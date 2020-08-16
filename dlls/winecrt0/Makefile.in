@@ -1,0 +1,16 @@
+MODULE    = libwinecrt0.a
+
+C_SRCS = \
+	crt_dllmain.c \
+	crt_fltused.c \
+	debug.c \
+	delay_load.c \
+	dll_main.c \
+	exception.c \
+	exe16_entry.c \
+	exe_entry.c \
+	exe_main.c \
+	exe_wentry.c \
+	exe_wmain.c \
+	register.c \
+	stub.c
