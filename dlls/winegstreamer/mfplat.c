@@ -693,12 +693,12 @@ HRESULT mfplat_DllRegisterServer(void)
         for (j = 0; j < cur->input_types_count; j++)
         {
             input_types[j].guidMajorType = *(cur->major_type);
-            input_types[j].guidSubtype = *(cur->input_types[i]);
+            input_types[j].guidSubtype = *(cur->input_types[j]);
         }
         for (k = 0; k < cur->output_types_count; k++)
         {
             output_types[k].guidMajorType = *(cur->major_type);
-            output_types[k].guidSubtype = *(cur->output_types[i]);
+            output_types[k].guidSubtype = *(cur->output_types[k]);
         }
 
         hr = MFTRegister(*(cur->clsid), *(cur->category), cur->name, cur->flags, cur->input_types_count,
