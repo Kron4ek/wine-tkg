@@ -18578,6 +18578,11 @@ static void test_format_support(const D3D_FEATURE_LEVEL feature_level)
         ok(hr == S_OK || (hr == E_FAIL && !format_support[format]),
                 "Got unexpected result for format %#x: hr %#x, format_support %#x.\n",
                 format, hr, format_support[format]);
+        if (format_support[format] & D3D11_FORMAT_SUPPORT_MIP_AUTOGEN)
+        {
+            ok(format_support[format] & D3D11_FORMAT_SUPPORT_TEXTURE2D,
+                    "Got unexpected format support %#x for format %#x", format_support[format], format);
+        }
     }
 
     for (format = DXGI_FORMAT_UNKNOWN; format <= DXGI_FORMAT_B4G4R4A4_UNORM; ++format)
@@ -29075,6 +29080,13 @@ static void test_sample_mask(void)
     ID3D11DeviceContext_ResolveSubresource(context, (ID3D11Resource *)test_context.backbuffer, 0,
             (ID3D11Resource *)texture, 0, texture_desc.Format);
     check_texture_color(test_context.backbuffer, 0x7f7f7f7f, 1);
+
+    ID3D11DeviceContext_OMSetBlendState(context, NULL, NULL, 0xb);
+    ID3D11DeviceContext_ClearRenderTargetView(context, rtv, black);
+    draw_quad(&test_context);
+    ID3D11DeviceContext_ResolveSubresource(context, (ID3D11Resource *)test_context.backbuffer, 0,
+            (ID3D11Resource *)texture, 0, texture_desc.Format);
+    check_texture_color(test_context.backbuffer, 0x3f3f3f3f, 1);
 
     ID3D11RenderTargetView_Release(rtv);
     ID3D11Texture2D_Release(texture);

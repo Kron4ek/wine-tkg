@@ -1251,6 +1251,8 @@ struct wined3d_shader_instruction
     const struct wined3d_shader_dst_param *dst;
     const struct wined3d_shader_src_param *src;
     struct wined3d_shader_texel_offset texel_offset;
+    enum wined3d_shader_resource_type resource_type;
+    enum wined3d_data_type resource_data_type;
     BOOL coissue;
     const struct wined3d_shader_src_param *predicate;
     union
@@ -1775,7 +1777,10 @@ enum wined3d_pipeline
 #define STATE_BLEND_FACTOR (STATE_BLEND + 1)
 #define STATE_IS_BLEND_FACTOR(a) ((a) == STATE_BLEND_FACTOR)
 
-#define STATE_COMPUTE_OFFSET (STATE_BLEND_FACTOR + 1)
+#define STATE_SAMPLE_MASK (STATE_BLEND_FACTOR + 1)
+#define STATE_IS_SAMPLE_MASK(a) ((a) == STATE_SAMPLE_MASK)
+
+#define STATE_COMPUTE_OFFSET (STATE_SAMPLE_MASK + 1)
 
 #define STATE_COMPUTE_SHADER (STATE_COMPUTE_OFFSET)
 #define STATE_IS_COMPUTE_SHADER(a) ((a) == STATE_COMPUTE_SHADER)
@@ -3618,6 +3623,7 @@ struct wined3d_state
     DWORD render_states[WINEHIGHEST_RENDER_STATE + 1];
     struct wined3d_blend_state *blend_state;
     struct wined3d_color blend_factor;
+    unsigned int sample_mask;
     struct wined3d_rasterizer_state *rasterizer_state;
 };
 
@@ -4632,7 +4638,7 @@ void wined3d_cs_emit_present(struct wined3d_cs *cs, struct wined3d_swapchain *sw
 void wined3d_cs_emit_query_issue(struct wined3d_cs *cs, struct wined3d_query *query, DWORD flags) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_reset_state(struct wined3d_cs *cs) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_blend_state(struct wined3d_cs *cs, struct wined3d_blend_state *state,
-        const struct wined3d_color *blend_factor) DECLSPEC_HIDDEN;
+        const struct wined3d_color *blend_factor, unsigned int sample_mask) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_clip_plane(struct wined3d_cs *cs, UINT plane_idx,
         const struct wined3d_vec4 *plane) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_color_key(struct wined3d_cs *cs, struct wined3d_texture *texture,

@@ -1923,11 +1923,29 @@ static void state_antialias(struct wined3d_context *context, const struct wined3
         FIXME("Antialias not supported yet.\n");
 }
 
-static void state_multisampmask(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
+static void state_sample_mask(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    if (state->render_states[WINED3D_RS_MULTISAMPLEMASK] != 0xffffffff)
-        FIXME("WINED3D_RS_MULTISAMPLEMASK %#x not yet implemented.\n",
-                state->render_states[WINED3D_RS_MULTISAMPLEMASK]);
+    const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
+    unsigned int sample_mask = state->sample_mask;
+
+    TRACE("Setting sample mask to %#x.\n", sample_mask);
+    if (sample_mask != 0xffffffff)
+    {
+        gl_info->gl_ops.gl.p_glEnable(GL_SAMPLE_MASK);
+        checkGLcall("glEnable GL_SAMPLE_MASK");
+        GL_EXTCALL(glSampleMaski(0, sample_mask));
+        checkGLcall("glSampleMaski");
+    }
+    else
+    {
+        gl_info->gl_ops.gl.p_glDisable(GL_SAMPLE_MASK);
+        checkGLcall("glDisable GL_SAMPLE_MASK");
+    }
+}
+
+static void state_sample_mask_w(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
+{
+    WARN("Unsupported in local OpenGL implementation: glSampleMaski.\n");
 }
 
 static void state_patchedgestyle(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
@@ -4609,6 +4627,8 @@ const struct wined3d_state_entry_template misc_state_template_gl[] =
     { STATE_BLEND,                                        { STATE_BLEND,                                        blend               }, WINED3D_GL_EXT_NONE             },
     { STATE_BLEND_FACTOR,                                 { STATE_BLEND_FACTOR,                                 state_blend_factor  }, EXT_BLEND_COLOR                 },
     { STATE_BLEND_FACTOR,                                 { STATE_BLEND_FACTOR,                                 state_blend_factor_w}, WINED3D_GL_EXT_NONE             },
+    { STATE_SAMPLE_MASK,                                  { STATE_SAMPLE_MASK,                                  state_sample_mask   }, ARB_TEXTURE_MULTISAMPLE         },
+    { STATE_SAMPLE_MASK,                                  { STATE_SAMPLE_MASK,                                  state_sample_mask_w }, WINED3D_GL_EXT_NONE             },
     { STATE_STREAMSRC,                                    { STATE_STREAMSRC,                                    streamsrc           }, WINED3D_GL_EXT_NONE             },
     { STATE_VDECL,                                        { STATE_VDECL,                                        vdecl_miscpart      }, WINED3D_GL_EXT_NONE             },
     { STATE_RASTERIZER,                                   { STATE_RASTERIZER,                                   rasterizer_cc       }, ARB_CLIP_CONTROL                },
@@ -4743,7 +4763,6 @@ const struct wined3d_state_entry_template misc_state_template_gl[] =
     { STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION),{ STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION),state_tessellation  }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),      { STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),      state_msaa          }, ARB_MULTISAMPLE                 },
     { STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),      { STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),      state_msaa_w        }, WINED3D_GL_EXT_NONE             },
-    { STATE_RENDER(WINED3D_RS_MULTISAMPLEMASK),           { STATE_RENDER(WINED3D_RS_MULTISAMPLEMASK),           state_multisampmask }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_DEBUGMONITORTOKEN),         { STATE_RENDER(WINED3D_RS_DEBUGMONITORTOKEN),         state_debug_monitor }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_ZVISIBLE),                  { STATE_RENDER(WINED3D_RS_ZVISIBLE),                  state_zvisible      }, WINED3D_GL_EXT_NONE             },
     /* Samplers */
@@ -5511,6 +5530,7 @@ static void validate_state_table(struct wined3d_state_entry *state_table)
         { 47,  47},
         { 61, 127},
         {149, 150},
+        {162, 162},
         {168, 169},
         {171, 171},
         {174, 177},

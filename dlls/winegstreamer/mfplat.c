@@ -404,6 +404,8 @@ failed:
     return hr;
 }
 
+static const GUID CLSID_GStreamerByteStreamHandler = {0x317df618, 0x5e5a, 0x468a, {0x9f, 0x15, 0xd8, 0x27, 0xa9, 0xa0, 0x81, 0x62}};
+
 static HRESULT h264_decoder_create(REFIID riid, void **ret)
 {
     return generic_decoder_construct(riid, ret, DECODER_TYPE_H264);
@@ -429,16 +431,6 @@ static HRESULT m4s2_decoder_create(REFIID riid, void **ret)
     return generic_decoder_construct(riid, ret, DECODER_TYPE_M4S2);
 }
 
-static HRESULT mp4_stream_handler_create(REFIID riid, void **ret)
-{
-    return container_stream_handler_construct(riid, ret, SOURCE_TYPE_MPEG_4);
-}
-
-static HRESULT asf_stream_handler_create(REFIID riid, void **ret)
-{
-    return container_stream_handler_construct(riid, ret, SOURCE_TYPE_ASF);
-}
-
 static GUID CLSID_CColorConvertDMO = {0x98230571,0x0087,0x4204,{0xb0,0x20,0x32,0x82,0x53,0x8e,0x57,0xd3}};
 
 static GUID CLSID_WINEAudioConverter = {0x6a170414,0xaad9,0x4693,{0xb8,0x06,0x3a,0x0c,0x47,0xc5,0x70,0xd6}};
@@ -451,13 +443,12 @@ static const struct class_object
 class_objects[] =
 {
     { &CLSID_VideoProcessorMFT, &video_processor_create },
+    { &CLSID_GStreamerByteStreamHandler, &winegstreamer_stream_handler_create },
     { &CLSID_CMSH264DecoderMFT, &h264_decoder_create },
     { &CLSID_CMSAACDecMFT, &aac_decoder_create },
     { &CLSID_CWMVDecMediaObject, &wmv_decoder_create },
     { &CLSID_CWMADecMediaObject, &wma_decoder_create },
     { &CLSID_CMpeg4sDecMFT, m4s2_decoder_create },
-    { &CLSID_MPEG4ByteStreamHandler, &mp4_stream_handler_create },
-    { &CLSID_ASFByteStreamHandler, &asf_stream_handler_create },
     { &CLSID_CColorConvertDMO, &color_converter_create },
     { &CLSID_WINEAudioConverter, &audio_converter_create },
 };
@@ -467,9 +458,6 @@ HRESULT mfplat_get_class_object(REFCLSID rclsid, REFIID riid, void **obj)
     struct class_factory *factory;
     unsigned int i;
     HRESULT hr;
-
-    if (!(init_gstreamer()))
-        return CLASS_E_CLASSNOTAVAILABLE;
 
     for (i = 0; i < ARRAY_SIZE(class_objects); ++i)
     {
@@ -527,9 +515,9 @@ const GUID *h264_decoder_input_types[] =
 };
 const GUID *h264_decoder_output_types[] =
 {
+    &MFVideoFormat_NV12,
     &MFVideoFormat_I420,
     &MFVideoFormat_IYUV,
-    &MFVideoFormat_NV12,
     &MFVideoFormat_YUY2,
     &MFVideoFormat_YV12,
 };
@@ -855,6 +843,8 @@ static IMFMediaType* transform_to_media_type(GstCaps *caps)
                     IMFMediaType_SetUINT32(media_type, &MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High);
                 else if (!(strcmp(profile, "high-4:4:4")))
                     IMFMediaType_SetUINT32(media_type, &MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_444);
+                else if (!(strcmp(profile, "constrained-baseline")))
+                    IMFMediaType_SetUINT32(media_type, &MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_ConstrainedBase);
                 else
                     FIXME("Unrecognized profile %s\n", profile);
             }
@@ -1304,6 +1294,7 @@ GstCaps *caps_from_mf_media_type(IMFMediaType *type)
                     case eAVEncH264VProfile_Main: profile = "main"; break;
                     case eAVEncH264VProfile_High: profile = "high"; break;
                     case eAVEncH264VProfile_444: profile = "high-4:4:4"; break;
+                    case eAVEncH264VProfile_ConstrainedBase: profile = "constrained-baseline"; break;
                     default: FIXME("Unknown profile %u\n", h264_profile);
                 }
                 if (profile)
@@ -1526,7 +1517,7 @@ GstCaps *caps_from_mf_media_type(IMFMediaType *type)
         }
         if (SUCCEEDED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_CHANNEL_MASK, &channel_mask)))
         {
-            gst_caps_set_simple(output, "channel-mask", GST_TYPE_BITMASK, channel_mask, NULL);
+            gst_caps_set_simple(output, "channel-mask", GST_TYPE_BITMASK, (guint64) channel_mask, NULL);
         }
 
         if (SUCCEEDED(IMFMediaType_GetUINT32(type, &MF_MT_AVG_BITRATE, &bitrate)))

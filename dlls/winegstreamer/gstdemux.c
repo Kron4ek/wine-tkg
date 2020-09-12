@@ -1280,6 +1280,7 @@ static GstBusSyncReply watch_bus(GstBus *bus, GstMessage *msg, gpointer data)
     default:
         break;
     }
+    gst_message_unref(msg);
     return GST_BUS_DROP;
 }
 
@@ -1713,6 +1714,7 @@ static HRESULT gstdecoder_source_get_media_type(struct gstdemux_source *pin,
             gst_caps_unref(caps);
             return S_OK;
         }
+        FreeMediaType(mt);
     }
 
     if (!strcmp(type, "video/x-raw") && index < ARRAY_SIZE(video_formats))

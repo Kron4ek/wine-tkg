@@ -192,12 +192,16 @@ extern const vtable_ptr MSVCP_istream_vtable;
 extern const vtable_ptr MSVCP_istream_withassign_vtable;
 /* ??_7istrstream@@6B@ */
 extern const vtable_ptr MSVCP_istrstream_vtable;
+/* ??_7ifstream@@6B@ */
+extern const vtable_ptr MSVCP_ifstream_vtable;
 /* ??_7iostream@@6B@ */
 extern const vtable_ptr MSVCP_iostream_vtable;
 /* ??_7strstream@@6B@ */
 extern const vtable_ptr MSVCP_strstream_vtable;
 /* ??_7stdiostream@@6B@ */
 extern const vtable_ptr MSVCP_stdiostream_vtable;
+/* ??_7fstream@@6B@ */
+extern const vtable_ptr MSVCP_fstream_vtable;
 
 __ASM_BLOCK_BEGIN(vtables)
     __ASM_VTABLE(streambuf,
@@ -262,11 +266,15 @@ __ASM_BLOCK_BEGIN(vtables)
             VTABLE_ADD_FUNC(istream_vector_dtor));
     __ASM_VTABLE(istrstream,
             VTABLE_ADD_FUNC(istream_vector_dtor));
+    __ASM_VTABLE(ifstream,
+            VTABLE_ADD_FUNC(istream_vector_dtor));
     __ASM_VTABLE(iostream,
             VTABLE_ADD_FUNC(iostream_vector_dtor));
     __ASM_VTABLE(strstream,
             VTABLE_ADD_FUNC(iostream_vector_dtor));
     __ASM_VTABLE(stdiostream,
+            VTABLE_ADD_FUNC(iostream_vector_dtor));
+    __ASM_VTABLE(fstream,
             VTABLE_ADD_FUNC(iostream_vector_dtor));
 __ASM_BLOCK_END
 
@@ -280,6 +288,7 @@ const int ostream_vbtable[] = {0, VBTABLE_ENTRY(ostream, FIELD_OFFSET(ostream, v
 /* ??_8istream@@7B@ */
 /* ??_8istream_withassign@@7B@ */
 /* ??_8istrstream@@7B@ */
+/* ??_8ifstream@@7B@ */
 const int istream_vbtable[] = {0, VBTABLE_ENTRY(istream, FIELD_OFFSET(istream, vbtable), ios)};
 /* ??_8iostream@@7Bistream@@@ */
 /* ??_8stdiostream@@7Bistream@@@ */
@@ -305,15 +314,20 @@ DEFINE_RTTI_DATA2(istream_withassign, sizeof(istream),
     &istream_rtti_base_descriptor, &ios_rtti_base_descriptor, ".?AVistream_withassign@@")
 DEFINE_RTTI_DATA2(istrstream, sizeof(istream),
     &istream_rtti_base_descriptor, &ios_rtti_base_descriptor, ".?AVistrstream@@")
+DEFINE_RTTI_DATA2(ifstream, sizeof(istream),
+    &istream_rtti_base_descriptor, &ios_rtti_base_descriptor, ".?AVifstream@@")
 DEFINE_RTTI_DATA4(iostream, sizeof(iostream),
     &istream_rtti_base_descriptor, &ios_rtti_base_descriptor,
     &ostream_rtti_base_descriptor, &ios_rtti_base_descriptor, ".?AViostream@@")
-DEFINE_RTTI_DATA4(strstream, sizeof(iostream),
+DEFINE_RTTI_DATA5(strstream, sizeof(iostream), &iostream_rtti_base_descriptor,
     &istream_rtti_base_descriptor, &ios_rtti_base_descriptor,
     &ostream_rtti_base_descriptor, &ios_rtti_base_descriptor, ".?AVstrstream@@")
-DEFINE_RTTI_DATA4(stdiostream, sizeof(iostream),
+DEFINE_RTTI_DATA5(stdiostream, sizeof(iostream), &iostream_rtti_base_descriptor,
     &istream_rtti_base_descriptor, &ios_rtti_base_descriptor,
     &ostream_rtti_base_descriptor, &ios_rtti_base_descriptor, ".?AVstdiostream@@")
+DEFINE_RTTI_DATA5(fstream, sizeof(iostream), &iostream_rtti_base_descriptor,
+    &istream_rtti_base_descriptor, &ios_rtti_base_descriptor,
+    &ostream_rtti_base_descriptor, &ios_rtti_base_descriptor, ".?AVfstream@@")
 
 /* ?cin@@3Vistream_withassign@@A */
 struct {
@@ -1168,16 +1182,28 @@ streampos __thiscall filebuf_seekoff(filebuf *this, streamoff offset, ios_seek_d
 DEFINE_THISCALL_WRAPPER(filebuf_setbuf, 12)
 streambuf* __thiscall filebuf_setbuf(filebuf *this, char *buffer, int length)
 {
-    streambuf *ret;
-
     TRACE("(%p %p %d)\n", this, buffer, length);
-    if (this->base.base != NULL)
+
+    if (filebuf_is_open(this) && this->base.base != NULL)
         return NULL;
 
     streambuf_lock(&this->base);
-    ret = streambuf_setbuf(&this->base, buffer, length);
+
+    if (buffer == NULL || !length) {
+        this->base.unbuffered = 1;
+    } else {
+        if (this->base.allocated) {
+            MSVCRT_operator_delete(this->base.base);
+            this->base.allocated = 0;
+        }
+
+        this->base.base = buffer;
+        this->base.ebuf = buffer + length;
+    }
+
     streambuf_unlock(&this->base);
-    return ret;
+
+    return &this->base;
 }
 
 /* ?setmode@filebuf@@QAEHH@Z */
@@ -3005,11 +3031,15 @@ ostream* __thiscall ostrstream_buffer_ctor(ostream *this, char *buffer, int leng
 
     TRACE("(%p %p %d %d %d)\n", this, buffer, length, mode, virt_init);
 
-    if (ssb) {
-        strstreambuf_buffer_ctor(ssb, buffer, length, buffer);
-        if (mode & (OPENMODE_app|OPENMODE_ate))
-            ssb->base.pptr = buffer + strlen(buffer);
+    if (!ssb) {
+        FIXME("out of memory\n");
+        return NULL;
     }
+
+    strstreambuf_buffer_ctor(ssb, buffer, length, buffer);
+    if (mode & (OPENMODE_app|OPENMODE_ate))
+        ssb->base.pptr = buffer + strlen(buffer);
+
     return ostrstream_internal_sb_ctor(this, ssb, virt_init);
 }
 
@@ -3022,8 +3052,13 @@ ostream* __thiscall ostrstream_ctor(ostream *this, BOOL virt_init)
 
     TRACE("(%p %d)\n", this, virt_init);
 
-    if (ssb)
-        strstreambuf_ctor(ssb);
+    if (!ssb) {
+        FIXME("out of memory\n");
+        return NULL;
+    }
+
+    strstreambuf_ctor(ssb);
+
     return ostrstream_internal_sb_ctor(this, ssb, virt_init);
 }
 
@@ -3113,6 +3148,8 @@ istream* __thiscall istream_copy_ctor(istream *this, const istream *copy, BOOL v
 /* ??1istream_withassign@@UEAA@XZ */
 /* ??1istrstream@@UAE@XZ */
 /* ??1istrstream@@UEAA@XZ */
+/* ??1ifstream@@UAE@XZ */
+/* ??1ifstream@@UEAA@XZ */
 DEFINE_THISCALL_WRAPPER(istream_dtor, 4)
 void __thiscall istream_dtor(ios *base)
 {
@@ -3152,6 +3189,8 @@ istream* __thiscall istream_assign_sb(istream *this, streambuf *sb)
 /* ??4istream_withassign@@QEAAAEAVistream@@AEBV1@@Z */
 /* ??4istrstream@@QAEAAV0@ABV0@@Z */
 /* ??4istrstream@@QEAAAEAV0@AEBV0@@Z */
+/* ??4ifstream@@QAEAAV0@ABV0@@Z */
+/* ??4ifstream@@QEAAAEAV0@AEBV0@@Z */
 DEFINE_THISCALL_WRAPPER(istream_assign, 8)
 istream* __thiscall istream_assign(istream *this, const istream *rhs)
 {
@@ -3164,6 +3203,8 @@ istream* __thiscall istream_assign(istream *this, const istream *rhs)
 /* ??_Distream_withassign@@QEAAXXZ */
 /* ??_Distrstream@@QAEXXZ */
 /* ??_Distrstream@@QEAAXXZ */
+/* ??_Difstream@@QAEXXZ */
+/* ??_Difstream@@QEAAXXZ */
 DEFINE_THISCALL_WRAPPER(istream_vbase_dtor, 4)
 void __thiscall istream_vbase_dtor(istream *this)
 {
@@ -3178,6 +3219,7 @@ void __thiscall istream_vbase_dtor(istream *this)
 /* ??_Eistream@@UAEPAXI@Z */
 /* ??_Eistream_withassign@@UAEPAXI@Z */
 /* ??_Eistrstream@@UAEPAXI@Z */
+/* ??_Eifstream@@UAEPAXI@Z */
 DEFINE_THISCALL_WRAPPER(istream_vector_dtor, 8)
 istream* __thiscall istream_vector_dtor(ios *base, unsigned int flags)
 {
@@ -3203,6 +3245,7 @@ istream* __thiscall istream_vector_dtor(ios *base, unsigned int flags)
 /* ??_Gistream@@UAEPAXI@Z */
 /* ??_Gistream_withassign@@UAEPAXI@Z */
 /* ??_Gistrstream@@UAEPAXI@Z */
+/* ??_Gifstream@@UAEPAXI@Z */
 DEFINE_THISCALL_WRAPPER(istream_scalar_dtor, 8)
 istream* __thiscall istream_scalar_dtor(ios *base, unsigned int flags)
 {
@@ -4054,11 +4097,14 @@ istream* __thiscall istrstream_buffer_ctor(istream *this, char *buffer, int leng
 
     TRACE("(%p %p %d %d)\n", this, buffer, length, virt_init);
 
-    if (ssb) {
-        strstreambuf_buffer_ctor(ssb, buffer, length, NULL);
-        istream_sb_ctor(this, &ssb->base, virt_init);
-    } else
-        istream_ctor(this, virt_init);
+    if (!ssb) {
+        FIXME("out of memory\n");
+        return NULL;
+    }
+
+    strstreambuf_buffer_ctor(ssb, buffer, length, NULL);
+    istream_sb_ctor(this, &ssb->base, virt_init);
+
     base = istream_get_ios(this);
     base->vtable = &MSVCP_istrstream_vtable;
     base->delbuf = 1;
@@ -4087,6 +4133,190 @@ DEFINE_THISCALL_WRAPPER(istrstream_str, 4)
 char* __thiscall istrstream_str(istream *this)
 {
     return strstreambuf_str(istrstream_rdbuf(this));
+}
+
+/* ??0ifstream@@QAE@ABV0@@Z */
+/* ??0ifstream@@QEAA@AEBV0@@Z */
+DEFINE_THISCALL_WRAPPER(ifstream_copy_ctor, 12)
+istream* __thiscall ifstream_copy_ctor(istream *this, const istream *copy, BOOL virt_init)
+{
+    TRACE("(%p %p %d)\n", this, copy, virt_init);
+    istream_withassign_copy_ctor(this, copy, virt_init);
+    istream_get_ios(this)->vtable = &MSVCP_ifstream_vtable;
+    return this;
+}
+
+/* ??0ifstream@@QAE@HPADH@Z */
+/* ??0ifstream@@QEAA@HPEADH@Z */
+DEFINE_THISCALL_WRAPPER(ifstream_buffer_ctor, 20)
+istream* __thiscall ifstream_buffer_ctor(istream *this, filedesc fd, char *buffer, int length, BOOL virt_init)
+{
+    ios *base;
+    filebuf *fb = MSVCRT_operator_new(sizeof(filebuf));
+
+    TRACE("(%p %d %p %d %d)\n", this, fd, buffer, length, virt_init);
+
+    if (!fb) {
+        FIXME("out of memory\n");
+        return NULL;
+    }
+
+    filebuf_fd_reserve_ctor(fb, fd, buffer, length);
+    istream_sb_ctor(this, &fb->base, virt_init);
+
+    base = istream_get_ios(this);
+    base->vtable = &MSVCP_ifstream_vtable;
+    base->delbuf = 1;
+
+    return this;
+}
+
+/* ??0ifstream@@QAE@H@Z */
+/* ??0ifstream@@QEAA@H@Z */
+DEFINE_THISCALL_WRAPPER(ifstream_fd_ctor, 12)
+istream* __thiscall ifstream_fd_ctor(istream *this, filedesc fd, BOOL virt_init)
+{
+    ios *base;
+    filebuf *fb = MSVCRT_operator_new(sizeof(filebuf));
+
+    TRACE("(%p %d %d)\n", this, fd, virt_init);
+
+    if (!fb) {
+        FIXME("out of memory\n");
+        return NULL;
+    }
+
+    filebuf_fd_ctor(fb, fd);
+    istream_sb_ctor(this, &fb->base, virt_init);
+
+    base = istream_get_ios(this);
+    base->vtable = &MSVCP_ifstream_vtable;
+    base->delbuf = 1;
+
+    return this;
+}
+
+/* ??0ifstream@@QAE@PBDHH@Z */
+/* ??0ifstream@@QEAA@PEBDHH@Z */
+DEFINE_THISCALL_WRAPPER(ifstream_open_ctor, 20)
+istream* __thiscall ifstream_open_ctor(istream *this, const char *name, ios_open_mode mode, int protection, BOOL virt_init)
+{
+    ios *base;
+    filebuf *fb = MSVCRT_operator_new(sizeof(filebuf));
+
+    TRACE("(%p %s %d %d %d)\n", this, name, mode, protection, virt_init);
+
+    if (!fb) {
+        FIXME("out of memory\n");
+        return NULL;
+    }
+
+    filebuf_ctor(fb);
+    istream_sb_ctor(this, &fb->base, virt_init);
+    filebuf_open(fb, name, mode|OPENMODE_in, protection);
+
+    base = istream_get_ios(this);
+    base->vtable = &MSVCP_ifstream_vtable;
+    base->delbuf = 1;
+
+    return this;
+}
+
+/* ??0ifstream@@QAE@XZ */
+/* ??0ifstream@@QEAA@XZ */
+DEFINE_THISCALL_WRAPPER(ifstream_ctor, 8)
+istream* __thiscall ifstream_ctor(istream *this, BOOL virt_init)
+{
+    return ifstream_fd_ctor(this, -1, virt_init);
+}
+
+/* ?rdbuf@ifstream@@QBEPAVfilebuf@@XZ */
+/* ?rdbuf@ifstream@@QEBAPEAVfilebuf@@XZ */
+DEFINE_THISCALL_WRAPPER(ifstream_rdbuf, 4)
+filebuf* __thiscall ifstream_rdbuf(const istream *this)
+{
+    TRACE("(%p)\n", this);
+    return (filebuf*) istream_get_ios(this)->sb;
+}
+
+/* ?fd@ifstream@@QBEHXZ */
+/* ?fd@ifstream@@QEBAHXZ */
+DEFINE_THISCALL_WRAPPER(ifstream_fd, 4)
+filedesc __thiscall ifstream_fd(istream *this)
+{
+    TRACE("(%p)\n", this);
+    return filebuf_fd(ifstream_rdbuf(this));
+}
+
+/* ?attach@ifstream@@QAEXH@Z */
+/* ?attach@ifstream@@QEAAXH@Z */
+DEFINE_THISCALL_WRAPPER(ifstream_attach, 8)
+void __thiscall ifstream_attach(istream *this, filedesc fd)
+{
+    ios *base = istream_get_ios(this);
+    TRACE("(%p %d)\n", this, fd);
+    if (filebuf_attach(ifstream_rdbuf(this), fd) == NULL)
+        ios_clear(base, base->state | IOSTATE_failbit);
+}
+
+/* ?close@ifstream@@QAEXXZ */
+/* ?close@ifstream@@QEAAXXZ */
+DEFINE_THISCALL_WRAPPER(ifstream_close, 4)
+void __thiscall ifstream_close(istream *this)
+{
+    ios *base = istream_get_ios(this);
+    TRACE("(%p)\n", this);
+    if (filebuf_close(ifstream_rdbuf(this)) == NULL)
+        ios_clear(base, base->state | IOSTATE_failbit);
+    else
+        ios_clear(base, IOSTATE_goodbit);
+}
+
+/* ?is_open@ifstream@@QBEHXZ */
+/* ?is_open@ifstream@@QEBAHXZ */
+DEFINE_THISCALL_WRAPPER(ifstream_is_open, 4)
+int __thiscall ifstream_is_open(const istream *this)
+{
+    TRACE("(%p)\n", this);
+    return filebuf_is_open(ifstream_rdbuf(this));
+}
+
+/* ?open@ifstream@@QAEXPBDHH@Z */
+/* ?open@ifstream@@QEAAXPEBDHH@Z */
+DEFINE_THISCALL_WRAPPER(ifstream_open, 16)
+void __thiscall ifstream_open(istream *this, const char *name, ios_open_mode mode, int protection)
+{
+    ios *base = istream_get_ios(this);
+    TRACE("(%p %s %d %d)\n", this, name, mode, protection);
+    if (filebuf_open(ifstream_rdbuf(this), name, mode|OPENMODE_in, protection) == NULL)
+        ios_clear(base, base->state | IOSTATE_failbit);
+}
+
+/* ?setbuf@ifstream@@QAEPAVstreambuf@@PADH@Z */
+/* ?setbuf@ifstream@@QEAAPEAVstreambuf@@PEADH@Z */
+DEFINE_THISCALL_WRAPPER(ifstream_setbuf, 12)
+streambuf* __thiscall ifstream_setbuf(istream *this, char *buffer, int length)
+{
+    ios *base = istream_get_ios(this);
+    filebuf* fb = ifstream_rdbuf(this);
+
+    TRACE("(%p %p %d)\n", this, buffer, length);
+
+    if (filebuf_is_open(fb)) {
+        ios_clear(base, base->state | IOSTATE_failbit);
+        return NULL;
+    }
+
+    return filebuf_setbuf(fb, buffer, length);
+}
+
+/* ?setmode@ifstream@@QAEHH@Z */
+/* ?setmode@ifstream@@QEAAHH@Z */
+DEFINE_THISCALL_WRAPPER(ifstream_setmode, 8)
+int __thiscall ifstream_setmode(istream *this, int mode)
+{
+    TRACE("(%p %d)\n", this, mode);
+    return filebuf_setmode(ifstream_rdbuf(this), mode);
 }
 
 static inline ios* iostream_to_ios(const iostream *this)
@@ -4146,6 +4376,8 @@ iostream* __thiscall iostream_copy_ctor(iostream *this, const iostream *copy, BO
 /* ??1stdiostream@@UEAA@XZ */
 /* ??1strstream@@UAE@XZ */
 /* ??1strstream@@UEAA@XZ */
+/* ??1fstream@@UAE@XZ */
+/* ??1fstream@@UEAA@XZ */
 DEFINE_THISCALL_WRAPPER(iostream_dtor, 4)
 void __thiscall iostream_dtor(ios *base)
 {
@@ -4286,13 +4518,17 @@ iostream* __thiscall strstream_buffer_ctor(iostream *this, char *buffer, int len
 
     TRACE("(%p %p %d %d %d)\n", this, buffer, length, mode, virt_init);
 
-    if (ssb) {
-        strstreambuf_buffer_ctor(ssb, buffer, length, buffer);
-        if ((mode & OPENMODE_out) && (mode & (OPENMODE_app|OPENMODE_ate)))
-            ssb->base.pptr = buffer + strlen(buffer);
-        return iostream_internal_sb_ctor(this, &ssb->base, &MSVCP_strstream_vtable, virt_init);
+    if (!ssb) {
+        FIXME("out of memory\n");
+        return NULL;
     }
-    return iostream_internal_sb_ctor(this, NULL, &MSVCP_strstream_vtable, virt_init);
+
+    strstreambuf_buffer_ctor(ssb, buffer, length, buffer);
+
+    if ((mode & OPENMODE_out) && (mode & (OPENMODE_app|OPENMODE_ate)))
+        ssb->base.pptr = buffer + strlen(buffer);
+
+    return iostream_internal_sb_ctor(this, &ssb->base, &MSVCP_strstream_vtable, virt_init);
 }
 
 /* ??0strstream@@QAE@XZ */
@@ -4304,11 +4540,14 @@ iostream* __thiscall strstream_ctor(iostream *this, BOOL virt_init)
 
     TRACE("(%p %d)\n", this, virt_init);
 
-    if (ssb) {
-        strstreambuf_ctor(ssb);
-        return iostream_internal_sb_ctor(this, &ssb->base, &MSVCP_strstream_vtable, virt_init);
+    if (!ssb) {
+        FIXME("out of memory\n");
+        return NULL;
     }
-    return iostream_internal_sb_ctor(this, NULL, &MSVCP_strstream_vtable, virt_init);
+
+    strstreambuf_ctor(ssb);
+
+    return iostream_internal_sb_ctor(this, &ssb->base, &MSVCP_strstream_vtable, virt_init);
 }
 
 /* ?pcount@strstream@@QBEHXZ */
@@ -4353,11 +4592,14 @@ iostream* __thiscall stdiostream_file_ctor(iostream *this, FILE *file, BOOL virt
 
     TRACE("(%p %p %d)\n", this, file, virt_init);
 
-    if (stb) {
-        stdiobuf_file_ctor(stb, file);
-        return iostream_internal_sb_ctor(this, &stb->base, &MSVCP_stdiostream_vtable, virt_init);
+    if (!stb) {
+        FIXME("out of memory\n");
+        return NULL;
     }
-    return iostream_internal_sb_ctor(this, NULL, &MSVCP_stdiostream_vtable, virt_init);
+
+    stdiobuf_file_ctor(stb, file);
+
+    return iostream_internal_sb_ctor(this, &stb->base, &MSVCP_stdiostream_vtable, virt_init);
 }
 
 /* ?rdbuf@stdiostream@@QBEPAVstdiobuf@@XZ */
@@ -4366,6 +4608,32 @@ DEFINE_THISCALL_WRAPPER(stdiostream_rdbuf, 4)
 stdiobuf* __thiscall stdiostream_rdbuf(const iostream *this)
 {
     return (stdiobuf*) istream_get_ios(&this->base1)->sb;
+}
+
+/* ??0fstream@@QAE@PBDHH@Z */
+/* ??0fstream@@QEAA@PEBDHH@Z */
+DEFINE_THISCALL_WRAPPER(fstream_open_ctor, 20)
+iostream* __thiscall fstream_open_ctor(iostream *this, const char *name, ios_open_mode mode, int protection, BOOL virt_init)
+{
+    ios *base;
+    filebuf *fb = MSVCRT_operator_new(sizeof(filebuf));
+
+    TRACE("(%p %s %d %d %d)\n", this, name, mode, protection, virt_init);
+
+    if (!fb) {
+        FIXME("out of memory\n");
+        return NULL;
+    }
+
+    filebuf_ctor(fb);
+    filebuf_open(fb, name, mode, protection);
+
+    iostream_internal_sb_ctor(this, &fb->base, &MSVCP_fstream_vtable, virt_init);
+
+    base = istream_get_ios(&this->base1);
+    base->delbuf = 1;
+
+    return this;
 }
 
 /* ??0Iostream_init@@QAE@AAVios@@H@Z */
@@ -4490,6 +4758,18 @@ DEFINE_VTBL_WRAPPER(56);
 void* (__cdecl *MSVCRT_operator_new)(SIZE_T);
 void (__cdecl *MSVCRT_operator_delete)(void*);
 
+void __cdecl _mtlock(CRITICAL_SECTION *crit)
+{
+    TRACE("(%p)\n", crit);
+    EnterCriticalSection(crit);
+}
+
+void __cdecl _mtunlock(CRITICAL_SECTION *crit)
+{
+    TRACE("(%p)\n", crit);
+    LeaveCriticalSection(crit);
+}
+
 static void init_cxx_funcs(void)
 {
     HMODULE hmod = GetModuleHandleA("msvcrt.dll");
@@ -4522,9 +4802,11 @@ static void init_io(void *base)
     init_istream_rtti(base);
     init_istream_withassign_rtti(base);
     init_istrstream_rtti(base);
+    init_ifstream_rtti(base);
     init_iostream_rtti(base);
     init_strstream_rtti(base);
     init_stdiostream_rtti(base);
+    init_fstream_rtti(base);
 #endif
 
     if ((fb = MSVCRT_operator_new(sizeof(filebuf)))) {

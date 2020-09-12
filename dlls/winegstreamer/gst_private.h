@@ -56,6 +56,7 @@ void start_dispatch_thread(void) DECLSPEC_HIDDEN;
 extern HRESULT mfplat_DllRegisterServer(void) DECLSPEC_HIDDEN;
 extern HRESULT mfplat_get_class_object(REFCLSID rclsid, REFIID riid, void **obj) DECLSPEC_HIDDEN;
 
+HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj) DECLSPEC_HIDDEN;
 GstCaps *make_mf_compatible_caps(GstCaps *caps);
 IMFMediaType *mf_media_type_from_caps(GstCaps *caps);
 GstCaps *caps_from_mf_media_type(IMFMediaType *type);
@@ -70,13 +71,8 @@ enum decoder_type
     DECODER_TYPE_WMA,
     DECODER_TYPE_M4S2,
 };
-HRESULT generic_decoder_construct(REFIID riid, void **obj, enum decoder_type);
-enum source_type
-{
-    SOURCE_TYPE_MPEG_4,
-    SOURCE_TYPE_ASF,
-};
-HRESULT container_stream_handler_construct(REFIID riid, void **obj, enum source_type);
+HRESULT generic_decoder_construct(REFIID riid, void **obj, enum decoder_type) DECLSPEC_HIDDEN;
+HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj) DECLSPEC_HIDDEN;
 
 HRESULT color_converter_create(REFIID riid, void **ret);
 HRESULT audio_converter_create(REFIID riid, void **ret);

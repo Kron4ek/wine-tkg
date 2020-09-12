@@ -1,3 +1,22 @@
+/* GStreamer Media Source
+ *
+ * Copyright 2020 Derek Lesho
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+ */
+
 #include "config.h"
 
 #include <gst/gst.h>
@@ -23,19 +42,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 
-static struct source_desc
-{
-    GstStaticCaps bytestream_caps;
-} source_descs[] =
-{
-    {/*SOURCE_TYPE_MPEG_4*/
-        GST_STATIC_CAPS("video/quicktime"),
-    },
-    {/*SOURCE_TYPE_ASF*/
-        GST_STATIC_CAPS("video/x-ms-asf"),
-    }
-};
-
 struct media_stream
 {
     IMFMediaStream IMFMediaStream_iface;
@@ -46,7 +52,6 @@ struct media_stream
     GstElement *appsink;
     GstPad *their_src, *my_sink;
     GstCaps *their_caps;
-    /* usually reflects state of source */
     enum
     {
         STREAM_STUB,
@@ -96,7 +101,6 @@ struct media_source
     IMFAsyncCallback async_commands_callback;
     LONG ref;
     DWORD async_commands_queue;
-    enum source_type type;
     IMFMediaEventQueue *event_queue;
     IMFByteStream *byte_stream;
     struct media_stream **streams;
@@ -576,11 +580,11 @@ static gboolean query_bytestream(GstPad *pad, GstObject *parent, GstQuery *query
         }
         case GST_QUERY_CAPS:
         {
+            GstStaticCaps any = GST_STATIC_CAPS_ANY;
             GstCaps *caps, *filter;
 
+            caps = gst_static_caps_get(&any);
             gst_query_parse_caps(query, &filter);
-
-            caps = gst_static_caps_get(&source_descs[source->type].bytestream_caps);
 
             if (filter) {
                 GstCaps* filtered;
@@ -1226,6 +1230,8 @@ static ULONG WINAPI media_source_Release(IMFMediaSource *iface)
 
     if (!ref)
     {
+        IMFMediaSource_Shutdown(&source->IMFMediaSource_iface);
+        IMFMediaEventQueue_Release(source->event_queue);
         heap_free(source);
     }
 
@@ -1238,9 +1244,6 @@ static HRESULT WINAPI media_source_GetEvent(IMFMediaSource *iface, DWORD flags, 
 
     TRACE("(%p)->(%#x, %p)\n", source, flags, event);
 
-    if (source->state == SOURCE_SHUTDOWN)
-        return MF_E_SHUTDOWN;
-
     return IMFMediaEventQueue_GetEvent(source->event_queue, flags, event);
 }
 
@@ -1249,9 +1252,6 @@ static HRESULT WINAPI media_source_BeginGetEvent(IMFMediaSource *iface, IMFAsync
     struct media_source *source = impl_from_IMFMediaSource(iface);
 
     TRACE("(%p)->(%p, %p)\n", source, callback, state);
-
-    if (source->state == SOURCE_SHUTDOWN)
-        return MF_E_SHUTDOWN;
 
     return IMFMediaEventQueue_BeginGetEvent(source->event_queue, callback, state);
 }
@@ -1262,9 +1262,6 @@ static HRESULT WINAPI media_source_EndGetEvent(IMFMediaSource *iface, IMFAsyncRe
 
     TRACE("(%p)->(%p, %p)\n", source, result, event);
 
-    if (source->state == SOURCE_SHUTDOWN)
-        return MF_E_SHUTDOWN;
-
     return IMFMediaEventQueue_EndGetEvent(source->event_queue, result, event);
 }
 
@@ -1274,9 +1271,6 @@ static HRESULT WINAPI media_source_QueueEvent(IMFMediaSource *iface, MediaEventT
     struct media_source *source = impl_from_IMFMediaSource(iface);
 
     TRACE("(%p)->(%d, %s, %#x, %p)\n", source, event_type, debugstr_guid(ext_type), hr, value);
-
-    if (source->state == SOURCE_SHUTDOWN)
-        return MF_E_SHUTDOWN;
 
     return IMFMediaEventQueue_QueueEventParamVar(source->event_queue, event_type, ext_type, hr, value);
 }
@@ -1372,8 +1366,17 @@ static HRESULT WINAPI media_source_Pause(IMFMediaSource *iface)
     return E_NOTIMPL;
 }
 
-static HRESULT media_source_teardown(struct media_source *source)
+static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
 {
+    struct media_source *source = impl_from_IMFMediaSource(iface);
+
+    TRACE("(%p)\n", source);
+
+    if (source->state == SOURCE_SHUTDOWN)
+        return MF_E_SHUTDOWN;
+
+    source->state = SOURCE_SHUTDOWN;
+
     if (source->container)
     {
         gst_element_set_state(source->container, GST_STATE_NULL);
@@ -1388,7 +1391,7 @@ static HRESULT media_source_teardown(struct media_source *source)
     if (source->pres_desc)
         IMFPresentationDescriptor_Release(source->pres_desc);
     if (source->event_queue)
-        IMFMediaEventQueue_Release(source->event_queue);
+        IMFMediaEventQueue_Shutdown(source->event_queue);
     if (source->byte_stream)
         IMFByteStream_Release(source->byte_stream);
 
@@ -1408,16 +1411,6 @@ static HRESULT media_source_teardown(struct media_source *source)
         MFUnlockWorkQueue(source->async_commands_queue);
 
     return S_OK;
-}
-
-static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
-{
-    struct media_source *source = impl_from_IMFMediaSource(iface);
-
-    TRACE("(%p)\n", source);
-
-    source->state = SOURCE_SHUTDOWN;
-    return media_source_teardown(source);
 }
 
 static const IMFMediaSourceVtbl IMFMediaSource_vtbl =
@@ -1654,13 +1647,13 @@ static GstPadProbeReturn caps_listener(GstPad *pad, GstPadProbeInfo *info, gpoin
     return GST_PAD_PROBE_OK;
 }
 
-static HRESULT media_source_constructor(IMFByteStream *bytestream, enum source_type type, struct media_source **out_media_source)
+static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_source **out_media_source)
 {
     GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE(
         "mf_src",
         GST_PAD_SRC,
         GST_PAD_ALWAYS,
-        source_descs[type].bytestream_caps);
+        GST_STATIC_CAPS_ANY);
 
     struct media_source *object = heap_alloc_zero(sizeof(*object));
     BOOL video_selected = FALSE, audio_selected = FALSE;
@@ -1676,7 +1669,6 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, enum source_t
     object->IMFSeekInfo_iface.lpVtbl = &IMFSeekInfo_vtbl;
     object->async_commands_callback.lpVtbl = &source_async_commands_callback_vtbl;
     object->ref = 1;
-    object->type = type;
     object->byte_stream = bytestream;
     IMFByteStream_AddRef(bytestream);
     object->all_streams_event = CreateEventA(NULL, FALSE, FALSE, NULL);
@@ -1710,7 +1702,6 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, enum source_t
     g_object_set(object->decodebin, "max-size-buffers", 0, NULL);
     g_object_set(object->decodebin, "max-size-time", G_GUINT64_CONSTANT(0), NULL);
     g_object_set(object->decodebin, "max-size-bytes", 0, NULL);
-    g_object_set(object->decodebin, "sink-caps", gst_static_caps_get(&source_descs[type].bytestream_caps), NULL);
 
     gst_bin_add(GST_BIN(object->container), object->decodebin);
 
@@ -1865,28 +1856,23 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, enum source_t
 
     if (descriptors)
         heap_free(descriptors);
-    media_source_teardown(object);
-    heap_free(object);
-    *out_media_source = NULL;
+    IMFMediaSource_Release(&object->IMFMediaSource_iface);
     return hr;
 }
 
-/* IMFByteStreamHandler */
-
-struct container_stream_handler
+struct winegstreamer_stream_handler
 {
     IMFByteStreamHandler IMFByteStreamHandler_iface;
     LONG refcount;
-    enum source_type type;
     struct handler handler;
 };
 
-static struct container_stream_handler *impl_from_IMFByteStreamHandler(IMFByteStreamHandler *iface)
+static struct winegstreamer_stream_handler *impl_from_IMFByteStreamHandler(IMFByteStreamHandler *iface)
 {
-    return CONTAINING_RECORD(iface, struct container_stream_handler, IMFByteStreamHandler_iface);
+    return CONTAINING_RECORD(iface, struct winegstreamer_stream_handler, IMFByteStreamHandler_iface);
 }
 
-static HRESULT WINAPI container_stream_handler_QueryInterface(IMFByteStreamHandler *iface, REFIID riid, void **obj)
+static HRESULT WINAPI winegstreamer_stream_handler_QueryInterface(IMFByteStreamHandler *iface, REFIID riid, void **obj)
 {
     TRACE("%p, %s, %p.\n", iface, debugstr_guid(riid), obj);
 
@@ -1903,9 +1889,9 @@ static HRESULT WINAPI container_stream_handler_QueryInterface(IMFByteStreamHandl
     return E_NOINTERFACE;
 }
 
-static ULONG WINAPI container_stream_handler_AddRef(IMFByteStreamHandler *iface)
+static ULONG WINAPI winegstreamer_stream_handler_AddRef(IMFByteStreamHandler *iface)
 {
-    struct container_stream_handler *handler = impl_from_IMFByteStreamHandler(iface);
+    struct winegstreamer_stream_handler *handler = impl_from_IMFByteStreamHandler(iface);
     ULONG refcount = InterlockedIncrement(&handler->refcount);
 
     TRACE("%p, refcount %u.\n", handler, refcount);
@@ -1913,9 +1899,9 @@ static ULONG WINAPI container_stream_handler_AddRef(IMFByteStreamHandler *iface)
     return refcount;
 }
 
-static ULONG WINAPI container_stream_handler_Release(IMFByteStreamHandler *iface)
+static ULONG WINAPI winegstreamer_stream_handler_Release(IMFByteStreamHandler *iface)
 {
-    struct container_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
+    struct winegstreamer_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
     ULONG refcount = InterlockedDecrement(&this->refcount);
 
     TRACE("%p, refcount %u.\n", iface, refcount);
@@ -1929,50 +1915,50 @@ static ULONG WINAPI container_stream_handler_Release(IMFByteStreamHandler *iface
     return refcount;
 }
 
-static HRESULT WINAPI container_stream_handler_BeginCreateObject(IMFByteStreamHandler *iface, IMFByteStream *stream, const WCHAR *url, DWORD flags,
+static HRESULT WINAPI winegstreamer_stream_handler_BeginCreateObject(IMFByteStreamHandler *iface, IMFByteStream *stream, const WCHAR *url, DWORD flags,
         IPropertyStore *props, IUnknown **cancel_cookie, IMFAsyncCallback *callback, IUnknown *state)
 {
-    struct container_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
+    struct winegstreamer_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
 
     TRACE("%p, %s, %#x, %p, %p, %p, %p.\n", iface, debugstr_w(url), flags, props, cancel_cookie, callback, state);
     return handler_begin_create_object(&this->handler, stream, url, flags, props, cancel_cookie, callback, state);
 }
 
-static HRESULT WINAPI container_stream_handler_EndCreateObject(IMFByteStreamHandler *iface, IMFAsyncResult *result,
+static HRESULT WINAPI winegstreamer_stream_handler_EndCreateObject(IMFByteStreamHandler *iface, IMFAsyncResult *result,
         MF_OBJECT_TYPE *obj_type, IUnknown **object)
 {
-    struct container_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
+    struct winegstreamer_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
 
     TRACE("%p, %p, %p, %p.\n", iface, result, obj_type, object);
     return handler_end_create_object(&this->handler, result, obj_type, object);
 }
 
-static HRESULT WINAPI container_stream_handler_CancelObjectCreation(IMFByteStreamHandler *iface, IUnknown *cancel_cookie)
+static HRESULT WINAPI winegstreamer_stream_handler_CancelObjectCreation(IMFByteStreamHandler *iface, IUnknown *cancel_cookie)
 {
-    struct container_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
+    struct winegstreamer_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
 
     TRACE("%p, %p.\n", iface, cancel_cookie);
     return handler_cancel_object_creation(&this->handler, cancel_cookie);
 }
 
-static HRESULT WINAPI container_stream_handler_GetMaxNumberOfBytesRequiredForResolution(IMFByteStreamHandler *iface, QWORD *bytes)
+static HRESULT WINAPI winegstreamer_stream_handler_GetMaxNumberOfBytesRequiredForResolution(IMFByteStreamHandler *iface, QWORD *bytes)
 {
     FIXME("stub (%p %p)\n", iface, bytes);
     return E_NOTIMPL;
 }
 
-static const IMFByteStreamHandlerVtbl container_stream_handler_vtbl =
+static const IMFByteStreamHandlerVtbl winegstreamer_stream_handler_vtbl =
 {
-    container_stream_handler_QueryInterface,
-    container_stream_handler_AddRef,
-    container_stream_handler_Release,
-    container_stream_handler_BeginCreateObject,
-    container_stream_handler_EndCreateObject,
-    container_stream_handler_CancelObjectCreation,
-    container_stream_handler_GetMaxNumberOfBytesRequiredForResolution,
+    winegstreamer_stream_handler_QueryInterface,
+    winegstreamer_stream_handler_AddRef,
+    winegstreamer_stream_handler_Release,
+    winegstreamer_stream_handler_BeginCreateObject,
+    winegstreamer_stream_handler_EndCreateObject,
+    winegstreamer_stream_handler_CancelObjectCreation,
+    winegstreamer_stream_handler_GetMaxNumberOfBytesRequiredForResolution,
 };
 
-static HRESULT container_stream_handler_create_object(struct handler *handler, WCHAR *url, IMFByteStream *stream, DWORD flags,
+static HRESULT winegstreamer_stream_handler_create_object(struct handler *handler, WCHAR *url, IMFByteStream *stream, DWORD flags,
                                             IPropertyStore *props, IUnknown **out_object, MF_OBJECT_TYPE *out_obj_type)
 {
     TRACE("(%p %s %p %u %p %p %p)\n", handler, debugstr_w(url), stream, flags, props, out_object, out_obj_type);
@@ -1981,9 +1967,9 @@ static HRESULT container_stream_handler_create_object(struct handler *handler, W
     {
         HRESULT hr;
         struct media_source *new_source;
-        struct container_stream_handler *This = CONTAINING_RECORD(handler, struct container_stream_handler, handler);
+        struct winegstreamer_stream_handler *This = CONTAINING_RECORD(handler, struct winegstreamer_stream_handler, handler);
 
-        if (FAILED(hr = media_source_constructor(stream, This->type, &new_source)))
+        if (FAILED(hr = media_source_constructor(stream, &new_source)))
             return hr;
 
         TRACE("->(%p)\n", new_source);
@@ -2000,9 +1986,9 @@ static HRESULT container_stream_handler_create_object(struct handler *handler, W
     }
 }
 
-HRESULT container_stream_handler_construct(REFIID riid, void **obj, enum source_type type)
+HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj)
 {
-    struct container_stream_handler *this;
+    struct winegstreamer_stream_handler *this;
     HRESULT hr;
 
     TRACE("%s, %p.\n", debugstr_guid(riid), obj);
@@ -2011,10 +1997,9 @@ HRESULT container_stream_handler_construct(REFIID riid, void **obj, enum source_
     if (!this)
         return E_OUTOFMEMORY;
 
-    handler_construct(&this->handler, container_stream_handler_create_object);
+    handler_construct(&this->handler, winegstreamer_stream_handler_create_object);
 
-    this->type = type;
-    this->IMFByteStreamHandler_iface.lpVtbl = &container_stream_handler_vtbl;
+    this->IMFByteStreamHandler_iface.lpVtbl = &winegstreamer_stream_handler_vtbl;
     this->refcount = 1;
 
     hr = IMFByteStreamHandler_QueryInterface(&this->IMFByteStreamHandler_iface, riid, obj);
