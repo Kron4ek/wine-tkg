@@ -533,7 +533,9 @@ static HRESULT WINAPI video_mixer_transform_GetOutputAvailableType(IMFTransform 
 
     EnterCriticalSection(&mixer->cs);
 
-    if (index >= mixer->output.type_count)
+    if (!mixer->inputs[0].media_type)
+        hr = MF_E_TRANSFORM_TYPE_NOT_SET;
+    else if (index >= mixer->output.type_count)
         hr = MF_E_NO_MORE_TYPES;
     else
     {
@@ -602,6 +604,7 @@ static HRESULT video_mixer_collect_output_types(struct video_mixer *mixer, const
             if (!(ptr = heap_realloc(rt_formats, (count + format_count) * sizeof(*rt_formats))))
             {
                 hr = E_OUTOFMEMORY;
+                count = 0;
                 CoTaskMemFree(formats);
                 break;
             }
@@ -639,12 +642,15 @@ static HRESULT video_mixer_collect_output_types(struct video_mixer *mixer, const
             mixer->output.type_count = count;
         }
         else
+        {
             hr = E_OUTOFMEMORY;
+            count = 0;
+        }
     }
 
     heap_free(rt_formats);
 
-    return hr;
+    return count ? S_OK : hr;
 }
 
 static HRESULT WINAPI video_mixer_transform_SetInputType(IMFTransform *iface, DWORD id, IMFMediaType *media_type, DWORD flags)

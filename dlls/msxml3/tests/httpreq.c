@@ -26,7 +26,7 @@
 #include <assert.h>
 
 #include "windows.h"
-
+#include "msxml2.h"
 #include "msxml6.h"
 #include "msxml6did.h"
 #include "dispex.h"

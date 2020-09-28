@@ -109,6 +109,67 @@ HRESULT CDECL wined3d_blend_state_create(struct wined3d_device *device,
     return WINED3D_OK;
 }
 
+ULONG CDECL wined3d_depth_stencil_state_incref(struct wined3d_depth_stencil_state *state)
+{
+    ULONG refcount = InterlockedIncrement(&state->refcount);
+
+    TRACE("%p increasing refcount to %u.\n", state, refcount);
+
+    return refcount;
+}
+
+static void wined3d_depth_stencil_state_destroy_object(void *object)
+{
+    heap_free(object);
+}
+
+ULONG CDECL wined3d_depth_stencil_state_decref(struct wined3d_depth_stencil_state *state)
+{
+    ULONG refcount = InterlockedDecrement(&state->refcount);
+    struct wined3d_device *device = state->device;
+
+    TRACE("%p decreasing refcount to %u.\n", state, refcount);
+
+    if (!refcount)
+    {
+        state->parent_ops->wined3d_object_destroyed(state->parent);
+        wined3d_cs_destroy_object(device->cs, wined3d_depth_stencil_state_destroy_object, state);
+    }
+
+    return refcount;
+}
+
+void * CDECL wined3d_depth_stencil_state_get_parent(const struct wined3d_depth_stencil_state *state)
+{
+    TRACE("state %p.\n", state);
+
+    return state->parent;
+}
+
+HRESULT CDECL wined3d_depth_stencil_state_create(struct wined3d_device *device,
+        const struct wined3d_depth_stencil_state_desc *desc, void *parent,
+        const struct wined3d_parent_ops *parent_ops, struct wined3d_depth_stencil_state **state)
+{
+    struct wined3d_depth_stencil_state *object;
+
+    TRACE("device %p, desc %p, parent %p, parent_ops %p, state %p.\n",
+            device, desc, parent, parent_ops, state);
+
+    if (!(object = heap_alloc_zero(sizeof(*object))))
+        return E_OUTOFMEMORY;
+
+    object->refcount = 1;
+    object->desc = *desc;
+    object->parent = parent;
+    object->parent_ops = parent_ops;
+    object->device = device;
+
+    TRACE("Created depth/stencil state %p.\n", object);
+    *state = object;
+
+    return WINED3D_OK;
+}
+
 ULONG CDECL wined3d_rasterizer_state_incref(struct wined3d_rasterizer_state *state)
 {
     ULONG refcount = InterlockedIncrement(&state->refcount);
@@ -228,42 +289,6 @@ static void state_lighting(struct wined3d_context *context, const struct wined3d
         gl_info->gl_ops.gl.p_glDisable(GL_LIGHTING);
         checkGLcall("glDisable GL_LIGHTING");
     }
-}
-
-static void state_zenable(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
-{
-    enum wined3d_depth_buffer_type zenable = state->render_states[WINED3D_RS_ZENABLE];
-    const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
-
-    /* No z test without depth stencil buffers */
-    if (!state->fb.depth_stencil)
-    {
-        TRACE("No Z buffer - disabling depth test\n");
-        zenable = WINED3D_ZB_FALSE;
-    }
-
-    switch (zenable)
-    {
-        case WINED3D_ZB_FALSE:
-            gl_info->gl_ops.gl.p_glDisable(GL_DEPTH_TEST);
-            checkGLcall("glDisable GL_DEPTH_TEST");
-            break;
-        case WINED3D_ZB_TRUE:
-            gl_info->gl_ops.gl.p_glEnable(GL_DEPTH_TEST);
-            checkGLcall("glEnable GL_DEPTH_TEST");
-            break;
-        case WINED3D_ZB_USEW:
-            gl_info->gl_ops.gl.p_glEnable(GL_DEPTH_TEST);
-            checkGLcall("glEnable GL_DEPTH_TEST");
-            FIXME("W buffer is not well handled\n");
-            break;
-        default:
-            FIXME("Unrecognized depth buffer type %#x.\n", zenable);
-            break;
-    }
-
-    if (context->last_was_rhw && !isStateDirty(context, STATE_TRANSFORM(WINED3D_TS_PROJECTION)))
-        context_apply_state(context, state, STATE_TRANSFORM(WINED3D_TS_PROJECTION));
 }
 
 static void cullmode(const struct wined3d_rasterizer_state *r, const struct wined3d_gl_info *gl_info)
@@ -1176,6 +1201,33 @@ static void state_stencilwrite(struct wined3d_context *context, const struct win
 
     gl_info->gl_ops.gl.p_glStencilMask(mask);
     checkGLcall("glStencilMask");
+}
+
+static void depth_stencil(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
+{
+    const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
+    const struct wined3d_depth_stencil_state *d = state->depth_stencil_state;
+    BOOL enable_depth = d ? d->desc.depth : TRUE;
+
+    if (!state->fb.depth_stencil)
+    {
+        TRACE("No depth/stencil buffer is attached; disabling depth test.\n");
+        enable_depth = FALSE;
+    }
+
+    if (enable_depth)
+    {
+        gl_info->gl_ops.gl.p_glEnable(GL_DEPTH_TEST);
+        checkGLcall("glEnable GL_DEPTH_TEST");
+    }
+    else
+    {
+        gl_info->gl_ops.gl.p_glDisable(GL_DEPTH_TEST);
+        checkGLcall("glDisable GL_DEPTH_TEST");
+    }
+
+    if (context->last_was_rhw && !isStateDirty(context, STATE_TRANSFORM(WINED3D_TS_PROJECTION)))
+        context_apply_state(context, state, STATE_TRANSFORM(WINED3D_TS_PROJECTION));
 }
 
 static void state_fog_vertexpart(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
@@ -4629,6 +4681,7 @@ const struct wined3d_state_entry_template misc_state_template_gl[] =
     { STATE_BLEND_FACTOR,                                 { STATE_BLEND_FACTOR,                                 state_blend_factor_w}, WINED3D_GL_EXT_NONE             },
     { STATE_SAMPLE_MASK,                                  { STATE_SAMPLE_MASK,                                  state_sample_mask   }, ARB_TEXTURE_MULTISAMPLE         },
     { STATE_SAMPLE_MASK,                                  { STATE_SAMPLE_MASK,                                  state_sample_mask_w }, WINED3D_GL_EXT_NONE             },
+    { STATE_DEPTH_STENCIL,                                { STATE_DEPTH_STENCIL,                                depth_stencil       }, WINED3D_GL_EXT_NONE             },
     { STATE_STREAMSRC,                                    { STATE_STREAMSRC,                                    streamsrc           }, WINED3D_GL_EXT_NONE             },
     { STATE_VDECL,                                        { STATE_VDECL,                                        vdecl_miscpart      }, WINED3D_GL_EXT_NONE             },
     { STATE_RASTERIZER,                                   { STATE_RASTERIZER,                                   rasterizer_cc       }, ARB_CLIP_CONTROL                },
@@ -4696,7 +4749,6 @@ const struct wined3d_state_entry_template misc_state_template_gl[] =
     { STATE_INDEXBUFFER,                                  { STATE_INDEXBUFFER,                                  state_nop           }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_ANTIALIAS),                 { STATE_RENDER(WINED3D_RS_ANTIALIAS),                 state_antialias     }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_TEXTUREPERSPECTIVE),        { STATE_RENDER(WINED3D_RS_TEXTUREPERSPECTIVE),        state_nop           }, WINED3D_GL_EXT_NONE             },
-    { STATE_RENDER(WINED3D_RS_ZENABLE),                   { STATE_RENDER(WINED3D_RS_ZENABLE),                   state_zenable       }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_WRAPU),                     { STATE_RENDER(WINED3D_RS_WRAPU),                     state_wrapu         }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_WRAPV),                     { STATE_RENDER(WINED3D_RS_WRAPV),                     state_wrapv         }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_LINEPATTERN),               { STATE_RENDER(WINED3D_RS_LINEPATTERN),               state_linepattern   }, WINED3D_GL_LEGACY_CONTEXT       },
@@ -5522,7 +5574,7 @@ static void validate_state_table(struct wined3d_state_entry *state_table)
     {
         {  1,   1},
         {  3,   3},
-        {  8,   8},
+        {  7,   8},
         { 17,  22},
         { 27,  27},
         { 40,  40},
@@ -5572,6 +5624,7 @@ static void validate_state_table(struct wined3d_state_entry *state_table)
         STATE_COLOR_KEY,
         STATE_BLEND,
         STATE_BLEND_FACTOR,
+        STATE_DEPTH_STENCIL,
     };
     unsigned int i, current;
 

@@ -2382,6 +2382,7 @@ static struct strarray get_source_defines( struct makefile *make, struct incl_fi
         strarray_add( &ret, strmake( "-I%s", make->include_paths.str[i] ));
     strarray_addall( &ret, make->define_args );
     strarray_addall( &ret, get_expanded_file_local_var( make, obj, "EXTRADEFS" ));
+    if ((source->file->flags & FLAG_C_UNIX) && *dll_ext) strarray_add( &ret, "-DWINE_UNIX_LIB" );
     return ret;
 }
 
@@ -2989,6 +2990,17 @@ static void output_source_svg( struct makefile *make, struct incl_file *source, 
 
 
 /*******************************************************************
+ *         output_source_icm
+ */
+static void output_source_icm( struct makefile *make, struct incl_file *source, const char *obj )
+{
+    add_install_rule( make, source->name, source->name,
+                      strmake( "D$(colordir)/%s", source->name ));
+    output_srcdir_symlink( make, strmake( "%s.icm", obj ));
+}
+
+
+/*******************************************************************
  *         output_source_nls
  */
 static void output_source_nls( struct makefile *make, struct incl_file *source, const char *obj )
@@ -3121,7 +3133,7 @@ static void output_source_default( struct makefile *make, struct incl_file *sour
                        ((source->file->flags & FLAG_C_IMPLIB) &&
                         (needs_cross_lib( make ) || needs_delay_lib( make ))) ||
                        (make->staticlib && needs_cross_lib( make ))));
-    int need_obj = ((*dll_ext || !make->staticlib || !(source->file->flags & FLAG_C_UNIX)) &&
+    int need_obj = ((*dll_ext || !(source->file->flags & FLAG_C_UNIX)) &&
                     (!need_cross ||
                      (source->file->flags & FLAG_C_IMPLIB) ||
                      (make->module && make->staticlib)));
@@ -3205,6 +3217,7 @@ static const struct
     { "tlb", output_source_tlb },
     { "sfd", output_source_sfd },
     { "svg", output_source_svg },
+    { "icm", output_source_icm },
     { "nls", output_source_nls },
     { "desktop", output_source_desktop },
     { "po", output_source_po },

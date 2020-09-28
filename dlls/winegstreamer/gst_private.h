@@ -57,11 +57,11 @@ extern HRESULT mfplat_DllRegisterServer(void) DECLSPEC_HIDDEN;
 extern HRESULT mfplat_get_class_object(REFCLSID rclsid, REFIID riid, void **obj) DECLSPEC_HIDDEN;
 
 HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj) DECLSPEC_HIDDEN;
-GstCaps *make_mf_compatible_caps(GstCaps *caps);
-IMFMediaType *mf_media_type_from_caps(GstCaps *caps);
-GstCaps *caps_from_mf_media_type(IMFMediaType *type);
-IMFSample *mf_sample_from_gst_buffer(GstBuffer *in);
-GstBuffer *gst_buffer_from_mf_sample(IMFSample *in);
+GstCaps *make_mf_compatible_caps(GstCaps *caps) DECLSPEC_HIDDEN;
+IMFMediaType *mf_media_type_from_caps(const GstCaps *caps) DECLSPEC_HIDDEN;
+GstCaps *caps_from_mf_media_type(IMFMediaType *type) DECLSPEC_HIDDEN;
+IMFSample *mf_sample_from_gst_buffer(GstBuffer *in) DECLSPEC_HIDDEN;
+GstBuffer *gst_buffer_from_mf_sample(IMFSample *in) DECLSPEC_HIDDEN;
 
 enum decoder_type
 {
@@ -74,7 +74,7 @@ enum decoder_type
 HRESULT generic_decoder_construct(REFIID riid, void **obj, enum decoder_type) DECLSPEC_HIDDEN;
 HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj) DECLSPEC_HIDDEN;
 
-HRESULT color_converter_create(REFIID riid, void **ret);
-HRESULT audio_converter_create(REFIID riid, void **ret);
+HRESULT color_converter_create(REFIID riid, void **ret) DECLSPEC_HIDDEN;
+HRESULT audio_converter_create(REFIID riid, void **ret) DECLSPEC_HIDDEN;
 
 #endif /* __GST_PRIVATE_INCLUDED__ */

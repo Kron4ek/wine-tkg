@@ -1589,8 +1589,7 @@ static HRESULT com_get_class_object(REFCLSID rclsid, DWORD clscontext,
             clsreg.u.actctx.threading_model = comclass->model;
             clsreg.origin = CLASS_REG_ACTCTX;
 
-            hr = apartment_get_inproc_class_object(apt, &clsreg, &comclass->clsid, riid,
-                    !(clscontext & WINE_CLSCTX_DONT_HOST), obj);
+            hr = apartment_get_inproc_class_object(apt, &clsreg, &comclass->clsid, riid, clscontext, obj);
             ReleaseActCtx(data.hActCtx);
             apartment_release(apt);
             return hr;
@@ -1631,7 +1630,7 @@ static HRESULT com_get_class_object(REFCLSID rclsid, DWORD clscontext,
             clsreg.u.hkey = hkey;
             clsreg.origin = CLASS_REG_REGISTRY;
 
-            hr = apartment_get_inproc_class_object(apt, &clsreg, rclsid, riid, !(clscontext & WINE_CLSCTX_DONT_HOST), obj);
+            hr = apartment_get_inproc_class_object(apt, &clsreg, rclsid, riid, clscontext, obj);
             RegCloseKey(hkey);
         }
 
@@ -1666,7 +1665,7 @@ static HRESULT com_get_class_object(REFCLSID rclsid, DWORD clscontext,
             clsreg.u.hkey = hkey;
             clsreg.origin = CLASS_REG_REGISTRY;
 
-            hr = apartment_get_inproc_class_object(apt, &clsreg, rclsid, riid, !(clscontext & WINE_CLSCTX_DONT_HOST), obj);
+            hr = apartment_get_inproc_class_object(apt, &clsreg, rclsid, riid, clscontext, obj);
             RegCloseKey(hkey);
         }
 
@@ -3105,9 +3104,20 @@ HRESULT WINAPI CoRegisterChannelHook(REFGUID guidExtension, IChannelHook *channe
  */
 HRESULT WINAPI CoDisableCallCancellation(void *reserved)
 {
-    FIXME("%p stub\n", reserved);
+    struct tlsdata *tlsdata;
+    HRESULT hr;
 
-    return E_NOTIMPL;
+    TRACE("%p\n", reserved);
+
+    if (FAILED(hr = com_get_tlsdata(&tlsdata)))
+        return hr;
+
+    if (!tlsdata->cancelcount)
+        return CO_E_CANCEL_DISABLED;
+
+    tlsdata->cancelcount--;
+
+    return S_OK;
 }
 
 /***********************************************************************
@@ -3115,9 +3125,17 @@ HRESULT WINAPI CoDisableCallCancellation(void *reserved)
  */
 HRESULT WINAPI CoEnableCallCancellation(void *reserved)
 {
-    FIXME("%p stub\n", reserved);
+    struct tlsdata *tlsdata;
+    HRESULT hr;
 
-    return E_NOTIMPL;
+    TRACE("%p\n", reserved);
+
+    if (FAILED(hr = com_get_tlsdata(&tlsdata)))
+        return hr;
+
+    tlsdata->cancelcount++;
+
+    return S_OK;
 }
 
 /***********************************************************************

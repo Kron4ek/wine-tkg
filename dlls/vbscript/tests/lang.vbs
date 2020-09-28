@@ -47,6 +47,8 @@ Call ok(56.789e-2 = 0.56789, "56.789e-2 <> 0.56789")
 Call ok(1e-94938484 = 0, "1e-... <> 0")
 Call ok(34e0 = 34, "34e0 <> 34")
 Call ok(34E1 = 340, "34E0 <> 340")
+Call ok(.5 = 0.5, ".5 <> 0.5")
+Call ok(.5e1 = 5, ".5e1 <> 5")
 Call ok(--1 = 1, "--1 = " & --1)
 Call ok(-empty = 0, "-empty = " & (-empty))
 Call ok(true = -1, "! true = -1")
@@ -64,6 +66,9 @@ Call ok(W = 5, "W = " & W & " expected " & 5)
 
 x = "xx"
 Call ok(x = "xx", "x = " & x & " expected ""xx""")
+
+Dim public1 : public1 = 42
+Call ok(public1 = 42, "public1=" & public1 & " expected & " & 42)
 
 Call ok(true <> false, "true <> false is false")
 Call ok(not (true <> true), "true <> true is true")
@@ -86,6 +91,7 @@ Call ok(getVT(null) = "VT_NULL", "getVT(null) is not VT_NULL")
 Call ok(getVT(0) = "VT_I2", "getVT(0) is not VT_I2")
 Call ok(getVT(1) = "VT_I2", "getVT(1) is not VT_I2")
 Call ok(getVT(0.5) = "VT_R8", "getVT(0.5) is not VT_R8")
+Call ok(getVT(.5) = "VT_R8", "getVT(.5) is not VT_R8")
 Call ok(getVT(0.0) = "VT_R8", "getVT(0.0) is not VT_R8")
 Call ok(getVT(2147483647) = "VT_I4", "getVT(2147483647) is not VT_I4")
 Call ok(getVT(2147483648) = "VT_R8", "getVT(2147483648) is not VT_R8")

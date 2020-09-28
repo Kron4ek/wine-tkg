@@ -2106,7 +2106,6 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_OMSetBlendState(ID3D11Devi
 
 static void set_default_depth_stencil_state(struct wined3d_device *wined3d_device)
 {
-    wined3d_device_set_render_state(wined3d_device, WINED3D_RS_ZENABLE, TRUE);
     wined3d_device_set_render_state(wined3d_device, WINED3D_RS_ZWRITEENABLE, D3D11_DEPTH_WRITE_MASK_ALL);
     wined3d_device_set_render_state(wined3d_device, WINED3D_RS_ZFUNC, WINED3D_CMP_LESS);
     wined3d_device_set_render_state(wined3d_device, WINED3D_RS_STENCILENABLE, FALSE);
@@ -2117,6 +2116,7 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_OMSetDepthStencilState(ID3
 {
     struct d3d_device *device = device_from_immediate_ID3D11DeviceContext1(iface);
     const D3D11_DEPTH_STENCILOP_DESC *front, *back;
+    struct d3d_depthstencil_state *state_impl;
     const D3D11_DEPTH_STENCIL_DESC *desc;
 
     TRACE("iface %p, depth_stencil_state %p, stencil_ref %u.\n",
@@ -2124,19 +2124,20 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_OMSetDepthStencilState(ID3
 
     wined3d_mutex_lock();
     device->stencil_ref = stencil_ref;
-    if (!(device->depth_stencil_state = unsafe_impl_from_ID3D11DepthStencilState(depth_stencil_state)))
+    if (!(state_impl = unsafe_impl_from_ID3D11DepthStencilState(depth_stencil_state)))
     {
+        wined3d_device_set_depth_stencil_state(device->wined3d_device, NULL);
         set_default_depth_stencil_state(device->wined3d_device);
         wined3d_mutex_unlock();
         return;
     }
 
-    desc = &device->depth_stencil_state->desc;
+    wined3d_device_set_depth_stencil_state(device->wined3d_device, state_impl->wined3d_state);
+    desc = &state_impl->desc;
 
     front = &desc->FrontFace;
     back = &desc->BackFace;
 
-    wined3d_device_set_render_state(device->wined3d_device, WINED3D_RS_ZENABLE, desc->DepthEnable);
     if (desc->DepthEnable)
     {
         wined3d_device_set_render_state(device->wined3d_device, WINED3D_RS_ZWRITEENABLE, desc->DepthWriteMask);
@@ -2344,6 +2345,9 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_CopySubresourceRegion(ID3D
             "src_resource %p, src_subresource_idx %u, src_box %p.\n",
             iface, dst_resource, dst_subresource_idx, dst_x, dst_y, dst_z,
             src_resource, src_subresource_idx, src_box);
+
+    if (!dst_resource || !src_resource)
+        return;
 
     if (src_box)
         wined3d_box_set(&wined3d_src_box, src_box->left, src_box->top,
@@ -3463,14 +3467,24 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_OMGetDepthStencilState(ID3
         ID3D11DepthStencilState **depth_stencil_state, UINT *stencil_ref)
 {
     struct d3d_device *device = device_from_immediate_ID3D11DeviceContext1(iface);
+    struct wined3d_depth_stencil_state *wined3d_state;
+    struct d3d_depthstencil_state *state_impl;
 
     TRACE("iface %p, depth_stencil_state %p, stencil_ref %p.\n",
             iface, depth_stencil_state, stencil_ref);
 
-    if ((*depth_stencil_state = device->depth_stencil_state
-            ? &device->depth_stencil_state->ID3D11DepthStencilState_iface : NULL))
-        ID3D11DepthStencilState_AddRef(*depth_stencil_state);
+    wined3d_mutex_lock();
+    if ((wined3d_state = wined3d_device_get_depth_stencil_state(device->wined3d_device)))
+    {
+        state_impl = wined3d_depth_stencil_state_get_parent(wined3d_state);
+        ID3D11DepthStencilState_AddRef(*depth_stencil_state = &state_impl->ID3D11DepthStencilState_iface);
+    }
+    else
+    {
+        *depth_stencil_state = NULL;
+    }
     *stencil_ref = device->stencil_ref;
+    wined3d_mutex_unlock();
 }
 
 static void STDMETHODCALLTYPE d3d11_immediate_context_SOGetTargets(ID3D11DeviceContext1 *iface,
@@ -3999,6 +4013,9 @@ static void STDMETHODCALLTYPE d3d11_immediate_context_CopySubresourceRegion1(ID3
             "src_resource %p, src_subresource_idx %u, src_box %p, flags %#x.\n",
             iface, dst_resource, dst_subresource_idx, dst_x, dst_y, dst_z,
             src_resource, src_subresource_idx, src_box, flags);
+
+    if (!dst_resource || !src_resource)
+        return;
 
     if (src_box)
         wined3d_box_set(&wined3d_src_box, src_box->left, src_box->top,
@@ -7978,6 +7995,9 @@ static void STDMETHODCALLTYPE d3d10_device_CopySubresourceRegion(ID3D10Device1 *
             "src_resource %p, src_subresource_idx %u, src_box %p.\n",
             iface, dst_resource, dst_subresource_idx, dst_x, dst_y, dst_z,
             src_resource, src_subresource_idx, src_box);
+
+    if (!dst_resource || !src_resource)
+        return;
 
     if (src_box)
         wined3d_box_set(&wined3d_src_box, src_box->left, src_box->top,

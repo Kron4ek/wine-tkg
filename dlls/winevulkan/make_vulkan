@@ -64,7 +64,7 @@ from enum import Enum
 LOGGER = logging.Logger("vulkan")
 LOGGER.addHandler(logging.StreamHandler())
 
-VK_XML_VERSION = "1.2.149"
+VK_XML_VERSION = "1.2.154"
 WINE_VK_VERSION = (1, 2)
 
 # Filenames to create.
@@ -821,11 +821,12 @@ class VkFunction(object):
 
 
 class VkFunctionPointer(object):
-    def __init__(self, _type, name, members):
+    def __init__(self, _type, name, members, forward_decls):
         self.name = name
         self.members = members
         self.type = _type
         self.required = False
+        self.forward_decls = forward_decls
 
     @staticmethod
     def from_xml(funcpointer):
@@ -862,10 +863,19 @@ class VkFunctionPointer(object):
 
         _type = funcpointer.text
         name = funcpointer.find("name").text
-        return VkFunctionPointer(_type, name, members)
+        if "requires" in funcpointer.attrib:
+            forward_decls = funcpointer.attrib.get("requires").split(",")
+        else:
+            forward_decls = []
+        return VkFunctionPointer(_type, name, members, forward_decls)
 
     def definition(self):
-        text = "{0} {1})(\n".format(self.type, self.name)
+        text = ""
+        # forward declare required structs
+        for decl in self.forward_decls:
+            text += "typedef struct {0} {0};\n".format(decl)
+
+        text += "{0} {1})(\n".format(self.type, self.name)
 
         first = True
         if len(self.members) > 0:
@@ -881,6 +891,8 @@ class VkFunctionPointer(object):
         text += ");\n"
         return text
 
+    def is_alias(self):
+        return False
 
 class VkHandle(object):
     def __init__(self, name, _type, parent, alias=None):

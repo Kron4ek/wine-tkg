@@ -494,7 +494,10 @@ static BOOL socket_list_add(SOCKET socket)
     }
     new_size = max(socket_list_size * 2, 8);
     if (!(new_array = heap_realloc(socket_list, new_size * sizeof(*socket_list))))
+    {
+        LeaveCriticalSection(&cs_socket_list);
         return FALSE;
+    }
     socket_list = new_array;
     memset(socket_list + socket_list_size, 0, (new_size - socket_list_size) * sizeof(*socket_list));
     socket_list[socket_list_size] = socket;
@@ -840,6 +843,7 @@ static const int ws_aiflag_map[][2] =
 #ifdef  AI_V4MAPPED
     MAP_OPTION( AI_V4MAPPED ),
 #endif
+    MAP_OPTION( AI_ALL ),
     MAP_OPTION( AI_ADDRCONFIG ),
 };
 
