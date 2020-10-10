@@ -158,7 +158,7 @@ static gboolean amt_from_gst_audio_info(const GstAudioInfo *info, AM_MEDIA_TYPE 
 
 static gboolean amt_from_gst_video_info(const GstVideoInfo *info, AM_MEDIA_TYPE *amt)
 {
-    VIDEOINFOHEADER *vih;
+    VIDEOINFO *vih;
     BITMAPINFOHEADER *bih;
     gint32 width, height;
 
@@ -170,7 +170,7 @@ static gboolean amt_from_gst_video_info(const GstVideoInfo *info, AM_MEDIA_TYPE 
 
     amt->formattype = FORMAT_VideoInfo;
     amt->pbFormat = (BYTE*)vih;
-    amt->cbFormat = sizeof(*vih);
+    amt->cbFormat = sizeof(VIDEOINFOHEADER);
     amt->bFixedSizeSamples = FALSE;
     amt->bTemporalCompression = TRUE;
     amt->lSampleSize = 1;
@@ -180,6 +180,7 @@ static gboolean amt_from_gst_video_info(const GstVideoInfo *info, AM_MEDIA_TYPE 
 
     if (GST_VIDEO_INFO_IS_RGB(info))
     {
+        bih->biCompression = BI_RGB;
         switch (GST_VIDEO_INFO_FORMAT(info))
         {
         case GST_VIDEO_FORMAT_BGRA:
@@ -194,11 +195,16 @@ static gboolean amt_from_gst_video_info(const GstVideoInfo *info, AM_MEDIA_TYPE 
             amt->subtype = MEDIASUBTYPE_RGB24;
             bih->biBitCount = 24;
             break;
-        case GST_VIDEO_FORMAT_BGR16:
+        case GST_VIDEO_FORMAT_RGB16:
             amt->subtype = MEDIASUBTYPE_RGB565;
+            amt->cbFormat = offsetof(VIDEOINFO, u.dwBitMasks[3]);
+            vih->u.dwBitMasks[iRED] = 0xf800;
+            vih->u.dwBitMasks[iGREEN] = 0x07e0;
+            vih->u.dwBitMasks[iBLUE] = 0x001f;
             bih->biBitCount = 16;
+            bih->biCompression = BI_BITFIELDS;
             break;
-        case GST_VIDEO_FORMAT_BGR15:
+        case GST_VIDEO_FORMAT_RGB15:
             amt->subtype = MEDIASUBTYPE_RGB555;
             bih->biBitCount = 16;
             break;
@@ -207,7 +213,6 @@ static gboolean amt_from_gst_video_info(const GstVideoInfo *info, AM_MEDIA_TYPE 
             CoTaskMemFree(vih);
             return FALSE;
         }
-        bih->biCompression = BI_RGB;
     } else {
         amt->subtype = MEDIATYPE_Video;
         if (!(amt->subtype.Data1 = gst_video_format_to_fourcc(GST_VIDEO_INFO_FORMAT(info))))
@@ -380,8 +385,8 @@ static GstCaps *amt_to_gst_caps_video(const AM_MEDIA_TYPE *mt)
         {&MEDIASUBTYPE_ARGB32,  GST_VIDEO_FORMAT_BGRA},
         {&MEDIASUBTYPE_RGB32,   GST_VIDEO_FORMAT_BGRx},
         {&MEDIASUBTYPE_RGB24,   GST_VIDEO_FORMAT_BGR},
-        {&MEDIASUBTYPE_RGB565,  GST_VIDEO_FORMAT_BGR16},
-        {&MEDIASUBTYPE_RGB555,  GST_VIDEO_FORMAT_BGR15},
+        {&MEDIASUBTYPE_RGB565,  GST_VIDEO_FORMAT_RGB16},
+        {&MEDIASUBTYPE_RGB555,  GST_VIDEO_FORMAT_RGB15},
     };
 
     const VIDEOINFOHEADER *vih = (VIDEOINFOHEADER *)mt->pbFormat;
@@ -998,7 +1003,7 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
 
     if (!strcmp(typename, "video/x-raw"))
     {
-        GstElement *vconv, *flip, *deinterlace;
+        GstElement *deinterlace, *vconv, *flip, *vconv2;
 
         /* DirectShow can express interlaced video, but downstream filters can't
          * necessarily consume it. In particular, the video renderer can't. */
@@ -1030,6 +1035,18 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
             goto out;
         }
 
+        /* videoflip does not support 15 and 16-bit RGB so add a second videoconvert
+         * to do the final conversion. */
+        if (!(vconv2 = gst_element_factory_make("videoconvert", NULL)))
+        {
+            ERR("Failed to create videoconvert, are %u-bit GStreamer \"base\" plugins installed?\n",
+                    8 * (int)sizeof(void *));
+            goto out;
+        }
+
+        /* Avoid expensive color matrix conversions. */
+        gst_util_set_object_arg(G_OBJECT(vconv2), "matrix-mode", "none");
+
         /* The bin takes ownership of these elements. */
         gst_bin_add(GST_BIN(This->container), deinterlace);
         gst_element_sync_state_with_parent(deinterlace);
@@ -1037,12 +1054,15 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
         gst_element_sync_state_with_parent(vconv);
         gst_bin_add(GST_BIN(This->container), flip);
         gst_element_sync_state_with_parent(flip);
+        gst_bin_add(GST_BIN(This->container), vconv2);
+        gst_element_sync_state_with_parent(vconv2);
 
         gst_element_link(deinterlace, vconv);
         gst_element_link(vconv, flip);
+        gst_element_link(flip, vconv2);
 
         pin->post_sink = gst_element_get_static_pad(deinterlace, "sink");
-        pin->post_src = gst_element_get_static_pad(flip, "src");
+        pin->post_src = gst_element_get_static_pad(vconv2, "src");
         pin->flip = flip;
     }
     else if (!strcmp(typename, "audio/x-raw"))
@@ -1702,6 +1722,8 @@ static HRESULT gstdecoder_source_get_media_type(struct gstdemux_source *pin,
         GST_VIDEO_FORMAT_BGRA,
         GST_VIDEO_FORMAT_BGRx,
         GST_VIDEO_FORMAT_BGR,
+        GST_VIDEO_FORMAT_RGB16,
+        GST_VIDEO_FORMAT_RGB15,
     };
 
     assert(caps); /* We shouldn't be able to get here if caps haven't been set. */
@@ -2116,7 +2138,8 @@ static HRESULT WINAPI GSTOutPin_DecideBufferSize(struct strmbase_source *iface,
         buffer_size = format->bmiHeader.biSizeImage;
 
         gst_util_set_object_arg(G_OBJECT(pin->flip), "method",
-                format->bmiHeader.biCompression == BI_RGB ? "vertical-flip" : "none");
+                (format->bmiHeader.biCompression == BI_RGB
+                || format->bmiHeader.biCompression == BI_BITFIELDS) ? "vertical-flip" : "none");
     }
     else if (IsEqualGUID(&pin->pin.pin.mt.formattype, &FORMAT_WaveFormatEx)
             && (IsEqualGUID(&pin->pin.pin.mt.subtype, &MEDIASUBTYPE_PCM)

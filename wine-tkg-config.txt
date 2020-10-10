@@ -1,16 +1,17 @@
-# Last wine-tkg-staging-fsync-vkd3d-git configuration - Mon Sep 28 06:40:16 PM +07 2020 :
+# Last wine-tkg-staging-fsync-git configuration - Sun Oct 11 01:09:47 AM +07 2020 :
 
 Local cfg files used
 
-Wine (plain) version: 5.18.r0.g9a6e5b2329
-Using wine-staging patchset (version 5.18.r3.g9acfa3b8)
+Wine (plain) version: 5.19.r0.gf7d8150895
+Using wine-staging patchset (version 5.19.r1.gb49e8743)
 
 Disabled the local Esync patchset to use Staging impl instead.
-Using VKD3D for d3d12 translation
 
 Hotfix: 3a9edf9aad43c3e8ba724571da5381f821f1dc56 revert path used
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
+16984895f0191dad12d55dee422214645b51aece reverted 
+0120a1aa40936fc6d57d83eb12709b951c7b88d6 reverted 
 4a330b29212402b9700828be82939112bd11a786 reverted 
 bbae35f0fb04ea7efb8e1d6e5535e42715ae7766 reverted 
 ec245c7e300f7cb779cf404079872f68c812585e reverted 
@@ -50,7 +51,7 @@ fd6f50c0d3e96947846ca82ed0c9bd79fd8e5b80 reverted
 2538b0100fbbe1223e7c18a52bade5cfe5f8d3e3 reverted 
 ( FS hack unbreak reverts applied )
 
-Applied hotfix 06877e55b1100cc49d3726e9a70f31c4dfbe66f8-99.mystagingpatch
+Applied hotfix 06877e55b1100cc49d3726e9a70f31c4dfbe66f8-110.mystagingpatch
 Applied hotfix 934a09585a15e8491e422b43624ffe632b02bd3c-3.mystagingpatch
 Applied hotfix ntdll-ForceBottomUpAlloc-97fbe3f.mystagingpatch
 Applied hotfix 001-8db14f4e18a3770b4ac3cfe6e1ddbe17dec342d7.myearlypatch
@@ -84,10 +85,13 @@ josh-flat-theme-6456973.patch -- ( Add Josh's better-theme )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
 Applied hotfix d8d6a6b2e639d2e29e166a3faf988b81388ae191.mypatch
+Applied hotfix Updated_wow64cpu-Wow64Transition.mypatch
+Applied hotfix ntdll-ThreadHideFromDebugger.mypatch
 Applied hotfix origin_3078f10d_fix.mypatch
 Applied hotfix 001-SMBIOS-0720c6cf.mypatch
 Applied hotfix 002-SMBIOS-d29c33a3.mypatch
 Applied hotfix 001-8622eb326fb8120fc038e27947e61677d4124f15-staging.mypatch
+Applied hotfix winepulse-staging-f82518af-hotfix.mypatch
 Applied your own patch amdags.mypatch
 Applied your own patch FinalFantasyXVHack.mypatch
 Applied your own patch GNUTLShack.mypatch

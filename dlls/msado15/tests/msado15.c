@@ -675,6 +675,8 @@ static void test_Connection(void)
     IConnectionPointContainer *pointcontainer;
     LONG state, timeout;
     BSTR str, str2, str3;
+    ConnectModeEnum mode;
+    CursorLocationEnum location;
 
     hr = CoCreateInstance(&CLSID_Connection, NULL, CLSCTX_INPROC_SERVER, &IID__Connection, (void**)&connection);
     ok( hr == S_OK, "got %08x\n", hr );
@@ -718,14 +720,81 @@ if (0)   /* Crashes on windows */
     ok(hr == S_OK, "Failed to get state, hr 0x%08x\n", hr);
     ok(timeout == 300, "Unexpected timeout value %d\n", timeout);
 
+    location = 0;
+    hr = _Connection_get_CursorLocation(connection, &location);
+    ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+    ok(location == adUseServer, "Unexpected location value %d\n", location);
+
+    hr = _Connection_put_CursorLocation(connection, adUseClient);
+    ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+
+    location = 0;
+    hr = _Connection_get_CursorLocation(connection, &location);
+    ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+    ok(location == adUseClient, "Unexpected location value %d\n", location);
+
+    hr = _Connection_put_CursorLocation(connection, adUseServer);
+    ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+
+    mode = 0xdeadbeef;
+    hr = _Connection_get_Mode(connection, &mode);
+    ok(hr == S_OK, "Failed to get state, hr 0x%08x\n", hr);
+    ok(mode == adModeUnknown, "Unexpected mode value %d\n", mode);
+
+    hr = _Connection_put_Mode(connection, adModeShareDenyNone);
+    ok(hr == S_OK, "Failed to get state, hr 0x%08x\n", hr);
+
+    mode = adModeUnknown;
+    hr = _Connection_get_Mode(connection, &mode);
+    ok(hr == S_OK, "Failed to get state, hr 0x%08x\n", hr);
+    ok(mode == adModeShareDenyNone, "Unexpected mode value %d\n", mode);
+
+    hr = _Connection_put_Mode(connection, adModeUnknown);
+    ok(hr == S_OK, "Failed to get state, hr 0x%08x\n", hr);
+
+    /* Default */
+    str = (BSTR)0xdeadbeef;
+    hr = _Connection_get_Provider(connection, &str);
+    ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+    ok(!wcscmp(str, L"MSDASQL"), "wrong string %s\n", wine_dbgstr_w(str));
+    SysFreeString(str);
+
+    str = SysAllocString(L"MSDASQL.1");
+    hr = _Connection_put_Provider(connection, str);
+    ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+    SysFreeString(str);
+
+    str = (BSTR)0xdeadbeef;
+    hr = _Connection_get_Provider(connection, &str);
+    ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+    ok(!wcscmp(str, L"MSDASQL.1"), "wrong string %s\n", wine_dbgstr_w(str));
+
+    /* Restore default */
+    str = SysAllocString(L"MSDASQL");
+    hr = _Connection_put_Provider(connection, str);
+    ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+    SysFreeString(str);
+
+    hr = _Connection_put_Provider(connection, NULL);
+    ok(hr == MAKE_ADO_HRESULT(adErrInvalidArgument), "got 0x%08x\n", hr);
+    SysFreeString(str);
+
     str = (BSTR)0xdeadbeef;
     hr = _Connection_get_ConnectionString(connection, &str);
-    ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
     ok(str == NULL, "got %p\n", str);
 
     str = SysAllocString(L"Provider=MSDASQL.1;Persist Security Info=False;Data Source=wine_test");
     hr = _Connection_put_ConnectionString(connection, str);
     ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+
+    /* Show put_ConnectionString effects Provider */
+    str3 = (BSTR)0xdeadbeef;
+    hr = _Connection_get_Provider(connection, &str3);
+    ok(hr == S_OK, "Failed, hr 0x%08x\n", hr);
+    ok(str3 != NULL, "Expected value got NULL\n");
+    todo_wine ok(!wcscmp(str3, L"MSDASQL.1"), "wrong string %s\n", wine_dbgstr_w(str3));
+    SysFreeString(str3);
 
 if (0) /* Crashes on windows */
 {
@@ -781,6 +850,7 @@ static void test_Command(void)
     Command25 *command25;
     CommandTypeEnum cmd_type = adCmdUnspecified;
     BSTR cmd_text = (BSTR)"test";
+    _Connection *connection;
 
     hr = CoCreateInstance( &CLSID_Command, NULL, CLSCTX_INPROC_SERVER, &IID__Command, (void **)&command );
     ok( hr == S_OK, "got %08x\n", hr );
@@ -833,6 +903,14 @@ static void test_Command(void)
     hr = _Command_get_CommandText( command,  &cmd_text );
     ok( hr == S_OK, "got %08x\n", hr );
     ok( !wcscmp( L"test", cmd_text ), "got %p\n", wine_dbgstr_w( cmd_text ) );
+
+    connection = (_Connection*)0xdeadbeef;
+    hr = _Command_get_ActiveConnection( command,  &connection );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( connection == NULL, "got %p\n", connection );
+
+    hr = _Command_putref_ActiveConnection( command,  NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
 
     _Command_Release( command );
 }

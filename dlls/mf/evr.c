@@ -21,6 +21,9 @@
 #include "mf_private.h"
 #include "uuids.h"
 #include "evr.h"
+#include "d3d9.h"
+#include "initguid.h"
+#include "dxva2api.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 
@@ -38,10 +41,12 @@ struct video_stream
 {
     IMFStreamSink IMFStreamSink_iface;
     IMFMediaTypeHandler IMFMediaTypeHandler_iface;
+    IMFGetService IMFGetService_iface;
     LONG refcount;
     unsigned int id;
     struct video_renderer *parent;
     IMFMediaEventQueue *event_queue;
+    IMFVideoSampleAllocator *allocator;
 };
 
 struct video_renderer
@@ -120,6 +125,11 @@ static struct video_stream *impl_from_IMFMediaTypeHandler(IMFMediaTypeHandler *i
     return CONTAINING_RECORD(iface, struct video_stream, IMFMediaTypeHandler_iface);
 }
 
+static struct video_stream *impl_from_stream_IMFGetService(IMFGetService *iface)
+{
+    return CONTAINING_RECORD(iface, struct video_stream, IMFGetService_iface);
+}
+
 static void video_renderer_release_services(struct video_renderer *renderer)
 {
     IMFTopologyServiceLookupClient *lookup_client;
@@ -159,6 +169,10 @@ static HRESULT WINAPI video_stream_sink_QueryInterface(IMFStreamSink *iface, REF
     {
         *obj = &stream->IMFMediaTypeHandler_iface;
     }
+    else if (IsEqualIID(riid, &IID_IMFGetService))
+    {
+        *obj = &stream->IMFGetService_iface;
+    }
 
     if (*obj)
     {
@@ -190,6 +204,8 @@ static ULONG WINAPI video_stream_sink_Release(IMFStreamSink *iface)
     {
         if (stream->event_queue)
             IMFMediaEventQueue_Release(stream->event_queue);
+        if (stream->allocator)
+            IMFVideoSampleAllocator_Release(stream->allocator);
         heap_free(stream);
     }
 
@@ -346,41 +362,115 @@ static ULONG WINAPI video_stream_typehandler_Release(IMFMediaTypeHandler *iface)
     return IMFStreamSink_Release(&stream->IMFStreamSink_iface);
 }
 
+/* Mixer expects special video media type instance. */
+static HRESULT video_renderer_create_video_type(IMFMediaType *media_type, IMFVideoMediaType **video_type)
+{
+    GUID subtype;
+    HRESULT hr;
+
+    *video_type = NULL;
+
+    if (FAILED(hr = IMFMediaType_GetGUID(media_type, &MF_MT_SUBTYPE, &subtype)))
+        return hr;
+
+    if (FAILED(hr = MFCreateVideoMediaTypeFromSubtype(&subtype, video_type)))
+        return hr;
+
+    hr = IMFMediaType_CopyAllItems(media_type, (IMFAttributes *)*video_type);
+    if (FAILED(hr))
+    {
+        IMFVideoMediaType_Release(*video_type);
+        *video_type = NULL;
+    }
+
+    return hr;
+}
+
 static HRESULT WINAPI video_stream_typehandler_IsMediaTypeSupported(IMFMediaTypeHandler *iface,
         IMFMediaType *in_type, IMFMediaType **out_type)
 {
-    FIXME("%p, %p, %p.\n", iface, in_type, out_type);
+    struct video_stream *stream = impl_from_IMFMediaTypeHandler(iface);
+    IMFVideoMediaType *video_type;
+    HRESULT hr;
 
-    return E_NOTIMPL;
+    TRACE("%p, %p, %p.\n", iface, in_type, out_type);
+
+    if (!in_type)
+        return E_POINTER;
+
+    if (!stream->parent)
+        return MF_E_INVALIDMEDIATYPE;
+
+    if (FAILED(hr = video_renderer_create_video_type(in_type, &video_type)))
+        return hr;
+
+    if (SUCCEEDED(hr = IMFTransform_SetInputType(stream->parent->mixer, stream->id, (IMFMediaType *)video_type,
+            MFT_SET_TYPE_TEST_ONLY)))
+    {
+        if (out_type) *out_type = NULL;
+    }
+
+    IMFVideoMediaType_Release(video_type);
+
+    return hr;
 }
 
 static HRESULT WINAPI video_stream_typehandler_GetMediaTypeCount(IMFMediaTypeHandler *iface, DWORD *count)
 {
-    FIXME("%p, %p.\n", iface, count);
+    TRACE("%p, %p.\n", iface, count);
 
-    return E_NOTIMPL;
+    if (!count)
+        return E_POINTER;
+
+    *count = 0;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI video_stream_typehandler_GetMediaTypeByIndex(IMFMediaTypeHandler *iface, DWORD index,
         IMFMediaType **type)
 {
-    FIXME("%p, %u, %p.\n", iface, index, type);
+    TRACE("%p, %u, %p.\n", iface, index, type);
 
-    return E_NOTIMPL;
+    return MF_E_NO_MORE_TYPES;
 }
 
 static HRESULT WINAPI video_stream_typehandler_SetCurrentMediaType(IMFMediaTypeHandler *iface, IMFMediaType *type)
 {
-    FIXME("%p, %p.\n", iface, type);
+    struct video_stream *stream = impl_from_IMFMediaTypeHandler(iface);
+    IMFVideoMediaType *video_type;
+    HRESULT hr;
 
-    return E_NOTIMPL;
+    TRACE("%p, %p.\n", iface, type);
+
+    if (!type)
+        return E_POINTER;
+
+    if (!stream->parent)
+        return MF_E_STREAMSINK_REMOVED;
+
+    if (FAILED(hr = video_renderer_create_video_type(type, &video_type)))
+        return hr;
+
+    hr = IMFTransform_SetInputType(stream->parent->mixer, stream->id, (IMFMediaType *)video_type, 0);
+    IMFVideoMediaType_Release(video_type);
+
+    return hr;
 }
 
 static HRESULT WINAPI video_stream_typehandler_GetCurrentMediaType(IMFMediaTypeHandler *iface, IMFMediaType **type)
 {
-    FIXME("%p, %p.\n", iface, type);
+    struct video_stream *stream = impl_from_IMFMediaTypeHandler(iface);
 
-    return E_NOTIMPL;
+    TRACE("%p, %p.\n", iface, type);
+
+    if (!type)
+        return E_POINTER;
+
+    if (!stream->parent)
+        return MF_E_STREAMSINK_REMOVED;
+
+    return IMFTransform_GetInputCurrentType(stream->parent->mixer, stream->id, type);
 }
 
 static HRESULT WINAPI video_stream_typehandler_GetMajorType(IMFMediaTypeHandler *iface, GUID *type)
@@ -412,6 +502,50 @@ static const IMFMediaTypeHandlerVtbl video_stream_type_handler_vtbl =
     video_stream_typehandler_GetMajorType,
 };
 
+static HRESULT WINAPI video_stream_get_service_QueryInterface(IMFGetService *iface, REFIID riid, void **obj)
+{
+    struct video_stream *stream = impl_from_stream_IMFGetService(iface);
+    return IMFStreamSink_QueryInterface(&stream->IMFStreamSink_iface, riid, obj);
+}
+
+static ULONG WINAPI video_stream_get_service_AddRef(IMFGetService *iface)
+{
+    struct video_stream *stream = impl_from_stream_IMFGetService(iface);
+    return IMFStreamSink_AddRef(&stream->IMFStreamSink_iface);
+}
+
+static ULONG WINAPI video_stream_get_service_Release(IMFGetService *iface)
+{
+    struct video_stream *stream = impl_from_stream_IMFGetService(iface);
+    return IMFStreamSink_Release(&stream->IMFStreamSink_iface);
+}
+
+static HRESULT WINAPI video_stream_get_service_GetService(IMFGetService *iface, REFGUID service, REFIID riid, void **obj)
+{
+    struct video_stream *stream = impl_from_stream_IMFGetService(iface);
+
+    TRACE("%p, %s, %s, %p.\n", iface, debugstr_guid(service), debugstr_guid(riid), obj);
+
+    if (IsEqualGUID(service, &MR_VIDEO_ACCELERATION_SERVICE))
+    {
+        if (IsEqualIID(riid, &IID_IMFVideoSampleAllocator))
+            return IMFVideoSampleAllocator_QueryInterface(stream->allocator, riid, obj);
+        return E_NOINTERFACE;
+    }
+
+    FIXME("Unsupported service %s.\n", debugstr_guid(service));
+
+    return E_NOTIMPL;
+}
+
+static const IMFGetServiceVtbl video_stream_get_service_vtbl =
+{
+    video_stream_get_service_QueryInterface,
+    video_stream_get_service_AddRef,
+    video_stream_get_service_Release,
+    video_stream_get_service_GetService,
+};
+
 static HRESULT video_renderer_stream_create(struct video_renderer *renderer, unsigned int id,
         struct video_stream **ret)
 {
@@ -423,10 +557,14 @@ static HRESULT video_renderer_stream_create(struct video_renderer *renderer, uns
 
     stream->IMFStreamSink_iface.lpVtbl = &video_stream_sink_vtbl;
     stream->IMFMediaTypeHandler_iface.lpVtbl = &video_stream_type_handler_vtbl;
+    stream->IMFGetService_iface.lpVtbl = &video_stream_get_service_vtbl;
     stream->refcount = 1;
 
     if (FAILED(hr = MFCreateEventQueue(&stream->event_queue)))
-        return hr;
+        goto failed;
+
+    if (FAILED(hr = MFCreateVideoSampleAllocator(&IID_IMFVideoSampleAllocator, (void **)&stream->allocator)))
+        goto failed;
 
     stream->parent = renderer;
     IMFMediaSink_AddRef(&stream->parent->IMFMediaSink_iface);
@@ -435,6 +573,12 @@ static HRESULT video_renderer_stream_create(struct video_renderer *renderer, uns
     *ret = stream;
 
     return S_OK;
+
+failed:
+
+    IMFStreamSink_Release(&stream->IMFStreamSink_iface);
+
+    return hr;
 }
 
 static HRESULT WINAPI video_renderer_sink_QueryInterface(IMFMediaSink *iface, REFIID riid, void **obj)
@@ -854,12 +998,214 @@ static ULONG WINAPI video_renderer_Release(IMFVideoRenderer *iface)
     return IMFMediaSink_Release(&renderer->IMFMediaSink_iface);
 }
 
+static HRESULT video_renderer_create_mixer(IMFAttributes *attributes, IMFTransform **out)
+{
+    unsigned int flags = 0;
+    IMFActivate *activate;
+    CLSID clsid;
+    HRESULT hr;
+
+    if (attributes && SUCCEEDED(hr = IMFAttributes_GetUnknown(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_MIXER_ACTIVATE,
+            &IID_IMFActivate, (void **)&activate)))
+    {
+        IMFAttributes_GetUINT32(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_MIXER_FLAGS, &flags);
+        hr = IMFActivate_ActivateObject(activate, &IID_IMFTransform, (void **)out);
+        IMFActivate_Release(activate);
+        if (SUCCEEDED(hr) || !(flags & MF_ACTIVATE_CUSTOM_MIXER_ALLOWFAIL))
+            return hr;
+    }
+
+    if (!attributes || FAILED(IMFAttributes_GetGUID(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_MIXER_CLSID, &clsid)))
+        memcpy(&clsid, &CLSID_MFVideoMixer9, sizeof(clsid));
+
+    return CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IMFTransform, (void **)out);
+}
+
+static HRESULT video_renderer_create_presenter(IMFAttributes *attributes, IMFVideoPresenter **out)
+{
+    unsigned int flags = 0;
+    IMFActivate *activate;
+    CLSID clsid;
+    HRESULT hr;
+
+    if (attributes && SUCCEEDED(IMFAttributes_GetUnknown(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_PRESENTER_ACTIVATE,
+            &IID_IMFActivate, (void **)&activate)))
+    {
+        IMFAttributes_GetUINT32(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_PRESENTER_FLAGS, &flags);
+        hr = IMFActivate_ActivateObject(activate, &IID_IMFVideoPresenter, (void **)out);
+        IMFActivate_Release(activate);
+        if (SUCCEEDED(hr) || !(flags & MF_ACTIVATE_CUSTOM_PRESENTER_ALLOWFAIL))
+            return hr;
+    }
+
+    if (!attributes || FAILED(IMFAttributes_GetGUID(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_PRESENTER_CLSID, &clsid)))
+        memcpy(&clsid, &CLSID_MFVideoPresenter9, sizeof(clsid));
+
+    return CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IMFVideoPresenter, (void **)out);
+}
+
+static HRESULT video_renderer_configure_mixer(struct video_renderer *renderer)
+{
+    IMFTopologyServiceLookupClient *lookup_client;
+    IMFAttributes *attributes;
+    HRESULT hr;
+
+    if (SUCCEEDED(hr = IMFTransform_QueryInterface(renderer->mixer, &IID_IMFTopologyServiceLookupClient,
+            (void **)&lookup_client)))
+    {
+        renderer->flags |= EVR_INIT_SERVICES;
+        if (SUCCEEDED(hr = IMFTopologyServiceLookupClient_InitServicePointers(lookup_client,
+                &renderer->IMFTopologyServiceLookup_iface)))
+        {
+            renderer->flags |= EVR_MIXER_INITED_SERVICES;
+        }
+        renderer->flags &= ~EVR_INIT_SERVICES;
+        IMFTopologyServiceLookupClient_Release(lookup_client);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        unsigned int input_count, output_count;
+        unsigned int *ids, *oids;
+        size_t i;
+
+        /* Create stream sinks for inputs that mixer already has by default. */
+        if (SUCCEEDED(IMFTransform_GetStreamCount(renderer->mixer, &input_count, &output_count)))
+        {
+            ids = heap_calloc(input_count, sizeof(*ids));
+            oids = heap_calloc(output_count, sizeof(*oids));
+
+            if (ids && oids)
+            {
+                if (SUCCEEDED(IMFTransform_GetStreamIDs(renderer->mixer, input_count, ids, output_count, oids)))
+                {
+                    for (i = 0; i < input_count; ++i)
+                    {
+                        video_renderer_add_stream(renderer, ids[i], NULL);
+                    }
+                }
+
+            }
+
+            heap_free(ids);
+            heap_free(oids);
+        }
+    }
+
+    /* Set device manager that presenter should have created. */
+    if (SUCCEEDED(IMFTransform_QueryInterface(renderer->mixer, &IID_IMFAttributes, (void **)&attributes)))
+    {
+        IDirect3DDeviceManager9 *device_manager;
+        unsigned int value;
+
+        if (SUCCEEDED(IMFAttributes_GetUINT32(attributes, &MF_SA_D3D_AWARE, &value)) && value)
+        {
+            if (SUCCEEDED(MFGetService((IUnknown *)renderer->presenter, &MR_VIDEO_ACCELERATION_SERVICE,
+                    &IID_IDirect3DDeviceManager9, (void **)&device_manager)))
+            {
+                IMFTransform_ProcessMessage(renderer->mixer, MFT_MESSAGE_SET_D3D_MANAGER, (ULONG_PTR)device_manager);
+                IDirect3DDeviceManager9_Release(device_manager);
+            }
+        }
+        IMFAttributes_Release(attributes);
+    }
+
+    return hr;
+}
+
+static HRESULT video_renderer_configure_presenter(struct video_renderer *renderer)
+{
+    IMFTopologyServiceLookupClient *lookup_client;
+    HRESULT hr;
+
+    if (SUCCEEDED(hr = IMFVideoPresenter_QueryInterface(renderer->presenter, &IID_IMFTopologyServiceLookupClient,
+            (void **)&lookup_client)))
+    {
+        renderer->flags |= EVR_INIT_SERVICES;
+        if (SUCCEEDED(hr = IMFTopologyServiceLookupClient_InitServicePointers(lookup_client,
+                &renderer->IMFTopologyServiceLookup_iface)))
+        {
+            renderer->flags |= EVR_PRESENTER_INITED_SERVICES;
+        }
+        renderer->flags &= ~EVR_INIT_SERVICES;
+        IMFTopologyServiceLookupClient_Release(lookup_client);
+    }
+
+    return hr;
+}
+
+static HRESULT video_renderer_initialize(struct video_renderer *renderer, IMFTransform *mixer,
+        IMFVideoPresenter *presenter)
+{
+    HRESULT hr;
+
+    if (renderer->mixer)
+    {
+        IMFTransform_Release(renderer->mixer);
+        renderer->mixer = NULL;
+    }
+
+    if (renderer->presenter)
+    {
+        IMFVideoPresenter_Release(renderer->presenter);
+        renderer->presenter = NULL;
+    }
+
+    renderer->mixer = mixer;
+    IMFTransform_AddRef(renderer->mixer);
+
+    renderer->presenter = presenter;
+    IMFVideoPresenter_AddRef(renderer->presenter);
+
+    if (SUCCEEDED(hr = video_renderer_configure_mixer(renderer)))
+        hr = video_renderer_configure_presenter(renderer);
+
+    return hr;
+}
+
 static HRESULT WINAPI video_renderer_InitializeRenderer(IMFVideoRenderer *iface, IMFTransform *mixer,
         IMFVideoPresenter *presenter)
 {
-    FIXME("%p, %p, %p.\n", iface, mixer, presenter);
+    struct video_renderer *renderer = impl_from_IMFVideoRenderer(iface);
+    HRESULT hr;
 
-    return E_NOTIMPL;
+    TRACE("%p, %p, %p.\n", iface, mixer, presenter);
+
+    if (mixer)
+        IMFTransform_AddRef(mixer);
+    else if (FAILED(hr = video_renderer_create_mixer(NULL, &mixer)))
+    {
+        WARN("Failed to create default mixer object, hr %#x.\n", hr);
+        return hr;
+    }
+
+    if (presenter)
+        IMFVideoPresenter_AddRef(presenter);
+    else if (FAILED(hr = video_renderer_create_presenter(NULL, &presenter)))
+    {
+        WARN("Failed to create default presenter, hr %#x.\n", hr);
+        IMFTransform_Release(mixer);
+        return hr;
+    }
+
+    EnterCriticalSection(&renderer->cs);
+
+    if (renderer->flags & EVR_SHUT_DOWN)
+        hr = MF_E_SHUTDOWN;
+    else
+    {
+        /* FIXME: check clock state */
+        /* FIXME: check that streams are not initialized */
+
+        hr = video_renderer_initialize(renderer, mixer, presenter);
+    }
+
+    LeaveCriticalSection(&renderer->cs);
+
+    IMFTransform_Release(mixer);
+    IMFVideoPresenter_Release(presenter);
+
+    return hr;
 }
 
 static const IMFVideoRendererVtbl video_renderer_vtbl =
@@ -1191,128 +1537,11 @@ static const IMediaEventSinkVtbl media_event_sink_vtbl =
     video_renderer_event_sink_Notify,
 };
 
-static HRESULT video_renderer_create_mixer(struct video_renderer *renderer, IMFAttributes *attributes,
-        IMFTransform **out)
-{
-    IMFTopologyServiceLookupClient *lookup_client;
-    unsigned int flags = 0;
-    IMFActivate *activate;
-    CLSID clsid;
-    HRESULT hr;
-
-    if (SUCCEEDED(hr = IMFAttributes_GetUnknown(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_MIXER_ACTIVATE,
-            &IID_IMFActivate, (void **)&activate)))
-    {
-        IMFAttributes_GetUINT32(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_MIXER_FLAGS, &flags);
-        hr = IMFActivate_ActivateObject(activate, &IID_IMFTransform, (void **)out);
-        IMFActivate_Release(activate);
-        if (FAILED(hr) && !(flags & MF_ACTIVATE_CUSTOM_MIXER_ALLOWFAIL))
-            return hr;
-    }
-
-    /* Activation object failed, use class activation. */
-    if (FAILED(hr))
-    {
-        if (FAILED(IMFAttributes_GetGUID(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_MIXER_CLSID, &clsid)))
-            memcpy(&clsid, &CLSID_MFVideoMixer9, sizeof(clsid));
-        hr = CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IMFTransform, (void **)out);
-    }
-
-    if (FAILED(hr))
-    {
-        WARN("Failed to create a mixer object, hr %#x.\n", hr);
-        return hr;
-    }
-
-    if (SUCCEEDED(hr = IMFTransform_QueryInterface(*out, &IID_IMFTopologyServiceLookupClient,
-            (void **)&lookup_client)))
-    {
-        renderer->flags |= EVR_INIT_SERVICES;
-        if (SUCCEEDED(hr = IMFTopologyServiceLookupClient_InitServicePointers(lookup_client,
-                &renderer->IMFTopologyServiceLookup_iface)))
-        {
-            renderer->flags |= EVR_MIXER_INITED_SERVICES;
-        }
-        renderer->flags &= ~EVR_INIT_SERVICES;
-        IMFTopologyServiceLookupClient_Release(lookup_client);
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        unsigned int input_count, output_count;
-        unsigned int *ids, *oids;
-        size_t i;
-
-        /* Create stream sinks for inputs that mixer already has by default. */
-        if (SUCCEEDED(IMFTransform_GetStreamCount(*out, &input_count, &output_count)))
-        {
-            ids = heap_calloc(input_count, sizeof(*ids));
-            oids = heap_calloc(output_count, sizeof(*oids));
-
-            if (ids && oids)
-            {
-                if (SUCCEEDED(IMFTransform_GetStreamIDs(*out, input_count, ids, output_count, oids)))
-                {
-                    for (i = 0; i < input_count; ++i)
-                    {
-                        video_renderer_add_stream(renderer, ids[i], NULL);
-                    }
-                }
-
-            }
-
-            heap_free(ids);
-            heap_free(oids);
-        }
-    }
-
-    return hr;
-}
-
-static HRESULT video_renderer_create_presenter(struct video_renderer *renderer, IMFAttributes *attributes,
-        IMFVideoPresenter **out)
-{
-    IMFTopologyServiceLookupClient *lookup_client;
-    unsigned int flags = 0;
-    IMFActivate *activate;
-    CLSID clsid;
-    HRESULT hr;
-
-    if (SUCCEEDED(IMFAttributes_GetUnknown(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_PRESENTER_ACTIVATE,
-            &IID_IMFActivate, (void **)&activate)))
-    {
-        IMFAttributes_GetUINT32(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_PRESENTER_FLAGS, &flags);
-        hr = IMFActivate_ActivateObject(activate, &IID_IMFVideoPresenter, (void **)out);
-        IMFActivate_Release(activate);
-        if (FAILED(hr) && !(flags & MF_ACTIVATE_CUSTOM_PRESENTER_ALLOWFAIL))
-            return hr;
-    }
-
-    if (FAILED(IMFAttributes_GetGUID(attributes, &MF_ACTIVATE_CUSTOM_VIDEO_PRESENTER_CLSID, &clsid)))
-        memcpy(&clsid, &CLSID_MFVideoPresenter9, sizeof(clsid));
-
-    if (SUCCEEDED(hr = CoCreateInstance(&clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IMFVideoPresenter, (void **)out)))
-    {
-        if (SUCCEEDED(hr = IMFVideoPresenter_QueryInterface(*out, &IID_IMFTopologyServiceLookupClient,
-                (void **)&lookup_client)))
-        {
-            renderer->flags |= EVR_INIT_SERVICES;
-            if (SUCCEEDED(hr = IMFTopologyServiceLookupClient_InitServicePointers(lookup_client,
-                    &renderer->IMFTopologyServiceLookup_iface)))
-            {
-                renderer->flags |= EVR_PRESENTER_INITED_SERVICES;
-            }
-            renderer->flags &= ~EVR_INIT_SERVICES;
-            IMFTopologyServiceLookupClient_Release(lookup_client);
-        }
-    }
-
-    return hr;
-}
-
 static HRESULT evr_create_object(IMFAttributes *attributes, void *user_context, IUnknown **obj)
 {
     struct video_renderer *object;
+    IMFVideoPresenter *presenter;
+    IMFTransform *mixer;
     HRESULT hr;
 
     TRACE("%p, %p, %p.\n", attributes, user_context, obj);
@@ -1335,17 +1564,29 @@ static HRESULT evr_create_object(IMFAttributes *attributes, void *user_context, 
         goto failed;
 
     /* Create mixer and presenter. */
-    if (FAILED(hr = video_renderer_create_mixer(object, attributes, &object->mixer)))
+    if (FAILED(hr = video_renderer_create_mixer(attributes, &mixer)))
         goto failed;
 
-    if (FAILED(hr = video_renderer_create_presenter(object, attributes, &object->presenter)))
+    if (FAILED(hr = video_renderer_create_presenter(attributes, &presenter)))
         goto failed;
+
+    if (FAILED(hr = video_renderer_initialize(object, mixer, presenter)))
+        goto failed;
+
+    IMFTransform_Release(mixer);
+    IMFVideoPresenter_Release(presenter);
 
     *obj = (IUnknown *)&object->IMFMediaSink_iface;
 
     return S_OK;
 
 failed:
+
+    if (mixer)
+        IMFTransform_Release(mixer);
+
+    if (presenter)
+        IMFVideoPresenter_Release(presenter);
 
     video_renderer_release_services(object);
     IMFMediaSink_Release(&object->IMFMediaSink_iface);
@@ -1385,6 +1626,27 @@ HRESULT WINAPI MFCreateVideoRendererActivate(HWND hwnd, IMFActivate **activate)
     hr = create_activation_object(NULL, &evr_activate_funcs, activate);
     if (SUCCEEDED(hr))
         IMFActivate_SetUINT64(*activate, &MF_ACTIVATE_VIDEO_WINDOW, (ULONG_PTR)hwnd);
+
+    return hr;
+}
+
+/***********************************************************************
+ *      MFCreateVideoRenderer (mf.@)
+ */
+HRESULT WINAPI MFCreateVideoRenderer(REFIID riid, void **renderer)
+{
+    IUnknown *obj;
+    HRESULT hr;
+
+    TRACE("%s, %p.\n", debugstr_guid(riid), renderer);
+
+    *renderer = NULL;
+
+    if (SUCCEEDED(hr = evr_create_object(NULL, NULL, &obj)))
+    {
+        hr = IUnknown_QueryInterface(obj, riid, renderer);
+        IUnknown_Release(obj);
+    }
 
     return hr;
 }

@@ -54,12 +54,10 @@ struct media_stream
     GstPad *their_src, *my_sink;
     enum
     {
-        STREAM_STUB,
         STREAM_INACTIVE,
         STREAM_SHUTDOWN,
         STREAM_RUNNING,
     } state;
-    /* used when in STUB state: */
     DWORD stream_id;
     BOOL eos;
 };
@@ -116,7 +114,7 @@ struct media_source
         SOURCE_RUNNING,
         SOURCE_SHUTDOWN,
     } state;
-    HANDLE all_streams_event;
+    HANDLE no_more_pads_event;
 };
 
 static inline struct media_stream *impl_from_IMFMediaStream(IMFMediaStream *iface)
@@ -710,15 +708,8 @@ static ULONG WINAPI media_stream_Release(IMFMediaStream *iface)
 
     if (!ref)
     {
-        if (stream->my_sink)
-            gst_object_unref(GST_OBJECT(stream->my_sink));
-        if (stream->descriptor)
-            IMFStreamDescriptor_Release(stream->descriptor);
         if (stream->event_queue)
             IMFMediaEventQueue_Release(stream->event_queue);
-        if (stream->parent_source)
-            IMFMediaSource_Release(&stream->parent_source->IMFMediaSource_iface);
-
         heap_free(stream);
     }
 
@@ -731,9 +722,6 @@ static HRESULT WINAPI media_stream_GetEvent(IMFMediaStream *iface, DWORD flags, 
 
     TRACE("(%p)->(%#x, %p)\n", stream, flags, event);
 
-    if (stream->state == STREAM_SHUTDOWN)
-        return MF_E_SHUTDOWN;
-
     return IMFMediaEventQueue_GetEvent(stream->event_queue, flags, event);
 }
 
@@ -742,9 +730,6 @@ static HRESULT WINAPI media_stream_BeginGetEvent(IMFMediaStream *iface, IMFAsync
     struct media_stream *stream = impl_from_IMFMediaStream(iface);
 
     TRACE("(%p)->(%p, %p)\n", stream, callback, state);
-
-    if (stream->state == STREAM_SHUTDOWN)
-        return MF_E_SHUTDOWN;
 
     return IMFMediaEventQueue_BeginGetEvent(stream->event_queue, callback, state);
 }
@@ -755,9 +740,6 @@ static HRESULT WINAPI media_stream_EndGetEvent(IMFMediaStream *iface, IMFAsyncRe
 
     TRACE("(%p)->(%p, %p)\n", stream, result, event);
 
-    if (stream->state == STREAM_SHUTDOWN)
-        return MF_E_SHUTDOWN;
-
     return IMFMediaEventQueue_EndGetEvent(stream->event_queue, result, event);
 }
 
@@ -767,9 +749,6 @@ static HRESULT WINAPI media_stream_QueueEvent(IMFMediaStream *iface, MediaEventT
     struct media_stream *stream = impl_from_IMFMediaStream(iface);
 
     TRACE("(%p)->(%d, %s, %#x, %p)\n", stream, event_type, debugstr_guid(ext_type), hr, value);
-
-    if (stream->state == STREAM_SHUTDOWN)
-        return MF_E_SHUTDOWN;
 
     return IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, event_type, ext_type, hr, value);
 }
@@ -993,7 +972,6 @@ static HRESULT media_stream_align_with_mf(struct media_stream *stream)
 }
 
 
-/* creates a stub stream */
 static HRESULT new_media_stream(struct media_source *source, GstPad *pad, DWORD stream_id, struct media_stream **out_stream)
 {
     struct media_stream *object = heap_alloc_zero(sizeof(*object));
@@ -1009,7 +987,7 @@ static HRESULT new_media_stream(struct media_source *source, GstPad *pad, DWORD 
     object->their_src = pad;
     object->stream_id = stream_id;
 
-    object->state = STREAM_STUB;
+    object->state = STREAM_INACTIVE;
     object->eos = FALSE;
 
     if (FAILED(hr = MFCreateEventQueue(&object->event_queue)))
@@ -1050,12 +1028,6 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
     DWORD type_count = 0;
     unsigned int i;
     HRESULT hr;
-
-    if (!current_caps)
-    {
-        hr = E_FAIL;
-        goto fail;
-    }
 
     if (!strcmp(gst_structure_get_name(gst_caps_get_structure(current_caps, 0)), "video/x-raw"))
     {
@@ -1117,38 +1089,25 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
     if (!type_count)
     {
         ERR("Failed to establish an IMFMediaType from any of the possible stream caps!\n");
-        hr = E_FAIL;
-        goto fail;
+        return E_FAIL;
     }
 
     if (FAILED(hr = MFCreateStreamDescriptor(stream->stream_id, type_count, stream_types, &stream->descriptor)))
-        goto fail;
+        goto done;
 
     if (FAILED(hr = IMFStreamDescriptor_GetMediaTypeHandler(stream->descriptor, &type_handler)))
-        goto fail;
+        goto done;
 
     if (FAILED(hr = IMFMediaTypeHandler_SetCurrentMediaType(type_handler, stream_types[0])))
-        goto fail;
+        goto done;
 
-    stream->state = STREAM_INACTIVE;
-
-    IMFMediaTypeHandler_Release(type_handler);
+done:
+    if (type_handler)
+        IMFMediaTypeHandler_Release(type_handler);
     for (i = 0; i < type_count; i++)
         IMFMediaType_Release(stream_types[i]);
     if (stream_types != &stream_type)
         heap_free(stream_types);
-
-    return S_OK;
-    fail:
-    if (type_handler)
-        IMFMediaTypeHandler_Release(type_handler);
-    if (stream_types)
-    {
-        for (i = 0; i < type_count; i++)
-            IMFMediaType_Release(stream_types[i]);
-        if (stream_types != &stream_type)
-            heap_free(stream_types);
-    }
     return hr;
 }
 
@@ -1366,15 +1325,27 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
 
     for (i = 0; i < source->stream_count; i++)
     {
-        source->streams[i]->state = STREAM_SHUTDOWN;
-        IMFMediaStream_Release(&source->streams[i]->IMFMediaStream_iface);
+        struct media_stream *stream = source->streams[i];
+
+        stream->state = STREAM_SHUTDOWN;
+
+        if (stream->my_sink)
+            gst_object_unref(GST_OBJECT(stream->my_sink));
+        if (stream->event_queue)
+            IMFMediaEventQueue_Shutdown(stream->event_queue);
+        if (stream->descriptor)
+            IMFStreamDescriptor_Release(stream->descriptor);
+        if (stream->parent_source)
+            IMFMediaSource_Release(&stream->parent_source->IMFMediaSource_iface);
+
+        IMFMediaStream_Release(&stream->IMFMediaStream_iface);
     }
 
     if (source->stream_count)
         heap_free(source->streams);
 
-    if (source->all_streams_event)
-        CloseHandle(source->all_streams_event);
+    if (source->no_more_pads_event)
+        CloseHandle(source->no_more_pads_event);
 
     if (source->async_commands_queue)
         MFUnlockWorkQueue(source->async_commands_queue);
@@ -1543,8 +1514,7 @@ static void stream_removed(GstElement *element, GstPad *pad, gpointer user)
         if (stream->their_src != pad)
             continue;
         stream->their_src = NULL;
-        if (stream->state != STREAM_INACTIVE)
-            stream->state = STREAM_INACTIVE;
+        stream->state = STREAM_INACTIVE;
     }
 }
 
@@ -1552,7 +1522,7 @@ static void no_more_pads(GstElement *element, gpointer user)
 {
     struct media_source *source = user;
 
-    SetEvent(source->all_streams_event);
+    SetEvent(source->no_more_pads_event);
 }
 
 static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_source **out_media_source)
@@ -1577,7 +1547,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     object->ref = 1;
     object->byte_stream = bytestream;
     IMFByteStream_AddRef(bytestream);
-    object->all_streams_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    object->no_more_pads_event = CreateEventA(NULL, FALSE, FALSE, NULL);
 
     if (FAILED(hr = MFCreateEventQueue(&object->event_queue)))
         goto fail;
@@ -1604,10 +1574,14 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
         goto fail;
     }
 
-    /* In Media Foundation, sources will infinitely leak buffers, when a subset of the selected
-       streams are read from.  This behavior is relied upon in the Unity3D engine game, Trailmakers,
-       where Unity selects both the video and audio streams, yet only reads from the video stream.
-       Removing these buffering limits reflects that behavior. */
+    /* In Media Foundation, sources may read from any media source stream
+       without fear of blocking due to buffering limits on another.  Trailmakers,
+       a Unity3D engine game does this by only reading from the audio stream once,
+       and never deselecting this.  These properties replicate that behavior.
+
+       Note that with most elements, this causes excessive memory use, however
+       this is also what occurs on Windows.
+    */
     g_object_set(object->decodebin, "max-size-buffers", 0, NULL);
     g_object_set(object->decodebin, "max-size-time", G_GUINT64_CONSTANT(0), NULL);
     g_object_set(object->decodebin, "max-size-bytes", 0, NULL);
@@ -1624,8 +1598,8 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
 
     if ((ret = gst_pad_link(object->my_src, object->their_sink)) < 0)
     {
-        WARN("Failed to link our bytestream pad to the demuxer input\n");
-        hr = E_OUTOFMEMORY;
+        WARN("Failed to link our bytestream pad to the demuxer input, error %d.\n", ret);
+        hr = E_FAIL;
         goto fail;
     }
 
@@ -1635,18 +1609,17 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     ret = gst_element_get_state(object->container, NULL, NULL, -1);
     if (ret == GST_STATE_CHANGE_FAILURE)
     {
-        ERR("Failed to play source.\n");
-        hr = E_OUTOFMEMORY;
+        ERR("Failed to play source, error %d.\n", ret);
+        hr = E_FAIL;
         goto fail;
     }
 
-    WaitForSingleObject(object->all_streams_event, INFINITE);
+    WaitForSingleObject(object->no_more_pads_event, INFINITE);
     for (i = 0; i < object->stream_count; i++)
     {
         GstSample *preroll;
         g_signal_emit_by_name(object->streams[i]->appsink, "pull-preroll", &preroll);
-        hr = E_FAIL;
-        if (!preroll || FAILED(hr = media_stream_init_desc(object->streams[i])))
+        if (FAILED(hr = media_stream_init_desc(object->streams[i])))
         {
             ERR("Failed to finish initialization of media stream %p, hr %x.\n", object->streams[i], hr);
             IMFMediaStream_Release(&object->streams[i]->IMFMediaStream_iface);
@@ -1837,7 +1810,6 @@ static HRESULT WINAPI winegstreamer_stream_handler_BeginCreateObject(IMFByteStre
     struct winegstreamer_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
 
     TRACE("%p, %s, %#x, %p, %p, %p, %p.\n", iface, debugstr_w(url), flags, props, cancel_cookie, callback, state);
-
     return handler_begin_create_object(&this->handler, stream, url, flags, props, cancel_cookie, callback, state);
 }
 
@@ -1847,7 +1819,6 @@ static HRESULT WINAPI winegstreamer_stream_handler_EndCreateObject(IMFByteStream
     struct winegstreamer_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
 
     TRACE("%p, %p, %p, %p.\n", iface, result, obj_type, object);
-
     return handler_end_create_object(&this->handler, result, obj_type, object);
 }
 
@@ -1856,7 +1827,6 @@ static HRESULT WINAPI winegstreamer_stream_handler_CancelObjectCreation(IMFByteS
     struct winegstreamer_stream_handler *this = impl_from_IMFByteStreamHandler(iface);
 
     TRACE("%p, %p.\n", iface, cancel_cookie);
-
     return handler_cancel_object_creation(&this->handler, cancel_cookie);
 }
 

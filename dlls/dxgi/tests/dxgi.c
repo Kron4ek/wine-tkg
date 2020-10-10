@@ -24,6 +24,7 @@
 #include "dxgi1_6.h"
 #include "d3d11.h"
 #include "d3d12.h"
+#include "d3d12sdklayers.h"
 #include "winternl.h"
 #include "ddk/d3dkmthk.h"
 #include "wine/heap.h"
@@ -2122,7 +2123,7 @@ static HMONITOR get_primary_if_right_side_secondary(const DXGI_OUTPUT_DESC *outp
     return NULL;
 }
 
-static void test_get_containing_output(void)
+static void test_get_containing_output(IUnknown *device, BOOL is_d3d12)
 {
     unsigned int adapter_idx, output_idx, output_count;
     DXGI_OUTPUT_DESC output_desc, output_desc2;
@@ -2133,7 +2134,6 @@ static void test_get_containing_output(void)
     IDXGIFactory *factory;
     IDXGIAdapter *adapter;
     POINT points[4 * 16];
-    IDXGIDevice *device;
     unsigned int i, j;
     HMONITOR monitor;
     HMONITOR primary;
@@ -2142,17 +2142,21 @@ static void test_get_containing_output(void)
     HRESULT hr;
     BOOL ret;
 
-    if (!(device = create_device(0)))
+    adapter = get_adapter(device, is_d3d12);
+    if (!adapter)
     {
-        skip("Failed to create device.\n");
+        skip("Failed to get adapter on Direct3D %d.\n", is_d3d12 ? 12 : 10);
         return;
     }
 
-    hr = IDXGIDevice_GetAdapter(device, &adapter);
-    ok(SUCCEEDED(hr), "GetAdapter failed, hr %#x.\n", hr);
-
-    hr = IDXGIAdapter_GetParent(adapter, &IID_IDXGIFactory, (void **)&factory);
-    ok(SUCCEEDED(hr), "GetParent failed, hr %#x.\n", hr);
+    output_count = 0;
+    while ((hr = IDXGIAdapter_EnumOutputs(adapter, output_count, &output)) != DXGI_ERROR_NOT_FOUND)
+    {
+        ok(SUCCEEDED(hr), "Failed to enumerate output %u, hr %#x.\n", output_count, hr);
+        IDXGIOutput_Release(output);
+        ++output_count;
+    }
+    IDXGIAdapter_Release(adapter);
 
     swapchain_desc.BufferDesc.Width = 100;
     swapchain_desc.BufferDesc.Height = 100;
@@ -2164,23 +2168,15 @@ static void test_get_containing_output(void)
     swapchain_desc.SampleDesc.Count = 1;
     swapchain_desc.SampleDesc.Quality = 0;
     swapchain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swapchain_desc.BufferCount = 1;
+    swapchain_desc.BufferCount = is_d3d12 ? 2 : 1;
     swapchain_desc.OutputWindow = CreateWindowA("static", "dxgi_test",
             WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, 100, 100, 0, 0, 0, 0);
     swapchain_desc.Windowed = TRUE;
-    swapchain_desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    swapchain_desc.SwapEffect = is_d3d12 ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_DISCARD;
     swapchain_desc.Flags = 0;
 
-    output_count = 0;
-    while (IDXGIAdapter_EnumOutputs(adapter, output_count, &output) != DXGI_ERROR_NOT_FOUND)
-    {
-        ok(SUCCEEDED(hr), "Failed to enumerate output %u, hr %#x.\n", output_count, hr);
-        IDXGIOutput_Release(output);
-        ++output_count;
-    }
-    IDXGIAdapter_Release(adapter);
-
-    hr = IDXGIFactory_CreateSwapChain(factory, (IUnknown *)device, &swapchain_desc, &swapchain);
+    get_factory(device, is_d3d12, &factory);
+    hr = IDXGIFactory_CreateSwapChain(factory, device, &swapchain_desc, &swapchain);
     ok(SUCCEEDED(hr), "CreateSwapChain failed, hr %#x.\n", hr);
 
     monitor = MonitorFromWindow(swapchain_desc.OutputWindow, 0);
@@ -2457,7 +2453,7 @@ static void test_get_containing_output(void)
         ok(hr == S_OK, "GetDesc failed, hr %#x.\n", hr);
         hr = IDXGIOutput_GetDesc(output2, &output_desc2);
         ok(hr == S_OK, "GetDesc failed, hr %#x.\n", hr);
-        todo_wine ok(!lstrcmpW(output_desc.DeviceName, output_desc2.DeviceName),
+        ok(!lstrcmpW(output_desc.DeviceName, output_desc2.DeviceName),
                 "Expect device name %s, got %s.\n", wine_dbgstr_w(output_desc2.DeviceName),
                 wine_dbgstr_w(output_desc.DeviceName));
         IDXGIOutput_Release(output);
@@ -2469,7 +2465,7 @@ static void test_get_containing_output(void)
         ok(hr == S_OK, "GetDesc failed, hr %#x.\n", hr);
         hr = IDXGIOutput_GetDesc(output2, &output_desc2);
         ok(hr == S_OK, "GetDesc failed, hr %#x.\n", hr);
-        todo_wine ok(!lstrcmpW(output_desc.DeviceName, output_desc2.DeviceName),
+        ok(!lstrcmpW(output_desc.DeviceName, output_desc2.DeviceName),
                 "Expect device name %s, got %s.\n", wine_dbgstr_w(output_desc2.DeviceName),
                 wine_dbgstr_w(output_desc.DeviceName));
 
@@ -2489,10 +2485,8 @@ static void test_get_containing_output(void)
 done:
     refcount = IDXGISwapChain_Release(swapchain);
     ok(!refcount, "IDXGISwapChain has %u references left.\n", refcount);
-    refcount = IDXGIDevice_Release(device);
-    ok(!refcount, "Device has %u references left.\n", refcount);
     refcount = IDXGIFactory_Release(factory);
-    ok(!refcount, "Factory has %u references left.\n", refcount);
+    ok(refcount == !is_d3d12, "IDXGIFactory has %u references left.\n", refcount);
     DestroyWindow(swapchain_desc.OutputWindow);
 }
 
@@ -2802,7 +2796,7 @@ done:
     ok(refcount == !is_d3d12, "Got unexpected refcount %u.\n", refcount);
 }
 
-static void test_default_fullscreen_target_output(void)
+static void test_default_fullscreen_target_output(IUnknown *device, BOOL is_d3d12)
 {
     IDXGIOutput *output, *containing_output, *target;
     unsigned int adapter_idx, output_idx;
@@ -2812,19 +2806,12 @@ static void test_default_fullscreen_target_output(void)
     IDXGISwapChain *swapchain;
     IDXGIFactory *factory;
     IDXGIAdapter *adapter;
-    IDXGIDevice *device;
+    BOOL fullscreen, ret;
     RECT window_rect;
     ULONG refcount;
     HRESULT hr;
-    BOOL ret;
 
-    if (!(device = create_device(0)))
-    {
-        skip("Failed to create device.\n");
-        return;
-    }
-
-    get_factory((IUnknown *)device, FALSE, &factory);
+    get_factory(device, is_d3d12, &factory);
 
     swapchain_desc.BufferDesc.RefreshRate.Numerator = 60;
     swapchain_desc.BufferDesc.RefreshRate.Denominator = 60;
@@ -2834,8 +2821,8 @@ static void test_default_fullscreen_target_output(void)
     swapchain_desc.SampleDesc.Count = 1;
     swapchain_desc.SampleDesc.Quality = 0;
     swapchain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swapchain_desc.BufferCount = 1;
-    swapchain_desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    swapchain_desc.BufferCount = is_d3d12 ? 2 : 1;
+    swapchain_desc.SwapEffect = is_d3d12 ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_DISCARD;
     swapchain_desc.Flags = 0;
 
     for (adapter_idx = 0; SUCCEEDED(IDXGIFactory_EnumAdapters(factory, adapter_idx, &adapter));
@@ -2853,6 +2840,14 @@ static void test_default_fullscreen_target_output(void)
                     &swapchain);
             ok(SUCCEEDED(hr), "Adapter %u output %u: CreateSwapChain failed, hr %#x.\n",
                     adapter_idx, output_idx, hr);
+
+            hr = IDXGISwapChain_GetFullscreenState(swapchain, &fullscreen, &containing_output);
+            ok(SUCCEEDED(hr), "Adapter %u output %u: GetFullscreenState failed, hr %#x.\n",
+                    adapter_idx, output_idx, hr);
+            ok(!fullscreen, "Adapter %u output %u: Expected not fullscreen.\n", adapter_idx,
+                    output_idx);
+            ok(!containing_output, "Adapter %u output %u: Expected a null output.\n", adapter_idx,
+                    output_idx);
 
             /* Move the OutputWindow to the current output. */
             hr = IDXGIOutput_GetDesc(output, &output_desc);
@@ -2954,6 +2949,15 @@ static void test_default_fullscreen_target_output(void)
                 continue;
             }
 
+            hr = IDXGISwapChain_GetFullscreenState(swapchain, &fullscreen, &containing_output);
+            ok(SUCCEEDED(hr), "Adapter %u output %u: GetFullscreenState failed, hr %#x.\n",
+                    adapter_idx, output_idx, hr);
+            ok(fullscreen, "Adapter %u output %u: Expected fullscreen.\n", adapter_idx, output_idx);
+            ok(!!containing_output, "Adapter %u output %u: Expected a valid output.\n", adapter_idx,
+                    output_idx);
+            if (containing_output)
+                IDXGIOutput_Release(containing_output);
+
             ret = GetWindowRect(swapchain_desc.OutputWindow, &window_rect);
             ok(ret, "Adapter %u output %u: GetWindowRect failed, error %#x.\n", adapter_idx,
                     output_idx, GetLastError());
@@ -2985,10 +2989,8 @@ static void test_default_fullscreen_target_output(void)
         IDXGIAdapter_Release(adapter);
     }
 
-    refcount = IDXGIDevice_Release(device);
-    ok(!refcount, "Device has %u references left.\n", refcount);
     refcount = IDXGIFactory_Release(factory);
-    ok(!refcount, "Factory has %u references left.\n", refcount);
+    ok(refcount == !is_d3d12, "IDXGIFactory has %u references left.\n", refcount);
 }
 
 static void test_windowed_resize_target(IDXGISwapChain *swapchain, HWND window,
@@ -5326,9 +5328,12 @@ static void test_multi_adapter(void)
     unsigned int output_count = 0, expected_output_count = 0;
     unsigned int adapter_index, output_index, device_index;
     DXGI_OUTPUT_DESC old_output_desc, output_desc;
+    DXGI_ADAPTER_DESC1 adapter_desc1;
+    DXGI_ADAPTER_DESC adapter_desc;
     DISPLAY_DEVICEW display_device;
     MONITORINFO monitor_info;
     DEVMODEW old_mode, mode;
+    IDXGIAdapter1 *adapter1;
     IDXGIFactory *factory;
     IDXGIAdapter *adapter;
     IDXGIOutput *output;
@@ -5530,6 +5535,48 @@ static void test_multi_adapter(void)
         IDXGIAdapter_Release(adapter);
     }
 
+    /* Windows 8+ always have a WARP adapter present at the end. */
+    todo_wine ok(adapter_index >= 2 || broken(adapter_index < 2) /* Windows 7 and before */,
+            "Got unexpected adapter count %u.\n", adapter_index);
+    if (adapter_index < 2)
+    {
+        todo_wine win_skip("WARP adapter missing, skipping tests.\n");
+        goto done;
+    }
+
+    hr = IDXGIFactory_EnumAdapters(factory, adapter_index - 1, &adapter);
+    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+    hr = IDXGIAdapter_GetDesc(adapter, &adapter_desc);
+    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+    todo_wine ok(!lstrcmpW(adapter_desc.Description, L"Microsoft Basic Render Driver"),
+            "Got unexpected description %s.\n", wine_dbgstr_w(adapter_desc.Description));
+    todo_wine ok(adapter_desc.VendorId == 0x1414,
+            "Got unexpected vendor ID %#x.\n", adapter_desc.VendorId);
+    todo_wine ok(adapter_desc.DeviceId == 0x008c,
+            "Got unexpected device ID %#x.\n", adapter_desc.DeviceId);
+    ok(adapter_desc.SubSysId == 0x0000,
+            "Got unexpected sub-system ID %#x.\n", adapter_desc.SubSysId);
+    ok(adapter_desc.Revision == 0x0000,
+            "Got unexpected revision %#x.\n", adapter_desc.Revision);
+    todo_wine ok(!adapter_desc.DedicatedVideoMemory,
+            "Got unexpected DedicatedVideoMemory %#lx.\n", adapter_desc.DedicatedVideoMemory);
+    ok(!adapter_desc.DedicatedSystemMemory,
+            "Got unexpected DedicatedSystemMemory %#lx.\n", adapter_desc.DedicatedSystemMemory);
+
+    hr = IDXGIAdapter_QueryInterface(adapter, &IID_IDXGIAdapter1, (void **)&adapter1);
+    ok(hr == S_OK || broken(hr == E_NOINTERFACE), "Got unexpected hr %#x.\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        hr = IDXGIAdapter1_GetDesc1(adapter1, &adapter_desc1);
+        ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+        todo_wine ok(adapter_desc1.Flags == DXGI_ADAPTER_FLAG_SOFTWARE,
+                "Got unexpected flags %#x.\n", adapter_desc1.Flags);
+        IDXGIAdapter1_Release(adapter1);
+    }
+
+    IDXGIAdapter_Release(adapter);
+
+done:
     IDXGIFactory_Release(factory);
 
     expected_output_count = GetSystemMetrics(SM_CMONITORS);
@@ -6083,15 +6130,13 @@ done:
     ok(!refcount, "Factory has %u references left.\n", refcount);
 }
 
-static void test_window_association(void)
+static void test_window_association(IUnknown *device, BOOL is_d3d12)
 {
     DXGI_SWAP_CHAIN_DESC swapchain_desc;
     LONG_PTR original_wndproc, wndproc;
     IDXGIFactory *factory, *factory2;
     IDXGISwapChain *swapchain;
     IDXGIOutput *output;
-    IDXGIAdapter *adapter;
-    IDXGIDevice *device;
     HWND hwnd, hwnd2;
     BOOL fullscreen;
     unsigned int i;
@@ -6128,12 +6173,6 @@ static void test_window_association(void)
         {0, FALSE}
     };
 
-    if (!(device = create_device(0)))
-    {
-        skip("Failed to create device.\n");
-        return;
-    }
-
     swapchain_desc.BufferDesc.Width = 640;
     swapchain_desc.BufferDesc.Height = 480;
     swapchain_desc.BufferDesc.RefreshRate.Numerator = 60;
@@ -6144,10 +6183,10 @@ static void test_window_association(void)
     swapchain_desc.SampleDesc.Count = 1;
     swapchain_desc.SampleDesc.Quality = 0;
     swapchain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swapchain_desc.BufferCount = 1;
+    swapchain_desc.BufferCount = is_d3d12 ? 2 : 1;
     swapchain_desc.OutputWindow = CreateWindowA("static", "dxgi_test", 0, 0, 0, 400, 200, 0, 0, 0, 0);
     swapchain_desc.Windowed = TRUE;
-    swapchain_desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    swapchain_desc.SwapEffect = is_d3d12 ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_DISCARD;
     swapchain_desc.Flags = 0;
 
     original_wndproc = GetWindowLongPtrW(swapchain_desc.OutputWindow, GWLP_WNDPROC);
@@ -6156,11 +6195,7 @@ static void test_window_association(void)
     hr = CreateDXGIFactory(&IID_IDXGIFactory, (void **)&factory2);
     ok(hr == S_OK, "Failed to create DXGI factory, hr %#x.\n", hr);
 
-    hr = IDXGIDevice_GetAdapter(device, &adapter);
-    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
-    hr = IDXGIAdapter_GetParent(adapter, &IID_IDXGIFactory, (void **)&factory);
-    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
-    refcount = IDXGIAdapter_Release(adapter);
+    get_factory(device, is_d3d12, &factory);
 
     hr = IDXGIFactory_GetWindowAssociation(factory, NULL);
     ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
@@ -6190,7 +6225,7 @@ static void test_window_association(void)
     ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
 
     /* Alt+Enter tests. */
-    hr = IDXGIFactory_CreateSwapChain(factory, (IUnknown *)device, &swapchain_desc, &swapchain);
+    hr = IDXGIFactory_CreateSwapChain(factory, device, &swapchain_desc, &swapchain);
     ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
 
     wndproc = GetWindowLongPtrW(swapchain_desc.OutputWindow, GWLP_WNDPROC);
@@ -6260,10 +6295,8 @@ static void test_window_association(void)
     ok(!refcount, "IDXGISwapChain has %u references left.\n", refcount);
     DestroyWindow(swapchain_desc.OutputWindow);
 
-    refcount = IDXGIDevice_Release(device);
-    ok(!refcount, "Device has %u references left.\n", refcount);
     refcount = IDXGIFactory_Release(factory);
-    ok(!refcount, "Factory has %u references left.\n", refcount);
+    ok(refcount == !is_d3d12, "IDXGIFactory has %u references left.\n", refcount);
 }
 
 static void test_output_ownership(IUnknown *device, BOOL is_d3d12)
@@ -6962,15 +6995,12 @@ START_TEST(dxgi)
 
     /* These tests use full-screen swapchains, so shouldn't run in parallel. */
     test_create_swapchain();
-    test_default_fullscreen_target_output();
     test_inexact_modes();
     test_gamma_control();
-    test_get_containing_output();
     test_multi_adapter();
     test_swapchain_parameters();
     test_swapchain_window_messages();
     test_swapchain_window_styles();
-    test_window_association();
     run_on_d3d10(test_set_fullscreen);
     run_on_d3d10(test_resize_target);
     run_on_d3d10(test_swapchain_resize);
@@ -6979,6 +7009,9 @@ START_TEST(dxgi)
     run_on_d3d10(test_swapchain_formats);
     run_on_d3d10(test_output_ownership);
     run_on_d3d10(test_cursor_clipping);
+    run_on_d3d10(test_get_containing_output);
+    run_on_d3d10(test_window_association);
+    run_on_d3d10(test_default_fullscreen_target_output);
 
     if (!(d3d12_module = LoadLibraryA("d3d12.dll")))
     {
@@ -7005,6 +7038,9 @@ START_TEST(dxgi)
     run_on_d3d12(test_cursor_clipping);
     run_on_d3d12(test_frame_latency_event);
     run_on_d3d12(test_colour_space_support);
+    run_on_d3d12(test_get_containing_output);
+    run_on_d3d12(test_window_association);
+    run_on_d3d12(test_default_fullscreen_target_output);
 
     FreeLibrary(d3d12_module);
 }

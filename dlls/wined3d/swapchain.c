@@ -34,7 +34,7 @@ void wined3d_swapchain_cleanup(struct wined3d_swapchain *swapchain)
 
     TRACE("Destroying swapchain %p.\n", swapchain);
 
-    wined3d_unhook_swapchain(swapchain);
+    wined3d_swapchain_state_unregister(&swapchain->state);
     wined3d_swapchain_set_gamma_ramp(swapchain, 0, &swapchain->orig_gamma);
 
     /* Release the swapchain's draw buffers. Make sure swapchain->back_buffers[0]
@@ -1288,7 +1288,8 @@ static enum wined3d_format_id adapter_format_from_backbuffer_format(const struct
 }
 
 static HRESULT wined3d_swapchain_state_init(struct wined3d_swapchain_state *state,
-        const struct wined3d_swapchain_desc *desc, HWND window)
+        const struct wined3d_swapchain_desc *desc, HWND window, struct wined3d *wined3d,
+        struct wined3d_swapchain_state_parent *parent)
 {
     HRESULT hr;
 
@@ -1319,12 +1320,17 @@ static HRESULT wined3d_swapchain_state_init(struct wined3d_swapchain_state *stat
 
     GetWindowRect(window, &state->original_window_rect);
     state->device_window = window;
+    state->parent = parent;
+
+    if (desc->flags & WINED3D_SWAPCHAIN_REGISTER_STATE)
+        wined3d_swapchain_state_register(state, wined3d);
 
     return hr;
 }
 
 static HRESULT wined3d_swapchain_init(struct wined3d_swapchain *swapchain, struct wined3d_device *device,
-        struct wined3d_swapchain_desc *desc, void *parent, const struct wined3d_parent_ops *parent_ops,
+        struct wined3d_swapchain_desc *desc, struct wined3d_swapchain_state_parent *state_parent,
+        void *parent, const struct wined3d_parent_ops *parent_ops,
         const struct wined3d_swapchain_ops *swapchain_ops)
 {
     struct wined3d_resource_desc texture_desc;
@@ -1350,7 +1356,7 @@ static HRESULT wined3d_swapchain_init(struct wined3d_swapchain *swapchain, struc
         FIXME("Unimplemented swap effect %#x.\n", desc->swap_effect);
 
     window = desc->device_window ? desc->device_window : device->create_parms.focus_window;
-    if (FAILED(hr = wined3d_swapchain_state_init(&swapchain->state, desc, window)))
+    if (FAILED(hr = wined3d_swapchain_state_init(&swapchain->state, desc, window, device->wined3d, state_parent)))
     {
         ERR("Failed to initialise swapchain state, hr %#x.\n", hr);
         goto err;
@@ -1565,23 +1571,27 @@ err:
 }
 
 HRESULT wined3d_swapchain_no3d_init(struct wined3d_swapchain *swapchain_no3d, struct wined3d_device *device,
-        struct wined3d_swapchain_desc *desc, void *parent, const struct wined3d_parent_ops *parent_ops)
+        struct wined3d_swapchain_desc *desc, struct wined3d_swapchain_state_parent *state_parent,
+        void *parent, const struct wined3d_parent_ops *parent_ops)
 {
-    TRACE("swapchain_no3d %p, device %p, desc %p, parent %p, parent_ops %p.\n",
-            swapchain_no3d, device, desc, parent, parent_ops);
+    TRACE("swapchain_no3d %p, device %p, desc %p, state_parent %p, parent %p, parent_ops %p.\n",
+            swapchain_no3d, device, desc, state_parent, parent, parent_ops);
 
-    return wined3d_swapchain_init(swapchain_no3d, device, desc, parent, parent_ops, &swapchain_no3d_ops);
+    return wined3d_swapchain_init(swapchain_no3d, device, desc, state_parent, parent, parent_ops,
+            &swapchain_no3d_ops);
 }
 
 HRESULT wined3d_swapchain_gl_init(struct wined3d_swapchain_gl *swapchain_gl, struct wined3d_device *device,
-        struct wined3d_swapchain_desc *desc, void *parent, const struct wined3d_parent_ops *parent_ops)
+        struct wined3d_swapchain_desc *desc, struct wined3d_swapchain_state_parent *state_parent,
+        void *parent, const struct wined3d_parent_ops *parent_ops)
 {
     HRESULT hr;
 
-    TRACE("swapchain_gl %p, device %p, desc %p, parent %p, parent_ops %p.\n",
-            swapchain_gl, device, desc, parent, parent_ops);
+    TRACE("swapchain_gl %p, device %p, desc %p, state_parent %p, parent %p, parent_ops %p.\n",
+            swapchain_gl, device, desc, state_parent, parent, parent_ops);
 
-    if (FAILED(hr = wined3d_swapchain_init(&swapchain_gl->s, device, desc, parent, parent_ops, &swapchain_gl_ops)))
+    if (FAILED(hr = wined3d_swapchain_init(&swapchain_gl->s, device, desc, state_parent, parent,
+            parent_ops, &swapchain_gl_ops)))
     {
         /* Cleanup any context that may have been created for the swapchain. */
         wined3d_cs_destroy_object(device->cs, wined3d_swapchain_gl_destroy_object, swapchain_gl);
@@ -1592,14 +1602,16 @@ HRESULT wined3d_swapchain_gl_init(struct wined3d_swapchain_gl *swapchain_gl, str
 }
 
 HRESULT wined3d_swapchain_vk_init(struct wined3d_swapchain_vk *swapchain_vk, struct wined3d_device *device,
-        struct wined3d_swapchain_desc *desc, void *parent, const struct wined3d_parent_ops *parent_ops)
+        struct wined3d_swapchain_desc *desc, struct wined3d_swapchain_state_parent *state_parent,
+        void *parent, const struct wined3d_parent_ops *parent_ops)
 {
     HRESULT hr;
 
     TRACE("swapchain_vk %p, device %p, desc %p, parent %p, parent_ops %p.\n",
             swapchain_vk, device, desc, parent, parent_ops);
 
-    if (FAILED(hr = wined3d_swapchain_init(&swapchain_vk->s, device, desc, parent, parent_ops, &swapchain_vk_ops)))
+    if (FAILED(hr = wined3d_swapchain_init(&swapchain_vk->s, device, desc, state_parent, parent,
+            parent_ops, &swapchain_vk_ops)))
         return hr;
 
     if (swapchain_vk->s.win_handle == GetDesktopWindow())
@@ -1617,18 +1629,17 @@ HRESULT wined3d_swapchain_vk_init(struct wined3d_swapchain_vk *swapchain_vk, str
     return hr;
 }
 
-HRESULT CDECL wined3d_swapchain_create(struct wined3d_device *device, struct wined3d_swapchain_desc *desc,
-        void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_swapchain **swapchain)
+HRESULT CDECL wined3d_swapchain_create(struct wined3d_device *device,
+        struct wined3d_swapchain_desc *desc, struct wined3d_swapchain_state_parent *state_parent,
+        void *parent, const struct wined3d_parent_ops *parent_ops,
+        struct wined3d_swapchain **swapchain)
 {
     struct wined3d_swapchain *object;
     HRESULT hr;
 
     if (FAILED(hr = device->adapter->adapter_ops->adapter_create_swapchain(device,
-            desc, parent, parent_ops, &object)))
+            desc, state_parent, parent, parent_ops, &object)))
         return hr;
-
-    if (desc->flags & WINED3D_SWAPCHAIN_HOOK)
-        wined3d_hook_swapchain(object);
 
     if (desc->flags & WINED3D_SWAPCHAIN_IMPLICIT)
     {
@@ -2175,6 +2186,7 @@ HRESULT CDECL wined3d_swapchain_state_set_fullscreen(struct wined3d_swapchain_st
 {
     struct wined3d_display_mode actual_mode;
     struct wined3d_output_desc output_desc;
+    BOOL windowed = state->desc.windowed;
     HRESULT hr;
 
     TRACE("state %p, swapchain_desc %p, mode %p.\n", state, swapchain_desc, mode);
@@ -2263,26 +2275,38 @@ HRESULT CDECL wined3d_swapchain_state_set_fullscreen(struct wined3d_swapchain_st
     state->desc.output = swapchain_desc->output;
     state->desc.windowed = swapchain_desc->windowed;
 
+    if (windowed != state->desc.windowed)
+        state->parent->ops->windowed_state_changed(state->parent, state->desc.windowed);
+
     return WINED3D_OK;
+}
+
+BOOL CDECL wined3d_swapchain_state_is_windowed(const struct wined3d_swapchain_state *state)
+{
+    TRACE("state %p.\n", state);
+
+    return state->desc.windowed;
 }
 
 void CDECL wined3d_swapchain_state_destroy(struct wined3d_swapchain_state *state)
 {
+    wined3d_swapchain_state_unregister(state);
     heap_free(state);
 }
 
 HRESULT CDECL wined3d_swapchain_state_create(const struct wined3d_swapchain_desc *desc,
-        HWND window, struct wined3d_swapchain_state **state)
+        HWND window, struct wined3d *wined3d, struct wined3d_swapchain_state_parent *state_parent,
+        struct wined3d_swapchain_state **state)
 {
     struct wined3d_swapchain_state *s;
     HRESULT hr;
 
-    TRACE("desc %p, window %p, state %p.\n", desc, window, state);
+    TRACE("desc %p, window %p, wined3d %p, state %p.\n", desc, window, wined3d, state);
 
     if (!(s = heap_alloc_zero(sizeof(*s))))
         return E_OUTOFMEMORY;
 
-    if (FAILED(hr = wined3d_swapchain_state_init(s, desc, window)))
+    if (FAILED(hr = wined3d_swapchain_state_init(s, desc, window, wined3d, state_parent)))
     {
         heap_free(s);
         return hr;

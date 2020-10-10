@@ -2990,17 +2990,6 @@ static void output_source_svg( struct makefile *make, struct incl_file *source, 
 
 
 /*******************************************************************
- *         output_source_icm
- */
-static void output_source_icm( struct makefile *make, struct incl_file *source, const char *obj )
-{
-    add_install_rule( make, source->name, source->name,
-                      strmake( "D$(colordir)/%s", source->name ));
-    output_srcdir_symlink( make, strmake( "%s.icm", obj ));
-}
-
-
-/*******************************************************************
  *         output_source_nls
  */
 static void output_source_nls( struct makefile *make, struct incl_file *source, const char *obj )
@@ -3217,7 +3206,6 @@ static const struct
     { "tlb", output_source_tlb },
     { "sfd", output_source_sfd },
     { "svg", output_source_svg },
-    { "icm", output_source_icm },
     { "nls", output_source_nls },
     { "desktop", output_source_desktop },
     { "po", output_source_po },

@@ -394,7 +394,7 @@ BOOL ME_InternalDeleteText(ME_TextEditor *editor, ME_Cursor *start,
 
       c.nOffset -= nCharsToDelete;
 
-      mark_para_rewrap(editor, ME_FindItemBack(c.pRun, diParagraph));
+      para_mark_rewrap( editor, &ME_FindItemBack( c.pRun, diParagraph )->member.para );
 
       cursor = c;
       /* nChars is the number of characters that should be deleted from the
@@ -1011,6 +1011,7 @@ static BOOL ME_FindPixelPos(ME_TextEditor *editor, int x, int y,
                             ME_Cursor *result, BOOL *is_eol, BOOL final_eop)
 {
   ME_DisplayItem *p = editor->pBuffer->pFirst->member.para.next_para;
+  ME_DisplayItem *row = NULL;
   BOOL isExact = TRUE;
 
   x -= editor->rcFormat.left;
@@ -1022,42 +1023,40 @@ static BOOL ME_FindPixelPos(ME_TextEditor *editor, int x, int y,
   /* find paragraph */
   for (; p != editor->pBuffer->pLast; p = p->member.para.next_para)
   {
-    assert(p->type == diParagraph);
     if (y < p->member.para.pt.y + p->member.para.nHeight)
     {
       if (p->member.para.nFlags & MEPF_ROWSTART)
         p = ME_FindPixelPosInTableRow(x, y, p);
       y -= p->member.para.pt.y;
-      p = ME_FindItemFwd(p, diStartRow);
+      row = ME_FindItemFwd(p, diStartRow);
       break;
-    } else if (p->member.para.nFlags & MEPF_ROWSTART) {
-      p = ME_GetTableRowEnd(p);
+    }
+    else if (p->member.para.nFlags & MEPF_ROWSTART)
+    {
+      p = para_get_di( table_row_end( &p->member.para ) );
     }
   }
   /* find row */
-  for (; p != editor->pBuffer->pLast; )
+  while (row)
   {
-    ME_DisplayItem *pp;
-    assert(p->type == diStartRow);
-    if (y < p->member.row.pt.y + p->member.row.nHeight) break;
-    pp = ME_FindItemFwd(p, diStartRow);
-    if (!pp) break;
-    p = pp;
+    ME_DisplayItem *next_row;
+
+    if (y < row->member.row.pt.y + row->member.row.nHeight) break;
+    next_row = ME_FindItemFwd(row, diStartRow);
+    if (!next_row) break;
+    row = next_row;
   }
-  if (p == editor->pBuffer->pLast && !final_eop)
+
+  if (!row && !final_eop)
   {
     /* The position is below the last paragraph, so the last row will be used
      * rather than the end of the text, so the x position will be used to
      * determine the offset closest to the pixel position. */
     isExact = FALSE;
-    p = ME_FindItemBack(p, diStartRow);
-    if (!p) p = editor->pBuffer->pLast;
+    row = ME_FindItemBack(p, diStartRow);
   }
 
-  assert( p->type == diStartRow || p == editor->pBuffer->pLast );
-
-  if( p->type == diStartRow )
-      return ME_FindRunInRow( editor, p, x, result, is_eol ) && isExact;
+  if (row) return ME_FindRunInRow( editor, row, x, result, is_eol ) && isExact;
 
   ME_SetCursorToEnd(editor, result, TRUE);
   return FALSE;
@@ -1305,7 +1304,7 @@ ME_MoveCursorLines(ME_TextEditor *editor, ME_Cursor *pCursor, int nRelOfs, BOOL 
          pOldPara->member.para.pCell != pNewPara->member.para.pCell))
     {
       /* Brought out of a cell */
-      pNewPara = ME_GetTableRowStart(pOldPara)->member.para.prev_para;
+      pNewPara = table_row_start( &pOldPara->member.para )->prev_para;
       if (pNewPara->type == diTextStart)
         return; /* At the top, so don't go anywhere. */
       pItem = ME_FindItemFwd(pNewPara, diStartRow);
@@ -1336,7 +1335,7 @@ ME_MoveCursorLines(ME_TextEditor *editor, ME_Cursor *pCursor, int nRelOfs, BOOL 
          pOldPara->member.para.pCell != pNewPara->member.para.pCell))
     {
       /* Brought out of a cell */
-      pNewPara = ME_GetTableRowEnd(pOldPara)->member.para.next_para;
+      pNewPara = table_row_end( &pOldPara->member.para )->next_para;
       if (pNewPara->type == diTextEnd)
         return; /* At the bottom, so don't go anywhere. */
       pItem = ME_FindItemFwd(pNewPara, diStartRow);

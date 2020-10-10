@@ -2470,7 +2470,8 @@ struct wined3d_context_vk
     const struct wined3d_vk_info *vk_info;
 
     uint32_t update_compute_pipeline : 1;
-    uint32_t padding : 31;
+    uint32_t update_stream_output : 1;
+    uint32_t padding : 30;
 
     struct
     {
@@ -2510,11 +2511,16 @@ struct wined3d_context_vk
     VkSampleCountFlagBits sample_count;
     unsigned int rt_count;
 
+    VkBuffer vk_so_counters[WINED3D_MAX_STREAM_OUTPUT_BUFFERS];
+    VkDeviceSize vk_so_offsets[WINED3D_MAX_STREAM_OUTPUT_BUFFERS];
+    struct wined3d_bo_vk vk_so_counter_bo;
+
     struct list active_queries;
     struct wined3d_pending_queries_vk pending_queries;
     struct list free_occlusion_query_pools;
     struct list free_timestamp_query_pools;
     struct list free_pipeline_statistics_query_pools;
+    struct list free_stream_output_statistics_query_pools;
 
     struct wined3d_retired_objects_vk retired;
     struct wine_rb_tree render_passes;
@@ -3245,8 +3251,10 @@ struct wined3d_adapter_ops
             unsigned int range_count, const struct wined3d_range *ranges);
     void (*adapter_copy_bo_address)(struct wined3d_context *context,
             const struct wined3d_bo_address *dst, const struct wined3d_bo_address *src, size_t size);
-    HRESULT (*adapter_create_swapchain)(struct wined3d_device *device, struct wined3d_swapchain_desc *desc,
-            void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_swapchain **swapchain);
+    HRESULT (*adapter_create_swapchain)(struct wined3d_device *device,
+            struct wined3d_swapchain_desc *desc,
+            struct wined3d_swapchain_state_parent *state_parent, void *parent,
+            const struct wined3d_parent_ops *parent_ops, struct wined3d_swapchain **swapchain);
     void (*adapter_destroy_swapchain)(struct wined3d_swapchain *swapchain);
     HRESULT (*adapter_create_buffer)(struct wined3d_device *device, const struct wined3d_buffer_desc *desc,
             const struct wined3d_sub_resource_data *data, void *parent, const struct wined3d_parent_ops *parent_ops,
@@ -3353,6 +3361,8 @@ struct wined3d_adapter_vk
     struct wined3d_adapter a;
 
     struct wined3d_vk_info vk_info;
+    unsigned int device_extension_count;
+    const char **device_extensions;
     VkPhysicalDevice physical_device;
 
     VkPhysicalDeviceLimits device_limits;
@@ -3521,9 +3531,7 @@ struct wined3d
 };
 
 BOOL wined3d_filter_messages(HWND window, BOOL filter) DECLSPEC_HIDDEN;
-void wined3d_hook_swapchain(struct wined3d_swapchain *swapchain) DECLSPEC_HIDDEN;
 HRESULT wined3d_init(struct wined3d *wined3d, DWORD flags) DECLSPEC_HIDDEN;
-void wined3d_unhook_swapchain(struct wined3d_swapchain *swapchain) DECLSPEC_HIDDEN;
 void wined3d_unregister_window(HWND window) DECLSPEC_HIDDEN;
 
 BOOL wined3d_get_app_name(char *app_name, unsigned int app_name_size) DECLSPEC_HIDDEN;
@@ -3650,8 +3658,9 @@ struct wined3d_state
 
 static inline bool wined3d_state_uses_depth_buffer(const struct wined3d_state *state)
 {
-    return state->render_states[WINED3D_RS_ZWRITEENABLE]
-            || !state->depth_stencil_state || state->depth_stencil_state->desc.depth;
+    if (!state->depth_stencil_state)
+        return true;
+    return state->depth_stencil_state->desc.depth || state->depth_stencil_state->desc.depth_write;
 }
 
 struct wined3d_dummy_textures
@@ -3674,6 +3683,13 @@ struct wined3d_dummy_textures
 /* Multithreaded flag. Removed from the public header to signal that
  * wined3d_device_create() ignores it. */
 #define WINED3DCREATE_MULTITHREADED 0x00000004
+
+struct wined3d_so_desc_entry
+{
+    struct wine_rb_entry entry;
+    struct wined3d_stream_output_desc desc;
+    struct wined3d_stream_output_element elements[1];
+};
 
 struct wined3d_device
 {
@@ -3719,6 +3735,7 @@ struct wined3d_device
 
     struct list             resources; /* a linked list to track resources created by the device */
     struct list             shaders;   /* a linked list to track shaders (pixel and vertex)      */
+    struct wine_rb_tree so_descs;
     struct wine_rb_tree samplers, rasterizer_states, blend_states, depth_stencil_states;
 
     /* Render Target Support */
@@ -3975,15 +3992,10 @@ struct wined3d_resource_ops
     HRESULT (*resource_sub_resource_unmap)(struct wined3d_resource *resource, unsigned int sub_resource_idx);
 };
 
-#define WINED3D_SUB_RESOURCES_BIND_SRV 1
-#define WINED3D_SUB_RESOURCES_BIND_RTV 2
-
 struct wined3d_resource
 {
     LONG ref;
     LONG bind_count;
-    uint32_t srv_bind_count_device;
-    uint32_t rtv_bind_count_device;
     LONG map_count;
     LONG access_count;
     struct wined3d_device *device;
@@ -4017,7 +4029,10 @@ struct wined3d_resource
         uint32_t rtv;
     }
     *sub_resource_bind_counts_device;
-    uint32_t sub_resource_bind_flags;
+    uint32_t srv_full_bind_count_device;
+    uint32_t rtv_full_bind_count_device;
+    uint32_t srv_partial_bind_count_device;
+    uint32_t rtv_partial_bind_count_device;
 };
 
 static inline ULONG wined3d_resource_incref(struct wined3d_resource *resource)
@@ -5083,6 +5098,7 @@ void wined3d_unordered_access_view_vk_update(struct wined3d_unordered_access_vie
 struct wined3d_swapchain_state
 {
     struct wined3d_swapchain_desc desc;
+    struct wined3d_swapchain_state_parent *parent;
 
     struct wined3d_display_mode original_mode, d3d_mode;
     RECT original_window_rect;
@@ -5093,10 +5109,13 @@ struct wined3d_swapchain_state
     HWND device_window;
 };
 
+void wined3d_swapchain_state_register(struct wined3d_swapchain_state *state,
+        struct wined3d *wined3d) DECLSPEC_HIDDEN;
 void wined3d_swapchain_state_restore_from_fullscreen(struct wined3d_swapchain_state *state,
         HWND window, const RECT *window_rect) DECLSPEC_HIDDEN;
 HRESULT wined3d_swapchain_state_setup_fullscreen(struct wined3d_swapchain_state *state,
         HWND window, int x, int y, int width, int height) DECLSPEC_HIDDEN;
+void wined3d_swapchain_state_unregister(struct wined3d_swapchain_state *state) DECLSPEC_HIDDEN;
 
 struct wined3d_swapchain_ops
 {
@@ -5138,7 +5157,8 @@ void swapchain_set_max_frame_latency(struct wined3d_swapchain *swapchain,
 
 HRESULT wined3d_swapchain_no3d_init(struct wined3d_swapchain *swapchain_no3d,
         struct wined3d_device *device, struct wined3d_swapchain_desc *desc,
-        void *parent, const struct wined3d_parent_ops *parent_ops) DECLSPEC_HIDDEN;
+        struct wined3d_swapchain_state_parent *state_parent, void *parent,
+        const struct wined3d_parent_ops *parent_ops) DECLSPEC_HIDDEN;
 
 struct wined3d_swapchain_gl
 {
@@ -5163,7 +5183,8 @@ HDC wined3d_swapchain_gl_get_backup_dc(struct wined3d_swapchain_gl *swapchain_gl
 struct wined3d_context_gl *wined3d_swapchain_gl_get_context(struct wined3d_swapchain_gl *swapchain_gl) DECLSPEC_HIDDEN;
 HRESULT wined3d_swapchain_gl_init(struct wined3d_swapchain_gl *swapchain_gl,
         struct wined3d_device *device, struct wined3d_swapchain_desc *desc,
-        void *parent, const struct wined3d_parent_ops *parent_ops) DECLSPEC_HIDDEN;
+        struct wined3d_swapchain_state_parent *state_parent, void *parent,
+        const struct wined3d_parent_ops *parent_ops) DECLSPEC_HIDDEN;
 
 struct wined3d_swapchain_vk
 {
@@ -5189,7 +5210,8 @@ static inline struct wined3d_swapchain_vk *wined3d_swapchain_vk(struct wined3d_s
 void wined3d_swapchain_vk_cleanup(struct wined3d_swapchain_vk *swapchain_vk) DECLSPEC_HIDDEN;
 HRESULT wined3d_swapchain_vk_init(struct wined3d_swapchain_vk *swapchain_vk,
         struct wined3d_device *device, struct wined3d_swapchain_desc *desc,
-        void *parent, const struct wined3d_parent_ops *parent_ops) DECLSPEC_HIDDEN;
+        struct wined3d_swapchain_state_parent *state_parent, void *parent,
+        const struct wined3d_parent_ops *parent_ops) DECLSPEC_HIDDEN;
 
 /*****************************************************************************
  * Utility function prototypes
@@ -5352,7 +5374,7 @@ struct wined3d_geometry_shader
     unsigned int vertices_out;
     unsigned int instance_count;
 
-    struct wined3d_stream_output_desc so_desc;
+    const struct wined3d_stream_output_desc *so_desc;
 };
 
 struct wined3d_pixel_shader
@@ -5587,6 +5609,7 @@ extern enum wined3d_format_id pixelformat_for_depth(DWORD depth) DECLSPEC_HIDDEN
 /* WineD3D pixel format flags */
 #define WINED3DFMT_FLAG_POSTPIXELSHADER_BLENDING    0x00000001
 #define WINED3DFMT_FLAG_FILTERING                   0x00000002
+#define WINED3DFMT_FLAG_UNORDERED_ACCESS            0x00000004
 #define WINED3DFMT_FLAG_DEPTH_STENCIL               0x00000008
 #define WINED3DFMT_FLAG_RENDERTARGET                0x00000010
 #define WINED3DFMT_FLAG_EXTENSION                   0x00000020
@@ -5747,7 +5770,7 @@ static inline BOOL use_transform_feedback(const struct wined3d_state *state)
 
     if (!(shader = state->shader[WINED3D_SHADER_TYPE_GEOMETRY]))
         return FALSE;
-    return shader->u.gs.so_desc.element_count;
+    return !!shader->u.gs.so_desc;
 }
 
 static inline void context_apply_state(struct wined3d_context *context,
@@ -5811,8 +5834,8 @@ static inline BOOL can_use_texture_swizzle(const struct wined3d_d3d_info *d3d_in
 
 static inline BOOL is_rasterization_disabled(const struct wined3d_shader *geometry_shader)
 {
-    return geometry_shader
-            && geometry_shader->u.gs.so_desc.rasterizer_stream_idx == WINED3D_NO_RASTERIZER_STREAM;
+    return geometry_shader && geometry_shader->u.gs.so_desc
+            && geometry_shader->u.gs.so_desc->rasterizer_stream_idx == WINED3D_NO_RASTERIZER_STREAM;
 }
 
 static inline DWORD wined3d_extract_bits(const DWORD *bitstream,
@@ -6037,6 +6060,11 @@ static inline BOOL wined3d_dsv_srv_conflict(const struct wined3d_rendertarget_vi
             || (srv_format->green_size && !(dsv->desc.flags & WINED3D_VIEW_READ_ONLY_STENCIL));
 }
 
+static inline unsigned int wined3d_bind_layer_count(const struct wined3d_texture *texture)
+{
+    return texture->resource.type == WINED3D_RTYPE_TEXTURE_3D ? texture->resource.depth : texture->layer_count;
+}
+
 static inline bool wined3d_srv_all_subresources(const struct wined3d_shader_resource_view *srv)
 {
     struct wined3d_texture *texture;
@@ -6049,7 +6077,7 @@ static inline bool wined3d_srv_all_subresources(const struct wined3d_shader_reso
 
     texture = texture_from_resource(srv->resource);
     return srv->desc.u.texture.level_count == texture->level_count
-            && srv->desc.u.texture.layer_count == texture->layer_count;
+            && srv->desc.u.texture.layer_count == wined3d_bind_layer_count(texture);
 }
 
 static inline bool wined3d_rtv_all_subresources(const struct wined3d_rendertarget_view *rtv)
@@ -6063,102 +6091,79 @@ static inline bool wined3d_rtv_all_subresources(const struct wined3d_rendertarge
         return FALSE;
 
     texture = texture_from_resource(rtv->resource);
-    return texture->level_count == 1 && rtv->layer_count == texture->layer_count;
+    return texture->level_count == 1 && rtv->layer_count == wined3d_bind_layer_count(texture);
 }
 
-static inline void wined3d_srv_bind_count_inc(struct wined3d_shader_resource_view *srv)
+static inline void wined3d_srv_bind_count_add(struct wined3d_shader_resource_view *srv, int value)
 {
     struct wined3d_resource *resource = srv->resource;
     struct wined3d_texture *texture;
     unsigned int level, layer;
 
-    ++resource->srv_bind_count_device;
-
     if (wined3d_srv_all_subresources(srv))
+    {
+        resource->srv_full_bind_count_device += value;
         return;
+    }
+
+    resource->srv_partial_bind_count_device += value;
 
     texture = texture_from_resource(resource);
 
     if (!resource->sub_resource_bind_counts_device
             && !(resource->sub_resource_bind_counts_device = heap_alloc_zero(texture->level_count
-            * texture->layer_count * sizeof(*resource->sub_resource_bind_counts_device))))
+            * wined3d_bind_layer_count(texture) * sizeof(*resource->sub_resource_bind_counts_device))))
         return;
 
     for (layer = 0; layer < srv->desc.u.texture.layer_count; ++layer)
         for (level = 0; level < srv->desc.u.texture.level_count; ++level)
-            ++resource->sub_resource_bind_counts_device[(layer + srv->desc.u.texture.layer_idx)
-                    * texture->level_count + srv->desc.u.texture.level_idx + level].srv;
+            resource->sub_resource_bind_counts_device[(layer + srv->desc.u.texture.layer_idx)
+                    * texture->level_count + srv->desc.u.texture.level_idx + level].srv += value;
+}
 
-    resource->sub_resource_bind_flags |= WINED3D_SUB_RESOURCES_BIND_SRV;
+static inline void wined3d_srv_bind_count_inc(struct wined3d_shader_resource_view *srv)
+{
+    wined3d_srv_bind_count_add(srv, 1);
 }
 
 static inline void wined3d_srv_bind_count_dec(struct wined3d_shader_resource_view *srv)
 {
-    struct wined3d_resource *resource = srv->resource;
-    unsigned int level, layer, count;
-    struct wined3d_texture *texture;
-
-    --resource->srv_bind_count_device;
-
-    if (wined3d_srv_all_subresources(srv))
-        return;
-
-    texture = texture_from_resource(resource);
-
-    count = 0;
-    for (layer = 0; layer < srv->desc.u.texture.layer_count; ++layer)
-        for (level = 0; level < srv->desc.u.texture.level_count; ++level)
-            count += --resource->sub_resource_bind_counts_device[(layer + srv->desc.u.texture.layer_idx)
-                    * texture->level_count + srv->desc.u.texture.level_idx + level].srv;
-
-    if (!count)
-        resource->sub_resource_bind_flags &= ~WINED3D_SUB_RESOURCES_BIND_SRV;
+    wined3d_srv_bind_count_add(srv, -1);
 }
 
-static inline void wined3d_rtv_bind_count_inc(struct wined3d_rendertarget_view *rtv)
+static inline void wined3d_rtv_bind_count_add(struct wined3d_rendertarget_view *rtv, int value)
 {
     struct wined3d_resource *resource = rtv->resource;
     struct wined3d_texture *texture;
     unsigned int layer;
 
-    ++resource->rtv_bind_count_device;
-
     if (wined3d_rtv_all_subresources(rtv))
+    {
+        resource->rtv_full_bind_count_device += value;
         return;
+    }
+
+    resource->rtv_partial_bind_count_device += value;
 
     texture = texture_from_resource(resource);
 
     if (!resource->sub_resource_bind_counts_device
             && !(resource->sub_resource_bind_counts_device = heap_alloc_zero(texture->level_count
-            * texture->layer_count * sizeof(*resource->sub_resource_bind_counts_device))))
+            * wined3d_bind_layer_count(texture) * sizeof(*resource->sub_resource_bind_counts_device))))
         return;
 
     for (layer = 0; layer < rtv->layer_count; ++layer)
-        ++resource->sub_resource_bind_counts_device[rtv->sub_resource_idx + layer * texture->level_count].rtv;
+        resource->sub_resource_bind_counts_device[rtv->sub_resource_idx + layer * texture->level_count].rtv += value;
+}
 
-    resource->sub_resource_bind_flags |= WINED3D_SUB_RESOURCES_BIND_RTV;
+static inline void wined3d_rtv_bind_count_inc(struct wined3d_rendertarget_view *rtv)
+{
+    wined3d_rtv_bind_count_add(rtv, 1);
 }
 
 static inline void wined3d_rtv_bind_count_dec(struct wined3d_rendertarget_view *rtv)
 {
-    struct wined3d_resource *resource = rtv->resource;
-    struct wined3d_texture *texture;
-    unsigned int layer, count;
-
-    --resource->rtv_bind_count_device;
-
-    if (wined3d_rtv_all_subresources(rtv))
-        return;
-
-    texture = texture_from_resource(rtv->resource);
-
-    count = 0;
-    for (layer = 0; layer < rtv->layer_count; ++layer)
-        count += --resource->sub_resource_bind_counts_device[rtv->sub_resource_idx
-                + layer * texture->level_count].rtv;
-
-    if (!count)
-        resource->sub_resource_bind_flags &= ~WINED3D_SUB_RESOURCES_BIND_RTV;
+    wined3d_rtv_bind_count_add(rtv, -1);
 }
 
 static inline bool wined3d_is_srv_rtv_bound(const struct wined3d_shader_resource_view *srv)
@@ -6167,9 +6172,11 @@ static inline bool wined3d_is_srv_rtv_bound(const struct wined3d_shader_resource
     struct wined3d_texture *texture;
     unsigned int level, layer;
 
-    if (!resource->rtv_bind_count_device || !(resource->sub_resource_bind_flags & WINED3D_SUB_RESOURCES_BIND_RTV)
-            || wined3d_srv_all_subresources(srv))
-        return resource->rtv_bind_count_device;
+    if (!(resource->rtv_full_bind_count_device + resource->rtv_partial_bind_count_device))
+        return FALSE;
+
+    if (resource->rtv_full_bind_count_device || wined3d_srv_all_subresources(srv))
+        return TRUE;
 
     texture = texture_from_resource(resource);
 
@@ -6188,9 +6195,11 @@ static inline bool wined3d_is_rtv_srv_bound(const struct wined3d_rendertarget_vi
     struct wined3d_texture *texture;
     unsigned int layer;
 
-    if (!resource->srv_bind_count_device || !(resource->sub_resource_bind_flags & WINED3D_SUB_RESOURCES_BIND_SRV)
-            || wined3d_rtv_all_subresources(rtv))
-        return resource->srv_bind_count_device;
+    if (!(resource->srv_full_bind_count_device + resource->srv_partial_bind_count_device))
+        return FALSE;
+
+    if (resource->srv_full_bind_count_device || wined3d_rtv_all_subresources(rtv))
+        return TRUE;
 
     texture = texture_from_resource(resource);
 

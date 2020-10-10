@@ -23,9 +23,9 @@
 @ stub MFAverageTimePerFrameToFrameRate
 @ stdcall MFBeginCreateFile(long long long wstr ptr ptr ptr)
 @ stub MFBeginGetHostByName
-@ stub MFBeginRegisterWorkQueueWithMMCSS
+@ stdcall MFBeginRegisterWorkQueueWithMMCSS(long wstr long ptr ptr)
 @ stdcall MFBeginRegisterWorkQueueWithMMCSSEx(long wstr long long ptr ptr) rtworkq.RtwqBeginRegisterWorkQueueWithMMCSS
-@ stub MFBeginUnregisterWorkQueueWithMMCSS
+@ stdcall MFBeginUnregisterWorkQueueWithMMCSS(long ptr ptr) rtworkq.RtwqBeginUnregisterWorkQueueWithMMCSS
 @ stub MFBlockThread
 @ stub MFCalculateBitmapImageSize
 @ stdcall MFCalculateImageSize(ptr long long ptr)
@@ -87,8 +87,8 @@
 @ stub MFDeserializePresentationDescriptor
 @ stdcall MFEndCreateFile(ptr ptr)
 @ stub MFEndGetHostByName
-@ stub MFEndRegisterWorkQueueWithMMCSS
-@ stub MFEndUnregisterWorkQueueWithMMCSS
+@ stdcall MFEndRegisterWorkQueueWithMMCSS(ptr ptr) rtworkq.RtwqEndRegisterWorkQueueWithMMCSS
+@ stdcall MFEndUnregisterWorkQueueWithMMCSS(ptr) rtworkq.RtwqEndUnregisterWorkQueueWithMMCSS
 @ stub MFFrameRateToAverageTimePerFrame
 @ stub MFFreeAdaptersAddresses
 @ stub MFGetAdaptersAddresses

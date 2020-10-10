@@ -824,7 +824,7 @@ IMFMediaType *mf_media_type_from_caps(const GstCaps *caps)
                 }
                 if (i == ARRAY_SIZE(uncompressed_video_formats))
                 {
-                    FIXME("Unrecognized uncompressed video format %x\n", video_info.finfo->format);
+                    FIXME("Unrecognized uncompressed video format %s\n", gst_video_format_to_string(video_info.finfo->format));
                     IMFMediaType_Release(media_type);
                     return NULL;
                 }
@@ -976,44 +976,43 @@ IMFMediaType *mf_media_type_from_caps(const GstCaps *caps)
         if (!strcmp(mime_type, "audio/x-raw"))
         {
             GstAudioInfo audio_info;
+            DWORD depth;
 
-            if (gst_audio_info_from_caps(&audio_info, caps))
-            {
-                DWORD depth = GST_AUDIO_INFO_DEPTH(&audio_info);
-
-                /* validation */
-                if ((audio_info.finfo->flags & GST_AUDIO_FORMAT_FLAG_INTEGER && depth > 8) ||
-                    (audio_info.finfo->flags & GST_AUDIO_FORMAT_FLAG_SIGNED && depth <= 8) ||
-                    (audio_info.finfo->endianness != G_LITTLE_ENDIAN && depth > 8))
-                {
-                    IMFMediaType_Release(media_type);
-                    return NULL;
-                }
-
-                /* conversion */
-                switch (audio_info.finfo->flags)
-                {
-                    case GST_AUDIO_FORMAT_FLAG_FLOAT:
-                        IMFMediaType_SetGUID(media_type, &MF_MT_SUBTYPE, &MFAudioFormat_Float);
-                        break;
-                    case GST_AUDIO_FORMAT_FLAG_INTEGER:
-                    case GST_AUDIO_FORMAT_FLAG_SIGNED:
-                        IMFMediaType_SetGUID(media_type, &MF_MT_SUBTYPE, &MFAudioFormat_PCM);
-                        break;
-                    default:
-                        FIXME("Unrecognized audio format %x\n", audio_info.finfo->format);
-                        IMFMediaType_Release(media_type);
-                        return NULL;
-                }
-
-                IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_BITS_PER_SAMPLE, depth);
-            }
-            else
+            if (!gst_audio_info_from_caps(&audio_info, caps))
             {
                 ERR("Failed to get caps audio info\n");
                 IMFMediaType_Release(media_type);
                 return NULL;
             }
+
+            depth = GST_AUDIO_INFO_DEPTH(&audio_info);
+
+            /* validation */
+            if ((audio_info.finfo->flags & GST_AUDIO_FORMAT_FLAG_INTEGER && depth > 8) ||
+                (audio_info.finfo->flags & GST_AUDIO_FORMAT_FLAG_SIGNED && depth <= 8) ||
+                (audio_info.finfo->endianness != G_LITTLE_ENDIAN && depth > 8))
+            {
+                IMFMediaType_Release(media_type);
+                return NULL;
+            }
+
+            /* conversion */
+            switch (audio_info.finfo->flags)
+            {
+                case GST_AUDIO_FORMAT_FLAG_FLOAT:
+                    IMFMediaType_SetGUID(media_type, &MF_MT_SUBTYPE, &MFAudioFormat_Float);
+                    break;
+                case GST_AUDIO_FORMAT_FLAG_INTEGER:
+                case GST_AUDIO_FORMAT_FLAG_SIGNED:
+                    IMFMediaType_SetGUID(media_type, &MF_MT_SUBTYPE, &MFAudioFormat_PCM);
+                    break;
+                default:
+                    FIXME("Unrecognized audio format %x\n", audio_info.finfo->format);
+                    IMFMediaType_Release(media_type);
+                    return NULL;
+            }
+
+            IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_BITS_PER_SAMPLE, depth);
         }
         else if (!(strcmp(mime_type, "audio/mpeg")))
         {

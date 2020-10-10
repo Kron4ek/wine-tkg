@@ -76,6 +76,8 @@ ME_DisplayItem *ME_MakeDI(ME_DIType type) DECLSPEC_HIDDEN;
 void ME_DestroyDisplayItem(ME_DisplayItem *item) DECLSPEC_HIDDEN;
 void ME_DumpDocument(ME_TextBuffer *buffer) DECLSPEC_HIDDEN;
 void destroy_para(ME_TextEditor *editor, ME_DisplayItem *item) DECLSPEC_HIDDEN;
+ME_Run *run_prev( ME_Run *run ) DECLSPEC_HIDDEN;
+ME_Run *run_next( ME_Run *run ) DECLSPEC_HIDDEN;
 
 /* string.c */
 ME_String *ME_MakeStringN(LPCWSTR szText, int nMaxChars) DECLSPEC_HIDDEN;
@@ -145,6 +147,10 @@ void ME_GetCharFormat(ME_TextEditor *editor, const ME_Cursor *from,
 void ME_GetSelectionCharFormat(ME_TextEditor *editor, CHARFORMAT2W *pFmt) DECLSPEC_HIDDEN;
 void ME_GetDefaultCharFormat(ME_TextEditor *editor, CHARFORMAT2W *pFmt) DECLSPEC_HIDDEN;
 void ME_SetDefaultCharFormat(ME_TextEditor *editor, CHARFORMAT2W *mod) DECLSPEC_HIDDEN;
+static inline ME_DisplayItem *run_get_di( ME_Run *run )
+{
+    return (ME_DisplayItem *)((ptrdiff_t)run - offsetof(ME_DisplayItem, member));
+}
 
 /* caret.c */
 void ME_SetCursorToStart(ME_TextEditor *editor, ME_Cursor *cursor) DECLSPEC_HIDDEN;
@@ -202,10 +208,16 @@ void ME_SetDefaultParaFormat(ME_TextEditor *editor, PARAFORMAT2 *pFmt) DECLSPEC_
 void para_num_init( ME_Context *c, ME_Paragraph *para ) DECLSPEC_HIDDEN;
 void para_num_clear( struct para_num *pn ) DECLSPEC_HIDDEN;
 int get_total_width(ME_TextEditor *editor) DECLSPEC_HIDDEN;
-void mark_para_rewrap(ME_TextEditor *editor, ME_DisplayItem *para) DECLSPEC_HIDDEN;
-ME_DisplayItem *get_di_from_para(ME_Paragraph *para) DECLSPEC_HIDDEN;
-void add_marked_para(ME_TextEditor *editor, ME_DisplayItem *para) DECLSPEC_HIDDEN;
-void remove_marked_para(ME_TextEditor *editor, ME_DisplayItem *para) DECLSPEC_HIDDEN;
+void para_mark_rewrap( ME_TextEditor *editor, ME_Paragraph *para ) DECLSPEC_HIDDEN;
+void para_mark_add( ME_TextEditor *editor, ME_Paragraph *para ) DECLSPEC_HIDDEN;
+void para_mark_remove( ME_TextEditor *editor, ME_Paragraph *para ) DECLSPEC_HIDDEN;
+ME_Paragraph *para_next( ME_Paragraph *para ) DECLSPEC_HIDDEN;
+ME_Paragraph *para_prev( ME_Paragraph *para ) DECLSPEC_HIDDEN;
+ME_Run *para_first_run( ME_Paragraph *para ) DECLSPEC_HIDDEN;
+static inline ME_DisplayItem *para_get_di(ME_Paragraph *para)
+{
+    return (ME_DisplayItem *)((ptrdiff_t)para - offsetof(ME_DisplayItem, member));
+}
 
 /* paint.c */
 void ME_PaintContent(ME_TextEditor *editor, HDC hDC, const RECT *rcUpdate) DECLSPEC_HIDDEN;
@@ -263,9 +275,9 @@ ME_DisplayItem *ME_InsertTableRowStartAtParagraph(ME_TextEditor *editor,
                                                   ME_DisplayItem *para) DECLSPEC_HIDDEN;
 ME_DisplayItem *ME_InsertTableCellFromCursor(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 ME_DisplayItem *ME_InsertTableRowEndFromCursor(ME_TextEditor *editor) DECLSPEC_HIDDEN;
-ME_DisplayItem *ME_GetTableRowEnd(ME_DisplayItem *para) DECLSPEC_HIDDEN;
-ME_DisplayItem *ME_GetTableRowStart(ME_DisplayItem *para) DECLSPEC_HIDDEN;
-ME_DisplayItem *ME_GetOuterParagraph(ME_DisplayItem *para) DECLSPEC_HIDDEN;
+ME_Paragraph *table_row_end( ME_Paragraph *para ) DECLSPEC_HIDDEN;
+ME_Paragraph *table_row_start( ME_Paragraph *para ) DECLSPEC_HIDDEN;
+ME_Paragraph *table_outer_para( ME_Paragraph *para ) DECLSPEC_HIDDEN;
 void ME_CheckTablesForCorruption(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 void ME_ProtectPartialTableDeletion(ME_TextEditor *editor, ME_Cursor *c, int *nChars) DECLSPEC_HIDDEN;
 ME_DisplayItem* ME_AppendTableRow(ME_TextEditor *editor, ME_DisplayItem *table_row) DECLSPEC_HIDDEN;

@@ -23,15 +23,10 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(richedit);
 
-void mark_para_rewrap(ME_TextEditor *editor, ME_DisplayItem *para)
+void para_mark_rewrap( ME_TextEditor *editor, ME_Paragraph *para )
 {
-    para->member.para.nFlags |= MEPF_REWRAP;
-    add_marked_para(editor, para);
-}
-
-ME_DisplayItem *get_di_from_para(ME_Paragraph *para)
-{
-    return (ME_DisplayItem *)((ptrdiff_t)para - offsetof(ME_DisplayItem, member));
+    para->nFlags |= MEPF_REWRAP;
+    para_mark_add( editor, para );
 }
 
 static ME_DisplayItem *make_para(ME_TextEditor *editor)
@@ -40,7 +35,6 @@ static ME_DisplayItem *make_para(ME_TextEditor *editor)
 
     ME_SetDefaultParaFormat(editor, &item->member.para.fmt);
     item->member.para.nFlags = MEPF_REWRAP;
-    item->member.para.next_marked = item->member.para.prev_marked = NULL;
 
     return item;
 }
@@ -57,8 +51,21 @@ void destroy_para(ME_TextEditor *editor, ME_DisplayItem *item)
     editor->total_rows -= item->member.para.nRows;
     ME_DestroyString(item->member.para.text);
     para_num_clear( &item->member.para.para_num );
-    remove_marked_para(editor, item);
+    para_mark_remove( editor, &item->member.para );
     ME_DestroyDisplayItem(item);
+}
+
+/* Note para_next/prev will return the start and end doc nodes */
+ME_Paragraph *para_next( ME_Paragraph *para )
+{
+    if (para->next_para) return &para->next_para->member.para;
+    return NULL;
+}
+
+ME_Paragraph *para_prev( ME_Paragraph *para )
+{
+    if (para->prev_para) return &para->prev_para->member.para;
+    return NULL;
 }
 
 int get_total_width(ME_TextEditor *editor)
@@ -79,73 +86,34 @@ int get_total_width(ME_TextEditor *editor)
     return total_width;
 }
 
-void remove_marked_para(ME_TextEditor *editor, ME_DisplayItem *di)
+static int para_mark_compare( const void *key, const struct wine_rb_entry *entry )
 {
-    ME_DisplayItem *head = editor->first_marked_para;
+    ME_Paragraph *para = WINE_RB_ENTRY_VALUE( entry, ME_Paragraph, marked_entry );
 
-    assert(di->type == diParagraph);
-    if (!di->member.para.next_marked && !di->member.para.prev_marked)
-    {
-        if (di == head)
-            editor->first_marked_para = NULL;
-    }
-    else if (di->member.para.next_marked && di->member.para.prev_marked)
-    {
-        di->member.para.prev_marked->member.para.next_marked = di->member.para.next_marked;
-        di->member.para.next_marked->member.para.prev_marked = di->member.para.prev_marked;
-        di->member.para.prev_marked = di->member.para.next_marked = NULL;
-    }
-    else if (di->member.para.next_marked)
-    {
-        assert(di == editor->first_marked_para);
-        editor->first_marked_para = di->member.para.next_marked;
-        di->member.para.next_marked->member.para.prev_marked = NULL;
-        di->member.para.next_marked = NULL;
-    }
-    else
-    {
-        di->member.para.prev_marked->member.para.next_marked = NULL;
-        di->member.para.prev_marked = NULL;
-    }
+    return *(int *)key - para->nCharOfs;
 }
 
-void add_marked_para(ME_TextEditor *editor, ME_DisplayItem *di)
+void para_mark_remove( ME_TextEditor *editor, ME_Paragraph *para )
 {
-    ME_DisplayItem *iter = editor->first_marked_para;
+    wine_rb_remove_key( &editor->marked_paras, &para->nCharOfs );
+}
 
-    if (!iter)
+void para_mark_add( ME_TextEditor *editor, ME_Paragraph *para )
+{
+    wine_rb_put( &editor->marked_paras, &para->nCharOfs, &para->marked_entry );
+}
+
+ME_Run *para_first_run( ME_Paragraph *para )
+{
+    ME_DisplayItem *di;
+
+    for (di = para_get_di( para ); di != para->next_para; di = di->next )
     {
-        editor->first_marked_para = di;
-        return;
+        if (di->type != diRun) continue;
+        return &di->member.run;
     }
-    while (iter)
-    {
-        if (iter == di)
-            return;
-        else if (di->member.para.nCharOfs < iter->member.para.nCharOfs)
-        {
-            if (iter == editor->first_marked_para)
-                editor->first_marked_para = di;
-            di->member.para.next_marked = iter;
-            iter->member.para.prev_marked = di;
-            break;
-        }
-        else if (di->member.para.nCharOfs >= iter->member.para.nCharOfs)
-        {
-            if (!iter->member.para.next_marked || di->member.para.nCharOfs < iter->member.para.next_marked->member.para.nCharOfs)
-            {
-                if (iter->member.para.next_marked)
-                {
-                    di->member.para.next_marked = iter->member.para.next_marked;
-                    iter->member.para.next_marked->member.para.prev_marked = di;
-                }
-                di->member.para.prev_marked = iter;
-                iter->member.para.next_marked = di;
-                break;
-            }
-        }
-        iter = iter->member.para.next_marked;
-    }
+    ERR( "failed to find run in paragraph\n" );
+    return NULL;
 }
 
 void ME_MakeFirstParagraph(ME_TextEditor *editor)
@@ -220,7 +188,8 @@ void ME_MakeFirstParagraph(ME_TextEditor *editor)
 
   text->pLast->member.para.nCharOfs = editor->bEmulateVersion10 ? 2 : 1;
 
-  add_marked_para(editor, para);
+  wine_rb_init( &editor->marked_paras, para_mark_compare );
+  para_mark_add( editor, &para->member.para );
   ME_DestroyContext(&c);
 }
 
@@ -228,7 +197,7 @@ static void ME_MarkForWrapping(ME_TextEditor *editor, ME_DisplayItem *first, con
 {
   while(first != last)
   {
-    mark_para_rewrap(editor, first);
+    para_mark_rewrap( editor, &first->member.para );
     first = first->member.para.next_para;
   }
 }
@@ -454,7 +423,7 @@ static void para_num_clear_list( ME_TextEditor *editor, ME_Paragraph *para, cons
 {
     do
     {
-        mark_para_rewrap(editor, get_di_from_para(para));
+        para_mark_rewrap( editor, para );
         para_num_clear( &para->para_num );
         if (para->next_para->type != diParagraph) break;
         para = &para->next_para->member.para;
@@ -529,7 +498,7 @@ static BOOL ME_SetParaFormat(ME_TextEditor *editor, ME_Paragraph *para, const PA
 
   if (memcmp(&copy, &para->fmt, sizeof(PARAFORMAT2)))
   {
-    mark_para_rewrap(editor, get_di_from_para(para));
+    para_mark_rewrap( editor, para );
     if (((dwMask & PFM_NUMBERING)      && (copy.wNumbering != para->fmt.wNumbering)) ||
         ((dwMask & PFM_NUMBERINGSTART) && (copy.wNumberingStart != para->fmt.wNumberingStart)) ||
         ((dwMask & PFM_NUMBERINGSTYLE) && (copy.wNumberingStyle != para->fmt.wNumberingStyle)))
@@ -604,7 +573,7 @@ ME_DisplayItem *ME_SplitParagraph(ME_TextEditor *editor, ME_DisplayItem *run,
   new_para->member.para.nCharOfs = run_para->member.para.nCharOfs + ofs;
   new_para->member.para.nCharOfs += eol_len;
   new_para->member.para.nFlags = 0;
-  mark_para_rewrap(editor, new_para);
+  para_mark_rewrap( editor, &new_para->member.para );
 
   /* FIXME initialize format style and call ME_SetParaFormat blah blah */
   new_para->member.para.fmt = run_para->member.para.fmt;
@@ -671,9 +640,9 @@ ME_DisplayItem *ME_SplitParagraph(ME_TextEditor *editor, ME_DisplayItem *run,
 
   /* force rewrap of the */
   if (run_para->member.para.prev_para->type == diParagraph)
-    mark_para_rewrap(editor, run_para->member.para.prev_para);
+    para_mark_rewrap( editor, &run_para->member.para.prev_para->member.para );
 
-  mark_para_rewrap(editor, new_para->member.para.prev_para);
+  para_mark_rewrap( editor, &new_para->member.para.prev_para->member.para );
 
   /* we've added the end run, so we need to modify nCharOfs in the next paragraphs */
   ME_PropagateCharOffset(next_para, eol_len);
@@ -808,7 +777,7 @@ ME_DisplayItem *ME_JoinParagraphs(ME_TextEditor *editor, ME_DisplayItem *tp,
   ME_CheckCharOffsets(editor);
 
   editor->nParagraphs--;
-  mark_para_rewrap(editor, tp);
+  para_mark_rewrap( editor, &tp->member.para );
   return tp;
 }
 

@@ -802,7 +802,7 @@ static FARPROC find_ordinal_export( HMODULE module, const IMAGE_EXPORT_DIRECTORY
     proc = get_rva( module, functions[ordinal] );
 
     /* if the address falls into the export dir, it's a forward */
-    if (((const char *)proc >= (const char *)exports) && 
+    if (((const char *)proc >= (const char *)exports) &&
         ((const char *)proc < (const char *)exports + exp_size))
         return find_forwarded_export( module, (const char *)proc, load_path );
 
@@ -1723,7 +1723,7 @@ static void process_detach(void)
 
             /* Call detach notification */
             mod->Flags &= ~LDR_PROCESS_ATTACHED;
-            MODULE_InitDLL( CONTAINING_RECORD(mod, WINE_MODREF, ldr), 
+            MODULE_InitDLL( CONTAINING_RECORD(mod, WINE_MODREF, ldr),
                             DLL_PROCESS_DETACH, ULongToPtr(process_detaching) );
             call_ldr_notifications( LDR_DLL_NOTIFICATION_REASON_UNLOADED, mod );
 
@@ -3691,7 +3691,7 @@ IMAGE_BASE_RELOCATION * WINAPI LdrProcessRelocationBlock( void *page, UINT count
  *		LdrQueryProcessModuleInformation
  *
  */
-NTSTATUS WINAPI LdrQueryProcessModuleInformation(PSYSTEM_MODULE_INFORMATION smi, 
+NTSTATUS WINAPI LdrQueryProcessModuleInformation(PSYSTEM_MODULE_INFORMATION smi,
                                                  ULONG buf_size, ULONG* req_size)
 {
     SYSTEM_MODULE*      sm = &smi->Modules[0];
@@ -3996,7 +3996,7 @@ void WINAPI LdrShutdownThread(void)
         if ( mod->Flags & LDR_NO_DLL_CALLS )
             continue;
 
-        MODULE_InitDLL( CONTAINING_RECORD(mod, WINE_MODREF, ldr), 
+        MODULE_InitDLL( CONTAINING_RECORD(mod, WINE_MODREF, ldr),
                         DLL_THREAD_DETACH, NULL );
     }
 
@@ -4784,7 +4784,9 @@ void __wine_process_init(void)
     static const WCHAR ntdllW[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\',
                                    's','y','s','t','e','m','3','2','\\',
                                    'n','t','d','l','l','.','d','l','l',0};
-    static const WCHAR wow64cpuW[] = {'w','o','w','6','4','c','p','u','.','d','l','l',0};
+    static const WCHAR wow64cpuW[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\',
+                                      's','y','s','t','e','m','3','2','\\',
+                                      'w','o','w','6','4','c','p','u','.','d','l','l',0};
     static const WCHAR kernel32W[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\',
                                       's','y','s','t','e','m','3','2','\\',
                                       'k','e','r','n','e','l','3','2','.','d','l','l',0};
