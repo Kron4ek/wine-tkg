@@ -184,14 +184,16 @@ struct keylength_test {
     BOOL expectedResult;
     DWORD expectedError;
     DWORD brokenError;
+    int todo_result;
+    int todo_error;
 };
 
 static const struct keylength_test baseDSS_keylength[] = {
     /* AT_KEYEXCHANGE is not supported by the base DSS provider */
-    {AT_KEYEXCHANGE, 448 << 16, FALSE, NTE_BAD_ALGID},
-    {AT_KEYEXCHANGE, 512 << 16, FALSE, NTE_BAD_ALGID},
-    {AT_KEYEXCHANGE, 1024 << 16, FALSE, NTE_BAD_ALGID},
-    {AT_KEYEXCHANGE, 1088 << 16, FALSE, NTE_BAD_ALGID},
+    {AT_KEYEXCHANGE, 448 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
+    {AT_KEYEXCHANGE, 512 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
+    {AT_KEYEXCHANGE, 1024 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
+    {AT_KEYEXCHANGE, 1088 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
     /* min 512 max 1024 increment by 64 */
     {AT_SIGNATURE, 448 << 16, FALSE, NTE_BAD_FLAGS},
     {AT_SIGNATURE, 512 << 16, TRUE},
@@ -200,15 +202,15 @@ static const struct keylength_test baseDSS_keylength[] = {
     {AT_SIGNATURE, 1024 << 16, TRUE},
     {AT_SIGNATURE, 1088 << 16, FALSE, NTE_BAD_FLAGS},
     /* CALG_DH_EPHEM is not supported by the base DSS provider */
-    {CALG_DH_EPHEM, 448 << 16, FALSE, NTE_BAD_ALGID},
-    {CALG_DH_EPHEM, 512 << 16, FALSE, NTE_BAD_ALGID},
-    {CALG_DH_EPHEM, 1024 << 16, FALSE, NTE_BAD_ALGID},
-    {CALG_DH_EPHEM, 1088 << 16, FALSE, NTE_BAD_ALGID},
+    {CALG_DH_EPHEM, 448 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
+    {CALG_DH_EPHEM, 512 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
+    {CALG_DH_EPHEM, 1024 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
+    {CALG_DH_EPHEM, 1088 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
     /* CALG_DH_SF is not supported by the base DSS provider */
-    {CALG_DH_SF, 448 << 16, FALSE, NTE_BAD_ALGID},
-    {CALG_DH_SF, 512 << 16, FALSE, NTE_BAD_ALGID},
-    {CALG_DH_SF, 1024 << 16, FALSE, NTE_BAD_ALGID},
-    {CALG_DH_SF, 1088 << 16, FALSE, NTE_BAD_ALGID},
+    {CALG_DH_SF, 448 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
+    {CALG_DH_SF, 512 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
+    {CALG_DH_SF, 1024 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
+    {CALG_DH_SF, 1088 << 16, FALSE, NTE_BAD_ALGID, 0, 0, 1},
     /* min 512 max 1024, increment by 64 */
     {CALG_DSS_SIGN, 448 << 16, FALSE, NTE_BAD_FLAGS},
     {CALG_DSS_SIGN, 512 << 16, TRUE},
@@ -221,10 +223,10 @@ static const struct keylength_test baseDSS_keylength[] = {
 static const struct keylength_test dssDH_keylength[] = {
     /* min 512 max 1024, increment by 64 */
     {AT_KEYEXCHANGE, 448 << 16, FALSE, NTE_BAD_FLAGS},
-    {AT_KEYEXCHANGE, 512 << 16, TRUE},
-    {AT_KEYEXCHANGE, 513 << 16, FALSE, NTE_BAD_FLAGS},
-    {AT_KEYEXCHANGE, 768 << 16, TRUE},
-    {AT_KEYEXCHANGE, 1024 << 16, TRUE},
+    {AT_KEYEXCHANGE, 512 << 16, TRUE, 0, 0, 1},
+    {AT_KEYEXCHANGE, 513 << 16, FALSE, NTE_BAD_FLAGS, 0, 0, 1},
+    {AT_KEYEXCHANGE, 768 << 16, TRUE, 0, 0, 1},
+    {AT_KEYEXCHANGE, 1024 << 16, TRUE, 0, 0, 1},
     {AT_KEYEXCHANGE, 1088 << 16, FALSE, NTE_BAD_FLAGS},
     {AT_SIGNATURE, 448 << 16, FALSE, NTE_BAD_FLAGS},
     {AT_SIGNATURE, 512 << 16, TRUE},
@@ -233,16 +235,16 @@ static const struct keylength_test dssDH_keylength[] = {
     {AT_SIGNATURE, 1024 << 16, TRUE},
     {AT_SIGNATURE, 1088 << 16, FALSE, NTE_BAD_FLAGS},
     {CALG_DH_EPHEM, 448 << 16, FALSE, NTE_BAD_FLAGS},
-    {CALG_DH_EPHEM, 512 << 16, TRUE},
-    {CALG_DH_EPHEM, 513 << 16, FALSE, NTE_BAD_FLAGS},
-    {CALG_DH_EPHEM, 768 << 16, TRUE},
-    {CALG_DH_EPHEM, 1024 << 16, TRUE},
+    {CALG_DH_EPHEM, 512 << 16, TRUE, 0, 0, 1},
+    {CALG_DH_EPHEM, 513 << 16, FALSE, NTE_BAD_FLAGS, 0, 0, 1},
+    {CALG_DH_EPHEM, 768 << 16, TRUE, 0, 0, 1},
+    {CALG_DH_EPHEM, 1024 << 16, TRUE, 0, 0, 1},
     {CALG_DH_EPHEM, 1088 << 16, FALSE, NTE_BAD_FLAGS},
     {CALG_DH_SF, 448 << 16, FALSE, NTE_BAD_FLAGS},
-    {CALG_DH_SF, 512 << 16, TRUE},
-    {CALG_DH_SF, 513 << 16, FALSE, NTE_BAD_FLAGS},
-    {CALG_DH_SF, 768 << 16, TRUE},
-    {CALG_DH_SF, 1024 << 16, TRUE},
+    {CALG_DH_SF, 512 << 16, TRUE, 0, 0, 1},
+    {CALG_DH_SF, 513 << 16, FALSE, NTE_BAD_FLAGS, 0, 0, 1},
+    {CALG_DH_SF, 768 << 16, TRUE, 0, 0, 1},
+    {CALG_DH_SF, 1024 << 16, TRUE, 0, 0, 1},
     {CALG_DH_SF, 1088 << 16, FALSE, NTE_BAD_FLAGS},
     {CALG_DSS_SIGN, 448 << 16, FALSE, NTE_BAD_FLAGS},
     {CALG_DSS_SIGN, 512 << 16, TRUE},
@@ -255,12 +257,12 @@ static const struct keylength_test dssDH_keylength[] = {
 static const struct keylength_test dssENH_keylength[] = {
     /* min 512 max 1024 (AT_KEYEXCHANGE, CALG_DH_EPHEM, CALG_DH_SF max 4096), increment by 64*/
     {AT_KEYEXCHANGE, 448 << 16, FALSE, NTE_BAD_FLAGS},
-    {AT_KEYEXCHANGE, 512 << 16, TRUE},
-    {AT_KEYEXCHANGE, 513 << 16, FALSE, NTE_BAD_FLAGS},
-    {AT_KEYEXCHANGE, 768 << 16, TRUE},
-    {AT_KEYEXCHANGE, 1024 << 16, TRUE},
-    {AT_KEYEXCHANGE, 1088 << 16, TRUE},
-    {AT_KEYEXCHANGE, 2048 << 16, TRUE},
+    {AT_KEYEXCHANGE, 512 << 16, TRUE, 0, 0, 1},
+    {AT_KEYEXCHANGE, 513 << 16, FALSE, NTE_BAD_FLAGS, 0, 0, 1},
+    {AT_KEYEXCHANGE, 768 << 16, TRUE, 0, 0, 1},
+    {AT_KEYEXCHANGE, 1024 << 16, TRUE, 0, 0, 1},
+    {AT_KEYEXCHANGE, 1088 << 16, TRUE, 0, 0, 1},
+    {AT_KEYEXCHANGE, 2048 << 16, TRUE, 0, 0, 1},
     /* Keylength too large - test bot timeout.
     {AT_KEYEXCHANGE, 3072 << 16, TRUE},
     {AT_KEYEXCHANGE, 4096 << 16, TRUE}, */
@@ -272,20 +274,20 @@ static const struct keylength_test dssENH_keylength[] = {
     {AT_SIGNATURE, 1024 << 16, TRUE},
     {AT_SIGNATURE, 1032 << 16, FALSE, NTE_BAD_FLAGS},
     {CALG_DH_EPHEM, 448 << 16, FALSE, NTE_BAD_FLAGS},
-    {CALG_DH_EPHEM, 512 << 16, TRUE},
-    {CALG_DH_EPHEM, 513 << 16, FALSE, NTE_BAD_FLAGS},
-    {CALG_DH_EPHEM, 768 << 16, TRUE},
-    {CALG_DH_EPHEM, 1024 << 16, TRUE},
+    {CALG_DH_EPHEM, 512 << 16, TRUE, 0, 0, 1},
+    {CALG_DH_EPHEM, 513 << 16, FALSE, NTE_BAD_FLAGS, 0, 0, 1},
+    {CALG_DH_EPHEM, 768 << 16, TRUE, 0, 0, 1},
+    {CALG_DH_EPHEM, 1024 << 16, TRUE, 0, 0, 1},
     {CALG_DH_EPHEM, 1040 << 16, FALSE, NTE_BAD_FLAGS},
-    {CALG_DH_EPHEM, 1088 << 16, TRUE},
+    {CALG_DH_EPHEM, 1088 << 16, TRUE, 0, 0, 1},
     {CALG_DH_EPHEM, 4160 << 16, FALSE, NTE_BAD_FLAGS},
     {CALG_DH_SF, 448 << 16, FALSE, NTE_BAD_FLAGS},
-    {CALG_DH_SF, 512 << 16, TRUE},
-    {CALG_DH_SF, 513 << 16, FALSE, NTE_BAD_FLAGS},
-    {CALG_DH_SF, 768 << 16, TRUE},
-    {CALG_DH_SF, 1024 << 16, TRUE},
+    {CALG_DH_SF, 512 << 16, TRUE, 0, 0, 1},
+    {CALG_DH_SF, 513 << 16, FALSE, NTE_BAD_FLAGS, 0, 0, 1},
+    {CALG_DH_SF, 768 << 16, TRUE, 0, 0, 1},
+    {CALG_DH_SF, 1024 << 16, TRUE, 0, 0, 1},
     {CALG_DH_SF, 1032 << 16, FALSE, NTE_BAD_FLAGS},
-    {CALG_DH_SF, 1088 << 16, TRUE},
+    {CALG_DH_SF, 1088 << 16, TRUE, 0, 0, 1},
     {CALG_DH_SF, 4160 << 16, FALSE, NTE_BAD_FLAGS},
     {CALG_DSS_SIGN, 448 << 16, FALSE, NTE_BAD_FLAGS},
     {CALG_DSS_SIGN, 512 << 16, TRUE},
@@ -307,16 +309,22 @@ static void test_keylength_array(HCRYPTPROV hProv,const struct keylength_test *t
         result = CryptGenKey(hProv, tests[i].algid, tests[i].flags, &key);
 
         /* success */
-        if(tests[i].expectedResult)
+        if (tests[i].expectedResult)
         {
-            ok(result, "%d: Expected a key, got %08x\n", i, GetLastError());
-            result = CryptDestroyKey(key);
-            ok(result, "Expected no errors.\n");
+            todo_wine_if (tests[i].todo_result) ok(result, "%d: got %08x\n", i, GetLastError());
+            if (result)
+            {
+                result = CryptDestroyKey(key);
+                ok(result, "%d: got %08x\n", i, GetLastError());
+            }
         }
         else
-            ok(!result && (GetLastError() == tests[i].expectedError ||
-                           broken(GetLastError() == tests[i].brokenError)),
-               "%d: got %x.\n", i, GetLastError());
+        {
+            todo_wine_if (tests[i].todo_result) ok(!result, "%d: got %x\n", i, GetLastError());
+            todo_wine_if (tests[i].todo_error)
+                ok(GetLastError() == tests[i].expectedError ||
+                   broken(GetLastError() == tests[i].brokenError), "%d: got %08x\n", i, GetLastError());
+        }
     }
 }
 
@@ -337,12 +345,7 @@ static void test_keylength(void)
     ok(result, "Expected no errors.\n");
 
     result = CryptGenKey(hProv, AT_SIGNATURE, 0, &key);
-    todo_wine ok(result, "Expected no errors.\n");
-    if (!result)
-    {
-        skip("skipping key length tests\n");
-        return;
-    }
+    ok(result, "Expected no errors.\n");
 
     result = CryptDestroyKey(key);
     ok(result, "Expected no errors.\n");
@@ -889,12 +892,8 @@ static void test_signhash_array(HCRYPTPROV hProv, const struct signature_test *t
         ok(!memcmp(hashValue1, hashValue2, hashLen2), "Hashes were not identical.\n");
 
         /* Sign hash 1 */
+        signLen1 = 0;
         result = CryptSignHashA(hHash1, AT_SIGNATURE, NULL, 0, NULL, &signLen1);
-        if (!result)
-        {
-            skip("skipping sign tests\n");
-            return;
-        }
         ok(result, "Failed to get signature length, got %x\n", GetLastError());
         ok(signLen1 == 40, "Expected a 40-byte signature, got %d\n", signLen1);
 
@@ -902,6 +901,7 @@ static void test_signhash_array(HCRYPTPROV hProv, const struct signature_test *t
         ok(result, "Failed to sign hash, got %x\n", GetLastError());
 
         /* Sign hash 2 */
+        signLen2 = 0;
         result = CryptSignHashA(hHash2, AT_SIGNATURE, NULL, 0, NULL, &signLen2);
         ok(result, "Failed to get signature length, got %x\n", GetLastError());
         ok(signLen2 == 40, "Expected a 40-byte signature, got %d\n", signLen2);
@@ -943,6 +943,11 @@ static void test_signhash_array(HCRYPTPROV hProv, const struct signature_test *t
 
         /* Verify signed hash 1 */
         result = CryptVerifySignatureA(hHash1, signValue1, sizeof(signValue1), pubKey, NULL, 0);
+        if (!result)
+        {
+            skip("skipping sign tests\n");
+            return;
+        }
         ok(result, "Failed to verify signature, got %x\n", GetLastError());
 
         result = CryptCreateHash(hProv, CALG_SHA, 0, 0, &hHash2);
@@ -1413,6 +1418,132 @@ static void test_key_exchange(void)
     ok(result, "Failed to release CSP provider.\n");
 }
 
+static void test_duplicate_hash(void)
+{
+    static const char expected[] =
+        {0xb9,0x7b,0xed,0xd4,0x7b,0xd8,0xa0,0xcd,0x6c,0xba,0xce,0xe9,0xb1,0x36,0xbb,0x00,0x27,0xe3,0x95,0x21};
+    HCRYPTPROV hprov;
+    HCRYPTHASH hhash, hhash2;
+    BYTE buf[20];
+    DWORD len;
+    BOOL result;
+
+    result = CryptAcquireContextA(&hprov, NULL, MS_DEF_DSS_PROV_A, PROV_DSS, CRYPT_VERIFYCONTEXT);
+    ok(result, "got %08x\n", GetLastError());
+
+    result = CryptCreateHash(hprov, CALG_SHA, 0, 0, &hhash);
+    ok(result, "got %08x\n", GetLastError());
+
+    result = CryptHashData(hhash, (const BYTE *)"winetest", sizeof("winetest"), 0);
+    ok(result, "got %08x\n", GetLastError());
+
+    len = sizeof(buf);
+    result = CryptGetHashParam(hhash, HP_HASHVAL, buf, &len, 0);
+    ok(result, "got %08x\n", GetLastError());
+    ok(!memcmp(buf, expected, sizeof(expected)), "wrong data\n");
+
+    SetLastError(0xdeadbeef);
+    result = CryptHashData(hhash, (const BYTE *)"winetest", sizeof("winetest"), 0);
+    ok(!result, "success\n");
+    ok(GetLastError() == NTE_BAD_HASH_STATE, "got %08x\n", GetLastError());
+
+    result = CryptDuplicateHash(hhash, NULL, 0, &hhash2);
+    ok(result, "got %08x\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    result = CryptHashData(hhash2, (const BYTE *)"winetest", sizeof("winetest"), 0);
+    ok(!result, "success\n");
+    ok(GetLastError() == NTE_BAD_HASH_STATE, "got %08x\n", GetLastError());
+
+    len = sizeof(buf);
+    result = CryptGetHashParam(hhash2, HP_HASHVAL, buf, &len, 0);
+    ok(result, "got %08x\n", GetLastError());
+    ok(!memcmp(buf, expected, sizeof(expected)), "wrong data\n");
+
+    result = CryptDestroyHash(hhash2);
+    ok(result, "got %08x\n", GetLastError());
+
+    result = CryptDestroyHash(hhash);
+    ok(result, "got %08x\n", GetLastError());
+
+    result = CryptReleaseContext(hprov, 0);
+    ok(result, "got %08x\n", GetLastError());
+}
+
+static void test_userkey(void)
+{
+    HCRYPTPROV hprov;
+    HCRYPTKEY hkey;
+    BOOL result;
+
+    CryptAcquireContextA(&hprov, "winetest", MS_ENH_DSS_DH_PROV_A, PROV_DSS_DH, CRYPT_DELETEKEYSET);
+    result = CryptAcquireContextA(&hprov, "winetest", MS_ENH_DSS_DH_PROV_A, PROV_DSS_DH, CRYPT_NEWKEYSET);
+    ok(result, "got %08x\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    result = CryptGetUserKey(hprov, AT_KEYEXCHANGE, &hkey);
+    ok(!result, "success\n");
+    ok(GetLastError() == NTE_NO_KEY, "got %08x\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    result = CryptGetUserKey(hprov, AT_SIGNATURE, &hkey);
+    ok(!result, "success\n");
+    ok(GetLastError() == NTE_NO_KEY, "got %08x\n", GetLastError());
+
+    result = CryptGenKey(hprov, AT_SIGNATURE, 1024 << 16, &hkey);
+    ok(result, "got %08x\n", GetLastError());
+    result = CryptDestroyKey(hkey);
+    ok(result, "got %08x\n", GetLastError());
+
+    result = CryptGetUserKey(hprov, AT_SIGNATURE, &hkey);
+    ok(result, "got %08x\n", GetLastError());
+    result = CryptDestroyKey(hkey);
+    ok(result, "got %08x\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    result = CryptGetUserKey(hprov, AT_KEYEXCHANGE, &hkey);
+    ok(!result, "success\n");
+    ok(GetLastError() == NTE_NO_KEY, "got %08x\n", GetLastError());
+
+    result = CryptReleaseContext(hprov, 0);
+    ok(result, "got %08x\n", GetLastError());
+
+    hprov = 0xdeadbeef;
+    result = CryptAcquireContextA(&hprov, "winetest", MS_ENH_DSS_DH_PROV_A, PROV_DSS_DH, CRYPT_DELETEKEYSET);
+    ok(result, "got %08x\n", GetLastError());
+    ok(!hprov, "got %08x\n", (DWORD)hprov);
+}
+
+static void test_duplicate_key(void)
+{
+    HCRYPTPROV hprov;
+    HCRYPTKEY hkey, hkey2;
+    DWORD len;
+    BOOL result;
+    BYTE buf[512];
+
+    result = CryptAcquireContextA(&hprov, NULL, MS_DEF_DSS_PROV_A, PROV_DSS, CRYPT_VERIFYCONTEXT);
+    ok(result, "got %08x\n", GetLastError());
+
+    result = CryptImportKey(hprov, DSS_SIGN_PrivateKey, sizeof(DSS_SIGN_PrivateKey), 0, CRYPT_EXPORTABLE, &hkey);
+    ok(result, "got %08x\n", GetLastError());
+
+    result = CryptDuplicateKey(hkey, NULL, 0, &hkey2);
+    ok(result, "got %08x\n", GetLastError());
+
+    len = sizeof(buf);
+    result = CryptExportKey(hkey2, 0, PRIVATEKEYBLOB, 0, buf, &len);
+    ok(result, "got %08x\n", GetLastError());
+    ok(len == sizeof(DSS_SIGN_PrivateKey), "got %u\n", len);
+    ok(!memcmp(buf, DSS_SIGN_PrivateKey, sizeof(DSS_SIGN_PrivateKey)), "wrong data\n");
+
+    result = CryptDestroyKey(hkey2);
+    ok(result, "got %08x\n", GetLastError());
+
+    result = CryptDestroyKey(hkey);
+    ok(result, "got %08x\n", GetLastError());
+}
+
 START_TEST(dssenh)
 {
     test_acquire_context();
@@ -1422,4 +1553,7 @@ START_TEST(dssenh)
     test_cipher_modes(ciphermode_data, ARRAY_SIZE(ciphermode_data));
     test_verify_signature();
     test_key_exchange();
+    test_duplicate_hash();
+    test_userkey();
+    test_duplicate_key();
 }

@@ -280,6 +280,16 @@ static ME_TextBuffer *ME_MakeText(void) {
   return buf;
 }
 
+ME_Paragraph *editor_first_para( ME_TextEditor *editor )
+{
+    return para_next( &editor->pBuffer->pFirst->member.para );
+}
+
+/* Note, returns the diTextEnd sentinel paragraph */
+ME_Paragraph *editor_end_para( ME_TextEditor *editor )
+{
+    return &editor->pBuffer->pLast->member.para;
+}
 
 static LRESULT ME_StreamInText(ME_TextEditor *editor, DWORD dwFormat, ME_InStream *stream, ME_Style *style)
 {
@@ -575,27 +585,29 @@ void ME_RTFParAttrHook(RTF_Info *info)
 
     if (!info->editor->bEmulateVersion10) /* v4.1 */
     {
-      if (info->tableDef && info->tableDef->tableRowStart &&
-          info->tableDef->tableRowStart->member.para.nFlags & MEPF_ROWEND)
+      if (info->tableDef && info->tableDef->row_start &&
+          info->tableDef->row_start->nFlags & MEPF_ROWEND)
       {
         ME_Cursor cursor;
-        ME_DisplayItem *para;
+        ME_Paragraph *para;
         /* We are just after a table row. */
         RTFFlushOutputBuffer(info);
         cursor = info->editor->pCursors[0];
-        para = cursor.pPara;
-        if (para  == info->tableDef->tableRowStart->member.para.next_para
+        para = &cursor.pPara->member.para;
+        if (para == para_next( info->tableDef->row_start )
             && !cursor.nOffset && !cursor.pRun->member.run.nCharOfs)
         {
           /* Since the table row end, no text has been inserted, and the \intbl
            * control word has not be used.  We can confirm that we are not in a
            * table anymore.
            */
-          info->tableDef->tableRowStart = NULL;
+          info->tableDef->row_start = NULL;
           info->canInheritInTbl = FALSE;
         }
       }
-    } else { /* v1.0 - v3.0 */
+    }
+    else /* v1.0 - v3.0 */
+    {
       info->fmt.dwMask |= PFM_TABLE;
       info->fmt.wEffects &= ~PFE_TABLE;
     }
@@ -603,26 +615,26 @@ void ME_RTFParAttrHook(RTF_Info *info)
   case rtfNestLevel:
     if (!info->editor->bEmulateVersion10) /* v4.1 */
     {
-      while (info->rtfParam > info->nestingLevel) {
+      while (info->rtfParam > info->nestingLevel)
+      {
         RTFTable *tableDef = heap_alloc_zero(sizeof(*tableDef));
         tableDef->parent = info->tableDef;
         info->tableDef = tableDef;
 
         RTFFlushOutputBuffer(info);
-        if (tableDef->tableRowStart &&
-            tableDef->tableRowStart->member.para.nFlags & MEPF_ROWEND)
+        if (tableDef->row_start && tableDef->row_start->nFlags & MEPF_ROWEND)
         {
-          ME_DisplayItem *para = tableDef->tableRowStart;
-          para = para->member.para.next_para;
-          para = ME_InsertTableRowStartAtParagraph(info->editor, para);
-          tableDef->tableRowStart = para;
-        } else {
+          ME_Paragraph *para = para_next( tableDef->row_start );
+          tableDef->row_start = table_insert_row_start_at_para( info->editor, para );
+        }
+        else
+        {
           ME_Cursor cursor;
           WCHAR endl = '\r';
           cursor = info->editor->pCursors[0];
           if (cursor.nOffset || cursor.pRun->member.run.nCharOfs)
             ME_InsertTextFromCursor(info->editor, 0, &endl, 1, info->style);
-          tableDef->tableRowStart = ME_InsertTableRowStartFromCursor(info->editor);
+          tableDef->row_start = table_insert_row_start( info->editor, info->editor->pCursors );
         }
 
         info->nestingLevel++;
@@ -637,25 +649,19 @@ void ME_RTFParAttrHook(RTF_Info *info)
       if (info->nestingLevel < 1)
       {
         RTFTable *tableDef;
+        ME_Paragraph *para;
+
         if (!info->tableDef)
             info->tableDef = heap_alloc_zero(sizeof(*info->tableDef));
         tableDef = info->tableDef;
         RTFFlushOutputBuffer(info);
-        if (tableDef->tableRowStart &&
-            tableDef->tableRowStart->member.para.nFlags & MEPF_ROWEND)
-        {
-          ME_DisplayItem *para = tableDef->tableRowStart;
-          para = para->member.para.next_para;
-          para = ME_InsertTableRowStartAtParagraph(info->editor, para);
-          tableDef->tableRowStart = para;
-        } else {
-          ME_Cursor cursor;
-          WCHAR endl = '\r';
-          cursor = info->editor->pCursors[0];
-          if (cursor.nOffset || cursor.pRun->member.run.nCharOfs)
-            ME_InsertTextFromCursor(info->editor, 0, &endl, 1, info->style);
-          tableDef->tableRowStart = ME_InsertTableRowStartFromCursor(info->editor);
-        }
+        if (tableDef->row_start && tableDef->row_start->nFlags & MEPF_ROWEND)
+          para = para_next( tableDef->row_start );
+        else
+          para = &info->editor->pCursors[0].pPara->member.para;
+
+        tableDef->row_start = table_insert_row_start_at_para( info->editor, para );
+
         info->nestingLevel = 1;
         info->canInheritInTbl = TRUE;
       }
@@ -950,25 +956,24 @@ void ME_RTFSpecialCharHook(RTF_Info *info)
       if (!tableDef)
         break;
       RTFFlushOutputBuffer(info);
-      if (!info->editor->bEmulateVersion10) { /* v4.1 */
-        if (tableDef->tableRowStart)
+      if (!info->editor->bEmulateVersion10) /* v4.1 */
+      {
+        if (tableDef->row_start)
         {
-          if (!info->nestingLevel &&
-              tableDef->tableRowStart->member.para.nFlags & MEPF_ROWEND)
+          if (!info->nestingLevel && tableDef->row_start->nFlags & MEPF_ROWEND)
           {
-            ME_DisplayItem *para = tableDef->tableRowStart;
-            para = para->member.para.next_para;
-            para = ME_InsertTableRowStartAtParagraph(info->editor, para);
-            tableDef->tableRowStart = para;
+            ME_Paragraph *para = para_next( tableDef->row_start );
+            tableDef->row_start = table_insert_row_start_at_para( info->editor, para );
             info->nestingLevel = 1;
           }
-          ME_InsertTableCellFromCursor(info->editor);
+          table_insert_cell( info->editor, info->editor->pCursors );
         }
-      } else { /* v1.0 - v3.0 */
-        ME_DisplayItem *para = info->editor->pCursors[0].pPara;
-        PARAFORMAT2 *pFmt = &para->member.para.fmt;
-        if (pFmt->dwMask & PFM_TABLE && pFmt->wEffects & PFE_TABLE &&
-            tableDef->numCellsInserted < tableDef->numCellsDefined)
+      }
+      else /* v1.0 - v3.0 */
+      {
+        ME_Paragraph *para = &info->editor->pCursors[0].pPara->member.para;
+
+        if (para_in_table( para ) && tableDef->numCellsInserted < tableDef->numCellsDefined)
         {
           WCHAR tab = '\t';
           ME_InsertTextFromCursor(info->editor, 0, &tab, 1, info->style);
@@ -982,61 +987,62 @@ void ME_RTFSpecialCharHook(RTF_Info *info)
       /* else fall through since v4.1 treats rtfNestRow and rtfRow the same */
     case rtfRow:
     {
-      ME_DisplayItem *para, *cell, *run;
+      ME_DisplayItem *run;
+      ME_Paragraph *para;
+      ME_Cell *cell;
       int i;
 
       if (!tableDef)
         break;
       RTFFlushOutputBuffer(info);
-      if (!info->editor->bEmulateVersion10) { /* v4.1 */
-        if (!tableDef->tableRowStart)
-          break;
-        if (!info->nestingLevel &&
-            tableDef->tableRowStart->member.para.nFlags & MEPF_ROWEND)
+      if (!info->editor->bEmulateVersion10) /* v4.1 */
+      {
+        if (!tableDef->row_start) break;
+        if (!info->nestingLevel && tableDef->row_start->nFlags & MEPF_ROWEND)
         {
-          para = tableDef->tableRowStart;
-          para = para->member.para.next_para;
-          para = ME_InsertTableRowStartAtParagraph(info->editor, para);
-          tableDef->tableRowStart = para;
+          para = para_next( tableDef->row_start );
+          tableDef->row_start = table_insert_row_start_at_para( info->editor, para );
           info->nestingLevel++;
         }
-        para = tableDef->tableRowStart;
-        cell = ME_FindItemFwd(para, diCell);
-        assert(cell && !cell->member.cell.prev_cell);
+        para = tableDef->row_start;
+        cell = table_row_first_cell( para );
+        assert( cell && !cell_prev( cell ) );
         if (tableDef->numCellsDefined < 1)
         {
           /* 2000 twips appears to be the cell size that native richedit uses
            * when no cell sizes are specified. */
-          const int defaultCellSize = 2000;
-          int nRightBoundary = defaultCellSize;
-          cell->member.cell.nRightBoundary = nRightBoundary;
-          while (cell->member.cell.next_cell) {
-            cell = cell->member.cell.next_cell;
-            nRightBoundary += defaultCellSize;
-            cell->member.cell.nRightBoundary = nRightBoundary;
+          const int default_size = 2000;
+          int right_boundary = default_size;
+          cell->nRightBoundary = right_boundary;
+          while (cell_next( cell ))
+          {
+            cell = cell_next( cell );
+            right_boundary += default_size;
+            cell->nRightBoundary = right_boundary;
           }
-          para = ME_InsertTableCellFromCursor(info->editor);
-          cell = para->member.para.pCell;
-          cell->member.cell.nRightBoundary = nRightBoundary;
-        } else {
+          para = table_insert_cell( info->editor, info->editor->pCursors );
+          cell = para_cell( para );
+          cell->nRightBoundary = right_boundary;
+        }
+        else
+        {
           for (i = 0; i < tableDef->numCellsDefined; i++)
           {
             RTFCell *cellDef = &tableDef->cells[i];
-            cell->member.cell.nRightBoundary = cellDef->rightBoundary;
-            ME_ApplyBorderProperties(info, &cell->member.cell.border,
-                                     cellDef->border);
-            cell = cell->member.cell.next_cell;
+            cell->nRightBoundary = cellDef->rightBoundary;
+            ME_ApplyBorderProperties( info, &cell->border, cellDef->border );
+            cell = cell_next( cell );
             if (!cell)
             {
-              para = ME_InsertTableCellFromCursor(info->editor);
-              cell = para->member.para.pCell;
+              para = table_insert_cell( info->editor, info->editor->pCursors );
+              cell = para_cell( para );
             }
           }
           /* Cell for table row delimiter is empty */
-          cell->member.cell.nRightBoundary = tableDef->cells[i-1].rightBoundary;
+          cell->nRightBoundary = tableDef->cells[i - 1].rightBoundary;
         }
 
-        run = ME_FindItemFwd(cell, diRun);
+        run = ME_FindItemFwd( cell_get_di( cell) , diRun );
         if (info->editor->pCursors[0].pRun != run ||
             info->editor->pCursors[0].nOffset)
         {
@@ -1051,45 +1057,47 @@ void ME_RTFSpecialCharHook(RTF_Info *info)
                                 nChars, TRUE);
         }
 
-        para = ME_InsertTableRowEndFromCursor(info->editor);
-        para->member.para.fmt.dxOffset = abs(info->tableDef->gapH);
-        para->member.para.fmt.dxStartIndent = info->tableDef->leftEdge;
-        ME_ApplyBorderProperties(info, &para->member.para.border,
-                                 tableDef->border);
+        para = table_insert_row_end( info->editor, info->editor->pCursors );
+        para->fmt.dxOffset = abs(info->tableDef->gapH);
+        para->fmt.dxStartIndent = info->tableDef->leftEdge;
+        ME_ApplyBorderProperties( info, &para->border, tableDef->border );
         info->nestingLevel--;
         if (!info->nestingLevel)
         {
-          if (info->canInheritInTbl) {
-            tableDef->tableRowStart = para;
-          } else {
-            while (info->tableDef) {
+          if (info->canInheritInTbl) tableDef->row_start = para;
+          else
+          {
+            while (info->tableDef)
+            {
               tableDef = info->tableDef;
               info->tableDef = tableDef->parent;
               heap_free(tableDef);
             }
           }
-        } else {
+        }
+        else
+        {
           info->tableDef = tableDef->parent;
           heap_free(tableDef);
         }
-      } else { /* v1.0 - v3.0 */
+      }
+      else /* v1.0 - v3.0 */
+      {
         WCHAR endl = '\r';
-        ME_DisplayItem *para = info->editor->pCursors[0].pPara;
-        PARAFORMAT2 *pFmt = &para->member.para.fmt;
-        pFmt->dxOffset = info->tableDef->gapH;
-        pFmt->dxStartIndent = info->tableDef->leftEdge;
 
-        ME_ApplyBorderProperties(info, &para->member.para.border,
-                                 tableDef->border);
+        para = &info->editor->pCursors[0].pPara->member.para;
+        para->fmt.dxOffset = info->tableDef->gapH;
+        para->fmt.dxStartIndent = info->tableDef->leftEdge;
+
+        ME_ApplyBorderProperties( info, &para->border, tableDef->border );
         while (tableDef->numCellsInserted < tableDef->numCellsDefined)
         {
           WCHAR tab = '\t';
           ME_InsertTextFromCursor(info->editor, 0, &tab, 1, info->style);
           tableDef->numCellsInserted++;
         }
-        pFmt->cTabCount = min(tableDef->numCellsDefined, MAX_TAB_STOPS);
-        if (!tableDef->numCellsDefined)
-          pFmt->wEffects &= ~PFE_TABLE;
+        para->fmt.cTabCount = min(tableDef->numCellsDefined, MAX_TAB_STOPS);
+        if (!tableDef->numCellsDefined) para->fmt.wEffects &= ~PFE_TABLE;
         ME_InsertTextFromCursor(info->editor, 0, &endl, 1, info->style);
         tableDef->numCellsInserted = 0;
       }
@@ -1097,13 +1105,13 @@ void ME_RTFSpecialCharHook(RTF_Info *info)
     }
     case rtfTab:
     case rtfPar:
-      if (info->editor->bEmulateVersion10) { /* v1.0 - 3.0 */
-        ME_DisplayItem *para;
-        PARAFORMAT2 *pFmt;
+      if (info->editor->bEmulateVersion10) /* v1.0 - 3.0 */
+      {
+        ME_Paragraph *para;
+
         RTFFlushOutputBuffer(info);
-        para = info->editor->pCursors[0].pPara;
-        pFmt = &para->member.para.fmt;
-        if (pFmt->dwMask & PFM_TABLE && pFmt->wEffects & PFE_TABLE)
+        para = &info->editor->pCursors[0].pPara->member.para;
+        if (para_in_table( para ))
         {
           /* rtfPar is treated like a space within a table. */
           info->rtfClass = rtfText;
@@ -1689,13 +1697,14 @@ static LRESULT ME_StreamIn(ME_TextEditor *editor, DWORD format, EDITSTREAM *stre
       /* do the parsing */
       RTFRead(&parser);
       RTFFlushOutputBuffer(&parser);
-      if (!editor->bEmulateVersion10) { /* v4.1 */
-        if (parser.tableDef && parser.tableDef->tableRowStart &&
+      if (!editor->bEmulateVersion10) /* v4.1 */
+      {
+        if (parser.tableDef && parser.tableDef->row_start &&
             (parser.nestingLevel > 0 || parser.canInheritInTbl))
         {
           /* Delete any incomplete table row at the end of the rich text. */
           int nOfs, nChars;
-          ME_DisplayItem *para;
+          ME_Paragraph *para;
 
           parser.rtfMinor = rtfRow;
           /* Complete the table row before deleting it.
@@ -1706,23 +1715,24 @@ static LRESULT ME_StreamIn(ME_TextEditor *editor, DWORD format, EDITSTREAM *stre
           {
             while (parser.nestingLevel > 1)
               ME_RTFSpecialCharHook(&parser); /* Decrements nestingLevel */
-            para = parser.tableDef->tableRowStart;
+            para = parser.tableDef->row_start;
             ME_RTFSpecialCharHook(&parser);
-          } else {
-            para = parser.tableDef->tableRowStart;
+          }
+          else
+          {
+            para = parser.tableDef->row_start;
             ME_RTFSpecialCharHook(&parser);
-            assert(para->member.para.nFlags & MEPF_ROWEND);
-            para = para->member.para.next_para;
+            assert( para->nFlags & MEPF_ROWEND );
+            para = para_next( para );
           }
 
-          editor->pCursors[1].pPara = para;
-          editor->pCursors[1].pRun = ME_FindItemFwd(para, diRun);
+          editor->pCursors[1].pPara = para_get_di( para );
+          editor->pCursors[1].pRun = run_get_di( para_first_run( para ) );
           editor->pCursors[1].nOffset = 0;
           nOfs = ME_GetCursorOfs(&editor->pCursors[1]);
           nChars = ME_GetCursorOfs(&editor->pCursors[0]) - nOfs;
           ME_InternalDeleteText(editor, &editor->pCursors[1], nChars, TRUE);
-          if (parser.tableDef)
-            parser.tableDef->tableRowStart = NULL;
+          if (parser.tableDef) parser.tableDef->row_start = NULL;
         }
       }
       ME_CheckTablesForCorruption(editor);
@@ -1784,7 +1794,7 @@ static LRESULT ME_StreamIn(ME_TextEditor *editor, DWORD format, EDITSTREAM *stre
     /* put the cursor at the top */
     if (!(format & SFF_SELECTION))
       set_selection_cursors(editor, 0, 0);
-    ME_CursorFromCharOfs(editor, from, &start);
+    cursor_from_char_ofs( editor, from, &start );
     ME_UpdateLinkAttribute(editor, &start, to - from);
   }
 
@@ -1913,12 +1923,11 @@ ME_FindText(ME_TextEditor *editor, DWORD flags, const CHARRANGE *chrg, const WCH
     /* If possible, find the character before where the search starts */
     if ((flags & FR_WHOLEWORD) && nMin)
     {
-      ME_CursorFromCharOfs(editor, nMin - 1, &cursor);
+      cursor_from_char_ofs( editor, nMin - 1, &cursor );
       wLastChar = *get_text( &cursor.pRun->member.run, cursor.nOffset );
       ME_MoveCursorChars(editor, &cursor, 1, FALSE);
-    } else {
-      ME_CursorFromCharOfs(editor, nMin, &cursor);
     }
+    else cursor_from_char_ofs( editor, nMin, &cursor );
 
     while (cursor.pRun && ME_GetCursorOfs(&cursor) + nLen <= nMax)
     {
@@ -1989,12 +1998,11 @@ ME_FindText(ME_TextEditor *editor, DWORD flags, const CHARRANGE *chrg, const WCH
     /* If possible, find the character after where the search ends */
     if ((flags & FR_WHOLEWORD) && nMax < nTextLen - 1)
     {
-      ME_CursorFromCharOfs(editor, nMax + 1, &cursor);
+      cursor_from_char_ofs( editor, nMax + 1, &cursor );
       wLastChar = *get_text( &cursor.pRun->member.run, cursor.nOffset );
       ME_MoveCursorChars(editor, &cursor, -1, FALSE);
-    } else {
-      ME_CursorFromCharOfs(editor, nMax, &cursor);
     }
+    else cursor_from_char_ofs( editor, nMax, &cursor );
 
     while (cursor.pRun && ME_GetCursorOfs(&cursor) - nLen >= nMin)
     {
@@ -2331,52 +2339,70 @@ done:
     return hr == S_OK;
 }
 
-static BOOL ME_Copy(ME_TextEditor *editor, const ME_Cursor *start, int nChars)
+static HRESULT editor_copy( ME_TextEditor *editor, ME_Cursor *start, int chars, IDataObject **data_out )
 {
-  LPDATAOBJECT dataObj = NULL;
-  HRESULT hr = S_OK;
+    IDataObject *data = NULL;
+    HRESULT hr = S_OK;
 
-  if (editor->cPasswordMask)
-    return FALSE; /* Copying or Cutting masked text isn't allowed */
+    if (editor->lpOleCallback)
+    {
+        CHARRANGE range;
+        range.cpMin = ME_GetCursorOfs( start );
+        range.cpMax = range.cpMin + chars;
+        hr = IRichEditOleCallback_GetClipboardData( editor->lpOleCallback, &range, RECO_COPY, &data );
+    }
 
-  if(editor->lpOleCallback)
-  {
-    CHARRANGE range;
-    range.cpMin = ME_GetCursorOfs(start);
-    range.cpMax = range.cpMin + nChars;
-    hr = IRichEditOleCallback_GetClipboardData(editor->lpOleCallback, &range, RECO_COPY, &dataObj);
-  }
-  if(FAILED(hr) || !dataObj)
-    hr = ME_GetDataObject(editor, start, nChars, &dataObj);
-  if(SUCCEEDED(hr)) {
-    hr = OleSetClipboard(dataObj);
-    IDataObject_Release(dataObj);
-  }
-  return SUCCEEDED(hr);
+    if (FAILED( hr ) || !data)
+        hr = ME_GetDataObject( editor, start, chars, &data );
+
+    if (SUCCEEDED( hr ))
+    {
+        if (data_out)
+            *data_out = data;
+        else
+        {
+            hr = OleSetClipboard( data );
+            IDataObject_Release( data );
+        }
+    }
+
+    return hr;
 }
 
-static BOOL copy_or_cut(ME_TextEditor *editor, BOOL cut)
+HRESULT editor_copy_or_cut( ME_TextEditor *editor, BOOL cut, ME_Cursor *start, int count,
+                            IDataObject **data_out )
 {
-    BOOL result;
-    int offs, num_chars;
-    int start_cursor = ME_GetSelectionOfs(editor, &offs, &num_chars);
-    ME_Cursor *sel_start = &editor->pCursors[start_cursor];
+    HRESULT hr;
 
     if (cut && (editor->styleFlags & ES_READONLY))
     {
-        MessageBeep(MB_ICONERROR);
-        return FALSE;
+        return E_ACCESSDENIED;
     }
 
-    num_chars -= offs;
-    result = ME_Copy(editor, sel_start, num_chars);
-    if (result && cut)
+    hr = editor_copy( editor, start, count, data_out );
+    if (SUCCEEDED(hr) && cut)
     {
-        ME_InternalDeleteText(editor, sel_start, num_chars, FALSE);
-        ME_CommitUndo(editor);
-        ME_UpdateRepaint(editor, TRUE);
+        ME_InternalDeleteText( editor, start, count, FALSE );
+        ME_CommitUndo( editor );
+        ME_UpdateRepaint( editor, TRUE );
     }
-    return result;
+    return hr;
+}
+
+static BOOL copy_or_cut( ME_TextEditor *editor, BOOL cut )
+{
+    HRESULT hr;
+    int offs, count;
+    int start_cursor = ME_GetSelectionOfs( editor, &offs, &count );
+    ME_Cursor *sel_start = &editor->pCursors[start_cursor];
+
+    if (editor->cPasswordMask) return FALSE;
+
+    count -= offs;
+    hr = editor_copy_or_cut( editor, cut, sel_start, count, NULL );
+    if (FAILED( hr )) MessageBeep( MB_ICONERROR );
+
+    return SUCCEEDED( hr );
 }
 
 /* helper to send a msg filter notification */
@@ -2482,7 +2508,7 @@ static BOOL handle_enter(ME_TextEditor *editor)
                 if (para->member.para.nFlags & MEPF_ROWEND)
                 {
                     /* Add a new table row after this row. */
-                    para = ME_AppendTableRow(editor, para);
+                    para = para_get_di( table_append_row( editor, &para->member.para ) );
                     para = para->member.para.next_para;
                     editor->pCursors[0].pPara = para;
                     editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
@@ -2530,7 +2556,7 @@ static BOOL handle_enter(ME_TextEditor *editor)
                         if (from == to)
                         {
                             ME_ContinueCoalescingTransaction(editor);
-                            para = ME_AppendTableRow(editor, para);
+                            para = para_get_di( table_append_row( editor, &para->member.para ) );
                             editor->pCursors[0].pPara = para;
                             editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
                             editor->pCursors[0].nOffset = 0;
@@ -2561,7 +2587,7 @@ static BOOL handle_enter(ME_TextEditor *editor)
                         else
                         {
                             editor->pCursors[1] = editor->pCursors[0];
-                            para = ME_AppendTableRow(editor, para);
+                            para = para_get_di( table_append_row( editor, &para->member.para ) );
                             editor->pCursors[0].pPara = para;
                             editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
                             editor->pCursors[0].nOffset = 0;
@@ -2574,7 +2600,7 @@ static BOOL handle_enter(ME_TextEditor *editor)
                 }
             }
 
-            style = ME_GetInsertStyle(editor, 0);
+            style = style_get_insert_style( editor, editor->pCursors );
 
             /* Normally the new eop style is the insert style, however in a list it is copied from the existing
             eop style (this prevents the list label style changing when the new eop is inserted).
@@ -2816,7 +2842,7 @@ static LRESULT ME_Char(ME_TextEditor *editor, WPARAM charCode,
     /* WM_CHAR is restricted to nTextLimit */
     if(editor->nTextLimit > ME_GetTextLength(editor) - (to-from))
     {
-      ME_Style *style = ME_GetInsertStyle(editor, 0);
+      ME_Style *style = style_get_insert_style( editor, editor->pCursors );
       ME_ContinueCoalescingTransaction(editor);
       ME_InsertTextFromCursor(editor, 0, &wstr, 1, style);
       ME_ReleaseStyle(style);
@@ -3005,7 +3031,7 @@ static LONG ME_GetSelectionType(ME_TextEditor *editor)
         {
             ME_Cursor cursor;
 
-            ME_CursorFromCharOfs(editor, start + i, &cursor);
+            cursor_from_char_ofs( editor, start + i, &cursor );
             if (cursor.pRun->member.run.reobj)
                 object_count++;
             else
@@ -3095,7 +3121,6 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
   ed->nUDArrowX = -1;
   ed->rgbBackColor = -1;
   ed->hbrBackground = GetSysColorBrush(COLOR_WINDOW);
-  ed->bCaretAtEnd = FALSE;
   ed->nEventMask = 0;
   ed->nModifyStep = 0;
   ed->nTextLimit = TEXT_LIMIT_DEFAULT;
@@ -3193,10 +3218,11 @@ void ME_DestroyEditor(ME_TextEditor *editor)
   ME_ClearTempStyle(editor);
   ME_EmptyUndoStack(editor);
   editor->pBuffer->pFirst = NULL;
-  while(p) {
+  while(p)
+  {
     pNext = p->next;
     if (p->type == diParagraph)
-      destroy_para(editor, p);
+      para_destroy( editor, &p->member.para );
     else
       ME_DestroyDisplayItem(p);
     p = pNext;
@@ -4201,7 +4227,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
       nEnd = textlength;
     if (nStart >= nEnd) return 0;
 
-    ME_CursorFromCharOfs(editor, nStart, &start);
+    cursor_from_char_ofs( editor, nStart, &start );
     return ME_GetTextRange(editor, rng->lpstrText, &start, nEnd - nStart, unicode);
   }
   case EM_GETLINE:
@@ -4309,7 +4335,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   {
     ME_DisplayItem *item, *item_end;
     int nChars = 0, nThisLineOfs = 0, nNextLineOfs = 0;
-    ME_DisplayItem *para, *run;
+    ME_Cursor cursor;
 
     if (wParam > ME_GetTextLength(editor))
       return 0;
@@ -4318,19 +4344,20 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
       FIXME("EM_LINELENGTH: returning number of unselected characters on lines with selection unsupported.\n");
       return 0;
     }
-    ME_RunOfsFromCharOfs(editor, wParam, &para, &run, NULL);
-    item = ME_RowStart(run);
-    nThisLineOfs = ME_CharOfsFromRunOfs(editor, para, ME_FindItemFwd(item, diRun), 0);
+    cursor_from_char_ofs( editor, wParam, &cursor );
+    item = ME_RowStart( cursor.pRun );
+    nThisLineOfs = run_char_ofs( &ME_FindItemFwd( item, diRun )->member.run, 0 );
     item_end = ME_FindItemFwd(item, diStartRowOrParagraphOrEnd);
-    if (item_end->type == diStartRow) {
-      nNextLineOfs = ME_CharOfsFromRunOfs(editor, para, ME_FindItemFwd(item_end, diRun), 0);
-    } else {
+    if (item_end->type == diStartRow)
+      nNextLineOfs = run_char_ofs( &ME_FindItemFwd( item_end, diRun )->member.run, 0 );
+    else
+    {
       ME_DisplayItem *endRun = ME_FindItemBack(item_end, diRun);
       assert(endRun && endRun->member.run.nFlags & MERF_ENDPARA);
-      nNextLineOfs = item_end->member.para.nCharOfs - endRun->member.run.len;
+      nNextLineOfs = run_char_ofs( &endRun->member.run, 0 );
     }
     nChars = nNextLineOfs - nThisLineOfs;
-    TRACE("EM_LINELENGTH(%ld)==%d\n",wParam, nChars);
+    TRACE("EM_LINELENGTH(%ld)==%d\n", wParam, nChars);
     return nChars;
   }
   case EM_EXLIMITTEXT:
@@ -4420,8 +4447,8 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   }
   case EM_POSFROMCHAR:
   {
-    ME_DisplayItem *pPara, *pRun;
-    int nCharOfs, nOffset, nLength;
+    ME_Cursor cursor;
+    int nCharOfs, nLength;
     POINTL pt = {0,0};
 
     nCharOfs = wParam;
@@ -4432,11 +4459,11 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     nCharOfs = min(nCharOfs, nLength);
     nCharOfs = max(nCharOfs, 0);
 
-    ME_RunOfsFromCharOfs(editor, nCharOfs, &pPara, &pRun, &nOffset);
-    assert(pRun->type == diRun);
-    pt.y = pRun->member.run.pt.y;
-    pt.x = pRun->member.run.pt.x + ME_PointFromChar(editor, &pRun->member.run, nOffset, TRUE);
-    pt.y += pPara->member.para.pt.y + editor->rcFormat.top;
+    cursor_from_char_ofs( editor, nCharOfs, &cursor );
+    pt.y = cursor.pRun->member.run.pt.y;
+    pt.x = cursor.pRun->member.run.pt.x +
+        ME_PointFromChar( editor, &cursor.pRun->member.run, cursor.nOffset, TRUE );
+    pt.y += cursor.pPara->member.para.pt.y + editor->rcFormat.top;
     pt.x += editor->rcFormat.left;
 
     pt.x -= editor->horz_si.nPos;
@@ -4794,7 +4821,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   {
     HIMC hIMC;
 
-    ME_Style *style = ME_GetInsertStyle(editor, 0);
+    ME_Style *style = style_get_insert_style( editor, editor->pCursors );
     hIMC = ITextHost_TxImmGetContext(editor->texthost);
     ME_DeleteSelection(editor);
     ME_SaveTempStyle(editor, style);

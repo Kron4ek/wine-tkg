@@ -2972,6 +2972,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_GTX1060     = 0x1c03,
     CARD_NVIDIA_GEFORCE_GTX1070     = 0x1b81,
     CARD_NVIDIA_GEFORCE_GTX1080     = 0x1b80,
+    CARD_NVIDIA_GEFORCE_GTX1080M    = 0x1be0,
     CARD_NVIDIA_GEFORCE_GTX1080TI   = 0x1b06,
     CARD_NVIDIA_TITANX_PASCAL       = 0x1b00,
     CARD_NVIDIA_TITANV              = 0x1d81,
@@ -5109,13 +5110,13 @@ struct wined3d_swapchain_state
     HWND device_window;
 };
 
+void wined3d_swapchain_state_cleanup(struct wined3d_swapchain_state *state) DECLSPEC_HIDDEN;
 void wined3d_swapchain_state_register(struct wined3d_swapchain_state *state,
         struct wined3d *wined3d) DECLSPEC_HIDDEN;
 void wined3d_swapchain_state_restore_from_fullscreen(struct wined3d_swapchain_state *state,
         HWND window, const RECT *window_rect) DECLSPEC_HIDDEN;
 HRESULT wined3d_swapchain_state_setup_fullscreen(struct wined3d_swapchain_state *state,
         HWND window, int x, int y, int width, int height) DECLSPEC_HIDDEN;
-void wined3d_swapchain_state_unregister(struct wined3d_swapchain_state *state) DECLSPEC_HIDDEN;
 
 struct wined3d_swapchain_ops
 {

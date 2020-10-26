@@ -26,6 +26,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <unistd.h>
 #ifdef HAVE_TERMIOS_H
 # include <termios.h>
 #endif
@@ -1028,6 +1029,14 @@ static BOOL get_volume_device_info( struct volume *volume )
 
     if (!unix_device)
         return FALSE;
+
+#ifdef __APPLE__
+    if (access( unix_device, R_OK ))
+    {
+        WARN("Unable to open %s, not accessible\n", debugstr_a(unix_device));
+        return FALSE;
+    }
+#endif
 
     if (!(name = wine_get_dos_file_name( unix_device )))
     {

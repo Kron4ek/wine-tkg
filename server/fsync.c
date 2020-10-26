@@ -163,6 +163,7 @@ const struct object_ops fsync_ops =
     fsync_map_access,          /* map_access */
     default_get_sd,            /* get_sd */
     default_set_sd,            /* set_sd */
+    no_get_full_name,          /* get_full_name */
     no_lookup_name,            /* lookup_name */
     directory_link_name,       /* link_name */
     default_unlink_name,       /* unlink_name */
@@ -210,12 +211,14 @@ static void *get_shm( unsigned int idx )
 
     if (entry >= shm_addrs_size)
     {
-        if (!(shm_addrs = realloc( shm_addrs, (entry + 1) * sizeof(shm_addrs[0]) )))
+        int new_size = max(shm_addrs_size * 2, entry + 1);
+
+        if (!(shm_addrs = realloc( shm_addrs, new_size * sizeof(shm_addrs[0]) )))
             fprintf( stderr, "fsync: couldn't expand shm_addrs array to size %d\n", entry + 1 );
 
-        memset( &shm_addrs[shm_addrs_size], 0, (entry + 1 - shm_addrs_size) * sizeof(shm_addrs[0]) );
+        memset( shm_addrs + shm_addrs_size, 0, (new_size - shm_addrs_size) * sizeof(shm_addrs[0]) );
 
-        shm_addrs_size = entry + 1;
+        shm_addrs_size = new_size;
     }
 
     if (!shm_addrs[entry])
@@ -230,7 +233,7 @@ static void *get_shm( unsigned int idx )
         if (debug_level)
             fprintf( stderr, "fsync: Mapping page %d at %p.\n", entry, addr );
 
-        if (InterlockedCompareExchangePointer( &shm_addrs[entry], addr, 0 ))
+        if (__sync_val_compare_and_swap( &shm_addrs[entry], 0, addr ))
             munmap( addr, pagesize ); /* someone beat us to it */
     }
 
@@ -413,7 +416,6 @@ struct mutex
 
 void fsync_abandon_mutexes( struct thread *thread )
 {
-    unsigned int index = 0;
     struct fsync *fsync;
 
     LIST_FOR_EACH_ENTRY( fsync, &mutex_list, struct fsync, mutex_entry )

@@ -4,21 +4,21 @@
 @ stdcall CPDeriveKey(ptr long ptr long ptr)
 @ stdcall CPDestroyHash(ptr ptr)
 @ stdcall CPDestroyKey(ptr ptr)
-@ stub CPDuplicateHash
-@ stub CPDuplicateKey
+@ stdcall CPDuplicateHash(ptr ptr ptr long ptr)
+@ stdcall CPDuplicateKey(ptr ptr ptr long ptr)
 @ stub CPEncrypt
 @ stdcall CPExportKey(ptr ptr ptr long long ptr ptr)
 @ stdcall CPGenKey(ptr long long ptr)
-@ stub CPGenRandom
+@ stdcall CPGenRandom(ptr long ptr)
 @ stdcall CPGetHashParam(ptr ptr long ptr ptr long)
 @ stub CPGetKeyParam
 @ stdcall CPGetProvParam(ptr long ptr ptr long)
-@ stub CPGetUserKey
+@ stdcall CPGetUserKey(ptr long ptr)
 @ stdcall CPHashData(ptr ptr ptr long long)
 @ stub CPHashSessionKey
 @ stdcall CPImportKey(ptr ptr long ptr long ptr)
 @ stdcall CPReleaseContext(ptr long)
-@ stub CPSetHashParam
+@ stdcall CPSetHashParam(ptr ptr long ptr long)
 @ stub CPSetKeyParam
 @ stub CPSetProvParam
 @ stdcall CPSignHash(ptr ptr long wstr long ptr ptr)

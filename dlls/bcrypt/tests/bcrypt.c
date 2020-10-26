@@ -2603,6 +2603,9 @@ static void test_DSA(void)
     ok(!memcmp(dssKey, buf, size), "wrong data\n");
     HeapFree(GetProcessHeap(), 0, buf);
 
+    ret = pBCryptDestroyKey(key);
+    ok(!ret, "got %08x\n", ret);
+
     ret = pBCryptCloseAlgorithmProvider(alg, 0);
     ok(!ret, "got %08x\n", ret);
 }
@@ -2652,7 +2655,6 @@ static void test_SecretAgreement(void)
     ok(status == STATUS_INVALID_PARAMETER, "got %08x\n", status);
 
     status = pBCryptDeriveKey(secret, L"HASH", NULL, NULL, 0, &size, 0);
-    todo_wine
     ok(status == STATUS_SUCCESS, "got %08x\n", status);
 
     status = pBCryptDestroyHash(secret);

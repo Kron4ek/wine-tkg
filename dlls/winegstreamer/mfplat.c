@@ -1215,62 +1215,17 @@ GstCaps *caps_from_mf_media_type(IMFMediaType *type)
     if (IsEqualGUID(&major_type, &MFMediaType_Video))
     {
         UINT64 frame_rate = 0, frame_size = 0;
-        DWORD width, height, framerate_num, framerate_den;
+        DWORD width, height;
         UINT32 unused;
 
         if (FAILED(IMFMediaType_GetUINT64(type, &MF_MT_FRAME_SIZE, &frame_size)))
             return NULL;
         width = frame_size >> 32;
         height = frame_size;
-        if (FAILED(IMFMediaType_GetUINT64(type, &MF_MT_FRAME_RATE, &frame_rate)))
-        {
-            frame_rate = TRUE;
-            framerate_num = 0;
-            framerate_den = 1;
-        }
-        else
-        {
-            framerate_num = frame_rate >> 32;
-            framerate_den = frame_rate;
-        }
 
-        /* Check if type is uncompressed */
-        if (SUCCEEDED(MFCalculateImageSize(&subtype, 100, 100, &unused)))
-        {
-            GstVideoFormat format = GST_VIDEO_FORMAT_UNKNOWN;
-            unsigned int i;
+        output = gst_caps_new_empty_simple("video/x-raw");
 
-            output = gst_caps_new_empty_simple("video/x-raw");
-
-            for (i = 0; i < ARRAY_SIZE(uncompressed_video_formats); i++)
-            {
-                if (IsEqualGUID(uncompressed_video_formats[i].subtype, &subtype))
-                {
-                    format = uncompressed_video_formats[i].format;
-                    break;
-                }
-            }
-
-            if (format == GST_VIDEO_FORMAT_UNKNOWN)
-            {
-                format = gst_video_format_from_fourcc(subtype.Data1);
-            }
-
-            if (format == GST_VIDEO_FORMAT_UNKNOWN)
-            {
-                FIXME("Unrecognized format %s\n", debugstr_guid(&subtype));
-                return NULL;
-            }
-            else
-            {
-                GstVideoInfo info;
-
-                gst_video_info_set_format(&info, format, width, height);
-                output = gst_video_info_to_caps(&info);
-            }
-
-        }
-        else if (IsEqualGUID(&subtype, &MFVideoFormat_H264))
+        if (IsEqualGUID(&subtype, &MFVideoFormat_H264))
         {
             enum eAVEncH264VProfile h264_profile;
             enum eAVEncH264VLevel h264_level;
@@ -1363,19 +1318,50 @@ GstCaps *caps_from_mf_media_type(IMFMediaType *type)
 
             user_data_to_codec_data(type, output);
         }
-        else {
-            FIXME("Unrecognized subtype %s\n", debugstr_guid(&subtype));
-            return NULL;
-        }
+        else
+        {
+            GstVideoFormat format = GST_VIDEO_FORMAT_UNKNOWN;
+            GUID subtype_base;
+            GstVideoInfo info;
+            unsigned int i;
 
+            for (i = 0; i < ARRAY_SIZE(uncompressed_video_formats); i++)
+            {
+                if (IsEqualGUID(uncompressed_video_formats[i].subtype, &subtype))
+                {
+                    format = uncompressed_video_formats[i].format;
+                    break;
+                }
+            }
+
+            subtype_base = subtype;
+            subtype_base.Data1 = 0;
+            if (format == GST_VIDEO_FORMAT_UNKNOWN && IsEqualGUID(&MFVideoFormat_Base, &subtype_base))
+                format = gst_video_format_from_fourcc(subtype.Data1);
+
+            if (format == GST_VIDEO_FORMAT_UNKNOWN)
+            {
+                FIXME("Unrecognized format %s\n", debugstr_guid(&subtype));
+                return NULL;
+            }
+
+            gst_video_info_set_format(&info, format, width, height);
+            output = gst_video_info_to_caps(&info);
+        }
 
         if (frame_size)
         {
             gst_caps_set_simple(output, "width", G_TYPE_INT, width, NULL);
             gst_caps_set_simple(output, "height", G_TYPE_INT, height, NULL);
         }
-        if (frame_rate)
-            gst_caps_set_simple(output, "framerate", GST_TYPE_FRACTION, framerate_num, framerate_den, NULL);
+        if (SUCCEEDED(IMFMediaType_GetUINT64(type, &MF_MT_FRAME_RATE, &frame_rate)))
+        {
+            /* Darksiders: Warmastered Edition uses a MF_MT_FRAME_RATE of 0,
+               and gstreamer won't accept an undefined number as the framerate. */
+            if (!(DWORD32)frame_rate)
+                frame_rate = 1;
+            gst_caps_set_simple(output, "framerate", GST_TYPE_FRACTION, frame_rate >> 32, (DWORD32) frame_rate, NULL);
+        }
         return output;
     }
     else if (IsEqualGUID(&major_type, &MFMediaType_Audio))
@@ -1535,83 +1521,62 @@ GstCaps *caps_from_mf_media_type(IMFMediaType *type)
 
 IMFSample* mf_sample_from_gst_buffer(GstBuffer *gst_buffer)
 {
-    IMFSample *out = NULL;
+    IMFMediaBuffer *mf_buffer = NULL;
+    GstMapInfo map_info = {0};
     LONGLONG duration, time;
-    int buffer_count;
+    BYTE *mapped_buf = NULL;
+    IMFSample *out = NULL;
     HRESULT hr;
 
     if (FAILED(hr = MFCreateSample(&out)))
-        goto fail;
+        goto done;
 
     duration = GST_BUFFER_DURATION(gst_buffer);
     time = GST_BUFFER_PTS(gst_buffer);
 
-    if (FAILED(IMFSample_SetSampleDuration(out, duration / 100)))
-        goto fail;
+    if (FAILED(hr = IMFSample_SetSampleDuration(out, duration / 100)))
+        goto done;
 
-    if (FAILED(IMFSample_SetSampleTime(out, time / 100)))
-        goto fail;
+    if (FAILED(hr = IMFSample_SetSampleTime(out, time / 100)))
+        goto done;
 
-    buffer_count = gst_buffer_n_memory(gst_buffer);
-
-    for (unsigned int i = 0; i < buffer_count; i++)
+    if (!gst_buffer_map(gst_buffer, &map_info, GST_MAP_READ))
     {
-        GstMemory *memory = gst_buffer_get_memory(gst_buffer, i);
-        IMFMediaBuffer *mf_buffer = NULL;
-        GstMapInfo map_info;
-        BYTE *buf_data;
+        hr = E_FAIL;
+        goto done;
+    }
 
-        if (!memory)
-        {
-            hr = E_FAIL;
-            goto loop_done;
-        }
+    if (FAILED(hr = MFCreateMemoryBuffer(map_info.maxsize, &mf_buffer)))
+        goto done;
 
-        if (!(gst_memory_map(memory, &map_info, GST_MAP_READ)))
-        {
-            hr = E_FAIL;
-            goto loop_done;
-        }
+    if (FAILED(hr = IMFMediaBuffer_Lock(mf_buffer, &mapped_buf, NULL, NULL)))
+        goto done;
 
-        if (FAILED(hr = MFCreateMemoryBuffer(map_info.maxsize, &mf_buffer)))
-        {
-            gst_memory_unmap(memory, &map_info);
-            goto loop_done;
-        }
+    memcpy(mapped_buf, map_info.data, map_info.size);
 
-        if (FAILED(hr = IMFMediaBuffer_Lock(mf_buffer, &buf_data, NULL, NULL)))
-        {
-            gst_memory_unmap(memory, &map_info);
-            goto loop_done;
-        }
+    if (FAILED(hr = IMFMediaBuffer_Unlock(mf_buffer)))
+        goto done;
 
-        memcpy(buf_data, map_info.data, map_info.size);
+    if (FAILED(hr = IMFMediaBuffer_SetCurrentLength(mf_buffer, map_info.size)))
+        goto done;
 
-        gst_memory_unmap(memory, &map_info);
+    if (FAILED(hr = IMFSample_AddBuffer(out, mf_buffer)))
+        goto done;
 
-        if (FAILED(hr = IMFMediaBuffer_Unlock(mf_buffer)))
-            goto loop_done;
-
-        if (FAILED(hr = IMFMediaBuffer_SetCurrentLength(mf_buffer, map_info.size)))
-            goto loop_done;
-
-        if (FAILED(hr = IMFSample_AddBuffer(out, mf_buffer)))
-            goto loop_done;
-
-        loop_done:
-        if (mf_buffer)
-            IMFMediaBuffer_Release(mf_buffer);
-        if (memory)
-            gst_memory_unref(memory);
-        if (FAILED(hr))
-            goto fail;
+done:
+    if (mf_buffer)
+        IMFMediaBuffer_Release(mf_buffer);
+    if (map_info.data)
+        gst_buffer_unmap(gst_buffer, &map_info);
+    if (FAILED(hr))
+    {
+        ERR("Failed to copy IMFSample to GstBuffer, hr = %#x\n", hr);
+        if (out)
+            IMFSample_Release(out);
+        out = NULL;
     }
 
     return out;
-    fail:
-    ERR("Failed to copy IMFSample to GstBuffer, hr = %#x\n", hr);
-    IMFSample_Release(out);
-    return NULL;
 }
 
 GstBuffer* gst_buffer_from_mf_sample(IMFSample *mf_sample)
@@ -1680,7 +1645,7 @@ GstBuffer* gst_buffer_from_mf_sample(IMFSample *mf_sample)
 
     return out;
 
-    fail:
+fail:
     ERR("Failed to copy IMFSample to GstBuffer, hr = %#x\n", hr);
     if (mf_buffer)
         IMFMediaBuffer_Release(mf_buffer);

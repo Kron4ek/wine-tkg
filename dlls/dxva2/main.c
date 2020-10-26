@@ -65,6 +65,18 @@ struct device_manager
     CONDITION_VARIABLE lock;
 };
 
+struct video_processor
+{
+    IDirectXVideoProcessor IDirectXVideoProcessor_iface;
+    LONG refcount;
+
+    IDirectXVideoProcessorService *service;
+    GUID device;
+    DXVA2_VideoDesc video_desc;
+    D3DFORMAT rt_format;
+    unsigned int max_substreams;
+};
+
 static BOOL dxva_array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
 {
     size_t new_capacity, max_capacity;
@@ -101,6 +113,132 @@ static struct device_manager *impl_from_IDirectXVideoProcessorService(IDirectXVi
 {
     return CONTAINING_RECORD(iface, struct device_manager, IDirectXVideoProcessorService_iface);
 }
+
+static struct video_processor *impl_from_IDirectXVideoProcessor(IDirectXVideoProcessor *iface)
+{
+    return CONTAINING_RECORD(iface, struct video_processor, IDirectXVideoProcessor_iface);
+}
+
+static HRESULT WINAPI video_processor_QueryInterface(IDirectXVideoProcessor *iface, REFIID riid, void **obj)
+{
+    if (IsEqualIID(riid, &IID_IDirectXVideoProcessor) ||
+            IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = iface;
+        IDirectXVideoProcessor_AddRef(iface);
+        return S_OK;
+    }
+
+    WARN("Unsupported interface %s.\n", debugstr_guid(riid));
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI video_processor_AddRef(IDirectXVideoProcessor *iface)
+{
+    struct video_processor *processor = impl_from_IDirectXVideoProcessor(iface);
+    ULONG refcount = InterlockedIncrement(&processor->refcount);
+
+    TRACE("%p, refcount %u.\n", iface, refcount);
+
+    return refcount;
+}
+
+static ULONG WINAPI video_processor_Release(IDirectXVideoProcessor *iface)
+{
+    struct video_processor *processor = impl_from_IDirectXVideoProcessor(iface);
+    ULONG refcount = InterlockedDecrement(&processor->refcount);
+
+    TRACE("%p, refcount %u.\n", iface, refcount);
+
+    if (!refcount)
+    {
+        IDirectXVideoProcessorService_Release(processor->service);
+        heap_free(processor);
+    }
+
+    return refcount;
+}
+
+static HRESULT WINAPI video_processor_GetVideoProcessorService(IDirectXVideoProcessor *iface,
+        IDirectXVideoProcessorService **service)
+{
+    struct video_processor *processor = impl_from_IDirectXVideoProcessor(iface);
+
+    TRACE("%p, %p.\n", iface, service);
+
+    *service = processor->service;
+    IDirectXVideoProcessorService_AddRef(*service);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI video_processor_GetCreationParameters(IDirectXVideoProcessor *iface,
+        GUID *device, DXVA2_VideoDesc *video_desc, D3DFORMAT *rt_format, UINT *max_substreams)
+{
+    struct video_processor *processor = impl_from_IDirectXVideoProcessor(iface);
+
+    TRACE("%p, %p, %p, %p, %p.\n", iface, device, video_desc, rt_format, max_substreams);
+
+    if (!device && !video_desc && !rt_format && !max_substreams)
+        return E_INVALIDARG;
+
+    if (device)
+        *device = processor->device;
+    if (video_desc)
+        *video_desc = processor->video_desc;
+    if (rt_format)
+        *rt_format = processor->rt_format;
+    if (max_substreams)
+        *max_substreams = processor->max_substreams;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI video_processor_GetVideoProcessorCaps(IDirectXVideoProcessor *iface,
+        DXVA2_VideoProcessorCaps *caps)
+{
+    FIXME("%p, %p.\n", iface, caps);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI video_processor_GetProcAmpRange(IDirectXVideoProcessor *iface, UINT cap, DXVA2_ValueRange *range)
+{
+    FIXME("%p, %u, %p.\n", iface, cap, range);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI video_processor_GetFilterPropertyRange(IDirectXVideoProcessor *iface, UINT setting,
+        DXVA2_ValueRange *range)
+{
+    FIXME("%p, %u, %p.\n", iface, setting, range);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI video_processor_VideoProcessBlt(IDirectXVideoProcessor *iface, IDirect3DSurface9 *rt,
+        const DXVA2_VideoProcessBltParams *params, const DXVA2_VideoSample *samples, UINT sample_count,
+        HANDLE *complete_handle)
+{
+    FIXME("%p, %p, %p, %p, %u, %p.\n", iface, rt, params, samples, sample_count, complete_handle);
+
+    return E_NOTIMPL;
+}
+
+static const IDirectXVideoProcessorVtbl video_processor_vtbl =
+{
+    video_processor_QueryInterface,
+    video_processor_AddRef,
+    video_processor_Release,
+    video_processor_GetVideoProcessorService,
+    video_processor_GetCreationParameters,
+    video_processor_GetVideoProcessorCaps,
+    video_processor_GetProcAmpRange,
+    video_processor_GetFilterPropertyRange,
+    video_processor_VideoProcessBlt,
+};
 
 static HRESULT WINAPI device_manager_processor_service_QueryInterface(IDirectXVideoProcessorService *iface,
         REFIID riid, void **obj)
@@ -253,13 +391,31 @@ static HRESULT WINAPI device_manager_processor_service_GetFilterPropertyRange(
 }
 
 static HRESULT WINAPI device_manager_processor_service_CreateVideoProcessor(IDirectXVideoProcessorService *iface,
-        REFGUID deviceguid, const DXVA2_VideoDesc *video_desc, D3DFORMAT rt_format, UINT max_substreams,
+        REFGUID device, const DXVA2_VideoDesc *video_desc, D3DFORMAT rt_format, UINT max_substreams,
         IDirectXVideoProcessor **processor)
 {
-    FIXME("%p, %s, %p, %d, %u, %p.\n", iface, debugstr_guid(deviceguid), video_desc, rt_format, max_substreams,
+    struct video_processor *object;
+
+    FIXME("%p, %s, %p, %d, %u, %p.\n", iface, debugstr_guid(device), video_desc, rt_format, max_substreams,
             processor);
 
-    return E_NOTIMPL;
+    /* FIXME: validate render target format */
+
+    if (!(object = heap_alloc_zero(sizeof(*object))))
+        return E_OUTOFMEMORY;
+
+    object->IDirectXVideoProcessor_iface.lpVtbl = &video_processor_vtbl;
+    object->refcount = 1;
+    object->service = iface;
+    IDirectXVideoProcessorService_AddRef(object->service);
+    object->device = *device;
+    object->video_desc = *video_desc;
+    object->rt_format = rt_format;
+    object->max_substreams = max_substreams;
+
+    *processor = &object->IDirectXVideoProcessor_iface;
+
+    return S_OK;
 }
 
 static const IDirectXVideoProcessorServiceVtbl device_manager_processor_service_vtbl =
@@ -392,7 +548,7 @@ static HRESULT WINAPI device_manager_OpenDeviceHandle(IDirect3DDeviceManager9 *i
                 sizeof(*manager->handles)))
         {
             *hdevice = ULongToHandle(manager->count + 1);
-            manager->handles[manager->count].flags |= HANDLE_FLAG_OPEN;
+            manager->handles[manager->count].flags = HANDLE_FLAG_OPEN;
             manager->handles[manager->count].state_block = NULL;
             manager->count++;
         }
@@ -406,7 +562,7 @@ static HRESULT WINAPI device_manager_OpenDeviceHandle(IDirect3DDeviceManager9 *i
 
 static HRESULT device_manager_get_handle_index(struct device_manager *manager, HANDLE hdevice, size_t *idx)
 {
-    if (hdevice > ULongToHandle(manager->count))
+    if (!hdevice || hdevice > ULongToHandle(manager->count))
         return E_HANDLE;
     *idx = (ULONG_PTR)hdevice - 1;
     return S_OK;

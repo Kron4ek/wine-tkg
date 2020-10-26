@@ -849,6 +849,56 @@ BOOL WINAPI CryptCATCatalogInfoFromContext(HCATINFO hcatinfo, CATALOG_INFO *info
 }
 
 /***********************************************************************
+ *      CryptCATPutAttrInfo  (WINTRUST.@)
+ */
+CRYPTCATATTRIBUTE * WINAPI CryptCATPutAttrInfo(HANDLE catalog, CRYPTCATMEMBER *member,
+        WCHAR *name, DWORD flags, DWORD size, BYTE *data)
+{
+    FIXME("catalog %p, member %p, name %s, flags %#x, size %u, data %p, stub!\n",
+            catalog, member, debugstr_w(name), flags, size, data);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return NULL;
+}
+
+/***********************************************************************
+ *      CryptCATPutCatAttrInfo  (WINTRUST.@)
+ */
+CRYPTCATATTRIBUTE * WINAPI CryptCATPutCatAttrInfo(HANDLE catalog,
+        WCHAR *name, DWORD flags, DWORD size, BYTE *data)
+{
+    FIXME("catalog %p, name %s, flags %#x, size %u, data %p, stub!\n",
+            catalog, debugstr_w(name), flags, size, data);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return NULL;
+}
+
+/***********************************************************************
+ *      CryptCATPutMemberInfo  (WINTRUST.@)
+ */
+CRYPTCATMEMBER * WINAPI CryptCATPutMemberInfo(HANDLE catalog, WCHAR *filename,
+        WCHAR *member, GUID *subject, DWORD version, DWORD size, BYTE *data)
+{
+    FIXME("catalog %p, filename %s, member %s, subject %s, version %u, size %u, data %p, stub!\n",
+            catalog, debugstr_w(filename), debugstr_w(member), debugstr_guid(subject), version, size, data);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return NULL;
+}
+
+/***********************************************************************
+ *      CryptCATPersistStore  (WINTRUST.@)
+ */
+BOOL WINAPI CryptCATPersistStore(HANDLE catalog)
+{
+    FIXME("catalog %p, stub!\n", catalog);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/***********************************************************************
  *      CryptCATOpen  (WINTRUST.@)
  */
 HANDLE WINAPI CryptCATOpen(WCHAR *filename, DWORD flags, HCRYPTPROV hProv,

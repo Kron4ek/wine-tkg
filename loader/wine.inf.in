@@ -832,19 +832,19 @@ HKCU,Software\Microsoft\Protected Storage System Provider,,16
 ; Some apps requires at least four subkeys of Active Setup\Installed Components
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{44BBA855-CC51-11CF-AAFA-00AA00B6015F},,2,"DirectDrawEx"
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{44BBA855-CC51-11CF-AAFA-00AA00B6015F},"ComponentID",2,"DirectDrawEx"
-HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{44BBA855-CC51-11CF-AAFA-00AA00B6015F},"IsInstalled",2,1
+HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{44BBA855-CC51-11CF-AAFA-00AA00B6015F},"IsInstalled",0x10003,1
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{44BBA855-CC51-11CF-AAFA-00AA00B6015F},"Locale",2,"*"
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{44BBA855-CC51-11CF-AAFA-00AA00B6015F},"Version",2,"4,71,1113,0"
 
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{de5aed00-a4bf-11d1-9948-00c04f98bbc9},,2,"HTML Help"
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{de5aed00-a4bf-11d1-9948-00c04f98bbc9},"ComponentID",2,"HTMLHelp"
-HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{de5aed00-a4bf-11d1-9948-00c04f98bbc9},"IsInstalled",2,1
+HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{de5aed00-a4bf-11d1-9948-00c04f98bbc9},"IsInstalled",0x10003,1
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{de5aed00-a4bf-11d1-9948-00c04f98bbc9},"Locale",2,"*"
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{de5aed00-a4bf-11d1-9948-00c04f98bbc9},"Version",2,"4,74,9273,0"
 
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{6BF52A52-394A-11d3-B153-00C04F79FAA6},,2,"Windows Media Player"
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{6BF52A52-394A-11d3-B153-00C04F79FAA6},"ComponentID",2,"wmp"
-HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{6BF52A52-394A-11d3-B153-00C04F79FAA6},"IsInstalled",2,1
+HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{6BF52A52-394A-11d3-B153-00C04F79FAA6},"IsInstalled",0x10003,1
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{6BF52A52-394A-11d3-B153-00C04F79FAA6},"Locale",2,"*"
 HKLM,SOFTWARE\Microsoft\Active Setup\Installed Components\{6BF52A52-394A-11d3-B153-00C04F79FAA6},"Version",2,"12,0,7601,18840"
 
@@ -3314,6 +3314,17 @@ HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time\Dynamic DST,"2006",1,2c
 HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time\Dynamic DST,"2007",1,2c,01,00,00,00,00,00,00,c4,ff,ff,ff,00,00,0b,00,00,00,01,00,02,00,00,00,00,00,00,00,00,00,03,00,00,00,02,00,02,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time\Dynamic DST,"FirstEntry",0x10001,"2006"
 HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time\Dynamic DST,"LastEntry",0x10001,"2007"
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico),"Display",,"America/Cancun"
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico),"Dlt",,"Eastern Daylight Time (Mexico)"
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico),"MUI_Dlt",,"@tzres.dll,-59537"
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico),"MUI_Std",,"@tzres.dll,-59536"
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico),"Std",,"Eastern Standard Time (Mexico)"
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico),"TZI",1,2c,01,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico)\Dynamic DST,"2014",1,68,01,00,00,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,00,00,05,00,02,00,00,00,00,00,00,00,00,00,04,00,00,00,01,00,02,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico)\Dynamic DST,"2015",1,68,01,00,00,00,00,00,00,c4,ff,ff,ff,00,00,01,00,04,00,01,00,00,00,00,00,00,00,00,00,00,00,02,00,00,00,01,00,02,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico)\Dynamic DST,"2016",1,2c,01,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico)\Dynamic DST,"FirstEntry",0x10001,"2014"
+HKLM,%CurrentVersionNT%\Time Zones\Eastern Standard Time (Mexico)\Dynamic DST,"LastEntry",0x10001,"2016"
 HKLM,%CurrentVersionNT%\Time Zones\Egypt Standard Time,"Display",,"Africa/Cairo"
 HKLM,%CurrentVersionNT%\Time Zones\Egypt Standard Time,"Dlt",,"Egypt Daylight Time"
 HKLM,%CurrentVersionNT%\Time Zones\Egypt Standard Time,"MUI_Dlt",,"@tzres.dll,-59425"

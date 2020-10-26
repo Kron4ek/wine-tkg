@@ -243,11 +243,12 @@ static IMFStreamDescriptor *stream_descriptor_from_id(IMFPresentationDescriptor 
 {
     ULONG sd_count;
     IMFStreamDescriptor *ret;
+    unsigned int i;
 
     if (FAILED(IMFPresentationDescriptor_GetStreamDescriptorCount(pres_desc, &sd_count)))
         return NULL;
 
-    for (unsigned int i = 0; i < sd_count; i++)
+    for (i = 0; i < sd_count; i++)
     {
         DWORD stream_id;
 
@@ -262,13 +263,16 @@ static IMFStreamDescriptor *stream_descriptor_from_id(IMFPresentationDescriptor 
     return NULL;
 }
 
-static HRESULT start_pipeline(struct media_source *source, struct source_async_command *command)
+static void start_pipeline(struct media_source *source, struct source_async_command *command)
 {
     PROPVARIANT *position = &command->u.start.position;
     BOOL seek_message = source->state != SOURCE_STOPPED && position->vt != VT_EMPTY;
+    GstStateChangeReturn ret;
+    unsigned int i;
 
     gst_element_set_state(source->container, GST_STATE_PAUSED);
-    assert(gst_element_get_state(source->container, NULL, NULL, -1) == GST_STATE_CHANGE_SUCCESS);
+    ret = gst_element_get_state(source->container, NULL, NULL, -1);
+    assert(ret == GST_STATE_CHANGE_SUCCESS);
 
     /* seek to beginning on stop->play */
     if (source->state == SOURCE_STOPPED && position->vt == VT_EMPTY)
@@ -277,7 +281,7 @@ static HRESULT start_pipeline(struct media_source *source, struct source_async_c
         position->u.hVal.QuadPart = 0;
     }
 
-    for (unsigned int i = 0; i < source->stream_count; i++)
+    for (i = 0; i < source->stream_count; i++)
     {
         struct media_stream *stream;
         IMFStreamDescriptor *sd;
@@ -288,7 +292,6 @@ static HRESULT start_pipeline(struct media_source *source, struct source_async_c
         DWORD stream_id;
         BOOL was_active;
         BOOL selected;
-        BOOL changed_caps;
 
         stream = source->streams[i];
 
@@ -307,12 +310,10 @@ static HRESULT start_pipeline(struct media_source *source, struct source_async_c
             IMFMediaTypeHandler_GetCurrentMediaType(mth, &current_mt);
             current_caps = caps_from_mf_media_type(current_mt);
             g_object_get(stream->appsink, "caps", &prev_caps, NULL);
-            changed_caps = !gst_caps_is_equal(prev_caps, current_caps);
-
-            if (changed_caps)
+            if (!gst_caps_is_equal(prev_caps, current_caps))
             {
-                g_object_set(stream->appsink, "caps", current_caps, NULL);
                 GstEvent *reconfigure_event = gst_event_new_reconfigure();
+                g_object_set(stream->appsink, "caps", current_caps, NULL);
                 gst_pad_push_event(gst_element_get_static_pad(stream->appsink, "sink"), reconfigure_event);
             }
 
@@ -322,14 +323,15 @@ static HRESULT start_pipeline(struct media_source *source, struct source_async_c
             IMFMediaTypeHandler_Release(mth);
         }
 
+        g_object_set(stream->appsink, "drop", !selected, NULL);
+
         if (position->vt != VT_EMPTY)
         {
             GstEvent *seek_event = gst_event_new_seek(1.0, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
                     GST_SEEK_TYPE_SET, position->u.hVal.QuadPart / 100, GST_SEEK_TYPE_NONE, 0);
-
+            GstSample *preroll;
 
             gst_pad_push_event(stream->my_sink, seek_event);
-            gst_bus_poll(source->bus, GST_MESSAGE_RESET_TIME, -1);
 
             stream->eos = FALSE;
         }
@@ -338,8 +340,8 @@ static HRESULT start_pipeline(struct media_source *source, struct source_async_c
         {
             TRACE("Stream %u (%p) selected\n", i, stream);
             IMFMediaEventQueue_QueueEventParamUnk(source->event_queue,
-            was_active ? MEUpdatedStream : MENewStream, &GUID_NULL,
-            S_OK, (IUnknown*) &stream->IMFMediaStream_iface);
+                was_active ? MEUpdatedStream : MENewStream, &GUID_NULL,
+                S_OK, (IUnknown*) &stream->IMFMediaStream_iface);
 
             IMFMediaEventQueue_QueueEventParamVar(stream->event_queue,
                 seek_message ? MEStreamSeeked : MEStreamStarted, &GUID_NULL, S_OK, position);
@@ -353,9 +355,6 @@ static HRESULT start_pipeline(struct media_source *source, struct source_async_c
     source->state = SOURCE_RUNNING;
 
     gst_element_set_state(source->container, GST_STATE_PLAYING);
-    gst_element_get_state(source->container, NULL, NULL, -1);
-
-    return S_OK;
 }
 
 static void stop_pipeline(struct media_source *source)
@@ -378,9 +377,10 @@ static void stop_pipeline(struct media_source *source)
 static void dispatch_end_of_presentation(struct media_source *source)
 {
     PROPVARIANT empty = {.vt = VT_EMPTY};
+    unsigned int i;
 
     /* A stream has ended, check whether all have */
-    for (unsigned int i = 0; i < source->stream_count; i++)
+    for (i = 0; i < source->stream_count; i++)
     {
         struct media_stream *stream = source->streams[i];
 
@@ -391,7 +391,7 @@ static void dispatch_end_of_presentation(struct media_source *source)
     IMFMediaEventQueue_QueueEventParamVar(source->event_queue, MEEndOfPresentation, &GUID_NULL, S_OK, &empty);
 }
 
-static HRESULT wait_on_sample(struct media_stream *stream, IUnknown *token)
+static void wait_on_sample(struct media_stream *stream, IUnknown *token)
 {
     PROPVARIANT empty_var = {.vt = VT_EMPTY};
     GstSample *gst_sample;
@@ -405,24 +405,7 @@ static HRESULT wait_on_sample(struct media_stream *stream, IUnknown *token)
     {
         buffer = gst_sample_get_buffer(gst_sample);
 
-        if (TRACE_ON(mfplat))
-        {
-            const GstCaps *sample_caps = gst_sample_get_caps(gst_sample);
-            const GstStructure *sample_info = gst_sample_get_info(gst_sample);
-            if (sample_caps)
-            {
-                gchar *sample_caps_str = gst_caps_to_string(sample_caps);
-                TRACE("sample caps %s\n", debugstr_a(sample_caps_str));
-                g_free(sample_caps_str);
-            }
-            if (sample_info)
-            {
-                gchar *sample_info_str = gst_structure_to_string(sample_info);
-                TRACE("sample info %s\n", debugstr_a(sample_info_str));
-                g_free(sample_info_str);
-            }
-            TRACE("PTS = %lu DTS = %lu\n", GST_BUFFER_PTS(buffer), GST_BUFFER_DTS(buffer));
-        }
+        TRACE("PTS = %llu\n", (unsigned long long int) GST_BUFFER_PTS(buffer));
 
         sample = mf_sample_from_gst_buffer(buffer);
         gst_sample_unref(gst_sample);
@@ -441,10 +424,7 @@ static HRESULT wait_on_sample(struct media_stream *stream, IUnknown *token)
             IUnknown_Release(token);
         IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEEndOfStream, &GUID_NULL, S_OK, &empty_var);
         dispatch_end_of_presentation(stream->parent_source);
-        return S_OK;
     }
-
-    return S_OK;
 }
 
 static HRESULT WINAPI source_async_commands_Invoke(IMFAsyncCallback *iface, IMFAsyncResult *result)
@@ -472,8 +452,6 @@ static HRESULT WINAPI source_async_commands_Invoke(IMFAsyncCallback *iface, IMFA
         case SOURCE_ASYNC_REQUEST_SAMPLE:
             wait_on_sample(command->u.request_sample.stream, command->u.request_sample.token);
             break;
-        default:
-            ;
     }
 
     IUnknown_Release(state);
@@ -661,8 +639,8 @@ GstBusSyncReply bus_watch(GstBus *bus, GstMessage *message, gpointer user)
             break;
     }
 
-    /* FIXME: drop messages and find a substitute for gst_bus_poll */
-    return GST_BUS_PASS;
+    gst_message_unref(message);
+    return GST_BUS_DROP;
 }
 
 static HRESULT WINAPI media_stream_QueryInterface(IMFMediaStream *iface, REFIID riid, void **out)
@@ -812,7 +790,7 @@ static HRESULT WINAPI media_stream_RequestSample(IMFMediaStream *iface, IUnknown
             IUnknown_AddRef(token);
         command->u.request_sample.token = token;
 
-        /* Once pause support is added, this will need to into a stream queue, and synchronization will need to be added*/
+        /* Once pause support is added, this will need to put into a stream queue, and synchronization will need to be added*/
         hr = MFPutWorkItem(stream->parent_source->async_commands_queue, &stream->parent_source->async_commands_callback, &command->IUnknown_iface);
     }
 
@@ -844,23 +822,18 @@ static const IMFMediaStreamVtbl media_stream_vtbl =
    2) In the second path, we are dealing with x-raw output from decodebin.  In this case, we just
       have to setup a chain of elements which should hopefully allow transformations to any IMFMediaType
       the user throws at us through gstreamer's caps negotiation.*/
-static HRESULT media_stream_align_with_mf(struct media_stream *stream)
+static HRESULT media_stream_connect_to_sink(struct media_stream *stream)
 {
-    GstCaps *source_caps = NULL;
-    GstCaps *target_caps = NULL;
-    HRESULT hr = E_FAIL;
+    GstCaps *source_caps = gst_pad_query_caps(stream->their_src, NULL);
+    const gchar *stream_type;
 
-    if (!(source_caps = gst_pad_query_caps(stream->their_src, NULL)))
-        goto done;
+    if (!source_caps)
+        return E_FAIL;
 
-    if (TRACE_ON(mfplat))
-    {
-        gchar *source_caps_str = gst_caps_to_string(source_caps);
-        TRACE("source caps %s\n", debugstr_a(source_caps_str));
-        g_free(source_caps_str);
-    }
+    stream_type = gst_structure_get_name(gst_caps_get_structure(source_caps, 0));
+    gst_caps_unref(source_caps);
 
-    if (!strcmp(gst_structure_get_name(gst_caps_get_structure(source_caps, 0)), "video/x-raw"))
+    if (!strcmp(stream_type, "video/x-raw"))
     {
         GstElement *videoconvert = gst_element_factory_make("videoconvert", NULL);
 
@@ -868,14 +841,12 @@ static HRESULT media_stream_align_with_mf(struct media_stream *stream)
 
         stream->my_sink = gst_element_get_static_pad(videoconvert, "sink");
 
-        assert(gst_pad_link(stream->their_src, stream->my_sink) == GST_PAD_LINK_OK);
-        assert(gst_element_link(videoconvert, stream->appsink));
+        if (!gst_element_link(videoconvert, stream->appsink))
+            return E_FAIL;
 
         gst_element_sync_state_with_parent(videoconvert);
-
-        g_object_set(stream->appsink, "caps", source_caps, NULL);
     }
-    else if(!strcmp(gst_structure_get_name(gst_caps_get_structure(source_caps, 0)), "audio/x-raw"))
+    else if (!strcmp(stream_type, "audio/x-raw"))
     {
         GstElement *audioconvert = gst_element_factory_make("audioconvert", NULL);
 
@@ -883,27 +854,22 @@ static HRESULT media_stream_align_with_mf(struct media_stream *stream)
 
         stream->my_sink = gst_element_get_static_pad(audioconvert, "sink");
 
-        assert(gst_pad_link(stream->their_src, stream->my_sink) == GST_PAD_LINK_OK);
-        assert(gst_element_link(audioconvert, stream->appsink));
+        if (!gst_element_link(audioconvert, stream->appsink))
+            return E_FAIL;
 
         gst_element_sync_state_with_parent(audioconvert);
-
-        g_object_set(stream->appsink, "caps", source_caps, NULL);
     }
     else
     {
         GstElement *parser = NULL;
+        GstCaps *target_caps;
 
         assert(gst_caps_is_fixed(source_caps));
 
         if (!(target_caps = make_mf_compatible_caps(source_caps)))
-            goto done;
-
-        if (TRACE_ON(mfplat))
         {
-            gchar *target_caps_str = gst_caps_to_string(target_caps);
-            TRACE("target caps %s\n", debugstr_a(target_caps_str));
-            g_free(target_caps_str);
+            gst_caps_unref(source_caps);
+            return E_FAIL;
         }
 
         g_object_set(stream->appsink, "caps", target_caps, NULL);
@@ -922,13 +888,14 @@ static HRESULT media_stream_align_with_mf(struct media_stream *stream)
             parser_list_two = gst_element_factory_list_filter(parser_list_one, target_caps, GST_PAD_SRC, 0);
             gst_plugin_feature_list_free(parser_list_one);
             parser_list_one = parser_list_two;
+            gst_caps_unref(target_caps);
 
             if (!(g_list_length(parser_list_one)))
             {
                 gst_plugin_feature_list_free(parser_list_one);
                 ERR("Failed to find parser for stream\n");
-                hr = E_FAIL;
-                goto done;
+                gst_caps_unref(source_caps);
+                return E_FAIL;
             }
 
             parser_factory = g_list_first(parser_list_one)->data;
@@ -940,13 +907,11 @@ static HRESULT media_stream_align_with_mf(struct media_stream *stream)
 
             if (!parser)
             {
-                hr = E_FAIL;
-                goto done;
+                gst_caps_unref(source_caps);
+                return E_FAIL;
             }
 
             gst_bin_add(GST_BIN(stream->parent_source->container), parser);
-
-            assert(gst_pad_link(stream->their_src, gst_element_get_static_pad(parser, "sink")) == GST_PAD_LINK_OK);
 
             assert(gst_element_link(parser, stream->appsink));
 
@@ -954,23 +919,17 @@ static HRESULT media_stream_align_with_mf(struct media_stream *stream)
         }
         else
         {
-            assert(gst_pad_link(stream->their_src, gst_element_get_static_pad(stream->appsink, "sink")) == GST_PAD_LINK_OK);
+            gst_caps_unref(target_caps);
         }
 
         stream->my_sink = gst_element_get_static_pad(parser ? parser : stream->appsink, "sink");
     }
 
-    hr = S_OK;
+    if (gst_pad_link(stream->their_src, stream->my_sink) != GST_PAD_LINK_OK)
+        return E_FAIL;
 
-    done:
-    if (source_caps)
-        gst_caps_unref(source_caps);
-    if (target_caps)
-        gst_caps_unref(target_caps);
-
-    return hr;
+    return S_OK;
 }
-
 
 static HRESULT new_media_stream(struct media_source *source, GstPad *pad, DWORD stream_id, struct media_stream **out_stream)
 {
@@ -1003,7 +962,8 @@ static HRESULT new_media_stream(struct media_source *source, GstPad *pad, DWORD 
     g_object_set(object->appsink, "sync", FALSE, NULL);
     g_object_set(object->appsink, "max-buffers", 5, NULL);
 
-    media_stream_align_with_mf(object);
+    if (FAILED(hr = media_stream_connect_to_sink(object)))
+        goto fail;
 
     gst_element_sync_state_with_parent(object->appsink);
 
@@ -1026,42 +986,53 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
     IMFMediaType **stream_types = NULL;
     IMFMediaType *stream_type = NULL;
     DWORD type_count = 0;
+    const gchar *major_type;
     unsigned int i;
     HRESULT hr;
 
-    if (!strcmp(gst_structure_get_name(gst_caps_get_structure(current_caps, 0)), "video/x-raw"))
+    major_type = gst_structure_get_name(gst_caps_get_structure(current_caps, 0));
+
+    if (!strcmp(major_type, "video/x-raw"))
     {
-#ifdef HAVE_GST_STRUCTURE_GET_LIST
-        GstElementFactory *videoconvert_factory = gst_element_factory_find("videoconvert");
-        /* output every format supported by videoconvert */
-        const GList *template_list = gst_element_factory_get_static_pad_templates(videoconvert_factory);
-        for (;template_list; template_list = template_list->next)
+        /* These are the most common native output types of decoders:
+            https://docs.microsoft.com/en-us/windows/win32/medfound/mft-decoder-expose-output-types-in-native-order */
+        static const GUID *const video_types[] =
         {
-            GstStaticPadTemplate *template = (GstStaticPadTemplate *)template_list->data;
-            GstCaps *src_caps;
-            GValueArray *formats;
-            if (template->direction != GST_PAD_SRC)
+            &MFVideoFormat_NV12,
+            &MFVideoFormat_YV12,
+            &MFVideoFormat_YUY2,
+            &MFVideoFormat_IYUV,
+            &MFVideoFormat_I420,
+        };
+
+        IMFMediaType *base_type = mf_media_type_from_caps(current_caps);
+        GUID base_subtype;
+
+        IMFMediaType_GetGUID(base_type, &MF_MT_SUBTYPE, &base_subtype);
+
+        stream_types = heap_alloc( sizeof(IMFMediaType *) * ARRAY_SIZE(video_types) + 1);
+
+        stream_types[0] = base_type;
+        type_count = 1;
+
+        for (i = 0; i < ARRAY_SIZE(video_types); i++)
+        {
+            IMFMediaType *new_type;
+
+            if (IsEqualGUID(&base_subtype, video_types[i]))
                 continue;
-            src_caps = gst_static_pad_template_get_caps(template);
-            gst_structure_get_list(gst_caps_get_structure(src_caps, 0), "format", &formats);
-            stream_types = heap_alloc( sizeof(IMFMediaType*) * formats->n_values );
-            for (i = 0; i < formats->n_values; i++)
-            {
-                GValue *format = g_value_array_get_nth(formats, i);
-                GstCaps *modified_caps = gst_caps_copy(current_caps);
-                gst_caps_set_value(modified_caps, "format", format);
-                stream_types[type_count] = mf_media_type_from_caps(modified_caps);
-                gst_caps_unref(modified_caps);
-                if (stream_types[type_count])
-                    type_count++;
-            }
-            g_value_array_free(formats);
-            gst_caps_unref(src_caps);
-            break;
+
+            if (FAILED(hr = MFCreateMediaType(&new_type)))
+                goto done;
+            stream_types[type_count++] = new_type;
+
+            if (FAILED(hr = IMFMediaType_CopyAllItems(base_type, (IMFAttributes *) new_type)))
+                goto done;
+            if (FAILED(hr = IMFMediaType_SetGUID(new_type, &MF_MT_SUBTYPE, video_types[i])))
+                goto done;
         }
-#endif
     }
-    else if (!strcmp(gst_structure_get_name(gst_caps_get_structure(current_caps, 0)), "audio/x-raw"))
+    else if (!strcmp(major_type, "audio/x-raw"))
     {
         stream_type = mf_media_type_from_caps(current_caps);
         if (stream_type)
@@ -1085,7 +1056,6 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
         }
     }
 
-    gst_caps_unref(current_caps);
     if (!type_count)
     {
         ERR("Failed to establish an IMFMediaType from any of the possible stream caps!\n");
@@ -1102,6 +1072,7 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
         goto done;
 
 done:
+    gst_caps_unref(current_caps);
     if (type_handler)
         IMFMediaTypeHandler_Release(type_handler);
     for (i = 0; i < type_count; i++)
@@ -1225,14 +1196,7 @@ static HRESULT WINAPI media_source_CreatePresentationDescriptor(IMFMediaSource *
     if (source->state == SOURCE_SHUTDOWN)
         return MF_E_SHUTDOWN;
 
-    if (!(source->pres_desc))
-    {
-        return MF_E_NOT_INITIALIZED;
-    }
-
-    IMFPresentationDescriptor_Clone(source->pres_desc, descriptor);
-
-    return S_OK;
+    return IMFPresentationDescriptor_Clone(source->pres_desc, descriptor);
 }
 
 static HRESULT WINAPI media_source_Start(IMFMediaSource *iface, IMFPresentationDescriptor *descriptor,
@@ -1248,9 +1212,7 @@ static HRESULT WINAPI media_source_Start(IMFMediaSource *iface, IMFPresentationD
         return MF_E_SHUTDOWN;
 
     if (!(IsEqualIID(time_format, &GUID_NULL)))
-    {
         return MF_E_UNSUPPORTED_TIME_FORMAT;
-    }
 
     if (SUCCEEDED(hr = source_create_async_op(SOURCE_ASYNC_START, &command)))
     {
@@ -1631,16 +1593,16 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     /* init presentation descriptor */
 
     descriptors = heap_alloc(object->stream_count * sizeof(IMFStreamDescriptor*));
-    for (unsigned int i = 0; i < object->stream_count; i++)
+    for (i = 0; i < object->stream_count; i++)
     {
         IMFMediaStream_GetStreamDescriptor(&object->streams[i]->IMFMediaStream_iface, &descriptors[object->stream_count - 1 - i]);
     }
 
-    if (FAILED(MFCreatePresentationDescriptor(object->stream_count, descriptors, &object->pres_desc)))
+    if (FAILED(hr = MFCreatePresentationDescriptor(object->stream_count, descriptors, &object->pres_desc)))
         goto fail;
 
     /* Select one of each major type. */
-    for (unsigned int i = 0; i < object->stream_count; i++)
+    for (i = 0; i < object->stream_count; i++)
     {
         IMFMediaTypeHandler *handler;
         GUID major_type;
@@ -1743,8 +1705,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     fail:
     WARN("Failed to construct MFMediaSource, hr %#x.\n", hr);
 
-    if (descriptors)
-        heap_free(descriptors);
+    heap_free(descriptors);
     IMFMediaSource_Release(&object->IMFMediaSource_iface);
     return hr;
 }

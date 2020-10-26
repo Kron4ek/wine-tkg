@@ -84,23 +84,15 @@ C_SRCS = \
 	utf8.c \
 	wctomb.c
 
-EXTRA_OBJS = version.o
-
 config_EXTRADEFS = \
 	-DBINDIR='"${bindir}"' \
 	-DDLLDIR='"${dlldir}"' \
-	-DLIB_TO_BINDIR=\"`$(MAKEDEP) -R ${libdir} ${bindir}`\" \
-	-DLIB_TO_DLLDIR=\"`$(MAKEDEP) -R ${libdir} ${dlldir}`\" \
-	-DBIN_TO_DLLDIR=\"`$(MAKEDEP) -R ${bindir} ${dlldir}`\" \
-	-DBIN_TO_DATADIR=\"`$(MAKEDEP) -R ${bindir} ${datadir}/wine`\"
+	-DLIB_TO_BINDIR=\"`${MAKEDEP} -R ${libdir} ${bindir}`\" \
+	-DLIB_TO_DLLDIR=\"`${MAKEDEP} -R ${libdir} ${dlldir}`\" \
+	-DBIN_TO_DLLDIR=\"`${MAKEDEP} -R ${bindir} ${dlldir}`\" \
+	-DBIN_TO_DATADIR=\"`${MAKEDEP} -R ${bindir} ${datadir}/wine`\"
 
 SHAREDLIB = $(LIBWINE_SHAREDLIB)
 
 libwine_LDFLAGS = $(LIBWINE_LDFLAGS)
 libwine_DEPS = $(LIBWINE_DEPENDS)
-
-version.c: dummy
-	version=`(echo "wine-5.19.r1.gb49e8743") | sed -n -e '$$s/\(.*\)/const char wine_build[] = "\1  ( TkG Staging Esync Fsync )";/p'` && (echo $$version | cmp -s - $@) || echo $$version >$@ || (rm -f $@ && exit 1)
-
-dummy:
-.PHONY: dummy

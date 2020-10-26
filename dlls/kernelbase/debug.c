@@ -1247,59 +1247,15 @@ DWORD WINAPI DECLSPEC_HOTPATCH K32GetDeviceDriverFileNameW( void *image_base, WC
     return 0;
 }
 
-static DWORD FILE_name_WtoA( LPCWSTR src, INT srclen, LPSTR dest, INT destlen )
-{
-    DWORD ret;
-
-    if (srclen < 0) srclen = lstrlenW( src ) + 1;
-    if (!destlen)
-    {
-        if (!AreFileApisANSI())
-        {
-            UNICODE_STRING strW;
-            strW.Buffer = (WCHAR *)src;
-            strW.Length = srclen * sizeof(WCHAR);
-            ret = RtlUnicodeStringToOemSize( &strW ) - 1;
-        }
-        else
-            RtlUnicodeToMultiByteSize( &ret, src, srclen * sizeof(WCHAR) );
-    }
-    else
-    {
-        if (!AreFileApisANSI())
-            RtlUnicodeToOemN( dest, destlen, &ret, src, srclen * sizeof(WCHAR) );
-        else
-            RtlUnicodeToMultiByteN( dest, destlen, &ret, src, srclen * sizeof(WCHAR) );
-    }
-    return ret;
-}
 
 /***********************************************************************
  *         K32GetMappedFileNameA   (kernelbase.@)
  */
 DWORD WINAPI DECLSPEC_HOTPATCH K32GetMappedFileNameA( HANDLE process, void *addr, char *name, DWORD size )
 {
-    WCHAR file_nameW[MAX_PATH];
-    DWORD ret;
-
-    TRACE("(%p, %p, %p, %d)\n", process, addr, name, size);
-
-    if (!name || !size)
-    {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return 0;
-    }
-
-    ret = K32GetMappedFileNameW(process, addr, file_nameW, MAX_PATH);
-    if (ret)
-    {
-        ret = FILE_name_WtoA(file_nameW, -1, name, size);
-        if (ret > 1)
-            ret--; /* don't account for terminating NUL */
-        else
-            name[0] = 0;
-    }
-    return ret;
+    FIXME( "(%p, %p, %p, %d): stub\n", process, addr, name, size );
+    if (name && size) name[0] = 0;
+    return 0;
 }
 
 
@@ -1308,40 +1264,9 @@ DWORD WINAPI DECLSPEC_HOTPATCH K32GetMappedFileNameA( HANDLE process, void *addr
  */
 DWORD WINAPI DECLSPEC_HOTPATCH K32GetMappedFileNameW( HANDLE process, void *addr, WCHAR *name, DWORD size )
 {
-    MEMORY_SECTION_NAME *section;
-    SIZE_T buf_len;
-    NTSTATUS status;
-
-    TRACE("(%p, %p, %p, %d)\n", process, addr, name, size);
-
-    if (!name || !size)
-    {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return 0;
-    }
-
-    buf_len = sizeof(*section) + size * sizeof(WCHAR);
-    section = HeapAlloc(GetProcessHeap(), 0, buf_len);
-    if (!section)
-    {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return 0;
-    }
-
-    status = NtQueryVirtualMemory(process, addr, MemorySectionName, section, buf_len, &buf_len);
-    if (status)
-    {
-        HeapFree(GetProcessHeap(), 0, section);
-        SetLastError(RtlNtStatusToDosError(status));
-        return 0;
-    }
-
-    memcpy(name, section->SectionFileName.Buffer, section->SectionFileName.MaximumLength);
-    buf_len = section->SectionFileName.Length;
-
-    HeapFree(GetProcessHeap(), 0, section);
-
-    return buf_len;
+    FIXME( "(%p, %p, %p, %d): stub\n", process, addr, name, size );
+    if (name && size) name[0] = 0;
+    return 0;
 }
 
 
@@ -1542,6 +1467,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH K32GetPerformanceInfo( PPERFORMANCE_INFORMATION in
 {
     SYSTEM_PERFORMANCE_INFORMATION perf;
     SYSTEM_BASIC_INFORMATION basic;
+    SYSTEM_PROCESS_INFORMATION *process, *spi;
     DWORD info_size;
     NTSTATUS status;
 
@@ -1554,9 +1480,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH K32GetPerformanceInfo( PPERFORMANCE_INFORMATION in
     }
 
     status = NtQuerySystemInformation( SystemPerformanceInformation, &perf, sizeof(perf), NULL );
-    if (status) goto err;
+    if (!set_ntstatus( status )) return FALSE;
     status = NtQuerySystemInformation( SystemBasicInformation, &basic, sizeof(basic), NULL );
-    if (status) goto err;
+    if (!set_ntstatus( status )) return FALSE;
 
     info->cb                 = sizeof(*info);
     info->CommitTotal        = perf.TotalCommittedPages;
@@ -1570,24 +1496,37 @@ BOOL WINAPI DECLSPEC_HOTPATCH K32GetPerformanceInfo( PPERFORMANCE_INFORMATION in
     info->KernelNonpaged     = perf.NonPagedPoolUsage;
     info->PageSize           = basic.PageSize;
 
-    SERVER_START_REQ( get_system_info )
+    /* fields from SYSTEM_PROCESS_INFORMATION */
+    NtQuerySystemInformation( SystemProcessInformation, NULL, 0, &info_size );
+    for (;;)
     {
-        status = wine_server_call( req );
-        if (!status)
+        process = HeapAlloc( GetProcessHeap(), 0, info_size );
+        if (!process)
         {
-            info->ProcessCount = reply->processes;
-            info->HandleCount = reply->handles;
-            info->ThreadCount = reply->threads;
+            SetLastError( ERROR_OUTOFMEMORY );
+            return FALSE;
+        }
+        status = NtQuerySystemInformation( SystemProcessInformation, process, info_size, &info_size );
+        if (!status) break;
+        HeapFree( GetProcessHeap(), 0, process );
+        if (status != STATUS_INFO_LENGTH_MISMATCH)
+        {
+            SetLastError( RtlNtStatusToDosError( status ) );
+            return FALSE;
         }
     }
-    SERVER_END_REQ;
-
-    if (status) goto err;
+    info->HandleCount = info->ProcessCount = info->ThreadCount = 0;
+    spi = process;
+    for (;;)
+    {
+        info->ProcessCount++;
+        info->HandleCount += spi->HandleCount;
+        info->ThreadCount += spi->dwThreadCount;
+        if (spi->NextEntryOffset == 0) break;
+        spi = (SYSTEM_PROCESS_INFORMATION *)((char *)spi + spi->NextEntryOffset);
+    }
+    HeapFree( GetProcessHeap(), 0, process );
     return TRUE;
-
-err:
-    SetLastError( RtlNtStatusToDosError( status ) );
-    return FALSE;
 }
 
 

@@ -30,7 +30,6 @@
 #include "initguid.h"
 #include "devguid.h"
 #include "devpkey.h"
-#include "ntddvdeo.h"
 #include "setupapi.h"
 #define WIN32_NO_STATUS
 #include "winternl.h"
@@ -52,7 +51,6 @@ DEFINE_DEVPROPKEY(WINE_DEVPROPKEY_MONITOR_RCWORK, 0x233a9ef3, 0xafc4, 0x4abd, 0x
 DEFINE_DEVPROPKEY(WINE_DEVPROPKEY_MONITOR_ADAPTERNAME, 0x233a9ef3, 0xafc4, 0x4abd, 0xb5, 0x64, 0xc3, 0x2f, 0x21, 0xf1, 0x53, 0x5b, 5);
 
 static const WCHAR driver_date_dataW[] = {'D','r','i','v','e','r','D','a','t','e','D','a','t','a',0};
-static const WCHAR driver_dateW[] = {'D','r','i','v','e','r','D','a','t','e',0};
 static const WCHAR driver_descW[] = {'D','r','i','v','e','r','D','e','s','c',0};
 static const WCHAR displayW[] = {'D','I','S','P','L','A','Y',0};
 static const WCHAR pciW[] = {'P','C','I',0};
@@ -109,7 +107,6 @@ static const WCHAR monitor_instance_fmtW[] = {
 static const WCHAR monitor_hardware_idW[] = {
     'M','O','N','I','T','O','R','\\',
     'D','e','f','a','u','l','t','_','M','o','n','i','t','o','r',0,0};
-static const WCHAR driver_date_fmtW[] = {'%','u','-','%','u','-','%','u',0};
 
 static struct x11drv_display_device_handler host_handler;
 struct x11drv_display_device_handler desktop_handler;
@@ -353,63 +350,55 @@ void X11DRV_DisplayDevices_RegisterEventHandlers(void)
         handler->register_event_handlers();
 }
 
-/* This function sets device interface link state to enabled.
- * The link state should be set via IoSetDeviceInterfaceState(),
- * but IoSetDeviceInterfaceState() requires a PnP driver, which
- * currently doesn't exist for display devices. */
-static BOOL link_device(const WCHAR *instance, const GUID *guid)
+static BOOL CALLBACK update_windows_on_display_change(HWND hwnd, LPARAM lparam)
 {
-    static const WCHAR device_instanceW[] = {'D','e','v','i','c','e','I','n','s','t','a','n','c','e',0};
-    static const WCHAR hash_controlW[] = {'#','\\','C','o','n','t','r','o','l',0};
-    static const WCHAR linkedW[] = {'L','i','n','k','e','d',0};
-    static const DWORD enabled = 1;
-    WCHAR device_key_name[MAX_PATH], device_instance[MAX_PATH];
-    HKEY iface_key, device_key, control_key;
-    DWORD length, type, index = 0;
-    BOOL ret = FALSE;
-    LSTATUS lr;
+    struct x11drv_win_data *data;
+    UINT mask = (UINT)lparam;
 
-    iface_key = SetupDiOpenClassRegKeyExW(guid, KEY_ALL_ACCESS, DIOCR_INTERFACE, NULL, NULL);
-    while (1)
+    if (!(data = get_win_data(hwnd)))
+        return TRUE;
+
+    /* update the full screen state */
+    update_net_wm_states(data);
+
+    if (mask && data->whole_window)
     {
-        length = ARRAY_SIZE(device_key_name);
-        lr = RegEnumKeyExW(iface_key, index++, device_key_name, &length, NULL, NULL, NULL, NULL);
-        if (lr)
-            break;
-
-        lr = RegOpenKeyExW(iface_key, device_key_name, 0, KEY_ALL_ACCESS, &device_key);
-        if (lr)
-            continue;
-
-        length = ARRAY_SIZE(device_instance);
-        lr = RegQueryValueExW(device_key, device_instanceW, NULL, &type, (BYTE *)device_instance, &length);
-        if (lr || type != REG_SZ)
-        {
-            RegCloseKey(device_key);
-            continue;
-        }
-
-        if (lstrcmpiW(device_instance, instance))
-        {
-            RegCloseKey(device_key);
-            continue;
-        }
-
-        lr = RegCreateKeyExW(device_key, hash_controlW, 0, NULL, REG_OPTION_VOLATILE, KEY_ALL_ACCESS, NULL, &control_key, NULL);
-        RegCloseKey(device_key);
-        if (lr)
-            continue;
-
-        lr = RegSetValueExW(control_key, linkedW, 0, REG_DWORD, (const BYTE *)&enabled, sizeof(enabled));
-        RegCloseKey(control_key);
-        if (!lr)
-        {
-            ret = TRUE;
-            break;
-        }
+        POINT pos = virtual_screen_to_root(data->whole_rect.left, data->whole_rect.top);
+        XWindowChanges changes;
+        changes.x = pos.x;
+        changes.y = pos.y;
+        XReconfigureWMWindow(data->display, data->whole_window, data->vis.screen, mask, &changes);
     }
-    RegCloseKey(iface_key);
-    return ret;
+    release_win_data(data);
+    return TRUE;
+}
+
+void X11DRV_DisplayDevices_Update(BOOL send_display_change)
+{
+    RECT old_virtual_rect, new_virtual_rect;
+    DWORD tid, pid;
+    HWND foreground;
+    UINT mask = 0;
+
+    old_virtual_rect = get_virtual_screen_rect();
+    X11DRV_DisplayDevices_Init(TRUE);
+    new_virtual_rect = get_virtual_screen_rect();
+
+    /* Calculate XReconfigureWMWindow() mask */
+    if (old_virtual_rect.left != new_virtual_rect.left)
+        mask |= CWX;
+    if (old_virtual_rect.top != new_virtual_rect.top)
+        mask |= CWY;
+
+    X11DRV_resize_desktop(send_display_change);
+    EnumWindows(update_windows_on_display_change, (LPARAM)mask);
+
+    /* forward clip_fullscreen_window request to the foreground window */
+    if ((foreground = GetForegroundWindow()) && (tid = GetWindowThreadProcessId( foreground, &pid )) && pid == GetCurrentProcessId())
+    {
+        if (tid == GetCurrentThreadId()) clip_fullscreen_window( foreground, TRUE );
+        else SendNotifyMessageW( foreground, WM_X11DRV_CLIP_CURSOR_REQUEST, TRUE, TRUE );
+    }
 }
 
 /* Initialize a GPU instance.
@@ -418,19 +407,17 @@ static BOOL X11DRV_InitGpu(HDEVINFO devinfo, const struct x11drv_gpu *gpu, INT g
                            WCHAR *driver, LUID *gpu_luid)
 {
     static const BOOL present = TRUE;
-    SP_DEVICE_INTERFACE_DATA iface_data = {sizeof(iface_data)};
     SP_DEVINFO_DATA device_data = {sizeof(device_data)};
     WCHAR instanceW[MAX_PATH];
     DEVPROPTYPE property_type;
-    SYSTEMTIME systemtime;
     WCHAR bufferW[1024];
-    FILETIME filetime;
     HKEY hkey = NULL;
     GUID guid;
     LUID luid;
     INT written;
     DWORD size;
     BOOL ret = FALSE;
+    FILETIME filetime;
 
     TRACE("GPU id:0x%s name:%s.\n", wine_dbgstr_longlong(gpu->id), wine_dbgstr_w(gpu->name));
 
@@ -441,13 +428,6 @@ static BOOL X11DRV_InitGpu(HDEVINFO devinfo, const struct x11drv_gpu *gpu, INT g
         if (!SetupDiRegisterDeviceInfo(devinfo, &device_data, 0, NULL, NULL, NULL))
             goto done;
     }
-
-    /* Register GUID_DEVINTERFACE_DISPLAY_ADAPTER */
-    if (!SetupDiCreateDeviceInterfaceW(devinfo, &device_data, &GUID_DEVINTERFACE_DISPLAY_ADAPTER, NULL, 0, &iface_data))
-        goto done;
-
-    if (!link_device(instanceW, &GUID_DEVINTERFACE_DISPLAY_ADAPTER))
-        goto done;
 
     /* Write HardwareID registry property, REG_MULTI_SZ */
     written = sprintfW(bufferW, gpu_hardware_id_fmtW, gpu->vendor_id, gpu->device_id);
@@ -493,11 +473,6 @@ static BOOL X11DRV_InitGpu(HDEVINFO devinfo, const struct x11drv_gpu *gpu, INT g
     /* Write DriverDateData value, using current time as driver date, needed by Evoland */
     GetSystemTimeAsFileTime(&filetime);
     if (RegSetValueExW(hkey, driver_date_dataW, 0, REG_BINARY, (BYTE *)&filetime, sizeof(filetime)))
-        goto done;
-
-    GetSystemTime(&systemtime);
-    sprintfW(bufferW, driver_date_fmtW, systemtime.wMonth, systemtime.wDay, systemtime.wYear);
-    if (RegSetValueExW(hkey, driver_dateW, 0, REG_SZ, (BYTE *)bufferW, (strlenW(bufferW) + 1) * sizeof(WCHAR)))
         goto done;
 
     RegCloseKey(hkey);
@@ -601,7 +576,6 @@ done:
 static BOOL X11DRV_InitMonitor(HDEVINFO devinfo, const struct x11drv_monitor *monitor, int monitor_index,
                                int video_index, const LUID *gpu_luid, UINT output_id)
 {
-    SP_DEVICE_INTERFACE_DATA iface_data = {sizeof(iface_data)};
     SP_DEVINFO_DATA device_data = {sizeof(SP_DEVINFO_DATA)};
     WCHAR bufferW[MAX_PATH];
     HKEY hkey;
@@ -611,13 +585,6 @@ static BOOL X11DRV_InitMonitor(HDEVINFO devinfo, const struct x11drv_monitor *mo
     sprintfW(bufferW, monitor_instance_fmtW, video_index, monitor_index);
     SetupDiCreateDeviceInfoW(devinfo, bufferW, &GUID_DEVCLASS_MONITOR, monitor->name, NULL, 0, &device_data);
     if (!SetupDiRegisterDeviceInfo(devinfo, &device_data, 0, NULL, NULL, NULL))
-        goto done;
-
-    /* Register GUID_DEVINTERFACE_MONITOR */
-    if (!SetupDiCreateDeviceInterfaceW(devinfo, &device_data, &GUID_DEVINTERFACE_MONITOR, NULL, 0, &iface_data))
-        goto done;
-
-    if (!link_device(bufferW, &GUID_DEVINTERFACE_MONITOR))
         goto done;
 
     /* Write HardwareID registry property */

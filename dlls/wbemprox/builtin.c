@@ -379,6 +379,7 @@ static const struct column col_sounddevice[] =
     { L"Manufacturer", CIM_STRING },
     { L"Name",         CIM_STRING },
     { L"ProductName",  CIM_STRING },
+    { L"Status",       CIM_STRING },
     { L"StatusInfo",   CIM_UINT16 },
 };
 static const struct column col_stdregprov[] =
@@ -768,6 +769,7 @@ struct record_sounddevice
     const WCHAR *manufacturer;
     const WCHAR *name;
     const WCHAR *productname;
+    const WCHAR *status;
     UINT16       statusinfo;
 };
 struct record_stdregprov
@@ -886,7 +888,7 @@ static const struct record_quickfixengineering data_quickfixengineering[] =
 };
 static const struct record_sounddevice data_sounddevice[] =
 {
-    { L"The Wine Project", L"Wine Audio Device", L"Wine Audio Device", 3 /* enabled */ }
+    { L"The Wine Project", L"Wine Audio Device", L"Wine Audio Device", L"OK", 3 /* enabled */ }
 };
 static const struct record_stdregprov data_stdregprov[] =
 {
@@ -1320,7 +1322,7 @@ static enum fill_status fill_bios( struct table *table, const struct expr *cond 
 
 static enum fill_status fill_cdromdrive( struct table *table, const struct expr *cond )
 {
-    WCHAR drive[3], root[] = {'A',':','\\',0};
+    WCHAR drive[3], root[] = L"A:\\";
     struct record_cdromdrive *rec;
     UINT i, row = 0, offset = 0;
     DWORD drives = GetLogicalDrives();
@@ -1846,7 +1848,7 @@ static enum fill_status fill_datafile( struct table *table, const struct expr *c
 {
     struct record_datafile *rec;
     UINT i, len, row = 0, offset = 0, num_expected_rows;
-    WCHAR *glob = NULL, *path = NULL, *new_path, root[] = {'A',':','\\',0};
+    WCHAR *glob = NULL, *path = NULL, *new_path, root[] = L"A:\\";
     DWORD drives = GetLogicalDrives();
     WIN32_FIND_DATAW data;
     HANDLE handle;
@@ -1974,7 +1976,7 @@ static enum fill_status fill_directory( struct table *table, const struct expr *
 {
     struct record_directory *rec;
     UINT i, len, row = 0, offset = 0, num_expected_rows;
-    WCHAR *glob = NULL, *path = NULL, *new_path, root[] = {'A',':','\\',0};
+    WCHAR *glob = NULL, *path = NULL, *new_path, root[] = L"A:\\";
     DWORD drives = GetLogicalDrives();
     WIN32_FIND_DATAW data;
     HANDLE handle;
@@ -2071,7 +2073,7 @@ done:
 
 static UINT64 get_freespace( const WCHAR *dir, UINT64 *disksize )
 {
-    WCHAR root[] = {'\\','\\','.','\\','A',':',0};
+    WCHAR root[] = L"\\\\.\\A:";
     ULARGE_INTEGER free;
     DISK_GEOMETRY_EX info;
     HANDLE handle;
@@ -2130,7 +2132,7 @@ done:
 static enum fill_status fill_diskdrive( struct table *table, const struct expr *cond )
 {
     static const WCHAR fmtW[] = L"\\\\\\\\.\\\\PHYSICALDRIVE%u";
-    WCHAR device_id[ARRAY_SIZE( fmtW ) + 10], root[] = {'A',':','\\',0};
+    WCHAR device_id[ARRAY_SIZE( fmtW ) + 10], root[] = L"A:\\";
     struct record_diskdrive *rec;
     UINT i, row = 0, offset = 0, index = 0, type;
     UINT64 size = 1024 * 1024 * 1024;
@@ -2283,7 +2285,7 @@ static WCHAR *get_filesystem( const WCHAR *root )
 
 static enum fill_status fill_diskpartition( struct table *table, const struct expr *cond )
 {
-    WCHAR device_id[32], root[] = {'A',':','\\',0};
+    WCHAR device_id[32], root[] = L"A:\\";
     struct record_diskpartition *rec;
     UINT i, row = 0, offset = 0, type, index = 0;
     UINT64 size = 1024 * 1024 * 1024;
@@ -2435,7 +2437,7 @@ static WCHAR *get_volumeserialnumber( const WCHAR *root )
 
 static enum fill_status fill_logicaldisk( struct table *table, const struct expr *cond )
 {
-    WCHAR device_id[3], root[] = {'A',':','\\',0};
+    WCHAR device_id[3], root[] = L"A:\\";
     struct record_logicaldisk *rec;
     UINT i, row = 0, offset = 0, type;
     UINT64 size = 1024 * 1024 * 1024;
@@ -3286,7 +3288,7 @@ static WCHAR *get_lastbootuptime(void)
     if (!(ret = heap_alloc( 26 * sizeof(WCHAR) ))) return NULL;
 
     NtQuerySystemInformation( SystemTimeOfDayInformation, &ti, sizeof(ti), NULL );
-    RtlTimeToTimeFields( &ti.liKeBootTime, &tf );
+    RtlTimeToTimeFields( &ti.BootTime, &tf );
     swprintf( ret, 26, L"%04u%02u%02u%02u%02u%02u.%06u+000", tf.Year, tf.Month, tf.Day, tf.Hour, tf.Minute,
               tf.Second, tf.Milliseconds * 1000 );
     return ret;

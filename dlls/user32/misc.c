@@ -21,8 +21,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
 #include <stdarg.h>
 
 #include "windef.h"
@@ -32,7 +30,6 @@
 #include "controls.h"
 #include "user_private.h"
 
-#include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(win);
@@ -41,7 +38,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(win);
 static HWND (WINAPI *imm_get_ui_window)(HKL);
 BOOL (WINAPI *imm_register_window)(HWND) = NULL;
 void (WINAPI *imm_unregister_window)(HWND) = NULL;
-void (WINAPI *imm_activate_window)(HWND) = NULL;
 
 /* MSIME messages */
 static UINT WM_MSIME_SERVICE;
@@ -326,8 +322,7 @@ VOID WINAPI LoadLocalFonts(VOID)
  */
 BOOL WINAPI User32InitializeImmEntryTable(DWORD magic)
 {
-    static const WCHAR imm32_dllW[] = {'i','m','m','3','2','.','d','l','l',0};
-    HMODULE imm32 = GetModuleHandleW(imm32_dllW);
+    HMODULE imm32 = GetModuleHandleW(L"imm32.dll");
 
     TRACE("(%x)\n", magic);
 
@@ -349,7 +344,6 @@ BOOL WINAPI User32InitializeImmEntryTable(DWORD magic)
     imm_get_ui_window = (void*)GetProcAddress(imm32, "__wine_get_ui_window");
     imm_register_window = (void*)GetProcAddress(imm32, "__wine_register_window");
     imm_unregister_window = (void*)GetProcAddress(imm32, "__wine_unregister_window");
-    imm_activate_window = (void*)GetProcAddress(imm32, "__wine_activate_window");
     if (!imm_get_ui_window)
         FIXME("native imm32.dll not supported\n");
     return TRUE;
@@ -536,10 +530,9 @@ BOOL WINAPI GetPointerType(UINT32 id, POINTER_INPUT_TYPE *type)
     return TRUE;
 }
 
-static const WCHAR imeW[] = {'I','M','E',0};
 const struct builtin_class_descr IME_builtin_class =
 {
-    imeW,               /* name */
+    L"IME",             /* name */
     0,                  /* style  */
     WINPROC_IME,        /* proc */
     2*sizeof(LONG_PTR), /* extra */

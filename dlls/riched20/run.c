@@ -47,6 +47,26 @@ ME_Run *run_prev( ME_Run *run )
     return NULL;
 }
 
+ME_Run *run_next_all_paras( ME_Run *run )
+{
+    ME_DisplayItem *item = run_get_di( run ), *dummy = para_get_di( run->para );
+
+    if (ME_NextRun( &dummy, &item, TRUE ))
+        return &item->member.run;
+
+    return NULL;
+}
+
+ME_Run *run_prev_all_paras( ME_Run *run )
+{
+    ME_DisplayItem *item = run_get_di( run ), *dummy = para_get_di( run->para );
+
+    if (ME_PrevRun( &dummy, &item, TRUE ))
+        return &item->member.run;
+
+    return NULL;
+}
+
 /******************************************************************************
  * ME_CanJoinRuns
  *
@@ -167,231 +187,208 @@ void ME_CheckCharOffsets(ME_TextEditor *editor)
 }
 
 /******************************************************************************
- * ME_CharOfsFromRunOfs
+ * run_char_ofs
  *
- * Converts a character position relative to the start of the run, to a
+ * Converts a character position relative to the start of the run to a
  * character position relative to the start of the document.
- * Kind of a "local to global" offset conversion.
  */
-int ME_CharOfsFromRunOfs(ME_TextEditor *editor, const ME_DisplayItem *pPara,
-                         const ME_DisplayItem *pRun, int nOfs)
+
+int run_char_ofs( ME_Run *run, int ofs )
 {
-  assert(pRun && pRun->type == diRun);
-  assert(pPara && pPara->type == diParagraph);
-  return pPara->member.para.nCharOfs + pRun->member.run.nCharOfs + nOfs;
+    return run->para->nCharOfs + run->nCharOfs + ofs;
 }
 
 /******************************************************************************
- * ME_CursorFromCharOfs
+ * cursor_from_char_ofs
  *
  * Converts a character offset (relative to the start of the document) to
  * a cursor structure (which contains a run and a position relative to that
  * run).
  */
-void ME_CursorFromCharOfs(ME_TextEditor *editor, int nCharOfs, ME_Cursor *pCursor)
+void cursor_from_char_ofs( ME_TextEditor *editor, int char_ofs, ME_Cursor *cursor )
 {
-  ME_RunOfsFromCharOfs(editor, nCharOfs, &pCursor->pPara,
-                       &pCursor->pRun, &pCursor->nOffset);
+    ME_Paragraph *para;
+    ME_Run *run;
+
+    char_ofs = min( max( char_ofs, 0 ), ME_GetTextLength( editor ) );
+
+    /* Find the paragraph at the offset. */
+    for (para = editor_first_para( editor );
+         para_next( para )->nCharOfs <= char_ofs;
+         para = para_next( para ))
+        ;
+
+    char_ofs -= para->nCharOfs;
+
+    /* Find the run at the offset. */
+    for (run = para_first_run( para );
+         run_next( run ) && run_next( run )->nCharOfs <= char_ofs;
+         run = run_next( run ))
+        ;
+
+    char_ofs -= run->nCharOfs;
+
+    cursor->pPara = para_get_di( para );
+    cursor->pRun = run_get_di( run );
+    cursor->nOffset = char_ofs;
 }
 
 /******************************************************************************
- * ME_RunOfsFromCharOfs
- *
- * Find a run and relative character offset given an absolute character offset
- * (absolute offset being an offset relative to the start of the document).
- * Kind of a "global to local" offset conversion.
- */
-void ME_RunOfsFromCharOfs(ME_TextEditor *editor,
-                          int nCharOfs,
-                          ME_DisplayItem **ppPara,
-                          ME_DisplayItem **ppRun,
-                          int *pOfs)
-{
-  ME_DisplayItem *item, *next_item;
-  int endOfs = nCharOfs, len = ME_GetTextLength(editor);
-
-  nCharOfs = max(nCharOfs, 0);
-  nCharOfs = min(nCharOfs, len);
-
-  /* Find the paragraph at the offset. */
-  next_item = editor->pBuffer->pFirst->member.para.next_para;
-  do {
-    item = next_item;
-    next_item = item->member.para.next_para;
-  } while (next_item->member.para.nCharOfs <= nCharOfs);
-  assert(item->type == diParagraph);
-  nCharOfs -= item->member.para.nCharOfs;
-  if (ppPara) *ppPara = item;
-
-  /* Find the run at the offset. */
-  next_item = ME_FindItemFwd(item, diRun);
-  do {
-    item = next_item;
-    next_item = ME_FindItemFwd(item, diRunOrParagraphOrEnd);
-  } while (next_item->type == diRun &&
-           next_item->member.run.nCharOfs <= nCharOfs);
-  assert(item->type == diRun);
-  nCharOfs -= item->member.run.nCharOfs;
-
-  if (ppRun) *ppRun = item;
-  if (pOfs) {
-    if (((*ppRun)->member.run.nFlags & MERF_ENDPARA) && endOfs > len)
-      *pOfs = (*ppRun)->member.run.len;
-    else *pOfs = nCharOfs;
-  }
-}
-
-/******************************************************************************
- * ME_JoinRuns
+ * run_join
  * 
  * Merges two adjacent runs, the one given as a parameter and the next one.
  */    
-void ME_JoinRuns(ME_TextEditor *editor, ME_DisplayItem *p)
+void run_join( ME_TextEditor *editor, ME_Run *run )
 {
-  ME_DisplayItem *pNext = p->next;
+  ME_Run *next = run_next( run );
   int i;
-  assert(p->type == diRun && pNext->type == diRun);
-  assert(p->member.run.nCharOfs != -1);
-  para_mark_rewrap( editor, &ME_GetParagraph( p )->member.para );
+
+  assert( run );
+  assert( run->nCharOfs != -1 );
+  para_mark_rewrap( editor, run->para );
 
   /* Update all cursors so that they don't contain the soon deleted run */
-  for (i=0; i<editor->nCursors; i++) {
-    if (editor->pCursors[i].pRun == pNext) {
-      editor->pCursors[i].pRun = p;
-      editor->pCursors[i].nOffset += p->member.run.len;
+  for (i = 0; i < editor->nCursors; i++)
+  {
+    if (&editor->pCursors[i].pRun->member.run == next)
+    {
+      editor->pCursors[i].pRun = run_get_di( run );
+      editor->pCursors[i].nOffset += run->len;
     }
   }
 
-  p->member.run.len += pNext->member.run.len;
-  ME_Remove(pNext);
-  ME_DestroyDisplayItem(pNext);
-  ME_UpdateRunFlags(editor, &p->member.run);
-  ME_CheckCharOffsets(editor);
+  run->len += next->len;
+  ME_Remove( run_get_di( next ) );
+  ME_DestroyDisplayItem( run_get_di( next ) );
+  ME_UpdateRunFlags( editor, run );
+  ME_CheckCharOffsets( editor );
 }
 
 /******************************************************************************
- * ME_SplitRunSimple
+ * run_split
  *
  * Does the most basic job of splitting a run into two - it does not
  * update the positions and extents.
  */
-ME_DisplayItem *ME_SplitRunSimple(ME_TextEditor *editor, ME_Cursor *cursor)
+ME_Run *run_split( ME_TextEditor *editor, ME_Cursor *cursor )
 {
-  ME_DisplayItem *run = cursor->pRun;
-  ME_DisplayItem *new_run;
-  int i;
-  int nOffset = cursor->nOffset;
+    ME_Run *run = &cursor->pRun->member.run, *new_run;
+    int i;
+    int nOffset = cursor->nOffset;
 
-  assert(!(run->member.run.nFlags & MERF_NONTEXT));
+    assert( !(run->nFlags & MERF_NONTEXT) );
 
-  new_run = ME_MakeRun(run->member.run.style,
-                       run->member.run.nFlags & MERF_SPLITMASK);
-  new_run->member.run.nCharOfs = run->member.run.nCharOfs + nOffset;
-  new_run->member.run.len = run->member.run.len - nOffset;
-  new_run->member.run.para = run->member.run.para;
-  run->member.run.len = nOffset;
-  cursor->pRun = new_run;
-  cursor->nOffset = 0;
+    new_run = run_create( run->style, run->nFlags & MERF_SPLITMASK );
+    new_run->nCharOfs = run->nCharOfs + nOffset;
+    new_run->len = run->len - nOffset;
+    new_run->para = run->para;
+    run->len = nOffset;
+    cursor->pRun = run_get_di( new_run );
+    cursor->nOffset = 0;
 
-  ME_InsertBefore(run->next, new_run);
+    ME_InsertBefore( run_get_di( run )->next, run_get_di( new_run ) );
 
-  ME_UpdateRunFlags(editor, &run->member.run);
-  ME_UpdateRunFlags(editor, &new_run->member.run);
-  for (i = 0; i < editor->nCursors; i++) {
-    if (editor->pCursors[i].pRun == run &&
-        editor->pCursors[i].nOffset >= nOffset) {
-      editor->pCursors[i].pRun = new_run;
-      editor->pCursors[i].nOffset -= nOffset;
+    ME_UpdateRunFlags( editor, run );
+    ME_UpdateRunFlags( editor, new_run );
+    for (i = 0; i < editor->nCursors; i++)
+    {
+        if (editor->pCursors[i].pRun == run_get_di( run ) &&
+            editor->pCursors[i].nOffset >= nOffset)
+        {
+            editor->pCursors[i].pRun = run_get_di( new_run );
+            editor->pCursors[i].nOffset -= nOffset;
+        }
     }
-  }
-  para_mark_rewrap( editor, &cursor->pPara->member.para );
-  return run;
+    para_mark_rewrap( editor, run->para );
+    return run;
 }
 
 /******************************************************************************
- * ME_MakeRun
+ * run_create
  * 
  * A helper function to create run structures quickly.
  */   
-ME_DisplayItem *ME_MakeRun(ME_Style *s, int nFlags)
+ME_Run *run_create( ME_Style *s, int flags )
 {
-  ME_DisplayItem *item = ME_MakeDI(diRun);
-  item->member.run.style = s;
-  item->member.run.reobj = NULL;
-  item->member.run.nFlags = nFlags;
-  item->member.run.nCharOfs = -1;
-  item->member.run.len = 0;
-  item->member.run.para = NULL;
-  item->member.run.num_glyphs = 0;
-  item->member.run.max_glyphs = 0;
-  item->member.run.glyphs = NULL;
-  item->member.run.vis_attrs = NULL;
-  item->member.run.advances = NULL;
-  item->member.run.offsets = NULL;
-  item->member.run.max_clusters = 0;
-  item->member.run.clusters = NULL;
-  ME_AddRefStyle(s);
-  return item;
+    ME_DisplayItem *item = ME_MakeDI( diRun );
+    ME_Run *run = &item->member.run;
+
+    if (!item) return NULL;
+
+    ME_AddRefStyle( s );
+    run->style = s;
+    run->reobj = NULL;
+    run->nFlags = flags;
+    run->nCharOfs = -1;
+    run->len = 0;
+    run->para = NULL;
+    run->num_glyphs = 0;
+    run->max_glyphs = 0;
+    run->glyphs = NULL;
+    run->vis_attrs = NULL;
+    run->advances = NULL;
+    run->offsets = NULL;
+    run->max_clusters = 0;
+    run->clusters = NULL;
+    return run;
 }
 
 /******************************************************************************
- * ME_InsertRunAtCursor
+ * run_insert
  *
  * Inserts a new run with given style, flags and content at a given position,
  * which is passed as a cursor structure (which consists of a run and 
  * a run-relative character offset).
  */
-ME_DisplayItem *
-ME_InsertRunAtCursor(ME_TextEditor *editor, ME_Cursor *cursor, ME_Style *style,
-                     const WCHAR *str, int len, int flags)
+ME_Run *run_insert( ME_TextEditor *editor, ME_Cursor *cursor, ME_Style *style,
+                    const WCHAR *str, int len, int flags )
 {
-  ME_DisplayItem *pDI, *insert_before = cursor->pRun, *prev;
+  ME_Run *insert_before = &cursor->pRun->member.run, *run, *prev;
 
   if (cursor->nOffset)
   {
-    if (cursor->nOffset == cursor->pRun->member.run.len)
+    if (cursor->nOffset == insert_before->len)
     {
-      insert_before = ME_FindItemFwd( cursor->pRun, diRun );
-      if (!insert_before) insert_before = cursor->pRun; /* Always insert before the final eop run */
+      insert_before = run_next_all_paras( insert_before );
+      if (!insert_before) insert_before = &cursor->pRun->member.run; /* Always insert before the final eop run */
     }
     else
     {
-      ME_SplitRunSimple( editor, cursor );
-      insert_before = cursor->pRun;
+      run_split( editor, cursor );
+      insert_before = &cursor->pRun->member.run;
     }
   }
 
-  add_undo_delete_run( editor, insert_before->member.run.para->nCharOfs +
-                       insert_before->member.run.nCharOfs, len );
+  add_undo_delete_run( editor, insert_before->para->nCharOfs + insert_before->nCharOfs, len );
 
-  pDI = ME_MakeRun(style, flags);
-  pDI->member.run.nCharOfs = insert_before->member.run.nCharOfs;
-  pDI->member.run.len = len;
-  pDI->member.run.para = insert_before->member.run.para;
-  ME_InsertString( pDI->member.run.para->text, pDI->member.run.nCharOfs, str, len );
-  ME_InsertBefore( insert_before, pDI );
+  run = run_create( style, flags );
+  run->nCharOfs = insert_before->nCharOfs;
+  run->len = len;
+  run->para = insert_before->para;
+  ME_InsertString( run->para->text, run->nCharOfs, str, len );
+  ME_InsertBefore( run_get_di( insert_before ), run_get_di( run ) );
   TRACE("Shift length:%d\n", len);
-  ME_PropagateCharOffset( insert_before, len );
-  para_mark_rewrap( editor, insert_before->member.run.para );
+  ME_PropagateCharOffset( run_get_di( insert_before ), len );
+  para_mark_rewrap( editor, insert_before->para );
 
   /* Move any cursors that were at the end of the previous run to the end of the inserted run */
-  prev = ME_FindItemBack( pDI, diRun );
+  prev = run_prev_all_paras( run );
   if (prev)
   {
     int i;
 
     for (i = 0; i < editor->nCursors; i++)
     {
-      if (editor->pCursors[i].pRun == prev &&
-          editor->pCursors[i].nOffset == prev->member.run.len)
+      if (editor->pCursors[i].pRun == run_get_di( prev ) &&
+          editor->pCursors[i].nOffset == prev->len)
       {
-        editor->pCursors[i].pRun = pDI;
+        editor->pCursors[i].pRun = run_get_di( run );
         editor->pCursors[i].nOffset = len;
       }
     }
   }
 
-  return pDI;
+  return run;
 }
 
 static BOOL run_is_splittable( const ME_Run *run )
@@ -719,7 +716,7 @@ void ME_SetSelectionCharFormat(ME_TextEditor *editor, CHARFORMAT2W *pFmt)
   {
     ME_Style *s;
     if (!editor->pBuffer->pCharStyle)
-      editor->pBuffer->pCharStyle = ME_GetInsertStyle(editor, 0);
+      editor->pBuffer->pCharStyle = style_get_insert_style( editor, editor->pCursors );
     s = ME_ApplyStyle(editor, editor->pBuffer->pCharStyle, pFmt);
     ME_ReleaseStyle(editor->pBuffer->pCharStyle);
     editor->pBuffer->pCharStyle = s;
@@ -742,23 +739,23 @@ void ME_SetSelectionCharFormat(ME_TextEditor *editor, CHARFORMAT2W *pFmt)
  *
  * If no text is selected, then nothing is done.
  */
-void ME_SetCharFormat(ME_TextEditor *editor, ME_Cursor *start, ME_Cursor *end, CHARFORMAT2W *pFmt)
+void ME_SetCharFormat( ME_TextEditor *editor, ME_Cursor *start, ME_Cursor *end, CHARFORMAT2W *fmt )
 {
-  ME_DisplayItem *run, *start_run = start->pRun, *end_run = NULL;
+  ME_Run *run, *start_run = &start->pRun->member.run, *end_run = NULL;
 
   if (end && start->pRun == end->pRun && start->nOffset == end->nOffset)
     return;
 
   if (start->nOffset == start->pRun->member.run.len)
-    start_run = ME_FindItemFwd( start->pRun, diRun );
+    start_run = run_next_all_paras( &start->pRun->member.run );
   else if (start->nOffset)
   {
-    /* SplitRunSimple may or may not update the cursors, depending on whether they
+    /* run_split() may or may not update the cursors, depending on whether they
      * are selection cursors, but we need to make sure they are valid. */
     int split_offset = start->nOffset;
-    ME_DisplayItem *split_run = ME_SplitRunSimple(editor, start);
-    start_run = start->pRun;
-    if (end && end->pRun == split_run)
+    ME_Run *split_run = run_split( editor, start );
+    start_run = &start->pRun->member.run;
+    if (end && &end->pRun->member.run == split_run)
     {
       end->pRun = start->pRun;
       end->nOffset -= split_offset;
@@ -768,26 +765,26 @@ void ME_SetCharFormat(ME_TextEditor *editor, ME_Cursor *start, ME_Cursor *end, C
   if (end)
   {
     if (end->nOffset == end->pRun->member.run.len)
-      end_run = ME_FindItemFwd( end->pRun, diRun );
+      end_run = run_next_all_paras( &end->pRun->member.run );
     else
     {
-      if (end->nOffset) ME_SplitRunSimple(editor, end);
-      end_run = end->pRun;
+      if (end->nOffset) run_split( editor, end );
+      end_run = &end->pRun->member.run;
     }
   }
 
-  for (run = start_run; run != end_run; run = ME_FindItemFwd( run, diRun ))
+  for (run = start_run; run != end_run; run = run_next_all_paras( run ))
   {
-    ME_Style *new_style = ME_ApplyStyle(editor, run->member.run.style, pFmt);
-    ME_Paragraph *para = run->member.run.para;
+    ME_Style *new_style = ME_ApplyStyle( editor, run->style, fmt );
+    ME_Paragraph *para = run->para;
 
-    add_undo_set_char_fmt( editor, run->member.run.para->nCharOfs + run->member.run.nCharOfs,
-                           run->member.run.len, &run->member.run.style->fmt );
-    ME_ReleaseStyle(run->member.run.style);
-    run->member.run.style = new_style;
+    add_undo_set_char_fmt( editor, para->nCharOfs + run->nCharOfs,
+                           run->len, &run->style->fmt );
+    ME_ReleaseStyle( run->style );
+    run->style = new_style;
 
     /* The para numbering style depends on the eop style */
-    if ((run->member.run.nFlags & MERF_ENDPARA) && para->para_num.style)
+    if ((run->nFlags & MERF_ENDPARA) && para->para_num.style)
     {
       ME_ReleaseStyle(para->para_num.style);
       para->para_num.style = NULL;
@@ -796,9 +793,9 @@ void ME_SetCharFormat(ME_TextEditor *editor, ME_Cursor *start, ME_Cursor *end, C
   }
 }
 
-static void ME_GetRunCharFormat(ME_TextEditor *editor, ME_DisplayItem *run, CHARFORMAT2W *pFmt)
+static void run_copy_char_fmt( ME_Run *run, CHARFORMAT2W *fmt )
 {
-  ME_CopyCharFormat(pFmt, &run->member.run.style->fmt);
+    ME_CopyCharFormat( fmt, &run->style->fmt );
 }
 
 /******************************************************************************
@@ -836,33 +833,25 @@ void ME_GetSelectionCharFormat(ME_TextEditor *editor, CHARFORMAT2W *pFmt)
  * Returns the style consisting of those attributes which are consistently set
  * in the whole character range.
  */
-void ME_GetCharFormat(ME_TextEditor *editor, const ME_Cursor *from,
-                      const ME_Cursor *to, CHARFORMAT2W *pFmt)
+void ME_GetCharFormat( ME_TextEditor *editor, const ME_Cursor *from,
+                       const ME_Cursor *to, CHARFORMAT2W *fmt )
 {
-  ME_DisplayItem *run, *run_end;
+  ME_Run *run, *run_end, *prev_run;
   CHARFORMAT2W tmp;
 
-  run = from->pRun;
+  run = &from->pRun->member.run;
   /* special case - if selection is empty, take previous char's formatting */
   if (from->pRun == to->pRun && from->nOffset == to->nOffset)
   {
-    if (!from->nOffset)
-    {
-      ME_DisplayItem *tmp_run = ME_FindItemBack(run, diRunOrParagraph);
-      if (tmp_run->type == diRun) {
-        ME_GetRunCharFormat(editor, tmp_run, pFmt);
-        return;
-      }
-    }
-    ME_GetRunCharFormat(editor, run, pFmt);
+    if (!from->nOffset && (prev_run = run_prev( run ))) run = prev_run;
+    run_copy_char_fmt( run, fmt );
     return;
   }
 
-  run_end = to->pRun;
-  if (!to->nOffset)
-    run_end = ME_FindItemBack(run_end, diRun);
+  run_end = &to->pRun->member.run;
+  if (!to->nOffset) run_end = run_prev_all_paras( run_end );
 
-  ME_GetRunCharFormat(editor, run, pFmt);
+  run_copy_char_fmt( run, fmt );
 
   if (run == run_end) return;
 
@@ -871,40 +860,37 @@ void ME_GetCharFormat(ME_TextEditor *editor, const ME_Cursor *from,
     DWORD dwAttribs = CFM_SIZE | CFM_FACE | CFM_COLOR | CFM_UNDERLINETYPE;
     DWORD dwEffects = CFM_BOLD | CFM_ITALIC | CFM_UNDERLINE | CFM_STRIKEOUT | CFM_PROTECTED | CFM_LINK | CFM_SUPERSCRIPT;
 
-    run = ME_FindItemFwd(run, diRun);
+    run = run_next_all_paras( run );
 
-    ZeroMemory(&tmp, sizeof(tmp));
+    memset( &tmp, 0, sizeof(tmp) );
     tmp.cbSize = sizeof(tmp);
-    ME_GetRunCharFormat(editor, run, &tmp);
+    run_copy_char_fmt( run, &tmp );
 
     assert((tmp.dwMask & dwAttribs) == dwAttribs);
     /* reset flags that differ */
 
-    if (pFmt->yHeight != tmp.yHeight)
-      pFmt->dwMask &= ~CFM_SIZE;
-    if (pFmt->dwMask & CFM_FACE)
+    if (fmt->yHeight != tmp.yHeight) fmt->dwMask &= ~CFM_SIZE;
+    if (fmt->dwMask & CFM_FACE)
     {
       if (!(tmp.dwMask & CFM_FACE))
-        pFmt->dwMask &= ~CFM_FACE;
-      else if (wcscmp(pFmt->szFaceName, tmp.szFaceName) ||
-          pFmt->bPitchAndFamily != tmp.bPitchAndFamily)
-        pFmt->dwMask &= ~CFM_FACE;
+        fmt->dwMask &= ~CFM_FACE;
+      else if (wcscmp( fmt->szFaceName, tmp.szFaceName ) ||
+               fmt->bPitchAndFamily != tmp.bPitchAndFamily)
+        fmt->dwMask &= ~CFM_FACE;
     }
-    if (pFmt->yHeight != tmp.yHeight)
-      pFmt->dwMask &= ~CFM_SIZE;
-    if (pFmt->bUnderlineType != tmp.bUnderlineType)
-      pFmt->dwMask &= ~CFM_UNDERLINETYPE;
-    if (pFmt->dwMask & CFM_COLOR)
+    if (fmt->yHeight != tmp.yHeight) fmt->dwMask &= ~CFM_SIZE;
+    if (fmt->bUnderlineType != tmp.bUnderlineType) fmt->dwMask &= ~CFM_UNDERLINETYPE;
+    if (fmt->dwMask & CFM_COLOR)
     {
-      if (!((pFmt->dwEffects&CFE_AUTOCOLOR) & (tmp.dwEffects&CFE_AUTOCOLOR)))
+      if (!((fmt->dwEffects&CFE_AUTOCOLOR) & (tmp.dwEffects&CFE_AUTOCOLOR)))
       {
-        if (pFmt->crTextColor != tmp.crTextColor)
-          pFmt->dwMask &= ~CFM_COLOR;
+        if (fmt->crTextColor != tmp.crTextColor)
+          fmt->dwMask &= ~CFM_COLOR;
       }
     }
 
-    pFmt->dwMask &= ~((pFmt->dwEffects ^ tmp.dwEffects) & dwEffects);
-    pFmt->dwEffects = tmp.dwEffects;
+    fmt->dwMask &= ~((fmt->dwEffects ^ tmp.dwEffects) & dwEffects);
+    fmt->dwEffects = tmp.dwEffects;
 
   } while(run != run_end);
 }

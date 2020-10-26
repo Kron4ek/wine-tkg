@@ -545,7 +545,8 @@ static MSVCRT_size_t MSVCRT_wcsrtombs_l(char *mbstr, const MSVCRT_wchar_t **wcst
 {
     MSVCRT_pthreadlocinfo locinfo;
     MSVCRT_size_t tmp = 0;
-    BOOL used_default;
+    BOOL used_default = FALSE;
+    BOOL *pused_default;
 
     if(!locale)
         locinfo = get_locinfo();
@@ -570,9 +571,11 @@ static MSVCRT_size_t MSVCRT_wcsrtombs_l(char *mbstr, const MSVCRT_wchar_t **wcst
         return i;
     }
 
+    pused_default = (locinfo->lc_codepage != CP_UTF8 ? &used_default : NULL);
+
     if(!mbstr) {
         tmp = WideCharToMultiByte(locinfo->lc_codepage, WC_NO_BEST_FIT_CHARS,
-                *wcstr, -1, NULL, 0, NULL, &used_default);
+                *wcstr, -1, NULL, 0, NULL, pused_default);
         if(!tmp || used_default) {
             *MSVCRT__errno() = MSVCRT_EILSEQ;
             return -1;
@@ -585,7 +588,7 @@ static MSVCRT_size_t MSVCRT_wcsrtombs_l(char *mbstr, const MSVCRT_wchar_t **wcst
         MSVCRT_size_t i, size;
 
         size = WideCharToMultiByte(locinfo->lc_codepage, WC_NO_BEST_FIT_CHARS,
-                *wcstr, 1, buf, 3, NULL, &used_default);
+                *wcstr, 1, buf, 3, NULL, pused_default);
         if(!size || used_default) {
             *MSVCRT__errno() = MSVCRT_EILSEQ;
             return -1;
@@ -1902,7 +1905,8 @@ int CDECL MSVCRT__wctomb_s_l(int *len, char *mbchar, MSVCRT_size_t size,
         MSVCRT_wchar_t wch, MSVCRT__locale_t locale)
 {
     MSVCRT_pthreadlocinfo locinfo;
-    BOOL error;
+    BOOL error = FALSE;
+    BOOL *perror;
     int mblen;
 
     if(!mbchar && size>0) {
@@ -1939,7 +1943,8 @@ int CDECL MSVCRT__wctomb_s_l(int *len, char *mbchar, MSVCRT_size_t size,
         return 0;
     }
 
-    mblen = WideCharToMultiByte(locinfo->lc_codepage, 0, &wch, 1, mbchar, size, NULL, &error);
+    perror = (locinfo->lc_codepage != CP_UTF8 ? &error : NULL);
+    mblen = WideCharToMultiByte(locinfo->lc_codepage, 0, &wch, 1, mbchar, size, NULL, perror);
     if(!mblen || error) {
         if(!mblen && GetLastError()==ERROR_INSUFFICIENT_BUFFER) {
             if(mbchar && size>0)
@@ -1991,15 +1996,18 @@ INT CDECL MSVCRT_wctomb( char *dst, MSVCRT_wchar_t ch )
 INT CDECL MSVCRT_wctob( MSVCRT_wint_t wchar )
 {
     char out;
-    BOOL error;
+    BOOL error = FALSE;
+    BOOL *perror;
     UINT codepage = get_locinfo()->lc_codepage;
+
+    perror = (codepage != CP_UTF8 ? &error : NULL);
 
     if(!codepage) {
         if (wchar < 0xff)
             return (signed char)wchar;
         else
             return MSVCRT_EOF;
-    } else if(WideCharToMultiByte( codepage, 0, &wchar, 1, &out, 1, NULL, &error ) && !error)
+    } else if(WideCharToMultiByte( codepage, 0, &wchar, 1, &out, 1, NULL, perror ) && !error)
         return (INT)out;
     return MSVCRT_EOF;
 }

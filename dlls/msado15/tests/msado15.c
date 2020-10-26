@@ -68,6 +68,7 @@ static void test_Recordset(void)
     LONG refs, count, state;
     VARIANT missing, val, index;
     CursorLocationEnum location;
+    CursorTypeEnum cursor;
     BSTR name;
     HRESULT hr;
 
@@ -143,6 +144,11 @@ static void test_Recordset(void)
     hr = _Recordset_get_CursorLocation( recordset, &location );
     ok( hr == S_OK, "got %08x\n", hr );
     ok( location == adUseServer, "got %d\n", location );
+
+    cursor = adOpenUnspecified;
+    hr = _Recordset_get_CursorType( recordset, &cursor );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( cursor == adOpenForwardOnly, "got %d\n", cursor );
 
     VariantInit( &missing );
     hr = _Recordset_AddNew( recordset, missing, missing );
@@ -808,12 +814,12 @@ if (0) /* Crashes on windows */
     ok(!wcscmp(str, str2), "wrong string %s\n", wine_dbgstr_w(str2));
 
     hr = _Connection_Open(connection, NULL, NULL, NULL, 0);
-    todo_wine ok(hr == E_FAIL, "Failed, hr 0x%08x\n", hr);
+    ok(hr == E_FAIL, "Failed, hr 0x%08x\n", hr);
 
     /* Open adds trailing ; if it's missing */
     str3 = SysAllocString(L"Provider=MSDASQL.1;Persist Security Info=False;Data Source=wine_test;");
     hr = _Connection_Open(connection, NULL, NULL, NULL, adConnectUnspecified);
-    todo_wine ok(hr == E_FAIL, "Failed, hr 0x%08x\n", hr);
+    ok(hr == E_FAIL, "Failed, hr 0x%08x\n", hr);
 
     str2 = NULL;
     hr = _Connection_get_ConnectionString(connection, &str2);

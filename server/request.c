@@ -104,6 +104,7 @@ static const struct object_ops master_socket_ops =
     no_map_access,                 /* map_access */
     default_get_sd,                /* get_sd */
     default_set_sd,                /* set_sd */
+    no_get_full_name,              /* get_full_name */
     no_lookup_name,                /* lookup_name */
     no_link_name,                  /* link_name */
     NULL,                          /* unlink_name */
@@ -584,7 +585,7 @@ static void master_socket_poll_event( struct fd *fd, int event )
         int client = accept( get_unix_fd( master_socket->fd ), (struct sockaddr *) &dummy, &len );
         if (client == -1) return;
         fcntl( client, F_SETFL, O_NONBLOCK );
-        if ((process = create_process( client, NULL, 0, NULL, NULL )))
+        if ((process = create_process( client, NULL, 0, NULL, NULL, NULL, 0, NULL )))
         {
             create_thread( -1, process, NULL );
             release_object( process );
@@ -872,7 +873,7 @@ static void acquire_lock(void)
         !(master_socket->fd = create_anonymous_fd( &master_socket_fd_ops, fd, &master_socket->obj, 0 )))
         fatal_error( "out of memory\n" );
     set_fd_events( master_socket->fd, POLLIN );
-    make_object_static( &master_socket->obj );
+    make_object_permanent( &master_socket->obj );
 }
 
 /* open the master server socket and start waiting for new clients */

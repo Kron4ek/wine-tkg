@@ -155,6 +155,7 @@ static void key_dump( struct object *obj, int verbose );
 static struct object_type *key_get_type( struct object *obj );
 static unsigned int key_map_access( struct object *obj, unsigned int access );
 static struct security_descriptor *key_get_sd( struct object *obj );
+static WCHAR *key_get_full_name( struct object *obj, data_size_t *len );
 static int key_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
 static void key_destroy( struct object *obj );
 
@@ -174,6 +175,7 @@ static const struct object_ops key_ops =
     key_map_access,          /* map_access */
     key_get_sd,              /* get_sd */
     default_set_sd,          /* set_sd */
+    key_get_full_name,       /* get_full_name */
     no_lookup_name,          /* lookup_name */
     no_link_name,            /* link_name */
     NULL,                    /* unlink_name */
@@ -410,6 +412,28 @@ static struct security_descriptor *key_get_sd( struct object *obj )
         memcpy( &aaa->SidStart, security_builtin_admins_sid, admins_sid_len );
     }
     return key_default_sd;
+}
+
+static WCHAR *key_get_full_name( struct object *obj, data_size_t *ret_len )
+{
+    static const WCHAR backslash = '\\';
+    struct key *key = (struct key *) obj;
+    data_size_t len = sizeof(root_name) - sizeof(WCHAR);
+    char *ret;
+
+    for (key = (struct key *)obj; key != root_key; key = key->parent) len += key->namelen + sizeof(WCHAR);
+    if (!(ret = malloc( len ))) return NULL;
+
+    *ret_len = len;
+    key = (struct key *)obj;
+    for (key = (struct key *)obj; key != root_key; key = key->parent)
+    {
+        memcpy( ret + len - key->namelen, key->name, key->namelen );
+        len -= key->namelen + sizeof(WCHAR);
+        memcpy( ret + len, &backslash, sizeof(WCHAR) );
+    }
+    memcpy( ret, root_name, sizeof(root_name) - sizeof(WCHAR) );
+    return (WCHAR *)ret;
 }
 
 /* close the notification associated with a handle */
@@ -894,15 +918,13 @@ static struct key *create_key_recursive( struct key *key, const struct unicode_s
 }
 
 /* query information about a key or a subkey */
-static void enum_key( const struct key *key, int index, int info_class,
-                      struct enum_key_reply *reply )
+static void enum_key( struct key *key, int index, int info_class, struct enum_key_reply *reply )
 {
-    static const WCHAR backslash[] = { '\\' };
     int i;
     data_size_t len, namelen, classlen;
     data_size_t max_subkey = 0, max_class = 0;
     data_size_t max_value = 0, max_data = 0;
-    const struct key *k;
+    WCHAR *fullname = NULL;
     char *data;
 
     if (index != -1)  /* -1 means use the specified key directly */
@@ -921,11 +943,7 @@ static void enum_key( const struct key *key, int index, int info_class,
     switch(info_class)
     {
     case KeyNameInformation:
-        namelen = 0;
-        for (k = key; k != root_key; k = k->parent)
-            namelen += k->namelen + sizeof(backslash);
-        if (!namelen) return;
-        namelen += sizeof(root_name) - sizeof(backslash);
+        if (!(fullname = key->obj.ops->get_full_name( &key->obj, &namelen ))) return;
         /* fall through */
     case KeyBasicInformation:
         classlen = 0; /* only return the name */
@@ -977,18 +995,8 @@ static void enum_key( const struct key *key, int index, int info_class,
         }
         else if (info_class == KeyNameInformation)
         {
-            data_size_t pos = namelen;
             reply->namelen = namelen;
-            for (k = key; k != root_key; k = k->parent)
-            {
-                pos -= k->namelen;
-                if (pos < len) memcpy( data + pos, k->name,
-                                       min( k->namelen, len - pos ) );
-                pos -= sizeof(backslash);
-                if (pos < len) memcpy( data + pos, backslash,
-                                       min( sizeof(backslash), len - pos ) );
-            }
-            memcpy( data, root_name, min( sizeof(root_name) - sizeof(backslash), len ) );
+            memcpy( data, fullname, len );
         }
         else
         {
@@ -996,6 +1004,7 @@ static void enum_key( const struct key *key, int index, int info_class,
             memcpy( data, key->name, len );
         }
     }
+    free( fullname );
     if (debug_level > 1) dump_operation( key, NULL, "Enum" );
 }
 
@@ -1751,7 +1760,7 @@ static int load_init_registry_from_file( const char *filename, struct key *key )
 
     save_branch_info[save_branch_count].path = filename;
     save_branch_info[save_branch_count++].key = (struct key *)grab_object( key );
-    make_object_static( &key->obj );
+    make_object_permanent( &key->obj );
     return (f != NULL);
 }
 
@@ -1822,7 +1831,7 @@ void init_registry(void)
     /* create the root key */
     root_key = alloc_key( &root_name, current_time );
     assert( root_key );
-    make_object_static( &root_key->obj );
+    make_object_permanent( &root_key->obj );
 
     /* load system.reg into Registry\Machine */
 

@@ -23,27 +23,18 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
-#include <stdlib.h>
 #include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
-#ifdef HAVE_NETINET_IN_H
-#include <netinet/in.h>
-#endif
+
 #include "ntstatus.h"
 #define NONAMELESSUNION
 #define NONAMELESSSTRUCT
 #define WIN32_NO_STATUS
-#define USE_WS_PREFIX
+#include "winsock2.h"
 #include "windef.h"
 #include "winternl.h"
 #include "wine/debug.h"
 #include "wine/exception.h"
 #include "ntdll_misc.h"
-#include "inaddr.h"
 #include "in6addr.h"
 #include "ddk/ntddk.h"
 
@@ -315,7 +306,7 @@ NTSTATUS WINAPIV DbgPrint(LPCSTR fmt, ...)
   __ms_va_list args;
 
   __ms_va_start(args, fmt);
-  NTDLL__vsnprintf(buf, sizeof(buf), fmt, args);
+  _vsnprintf(buf, sizeof(buf), fmt, args);
   __ms_va_end(args);
 
   MESSAGE("DbgPrint says: %s",buf);
@@ -353,7 +344,7 @@ NTSTATUS WINAPI vDbgPrintExWithPrefix( LPCSTR prefix, ULONG id, ULONG level, LPC
 {
     char buf[1024];
 
-    NTDLL__vsnprintf(buf, sizeof(buf), fmt, args);
+    _vsnprintf(buf, sizeof(buf), fmt, args);
 
     switch (level & DPFLTR_MASK)
     {
@@ -1310,11 +1301,11 @@ NTSTATUS WINAPI RtlIpv4AddressToStringExW(const IN_ADDR *pin, USHORT port, LPWST
 
     TRACE("(%p:0x%x, %d, %p, %p:%d)\n", pin, pin->S_un.S_addr, port, buffer, psize, *psize);
 
-    needed = NTDLL_swprintf(tmp_ip, fmt_ip,
+    needed = swprintf(tmp_ip, ARRAY_SIZE(tmp_ip), fmt_ip,
                       pin->S_un.S_un_b.s_b1, pin->S_un.S_un_b.s_b2,
                       pin->S_un.S_un_b.s_b3, pin->S_un.S_un_b.s_b4);
 
-    if (port) needed += NTDLL_swprintf(tmp_ip + needed, fmt_port, ntohs(port));
+    if (port) needed += swprintf(tmp_ip + needed, ARRAY_SIZE(tmp_ip) - needed, fmt_port, ntohs(port));
 
     if (*psize > needed) {
         *psize = needed + 1;

@@ -23,12 +23,13 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(richedit);
 
-static void ME_DrawParagraph(ME_Context *c, ME_DisplayItem *paragraph);
+static void draw_paragraph( ME_Context *c, ME_Paragraph *para );
 
 void ME_PaintContent(ME_TextEditor *editor, HDC hDC, const RECT *rcUpdate)
 {
-  ME_DisplayItem *item;
+  ME_Paragraph *para;
   ME_Context c;
+  ME_Cell *cell;
   int ys, ye;
   HRGN oldRgn;
 
@@ -44,36 +45,29 @@ void ME_PaintContent(ME_TextEditor *editor, HDC hDC, const RECT *rcUpdate)
   ME_InitContext(&c, editor, hDC);
   SetBkMode(hDC, TRANSPARENT);
 
-  item = editor->pBuffer->pFirst->next;
+  para = editor_first_para( editor );
   /* This context point is an offset for the paragraph positions stored
    * during wrapping. It shouldn't be modified during painting. */
   c.pt.x = c.rcView.left - editor->horz_si.nPos;
   c.pt.y = c.rcView.top - editor->vert_si.nPos;
-  while(item != editor->pBuffer->pLast)
+  while (para_next( para ))
   {
-    assert(item->type == diParagraph);
-
-    ys = c.pt.y + item->member.para.pt.y;
-    if (item->member.para.pCell
-        != item->member.para.next_para->member.para.pCell)
-    {
-      ME_Cell *cell = NULL;
-      cell = &ME_FindItemBack(item->member.para.next_para, diCell)->member.cell;
+    ys = c.pt.y + para->pt.y;
+    cell = para_cell( para );
+    if (cell && para == cell_end_para( cell ))
       ye = c.pt.y + cell->pt.y + cell->nHeight;
-    } else {
-      ye = ys + item->member.para.nHeight;
-    }
-    if (item->member.para.pCell && !(item->member.para.nFlags & MEPF_ROWEND) &&
-        item->member.para.pCell != item->member.para.prev_para->member.para.pCell)
+    else ye = ys + para->nHeight;
+
+    if (cell && !(para->nFlags & MEPF_ROWEND) && para == cell_first_para( cell ))
     {
       /* the border shifts the text down */
-      ys -= item->member.para.pCell->member.cell.yTextOffset;
+      ys -= para_cell( para )->yTextOffset;
     }
 
     /* Draw the paragraph if any of the paragraph is in the update region. */
     if (ys < rcUpdate->bottom && ye > rcUpdate->top)
-      ME_DrawParagraph(&c, item);
-    item = item->member.para.next_para;
+      draw_paragraph( &c, para );
+    para = para_next( para );
   }
   if (c.pt.y + editor->nTotalLength < c.rcView.bottom)
   {
@@ -440,17 +434,16 @@ static void ME_DebugWrite(HDC hDC, const POINT *pt, LPCWSTR szText) {
   SetTextColor(hDC, color);
 }
 
-static void ME_DrawRun(ME_Context *c, int x, int y, ME_DisplayItem *rundi, ME_Paragraph *para) 
+static void ME_DrawRun( ME_Context *c, int x, int y, ME_Run *run, ME_Paragraph *para )
 {
-  ME_Run *run = &rundi->member.run;
   ME_DisplayItem *start;
   int runofs = run->nCharOfs+para->nCharOfs;
   int nSelFrom, nSelTo;
-  
+
   if (run->nFlags & MERF_HIDDEN)
     return;
 
-  start = ME_FindItemBack(rundi, diStartRow);
+  start = ME_FindItemBack( run_get_di( run ), diStartRow );
   ME_GetSelectionOfs(c->editor, &nSelFrom, &nSelTo);
 
   /* Draw selected end-of-paragraph mark */
@@ -696,31 +689,31 @@ static void ME_DrawParaDecoration(ME_Context* c, ME_Paragraph* para, int y, RECT
   }
 }
 
-static void ME_DrawTableBorders(ME_Context *c, ME_DisplayItem *paragraph)
+static void draw_table_borders( ME_Context *c, ME_Paragraph *para )
 {
-  ME_Paragraph *para = &paragraph->member.para;
   if (!c->editor->bEmulateVersion10) /* v4.1 */
   {
-    if (para->pCell)
+    if (para_cell( para ))
     {
       RECT rc;
-      ME_Cell *cell = &para->pCell->member.cell;
-      ME_DisplayItem *paraAfterRow;
+      ME_Cell *cell = para_cell( para );
+      ME_Paragraph *after_row;
       HPEN pen, oldPen;
       LOGBRUSH logBrush;
       HBRUSH brush;
       COLORREF color;
       POINT oldPt;
       int width;
-      BOOL atTop = (para->pCell != para->prev_para->member.para.pCell);
-      BOOL atBottom = (para->pCell != para->next_para->member.para.pCell);
+      BOOL atTop = (para == cell_first_para( cell ));
+      BOOL atBottom = (para == cell_end_para( cell ));
       int top = c->pt.y + (atTop ? cell->pt.y : para->pt.y);
       int bottom = (atBottom ?
                     c->pt.y + cell->pt.y + cell->nHeight :
                     top + para->nHeight + (atTop ? cell->yTextOffset : 0));
       rc.left = c->pt.x + cell->pt.x;
       rc.right = rc.left + cell->nWidth;
-      if (atTop) {
+      if (atTop)
+      {
         /* Erase gap before text if not all borders are the same height. */
         width = max(ME_twips2pointsY(c, cell->border.top.width), 1);
         rc.top = top + width;
@@ -733,14 +726,17 @@ static void ME_DrawTableBorders(ME_Context *c, ME_DisplayItem *paragraph)
        * The order borders are draw in is left, top, bottom, right in order
        * to be consistent with native richedit.  This is noticeable from the
        * overlap of borders of different colours. */
-      if (!(para->nFlags & MEPF_ROWEND)) {
+      if (!(para->nFlags & MEPF_ROWEND))
+      {
         rc.top = top;
         rc.bottom = bottom;
         if (cell->border.left.width > 0)
         {
           color = cell->border.left.colorRef;
           width = max(ME_twips2pointsX(c, cell->border.left.width), 1);
-        } else {
+        }
+        else
+        {
           color = RGB(192,192,192);
           width = 1;
         }
@@ -757,12 +753,15 @@ static void ME_DrawTableBorders(ME_Context *c, ME_DisplayItem *paragraph)
         MoveToEx(c->hDC, oldPt.x, oldPt.y, NULL);
       }
 
-      if (atTop) {
+      if (atTop)
+      {
         if (cell->border.top.width > 0)
         {
           brush = CreateSolidBrush(cell->border.top.colorRef);
           width = max(ME_twips2pointsY(c, cell->border.top.width), 1);
-        } else {
+        }
+        else
+        {
           brush = GetStockObject(LTGRAY_BRUSH);
           width = 1;
         }
@@ -775,29 +774,24 @@ static void ME_DrawTableBorders(ME_Context *c, ME_DisplayItem *paragraph)
 
       /* Draw the bottom border if at the last paragraph in the cell, and when
        * in the last row of the table. */
-      if (atBottom) {
+      if (atBottom)
+      {
         int oldLeft = rc.left;
         width = max(ME_twips2pointsY(c, cell->border.bottom.width), 1);
-        paraAfterRow = table_row_end( &paragraph->member.para )->next_para;
-        if (paraAfterRow->member.para.nFlags & MEPF_ROWSTART) {
-          ME_DisplayItem *nextEndCell;
-          nextEndCell = ME_FindItemBack( para_get_di( table_row_end( &paraAfterRow->member.para ) ), diCell );
-          assert(nextEndCell && !nextEndCell->member.cell.next_cell);
-          rc.left = c->pt.x + nextEndCell->member.cell.pt.x;
-          /* FIXME: Native draws FROM the bottom of the table rather than
-           * TO the bottom of the table in this case, but just doing so here
-           * will cause the next row to erase the border. */
-          /*
-          rc.top = bottom;
-          rc.bottom = rc.top + width;
-           */
+        after_row = para_next( table_row_end( para ) );
+        if (after_row->nFlags & MEPF_ROWSTART)
+        {
+          ME_Cell *next_end;
+          next_end = table_row_end_cell( after_row );
+          assert( next_end && !cell_next( next_end ) );
+          rc.left = c->pt.x + next_end->pt.x;
         }
-        if (rc.left < rc.right) {
-          if (cell->border.bottom.width > 0) {
+        if (rc.left < rc.right)
+        {
+          if (cell->border.bottom.width > 0)
             brush = CreateSolidBrush(cell->border.bottom.colorRef);
-          } else {
+          else
             brush = GetStockObject(LTGRAY_BRUSH);
-          }
           rc.bottom = bottom;
           rc.top = rc.bottom - width;
           FillRect(c->hDC, &rc, brush);
@@ -808,15 +802,17 @@ static void ME_DrawTableBorders(ME_Context *c, ME_DisplayItem *paragraph)
       }
 
       /* Right border only drawn if at the end of the table row. */
-      if (!cell->next_cell->member.cell.next_cell &&
-          !(para->nFlags & MEPF_ROWSTART))
+      if (!cell_next( cell_next( cell ) ) && !(para->nFlags & MEPF_ROWSTART))
       {
         rc.top = top;
         rc.bottom = bottom;
-        if (cell->border.right.width > 0) {
+        if (cell->border.right.width > 0)
+        {
           color = cell->border.right.colorRef;
           width = max(ME_twips2pointsX(c, cell->border.right.width), 1);
-        } else {
+        }
+        else
+        {
           color = RGB(192,192,192);
           width = 1;
         }
@@ -833,19 +829,21 @@ static void ME_DrawTableBorders(ME_Context *c, ME_DisplayItem *paragraph)
         MoveToEx(c->hDC, oldPt.x, oldPt.y, NULL);
       }
     }
-  } else { /* v1.0 - 3.0 */
+  }
+  else /* v1.0 - 3.0 */
+  {
     /* Draw simple table border */
-    if (para->fmt.dwMask & PFM_TABLE && para->fmt.wEffects & PFE_TABLE) {
+    if (para_in_table( para ))
+    {
       HPEN pen = NULL, oldpen = NULL;
       int i, firstX, startX, endX, rowY, rowBottom, nHeight;
       POINT oldPt;
-      PARAFORMAT2 *pNextFmt;
 
       pen = CreatePen(PS_SOLID, 0, para->border.top.colorRef);
       oldpen = SelectObject(c->hDC, pen);
 
       /* Find the start relative to the text */
-      firstX = c->pt.x + ME_FindItemFwd(paragraph, diRun)->member.run.pt.x;
+      firstX = c->pt.x + para_first_run( para )->pt.x;
       /* Go back by the horizontal gap, which is stored in dxOffset */
       firstX -= ME_twips2pointsX(c, para->fmt.dxOffset);
       /* The left edge, stored in dxStartIndent affected just the first edge */
@@ -853,7 +851,7 @@ static void ME_DrawTableBorders(ME_Context *c, ME_DisplayItem *paragraph)
       rowY = c->pt.y + para->pt.y;
       if (para->fmt.dwMask & PFM_SPACEBEFORE)
         rowY += ME_twips2pointsY(c, para->fmt.dySpaceBefore);
-      nHeight = ME_FindItemFwd(paragraph, diStartRow)->member.row.nHeight;
+      nHeight = ME_FindItemFwd( para_get_di( para ), diStartRow )->member.row.nHeight;
       rowBottom = rowY + nHeight;
 
       /* Draw horizontal lines */
@@ -861,11 +859,9 @@ static void ME_DrawTableBorders(ME_Context *c, ME_DisplayItem *paragraph)
       i = para->fmt.cTabCount - 1;
       endX = startX + ME_twips2pointsX(c, para->fmt.rgxTabs[i] & 0x00ffffff) + 1;
       LineTo(c->hDC, endX, rowY);
-      pNextFmt = &para->next_para->member.para.fmt;
       /* The bottom of the row only needs to be drawn if the next row is
        * not a table. */
-      if (!(pNextFmt && pNextFmt->dwMask & PFM_TABLE && pNextFmt->wEffects &&
-            para->nRows == 1))
+      if (!(para_next( para ) && para_in_table( para_next( para ) ) && para->nRows == 1))
       {
         /* Decrement rowBottom to draw the bottom line within the row, and
          * to not draw over this line when drawing the vertical lines. */
@@ -892,9 +888,8 @@ static void ME_DrawTableBorders(ME_Context *c, ME_DisplayItem *paragraph)
   }
 }
 
-static void draw_para_number( ME_Context *c, ME_DisplayItem *p )
+static void draw_para_number( ME_Context *c, ME_Paragraph *para )
 {
-    ME_Paragraph *para = &p->member.para;
     int x, y;
     COLORREF old_text;
 
@@ -912,12 +907,12 @@ static void draw_para_number( ME_Context *c, ME_DisplayItem *p )
     }
 }
 
-static void ME_DrawParagraph(ME_Context *c, ME_DisplayItem *paragraph)
+static void draw_paragraph( ME_Context *c, ME_Paragraph *para )
 {
   int align = SetTextAlign(c->hDC, TA_BASELINE);
   ME_DisplayItem *p;
+  ME_Cell *cell;
   ME_Run *run;
-  ME_Paragraph *para = NULL;
   RECT rc, bounds;
   int y;
   int height = 0, baseline = 0, no=0;
@@ -926,32 +921,33 @@ static void ME_DrawParagraph(ME_Context *c, ME_DisplayItem *paragraph)
   rc.left = c->pt.x;
   rc.right = c->rcView.right;
 
-  assert(paragraph);
-  para = &paragraph->member.para;
   y = c->pt.y + para->pt.y;
-  if (para->pCell)
+  if ((cell = para_cell( para )))
   {
-    ME_Cell *cell = &para->pCell->member.cell;
     rc.left = c->pt.x + cell->pt.x;
     rc.right = rc.left + cell->nWidth;
   }
-  if (para->nFlags & MEPF_ROWSTART) {
-    ME_Cell *cell = &para->next_para->member.para.pCell->member.cell;
+  if (para->nFlags & MEPF_ROWSTART)
+  {
+    cell = table_row_first_cell( para );
     rc.right = c->pt.x + cell->pt.x;
-  } else if (para->nFlags & MEPF_ROWEND) {
-    ME_Cell *cell = &para->prev_para->member.para.pCell->member.cell;
+  }
+  else if (para->nFlags & MEPF_ROWEND)
+  {
+    cell = table_row_end_cell( para );
     rc.left = c->pt.x + cell->pt.x + cell->nWidth;
   }
   ME_DrawParaDecoration(c, para, y, &bounds);
   y += bounds.top;
-  if (bounds.left || bounds.right) {
+  if (bounds.left || bounds.right)
+  {
     rc.left = max(rc.left, c->pt.x + bounds.left);
     rc.right = min(rc.right, c->pt.x - bounds.right
                              + max(c->editor->sizeWindow.cx,
                                    c->editor->nTotalWidth));
   }
 
-  for (p = paragraph->next; p != para->next_para; p = p->next)
+  for (p = para_get_di( para )->next; p != para_get_di( para_next( para ) ); p = p->next)
   {
     switch(p->type) {
       case diParagraph:
@@ -1005,8 +1001,8 @@ static void ME_DrawParagraph(ME_Context *c, ME_DisplayItem *paragraph)
           FrameRect(c->hDC, &rc, GetSysColorBrush(COLOR_GRAYTEXT));
         }
         if (visible)
-          ME_DrawRun(c, c->pt.x + run->pt.x,
-                     c->pt.y + para->pt.y + run->pt.y + baseline, p, para);
+          ME_DrawRun( c, c->pt.x + run->pt.x,
+                      c->pt.y + para->pt.y + run->pt.y + baseline, run, para );
         if (me_debug)
         {
           static const WCHAR wszRunDebug[] = {'[','%','d',':','%','x',']',' ','%','l','s',0};
@@ -1034,8 +1030,8 @@ static void ME_DrawParagraph(ME_Context *c, ME_DisplayItem *paragraph)
     no++;
   }
 
-  ME_DrawTableBorders(c, paragraph);
-  draw_para_number(c, paragraph);
+  draw_table_borders( c, para );
+  draw_para_number( c, para );
 
   SetTextAlign(c->hDC, align);
 }
@@ -1356,7 +1352,7 @@ ME_InvalidateSelection(ME_TextEditor *editor)
   }
 
   if (repaint_start)
-    ME_InvalidateParagraphRange(editor, repaint_start, repaint_end);
+    para_range_invalidate( editor, &repaint_start->member.para, &repaint_end->member.para );
   /* remember the last invalidated position */
   ME_GetSelectionOfs(editor, &editor->nLastSelStart, &editor->nLastSelEnd);
   ME_GetSelectionParas(editor, &editor->pLastSelStartPara, &editor->pLastSelEndPara);

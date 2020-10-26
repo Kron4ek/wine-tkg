@@ -20,9 +20,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include <stdarg.h>
 
 #include "windef.h"
@@ -169,7 +166,8 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
         if (GetAncestor( hwnd, GA_PARENT ) == GetDesktopWindow())
             PostMessageW( GetDesktopWindow(), WM_PARENTNOTIFY, WM_NCACTIVATE, (LPARAM)hwnd );
 
-        imm_activate_window( hwnd );
+        if (hwnd == GetForegroundWindow() && !IsIconic( hwnd ))
+            USER_Driver->pSetActiveWindow( hwnd );
     }
 
     /* now change focus if necessary */
@@ -347,10 +345,8 @@ BOOL WINAPI SetForegroundWindow( HWND hwnd )
  */
 HWND WINAPI GetActiveWindow(void)
 {
-    shmlocal_t *shm = wine_get_shmlocal();
     HWND ret = 0;
 
-    if (shm) return wine_server_ptr_handle( shm->input_active );
     SERVER_START_REQ( get_thread_input )
     {
         req->tid = GetCurrentThreadId();
@@ -366,10 +362,8 @@ HWND WINAPI GetActiveWindow(void)
  */
 HWND WINAPI GetFocus(void)
 {
-    shmlocal_t *shm = wine_get_shmlocal();
     HWND ret = 0;
 
-    if (shm) return wine_server_ptr_handle( shm->input_focus );
     SERVER_START_REQ( get_thread_input )
     {
         req->tid = GetCurrentThreadId();

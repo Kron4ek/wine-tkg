@@ -139,7 +139,7 @@ static ME_Run *split_run_extents( ME_WrapContext *wc, ME_Run *run, int nVChar )
   TRACE("Before split: %s(%d, %d)\n", debugstr_run( run ),
         run->pt.x, run->pt.y);
 
-  ME_SplitRunSimple(editor, &cursor);
+  run_split( editor, &cursor );
 
   run2 = &cursor.pRun->member.run;
   run2->script_analysis = run->script_analysis;
@@ -185,6 +185,8 @@ static ME_DisplayItem *ME_MakeRow(int height, int baseline, int width)
 
 static void ME_BeginRow(ME_WrapContext *wc)
 {
+  ME_Cell *cell;
+
   wc->pRowStart = NULL;
   wc->bOverflown = FALSE;
   wc->pLastSplittableRun = NULL;
@@ -195,19 +197,18 @@ static void ME_BeginRow(ME_WrapContext *wc)
     wc->bWordWrap = FALSE;
     if (wc->para->nFlags & MEPF_ROWEND)
     {
-      ME_Cell *cell = &ME_FindItemBack( para_get_di( wc->para ), diCell)->member.cell;
+      cell = table_row_end_cell( wc->para );
       cell->nWidth = 0;
     }
   }
-  else if (wc->para->pCell)
+  else if (para_cell( wc->para ))
   {
-    ME_Cell *cell = &wc->para->pCell->member.cell;
     int width;
 
+    cell = para_cell( wc->para );
     width = cell->nRightBoundary;
-    if (cell->prev_cell)
-      width -= cell->prev_cell->member.cell.nRightBoundary;
-    if (!cell->prev_cell)
+    if (cell_prev( cell )) width -= cell_prev( cell )->nRightBoundary;
+    else
     {
       int rowIndent = table_row_end( wc->para )->fmt.dxStartIndent;
       width -= rowIndent;
@@ -217,13 +218,14 @@ static void ME_BeginRow(ME_WrapContext *wc)
     wc->nAvailWidth = cell->nWidth
         - (wc->nRow ? wc->nLeftMargin : wc->nFirstMargin) - wc->nRightMargin;
     wc->bWordWrap = TRUE;
-  } else {
+  }
+  else
     wc->nAvailWidth = wc->context->nAvailWidth
         - (wc->nRow ? wc->nLeftMargin : wc->nFirstMargin) - wc->nRightMargin;
-  }
+
   wc->pt.x = wc->context->pt.x;
   if (wc->context->editor->bEmulateVersion10 && /* v1.0 - 3.0 */
-      wc->para->fmt.dwMask & PFM_TABLE && wc->para->fmt.wEffects & PFE_TABLE)
+      para_in_table( wc->para ))
     /* Shift the text down because of the border. */
     wc->pt.y++;
 }
@@ -714,7 +716,7 @@ static void ME_PrepareParagraphForWrapping( ME_TextEditor *editor, ME_Context *c
         if (p->type == diRun)
         {
             while (p->next->type == diRun && ME_CanJoinRuns( &p->member.run, &p->next->member.run ))
-                ME_JoinRuns( c->editor, p );
+                run_join( c->editor, &p->member.run );
         }
     }
 }
@@ -776,7 +778,7 @@ static HRESULT itemize_para( ME_Context *c, ME_Paragraph *para )
         if (run->nCharOfs + run->len > items[cur_item+1].iCharPos)
         {
             ME_Cursor cursor = {para_get_di( para ), run_get_di( run ), items[cur_item+1].iCharPos - run->nCharOfs};
-            ME_SplitRunSimple( c->editor, &cursor );
+            run_split( c->editor, &cursor );
         }
     }
 
@@ -843,7 +845,7 @@ static void ME_WrapTextParagraph( ME_TextEditor *editor, ME_Context *c, ME_Parag
   else
   {
     int dxStartIndent = para->fmt.dxStartIndent;
-    if (para->pCell) dxStartIndent += table_row_end( para )->fmt.dxOffset;
+    if (para_cell( wc.para )) dxStartIndent += table_row_end( para )->fmt.dxOffset;
 
     wc.nLeftMargin = ME_twips2pointsX( c, dxStartIndent + para->fmt.dxOffset );
     wc.nFirstMargin = ME_twips2pointsX( c, dxStartIndent );
@@ -903,123 +905,116 @@ static void ME_WrapTextParagraph( ME_TextEditor *editor, ME_Context *c, ME_Parag
   editor->total_rows += wc.nRow;
 }
 
-static void ME_MarkRepaintEnd(ME_DisplayItem *para,
-                              ME_DisplayItem **repaint_start,
-                              ME_DisplayItem **repaint_end)
+struct repaint_range
 {
-    if (!*repaint_start)
-      *repaint_start = para;
-    *repaint_end = para;
+    ME_Paragraph *start, *end;
+};
+
+static void update_repaint( ME_Paragraph *para, struct repaint_range *repaint )
+{
+    if (!repaint->start) repaint->start = para;
+    repaint->end = para;
 }
 
-static void adjust_para_y(ME_Paragraph *para, ME_Context *c, ME_DisplayItem *repaint_start, ME_DisplayItem *repaint_end)
+static void adjust_para_y( ME_Paragraph *para, ME_Context *c, struct repaint_range *repaint )
 {
+    ME_Cell *cell;
+
     if (para->nFlags & MEPF_ROWSTART)
     {
-        ME_DisplayItem *cell = ME_FindItemFwd( para_get_di( para ), diCell);
-        ME_DisplayItem *endRowPara;
+        ME_Paragraph *end_row_para = table_row_end( para );
         int borderWidth = 0;
-        cell->member.cell.pt = c->pt;
+
+        cell = table_row_first_cell( para );
+        cell->pt = c->pt;
         /* Offset the text by the largest top border width. */
-        while (cell->member.cell.next_cell)
+        while (cell_next( cell ))
         {
-            borderWidth = max(borderWidth, cell->member.cell.border.top.width);
-            cell = cell->member.cell.next_cell;
+            borderWidth = max( borderWidth, cell->border.top.width );
+            cell = cell_next( cell );
         }
-        endRowPara = ME_FindItemFwd(cell, diParagraph);
-        assert(endRowPara->member.para.nFlags & MEPF_ROWEND);
         if (borderWidth > 0)
         {
             borderWidth = max(ME_twips2pointsY(c, borderWidth), 1);
             while (cell)
             {
-                cell->member.cell.yTextOffset = borderWidth;
-                cell = cell->member.cell.prev_cell;
+                cell->yTextOffset = borderWidth;
+                cell = cell_prev( cell );
             }
             c->pt.y += borderWidth;
         }
-        if (endRowPara->member.para.fmt.dxStartIndent > 0)
+        if (end_row_para->fmt.dxStartIndent > 0)
         {
-            int dxStartIndent = endRowPara->member.para.fmt.dxStartIndent;
-            cell = ME_FindItemFwd( para_get_di( para ), diCell);
-            cell->member.cell.pt.x += ME_twips2pointsX(c, dxStartIndent);
-            c->pt.x = cell->member.cell.pt.x;
+            cell = table_row_first_cell( para );
+            cell->pt.x += ME_twips2pointsX( c, end_row_para->fmt.dxStartIndent );
+            c->pt.x = cell->pt.x;
         }
     }
     else if (para->nFlags & MEPF_ROWEND)
     {
         /* Set all the cells to the height of the largest cell */
-        ME_DisplayItem *startRowPara;
+        ME_Paragraph *start_row_para = table_row_start( para );
         int prevHeight, nHeight, bottomBorder = 0;
-        ME_DisplayItem *cell = ME_FindItemBack( para_get_di( para ), diCell );
-        para->nWidth = cell->member.cell.pt.x + cell->member.cell.nWidth;
-        if (!(para->next_para->member.para.nFlags & MEPF_ROWSTART))
+
+        cell = table_row_end_cell( para );
+        para->nWidth = cell->pt.x + cell->nWidth;
+        if (!(para_next( para )->nFlags & MEPF_ROWSTART))
         {
             /* Last row, the bottom border is added to the height. */
-            cell = cell->member.cell.prev_cell;
-            while (cell)
-            {
-                bottomBorder = max(bottomBorder, cell->member.cell.border.bottom.width);
-                cell = cell->member.cell.prev_cell;
-            }
+            while ((cell = cell_prev( cell )))
+                bottomBorder = max( bottomBorder, cell->border.bottom.width );
+
             bottomBorder = ME_twips2pointsY(c, bottomBorder);
-            cell = ME_FindItemBack( para_get_di( para ), diCell );
+            cell = table_row_end_cell( para );
         }
-        prevHeight = cell->member.cell.nHeight;
-        nHeight = cell->member.cell.prev_cell->member.cell.nHeight + bottomBorder;
-        cell->member.cell.nHeight = nHeight;
+        prevHeight = cell->nHeight;
+        nHeight = cell_prev( cell )->nHeight + bottomBorder;
+        cell->nHeight = nHeight;
         para->nHeight = nHeight;
-        cell = cell->member.cell.prev_cell;
-        cell->member.cell.nHeight = nHeight;
-        while (cell->member.cell.prev_cell)
+        while (cell_prev( cell ))
         {
-            cell = cell->member.cell.prev_cell;
-            cell->member.cell.nHeight = nHeight;
+            cell = cell_prev( cell );
+            cell->nHeight = nHeight;
         }
+
         /* Also set the height of the start row paragraph */
-        startRowPara = ME_FindItemBack(cell, diParagraph);
-        startRowPara->member.para.nHeight = nHeight;
-        c->pt.x = startRowPara->member.para.pt.x;
-        c->pt.y = cell->member.cell.pt.y + nHeight;
+        start_row_para->nHeight = nHeight;
+        c->pt.x = start_row_para->pt.x;
+        c->pt.y = cell->pt.y + nHeight;
         if (prevHeight < nHeight)
         {
             /* The height of the cells has grown, so invalidate the bottom of
              * the cells. */
-            ME_MarkRepaintEnd( para_get_di( para ) , &repaint_start, &repaint_end );
-            cell = ME_FindItemBack( para_get_di( para ), diCell );
+            update_repaint( para, repaint );
+            cell = cell_prev( table_row_end_cell( para ) );
             while (cell)
             {
-                ME_MarkRepaintEnd(ME_FindItemBack(cell, diParagraph), &repaint_start, &repaint_end);
-                cell = cell->member.cell.prev_cell;
+                update_repaint( cell_end_para( cell ), repaint );
+                cell = cell_prev( cell );
             }
         }
     }
-    else if (para->pCell && para->pCell != para->next_para->member.para.pCell)
+    else if ((cell = para_cell( para )) && para == cell_end_para( cell ))
     {
         /* The next paragraph is in the next cell in the table row. */
-        ME_Cell *cell = &para->pCell->member.cell;
         cell->nHeight = c->pt.y + para->nHeight - cell->pt.y;
 
         /* Propagate the largest height to the end so that it can be easily
          * sent back to all the cells at the end of the row. */
-        if (cell->prev_cell)
-            cell->nHeight = max(cell->nHeight, cell->prev_cell->member.cell.nHeight);
+        if (cell_prev( cell ))
+            cell->nHeight = max( cell->nHeight, cell_prev( cell )->nHeight );
 
         c->pt.x = cell->pt.x + cell->nWidth;
         c->pt.y = cell->pt.y;
-        cell->next_cell->member.cell.pt = c->pt;
-        if (!(para->next_para->member.para.nFlags & MEPF_ROWEND))
+        cell_next( cell )->pt = c->pt;
+        if (!(para_next( para )->nFlags & MEPF_ROWEND))
             c->pt.y += cell->yTextOffset;
     }
     else
     {
-        if (para->pCell)
-        {
-            /* Next paragraph in the same cell. */
-            c->pt.x = para->pCell->member.cell.pt.x;
-        }
-        else
-            /* Normal paragraph */
+        if ((cell = para_cell( para ))) /* Next paragraph in the same cell. */
+            c->pt.x = cell->pt.x;
+        else /* Normal paragraph */
             c->pt.x = 0;
         c->pt.y += para->nHeight;
     }
@@ -1028,10 +1023,10 @@ static void adjust_para_y(ME_Paragraph *para, ME_Context *c, ME_DisplayItem *rep
 BOOL ME_WrapMarkedParagraphs(ME_TextEditor *editor)
 {
   ME_Paragraph *para, *next;
-  struct wine_rb_entry *entry, *next_entry;
+  struct wine_rb_entry *entry, *next_entry = NULL;
   ME_Context c;
   int totalWidth = editor->nTotalWidth, prev_width;
-  ME_DisplayItem *repaint_start = NULL, *repaint_end = NULL;
+  struct repaint_range repaint = { NULL, NULL };
 
   if (!editor->marked_paras.root) return FALSE;
 
@@ -1041,7 +1036,16 @@ BOOL ME_WrapMarkedParagraphs(ME_TextEditor *editor)
   while (entry)
   {
     para = WINE_RB_ENTRY_VALUE( entry, ME_Paragraph, marked_entry );
-    next_entry = wine_rb_next( entry );
+
+    /* If the first entry lies inside a table, go back to the start
+       of the table to ensure cell heights are kept in sync. */
+    if (!next_entry && para_in_table( para ) && para != table_outer_para( para ))
+    {
+        para = table_outer_para( para );
+        next_entry = entry;
+    }
+    else
+        next_entry = wine_rb_next( entry );
 
     c.pt = para->pt;
     prev_width = para->nWidth;
@@ -1051,23 +1055,22 @@ BOOL ME_WrapMarkedParagraphs(ME_TextEditor *editor)
     else
       totalWidth = max(totalWidth, para->nWidth);
 
-    if (!para->nCharOfs)
-      ME_MarkRepaintEnd( para->prev_para, &repaint_start, &repaint_end );
-    ME_MarkRepaintEnd( para_get_di( para ), &repaint_start, &repaint_end );
-    adjust_para_y( para, &c, repaint_start, repaint_end );
+    update_repaint( para, &repaint );
+    adjust_para_y( para, &c, &repaint );
 
-    if (para->next_para)
+    if (para_next( para ))
     {
-      if (c.pt.y != para->next_para->member.para.pt.y)
+      if (c.pt.x != para_next( para )->pt.x || c.pt.y != para_next( para )->pt.y ||
+          para_in_table( para ))
       {
         next = para;
-        while (next->next_para && &next->marked_entry != next_entry &&
+        while (para_next( next ) && &next->marked_entry != next_entry &&
                next != &editor->pBuffer->pLast->member.para)
         {
-          ME_MarkRepaintEnd(next->next_para, &repaint_start, &repaint_end);
-          next->next_para->member.para.pt.y = c.pt.y;
-          adjust_para_y( &next->next_para->member.para, &c, repaint_start, repaint_end );
-          next = &next->next_para->member.para;
+          update_repaint( para_next( next ), &repaint );
+          para_next( next )->pt = c.pt;
+          adjust_para_y( para_next( next ), &c, &repaint );
+          next = para_next( next );
         }
       }
     }
@@ -1083,14 +1086,13 @@ BOOL ME_WrapMarkedParagraphs(ME_TextEditor *editor)
 
   ME_DestroyContext(&c);
 
-  if (repaint_start || editor->nTotalLength < editor->nLastTotalLength)
-    ME_InvalidateParagraphRange(editor, repaint_start, repaint_end);
-  return !!repaint_start;
+  if (repaint.start || editor->nTotalLength < editor->nLastTotalLength)
+    para_range_invalidate( editor, repaint.start, repaint.end);
+  return !!repaint.start;
 }
 
-void ME_InvalidateParagraphRange(ME_TextEditor *editor,
-                                 ME_DisplayItem *start_para,
-                                 ME_DisplayItem *last_para)
+void para_range_invalidate( ME_TextEditor *editor, ME_Paragraph *start_para,
+                            ME_Paragraph *last_para )
 {
   RECT rc;
   int ofs;
@@ -1100,16 +1102,16 @@ void ME_InvalidateParagraphRange(ME_TextEditor *editor,
 
   if (start_para)
   {
-    start_para = para_get_di( table_outer_para( &start_para->member.para ) );
-    last_para = para_get_di( table_outer_para( &last_para->member.para ) );
-    rc.top += start_para->member.para.pt.y - ofs;
+    start_para = table_outer_para( start_para );
+    last_para = table_outer_para( last_para );
+    rc.top += start_para->pt.y - ofs;
   } else {
     rc.top += editor->nTotalLength - ofs;
   }
   if (editor->nTotalLength < editor->nLastTotalLength)
     rc.bottom = editor->rcFormat.top + editor->nLastTotalLength - ofs;
   else
-    rc.bottom = editor->rcFormat.top + last_para->member.para.pt.y + last_para->member.para.nHeight - ofs;
+    rc.bottom = editor->rcFormat.top + last_para->pt.y + last_para->nHeight - ofs;
   ITextHost_TxInvalidateRect(editor->texthost, &rc, TRUE);
 }
 

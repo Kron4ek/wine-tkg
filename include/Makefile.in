@@ -21,6 +21,7 @@ SOURCES = \
 	appmodel.h \
 	asferr.h \
 	asptlb.idl \
+	asyncinfo.idl \
 	asynot.idl \
 	asysta.idl \
 	atlbase.h \
@@ -743,14 +744,19 @@ SOURCES = \
 	windef.h \
 	windns.h \
 	windows.foundation.idl \
+	windows.gaming.input.idl \
+	windows.gaming.input.forcefeedback.idl \
 	windows.globalization.idl \
+	windows.system.userprofile.idl \
+	windows.media.speechsynthesis.idl \
+	windows.system.idl \
 	windows.h \
+	windowscontracts.idl \
 	windowsx.h \
 	wine/debug.h \
 	wine/exception.h \
 	wine/fil_data.idl \
 	wine/itss.idl \
-	wine/library.h \
 	wine/orpc.idl \
 	wine/svcctl.idl \
 	wine/winedxgi.idl \

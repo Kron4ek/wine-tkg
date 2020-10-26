@@ -247,4 +247,103 @@ static inline const char *debug_wic_rect(const WICRect *rect)
     return wine_dbg_sprintf("(%u,%u)-(%u,%u)", rect->X, rect->Y, rect->Width, rect->Height);
 }
 
+extern HMODULE windowscodecs_module;
+
+HRESULT read_png_chunk(IStream *stream, BYTE *type, BYTE **data, ULONG *data_size);
+
+/* unixlib iface */
+struct decoder_funcs;
+
+struct decoder_info
+{
+    GUID container_format;
+    GUID block_format;
+    CLSID clsid;
+};
+
+#define DECODER_FLAGS_CAPABILITY_MASK 0x1f
+
+struct decoder_stat
+{
+    DWORD flags;
+    DWORD frame_count;
+};
+
+struct decoder_frame
+{
+    CLSID pixel_format;
+    UINT width, height;
+    UINT bpp;
+    double dpix, dpiy;
+    DWORD num_color_contexts;
+    DWORD num_colors;
+    WICColor palette[256];
+};
+
+struct decoder_block
+{
+    ULONGLONG offset;
+    ULONGLONG length;
+    DWORD options;
+};
+
+struct decoder
+{
+    const struct decoder_funcs *vtable;
+};
+
+struct decoder_funcs
+{
+    HRESULT (CDECL *initialize)(struct decoder* This, IStream *stream, struct decoder_stat *st);
+    HRESULT (CDECL *get_frame_info)(struct decoder* This, UINT frame, struct decoder_frame *info);
+    HRESULT (CDECL *copy_pixels)(struct decoder* This, UINT frame, const WICRect *prc,
+        UINT stride, UINT buffersize, BYTE *buffer);
+    HRESULT (CDECL *get_metadata_blocks)(struct decoder* This, UINT frame, UINT *count,
+        struct decoder_block **blocks);
+    HRESULT (CDECL *get_color_context)(struct decoder* This, UINT frame, UINT num,
+        BYTE **data, DWORD *datasize);
+    void (CDECL *destroy)(struct decoder* This);
+};
+
+HRESULT CDECL stream_read(IStream *stream, void *buffer, ULONG read, ULONG *bytes_read);
+HRESULT CDECL stream_seek(IStream *stream, LONGLONG ofs, DWORD origin, ULONGLONG *new_position);
+
+struct win32_funcs
+{
+    HRESULT (CDECL *stream_read)(IStream *stream, void *buffer, ULONG read, ULONG *bytes_read);
+    HRESULT (CDECL *stream_seek)(IStream *stream, LONGLONG ofs, DWORD origin, ULONGLONG *new_position);
+};
+
+HRESULT CDECL decoder_create(const CLSID *decoder_clsid, struct decoder_info *info, struct decoder **result);
+HRESULT CDECL decoder_initialize(struct decoder *This, IStream *stream, struct decoder_stat *st);
+HRESULT CDECL decoder_get_frame_info(struct decoder* This, UINT frame, struct decoder_frame *info);
+HRESULT CDECL decoder_copy_pixels(struct decoder* This, UINT frame, const WICRect *prc,
+    UINT stride, UINT buffersize, BYTE *buffer);
+HRESULT CDECL decoder_get_metadata_blocks(struct decoder* This, UINT frame, UINT *count,
+    struct decoder_block **blocks);
+HRESULT CDECL decoder_get_color_context(struct decoder* This, UINT frame, UINT num,
+    BYTE **data, DWORD *datasize);
+void CDECL decoder_destroy(struct decoder *This);
+
+HRESULT CDECL png_decoder_create(struct decoder_info *info, struct decoder **result);
+
+struct unix_funcs
+{
+    HRESULT (CDECL *decoder_create)(const CLSID *decoder_clsid, struct decoder_info *info, struct decoder **result);
+    HRESULT (CDECL *decoder_initialize)(struct decoder *This, IStream *stream, struct decoder_stat *st);
+    HRESULT (CDECL *decoder_get_frame_info)(struct decoder* This, UINT frame, struct decoder_frame *info);
+    HRESULT (CDECL *decoder_copy_pixels)(struct decoder* This, UINT frame, const WICRect *prc,
+        UINT stride, UINT buffersize, BYTE *buffer);
+    HRESULT (CDECL *decoder_get_metadata_blocks)(struct decoder* This, UINT frame, UINT *count,
+        struct decoder_block **blocks);
+    HRESULT (CDECL *decoder_get_color_context)(struct decoder* This, UINT frame, UINT num,
+        BYTE **data, DWORD *datasize);
+    void (CDECL *decoder_destroy)(struct decoder* This);
+};
+
+HRESULT get_unix_decoder(const CLSID *decoder_clsid, struct decoder_info *info, struct decoder **result);
+
+extern HRESULT CommonDecoder_CreateInstance(struct decoder *decoder,
+    const struct decoder_info *decoder_info, REFIID iid, void** ppv) DECLSPEC_HIDDEN;
+
 #endif /* WINCODECS_PRIVATE_H */

@@ -987,6 +987,7 @@ static HRESULT WINAPI mf_decoder_ProcessMessage(IMFTransform *iface, MFT_MESSAGE
             gst_element_set_state(decoder->container, GST_STATE_PLAYING);
 
             decoder->flushing = FALSE;
+            decoder->draining = FALSE;
             LeaveCriticalSection(&decoder->state_cs);
 
             hr = S_OK;

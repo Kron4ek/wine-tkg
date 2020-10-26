@@ -265,7 +265,7 @@ extern void dibdrv_set_window_surface( DC *dc, struct window_surface *surface ) 
 extern const struct gdi_dc_funcs null_driver DECLSPEC_HIDDEN;
 extern const struct gdi_dc_funcs dib_driver DECLSPEC_HIDDEN;
 extern const struct gdi_dc_funcs path_driver DECLSPEC_HIDDEN;
-extern const struct gdi_dc_funcs *font_driver DECLSPEC_HIDDEN;
+extern const struct gdi_dc_funcs font_driver DECLSPEC_HIDDEN;
 extern const struct gdi_dc_funcs *DRIVER_load_driver( LPCWSTR name ) DECLSPEC_HIDDEN;
 extern BOOL DRIVER_GetDriverName( LPCWSTR device, LPWSTR driver, DWORD size ) DECLSPEC_HIDDEN;
 
@@ -273,16 +273,13 @@ extern BOOL DRIVER_GetDriverName( LPCWSTR device, LPWSTR driver, DWORD size ) DE
 extern HENHMETAFILE EMF_Create_HENHMETAFILE(ENHMETAHEADER *emh, DWORD filesize, BOOL on_disk ) DECLSPEC_HIDDEN;
 
 /* font.c */
+
 struct font_gamma_ramp
 {
     DWORD gamma;
     BYTE  encode[256];
     BYTE  decode[256];
 };
-
-extern void font_init(void) DECLSPEC_HIDDEN;
-
-/* freetype.c */
 
 /* Undocumented structure filled in by GetFontRealizationInfo */
 struct font_realization_info
@@ -304,11 +301,99 @@ struct char_width_info
     INT unk;   /* unknown */
 };
 
-extern INT WineEngAddFontResourceEx(LPCWSTR, DWORD, PVOID) DECLSPEC_HIDDEN;
-extern HANDLE WineEngAddFontMemResourceEx(PVOID, DWORD, PVOID, LPDWORD) DECLSPEC_HIDDEN;
-extern BOOL WineEngCreateScalableFontResource(DWORD, LPCWSTR, LPCWSTR, LPCWSTR) DECLSPEC_HIDDEN;
-extern BOOL WineEngInit(void) DECLSPEC_HIDDEN;
-extern BOOL WineEngRemoveFontResourceEx(LPCWSTR, DWORD, PVOID) DECLSPEC_HIDDEN;
+typedef struct { FLOAT eM11, eM12, eM21, eM22; } FMAT2;
+
+struct glyph_metrics;
+
+struct gdi_font
+{
+    struct list            entry;
+    struct list            unused_entry;
+    DWORD                  refcount;
+    DWORD                  gm_size;
+    struct glyph_metrics **gm;
+    /* the following members can be accessed without locking, they are never modified after creation */
+    void                  *private;  /* font backend private data */
+    DWORD                  handle;
+    DWORD                  cache_num;
+    DWORD                  hash;
+    UINT                   charset;
+    UINT                   codepage;
+    FONTSIGNATURE          fs;
+    LOGFONTW               lf;
+    FMAT2                  matrix;
+    UINT                   face_index;
+    double                 scale_y;
+    INT                    aveWidth;
+    INT                    ppem;
+    SHORT                  yMax;
+    SHORT                  yMin;
+    UINT                   ntmFlags;
+    UINT                   ntmCellHeight;
+    UINT                   ntmAvgWidth;
+    UINT                   aa_flags;
+    ULONG                  ttc_item_offset;    /* 0 if font is not a part of TrueType collection */
+    BOOL                   can_use_bitmap : 1;
+    BOOL                   fake_italic : 1;
+    BOOL                   fake_bold : 1;
+    BOOL                   scalable : 1;
+    WCHAR                 *name;
+    struct font_fileinfo  *fileinfo;
+};
+
+#define MS_MAKE_TAG(ch1,ch2,ch3,ch4) \
+    (((DWORD)ch4 << 24) | ((DWORD)ch3 << 16) | ((DWORD)ch2 << 8) | (DWORD)ch1)
+
+#define MS_GASP_TAG MS_MAKE_TAG('g', 'a', 's', 'p')
+#define MS_GSUB_TAG MS_MAKE_TAG('G', 'S', 'U', 'B')
+#define MS_KERN_TAG MS_MAKE_TAG('k', 'e', 'r', 'n')
+#define MS_TTCF_TAG MS_MAKE_TAG('t', 't', 'c', 'f')
+#define MS_VDMX_TAG MS_MAKE_TAG('V', 'D', 'M', 'X')
+
+struct font_backend_funcs
+{
+    BOOL  (CDECL *pEnumFonts)( LOGFONTW *lf, FONTENUMPROCW proc, LPARAM lparam );
+    BOOL  (CDECL *pFontIsLinked)( struct gdi_font *font );
+    BOOL  (CDECL *pGetCharWidthInfo)( struct gdi_font *font, struct char_width_info *info );
+    DWORD (CDECL *pGetFontUnicodeRanges)( struct gdi_font *font, GLYPHSET *glyphset );
+    DWORD (CDECL *pGetKerningPairs)( struct gdi_font *font, DWORD count, KERNINGPAIR *pairs );
+    UINT  (CDECL *pGetOutlineTextMetrics)( struct gdi_font *font, UINT size, OUTLINETEXTMETRICW *metrics );
+    BOOL  (CDECL *pGetTextMetrics)( struct gdi_font *font, TEXTMETRICW *metrics );
+    struct gdi_font * (CDECL *pSelectFont)( DC *dc, HFONT hfont, UINT *aa_flags, UINT default_aa_flags );
+
+    INT   (CDECL *pAddFontResourceEx)( LPCWSTR file, DWORD flags, PVOID pdv );
+    INT   (CDECL *pRemoveFontResourceEx)( LPCWSTR file, DWORD flags, PVOID pdv );
+    HANDLE (CDECL *pAddFontMemResourceEx)( void *font, DWORD size, PVOID pdv, DWORD *count );
+    BOOL  (CDECL *pCreateScalableFontResource)( DWORD hidden, LPCWSTR resource,
+                                                LPCWSTR font_file, LPCWSTR font_path );
+
+    BOOL  (CDECL *alloc_font)( struct gdi_font *font );
+    DWORD (CDECL *get_font_data)( struct gdi_font *gdi_font, DWORD table, DWORD offset,
+                                  void *buf, DWORD count );
+    BOOL  (CDECL *get_glyph_index)( struct gdi_font *gdi_font, UINT *glyph );
+    UINT  (CDECL *get_default_glyph)( struct gdi_font *gdi_font );
+    DWORD (CDECL *get_glyph_outline)( struct gdi_font *font, UINT glyph, UINT format,
+                                      GLYPHMETRICS *gm, ABC *abc, DWORD buflen, void *buf, const MAT2 *mat );
+    void  (CDECL *destroy_font)( struct gdi_font *font );
+};
+
+extern struct gdi_font *alloc_gdi_font(void) DECLSPEC_HIDDEN;
+extern void free_gdi_font( struct gdi_font *font ) DECLSPEC_HIDDEN;
+extern void cache_gdi_font( struct gdi_font *font ) DECLSPEC_HIDDEN;
+extern struct gdi_font *find_cached_gdi_font( const LOGFONTW *lf, const FMAT2 *matrix,
+                                              BOOL can_use_bitmap ) DECLSPEC_HIDDEN;
+extern void set_gdi_font_name( struct gdi_font *font, const WCHAR *name ) DECLSPEC_HIDDEN;
+extern void set_gdi_font_file_info( struct gdi_font *font, const WCHAR *file, SIZE_T data_size ) DECLSPEC_HIDDEN;
+extern BOOL get_gdi_font_glyph_metrics( struct gdi_font *font, UINT index,
+                                        GLYPHMETRICS *gm, ABC *abc ) DECLSPEC_HIDDEN;
+extern void set_gdi_font_glyph_metrics( struct gdi_font *font, UINT index,
+                                        const GLYPHMETRICS *gm, const ABC *abc ) DECLSPEC_HIDDEN;
+extern void font_init(void) DECLSPEC_HIDDEN;
+extern CRITICAL_SECTION font_cs DECLSPEC_HIDDEN;
+
+/* freetype.c */
+
+extern BOOL WineEngInit( const struct font_backend_funcs **funcs ) DECLSPEC_HIDDEN;
 
 /* gdiobj.c */
 extern HGDIOBJ alloc_gdi_handle( void *obj, WORD type, const struct gdi_obj_funcs *funcs ) DECLSPEC_HIDDEN;

@@ -2058,6 +2058,7 @@ static bool wined3d_context_vk_update_graphics_pipeline_key(struct wined3d_conte
         {
             key->ds_desc.depthTestEnable = d->desc.depth;
             key->ds_desc.depthWriteEnable = d->desc.depth_write;
+            key->ds_desc.depthCompareOp = vk_compare_op_from_wined3d(d->desc.depth_func);
             key->ds_desc.stencilTestEnable = state->fb.depth_stencil && d->desc.stencil;
             if (key->ds_desc.stencilTestEnable)
             {
@@ -2079,14 +2080,19 @@ static bool wined3d_context_vk_update_graphics_pipeline_key(struct wined3d_conte
                 key->ds_desc.back.reference = state->render_states[WINED3D_RS_STENCILREF]
                         & ((1 << state->fb.depth_stencil->format->stencil_size) - 1);
             }
+            else
+            {
+                memset(&key->ds_desc.front, 0, sizeof(key->ds_desc.front));
+                memset(&key->ds_desc.back, 0, sizeof(key->ds_desc.back));
+            }
         }
         else
         {
             key->ds_desc.depthTestEnable = VK_TRUE;
             key->ds_desc.depthWriteEnable = VK_TRUE;
+            key->ds_desc.depthCompareOp = VK_COMPARE_OP_LESS;
             key->ds_desc.stencilTestEnable = VK_FALSE;
         }
-        key->ds_desc.depthCompareOp = vk_compare_op_from_wined3d(d->desc.depth_func);
 
         update = true;
     }

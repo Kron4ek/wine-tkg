@@ -97,9 +97,6 @@
 /* Define to 1 if you have the <cups/ppd.h> header file. */
 #undef HAVE_CUPS_PPD_H
 
-/* Define to 1 if you have the <curses.h> header file. */
-#undef HAVE_CURSES_H
-
 /* Define to 1 if you have the <dirent.h> header file. */
 #undef HAVE_DIRENT_H
 
@@ -258,6 +255,9 @@
 /* Define to 1 if you have the `getopt_long_only' function. */
 #undef HAVE_GETOPT_LONG_ONLY
 
+/* Define to 1 if you have the `getrandom' function. */
+#undef HAVE_GETRANDOM
+
 /* Define to 1 if you have the `getservbyport' function. */
 #undef HAVE_GETSERVBYPORT
 
@@ -287,12 +287,6 @@
 
 /* Define to 1 if you have the <gssapi/gssapi.h> header file. */
 #undef HAVE_GSSAPI_GSSAPI_H
-
-/* Define to 1 if you have the `gst_structure_get_list' function. */
-#undef HAVE_GST_STRUCTURE_GET_LIST
-
-/* Define to 1 if you have the <gtk/gtk.h> header file. */
-#undef HAVE_GTK_GTK_H
 
 /* Define to 1 if you have the <ieeefp.h> header file. */
 #undef HAVE_IEEEFP_H
@@ -582,17 +576,11 @@
 /* Define to 1 if you have the <mntent.h> header file. */
 #undef HAVE_MNTENT_H
 
-/* Define to 1 if you have the `mousemask' function. */
-#undef HAVE_MOUSEMASK
-
 /* Define to 1 if you have the <mpg123.h> header file. */
 #undef HAVE_MPG123_H
 
 /* Define if MTLDevice protocol has registryID property. */
 #undef HAVE_MTLDEVICE_REGISTRYID
-
-/* Define to 1 if you have the <ncurses.h> header file. */
-#undef HAVE_NCURSES_H
 
 /* Define to 1 if you have the `nearbyint' function. */
 #undef HAVE_NEARBYINT
@@ -984,6 +972,12 @@
 /* Define to 1 if `__st_birthtime' is a member of `struct stat'. */
 #undef HAVE_STRUCT_STAT___ST_BIRTHTIME
 
+/* Define to 1 if `mem_unit' is a member of `struct sysinfo'. */
+#undef HAVE_STRUCT_SYSINFO_MEM_UNIT
+
+/* Define to 1 if `totalram' is a member of `struct sysinfo'. */
+#undef HAVE_STRUCT_SYSINFO_TOTALRAM
+
 /* Define to 1 if `tcps_connattempt' is a member of `struct tcpstat'. */
 #undef HAVE_STRUCT_TCPSTAT_TCPS_CONNATTEMPT
 
@@ -1087,6 +1081,9 @@
 
 /* Define to 1 if you have the <sys/queue.h> header file. */
 #undef HAVE_SYS_QUEUE_H
+
+/* Define to 1 if you have the <sys/random.h> header file. */
+#undef HAVE_SYS_RANDOM_H
 
 /* Define to 1 if you have the <sys/resource.h> header file. */
 #undef HAVE_SYS_RESOURCE_H
@@ -1298,9 +1295,6 @@
 /* Define if Xrandr has the XRRGetProviderResources function */
 #undef HAVE_XRRGETPROVIDERRESOURCES
 
-/* Define if Xrandr has the XRRGetScreenResources function */
-#undef HAVE_XRRGETSCREENRESOURCES
-
 /* Define to 1 if you have the `y0' function. */
 #undef HAVE_Y0
 
@@ -1312,9 +1306,6 @@
 
 /* Define to 1 if you have the `_spawnvp' function. */
 #undef HAVE__SPAWNVP
-
-/* Define to 1 if you have the `__builtin_ctzl' built-in function. */
-#undef HAVE___BUILTIN_CTZL
 
 /* Define to 1 if you have the `__builtin_popcount' built-in function. */
 #undef HAVE___BUILTIN_POPCOUNT
@@ -1355,17 +1346,11 @@
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
 
-/* Define to the soname of the libcairo library. */
-#undef SONAME_LIBCAIRO
-
 /* Define to the soname of the libcapi20 library. */
 #undef SONAME_LIBCAPI20
 
 /* Define to the soname of the libcups library. */
 #undef SONAME_LIBCUPS
-
-/* Define to the soname of the libcurses library. */
-#undef SONAME_LIBCURSES
 
 /* Define to the soname of the libdbus-1 library. */
 #undef SONAME_LIBDBUS_1
@@ -1397,17 +1382,11 @@
 /* Define to the soname of the libgnutls library. */
 #undef SONAME_LIBGNUTLS
 
-/* Define to the soname of the libgobject-2.0 library. */
-#undef SONAME_LIBGOBJECT_2_0
-
 /* Define to the soname of the libgsm library. */
 #undef SONAME_LIBGSM
 
 /* Define to the soname of the libgssapi_krb5 library. */
 #undef SONAME_LIBGSSAPI_KRB5
-
-/* Define to the soname of the libgtk-3 library. */
-#undef SONAME_LIBGTK_3
 
 /* Define to the soname of the libhal library. */
 #undef SONAME_LIBHAL
@@ -1420,9 +1399,6 @@
 
 /* Define to the soname of the libMoltenVK library. */
 #undef SONAME_LIBMOLTENVK
-
-/* Define to the soname of the libncurses library. */
-#undef SONAME_LIBNCURSES
 
 /* Define to the soname of the libnetapi library. */
 #undef SONAME_LIBNETAPI

@@ -25,7 +25,6 @@
 
 NTSTATUS WINAPI BaseGetNamedObjectDirectory( HANDLE *dir );
 BOOL           CONSOLE_Init(RTL_USER_PROCESS_PARAMETERS *params) DECLSPEC_HIDDEN;
-BOOL           CONSOLE_Exit(void) DECLSPEC_HIDDEN;
 
 static inline BOOL is_console_handle(HANDLE h)
 {
@@ -50,21 +49,13 @@ static inline BOOL set_ntstatus( NTSTATUS status )
     return !status;
 }
 
-/* Some Wine specific values for Console inheritance (params->ConsoleHandle) */
-#define KERNEL32_CONSOLE_ALLOC          ((HANDLE)1)
-#define KERNEL32_CONSOLE_SHELL          ((HANDLE)2)
-
 extern HMODULE kernel32_handle DECLSPEC_HIDDEN;
 extern SYSTEM_BASIC_INFORMATION system_info DECLSPEC_HIDDEN;
 
 extern const WCHAR DIR_Windows[] DECLSPEC_HIDDEN;
 extern const WCHAR DIR_System[] DECLSPEC_HIDDEN;
 
-extern void FILE_SetDosError(void) DECLSPEC_HIDDEN;
 extern WCHAR *FILE_name_AtoW( LPCSTR name, BOOL alloc ) DECLSPEC_HIDDEN;
 extern DWORD FILE_name_WtoA( LPCWSTR src, INT srclen, LPSTR dest, INT destlen ) DECLSPEC_HIDDEN;
-
-/* computername.c */
-extern void COMPUTERNAME_Init(void) DECLSPEC_HIDDEN;
 
 #endif

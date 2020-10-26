@@ -336,7 +336,7 @@ static void ME_PlayUndoItem(ME_TextEditor *editor, struct undo_item *undo)
   {
     ME_Cursor tmp;
     ME_DisplayItem *para;
-    ME_CursorFromCharOfs(editor, undo->u.set_para_fmt.pos, &tmp);
+    cursor_from_char_ofs( editor, undo->u.set_para_fmt.pos, &tmp );
     para = ME_FindItemBack(tmp.pRun, diParagraph);
     add_undo_set_para_fmt( editor, &para->member.para );
     para->member.para.fmt = undo->u.set_para_fmt.fmt;
@@ -347,7 +347,7 @@ static void ME_PlayUndoItem(ME_TextEditor *editor, struct undo_item *undo)
   case undo_set_char_fmt:
   {
     ME_Cursor start, end;
-    ME_CursorFromCharOfs(editor, undo->u.set_char_fmt.pos, &start);
+    cursor_from_char_ofs( editor, undo->u.set_char_fmt.pos, &start );
     end = start;
     ME_MoveCursorChars(editor, &end, undo->u.set_char_fmt.len, FALSE);
     ME_SetCharFormat(editor, &start, &end, &undo->u.set_char_fmt.fmt);
@@ -356,53 +356,52 @@ static void ME_PlayUndoItem(ME_TextEditor *editor, struct undo_item *undo)
   case undo_insert_run:
   {
     ME_Cursor tmp;
-    ME_CursorFromCharOfs(editor, undo->u.insert_run.pos, &tmp);
-    ME_InsertRunAtCursor(editor, &tmp, undo->u.insert_run.style,
-                         undo->u.insert_run.str,
-                         undo->u.insert_run.len,
-                         undo->u.insert_run.flags);
+    cursor_from_char_ofs( editor, undo->u.insert_run.pos, &tmp );
+    run_insert( editor, &tmp, undo->u.insert_run.style,
+                undo->u.insert_run.str, undo->u.insert_run.len,
+                undo->u.insert_run.flags );
     break;
   }
   case undo_delete_run:
   {
     ME_Cursor tmp;
-    ME_CursorFromCharOfs(editor, undo->u.delete_run.pos, &tmp);
+    cursor_from_char_ofs( editor, undo->u.delete_run.pos, &tmp );
     ME_InternalDeleteText(editor, &tmp, undo->u.delete_run.len, TRUE);
     break;
   }
   case undo_join_paras:
   {
     ME_Cursor tmp;
-    ME_CursorFromCharOfs(editor, undo->u.join_paras.pos, &tmp);
-    ME_JoinParagraphs(editor, tmp.pPara, TRUE);
+    cursor_from_char_ofs( editor, undo->u.join_paras.pos, &tmp );
+    para_join( editor, &tmp.pPara->member.para, TRUE );
     break;
   }
   case undo_split_para:
   {
     ME_Cursor tmp;
-    ME_DisplayItem *this_para, *new_para;
+    ME_Paragraph *this_para, *new_para;
     BOOL bFixRowStart;
     int paraFlags = undo->u.split_para.flags & (MEPF_ROWSTART|MEPF_CELL|MEPF_ROWEND);
-    ME_CursorFromCharOfs(editor, undo->u.split_para.pos, &tmp);
-    if (tmp.nOffset)
-      ME_SplitRunSimple(editor, &tmp);
-    this_para = tmp.pPara;
-    bFixRowStart = this_para->member.para.nFlags & MEPF_ROWSTART;
+
+    cursor_from_char_ofs( editor, undo->u.split_para.pos, &tmp );
+    if (tmp.nOffset) run_split( editor, &tmp );
+    this_para = &tmp.pPara->member.para;
+    bFixRowStart = this_para->nFlags & MEPF_ROWSTART;
     if (bFixRowStart)
     {
       /* Re-insert the paragraph before the table, making sure the nFlag value
        * is correct. */
-      this_para->member.para.nFlags &= ~MEPF_ROWSTART;
+      this_para->nFlags &= ~MEPF_ROWSTART;
     }
-    new_para = ME_SplitParagraph(editor, tmp.pRun, tmp.pRun->member.run.style,
-                                 undo->u.split_para.eol_str->szData, undo->u.split_para.eol_str->nLen, paraFlags);
+    new_para = para_split( editor, &tmp.pRun->member.run, tmp.pRun->member.run.style,
+                           undo->u.split_para.eol_str->szData, undo->u.split_para.eol_str->nLen, paraFlags );
     if (bFixRowStart)
-      new_para->member.para.nFlags |= MEPF_ROWSTART;
-    new_para->member.para.fmt = undo->u.split_para.fmt;
-    new_para->member.para.border = undo->u.split_para.border;
+      new_para->nFlags |= MEPF_ROWSTART;
+    new_para->fmt = undo->u.split_para.fmt;
+    new_para->border = undo->u.split_para.border;
     if (paraFlags)
     {
-      ME_DisplayItem *pCell = new_para->member.para.pCell;
+      ME_DisplayItem *pCell = new_para->pCell;
       pCell->member.cell.nRightBoundary = undo->u.split_para.cell_right_boundary;
       pCell->member.cell.border = undo->u.split_para.cell_border;
     }
