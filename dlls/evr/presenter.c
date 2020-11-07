@@ -40,6 +40,18 @@ enum presenter_state
     PRESENTER_STATE_PAUSED,
 };
 
+enum streaming_thread_message
+{
+    EVRM_STOP = WM_USER,
+};
+
+struct streaming_thread
+{
+    HANDLE hthread;
+    HANDLE ready_event;
+    DWORD tid;
+};
+
 struct video_presenter
 {
     IMFVideoPresenter IMFVideoPresenter_iface;
@@ -58,6 +70,8 @@ struct video_presenter
     IMediaEventSink *event_sink;
 
     IDirect3DDeviceManager9 *device_manager;
+    struct streaming_thread thread;
+    IMFMediaType *media_type;
     UINT reset_token;
     HWND video_window;
     MFVideoNormalizedRect src_rect;
@@ -155,9 +169,137 @@ static void video_presenter_get_native_video_size(struct video_presenter *presen
     IMFMediaType_Release(media_type);
 }
 
+static void video_presenter_reset_media_type(struct video_presenter *presenter)
+{
+    if (presenter->media_type)
+        IMFMediaType_Release(presenter->media_type);
+    presenter->media_type = NULL;
+
+    /* FIXME: release samples pool */
+}
+
+static HRESULT video_presenter_set_media_type(struct video_presenter *presenter, IMFMediaType *media_type)
+{
+    unsigned int flags;
+
+    if (!media_type)
+    {
+        video_presenter_reset_media_type(presenter);
+        return S_OK;
+    }
+
+    if (presenter->media_type && IMFMediaType_IsEqual(presenter->media_type, media_type, &flags) == S_OK)
+        return S_OK;
+
+    video_presenter_reset_media_type(presenter);
+
+    /* FIXME: allocate samples pool */
+
+    presenter->media_type = media_type;
+    IMFMediaType_AddRef(presenter->media_type);
+
+    return S_OK;
+}
+
 static HRESULT video_presenter_invalidate_media_type(struct video_presenter *presenter)
 {
+    IMFMediaType *media_type;
+    unsigned int idx = 0;
+    HRESULT hr;
+
     video_presenter_get_native_video_size(presenter);
+
+    while (SUCCEEDED(hr = IMFTransform_GetOutputAvailableType(presenter->mixer, 0, idx++, &media_type)))
+    {
+        /* FIXME: check that d3d device supports this format */
+
+        /* FIXME: potentially adjust frame size */
+
+        hr = IMFTransform_SetOutputType(presenter->mixer, 0, media_type, MFT_SET_TYPE_TEST_ONLY);
+
+        if (SUCCEEDED(hr))
+            hr = video_presenter_set_media_type(presenter, media_type);
+
+        hr = IMFTransform_SetOutputType(presenter->mixer, 0, media_type, 0);
+        IMFMediaType_Release(media_type);
+
+        if (SUCCEEDED(hr))
+            break;
+    }
+
+    return hr;
+}
+
+static DWORD CALLBACK video_presenter_streaming_thread(void *arg)
+{
+    struct video_presenter *presenter = arg;
+    BOOL stop_thread = FALSE;
+    MSG msg;
+
+    PeekMessageW(&msg, NULL, WM_USER, WM_USER, PM_NOREMOVE);
+
+    SetEvent(presenter->thread.ready_event);
+
+    while (!stop_thread)
+    {
+        MsgWaitForMultipleObjects(0, NULL, FALSE, INFINITE, QS_POSTMESSAGE);
+
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            switch (msg.message)
+            {
+                case EVRM_STOP:
+                    stop_thread = TRUE;
+                    break;
+
+                default:
+                    ;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static HRESULT video_presenter_start_streaming(struct video_presenter *presenter)
+{
+    if (presenter->thread.hthread)
+        return S_OK;
+
+    if (!(presenter->thread.ready_event = CreateEventW(NULL, FALSE, FALSE, NULL)))
+        return HRESULT_FROM_WIN32(GetLastError());
+
+    if (!(presenter->thread.hthread = CreateThread(NULL, 0, video_presenter_streaming_thread,
+            presenter, 0, &presenter->thread.tid)))
+    {
+        WARN("Failed to create streaming thread.\n");
+        CloseHandle(presenter->thread.ready_event);
+        presenter->thread.ready_event = NULL;
+        return E_FAIL;
+    }
+
+    WaitForSingleObject(presenter->thread.ready_event, INFINITE);
+    CloseHandle(presenter->thread.ready_event);
+    presenter->thread.ready_event = NULL;
+
+    TRACE("Started streaming thread, tid %#x.\n", presenter->thread.tid);
+
+    return S_OK;
+}
+
+static HRESULT video_presenter_end_streaming(struct video_presenter *presenter)
+{
+    if (!presenter->thread.hthread)
+        return S_OK;
+
+    PostThreadMessageW(presenter->thread.tid, EVRM_STOP, 0, 0);
+
+    WaitForSingleObject(presenter->thread.hthread, INFINITE);
+    CloseHandle(presenter->thread.hthread);
+
+    TRACE("Terminated streaming thread tid %#x.\n", presenter->thread.tid);
+
+    memset(&presenter->thread, 0, sizeof(presenter->thread));
 
     return S_OK;
 }
@@ -244,6 +386,7 @@ static ULONG WINAPI video_presenter_inner_Release(IUnknown *iface)
 
     if (!refcount)
     {
+        video_presenter_end_streaming(presenter);
         video_presenter_clear_container(presenter);
         DeleteCriticalSection(&presenter->cs);
         if (presenter->device_manager)
@@ -352,6 +495,12 @@ static HRESULT WINAPI video_presenter_ProcessMessage(IMFVideoPresenter *iface, M
         case MFVP_MESSAGE_INVALIDATEMEDIATYPE:
             hr = video_presenter_invalidate_media_type(presenter);
             break;
+        case MFVP_MESSAGE_BEGINSTREAMING:
+            hr = video_presenter_start_streaming(presenter);
+            break;
+        case MFVP_MESSAGE_ENDSTREAMING:
+            hr = video_presenter_end_streaming(presenter);
+            break;
         default:
             FIXME("Unsupported message %u.\n", message);
             hr = E_NOTIMPL;
@@ -362,11 +511,29 @@ static HRESULT WINAPI video_presenter_ProcessMessage(IMFVideoPresenter *iface, M
     return hr;
 }
 
-static HRESULT WINAPI video_presenter_GetCurrentMediaType(IMFVideoPresenter *iface, IMFVideoMediaType **media_type)
+static HRESULT WINAPI video_presenter_GetCurrentMediaType(IMFVideoPresenter *iface,
+        IMFVideoMediaType **media_type)
 {
-    FIXME("%p, %p.\n", iface, media_type);
+    struct video_presenter *presenter = impl_from_IMFVideoPresenter(iface);
+    HRESULT hr;
 
-    return E_NOTIMPL;
+    TRACE("%p, %p.\n", iface, media_type);
+
+    EnterCriticalSection(&presenter->cs);
+
+    if (presenter->state == PRESENTER_STATE_SHUT_DOWN)
+        hr = MF_E_SHUTDOWN;
+    else if (!presenter->media_type)
+        hr = MF_E_NOT_INITIALIZED;
+    else
+    {
+        hr = IMFMediaType_QueryInterface(presenter->media_type, &IID_IMFVideoMediaType,
+                (void **)media_type);
+    }
+
+    LeaveCriticalSection(&presenter->cs);
+
+    return hr;
 }
 
 static const IMFVideoPresenterVtbl video_presenter_vtbl =

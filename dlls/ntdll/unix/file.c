@@ -113,6 +113,7 @@
 #include <sys/xattr.h>
 #endif
 #ifdef HAVE_SYS_EXTATTR_H
+#undef XATTR_ADDITIONAL_OPTIONS
 #include <sys/extattr.h>
 #endif
 #include <time.h>
@@ -388,6 +389,9 @@ NTSTATUS errno_to_status( int err )
 
 #ifndef XATTR_USER_PREFIX
 #define XATTR_USER_PREFIX "user."
+#endif
+#ifndef XATTR_USER_PREFIX_LEN
+#define XATTR_USER_PREFIX_LEN (sizeof(XATTR_USER_PREFIX) - 1)
 #endif
 
 static int xattr_fremove( int filedes, const char *name )

@@ -1706,12 +1706,26 @@ BOOL WINAPI DECLSPEC_HOTPATCH FindNextFileW( HANDLE handle, WIN32_FIND_DATAW *da
             HANDLE hlink;
             DWORD dwret;
             BOOL bret;
+            INT path_len = info->path.Length + dir_info->FileNameLength +
+                           sizeof(WCHAR);
+            WCHAR *path = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, path_len );
 
-            hlink = CreateFileW( data->cFileName, GENERIC_READ | GENERIC_WRITE, 0, 0,
+            if (!path) break;
+
+            lstrcpynW( path, info->path.Buffer, info->path.Length/sizeof(WCHAR) + 1 );
+            lstrcatW( path, data->cFileName );
+
+            hlink = CreateFileW( path, GENERIC_READ | GENERIC_WRITE, 0, 0,
                                  OPEN_EXISTING,
                                  FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, 0 );
+            HeapFree( GetProcessHeap(), 0, path );
             buffer_len = sizeof(*buffer) + 2*MAX_PATH*sizeof(WCHAR);
             buffer = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, buffer_len );
+            if (!buffer)
+            {
+                CloseHandle( hlink );
+                break;
+            }
             bret = DeviceIoControl( hlink, FSCTL_GET_REPARSE_POINT, NULL, 0, (LPVOID)buffer,
                                     buffer_len, &dwret, 0 );
             if (bret) data->dwReserved0 = buffer->ReparseTag;

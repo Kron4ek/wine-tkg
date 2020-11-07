@@ -206,7 +206,7 @@ typedef struct tagME_Paragraph
   PARAFORMAT2 fmt;
   ME_String *text;
 
-  struct tagME_DisplayItem *pCell; /* v4.1 */
+  struct tagME_Cell *cell; /* v4.1 */
   ME_BorderRect border;
 
   int nCharOfs;
@@ -228,7 +228,7 @@ typedef struct tagME_Cell /* v4.1 */
   POINT pt;
   int nHeight, nWidth;
   int yTextOffset; /* The text offset is caused by the largest top border. */
-  struct tagME_DisplayItem *prev_cell, *next_cell, *parent_cell;
+  struct tagME_Cell *prev_cell, *next_cell, *parent_cell;
 } ME_Cell;
 
 typedef struct tagME_Row
@@ -274,8 +274,8 @@ typedef struct tagME_TextBuffer
 
 typedef struct tagME_Cursor
 {
-  ME_DisplayItem *pPara;
-  ME_DisplayItem *pRun;
+  ME_Paragraph *para;
+  ME_Run *run;
   int nOffset;
 } ME_Cursor;
 
@@ -407,7 +407,7 @@ typedef struct tagME_TextEditor
   ME_UndoMode nUndoMode;
   int nParagraphs;
   int nLastSelStart, nLastSelEnd;
-  ME_DisplayItem *pLastSelStartPara, *pLastSelEndPara;
+  ME_Paragraph *last_sel_start_para, *last_sel_end_para;
   ME_FontCacheItem pFontCache[HFONT_CACHE_SIZE];
   int nZoomNumerator, nZoomDenominator;
   RECT prevClientRect;

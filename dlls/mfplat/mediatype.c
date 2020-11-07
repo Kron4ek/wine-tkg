@@ -2003,10 +2003,8 @@ static HRESULT WINAPI mediatype_handler_GetMajorType(IMFMediaTypeHandler *iface,
     TRACE("%p, %p.\n", iface, type);
 
     EnterCriticalSection(&stream_desc->attributes.cs);
-    if (stream_desc->current_type)
-        hr = IMFMediaType_GetGUID(stream_desc->current_type, &MF_MT_MAJOR_TYPE, type);
-    else
-        hr = MF_E_ATTRIBUTENOTFOUND;
+    hr = IMFMediaType_GetGUID(stream_desc->current_type ? stream_desc->current_type :
+            stream_desc->media_types[0], &MF_MT_MAJOR_TYPE, type);
     LeaveCriticalSection(&stream_desc->attributes.cs);
 
     return hr;
@@ -2630,7 +2628,6 @@ static const struct uncompressed_video_format video_formats[] =
     { &MFVideoFormat_A2R10G10B10,   4, 3, 1, 0 },
     { &MFVideoFormat_RGB8,          1, 3, 1, 0 },
     { &MFVideoFormat_L8,            1, 3, 1, 0 },
-    { &MFVideoFormat_I420,          1, 0, 0, 1 },
     { &MFVideoFormat_AYUV,          4, 3, 0, 1 },
     { &MFVideoFormat_I420,          1, 0, 0, 1 },
     { &MFVideoFormat_IMC1,          2, 3, 0, 1 },
@@ -3166,4 +3163,149 @@ HRESULT WINAPI MFConvertColorInfoToDXVA(DWORD *dxva_info, const MFVIDEOFORMAT *f
     dxva_format->VideoTransferFunction = format->videoInfo.TransferFunction;
 
     return S_OK;
+}
+
+struct frame_rate
+{
+    UINT64 rate;
+    UINT64 frame_time;
+};
+
+static int __cdecl frame_rate_compare(const void *a, const void *b)
+{
+    const UINT64 *rate = a;
+    const struct frame_rate *known_rate = b;
+    return *rate == known_rate->rate ? 0 : ( *rate < known_rate->rate ? 1 : -1 );
+}
+
+/***********************************************************************
+ *      MFFrameRateToAverageTimePerFrame (mfplat.@)
+ */
+HRESULT WINAPI MFFrameRateToAverageTimePerFrame(UINT32 numerator, UINT32 denominator, UINT64 *avgframetime)
+{
+    static const struct frame_rate known_rates[] =
+    {
+#define KNOWN_RATE(n,d,ft) { ((UINT64)n << 32) | d, ft }
+        KNOWN_RATE(60000, 1001, 166833),
+        KNOWN_RATE(30000, 1001, 333667),
+        KNOWN_RATE(24000, 1001, 417188),
+        KNOWN_RATE(60,       1, 166667),
+        KNOWN_RATE(50,       1, 200000),
+        KNOWN_RATE(30,       1, 333333),
+        KNOWN_RATE(25,       1, 400000),
+        KNOWN_RATE(24,       1, 416667),
+#undef KNOWN_RATE
+    };
+    UINT64 rate = ((UINT64)numerator << 32) | denominator;
+    const struct frame_rate *entry;
+
+    TRACE("%u, %u, %p.\n", numerator, denominator, avgframetime);
+
+    if ((entry = bsearch(&rate, known_rates, ARRAY_SIZE(known_rates), sizeof(*known_rates),
+            frame_rate_compare)))
+    {
+        *avgframetime = entry->frame_time;
+    }
+    else
+        *avgframetime = numerator ? denominator * (UINT64)10000000 / numerator : 0;
+
+    return S_OK;
+}
+
+/***********************************************************************
+ *      MFMapDXGIFormatToDX9Format (mfplat.@)
+ */
+DWORD WINAPI MFMapDXGIFormatToDX9Format(DXGI_FORMAT dxgi_format)
+{
+    switch (dxgi_format)
+    {
+        case DXGI_FORMAT_R32G32B32A32_FLOAT:
+            return D3DFMT_A32B32G32R32F;
+        case DXGI_FORMAT_R16G16B16A16_FLOAT:
+            return D3DFMT_A16B16G16R16F;
+        case DXGI_FORMAT_R16G16B16A16_UNORM:
+            return D3DFMT_A16B16G16R16;
+        case DXGI_FORMAT_R16G16B16A16_SNORM:
+            return D3DFMT_Q16W16V16U16;
+        case DXGI_FORMAT_R32G32_FLOAT:
+            return D3DFMT_G32R32F;
+        case DXGI_FORMAT_R10G10B10A2_UNORM:
+            return D3DFMT_A2B10G10R10;
+        case DXGI_FORMAT_R8G8B8A8_SNORM:
+            return D3DFMT_Q8W8V8U8;
+        case DXGI_FORMAT_R16G16_FLOAT:
+            return D3DFMT_G16R16F;
+        case DXGI_FORMAT_R16G16_UNORM:
+            return D3DFMT_G16R16;
+        case DXGI_FORMAT_R16G16_SNORM:
+            return D3DFMT_V16U16;
+        case DXGI_FORMAT_D32_FLOAT:
+            return D3DFMT_D32F_LOCKABLE;
+        case DXGI_FORMAT_R32_FLOAT:
+            return D3DFMT_R32F;
+        case DXGI_FORMAT_D24_UNORM_S8_UINT:
+            return D3DFMT_D24S8;
+        case DXGI_FORMAT_R8G8_SNORM:
+            return D3DFMT_V8U8;
+        case DXGI_FORMAT_R16_FLOAT:
+            return D3DFMT_R16F;
+        case DXGI_FORMAT_D16_UNORM:
+            return D3DFMT_D16_LOCKABLE;
+        case DXGI_FORMAT_R16_UNORM:
+            return D3DFMT_L16;
+        case DXGI_FORMAT_R8_UNORM:
+            return D3DFMT_L8;
+        case DXGI_FORMAT_A8_UNORM:
+            return D3DFMT_A8;
+        case DXGI_FORMAT_BC1_UNORM:
+        case DXGI_FORMAT_BC1_UNORM_SRGB:
+            return D3DFMT_DXT1;
+        case DXGI_FORMAT_BC2_UNORM:
+        case DXGI_FORMAT_BC2_UNORM_SRGB:
+            return D3DFMT_DXT2;
+        case DXGI_FORMAT_BC3_UNORM:
+        case DXGI_FORMAT_BC3_UNORM_SRGB:
+            return D3DFMT_DXT4;
+        case DXGI_FORMAT_R8G8B8A8_UNORM:
+            return D3DFMT_A8B8G8R8;
+        case DXGI_FORMAT_B8G8R8A8_UNORM:
+        case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+        case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+            return D3DFMT_A8R8G8B8;
+        case DXGI_FORMAT_B8G8R8X8_UNORM:
+        case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+            return D3DFMT_X8R8G8B8;
+        case DXGI_FORMAT_AYUV:
+            return MAKEFOURCC('A','Y','U','V');
+        case DXGI_FORMAT_Y410:
+            return MAKEFOURCC('Y','4','1','0');
+        case DXGI_FORMAT_Y416:
+            return MAKEFOURCC('Y','4','1','6');
+        case DXGI_FORMAT_NV12:
+            return MAKEFOURCC('N','V','1','2');
+        case DXGI_FORMAT_P010:
+            return MAKEFOURCC('P','0','1','0');
+        case DXGI_FORMAT_P016:
+            return MAKEFOURCC('P','0','1','6');
+        case DXGI_FORMAT_420_OPAQUE:
+            return MAKEFOURCC('4','2','0','O');
+        case DXGI_FORMAT_YUY2:
+            return D3DFMT_YUY2;
+        case DXGI_FORMAT_Y210:
+            return MAKEFOURCC('Y','2','1','0');
+        case DXGI_FORMAT_Y216:
+            return MAKEFOURCC('Y','2','1','6');
+        case DXGI_FORMAT_NV11:
+            return MAKEFOURCC('N','V','1','1');
+        case DXGI_FORMAT_AI44:
+            return MAKEFOURCC('A','I','4','4');
+        case DXGI_FORMAT_IA44:
+            return MAKEFOURCC('I','A','4','4');
+        case DXGI_FORMAT_P8:
+            return D3DFMT_P8;
+        case DXGI_FORMAT_A8P8:
+            return D3DFMT_A8P8;
+        default:
+            return 0;
+    }
 }

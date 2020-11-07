@@ -265,16 +265,19 @@ todo_wine
 
     /* Preload mode is still accessible. */
     state = IMFMediaEngine_GetPreload(media_engine);
-todo_wine
     ok(!state, "Unexpected state %d.\n", state);
 
     hr = IMFMediaEngine_SetPreload(media_engine, MF_MEDIA_ENGINE_PRELOAD_AUTOMATIC);
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     state = IMFMediaEngine_GetPreload(media_engine);
-todo_wine
     ok(state == MF_MEDIA_ENGINE_PRELOAD_AUTOMATIC, "Unexpected state %d.\n", state);
+
+    hr = IMFMediaEngine_SetPreload(media_engine, 100);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    state = IMFMediaEngine_GetPreload(media_engine);
+    ok(state == 100, "Unexpected state %d.\n", state);
 
     hr = IMFMediaEngine_GetBuffered(media_engine, &time_range);
 todo_wine
@@ -376,11 +379,9 @@ todo_wine
     ok(!state, "Unexpected state.\n");
 
     hr = IMFMediaEngine_GetNativeVideoSize(media_engine, &cx, &cy);
-todo_wine
     ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#x.\n", hr);
 
     hr = IMFMediaEngine_GetVideoAspectRatio(media_engine, &cx, &cy);
-todo_wine
     ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#x.\n", hr);
 
     IMFMediaEngine_Release(media_engine);
@@ -391,6 +392,7 @@ static void test_Play(void)
     struct media_engine_notify notify_impl = {{&media_engine_notify_vtbl}, 1};
     IMFMediaEngineNotify *callback = &notify_impl.IMFMediaEngineNotify_iface;
     IMFMediaEngine *media_engine;
+    LONGLONG pts;
     HRESULT hr;
     BOOL ret;
 
@@ -398,6 +400,14 @@ static void test_Play(void)
 
     ret = IMFMediaEngine_IsPaused(media_engine);
     ok(ret, "Unexpected state %d.\n", ret);
+
+    hr = IMFMediaEngine_OnVideoStreamTick(media_engine, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#x.\n", hr);
+
+    pts = 0;
+    hr = IMFMediaEngine_OnVideoStreamTick(media_engine, &pts);
+    ok(hr == S_FALSE, "Unexpected hr %#x.\n", hr);
+    ok(pts == MINLONGLONG, "Unexpected timestamp.\n");
 
     hr = IMFMediaEngine_Play(media_engine);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
@@ -410,6 +420,12 @@ static void test_Play(void)
 
     hr = IMFMediaEngine_Shutdown(media_engine);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFMediaEngine_OnVideoStreamTick(media_engine, NULL);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFMediaEngine_OnVideoStreamTick(media_engine, &pts);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#x.\n", hr);
 
     ret = IMFMediaEngine_IsPaused(media_engine);
     ok(!ret, "Unexpected state %d.\n", ret);

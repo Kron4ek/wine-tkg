@@ -335,19 +335,37 @@ static HRESULT WINAPI video_stream_sink_GetMediaTypeHandler(IMFStreamSink *iface
 static HRESULT WINAPI video_stream_sink_ProcessSample(IMFStreamSink *iface, IMFSample *sample)
 {
     struct video_stream *stream = impl_from_IMFStreamSink(iface);
+    LONGLONG timestamp;
+    HRESULT hr = S_OK;
 
-    FIXME("%p, %p.\n", iface, sample);
+    TRACE("%p, %p.\n", iface, sample);
 
     EnterCriticalSection(&stream->cs);
-    if (stream->flags & EVR_STREAM_PREROLLING)
+
+    if (!stream->parent)
+        hr = MF_E_STREAMSINK_REMOVED;
+    else if (!stream->parent->clock)
+        hr = MF_E_NO_CLOCK;
+    else if (FAILED(hr = IMFSample_GetSampleTime(sample, &timestamp)))
     {
-        IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkPrerolled, &GUID_NULL, S_OK, NULL);
-        stream->flags &= ~EVR_STREAM_PREROLLING;
-        stream->flags |= EVR_STREAM_PREROLLED;
+        WARN("No sample timestamp, hr %#x.\n", hr);
     }
+    else if (stream->parent->state == EVR_STATE_RUNNING)
+    {
+        if (SUCCEEDED(IMFTransform_ProcessInput(stream->parent->mixer, stream->id, sample, 0)))
+            IMFVideoPresenter_ProcessMessage(stream->parent->presenter, MFVP_MESSAGE_PROCESSINPUTNOTIFY, 0);
+
+        if (stream->flags & EVR_STREAM_PREROLLING)
+        {
+            IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkPrerolled, &GUID_NULL, S_OK, NULL);
+            stream->flags &= ~EVR_STREAM_PREROLLING;
+            stream->flags |= EVR_STREAM_PREROLLED;
+        }
+    }
+
     LeaveCriticalSection(&stream->cs);
 
-    return E_NOTIMPL;
+    return hr;
 }
 
 static HRESULT WINAPI video_stream_sink_PlaceMarker(IMFStreamSink *iface, MFSTREAMSINK_MARKER_TYPE marker_type,
@@ -860,7 +878,6 @@ static HRESULT WINAPI video_renderer_sink_GetStreamSinkById(IMFMediaSink *iface,
             *stream = &renderer->streams[i]->IMFStreamSink_iface;
             IMFStreamSink_AddRef(*stream);
         }
-
     }
     LeaveCriticalSection(&renderer->cs);
 
@@ -1382,20 +1399,29 @@ static HRESULT WINAPI video_renderer_clock_sink_OnClockStart(IMFClockStateSink *
 
     EnterCriticalSection(&renderer->cs);
 
-    for (i = 0; i < renderer->stream_count; ++i)
+    if (renderer->state == EVR_STATE_STOPPED)
     {
-        struct video_stream *stream = renderer->streams[i];
+        IMFTransform_ProcessMessage(renderer->mixer, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
+        IMFVideoPresenter_ProcessMessage(renderer->presenter, MFVP_MESSAGE_BEGINSTREAMING, 0);
 
-        IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkStarted, &GUID_NULL, S_OK, NULL);
+        for (i = 0; i < renderer->stream_count; ++i)
+        {
+            struct video_stream *stream = renderer->streams[i];
 
-        EnterCriticalSection(&stream->cs);
-        if (!(stream->flags & EVR_STREAM_PREROLLED))
-            IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkRequestSample,
-                    &GUID_NULL, S_OK, NULL);
-        stream->flags |= EVR_STREAM_PREROLLED;
-        LeaveCriticalSection(&stream->cs);
+            IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkStarted, &GUID_NULL, S_OK, NULL);
+
+            EnterCriticalSection(&stream->cs);
+            if (!(stream->flags & EVR_STREAM_PREROLLED))
+                IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkRequestSample,
+                        &GUID_NULL, S_OK, NULL);
+            stream->flags |= EVR_STREAM_PREROLLED;
+            LeaveCriticalSection(&stream->cs);
+        }
     }
+
     renderer->state = EVR_STATE_RUNNING;
+
+    IMFVideoPresenter_OnClockStart(renderer->presenter, systime, offset);
 
     LeaveCriticalSection(&renderer->cs);
 
@@ -1411,16 +1437,28 @@ static HRESULT WINAPI video_renderer_clock_sink_OnClockStop(IMFClockStateSink *i
 
     EnterCriticalSection(&renderer->cs);
 
-    for (i = 0; i < renderer->stream_count; ++i)
-    {
-        struct video_stream *stream = renderer->streams[i];
-        IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkStopped, &GUID_NULL, S_OK, NULL);
+    IMFVideoPresenter_OnClockStop(renderer->presenter, systime);
 
-        EnterCriticalSection(&stream->cs);
-        stream->flags &= ~EVR_STREAM_PREROLLED;
-        LeaveCriticalSection(&stream->cs);
+    IMFTransform_ProcessMessage(renderer->mixer, MFT_MESSAGE_COMMAND_FLUSH, 0);
+    IMFVideoPresenter_ProcessMessage(renderer->presenter, MFVP_MESSAGE_FLUSH, 0);
+
+    if (renderer->state == EVR_STATE_RUNNING ||
+            renderer->state == EVR_STATE_PAUSED)
+    {
+        IMFTransform_ProcessMessage(renderer->mixer, MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
+        IMFVideoPresenter_ProcessMessage(renderer->presenter, MFVP_MESSAGE_ENDSTREAMING, 0);
+
+        for (i = 0; i < renderer->stream_count; ++i)
+        {
+            struct video_stream *stream = renderer->streams[i];
+            IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkStopped, &GUID_NULL, S_OK, NULL);
+
+            EnterCriticalSection(&stream->cs);
+            stream->flags &= ~EVR_STREAM_PREROLLED;
+            LeaveCriticalSection(&stream->cs);
+        }
+        renderer->state = EVR_STATE_STOPPED;
     }
-    renderer->state = EVR_STATE_STOPPED;
 
     LeaveCriticalSection(&renderer->cs);
 
@@ -1436,11 +1474,17 @@ static HRESULT WINAPI video_renderer_clock_sink_OnClockPause(IMFClockStateSink *
 
     EnterCriticalSection(&renderer->cs);
 
-    for (i = 0; i < renderer->stream_count; ++i)
+    IMFVideoPresenter_OnClockPause(renderer->presenter, systime);
+
+    if (renderer->state == EVR_STATE_RUNNING)
     {
-        struct video_stream *stream = renderer->streams[i];
-        IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkPaused, &GUID_NULL, S_OK, NULL);
+        for (i = 0; i < renderer->stream_count; ++i)
+        {
+            struct video_stream *stream = renderer->streams[i];
+            IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkPaused, &GUID_NULL, S_OK, NULL);
+        }
     }
+
     renderer->state = EVR_STATE_PAUSED;
 
     LeaveCriticalSection(&renderer->cs);
@@ -1457,6 +1501,8 @@ static HRESULT WINAPI video_renderer_clock_sink_OnClockRestart(IMFClockStateSink
 
     EnterCriticalSection(&renderer->cs);
 
+    IMFVideoPresenter_OnClockRestart(renderer->presenter, systime);
+
     for (i = 0; i < renderer->stream_count; ++i)
     {
         struct video_stream *stream = renderer->streams[i];
@@ -1471,9 +1517,23 @@ static HRESULT WINAPI video_renderer_clock_sink_OnClockRestart(IMFClockStateSink
 
 static HRESULT WINAPI video_renderer_clock_sink_OnClockSetRate(IMFClockStateSink *iface, MFTIME systime, float rate)
 {
-    FIXME("%p, %s, %f.\n", iface, debugstr_time(systime), rate);
+    struct video_renderer *renderer = impl_from_IMFClockStateSink(iface);
+    IMFClockStateSink *sink;
 
-    return E_NOTIMPL;
+    TRACE("%p, %s, %f.\n", iface, debugstr_time(systime), rate);
+
+    EnterCriticalSection(&renderer->cs);
+
+    IMFVideoPresenter_OnClockSetRate(renderer->presenter, systime, rate);
+    if (SUCCEEDED(IMFTransform_QueryInterface(renderer->mixer, &IID_IMFClockStateSink, (void **)&sink)))
+    {
+        IMFClockStateSink_OnClockSetRate(sink, systime, rate);
+        IMFClockStateSink_Release(sink);
+    }
+
+    LeaveCriticalSection(&renderer->cs);
+
+    return S_OK;
 }
 
 static const IMFClockStateSinkVtbl video_renderer_clock_sink_vtbl =
@@ -2015,8 +2075,8 @@ static const IMFAttributesVtbl video_renderer_attributes_vtbl =
 static HRESULT evr_create_object(IMFAttributes *attributes, void *user_context, IUnknown **obj)
 {
     struct video_renderer *object;
-    IMFVideoPresenter *presenter;
-    IMFTransform *mixer;
+    IMFVideoPresenter *presenter = NULL;
+    IMFTransform *mixer = NULL;
     HRESULT hr;
 
     TRACE("%p, %p, %p.\n", attributes, user_context, obj);

@@ -310,7 +310,7 @@ static void start_pipeline(struct media_source *source, struct source_async_comm
             IMFMediaTypeHandler_GetCurrentMediaType(mth, &current_mt);
             current_caps = caps_from_mf_media_type(current_mt);
             g_object_get(stream->appsink, "caps", &prev_caps, NULL);
-            if (!gst_caps_is_equal(prev_caps, current_caps))
+            if (!prev_caps || !gst_caps_is_equal(prev_caps, current_caps))
             {
                 GstEvent *reconfigure_event = gst_event_new_reconfigure();
                 g_object_set(stream->appsink, "caps", current_caps, NULL);
@@ -318,7 +318,8 @@ static void start_pipeline(struct media_source *source, struct source_async_comm
             }
 
             gst_caps_unref(current_caps);
-            gst_caps_unref(prev_caps);
+            if (prev_caps)
+                gst_caps_unref(prev_caps);
             IMFMediaType_Release(current_mt);
             IMFMediaTypeHandler_Release(mth);
         }
@@ -329,7 +330,6 @@ static void start_pipeline(struct media_source *source, struct source_async_comm
         {
             GstEvent *seek_event = gst_event_new_seek(1.0, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
                     GST_SEEK_TYPE_SET, position->u.hVal.QuadPart / 100, GST_SEEK_TYPE_NONE, 0);
-            GstSample *preroll;
 
             gst_pad_push_event(stream->my_sink, seek_event);
 
@@ -416,14 +416,16 @@ static void wait_on_sample(struct media_stream *stream, IUnknown *token)
         IMFMediaEventQueue_QueueEventParamUnk(stream->event_queue, MEMediaSample, &GUID_NULL, S_OK, (IUnknown *)sample);
         IMFSample_Release(sample);
     }
-
-    g_object_get(stream->appsink, "eos", &stream->eos, NULL);
-    if (stream->eos)
+    else
     {
-        if (token)
-            IUnknown_Release(token);
-        IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEEndOfStream, &GUID_NULL, S_OK, &empty_var);
-        dispatch_end_of_presentation(stream->parent_source);
+        g_object_get(stream->appsink, "eos", &stream->eos, NULL);
+        if (stream->eos)
+        {
+            if (token)
+                IUnknown_Release(token);
+            IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEEndOfStream, &GUID_NULL, S_OK, &empty_var);
+            dispatch_end_of_presentation(stream->parent_source);
+        }
     }
 }
 

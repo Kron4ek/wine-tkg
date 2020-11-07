@@ -47,6 +47,7 @@
 #include <sys/xattr.h>
 #endif
 #ifdef HAVE_SYS_EXTATTR_H
+#undef XATTR_ADDITIONAL_OPTIONS
 #include <sys/extattr.h>
 #endif
 
@@ -64,6 +65,9 @@
 
 #ifndef XATTR_USER_PREFIX
 #define XATTR_USER_PREFIX "user."
+#endif
+#ifndef XATTR_USER_PREFIX_LEN
+#define XATTR_USER_PREFIX_LEN (sizeof(XATTR_USER_PREFIX) - 1)
 #endif
 #ifndef XATTR_SIZE_MAX
 #define XATTR_SIZE_MAX    65536
@@ -232,6 +236,18 @@ int is_file_executable( const char *name )
     int len = strlen( name );
     return len >= 4 && (!strcasecmp( name + len - 4, ".exe") || !strcasecmp( name + len - 4, ".com" ));
 }
+
+#ifdef HAVE_SYS_EXTATTR_H
+static inline int xattr_valid_namespace( const char *name )
+{
+    if (strncmp( XATTR_USER_PREFIX, name, XATTR_USER_PREFIX_LEN ) != 0)
+    {
+        errno = EPERM;
+        return 0;
+    }
+    return 1;
+}
+#endif
 
 static int xattr_fget( int filedes, const char *name, void *value, size_t size )
 {

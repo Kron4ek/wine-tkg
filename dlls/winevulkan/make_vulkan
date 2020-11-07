@@ -86,14 +86,6 @@ EXT_BLOCK_SIZE = 1000
 
 UNSUPPORTED_EXTENSIONS = [
     # Instance extensions
-    "VK_EXT_debug_report",
-    # Handling of VK_EXT_debug_report requires some consideration. The win32
-    # loader already provides it for us and it is somewhat usable. If we add
-    # plumbing down to the native layer, we will get each message twice as we
-    # use 2 loaders (win32+native), but we may get output from the driver.
-    # In any case callback conversion is required.
-    "VK_EXT_validation_features",
-    "VK_EXT_validation_flags",
     "VK_KHR_display", # Needs WSI work.
     "VK_KHR_surface_protected_capabilities",
 
@@ -248,6 +240,15 @@ FUNCTION_OVERRIDES = {
     "vkSubmitDebugUtilsMessageEXT" : {"dispatch": True, "driver" : False, "thunk" : True, "private_thunk" : True},
     "vkSetDebugUtilsObjectTagEXT" : {"dispatch": True, "driver" : False, "thunk" : True, "private_thunk" : True},
     "vkSetDebugUtilsObjectNameEXT" : {"dispatch": True, "driver" : False, "thunk" : True, "private_thunk" : True},
+
+    # VK_EXT_debug_report
+    "vkCreateDebugReportCallbackEXT" : {"dispatch": True, "driver" : False, "thunk" : False},
+    "vkDestroyDebugReportCallbackEXT" : {"dispatch": True, "driver" : False, "thunk" : False},
+    "vkDebugReportMessageEXT" : {"dispatch": True, "driver" : False, "thunk" : False},
+
+    # VK_EXT_debug_marker
+    "vkDebugMarkerSetObjectNameEXT" : {"dispatch": True, "driver" : False, "thunk" : True, "private_thunk" : True},
+    "vkDebugMarkerSetObjectTagEXT" : {"dispatch": True, "driver" : False, "thunk" : True, "private_thunk" : True},
 }
 
 STRUCT_CHAIN_CONVERSIONS = [
@@ -394,21 +395,20 @@ class VkEnum(object):
             # Value is either a value or a bitpos, only one can exist.
             value = v.attrib.get("value")
             alias_name = v.attrib.get("alias")
-            comment = v.attrib.get("comment")
             if alias_name:
                 alias = next(x for x in values if x.name == alias_name)
-                values.append(VkEnumValue(v.attrib.get("name"), value=alias.value, hex=alias.hex, comment=comment))
+                values.append(VkEnumValue(v.attrib.get("name"), value=alias.value, hex=alias.hex))
             elif value:
                 # Some values are in hex form. We want to preserve the hex representation
                 # at least when we convert back to a string. Internally we want to use int.
                 if "0x" in value:
-                    values.append(VkEnumValue(v.attrib.get("name"), value=int(value, 0), hex=True, comment=comment))
+                    values.append(VkEnumValue(v.attrib.get("name"), value=int(value, 0), hex=True))
                 else:
-                    values.append(VkEnumValue(v.attrib.get("name"), value=int(value, 0), comment=comment))
+                    values.append(VkEnumValue(v.attrib.get("name"), value=int(value, 0)))
             else:
                 # bitmask
                 value = 1 << int(v.attrib.get("bitpos"))
-                values.append(VkEnumValue(v.attrib.get("name"), value=value, hex=True, comment=comment))
+                values.append(VkEnumValue(v.attrib.get("name"), value=value, hex=True))
 
         # vulkan.h contains a *_MAX_ENUM value set to 32-bit at the time of writing,
         # which is to prepare for extensions as they can add values and hence affect
@@ -459,12 +459,11 @@ class VkEnum(object):
 
 
 class VkEnumValue(object):
-    def __init__(self, name, value=None, hex=False, alias=None, comment=None):
+    def __init__(self, name, value=None, hex=False, alias=None):
         self.name = name
         self.value = value
         self.hex = hex
         self.alias = alias
-        self.comment = comment
 
     def __repr__(self):
         if self.is_alias():
@@ -969,6 +968,8 @@ class VkHandle(object):
             return "wine_cmd_pool_from_handle({0})->command_pool".format(name)
         if self.name == "VkDebugUtilsMessengerEXT":
             return "wine_debug_utils_messenger_from_handle({0})->debug_messenger".format(name)
+        if self.name == "VkDebugReportCallbackEXT":
+            return "wine_debug_report_callback_from_handle({0})->debug_callback".format(name)
 
         native_handle_name = None
 
@@ -2778,21 +2779,16 @@ class VkRegistry(object):
 
     def _match_object_types(self):
         """ Matches each handle with the correct object type. """
-        for handle in self.handles:
-            if not handle.is_required() or handle.is_alias():
-                continue
-            for value in self.enums["VkObjectType"].values:
-                if value.comment == handle.name:
-                    handle.object_type = value.name
-                    break
-            else:
-                LOGGER.warning("No object type found for {}".format(handle.name))
+        # Use upper case comparison for simplicity.
+        object_types = {}
+        for value in self.enums["VkObjectType"].values:
+            object_name = "VK" + value.name[len("VK_OBJECT_TYPE"):].replace("_", "")
+            object_types[object_name] = value.name
 
         for handle in self.handles:
-            if not handle.is_required() or not handle.is_alias():
+            if not handle.is_required():
                 continue
-            # Use the object type of the alias
-            handle.object_type = handle.alias.object_type
+            handle.object_type = object_types.get(handle.name.upper())
             if not handle.object_type:
                 LOGGER.warning("No object type found for {}".format(handle.name))
 
@@ -2889,12 +2885,10 @@ class VkRegistry(object):
             if only_aliased and not aliased:
                 return
 
-            comment = enum_elem.attrib.get("comment")
-
             if "bitpos" in enum_elem.keys():
                 # We need to add an extra value to an existing enum type.
                 # E.g. VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_CUBIC_BIT_IMG to VkFormatFeatureFlagBits.
-                enum.add(VkEnumValue(enum_elem.attrib["name"], value=(1 << int(enum_elem.attrib["bitpos"])), hex=True, comment=comment))
+                enum.add(VkEnumValue(enum_elem.attrib["name"], value=(1 << int(enum_elem.attrib["bitpos"])), hex=True))
 
             elif "offset" in enum_elem.keys():
                 # Extensions promoted to Core, have the extension number as part
@@ -2911,12 +2905,12 @@ class VkRegistry(object):
                 if direction is not None:
                     value = -value
 
-                enum.add(VkEnumValue(enum_elem.attrib["name"], value=value, comment=comment))
+                enum.add(VkEnumValue(enum_elem.attrib["name"], value=value))
 
             elif "value" in enum_elem.keys():
-                enum.add(VkEnumValue(enum_elem.attrib["name"], value=int(enum_elem.attrib["value"]), comment=comment))
+                enum.add(VkEnumValue(enum_elem.attrib["name"], value=int(enum_elem.attrib["value"])))
             elif "alias" in enum_elem.keys():
-                enum.add(VkEnumValue(enum_elem.attrib["name"], alias=enum_elem.attrib["alias"], comment=comment))
+                enum.add(VkEnumValue(enum_elem.attrib["name"], alias=enum_elem.attrib["alias"]))
 
         elif "value" in enum_elem.keys():
             # Constants are not aliased, no need to add them here, they'll get added later on.

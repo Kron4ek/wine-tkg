@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Mon Oct 26 10:31:25 PM +07 2020 :
+# Last wine-tkg-staging-fsync-git configuration - Sun Nov  8 12:15:46 AM +07 2020 :
 
 Local cfg files used
 
-Wine (plain) version: 5.20.r0.g6373792eec0
-Using wine-staging patchset (version 5.20.r0.gbf69e4ee)
+Wine (plain) version: 5.21.r0.g70d77a439ab
+Using wine-staging patchset (version 5.21.r0.ge2d9f97b)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
@@ -16,12 +16,11 @@ childwindow.patch -- ( Applied child window for vk patch )
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W dinput-remap-joystick -W dinput-reconnect-joystick -W dinput-axis-recalc
+Staging overrides, if any: 
 
 fsync-unix-staging.patch -- ( Applied fsync, an experimental replacement for esync (unix, staging) )
 server_Abort_waiting_on_a_completion_port_when_closing_it.patch -- ( Added Abort waiting on a completion port when closing it Proton patch )
 
-proton-rawinput-nofshack.patch -- ( Using rawinput nofshack patchset )
 LAA-unix-staging.patch -- ( Applied large address aware override support )
 
 proton-tkg-staging.patch -- ( Using Steam-specific Proton-tkg patches (staging) 2/3 )

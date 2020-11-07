@@ -22,6 +22,7 @@
 #include <mfobjects.h>
 #include <mmreg.h>
 #include <avrt.h>
+#include <dxgiformat.h>
 
 #if defined(__cplusplus)
 extern "C" {
@@ -526,6 +527,7 @@ HRESULT WINAPI MFCreateWaveFormatExFromMFMediaType(IMFMediaType *type, WAVEFORMA
 HRESULT WINAPI MFEndCreateFile(IMFAsyncResult *result, IMFByteStream **stream);
 HRESULT WINAPI MFEndRegisterWorkQueueWithMMCSS(IMFAsyncResult *result, DWORD *taskid);
 HRESULT WINAPI MFEndUnregisterWorkQueueWithMMCSS(IMFAsyncResult *result);
+HRESULT WINAPI MFFrameRateToAverageTimePerFrame(UINT32 numerator, UINT32 denominator, UINT64 *avgtime);
 void *  WINAPI MFHeapAlloc(SIZE_T size, ULONG flags, char *file, int line, EAllocationType type);
 void    WINAPI MFHeapFree(void *ptr);
 HRESULT WINAPI MFGetAttributesAsBlob(IMFAttributes *attributes, UINT8 *buffer, UINT size);
@@ -548,6 +550,7 @@ HRESULT WINAPI MFInitAttributesFromBlob(IMFAttributes *attributes, const UINT8 *
 HRESULT WINAPI MFInitMediaTypeFromWaveFormatEx(IMFMediaType *mediatype, const WAVEFORMATEX *format, UINT32 size);
 HRESULT WINAPI MFInvokeCallback(IMFAsyncResult *result);
 HRESULT WINAPI MFLockPlatform(void);
+DWORD WINAPI MFMapDXGIFormatToDX9Format(DXGI_FORMAT dxgi_format);
 HRESULT WINAPI MFPutWaitingWorkItem(HANDLE event, LONG priority, IMFAsyncResult *result, MFWORKITEM_KEY *key);
 HRESULT WINAPI MFPutWorkItem(DWORD queue, IMFAsyncCallback *callback, IUnknown *state);
 HRESULT WINAPI MFPutWorkItem2(DWORD queue, LONG priority, IMFAsyncCallback *callback, IUnknown *state);

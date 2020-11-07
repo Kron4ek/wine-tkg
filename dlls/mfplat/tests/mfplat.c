@@ -108,6 +108,7 @@ static HRESULT (WINAPI *pMFCreateMediaBufferFromMediaType)(IMFMediaType *media_t
         DWORD min_alignment, IMFMediaBuffer **buffer);
 static HRESULT (WINAPI *pMFCreateDXSurfaceBuffer)(REFIID riid, IUnknown *surface, BOOL bottom_up, IMFMediaBuffer **buffer);
 static HRESULT (WINAPI *pMFCreateTrackedSample)(IMFTrackedSample **sample);
+static DWORD (WINAPI *pMFMapDXGIFormatToDX9Format)(DXGI_FORMAT dxgi_format);
 
 static HWND create_window(void)
 {
@@ -614,8 +615,7 @@ static void test_source_resolver(void)
     get_event((IMFMediaEventGenerator *)video_stream, MEStreamStarted, NULL);
     sample_count = 10;
 
-    /* Request one beyond EOS, otherwise EndOfStream isn't queued. */
-    for (i = 0; i <= sample_count; ++i)
+    for (i = 0; i < sample_count; ++i)
     {
         hr = IMFMediaStream_RequestSample(video_stream, NULL);
         if (i == sample_count)
@@ -657,7 +657,19 @@ static void test_source_resolver(void)
     }
 
     if (i == sample_count)
+    {
+        IMFMediaEvent *event;
+
+        /* MEEndOfStream isn't queued until after a one request beyond the last frame is submitted */
+        Sleep(100);
+        hr = IMFMediaEventGenerator_GetEvent((IMFMediaEventGenerator *)video_stream, MF_EVENT_FLAG_NO_WAIT, &event);
+        ok (hr == MF_E_NO_EVENTS_AVAILABLE, "Unexpected hr %#x.\n", hr);
+
+        hr = IMFMediaStream_RequestSample(video_stream, NULL);
+        ok (hr == S_OK || hr == MF_E_END_OF_STREAM, "Unexpected hr %#x.\n", hr);
         get_event((IMFMediaEventGenerator *)video_stream, MEEndOfStream, NULL);
+    }
+
 
     hr = IMFMediaStream_RequestSample(video_stream, NULL);
     ok(hr == MF_E_END_OF_STREAM, "Unexpected hr %#x.\n", hr);
@@ -730,6 +742,7 @@ static void init_functions(void)
     X(MFCreateTransformActivate);
     X(MFGetPlaneSize);
     X(MFGetStrideForBitmapInfoHeader);
+    X(MFMapDXGIFormatToDX9Format);
     X(MFPutWaitingWorkItem);
     X(MFRegisterLocalByteStreamHandler);
     X(MFRegisterLocalSchemeHandler);
@@ -1813,6 +1826,7 @@ static void test_system_memory_buffer(void)
     HRESULT hr;
     DWORD length, max;
     BYTE *data, *data2;
+    IUnknown *unk;
 
     hr = MFCreateMemoryBuffer(1024, NULL);
     ok(hr == E_INVALIDARG || hr == E_POINTER, "got 0x%08x\n", hr);
@@ -1830,6 +1844,9 @@ static void test_system_memory_buffer(void)
 
     hr = MFCreateMemoryBuffer(1024, &buffer);
     ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMFGetService, (void **)&unk);
+    ok(hr == E_NOINTERFACE, "Unexpected hr %#x.\n", hr);
 
     hr = IMFMediaBuffer_GetMaxLength(buffer, NULL);
     ok(hr == E_INVALIDARG || hr == E_POINTER, "got 0x%08x\n", hr);
@@ -3663,6 +3680,42 @@ static void test_stream_descriptor(void)
     IMFMediaTypeHandler_Release(type_handler);
 
     IMFStreamDescriptor_Release(stream_desc);
+
+    /* Major type is returned for first entry. */
+    hr = MFCreateMediaType(&media_types[0]);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    hr = MFCreateMediaType(&media_types[1]);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFMediaType_SetGUID(media_types[0], &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    hr = IMFMediaType_SetGUID(media_types[1], &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = MFCreateStreamDescriptor(0, 2, media_types, &stream_desc);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFStreamDescriptor_GetMediaTypeHandler(stream_desc, &type_handler);
+    ok(hr == S_OK, "Failed to get type handler, hr %#x.\n", hr);
+
+    hr = IMFMediaTypeHandler_GetMajorType(type_handler, &major_type);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(IsEqualGUID(&major_type, &MFMediaType_Audio), "Unexpected major type %s.\n", wine_dbgstr_guid(&major_type));
+
+    hr = IMFMediaType_SetGUID(media_types[0], &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    hr = IMFMediaType_SetGUID(media_types[1], &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFMediaTypeHandler_GetMajorType(type_handler, &major_type);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(IsEqualGUID(&major_type, &MFMediaType_Video), "Unexpected major type %s.\n", wine_dbgstr_guid(&major_type));
+
+    IMFMediaType_Release(media_types[0]);
+    IMFMediaType_Release(media_types[1]);
+
+    IMFMediaTypeHandler_Release(type_handler);
+    IMFStreamDescriptor_Release(stream_desc);
 }
 
 static void test_MFCalculateImageSize(void)
@@ -5150,6 +5203,7 @@ static void test_MFCreate2DMediaBuffer(void)
     IMF2DBuffer *_2dbuffer;
     IMFMediaBuffer *buffer;
     int i, pitch, pitch2;
+    IUnknown *unk;
     HRESULT hr;
     BOOL ret;
 
@@ -5171,6 +5225,10 @@ static void test_MFCreate2DMediaBuffer(void)
 
     hr = pMFCreate2DMediaBuffer(2, 3, MAKEFOURCC('N','V','1','2'), FALSE, &buffer);
     ok(hr == S_OK, "Failed to create a buffer, hr %#x.\n", hr);
+
+    hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMFGetService, (void **)&unk);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    IUnknown_Release(unk);
 
     /* Full backing buffer size, with 64 bytes per row alignment.  */
     hr = IMFMediaBuffer_GetMaxLength(buffer, &max_length);
@@ -5400,6 +5458,7 @@ static void test_MFCreateMediaBufferFromMediaType(void)
     HRESULT hr;
     IMFMediaType *media_type;
     unsigned int i;
+    IUnknown *unk;
 
     if (!pMFCreateMediaBufferFromMediaType)
     {
@@ -5431,6 +5490,9 @@ static void test_MFCreateMediaBufferFromMediaType(void)
         ok(hr == S_OK || broken(FAILED(hr)) /* Win8 */, "Unexpected hr %#x.\n", hr);
         if (FAILED(hr))
             break;
+
+        hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMFGetService, (void **)&unk);
+        ok(hr == E_NOINTERFACE, "Unexpected hr %#x.\n", hr);
 
         hr = IMFMediaBuffer_GetMaxLength(buffer, &length);
         ok(hr == S_OK, "Failed to get length, hr %#x.\n", hr);
@@ -5631,7 +5693,7 @@ static void test_MFCreateDXSurfaceBuffer(void)
 
     if (!pMFCreateDXSurfaceBuffer)
     {
-        skip("MFCreateDXSurfaceBuffer is not available.\n");
+        win_skip("MFCreateDXSurfaceBuffer is not available.\n");
         return;
     }
 
@@ -5652,6 +5714,9 @@ static void test_MFCreateDXSurfaceBuffer(void)
     ok(backbuffer != NULL, "The back buffer is NULL\n");
 
     IDirect3DSwapChain9_Release(swapchain);
+
+    hr = pMFCreateDXSurfaceBuffer(&IID_IUnknown, (IUnknown *)backbuffer, FALSE, &buffer);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#x.\n", hr);
 
     hr = pMFCreateDXSurfaceBuffer(&IID_IDirect3DSurface9, (IUnknown *)backbuffer, FALSE, &buffer);
     ok(hr == S_OK, "Failed to create a buffer, hr %#x.\n", hr);
@@ -5746,6 +5811,12 @@ static void test_MFCreateDXSurfaceBuffer(void)
     ok(data[0] == 0xab, "Unexpected leading byte.\n");
     IMF2DBuffer2_Unlock2D(_2dbuffer2);
 
+    hr = IMFMediaBuffer_Lock(buffer, &data, NULL, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(data[0] == 0xab, "Unexpected leading byte.\n");
+    hr = IMFMediaBuffer_Unlock(buffer);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
     hr = IMF2DBuffer2_Lock2DSize(_2dbuffer2, MF2DBuffer_LockFlags_ReadWrite, &data, &pitch, &data2, &length);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     IMF2DBuffer2_Unlock2D(_2dbuffer2);
@@ -5793,6 +5864,122 @@ static void test_MFCreateTrackedSample(void)
     ok(hr == E_NOINTERFACE, "Unexpected hr %#x.\n", hr);
 
     IMFTrackedSample_Release(tracked_sample);
+}
+
+static void test_MFFrameRateToAverageTimePerFrame(void)
+{
+    static const struct frame_rate_test
+    {
+        unsigned int numerator;
+        unsigned int denominator;
+        UINT64 avgtime;
+    } frame_rate_tests[] =
+    {
+        { 60000, 1001, 166833 },
+        { 30000, 1001, 333667 },
+        { 24000, 1001, 417188 },
+        { 60, 1, 166667 },
+        { 30, 1, 333333 },
+        { 50, 1, 200000 },
+        { 25, 1, 400000 },
+        { 24, 1, 416667 },
+
+        { 39, 1, 256410 },
+        { 120, 1, 83333 },
+    };
+    unsigned int i;
+    UINT64 avgtime;
+    HRESULT hr;
+
+    avgtime = 1;
+    hr = MFFrameRateToAverageTimePerFrame(0, 0, &avgtime);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!avgtime, "Unexpected frame time.\n");
+
+    avgtime = 1;
+    hr = MFFrameRateToAverageTimePerFrame(0, 1001, &avgtime);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!avgtime, "Unexpected frame time.\n");
+
+    for (i = 0; i < ARRAY_SIZE(frame_rate_tests); ++i)
+    {
+        avgtime = 0;
+        hr = MFFrameRateToAverageTimePerFrame(frame_rate_tests[i].numerator,
+                frame_rate_tests[i].denominator, &avgtime);
+        ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+        ok(avgtime == frame_rate_tests[i].avgtime, "%u: unexpected frame time %s, expected %s.\n",
+                i, wine_dbgstr_longlong(avgtime), wine_dbgstr_longlong(frame_rate_tests[i].avgtime));
+    }
+}
+
+static void test_MFMapDXGIFormatToDX9Format(void)
+{
+    static const struct format_pair
+    {
+        DXGI_FORMAT dxgi_format;
+        DWORD d3d9_format;
+    }
+    formats_map[] =
+    {
+        { DXGI_FORMAT_R32G32B32A32_FLOAT, D3DFMT_A32B32G32R32F },
+        { DXGI_FORMAT_R16G16B16A16_FLOAT, D3DFMT_A16B16G16R16F },
+        { DXGI_FORMAT_R16G16B16A16_UNORM, D3DFMT_A16B16G16R16 },
+        { DXGI_FORMAT_R16G16B16A16_SNORM, D3DFMT_Q16W16V16U16 },
+        { DXGI_FORMAT_R32G32_FLOAT, D3DFMT_G32R32F },
+        { DXGI_FORMAT_R10G10B10A2_UNORM, D3DFMT_A2B10G10R10 },
+        { DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, D3DFMT_A8R8G8B8 },
+        { DXGI_FORMAT_R8G8B8A8_SNORM, D3DFMT_Q8W8V8U8 },
+        { DXGI_FORMAT_R16G16_FLOAT, D3DFMT_G16R16F },
+        { DXGI_FORMAT_R16G16_UNORM, D3DFMT_G16R16 },
+        { DXGI_FORMAT_R16G16_SNORM, D3DFMT_V16U16 },
+        { DXGI_FORMAT_D32_FLOAT, D3DFMT_D32F_LOCKABLE },
+        { DXGI_FORMAT_R32_FLOAT, D3DFMT_R32F },
+        { DXGI_FORMAT_D24_UNORM_S8_UINT, D3DFMT_D24S8 },
+        { DXGI_FORMAT_R8G8_SNORM, D3DFMT_V8U8 },
+        { DXGI_FORMAT_R16_FLOAT, D3DFMT_R16F },
+        { DXGI_FORMAT_R16_UNORM, D3DFMT_L16 },
+        { DXGI_FORMAT_R8_UNORM, D3DFMT_L8 },
+        { DXGI_FORMAT_A8_UNORM, D3DFMT_A8 },
+        { DXGI_FORMAT_BC1_UNORM, D3DFMT_DXT1 },
+        { DXGI_FORMAT_BC1_UNORM_SRGB, D3DFMT_DXT1 },
+        { DXGI_FORMAT_BC2_UNORM, D3DFMT_DXT2 },
+        { DXGI_FORMAT_BC2_UNORM_SRGB, D3DFMT_DXT2 },
+        { DXGI_FORMAT_BC3_UNORM, D3DFMT_DXT4 },
+        { DXGI_FORMAT_BC3_UNORM_SRGB, D3DFMT_DXT4 },
+        { DXGI_FORMAT_B8G8R8A8_UNORM, D3DFMT_A8R8G8B8 },
+        { DXGI_FORMAT_B8G8R8X8_UNORM, D3DFMT_X8R8G8B8 },
+        { DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, D3DFMT_A8R8G8B8 },
+        { DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, D3DFMT_X8R8G8B8 },
+        { DXGI_FORMAT_AYUV, MAKEFOURCC('A','Y','U','V') },
+        { DXGI_FORMAT_Y410, MAKEFOURCC('Y','4','1','0') },
+        { DXGI_FORMAT_Y416, MAKEFOURCC('Y','4','1','6') },
+        { DXGI_FORMAT_NV12, MAKEFOURCC('N','V','1','2') },
+        { DXGI_FORMAT_P010, MAKEFOURCC('P','0','1','0') },
+        { DXGI_FORMAT_P016, MAKEFOURCC('P','0','1','6') },
+        { DXGI_FORMAT_420_OPAQUE, MAKEFOURCC('4','2','0','O') },
+        { DXGI_FORMAT_YUY2, D3DFMT_YUY2 },
+        { DXGI_FORMAT_Y210, MAKEFOURCC('Y','2','1','0') },
+        { DXGI_FORMAT_Y216, MAKEFOURCC('Y','2','1','6') },
+        { DXGI_FORMAT_NV11, MAKEFOURCC('N','V','1','1') },
+        { DXGI_FORMAT_AI44, MAKEFOURCC('A','I','4','4') },
+        { DXGI_FORMAT_IA44, MAKEFOURCC('I','A','4','4') },
+        { DXGI_FORMAT_P8, D3DFMT_P8 },
+        { DXGI_FORMAT_A8P8, D3DFMT_A8P8 },
+    };
+    unsigned int i;
+    DWORD format;
+
+    if (!pMFMapDXGIFormatToDX9Format)
+    {
+        win_skip("MFMapDXGIFormatToDX9Format is not available.\n");
+        return;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(formats_map); ++i)
+    {
+        format = pMFMapDXGIFormatToDX9Format(formats_map[i].dxgi_format);
+        ok(format == formats_map[i].d3d9_format, "Unexpected d3d9 format %#x, dxgi format %#x.\n", format, formats_map[i].dxgi_format);
+    }
 }
 
 START_TEST(mfplat)
@@ -5853,6 +6040,8 @@ START_TEST(mfplat)
     test_MFCreateMFVideoFormatFromMFMediaType();
     test_MFCreateDXSurfaceBuffer();
     test_MFCreateTrackedSample();
+    test_MFFrameRateToAverageTimePerFrame();
+    test_MFMapDXGIFormatToDX9Format();
 
     CoUninitialize();
 }

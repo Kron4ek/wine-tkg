@@ -482,14 +482,14 @@ ME_Style *style_get_insert_style( ME_TextEditor *editor, ME_Cursor *cursor )
     if (ME_IsSelection( editor ))
     {
         ME_GetSelection( editor, &from, &to );
-        style = from->pRun->member.run.style;
+        style = from->run->style;
     }
     else if (editor->pBuffer->pCharStyle)
         style = editor->pBuffer->pCharStyle;
-    else if (!cursor->nOffset && (prev = run_prev( &cursor->pRun->member.run )))
+    else if (!cursor->nOffset && (prev = run_prev( cursor->run )))
         style = prev->style;
     else
-        style = cursor->pRun->member.run.style;
+        style = cursor->run->style;
 
     ME_AddRefStyle( style );
     return style;
@@ -536,5 +536,5 @@ void ME_SetDefaultCharFormat(ME_TextEditor *editor, CHARFORMAT2W *mod)
     }
     ScriptFreeCache( &def->script_cache );
     ME_ReleaseStyle( style );
-    ME_MarkAllForWrapping( editor );
+    editor_mark_rewrap_all( editor );
 }

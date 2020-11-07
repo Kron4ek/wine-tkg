@@ -9425,6 +9425,82 @@ static void test_wic_bitmap_format(void)
     DestroyWindow(window);
 }
 
+static void test_math(void)
+{
+    float s, c, t, l;
+    unsigned int i;
+
+    static const struct
+    {
+        float x;
+        float s;
+        float c;
+    }
+    sc_data[] =
+    {
+        {0.0f,         0.0f,              1.0f},
+        {1.0f,         8.41470957e-001f,  5.40302277e-001f},
+        {2.0f,         9.09297407e-001f, -4.16146845e-001f},
+        {M_PI / 2.0f,  1.0f,             -4.37113883e-008f},
+        {M_PI,        -8.74227766e-008f, -1.0f},
+    };
+
+    static const struct
+    {
+        float x;
+        float t;
+    }
+    t_data[] =
+    {
+        {0.0f,         0.0f},
+        {1.0f,         1.55740774f},
+        {2.0f,        -2.18503976f},
+        {M_PI / 2.0f, -2.28773320e+007f},
+        {M_PI,         8.74227766e-008f},
+    };
+
+    static const struct
+    {
+        float x;
+        float y;
+        float z;
+        float l;
+    }
+    l_data[] =
+    {
+        {0.0f, 0.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f, 1.0f},
+        {0.0f, 1.0f, 0.0f, 1.0f},
+        {0.0f, 0.0f, 1.0f, 1.0f},
+        {1.0f, 1.0f, 1.0f, 1.73205078f},
+        {1.0f, 2.0f, 2.0f, 3.0f},
+        {1.0f, 2.0f, 3.0f, 3.74165750f},
+    };
+
+    for (i = 0; i < ARRAY_SIZE(sc_data); ++i)
+    {
+        D2D1SinCos(sc_data[i].x, &s, &c);
+        ok(compare_float(s, sc_data[i].s, 0),
+                "Test %u: Got unexpected sin %.8e, expected %.8e.\n", i, s, sc_data[i].s);
+        ok(compare_float(c, sc_data[i].c, 0),
+                "Test %u: Got unexpected cos %.8e, expected %.8e.\n", i, c, sc_data[i].c);
+    }
+
+    for (i = 0; i < ARRAY_SIZE(t_data); ++i)
+    {
+        t = D2D1Tan(t_data[i].x);
+        ok(compare_float(t, t_data[i].t, 1),
+                "Test %u: Got unexpected tan %.8e, expected %.8e.\n", i, t, t_data[i].t);
+    }
+
+    for (i = 0; i < ARRAY_SIZE(l_data); ++i)
+    {
+        l = D2D1Vec3Length(l_data[i].x, l_data[i].y, l_data[i].z);
+        ok(compare_float(l, l_data[i].l, 0),
+                "Test %u: Got unexpected length %.8e, expected %.8e.\n", i, l, l_data[i].l);
+    }
+}
+
 START_TEST(d2d1)
 {
     unsigned int argc, i;
@@ -9477,6 +9553,7 @@ START_TEST(d2d1)
     queue_test(test_max_bitmap_size);
     queue_test(test_dpi);
     queue_test(test_wic_bitmap_format);
+    queue_test(test_math);
 
     run_queued_tests();
 }

@@ -117,7 +117,7 @@ void ME_UpdateRepaint(ME_TextEditor *editor, BOOL update_now)
     ME_UpdateScrollBar(editor);
 
   /* Ensure that the cursor is visible */
-  ME_EnsureVisible(editor, &editor->pCursors[0]);
+  editor_ensure_visible( editor, &editor->pCursors[0] );
 
   ITextHost_TxViewChange(editor->texthost, update_now);
 
@@ -138,7 +138,7 @@ ME_RewrapRepaint(ME_TextEditor *editor)
   /* RewrapRepaint should be called whenever the control has changed in
    * looks, but not content. Like resizing. */
   
-  ME_MarkAllForWrapping(editor);
+  editor_mark_rewrap_all( editor );
   ME_WrapMarkedParagraphs(editor);
   ME_UpdateScrollBar(editor);
   ME_Repaint(editor);
@@ -359,8 +359,8 @@ static void draw_text( ME_Context *c, ME_Run *run, int x, int y, BOOL selected, 
 }
 
 
-static void ME_DrawTextWithStyle(ME_Context *c, ME_Run *run, int x, int y,
-                                 int nSelFrom, int nSelTo, int ymin, int cy)
+static void draw_text_with_style( ME_Context *c, ME_Run *run, int x, int y,
+                                  int nSelFrom, int nSelTo, int ymin, int cy )
 {
   HDC hDC = c->hDC;
   int yOffset = 0;
@@ -434,16 +434,16 @@ static void ME_DebugWrite(HDC hDC, const POINT *pt, LPCWSTR szText) {
   SetTextColor(hDC, color);
 }
 
-static void ME_DrawRun( ME_Context *c, int x, int y, ME_Run *run, ME_Paragraph *para )
+static void draw_run( ME_Context *c, int x, int y, ME_Cursor *cursor )
 {
-  ME_DisplayItem *start;
-  int runofs = run->nCharOfs+para->nCharOfs;
+  ME_Row *row;
+  ME_Run *run = cursor->run;
+  int runofs = run_char_ofs( run, cursor->nOffset );
   int nSelFrom, nSelTo;
 
-  if (run->nFlags & MERF_HIDDEN)
-    return;
+  if (run->nFlags & MERF_HIDDEN) return;
 
-  start = ME_FindItemBack( run_get_di( run ), diStartRow );
+  row = row_from_cursor( cursor );
   ME_GetSelectionOfs(c->editor, &nSelFrom, &nSelTo);
 
   /* Draw selected end-of-paragraph mark */
@@ -452,8 +452,7 @@ static void ME_DrawRun( ME_Context *c, int x, int y, ME_Run *run, ME_Paragraph *
     if (runofs >= nSelFrom && runofs < nSelTo)
     {
       draw_space( c, run, x, y, TRUE, FALSE,
-                  c->pt.y + para->pt.y + start->member.row.pt.y,
-                  start->member.row.nHeight );
+                  c->pt.y + run->para->pt.y + row->pt.y, row->nHeight );
     }
     return;
   }
@@ -463,19 +462,15 @@ static void ME_DrawRun( ME_Context *c, int x, int y, ME_Run *run, ME_Paragraph *
     BOOL selected = runofs >= nSelFrom && runofs < nSelTo;
 
     draw_space( c, run, x, y, selected, TRUE,
-                c->pt.y + para->pt.y + start->member.row.pt.y,
-                start->member.row.nHeight );
+                c->pt.y + run->para->pt.y + row->pt.y, row->nHeight );
     return;
   }
 
   if (run->nFlags & MERF_GRAPHICS)
-    ME_DrawOLE(c, x, y, run, (runofs >= nSelFrom) && (runofs < nSelTo));
+    draw_ole( c, x, y, run, (runofs >= nSelFrom) && (runofs < nSelTo) );
   else
-  {
-    ME_DrawTextWithStyle(c, run, x, y, nSelFrom - runofs, nSelTo - runofs,
-                         c->pt.y + para->pt.y + start->member.row.pt.y,
-                         start->member.row.nHeight);
-  }
+    draw_text_with_style( c, run, x, y, nSelFrom - runofs, nSelTo - runofs,
+                          c->pt.y + run->para->pt.y + row->pt.y, row->nHeight );
 }
 
 /* The documented widths are in points (72 dpi), but converting them to
@@ -851,7 +846,7 @@ static void draw_table_borders( ME_Context *c, ME_Paragraph *para )
       rowY = c->pt.y + para->pt.y;
       if (para->fmt.dwMask & PFM_SPACEBEFORE)
         rowY += ME_twips2pointsY(c, para->fmt.dySpaceBefore);
-      nHeight = ME_FindItemFwd( para_get_di( para ), diStartRow )->member.row.nHeight;
+      nHeight = para_first_row( para )->nHeight;
       rowBottom = rowY + nHeight;
 
       /* Draw horizontal lines */
@@ -1001,8 +996,14 @@ static void draw_paragraph( ME_Context *c, ME_Paragraph *para )
           FrameRect(c->hDC, &rc, GetSysColorBrush(COLOR_GRAYTEXT));
         }
         if (visible)
-          ME_DrawRun( c, c->pt.x + run->pt.x,
-                      c->pt.y + para->pt.y + run->pt.y + baseline, run, para );
+        {
+          ME_Cursor cursor;
+
+          cursor.run = run;
+          cursor.para = para;
+          cursor.nOffset = 0;
+          draw_run( c, c->pt.x + run->pt.x, c->pt.y + para->pt.y + run->pt.y + baseline, &cursor );
+        }
         if (me_debug)
         {
           static const WCHAR wszRunDebug[] = {'[','%','d',':','%','x',']',' ','%','l','s',0};
@@ -1268,19 +1269,17 @@ void ME_UpdateScrollBar(ME_TextEditor *editor)
   }
 }
 
-void ME_EnsureVisible(ME_TextEditor *editor, ME_Cursor *pCursor)
+void editor_ensure_visible( ME_TextEditor *editor, ME_Cursor *cursor )
 {
-  ME_Run *pRun = &pCursor->pRun->member.run;
-  ME_DisplayItem *pRow = ME_FindItemBack(pCursor->pRun, diStartRow);
-  ME_DisplayItem *pPara = pCursor->pPara;
+  ME_Run *run = cursor->run;
+  ME_Row *row = row_from_cursor( cursor );
+  ME_Paragraph *para = cursor->para;
   int x, y, yheight;
 
-  assert(pRow);
-  assert(pPara);
 
   if (editor->styleFlags & ES_AUTOHSCROLL)
   {
-    x = pRun->pt.x + ME_PointFromChar(editor, pRun, pCursor->nOffset, TRUE);
+    x = run->pt.x + ME_PointFromChar( editor, run, cursor->nOffset, TRUE );
     if (x > editor->horz_si.nPos + editor->sizeWindow.cx)
       x = x + 1 - editor->sizeWindow.cx;
     else if (x > editor->horz_si.nPos)
@@ -1291,14 +1290,15 @@ void ME_EnsureVisible(ME_TextEditor *editor, ME_Cursor *pCursor)
       ME_HScrollAbs(editor, x);
       return;
     }
-  } else {
-    if (~editor->styleFlags & ES_AUTOVSCROLL)
-      return;
+  }
+  else
+  {
+    if (~editor->styleFlags & ES_AUTOVSCROLL) return;
     x = editor->horz_si.nPos;
   }
 
-  y = pPara->member.para.pt.y + pRow->member.row.pt.y;
-  yheight = pRow->member.row.nHeight;
+  y = para->pt.y + row->pt.y;
+  yheight = row->nHeight;
 
   if (y < editor->vert_si.nPos)
     ME_ScrollAbs(editor, x, y);
@@ -1312,8 +1312,8 @@ void ME_EnsureVisible(ME_TextEditor *editor, ME_Cursor *pCursor)
 void
 ME_InvalidateSelection(ME_TextEditor *editor)
 {
-  ME_DisplayItem *sel_start, *sel_end;
-  ME_DisplayItem *repaint_start = NULL, *repaint_end = NULL;
+  ME_Paragraph *sel_start, *sel_end;
+  ME_Paragraph *repaint_start = NULL, *repaint_end = NULL;
   int nStart, nEnd;
   int len = ME_GetTextLength(editor);
 
@@ -1323,41 +1323,47 @@ ME_InvalidateSelection(ME_TextEditor *editor)
   if (nStart == nEnd && editor->nLastSelStart == editor->nLastSelEnd)
     return;
   ME_WrapMarkedParagraphs(editor);
-  ME_GetSelectionParas(editor, &sel_start, &sel_end);
-  assert(sel_start->type == diParagraph);
-  assert(sel_end->type == diParagraph);
+  editor_get_selection_paras( editor, &sel_start, &sel_end );
+
   /* last selection markers aren't always updated, which means
    * they can point past the end of the document */
-  if (editor->nLastSelStart > len || editor->nLastSelEnd > len) {
-    repaint_start = ME_FindItemFwd(editor->pBuffer->pFirst, diParagraph);
-    repaint_end = editor->pBuffer->pLast->member.para.prev_para;
-  } else {
+  if (editor->nLastSelStart > len || editor->nLastSelEnd > len)
+  {
+    repaint_start = editor_first_para( editor );
+    repaint_end = para_prev( editor_end_para( editor ) );
+  }
+  else
+  {
     /* if the start part of selection is being expanded or contracted... */
-    if (nStart < editor->nLastSelStart) {
+    if (nStart < editor->nLastSelStart)
+    {
       repaint_start = sel_start;
-      repaint_end = editor->pLastSelStartPara;
-    } else if (nStart > editor->nLastSelStart) {
-      repaint_start = editor->pLastSelStartPara;
+      repaint_end = editor->last_sel_start_para;
+    }
+    else if (nStart > editor->nLastSelStart)
+    {
+      repaint_start = editor->last_sel_start_para;
       repaint_end = sel_start;
     }
 
     /* if the end part of selection is being contracted or expanded... */
-    if (nEnd < editor->nLastSelEnd) {
+    if (nEnd < editor->nLastSelEnd)
+    {
       if (!repaint_start) repaint_start = sel_end;
-      repaint_end = editor->pLastSelEndPara;
-    } else if (nEnd > editor->nLastSelEnd) {
-      if (!repaint_start) repaint_start = editor->pLastSelEndPara;
+      repaint_end = editor->last_sel_end_para;
+    }
+    else if (nEnd > editor->nLastSelEnd)
+    {
+      if (!repaint_start) repaint_start = editor->last_sel_end_para;
       repaint_end = sel_end;
     }
   }
 
   if (repaint_start)
-    para_range_invalidate( editor, &repaint_start->member.para, &repaint_end->member.para );
+    para_range_invalidate( editor, repaint_start, repaint_end );
   /* remember the last invalidated position */
   ME_GetSelectionOfs(editor, &editor->nLastSelStart, &editor->nLastSelEnd);
-  ME_GetSelectionParas(editor, &editor->pLastSelStartPara, &editor->pLastSelEndPara);
-  assert(editor->pLastSelStartPara->type == diParagraph);
-  assert(editor->pLastSelEndPara->type == diParagraph);
+  editor_get_selection_paras( editor, &editor->last_sel_start_para, &editor->last_sel_end_para );
 }
 
 BOOL

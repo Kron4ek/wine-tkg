@@ -1044,6 +1044,30 @@ static inline void convert_VkSwapchainCreateInfoKHR_win_to_host(const VkSwapchai
     out->oldSwapchain = in->oldSwapchain;
 }
 
+static inline void convert_VkDebugMarkerObjectNameInfoEXT_win_to_host(const VkDebugMarkerObjectNameInfoEXT *in, VkDebugMarkerObjectNameInfoEXT_host *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = in->pNext;
+    out->objectType = in->objectType;
+    out->object = in->object;
+    out->pObjectName = in->pObjectName;
+}
+
+static inline void convert_VkDebugMarkerObjectTagInfoEXT_win_to_host(const VkDebugMarkerObjectTagInfoEXT *in, VkDebugMarkerObjectTagInfoEXT_host *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = in->pNext;
+    out->objectType = in->objectType;
+    out->object = in->object;
+    out->tagName = in->tagName;
+    out->tagSize = in->tagSize;
+    out->pTag = in->pTag;
+}
+
 static inline VkMappedMemoryRange_host *convert_VkMappedMemoryRange_array_win_to_host(const VkMappedMemoryRange *in, uint32_t count)
 {
     VkMappedMemoryRange_host *out;
@@ -3126,6 +3150,60 @@ VkResult convert_VkInstanceCreateInfo_struct_chain(const void *pNext, VkInstance
         case VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO:
             break;
 
+        case VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT:
+        {
+            const VkDebugReportCallbackCreateInfoEXT *in = (const VkDebugReportCallbackCreateInfoEXT *)in_header;
+            VkDebugReportCallbackCreateInfoEXT *out;
+
+            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->flags = in->flags;
+            out->pfnCallback = in->pfnCallback;
+            out->pUserData = in->pUserData;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
+        case VK_STRUCTURE_TYPE_VALIDATION_FLAGS_EXT:
+        {
+            const VkValidationFlagsEXT *in = (const VkValidationFlagsEXT *)in_header;
+            VkValidationFlagsEXT *out;
+
+            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->disabledValidationCheckCount = in->disabledValidationCheckCount;
+            out->pDisabledValidationChecks = in->pDisabledValidationChecks;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
+        case VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT:
+        {
+            const VkValidationFeaturesEXT *in = (const VkValidationFeaturesEXT *)in_header;
+            VkValidationFeaturesEXT *out;
+
+            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->enabledValidationFeatureCount = in->enabledValidationFeatureCount;
+            out->pEnabledValidationFeatures = in->pEnabledValidationFeatures;
+            out->disabledValidationFeatureCount = in->disabledValidationFeatureCount;
+            out->pDisabledValidationFeatures = in->pDisabledValidationFeatures;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
         case VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT:
         {
             const VkDebugUtilsMessengerCreateInfoEXT *in = (const VkDebugUtilsMessengerCreateInfoEXT *)in_header;
@@ -3686,6 +3764,24 @@ void WINAPI wine_vkCmdCopyQueryPoolResults(VkCommandBuffer commandBuffer, VkQuer
 {
     TRACE("%p, 0x%s, %u, %u, 0x%s, 0x%s, 0x%s, %#x\n", commandBuffer, wine_dbgstr_longlong(queryPool), firstQuery, queryCount, wine_dbgstr_longlong(dstBuffer), wine_dbgstr_longlong(dstOffset), wine_dbgstr_longlong(stride), flags);
     commandBuffer->device->funcs.p_vkCmdCopyQueryPoolResults(commandBuffer->command_buffer, queryPool, firstQuery, queryCount, dstBuffer, dstOffset, stride, flags);
+}
+
+static void WINAPI wine_vkCmdDebugMarkerBeginEXT(VkCommandBuffer commandBuffer, const VkDebugMarkerMarkerInfoEXT *pMarkerInfo)
+{
+    TRACE("%p, %p\n", commandBuffer, pMarkerInfo);
+    commandBuffer->device->funcs.p_vkCmdDebugMarkerBeginEXT(commandBuffer->command_buffer, pMarkerInfo);
+}
+
+static void WINAPI wine_vkCmdDebugMarkerEndEXT(VkCommandBuffer commandBuffer)
+{
+    TRACE("%p\n", commandBuffer);
+    commandBuffer->device->funcs.p_vkCmdDebugMarkerEndEXT(commandBuffer->command_buffer);
+}
+
+static void WINAPI wine_vkCmdDebugMarkerInsertEXT(VkCommandBuffer commandBuffer, const VkDebugMarkerMarkerInfoEXT *pMarkerInfo)
+{
+    TRACE("%p, %p\n", commandBuffer, pMarkerInfo);
+    commandBuffer->device->funcs.p_vkCmdDebugMarkerInsertEXT(commandBuffer->command_buffer, pMarkerInfo);
 }
 
 void WINAPI wine_vkCmdDispatch(VkCommandBuffer commandBuffer, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)
@@ -4599,6 +4695,34 @@ VkResult WINAPI wine_vkCreateWin32SurfaceKHR(VkInstance instance, const VkWin32S
 {
     TRACE("%p, %p, %p, %p\n", instance, pCreateInfo, pAllocator, pSurface);
     return instance->funcs.p_vkCreateWin32SurfaceKHR(instance->instance, pCreateInfo, NULL, pSurface);
+}
+
+VkResult thunk_vkDebugMarkerSetObjectNameEXT(VkDevice device, const VkDebugMarkerObjectNameInfoEXT *pNameInfo)
+{
+#if defined(USE_STRUCT_CONVERSION)
+    VkResult result;
+    VkDebugMarkerObjectNameInfoEXT_host pNameInfo_host;
+    convert_VkDebugMarkerObjectNameInfoEXT_win_to_host(pNameInfo, &pNameInfo_host);
+    result = device->funcs.p_vkDebugMarkerSetObjectNameEXT(device->device, &pNameInfo_host);
+
+    return result;
+#else
+    return device->funcs.p_vkDebugMarkerSetObjectNameEXT(device->device, pNameInfo);
+#endif
+}
+
+VkResult thunk_vkDebugMarkerSetObjectTagEXT(VkDevice device, const VkDebugMarkerObjectTagInfoEXT *pTagInfo)
+{
+#if defined(USE_STRUCT_CONVERSION)
+    VkResult result;
+    VkDebugMarkerObjectTagInfoEXT_host pTagInfo_host;
+    convert_VkDebugMarkerObjectTagInfoEXT_win_to_host(pTagInfo, &pTagInfo_host);
+    result = device->funcs.p_vkDebugMarkerSetObjectTagEXT(device->device, &pTagInfo_host);
+
+    return result;
+#else
+    return device->funcs.p_vkDebugMarkerSetObjectTagEXT(device->device, pTagInfo);
+#endif
 }
 
 static void WINAPI wine_vkDestroyAccelerationStructureNV(VkDevice device, VkAccelerationStructureKHR accelerationStructure, const VkAllocationCallbacks *pAllocator)
@@ -5969,6 +6093,9 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkCmdCopyImageToBuffer", &wine_vkCmdCopyImageToBuffer},
     {"vkCmdCopyImageToBuffer2KHR", &wine_vkCmdCopyImageToBuffer2KHR},
     {"vkCmdCopyQueryPoolResults", &wine_vkCmdCopyQueryPoolResults},
+    {"vkCmdDebugMarkerBeginEXT", &wine_vkCmdDebugMarkerBeginEXT},
+    {"vkCmdDebugMarkerEndEXT", &wine_vkCmdDebugMarkerEndEXT},
+    {"vkCmdDebugMarkerInsertEXT", &wine_vkCmdDebugMarkerInsertEXT},
     {"vkCmdDispatch", &wine_vkCmdDispatch},
     {"vkCmdDispatchBase", &wine_vkCmdDispatchBase},
     {"vkCmdDispatchBaseKHR", &wine_vkCmdDispatchBaseKHR},
@@ -6084,6 +6211,8 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkCreateShaderModule", &wine_vkCreateShaderModule},
     {"vkCreateSwapchainKHR", &wine_vkCreateSwapchainKHR},
     {"vkCreateValidationCacheEXT", &wine_vkCreateValidationCacheEXT},
+    {"vkDebugMarkerSetObjectNameEXT", &wine_vkDebugMarkerSetObjectNameEXT},
+    {"vkDebugMarkerSetObjectTagEXT", &wine_vkDebugMarkerSetObjectTagEXT},
     {"vkDestroyAccelerationStructureNV", &wine_vkDestroyAccelerationStructureNV},
     {"vkDestroyBuffer", &wine_vkDestroyBuffer},
     {"vkDestroyBufferView", &wine_vkDestroyBufferView},
@@ -6211,10 +6340,13 @@ static const struct vulkan_func vk_device_dispatch_table[] =
 
 static const struct vulkan_func vk_instance_dispatch_table[] =
 {
+    {"vkCreateDebugReportCallbackEXT", &wine_vkCreateDebugReportCallbackEXT},
     {"vkCreateDebugUtilsMessengerEXT", &wine_vkCreateDebugUtilsMessengerEXT},
     {"vkCreateDevice", &wine_vkCreateDevice},
     {"vkCreateHeadlessSurfaceEXT", &wine_vkCreateHeadlessSurfaceEXT},
     {"vkCreateWin32SurfaceKHR", &wine_vkCreateWin32SurfaceKHR},
+    {"vkDebugReportMessageEXT", &wine_vkDebugReportMessageEXT},
+    {"vkDestroyDebugReportCallbackEXT", &wine_vkDestroyDebugReportCallbackEXT},
     {"vkDestroyDebugUtilsMessengerEXT", &wine_vkDestroyDebugUtilsMessengerEXT},
     {"vkDestroyInstance", &wine_vkDestroyInstance},
     {"vkDestroySurfaceKHR", &wine_vkDestroySurfaceKHR},
@@ -6328,6 +6460,7 @@ static const char * const vk_device_extensions[] =
     "VK_EXT_conditional_rendering",
     "VK_EXT_conservative_rasterization",
     "VK_EXT_custom_border_color",
+    "VK_EXT_debug_marker",
     "VK_EXT_depth_clip_enable",
     "VK_EXT_depth_range_unrestricted",
     "VK_EXT_descriptor_indexing",
@@ -6465,9 +6598,12 @@ static const VkExtensionProperties vk_device_extension_discards[] =
 
 static const char * const vk_instance_extensions[] =
 {
+    "VK_EXT_debug_report",
     "VK_EXT_debug_utils",
     "VK_EXT_headless_surface",
     "VK_EXT_swapchain_colorspace",
+    "VK_EXT_validation_features",
+    "VK_EXT_validation_flags",
     "VK_KHR_device_group_creation",
     "VK_KHR_external_fence_capabilities",
     "VK_KHR_external_memory_capabilities",
@@ -6526,6 +6662,7 @@ BOOL wine_vk_is_type_wrapped(VkObjectType type)
     return FALSE ||
         type == VK_OBJECT_TYPE_COMMAND_BUFFER ||
         type == VK_OBJECT_TYPE_COMMAND_POOL ||
+        type == VK_OBJECT_TYPE_DEBUG_REPORT_CALLBACK_EXT ||
         type == VK_OBJECT_TYPE_DEBUG_UTILS_MESSENGER_EXT ||
         type == VK_OBJECT_TYPE_DEVICE ||
         type == VK_OBJECT_TYPE_INSTANCE ||
@@ -6541,6 +6678,8 @@ uint64_t wine_vk_unwrap_handle(VkObjectType type, uint64_t handle)
         return (uint64_t) (uintptr_t) ((VkCommandBuffer) (uintptr_t) handle)->command_buffer;
     case VK_OBJECT_TYPE_COMMAND_POOL:
         return (uint64_t) wine_cmd_pool_from_handle(handle)->command_pool;
+    case VK_OBJECT_TYPE_DEBUG_REPORT_CALLBACK_EXT:
+        return (uint64_t) wine_debug_report_callback_from_handle(handle)->debug_callback;
     case VK_OBJECT_TYPE_DEBUG_UTILS_MESSENGER_EXT:
         return (uint64_t) wine_debug_utils_messenger_from_handle(handle)->debug_messenger;
     case VK_OBJECT_TYPE_DEVICE:

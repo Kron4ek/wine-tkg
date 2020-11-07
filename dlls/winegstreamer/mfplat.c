@@ -1216,7 +1216,6 @@ GstCaps *caps_from_mf_media_type(IMFMediaType *type)
     {
         UINT64 frame_rate = 0, frame_size = 0;
         DWORD width, height;
-        UINT32 unused;
 
         if (FAILED(IMFMediaType_GetUINT64(type, &MF_MT_FRAME_SIZE, &frame_size)))
             return NULL;
@@ -1360,7 +1359,7 @@ GstCaps *caps_from_mf_media_type(IMFMediaType *type)
                and gstreamer won't accept an undefined number as the framerate. */
             if (!(DWORD32)frame_rate)
                 frame_rate = 1;
-            gst_caps_set_simple(output, "framerate", GST_TYPE_FRACTION, frame_rate >> 32, (DWORD32) frame_rate, NULL);
+            gst_caps_set_simple(output, "framerate", GST_TYPE_FRACTION, (DWORD32)(frame_rate >> 32), (DWORD32) frame_rate, NULL);
         }
         return output;
     }

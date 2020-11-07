@@ -180,7 +180,7 @@ static typelib_t *current_typelib;
 %token LOGICALOR LOGICALAND
 %token ELLIPSIS
 %token tACTIVATABLE
-%token tAGGREGATABLE
+%token tAGGREGATABLE tALLNODES
 %token tAGILE
 %token tALLOCATE tANNOTATION
 %token tAPICONTRACT
@@ -200,7 +200,7 @@ static typelib_t *current_typelib;
 %token tDEFAULTVTABLE
 %token tDISABLECONSISTENCYCHECK tDISPLAYBIND
 %token tDISPINTERFACE
-%token tDLLNAME tDOUBLE tDUAL
+%token tDLLNAME tDONTFREE tDOUBLE tDUAL
 %token tENABLEALLOCATE tENCODE tENDPOINT
 %token tENTRY tENUM tERRORSTATUST
 %token tEVENTADD tEVENTREMOVE
@@ -260,7 +260,7 @@ static typelib_t *current_typelib;
 %token tRUNTIMECLASS
 %token tSAFEARRAY
 %token tSHORT
-%token tSIGNED
+%token tSIGNED tSINGLENODE
 %token tSIZEIS tSIZEOF
 %token tSMALL
 %token tSOURCE
@@ -335,6 +335,7 @@ static typelib_t *current_typelib;
 %type <stmt_list> decl_block decl_statements
 %type <stmt_list> imp_decl_block imp_decl_statements
 %type <warning_list> warnings
+%type <num> allocate_option_list allocate_option
 
 %left ','
 %right '?' ':'
@@ -1351,16 +1352,20 @@ version:
 acf_statements
         : /* empty */
         | acf_interface acf_statements
+	;
 
 acf_int_statements
         : /* empty */
         | acf_int_statement acf_int_statements
+	;
 
 acf_int_statement
         : tTYPEDEF acf_attributes aKNOWNTYPE ';'
                                                 { type_t *type = find_type_or_error($3, 0);
                                                   type->attrs = append_attr_list(type->attrs, $2);
                                                 }
+	;
+
 acf_interface
         : acf_attributes tINTERFACE aKNOWNTYPE '{' acf_int_statements '}'
                                                 {  type_t *iface = find_type_or_error2($3, 0);
@@ -1368,19 +1373,38 @@ acf_interface
                                                        error_loc("%s is not an interface\n", iface->name);
                                                    iface->attrs = append_attr_list(iface->attrs, $1);
                                                 }
+	;
 
 acf_attributes
         : /* empty */                           { $$ = NULL; };
         | '[' acf_attribute_list ']'            { $$ = $2; };
+	;
 
 acf_attribute_list
         : acf_attribute                         { $$ = append_attr(NULL, $1); }
         | acf_attribute_list ',' acf_attribute  { $$ = append_attr($1, $3); }
+	;
 
 acf_attribute
-        : tENCODE                               { $$ = make_attr(ATTR_ENCODE); }
+	: tALLOCATE '(' allocate_option_list ')'
+						{ $$ = make_attrv(ATTR_ALLOCATE, $3); }
+        | tENCODE                               { $$ = make_attr(ATTR_ENCODE); }
         | tDECODE                               { $$ = make_attr(ATTR_DECODE); }
         | tEXPLICITHANDLE                       { $$ = make_attr(ATTR_EXPLICIT_HANDLE); }
+	;
+
+allocate_option_list
+	: allocate_option			{ $$ = $1; }
+	| allocate_option_list ',' allocate_option
+						{ $$ = $1 | $3; }
+	;
+
+allocate_option
+	: tDONTFREE				{ $$ = FC_DONT_FREE; }
+	| tFREE					{ $$ = 0; }
+	| tALLNODES				{ $$ = FC_ALLOCATE_ALL_NODES; }
+	| tSINGLENODE				{ $$ = 0; }
+	;
 
 %%
 
@@ -2365,6 +2389,7 @@ struct allowed_attr allowed_attr[] =
     /* attr                        { D ACF M   I Fn ARG T En Enm St Un Fi L  DI M  C AC  R  <display name> } */
     /* ATTR_ACTIVATABLE */         { 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, "activatable" },
     /* ATTR_AGGREGATABLE */        { 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, "aggregatable" },
+    /* ATTR_ALLOCATE */            { 0, 1, 0,  0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "allocate" },
     /* ATTR_ANNOTATION */          { 0, 0, 0,  0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "annotation" },
     /* ATTR_APPOBJECT */           { 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, "appobject" },
     /* ATTR_ASYNC */               { 0, 1, 0,  0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "async" },

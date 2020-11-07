@@ -19,9 +19,14 @@ VkResult WINAPI wine_vkAcquireFullScreenExclusiveModeEXT(VkDevice device, VkSwap
 VkResult WINAPI wine_vkAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocateInfo *pAllocateInfo, VkCommandBuffer *pCommandBuffers);
 void WINAPI wine_vkCmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCount, const VkCommandBuffer *pCommandBuffers);
 VkResult WINAPI wine_vkCreateCommandPool(VkDevice device, const VkCommandPoolCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkCommandPool *pCommandPool);
+VkResult WINAPI wine_vkCreateDebugReportCallbackEXT(VkInstance instance, const VkDebugReportCallbackCreateInfoEXT *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkDebugReportCallbackEXT *pCallback) DECLSPEC_HIDDEN;
 VkResult WINAPI wine_vkCreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkDebugUtilsMessengerEXT *pMessenger) DECLSPEC_HIDDEN;
 VkResult WINAPI wine_vkCreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkDevice *pDevice);
+VkResult WINAPI wine_vkDebugMarkerSetObjectNameEXT(VkDevice device, const VkDebugMarkerObjectNameInfoEXT *pNameInfo) DECLSPEC_HIDDEN;
+VkResult WINAPI wine_vkDebugMarkerSetObjectTagEXT(VkDevice device, const VkDebugMarkerObjectTagInfoEXT *pTagInfo) DECLSPEC_HIDDEN;
+void WINAPI wine_vkDebugReportMessageEXT(VkInstance instance, VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objectType, uint64_t object, size_t location, int32_t messageCode, const char *pLayerPrefix, const char *pMessage) DECLSPEC_HIDDEN;
 void WINAPI wine_vkDestroyCommandPool(VkDevice device, VkCommandPool commandPool, const VkAllocationCallbacks *pAllocator);
+void WINAPI wine_vkDestroyDebugReportCallbackEXT(VkInstance instance, VkDebugReportCallbackEXT callback, const VkAllocationCallbacks *pAllocator) DECLSPEC_HIDDEN;
 void WINAPI wine_vkDestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT messenger, const VkAllocationCallbacks *pAllocator) DECLSPEC_HIDDEN;
 void WINAPI wine_vkDestroyDevice(VkDevice device, const VkAllocationCallbacks *pAllocator);
 void WINAPI wine_vkDestroyInstance(VkInstance instance, const VkAllocationCallbacks *pAllocator);
@@ -60,6 +65,8 @@ VkResult WINAPI wine_vkSetPrivateDataEXT(VkDevice device, VkObjectType objectTyp
 void WINAPI wine_vkSubmitDebugUtilsMessageEXT(VkInstance instance, VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageTypes, const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData) DECLSPEC_HIDDEN;
 
 /* Private thunks */
+VkResult thunk_vkDebugMarkerSetObjectNameEXT(VkDevice device, const VkDebugMarkerObjectNameInfoEXT *pNameInfo) DECLSPEC_HIDDEN;
+VkResult thunk_vkDebugMarkerSetObjectTagEXT(VkDevice device, const VkDebugMarkerObjectTagInfoEXT *pTagInfo) DECLSPEC_HIDDEN;
 VkResult thunk_vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device, VkSurfaceKHR surface, VkDeviceGroupPresentModeFlagsKHR *pModes) DECLSPEC_HIDDEN;
 VkResult thunk_vkGetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2 *pImageFormatInfo, VkImageFormatProperties2 *pImageFormatProperties) DECLSPEC_HIDDEN;
 VkResult thunk_vkGetPhysicalDeviceImageFormatProperties2KHR(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2 *pImageFormatInfo, VkImageFormatProperties2 *pImageFormatProperties) DECLSPEC_HIDDEN;
@@ -678,6 +685,28 @@ typedef struct VkSwapchainCreateInfoKHR_host
 } VkSwapchainCreateInfoKHR_host;
 
 
+typedef struct VkDebugMarkerObjectNameInfoEXT_host
+{
+    VkStructureType sType;
+    const void *pNext;
+    VkDebugReportObjectTypeEXT objectType;
+    uint64_t object;
+    const char *pObjectName;
+} VkDebugMarkerObjectNameInfoEXT_host;
+
+
+typedef struct VkDebugMarkerObjectTagInfoEXT_host
+{
+    VkStructureType sType;
+    const void *pNext;
+    VkDebugReportObjectTypeEXT objectType;
+    uint64_t object;
+    uint64_t tagName;
+    size_t tagSize;
+    const void *pTag;
+} VkDebugMarkerObjectTagInfoEXT_host;
+
+
 typedef struct VkMappedMemoryRange_host
 {
     VkStructureType sType;
@@ -1270,6 +1299,9 @@ struct vulkan_device_funcs
     void (*p_vkCmdCopyImageToBuffer2KHR)(VkCommandBuffer, const VkCopyImageToBufferInfo2KHR *);
 #endif
     void (*p_vkCmdCopyQueryPoolResults)(VkCommandBuffer, VkQueryPool, uint32_t, uint32_t, VkBuffer, VkDeviceSize, VkDeviceSize, VkQueryResultFlags);
+    void (*p_vkCmdDebugMarkerBeginEXT)(VkCommandBuffer, const VkDebugMarkerMarkerInfoEXT *);
+    void (*p_vkCmdDebugMarkerEndEXT)(VkCommandBuffer);
+    void (*p_vkCmdDebugMarkerInsertEXT)(VkCommandBuffer, const VkDebugMarkerMarkerInfoEXT *);
     void (*p_vkCmdDispatch)(VkCommandBuffer, uint32_t, uint32_t, uint32_t);
     void (*p_vkCmdDispatchBase)(VkCommandBuffer, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
     void (*p_vkCmdDispatchBaseKHR)(VkCommandBuffer, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
@@ -1465,6 +1497,16 @@ struct vulkan_device_funcs
     VkResult (*p_vkCreateSwapchainKHR)(VkDevice, const VkSwapchainCreateInfoKHR *, const VkAllocationCallbacks *, VkSwapchainKHR *);
 #endif
     VkResult (*p_vkCreateValidationCacheEXT)(VkDevice, const VkValidationCacheCreateInfoEXT *, const VkAllocationCallbacks *, VkValidationCacheEXT *);
+#if defined(USE_STRUCT_CONVERSION)
+    VkResult (*p_vkDebugMarkerSetObjectNameEXT)(VkDevice, const VkDebugMarkerObjectNameInfoEXT_host *);
+#else
+    VkResult (*p_vkDebugMarkerSetObjectNameEXT)(VkDevice, const VkDebugMarkerObjectNameInfoEXT *);
+#endif
+#if defined(USE_STRUCT_CONVERSION)
+    VkResult (*p_vkDebugMarkerSetObjectTagEXT)(VkDevice, const VkDebugMarkerObjectTagInfoEXT_host *);
+#else
+    VkResult (*p_vkDebugMarkerSetObjectTagEXT)(VkDevice, const VkDebugMarkerObjectTagInfoEXT *);
+#endif
     void (*p_vkDestroyAccelerationStructureNV)(VkDevice, VkAccelerationStructureKHR, const VkAllocationCallbacks *);
     void (*p_vkDestroyBuffer)(VkDevice, VkBuffer, const VkAllocationCallbacks *);
     void (*p_vkDestroyBufferView)(VkDevice, VkBufferView, const VkAllocationCallbacks *);
@@ -1712,10 +1754,13 @@ struct vulkan_device_funcs
 /* For use by vkInstance and children */
 struct vulkan_instance_funcs
 {
+    VkResult (*p_vkCreateDebugReportCallbackEXT)(VkInstance, const VkDebugReportCallbackCreateInfoEXT *, const VkAllocationCallbacks *, VkDebugReportCallbackEXT *);
     VkResult (*p_vkCreateDebugUtilsMessengerEXT)(VkInstance, const VkDebugUtilsMessengerCreateInfoEXT *, const VkAllocationCallbacks *, VkDebugUtilsMessengerEXT *);
     VkResult (*p_vkCreateDevice)(VkPhysicalDevice, const VkDeviceCreateInfo *, const VkAllocationCallbacks *, VkDevice *);
     VkResult (*p_vkCreateHeadlessSurfaceEXT)(VkInstance, const VkHeadlessSurfaceCreateInfoEXT *, const VkAllocationCallbacks *, VkSurfaceKHR *);
     VkResult (*p_vkCreateWin32SurfaceKHR)(VkInstance, const VkWin32SurfaceCreateInfoKHR *, const VkAllocationCallbacks *, VkSurfaceKHR *);
+    void (*p_vkDebugReportMessageEXT)(VkInstance, VkDebugReportFlagsEXT, VkDebugReportObjectTypeEXT, uint64_t, size_t, int32_t, const char *, const char *);
+    void (*p_vkDestroyDebugReportCallbackEXT)(VkInstance, VkDebugReportCallbackEXT, const VkAllocationCallbacks *);
     void (*p_vkDestroyDebugUtilsMessengerEXT)(VkInstance, VkDebugUtilsMessengerEXT, const VkAllocationCallbacks *);
     void (*p_vkDestroySurfaceKHR)(VkInstance, VkSurfaceKHR, const VkAllocationCallbacks *);
     VkResult (*p_vkEnumerateDeviceExtensionProperties)(VkPhysicalDevice, const char *, uint32_t *, VkExtensionProperties *);
@@ -1865,6 +1910,9 @@ struct vulkan_instance_funcs
     USE_VK_FUNC(vkCmdCopyImageToBuffer) \
     USE_VK_FUNC(vkCmdCopyImageToBuffer2KHR) \
     USE_VK_FUNC(vkCmdCopyQueryPoolResults) \
+    USE_VK_FUNC(vkCmdDebugMarkerBeginEXT) \
+    USE_VK_FUNC(vkCmdDebugMarkerEndEXT) \
+    USE_VK_FUNC(vkCmdDebugMarkerInsertEXT) \
     USE_VK_FUNC(vkCmdDispatch) \
     USE_VK_FUNC(vkCmdDispatchBase) \
     USE_VK_FUNC(vkCmdDispatchBaseKHR) \
@@ -1980,6 +2028,8 @@ struct vulkan_instance_funcs
     USE_VK_FUNC(vkCreateShaderModule) \
     USE_VK_FUNC(vkCreateSwapchainKHR) \
     USE_VK_FUNC(vkCreateValidationCacheEXT) \
+    USE_VK_FUNC(vkDebugMarkerSetObjectNameEXT) \
+    USE_VK_FUNC(vkDebugMarkerSetObjectTagEXT) \
     USE_VK_FUNC(vkDestroyAccelerationStructureNV) \
     USE_VK_FUNC(vkDestroyBuffer) \
     USE_VK_FUNC(vkDestroyBufferView) \
@@ -2104,10 +2154,13 @@ struct vulkan_instance_funcs
     USE_VK_FUNC(vkWaitSemaphoresKHR)
 
 #define ALL_VK_INSTANCE_FUNCS() \
+    USE_VK_FUNC(vkCreateDebugReportCallbackEXT) \
     USE_VK_FUNC(vkCreateDebugUtilsMessengerEXT) \
     USE_VK_FUNC(vkCreateDevice) \
     USE_VK_FUNC(vkCreateHeadlessSurfaceEXT) \
     USE_VK_FUNC(vkCreateWin32SurfaceKHR) \
+    USE_VK_FUNC(vkDebugReportMessageEXT) \
+    USE_VK_FUNC(vkDestroyDebugReportCallbackEXT) \
     USE_VK_FUNC(vkDestroyDebugUtilsMessengerEXT) \
     USE_VK_FUNC(vkDestroySurfaceKHR) \
     USE_VK_FUNC(vkEnumerateDeviceExtensionProperties) \

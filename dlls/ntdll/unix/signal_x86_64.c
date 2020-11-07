@@ -2306,39 +2306,37 @@ static void install_bpf(struct sigaction *sig_act)
        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     };
     struct sock_fprog prog;
-    int ret;
+    NTSTATUS status;
+
+    sig_act->sa_sigaction = sigsys_handler;
+    sigaction(SIGSYS, sig_act, NULL);
+
+    if ((status = syscall(0xffff)) == STATUS_INVALID_PARAMETER)
+    {
+        TRACE("Seccomp filters already installed.\n");
+        return;
+    }
+    if (status != -ENOSYS && (status != -1 || errno != ENOSYS))
+    {
+        ERR("Unexpected status %#x, errno %d.\n", status, errno);
+        return;
+    }
 
     memset(&prog, 0, sizeof(prog));
     prog.len = ARRAY_SIZE(filter);
     prog.filter = filter;
 
-    if (!(ret = prctl(PR_GET_SECCOMP, 0, NULL, 0, 0)))
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
     {
-        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
-        {
-            perror("prctl(PR_SET_NO_NEW_PRIVS, ...)");
-            exit(1);
-        }
-
-        if (sc_seccomp(SECCOMP_SET_MODE_FILTER, flags, &prog))
-
-        {
-            perror("prctl(PR_SET_SECCOMP, ...)");
-            exit(1);
-        }
-
-        check_bpf_jit_enable();
+        perror("prctl(PR_SET_NO_NEW_PRIVS, ...)");
+        exit(1);
     }
-    else
+    if (sc_seccomp(SECCOMP_SET_MODE_FILTER, flags, &prog))
     {
-        if (ret == 2)
-            TRACE("Seccomp filters already installed.\n");
-        else
-            ERR("Seccomp filters cannot be installed, ret %d, error %s.\n", ret, strerror(errno));
+        perror("prctl(PR_SET_SECCOMP, ...)");
+        exit(1);
     }
-
-    sig_act->sa_sigaction = sigsys_handler;
-    sigaction(SIGSYS, sig_act, NULL);
+    check_bpf_jit_enable();
 #else
     WARN("Built without seccomp.\n");
 #endif

@@ -6,6 +6,8 @@ EXTRAINCL = $(FREETYPE_CFLAGS) $(FONTCONFIG_CFLAGS)
 EXTRALIBS = $(CARBON_LIBS) $(APPKIT_LIBS)
 DELAYIMPORTS = usp10 setupapi
 
+EXTRADLLFLAGS = -mno-cygwin
+
 C_SRCS = \
 	bidi.c \
 	bitblt.c \
@@ -52,4 +54,4 @@ C_SRCS = \
 
 RC_SRCS = gdi32.rc
 
-freetype_EXTRADEFS = -DWINE_FONT_DIR=\"`${MAKEDEP} -R ${datadir}/wine ${fontdir}`\"
+font_EXTRADEFS = -DWINE_FONT_DIR=\"`${MAKEDEP} -R ${datadir}/wine ${fontdir}`\"

@@ -46,6 +46,7 @@
 @ stub MFCreateAudioMediaType
 @ stdcall MFCreateCollection(ptr)
 @ stdcall MFCreateDXGIDeviceManager(ptr ptr)
+@ stdcall MFCreateDXSurfaceBuffer(ptr ptr long ptr)
 @ stdcall MFCreateEventQueue(ptr)
 @ stdcall MFCreateFile(long long long wstr ptr)
 @ stub MFCreateLegacyMediaBufferOnMFMediaBuffer
@@ -89,7 +90,7 @@
 @ stub MFEndGetHostByName
 @ stdcall MFEndRegisterWorkQueueWithMMCSS(ptr ptr) rtworkq.RtwqEndRegisterWorkQueueWithMMCSS
 @ stdcall MFEndUnregisterWorkQueueWithMMCSS(ptr) rtworkq.RtwqEndUnregisterWorkQueueWithMMCSS
-@ stub MFFrameRateToAverageTimePerFrame
+@ stdcall MFFrameRateToAverageTimePerFrame(long long ptr)
 @ stub MFFreeAdaptersAddresses
 @ stub MFGetAdaptersAddresses
 @ stdcall MFGetAttributesAsBlob(ptr ptr long)
@@ -130,6 +131,7 @@
 @ stdcall MFJoinWorkQueue(long long ptr) rtworkq.RtwqJoinWorkQueue
 @ stdcall MFLockPlatform() rtworkq.RtwqLockPlatform
 @ stdcall MFLockWorkQueue(long) rtworkq.RtwqLockWorkQueue
+@ stdcall MFMapDXGIFormatToDX9Format(long)
 @ stdcall MFPutWaitingWorkItem(long long ptr ptr) rtworkq.RtwqPutWaitingWorkItem
 @ stdcall MFPutWorkItem(long ptr ptr)
 @ stdcall MFPutWorkItem2(long long ptr ptr)

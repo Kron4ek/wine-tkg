@@ -2345,30 +2345,27 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
             "\\SystemRoot\\system32\\drivers\\mountmgr.sys"
         };
 
-        if (!info) ret = STATUS_ACCESS_VIOLATION;
-        else
-        {
-            ULONG i;
-            SYSTEM_MODULE_INFORMATION *smi = info;
+        ULONG i;
+        SYSTEM_MODULE_INFORMATION *smi = info;
 
-            len = offsetof( SYSTEM_MODULE_INFORMATION, Modules[ARRAY_SIZE(fake_modules)] );
-            if (len <= size)
+        len = offsetof( SYSTEM_MODULE_INFORMATION, Modules[ARRAY_SIZE(fake_modules)] );
+        if (len <= size)
+        {
+            memset( smi, 0, len );
+            for (i = 0; i < ARRAY_SIZE(fake_modules); i++)
             {
-                memset( smi, 0, len );
-                for (i = 0; i < ARRAY_SIZE(fake_modules); i++)
-                {
-                    SYSTEM_MODULE *sm = &smi->Modules[i];
-                    sm->ImageBaseAddress = (char *)0x10000000 + 0x200000 * i;
-                    sm->ImageSize = 0x200000;
-                    sm->LoadOrderIndex = i;
-                    sm->LoadCount = 1;
-                    strcpy( (char *)sm->Name, fake_modules[i] );
-                    sm->NameOffset = strrchr( fake_modules[i], '\\' ) - fake_modules[i] + 1;
-                }
-                smi->ModulesCount = i;
+                SYSTEM_MODULE *sm = &smi->Modules[i];
+                sm->ImageBaseAddress = (char *)0x10000000 + 0x200000 * i;
+                sm->ImageSize = 0x200000;
+                sm->LoadOrderIndex = i;
+                sm->LoadCount = 1;
+                strcpy( (char *)sm->Name, fake_modules[i] );
+                sm->NameOffset = strrchr( fake_modules[i], '\\' ) - fake_modules[i] + 1;
             }
-            else ret = STATUS_INFO_LENGTH_MISMATCH;
+            smi->ModulesCount = i;
         }
+        else ret = STATUS_INFO_LENGTH_MISMATCH;
+
         break;
     }
 
@@ -2382,34 +2379,28 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
             "\\SystemRoot\\system32\\drivers\\mountmgr.sys"
         };
 
-        if (!info) ret = STATUS_ACCESS_VIOLATION;
-        else
-        {
-            ULONG i;
+        ULONG i;
+        RTL_PROCESS_MODULE_INFORMATION_EX *module_info = info;
 
+        len = sizeof(*module_info) * ARRAY_SIZE(fake_modules) + sizeof(module_info->NextOffset);
+        if (len <= size)
+        {
+            memset( info, 0, len );
             for (i = 0; i < ARRAY_SIZE(fake_modules); i++)
             {
-                SYSTEM_MODULE_INFORMATION_EX *smi = (SYSTEM_MODULE_INFORMATION_EX *)((char *)info + len);
-
-                len += sizeof(SYSTEM_MODULE_INFORMATION_EX);
-                if (len > size)
-                {
-                    ret = STATUS_INFO_LENGTH_MISMATCH;
-                    continue;
-                }
-
-                memset(smi, 0, sizeof(*smi));
-                if (i < ARRAY_SIZE(fake_modules) - 1)
-                    smi->NextOffset = len;
-                smi->BaseInfo.ImageBaseAddress = (char *)0x10000000 + 0x200000 * i;
-                smi->BaseInfo.ImageSize = 0x200000;
-                smi->BaseInfo.LoadOrderIndex = i;
-                smi->BaseInfo.LoadCount = 1;
-                strcpy( (char *)smi->BaseInfo.Name, fake_modules[i] );
-                smi->BaseInfo.NameOffset = strrchr( fake_modules[i], '\\' ) - fake_modules[i] + 1;
-                smi->DefaultBase = smi->BaseInfo.ImageBaseAddress;
+                SYSTEM_MODULE *sm = &module_info[i].BaseInfo;
+                sm->ImageBaseAddress = (char *)0x10000000 + 0x200000 * i;
+                sm->ImageSize = 0x200000;
+                sm->LoadOrderIndex = i;
+                sm->LoadCount = 1;
+                strcpy( (char *)sm->Name, fake_modules[i] );
+                sm->NameOffset = strrchr( fake_modules[i], '\\' ) - fake_modules[i] + 1;
+                module_info[i].NextOffset = sizeof(*module_info);
             }
+            module_info[ARRAY_SIZE(fake_modules)].NextOffset = 0;
         }
+        else ret = STATUS_INFO_LENGTH_MISMATCH;
+
         break;
     }
 

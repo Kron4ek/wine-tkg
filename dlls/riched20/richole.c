@@ -1398,20 +1398,20 @@ IRichEditOle_fnGetObject(IRichEditOle *me, LONG iob,
 
         TRACE("character offset: %d\n", lpreobject->cp);
         cursor_from_char_ofs( This->editor, lpreobject->cp, &cursor );
-        if (!cursor.pRun->member.run.reobj)
+        if (!cursor.run->reobj)
             return E_INVALIDARG;
         else
-            reobj = cursor.pRun->member.run.reobj;
+            reobj = cursor.run->reobj;
     }
     else if (iob == REO_IOB_SELECTION)
     {
         ME_Cursor *from, *to;
 
         ME_GetSelection(This->editor, &from, &to);
-        if (!from->pRun->member.run.reobj)
+        if (!from->run->reobj)
             return E_INVALIDARG;
         else
-            reobj = from->pRun->member.run.reobj;
+            reobj = from->run->reobj;
     }
     else
     {
@@ -1667,7 +1667,7 @@ static HRESULT WINAPI ITextRange_fnGetText(ITextRange *me, BSTR *str)
     if (!*str)
         return E_OUTOFMEMORY;
 
-    bEOP = (end.pRun->next->type == diTextEnd && This->end > ME_GetTextLength(editor));
+    bEOP = (!para_next( para_next( end.para )) && This->end > ME_GetTextLength(editor));
     ME_GetTextW(editor, *str, length, &start, length, FALSE, bEOP);
     return S_OK;
 }
@@ -1722,7 +1722,7 @@ static HRESULT range_GetChar(ME_TextEditor *editor, ME_Cursor *cursor, LONG *pch
 {
     WCHAR wch[2];
 
-    ME_GetTextW(editor, wch, 1, cursor, 1, FALSE, cursor->pRun->next->type == diTextEnd);
+    ME_GetTextW(editor, wch, 1, cursor, 1, FALSE, !para_next( para_next( cursor->para ) ));
     *pch = wch[0];
 
     return S_OK;
@@ -2742,11 +2742,11 @@ static HRESULT WINAPI ITextRange_fnScrollIntoView(ITextRange *me, LONG value)
     {
     case tomStart:
         cursor_from_char_ofs( editor, This->start, &cursor );
-        ME_GetCursorCoordinates(editor, &cursor, &x, &y, &height);
+        cursor_coords( editor, &cursor, &x, &y, &height );
         break;
     case tomEnd:
         cursor_from_char_ofs( editor, This->end, &cursor );
-        ME_GetCursorCoordinates(editor, &cursor, &x, &y, &height);
+        cursor_coords( editor, &cursor, &x, &y, &height );
         break;
     default:
         FIXME("bStart value %d not handled\n", value);
@@ -4957,7 +4957,7 @@ static HRESULT WINAPI ITextSelection_fnGetText(ITextSelection *me, BSTR *pbstr)
     if (!*pbstr)
         return E_OUTOFMEMORY;
 
-    bEOP = (end->pRun->next->type == diTextEnd && endOfs > ME_GetTextLength(This->reOle->editor));
+    bEOP = (!para_next( para_next( end->para ) ) && endOfs > ME_GetTextLength(This->reOle->editor));
     ME_GetTextW(This->reOle->editor, *pbstr, nChars, start, nChars, FALSE, bEOP);
     TRACE("%s\n", wine_dbgstr_w(*pbstr));
 
@@ -6058,7 +6058,7 @@ void ME_GetOLEObjectSize(const ME_Context *c, ME_Run *run, SIZE *pSize)
   }
 }
 
-void ME_DrawOLE(ME_Context *c, int x, int y, ME_Run *run, BOOL selected)
+void draw_ole( ME_Context *c, int x, int y, ME_Run *run, BOOL selected )
 {
   IDataObject*  ido;
   FORMATETC     fmt;
