@@ -95,6 +95,7 @@ static ULONG WINAPI CommonDecoder_Release(IWICBitmapDecoder *iface)
             IStream_Release(This->stream);
         This->lock.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&This->lock);
+        decoder_destroy(This->decoder);
         HeapFree(GetProcessHeap(), 0, This);
     }
 
@@ -459,6 +460,13 @@ static HRESULT WINAPI CommonDecoderFrame_GetColorContexts(IWICBitmapFrameDecode 
     TRACE("(%p,%u,%p,%p)\n", iface, cCount, ppIColorContexts, pcActualCount);
 
     if (!pcActualCount) return E_INVALIDARG;
+
+    if (This->parent->file_info.flags & DECODER_FLAGS_UNSUPPORTED_COLOR_CONTEXT)
+    {
+        FIXME("not supported for %s\n", wine_dbgstr_guid(&This->parent->decoder_info.clsid));
+        *pcActualCount = 0;
+        return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+    }
 
     *pcActualCount = This->decoder_frame.num_color_contexts;
 

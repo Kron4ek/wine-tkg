@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 Rémi Bernon for CodeWeavers
+ * Copyright 2020 Alsitair Leslie-Hughes
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,30 +16,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifdef __WIDL__
-#pragma winrt ns_prefix
-#endif
+#define WINE_FILEDESCRIPTION_STR "Wine xaudio2_9"
+#define WINE_FILENAME_STR "xaudio2_9.dll"
+#define WINE_FILEVERSION 10,0,19041,1
+#define WINE_FILEVERSION_STR "10.0.19041.1"
+#define WINE_PRODUCTVERSION 10,0,19041,1
+#define WINE_PRODUCTVERSION_STR "10.0.19041.1"
 
-import "windows.foundation.idl";
-
-namespace Windows {
-    namespace Globalization {
-        typedef enum DayOfWeek DayOfWeek;
-    }
-}
-
-namespace Windows {
-    namespace Globalization {
-        [contract(Windows.Foundation.UniversalApiContract, 1.0)]
-        enum DayOfWeek
-        {
-            Sunday    = 0,
-            Monday    = 1,
-            Tuesday   = 2,
-            Wednesday = 3,
-            Thursday  = 4,
-            Friday    = 5,
-            Saturday  = 6
-        };
-    }
-}
+#include "wine/wine_common_ver.rc"

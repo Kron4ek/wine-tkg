@@ -2027,16 +2027,6 @@ static void dump_set_socket_deferred_request( const struct set_socket_deferred_r
     fprintf( stderr, ", deferred=%04x", req->deferred );
 }
 
-static void dump_get_console_wait_event_request( const struct get_console_wait_event_request *req )
-{
-    fprintf( stderr, " handle=%04x", req->handle );
-}
-
-static void dump_get_console_wait_event_reply( const struct get_console_wait_event_reply *req )
-{
-    fprintf( stderr, " event=%04x", req->event );
-}
-
 static void dump_get_next_console_request_request( const struct get_next_console_request_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
@@ -4591,7 +4581,6 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_socket_info_request,
     (dump_func)dump_enable_socket_event_request,
     (dump_func)dump_set_socket_deferred_request,
-    (dump_func)dump_get_console_wait_event_request,
     (dump_func)dump_get_next_console_request_request,
     (dump_func)dump_read_directory_changes_request,
     (dump_func)dump_read_change_request,
@@ -4882,7 +4871,6 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_socket_info_reply,
     NULL,
     NULL,
-    (dump_func)dump_get_console_wait_event_reply,
     (dump_func)dump_get_next_console_request_reply,
     NULL,
     (dump_func)dump_read_change_reply,
@@ -5173,7 +5161,6 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "get_socket_info",
     "enable_socket_event",
     "set_socket_deferred",
-    "get_console_wait_event",
     "get_next_console_request",
     "read_directory_changes",
     "read_change",

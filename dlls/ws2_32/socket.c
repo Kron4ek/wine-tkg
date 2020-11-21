@@ -3521,7 +3521,7 @@ static BOOL WINAPI WS2_ConnectEx(SOCKET s, const struct WS_sockaddr* name, int n
             {
                 ov->Internal = sock_error_to_ntstatus( get_sock_error( s, FD_CONNECT_BIT  ));
                 ov->InternalHigh = 0;
-                if (cvalue) WS_AddCompletion( s, cvalue, ov->Internal, ov->InternalHigh, FALSE );
+                if (cvalue) WS_AddCompletion( s, cvalue, ov->Internal, ov->InternalHigh, TRUE );
                 if (ov->hEvent) NtSetEvent( ov->hEvent, NULL );
                 status = STATUS_PENDING;
             }
@@ -6321,6 +6321,13 @@ struct WS_hostent* WINAPI WS_gethostbyname(const char* name)
         extrabuf=HeapAlloc(GetProcessHeap(),0,ebufsize) ;
         while(extrabuf) {
             int res = gethostbyname_r(name, &hostentry, extrabuf, ebufsize, &host, &locerr);
+
+            if (!strcmp(name, "download-alt.easyanticheat.net"))
+            {
+                ERR("HACK: failing download-alt.easyanticheat.net resolution.\n");
+                res = HOST_NOT_FOUND;
+            }
+
             if( res != ERANGE) break;
             ebufsize *=2;
             extrabuf=HeapReAlloc(GetProcessHeap(),0,extrabuf,ebufsize) ;
@@ -6567,6 +6574,13 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
     *res = NULL;
     if (!nodename && !servname)
     {
+        SetLastError(WSAHOST_NOT_FOUND);
+        return WSAHOST_NOT_FOUND;
+    }
+
+    if (nodename && !strcmp(nodename, "download-alt.easyanticheat.net"))
+    {
+        ERR("HACK: failing download-alt.easyanticheat.net resolution.\n");
         SetLastError(WSAHOST_NOT_FOUND);
         return WSAHOST_NOT_FOUND;
     }

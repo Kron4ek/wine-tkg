@@ -18,8 +18,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
 #include <stdarg.h>
 
 #include "windef.h"
@@ -418,7 +416,7 @@ void * CDECL Concurrency_Alloc(MSVCRT_size_t size)
         }
     }
 
-    TRACE("(%ld) returning %p\n", size, p->alloc.mem);
+    TRACE("(%Iu) returning %p\n", size, p->alloc.mem);
     return p->alloc.mem;
 }
 
@@ -556,7 +554,7 @@ SchedulerPolicy* WINAPIV SchedulerPolicy_ctor_policies(
     __ms_va_list valist;
     MSVCRT_size_t i;
 
-    TRACE("(%p %ld)\n", this, n);
+    TRACE("(%p %Iu)\n", this, n);
 
     SchedulerPolicy_ctor(this);
     min_concurrency = this->policy_container->policies[MinConcurrency];

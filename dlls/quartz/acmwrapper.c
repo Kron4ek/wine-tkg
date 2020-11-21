@@ -324,7 +324,6 @@ static const struct strmbase_sink_ops sink_ops =
 {
     .base.pin_query_interface = acm_wrapper_sink_query_interface,
     .base.pin_query_accept = acm_wrapper_sink_query_accept,
-    .base.pin_get_media_type = strmbase_pin_get_media_type,
     .pfnReceive = acm_wrapper_sink_Receive,
     .sink_connect = acm_wrapper_sink_connect,
     .sink_disconnect = acm_wrapper_sink_disconnect,
@@ -500,8 +499,10 @@ static void acm_wrapper_destroy(struct strmbase_filter *iface)
 static HRESULT acm_wrapper_init_stream(struct strmbase_filter *iface)
 {
     struct acm_wrapper *filter = impl_from_strmbase_filter(iface);
+    HRESULT hr;
 
-    BaseOutputPinImpl_Active(&filter->source);
+    if (filter->source.pin.peer && FAILED(hr = IMemAllocator_Commit(filter->source.pAllocator)))
+        ERR("Failed to commit allocator, hr %#x.\n", hr);
     return S_OK;
 }
 
@@ -509,7 +510,8 @@ static HRESULT acm_wrapper_cleanup_stream(struct strmbase_filter *iface)
 {
     struct acm_wrapper *filter = impl_from_strmbase_filter(iface);
 
-    BaseOutputPinImpl_Inactive(&filter->source);
+    if (filter->source.pin.peer)
+        IMemAllocator_Decommit(filter->source.pAllocator);
     return S_OK;
 }
 

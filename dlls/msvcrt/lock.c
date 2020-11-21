@@ -16,9 +16,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include <stdarg.h>
 
 #include "wine/debug.h"
@@ -918,7 +915,7 @@ int __cdecl event_wait_for_multiple(event **events, MSVCRT_size_t count, MSVCRT_
     thread_wait *wait;
     MSVCRT_size_t ret;
 
-    TRACE("(%p %ld %d %u)\n", events, count, wait_all, timeout);
+    TRACE("(%p %Iu %d %u)\n", events, count, wait_all, timeout);
 
     if(count == 0)
         return 0;

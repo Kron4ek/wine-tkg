@@ -222,7 +222,18 @@ static void gnutls_log( int level, const char *msg )
 
 static BOOL gnutls_initialize(void)
 {
+    const char *env_str;
     int ret;
+
+    if ((env_str = getenv("GNUTLS_SYSTEM_PRIORITY_FILE")))
+    {
+        WARN("GNUTLS_SYSTEM_PRIORITY_FILE is %s.\n", debugstr_a(env_str));
+    }
+    else
+    {
+        WARN("Setting GNUTLS_SYSTEM_PRIORITY_FILE to \"/dev/null\".\n");
+        setenv("GNUTLS_SYSTEM_PRIORITY_FILE", "/dev/null", 0);
+    }
 
     if (!(libgnutls_handle = dlopen( SONAME_LIBGNUTLS, RTLD_NOW )))
     {
@@ -497,6 +508,7 @@ static NTSTATUS CDECL key_symmetric_init( struct key *key )
 
     switch (key->alg_id)
     {
+    case ALG_ID_3DES:
     case ALG_ID_AES:
         return STATUS_SUCCESS;
 
@@ -510,6 +522,18 @@ static gnutls_cipher_algorithm_t get_gnutls_cipher( const struct key *key )
 {
     switch (key->alg_id)
     {
+    case ALG_ID_3DES:
+        WARN( "handle block size\n" );
+        switch (key->u.s.mode)
+        {
+        case MODE_ID_CBC:
+            return GNUTLS_CIPHER_3DES_CBC;
+        default:
+            break;
+        }
+        FIXME( "3DES mode %u with key length %u not supported\n", key->u.s.mode, key->u.s.secret_len );
+        return GNUTLS_CIPHER_UNKNOWN;
+
     case ALG_ID_AES:
         WARN( "handle block size\n" );
         switch (key->u.s.mode)

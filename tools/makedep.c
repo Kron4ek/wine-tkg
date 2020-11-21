@@ -2225,9 +2225,6 @@ static struct strarray add_import_libs( const struct makefile *make, struct stra
         const char *name = get_base_name( imports.str[i] );
         const char *lib = NULL;
 
-        /* skip module's own importlib, its object files will be linked directly */
-        if (make->importlib && !strcmp( make->importlib, imports.str[i] )) continue;
-
         for (j = 0; j < subdirs.count; j++)
         {
             if (submakes[j]->importlib && !strcmp( submakes[j]->importlib, name ))
@@ -2283,7 +2280,7 @@ static struct strarray get_default_imports( const struct makefile *make )
 /*******************************************************************
  *         add_crt_import
  */
-static const char *add_crt_import( const struct makefile *make, struct strarray *imports )
+static void add_crt_import( const struct makefile *make, struct strarray *imports, struct strarray *defs )
 {
     unsigned int i;
     const char *crt_dll = NULL;
@@ -2296,10 +2293,28 @@ static const char *add_crt_import( const struct makefile *make, struct strarray 
     }
     if (!crt_dll && !strarray_exists( &make->extradllflags, "-nodefaultlibs" ))
     {
-        crt_dll = !make->testdll && !make->staticlib ? "ucrtbase" : "msvcrt";
-        strarray_add( imports, crt_dll );
+        if (make->module &&
+            (!strncmp( make->module, "msvcr", 5 ) ||
+             !strncmp( make->module, "ucrt", 4 ) ||
+             !strcmp( make->module, "crtdll.dll" )))
+        {
+            crt_dll = make->module;
+        }
+        else
+        {
+            crt_dll = !make->testdll && !make->staticlib ? "ucrtbase" : "msvcrt";
+            strarray_add( imports, crt_dll );
+        }
     }
-    return crt_dll;
+
+    if (!defs) return;
+    if (crt_dll && !strncmp( crt_dll, "ucrt", 4 )) strarray_add( defs, "-D_UCRT" );
+    else
+    {
+        unsigned int version = 0;
+        if (crt_dll) sscanf( crt_dll, "msvcr%u", &version );
+        strarray_add( defs, strmake( "-D_MSVCR_VER=%u", version ));
+    }
 }
 
 
@@ -3041,7 +3056,7 @@ static void output_source_spec( struct makefile *make, struct incl_file *source,
     const char *debug_file;
 
     if (!imports.count) imports = make->imports;
-    else if (make->use_msvcrt) add_crt_import( make, &imports );
+    else if (make->use_msvcrt) add_crt_import( make, &imports, NULL );
 
     if (!dll_flags.count) dll_flags = make->extradllflags;
     all_libs = add_import_libs( make, &dep_libs, imports, 0, 0 );
@@ -3069,8 +3084,8 @@ static void output_source_spec( struct makefile *make, struct incl_file *source,
     output_filename( "-shared" );
     output_filename( source->filename );
     output_filename( obj_name );
-    if ((debug_file = get_debug_file( make, output_file )))
-        output_filename( strmake( "-Wl,--debug-file,%s", debug_file ));
+    if ((debug_file = get_debug_file( make, dll_name )))
+        output_filename( strmake( "-Wl,--debug-file,%s", obj_dir_path( make, debug_file )));
     output_filenames( all_libs );
     output_filename( make->is_cross ? "$(CROSSLDFLAGS)" : "$(LDFLAGS)" );
     output( "\n" );
@@ -3106,7 +3121,7 @@ static void output_source_default( struct makefile *make, struct incl_file *sour
     {
         if ((source->file->flags & FLAG_C_UNIX) && *dll_ext)
             strarray_add( &make->unixobj_files, strmake( "%s.o", obj ));
-        else if (!is_dll_src && (!(source->file->flags & FLAG_C_IMPLIB) || (make->importlib && strarray_exists( &make->imports, make->importlib ))))
+        else if (!is_dll_src && !(source->file->flags & FLAG_C_IMPLIB))
             strarray_add( &make->object_files, strmake( "%s.o", obj ));
         else
             strarray_add( &make->clean_files, strmake( "%s.o", obj ));
@@ -3125,7 +3140,10 @@ static void output_source_default( struct makefile *make, struct incl_file *sour
     }
     if (need_cross)
     {
-        strarray_add( is_dll_src ? &make->clean_files : &make->crossobj_files, strmake( "%s.cross.o", obj ));
+        if (!is_dll_src && !(source->file->flags & FLAG_C_IMPLIB))
+            strarray_add( &make->crossobj_files, strmake( "%s.cross.o", obj ));
+        else
+            strarray_add( &make->clean_files, strmake( "%s.cross.o", obj ));
         output( "%s.cross.o: %s\n", obj_dir_path( make, obj ), source->filename );
         output( "\t$(CROSSCC) -c -o $@ %s", source->filename );
         output_filenames( defines );
@@ -3282,7 +3300,7 @@ static void output_module( struct makefile *make )
         strarray_add( &make->all_targets, strmake( "%s", make->module ));
         add_install_rule( make, make->module, strmake( "%s", make->module ),
                           strmake( "c$(dlldir)/%s", make->module ));
-        debug_file = get_debug_file( make, module_path );
+        debug_file = get_debug_file( make, make->module );
         output( "%s:", module_path );
     }
     else if (*dll_ext)
@@ -3305,7 +3323,7 @@ static void output_module( struct makefile *make )
         strarray_add( &make->all_targets, make->module );
         add_install_rule( make, make->module, make->module,
                           strmake( "p$(%s)/%s", spec_file ? "dlldir" : "bindir", make->module ));
-        debug_file = get_debug_file( make, module_path );
+        debug_file = get_debug_file( make, make->module );
         output( "%s:", module_path );
     }
 
@@ -3326,7 +3344,7 @@ static void output_module( struct makefile *make )
     output_filenames( make->extradllflags );
     output_filenames_obj_dir( make, make->is_cross ? make->crossobj_files : make->object_files );
     output_filenames_obj_dir( make, make->res_files );
-    if (debug_file) output_filename( strmake( "-Wl,--debug-file,%s", debug_file ));
+    if (debug_file) output_filename( strmake( "-Wl,--debug-file,%s", obj_dir_path( make, debug_file )));
     output_filenames( all_libs );
     output_filename( make->is_cross ? "$(CROSSLDFLAGS)" : "$(LDFLAGS)" );
     output_filename( make->is_cross ? "-Wl,--file-alignment,4096" : "" );
@@ -3541,8 +3559,8 @@ static void output_test_module( struct makefile *make )
     output_filenames( make->extradllflags );
     output_filenames_obj_dir( make, make->is_cross ? make->crossobj_files : make->object_files );
     output_filenames_obj_dir( make, make->res_files );
-    if ((debug_file = get_debug_file( make, output_file )))
-        output_filename( strmake( "-Wl,--debug-file,%s", debug_file ));
+    if ((debug_file = get_debug_file( make, testmodule )))
+        output_filename( strmake( "-Wl,--debug-file,%s", obj_dir_path( make, debug_file )));
     output_filenames( all_libs );
     output_filename( make->is_cross ? "$(CROSSLDFLAGS)" : "$(LDFLAGS)" );
     output( "\n" );
@@ -4084,6 +4102,9 @@ static void output_dependencies( struct makefile *make )
     }
     else output_stub_makefile( make );
 
+    /* disable implicit rules */
+    output( ".SUFFIXES:\n" );
+
     fclose( output_file );
     output_file = NULL;
     rename_temp_file( output_file_name );
@@ -4208,19 +4229,7 @@ static void load_sources( struct makefile *make )
         make->use_msvcrt = 1;
     }
 
-    if (make->use_msvcrt)
-    {
-        const char *crt_dll = add_crt_import( make, &make->imports );
-
-        if (crt_dll && !strncmp( crt_dll, "ucrt", 4 )) strarray_add( &make->define_args, "-D_UCRT" );
-        else
-        {
-            unsigned int msvcrt_version = 0;
-
-            if (crt_dll) sscanf( crt_dll, "msvcr%u", &msvcrt_version );
-            strarray_add( &make->define_args, strmake( "-D_MSVCR_VER=%u", msvcrt_version ));
-        }
-    }
+    if (make->use_msvcrt) add_crt_import( make, &make->imports, &make->define_args );
 
     LIST_FOR_EACH_ENTRY( file, &make->includes, struct incl_file, entry ) parse_file( make, file, 0 );
     LIST_FOR_EACH_ENTRY( file, &make->sources, struct incl_file, entry ) get_dependencies( file, file );

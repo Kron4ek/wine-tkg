@@ -653,7 +653,8 @@ static int rt_formats_sort_compare(const void *left, const void *right)
 }
 
 static HRESULT video_mixer_collect_output_types(struct video_mixer *mixer, const DXVA2_VideoDesc *video_desc,
-        IDirectXVideoProcessorService *service, unsigned int device_count, const GUID *devices, unsigned int flags)
+        IMFMediaType *media_type, IDirectXVideoProcessorService *service, unsigned int device_count,
+        const GUID *devices, unsigned int flags)
 {
     unsigned int i, j, format_count, count;
     struct rt_format *rt_formats = NULL, *ptr;
@@ -706,9 +707,16 @@ static HRESULT video_mixer_collect_output_types(struct video_mixer *mixer, const
         {
             for (i = 0; i < count; ++i)
             {
+                IMFMediaType *rt_media_type;
+
                 subtype.Data1 = rt_formats[i].format;
                 mixer->output.rt_formats[i] = rt_formats[i];
-                MFCreateVideoMediaTypeFromSubtype(&subtype, (IMFVideoMediaType **)&mixer->output.rt_formats[i].media_type);
+
+                MFCreateMediaType(&rt_media_type);
+                IMFMediaType_CopyAllItems(media_type, (IMFAttributes *)rt_media_type);
+                IMFMediaType_SetGUID(rt_media_type, &MF_MT_SUBTYPE, &subtype);
+
+                mixer->output.rt_formats[i].media_type = rt_media_type;
             }
             mixer->output.rt_formats_count = count;
         }
@@ -785,8 +793,8 @@ static HRESULT WINAPI video_mixer_transform_SetInputType(IMFTransform *iface, DW
                     if (SUCCEEDED(hr = IDirectXVideoProcessorService_GetVideoProcessorDeviceGuids(service, &video_desc,
                             &count, &guids)))
                     {
-                        if (SUCCEEDED(hr = video_mixer_collect_output_types(mixer, &video_desc, service, count,
-                                guids, flags)) && !(flags & MFT_SET_TYPE_TEST_ONLY))
+                        if (SUCCEEDED(hr = video_mixer_collect_output_types(mixer, &video_desc, media_type,
+                                service, count, guids, flags)) && !(flags & MFT_SET_TYPE_TEST_ONLY))
                         {
                             if (mixer->inputs[0].media_type)
                                 IMFMediaType_Release(mixer->inputs[0].media_type);
@@ -1155,10 +1163,84 @@ static HRESULT video_mixer_get_d3d_device(struct video_mixer *mixer, IDirect3DDe
     return hr;
 }
 
+static void video_mixer_scale_rect(RECT *rect, unsigned int width, unsigned int height,
+        const MFVideoNormalizedRect *scale)
+{
+    if (rect->left == 0.0f && rect->top == 0.0f && rect->right == 1.0f && rect->bottom == 1.0f)
+    {
+        SetRect(rect, 0, 0, width, height);
+    }
+    else
+    {
+        rect->left = width * scale->left;
+        rect->right = width * scale->right;
+        rect->top = height * scale->top;
+        rect->bottom = height * scale->bottom;
+    }
+}
+
+static void video_mixer_render(struct video_mixer *mixer, IDirect3DSurface9 *rt)
+{
+    DXVA2_VideoSample samples[1] = {{ 0 }};
+    DXVA2_VideoProcessBltParams params = { 0 };
+    MFVideoNormalizedRect zoom_rect;
+    struct input_stream *stream;
+    IDirect3DSurface9 *surface;
+    D3DSURFACE_DESC desc;
+    HRESULT hr;
+
+    IDirect3DSurface9_GetDesc(rt, &desc);
+
+    if (FAILED(IMFAttributes_GetBlob(mixer->attributes, &VIDEO_ZOOM_RECT, (UINT8 *)&zoom_rect,
+            sizeof(zoom_rect), NULL)))
+    {
+        zoom_rect.left = zoom_rect.top = 0.0f;
+        zoom_rect.right = zoom_rect.bottom = 1.0f;
+    }
+
+    video_mixer_scale_rect(&params.TargetRect, desc.Width, desc.Height, &zoom_rect);
+
+    /* FIXME: for now only handle reference stream. */
+
+    video_mixer_get_input(mixer, 0, &stream);
+
+    if (FAILED(hr = video_mixer_get_sample_surface(stream->sample, &surface)))
+    {
+        WARN("Failed to get source surface, hr %#x.\n", hr);
+        return;
+    }
+
+    IDirect3DSurface9_GetDesc(surface, &desc);
+
+    samples[0].SrcSurface = surface;
+    SetRect(&samples[0].SrcRect, 0, 0, desc.Width, desc.Height);
+    video_mixer_scale_rect(&samples[0].DstRect, desc.Width, desc.Height, &stream->rect);
+
+    if (FAILED(hr = IDirectXVideoProcessor_VideoProcessBlt(mixer->processor, rt, &params, samples, 1, NULL)))
+        WARN("Failed to process samples, hr %#x.\n", hr);
+
+    IDirect3DSurface9_Release(surface);
+}
+
+static HRESULT video_mixer_get_sample_desired_time(IMFSample *sample, LONGLONG *timestamp, LONGLONG *duration)
+{
+    IMFDesiredSample *desired;
+    HRESULT hr;
+
+    if (SUCCEEDED(hr = IMFSample_QueryInterface(sample, &IID_IMFDesiredSample, (void **)&desired)))
+    {
+        hr = IMFDesiredSample_GetDesiredSampleTimeAndDuration(desired, timestamp, duration);
+        IMFDesiredSample_Release(desired);
+    }
+
+    return hr;
+}
+
 static HRESULT WINAPI video_mixer_transform_ProcessOutput(IMFTransform *iface, DWORD flags, DWORD count,
         MFT_OUTPUT_DATA_BUFFER *buffers, DWORD *status)
 {
     struct video_mixer *mixer = impl_from_IMFTransform(iface);
+    LONGLONG timestamp, duration;
     IDirect3DSurface9 *surface;
     IDirect3DDevice9 *device;
     unsigned int i;
@@ -1189,13 +1271,26 @@ static HRESULT WINAPI video_mixer_transform_ProcessOutput(IMFTransform *iface, D
                 }
             }
 
-            /* FIXME: for now discard input */
+            if (SUCCEEDED(hr))
+            {
+                video_mixer_render(mixer, surface);
+
+                timestamp = duration = 0;
+                if (SUCCEEDED(IMFSample_GetSampleTime(mixer->inputs[0].sample, &timestamp)))
+                {
+                    IMFSample_SetSampleTime(buffers->pSample, timestamp);
+
+                    IMFSample_GetSampleDuration(mixer->inputs[0].sample, &duration);
+                    IMFSample_SetSampleDuration(buffers->pSample, duration);
+                }
+            }
 
             if (SUCCEEDED(hr))
             {
                 for (i = 0; i < mixer->input_count; ++i)
                 {
-                    IMFSample_Release(mixer->inputs[i].sample);
+                    if (mixer->inputs[i].sample)
+                        IMFSample_Release(mixer->inputs[i].sample);
                     mixer->inputs[i].sample = NULL;
                     video_mixer_request_sample(mixer, i);
                 }
@@ -1203,12 +1298,17 @@ static HRESULT WINAPI video_mixer_transform_ProcessOutput(IMFTransform *iface, D
         }
         else
         {
-            if (SUCCEEDED(hr = video_mixer_get_d3d_device(mixer, &device)))
+            if (SUCCEEDED(video_mixer_get_sample_desired_time(buffers->pSample, &timestamp, &duration)))
             {
-                IDirect3DDevice9_ColorFill(device, surface, NULL, 0);
-                IDirect3DDeviceManager9_UnlockDevice(mixer->device_manager, mixer->device_handle, FALSE);
-                IDirect3DDevice9_Release(device);
+                if (SUCCEEDED(hr = video_mixer_get_d3d_device(mixer, &device)))
+                {
+                    IDirect3DDevice9_ColorFill(device, surface, NULL, 0);
+                    IDirect3DDeviceManager9_UnlockDevice(mixer->device_manager, mixer->device_handle, FALSE);
+                    IDirect3DDevice9_Release(device);
+                }
             }
+            else
+                hr = MF_E_TRANSFORM_NEED_MORE_INPUT;
         }
         IDirect3DSurface9_Release(surface);
     }
@@ -1550,11 +1650,13 @@ static HRESULT WINAPI video_mixer_getservice_GetService(IMFGetService *iface, RE
         {
             return IMFGetService_QueryInterface(iface, riid, obj);
         }
+
+        return E_NOINTERFACE;
     }
 
     FIXME("Unsupported service %s, riid %s.\n", debugstr_guid(service), debugstr_guid(riid));
 
-    return E_NOTIMPL;
+    return MF_E_UNSUPPORTED_SERVICE;
 }
 
 static const IMFGetServiceVtbl video_mixer_getservice_vtbl =
@@ -2138,7 +2240,7 @@ static ULONG WINAPI video_mixer_quality_advise_AddRef(IMFQualityAdvise *iface)
     return IMFTransform_AddRef(&mixer->IMFTransform_iface);
 }
 
-static ULONG WINAPI video_mixer_quality_Release(IMFQualityAdvise *iface)
+static ULONG WINAPI video_mixer_quality_advise_Release(IMFQualityAdvise *iface)
 {
     struct video_mixer *mixer = impl_from_IMFQualityAdvise(iface);
     return IMFTransform_Release(&mixer->IMFTransform_iface);
@@ -2183,7 +2285,7 @@ static const IMFQualityAdviseVtbl video_mixer_quality_advise_vtbl =
 {
     video_mixer_quality_advise_QueryInterface,
     video_mixer_quality_advise_AddRef,
-    video_mixer_quality_Release,
+    video_mixer_quality_advise_Release,
     video_mixer_quality_advise_SetDropMode,
     video_mixer_quality_advise_SetQualityLevel,
     video_mixer_quality_advise_GetDropMode,

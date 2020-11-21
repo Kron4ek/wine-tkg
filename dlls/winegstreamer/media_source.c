@@ -983,14 +983,19 @@ fail:
 
 static HRESULT media_stream_init_desc(struct media_stream *stream)
 {
-    GstCaps *current_caps = gst_pad_get_current_caps(stream->their_src);
+    GstCaps *base_caps = gst_pad_get_current_caps(stream->their_src);
     IMFMediaTypeHandler *type_handler;
     IMFMediaType **stream_types = NULL;
     IMFMediaType *stream_type = NULL;
+    GstCaps *current_caps = make_mf_compatible_caps(base_caps);
     DWORD type_count = 0;
     const gchar *major_type;
     unsigned int i;
     HRESULT hr;
+
+    gst_caps_unref(base_caps);
+    if (!current_caps)
+        return E_FAIL;
 
     major_type = gst_structure_get_name(gst_caps_get_structure(current_caps, 0));
 
@@ -1034,27 +1039,13 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
                 goto done;
         }
     }
-    else if (!strcmp(major_type, "audio/x-raw"))
+    else
     {
         stream_type = mf_media_type_from_caps(current_caps);
         if (stream_type)
         {
             stream_types = &stream_type;
             type_count = 1;
-        }
-    }
-    else
-    {
-        GstCaps *compatible_caps = make_mf_compatible_caps(current_caps);
-        if (compatible_caps)
-        {
-            stream_type = mf_media_type_from_caps(compatible_caps);
-            gst_caps_unref(compatible_caps);
-            if (stream_type)
-            {
-                stream_types = &stream_type;
-                type_count = 1;
-            }
         }
     }
 
@@ -1497,12 +1488,24 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     struct media_source *object = heap_alloc_zero(sizeof(*object));
     BOOL video_selected = FALSE, audio_selected = FALSE;
     IMFStreamDescriptor **descriptors = NULL;
+    IMFAttributes *byte_stream_attributes;
+    gint64 total_pres_time = 0;
+    DWORD bytestream_caps;
     unsigned int i;
     HRESULT hr;
     int ret;
 
     if (!object)
         return E_OUTOFMEMORY;
+
+    if (FAILED(hr = IMFByteStream_GetCapabilities(bytestream, &bytestream_caps)))
+        return hr;
+
+    if (!(bytestream_caps & MFBYTESTREAM_IS_SEEKABLE))
+    {
+        FIXME("Non-seekable bytestreams not supported.\n");
+        return MF_E_BYTESTREAM_NOT_SEEKABLE;
+    }
 
     object->IMFMediaSource_iface.lpVtbl = &IMFMediaSource_vtbl;
     object->IMFGetService_iface.lpVtbl = &IMFGetService_vtbl;
@@ -1630,73 +1633,61 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     heap_free(descriptors);
     descriptors = NULL;
 
+    for (i = 0; i < object->stream_count; i++)
     {
-        IMFAttributes *byte_stream_attributes;
-        gint64 total_pres_time = 0;
+        struct media_stream *stream = object->streams[i];
+        gint64 stream_pres_time;
+        GstEvent *tag_event;
 
-        if (SUCCEEDED(IMFByteStream_QueryInterface(object->byte_stream, &IID_IMFAttributes, (void **)&byte_stream_attributes)))
+        if (gst_pad_query_duration(stream->their_src, GST_FORMAT_TIME, &stream_pres_time))
         {
-            WCHAR *mimeW = NULL;
-            DWORD length;
-            if (SUCCEEDED(IMFAttributes_GetAllocatedString(byte_stream_attributes, &MF_BYTESTREAM_CONTENT_TYPE, &mimeW, &length)))
-            {
-                IMFPresentationDescriptor_SetString(object->pres_desc, &MF_PD_MIME_TYPE, mimeW);
-                CoTaskMemFree(mimeW);
-            }
-            IMFAttributes_Release(byte_stream_attributes);
+            if (stream_pres_time > total_pres_time)
+                total_pres_time = stream_pres_time;
+        }
+        else
+        {
+            WARN("Unable to get presentation time of stream %u\n", i);
         }
 
-        /* TODO: consider streams which don't start at T=0 */
-        for (unsigned int i = 0; i < object->stream_count; i++)
+        tag_event = gst_pad_get_sticky_event(stream->their_src, GST_EVENT_TAG, 0);
+        if (tag_event)
         {
-            struct media_stream *stream = object->streams[i];
-            GstEvent *tag_event;
-            GstQuery *query;
+            GstTagList *tag_list;
+            gchar *language_code = NULL;
 
-            query = gst_query_new_duration(GST_FORMAT_TIME);
-            if (gst_pad_query(stream->their_src, query))
+            gst_event_parse_tag(tag_event, &tag_list);
+
+            gst_tag_list_get_string(tag_list, "language-code", &language_code);
+            if (language_code)
             {
-                gint64 stream_pres_time;
-                gst_query_parse_duration(query, NULL, &stream_pres_time);
-
-                TRACE("Stream %u has duration %lu\n", i, stream_pres_time);
-
-                if (stream_pres_time > total_pres_time)
-                    total_pres_time = stream_pres_time;
-            }
-            else
-            {
-                WARN("Unable to get presentation time of stream %u\n", i);
-            }
-
-            tag_event = gst_pad_get_sticky_event(stream->their_src, GST_EVENT_TAG, 0);
-            if (tag_event)
-            {
-                GstTagList *tag_list;
-                gchar *language_code = NULL;
-
-                gst_event_parse_tag(tag_event, &tag_list);
-
-                gst_tag_list_get_string(tag_list, "language-code", &language_code);
-                if (language_code)
+                DWORD char_count = MultiByteToWideChar(CP_UTF8, 0, language_code, -1, NULL, 0);
+                if (char_count)
                 {
-                    DWORD char_count = MultiByteToWideChar(CP_UTF8, 0, language_code, -1, NULL, 0);
-                    if (char_count)
-                    {
-                        WCHAR *language_codeW = heap_alloc(char_count * sizeof(WCHAR));
-                        MultiByteToWideChar(CP_UTF8, 0, language_code, -1, language_codeW, char_count);
-                        IMFStreamDescriptor_SetString(stream->descriptor, &MF_SD_LANGUAGE, language_codeW);
-                        heap_free(language_codeW);
-                    }
-                    g_free(language_code);
+                    WCHAR *language_codeW = heap_alloc(char_count * sizeof(WCHAR));
+                    MultiByteToWideChar(CP_UTF8, 0, language_code, -1, language_codeW, char_count);
+                    IMFStreamDescriptor_SetString(stream->descriptor, &MF_SD_LANGUAGE, language_codeW);
+                    heap_free(language_codeW);
                 }
-
-                gst_event_unref(tag_event);
+                g_free(language_code);
             }
-        }
 
-        if (object->stream_count)
-            IMFPresentationDescriptor_SetUINT64(object->pres_desc, &MF_PD_DURATION, total_pres_time / 100);
+            gst_event_unref(tag_event);
+        }
+    }
+
+    if (object->stream_count)
+        IMFPresentationDescriptor_SetUINT64(object->pres_desc, &MF_PD_DURATION, total_pres_time / 100);
+
+    if (SUCCEEDED(IMFByteStream_QueryInterface(object->byte_stream, &IID_IMFAttributes, (void **)&byte_stream_attributes)))
+    {
+        WCHAR *mimeW = NULL;
+        DWORD length;
+        if (SUCCEEDED(IMFAttributes_GetAllocatedString(byte_stream_attributes, &MF_BYTESTREAM_CONTENT_TYPE, &mimeW, &length)))
+        {
+            IMFPresentationDescriptor_SetString(object->pres_desc, &MF_PD_MIME_TYPE, mimeW);
+            CoTaskMemFree(mimeW);
+        }
+        IMFAttributes_Release(byte_stream_attributes);
     }
 
     object->state = SOURCE_STOPPED;

@@ -1656,6 +1656,19 @@ Class class_test_identifiers_as_function_name
     End Sub
 End Class
 
+Class class_test_identifiers_as_property_name
+    Public Property Get Property()
+    End Property
+
+    Public Property Let Error(par)
+        Error = par
+    End Property
+
+    Public Property Set Default(par)
+        Set Default = par
+    End Property
+End Class
+
 sub test_dotIdentifiers
     ' test keywords that can also be an identifier after a dot
     Call ok(testObj.rem = 10, "testObj.rem = " & testObj.rem & " expected 10")
@@ -1756,6 +1769,27 @@ class TestPropSyntax
         def = ""
     end property
 end class
+
+Class TestPropParam
+    Public oDict
+    Public Property Let Key(oldKey,newKey)
+        oDict = oldKey & newKey
+    End Property
+    Public Property Let three(uno,due,tre)
+        oDict = uno & due & tre
+    End Property
+    Public Property Let ten(a,b,c,d,e,f,g,h,i,j)
+        oDict = a & b & c & d & e & f & g & h & i & j
+    End Property
+End Class
+
+Set x = new TestPropParam
+x.key("old") = "new"
+call ok(x.oDict = "oldnew","x.oDict = " & x.oDict & " expected oldnew")
+x.three(1,2) = 3
+call ok(x.oDict = "123","x.oDict = " & x.oDict & " expected 123")
+x.ten(1,2,3,4,5,6,7,8,9) = 0
+call ok(x.oDict = "1234567890","x.oDict = " & x.oDict & " expected 1234567890")
 
 set x = new TestPropSyntax
 set x.prop = new TestPropSyntax

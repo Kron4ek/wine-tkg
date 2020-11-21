@@ -26,15 +26,10 @@
  * Use the file flag hints O_SEQUENTIAL, O_RANDOM, O_SHORT_LIVED
  */
 
-#include "config.h"
-#include "wine/port.h"
 
 #define __iob_func mingw___iob_func
 #include <stdarg.h>
 #include <stdio.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
 #include <sys/types.h>
 #include <limits.h>
 
@@ -2532,7 +2527,7 @@ int CDECL MSVCRT__open_osfhandle(MSVCRT_intptr_t handle, int oflags)
   flags |= split_oflags(oflags);
 
   fd = msvcrt_alloc_fd((HANDLE)handle, flags);
-  TRACE(":handle (%ld) fd (%d) flags 0x%08x\n", handle, fd, flags);
+  TRACE(":handle (%Iu) fd (%d) flags 0x%08x\n", handle, fd, flags);
   return fd;
 }
 
@@ -3013,7 +3008,7 @@ int CDECL MSVCRT_stat64(const char* path, struct MSVCRT__stat64 * buf)
                  Also a letter as first char isn't enough to be classified
 		 as a drive letter
   */
-  if (isalpha(*path)&& (*(path+1)==':'))
+  if (MSVCRT_isalpha(*path)&& (*(path+1)==':'))
     buf->st_dev = buf->st_rdev = MSVCRT__toupper_l(*path, NULL) - 'A'; /* drive num */
   else
     buf->st_dev = buf->st_rdev = MSVCRT__getdrive() - 1;
@@ -4407,7 +4402,7 @@ MSVCRT_size_t CDECL MSVCRT__fread_nolock_s(void *buf, MSVCRT_size_t buf_size, MS
 {
     size_t bytes_left, buf_pos;
 
-    TRACE("(%p %lu %lu %lu %p)\n", buf, buf_size, elem_size, count, stream);
+    TRACE("(%p %Iu %Iu %Iu %p)\n", buf, buf_size, elem_size, count, stream);
 
     if(!MSVCRT_CHECK_PMT(stream != NULL)) {
         if(buf && buf_size)
@@ -4545,7 +4540,7 @@ int CDECL MSVCRT_freopen_s(MSVCRT_FILE** pFile,
 /*********************************************************************
  *		fsetpos (MSVCRT.@)
  */
-int CDECL MSVCRT_fsetpos(MSVCRT_FILE* file, MSVCRT_fpos_t *pos)
+int CDECL MSVCRT_fsetpos(MSVCRT_FILE* file, fpos_t *pos)
 {
   int ret;
 
@@ -4651,7 +4646,7 @@ LONG CDECL MSVCRT__ftell_nolock(MSVCRT_FILE* file)
 /*********************************************************************
  *		fgetpos (MSVCRT.@)
  */
-int CDECL MSVCRT_fgetpos(MSVCRT_FILE* file, MSVCRT_fpos_t *pos)
+int CDECL MSVCRT_fgetpos(MSVCRT_FILE* file, fpos_t *pos)
 {
     *pos = MSVCRT__ftelli64(file);
     if(*pos == -1)

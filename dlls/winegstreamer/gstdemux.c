@@ -1003,7 +1003,7 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
 
     if (!strcmp(typename, "video/x-raw"))
     {
-        GstElement *deinterlace, *vconv, *flip, *vconv2;
+        GstElement *deinterlace, *vconv, *yuvfix, *flip, *vconv2, *yuvfix2;
 
         /* DirectShow can express interlaced video, but downstream filters can't
          * necessarily consume it. In particular, the video renderer can't. */
@@ -1024,8 +1024,12 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
             goto out;
         }
 
-        /* Avoid expensive color matrix conversions. */
-        gst_util_set_object_arg(G_OBJECT(vconv), "matrix-mode", "none");
+        /* To avoid expensive color matrix conversions, keep YUV colorimetry info */
+        if (!(yuvfix = gst_element_factory_make("yuvfixup", NULL)))
+        {
+            ERR("Failed to create our yuvfixup element\n");
+            goto out;
+        }
 
         /* GStreamer outputs RGB video top-down, but DirectShow expects bottom-up. */
         if (!(flip = gst_element_factory_make("videoflip", NULL)))
@@ -1044,25 +1048,35 @@ static void init_new_decoded_pad(GstElement *bin, GstPad *pad, struct gstdemux *
             goto out;
         }
 
-        /* Avoid expensive color matrix conversions. */
-        gst_util_set_object_arg(G_OBJECT(vconv2), "matrix-mode", "none");
+        /* To avoid expensive color matrix conversions, keep YUV colorimetry info */
+        if (!(yuvfix2 = gst_element_factory_make("yuvfixup", NULL)))
+        {
+            ERR("Failed to create our yuvfixup2 element\n");
+            goto out;
+        }
 
         /* The bin takes ownership of these elements. */
         gst_bin_add(GST_BIN(This->container), deinterlace);
         gst_element_sync_state_with_parent(deinterlace);
         gst_bin_add(GST_BIN(This->container), vconv);
         gst_element_sync_state_with_parent(vconv);
+        gst_bin_add(GST_BIN(This->container), yuvfix);
+        gst_element_sync_state_with_parent(yuvfix);
         gst_bin_add(GST_BIN(This->container), flip);
         gst_element_sync_state_with_parent(flip);
         gst_bin_add(GST_BIN(This->container), vconv2);
         gst_element_sync_state_with_parent(vconv2);
+        gst_bin_add(GST_BIN(This->container), yuvfix2);
+        gst_element_sync_state_with_parent(yuvfix2);
 
         gst_element_link(deinterlace, vconv);
-        gst_element_link(vconv, flip);
+        gst_element_link(vconv, yuvfix);
+        gst_element_link(yuvfix, flip);
         gst_element_link(flip, vconv2);
+        gst_element_link(vconv2, yuvfix2);
 
         pin->post_sink = gst_element_get_static_pad(deinterlace, "sink");
-        pin->post_src = gst_element_get_static_pad(vconv2, "src");
+        pin->post_src = gst_element_get_static_pad(yuvfix2, "src");
         pin->flip = flip;
     }
     else if (!strcmp(typename, "audio/x-raw"))
@@ -1432,22 +1446,20 @@ static void gstdemux_destroy(struct strmbase_filter *iface)
 static HRESULT gstdemux_init_stream(struct strmbase_filter *iface)
 {
     struct gstdemux *filter = impl_from_strmbase_filter(iface);
-    HRESULT hr = VFW_E_NOT_CONNECTED, pin_hr;
     const SourceSeeking *seeking;
     GstStateChangeReturn ret;
     unsigned int i;
 
     if (!filter->container)
-        return VFW_E_NOT_CONNECTED;
+        return S_OK;
 
     for (i = 0; i < filter->source_count; ++i)
     {
-        if (SUCCEEDED(pin_hr = BaseOutputPinImpl_Active(&filter->sources[i]->pin)))
-            hr = pin_hr;
-    }
+        HRESULT hr;
 
-    if (FAILED(hr))
-        return hr;
+        if (filter->sources[i]->pin.pin.peer && FAILED(hr = IMemAllocator_Commit(filter->sources[i]->pin.pAllocator)))
+            ERR("Failed to commit allocator, hr %#x.\n", hr);
+    }
 
     if (filter->no_more_pads_event)
         ResetEvent(filter->no_more_pads_event);
@@ -1480,7 +1492,7 @@ static HRESULT gstdemux_init_stream(struct strmbase_filter *iface)
                 stop_type, seeking->llStop * 100));
     }
 
-    return hr;
+    return S_OK;
 }
 
 static HRESULT gstdemux_start_stream(struct strmbase_filter *iface, REFERENCE_TIME time)
@@ -1489,7 +1501,7 @@ static HRESULT gstdemux_start_stream(struct strmbase_filter *iface, REFERENCE_TI
     GstStateChangeReturn ret;
 
     if (!filter->container)
-        return VFW_E_NOT_CONNECTED;
+        return S_OK;
 
     if ((ret = gst_element_set_state(filter->container, GST_STATE_PLAYING)) == GST_STATE_CHANGE_FAILURE)
     {
@@ -1507,7 +1519,7 @@ static HRESULT gstdemux_stop_stream(struct strmbase_filter *iface)
     GstStateChangeReturn ret;
 
     if (!filter->container)
-        return VFW_E_NOT_CONNECTED;
+        return S_OK;
 
     if ((ret = gst_element_set_state(filter->container, GST_STATE_PAUSED)) == GST_STATE_CHANGE_FAILURE)
     {

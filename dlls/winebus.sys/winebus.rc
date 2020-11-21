@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 Rémi Bernon for CodeWeavers
+ * Copyright 2020 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,18 +16,5 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifdef __WIDL__
-#pragma winrt ns_prefix
-#endif
-
-namespace Windows {
-    namespace Foundation {
-        [contractversion(4)]
-        apicontract FoundationContract
-        {};
-
-        [contractversion(10)]
-        apicontract UniversalApiContract
-        {};
-    }
-}
+/* @makedep: winebus.inf */
+1 WINE_DATA_FILE winebus.inf

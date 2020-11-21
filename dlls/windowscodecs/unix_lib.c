@@ -62,6 +62,11 @@ HRESULT CDECL stream_seek(IStream *stream, LONGLONG ofs, DWORD origin, ULONGLONG
     return win32_funcs->stream_seek(stream, ofs, origin, new_position);
 }
 
+HRESULT CDECL stream_write(IStream *stream, const void *buffer, ULONG write, ULONG *bytes_written)
+{
+    return win32_funcs->stream_write(stream, buffer, write, bytes_written);
+}
+
 HRESULT CDECL decoder_create(const CLSID *decoder_clsid, struct decoder_info *info, struct decoder **result)
 {
     if (IsEqualGUID(decoder_clsid, &CLSID_WICPngDecoder))
@@ -69,6 +74,17 @@ HRESULT CDECL decoder_create(const CLSID *decoder_clsid, struct decoder_info *in
 
     if (IsEqualGUID(decoder_clsid, &CLSID_WICTiffDecoder))
         return tiff_decoder_create(info, result);
+
+    if (IsEqualGUID(decoder_clsid, &CLSID_WICJpegDecoder))
+        return jpeg_decoder_create(info, result);
+
+    return E_NOTIMPL;
+}
+
+HRESULT CDECL encoder_create(const CLSID *encoder_clsid, struct encoder_info *info, struct encoder **result)
+{
+    if (IsEqualGUID(encoder_clsid, &CLSID_WICPngEncoder))
+        return png_encoder_create(info, result);
 
     return E_NOTIMPL;
 }
@@ -80,7 +96,15 @@ static const struct unix_funcs unix_funcs = {
     decoder_copy_pixels,
     decoder_get_metadata_blocks,
     decoder_get_color_context,
-    decoder_destroy
+    decoder_destroy,
+    encoder_create,
+    encoder_initialize,
+    encoder_get_supported_format,
+    encoder_create_frame,
+    encoder_write_lines,
+    encoder_commit_frame,
+    encoder_commit_file,
+    encoder_destroy
 };
 
 NTSTATUS CDECL __wine_init_unix_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out )

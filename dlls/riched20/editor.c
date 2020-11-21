@@ -244,9 +244,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(richedit);
 
 static BOOL ME_RegisterEditorClass(HINSTANCE);
 static BOOL ME_UpdateLinkAttribute(ME_TextEditor *editor, ME_Cursor *start, int nChars);
-
-static const WCHAR REListBox20W[] = {'R','E','L','i','s','t','B','o','x','2','0','W', 0};
-static const WCHAR REComboBox20W[] = {'R','E','C','o','m','b','o','B','o','x','2','0','W', 0};
 static HCURSOR hLeft;
 
 BOOL me_debug = FALSE;
@@ -630,10 +627,9 @@ void ME_RTFParAttrHook(RTF_Info *info)
         else
         {
           ME_Cursor cursor;
-          WCHAR endl = '\r';
           cursor = info->editor->pCursors[0];
           if (cursor.nOffset || cursor.run->nCharOfs)
-            ME_InsertTextFromCursor(info->editor, 0, &endl, 1, info->style);
+            ME_InsertTextFromCursor(info->editor, 0, L"\r", 1, info->style);
           tableDef->row_start = table_insert_row_start( info->editor, info->editor->pCursors );
         }
 
@@ -1082,8 +1078,6 @@ void ME_RTFSpecialCharHook(RTF_Info *info)
       }
       else /* v1.0 - v3.0 */
       {
-        WCHAR endl = '\r';
-
         para = info->editor->pCursors[0].para;
         para->fmt.dxOffset = info->tableDef->gapH;
         para->fmt.dxStartIndent = info->tableDef->leftEdge;
@@ -1097,7 +1091,7 @@ void ME_RTFSpecialCharHook(RTF_Info *info)
         }
         para->fmt.cTabCount = min(tableDef->numCellsDefined, MAX_TAB_STOPS);
         if (!tableDef->numCellsDefined) para->fmt.wEffects &= ~PFE_TABLE;
-        ME_InsertTextFromCursor(info->editor, 0, &endl, 1, info->style);
+        ME_InsertTextFromCursor(info->editor, 0, L"\r", 1, info->style);
         tableDef->numCellsInserted = 0;
       }
       break;
@@ -2222,8 +2216,6 @@ static DWORD CALLBACK ME_ReadFromHGLOBALRTF(DWORD_PTR dwCookie, LPBYTE lpBuff, L
   return 0;
 }
 
-static const WCHAR rtfW[] = {'R','i','c','h',' ','T','e','x','t',' ','F','o','r','m','a','t',0};
-
 static HRESULT paste_rtf(ME_TextEditor *editor, FORMATETC *fmt, STGMEDIUM *med)
 {
     EDITSTREAM es;
@@ -2278,7 +2270,7 @@ static struct paste_format
     const WCHAR *name;
 } paste_formats[] =
 {
-    {{ -1,             NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL }, paste_rtf, rtfW },
+    {{ -1,             NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL }, paste_rtf, L"Rich Text Format" },
     {{ CF_UNICODETEXT, NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL }, paste_text },
     {{ CF_ENHMETAFILE, NULL, DVASPECT_CONTENT, -1, TYMED_ENHMF },   paste_emf },
     {{ 0 }}
@@ -2493,8 +2485,6 @@ static BOOL handle_enter(ME_TextEditor *editor)
 
     if (editor->styleFlags & ES_MULTILINE)
     {
-        static const WCHAR endl = '\r';
-        static const WCHAR endlv10[] = {'\r','\n'};
         ME_Cursor cursor = editor->pCursors[0];
         ME_Paragraph *para = cursor.para;
         int from, to;
@@ -2535,7 +2525,7 @@ static BOOL handle_enter(ME_TextEditor *editor)
                     editor->pCursors[0].para = para;
                     editor->pCursors[0].run = para_first_run( para );
                     editor->pCursors[1] = editor->pCursors[0];
-                    ME_InsertTextFromCursor( editor, 0, &endl, 1, editor->pCursors[0].run->style );
+                    ME_InsertTextFromCursor( editor, 0, L"\r", 1, editor->pCursors[0].run->style );
                     para = editor_first_para( editor );
                     editor_set_default_para_fmt( editor, &para->fmt );
                     para->nFlags = 0;
@@ -2584,7 +2574,7 @@ static BOOL handle_enter(ME_TextEditor *editor)
                             }
                             editor->pCursors[0].nOffset = 0;
                             editor->pCursors[1] = editor->pCursors[0];
-                            ME_InsertTextFromCursor( editor, 0, &endl, 1, editor->pCursors[0].run->style );
+                            ME_InsertTextFromCursor( editor, 0, L"\r", 1, editor->pCursors[0].run->style );
                         }
                         else
                         {
@@ -2616,9 +2606,9 @@ static BOOL handle_enter(ME_TextEditor *editor)
                 ME_InsertEndRowFromCursor(editor, 0);
             else
                 if (!editor->bEmulateVersion10)
-                    ME_InsertTextFromCursor(editor, 0, &endl, 1, eop_style);
+                    ME_InsertTextFromCursor(editor, 0, L"\r", 1, eop_style);
                 else
-                    ME_InsertTextFromCursor(editor, 0, endlv10, 2, eop_style);
+                    ME_InsertTextFromCursor(editor, 0, L"\r\n", 2, eop_style);
             ME_CommitCoalescingUndo(editor);
             SetCursor(NULL);
 
@@ -3273,9 +3263,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
       UnregisterClassA(RICHEDIT_CLASS20A, 0);
       UnregisterClassA("RichEdit50A", 0);
       if (ME_ListBoxRegistered)
-          UnregisterClassW(REListBox20W, 0);
+          UnregisterClassW(L"REListBox20W", 0);
       if (ME_ComboBoxRegistered)
-          UnregisterClassW(REComboBox20W, 0);
+          UnregisterClassW(L"REComboBox20W", 0);
       LookupCleanup();
       HeapDestroy (me_heap);
       release_typelib();
@@ -5149,7 +5139,6 @@ int ME_GetTextW(ME_TextEditor *editor, WCHAR *buffer, int buflen,
 {
   ME_Run *run, *next_run;
   const WCHAR *pStart = buffer;
-  const WCHAR cr_lf[] = {'\r', '\n', 0};
   const WCHAR *str;
   int nLen;
 
@@ -5172,7 +5161,7 @@ int ME_GetTextW(ME_TextEditor *editor, WCHAR *buffer, int buflen,
        *        also uses this function. */
       srcChars -= min(nLen, srcChars);
       nLen = 2;
-      str = cr_lf;
+      str = L"\r\n";
     }
     else
     {
@@ -5290,7 +5279,7 @@ LRESULT WINAPI REExtendedRegisterClass(void)
   {
       wcW.style = CS_PARENTDC | CS_DBLCLKS | CS_GLOBALCLASS;
       wcW.lpfnWndProc = REListWndProc;
-      wcW.lpszClassName = REListBox20W;
+      wcW.lpszClassName = L"REListBox20W";
       if (RegisterClassW(&wcW)) ME_ListBoxRegistered = TRUE;
   }
 
@@ -5298,7 +5287,7 @@ LRESULT WINAPI REExtendedRegisterClass(void)
   {
       wcW.style = CS_PARENTDC | CS_DBLCLKS | CS_GLOBALCLASS | CS_VREDRAW | CS_HREDRAW;
       wcW.lpfnWndProc = REComboWndProc;
-      wcW.lpszClassName = REComboBox20W;
+      wcW.lpszClassName = L"REComboBox20W";
       if (RegisterClassW(&wcW)) ME_ComboBoxRegistered = TRUE;  
   }
 
@@ -5321,13 +5310,13 @@ static int __cdecl wchar_comp( const void *key, const void *elem )
 static BOOL isurlneutral( WCHAR c )
 {
     /* NB this list is sorted */
-    static const WCHAR neutral_chars[] = {'!','\"','\'','(',')',',','-','.',':',';','<','>','?','[',']','{','}'};
+    static const WCHAR neutral_chars[] = L"!\"'(),-.:;<>?[]{}";
 
     /* Some shortcuts */
     if (isalnum( c )) return FALSE;
-    if (c > neutral_chars[ARRAY_SIZE( neutral_chars ) - 1]) return FALSE;
+    if (c > L'}') return FALSE;
 
-    return !!bsearch( &c, neutral_chars, ARRAY_SIZE( neutral_chars ), sizeof(c), wchar_comp );
+    return !!bsearch( &c, neutral_chars, ARRAY_SIZE( neutral_chars ) - 1, sizeof(c), wchar_comp );
 }
 
 /**
@@ -5439,23 +5428,25 @@ done:
 static BOOL ME_IsCandidateAnURL(ME_TextEditor *editor, const ME_Cursor *start, int nChars)
 {
 #define MAX_PREFIX_LEN 9
+#define X(str)  str, ARRAY_SIZE(str) - 1
   struct prefix_s {
     const WCHAR text[MAX_PREFIX_LEN];
     int length;
   }prefixes[] = {
-    {{'p','r','o','s','p','e','r','o',':'}, 9},
-    {{'t','e','l','n','e','t',':'}, 7},
-    {{'g','o','p','h','e','r',':'}, 7},
-    {{'m','a','i','l','t','o',':'}, 7},
-    {{'h','t','t','p','s',':'}, 6},
-    {{'f','i','l','e',':'}, 5},
-    {{'n','e','w','s',':'}, 5},
-    {{'w','a','i','s',':'}, 5},
-    {{'n','n','t','p',':'}, 5},
-    {{'h','t','t','p',':'}, 5},
-    {{'w','w','w','.'}, 4},
-    {{'f','t','p',':'}, 4},
+    {X(L"prospero:")},
+    {X(L"telnet:")},
+    {X(L"gopher:")},
+    {X(L"mailto:")},
+    {X(L"https:")},
+    {X(L"file:")},
+    {X(L"news:")},
+    {X(L"wais:")},
+    {X(L"nntp:")},
+    {X(L"http:")},
+    {X(L"www.")},
+    {X(L"ftp:")},
   };
+#undef X
   WCHAR bufferW[MAX_PREFIX_LEN + 1];
   unsigned int i;
 

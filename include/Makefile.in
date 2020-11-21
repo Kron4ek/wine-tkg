@@ -21,7 +21,6 @@ SOURCES = \
 	appmodel.h \
 	asferr.h \
 	asptlb.idl \
-	asyncinfo.idl \
 	asynot.idl \
 	asysta.idl \
 	atlbase.h \
@@ -65,6 +64,9 @@ SOURCES = \
 	cierror.h \
 	clusapi.h \
 	cmdbas.idl \
+	cmdpre.idl \
+	cmdprp.idl \
+	cmdstrm.idl \
 	cmdtxt.idl \
 	cmnquery.idl \
 	codecapi.h \
@@ -93,6 +95,7 @@ SOURCES = \
 	custcntl.h \
 	cuviddec.h \
 	cvconst.h \
+	cvttyp.idl \
 	d2d1.idl \
 	d2d1_1.idl \
 	d2d1_2.idl \
@@ -311,6 +314,7 @@ SOURCES = \
 	gdiplusmetaheader.h \
 	gdipluspixelformats.h \
 	gdiplustypes.h \
+	getdts.idl \
 	guiddef.h \
 	hidusage.h \
 	highlevelmonitorconfigurationapi.h \
@@ -615,9 +619,11 @@ SOURCES = \
 	rpcproxy.h \
 	rpcsal.h \
 	rstbas.idl \
+	rstchg.idl \
 	rstinf.idl \
 	rstloc.idl \
 	rstnot.idl \
+	rstupd.idl \
 	rtutils.h \
 	rtworkq.idl \
 	sal.h \
@@ -745,14 +751,7 @@ SOURCES = \
 	windef.h \
 	windns.h \
 	windows.foundation.idl \
-	windows.gaming.input.idl \
-	windows.gaming.input.forcefeedback.idl \
-	windows.globalization.idl \
-	windows.system.userprofile.idl \
-	windows.media.speechsynthesis.idl \
-	windows.system.idl \
 	windows.h \
-	windowscontracts.idl \
 	windowsx.h \
 	wine/debug.h \
 	wine/exception.h \

@@ -150,7 +150,6 @@ ME_Row *para_end_row( ME_Paragraph *para )
 
 void ME_MakeFirstParagraph(ME_TextEditor *editor)
 {
-  static const WCHAR cr_lf[] = {'\r','\n',0};
   ME_Context c;
   CHARFORMAT2W cf;
   const CHARFORMATW *host_cf;
@@ -202,7 +201,7 @@ void ME_MakeFirstParagraph(ME_TextEditor *editor)
   }
 
   eol_len = editor->bEmulateVersion10 ? 2 : 1;
-  para->text = ME_MakeStringN( cr_lf, eol_len );
+  para->text = ME_MakeStringN( L"\r\n", eol_len );
 
   run = run_create( style, MERF_ENDPARA );
   run->nCharOfs = 0;
@@ -280,7 +279,6 @@ static ME_String *para_num_get_str( ME_Paragraph *para, WORD num )
     /* max 4 Roman letters (representing '8') / decade + '(' + ')' */
     ME_String *str = ME_MakeStringEmpty( 20 + 2 );
     WCHAR *p;
-    static const WCHAR fmtW[] = {'%', 'd', 0};
     static const WORD letter_base[] = { 1, 26, 26 * 26, 26 * 26 * 26 };
     /* roman_base should start on a '5' not a '1', otherwise the 'total' code will need adjusting.
        'N' and 'O' are what MS uses for 5000 and 10000, their version doesn't work well above 30000,
@@ -309,7 +307,7 @@ static ME_String *para_num_get_str( ME_Paragraph *para, WORD num )
     {
     case PFN_ARABIC:
     default:
-        p += swprintf( p, 20, fmtW, num );
+        p += swprintf( p, 20, L"%d", num );
         break;
 
     case PFN_LCLETTER:
@@ -393,9 +391,6 @@ void para_num_init( ME_Context *c, ME_Paragraph *para )
 {
     ME_Style *style;
     CHARFORMAT2W cf;
-    static const WCHAR bullet_font[] = {'S','y','m','b','o','l',0};
-    static const WCHAR bullet_str[] = {0xb7, 0};
-    static const WCHAR spaceW[] = {' ', 0};
     SIZE sz;
 
     if (!para->fmt.wNumbering) return;
@@ -409,7 +404,7 @@ void para_num_init( ME_Context *c, ME_Paragraph *para )
         {
             cf.cbSize = sizeof(cf);
             cf.dwMask = CFM_FACE | CFM_CHARSET;
-            memcpy( cf.szFaceName, bullet_font, sizeof(bullet_font) );
+            lstrcpyW( cf.szFaceName, L"Symbol" );
             cf.bCharSet = SYMBOL_CHARSET;
             style = ME_ApplyStyle( c->editor, style, &cf );
         }
@@ -426,13 +421,13 @@ void para_num_init( ME_Context *c, ME_Paragraph *para )
         if (para->fmt.wNumbering != PFN_BULLET)
             para->para_num.text = para_num_get_str( para, para_num_get_num( para ) );
         else
-            para->para_num.text = ME_MakeStringConst( bullet_str, 1 );
+            para->para_num.text = ME_MakeStringConst( L"\x00b7", 1 );
     }
 
     select_style( c, para->para_num.style );
     GetTextExtentPointW( c->hDC, para->para_num.text->szData, para->para_num.text->nLen, &sz );
     para->para_num.width = sz.cx;
-    GetTextExtentPointW( c->hDC, spaceW, 1, &sz );
+    GetTextExtentPointW( c->hDC, L" ", 1, &sz );
     para->para_num.width += sz.cx;
 }
 
@@ -674,7 +669,7 @@ ME_Paragraph *para_split( ME_TextEditor *editor, ME_Run *run, ME_Style *style,
   para_mark_rewrap( editor, &new_para->prev_para->member.para );
 
   /* we've added the end run, so we need to modify nCharOfs in the next paragraphs */
-  ME_PropagateCharOffset( para_get_di( next_para ), eol_len );
+  editor_propagate_char_ofs( next_para, NULL, eol_len );
   editor->nParagraphs++;
 
   return new_para;
@@ -684,12 +679,10 @@ ME_Paragraph *para_split( ME_TextEditor *editor, ME_Run *run, ME_Style *style,
    specified in use_first_fmt */
 ME_Paragraph *para_join( ME_TextEditor *editor, ME_Paragraph *para, BOOL use_first_fmt )
 {
-  ME_DisplayItem *tmp;
   ME_Paragraph *next = para_next( para );
   ME_Run *end_run, *next_first_run, *tmp_run;
   ME_Cell *cell = NULL;
-  int i, shift;
-  int end_len;
+  int i, end_len;
   CHARFORMAT2W fmt;
   ME_Cursor startCur, endCur;
   ME_String *eol_str;
@@ -718,20 +711,13 @@ ME_Paragraph *para_join( ME_TextEditor *editor, ME_Paragraph *para, BOOL use_fir
 
   if (!editor->bEmulateVersion10) /* v4.1 */
   {
+    /* Remove cell boundary if it is between the end paragraph run and the next
+     * paragraph display item. */
+    if (para->cell != next->cell) cell = next->cell;
+
     /* Table cell/row properties are always moved over from the removed para. */
     para->nFlags = next->nFlags;
     para->cell = next->cell;
-
-    /* Remove cell boundary if it is between the end paragraph run and the next
-     * paragraph display item. */
-    for (tmp = run_get_di( end_run ); tmp != para_get_di( next ); tmp = tmp->next)
-    {
-      if (tmp->type == diCell)
-      {
-        cell = &tmp->member.cell;
-        break;
-      }
-    }
   }
 
   add_undo_split_para( editor, next, eol_str, cell );
@@ -751,8 +737,6 @@ ME_Paragraph *para_join( ME_TextEditor *editor, ME_Paragraph *para, BOOL use_fir
     para->border = next->border;
   }
 
-  shift = next->nCharOfs - para->nCharOfs - end_len;
-
   /* Update selection cursors so they don't point to the removed end
    * paragraph run, and point to the correct paragraph. */
   for (i = 0; i < editor->nCursors; i++)
@@ -768,8 +752,7 @@ ME_Paragraph *para_join( ME_TextEditor *editor, ME_Paragraph *para, BOOL use_fir
 
   for (tmp_run = next_first_run; tmp_run; tmp_run = run_next( tmp_run ))
   {
-    TRACE( "shifting %s by %d (previous %d)\n", debugstr_run( tmp_run ), shift, tmp_run->nCharOfs );
-    tmp_run->nCharOfs += shift;
+    tmp_run->nCharOfs += next->nCharOfs - para->nCharOfs - end_len;
     tmp_run->para = para;
   }
 
@@ -789,17 +772,13 @@ ME_Paragraph *para_join( ME_TextEditor *editor, ME_Paragraph *para, BOOL use_fir
   ME_Remove( para_get_di(next) );
   para_destroy( editor, next );
 
-  ME_PropagateCharOffset( para->next_para, -end_len );
+  editor_propagate_char_ofs( para_next( para ), NULL, -end_len );
 
   ME_CheckCharOffsets(editor);
 
   editor->nParagraphs--;
   para_mark_rewrap( editor, para );
   return para;
-}
-
-ME_DisplayItem *ME_GetParagraph(ME_DisplayItem *item) {
-  return ME_FindItemBackOrHere(item, diParagraph);
 }
 
 void ME_DumpParaStyleToBuf(const PARAFORMAT2 *pFmt, char buf[2048])

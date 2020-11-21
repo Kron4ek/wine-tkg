@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 Rémi Bernon for CodeWeavers
+ * Copyright (C) 2020 Alistair Leslie-Hughes
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -15,31 +15,20 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-
-#ifdef __WIDL__
-#pragma winrt ns_prefix
+#if 0
+#pragma makedep install
 #endif
-
-import "inspectable.idl";
-
-typedef [v1_enum] enum AsyncStatus
-{
-    Started = 0,
-    Completed, 
-    Canceled, 
-    Error,
-} AsyncStatus;
 
 [
     object,
-    uuid(00000036-0000-0000-c000-000000000046),
+    uuid(0c733a75-2a1c-11ce-ade5-00aa0044773d),
     pointer_default(unique)
 ]
-interface IAsyncInfo : IInspectable
+interface IGetDataSource : IUnknown
 {
-    [propget] HRESULT Id([out, retval] unsigned __int32 *id);
-    [propget] HRESULT Status([out, retval] AsyncStatus *status);
-    [propget] HRESULT ErrorCode([out, retval] HRESULT *errorCode);
-    HRESULT Cancel();
-    HRESULT Close();
+    [local]
+    HRESULT GetDataSource([in] REFIID riid, [out, iid_is(riid)] IUnknown **datasource);
+
+    [call_as(GetDataSource)]
+    HRESULT RemoteGetDataSource([in] REFIID riid, [out, iid_is(riid)] IUnknown **datasource, [out] IErrorInfo **error);
 }

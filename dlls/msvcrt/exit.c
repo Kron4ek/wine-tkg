@@ -26,8 +26,8 @@
 WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 
 /* MT */
-#define LOCK_EXIT   _mlock(_EXIT_LOCK1)
-#define UNLOCK_EXIT _munlock(_EXIT_LOCK1)
+#define LOCK_EXIT   _lock(_EXIT_LOCK1)
+#define UNLOCK_EXIT _unlock(_EXIT_LOCK1)
 
 static MSVCRT_purecall_handler purecall_handler = NULL;
 
@@ -314,7 +314,7 @@ void CDECL MSVCRT__wassert(const MSVCRT_wchar_t* str, const MSVCRT_wchar_t* file
 /*********************************************************************
  *		_assert (MSVCRT.@)
  */
-void CDECL MSVCRT__assert(const char* str, const char* file, unsigned int line)
+void CDECL _assert(const char* str, const char* file, unsigned int line)
 {
     MSVCRT_wchar_t strW[1024], fileW[1024];
 

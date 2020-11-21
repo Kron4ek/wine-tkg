@@ -21,7 +21,6 @@ import "d2d1.idl";
 interface ID2D1DeviceContext;
 interface ID2D1StrokeStyle1;
 interface ID2D1PathGeometry1;
-interface ID2D1GdiMetafile;
 interface ID2D1Properties;
 interface IPrintDocumentPackageTarget;
 interface ID2D1PrintControl;
@@ -187,6 +186,33 @@ typedef enum D2D1_PROPERTY_TYPE
     D2D1_PROPERTY_TYPE_FORCE_DWORD = 0xffffffff,
 } D2D1_PROPERTY_TYPE;
 
+typedef enum D2D1_PROPERTY
+{
+    D2D1_PROPERTY_CLSID = 0x80000000,
+    D2D1_PROPERTY_DISPLAYNAME = 0x80000001,
+    D2D1_PROPERTY_AUTHOR = 0x80000002,
+    D2D1_PROPERTY_CATEGORY = 0x80000003,
+    D2D1_PROPERTY_DESCRIPTION = 0x80000004,
+    D2D1_PROPERTY_INPUTS = 0x80000005,
+    D2D1_PROPERTY_CACHED = 0x80000006,
+    D2D1_PROPERTY_PRECISION = 0x80000007,
+    D2D1_PROPERTY_MIN_INPUTS = 0x80000008,
+    D2D1_PROPERTY_MAX_INPUTS = 0x80000009,
+    D2D1_PROPERTY_FORCE_DWORD = 0xffffffff
+} D2D1_PROPERTY;
+
+typedef enum D2D1_SUBPROPERTY
+{
+    D2D1_SUBPROPERTY_DISPLAYNAME = 0x80000000,
+    D2D1_SUBPROPERTY_ISREADONLY = 0x80000001,
+    D2D1_SUBPROPERTY_MIN = 0x80000002,
+    D2D1_SUBPROPERTY_MAX = 0x80000003,
+    D2D1_SUBPROPERTY_DEFAULT = 0x80000004,
+    D2D1_SUBPROPERTY_FIELDS = 0x80000005,
+    D2D1_SUBPROPERTY_INDEX = 0x80000006,
+    D2D1_SUBPROPERTY_FORCE_DWORD = 0xffffffff
+} D2D1_SUBPROPERTY;
+
 typedef enum D2D1_THREADING_MODE
 {
     D2D1_THREADING_MODE_SINGLE_THREADED = D2D1_FACTORY_TYPE_SINGLE_THREADED,
@@ -285,7 +311,45 @@ typedef struct D2D1_EFFECT_INPUT_DESCRIPTION
     D2D1_RECT_F inputRectangle;
 } D2D1_EFFECT_INPUT_DESCRIPTION;
 
+typedef struct D2D1_POINT_DESCRIPTION
+{
+    D2D1_POINT_2F point;
+    D2D1_POINT_2F unitTangentVector;
+    UINT32 endSegment;
+    UINT32 endFigure;
+    float lengthToEndSegment;
+} D2D1_POINT_DESCRIPTION;
+
 typedef HRESULT (__stdcall *PD2D1_EFFECT_FACTORY)(IUnknown **effect);
+
+[
+    object,
+    uuid(82237326-8111-4f7c-bcf4-b5c1175564fe),
+    local,
+]
+interface ID2D1GdiMetafileSink : IUnknown
+{
+    HRESULT ProcessRecord(
+        [in] DWORD type,
+        [in, optional] const void *data,
+        [in] DWORD size
+    );
+}
+
+[
+    object,
+    uuid(2f543dc3-cfc1-4211-864f-cfd91c6f3395),
+    local,
+]
+interface ID2D1GdiMetafile : ID2D1Resource
+{
+    HRESULT Stream(
+        [in] ID2D1GdiMetafileSink *sink
+    );
+    HRESULT GetBounds(
+        [out] D2D1_RECT_F *bounds
+    );
+}
 
 [
     object,
@@ -561,6 +625,23 @@ interface ID2D1CommandList : ID2D1Image
 {
     HRESULT Stream(
         [in] ID2D1CommandSink *sink
+    );
+    HRESULT Close();
+}
+
+[
+    object,
+    uuid(2c1d867d-c290-41c8-ae7e-34a98702e9a5),
+    local,
+]
+interface ID2D1PrintControl : IUnknown
+{
+    HRESULT AddPage(
+        [in] ID2D1CommandList *list,
+        [in] D2D_SIZE_F size,
+        [in, optional] IStream *stream,
+        [out, optional] D2D1_TAG *tag1,
+        [out, optional] D2D1_TAG *tag2
     );
     HRESULT Close();
 }

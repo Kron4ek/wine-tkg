@@ -1163,11 +1163,41 @@ GstCaps *make_mf_compatible_caps(GstCaps *caps)
     if (gst_caps_get_size(caps) != 1)
         return NULL;
 
+    /* Optimization: Don't copy caps if no transformation is needed */
+    if ((media_type = mf_media_type_from_caps(caps)))
+    {
+        IMFMediaType_Release(media_type);
+        return gst_caps_ref(caps);
+    }
+
     ret = gst_caps_copy(caps);
     structure = gst_caps_get_structure(ret, 0);
     mime_type = gst_structure_get_name(structure);
 
-    if (!strcmp(mime_type, "video/x-h264"))
+    if (!strcmp(mime_type, "audio/x-raw"))
+    {
+        const char *format;
+        if ((format = gst_structure_get_string(structure, "format")))
+        {
+            char type;
+            unsigned int bits_per_sample;
+            char endian[2];
+            char new_format[6];
+
+            if (strlen(format) <= 5 && (sscanf(format, "%c%u%2c", &type, &bits_per_sample, endian) >= 2))
+            {
+                if (type == 'U' || type == 'S')
+                    type = bits_per_sample == 8 ? 'U' : 'S';
+
+                if (endian[0] == 'B')
+                    endian[0] = 'L';
+
+                sprintf(new_format, "%c%u%.2s", type, bits_per_sample, bits_per_sample > 8 ? endian : 0);
+                gst_caps_set_simple(caps, "format", G_TYPE_STRING, new_format, NULL);
+            }
+        }
+    }
+    else if (!strcmp(mime_type, "video/x-h264"))
     {
         gst_caps_set_simple(ret, "stream-format", G_TYPE_STRING, "byte-stream", NULL);
         gst_caps_set_simple(ret, "alignment", G_TYPE_STRING, "au", NULL);

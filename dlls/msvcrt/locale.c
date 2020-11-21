@@ -18,13 +18,13 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include <limits.h>
 #include <locale.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <mbctype.h>
+#include <wctype.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -46,7 +46,6 @@ unsigned int MSVCRT___lc_codepage = 0;
 int MSVCRT___lc_collate_cp = 0;
 LCID MSVCRT___lc_handle[MSVCRT_LC_MAX - MSVCRT_LC_MIN + 1] = { 0 };
 int MSVCRT___mb_cur_max = 1;
-static unsigned char charmax = CHAR_MAX;
 BOOL initial_locale = TRUE;
 
 #define MSVCRT_LEADBYTE  0x8000
@@ -110,7 +109,7 @@ MSVCRT___lc_time_data cloc_time_data =
 #if _MSVCR_VER < 110
     MAKELCID(LANG_ENGLISH, SORT_DEFAULT),
 #endif
-    {1, 0},
+    1, 0,
     {{sun, mon, tue, wed, thu, fri, sat,
       sunday, monday, tuesday, wednesday, thursday, friday, saturday,
       jan, feb, mar, apr, may, jun, jul, aug, sep, oct, nov, dec,
@@ -119,6 +118,93 @@ MSVCRT___lc_time_data cloc_time_data =
       am, pm, cloc_short_date, cloc_date, cloc_time}},
 #if _MSVCR_VER >= 110
     en_us,
+#endif
+};
+
+static const unsigned char cloc_clmap[256] =
+{
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+    0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+    0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+    0x40, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
+    0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
+    0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,
+    0x78, 0x79, 0x7a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
+    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
+    0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
+    0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77,
+    0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f,
+    0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+    0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+    0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+    0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
+    0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+    0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf,
+    0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
+    0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7,
+    0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf,
+    0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7,
+    0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf,
+    0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7,
+    0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef,
+    0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+    0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
+};
+
+static const unsigned char cloc_cumap[256] =
+{
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+    0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+    0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+    0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
+    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
+    0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
+    0x60, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+    0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
+    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
+    0x58, 0x59, 0x5a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f,
+    0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+    0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+    0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+    0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
+    0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+    0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf,
+    0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
+    0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7,
+    0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf,
+    0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7,
+    0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf,
+    0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7,
+    0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef,
+    0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+    0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
+};
+
+static char empty[] = "";
+static char cloc_dec_point[] = ".";
+#if _MSVCR_VER >= 100
+static MSVCRT_wchar_t emptyW[] = {0};
+static MSVCRT_wchar_t cloc_dec_pointW[] = {'.', 0};
+#endif
+static struct MSVCRT_lconv cloc_lconv =
+{
+    cloc_dec_point, empty, empty, empty, empty, empty, empty, empty, empty, empty,
+    CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX,
+#if _MSVCR_VER >= 100
+    cloc_dec_pointW, emptyW, emptyW, emptyW, emptyW, emptyW, emptyW, emptyW
 #endif
 };
 
@@ -351,8 +437,13 @@ LCID MSVCRT_locale_to_LCID(const char *locale, unsigned short *codepage, BOOL *s
     } else if (!MSVCRT__strnicmp(cp, ".OCP", 4)) {
         GetLocaleInfoW(lcid, LOCALE_IDEFAULTCODEPAGE | LOCALE_RETURN_NUMBER,
                 (WCHAR *)&locale_cp, sizeof(DWORD)/sizeof(WCHAR));
+#if _MSVCR_VER >= 140
+    } else if (!MSVCRT__strnicmp(cp, ".UTF-8", 6)
+            || !MSVCRT__strnicmp(cp, ".UTF8", 5)) {
+        locale_cp = CP_UTF8;
+#endif
     } else {
-        locale_cp = atoi(cp + 1);
+        locale_cp = MSVCRT_atoi(cp + 1);
     }
     if (!IsValidCodePage(locale_cp))
         return -1;
@@ -375,6 +466,24 @@ LCID MSVCRT_locale_to_LCID(const char *locale, unsigned short *codepage, BOOL *s
     return lcid;
 }
 
+static void copy_threadlocinfo_category(MSVCRT_pthreadlocinfo locinfo,
+        const MSVCRT_threadlocinfo *old_locinfo, int category)
+{
+    locinfo->lc_handle[category] = old_locinfo->lc_handle[category];
+    locinfo->lc_id[category] = old_locinfo->lc_id[category];
+    if(!locinfo->lc_category[category].locale) {
+        locinfo->lc_category[category].locale = old_locinfo->lc_category[category].locale;
+        locinfo->lc_category[category].refcount = old_locinfo->lc_category[category].refcount;
+        InterlockedIncrement(locinfo->lc_category[category].refcount);
+    }
+#if _MSVCR_VER >= 110
+    locinfo->lc_name[category] = old_locinfo->lc_name[category];
+    locinfo->lc_category[category].wrefcount = old_locinfo->lc_category[category].wrefcount;
+    if(locinfo->lc_category[category].wrefcount)
+        InterlockedIncrement(locinfo->lc_category[category].wrefcount);
+#endif
+}
+
 static BOOL init_category_name(const char *name, int len,
         MSVCRT_pthreadlocinfo locinfo, int category)
 {
@@ -394,6 +503,38 @@ static BOOL init_category_name(const char *name, int len,
     *locinfo->lc_category[category].refcount = 1;
     return TRUE;
 }
+
+#if _MSVCR_VER >= 110
+static inline BOOL set_lc_locale_name(MSVCRT_pthreadlocinfo locinfo, int cat)
+{
+    LCID lcid = locinfo->lc_handle[cat];
+    WCHAR buf[100];
+    int len;
+
+    locinfo->lc_category[cat].wrefcount = MSVCRT_malloc(sizeof(int));
+    if(!locinfo->lc_category[cat].wrefcount)
+        return FALSE;
+    *locinfo->lc_category[cat].wrefcount = 1;
+
+    len = GetLocaleInfoW(lcid, LOCALE_SISO639LANGNAME
+            |LOCALE_NOUSEROVERRIDE, buf, 100);
+    if(!len) return FALSE;
+
+    if(LocaleNameToLCID(buf, 0) != lcid)
+        len = LCIDToLocaleName(lcid, buf, 100, 0);
+
+    if(!len || !(locinfo->lc_name[cat] = MSVCRT_malloc(len*sizeof(MSVCRT_wchar_t))))
+        return FALSE;
+
+    memcpy(locinfo->lc_name[cat], buf, len*sizeof(MSVCRT_wchar_t));
+    return TRUE;
+}
+#else
+static inline BOOL set_lc_locale_name(MSVCRT_pthreadlocinfo locinfo, int cat)
+{
+    return TRUE;
+}
+#endif
 
 /* INTERNAL: Set lc_handle, lc_id and lc_category in threadlocinfo struct */
 static BOOL update_threadlocinfo_category(LCID lcid, unsigned short cp,
@@ -424,6 +565,8 @@ static BOOL update_threadlocinfo_category(LCID lcid, unsigned short cp,
 
     locinfo->lc_handle[category] = lcid;
 
+    set_lc_locale_name(locinfo, category);
+
     if(!locinfo->lc_category[category].locale) {
         int len = 0;
 
@@ -442,33 +585,32 @@ static BOOL update_threadlocinfo_category(LCID lcid, unsigned short cp,
     return TRUE;
 }
 
-/* INTERNAL: swap pointers values */
-static inline void swap_pointers(void **p1, void **p2) {
-    void *hlp;
-
-    hlp = *p1;
-    *p1 = *p2;
-    *p2 = hlp;
-}
-
-/* INTERNAL: returns pthreadlocinfo struct */
-MSVCRT_pthreadlocinfo get_locinfo(void) {
+static MSVCRT_pthreadlocinfo* CDECL get_locinfo_ptr(void) {
     thread_data_t *data = msvcrt_get_thread_data();
 
     if(!data || !data->have_locale)
-        return MSVCRT_locale->locinfo;
+        return &MSVCRT_locale->locinfo;
 
-    return data->locinfo;
+    return &data->locinfo;
 }
 
-/* INTERNAL: returns pthreadlocinfo struct */
-MSVCRT_pthreadmbcinfo get_mbcinfo(void) {
+/* INTERNAL: returns threadlocinfo struct */
+MSVCRT_pthreadlocinfo CDECL get_locinfo(void) {
+    return *get_locinfo_ptr();
+}
+
+MSVCRT_pthreadmbcinfo* CDECL get_mbcinfo_ptr(void) {
     thread_data_t *data = msvcrt_get_thread_data();
 
     if(!data || !data->have_locale)
-        return MSVCRT_locale->mbcinfo;
+        return &MSVCRT_locale->mbcinfo;
 
-    return data->mbcinfo;
+    return &data->mbcinfo;
+}
+
+/* INTERNAL: returns pthreadmbcinfo struct */
+MSVCRT_pthreadmbcinfo CDECL get_mbcinfo(void) {
+    return *get_mbcinfo_ptr();
 }
 
 /* INTERNAL: constructs string returned by setlocale */
@@ -703,7 +845,7 @@ int CDECL __crtLCMapStringA(
     if (!in_len) return 0;
     if (in_len > ARRAY_SIZE(buf_in))
     {
-        in = malloc(in_len * sizeof(WCHAR));
+        in = MSVCRT_malloc(in_len * sizeof(WCHAR));
         if (!in) return 0;
     }
 
@@ -721,7 +863,7 @@ int CDECL __crtLCMapStringA(
     out_len = r;
     if (r > ARRAY_SIZE(buf_out))
     {
-        out = malloc(r * sizeof(WCHAR));
+        out = MSVCRT_malloc(r * sizeof(WCHAR));
         if (!out)
         {
             r = 0;
@@ -735,8 +877,8 @@ int CDECL __crtLCMapStringA(
     r = WideCharToMultiByte(codepage, 0, out, out_len, dst, dstlen, NULL, NULL);
 
 done:
-    if (in != buf_in) free(in);
-    if (out != buf_out) free(out);
+    if (in != buf_in) MSVCRT_free(in);
+    if (out != buf_out) MSVCRT_free(out);
     return r;
 }
 
@@ -845,7 +987,14 @@ struct MSVCRT_lconv * CDECL MSVCRT_localeconv(void)
 int CDECL __lconv_init(void)
 {
     /* this is used to make chars unsigned */
-    charmax = 255;
+    cloc_lconv.int_frac_digits = (char)UCHAR_MAX;
+    cloc_lconv.frac_digits = (char)UCHAR_MAX;
+    cloc_lconv.p_cs_precedes = (char)UCHAR_MAX;
+    cloc_lconv.p_sep_by_space = (char)UCHAR_MAX;
+    cloc_lconv.n_cs_precedes = (char)UCHAR_MAX;
+    cloc_lconv.n_sep_by_space = (char)UCHAR_MAX;
+    cloc_lconv.p_sign_posn = (char)UCHAR_MAX;
+    cloc_lconv.n_sign_posn = (char)UCHAR_MAX;
     return 0;
 }
 
@@ -854,7 +1003,7 @@ int CDECL __lconv_init(void)
  */
 LCID* CDECL ___lc_handle_func(void)
 {
-    return get_locinfo()->lc_handle;
+    return (LCID *)get_locinfo()->lc_handle;
 }
 
 #if _MSVCR_VER >= 110
@@ -891,21 +1040,34 @@ void free_locinfo(MSVCRT_pthreadlocinfo locinfo)
     if(!locinfo)
         return;
 
-    if(InterlockedDecrement(&locinfo->refcount))
-        return;
-
     for(i=MSVCRT_LC_MIN+1; i<=MSVCRT_LC_MAX; i++) {
-        MSVCRT_free(locinfo->lc_category[i].locale);
-        MSVCRT_free(locinfo->lc_category[i].refcount);
+        if(!locinfo->lc_category[i].refcount
+                || !InterlockedDecrement(locinfo->lc_category[i].refcount)) {
+            MSVCRT_free(locinfo->lc_category[i].locale);
+            MSVCRT_free(locinfo->lc_category[i].refcount);
+        }
+        if(!locinfo->lc_category[i].wrefcount
+                || !InterlockedDecrement(locinfo->lc_category[i].wrefcount)) {
 #if _MSVCR_VER >= 110
-        MSVCRT_free(locinfo->lc_name[i]);
+            MSVCRT_free(locinfo->lc_name[i]);
 #endif
+            MSVCRT_free(locinfo->lc_category[i].wrefcount);
+        }
     }
 
-    if(locinfo->lconv) {
+    if(locinfo->lconv_num_refcount
+            && !InterlockedDecrement(locinfo->lconv_num_refcount)) {
         MSVCRT_free(locinfo->lconv->decimal_point);
         MSVCRT_free(locinfo->lconv->thousands_sep);
         MSVCRT_free(locinfo->lconv->grouping);
+#if _MSVCR_VER >= 100
+        MSVCRT_free(locinfo->lconv->_W_decimal_point);
+        MSVCRT_free(locinfo->lconv->_W_thousands_sep);
+#endif
+        MSVCRT_free(locinfo->lconv_num_refcount);
+    }
+    if(locinfo->lconv_mon_refcount
+            && !InterlockedDecrement(locinfo->lconv_mon_refcount)) {
         MSVCRT_free(locinfo->lconv->int_curr_symbol);
         MSVCRT_free(locinfo->lconv->currency_symbol);
         MSVCRT_free(locinfo->lconv->mon_decimal_point);
@@ -914,8 +1076,6 @@ void free_locinfo(MSVCRT_pthreadlocinfo locinfo)
         MSVCRT_free(locinfo->lconv->positive_sign);
         MSVCRT_free(locinfo->lconv->negative_sign);
 #if _MSVCR_VER >= 100
-        MSVCRT_free(locinfo->lconv->_W_decimal_point);
-        MSVCRT_free(locinfo->lconv->_W_thousands_sep);
         MSVCRT_free(locinfo->lconv->_W_int_curr_symbol);
         MSVCRT_free(locinfo->lconv->_W_currency_symbol);
         MSVCRT_free(locinfo->lconv->_W_mon_decimal_point);
@@ -923,20 +1083,28 @@ void free_locinfo(MSVCRT_pthreadlocinfo locinfo)
         MSVCRT_free(locinfo->lconv->_W_positive_sign);
         MSVCRT_free(locinfo->lconv->_W_negative_sign);
 #endif
+        MSVCRT_free(locinfo->lconv_mon_refcount);
     }
-    MSVCRT_free(locinfo->lconv_intl_refcount);
-    MSVCRT_free(locinfo->lconv_num_refcount);
-    MSVCRT_free(locinfo->lconv_mon_refcount);
-    MSVCRT_free(locinfo->lconv);
+    if(locinfo->lconv_intl_refcount
+            && !InterlockedDecrement(locinfo->lconv_intl_refcount)) {
+        MSVCRT_free(locinfo->lconv_intl_refcount);
+        MSVCRT_free(locinfo->lconv);
+    }
 
-    MSVCRT_free(locinfo->ctype1_refcount);
-    MSVCRT_free(locinfo->ctype1);
+    if(locinfo->ctype1_refcount
+            && !InterlockedDecrement(locinfo->ctype1_refcount)) {
+        MSVCRT_free(locinfo->ctype1_refcount);
+        MSVCRT_free(locinfo->ctype1);
+        MSVCRT_free((void*)locinfo->pclmap);
+        MSVCRT_free((void*)locinfo->pcumap);
+    }
 
-    MSVCRT_free(locinfo->pclmap);
-    MSVCRT_free(locinfo->pcumap);
-
-    if(locinfo->lc_time_curr != &cloc_time_data)
+    if(locinfo->lc_time_curr && locinfo->lc_time_curr != &cloc_time_data
+            && !InterlockedDecrement(&locinfo->lc_time_curr->refcount))
         MSVCRT_free(locinfo->lc_time_curr);
+
+    if(InterlockedDecrement(&locinfo->refcount))
+        return;
 
     MSVCRT_free(locinfo);
 }
@@ -954,6 +1122,63 @@ void free_mbcinfo(MSVCRT_pthreadmbcinfo mbcinfo)
 }
 
 /*********************************************************************
+ *      _lock_locales (UCRTBASE.@)
+ */
+void CDECL _lock_locales(void)
+{
+    _lock(_SETLOCALE_LOCK);
+}
+
+/*********************************************************************
+ *      _unlock_locales (UCRTBASE.@)
+ */
+void CDECL _unlock_locales(void)
+{
+    _unlock(_SETLOCALE_LOCK);
+}
+
+MSVCRT__locale_t CDECL get_current_locale_noalloc(MSVCRT__locale_t locale)
+{
+    thread_data_t *data = msvcrt_get_thread_data();
+    int i;
+
+    if(!data || !data->have_locale)
+    {
+        _lock_locales();
+        *locale = *MSVCRT_locale;
+    }
+    else
+    {
+        locale->locinfo = data->locinfo;
+        locale->mbcinfo = data->mbcinfo;
+    }
+
+    InterlockedIncrement(&locale->locinfo->refcount);
+    for(i=MSVCRT_LC_MIN+1; i<=MSVCRT_LC_MAX; i++)
+        InterlockedIncrement(locale->locinfo->lc_category[i].refcount);
+    if(locale->locinfo->lconv_intl_refcount)
+        InterlockedIncrement(locale->locinfo->lconv_intl_refcount);
+    if(locale->locinfo->lconv_num_refcount)
+        InterlockedIncrement(locale->locinfo->lconv_num_refcount);
+    if(locale->locinfo->lconv_mon_refcount)
+        InterlockedIncrement(locale->locinfo->lconv_mon_refcount);
+    if(locale->locinfo->ctype1_refcount)
+        InterlockedIncrement(locale->locinfo->ctype1_refcount);
+    InterlockedIncrement(&locale->locinfo->lc_time_curr->refcount);
+    if(locale->locinfo == MSVCRT_locale->locinfo)
+        _unlock_locales();
+
+    InterlockedIncrement(&locale->mbcinfo->refcount);
+    return locale;
+}
+
+void CDECL free_locale_noalloc(MSVCRT__locale_t locale)
+{
+    free_locinfo(locale->locinfo);
+    free_mbcinfo(locale->mbcinfo);
+}
+
+/*********************************************************************
  *      _get_current_locale (MSVCRT.@)
  */
 MSVCRT__locale_t CDECL MSVCRT__get_current_locale(void)
@@ -962,11 +1187,7 @@ MSVCRT__locale_t CDECL MSVCRT__get_current_locale(void)
     if(!loc)
         return NULL;
 
-    loc->locinfo = get_locinfo();
-    loc->mbcinfo = get_mbcinfo();
-    InterlockedIncrement(&loc->locinfo->refcount);
-    InterlockedIncrement(&loc->mbcinfo->refcount);
-    return loc;
+    return get_current_locale_noalloc(loc);
 }
 
 /*********************************************************************
@@ -977,43 +1198,14 @@ void CDECL MSVCRT__free_locale(MSVCRT__locale_t locale)
     if (!locale)
         return;
 
-    free_locinfo(locale->locinfo);
-    free_mbcinfo(locale->mbcinfo);
+    free_locale_noalloc(locale);
     MSVCRT_free(locale);
 }
 
-#if _MSVCR_VER >= 110
-static inline BOOL set_lc_locale_name(MSVCRT_pthreadlocinfo locinfo, int cat)
-{
-    LCID lcid = locinfo->lc_handle[cat];
-    WCHAR buf[100];
-    int len;
-
-    len = GetLocaleInfoW(lcid, LOCALE_SISO639LANGNAME
-            |LOCALE_NOUSEROVERRIDE, buf, 100);
-    if(!len) return FALSE;
-
-    if(LocaleNameToLCID(buf, 0) != lcid)
-        len = LCIDToLocaleName(lcid, buf, 100, 0);
-
-    if(!len || !(locinfo->lc_name[cat] = MSVCRT_malloc(len*sizeof(MSVCRT_wchar_t))))
-        return FALSE;
-
-    memcpy(locinfo->lc_name[cat], buf, len*sizeof(MSVCRT_wchar_t));
-    return TRUE;
-}
-#else
-static inline BOOL set_lc_locale_name(MSVCRT_pthreadlocinfo locinfo, int cat)
-{
-    return TRUE;
-}
-#endif
-
-static inline BOOL category_needs_update(int cat, int user_cat,
-        MSVCRT_pthreadlocinfo locinfo, LCID lcid, unsigned short cp)
+static inline BOOL category_needs_update(int cat,
+        const MSVCRT_threadlocinfo *locinfo, LCID lcid, unsigned short cp)
 {
     if(!locinfo) return TRUE;
-    if(user_cat!=cat && user_cat!=MSVCRT_LC_ALL) return FALSE;
     return lcid!=locinfo->lc_handle[cat] || cp!=locinfo->lc_id[cat].wCodePage;
 }
 
@@ -1076,12 +1268,14 @@ static MSVCRT___lc_time_data* create_time_data(LCID lcid)
 #else
     cur->lcid = lcid;
 #endif
+    cur->unk = 1;
+    cur->refcount = 1;
 
     return cur;
 }
 
 static MSVCRT_pthreadlocinfo create_locinfo(int category,
-        const char *locale, MSVCRT_pthreadlocinfo old_locinfo)
+        const char *locale, const MSVCRT_threadlocinfo *old_locinfo)
 {
     static const char collate[] = "COLLATE=";
     static const char ctype[] = "CTYPE=";
@@ -1093,7 +1287,7 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
     LCID lcid[6] = { 0 };
     unsigned short cp[6] = { 0 };
     const char *locale_name[6] = { 0 };
-    int locale_len[6] = { 0 };
+    int val, locale_len[6] = { 0 };
     char buf[256];
     BOOL sname;
 #if _MSVCR_VER >= 100
@@ -1177,26 +1371,24 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
         }
     }
 
+    for(i=1; i<6; i++) {
+        if(category!=MSVCRT_LC_ALL && category!=i) {
+            if(old_locinfo) {
+                lcid[i] = old_locinfo->lc_handle[i];
+                cp[i] = old_locinfo->lc_id[i].wCodePage;
+            } else {
+                lcid[i] = 0;
+                cp[i] = 0;
+            }
+        }
+    }
+
     locinfo = MSVCRT_malloc(sizeof(MSVCRT_threadlocinfo));
     if(!locinfo)
         return NULL;
 
     memset(locinfo, 0, sizeof(MSVCRT_threadlocinfo));
     locinfo->refcount = 1;
-
-    locinfo->lconv = MSVCRT_malloc(sizeof(struct MSVCRT_lconv));
-    if(!locinfo->lconv) {
-        free_locinfo(locinfo);
-        return NULL;
-    }
-    memset(locinfo->lconv, 0, sizeof(struct MSVCRT_lconv));
-
-    locinfo->pclmap = MSVCRT_malloc(sizeof(char[256]));
-    locinfo->pcumap = MSVCRT_malloc(sizeof(char[256]));
-    if(!locinfo->pclmap || !locinfo->pcumap) {
-        free_locinfo(locinfo);
-        return NULL;
-    }
 
     if(locale_name[MSVCRT_LC_COLLATE] &&
             !init_category_name(locale_name[MSVCRT_LC_COLLATE],
@@ -1205,11 +1397,11 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
         return NULL;
     }
 
-    if(!category_needs_update(MSVCRT_LC_COLLATE, category, old_locinfo,
+    if(!category_needs_update(MSVCRT_LC_COLLATE, old_locinfo,
                 lcid[MSVCRT_LC_COLLATE], cp[MSVCRT_LC_COLLATE])) {
-        locinfo->lc_handle[MSVCRT_LC_COLLATE] = old_locinfo->lc_handle[MSVCRT_LC_COLLATE];
-        locinfo->lc_id[MSVCRT_LC_COLLATE].wCodePage = old_locinfo->lc_id[MSVCRT_LC_COLLATE].wCodePage;
-    } else if(lcid[MSVCRT_LC_COLLATE] && (category==MSVCRT_LC_ALL || category==MSVCRT_LC_COLLATE)) {
+        copy_threadlocinfo_category(locinfo, old_locinfo, MSVCRT_LC_COLLATE);
+        locinfo->lc_collate_cp = old_locinfo->lc_collate_cp;
+    } else if(lcid[MSVCRT_LC_COLLATE]) {
         if(!update_threadlocinfo_category(lcid[MSVCRT_LC_COLLATE],
                     cp[MSVCRT_LC_COLLATE], locinfo, MSVCRT_LC_COLLATE)) {
             free_locinfo(locinfo);
@@ -1217,13 +1409,12 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
         }
 
         locinfo->lc_collate_cp = locinfo->lc_id[MSVCRT_LC_COLLATE].wCodePage;
-
-        if(!set_lc_locale_name(locinfo, MSVCRT_LC_COLLATE)) {
+    } else {
+        if(!init_category_name("C", 1, locinfo, MSVCRT_LC_COLLATE)) {
             free_locinfo(locinfo);
             return NULL;
         }
-    } else
-        locinfo->lc_category[MSVCRT_LC_COLLATE].locale = MSVCRT__strdup("C");
+    }
 
     if(locale_name[MSVCRT_LC_CTYPE] &&
             !init_category_name(locale_name[MSVCRT_LC_CTYPE],
@@ -1232,11 +1423,20 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
         return NULL;
     }
 
-    if(!category_needs_update(MSVCRT_LC_CTYPE, category, old_locinfo,
+    if(!category_needs_update(MSVCRT_LC_CTYPE, old_locinfo,
                 lcid[MSVCRT_LC_CTYPE], cp[MSVCRT_LC_CTYPE])) {
-        locinfo->lc_handle[MSVCRT_LC_CTYPE] = old_locinfo->lc_handle[MSVCRT_LC_CTYPE];
-        locinfo->lc_id[MSVCRT_LC_CTYPE].wCodePage = old_locinfo->lc_id[MSVCRT_LC_CTYPE].wCodePage;
-    } else if(lcid[MSVCRT_LC_CTYPE] && (category==MSVCRT_LC_ALL || category==MSVCRT_LC_CTYPE)) {
+        copy_threadlocinfo_category(locinfo, old_locinfo, MSVCRT_LC_CTYPE);
+        locinfo->lc_codepage = old_locinfo->lc_codepage;
+        locinfo->lc_clike = old_locinfo->lc_clike;
+        locinfo->mb_cur_max = old_locinfo->mb_cur_max;
+        locinfo->ctype1 = old_locinfo->ctype1;
+        locinfo->ctype1_refcount = old_locinfo->ctype1_refcount;
+        locinfo->pctype = old_locinfo->pctype;
+        locinfo->pclmap = old_locinfo->pclmap;
+        locinfo->pcumap = old_locinfo->pcumap;
+        if(locinfo->ctype1_refcount)
+            InterlockedIncrement(locinfo->ctype1_refcount);
+    } else if(lcid[MSVCRT_LC_CTYPE]) {
         CPINFO cp_info;
         int j;
 
@@ -1255,13 +1455,20 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
         locinfo->mb_cur_max = cp_info.MaxCharSize;
 
         locinfo->ctype1_refcount = MSVCRT_malloc(sizeof(int));
+        if(!locinfo->ctype1_refcount) {
+            free_locinfo(locinfo);
+            return NULL;
+        }
+        *locinfo->ctype1_refcount = 1;
+
         locinfo->ctype1 = MSVCRT_malloc(sizeof(short[257]));
-        if(!locinfo->ctype1_refcount || !locinfo->ctype1) {
+        locinfo->pclmap = MSVCRT_malloc(sizeof(char[256]));
+        locinfo->pcumap = MSVCRT_malloc(sizeof(char[256]));
+        if(!locinfo->ctype1 || !locinfo->pclmap || !locinfo->pcumap) {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        *locinfo->ctype1_refcount = 1;
         locinfo->ctype1[0] = 0;
         locinfo->pctype = locinfo->ctype1+1;
 
@@ -1280,11 +1487,6 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
             for(j=cp_info.LeadByte[i]; j<=cp_info.LeadByte[i+1]; j++)
                 locinfo->ctype1[j+1] |= MSVCRT__LEADBYTE;
 
-        if(!set_lc_locale_name(locinfo, MSVCRT_LC_CTYPE)) {
-            free_locinfo(locinfo);
-            return NULL;
-        }
-
         for(i=0; i<256; i++) {
             if(locinfo->pctype[i] & MSVCRT__LEADBYTE)
                 buf[i] = ' ';
@@ -1300,19 +1502,37 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
         locinfo->lc_clike = 1;
         locinfo->mb_cur_max = 1;
         locinfo->pctype = MSVCRT__ctype+1;
-        locinfo->lc_category[MSVCRT_LC_CTYPE].locale = MSVCRT__strdup("C");
-
-        for(i=0; i<256; i++) {
-            if(locinfo->pctype[i] & MSVCRT__LEADBYTE)
-                buf[i] = ' ';
-            else
-                buf[i] = i;
+        locinfo->pclmap = cloc_clmap;
+        locinfo->pcumap = cloc_cumap;
+        if(!init_category_name("C", 1, locinfo, MSVCRT_LC_CTYPE)) {
+            free_locinfo(locinfo);
+            return NULL;
         }
+    }
 
-        for(i=0; i<256; i++) {
-            locinfo->pclmap[i] = (i>='A' && i<='Z' ? i-'A'+'a' : i);
-            locinfo->pcumap[i] = (i>='a' && i<='z' ? i-'a'+'A' : i);
+    if(!category_needs_update(MSVCRT_LC_MONETARY, old_locinfo,
+                lcid[MSVCRT_LC_MONETARY], cp[MSVCRT_LC_MONETARY]) &&
+            !category_needs_update(MSVCRT_LC_NUMERIC, old_locinfo,
+                lcid[MSVCRT_LC_NUMERIC], cp[MSVCRT_LC_NUMERIC])) {
+        locinfo->lconv = old_locinfo->lconv;
+        locinfo->lconv_intl_refcount = old_locinfo->lconv_intl_refcount;
+        if(locinfo->lconv_intl_refcount)
+            InterlockedIncrement(locinfo->lconv_intl_refcount);
+    } else if(lcid[MSVCRT_LC_MONETARY] || lcid[MSVCRT_LC_NUMERIC]) {
+        locinfo->lconv = MSVCRT_malloc(sizeof(struct MSVCRT_lconv));
+        locinfo->lconv_intl_refcount = MSVCRT_malloc(sizeof(int));
+        if(!locinfo->lconv || !locinfo->lconv_intl_refcount) {
+            MSVCRT_free(locinfo->lconv);
+            MSVCRT_free(locinfo->lconv_intl_refcount);
+            locinfo->lconv = NULL;
+            locinfo->lconv_intl_refcount = NULL;
+            free_locinfo(locinfo);
+            return NULL;
         }
+        memset(locinfo->lconv, 0, sizeof(struct MSVCRT_lconv));
+        *locinfo->lconv_intl_refcount = 1;
+    } else {
+        locinfo->lconv = &cloc_lconv;
     }
 
     if(locale_name[MSVCRT_LC_MONETARY] &&
@@ -1322,25 +1542,50 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
         return NULL;
     }
 
-    if(!category_needs_update(MSVCRT_LC_MONETARY, category, old_locinfo,
+    if(!category_needs_update(MSVCRT_LC_MONETARY, old_locinfo,
                 lcid[MSVCRT_LC_MONETARY], cp[MSVCRT_LC_MONETARY])) {
-        locinfo->lc_handle[MSVCRT_LC_MONETARY] = old_locinfo->lc_handle[MSVCRT_LC_MONETARY];
-        locinfo->lc_id[MSVCRT_LC_MONETARY].wCodePage = old_locinfo->lc_id[MSVCRT_LC_MONETARY].wCodePage;
-    } else if(lcid[MSVCRT_LC_MONETARY] && (category==MSVCRT_LC_ALL || category==MSVCRT_LC_MONETARY)) {
+        copy_threadlocinfo_category(locinfo, old_locinfo, MSVCRT_LC_MONETARY);
+        locinfo->lconv_mon_refcount = old_locinfo->lconv_mon_refcount;
+        if(locinfo->lconv_mon_refcount)
+            InterlockedIncrement(locinfo->lconv_mon_refcount);
+        if(locinfo->lconv != &cloc_lconv && locinfo->lconv != old_locinfo->lconv) {
+            locinfo->lconv->int_curr_symbol = old_locinfo->lconv->int_curr_symbol;
+            locinfo->lconv->currency_symbol = old_locinfo->lconv->currency_symbol;
+            locinfo->lconv->mon_decimal_point = old_locinfo->lconv->mon_decimal_point;
+            locinfo->lconv->mon_thousands_sep = old_locinfo->lconv->mon_thousands_sep;
+            locinfo->lconv->mon_grouping = old_locinfo->lconv->mon_grouping;
+            locinfo->lconv->positive_sign = old_locinfo->lconv->positive_sign;
+            locinfo->lconv->negative_sign = old_locinfo->lconv->negative_sign;
+            locinfo->lconv->int_frac_digits = old_locinfo->lconv->int_frac_digits;
+            locinfo->lconv->frac_digits = old_locinfo->lconv->frac_digits;
+            locinfo->lconv->p_cs_precedes = old_locinfo->lconv->p_cs_precedes;
+            locinfo->lconv->p_sep_by_space = old_locinfo->lconv->p_sep_by_space;
+            locinfo->lconv->n_cs_precedes = old_locinfo->lconv->n_cs_precedes;
+            locinfo->lconv->n_sep_by_space = old_locinfo->lconv->n_sep_by_space;
+            locinfo->lconv->p_sign_posn = old_locinfo->lconv->p_sign_posn;
+            locinfo->lconv->n_sign_posn = old_locinfo->lconv->n_sign_posn;
+#if _MSVCR_VER >= 100
+            locinfo->lconv->_W_int_curr_symbol = old_locinfo->lconv->_W_int_curr_symbol;
+            locinfo->lconv->_W_currency_symbol = old_locinfo->lconv->_W_currency_symbol;
+            locinfo->lconv->_W_mon_decimal_point = old_locinfo->lconv->_W_mon_decimal_point;
+            locinfo->lconv->_W_mon_thousands_sep = old_locinfo->lconv->_W_mon_thousands_sep;
+            locinfo->lconv->_W_positive_sign = old_locinfo->lconv->_W_positive_sign;
+            locinfo->lconv->_W_negative_sign = old_locinfo->lconv->_W_negative_sign;
+#endif
+        }
+    } else if(lcid[MSVCRT_LC_MONETARY]) {
         if(!update_threadlocinfo_category(lcid[MSVCRT_LC_MONETARY],
                     cp[MSVCRT_LC_MONETARY], locinfo, MSVCRT_LC_MONETARY)) {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        locinfo->lconv_intl_refcount = MSVCRT_malloc(sizeof(int));
         locinfo->lconv_mon_refcount = MSVCRT_malloc(sizeof(int));
-        if(!locinfo->lconv_intl_refcount || !locinfo->lconv_mon_refcount) {
+        if(!locinfo->lconv_mon_refcount) {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        *locinfo->lconv_intl_refcount = 1;
         *locinfo->lconv_mon_refcount = 1;
 
         i = GetLocaleInfoA(lcid[MSVCRT_LC_MONETARY], LOCALE_SINTLSYMBOL
@@ -1412,65 +1657,65 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
             return NULL;
         }
 
-        if(GetLocaleInfoA(lcid[MSVCRT_LC_MONETARY], LOCALE_IINTLCURRDIGITS
-                    |LOCALE_NOUSEROVERRIDE, buf, 256))
-            locinfo->lconv->int_frac_digits = atoi(buf);
+        if(GetLocaleInfoW(lcid[MSVCRT_LC_MONETARY], LOCALE_IINTLCURRDIGITS
+                          |LOCALE_NOUSEROVERRIDE|LOCALE_RETURN_NUMBER, (WCHAR *)&val, 2))
+            locinfo->lconv->int_frac_digits = val;
         else {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        if(GetLocaleInfoA(lcid[MSVCRT_LC_MONETARY], LOCALE_ICURRDIGITS
-                    |LOCALE_NOUSEROVERRIDE, buf, 256))
-            locinfo->lconv->frac_digits = atoi(buf);
+        if(GetLocaleInfoW(lcid[MSVCRT_LC_MONETARY], LOCALE_ICURRDIGITS
+                          |LOCALE_NOUSEROVERRIDE|LOCALE_RETURN_NUMBER, (WCHAR *)&val, 2))
+            locinfo->lconv->frac_digits = val;
         else {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        if(GetLocaleInfoA(lcid[MSVCRT_LC_MONETARY], LOCALE_IPOSSYMPRECEDES
-                    |LOCALE_NOUSEROVERRIDE, buf, 256))
-            locinfo->lconv->p_cs_precedes = atoi(buf);
+        if(GetLocaleInfoW(lcid[MSVCRT_LC_MONETARY], LOCALE_IPOSSYMPRECEDES
+                          |LOCALE_NOUSEROVERRIDE|LOCALE_RETURN_NUMBER, (WCHAR *)&val, 2))
+            locinfo->lconv->p_cs_precedes = val;
         else {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        if(GetLocaleInfoA(lcid[MSVCRT_LC_MONETARY], LOCALE_IPOSSEPBYSPACE
-                    |LOCALE_NOUSEROVERRIDE, buf, 256))
-            locinfo->lconv->p_sep_by_space = atoi(buf);
+        if(GetLocaleInfoW(lcid[MSVCRT_LC_MONETARY], LOCALE_IPOSSEPBYSPACE
+                          |LOCALE_NOUSEROVERRIDE|LOCALE_RETURN_NUMBER, (WCHAR *)&val, 2))
+            locinfo->lconv->p_sep_by_space = val;
         else {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        if(GetLocaleInfoA(lcid[MSVCRT_LC_MONETARY], LOCALE_INEGSYMPRECEDES
-                    |LOCALE_NOUSEROVERRIDE, buf, 256))
-            locinfo->lconv->n_cs_precedes = atoi(buf);
+        if(GetLocaleInfoW(lcid[MSVCRT_LC_MONETARY], LOCALE_INEGSYMPRECEDES
+                          |LOCALE_NOUSEROVERRIDE|LOCALE_RETURN_NUMBER, (WCHAR *)&val, 2))
+            locinfo->lconv->n_cs_precedes = val;
         else {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        if(GetLocaleInfoA(lcid[MSVCRT_LC_MONETARY], LOCALE_INEGSEPBYSPACE
-                    |LOCALE_NOUSEROVERRIDE, buf, 256))
-            locinfo->lconv->n_sep_by_space = atoi(buf);
+        if(GetLocaleInfoW(lcid[MSVCRT_LC_MONETARY], LOCALE_INEGSEPBYSPACE
+                          |LOCALE_NOUSEROVERRIDE|LOCALE_RETURN_NUMBER, (WCHAR *)&val, 2))
+            locinfo->lconv->n_sep_by_space = val;
         else {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        if(GetLocaleInfoA(lcid[MSVCRT_LC_MONETARY], LOCALE_IPOSSIGNPOSN
-                    |LOCALE_NOUSEROVERRIDE, buf, 256))
-            locinfo->lconv->p_sign_posn = atoi(buf);
+        if(GetLocaleInfoW(lcid[MSVCRT_LC_MONETARY], LOCALE_IPOSSIGNPOSN
+                          |LOCALE_NOUSEROVERRIDE|LOCALE_RETURN_NUMBER, (WCHAR *)&val, 2))
+            locinfo->lconv->p_sign_posn = val;
         else {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        if(GetLocaleInfoA(lcid[MSVCRT_LC_MONETARY], LOCALE_INEGSIGNPOSN
-                    |LOCALE_NOUSEROVERRIDE, buf, 256))
-            locinfo->lconv->n_sign_posn = atoi(buf);
+        if(GetLocaleInfoW(lcid[MSVCRT_LC_MONETARY], LOCALE_INEGSIGNPOSN
+                          |LOCALE_NOUSEROVERRIDE|LOCALE_RETURN_NUMBER, (WCHAR *)&val, 2))
+            locinfo->lconv->n_sign_posn = val;
         else {
             free_locinfo(locinfo);
             return NULL;
@@ -1531,68 +1776,38 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
             return NULL;
         }
 #endif
-
-        if(!set_lc_locale_name(locinfo, MSVCRT_LC_MONETARY)) {
-            free_locinfo(locinfo);
-            return NULL;
-        }
     } else {
-        locinfo->lconv->int_curr_symbol = MSVCRT_malloc(sizeof(char));
-        locinfo->lconv->currency_symbol = MSVCRT_malloc(sizeof(char));
-        locinfo->lconv->mon_decimal_point = MSVCRT_malloc(sizeof(char));
-        locinfo->lconv->mon_thousands_sep = MSVCRT_malloc(sizeof(char));
-        locinfo->lconv->mon_grouping = MSVCRT_malloc(sizeof(char));
-        locinfo->lconv->positive_sign = MSVCRT_malloc(sizeof(char));
-        locinfo->lconv->negative_sign = MSVCRT_malloc(sizeof(char));
-
-        if(!locinfo->lconv->int_curr_symbol || !locinfo->lconv->currency_symbol
-                || !locinfo->lconv->mon_decimal_point || !locinfo->lconv->mon_thousands_sep
-                || !locinfo->lconv->mon_grouping || !locinfo->lconv->positive_sign
-                || !locinfo->lconv->negative_sign) {
-            free_locinfo(locinfo);
-            return NULL;
-        }
-
-        locinfo->lconv->int_curr_symbol[0] = '\0';
-        locinfo->lconv->currency_symbol[0] = '\0';
-        locinfo->lconv->mon_decimal_point[0] = '\0';
-        locinfo->lconv->mon_thousands_sep[0] = '\0';
-        locinfo->lconv->mon_grouping[0] = '\0';
-        locinfo->lconv->positive_sign[0] = '\0';
-        locinfo->lconv->negative_sign[0] = '\0';
-        locinfo->lconv->int_frac_digits = charmax;
-        locinfo->lconv->frac_digits = charmax;
-        locinfo->lconv->p_cs_precedes = charmax;
-        locinfo->lconv->p_sep_by_space = charmax;
-        locinfo->lconv->n_cs_precedes = charmax;
-        locinfo->lconv->n_sep_by_space = charmax;
-        locinfo->lconv->p_sign_posn = charmax;
-        locinfo->lconv->n_sign_posn = charmax;
+        if (locinfo->lconv != &cloc_lconv) {
+            locinfo->lconv->int_curr_symbol = cloc_lconv.int_curr_symbol;
+            locinfo->lconv->currency_symbol = cloc_lconv.currency_symbol;
+            locinfo->lconv->mon_decimal_point = cloc_lconv.mon_decimal_point;
+            locinfo->lconv->mon_thousands_sep = cloc_lconv.mon_thousands_sep;
+            locinfo->lconv->mon_grouping = cloc_lconv.mon_grouping;
+            locinfo->lconv->positive_sign = cloc_lconv.positive_sign;
+            locinfo->lconv->negative_sign = cloc_lconv.negative_sign;
+            locinfo->lconv->int_frac_digits = cloc_lconv.int_frac_digits;
+            locinfo->lconv->frac_digits = cloc_lconv.frac_digits;
+            locinfo->lconv->p_cs_precedes = cloc_lconv.p_cs_precedes;
+            locinfo->lconv->p_sep_by_space = cloc_lconv.p_sep_by_space;
+            locinfo->lconv->n_cs_precedes = cloc_lconv.n_cs_precedes;
+            locinfo->lconv->n_sep_by_space = cloc_lconv.n_sep_by_space;
+            locinfo->lconv->p_sign_posn = cloc_lconv.p_sign_posn;
+            locinfo->lconv->n_sign_posn = cloc_lconv.n_sign_posn;
 
 #if _MSVCR_VER >= 100
-        locinfo->lconv->_W_int_curr_symbol = MSVCRT_malloc(sizeof(MSVCRT_wchar_t));
-        locinfo->lconv->_W_currency_symbol = MSVCRT_malloc(sizeof(MSVCRT_wchar_t));
-        locinfo->lconv->_W_mon_decimal_point = MSVCRT_malloc(sizeof(MSVCRT_wchar_t));
-        locinfo->lconv->_W_mon_thousands_sep = MSVCRT_malloc(sizeof(MSVCRT_wchar_t));
-        locinfo->lconv->_W_positive_sign = MSVCRT_malloc(sizeof(MSVCRT_wchar_t));
-        locinfo->lconv->_W_negative_sign = MSVCRT_malloc(sizeof(MSVCRT_wchar_t));
+            locinfo->lconv->_W_int_curr_symbol = cloc_lconv._W_int_curr_symbol;
+            locinfo->lconv->_W_currency_symbol = cloc_lconv._W_currency_symbol;
+            locinfo->lconv->_W_mon_decimal_point = cloc_lconv._W_mon_decimal_point;
+            locinfo->lconv->_W_mon_thousands_sep = cloc_lconv._W_mon_thousands_sep;
+            locinfo->lconv->_W_positive_sign = cloc_lconv._W_positive_sign;
+            locinfo->lconv->_W_negative_sign = cloc_lconv._W_negative_sign;
+#endif
+        }
 
-        if(!locinfo->lconv->_W_int_curr_symbol || !locinfo->lconv->_W_currency_symbol
-                || !locinfo->lconv->_W_mon_decimal_point || !locinfo->lconv->_W_mon_thousands_sep
-                || !locinfo->lconv->positive_sign || !locinfo->lconv->negative_sign) {
+        if(!init_category_name("C", 1, locinfo, MSVCRT_LC_MONETARY)) {
             free_locinfo(locinfo);
             return NULL;
         }
-
-        locinfo->lconv->_W_int_curr_symbol[0] = '\0';
-        locinfo->lconv->_W_currency_symbol[0] = '\0';
-        locinfo->lconv->_W_mon_decimal_point[0] = '\0';
-        locinfo->lconv->_W_mon_thousands_sep[0] = '\0';
-        locinfo->lconv->_W_positive_sign[0] = '\0';
-        locinfo->lconv->_W_negative_sign[0] = '\0';
-#endif
-
-        locinfo->lc_category[MSVCRT_LC_MONETARY].locale = MSVCRT__strdup("C");
     }
 
     if(locale_name[MSVCRT_LC_NUMERIC] &&
@@ -1602,26 +1817,34 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
         return NULL;
     }
 
-    if(!category_needs_update(MSVCRT_LC_NUMERIC, category, old_locinfo,
+    if(!category_needs_update(MSVCRT_LC_NUMERIC, old_locinfo,
                 lcid[MSVCRT_LC_NUMERIC], cp[MSVCRT_LC_NUMERIC])) {
-        locinfo->lc_handle[MSVCRT_LC_NUMERIC] = old_locinfo->lc_handle[MSVCRT_LC_NUMERIC];
-        locinfo->lc_id[MSVCRT_LC_NUMERIC].wCodePage = old_locinfo->lc_id[MSVCRT_LC_NUMERIC].wCodePage;
-    } else if(lcid[MSVCRT_LC_NUMERIC] && (category==MSVCRT_LC_ALL || category==MSVCRT_LC_NUMERIC)) {
+        copy_threadlocinfo_category(locinfo, old_locinfo, MSVCRT_LC_NUMERIC);
+        locinfo->lconv_num_refcount = old_locinfo->lconv_num_refcount;
+        if(locinfo->lconv_num_refcount)
+            InterlockedIncrement(locinfo->lconv_num_refcount);
+        if(locinfo->lconv != &cloc_lconv && locinfo->lconv != old_locinfo->lconv) {
+            locinfo->lconv->decimal_point = old_locinfo->lconv->decimal_point;
+            locinfo->lconv->thousands_sep = old_locinfo->lconv->thousands_sep;
+            locinfo->lconv->grouping = old_locinfo->lconv->grouping;
+#if _MSVCR_VER >= 100
+            locinfo->lconv->_W_decimal_point = old_locinfo->lconv->_W_decimal_point;
+            locinfo->lconv->_W_thousands_sep = old_locinfo->lconv->_W_thousands_sep;
+#endif
+        }
+    } else if(lcid[MSVCRT_LC_NUMERIC]) {
         if(!update_threadlocinfo_category(lcid[MSVCRT_LC_NUMERIC],
                     cp[MSVCRT_LC_NUMERIC], locinfo, MSVCRT_LC_NUMERIC)) {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        if(!locinfo->lconv_intl_refcount)
-            locinfo->lconv_intl_refcount = MSVCRT_malloc(sizeof(int));
         locinfo->lconv_num_refcount = MSVCRT_malloc(sizeof(int));
-        if(!locinfo->lconv_intl_refcount || !locinfo->lconv_num_refcount) {
+        if(!locinfo->lconv_num_refcount) {
             free_locinfo(locinfo);
             return NULL;
         }
 
-        *locinfo->lconv_intl_refcount = 1;
         *locinfo->lconv_num_refcount = 1;
 
         i = GetLocaleInfoA(lcid[MSVCRT_LC_NUMERIC], LOCALE_SDECIMAL
@@ -1676,41 +1899,22 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
             return NULL;
         }
 #endif
-
-        if(!set_lc_locale_name(locinfo, MSVCRT_LC_NUMERIC)) {
-            free_locinfo(locinfo);
-            return NULL;
-        }
     } else {
-        locinfo->lconv->decimal_point = MSVCRT_malloc(sizeof(char[2]));
-        locinfo->lconv->thousands_sep = MSVCRT_malloc(sizeof(char));
-        locinfo->lconv->grouping = MSVCRT_malloc(sizeof(char));
-        if(!locinfo->lconv->decimal_point || !locinfo->lconv->thousands_sep
-                || !locinfo->lconv->grouping) {
-            free_locinfo(locinfo);
-            return NULL;
-        }
-
-        locinfo->lconv->decimal_point[0] = '.';
-        locinfo->lconv->decimal_point[1] = '\0';
-        locinfo->lconv->thousands_sep[0] = '\0';
-        locinfo->lconv->grouping[0] = '\0';
+        if (locinfo->lconv != &cloc_lconv) {
+            locinfo->lconv->decimal_point = cloc_lconv.decimal_point;
+            locinfo->lconv->thousands_sep = cloc_lconv.thousands_sep;
+            locinfo->lconv->grouping = cloc_lconv.grouping;
 
 #if _MSVCR_VER >= 100
-        locinfo->lconv->_W_decimal_point = MSVCRT_malloc(sizeof(MSVCRT_wchar_t[2]));
-        locinfo->lconv->_W_thousands_sep = MSVCRT_malloc(sizeof(MSVCRT_wchar_t));
+            locinfo->lconv->_W_decimal_point = cloc_lconv._W_decimal_point;
+            locinfo->lconv->_W_thousands_sep = cloc_lconv._W_thousands_sep;
+#endif
+        }
 
-        if(!locinfo->lconv->_W_decimal_point || !locinfo->lconv->_W_thousands_sep) {
+        if (!init_category_name("C", 1, locinfo, MSVCRT_LC_NUMERIC)) {
             free_locinfo(locinfo);
             return NULL;
         }
-
-        locinfo->lconv->_W_decimal_point[0] = '.';
-        locinfo->lconv->_W_decimal_point[1] = '\0';
-        locinfo->lconv->_W_thousands_sep[0] = '\0';
-#endif
-
-        locinfo->lc_category[MSVCRT_LC_NUMERIC].locale = MSVCRT__strdup("C");
     }
 
     if(locale_name[MSVCRT_LC_TIME] &&
@@ -1720,18 +1924,15 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
         return NULL;
     }
 
-    if(!category_needs_update(MSVCRT_LC_TIME, category, old_locinfo,
+    if(!category_needs_update(MSVCRT_LC_TIME, old_locinfo,
                 lcid[MSVCRT_LC_TIME], cp[MSVCRT_LC_TIME])) {
-        locinfo->lc_handle[MSVCRT_LC_TIME] = old_locinfo->lc_handle[MSVCRT_LC_TIME];
-        locinfo->lc_id[MSVCRT_LC_TIME].wCodePage = old_locinfo->lc_id[MSVCRT_LC_TIME].wCodePage;
-    } else if(lcid[MSVCRT_LC_TIME] && (category==MSVCRT_LC_ALL || category==MSVCRT_LC_TIME)) {
+        copy_threadlocinfo_category(locinfo, old_locinfo, MSVCRT_LC_TIME);
+        locinfo->lc_time_curr = old_locinfo->lc_time_curr;
+        if(locinfo->lc_time_curr != &cloc_time_data)
+            InterlockedIncrement(&locinfo->lc_time_curr->refcount);
+    } else if(lcid[MSVCRT_LC_TIME]) {
         if(!update_threadlocinfo_category(lcid[MSVCRT_LC_TIME],
                     cp[MSVCRT_LC_TIME], locinfo, MSVCRT_LC_TIME)) {
-            free_locinfo(locinfo);
-            return NULL;
-        }
-
-        if(!set_lc_locale_name(locinfo, MSVCRT_LC_TIME)) {
             free_locinfo(locinfo);
             return NULL;
         }
@@ -1742,27 +1943,14 @@ static MSVCRT_pthreadlocinfo create_locinfo(int category,
             return NULL;
         }
     } else {
-        locinfo->lc_category[MSVCRT_LC_TIME].locale = MSVCRT__strdup("C");
+        if(!init_category_name("C", 1, locinfo, MSVCRT_LC_TIME)) {
+            free_locinfo(locinfo);
+            return NULL;
+        }
         locinfo->lc_time_curr = &cloc_time_data;
     }
 
     return locinfo;
-}
-
-/*********************************************************************
- *      _lock_locales (UCRTBASE.@)
- */
-void CDECL _lock_locales(void)
-{
-    _mlock(_SETLOCALE_LOCK);
-}
-
-/*********************************************************************
- *      _unlock_locales (UCRTBASE.@)
- */
-void CDECL _unlock_locales(void)
-{
-    _munlock(_SETLOCALE_LOCK);
 }
 
 /*********************************************************************
@@ -1782,16 +1970,13 @@ MSVCRT__locale_t CDECL MSVCRT__create_locale(int category, const char *locale)
         return NULL;
     }
 
-    loc->mbcinfo = MSVCRT_malloc(sizeof(MSVCRT_threadmbcinfo));
+    loc->mbcinfo = create_mbcinfo(loc->locinfo->lc_id[MSVCRT_LC_CTYPE].wCodePage,
+            loc->locinfo->lc_handle[MSVCRT_LC_CTYPE], NULL);
     if(!loc->mbcinfo) {
         free_locinfo(loc->locinfo);
         MSVCRT_free(loc);
         return NULL;
     }
-
-    loc->mbcinfo->refcount = 1;
-    _setmbcp_l(loc->locinfo->lc_id[MSVCRT_LC_CTYPE].wCodePage,
-            loc->locinfo->lc_handle[MSVCRT_LC_CTYPE], loc->mbcinfo);
     return loc;
 }
 
@@ -1827,8 +2012,8 @@ MSVCRT__locale_t CDECL MSVCRT__wcreate_locale(int category, const MSVCRT_wchar_t
  */
 char* CDECL MSVCRT_setlocale(int category, const char* locale)
 {
-    MSVCRT_pthreadlocinfo locinfo = get_locinfo();
-    MSVCRT_pthreadlocinfo newlocinfo;
+    MSVCRT_pthreadlocinfo *plocinfo = get_locinfo_ptr();
+    MSVCRT_pthreadlocinfo locinfo = *plocinfo, newlocinfo;
 
     if(category<MSVCRT_LC_MIN || category>MSVCRT_LC_MAX)
         return NULL;
@@ -1846,191 +2031,29 @@ char* CDECL MSVCRT_setlocale(int category, const char* locale)
         return NULL;
     }
 
-    _lock_locales();
-
     if(locale[0] != 'C' || locale[1] != '\0')
         initial_locale = FALSE;
 
-    if(locinfo->lc_handle[MSVCRT_LC_COLLATE]!=newlocinfo->lc_handle[MSVCRT_LC_COLLATE]
-            || locinfo->lc_id[MSVCRT_LC_COLLATE].wCodePage!=newlocinfo->lc_id[MSVCRT_LC_COLLATE].wCodePage) {
-        locinfo->lc_collate_cp = newlocinfo->lc_collate_cp;
-        locinfo->lc_handle[MSVCRT_LC_COLLATE] =
-            newlocinfo->lc_handle[MSVCRT_LC_COLLATE];
-        locinfo->lc_id[MSVCRT_LC_COLLATE] =
-            newlocinfo->lc_id[MSVCRT_LC_COLLATE];
-
-#if _MSVCR_VER >= 110
-        swap_pointers((void**)&locinfo->lc_name[MSVCRT_LC_COLLATE],
-                (void**)&newlocinfo->lc_name[MSVCRT_LC_COLLATE]);
-#endif
-    }
-    if(newlocinfo->lc_category[MSVCRT_LC_COLLATE].locale) {
-        swap_pointers((void**)&locinfo->lc_category[MSVCRT_LC_COLLATE].locale,
-                (void**)&newlocinfo->lc_category[MSVCRT_LC_COLLATE].locale);
-        swap_pointers((void**)&locinfo->lc_category[MSVCRT_LC_COLLATE].refcount,
-                (void**)&newlocinfo->lc_category[MSVCRT_LC_COLLATE].refcount);
-    }
-
-    if(locinfo->lc_handle[MSVCRT_LC_CTYPE]!=newlocinfo->lc_handle[MSVCRT_LC_CTYPE]
-            || locinfo->lc_id[MSVCRT_LC_CTYPE].wCodePage!=newlocinfo->lc_id[MSVCRT_LC_CTYPE].wCodePage) {
-        locinfo->lc_handle[MSVCRT_LC_CTYPE] =
-            newlocinfo->lc_handle[MSVCRT_LC_CTYPE];
-        locinfo->lc_id[MSVCRT_LC_CTYPE] =
-            newlocinfo->lc_id[MSVCRT_LC_CTYPE];
-
-        locinfo->lc_codepage = newlocinfo->lc_codepage;
-        locinfo->lc_clike = newlocinfo->lc_clike;
-        locinfo->mb_cur_max = newlocinfo->mb_cur_max;
-
-        swap_pointers((void**)&locinfo->ctype1_refcount,
-                (void**)&newlocinfo->ctype1_refcount);
-        swap_pointers((void**)&locinfo->ctype1, (void**)&newlocinfo->ctype1);
-        swap_pointers((void**)&locinfo->pctype, (void**)&newlocinfo->pctype);
-        swap_pointers((void**)&locinfo->pclmap, (void**)&newlocinfo->pclmap);
-        swap_pointers((void**)&locinfo->pcumap, (void**)&newlocinfo->pcumap);
-
-#if _MSVCR_VER >= 110
-        swap_pointers((void**)&locinfo->lc_name[MSVCRT_LC_CTYPE],
-                (void**)&newlocinfo->lc_name[MSVCRT_LC_CTYPE]);
-#endif
-    }
-    if(newlocinfo->lc_category[MSVCRT_LC_CTYPE].locale) {
-        swap_pointers((void**)&locinfo->lc_category[MSVCRT_LC_CTYPE].locale,
-                (void**)&newlocinfo->lc_category[MSVCRT_LC_CTYPE].locale);
-        swap_pointers((void**)&locinfo->lc_category[MSVCRT_LC_CTYPE].refcount,
-                (void**)&newlocinfo->lc_category[MSVCRT_LC_CTYPE].refcount);
-    }
-
-    if(locinfo->lc_handle[MSVCRT_LC_MONETARY]!=newlocinfo->lc_handle[MSVCRT_LC_MONETARY]
-            || locinfo->lc_id[MSVCRT_LC_MONETARY].wCodePage!=newlocinfo->lc_id[MSVCRT_LC_MONETARY].wCodePage) {
-        locinfo->lc_handle[MSVCRT_LC_MONETARY] =
-            newlocinfo->lc_handle[MSVCRT_LC_MONETARY];
-        locinfo->lc_id[MSVCRT_LC_MONETARY] =
-            newlocinfo->lc_id[MSVCRT_LC_MONETARY];
-
-        swap_pointers((void**)&locinfo->lconv->int_curr_symbol,
-                (void**)&newlocinfo->lconv->int_curr_symbol);
-        swap_pointers((void**)&locinfo->lconv->currency_symbol,
-                (void**)&newlocinfo->lconv->currency_symbol);
-        swap_pointers((void**)&locinfo->lconv->mon_decimal_point,
-                (void**)&newlocinfo->lconv->mon_decimal_point);
-        swap_pointers((void**)&locinfo->lconv->mon_thousands_sep,
-                (void**)&newlocinfo->lconv->mon_thousands_sep);
-        swap_pointers((void**)&locinfo->lconv->mon_grouping,
-                (void**)&newlocinfo->lconv->mon_grouping);
-        swap_pointers((void**)&locinfo->lconv->positive_sign,
-                (void**)&newlocinfo->lconv->positive_sign);
-        swap_pointers((void**)&locinfo->lconv->negative_sign,
-                (void**)&newlocinfo->lconv->negative_sign);
-
-#if _MSVCR_VER >= 100
-        swap_pointers((void**)&locinfo->lconv->_W_int_curr_symbol,
-                (void**)&newlocinfo->lconv->_W_int_curr_symbol);
-        swap_pointers((void**)&locinfo->lconv->_W_currency_symbol,
-                (void**)&newlocinfo->lconv->_W_currency_symbol);
-        swap_pointers((void**)&locinfo->lconv->_W_mon_decimal_point,
-                (void**)&newlocinfo->lconv->_W_mon_decimal_point);
-        swap_pointers((void**)&locinfo->lconv->_W_mon_thousands_sep,
-                (void**)&newlocinfo->lconv->_W_mon_thousands_sep);
-        swap_pointers((void**)&locinfo->lconv->_W_positive_sign,
-                (void**)&newlocinfo->lconv->_W_positive_sign);
-        swap_pointers((void**)&locinfo->lconv->_W_negative_sign,
-                (void**)&newlocinfo->lconv->_W_negative_sign);
-#endif
-
-        locinfo->lconv->int_frac_digits = newlocinfo->lconv->int_frac_digits;
-        locinfo->lconv->frac_digits = newlocinfo->lconv->frac_digits;
-        locinfo->lconv->p_cs_precedes = newlocinfo->lconv->p_cs_precedes;
-        locinfo->lconv->p_sep_by_space = newlocinfo->lconv->p_sep_by_space;
-        locinfo->lconv->n_cs_precedes = newlocinfo->lconv->n_cs_precedes;
-        locinfo->lconv->n_sep_by_space = newlocinfo->lconv->n_sep_by_space;
-        locinfo->lconv->p_sign_posn = newlocinfo->lconv->p_sign_posn;
-        locinfo->lconv->n_sign_posn = newlocinfo->lconv->n_sign_posn;
-
-#if _MSVCR_VER >= 110
-        swap_pointers((void**)&locinfo->lc_name[MSVCRT_LC_MONETARY],
-                (void**)&newlocinfo->lc_name[MSVCRT_LC_MONETARY]);
-#endif
-    }
-    if(newlocinfo->lc_category[MSVCRT_LC_MONETARY].locale) {
-        swap_pointers((void**)&locinfo->lc_category[MSVCRT_LC_MONETARY].locale,
-                (void**)&newlocinfo->lc_category[MSVCRT_LC_MONETARY].locale);
-        swap_pointers((void**)&locinfo->lc_category[MSVCRT_LC_MONETARY].refcount,
-                (void**)&newlocinfo->lc_category[MSVCRT_LC_MONETARY].refcount);
-    }
-
-    if(locinfo->lc_handle[MSVCRT_LC_NUMERIC]!=newlocinfo->lc_handle[MSVCRT_LC_NUMERIC]
-            || locinfo->lc_id[MSVCRT_LC_NUMERIC].wCodePage!=newlocinfo->lc_id[MSVCRT_LC_NUMERIC].wCodePage) {
-        locinfo->lc_handle[MSVCRT_LC_NUMERIC] =
-            newlocinfo->lc_handle[MSVCRT_LC_NUMERIC];
-        locinfo->lc_id[MSVCRT_LC_NUMERIC] =
-            newlocinfo->lc_id[MSVCRT_LC_NUMERIC];
-
-        swap_pointers((void**)&locinfo->lconv->decimal_point,
-                (void**)&newlocinfo->lconv->decimal_point);
-        swap_pointers((void**)&locinfo->lconv->thousands_sep,
-                (void**)&newlocinfo->lconv->thousands_sep);
-        swap_pointers((void**)&locinfo->lconv->grouping,
-                (void**)&newlocinfo->lconv->grouping);
-
-#if _MSVCR_VER >= 100
-        swap_pointers((void**)&locinfo->lconv->_W_decimal_point,
-                (void**)&newlocinfo->lconv->_W_decimal_point);
-        swap_pointers((void**)&locinfo->lconv->_W_thousands_sep,
-                (void**)&newlocinfo->lconv->_W_thousands_sep);
-#endif
-
-#if _MSVCR_VER >= 110
-        swap_pointers((void**)&locinfo->lc_name[MSVCRT_LC_NUMERIC],
-                (void**)&newlocinfo->lc_name[MSVCRT_LC_NUMERIC]);
-#endif
-    }
-    if(newlocinfo->lc_category[MSVCRT_LC_NUMERIC].locale) {
-        swap_pointers((void**)&locinfo->lc_category[MSVCRT_LC_NUMERIC].locale,
-                (void**)&newlocinfo->lc_category[MSVCRT_LC_NUMERIC].locale);
-        swap_pointers((void**)&locinfo->lc_category[MSVCRT_LC_NUMERIC].refcount,
-                (void**)&newlocinfo->lc_category[MSVCRT_LC_NUMERIC].refcount);
-    }
-
-    if(locinfo->lc_handle[MSVCRT_LC_TIME]!=newlocinfo->lc_handle[MSVCRT_LC_TIME]
-            || locinfo->lc_id[MSVCRT_LC_TIME].wCodePage!=newlocinfo->lc_id[MSVCRT_LC_TIME].wCodePage) {
-        locinfo->lc_handle[MSVCRT_LC_TIME] =
-            newlocinfo->lc_handle[MSVCRT_LC_TIME];
-        locinfo->lc_id[MSVCRT_LC_TIME] =
-            newlocinfo->lc_id[MSVCRT_LC_TIME];
-        swap_pointers((void**)&locinfo->lc_time_curr,
-                (void**)&newlocinfo->lc_time_curr);
-
-#if _MSVCR_VER >= 110
-        swap_pointers((void**)&locinfo->lc_name[MSVCRT_LC_TIME],
-                (void**)&newlocinfo->lc_name[MSVCRT_LC_TIME]);
-#endif
-    }
-    if(newlocinfo->lc_category[MSVCRT_LC_TIME].locale) {
-        swap_pointers((void**)&locinfo->lc_category[MSVCRT_LC_TIME].locale,
-                (void**)&newlocinfo->lc_category[MSVCRT_LC_TIME].locale);
-        swap_pointers((void**)&locinfo->lc_category[MSVCRT_LC_TIME].refcount,
-                (void**)&newlocinfo->lc_category[MSVCRT_LC_TIME].refcount);
-    }
-
-    free_locinfo(newlocinfo);
+    _lock_locales();
+    free_locinfo(locinfo);
+    *plocinfo = newlocinfo;
     _unlock_locales();
 
-    if(locinfo == MSVCRT_locale->locinfo) {
+    if(newlocinfo == MSVCRT_locale->locinfo) {
         int i;
 
-        MSVCRT___lc_codepage = locinfo->lc_codepage;
-        MSVCRT___lc_collate_cp = locinfo->lc_collate_cp;
-        MSVCRT___mb_cur_max = locinfo->mb_cur_max;
-        MSVCRT__pctype = locinfo->pctype;
+        MSVCRT___lc_codepage = newlocinfo->lc_codepage;
+        MSVCRT___lc_collate_cp = newlocinfo->lc_collate_cp;
+        MSVCRT___mb_cur_max = newlocinfo->mb_cur_max;
+        MSVCRT__pctype = newlocinfo->pctype;
         for(i=MSVCRT_LC_MIN; i<=MSVCRT_LC_MAX; i++)
             MSVCRT___lc_handle[i] = MSVCRT_locale->locinfo->lc_handle[i];
     }
 
     if(category == MSVCRT_LC_ALL)
-        return construct_lc_all(locinfo);
+        return construct_lc_all(newlocinfo);
 
-    return locinfo->lc_category[category].locale;
+    return newlocinfo->lc_category[category].locale;
 }
 
 /*********************************************************************
@@ -2141,7 +2164,7 @@ BOOL msvcrt_init_locale(void)
 /*********************************************************************
  *      wctrans (MSVCR120.@)
  */
-MSVCRT_wctrans_t CDECL MSVCR120_wctrans(const char *property)
+wctrans_t CDECL MSVCR120_wctrans(const char *property)
 {
     static const char str_tolower[] = "tolower";
     static const char str_toupper[] = "toupper";
@@ -2156,7 +2179,7 @@ MSVCRT_wctrans_t CDECL MSVCR120_wctrans(const char *property)
 /*********************************************************************
  *      towctrans (MSVCR120.@)
  */
-MSVCRT_wint_t CDECL MSVCR120_towctrans(MSVCRT_wint_t c, MSVCRT_wctrans_t category)
+MSVCRT_wint_t CDECL MSVCR120_towctrans(MSVCRT_wint_t c, wctrans_t category)
 {
     if(category == 1)
         return MSVCRT__towupper_l(c, NULL);

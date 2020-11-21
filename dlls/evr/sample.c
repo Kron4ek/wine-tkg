@@ -61,6 +61,13 @@ struct surface_buffer
     ULONG length;
 };
 
+enum sample_prop_flags
+{
+    SAMPLE_PROP_HAS_DURATION      = 1 << 0,
+    SAMPLE_PROP_HAS_TIMESTAMP     = 1 << 1,
+    SAMPLE_PROP_HAS_DESIRED_PROPS = 1 << 2,
+};
+
 struct video_sample
 {
     IMFSample IMFSample_iface;
@@ -73,9 +80,12 @@ struct video_sample
     IMFAsyncResult *tracked_result;
     LONG tracked_refcount;
 
-    LONGLONG desired_time;
+    LONGLONG timestamp;
+    LONGLONG duration;
+    LONGLONG desired_timestamp;
     LONGLONG desired_duration;
-    BOOL desired_set;
+    unsigned int flags;
+    CRITICAL_SECTION cs;
 };
 
 static struct video_sample *impl_from_IMFSample(IMFSample *iface)
@@ -459,7 +469,6 @@ static void sample_allocator_release_samples(struct sample_allocator *allocator)
     LIST_FOR_EACH_ENTRY_SAFE(iter, iter2, &allocator->used_samples, struct queued_sample, entry)
     {
         list_remove(&iter->entry);
-        IMFSample_Release(iter->sample);
         heap_free(iter);
     }
 }
@@ -676,8 +685,10 @@ static HRESULT WINAPI sample_allocator_AllocateSample(IMFVideoSampleAllocator *i
             list_add_tail(&allocator->used_samples, head);
             allocator->free_sample_count--;
 
+            /* Reference counter is not increased when sample is returned, so next release could trigger
+               tracking condition. This is balanced by incremented reference counter when sample is returned
+               back to the free list. */
             *out = sample;
-            IMFSample_AddRef(*out);
         }
     }
 
@@ -796,24 +807,36 @@ static HRESULT WINAPI sample_allocator_tracking_callback_Invoke(IMFAsyncCallback
 {
     struct sample_allocator *allocator = impl_from_IMFAsyncCallback(iface);
     struct queued_sample *iter;
-    IUnknown *sample = NULL;
+    IUnknown *object = NULL;
+    IMFSample *sample = NULL;
+    HRESULT hr;
+
+    if (FAILED(IMFAsyncResult_GetObject(result, &object)))
+        return E_UNEXPECTED;
+
+    hr = IUnknown_QueryInterface(object, &IID_IMFSample, (void **)&sample);
+    IUnknown_Release(object);
+    if (FAILED(hr))
+        return E_UNEXPECTED;
 
     EnterCriticalSection(&allocator->cs);
 
-    IMFAsyncResult_GetObject(result, (IUnknown **)&sample);
-
     LIST_FOR_EACH_ENTRY(iter, &allocator->used_samples, struct queued_sample, entry)
     {
-        if (sample == (IUnknown *)iter->sample)
+        if (sample == iter->sample)
         {
             list_remove(&iter->entry);
             list_add_tail(&allocator->free_samples, &iter->entry);
+            IMFSample_AddRef(iter->sample);
             allocator->free_sample_count++;
             break;
         }
     }
 
-    IUnknown_Release(sample);
+    IMFSample_Release(sample);
+
+    if (allocator->callback)
+        IMFVideoSampleAllocatorNotify_NotifyRelease(allocator->callback);
 
     LeaveCriticalSection(&allocator->cs);
 
@@ -918,6 +941,7 @@ static ULONG WINAPI video_sample_Release(IMFSample *iface)
         video_sample_stop_tracking_thread();
         if (sample->sample)
             IMFSample_Release(sample->sample);
+        DeleteCriticalSection(&sample->cs);
         heap_free(sample);
     }
 
@@ -1216,10 +1240,18 @@ static HRESULT WINAPI video_sample_SetSampleFlags(IMFSample *iface, DWORD flags)
 static HRESULT WINAPI video_sample_GetSampleTime(IMFSample *iface, LONGLONG *timestamp)
 {
     struct video_sample *sample = impl_from_IMFSample(iface);
+    HRESULT hr = S_OK;
 
     TRACE("%p, %p.\n", iface, timestamp);
 
-    return IMFSample_GetSampleTime(sample->sample, timestamp);
+    EnterCriticalSection(&sample->cs);
+    if (sample->flags & SAMPLE_PROP_HAS_TIMESTAMP)
+        *timestamp = sample->timestamp;
+    else
+        hr = MF_E_NO_SAMPLE_TIMESTAMP;
+    LeaveCriticalSection(&sample->cs);
+
+    return hr;
 }
 
 static HRESULT WINAPI video_sample_SetSampleTime(IMFSample *iface, LONGLONG timestamp)
@@ -1228,16 +1260,29 @@ static HRESULT WINAPI video_sample_SetSampleTime(IMFSample *iface, LONGLONG time
 
     TRACE("%p, %s.\n", iface, debugstr_time(timestamp));
 
-    return IMFSample_SetSampleTime(sample->sample, timestamp);
+    EnterCriticalSection(&sample->cs);
+    sample->timestamp = timestamp;
+    sample->flags |= SAMPLE_PROP_HAS_TIMESTAMP;
+    LeaveCriticalSection(&sample->cs);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI video_sample_GetSampleDuration(IMFSample *iface, LONGLONG *duration)
 {
     struct video_sample *sample = impl_from_IMFSample(iface);
+    HRESULT hr = S_OK;
 
     TRACE("%p, %p.\n", iface, duration);
 
-    return IMFSample_GetSampleDuration(sample->sample, duration);
+    EnterCriticalSection(&sample->cs);
+    if (sample->flags & SAMPLE_PROP_HAS_DURATION)
+        *duration = sample->duration;
+    else
+        hr = MF_E_NO_SAMPLE_DURATION;
+    LeaveCriticalSection(&sample->cs);
+
+    return hr;
 }
 
 static HRESULT WINAPI video_sample_SetSampleDuration(IMFSample *iface, LONGLONG duration)
@@ -1246,7 +1291,12 @@ static HRESULT WINAPI video_sample_SetSampleDuration(IMFSample *iface, LONGLONG 
 
     TRACE("%p, %s.\n", iface, debugstr_time(duration));
 
-    return IMFSample_SetSampleDuration(sample->sample, duration);
+    EnterCriticalSection(&sample->cs);
+    sample->duration = duration;
+    sample->flags |= SAMPLE_PROP_HAS_DURATION;
+    LeaveCriticalSection(&sample->cs);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI video_sample_GetBufferCount(IMFSample *iface, DWORD *count)
@@ -1455,15 +1505,15 @@ static HRESULT WINAPI desired_video_sample_GetDesiredSampleTimeAndDuration(IMFDe
     if (!sample_time || !sample_duration)
         return E_POINTER;
 
-    IMFSample_LockStore(sample->sample);
-    if (sample->desired_set)
+    EnterCriticalSection(&sample->cs);
+    if (sample->flags & SAMPLE_PROP_HAS_DESIRED_PROPS)
     {
-        *sample_time = sample->desired_time;
+        *sample_time = sample->desired_timestamp;
         *sample_duration = sample->desired_duration;
     }
     else
         hr = MF_E_NOT_AVAILABLE;
-    IMFSample_UnlockStore(sample->sample);
+    LeaveCriticalSection(&sample->cs);
 
     return hr;
 }
@@ -1475,11 +1525,11 @@ static void WINAPI desired_video_sample_SetDesiredSampleTimeAndDuration(IMFDesir
 
     TRACE("%p, %s, %s.\n", iface, debugstr_time(sample_time), debugstr_time(sample_duration));
 
-    IMFSample_LockStore(sample->sample);
-    sample->desired_set = TRUE;
-    sample->desired_time = sample_time;
+    EnterCriticalSection(&sample->cs);
+    sample->flags |= SAMPLE_PROP_HAS_DESIRED_PROPS;
+    sample->desired_timestamp = sample_time;
     sample->desired_duration = sample_duration;
-    IMFSample_UnlockStore(sample->sample);
+    LeaveCriticalSection(&sample->cs);
 }
 
 static void WINAPI desired_video_sample_Clear(IMFDesiredSample *iface)
@@ -1488,9 +1538,11 @@ static void WINAPI desired_video_sample_Clear(IMFDesiredSample *iface)
 
     TRACE("%p.\n", iface);
 
-    IMFSample_LockStore(sample->sample);
-    sample->desired_set = FALSE;
-    IMFSample_UnlockStore(sample->sample);
+    EnterCriticalSection(&sample->cs);
+    sample->flags = 0;
+    IMFSample_SetSampleFlags(sample->sample, 0);
+    IMFSample_DeleteAllItems(sample->sample);
+    LeaveCriticalSection(&sample->cs);
 }
 
 static const IMFDesiredSampleVtbl desired_video_sample_vtbl =
@@ -1680,6 +1732,7 @@ HRESULT WINAPI MFCreateVideoSampleFromSurface(IUnknown *surface, IMFSample **sam
     object->IMFTrackedSample_iface.lpVtbl = &tracked_video_sample_vtbl;
     object->IMFDesiredSample_iface.lpVtbl = &desired_video_sample_vtbl;
     object->refcount = 1;
+    InitializeCriticalSection(&object->cs);
 
     if (FAILED(hr = MFCreateSample(&object->sample)))
     {

@@ -267,7 +267,6 @@ static const struct keyword keywords[] = {
 	{"_fastcall",       tFASTCALL,       0},
 	{"_pascal",         tPASCAL,         0},
 	{"_stdcall",        tSTDCALL,        0},
-	{"apicontract",     tAPICONTRACT,    1},
 	{"boolean",         tBOOLEAN,        0},
 	{"byte",            tBYTE,           0},
 	{"case",            tCASE,           0},
@@ -276,9 +275,7 @@ static const struct keyword keywords[] = {
 	{"coclass",         tCOCLASS,        0},
 	{"const",           tCONST,          0},
 	{"cpp_quote",       tCPPQUOTE,       0},
-	{"declare",         tDECLARE,        1},
 	{"default",         tDEFAULT,        0},
-	{"delegate",        tDELEGATE,       1},
 	{"dispinterface",   tDISPINTERFACE,  0},
 	{"double",          tDOUBLE,         0},
 	{"enum",            tENUM,           0},
@@ -300,8 +297,6 @@ static const struct keyword keywords[] = {
 	{"pascal",          tPASCAL,         0},
 	{"properties",      tPROPERTIES,     0},
 	{"register",        tREGISTER,       0},
-	{"requires",        tREQUIRES,       1},
-	{"runtimeclass",    tRUNTIMECLASS,   1},
 	{"short",           tSHORT,          0},
 	{"signed",          tSIGNED,         0},
 	{"sizeof",          tSIZEOF,         0},
@@ -323,9 +318,7 @@ static const struct keyword keywords[] = {
  */
 static const struct keyword attr_keywords[] =
 {
-	{"activatable",                 tACTIVATABLE,               1},
 	{"aggregatable",                tAGGREGATABLE,              0},
-	{"agile",                       tAGILE,                     1},
 	{"all_nodes",                   tALLNODES,                  0},
 	{"allocate",                    tALLOCATE,                  0},
 	{"annotation",                  tANNOTATION,                0},
@@ -345,9 +338,8 @@ static const struct keyword attr_keywords[] =
 	{"context_handle",              tCONTEXTHANDLE,             0},
 	{"context_handle_noserialize",  tCONTEXTHANDLENOSERIALIZE,  0},
 	{"context_handle_serialize",    tCONTEXTHANDLENOSERIALIZE,  0},
-	{"contract",                    tCONTRACT,                  1},
-	{"contractversion",             tCONTRACTVERSION,           1},
 	{"control",                     tCONTROL,                   0},
+	{"custom",                      tCUSTOM,                    0},
 	{"decode",                      tDECODE,                    0},
 	{"defaultbind",                 tDEFAULTBIND,               0},
 	{"defaultcollelem",             tDEFAULTCOLLELEM,           0},
@@ -362,12 +354,8 @@ static const struct keyword attr_keywords[] =
 	{"encode",                      tENCODE,                    0},
 	{"endpoint",                    tENDPOINT,                  0},
 	{"entry",                       tENTRY,                     0},
-	{"eventadd",                    tEVENTADD,                  1},
-	{"eventremove",                 tEVENTREMOVE,               1},
-	{"exclusiveto",                 tEXCLUSIVETO,               1},
 	{"explicit_handle",             tEXPLICITHANDLE,            0},
 	{"fault_status",                tFAULTSTATUS,               0},
-	{"flags",                       tFLAGS,                     1},
 	{"force_allocate",              tFORCEALLOCATE,             0},
 	{"free",                        tFREE,                      0},
 	{"handle",                      tHANDLE,                    0},
@@ -390,15 +378,12 @@ static const struct keyword attr_keywords[] =
 	{"length_is",                   tLENGTHIS,                  0},
 	{"licensed",                    tLICENSED,                  0},
 	{"local",                       tLOCAL,                     0},
-	{"marshaling_behavior",         tMARSHALINGBEHAVIOR,        1},
 	{"maybe",                       tMAYBE,                     0},
 	{"message",                     tMESSAGE,                   0},
-	{"mta" ,                        tMTA,                       1},
 	{"neutral",                     tNEUTRAL,                   0},
 	{"nocode",                      tNOCODE,                    0},
 	{"nonbrowsable",                tNONBROWSABLE,              0},
 	{"noncreatable",                tNONCREATABLE,              0},
-	{"none",                        tNONE,                      1},
 	{"nonextensible",               tNONEXTENSIBLE,             0},
 	{"notify",                      tNOTIFY,                    0},
 	{"notify_flag",                 tNOTIFYFLAG,                0},
@@ -428,8 +413,6 @@ static const struct keyword attr_keywords[] =
 	{"single_node",                 tSINGLENODE,                0},
 	{"size_is",                     tSIZEIS,                    0},
 	{"source",                      tSOURCE,                    0},
-	{"standard",                    tSTANDARD,                  1},
-	{"static",                      tSTATIC,                    1},
 	{"strict_context_handle",       tSTRICTCONTEXTHANDLE,       0},
 	{"string",                      tSTRING,                    0},
 	{"switch_is",                   tSWITCHIS,                  0},
@@ -449,7 +432,6 @@ static const struct keyword attr_keywords[] =
 };
 
 /* attributes TODO:
-    custom
     first_is
     last_is
     max_is

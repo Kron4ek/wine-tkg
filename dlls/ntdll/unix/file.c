@@ -100,6 +100,9 @@
 #ifdef HAVE_SYS_PARAM_H
 #include <sys/param.h>
 #endif
+#ifdef HAVE_SYS_CONF_H
+#include <sys/conf.h>
+#endif
 #ifdef HAVE_SYS_MOUNT_H
 #include <sys/mount.h>
 #endif
@@ -1248,20 +1251,25 @@ static BOOLEAN get_dir_case_sensitivity_stat( const char *dir )
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
     struct statfs stfs;
 
-    if (statfs( dir, &stfs ) == -1) return FALSE;
-    /* Assume these file systems are always case insensitive on Mac OS.
-     * For FreeBSD, only assume CIOPFS is case insensitive (AFAIK, Mac OS
-     * is the only UNIX that supports case-insensitive lookup).
-     */
+    if (statfs( dir, &stfs ) == -1) return TRUE;
+    /* Assume these file systems are always case insensitive.*/
     if (!strcmp( stfs.f_fstypename, "fusefs" ) &&
         !strncmp( stfs.f_mntfromname, "ciopfs", 5 ))
         return FALSE;
+    /* msdosfs was case-insensitive since FreeBSD 8, if not earlier */
+    if (!strcmp( stfs.f_fstypename, "msdosfs" ) ||
+        /* older CIFS protocol versions uppercase filename on the client,
+         * newer versions should be case-insensitive on the server anyway */
+        !strcmp( stfs.f_fstypename, "smbfs" ))
+        return FALSE;
+    /* no ntfs-3g: modern fusefs has no way to report the filesystem on FreeBSD
+     * no cd9660 or udf, they're case-sensitive on FreeBSD
+     */
 #ifdef __APPLE__
     if (!strcmp( stfs.f_fstypename, "msdos" ) ||
         !strcmp( stfs.f_fstypename, "cd9660" ) ||
         !strcmp( stfs.f_fstypename, "udf" ) ||
-        !strcmp( stfs.f_fstypename, "ntfs" ) ||
-        !strcmp( stfs.f_fstypename, "smbfs" ))
+        !strcmp( stfs.f_fstypename, "ntfs" ))
         return FALSE;
 #ifdef _DARWIN_FEATURE_64_BIT_INODE
      if (!strcmp( stfs.f_fstypename, "hfs" ) && (stfs.f_fssubtype == 0 ||
@@ -1285,12 +1293,12 @@ static BOOLEAN get_dir_case_sensitivity_stat( const char *dir )
 #elif defined(__NetBSD__)
     struct statvfs stfs;
 
-    if (statvfs( dir, &stfs ) == -1) return FALSE;
+    if (statvfs( dir, &stfs ) == -1) return TRUE;
     /* Only assume CIOPFS is case insensitive. */
     if (strcmp( stfs.f_fstypename, "fusefs" ) ||
         strncmp( stfs.f_mntfromname, "ciopfs", 5 ))
-        return TRUE;
-    return FALSE;
+        return FALSE;
+    return TRUE;
 
 #elif defined(__linux__)
     BOOLEAN sens = TRUE;
@@ -6984,6 +6992,31 @@ static NTSTATUS get_device_info( int fd, FILE_FS_DEVICE_INFORMATION *info )
             info->DeviceType = FILE_DEVICE_TAPE;
             break;
         }
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__APPLE__)
+        {
+            int d_type;
+            if (ioctl(fd, FIODTYPE, &d_type) == 0)
+            {
+                switch(d_type)
+                {
+                case D_TAPE:
+                    info->DeviceType = FILE_DEVICE_TAPE;
+                    break;
+                case D_DISK:
+                    info->DeviceType = FILE_DEVICE_DISK;
+                    break;
+                case D_TTY:
+                    info->DeviceType = FILE_DEVICE_SERIAL_PORT;
+                    break;
+#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+                case D_MEM:
+                    info->DeviceType = FILE_DEVICE_NULL;
+                    break;
+#endif
+                }
+            /* no special d_type for parallel ports */
+            }
+        }
 #endif
     }
     else if (S_ISBLK( st.st_mode ))
@@ -7240,7 +7273,9 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
                     fs_type = MOUNTMGR_FS_TYPE_ISO9660;
                 else if (!strcmp( stfs.f_fstypename, "udf" ))
                     fs_type = MOUNTMGR_FS_TYPE_UDF;
-                else if (!strcmp( stfs.f_fstypename, "msdos" ))
+                else if (!strcmp( stfs.f_fstypename, "msdos" )) /* FreeBSD < 5, Apple */
+                    fs_type = MOUNTMGR_FS_TYPE_FAT32;
+                else if (!strcmp( stfs.f_fstypename, "msdosfs" )) /* FreeBSD >= 5 */
                     fs_type = MOUNTMGR_FS_TYPE_FAT32;
 #endif
             }

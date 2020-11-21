@@ -130,6 +130,7 @@ static int (__cdecl *p_fflush_nolock)(FILE*);
 static size_t (__cdecl *p_mbstowcs)(wchar_t*, const char*, size_t);
 static size_t (__cdecl *p_wcstombs)(char*, const wchar_t*, size_t);
 static char* (__cdecl *p_setlocale)(int, const char*);
+static int (__cdecl *p__setmbcp)(int);
 static int (__cdecl *p__fpieee_flt)(ULONG, EXCEPTION_POINTERS*, int (__cdecl *handler)(_FPIEEE_RECORD*));
 static int (__cdecl *p__memicmp)(const char*, const char*, size_t);
 static int (__cdecl *p__memicmp_l)(const char*, const char*, size_t, _locale_t);
@@ -139,10 +140,36 @@ static int (WINAPIV *p_swscanf)(const wchar_t *str, const wchar_t* format, ...);
 static int (__cdecl *p____mb_cur_max_l_func)(_locale_t locale);
 static _locale_t (__cdecl *p__create_locale)(int, const char*);
 static void (__cdecl *p__free_locale)(_locale_t);
+static _locale_t (__cdecl *p__get_current_locale)(void);
+
+struct __lc_time_data {
+    const char *short_wday[7];
+    const char *wday[7];
+    const char *short_mon[12];
+    const char *mon[12];
+    const char *am;
+    const char *pm;
+    const char *short_date;
+    const char *date;
+    const char *time;
+    LCID lcid;
+    int  unk;
+    int  refcount;
+};
 
 /* make sure we use the correct errno */
 #undef errno
 #define errno (*p_errno())
+
+typedef struct threadmbcinfostruct {
+    int refcount;
+    int mbcodepage;
+    int ismbcodepage;
+    int mblcid;
+    unsigned short mbulinfo[6];
+    unsigned char mbctype[257];
+    unsigned char mbcasemap[256];
+} threadmbcinfo;
 
 /* type info */
 typedef struct __type_info
@@ -399,6 +426,7 @@ static BOOL init(void)
     SET(p_mbstowcs, "mbstowcs");
     SET(p_wcstombs, "wcstombs");
     SET(p_setlocale, "setlocale");
+    SET(p__setmbcp, "_setmbcp");
     SET(p__fpieee_flt, "_fpieee_flt");
     SET(p__memicmp, "_memicmp");
     SET(p__memicmp_l, "_memicmp_l");
@@ -408,6 +436,7 @@ static BOOL init(void)
     SET(p____mb_cur_max_l_func, "___mb_cur_max_l_func");
     SET(p__create_locale, "_create_locale");
     SET(p__free_locale, "_free_locale");
+    SET(p__get_current_locale, "_get_current_locale");
 
     if (sizeof(void *) == 8)
     {
@@ -1960,6 +1989,374 @@ static void test____mb_cur_max_l_func(void)
     p__free_locale(l);
 }
 
+static void test__get_current_locale(void)
+{
+    _locale_t l, l2;
+    int i;
+
+    ok(!p__setmbcp(1252), "_setmbcp failed\n");
+    l = p__get_current_locale();
+    l2 = p__get_current_locale();
+
+    ok(!strcmp(l->locinfo->lc_category[LC_COLLATE].locale, "C"),
+            "LC_COLLATE = \"%s\"\n", l->locinfo->lc_category[LC_COLLATE].locale);
+    ok(!strcmp(l->locinfo->lc_category[LC_CTYPE].locale, "C"),
+            "LC_CTYPE = \"%s\"\n", l->locinfo->lc_category[LC_CTYPE].locale);
+    ok(!strcmp(l->locinfo->lc_category[LC_MONETARY].locale, "C"),
+            "LC_MONETARY = \"%s\"\n", l->locinfo->lc_category[LC_MONETARY].locale);
+    ok(!strcmp(l->locinfo->lc_category[LC_NUMERIC].locale, "C"),
+            "LC_NUMERIC = \"%s\"\n", l->locinfo->lc_category[LC_NUMERIC].locale);
+    ok(!strcmp(l->locinfo->lc_category[LC_TIME].locale, "C"),
+            "LC_TIME = \"%s\"\n", l->locinfo->lc_category[LC_TIME].locale);
+    ok(l->mbcinfo->mbcodepage == 1252, "mbcodepage = %d\n", l->mbcinfo->mbcodepage);
+
+    ok(l->locinfo->refcount == 3, "refcount = %d\n", l->locinfo->refcount);
+
+    if(!p_setlocale(LC_ALL, "english")) {
+        win_skip("English locale not available\n");
+        p__free_locale(l);
+        p__free_locale(l2);
+        return;
+    }
+    ok(!p__setmbcp(932), "_setmbcp failed\n");
+
+    ok(!strcmp(l->locinfo->lc_category[LC_COLLATE].locale, "C"),
+            "LC_COLLATE = \"%s\"\n", l->locinfo->lc_category[LC_COLLATE].locale);
+    ok(!strcmp(l->locinfo->lc_category[LC_CTYPE].locale, "C"),
+            "LC_CTYPE = \"%s\"\n", l->locinfo->lc_category[LC_CTYPE].locale);
+    ok(!strcmp(l->locinfo->lc_category[LC_MONETARY].locale, "C"),
+            "LC_MONETARY = \"%s\"\n", l->locinfo->lc_category[LC_MONETARY].locale);
+    ok(!strcmp(l->locinfo->lc_category[LC_NUMERIC].locale, "C"),
+            "LC_NUMERIC = \"%s\"\n", l->locinfo->lc_category[LC_NUMERIC].locale);
+    ok(!strcmp(l->locinfo->lc_category[LC_TIME].locale, "C"),
+            "LC_TIME = \"%s\"\n", l->locinfo->lc_category[LC_TIME].locale);
+    ok(l->mbcinfo->mbcodepage == 1252, "mbcodepage = %d\n", l->mbcinfo->mbcodepage);
+
+    ok(l->locinfo->refcount == 2, "refcount = %d\n", l->locinfo->refcount);
+    ok(l->locinfo == l2->locinfo, "different locinfo pointers\n");
+    ok(l->mbcinfo == l2->mbcinfo, "different mbcinfo pointers\n");
+
+    p__free_locale(l);
+    p__free_locale(l2);
+
+    l = p__get_current_locale();
+    p_setlocale(LC_COLLATE, "C");
+    l2 = p__get_current_locale();
+
+    ok(l->locinfo->refcount == 1, "refcount = %d\n", l->locinfo->refcount);
+    ok(l2->locinfo->refcount == 2, "refcount = %d\n", l2->locinfo->refcount);
+
+    ok(l->locinfo->lc_category[LC_COLLATE].locale != l2->locinfo->lc_category[LC_COLLATE].locale,
+            "same locale name pointers for LC_COLLATE\n");
+    ok(l->locinfo->lc_category[LC_COLLATE].refcount != l2->locinfo->lc_category[LC_COLLATE].refcount,
+            "same refcount pointers for LC_COLLATE\n");
+    ok(*l2->locinfo->lc_category[LC_COLLATE].refcount == 2, "refcount = %d\n",
+            *l2->locinfo->lc_category[LC_COLLATE].refcount);
+    ok(*l->locinfo->lc_category[LC_COLLATE].refcount == 1, "refcount = %d\n",
+            *l->locinfo->lc_category[LC_COLLATE].refcount);
+    for(i = LC_CTYPE; i <= LC_MAX; i++) {
+        ok(l->locinfo->lc_category[i].locale == l2->locinfo->lc_category[i].locale,
+                "different locale name pointers for category %d\n", i);
+        ok(l->locinfo->lc_category[i].refcount == l2->locinfo->lc_category[i].refcount,
+                "different refcount pointers for category %d\n", i);
+        ok(*l->locinfo->lc_category[i].refcount == 3, "refcount = %d for category %d\n",
+                *l->locinfo->lc_category[i].refcount, i);
+    }
+
+    ok(l->locinfo->lc_collate_cp != l2->locinfo->lc_collate_cp, "same lc_collate_cp %u, %u\n",
+            l->locinfo->lc_collate_cp, l2->locinfo->lc_collate_cp);
+
+    ok(l->locinfo->lc_codepage == l2->locinfo->lc_codepage, "different lc_codepages %u, %u\n",
+            l->locinfo->lc_codepage, l2->locinfo->lc_codepage);
+    ok(l->locinfo->lc_clike == l2->locinfo->lc_clike, "different lc_clike values %d, %d\n",
+            l->locinfo->lc_clike, l2->locinfo->lc_clike);
+    /* The meaning of this member seems to be reversed--go figure */
+    ok(l->locinfo->lc_clike, "non-C locale is C-like\n");
+    ok(l->locinfo->ctype1 == l2->locinfo->ctype1, "different ctype1 pointers\n");
+    ok(l->locinfo->pclmap == l2->locinfo->pclmap, "different clmap pointers\n");
+    ok(l->locinfo->pcumap == l2->locinfo->pcumap, "different cumap pointers\n");
+    ok(l->locinfo->ctype1_refcount == l2->locinfo->ctype1_refcount, "different ctype1_refcount pointers\n");
+    ok(*l->locinfo->ctype1_refcount == 3, "refcount = %d\n", *l->locinfo->ctype1_refcount);
+
+    ok(l->locinfo->lconv == l2->locinfo->lconv, "different lconv pointers\n");
+    ok(l->locinfo->lconv_intl_refcount == l2->locinfo->lconv_intl_refcount, "different lconv_intl_refcount pointers\n");
+    ok(!!l->locinfo->lconv_intl_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_intl_refcount == 3, "refcount = %d\n", *l->locinfo->lconv_intl_refcount);
+
+    ok(l->locinfo->lconv->decimal_point == l2->locinfo->lconv->decimal_point, "different LC_NUMERIC pointers\n");
+    ok(l->locinfo->lconv_num_refcount == l2->locinfo->lconv_num_refcount, "different lconv_num_refcount pointers\n");
+    ok(!!l->locinfo->lconv_num_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_num_refcount == 3, "refcount = %d\n", *l->locinfo->lconv_num_refcount);
+
+    ok(l->locinfo->lconv->currency_symbol == l2->locinfo->lconv->currency_symbol, "different LC_MONETARY pointers\n");
+    ok(l->locinfo->lconv_mon_refcount == l2->locinfo->lconv_mon_refcount, "different lconv_mon_refcount pointers\n");
+    ok(!!l->locinfo->lconv_mon_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_mon_refcount == 3, "refcount = %d\n", *l->locinfo->lconv_mon_refcount);
+
+    ok(l->locinfo->lc_time_curr == l2->locinfo->lc_time_curr, "different lc_time_curr pointers\n");
+    ok(l->locinfo->lc_time_curr->unk == 1, "unk = %d\n", l->locinfo->lc_time_curr->unk);
+    ok(l->locinfo->lc_time_curr->refcount == 3, "refcount = %d\n", l->locinfo->lc_time_curr->refcount);
+
+    p__free_locale(l2);
+
+    p_setlocale(LC_CTYPE, "C");
+    l2 = p__get_current_locale();
+
+    ok(l->locinfo->refcount == 1, "refcount = %d\n", l->locinfo->refcount);
+    ok(l2->locinfo->refcount == 2, "refcount = %d\n", l2->locinfo->refcount);
+
+    for(i = LC_COLLATE; i < LC_MONETARY; i++) {
+        ok(l->locinfo->lc_category[i].locale != l2->locinfo->lc_category[i].locale,
+                "same locale name pointers for category %d\n", i);
+        ok(l->locinfo->lc_category[i].refcount != l2->locinfo->lc_category[i].refcount,
+                "same refcount pointers for category %d\n", i);
+        ok(*l2->locinfo->lc_category[i].refcount == 2, "refcount = %d for category %d\n",
+                *l2->locinfo->lc_category[i].refcount, i);
+        ok(*l->locinfo->lc_category[i].refcount == 1, "refcount = %d for category %d\n",
+                *l->locinfo->lc_category[i].refcount, i);
+    }
+    for(i = LC_MONETARY; i <= LC_MAX; i++) {
+        ok(l->locinfo->lc_category[i].locale == l2->locinfo->lc_category[i].locale,
+                "different locale name pointers for category %d\n", i);
+        ok(l->locinfo->lc_category[i].refcount == l2->locinfo->lc_category[i].refcount,
+                "different refcount pointers for category %d\n", i);
+        ok(*l->locinfo->lc_category[i].refcount == 3, "refcount = %d for category %d\n",
+                *l->locinfo->lc_category[i].refcount, i);
+    }
+
+    ok(l->locinfo->lc_collate_cp != l2->locinfo->lc_collate_cp, "same lc_collate_cp %u, %u\n",
+            l->locinfo->lc_collate_cp, l2->locinfo->lc_collate_cp);
+
+    ok(l->locinfo->lc_codepage != l2->locinfo->lc_codepage, "same lc_codepages %u, %u\n",
+            l->locinfo->lc_codepage, l2->locinfo->lc_codepage);
+    todo_wine ok(l->locinfo->lc_clike != l2->locinfo->lc_clike, "same lc_clike values %d, %d\n",
+            l->locinfo->lc_clike, l2->locinfo->lc_clike);
+    ok(l->locinfo->lc_clike, "non-C locale is C-like\n");
+    todo_wine ok(!l2->locinfo->lc_clike, "C locale is not C-like\n");
+    ok(l->locinfo->ctype1 != l2->locinfo->ctype1, "same ctype1 pointers\n");
+    ok(l->locinfo->pclmap != l2->locinfo->pclmap, "same clmap pointers\n");
+    ok(l->locinfo->pcumap != l2->locinfo->pcumap, "same cumap pointers\n");
+    ok(l->locinfo->ctype1_refcount != l2->locinfo->ctype1_refcount, "same ctype1_refcount pointers\n");
+    ok(!!l->locinfo->ctype1_refcount, "null refcount pointer for non-C locale\n");
+    ok(*l->locinfo->ctype1_refcount == 1, "refcount = %d\n", *l->locinfo->ctype1_refcount);
+    ok(!l2->locinfo->ctype1_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lconv == l2->locinfo->lconv, "different lconv pointers\n");
+    ok(l->locinfo->lconv_intl_refcount == l2->locinfo->lconv_intl_refcount, "different lconv_intl_refcount pointers\n");
+    ok(!!l->locinfo->lconv_intl_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_intl_refcount == 3, "refcount = %d\n", *l->locinfo->lconv_intl_refcount);
+
+    ok(l->locinfo->lconv->decimal_point == l2->locinfo->lconv->decimal_point, "different LC_NUMERIC pointers\n");
+    ok(l->locinfo->lconv_num_refcount == l2->locinfo->lconv_num_refcount, "different lconv_num_refcount pointers\n");
+    ok(!!l->locinfo->lconv_num_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_num_refcount == 3, "refcount = %d\n", *l->locinfo->lconv_num_refcount);
+
+    ok(l->locinfo->lconv->currency_symbol == l2->locinfo->lconv->currency_symbol, "different LC_MONETARY pointers\n");
+    ok(l->locinfo->lconv_mon_refcount == l2->locinfo->lconv_mon_refcount, "different lconv_mon_refcount pointers\n");
+    ok(!!l->locinfo->lconv_mon_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_mon_refcount == 3, "refcount = %d\n", *l->locinfo->lconv_mon_refcount);
+
+    ok(l->locinfo->lc_time_curr == l2->locinfo->lc_time_curr, "different lc_time_curr pointers\n");
+    ok(l->locinfo->lc_time_curr->unk == 1, "unk = %d\n", l->locinfo->lc_time_curr->unk);
+    ok(l->locinfo->lc_time_curr->refcount == 3, "refcount = %d\n", l->locinfo->lc_time_curr->refcount);
+
+    p__free_locale(l2);
+
+    p_setlocale(LC_MONETARY, "C");
+    l2 = p__get_current_locale();
+
+    ok(l->locinfo->refcount == 1, "refcount = %d\n", l->locinfo->refcount);
+    ok(l2->locinfo->refcount == 2, "refcount = %d\n", l2->locinfo->refcount);
+
+    for(i = LC_COLLATE; i <= LC_MONETARY; i++) {
+        ok(l->locinfo->lc_category[i].locale != l2->locinfo->lc_category[i].locale,
+                "same locale name pointers for category %d\n", i);
+        ok(l->locinfo->lc_category[i].refcount != l2->locinfo->lc_category[i].refcount,
+                "same refcount pointers for category %d\n", i);
+        ok(*l2->locinfo->lc_category[i].refcount == 2, "refcount = %d for category %d\n",
+                *l2->locinfo->lc_category[i].refcount, i);
+        ok(*l->locinfo->lc_category[i].refcount == 1, "refcount = %d for category %d\n",
+                *l->locinfo->lc_category[i].refcount, i);
+    }
+    for(i = LC_NUMERIC; i <= LC_MAX; i++) {
+        ok(l->locinfo->lc_category[i].locale == l2->locinfo->lc_category[i].locale,
+                "different locale name pointers for category %d\n", i);
+        ok(l->locinfo->lc_category[i].refcount == l2->locinfo->lc_category[i].refcount,
+                "different refcount pointers for category %d\n", i);
+        ok(*l->locinfo->lc_category[i].refcount == 3, "refcount = %d for category %d\n",
+                *l->locinfo->lc_category[i].refcount, i);
+    }
+
+    ok(l->locinfo->lc_collate_cp != l2->locinfo->lc_collate_cp, "same lc_collate_cp %u, %u\n",
+            l->locinfo->lc_collate_cp, l2->locinfo->lc_collate_cp);
+
+    ok(l->locinfo->lc_codepage != l2->locinfo->lc_codepage, "same lc_codepages %u, %u\n",
+            l->locinfo->lc_codepage, l2->locinfo->lc_codepage);
+    todo_wine ok(l->locinfo->lc_clike != l2->locinfo->lc_clike, "same lc_clike values %d, %d\n",
+            l->locinfo->lc_clike, l2->locinfo->lc_clike);
+    ok(l->locinfo->lc_clike, "non-C locale is C-like\n");
+    todo_wine ok(!l2->locinfo->lc_clike, "C locale is not C-like\n");
+    ok(l->locinfo->ctype1 != l2->locinfo->ctype1, "same ctype1 pointers\n");
+    ok(l->locinfo->pclmap != l2->locinfo->pclmap, "same clmap pointers\n");
+    ok(l->locinfo->pcumap != l2->locinfo->pcumap, "same cumap pointers\n");
+    ok(l->locinfo->ctype1_refcount != l2->locinfo->ctype1_refcount, "same ctype1_refcount pointers\n");
+    ok(!!l->locinfo->ctype1_refcount, "null refcount pointer for non-C locale\n");
+    ok(*l->locinfo->ctype1_refcount == 1, "refcount = %d\n", *l->locinfo->ctype1_refcount);
+    ok(!l2->locinfo->ctype1_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lconv != l2->locinfo->lconv, "same lconv pointers\n");
+    ok(l->locinfo->lconv_intl_refcount != l2->locinfo->lconv_intl_refcount, "same lconv_intl_refcount pointers\n");
+    ok(!!l->locinfo->lconv_intl_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_intl_refcount == 1, "refcount = %d\n", *l->locinfo->lconv_intl_refcount);
+    ok(!!l2->locinfo->lconv_intl_refcount, "null refcount pointer for C locale\n");
+    ok(*l2->locinfo->lconv_intl_refcount == 2, "refcount = %d\n", *l2->locinfo->lconv_intl_refcount);
+
+    ok(l->locinfo->lconv->decimal_point == l2->locinfo->lconv->decimal_point, "different LC_NUMERIC pointers\n");
+    ok(l->locinfo->lconv_num_refcount == l2->locinfo->lconv_num_refcount, "different lconv_num_refcount pointers\n");
+    ok(!!l->locinfo->lconv_num_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_num_refcount == 3, "refcount = %d\n", *l->locinfo->lconv_num_refcount);
+
+    ok(l->locinfo->lconv->currency_symbol != l2->locinfo->lconv->currency_symbol, "same LC_MONETARY pointers\n");
+    ok(l->locinfo->lconv_mon_refcount != l2->locinfo->lconv_mon_refcount, "same lconv_mon_refcount pointers\n");
+    ok(!!l->locinfo->lconv_mon_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_mon_refcount == 1, "refcount = %d\n", *l->locinfo->lconv_mon_refcount);
+    ok(!l2->locinfo->lconv_mon_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lc_time_curr == l2->locinfo->lc_time_curr, "different lc_time_curr pointers\n");
+    ok(l->locinfo->lc_time_curr->unk == 1, "unk = %d\n", l->locinfo->lc_time_curr->unk);
+    ok(l->locinfo->lc_time_curr->refcount == 3, "refcount = %d\n", l->locinfo->lc_time_curr->refcount);
+
+    p__free_locale(l2);
+
+    p_setlocale(LC_NUMERIC, "C");
+    l2 = p__get_current_locale();
+
+    ok(l->locinfo->refcount == 1, "refcount = %d\n", l->locinfo->refcount);
+    ok(l2->locinfo->refcount == 2, "refcount = %d\n", l2->locinfo->refcount);
+
+    for(i = LC_COLLATE; i <= LC_NUMERIC; i++) {
+        ok(l->locinfo->lc_category[i].locale != l2->locinfo->lc_category[i].locale,
+                "same locale name pointers for category %d\n", i);
+        ok(l->locinfo->lc_category[i].refcount != l2->locinfo->lc_category[i].refcount,
+                "same refcount pointers for category %d\n", i);
+        ok(*l2->locinfo->lc_category[i].refcount == 2, "refcount = %d for category %d\n",
+                *l2->locinfo->lc_category[i].refcount, i);
+        ok(*l->locinfo->lc_category[i].refcount == 1, "refcount = %d for category %d\n",
+                *l->locinfo->lc_category[i].refcount, i);
+    }
+    ok(l->locinfo->lc_category[LC_TIME].locale == l2->locinfo->lc_category[LC_TIME].locale,
+            "different locale name pointers for LC_TIME\n");
+    ok(l->locinfo->lc_category[LC_TIME].refcount == l2->locinfo->lc_category[LC_TIME].refcount,
+            "different refcount pointers for LC_TIME\n");
+    ok(*l->locinfo->lc_category[LC_TIME].refcount == 3, "refcount = %d\n",
+            *l->locinfo->lc_category[LC_TIME].refcount);
+
+    ok(l->locinfo->lc_collate_cp != l2->locinfo->lc_collate_cp, "same lc_collate_cp %u, %u\n",
+            l->locinfo->lc_collate_cp, l2->locinfo->lc_collate_cp);
+
+    ok(l->locinfo->lc_codepage != l2->locinfo->lc_codepage, "same lc_codepages %u, %u\n",
+            l->locinfo->lc_codepage, l2->locinfo->lc_codepage);
+    todo_wine ok(l->locinfo->lc_clike != l2->locinfo->lc_clike, "same lc_clike values %d, %d\n",
+            l->locinfo->lc_clike, l2->locinfo->lc_clike);
+    ok(l->locinfo->lc_clike, "non-C locale is C-like\n");
+    todo_wine ok(!l2->locinfo->lc_clike, "C locale is not C-like\n");
+    ok(l->locinfo->ctype1 != l2->locinfo->ctype1, "same ctype1 pointers\n");
+    ok(l->locinfo->pclmap != l2->locinfo->pclmap, "same clmap pointers\n");
+    ok(l->locinfo->pcumap != l2->locinfo->pcumap, "same cumap pointers\n");
+    ok(l->locinfo->ctype1_refcount != l2->locinfo->ctype1_refcount, "same ctype1_refcount pointers\n");
+    ok(!!l->locinfo->ctype1_refcount, "null refcount pointer for non-C locale\n");
+    ok(*l->locinfo->ctype1_refcount == 1, "refcount = %d\n", *l->locinfo->ctype1_refcount);
+    ok(!l2->locinfo->ctype1_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lconv != l2->locinfo->lconv, "same lconv pointers\n");
+    ok(l->locinfo->lconv_intl_refcount != l2->locinfo->lconv_intl_refcount, "same lconv_intl_refcount pointers\n");
+    ok(!!l->locinfo->lconv_intl_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_intl_refcount == 1, "refcount = %d\n", *l->locinfo->lconv_intl_refcount);
+    ok(!l2->locinfo->lconv_intl_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lconv->decimal_point != l2->locinfo->lconv->decimal_point, "same LC_NUMERIC pointers\n");
+    ok(l->locinfo->lconv_num_refcount != l2->locinfo->lconv_num_refcount, "same lconv_num_refcount pointers\n");
+    ok(!!l->locinfo->lconv_num_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_num_refcount == 1, "refcount = %d\n", *l->locinfo->lconv_num_refcount);
+    ok(!l2->locinfo->lconv_num_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lconv->currency_symbol != l2->locinfo->lconv->currency_symbol, "same LC_MONETARY pointers\n");
+    ok(l->locinfo->lconv_mon_refcount != l2->locinfo->lconv_mon_refcount, "same lconv_mon_refcount pointers\n");
+    ok(!!l->locinfo->lconv_mon_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_mon_refcount == 1, "refcount = %d\n", *l->locinfo->lconv_mon_refcount);
+    ok(!l2->locinfo->lconv_mon_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lc_time_curr == l2->locinfo->lc_time_curr, "different lc_time_curr pointers\n");
+    ok(l->locinfo->lc_time_curr->unk == 1, "unk = %d\n", l->locinfo->lc_time_curr->unk);
+    ok(l->locinfo->lc_time_curr->refcount == 3, "refcount = %d\n", l->locinfo->lc_time_curr->refcount);
+
+    p__free_locale(l2);
+
+    p_setlocale(LC_TIME, "C");
+    l2 = p__get_current_locale();
+
+    ok(l->locinfo->refcount == 1, "refcount = %d\n", l->locinfo->refcount);
+    ok(l2->locinfo->refcount == 2, "refcount = %d\n", l2->locinfo->refcount);
+
+    for(i = LC_MIN+1; i <= LC_MAX; i++) {
+        ok(l->locinfo->lc_category[i].locale != l2->locinfo->lc_category[i].locale,
+                "same locale name pointers for category %d\n", i);
+        ok(l->locinfo->lc_category[i].refcount != l2->locinfo->lc_category[i].refcount,
+                "same refcount pointers for category %d\n", i);
+        ok(*l2->locinfo->lc_category[i].refcount == 2, "refcount = %d for category %d\n",
+                *l2->locinfo->lc_category[i].refcount, i);
+        ok(*l->locinfo->lc_category[i].refcount == 1, "refcount = %d for category %d\n",
+                *l->locinfo->lc_category[i].refcount, i);
+    }
+
+    ok(l->locinfo->lc_collate_cp != l2->locinfo->lc_collate_cp, "same lc_collate_cp %u, %u\n",
+            l->locinfo->lc_collate_cp, l2->locinfo->lc_collate_cp);
+
+    ok(l->locinfo->lc_codepage != l2->locinfo->lc_codepage, "same lc_codepages %u, %u\n",
+            l->locinfo->lc_codepage, l2->locinfo->lc_codepage);
+    todo_wine ok(l->locinfo->lc_clike != l2->locinfo->lc_clike, "same lc_clike values %d, %d\n",
+            l->locinfo->lc_clike, l2->locinfo->lc_clike);
+    ok(l->locinfo->lc_clike, "non-C locale is C-like\n");
+    todo_wine ok(!l2->locinfo->lc_clike, "C locale is not C-like\n");
+    ok(l->locinfo->ctype1 != l2->locinfo->ctype1, "same ctype1 pointers\n");
+    ok(l->locinfo->pclmap != l2->locinfo->pclmap, "same clmap pointers\n");
+    ok(l->locinfo->pcumap != l2->locinfo->pcumap, "same cumap pointers\n");
+    ok(l->locinfo->ctype1_refcount != l2->locinfo->ctype1_refcount, "same ctype1_refcount pointers\n");
+    ok(!!l->locinfo->ctype1_refcount, "null refcount pointer for non-C locale\n");
+    ok(*l->locinfo->ctype1_refcount == 1, "refcount = %d\n", *l->locinfo->ctype1_refcount);
+    ok(!l2->locinfo->ctype1_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lconv != l2->locinfo->lconv, "same lconv pointers\n");
+    ok(l->locinfo->lconv_intl_refcount != l2->locinfo->lconv_intl_refcount, "same lconv_intl_refcount pointers\n");
+    ok(!!l->locinfo->lconv_intl_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_intl_refcount == 1, "refcount = %d\n", *l->locinfo->lconv_intl_refcount);
+    ok(!l2->locinfo->lconv_intl_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lconv->decimal_point != l2->locinfo->lconv->decimal_point, "same LC_NUMERIC pointers\n");
+    ok(l->locinfo->lconv_num_refcount != l2->locinfo->lconv_num_refcount, "same lconv_num_refcount pointers\n");
+    ok(!!l->locinfo->lconv_num_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_num_refcount == 1, "refcount = %d\n", *l->locinfo->lconv_num_refcount);
+    ok(!l2->locinfo->lconv_num_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lconv->currency_symbol != l2->locinfo->lconv->currency_symbol, "same LC_MONETARY pointers\n");
+    ok(l->locinfo->lconv_mon_refcount != l2->locinfo->lconv_mon_refcount, "same lconv_mon_refcount pointers\n");
+    ok(!!l->locinfo->lconv_mon_refcount, "null refcount pointer in non-C locale\n");
+    ok(*l->locinfo->lconv_mon_refcount == 1, "refcount = %d\n", *l->locinfo->lconv_mon_refcount);
+    ok(!l2->locinfo->lconv_mon_refcount, "nonnull refcount pointer for C locale\n");
+
+    ok(l->locinfo->lc_time_curr != l2->locinfo->lc_time_curr, "same lc_time_curr pointers\n");
+    ok(l->locinfo->lc_time_curr->unk == 1, "unk = %d\n", l->locinfo->lc_time_curr->unk);
+    ok(l->locinfo->lc_time_curr->refcount == 1, "refcount = %d\n", l->locinfo->lc_time_curr->refcount);
+    ok(l2->locinfo->lc_time_curr->unk == 1, "unk = %d\n", l2->locinfo->lc_time_curr->unk);
+    ok(l2->locinfo->lc_time_curr->refcount == 3 || broken(l2->locinfo->lc_time_curr->refcount == 2),
+            "refcount = %d\n", l2->locinfo->lc_time_curr->refcount);
+
+    p__free_locale(l2);
+
+    p__free_locale(l);
+    p_setlocale(LC_ALL, "C");
+}
+
 START_TEST(msvcr90)
 {
     if(!init())
@@ -2000,4 +2397,5 @@ START_TEST(msvcr90)
     test___strncnt();
     test_swscanf();
     test____mb_cur_max_l_func();
+    test__get_current_locale();
 }

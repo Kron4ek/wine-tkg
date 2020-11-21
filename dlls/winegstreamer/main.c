@@ -223,6 +223,8 @@ static BOOL CALLBACK init_gstreamer_proc(INIT_ONCE *once, void *param, void **ct
         g_error_free(err);
     }
 
+    gst_wine_yuvfixup_plugin_init();
+
     return TRUE;
 }
 

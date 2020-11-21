@@ -25,12 +25,10 @@
  * www.thecodeproject.com.
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #ifdef __i386__
 
 #include <stdarg.h>
+#include <fpieee.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -1144,14 +1142,14 @@ void __stdcall _seh_longjmp_unwind4(struct MSVCRT___JUMP_BUFFER *jmp)
 /*********************************************************************
  *              _fpieee_flt (MSVCRT.@)
  */
-int __cdecl _fpieee_flt(ULONG exception_code, EXCEPTION_POINTERS *ep,
+int __cdecl _fpieee_flt(__msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
         int (__cdecl *handler)(_FPIEEE_RECORD*))
 {
     FLOATING_SAVE_AREA *ctx = &ep->ContextRecord->FloatSave;
     _FPIEEE_RECORD rec;
     int ret;
 
-    TRACE("(%x %p %p)\n", exception_code, ep, handler);
+    TRACE("(%lx %p %p)\n", exception_code, ep, handler);
 
     switch(exception_code) {
     case STATUS_FLOAT_DIVIDE_BY_ZERO:

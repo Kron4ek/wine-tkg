@@ -204,11 +204,6 @@ static HRESULT WINAPI avi_decompressor_sink_Receive(struct strmbase_sink *iface,
     else
         IMediaSample_SetTime(pOutSample, NULL, NULL);
 
-    if (IMediaSample_GetMediaTime(pSample, &tStart, &tStop) == S_OK)
-        IMediaSample_SetMediaTime(pOutSample, &tStart, &tStop);
-    else
-        IMediaSample_SetMediaTime(pOutSample, NULL, NULL);
-
     hr = IMemInputPin_Receive(This->source.pMemInputPin, pOutSample);
     if (hr != S_OK && hr != VFW_E_NOT_CONNECTED)
         ERR("Error sending sample (%x)\n", hr);
@@ -287,7 +282,6 @@ static const struct strmbase_sink_ops sink_ops =
 {
     .base.pin_query_interface = avi_decompressor_sink_query_interface,
     .base.pin_query_accept = avi_decompressor_sink_query_accept,
-    .base.pin_get_media_type = strmbase_pin_get_media_type,
     .pfnReceive = avi_decompressor_sink_Receive,
     .sink_connect = avi_decompressor_sink_connect,
     .sink_disconnect = avi_decompressor_sink_disconnect,
@@ -564,6 +558,10 @@ static HRESULT avi_decompressor_init_stream(struct strmbase_filter *iface)
     struct avi_decompressor *filter = impl_from_strmbase_filter(iface);
     VIDEOINFOHEADER *source_format;
     LRESULT res;
+    HRESULT hr;
+
+    if (!filter->source.pin.peer)
+        return S_OK;
 
     filter->late = -1;
 
@@ -574,7 +572,9 @@ static HRESULT avi_decompressor_init_stream(struct strmbase_filter *iface)
         return E_FAIL;
     }
 
-    BaseOutputPinImpl_Active(&filter->source);
+    if (FAILED(hr = IMemAllocator_Commit(filter->source.pAllocator)))
+        ERR("Failed to commit allocator, hr %#x.\n", hr);
+
     return S_OK;
 }
 
@@ -583,13 +583,17 @@ static HRESULT avi_decompressor_cleanup_stream(struct strmbase_filter *iface)
     struct avi_decompressor *filter = impl_from_strmbase_filter(iface);
     LRESULT res;
 
+    if (!filter->source.pin.peer)
+        return S_OK;
+
     if (filter->hvid && (res = ICDecompressEnd(filter->hvid)))
     {
         ERR("ICDecompressEnd() failed, error %ld.\n", res);
         return E_FAIL;
     }
 
-    BaseOutputPinImpl_Inactive(&filter->source);
+    IMemAllocator_Decommit(filter->source.pAllocator);
+
     return S_OK;
 }
 

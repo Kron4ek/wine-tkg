@@ -168,12 +168,6 @@
 /* Define to 1 if you have the `ffs' function. */
 #undef HAVE_FFS
 
-/* Define to 1 if you have the `finite' function. */
-#undef HAVE_FINITE
-
-/* Define to 1 if you have the `finitef' function. */
-#undef HAVE_FINITEF
-
 /* Define to 1 if you have the <float.h> header file. */
 #undef HAVE_FLOAT_H
 
@@ -194,9 +188,6 @@
 
 /* Define to 1 if you have the `fork' function. */
 #undef HAVE_FORK
-
-/* Define to 1 if you have the `fpclass' function. */
-#undef HAVE_FPCLASS
 
 /* Define if FreeType 2 is installed */
 #undef HAVE_FREETYPE
@@ -296,12 +287,6 @@
 
 /* Define to 1 if you have the `if_nameindex' function. */
 #undef HAVE_IF_NAMEINDEX
-
-/* Define to 1 if you have the `ilogb' function. */
-#undef HAVE_ILOGB
-
-/* Define to 1 if you have the `ilogbf' function. */
-#undef HAVE_ILOGBF
 
 /* Define to 1 if you have the <inet/mib2.h> header file. */
 #undef HAVE_INET_MIB2_H
@@ -1022,6 +1007,9 @@
 /* Define to 1 if you have the <sys/cdio.h> header file. */
 #undef HAVE_SYS_CDIO_H
 
+/* Define to 1 if you have the <sys/conf.h> header file. */
+#undef HAVE_SYS_CONF_H
+
 /* Define to 1 if you have the <sys/epoll.h> header file. */
 #undef HAVE_SYS_EPOLL_H
 
@@ -1375,9 +1363,6 @@
 
 /* Define to the soname of the libGLESv2 library. */
 #undef SONAME_LIBGLESV2
-
-/* Define to the soname of the libGLU library. */
-#undef SONAME_LIBGLU
 
 /* Define to the soname of the libgnutls library. */
 #undef SONAME_LIBGNUTLS

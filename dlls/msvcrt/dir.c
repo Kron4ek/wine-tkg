@@ -21,10 +21,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include <stdarg.h>
+#include <direct.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -321,7 +319,7 @@ int CDECL MSVCRT__chdrive(int newdrive)
  */
 int CDECL MSVCRT__findclose(MSVCRT_intptr_t hand)
 {
-  TRACE(":handle %ld\n",hand);
+  TRACE(":handle %Iu\n",hand);
   if (!FindClose((HANDLE)hand))
   {
     msvcrt_set_errno(GetLastError());
@@ -940,7 +938,7 @@ MSVCRT_wchar_t* CDECL MSVCRT__wgetdcwd(int drive, MSVCRT_wchar_t * buf, int size
  * NOTES
  *  See GetLastError().
  */
-unsigned int CDECL MSVCRT__getdiskfree(unsigned int disk, struct MSVCRT__diskfree_t * d)
+unsigned int CDECL MSVCRT__getdiskfree(unsigned int disk, struct _diskfree_t * d)
 {
   WCHAR drivespec[] = {'@', ':', '\\', 0};
   DWORD ret[4];

@@ -231,6 +231,21 @@ static void check_interface_(unsigned int line, void *iface_ptr, REFIID iid, BOO
         IUnknown_Release(unk);
 }
 
+#define check_service_interface(a, b, c, d) check_service_interface_(__LINE__, a, b, c, d)
+static void check_service_interface_(unsigned int line, void *iface_ptr, REFGUID service, REFIID iid, BOOL supported)
+{
+    IUnknown *iface = iface_ptr;
+    HRESULT hr, expected_hr;
+    IUnknown *unk;
+
+    expected_hr = supported ? S_OK : E_NOINTERFACE;
+
+    hr = MFGetService(iface, service, iid, (void **)&unk);
+    ok_(__FILE__, line)(hr == expected_hr, "Got hr %#x, expected %#x.\n", hr, expected_hr);
+    if (SUCCEEDED(hr))
+        IUnknown_Release(unk);
+}
+
 static void test_interfaces(void)
 {
     IBaseFilter *filter = create_evr();
@@ -449,7 +464,6 @@ static void test_default_mixer(void)
     DXVA2_ValueRange range;
     DXVA2_Fixed32 dxva_value;
     DWORD flags, value, count;
-    IMFGetService *gs;
     COLORREF color;
     unsigned int i;
     DWORD ids[16];
@@ -461,33 +475,26 @@ static void test_default_mixer(void)
     hr = MFCreateVideoMixer(NULL, &IID_IDirect3DDevice9, &IID_IMFTransform, (void **)&transform);
     ok(hr == S_OK, "Failed to create default mixer, hr %#x.\n", hr);
 
-    hr = IMFTransform_QueryInterface(transform, &IID_IMFQualityAdvise, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
+    check_interface(transform, &IID_IMFQualityAdvise, TRUE);
+    check_interface(transform, &IID_IMFClockStateSink, TRUE);
+    check_interface(transform, &IID_IMFTopologyServiceLookupClient, TRUE);
+    check_interface(transform, &IID_IMFGetService, TRUE);
+    check_interface(transform, &IID_IMFAttributes, TRUE);
+    check_interface(transform, &IID_IMFVideoMixerBitmap, TRUE);
+    check_interface(transform, &IID_IMFVideoPositionMapper, TRUE);
+    check_interface(transform, &IID_IMFVideoProcessor, TRUE);
+    check_interface(transform, &IID_IMFVideoMixerControl, TRUE);
+    check_interface(transform, &IID_IMFVideoDeviceID, TRUE);
+    check_service_interface(transform, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoMixerBitmap, TRUE);
+    check_service_interface(transform, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoProcessor, TRUE);
+    check_service_interface(transform, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoMixerControl, TRUE);
+    check_service_interface(transform, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoPositionMapper, TRUE);
+    check_service_interface(transform, &MR_VIDEO_MIXER_SERVICE, &IID_IMFTransform, FALSE);
 
-    hr = IMFTransform_QueryInterface(transform, &IID_IMFClockStateSink, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
+    hr = MFGetService((IUnknown *)transform, &MR_VIDEO_RENDER_SERVICE, &IID_IUnknown, (void **)&unk);
+    ok(hr == MF_E_UNSUPPORTED_SERVICE, "Unexpected hr %#x.\n", hr);
 
-    hr = IMFTransform_QueryInterface(transform, &IID_IMFTopologyServiceLookupClient, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
-
-    hr = IMFTransform_QueryInterface(transform, &IID_IMFGetService, (void **)&gs);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-
-    hr = IMFGetService_GetService(gs, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoMixerBitmap, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
-
-    hr = IMFGetService_GetService(gs, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoProcessor, (void **)&processor);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-
-    hr = IMFGetService_GetService(gs, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoMixerControl, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
-
-    if (SUCCEEDED(IMFGetService_GetService(gs, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoMixerControl2, (void **)&mixer_control2)))
+    if (SUCCEEDED(MFGetService((IUnknown *)transform, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoMixerControl2, (void **)&mixer_control2)))
     {
         hr = IMFVideoMixerControl2_GetMixingPrefs(mixer_control2, NULL);
         ok(hr == E_POINTER, "Unexpected hr %#x.\n", hr);
@@ -498,6 +505,9 @@ static void test_default_mixer(void)
 
         IMFVideoMixerControl2_Release(mixer_control2);
     }
+
+    hr = MFGetService((IUnknown *)transform, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoProcessor, (void **)&processor);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     hr = IMFVideoProcessor_GetBackgroundColor(processor, NULL);
     ok(hr == E_POINTER, "Unexpected hr %#x.\n", hr);
@@ -527,28 +537,6 @@ todo_wine
     ok(hr == MF_E_TRANSFORM_TYPE_NOT_SET, "Unexpected hr %#x.\n", hr);
 
     IMFVideoProcessor_Release(processor);
-
-    hr = IMFGetService_GetService(gs, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoPositionMapper, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
-
-    IMFGetService_Release(gs);
-
-    hr = IMFTransform_QueryInterface(transform, &IID_IMFVideoMixerBitmap, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
-
-    hr = IMFTransform_QueryInterface(transform, &IID_IMFVideoPositionMapper, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
-
-    hr = IMFTransform_QueryInterface(transform, &IID_IMFVideoProcessor, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
-
-    hr = IMFTransform_QueryInterface(transform, &IID_IMFVideoMixerControl, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
 
     hr = IMFTransform_SetOutputBounds(transform, 100, 10);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
@@ -807,6 +795,45 @@ static void test_surface_sample(void)
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     ok(!count, "Unexpected attribute count %u.\n", count);
 
+    /* Attributes are cleared. */
+    hr = IMFSample_SetUnknown(sample, &MFSampleExtension_Token, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_GetCount(sample, &count);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(count == 1, "Unexpected attribute count %u.\n", count);
+
+    hr = IMFSample_SetSampleTime(sample, 0);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_GetSampleTime(sample, &time1);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_SetSampleDuration(sample, 0);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_GetSampleDuration(sample, &duration);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_SetSampleFlags(sample, 0x1);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    IMFDesiredSample_Clear(desired_sample);
+
+    hr = IMFSample_GetCount(sample, &count);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!count, "Unexpected attribute count %u.\n", count);
+
+    hr = IMFSample_GetSampleTime(sample, &time1);
+    ok(hr == MF_E_NO_SAMPLE_TIMESTAMP, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_GetSampleDuration(sample, &duration);
+    ok(hr == MF_E_NO_SAMPLE_DURATION, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_GetSampleFlags(sample, &flags);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(flags == 0, "Unexpected flags %#x.\n", flags);
+
     IMFDesiredSample_Release(desired_sample);
 
     hr = IMFSample_GetCount(sample, &count);
@@ -915,11 +942,11 @@ static void test_default_mixer_type_negotiation(void)
     IDirect3DDevice9 *device;
     IMFMediaType *video_type;
     IMFTransform *transform;
+    DWORD index, count;
     GUID guid, *guids;
     IDirect3D9 *d3d;
     IUnknown *unk;
     HWND window;
-    DWORD count;
     HRESULT hr;
     UINT token;
 
@@ -1013,6 +1040,25 @@ static void test_default_mixer_type_negotiation(void)
     IMFMediaType_Release(media_type);
     IMFMediaType_Release(media_type2);
 
+    /* Check attributes on available output types. */
+    index = 0;
+    while (SUCCEEDED(IMFTransform_GetOutputAvailableType(transform, 0, index++, &media_type)))
+    {
+        UINT64 frame_size;
+        GUID subtype;
+        UINT32 value;
+
+        hr = IMFMediaType_GetGUID(media_type, &MF_MT_SUBTYPE, &subtype);
+        ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+        hr = IMFMediaType_GetUINT64(media_type, &MF_MT_FRAME_SIZE, &frame_size);
+        ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+        hr = IMFMediaType_GetUINT32(media_type, &MF_MT_ALL_SAMPLES_INDEPENDENT, &value);
+        ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+        IMFMediaType_Release(media_type);
+    }
+    ok(index > 1, "Unexpected number of available types.\n");
+
     hr = IMFTransform_QueryInterface(transform, &IID_IMFVideoProcessor, (void **)&processor);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
@@ -1077,19 +1123,13 @@ done:
 
 static void test_default_presenter(void)
 {
-    D3DDEVICE_CREATION_PARAMETERS device_params = { 0 };
-    D3DPRESENT_PARAMETERS present_params = { 0 };
     IMFVideoDisplayControl *display_control;
-    IDirect3DSwapChain9 *swapchain;
     IMFVideoPresenter *presenter;
     IMFRateSupport *rate_support;
-    IDirect3DDevice9 *d3d_device;
     IDirect3DDeviceManager9 *dm;
     IMFVideoDeviceID *deviceid;
-    IMFGetService *gs;
+    IUnknown *unk, *unk2;
     HWND hwnd, hwnd2;
-    HANDLE handle;
-    IUnknown *unk;
     DWORD flags;
     float rate;
     HRESULT hr;
@@ -1103,13 +1143,49 @@ static void test_default_presenter(void)
     if (FAILED(hr))
         return;
 
-    hr = IMFVideoPresenter_QueryInterface(presenter, &IID_IMFVideoPositionMapper, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
+    check_interface(presenter, &IID_IQualProp, TRUE);
+    check_interface(presenter, &IID_IMFVideoPositionMapper, TRUE);
+    check_interface(presenter, &IID_IMFTopologyServiceLookupClient, TRUE);
+    check_interface(presenter, &IID_IMFVideoDisplayControl, TRUE);
+    check_interface(presenter, &IID_IMFRateSupport, TRUE);
+    check_interface(presenter, &IID_IMFGetService, TRUE);
+    check_interface(presenter, &IID_IMFClockStateSink, TRUE);
+    check_interface(presenter, &IID_IMFVideoPresenter, TRUE);
+    check_interface(presenter, &IID_IMFVideoDeviceID, TRUE);
+    check_interface(presenter, &IID_IMFQualityAdvise, TRUE);
+    check_interface(presenter, &IID_IDirect3DDeviceManager9, TRUE);
+    todo_wine check_interface(presenter, &IID_IMFQualityAdviseLimits, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoPositionMapper, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoDisplayControl, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoPresenter, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFClockStateSink, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFTopologyServiceLookupClient, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IQualProp, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFRateSupport, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFGetService, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoDeviceID, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFQualityAdvise, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFTransform, FALSE);
+    check_service_interface(presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IDirect3DDeviceManager9, TRUE);
+    check_service_interface(presenter, &MR_VIDEO_ACCELERATION_SERVICE, &IID_IDirect3DDeviceManager9, TRUE);
 
-    hr = MFGetService((IUnknown *)presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoPositionMapper, (void **)&unk);
+    /* Query arbitrary supported interface back from device manager wrapper. */
+    hr = IMFVideoPresenter_QueryInterface(presenter, &IID_IDirect3DDeviceManager9, (void **)&dm);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    hr = IDirect3DDeviceManager9_QueryInterface(dm, &IID_IQualProp, (void **)&unk);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     IUnknown_Release(unk);
+    hr = IDirect3DDeviceManager9_QueryInterface(dm, &IID_IUnknown, (void **)&unk);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    hr = IMFVideoPresenter_QueryInterface(presenter, &IID_IUnknown, (void **)&unk2);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(unk == unk2, "Unexpected interface.\n");
+    IUnknown_Release(unk2);
+    IUnknown_Release(unk);
+    IDirect3DDeviceManager9_Release(dm);
+
+    hr = MFGetService((IUnknown *)presenter, &MR_VIDEO_MIXER_SERVICE, &IID_IUnknown, (void **)&unk);
+    ok(hr == MF_E_UNSUPPORTED_SERVICE, "Unexpected hr %#x.\n", hr);
 
     hr = IMFVideoPresenter_QueryInterface(presenter, &IID_IMFVideoDeviceID, (void **)&deviceid);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
@@ -1123,18 +1199,7 @@ static void test_default_presenter(void)
 
     IMFVideoDeviceID_Release(deviceid);
 
-    hr = IMFVideoPresenter_QueryInterface(presenter, &IID_IMFTopologyServiceLookupClient, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
-
-    hr = IMFVideoPresenter_QueryInterface(presenter, &IID_IMFVideoDisplayControl, (void **)&unk);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IUnknown_Release(unk);
-
-    hr = IMFVideoPresenter_QueryInterface(presenter, &IID_IMFGetService, (void **)&gs);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-
-    hr = IMFGetService_GetService(gs, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoDisplayControl, (void **)&display_control);
+    hr = MFGetService((IUnknown *)presenter, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoDisplayControl, (void **)&display_control);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     hr = IMFVideoDisplayControl_GetRenderingPrefs(display_control, NULL);
@@ -1147,37 +1212,10 @@ static void test_default_presenter(void)
 
     IMFVideoDisplayControl_Release(display_control);
 
-    hr = IMFGetService_GetService(gs, &MR_VIDEO_ACCELERATION_SERVICE, &IID_IDirect3DDeviceManager9, (void **)&dm);
+    hr = MFGetService((IUnknown *)presenter, &MR_VIDEO_ACCELERATION_SERVICE, &IID_IDirect3DDeviceManager9, (void **)&dm);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     hr = IMFVideoPresenter_QueryInterface(presenter, &IID_IMFVideoDisplayControl, (void **)&display_control);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-
-    hr = IDirect3DDeviceManager9_OpenDeviceHandle(dm, &handle);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-
-    hr = IDirect3DDeviceManager9_LockDevice(dm, handle, &d3d_device, FALSE);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-
-    hr = IDirect3DDevice9_GetCreationParameters(d3d_device, &device_params);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    ok(device_params.hFocusWindow == GetDesktopWindow(), "Unexpected window %p.\n", device_params.hFocusWindow);
-
-    hr = IDirect3DDevice9_GetSwapChain(d3d_device, 0, &swapchain);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-
-    hr = IDirect3DSwapChain9_GetPresentParameters(swapchain, &present_params);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-
-    ok(present_params.hDeviceWindow == GetDesktopWindow(), "Unexpected device window.\n");
-    ok(present_params.Windowed, "Unexpected windowed mode.\n");
-    ok(present_params.SwapEffect == D3DSWAPEFFECT_COPY, "Unexpected swap effect.\n");
-    ok(present_params.Flags & D3DPRESENTFLAG_VIDEO, "Unexpected flags %#x.\n", present_params.Flags);
-    ok(present_params.PresentationInterval == D3DPRESENT_INTERVAL_IMMEDIATE, "Unexpected present interval.\n");
-
-    IDirect3DDevice9_Release(d3d_device);
-
-    hr = IDirect3DDeviceManager9_UnlockDevice(dm, handle, FALSE);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     /* Video window */
@@ -1205,15 +1243,6 @@ static void test_default_presenter(void)
     hr = IMFVideoDisplayControl_GetVideoWindow(display_control, &hwnd2);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     ok(hwnd2 == hwnd, "Unexpected window %p.\n", hwnd2);
-
-    /* Video position */
-    hr = IDirect3DDeviceManager9_CloseDeviceHandle(dm, handle);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-
-    IDirect3DDeviceManager9_Release(dm);
-
-    IMFVideoDisplayControl_Release(display_control);
-    IMFGetService_Release(gs);
 
     /* Rate support. */
     hr = IMFVideoPresenter_QueryInterface(presenter, &IID_IMFRateSupport, (void **)&rate_support);
@@ -1307,13 +1336,13 @@ static void test_MFCreateVideoSampleAllocator(void)
     IDirect3DSurface9 *surface;
     IDirect3DDevice9 *device;
     IMFMediaBuffer *buffer;
+    LONG refcount, count;
     unsigned int token;
     IMFGetService *gs;
     IDirect3D9 *d3d;
     IUnknown *unk;
     HWND window;
     HRESULT hr;
-    LONG count;
     BYTE *data;
 
     hr = MFCreateVideoSampleAllocator(&IID_IUnknown, (void **)&unk);
@@ -1355,10 +1384,10 @@ static void test_MFCreateVideoSampleAllocator(void)
     hr = MFCreateMediaType(&media_type);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
-    /* It expects IMFVideoMediaType. */
+    /* It expects IMFVideoMediaType aka video major type. Exact return code is E_NOINTERFACE,
+       likely coming from querying for IMFVideoMediaType. Does not seem valuable to match it. */
     hr = IMFVideoSampleAllocator_InitializeSampleAllocator(allocator, 2, media_type);
-todo_wine
-    ok(hr == E_NOINTERFACE, "Unexpected hr %#x.\n", hr);
+    ok(FAILED(hr), "Unexpected hr %#x.\n", hr);
 
     video_type = create_video_type(&MFVideoFormat_RGB32);
 
@@ -1378,7 +1407,7 @@ todo_wine
     sample = NULL;
     hr = IMFVideoSampleAllocator_AllocateSample(allocator, &sample);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    ok(get_refcount(sample) == 3, "Unexpected refcount %u.\n", get_refcount(sample));
+    refcount = get_refcount(sample);
 
     hr = IMFVideoSampleAllocator_AllocateSample(allocator, &sample2);
     ok(hr == MF_E_SAMPLEALLOCATOR_EMPTY, "Unexpected hr %#x.\n", hr);
@@ -1386,8 +1415,7 @@ todo_wine
     /* Reinitialize with active sample. */
     hr = IMFVideoSampleAllocator_InitializeSampleAllocator(allocator, 4, video_type);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-todo_wine
-    ok(get_refcount(sample) == 3, "Unexpected refcount %u.\n", get_refcount(sample));
+    ok(refcount == get_refcount(sample), "Unexpected refcount %u.\n", get_refcount(sample));
 
     hr = IMFVideoSampleAllocatorCallback_GetFreeSampleCount(allocator_cb, &count);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
@@ -1463,9 +1491,7 @@ todo_wine
     hr = IMFSample_GetBufferByIndex(sample, 0, &buffer);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
-    hr = MFGetService((IUnknown *)buffer, &MR_BUFFER_SERVICE, &IID_IDirect3DSurface9, (void **)&surface);
-    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-    IDirect3DSurface9_Release(surface);
+    check_service_interface(buffer, &MR_BUFFER_SERVICE, &IID_IDirect3DSurface9, TRUE);
 
     hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMF2DBuffer, (void **)&unk);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
@@ -1898,6 +1924,92 @@ static void test_presenter_ar_mode(void)
     IMFVideoDisplayControl_Release(display_control);
 }
 
+static void test_presenter_video_window(void)
+{
+    D3DDEVICE_CREATION_PARAMETERS device_params = { 0 };
+    IMFVideoDisplayControl *display_control;
+    IDirect3DDeviceManager9 *dm;
+    IDirect3DDevice9 *d3d_device;
+    HANDLE hdevice;
+    HRESULT hr;
+    IDirect3DSwapChain9 *swapchain;
+    D3DPRESENT_PARAMETERS present_params = { 0 };
+    HWND window;
+
+    hr = MFCreateVideoPresenter(NULL, &IID_IDirect3DDevice9, &IID_IMFVideoDisplayControl, (void **)&display_control);
+    ok(hr == S_OK, "Failed to create default presenter, hr %#x.\n", hr);
+
+    hr = MFGetService((IUnknown *)display_control, &MR_VIDEO_ACCELERATION_SERVICE,
+         &IID_IDirect3DDeviceManager9, (void **)&dm);
+
+    hr = IDirect3DDeviceManager9_OpenDeviceHandle(dm, &hdevice);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IDirect3DDeviceManager9_LockDevice(dm, hdevice, &d3d_device, FALSE);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IDirect3DDevice9_GetCreationParameters(d3d_device, &device_params);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(device_params.hFocusWindow == GetDesktopWindow(), "Unexpected window %p.\n", device_params.hFocusWindow);
+
+    hr = IDirect3DDevice9_GetSwapChain(d3d_device, 0, &swapchain);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IDirect3DSwapChain9_GetPresentParameters(swapchain, &present_params);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    ok(present_params.hDeviceWindow == GetDesktopWindow(), "Unexpected device window.\n");
+    ok(present_params.Windowed, "Unexpected windowed mode.\n");
+    ok(present_params.SwapEffect == D3DSWAPEFFECT_COPY, "Unexpected swap effect.\n");
+    ok(present_params.Flags & D3DPRESENTFLAG_VIDEO, "Unexpected flags %#x.\n", present_params.Flags);
+    ok(present_params.PresentationInterval == D3DPRESENT_INTERVAL_IMMEDIATE, "Unexpected present interval.\n");
+
+    IDirect3DSwapChain9_Release(swapchain);
+    IDirect3DDevice9_Release(d3d_device);
+
+    hr = IDirect3DDeviceManager9_UnlockDevice(dm, hdevice, FALSE);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    /* Setting window. */
+    hr = IMFVideoDisplayControl_GetVideoWindow(display_control, &window);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!window, "Unexpected window %p.\n", window);
+
+    window = create_window();
+
+    hr = IMFVideoDisplayControl_SetVideoWindow(display_control, window);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    /* Device is not recreated or reset on window change. */
+    hr = IDirect3DDeviceManager9_LockDevice(dm, hdevice, &d3d_device, FALSE);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IDirect3DDevice9_GetSwapChain(d3d_device, 0, &swapchain);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IDirect3DSwapChain9_GetPresentParameters(swapchain, &present_params);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    ok(present_params.hDeviceWindow == GetDesktopWindow(), "Unexpected device window.\n");
+    ok(present_params.Windowed, "Unexpected windowed mode.\n");
+    ok(present_params.SwapEffect == D3DSWAPEFFECT_COPY, "Unexpected swap effect.\n");
+    ok(present_params.Flags & D3DPRESENTFLAG_VIDEO, "Unexpected flags %#x.\n", present_params.Flags);
+    ok(present_params.PresentationInterval == D3DPRESENT_INTERVAL_IMMEDIATE, "Unexpected present interval.\n");
+
+    IDirect3DSwapChain9_Release(swapchain);
+    IDirect3DDevice9_Release(d3d_device);
+
+    hr = IDirect3DDeviceManager9_UnlockDevice(dm, hdevice, FALSE);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IDirect3DDeviceManager9_CloseDeviceHandle(dm, hdevice);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    IMFVideoDisplayControl_Release(display_control);
+
+    DestroyWindow(window);
+}
+
 static void test_mixer_output_rectangle(void)
 {
     IMFVideoMixerControl *mixer_control;
@@ -2134,13 +2246,14 @@ static void test_mixer_samples(void)
     IMFDesiredSample *desired;
     IDirect3DDevice9 *device;
     IMFMediaType *video_type;
-    DWORD color, status;
+    DWORD count, flags, color, status;
     IMFTransform *mixer;
-    IMFSample *sample;
+    IMFSample *sample, *sample2;
     IDirect3D9 *d3d;
     HWND window;
     UINT token;
     HRESULT hr;
+    LONGLONG pts, duration;
 
     window = create_window();
     d3d = Direct3DCreate9(D3D_SDK_VERSION);
@@ -2240,11 +2353,9 @@ static void test_mixer_samples(void)
 
     buffers[0].pSample = sample;
     hr = IMFTransform_ProcessOutput(mixer, 0, 1, buffers, &status);
-todo_wine
     ok(hr == MF_E_TRANSFORM_NEED_MORE_INPUT, "Unexpected hr %#x.\n", hr);
 
     color = get_surface_color(surface, 0, 0);
-todo_wine
     ok(color == D3DCOLOR_ARGB(0x10, 0xff, 0x00, 0x00), "Unexpected color %#x.\n", color);
 
     /* Streaming is not started yet. Output is colored black, but only if desired timestamps were set. */
@@ -2312,6 +2423,57 @@ todo_wine
     hr = IMFTransform_ProcessInput(mixer, 5, sample, 0);
     ok(hr == MF_E_INVALIDSTREAMNUMBER, "Unexpected hr %#x.\n", hr);
 
+    /* ProcessOutput() sets sample time and duration. */
+    hr = MFCreateVideoSampleFromSurface((IUnknown *)surface, &sample2);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_SetUINT32(sample2, &IID_IMFSample, 1);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_SetSampleFlags(sample2, 0x123);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_GetSampleTime(sample2, &pts);
+    ok(hr == MF_E_NO_SAMPLE_TIMESTAMP, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_GetSampleDuration(sample2, &duration);
+    ok(hr == MF_E_NO_SAMPLE_DURATION, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_SetSampleTime(sample, 0);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_SetSampleDuration(sample, 0);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    memset(buffers, 0, sizeof(buffers));
+    buffers[0].pSample = sample2;
+    hr = IMFTransform_ProcessOutput(mixer, 0, 1, buffers, &status);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IMFSample_GetSampleTime(sample2, &pts);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!pts, "Unexpected sample time.\n");
+
+    hr = IMFSample_GetSampleDuration(sample2, &duration);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!duration, "Unexpected duration\n");
+
+    /* Flags are not copied. */
+    hr = IMFSample_GetSampleFlags(sample2, &flags);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(flags == 0x123, "Unexpected flags %#x.\n", flags);
+
+    /* Attributes are not removed. */
+    hr = IMFSample_GetCount(sample2, &count);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(count == 1, "Unexpected attribute count %u.\n", count);
+
+    hr = IMFSample_GetCount(sample, &count);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!count, "Unexpected attribute count %u.\n", count);
+
+    IMFSample_Release(sample2);
+
     hr = IMFTransform_ProcessMessage(mixer, MFT_MESSAGE_COMMAND_DRAIN, 0);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
@@ -2348,6 +2510,7 @@ START_TEST(evr)
     test_presenter_video_position();
     test_presenter_native_video_size();
     test_presenter_ar_mode();
+    test_presenter_video_window();
     test_mixer_output_rectangle();
     test_mixer_zorder();
     test_mixer_samples();

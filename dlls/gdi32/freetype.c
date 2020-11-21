@@ -190,6 +190,20 @@ MAKE_FUNCPTR(FcPatternDestroy);
 MAKE_FUNCPTR(FcPatternGetBool);
 MAKE_FUNCPTR(FcPatternGetInteger);
 MAKE_FUNCPTR(FcPatternGetString);
+MAKE_FUNCPTR(FcConfigGetFontDirs);
+MAKE_FUNCPTR(FcConfigGetCurrent);
+MAKE_FUNCPTR(FcCacheCopySet);
+MAKE_FUNCPTR(FcCacheNumSubdir);
+MAKE_FUNCPTR(FcCacheSubdir);
+MAKE_FUNCPTR(FcDirCacheRead);
+MAKE_FUNCPTR(FcDirCacheUnload);
+MAKE_FUNCPTR(FcStrListCreate);
+MAKE_FUNCPTR(FcStrListDone);
+MAKE_FUNCPTR(FcStrListNext);
+MAKE_FUNCPTR(FcStrSetAdd);
+MAKE_FUNCPTR(FcStrSetCreate);
+MAKE_FUNCPTR(FcStrSetDestroy);
+MAKE_FUNCPTR(FcStrSetMember);
 #ifndef FC_NAMELANG
 #define FC_NAMELANG "namelang"
 #endif
@@ -1002,50 +1016,6 @@ static inline void get_fontsig( FT_Face ft_face, FONTSIGNATURE *fs )
     }
 }
 
-static int AddFaceToList(FT_Face ft_face, const WCHAR *file, void *data_ptr, SIZE_T data_size,
-                         FT_Long face_index, DWORD flags )
-{
-    struct bitmap_font_size size;
-    FONTSIGNATURE fs;
-    int ret;
-    WCHAR *family_name = ft_face_get_family_name( ft_face, system_lcid );
-    WCHAR *second_name = ft_face_get_family_name( ft_face, MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT) );
-    WCHAR *style_name = ft_face_get_style_name( ft_face, system_lcid );
-    WCHAR *full_name = ft_face_get_full_name( ft_face, system_lcid );
-
-    /* try to find another secondary name, preferring the lowest langids */
-    if (!RtlCompareUnicodeStrings( family_name, lstrlenW(family_name),
-                                   second_name, lstrlenW(second_name), TRUE ))
-    {
-        RtlFreeHeap( GetProcessHeap(), 0, second_name );
-        second_name = ft_face_get_family_name( ft_face, MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL) );
-        if (!RtlCompareUnicodeStrings( family_name, lstrlenW(family_name),
-                                       second_name, lstrlenW(second_name), TRUE ))
-        {
-            RtlFreeHeap( GetProcessHeap(), 0, second_name );
-            second_name = NULL;
-        }
-    }
-
-    get_fontsig( ft_face, &fs );
-    if (!FT_IS_SCALABLE( ft_face )) get_bitmap_size( ft_face, &size );
-    if (!HIWORD( flags )) flags |= ADDFONT_AA_FLAGS( default_aa_flags );
-
-    ret = callback_funcs->add_gdi_face( family_name, second_name, style_name, full_name, file,
-                                        data_ptr, data_size, face_index, fs, get_ntm_flags( ft_face ),
-                                        get_font_version( ft_face ), flags,
-                                        FT_IS_SCALABLE(ft_face) ? NULL : &size );
-
-    TRACE("fsCsb = %08x %08x/%08x %08x %08x %08x\n",
-          fs.fsCsb[0], fs.fsCsb[1], fs.fsUsb[0], fs.fsUsb[1], fs.fsUsb[2], fs.fsUsb[3]);
-
-    RtlFreeHeap( GetProcessHeap(), 0, family_name );
-    RtlFreeHeap( GetProcessHeap(), 0, second_name );
-    RtlFreeHeap( GetProcessHeap(), 0, style_name );
-    RtlFreeHeap( GetProcessHeap(), 0, full_name );
-    return ret;
-}
-
 static FT_Face new_ft_face( const char *file, void *font_data_ptr, DWORD font_data_size,
                             FT_Long face_index, BOOL allow_bitmap )
 {
@@ -1122,6 +1092,68 @@ fail:
     return NULL;
 }
 
+static int add_unix_face( const char *unix_name, const WCHAR *file, void *data_ptr, SIZE_T data_size,
+                          DWORD face_index, DWORD flags, DWORD *num_faces )
+{
+    struct bitmap_font_size size;
+    FONTSIGNATURE fs;
+    FT_Face ft_face;
+    WCHAR *family_name, *second_name, *style_name, *full_name;
+    int ret;
+
+    if (num_faces) *num_faces = 0;
+
+    if (!(ft_face = new_ft_face( unix_name, data_ptr, data_size, face_index, flags & ADDFONT_ALLOW_BITMAP )))
+        return 0;
+
+    if (ft_face->family_name[0] == '.') /* Ignore fonts with names beginning with a dot */
+    {
+        TRACE("Ignoring %s since its family name begins with a dot\n", debugstr_a(unix_name));
+        pFT_Done_Face( ft_face );
+        return 0;
+    }
+
+    family_name = ft_face_get_family_name( ft_face, system_lcid );
+    second_name = ft_face_get_family_name( ft_face, MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT) );
+    style_name = ft_face_get_style_name( ft_face, system_lcid );
+    full_name = ft_face_get_full_name( ft_face, system_lcid );
+
+    /* try to find another secondary name, preferring the lowest langids */
+    if (!RtlCompareUnicodeStrings( family_name, lstrlenW(family_name),
+                                   second_name, lstrlenW(second_name), TRUE ))
+    {
+        RtlFreeHeap( GetProcessHeap(), 0, second_name );
+        second_name = ft_face_get_family_name( ft_face, MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL) );
+        if (!RtlCompareUnicodeStrings( family_name, lstrlenW(family_name),
+                                       second_name, lstrlenW(second_name), TRUE ))
+        {
+            RtlFreeHeap( GetProcessHeap(), 0, second_name );
+            second_name = NULL;
+        }
+    }
+
+    get_fontsig( ft_face, &fs );
+    if (!FT_IS_SCALABLE( ft_face )) get_bitmap_size( ft_face, &size );
+    if (!HIWORD( flags )) flags |= ADDFONT_AA_FLAGS( default_aa_flags );
+
+    ret = callback_funcs->add_gdi_face( family_name, second_name, style_name, full_name, file,
+                                        data_ptr, data_size, face_index, fs, get_ntm_flags( ft_face ),
+                                        get_font_version( ft_face ), flags,
+                                        FT_IS_SCALABLE(ft_face) ? NULL : &size );
+
+    TRACE("fsCsb = %08x %08x/%08x %08x %08x %08x\n",
+          fs.fsCsb[0], fs.fsCsb[1], fs.fsUsb[0], fs.fsUsb[1], fs.fsUsb[2], fs.fsUsb[3]);
+
+    RtlFreeHeap( GetProcessHeap(), 0, family_name );
+    RtlFreeHeap( GetProcessHeap(), 0, second_name );
+    RtlFreeHeap( GetProcessHeap(), 0, style_name );
+    RtlFreeHeap( GetProcessHeap(), 0, full_name );
+
+    if (num_faces) *num_faces = ft_face->num_faces;
+    pFT_Done_Face( ft_face );
+    return ret;
+}
+
 static WCHAR *get_dos_file_name( LPCSTR str )
 {
     WCHAR *buffer;
@@ -1176,8 +1208,7 @@ static char *get_unix_file_name( LPCWSTR dosW )
 static INT AddFontToList(const WCHAR *dos_name, const char *unix_name, void *font_data_ptr,
                          DWORD font_data_size, DWORD flags)
 {
-    FT_Face ft_face;
-    FT_Long face_index = 0, num_faces;
+    DWORD face_index = 0, num_faces;
     INT ret = 0;
     WCHAR *filename = NULL;
 
@@ -1207,22 +1238,10 @@ static INT AddFontToList(const WCHAR *dos_name, const char *unix_name, void *fon
 
     if (!dos_name && unix_name) dos_name = filename = get_dos_file_name( unix_name );
 
-    do {
-        ft_face = new_ft_face( unix_name, font_data_ptr, font_data_size, face_index, flags & ADDFONT_ALLOW_BITMAP );
-        if (!ft_face) break;
+    do
+        ret += add_unix_face( unix_name, dos_name, font_data_ptr, font_data_size, face_index, flags, &num_faces );
+    while (num_faces > ++face_index);
 
-        if(ft_face->family_name[0] == '.') /* Ignore fonts with names beginning with a dot */
-        {
-            TRACE("Ignoring %s since its family name begins with a dot\n", debugstr_a(unix_name));
-            pFT_Done_Face(ft_face);
-            break;
-        }
-
-        ret += AddFaceToList(ft_face, dos_name, font_data_ptr, font_data_size, face_index, flags);
-
-	num_faces = ft_face->num_faces;
-	pFT_Done_Face(ft_face);
-    } while(num_faces > ++face_index);
     RtlFreeHeap( GetProcessHeap(), 0, filename );
     return ret;
 }
@@ -1324,21 +1343,67 @@ static UINT parse_aa_pattern( FcPattern *pattern )
     return aa_flags;
 }
 
-static FcPattern *create_family_pattern( const char *name )
+static FcPattern *create_family_pattern( const char *name, FcPattern **cached )
 {
-    FcPattern *ret, *pattern = pFcPatternCreate();
+    FcPattern *ret = NULL, *tmp, *pattern = pFcPatternCreate();
     FcResult result;
-
+    if (*cached) return *cached;
     pFcPatternAddString( pattern, FC_FAMILY, (const FcChar8 *)name );
     pFcPatternAddString( pattern, FC_NAMELANG, (const FcChar8 *)"en-us" );
     pFcPatternAddString( pattern, FC_PRGNAME, (const FcChar8 *)"wine" );
     pFcConfigSubstitute( NULL, pattern, FcMatchPattern );
     pFcDefaultSubstitute( pattern );
-    ret = pFcFontMatch( NULL, pattern, &result );
+    tmp = pFcFontMatch( NULL, pattern, &result );
     pFcPatternDestroy( pattern );
-    if (ret && result == FcResultMatch) return ret;
-    pFcPatternDestroy( ret );
-    return NULL;
+    if (result != FcResultMatch) pFcPatternDestroy( tmp );
+    else if ((ret = InterlockedCompareExchangePointer( (void **)cached, tmp, NULL ))) pFcPatternDestroy( tmp );
+    else ret = tmp;
+    return ret;
+}
+
+static void fontconfig_add_font( FcPattern *pattern, DWORD flags )
+{
+    const char *unix_name, *format;
+    WCHAR *dos_name;
+    FcBool scalable;
+    DWORD aa_flags;
+    int face_index;
+
+    TRACE( "(%p %#x)\n", pattern, flags );
+
+    if (pFcPatternGetString( pattern, FC_FILE, 0, (FcChar8 **)&unix_name ) != FcResultMatch)
+        return;
+
+    if (pFcPatternGetBool( pattern, FC_SCALABLE, 0, &scalable ) != FcResultMatch)
+        scalable = FALSE;
+
+    if (pFcPatternGetString( pattern, FC_FONTFORMAT, 0, (FcChar8 **)&format ) != FcResultMatch)
+    {
+        TRACE( "ignoring unknown font format %s\n", debugstr_a(unix_name) );
+        return;
+    }
+
+    if (!strcmp( format, "Type 1" ))
+    {
+        TRACE( "ignoring Type 1 font %s\n", debugstr_a(unix_name) );
+        return;
+    }
+
+    if (!scalable && !(flags & ADDFONT_ALLOW_BITMAP))
+    {
+        TRACE( "ignoring non-scalable font %s\n", debugstr_a(unix_name) );
+        return;
+    }
+
+    if (!(aa_flags = parse_aa_pattern( pattern ))) aa_flags = default_aa_flags;
+    flags |= ADDFONT_AA_FLAGS(aa_flags);
+
+    if (pFcPatternGetInteger( pattern, FC_INDEX, 0, &face_index ) != FcResultMatch)
+        face_index = 0;
+
+    dos_name = get_dos_file_name( unix_name );
+    add_unix_face( unix_name, dos_name, NULL, 0, face_index, flags, NULL );
+    RtlFreeHeap( GetProcessHeap(), 0, dos_name );
 }
 
 static void init_fontconfig(void)
@@ -1364,6 +1429,20 @@ static void init_fontconfig(void)
     LOAD_FUNCPTR(FcPatternGetBool);
     LOAD_FUNCPTR(FcPatternGetInteger);
     LOAD_FUNCPTR(FcPatternGetString);
+    LOAD_FUNCPTR(FcConfigGetFontDirs);
+    LOAD_FUNCPTR(FcConfigGetCurrent);
+    LOAD_FUNCPTR(FcCacheCopySet);
+    LOAD_FUNCPTR(FcCacheNumSubdir);
+    LOAD_FUNCPTR(FcCacheSubdir);
+    LOAD_FUNCPTR(FcDirCacheRead);
+    LOAD_FUNCPTR(FcDirCacheUnload);
+    LOAD_FUNCPTR(FcStrListCreate);
+    LOAD_FUNCPTR(FcStrListDone);
+    LOAD_FUNCPTR(FcStrListNext);
+    LOAD_FUNCPTR(FcStrSetAdd);
+    LOAD_FUNCPTR(FcStrSetCreate);
+    LOAD_FUNCPTR(FcStrSetDestroy);
+    LOAD_FUNCPTR(FcStrSetMember);
 #undef LOAD_FUNCPTR
 
     if (pFcInit())
@@ -1380,66 +1459,75 @@ static void init_fontconfig(void)
             default_aa_flags = parse_aa_pattern( pattern );
             pFcPatternDestroy( pattern );
         }
-        pattern_serif = create_family_pattern( "serif" );
-        pattern_fixed = create_family_pattern( "monospace" );
-        pattern_sans = create_family_pattern( "sans" );
 
         TRACE( "enabled, default flags = %x\n", default_aa_flags );
         fontconfig_enabled = TRUE;
     }
 }
 
-static void load_fontconfig_fonts(void)
+static void fontconfig_add_fonts_from_dir_list( FcConfig *config, FcStrList *dir_list, FcStrSet *done_set, DWORD flags )
 {
-    FcPattern *pat;
-    FcFontSet *fontset;
-    int i, len;
-    char *file;
-    const char *ext;
+    const FcChar8 *dir;
+    FcFontSet *font_set;
+    FcStrList *subdir_list = NULL;
+    FcStrSet *subdir_set = NULL;
+    FcCache *cache = NULL;
+    int i;
+
+    TRACE( "(%p %p %p %#x)\n", config, dir_list, done_set, flags );
+
+    while ((dir = pFcStrListNext( dir_list )))
+    {
+        if (pFcStrSetMember( done_set, dir )) continue;
+
+        TRACE( "adding fonts from %s\n", dir );
+        if (!(cache = pFcDirCacheRead( dir, FcFalse, config ))) continue;
+
+        if (!(font_set = pFcCacheCopySet( cache ))) goto done;
+        for (i = 0; i < font_set->nfont; i++)
+            fontconfig_add_font( font_set->fonts[i], flags );
+        pFcFontSetDestroy( font_set );
+        font_set = NULL;
+
+        if (!(subdir_set = pFcStrSetCreate())) goto done;
+        for (i = 0; i < pFcCacheNumSubdir( cache ); i++)
+            pFcStrSetAdd( subdir_set, pFcCacheSubdir( cache, i ) );
+        pFcDirCacheUnload( cache );
+        cache = NULL;
+
+        if (!(subdir_list = pFcStrListCreate( subdir_set ))) goto done;
+        pFcStrSetDestroy( subdir_set );
+        subdir_set = NULL;
+
+        pFcStrSetAdd( done_set, dir );
+        fontconfig_add_fonts_from_dir_list( config, subdir_list, done_set, flags );
+        pFcStrListDone( subdir_list );
+        subdir_list = NULL;
+    }
+
+done:
+    if (font_set) pFcFontSetDestroy( font_set );
+    if (subdir_list) pFcStrListDone( subdir_list );
+    if (subdir_set) pFcStrSetDestroy( subdir_set );
+    if (cache) pFcDirCacheUnload( cache );
+}
+
+static void load_fontconfig_fonts( void )
+{
+    FcStrList *dir_list = NULL;
+    FcStrSet *done_set = NULL;
+    FcConfig *config;
 
     if (!fontconfig_enabled) return;
+    if (!(config = pFcConfigGetCurrent())) goto done;
+    if (!(done_set = pFcStrSetCreate())) goto done;
+    if (!(dir_list = pFcConfigGetFontDirs( config ))) goto done;
 
-    pat = pFcPatternCreate();
-    if (!pat) return;
+    fontconfig_add_fonts_from_dir_list( config, dir_list, done_set, ADDFONT_EXTERNAL_FONT | ADDFONT_ADD_TO_CACHE );
 
-    fontset = pFcFontList(NULL, pat, NULL);
-    if (!fontset)
-    {
-        pFcPatternDestroy(pat);
-        return;
-    }
-
-    for(i = 0; i < fontset->nfont; i++) {
-        FcBool scalable;
-        DWORD aa_flags;
-
-        if(pFcPatternGetString(fontset->fonts[i], FC_FILE, 0, (FcChar8**)&file) != FcResultMatch)
-            continue;
-
-        pFcConfigSubstitute( NULL, fontset->fonts[i], FcMatchFont );
-
-        /* We're just interested in OT/TT fonts for now, so this hack just
-           picks up the scalable fonts without extensions .pf[ab] to save time
-           loading every other font */
-
-        if(pFcPatternGetBool(fontset->fonts[i], FC_SCALABLE, 0, &scalable) == FcResultMatch && !scalable)
-        {
-            TRACE("not scalable\n");
-            continue;
-        }
-
-        aa_flags = parse_aa_pattern( fontset->fonts[i] );
-        TRACE("fontconfig: %s aa %x\n", file, aa_flags);
-
-        len = strlen( file );
-        if(len < 4) continue;
-        ext = &file[ len - 3 ];
-        if(_strnicmp(ext, "pfa", -1) && _strnicmp(ext, "pfb", -1))
-            AddFontToList(NULL, file, NULL, 0,
-                          ADDFONT_EXTERNAL_FONT | ADDFONT_ADD_TO_CACHE | ADDFONT_AA_FLAGS(aa_flags) );
-    }
-    pFcFontSetDestroy(fontset);
-    pFcPatternDestroy(pat);
+done:
+    if (dir_list) pFcStrListDone( dir_list );
+    if (done_set) pFcStrSetDestroy( done_set );
 }
 
 #elif defined(HAVE_CARBON_CARBON_H)
@@ -2123,9 +2211,9 @@ static BOOL CDECL fontconfig_enum_family_fallbacks( DWORD pitch_and_family, int 
     char *str;
     DWORD len;
 
-    if ((pitch_and_family & FIXED_PITCH) || (pitch_and_family & 0xf0) == FF_MODERN) pat = pattern_fixed;
-    else if ((pitch_and_family & 0xf0) == FF_ROMAN) pat = pattern_serif;
-    else pat = pattern_sans;
+    if ((pitch_and_family & FIXED_PITCH) || (pitch_and_family & 0xf0) == FF_MODERN) pat = create_family_pattern( "monospace", &pattern_fixed );
+    else if ((pitch_and_family & 0xf0) == FF_ROMAN) pat = create_family_pattern( "serif", &pattern_serif );
+    else pat = create_family_pattern( "sans", &pattern_sans );
 
     if (!pat) return FALSE;
     if (pFcPatternGetString( pat, FC_FAMILY, index, (FcChar8 **)&str ) != FcResultMatch) return FALSE;

@@ -19,9 +19,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -469,7 +466,7 @@ static BOOL get_modified_type(struct datatype_t *ct, struct parsed_symbol* sym,
 
             sym->current++;
             if (!(n1 = get_number(sym))) return FALSE;
-            num = atoi(n1);
+            num = MSVCRT_atoi(n1);
 
             if (str_modif[0] == ' ' && !modifier)
                 str_modif++;
@@ -857,7 +854,7 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
         if (!get_modified_type(ct, sym, pmt_ref, in_args ? dt : 'P', in_args)) goto done;
         break;
     case 'P': /* Pointer */
-        if (isdigit(*sym->current))
+        if (MSVCRT_isdigit(*sym->current))
 	{
             /* FIXME:
              *   P6 = Function pointer
@@ -1007,7 +1004,7 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
 
                     sym->current++;
                     if (!(n1 = get_number(sym))) goto done;
-                    num = atoi(n1);
+                    num = MSVCRT_atoi(n1);
 
                     while (num--)
                         arr = str_printf(sym, "%s[%s]", arr, get_number(sym));

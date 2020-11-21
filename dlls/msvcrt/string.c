@@ -21,10 +21,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define _ISOC99_SOURCE
-#include "config.h"
-#include "wine/port.h"
-
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -1153,7 +1149,7 @@ int CDECL MSVCRT_strcoll_l( const char* str1, const char* str2, MSVCRT__locale_t
         locinfo = locale->locinfo;
 
     if(!locinfo->lc_handle[MSVCRT_LC_COLLATE])
-        return MSVCRT_strcmp(str1, str2);
+        return strcmp(str1, str2);
     return CompareStringA(locinfo->lc_handle[MSVCRT_LC_COLLATE], 0, str1, -1, str2, -1)-CSTR_EQUAL;
 }
 
@@ -1263,7 +1259,7 @@ char* __cdecl MSVCRT_strncpy(char *dst, const char *src, MSVCRT_size_t len)
 /*********************************************************************
  *      strcpy (MSVCRT.@)
  */
-char* CDECL MSVCRT_strcpy(char *dst, const char *src)
+char* CDECL strcpy(char *dst, const char *src)
 {
     char *ret = dst;
     while ((*dst++ = *src++));
@@ -1324,7 +1320,7 @@ int CDECL MSVCRT_strcat_s( char* dst, MSVCRT_size_t elem, const char* src )
 /*********************************************************************
  *      strcat (MSVCRT.@)
  */
-char* __cdecl MSVCRT_strcat( char *dst, const char *src )
+char* __cdecl strcat( char *dst, const char *src )
 {
     char *d = dst;
     while (*d) d++;
@@ -1502,7 +1498,7 @@ int CDECL MSVCRT__atoldbl(MSVCRT__LDOUBLE *value, const char *str)
 /*********************************************************************
  *              strlen (MSVCRT.@)
  */
-MSVCRT_size_t __cdecl MSVCRT_strlen(const char *str)
+size_t __cdecl strlen(const char *str)
 {
     const char *s = str;
     while (*s) s++;
@@ -2390,20 +2386,29 @@ struct _I10_OUTPUT_DATA {
  */
 int CDECL MSVCRT_I10_OUTPUT(MSVCRT__LDOUBLE ld80, int prec, int flag, struct _I10_OUTPUT_DATA *data)
 {
-    static const char inf_str[] = "1#INF";
-    static const char nan_str[] = "1#QNAN";
-
-    /* MS' long double type wants 12 bytes for Intel's 80 bit FP format.
-     * Some UNIX have sizeof(long double) == 16, yet only 80 bit are used.
-     * Assume long double uses 80 bit FP, never seen 128 bit FP. */
-    long double ld = 0;
+    struct fpnum num;
     double d;
     char format[8];
     char buf[I10_OUTPUT_MAX_PREC+9]; /* 9 = strlen("0.e+0000") + '\0' */
     char *p;
 
-    memcpy(&ld, &ld80, 10);
-    d = ld;
+    if ((ld80.x80[2] & 0x7fff) == 0x7fff)
+    {
+        if (ld80.x80[0] == 0 && ld80.x80[1] == 0x80000000)
+            strcpy( data->str, "1#INF" );
+        else
+            strcpy( data->str, (ld80.x80[1] & 0x40000000) ? "1#QNAN" : "1#SNAN" );
+        data->pos = 1;
+        data->sign = (ld80.x80[2] & 0x8000) ? '-' : ' ';
+        data->len = strlen(data->str);
+        return 0;
+    }
+
+    num.sign = (ld80.x80[2] & 0x8000) ? -1 : 1;
+    num.exp  = (ld80.x80[2] & 0x7fff) - 0x3fff - 63;
+    num.m    = ld80.x80[0] | ((ULONGLONG)ld80.x80[1] << 32);
+    num.mod  = FP_ROUND_EVEN;
+    fpnum_double( &num, &d );
     TRACE("(%lf %d %x %p)\n", d, prec, flag, data);
 
     if(d<0) {
@@ -2412,24 +2417,8 @@ int CDECL MSVCRT_I10_OUTPUT(MSVCRT__LDOUBLE ld80, int prec, int flag, struct _I1
     } else
         data->sign = ' ';
 
-    if(isinf(d)) {
-        data->pos = 1;
-        data->len = 5;
-        memcpy(data->str, inf_str, sizeof(inf_str));
-
-        return 0;
-    }
-
-    if(isnan(d)) {
-        data->pos = 1;
-        data->len = 6;
-        memcpy(data->str, nan_str, sizeof(nan_str));
-
-        return 0;
-    }
-
     if(flag&1) {
-        int exp = 1+floor(log10(d));
+        int exp = 1 + MSVCRT_floor(MSVCRT_log10(d));
 
         prec += exp;
         if(exp < 0)
@@ -2448,7 +2437,7 @@ int CDECL MSVCRT_I10_OUTPUT(MSVCRT__LDOUBLE ld80, int prec, int flag, struct _I1
     MSVCRT_sprintf(buf, format, d);
 
     buf[1] = buf[0];
-    data->pos = atoi(buf+prec+3);
+    data->pos = MSVCRT_atoi(buf+prec+3);
     if(buf[1] != '0')
         data->pos++;
 
@@ -2468,7 +2457,7 @@ int CDECL MSVCRT_I10_OUTPUT(MSVCRT__LDOUBLE ld80, int prec, int flag, struct _I1
 /*********************************************************************
  *                  memcmp (MSVCRT.@)
  */
-int __cdecl MSVCRT_memcmp(const void *ptr1, const void *ptr2, MSVCRT_size_t n)
+int __cdecl memcmp(const void *ptr1, const void *ptr2, size_t n)
 {
     const unsigned char *p1, *p2;
 
@@ -2488,7 +2477,7 @@ int __cdecl MSVCRT_memcmp(const void *ptr1, const void *ptr2, MSVCRT_size_t n)
 #else
 # define MERGE(w1, sh1, w2, sh2) ((w1 >> sh1) | (w2 << sh2))
 #endif
-void * __cdecl MSVCRT_memmove(void *dst, const void *src, MSVCRT_size_t n)
+void * __cdecl memmove(void *dst, const void *src, size_t n)
 {
     unsigned char *d = dst;
     const unsigned char *s = src;
@@ -2587,15 +2576,15 @@ void * __cdecl MSVCRT_memmove(void *dst, const void *src, MSVCRT_size_t n)
 /*********************************************************************
  *                  memcpy   (MSVCRT.@)
  */
-void * __cdecl MSVCRT_memcpy(void *dst, const void *src, MSVCRT_size_t n)
+void * __cdecl memcpy(void *dst, const void *src, size_t n)
 {
-    return MSVCRT_memmove(dst, src, n);
+    return memmove(dst, src, n);
 }
 
 /*********************************************************************
  *		    memset (MSVCRT.@)
  */
-void* __cdecl MSVCRT_memset(void *dst, int c, MSVCRT_size_t n)
+void* __cdecl memset(void *dst, int c, size_t n)
 {
     volatile unsigned char *d = dst;  /* avoid gcc optimizations */
     while (n--) *d++ = c;
@@ -2605,7 +2594,7 @@ void* __cdecl MSVCRT_memset(void *dst, int c, MSVCRT_size_t n)
 /*********************************************************************
  *		    strchr (MSVCRT.@)
  */
-char* __cdecl MSVCRT_strchr(const char *str, int c)
+char* __cdecl strchr(const char *str, int c)
 {
     do
     {
@@ -2638,7 +2627,7 @@ void* __cdecl MSVCRT_memchr(const void *ptr, int c, MSVCRT_size_t n)
 /*********************************************************************
  *                  strcmp (MSVCRT.@)
  */
-int __cdecl MSVCRT_strcmp(const char *str1, const char *str2)
+int __cdecl strcmp(const char *str1, const char *str2)
 {
     while (*str1 && *str1 == *str2) { str1++; str2++; }
     if ((unsigned char)*str1 > (unsigned char)*str2) return 1;
@@ -2728,7 +2717,7 @@ char* __cdecl MSVCRT_strstr(const char *haystack, const char *needle)
     MSVCRT_size_t i, j, len, needle_len, lps_len;
     BYTE lps[256];
 
-    needle_len = MSVCRT_strlen(needle);
+    needle_len = strlen(needle);
     if (!needle_len) return (char*)haystack;
     lps_len = needle_len > ARRAY_SIZE(lps) ? ARRAY_SIZE(lps) : needle_len;
 

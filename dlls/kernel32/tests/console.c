@@ -19,10 +19,13 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "wine/test.h"
+#include <ntstatus.h>
+#define WIN32_NO_STATUS
 #include <windows.h>
 #include <winternl.h>
 #include <stdio.h>
+
+#include "wine/test.h"
 
 static void (WINAPI *pClosePseudoConsole)(HPCON);
 static HRESULT (WINAPI *pCreatePseudoConsole)(COORD,HANDLE,HANDLE,DWORD,HPCON*);
@@ -79,6 +82,25 @@ static void init_function_pointers(void)
     KERNEL32_GET_PROC(VerifyConsoleIoHandle);
 
 #undef KERNEL32_GET_PROC
+}
+
+static HANDLE create_unbound_handle(BOOL output, BOOL test_status)
+{
+    OBJECT_ATTRIBUTES attr = {sizeof(attr)};
+    IO_STATUS_BLOCK iosb;
+    UNICODE_STRING name;
+    HANDLE handle;
+    NTSTATUS status;
+
+    attr.ObjectName = &name;
+    attr.Attributes = OBJ_INHERIT;
+    RtlInitUnicodeString( &name, output ? L"\\Device\\ConDrv\\Output" : L"\\Device\\ConDrv\\Input" );
+    status = NtCreateFile( &handle, FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE | FILE_READ_ATTRIBUTES |
+                           FILE_WRITE_ATTRIBUTES, &attr, &iosb, NULL, FILE_ATTRIBUTE_NORMAL,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_CREATE,
+                           FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0 );
+    if (test_status) ok(!status, "NtCreateFile failed: %#x\n", status);
+    return status ? NULL : handle;
 }
 
 /* FIXME: this could be optimized on a speed point of view */
@@ -988,6 +1010,79 @@ static void testWaitForConsoleInput(HANDLE input_handle)
     CloseHandle(complete_event);
 }
 
+static void test_wait(HANDLE input, HANDLE orig_output)
+{
+    HANDLE output, unbound_output, unbound_input;
+    LARGE_INTEGER zero;
+    INPUT_RECORD ir;
+    DWORD res, count;
+    NTSTATUS status;
+    BOOL ret;
+
+    if (skip_nt) return;
+
+    memset(&ir, 0, sizeof(ir));
+    ir.EventType = MOUSE_EVENT;
+    ir.Event.MouseEvent.dwEventFlags = MOUSE_MOVED;
+    zero.QuadPart = 0;
+
+    output = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE,
+                                       FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                       CONSOLE_TEXTMODE_BUFFER, NULL);
+    ok(output != INVALID_HANDLE_VALUE, "CreateConsoleScreenBuffer failed: %u\n", GetLastError());
+
+    ret = SetConsoleActiveScreenBuffer(output);
+    ok(ret, "SetConsoleActiveScreenBuffer failed: %u\n", GetLastError());
+    FlushConsoleInputBuffer(input);
+
+    unbound_output = create_unbound_handle(TRUE, TRUE);
+    unbound_input = create_unbound_handle(FALSE, TRUE);
+
+    res = WaitForSingleObject(input, 0);
+    ok(res == WAIT_TIMEOUT, "WaitForSingleObject returned %x\n", res);
+    res = WaitForSingleObject(output, 0);
+    ok(res == WAIT_TIMEOUT, "WaitForSingleObject returned %x\n", res);
+    res = WaitForSingleObject(orig_output, 0);
+    ok(res == WAIT_TIMEOUT, "WaitForSingleObject returned %x\n", res);
+    res = WaitForSingleObject(unbound_output, 0);
+    ok(res == WAIT_TIMEOUT, "WaitForSingleObject returned %x\n", res);
+    res = WaitForSingleObject(unbound_input, 0);
+    ok(res == WAIT_TIMEOUT, "WaitForSingleObject returned %x\n", res);
+    status = NtWaitForSingleObject(input, FALSE, &zero);
+    ok(status == STATUS_TIMEOUT || broken(status == STATUS_ACCESS_DENIED /* win2k8 */),
+       "NtWaitForSingleObject returned %x\n", status);
+    status = NtWaitForSingleObject(output, FALSE, &zero);
+    ok(status == STATUS_TIMEOUT || broken(status == STATUS_ACCESS_DENIED /* win2k8 */),
+       "NtWaitForSingleObject returned %x\n", status);
+
+    ret = WriteConsoleInputW(input, &ir, 1, &count);
+    ok(ret, "WriteConsoleInputW failed: %u\n", GetLastError());
+
+    res = WaitForSingleObject(input, 0);
+    ok(!res, "WaitForSingleObject returned %x\n", res);
+    res = WaitForSingleObject(output, 0);
+    ok(!res, "WaitForSingleObject returned %x\n", res);
+    res = WaitForSingleObject(orig_output, 0);
+    ok(!res, "WaitForSingleObject returned %x\n", res);
+    res = WaitForSingleObject(unbound_output, 0);
+    ok(!res, "WaitForSingleObject returned %x\n", res);
+    res = WaitForSingleObject(unbound_input, 0);
+    ok(!res, "WaitForSingleObject returned %x\n", res);
+    status = NtWaitForSingleObject(input, FALSE, &zero);
+    ok(!status || broken(status == STATUS_ACCESS_DENIED /* win2k8 */),
+       "NtWaitForSingleObject returned %x\n", status);
+    status = NtWaitForSingleObject(output, FALSE, &zero);
+    ok(!status || broken(status == STATUS_ACCESS_DENIED /* win2k8 */),
+       "NtWaitForSingleObject returned %x\n", status);
+
+    ret = SetConsoleActiveScreenBuffer(orig_output);
+    ok(ret, "SetConsoleActiveScreenBuffer failed: %u\n", GetLastError());
+
+    CloseHandle(unbound_input);
+    CloseHandle(unbound_output);
+    CloseHandle(output);
+}
+
 static void test_GetSetConsoleInputExeName(void)
 {
     BOOL ret;
@@ -1323,12 +1418,6 @@ static void test_CreateFileW(void)
         ret = CreateFileW(cf_table[index].input ? L"\\??\\CONIN$" : L"\\??\\CONOUT$", cf_table[index].access,
                           FILE_SHARE_READ|FILE_SHARE_WRITE, &sa,
                           cf_table[index].creation, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (!index && ret == INVALID_HANDLE_VALUE)
-        {
-            win_skip("Skipping NT path tests, not supported on this Windows version\n");
-            skip_nt = TRUE;
-            continue;
-        }
         if (cf_table[index].gle)
             ok(ret == INVALID_HANDLE_VALUE && GetLastError() == cf_table[index].gle,
                "CreateFileW to returned %p %u for index %d\n", ret, GetLastError(), index);
@@ -1441,6 +1530,32 @@ static void test_GetSetStdHandle(void)
     error = GetLastError();
     ok(ret, "expected SetStdHandle to succeed\n");
     ok(error == 0xdeadbeef, "wrong GetLastError() %d\n", error);
+}
+
+static void test_DuplicateConsoleHandle(void)
+{
+    HANDLE handle, event;
+    BOOL ret;
+
+    if (skip_nt) return;
+
+    event = CreateEventW(NULL, TRUE, FALSE, NULL);
+
+    /* duplicate an event handle with DuplicateConsoleHandle */
+    handle = DuplicateConsoleHandle(event, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    ok(handle != NULL, "DuplicateConsoleHandle failed: %u\n", GetLastError());
+
+    ret = SetEvent(handle);
+    ok(ret, "SetEvent failed: %u\n", GetLastError());
+
+    ret = CloseConsoleHandle(handle);
+    ok(ret, "CloseConsoleHandle failed: %u\n", GetLastError());
+    ret = CloseConsoleHandle(event);
+    ok(ret, "CloseConsoleHandle failed: %u\n", GetLastError());
+
+    handle = DuplicateConsoleHandle((HANDLE)0xdeadbeef, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    ok(handle == INVALID_HANDLE_VALUE, "DuplicateConsoleHandle failed: %u\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "last error = %u\n", GetLastError());
 }
 
 static void test_GetNumberOfConsoleInputEvents(HANDLE input_handle)
@@ -3660,14 +3775,15 @@ static void test_GetConsoleScreenBufferInfoEx(HANDLE std_output)
 
 static void test_FreeConsole(void)
 {
+    HANDLE handle, unbound_output = NULL;
+    DWORD size, mode;
     WCHAR title[16];
-    HANDLE handle;
-    DWORD size;
     HWND hwnd;
     UINT cp;
     BOOL ret;
 
     ok(RtlGetCurrentPeb()->ProcessParameters->ConsoleHandle != NULL, "ConsoleHandle is NULL\n");
+    if (!skip_nt) unbound_output = create_unbound_handle(TRUE, TRUE);
 
     ret = FreeConsole();
     ok(ret, "FreeConsole failed: %u\n", GetLastError());
@@ -3747,6 +3863,12 @@ static void test_FreeConsole(void)
     SetStdHandle( STD_INPUT_HANDLE, NULL );
     handle = GetConsoleInputWaitHandle();
     ok(!handle, "GetConsoleInputWaitHandle returned %p\n", handle);
+
+    ret = GetConsoleMode(unbound_output, &mode);
+    ok(!ret && GetLastError() == ERROR_INVALID_HANDLE,
+       "GetConsoleMode returned %x %u\n", ret, GetLastError());
+
+    CloseHandle(unbound_output);
 }
 
 static void test_SetConsoleScreenBufferInfoEx(HANDLE std_output)
@@ -3946,7 +4068,6 @@ static void test_AllocConsole_child(void)
     ok(GetStdHandle(STD_OUTPUT_HANDLE) == prev_output, "GetStdHandle(STD_OUTPUT_HANDLE) = %p\n", GetStdHandle(STD_OUTPUT_HANDLE));
     ok(GetStdHandle(STD_ERROR_HANDLE) == prev_error, "GetStdHandle(STD_ERROR_HANDLE) = %p\n", GetStdHandle(STD_ERROR_HANDLE));
     res = GetConsoleMode(unbound_output, &mode);
-    todo_wine
     ok(!res && GetLastError() == ERROR_INVALID_HANDLE, "GetConsoleMode failed: %u\n", GetLastError());
 
     res = AllocConsole();
@@ -4153,7 +4274,7 @@ static void test_pseudo_console(void)
 
 START_TEST(console)
 {
-    HANDLE hConIn, hConOut, revert_output = NULL;
+    HANDLE hConIn, hConOut, revert_output = NULL, unbound_output;
     BOOL ret, test_current;
     CONSOLE_SCREEN_BUFFER_INFO	sbi;
     BOOL using_pseudo_console;
@@ -4241,6 +4362,13 @@ START_TEST(console)
         }
     }
 
+    unbound_output = create_unbound_handle(TRUE, FALSE);
+    if (!unbound_output)
+    {
+        win_skip("Skipping NT path tests, not supported on this Windows version\n");
+        skip_nt = TRUE;
+    }
+
     if (test_current)
     {
         HANDLE sb;
@@ -4295,6 +4423,7 @@ START_TEST(console)
     if (!test_current) testScreenBuffer(hConOut);
     /* Test waiting for a console handle */
     testWaitForConsoleInput(hConIn);
+    test_wait(hConIn, hConOut);
 
     if (!test_current)
     {
@@ -4323,6 +4452,7 @@ START_TEST(console)
     test_OpenCON();
     test_VerifyConsoleIoHandle(hConOut);
     test_GetSetStdHandle();
+    test_DuplicateConsoleHandle();
     test_GetNumberOfConsoleInputEvents(hConIn);
     test_WriteConsoleInputA(hConIn);
     test_WriteConsoleInputW(hConIn);
@@ -4359,4 +4489,5 @@ START_TEST(console)
     }
     else if (revert_output) SetConsoleActiveScreenBuffer(revert_output);
 
+    CloseHandle(unbound_output);
 }

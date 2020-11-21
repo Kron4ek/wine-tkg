@@ -896,6 +896,7 @@ VkResult WINAPI wine_vkCreateInstance(const VkInstanceCreateInfo *create_info,
 {
     VkInstanceCreateInfo create_info_host;
     const VkApplicationInfo *app_info;
+    uint32_t new_mxcsr, old_mxcsr;
     struct VkInstance_T *object;
     VkResult res;
 
@@ -949,7 +950,12 @@ VkResult WINAPI wine_vkCreateInstance(const VkInstanceCreateInfo *create_info,
      * the native physical devices and present those to the application.
      * Cleanup happens as part of wine_vkDestroyInstance.
      */
+    __asm__ volatile("stmxcsr %0" : "=m"(old_mxcsr));
+    new_mxcsr = 0x1f80;
+    __asm__ volatile("ldmxcsr %0" : : "m"(new_mxcsr));
     res = wine_vk_instance_load_physical_devices(object);
+    __asm__ volatile("ldmxcsr %0" : : "m"(old_mxcsr));
+    TRACE("old_mxcsr %#x.\n", old_mxcsr);
     if (res != VK_SUCCESS)
     {
         ERR("Failed to load physical devices, res=%d\n", res);
@@ -2151,6 +2157,10 @@ static void *wine_vk_get_global_proc_addr(const char *name)
  */
 void *native_vkGetInstanceProcAddrWINE(VkInstance instance, const char *name)
 {
+    wine_vk_init_once();
+    if (!vk_funcs)
+        return NULL;
+
     return vk_funcs->p_vkGetInstanceProcAddr(instance, name);
 }
 

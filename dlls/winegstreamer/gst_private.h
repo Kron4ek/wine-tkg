@@ -99,4 +99,5 @@ HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj) DECLSPEC_HI
 HRESULT color_converter_create(REFIID riid, void **ret) DECLSPEC_HIDDEN;
 HRESULT audio_converter_create(REFIID riid, void **ret) DECLSPEC_HIDDEN;
 
+gboolean gst_wine_yuvfixup_plugin_init(void) DECLSPEC_HIDDEN;
 #endif /* __GST_PRIVATE_INCLUDED__ */

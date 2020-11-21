@@ -18,8 +18,6 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-#include "config.h"
-#include "wine/port.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -119,16 +117,22 @@ int CDECL MSVCRT_towlower(MSVCRT_wint_t c)
 
 INT CDECL MSVCRT__wcsicmp_l(const MSVCRT_wchar_t *str1, const MSVCRT_wchar_t *str2, MSVCRT__locale_t locale)
 {
+    MSVCRT__locale_tstruct tmp = {0};
     MSVCRT_wchar_t c1, c2;
 
     if(!MSVCRT_CHECK_PMT(str1 != NULL) || !MSVCRT_CHECK_PMT(str2 != NULL))
         return MSVCRT__NLSCMPERROR;
+
+    if(!locale)
+        locale = get_current_locale_noalloc(&tmp);
 
     do
     {
         c1 = MSVCRT__towlower_l(*str1++, locale);
         c2 = MSVCRT__towlower_l(*str2++, locale);
     } while(c1 && (c1 == c2));
+
+    free_locale_noalloc(&tmp);
     return c1 - c2;
 }
 
@@ -146,19 +150,25 @@ INT CDECL MSVCRT__wcsicmp( const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str
 INT CDECL MSVCRT__wcsnicmp_l(const MSVCRT_wchar_t *str1, const MSVCRT_wchar_t *str2,
         MSVCRT_size_t n, MSVCRT__locale_t locale)
 {
+    MSVCRT__locale_tstruct tmp = {0};
     MSVCRT_wchar_t c1, c2;
 
     if (!n)
-            return 0;
+        return 0;
 
     if(!MSVCRT_CHECK_PMT(str1 != NULL) || !MSVCRT_CHECK_PMT(str2 != NULL))
         return MSVCRT__NLSCMPERROR;
+
+    if(!locale)
+        locale = get_current_locale_noalloc(&tmp);
 
     do
     {
         c1 = MSVCRT__towlower_l(*str1++, locale);
         c2 = MSVCRT__towlower_l(*str2++, locale);
     } while(--n && c1 && (c1 == c2));
+
+    free_locale_noalloc(&tmp);
     return c1 - c2;
 }
 
@@ -343,6 +353,7 @@ MSVCRT_wchar_t* CDECL MSVCRT__wcsset( MSVCRT_wchar_t* str, MSVCRT_wchar_t c )
 int CDECL MSVCRT__wcsupr_s_l( MSVCRT_wchar_t* str, MSVCRT_size_t n,
    MSVCRT__locale_t locale )
 {
+  MSVCRT__locale_tstruct tmp = {0};
   MSVCRT_wchar_t* ptr = str;
 
   if (!str || !n)
@@ -352,12 +363,21 @@ int CDECL MSVCRT__wcsupr_s_l( MSVCRT_wchar_t* str, MSVCRT_size_t n,
     return MSVCRT_EINVAL;
   }
 
+  if(!locale)
+    locale = get_current_locale_noalloc(&tmp);
+
   while (n--)
   {
-    if (!*ptr) return 0;
+    if (!*ptr)
+    {
+      free_locale_noalloc(&tmp);
+      return 0;
+    }
     *ptr = MSVCRT__towupper_l(*ptr, locale);
     ptr++;
   }
+
+  free_locale_noalloc(&tmp);
 
   /* MSDN claims that the function should return and set errno to
    * ERANGE, which doesn't seem to be true based on the tests. */
@@ -397,6 +417,7 @@ MSVCRT_wchar_t* CDECL MSVCRT__wcsupr( MSVCRT_wchar_t *str )
  */
 int CDECL MSVCRT__wcslwr_s_l( MSVCRT_wchar_t* str, MSVCRT_size_t n, MSVCRT__locale_t locale )
 {
+  MSVCRT__locale_tstruct tmp = {0};
   MSVCRT_wchar_t* ptr = str;
 
   if (!str || !n)
@@ -406,12 +427,21 @@ int CDECL MSVCRT__wcslwr_s_l( MSVCRT_wchar_t* str, MSVCRT_size_t n, MSVCRT__loca
     return MSVCRT_EINVAL;
   }
 
+  if(!locale)
+    locale = get_current_locale_noalloc(&tmp);
+
   while (n--)
   {
-    if (!*ptr) return 0;
+    if (!*ptr)
+    {
+      free_locale_noalloc(&tmp);
+      return 0;
+    }
     *ptr = MSVCRT__towlower_l(*ptr, locale);
     ptr++;
   }
+
+  free_locale_noalloc(&tmp);
 
   /* MSDN claims that the function should return and set errno to
    * ERANGE, which doesn't seem to be true based on the tests. */
@@ -800,11 +830,12 @@ printf_arg arg_clbk_positional(void *ctx, int pos, int type, __ms_va_list *valis
     return args[pos];
 }
 
+#if _MSVCR_VER < 140
+
 /*********************************************************************
  *              _vsnprintf (MSVCRT.@)
  */
-int CDECL MSVCRT_vsnprintf( char *str, MSVCRT_size_t len,
-                            const char *format, __ms_va_list valist )
+int CDECL _vsnprintf( char *str, size_t len, const char *format, __ms_va_list valist )
 {
     static const char nullbyte = '\0';
     struct _str_ctx_a ctx = {len, str};
@@ -816,7 +847,7 @@ int CDECL MSVCRT_vsnprintf( char *str, MSVCRT_size_t len,
     return ret;
 }
 
-#if _MSVCR_VER>=140
+#else
 
 static int puts_clbk_str_c99_a(void *ctx, int len, const char *str)
 {
@@ -841,8 +872,8 @@ static int puts_clbk_str_c99_a(void *ctx, int len, const char *str)
 /*********************************************************************
  *              __stdio_common_vsprintf (UCRTBASE.@)
  */
-int CDECL MSVCRT__stdio_common_vsprintf( unsigned __int64 options, char *str, MSVCRT_size_t len, const char *format,
-                                         MSVCRT__locale_t locale, __ms_va_list valist )
+int CDECL __stdio_common_vsprintf( unsigned __int64 options, char *str, size_t len, const char *format,
+                                   _locale_t locale, __ms_va_list valist )
 {
     static const char nullbyte = '\0';
     struct _str_ctx_a ctx = {len, str};
@@ -851,7 +882,7 @@ int CDECL MSVCRT__stdio_common_vsprintf( unsigned __int64 options, char *str, MS
     if (options & ~UCRTBASE_PRINTF_MASK)
         FIXME("options %s not handled\n", wine_dbgstr_longlong(options));
     ret = pf_printf_a(puts_clbk_str_c99_a,
-            &ctx, format, locale, options & UCRTBASE_PRINTF_MASK, arg_clbk_valist, NULL, &valist);
+            &ctx, format, (MSVCRT__locale_t)locale, options & UCRTBASE_PRINTF_MASK, arg_clbk_valist, NULL, &valist);
     puts_clbk_str_a(&ctx, 1, &nullbyte);
 
     if(!str)
@@ -1086,7 +1117,7 @@ int CDECL MSVCRT__stdio_common_vsprintf_s( unsigned __int64 options,
  */
 int CDECL MSVCRT_vsprintf( char *str, const char *format, __ms_va_list valist)
 {
-    return MSVCRT_vsnprintf(str, INT_MAX, format, valist);
+    return vsnprintf(str, INT_MAX, format, valist);
 }
 
 /*********************************************************************
@@ -1094,7 +1125,7 @@ int CDECL MSVCRT_vsprintf( char *str, const char *format, __ms_va_list valist)
  */
 int CDECL MSVCRT_vsprintf_s( char *str, MSVCRT_size_t num, const char *format, __ms_va_list valist)
 {
-    return MSVCRT_vsnprintf(str, num, format, valist);
+    return vsnprintf(str, num, format, valist);
 }
 
 /*********************************************************************
@@ -1102,7 +1133,7 @@ int CDECL MSVCRT_vsprintf_s( char *str, MSVCRT_size_t num, const char *format, _
  */
 int CDECL MSVCRT__vscprintf( const char *format, __ms_va_list valist )
 {
-    return MSVCRT_vsnprintf( NULL, INT_MAX, format, valist );
+    return MSVCRT_vsnprintf_l( NULL, INT_MAX, format, NULL, valist );
 }
 
 /*********************************************************************
@@ -1160,7 +1191,7 @@ int WINAPIV MSVCRT__snprintf(char *str, MSVCRT_size_t len, const char *format, .
     int retval;
     __ms_va_list valist;
     __ms_va_start(valist, format);
-    retval = MSVCRT_vsnprintf(str, len, format, valist);
+    retval = vsnprintf(str, len, format, valist);
     __ms_va_end(valist);
     return retval;
 }
@@ -1498,7 +1529,7 @@ int WINAPIV MSVCRT_sprintf( char *str, const char *format, ... )
     int r;
 
     __ms_va_start( ap, format );
-    r = MSVCRT_vsnprintf( str, INT_MAX, format, ap );
+    r = vsnprintf( str, INT_MAX, format, ap );
     __ms_va_end( ap );
     return r;
 }
@@ -1512,7 +1543,7 @@ int WINAPIV MSVCRT_sprintf_s( char *str, MSVCRT_size_t num, const char *format, 
     int r;
 
     __ms_va_start( ap, format );
-    r = MSVCRT_vsnprintf( str, num, format, ap );
+    r = vsnprintf( str, num, format, ap );
     __ms_va_end( ap );
     return r;
 }
@@ -2039,7 +2070,7 @@ MSVCRT_size_t CDECL MSVCRT_wcrtomb( char *dst, MSVCRT_wchar_t ch, MSVCRT_mbstate
 /*********************************************************************
  *		_iswctype_l (MSVCRT.@)
  */
-INT CDECL MSVCRT__iswctype_l( MSVCRT_wchar_t wc, MSVCRT_wctype_t type, MSVCRT__locale_t locale )
+INT CDECL MSVCRT__iswctype_l( MSVCRT_wchar_t wc, wctype_t type, MSVCRT__locale_t locale )
 {
     WORD ct;
 
@@ -2057,7 +2088,7 @@ INT CDECL MSVCRT__iswctype_l( MSVCRT_wchar_t wc, MSVCRT_wctype_t type, MSVCRT__l
 /*********************************************************************
  *		iswctype    (MSVCRT.@)
  */
-INT CDECL MSVCRT_iswctype( MSVCRT_wchar_t wc, MSVCRT_wctype_t type )
+INT CDECL MSVCRT_iswctype( MSVCRT_wchar_t wc, wctype_t type )
 {
     return MSVCRT__iswctype_l( wc, type, NULL );
 }

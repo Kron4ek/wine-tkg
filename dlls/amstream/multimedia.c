@@ -42,6 +42,7 @@ struct multimedia_stream
     BOOL initialized;
     STREAM_TYPE type;
     OAEVENT event;
+    STREAM_STATE state;
 };
 
 static inline struct multimedia_stream *impl_from_IAMMultiMediaStream(IAMMultiMediaStream *iface)
@@ -136,13 +137,15 @@ static HRESULT WINAPI multimedia_stream_EnumMediaStreams(IAMMultiMediaStream *if
     return IMediaStreamFilter_EnumMediaStreams(mmstream->filter, index, stream);
 }
 
-static HRESULT WINAPI multimedia_stream_GetState(IAMMultiMediaStream *iface, STREAM_STATE *pCurrentState)
+static HRESULT WINAPI multimedia_stream_GetState(IAMMultiMediaStream *iface, STREAM_STATE *state)
 {
-    struct multimedia_stream *This = impl_from_IAMMultiMediaStream(iface);
+    struct multimedia_stream *mmstream = impl_from_IAMMultiMediaStream(iface);
 
-    FIXME("(%p/%p)->(%p) stub!\n", This, iface, pCurrentState);
+    TRACE("mmstream %p, state %p.\n", mmstream, state);
 
-    return E_NOTIMPL;
+    *state = mmstream->state;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI multimedia_stream_SetState(IAMMultiMediaStream *iface, STREAM_STATE new_state)
@@ -165,16 +168,19 @@ static HRESULT WINAPI multimedia_stream_SetState(IAMMultiMediaStream *iface, STR
     else if (new_state == STREAMSTATE_STOP)
         hr = IMediaControl_Stop(This->media_control);
 
+    if (SUCCEEDED(hr))
+        This->state = new_state;
+
     return hr;
 }
 
-static HRESULT WINAPI multimedia_stream_GetTime(IAMMultiMediaStream *iface, STREAM_TIME *pCurrentTime)
+static HRESULT WINAPI multimedia_stream_GetTime(IAMMultiMediaStream *iface, STREAM_TIME *time)
 {
-    struct multimedia_stream *This = impl_from_IAMMultiMediaStream(iface);
+    struct multimedia_stream *stream = impl_from_IAMMultiMediaStream(iface);
 
-    FIXME("(%p/%p)->(%p) stub!\n", This, iface, pCurrentTime);
+    TRACE("stream %p, time %p.\n", stream, time);
 
-    return E_NOTIMPL;
+    return IMediaStreamFilter_GetCurrentStreamTime(stream->filter, time);
 }
 
 static HRESULT WINAPI multimedia_stream_GetDuration(IAMMultiMediaStream *iface, STREAM_TIME *duration)

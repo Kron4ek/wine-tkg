@@ -37,8 +37,8 @@
 #include "winnls.h"
 #include "winerror.h"
 #include "wincon.h"
+#include "winternl.h"
 #include "wine/condrv.h"
-#include "wine/server.h"
 #include "wine/exception.h"
 #include "wine/debug.h"
 #include "kernelbase.h"
@@ -56,7 +56,6 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
 static CRITICAL_SECTION console_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
 static HANDLE console_connection;
-static HANDLE console_wait_event;
 static unsigned int console_flags;
 
 #define CONSOLE_INPUT_HANDLE    0x01
@@ -238,8 +237,7 @@ static BOOL init_console_std_handles( BOOL override_all )
 
     if (override_all || !GetStdHandle( STD_INPUT_HANDLE ))
     {
-        /* FIXME: Use unbound console handle */
-        RtlInitUnicodeString( &name, L"\\Device\\ConDrv\\CurrentIn" );
+        RtlInitUnicodeString( &name, L"\\Device\\ConDrv\\Input" );
         status = NtCreateFile( &handle, FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE | FILE_READ_ATTRIBUTES |
                                FILE_WRITE_ATTRIBUTES, &attr, &iosb, NULL, FILE_ATTRIBUTE_NORMAL,
                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_CREATE,
@@ -256,8 +254,7 @@ static BOOL init_console_std_handles( BOOL override_all )
         if (std_out && std_err) return TRUE;
     }
 
-    /* FIXME: Use unbound console handle */
-    RtlInitUnicodeString( &name, L"\\Device\\ConDrv\\CurrentOut" );
+    RtlInitUnicodeString( &name, L"\\Device\\ConDrv\\Output" );
     status = NtCreateFile( &handle, FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE | FILE_READ_ATTRIBUTES |
                            FILE_WRITE_ATTRIBUTES, &attr, &iosb, NULL, FILE_ATTRIBUTE_NORMAL,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_CREATE,
@@ -559,32 +556,12 @@ BOOL WINAPI DECLSPEC_HOTPATCH FillConsoleOutputCharacterW( HANDLE handle, WCHAR 
                           written, sizeof(*written), NULL );
 }
 
-HANDLE get_console_wait_handle( HANDLE handle )
-{
-    HANDLE event = 0;
-
-    SERVER_START_REQ( get_console_wait_event )
-    {
-        req->handle = wine_server_obj_handle( console_handle_map( handle ));
-        if (!wine_server_call( req )) event = wine_server_ptr_handle( reply->event );
-    }
-    SERVER_END_REQ;
-    if (event)
-    {
-        if (InterlockedCompareExchangePointer( &console_wait_event, event, 0 )) NtClose( event );
-        handle = console_wait_event;
-    }
-    return handle;
-}
-
 
 /***********************************************************************
  *	FreeConsole   (kernelbase.@)
  */
 BOOL WINAPI DECLSPEC_HOTPATCH FreeConsole(void)
 {
-    HANDLE event;
-
     RtlEnterCriticalSection( &console_section );
 
     NtClose( console_connection );
@@ -597,8 +574,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH FreeConsole(void)
     if (console_flags & CONSOLE_OUTPUT_HANDLE) NtClose( GetStdHandle( STD_OUTPUT_HANDLE ));
     if (console_flags & CONSOLE_ERROR_HANDLE)  NtClose( GetStdHandle( STD_ERROR_HANDLE ));
     console_flags = 0;
-
-    if ((event = InterlockedExchangePointer( &console_wait_event, NULL ))) NtClose( event );
 
     RtlLeaveCriticalSection( &console_section );
     return TRUE;
@@ -1610,24 +1585,15 @@ BOOL WINAPI DECLSPEC_HOTPATCH WriteConsoleOutputCharacterW( HANDLE handle, LPCWS
 /***********************************************************************
  *            ReadConsoleA   (kernelbase.@)
  */
-BOOL WINAPI ReadConsoleA( HANDLE handle, void *buffer, DWORD length, DWORD *ret_count, void *reserved )
+BOOL WINAPI ReadConsoleA( HANDLE handle, void *buffer, DWORD length, DWORD *count, void *reserved )
 {
-    LPWSTR strW = HeapAlloc( GetProcessHeap(), 0, length * sizeof(WCHAR) );
-    DWORD count = 0;
-    BOOL ret;
-
-    if (!strW)
+    if (length > INT_MAX)
     {
         SetLastError( ERROR_NOT_ENOUGH_MEMORY );
         return FALSE;
     }
-    if ((ret = ReadConsoleW( handle, strW, length, &count, NULL )))
-    {
-        count = WideCharToMultiByte( GetConsoleCP(), 0, strW, count, buffer, length, NULL, NULL );
-        if (ret_count) *ret_count = count;
-    }
-    HeapFree( GetProcessHeap(), 0, strW );
-    return ret;
+
+    return console_ioctl( handle, IOCTL_CONDRV_READ_FILE, NULL, 0, buffer, length, count );
 }
 
 
@@ -1659,17 +1625,12 @@ BOOL WINAPI ReadConsoleW( HANDLE handle, void *buffer, DWORD length, DWORD *coun
 BOOL WINAPI DECLSPEC_HOTPATCH WriteConsoleA( HANDLE handle, const void *buffer, DWORD length,
                                              DWORD *written, void *reserved )
 {
-    UINT cp = GetConsoleOutputCP();
-    LPWSTR strW;
-    DWORD lenW;
     BOOL ret;
 
-    if (written) *written = 0;
-    lenW = MultiByteToWideChar( cp, 0, buffer, length, NULL, 0 );
-    if (!(strW = HeapAlloc( GetProcessHeap(), 0, lenW * sizeof(WCHAR) ))) return FALSE;
-    MultiByteToWideChar( cp, 0, buffer, length, strW, lenW );
-    ret = WriteConsoleW( handle, strW, lenW, written, 0 );
-    HeapFree( GetProcessHeap(), 0, strW );
+    TRACE( "(%p,%s,%d,%p,%p)\n", handle, debugstr_an(buffer, length), length, written, reserved );
+
+    ret = console_ioctl( handle, IOCTL_CONDRV_WRITE_FILE, (void *)buffer, length, NULL, 0, NULL );
+    if (written) *written = ret ? length : 0;
     return ret;
 }
 

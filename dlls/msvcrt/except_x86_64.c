@@ -18,12 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #ifdef __x86_64__
 
 #include <stdarg.h>
+#include <fpieee.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -736,10 +734,10 @@ void __cdecl _local_unwind( void *frame, void *target )
 /*********************************************************************
  *              _fpieee_flt (MSVCRT.@)
  */
-int __cdecl _fpieee_flt(ULONG exception_code, EXCEPTION_POINTERS *ep,
+int __cdecl _fpieee_flt(__msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
         int (__cdecl *handler)(_FPIEEE_RECORD*))
 {
-    FIXME("(%x %p %p) opcode: %s\n", exception_code, ep, handler,
+    FIXME("(%lx %p %p) opcode: %s\n", exception_code, ep, handler,
             wine_dbgstr_longlong(*(ULONG64*)ep->ContextRecord->Rip));
     return EXCEPTION_CONTINUE_SEARCH;
 }

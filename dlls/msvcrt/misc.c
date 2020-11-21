@@ -18,10 +18,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include <stdlib.h>
+#include <sys/types.h>
 
 #include "msvcrt.h"
 #include "wine/debug.h"
@@ -82,7 +80,7 @@ int CDECL MSVCRT_rand_s(unsigned int *pval)
  */
 void CDECL MSVCRT__sleep(MSVCRT_ulong timeout)
 {
-  TRACE("_sleep for %d milliseconds\n",timeout);
+  TRACE("_sleep for %ld milliseconds\n",timeout);
   Sleep((timeout)?timeout:1);
 }
 

@@ -704,14 +704,11 @@ static HRESULT WINAPI FilterGraph2_RemoveFilter(IFilterGraph2 *iface, IBaseFilte
 
     TRACE("(%p/%p)->(%p)\n", This, iface, pFilter);
 
-    /* FIXME: check graph is stopped */
-
     LIST_FOR_EACH_ENTRY(entry, &This->filters, struct filter, entry)
     {
         if (entry->filter == pFilter)
         {
             IEnumPins *penumpins = NULL;
-            FILTER_STATE state;
 
             if (This->defaultclock && This->refClockProvider == pFilter)
             {
@@ -720,42 +717,36 @@ static HRESULT WINAPI FilterGraph2_RemoveFilter(IFilterGraph2 *iface, IBaseFilte
             }
 
             TRACE("Removing filter %s.\n", debugstr_w(entry->name));
-            IBaseFilter_GetState(pFilter, 0, &state);
-            if (state == State_Running)
-                IBaseFilter_Pause(pFilter);
-            if (state != State_Stopped)
-                IBaseFilter_Stop(pFilter);
 
             hr = IBaseFilter_EnumPins(pFilter, &penumpins);
             if (SUCCEEDED(hr)) {
                 IPin *ppin;
                 while(IEnumPins_Next(penumpins, 1, &ppin, NULL) == S_OK)
                 {
-                    IPin *victim = NULL;
-                    HRESULT h;
-                    IPin_ConnectedTo(ppin, &victim);
-                    if (victim)
+                    IPin *peer = NULL;
+                    HRESULT hr;
+
+                    IPin_ConnectedTo(ppin, &peer);
+                    if (peer)
                     {
-                        h = IPin_Disconnect(victim);
-                        TRACE("Disconnect other side: %08x\n", h);
-                        if (h == VFW_E_NOT_STOPPED)
+                        if (FAILED(hr = IPin_Disconnect(peer)))
                         {
-                            PIN_INFO pinfo;
-                            IPin_QueryPinInfo(victim, &pinfo);
-
-                            IBaseFilter_GetState(pinfo.pFilter, 0, &state);
-                            if (state == State_Running)
-                                IBaseFilter_Pause(pinfo.pFilter);
-                            IBaseFilter_Stop(pinfo.pFilter);
-                            IBaseFilter_Release(pinfo.pFilter);
-                            h = IPin_Disconnect(victim);
-                            TRACE("Disconnect retry: %08x\n", h);
+                            WARN("Failed to disconnect peer %p, hr %#x.\n", peer, hr);
+                            IPin_Release(peer);
+                            IPin_Release(ppin);
+                            IEnumPins_Release(penumpins);
+                            return hr;
                         }
-                        IPin_Release(victim);
-                    }
-                    h = IPin_Disconnect(ppin);
-                    TRACE("Disconnect 2: %08x\n", h);
+                        IPin_Release(peer);
 
+                        if (FAILED(hr = IPin_Disconnect(ppin)))
+                        {
+                            WARN("Failed to disconnect pin %p, hr %#x.\n", ppin, hr);
+                            IPin_Release(ppin);
+                            IEnumPins_Release(penumpins);
+                            return hr;
+                        }
+                    }
                     IPin_Release(ppin);
                 }
                 IEnumPins_Release(penumpins);
@@ -1837,7 +1828,6 @@ static void CALLBACK async_run_cb(TP_CALLBACK_INSTANCE *instance, void *context,
     }
 
     LeaveCriticalSection(&graph->cs);
-    IUnknown_Release(graph->outer_unk);
 }
 
 static HRESULT WINAPI MediaControl_Run(IMediaControl *iface)
@@ -1897,7 +1887,6 @@ static HRESULT WINAPI MediaControl_Run(IMediaControl *iface)
             if (!graph->async_run_work)
                 graph->async_run_work = CreateThreadpoolWork(async_run_cb, graph, NULL);
             graph->needs_async_run = 1;
-            IUnknown_AddRef(graph->outer_unk);
             SubmitThreadpoolWork(graph->async_run_work);
         }
         else
@@ -5008,9 +4997,8 @@ static HRESULT WINAPI MediaFilter_Stop(IMediaFilter *iface)
 
     LeaveCriticalSection(&graph->cs);
 
-    /* Don't cancel the callback; it's holding a reference to the graph. */
     if (work)
-        WaitForThreadpoolWorkCallbacks(work, FALSE);
+        WaitForThreadpoolWorkCallbacks(work, TRUE);
 
     return hr;
 }
@@ -5059,9 +5047,8 @@ static HRESULT WINAPI MediaFilter_Pause(IMediaFilter *iface)
 
     LeaveCriticalSection(&graph->cs);
 
-    /* Don't cancel the callback; it's holding a reference to the graph. */
     if (work)
-        WaitForThreadpoolWorkCallbacks(work, FALSE);
+        WaitForThreadpoolWorkCallbacks(work, TRUE);
 
     return hr;
 }
