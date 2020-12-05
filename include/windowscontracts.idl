@@ -1,7 +1,5 @@
 /*
- * isinf function
- *
- * Copyright 2008 Petr Sumbera
+ * Copyright 2020 Rémi Bernon for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,21 +16,18 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
-#if !defined(HAVE_ISINF) && !defined(isinf)
-
-#ifdef HAVE_IEEEFP_H
-#include <ieeefp.h>
-
-int isinf(double x)
-{
-  return (!(finite(x) || isnand(x)));
-}
-
-#else
-#error No isinf() implementation available.
+#ifdef __WIDL__
+#pragma winrt ns_prefix
 #endif
 
-#endif /* HAVE_ISINF */
+namespace Windows {
+    namespace Foundation {
+        [contractversion(4)]
+        apicontract FoundationContract
+        {};
+
+        [contractversion(10)]
+        apicontract UniversalApiContract
+        {};
+    }
+}

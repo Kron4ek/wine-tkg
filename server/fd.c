@@ -1997,6 +1997,9 @@ struct fd *open_fd( struct fd *root, const char *name, int flags, mode_t *mode, 
     }
     else rw_mode = O_RDONLY;
 
+    if ((options & FILE_OPEN_REPARSE_POINT) && !(flags & O_CREAT))
+        flags |= O_SYMLINK;
+
     if ((fd->unix_fd = open( name, rw_mode | (flags & ~O_TRUNC), *mode )) == -1)
     {
         /* if we tried to open a directory for write access, retry read-only */

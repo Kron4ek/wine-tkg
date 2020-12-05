@@ -16,9 +16,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include <stdarg.h>
 
 #define NONAMELESSUNION
@@ -34,12 +31,17 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(wincodecs);
 
-static const WCHAR wszPngInterlaceOption[] = {'I','n','t','e','r','l','a','c','e','O','p','t','i','o','n',0};
-static const WCHAR wszPngFilterOption[] = {'F','i','l','t','e','r','O','p','t','i','o','n',0};
-
 static const PROPBAG2 encoder_option_properties[ENCODER_OPTION_END] = {
-    { PROPBAG2_TYPE_DATA, VT_BOOL, 0, 0, (LPOLESTR)wszPngInterlaceOption },
-    { PROPBAG2_TYPE_DATA, VT_UI1,  0, 0, (LPOLESTR)wszPngFilterOption }
+    { PROPBAG2_TYPE_DATA, VT_BOOL, 0, 0, (LPOLESTR)L"InterlaceOption" },
+    { PROPBAG2_TYPE_DATA, VT_UI1,  0, 0, (LPOLESTR)L"FilterOption" },
+    { PROPBAG2_TYPE_DATA, VT_UI1,  0, 0, (LPOLESTR)L"TiffCompressionMethod" },
+    { PROPBAG2_TYPE_DATA, VT_R4,   0, 0, (LPOLESTR)L"CompressionQuality" },
+    { PROPBAG2_TYPE_DATA, VT_R4,            0, 0, (LPOLESTR)L"ImageQuality" },
+    { PROPBAG2_TYPE_DATA, VT_UI1,           0, 0, (LPOLESTR)L"BitmapTransform" },
+    { PROPBAG2_TYPE_DATA, VT_I4 | VT_ARRAY, 0, 0, (LPOLESTR)L"Luminance" },
+    { PROPBAG2_TYPE_DATA, VT_I4 | VT_ARRAY, 0, 0, (LPOLESTR)L"Chrominance" },
+    { PROPBAG2_TYPE_DATA, VT_UI1,           0, 0, (LPOLESTR)L"JpegYCrCbSubsampling" },
+    { PROPBAG2_TYPE_DATA, VT_BOOL,          0, 0, (LPOLESTR)L"SuppressApp0" }
 };
 
 typedef struct CommonEncoder {
@@ -204,6 +206,31 @@ static HRESULT WINAPI CommonEncoderFrame_SetSize(IWICBitmapFrameEncode *iface,
 
     EnterCriticalSection(&This->parent->lock);
 
+    if (This->parent->encoder_info.flags & ENCODER_FLAGS_ICNS_SIZE)
+    {
+        if (uiWidth != uiHeight)
+        {
+            WARN("cannot generate ICNS icon from %dx%d image\n", uiWidth, uiHeight);
+            hr = E_INVALIDARG;
+            goto end;
+        }
+
+        switch (uiWidth)
+        {
+            case 16:
+            case 32:
+            case 48:
+            case 128:
+            case 256:
+            case 512:
+                break;
+            default:
+                WARN("cannot generate ICNS icon from %dx%d image\n", uiWidth, uiHeight);
+                hr = E_INVALIDARG;
+                goto end;
+        }
+    }
+
     if (!This->initialized || This->frame_created)
     {
         hr = WINCODEC_ERR_WRONGSTATE;
@@ -215,6 +242,7 @@ static HRESULT WINAPI CommonEncoderFrame_SetSize(IWICBitmapFrameEncode *iface,
         hr = S_OK;
     }
 
+end:
     LeaveCriticalSection(&This->parent->lock);
 
     return hr;

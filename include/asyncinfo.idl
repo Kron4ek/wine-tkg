@@ -1,7 +1,5 @@
 /*
- * rint family
- *
- * Copyright 2017 Alex Henrie
+ * Copyright 2020 Rémi Bernon for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,49 +16,30 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
-#include <math.h>
-
-#ifndef HAVE_RINT
-double rint(double x)
-{
-    return x >= 0 ? floor(x + 0.5) : ceil(x - 0.5);
-}
+#ifdef __WIDL__
+#pragma winrt ns_prefix
 #endif
 
-#ifndef HAVE_RINTF
-float rintf(float x)
-{
-    return rint(x);
-}
-#endif
+import "inspectable.idl";
 
-#ifndef HAVE_LRINT
-long lrint(double x)
+typedef [v1_enum] enum AsyncStatus
 {
-    return x >= 0 ? floor(x + 0.5) : ceil(x - 0.5);
-}
-#endif
+    Started = 0,
+    Completed, 
+    Canceled, 
+    Error,
+} AsyncStatus;
 
-#ifndef HAVE_LRINTF
-long lrintf(float x)
+[
+    object,
+    uuid(00000036-0000-0000-c000-000000000046),
+    pointer_default(unique)
+]
+interface IAsyncInfo : IInspectable
 {
-    return lrint(x);
+    [propget] HRESULT Id([out, retval] unsigned __int32 *id);
+    [propget] HRESULT Status([out, retval] AsyncStatus *status);
+    [propget] HRESULT ErrorCode([out, retval] HRESULT *errorCode);
+    HRESULT Cancel();
+    HRESULT Close();
 }
-#endif
-
-#ifndef HAVE_LLRINT
-__int64 llrint(double x)
-{
-    return x >= 0 ? floor(x + 0.5) : ceil(x - 0.5);
-}
-#endif
-
-#ifndef HAVE_LLRINTF
-__int64 llrintf(float x)
-{
-    return llrint(x);
-}
-#endif

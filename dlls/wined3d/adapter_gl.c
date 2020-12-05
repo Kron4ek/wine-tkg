@@ -4280,6 +4280,8 @@ static HRESULT adapter_gl_create_device(struct wined3d *wined3d, const struct wi
     if (!(device_gl = heap_alloc_zero(sizeof(*device_gl))))
         return E_OUTOFMEMORY;
 
+    device_gl->current_fence_id = 1;
+
     if (FAILED(hr = wined3d_device_init(&device_gl->d, wined3d, adapter->ordinal, device_type, focus_window,
             flags, surface_alignment, levels, level_count, adapter->gl_info.supported, device_parent)))
     {
@@ -4803,7 +4805,7 @@ static void wined3d_view_gl_destroy_object(void *object)
             gl_info->gl_ops.gl.p_glDeleteTextures(1, &ctx->gl_view->name);
         }
         if (counter_id)
-            GL_EXTCALL(glDeleteBuffers(1, &counter_id));
+            wined3d_context_gl_destroy_bo(wined3d_context_gl(context), ctx->counter_bo);
         checkGLcall("delete resources");
         context_release(context);
     }
@@ -4890,6 +4892,7 @@ static void adapter_gl_destroy_shader_resource_view(struct wined3d_shader_resour
      * the refcount on a device that's in the process of being destroyed. */
     if (swapchain_count)
         wined3d_device_incref(device);
+    list_remove(&view_gl->bo_user.entry);
     wined3d_shader_resource_view_cleanup(&view_gl->v);
     wined3d_view_gl_destroy(device, &view_gl->gl_view, NULL, view_gl);
     if (swapchain_count)
@@ -4936,6 +4939,7 @@ static void adapter_gl_destroy_unordered_access_view(struct wined3d_unordered_ac
      * the refcount on a device that's in the process of being destroyed. */
     if (swapchain_count)
         wined3d_device_incref(device);
+    list_remove(&view_gl->bo_user.entry);
     wined3d_unordered_access_view_cleanup(&view_gl->v);
     wined3d_view_gl_destroy(device, &view_gl->gl_view, &view_gl->counter_bo, view_gl);
     if (swapchain_count)

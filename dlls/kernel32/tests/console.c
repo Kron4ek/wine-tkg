@@ -23,6 +23,7 @@
 #define WIN32_NO_STATUS
 #include <windows.h>
 #include <winternl.h>
+#include <winioctl.h>
 #include <stdio.h>
 
 #include "wine/test.h"
@@ -267,12 +268,26 @@ static void testWriteSimple(HANDLE hCon)
     const char*	mytest = "abcdefg";
     int mylen = strlen(mytest);
     COORD c = {0, 0};
+    DWORD len;
+    BOOL ret;
 
     simple_write_console(hCon, mytest);
 
     for (c.X = 0; c.X < mylen; c.X++)
     {
         okCHAR(hCon, c, mytest[c.X], TEST_ATTRIB);
+    }
+
+    okCURSOR(hCon, c);
+    okCHAR(hCon, c, ' ', DEFAULT_ATTRIB);
+
+    ret = WriteFile(hCon, mytest, mylen, &len, NULL);
+    ok(ret, "WriteFile failed: %u\n", GetLastError());
+    ok(len == mylen, "unexpected len = %u\n", len);
+
+    for (c.X = 0; c.X < 2 * mylen; c.X++)
+    {
+        okCHAR(hCon, c, mytest[c.X % mylen], TEST_ATTRIB);
     }
 
     okCURSOR(hCon, c);
@@ -3775,15 +3790,20 @@ static void test_GetConsoleScreenBufferInfoEx(HANDLE std_output)
 
 static void test_FreeConsole(void)
 {
-    HANDLE handle, unbound_output = NULL;
-    DWORD size, mode;
+    HANDLE handle, unbound_output = NULL, unbound_input = NULL;
+    DWORD size, mode, type;
     WCHAR title[16];
+    char buf[32];
     HWND hwnd;
     UINT cp;
     BOOL ret;
 
     ok(RtlGetCurrentPeb()->ProcessParameters->ConsoleHandle != NULL, "ConsoleHandle is NULL\n");
-    if (!skip_nt) unbound_output = create_unbound_handle(TRUE, TRUE);
+    if (!skip_nt)
+    {
+        unbound_input  = create_unbound_handle(FALSE, TRUE);
+        unbound_output = create_unbound_handle(TRUE, TRUE);
+    }
 
     ret = FreeConsole();
     ok(ret, "FreeConsole failed: %u\n", GetLastError());
@@ -3864,10 +3884,31 @@ static void test_FreeConsole(void)
     handle = GetConsoleInputWaitHandle();
     ok(!handle, "GetConsoleInputWaitHandle returned %p\n", handle);
 
+    ret = ReadFile(unbound_input, buf, sizeof(buf), &size, NULL);
+    ok(!ret && GetLastError() == ERROR_INVALID_HANDLE,
+       "ReadFile returned %x %u\n", ret, GetLastError());
+
+    ret = FlushFileBuffers(unbound_input);
+    ok(!ret && GetLastError() == ERROR_INVALID_HANDLE,
+       "ReadFile returned %x %u\n", ret, GetLastError());
+
+    ret = WriteFile(unbound_input, "test", 4, &size, NULL);
+    ok(!ret && GetLastError() == ERROR_INVALID_HANDLE,
+       "ReadFile returned %x %u\n", ret, GetLastError());
+
+    ret = GetConsoleMode(unbound_input, &mode);
+    ok(!ret && GetLastError() == ERROR_INVALID_HANDLE,
+       "GetConsoleMode returned %x %u\n", ret, GetLastError());
     ret = GetConsoleMode(unbound_output, &mode);
     ok(!ret && GetLastError() == ERROR_INVALID_HANDLE,
        "GetConsoleMode returned %x %u\n", ret, GetLastError());
 
+    type = GetFileType(unbound_input);
+    ok(type == FILE_TYPE_CHAR, "GetFileType returned %u\n", type);
+    type = GetFileType(unbound_output);
+    ok(type == FILE_TYPE_CHAR, "GetFileType returned %u\n", type);
+
+    CloseHandle(unbound_input);
     CloseHandle(unbound_output);
 }
 
@@ -3940,6 +3981,50 @@ static void test_console_title(void)
         ok(ret, "GetConsoleTitleW failed: %u\n", GetLastError());
         ok(!wcscmp(buf, L"tes"), "title = %s\n", wine_dbgstr_w(buf));
     }
+}
+
+static void test_file_info(HANDLE input, HANDLE output)
+{
+    FILE_STANDARD_INFORMATION std_info;
+    FILE_FS_DEVICE_INFORMATION fs_info;
+    LARGE_INTEGER size;
+    IO_STATUS_BLOCK io;
+    DWORD type;
+    NTSTATUS status;
+    BOOL ret;
+
+    if (skip_nt) return;
+
+    status = NtQueryInformationFile(input, &io, &std_info, sizeof(std_info), FileStandardInformation);
+    ok(status == STATUS_INVALID_DEVICE_REQUEST, "NtQueryInformationFile returned: %#x\n", status);
+
+    status = NtQueryInformationFile(output, &io, &std_info, sizeof(std_info), FileStandardInformation);
+    ok(status == STATUS_INVALID_DEVICE_REQUEST, "NtQueryInformationFile returned: %#x\n", status);
+
+    ret = GetFileSizeEx(input, &size);
+    ok(!ret && GetLastError() == ERROR_INVALID_FUNCTION,
+       "GetFileSizeEx returned %x(%u)\n", ret, GetLastError());
+
+    ret = GetFileSizeEx(output, &size);
+    ok(!ret && GetLastError() == ERROR_INVALID_FUNCTION,
+       "GetFileSizeEx returned %x(%u)\n", ret, GetLastError());
+
+    status = NtQueryVolumeInformationFile(input, &io, &fs_info, sizeof(fs_info), FileFsDeviceInformation);
+    ok(!status, "NtQueryVolumeInformationFile failed: %#x\n", status);
+    ok(fs_info.DeviceType == FILE_DEVICE_CONSOLE, "DeviceType = %u\n", fs_info.DeviceType);
+    ok(fs_info.Characteristics == FILE_DEVICE_ALLOW_APPCONTAINER_TRAVERSAL,
+       "Characteristics = %x\n", fs_info.Characteristics);
+
+    status = NtQueryVolumeInformationFile(output, &io, &fs_info, sizeof(fs_info), FileFsDeviceInformation);
+    ok(!status, "NtQueryVolumeInformationFile failed: %#x\n", status);
+    ok(fs_info.DeviceType == FILE_DEVICE_CONSOLE, "DeviceType = %u\n", fs_info.DeviceType);
+    ok(fs_info.Characteristics == FILE_DEVICE_ALLOW_APPCONTAINER_TRAVERSAL,
+       "Characteristics = %x\n", fs_info.Characteristics);
+
+    type = GetFileType(input);
+    ok(type == FILE_TYPE_CHAR, "GetFileType returned %u\n", type);
+    type = GetFileType(output);
+    ok(type == FILE_TYPE_CHAR, "GetFileType returned %u\n", type);
 }
 
 static void test_AttachConsole_child(DWORD console_pid)
@@ -4479,6 +4564,7 @@ START_TEST(console)
     }
     test_GetConsoleScreenBufferInfoEx(hConOut);
     test_SetConsoleScreenBufferInfoEx(hConOut);
+    test_file_info(hConIn, hConOut);
     test_console_title();
     if (!test_current)
     {

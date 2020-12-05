@@ -86,6 +86,15 @@ HRESULT CDECL encoder_create(const CLSID *encoder_clsid, struct encoder_info *in
     if (IsEqualGUID(encoder_clsid, &CLSID_WICPngEncoder))
         return png_encoder_create(info, result);
 
+    if (IsEqualGUID(encoder_clsid, &CLSID_WICTiffEncoder))
+        return tiff_encoder_create(info, result);
+
+    if (IsEqualGUID(encoder_clsid, &CLSID_WICJpegEncoder))
+        return jpeg_encoder_create(info, result);
+
+    if (IsEqualGUID(encoder_clsid, &CLSID_WICIcnsEncoder))
+        return icns_encoder_create(info, result);
+
     return E_NOTIMPL;
 }
 

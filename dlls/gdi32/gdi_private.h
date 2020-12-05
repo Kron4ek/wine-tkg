@@ -376,6 +376,7 @@ struct gdi_font
 #define ADDFONT_ADD_TO_CACHE  0x04
 #define ADDFONT_ADD_RESOURCE  0x08  /* added through AddFontResource */
 #define ADDFONT_VERTICAL_FONT 0x10
+#define ADDFONT_EXTERNAL_FOUND 0x20
 #define ADDFONT_AA_FLAGS(flags) ((flags) << 16)
 
 struct font_backend_funcs
@@ -412,6 +413,34 @@ struct font_callback_funcs
 };
 
 extern void font_init(void) DECLSPEC_HIDDEN;
+
+/* opentype.c */
+
+struct ttc_sfnt_v1;
+struct tt_name_v0;
+
+struct opentype_name
+{
+    DWORD codepage;
+    DWORD length;
+    const void *bytes;
+};
+
+extern BOOL opentype_get_ttc_sfnt_v1( const void *data, size_t size, DWORD index, DWORD *count,
+                                      const struct ttc_sfnt_v1 **ttc_sfnt_v1 ) DECLSPEC_HIDDEN;
+extern BOOL opentype_get_tt_name_v0( const void *data, size_t size, const struct ttc_sfnt_v1 *ttc_sfnt_v1,
+                                     const struct tt_name_v0 **tt_name_v0 ) DECLSPEC_HIDDEN;
+
+typedef BOOL ( *opentype_enum_names_cb )( LANGID langid, struct opentype_name *name, void *user );
+extern BOOL opentype_enum_family_names( const struct tt_name_v0 *tt_name_v0,
+                                        opentype_enum_names_cb callback, void *user ) DECLSPEC_HIDDEN;
+extern BOOL opentype_enum_style_names( const struct tt_name_v0 *tt_name_v0,
+                                       opentype_enum_names_cb callback, void *user ) DECLSPEC_HIDDEN;
+extern BOOL opentype_enum_full_names( const struct tt_name_v0 *tt_name_v0,
+                                      opentype_enum_names_cb callback, void *user ) DECLSPEC_HIDDEN;
+
+extern BOOL opentype_get_properties( const void *data, size_t size, const struct ttc_sfnt_v1 *ttc_sfnt_v1,
+                                     DWORD *version, FONTSIGNATURE *fs, DWORD *ntm_flags ) DECLSPEC_HIDDEN;
 
 /* gdiobj.c */
 extern HGDIOBJ alloc_gdi_handle( void *obj, WORD type, const struct gdi_obj_funcs *funcs ) DECLSPEC_HIDDEN;

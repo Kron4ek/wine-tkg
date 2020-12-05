@@ -328,7 +328,7 @@ static const char* get_number(struct parsed_symbol* sym)
         if (*sym->current != '@') return NULL;
 
         ptr = und_alloc(sym, 17);
-        MSVCRT_sprintf(ptr, "%s%u", sgn ? "-" : "", ret);
+        sprintf(ptr, "%s%u", sgn ? "-" : "", ret);
         sym->current++;
     }
     else return NULL;
@@ -466,7 +466,7 @@ static BOOL get_modified_type(struct datatype_t *ct, struct parsed_symbol* sym,
 
             sym->current++;
             if (!(n1 = get_number(sym))) return FALSE;
-            num = MSVCRT_atoi(n1);
+            num = atoi(n1);
 
             if (str_modif[0] == ' ' && !modifier)
                 str_modif++;
@@ -854,7 +854,7 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
         if (!get_modified_type(ct, sym, pmt_ref, in_args ? dt : 'P', in_args)) goto done;
         break;
     case 'P': /* Pointer */
-        if (MSVCRT_isdigit(*sym->current))
+        if (isdigit(*sym->current))
 	{
             /* FIXME:
              *   P6 = Function pointer
@@ -1004,7 +1004,7 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
 
                     sym->current++;
                     if (!(n1 = get_number(sym))) goto done;
-                    num = MSVCRT_atoi(n1);
+                    num = atoi(n1);
 
                     while (num--)
                         arr = str_printf(sym, "%s[%s]", arr, get_number(sym));

@@ -17,6 +17,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+#include <process.h>
 #include "msvcrt.h"
 #include "wine/debug.h"
 
@@ -26,7 +27,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 
 typedef struct {
   HANDLE thread;
-  MSVCRT__beginthread_start_routine_t start_address;
+  _beginthread_start_routine_t start_address;
   void *arglist;
 } _beginthread_trampoline_t;
 
@@ -98,7 +99,7 @@ static DWORD CALLBACK _beginthread_trampoline(LPVOID arg)
 
     memcpy(&local_trampoline,arg,sizeof(local_trampoline));
     data->handle = local_trampoline.thread;
-    MSVCRT_free(arg);
+    free(arg);
 
     local_trampoline.start_address(local_trampoline.arglist);
     _endthread();
@@ -109,7 +110,7 @@ static DWORD CALLBACK _beginthread_trampoline(LPVOID arg)
  *		_beginthread (MSVCRT.@)
  */
 uintptr_t CDECL _beginthread(
-  MSVCRT__beginthread_start_routine_t start_address, /* [in] Start address of routine that begins execution of new thread */
+  _beginthread_start_routine_t start_address, /* [in] Start address of routine that begins execution of new thread */
   unsigned int stack_size, /* [in] Stack size for new thread or 0 */
   void *arglist)           /* [in] Argument list to be passed to new thread or NULL */
 {
@@ -118,17 +119,17 @@ uintptr_t CDECL _beginthread(
 
   TRACE("(%p, %d, %p)\n", start_address, stack_size, arglist);
 
-  trampoline = MSVCRT_malloc(sizeof(*trampoline));
+  trampoline = malloc(sizeof(*trampoline));
   if(!trampoline) {
-      *MSVCRT__errno() = MSVCRT_EAGAIN;
+      *_errno() = EAGAIN;
       return -1;
   }
 
   thread = CreateThread(NULL, stack_size, _beginthread_trampoline,
           trampoline, CREATE_SUSPENDED, NULL);
   if(!thread) {
-      MSVCRT_free(trampoline);
-      *MSVCRT__errno() = MSVCRT_EAGAIN;
+      free(trampoline);
+      *_errno() = EAGAIN;
       return -1;
   }
 
@@ -137,8 +138,8 @@ uintptr_t CDECL _beginthread(
   trampoline->arglist = arglist;
 
   if(ResumeThread(thread) == -1) {
-      MSVCRT_free(trampoline);
-      *MSVCRT__errno() = MSVCRT_EAGAIN;
+      free(trampoline);
+      *_errno() = EAGAIN;
       return -1;
   }
 
@@ -151,7 +152,7 @@ uintptr_t CDECL _beginthread(
 uintptr_t CDECL _beginthreadex(
   void *security,          /* [in] Security descriptor for new thread; must be NULL for Windows 9x applications */
   unsigned int stack_size, /* [in] Stack size for new thread or 0 */
-  MSVCRT__beginthreadex_start_routine_t start_address, /* [in] Start address of routine that begins execution of new thread */
+  _beginthreadex_start_routine_t start_address, /* [in] Start address of routine that begins execution of new thread */
   void *arglist,           /* [in] Argument list to be passed to new thread or NULL */
   unsigned int initflag,   /* [in] Initial state of new thread (0 for running or CREATE_SUSPEND for suspended) */
   unsigned int *thrdaddr)  /* [out] Points to a 32-bit variable that receives the thread identifier */

@@ -23,13 +23,14 @@
 #include "wincodecsdk.h"
 
 #include "wine/debug.h"
-#include "wine/unicode.h"
 
 DEFINE_GUID(CLSID_WineTgaDecoder, 0xb11fc79a,0x67cc,0x43e6,0xa9,0xce,0xe3,0xd5,0x49,0x45,0xd3,0x04);
 
 DEFINE_GUID(CLSID_WICIcnsEncoder, 0x312fb6f1,0xb767,0x409d,0x8a,0x6d,0x0f,0xc1,0x54,0xd4,0xf0,0x5c);
 
 DEFINE_GUID(GUID_WineContainerFormatTga, 0x0c44fda1,0xa5c5,0x4298,0x96,0x85,0x47,0x3f,0xc1,0x7c,0xd3,0x22);
+
+DEFINE_GUID(GUID_WineContainerFormatIcns, 0xe4cd3e69,0x4436,0x4363,0x98,0x1d,0xcc,0xf0,0x5a,0x87,0x4c,0x73);
 
 DEFINE_GUID(GUID_VendorWine, 0xddf46da1,0x7dc1,0x404e,0x98,0xf2,0xef,0xa4,0x8d,0xfc,0x95,0x0a);
 
@@ -236,7 +237,7 @@ static inline WCHAR *heap_strdupW(const WCHAR *src)
     WCHAR *dst;
     SIZE_T len;
     if (!src) return NULL;
-    len = (strlenW(src) + 1) * sizeof(WCHAR);
+    len = (lstrlenW(src) + 1) * sizeof(WCHAR);
     if ((dst = HeapAlloc(GetProcessHeap(), 0, len))) memcpy(dst, src, len);
     return dst;
 }
@@ -275,7 +276,7 @@ struct decoder_frame
     CLSID pixel_format;
     UINT width, height;
     UINT bpp;
-    double dpix, dpiy;
+    DOUBLE dpix, dpiy;
     DWORD num_color_contexts;
     DWORD num_colors;
     WICColor palette[256];
@@ -341,10 +342,19 @@ enum encoder_option
 {
     ENCODER_OPTION_INTERLACE,
     ENCODER_OPTION_FILTER,
+    ENCODER_OPTION_COMPRESSION_METHOD,
+    ENCODER_OPTION_COMPRESSION_QUALITY,
+    ENCODER_OPTION_IMAGE_QUALITY,
+    ENCODER_OPTION_BITMAP_TRANSFORM,
+    ENCODER_OPTION_LUMINANCE,
+    ENCODER_OPTION_CHROMINANCE,
+    ENCODER_OPTION_YCRCB_SUBSAMPLING,
+    ENCODER_OPTION_SUPPRESS_APP0,
     ENCODER_OPTION_END
 };
 
 #define ENCODER_FLAGS_MULTI_FRAME 0x1
+#define ENCODER_FLAGS_ICNS_SIZE 0x2
 
 struct encoder_info
 {
@@ -360,7 +370,7 @@ struct encoder_frame
     UINT width, height;
     UINT bpp;
     BOOL indexed;
-    double dpix, dpiy;
+    DOUBLE dpix, dpiy;
     DWORD num_colors;
     WICColor palette[256];
     /* encoder options */
@@ -397,6 +407,9 @@ HRESULT CDECL tiff_decoder_create(struct decoder_info *info, struct decoder **re
 HRESULT CDECL jpeg_decoder_create(struct decoder_info *info, struct decoder **result);
 
 HRESULT CDECL png_encoder_create(struct encoder_info *info, struct encoder **result);
+HRESULT CDECL tiff_encoder_create(struct encoder_info *info, struct encoder **result);
+HRESULT CDECL jpeg_encoder_create(struct encoder_info *info, struct encoder **result);
+HRESULT CDECL icns_encoder_create(struct encoder_info *info, struct encoder **result);
 
 struct unix_funcs
 {

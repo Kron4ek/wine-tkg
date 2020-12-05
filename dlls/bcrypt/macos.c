@@ -249,6 +249,12 @@ static NTSTATUS CDECL key_import_ecc( struct key *key, UCHAR *input, ULONG len )
     return STATUS_NOT_IMPLEMENTED;
 }
 
+static NTSTATUS CDECL key_import_rsa( struct key *key, UCHAR *input, ULONG len )
+{
+    FIXME( "not implemented on Mac\n" );
+    return STATUS_NOT_IMPLEMENTED;
+}
+
 static NTSTATUS CDECL key_asymmetric_generate( struct key *key )
 {
     FIXME( "not implemented on Mac\n" );
@@ -260,6 +266,13 @@ static void CDECL key_asymmetric_destroy( struct key *key )
 }
 
 static NTSTATUS CDECL key_asymmetric_duplicate( struct key *key_orig, struct key *key_copy )
+{
+    FIXME( "not implemented on Mac\n" );
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+static NTSTATUS CDECL key_asymmetric_decrypt( struct key *key, UCHAR *input, ULONG input_len,
+        UCHAR *output, ULONG *output_len )
 {
     FIXME( "not implemented on Mac\n" );
     return STATUS_NOT_IMPLEMENTED;
@@ -277,6 +290,7 @@ static const struct key_funcs key_funcs =
     key_symmetric_destroy,
     key_asymmetric_init,
     key_asymmetric_generate,
+    key_asymmetric_decrypt,
     key_asymmetric_duplicate,
     key_asymmetric_sign,
     key_asymmetric_verify,
@@ -285,6 +299,7 @@ static const struct key_funcs key_funcs =
     key_export_ecc,
     key_import_dsa_capi,
     key_import_ecc,
+    key_import_rsa,
     NULL
 };
 

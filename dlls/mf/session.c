@@ -794,6 +794,7 @@ static void session_shutdown_current_topology(struct media_session *session)
     IMFMediaSink *sink;
     IUnknown *object;
     WORD idx = 0;
+    HRESULT hr;
 
     topology = session->presentation.current_topology;
     force_shutdown = session->state == SESSION_STATE_SHUT_DOWN;
@@ -813,7 +814,8 @@ static void session_shutdown_current_topology(struct media_session *session)
                 if (SUCCEEDED(IMFTopologyNode_GetUnknown(node, &_MF_TOPONODE_IMFActivate, &IID_IMFActivate,
                         (void **)&activate)))
                 {
-                    IMFActivate_ShutdownObject(activate);
+                    if (FAILED(hr = IMFActivate_ShutdownObject(activate)))
+                        WARN("Failed to shut down activation object for the sink, hr %#x.\n", hr);
                     IMFActivate_Release(activate);
                 }
                 else if (SUCCEEDED(IMFTopologyNode_GetObject(node, &object)))
@@ -1022,7 +1024,7 @@ static void session_pause(struct media_session *session)
     {
         case SESSION_STATE_STARTED:
 
-            /* Transition in two steps - pause clock, wait for sinks and pause sources. */
+            /* Transition in two steps - pause the clock, wait for sinks, then pause sources. */
             if (SUCCEEDED(hr = IMFPresentationClock_Pause(session->clock)))
                 session->state = SESSION_STATE_PAUSING_SINKS;
 
@@ -1061,7 +1063,7 @@ static void session_stop(struct media_session *session)
         case SESSION_STATE_STARTED:
         case SESSION_STATE_PAUSED:
 
-            /* Transition in two steps - pause clock, wait for sinks and pause sources. */
+            /* Transition in two steps - stop the clock, wait for sinks, then stop sources. */
             IMFPresentationClock_GetTime(session->clock, &session->presentation.clock_stop_time);
             if (SUCCEEDED(hr = IMFPresentationClock_Stop(session->clock)))
                 session->state = SESSION_STATE_STOPPING_SINKS;
@@ -1392,7 +1394,11 @@ static HRESULT session_append_node(struct media_session *session, IMFTopologyNod
                     if (SUCCEEDED(MFGetService(topo_node->object.object, &MR_VIDEO_ACCELERATION_SERVICE,
                         &IID_IMFVideoSampleAllocator, (void **)&topo_node->u.sink.allocator)))
                     {
-                        IMFVideoSampleAllocator_InitializeSampleAllocator(topo_node->u.sink.allocator, 2, media_type);
+                        if (FAILED(hr = IMFVideoSampleAllocator_InitializeSampleAllocator(topo_node->u.sink.allocator,
+                                2, media_type)))
+                        {
+                            WARN("Failed to initialize sample allocator for the stream, hr %#x.\n", hr);
+                        }
                         IMFVideoSampleAllocator_QueryInterface(topo_node->u.sink.allocator,
                                 &IID_IMFVideoSampleAllocatorCallback, (void **)&topo_node->u.sink.allocator_cb);
                         IMFVideoSampleAllocatorCallback_SetCallback(topo_node->u.sink.allocator_cb,
@@ -1845,7 +1851,6 @@ static HRESULT WINAPI mfsession_Close(IMFMediaSession *iface)
 static HRESULT WINAPI mfsession_Shutdown(IMFMediaSession *iface)
 {
     struct media_session *session = impl_from_IMFMediaSession(iface);
-    struct media_sink *sink;
     HRESULT hr = S_OK;
 
     TRACE("%p.\n", iface);
@@ -1857,10 +1862,6 @@ static HRESULT WINAPI mfsession_Shutdown(IMFMediaSession *iface)
         IMFMediaEventQueue_Shutdown(session->event_queue);
         if (session->quality_manager)
             IMFQualityManager_Shutdown(session->quality_manager);
-        LIST_FOR_EACH_ENTRY(sink, &session->presentation.sinks, struct media_sink, entry)
-        {
-            IMFMediaSink_Shutdown(sink->sink);
-        }
         MFShutdownObject((IUnknown *)session->clock);
         IMFPresentationClock_Release(session->clock);
         session->clock = NULL;

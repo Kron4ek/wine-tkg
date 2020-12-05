@@ -22,18 +22,6 @@
 #define __WINE_KERNEL_PRIVATE_H
 
 NTSTATUS WINAPI BaseGetNamedObjectDirectory( HANDLE *dir );
-BOOL           CONSOLE_Init(RTL_USER_PROCESS_PARAMETERS *params) DECLSPEC_HIDDEN;
-
-static inline BOOL is_console_handle(HANDLE h)
-{
-    return h != INVALID_HANDLE_VALUE && ((UINT_PTR)h & 3) == 3;
-}
-
-/* map a real wineserver handle onto a kernel32 console handle */
-static inline HANDLE console_handle_map(HANDLE h)
-{
-    return h != INVALID_HANDLE_VALUE ? (HANDLE)((UINT_PTR)h ^ 3) : INVALID_HANDLE_VALUE;
-}
 
 static inline BOOL set_ntstatus( NTSTATUS status )
 {
@@ -41,11 +29,7 @@ static inline BOOL set_ntstatus( NTSTATUS status )
     return !status;
 }
 
-extern HMODULE kernel32_handle DECLSPEC_HIDDEN;
 extern SYSTEM_BASIC_INFORMATION system_info DECLSPEC_HIDDEN;
-
-extern const WCHAR DIR_Windows[] DECLSPEC_HIDDEN;
-extern const WCHAR DIR_System[] DECLSPEC_HIDDEN;
 
 extern WCHAR *FILE_name_AtoW( LPCSTR name, BOOL alloc ) DECLSPEC_HIDDEN;
 extern DWORD FILE_name_WtoA( LPCWSTR src, INT srclen, LPSTR dest, INT destlen ) DECLSPEC_HIDDEN;

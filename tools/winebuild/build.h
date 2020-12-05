@@ -136,6 +136,7 @@ typedef struct
     int              subsystem;          /* subsystem id */
     int              subsystem_major;    /* subsystem version major number */
     int              subsystem_minor;    /* subsystem version minor number */
+    int              unicode_app;        /* default to unicode entry point */
     ORDDEF          *entry_points;       /* dll entry points */
     ORDDEF         **names;              /* array of entry point names (points into entry_points) */
     ORDDEF         **ordinals;           /* array of dll ordinals (points into entry_points) */
@@ -299,6 +300,7 @@ extern void output_gnu_stack_note(void);
 extern void add_import_dll( const char *name, const char *filename );
 extern void add_delayed_import( const char *name );
 extern void add_extra_ld_symbol( const char *name );
+extern void add_spec_extra_ld_symbol( const char *name );
 extern void read_undef_symbols( DLLSPEC *spec, char **argv );
 extern void resolve_imports( DLLSPEC *spec );
 extern int is_undefined( const char *name );

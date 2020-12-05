@@ -971,6 +971,38 @@ static void test_fgetwc_unicode(void)
     ok(ch == WEOF, "got %04hx, expected WEOF (unicode)\n", ch);
     fclose(tempfh);
 
+    tempfh = fopen(tempfile, "r,ccs=utf-8");
+    ok(tempfh != NULL, "can't open tempfile\n");
+    for (i = 1; i < ARRAY_SIZE(wchar_text); i++)
+    {
+        ch = fgetwc(tempfh);
+        ok(ch == wchar_text[i],
+                "got %04hx, expected %04x (unicode[%d])\n", ch, wchar_text[i], i-1);
+    }
+    ch = fgetwc(tempfh);
+    ok(ch == WEOF, "got %04hx, expected WEOF (unicode)\n", ch);
+    fclose(tempfh);
+
+    tempfh = fopen(tempfile, "a,ccs=utf-16le");
+    ok(tempfh != NULL, "can't open tempfile\n");
+    ch = fputwc('a', tempfh);
+    ok(ch == 'a', "fputwc returned %x\n", ch);
+    fclose(tempfh);
+
+    tempfh = fopen(tempfile, "a+,ccs=utf-8");
+    ok(tempfh != NULL, "can't open tempfile\n");
+    for (i = 1; i < ARRAY_SIZE(wchar_text); i++)
+    {
+        ch = fgetwc(tempfh);
+        ok(ch == wchar_text[i],
+                "got %04hx, expected %04x (unicode[%d])\n", ch, wchar_text[i], i-1);
+    }
+    ch = fgetwc(tempfh);
+    ok(ch == 'a', "got %04x, expected 'a'\n", ch);
+    ch = fgetwc(tempfh);
+    ok(ch == WEOF, "got %04hx, expected WEOF (unicode)\n", ch);
+    fclose(tempfh);
+
     tempfh = fopen(tempfile, "wb");
     ok(tempfh != NULL, "can't open tempfile\n");
     ret = WideCharToMultiByte(CP_UTF8, 0, wchar_text, ARRAY_SIZE(wchar_text),
@@ -989,6 +1021,23 @@ static void test_fgetwc_unicode(void)
     }
     ch = fgetwc(tempfh);
     ok(ch == WEOF, "got %04hx, expected WEOF (utf8)\n", ch);
+    fclose(tempfh);
+
+    tempfh = fopen(tempfile, "wb");
+    ok(tempfh != NULL, "can't open tempfile\n");
+    fwrite(wchar_text+1, 1, sizeof(wchar_text)-1, tempfh);
+    fclose(tempfh);
+
+    tempfh = fopen(tempfile, "rt,ccs=utf-16le");
+    ok(tempfh != NULL, "can't open tempfile\n");
+    for (i = 1; i < ARRAY_SIZE(wchar_text); i++)
+    {
+        ch = fgetwc(tempfh);
+        ok(ch == wchar_text[i],
+                "got %04hx, expected %04x (unicode[%d])\n", ch, wchar_text[i], i-1);
+    }
+    ch = fgetwc(tempfh);
+    ok(ch == WEOF, "got %04hx, expected WEOF (unicode)\n", ch);
     fclose(tempfh);
     unlink(temppath);
 }
@@ -1895,12 +1944,6 @@ static void test_fopen_s( void )
 static void test__wfopen_s( void )
 {
     const char name[] = "empty1";
-    const WCHAR wname[] = {
-       'e','m','p','t','y','1',0
-    };
-    const WCHAR wmode[] = {
-       'w',0
-    };
     char buff[16];
     FILE *file;
     int ret;
@@ -1912,7 +1955,7 @@ static void test__wfopen_s( void )
         return;
     }
     /* testing _wfopen_s */
-    ret = p__wfopen_s(&file, wname, wmode);
+    ret = p__wfopen_s(&file, L"empty1", L"w");
     ok(ret == 0, "_wfopen_s failed with %d\n", ret);
     ok(file != 0, "_wfopen_s failed to return value\n");
     fwrite(name, sizeof(name), 1, file);

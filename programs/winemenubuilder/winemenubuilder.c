@@ -2951,7 +2951,7 @@ static BOOL InvokeShellLinker( IShellLinkW *sl, LPCWSTR link, BOOL bWait )
 
             szArgs[0] = '"';
             lstrcpyW(szArgs + 1, szPath);
-            p[-1] = '"';
+            szArgs[lstrlenW(szArgs)] = '"';
 
             GetWindowsDirectoryW(szPath, MAX_PATH);
             lstrcatW(szPath, startW);

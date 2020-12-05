@@ -7,8 +7,6 @@ WINE_1.0
     __wine_main_environ;
     __wine_main_wargv;
     wine_anon_mmap;
-    wine_casemap_lower;
-    wine_casemap_upper;
     wine_dll_set_callback;
     wine_init;
     wine_init_argv0_path;
@@ -16,7 +14,6 @@ WINE_1.0
     wine_mmap_enum_reserved_areas;
     wine_mmap_is_in_reserved_area;
     wine_mmap_remove_reserved_area;
-    wine_wctype_table;
 
     /* the following functions are obsolete and only exported for backwards compatibility */
 
@@ -64,6 +61,8 @@ WINE_1.0
     vsnprintfW;
     vsprintfW;
     wine_call_on_stack;
+    wine_casemap_lower;
+    wine_casemap_upper;
     wine_compare_string;
     wine_cp_enum_table;
     wine_cp_get_table;
@@ -120,6 +119,7 @@ WINE_1.0
     wine_switch_to_stack;
     wine_utf8_mbstowcs;
     wine_utf8_wcstombs;
+    wine_wctype_table;
 
   local: *;
 };

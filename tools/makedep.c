@@ -19,19 +19,25 @@
  */
 
 #include "config.h"
-#define NO_LIBWINE_PORT
-#include "wine/port.h"
 
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
+#endif
+#if defined(_WIN32) && !defined(__CYGWIN__)
+#include <direct.h>
+#include <io.h>
+#define mkdir(path,mode) mkdir(path)
 #endif
 #include "wine/list.h"
 
@@ -2278,6 +2284,15 @@ static struct strarray get_default_imports( const struct makefile *make )
 
 
 /*******************************************************************
+ *         is_crt_module
+ */
+static int is_crt_module( const char *file )
+{
+    return !strncmp( file, "msvcr", 5 ) || !strncmp( file, "ucrt", 4 ) || !strcmp( file, "crtdll.dll" );
+}
+
+
+/*******************************************************************
  *         add_crt_import
  */
 static void add_crt_import( const struct makefile *make, struct strarray *imports, struct strarray *defs )
@@ -2287,16 +2302,13 @@ static void add_crt_import( const struct makefile *make, struct strarray *import
 
     for (i = 0; i < imports->count; i++)
     {
-        if (strncmp( imports->str[i], "msvcr", 5 ) && strncmp( imports->str[i], "ucrt", 4 )) continue;
+        if (!is_crt_module( imports->str[i])) continue;
         if (crt_dll) fatal_error( "More than one C runtime DLL imported: %s and %s\n", crt_dll, imports->str[i] );
         crt_dll = imports->str[i];
     }
     if (!crt_dll && !strarray_exists( &make->extradllflags, "-nodefaultlibs" ))
     {
-        if (make->module &&
-            (!strncmp( make->module, "msvcr", 5 ) ||
-             !strncmp( make->module, "ucrt", 4 ) ||
-             !strcmp( make->module, "crtdll.dll" )))
+        if (make->module && is_crt_module( make->module ))
         {
             crt_dll = make->module;
         }
@@ -2383,9 +2395,6 @@ static struct strarray get_shared_lib_names( const char *libname )
         strcpy( second, ext );
         strarray_add( &ret, xstrdup( name ));
     }
-    /* now remove all digits */
-    strcpy( first, ext );
-    strarray_add( &ret, name );
     return ret;
 }
 
@@ -3148,7 +3157,8 @@ static void output_source_default( struct makefile *make, struct incl_file *sour
         output( "\t$(CROSSCC) -c -o $@ %s", source->filename );
         output_filenames( defines );
         output_filenames( extra_cross_cflags );
-        if (source->file->flags & FLAG_C_IMPLIB) output_filename( "-fno-builtin" );
+        if (source->file->flags & FLAG_C_IMPLIB || (make->module && is_crt_module( make->module )))
+            output_filename( "-fno-builtin" );
         output_filenames( cpp_flags );
         output_filename( "$(CROSSCFLAGS)" );
         output( "\n" );

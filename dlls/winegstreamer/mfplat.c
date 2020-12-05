@@ -26,6 +26,7 @@
 #include "gst_private.h"
 #include "mfapi.h"
 #include "mfidl.h"
+#include "wmcodecdsp.h"
 #include "codecapi.h"
 
 #include "wine/debug.h"
@@ -406,6 +407,8 @@ failed:
 
 static const GUID CLSID_GStreamerByteStreamHandler = {0x317df618, 0x5e5a, 0x468a, {0x9f, 0x15, 0xd8, 0x27, 0xa9, 0xa0, 0x81, 0x62}};
 
+static const GUID CLSID_WINEAudioConverter = {0x6a170414,0xaad9,0x4693,{0xb8,0x06,0x3a,0x0c,0x47,0xc5,0x70,0xd6}};
+
 static HRESULT h264_decoder_create(REFIID riid, void **ret)
 {
     return generic_decoder_construct(riid, ret, DECODER_TYPE_H264);
@@ -431,10 +434,6 @@ static HRESULT m4s2_decoder_create(REFIID riid, void **ret)
     return generic_decoder_construct(riid, ret, DECODER_TYPE_M4S2);
 }
 
-static GUID CLSID_CColorConvertDMO = {0x98230571,0x0087,0x4204,{0xb0,0x20,0x32,0x82,0x53,0x8e,0x57,0xd3}};
-
-static GUID CLSID_WINEAudioConverter = {0x6a170414,0xaad9,0x4693,{0xb8,0x06,0x3a,0x0c,0x47,0xc5,0x70,0xd6}};
-
 static const struct class_object
 {
     const GUID *clsid;
@@ -444,13 +443,13 @@ class_objects[] =
 {
     { &CLSID_VideoProcessorMFT, &video_processor_create },
     { &CLSID_GStreamerByteStreamHandler, &winegstreamer_stream_handler_create },
+    { &CLSID_WINEAudioConverter, &audio_converter_create },
+    { &CLSID_CColorConvertDMO, &color_converter_create },
     { &CLSID_CMSH264DecoderMFT, &h264_decoder_create },
     { &CLSID_CMSAACDecMFT, &aac_decoder_create },
     { &CLSID_CWMVDecMediaObject, &wmv_decoder_create },
     { &CLSID_CWMADecMediaObject, &wma_decoder_create },
     { &CLSID_CMpeg4sDecMFT, m4s2_decoder_create },
-    { &CLSID_CColorConvertDMO, &color_converter_create },
-    { &CLSID_WINEAudioConverter, &audio_converter_create },
 };
 
 HRESULT mfplat_get_class_object(REFCLSID rclsid, REFIID riid, void **obj)
@@ -479,8 +478,14 @@ HRESULT mfplat_get_class_object(REFCLSID rclsid, REFIID riid, void **obj)
     return CLASS_E_CLASSNOTAVAILABLE;
 }
 
-static WCHAR color_converterW[] = {'C','o','l','o','r',' ','C','o','n','v','e','r','t','e','r',0};
+static WCHAR audio_converterW[] = {'A','u','d','i','o',' ','C','o','n','v','e','r','t','e','r',0};
+static const GUID *audio_converter_supported_types[] =
+{
+    &MFAudioFormat_PCM,
+    &MFAudioFormat_Float,
+};
 
+static WCHAR color_converterW[] = {'C','o','l','o','r',' ','C','o','n','v','e','r','t','e','r',0};
 const GUID *color_converter_supported_types[] =
 {
     &MFVideoFormat_RGB24,
@@ -498,14 +503,6 @@ const GUID *color_converter_supported_types[] =
     &MFVideoFormat_YUY2,
     &MFVideoFormat_YVYU,
     &MFVideoFormat_YVYU,
-};
-
-static WCHAR audio_converterW[] = {'A','u','d','i','o',' ','C','o','n','v','e','r','t','e','r',0};
-
-const GUID *audio_converter_supported_types[] =
-{
-    &MFAudioFormat_PCM,
-    &MFAudioFormat_Float,
 };
 
 static WCHAR h264decoderW[] = {'H','.','2','6','4',' ','D','e','c','o','d','e','r',0};
@@ -603,18 +600,6 @@ static const struct mft
 mfts[] =
 {
     {
-        &CLSID_CColorConvertDMO,
-        &MFT_CATEGORY_VIDEO_EFFECT,
-        color_converterW,
-        MFT_ENUM_FLAG_SYNCMFT,
-        &MFMediaType_Video,
-        ARRAY_SIZE(color_converter_supported_types),
-        color_converter_supported_types,
-        ARRAY_SIZE(color_converter_supported_types),
-        color_converter_supported_types,
-        NULL
-    },
-    {
         &CLSID_WINEAudioConverter,
         &MFT_CATEGORY_AUDIO_EFFECT,
         audio_converterW,
@@ -624,6 +609,18 @@ mfts[] =
         audio_converter_supported_types,
         ARRAY_SIZE(audio_converter_supported_types),
         audio_converter_supported_types,
+        NULL
+    },
+    {
+        &CLSID_CColorConvertDMO,
+        &MFT_CATEGORY_VIDEO_EFFECT,
+        color_converterW,
+        MFT_ENUM_FLAG_SYNCMFT,
+        &MFMediaType_Video,
+        ARRAY_SIZE(color_converter_supported_types),
+        color_converter_supported_types,
+        ARRAY_SIZE(color_converter_supported_types),
+        color_converter_supported_types,
         NULL
     },
     {
@@ -685,36 +682,32 @@ mfts[] =
         ARRAY_SIZE(m4s2_decoder_output_types),
         m4s2_decoder_output_types,
         NULL
-    }
+    },
 };
 
 HRESULT mfplat_DllRegisterServer(void)
 {
+    unsigned int i, j;
     HRESULT hr;
+    MFT_REGISTER_TYPE_INFO input_types[15], output_types[15];
 
-    for (unsigned int i = 0; i < ARRAY_SIZE(mfts); i++)
+    for (i = 0; i < ARRAY_SIZE(mfts); i++)
     {
         const struct mft *cur = &mfts[i];
 
-        MFT_REGISTER_TYPE_INFO *input_types, *output_types;
-        input_types = heap_alloc(cur->input_types_count * sizeof(input_types[0]));
-        output_types = heap_alloc(cur->output_types_count * sizeof(output_types[0]));
-        for (unsigned int i = 0; i < cur->input_types_count; i++)
+        for (j = 0; j < cur->input_types_count; j++)
         {
-            input_types[i].guidMajorType = *(cur->major_type);
-            input_types[i].guidSubtype = *(cur->input_types[i]);
+            input_types[j].guidMajorType = *(cur->major_type);
+            input_types[j].guidSubtype = *(cur->input_types[j]);
         }
-        for (unsigned int i = 0; i < cur->output_types_count; i++)
+        for (j = 0; j < cur->output_types_count; j++)
         {
-            output_types[i].guidMajorType = *(cur->major_type);
-            output_types[i].guidSubtype = *(cur->output_types[i]);
+            output_types[j].guidMajorType = *(cur->major_type);
+            output_types[j].guidSubtype = *(cur->output_types[j]);
         }
 
         hr = MFTRegister(*(cur->clsid), *(cur->category), cur->name, cur->flags, cur->input_types_count,
                     input_types, cur->output_types_count, output_types, cur->attributes);
-
-        heap_free(input_types);
-        heap_free(output_types);
 
         if (FAILED(hr))
         {
@@ -806,6 +799,7 @@ IMFMediaType *mf_media_type_from_caps(const GstCaps *caps)
             unsigned int i;
 
             IMFMediaType_SetUINT32(media_type, &MF_MT_COMPRESSED, FALSE);
+            IMFMediaType_SetUINT32(media_type, &MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
 
             /* First try FOURCC */
             if ((fourcc_subtype.Data1 = gst_video_format_to_fourcc(video_info.finfo->format)))
@@ -1395,31 +1389,43 @@ GstCaps *caps_from_mf_media_type(IMFMediaType *type)
     }
     else if (IsEqualGUID(&major_type, &MFMediaType_Audio))
     {
-        DWORD rate, channels, channel_mask, bitrate;
+        DWORD rate = -1, channels = -1, channel_mask = -1;
+
+        IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &rate);
+        IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_NUM_CHANNELS, &channels);
+        IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_CHANNEL_MASK, &channel_mask);
 
         if (IsEqualGUID(&subtype, &MFAudioFormat_Float))
         {
-            output = gst_caps_new_empty_simple("audio/x-raw");
+            GstAudioInfo float_info;
 
-            gst_caps_set_simple(output, "format", G_TYPE_STRING, "F32LE", NULL);
-            gst_caps_set_simple(output, "layout", G_TYPE_STRING, "interleaved", NULL);
+            if (rate == -1 || channels == -1)
+            {
+                ERR("Incomplete media type.\n");
+                return NULL;
+            }
+
+            gst_audio_info_set_format(&float_info, GST_AUDIO_FORMAT_F32LE, rate, channels, NULL);
+            output = gst_audio_info_to_caps(&float_info);
         }
         else if (IsEqualGUID(&subtype, &MFAudioFormat_PCM))
         {
+            GstAudioFormat pcm_format;
+            GstAudioInfo pcm_info;
             DWORD bits_per_sample;
+
+            if (rate == -1 || channels == -1)
+            {
+                ERR("Incomplete media type.\n");
+                return NULL;
+            }
 
             if (SUCCEEDED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_BITS_PER_SAMPLE, &bits_per_sample)))
             {
-                char format[6];
-                char type;
+                pcm_format = gst_audio_format_build_integer(bits_per_sample > 8, G_LITTLE_ENDIAN, bits_per_sample, bits_per_sample);
 
-                type = bits_per_sample > 8 ? 'S' : 'U';
-
-                output = gst_caps_new_empty_simple("audio/x-raw");
-
-                sprintf(format, "%c%u%s", type, bits_per_sample, bits_per_sample > 8 ? "LE" : "");
-
-                gst_caps_set_simple(output, "format", G_TYPE_STRING, format, NULL);
+                gst_audio_info_set_format(&pcm_info, pcm_format, rate, channels, NULL);
+                output = gst_audio_info_to_caps(&pcm_info);
             }
             else
             {
@@ -1514,23 +1520,12 @@ GstCaps *caps_from_mf_media_type(IMFMediaType *type)
             return NULL;
         }
 
-        if (SUCCEEDED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &rate)))
-        {
+        if (rate != -1)
             gst_caps_set_simple(output, "rate", G_TYPE_INT, rate, NULL);
-        }
-        if (SUCCEEDED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_NUM_CHANNELS, &channels)))
-        {
+        if (channels != -1)
             gst_caps_set_simple(output, "channels", G_TYPE_INT, channels, NULL);
-        }
-        if (SUCCEEDED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_CHANNEL_MASK, &channel_mask)))
-        {
+        if (channel_mask != -1)
             gst_caps_set_simple(output, "channel-mask", GST_TYPE_BITMASK, (guint64) channel_mask, NULL);
-        }
-
-        if (SUCCEEDED(IMFMediaType_GetUINT32(type, &MF_MT_AVG_BITRATE, &bitrate)))
-        {
-            gst_caps_set_simple(output, "bitrate", G_TYPE_INT, bitrate, NULL);
-        }
 
         return output;
     }
@@ -1608,12 +1603,13 @@ done:
     return out;
 }
 
-GstBuffer* gst_buffer_from_mf_sample(IMFSample *mf_sample)
+GstBuffer *gst_buffer_from_mf_sample(IMFSample *mf_sample)
 {
     GstBuffer *out = gst_buffer_new();
     IMFMediaBuffer *mf_buffer = NULL;
     LONGLONG duration, time;
     DWORD buffer_count;
+    unsigned int i;
     HRESULT hr;
 
     if (FAILED(hr = IMFSample_GetSampleDuration(mf_sample, &duration)))
@@ -1628,17 +1624,14 @@ GstBuffer* gst_buffer_from_mf_sample(IMFSample *mf_sample)
     if (FAILED(hr = IMFSample_GetBufferCount(mf_sample, &buffer_count)))
         goto fail;
 
-    for (unsigned int i = 0; i < buffer_count; i++)
+    for (i = 0; i < buffer_count; i++)
     {
-        DWORD buffer_max_size, buffer_size;
+        DWORD buffer_size;
         GstMapInfo map_info;
         GstMemory *memory;
         BYTE *buf_data;
 
         if (FAILED(hr = IMFSample_GetBufferByIndex(mf_sample, i, &mf_buffer)))
-            goto fail;
-
-        if (FAILED(hr = IMFMediaBuffer_GetMaxLength(mf_buffer, &buffer_max_size)))
             goto fail;
 
         if (FAILED(hr = IMFMediaBuffer_GetCurrentLength(mf_buffer, &buffer_size)))
@@ -1647,7 +1640,7 @@ GstBuffer* gst_buffer_from_mf_sample(IMFSample *mf_sample)
         memory = gst_allocator_alloc(NULL, buffer_size, NULL);
         gst_memory_resize(memory, 0, buffer_size);
 
-        if (!(gst_memory_map(memory, &map_info, GST_MAP_WRITE)))
+        if (!gst_memory_map(memory, &map_info, GST_MAP_WRITE))
         {
             hr = E_FAIL;
             goto fail;
@@ -1659,9 +1652,6 @@ GstBuffer* gst_buffer_from_mf_sample(IMFSample *mf_sample)
         memcpy(map_info.data, buf_data, buffer_size);
 
         if (FAILED(hr = IMFMediaBuffer_Unlock(mf_buffer)))
-            goto fail;
-
-        if (FAILED(hr = IMFMediaBuffer_SetCurrentLength(mf_buffer, buffer_size)))
             goto fail;
 
         gst_memory_unmap(memory, &map_info);

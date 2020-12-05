@@ -21,6 +21,7 @@ SOURCES = \
 	appmodel.h \
 	asferr.h \
 	asptlb.idl \
+	asyncinfo.idl \
 	asynot.idl \
 	asysta.idl \
 	atlbase.h \
@@ -446,8 +447,10 @@ SOURCES = \
 	mstask.idl \
 	mstcpip.h \
 	msvcrt/assert.h \
+	msvcrt/complex.h \
 	msvcrt/conio.h \
 	msvcrt/corecrt.h \
+	msvcrt/corecrt_io.h \
 	msvcrt/corecrt_startup.h \
 	msvcrt/corecrt_stdio_config.h \
 	msvcrt/corecrt_wctype.h \
@@ -751,7 +754,14 @@ SOURCES = \
 	windef.h \
 	windns.h \
 	windows.foundation.idl \
+	windows.gaming.input.idl \
+	windows.gaming.input.forcefeedback.idl \
+	windows.globalization.idl \
+	windows.system.userprofile.idl \
+	windows.media.speechsynthesis.idl \
+	windows.system.idl \
 	windows.h \
+	windowscontracts.idl \
 	windowsx.h \
 	wine/debug.h \
 	wine/exception.h \

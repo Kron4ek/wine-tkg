@@ -1,7 +1,5 @@
 /*
- * strnlen function
- *
- * Copyright 2017 Alexandre Julliard
+ * Copyright 2020 Austin English
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,14 +16,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
+#define WINE_FILEDESCRIPTION_STR "Wine dcomp"
+#define WINE_FILENAME_STR "dcomp.dll"
+#define WINE_FILEVERSION 10,0,14393,0
+#define WINE_FILEVERSION_STR "10.0.14393.0"
+#define WINE_PRODUCTVERSION 10,0,14393,0
+#define WINE_PRODUCTVERSION_STR "10.0.14393.0"
 
-#ifndef HAVE_STRNLEN
-size_t strnlen( const char *str, size_t maxlen )
-{
-    const char *ptr = memchr( str, 0, maxlen );
-    if (!ptr) return maxlen;
-    return ptr - str;
-}
-#endif /* HAVE_STRNLEN */
+#include "wine/wine_common_ver.rc"

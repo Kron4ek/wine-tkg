@@ -1,7 +1,7 @@
 /*
- * usleep function
+ * DirectComposition Library
  *
- * Copyright 1996 Alexandre Julliard
+ * Copyright 2020 Austin English
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,31 +17,28 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+#include <stdarg.h>
 
-#include "config.h"
-#include "wine/port.h"
+#include "windef.h"
+#include "winbase.h"
+#include "wine/debug.h"
 
-#include <errno.h>
+WINE_DEFAULT_DEBUG_CHANNEL(dcomp);
 
-#ifndef HAVE_USLEEP
-int usleep (unsigned int useconds)
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
-#if defined(__EMX__)
-    DosSleep(useconds);
-    return 0;
-#elif defined(__BEOS__)
-    return snooze(useconds);
-#elif defined(HAVE_SELECT)
-    struct timeval delay;
+    TRACE("(0x%p, %d, %p)\n", hinstDLL, fdwReason, lpvReserved);
 
-    delay.tv_sec = useconds / 1000000;
-    delay.tv_usec = useconds % 1000000;
+    switch (fdwReason)
+    {
+        case DLL_WINE_PREATTACH:
+            return FALSE;    /* prefer native version */
+        case DLL_PROCESS_ATTACH:
+            DisableThreadLibraryCalls(hinstDLL);
+            break;
+        default:
+            break;
+    }
 
-    select( 0, 0, 0, 0, &delay );
-    return 0;
-#else /* defined(__EMX__) || defined(__BEOS__) || defined(HAVE_SELECT) */
-    errno = ENOSYS;
-    return -1;
-#endif /* defined(__EMX__) || defined(__BEOS__) || defined(HAVE_SELECT) */
+    return TRUE;
 }
-#endif /* HAVE_USLEEP */

@@ -1579,7 +1579,6 @@ const char *debugstr_attr(const GUID *guid)
         X(MF_SA_D3D_AWARE),
         X(MF_MT_MAX_KEYFRAME_SPACING),
         X(MFT_TRANSFORM_CLSID_Attribute),
-        X(MFT_TRANSFORM_CLSID_Attribute),
         X(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING),
         X(MF_MT_AM_FORMAT_TYPE),
         X(MF_SESSION_APPROX_EVENT_OCCURRENCE_TIME),
@@ -8912,14 +8911,12 @@ HRESULT WINAPI MFCreateDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **man
     if (!token || !manager)
         return E_POINTER;
 
-    object = heap_alloc(sizeof(*object));
-    if (!object)
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     object->IMFDXGIDeviceManager_iface.lpVtbl = &dxgi_device_manager_vtbl;
     object->refcount = 1;
     object->token = GetTickCount();
-    object->device = NULL;
     InitializeCriticalSection(&object->cs);
     InitializeConditionVariable(&object->lock);
 

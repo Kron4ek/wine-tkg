@@ -1603,6 +1603,8 @@ static inline int get_file_xattr( char *hexattr, int attrlen )
 
 NTSTATUS FILE_DecodeSymlink(const char *unix_src, char *unix_dest, int *unix_dest_len,
                             DWORD *tag, ULONG *flags, BOOL *is_dir);
+NTSTATUS get_symlink_properties(const char *target, int len, char *unix_dest, int *unix_dest_len,
+                                DWORD *tag, ULONG *flags, BOOL *is_dir);
 
 /* fetch the attributes of a file */
 static inline ULONG get_file_attributes( const struct stat *st )
@@ -1639,6 +1641,22 @@ static int fd_get_file_info( int fd, unsigned int options, struct stat *st, ULON
     /* consider mount points to be reparse points (IO_REPARSE_TAG_MOUNT_POINT) */
     if ((options & FILE_OPEN_REPARSE_POINT) && fd_is_mount_point( fd, st ))
         *attr |= FILE_ATTRIBUTE_REPARSE_POINT;
+    if (S_ISLNK( st->st_mode ))
+    {
+        char path[MAX_PATH];
+        ssize_t len;
+        BOOL is_dir;
+
+        if ((len = readlinkat( fd, "", path, sizeof(path))) == -1) goto done;
+        /* symbolic links (either junction points or NT symlinks) are "reparse points" */
+        *attr |= FILE_ATTRIBUTE_REPARSE_POINT;
+        /* symbolic links always report size 0 */
+        st->st_size = 0;
+        if (get_symlink_properties(path, len, NULL, NULL, NULL, NULL, &is_dir) == STATUS_SUCCESS)
+            st->st_mode = (st->st_mode & ~S_IFMT) | (is_dir ? S_IFDIR : S_IFREG);
+    }
+
+done:
     return ret;
 }
 
@@ -1728,12 +1746,12 @@ static int get_file_info( const char *path, struct stat *st, ULONG *attr )
 }
 
 
-#if defined(__ANDROID__) && !defined(HAVE_FUTIMENS)
-static int futimens( int fd, const struct timespec spec[2] )
+#if !defined(HAVE_UTIMENSAT) && defined(__ANDROID__)
+static int utimensat( int fd, const char *name, const struct timespec spec[2], int flags )
 {
-    return syscall( __NR_utimensat, fd, NULL, spec, 0 );
+    return syscall( __NR_utimensat, fd, name, spec, flags );
 }
-#define HAVE_FUTIMENS
+#define HAVE_UTIMENSAT
 #endif  /* __ANDROID__ */
 
 #ifndef UTIME_OMIT
@@ -1743,7 +1761,7 @@ static int futimens( int fd, const struct timespec spec[2] )
 static BOOL set_file_times_precise( int fd, const LARGE_INTEGER *mtime,
                                     const LARGE_INTEGER *atime, NTSTATUS *status )
 {
-#ifdef HAVE_FUTIMENS
+#if defined(HAVE_FUTIMENS) || defined(HAVE_UTIMENSAT)
     struct timespec tv[2];
 
     tv[0].tv_sec = tv[1].tv_sec = 0;
@@ -1759,9 +1777,16 @@ static BOOL set_file_times_precise( int fd, const LARGE_INTEGER *mtime,
         tv[1].tv_nsec = (mtime->QuadPart % 10000000) * 100;
     }
 #ifdef __APPLE__
-    if (!&futimens) return FALSE;
+    if (!&utimensat) return FALSE;
 #endif
-    if (futimens( fd, tv ) == -1) *status = errno_to_status( errno );
+#if defined(HAVE_UTIMENSAT)
+    /* futimens does not work on O_PATH|O_NOFOLLOW (O_SYMLINK) file descriptors, so if the file
+     * descriptor is for a symlink then use utimensat with an empty path (.) and do not follow the
+     * link. Since this approach works for both symlinks and regular files, just use utimensat. */
+    if (utimensat(fd, ".", tv, AT_SYMLINK_NOFOLLOW) == -1) *status = errno_to_status( errno );
+#else
+    if (futimens(fd, tv) == -1) *status = errno_to_status( errno );
+#endif
     else *status = STATUS_SUCCESS;
     return TRUE;
 #else
@@ -1830,9 +1855,9 @@ static NTSTATUS set_file_times( int fd, const LARGE_INTEGER *mtime, const LARGE_
 static inline void get_file_times( const struct stat *st, LARGE_INTEGER *mtime, LARGE_INTEGER *ctime,
                                    LARGE_INTEGER *atime, LARGE_INTEGER *creation )
 {
-    mtime->QuadPart = st->st_mtime * (ULONGLONG)TICKSPERSEC + TICKS_1601_TO_1970;
-    ctime->QuadPart = st->st_ctime * (ULONGLONG)TICKSPERSEC + TICKS_1601_TO_1970;
-    atime->QuadPart = st->st_atime * (ULONGLONG)TICKSPERSEC + TICKS_1601_TO_1970;
+    mtime->QuadPart = ticks_from_time_t( st->st_mtime );
+    ctime->QuadPart = ticks_from_time_t( st->st_ctime );
+    atime->QuadPart = ticks_from_time_t( st->st_atime );
 #ifdef HAVE_STRUCT_STAT_ST_MTIM
     mtime->QuadPart += st->st_mtim.tv_nsec / 100;
 #elif defined(HAVE_STRUCT_STAT_ST_MTIMESPEC)
@@ -1849,14 +1874,14 @@ static inline void get_file_times( const struct stat *st, LARGE_INTEGER *mtime, 
     atime->QuadPart += st->st_atimespec.tv_nsec / 100;
 #endif
 #ifdef HAVE_STRUCT_STAT_ST_BIRTHTIME
-    creation->QuadPart = st->st_birthtime * (ULONGLONG)TICKSPERSEC + TICKS_1601_TO_1970;
+    creation->QuadPart = ticks_from_time_t( st->st_birthtime );
 #ifdef HAVE_STRUCT_STAT_ST_BIRTHTIM
     creation->QuadPart += st->st_birthtim.tv_nsec / 100;
 #elif defined(HAVE_STRUCT_STAT_ST_BIRTHTIMESPEC)
     creation->QuadPart += st->st_birthtimespec.tv_nsec / 100;
 #endif
 #elif defined(HAVE_STRUCT_STAT___ST_BIRTHTIME)
-    creation->QuadPart = st->__st_birthtime * (ULONGLONG)TICKSPERSEC + TICKS_1601_TO_1970;
+    creation->QuadPart = ticks_from_time_t( st->__st_birthtime );
 #ifdef HAVE_STRUCT_STAT___ST_BIRTHTIM
     creation->QuadPart += st->__st_birthtim.tv_nsec / 100;
 #endif
@@ -4439,7 +4464,16 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         {
             FILE_ATTRIBUTE_TAG_INFORMATION *info = ptr;
             info->FileAttributes = attr;
-            info->ReparseTag = 0; /* FIXME */
+            info->ReparseTag = 0;
+            if (attr & FILE_ATTRIBUTE_REPARSE_POINT)
+            {
+                char path[MAX_PATH];
+                ssize_t len;
+                BOOL is_dir;
+
+                if ((len = readlinkat( fd, "", path, sizeof(path))) != -1)
+                    get_symlink_properties(path, len, NULL, NULL, &info->ReparseTag, NULL, &is_dir);
+            }
             if ((options & FILE_OPEN_REPARSE_POINT) && fd_is_mount_point( fd, &st ))
                 info->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
         }
@@ -5353,6 +5387,11 @@ NTSTATUS WINAPI NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, vo
             goto done;
         }
     }
+    else if (type == FD_TYPE_SYMLINK)
+    {
+        status = STATUS_SUCCESS;
+        goto done;
+    }
 
     if (type == FD_TYPE_SERIAL && async_read && length)
     {
@@ -6160,41 +6199,22 @@ cleanup:
 }
 
 
-NTSTATUS FILE_DecodeSymlink(const char *unix_src, char *unix_dest, int *unix_dest_len,
-                            DWORD *tag, ULONG *flags, BOOL *is_dir)
+NTSTATUS get_symlink_properties(const char *target, int len, char *unix_dest, int *unix_dest_len,
+                                DWORD *tag, ULONG *flags, BOOL *is_dir)
 {
-    int len = MAX_PATH;
+    const char *p = target;
     DWORD reparse_tag;
-    NTSTATUS status;
     BOOL dir_flag;
-    char *p, *tmp;
-    ssize_t ret;
     int i;
 
-    if (unix_dest_len) len = *unix_dest_len;
-    if (!unix_dest)
-        tmp = malloc( len );
-    else
-        tmp = unix_dest;
-    if ((ret = readlink( unix_src, tmp, len )) < 0)
-    {
-        status = errno_to_status( errno );
-        goto cleanup;
-    }
-    len = ret;
-
     /* Decode the reparse tag from the symlink */
-    p = tmp;
     if (*p == '.')
     {
         if (flags) *flags = SYMLINK_FLAG_RELATIVE;
         p++;
     }
     if (*p++ != '/')
-    {
-        status = STATUS_NOT_IMPLEMENTED;
-        goto cleanup;
-    }
+        return STATUS_NOT_IMPLEMENTED;
     reparse_tag = 0;
     for (i = 0; i < sizeof(ULONG)*8; i++)
     {
@@ -6206,10 +6226,7 @@ NTSTATUS FILE_DecodeSymlink(const char *unix_src, char *unix_dest, int *unix_des
         else if (c == '.' && *p++ == '/')
             val = 1;
         else
-        {
-            status = STATUS_NOT_IMPLEMENTED;
-            goto cleanup;
-        }
+            return STATUS_NOT_IMPLEMENTED;
         reparse_tag |= (val << i);
     }
     /* skip past the directory/file flag */
@@ -6222,19 +6239,39 @@ NTSTATUS FILE_DecodeSymlink(const char *unix_src, char *unix_dest, int *unix_des
         else if (c == '.' && *p++ == '/')
             dir_flag = TRUE;
         else
-        {
-            status = STATUS_NOT_IMPLEMENTED;
-            goto cleanup;
-        }
+            return STATUS_NOT_IMPLEMENTED;
     }
     else
         dir_flag = TRUE;
-    len -= (p - tmp);
+    len -= (p - target);
     if (tag) *tag = reparse_tag;
     if (is_dir) *is_dir = dir_flag;
     if (unix_dest) memmove(unix_dest, p, len + 1);
     if (unix_dest_len) *unix_dest_len = len;
-    status = STATUS_SUCCESS;
+    return STATUS_SUCCESS;
+}
+
+
+NTSTATUS FILE_DecodeSymlink(const char *unix_src, char *unix_dest, int *unix_dest_len,
+                            DWORD *tag, ULONG *flags, BOOL *is_dir)
+{
+    int len = MAX_PATH;
+    NTSTATUS status;
+    ssize_t ret;
+    char *tmp;
+
+    if (unix_dest_len) len = *unix_dest_len;
+    if (!unix_dest)
+        tmp = malloc( len );
+    else
+        tmp = unix_dest;
+    if ((ret = readlink( unix_src, tmp, len )) < 0)
+    {
+        status = errno_to_status( errno );
+        goto cleanup;
+    }
+    len = ret;
+    status = get_symlink_properties(tmp, len, unix_dest, unix_dest_len, tag, flags, is_dir);
 
 cleanup:
     if (!unix_dest) free( tmp );
@@ -6269,6 +6306,7 @@ NTSTATUS FILE_GetSymlink(HANDLE handle, REPARSE_DATA_BUFFER *buffer, ULONG out_s
 
     if ((status = FILE_DecodeSymlink( unix_src, unix_dest, &unix_dest_len, &buffer->ReparseTag, &flags, NULL )))
         goto cleanup;
+    unix_dest[unix_dest_len] = 0;
 
     /* convert the relative path into an absolute path */
     if (flags == SYMLINK_FLAG_RELATIVE)
@@ -6277,8 +6315,7 @@ NTSTATUS FILE_GetSymlink(HANDLE handle, REPARSE_DATA_BUFFER *buffer, ULONG out_s
         int offset = unix_src_len + 2;
         char *d;
 
-        memcpy( &unix_dest[offset], unix_dest, unix_dest_len );
-        unix_dest[offset+unix_dest_len] = 0;
+        memcpy( &unix_dest[offset], unix_dest, unix_dest_len + 1 );
         memcpy( unix_dest, unix_src, unix_src_len );
         unix_dest[unix_src_len] = 0;
         d = dirname( unix_dest );

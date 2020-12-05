@@ -215,8 +215,7 @@ static inline ORDDEF *find_export( const char *name, ORDDEF **table, int size )
 {
     ORDDEF func, *odp, **res = NULL;
 
-    func.name = xstrdup(name);
-    func.ordinal = -1;
+    func.name = func.export_name = xstrdup(name);
     odp = &func;
     if (table) res = bsearch( &odp, table, size, sizeof(*table), func_cmp );
     free( func.name );
@@ -1726,9 +1725,9 @@ void output_syscalls( DLLSPEC *spec )
             output( "\t.byte 0xc3\n" );           /* ret */
             output( "\tjmp 1f\n" );
             output( "\t.byte 0xc3\n" );           /* ret */
-            if (target_platform == PLATFORM_WINDOWS || target_platform == PLATFORM_APPLE)
+            if (target_platform == PLATFORM_WINDOWS)
             {
-                output( "1:\t.byte 0xff,0x14,0x25\n" ); /* call *(user_shared_data + 0x1000) */
+                output( "1:\t.byte 0xff,0x14,0x25\n" ); /* 1: callq *(0x7ffe1000) */
                 output( "\t.long 0x7ffe1000\n" );
             }
             else
@@ -1773,7 +1772,7 @@ void output_syscalls( DLLSPEC *spec )
         output( "\t.align %d\n", get_alignment(16) );
         output( "\t%s\n", func_declaration("__wine_syscall") );
         output( "%s:\n", asm_name("__wine_syscall") );
-        output( "\tjmp *(0x7ffe1000)\n" );
+        output( "\tjmp *(%s)\n", asm_name("__wine_syscall_dispatcher") );
         output_function_size( "__wine_syscall" );
     }
     output( "\t.data\n" );

@@ -88,9 +88,6 @@
 /* Define to 1 if you have the <CoreAudio/CoreAudio.h> header file. */
 #undef HAVE_COREAUDIO_COREAUDIO_H
 
-/* Define to 1 if you have the <CoreServices/CoreServices.h> header file. */
-#undef HAVE_CORESERVICES_CORESERVICES_H
-
 /* Define to 1 if you have the <cups/cups.h> header file. */
 #undef HAVE_CUPS_CUPS_H
 
@@ -165,9 +162,6 @@
 /* Define to 1 if you have the <FAudio.h> header file. */
 #undef HAVE_FAUDIO_H
 
-/* Define to 1 if you have the `ffs' function. */
-#undef HAVE_FFS
-
 /* Define to 1 if you have the <float.h> header file. */
 #undef HAVE_FLOAT_H
 
@@ -192,17 +186,8 @@
 /* Define if FreeType 2 is installed */
 #undef HAVE_FREETYPE
 
-/* Define to 1 if the system has the type `fsblkcnt_t'. */
-#undef HAVE_FSBLKCNT_T
-
-/* Define to 1 if the system has the type `fsfilcnt_t'. */
-#undef HAVE_FSFILCNT_T
-
 /* Define to 1 if you have the `fstatfs' function. */
 #undef HAVE_FSTATFS
-
-/* Define to 1 if you have the `fstatvfs' function. */
-#undef HAVE_FSTATVFS
 
 /* Define to 1 if you have the <ft2build.h> header file. */
 #undef HAVE_FT2BUILD_H
@@ -236,9 +221,6 @@
 
 /* Define to 1 if you have the `getnameinfo' function. */
 #undef HAVE_GETNAMEINFO
-
-/* Define to 1 if you have the `getnetbyname' function. */
-#undef HAVE_GETNETBYNAME
 
 /* Define to 1 if you have the <getopt.h> header file. */
 #undef HAVE_GETOPT_H
@@ -435,9 +417,6 @@
 /* Define to 1 if you have the <linux/cdrom.h> header file. */
 #undef HAVE_LINUX_CDROM_H
 
-/* Define to 1 if you have the <linux/compiler.h> header file. */
-#undef HAVE_LINUX_COMPILER_H
-
 /* Define to 1 if you have the <linux/filter.h> header file. */
 #undef HAVE_LINUX_FILTER_H
 
@@ -540,17 +519,11 @@
 /* Define to 1 if you have the `mach_continuous_time' function. */
 #undef HAVE_MACH_CONTINUOUS_TIME
 
-/* Define to 1 if you have the <mach/machine.h> header file. */
-#undef HAVE_MACH_MACHINE_H
-
 /* Define to 1 if you have the <mach/mach.h> header file. */
 #undef HAVE_MACH_MACH_H
 
 /* Define to 1 if you have the <mach-o/loader.h> header file. */
 #undef HAVE_MACH_O_LOADER_H
-
-/* Define to 1 if you have the <mach-o/nlist.h> header file. */
-#undef HAVE_MACH_O_NLIST_H
 
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
@@ -714,9 +687,6 @@
 /* Define to 1 if you have the <QuickTime/ImageCompression.h> header file. */
 #undef HAVE_QUICKTIME_IMAGECOMPRESSION_H
 
-/* Define to 1 if you have the `readdir' function. */
-#undef HAVE_READDIR
-
 /* Define to 1 if you have the `readlink' function. */
 #undef HAVE_READLINK
 
@@ -786,23 +756,17 @@
 /* Define to 1 if you have the <scsi/sg.h> header file. */
 #undef HAVE_SCSI_SG_H
 
-/* Define to 1 if you have the <SDL2/SDL.h> header file. */
-#undef HAVE_SDL2_SDL_H
+/* Define to 1 if you have the <SDL.h> header file. */
+#undef HAVE_SDL_H
 
 /* Define to 1 if you have the <Security/Security.h> header file. */
 #undef HAVE_SECURITY_SECURITY_H
-
-/* Define to 1 if you have the `select' function. */
-#undef HAVE_SELECT
 
 /* Define to 1 if you have the `setproctitle' function. */
 #undef HAVE_SETPROCTITLE
 
 /* Define to 1 if you have the `setprogname' function. */
 #undef HAVE_SETPROGNAME
-
-/* Define to 1 if you have the `settimeofday' function. */
-#undef HAVE_SETTIMEOFDAY
 
 /* Define to 1 if `interface_id' is a member of `sg_io_hdr_t'. */
 #undef HAVE_SG_IO_HDR_T_INTERFACE_ID
@@ -825,15 +789,6 @@
 /* Define to 1 if you have the `SSLCopyPeerCertificates' function. */
 #undef HAVE_SSLCOPYPEERCERTIFICATES
 
-/* Define to 1 if you have the `statfs' function. */
-#undef HAVE_STATFS
-
-/* Define to 1 if you have the `statvfs' function. */
-#undef HAVE_STATVFS
-
-/* Define to 1 if you have the <stdbool.h> header file. */
-#undef HAVE_STDBOOL_H
-
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
 
@@ -846,17 +801,8 @@
 /* Define to 1 if you have the <string.h> header file. */
 #undef HAVE_STRING_H
 
-/* Define to 1 if you have the `strnlen' function. */
-#undef HAVE_STRNLEN
-
 /* Define to 1 if you have the <stropts.h> header file. */
 #undef HAVE_STROPTS_H
-
-/* Define to 1 if you have the `strtold' function. */
-#undef HAVE_STRTOLD
-
-/* Define to 1 if `d_reclen' is a member of `struct dirent'. */
-#undef HAVE_STRUCT_DIRENT_D_RECLEN
 
 /* Define to 1 if `direction' is a member of `struct ff_effect'. */
 #undef HAVE_STRUCT_FF_EFFECT_DIRECTION
@@ -899,27 +845,6 @@
 
 /* Define to 1 if `sun_len' is a member of `struct sockaddr_un'. */
 #undef HAVE_STRUCT_SOCKADDR_UN_SUN_LEN
-
-/* Define to 1 if `f_bavail' is a member of `struct statfs'. */
-#undef HAVE_STRUCT_STATFS_F_BAVAIL
-
-/* Define to 1 if `f_bfree' is a member of `struct statfs'. */
-#undef HAVE_STRUCT_STATFS_F_BFREE
-
-/* Define to 1 if `f_favail' is a member of `struct statfs'. */
-#undef HAVE_STRUCT_STATFS_F_FAVAIL
-
-/* Define to 1 if `f_ffree' is a member of `struct statfs'. */
-#undef HAVE_STRUCT_STATFS_F_FFREE
-
-/* Define to 1 if `f_frsize' is a member of `struct statfs'. */
-#undef HAVE_STRUCT_STATFS_F_FRSIZE
-
-/* Define to 1 if `f_namelen' is a member of `struct statfs'. */
-#undef HAVE_STRUCT_STATFS_F_NAMELEN
-
-/* Define to 1 if `f_blocks' is a member of `struct statvfs'. */
-#undef HAVE_STRUCT_STATVFS_F_BLOCKS
 
 /* Define to 1 if `st_atim' is a member of `struct stat'. */
 #undef HAVE_STRUCT_STAT_ST_ATIM
@@ -986,9 +911,6 @@
 
 /* Define to 1 if you have the <syscall.h> header file. */
 #undef HAVE_SYSCALL_H
-
-/* Define to 1 if you have the `sysinfo' function. */
-#undef HAVE_SYSINFO
 
 /* Define to 1 if you have the
    <SystemConfiguration/SCDynamicStoreCopyDHCPInfo.h> header file. */
@@ -1190,8 +1112,8 @@
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
 
-/* Define to 1 if you have the `usleep' function. */
-#undef HAVE_USLEEP
+/* Define to 1 if you have the `utimensat' function. */
+#undef HAVE_UTIMENSAT
 
 /* Define to 1 if you have the <utime.h> header file. */
 #undef HAVE_UTIME_H

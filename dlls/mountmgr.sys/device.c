@@ -2091,6 +2091,8 @@ static void create_port_devices( DRIVER_OBJECT *driver )
     }
     p += 3;
 
+    /* @@ Wine registry key: HKLM\Software\Wine\Ports */
+
     RegCreateKeyExW( HKEY_LOCAL_MACHINE, ports_keyW, 0, NULL, 0,
                      KEY_QUERY_VALUE, NULL, &wine_ports_key, NULL );
     RegCreateKeyExW( HKEY_LOCAL_MACHINE, windows_ports_key_name, 0, NULL, REG_OPTION_VOLATILE,
@@ -2108,7 +2110,7 @@ static void create_port_devices( DRIVER_OBJECT *driver )
         if (type != REG_SZ || strncmpiW( port, port_prefix, 3 ))
             continue;
 
-        n = atolW( port  + 3 );
+        n = atoiW( port  + 3 );
         if (n < 1 || n >= MAX_PORTS)
             continue;
 

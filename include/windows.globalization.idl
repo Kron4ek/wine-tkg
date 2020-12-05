@@ -1,7 +1,5 @@
 /*
- * isfinite function
- *
- * Copyright 2013 Francois Gouget
+ * Copyright 2020 Rémi Bernon for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,21 +16,30 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
-#if !defined(HAVE_ISFINITE) && !defined(isfinite)
-
-#ifdef HAVE_IEEEFP_H
-#include <ieeefp.h>
-
-int isfinite(double x)
-{
-  return finite(x);
-}
-
-#else
-#error No isfinite() implementation available.
+#ifdef __WIDL__
+#pragma winrt ns_prefix
 #endif
 
-#endif /* HAVE_ISFINITE */
+import "windows.foundation.idl";
+
+namespace Windows {
+    namespace Globalization {
+        typedef enum DayOfWeek DayOfWeek;
+    }
+}
+
+namespace Windows {
+    namespace Globalization {
+        [contract(Windows.Foundation.UniversalApiContract, 1.0)]
+        enum DayOfWeek
+        {
+            Sunday    = 0,
+            Monday    = 1,
+            Tuesday   = 2,
+            Wednesday = 3,
+            Thursday  = 4,
+            Friday    = 5,
+            Saturday  = 6
+        };
+    }
+}

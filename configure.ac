@@ -429,7 +429,6 @@ AC_CHECK_HEADERS(\
 	Carbon/Carbon.h \
 	CommonCrypto/CommonCryptor.h \
 	CoreAudio/CoreAudio.h \
-	CoreServices/CoreServices.h \
 	DiskArbitration/DiskArbitration.h \
 	EGL/egl.h \
 	IOKit/IOKitLib.h \
@@ -461,7 +460,6 @@ AC_CHECK_HEADERS(\
 	libproc.h \
 	link.h \
 	linux/cdrom.h \
-	linux/compiler.h \
 	linux/filter.h \
 	linux/hdreg.h \
 	linux/hidraw.h \
@@ -475,10 +473,8 @@ AC_CHECK_HEADERS(\
 	linux/types.h \
 	linux/ucdrom.h \
 	lwp.h \
-	mach-o/nlist.h \
 	mach-o/loader.h \
 	mach/mach.h \
-	mach/machine.h \
 	machine/cpu.h \
 	machine/sysarch.h \
 	mntent.h \
@@ -497,7 +493,6 @@ AC_CHECK_HEADERS(\
 	scsi/scsi.h \
 	scsi/scsi_ioctl.h \
 	scsi/sg.h \
-	stdbool.h \
 	stdint.h \
 	stropts.h \
 	sys/attr.h \
@@ -920,7 +915,6 @@ case $host_os in
     AC_SUBST(LIBWINE_LDFLAGS,["-dynamiclib -install_name @rpath/libwine.$libwine_soversion.dylib -Wl,-rpath,@loader_path/ -compatibility_version $libwine_soversion -current_version $libwine_version"])
     AC_SUBST(WINELOADER_DEPENDS,"wine_info.plist")
     TOP_INSTALL_LIB="$TOP_INSTALL_LIB libs/wine/libwine.$libwine_version.dylib libs/wine/libwine.$libwine_soversion.dylib"
-    TOP_INSTALL_DEV="$TOP_INSTALL_DEV libs/wine/libwine.dylib"
     ;;
 
   linux-android*)
@@ -1013,7 +1007,6 @@ case $host_os in
     AC_SUBST(LIBWINE_SHAREDLIB,"libwine.so.$libwine_version")
     AC_SUBST(LIBWINE_DEPENDS,"wine.map")
     TOP_INSTALL_LIB="$TOP_INSTALL_LIB libs/wine/libwine.so.$libwine_version libs/wine/libwine.so.$libwine_soversion"
-    TOP_INSTALL_DEV="$TOP_INSTALL_DEV libs/wine/libwine.so"
     ;;
 esac
 
@@ -1100,6 +1093,7 @@ then
                   WINE_TRY_CROSSCFLAGS([-Wformat-overflow])
                   WINE_TRY_CROSSCFLAGS([-Wnonnull])
                   WINE_TRY_CROSSCFLAGS([-mcx16]) ;;
+          aarch64) WINE_TRY_CROSSCFLAGS([-Wno-format]) ;;
         esac
 
         dnl Determine debug info format
@@ -1745,7 +1739,7 @@ dnl **** Check for libSDL2 ****
 if test "x$with_sdl" != "xno"
 then
     WINE_PACKAGE_FLAGS(SDL2,[sdl2],[-lSDL2],,,
-        [AC_CHECK_HEADERS([SDL2/SDL.h],
+        [AC_CHECK_HEADERS([SDL.h],
             [WINE_CHECK_SONAME(SDL2,SDL_Init,,,[$SDL2_LIBS],[[libSDL2-2.0*]])])])
 fi
 WINE_NOTICE_WITH(sdl,[test "x$ac_cv_lib_soname_SDL2" = "x"],
@@ -2215,11 +2209,9 @@ AC_CHECK_FUNCS(\
         __res_getservers \
 	_spawnvp \
 	epoll_create \
-	ffs \
 	fnmatch \
 	fork \
 	fstatfs \
-	fstatvfs \
 	futimens \
 	futimes \
 	futimesat \
@@ -2239,25 +2231,17 @@ AC_CHECK_FUNCS(\
 	pread \
 	proc_pidinfo \
 	pwrite \
-	readdir \
 	readlink \
 	renameat \
 	renameat2 \
 	sched_yield \
-	select \
 	setproctitle \
 	setprogname \
-	settimeofday \
 	sigprocmask \
-	statfs \
-	statvfs \
-	strnlen \
-	strtold \
 	symlink \
-	sysinfo \
 	tcdrain \
 	thr_kill2 \
-	usleep
+	utimensat
 )
 CFLAGS="$ac_save_CFLAGS"
 
@@ -2284,7 +2268,6 @@ dnl **** Check for functions which may rely on -lsocket on Solaris.
 AC_CHECK_FUNCS(\
 	getaddrinfo \
 	getnameinfo \
-	getnetbyname \
 	getservbyport \
 )
 
@@ -2365,7 +2348,6 @@ fi
 dnl **** Check for types ****
 
 AC_C_INLINE
-AC_CHECK_TYPES([fsblkcnt_t, fsfilcnt_t])
 AC_CHECK_TYPES([sigset_t],,,[#include <sys/types.h>
 #include <signal.h>])
 AC_CHECK_TYPES([request_sense],,,[#include <linux/cdrom.h>])
@@ -2467,35 +2449,6 @@ then
                 [Define if <linux/joystick.h> defines the Linux 2.2 joystick API])
    fi
 fi
-
-dnl **** FIXME: what about mixed cases, where we need two of them? ***
-
-dnl Check for statfs members
-AC_CHECK_MEMBERS([struct statfs.f_bfree, struct statfs.f_bavail, struct statfs.f_frsize, struct statfs.f_ffree, struct statfs.f_favail, struct statfs.f_namelen],,,
-[#include <sys/types.h>
-#ifdef HAVE_SYS_PARAM_H
-# include <sys/param.h>
-#endif
-#ifdef HAVE_SYS_MOUNT_H
-# include <sys/mount.h>
-#endif
-#ifdef HAVE_SYS_VFS_H
-# include <sys/vfs.h>
-#endif
-#ifdef HAVE_SYS_STATFS_H
-# include <sys/statfs.h>
-#endif])
-
-AC_CHECK_MEMBERS([struct statvfs.f_blocks],,,
-[#ifdef HAVE_SYS_STATVFS_H
-#include <sys/statvfs.h>
-#endif])
-
-dnl Check for dirent.d_reclen
-AC_CHECK_MEMBERS([struct dirent.d_reclen],,,
-[#ifdef HAVE_DIRENT_H
-#include <dirent.h>
-#endif])
 
 dnl Check for socket structure members
 AC_CHECK_MEMBERS([struct msghdr.msg_accrights, struct sockaddr.sa_len, struct sockaddr_un.sun_len],,,
@@ -3259,6 +3212,7 @@ WINE_CONFIG_MAKEFILE(dlls/dbgeng/tests)
 WINE_CONFIG_MAKEFILE(dlls/dbghelp)
 WINE_CONFIG_MAKEFILE(dlls/dbghelp/tests)
 WINE_CONFIG_MAKEFILE(dlls/dciman32)
+WINE_CONFIG_MAKEFILE(dlls/dcomp)
 WINE_CONFIG_MAKEFILE(dlls/ddeml.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/ddraw)
 WINE_CONFIG_MAKEFILE(dlls/ddraw/tests)
@@ -3896,6 +3850,10 @@ WINE_CONFIG_MAKEFILE(dlls/win32s16.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/win87em.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/winaspi.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/windebug.dll16,enable_win16)
+WINE_CONFIG_MAKEFILE(dlls/windows.gaming.input.dll)
+WINE_CONFIG_MAKEFILE(dlls/windows.globalization.dll)
+WINE_CONFIG_MAKEFILE(dlls/windows.media.speech.dll)
+WINE_CONFIG_MAKEFILE(dlls/windows.networking.connectivity.dll)
 WINE_CONFIG_MAKEFILE(dlls/windowscodecs)
 WINE_CONFIG_MAKEFILE(dlls/windowscodecs/tests)
 WINE_CONFIG_MAKEFILE(dlls/windowscodecsext)

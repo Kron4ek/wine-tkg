@@ -37,13 +37,17 @@
 #include <X11/extensions/shape.h>
 #endif /* HAVE_LIBXSHAPE */
 
+#include "x11drv.h"
+
+/* avoid conflict with field names in included win32 headers */
+#undef Status
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
 #include "wine/unicode.h"
 
-#include "x11drv.h"
+
 #include "wine/debug.h"
 #include "wine/server.h"
 #include "mwm.h"
@@ -763,6 +767,10 @@ static void set_mwm_hints( struct x11drv_win_data *data, DWORD style, DWORD ex_s
             if (style & WS_MINIMIZEBOX) mwm_hints.functions |= MWM_FUNC_MINIMIZE;
             if (style & WS_MAXIMIZEBOX) mwm_hints.functions |= MWM_FUNC_MAXIMIZE;
             if (style & WS_SYSMENU)     mwm_hints.functions |= MWM_FUNC_CLOSE;
+
+            /* The window can be programmatically minimized even without
+               a minimize box button. Allow the WM to restore it. */
+            if (style & WS_MINIMIZE)    mwm_hints.functions |= MWM_FUNC_MINIMIZE | MWM_FUNC_MAXIMIZE;
         }
     }
 

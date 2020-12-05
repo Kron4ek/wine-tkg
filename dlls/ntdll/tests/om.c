@@ -73,6 +73,7 @@ static NTSTATUS (WINAPI *pNtQuerySystemTime)( LARGE_INTEGER * );
 static NTSTATUS (WINAPI *pRtlWaitOnAddress)( const void *, const void *, SIZE_T, const LARGE_INTEGER * );
 static void     (WINAPI *pRtlWakeAddressAll)( const void * );
 static void     (WINAPI *pRtlWakeAddressSingle)( const void * );
+static NTSTATUS (WINAPI *pNtOpenProcess)( HANDLE *, ACCESS_MASK, const OBJECT_ATTRIBUTES *, const CLIENT_ID * );
 static NTSTATUS (WINAPI *pNtQuerySystemInformation)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
 
 #define KEYEDEVENT_WAIT       0x0001
@@ -1097,7 +1098,7 @@ static void test_symboliclink(void)
     NTSTATUS status;
     UNICODE_STRING str, target;
     OBJECT_ATTRIBUTES attr;
-    HANDLE dir, link, h;
+    HANDLE dir, link, h, h2;
     IO_STATUS_BLOCK iosb;
 
     /* No name and/or no attributes */
@@ -1192,6 +1193,68 @@ static void test_symboliclink(void)
     ok(status == STATUS_SUCCESS, "Failed to open NUL device(%08x)\n", status);
 
     pNtClose(h);
+    pNtClose(link);
+    pNtClose(dir);
+
+    InitializeObjectAttributes(&attr, &str, 0, 0, NULL);
+    RtlInitUnicodeString(&str, L"\\BaseNamedObjects\\om.c-test");
+    status = pNtCreateDirectoryObject(&dir, DIRECTORY_QUERY, &attr);
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#x.\n", status);
+
+    RtlInitUnicodeString(&str, L"\\DosDevices\\test_link");
+    RtlInitUnicodeString(&target, L"\\BaseNamedObjects");
+    status = pNtCreateSymbolicLinkObject(&link, SYMBOLIC_LINK_QUERY, &attr, &target);
+    ok(status == STATUS_SUCCESS && !!link, "Got unexpected status %#x.\n", status);
+
+    status = NtCreateFile(&h, GENERIC_READ | SYNCHRONIZE, &attr, &iosb, NULL, 0,
+            FILE_SHARE_READ|FILE_SHARE_WRITE, FILE_OPEN, 0, NULL, 0 );
+    ok(status == STATUS_OBJECT_TYPE_MISMATCH, "Got unexpected status %#x.\n", status);
+
+    status = pNtOpenSymbolicLinkObject( &h, SYMBOLIC_LINK_QUERY, &attr );
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#x.\n", status);
+    pNtClose(h);
+
+    InitializeObjectAttributes(&attr, &str, 0, 0, NULL);
+    RtlInitUnicodeString( &str, L"\\BaseNamedObjects\\om.c-test\\" );
+    status = NtCreateFile(&h, GENERIC_READ | SYNCHRONIZE, &attr, &iosb, NULL, 0,
+            FILE_SHARE_READ|FILE_SHARE_WRITE, FILE_OPEN, 0, NULL, 0 );
+    ok(status == STATUS_OBJECT_NAME_INVALID, "Got unexpected status %#x.\n", status);
+
+    InitializeObjectAttributes(&attr, &str, 0, link, NULL);
+    RtlInitUnicodeString( &str, L"om.c-test\\test_object" );
+    status = pNtCreateMutant( &h, GENERIC_ALL, &attr, FALSE );
+    ok(status == STATUS_OBJECT_TYPE_MISMATCH, "Got unexpected status %#x.\n", status);
+
+    InitializeObjectAttributes(&attr, &str, 0, 0, NULL);
+    RtlInitUnicodeString( &str, L"\\DosDevices\\test_link\\om.c-test\\test_object" );
+    status = pNtCreateMutant( &h, GENERIC_ALL, &attr, FALSE );
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#x.\n", status);
+    status = pNtOpenMutant( &h2, GENERIC_ALL, &attr );
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#x.\n", status);
+    pNtClose(h2);
+    RtlInitUnicodeString( &str, L"\\BaseNamedObjects\\om.c-test\\test_object" );
+    status = pNtCreateMutant( &h2, GENERIC_ALL, &attr, FALSE );
+    ok(status == STATUS_OBJECT_NAME_COLLISION, "Got unexpected status %#x.\n", status);
+
+    InitializeObjectAttributes(&attr, &str, 0, link, NULL);
+    RtlInitUnicodeString( &str, L"om.c-test\\test_object" );
+    status = pNtOpenMutant( &h2, GENERIC_ALL, &attr );
+    ok(status == STATUS_OBJECT_TYPE_MISMATCH, "Got unexpected status %#x.\n", status);
+
+    pNtClose(h);
+
+    status = pNtOpenMutant( &h, GENERIC_ALL, &attr );
+    ok(status == STATUS_OBJECT_TYPE_MISMATCH, "Got unexpected status %#x.\n", status);
+
+    InitializeObjectAttributes(&attr, &str, 0, dir, NULL);
+    RtlInitUnicodeString( &str, L"test_object" );
+    status = pNtCreateMutant( &h, GENERIC_ALL, &attr, FALSE );
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#x.\n", status);
+    status = pNtOpenMutant( &h2, GENERIC_ALL, &attr );
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#x.\n", status);
+    pNtClose(h);
+    pNtClose(h2);
+
     pNtClose(link);
     pNtClose(dir);
 }
@@ -2152,6 +2215,56 @@ static void test_wait_on_address(void)
     ok(address == 0, "got %s\n", wine_dbgstr_longlong(address));
 }
 
+static void test_process(void)
+{
+    OBJECT_ATTRIBUTES attr;
+    CLIENT_ID cid;
+    NTSTATUS status;
+    HANDLE process;
+
+    if (!pNtOpenProcess)
+    {
+        win_skip( "NtOpenProcess not supported, skipping test\n" );
+        return;
+    }
+
+    InitializeObjectAttributes( &attr, NULL, 0, 0, NULL );
+
+    cid.UniqueProcess = 0;
+    cid.UniqueThread = 0;
+    status = pNtOpenProcess( &process, PROCESS_QUERY_LIMITED_INFORMATION, NULL, &cid );
+    todo_wine ok( status == STATUS_ACCESS_VIOLATION, "NtOpenProcess returned %x\n", status );
+    status = pNtOpenProcess( &process, PROCESS_QUERY_LIMITED_INFORMATION, &attr, NULL );
+    todo_wine ok( status == STATUS_INVALID_PARAMETER_MIX, "NtOpenProcess returned %x\n", status );
+
+    cid.UniqueProcess = 0;
+    cid.UniqueThread = 0;
+    status = pNtOpenProcess( &process, PROCESS_QUERY_LIMITED_INFORMATION, &attr, &cid );
+    ok( status == STATUS_INVALID_CID, "NtOpenProcess returned %x\n", status );
+
+    cid.UniqueProcess = ULongToHandle( 0xdeadbeef );
+    cid.UniqueThread = ULongToHandle( 0xdeadbeef );
+    status = pNtOpenProcess( &process, PROCESS_QUERY_LIMITED_INFORMATION, &attr, &cid );
+    ok( status == STATUS_INVALID_CID, "NtOpenProcess returned %x\n", status );
+
+    cid.UniqueProcess = ULongToHandle( GetCurrentThreadId() );
+    cid.UniqueThread = 0;
+    status = pNtOpenProcess( &process, PROCESS_QUERY_LIMITED_INFORMATION, &attr, &cid );
+    ok( status == STATUS_INVALID_CID, "NtOpenProcess returned %x\n", status );
+
+    cid.UniqueProcess = ULongToHandle( GetCurrentProcessId() );
+    cid.UniqueThread = 0;
+    status = pNtOpenProcess( &process, PROCESS_QUERY_LIMITED_INFORMATION, &attr, &cid );
+    ok( !status, "NtOpenProcess returned %x\n", status );
+    pNtClose( process );
+
+    cid.UniqueProcess = ULongToHandle( GetCurrentProcessId() );
+    cid.UniqueThread = ULongToHandle( GetCurrentThreadId() );
+    status = pNtOpenProcess( &process, PROCESS_QUERY_LIMITED_INFORMATION, &attr, &cid );
+    ok( !status, "NtOpenProcess returned %x\n", status );
+    pNtClose( process );
+}
+
 START_TEST(om)
 {
     HMODULE hntdll = GetModuleHandleA("ntdll.dll");
@@ -2200,6 +2313,7 @@ START_TEST(om)
     pRtlWaitOnAddress       =  (void *)GetProcAddress(hntdll, "RtlWaitOnAddress");
     pRtlWakeAddressAll      =  (void *)GetProcAddress(hntdll, "RtlWakeAddressAll");
     pRtlWakeAddressSingle   =  (void *)GetProcAddress(hntdll, "RtlWakeAddressSingle");
+    pNtOpenProcess          =  (void *)GetProcAddress(hntdll, "NtOpenProcess");
     pNtQuerySystemInformation = (void *)GetProcAddress(hntdll, "NtQuerySystemInformation");
 
     test_case_sensitive();
@@ -2216,4 +2330,5 @@ START_TEST(om)
     test_keyed_events();
     test_null_device();
     test_wait_on_address();
+    test_process();
 }

@@ -1739,7 +1739,8 @@ static void sock_release_ifchange( struct sock *sock )
 
 static struct object_type *socket_device_get_type( struct object *obj );
 static void socket_device_dump( struct object *obj, int verbose );
-static struct object *socket_device_lookup_name( struct object *obj, struct unicode_str *name, unsigned int attr );
+static struct object *socket_device_lookup_name( struct object *obj, struct unicode_str *name,
+                                                 unsigned int attr, struct object *root );
 static struct object *socket_device_open_file( struct object *obj, unsigned int access,
                                                unsigned int sharing, unsigned int options );
 
@@ -1781,7 +1782,8 @@ static void socket_device_dump( struct object *obj, int verbose )
     fputs( "Socket device\n", stderr );
 }
 
-static struct object *socket_device_lookup_name( struct object *obj, struct unicode_str *name, unsigned int attr )
+static struct object *socket_device_lookup_name( struct object *obj, struct unicode_str *name,
+                                                 unsigned int attr, struct object *root )
 {
     return NULL;
 }

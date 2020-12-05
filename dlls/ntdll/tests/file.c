@@ -1400,6 +1400,18 @@ static void test_file_basic_information(void)
     ok ( U(io).Status == STATUS_SUCCESS, "can't set system attribute, io.Status is %x\n", U(io).Status );
 
     memset(&fbi2, 0, sizeof(fbi2));
+    fbi2.LastAccessTime.QuadPart = 0x200deadcafebeef;
+    U(io).Status = 0xdeadbeef;
+    res = pNtSetInformationFile(h, &io, &fbi2, sizeof(fbi2), FileBasicInformation);
+    ok ( res == STATUS_SUCCESS, "can't set system attribute, NtSetInformationFile returned %x\n", res );
+    ok ( U(io).Status == STATUS_SUCCESS, "can't set system attribute, io.Status is %x\n", U(io).Status );
+    res = pNtQueryInformationFile(h, &io, &fbi, sizeof(fbi), FileBasicInformation);
+    ok ( res == STATUS_SUCCESS, "can't get system attribute, NtQueryInformationFile returned %x\n", res );
+    ok ( U(io).Status == STATUS_SUCCESS, "can't get system attribute, io.Status is %x\n", U(io).Status );
+    ok ( fbi2.LastAccessTime.QuadPart == fbi.LastAccessTime.QuadPart,
+         "large access time set/get does not match.\n" );
+
+    memset(&fbi2, 0, sizeof(fbi2));
     res = pNtQueryInformationFile(h, &io, &fbi2, sizeof fbi2, FileBasicInformation);
     ok ( res == STATUS_SUCCESS, "can't get attributes, res %x\n", res);
     ok ( fbi2.LastWriteTime.QuadPart == fbi.LastWriteTime.QuadPart, "unexpected write time.\n");
@@ -5384,6 +5396,7 @@ static void test_reparse_points(void)
     static WCHAR volW[] = {'c',':','\\',0};
     REPARSE_GUID_DATA_BUFFER guid_buffer;
     static const WCHAR dotW[] = {'.',0};
+    FILE_ATTRIBUTE_TAG_INFORMATION info;
     REPARSE_DATA_BUFFER *buffer = NULL;
     DWORD dwret, dwLen, dwFlags, err;
     WIN32_FILE_ATTRIBUTE_DATA fad;
@@ -5393,6 +5406,7 @@ static void test_reparse_points(void)
     IO_STATUS_BLOCK iosb;
     UNICODE_STRING nameW;
     TOKEN_PRIVILEGES tp;
+    NTSTATUS status;
     WCHAR *dest;
     LUID luid;
     BOOL bret;
@@ -5567,10 +5581,14 @@ static void test_reparse_points(void)
     handle = CreateFileW(reparse_path, GENERIC_READ | GENERIC_WRITE, 0, 0, OPEN_EXISTING,
                          FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, 0);
     ok(handle != INVALID_HANDLE_VALUE, "Failed to open symlink file.\n");
-    todo_wine ok(GetFileSize(handle, NULL) == 0, "symlink size is not zero\n");
+    ok(GetFileSize(handle, NULL) == 0, "symlink size is not zero\n");
     bret = ReadFile(handle, &buf, sizeof(buf), &dwLen, NULL);
     ok(bret, "Failed to read data from the symlink.\n");
-    todo_wine ok(dwLen == 0, "Length of symlink data is not zero.\n");
+    ok(dwLen == 0, "Length of symlink data is not zero.\n");
+    memset(&info, 0x0, sizeof(info));
+    status = pNtQueryInformationFile(handle, &iosb, &info, sizeof(info), FileAttributeTagInformation);
+    ok( status == STATUS_SUCCESS, "got %#x\n", status );
+    ok( info.ReparseTag == IO_REPARSE_TAG_SYMLINK, "got reparse tag %#x\n", info.ReparseTag );
     CloseHandle(handle);
 
     /* Check the size/data of the symlink target */

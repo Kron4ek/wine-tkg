@@ -36,6 +36,7 @@
 #include "file.h"
 #include "thread.h"
 #include "request.h"
+#include "unicode.h"
 #include "esync.h"
 #include "fsync.h"
 
@@ -155,7 +156,7 @@ int main( int argc, char *argv[] )
     set_current_time();
     init_scheduler();
     init_signals();
-    init_directories();
+    init_directories( load_intl_file() );
     init_registry();
     init_types();
     main_loop();

@@ -359,10 +359,11 @@ static void start_pipeline(struct media_source *source, struct source_async_comm
 
 static void stop_pipeline(struct media_source *source)
 {
-    /* TODO: seek to beginning */
+    unsigned int i;
+
     gst_element_set_state(source->container, GST_STATE_PAUSED);
 
-    for (unsigned int i = 0; i < source->stream_count; i++)
+    for (i = 0; i < source->stream_count; i++)
     {
         struct media_stream *stream = source->streams[i];
         if (stream->state != STREAM_INACTIVE)
@@ -984,7 +985,7 @@ fail:
 static HRESULT media_stream_init_desc(struct media_stream *stream)
 {
     GstCaps *base_caps = gst_pad_get_current_caps(stream->their_src);
-    IMFMediaTypeHandler *type_handler;
+    IMFMediaTypeHandler *type_handler = NULL;
     IMFMediaType **stream_types = NULL;
     IMFMediaType *stream_type = NULL;
     GstCaps *current_caps = make_mf_compatible_caps(base_caps);
@@ -1485,18 +1486,15 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     GstStaticPadTemplate src_template =
         GST_STATIC_PAD_TEMPLATE("mf_src", GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
 
-    struct media_source *object = heap_alloc_zero(sizeof(*object));
     BOOL video_selected = FALSE, audio_selected = FALSE;
     IMFStreamDescriptor **descriptors = NULL;
     IMFAttributes *byte_stream_attributes;
+    struct media_source *object;
     gint64 total_pres_time = 0;
     DWORD bytestream_caps;
     unsigned int i;
     HRESULT hr;
     int ret;
-
-    if (!object)
-        return E_OUTOFMEMORY;
 
     if (FAILED(hr = IMFByteStream_GetCapabilities(bytestream, &bytestream_caps)))
         return hr;
@@ -1506,6 +1504,9 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
         FIXME("Non-seekable bytestreams not supported.\n");
         return MF_E_BYTESTREAM_NOT_SEEKABLE;
     }
+
+    if (!(object = heap_alloc_zero(sizeof(*object))))
+        return E_OUTOFMEMORY;
 
     object->IMFMediaSource_iface.lpVtbl = &IMFMediaSource_vtbl;
     object->IMFGetService_iface.lpVtbl = &IMFGetService_vtbl;

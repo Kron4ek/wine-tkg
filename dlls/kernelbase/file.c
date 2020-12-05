@@ -887,6 +887,8 @@ static UINT get_nt_file_options( DWORD attributes )
         options |= FILE_RANDOM_ACCESS;
     if (attributes & FILE_FLAG_WRITE_THROUGH)
         options |= FILE_WRITE_THROUGH;
+    if (attributes & FILE_FLAG_OPEN_REPARSE_POINT)
+        options |= FILE_OPEN_REPARSE_POINT;
     return options;
 }
 
@@ -902,7 +904,6 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileW( LPCWSTR filename, DWORD access, DWO
     UNICODE_STRING nameW;
     IO_STATUS_BLOCK io;
     HANDLE ret;
-    DWORD dosdev;
     const WCHAR *vxd_name = NULL;
     SECURITY_QUALITY_OF_SERVICE qos;
 
@@ -940,25 +941,14 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileW( LPCWSTR filename, DWORD access, DWO
         return INVALID_HANDLE_VALUE;
     }
 
-    if (!wcsncmp( filename, L"\\\\.\\", 4 ))
+    if ((GetVersion() & 0x80000000) && !wcsncmp( filename, L"\\\\.\\", 4 ) &&
+        !RtlIsDosDeviceName_U( filename + 4 ) &&
+        wcsnicmp( filename + 4, L"PIPE\\", 5 ) &&
+        wcsnicmp( filename + 4, L"MAILSLOT\\", 9 ))
     {
-        if ((filename[4] && filename[5] == ':' && !filename[6]) ||
-            !wcsnicmp( filename + 4, L"PIPE\\", 5 ) ||
-            !wcsnicmp( filename + 4, L"MAILSLOT\\", 9 ))
-        {
-            dosdev = 0;
-        }
-        else if ((dosdev = RtlIsDosDeviceName_U( filename + 4 )))
-        {
-            dosdev += MAKELONG( 0, 4*sizeof(WCHAR) );  /* adjust position to start of filename */
-        }
-        else if (GetVersion() & 0x80000000)
-        {
-            vxd_name = filename + 4;
-            if (!creation) creation = OPEN_EXISTING;
-        }
+        vxd_name = filename + 4;
+        if (!creation) creation = OPEN_EXISTING;
     }
-    else dosdev = RtlIsDosDeviceName_U( filename );
 
     if (creation < CREATE_NEW || creation > TRUNCATE_EXISTING)
     {
@@ -1024,12 +1014,6 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileW( LPCWSTR filename, DWORD access, DWO
     }
     else
     {
-        if (dosdev &&
-            ((LOWORD(dosdev) == 3 * sizeof(WCHAR) && !wcsnicmp( filename + HIWORD(dosdev)/sizeof(WCHAR), L"CON", 3 )) ||
-             (LOWORD(dosdev) == 6 * sizeof(WCHAR) && !wcsnicmp( filename + HIWORD(dosdev)/sizeof(WCHAR), L"CONIN$", 6 )) ||
-             (LOWORD(dosdev) == 7 * sizeof(WCHAR) && !wcsnicmp( filename + HIWORD(dosdev)/sizeof(WCHAR), L"CONOUT$", 7 ))))
-            ret = console_handle_map( ret );
-
         if ((creation == CREATE_ALWAYS && io.Information == FILE_OVERWRITTEN) ||
             (creation == OPEN_ALWAYS && io.Information == FILE_OPENED))
             SetLastError( ERROR_ALREADY_EXISTS );
@@ -3368,12 +3352,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetFileSizeEx( HANDLE file, PLARGE_INTEGER size )
     FILE_STANDARD_INFORMATION info;
     IO_STATUS_BLOCK io;
 
-    if (is_console_handle( file ))
-    {
-        SetLastError( ERROR_INVALID_HANDLE );
-        return FALSE;
-    }
-
     if (!set_ntstatus( NtQueryInformationFile( file, &io, &info, sizeof(info), FileStandardInformation )))
         return FALSE;
 
@@ -3426,8 +3404,6 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFileType( HANDLE file )
         file == (HANDLE)STD_ERROR_HANDLE)
         file = GetStdHandle( (DWORD_PTR)file );
 
-    if (is_console_handle( file )) return FILE_TYPE_CHAR;
-
     if (!set_ntstatus( NtQueryVolumeInformationFile( file, &io, &info, sizeof(info),
                                                      FileFsDeviceInformation )))
         return FILE_TYPE_UNKNOWN;
@@ -3435,6 +3411,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFileType( HANDLE file )
     switch (info.DeviceType)
     {
     case FILE_DEVICE_NULL:
+    case FILE_DEVICE_CONSOLE:
     case FILE_DEVICE_SERIAL_PORT:
     case FILE_DEVICE_PARALLEL_PORT:
     case FILE_DEVICE_TAPE:
