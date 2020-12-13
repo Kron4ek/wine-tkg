@@ -1997,8 +1997,10 @@ struct fd *open_fd( struct fd *root, const char *name, int flags, mode_t *mode, 
     }
     else rw_mode = O_RDONLY;
 
+#if defined(O_SYMLINK)
     if ((options & FILE_OPEN_REPARSE_POINT) && !(flags & O_CREAT))
         flags |= O_SYMLINK;
+#endif
 
     if ((fd->unix_fd = open( name, rw_mode | (flags & ~O_TRUNC), *mode )) == -1)
     {

@@ -1510,10 +1510,21 @@ static BOOL CALLBACK test_EnumDisplayMonitors_invalid_handle_cb(HMONITOR monitor
     return TRUE;
 }
 
+static BOOL CALLBACK test_EnumDisplayMonitors_count(HMONITOR monitor, HDC hdc, LPRECT rect,
+        LPARAM lparam)
+{
+    INT *count = (INT *)lparam;
+    ++(*count);
+    return TRUE;
+}
+
 static void test_EnumDisplayMonitors(void)
 {
+    static const DWORD DESKTOP_ALL_ACCESS = 0x01ff;
+    HWINSTA winstation, old_winstation;
+    HDESK desktop, old_desktop;
+    INT count, old_count;
     DWORD error;
-    INT count;
     BOOL ret;
 
     ret = EnumDisplayMonitors(NULL, NULL, test_EnumDisplayMonitors_normal_cb, 0);
@@ -1534,6 +1545,45 @@ static void test_EnumDisplayMonitors(void)
     else
         ok(ret, "EnumDisplayMonitors failed.\n");
     ok(error == 0xdeadbeef, "Expected error %#x, got %#x.\n", 0xdeadbeef, error);
+
+    /* Test that monitor enumeration is not affected by window stations and desktops */
+    old_winstation = GetProcessWindowStation();
+    old_desktop = GetThreadDesktop(GetCurrentThreadId());
+    old_count = GetSystemMetrics(SM_CMONITORS);
+
+    count = 0;
+    ret = EnumDisplayMonitors(NULL, NULL, test_EnumDisplayMonitors_count, (LPARAM)&count);
+    ok(ret, "EnumDisplayMonitors failed, error %#x.\n", GetLastError());
+    ok(count == old_count, "Expected %d, got %d.\n", old_count, count);
+
+    winstation = CreateWindowStationW(NULL, 0, WINSTA_ALL_ACCESS, NULL);
+    ok(!!winstation && winstation != old_winstation, "CreateWindowStationW failed, error %#x.\n", GetLastError());
+    ret = SetProcessWindowStation(winstation);
+    ok(ret, "SetProcessWindowStation failed, error %#x.\n", GetLastError());
+    ok(winstation == GetProcessWindowStation(), "Expected %p, got %p.\n", GetProcessWindowStation(), winstation);
+
+    desktop = CreateDesktopW(L"test_desktop", NULL, NULL, 0, DESKTOP_ALL_ACCESS, NULL);
+    ok(!!desktop && desktop != old_desktop, "CreateDesktopW failed, error %#x.\n", GetLastError());
+    ret = SetThreadDesktop(desktop);
+    ok(ret, "SetThreadDesktop failed, error %#x.\n", GetLastError());
+    ok(desktop == GetThreadDesktop(GetCurrentThreadId()), "Expected %p, got %p.\n",
+            GetThreadDesktop(GetCurrentThreadId()), desktop);
+
+    count = GetSystemMetrics(SM_CMONITORS);
+    ok(count == old_count, "Expected %d, got %d.\n", old_count, count);
+    count = 0;
+    ret = EnumDisplayMonitors(NULL, NULL, test_EnumDisplayMonitors_count, (LPARAM)&count);
+    ok(ret, "EnumDisplayMonitors failed, error %#x.\n", GetLastError());
+    ok(count == old_count, "Expected %d, got %d.\n", old_count, count);
+
+    ret = SetProcessWindowStation(old_winstation);
+    ok(ret, "SetProcessWindowStation failed, error %#x.\n", GetLastError());
+    ret = SetThreadDesktop(old_desktop);
+    ok(ret, "SetThreadDesktop failed, error %#x.\n", GetLastError());
+    ret = CloseDesktop(desktop);
+    ok(ret, "CloseDesktop failed, error %#x.\n", GetLastError());
+    ret = CloseWindowStation(winstation);
+    ok(ret, "CloseWindowStation failed, error %#x.\n", GetLastError());
 }
 
 static void test_QueryDisplayConfig_result(UINT32 flags,
@@ -1862,6 +1912,86 @@ static void test_display_config(void)
     test_DisplayConfigGetDeviceInfo();
 }
 
+static BOOL CALLBACK test_handle_proc(HMONITOR full_monitor, HDC hdc, LPRECT rect, LPARAM lparam)
+{
+    MONITORINFO monitor_info = {sizeof(monitor_info)};
+    HMONITOR monitor;
+    BOOL ret;
+
+#ifdef _WIN64
+    if ((ULONG_PTR)full_monitor >> 32)
+        monitor = full_monitor;
+    else
+        monitor = (HMONITOR)((ULONG_PTR)full_monitor | ((ULONG_PTR)~0u << 32));
+    SetLastError(0xdeadbeef);
+    ret = GetMonitorInfoW(monitor, &monitor_info);
+    ok(ret, "GetMonitorInfoW failed, error %#x.\n", GetLastError());
+
+    monitor = (HMONITOR)((ULONG_PTR)full_monitor & 0xffffffff);
+    SetLastError(0xdeadbeef);
+    ret = GetMonitorInfoW(monitor, &monitor_info);
+    ok(ret, "GetMonitorInfoW failed, error %#x.\n", GetLastError());
+
+    monitor = (HMONITOR)(((ULONG_PTR)full_monitor & 0xffffffff) | ((ULONG_PTR)0x1234 << 32));
+    SetLastError(0xdeadbeef);
+    ret = GetMonitorInfoW(monitor, &monitor_info);
+    ok(ret, "GetMonitorInfoW failed, error %#x.\n", GetLastError());
+
+    monitor = (HMONITOR)((ULONG_PTR)full_monitor & 0xffff);
+    SetLastError(0xdeadbeef);
+    ret = GetMonitorInfoW(monitor, &monitor_info);
+    todo_wine ok(!ret, "GetMonitorInfoW succeeded.\n");
+    todo_wine ok(GetLastError() == ERROR_INVALID_MONITOR_HANDLE, "Expected error code %#x, got %#x.\n",
+            ERROR_INVALID_MONITOR_HANDLE, GetLastError());
+
+    monitor = (HMONITOR)(((ULONG_PTR)full_monitor & 0xffff) | ((ULONG_PTR)0x9876 << 16));
+    SetLastError(0xdeadbeef);
+    ret = GetMonitorInfoW(monitor, &monitor_info);
+    ok(!ret, "GetMonitorInfoW succeeded.\n");
+    ok(GetLastError() == ERROR_INVALID_MONITOR_HANDLE, "Expected error code %#x, got %#x.\n",
+            ERROR_INVALID_MONITOR_HANDLE, GetLastError());
+
+    monitor = (HMONITOR)(((ULONG_PTR)full_monitor & 0xffff) | ((ULONG_PTR)0x12345678 << 16));
+    SetLastError(0xdeadbeef);
+    ret = GetMonitorInfoW(monitor, &monitor_info);
+    ok(!ret, "GetMonitorInfoW succeeded.\n");
+    ok(GetLastError() == ERROR_INVALID_MONITOR_HANDLE, "Expected error code %#x, got %#x.\n",
+            ERROR_INVALID_MONITOR_HANDLE, GetLastError());
+#else
+    if ((ULONG_PTR)full_monitor >> 16)
+        monitor = full_monitor;
+    else
+        monitor = (HMONITOR)((ULONG_PTR)full_monitor | ((ULONG_PTR)~0u << 16));
+    SetLastError(0xdeadbeef);
+    ret = GetMonitorInfoW(monitor, &monitor_info);
+    todo_wine_if(((ULONG_PTR)full_monitor >> 16) == 0)
+    ok(ret, "GetMonitorInfoW failed, error %#x.\n", GetLastError());
+
+    monitor = (HMONITOR)((ULONG_PTR)full_monitor & 0xffff);
+    SetLastError(0xdeadbeef);
+    ret = GetMonitorInfoW(monitor, &monitor_info);
+    ok(ret, "GetMonitorInfoW failed, error %#x.\n", GetLastError());
+
+    monitor = (HMONITOR)(((ULONG_PTR)full_monitor & 0xffff) | ((ULONG_PTR)0x1234 << 16));
+    SetLastError(0xdeadbeef);
+    ret = GetMonitorInfoW(monitor, &monitor_info);
+    ok(!ret, "GetMonitorInfoW succeeded.\n");
+    ok(GetLastError() == ERROR_INVALID_MONITOR_HANDLE, "Expected error code %#x, got %#x.\n",
+            ERROR_INVALID_MONITOR_HANDLE, GetLastError());
+#endif
+
+    return TRUE;
+}
+
+static void test_handles(void)
+{
+    BOOL ret;
+
+    /* Test that monitor handles are user32 handles */
+    ret = EnumDisplayMonitors(NULL, NULL, test_handle_proc, 0);
+    ok(ret, "EnumDisplayMonitors failed, error %#x.\n", GetLastError());
+}
+
 START_TEST(monitor)
 {
     init_function_pointers();
@@ -1871,4 +2001,5 @@ START_TEST(monitor)
     test_monitors();
     test_work_area();
     test_display_config();
+    test_handles();
 }

@@ -1475,7 +1475,7 @@ static void save_context( struct xcontext *xcontext, const ucontext_t *sigcontex
         context->ContextFlags |= CONTEXT_FLOATING_POINT;
         context->u.FltSave = *FPU_sig(sigcontext);
         context->MxCsr = context->u.FltSave.MxCsr;
-        if ((xs = XState_sig(FPU_sig(sigcontext))))
+        if (user_shared_data->XState.EnabledFeatures && (xs = XState_sig(FPU_sig(sigcontext))))
         {
             /* xcontext and sigcontext are both on the signal stack, so we can
              * just reference sigcontext without overflowing 32 bit XState.Offset */
@@ -1555,37 +1555,9 @@ static void restore_context( const struct xcontext *xcontext, ucontext_t *sigcon
     amd64_thread_data()->dr7 = context->Dr7;
     set_sigcontext( context, sigcontext );
     if (FPU_sig(sigcontext)) *FPU_sig(sigcontext) = context->u.FltSave;
-    if ((xs = XState_sig(FPU_sig(sigcontext))))
+    if (user_shared_data->XState.EnabledFeatures && (xs = XState_sig(FPU_sig(sigcontext))))
         xs->CompactionMask = xcontext->host_compaction_mask;
 }
-
-
-/***********************************************************************
- *           set_nonvolatile_regs_from_context
- *
- * Set the non-volatile registers from CPU context.
- */
-extern void set_nonvolatile_regs_from_context( const CONTEXT *context );
-__ASM_GLOBAL_FUNC( set_nonvolatile_regs_from_context,
-                   "movq 0xa0(%rcx),%rbp\n\t"
-                   "movq 0x90(%rcx),%rbx\n\t"
-                   "movq 0xa8(%rcx),%rsi\n\t"
-                   "movq 0xb0(%rcx),%rdi\n\t"
-                   "movq 0xd8(%rcx),%r12\n\t"
-                   "movq 0xe0(%rcx),%r13\n\t"
-                   "movq 0xe8(%rcx),%r14\n\t"
-                   "movq 0xf0(%rcx),%r15\n\t"
-                   "movdqa 0x200(%rcx),%xmm6\n\t"
-                   "movdqa 0x210(%rcx),%xmm7\n\t"
-                   "movdqa 0x220(%rcx),%xmm8\n\t"
-                   "movdqa 0x230(%rcx),%xmm9\n\t"
-                   "movdqa 0x240(%rcx),%xmm10\n\t"
-                   "movdqa 0x250(%rcx),%xmm11\n\t"
-                   "movdqa 0x260(%rcx),%xmm12\n\t"
-                   "movdqa 0x270(%rcx),%xmm13\n\t"
-                   "movdqa 0x280(%rcx),%xmm14\n\t"
-                   "movdqa 0x290(%rcx),%xmm15\n\t"
-                   "ret" );
 
 
 /***********************************************************************
@@ -1640,7 +1612,7 @@ static void restore_xstate( const CONTEXT *context )
     XSAVE_FORMAT *xrstor_base;
     XSTATE *xs;
 
-    if (!(xs = xstate_from_context( context )))
+    if (!(user_shared_data->XState.EnabledFeatures && (xs = xstate_from_context( context ))))
         return;
 
     xrstor_base = (XSAVE_FORMAT *)xs - 1;
@@ -2156,9 +2128,7 @@ struct stack_layout * WINAPI setup_user_exception_dispatcher_stack( EXCEPTION_RE
 }
 
 __ASM_GLOBAL_FUNC( call_user_exception_dispatcher,
-                   "movq %gs:0x30,%rax\n\t"
-                   "movq $0,0x328(%rax)\n\t"   /* amd64_thread_data()->syscall_frame */
-                   "movq 0x98(%rdx),%r9\n\t"   /* context->Rsp */
+                   "movq 0x98(%rdx),%r9\n\t" /* context->Rsp */
                    "andq $~0xf,%r9\n\t"
                    "btl $6,0x30(%rdx)\n\t" /* context->ContextFlags, CONTEXT_XSTATE bit. */
                    "jnc 1f\n\t"
@@ -2170,11 +2140,30 @@ __ASM_GLOBAL_FUNC( call_user_exception_dispatcher,
                    "pushq %r8\n\t"
                    "subq $0x20,%rsp\n\t"
                    "call " __ASM_NAME("setup_user_exception_dispatcher_stack") "\n\t"
-                   "mov %rax,%rcx\n\t"
-                   "call " __ASM_NAME("set_nonvolatile_regs_from_context") "\n\t"
                    "addq $0x20,%rsp\n\t"
                    "popq %r8\n\t"
+                   "mov %rax,%rcx\n\t"
+                   "movq 0xa0(%rcx),%rbp\n\t"
+                   "movq 0x90(%rcx),%rbx\n\t"
+                   "movq 0xa8(%rcx),%rsi\n\t"
+                   "movq 0xb0(%rcx),%rdi\n\t"
+                   "movq 0xd8(%rcx),%r12\n\t"
+                   "movq 0xe0(%rcx),%r13\n\t"
+                   "movq 0xe8(%rcx),%r14\n\t"
+                   "movq 0xf0(%rcx),%r15\n\t"
+                   "movdqa 0x200(%rcx),%xmm6\n\t"
+                   "movdqa 0x210(%rcx),%xmm7\n\t"
+                   "movdqa 0x220(%rcx),%xmm8\n\t"
+                   "movdqa 0x230(%rcx),%xmm9\n\t"
+                   "movdqa 0x240(%rcx),%xmm10\n\t"
+                   "movdqa 0x250(%rcx),%xmm11\n\t"
+                   "movdqa 0x260(%rcx),%xmm12\n\t"
+                   "movdqa 0x270(%rcx),%xmm13\n\t"
+                   "movdqa 0x280(%rcx),%xmm14\n\t"
+                   "movdqa 0x290(%rcx),%xmm15\n\t"
                    "mov %rcx,%rsp\n\t"
+                   "movq %gs:0x30,%rax\n\t"
+                   "movq $0,0x328(%rax)\n\t"   /* amd64_thread_data()->syscall_frame */
                    "jmpq *%r8")
 
 /***********************************************************************

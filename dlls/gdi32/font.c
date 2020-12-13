@@ -3761,9 +3761,9 @@ static HFONT CDECL font_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags )
 
         font = select_font( &lf, dcmat, can_use_bitmap );
 
-        if (font && !*aa_flags)
+        if (font)
         {
-            *aa_flags = font->aa_flags;
+            if (!*aa_flags) *aa_flags = font->aa_flags;
             if (!*aa_flags)
             {
                 if (lf.lfQuality == CLEARTYPE_QUALITY || lf.lfQuality == CLEARTYPE_NATURAL_QUALITY)
@@ -6887,6 +6887,7 @@ BOOL WINAPI CreateScalableFontResourceW( DWORD hidden, LPCWSTR resource_file,
     fontdir.dfReserved        = 0;
     WideCharToMultiByte( CP_ACP, 0, (WCHAR *)font->otm.otmpFamilyName, -1,
                          fontdir.szFaceName, LF_FACESIZE, NULL, NULL );
+    free_gdi_font( font );
 
     if (hidden) fontdir.dfType |= 0x80;
     return create_fot( resource_file, font_file, &fontdir );

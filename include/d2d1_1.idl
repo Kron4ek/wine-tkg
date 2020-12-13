@@ -19,7 +19,6 @@
 import "d2d1.idl";
 
 interface ID2D1DeviceContext;
-interface ID2D1StrokeStyle1;
 interface ID2D1PathGeometry1;
 interface ID2D1Properties;
 interface IPrintDocumentPackageTarget;
@@ -28,8 +27,6 @@ interface IWICImagingFactory;
 interface IWICColorContext;
 interface ID2D1ColorContext;
 interface ID2D1Effect;
-interface ID2D1GradientStopCollection1;
-interface ID2D1ImageBrush;
 interface ID2D1BitmapBrush1;
 
 cpp_quote("#ifndef __dwrite_h__")
@@ -448,6 +445,21 @@ interface ID2D1DrawingStateBlock1 : ID2D1DrawingStateBlock
 
 [
     object,
+    uuid(1c4820bb-5771-4518-a581-2fe4dd0ec657),
+    local,
+]
+interface ID2D1ColorContext : ID2D1Resource
+{
+    D2D1_COLOR_SPACE GetColorSpace();
+    UINT32 GetProfileSize();
+    HRESULT GetProfile(
+        [out] BYTE *profile,
+        [in] UINT32 size
+    );
+}
+
+[
+    object,
     uuid(a898a84c-3873-4588-b08b-ebbf978df041),
     local,
 ]
@@ -478,6 +490,23 @@ interface ID2D1BitmapBrush1 : ID2D1BitmapBrush
         [in] D2D1_INTERPOLATION_MODE mode
     );
     D2D1_INTERPOLATION_MODE GetInterpolationMode1();
+}
+
+[
+    object,
+    uuid(ae1572f4-5dd0-4777-998b-9279472ae63b),
+    local,
+]
+interface ID2D1GradientStopCollection1 : ID2D1GradientStopCollection
+{
+    void GetGradientStops1(
+        [out] D2D1_GRADIENT_STOP *gradient,
+        [in] UINT32 count
+    );
+    D2D1_COLOR_SPACE GetPreInterpolationSpace();
+    D2D1_COLOR_SPACE GetPostInterpolationSpace();
+    D2D1_BUFFER_PRECISION GetBufferPrecision();
+    D2D1_COLOR_INTERPOLATION_MODE GetColorInterpolationMode();
 }
 
 [
@@ -644,6 +673,39 @@ interface ID2D1PrintControl : IUnknown
         [out, optional] D2D1_TAG *tag2
     );
     HRESULT Close();
+}
+
+[
+    object,
+    uuid(fe9e984d-3f95-407c-b5db-cb94d4e8f87c),
+    local,
+]
+interface ID2D1ImageBrush : ID2D1Brush
+{
+    void SetImage(
+        [in] ID2D1Image *image
+    );
+    void SetExtendModeX(
+        [in] D2D1_EXTEND_MODE extend_mode
+    );
+    void SetExtendModeY(
+        [in] D2D1_EXTEND_MODE extend_mode
+    );
+    void SetInterpolationMode(
+        [in] D2D1_INTERPOLATION_MODE interpolation_mode
+    );
+    void SetSourceRectangle(
+        [in] const D2D1_RECT_F *rect
+    );
+    void GetImage(
+        [out] ID2D1Image **image
+    );
+    D2D1_EXTEND_MODE GetExtendModeX();
+    D2D1_EXTEND_MODE GetExtendModeY();
+    D2D1_INTERPOLATION_MODE GetInterpolationMode();
+    void GetSourceRectangle(
+        [out] D2D1_RECT_F *rect
+    );
 }
 
 [
@@ -817,6 +879,16 @@ interface ID2D1DeviceContext : ID2D1RenderTarget
 
 [
     object,
+    uuid(10a72a66-e91c-43f4-993f-ddf4b82b0b4a),
+    local,
+]
+interface ID2D1StrokeStyle1 : ID2D1StrokeStyle
+{
+    D2D1_STROKE_TRANSFORM_TYPE GetStrokeTransformType();
+}
+
+[
+    object,
     uuid(bb12d362-daee-4b9a-aa1d-14ba401cfa1f),
     local,
 ]
@@ -871,6 +943,18 @@ interface ID2D1Factory1 : ID2D1Factory
         [in] REFCLSID effect_id,
         [out] ID2D1Properties **props
     );
+}
+
+[
+    object,
+    uuid(31e6e7bc-e0ff-4d46-8c64-a0a8c41c15d3),
+    local,
+]
+interface ID2D1Multithread : IUnknown
+{
+    BOOL GetMultithreadProtected();
+    void Enter();
+    void Leave();
 }
 
 [local] HRESULT __stdcall D2D1CreateDevice(IDXGIDevice *dxgi_device,

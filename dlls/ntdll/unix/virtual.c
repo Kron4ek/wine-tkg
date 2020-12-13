@@ -2671,12 +2671,12 @@ static void init_teb( TEB *teb, PEB *peb )
     InitializeListHead( &teb->ActivationContextStack.FrameListCache );
     teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
+    thread_data->esync_apc_fd = -1;
+    thread_data->fsync_apc_futex = NULL;
     thread_data->request_fd = -1;
     thread_data->reply_fd   = -1;
     thread_data->wait_fd[0] = -1;
     thread_data->wait_fd[1] = -1;
-    thread_data->esync_apc_fd = -1;
-    thread_data->fsync_apc_futex = NULL;
     list_add_head( &teb_list, &thread_data->entry );
 }
 

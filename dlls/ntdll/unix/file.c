@@ -397,6 +397,18 @@ NTSTATUS errno_to_status( int err )
 #define XATTR_USER_PREFIX_LEN (sizeof(XATTR_USER_PREFIX) - 1)
 #endif
 
+#ifdef HAVE_SYS_EXTATTR_H
+static inline int xattr_valid_namespace( const char *name )
+{
+    if (strncmp( XATTR_USER_PREFIX, name, XATTR_USER_PREFIX_LEN ) != 0)
+    {
+        errno = EPERM;
+        return 0;
+    }
+    return 1;
+}
+#endif
+
 static int xattr_fremove( int filedes, const char *name )
 {
 #if defined(XATTR_ADDITIONAL_OPTIONS)
@@ -1746,12 +1758,20 @@ static int get_file_info( const char *path, struct stat *st, ULONG *attr )
 }
 
 
-#if !defined(HAVE_UTIMENSAT) && defined(__ANDROID__)
+#if defined(__ANDROID__) && !defined(HAVE_UTIMENSAT)
 static int utimensat( int fd, const char *name, const struct timespec spec[2], int flags )
 {
     return syscall( __NR_utimensat, fd, name, spec, flags );
 }
 #define HAVE_UTIMENSAT
+#endif  /* __ANDROID__ */
+
+#if defined(__ANDROID__) && !defined(HAVE_FUTIMENS)
+static int futimens( int fd, const struct timespec spec[2] )
+{
+    return syscall( __NR_utimensat, fd, NULL, spec, 0 );
+}
+#define HAVE_FUTIMENS
 #endif  /* __ANDROID__ */
 
 #ifndef UTIME_OMIT
@@ -1777,17 +1797,16 @@ static BOOL set_file_times_precise( int fd, const LARGE_INTEGER *mtime,
         tv[1].tv_nsec = (mtime->QuadPart % 10000000) * 100;
     }
 #ifdef __APPLE__
-    if (!&utimensat) return FALSE;
+    if (!&utimensat || !&futimens) return FALSE;
 #endif
 #if defined(HAVE_UTIMENSAT)
-    /* futimens does not work on O_PATH|O_NOFOLLOW (O_SYMLINK) file descriptors, so if the file
-     * descriptor is for a symlink then use utimensat with an empty path (.) and do not follow the
-     * link. Since this approach works for both symlinks and regular files, just use utimensat. */
-    if (utimensat(fd, ".", tv, AT_SYMLINK_NOFOLLOW) == -1) *status = errno_to_status( errno );
-#else
-    if (futimens(fd, tv) == -1) *status = errno_to_status( errno );
+    /* futimens does not work on O_PATH|O_NOFOLLOW (O_SYMLINK) file descriptors, so if fd is for a
+     * symlink then use utimensat with an empty path (.) and do not follow the link. */
+    if (utimensat(fd, ".", tv, AT_SYMLINK_NOFOLLOW) == 0) *status = STATUS_SUCCESS;
+    else
 #endif
-    else *status = STATUS_SUCCESS;
+    if (futimens(fd, tv) == 0) *status = STATUS_SUCCESS;
+    else *status = errno_to_status( errno );
     return TRUE;
 #else
     return FALSE;
@@ -3032,7 +3051,6 @@ static NTSTATUS get_dos_device( const WCHAR *name, UINT name_len, char **unix_na
         if (!new_name) break;
         free( unix_name );
         unix_name = new_name;
-        unix_len = strlen(unix_name) + 1;
         dev = NULL; /* last try */
     }
     free( unix_name );
