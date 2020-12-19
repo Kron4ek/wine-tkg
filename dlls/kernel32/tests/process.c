@@ -91,6 +91,7 @@ static BOOL   (WINAPI *pInitializeProcThreadAttributeList)(struct _PROC_THREAD_A
 static BOOL   (WINAPI *pUpdateProcThreadAttribute)(struct _PROC_THREAD_ATTRIBUTE_LIST*, DWORD, DWORD_PTR, void *,SIZE_T,void*,SIZE_T*);
 static void   (WINAPI *pDeleteProcThreadAttributeList)(struct _PROC_THREAD_ATTRIBUTE_LIST*);
 static DWORD  (WINAPI *pGetActiveProcessorCount)(WORD);
+static DWORD  (WINAPI *pGetMaximumProcessorCount)(WORD);
 
 /* ############################### */
 static char     base[MAX_PATH];
@@ -272,6 +273,7 @@ static BOOL init(void)
     pUpdateProcThreadAttribute = (void *)GetProcAddress(hkernel32, "UpdateProcThreadAttribute");
     pDeleteProcThreadAttributeList = (void *)GetProcAddress(hkernel32, "DeleteProcThreadAttributeList");
     pGetActiveProcessorCount = (void *)GetProcAddress(hkernel32, "GetActiveProcessorCount");
+    pGetMaximumProcessorCount = (void *)GetProcAddress(hkernel32, "GetMaximumProcessorCount");
 
     return TRUE;
 }
@@ -2320,6 +2322,23 @@ static void test_SystemInfo(void)
            "Expected no difference for dwProcessorType, got %d and %d\n",
            si.dwProcessorType, nsi.dwProcessorType);
     }
+}
+
+static void test_ProcessorCount(void)
+{
+    DWORD active, maximum;
+
+    if (!pGetActiveProcessorCount || !pGetMaximumProcessorCount)
+    {
+        win_skip("GetActiveProcessorCount or GetMaximumProcessorCount is not available\n");
+        return;
+    }
+
+    active = pGetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    maximum = pGetMaximumProcessorCount(ALL_PROCESSOR_GROUPS);
+    ok(active <= maximum,
+       "Number of active processors %i is greater than maximum number of processors %i\n",
+       active, maximum);
 }
 
 static void test_RegistryQuota(void)
@@ -4374,6 +4393,7 @@ START_TEST(process)
     test_IsWow64Process();
     test_IsWow64Process2();
     test_SystemInfo();
+    test_ProcessorCount();
     test_RegistryQuota();
     test_DuplicateHandle();
     test_StartupNoConsole();

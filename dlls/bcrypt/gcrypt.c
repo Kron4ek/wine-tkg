@@ -260,6 +260,8 @@ static struct key_funcs key_funcs =
     NULL,
     NULL,
     NULL,
+    NULL,
+    NULL,
     key_compute_secret_ecc
 };
 

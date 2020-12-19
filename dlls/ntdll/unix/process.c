@@ -478,7 +478,7 @@ static ULONG get_env_size( const RTL_USER_PROCESS_PARAMETERS *params, char **win
  *
  * Simplified version of RtlDosPathNameToNtPathName_U.
  */
-static WCHAR *get_nt_pathname( const UNICODE_STRING *str )
+WCHAR *get_nt_pathname( const UNICODE_STRING *str )
 {
     static const WCHAR ntprefixW[] = {'\\','?','?','\\',0};
     static const WCHAR uncprefixW[] = {'U','N','C','\\',0};

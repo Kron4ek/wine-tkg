@@ -129,6 +129,19 @@ static void CDECL key_asymmetric_destroy( struct key *key )
     FIXME( "not implemented\n" );
 }
 
+static NTSTATUS CDECL key_asymmetric_decrypt( struct key *key, UCHAR *input, ULONG input_len,
+        UCHAR *output, ULONG *output_len )
+{
+    FIXME( "not implemented\n" );
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+static NTSTATUS CDECL key_import_rsa( struct key *key, UCHAR *input, ULONG input_len )
+{
+    FIXME( "not implemented\n" );
+    return STATUS_NOT_IMPLEMENTED;
+}
+
 static NTSTATUS CDECL key_compute_secret_ecc (unsigned char *privkey_in, struct key *pubkey_in, struct secret *secret)
 {
     FIXME( "not implemented\n" );
@@ -147,6 +160,7 @@ static struct key_funcs key_funcs =
     key_symmetric_destroy,
     key_asymmetric_init,
     key_asymmetric_generate,
+    key_asymmetric_decrypt,
     key_asymmetric_duplicate,
     key_asymmetric_sign,
     key_asymmetric_verify,
@@ -155,7 +169,8 @@ static struct key_funcs key_funcs =
     key_export_ecc,
     key_import_dsa_capi,
     key_import_ecc,
-    key_compute_secret_ecc
+    key_import_rsa,
+    key_compute_secret_ecc,
 };
 
 NTSTATUS CDECL __wine_init_unix_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out )
@@ -184,6 +199,7 @@ NTSTATUS CDECL __wine_init_unix_lib( HMODULE module, DWORD reason, const void *p
         RESOLVE_FUNC(symmetric_destroy)
         RESOLVE_FUNC(asymmetric_init)
         RESOLVE_FUNC(asymmetric_generate)
+        RESOLVE_FUNC(asymmetric_decrypt)
         RESOLVE_FUNC(asymmetric_duplicate)
         RESOLVE_FUNC(asymmetric_sign)
         RESOLVE_FUNC(asymmetric_verify)
@@ -192,6 +208,7 @@ NTSTATUS CDECL __wine_init_unix_lib( HMODULE module, DWORD reason, const void *p
         RESOLVE_FUNC(export_ecc)
         RESOLVE_FUNC(import_dsa_capi)
         RESOLVE_FUNC(import_ecc)
+        RESOLVE_FUNC(import_rsa)
         RESOLVE_FUNC(compute_secret_ecc)
 
 #undef RESOLVE_FUNC

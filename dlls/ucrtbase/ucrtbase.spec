@@ -92,7 +92,7 @@
 @ cdecl __fpe_flt_rounds()
 @ cdecl __fpecode()
 @ cdecl __initialize_lconv_for_unsigned_char() __lconv_init
-@ stub __intrinsic_abnormal_termination
+@ cdecl __intrinsic_abnormal_termination()
 @ cdecl -arch=i386,x86_64,arm,arm64 -norelay __intrinsic_setjmp(ptr) MSVCRT__setjmp
 @ cdecl -arch=x86_64,arm64 -norelay __intrinsic_setjmpex(ptr ptr) __wine_setjmpex
 @ cdecl __isascii(long)
@@ -568,8 +568,8 @@
 @ cdecl _logb(double)
 @ cdecl -arch=!i386 _logbf(float)
 @ cdecl -arch=i386 _longjmpex(ptr long) MSVCRT_longjmp
-@ cdecl _lrotl(long long)
-@ cdecl _lrotr(long long)
+@ cdecl MSVCRT__lrotl(long long) MSVCRT__lrotl
+@ cdecl MSVCRT__lrotr(long long) MSVCRT__lrotr
 @ cdecl _lsearch(ptr ptr ptr long ptr)
 @ stub _lsearch_s
 @ cdecl _lseek(long long long)
@@ -1866,10 +1866,10 @@
 @ cdecl _resetstkoflw()
 @ cdecl _rmdir(str)
 @ cdecl _rmtmp()
-@ cdecl _rotl(long long)
-@ cdecl -ret64 _rotl64(int64 long)
-@ cdecl _rotr(long long)
-@ cdecl -ret64 _rotr64(int64 long)
+@ cdecl _rotl(long long) MSVCRT__rotl
+@ cdecl -ret64 _rotl64(int64 long) MSVCRT__rotl64
+@ cdecl _rotr(long long) MSVCRT__rotr
+@ cdecl -ret64 _rotr64(int64 long) MSVCRT__rotr64
 @ cdecl _scalb(double long)
 @ cdecl -arch=x86_64 _scalbf(float long)
 @ cdecl _searchenv(str str ptr)

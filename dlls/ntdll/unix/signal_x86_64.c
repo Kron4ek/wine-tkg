@@ -248,10 +248,6 @@ struct stack_layout
     CONTEXT           context;
     CONTEXT_EX        context_ex;
     EXCEPTION_RECORD  rec;
-    ULONG64           rsi;
-    ULONG64           rdi;
-    ULONG64           rbp;
-    ULONG64           rip;
     ULONG64           align;
     char              xstate[0]; /* If xstate is present it is allocated
                                   * dynamically to provide 64 byte alignment. */
@@ -260,7 +256,23 @@ struct stack_layout
 C_ASSERT((offsetof(struct stack_layout, xstate) == sizeof(struct stack_layout)));
 
 C_ASSERT( sizeof(XSTATE) == 0x140 );
-C_ASSERT( sizeof(struct stack_layout) == 0x5b0 ); /* Should match the size in call_user_exception_dispatcher(). */
+C_ASSERT( sizeof(struct stack_layout) == 0x590 ); /* Should match the size in call_user_exception_dispatcher(). */
+
+/* stack layout when calling an user apc function.
+ * FIXME: match Windows ABI. */
+struct apc_stack_layout
+{
+    ULONG64  save_regs[4];
+    void            *func;
+    ULONG64         align;
+    CONTEXT       context;
+    ULONG64           rbp;
+    ULONG64           rip;
+};
+
+/* Should match size and offset in call_user_apc_dispatcher(). */
+C_ASSERT( offsetof(struct apc_stack_layout, context) == 0x30 );
+C_ASSERT( sizeof(struct apc_stack_layout) == 0x510 );
 
 struct syscall_frame
 {
@@ -277,6 +289,9 @@ struct syscall_frame
     ULONG64               thunk_addr;
     ULONG64               ret_addr;
 };
+
+/* Should match the offset in call_user_apc_dispatcher(). */
+C_ASSERT( offsetof( struct syscall_frame, ret_addr ) == 0xf0);
 
 struct amd64_thread_data
 {
@@ -1973,10 +1988,10 @@ static void setup_raise_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec
     /* fix up instruction pointer in context for EXCEPTION_BREAKPOINT */
     if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context->Rip--;
 
-    stack_size = sizeof(*stack);
+    stack_size = sizeof(*stack) + 0x20;
     if ((src_xs = xstate_from_context( context )))
     {
-        stack_size += (ULONG_PTR)stack_ptr - (((ULONG_PTR)stack_ptr
+        stack_size += (ULONG_PTR)stack_ptr - 0x20 - (((ULONG_PTR)stack_ptr - 0x20
                 - sizeof(XSTATE)) & ~(ULONG_PTR)63);
     }
 
@@ -2026,35 +2041,69 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 /***********************************************************************
  *           call_user_apc_dispatcher
  */
+struct apc_stack_layout * WINAPI setup_user_apc_dispatcher_stack( CONTEXT *context, struct apc_stack_layout *stack )
+{
+    CONTEXT c;
+
+    if (!context)
+    {
+        c.ContextFlags = CONTEXT_FULL;
+        NtGetContextThread( GetCurrentThread(), &c );
+        context = &c;
+    }
+    memmove( &stack->context, context, sizeof(stack->context) );
+    return stack;
+}
+
 __ASM_GLOBAL_FUNC( call_user_apc_dispatcher,
                    "movq 0x28(%rsp),%rsi\n\t"       /* func */
                    "movq 0x30(%rsp),%rdi\n\t"       /* dispatcher */
                    "movq %gs:0x30,%rbx\n\t"
-                   "jrcxz 1f\n\t"
-                   "movq 0x98(%rcx),%rax\n\t"       /* context_ptr->Rsp */
-                   "leaq -0x5c0(%rax),%rsp\n\t"     /* sizeof(CONTEXT) + offsetof(frame,ret_addr) */
-                   "andq $~15,%rsp\n\t"
-                   "jmp 2f\n"
-                   "1:\tmovq 0x328(%rbx),%rax\n\t"  /* amd64_thread_data()->syscall_frame */
-                   "leaq -0x4d0(%rax),%rsp\n\t"
-                   "andq $~15,%rsp\n\t"
                    "movq %rdx,%r12\n\t"             /* ctx */
                    "movq %r8,%r13\n\t"              /* arg1 */
                    "movq %r9,%r14\n\t"              /* arg2 */
-                   "movq %rsp,%rdx\n\t"             /* context */
-                   "movl $0x10000b,0x30(%rdx)\n\t"  /* context.ContextFlags */
-                   "movq $~1,%rcx\n\t"
-                   "call " __ASM_NAME("NtGetContextThread") "\n\t"
-                   "movq %rsp,%rcx\n\t"             /* context */
+                   "jrcxz 1f\n\t"
+                   "movq 0x98(%rcx),%rdx\n\t"        /* context->Rsp */
+                   "jmp 2f\n\t"
+                   "1:\tmovq 0x328(%rbx),%rax\n\t"   /* amd64_thread_data()->syscall_frame */
+                   "leaq 0xf0(%rax),%rdx\n\t"        /* &amd64_thread_data()->syscall_frame->ret_addr */
+                   "2:\tsubq $0x510,%rdx\n\t"        /* sizeof(struct apc_stack_layout) */
+                   "andq $~0xf,%rdx\n\t"
+                   "addq $8,%rsp\n\t"                /* pop return address */
+                   "cmpq %rsp,%rdx\n\t"
+                   "cmovbq %rdx,%rsp\n\t"
+                   "subq $0x20,%rsp\n\t"
+                   "call " __ASM_NAME("setup_user_apc_dispatcher_stack") "\n\t"
+                   "movq %rax,%rsp\n\t"
+                   "leaq 0x30(%rsp),%rcx\n\t"       /* context */
                    "movq $0xc0,0x78(%rcx)\n\t"      /* context.Rax = STATUS_USER_APC */
                    "movq %r12,%rdx\n\t"             /* ctx */
                    "movq %r13,%r8\n\t"              /* arg1 */
                    "movq %r14,%r9\n"                /* arg2 */
-                   "2:\tmovq $0,0x328(%rbx)\n\t"
+                   "movq $0,0x328(%rbx)\n\t"        /* amd64_thread_data()->syscall_frame */
                    "movq %rsi,0x20(%rsp)\n\t"       /* func */
-                   "movq 0xa0(%rcx),%rbp\n\t"       /* context.Rbp */
+                   "movq %rdi,%r10\n\t"
+                   /* Set nonvolatile regs from context. */
+                   "movq 0xa0(%rcx),%rbp\n\t"
+                   "movq 0x90(%rcx),%rbx\n\t"
+                   "movq 0xa8(%rcx),%rsi\n\t"
+                   "movq 0xb0(%rcx),%rdi\n\t"
+                   "movq 0xd8(%rcx),%r12\n\t"
+                   "movq 0xe0(%rcx),%r13\n\t"
+                   "movq 0xe8(%rcx),%r14\n\t"
+                   "movq 0xf0(%rcx),%r15\n\t"
+                   "movdqa 0x200(%rcx),%xmm6\n\t"
+                   "movdqa 0x210(%rcx),%xmm7\n\t"
+                   "movdqa 0x220(%rcx),%xmm8\n\t"
+                   "movdqa 0x230(%rcx),%xmm9\n\t"
+                   "movdqa 0x240(%rcx),%xmm10\n\t"
+                   "movdqa 0x250(%rcx),%xmm11\n\t"
+                   "movdqa 0x260(%rcx),%xmm12\n\t"
+                   "movdqa 0x270(%rcx),%xmm13\n\t"
+                   "movdqa 0x280(%rcx),%xmm14\n\t"
+                   "movdqa 0x290(%rcx),%xmm15\n\t"
                    "pushq 0xf8(%rcx)\n\t"           /* context.Rip */
-                   "jmp *%rdi" )
+                   "jmp *%r10" )
 
 
 /***********************************************************************
@@ -2129,12 +2178,13 @@ struct stack_layout * WINAPI setup_user_exception_dispatcher_stack( EXCEPTION_RE
 
 __ASM_GLOBAL_FUNC( call_user_exception_dispatcher,
                    "movq 0x98(%rdx),%r9\n\t" /* context->Rsp */
+                   "subq $0x20,%r9\n\t" /* Unwind registers save space */
                    "andq $~0xf,%r9\n\t"
                    "btl $6,0x30(%rdx)\n\t" /* context->ContextFlags, CONTEXT_XSTATE bit. */
                    "jnc 1f\n\t"
                    "subq $0x140,%r9\n\t" /* sizeof(XSTATE) */
                    "andq $~63,%r9\n"
-                   "1:\tsubq $0x5b0,%r9\n\t" /* sizeof(struct stack_layout) */
+                   "1:\tsubq $0x590,%r9\n\t" /* sizeof(struct stack_layout) */
                    "cmpq %rsp,%r9\n\t"
                    "cmovbq %r9,%rsp\n\t"
                    "pushq %r8\n\t"
@@ -2342,13 +2392,13 @@ static void install_bpf(struct sigaction *sig_act)
 
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
     {
-        perror("prctl(PR_SET_NO_NEW_PRIVS, ...)");
-        exit(1);
+        ERR("prctl(PR_SET_NO_NEW_PRIVS, ...): %s.\n", strerror(errno));
+        return;
     }
     if (sc_seccomp(SECCOMP_SET_MODE_FILTER, flags, &prog))
     {
-        perror("prctl(PR_SET_SECCOMP, ...)");
-        exit(1);
+        ERR("prctl(PR_SET_SECCOMP, ...): %s.\n", strerror(errno));
+        return;
     }
     check_bpf_jit_enable();
 #else

@@ -1631,11 +1631,17 @@ struct wined3d_bo_slab_vk
 {
     struct wine_rb_entry entry;
     struct wined3d_bo_slab_vk *next;
+    VkMemoryPropertyFlags requested_memory_type;
     struct wined3d_bo_vk bo;
     unsigned int map_count;
     void *map_ptr;
     uint32_t map;
 };
+
+void *wined3d_bo_slab_vk_map(struct wined3d_bo_slab_vk *slab_vk,
+        struct wined3d_context_vk *context_vk) DECLSPEC_HIDDEN;
+void wined3d_bo_slab_vk_unmap(struct wined3d_bo_slab_vk *slab_vk,
+        struct wined3d_context_vk *context_vk) DECLSPEC_HIDDEN;
 
 struct wined3d_bo_address
 {
@@ -6397,6 +6403,11 @@ static inline void wined3d_context_gl_reference_bo(struct wined3d_context_gl *co
     struct wined3d_device_gl *device_gl = wined3d_device_gl(context_gl->c.device);
 
     bo_gl->command_fence_id = device_gl->current_fence_id;
+}
+
+static inline bool wined3d_map_persistent(void)
+{
+    return sizeof(void *) >= sizeof(uint64_t);
 }
 
 /* The WNDCLASS-Name for the fake window which we use to retrieve the GL capabilities */

@@ -1520,8 +1520,18 @@ void server_init_process_done(void)
     PEB *peb = NtCurrentTeb()->Peb;
     IMAGE_NT_HEADERS *nt = get_exe_nt_header();
     void *entry = (char *)peb->ImageBaseAddress + nt->OptionalHeader.AddressOfEntryPoint;
+    struct cpu_topology_override *cpu_override = get_cpu_topology_override();
     NTSTATUS status;
-    int suspend;
+    int suspend, needs_close, unixdir;
+
+    if (peb->ProcessParameters->CurrentDirectory.Handle &&
+        !server_get_unix_fd( peb->ProcessParameters->CurrentDirectory.Handle,
+                             FILE_TRAVERSE, &unixdir, &needs_close, NULL, NULL ))
+    {
+        fchdir( unixdir );
+        if (needs_close) close( unixdir );
+    }
+    else chdir( "/" ); /* avoid locking removable devices */
 
 #ifdef __APPLE__
     send_server_task_port();
@@ -1543,6 +1553,8 @@ void server_init_process_done(void)
 #endif
         req->entry    = wine_server_client_ptr( entry );
         req->gui      = (nt->OptionalHeader.Subsystem != IMAGE_SUBSYSTEM_WINDOWS_CUI);
+        if (cpu_override)
+            wine_server_add_data( req, cpu_override, sizeof(*cpu_override) );
         status = wine_server_call( req );
         suspend = reply->suspend;
     }

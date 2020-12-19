@@ -75,17 +75,6 @@ int __cdecl __wine_dbg_output( const char *str )
 }
 
 
-/*******************************************************************
- *		KiUserApcDispatcher (NTDLL.@)
- */
-void WINAPI KiUserApcDispatcher( CONTEXT *context, ULONG_PTR ctx, ULONG_PTR arg1, ULONG_PTR arg2,
-                                 PNTAPCFUNC func )
-{
-    func( ctx, arg1, arg2 );
-    NtContinue( context, TRUE );
-}
-
-
 /***********************************************************************
  *           RtlExitUserThread  (NTDLL.@)
  */
@@ -135,7 +124,7 @@ void DECLSPEC_HIDDEN call_thread_func( PRTL_THREAD_START_ROUTINE entry, void *ar
     }
     __EXCEPT(call_unhandled_exception_filter)
     {
-        NtTerminateProcess( GetCurrentThread(), GetExceptionCode() );
+        NtTerminateProcess( GetCurrentProcess(), GetExceptionCode() );
     }
     __ENDTRY
 }
@@ -151,7 +140,7 @@ void WINAPI RtlUserThreadStart( PRTL_THREAD_START_ROUTINE entry, void *arg )
     }
     __EXCEPT(call_unhandled_exception_filter)
     {
-        NtTerminateProcess( GetCurrentThread(), GetExceptionCode() );
+        NtTerminateProcess( GetCurrentProcess(), GetExceptionCode() );
     }
     __ENDTRY
 }

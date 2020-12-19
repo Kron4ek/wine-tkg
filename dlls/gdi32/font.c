@@ -605,7 +605,7 @@ static struct gdi_font_family *create_family( const WCHAR *name, const WCHAR *se
 
     family->refcount = 1;
     lstrcpynW( family->family_name, name, LF_FACESIZE );
-    if (second_name && second_name[0])
+    if (second_name && second_name[0] && wcsicmp( name, second_name ))
     {
         lstrcpynW( family->second_name, second_name, LF_FACESIZE );
         add_gdi_font_subst( second_name, -1, name, -1 );
@@ -2919,6 +2919,8 @@ static UINT get_glyph_index( struct gdi_font *font, UINT glyph )
         glyph = (unsigned char)ch;
         font_funcs->get_glyph_index( font, &glyph, FALSE );
     }
+    else return 0;
+
     return glyph;
 }
 

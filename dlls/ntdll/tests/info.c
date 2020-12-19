@@ -22,6 +22,7 @@
 #include <winnls.h>
 #include <stdio.h>
 
+static NTSTATUS (WINAPI * pRtlDowncaseUnicodeString)(UNICODE_STRING *, const UNICODE_STRING *, BOOLEAN);
 static NTSTATUS (WINAPI * pNtQuerySystemInformation)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
 static NTSTATUS (WINAPI * pNtSetSystemInformation)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG);
 static NTSTATUS (WINAPI * pRtlGetNativeSystemInformation)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
@@ -76,6 +77,7 @@ static BOOL InitFunctionPtrs(void)
     HMODULE hntdll = GetModuleHandleA("ntdll");
     HMODULE hkernel32 = GetModuleHandleA("kernel32");
 
+    NTDLL_GET_PROC(RtlDowncaseUnicodeString);
     NTDLL_GET_PROC(NtQuerySystemInformation);
     NTDLL_GET_PROC(NtSetSystemInformation);
     NTDLL_GET_PROC(RtlGetNativeSystemInformation);
@@ -2232,6 +2234,7 @@ static void test_queryvirtualmemory(void)
 {
     NTSTATUS status;
     SIZE_T readcount;
+    static const WCHAR windowsW[] = {'w','i','n','d','o','w','s'};
     static const char teststring[] = "test string";
     static char datatestbuf[42] = "abc";
     static char rwtestbuf[42];
@@ -2239,6 +2242,10 @@ static void test_queryvirtualmemory(void)
     char stackbuf[42];
     HMODULE module;
     void *user_shared_data = (void *)0x7ffe0000;
+    char buffer_name[sizeof(MEMORY_SECTION_NAME) + MAX_PATH * sizeof(WCHAR)];
+    MEMORY_SECTION_NAME *msn = (MEMORY_SECTION_NAME *)buffer_name;
+    BOOL found;
+    int i;
 
     module = GetModuleHandleA( "ntdll.dll" );
     status = pNtQueryVirtualMemory(NtCurrentProcess(), module, MemoryBasicInformation, &mbi, sizeof(MEMORY_BASIC_INFORMATION), &readcount);
@@ -2321,6 +2328,38 @@ static void test_queryvirtualmemory(void)
     /* check error code when len is less than MEMORY_BASIC_INFORMATION size */
     status = pNtQueryVirtualMemory(NtCurrentProcess(), GetProcessHeap(), MemoryBasicInformation, &mbi, sizeof(MEMORY_BASIC_INFORMATION) - 1, &readcount);
     ok(status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08x\n", status);
+
+    module = GetModuleHandleA( "ntdll.dll" );
+    memset(msn, 0, sizeof(*msn));
+    readcount = 0;
+    status = pNtQueryVirtualMemory(NtCurrentProcess(), module, MemorySectionName, msn, sizeof(*msn), &readcount);
+    ok( status == STATUS_BUFFER_OVERFLOW, "Expected STATUS_BUFFER_OVERFLOW, got %08x\n", status);
+    ok( readcount > 0, "Expected readcount to be > 0\n");
+
+    module = GetModuleHandleA( "ntdll.dll" );
+    memset(msn, 0, sizeof(*msn));
+    readcount = 0;
+    status = pNtQueryVirtualMemory(NtCurrentProcess(), module, MemorySectionName, msn, sizeof(*msn) - 1, &readcount);
+    ok( status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08x\n", status);
+    ok( readcount > 0, "Expected readcount to be > 0\n");
+
+    module = GetModuleHandleA( "ntdll.dll" );
+    memset(msn, 0x55, sizeof(*msn));
+    memset(buffer_name, 0x77, sizeof(buffer_name));
+    readcount = 0;
+    status = pNtQueryVirtualMemory(NtCurrentProcess(), (char *)module + 0x100, MemorySectionName, msn, sizeof(buffer_name), &readcount);
+    ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
+    ok( readcount > 0, "Expected readcount to be > 0\n");
+    pRtlDowncaseUnicodeString( &msn->SectionFileName, &msn->SectionFileName, FALSE );
+    for (found = FALSE, i = (msn->SectionFileName.Length - sizeof(windowsW)) / sizeof(WCHAR); i >= 0; i--)
+        found |= !memcmp( &msn->SectionFileName.Buffer[i], windowsW, sizeof(windowsW) );
+    ok( found, "Section name does not contain \"Windows\"\n");
+
+    memset(msn, 0, sizeof(*msn));
+    readcount = 0;
+    status = pNtQueryVirtualMemory(NtCurrentProcess(), &buffer_name, MemorySectionName, msn, sizeof(buffer_name), &readcount);
+    ok( status == STATUS_INVALID_ADDRESS, "Expected STATUS_INVALID_ADDRESS, got %08x\n", status);
+    ok( readcount == 0 || broken(readcount != 0) /* wow64 */, "Expected readcount to be 0\n");
 }
 
 static void test_affinity(void)

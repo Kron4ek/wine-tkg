@@ -763,7 +763,6 @@ static void *wined3d_bo_vk_map(struct wined3d_bo_vk *bo, struct wined3d_context_
     const struct wined3d_vk_info *vk_info;
     struct wined3d_device_vk *device_vk;
     struct wined3d_bo_slab_vk *slab;
-    void *map_ptr;
     VkResult vr;
 
     if (bo->map_ptr)
@@ -774,33 +773,29 @@ static void *wined3d_bo_vk_map(struct wined3d_bo_vk *bo, struct wined3d_context_
 
     if ((slab = bo->slab))
     {
-        if (!(map_ptr = slab->map_ptr) && !(map_ptr = wined3d_bo_vk_map(&slab->bo, context_vk)))
+        if (!(bo->map_ptr = wined3d_bo_slab_vk_map(slab, context_vk)))
         {
             ERR("Failed to map slab.\n");
             return NULL;
         }
-        ++slab->map_count;
     }
     else if (bo->memory)
     {
         struct wined3d_allocator_chunk_vk *chunk_vk = wined3d_allocator_chunk_vk(bo->memory->chunk);
 
-        if (!(map_ptr = wined3d_allocator_chunk_vk_map(chunk_vk, context_vk)))
+        if (!(bo->map_ptr = wined3d_allocator_chunk_vk_map(chunk_vk, context_vk)))
         {
             ERR("Failed to map chunk.\n");
             return NULL;
         }
     }
-    else if ((vr = VK_CALL(vkMapMemory(device_vk->vk_device, bo->vk_memory, 0, VK_WHOLE_SIZE, 0, &map_ptr))) < 0)
+    else if ((vr = VK_CALL(vkMapMemory(device_vk->vk_device, bo->vk_memory, 0, VK_WHOLE_SIZE, 0, &bo->map_ptr))) < 0)
     {
         ERR("Failed to map memory, vr %s.\n", wined3d_debug_vkresult(vr));
         return NULL;
     }
 
-    if (sizeof(map_ptr) >= sizeof(uint64_t))
-        bo->map_ptr = map_ptr;
-
-    return map_ptr;
+    return bo->map_ptr;
 }
 
 static void wined3d_bo_vk_unmap(struct wined3d_bo_vk *bo, struct wined3d_context_vk *context_vk)
@@ -809,26 +804,50 @@ static void wined3d_bo_vk_unmap(struct wined3d_bo_vk *bo, struct wined3d_context
     struct wined3d_device_vk *device_vk;
     struct wined3d_bo_slab_vk *slab;
 
-    if (bo->map_ptr)
+    if (wined3d_map_persistent())
         return;
+
+    bo->map_ptr = NULL;
 
     if ((slab = bo->slab))
     {
-        if (--slab->map_count)
-            return;
+        wined3d_bo_slab_vk_unmap(slab, context_vk);
+        return;
+    }
 
-        wined3d_bo_vk_unmap(&slab->bo, context_vk);
-        slab->map_ptr = NULL;
+    if (bo->memory)
+    {
+        wined3d_allocator_chunk_vk_unmap(wined3d_allocator_chunk_vk(bo->memory->chunk), context_vk);
         return;
     }
 
     vk_info = context_vk->vk_info;
     device_vk = wined3d_device_vk(context_vk->c.device);
+    VK_CALL(vkUnmapMemory(device_vk->vk_device, bo->vk_memory));
+}
 
-    if (bo->memory)
-        wined3d_allocator_chunk_vk_unmap(wined3d_allocator_chunk_vk(bo->memory->chunk), context_vk);
-    else
-        VK_CALL(vkUnmapMemory(device_vk->vk_device, bo->vk_memory));
+void *wined3d_bo_slab_vk_map(struct wined3d_bo_slab_vk *slab_vk, struct wined3d_context_vk *context_vk)
+{
+    TRACE("slab_vk %p, context_vk %p.\n", slab_vk, context_vk);
+
+    if (!slab_vk->map_ptr && !(slab_vk->map_ptr = wined3d_bo_vk_map(&slab_vk->bo, context_vk)))
+    {
+        ERR("Failed to map slab.\n");
+        return NULL;
+    }
+
+    ++slab_vk->map_count;
+
+    return slab_vk->map_ptr;
+}
+
+void wined3d_bo_slab_vk_unmap(struct wined3d_bo_slab_vk *slab_vk, struct wined3d_context_vk *context_vk)
+{
+    if (--slab_vk->map_count)
+        return;
+
+    wined3d_bo_vk_unmap(&slab_vk->bo, context_vk);
+    slab_vk->map_ptr = NULL;
 }
 
 static VkAccessFlags vk_access_mask_from_buffer_usage(VkBufferUsageFlags usage)

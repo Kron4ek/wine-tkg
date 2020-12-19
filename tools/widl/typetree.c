@@ -676,11 +676,13 @@ static unsigned int compute_method_indexes(type_t *iface)
     return idx;
 }
 
-static void compute_delegate_iface_name(type_t *delegate)
+static void compute_delegate_iface_names(type_t *delegate, type_t *type, type_list_t *params)
 {
-    char *name = xmalloc(strlen(delegate->name) + 2);
-    sprintf(name, "I%s", delegate->name);
-    delegate->details.delegate.iface->name = name;
+    type_t *iface = delegate->details.delegate.iface;
+    iface->namespace = delegate->namespace;
+    iface->name = strmake("I%s", delegate->name);
+    if (type) iface->c_name = format_parameterized_type_c_name(type, params, "I");
+    else iface->c_name = format_namespace(delegate->namespace, "__x_", "_C", iface->name, use_abi_namespace ? "ABI" : NULL);
 }
 
 static void compute_interface_signature_uuid(type_t *iface)
@@ -933,9 +935,7 @@ type_t *type_parameterized_type_specialize_declare(type_t *type, type_list_t *pa
     if (new_type->type_type == TYPE_DELEGATE)
     {
         new_type->details.delegate.iface = duptype(tmpl->details.delegate.iface, 0);
-        compute_delegate_iface_name(new_type);
-        new_type->details.delegate.iface->namespace = new_type->namespace;
-        new_type->details.delegate.iface->c_name = format_parameterized_type_c_name(type, params, "I");
+        compute_delegate_iface_names(new_type, type, params);
         new_type->details.delegate.iface->short_name = format_parameterized_type_short_name(type, params, "I");
     }
 
@@ -1019,7 +1019,6 @@ void type_delegate_define(type_t *delegate, statement_list_t *stmts)
 {
     type_t *iface = make_type(TYPE_INTERFACE);
 
-    iface->namespace = delegate->namespace;
     iface->details.iface = xmalloc(sizeof(*iface->details.iface));
     iface->details.iface->disp_props = NULL;
     iface->details.iface->disp_methods = NULL;
@@ -1030,10 +1029,11 @@ void type_delegate_define(type_t *delegate, statement_list_t *stmts)
     iface->details.iface->async_iface = NULL;
     iface->details.iface->requires = NULL;
     iface->defined = TRUE;
+    iface->attrs = delegate->attrs;
     compute_method_indexes(iface);
 
     delegate->details.delegate.iface = iface;
-    compute_delegate_iface_name(delegate);
+    compute_delegate_iface_names(delegate, NULL, NULL);
 }
 
 void type_parameterized_delegate_define(type_t *type, type_list_t *params, statement_list_t *stmts)

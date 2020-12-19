@@ -186,6 +186,7 @@ DECL_HANDLER(open_mapping);
 DECL_HANDLER(get_mapping_info);
 DECL_HANDLER(map_view);
 DECL_HANDLER(unmap_view);
+DECL_HANDLER(get_mapping_file);
 DECL_HANDLER(get_mapping_committed_range);
 DECL_HANDLER(add_mapping_committed_range);
 DECL_HANDLER(is_same_mapping);
@@ -479,6 +480,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_get_mapping_info,
     (req_handler)req_map_view,
     (req_handler)req_unmap_view,
+    (req_handler)req_get_mapping_file,
     (req_handler)req_get_mapping_committed_range,
     (req_handler)req_add_mapping_committed_range,
     (req_handler)req_is_same_mapping,
@@ -1142,6 +1144,11 @@ C_ASSERT( FIELD_OFFSET(struct map_view_request, start) == 40 );
 C_ASSERT( sizeof(struct map_view_request) == 48 );
 C_ASSERT( FIELD_OFFSET(struct unmap_view_request, base) == 16 );
 C_ASSERT( sizeof(struct unmap_view_request) == 24 );
+C_ASSERT( FIELD_OFFSET(struct get_mapping_file_request, process) == 12 );
+C_ASSERT( FIELD_OFFSET(struct get_mapping_file_request, addr) == 16 );
+C_ASSERT( sizeof(struct get_mapping_file_request) == 24 );
+C_ASSERT( FIELD_OFFSET(struct get_mapping_file_reply, handle) == 8 );
+C_ASSERT( sizeof(struct get_mapping_file_reply) == 16 );
 C_ASSERT( FIELD_OFFSET(struct get_mapping_committed_range_request, base) == 16 );
 C_ASSERT( FIELD_OFFSET(struct get_mapping_committed_range_request, offset) == 24 );
 C_ASSERT( sizeof(struct get_mapping_committed_range_request) == 32 );
