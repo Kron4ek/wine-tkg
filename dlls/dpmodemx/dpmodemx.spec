@@ -1,1 +1,1 @@
-@ stub SPInit
+@ stdcall SPInit(ptr)

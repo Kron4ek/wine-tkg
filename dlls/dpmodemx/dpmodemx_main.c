@@ -23,6 +23,8 @@
 #include "winbase.h"
 #include "wine/debug.h"
 
+#include "wine/dplaysp.h"
+
 WINE_DEFAULT_DEBUG_CHANNEL(dpmodemx);
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
@@ -39,4 +41,10 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
     }
 
     return TRUE;
+}
+
+HRESULT WINAPI SPInit( LPSPINITDATA lpspData )
+{
+    FIXME("Currently not implemented.\n");
+    return DPERR_UNAVAILABLE;
 }

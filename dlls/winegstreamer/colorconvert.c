@@ -58,7 +58,7 @@ struct color_converter
     IMFMediaType *output_type;
     CRITICAL_SECTION cs;
     BOOL inflight;
-    GstElement *container, *appsrc, *appsink;
+    GstElement *container, *appsrc, *videoconvert, *appsink;
 };
 
 static struct color_converter *impl_color_converter_from_IMFTransform(IMFTransform *iface)
@@ -153,8 +153,6 @@ static HRESULT WINAPI color_converter_GetInputStreamInfo(IMFTransform *iface, DW
     info->cbMaxLookahead = 0;
     info->cbAlignment = 0;
     info->hnsMaxLatency = 0;
-    /* TODO: this can be calculated using MFCalculateImageSize */
-    info->cbSize = 0;
 
     return S_OK;
 }
@@ -166,10 +164,9 @@ static HRESULT WINAPI color_converter_GetOutputStreamInfo(IMFTransform *iface, D
     if (id != 0)
         return MF_E_INVALIDSTREAMNUMBER;
 
-    info->dwFlags = MFT_OUTPUT_STREAM_PROVIDES_SAMPLES | MFT_OUTPUT_STREAM_WHOLE_SAMPLES;
-    info->cbAlignment = 0;
-    /* TODO: this can be calculated using MFCalculateImageSize */
+    info->dwFlags = MFT_OUTPUT_STREAM_PROVIDES_SAMPLES;
     info->cbSize = 0;
+    info->cbAlignment = 0;
 
     return S_OK;
 }
@@ -255,6 +252,16 @@ static HRESULT WINAPI color_converter_GetInputAvailableType(IMFTransform *iface,
     return S_OK;
 }
 
+static void copy_attr(IMFMediaType *target, IMFMediaType *source, const GUID *key)
+{
+    PROPVARIANT val;
+
+    if (SUCCEEDED(IMFAttributes_GetItem((IMFAttributes *)source, key, &val)))
+    {
+        IMFAttributes_SetItem((IMFAttributes* )target, key, &val);
+    }
+}
+
 static HRESULT WINAPI color_converter_GetOutputAvailableType(IMFTransform *iface, DWORD id, DWORD index,
         IMFMediaType **type)
 {
@@ -299,7 +306,6 @@ static HRESULT WINAPI color_converter_GetOutputAvailableType(IMFTransform *iface
 
 static HRESULT WINAPI color_converter_SetInputType(IMFTransform *iface, DWORD id, IMFMediaType *type, DWORD flags)
 {
-    GUID major_type, subtype;
     GstCaps *input_caps;
     unsigned int i;
     HRESULT hr;
@@ -311,69 +317,60 @@ static HRESULT WINAPI color_converter_SetInputType(IMFTransform *iface, DWORD id
     if (id != 0)
         return MF_E_INVALIDSTREAMNUMBER;
 
-    if (!type)
+    if (type)
     {
-        if (flags & MFT_SET_TYPE_TEST_ONLY)
-            return S_OK;
+        GUID major_type, subtype;
 
-        EnterCriticalSection(&converter->cs);
+        if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major_type)))
+            return MF_E_INVALIDTYPE;
+        if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
+            return MF_E_INVALIDTYPE;
 
-        converter->inflight = FALSE;
-        gst_element_set_state(converter->container, GST_STATE_READY);
+        if (!(IsEqualGUID(&major_type, &MFMediaType_Video)))
+            return MF_E_INVALIDTYPE;
 
-        if (converter->input_type)
+        for (i = 0; i < ARRAY_SIZE(raw_types); i++)
         {
-            IMFMediaType_Release(converter->input_type);
-            converter->input_type = NULL;
+            if (IsEqualGUID(&subtype, raw_types[i]))
+                break;
         }
 
-        LeaveCriticalSection(&converter->cs);
+        if (i == ARRAY_SIZE(raw_types))
+            return MF_E_INVALIDTYPE;
 
-        return S_OK;
+        if (!(input_caps = caps_from_mf_media_type(type)))
+            return MF_E_INVALIDTYPE;
+
+        if (flags & MFT_SET_TYPE_TEST_ONLY)
+            gst_caps_unref(input_caps);
     }
-
-    if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major_type)))
-        return MF_E_INVALIDTYPE;
-    if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
-        return MF_E_INVALIDTYPE;
-
-    if (!(IsEqualGUID(&major_type, &MFMediaType_Video)))
-        return MF_E_INVALIDTYPE;
-
-    for (i = 0; i < ARRAY_SIZE(raw_types); i++)
-    {
-        if (IsEqualGUID(&subtype, raw_types[i]))
-            break;
-    }
-
-    if (i == ARRAY_SIZE(raw_types))
-        return MF_E_INVALIDTYPE;
-
-    if (!(input_caps = caps_from_mf_media_type(type)))
-        return MF_E_INVALIDTYPE;
 
     if (flags & MFT_SET_TYPE_TEST_ONLY)
-    {
-        gst_caps_unref(input_caps);
         return S_OK;
-    }
 
     EnterCriticalSection(&converter->cs);
 
     hr = S_OK;
-    converter->inflight = FALSE;
     gst_element_set_state(converter->container, GST_STATE_READY);
 
-    if (!converter->input_type)
-        hr = MFCreateMediaType(&converter->input_type);
+    if (type)
+    {
+        if (!converter->input_type)
+            hr = MFCreateMediaType(&converter->input_type);
 
-    if (SUCCEEDED(hr))
-        hr = IMFMediaType_CopyAllItems(type, (IMFAttributes *) converter->input_type);
+        if (SUCCEEDED(hr))
+            hr = IMFMediaType_CopyAllItems(type, (IMFAttributes *) converter->input_type);
 
-    g_object_set(converter->appsrc, "caps", input_caps, NULL);
-    gst_caps_unref(input_caps);
+        g_object_set(converter->appsrc, "caps", input_caps, NULL);
+        gst_caps_unref(input_caps);
 
-    if (FAILED(hr))
+        if (FAILED(hr))
+        {
+            IMFMediaType_Release(converter->input_type);
+            converter->input_type = NULL;
+        }
+    }
+    else
     {
         IMFMediaType_Release(converter->input_type);
         converter->input_type = NULL;
@@ -389,7 +386,6 @@ static HRESULT WINAPI color_converter_SetInputType(IMFTransform *iface, DWORD id
 
 static HRESULT WINAPI color_converter_SetOutputType(IMFTransform *iface, DWORD id, IMFMediaType *type, DWORD flags)
 {
-    GUID major_type, subtype;
     GstCaps *output_caps;
     unsigned int i;
     HRESULT hr;
@@ -401,69 +397,60 @@ static HRESULT WINAPI color_converter_SetOutputType(IMFTransform *iface, DWORD i
     if (id != 0)
         return MF_E_INVALIDSTREAMNUMBER;
 
-    if (!type)
+    if (type)
     {
-        if (flags & MFT_SET_TYPE_TEST_ONLY)
-            return S_OK;
+        GUID major_type, subtype;
 
-        EnterCriticalSection(&converter->cs);
+        if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major_type)))
+            return MF_E_INVALIDTYPE;
+        if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
+            return MF_E_INVALIDTYPE;
 
-        converter->inflight = FALSE;
-        gst_element_set_state(converter->container, GST_STATE_READY);
+        if (!(IsEqualGUID(&major_type, &MFMediaType_Video)))
+            return MF_E_INVALIDTYPE;
 
-        if (converter->output_type)
+        for (i = 0; i < ARRAY_SIZE(raw_types); i++)
         {
-            IMFMediaType_Release(converter->output_type);
-            converter->output_type = NULL;
+            if (IsEqualGUID(&subtype, raw_types[i]))
+                break;
         }
 
-        LeaveCriticalSection(&converter->cs);
+        if (i == ARRAY_SIZE(raw_types))
+            return MF_E_INVALIDTYPE;
 
-        return S_OK;
+        if (!(output_caps = caps_from_mf_media_type(type)))
+            return MF_E_INVALIDTYPE;
+
+        if (flags & MFT_SET_TYPE_TEST_ONLY)
+            gst_caps_unref(output_caps);
     }
-
-    if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major_type)))
-        return MF_E_INVALIDTYPE;
-    if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
-        return MF_E_INVALIDTYPE;
-
-    if (!(IsEqualGUID(&major_type, &MFMediaType_Video)))
-        return MF_E_INVALIDTYPE;
-
-    for (i = 0; i < ARRAY_SIZE(raw_types); i++)
-    {
-        if (IsEqualGUID(&subtype, raw_types[i]))
-            break;
-    }
-
-    if (i == ARRAY_SIZE(raw_types))
-        return MF_E_INVALIDTYPE;
-
-    if (!(output_caps = caps_from_mf_media_type(type)))
-        return MF_E_INVALIDTYPE;
 
     if (flags & MFT_SET_TYPE_TEST_ONLY)
-    {
-        gst_caps_unref(output_caps);
         return S_OK;
-    }
 
     EnterCriticalSection(&converter->cs);
 
     hr = S_OK;
-    converter->inflight = FALSE;
     gst_element_set_state(converter->container, GST_STATE_READY);
 
-    if (!converter->output_type)
-        hr = MFCreateMediaType(&converter->output_type);
+    if (type)
+    {
+        if (!converter->output_type)
+            hr = MFCreateMediaType(&converter->output_type);
 
-    if (SUCCEEDED(hr))
-        hr = IMFMediaType_CopyAllItems(type, (IMFAttributes *) converter->output_type);
+        if (SUCCEEDED(hr))
+            hr = IMFMediaType_CopyAllItems(type, (IMFAttributes *) converter->output_type);
 
-    g_object_set(converter->appsink, "caps", output_caps, NULL);
-    gst_caps_unref(output_caps);
+        g_object_set(converter->appsink, "caps", output_caps, NULL);
+        gst_caps_unref(output_caps);
 
-    if (FAILED(hr))
+        if (FAILED(hr))
+        {
+            IMFMediaType_Release(converter->output_type);
+            converter->output_type = NULL;
+        }
+    }
+    else
     {
         IMFMediaType_Release(converter->output_type);
         converter->output_type = NULL;
@@ -622,7 +609,7 @@ static HRESULT WINAPI color_converter_ProcessInput(IMFTransform *iface, DWORD id
     gst_buffer_unref(gst_buffer);
     if (ret != GST_FLOW_OK)
     {
-        ERR("Couldn't push buffer, (%s)\n", gst_flow_get_name(ret));
+        ERR("Couldn't push buffer ret = %d (%s)\n", ret, gst_flow_get_name(ret));
         LeaveCriticalSection(&converter->cs);
         return E_FAIL;
     }
@@ -670,7 +657,7 @@ static HRESULT WINAPI color_converter_ProcessOutput(IMFTransform *iface, DWORD f
 
     g_signal_emit_by_name(converter->appsink, "pull-sample", &sample);
 
-    converter->inflight = FALSE;
+    converter->inflight =  FALSE;
 
     samples[0].pSample = mf_sample_from_gst_buffer(gst_sample_get_buffer(sample));
     gst_sample_unref(sample);
@@ -718,7 +705,6 @@ static const IMFTransformVtbl color_converter_vtbl =
 HRESULT color_converter_create(REFIID riid, void **ret)
 {
     struct color_converter *object;
-    GstElement *videoconvert;
     HRESULT hr;
 
     TRACE("%s %p\n", debugstr_guid(riid), ret);
@@ -755,14 +741,14 @@ HRESULT color_converter_create(REFIID riid, void **ret)
     }
     gst_bin_add(GST_BIN(object->container), object->appsrc);
 
-    if (!(videoconvert = gst_element_factory_make("videoconvert", NULL)))
+    if (!(object->videoconvert = gst_element_factory_make("videoconvert", NULL)))
     {
         ERR("Failed to create videoconvert, are %u-bit Gstreamer \"base\" plugins installed?\n",
                 8 * (int)sizeof(void *));
         IMFTransform_Release(&object->IMFTransform_iface);
         return E_FAIL;
     }
-    gst_bin_add(GST_BIN(object->container), videoconvert);
+    gst_bin_add(GST_BIN(object->container), object->videoconvert);
 
     if (!(object->appsink = gst_element_factory_make("appsink", NULL)))
     {
@@ -773,14 +759,14 @@ HRESULT color_converter_create(REFIID riid, void **ret)
     }
     gst_bin_add(GST_BIN(object->container), object->appsink);
 
-    if (!gst_element_link(object->appsrc, videoconvert))
+    if (!gst_element_link(object->appsrc, object->videoconvert))
     {
         ERR("Failed to link appsrc to videoconvert\n");
         IMFTransform_Release(&object->IMFTransform_iface);
         return E_FAIL;
     }
 
-    if (!gst_element_link(videoconvert, object->appsink))
+    if (!gst_element_link(object->videoconvert, object->appsink))
     {
         ERR("Failed to link videoconvert to appsink\n");
         IMFTransform_Release(&object->IMFTransform_iface);

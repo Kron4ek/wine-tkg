@@ -820,18 +820,21 @@ mode_t sd_to_mode( const struct security_descriptor *sd, const SID *owner )
                     mode = file_access_to_mode( aa_ace->Mask );
                     if (security_equal_sid( sid, security_world_sid ))
                     {
-                        new_mode |= (mode << 0) & bits_to_set; /* all */
-                        bits_to_set &= ~(mode << 0);
+                        mode = (mode << 0); /* all */
+                        new_mode |= mode & bits_to_set;
+                        bits_to_set &= ~mode;
                     }
                     if (token_sid_present( current->process->token, sid, FALSE ))
                     {
-                        new_mode |= (mode << 3) & bits_to_set; /* group */
-                        bits_to_set &= ~(mode << 3);
+                        mode = (mode << 3); /* group */
+                        new_mode |= mode & bits_to_set;
+                        bits_to_set &= ~mode;
                     }
                     if (security_equal_sid( sid, owner ))
                     {
-                        new_mode |= (mode << 6) & bits_to_set; /* user */
-                        bits_to_set &= ~(mode << 6);
+                        mode = (mode << 6); /* user */
+                        new_mode |= mode & bits_to_set;
+                        bits_to_set &= ~mode;
                     }
                     break;
             }

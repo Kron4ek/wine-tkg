@@ -26,7 +26,6 @@
 #include "gst_private.h"
 #include "mfapi.h"
 #include "mfidl.h"
-#include "wmcodecdsp.h"
 #include "codecapi.h"
 
 #include "wine/debug.h"
@@ -409,6 +408,8 @@ static const GUID CLSID_GStreamerByteStreamHandler = {0x317df618, 0x5e5a, 0x468a
 
 static const GUID CLSID_WINEAudioConverter = {0x6a170414,0xaad9,0x4693,{0xb8,0x06,0x3a,0x0c,0x47,0xc5,0x70,0xd6}};
 
+static GUID CLSID_WINEColorConverter = {0x2be8b27f,0xcd60,0x4b8a,{0x95,0xae,0xd1,0x74,0xcc,0x5c,0xba,0xa7}};
+
 static HRESULT h264_decoder_create(REFIID riid, void **ret)
 {
     return generic_decoder_construct(riid, ret, DECODER_TYPE_H264);
@@ -444,7 +445,7 @@ class_objects[] =
     { &CLSID_VideoProcessorMFT, &video_processor_create },
     { &CLSID_GStreamerByteStreamHandler, &winegstreamer_stream_handler_create },
     { &CLSID_WINEAudioConverter, &audio_converter_create },
-    { &CLSID_CColorConvertDMO, &color_converter_create },
+    { &CLSID_WINEColorConverter, &color_converter_create },
     { &CLSID_CMSH264DecoderMFT, &h264_decoder_create },
     { &CLSID_CMSAACDecMFT, &aac_decoder_create },
     { &CLSID_CWMVDecMediaObject, &wmv_decoder_create },
@@ -612,7 +613,7 @@ mfts[] =
         NULL
     },
     {
-        &CLSID_CColorConvertDMO,
+        &CLSID_WINEColorConverter,
         &MFT_CATEGORY_VIDEO_EFFECT,
         color_converterW,
         MFT_ENUM_FLAG_SYNCMFT,
@@ -1504,7 +1505,7 @@ done:
     return out;
 }
 
-GstBuffer *gst_buffer_from_mf_sample(IMFSample *mf_sample)
+GstBuffer* gst_buffer_from_mf_sample(IMFSample *mf_sample)
 {
     GstBuffer *out = gst_buffer_new();
     IMFMediaBuffer *mf_buffer = NULL;
@@ -1541,7 +1542,7 @@ GstBuffer *gst_buffer_from_mf_sample(IMFSample *mf_sample)
         memory = gst_allocator_alloc(NULL, buffer_size, NULL);
         gst_memory_resize(memory, 0, buffer_size);
 
-        if (!gst_memory_map(memory, &map_info, GST_MAP_WRITE))
+        if (!(gst_memory_map(memory, &map_info, GST_MAP_WRITE)))
         {
             hr = E_FAIL;
             goto fail;
