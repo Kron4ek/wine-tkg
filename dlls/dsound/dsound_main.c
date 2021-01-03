@@ -93,7 +93,7 @@ const WCHAR wine_vxd_drv[] = L"winemm.vxd";
 /* All default settings, you most likely don't want to touch these, see wiki on UsefulRegistryKeys */
 int ds_hel_buflen = 32768 * 2;
 int ds_hq_buffers_max = 4;
-BOOL ds_eax_enabled = FALSE;
+BOOL ds_eax_enabled = TRUE;
 static HINSTANCE instance;
 
 #define IS_OPTION_TRUE(ch) \
