@@ -315,6 +315,12 @@ HRESULT variant_to_jsval(VARIANT *var, jsval_t *r)
     case VT_R4:
         *r = jsval_number(V_R4(var));
         return S_OK;
+    case VT_CY:
+        /* FIXME: Native converts VT_CY to a special kind number type, which is
+         * never converted to VT_I4 when it's converted back to VARIANT. */
+        *r = jsval_number((double)V_CY(var).int64 / 10000.0);
+        WARN("VT_CY: %lf\n", get_number(*r));
+        return S_OK;
     case VT_UNKNOWN:
         if(V_UNKNOWN(var)) {
             IDispatch *disp;
@@ -611,9 +617,16 @@ HRESULT to_number(script_ctx_t *ctx, jsval_t val, double *ret)
     case JSV_BOOL:
         *ret = get_bool(val) ? 1 : 0;
         return S_OK;
-    case JSV_VARIANT:
-        FIXME("unimplemented for variant %s\n", debugstr_variant(get_variant(val)));
-        return E_NOTIMPL;
+    case JSV_VARIANT: {
+        const VARIANT *v = get_variant(val);
+        switch(V_VT(v)) {
+        case VT_DATE:
+            return variant_date_to_number(V_DATE(v), ret);
+        default:
+            FIXME("unimplemented for variant %s\n", debugstr_variant(v));
+            return E_NOTIMPL;
+        }
+    }
     };
 
     assert(0);
@@ -766,9 +779,17 @@ HRESULT to_string(script_ctx_t *ctx, jsval_t val, jsstr_t **str)
     case JSV_BOOL:
         *str = jsstr_alloc(get_bool(val) ? L"true" : L"false");
         break;
-    default:
-        FIXME("unsupported %s\n", debugstr_jsval(val));
-        return E_NOTIMPL;
+    default: {
+        const VARIANT *v = get_variant(val);
+        switch(V_VT(v))
+        {
+        case VT_DATE:
+            return variant_date_to_string(ctx, V_DATE(v), str);
+        default:
+            FIXME("unsupported %s\n", debugstr_variant(v));
+            return E_NOTIMPL;
+        }
+    }
     }
 
     return *str ? S_OK : E_OUTOFMEMORY;

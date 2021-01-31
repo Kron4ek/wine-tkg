@@ -2691,6 +2691,10 @@ static void shader_generate_glsl_declarations(const struct wined3d_context_gl *c
     /* Temporary variables for matrix operations */
     shader_addline(buffer, "vec4 tmp0;\n");
     shader_addline(buffer, "vec4 tmp1;\n");
+    if (gl_info->supported[ARB_GPU_SHADER5])
+        shader_addline(buffer, "precise vec4 tmp_precise;\n");
+    else
+        shader_addline(buffer, "/* precise */ vec4 tmp_precise;\n");
 
     if (!shader->load_local_constsF)
     {
@@ -3275,6 +3279,11 @@ static void shader_glsl_get_swizzle(const struct wined3d_shader_src_param *param
 static void shader_glsl_sprintf_cast(struct wined3d_string_buffer *dst_param, const char *src_param,
         enum wined3d_data_type dst_data_type, enum wined3d_data_type src_data_type, unsigned int size)
 {
+    if (dst_data_type == WINED3D_DATA_UNORM || dst_data_type == WINED3D_DATA_SNORM)
+        dst_data_type = WINED3D_DATA_FLOAT;
+    if (src_data_type == WINED3D_DATA_UNORM || src_data_type == WINED3D_DATA_SNORM)
+        src_data_type = WINED3D_DATA_FLOAT;
+
     if (dst_data_type == src_data_type)
     {
         string_buffer_sprintf(dst_param, "%s", src_param);
@@ -3419,9 +3428,14 @@ static DWORD shader_glsl_append_dst_ext(struct wined3d_string_buffer *buffer,
 
     if ((mask = shader_glsl_add_dst_param(ins, dst, &glsl_dst)))
     {
+        if (ins->flags & WINED3DSI_PRECISE_XYZW)
+            sprintf(glsl_dst.reg_name, "tmp_precise");
+
         switch (data_type)
         {
             case WINED3D_DATA_FLOAT:
+            case WINED3D_DATA_UNORM:
+            case WINED3D_DATA_SNORM:
                 shader_addline(buffer, "%s%s = %s(",
                         glsl_dst.reg_name, glsl_dst.mask_str, shift_glsl_tab[dst->shift]);
                 break;
@@ -3459,6 +3473,13 @@ static void shader_glsl_add_instruction_modifiers(const struct wined3d_shader_in
     DWORD modifiers;
 
     if (!ins->dst_count) return;
+
+    if (ins->flags & WINED3DSI_PRECISE_XYZW)
+    {
+        shader_glsl_add_dst_param(ins, &ins->dst[0], &dst_param);
+        shader_addline(ins->ctx->buffer, "%s%s = tmp_precise%s;\n",
+                dst_param.reg_name, dst_param.mask_str, dst_param.mask_str);
+    }
 
     modifiers = ins->dst[0].modifiers;
     if (!modifiers) return;
@@ -5952,6 +5973,12 @@ static void shader_glsl_sync(const struct wined3d_shader_instruction *ins)
     {
         shader_addline(buffer, "memoryBarrierShared();\n");
         sync_flags &= ~WINED3DSSF_GROUP_SHARED_MEMORY;
+    }
+
+    if (sync_flags & WINED3DSSF_GLOBAL_UAV)
+    {
+        shader_addline(buffer, "memoryBarrier();\n");
+        sync_flags &= ~WINED3DSSF_GLOBAL_UAV;
     }
 
     if (sync_flags)

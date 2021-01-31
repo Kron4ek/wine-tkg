@@ -759,9 +759,10 @@ typedef struct
     mem_size_t     stack_commit;
     unsigned int   zerobits;
     unsigned int   subsystem;
-    unsigned short subsystem_low;
-    unsigned short subsystem_high;
-    unsigned int   gp;
+    unsigned short subsystem_minor;
+    unsigned short subsystem_major;
+    unsigned short osversion_major;
+    unsigned short osversion_minor;
     unsigned short image_charact;
     unsigned short dll_charact;
     unsigned short machine;
@@ -779,6 +780,7 @@ typedef struct
 #define IMAGE_FLAGS_ImageDynamicallyRelocated 0x04
 #define IMAGE_FLAGS_ImageMappedFlat           0x08
 #define IMAGE_FLAGS_BaseBelow4gb              0x10
+#define IMAGE_FLAGS_ComPlusPrefer32bit        0x20
 #define IMAGE_FLAGS_WineBuiltin               0x40
 #define IMAGE_FLAGS_WineFakeDll               0x80
 
@@ -817,7 +819,6 @@ struct new_process_request
     int          inherit_all;
     unsigned int create_flags;
     int          socket_fd;
-    obj_handle_t exe_file;
     unsigned int access;
     client_cpu_t cpu;
     data_size_t  info_size;
@@ -826,7 +827,6 @@ struct new_process_request
     /* VARARG(handles,uints,handles_size); */
     /* VARARG(info,startup_info,info_size); */
     /* VARARG(env,unicode_str); */
-    char __pad_52[4];
 };
 struct new_process_reply
 {
@@ -1931,6 +1931,7 @@ struct map_view_request
     client_ptr_t base;
     mem_size_t   size;
     file_pos_t   start;
+    /* VARARG(image,pe_image_info); */
 };
 struct map_view_reply
 {
@@ -2048,6 +2049,23 @@ struct list_processes_reply
     data_size_t     info_size;
     int             process_count;
     /* VARARG(data,process_info,info_size); */
+};
+
+
+
+struct create_debug_obj_request
+{
+    struct request_header __header;
+    unsigned int access;
+    unsigned int flags;
+    /* VARARG(objattr,object_attributes); */
+    char __pad_20[4];
+};
+struct create_debug_obj_reply
+{
+    struct reply_header __header;
+    obj_handle_t handle;
+    char __pad_12[4];
 };
 
 
@@ -5683,6 +5701,7 @@ enum request
     REQ_add_mapping_committed_range,
     REQ_is_same_mapping,
     REQ_list_processes,
+    REQ_create_debug_obj,
     REQ_wait_debug_event,
     REQ_queue_exception_event,
     REQ_get_exception_status,
@@ -5978,6 +5997,7 @@ union generic_request
     struct add_mapping_committed_range_request add_mapping_committed_range_request;
     struct is_same_mapping_request is_same_mapping_request;
     struct list_processes_request list_processes_request;
+    struct create_debug_obj_request create_debug_obj_request;
     struct wait_debug_event_request wait_debug_event_request;
     struct queue_exception_event_request queue_exception_event_request;
     struct get_exception_status_request get_exception_status_request;
@@ -6271,6 +6291,7 @@ union generic_reply
     struct add_mapping_committed_range_reply add_mapping_committed_range_reply;
     struct is_same_mapping_reply is_same_mapping_reply;
     struct list_processes_reply list_processes_reply;
+    struct create_debug_obj_reply create_debug_obj_reply;
     struct wait_debug_event_reply wait_debug_event_reply;
     struct queue_exception_event_reply queue_exception_event_reply;
     struct get_exception_status_reply get_exception_status_reply;
@@ -6491,7 +6512,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 654
+#define SERVER_PROTOCOL_VERSION 659
 
 /* ### protocol_version end ### */
 

@@ -1845,11 +1845,6 @@ static BOOL handle_interrupt( unsigned int interrupt, ucontext_t *sigcontext, vo
         rec->ExceptionInformation[2] = context->Edx;
         setup_raise_exception( sigcontext, stack, rec, xcontext );
         return TRUE;
-    case 0x2e:
-        FIXME("unimplemented syscall handler for %#x\n", context->Eax);
-        EAX_sig(sigcontext) = STATUS_INVALID_SYSTEM_SERVICE;
-        EIP_sig(sigcontext) += 2;
-        return TRUE;
     default:
         return FALSE;
     }

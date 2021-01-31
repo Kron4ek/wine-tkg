@@ -1259,12 +1259,14 @@ static void dump_varargs_pe_image_info( const char *prefix, data_size_t size )
     dump_uint64( ",map_size=", &info.map_size );
     dump_uint64( ",stack_size=", &info.stack_size );
     dump_uint64( ",stack_commit=", &info.stack_commit );
-    fprintf( stderr, ",zerobits=%08x,subsystem=%08x,subsystem_low=%04x,subsystem_high=%04x,gp=%08x"
-             ",image_charact=%04x,dll_charact=%04x,machine=%04x,contains_code=%u,image_flags=%02x"
+    fprintf( stderr, ",zerobits=%08x,subsystem=%08x,subsystem_minor=%04x,subsystem_major=%04x"
+             ",osversion_major=%04x,osversion_minor=%04x,image_charact=%04x,dll_charact=%04x,machine=%04x"
+             ",contains_code=%u,image_flags=%02x"
              ",loader_flags=%08x,header_size=%08x,file_size=%08x,checksum=%08x",
-             info.zerobits, info.subsystem, info.subsystem_low, info.subsystem_high, info.gp,
-             info.image_charact, info.dll_charact, info.machine, info.contains_code, info.image_flags,
-             info.loader_flags, info.header_size, info.file_size, info.checksum );
+             info.zerobits, info.subsystem, info.subsystem_minor, info.subsystem_major,
+             info.osversion_major, info.osversion_minor, info.image_charact, info.dll_charact,
+             info.machine, info.contains_code, info.image_flags, info.loader_flags,
+             info.header_size, info.file_size, info.checksum );
     dump_client_cpu( ",cpu=", &info.cpu );
     fputc( '}', stderr );
     remove_data( size );
@@ -1334,7 +1336,6 @@ static void dump_new_process_request( const struct new_process_request *req )
     fprintf( stderr, ", inherit_all=%d", req->inherit_all );
     fprintf( stderr, ", create_flags=%08x", req->create_flags );
     fprintf( stderr, ", socket_fd=%d", req->socket_fd );
-    fprintf( stderr, ", exe_file=%04x", req->exe_file );
     fprintf( stderr, ", access=%08x", req->access );
     dump_client_cpu( ", cpu=", &req->cpu );
     fprintf( stderr, ", info_size=%u", req->info_size );
@@ -2130,6 +2131,7 @@ static void dump_map_view_request( const struct map_view_request *req )
     dump_uint64( ", base=", &req->base );
     dump_uint64( ", size=", &req->size );
     dump_uint64( ", start=", &req->start );
+    dump_varargs_pe_image_info( ", image=", cur_size );
 }
 
 static void dump_unmap_view_request( const struct unmap_view_request *req )
@@ -2182,6 +2184,18 @@ static void dump_list_processes_reply( const struct list_processes_reply *req )
     fprintf( stderr, " info_size=%u", req->info_size );
     fprintf( stderr, ", process_count=%d", req->process_count );
     dump_varargs_process_info( ", data=", min(cur_size,req->info_size) );
+}
+
+static void dump_create_debug_obj_request( const struct create_debug_obj_request *req )
+{
+    fprintf( stderr, " access=%08x", req->access );
+    fprintf( stderr, ", flags=%08x", req->flags );
+    dump_varargs_object_attributes( ", objattr=", cur_size );
+}
+
+static void dump_create_debug_obj_reply( const struct create_debug_obj_reply *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
 }
 
 static void dump_wait_debug_event_request( const struct wait_debug_event_request *req )
@@ -4624,6 +4638,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_add_mapping_committed_range_request,
     (dump_func)dump_is_same_mapping_request,
     (dump_func)dump_list_processes_request,
+    (dump_func)dump_create_debug_obj_request,
     (dump_func)dump_wait_debug_event_request,
     (dump_func)dump_queue_exception_event_request,
     (dump_func)dump_get_exception_status_request,
@@ -4915,6 +4930,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     NULL,
     NULL,
     (dump_func)dump_list_processes_reply,
+    (dump_func)dump_create_debug_obj_reply,
     (dump_func)dump_wait_debug_event_reply,
     (dump_func)dump_queue_exception_event_reply,
     NULL,
@@ -5206,6 +5222,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "add_mapping_committed_range",
     "is_same_mapping",
     "list_processes",
+    "create_debug_obj",
     "wait_debug_event",
     "queue_exception_event",
     "get_exception_status",

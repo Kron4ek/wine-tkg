@@ -249,6 +249,7 @@ static void output_relay_debug( DLLSPEC *spec )
     /* then the relay thunks */
 
     output( "\t.text\n" );
+    if (thumb_mode) output( "\t.thumb_func\n" );
     output( "__wine_spec_relay_entry_points:\n" );
     output( "\tnop\n" );  /* to avoid 0 offset */
 
@@ -306,6 +307,7 @@ static void output_relay_debug( DLLSPEC *spec )
 
             val = (odp->u.func.args_str_offset << 16) | (i - spec->base);
             output( "\t.align %d\n", get_alignment(4) );
+            if (thumb_mode) output( "\t.thumb_func\n" );
             output( ".L__wine_spec_relay_entry_point_%d:\n", i );
             output_cfi( ".cfi_startproc" );
             output( "\tpush {r0-r3}\n" );
@@ -317,13 +319,14 @@ static void output_relay_debug( DLLSPEC *spec )
                 if (val & mask) output( "\t%s r1,#%u\n", count++ ? "add" : "mov", val & mask );
             if (!count) output( "\tmov r1,#0\n" );
             output( "\tldr r0, 2f\n");
-            output( "\tadd r0, PC\n");
+            if (UsePIC) output( "1:\tadd r0, PC\n");
             output( "\tldr IP, [r0, #4]\n");
-            output( "1:\tblx IP\n");
+            output( "\tblx IP\n");
             output( "\tldr IP, [SP, #4]\n" );
             output( "\tadd SP, #%u\n", 24 + (has_float ? 64 : 0) );
             output( "\tbx IP\n");
-            output( "2:\t.long .L__wine_spec_relay_descr-1b\n" );
+            if (UsePIC) output( "2:\t.long .L__wine_spec_relay_descr-1b-%u\n", thumb_mode ? 4 : 8 );
+            else output( "2:\t.long .L__wine_spec_relay_descr\n" );
             output_cfi( ".cfi_endproc" );
             break;
         }
@@ -407,7 +410,7 @@ void output_exports( DLLSPEC *spec )
     int needs_imports = 0;
     int needs_relay = has_relays( spec );
     int nr_exports = get_exports_count( spec );
-    const char *func_ptr = (target_platform == PLATFORM_WINDOWS) ? ".rva" : get_asm_ptr_keyword();
+    const char *func_ptr = is_pe() ? ".rva" : get_asm_ptr_keyword();
     const char *name;
 
     if (!nr_exports) return;
@@ -444,8 +447,7 @@ void output_exports( DLLSPEC *spec )
     for (i = spec->base; i <= spec->limit; i++)
     {
         ORDDEF *odp = spec->ordinals[i];
-        if (!odp) output( "\t%s 0\n",
-                          (target_platform == PLATFORM_WINDOWS) ? ".long" : get_asm_ptr_keyword() );
+        if (!odp) output( "\t%s 0\n", is_pe() ? ".long" : get_asm_ptr_keyword() );
         else switch(odp->type)
         {
         case TYPE_EXTERN:
@@ -510,7 +512,7 @@ void output_exports( DLLSPEC *spec )
     if (needs_relay)
     {
         output( "\t.long 0xdeb90002\n" );  /* magic */
-        if (target_platform == PLATFORM_WINDOWS) output_rva( ".L__wine_spec_relay_descr" );
+        if (is_pe()) output_rva( ".L__wine_spec_relay_descr" );
         else output( "\t.long 0\n" );
     }
 
@@ -539,7 +541,7 @@ void output_exports( DLLSPEC *spec )
 
     if (needs_relay)
     {
-        if (target_platform == PLATFORM_WINDOWS)
+        if (is_pe())
         {
             output( "\t.data\n" );
             output( "\t.align %d\n", get_alignment(get_ptr_size()) );
@@ -560,7 +562,7 @@ void output_exports( DLLSPEC *spec )
 
         output_relay_debug( spec );
     }
-    else if (target_platform != PLATFORM_WINDOWS)
+    else if (!is_pe())
     {
             output( "\t.align %d\n", get_alignment(get_ptr_size()) );
             output( ".L__wine_spec_exports_end:\n" );
@@ -625,6 +627,7 @@ void output_module( DLLSPEC *spec )
 
     switch (target_platform)
     {
+    case PLATFORM_MINGW:
     case PLATFORM_WINDOWS:
         return;  /* nothing to do */
     case PLATFORM_APPLE:
@@ -1007,7 +1010,7 @@ void output_def_file( DLLSPEC *spec, int import_only )
         if (!is_private) total++;
         if (import_only && odp->type == TYPE_STUB) continue;
 
-        if ((odp->flags & FLAG_FASTCALL) && target_platform == PLATFORM_WINDOWS)
+        if ((odp->flags & FLAG_FASTCALL) && is_pe())
             name = strmake( "@%s", name );
 
         output( "  %s", name );

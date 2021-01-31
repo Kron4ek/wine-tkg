@@ -119,6 +119,38 @@ NTSTATUS WINAPI RtlCreateUserProcess( UNICODE_STRING *path, ULONG attributes,
 }
 
 /***********************************************************************
+ *      DbgUiGetThreadDebugObject (NTDLL.@)
+ */
+HANDLE WINAPI DbgUiGetThreadDebugObject(void)
+{
+    return NtCurrentTeb()->DbgSsReserved[1];
+}
+
+/***********************************************************************
+ *      DbgUiSetThreadDebugObject (NTDLL.@)
+ */
+void WINAPI DbgUiSetThreadDebugObject( HANDLE handle )
+{
+    NtCurrentTeb()->DbgSsReserved[1] = handle;
+}
+
+/***********************************************************************
+ *      DbgUiConnectToDbg (NTDLL.@)
+ */
+NTSTATUS WINAPI DbgUiConnectToDbg(void)
+{
+    HANDLE handle;
+    NTSTATUS status;
+    OBJECT_ATTRIBUTES attr = { sizeof(attr) };
+
+    if (DbgUiGetThreadDebugObject()) return STATUS_SUCCESS;  /* already connected */
+
+    status = NtCreateDebugObject( &handle, DEBUG_ALL_ACCESS, &attr, DEBUG_KILL_ON_CLOSE );
+    if (!status) DbgUiSetThreadDebugObject( handle );
+    return status;
+}
+
+/***********************************************************************
  *      DbgUiRemoteBreakin (NTDLL.@)
  */
 void WINAPI DbgUiRemoteBreakin( void *arg )

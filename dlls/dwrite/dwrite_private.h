@@ -346,6 +346,7 @@ extern void factory_unlock(IDWriteFactory7 *factory) DECLSPEC_HIDDEN;
 extern HRESULT create_inmemory_fileloader(IDWriteInMemoryFontFileLoader **loader) DECLSPEC_HIDDEN;
 extern HRESULT create_font_resource(IDWriteFactory7 *factory, IDWriteFontFile *file, UINT32 face_index,
         IDWriteFontResource **resource) DECLSPEC_HIDDEN;
+extern HRESULT create_fontset_builder(IDWriteFactory7 *factory, IDWriteFontSetBuilder2 **ret) DECLSPEC_HIDDEN;
 
 struct dwrite_fontface;
 
@@ -535,9 +536,69 @@ struct scriptshaping_context;
 
 typedef void (*p_apply_context_lookup)(struct scriptshaping_context *context, unsigned int lookup_index);
 
+enum shaping_feature_flags
+{
+    FEATURE_GLOBAL = 0x1,
+    FEATURE_GLOBAL_SEARCH = 0x2,
+    FEATURE_MANUAL_ZWNJ = 0x4,
+    FEATURE_MANUAL_ZWJ = 0x8,
+    FEATURE_MANUAL_JOINERS = FEATURE_MANUAL_ZWNJ | FEATURE_MANUAL_ZWJ,
+    FEATURE_HAS_FALLBACK = 0x10,
+    FEATURE_NEEDS_FALLBACK = 0x20,
+};
+
+struct shaping_feature
+{
+    unsigned int tag;
+    unsigned int index;
+    unsigned int flags;
+    unsigned int max_value;
+    unsigned int default_value;
+    unsigned int mask;
+    unsigned int shift;
+    unsigned int stage;
+};
+
+#define MAX_SHAPING_STAGE 16
+
+typedef void (*stage_func)(struct scriptshaping_context *context);
+
+struct shaping_stage
+{
+    stage_func func;
+    unsigned int last_lookup;
+};
+
+struct shaping_features
+{
+    struct shaping_feature *features;
+    size_t count;
+    size_t capacity;
+    unsigned int stage;
+    struct shaping_stage stages[MAX_SHAPING_STAGE];
+};
+
+struct shaper
+{
+    void (*collect_features)(struct scriptshaping_context *context, struct shaping_features *features);
+    void (*setup_masks)(struct scriptshaping_context *context, const struct shaping_features *features);
+};
+
+extern const struct shaper arabic_shaper DECLSPEC_HIDDEN;
+
+extern void shape_enable_feature(struct shaping_features *features, unsigned int tag,
+        unsigned int flags) DECLSPEC_HIDDEN;
+extern void shape_add_feature_full(struct shaping_features *features, unsigned int tag,
+        unsigned int flags, unsigned int value) DECLSPEC_HIDDEN;
+extern unsigned int shape_get_feature_1_mask(const struct shaping_features *features,
+        unsigned int tag) DECLSPEC_HIDDEN;
+extern void shape_start_next_stage(struct shaping_features *features, stage_func func) DECLSPEC_HIDDEN;
+
 struct scriptshaping_context
 {
     struct scriptshaping_cache *cache;
+    const struct shaper *shaper;
+    unsigned int script;
     UINT32 language_tag;
 
     const WCHAR *text;
@@ -585,6 +646,8 @@ struct scriptshaping_context
     } user_features;
     unsigned int global_mask;
     unsigned int lookup_mask; /* Currently processed feature mask, set in main loop. */
+    unsigned int auto_zwj;
+    unsigned int auto_zwnj;
     struct shaping_glyph_info *glyph_infos;
 
     unsigned int cur;
@@ -611,41 +674,15 @@ extern struct scriptshaping_cache *create_scriptshaping_cache(void *context,
 extern void release_scriptshaping_cache(struct scriptshaping_cache*) DECLSPEC_HIDDEN;
 extern struct scriptshaping_cache *fontface_get_shaping_cache(struct dwrite_fontface *fontface) DECLSPEC_HIDDEN;
 
-enum shaping_feature_flags
-{
-    FEATURE_GLOBAL = 0x1,
-    FEATURE_GLOBAL_SEARCH = 0x2,
-};
-
-struct shaping_feature
-{
-    unsigned int tag;
-    unsigned int index;
-    unsigned int flags;
-    unsigned int max_value;
-    unsigned int default_value;
-    unsigned int mask;
-    unsigned int shift;
-    unsigned int stage;
-};
-
-struct shaping_features
-{
-    struct shaping_feature *features;
-    size_t count;
-    size_t capacity;
-    unsigned int stage;
-};
-
 extern void opentype_layout_scriptshaping_cache_init(struct scriptshaping_cache *cache) DECLSPEC_HIDDEN;
 extern DWORD opentype_layout_find_script(const struct scriptshaping_cache *cache, DWORD kind, DWORD tag,
         unsigned int *script_index) DECLSPEC_HIDDEN;
 extern DWORD opentype_layout_find_language(const struct scriptshaping_cache *cache, DWORD kind, DWORD tag,
         unsigned int script_index, unsigned int *language_index) DECLSPEC_HIDDEN;
 extern void opentype_layout_apply_gsub_features(struct scriptshaping_context *context, unsigned int script_index,
-        unsigned int language_index, const struct shaping_features *features) DECLSPEC_HIDDEN;
+        unsigned int language_index, struct shaping_features *features) DECLSPEC_HIDDEN;
 extern void opentype_layout_apply_gpos_features(struct scriptshaping_context *context, unsigned int script_index,
-        unsigned int language_index, const struct shaping_features *features) DECLSPEC_HIDDEN;
+        unsigned int language_index, struct shaping_features *features) DECLSPEC_HIDDEN;
 extern BOOL opentype_layout_check_feature(struct scriptshaping_context *context, unsigned int script_index,
         unsigned int language_index, struct shaping_feature *feature, unsigned int glyph_count,
         const UINT16 *glyphs, UINT8 *feature_applies) DECLSPEC_HIDDEN;

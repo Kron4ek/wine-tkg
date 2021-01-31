@@ -1505,7 +1505,7 @@ done:
     return out;
 }
 
-GstBuffer* gst_buffer_from_mf_sample(IMFSample *mf_sample)
+GstBuffer *gst_buffer_from_mf_sample(IMFSample *mf_sample)
 {
     GstBuffer *out = gst_buffer_new();
     IMFMediaBuffer *mf_buffer = NULL;
@@ -1542,7 +1542,7 @@ GstBuffer* gst_buffer_from_mf_sample(IMFSample *mf_sample)
         memory = gst_allocator_alloc(NULL, buffer_size, NULL);
         gst_memory_resize(memory, 0, buffer_size);
 
-        if (!(gst_memory_map(memory, &map_info, GST_MAP_WRITE)))
+        if (!gst_memory_map(memory, &map_info, GST_MAP_WRITE))
         {
             hr = E_FAIL;
             goto fail;

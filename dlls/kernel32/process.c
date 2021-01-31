@@ -33,14 +33,16 @@
 #include "winnls.h"
 #include "wincon.h"
 #include "kernel_private.h"
-#include "winreg.h"
 #include "psapi.h"
+#include "ddk/wdm.h"
 #include "wine/exception.h"
 #include "wine/server.h"
 #include "wine/asm.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(process);
+
+static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x7ffe0000;
 
 typedef struct
 {
@@ -49,8 +51,6 @@ typedef struct
     LPSTR lpCmdShow;
     DWORD dwReserved;
 } LOADPARMS32;
-
-static BOOL is_wow64;
 
 SYSTEM_BASIC_INFORMATION system_info = { 0 };
 
@@ -62,7 +62,6 @@ SYSTEM_BASIC_INFORMATION system_info = { 0 };
 #define PDB32_FILE_APIS_OEM 0x0040  /* File APIs are OEM */
 #define PDB32_WIN32S_PROC   0x8000  /* Win32s process */
 
-static DEP_SYSTEM_POLICY_TYPE system_DEP_policy = OptIn;
 
 /***********************************************************************
  *           wait_input_idle
@@ -180,6 +179,7 @@ DWORD WINAPI LoadModule( LPCSTR name, LPVOID paramBlock )
     HeapFree( GetProcessHeap(), 0, cmdline );
     return ret;
 }
+
 
 /***********************************************************************
  *           ExitProcess   (KERNEL32.@)
@@ -556,109 +556,25 @@ DWORD WINAPI WTSGetActiveConsoleSessionId(void)
  */
 DEP_SYSTEM_POLICY_TYPE WINAPI GetSystemDEPPolicy(void)
 {
-    char buffer[MAX_PATH+10];
-    DWORD size = sizeof(buffer);
-    HKEY hkey = 0;
-    HKEY appkey = 0;
-    DWORD len;
-    LSTATUS (WINAPI *pRegOpenKeyA)(HKEY,LPCSTR,PHKEY);
-    LSTATUS (WINAPI *pRegQueryValueExA)(HKEY,LPCSTR,LPDWORD,LPDWORD,LPBYTE,LPDWORD);
-    LSTATUS (WINAPI *pRegCloseKey)(HKEY);
-
-    TRACE("()\n");
-
-    pRegOpenKeyA = (void*)GetProcAddress(GetModuleHandleA("advapi32"), "RegOpenKeyA");
-    pRegQueryValueExA = (void*)GetProcAddress(GetModuleHandleA("advapi32"), "RegQueryValueExA");
-    pRegCloseKey = (void*)GetProcAddress(GetModuleHandleA("advapi32"), "RegCloseKey");
-    if ( !pRegOpenKeyA || !pRegQueryValueExA || !pRegCloseKey ) return OptIn;
-
-    /* @@ Wine registry key: HKCU\Software\Wine\Boot.ini */
-    if ( pRegOpenKeyA( HKEY_CURRENT_USER, "Software\\Wine\\Boot.ini", &hkey ) ) hkey = 0;
-
-    len = GetModuleFileNameA( 0, buffer, MAX_PATH );
-    if (len && len < MAX_PATH)
-    {
-        HKEY tmpkey;
-        /* @@ Wine registry key: HKCU\Software\Wine\AppDefaults\app.exe\Boot.ini */
-        if (!pRegOpenKeyA( HKEY_CURRENT_USER, "Software\\Wine\\AppDefaults", &tmpkey ))
-        {
-            char *p, *appname = buffer;
-            if ((p = strrchr( appname, '/' ))) appname = p + 1;
-            if ((p = strrchr( appname, '\\' ))) appname = p + 1;
-            strcat( appname, "\\Boot.ini" );
-            TRACE("appname = [%s]\n", appname);
-            if (pRegOpenKeyA( tmpkey, appname, &appkey )) appkey = 0;
-            pRegCloseKey( tmpkey );
-        }
-    }
-
-    if (hkey || appkey)
-    {
-        if ((appkey && !pRegQueryValueExA(appkey, "NoExecute", 0, NULL, (BYTE *)buffer, &size)) ||
-            (hkey && !pRegQueryValueExA(hkey, "NoExecute", 0, NULL, (BYTE *)buffer, &size)))
-        {
-            if (!strcmp(buffer,"OptIn"))
-            {
-                TRACE("System DEP policy set to OptIn\n");
-                system_DEP_policy = OptIn;
-            }
-            else if (!strcmp(buffer,"OptOut"))
-            {
-                TRACE("System DEP policy set to OptOut\n");
-                system_DEP_policy = OptIn;
-            }
-            else if (!strcmp(buffer,"AlwaysOn"))
-            {
-                TRACE("System DEP policy set to AlwaysOn\n");
-                system_DEP_policy = AlwaysOn;
-            }
-            else if (!strcmp(buffer,"AlwaysOff"))
-            {
-                TRACE("System DEP policy set to AlwaysOff\n");
-                system_DEP_policy = AlwaysOff;
-            }
-        }
-    }
-
-    if (appkey) pRegCloseKey( appkey );
-    if (hkey) pRegCloseKey( hkey );
-    return system_DEP_policy;
+    return user_shared_data->NXSupportPolicy;
 }
 
 /**********************************************************************
  *           SetProcessDEPPolicy     (KERNEL32.@)
  */
-BOOL WINAPI SetProcessDEPPolicy(DWORD newDEP)
+BOOL WINAPI SetProcessDEPPolicy( DWORD flags )
 {
     ULONG dep_flags = 0;
-    NTSTATUS status;
 
-    TRACE("(%d)\n", newDEP);
+    TRACE("%#x\n", flags);
 
-    if (is_wow64 || (system_DEP_policy != OptIn && system_DEP_policy != OptOut) )
-    {
-        SetLastError(ERROR_ACCESS_DENIED);
-        return FALSE;
-    }
-
-    if (!newDEP)
-        dep_flags = MEM_EXECUTE_OPTION_ENABLE;
-    else if (newDEP & PROCESS_DEP_ENABLE)
-        dep_flags = MEM_EXECUTE_OPTION_DISABLE|MEM_EXECUTE_OPTION_PERMANENT;
-    else
-    {
-        SetLastError(ERROR_ACCESS_DENIED);
-        return FALSE;
-    }
-
-    if (newDEP & PROCESS_DEP_DISABLE_ATL_THUNK_EMULATION)
+    if (flags & PROCESS_DEP_ENABLE)
+        dep_flags |= MEM_EXECUTE_OPTION_DISABLE | MEM_EXECUTE_OPTION_PERMANENT;
+    if (flags & PROCESS_DEP_DISABLE_ATL_THUNK_EMULATION)
         dep_flags |= MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION;
 
-    status = NtSetInformationProcess( GetCurrentProcess(), ProcessExecuteFlags,
-                                        &dep_flags, sizeof(dep_flags) );
-
-    if (status) SetLastError( RtlNtStatusToDosError(status) );
-    return !status;
+    return set_ntstatus( NtSetInformationProcess( GetCurrentProcess(), ProcessExecuteFlags,
+                                                  &dep_flags, sizeof(dep_flags) ) );
 }
 
 /**********************************************************************
@@ -850,21 +766,13 @@ BOOL WINAPI GetProcessDEPPolicy(HANDLE process, LPDWORD flags, PBOOL permanent)
     if (flags)
     {
         *flags = 0;
-        if (system_DEP_policy != AlwaysOff)
-        {
-            if (dep_flags & MEM_EXECUTE_OPTION_DISABLE || system_DEP_policy == AlwaysOn)
-                *flags |= PROCESS_DEP_ENABLE;
-            if (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION)
-                *flags |= PROCESS_DEP_DISABLE_ATL_THUNK_EMULATION;
-        }
+        if (dep_flags & MEM_EXECUTE_OPTION_DISABLE)
+            *flags |= PROCESS_DEP_ENABLE;
+        if (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION)
+            *flags |= PROCESS_DEP_DISABLE_ATL_THUNK_EMULATION;
     }
 
-    if (permanent)
-    {
-        *permanent = (dep_flags & MEM_EXECUTE_OPTION_PERMANENT) != 0;
-        if (system_DEP_policy == AlwaysOn || system_DEP_policy == AlwaysOff)
-            *permanent = TRUE;
-    }
+    if (permanent) *permanent = (dep_flags & MEM_EXECUTE_OPTION_PERMANENT) != 0;
     return TRUE;
 }
 

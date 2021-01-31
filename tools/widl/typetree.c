@@ -52,6 +52,7 @@ type_t *make_type(enum type_type type)
     t->c_name = NULL;
     t->signature = NULL;
     t->short_name = NULL;
+    t->qualified_name = NULL;
     memset(&t->details, 0, sizeof(t->details));
     t->typestring_offset = 0;
     t->ptrdesc = 0;
@@ -92,6 +93,20 @@ const char *type_get_name(const type_t *type, enum name_type name_type)
     return NULL;
 }
 
+const char *type_get_qualified_name(const type_t *type, enum name_type name_type)
+{
+    assert(!!type->c_name == !!type->qualified_name);
+    switch(name_type) {
+    case NAME_DEFAULT:
+        return type->qualified_name;
+    case NAME_C:
+        return type->c_name;
+    }
+
+    assert(0);
+    return NULL;
+}
+
 static size_t append_namespace(char **buf, size_t *len, size_t pos, struct namespace *namespace, const char *separator, const char *abi_prefix)
 {
     int nested = namespace && !is_global_namespace(namespace);
@@ -106,9 +121,10 @@ static size_t append_namespace(char **buf, size_t *len, size_t pos, struct names
 static size_t append_namespaces(char **buf, size_t *len, size_t pos, struct namespace *namespace, const char *prefix,
                                 const char *separator, const char *suffix, const char *abi_prefix)
 {
+    int nested = namespace && !is_global_namespace(namespace);
     size_t n = 0;
     n += strappend(buf, len, pos + n, "%s", prefix);
-    n += append_namespace(buf, len, pos + n, namespace, separator, abi_prefix);
+    if (nested) n += append_namespace(buf, len, pos + n, namespace, separator, abi_prefix);
     n += strappend(buf, len, pos + n, "%s", suffix);
     return n;
 }
@@ -683,6 +699,7 @@ static void compute_delegate_iface_names(type_t *delegate, type_t *type, type_li
     iface->name = strmake("I%s", delegate->name);
     if (type) iface->c_name = format_parameterized_type_c_name(type, params, "I");
     else iface->c_name = format_namespace(delegate->namespace, "__x_", "_C", iface->name, use_abi_namespace ? "ABI" : NULL);
+    iface->qualified_name = format_namespace(delegate->namespace, "", "::", iface->name, use_abi_namespace ? "ABI" : NULL);
 }
 
 static void compute_interface_signature_uuid(type_t *iface)
@@ -1107,6 +1124,8 @@ type_t *type_runtimeclass_define(type_t *runtimeclass, ifref_list_t *ifaces)
 {
     runtimeclass->details.runtimeclass.ifaces = ifaces;
     runtimeclass->defined = TRUE;
+    if (!type_runtimeclass_get_default_iface(runtimeclass))
+        error_loc("missing default interface on runtimeclass %s\n", runtimeclass->name);
     return runtimeclass;
 }
 

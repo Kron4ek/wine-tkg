@@ -68,8 +68,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
-static pthread_key_t teb_key;
-
 
 /***********************************************************************
  * signal context platform-specific definitions
@@ -283,6 +281,7 @@ static void save_context( CONTEXT *context, const ucontext_t *sigcontext )
     context->Cpsr = CPSR_sig(sigcontext); /* Current State Register */
     context->R11  = FP_sig(sigcontext);   /* Frame pointer */
     context->R12  = IP_sig(sigcontext);   /* Intra-Procedure-call scratch register */
+    if (CPSR_sig(sigcontext) & 0x20) context->Pc |= 1;  /* Thumb mode */
     save_fpu( context, sigcontext );
 }
 
@@ -305,6 +304,8 @@ static void restore_context( const CONTEXT *context, ucontext_t *sigcontext )
     CPSR_sig(sigcontext) = context->Cpsr; /* Current State Register */
     FP_sig(sigcontext)   = context->R11;  /* Frame pointer */
     IP_sig(sigcontext)   = context->R12;  /* Intra-Procedure-call scratch register */
+    if (PC_sig(sigcontext) & 1) CPSR_sig(sigcontext) |= 0x20;
+    else CPSR_sig(sigcontext) &= ~0x20;
     restore_fpu( context, sigcontext );
 }
 
@@ -316,17 +317,18 @@ static void restore_context( const CONTEXT *context, ucontext_t *sigcontext )
  */
 void DECLSPEC_HIDDEN set_cpu_context( const CONTEXT *context );
 __ASM_GLOBAL_FUNC( set_cpu_context,
-                   ".arm\n\t"
                    "ldr r2, [r0, #0x44]\n\t"  /* context->Cpsr */
                    "tst r2, #0x20\n\t"        /* thumb? */
                    "ldr r1, [r0, #0x40]\n\t"  /* context->Pc */
+                   "ite ne\n\t"
                    "orrne r1, r1, #1\n\t"     /* Adjust PC according to thumb */
                    "biceq r1, r1, #1\n\t"     /* Adjust PC according to arm */
                    "msr CPSR_f, r2\n\t"
                    "ldr lr, [r0, #0x3c]\n\t"  /* context->Lr */
                    "ldr sp, [r0, #0x38]\n\t"  /* context->Sp */
                    "push {r1}\n\t"
-                   "ldmib r0, {r0-r12}\n\t"   /* context->R0..R12 */
+                   "add r0, #0x4\n\t"
+                   "ldm r0, {r0-r12}\n\t"     /* context->R0..R12 */
                    "pop {pc}" )
 
 
@@ -533,19 +535,6 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
 }
 
 
-extern void raise_func_trampoline_thumb( EXCEPTION_RECORD *rec, CONTEXT *context, void *func );
-__ASM_GLOBAL_FUNC( raise_func_trampoline_thumb,
-                   ".thumb\n\t"
-                   "bx r2\n\t"
-                   "bkpt\n\t"
-                   ".arm")
-
-extern void raise_func_trampoline_arm( EXCEPTION_RECORD *rec, CONTEXT *context, void *func );
-__ASM_GLOBAL_FUNC( raise_func_trampoline_arm,
-                   ".arm\n\t"
-                   "bx r2\n\t"
-                   "bkpt")
-
 /***********************************************************************
  *           setup_exception
  *
@@ -565,7 +554,8 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 
     rec->ExceptionAddress = (void *)PC_sig(sigcontext);
     save_context( &context, sigcontext );
-    if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context.Pc += 4;
+    if (rec->ExceptionCode == EXCEPTION_BREAKPOINT)
+        context.Pc += CPSR_sig(sigcontext) & 0x20 ? 2 : 4;
 
     status = send_debug_event( rec, &context, TRUE );
     if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
@@ -580,13 +570,11 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 
     /* now modify the sigcontext to return to the raise function */
     SP_sig(sigcontext) = (DWORD)stack;
-    if (CPSR_sig(sigcontext) & 0x20)
-        PC_sig(sigcontext) = (DWORD)raise_func_trampoline_thumb;
-    else
-        PC_sig(sigcontext) = (DWORD)raise_func_trampoline_arm;
+    PC_sig(sigcontext) = (DWORD)pKiUserExceptionDispatcher;
+    if (PC_sig(sigcontext) & 1) CPSR_sig(sigcontext) |= 0x20;
+    else CPSR_sig(sigcontext) &= ~0x20;
     REGn_sig(0, sigcontext) = (DWORD)&stack->rec;  /* first arg for KiUserExceptionDispatcher */
     REGn_sig(1, sigcontext) = (DWORD)&stack->context; /* second arg for KiUserExceptionDispatcher */
-    REGn_sig(2, sigcontext) = (DWORD)pKiUserExceptionDispatcher;
 }
 
 
@@ -594,24 +582,23 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
  *           call_user_apc_dispatcher
  */
 __ASM_GLOBAL_FUNC( call_user_apc_dispatcher,
-                   "mov r4, r0\n\t"           /* context_ptr */
                    "mov r5, r1\n\t"           /* ctx */
                    "mov r6, r2\n\t"           /* arg1 */
                    "mov r7, r3\n\t"           /* arg2 */
                    "ldr r8, [sp]\n\t"         /* func */
                    "ldr r9, [sp, #4]\n\t"     /* dispatcher */
-                   "bl " __ASM_NAME("NtCurrentTeb") "\n\t"
-                   "add r10, r0, #0x1d8\n\t"  /* arm_thread_data()->syscall_frame */
-                   "movs r0, r4\n\t"
+                   "mrc p15, 0, r10, c13, c0, 2\n\t"  /* NtCurrentTeb() */
+                   "cmp r0, #0\n\t"           /* context_ptr */
                    "beq 1f\n\t"
                    "ldr r0, [r0, #0x38]\n\t"  /* context_ptr->Sp */
                    "sub r0, r0, #0x1c8\n\t"   /* sizeof(CONTEXT) + offsetof(frame,r4) */
                    "mov ip, #0\n\t"
-                   "str ip, [r10]\n\t"
+                   "str ip, [r10, #0x1d8]\n\t"  /* arm_thread_data()->syscall_frame */
                    "mov sp, r0\n\t"
                    "b 2f\n"
-                   "1:\tldr r0, [r10]\n\t"
-                   "sub sp, r0, #0x1a0\n\t"
+                   "1:\tldr r0, [r10, #0x1d8]\n\t"
+                   "sub r0, #0x1a0\n\t"
+                   "mov sp, r0\n\t"
                    "mov r0, #3\n\t"
                    "movt r0, #32\n\t"
                    "str r0, [sp]\n\t"         /* context.ContextFlags = CONTEXT_FULL */
@@ -622,7 +609,7 @@ __ASM_GLOBAL_FUNC( call_user_apc_dispatcher,
                    "str r0, [sp, #4]\n\t"     /* context.R0 = STATUS_USER_APC */
                    "mov r0, sp\n\t"
                    "mov ip, #0\n\t"
-                   "str ip, [r10]\n\t"
+                   "str ip, [r10, #0x1d8]\n\t"
                    "2:\tmov r1, r5\n\t"       /* ctx */
                    "mov r2, r6\n\t"           /* arg1 */
                    "mov r3, r7\n\t"           /* arg2 */
@@ -643,22 +630,16 @@ __ASM_GLOBAL_FUNC( call_raise_user_exception_dispatcher,
  *           call_user_exception_dispatcher
  */
 __ASM_GLOBAL_FUNC( call_user_exception_dispatcher,
-                   "mov r4, r0\n\t"
-                   "mov r5, r1\n\t"
-                   "mov r6, r2\n\t"
-                   "bl " __ASM_NAME("NtCurrentTeb") "\n\t"
-                   "add r7, r0, #0x1d8\n\t"  /* arm_thread_data()->syscall_frame */
-                   "mov r0, r4\n\t"
-                   "mov r1, r5\n\t"
-                   "mov r2, r6\n\t"
-                   "ldr r3, [r7]\n\t"
+                   "mrc p15, 0, r7, c13, c0, 2\n\t"  /* NtCurrentTeb() */
+                   "ldr r3, [r7, #0x1d8]\n\t"  /* arm_thread_data()->syscall_frame */
                    "mov ip, #0\n\t"
-                   "str ip, [r7]\n\t"
+                   "str ip, [r7, #0x1d8]\n\t"
                    "add r3, r3, #8\n\t"
                    "ldm r3, {r5-r11}\n\t"
                    "ldr r4, [r3, #32]\n\t"
                    "ldr lr, [r3, #36]\n\t"
-                   "add sp, r3, #40\n\t"
+                   "add r3, #40\n\t"
+                   "mov sp, r3\n\t"
                    "bx r2" )
 
 
@@ -919,7 +900,6 @@ NTSTATUS WINAPI NtSetLdtEntries( ULONG sel1, LDT_ENTRY entry1, ULONG sel2, LDT_E
  */
 void signal_init_threading(void)
 {
-    pthread_key_create( &teb_key, NULL );
 }
 
 
@@ -945,11 +925,7 @@ void signal_free_thread( TEB *teb )
  */
 void signal_init_thread( TEB *teb )
 {
-#if defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_8A__)
-    /* Win32/ARM applications expect the TEB pointer to be in the TPIDRURW register. */
     __asm__ __volatile__( "mcr p15, 0, %0, c13, c0, 2" : : "r" (teb) );
-#endif
-    pthread_setspecific( teb_key, teb );
 }
 
 
@@ -1002,6 +978,7 @@ static void init_thread_context( CONTEXT *context, LPTHREAD_START_ROUTINE entry,
     context->R1 = (DWORD)arg;
     context->Sp = (DWORD)teb->Tib.StackBase;
     context->Pc = (DWORD)pRtlUserThreadStart;
+    if (context->Pc & 1) context->Cpsr |= 0x20; /* thumb mode */
 }
 
 
@@ -1037,7 +1014,6 @@ PCONTEXT DECLSPEC_HIDDEN get_initial_context( LPTHREAD_START_ROUTINE entry, void
  *           signal_start_thread
  */
 __ASM_GLOBAL_FUNC( signal_start_thread,
-                   ".arm\n\t"
                    "push {r4-r12,lr}\n\t"
                    "mov r5, r3\n\t"           /* thunk */
                    /* store exit frame */
@@ -1045,7 +1021,8 @@ __ASM_GLOBAL_FUNC( signal_start_thread,
                    "str sp, [r3, #0x1d4]\n\t" /* arm_thread_data()->exit_frame */
                    /* switch to thread stack */
                    "ldr r4, [r3, #4]\n\t"     /* teb->Tib.StackBase */
-                   "sub sp, r4, #0x1000\n\t"
+                   "sub r4, #0x1000\n\t"
+                   "mov sp, r4\n\t"
                    /* attach dlls */
                    "bl " __ASM_NAME("get_initial_context") "\n\t"
                    "mov lr, #0\n\t"
@@ -1054,11 +1031,11 @@ __ASM_GLOBAL_FUNC( signal_start_thread,
 
 extern void DECLSPEC_NORETURN call_thread_exit_func( int status, void (*func)(int), TEB *teb );
 __ASM_GLOBAL_FUNC( call_thread_exit_func,
-                   ".arm\n\t"
                    "ldr r3, [r2, #0x1d4]\n\t"  /* arm_thread_data()->exit_frame */
                    "mov ip, #0\n\t"
                    "str ip, [r2, #0x1d4]\n\t"
                    "cmp r3, ip\n\t"
+                   "it ne\n\t"
                    "movne sp, r3\n\t"
                    "blx r1" )
 
@@ -1068,15 +1045,6 @@ __ASM_GLOBAL_FUNC( call_thread_exit_func,
 void signal_exit_thread( int status, void (*func)(int) )
 {
     call_thread_exit_func( status, func, NtCurrentTeb() );
-}
-
-
-/**********************************************************************
- *           NtCurrentTeb   (NTDLL.@)
- */
-TEB * WINAPI NtCurrentTeb(void)
-{
-    return pthread_getspecific( teb_key );
 }
 
 #endif  /* __arm__ */

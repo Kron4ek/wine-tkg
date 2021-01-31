@@ -587,8 +587,13 @@ static void disconnect_console_server( struct console_server *server )
         list_remove( &call->entry );
         console_host_ioctl_terminate( call, STATUS_CANCELLED );
     }
+
+    if (do_fsync())
+        fsync_clear_futex( server->fsync_idx );
+
     if (do_esync())
         esync_clear( server->esync_fd );
+
     while (!list_empty( &server->read_queue ))
     {
         struct console_host_ioctl *call = LIST_ENTRY( list_head( &server->read_queue ), struct console_host_ioctl, entry );
@@ -1545,6 +1550,10 @@ DECL_HANDLER(get_next_console_request)
         /* set result of previous ioctl */
         ioctl = LIST_ENTRY( list_head( &server->queue ), struct console_host_ioctl, entry );
         list_remove( &ioctl->entry );
+
+        if (do_fsync() && list_empty( &server->queue ))
+            fsync_clear_futex( server->fsync_idx );
+
         if (do_esync() && list_empty( &server->queue ))
             esync_clear( server->esync_fd );
     }
@@ -1645,6 +1654,10 @@ DECL_HANDLER(get_next_console_request)
     {
         set_error( STATUS_PENDING );
     }
+
+    if (do_fsync() && list_empty( &server->queue ))
+        fsync_clear_futex( server->fsync_idx );
+
     if (do_esync() && list_empty( &server->queue ))
         esync_clear( server->esync_fd );
 

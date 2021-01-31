@@ -26,7 +26,7 @@
 #include "stdlib.h"
 
 static VOID     (WINAPI *pRtlInitUnicodeString)( PUNICODE_STRING, LPCWSTR );
-static NTSTATUS (WINAPI *pNtCreateEvent) ( PHANDLE, ACCESS_MASK, const POBJECT_ATTRIBUTES, BOOLEAN, BOOLEAN);
+static NTSTATUS (WINAPI *pNtCreateEvent) ( PHANDLE, ACCESS_MASK, const POBJECT_ATTRIBUTES, EVENT_TYPE, BOOLEAN);
 static NTSTATUS (WINAPI *pNtOpenEvent)   ( PHANDLE, ACCESS_MASK, const POBJECT_ATTRIBUTES);
 static NTSTATUS (WINAPI *pNtPulseEvent)  ( HANDLE, PLONG );
 static NTSTATUS (WINAPI *pNtQueryEvent)  ( HANDLE, EVENT_INFORMATION_CLASS, PVOID, ULONG, PULONG );
@@ -46,6 +46,7 @@ static NTSTATUS (WINAPI *pNtQueryMutant) ( HANDLE, MUTANT_INFORMATION_CLASS, PVO
 static NTSTATUS (WINAPI *pNtReleaseMutant)( HANDLE, PLONG );
 static NTSTATUS (WINAPI *pNtCreateSemaphore)( PHANDLE, ACCESS_MASK,const POBJECT_ATTRIBUTES,LONG,LONG );
 static NTSTATUS (WINAPI *pNtOpenSemaphore)( PHANDLE, ACCESS_MASK, const POBJECT_ATTRIBUTES );
+static NTSTATUS (WINAPI *pNtQuerySemaphore)( PHANDLE, SEMAPHORE_INFORMATION_CLASS, PVOID, ULONG, PULONG );
 static NTSTATUS (WINAPI *pNtCreateTimer) ( PHANDLE, ACCESS_MASK, const POBJECT_ATTRIBUTES, TIMER_TYPE );
 static NTSTATUS (WINAPI *pNtOpenTimer)( PHANDLE, ACCESS_MASK, const POBJECT_ATTRIBUTES );
 static NTSTATUS (WINAPI *pNtCreateSection)( PHANDLE, ACCESS_MASK, const POBJECT_ATTRIBUTES, const PLARGE_INTEGER,
@@ -74,6 +75,7 @@ static NTSTATUS (WINAPI *pRtlWaitOnAddress)( const void *, const void *, SIZE_T,
 static void     (WINAPI *pRtlWakeAddressAll)( const void * );
 static void     (WINAPI *pRtlWakeAddressSingle)( const void * );
 static NTSTATUS (WINAPI *pNtOpenProcess)( HANDLE *, ACCESS_MASK, const OBJECT_ATTRIBUTES *, const CLIENT_ID * );
+static NTSTATUS (WINAPI *pNtCreateDebugObject)( HANDLE *, ACCESS_MASK, OBJECT_ATTRIBUTES *, ULONG );
 static NTSTATUS (WINAPI *pNtQuerySystemInformation)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
 
 #define KEYEDEVENT_WAIT       0x0001
@@ -107,12 +109,12 @@ static void test_case_sensitive (void)
     status = pNtCreateMutant(&Mutant, GENERIC_ALL, &attr, FALSE);
     ok(status == STATUS_SUCCESS, "Failed to create Mutant(%08x)\n", status);
 
-    status = pNtCreateEvent(&Event, GENERIC_ALL, &attr, FALSE, FALSE);
+    status = pNtCreateEvent(&Event, GENERIC_ALL, &attr, NotificationEvent, FALSE);
     ok(status == STATUS_OBJECT_NAME_COLLISION || status == STATUS_OBJECT_TYPE_MISMATCH /* Vista+ */, "got %#x\n", status);
 
     pRtlInitUnicodeString(&str, L"\\BaseNamedObjects\\Test");
     InitializeObjectAttributes(&attr, &str, 0, 0, NULL);
-    status = pNtCreateEvent(&Event, GENERIC_ALL, &attr, FALSE, FALSE);
+    status = pNtCreateEvent(&Event, GENERIC_ALL, &attr, NotificationEvent, FALSE);
     ok(status == STATUS_SUCCESS, "Failed to create Event(%08x)\n", status);
 
     pRtlInitUnicodeString(&str, L"\\BaseNamedObjects\\TEst");
@@ -128,7 +130,7 @@ static void test_case_sensitive (void)
     status = pNtCreateMutant(&Mutant, GENERIC_ALL, &attr, FALSE);
     ok(status == STATUS_OBJECT_NAME_COLLISION || status == STATUS_OBJECT_TYPE_MISMATCH /* Vista+ */, "got %#x\n", status);
 
-    status = pNtCreateEvent(&h, GENERIC_ALL, &attr, FALSE, FALSE);
+    status = pNtCreateEvent(&h, GENERIC_ALL, &attr, NotificationEvent, FALSE);
     ok(status == STATUS_OBJECT_NAME_COLLISION,
         "NtCreateEvent should have failed with STATUS_OBJECT_NAME_COLLISION got(%08x)\n", status);
 
@@ -307,7 +309,7 @@ static void test_name_collisions(void)
 
     h = CreateEventA(NULL, FALSE, FALSE, "om.c-test");
     ok(h != 0, "CreateEventA failed got ret=%p (%d)\n", h, GetLastError());
-    status = pNtCreateEvent(&h1, GENERIC_ALL, &attr, FALSE, FALSE);
+    status = pNtCreateEvent(&h1, GENERIC_ALL, &attr, NotificationEvent, FALSE);
     ok(status == STATUS_OBJECT_NAME_EXISTS && h1 != NULL,
         "NtCreateEvent should have succeeded with STATUS_OBJECT_NAME_EXISTS got(%08x)\n", status);
     h2 = CreateEventA(NULL, FALSE, FALSE, "om.c-test");
@@ -385,7 +387,7 @@ static void test_all_kernel_objects( UINT line, OBJECT_ATTRIBUTES *attr,
     ok( status2 == open_expect, "%u: NtOpenSemaphore failed %x\n", line, status2 );
     if (!status) pNtClose( ret );
     if (!status2) pNtClose( ret2 );
-    status = pNtCreateEvent( &ret, GENERIC_ALL, attr, 1, 0 );
+    status = pNtCreateEvent( &ret, GENERIC_ALL, attr, SynchronizationEvent, 0 );
     ok( status == create_expect, "%u: NtCreateEvent failed %x\n", line, status );
     status2 = pNtOpenEvent( &ret2, GENERIC_ALL, attr );
     ok( status2 == open_expect, "%u: NtOpenEvent failed %x\n", line, status2 );
@@ -433,6 +435,9 @@ static void test_all_kernel_objects( UINT line, OBJECT_ATTRIBUTES *attr,
     ok( status2 == open_expect, "%u: NtOpenSection failed %x\n", line, status2 );
     if (!status) pNtClose( ret );
     if (!status2) pNtClose( ret2 );
+    status = pNtCreateDebugObject( &ret, DEBUG_ALL_ACCESS, attr, 0 );
+    ok( status == create_expect, "%u: NtCreateDebugObject failed %x\n", line, status );
+    if (!status) pNtClose( ret );
 }
 
 static void test_name_limits(void)
@@ -477,7 +482,7 @@ static void test_name_limits(void)
     ok( status == STATUS_OBJECT_TYPE_MISMATCH || status == STATUS_INVALID_HANDLE /* < 7 */,
         "%u: NtOpenSemaphore failed %x\n", str.Length, status );
     pNtClose( ret );
-    status = pNtCreateEvent( &ret, GENERIC_ALL, &attr2, 1, 0 );
+    status = pNtCreateEvent( &ret, GENERIC_ALL, &attr2, SynchronizationEvent, 0 );
     ok( status == STATUS_SUCCESS, "%u: NtCreateEvent failed %x\n", str.Length, status );
     attr3.RootDirectory = ret;
     status = pNtOpenEvent( &ret2, GENERIC_ALL, &attr );
@@ -596,7 +601,7 @@ static void test_name_limits(void)
     pNtClose( ret );
     status = pNtOpenSemaphore( &ret, GENERIC_ALL, NULL );
     ok( status == STATUS_INVALID_PARAMETER, "NULL: NtOpenSemaphore failed %x\n", status );
-    status = pNtCreateEvent( &ret, GENERIC_ALL, NULL, 1, 0 );
+    status = pNtCreateEvent( &ret, GENERIC_ALL, NULL, SynchronizationEvent, 0 );
     ok( status == STATUS_SUCCESS, "NULL: NtCreateEvent failed %x\n", status );
     pNtClose( ret );
     status = pNtOpenEvent( &ret, GENERIC_ALL, NULL );
@@ -949,7 +954,7 @@ static void test_directory(void)
 
     RtlInitUnicodeString( &str, L"om.c-event" );
     InitializeObjectAttributes( &attr, &str, 0, dir1, NULL );
-    status = pNtCreateEvent( &h, GENERIC_ALL, &attr, 1, 0 );
+    status = pNtCreateEvent( &h, GENERIC_ALL, &attr, SynchronizationEvent, 0 );
     ok( status == STATUS_SUCCESS, "NtCreateEvent failed %x\n", status );
     status = pNtOpenEvent( &h2, GENERIC_ALL, &attr );
     ok( status == STATUS_SUCCESS, "NtOpenEvent failed %x\n", status );
@@ -1465,6 +1470,15 @@ static void test_query_object(void)
 
     pNtClose( handle );
 
+    RtlInitUnicodeString( &path, L"\\BaseNamedObjects\\test_debug" );
+    status = pNtCreateDebugObject( &handle, DEBUG_ALL_ACCESS, &attr, 0 );
+    ok(!status, "NtCreateDebugObject failed: %x\n", status);
+
+    test_object_name( handle, L"\\BaseNamedObjects\\test_debug", FALSE );
+    test_object_type( handle, L"DebugObject" );
+    test_no_file_info( handle );
+    pNtClose(handle);
+
     status = pNtCreateDirectoryObject( &handle, DIRECTORY_QUERY, NULL );
     ok(status == STATUS_SUCCESS, "Failed to create Directory %08x\n", status);
 
@@ -1687,7 +1701,7 @@ static void test_type_mismatch(void)
     attr.SecurityDescriptor       = NULL;
     attr.SecurityQualityOfService = NULL;
 
-    res = pNtCreateEvent( &h, 0, &attr, 0, 0 );
+    res = pNtCreateEvent( &h, 0, &attr, NotificationEvent, 0 );
     ok(!res, "can't create event: %x\n", res);
 
     res = pNtReleaseSemaphore( h, 30, NULL );
@@ -1709,16 +1723,29 @@ static void test_event(void)
     pRtlInitUnicodeString( &str, L"\\BaseNamedObjects\\testEvent" );
     InitializeObjectAttributes(&attr, &str, 0, 0, NULL);
 
-    status = pNtCreateEvent(&Event, GENERIC_ALL, &attr, 1, 0);
+    status = pNtCreateEvent(&Event, GENERIC_ALL, &attr, 2, 0);
+    ok( status == STATUS_INVALID_PARAMETER, "NtCreateEvent failed %08x\n", status );
+
+    status = pNtCreateEvent(&Event, GENERIC_ALL, &attr, NotificationEvent, 0);
+    ok( status == STATUS_SUCCESS, "NtCreateEvent failed %08x\n", status );
+    memset(&info, 0xcc, sizeof(info));
+    status = pNtQueryEvent(Event, EventBasicInformation, &info, sizeof(info), NULL);
+    ok( status == STATUS_SUCCESS, "NtQueryEvent failed %08x\n", status );
+    ok( info.EventType == NotificationEvent && info.EventState == 0,
+        "NtQueryEvent failed, expected 0 0, got %d %d\n", info.EventType, info.EventState );
+    pNtClose(Event);
+
+    status = pNtCreateEvent(&Event, GENERIC_ALL, &attr, SynchronizationEvent, 0);
     ok( status == STATUS_SUCCESS, "NtCreateEvent failed %08x\n", status );
 
     status = pNtPulseEvent(Event, &prev_state);
     ok( status == STATUS_SUCCESS, "NtPulseEvent failed %08x\n", status );
     ok( !prev_state, "prev_state = %x\n", prev_state );
 
+    memset(&info, 0xcc, sizeof(info));
     status = pNtQueryEvent(Event, EventBasicInformation, &info, sizeof(info), NULL);
     ok( status == STATUS_SUCCESS, "NtQueryEvent failed %08x\n", status );
-    ok( info.EventType == 1 && info.EventState == 0,
+    ok( info.EventType == SynchronizationEvent && info.EventState == 0,
         "NtQueryEvent failed, expected 1 0, got %d %d\n", info.EventType, info.EventState );
 
     status = pNtOpenEvent(&Event2, GENERIC_ALL, &attr);
@@ -1727,14 +1754,21 @@ static void test_event(void)
     pNtClose(Event);
     Event = Event2;
 
+    memset(&info, 0xcc, sizeof(info));
     status = pNtQueryEvent(Event, EventBasicInformation, &info, sizeof(info), NULL);
     ok( status == STATUS_SUCCESS, "NtQueryEvent failed %08x\n", status );
-    ok( info.EventType == 1 && info.EventState == 0,
+    ok( info.EventType == SynchronizationEvent && info.EventState == 0,
         "NtQueryEvent failed, expected 1 0, got %d %d\n", info.EventType, info.EventState );
 
     status = pNtSetEvent( Event, &prev_state );
     ok( status == STATUS_SUCCESS, "NtSetEvent failed: %08x\n", status );
     ok( !prev_state, "prev_state = %x\n", prev_state );
+
+    memset(&info, 0xcc, sizeof(info));
+    status = pNtQueryEvent(Event, EventBasicInformation, &info, sizeof(info), NULL);
+    ok( status == STATUS_SUCCESS, "NtQueryEvent failed %08x\n", status );
+    ok( info.EventType == SynchronizationEvent && info.EventState == 1,
+        "NtQueryEvent failed, expected 1 1, got %d %d\n", info.EventType, info.EventState );
 
     status = pNtSetEvent( Event, &prev_state );
     ok( status == STATUS_SUCCESS, "NtSetEvent failed: %08x\n", status );
@@ -1941,13 +1975,13 @@ static void test_keyed_events(void)
     status = pNtPulseEvent( handle, NULL );
     ok( status == STATUS_OBJECT_TYPE_MISMATCH, "NtPulseEvent %x\n", status );
 
-    status = pNtCreateEvent( &event, GENERIC_ALL, &attr, FALSE, FALSE );
+    status = pNtCreateEvent( &event, GENERIC_ALL, &attr, NotificationEvent, FALSE );
     ok( status == STATUS_OBJECT_NAME_COLLISION || status == STATUS_OBJECT_TYPE_MISMATCH /* 7+ */,
         "CreateEvent %x\n", status );
 
     NtClose( handle );
 
-    status = pNtCreateEvent( &event, GENERIC_ALL, &attr, FALSE, FALSE );
+    status = pNtCreateEvent( &event, GENERIC_ALL, &attr, NotificationEvent, FALSE );
     ok( status == 0, "CreateEvent %x\n", status );
     status = pNtWaitForKeyedEvent( event, (void *)8, 0, &timeout );
     ok( status == STATUS_OBJECT_TYPE_MISMATCH, "NtWaitForKeyedEvent %x\n", status );
@@ -2101,13 +2135,13 @@ static void test_mutant(void)
 
     prev = 0xdeadbeef;
     status = pNtReleaseMutant(mutant, &prev);
-    ok( status == STATUS_SUCCESS, "NtQueryRelease failed %08x\n", status );
-    ok( prev == -1, "NtQueryRelease failed, expected -1, got %d\n", prev );
+    ok( status == STATUS_SUCCESS, "NtReleaseMutant failed %08x\n", status );
+    ok( prev == -1, "NtReleaseMutant failed, expected -1, got %d\n", prev );
 
     prev = 0xdeadbeef;
     status = pNtReleaseMutant(mutant, &prev);
-    ok( status == STATUS_SUCCESS, "NtQueryRelease failed %08x\n", status );
-    ok( prev == 0, "NtQueryRelease failed, expected 0, got %d\n", prev );
+    ok( status == STATUS_SUCCESS, "NtReleaseMutant failed %08x\n", status );
+    ok( prev == 0, "NtReleaseMutant failed, expected 0, got %d\n", prev );
 
     memset(&info, 0xcc, sizeof(info));
     status = pNtQueryMutant(mutant, MutantBasicInformation, &info, sizeof(info), NULL);
@@ -2140,6 +2174,82 @@ static void test_mutant(void)
     ok( info.AbandonedState == FALSE, "expected FALSE, got %d\n", info.AbandonedState );
 
     NtClose( mutant );
+}
+
+static void test_semaphore(void)
+{
+    SEMAPHORE_BASIC_INFORMATION info;
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING str;
+    NTSTATUS status;
+    HANDLE semaphore;
+    ULONG prev;
+    ULONG len;
+    DWORD ret;
+
+    pRtlInitUnicodeString(&str, L"\\BaseNamedObjects\\test_semaphore");
+    InitializeObjectAttributes(&attr, &str, 0, 0, NULL);
+
+    status = pNtCreateSemaphore(&semaphore, GENERIC_ALL, &attr, 2, 1);
+    ok( status == STATUS_INVALID_PARAMETER, "Failed to create Semaphore(%08x)\n", status );
+    status = pNtCreateSemaphore(&semaphore, GENERIC_ALL, &attr, 1, 2);
+    ok( status == STATUS_SUCCESS, "Failed to create Semaphore(%08x)\n", status );
+
+    /* bogus */
+    status = pNtQuerySemaphore(semaphore, SemaphoreBasicInformation, &info, 0, NULL);
+    ok( status == STATUS_INFO_LENGTH_MISMATCH,
+        "Failed to NtQuerySemaphore, expected STATUS_INFO_LENGTH_MISMATCH, got %08x\n", status );
+    status = pNtQuerySemaphore(semaphore, 0x42, &info, sizeof(info), NULL);
+    ok( status == STATUS_INVALID_INFO_CLASS,
+        "Failed to NtQuerySemaphore, expected STATUS_INVALID_INFO_CLASS, got %08x\n", status );
+    status = pNtQuerySemaphore((HANDLE)0xdeadbeef, SemaphoreBasicInformation, &info, sizeof(info), NULL);
+    ok( status == STATUS_INVALID_HANDLE,
+        "Failed to NtQuerySemaphore, expected STATUS_INVALID_HANDLE, got %08x\n", status );
+
+    len = -1;
+    memset(&info, 0xcc, sizeof(info));
+    status = pNtQuerySemaphore(semaphore, SemaphoreBasicInformation, &info, sizeof(info), &len);
+    ok( status == STATUS_SUCCESS, "NtQuerySemaphore failed %08x\n", status );
+    ok( info.CurrentCount == 1, "expected 1, got %d\n", info.CurrentCount );
+    ok( info.MaximumCount == 2, "expected 2, got %d\n", info.MaximumCount );
+    ok( len == sizeof(info), "got %u\n", len );
+
+    ret = WaitForSingleObject( semaphore, 1000 );
+    ok( ret == WAIT_OBJECT_0, "WaitForSingleObject failed %08x\n", ret );
+
+    memset(&info, 0xcc, sizeof(info));
+    status = pNtQuerySemaphore(semaphore, SemaphoreBasicInformation, &info, sizeof(info), NULL);
+    ok( status == STATUS_SUCCESS, "NtQuerySemaphore failed %08x\n", status );
+    ok( info.CurrentCount == 0, "expected 0, got %d\n", info.CurrentCount );
+    ok( info.MaximumCount == 2, "expected 2, got %d\n", info.MaximumCount );
+
+    prev = 0xdeadbeef;
+    status = pNtReleaseSemaphore(semaphore, 3, &prev);
+    ok( status == STATUS_SEMAPHORE_LIMIT_EXCEEDED, "NtReleaseSemaphore failed %08x\n", status );
+    ok( prev == 0xdeadbeef, "NtReleaseSemaphore failed, expected 0xdeadbeef, got %d\n", prev );
+
+    prev = 0xdeadbeef;
+    status = pNtReleaseSemaphore(semaphore, 1, &prev);
+    ok( status == STATUS_SUCCESS, "NtReleaseSemaphore failed %08x\n", status );
+    ok( prev == 0, "NtReleaseSemaphore failed, expected 0, got %d\n", prev );
+
+    prev = 0xdeadbeef;
+    status = pNtReleaseSemaphore(semaphore, 1, &prev);
+    ok( status == STATUS_SUCCESS, "NtReleaseSemaphore failed %08x\n", status );
+    ok( prev == 1, "NtReleaseSemaphore failed, expected 1, got %d\n", prev );
+
+    prev = 0xdeadbeef;
+    status = pNtReleaseSemaphore(semaphore, 1, &prev);
+    ok( status == STATUS_SEMAPHORE_LIMIT_EXCEEDED, "NtReleaseSemaphore failed %08x\n", status );
+    ok( prev == 0xdeadbeef, "NtReleaseSemaphore failed, expected 0xdeadbeef, got %d\n", prev );
+
+    memset(&info, 0xcc, sizeof(info));
+    status = pNtQuerySemaphore(semaphore, SemaphoreBasicInformation, &info, sizeof(info), NULL);
+    ok( status == STATUS_SUCCESS, "NtQuerySemaphore failed %08x\n", status );
+    ok( info.CurrentCount == 2, "expected 2, got %d\n", info.CurrentCount );
+    ok( info.MaximumCount == 2, "expected 2, got %d\n", info.MaximumCount );
+
+    NtClose( semaphore );
 }
 
 static void test_wait_on_address(void)
@@ -2296,6 +2406,7 @@ START_TEST(om)
     pNtQuerySymbolicLinkObject  = (void *)GetProcAddress(hntdll, "NtQuerySymbolicLinkObject");
     pNtCreateSemaphore      =  (void *)GetProcAddress(hntdll, "NtCreateSemaphore");
     pNtOpenSemaphore        =  (void *)GetProcAddress(hntdll, "NtOpenSemaphore");
+    pNtQuerySemaphore       =  (void *)GetProcAddress(hntdll, "NtQuerySemaphore");
     pNtCreateTimer          =  (void *)GetProcAddress(hntdll, "NtCreateTimer");
     pNtOpenTimer            =  (void *)GetProcAddress(hntdll, "NtOpenTimer");
     pNtCreateSection        =  (void *)GetProcAddress(hntdll, "NtCreateSection");
@@ -2314,6 +2425,7 @@ START_TEST(om)
     pRtlWakeAddressAll      =  (void *)GetProcAddress(hntdll, "RtlWakeAddressAll");
     pRtlWakeAddressSingle   =  (void *)GetProcAddress(hntdll, "RtlWakeAddressSingle");
     pNtOpenProcess          =  (void *)GetProcAddress(hntdll, "NtOpenProcess");
+    pNtCreateDebugObject    =  (void *)GetProcAddress(hntdll, "NtCreateDebugObject");
     pNtQuerySystemInformation = (void *)GetProcAddress(hntdll, "NtQuerySystemInformation");
 
     test_case_sensitive();
@@ -2327,6 +2439,7 @@ START_TEST(om)
     test_type_mismatch();
     test_event();
     test_mutant();
+    test_semaphore();
     test_keyed_events();
     test_null_device();
     test_wait_on_address();

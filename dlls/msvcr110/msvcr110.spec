@@ -990,7 +990,7 @@
 @ cdecl __p__mbctype()
 @ cdecl __p__pctype()
 @ cdecl __p__pgmptr()
-@ stub __p__pwctype()
+@ cdecl __p__pwctype()
 @ cdecl __p__timezone()
 @ cdecl __p__tzname()
 @ cdecl __p__wcmdln()
@@ -998,14 +998,14 @@
 @ cdecl __p__wpgmptr()
 @ cdecl __pctype_func()
 @ extern __pioinfo MSVCRT___pioinfo
-@ stub __pwctype_func
+@ cdecl __pwctype_func()
 @ cdecl __pxcptinfoptrs()
 @ stub __report_gsfailure
 @ cdecl __set_app_type(long)
 @ extern __setlc_active MSVCRT___setlc_active
 @ cdecl __setusermatherr(ptr)
 @ cdecl __strncnt(str long)
-@ varargs  __swprintf_l(ptr wstr ptr)
+@ varargs __swprintf_l(ptr wstr ptr)
 @ cdecl __sys_errlist()
 @ cdecl __sys_nerr()
 @ cdecl __threadhandle() kernel32.GetCurrentThread
@@ -1217,7 +1217,7 @@
 @ varargs _fwscanf_l(ptr wstr ptr)
 @ varargs _fwscanf_s_l(ptr wstr ptr)
 @ cdecl _gcvt(double long str)
-@ cdecl _gcvt_s(ptr long  double long)
+@ cdecl _gcvt_s(ptr long double long)
 @ cdecl _get_current_locale()
 @ cdecl _get_daylight(ptr)
 @ cdecl _get_doserrno(ptr)
@@ -1249,7 +1249,7 @@
 @ cdecl _getdrives() kernel32.GetLogicalDrives
 @ cdecl _getmaxstdio()
 @ cdecl _getmbcp()
-@ cdecl _getpid() _getpid
+@ cdecl _getpid()
 @ cdecl _getptd()
 @ stub _getsystime(ptr)
 @ cdecl _getw(ptr)
@@ -1340,9 +1340,9 @@
 @ cdecl _ismbcl2_l(long ptr)
 @ cdecl _ismbclegal(long)
 @ cdecl _ismbclegal_l(long ptr)
-@ stub _ismbclower(long)
+@ cdecl _ismbclower(long)
 @ cdecl _ismbclower_l(long ptr)
-@ stub _ismbcprint(long)
+@ cdecl _ismbcprint(long)
 @ cdecl _ismbcprint_l(long ptr)
 @ cdecl _ismbcpunct(long)
 @ cdecl _ismbcpunct_l(long ptr)
@@ -2015,7 +2015,7 @@
 @ cdecl exp(double)
 @ cdecl -arch=!i386 expf(float)
 @ cdecl fabs(double)
-@ cdecl -arch=!i386 fabsf(float)
+@ cdecl -arch=arm,arm64 fabsf(float)
 @ cdecl fclose(ptr)
 @ cdecl feof(ptr)
 @ cdecl ferror(ptr)
@@ -2091,7 +2091,7 @@
 @ cdecl ldexp(double long)
 @ cdecl -ret64 ldiv(long long)
 @ cdecl -ret64 llabs(int64)
-@ cdecl lldiv(int64 int64)
+@ cdecl -norelay lldiv(int64 int64)
 @ cdecl localeconv()
 @ cdecl log(double)
 @ cdecl -arch=!i386 logf(float)

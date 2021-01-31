@@ -524,7 +524,7 @@ struct process *create_process( int fd, struct process *parent, int inherit_all,
         goto error;
     }
     process->parent_id       = 0;
-    process->debugger        = NULL;
+    process->debug_obj       = NULL;
     process->debug_event     = NULL;
     process->handles         = NULL;
     process->msg_fd          = NULL;
@@ -542,7 +542,6 @@ struct process *create_process( int fd, struct process *parent, int inherit_all,
     process->startup_state   = STARTUP_IN_PROGRESS;
     process->startup_info    = NULL;
     process->idle_event      = NULL;
-    process->exe_file        = NULL;
     process->peb             = 0;
     process->ldt_copy        = 0;
     process->dir_cache       = NULL;
@@ -661,7 +660,6 @@ static void process_destroy( struct object *obj )
     if (process->msg_fd) release_object( process->msg_fd );
     list_remove( &process->entry );
     if (process->idle_event) release_object( process->idle_event );
-    if (process->exe_file) release_object( process->exe_file );
     if (process->id) free_ptid( process->id );
     if (process->token) release_object( process->token );
     free( process->dir_cache );
@@ -945,9 +943,7 @@ static void process_killed( struct process *process )
     close_process_handles( process );
     cancel_process_asyncs( process );
     if (process->idle_event) release_object( process->idle_event );
-    if (process->exe_file) release_object( process->exe_file );
     process->idle_event = NULL;
-    process->exe_file = NULL;
     assert( !process->console );
 
     while ((ptr = list_head( &process->rawinput_devices )))
@@ -1075,8 +1071,8 @@ void kill_process( struct process *process, int violent_death )
     }
 }
 
-/* kill all processes being debugged by a given thread */
-void kill_debugged_processes( struct thread *debugger, int exit_code )
+/* detach all processes being debugged by a given thread */
+void detach_debugged_processes( struct debug_obj *debug_obj, int exit_code )
 {
     for (;;)  /* restart from the beginning of the list every time */
     {
@@ -1086,26 +1082,15 @@ void kill_debugged_processes( struct thread *debugger, int exit_code )
         LIST_FOR_EACH_ENTRY( process, &process_list, struct process, entry )
         {
             if (!process->running_threads) continue;
-            if (process->debugger == debugger) break;
+            if (process->debug_obj == debug_obj) break;
         }
         if (&process->entry == &process_list) break;  /* no process found */
-        process->debugger = NULL;
-        terminate_process( process, NULL, exit_code );
-    }
-}
-
-
-/* detach a debugger from all its debuggees */
-void detach_debugged_processes( struct thread *debugger )
-{
-    struct process *process;
-
-    LIST_FOR_EACH_ENTRY( process, &process_list, struct process, entry )
-    {
-        if (process->debugger == debugger && process->running_threads)
+        if (exit_code)
         {
-            debugger_detach( process, debugger );
+            process->debug_obj = NULL;
+            terminate_process( process, NULL, exit_code );
         }
+        else debugger_detach( process, debug_obj );
     }
 }
 
@@ -1270,10 +1255,6 @@ DECL_HANDLER(new_process)
 
     process->startup_info = (struct startup_info *)grab_object( info );
 
-    if (req->exe_file &&
-        !(process->exe_file = get_file_obj( current->process, req->exe_file, FILE_READ_DATA )))
-        goto done;
-
     if (parent->job
        && !(req->create_flags & CREATE_BREAKAWAY_FROM_JOB)
        && !(parent->job->limit_flags & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK))
@@ -1307,9 +1288,9 @@ DECL_HANDLER(new_process)
         set_process_debugger( process, current );
         process->debug_children = !(req->create_flags & DEBUG_ONLY_THIS_PROCESS);
     }
-    else if (current->process->debugger && current->process->debug_children)
+    else if (current->process->debug_children)
     {
-        set_process_debugger( process, current->process->debugger );
+        process->debug_obj = current->process->debug_obj;
         /* debug_children is set to 1 by default */
     }
 
@@ -1419,15 +1400,13 @@ DECL_HANDLER(init_process_done)
     process->ldt_copy = req->ldt_copy;
     process->start_time = current_time;
     current->entry_point = req->entry;
-    if (process->exe_file) release_object( process->exe_file );
-    process->exe_file = NULL;
 
     init_process_tracing( process );
     generate_startup_debug_events( process, req->entry );
     set_process_startup_state( process, STARTUP_DONE );
 
     if (req->gui) process->idle_event = create_event( NULL, NULL, 0, 1, 0, NULL );
-    if (process->debugger) set_process_debug_flag( process, 1 );
+    if (process->debug_obj) set_process_debug_flag( process, 1 );
     reply->suspend = (current->suspend || process->suspend);
 
     if (have_cpu_override)
@@ -1479,7 +1458,7 @@ DECL_HANDLER(get_process_info)
         reply->start_time       = process->start_time;
         reply->end_time         = process->end_time;
         reply->cpu              = process->cpu;
-        reply->debugger_present = !!process->debugger;
+        reply->debugger_present = !!process->debug_obj;
         reply->debug_children   = process->debug_children;
         if (get_reply_max_size())
         {

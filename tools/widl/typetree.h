@@ -61,7 +61,9 @@ type_t *type_coclass_define(type_t *coclass, ifref_list_t *ifaces);
 type_t *type_runtimeclass_define(type_t *runtimeclass, ifref_list_t *ifaces);
 int type_is_equal(const type_t *type1, const type_t *type2);
 const char *type_get_name(const type_t *type, enum name_type name_type);
+const char *type_get_qualified_name(const type_t *type, enum name_type name_type);
 char *gen_name(void);
+extern int is_attr(const attr_list_t *list, enum attr_type t);
 
 /* FIXME: shouldn't need to export this */
 type_t *duptype(type_t *t, int dupname);
@@ -364,13 +366,12 @@ static inline type_t *type_runtimeclass_get_default_iface(const type_t *type)
 {
     ifref_list_t *ifaces = type_runtimeclass_get_ifaces(type);
     ifref_t *entry;
-    attr_t *attr;
 
+    if (!ifaces) return NULL;
     LIST_FOR_EACH_ENTRY(entry, ifaces, ifref_t, entry)
-        LIST_FOR_EACH_ENTRY(attr, entry->attrs, attr_t, entry)
-            if (attr->type == ATTR_DEFAULT) return entry->iface;
+        if (is_attr(entry->attrs, ATTR_DEFAULT))
+            return entry->iface;
 
-    assert(0);
     return NULL;
 }
 

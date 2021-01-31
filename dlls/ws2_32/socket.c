@@ -4529,6 +4529,123 @@ static DWORD server_ioctl_sock( SOCKET s, DWORD code, LPVOID in_buff, DWORD in_s
     return NtStatusToWSAError( status );
 }
 
+static DWORD get_interface_list(SOCKET s, void *out_buff, DWORD out_size, DWORD *ret_size, DWORD *total_bytes)
+{
+    DWORD size, interface_count = 0, ret;
+    INTERFACE_INFO *info = out_buff;
+    PMIB_IPADDRTABLE table = NULL;
+    struct if_nameindex *if_ni;
+    DWORD status = 0;
+    int fd;
+
+    if (!out_buff || !ret_size)
+        return WSAEFAULT;
+
+    if ((fd = get_sock_fd(s, 0, NULL)) == -1)
+        return SOCKET_ERROR;
+
+    if ((ret = GetIpAddrTable(NULL, &size, TRUE)) != ERROR_INSUFFICIENT_BUFFER)
+    {
+        if (ret != ERROR_NO_DATA)
+        {
+            ERR("Unable to get ip address table.\n");
+            status = WSAEINVAL;
+        }
+        goto done;
+    }
+    if (!(table = heap_alloc(size)))
+    {
+        ERR("No memory.\n");
+        status = WSAEINVAL;
+        goto done;
+    }
+    if (GetIpAddrTable(table, &size, TRUE) != NO_ERROR)
+    {
+        ERR("Unable to get interface table.\n");
+        status = WSAEINVAL;
+        goto done;
+    }
+    if (table->dwNumEntries * sizeof(INTERFACE_INFO) > out_size)
+    {
+        WARN("Buffer too small, dwNumEntries %u, out_size = %u.\n", table->dwNumEntries, out_size);
+        *ret_size = 0;
+        status = WSAEFAULT;
+        goto done;
+    }
+
+    if (!(if_ni = if_nameindex()))
+    {
+        ERR("Unable to get interface name index.\n");
+        status = WSAEINVAL;
+        goto done;
+    }
+
+    for (; interface_count < table->dwNumEntries; ++interface_count, ++info)
+    {
+        unsigned int addr, mask;
+        struct ifreq if_info;
+        unsigned int i;
+
+        memset(info, 0, sizeof(*info));
+
+        for (i = 0; if_ni[i].if_index || if_ni[i].if_name; ++i)
+            if (if_ni[i].if_index == table->table[interface_count].dwIndex)
+                break;
+
+        if (!if_ni[i].if_name)
+        {
+            ERR("Error obtaining interface name for ifindex %u.\n", table->table[interface_count].dwIndex);
+            status = WSAEINVAL;
+            break;
+        }
+
+        lstrcpynA(if_info.ifr_name, if_ni[i].if_name, IFNAMSIZ);
+        if (ioctl(fd, SIOCGIFFLAGS, &if_info) < 0)
+        {
+            ERR("Error obtaining status flags for socket.\n");
+            status = WSAEINVAL;
+            break;
+        }
+
+        if (if_info.ifr_flags & IFF_BROADCAST)
+            info->iiFlags |= WS_IFF_BROADCAST;
+#ifdef IFF_POINTOPOINT
+        if (if_info.ifr_flags & IFF_POINTOPOINT)
+            info->iiFlags |= WS_IFF_POINTTOPOINT;
+#endif
+        if (if_info.ifr_flags & IFF_LOOPBACK)
+            info->iiFlags |= WS_IFF_LOOPBACK;
+        if (if_info.ifr_flags & IFF_UP)
+            info->iiFlags |= WS_IFF_UP;
+        if (if_info.ifr_flags & IFF_MULTICAST)
+            info->iiFlags |= WS_IFF_MULTICAST;
+
+        addr = table->table[interface_count].dwAddr;
+        mask = table->table[interface_count].dwMask;
+
+        info->iiAddress.AddressIn.sin_family = WS_AF_INET;
+        info->iiAddress.AddressIn.sin_port = 0;
+        info->iiAddress.AddressIn.sin_addr.WS_s_addr = addr;
+
+        info->iiNetmask.AddressIn.sin_family = WS_AF_INET;
+        info->iiNetmask.AddressIn.sin_port = 0;
+        info->iiNetmask.AddressIn.sin_addr.WS_s_addr = mask;
+
+        if (if_info.ifr_flags & IFF_BROADCAST)
+        {
+            info->iiBroadcastAddress.AddressIn.sin_family = WS_AF_INET;
+            info->iiBroadcastAddress.AddressIn.sin_port = 0;
+            info->iiBroadcastAddress.AddressIn.sin_addr.WS_s_addr = addr | ~mask;
+        }
+    }
+    if_freenameindex(if_ni);
+done:
+    heap_free(table);
+    *total_bytes = sizeof(INTERFACE_INFO) * interface_count;
+    release_sock_fd(s, fd);
+    return status;
+}
+
 /**********************************************************************
  *              WSAIoctl                (WS2_32.50)
  *
@@ -4624,111 +4741,9 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
 
    case WS_SIO_GET_INTERFACE_LIST:
        {
-           INTERFACE_INFO* intArray = out_buff;
-           DWORD size, numInt = 0, apiReturn;
-
            TRACE("-> SIO_GET_INTERFACE_LIST request\n");
 
-           if (!out_buff || !ret_size)
-           {
-               SetLastError(WSAEFAULT);
-               return SOCKET_ERROR;
-           }
-
-           fd = get_sock_fd( s, 0, NULL );
-           if (fd == -1) return SOCKET_ERROR;
-
-           apiReturn = GetAdaptersInfo(NULL, &size);
-           if (apiReturn == ERROR_BUFFER_OVERFLOW)
-           {
-               PIP_ADAPTER_INFO table = HeapAlloc(GetProcessHeap(),0,size);
-
-               if (table)
-               {
-                  if (GetAdaptersInfo(table, &size) == NO_ERROR)
-                  {
-                     PIP_ADAPTER_INFO ptr;
-
-                     for (ptr = table, numInt = 0; ptr; ptr = ptr->Next)
-                     {
-                        unsigned int addr, mask, bcast;
-                        struct ifreq ifInfo;
-
-                        /* Skip interfaces without an IPv4 address. */
-                        if (ptr->IpAddressList.IpAddress.String[0] == '\0')
-                            continue;
-
-                        if ((numInt + 1) * sizeof(INTERFACE_INFO) > out_size)
-                        {
-                            WARN("Buffer too small = %u, out_size = %u\n", numInt + 1, out_size);
-                            status = WSAEFAULT;
-                            if (ret_size) *ret_size = 0;
-                            break;
-                        }
-
-                        /* Socket Status Flags */
-                        lstrcpynA(ifInfo.ifr_name, ptr->AdapterName, IFNAMSIZ);
-                        if (ioctl(fd, SIOCGIFFLAGS, &ifInfo) < 0)
-                        {
-                           ERR("Error obtaining status flags for socket!\n");
-                           status = WSAEINVAL;
-                           break;
-                        }
-                        else
-                        {
-                           /* set flags; the values of IFF_* are not the same
-                              under Linux and Windows, therefore must generate
-                              new flags */
-                           intArray->iiFlags = 0;
-                           if (ifInfo.ifr_flags & IFF_BROADCAST)
-                              intArray->iiFlags |= WS_IFF_BROADCAST;
-#ifdef IFF_POINTOPOINT
-                           if (ifInfo.ifr_flags & IFF_POINTOPOINT)
-                              intArray->iiFlags |= WS_IFF_POINTTOPOINT;
-#endif
-                           if (ifInfo.ifr_flags & IFF_LOOPBACK)
-                              intArray->iiFlags |= WS_IFF_LOOPBACK;
-                           if (ifInfo.ifr_flags & IFF_UP)
-                              intArray->iiFlags |= WS_IFF_UP;
-                           if (ifInfo.ifr_flags & IFF_MULTICAST)
-                              intArray->iiFlags |= WS_IFF_MULTICAST;
-                        }
-
-                        addr = inet_addr(ptr->IpAddressList.IpAddress.String);
-                        mask = inet_addr(ptr->IpAddressList.IpMask.String);
-                        bcast = addr | ~mask;
-                        intArray->iiAddress.AddressIn.sin_family = WS_AF_INET;
-                        intArray->iiAddress.AddressIn.sin_port = 0;
-                        intArray->iiAddress.AddressIn.sin_addr.WS_s_addr = addr;
-
-                        intArray->iiNetmask.AddressIn.sin_family = WS_AF_INET;
-                        intArray->iiNetmask.AddressIn.sin_port = 0;
-                        intArray->iiNetmask.AddressIn.sin_addr.WS_s_addr = mask;
-
-                        intArray->iiBroadcastAddress.AddressIn.sin_family = WS_AF_INET;
-                        intArray->iiBroadcastAddress.AddressIn.sin_port = 0;
-                        intArray->iiBroadcastAddress.AddressIn.sin_addr.WS_s_addr = bcast;
-                        intArray++;
-                        numInt++;
-                     }
-                  }
-                  else
-                  {
-                     ERR("Unable to get interface table!\n");
-                     status = WSAEINVAL;
-                  }
-                  HeapFree(GetProcessHeap(),0,table);
-               }
-               else status = WSAEINVAL;
-           }
-           else if (apiReturn != ERROR_NO_DATA)
-           {
-               ERR("Unable to get interface table!\n");
-               status = WSAEINVAL;
-           }
-           /* Calculate the size of the array being returned */
-           total = sizeof(INTERFACE_INFO) * numInt;
-           release_sock_fd( s, fd );
+           status = get_interface_list(s, out_buff, out_size, ret_size, &total);
            break;
        }
 
@@ -4982,7 +4997,7 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
                                    overlapped, completion);
         if (status != WSAEOPNOTSUPP)
         {
-            if (status == 0 || status == WSA_IO_PENDING)
+            if (status == 0 || status == WSA_IO_PENDING || status == WSAEWOULDBLOCK)
                 TRACE("-> %s request\n", debugstr_wsaioctl(code));
             else
                 ERR("-> %s request failed with status 0x%x\n", debugstr_wsaioctl(code), status);
@@ -6560,6 +6575,21 @@ static char *get_fqdn(void)
     return ret;
 }
 
+static BOOL addrinfo_in_list( const struct WS_addrinfo *list, const struct WS_addrinfo *ai )
+{
+    const struct WS_addrinfo *cursor = list;
+    while (cursor)
+    {
+        if (ai->ai_flags == cursor->ai_flags && ai->ai_family == cursor->ai_family &&
+            ai->ai_socktype == cursor->ai_socktype && ai->ai_protocol == cursor->ai_protocol &&
+            ai->ai_addrlen == cursor->ai_addrlen && !memcmp(ai->ai_addr, cursor->ai_addr, ai->ai_addrlen) &&
+            ((ai->ai_canonname && cursor->ai_canonname && !strcmp(ai->ai_canonname, cursor->ai_canonname))
+            || (!ai->ai_canonname && !cursor->ai_canonname))) return TRUE;
+        cursor = cursor->ai_next;
+    }
+    return FALSE;
+}
+
 /***********************************************************************
  *		getaddrinfo		(WS2_32.@)
  */
@@ -6693,7 +6723,6 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
             if (!ai)
                 goto outofmem;
 
-            *xai = ai;xai = &ai->ai_next;
             ai->ai_flags    = convert_aiflag_u2w(xuai->ai_flags);
             ai->ai_family   = convert_af_u2w(xuai->ai_family);
             /* copy whatever was sent in the hints */
@@ -6729,6 +6758,18 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
                     goto outofmem;
                 ai->ai_addrlen = len;
             } while (1);
+
+            if (addrinfo_in_list(*res, ai))
+            {
+                HeapFree(GetProcessHeap(), 0, ai->ai_canonname);
+                HeapFree(GetProcessHeap(), 0, ai->ai_addr);
+                HeapFree(GetProcessHeap(), 0, ai);
+            }
+            else
+            {
+                *xai = ai;
+                xai = &ai->ai_next;
+            }
             xuai = xuai->ai_next;
         }
         freeaddrinfo(unixaires);
@@ -8531,30 +8572,15 @@ INT WINAPI WSAAddressToStringW( LPSOCKADDR sockaddr, DWORD len,
                                 LPWSAPROTOCOL_INFOW info, LPWSTR string,
                                 LPDWORD lenstr )
 {
-    INT   ret;
-    DWORD size;
-    WCHAR buffer[54]; /* 32 digits + 7':' + '[' + '%" + 5 digits + ']:' + 5 digits + '\0' */
-    CHAR bufAddr[54];
+    INT ret;
+    char buf[54]; /* 32 digits + 7':' + '[' + '%" + 5 digits + ']:' + 5 digits + '\0' */
 
     TRACE( "(%p, %d, %p, %p, %p)\n", sockaddr, len, info, string, lenstr );
 
-    size = *lenstr;
-    ret = WSAAddressToStringA(sockaddr, len, NULL, bufAddr, &size);
+    if ((ret = WSAAddressToStringA(sockaddr, len, NULL, buf, lenstr))) return ret;
 
-    if (ret) return ret;
-
-    MultiByteToWideChar(CP_ACP, 0, bufAddr, size, buffer, ARRAY_SIZE(buffer));
-
-    if (*lenstr <  size)
-    {
-        *lenstr = size;
-        SetLastError(WSAEFAULT);
-        return SOCKET_ERROR;
-    }
-
-    TRACE("=> %s,%u bytes\n", debugstr_w(buffer), size);
-    *lenstr = size;
-    lstrcpyW( string, buffer );
+    MultiByteToWideChar(CP_ACP, 0, buf, *lenstr, string, *lenstr);
+    TRACE("=> %s,%u chars\n", debugstr_w(string), *lenstr);
     return 0;
 }
 

@@ -22,6 +22,8 @@
 #define __GST_PRIVATE_INCLUDED__
 
 #include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <gst/gst.h>
 #include <gst/video/video.h>
@@ -67,7 +69,7 @@ static inline const char *debugstr_time(REFERENCE_TIME time)
 extern LONG object_locks;
 
 HRESULT avi_splitter_create(IUnknown *outer, IUnknown **out) DECLSPEC_HIDDEN;
-HRESULT gstdemux_create(IUnknown *outer, IUnknown **out) DECLSPEC_HIDDEN;
+HRESULT decodebin_parser_create(IUnknown *outer, IUnknown **out) DECLSPEC_HIDDEN;
 HRESULT mpeg_splitter_create(IUnknown *outer, IUnknown **out) DECLSPEC_HIDDEN;
 HRESULT wave_parser_create(IUnknown *outer, IUnknown **out) DECLSPEC_HIDDEN;
 

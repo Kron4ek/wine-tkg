@@ -960,7 +960,7 @@
 @ cdecl __p__wpgmptr() msvcr120.__p__wpgmptr
 @ cdecl __pctype_func() msvcr120.__pctype_func
 @ extern __pioinfo msvcr120.__pioinfo
-@ stub __pwctype_func
+@ cdecl __pwctype_func() msvcr120.__pwctype_func
 @ cdecl __pxcptinfoptrs() msvcr120.__pxcptinfoptrs
 @ stub __report_gsfailure
 @ extern __setlc_active msvcr120.__setlc_active
@@ -1145,7 +1145,7 @@
 @ varargs _fwscanf_l(ptr wstr ptr) msvcr120._fwscanf_l
 @ varargs _fwscanf_s_l(ptr wstr ptr) msvcr120._fwscanf_s_l
 @ cdecl _gcvt(double long str) msvcr120._gcvt
-@ cdecl _gcvt_s(ptr long  double long) msvcr120._gcvt_s
+@ cdecl _gcvt_s(ptr long double long) msvcr120._gcvt_s
 @ cdecl _get_current_locale() msvcr120._get_current_locale
 @ cdecl _get_daylight(ptr) msvcr120._get_daylight
 @ cdecl _get_doserrno(ptr) msvcr120._get_doserrno
@@ -1804,7 +1804,7 @@
 @ cdecl expm1f(float) msvcr120.expm1f
 @ cdecl expm1l(double) msvcr120.expm1l
 @ cdecl fabs(double) msvcr120.fabs
-@ cdecl -arch=!i386 fabsf(float) msvcr120.fabsf
+@ cdecl -arch=arm,arm64 fabsf(float) msvcr120.fabsf
 @ cdecl fclose(ptr) msvcr120.fclose
 @ cdecl fdim(double double) msvcr120.fdim
 @ cdecl fdimf(float float) msvcr120.fdimf
@@ -1910,7 +1910,7 @@
 @ cdecl lgammaf(float) msvcr120.lgammaf
 @ cdecl lgammal(double) msvcr120.lgammal
 @ cdecl -ret64 llabs(int64) msvcr120.llabs
-@ cdecl lldiv(int64 int64) msvcr120.lldiv
+@ cdecl -norelay lldiv(int64 int64) msvcr120.lldiv
 @ cdecl -ret64 llrint(double) msvcr120.llrint
 @ cdecl -ret64 llrintf(float) msvcr120.llrintf
 @ cdecl -ret64 llrintl(double) msvcr120.llrintl

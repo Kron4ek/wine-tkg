@@ -322,6 +322,21 @@ static struct memory_view *find_mapped_view( struct process *process, client_ptr
     return NULL;
 }
 
+/* add a view to the process list */
+static void add_process_view( struct process *process, struct memory_view *view )
+{
+    if (view->flags & SEC_IMAGE)
+    {
+        if (!is_process_init_done( process ) && !(view->image.image_charact & IMAGE_FILE_DLL))
+        {
+            /* main exe */
+            list_add_head( &process->views, &view->entry );
+            return;
+        }
+    }
+    list_add_tail( &process->views, &view->entry );
+}
+
 static void free_memory_view( struct memory_view *view )
 {
     if (view->fd) release_object( view->fd );
@@ -643,21 +658,23 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
         clr_va = nt.opt.hdr32.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress;
         clr_size = nt.opt.hdr32.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].Size;
 
-        mapping->image.base           = nt.opt.hdr32.ImageBase;
-        mapping->image.entry_point    = nt.opt.hdr32.ImageBase + nt.opt.hdr32.AddressOfEntryPoint;
-        mapping->image.map_size       = ROUND_SIZE( nt.opt.hdr32.SizeOfImage );
-        mapping->image.stack_size     = nt.opt.hdr32.SizeOfStackReserve;
-        mapping->image.stack_commit   = nt.opt.hdr32.SizeOfStackCommit;
-        mapping->image.subsystem      = nt.opt.hdr32.Subsystem;
-        mapping->image.subsystem_low  = nt.opt.hdr32.MinorSubsystemVersion;
-        mapping->image.subsystem_high = nt.opt.hdr32.MajorSubsystemVersion;
-        mapping->image.dll_charact    = nt.opt.hdr32.DllCharacteristics;
-        mapping->image.contains_code  = (nt.opt.hdr32.SizeOfCode ||
-                                         nt.opt.hdr32.AddressOfEntryPoint ||
-                                         nt.opt.hdr32.SectionAlignment & page_mask);
-        mapping->image.header_size    = nt.opt.hdr32.SizeOfHeaders;
-        mapping->image.checksum       = nt.opt.hdr32.CheckSum;
-        mapping->image.image_flags    = 0;
+        mapping->image.base            = nt.opt.hdr32.ImageBase;
+        mapping->image.entry_point     = nt.opt.hdr32.ImageBase + nt.opt.hdr32.AddressOfEntryPoint;
+        mapping->image.map_size        = ROUND_SIZE( nt.opt.hdr32.SizeOfImage );
+        mapping->image.stack_size      = nt.opt.hdr32.SizeOfStackReserve;
+        mapping->image.stack_commit    = nt.opt.hdr32.SizeOfStackCommit;
+        mapping->image.subsystem       = nt.opt.hdr32.Subsystem;
+        mapping->image.subsystem_minor = nt.opt.hdr32.MinorSubsystemVersion;
+        mapping->image.subsystem_major = nt.opt.hdr32.MajorSubsystemVersion;
+        mapping->image.osversion_minor = nt.opt.hdr32.MinorOperatingSystemVersion;
+        mapping->image.osversion_major = nt.opt.hdr32.MajorOperatingSystemVersion;
+        mapping->image.dll_charact     = nt.opt.hdr32.DllCharacteristics;
+        mapping->image.contains_code   = (nt.opt.hdr32.SizeOfCode ||
+                                          nt.opt.hdr32.AddressOfEntryPoint ||
+                                          nt.opt.hdr32.SectionAlignment & page_mask);
+        mapping->image.header_size     = nt.opt.hdr32.SizeOfHeaders;
+        mapping->image.checksum        = nt.opt.hdr32.CheckSum;
+        mapping->image.image_flags     = 0;
         if (nt.opt.hdr32.SectionAlignment & page_mask)
             mapping->image.image_flags |= IMAGE_FLAGS_ImageMappedFlat;
         if ((nt.opt.hdr32.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) &&
@@ -683,21 +700,23 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
         clr_va = nt.opt.hdr64.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress;
         clr_size = nt.opt.hdr64.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].Size;
 
-        mapping->image.base           = nt.opt.hdr64.ImageBase;
-        mapping->image.entry_point    = nt.opt.hdr64.ImageBase + nt.opt.hdr64.AddressOfEntryPoint;
-        mapping->image.map_size       = ROUND_SIZE( nt.opt.hdr64.SizeOfImage );
-        mapping->image.stack_size     = nt.opt.hdr64.SizeOfStackReserve;
-        mapping->image.stack_commit   = nt.opt.hdr64.SizeOfStackCommit;
-        mapping->image.subsystem      = nt.opt.hdr64.Subsystem;
-        mapping->image.subsystem_low  = nt.opt.hdr64.MinorSubsystemVersion;
-        mapping->image.subsystem_high = nt.opt.hdr64.MajorSubsystemVersion;
-        mapping->image.dll_charact    = nt.opt.hdr64.DllCharacteristics;
-        mapping->image.contains_code  = (nt.opt.hdr64.SizeOfCode ||
-                                         nt.opt.hdr64.AddressOfEntryPoint ||
-                                         nt.opt.hdr64.SectionAlignment & page_mask);
-        mapping->image.header_size    = nt.opt.hdr64.SizeOfHeaders;
-        mapping->image.checksum       = nt.opt.hdr64.CheckSum;
-        mapping->image.image_flags    = 0;
+        mapping->image.base            = nt.opt.hdr64.ImageBase;
+        mapping->image.entry_point     = nt.opt.hdr64.ImageBase + nt.opt.hdr64.AddressOfEntryPoint;
+        mapping->image.map_size        = ROUND_SIZE( nt.opt.hdr64.SizeOfImage );
+        mapping->image.stack_size      = nt.opt.hdr64.SizeOfStackReserve;
+        mapping->image.stack_commit    = nt.opt.hdr64.SizeOfStackCommit;
+        mapping->image.subsystem       = nt.opt.hdr64.Subsystem;
+        mapping->image.subsystem_minor = nt.opt.hdr64.MinorSubsystemVersion;
+        mapping->image.subsystem_major = nt.opt.hdr64.MajorSubsystemVersion;
+        mapping->image.osversion_minor = nt.opt.hdr64.MinorOperatingSystemVersion;
+        mapping->image.osversion_major = nt.opt.hdr64.MajorOperatingSystemVersion;
+        mapping->image.dll_charact     = nt.opt.hdr64.DllCharacteristics;
+        mapping->image.contains_code   = (nt.opt.hdr64.SizeOfCode ||
+                                          nt.opt.hdr64.AddressOfEntryPoint ||
+                                          nt.opt.hdr64.SectionAlignment & page_mask);
+        mapping->image.header_size     = nt.opt.hdr64.SizeOfHeaders;
+        mapping->image.checksum        = nt.opt.hdr64.CheckSum;
+        mapping->image.image_flags     = 0;
         if (nt.opt.hdr64.SectionAlignment & page_mask)
             mapping->image.image_flags |= IMAGE_FLAGS_ImageMappedFlat;
         if ((nt.opt.hdr64.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) &&
@@ -712,7 +731,6 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
     mapping->image.image_charact = nt.FileHeader.Characteristics;
     mapping->image.machine       = nt.FileHeader.Machine;
     mapping->image.zerobits      = 0; /* FIXME */
-    mapping->image.gp            = 0; /* FIXME */
     mapping->image.file_size     = file_size;
     mapping->image.loader_flags  = clr_va && clr_size;
     mapping->image.__pad         = 0;
@@ -739,12 +757,16 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
         (clr.Flags & COMIMAGE_FLAGS_ILONLY))
     {
         mapping->image.image_flags |= IMAGE_FLAGS_ComPlusILOnly;
-        if (nt.opt.hdr32.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC &&
-            !(clr.Flags & COMIMAGE_FLAGS_32BITREQUIRED))
+        if (nt.opt.hdr32.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC)
         {
-            mapping->image.image_flags |= IMAGE_FLAGS_ComPlusNativeReady;
-            if (cpu_mask & CPU_FLAG(CPU_x86_64)) mapping->image.cpu = CPU_x86_64;
-            else if (cpu_mask & CPU_FLAG(CPU_ARM64)) mapping->image.cpu = CPU_ARM64;
+            if (!(clr.Flags & COMIMAGE_FLAGS_32BITREQUIRED))
+            {
+                mapping->image.image_flags |= IMAGE_FLAGS_ComPlusNativeReady;
+                if (cpu_mask & CPU_FLAG(CPU_x86_64)) mapping->image.cpu = CPU_x86_64;
+                else if (cpu_mask & CPU_FLAG(CPU_ARM64)) mapping->image.cpu = CPU_ARM64;
+            }
+            if (clr.Flags & COMIMAGE_FLAGS_32BITPREFERRED)
+                mapping->image.image_flags |= IMAGE_FLAGS_ComPlusPrefer32bit;
         }
     }
 
@@ -1095,6 +1117,19 @@ DECL_HANDLER(map_view)
         return;
     }
 
+    if (!req->mapping)  /* image mapping for a .so dll */
+    {
+        if (!(view = mem_alloc( sizeof(*view) ))) return;
+        memset( view, 0, sizeof(*view) );
+        view->base  = req->base;
+        view->size  = req->size;
+        view->start = req->start;
+        view->flags = SEC_IMAGE;
+        memcpy( &view->image, get_req_data(), min( sizeof(view->image), get_req_data_size() ));
+        add_process_view( current->process, view );
+        return;
+    }
+
     if (!(mapping = get_mapping_obj( current->process, req->mapping, req->access ))) return;
 
     if (mapping->flags & SEC_IMAGE)
@@ -1127,7 +1162,7 @@ DECL_HANDLER(map_view)
             view->image = mapping->image;
             if (view->base != mapping->image.base) set_error( STATUS_IMAGE_NOT_AT_BASE );
         }
-        list_add_tail( &current->process->views, &view->entry );
+        add_process_view( current->process, view );
     }
 
 done:

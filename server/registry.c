@@ -49,17 +49,11 @@
 
 #include "winternl.h"
 
-struct notify_event
-{
-    struct list      entry;     /* entry in list of events */
-    struct event    *event;     /* event to set */
-};
-
 struct notify
 {
-    unsigned int      refcount; /* number of references */
     struct list       entry;    /* entry in list of notifications */
-    struct list       events;   /* list of events to set when changing this key */
+    struct event    **events;   /* events to set when changing this key */
+    unsigned int      event_count; /* number of events */
     int               subtree;  /* true if subtree notification */
     unsigned int      filter;   /* which events to notify on */
     obj_handle_t      hkey;     /* hkey associated with this notification */
@@ -322,28 +316,22 @@ static struct object_type *key_get_type( struct object *obj )
 /* notify waiter and maybe delete the notification */
 static void do_notification( struct key *key, struct notify *notify, int del )
 {
-    void *ptr;
+    unsigned int i;
+
+    for (i = 0; i < notify->event_count; ++i)
+    {
+        set_event( notify->events[i] );
+        release_object( notify->events[i] );
+    }
+    free( notify->events );
+    notify->events = NULL;
+    notify->event_count = 0;
 
     if (del)
+    {
         list_remove( &notify->entry );
-    else
-    {
-        assert( notify->refcount < INT_MAX );
-        notify->refcount++;
-    }
-
-    while ((ptr = list_head( &notify->events )))
-    {
-        struct notify_event *notify_event = LIST_ENTRY( ptr, struct notify_event, entry );
-        list_remove( &notify_event->entry );
-        set_event( notify_event->event );
-        release_object( notify_event->event );
-        free( notify_event );
-    }
-
-    assert( notify->refcount );
-    if (!--notify->refcount)
         free( notify );
+    }
 }
 
 static inline struct notify *find_notify( struct key *key, struct process *process, obj_handle_t hkey )
@@ -2294,7 +2282,6 @@ DECL_HANDLER(set_registry_notification)
     struct key *key;
     struct event *event;
     struct notify *notify;
-    struct notify_event *notify_event;
 
     key = get_hkey_obj( req->hkey, KEY_NOTIFY );
     if (key)
@@ -2303,23 +2290,32 @@ DECL_HANDLER(set_registry_notification)
         if (event)
         {
             notify = find_notify( key, current->process, req->hkey );
-            if (!notify && (notify = mem_alloc( sizeof(*notify) )))
+            if (!notify)
             {
-                notify->refcount = 1;
-                list_init( &notify->events );
-                notify->subtree = req->subtree;
-                notify->filter  = req->filter;
-                notify->hkey    = req->hkey;
-                notify->process = current->process;
-                list_add_head( &key->notify_list, &notify->entry );
+                notify = mem_alloc( sizeof(*notify) );
+                if (notify)
+                {
+                    notify->events  = NULL;
+                    notify->event_count = 0;
+                    notify->subtree = req->subtree;
+                    notify->filter  = req->filter;
+                    notify->hkey    = req->hkey;
+                    notify->process = current->process;
+                    list_add_head( &key->notify_list, &notify->entry );
+                }
             }
-            if (notify && (notify_event = mem_alloc( sizeof(*notify_event) )))
+            if (notify)
             {
-                grab_object(event);
-                notify_event->event = event;
-                list_add_tail( &notify->events, &notify_event->entry );
-                reset_event( event );
-                set_error( STATUS_PENDING );
+                struct event **new_array;
+
+                if ((new_array = realloc( notify->events, (notify->event_count + 1) * sizeof(*notify->events) )))
+                {
+                    notify->events = new_array;
+                    notify->events[notify->event_count++] = (struct event *)grab_object( event );
+                    reset_event( event );
+                    set_error( STATUS_PENDING );
+                }
+                else set_error( STATUS_NO_MEMORY );
             }
             release_object( event );
         }

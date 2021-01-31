@@ -4642,9 +4642,9 @@ static void wined3d_texture_vk_upload_data(struct wined3d_context *context,
     VkCommandBuffer vk_command_buffer;
     struct wined3d_bo_vk staging_bo;
     VkImageAspectFlags aspect_mask;
-    size_t src_offset, dst_offset;
     struct wined3d_range range;
     VkBufferImageCopy region;
+    size_t src_offset;
     void *map_ptr;
 
     TRACE("context %p, src_bo_addr %s, src_format %s, src_box %s, src_row_pitch %u, src_slice_pitch %u, "
@@ -4699,9 +4699,6 @@ static void wined3d_texture_vk_upload_data(struct wined3d_context *context,
     src_offset = src_box->front * src_slice_pitch
             + (src_box->top / src_format->block_height) * src_row_pitch
             + (src_box->left / src_format->block_width) * src_format->block_byte_count;
-    dst_offset = dst_z * src_slice_pitch
-            + (dst_y / src_format->block_height) * src_row_pitch
-            + (dst_x / src_format->block_width) * src_format->block_byte_count;
 
     if (!wined3d_context_vk_create_bo(context_vk, sub_resource->size,
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &staging_bo))
@@ -4720,8 +4717,8 @@ static void wined3d_texture_vk_upload_data(struct wined3d_context *context,
         return;
     }
 
-    wined3d_format_copy_data(src_format, src_bo_addr->addr + src_offset, src_row_pitch, src_slice_pitch,
-            (uint8_t *)map_ptr + dst_offset, dst_row_pitch, dst_slice_pitch, src_box->right - src_box->left,
+    wined3d_format_copy_data(src_format, src_bo_addr->addr + src_offset, src_row_pitch,
+            src_slice_pitch, map_ptr, dst_row_pitch, dst_slice_pitch, src_box->right - src_box->left,
             src_box->bottom - src_box->top, src_box->back - src_box->front);
 
     range.offset = 0;
@@ -4731,6 +4728,7 @@ static void wined3d_texture_vk_upload_data(struct wined3d_context *context,
     if (!(vk_command_buffer = wined3d_context_vk_get_command_buffer(context_vk)))
     {
         ERR("Failed to get command buffer.\n");
+        wined3d_context_vk_destroy_bo(context_vk, &staging_bo);
         return;
     }
 
@@ -4741,7 +4739,7 @@ static void wined3d_texture_vk_upload_data(struct wined3d_context *context,
             dst_texture_vk->layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             dst_texture_vk->vk_image, aspect_mask);
 
-    region.bufferOffset = staging_bo.buffer_offset + dst_offset;
+    region.bufferOffset = staging_bo.buffer_offset;
     region.bufferRowLength = (dst_row_pitch / src_format->block_byte_count) * src_format->block_width;
     if (dst_row_pitch)
         region.bufferImageHeight = (dst_slice_pitch / dst_row_pitch) * src_format->block_height;
@@ -4823,8 +4821,8 @@ static void wined3d_texture_vk_download_data(struct wined3d_context *context,
     if (dst_format->id != src_texture->resource.format->id)
     {
         FIXME("Unhandled format conversion (%s -> %s).\n",
-                debug_d3dformat(dst_format->id),
-                debug_d3dformat(src_texture->resource.format->id));
+                debug_d3dformat(src_texture->resource.format->id),
+                debug_d3dformat(dst_format->id));
         return;
     }
 
@@ -5235,6 +5233,26 @@ HRESULT wined3d_texture_vk_init(struct wined3d_texture_vk *texture_vk, struct wi
 
     return wined3d_texture_init(&texture_vk->t, desc, layer_count, level_count,
             flags, device, parent, parent_ops, &texture_vk[1], &wined3d_texture_vk_ops);
+}
+
+void wined3d_texture_vk_barrier(struct wined3d_texture_vk *texture_vk,
+        struct wined3d_context_vk *context_vk, uint32_t bind_mask)
+{
+    TRACE("texture_vk %p, context_vk %p, bind_mask %s.\n",
+            texture_vk, context_vk, wined3d_debug_bind_flags(bind_mask));
+
+    if (texture_vk->bind_mask && texture_vk->bind_mask != bind_mask)
+    {
+        TRACE("    %s -> %s.\n",
+                wined3d_debug_bind_flags(texture_vk->bind_mask), wined3d_debug_bind_flags(bind_mask));
+        wined3d_context_vk_image_barrier(context_vk, wined3d_context_vk_get_command_buffer(context_vk),
+                vk_pipeline_stage_mask_from_bind_flags(texture_vk->bind_mask),
+                vk_pipeline_stage_mask_from_bind_flags(bind_mask),
+                vk_access_mask_from_bind_flags(texture_vk->bind_mask), vk_access_mask_from_bind_flags(bind_mask),
+                texture_vk->layout, texture_vk->layout, texture_vk->vk_image,
+                vk_aspect_mask_from_format(texture_vk->t.resource.format));
+    }
+    texture_vk->bind_mask = bind_mask;
 }
 
 static void ffp_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_context *context)
@@ -6133,7 +6151,6 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
     struct wined3d_rendertarget_view_vk *rtv_vk;
     struct wined3d_rendertarget_view *view;
     const struct wined3d_vk_info *vk_info;
-    struct wined3d_texture_vk *texture_vk;
     struct wined3d_device_vk *device_vk;
     VkCommandBuffer vk_command_buffer;
     VkRenderPassBeginInfo begin_desc;
@@ -6172,6 +6189,7 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
 
         rtv_vk = wined3d_rendertarget_view_vk(view);
         views[attachment_count] = wined3d_rendertarget_view_vk_get_image_view(rtv_vk, context_vk);
+        wined3d_rendertarget_view_vk_barrier(rtv_vk, context_vk, WINED3D_BIND_RENDER_TARGET);
 
         c = &clear_values[attachment_count].color;
         if (view->format_flags & WINED3DFMT_FLAG_INTEGER)
@@ -6206,6 +6224,7 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
 
         rtv_vk = wined3d_rendertarget_view_vk(view);
         views[attachment_count] = wined3d_rendertarget_view_vk_get_image_view(rtv_vk, context_vk);
+        wined3d_rendertarget_view_vk_barrier(rtv_vk, context_vk, WINED3D_BIND_DEPTH_STENCIL);
 
         clear_values[attachment_count].depthStencil.depth = depth;
         clear_values[attachment_count].depthStencil.stencil = stencil;
@@ -6283,26 +6302,12 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
             continue;
 
         wined3d_context_vk_reference_rendertarget_view(context_vk, wined3d_rendertarget_view_vk(view));
-        texture_vk = wined3d_texture_vk(wined3d_texture_from_resource(view->resource));
-        wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                vk_access_mask_from_bind_flags(texture_vk->t.resource.bind_flags),
-                texture_vk->layout, texture_vk->layout,
-                texture_vk->vk_image, VK_IMAGE_ASPECT_COLOR_BIT);
     }
 
     if (depth_stencil)
     {
         view = fb->depth_stencil;
         wined3d_context_vk_reference_rendertarget_view(context_vk, wined3d_rendertarget_view_vk(view));
-        texture_vk = wined3d_texture_vk(wined3d_texture_from_resource(view->resource));
-        wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
-                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                vk_access_mask_from_bind_flags(texture_vk->t.resource.bind_flags),
-                texture_vk->layout, texture_vk->layout,
-                texture_vk->vk_image, vk_aspect_mask_from_format(texture_vk->t.resource.format));
     }
 }
 

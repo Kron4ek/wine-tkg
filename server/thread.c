@@ -234,7 +234,7 @@ static inline void init_thread_structure( struct thread *thread )
     thread->esync_fd        = -1;
     thread->esync_apc_fd    = -1;
     thread->fsync_idx       = 0;
-    thread->debug_ctx       = NULL;
+    thread->debug_obj       = NULL;
     thread->system_regs     = 0;
     thread->queue           = NULL;
     thread->wait            = NULL;
@@ -455,7 +455,7 @@ static void destroy_thread( struct object *obj )
     struct thread *thread = (struct thread *)obj;
     assert( obj->ops == &thread_ops );
 
-    assert( !thread->debug_ctx );  /* cannot still be debugging something */
+    assert( !thread->debug_obj );  /* cannot still be debugging something */
     list_remove( &thread->entry );
     cleanup_thread( thread );
     release_object( thread->process );

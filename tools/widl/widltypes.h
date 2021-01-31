@@ -275,8 +275,7 @@ enum threading_type
     THREADING_NEUTRAL,
     THREADING_SINGLE,
     THREADING_FREE,
-    THREADING_BOTH,
-    THREADING_MTA,
+    THREADING_BOTH
 };
 
 enum marshaling_type
@@ -506,6 +505,7 @@ struct _type_t {
   const char *c_name;
   const char *signature;
   const char *short_name;
+  const char *qualified_name;
   unsigned int typestring_offset;
   unsigned int ptrdesc;           /* used for complex structs */
   int typelib_idx;

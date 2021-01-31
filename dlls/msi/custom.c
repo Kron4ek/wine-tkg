@@ -748,6 +748,13 @@ static msi_custom_action_info *do_msidbCustomActionTypeDll(
     if (!ret)
         info->arch = (sizeof(void *) == 8 ? SCS_64BIT_BINARY : SCS_32BIT_BINARY);
 
+    if (info->arch == SCS_64BIT_BINARY && sizeof(void *) == 4 && !is_wow64)
+    {
+        ERR("Attempt to run a 64-bit custom action inside a 32-bit WINEPREFIX.\n");
+        free_custom_action_data( info );
+        return NULL;
+    }
+
     custom_start_server(package, info->arch);
 
     info->handle = CreateThread(NULL, 0, custom_client_thread, info, 0, NULL);
@@ -771,7 +778,8 @@ static UINT HANDLE_CustomType1( MSIPACKAGE *package, const WCHAR *source, const 
 
     TRACE("Calling function %s from %s\n", debugstr_w(target), debugstr_w(binary->tmpfile));
 
-    info = do_msidbCustomActionTypeDll( package, type, binary->tmpfile, target, action );
+    if (!(info = do_msidbCustomActionTypeDll( package, type, binary->tmpfile, target, action )))
+        return ERROR_FUNCTION_FAILED;
     return wait_thread_handle( info );
 }
 
@@ -876,7 +884,8 @@ static UINT HANDLE_CustomType17( MSIPACKAGE *package, const WCHAR *source, const
         return ERROR_FUNCTION_FAILED;
     }
 
-    info = do_msidbCustomActionTypeDll( package, type, file->TargetPath, target, action );
+    if (!(info = do_msidbCustomActionTypeDll( package, type, file->TargetPath, target, action )))
+        return ERROR_FUNCTION_FAILED;
     return wait_thread_handle( info );
 }
 

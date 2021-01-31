@@ -295,10 +295,6 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
                 wined3d_settings.shader_backend = WINED3D_SHADER_BACKEND_NONE;
             }
         }
-        else if (!get_config_key(hkey, appkey, "UseGLSL", buffer, size) && !strcmp(buffer, "disabled"))
-        {
-            wined3d_settings.shader_backend = WINED3D_SHADER_BACKEND_ARB;
-        }
         if (wined3d_settings.shader_backend == WINED3D_SHADER_BACKEND_ARB
                 || wined3d_settings.shader_backend == WINED3D_SHADER_BACKEND_NONE)
         {
@@ -504,9 +500,7 @@ static struct wined3d_output * wined3d_get_output_from_window(const struct wined
         }
     }
 
-    /* Because wined3d only supports one output right now. A window can be on non-primary outputs
-     * and thus fails to get its correct output. In this case, return the primary output for now */
-    return &wined3d->adapters[0]->outputs[0];
+    return NULL;
 }
 
 static struct wined3d_wndproc *wined3d_find_wndproc(HWND window, struct wined3d *wined3d)

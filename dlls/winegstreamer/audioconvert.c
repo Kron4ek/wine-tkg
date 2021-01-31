@@ -43,7 +43,7 @@ struct audio_converter
     IMFMediaType *output_type;
     CRITICAL_SECTION cs;
     BOOL inflight;
-    GstElement *container, *appsrc, *audioconvert, *resampler, *appsink;
+    GstElement *container, *appsrc, *appsink;
 };
 
 static struct audio_converter *impl_audio_converter_from_IMFTransform(IMFTransform *iface)
@@ -310,7 +310,9 @@ fail:
 
 static HRESULT WINAPI audio_converter_SetInputType(IMFTransform *iface, DWORD id, IMFMediaType *type, DWORD flags)
 {
+    GUID major_type, subtype;
     GstCaps *input_caps;
+    DWORD unused;
     HRESULT hr;
 
     struct audio_converter *converter = impl_audio_converter_from_IMFTransform(iface);
@@ -320,61 +322,69 @@ static HRESULT WINAPI audio_converter_SetInputType(IMFTransform *iface, DWORD id
     if (id != 0)
         return MF_E_INVALIDSTREAMNUMBER;
 
-    if (type)
+    if (!type)
     {
-        GUID major_type, subtype;
-        DWORD unused;
-
-        if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major_type)))
-            return MF_E_INVALIDTYPE;
-        if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
-            return MF_E_INVALIDTYPE;
-        if (FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &unused)))
-            return MF_E_INVALIDTYPE;
-        if (FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_NUM_CHANNELS, &unused)))
-            return MF_E_INVALIDTYPE;
-        if (IsEqualGUID(&subtype, &MFAudioFormat_PCM) && FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_BITS_PER_SAMPLE, &unused)))
-            return MF_E_INVALIDTYPE;
-
-        if (!(IsEqualGUID(&major_type, &MFMediaType_Audio)))
-            return MF_E_INVALIDTYPE;
-
-        if (!IsEqualGUID(&subtype, &MFAudioFormat_PCM) && !IsEqualGUID(&subtype, &MFAudioFormat_Float))
-            return MF_E_INVALIDTYPE;
-
-        if (!(input_caps = caps_from_mf_media_type(type)))
-            return MF_E_INVALIDTYPE;
-
         if (flags & MFT_SET_TYPE_TEST_ONLY)
-            gst_caps_unref(input_caps);
-    }
+            return S_OK;
 
-    if (flags & MFT_SET_TYPE_TEST_ONLY)
-        return S_OK;
+        EnterCriticalSection(&converter->cs);
 
-    EnterCriticalSection(&converter->cs);
+        converter->inflight = FALSE;
+        gst_element_set_state(converter->container, GST_STATE_READY);
 
-    hr = S_OK;
-    gst_element_set_state(converter->container, GST_STATE_READY);
-
-    if (type)
-    {
-        if (!converter->input_type)
-            hr = MFCreateMediaType(&converter->input_type);
-
-        if (SUCCEEDED(hr))
-            hr = IMFMediaType_CopyAllItems(type, (IMFAttributes *) converter->input_type);
-
-        g_object_set(converter->appsrc, "caps", input_caps, NULL);
-        gst_caps_unref(input_caps);
-
-        if (FAILED(hr))
+        if (converter->input_type)
         {
             IMFMediaType_Release(converter->input_type);
             converter->input_type = NULL;
         }
+
+        LeaveCriticalSection(&converter->cs);
+
+        return S_OK;
     }
-    else if (converter->input_type)
+
+    if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major_type)))
+        return MF_E_INVALIDTYPE;
+    if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
+        return MF_E_INVALIDTYPE;
+    if (FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &unused)))
+        return MF_E_INVALIDTYPE;
+    if (FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_NUM_CHANNELS, &unused)))
+        return MF_E_INVALIDTYPE;
+    if (IsEqualGUID(&subtype, &MFAudioFormat_PCM) && FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_BITS_PER_SAMPLE, &unused)))
+        return MF_E_INVALIDTYPE;
+
+    if (!(IsEqualGUID(&major_type, &MFMediaType_Audio)))
+        return MF_E_INVALIDTYPE;
+
+    if (!IsEqualGUID(&subtype, &MFAudioFormat_PCM) && !IsEqualGUID(&subtype, &MFAudioFormat_Float))
+        return MF_E_INVALIDTYPE;
+
+    if (!(input_caps = caps_from_mf_media_type(type)))
+        return MF_E_INVALIDTYPE;
+
+    if (flags & MFT_SET_TYPE_TEST_ONLY)
+    {
+        gst_caps_unref(input_caps);
+        return S_OK;
+    }
+
+    EnterCriticalSection(&converter->cs);
+
+    hr = S_OK;
+    converter->inflight = FALSE;
+    gst_element_set_state(converter->container, GST_STATE_READY);
+
+    if (!converter->input_type)
+        hr = MFCreateMediaType(&converter->input_type);
+
+    if (SUCCEEDED(hr))
+        hr = IMFMediaType_CopyAllItems(type, (IMFAttributes *) converter->input_type);
+
+    g_object_set(converter->appsrc, "caps", input_caps, NULL);
+    gst_caps_unref(input_caps);
+
+    if (FAILED(hr))
     {
         IMFMediaType_Release(converter->input_type);
         converter->input_type = NULL;
@@ -404,60 +414,69 @@ static HRESULT WINAPI audio_converter_SetOutputType(IMFTransform *iface, DWORD i
     if (!converter->input_type)
         return MF_E_TRANSFORM_TYPE_NOT_SET;
 
-    if (type)
+    if (!type)
     {
-        /* validate the type */
-
-        if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major_type)))
-            return MF_E_INVALIDTYPE;
-        if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
-            return MF_E_INVALIDTYPE;
-        if (FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_NUM_CHANNELS, &unused)))
-            return MF_E_INVALIDTYPE;
-        if (IsEqualGUID(&subtype, &MFAudioFormat_PCM) && FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_BITS_PER_SAMPLE, &unused)))
-            return MF_E_INVALIDTYPE;
-        if (FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &unused)))
-            return MF_E_INVALIDTYPE;
-
-        if (!(IsEqualGUID(&major_type, &MFMediaType_Audio)))
-            return MF_E_INVALIDTYPE;
-
-        if (!IsEqualGUID(&subtype, &MFAudioFormat_PCM) && !IsEqualGUID(&subtype, &MFAudioFormat_Float))
-            return MF_E_INVALIDTYPE;
-
-        if (!(output_caps = caps_from_mf_media_type(type)))
-            return MF_E_INVALIDTYPE;
-
         if (flags & MFT_SET_TYPE_TEST_ONLY)
-            gst_caps_unref(output_caps);
-    }
+            return S_OK;
 
-    if (flags & MFT_SET_TYPE_TEST_ONLY)
-        return S_OK;
+        EnterCriticalSection(&converter->cs);
 
-    EnterCriticalSection(&converter->cs);
+        converter->inflight = FALSE;
+        gst_element_set_state(converter->container, GST_STATE_READY);
 
-    hr = S_OK;
-    gst_element_set_state(converter->container, GST_STATE_READY);
-
-    if (type)
-    {
-        if (!converter->output_type)
-            hr = MFCreateMediaType(&converter->output_type);
-
-        if (SUCCEEDED(hr))
-            hr = IMFMediaType_CopyAllItems(type, (IMFAttributes *) converter->output_type);
-
-        g_object_set(converter->appsink, "caps", output_caps, NULL);
-        gst_caps_unref(output_caps);
-
-        if (FAILED(hr))
+        if (converter->output_type)
         {
             IMFMediaType_Release(converter->output_type);
             converter->output_type = NULL;
         }
+
+        LeaveCriticalSection(&converter->cs);
+
+        return S_OK;
     }
-    else if (converter->output_type)
+
+    if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major_type)))
+        return MF_E_INVALIDTYPE;
+    if (FAILED(IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
+        return MF_E_INVALIDTYPE;
+    if (FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_NUM_CHANNELS, &unused)))
+        return MF_E_INVALIDTYPE;
+    if (IsEqualGUID(&subtype, &MFAudioFormat_PCM) && FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_BITS_PER_SAMPLE, &unused)))
+        return MF_E_INVALIDTYPE;
+    if (FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &unused)))
+        return MF_E_INVALIDTYPE;
+
+    if (!(IsEqualGUID(&major_type, &MFMediaType_Audio)))
+        return MF_E_INVALIDTYPE;
+
+    if (!IsEqualGUID(&subtype, &MFAudioFormat_PCM) && !IsEqualGUID(&subtype, &MFAudioFormat_Float))
+        return MF_E_INVALIDTYPE;
+
+    if (!(output_caps = caps_from_mf_media_type(type)))
+        return MF_E_INVALIDTYPE;
+
+    if (flags & MFT_SET_TYPE_TEST_ONLY)
+    {
+        gst_caps_unref(output_caps);
+        return S_OK;
+    }
+
+    EnterCriticalSection(&converter->cs);
+
+    hr = S_OK;
+    converter->inflight = FALSE;
+    gst_element_set_state(converter->container, GST_STATE_READY);
+
+    if (!converter->output_type)
+        hr = MFCreateMediaType(&converter->output_type);
+
+    if (SUCCEEDED(hr))
+        hr = IMFMediaType_CopyAllItems(type, (IMFAttributes *) converter->output_type);
+
+    g_object_set(converter->appsink, "caps", output_caps, NULL);
+    gst_caps_unref(output_caps);
+
+    if (FAILED(hr))
     {
         IMFMediaType_Release(converter->output_type);
         converter->output_type = NULL;
@@ -614,7 +633,7 @@ static HRESULT WINAPI audio_converter_ProcessInput(IMFTransform *iface, DWORD id
     gst_buffer_unref(gst_buffer);
     if (ret != GST_FLOW_OK)
     {
-        ERR("Couldn't push buffer ret = %d (%s)\n", ret, gst_flow_get_name(ret));
+        ERR("Couldn't push buffer ret, (%s)\n", gst_flow_get_name(ret));
         LeaveCriticalSection(&converter->cs);
         return E_FAIL;
     }
@@ -707,6 +726,7 @@ static const IMFTransformVtbl audio_converter_vtbl =
 
 HRESULT audio_converter_create(REFIID riid, void **ret)
 {
+    GstElement *audioconvert, *resampler;
     struct audio_converter *object;
     HRESULT hr;
 
@@ -744,23 +764,23 @@ HRESULT audio_converter_create(REFIID riid, void **ret)
     }
     gst_bin_add(GST_BIN(object->container), object->appsrc);
 
-    if (!(object->audioconvert = gst_element_factory_make("audioconvert", NULL)))
+    if (!(audioconvert = gst_element_factory_make("audioconvert", NULL)))
     {
         ERR("Failed to create audioconvert, are %u-bit Gstreamer \"base\" plugins installed?\n",
                 8 * (int)sizeof(void *));
         IMFTransform_Release(&object->IMFTransform_iface);
         return E_FAIL;
     }
-    gst_bin_add(GST_BIN(object->container), object->audioconvert);
+    gst_bin_add(GST_BIN(object->container), audioconvert);
 
-    if (!(object->resampler = gst_element_factory_make("audioresample", NULL)))
+    if (!(resampler = gst_element_factory_make("audioresample", NULL)))
     {
         ERR("Failed to create audioresample, are %u-bit Gstreamer \"base\" plugins installed?\n",
                 8 * (int)sizeof(void *));
         IMFTransform_Release(&object->IMFTransform_iface);
         return E_FAIL;
     }
-    gst_bin_add(GST_BIN(object->container), object->resampler);
+    gst_bin_add(GST_BIN(object->container), resampler);
 
     if (!(object->appsink = gst_element_factory_make("appsink", NULL)))
     {
@@ -771,21 +791,21 @@ HRESULT audio_converter_create(REFIID riid, void **ret)
     }
     gst_bin_add(GST_BIN(object->container), object->appsink);
 
-    if (!gst_element_link(object->appsrc, object->audioconvert))
+    if (!gst_element_link(object->appsrc, audioconvert))
     {
         ERR("Failed to link appsrc to audioconvert\n");
         IMFTransform_Release(&object->IMFTransform_iface);
         return E_FAIL;
     }
 
-    if (!gst_element_link(object->audioconvert, object->resampler))
+    if (!gst_element_link(audioconvert, resampler))
     {
         ERR("Failed to link audioconvert to resampler\n");
         IMFTransform_Release(&object->IMFTransform_iface);
         return E_FAIL;
     }
 
-    if (!gst_element_link(object->resampler, object->appsink))
+    if (!gst_element_link(resampler, object->appsink))
     {
         ERR("Failed to link resampler to appsink\n");
         IMFTransform_Release(&object->IMFTransform_iface);

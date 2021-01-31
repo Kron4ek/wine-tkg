@@ -775,9 +775,10 @@ typedef struct
     mem_size_t     stack_commit;
     unsigned int   zerobits;
     unsigned int   subsystem;
-    unsigned short subsystem_low;
-    unsigned short subsystem_high;
-    unsigned int   gp;
+    unsigned short subsystem_minor;
+    unsigned short subsystem_major;
+    unsigned short osversion_major;
+    unsigned short osversion_minor;
     unsigned short image_charact;
     unsigned short dll_charact;
     unsigned short machine;
@@ -795,6 +796,7 @@ typedef struct
 #define IMAGE_FLAGS_ImageDynamicallyRelocated 0x04
 #define IMAGE_FLAGS_ImageMappedFlat           0x08
 #define IMAGE_FLAGS_BaseBelow4gb              0x10
+#define IMAGE_FLAGS_ComPlusPrefer32bit        0x20
 #define IMAGE_FLAGS_WineBuiltin               0x40
 #define IMAGE_FLAGS_WineFakeDll               0x80
 
@@ -831,7 +833,6 @@ struct cpu_topology_override
     int          inherit_all;    /* inherit all handles from parent */
     unsigned int create_flags;   /* creation flags */
     int          socket_fd;      /* file descriptor for process socket */
-    obj_handle_t exe_file;       /* file handle for main exe */
     unsigned int access;         /* access rights for process object */
     client_cpu_t cpu;            /* CPU that the new process will use */
     data_size_t  info_size;      /* size of startup info */
@@ -1542,11 +1543,12 @@ enum server_fd_type
 
 /* Add a memory view in the current process */
 @REQ(map_view)
-    obj_handle_t mapping;       /* file mapping handle */
+    obj_handle_t mapping;       /* file mapping handle, or 0 for .so builtin */
     unsigned int access;        /* wanted access rights */
     client_ptr_t base;          /* view base address (page-aligned) */
     mem_size_t   size;          /* view size */
     file_pos_t   start;         /* start offset in mapping */
+    VARARG(image,pe_image_info);/* image info for .so builtins */
 @END
 
 
@@ -1620,6 +1622,16 @@ struct process_info
     data_size_t     info_size;
     int             process_count;
     VARARG(data,process_info,info_size);
+@END
+
+
+/* Create a debug object */
+@REQ(create_debug_obj)
+    unsigned int access;       /* wanted access rights */
+    unsigned int flags;        /* object flags */
+    VARARG(objattr,object_attributes); /* object attributes */
+@REPLY
+    obj_handle_t handle;       /* handle to the debug object */
 @END
 
 

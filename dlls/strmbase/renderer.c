@@ -192,8 +192,6 @@ static HRESULT WINAPI BaseRenderer_Receive(struct strmbase_sink *pin, IMediaSamp
         DeleteMediaType(mt);
     }
 
-    EnterCriticalSection(&filter->csRenderLock);
-
     if (filter->filter.clock && SUCCEEDED(IMediaSample_GetTime(sample, &start, &stop)))
     {
         strmbase_passthrough_update_time(&filter->passthrough, start);
@@ -229,7 +227,6 @@ static HRESULT WINAPI BaseRenderer_Receive(struct strmbase_sink *pin, IMediaSamp
 
             if (ret == 1)
             {
-                LeaveCriticalSection(&filter->csRenderLock);
                 TRACE("Flush signaled; discarding current sample.\n");
                 return S_OK;
             }
@@ -244,8 +241,6 @@ static HRESULT WINAPI BaseRenderer_Receive(struct strmbase_sink *pin, IMediaSamp
     }
 
     QualityControlRender_DoQOS(&filter->qc);
-
-    LeaveCriticalSection(&filter->csRenderLock);
 
     return hr;
 }
@@ -273,8 +268,6 @@ static HRESULT sink_eos(struct strmbase_sink *iface)
     IFilterGraph *graph = filter->filter.graph;
     IMediaEventSink *event_sink;
 
-    EnterCriticalSection(&filter->csRenderLock);
-
     filter->eos = TRUE;
 
     if (graph && SUCCEEDED(IFilterGraph_QueryInterface(graph,
@@ -287,7 +280,6 @@ static HRESULT sink_eos(struct strmbase_sink *iface)
     strmbase_passthrough_eos(&filter->passthrough);
     SetEvent(filter->state_event);
 
-    LeaveCriticalSection(&filter->csRenderLock);
     return S_OK;
 }
 
@@ -304,14 +296,14 @@ static HRESULT sink_end_flush(struct strmbase_sink *iface)
 {
     struct strmbase_renderer *filter = impl_from_IPin(&iface->pin.IPin_iface);
 
-    EnterCriticalSection(&filter->csRenderLock);
+    EnterCriticalSection(&filter->filter.stream_cs);
 
     filter->eos = FALSE;
     QualityControlRender_Start(&filter->qc, filter->stream_start);
     strmbase_passthrough_invalidate_time(&filter->passthrough);
     ResetEvent(filter->flush_event);
 
-    LeaveCriticalSection(&filter->csRenderLock);
+    LeaveCriticalSection(&filter->filter.stream_cs);
     return S_OK;
 }
 
@@ -336,9 +328,6 @@ void strmbase_renderer_cleanup(struct strmbase_renderer *filter)
 
     strmbase_passthrough_cleanup(&filter->passthrough);
 
-    filter->csRenderLock.DebugInfo->Spare[0] = 0;
-    DeleteCriticalSection(&filter->csRenderLock);
-
     CloseHandle(filter->state_event);
     CloseHandle(filter->advise_event);
     CloseHandle(filter->flush_event);
@@ -358,8 +347,6 @@ void strmbase_renderer_init(struct strmbase_renderer *filter, IUnknown *outer,
 
     strmbase_sink_init(&filter->sink, &filter->filter, sink_name, &sink_ops, NULL);
 
-    InitializeCriticalSection(&filter->csRenderLock);
-    filter->csRenderLock.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__": strmbase_renderer.csRenderLock");
     filter->state_event = CreateEventW(NULL, TRUE, TRUE, NULL);
     filter->advise_event = CreateEventW(NULL, FALSE, FALSE, NULL);
     filter->flush_event = CreateEventW(NULL, TRUE, TRUE, NULL);

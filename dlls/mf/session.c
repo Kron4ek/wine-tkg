@@ -213,6 +213,7 @@ struct media_session
     IMFGetService IMFGetService_iface;
     IMFRateSupport IMFRateSupport_iface;
     IMFRateControl IMFRateControl_iface;
+    IMFTopologyNodeAttributeEditor IMFTopologyNodeAttributeEditor_iface;
     IMFAsyncCallback commands_callback;
     IMFAsyncCallback events_callback;
     IMFAsyncCallback sink_finalizer_callback;
@@ -360,6 +361,11 @@ static struct media_session *impl_session_from_IMFRateSupport(IMFRateSupport *if
 static struct media_session *impl_session_from_IMFRateControl(IMFRateControl *iface)
 {
     return CONTAINING_RECORD(iface, struct media_session, IMFRateControl_iface);
+}
+
+static struct media_session *impl_session_from_IMFTopologyNodeAttributeEditor(IMFTopologyNodeAttributeEditor *iface)
+{
+    return CONTAINING_RECORD(iface, struct media_session, IMFTopologyNodeAttributeEditor_iface);
 }
 
 static struct session_op *impl_op_from_IUnknown(IUnknown *iface)
@@ -792,7 +798,6 @@ static void session_shutdown_current_topology(struct media_session *session)
     IMFTopologyNode *node;
     IMFActivate *activate;
     IMFMediaSink *sink;
-    IUnknown *object;
     WORD idx = 0;
     HRESULT hr;
 
@@ -818,20 +823,15 @@ static void session_shutdown_current_topology(struct media_session *session)
                         WARN("Failed to shut down activation object for the sink, hr %#x.\n", hr);
                     IMFActivate_Release(activate);
                 }
-                else if (SUCCEEDED(IMFTopologyNode_GetObject(node, &object)))
+                else if (SUCCEEDED(topology_node_get_object(node, &IID_IMFStreamSink, (void **)&stream_sink)))
                 {
-                    if (SUCCEEDED(IUnknown_QueryInterface(object, &IID_IMFStreamSink, (void **)&stream_sink)))
+                    if (SUCCEEDED(IMFStreamSink_GetMediaSink(stream_sink, &sink)))
                     {
-                        if (SUCCEEDED(IMFStreamSink_GetMediaSink(stream_sink, &sink)))
-                        {
-                            IMFMediaSink_Shutdown(sink);
-                            IMFMediaSink_Release(sink);
-                        }
-
-                        IMFStreamSink_Release(stream_sink);
+                        IMFMediaSink_Shutdown(sink);
+                        IMFMediaSink_Release(sink);
                     }
 
-                    IUnknown_Release(object);
+                    IMFStreamSink_Release(stream_sink);
                 }
             }
         }
@@ -1358,7 +1358,6 @@ static HRESULT session_append_node(struct media_session *session, IMFTopologyNod
     IMFMediaType *media_type;
     IMFStreamDescriptor *sd;
     HRESULT hr = S_OK;
-    IUnknown *object;
 
     if (!(topo_node = heap_alloc_zero(sizeof(*topo_node))))
         return E_OUTOFMEMORY;
@@ -1374,15 +1373,11 @@ static HRESULT session_append_node(struct media_session *session, IMFTopologyNod
         case MF_TOPOLOGY_OUTPUT_NODE:
             topo_node->u.sink.notify_cb.lpVtbl = &node_sample_allocator_cb_vtbl;
 
-            if (FAILED(hr = IMFTopologyNode_GetObject(node, &object)))
+            if (FAILED(hr = topology_node_get_object(node, &IID_IMFStreamSink, (void **)&topo_node->object.object)))
             {
-                WARN("Node %s does not have associated object.\n", wine_dbgstr_longlong(topo_node->node_id));
+                WARN("Failed to get stream sink interface, hr %#x.\n", hr);
                 break;
             }
-            hr = IUnknown_QueryInterface(object, &IID_IMFStreamSink, (void **)&topo_node->object.object);
-            IUnknown_Release(object);
-            if (FAILED(hr))
-                break;
 
             if (FAILED(hr = IMFStreamSink_GetMediaSink(topo_node->object.sink_stream, &media_sink)))
                 break;
@@ -1433,14 +1428,11 @@ static HRESULT session_append_node(struct media_session *session, IMFTopologyNod
 
             break;
         case MF_TOPOLOGY_TRANSFORM_NODE:
-            if (SUCCEEDED(hr = IMFTopologyNode_GetObject(node, &object)))
-            {
-                hr = IUnknown_QueryInterface(object, &IID_IMFTransform, (void **)&topo_node->object.transform);
-                IUnknown_Release(object);
-            }
 
-            if (SUCCEEDED(hr))
+            if (SUCCEEDED(hr = topology_node_get_object(node, &IID_IMFTransform, (void **)&topo_node->object.transform)))
+            {
                 hr = session_set_transform_stream_info(topo_node);
+            }
             else
                 WARN("Failed to get IMFTransform for MFT node, hr %#x.\n", hr);
 
@@ -2013,14 +2005,18 @@ static HRESULT WINAPI session_get_service_GetService(IMFGetService *iface, REFGU
     {
         return IMFLocalMFTRegistration_QueryInterface(&local_mft_registration, riid, obj);
     }
+    else if (IsEqualGUID(service, &MF_TOPONODE_ATTRIBUTE_EDITOR_SERVICE))
+    {
+        *obj = &session->IMFTopologyNodeAttributeEditor_iface;
+    }
     else if (IsEqualGUID(service, &MR_VIDEO_RENDER_SERVICE))
     {
         IMFStreamSink *stream_sink;
         IMFTopologyNode *node;
-        IUnknown *vr, *object;
         IMFCollection *nodes;
         IMFMediaSink *sink;
         unsigned int i = 0;
+        IUnknown *vr;
         HRESULT hr;
 
         EnterCriticalSection(&session->cs);
@@ -2033,23 +2029,18 @@ static HRESULT WINAPI session_get_service_GetService(IMFGetService *iface, REFGU
             {
                 while (IMFCollection_GetElement(nodes, i++, (IUnknown **)&node) == S_OK)
                 {
-                    if (SUCCEEDED(IMFTopologyNode_GetObject(node, &object)))
+                    if (SUCCEEDED(topology_node_get_object(node, &IID_IMFStreamSink, (void **)&stream_sink)))
                     {
-                        if (SUCCEEDED(IUnknown_QueryInterface(object, &IID_IMFStreamSink, (void **)&stream_sink)))
+                        if (SUCCEEDED(IMFStreamSink_GetMediaSink(stream_sink, &sink)))
                         {
-                            if (SUCCEEDED(IMFStreamSink_GetMediaSink(stream_sink, &sink)))
+                            if (SUCCEEDED(IMFMediaSink_QueryInterface(sink, &IID_IMFVideoRenderer, (void **)&vr)))
                             {
-                                if (SUCCEEDED(IMFMediaSink_QueryInterface(sink, &IID_IMFVideoRenderer, (void **)&vr)))
-                                {
-                                    if (FAILED(hr = MFGetService(vr, service, riid, obj)))
-                                        WARN("Failed to get service from video renderer %#x.\n", hr);
-                                    IUnknown_Release(vr);
-                                }
+                                if (FAILED(hr = MFGetService(vr, service, riid, obj)))
+                                    WARN("Failed to get service from video renderer %#x.\n", hr);
+                                IUnknown_Release(vr);
                             }
-                            IMFStreamSink_Release(stream_sink);
                         }
-
-                        IUnknown_Release(object);
+                        IMFStreamSink_Release(stream_sink);
                     }
 
                     IMFTopologyNode_Release(node);
@@ -3598,6 +3589,52 @@ static const IMFRateControlVtbl session_rate_control_vtbl =
     session_rate_control_GetRate,
 };
 
+static HRESULT WINAPI node_attribute_editor_QueryInterface(IMFTopologyNodeAttributeEditor *iface,
+        REFIID riid, void **obj)
+{
+    TRACE("%p, %s, %p.\n", iface, debugstr_guid(riid), obj);
+
+    if (IsEqualIID(riid, &IID_IMFTopologyNodeAttributeEditor) ||
+            IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = iface;
+        IMFTopologyNodeAttributeEditor_AddRef(iface);
+        return S_OK;
+    }
+
+    WARN("Unsupported interface %s.\n", debugstr_guid(riid));
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI node_attribute_editor_AddRef(IMFTopologyNodeAttributeEditor *iface)
+{
+    struct media_session *session = impl_session_from_IMFTopologyNodeAttributeEditor(iface);
+    return IMFMediaSession_AddRef(&session->IMFMediaSession_iface);
+}
+
+static ULONG WINAPI node_attribute_editor_Release(IMFTopologyNodeAttributeEditor *iface)
+{
+    struct media_session *session = impl_session_from_IMFTopologyNodeAttributeEditor(iface);
+    return IMFMediaSession_Release(&session->IMFMediaSession_iface);
+}
+
+static HRESULT WINAPI node_attribute_editor_UpdateNodeAttributes(IMFTopologyNodeAttributeEditor *iface,
+        TOPOID id, DWORD count, MFTOPONODE_ATTRIBUTE_UPDATE *updates)
+{
+    FIXME("%p, %s, %u, %p.\n", iface, wine_dbgstr_longlong(id), count, updates);
+
+    return E_NOTIMPL;
+}
+
+static const IMFTopologyNodeAttributeEditorVtbl node_attribute_editor_vtbl =
+{
+    node_attribute_editor_QueryInterface,
+    node_attribute_editor_AddRef,
+    node_attribute_editor_Release,
+    node_attribute_editor_UpdateNodeAttributes,
+};
+
 /***********************************************************************
  *      MFCreateMediaSession (mf.@)
  */
@@ -3617,6 +3654,7 @@ HRESULT WINAPI MFCreateMediaSession(IMFAttributes *config, IMFMediaSession **ses
     object->IMFGetService_iface.lpVtbl = &session_get_service_vtbl;
     object->IMFRateSupport_iface.lpVtbl = &session_rate_support_vtbl;
     object->IMFRateControl_iface.lpVtbl = &session_rate_control_vtbl;
+    object->IMFTopologyNodeAttributeEditor_iface.lpVtbl = &node_attribute_editor_vtbl;
     object->commands_callback.lpVtbl = &session_commands_callback_vtbl;
     object->events_callback.lpVtbl = &session_events_callback_vtbl;
     object->sink_finalizer_callback.lpVtbl = &session_sink_finalizer_callback_vtbl;

@@ -64,7 +64,7 @@ typedef int (CDECL *MSVCRT_matherr_func)(struct _exception *);
 
 static MSVCRT_matherr_func MSVCRT_default_matherr_func = NULL;
 
-static BOOL sse2_supported;
+BOOL sse2_supported;
 static BOOL sse2_enabled;
 
 static const struct unix_funcs *unix_funcs;
@@ -714,18 +714,6 @@ float CDECL ceilf( float x )
 }
 
 /*********************************************************************
- *      fabsf (MSVCRT.@)
- *
- * Copied from musl: src/math/fabsf.c
- */
-float CDECL fabsf( float x )
-{
-    union { float f; UINT32 i; } u = { x };
-    u.i &= 0x7fffffff;
-    return u.f;
-}
-
-/*********************************************************************
  *      floorf (MSVCRT.@)
  */
 float CDECL floorf( float x )
@@ -747,6 +735,22 @@ float CDECL frexpf( float x, int *exp )
 float CDECL modff( float x, float *iptr )
 {
   return unix_funcs->modff( x, iptr );
+}
+
+#endif
+
+#if !defined(__i386__) && !defined(__x86_64__) && (_MSVCR_VER == 0 || _MSVCR_VER >= 110)
+
+/*********************************************************************
+ *      fabsf (MSVCRT.@)
+ *
+ * Copied from musl: src/math/fabsf.c
+ */
+float CDECL fabsf( float x )
+{
+    union { float f; UINT32 i; } u = { x };
+    u.i &= 0x7fffffff;
+    return u.f;
 }
 
 #endif

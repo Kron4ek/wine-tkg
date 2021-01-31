@@ -29,8 +29,8 @@ namespace Windows {
             typedef enum VoiceGender VoiceGender;
             interface IInstalledVoicesStatic;
             interface IVoiceInformation;
-            runtimeclass VoiceInformation;
             runtimeclass SpeechSynthesizer;
+            runtimeclass VoiceInformation;
         }
     }
 }

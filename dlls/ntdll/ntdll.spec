@@ -34,14 +34,14 @@
 @ stub DbgPrompt
 # @ stub DbgQueryDebugFilterState
 # @ stub DbgSetDebugFilterState
-@ stub DbgUiConnectToDbg
+@ stdcall DbgUiConnectToDbg()
 @ stub DbgUiContinue
 @ stub DbgUiConvertStateChangeStructure
 # @ stub DbgUiDebugActiveProcess
-# @ stub DbgUiGetThreadDebugObject
+@ stdcall DbgUiGetThreadDebugObject()
 @ stdcall DbgUiIssueRemoteBreakin(long)
 @ stdcall DbgUiRemoteBreakin(ptr)
-# @ stub DbgUiSetThreadDebugObject
+@ stdcall DbgUiSetThreadDebugObject(long)
 # @ stub DbgUiStopDebugging
 @ stub DbgUiWaitStateChange
 @ stdcall DbgUserBreakPoint()
@@ -159,7 +159,7 @@
 # @ stub NtCompressKey
 @ stdcall -syscall NtConnectPort(ptr ptr ptr ptr ptr ptr ptr ptr)
 @ stdcall -syscall NtContinue(ptr long)
-# @ stub NtCreateDebugObject
+@ stdcall -syscall NtCreateDebugObject(ptr long ptr long)
 @ stdcall -syscall NtCreateDirectoryObject(ptr long ptr)
 @ stdcall -syscall NtCreateEvent(ptr long ptr long long)
 @ stub NtCreateEventPair
@@ -189,7 +189,7 @@
 @ stub NtCreateToken
 @ stdcall -syscall NtCreateUserProcess(ptr ptr long long ptr ptr long long ptr ptr ptr)
 # @ stub NtCreateWaitablePort
-@ stdcall -arch=win32,arm64 NtCurrentTeb()
+@ stdcall -arch=i386,arm64 NtCurrentTeb()
 @ stdcall -syscall NtDebugActiveProcess(long long)
 # @ stub NtDebugContinue
 @ stdcall -syscall NtDelayExecution(long ptr)

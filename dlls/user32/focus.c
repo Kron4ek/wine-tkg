@@ -168,6 +168,8 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
 
         if (hwnd == GetForegroundWindow() && !IsIconic( hwnd ))
             USER_Driver->pSetActiveWindow( hwnd );
+
+        imm_activate_window( hwnd );
     }
 
     /* now change focus if necessary */

@@ -757,10 +757,10 @@ SOURCES = \
 	windows.gaming.input.idl \
 	windows.gaming.input.forcefeedback.idl \
 	windows.globalization.idl \
-	windows.system.userprofile.idl \
+	windows.h \
 	windows.media.speechsynthesis.idl \
 	windows.system.idl \
-	windows.h \
+	windows.system.userprofile.idl \
 	windowscontracts.idl \
 	windowsx.h \
 	wine/debug.h \
