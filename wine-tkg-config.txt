@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sun Jan 31 12:45:49 PM MSK 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Feb 13 10:47:42 AM MSK 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.1.r0.g47ac628b4a4
-Using wine-staging patchset (version 6.1.r0.gf6dacd2f)
+Wine (plain) version: 6.2.r0.g4f7e621dc58
+Using wine-staging patchset (version 6.2.r0.g3b5ea332)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
@@ -32,6 +32,7 @@ msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then buil
 josh-flat-theme.patch -- ( Add Josh's better-theme )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
+Applied hotfix mfplat-derek-hotfix.mypatch
 Applied your own patch amdags.mypatch
 Applied your own patch FinalFantasyXVHack.mypatch
 Applied your own patch fsync_futex2.mypatch

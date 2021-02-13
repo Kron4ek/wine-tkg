@@ -154,7 +154,10 @@ void fsync_init(void)
 
     is_fsync_initialized = 1;
 
-    fprintf( stderr, "fsync: up and running.\n" );
+    if (nr_futex2_wake)
+        fprintf( stderr, "futex2: up and running.\n" );
+    else
+        fprintf( stderr, "fsync: up and running.\n" );
 
     atexit( shm_cleanup );
 }
@@ -177,8 +180,8 @@ static void fsync_destroy( struct object *obj );
 const struct object_ops fsync_ops =
 {
     sizeof(struct fsync),      /* size */
+    &no_type,                  /* type */
     fsync_dump,                /* dump */
-    no_get_type,               /* get_type */
     no_add_queue,              /* add_queue */
     NULL,                      /* remove_queue */
     NULL,                      /* signaled */
