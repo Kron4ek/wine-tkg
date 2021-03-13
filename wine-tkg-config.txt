@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Feb 27 11:40:03 AM MSK 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Mar 13 04:40:06 PM MSK 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.3.r0.g0f972e22479
-Using wine-staging patchset (version 6.3.r0.ge83fdffe)
+Wine (plain) version: 6.4.r0.g4336ed0b84b
+Using wine-staging patchset (version 6.3.r22.g186c17f4)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
