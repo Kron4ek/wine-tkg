@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Mar 13 04:40:06 PM MSK 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Mar 27 09:28:18 PM MSK 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.4.r0.g4336ed0b84b
-Using wine-staging patchset (version 6.3.r22.g186c17f4)
+Wine (plain) version: 6.5.r0.g71d41b37a19
+Using wine-staging patchset (version 6.4.r14.g7b199110)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
@@ -18,6 +18,7 @@ CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
 Staging overrides, if any: -W ntdll-NtAlertThreadByThreadId
 
+ffxiv-launcher-workaround.patch -- ( Applied Final Fantasy XIV Launcher fix )
 mk11.patch -- ( Applied Mortal Kombat 11 fix )
 fsync-unix-staging.patch -- ( Applied fsync, an experimental replacement for esync (unix, staging) )
 server_Abort_waiting_on_a_completion_port_when_closing_it.patch -- ( Added Abort waiting on a completion port when closing it Proton patch )
@@ -33,7 +34,6 @@ msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then buil
 josh-flat-theme.patch -- ( Add Josh's better-theme )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
-Applied hotfix mfplat-derek-hotfix.mypatch
 Applied your own patch amdags.mypatch
 Applied your own patch FinalFantasyXVHack.mypatch
 Applied your own patch origin_downloads_e4ca5dbe_revert.mypatch

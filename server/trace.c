@@ -235,6 +235,11 @@ static void dump_apc_call( const char *prefix, const apc_call_t *call )
         dump_uint64( ",commit=", &call->create_thread.commit );
         fprintf( stderr, ",flags=%x", call->create_thread.flags );
         break;
+    case APC_DUP_HANDLE:
+        fprintf( stderr, "APC_DUP_HANDLE,src_handle=%04x,dst_process=%04x,access=%x,attributes=%x,options=%x",
+                 call->dup_handle.src_handle, call->dup_handle.dst_process, call->dup_handle.access,
+                 call->dup_handle.attributes, call->dup_handle.options );
+        break;
     case APC_BREAK_PROCESS:
         fprintf( stderr, "APC_BREAK_PROCESS" );
         break;
@@ -317,6 +322,10 @@ static void dump_apc_result( const char *prefix, const apc_result_t *result )
         fprintf( stderr, "APC_CREATE_THREAD,status=%s,pid=%04x,tid=%04x,handle=%04x",
                  get_status_name( result->create_thread.status ),
                  result->create_thread.pid, result->create_thread.tid, result->create_thread.handle );
+        break;
+    case APC_DUP_HANDLE:
+        fprintf( stderr, "APC_DUP_HANDLE,status=%s,handle=%04x",
+                 get_status_name( result->dup_handle.status ), result->dup_handle.handle );
         break;
     case APC_BREAK_PROCESS:
         fprintf( stderr, "APC_BREAK_PROCESS,status=%s", get_status_name( result->break_process.status ) );
@@ -1311,13 +1320,11 @@ static void dump_varargs_pe_image_info( const char *prefix, data_size_t size )
     fprintf( stderr, ",zerobits=%08x,subsystem=%08x,subsystem_minor=%04x,subsystem_major=%04x"
              ",osversion_major=%04x,osversion_minor=%04x,image_charact=%04x,dll_charact=%04x,machine=%04x"
              ",contains_code=%u,image_flags=%02x"
-             ",loader_flags=%08x,header_size=%08x,file_size=%08x,checksum=%08x",
+             ",loader_flags=%08x,header_size=%08x,file_size=%08x,checksum=%08x}",
              info.zerobits, info.subsystem, info.subsystem_minor, info.subsystem_major,
              info.osversion_major, info.osversion_minor, info.image_charact, info.dll_charact,
              info.machine, info.contains_code, info.image_flags, info.loader_flags,
              info.header_size, info.file_size, info.checksum );
-    dump_client_cpu( ",cpu=", &info.cpu );
-    fputc( '}', stderr );
     remove_data( min( size, sizeof(info) ));
 }
 
@@ -1401,12 +1408,6 @@ static void dump_new_process_reply( const struct new_process_reply *req )
     fprintf( stderr, " info=%04x", req->info );
     fprintf( stderr, ", pid=%04x", req->pid );
     fprintf( stderr, ", handle=%04x", req->handle );
-}
-
-static void dump_exec_process_request( const struct exec_process_request *req )
-{
-    fprintf( stderr, " socket_fd=%d", req->socket_fd );
-    dump_client_cpu( ", cpu=", &req->cpu );
 }
 
 static void dump_get_new_process_info_request( const struct get_new_process_info_request *req )
@@ -1701,8 +1702,6 @@ static void dump_dup_handle_request( const struct dup_handle_request *req )
 static void dump_dup_handle_reply( const struct dup_handle_reply *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
-    fprintf( stderr, ", self=%d", req->self );
-    fprintf( stderr, ", closed=%d", req->closed );
 }
 
 static void dump_make_temporary_request( const struct make_temporary_request *req )
@@ -2180,7 +2179,9 @@ static void dump_get_mapping_info_reply( const struct get_mapping_info_reply *re
     dump_uint64( " size=", &req->size );
     fprintf( stderr, ", flags=%08x", req->flags );
     fprintf( stderr, ", shared_file=%04x", req->shared_file );
+    fprintf( stderr, ", total=%u", req->total );
     dump_varargs_pe_image_info( ", image=", cur_size );
+    dump_varargs_unicode_str( ", name=", cur_size );
 }
 
 static void dump_map_view_request( const struct map_view_request *req )
@@ -4602,7 +4603,6 @@ static void dump_get_fsync_apc_idx_reply( const struct get_fsync_apc_idx_reply *
 
 static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_new_process_request,
-    (dump_func)dump_exec_process_request,
     (dump_func)dump_get_new_process_info_request,
     (dump_func)dump_new_thread_request,
     (dump_func)dump_get_startup_info_request,
@@ -4891,7 +4891,6 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
 
 static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_new_process_reply,
-    NULL,
     (dump_func)dump_get_new_process_info_reply,
     (dump_func)dump_new_thread_reply,
     (dump_func)dump_get_startup_info_reply,
@@ -5180,7 +5179,6 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
 
 static const char * const req_names[REQ_NB_REQUESTS] = {
     "new_process",
-    "exec_process",
     "get_new_process_info",
     "new_thread",
     "get_startup_info",

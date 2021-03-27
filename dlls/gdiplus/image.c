@@ -2244,6 +2244,7 @@ GpStatus WINGDIPAPI GdipGetImageGraphicsContext(GpImage *image,
         if (stat == Ok)
         {
             (*graphics)->image = image;
+            (*graphics)->image_type = image->type;
             (*graphics)->xres = image->xres;
             (*graphics)->yres = image->yres;
         }

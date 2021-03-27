@@ -294,6 +294,8 @@ static void release_inner_window(HTMLInnerWindow *This)
         IOmHistory_Release(&This->history->IOmHistory_iface);
     }
 
+    if(This->navigator)
+        IOmNavigator_Release(This->navigator);
     if(This->session_storage)
         IHTMLStorage_Release(This->session_storage);
     if(This->local_storage)
@@ -918,11 +920,19 @@ static HRESULT WINAPI HTMLWindow2_get_opener(IHTMLWindow2 *iface, VARIANT *p)
 static HRESULT WINAPI HTMLWindow2_get_navigator(IHTMLWindow2 *iface, IOmNavigator **p)
 {
     HTMLWindow *This = impl_from_IHTMLWindow2(iface);
+    HTMLInnerWindow *window = This->inner_window;
 
     TRACE("(%p)->(%p)\n", This, p);
 
-    *p = OmNavigator_Create();
-    return *p ? S_OK : E_OUTOFMEMORY;
+    if(!window->navigator) {
+        HRESULT hres;
+        hres = create_navigator(dispex_compat_mode(&window->event_target.dispex), &window->navigator);
+        if(FAILED(hres))
+            return hres;
+    }
+
+    IOmNavigator_AddRef(*p = window->navigator);
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLWindow2_put_name(IHTMLWindow2 *iface, BSTR v)
@@ -2127,7 +2137,8 @@ static HRESULT WINAPI HTMLWindow6_get_sessionStorage(IHTMLWindow6 *iface, IHTMLS
     if(!This->inner_window->session_storage) {
         HRESULT hres;
 
-        hres = create_storage(&This->inner_window->session_storage);
+        hres = create_html_storage(dispex_compat_mode(&This->inner_window->event_target.dispex),
+                                   &This->inner_window->session_storage);
         if(FAILED(hres))
             return hres;
     }
@@ -2146,7 +2157,8 @@ static HRESULT WINAPI HTMLWindow6_get_localStorage(IHTMLWindow6 *iface, IHTMLSto
     if(!This->inner_window->local_storage) {
         HRESULT hres;
 
-        hres = create_storage(&This->inner_window->local_storage);
+        hres = create_html_storage(dispex_compat_mode(&This->inner_window->event_target.dispex),
+                                   &This->inner_window->local_storage);
         if(FAILED(hres))
             return hres;
     }
@@ -2388,7 +2400,7 @@ static HRESULT WINAPI HTMLWindow7_get_performance(IHTMLWindow7 *iface, VARIANT *
     if(!This->performance_initialized) {
         IHTMLPerformance *performance;
 
-        hres = create_performance(&performance);
+        hres = create_performance(dispex_compat_mode(&This->event_target.dispex), &performance);
         if(FAILED(hres))
             return hres;
 

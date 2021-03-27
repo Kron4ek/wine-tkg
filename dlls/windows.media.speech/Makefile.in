@@ -1,5 +1,9 @@
 MODULE = windows.media.speech.dll
 IMPORTS = combase uuid
+
 EXTRADLLFLAGS = -mno-cygwin
+
 C_SRCS = \
-	windows.media.speech_main.c
+	main.c
+
+IDL_SRCS = classes.idl

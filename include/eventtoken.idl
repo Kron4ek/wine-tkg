@@ -1,6 +1,5 @@
-/* Wine Vulkan loader implementation
- *
- * Copyright 2018 Roderick Colenbrander
+/*
+ * Copyright 2021 Rémi Bernon for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,24 +16,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <stdarg.h>
-
-#include "windef.h"
-#include "winbase.h"
-
-#include "wine/debug.h"
-
-WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
-
-BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, void *reserved)
+struct EventRegistrationToken
 {
-    TRACE("%p, %u, %p\n", hinst, reason, reserved);
-
-    switch (reason)
-    {
-        case DLL_PROCESS_ATTACH:
-            DisableThreadLibraryCalls(hinst);
-            return TRUE;
-    }
-    return TRUE;
-}
+    __int64 value;
+};
+typedef struct EventRegistrationToken EventRegistrationToken;

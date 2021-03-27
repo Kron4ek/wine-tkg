@@ -1553,6 +1553,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemDynamicTimeZoneInformation = 102,
     SystemCodeIntegrityInformation = 103,
     SystemLogicalProcessorInformationEx = 107,
+    SystemHypervisorSharedPageInformation = 197,
     SystemInformationClassMax
 } SYSTEM_INFORMATION_CLASS, *PSYSTEM_INFORMATION_CLASS;
 

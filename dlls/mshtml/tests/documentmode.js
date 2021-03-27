@@ -323,3 +323,58 @@ sync_test("conditional_comments", function() {
     test_version(7);
     test_version(8);
 });
+
+var ready_states;
+
+async_test("script_load", function() {
+    var v = document.documentMode;
+    if(v < 9) {
+        next_test();
+        return;
+    }
+
+    var elem = document.createElement("script");
+    ready_states = "";
+
+    elem.onreadystatechange = guard(function() {
+        ok(v < 11, "unexpected onreadystatechange call");
+        ready_states += elem.readyState + ",";
+    });
+
+    elem.onload = guard(function() {
+        switch(v) {
+        case 9:
+            ok(ready_states === "loading,exec,loaded,", "ready_states = " + ready_states);
+            break;
+        case 10:
+            ok(ready_states === "loading,exec,", "ready_states = " + ready_states);
+            break;
+        case 11:
+            ok(ready_states === "exec,", "ready_states = " + ready_states);
+            break;
+        }
+        next_test();
+    });
+
+    document.body.appendChild(elem);
+    elem.src = "jsstream.php?simple";
+    external.writeStream("simple", "ready_states += 'exec,';");
+});
+
+sync_test("navigator", function() {
+    var v = document.documentMode, re;
+    var app = navigator.appVersion;
+    ok(navigator.userAgent === "Mozilla/" + app,
+       "userAgent = " + navigator.userAgent + " appVersion = " + app);
+
+    re = v < 11
+        ? "^" + (v < 9 ? "4" : "5") + "\\.0 \\(compatible; MSIE " + (v < 7 ? 7 : v) + "\\.0; Windows NT [^\\)]*\\)$"
+        : "^5.0 \\(Windows NT [0-9].[0-9]; .*Trident/[678]\\.0.*rv:11.0\\) like Gecko$";
+    ok(new RegExp(re).test(app), "appVersion = " + app);
+
+    ok(navigator.appCodeName === "Mozilla", "appCodeName = " + navigator.appCodeName);
+    ok(navigator.appName === (v < 11 ? "Microsoft Internet Explorer" : "Netscape"),
+       "appName = " + navigator.appName);
+    ok(navigator.toString() === (v < 9 ? "[object]" : "[object Navigator]"),
+       "navigator.toString() = " + navigator.toString());
+});

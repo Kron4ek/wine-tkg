@@ -3483,14 +3483,18 @@ static BOOL WINAPI WS2_ConnectEx(SOCKET s, const struct WS_sockaddr* name, int n
     else if (ret == WSAEINPROGRESS)
     {
         struct ws2_async *wsa;
+        DWORD size;
+
         ULONG_PTR cvalue = (((ULONG_PTR)ov->hEvent & 1) == 0) ? (ULONG_PTR)ov : 0;
 
         _enable_event(SOCKET2HANDLE(s), FD_CONNECT|FD_READ|FD_WRITE,
                       FD_CONNECT,
                       FD_WINE_CONNECTED|FD_WINE_LISTENING);
 
+        size = offsetof( struct ws2_async, iovec[1] ) + sendBufLen;
+
         /* Indirectly call WSASend */
-        if (!(wsa = (struct ws2_async *)alloc_async_io( offsetof( struct ws2_async, iovec[1] ), WS2_async_send )))
+        if (!(wsa = (struct ws2_async *)alloc_async_io( size, WS2_async_send )))
         {
             SetLastError(WSAEFAULT);
         }
@@ -3509,8 +3513,11 @@ static BOOL WINAPI WS2_ConnectEx(SOCKET s, const struct WS_sockaddr* name, int n
             wsa->n_iovecs    = sendBuf ? 1 : 0;
             wsa->first_iovec = 0;
             wsa->completion_func = NULL;
-            wsa->iovec[0].iov_base = sendBuf;
+            wsa->iovec[0].iov_base = &wsa->iovec[1];
             wsa->iovec[0].iov_len  = sendBufLen;
+
+            if (sendBufLen)
+                memcpy( wsa->iovec[0].iov_base, sendBuf, sendBufLen );
 
             status = register_async( ASYNC_TYPE_WRITE, wsa->hSocket, &wsa->io, ov->hEvent,
                                       NULL, (void *)cvalue, iosb );
@@ -7538,6 +7545,7 @@ SOCKET WINAPI WSASocketW(int af, int type, int protocol,
             if (!af) af = supported_protocols[i].iAddressFamily;
             if (!type) type = supported_protocols[i].iSocketType;
             if (!protocol) protocol = supported_protocols[i].iProtocol;
+            break;
         }
     }
 

@@ -129,14 +129,14 @@ static char * get_file_version(char * file_name)
                             pFixedVersionInfo->dwFileVersionLS >> 16,
                             pFixedVersionInfo->dwFileVersionLS & 0xffff);
                 } else
-                    sprintf(version, "version not available");
+                    sprintf(version, "version not found");
             } else
-                sprintf(version, "unknown");
+                sprintf(version, "version error %u", GetLastError());
             heap_free(data);
         } else
-            sprintf(version, "failed");
+            sprintf(version, "version error %u", ERROR_OUTOFMEMORY);
     } else
-        sprintf(version, "version not available");
+        sprintf(version, "version not present");
 
     return version;
 }
@@ -608,11 +608,12 @@ static void append_path( const char *path)
    value of WaitForSingleObject.
  */
 static int
-run_ex (char *cmd, HANDLE out_file, const char *tempdir, DWORD ms, DWORD* pid)
+run_ex (char *cmd, HANDLE out_file, const char *tempdir, DWORD ms, BOOL nocritical, DWORD* pid)
 {
     STARTUPINFOA si;
     PROCESS_INFORMATION pi;
-    DWORD wait, status;
+    DWORD wait, status, flags;
+    UINT old_errmode;
 
     /* Flush to disk so we know which test caused Windows to crash if it does */
     if (out_file)
@@ -623,14 +624,24 @@ run_ex (char *cmd, HANDLE out_file, const char *tempdir, DWORD ms, DWORD* pid)
     si.hStdInput  = GetStdHandle( STD_INPUT_HANDLE );
     si.hStdOutput = out_file ? out_file : GetStdHandle( STD_OUTPUT_HANDLE );
     si.hStdError  = out_file ? out_file : GetStdHandle( STD_ERROR_HANDLE );
+    if (nocritical)
+    {
+        old_errmode = SetErrorMode(0);
+        SetErrorMode(old_errmode | SEM_FAILCRITICALERRORS);
+        flags = 0;
+    }
+    else
+        flags = CREATE_DEFAULT_ERROR_MODE;
 
-    if (!CreateProcessA (NULL, cmd, NULL, NULL, TRUE, CREATE_DEFAULT_ERROR_MODE,
+    if (!CreateProcessA (NULL, cmd, NULL, NULL, TRUE, flags,
                          NULL, tempdir, &si, &pi))
     {
+        if (nocritical) SetErrorMode(old_errmode);
         if (pid) *pid = 0;
         return -2;
     }
 
+    if (nocritical) SetErrorMode(old_errmode);
     CloseHandle (pi.hThread);
     if (pid) *pid = pi.dwProcessId;
     status = wait_process( pi.hProcess, ms );
@@ -716,7 +727,7 @@ get_subtests (const char *tempdir, struct wine_test *test, LPSTR res_name)
         /* We need to add the path (to the main dll) to PATH */
         append_path(test->maindllpath);
     }
-    status = run_ex (cmd, subfile, tempdir, 5000, NULL);
+    status = run_ex (cmd, subfile, tempdir, 5000, TRUE, NULL);
     err = GetLastError();
     if (test->maindllpath) {
         /* Restore PATH again */
@@ -724,9 +735,12 @@ get_subtests (const char *tempdir, struct wine_test *test, LPSTR res_name)
     }
     heap_free (cmd);
 
-    if (status == -2)
+    if (status)
     {
-        report (R_ERROR, "Cannot run %s error %u", test->exename, err);
+        if (status == -2)
+            report (R_ERROR, "Cannot run %s error %u", test->exename, err);
+        else
+            err = status;
         CloseHandle( subfile );
         goto quit;
     }
@@ -782,7 +796,7 @@ run_test (struct wine_test* test, const char* subtest, HANDLE out_file, const ch
     if (test_filtered_out( test->name, subtest ))
     {
         report (R_STEP, "Skipping: %s:%s", test->name, subtest);
-        xprintf ("%s:%s skipped %s -\n", test->name, subtest, file);
+        xprintf ("%s:%s skipped %s\n", test->name, subtest, file);
         nr_of_skips++;
     }
     else
@@ -791,8 +805,8 @@ run_test (struct wine_test* test, const char* subtest, HANDLE out_file, const ch
         DWORD pid, start = GetTickCount();
         char *cmd = strmake (NULL, "%s %s", test->exename, subtest);
         report (R_STEP, "Running: %s:%s", test->name, subtest);
-        xprintf ("%s:%s start %s -\n", test->name, subtest, file);
-        status = run_ex (cmd, out_file, tempdir, 120000, &pid);
+        xprintf ("%s:%s start %s\n", test->name, subtest, file);
+        status = run_ex (cmd, out_file, tempdir, 120000, FALSE, &pid);
         heap_free (cmd);
         xprintf ("%s:%s:%04x done (%d) in %ds\n", test->name, subtest, pid, status, (GetTickCount()-start)/1000);
         if (status) failures++;
@@ -943,12 +957,7 @@ extract_test_proc (HMODULE hModule, LPCSTR lpszType, LPSTR lpszName, LONG_PTR lP
     }
 
     run = TRUE;
-    if (!dll)
-    {
-        xprintf ("    %s=dll is missing\n", dllname);
-        run = FALSE;
-    }
-    else
+    if (dll)
     {
         if (is_stub_dll(dllname))
         {
@@ -957,7 +966,7 @@ extract_test_proc (HMODULE hModule, LPCSTR lpszType, LPSTR lpszName, LONG_PTR lP
         }
         else if (is_native_dll(dll))
         {
-            xprintf ("    %s=load error Configured as native\n", dllname);
+            xprintf ("    %s=dll is native\n", dllname);
             nr_native_dlls++;
             run = FALSE;
         }
@@ -967,14 +976,26 @@ extract_test_proc (HMODULE hModule, LPCSTR lpszType, LPSTR lpszName, LONG_PTR lP
     if (run)
     {
         err = get_subtests( tempdir, &wine_tests[nr_of_files], lpszName );
-        if (!err)
+        switch (err)
         {
+        case 0:
             xprintf ("    %s=%s\n", dllname, get_file_version(filename));
             nr_of_tests += wine_tests[nr_of_files].subtest_count;
             nr_of_files++;
-        }
-        else
+            break;
+        case STATUS_DLL_NOT_FOUND:
+            xprintf ("    %s=dll is missing\n", dllname);
+            break;
+        case STATUS_ORDINAL_NOT_FOUND:
+            xprintf ("    %s=dll is missing an ordinal (%s)\n", dllname, get_file_version(filename));
+            break;
+        case STATUS_ENTRYPOINT_NOT_FOUND:
+            xprintf ("    %s=dll is missing an entrypoint (%s)\n", dllname, get_file_version(filename));
+            break;
+        default:
             xprintf ("    %s=load error %u\n", dllname, err);
+            break;
+        }
     }
 
     if (actctx != INVALID_HANDLE_VALUE)

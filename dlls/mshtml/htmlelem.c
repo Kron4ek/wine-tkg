@@ -230,7 +230,7 @@ static inline HTMLFiltersCollection *impl_from_IHTMLFiltersCollection(IHTMLFilte
     return CONTAINING_RECORD(iface, HTMLFiltersCollection, IHTMLFiltersCollection_iface);
 }
 
-static IHTMLFiltersCollection *HTMLFiltersCollection_Create(void);
+static HRESULT create_filters_collection(compat_mode_t compat_mode, IHTMLFiltersCollection **ret);
 
 static inline HTMLElement *impl_from_IHTMLElement(IHTMLElement *iface)
 {
@@ -512,7 +512,7 @@ static HRESULT create_html_rect(nsIDOMClientRect *nsrect, compat_mode_t compat_m
     rect->IHTMLRect_iface.lpVtbl = &HTMLRectVtbl;
     rect->ref = 1;
 
-    init_dispex_with_compat_mode(&rect->dispex, (IUnknown*)&rect->IHTMLRect_iface, &HTMLRect_dispex, compat_mode);
+    init_dispatch(&rect->dispex, (IUnknown*)&rect->IHTMLRect_iface, &HTMLRect_dispex, compat_mode);
 
     nsIDOMClientRect_AddRef(nsrect);
     rect->nsrect = nsrect;
@@ -2011,18 +2011,16 @@ static HRESULT WINAPI HTMLElement_click(IHTMLElement *iface)
     return S_OK;
 }
 
-static HRESULT WINAPI HTMLElement_get_filters(IHTMLElement *iface,
-                                              IHTMLFiltersCollection **p)
+static HRESULT WINAPI HTMLElement_get_filters(IHTMLElement *iface, IHTMLFiltersCollection **p)
 {
     HTMLElement *This = impl_from_IHTMLElement(iface);
+
     TRACE("(%p)->(%p)\n", This, p);
 
     if(!p)
         return E_POINTER;
 
-    *p = HTMLFiltersCollection_Create();
-
-    return S_OK;
+    return create_filters_collection(dispex_compat_mode(&This->node.event_target.dispex), p);
 }
 
 static HRESULT WINAPI HTMLElement_put_ondragstart(IHTMLElement *iface, VARIANT v)
@@ -2670,8 +2668,8 @@ static HRESULT WINAPI HTMLElement2_getClientRects(IHTMLElement2 *iface, IHTMLRec
     rects->IHTMLRectCollection_iface.lpVtbl = &HTMLRectCollectionVtbl;
     rects->ref = 1;
     rects->rect_list = rect_list;
-    init_dispex_with_compat_mode(&rects->dispex, (IUnknown*)&rects->IHTMLRectCollection_iface,
-                                 &HTMLRectCollection_dispex, dispex_compat_mode(&This->node.event_target.dispex));
+    init_dispatch(&rects->dispex, (IUnknown*)&rects->IHTMLRectCollection_iface,
+                  &HTMLRectCollection_dispex, dispex_compat_mode(&This->node.event_target.dispex));
 
     *pRectCol = &rects->IHTMLRectCollection_iface;
     return S_OK;
@@ -5740,7 +5738,7 @@ static HRESULT WINAPI ElementSelector_querySelectorAll(IElementSelector *iface, 
     HTMLElement *This = impl_from_IElementSelector(iface);
     nsIDOMNodeList *node_list;
     nsAString nsstr;
-    nsresult nsres;
+    HRESULT hres;
 
     TRACE("(%p)->(%s %p)\n", This, debugstr_w(v), pel);
 
@@ -5750,16 +5748,16 @@ static HRESULT WINAPI ElementSelector_querySelectorAll(IElementSelector *iface, 
     }
 
     nsAString_InitDepend(&nsstr, v);
-    nsres = nsIDOMElement_QuerySelectorAll(This->dom_element, &nsstr, &node_list);
+    hres = map_nsresult(nsIDOMElement_QuerySelectorAll(This->dom_element, &nsstr, &node_list));
     nsAString_Finish(&nsstr);
-    if(NS_FAILED(nsres)) {
-        ERR("QuerySelectorAll failed: %08x\n", nsres);
-        return E_FAIL;
+    if(FAILED(hres)) {
+        ERR("QuerySelectorAll failed: %08x\n", hres);
+        return hres;
     }
 
-    *pel = create_child_collection(node_list);
+    hres = create_child_collection(node_list, dispex_compat_mode(&This->node.event_target.dispex), pel);
     nsIDOMNodeList_Release(node_list);
-    return *pel ? S_OK : E_OUTOFMEMORY;
+    return hres;
 }
 
 static const IElementSelectorVtbl ElementSelectorVtbl = {
@@ -6606,17 +6604,21 @@ static dispex_static_data_t HTMLFiltersCollection_dispex = {
     HTMLFiltersCollection_iface_tids
 };
 
-static IHTMLFiltersCollection *HTMLFiltersCollection_Create(void)
+static HRESULT create_filters_collection(compat_mode_t compat_mode, IHTMLFiltersCollection **ret)
 {
-    HTMLFiltersCollection *ret = heap_alloc(sizeof(HTMLFiltersCollection));
+    HTMLFiltersCollection *collection;
 
-    ret->IHTMLFiltersCollection_iface.lpVtbl = &HTMLFiltersCollectionVtbl;
-    ret->ref = 1;
+    if(!(collection = heap_alloc(sizeof(HTMLFiltersCollection))))
+        return E_OUTOFMEMORY;
 
-    init_dispex(&ret->dispex, (IUnknown*)&ret->IHTMLFiltersCollection_iface,
-            &HTMLFiltersCollection_dispex);
+    collection->IHTMLFiltersCollection_iface.lpVtbl = &HTMLFiltersCollectionVtbl;
+    collection->ref = 1;
 
-    return &ret->IHTMLFiltersCollection_iface;
+    init_dispatch(&collection->dispex, (IUnknown*)&collection->IHTMLFiltersCollection_iface,
+                  &HTMLFiltersCollection_dispex, compat_mode);
+
+    *ret = &collection->IHTMLFiltersCollection_iface;
+    return S_OK;
 }
 
 /* interface IHTMLAttributeCollection */
@@ -7196,8 +7198,8 @@ HRESULT HTMLElement_get_attr_col(HTMLDOMNode *iface, HTMLAttributeCollection **a
 
     This->attrs->elem = This;
     list_init(&This->attrs->attrs);
-    init_dispex_with_compat_mode(&This->attrs->dispex, (IUnknown*)&This->attrs->IHTMLAttributeCollection_iface,
-                                 &HTMLAttributeCollection_dispex, dispex_compat_mode(&iface->event_target.dispex));
+    init_dispatch(&This->attrs->dispex, (IUnknown*)&This->attrs->IHTMLAttributeCollection_iface,
+                  &HTMLAttributeCollection_dispex, dispex_compat_mode(&iface->event_target.dispex));
 
     *ac = This->attrs;
     return S_OK;

@@ -502,6 +502,7 @@ enum apc_type
     APC_MAP_VIEW,
     APC_UNMAP_VIEW,
     APC_CREATE_THREAD,
+    APC_DUP_HANDLE,
     APC_BREAK_PROCESS
 };
 
@@ -612,6 +613,15 @@ typedef union
         mem_size_t       reserve;   /* reserve size for thread stack */
         mem_size_t       commit;    /* commit size for thread stack */
     } create_thread;
+    struct
+    {
+        enum apc_type    type;         /* APC_DUP_HANDLE */
+        obj_handle_t     src_handle;   /* src handle to duplicate */
+        obj_handle_t     dst_process;  /* dst process handle */
+        unsigned int     access;       /* wanted access rights */
+        unsigned int     attributes;   /* object attributes */
+        unsigned int     options;      /* duplicate options */
+    } dup_handle;
 } apc_call_t;
 
 typedef union
@@ -687,7 +697,7 @@ typedef union
     } map_view;
     struct
     {
-        enum apc_type    type;      /* APC_MAP_VIEW */
+        enum apc_type    type;      /* APC_UNMAP_VIEW */
         unsigned int     status;    /* status returned by call */
     } unmap_view;
     struct
@@ -699,6 +709,12 @@ typedef union
         client_ptr_t     teb;       /* thread teb (in process address space) */
         obj_handle_t     handle;    /* handle to new thread */
     } create_thread;
+    struct
+    {
+        enum apc_type    type;      /* APC_DUP_HANDLE */
+        unsigned int     status;    /* status returned by call */
+        obj_handle_t     handle;    /* duplicated handle in dst process */
+    } dup_handle;
     struct
     {
         enum apc_type    type;      /* APC_BREAK_PROCESS */
@@ -815,8 +831,6 @@ typedef struct
     unsigned int   checksum;
     unsigned int   dbg_offset;
     unsigned int   dbg_size;
-    client_cpu_t   cpu;
-    int            __pad;
 } pe_image_info_t;
 #define IMAGE_FLAGS_ComPlusNativeReady        0x01
 #define IMAGE_FLAGS_ComPlusILOnly             0x02
@@ -873,13 +887,6 @@ struct cpu_topology_override
     obj_handle_t info;           /* new process info handle */
     process_id_t pid;            /* process id */
     obj_handle_t handle;         /* process handle (in the current process) */
-@END
-
-
-/* Execute a process, replacing the current one */
-@REQ(exec_process)
-    int          socket_fd;      /* file descriptor for process socket */
-    client_cpu_t cpu;            /* CPU that the new process will use */
 @END
 
 
@@ -1142,11 +1149,9 @@ struct cpu_topology_override
     obj_handle_t dst_process;  /* dst process handle */
     unsigned int access;       /* wanted access rights */
     unsigned int attributes;   /* object attributes */
-    unsigned int options;      /* duplicate options (see below) */
+    unsigned int options;      /* duplicate options */
 @REPLY
     obj_handle_t handle;       /* duplicated handle in dst process */
-    int          self;         /* is the source the current process? */
-    int          closed;       /* whether the source handle has been closed */
 @END
 
 
@@ -1565,7 +1570,9 @@ enum server_fd_type
     mem_size_t   size;          /* mapping size */
     unsigned int flags;         /* SEC_* flags */
     obj_handle_t shared_file;   /* shared mapping file handle */
+    data_size_t  total;         /* total required buffer size in bytes */
     VARARG(image,pe_image_info);/* image info for SEC_IMAGE mappings */
+    VARARG(name,unicode_str);   /* filename for SEC_IMAGE mappings */
 @END
 
 

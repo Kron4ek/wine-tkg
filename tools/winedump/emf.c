@@ -93,7 +93,22 @@ static int dump_emfrecord(void)
 
     switch(type)
     {
-    EMRCASE(EMR_HEADER);
+    case EMR_HEADER:
+    {
+        const ENHMETAHEADER *header = PRD(offset, sizeof(*header));
+
+        printf("%-20s %08x\n", "EMR_HEADER", length);
+        printf("bounds (%d,%d - %d,%d) frame (%d,%d - %d,%d) signature %#x version %#x bytes %#x records %#x\n"
+               "handles %#x reserved %#x palette entries %#x px %dx%d mm %dx%d μm %dx%d opengl %d description %s\n",
+               header->rclBounds.left, header->rclBounds.top, header->rclBounds.right, header->rclBounds.bottom,
+               header->rclFrame.left, header->rclFrame.top, header->rclFrame.right, header->rclFrame.bottom,
+               header->dSignature, header->nVersion, header->nBytes, header->nRecords, header->nHandles, header->sReserved,
+               header->nPalEntries, header->szlDevice.cx, header->szlDevice.cy, header->szlMillimeters.cx,
+               header->szlMillimeters.cy, header->szlMicrometers.cx, header->szlMicrometers.cy, header->bOpenGL,
+               debugstr_wn((LPCWSTR)((const BYTE *)header + header->offDescription), header->nDescription));
+        break;
+    }
+
     EMRCASE(EMR_POLYBEZIER);
     EMRCASE(EMR_POLYGON);
     EMRCASE(EMR_POLYLINE);
@@ -342,7 +357,9 @@ static int dump_emfrecord(void)
         const EMREXTTEXTOUTW *etoW = PRD(offset, sizeof(*etoW));
 
         printf("%-20s %08x\n", "EMR_EXTTEXTOUTW", length);
-        printf("pt (%d,%d) rect (%d,%d - %d,%d) flags %#x, %s\n",
+        printf("bounds (%d,%d - %d,%d) mode %#x x_scale %f y_scale %f pt (%d,%d) rect (%d,%d - %d,%d) flags %#x, %s\n",
+               etoW->rclBounds.left, etoW->rclBounds.top, etoW->rclBounds.right, etoW->rclBounds.bottom,
+               etoW->iGraphicsMode, etoW->exScale, etoW->eyScale,
                etoW->emrtext.ptlReference.x, etoW->emrtext.ptlReference.y,
                etoW->emrtext.rcl.left, etoW->emrtext.rcl.top,
                etoW->emrtext.rcl.right, etoW->emrtext.rcl.bottom,

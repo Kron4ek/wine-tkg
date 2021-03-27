@@ -723,12 +723,22 @@ static void dispatch_script_readystatechange_event(HTMLScriptElement *script)
     DOMEvent *event;
     HRESULT hres;
 
-    hres = create_document_event(script->element.node.doc, EVENTID_READYSTATECHANGE, &event);
-    if(FAILED(hres))
-        return;
+    if(script->readystate != READYSTATE_LOADED ||
+       dispex_compat_mode(&script->element.node.event_target.dispex) < COMPAT_MODE_IE10) {
+        hres = create_document_event(script->element.node.doc, EVENTID_READYSTATECHANGE, &event);
+        if(SUCCEEDED(hres)) {
+            dispatch_event(&script->element.node.event_target, event);
+            IDOMEvent_Release(&event->IDOMEvent_iface);
+        }
+    }
 
-    dispatch_event(&script->element.node.event_target, event);
-    IDOMEvent_Release(&event->IDOMEvent_iface);
+    if(script->readystate == READYSTATE_LOADED) {
+        hres = create_document_event(script->element.node.doc, EVENTID_LOAD, &event);
+        if(SUCCEEDED(hres)) {
+            dispatch_event(&script->element.node.event_target, event);
+            IDOMEvent_Release(&event->IDOMEvent_iface);
+        }
+    }
 }
 
 typedef struct {
@@ -757,6 +767,10 @@ static void fire_readystatechange_task_destr(task_t *_task)
 static void set_script_elem_readystate(HTMLScriptElement *script_elem, READYSTATE readystate)
 {
     script_elem->readystate = readystate;
+
+    if(readystate != READYSTATE_LOADED &&
+       dispex_compat_mode(&script_elem->element.node.event_target.dispex) >= COMPAT_MODE_IE11)
+        return;
 
     if(readystate != READYSTATE_INTERACTIVE) {
         if(!script_elem->element.node.doc->window->parser_callback_cnt) {
@@ -808,6 +822,8 @@ typedef struct {
     BSCallback bsc;
 
     HTMLScriptElement *script_elem;
+    nsILoadGroup *load_group;
+    nsIRequest *request;
     DWORD scheme;
 
     DWORD size;
@@ -931,6 +947,13 @@ static void ScriptBSC_destroy(BSCallback *bsc)
         This->script_elem = NULL;
     }
 
+    if(This->request) {
+        ERR("Unfinished request\n");
+        nsIRequest_Release(This->request);
+    }
+    if(This->load_group)
+        nsILoadGroup_Release(This->load_group);
+
     heap_free(This->buf);
     heap_free(This);
 }
@@ -943,8 +966,18 @@ static HRESULT ScriptBSC_init_bindinfo(BSCallback *bsc)
 static HRESULT ScriptBSC_start_binding(BSCallback *bsc)
 {
     ScriptBSC *This = impl_from_BSCallback(bsc);
+    nsresult nsres;
 
     This->script_elem->binding = &This->bsc;
+
+    if(This->load_group) {
+        nsres = create_onload_blocker_request(&This->request);
+        if(NS_SUCCEEDED(nsres)) {
+            nsres = nsILoadGroup_AddRequest(This->load_group, This->request, NULL);
+            if(NS_FAILED(nsres))
+                ERR("AddRequest failed: %08x\n", nsres);
+        }
+    }
 
     /* FIXME: We should find a better to decide if 'loading' state is supposed to be used by the protocol. */
     if(This->scheme == URL_SCHEME_HTTPS || This->scheme == URL_SCHEME_HTTP)
@@ -956,6 +989,7 @@ static HRESULT ScriptBSC_start_binding(BSCallback *bsc)
 static HRESULT ScriptBSC_stop_binding(BSCallback *bsc, HRESULT result)
 {
     ScriptBSC *This = impl_from_BSCallback(bsc);
+    nsresult nsres;
 
     if(SUCCEEDED(result) && !This->script_elem)
         result = E_UNEXPECTED;
@@ -973,6 +1007,14 @@ static HRESULT ScriptBSC_stop_binding(BSCallback *bsc, HRESULT result)
         heap_free(This->buf);
         This->buf = NULL;
         This->size = 0;
+    }
+
+    if(This->request) {
+        nsres = nsILoadGroup_RemoveRequest(This->load_group, This->request, NULL, NS_OK);
+        if(NS_FAILED(nsres))
+            ERR("RemoveRequest failed: %08x\n", nsres);
+        nsIRequest_Release(This->request);
+        This->request = NULL;
     }
 
     IHTMLScriptElement_Release(&This->script_elem->IHTMLScriptElement_iface);
@@ -1084,6 +1126,20 @@ HRESULT load_script(HTMLScriptElement *script_elem, const WCHAR *src, BOOL async
 
     IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
     bsc->script_elem = script_elem;
+
+    if(window->bscallback && window->bscallback->nschannel &&
+       window->bscallback->nschannel->load_group) {
+        cpp_bool contains;
+        nsresult nsres;
+
+        nsres = nsIDOMNode_Contains(script_elem->element.node.doc->node.nsnode,
+                                    script_elem->element.node.nsnode, &contains);
+        if(NS_SUCCEEDED(nsres) && contains) {
+            TRACE("script %p will block load event\n", script_elem);
+            bsc->load_group = window->bscallback->nschannel->load_group;
+            nsILoadGroup_AddRef(bsc->load_group);
+        }
+    }
 
     hres = start_binding(window, &bsc->bsc, NULL);
 

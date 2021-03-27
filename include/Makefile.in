@@ -287,6 +287,7 @@ SOURCES = \
 	errors.h \
 	errrec.idl \
 	evcode.h \
+	eventtoken.idl \
 	evntprov.h \
 	evntrace.h \
 	evr.idl \
@@ -758,8 +759,8 @@ SOURCES = \
 	windns.h \
 	windows.foundation.collections.idl \
 	windows.foundation.idl \
-	windows.gaming.input.idl \
 	windows.gaming.input.forcefeedback.idl \
+	windows.gaming.input.idl \
 	windows.globalization.idl \
 	windows.h \
 	windows.media.speechsynthesis.idl \

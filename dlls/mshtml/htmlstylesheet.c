@@ -207,29 +207,32 @@ static dispex_static_data_t HTMLStyleSheetRule_dispex = {
     HTMLStyleSheetRule_iface_tids
 };
 
-static IHTMLStyleSheetRule *HTMLStyleSheetRule_Create(nsIDOMCSSRule *nsstylesheetrule)
+static HRESULT create_style_sheet_rule(nsIDOMCSSRule *nsstylesheetrule, compat_mode_t compat_mode,
+                                       IHTMLStyleSheetRule **ret)
 {
-    HTMLStyleSheetRule *ret;
+    HTMLStyleSheetRule *rule;
     nsresult nsres;
 
-    if(!(ret = heap_alloc(sizeof(*ret))))
-        return NULL;
+    if(!(rule = heap_alloc(sizeof(*rule))))
+        return E_OUTOFMEMORY;
 
-    ret->IHTMLStyleSheetRule_iface.lpVtbl = &HTMLStyleSheetRuleVtbl;
-    ret->ref = 1;
-    ret->nsstylesheetrule = NULL;
+    rule->IHTMLStyleSheetRule_iface.lpVtbl = &HTMLStyleSheetRuleVtbl;
+    rule->ref = 1;
+    rule->nsstylesheetrule = NULL;
 
-    init_dispex(&ret->dispex, (IUnknown *)&ret->IHTMLStyleSheetRule_iface, &HTMLStyleSheetRule_dispex);
+    init_dispatch(&rule->dispex, (IUnknown *)&rule->IHTMLStyleSheetRule_iface, &HTMLStyleSheetRule_dispex,
+                  compat_mode);
 
     if (nsstylesheetrule)
     {
         nsres = nsIDOMCSSRule_QueryInterface(nsstylesheetrule, &IID_nsIDOMCSSRule,
-                (void **)&ret->nsstylesheetrule);
+                (void **)&rule->nsstylesheetrule);
         if (NS_FAILED(nsres))
             ERR("Could not get nsIDOMCSSRule interface: %08x\n", nsres);
     }
 
-    return &ret->IHTMLStyleSheetRule_iface;
+    *ret = &rule->IHTMLStyleSheetRule_iface;
+    return S_OK;
 }
 
 static inline HTMLStyleSheetRulesCollection *impl_from_IHTMLStyleSheetRulesCollection(IHTMLStyleSheetRulesCollection *iface)
@@ -339,13 +342,13 @@ static HRESULT WINAPI HTMLStyleSheetRulesCollection_get_length(IHTMLStyleSheetRu
 }
 
 static HRESULT WINAPI HTMLStyleSheetRulesCollection_item(IHTMLStyleSheetRulesCollection *iface,
-        LONG index, IHTMLStyleSheetRule **ppHTMLStyleSheetRule)
+        LONG index, IHTMLStyleSheetRule **p)
 {
     HTMLStyleSheetRulesCollection *This = impl_from_IHTMLStyleSheetRulesCollection(iface);
     nsIDOMCSSRule *nsstylesheetrule;
     nsresult nsres;
 
-    TRACE("(%p)->(%d %p)\n", This, index, ppHTMLStyleSheetRule);
+    TRACE("(%p)->(%d %p)\n", This, index, p);
 
     nsres = nsIDOMCSSRuleList_Item(This->nslist, index, &nsstylesheetrule);
     if(NS_FAILED(nsres))
@@ -353,8 +356,7 @@ static HRESULT WINAPI HTMLStyleSheetRulesCollection_item(IHTMLStyleSheetRulesCol
     if(!nsstylesheetrule)
         return E_INVALIDARG;
 
-    *ppHTMLStyleSheetRule = HTMLStyleSheetRule_Create(nsstylesheetrule);
-    return *ppHTMLStyleSheetRule ? S_OK : E_OUTOFMEMORY;
+    return create_style_sheet_rule(nsstylesheetrule, dispex_compat_mode(&This->dispex), p);
 }
 
 static const IHTMLStyleSheetRulesCollectionVtbl HTMLStyleSheetRulesCollectionVtbl = {
@@ -379,21 +381,26 @@ static dispex_static_data_t HTMLStyleSheetRulesCollection_dispex = {
     HTMLStyleSheetRulesCollection_iface_tids
 };
 
-static IHTMLStyleSheetRulesCollection *HTMLStyleSheetRulesCollection_Create(nsIDOMCSSRuleList *nslist)
+static HRESULT create_style_sheet_rules_collection(nsIDOMCSSRuleList *nslist, compat_mode_t compat_mode,
+                                                   IHTMLStyleSheetRulesCollection **ret)
 {
-    HTMLStyleSheetRulesCollection *ret;
+    HTMLStyleSheetRulesCollection *collection;
 
-    ret = heap_alloc(sizeof(*ret));
-    ret->IHTMLStyleSheetRulesCollection_iface.lpVtbl = &HTMLStyleSheetRulesCollectionVtbl;
-    ret->ref = 1;
-    ret->nslist = nslist;
+    if(!(collection = heap_alloc(sizeof(*collection))))
+        return E_OUTOFMEMORY;
 
-    init_dispex(&ret->dispex, (IUnknown*)&ret->IHTMLStyleSheetRulesCollection_iface, &HTMLStyleSheetRulesCollection_dispex);
+    collection->IHTMLStyleSheetRulesCollection_iface.lpVtbl = &HTMLStyleSheetRulesCollectionVtbl;
+    collection->ref = 1;
+    collection->nslist = nslist;
+
+    init_dispatch(&collection->dispex, (IUnknown*)&collection->IHTMLStyleSheetRulesCollection_iface,
+                  &HTMLStyleSheetRulesCollection_dispex, compat_mode);
 
     if(nslist)
         nsIDOMCSSRuleList_AddRef(nslist);
 
-    return &ret->IHTMLStyleSheetRulesCollection_iface;
+    *ret = &collection->IHTMLStyleSheetRulesCollection_iface;
+    return S_OK;
 }
 
 static inline HTMLStyleSheetsCollection *impl_from_IHTMLStyleSheetsCollection(IHTMLStyleSheetsCollection *iface)
@@ -517,7 +524,9 @@ static HRESULT WINAPI HTMLStyleSheetsCollection_item(IHTMLStyleSheetsCollection 
     switch(V_VT(pvarIndex)) {
     case VT_I4: {
         nsIDOMStyleSheet *nsstylesheet;
+        IHTMLStyleSheet *stylesheet;
         nsresult nsres;
+        HRESULT hres;
 
         TRACE("index=%d\n", V_I4(pvarIndex));
 
@@ -528,9 +537,12 @@ static HRESULT WINAPI HTMLStyleSheetsCollection_item(IHTMLStyleSheetsCollection 
             return E_INVALIDARG;
         }
 
-        V_VT(pvarResult) = VT_DISPATCH;
-        V_DISPATCH(pvarResult) = (IDispatch*)HTMLStyleSheet_Create(nsstylesheet);
+        hres = create_style_sheet(nsstylesheet, dispex_compat_mode(&This->dispex), &stylesheet);
+        if(FAILED(hres))
+            return hres;
 
+        V_VT(pvarResult) = VT_DISPATCH;
+        V_DISPATCH(pvarResult) = (IDispatch*)stylesheet;
         return S_OK;
     }
 
@@ -568,21 +580,26 @@ static dispex_static_data_t HTMLStyleSheetsCollection_dispex = {
     HTMLStyleSheetsCollection_iface_tids
 };
 
-IHTMLStyleSheetsCollection *HTMLStyleSheetsCollection_Create(nsIDOMStyleSheetList *nslist)
+HRESULT create_style_sheet_collection(nsIDOMStyleSheetList *nslist, compat_mode_t compat_mode,
+                                      IHTMLStyleSheetsCollection **ret)
 {
-    HTMLStyleSheetsCollection *ret = heap_alloc(sizeof(HTMLStyleSheetsCollection));
+    HTMLStyleSheetsCollection *collection;
 
-    ret->IHTMLStyleSheetsCollection_iface.lpVtbl = &HTMLStyleSheetsCollectionVtbl;
-    ret->ref = 1;
+    if(!(collection = heap_alloc(sizeof(HTMLStyleSheetsCollection))))
+        return E_OUTOFMEMORY;
+
+    collection->IHTMLStyleSheetsCollection_iface.lpVtbl = &HTMLStyleSheetsCollectionVtbl;
+    collection->ref = 1;
 
     if(nslist)
         nsIDOMStyleSheetList_AddRef(nslist);
-    ret->nslist = nslist;
+    collection->nslist = nslist;
 
-    init_dispex(&ret->dispex, (IUnknown*)&ret->IHTMLStyleSheetsCollection_iface,
-            &HTMLStyleSheetsCollection_dispex);
+    init_dispatch(&collection->dispex, (IUnknown*)&collection->IHTMLStyleSheetsCollection_iface,
+                  &HTMLStyleSheetsCollection_dispex, compat_mode);
 
-    return &ret->IHTMLStyleSheetsCollection_iface;
+    *ret = &collection->IHTMLStyleSheetsCollection_iface;
+    return S_OK;
 }
 
 static inline HTMLStyleSheet *impl_from_IHTMLStyleSheet(IHTMLStyleSheet *iface)
@@ -884,6 +901,7 @@ static HRESULT WINAPI HTMLStyleSheet_get_rules(IHTMLStyleSheet *iface,
     HTMLStyleSheet *This = impl_from_IHTMLStyleSheet(iface);
     nsIDOMCSSRuleList *nslist = NULL;
     nsresult nsres;
+    HRESULT hres;
 
     TRACE("(%p)->(%p)\n", This, p);
 
@@ -893,8 +911,9 @@ static HRESULT WINAPI HTMLStyleSheet_get_rules(IHTMLStyleSheet *iface,
         return E_FAIL;
     }
 
-    *p = HTMLStyleSheetRulesCollection_Create(nslist);
-    return S_OK;
+    hres = create_style_sheet_rules_collection(nslist, dispex_compat_mode(&This->dispex), p);
+    nsIDOMCSSRuleList_Release(nslist);
+    return hres;
 }
 
 static const IHTMLStyleSheetVtbl HTMLStyleSheetVtbl = {
@@ -938,23 +957,28 @@ static dispex_static_data_t HTMLStyleSheet_dispex = {
     HTMLStyleSheet_iface_tids
 };
 
-IHTMLStyleSheet *HTMLStyleSheet_Create(nsIDOMStyleSheet *nsstylesheet)
+HRESULT create_style_sheet(nsIDOMStyleSheet *nsstylesheet, compat_mode_t compat_mode, IHTMLStyleSheet **ret)
 {
-    HTMLStyleSheet *ret = heap_alloc(sizeof(HTMLStyleSheet));
+    HTMLStyleSheet *style_sheet;
     nsresult nsres;
 
-    ret->IHTMLStyleSheet_iface.lpVtbl = &HTMLStyleSheetVtbl;
-    ret->ref = 1;
-    ret->nsstylesheet = NULL;
+    if(!(style_sheet = heap_alloc(sizeof(HTMLStyleSheet))))
+        return E_OUTOFMEMORY;
 
-    init_dispex(&ret->dispex, (IUnknown*)&ret->IHTMLStyleSheet_iface, &HTMLStyleSheet_dispex);
+    style_sheet->IHTMLStyleSheet_iface.lpVtbl = &HTMLStyleSheetVtbl;
+    style_sheet->ref = 1;
+    style_sheet->nsstylesheet = NULL;
+
+    init_dispatch(&style_sheet->dispex, (IUnknown*)&style_sheet->IHTMLStyleSheet_iface,
+                  &HTMLStyleSheet_dispex, compat_mode);
 
     if(nsstylesheet) {
         nsres = nsIDOMStyleSheet_QueryInterface(nsstylesheet, &IID_nsIDOMCSSStyleSheet,
-                (void**)&ret->nsstylesheet);
+                (void**)&style_sheet->nsstylesheet);
         if(NS_FAILED(nsres))
             ERR("Could not get nsICSSStyleSheet interface: %08x\n", nsres);
     }
 
-    return &ret->IHTMLStyleSheet_iface;
+    *ret = &style_sheet->IHTMLStyleSheet_iface;
+    return S_OK;
 }

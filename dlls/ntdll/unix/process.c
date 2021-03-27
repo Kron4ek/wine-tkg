@@ -50,10 +50,6 @@
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
-#ifdef __APPLE__
-# include <CoreFoundation/CoreFoundation.h>
-# include <pthread.h>
-#endif
 #ifdef HAVE_MACH_MACH_H
 # include <mach/mach.h>
 #endif
@@ -74,11 +70,24 @@ static ULONG execute_flags = MEM_EXECUTE_OPTION_DISABLE | (sizeof(void *) > size
                                                            MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION |
                                                            MEM_EXECUTE_OPTION_PERMANENT : 0);
 
-static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
-
 static const char * const cpu_names[] = { "x86", "x86_64", "PowerPC", "ARM", "ARM64" };
 
 static UINT process_error_mode;
+
+static client_cpu_t get_machine_cpu( pe_image_info_t *pe_info )
+{
+    switch (pe_info->machine)
+    {
+    case IMAGE_FILE_MACHINE_I386:
+        if ((is_win64 || is_wow64) && (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady))
+            return CPU_x86_64;
+        return CPU_x86;
+    case IMAGE_FILE_MACHINE_AMD64: return CPU_x86_64;
+    case IMAGE_FILE_MACHINE_ARMNT: return CPU_ARM;
+    case IMAGE_FILE_MACHINE_ARM64: return CPU_ARM64;
+    default: return 0;
+    }
+}
 
 static char **build_argv( const UNICODE_STRING *cmdline, int reserved )
 {
@@ -145,55 +154,6 @@ static char **build_argv( const UNICODE_STRING *cmdline, int reserved )
     argv[argc] = NULL;
     return argv;
 }
-
-
-#ifdef __APPLE__
-/***********************************************************************
- *           terminate_main_thread
- *
- * On some versions of Mac OS X, the execve system call fails with
- * ENOTSUP if the process has multiple threads.  Wine is always multi-
- * threaded on Mac OS X because it specifically reserves the main thread
- * for use by the system frameworks (see apple_main_thread() in
- * libs/wine/loader.c).  So, when we need to exec without first forking,
- * we need to terminate the main thread first.  We do this by installing
- * a custom run loop source onto the main run loop and signaling it.
- * The source's "perform" callback is pthread_exit and it will be
- * executed on the main thread, terminating it.
- *
- * Returns TRUE if there's still hope the main thread has terminated or
- * will soon.  Return FALSE if we've given up.
- */
-static BOOL terminate_main_thread(void)
-{
-    static int delayms;
-
-    if (!delayms)
-    {
-        CFRunLoopSourceContext source_context = { 0 };
-        CFRunLoopSourceRef source;
-
-        source_context.perform = pthread_exit;
-        if (!(source = CFRunLoopSourceCreate( NULL, 0, &source_context )))
-            return FALSE;
-
-        CFRunLoopAddSource( CFRunLoopGetMain(), source, kCFRunLoopCommonModes );
-        CFRunLoopSourceSignal( source );
-        CFRunLoopWakeUp( CFRunLoopGetMain() );
-        CFRelease( source );
-
-        delayms = 20;
-    }
-
-    if (delayms > 1000)
-        return FALSE;
-
-    usleep(delayms * 1000);
-    delayms *= 2;
-
-    return TRUE;
-}
-#endif
 
 
 static inline const WCHAR *get_params_string( const RTL_USER_PROCESS_PARAMETERS *params,
@@ -264,34 +224,6 @@ static startup_info_t *create_startup_info( const RTL_USER_PROCESS_PARAMETERS *p
 }
 
 
-/***************************************************************************
- *	is_builtin_path
- */
-static BOOL is_builtin_path( UNICODE_STRING *path, BOOL *is_64bit )
-{
-    static const WCHAR systemW[] = {'\\','?','?','\\','c',':','\\','w','i','n','d','o','w','s','\\',
-                                    's','y','s','t','e','m','3','2','\\'};
-    static const WCHAR wow64W[] = {'\\','?','?','\\','c',':','\\','w','i','n','d','o','w','s','\\',
-                                   's','y','s','w','o','w','6','4'};
-
-    *is_64bit = is_win64;
-    if (path->Length > sizeof(systemW) && !wcsnicmp( path->Buffer, systemW, ARRAY_SIZE(systemW) ))
-    {
-#ifndef _WIN64
-        if (NtCurrentTeb64() && NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR]) *is_64bit = TRUE;
-#endif
-        return TRUE;
-    }
-    if ((is_win64 || is_wow64) && path->Length > sizeof(wow64W) &&
-        !wcsnicmp( path->Buffer, wow64W, ARRAY_SIZE(wow64W) ))
-    {
-        *is_64bit = FALSE;
-        return TRUE;
-    }
-    return FALSE;
-}
-
-
 /***********************************************************************
  *           get_so_file_info
  */
@@ -356,10 +288,10 @@ static BOOL get_so_file_info( HANDLE handle, pe_image_info_t *info )
 #endif
         switch (header.elf.machine)
         {
-        case 3:   info->cpu = CPU_x86; break;
-        case 40:  info->cpu = CPU_ARM; break;
-        case 62:  info->cpu = CPU_x86_64; break;
-        case 183: info->cpu = CPU_ARM64; break;
+        case 3:   info->machine = IMAGE_FILE_MACHINE_I386; break;
+        case 40:  info->machine = IMAGE_FILE_MACHINE_ARMNT; break;
+        case 62:  info->machine = IMAGE_FILE_MACHINE_AMD64; break;
+        case 183: info->machine = IMAGE_FILE_MACHINE_ARM64; break;
         }
         if (header.elf.type != 3 /* ET_DYN */) return FALSE;
         if (header.elf.class == 2 /* ELFCLASS64 */)
@@ -385,10 +317,10 @@ static BOOL get_so_file_info( HANDLE handle, pe_image_info_t *info )
     {
         switch (header.macho.cputype)
         {
-        case 0x00000007: info->cpu = CPU_x86; break;
-        case 0x01000007: info->cpu = CPU_x86_64; break;
-        case 0x0000000c: info->cpu = CPU_ARM; break;
-        case 0x0100000c: info->cpu = CPU_ARM64; break;
+        case 0x00000007: info->machine = IMAGE_FILE_MACHINE_I386; break;
+        case 0x01000007: info->machine = IMAGE_FILE_MACHINE_AMD64; break;
+        case 0x0000000c: info->machine = IMAGE_FILE_MACHINE_ARMNT; break;
+        case 0x0100000c: info->machine = IMAGE_FILE_MACHINE_ARM64; break;
         }
         if (header.macho.filetype == 8) return TRUE;
     }
@@ -412,17 +344,9 @@ static NTSTATUS get_pe_file_info( UNICODE_STRING *path, HANDLE *handle, pe_image
     if ((status = NtOpenFile( handle, GENERIC_READ, &attr, &io,
                               FILE_SHARE_READ | FILE_SHARE_DELETE, FILE_SYNCHRONOUS_IO_NONALERT )))
     {
-        BOOL is_64bit;
-
-        if (is_builtin_path( path, &is_64bit ))
+        if (is_builtin_path( path, &info->machine ))
         {
-            TRACE( "assuming %u-bit builtin for %s\n", is_64bit ? 64 : 32, debugstr_us(path));
-            /* assume current arch */
-#if defined(__i386__) || defined(__x86_64__)
-            info->cpu = is_64bit ? CPU_x86_64 : CPU_x86;
-#else
-            info->cpu = client_cpu;
-#endif
+            TRACE( "assuming %04x builtin for %s\n", info->machine, debugstr_us(path));
             return STATUS_SUCCESS;
         }
         return status;
@@ -607,108 +531,6 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
     if (stdin_fd != -1) close( stdin_fd );
     if (stdout_fd != -1) close( stdout_fd );
     return status;
-}
-
-
-/***********************************************************************
- *           exec_process
- */
-void DECLSPEC_NORETURN exec_process( NTSTATUS status )
-{
-    RTL_USER_PROCESS_PARAMETERS *params = NtCurrentTeb()->Peb->ProcessParameters;
-    pe_image_info_t pe_info;
-    int unixdir, socketfd[2];
-    char **argv;
-    HANDLE handle;
-
-    if (startup_info_size) goto done;  /* started from another Win32 process */
-
-    switch (status)
-    {
-    case STATUS_CONFLICTING_ADDRESSES:
-    case STATUS_NO_MEMORY:
-    case STATUS_INVALID_IMAGE_FORMAT:
-    case STATUS_INVALID_IMAGE_NOT_MZ:
-    {
-        UNICODE_STRING image;
-        if (getenv( "WINEPRELOADRESERVE" )) goto done;
-        image.Buffer = get_nt_pathname( &params->ImagePathName );
-        image.Length = wcslen( image.Buffer ) * sizeof(WCHAR);
-        if ((status = get_pe_file_info( &image, &handle, &pe_info ))) goto done;
-        break;
-    }
-    case STATUS_INVALID_IMAGE_WIN_16:
-    case STATUS_INVALID_IMAGE_NE_FORMAT:
-    case STATUS_INVALID_IMAGE_PROTECT:
-        /* we'll start winevdm */
-        memset( &pe_info, 0, sizeof(pe_info) );
-        pe_info.cpu = CPU_x86;
-        break;
-    default:
-        goto done;
-    }
-
-    unixdir = get_unix_curdir( params );
-
-    if (socketpair( PF_UNIX, SOCK_STREAM, 0, socketfd ) == -1)
-    {
-        status = STATUS_TOO_MANY_OPENED_FILES;
-        goto done;
-    }
-#ifdef SO_PASSCRED
-    else
-    {
-        int enable = 1;
-        setsockopt( socketfd[0], SOL_SOCKET, SO_PASSCRED, &enable, sizeof(enable) );
-    }
-#endif
-    wine_server_send_fd( socketfd[1] );
-    close( socketfd[1] );
-
-    SERVER_START_REQ( exec_process )
-    {
-        req->socket_fd = socketfd[1];
-        req->cpu       = pe_info.cpu;
-        status = wine_server_call( req );
-    }
-    SERVER_END_REQ;
-
-    if (!status)
-    {
-        if (!(argv = build_argv( &params->CommandLine, 2 )))
-        {
-            status = STATUS_NO_MEMORY;
-            goto done;
-        }
-        fchdir( unixdir );
-        do
-        {
-            status = exec_wineloader( argv, socketfd[0], &pe_info );
-        }
-#ifdef __APPLE__
-        while (errno == ENOTSUP && terminate_main_thread());
-#else
-        while (0);
-#endif
-        free( argv );
-    }
-    close( socketfd[0] );
-
-done:
-    switch (status)
-    {
-    case STATUS_INVALID_IMAGE_FORMAT:
-    case STATUS_INVALID_IMAGE_NOT_MZ:
-        ERR( "%s not supported on this system\n", debugstr_us(&params->ImagePathName) );
-        break;
-    case STATUS_REVISION_MISMATCH:
-        ERR( "ntdll library version mismatch\n" );
-        break;
-    default:
-        ERR( "failed to load %s error %x\n", debugstr_us(&params->ImagePathName), status );
-        break;
-    }
-    for (;;) NtTerminateProcess( GetCurrentProcess(), status );
 }
 
 
@@ -952,7 +774,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
         req->create_flags   = params->DebugFlags; /* hack: creation flags stored in DebugFlags for now */
         req->socket_fd      = socketfd[1];
         req->access         = process_access;
-        req->cpu            = pe_info.cpu;
+        req->cpu            = get_machine_cpu( &pe_info );
         req->info_size      = startup_info_size;
         req->handles_size   = handles_size;
         wine_server_add_data( req, objattr, attr_len );
@@ -979,7 +801,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
             break;
         case STATUS_INVALID_IMAGE_FORMAT:
             ERR( "%s not supported on this installation (%s binary)\n",
-                 debugstr_us(&path), cpu_names[pe_info.cpu] );
+                 debugstr_us(&path), cpu_names[get_machine_cpu(&pe_info)] );
             break;
         }
         goto done;

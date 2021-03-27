@@ -398,7 +398,7 @@ sync_test("stylesheets", function() {
 sync_test("storage", function() {
     ok(typeof(window.sessionStorage) === "object",
        "typeof(window.sessionStorage) = " + typeof(window.sessionStorage));
-    ok(typeof(window.localStorage) === "object",
+    ok(typeof(window.localStorage) === "object" || typeof(window.localStorage) === "unknown",
        "typeof(window.localStorage) = " + typeof(window.localStorage));
 });
 
@@ -414,4 +414,14 @@ async_test("animation", function() {
     });
     document.body.appendChild(div);
     div.className = "testAnimation";
+});
+
+sync_test("navigator", function() {
+    ok(typeof(window.navigator) === "object",
+       "typeof(window.navigator) = " + typeof(window.navigator));
+
+    var v = window.navigator;
+    ok(v === window.navigator, "v != window.navigator");
+    v.testProp = true;
+    ok(window.navigator.testProp, "window.navigator.testProp = " + window.navigator.testProp);
 });

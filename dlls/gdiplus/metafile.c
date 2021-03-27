@@ -777,10 +777,7 @@ GpStatus WINGDIPAPI GdipRecordMetafileI(HDC hdc, EmfType type, GDIPCONST GpRect 
 
     if (frameRect)
     {
-        frameRectF.X = frameRect->X;
-        frameRectF.Y = frameRect->Y;
-        frameRectF.Width = frameRect->Width;
-        frameRectF.Height = frameRect->Height;
+        set_rect(&frameRectF, frameRect->X, frameRect->Y, frameRect->Width, frameRect->Height);
         pFrameRectF = &frameRectF;
     }
     else
@@ -798,10 +795,7 @@ GpStatus WINGDIPAPI GdipRecordMetafileStreamI(IStream *stream, HDC hdc, EmfType 
 
     if (frameRect)
     {
-        frameRectF.X = frameRect->X;
-        frameRectF.Y = frameRect->Y;
-        frameRectF.Width = frameRect->Width;
-        frameRectF.Height = frameRect->Height;
+        set_rect(&frameRectF, frameRect->X, frameRect->Y, frameRect->Width, frameRect->Height);
         pFrameRectF = &frameRectF;
     }
     else
@@ -4774,6 +4768,40 @@ GpStatus METAFILE_DrawPath(GpMetafile *metafile, GpPen *pen, GpPath *path)
     return Ok;
 }
 
+GpStatus METAFILE_DrawEllipse(GpMetafile *metafile, GpPen *pen, GpRectF *rect)
+{
+    EmfPlusDrawEllipse *record;
+    GpStatus stat;
+    DWORD pen_id;
+
+    if (metafile->metafile_type == MetafileTypeEmf)
+    {
+        FIXME("stub!\n");
+        return NotImplemented;
+    }
+
+    stat = METAFILE_AddPenObject(metafile, pen, &pen_id);
+    if (stat != Ok) return stat;
+
+    stat = METAFILE_AllocateRecord(metafile, sizeof(EmfPlusDrawEllipse), (void **)&record);
+    if (stat != Ok) return stat;
+    record->Header.Type = EmfPlusRecordTypeDrawEllipse;
+    record->Header.Flags = pen_id;
+    if (is_integer_rect(rect))
+    {
+        record->Header.Flags |= 0x4000;
+        record->RectData.rect.X = (SHORT)rect->X;
+        record->RectData.rect.Y = (SHORT)rect->Y;
+        record->RectData.rect.Width = (SHORT)rect->Width;
+        record->RectData.rect.Height = (SHORT)rect->Height;
+    }
+    else
+        memcpy(&record->RectData.rectF, rect, sizeof(*rect));
+
+    METAFILE_WriteRecords(metafile);
+    return Ok;
+}
+
 GpStatus METAFILE_FillPath(GpMetafile *metafile, GpBrush *brush, GpPath *path)
 {
     EmfPlusFillPath *fill_path_record;
@@ -4811,6 +4839,105 @@ GpStatus METAFILE_FillPath(GpMetafile *metafile, GpBrush *brush, GpPath *path)
         fill_path_record->Header.Flags = path_id;
         fill_path_record->data.BrushId = brush_id;
     }
+
+    METAFILE_WriteRecords(metafile);
+    return Ok;
+}
+
+GpStatus METAFILE_FillEllipse(GpMetafile *metafile, GpBrush *brush, GpRectF *rect)
+{
+    EmfPlusFillEllipse *record;
+    DWORD brush_id = -1;
+    BOOL inline_color;
+    GpStatus stat;
+
+    if (metafile->metafile_type == MetafileTypeEmf)
+    {
+        FIXME("stub!\n");
+        return NotImplemented;
+    }
+
+    inline_color = brush->bt == BrushTypeSolidColor;
+    if (!inline_color)
+    {
+        stat = METAFILE_AddBrushObject(metafile, brush, &brush_id);
+        if (stat != Ok) return stat;
+    }
+
+    stat = METAFILE_AllocateRecord(metafile, sizeof(EmfPlusFillEllipse), (void **)&record);
+    if (stat != Ok) return stat;
+    record->Header.Type = EmfPlusRecordTypeFillEllipse;
+    if (inline_color)
+    {
+        record->Header.Flags = 0x8000;
+        record->BrushId = ((GpSolidFill *)brush)->color;
+    }
+    else
+        record->BrushId = brush_id;
+
+    if (is_integer_rect(rect))
+    {
+        record->Header.Flags |= 0x4000;
+        record->RectData.rect.X = (SHORT)rect->X;
+        record->RectData.rect.Y = (SHORT)rect->Y;
+        record->RectData.rect.Width = (SHORT)rect->Width;
+        record->RectData.rect.Height = (SHORT)rect->Height;
+    }
+    else
+        memcpy(&record->RectData.rectF, rect, sizeof(*rect));
+
+    METAFILE_WriteRecords(metafile);
+    return Ok;
+}
+
+GpStatus METAFILE_FillPie(GpMetafile *metafile, GpBrush *brush, const GpRectF *rect,
+        REAL startAngle, REAL sweepAngle)
+{
+    BOOL is_int_rect, inline_color;
+    EmfPlusFillPie *record;
+    DWORD brush_id = -1;
+    GpStatus stat;
+
+    if (metafile->metafile_type == MetafileTypeEmf)
+    {
+        FIXME("stub!\n");
+        return NotImplemented;
+    }
+
+    inline_color = brush->bt == BrushTypeSolidColor;
+    if (!inline_color)
+    {
+        stat = METAFILE_AddBrushObject(metafile, brush, &brush_id);
+        if (stat != Ok) return stat;
+    }
+
+    is_int_rect = is_integer_rect(rect);
+
+    stat = METAFILE_AllocateRecord(metafile, FIELD_OFFSET(EmfPlusFillPie, RectData) +
+            is_int_rect ? sizeof(EmfPlusRect) : sizeof(EmfPlusRectF), (void **)&record);
+    if (stat != Ok) return stat;
+    record->Header.Type = EmfPlusRecordTypeFillPie;
+    if (inline_color)
+    {
+        record->Header.Flags = 0x8000;
+        record->BrushId = ((GpSolidFill *)brush)->color;
+    }
+    else
+        record->BrushId = brush_id;
+
+    record->StartAngle = startAngle;
+    record->SweepAngle = sweepAngle;
+
+    if (is_int_rect)
+    {
+        record->Header.Flags |= 0x4000;
+        record->RectData.rect.X = (SHORT)rect->X;
+        record->RectData.rect.Y = (SHORT)rect->Y;
+        record->RectData.rect.Width = (SHORT)rect->Width;
+        record->RectData.rect.Height = (SHORT)rect->Height;
+    }
+    else
+        memcpy(&record->RectData.rectF, rect, sizeof(*rect));
 
     METAFILE_WriteRecords(metafile);
     return Ok;
@@ -5017,6 +5144,108 @@ GpStatus METAFILE_FillRegion(GpMetafile* metafile, GpBrush* brush, GpRegion* reg
     }
     else
         fill_region_record->data.BrushId = brush_id;
+
+    METAFILE_WriteRecords(metafile);
+
+    return Ok;
+}
+
+GpStatus METAFILE_DrawRectangles(GpMetafile *metafile, GpPen *pen, const GpRectF *rects, INT count)
+{
+    EmfPlusDrawRects *record;
+    GpStatus stat;
+    BOOL integer_rects = TRUE;
+    DWORD pen_id;
+    int i;
+
+    if (metafile->metafile_type == MetafileTypeEmf)
+    {
+        FIXME("stub!\n");
+        return NotImplemented;
+    }
+
+    stat = METAFILE_AddPenObject(metafile, pen, &pen_id);
+    if (stat != Ok) return stat;
+
+    for (i = 0; i < count; i++)
+    {
+        if (!is_integer_rect(&rects[i]))
+        {
+            integer_rects = FALSE;
+            break;
+        }
+    }
+
+    stat = METAFILE_AllocateRecord(metafile, FIELD_OFFSET(EmfPlusDrawRects, RectData) +
+        count * (integer_rects ? sizeof(record->RectData.rect) : sizeof(record->RectData.rectF)),
+        (void **)&record);
+    if (stat != Ok)
+        return stat;
+
+    record->Header.Type = EmfPlusRecordTypeDrawRects;
+    record->Header.Flags = pen_id;
+    if (integer_rects)
+        record->Header.Flags |= 0x4000;
+    record->Count = count;
+
+    if (integer_rects)
+    {
+        for (i = 0; i < count; i++)
+        {
+            record->RectData.rect[i].X = (SHORT)rects[i].X;
+            record->RectData.rect[i].Y = (SHORT)rects[i].Y;
+            record->RectData.rect[i].Width = (SHORT)rects[i].Width;
+            record->RectData.rect[i].Height = (SHORT)rects[i].Height;
+        }
+    }
+    else
+        memcpy(record->RectData.rectF, rects, sizeof(*rects) * count);
+
+    METAFILE_WriteRecords(metafile);
+
+    return Ok;
+}
+
+GpStatus METAFILE_DrawArc(GpMetafile *metafile, GpPen *pen, const GpRectF *rect, REAL startAngle, REAL sweepAngle)
+{
+    EmfPlusDrawArc *record;
+    GpStatus stat;
+    BOOL integer_rect;
+    DWORD pen_id;
+
+    if (metafile->metafile_type == MetafileTypeEmf)
+    {
+        FIXME("stub!\n");
+        return NotImplemented;
+    }
+
+    stat = METAFILE_AddPenObject(metafile, pen, &pen_id);
+    if (stat != Ok) return stat;
+
+    integer_rect = is_integer_rect(rect);
+
+    stat = METAFILE_AllocateRecord(metafile, FIELD_OFFSET(EmfPlusDrawArc, RectData) +
+        integer_rect ? sizeof(record->RectData.rect) : sizeof(record->RectData.rectF),
+        (void **)&record);
+    if (stat != Ok)
+        return stat;
+
+    record->Header.Type = EmfPlusRecordTypeDrawArc;
+    record->Header.Flags = pen_id;
+    if (integer_rect)
+        record->Header.Flags |= 0x4000;
+    record->StartAngle = startAngle;
+    record->SweepAngle = sweepAngle;
+
+    if (integer_rect)
+    {
+        record->RectData.rect.X = (SHORT)rect->X;
+        record->RectData.rect.Y = (SHORT)rect->Y;
+        record->RectData.rect.Width = (SHORT)rect->Width;
+        record->RectData.rect.Height = (SHORT)rect->Height;
+    }
+    else
+        memcpy(&record->RectData.rectF, rect, sizeof(*rect));
 
     METAFILE_WriteRecords(metafile);
 

@@ -377,14 +377,15 @@ typedef struct tagME_InStream ME_InStream;
 
 typedef struct tagME_TextEditor
 {
-  HWND hWnd, hwndParent;
-  ITextHost *texthost;
+  ITextHost2 *texthost;
   IUnknown *reOle;
-  BOOL bEmulateVersion10;
+  unsigned int bEmulateVersion10 : 1;
+  unsigned int in_place_active : 1;
+  unsigned int have_texthost2 : 1;
   ME_TextBuffer *pBuffer;
   ME_Cursor *pCursors;
-  DWORD styleFlags;
-  DWORD exStyleFlags;
+  DWORD props;
+  DWORD scrollbars;
   int nCursors;
   SIZE sizeWindow;
   int nTotalLength, nLastTotalLength;
@@ -392,8 +393,6 @@ typedef struct tagME_TextEditor
   int nAvailWidth; /* 0 = wrap to client area, else wrap width in twips */
   int nUDArrowX;
   int total_rows;
-  COLORREF rgbBackColor;
-  HBRUSH hbrBackground;
   int nEventMask;
   int nModifyStep;
   struct list undo_stack;
@@ -406,9 +405,7 @@ typedef struct tagME_TextEditor
   ME_Paragraph *last_sel_start_para, *last_sel_end_para;
   ME_FontCacheItem pFontCache[HFONT_CACHE_SIZE];
   int nZoomNumerator, nZoomDenominator;
-  RECT prevClientRect;
   RECT rcFormat;
-  BOOL bDefaultFormatRect;
   BOOL bWordWrap;
   int nTextLimit;
   EDITWORDBREAKPROCW pfnWordBreak;
@@ -420,9 +417,8 @@ typedef struct tagME_TextEditor
   int mode;
   BOOL bHideSelection;
   BOOL AutoURLDetect_bEnable;
-  WCHAR cPasswordMask;
+  WCHAR password_char;
   BOOL bHaveFocus;
-  BOOL bDialogMode; /* Indicates that we are inside a dialog window */
   /*for IME */
   int imeStartIndex;
   DWORD selofs; /* The size of the selection bar on the left side of control */
@@ -433,11 +429,14 @@ typedef struct tagME_TextEditor
 
   /* Cache previously set scrollbar info */
   SCROLLINFO vert_si, horz_si;
+  unsigned int vert_sb_enabled : 1;
+  unsigned int horz_sb_enabled : 1;
 
   int caret_height;
   BOOL caret_hidden;
   BOOL bMouseCaptured;
   int wheel_remain;
+  TXTBACKSTYLE back_style;
   struct list style_list;
   struct list reobj_list;
   struct wine_rb_tree marked_paras;

@@ -1828,8 +1828,8 @@ static void test_EM_GETSELTEXT(void)
         SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)"abcdef\x8e\xf0ghijk");
         SendMessageA(hwndRichEdit, EM_SETSEL, 4, 8);
         result = SendMessageA(hwndRichEdit, EM_GETSELTEXT, 0, (LPARAM)buffer);
-        todo_wine ok(result == 5, "EM_GETSELTEXT returned %ld\n", result);
-        todo_wine ok(!strcmp("ef\x8e\xf0g", buffer), "EM_GETSELTEXT filled %s\n", buffer);
+        ok(result == 5, "EM_GETSELTEXT returned %ld\n", result);
+        ok(!strcmp("ef\x8e\xf0g", buffer), "EM_GETSELTEXT filled %s\n", buffer);
     }
 
     DestroyWindow(hwndRichEdit);
@@ -3109,11 +3109,9 @@ static void test_scrollbar_visibility(void)
   GetScrollInfo(hwndRichEdit, SB_VERT, &si);
   ok (((GetWindowLongA(hwndRichEdit, GWL_STYLE) & WS_VSCROLL) != 0),
     "Vertical scrollbar is invisible, should be visible.\n");
-  todo_wine {
   ok(si.nPage == 0 && si.nMin == 0 && si.nMax == 100,
         "reported page/range is %d (%d..%d) expected 0 (0..100)\n",
         si.nPage, si.nMin, si.nMax);
-  }
 
   /* Ditto, see above */
   SendMessageA(hwndRichEdit, WM_SETTEXT, 0, 0);
@@ -3123,11 +3121,9 @@ static void test_scrollbar_visibility(void)
   GetScrollInfo(hwndRichEdit, SB_VERT, &si);
   ok (((GetWindowLongA(hwndRichEdit, GWL_STYLE) & WS_VSCROLL) != 0),
     "Vertical scrollbar is invisible, should be visible.\n");
-  todo_wine {
   ok(si.nPage == 0 && si.nMin == 0 && si.nMax == 100,
         "reported page/range is %d (%d..%d) expected 0 (0..100)\n",
         si.nPage, si.nMin, si.nMax);
-  }
 
   /* Ditto, see above */
   SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)"a");
@@ -3137,11 +3133,9 @@ static void test_scrollbar_visibility(void)
   GetScrollInfo(hwndRichEdit, SB_VERT, &si);
   ok (((GetWindowLongA(hwndRichEdit, GWL_STYLE) & WS_VSCROLL) != 0),
     "Vertical scrollbar is invisible, should be visible.\n");
-  todo_wine {
   ok(si.nPage == 0 && si.nMin == 0 && si.nMax == 100,
         "reported page/range is %d (%d..%d) expected 0 (0..100)\n",
         si.nPage, si.nMin, si.nMax);
-  }
 
   /* Ditto, see above */
   SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)"a\na");
@@ -3151,11 +3145,9 @@ static void test_scrollbar_visibility(void)
   GetScrollInfo(hwndRichEdit, SB_VERT, &si);
   ok (((GetWindowLongA(hwndRichEdit, GWL_STYLE) & WS_VSCROLL) != 0),
     "Vertical scrollbar is invisible, should be visible.\n");
-  todo_wine {
   ok(si.nPage == 0 && si.nMin == 0 && si.nMax == 100,
         "reported page/range is %d (%d..%d) expected 0 (0..100)\n",
         si.nPage, si.nMin, si.nMax);
-  }
 
   /* Ditto, see above */
   SendMessageA(hwndRichEdit, WM_SETTEXT, 0, 0);
@@ -3165,11 +3157,9 @@ static void test_scrollbar_visibility(void)
   GetScrollInfo(hwndRichEdit, SB_VERT, &si);
   ok (((GetWindowLongA(hwndRichEdit, GWL_STYLE) & WS_VSCROLL) != 0),
     "Vertical scrollbar is invisible, should be visible.\n");
-  todo_wine {
   ok(si.nPage == 0 && si.nMin == 0 && si.nMax == 100,
         "reported page/range is %d (%d..%d) expected 0 (0..100)\n",
         si.nPage, si.nMin, si.nMax);
-  }
 
   SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)text);
   SendMessageA(hwndRichEdit, WM_SETTEXT, 0, 0);
@@ -7460,12 +7450,25 @@ static void test_format_rect(void)
     ok(EqualRect(&rc, &expected), "rect %s != %s\n", wine_dbgstr_rect(&rc),
        wine_dbgstr_rect(&expected));
 
+    /* reset back to client rect and now try adding selection bar */
+    SendMessageA(hwnd, EM_SETRECT, 0, 0);
+    expected = clientRect;
+    InflateRect(&expected, -1, 0);
+    SendMessageA(hwnd, EM_GETRECT, 0, (LPARAM)&rc);
+    ok(EqualRect(&rc, &expected), "rect %s != %s\n", wine_dbgstr_rect(&rc),
+       wine_dbgstr_rect(&expected));
+    SendMessageA(hwnd, EM_SETOPTIONS, ECOOP_OR, ECO_SELECTIONBAR);
+    SendMessageA(hwnd, EM_GETRECT, 0, (LPARAM)&rc);
+    ok(EqualRect(&rc, &expected), "rect %s != %s\n", wine_dbgstr_rect(&rc),
+       wine_dbgstr_rect(&expected));
+    SendMessageA(hwnd, EM_SETOPTIONS, ECOOP_AND, ~ECO_SELECTIONBAR);
+
     /* Set the absolute value of the formatting rectangle. */
     rc = clientRect;
     SendMessageA(hwnd, EM_SETRECT, 0, (LPARAM)&rc);
     expected = clientRect;
     SendMessageA(hwnd, EM_GETRECT, 0, (LPARAM)&rc);
-    ok(EqualRect(&rc, &expected), "[n=%d] rect %s != %s\n", n, wine_dbgstr_rect(&rc),
+    ok(EqualRect(&rc, &expected), "rect %s != %s\n", wine_dbgstr_rect(&rc),
        wine_dbgstr_rect(&expected));
 
     /* MSDN documents the EM_SETRECT message as using the rectangle provided in

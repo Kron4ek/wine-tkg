@@ -4822,8 +4822,7 @@ static HRESULT d3d_device7_SetTexture(IDirect3DDevice7 *iface,
     struct ddraw_surface *surf = unsafe_impl_from_IDirectDrawSurface7(texture);
     struct wined3d_texture *wined3d_texture = NULL;
 
-    TRACE("iface %p, stage %u, texture %p, surf %p, surf->surface_desc.ddsCaps.dwCaps %#x.\n",
-            iface, stage, texture, surf, surf ? surf->surface_desc.ddsCaps.dwCaps : 0);
+    TRACE("iface %p, stage %u, texture %p.\n", iface, stage, texture);
 
     if (surf && (surf->surface_desc.ddsCaps.dwCaps & DDSCAPS_TEXTURE))
         wined3d_texture = surf->draw_texture ? surf->draw_texture : surf->wined3d_texture;
@@ -4859,25 +4858,16 @@ static HRESULT WINAPI d3d_device3_SetTexture(IDirect3DDevice3 *iface,
 {
     struct d3d_device *device = impl_from_IDirect3DDevice3(iface);
     struct ddraw_surface *tex = unsafe_impl_from_IDirect3DTexture2(texture);
-    struct wined3d_texture *wined3d_texture;
+    struct wined3d_texture *wined3d_texture = NULL;
 
     TRACE("iface %p, stage %u, texture %p.\n", iface, stage, texture);
 
     wined3d_mutex_lock();
 
     if (tex && ((tex->surface_desc.ddsCaps.dwCaps & DDSCAPS_TEXTURE) || !device->hardware_device))
-    {
-        if (!(tex->surface_desc.ddsCaps.dwCaps & DDSCAPS_TEXTURE))
-            WARN("Setting texture without DDSCAPS_TEXTURE.\n");
-        wined3d_texture = tex->wined3d_texture;
-    }
-    else
-    {
-        wined3d_texture = NULL;
-    }
+        wined3d_texture = tex->draw_texture ? tex->draw_texture : tex->wined3d_texture;
 
     wined3d_stateblock_set_texture(device->state, stage, wined3d_texture);
-
     fixup_texture_alpha_op(device);
 
     wined3d_mutex_unlock();

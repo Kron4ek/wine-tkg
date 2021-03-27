@@ -6296,12 +6296,13 @@ static void test_navigator(IHTMLDocument2 *doc)
 
     hres = IHTMLWindow2_get_navigator(window, &navigator2);
     ok(hres == S_OK, "get_navigator failed: %08x\n", hres);
+    todo_wine
     ok(navigator != navigator2, "navigator2 != navigator\n");
     IOmNavigator_Release(navigator2);
 
     hres = IHTMLWindow2_get_clientInformation(window, &navigator2);
     ok(hres == S_OK, "get_clientInformation failed: %08x\n", hres);
-    todo_wine ok(iface_cmp((IUnknown*)navigator, (IUnknown*)navigator2), "navigator2 != navigator\n");
+    ok(iface_cmp((IUnknown*)navigator, (IUnknown*)navigator2), "navigator2 != navigator\n");
     IOmNavigator_Release(navigator2);
 
     IHTMLWindow2_Release(window);
@@ -6382,18 +6383,9 @@ static void test_navigator(IHTMLDocument2 *doc)
     bstr = NULL;
     hres = IOmNavigator_get_userAgent(navigator, &bstr);
     ok(hres == S_OK, "get_userAgent failed: %08x\n", hres);
+    todo_wine
     ok(!lstrcmpW(bstr, buf), "userAgent returned %s, expected \"%s\"\n", wine_dbgstr_w(bstr), wine_dbgstr_w(buf));
     SysFreeString(bstr);
-
-    if(!wcsncmp(buf, L"Mozilla/", 8)) {
-        bstr = NULL;
-        hres = IOmNavigator_get_appVersion(navigator, &bstr);
-        ok(hres == S_OK, "get_appVersion failed: %08x\n", hres);
-        ok(!lstrcmpW(bstr, buf+8), "appVersion returned %s, expected \"%s\"\n", wine_dbgstr_w(bstr), wine_dbgstr_w(buf+8));
-        SysFreeString(bstr);
-    }else {
-        skip("nonstandard user agent\n");
-    }
 
     hres = UrlMkSetSessionOption(URLMON_OPTION_USERAGENT, ua, sizeof(ua), 0);
     ok(hres == S_OK, "UrlMkSetSessionOption failed: %08x\n", hres);
@@ -6401,6 +6393,7 @@ static void test_navigator(IHTMLDocument2 *doc)
 
     hres = IOmNavigator_get_appVersion(navigator, &bstr);
     ok(hres == S_OK, "get_appVersion failed: %08x\n", hres);
+    todo_wine
     ok(!lstrcmpW(bstr, buf+8), "appVersion returned %s, expected \"%s\"\n", wine_dbgstr_w(bstr), wine_dbgstr_w(buf+8));
     SysFreeString(bstr);
 
@@ -6416,6 +6409,7 @@ static void test_navigator(IHTMLDocument2 *doc)
     test_mime_types_col(navigator);
 
     ref = IOmNavigator_Release(navigator);
+    todo_wine
     ok(!ref, "navigator should be destroyed here\n");
 }
 

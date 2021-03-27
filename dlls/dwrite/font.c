@@ -823,20 +823,120 @@ static void WINAPI dwritefontface_ReleaseFontTable(IDWriteFontFace5 *iface, void
     IDWriteFontFileStream_ReleaseFileFragment(fontface->stream, table_context);
 }
 
+int dwrite_outline_push_tag(struct dwrite_outline *outline, unsigned char tag)
+{
+    if (!dwrite_array_reserve((void **)&outline->tags.values, &outline->tags.size, outline->tags.count + 1,
+            sizeof(*outline->tags.values)))
+    {
+        return 1;
+    }
+
+    outline->tags.values[outline->tags.count++] = tag;
+
+    return 0;
+}
+
+int dwrite_outline_push_points(struct dwrite_outline *outline, const D2D1_POINT_2F *points, unsigned int count)
+{
+    if (!dwrite_array_reserve((void **)&outline->points.values, &outline->points.size, outline->points.count + count,
+            sizeof(*outline->points.values)))
+    {
+        return 1;
+    }
+
+    memcpy(&outline->points.values[outline->points.count], points, sizeof(*points) * count);
+    outline->points.count += count;
+
+    return 0;
+}
+
+static void apply_outline_point_offset(const D2D1_POINT_2F *src, const D2D1_POINT_2F *offset,
+        D2D1_POINT_2F *dst)
+{
+    dst->x = src->x + offset->x;
+    dst->y = src->y + offset->y;
+}
+
 static HRESULT WINAPI dwritefontface_GetGlyphRunOutline(IDWriteFontFace5 *iface, FLOAT emSize,
     UINT16 const *glyphs, FLOAT const* advances, DWRITE_GLYPH_OFFSET const *offsets,
     UINT32 count, BOOL is_sideways, BOOL is_rtl, IDWriteGeometrySink *sink)
 {
+    D2D1_POINT_2F *origins, baseline_origin = { 0 };
+    struct dwrite_outline outline = {{ 0 }};
+    D2D1_BEZIER_SEGMENT segment;
+    D2D1_POINT_2F point;
+    DWRITE_GLYPH_RUN run;
+    unsigned int i, j, p;
+    HRESULT hr;
+
     TRACE("%p, %.8e, %p, %p, %p, %u, %d, %d, %p.\n", iface, emSize, glyphs, advances, offsets,
         count, is_sideways, is_rtl, sink);
 
     if (!glyphs || !sink)
         return E_INVALIDARG;
 
-    if (is_sideways)
-        FIXME("sideways mode is not supported.\n");
+    if (!count)
+        return S_OK;
 
-    return freetype_get_glyphrun_outline(iface, emSize, glyphs, advances, offsets, count, is_rtl, sink);
+    run.fontFace = (IDWriteFontFace *)iface;
+    run.fontEmSize = emSize;
+    run.glyphCount = count;
+    run.glyphIndices = glyphs;
+    run.glyphAdvances = advances;
+    run.glyphOffsets = offsets;
+    run.isSideways = is_sideways;
+    run.bidiLevel = is_rtl ? 1 : 0;
+
+    if (!(origins = heap_alloc(sizeof(*origins) * count)))
+        return E_OUTOFMEMORY;
+
+    if (FAILED(hr = compute_glyph_origins(&run, DWRITE_MEASURING_MODE_NATURAL, baseline_origin, NULL, origins)))
+    {
+        heap_free(origins);
+        return hr;
+    }
+
+    ID2D1SimplifiedGeometrySink_SetFillMode(sink, D2D1_FILL_MODE_WINDING);
+
+    for (i = 0; i < count; ++i)
+    {
+        outline.tags.count = outline.points.count = 0;
+        if (freetype_get_glyph_outline(iface, emSize, glyphs[i], &outline))
+        {
+            WARN("Failed to get glyph outline for glyph %u.\n", glyphs[i]);
+            continue;
+        }
+
+        for (j = 0, p = 0; j < outline.tags.count; ++j)
+        {
+            switch (outline.tags.values[j])
+            {
+                case OUTLINE_BEGIN_FIGURE:
+                    apply_outline_point_offset(&outline.points.values[p++], &origins[i], &point);
+                    ID2D1SimplifiedGeometrySink_BeginFigure(sink, point, D2D1_FIGURE_BEGIN_FILLED);
+                    break;
+                case OUTLINE_END_FIGURE:
+                    ID2D1SimplifiedGeometrySink_EndFigure(sink, D2D1_FIGURE_END_CLOSED);
+                    break;
+                case OUTLINE_LINE:
+                    apply_outline_point_offset(&outline.points.values[p++], &origins[i], &point);
+                    ID2D1SimplifiedGeometrySink_AddLines(sink, &point, 1);
+                    break;
+                case OUTLINE_BEZIER:
+                    apply_outline_point_offset(&outline.points.values[p++], &origins[i], &segment.point1);
+                    apply_outline_point_offset(&outline.points.values[p++], &origins[i], &segment.point2);
+                    apply_outline_point_offset(&outline.points.values[p++], &origins[i], &segment.point3);
+                    ID2D1SimplifiedGeometrySink_AddBeziers(sink, &segment, 1);
+                    break;
+            }
+        }
+    }
+
+    heap_free(outline.tags.values);
+    heap_free(outline.points.values);
+    heap_free(origins);
+
+    return S_OK;
 }
 
 static DWRITE_RENDERING_MODE fontface_renderingmode_from_measuringmode(DWRITE_MEASURING_MODE measuring,
@@ -1266,7 +1366,7 @@ static HRESULT WINAPI dwritefontface2_GetRecommendedRenderingMode(IDWriteFontFac
     TRACE("%p, %.8e, %.8e, %.8e, %p, %d, %d, %d, %p, %p, %p.\n", iface, emSize, dpiX, dpiY, m, is_sideways, threshold,
         measuringmode, params, renderingmode, gridfitmode);
 
-    if (m)
+    if (m && memcmp(m, &identity, sizeof(*m)))
         FIXME("transform not supported %s\n", debugstr_matrix(m));
 
     if (is_sideways)
@@ -1453,7 +1553,7 @@ static HRESULT WINAPI dwritefontface3_GetRecommendedRenderingMode(IDWriteFontFac
     TRACE("%p, %.8e, %.8e, %.8e, %p, %d, %d, %d, %p, %p, %p.\n", iface, emSize, dpiX, dpiY, m, is_sideways, threshold,
         measuring_mode, params, rendering_mode, gridfit_mode);
 
-    if (m)
+    if (m && memcmp(m, &identity, sizeof(*m)))
         FIXME("transform not supported %s\n", debugstr_matrix(m));
 
     if (is_sideways)
@@ -4023,7 +4123,7 @@ static HRESULT init_font_data(const struct fontface_desc *desc, struct dwrite_fo
     return S_OK;
 }
 
-static HRESULT init_font_data_from_font(const struct dwrite_font_data *src, DWRITE_FONT_SIMULATIONS sim,
+static HRESULT init_font_data_from_font(const struct dwrite_font_data *src, DWRITE_FONT_SIMULATIONS simulations,
         const WCHAR *facenameW, struct dwrite_font_data **ret)
 {
     struct dwrite_font_data *data;
@@ -4036,10 +4136,10 @@ static HRESULT init_font_data_from_font(const struct dwrite_font_data *src, DWRI
 
     *data = *src;
     data->refcount = 1;
-    data->simulations |= sim;
-    if (sim == DWRITE_FONT_SIMULATIONS_BOLD)
+    data->simulations |= simulations;
+    if (simulations & DWRITE_FONT_SIMULATIONS_BOLD)
         data->weight = DWRITE_FONT_WEIGHT_BOLD;
-    else if (sim == DWRITE_FONT_SIMULATIONS_OBLIQUE)
+    if (simulations & DWRITE_FONT_SIMULATIONS_OBLIQUE)
         data->style = DWRITE_FONT_STYLE_OBLIQUE;
     memset(data->info_strings, 0, sizeof(data->info_strings));
     data->names = NULL;
@@ -7468,9 +7568,17 @@ static HRESULT WINAPI dwritefontset1_GetFontFaceReference(IDWriteFontSet3 *iface
 
 static HRESULT WINAPI dwritefontset1_CreateFontResource(IDWriteFontSet3 *iface, UINT32 index, IDWriteFontResource **resource)
 {
-    FIXME("%p, %u, %p.\n", iface, index, resource);
+    struct dwrite_fontset *set = impl_from_IDWriteFontSet3(iface);
 
-    return E_NOTIMPL;
+    TRACE("%p, %u, %p.\n", iface, index, resource);
+
+    *resource = NULL;
+
+    if (index >= set->count)
+        return E_INVALIDARG;
+
+    return IDWriteFactory7_CreateFontResource(set->factory, set->entries[index]->file,
+            set->entries[index]->face_index, resource);
 }
 
 static HRESULT WINAPI dwritefontset1_CreateFontFace(IDWriteFontSet3 *iface, UINT32 index, IDWriteFontFace5 **fontface)
