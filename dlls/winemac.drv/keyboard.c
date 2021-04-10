@@ -929,7 +929,7 @@ static void macdrv_send_keyboard_input(HWND hwnd, WORD vkey, WORD scan, DWORD fl
     input.ki.time           = time;
     input.ki.dwExtraInfo    = 0;
 
-    __wine_send_input(hwnd, &input, SEND_HWMSG_RAWINPUT|SEND_HWMSG_WINDOW);
+    __wine_send_input(hwnd, &input);
 }
 
 
@@ -942,7 +942,7 @@ static BOOL get_async_key_state(BYTE state[256])
 
     SERVER_START_REQ(get_key_state)
     {
-        req->tid = 0;
+        req->async = 1;
         req->key = -1;
         wine_server_set_reply(req, state, 256);
         ret = !wine_server_call(req);

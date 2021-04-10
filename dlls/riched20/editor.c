@@ -279,6 +279,11 @@ ME_Paragraph *editor_end_para( ME_TextEditor *editor )
     return &editor->pBuffer->pLast->member.para;
 }
 
+static BOOL editor_beep( ME_TextEditor *editor, UINT type )
+{
+    return editor->props & TXTBIT_ALLOWBEEP && MessageBeep( type );
+}
+
 static LRESULT ME_StreamInText(ME_TextEditor *editor, DWORD dwFormat, ME_InStream *stream, ME_Style *style)
 {
   WCHAR *pText;
@@ -1116,7 +1121,6 @@ static HRESULT insert_static_object(ME_TextEditor *editor, HENHMETAFILE hemf, HB
   LPOLECLIENTSITE     lpClientSite = NULL;
   LPDATAOBJECT        lpDataObject = NULL;
   LPOLECACHE          lpOleCache = NULL;
-  LPRICHEDITOLE       lpReOle = NULL;
   STGMEDIUM           stgm;
   FORMATETC           fm;
   CLSID               clsid;
@@ -1144,15 +1148,8 @@ static HRESULT insert_static_object(ME_TextEditor *editor, HENHMETAFILE hemf, HB
   fm.lindex = -1;
   fm.tymed = stgm.tymed;
 
-  if (!editor->reOle)
-  {
-    if (!CreateIRichEditOle(NULL, editor, (LPVOID *)&editor->reOle))
-      return hr;
-  }
-
   if (OleCreateDefaultHandler(&CLSID_NULL, NULL, &IID_IOleObject, (void**)&lpObject) == S_OK &&
-      IUnknown_QueryInterface(editor->reOle, &IID_IRichEditOle, (void**)&lpReOle) == S_OK &&
-      IRichEditOle_GetClientSite(lpReOle, &lpClientSite) == S_OK &&
+      IRichEditOle_GetClientSite(editor->richole, &lpClientSite) == S_OK &&
       IOleObject_SetClientSite(lpObject, lpClientSite) == S_OK &&
       IOleObject_GetUserClassID(lpObject, &clsid) == S_OK &&
       IOleObject_QueryInterface(lpObject, &IID_IOleCache, (void**)&lpOleCache) == S_OK &&
@@ -1184,7 +1181,6 @@ static HRESULT insert_static_object(ME_TextEditor *editor, HENHMETAFILE hemf, HB
   if (lpStorage)      IStorage_Release(lpStorage);
   if (lpDataObject)   IDataObject_Release(lpDataObject);
   if (lpOleCache)     IOleCache_Release(lpOleCache);
-  if (lpReOle)        IRichEditOle_Release(lpReOle);
 
   return hr;
 }
@@ -2281,7 +2277,7 @@ static BOOL paste_special(ME_TextEditor *editor, UINT cf, REPASTESPECIAL *ps, BO
     /* Protect read-only edit control from modification */
     if (editor->props & TXTBIT_READONLY)
     {
-        if (!check_only) MessageBeep(MB_ICONERROR);
+        if (!check_only) editor_beep( editor, MB_ICONERROR );
         return FALSE;
     }
 
@@ -2379,7 +2375,7 @@ static BOOL copy_or_cut( ME_TextEditor *editor, BOOL cut )
 
     count -= offs;
     hr = editor_copy_or_cut( editor, cut, sel_start, count, NULL );
-    if (FAILED( hr )) MessageBeep( MB_ICONERROR );
+    if (FAILED( hr )) editor_beep( editor, MB_ICONERROR );
 
     return SUCCEEDED( hr );
 }
@@ -2422,7 +2418,7 @@ static BOOL handle_enter(ME_TextEditor *editor)
 
         if (editor->props & TXTBIT_READONLY)
         {
-            MessageBeep(MB_ICONERROR);
+            editor_beep( editor, MB_ICONERROR );
             return TRUE;
         }
 
@@ -2683,7 +2679,7 @@ static LRESULT handle_wm_char( ME_TextEditor *editor, WCHAR wstr, LPARAM flags )
 
   if (editor->props & TXTBIT_READONLY)
   {
-    MessageBeep(MB_ICONERROR);
+    editor_beep( editor, MB_ICONERROR );
     return 0; /* FIXME really 0 ? */
   }
 
@@ -2737,7 +2733,7 @@ static LRESULT handle_wm_char( ME_TextEditor *editor, WCHAR wstr, LPARAM flags )
       if (para_in_table( para ) && cursor.run->nFlags & MERF_ENDPARA && from == to)
       {
         /* Text should not be inserted at the end of the table. */
-        MessageBeep(-1);
+        editor_beep( editor, -1 );
         return 0;
       }
     }
@@ -2945,13 +2941,13 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
     ed->have_texthost2 = FALSE;
   }
 
-  ed->reOle = NULL;
   ed->bEmulateVersion10 = bEmulateVersion10;
   ed->in_place_active = FALSE;
   ed->total_rows = 0;
   ITextHost_TxGetPropertyBits( ed->texthost, TXTBIT_RICHTEXT | TXTBIT_MULTILINE | TXTBIT_READONLY |
                                TXTBIT_USEPASSWORD | TXTBIT_HIDESELECTION | TXTBIT_SAVESELECTION |
-                               TXTBIT_AUTOWORDSEL | TXTBIT_VERTICAL | TXTBIT_WORDWRAP | TXTBIT_DISABLEDRAG,
+                               TXTBIT_AUTOWORDSEL | TXTBIT_VERTICAL | TXTBIT_WORDWRAP | TXTBIT_ALLOWBEEP |
+                               TXTBIT_DISABLEDRAG,
                                &ed->props );
   ITextHost_TxGetScrollBars( ed->texthost, &ed->scrollbars );
   ed->pBuffer = ME_MakeText();
@@ -2987,6 +2983,7 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
   ed->last_sel_start_para = ed->last_sel_end_para = ed->pCursors[0].para;
   ed->bHideSelection = FALSE;
   ed->pfnWordBreak = NULL;
+  ed->richole = NULL;
   ed->lpOleCallback = NULL;
   ed->mode = TM_MULTILEVELUNDO | TM_MULTICODEPAGE;
   ed->mode |= (ed->props & TXTBIT_RICHTEXT) ? TM_RICHTEXT : TM_PLAINTEXT;
@@ -3088,11 +3085,7 @@ void ME_DestroyEditor(ME_TextEditor *editor)
   }
   if(editor->lpOleCallback)
     IRichEditOleCallback_Release(editor->lpOleCallback);
-  if (editor->reOle)
-  {
-    IUnknown_Release(editor->reOle);
-    editor->reOle = NULL;
-  }
+
   OleUninitialize();
 
   heap_free(editor->pBuffer);
@@ -3377,7 +3370,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
   case EM_SETSCROLLPOS:
   {
     POINT *point = (POINT *)lParam;
-    ME_ScrollAbs(editor, point->x, point->y);
+    scroll_abs( editor, point->x, point->y, TRUE );
     return 0;
   }
   case EM_AUTOURLDETECT:
@@ -3939,7 +3932,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     editor->bHaveFocus = TRUE;
     create_caret(editor);
     update_caret(editor);
-    ME_SendOldNotify(editor, EN_SETFOCUS);
+    ITextHost_TxNotify( editor->texthost, EN_SETFOCUS, NULL );
     if (!editor->bHideSelection && (editor->props & TXTBIT_HIDESELECTION))
         ME_InvalidateSelection( editor );
     return 0;
@@ -3949,7 +3942,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     editor->wheel_remain = 0;
     hide_caret(editor);
     DestroyCaret();
-    ME_SendOldNotify(editor, EN_KILLFOCUS);
+    ITextHost_TxNotify( editor->texthost, EN_KILLFOCUS, NULL );
     if (!editor->bHideSelection && (editor->props & TXTBIT_HIDESELECTION))
         ME_InvalidateSelection( editor );
     return 0;
@@ -3986,12 +3979,11 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     switch(LOWORD(wParam))
     {
       case SB_LEFT:
-        ME_ScrollAbs(editor, 0, 0);
+        scroll_abs( editor, 0, 0, TRUE );
         break;
       case SB_RIGHT:
-        ME_ScrollAbs(editor,
-                     editor->horz_si.nMax - (int)editor->horz_si.nPage,
-                     editor->vert_si.nMax - (int)editor->vert_si.nPage);
+        scroll_abs( editor, editor->horz_si.nMax - (int)editor->horz_si.nPage,
+                    editor->vert_si.nMax - (int)editor->vert_si.nPage, TRUE );
         break;
       case SB_LINELEFT:
         ME_ScrollLeft(editor, scrollUnit);
@@ -4011,7 +4003,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
         int pos = HIWORD(wParam);
         if (editor->horz_si.nMax > 0xffff)
           pos = MulDiv(pos, editor->horz_si.nMax, 0xffff);
-        ME_HScrollAbs(editor, pos);
+        scroll_h_abs( editor, pos, FALSE );
         break;
       }
     }
@@ -4028,12 +4020,11 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     switch(LOWORD(wParam))
     {
       case SB_TOP:
-        ME_ScrollAbs(editor, 0, 0);
+        scroll_abs( editor, 0, 0, TRUE );
         break;
       case SB_BOTTOM:
-        ME_ScrollAbs(editor,
-                     editor->horz_si.nMax - (int)editor->horz_si.nPage,
-                     editor->vert_si.nMax - (int)editor->vert_si.nPage);
+        scroll_abs( editor, editor->horz_si.nMax - (int)editor->horz_si.nPage,
+                    editor->vert_si.nMax - (int)editor->vert_si.nPage, TRUE );
         break;
       case SB_LINEUP:
         ME_ScrollUp(editor,lineHeight);
@@ -4053,7 +4044,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
         int pos = HIWORD(wParam);
         if (editor->vert_si.nMax > 0xffff)
           pos = MulDiv(pos, editor->vert_si.nMax, 0xffff);
-        ME_VScrollAbs(editor, pos);
+        scroll_v_abs( editor, pos, FALSE );
         break;
       }
     }
@@ -4155,14 +4146,10 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     return 0;
   }
   case EM_GETOLEINTERFACE:
-  {
-    if (!editor->reOle)
-      if (!CreateIRichEditOle(NULL, editor, (LPVOID *)&editor->reOle))
-        return 0;
-    if (IUnknown_QueryInterface(editor->reOle, &IID_IRichEditOle, (LPVOID *)lParam) == S_OK)
-      return 1;
-    return 0;
-  }
+    IRichEditOle_AddRef( editor->richole );
+    *(IRichEditOle **)lParam = editor->richole;
+    return 1;
+
   case EM_SETOLECALLBACK:
     if(editor->lpOleCallback)
       IRichEditOleCallback_Release(editor->lpOleCallback);
@@ -4244,11 +4231,6 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     break;
   }
   return 0L;
-}
-
-void ME_SendOldNotify(ME_TextEditor *editor, int nCode)
-{
-  ITextHost_TxNotify(editor->texthost, nCode, NULL);
 }
 
 /* Fill buffer with srcChars unicode characters from the start cursor.

@@ -149,12 +149,13 @@ static LPBYTE get_regdata(const WCHAR *data, DWORD reg_type, WCHAR separator, DW
     return out_data;
 }
 
-int reg_add(HKEY root, WCHAR *path, WCHAR *value_name, BOOL value_empty,
-            WCHAR *type, WCHAR separator, WCHAR *data, BOOL force)
+static int run_add(HKEY root, WCHAR *path, WCHAR *value_name, BOOL value_empty,
+                   WCHAR *type, WCHAR separator, WCHAR *data, BOOL force)
 {
     HKEY key;
 
-    if (RegCreateKeyW(root, path, &key) != ERROR_SUCCESS)
+    if (RegCreateKeyExW(root, path, 0, NULL, REG_OPTION_NON_VOLATILE,
+                        KEY_READ|KEY_WRITE, NULL, &key, NULL))
     {
         output_message(STRING_INVALID_KEY);
         return 1;
@@ -207,4 +208,74 @@ int reg_add(HKEY root, WCHAR *path, WCHAR *value_name, BOOL value_empty,
     output_message(STRING_SUCCESS);
 
     return 0;
+}
+
+int reg_add(int argc, WCHAR *argvW[])
+{
+    HKEY root;
+    WCHAR *path, *value_name = NULL, *type = NULL, *data = NULL, separator = '\0';
+    BOOL value_empty = FALSE, force = FALSE;
+    int i;
+
+    if (!parse_registry_key(argvW[2], &root, &path))
+        return 1;
+
+    for (i = 3; i < argc; i++)
+    {
+        WCHAR *str;
+
+        if (argvW[i][0] != '/' && argvW[i][0] != '-')
+            goto invalid;
+
+        str = &argvW[i][1];
+
+        if (!lstrcmpiW(str, L"ve"))
+        {
+            if (value_empty) goto invalid;
+            value_empty = TRUE;
+            continue;
+        }
+        else if (!lstrcmpiW(str, L"reg:32") || !lstrcmpiW(str, L"reg:64"))
+            continue;
+        else if (!str[0] || str[1])
+            goto invalid;
+
+        switch (towlower(*str))
+        {
+        case 'v':
+            if (value_name || !(value_name = argvW[++i]))
+                goto invalid;
+            break;
+        case 't':
+            if (type || !(type = argvW[++i]))
+                goto invalid;
+            break;
+        case 'd':
+            if (data || !(data = argvW[++i]))
+                goto invalid;
+            break;
+        case 's':
+            str = argvW[++i];
+            if (separator || !str || lstrlenW(str) != 1)
+                goto invalid;
+            separator = str[0];
+            break;
+        case 'f':
+            if (force) goto invalid;
+            force = TRUE;
+            break;
+        default:
+            goto invalid;
+        }
+    }
+
+    if (value_name && value_empty)
+        goto invalid;
+
+    return run_add(root, path, value_name, value_empty, type, separator, data, force);
+
+invalid:
+    output_message(STRING_INVALID_SYNTAX);
+    output_message(STRING_FUNC_HELP, wcsupr(argvW[1]));
+    return 1;
 }

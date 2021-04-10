@@ -64,6 +64,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(environ);
 
 USHORT *uctable = NULL, *lctable = NULL;
 SIZE_T startup_info_size = 0;
+BOOL is_prefix_bootstrap = FALSE;
+
+static const WCHAR bootstrapW[] = {'W','I','N','E','B','O','O','T','S','T','R','A','P','M','O','D','E'};
 
 int main_argc = 0;
 char **main_argv = NULL;
@@ -851,104 +854,152 @@ char **build_envp( const WCHAR *envW )
  *
  * Change the process name in the ps output.
  */
-static int set_process_name( int argc, char *argv[] )
+static void set_process_name( const char *name )
 {
-    BOOL shift_strings;
-    char *p, *name;
-    int i;
+    char *p;
 
 #ifdef HAVE_SETPROCTITLE
-    setproctitle("-%s", argv[1]);
-    shift_strings = FALSE;
-#else
-    p = argv[0];
-
-    shift_strings = (argc >= 2);
-    for (i = 1; i < argc; i++)
-    {
-        p += strlen(p) + 1;
-        if (p != argv[i])
-        {
-            shift_strings = FALSE;
-            break;
-        }
-    }
+    setproctitle("-%s", name );
 #endif
-
-    if (shift_strings)
-    {
-        int offset = argv[1] - argv[0];
-        char *end = argv[argc-1] + strlen(argv[argc-1]) + 1;
-        memmove( argv[0], argv[1], end - argv[1] );
-        memset( end - offset, 0, offset );
-        for (i = 1; i < argc; i++)
-            argv[i-1] = argv[i] - offset;
-        argv[i-1] = NULL;
-    }
-    else
-    {
-        /* remove argv[0] */
-        memmove( argv, argv + 1, argc * sizeof(argv[0]) );
-    }
-
-    name = argv[0];
     if ((p = strrchr( name, '\\' ))) name = p + 1;
     if ((p = strrchr( name, '/' ))) name = p + 1;
-
-#if defined(HAVE_SETPROGNAME)
+#ifdef HAVE_SETPROGNAME
     setprogname( name );
 #endif
-
 #ifdef HAVE_PRCTL
 #ifndef PR_SET_NAME
 # define PR_SET_NAME 15
 #endif
     prctl( PR_SET_NAME, name );
-#endif  /* HAVE_PRCTL */
-    return argc - 1;
+#endif
+}
+
+
+/***********************************************************************
+ *           rebuild_argv
+ *
+ * Build the main argv by removing argv[0].
+ */
+static void rebuild_argv(void)
+{
+    BOOL shift_strings = FALSE;
+    int i;
+
+#ifndef HAVE_SETPROCTITLE
+    for (i = 1; i < main_argc; i++)
+        if (main_argv[i - 1] + strlen( main_argv[i - 1] ) + 1 != main_argv[i]) break;
+    shift_strings = (i == main_argc);
+#endif
+    if (shift_strings)
+    {
+        int offset = main_argv[1] - main_argv[0];
+        char *end = main_argv[main_argc - 1] + strlen(main_argv[main_argc - 1]) + 1;
+        memmove( main_argv[0], main_argv[1], end - main_argv[1] );
+        memset( end - offset, 0, offset );
+        for (i = 1; i < main_argc; i++) main_argv[i - 1] = main_argv[i] - offset;
+    }
+    else memmove( main_argv, main_argv + 1, (main_argc - 1) * sizeof(main_argv[0]) );
+
+    main_argv[--main_argc] = NULL;
+    set_process_name( main_argv[0] );
+}
+
+
+/***********************************************************************
+ *           prepend_argv
+ *
+ * Prepend values to the main argv, removing the original argv[0].
+ */
+static void prepend_argv( const char **args, int count )
+{
+    char **new_argv = malloc( (main_argc + count) * sizeof(*new_argv) );
+    char *p, *end;
+    BOOL write_strings = FALSE;
+    int i, total = 0, new_argc = main_argc + count - 1;
+
+    for (i = 0; i < count; i++) total += strlen(args[i]) + 1;
+    for (i = 1; i < main_argc; i++) total += strlen(main_argv[i]) + 1;
+
+    new_argv = malloc( (new_argc + 1) * sizeof(*new_argv) + total );
+    p = (char *)(new_argv + new_argc + 1);
+    for (i = 0; i < count; i++)
+    {
+        new_argv[i] = p;
+        strcpy( p, args[i] );
+        p += strlen(p) + 1;
+    }
+    for (i = 1; i < main_argc; i++)
+    {
+        new_argv[count + i - 1] = p;
+        strcpy( p, main_argv[i] );
+        p += strlen(p) + 1;
+    }
+    new_argv[new_argc] = NULL;
+
+    /* copy what we can over the original argv */
+
+#ifndef HAVE_SETPROCTITLE
+    for (i = 1; i < main_argc; i++)
+        if (main_argv[i - 1] + strlen(main_argv[i - 1]) + 1 != main_argv[i]) break;
+    write_strings = (i == main_argc);
+#endif
+    if (write_strings)
+    {
+        p = main_argv[0];
+        end = main_argv[main_argc - 1] + strlen(main_argv[main_argc - 1]) + 1;
+
+        for (i = 0; i < min( new_argc, main_argc ) && p < end; i++)
+        {
+            int len = min( end - p - 1, strlen(new_argv[i]) );
+
+            memcpy( p, new_argv[i], len );
+            main_argv[i] = p;
+            p += len;
+            *p++ = 0;
+        }
+        memset( p, 0, end - p );
+        main_argv[i] = NULL;
+    }
+    else
+    {
+        memcpy( main_argv, new_argv, min( new_argc, main_argc ) * sizeof(*new_argv) );
+        main_argv[min( new_argc, main_argc )] = NULL;
+    }
+
+    main_argc = new_argc;
+    main_argv = new_argv;
+    set_process_name( main_argv[0] );
 }
 
 
 /***********************************************************************
  *              build_wargv
  *
- * Build the Unicode argv array.
+ * Build the Unicode argv array, replacing argv[0] by the image name.
  */
-static WCHAR **build_wargv( char **argv )
+static WCHAR **build_wargv( const WCHAR *image )
 {
     int argc;
     WCHAR *p, **wargv;
-    DWORD total = 0;
+    DWORD total = wcslen(image) + 1;
 
-    for (argc = 0; argv[argc]; argc++) total += strlen(argv[argc]) + 1;
+    for (argc = 1; main_argv[argc]; argc++) total += strlen(main_argv[argc]) + 1;
 
     wargv = malloc( total * sizeof(WCHAR) + (argc + 1) * sizeof(*wargv) );
     p = (WCHAR *)(wargv + argc + 1);
-    for (argc = 0; argv[argc]; argc++)
+    wargv[0] = p;
+    wcscpy( p, image );
+    total -= wcslen( p ) + 1;
+    p += wcslen( p ) + 1;
+    for (argc = 1; main_argv[argc]; argc++)
     {
-        DWORD reslen = ntdll_umbstowcs( argv[argc], strlen(argv[argc]) + 1, p, total );
+        DWORD reslen = ntdll_umbstowcs( main_argv[argc], strlen(main_argv[argc]) + 1, p, total );
         wargv[argc] = p;
         p += reslen;
         total -= reslen;
     }
     wargv[argc] = NULL;
     return wargv;
-}
-
-
-/***********************************************************************
- *              prepend_main_wargv
- *
- * Rebuild the main_wargv array with some extra arguments in front.
- */
-static void prepend_main_wargv( const WCHAR **args, int count )
-{
-    WCHAR **argv = malloc( (main_argc + count + 1) * sizeof(*argv) );
-
-    memcpy( argv, args, count * sizeof(*argv) );
-    memcpy( argv + count, main_wargv, (main_argc + 1) * sizeof(*argv) );
-    main_wargv = argv;
-    main_argc += count;
 }
 
 
@@ -1093,9 +1144,8 @@ void init_environment( int argc, char *argv[], char *envp[] )
         lctable = case_table + case_table[1] + 2;
     }
 
-    main_argc = set_process_name( argc, argv );
+    main_argc = argc;
     main_argv = argv;
-    main_wargv = build_wargv( argv );
     main_envp = envp;
 }
 
@@ -1162,6 +1212,18 @@ static WCHAR *find_env_var( WCHAR *env, SIZE_T size, const WCHAR *name, SIZE_T n
         p += wcslen(p) + 1;
     }
     return NULL;
+}
+
+static WCHAR *get_env_var( WCHAR *env, SIZE_T size, const WCHAR *name, SIZE_T namelen )
+{
+    WCHAR *ret = NULL, *var = find_env_var( env, size, name, namelen );
+
+    if (var)
+    {
+        var += namelen + 1;  /* skip name */
+        if ((ret = malloc( (wcslen(var) + 1) * sizeof(WCHAR) ))) wcscpy( ret, var );
+    }
+    return ret;
 }
 
 /* set an environment variable, replacing it if it exists */
@@ -1780,7 +1842,6 @@ static void run_wineboot( WCHAR *env, SIZE_T size )
 
     wine_server_fd_to_handle( 2, GENERIC_WRITE | SYNCHRONIZE, OBJ_INHERIT, &params.hStdError );
 
-#ifndef _WIN64
     if (NtCurrentTeb64() && !NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR])
     {
         NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR] = TRUE;
@@ -1790,10 +1851,9 @@ static void run_wineboot( WCHAR *env, SIZE_T size )
         NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR] = FALSE;
     }
     else
-#endif
-    status = NtCreateUserProcess( &process, &thread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
-                                  NULL, NULL, 0, THREAD_CREATE_FLAGS_CREATE_SUSPENDED, &params,
-                                  &create_info, &ps_attr );
+        status = NtCreateUserProcess( &process, &thread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
+                                      NULL, NULL, 0, THREAD_CREATE_FLAGS_CREATE_SUSPENDED, &params,
+                                      &create_info, &ps_attr );
     NtClose( params.hStdError );
 
     if (status)
@@ -1844,52 +1904,54 @@ static inline WCHAR *get_dos_path( WCHAR *nt_path )
  */
 static RTL_USER_PROCESS_PARAMETERS *build_initial_params(void)
 {
+    static const WCHAR valueW[] = {'1',0};
     static const WCHAR pathW[] = {'P','A','T','H'};
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
-    SECTION_IMAGE_INFORMATION image_info;
     SIZE_T size, env_pos, env_size;
-    WCHAR *dst, *image, *cmdline, *p, *path = NULL;
+    WCHAR *dst, *image, *cmdline, *path, *bootstrap;
     WCHAR *env = get_initial_environment( &env_pos, &env_size );
     WCHAR *curdir = get_initial_directory();
-    void *module;
+    void *module = NULL;
     NTSTATUS status;
 
     /* store the initial PATH value */
-    if ((p = find_env_var( env, env_pos, pathW, 4 )))
-    {
-        path = malloc( (wcslen(p + 5) + 1) * sizeof(WCHAR) );
-        wcscpy( path, p + 5 );
-    }
+    path = get_env_var( env, env_pos, pathW, 4 );
     add_dynamic_environment( &env, &env_pos, &env_size );
     add_registry_environment( &env, &env_pos, &env_size );
+    bootstrap = get_env_var( env, env_pos, bootstrapW, ARRAY_SIZE(bootstrapW) );
+    set_env_var( &env, &env_pos, &env_size, bootstrapW, ARRAY_SIZE(bootstrapW), valueW );
+    is_prefix_bootstrap = TRUE;
     env[env_pos] = 0;
     run_wineboot( env, env_pos );
 
     /* reload environment now that wineboot has run */
     set_env_var( &env, &env_pos, &env_size, pathW, 4, path );  /* reset PATH */
     free( path );
+    set_env_var( &env, &env_pos, &env_size, bootstrapW, ARRAY_SIZE(bootstrapW), bootstrap );
+    is_prefix_bootstrap = !!bootstrap;
+    free( bootstrap );
     add_registry_environment( &env, &env_pos, &env_size );
     env[env_pos++] = 0;
 
-    status = load_main_exe( main_wargv[0], main_argv[0], curdir, &image, &module, &image_info );
-    if (!status && image_info.Machine != current_machine)  /* need to restart for Wow64 */
+    status = load_main_exe( NULL, main_argv[1], curdir, &image, &module );
+    if (!status)
     {
-        NtUnmapViewOfSection( GetCurrentProcess(), module );
-        status = STATUS_INVALID_IMAGE_FORMAT;
+        if (main_image_info.ImageCharacteristics & IMAGE_FILE_DLL) status = STATUS_INVALID_IMAGE_FORMAT;
+        if (main_image_info.Machine != current_machine) status = STATUS_INVALID_IMAGE_FORMAT;
     }
 
     if (status)  /* try launching it through start.exe */
     {
-        static const WCHAR execW[] = {'/','e','x','e','c',0};
-        const WCHAR *args[] = { NULL, execW };
-
+        static const char *args[] = { "start.exe", "/exec" };
         free( image );
-        prepend_main_wargv( args, 2 );
-        load_start_exe( &image, &module, &image_info );
+        if (module) NtUnmapViewOfSection( GetCurrentProcess(), module );
+        load_start_exe( &image, &module );
+        prepend_argv( args, 2 );
     }
+    else rebuild_argv();
 
     NtCurrentTeb()->Peb->ImageBaseAddress = module;
-    main_wargv[0] = get_dos_path( image );
+    main_wargv = build_wargv( get_dos_path( image ));
     cmdline = build_command_line( main_wargv );
 
     TRACE( "image %s cmdline %s dir %s\n",
@@ -1898,7 +1960,7 @@ static RTL_USER_PROCESS_PARAMETERS *build_initial_params(void)
     size = (sizeof(*params)
             + MAX_PATH * sizeof(WCHAR)  /* curdir */
             + (wcslen( cmdline ) + 1) * sizeof(WCHAR)  /* command line */
-            + (wcslen( main_wargv[0] ) + 1) * sizeof(WCHAR)  /* image path */
+            + (wcslen( main_wargv[0] ) + 1) * sizeof(WCHAR) * 2 /* image path + window title */
             + env_pos * sizeof(WCHAR));
 
     status = NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&params, 0, &size,
@@ -1918,6 +1980,8 @@ static RTL_USER_PROCESS_PARAMETERS *build_initial_params(void)
 
     put_unicode_string( main_wargv[0], &dst, &params->ImagePathName );
     put_unicode_string( cmdline, &dst, &params->CommandLine );
+    put_unicode_string( main_wargv[0], &dst, &params->WindowTitle );
+    free( image );
     free( cmdline );
     free( curdir );
 
@@ -1942,7 +2006,6 @@ void init_startup_info(void)
     NTSTATUS status;
     SIZE_T size, info_size, env_size, env_pos;
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
-    SECTION_IMAGE_INFORMATION image_info;
     startup_info_t *info;
 
     if (!startup_info_size)
@@ -1967,6 +2030,7 @@ void init_startup_info(void)
     memcpy( env, (char *)info + info_size, env_size * sizeof(WCHAR) );
     env_pos = env_size - 1;
     add_dynamic_environment( &env, &env_pos, &env_size );
+    is_prefix_bootstrap = !!find_env_var( env, env_pos, bootstrapW, ARRAY_SIZE(bootstrapW) );
     env[env_pos++] = 0;
 
     size = (sizeof(*params)
@@ -2035,14 +2099,16 @@ void init_startup_info(void)
     free( info );
     NtCurrentTeb()->Peb->ProcessParameters = params;
 
-    status = load_main_exe( params->ImagePathName.Buffer, NULL, params->CommandLine.Buffer,
-                            &image, &module, &image_info );
+    status = load_main_exe( params->ImagePathName.Buffer, NULL,
+                            params->CommandLine.Buffer, &image, &module );
     if (status)
     {
         MESSAGE( "wine: failed to start %s\n", debugstr_us(&params->ImagePathName) );
         NtTerminateProcess( GetCurrentProcess(), status );
     }
     NtCurrentTeb()->Peb->ImageBaseAddress = module;
+    rebuild_argv();
+    main_wargv = build_wargv( get_dos_path( image ));
     free( image );
 }
 

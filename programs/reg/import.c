@@ -245,18 +245,13 @@ static BOOL parse_data_type(struct parser *parser, WCHAR **line)
 {
     struct data_type { const WCHAR *tag; int len; int type; int parse_type; };
 
-    static const WCHAR quote[] = {'"'};
-    static const WCHAR hex[] = {'h','e','x',':'};
-    static const WCHAR dword[] = {'d','w','o','r','d',':'};
-    static const WCHAR hexp[] = {'h','e','x','('};
-
     static const struct data_type data_types[] = {
-    /*    tag    len  type         parse type    */
-        { quote,  1,  REG_SZ,      REG_SZ },
-        { hex,    4,  REG_BINARY,  REG_BINARY },
-        { dword,  6,  REG_DWORD,   REG_DWORD },
-        { hexp,   4,  -1,          REG_BINARY }, /* REG_NONE, REG_EXPAND_SZ, REG_MULTI_SZ */
-        { NULL,   0,  0,           0 }
+    /*    tag       len  type         parse type    */
+        { L"\"",     1,  REG_SZ,      REG_SZ },
+        { L"hex:",   4,  REG_BINARY,  REG_BINARY },
+        { L"dword:", 6,  REG_DWORD,   REG_DWORD },
+        { L"hex(",   4,  -1,          REG_BINARY }, /* REG_NONE, REG_EXPAND_SZ, REG_MULTI_SZ */
+        { NULL,      0,  0,           0 }
     };
 
     const struct data_type *ptr;
@@ -443,21 +438,17 @@ enum reg_versions {
 
 static enum reg_versions parse_file_header(const WCHAR *s)
 {
-    static const WCHAR header_31[] = {'R','E','G','E','D','I','T',0};
-    static const WCHAR header_40[] = {'R','E','G','E','D','I','T','4',0};
-    static const WCHAR header_50[] = {'W','i','n','d','o','w','s',' ',
-                                      'R','e','g','i','s','t','r','y',' ','E','d','i','t','o','r',' ',
-                                      'V','e','r','s','i','o','n',' ','5','.','0','0',0};
+    static const WCHAR *header_31 = L"REGEDIT";
 
     while (*s == ' ' || *s == '\t') s++;
 
     if (!lstrcmpW(s, header_31))
         return REG_VERSION_31;
 
-    if (!lstrcmpW(s, header_40))
+    if (!lstrcmpW(s, L"REGEDIT4"))
         return REG_VERSION_40;
 
-    if (!lstrcmpW(s, header_50))
+    if (!lstrcmpW(s, L"Windows Registry Editor Version 5.00"))
         return REG_VERSION_50;
 
     /* The Windows version accepts registry file headers beginning with "REGEDIT" and ending
@@ -511,13 +502,12 @@ static WCHAR *header_state(struct parser *parser, WCHAR *pos)
 static WCHAR *parse_win31_line_state(struct parser *parser, WCHAR *pos)
 {
     WCHAR *line, *value;
-    static WCHAR hkcr[] = {'H','K','E','Y','_','C','L','A','S','S','E','S','_','R','O','O','T'};
     unsigned int key_end = 0;
 
     if (!(line = get_line(parser->file)))
         return NULL;
 
-    if (wcsncmp(line, hkcr, ARRAY_SIZE(hkcr)))
+    if (wcsncmp(line, L"HKEY_CLASSES_ROOT", 17)) /* "HKEY_CLASSES_ROOT" without NUL */
         return line;
 
     /* get key name */
@@ -533,7 +523,7 @@ static WCHAR *parse_win31_line_state(struct parser *parser, WCHAR *pos)
 
     if (open_key(parser, line) != ERROR_SUCCESS)
     {
-        output_message(STRING_OPEN_KEY_FAILED, line);
+        output_message(STRING_KEY_IMPORT_FAILED, line);
         return line;
     }
 
@@ -594,7 +584,7 @@ static WCHAR *key_name_state(struct parser *parser, WCHAR *pos)
         return p + 1;
     }
     else if (open_key(parser, p) != ERROR_SUCCESS)
-        output_message(STRING_OPEN_KEY_FAILED, p);
+        output_message(STRING_KEY_IMPORT_FAILED, p);
 
 done:
     set_state(parser, LINE_START);
@@ -948,8 +938,7 @@ static WCHAR *get_lineW(FILE *fp)
 
     while (next)
     {
-        static const WCHAR line_endings[] = {'\r','\n',0};
-        WCHAR *p = wcspbrk(line, line_endings);
+        WCHAR *p = wcspbrk(line, L"\r\n");
         if (!p)
         {
             size_t len, count;
@@ -986,20 +975,27 @@ int reg_import(int argc, WCHAR *argvW[])
 {
     WCHAR *filename, *pos;
     FILE *fp;
-    static const WCHAR rb_mode[] = {'r','b',0};
     BYTE s[2];
     struct parser parser;
 
-    if (argc > 3)
+    if (argc > 4) goto invalid;
+
+    if (argc == 4)
     {
-        output_message(STRING_INVALID_SYNTAX);
-        output_message(STRING_FUNC_HELP, wcsupr(argvW[1]));
-        return 1;
+        WCHAR *str = argvW[3];
+
+        if (*str != '/' && *str != '-')
+            goto invalid;
+
+        str++;
+
+        if (lstrcmpiW(str, L"reg:32") && lstrcmpiW(str, L"reg:64"))
+            goto invalid;
     }
 
     filename = argvW[2];
 
-    fp = _wfopen(filename, rb_mode);
+    fp = _wfopen(filename, L"rb");
     if (!fp)
     {
         output_message(STRING_FILE_NOT_FOUND, filename);
@@ -1043,5 +1039,10 @@ int reg_import(int argc, WCHAR *argvW[])
 
 error:
     fclose(fp);
+    return 1;
+
+invalid:
+    output_message(STRING_INVALID_SYNTAX);
+    output_message(STRING_FUNC_HELP, wcsupr(argvW[1]));
     return 1;
 }

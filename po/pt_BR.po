@@ -3871,15 +3871,15 @@ msgstr "Compilação condicional está desligada"
 msgid "Expected '@'"
 msgstr "Esperado '@'"
 
-#: dlls/jscript/jscript.rc:78
+#: dlls/jscript/jscript.rc:79
 msgid "Microsoft JScript compilation error"
 msgstr "Microsoft JScript erro de compilação"
 
-#: dlls/jscript/jscript.rc:79
+#: dlls/jscript/jscript.rc:80
 msgid "Microsoft JScript runtime error"
 msgstr "Microsoft JScript erro de execução"
 
-#: dlls/jscript/jscript.rc:80 dlls/vbscript/vbscript.rc:64
+#: dlls/jscript/jscript.rc:81 dlls/vbscript/vbscript.rc:64
 msgid "Unknown runtime error"
 msgstr "Erro de execução desconhecido"
 
@@ -3972,14 +3972,18 @@ msgstr ""
 "'verdade' neste objeto"
 
 #: dlls/jscript/jscript.rc:74
+msgid "Cannot define property '|': object is not extensible"
+msgstr ""
+
+#: dlls/jscript/jscript.rc:75
 msgid "Cannot redefine non-configurable property '|'"
 msgstr "Não pode redefinir propriedade não configurável '|'"
 
-#: dlls/jscript/jscript.rc:75
+#: dlls/jscript/jscript.rc:76
 msgid "Cannot modify non-writable property '|'"
 msgstr "Não pode modificar propriedade não gravável '|'"
 
-#: dlls/jscript/jscript.rc:76
+#: dlls/jscript/jscript.rc:77
 msgid "Property cannot have both accessors and a value"
 msgstr "Propriedade não pode ter ambos acessores e valor"
 
@@ -14434,7 +14438,9 @@ msgid ""
 msgstr ""
 
 #: programs/reg/reg.rc:116
-msgid "The operation completed successfully\n"
+#, fuzzy
+#| msgid "The operation completed successfully\n"
+msgid "reg: The operation completed successfully\n"
 msgstr "A operação foi completada com sucesso\n"
 
 #: programs/reg/reg.rc:117
@@ -14452,8 +14458,10 @@ msgid "reg: Unable to access remote machine\n"
 msgstr "reg: Não foi possível acessar a máquina remota\n"
 
 #: programs/reg/reg.rc:120
-msgid ""
-"reg: The system was unable to find the specified registry key or value\n"
+#, fuzzy
+#| msgid ""
+#| "reg: The system was unable to find the specified registry key or value\n"
+msgid "reg: Unable to find the specified registry value\n"
 msgstr ""
 "reg: O sistema foi incapaz de encontrar a chave de registo ou valor "
 "especificado\n"
@@ -14479,7 +14487,9 @@ msgid "The registry value '%1' already exists. Do you want to overwrite it?"
 msgstr "O valor do registro '%1' já existe. Deseja sobrescrevê-lo?"
 
 #: programs/reg/reg.rc:129
-msgid "The registry operation was cancelled\n"
+#, fuzzy
+#| msgid "The registry operation was cancelled\n"
+msgid "reg: The registry operation was cancelled\n"
 msgstr "A operação de registro foi cancelada\n"
 
 #: programs/reg/reg.rc:130 programs/regedit/regedit.rc:239
@@ -14603,6 +14613,31 @@ msgstr "reg: Chave de sistema inválido[%1]\n"
 #: programs/reg/reg.rc:173
 msgid "The file '%1' already exists. Do you want to overwrite it?"
 msgstr "O arquivo '%1' já existe. Deseja sobrescrevê-lo?"
+
+#: programs/reg/reg.rc:174
+#, fuzzy
+#| msgid ""
+#| "reg: The system was unable to find the specified registry key or value\n"
+msgid "reg: Unable to find the specified registry key\n"
+msgstr ""
+"reg: O sistema foi incapaz de encontrar a chave de registo ou valor "
+"especificado\n"
+
+#: programs/reg/reg.rc:175
+#, fuzzy
+#| msgid "reg: Unable to open the registry key '%1'.\n"
+msgid "reg: Unable to import the registry key '%1'\n"
+msgstr "reg: Não foi possível abrir a chave de registro '%1'.\n"
+
+#: programs/reg/reg.rc:179
+msgid ""
+"  /reg:32\n"
+"     Access the registry using the 32-bit view.\n"
+"\n"
+"  /reg:64\n"
+"     Access the registry using the 64-bit view.\n"
+"\n"
+msgstr ""
 
 #: programs/regedit/regedit.rc:34
 msgid "&Registry"

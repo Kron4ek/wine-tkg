@@ -404,7 +404,7 @@ static void invoke_apc( CONTEXT *context, const user_apc_t *apc )
  * Invoke a single APC.
  *
  */
-static void invoke_system_apc( const apc_call_t *call, apc_result_t *result )
+static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOOL self )
 {
     SIZE_T size, bits;
     void *addr;
@@ -563,7 +563,7 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result )
             result->map_view.size = size;
         }
         else result->map_view.status = STATUS_INVALID_PARAMETER;
-        NtClose( wine_server_ptr_handle(call->map_view.handle) );
+        if (!self) NtClose( wine_server_ptr_handle(call->map_view.handle) );
         break;
     case APC_UNMAP_VIEW:
         result->type = call->type;
@@ -622,7 +622,7 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result )
                                                        &dst_handle, call->dup_handle.access,
                                                        call->dup_handle.attributes, call->dup_handle.options );
         result->dup_handle.handle = wine_server_obj_handle( dst_handle );
-        NtClose( wine_server_ptr_handle(call->dup_handle.dst_process) );
+        if (!self) NtClose( wine_server_ptr_handle(call->dup_handle.dst_process) );
         break;
     }
     case APC_BREAK_PROCESS:
@@ -706,7 +706,7 @@ unsigned int server_select( const select_op_t *select_op, data_size_t size, UINT
             SERVER_END_REQ;
 
             if (ret != STATUS_KERNEL_APC) break;
-            invoke_system_apc( &call, &result );
+            invoke_system_apc( &call, &result, FALSE );
 
             /* don't signal multiple times */
             if (size >= sizeof(select_op->signal_and_wait) && select_op->op == SELECT_SIGNAL_AND_WAIT)
@@ -804,7 +804,7 @@ unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call, a
 
         if (self)
         {
-            invoke_system_apc( call, result );
+            invoke_system_apc( call, result, TRUE );
         }
         else
         {
@@ -829,7 +829,7 @@ unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call, a
  *
  * Send a file descriptor to the server.
  */
-void CDECL wine_server_send_fd( int fd )
+void wine_server_send_fd( int fd )
 {
     struct send_fd data;
     struct msghdr msghdr;
@@ -1149,15 +1149,6 @@ NTSTATUS CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int
         if ((*unix_fd = dup(*unix_fd)) == -1) ret = STATUS_TOO_MANY_OPENED_FILES;
     }
     return ret;
-}
-
-
-/***********************************************************************
- *           wine_server_release_fd
- */
-void CDECL wine_server_release_fd( HANDLE handle, int unix_fd )
-{
-    close( unix_fd );
 }
 
 
@@ -1526,6 +1517,18 @@ static void init_teb64( TEB *teb )
 }
 
 /***********************************************************************
+ *           process_exit_wrapper
+ *
+ * Close server socket and exit process normally.
+ */
+void process_exit_wrapper( int status )
+{
+    close( fd_socket );
+    exit( status );
+}
+
+
+/***********************************************************************
  *           server_init_process
  *
  * Start the server and create the initial socket pair.
@@ -1657,7 +1660,6 @@ size_t server_init_process(void)
 void server_init_process_done(void)
 {
     PEB *peb = NtCurrentTeb()->Peb;
-    IMAGE_NT_HEADERS *nt = get_exe_nt_header();
     void *entry;
     struct cpu_topology_override *cpu_override = get_cpu_topology_override();
     NTSTATUS status;
@@ -1675,7 +1677,7 @@ void server_init_process_done(void)
 #ifdef __APPLE__
     send_server_task_port();
 #endif
-    if (nt->FileHeader.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE
+    if (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE
             || __wine_needs_override_large_address_aware()) virtual_set_large_address_space();
 
     /* Install signal handlers; this cannot be done earlier, since we cannot

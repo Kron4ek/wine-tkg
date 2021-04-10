@@ -2661,6 +2661,8 @@ static const emfplus_record properties_records[] = {
     { EmfPlusRecordTypeSetCompositingMode, CompositingModeSourceCopy },
     { EmfPlusRecordTypeSetCompositingQuality, CompositingQualityHighQuality },
     { EmfPlusRecordTypeSetInterpolationMode, InterpolationModeHighQualityBicubic },
+    { EmfPlusRecordTypeSetRenderingOrigin },
+    { EmfPlusRecordTypeSetRenderingOrigin },
     { EmfPlusRecordTypeEndOfFile },
     { EMR_EOF },
     { 0 }
@@ -2712,6 +2714,15 @@ static void test_properties(void)
     stat = GdipSetInterpolationMode(graphics, InterpolationModeDefault);
     expect(Ok, stat);
     stat = GdipSetInterpolationMode(graphics, InterpolationModeHighQuality);
+    expect(Ok, stat);
+
+    stat = GdipSetRenderingOrigin(graphics, 1, 2);
+    expect(Ok, stat);
+
+    stat = GdipSetRenderingOrigin(graphics, 1, 2);
+    expect(Ok, stat);
+
+    stat = GdipSetRenderingOrigin(graphics, 2, 1);
     expect(Ok, stat);
 
     stat = GdipDeleteGraphics(graphics);
@@ -3707,6 +3718,158 @@ static void test_drawrectangle(void)
     expect(Ok, stat);
 }
 
+static void test_offsetclip(void)
+{
+    static const GpRectF frame = { 0.0f, 0.0f, 100.0f, 100.0f };
+    static const emfplus_record offset_clip_records[] =
+    {
+       { EMR_HEADER },
+       { EmfPlusRecordTypeHeader },
+       { EmfPlusRecordTypeOffsetClip },
+       { EmfPlusRecordTypeOffsetClip },
+       { EmfPlusRecordTypeEndOfFile },
+       { EMR_EOF },
+       { 0 },
+    };
+
+    GpMetafile *metafile;
+    GpGraphics *graphics;
+    HENHMETAFILE hemf;
+    GpStatus stat;
+    HDC hdc;
+
+    hdc = CreateCompatibleDC(0);
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
+    expect(Ok, stat);
+    DeleteDC(hdc);
+
+    stat = GdipGetImageGraphicsContext((GpImage *)metafile, &graphics);
+    expect(Ok, stat);
+
+    stat = GdipTranslateClip(graphics, 1.0f, -1.0f);
+    expect(Ok, stat);
+
+    stat = GdipTranslateClipI(graphics, 2, 3);
+    expect(Ok, stat);
+
+    stat = GdipDeleteGraphics(graphics);
+    expect(Ok, stat);
+    sync_metafile(&metafile, "offset_clip.emf");
+
+    stat = GdipGetHemfFromMetafile(metafile, &hemf);
+    expect(Ok, stat);
+
+    check_emfplus(hemf, offset_clip_records, "offset clip");
+    DeleteEnhMetaFile(hemf);
+
+    stat = GdipDisposeImage((GpImage*)metafile);
+    expect(Ok, stat);
+}
+
+static void test_resetclip(void)
+{
+    static const GpRectF frame = { 0.0f, 0.0f, 100.0f, 100.0f };
+    static const emfplus_record reset_clip_records[] =
+    {
+       { EMR_HEADER },
+       { EmfPlusRecordTypeHeader },
+       { EmfPlusRecordTypeResetClip },
+       { EmfPlusRecordTypeResetClip },
+       { EmfPlusRecordTypeEndOfFile },
+       { EMR_EOF },
+       { 0 },
+    };
+
+    GpMetafile *metafile;
+    GpGraphics *graphics;
+    HENHMETAFILE hemf;
+    GpStatus stat;
+    HDC hdc;
+
+    hdc = CreateCompatibleDC(0);
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
+    expect(Ok, stat);
+    DeleteDC(hdc);
+
+    stat = GdipGetImageGraphicsContext((GpImage *)metafile, &graphics);
+    expect(Ok, stat);
+
+    stat = GdipResetClip(graphics);
+    expect(Ok, stat);
+
+    stat = GdipResetClip(graphics);
+    expect(Ok, stat);
+
+    stat = GdipDeleteGraphics(graphics);
+    expect(Ok, stat);
+    sync_metafile(&metafile, "reset_clip.emf");
+
+    stat = GdipGetHemfFromMetafile(metafile, &hemf);
+    expect(Ok, stat);
+
+    check_emfplus(hemf, reset_clip_records, "reset clip");
+    DeleteEnhMetaFile(hemf);
+
+    stat = GdipDisposeImage((GpImage*)metafile);
+    expect(Ok, stat);
+}
+
+static void test_setclippath(void)
+{
+    static const GpRectF frame = { 0.0f, 0.0f, 100.0f, 100.0f };
+    static const emfplus_record set_clip_path_records[] =
+    {
+       { EMR_HEADER },
+       { EmfPlusRecordTypeHeader },
+       { EmfPlusRecordTypeObject, ObjectTypePath << 8 },
+       { EmfPlusRecordTypeSetClipPath, 0x100 },
+       { EmfPlusRecordTypeEndOfFile },
+       { EMR_EOF },
+       { 0 },
+    };
+
+    GpMetafile *metafile;
+    GpGraphics *graphics;
+    HENHMETAFILE hemf;
+    GpStatus stat;
+    GpPath *path;
+    HDC hdc;
+
+    hdc = CreateCompatibleDC(0);
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
+    expect(Ok, stat);
+    DeleteDC(hdc);
+
+    stat = GdipGetImageGraphicsContext((GpImage *)metafile, &graphics);
+    expect(Ok, stat);
+
+    stat = GdipCreatePath(FillModeAlternate, &path);
+    expect(Ok, stat);
+    stat = GdipAddPathLine(path, 5, 5, 30, 30);
+    expect(Ok, stat);
+    stat = GdipAddPathLine(path, 30, 30, 5, 30);
+    expect(Ok, stat);
+
+    stat = GdipSetClipPath(graphics, path, CombineModeIntersect);
+    expect(Ok, stat);
+
+    stat = GdipDeletePath(path);
+    expect(Ok, stat);
+
+    stat = GdipDeleteGraphics(graphics);
+    expect(Ok, stat);
+    sync_metafile(&metafile, "set_clip_path.emf");
+
+    stat = GdipGetHemfFromMetafile(metafile, &hemf);
+    expect(Ok, stat);
+
+    check_emfplus(hemf, set_clip_path_records, "set clip path");
+    DeleteEnhMetaFile(hemf);
+
+    stat = GdipDisposeImage((GpImage*)metafile);
+    expect(Ok, stat);
+}
+
 START_TEST(metafile)
 {
     struct GdiplusStartupInput gdiplusStartupInput;
@@ -3764,6 +3927,9 @@ START_TEST(metafile)
     test_drawellipse();
     test_fillellipse();
     test_drawrectangle();
+    test_offsetclip();
+    test_resetclip();
+    test_setclippath();
 
     GdiplusShutdown(gdiplusToken);
 }

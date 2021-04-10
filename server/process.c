@@ -514,7 +514,7 @@ static void process_sigkill( void *private )
 static void start_sigkill_timer( struct process *process )
 {
     grab_object( process );
-    if (process->unix_pid != -1 && process->msg_fd)
+    if (process->unix_pid != -1)
         process->sigkill_timeout = add_timeout_user( -TICKS_PER_SEC, process_sigkill, process );
     else
         process_died( process );
@@ -980,13 +980,7 @@ void kill_process( struct process *process, int violent_death )
         process->msg_fd = NULL;
     }
 
-    if (process->sigkill_timeout)  /* already waiting for it to die */
-    {
-        remove_timeout_user( process->sigkill_timeout );
-        process->sigkill_timeout = NULL;
-        process_died( process );
-        return;
-    }
+    if (process->sigkill_timeout) return;  /* already waiting for it to die */
 
     if (violent_death) terminate_process( process, NULL, 1 );
     else

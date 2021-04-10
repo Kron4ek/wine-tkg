@@ -5916,6 +5916,8 @@ GpStatus WINGDIPAPI GdipDrawString(GpGraphics *graphics, GDIPCONST WCHAR *string
 
 GpStatus WINGDIPAPI GdipResetClip(GpGraphics *graphics)
 {
+    GpStatus stat;
+
     TRACE("(%p)\n", graphics);
 
     if(!graphics)
@@ -5923,6 +5925,13 @@ GpStatus WINGDIPAPI GdipResetClip(GpGraphics *graphics)
 
     if(graphics->busy)
         return ObjectBusy;
+
+    if (is_metafile_graphics(graphics))
+    {
+        stat = METAFILE_ResetClip((GpMetafile *)graphics->image);
+        if (stat != Ok)
+            return stat;
+    }
 
     return GdipSetInfinite(graphics->clip);
 }
@@ -6348,10 +6357,22 @@ GpStatus WINGDIPAPI GdipSetPixelOffsetMode(GpGraphics *graphics, PixelOffsetMode
 
 GpStatus WINGDIPAPI GdipSetRenderingOrigin(GpGraphics *graphics, INT x, INT y)
 {
+    GpStatus stat;
+
     TRACE("(%p,%i,%i)\n", graphics, x, y);
 
     if (!graphics)
         return InvalidParameter;
+
+    if (graphics->origin_x == x && graphics->origin_y == y)
+        return Ok;
+
+    if (is_metafile_graphics(graphics))
+    {
+         stat = METAFILE_SetRenderingOrigin((GpMetafile *)graphics->image, x, y);
+         if (stat != Ok)
+             return stat;
+    }
 
     graphics->origin_x = x;
     graphics->origin_y = y;
@@ -6540,6 +6561,13 @@ GpStatus WINGDIPAPI GdipSetClipPath(GpGraphics *graphics, GpPath *path, CombineM
 
     if(graphics->busy)
         return ObjectBusy;
+
+    if (is_metafile_graphics(graphics))
+    {
+        status = METAFILE_SetClipPath((GpMetafile*)graphics->image, path, mode);
+        if (status != Ok)
+            return status;
+    }
 
     status = GdipClonePath(path, &clip_path);
     if (status == Ok)
@@ -7118,6 +7146,8 @@ HPALETTE WINGDIPAPI GdipCreateHalftonePalette(void)
  */
 GpStatus WINGDIPAPI GdipTranslateClip(GpGraphics *graphics, REAL dx, REAL dy)
 {
+    GpStatus stat;
+
     TRACE("(%p, %.2f, %.2f)\n", graphics, dx, dy);
 
     if(!graphics)
@@ -7125,6 +7155,13 @@ GpStatus WINGDIPAPI GdipTranslateClip(GpGraphics *graphics, REAL dx, REAL dy)
 
     if(graphics->busy)
         return ObjectBusy;
+
+    if (is_metafile_graphics(graphics))
+    {
+        stat = METAFILE_OffsetClip((GpMetafile *)graphics->image, dx, dy);
+        if (stat != Ok)
+            return stat;
+    }
 
     return GdipTranslateRegion(graphics->clip, dx, dy);
 }
@@ -7136,15 +7173,8 @@ GpStatus WINGDIPAPI GdipTranslateClipI(GpGraphics *graphics, INT dx, INT dy)
 {
     TRACE("(%p, %d, %d)\n", graphics, dx, dy);
 
-    if(!graphics)
-        return InvalidParameter;
-
-    if(graphics->busy)
-        return ObjectBusy;
-
-    return GdipTranslateRegion(graphics->clip, (REAL)dx, (REAL)dy);
+    return GdipTranslateClip(graphics, dx, dy);
 }
-
 
 /*****************************************************************************
  * GdipMeasureDriverString [GDIPLUS.@]

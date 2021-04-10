@@ -250,9 +250,9 @@ int  ME_twips2pointsY(const ME_Context *c, int y) DECLSPEC_HIDDEN;
 
 /* scroll functions in paint.c */
 
-void ME_ScrollAbs(ME_TextEditor *editor, int x, int y) DECLSPEC_HIDDEN;
-void ME_HScrollAbs(ME_TextEditor *editor, int x) DECLSPEC_HIDDEN;
-void ME_VScrollAbs(ME_TextEditor *editor, int y) DECLSPEC_HIDDEN;
+void scroll_abs( ME_TextEditor *editor, int x, int y, BOOL notify ) DECLSPEC_HIDDEN;
+void scroll_h_abs( ME_TextEditor *editor, int x, BOOL notify ) DECLSPEC_HIDDEN;
+void scroll_v_abs( ME_TextEditor *editor, int y, BOOL notify ) DECLSPEC_HIDDEN;
 void ME_ScrollUp(ME_TextEditor *editor, int cy) DECLSPEC_HIDDEN;
 void ME_ScrollDown(ME_TextEditor *editor, int cy) DECLSPEC_HIDDEN;
 void ME_ScrollLeft(ME_TextEditor *editor, int cx) DECLSPEC_HIDDEN;
@@ -263,18 +263,19 @@ void ME_UpdateScrollBar(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 int ME_GetParaBorderWidth(const ME_Context *c, int flags) DECLSPEC_HIDDEN;
 
 /* richole.c */
-LRESULT CreateIRichEditOle(IUnknown *outer_unk, ME_TextEditor *editor, LPVOID *ppvObj) DECLSPEC_HIDDEN;
 void draw_ole( ME_Context *c, int x, int y, ME_Run* run, BOOL selected ) DECLSPEC_HIDDEN;
 void ME_GetOLEObjectSize(const ME_Context *c, ME_Run *run, SIZE *pSize) DECLSPEC_HIDDEN;
 void ME_CopyReObject(REOBJECT *dst, const REOBJECT *src, DWORD flags) DECLSPEC_HIDDEN;
 void ME_DeleteReObject(struct re_object *re_object) DECLSPEC_HIDDEN;
+void richole_release_children( struct text_services *services ) DECLSPEC_HIDDEN;
+extern const IRichEditOleVtbl re_ole_vtbl DECLSPEC_HIDDEN;
+extern const ITextDocument2OldVtbl text_doc2old_vtbl DECLSPEC_HIDDEN;
 
 /* editor.c */
 ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10) DECLSPEC_HIDDEN;
 void ME_DestroyEditor(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
                                LPARAM lParam, HRESULT* phresult ) DECLSPEC_HIDDEN;
-void ME_SendOldNotify(ME_TextEditor *editor, int nCode) DECLSPEC_HIDDEN;
 int ME_GetTextW(ME_TextEditor *editor, WCHAR *buffer, int buflen,
                 const ME_Cursor *start, int srcChars, BOOL bCRLF, BOOL bEOP) DECLSPEC_HIDDEN;
 void ME_RTFCharAttrHook(struct _RTF_Info *info) DECLSPEC_HIDDEN;

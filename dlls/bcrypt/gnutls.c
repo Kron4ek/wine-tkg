@@ -1914,7 +1914,7 @@ struct key_funcs * gnutls_lib_init( DWORD reason )
         if (!gnutls_initialize()) return NULL;
         return &key_funcs;
     case DLL_PROCESS_DETACH:
-        gnutls_uninitialize();
+        if (libgnutls_handle) gnutls_uninitialize();
     }
     return NULL;
 }

@@ -3881,15 +3881,15 @@ msgstr "La compilació condicional està desactivada"
 msgid "Expected '@'"
 msgstr "S'esperava '@'"
 
-#: dlls/jscript/jscript.rc:78
+#: dlls/jscript/jscript.rc:79
 msgid "Microsoft JScript compilation error"
 msgstr "Error de compilació de Microsoft JScript"
 
-#: dlls/jscript/jscript.rc:79
+#: dlls/jscript/jscript.rc:80
 msgid "Microsoft JScript runtime error"
 msgstr "Error d'entorn d'execució de Microsoft JScript"
 
-#: dlls/jscript/jscript.rc:80 dlls/vbscript/vbscript.rc:64
+#: dlls/jscript/jscript.rc:81 dlls/vbscript/vbscript.rc:64
 msgid "Unknown runtime error"
 msgstr "Error d'entorn d'execució desconegut"
 
@@ -3982,14 +3982,18 @@ msgstr ""
 "'true' en aquest objecte"
 
 #: dlls/jscript/jscript.rc:74
+msgid "Cannot define property '|': object is not extensible"
+msgstr ""
+
+#: dlls/jscript/jscript.rc:75
 msgid "Cannot redefine non-configurable property '|'"
 msgstr "No es pot redefinir la propietat no configurable '|'"
 
-#: dlls/jscript/jscript.rc:75
+#: dlls/jscript/jscript.rc:76
 msgid "Cannot modify non-writable property '|'"
 msgstr "No es pot modificar la propietat no escrivible '|'"
 
-#: dlls/jscript/jscript.rc:76
+#: dlls/jscript/jscript.rc:77
 msgid "Property cannot have both accessors and a value"
 msgstr "La propietat no pot tenir ambdós mètodes d'accés i un valor"
 
@@ -14486,7 +14490,9 @@ msgid ""
 msgstr ""
 
 #: programs/reg/reg.rc:116
-msgid "The operation completed successfully\n"
+#, fuzzy
+#| msgid "The operation completed successfully\n"
+msgid "reg: The operation completed successfully\n"
 msgstr "L'operació s'ha acabat amb èxit\n"
 
 #: programs/reg/reg.rc:117
@@ -14504,8 +14510,10 @@ msgid "reg: Unable to access remote machine\n"
 msgstr "reg: No s'ha pogut accedir a la màquina remota\n"
 
 #: programs/reg/reg.rc:120
-msgid ""
-"reg: The system was unable to find the specified registry key or value\n"
+#, fuzzy
+#| msgid ""
+#| "reg: The system was unable to find the specified registry key or value\n"
+msgid "reg: Unable to find the specified registry value\n"
 msgstr ""
 "reg: El sistema no ha pogut trobar la clau de registre especificada o el "
 "valor de registre especificat\n"
@@ -14531,7 +14539,9 @@ msgid "The registry value '%1' already exists. Do you want to overwrite it?"
 msgstr "El valor de registre '%1' ja existeix. El voleu sobreescriure?"
 
 #: programs/reg/reg.rc:129
-msgid "The registry operation was cancelled\n"
+#, fuzzy
+#| msgid "The registry operation was cancelled\n"
+msgid "reg: The registry operation was cancelled\n"
 msgstr "S'ha cancel·lat l'operació de registre\n"
 
 #: programs/reg/reg.rc:130 programs/regedit/regedit.rc:239
@@ -14655,6 +14665,31 @@ msgstr "reg: Nom de clau de sistema no vàlid [%1]\n"
 #: programs/reg/reg.rc:173
 msgid "The file '%1' already exists. Do you want to overwrite it?"
 msgstr "El fitxer '%1' ja existeix. El voleu sobreescriure?"
+
+#: programs/reg/reg.rc:174
+#, fuzzy
+#| msgid ""
+#| "reg: The system was unable to find the specified registry key or value\n"
+msgid "reg: Unable to find the specified registry key\n"
+msgstr ""
+"reg: El sistema no ha pogut trobar la clau de registre especificada o el "
+"valor de registre especificat\n"
+
+#: programs/reg/reg.rc:175
+#, fuzzy
+#| msgid "reg: Unable to open the registry key '%1'.\n"
+msgid "reg: Unable to import the registry key '%1'\n"
+msgstr "reg: No s'ha pogut obrir la clau de registre '%1'.\n"
+
+#: programs/reg/reg.rc:179
+msgid ""
+"  /reg:32\n"
+"     Access the registry using the 32-bit view.\n"
+"\n"
+"  /reg:64\n"
+"     Access the registry using the 64-bit view.\n"
+"\n"
+msgstr ""
 
 #: programs/regedit/regedit.rc:34
 msgid "&Registry"

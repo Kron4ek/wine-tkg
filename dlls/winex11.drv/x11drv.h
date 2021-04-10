@@ -32,9 +32,6 @@
 #include <X11/Xresource.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
-#ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
-#include <X11/extensions/XInput2.h>
-#endif
 
 #define BOOL X_BOOL
 #define BYTE X_BYTE
@@ -199,8 +196,6 @@ extern BOOL CDECL X11DRV_UnrealizePalette( HPALETTE hpal ) DECLSPEC_HIDDEN;
 
 extern void X11DRV_Xcursor_Init(void) DECLSPEC_HIDDEN;
 extern void X11DRV_XInput2_Init(void) DECLSPEC_HIDDEN;
-extern void X11DRV_XInput2_Enable(void) DECLSPEC_HIDDEN;
-extern void X11DRV_XInput2_Disable(void) DECLSPEC_HIDDEN;
 
 extern DWORD copy_image_bits( BITMAPINFO *info, BOOL is_r8g8b8, XImage *image,
                               const struct gdi_image_bits *src_bits, struct gdi_image_bits *dst_bits,
@@ -322,6 +317,13 @@ struct x11drv_escape_flush_gl_drawable
  * X11 USER driver
  */
 
+struct x11drv_valuator_data
+{
+    double min;
+    double max;
+    int number;
+};
+
 struct x11drv_thread_data
 {
     Display *display;
@@ -338,13 +340,13 @@ struct x11drv_thread_data
     HWND     clip_hwnd;            /* message window stored in desktop while clipping is active */
     DWORD    clip_reset;           /* time when clipping was last reset */
     HKL      kbd_layout;           /* active keyboard layout */
-#ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
     enum { xi_unavailable = -1, xi_unknown, xi_disabled, xi_enabled } xi2_state; /* XInput2 state */
-    XIValuatorClassInfo x_pos_valuator;
-    XIValuatorClassInfo y_pos_valuator;
+    void    *xi2_devices;          /* list of XInput2 devices (valid when state is enabled) */
+    int      xi2_device_count;
+    struct x11drv_valuator_data x_rel_valuator;
+    struct x11drv_valuator_data y_rel_valuator;
     int      xi2_core_pointer;     /* XInput2 core pointer id */
-    int      xi2_rawinput_only;
-#endif
+    int      xi2_current_slave;    /* Current slave driving the Core pointer */
 };
 
 extern struct x11drv_thread_data *x11drv_init_thread_data(void) DECLSPEC_HIDDEN;
@@ -430,8 +432,6 @@ enum x11drv_atoms
     XATOM_RAW_CAP_HEIGHT,
     XATOM_Rel_X,
     XATOM_Rel_Y,
-    XATOM_Abs_X,
-    XATOM_Abs_Y,
     XATOM_WM_PROTOCOLS,
     XATOM_WM_DELETE_WINDOW,
     XATOM_WM_STATE,
@@ -640,7 +640,6 @@ extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
 extern BOOL clip_fullscreen_window( HWND hwnd, BOOL reset ) DECLSPEC_HIDDEN;
 extern void move_resize_window( HWND hwnd, int dir ) DECLSPEC_HIDDEN;
 extern void X11DRV_InitKeyboard( Display *display ) DECLSPEC_HIDDEN;
-extern void X11DRV_InitMouse( Display *display ) DECLSPEC_HIDDEN;
 extern DWORD CDECL X11DRV_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles, DWORD timeout,
                                                        DWORD mask, DWORD flags ) DECLSPEC_HIDDEN;
 

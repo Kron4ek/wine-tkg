@@ -48,12 +48,11 @@ static WCHAR *reg_data_to_wchar(DWORD type, const BYTE *src, DWORD size_bytes)
         case REG_BINARY:
         {
             WCHAR *ptr;
-            static const WCHAR fmt[] = {'%','0','2','X',0};
 
             buffer = malloc((size_bytes * 2 + 1) * sizeof(WCHAR));
             ptr = buffer;
             for (i = 0; i < size_bytes; i++)
-                ptr += swprintf(ptr, 3, fmt, src[i]);
+                ptr += swprintf(ptr, 3, L"%02X", src[i]);
             break;
         }
         case REG_DWORD:
@@ -61,10 +60,9 @@ static WCHAR *reg_data_to_wchar(DWORD type, const BYTE *src, DWORD size_bytes)
         case REG_DWORD_BIG_ENDIAN:
         {
             const int zero_x_dword = 10;
-            static const WCHAR fmt[] = {'0','x','%','x',0};
 
             buffer = malloc((zero_x_dword + 1) * sizeof(WCHAR));
-            swprintf(buffer, zero_x_dword + 1, fmt, *(DWORD *)src);
+            swprintf(buffer, zero_x_dword + 1, L"0x%x", *(DWORD *)src);
             break;
         }
         case REG_MULTI_SZ:
@@ -102,11 +100,11 @@ static WCHAR *reg_data_to_wchar(DWORD type, const BYTE *src, DWORD size_bytes)
     return buffer;
 }
 
-static const WCHAR newlineW[] = {'\n',0};
+static const WCHAR *newlineW = L"\n";
 
 static void output_value(const WCHAR *value_name, DWORD type, BYTE *data, DWORD data_size)
 {
-    static const WCHAR fmt[] = {' ',' ',' ',' ','%','1',0};
+    static const WCHAR *fmt = L"    %1";
     WCHAR defval[32];
     WCHAR *reg_data;
 
@@ -142,7 +140,7 @@ static int query_value(HKEY key, WCHAR *value_name, WCHAR *path, BOOL recurse)
     DWORD subkey_len;
     DWORD type, path_len, i;
     BYTE *data;
-    WCHAR fmt[] = {'%','1','\n',0};
+    static const WCHAR *fmt = L"%1\n";
     WCHAR *subkey_name, *subkey_path;
     HKEY subkey;
 
@@ -176,7 +174,7 @@ static int query_value(HKEY key, WCHAR *value_name, WCHAR *path, BOOL recurse)
         {
             if (value_name && *value_name)
             {
-                output_message(STRING_CANNOT_FIND);
+                output_message(STRING_VALUE_NONEXIST);
                 return 1;
             }
             output_string(fmt, path);
@@ -219,13 +217,11 @@ static int query_all(HKEY key, WCHAR *path, BOOL recurse)
     DWORD max_data_bytes = 2048, data_size;
     DWORD subkey_len;
     DWORD i, type, path_len;
-    WCHAR fmt[] = {'%','1','\n',0};
-    WCHAR fmt_path[] = {'%','1','\\','%','2','\n',0};
     WCHAR *value_name, *subkey_name, *subkey_path;
     BYTE *data;
     HKEY subkey;
 
-    output_string(fmt, path);
+    output_string(L"%1\n", path);
 
     value_name = malloc(max_value_len * sizeof(WCHAR));
     data = malloc(max_data_bytes);
@@ -284,7 +280,7 @@ static int query_all(HKEY key, WCHAR *path, BOOL recurse)
                 }
                 free(subkey_path);
             }
-            else output_string(fmt_path, path, subkey_name);
+            else output_string(L"%1\\%2\n", path, subkey_name);
             i++;
         }
         else break;
@@ -306,7 +302,7 @@ static int run_query(HKEY root, WCHAR *path, WCHAR *key_name, WCHAR *value_name,
 
     if (RegOpenKeyExW(root, path, 0, KEY_READ, &key) != ERROR_SUCCESS)
     {
-        output_message(STRING_CANNOT_FIND);
+        output_message(STRING_KEY_NONEXIST);
         return 1;
     }
 
@@ -333,46 +329,53 @@ int reg_query(int argc, WCHAR *argvW[])
     BOOL value_empty = FALSE, recurse = FALSE;
     int i;
 
-    if (!parse_registry_key(argvW[2], &root, &path, &key_name))
+    if (!parse_registry_key(argvW[2], &root, &path))
         return 1;
 
     for (i = 3; i < argc; i++)
     {
-        if (argvW[i][0] == '/' || argvW[i][0] == '-')
+        WCHAR *str;
+
+        if (argvW[i][0] != '/' && argvW[i][0] != '-')
+            goto invalid;
+
+        str = &argvW[i][1];
+
+        if (!lstrcmpiW(str, L"ve"))
         {
-            WCHAR *str = &argvW[i][1];
+            if (value_empty) goto invalid;
+            value_empty = TRUE;
+            continue;
+        }
+        else if (!lstrcmpiW(str, L"reg:32") || !lstrcmpiW(str, L"reg:64"))
+            continue;
+        else if (!str[0] || str[1])
+            goto invalid;
 
-            if (!lstrcmpiW(str, L"ve"))
-            {
-                if (value_empty) goto invalid;
-                value_empty = TRUE;
-                continue;
-            }
-            else if (!str[0] || str[1])
+        switch (towlower(*str))
+        {
+        case 'v':
+            if (value_name || !(value_name = argvW[++i]))
                 goto invalid;
-
-            switch (towlower(*str))
-            {
-            case 'v':
-                if (value_name || !(value_name = argvW[++i]))
-                    goto invalid;
-                break;
-            case 's':
-                if (recurse) goto invalid;
-                recurse = TRUE;
-                break;
-            default:
-                goto invalid;
-            }
+            break;
+        case 's':
+            if (recurse) goto invalid;
+            recurse = TRUE;
+            break;
+        default:
+            goto invalid;
         }
     }
 
     if (value_name && value_empty)
         goto invalid;
 
+    key_name = get_long_key(root, path);
+
     return run_query(root, path, key_name, value_name, value_empty, recurse);
 
 invalid:
-    output_message(STRING_INVALID_CMDLINE);
+    output_message(STRING_INVALID_SYNTAX);
+    output_message(STRING_FUNC_HELP, wcsupr(argvW[1]));
     return 1;
 }

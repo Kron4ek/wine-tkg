@@ -32,6 +32,7 @@ sync_test("elem_props", function() {
     var v = document.documentMode;
 
     test_exposed("doScroll", v < 11);
+    test_exposed("readyState", v < 11);
     test_exposed("querySelectorAll", v >= 8);
     test_exposed("textContent", v >= 9);
     test_exposed("prefix", v >= 9);
@@ -44,6 +45,15 @@ sync_test("elem_props", function() {
     test_exposed("dispatchEvent", v >= 9);
     test_exposed("msSetPointerCapture", v >= 10);
     if (v >= 9) test_exposed("spellcheck", v >= 10);
+
+    elem = document.createElement("style");
+    test_exposed("media", true);
+    test_exposed("type", true);
+    test_exposed("disabled", true);
+    test_exposed("media", true);
+    test_exposed("sheet", v >= 9);
+    test_exposed("readyState", v < 11);
+    test_exposed("styleSheet", v < 11);
 });
 
 sync_test("doc_props", function() {
@@ -122,6 +132,42 @@ sync_test("xhr_props", function() {
     test_exposed("addEventListener", v >= 9);
     test_exposed("removeEventListener", v >= 9);
     test_exposed("dispatchEvent", v >= 9);
+});
+
+sync_test("stylesheet_props", function() {
+    var v = document.documentMode;
+    var elem = document.createElement("style");
+    document.body.appendChild(elem);
+    var sheet = v >= 9 ? elem.sheet : elem.styleSheet;
+
+    function test_exposed(prop, expect) {
+        if(expect)
+            ok(prop in sheet, prop + " not found in style sheet.");
+        else
+            ok(!(prop in sheet), prop + " found in style sheet.");
+    }
+
+    test_exposed("href", true);
+    test_exposed("title", true);
+    test_exposed("type", true);
+    test_exposed("media", true);
+    test_exposed("ownerNode", v >= 9);
+    test_exposed("ownerRule", v >= 9);
+    test_exposed("cssRules", v >= 9);
+    test_exposed("insertRule", v >= 9);
+    test_exposed("deleteRule", v >= 9);
+    test_exposed("disabled", true);
+    test_exposed("parentStyleSheet", true);
+    test_exposed("owningElement", true);
+    test_exposed("readOnly", true);
+    test_exposed("imports", true);
+    test_exposed("id", true);
+    test_exposed("addImport", true);
+    test_exposed("addRule", true);
+    test_exposed("removeImport", true);
+    test_exposed("removeRule", true);
+    test_exposed("cssText", true);
+    test_exposed("rules", true);
 });
 
 sync_test("xhr open", function() {
@@ -368,7 +414,8 @@ sync_test("navigator", function() {
        "userAgent = " + navigator.userAgent + " appVersion = " + app);
 
     re = v < 11
-        ? "^" + (v < 9 ? "4" : "5") + "\\.0 \\(compatible; MSIE " + (v < 7 ? 7 : v) + "\\.0; Windows NT [^\\)]*\\)$"
+        ? "^" + (v < 9 ? "4" : "5") + "\\.0 \\(compatible; MSIE " + (v < 7 ? 7 : v) +
+          "\\.0; Windows NT [0-9].[0-9]; .*Trident/[678]\\.0.*\\)$"
         : "^5.0 \\(Windows NT [0-9].[0-9]; .*Trident/[678]\\.0.*rv:11.0\\) like Gecko$";
     ok(new RegExp(re).test(app), "appVersion = " + app);
 
@@ -377,4 +424,113 @@ sync_test("navigator", function() {
        "appName = " + navigator.appName);
     ok(navigator.toString() === (v < 9 ? "[object]" : "[object Navigator]"),
        "navigator.toString() = " + navigator.toString());
+});
+
+sync_test("delete_prop", function() {
+    var v = document.documentMode;
+    var obj = document.createElement("div"), r, obj2;
+
+    obj.prop1 = true;
+    r = false;
+    try {
+        delete obj.prop1;
+    }catch(ex) {
+        r = true;
+    }
+    if(v < 8) {
+        ok(r, "did not get an expected exception");
+        return;
+    }
+    ok(!r, "got an unexpected exception");
+    ok(!("prop1" in obj), "prop1 is still in obj");
+
+    /* again, this time prop1 does not exist */
+    r = false;
+    try {
+        delete obj.prop1;
+    }catch(ex) {
+        r = true;
+    }
+    if(v < 9) {
+        ok(r, "did not get an expected exception");
+        return;
+    }else {
+        ok(!r, "got an unexpected exception");
+        ok(!("prop1" in obj), "prop1 is still in obj");
+    }
+
+    r = (delete obj.className);
+    ok(r, "delete returned " + r);
+    ok("className" in obj, "className deleted from obj");
+    ok(obj.className === "", "className = " + obj.className);
+
+    /* builtin propertiles don't throw any exception, but are not really deleted */
+    r = (delete obj.tagName);
+    ok(r, "delete returned " + r);
+    ok("tagName" in obj, "tagName deleted from obj");
+    ok(obj.tagName === "DIV", "tagName = " + obj.tagName);
+
+    obj = document.querySelectorAll("*");
+    ok("0" in obj, "0 is not in obj");
+    obj2 = obj[0];
+    r = (delete obj[0]);
+    ok("0" in obj, "0 is not in obj");
+    ok(obj[0] === obj2, "obj[0] != obj2");
+
+    /* test window object and its global scope handling */
+    obj = window;
+
+    obj.globalprop1 = true;
+    ok(globalprop1, "globalprop1 = " + globalprop1);
+    r = false;
+    try {
+        delete obj.globalprop1;
+    }catch(ex) {
+        r = true;
+    }
+    if(v < 9) {
+        ok(r, "did not get an expected exception");
+    }else {
+        ok(!r, "got an unexpected globalprop1 exception");
+        ok(!("globalprop1" in obj), "globalprop1 is still in obj");
+    }
+
+    globalprop2 = true;
+    ok(obj.globalprop2, "globalprop2 = " + globalprop2);
+    r = false;
+    try {
+        delete obj.globalprop2;
+    }catch(ex) {
+        r = true;
+    }
+    if(v < 9) {
+        ok(r, "did not get an expected globalprop2 exception");
+    }else {
+        ok(!r, "got an unexpected exception");
+        todo_wine.
+        ok(!("globalprop2" in obj), "globalprop2 is still in obj");
+    }
+
+    obj.globalprop3 = true;
+    ok(globalprop3, "globalprop3 = " + globalprop3);
+    r = false;
+    try {
+        delete globalprop3;
+    }catch(ex) {
+        r = true;
+    }
+    if(v < 9) {
+        ok(r, "did not get an expected exception");
+        ok("globalprop3" in obj, "globalprop3 is not in obj");
+    }else {
+        ok(!r, "got an unexpected globalprop3 exception");
+        ok(!("globalprop3" in obj), "globalprop3 is still in obj");
+    }
+
+    globalprop4 = true;
+    ok(obj.globalprop4, "globalprop4 = " + globalprop4);
+    r = (delete globalprop4);
+    ok(r, "delete returned " + r);
+    todo_wine.
+    ok(!("globalprop4" in obj), "globalprop4 is still in obj");
 });

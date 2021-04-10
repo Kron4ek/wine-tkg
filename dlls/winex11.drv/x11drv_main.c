@@ -97,7 +97,7 @@ static void *err_callback_arg;               /* error callback argument */
 static int err_callback_result;              /* error callback result */
 static unsigned long err_serial;             /* serial number of first request */
 static int (*old_error_handler)( Display *, XErrorEvent * );
-static BOOL use_xim = FALSE;
+static BOOL use_xim = TRUE;
 static char input_style[20];
 
 static CRITICAL_SECTION x11drv_section;
@@ -143,8 +143,6 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
     "RAW_CAP_HEIGHT",
     "Rel X",
     "Rel Y",
-    "Abs X",
-    "Abs Y",
     "WM_PROTOCOLS",
     "WM_DELETE_WINDOW",
     "WM_STATE",
@@ -621,7 +619,6 @@ static BOOL process_attach(void)
     if (use_xkb) use_xkb = XkbUseExtension( gdi_display, NULL, NULL );
 #endif
     X11DRV_InitKeyboard( gdi_display );
-    X11DRV_InitMouse( gdi_display );
     if (use_xim) use_xim = X11DRV_InitXIM( input_style );
 
     X11DRV_DisplayDevices_Init(FALSE);
@@ -638,8 +635,6 @@ void CDECL X11DRV_ThreadDetach(void)
 
     if (data)
     {
-        if (GetWindowThreadProcessId( GetDesktopWindow(), NULL ) == GetCurrentThreadId())
-            X11DRV_XInput2_Disable();
         if (data->xim) XCloseIM( data->xim );
         if (data->font_set) XFreeFontSet( data->display, data->font_set );
         XCloseDisplay( data->display );
@@ -709,8 +704,6 @@ struct x11drv_thread_data *x11drv_init_thread_data(void)
     TlsSetValue( thread_data_tls_index, data );
 
     if (use_xim) X11DRV_SetupXIM();
-    if (GetWindowThreadProcessId( GetDesktopWindow(), NULL ) == GetCurrentThreadId())
-        X11DRV_XInput2_Enable();
 
     return data;
 }

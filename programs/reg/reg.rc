@@ -112,11 +112,11 @@ STRINGTABLE
 \  /s\n\
 \     List all registry entries under <key> and its subkeys.\n\n"
 
-    STRING_SUCCESS, "The operation completed successfully\n"
+    STRING_SUCCESS, "reg: The operation completed successfully\n"
     STRING_INVALID_KEY, "reg: Invalid registry key\n"
     STRING_INVALID_CMDLINE, "reg: Invalid command line parameters\n"
     STRING_NO_REMOTE, "reg: Unable to access remote machine\n"
-    STRING_CANNOT_FIND, "reg: The system was unable to find the specified registry key or value\n"
+    STRING_VALUE_NONEXIST, "reg: Unable to find the specified registry value\n"
     STRING_UNSUPPORTED_TYPE, "reg: Unsupported registry data type [%1]\n"
     STRING_MISSING_INTEGER, "reg: The option [/d] must be followed by a valid integer\n"
     STRING_MISSING_HEXDATA, "reg: The option [/d] must be followed by a valid hexadecimal value\n"
@@ -125,7 +125,7 @@ STRINGTABLE
     STRING_YESNO, " (Yes|No)"
     STRING_YES, "#msgctxt#Yes key#Y"
     STRING_NO, "#msgctxt#No key#N"
-    STRING_CANCELLED, "The registry operation was cancelled\n"
+    STRING_CANCELLED, "reg: The registry operation was cancelled\n"
     STRING_DEFAULT_VALUE, "(Default)"
     STRING_DELETE_VALUE, "Are you sure you want to delete the registry value '%1'?"
     STRING_DELETE_VALUEALL, "Are you sure you want to delete all registry values in '%1'?"
@@ -170,4 +170,10 @@ STRINGTABLE
 
     STRING_INVALID_SYSTEM_KEY, "reg: Invalid system key [%1]\n"
     STRING_OVERWRITE_FILE, "The file '%1' already exists. Do you want to overwrite it?"
+    STRING_KEY_NONEXIST, "reg: Unable to find the specified registry key\n"
+    STRING_KEY_IMPORT_FAILED, "reg: Unable to import the registry key '%1'\n"
+    STRING_REG_VIEW_USAGE, "  /reg:32\n\
+\     Access the registry using the 32-bit view.\n\n\
+\  /reg:64\n\
+\     Access the registry using the 64-bit view.\n\n"
 }

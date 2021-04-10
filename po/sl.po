@@ -3948,15 +3948,15 @@ msgstr "Pogojno kodno prevajanje je izklopljeno"
 msgid "Expected '@'"
 msgstr "Pričakovan je bil ';'"
 
-#: dlls/jscript/jscript.rc:78
+#: dlls/jscript/jscript.rc:79
 msgid "Microsoft JScript compilation error"
 msgstr ""
 
-#: dlls/jscript/jscript.rc:79
+#: dlls/jscript/jscript.rc:80
 msgid "Microsoft JScript runtime error"
 msgstr ""
 
-#: dlls/jscript/jscript.rc:80 dlls/vbscript/vbscript.rc:64
+#: dlls/jscript/jscript.rc:81 dlls/vbscript/vbscript.rc:64
 #, fuzzy
 #| msgid "Unknown error"
 msgid "Unknown runtime error"
@@ -4057,14 +4057,18 @@ msgid ""
 msgstr ""
 
 #: dlls/jscript/jscript.rc:74
-msgid "Cannot redefine non-configurable property '|'"
+msgid "Cannot define property '|': object is not extensible"
 msgstr ""
 
 #: dlls/jscript/jscript.rc:75
-msgid "Cannot modify non-writable property '|'"
+msgid "Cannot redefine non-configurable property '|'"
 msgstr ""
 
 #: dlls/jscript/jscript.rc:76
+msgid "Cannot modify non-writable property '|'"
+msgstr ""
+
+#: dlls/jscript/jscript.rc:77
 msgid "Property cannot have both accessors and a value"
 msgstr ""
 
@@ -15079,7 +15083,9 @@ msgid ""
 msgstr ""
 
 #: programs/reg/reg.rc:116
-msgid "The operation completed successfully\n"
+#, fuzzy
+#| msgid "The operation completed successfully\n"
+msgid "reg: The operation completed successfully\n"
 msgstr "Opravilo se je uspešno izvedlo\n"
 
 #: programs/reg/reg.rc:117
@@ -15104,8 +15110,7 @@ msgstr "Napaka: ni mogoče dodati ključa na oddaljen računalnik\n"
 #, fuzzy
 #| msgid ""
 #| "Error: The system was unable to find the specified registry key or value\n"
-msgid ""
-"reg: The system was unable to find the specified registry key or value\n"
+msgid "reg: Unable to find the specified registry value\n"
 msgstr "Napaka: sistem ni našel navedenega ključa ali vrednosti registra\n"
 
 #: programs/reg/reg.rc:121
@@ -15133,8 +15138,10 @@ msgid "The registry value '%1' already exists. Do you want to overwrite it?"
 msgstr "Določena datoteka že obstaja. Ali jo želite zamenjati?"
 
 #: programs/reg/reg.rc:129
-msgid "The registry operation was cancelled\n"
-msgstr ""
+#, fuzzy
+#| msgid "Operation canceled by user.\n"
+msgid "reg: The registry operation was cancelled\n"
+msgstr "Uporabnik je prekinil opravilo.\n"
 
 #: programs/reg/reg.rc:130 programs/regedit/regedit.rc:239
 msgid "(Default)"
@@ -15271,6 +15278,29 @@ msgstr "Napaka: neveljavno ime ključa\n"
 #| msgid "The specified file already exists. Do you want to replace it?"
 msgid "The file '%1' already exists. Do you want to overwrite it?"
 msgstr "Določena datoteka že obstaja. Ali jo želite zamenjati?"
+
+#: programs/reg/reg.rc:174
+#, fuzzy
+#| msgid ""
+#| "Error: The system was unable to find the specified registry key or value\n"
+msgid "reg: Unable to find the specified registry key\n"
+msgstr "Napaka: sistem ni našel navedenega ključa ali vrednosti registra\n"
+
+#: programs/reg/reg.rc:175
+#, fuzzy
+#| msgid "Error: Unable to add keys to remote machine\n"
+msgid "reg: Unable to import the registry key '%1'\n"
+msgstr "Napaka: ni mogoče dodati ključa na oddaljen računalnik\n"
+
+#: programs/reg/reg.rc:179
+msgid ""
+"  /reg:32\n"
+"     Access the registry using the 32-bit view.\n"
+"\n"
+"  /reg:64\n"
+"     Access the registry using the 64-bit view.\n"
+"\n"
+msgstr ""
 
 #: programs/regedit/regedit.rc:34
 msgid "&Registry"

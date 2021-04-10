@@ -377,11 +377,7 @@ struct png_funcs
 {
     BOOL (CDECL *get_png_info)(const void *png_data, DWORD size, int *width, int *height, int *bpp);
     BITMAPINFO * (CDECL *load_png)(const char *png_data, DWORD *size);
-    int (CDECL *hack_unix_setenv)(const char *name, const char *value, int overwrite);
 };
-
-extern BOOL have_libpng(void);
-extern const struct png_funcs *png_funcs;
 
 /* Mingw's assert() imports MessageBoxA and gets confused by user32 exporting it */
 #ifdef __MINGW32__
@@ -398,7 +394,5 @@ static inline WCHAR *heap_strdupW(const WCHAR *src)
     if ((dst = heap_alloc(len))) memcpy(dst, src, len);
     return dst;
 }
-
-extern HANDLE rawinput_handle_from_device_handle(HANDLE device);
 
 #endif /* __WINE_USER_PRIVATE_H */

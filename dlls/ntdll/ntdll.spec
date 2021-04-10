@@ -1604,8 +1604,6 @@
 @ cdecl -syscall -norelay wine_server_call(ptr)
 @ cdecl -syscall wine_server_fd_to_handle(long long long ptr)
 @ cdecl -syscall wine_server_handle_to_fd(long long ptr ptr)
-@ cdecl -syscall wine_server_release_fd(long long)
-@ cdecl -syscall wine_server_send_fd(long)
 @ cdecl -syscall __wine_make_process_system()
 
 # Unix interface
@@ -1625,9 +1623,9 @@
 @ cdecl -syscall __wine_needs_override_large_address_aware()
 
 # Version
-@ cdecl -syscall wine_get_version()
-@ cdecl -syscall wine_get_build_id()
-@ cdecl -syscall wine_get_host_version(ptr ptr)
+@ cdecl wine_get_version()
+@ cdecl wine_get_build_id()
+@ cdecl wine_get_host_version(ptr ptr)
 
 # Filesystem
 @ cdecl -syscall wine_nt_to_unix_file_name(ptr ptr ptr long)

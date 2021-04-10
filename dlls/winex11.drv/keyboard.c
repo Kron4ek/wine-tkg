@@ -1149,7 +1149,7 @@ static void X11DRV_send_keyboard_input( HWND hwnd, WORD vkey, WORD scan, DWORD f
     input.u.ki.time        = time;
     input.u.ki.dwExtraInfo = 0;
 
-    __wine_send_input( hwnd, &input, SEND_HWMSG_RAWINPUT|SEND_HWMSG_WINDOW );
+    __wine_send_input( hwnd, &input );
 }
 
 
@@ -1162,7 +1162,7 @@ static BOOL get_async_key_state( BYTE state[256] )
 
     SERVER_START_REQ( get_key_state )
     {
-        req->tid = 0;
+        req->async = 1;
         req->key = -1;
         wine_server_set_reply( req, state, 256 );
         ret = !wine_server_call( req );
@@ -1178,7 +1178,6 @@ static void set_async_key_state( const BYTE state[256] )
 {
     SERVER_START_REQ( set_key_state )
     {
-        req->tid = GetCurrentThreadId();
         req->async = 1;
         wine_server_add_data( req, state, 256 );
         wine_server_call( req );
@@ -2010,24 +2009,13 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
 {
     HWND hwnd;
 
-    switch (event->xmapping.request)
-    {
-    case MappingModifier:
-    case MappingKeyboard:
-        XRefreshKeyboardMapping( &event->xmapping );
-        X11DRV_InitKeyboard( event->xmapping.display );
+    XRefreshKeyboardMapping(&event->xmapping);
+    X11DRV_InitKeyboard( event->xmapping.display );
 
-        hwnd = GetFocus();
-        if (!hwnd) hwnd = GetActiveWindow();
-        PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST,
-                     0 /*FIXME*/, (LPARAM)X11DRV_GetKeyboardLayout(0));
-        break;
-
-    case MappingPointer:
-        X11DRV_InitMouse( event->xmapping.display );
-        break;
-    }
-
+    hwnd = GetFocus();
+    if (!hwnd) hwnd = GetActiveWindow();
+    PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST,
+                 0 /*FIXME*/, (LPARAM)X11DRV_GetKeyboardLayout(0));
     return TRUE;
 }
 

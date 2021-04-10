@@ -3954,15 +3954,15 @@ msgstr "Compilazione condizionale disattivata"
 msgid "Expected '@'"
 msgstr "Richiesto ';'"
 
-#: dlls/jscript/jscript.rc:78
+#: dlls/jscript/jscript.rc:79
 msgid "Microsoft JScript compilation error"
 msgstr ""
 
-#: dlls/jscript/jscript.rc:79
+#: dlls/jscript/jscript.rc:80
 msgid "Microsoft JScript runtime error"
 msgstr ""
 
-#: dlls/jscript/jscript.rc:80 dlls/vbscript/vbscript.rc:64
+#: dlls/jscript/jscript.rc:81 dlls/vbscript/vbscript.rc:64
 #, fuzzy
 #| msgid "Unknown error"
 msgid "Unknown runtime error"
@@ -4063,14 +4063,18 @@ msgid ""
 msgstr ""
 
 #: dlls/jscript/jscript.rc:74
-msgid "Cannot redefine non-configurable property '|'"
+msgid "Cannot define property '|': object is not extensible"
 msgstr ""
 
 #: dlls/jscript/jscript.rc:75
-msgid "Cannot modify non-writable property '|'"
+msgid "Cannot redefine non-configurable property '|'"
 msgstr ""
 
 #: dlls/jscript/jscript.rc:76
+msgid "Cannot modify non-writable property '|'"
+msgstr ""
+
+#: dlls/jscript/jscript.rc:77
 msgid "Property cannot have both accessors and a value"
 msgstr ""
 
@@ -15136,7 +15140,9 @@ msgid ""
 msgstr ""
 
 #: programs/reg/reg.rc:116
-msgid "The operation completed successfully\n"
+#, fuzzy
+#| msgid "The operation completed successfully\n"
+msgid "reg: The operation completed successfully\n"
 msgstr "Operazione completata con successo\n"
 
 #: programs/reg/reg.rc:117
@@ -15161,8 +15167,7 @@ msgstr "Errore: impossibile aggiungere chiavi alla macchina remota\n"
 #, fuzzy
 #| msgid ""
 #| "Error: The system was unable to find the specified registry key or value\n"
-msgid ""
-"reg: The system was unable to find the specified registry key or value\n"
+msgid "reg: Unable to find the specified registry value\n"
 msgstr ""
 "Errore: il sistema non è riuscito a trovare la chiave di registro o il "
 "valore specificati\n"
@@ -15192,8 +15197,10 @@ msgid "The registry value '%1' already exists. Do you want to overwrite it?"
 msgstr "Il file specificato esiste già. Vuoi sostituirlo?"
 
 #: programs/reg/reg.rc:129
-msgid "The registry operation was cancelled\n"
-msgstr ""
+#, fuzzy
+#| msgid "Operation canceled by user.\n"
+msgid "reg: The registry operation was cancelled\n"
+msgstr "Operazione annullata dall'utente.\n"
 
 #: programs/reg/reg.rc:130 programs/regedit/regedit.rc:239
 msgid "(Default)"
@@ -15330,6 +15337,31 @@ msgstr "Errore: nome della chiave non valido\n"
 #| msgid "The specified file already exists. Do you want to replace it?"
 msgid "The file '%1' already exists. Do you want to overwrite it?"
 msgstr "Il file specificato esiste già. Vuoi sostituirlo?"
+
+#: programs/reg/reg.rc:174
+#, fuzzy
+#| msgid ""
+#| "Error: The system was unable to find the specified registry key or value\n"
+msgid "reg: Unable to find the specified registry key\n"
+msgstr ""
+"Errore: il sistema non è riuscito a trovare la chiave di registro o il "
+"valore specificati\n"
+
+#: programs/reg/reg.rc:175
+#, fuzzy
+#| msgid "Error: Unable to add keys to remote machine\n"
+msgid "reg: Unable to import the registry key '%1'\n"
+msgstr "Errore: impossibile aggiungere chiavi alla macchina remota\n"
+
+#: programs/reg/reg.rc:179
+msgid ""
+"  /reg:32\n"
+"     Access the registry using the 32-bit view.\n"
+"\n"
+"  /reg:64\n"
+"     Access the registry using the 64-bit view.\n"
+"\n"
+msgstr ""
 
 #: programs/regedit/regedit.rc:34
 msgid "&Registry"

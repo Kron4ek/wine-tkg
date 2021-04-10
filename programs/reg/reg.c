@@ -21,17 +21,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(reg);
 
-static const WCHAR short_hklm[] = {'H','K','L','M',0};
-static const WCHAR short_hkcu[] = {'H','K','C','U',0};
-static const WCHAR short_hkcr[] = {'H','K','C','R',0};
-static const WCHAR short_hku[] = {'H','K','U',0};
-static const WCHAR short_hkcc[] = {'H','K','C','C',0};
-static const WCHAR long_hklm[] = {'H','K','E','Y','_','L','O','C','A','L','_','M','A','C','H','I','N','E',0};
-static const WCHAR long_hkcu[] = {'H','K','E','Y','_','C','U','R','R','E','N','T','_','U','S','E','R',0};
-static const WCHAR long_hkcr[] = {'H','K','E','Y','_','C','L','A','S','S','E','S','_','R','O','O','T',0};
-static const WCHAR long_hku[] = {'H','K','E','Y','_','U','S','E','R','S',0};
-static const WCHAR long_hkcc[] = {'H','K','E','Y','_','C','U','R','R','E','N','T','_','C','O','N','F','I','G',0};
-
 static const struct
 {
     HKEY key;
@@ -40,32 +29,23 @@ static const struct
 }
 root_rels[] =
 {
-    {HKEY_LOCAL_MACHINE, short_hklm, long_hklm},
-    {HKEY_CURRENT_USER, short_hkcu, long_hkcu},
-    {HKEY_CLASSES_ROOT, short_hkcr, long_hkcr},
-    {HKEY_USERS, short_hku, long_hku},
-    {HKEY_CURRENT_CONFIG, short_hkcc, long_hkcc},
+    {HKEY_LOCAL_MACHINE,  L"HKLM", L"HKEY_LOCAL_MACHINE"},
+    {HKEY_CURRENT_USER,   L"HKCU", L"HKEY_CURRENT_USER"},
+    {HKEY_CLASSES_ROOT,   L"HKCR", L"HKEY_CLASSES_ROOT"},
+    {HKEY_USERS,          L"HKU",  L"HKEY_USERS"},
+    {HKEY_CURRENT_CONFIG, L"HKCC", L"HKEY_CURRENT_CONFIG"},
 };
-
-static const WCHAR type_none[] = {'R','E','G','_','N','O','N','E',0};
-static const WCHAR type_sz[] = {'R','E','G','_','S','Z',0};
-static const WCHAR type_expand_sz[] = {'R','E','G','_','E','X','P','A','N','D','_','S','Z',0};
-static const WCHAR type_binary[] = {'R','E','G','_','B','I','N','A','R','Y',0};
-static const WCHAR type_dword[] = {'R','E','G','_','D','W','O','R','D',0};
-static const WCHAR type_dword_le[] = {'R','E','G','_','D','W','O','R','D','_','L','I','T','T','L','E','_','E','N','D','I','A','N',0};
-static const WCHAR type_dword_be[] = {'R','E','G','_','D','W','O','R','D','_','B','I','G','_','E','N','D','I','A','N',0};
-static const WCHAR type_multi_sz[] = {'R','E','G','_','M','U','L','T','I','_','S','Z',0};
 
 const struct reg_type_rels type_rels[] =
 {
-    {REG_NONE, type_none},
-    {REG_SZ, type_sz},
-    {REG_EXPAND_SZ, type_expand_sz},
-    {REG_BINARY, type_binary},
-    {REG_DWORD, type_dword},
-    {REG_DWORD_LITTLE_ENDIAN, type_dword_le},
-    {REG_DWORD_BIG_ENDIAN, type_dword_be},
-    {REG_MULTI_SZ, type_multi_sz},
+    {REG_NONE,                L"REG_NONE"},
+    {REG_SZ,                  L"REG_SZ"},
+    {REG_EXPAND_SZ,           L"REG_EXPAND_SZ"},
+    {REG_BINARY,              L"REG_BINARY"},
+    {REG_DWORD,               L"REG_DWORD"},
+    {REG_DWORD_LITTLE_ENDIAN, L"REG_DWORD_LITTLE_ENDIAN"},
+    {REG_DWORD_BIG_ENDIAN,    L"REG_DWORD_BIG_ENDIAN"},
+    {REG_MULTI_SZ,            L"REG_MULTI_SZ"},
 };
 
 void output_writeconsole(const WCHAR *str, DWORD wlen)
@@ -216,19 +196,17 @@ static BOOL sane_path(const WCHAR *key)
 WCHAR *build_subkey_path(WCHAR *path, DWORD path_len, WCHAR *subkey_name, DWORD subkey_len)
 {
     WCHAR *subkey_path;
-    static const WCHAR fmt[] = {'%','s','\\','%','s',0};
 
     subkey_path = malloc((path_len + subkey_len + 2) * sizeof(WCHAR));
-    swprintf(subkey_path, path_len + subkey_len + 2, fmt, path, subkey_name);
+    swprintf(subkey_path, path_len + subkey_len + 2, L"%s\\%s", path, subkey_name);
 
     return subkey_path;
 }
 
-static WCHAR *get_long_key(HKEY root, WCHAR *path)
+WCHAR *get_long_key(HKEY root, WCHAR *path)
 {
     DWORD i, array_size = ARRAY_SIZE(root_rels), len;
     WCHAR *long_key;
-    WCHAR fmt[] = {'%','s','\\','%','s',0};
 
     for (i = 0; i < array_size; i++)
     {
@@ -247,11 +225,11 @@ static WCHAR *get_long_key(HKEY root, WCHAR *path)
 
     len += lstrlenW(path) + 1; /* add one for the backslash */
     long_key = malloc((len + 1) * sizeof(WCHAR));
-    swprintf(long_key, len + 1, fmt, root_rels[i].long_name, path);
+    swprintf(long_key, len + 1, L"%s\\%s", root_rels[i].long_name, path);
     return long_key;
 }
 
-BOOL parse_registry_key(const WCHAR *key, HKEY *root, WCHAR **path, WCHAR **long_key)
+BOOL parse_registry_key(const WCHAR *key, HKEY *root, WCHAR **path)
 {
     if (!sane_path(key))
         return FALSE;
@@ -267,9 +245,12 @@ BOOL parse_registry_key(const WCHAR *key, HKEY *root, WCHAR **path, WCHAR **long
         return FALSE;
     }
 
-    *long_key = get_long_key(*root, *path);
-
     return TRUE;
+}
+
+BOOL is_char(const WCHAR s, const WCHAR c)
+{
+    return (s == c || s == towupper(c));
 }
 
 BOOL is_switch(const WCHAR *s, const WCHAR c)
@@ -277,10 +258,7 @@ BOOL is_switch(const WCHAR *s, const WCHAR c)
     if (lstrlenW(s) > 2)
         return FALSE;
 
-    if ((s[0] == '/' || s[0] == '-') && (s[1] == c || s[1] == towupper(c)))
-        return TRUE;
-
-    return FALSE;
+    return ((s[0] == '/' || s[0] == '-') && is_char(s[1], c));
 }
 
 static BOOL is_help_switch(const WCHAR *s)
@@ -301,19 +279,13 @@ static enum operations get_operation(const WCHAR *str, int *op_help)
 {
     struct op_info { const WCHAR *op; int id; int help_id; };
 
-    static const WCHAR add[] = {'a','d','d',0};
-    static const WCHAR delete[] = {'d','e','l','e','t','e',0};
-    static const WCHAR export[] = {'e','x','p','o','r','t',0};
-    static const WCHAR import[] = {'i','m','p','o','r','t',0};
-    static const WCHAR query[] = {'q','u','e','r','y',0};
-
     static const struct op_info op_array[] =
     {
-        { add,     REG_ADD,     STRING_ADD_USAGE },
-        { delete,  REG_DELETE,  STRING_DELETE_USAGE },
-        { export,  REG_EXPORT,  STRING_EXPORT_USAGE },
-        { import,  REG_IMPORT,  STRING_IMPORT_USAGE },
-        { query,   REG_QUERY,   STRING_QUERY_USAGE },
+        { L"add",     REG_ADD,     STRING_ADD_USAGE },
+        { L"delete",  REG_DELETE,  STRING_DELETE_USAGE },
+        { L"export",  REG_EXPORT,  STRING_EXPORT_USAGE },
+        { L"import",  REG_IMPORT,  STRING_IMPORT_USAGE },
+        { L"query",   REG_QUERY,   STRING_QUERY_USAGE },
         { NULL,    -1,          0 }
     };
 
@@ -333,12 +305,7 @@ static enum operations get_operation(const WCHAR *str, int *op_help)
 
 int __cdecl wmain(int argc, WCHAR *argvW[])
 {
-    int i, op, op_help, ret;
-    static const WCHAR switchVAW[] = {'v','a',0};
-    static const WCHAR switchVEW[] = {'v','e',0};
-    WCHAR *key_name, *path, *value_name = NULL, *type = NULL, *data = NULL, separator = '\0';
-    BOOL value_empty = FALSE, value_all = FALSE, force = FALSE;
-    HKEY root;
+    int op, op_help;
 
     if (argc == 1)
     {
@@ -371,8 +338,15 @@ int __cdecl wmain(int argc, WCHAR *argvW[])
     if (is_help_switch(argvW[2]))
     {
         output_message(op_help);
+        output_message(STRING_REG_VIEW_USAGE);
         return 0;
     }
+
+    if (op == REG_ADD)
+        return reg_add(argc, argvW);
+
+    if (op == REG_DELETE)
+        return reg_delete(argc, argvW);
 
     if (op == REG_EXPORT)
         return reg_export(argc, argvW);
@@ -380,86 +354,5 @@ int __cdecl wmain(int argc, WCHAR *argvW[])
     if (op == REG_IMPORT)
         return reg_import(argc, argvW);
 
-    if (op == REG_QUERY)
-        return reg_query(argc, argvW);
-
-    if (!parse_registry_key(argvW[2], &root, &path, &key_name))
-        return 1;
-
-    for (i = 3; i < argc; i++)
-    {
-        if (argvW[i][0] == '/' || argvW[i][0] == '-')
-        {
-            WCHAR *ptr = &argvW[i][1];
-
-            if (!lstrcmpiW(ptr, switchVEW))
-            {
-                value_empty = TRUE;
-                continue;
-            }
-            else if (!lstrcmpiW(ptr, switchVAW))
-            {
-                value_all = TRUE;
-                continue;
-            }
-            else if (!ptr[0] || ptr[1])
-            {
-                output_message(STRING_INVALID_CMDLINE);
-                return 1;
-            }
-
-            switch(towlower(argvW[i][1]))
-            {
-            case 'v':
-                if (value_name || !(value_name = argvW[++i]))
-                {
-                    output_message(STRING_INVALID_CMDLINE);
-                    return 1;
-                }
-                break;
-            case 't':
-                if (type || !(type = argvW[++i]))
-                {
-                    output_message(STRING_INVALID_CMDLINE);
-                    return 1;
-                }
-                break;
-            case 'd':
-                if (data || !(data = argvW[++i]))
-                {
-                    output_message(STRING_INVALID_CMDLINE);
-                    return 1;
-                }
-                break;
-            case 's':
-                ptr = argvW[++i];
-                if (!ptr || lstrlenW(ptr) != 1)
-                {
-                    output_message(STRING_INVALID_CMDLINE);
-                    return 1;
-                }
-                separator = ptr[0];
-                break;
-            case 'f':
-                force = TRUE;
-                break;
-            default:
-                output_message(STRING_INVALID_CMDLINE);
-                return 1;
-            }
-        }
-    }
-
-    if ((value_name && value_empty) || (value_name && value_all) || (value_empty && value_all))
-    {
-        output_message(STRING_INVALID_CMDLINE);
-        return 1;
-    }
-
-    if (op == REG_ADD)
-        ret = reg_add(root, path, value_name, value_empty, type, separator, data, force);
-    else
-        ret = reg_delete(root, path, key_name, value_name, value_empty, value_all, force);
-
-    return ret;
+    return reg_query(argc, argvW);
 }

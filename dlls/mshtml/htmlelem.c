@@ -1628,7 +1628,7 @@ static HRESULT WINAPI HTMLElement_get_offsetParent(IHTMLElement *iface, IHTMLEle
 
     if(!nsparent) {
         *p = NULL;
-        hres = S_OK;
+        return S_OK;
     }
 
     hres = get_element(nsparent, &parent);
@@ -2790,22 +2790,38 @@ static HRESULT WINAPI HTMLElement2_focus(IHTMLElement2 *iface)
 static HRESULT WINAPI HTMLElement2_put_accessKey(IHTMLElement2 *iface, BSTR v)
 {
     HTMLElement *This = impl_from_IHTMLElement2(iface);
-    VARIANT var;
-
-    static WCHAR accessKeyW[] = L"accessKey";
+    nsAString nsstr;
+    nsresult nsres;
 
     TRACE("(%p)->(%s)\n", This, debugstr_w(v));
 
-    V_VT(&var) = VT_BSTR;
-    V_BSTR(&var) = v;
-    return IHTMLElement_setAttribute(&This->IHTMLElement_iface, accessKeyW, var, 0);
+    if(!This->html_element) {
+        FIXME("non-HTML element\n");
+        return E_NOTIMPL;
+    }
+
+    nsAString_InitDepend(&nsstr, v);
+    nsres = nsIDOMHTMLElement_SetAccessKey(This->html_element, &nsstr);
+    nsAString_Finish(&nsstr);
+    return map_nsresult(nsres);
 }
 
 static HRESULT WINAPI HTMLElement2_get_accessKey(IHTMLElement2 *iface, BSTR *p)
 {
     HTMLElement *This = impl_from_IHTMLElement2(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString nsstr;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if(!This->html_element) {
+        FIXME("non-HTML element\n");
+        return E_NOTIMPL;
+    }
+
+    nsAString_InitDepend(&nsstr, NULL);
+    nsres = nsIDOMHTMLElement_GetAccessKey(This->html_element, &nsstr);
+    return return_nsstr(nsres, &nsstr, p);
 }
 
 static HRESULT WINAPI HTMLElement2_put_onblur(IHTMLElement2 *iface, VARIANT v)
@@ -6285,6 +6301,7 @@ void HTMLElement_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 {
     static const dispex_hook_t elem2_ie11_hooks[] = {
         {DISPID_IHTMLELEMENT2_DOSCROLL, NULL},
+        {DISPID_IHTMLELEMENT2_READYSTATE, NULL},
         {DISPID_UNKNOWN}
     };
 

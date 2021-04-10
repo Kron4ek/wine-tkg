@@ -381,6 +381,7 @@ sync_test("style_properties", function() {
 
 sync_test("stylesheets", function() {
     document.body.innerHTML = '<style>.div { margin-right: 1px; }</style>';
+    var elem = document.body.firstChild;
 
     ok(document.styleSheets.length === 1, "document.styleSheets.length = " + document.styleSheets.length);
 
@@ -391,6 +392,17 @@ sync_test("stylesheets", function() {
 
     try {
         stylesheet.rules.item(1);
+        ok(false, "expected exception");
+    }catch(e) {}
+
+    ok(stylesheet.href === null, "stylesheet.href = " + stylesheet.href);
+
+    var id = stylesheet.insertRule(".input { margin-left: 1px; }", 0);
+    ok(id === 0, "id = " + id);
+    ok(document.styleSheets.length === 1, "document.styleSheets.length = " + document.styleSheets.length);
+
+    try {
+        stylesheet.insertRule(".input { margin-left: 1px; }", 3);
         ok(false, "expected exception");
     }catch(e) {}
 });
@@ -424,4 +436,12 @@ sync_test("navigator", function() {
     ok(v === window.navigator, "v != window.navigator");
     v.testProp = true;
     ok(window.navigator.testProp, "window.navigator.testProp = " + window.navigator.testProp);
+});
+
+sync_test("elem_props", function() {
+    var elem = document.body;
+
+    ok(elem.accessKey === "", "accessKey = " + elem.accessKey);
+    elem.accessKey = "q";
+    ok(elem.accessKey === "q", "accessKey = " + elem.accessKey + " expected q");
 });

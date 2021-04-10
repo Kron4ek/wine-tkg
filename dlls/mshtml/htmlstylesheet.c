@@ -35,6 +35,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 struct HTMLStyleSheet {
     DispatchEx dispex;
     IHTMLStyleSheet IHTMLStyleSheet_iface;
+    IHTMLStyleSheet4 IHTMLStyleSheet4_iface;
 
     LONG ref;
 
@@ -619,6 +620,8 @@ static HRESULT WINAPI HTMLStyleSheet_QueryInterface(IHTMLStyleSheet *iface, REFI
         *ppv = &This->IHTMLStyleSheet_iface;
     }else if(IsEqualGUID(&IID_IHTMLStyleSheet, riid)) {
         *ppv = &This->IHTMLStyleSheet_iface;
+    }else if(IsEqualGUID(&IID_IHTMLStyleSheet4, riid)) {
+        *ppv = &This->IHTMLStyleSheet4_iface;
     }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
@@ -947,6 +950,164 @@ static const IHTMLStyleSheetVtbl HTMLStyleSheetVtbl = {
     HTMLStyleSheet_get_rules
 };
 
+static inline HTMLStyleSheet *impl_from_IHTMLStyleSheet4(IHTMLStyleSheet4 *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLStyleSheet, IHTMLStyleSheet4_iface);
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_QueryInterface(IHTMLStyleSheet4 *iface, REFIID riid, void **ppv)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    return IHTMLStyleSheet_QueryInterface(&This->IHTMLStyleSheet_iface, riid, ppv);
+}
+
+static ULONG WINAPI HTMLStyleSheet4_AddRef(IHTMLStyleSheet4 *iface)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    return IHTMLStyleSheet_AddRef(&This->IHTMLStyleSheet_iface);
+}
+
+static ULONG WINAPI HTMLStyleSheet4_Release(IHTMLStyleSheet4 *iface)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    return IHTMLStyleSheet_Release(&This->IHTMLStyleSheet_iface);
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_GetTypeInfoCount(IHTMLStyleSheet4 *iface, UINT *pctinfo)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    TRACE("(%p)->(%p)\n", This, pctinfo);
+    return IDispatchEx_GetTypeInfoCount(&This->dispex.IDispatchEx_iface, pctinfo);
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_GetTypeInfo(IHTMLStyleSheet4 *iface, UINT iTInfo,
+                                                  LCID lcid, ITypeInfo **ppTInfo)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    return IDispatchEx_GetTypeInfo(&This->dispex.IDispatchEx_iface, iTInfo, lcid, ppTInfo);
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_GetIDsOfNames(IHTMLStyleSheet4 *iface, REFIID riid,
+                                                    LPOLESTR *rgszNames, UINT cNames,
+                                                    LCID lcid, DISPID *rgDispId)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    return IDispatchEx_GetIDsOfNames(&This->dispex.IDispatchEx_iface, riid, rgszNames, cNames, lcid, rgDispId);
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_Invoke(IHTMLStyleSheet4 *iface, DISPID dispIdMember,
+                                             REFIID riid, LCID lcid, WORD wFlags, DISPPARAMS *pDispParams,
+                                             VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    return IDispatchEx_Invoke(&This->dispex.IDispatchEx_iface, dispIdMember, riid, lcid, wFlags, pDispParams,
+                              pVarResult, pExcepInfo, puArgErr);
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_get_type(IHTMLStyleSheet4 *iface, BSTR *p)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    TRACE("(%p)->(%p)\n", This, p);
+    return IHTMLStyleSheet_get_type(&This->IHTMLStyleSheet_iface, p);
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_get_href(IHTMLStyleSheet4 *iface, VARIANT *p)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    nsAString href_str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&href_str, NULL);
+    nsres = nsIDOMCSSStyleSheet_GetHref(This->nsstylesheet, &href_str);
+    return return_nsstr_variant(nsres, &href_str, 0, p);
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_get_title(IHTMLStyleSheet4 *iface, BSTR *p)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    FIXME("(%p)->(%p)\n", This, p);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_get_ownerNode(IHTMLStyleSheet4 *iface, IHTMLElement **p)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    FIXME("(%p)->(%p)\n", This, p);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_get_ownerRule(IHTMLStyleSheet4 *iface, IHTMLCSSRule **p)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    FIXME("(%p)->(%p)\n", This, p);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_get_cssRules(IHTMLStyleSheet4 *iface, IHTMLStyleSheetRulesCollection **p)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    TRACE("(%p)->(%p)\n", This, p);
+    return IHTMLStyleSheet_get_rules(&This->IHTMLStyleSheet_iface, p);
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_get_media(IHTMLStyleSheet4 *iface, VARIANT *p)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    FIXME("(%p)->(%p)\n", This, p);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_insertRule(IHTMLStyleSheet4 *iface, BSTR rule, LONG index, LONG *p)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    UINT32 new_index = 0;
+    nsAString nsstr;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s %d %p)\n", This, debugstr_w(rule), index, p);
+
+    nsAString_InitDepend(&nsstr, rule);
+    nsres = nsIDOMCSSStyleSheet_InsertRule(This->nsstylesheet, &nsstr, index, &new_index);
+    if(NS_FAILED(nsres)) WARN("failed: %08x\n", nsres);
+    nsAString_Finish(&nsstr);
+    *p = new_index;
+    return map_nsresult(nsres);
+}
+
+static HRESULT WINAPI HTMLStyleSheet4_deleteRule(IHTMLStyleSheet4 *iface, LONG index)
+{
+    HTMLStyleSheet *This = impl_from_IHTMLStyleSheet4(iface);
+    FIXME("(%p)->(%d)\n", This, index);
+    return E_NOTIMPL;
+}
+
+static const IHTMLStyleSheet4Vtbl HTMLStyleSheet4Vtbl = {
+    HTMLStyleSheet4_QueryInterface,
+    HTMLStyleSheet4_AddRef,
+    HTMLStyleSheet4_Release,
+    HTMLStyleSheet4_GetTypeInfoCount,
+    HTMLStyleSheet4_GetTypeInfo,
+    HTMLStyleSheet4_GetIDsOfNames,
+    HTMLStyleSheet4_Invoke,
+    HTMLStyleSheet4_get_type,
+    HTMLStyleSheet4_get_href,
+    HTMLStyleSheet4_get_title,
+    HTMLStyleSheet4_get_ownerNode,
+    HTMLStyleSheet4_get_ownerRule,
+    HTMLStyleSheet4_get_cssRules,
+    HTMLStyleSheet4_get_media,
+    HTMLStyleSheet4_insertRule,
+    HTMLStyleSheet4_deleteRule,
+};
+
+static void HTMLStyleSheet_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+{
+    if(mode >= COMPAT_MODE_IE9)
+        dispex_info_add_interface(info, IHTMLStyleSheet4_tid, NULL);
+}
+
 static const tid_t HTMLStyleSheet_iface_tids[] = {
     IHTMLStyleSheet_tid,
     0
@@ -954,7 +1115,8 @@ static const tid_t HTMLStyleSheet_iface_tids[] = {
 static dispex_static_data_t HTMLStyleSheet_dispex = {
     NULL,
     DispHTMLStyleSheet_tid,
-    HTMLStyleSheet_iface_tids
+    HTMLStyleSheet_iface_tids,
+    HTMLStyleSheet_init_dispex_info
 };
 
 HRESULT create_style_sheet(nsIDOMStyleSheet *nsstylesheet, compat_mode_t compat_mode, IHTMLStyleSheet **ret)
@@ -966,6 +1128,7 @@ HRESULT create_style_sheet(nsIDOMStyleSheet *nsstylesheet, compat_mode_t compat_
         return E_OUTOFMEMORY;
 
     style_sheet->IHTMLStyleSheet_iface.lpVtbl = &HTMLStyleSheetVtbl;
+    style_sheet->IHTMLStyleSheet4_iface.lpVtbl = &HTMLStyleSheet4Vtbl;
     style_sheet->ref = 1;
     style_sheet->nsstylesheet = NULL;
 

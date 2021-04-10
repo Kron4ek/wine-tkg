@@ -119,9 +119,9 @@ BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret )
  *
  * Internal SendInput function to allow the graphics driver to inject real events.
  */
-BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input, UINT flags )
+BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input )
 {
-    NTSTATUS status = send_hardware_message( hwnd, input, flags );
+    NTSTATUS status = send_hardware_message( hwnd, input, 0 );
     if (status) SetLastError( RtlNtStatusToDosError(status) );
     return !status;
 }
@@ -189,9 +189,9 @@ UINT WINAPI SendInput( UINT count, LPINPUT inputs, int size )
             /* we need to update the coordinates to what the server expects */
             INPUT input = inputs[i];
             update_mouse_coords( &input );
-            status = send_hardware_message( 0, &input, SEND_HWMSG_INJECTED|SEND_HWMSG_RAWINPUT|SEND_HWMSG_WINDOW );
+            status = send_hardware_message( 0, &input, SEND_HWMSG_INJECTED );
         }
-        else status = send_hardware_message( 0, &inputs[i], SEND_HWMSG_INJECTED|SEND_HWMSG_RAWINPUT|SEND_HWMSG_WINDOW );
+        else status = send_hardware_message( 0, &inputs[i], SEND_HWMSG_INJECTED );
 
         if (status)
         {
@@ -413,7 +413,7 @@ SHORT WINAPI DECLSPEC_HOTPATCH GetAsyncKeyState( INT key )
     ret = 0;
     SERVER_START_REQ( get_key_state )
     {
-        req->tid = 0;
+        req->async = 1;
         req->key = key;
         if (key_state_info)
         {
@@ -550,7 +550,6 @@ SHORT WINAPI DECLSPEC_HOTPATCH GetKeyState(INT vkey)
 
     SERVER_START_REQ( get_key_state )
     {
-        req->tid = GetCurrentThreadId();
         req->key = vkey;
         if (!wine_server_call( req )) retval = (signed char)(reply->state & 0x81);
     }
@@ -573,7 +572,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetKeyboardState( LPBYTE state )
     memset( state, 0, 256 );
     SERVER_START_REQ( get_key_state )
     {
-        req->tid = GetCurrentThreadId();
         req->key = -1;
         wine_server_set_reply( req, state, 256 );
         ret = !wine_server_call_err( req );
@@ -593,7 +591,6 @@ BOOL WINAPI SetKeyboardState( LPBYTE state )
 
     SERVER_START_REQ( set_key_state )
     {
-        req->tid = GetCurrentThreadId();
         wine_server_add_data( req, state, 256 );
         ret = !wine_server_call_err( req );
     }
