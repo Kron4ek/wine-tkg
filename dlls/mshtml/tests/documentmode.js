@@ -33,6 +33,8 @@ sync_test("elem_props", function() {
 
     test_exposed("doScroll", v < 11);
     test_exposed("readyState", v < 11);
+    test_exposed("clientTop", true);
+    test_exposed("title", true);
     test_exposed("querySelectorAll", v >= 8);
     test_exposed("textContent", v >= 9);
     test_exposed("prefix", v >= 9);
@@ -41,6 +43,7 @@ sync_test("elem_props", function() {
     test_exposed("getElementsByClassName", v >= 9);
     test_exposed("removeAttributeNS", v >= 9);
     test_exposed("addEventListener", v >= 9);
+    if (v != 8 /* todo_wine */) test_exposed("hasAttribute", v >= 8);
     test_exposed("removeEventListener", v >= 9);
     test_exposed("dispatchEvent", v >= 9);
     test_exposed("msSetPointerCapture", v >= 10);
@@ -113,6 +116,8 @@ sync_test("window_props", function() {
     test_exposed("getSelection", v >= 9);
     test_exposed("onfocusout", v >= 9);
     test_exposed("getComputedStyle", v >= 9);
+    test_exposed("requestAnimationFrame", v >= 10);
+    test_exposed("Set", v >= 11);
     if(v >= 9) /* FIXME: native exposes it in all compat modes */
         test_exposed("performance", true);
 });
@@ -533,4 +538,117 @@ sync_test("delete_prop", function() {
     ok(r, "delete returned " + r);
     todo_wine.
     ok(!("globalprop4" in obj), "globalprop4 is still in obj");
+});
+
+var func_scope_val = 1;
+var func_scope_val2 = 2;
+
+sync_test("func_scope", function() {
+    var func_scope_val = 2;
+
+    var f = function func_scope_val() {
+        return func_scope_val;
+    };
+
+    func_scope_val = 3;
+    if(document.documentMode < 9) {
+        ok(f() === 3, "f() = " + f());
+        return;
+    }
+    ok(f === f(), "f() = " + f());
+
+    f = function func_scope_val(a) {
+        func_scope_val = 4;
+        return func_scope_val;
+    };
+
+    func_scope_val = 3;
+    ok(f === f(), "f() = " + f());
+    ok(func_scope_val === 3, "func_scope_val = " + func_scope_val);
+    ok(window.func_scope_val === 1, "window.func_scope_val = " + window.func_scope_val);
+
+    f = function func_scope_val(a) {
+        return (function() { return a ? func_scope_val(false) : func_scope_val; })();
+    };
+
+    ok(f === f(true), "f(true) = " + f(true));
+
+    window = 1;
+    ok(window === window.self, "window = " + window);
+
+    ! function func_scope_val2() {};
+    ok(window.func_scope_val2 === 2, "window.func_scope_val2 = " + window.func_scope_val2);
+
+    var o = {};
+    (function(x) {
+        ok(x === o, "x = " + x);
+        ! function x() {};
+        ok(x === o, "x != o");
+    })(o);
+
+    (function(x) {
+        ok(x === o, "x = " + x);
+        1, function x() {};
+        ok(x === o, "x != o");
+    })(o);
+
+    (function() {
+        ! function x() {};
+        try {
+            x();
+            ok(false, "expected exception");
+        }catch(e) {}
+    })(o);
+});
+
+sync_test("set_obj", function() {
+    if(!("Set" in window)) return;
+
+    var s = new Set, r;
+    ok(Object.getPrototypeOf(s) === Set.prototype, "unexpected Set prototype");
+
+    function test_length(name, len) {
+        ok(Set.prototype[name].length === len, "Set.prototype." + name + " = " + Set.prototype[name].length);
+    }
+    test_length("add", 1);
+    test_length("clear", 0);
+    test_length("delete", 1);
+    test_length("forEach", 1);
+    test_length("has", 1);
+    ok(!("entries" in s), "entries are in Set");
+    ok(!("keys" in s), "keys are in Set");
+    ok(!("values" in s), "values are in Set");
+
+    r = Object.prototype.toString.call(s);
+    ok(r === "[object Object]", "toString returned " + r);
+});
+
+sync_test("elem_attr", function() {
+    var v = document.documentMode;
+    var elem = document.createElement("div"), r;
+
+    r = elem.getAttribute("class");
+    ok(r === null, "class attr = " + r);
+    r = elem.getAttribute("className");
+    ok(r === (v < 8 ? "" : null), "className attr = " + r);
+
+    elem.className = "cls";
+    r = elem.getAttribute("class");
+    ok(r === (v < 8 ? null : "cls"), "class attr = " + r);
+    r = elem.getAttribute("className");
+    ok(r === (v < 8 ? "cls" : null), "className attr = " + r);
+
+    elem.setAttribute("class", "cls2");
+    ok(elem.className === (v < 8 ? "cls" : "cls2"), "elem.className = " + elem.className);
+    r = elem.getAttribute("class");
+    ok(r === "cls2", "class attr = " + r);
+    r = elem.getAttribute("className");
+    ok(r === (v < 8 ? "cls" : null), "className attr = " + r);
+
+    elem.setAttribute("className", "cls3");
+    ok(elem.className === (v < 8 ? "cls3" : "cls2"), "elem.className = " + elem.className);
+    r = elem.getAttribute("class");
+    ok(r === "cls2", "class attr = " + r);
+    r = elem.getAttribute("className");
+    ok(r === "cls3", "className attr = " + r);
 });

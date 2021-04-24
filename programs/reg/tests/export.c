@@ -18,8 +18,6 @@
 
 #include "reg_test.h"
 
-#define TODO_REG_COMPARE (0x0008u)
-
 #define compare_export(f,e,todo) compare_export_(__FILE__,__LINE__,f,e,todo)
 static BOOL compare_export_(const char *file, unsigned line, const char *filename,
                             const char *expected, DWORD todo)
@@ -293,10 +291,8 @@ static void test_export(void)
 
     /* Test the export order of registry keys */
     add_key(HKEY_CURRENT_USER, KEY_BASE, &hkey);
-    add_key(hkey, "Subkey2", &subkey);
-    close_key(subkey);
-    add_key(hkey, "Subkey1", &subkey);
-    close_key(subkey);
+    add_key(hkey, "Subkey2", NULL);
+    add_key(hkey, "Subkey1", NULL);
 
     run_reg_exe("reg export HKEY_CURRENT_USER\\" KEY_BASE " file.reg /y", &r);
     ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
@@ -407,8 +403,7 @@ static void test_export(void)
 
     /* Test registry export with forward and back slashes */
     add_key(HKEY_CURRENT_USER, KEY_BASE, &hkey);
-    add_key(hkey, "https://winehq.org", &subkey);
-    close_key(subkey);
+    add_key(hkey, "https://winehq.org", NULL);
     add_value(hkey, "count/up", REG_SZ, "one/two/three", 14);
     add_value(hkey, "\\foo\\bar", REG_SZ, "", 1);
     close_key(hkey);

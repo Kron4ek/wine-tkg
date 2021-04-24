@@ -117,6 +117,9 @@ static char *argv0;
 static const char *bin_dir;
 static const char *dll_dir;
 static SIZE_T dll_path_maxlen;
+static int *p___wine_main_argc;
+static char ***p___wine_main_argv;
+static WCHAR ***p___wine_main_wargv;
 
 const char *home_dir = NULL;
 const char *data_dir = NULL;
@@ -413,6 +416,8 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_i
     const char *loader = argv0;
     const char *loader_env = getenv( "WINELOADER" );
     char preloader_reserve[64], socket_env[64];
+
+    if (pe_info->image_flags & IMAGE_FLAGS_WineFakeDll) res_start = res_end = 0;
 
     if (!is_child_64bit && (is_win64 || is_wow64) && (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady))
     {
@@ -932,17 +937,12 @@ static void load_libwine(void)
 {
 #ifdef __APPLE__
 #define LIBWINE "libwine.1.dylib"
-#elif defined(__ANDROID__)
-#define LIBWINE "libwine.so"
 #else
 #define LIBWINE "libwine.so.1"
 #endif
     typedef void (*load_dll_callback_t)( void *, const char * );
-    static void (*p_wine_dll_set_callback)( load_dll_callback_t load );
-    static int *p___wine_main_argc;
-    static char ***p___wine_main_argv;
-    static char ***p___wine_main_environ;
-    static WCHAR ***p___wine_main_wargv;
+    void (*p_wine_dll_set_callback)( load_dll_callback_t load );
+    char ***p___wine_main_environ;
 
     char *path;
     void *handle;
@@ -961,9 +961,6 @@ static void load_libwine(void)
     p___wine_main_environ   = dlsym( handle, "__wine_main_environ" );
 
     if (p_wine_dll_set_callback) p_wine_dll_set_callback( load_builtin_callback );
-    if (p___wine_main_argc) *p___wine_main_argc = main_argc;
-    if (p___wine_main_argv) *p___wine_main_argv = main_argv;
-    if (p___wine_main_wargv) *p___wine_main_wargv = main_wargv;
     if (p___wine_main_environ) *p___wine_main_environ = main_envp;
 }
 
@@ -1106,13 +1103,22 @@ static NTSTATUS CDECL init_unix_lib( void *module, DWORD reason, const void *ptr
 static NTSTATUS CDECL load_so_dll( UNICODE_STRING *nt_name, void **module )
 {
     static const WCHAR soW[] = {'.','s','o',0};
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING redir;
     pe_image_info_t info;
     char *unix_name;
     NTSTATUS status;
     DWORD len;
 
     if (get_load_order( nt_name ) == LO_DISABLED) return STATUS_DLL_NOT_FOUND;
-    if (nt_to_unix_file_name( nt_name, &unix_name, NULL, FILE_OPEN )) return STATUS_DLL_NOT_FOUND;
+    InitializeObjectAttributes( &attr, nt_name, OBJ_CASE_INSENSITIVE, 0, 0 );
+    get_redirect( &attr, &redir );
+
+    if (nt_to_unix_file_name( &attr, &unix_name, FILE_OPEN ))
+    {
+        free( redir.Buffer );
+        return STATUS_DLL_NOT_FOUND;
+    }
 
     /* remove .so extension from Windows name */
     len = nt_name->Length / sizeof(WCHAR);
@@ -1120,6 +1126,7 @@ static NTSTATUS CDECL load_so_dll( UNICODE_STRING *nt_name, void **module )
 
     status = dlopen_dll( unix_name, nt_name, module, &info, FALSE );
     free( unix_name );
+    free( redir.Buffer );
     return status;
 }
 
@@ -1398,8 +1405,7 @@ BOOL is_builtin_path( const UNICODE_STRING *path, WORD *machine )
     if (path->Length > wcslen(system_dir) * sizeof(WCHAR) &&
         !wcsnicmp( path->Buffer, system_dir, wcslen(system_dir) ))
     {
-        if (NtCurrentTeb64() && NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR])
-            *machine = IMAGE_FILE_MACHINE_AMD64;
+        if (is_wow64) *machine = IMAGE_FILE_MACHINE_AMD64;
         goto found;
     }
     if ((is_win64 || is_wow64) && path->Length > sizeof(wow64W) &&
@@ -1422,7 +1428,8 @@ found:
 /***********************************************************************
  *           open_main_image
  */
-static NTSTATUS open_main_image( WCHAR *image, void **module, SECTION_IMAGE_INFORMATION *info )
+static NTSTATUS open_main_image( WCHAR *image, void **module, SECTION_IMAGE_INFORMATION *info,
+                                 enum loadorder loadorder )
 {
     static const WCHAR soW[] = {'.','s','o',0};
     UNICODE_STRING nt_name;
@@ -1434,9 +1441,11 @@ static NTSTATUS open_main_image( WCHAR *image, void **module, SECTION_IMAGE_INFO
     HANDLE mapping;
     WCHAR *p;
 
+    if (loadorder == LO_DISABLED) NtTerminateProcess( GetCurrentProcess(), STATUS_DLL_NOT_FOUND );
+
     init_unicode_string( &nt_name, image );
     InitializeObjectAttributes( &attr, &nt_name, OBJ_CASE_INSENSITIVE, 0, NULL );
-    if (nt_to_unix_file_name( &nt_name, &unix_name, NULL, FILE_OPEN )) return STATUS_DLL_NOT_FOUND;
+    if (nt_to_unix_file_name( &attr, &unix_name, FILE_OPEN )) return STATUS_DLL_NOT_FOUND;
 
     status = open_dll_file( unix_name, &attr, &mapping );
     if (!status)
@@ -1447,7 +1456,7 @@ static NTSTATUS open_main_image( WCHAR *image, void **module, SECTION_IMAGE_INFO
         if (!status) NtQuerySection( mapping, SectionImageInformation, info, sizeof(*info), NULL );
         NtClose( mapping );
     }
-    else if (status == STATUS_INVALID_IMAGE_NOT_MZ)
+    else if (status == STATUS_INVALID_IMAGE_NOT_MZ && loadorder != LO_NATIVE)
     {
         /* remove .so extension from Windows name */
         p = image + wcslen(image);
@@ -1470,6 +1479,7 @@ static NTSTATUS open_main_image( WCHAR *image, void **module, SECTION_IMAGE_INFO
 NTSTATUS load_main_exe( const WCHAR *dos_name, const char *unix_name, const WCHAR *curdir,
                         WCHAR **image, void **module )
 {
+    enum loadorder loadorder = LO_INVALID;
     UNICODE_STRING nt_name;
     WCHAR *tmp = NULL;
     BOOL contains_path;
@@ -1482,7 +1492,9 @@ NTSTATUS load_main_exe( const WCHAR *dos_name, const char *unix_name, const WCHA
     if (unix_name && unix_name[0] == '/' && !stat( unix_name, &st ))
     {
         if ((status = unix_to_nt_file_name( unix_name, image ))) goto failed;
-        status = open_main_image( *image, module, &main_image_info );
+        init_unicode_string( &nt_name, *image );
+        loadorder = get_load_order( &nt_name );
+        status = open_main_image( *image, module, &main_image_info, loadorder );
         if (status != STATUS_DLL_NOT_FOUND) return status;
         free( *image );
     }
@@ -1499,12 +1511,14 @@ NTSTATUS load_main_exe( const WCHAR *dos_name, const char *unix_name, const WCHA
     if ((status = get_full_path( dos_name, curdir, image ))) goto failed;
     free( tmp );
 
-    status = open_main_image( *image, module, &main_image_info );
+    init_unicode_string( &nt_name, *image );
+    if (loadorder == LO_INVALID) loadorder = get_load_order( &nt_name );
+
+    status = open_main_image( *image, module, &main_image_info, loadorder );
     if (status != STATUS_DLL_NOT_FOUND) return status;
 
     /* if path is in system dir, we can load the builtin even if the file itself doesn't exist */
-    init_unicode_string( &nt_name, *image );
-    if (is_builtin_path( &nt_name, &machine ))
+    if (loadorder != LO_NATIVE && is_builtin_path( &nt_name, &machine ))
     {
         status = find_builtin_dll( &nt_name, module, &size, &main_image_info, machine, FALSE );
         if (status != STATUS_DLL_NOT_FOUND) return status;
@@ -1528,11 +1542,13 @@ NTSTATUS load_start_exe( WCHAR **image, void **module )
 {
     static const WCHAR startW[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\',
         's','y','s','t','e','m','3','2','\\','s','t','a','r','t','.','e','x','e',0};
+    static const WCHAR startwow64W[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\',
+        's','y','s','w','o','w','6','4','\\','s','t','a','r','t','.','e','x','e',0};
     UNICODE_STRING nt_name;
     NTSTATUS status;
     SIZE_T size;
 
-    init_unicode_string( &nt_name, startW );
+    init_unicode_string( &nt_name, is_wow64 ? startwow64W : startW );
     status = find_builtin_dll( &nt_name, module, &size, &main_image_info, current_machine, FALSE );
     if (status)
     {
@@ -1781,14 +1797,17 @@ static void start_main_thread(void)
     init_cpu_info();
     syscall_dispatcher = signal_init_syscalls();
     init_files();
+    load_libwine();
     init_startup_info();
+    if (p___wine_main_argc) *p___wine_main_argc = main_argc;
+    if (p___wine_main_argv) *p___wine_main_argv = main_argv;
+    if (p___wine_main_wargv) *p___wine_main_wargv = main_wargv;
     virtual_alloc_thread_stack( &stack, 0, 0, NULL );
     teb->Tib.StackBase = stack.StackBase;
     teb->Tib.StackLimit = stack.StackLimit;
     teb->DeallocationStack = stack.DeallocationStack;
     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
     load_ntdll();
-    load_libwine();
     status = p__wine_set_unix_funcs( NTDLL_UNIXLIB_VERSION, &unix_funcs );
     if (status == STATUS_REVISION_MISMATCH)
     {

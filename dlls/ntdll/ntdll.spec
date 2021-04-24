@@ -183,7 +183,7 @@
 @ stdcall -syscall NtCreateSection(ptr long ptr ptr long long long)
 @ stdcall -syscall NtCreateSemaphore(ptr long ptr long long)
 @ stdcall -syscall NtCreateSymbolicLinkObject(ptr long ptr ptr)
-@ stub NtCreateThread
+@ stdcall -syscall NtCreateThread(ptr long ptr long ptr ptr ptr long)
 @ stdcall -syscall NtCreateThreadEx(ptr long ptr long ptr ptr long long long long ptr)
 @ stdcall -syscall NtCreateTimer(ptr long ptr long)
 @ stub NtCreateToken
@@ -223,6 +223,8 @@
 @ stdcall -norelay -syscall NtGetContextThread(long ptr)
 @ stdcall -syscall NtGetCurrentProcessorNumber()
 # @ stub NtGetDevicePowerState
+@ stdcall -syscall NtGetNextProcess(long long long long ptr)
+@ stdcall -syscall NtGetNextThread(ptr ptr long long long ptr)
 @ stdcall -syscall NtGetNlsSectionPtr(long long long ptr ptr)
 @ stub NtGetPlugPlayEvent
 @ stdcall NtGetTickCount()
@@ -1192,7 +1194,7 @@
 @ stdcall -private -syscall ZwCreateSection(ptr long ptr ptr long long long) NtCreateSection
 @ stdcall -private -syscall ZwCreateSemaphore(ptr long ptr long long) NtCreateSemaphore
 @ stdcall -private -syscall ZwCreateSymbolicLinkObject(ptr long ptr ptr) NtCreateSymbolicLinkObject
-@ stub ZwCreateThread
+@ stdcall -private -syscall ZwCreateThread(ptr long ptr long ptr ptr ptr long) NtCreateThread
 @ stdcall -private -syscall ZwCreateThreadEx(ptr long ptr long ptr ptr long long long long ptr) NtCreateThreadEx
 @ stdcall -private -syscall ZwCreateTimer(ptr long ptr long) NtCreateTimer
 @ stub ZwCreateToken

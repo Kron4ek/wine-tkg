@@ -315,6 +315,28 @@ LPVOID WINAPI DECLSPEC_HOTPATCH VirtualAlloc2( HANDLE process, void *addr, SIZE_
 
 
 /***********************************************************************
+ *             VirtualAllocFromApp   (kernelbase.@)
+ */
+LPVOID WINAPI DECLSPEC_HOTPATCH VirtualAllocFromApp( void *addr, SIZE_T size,
+                                                DWORD type, DWORD protect )
+{
+    LPVOID ret = addr;
+
+    TRACE_(virtual)( "addr %p, size %p, type %#x, protect %#x.\n", addr, (void *)size, type, protect );
+
+    if (protect == PAGE_EXECUTE || protect == PAGE_EXECUTE_READ || protect == PAGE_EXECUTE_READWRITE
+            || protect == PAGE_EXECUTE_WRITECOPY)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return NULL;
+    }
+
+    if (!set_ntstatus( NtAllocateVirtualMemory( GetCurrentProcess(), &ret, 0, &size, type, protect ))) return NULL;
+    return ret;
+}
+
+
+/***********************************************************************
  *             VirtualFree   (kernelbase.@)
  */
 BOOL WINAPI DECLSPEC_HOTPATCH VirtualFree( void *addr, SIZE_T size, DWORD type )
@@ -1143,6 +1165,17 @@ BOOL WINAPI GetSystemCpuSetInformation(SYSTEM_CPU_SET_INFORMATION *info, ULONG b
 
     return set_ntstatus( NtQuerySystemInformationEx( SystemCpuSetInformation, &process, sizeof(process), info,
             buffer_length, return_length ));
+}
+
+
+/***********************************************************************
+ *           SetThreadSelectedCpuSets   (kernelbase.@)
+ */
+BOOL WINAPI SetThreadSelectedCpuSets(HANDLE thread, const ULONG *cpu_set_ids, ULONG count)
+{
+    FIXME("thread %p, cpu_set_ids %p, count %u stub.\n", thread, cpu_set_ids, count);
+
+    return TRUE;
 }
 
 

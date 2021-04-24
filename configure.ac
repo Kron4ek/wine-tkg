@@ -47,7 +47,6 @@ AC_ARG_WITH(faudio,    AS_HELP_STRING([--without-faudio],[do not use FAudio (XAu
 AC_ARG_WITH(float-abi, AS_HELP_STRING([--with-float-abi=abi],[specify the ABI (soft|softfp|hard) for ARM platforms]))
 AC_ARG_WITH(fontconfig,AS_HELP_STRING([--without-fontconfig],[do not use fontconfig]))
 AC_ARG_WITH(freetype,  AS_HELP_STRING([--without-freetype],[do not use the FreeType library]))
-AC_ARG_WITH(gcrypt,    AS_HELP_STRING([--without-gcrypt],[do not use libgcrypt]))
 AC_ARG_WITH(gettext,   AS_HELP_STRING([--without-gettext],[do not use gettext]))
 AC_ARG_WITH(gettextpo, AS_HELP_STRING([--with-gettextpo],[use the GetTextPO library to rebuild po files]),
             [if test "x$withval" = "xno"; then ac_cv_header_gettext_po_h=no; fi])
@@ -921,10 +920,6 @@ case $host_os in
                     [WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
     WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"
 
-    AC_SUBST(LIBWINE_SHAREDLIB,"libwine.so")
-    AC_SUBST(LIBWINE_LDFLAGS,["-shared -Wl,-soname,libwine.so"])
-    TOP_INSTALL_LIB="$TOP_INSTALL_LIB libs/wine/libwine.so"
-
     WINE_CHECK_SONAME(EGL,eglGetProcAddress)
     WINE_CHECK_SONAME(GLESv2,glFlush)
 
@@ -1461,6 +1456,14 @@ fi
 WINE_WARNING_WITH(gnutls,[test "x$ac_cv_lib_soname_gnutls" = "x"],
                  [libgnutls ${notice_platform}development files not found, no schannel support.])
 
+dnl **** Check for libgmp ****
+if test "x$with_gnutls" != "xno"
+then
+    WINE_PACKAGE_FLAGS(GMP,[gmp],[-lgmp],,,
+        [AC_CHECK_HEADERS([gmp.h],
+            [WINE_CHECK_SONAME(gmp,__gmpz_init,,[GMP_CFLAGS=""],[$GMP_LIBS],[[libgmp-*]])])])
+fi
+
 dnl **** Check for SANE ****
 if test "x$with_sane" != "xno"
 then
@@ -1944,15 +1947,8 @@ then
     enable_x3daudio1_6=${enable_x3daudio1_6:-no}
     enable_x3daudio1_7=${enable_x3daudio1_7:-no}
     enable_xactengine2_0=${enable_xactengine2_0:-no}
-    enable_xactengine2_1=${enable_xactengine2_1:-no}
-    enable_xactengine2_10=${enable_xactengine2_10:-no}
-    enable_xactengine2_2=${enable_xactengine2_2:-no}
-    enable_xactengine2_3=${enable_xactengine2_3:-no}
     enable_xactengine2_4=${enable_xactengine2_4:-no}
-    enable_xactengine2_5=${enable_xactengine2_5:-no}
-    enable_xactengine2_6=${enable_xactengine2_6:-no}
     enable_xactengine2_7=${enable_xactengine2_7:-no}
-    enable_xactengine2_8=${enable_xactengine2_8:-no}
     enable_xactengine2_9=${enable_xactengine2_9:-no}
     enable_xactengine3_0=${enable_xactengine3_0:-no}
     enable_xactengine3_1=${enable_xactengine3_1:-no}
@@ -2035,19 +2031,6 @@ fi
 WINE_NOTICE_WITH(vkd3d,[test "x$ac_cv_lib_soname_vkd3d" = "x"],
                  [vkd3d ${notice_platform}development files not found (or too old), Direct3D 12 won't be supported.])
 test "x$ac_cv_lib_soname_vkd3d" != "x" || enable_d3d12=${enable_d3d12:-no}
-
-dnl **** Check for gcrypt ****
-if test "x$with_gcrypt" != "xno"
-then
-    WINE_PACKAGE_FLAGS(GCRYPT,[libgcrypt],,,,
-        [AC_CHECK_HEADERS([gcrypt.h])
-        if test "$ac_cv_header_gcrypt_h" = "yes"
-        then
-            WINE_CHECK_SONAME(gcrypt,gcry_sexp_build,,,[$GCRYPT_LIBS])
-        fi])
-fi
-WINE_NOTICE_WITH(gcrypt,[test "x$ac_cv_lib_soname_gcrypt" = "x"],
-                 [libgcrypt ${notice_platform}development files not found, GCRYPT won't be supported.])
 
 dnl **** Check for gcc specific options ****
 
@@ -3039,6 +3022,7 @@ WINE_CONFIG_MAKEFILE(dlls/api-ms-win-eventing-controller-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-eventing-legacy-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-eventing-provider-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-eventlog-legacy-l1-1-0)
+WINE_CONFIG_MAKEFILE(dlls/api-ms-win-gaming-tcui-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-gdi-dpiinfo-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-mm-joystick-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-mm-misc-l1-1-1)
@@ -3399,6 +3383,7 @@ WINE_CONFIG_MAKEFILE(dlls/fusion/tests)
 WINE_CONFIG_MAKEFILE(dlls/fwpuclnt)
 WINE_CONFIG_MAKEFILE(dlls/gameux)
 WINE_CONFIG_MAKEFILE(dlls/gameux/tests)
+WINE_CONFIG_MAKEFILE(dlls/gamingtcui)
 WINE_CONFIG_MAKEFILE(dlls/gcdef)
 WINE_CONFIG_MAKEFILE(dlls/gdi.exe16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/gdi32)
@@ -3898,6 +3883,8 @@ WINE_CONFIG_MAKEFILE(dlls/windows.gaming.input)
 WINE_CONFIG_MAKEFILE(dlls/windows.gaming.input/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.globalization)
 WINE_CONFIG_MAKEFILE(dlls/windows.globalization/tests)
+WINE_CONFIG_MAKEFILE(dlls/windows.media.devices)
+WINE_CONFIG_MAKEFILE(dlls/windows.media.devices/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.speech)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.speech/tests)
 WINE_CONFIG_MAKEFILE(dlls/windowscodecs)
@@ -3987,15 +3974,8 @@ WINE_CONFIG_MAKEFILE(dlls/x3daudio1_5)
 WINE_CONFIG_MAKEFILE(dlls/x3daudio1_6)
 WINE_CONFIG_MAKEFILE(dlls/x3daudio1_7)
 WINE_CONFIG_MAKEFILE(dlls/xactengine2_0)
-WINE_CONFIG_MAKEFILE(dlls/xactengine2_1)
-WINE_CONFIG_MAKEFILE(dlls/xactengine2_10)
-WINE_CONFIG_MAKEFILE(dlls/xactengine2_2)
-WINE_CONFIG_MAKEFILE(dlls/xactengine2_3)
 WINE_CONFIG_MAKEFILE(dlls/xactengine2_4)
-WINE_CONFIG_MAKEFILE(dlls/xactengine2_5)
-WINE_CONFIG_MAKEFILE(dlls/xactengine2_6)
 WINE_CONFIG_MAKEFILE(dlls/xactengine2_7)
-WINE_CONFIG_MAKEFILE(dlls/xactengine2_8)
 WINE_CONFIG_MAKEFILE(dlls/xactengine2_9)
 WINE_CONFIG_MAKEFILE(dlls/xactengine3_0)
 WINE_CONFIG_MAKEFILE(dlls/xactengine3_1)

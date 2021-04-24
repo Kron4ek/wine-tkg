@@ -404,6 +404,8 @@ DECL_HANDLER(open_fsync);
 DECL_HANDLER(get_fsync_idx);
 DECL_HANDLER(fsync_msgwait);
 DECL_HANDLER(get_fsync_apc_idx);
+DECL_HANDLER(get_next_process);
+DECL_HANDLER(get_next_thread);
 
 #ifdef WANT_REQUEST_HANDLERS
 
@@ -695,6 +697,8 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_get_fsync_idx,
     (req_handler)req_fsync_msgwait,
     (req_handler)req_get_fsync_apc_idx,
+    (req_handler)req_get_next_process,
+    (req_handler)req_get_next_thread,
 };
 
 C_ASSERT( sizeof(abstime_t) == 8 );
@@ -731,14 +735,13 @@ C_ASSERT( sizeof(user_handle_t) == 4 );
 C_ASSERT( FIELD_OFFSET(struct new_process_request, token) == 12 );
 C_ASSERT( FIELD_OFFSET(struct new_process_request, debug) == 16 );
 C_ASSERT( FIELD_OFFSET(struct new_process_request, parent_process) == 20 );
-C_ASSERT( FIELD_OFFSET(struct new_process_request, inherit_all) == 24 );
-C_ASSERT( FIELD_OFFSET(struct new_process_request, create_flags) == 28 );
-C_ASSERT( FIELD_OFFSET(struct new_process_request, socket_fd) == 32 );
-C_ASSERT( FIELD_OFFSET(struct new_process_request, access) == 36 );
-C_ASSERT( FIELD_OFFSET(struct new_process_request, cpu) == 40 );
-C_ASSERT( FIELD_OFFSET(struct new_process_request, info_size) == 44 );
-C_ASSERT( FIELD_OFFSET(struct new_process_request, handles_size) == 48 );
-C_ASSERT( sizeof(struct new_process_request) == 56 );
+C_ASSERT( FIELD_OFFSET(struct new_process_request, flags) == 24 );
+C_ASSERT( FIELD_OFFSET(struct new_process_request, socket_fd) == 28 );
+C_ASSERT( FIELD_OFFSET(struct new_process_request, access) == 32 );
+C_ASSERT( FIELD_OFFSET(struct new_process_request, cpu) == 36 );
+C_ASSERT( FIELD_OFFSET(struct new_process_request, info_size) == 40 );
+C_ASSERT( FIELD_OFFSET(struct new_process_request, handles_size) == 44 );
+C_ASSERT( sizeof(struct new_process_request) == 48 );
 C_ASSERT( FIELD_OFFSET(struct new_process_reply, info) == 8 );
 C_ASSERT( FIELD_OFFSET(struct new_process_reply, pid) == 12 );
 C_ASSERT( FIELD_OFFSET(struct new_process_reply, handle) == 16 );
@@ -777,7 +780,6 @@ C_ASSERT( FIELD_OFFSET(struct init_first_thread_reply, pid) == 8 );
 C_ASSERT( FIELD_OFFSET(struct init_first_thread_reply, tid) == 12 );
 C_ASSERT( FIELD_OFFSET(struct init_first_thread_reply, server_start) == 16 );
 C_ASSERT( FIELD_OFFSET(struct init_first_thread_reply, info_size) == 24 );
-C_ASSERT( FIELD_OFFSET(struct init_first_thread_reply, all_cpus) == 28 );
 C_ASSERT( sizeof(struct init_first_thread_reply) == 32 );
 C_ASSERT( FIELD_OFFSET(struct init_thread_request, unix_tid) == 12 );
 C_ASSERT( FIELD_OFFSET(struct init_thread_request, reply_fd) == 16 );
@@ -809,7 +811,7 @@ C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, start_time) == 32 );
 C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, end_time) == 40 );
 C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, exit_code) == 48 );
 C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, priority) == 52 );
-C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, cpu) == 56 );
+C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, machine) == 56 );
 C_ASSERT( sizeof(struct get_process_info_reply) == 64 );
 C_ASSERT( FIELD_OFFSET(struct get_process_debug_info_request, handle) == 12 );
 C_ASSERT( sizeof(struct get_process_debug_info_request) == 16 );
@@ -2315,6 +2317,21 @@ C_ASSERT( sizeof(struct fsync_msgwait_request) == 16 );
 C_ASSERT( sizeof(struct get_fsync_apc_idx_request) == 16 );
 C_ASSERT( FIELD_OFFSET(struct get_fsync_apc_idx_reply, shm_idx) == 8 );
 C_ASSERT( sizeof(struct get_fsync_apc_idx_reply) == 16 );
+C_ASSERT( FIELD_OFFSET(struct get_next_process_request, last) == 12 );
+C_ASSERT( FIELD_OFFSET(struct get_next_process_request, access) == 16 );
+C_ASSERT( FIELD_OFFSET(struct get_next_process_request, attributes) == 20 );
+C_ASSERT( FIELD_OFFSET(struct get_next_process_request, flags) == 24 );
+C_ASSERT( sizeof(struct get_next_process_request) == 32 );
+C_ASSERT( FIELD_OFFSET(struct get_next_process_reply, handle) == 8 );
+C_ASSERT( sizeof(struct get_next_process_reply) == 16 );
+C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, process) == 12 );
+C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, last) == 16 );
+C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, access) == 20 );
+C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, attributes) == 24 );
+C_ASSERT( FIELD_OFFSET(struct get_next_thread_request, flags) == 28 );
+C_ASSERT( sizeof(struct get_next_thread_request) == 32 );
+C_ASSERT( FIELD_OFFSET(struct get_next_thread_reply, handle) == 8 );
+C_ASSERT( sizeof(struct get_next_thread_reply) == 16 );
 
 #endif  /* WANT_REQUEST_HANDLERS */
 

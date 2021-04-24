@@ -2594,6 +2594,45 @@ failed:
 
 
 /***********************************************************************
+ *	build_dlldata_path
+ *
+ * Helper for find_actctx_dll.
+ */
+static NTSTATUS build_dlldata_path( LPCWSTR libname, ACTCTX_SECTION_KEYED_DATA *data, LPWSTR *fullname )
+{
+    struct dllredirect_data *dlldata = data->lpData;
+    char *base = data->lpSectionBase;
+    SIZE_T total = dlldata->total_len + (wcslen(libname) + 1) * sizeof(WCHAR);
+    WCHAR *p, *buffer;
+    NTSTATUS status = STATUS_SUCCESS;
+    ULONG i;
+
+    if (!(p = buffer = RtlAllocateHeap( GetProcessHeap(), 0, total ))) return STATUS_NO_MEMORY;
+    for (i = 0; i < dlldata->paths_count; i++)
+    {
+        memcpy( p, base + dlldata->paths[i].offset, dlldata->paths[i].len );
+        p += dlldata->paths[i].len / sizeof(WCHAR);
+    }
+    if (p == buffer || p[-1] == '\\') wcscpy( p, libname );
+    else *p = 0;
+
+    if (dlldata->flags & DLL_REDIRECT_PATH_EXPAND)
+    {
+        RtlExpandEnvironmentStrings( NULL, buffer, wcslen(buffer), NULL, 0, &total );
+        if ((*fullname = RtlAllocateHeap( GetProcessHeap(), 0, total * sizeof(WCHAR) )))
+            RtlExpandEnvironmentStrings( NULL, buffer, wcslen(buffer), *fullname, total, NULL );
+        else
+            status = STATUS_NO_MEMORY;
+
+        RtlFreeHeap( GetProcessHeap(), 0, buffer );
+    }
+    else *fullname = buffer;
+
+    return status;
+}
+
+
+/***********************************************************************
  *	find_actctx_dll
  *
  * Find the full path (if any) of the dll from the activation context.
@@ -2602,8 +2641,9 @@ static NTSTATUS find_actctx_dll( LPCWSTR libname, LPWSTR *fullname )
 {
     static const WCHAR winsxsW[] = {'\\','w','i','n','s','x','s','\\'};
 
-    ACTIVATION_CONTEXT_ASSEMBLY_DETAILED_INFORMATION *info;
+    ACTIVATION_CONTEXT_ASSEMBLY_DETAILED_INFORMATION *info = NULL;
     ACTCTX_SECTION_KEYED_DATA data;
+    struct dllredirect_data *dlldata;
     UNICODE_STRING nameW;
     NTSTATUS status;
     SIZE_T needed, size = 1024;
@@ -2615,6 +2655,18 @@ static NTSTATUS find_actctx_dll( LPCWSTR libname, LPWSTR *fullname )
                                                     ACTIVATION_CONTEXT_SECTION_DLL_REDIRECTION,
                                                     &nameW, &data );
     if (status != STATUS_SUCCESS) return status;
+
+    if (data.ulLength < offsetof( struct dllredirect_data, paths[0] ))
+    {
+        status = STATUS_SXS_KEY_NOT_FOUND;
+        goto done;
+    }
+    dlldata = data.lpData;
+    if (!(dlldata->flags & DLL_REDIRECT_PATH_OMITS_ASSEMBLY_ROOT))
+    {
+        status = build_dlldata_path( libname, &data, fullname );
+        goto done;
+    }
 
     for (;;)
     {
@@ -2703,7 +2755,7 @@ static NTSTATUS get_env_var( const WCHAR *name, SIZE_T extra, UNICODE_STRING *re
 
     for (;;)
     {
-        ret->Buffer = RtlAllocateHeap( GetProcessHeap(), 0, size );
+        ret->Buffer = RtlAllocateHeap( GetProcessHeap(), 0, size * sizeof(WCHAR) );
         status = RtlQueryEnvironmentVariable( NULL, name, wcslen(name),
                                               ret->Buffer, size - extra - 1, &len );
         if (!status)
@@ -3814,11 +3866,6 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unknown2, ULONG_PTR 
         peb->TlsBitmap          = &tls_bitmap;
         peb->TlsExpansionBitmap = &tls_expansion_bitmap;
         peb->LoaderLock         = &loader_section;
-        peb->OSMajorVersion     = 5;
-        peb->OSMinorVersion     = 1;
-        peb->OSBuildNumber      = 0xA28;
-        peb->OSPlatformId       = VER_PLATFORM_WIN32_NT;
-        peb->SessionId          = 1;
         peb->ProcessHeap        = RtlCreateHeap( HEAP_GROWABLE, NULL, 0, 0, NULL, NULL );
 
         RtlInitializeBitMap( &tls_bitmap, peb->TlsBitmapBits, sizeof(peb->TlsBitmapBits) * 8 );

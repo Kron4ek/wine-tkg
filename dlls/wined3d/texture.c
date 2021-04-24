@@ -322,11 +322,12 @@ static void texture2d_blt_fbo(struct wined3d_device *device, struct wined3d_cont
         struct wined3d_texture *dst_texture, unsigned int dst_sub_resource_idx, DWORD dst_location,
         const RECT *dst_rect, const struct wined3d_format *resolve_format)
 {
-    struct wined3d_texture *required_texture, *restore_texture;
+    struct wined3d_texture *required_texture, *restore_texture = NULL, *dst_save_texture = dst_texture;
+    unsigned int restore_idx, dst_save_sub_resource_idx = dst_sub_resource_idx;
+    struct wined3d_texture *src_staging_texture = NULL;
     const struct wined3d_gl_info *gl_info;
     struct wined3d_context_gl *context_gl;
-    unsigned int restore_idx;
-    bool scaled_resolve;
+    bool resolve, scaled_resolve;
     GLenum gl_filter;
     GLenum buffer;
     RECT s, d;
@@ -337,7 +338,8 @@ static void texture2d_blt_fbo(struct wined3d_device *device, struct wined3d_cont
             wined3d_debug_location(src_location), wine_dbgstr_rect(src_rect), dst_texture,
             dst_sub_resource_idx, wined3d_debug_location(dst_location), wine_dbgstr_rect(dst_rect), resolve_format);
 
-    scaled_resolve = wined3d_texture_gl_is_multisample_location(wined3d_texture_gl(src_texture), src_location)
+    resolve = wined3d_texture_gl_is_multisample_location(wined3d_texture_gl(src_texture), src_location);
+    scaled_resolve = resolve
             && (abs(src_rect->bottom - src_rect->top) != abs(dst_rect->bottom - dst_rect->top)
             || abs(src_rect->right - src_rect->left) != abs(dst_rect->right - dst_rect->left));
 
@@ -345,6 +347,106 @@ static void texture2d_blt_fbo(struct wined3d_device *device, struct wined3d_cont
         gl_filter = scaled_resolve ? GL_SCALED_RESOLVE_NICEST_EXT : GL_LINEAR;
     else
         gl_filter = scaled_resolve ? GL_SCALED_RESOLVE_FASTEST_EXT : GL_NEAREST;
+
+    if (resolve)
+    {
+        GLint resolve_internal, src_internal, dst_internal;
+        enum wined3d_format_id resolve_format_id;
+
+        src_internal = wined3d_gl_get_internal_format(&src_texture->resource,
+                wined3d_format_gl(src_texture->resource.format), src_location == WINED3D_LOCATION_TEXTURE_SRGB);
+        dst_internal = wined3d_gl_get_internal_format(&dst_texture->resource,
+                wined3d_format_gl(dst_texture->resource.format), dst_location == WINED3D_LOCATION_TEXTURE_SRGB);
+
+        if (resolve_format)
+        {
+            resolve_internal = wined3d_format_gl(resolve_format)->internal;
+            resolve_format_id = resolve_format->id;
+        }
+        else if (!wined3d_format_is_typeless(src_texture->resource.format))
+        {
+            resolve_internal = src_internal;
+            resolve_format_id = src_texture->resource.format->id;
+        }
+        else
+        {
+            resolve_internal = dst_internal;
+            resolve_format_id = dst_texture->resource.format->id;
+        }
+
+        /* In case of typeless resolve the texture type may not match the resolve type.
+         * To handle that, allocate intermediate texture(s) to resolve from/to.
+         * A possible performance improvement would be to resolve using a shader instead. */
+        if (src_internal != resolve_internal)
+        {
+            struct wined3d_resource_desc desc;
+            unsigned src_level;
+            HRESULT hr;
+
+            src_level = src_sub_resource_idx % src_texture->level_count;
+            desc.resource_type = WINED3D_RTYPE_TEXTURE_2D;
+            desc.format = resolve_format_id;
+            desc.multisample_type = src_texture->resource.multisample_type;
+            desc.multisample_quality = src_texture->resource.multisample_quality;
+            desc.usage = WINED3DUSAGE_PRIVATE;
+            desc.bind_flags = 0;
+            desc.access = WINED3D_RESOURCE_ACCESS_GPU;
+            desc.width = wined3d_texture_get_level_width(src_texture, src_level);
+            desc.height = wined3d_texture_get_level_height(src_texture, src_level);
+            desc.depth = 1;
+            desc.size = 0;
+
+            hr = wined3d_texture_create(device, &desc, 1, 1, 0, NULL, NULL, &wined3d_null_parent_ops,
+                    &src_staging_texture);
+            if (FAILED(hr))
+            {
+                ERR("Failed to create staging texture, hr %#x.\n", hr);
+                goto done;
+            }
+
+            if (src_location == WINED3D_LOCATION_DRAWABLE)
+                FIXME("WINED3D_LOCATION_DRAWABLE not supported for the source of a typeless resolve.");
+
+            device->blitter->ops->blitter_blit(device->blitter, WINED3D_BLIT_OP_RAW_BLIT, context,
+                    src_texture, src_sub_resource_idx, src_location, src_rect,
+                    src_staging_texture, 0, src_location, src_rect,
+                    NULL, WINED3D_TEXF_NONE, NULL);
+
+            src_texture = src_staging_texture;
+            src_sub_resource_idx = 0;
+        }
+
+        if (dst_internal != resolve_internal)
+        {
+            struct wined3d_resource_desc desc;
+            unsigned dst_level;
+            HRESULT hr;
+
+            dst_level = dst_sub_resource_idx % dst_texture->level_count;
+            desc.resource_type = WINED3D_RTYPE_TEXTURE_2D;
+            desc.format = resolve_format_id;
+            desc.multisample_type = dst_texture->resource.multisample_type;
+            desc.multisample_quality = dst_texture->resource.multisample_quality;
+            desc.usage = WINED3DUSAGE_PRIVATE;
+            desc.bind_flags = 0;
+            desc.access = WINED3D_RESOURCE_ACCESS_GPU;
+            desc.width = wined3d_texture_get_level_width(dst_texture, dst_level);
+            desc.height = wined3d_texture_get_level_height(dst_texture, dst_level);
+            desc.depth = 1;
+            desc.size = 0;
+
+            hr = wined3d_texture_create(device, &desc, 1, 1, 0, NULL, NULL, &wined3d_null_parent_ops,
+                    &dst_texture);
+            if (FAILED(hr))
+            {
+                ERR("Failed to create staging texture, hr %#x.\n", hr);
+                goto done;
+            }
+
+            wined3d_texture_load_location(dst_texture, 0, context, dst_location);
+            dst_sub_resource_idx = 0;
+        }
+    }
 
     /* Make sure the locations are up-to-date. Loading the destination
      * surface isn't required if the entire surface is overwritten. (And is
@@ -379,7 +481,8 @@ static void texture2d_blt_fbo(struct wined3d_device *device, struct wined3d_cont
     {
         context_release(context);
         WARN("Invalid context, skipping blit.\n");
-        return;
+        restore_texture = NULL;
+        goto done;
     }
 
     gl_info = context_gl->gl_info;
@@ -436,6 +539,24 @@ static void texture2d_blt_fbo(struct wined3d_device *device, struct wined3d_cont
 
     if (dst_location == WINED3D_LOCATION_DRAWABLE && dst_texture->swapchain->front_buffer == dst_texture)
         gl_info->gl_ops.gl.p_glFlush();
+
+    if (dst_texture != dst_save_texture)
+    {
+        if (dst_location == WINED3D_LOCATION_DRAWABLE)
+            FIXME("WINED3D_LOCATION_DRAWABLE not supported for the destination of a typeless resolve.");
+
+        device->blitter->ops->blitter_blit(device->blitter, WINED3D_BLIT_OP_RAW_BLIT, context,
+                dst_texture, 0, dst_location, dst_rect,
+                dst_save_texture, dst_save_sub_resource_idx, dst_location, dst_rect,
+                NULL, WINED3D_TEXF_NONE, NULL);
+    }
+
+done:
+    if (dst_texture != dst_save_texture)
+        wined3d_texture_decref(dst_texture);
+
+    if (src_staging_texture)
+        wined3d_texture_decref(src_staging_texture);
 
     if (restore_texture)
         context_restore(context, restore_texture, restore_idx);
@@ -6404,7 +6525,7 @@ static void vk_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_dev
 
 static bool vk_blitter_blit_supported(enum wined3d_blit_op op, const struct wined3d_context *context,
         const struct wined3d_resource *src_resource, const RECT *src_rect,
-        const struct wined3d_resource *dst_resource, const RECT *dst_rect)
+        const struct wined3d_resource *dst_resource, const RECT *dst_rect, const struct wined3d_format *resolve_format)
 {
     const struct wined3d_format *src_format = src_resource->format;
     const struct wined3d_format *dst_format = dst_resource->format;
@@ -6436,7 +6557,9 @@ static bool vk_blitter_blit_supported(enum wined3d_blit_op op, const struct wine
         }
 
         if (op != WINED3D_BLIT_OP_RAW_BLIT
-                && wined3d_format_vk(src_format)->vk_format != wined3d_format_vk(dst_format)->vk_format)
+                && wined3d_format_vk(src_format)->vk_format != wined3d_format_vk(dst_format)->vk_format
+                && ((!wined3d_format_is_typeless(src_format) && !wined3d_format_is_typeless(dst_format))
+                        || !resolve_format))
         {
             TRACE("Format conversion not supported.\n");
             return false;
@@ -6482,6 +6605,7 @@ static DWORD vk_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_blit_
     VkImageSubresourceRange vk_src_range, vk_dst_range;
     VkCommandBuffer vk_command_buffer;
     struct wined3d_blitter *next;
+    unsigned src_sample_count;
     bool resolve = false;
 
     TRACE("blitter %p, op %#x, context %p, src_texture %p, src_sub_resource_idx %u, src_location %s, "
@@ -6491,10 +6615,12 @@ static DWORD vk_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_blit_
             wine_dbgstr_rect(src_rect), dst_texture, dst_sub_resource_idx, wined3d_debug_location(dst_location),
             wine_dbgstr_rect(dst_rect), colour_key, debug_d3dtexturefiltertype(filter), resolve_format);
 
-    if (!vk_blitter_blit_supported(op, context, &src_texture->resource, src_rect, &dst_texture->resource, dst_rect))
+    if (!vk_blitter_blit_supported(op, context, &src_texture->resource, src_rect, &dst_texture->resource, dst_rect,
+            resolve_format))
         goto next;
 
-    if (wined3d_resource_get_sample_count(&src_texture_vk->t.resource) > 1)
+    src_sample_count = wined3d_resource_get_sample_count(&src_texture_vk->t.resource);
+    if (src_sample_count > 1)
         resolve = true;
 
     vk_src_range.aspectMask = vk_aspect_mask_from_format(src_texture_vk->t.resource.format);
@@ -6552,28 +6678,196 @@ static DWORD vk_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_blit_
 
     if (resolve)
     {
-        VkImageResolve region;
+        const struct wined3d_format_vk *src_format_vk = wined3d_format_vk(src_texture->resource.format);
+        const struct wined3d_format_vk *dst_format_vk = wined3d_format_vk(dst_texture->resource.format);
+        const unsigned int usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        VkImage src_vk_image, dst_vk_image;
+        VkImageSubresourceRange vk_range;
+        VkImageResolve resolve_region;
+        VkImageType vk_image_type;
+        VkImageCopy copy_region;
+        VkFormat vk_format;
 
-        region.srcSubresource.aspectMask = vk_src_range.aspectMask;
-        region.srcSubresource.mipLevel = vk_src_range.baseMipLevel;
-        region.srcSubresource.baseArrayLayer = vk_src_range.baseArrayLayer;
-        region.srcSubresource.layerCount = vk_src_range.layerCount;
-        region.srcOffset.x = src_rect->left;
-        region.srcOffset.y = src_rect->top;
-        region.srcOffset.z = 0;
-        region.dstSubresource.aspectMask = vk_dst_range.aspectMask;
-        region.dstSubresource.mipLevel = vk_dst_range.baseMipLevel;
-        region.dstSubresource.baseArrayLayer = vk_dst_range.baseArrayLayer;
-        region.dstSubresource.layerCount = vk_dst_range.layerCount;
-        region.dstOffset.x = dst_rect->left;
-        region.dstOffset.y = dst_rect->top;
-        region.dstOffset.z = 0;
-        region.extent.width = src_rect->right - src_rect->left;
-        region.extent.height = src_rect->bottom - src_rect->top;
-        region.extent.depth = 1;
+        if (resolve_format)
+        {
+            vk_format = wined3d_format_vk(resolve_format)->vk_format;
+        }
+        else if (!wined3d_format_is_typeless(src_texture->resource.format))
+        {
+            vk_format = src_format_vk->vk_format;
+        }
+        else
+        {
+            vk_format = dst_format_vk->vk_format;
+        }
 
-        VK_CALL(vkCmdResolveImage(vk_command_buffer, src_texture_vk->image.vk_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                dst_texture_vk->image.vk_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region));
+        switch (src_texture->resource.type)
+        {
+            case WINED3D_RTYPE_TEXTURE_1D:
+                vk_image_type = VK_IMAGE_TYPE_1D;
+                break;
+            case WINED3D_RTYPE_TEXTURE_2D:
+                vk_image_type = VK_IMAGE_TYPE_2D;
+                break;
+            case WINED3D_RTYPE_TEXTURE_3D:
+                vk_image_type = VK_IMAGE_TYPE_3D;
+                break;
+            default:
+                ERR("Unexpected resource type: %s\n", debug_d3dresourcetype(src_texture->resource.type));
+                goto barrier_next;
+        }
+
+        vk_range.baseMipLevel = 0;
+        vk_range.levelCount = 1;
+        vk_range.baseArrayLayer = 0;
+        vk_range.layerCount = 1;
+
+        resolve_region.srcSubresource.aspectMask = vk_src_range.aspectMask;
+        resolve_region.dstSubresource.aspectMask = vk_dst_range.aspectMask;
+        resolve_region.extent.width = src_rect->right - src_rect->left;
+        resolve_region.extent.height = src_rect->bottom - src_rect->top;
+        resolve_region.extent.depth = 1;
+
+        /* In case of typeless resolve the texture type may not match the resolve type.
+         * To handle that, allocate intermediate texture(s) to resolve from/to.
+         * A possible performance improvement would be to resolve using a shader instead. */
+        if (src_format_vk->vk_format != vk_format)
+        {
+            struct wined3d_image_vk src_image;
+
+            if (!wined3d_context_vk_create_image(context_vk, vk_image_type, usage, vk_format,
+                    resolve_region.extent.width, resolve_region.extent.height, 1,
+                    src_sample_count, 1, 1, 0, &src_image))
+                goto barrier_next;
+
+            wined3d_context_vk_reference_image(context_vk, &src_image);
+            src_vk_image = src_image.vk_image;
+            wined3d_context_vk_destroy_image(context_vk, &src_image);
+
+            vk_range.aspectMask = vk_src_range.aspectMask;
+
+            wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, src_vk_image, &vk_range);
+
+            copy_region.srcSubresource.aspectMask = vk_src_range.aspectMask;
+            copy_region.srcSubresource.mipLevel = vk_src_range.baseMipLevel;
+            copy_region.srcSubresource.baseArrayLayer = vk_src_range.baseArrayLayer;
+            copy_region.srcSubresource.layerCount = 1;
+            copy_region.srcOffset.x = src_rect->left;
+            copy_region.srcOffset.y = src_rect->top;
+            copy_region.srcOffset.z = 0;
+            copy_region.dstSubresource.aspectMask = vk_src_range.aspectMask;
+            copy_region.dstSubresource.mipLevel = 0;
+            copy_region.dstSubresource.baseArrayLayer = 0;
+            copy_region.dstSubresource.layerCount = 1;
+            copy_region.dstOffset.x = 0;
+            copy_region.dstOffset.y = 0;
+            copy_region.dstOffset.z = 0;
+            copy_region.extent.width = resolve_region.extent.width;
+            copy_region.extent.height = resolve_region.extent.height;
+            copy_region.extent.depth = 1;
+
+            VK_CALL(vkCmdCopyImage(vk_command_buffer, src_texture_vk->image.vk_image,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, src_vk_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    1, &copy_region));
+
+            wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    src_vk_image, &vk_range);
+
+            resolve_region.srcSubresource.mipLevel = 0;
+            resolve_region.srcSubresource.baseArrayLayer = 0;
+            resolve_region.srcSubresource.layerCount = 1;
+            resolve_region.srcOffset.x = 0;
+            resolve_region.srcOffset.y = 0;
+            resolve_region.srcOffset.z = 0;
+        }
+        else
+        {
+            src_vk_image = src_texture_vk->image.vk_image;
+
+            resolve_region.srcSubresource.mipLevel = vk_src_range.baseMipLevel;
+            resolve_region.srcSubresource.baseArrayLayer = vk_src_range.baseArrayLayer;
+            resolve_region.srcSubresource.layerCount = 1;
+            resolve_region.srcOffset.x = src_rect->left;
+            resolve_region.srcOffset.y = src_rect->top;
+            resolve_region.srcOffset.z = 0;
+        }
+
+        if (dst_format_vk->vk_format != vk_format)
+        {
+            struct wined3d_image_vk dst_image;
+
+            if (!wined3d_context_vk_create_image(context_vk, vk_image_type, usage, vk_format,
+                    resolve_region.extent.width, resolve_region.extent.height, 1,
+                    VK_SAMPLE_COUNT_1_BIT, 1, 1, 0, &dst_image))
+                goto barrier_next;
+
+            wined3d_context_vk_reference_image(context_vk, &dst_image);
+            dst_vk_image = dst_image.vk_image;
+            wined3d_context_vk_destroy_image(context_vk, &dst_image);
+
+            vk_range.aspectMask = vk_dst_range.aspectMask;
+            wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dst_vk_image, &vk_range);
+
+            resolve_region.dstSubresource.mipLevel = 0;
+            resolve_region.dstSubresource.baseArrayLayer = 0;
+            resolve_region.dstSubresource.layerCount = 1;
+            resolve_region.dstOffset.x = 0;
+            resolve_region.dstOffset.y = 0;
+            resolve_region.dstOffset.z = 0;
+        }
+        else
+        {
+            dst_vk_image = dst_texture_vk->image.vk_image;
+
+            resolve_region.dstSubresource.mipLevel = vk_dst_range.baseMipLevel;
+            resolve_region.dstSubresource.baseArrayLayer = vk_dst_range.baseArrayLayer;
+            resolve_region.dstSubresource.layerCount = 1;
+            resolve_region.dstOffset.x = dst_rect->left;
+            resolve_region.dstOffset.y = dst_rect->top;
+            resolve_region.dstOffset.z = 0;
+        }
+
+        VK_CALL(vkCmdResolveImage(vk_command_buffer, src_vk_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                dst_vk_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolve_region));
+
+        if (dst_vk_image != dst_texture_vk->image.vk_image)
+        {
+            wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    dst_vk_image, &vk_range);
+
+            copy_region.srcSubresource.aspectMask = vk_dst_range.aspectMask;
+            copy_region.srcSubresource.mipLevel = 0;
+            copy_region.srcSubresource.baseArrayLayer = 0;
+            copy_region.srcSubresource.layerCount = 1;
+            copy_region.srcOffset.x = 0;
+            copy_region.srcOffset.y = 0;
+            copy_region.srcOffset.z = 0;
+            copy_region.dstSubresource.aspectMask = vk_dst_range.aspectMask;
+            copy_region.dstSubresource.mipLevel = vk_dst_range.baseMipLevel;
+            copy_region.dstSubresource.baseArrayLayer = vk_dst_range.baseArrayLayer;
+            copy_region.dstSubresource.layerCount = 1;
+            copy_region.dstOffset.x = dst_rect->left;
+            copy_region.dstOffset.y = dst_rect->top;
+            copy_region.dstOffset.z = 0;
+            copy_region.extent.width = resolve_region.extent.width;
+            copy_region.extent.height = resolve_region.extent.height;
+            copy_region.extent.depth = 1;
+
+            VK_CALL(vkCmdCopyImage(vk_command_buffer, dst_vk_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    dst_texture_vk->image.vk_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region));
+        }
     }
     else
     {
@@ -6623,6 +6917,20 @@ static DWORD vk_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_blit_
     wined3d_context_vk_reference_texture(context_vk, dst_texture_vk);
 
     return dst_location | WINED3D_LOCATION_TEXTURE_RGB;
+
+barrier_next:
+    wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            vk_access_mask_from_bind_flags(dst_texture_vk->t.resource.bind_flags),
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dst_texture_vk->layout,
+            dst_texture_vk->image.vk_image, &vk_dst_range);
+    wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            vk_access_mask_from_bind_flags(src_texture_vk->t.resource.bind_flags),
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, src_texture_vk->layout,
+            src_texture_vk->image.vk_image, &vk_src_range);
 
 next:
     if (!(next = blitter->next))

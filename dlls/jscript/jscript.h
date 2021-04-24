@@ -42,9 +42,10 @@
 #define SCRIPTLANGUAGEVERSION_HTML 0x400
 
 /*
- * This is Wine jscript extension for ES5 compatible mode. Allowed only in HTML mode.
+ * This is Wine jscript extension for ES5 and ES6 compatible mode. Allowed only in HTML mode.
  */
 #define SCRIPTLANGUAGEVERSION_ES5  0x102
+#define SCRIPTLANGUAGEVERSION_ES6  0x103
 
 typedef struct _jsval_t jsval_t;
 typedef struct _jsstr_t jsstr_t;
@@ -129,7 +130,8 @@ typedef enum {
     JSCLASS_STRING,
     JSCLASS_ARGUMENTS,
     JSCLASS_VBARRAY,
-    JSCLASS_JSON
+    JSCLASS_JSON,
+    JSCLASS_SET,
 } jsclass_t;
 
 jsdisp_t *iface_to_jsdisp(IDispatch*) DECLSPEC_HIDDEN;
@@ -290,6 +292,12 @@ void jsdisp_release(jsdisp_t*) DECLSPEC_HIDDEN;
 
 #endif
 
+enum jsdisp_enum_type {
+    JSDISP_ENUM_ALL,
+    JSDISP_ENUM_OWN,
+    JSDISP_ENUM_OWN_ENUMERABLE
+};
+
 HRESULT create_dispex(script_ctx_t*,const builtin_info_t*,jsdisp_t*,jsdisp_t**) DECLSPEC_HIDDEN;
 HRESULT init_dispex(jsdisp_t*,script_ctx_t*,const builtin_info_t*,jsdisp_t*) DECLSPEC_HIDDEN;
 HRESULT init_dispex_from_constr(jsdisp_t*,script_ctx_t*,const builtin_info_t*,jsdisp_t*) DECLSPEC_HIDDEN;
@@ -315,7 +323,7 @@ HRESULT jsdisp_delete_idx(jsdisp_t*,DWORD) DECLSPEC_HIDDEN;
 HRESULT jsdisp_get_own_property(jsdisp_t*,const WCHAR*,BOOL,property_desc_t*) DECLSPEC_HIDDEN;
 HRESULT jsdisp_define_property(jsdisp_t*,const WCHAR*,property_desc_t*) DECLSPEC_HIDDEN;
 HRESULT jsdisp_define_data_property(jsdisp_t*,const WCHAR*,unsigned,jsval_t) DECLSPEC_HIDDEN;
-HRESULT jsdisp_next_prop(jsdisp_t*,DISPID,BOOL,DISPID*) DECLSPEC_HIDDEN;
+HRESULT jsdisp_next_prop(jsdisp_t*,DISPID,enum jsdisp_enum_type,DISPID*) DECLSPEC_HIDDEN;
 HRESULT jsdisp_get_prop_name(jsdisp_t*,DISPID,jsstr_t**);
 void jsdisp_freeze(jsdisp_t*,BOOL) DECLSPEC_HIDDEN;
 BOOL jsdisp_is_frozen(jsdisp_t*,BOOL) DECLSPEC_HIDDEN;
@@ -459,6 +467,7 @@ struct _script_ctx_t {
     jsdisp_t *regexp_constr;
     jsdisp_t *string_constr;
     jsdisp_t *vbarray_constr;
+    jsdisp_t *set_prototype;
 };
 
 void script_release(script_ctx_t*) DECLSPEC_HIDDEN;
@@ -471,6 +480,7 @@ static inline void script_addref(script_ctx_t *ctx)
 HRESULT init_global(script_ctx_t*) DECLSPEC_HIDDEN;
 HRESULT init_function_constr(script_ctx_t*,jsdisp_t*) DECLSPEC_HIDDEN;
 HRESULT create_object_prototype(script_ctx_t*,jsdisp_t**) DECLSPEC_HIDDEN;
+HRESULT init_set_constructor(script_ctx_t*) DECLSPEC_HIDDEN;
 
 HRESULT create_activex_constr(script_ctx_t*,jsdisp_t**) DECLSPEC_HIDDEN;
 HRESULT create_array_constr(script_ctx_t*,jsdisp_t*,jsdisp_t**) DECLSPEC_HIDDEN;

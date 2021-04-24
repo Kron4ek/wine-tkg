@@ -3550,6 +3550,18 @@ static void test_SuspendProcessState(void)
         "wrong entry point %p/%p\n", entry_ptr,
         (char *)exe_base + nt_header.OptionalHeader.AddressOfEntryPoint );
 
+    ok( !child_peb.LdrData, "LdrData set %p\n", child_peb.LdrData );
+    ok( !child_peb.FastPebLock, "FastPebLock set %p\n", child_peb.FastPebLock );
+    ok( !child_peb.TlsBitmap, "TlsBitmap set %p\n", child_peb.TlsBitmap );
+    ok( !child_peb.TlsExpansionBitmap, "TlsExpansionBitmap set %p\n", child_peb.TlsExpansionBitmap );
+    ok( !child_peb.LoaderLock, "LoaderLock set %p\n", child_peb.LoaderLock );
+    ok( !child_peb.ProcessHeap, "ProcessHeap set %p\n", child_peb.ProcessHeap );
+    ok( !child_peb.CSDVersion.Buffer, "CSDVersion set %s\n", debugstr_w(child_peb.CSDVersion.Buffer) );
+
+    ok( child_peb.OSMajorVersion, "OSMajorVersion not set %u\n", child_peb.OSMajorVersion );
+    ok( child_peb.OSPlatformId == VER_PLATFORM_WIN32_NT, "OSPlatformId not set %u\n", child_peb.OSPlatformId );
+    ok( child_peb.SessionId == 1, "SessionId not set %u\n", child_peb.SessionId );
+
     ret = SetThreadContext(pi.hThread, &ctx);
     ok(ret, "Failed to set remote thread context (%d)\n", GetLastError());
 
@@ -4392,26 +4404,6 @@ static void test_dead_process(void)
     CloseHandle(pi.hThread);
 }
 
-static void test_GetActiveProcessorCount(void)
-{
-    DWORD count;
-
-    if (!pGetActiveProcessorCount)
-    {
-        win_skip("GetActiveProcessorCount not available, skipping test\n");
-        return;
-    }
-
-    count = pGetActiveProcessorCount(0);
-    ok(count, "GetActiveProcessorCount failed, error %u\n", GetLastError());
-
-    /* Test would fail on systems with more than 6400 processors */
-    SetLastError(0xdeadbeef);
-    count = pGetActiveProcessorCount(101);
-    ok(count == 0, "Expeced GetActiveProcessorCount to fail\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %u\n", GetLastError());
-}
-
 START_TEST(process)
 {
     HANDLE job, hproc, h, h2;
@@ -4529,7 +4521,6 @@ START_TEST(process)
     test_session_info();
     test_GetLogicalProcessorInformationEx();
     test_GetSystemCpuSetInformation();
-    test_GetActiveProcessorCount();
     test_largepages();
     test_ProcThreadAttributeList();
     test_SuspendProcessState();

@@ -30,7 +30,7 @@ signature="$CHICAGO$"
 RegisterDlls=RegisterDllsSection
 WineFakeDlls=FakeDllsWin32,FakeDlls
 UpdateInis=SystemIni
-CopyFiles=ColorFiles,InfFiles,NlsFiles,SortFiles
+CopyFiles=ColorFiles,EtcFiles,InfFiles,NlsFiles,SortFiles
 AddReg=\
     Classes,\
     ContentIndex,\
@@ -55,7 +55,7 @@ AddReg=\
 RegisterDlls=RegisterDllsSection
 WineFakeDlls=FakeDllsWin32,FakeDlls
 UpdateInis=SystemIni
-CopyFiles=ColorFiles,InfFiles,NlsFiles,SortFiles
+CopyFiles=ColorFiles,EtcFiles,InfFiles,NlsFiles,SortFiles
 AddReg=\
     Classes,\
     ContentIndex,\
@@ -69,6 +69,7 @@ AddReg=\
     Misc,\
     Nls,\
     OLE,\
+    Packages,\
     Printing,\
     Services, \
     SessionMgr,\
@@ -82,7 +83,7 @@ RegisterDlls=RegisterDllsSection
 WineFakeDlls=FakeDllsWin64,FakeDlls
 WinePreInstall=Wow64
 UpdateInis=SystemIni
-CopyFiles=ColorFiles,InfFiles,NlsFiles,SortFiles
+CopyFiles=ColorFiles,EtcFiles,InfFiles,NlsFiles,SortFiles
 AddReg=\
     Classes,\
     ContentIndex,\
@@ -97,6 +98,7 @@ AddReg=\
     Misc,\
     Nls,\
     OLE,\
+    Packages.ntamd64,\
     Printing,\
     Services, \
     SessionMgr,\
@@ -110,7 +112,7 @@ RegisterDlls=RegisterDllsSection
 WineFakeDlls=FakeDllsWin64,FakeDlls
 WinePreInstall=Wow64
 UpdateInis=SystemIni
-CopyFiles=ColorFiles,InfFiles,NlsFiles,SortFiles
+CopyFiles=ColorFiles,EtcFiles,InfFiles,NlsFiles,SortFiles
 AddReg=\
     Classes,\
     ContentIndex,\
@@ -124,6 +126,7 @@ AddReg=\
     Misc,\
     Nls,\
     OLE,\
+    Packages.ntarm64,\
     Printing,\
     Services, \
     SessionMgr,\
@@ -144,6 +147,7 @@ AddReg=\
     KeyboardLayouts,\
     MCI,\
     Misc,\
+    Packages.wow64,\
     Tapi,\
     VersionInfo.ntamd64,\
     LicenseInformation
@@ -234,6 +238,7 @@ CurrentVersion="Software\Microsoft\Windows\CurrentVersion"
 CurrentVersionNT="Software\Microsoft\Windows NT\CurrentVersion"
 FontSubStr="Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes"
 Control="System\CurrentControlSet\Control"
+Packages="Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\PackageRepository\Packages"
 
 [Classes]
 HKCR,.chm,,2,"chm.file"
@@ -1384,6 +1389,18 @@ HKLM,SYSTEM\CurrentControlSet\Control\Keyboard Layouts\00120c00,,16
 [OLE]
 HKLM,"Software\Microsoft\OLE","EnableDCOM",,"Y"
 HKLM,"Software\Microsoft\OLE","EnableRemoteConnect",,"N"
+
+[Packages]
+HKLM,"%Packages%\Microsoft.VCLibs.140.00_14.0.29231.0_x86__8wekyb3d8bbwe","Path",0x00020002,"%SystemRoot%\system32"
+
+[Packages.ntamd64]
+HKLM,"%Packages%\Microsoft.VCLibs.140.00_14.0.29231.0_x64__8wekyb3d8bbwe","Path",0x00020002,"%SystemRoot%\system32"
+
+[Packages.wow64]
+HKLM,"%Packages%\Microsoft.VCLibs.140.00_14.0.29231.0_x86__8wekyb3d8bbwe","Path",0x00020002,"%SystemRoot%\syswow64"
+
+[Packages.arm64]
+HKLM,"%Packages%\Microsoft.VCLibs.140.00_14.0.29231.0_arm64__8wekyb3d8bbwe","Path",0x00020002,"%SystemRoot%\system32"
 
 [Printing]
 HKLM,%Control%\Print\Monitors\Local Port,"Driver",2,"localspl.dll"
@@ -2882,6 +2899,7 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
 11,,ddhelp.exe
 11,,dosx.exe
 11,,dsound.vxd
+11,,start.exe
 11,,winhlp32.exe
 52,win40\0,wineps16.drv,wineps16.drv16
 
@@ -2914,6 +2932,11 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
 11,,regasm.exe,-
 11,,servicemodelreg.exe,-
 11,,presentationfontcache.exe,-
+; some programs are 64-bit only
+11,,conhost.exe,-
+11,,services.exe,-
+11,,spoolsv.exe,-
+11,,winemenubuilder.exe,-
 ; registration order matters for these
 11,,msxml.dll
 11,,msxml2.dll
@@ -2948,7 +2971,6 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
 11,,explorer.exe
 11,,iexplore.exe
 11,,notepad.exe
-11,,start.exe
 11,,winetest.exe,-
 ; skip .NET fake dlls in Wine Mono package
 11,,aspnet_regiis.exe,-
@@ -4196,7 +4218,7 @@ ErrorControl=1
 HKLM,%CurrentVersion%\RunServices,"winemenubuilder",2,"%11%\winemenubuilder.exe -a -r"
 HKLM,"System\CurrentControlSet\Services\Eventlog\Application",,16
 HKLM,"System\CurrentControlSet\Services\Eventlog\System","Sources",0x10000,""
-HKLM,"System\CurrentControlSet\Services\Tcpip\Parameters","DataBasePath",2,"%11%\drivers"
+HKLM,"System\CurrentControlSet\Services\Tcpip\Parameters","DataBasePath",,"%12%\etc"
 HKLM,"System\CurrentControlSet\Services\VxD\MSTCP",,16
 HKLM,"System\CurrentControlSet\Services\Winsock\Parameters",,16
 HKLM,"System\CurrentControlSet\Services\Winsock2\Parameters\Protocol_Catalog9\Catalog_Entries",,16
@@ -4343,6 +4365,12 @@ HKCU,Software\Wine\DllOverrides,"vcruntime140",0x2,"native,builtin"
 [ColorFiles]
 srgb color space profile.icm,"@%11%\mscms.dll,-1"
 
+[EtcFiles]
+hosts,"@%11%\ws2_32.dll,-1"
+networks,"@%11%\ws2_32.dll,-2"
+protocol,"@%11%\ws2_32.dll,-3"
+services,"@%11%\ws2_32.dll,-4"
+
 [InfFiles]
 winebus.inf,"@%12%\winebus.sys,-1"
 winehid.inf,"@%12%\winehid.sys,-1"
@@ -4432,6 +4460,7 @@ SortFiles = nls
 
 [DestinationDirs]
 ColorFiles = 23
+EtcFiles  = 12,etc
 InfFiles  = 17
 NlsFiles  = 11
 SortFiles = 10,globalization\sorting

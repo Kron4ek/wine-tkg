@@ -130,7 +130,8 @@ extern char **main_argv DECLSPEC_HIDDEN;
 extern char **main_envp DECLSPEC_HIDDEN;
 extern WCHAR **main_wargv DECLSPEC_HIDDEN;
 extern const WCHAR system_dir[] DECLSPEC_HIDDEN;
-extern unsigned int server_cpus DECLSPEC_HIDDEN;
+extern unsigned int supported_machines_count DECLSPEC_HIDDEN;
+extern USHORT supported_machines[8] DECLSPEC_HIDDEN;
 extern BOOL is_wow64 DECLSPEC_HIDDEN;
 extern BOOL process_exiting DECLSPEC_HIDDEN;
 extern HANDLE keyed_event DECLSPEC_HIDDEN;
@@ -146,6 +147,8 @@ extern BOOL ac_odyssey DECLSPEC_HIDDEN;
 
 extern void init_environment( int argc, char *argv[], char *envp[] ) DECLSPEC_HIDDEN;
 extern void init_startup_info(void) DECLSPEC_HIDDEN;
+extern void *create_startup_info( const UNICODE_STRING *nt_image, const RTL_USER_PROCESS_PARAMETERS *params,
+                                  DWORD *info_size ) DECLSPEC_HIDDEN;
 extern DWORD ntdll_umbstowcs( const char *src, DWORD srclen, WCHAR *dst, DWORD dstlen ) DECLSPEC_HIDDEN;
 extern int ntdll_wcstoumbs( const WCHAR *src, DWORD srclen, char *dst, DWORD dstlen, BOOL strict ) DECLSPEC_HIDDEN;
 extern char **build_envp( const WCHAR *envW ) DECLSPEC_HIDDEN;
@@ -255,8 +258,8 @@ extern NTSTATUS tape_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTI
                                       ULONG in_size, void *out_buffer, ULONG out_size ) DECLSPEC_HIDDEN;
 
 extern NTSTATUS errno_to_status( int err ) DECLSPEC_HIDDEN;
-extern NTSTATUS nt_to_unix_file_name( const UNICODE_STRING *nameW, char **unix_name_ret,
-                                      UNICODE_STRING *nt_name, UINT disposition ) DECLSPEC_HIDDEN;
+extern BOOL get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir ) DECLSPEC_HIDDEN;
+extern NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret, UINT disposition ) DECLSPEC_HIDDEN;
 extern NTSTATUS unix_to_nt_file_name( const char *name, WCHAR **nt ) DECLSPEC_HIDDEN;
 extern NTSTATUS get_full_path( const WCHAR *name, const WCHAR *curdir, WCHAR **path ) DECLSPEC_HIDDEN;
 extern NTSTATUS open_unix_file( HANDLE *handle, const char *unix_name, ACCESS_MASK access,

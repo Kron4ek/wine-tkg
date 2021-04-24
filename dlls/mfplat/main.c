@@ -7006,12 +7006,20 @@ static IMFMediaEvent *queue_pop_event(struct event_queue *queue)
     return event;
 }
 
+static void event_queue_clear_subscriber(struct event_queue *queue)
+{
+    if (queue->subscriber)
+        IRtwqAsyncResult_Release(queue->subscriber);
+    queue->subscriber = NULL;
+}
+
 static void event_queue_cleanup(struct event_queue *queue)
 {
     IMFMediaEvent *event;
 
     while ((event = queue_pop_event(queue)))
         IMFMediaEvent_Release(event);
+    event_queue_clear_subscriber(queue);
 }
 
 static HRESULT WINAPI eventqueue_QueryInterface(IMFMediaEventQueue *iface, REFIID riid, void **out)
@@ -7109,7 +7117,7 @@ static void queue_notify_subscriber(struct event_queue *queue)
 static HRESULT WINAPI eventqueue_BeginGetEvent(IMFMediaEventQueue *iface, IMFAsyncCallback *callback, IUnknown *state)
 {
     struct event_queue *queue = impl_from_IMFMediaEventQueue(iface);
-    MFASYNCRESULT *result_data = (MFASYNCRESULT *)queue->subscriber;
+    RTWQASYNCRESULT *result_data;
     HRESULT hr;
 
     TRACE("%p, %p, %p.\n", iface, callback, state);
@@ -7121,9 +7129,9 @@ static HRESULT WINAPI eventqueue_BeginGetEvent(IMFMediaEventQueue *iface, IMFAsy
 
     if (queue->is_shut_down)
         hr = MF_E_SHUTDOWN;
-    else if (result_data)
+    else if ((result_data = (RTWQASYNCRESULT *)queue->subscriber))
     {
-        if (result_data->pCallback == callback)
+        if (result_data->pCallback == (IRtwqAsyncCallback *)callback)
             hr = IRtwqAsyncResult_GetStateNoAddRef(queue->subscriber) == state ?
                     MF_S_MULTIPLE_BEGIN : MF_E_MULTIPLE_BEGIN;
         else
@@ -7155,9 +7163,7 @@ static HRESULT WINAPI eventqueue_EndGetEvent(IMFMediaEventQueue *iface, IMFAsync
     else if (queue->subscriber == (IRtwqAsyncResult *)result)
     {
         *event = queue_pop_event(queue);
-        if (queue->subscriber)
-            IRtwqAsyncResult_Release(queue->subscriber);
-        queue->subscriber = NULL;
+        event_queue_clear_subscriber(queue);
         queue->notified = FALSE;
         hr = *event ? S_OK : E_FAIL;
     }

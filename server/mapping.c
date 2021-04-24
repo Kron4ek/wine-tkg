@@ -368,6 +368,7 @@ static void add_process_view( struct thread *thread, struct memory_view *view )
         else if (!(view->image.image_charact & IMAGE_FILE_DLL))
         {
             /* main exe */
+            process->machine = view->image.machine;
             list_add_head( &process->views, &view->entry );
             if (get_view_nt_name( view, &name ) && (process->image = memdup( name.str, name.len )))
                 process->imagelen = name.len;
@@ -683,9 +684,6 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
             return STATUS_INVALID_IMAGE_FORMAT;
         case IMAGE_FILE_MACHINE_ARMNT:
             if (cpu_mask & (CPU_FLAG(CPU_ARM) | CPU_FLAG(CPU_ARM64))) break;
-            return STATUS_INVALID_IMAGE_FORMAT;
-        case IMAGE_FILE_MACHINE_POWERPC:
-            if (cpu_mask & CPU_FLAG(CPU_POWERPC)) break;
             return STATUS_INVALID_IMAGE_FORMAT;
         default:
             return STATUS_INVALID_IMAGE_FORMAT;

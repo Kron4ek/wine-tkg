@@ -561,9 +561,9 @@ static void device_reset_viewport_state(struct d3d8_device *device)
     struct wined3d_viewport vp;
     RECT rect;
 
-    wined3d_device_get_viewports(device->wined3d_device, NULL, &vp);
+    wined3d_device_context_get_viewports(device->immediate_context, NULL, &vp);
     wined3d_stateblock_set_viewport(device->state, &vp);
-    wined3d_device_get_scissor_rects(device->wined3d_device, NULL, &rect);
+    wined3d_device_context_get_scissor_rects(device->immediate_context, NULL, &rect);
     wined3d_stateblock_set_scissor_rect(device->state, &rect);
 }
 
@@ -1505,7 +1505,7 @@ static HRESULT WINAPI d3d8_device_SetRenderTarget(IDirect3DDevice8 *iface,
         /* If no render target is passed in check the size against the current RT */
         if (!render_target)
         {
-            if (!(original_rtv = wined3d_device_get_rendertarget_view(device->wined3d_device, 0)))
+            if (!(original_rtv = wined3d_device_context_get_rendertarget_view(device->immediate_context, 0)))
             {
                 wined3d_mutex_unlock();
                 return D3DERR_NOTFOUND;
@@ -1535,7 +1535,7 @@ static HRESULT WINAPI d3d8_device_SetRenderTarget(IDirect3DDevice8 *iface,
         }
     }
 
-    original_dsv = wined3d_device_get_depth_stencil_view(device->wined3d_device);
+    original_dsv = wined3d_device_context_get_depth_stencil_view(device->immediate_context);
     rtv = ds_impl ? d3d8_surface_acquire_rendertarget_view(ds_impl) : NULL;
     hr = wined3d_device_context_set_depth_stencil_view(device->immediate_context, rtv);
     d3d8_surface_release_rendertarget_view(ds_impl, rtv);
@@ -1570,7 +1570,7 @@ static HRESULT WINAPI d3d8_device_GetRenderTarget(IDirect3DDevice8 *iface, IDire
         return D3DERR_INVALIDCALL;
 
     wined3d_mutex_lock();
-    if ((wined3d_rtv = wined3d_device_get_rendertarget_view(device->wined3d_device, 0)))
+    if ((wined3d_rtv = wined3d_device_context_get_rendertarget_view(device->immediate_context, 0)))
     {
         /* We want the sub resource parent here, since the view itself may be
          * internal to wined3d and may not have a parent. */
@@ -1603,7 +1603,7 @@ static HRESULT WINAPI d3d8_device_GetDepthStencilSurface(IDirect3DDevice8 *iface
         return D3DERR_INVALIDCALL;
 
     wined3d_mutex_lock();
-    if ((wined3d_dsv = wined3d_device_get_depth_stencil_view(device->wined3d_device)))
+    if ((wined3d_dsv = wined3d_device_context_get_depth_stencil_view(device->immediate_context)))
     {
         /* We want the sub resource parent here, since the view itself may be
          * internal to wined3d and may not have a parent. */
@@ -1737,7 +1737,7 @@ static HRESULT WINAPI d3d8_device_SetViewport(IDirect3DDevice8 *iface, const D3D
     TRACE("iface %p, viewport %p.\n", iface, viewport);
 
     wined3d_mutex_lock();
-    if (!(rtv = wined3d_device_get_rendertarget_view(device->wined3d_device, 0)))
+    if (!(rtv = wined3d_device_context_get_rendertarget_view(device->immediate_context, 0)))
     {
         wined3d_mutex_unlock();
         return D3DERR_NOTFOUND;
@@ -1928,7 +1928,7 @@ static void resolve_depth_buffer(struct d3d8_device *device)
             && desc.format != WINED3DFMT_INTZ)
         return;
 
-    if (!(wined3d_dsv = wined3d_device_get_depth_stencil_view(device->wined3d_device)))
+    if (!(wined3d_dsv = wined3d_device_context_get_depth_stencil_view(device->immediate_context)))
         return;
     d3d8_dsv = wined3d_rendertarget_view_get_sub_resource_parent(wined3d_dsv);
 
@@ -2505,7 +2505,8 @@ static HRESULT WINAPI d3d8_device_DrawPrimitive(IDirect3DDevice8 *iface,
     vertex_count = vertex_count_from_primitive_count(primitive_type, primitive_count);
     wined3d_mutex_lock();
     d3d8_device_upload_sysmem_vertex_buffers(device, start_vertex, vertex_count);
-    wined3d_device_set_primitive_type(device->wined3d_device, wined3d_primitive_type_from_d3d(primitive_type), 0);
+    wined3d_device_context_set_primitive_type(device->immediate_context,
+            wined3d_primitive_type_from_d3d(primitive_type), 0);
     wined3d_device_apply_stateblock(device->wined3d_device, device->state);
     wined3d_device_context_draw(device->immediate_context, start_vertex, vertex_count, 0, 0);
     wined3d_mutex_unlock();
@@ -2535,7 +2536,8 @@ static HRESULT WINAPI d3d8_device_DrawIndexedPrimitive(IDirect3DDevice8 *iface,
     base_vertex_index = device->stateblock_state->base_vertex_index;
     d3d8_device_upload_sysmem_vertex_buffers(device, base_vertex_index + min_vertex_idx, vertex_count);
     d3d8_device_upload_sysmem_index_buffer(device, start_idx, index_count);
-    wined3d_device_set_primitive_type(device->wined3d_device, wined3d_primitive_type_from_d3d(primitive_type), 0);
+    wined3d_device_context_set_primitive_type(device->immediate_context,
+            wined3d_primitive_type_from_d3d(primitive_type), 0);
     wined3d_device_apply_stateblock(device->wined3d_device, device->state);
     wined3d_device_context_draw_indexed(device->immediate_context, base_vertex_index, start_idx, index_count, 0, 0);
     wined3d_mutex_unlock();
@@ -2629,7 +2631,8 @@ static HRESULT WINAPI d3d8_device_DrawPrimitiveUP(IDirect3DDevice8 *iface,
     if (FAILED(hr))
         goto done;
 
-    wined3d_device_set_primitive_type(device->wined3d_device, wined3d_primitive_type_from_d3d(primitive_type), 0);
+    wined3d_device_context_set_primitive_type(device->immediate_context,
+            wined3d_primitive_type_from_d3d(primitive_type), 0);
     wined3d_device_apply_stateblock(device->wined3d_device, device->state);
     wined3d_device_context_draw(device->immediate_context, vb_pos / stride, vtx_count, 0, 0);
     wined3d_stateblock_set_stream_source(device->state, 0, NULL, 0, 0);
@@ -2759,7 +2762,8 @@ static HRESULT WINAPI d3d8_device_DrawIndexedPrimitiveUP(IDirect3DDevice8 *iface
     base_vertex_idx = vb_pos / vertex_stride - min_vertex_idx;
     wined3d_stateblock_set_base_vertex_index(device->state, base_vertex_idx);
 
-    wined3d_device_set_primitive_type(device->wined3d_device, wined3d_primitive_type_from_d3d(primitive_type), 0);
+    wined3d_device_context_set_primitive_type(device->immediate_context,
+            wined3d_primitive_type_from_d3d(primitive_type), 0);
     wined3d_device_apply_stateblock(device->wined3d_device, device->state);
     wined3d_device_context_draw_indexed(device->immediate_context,
             base_vertex_idx, ib_pos / idx_fmt_size, idx_count, 0, 0);

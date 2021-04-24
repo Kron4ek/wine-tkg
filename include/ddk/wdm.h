@@ -832,7 +832,8 @@ typedef enum _BUS_QUERY_ID_TYPE {
   BusQueryHardwareIDs,
   BusQueryCompatibleIDs,
   BusQueryInstanceID,
-  BusQueryDeviceSerialNumber
+  BusQueryDeviceSerialNumber,
+  BusQueryContainerID,
 } BUS_QUERY_ID_TYPE, *PBUS_QUERY_ID_TYPE;
 
 typedef enum _CREATE_FILE_TYPE {
@@ -1647,6 +1648,8 @@ static inline void IoCopyCurrentIrpStackLocationToNext(IRP *irp)
 #define SYMBOLIC_LINK_ALL_ACCESS        (STANDARD_RIGHTS_REQUIRED | 0x1)
 
 NTSTATUS  WINAPI DbgQueryDebugFilterState(ULONG, ULONG);
+
+void    FASTCALL ExAcquireFastMutex(FAST_MUTEX*);
 void    FASTCALL ExAcquireFastMutexUnsafe(PFAST_MUTEX);
 BOOLEAN   WINAPI ExAcquireResourceExclusiveLite(ERESOURCE*,BOOLEAN);
 BOOLEAN   WINAPI ExAcquireResourceSharedLite(ERESOURCE*,BOOLEAN);
@@ -1673,6 +1676,7 @@ LIST_ENTRY * WINAPI ExInterlockedRemoveHeadList(LIST_ENTRY*,KSPIN_LOCK*);
 BOOLEAN   WINAPI ExIsResourceAcquiredExclusiveLite(ERESOURCE*);
 ULONG     WINAPI ExIsResourceAcquiredSharedLite(ERESOURCE*);
 void *    WINAPI ExRegisterCallback(PCALLBACK_OBJECT,PCALLBACK_FUNCTION,void*);
+void    FASTCALL ExReleaseFastMutex(FAST_MUTEX*);
 void    FASTCALL ExReleaseFastMutexUnsafe(PFAST_MUTEX);
 void      WINAPI ExReleaseResourceForThreadLite(ERESOURCE*,ERESOURCE_THREAD);
 ULONG     WINAPI ExSetTimerResolution(ULONG,BOOLEAN);
@@ -1727,7 +1731,7 @@ void      WINAPI IoReleaseRemoveLockAndWaitEx(IO_REMOVE_LOCK*,void*,ULONG);
 void      WINAPI IoReleaseRemoveLockEx(IO_REMOVE_LOCK*,void*,ULONG);
 void      WINAPI IoReuseIrp(IRP*,NTSTATUS);
 NTSTATUS  WINAPI IoSetDeviceInterfaceState(UNICODE_STRING*,BOOLEAN);
-NTSTATUS  WINAPI IoSetDevicePropertyData(DEVICE_OBJECT*,const DEVPROPKEY*,LCID,ULONG,DEVPROPTYPE,ULONG,PVOID);
+NTSTATUS  WINAPI IoSetDevicePropertyData(DEVICE_OBJECT*,const DEVPROPKEY*,LCID,ULONG,DEVPROPTYPE,ULONG,void*);
 NTSTATUS  WINAPI IoWMIRegistrationControl(PDEVICE_OBJECT,ULONG);
 
 void    FASTCALL KeAcquireInStackQueuedSpinLockAtDpcLevel(KSPIN_LOCK*,KLOCK_QUEUE_HANDLE*);
