@@ -1,16 +1,15 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Apr 24 11:31:22 AM MSK 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Sat May  8 12:39:19 PM MSK 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.7.r0.gc0af8b73725
-Using wine-staging patchset (version 6.7.r0.gdeed76f3)
+Wine (plain) version: 6.8.r0.g99e47361a37
+Using wine-staging patchset (version 6.8.r0.g0f00e37c)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
 Applied hotfix protonify_stg_syscall_emu.mystagingpatch
-Applied reverting hotfix winevulkan_Use_standard_CRT_memory_allocators4.myearlyrevert
 use_clock_monotonic.patch -- ( Applied clock_monotonic patch )
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
@@ -30,7 +29,7 @@ proton-tkg-staging.patch -- ( Using Steam-specific Proton-tkg patches (staging) 
 proton-pa-staging.patch -- ( Enable Proton's PA additions )
 proton-cpu-topology-overrides.patch -- ( Enable Proton's CPU topology override support )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
-proton-bcrypt.patch -- ( Using Proton Bcrypt patches )
+proton-bcrypt-staging.patch -- ( Using Proton Bcrypt patches )
 josh-flat-theme.patch -- ( Add Josh's better-theme )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 

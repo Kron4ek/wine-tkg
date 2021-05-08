@@ -1080,11 +1080,6 @@ DECL_HANDLER(new_process)
         close( socket_fd );
         return;
     }
-    if (!is_cpu_supported( req->cpu ))
-    {
-        close( socket_fd );
-        return;
-    }
 
     if (req->parent_process)
     {
@@ -1727,47 +1722,6 @@ DECL_HANDLER(resume_process)
 
         release_object( process );
     }
-}
-
-/* Iterate process list */
-DECL_HANDLER(get_next_process)
-{
-    struct process *process = NULL, *next;
-    struct list *ptr;
-
-    reply->handle = 0;
-
-    if ( req->flags > 1 )
-    {
-        set_error( STATUS_INVALID_PARAMETER );
-        return;
-    }
-
-    if (!req->last)
-    {
-        ptr = req->flags ? list_tail( &process_list ) : list_head( &process_list );
-    }
-    else if ((process = get_process_from_handle( req->last, 0 )))
-    {
-        ptr = req->flags ? list_prev( &process_list, &process->entry ) :
-                list_next( &process_list, &process->entry );
-    }
-    else
-        return;
-
-    while (ptr)
-    {
-        next = LIST_ENTRY( ptr, struct process, entry );
-        if ((reply->handle = alloc_handle( current->process, next, req->access, req->attributes )))
-            break;
-        ptr = req->flags ? list_prev( &process_list, &next->entry ) : list_next( &process_list, &next->entry );
-    }
-
-    if (!reply->handle)
-        set_error( STATUS_NO_MORE_ENTRIES );
-
-    if (process)
-        release_object( process );
 }
 
 /* Get a list of processes and threads currently running */
