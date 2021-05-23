@@ -13,6 +13,11 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 
+VkResult WINAPI vkAcquireFullScreenExclusiveModeEXT(VkDevice device, VkSwapchainKHR swapchain)
+{
+    return unix_funcs->p_vkAcquireFullScreenExclusiveModeEXT(device, swapchain);
+}
+
 VkResult WINAPI vkAcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR *pAcquireInfo, uint32_t *pImageIndex)
 {
     return unix_funcs->p_vkAcquireNextImage2KHR(device, pAcquireInfo, pImageIndex);
@@ -276,6 +281,11 @@ void WINAPI vkCmdCopyMemoryToAccelerationStructureKHR(VkCommandBuffer commandBuf
 void WINAPI vkCmdCopyQueryPoolResults(VkCommandBuffer commandBuffer, VkQueryPool queryPool, uint32_t firstQuery, uint32_t queryCount, VkBuffer dstBuffer, VkDeviceSize dstOffset, VkDeviceSize stride, VkQueryResultFlags flags)
 {
     unix_funcs->p_vkCmdCopyQueryPoolResults(commandBuffer, queryPool, firstQuery, queryCount, dstBuffer, dstOffset, stride, flags);
+}
+
+void WINAPI vkCmdCuLaunchKernelNVX(VkCommandBuffer commandBuffer, const VkCuLaunchInfoNVX *pLaunchInfo)
+{
+    unix_funcs->p_vkCmdCuLaunchKernelNVX(commandBuffer, pLaunchInfo);
 }
 
 void WINAPI vkCmdDebugMarkerBeginEXT(VkCommandBuffer commandBuffer, const VkDebugMarkerMarkerInfoEXT *pMarkerInfo)
@@ -848,6 +858,16 @@ VkResult WINAPI vkCreateComputePipelines(VkDevice device, VkPipelineCache pipeli
     return unix_funcs->p_vkCreateComputePipelines(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
 }
 
+VkResult WINAPI vkCreateCuFunctionNVX(VkDevice device, const VkCuFunctionCreateInfoNVX *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkCuFunctionNVX *pFunction)
+{
+    return unix_funcs->p_vkCreateCuFunctionNVX(device, pCreateInfo, pAllocator, pFunction);
+}
+
+VkResult WINAPI vkCreateCuModuleNVX(VkDevice device, const VkCuModuleCreateInfoNVX *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkCuModuleNVX *pModule)
+{
+    return unix_funcs->p_vkCreateCuModuleNVX(device, pCreateInfo, pAllocator, pModule);
+}
+
 VkResult WINAPI vkCreateDebugReportCallbackEXT(VkInstance instance, const VkDebugReportCallbackCreateInfoEXT *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkDebugReportCallbackEXT *pCallback)
 {
     return unix_funcs->p_vkCreateDebugReportCallbackEXT(instance, pCreateInfo, pAllocator, pCallback);
@@ -1051,6 +1071,16 @@ void WINAPI vkDestroyBufferView(VkDevice device, VkBufferView bufferView, const 
 void WINAPI vkDestroyCommandPool(VkDevice device, VkCommandPool commandPool, const VkAllocationCallbacks *pAllocator)
 {
     unix_funcs->p_vkDestroyCommandPool(device, commandPool, pAllocator);
+}
+
+void WINAPI vkDestroyCuFunctionNVX(VkDevice device, VkCuFunctionNVX function, const VkAllocationCallbacks *pAllocator)
+{
+    unix_funcs->p_vkDestroyCuFunctionNVX(device, function, pAllocator);
+}
+
+void WINAPI vkDestroyCuModuleNVX(VkDevice device, VkCuModuleNVX module, const VkAllocationCallbacks *pAllocator)
+{
+    unix_funcs->p_vkDestroyCuModuleNVX(device, module, pAllocator);
 }
 
 void WINAPI vkDestroyDebugReportCallbackEXT(VkInstance instance, VkDebugReportCallbackEXT callback, const VkAllocationCallbacks *pAllocator)
@@ -1363,6 +1393,11 @@ VkResult WINAPI vkGetDeviceGroupPresentCapabilitiesKHR(VkDevice device, VkDevice
     return unix_funcs->p_vkGetDeviceGroupPresentCapabilitiesKHR(device, pDeviceGroupPresentCapabilities);
 }
 
+VkResult WINAPI vkGetDeviceGroupSurfacePresentModes2EXT(VkDevice device, const VkPhysicalDeviceSurfaceInfo2KHR *pSurfaceInfo, VkDeviceGroupPresentModeFlagsKHR *pModes)
+{
+    return unix_funcs->p_vkGetDeviceGroupSurfacePresentModes2EXT(device, pSurfaceInfo, pModes);
+}
+
 VkResult WINAPI vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device, VkSurfaceKHR surface, VkDeviceGroupPresentModeFlagsKHR *pModes)
 {
     return unix_funcs->p_vkGetDeviceGroupSurfacePresentModesKHR(device, surface, pModes);
@@ -1441,6 +1476,16 @@ void WINAPI vkGetImageSparseMemoryRequirements2KHR(VkDevice device, const VkImag
 void WINAPI vkGetImageSubresourceLayout(VkDevice device, VkImage image, const VkImageSubresource *pSubresource, VkSubresourceLayout *pLayout)
 {
     unix_funcs->p_vkGetImageSubresourceLayout(device, image, pSubresource, pLayout);
+}
+
+VkResult WINAPI vkGetImageViewAddressNVX(VkDevice device, VkImageView imageView, VkImageViewAddressPropertiesNVX *pProperties)
+{
+    return unix_funcs->p_vkGetImageViewAddressNVX(device, imageView, pProperties);
+}
+
+uint32_t WINAPI vkGetImageViewHandleNVX(VkDevice device, const VkImageViewHandleInfoNVX *pInfo)
+{
+    return unix_funcs->p_vkGetImageViewHandleNVX(device, pInfo);
 }
 
 VkResult WINAPI vkGetMemoryHostPointerPropertiesEXT(VkDevice device, VkExternalMemoryHandleTypeFlagBits handleType, const void *pHostPointer, VkMemoryHostPointerPropertiesEXT *pMemoryHostPointerProperties)
@@ -1568,11 +1613,6 @@ VkResult WINAPI vkGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice physica
     return unix_funcs->p_vkGetPhysicalDevicePresentRectanglesKHR(physicalDevice, surface, pRectCount, pRects);
 }
 
-void WINAPI vkGetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties *pProperties)
-{
-    unix_funcs->p_vkGetPhysicalDeviceProperties(physicalDevice, pProperties);
-}
-
 void WINAPI vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR(VkPhysicalDevice physicalDevice, const VkQueryPoolPerformanceCreateInfoKHR *pPerformanceQueryCreateInfo, uint32_t *pNumPasses)
 {
     unix_funcs->p_vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR(physicalDevice, pPerformanceQueryCreateInfo, pNumPasses);
@@ -1631,6 +1671,11 @@ VkResult WINAPI vkGetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice physicalD
 VkResult WINAPI vkGetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t *pSurfaceFormatCount, VkSurfaceFormatKHR *pSurfaceFormats)
 {
     return unix_funcs->p_vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, pSurfaceFormatCount, pSurfaceFormats);
+}
+
+VkResult WINAPI vkGetPhysicalDeviceSurfacePresentModes2EXT(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR *pSurfaceInfo, uint32_t *pPresentModeCount, VkPresentModeKHR *pPresentModes)
+{
+    return unix_funcs->p_vkGetPhysicalDeviceSurfacePresentModes2EXT(physicalDevice, pSurfaceInfo, pPresentModeCount, pPresentModes);
 }
 
 VkResult WINAPI vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t *pPresentModeCount, VkPresentModeKHR *pPresentModes)
@@ -1813,6 +1858,11 @@ VkResult WINAPI vkQueueWaitIdle(VkQueue queue)
     return unix_funcs->p_vkQueueWaitIdle(queue);
 }
 
+VkResult WINAPI vkReleaseFullScreenExclusiveModeEXT(VkDevice device, VkSwapchainKHR swapchain)
+{
+    return unix_funcs->p_vkReleaseFullScreenExclusiveModeEXT(device, swapchain);
+}
+
 VkResult WINAPI vkReleasePerformanceConfigurationINTEL(VkDevice device, VkPerformanceConfigurationINTEL configuration)
 {
     return unix_funcs->p_vkReleasePerformanceConfigurationINTEL(device, configuration);
@@ -1950,6 +2000,7 @@ VkResult WINAPI vkWriteAccelerationStructuresPropertiesKHR(VkDevice device, uint
 
 static const struct vulkan_func vk_device_dispatch_table[] =
 {
+    {"vkAcquireFullScreenExclusiveModeEXT", &vkAcquireFullScreenExclusiveModeEXT},
     {"vkAcquireNextImage2KHR", &vkAcquireNextImage2KHR},
     {"vkAcquireNextImageKHR", &vkAcquireNextImageKHR},
     {"vkAcquirePerformanceConfigurationINTEL", &vkAcquirePerformanceConfigurationINTEL},
@@ -2003,6 +2054,7 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkCmdCopyImageToBuffer2KHR", &vkCmdCopyImageToBuffer2KHR},
     {"vkCmdCopyMemoryToAccelerationStructureKHR", &vkCmdCopyMemoryToAccelerationStructureKHR},
     {"vkCmdCopyQueryPoolResults", &vkCmdCopyQueryPoolResults},
+    {"vkCmdCuLaunchKernelNVX", &vkCmdCuLaunchKernelNVX},
     {"vkCmdDebugMarkerBeginEXT", &vkCmdDebugMarkerBeginEXT},
     {"vkCmdDebugMarkerEndEXT", &vkCmdDebugMarkerEndEXT},
     {"vkCmdDebugMarkerInsertEXT", &vkCmdDebugMarkerInsertEXT},
@@ -2117,6 +2169,8 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkCreateBufferView", &vkCreateBufferView},
     {"vkCreateCommandPool", &vkCreateCommandPool},
     {"vkCreateComputePipelines", &vkCreateComputePipelines},
+    {"vkCreateCuFunctionNVX", &vkCreateCuFunctionNVX},
+    {"vkCreateCuModuleNVX", &vkCreateCuModuleNVX},
     {"vkCreateDeferredOperationKHR", &vkCreateDeferredOperationKHR},
     {"vkCreateDescriptorPool", &vkCreateDescriptorPool},
     {"vkCreateDescriptorSetLayout", &vkCreateDescriptorSetLayout},
@@ -2153,6 +2207,8 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkDestroyBuffer", &vkDestroyBuffer},
     {"vkDestroyBufferView", &vkDestroyBufferView},
     {"vkDestroyCommandPool", &vkDestroyCommandPool},
+    {"vkDestroyCuFunctionNVX", &vkDestroyCuFunctionNVX},
+    {"vkDestroyCuModuleNVX", &vkDestroyCuModuleNVX},
     {"vkDestroyDeferredOperationKHR", &vkDestroyDeferredOperationKHR},
     {"vkDestroyDescriptorPool", &vkDestroyDescriptorPool},
     {"vkDestroyDescriptorSetLayout", &vkDestroyDescriptorSetLayout},
@@ -2205,6 +2261,7 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkGetDeviceGroupPeerMemoryFeatures", &vkGetDeviceGroupPeerMemoryFeatures},
     {"vkGetDeviceGroupPeerMemoryFeaturesKHR", &vkGetDeviceGroupPeerMemoryFeaturesKHR},
     {"vkGetDeviceGroupPresentCapabilitiesKHR", &vkGetDeviceGroupPresentCapabilitiesKHR},
+    {"vkGetDeviceGroupSurfacePresentModes2EXT", &vkGetDeviceGroupSurfacePresentModes2EXT},
     {"vkGetDeviceGroupSurfacePresentModesKHR", &vkGetDeviceGroupSurfacePresentModesKHR},
     {"vkGetDeviceMemoryCommitment", &vkGetDeviceMemoryCommitment},
     {"vkGetDeviceMemoryOpaqueCaptureAddress", &vkGetDeviceMemoryOpaqueCaptureAddress},
@@ -2222,6 +2279,8 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkGetImageSparseMemoryRequirements2", &vkGetImageSparseMemoryRequirements2},
     {"vkGetImageSparseMemoryRequirements2KHR", &vkGetImageSparseMemoryRequirements2KHR},
     {"vkGetImageSubresourceLayout", &vkGetImageSubresourceLayout},
+    {"vkGetImageViewAddressNVX", &vkGetImageViewAddressNVX},
+    {"vkGetImageViewHandleNVX", &vkGetImageViewHandleNVX},
     {"vkGetMemoryHostPointerPropertiesEXT", &vkGetMemoryHostPointerPropertiesEXT},
     {"vkGetPerformanceParameterINTEL", &vkGetPerformanceParameterINTEL},
     {"vkGetPipelineCacheData", &vkGetPipelineCacheData},
@@ -2256,6 +2315,7 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkQueueSubmit", &vkQueueSubmit},
     {"vkQueueSubmit2KHR", &vkQueueSubmit2KHR},
     {"vkQueueWaitIdle", &vkQueueWaitIdle},
+    {"vkReleaseFullScreenExclusiveModeEXT", &vkReleaseFullScreenExclusiveModeEXT},
     {"vkReleasePerformanceConfigurationINTEL", &vkReleasePerformanceConfigurationINTEL},
     {"vkReleaseProfilingLockKHR", &vkReleaseProfilingLockKHR},
     {"vkResetCommandBuffer", &vkResetCommandBuffer},
@@ -2328,6 +2388,7 @@ static const struct vulkan_func vk_phys_dev_dispatch_table[] =
     {"vkGetPhysicalDeviceSurfaceCapabilitiesKHR", &vkGetPhysicalDeviceSurfaceCapabilitiesKHR},
     {"vkGetPhysicalDeviceSurfaceFormats2KHR", &vkGetPhysicalDeviceSurfaceFormats2KHR},
     {"vkGetPhysicalDeviceSurfaceFormatsKHR", &vkGetPhysicalDeviceSurfaceFormatsKHR},
+    {"vkGetPhysicalDeviceSurfacePresentModes2EXT", &vkGetPhysicalDeviceSurfacePresentModes2EXT},
     {"vkGetPhysicalDeviceSurfacePresentModesKHR", &vkGetPhysicalDeviceSurfacePresentModesKHR},
     {"vkGetPhysicalDeviceSurfaceSupportKHR", &vkGetPhysicalDeviceSurfaceSupportKHR},
     {"vkGetPhysicalDeviceToolPropertiesEXT", &vkGetPhysicalDeviceToolPropertiesEXT},

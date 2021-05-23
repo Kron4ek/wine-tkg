@@ -14,6 +14,7 @@
 
 struct unix_funcs
 {
+    VkResult (WINAPI *p_vkAcquireFullScreenExclusiveModeEXT)(VkDevice, VkSwapchainKHR);
     VkResult (WINAPI *p_vkAcquireNextImage2KHR)(VkDevice, const VkAcquireNextImageInfoKHR *, uint32_t *);
     VkResult (WINAPI *p_vkAcquireNextImageKHR)(VkDevice, VkSwapchainKHR, uint64_t, VkSemaphore, VkFence, uint32_t *);
     VkResult (WINAPI *p_vkAcquirePerformanceConfigurationINTEL)(VkDevice, const VkPerformanceConfigurationAcquireInfoINTEL *, VkPerformanceConfigurationINTEL *);
@@ -67,6 +68,7 @@ struct unix_funcs
     void (WINAPI *p_vkCmdCopyImageToBuffer2KHR)(VkCommandBuffer, const VkCopyImageToBufferInfo2KHR *);
     void (WINAPI *p_vkCmdCopyMemoryToAccelerationStructureKHR)(VkCommandBuffer, const VkCopyMemoryToAccelerationStructureInfoKHR *);
     void (WINAPI *p_vkCmdCopyQueryPoolResults)(VkCommandBuffer, VkQueryPool, uint32_t, uint32_t, VkBuffer, VkDeviceSize, VkDeviceSize, VkQueryResultFlags);
+    void (WINAPI *p_vkCmdCuLaunchKernelNVX)(VkCommandBuffer, const VkCuLaunchInfoNVX *);
     void (WINAPI *p_vkCmdDebugMarkerBeginEXT)(VkCommandBuffer, const VkDebugMarkerMarkerInfoEXT *);
     void (WINAPI *p_vkCmdDebugMarkerEndEXT)(VkCommandBuffer);
     void (WINAPI *p_vkCmdDebugMarkerInsertEXT)(VkCommandBuffer, const VkDebugMarkerMarkerInfoEXT *);
@@ -181,6 +183,8 @@ struct unix_funcs
     VkResult (WINAPI *p_vkCreateBufferView)(VkDevice, const VkBufferViewCreateInfo *, const VkAllocationCallbacks *, VkBufferView *);
     VkResult (WINAPI *p_vkCreateCommandPool)(VkDevice, const VkCommandPoolCreateInfo *, const VkAllocationCallbacks *, VkCommandPool *);
     VkResult (WINAPI *p_vkCreateComputePipelines)(VkDevice, VkPipelineCache, uint32_t, const VkComputePipelineCreateInfo *, const VkAllocationCallbacks *, VkPipeline *);
+    VkResult (WINAPI *p_vkCreateCuFunctionNVX)(VkDevice, const VkCuFunctionCreateInfoNVX *, const VkAllocationCallbacks *, VkCuFunctionNVX *);
+    VkResult (WINAPI *p_vkCreateCuModuleNVX)(VkDevice, const VkCuModuleCreateInfoNVX *, const VkAllocationCallbacks *, VkCuModuleNVX *);
     VkResult (WINAPI *p_vkCreateDebugReportCallbackEXT)(VkInstance, const VkDebugReportCallbackCreateInfoEXT *, const VkAllocationCallbacks *, VkDebugReportCallbackEXT *);
     VkResult (WINAPI *p_vkCreateDebugUtilsMessengerEXT)(VkInstance, const VkDebugUtilsMessengerCreateInfoEXT *, const VkAllocationCallbacks *, VkDebugUtilsMessengerEXT *);
     VkResult (WINAPI *p_vkCreateDeferredOperationKHR)(VkDevice, const VkAllocationCallbacks *, VkDeferredOperationKHR *);
@@ -223,6 +227,8 @@ struct unix_funcs
     void (WINAPI *p_vkDestroyBuffer)(VkDevice, VkBuffer, const VkAllocationCallbacks *);
     void (WINAPI *p_vkDestroyBufferView)(VkDevice, VkBufferView, const VkAllocationCallbacks *);
     void (WINAPI *p_vkDestroyCommandPool)(VkDevice, VkCommandPool, const VkAllocationCallbacks *);
+    void (WINAPI *p_vkDestroyCuFunctionNVX)(VkDevice, VkCuFunctionNVX, const VkAllocationCallbacks *);
+    void (WINAPI *p_vkDestroyCuModuleNVX)(VkDevice, VkCuModuleNVX, const VkAllocationCallbacks *);
     void (WINAPI *p_vkDestroyDebugReportCallbackEXT)(VkInstance, VkDebugReportCallbackEXT, const VkAllocationCallbacks *);
     void (WINAPI *p_vkDestroyDebugUtilsMessengerEXT)(VkInstance, VkDebugUtilsMessengerEXT, const VkAllocationCallbacks *);
     void (WINAPI *p_vkDestroyDeferredOperationKHR)(VkDevice, VkDeferredOperationKHR, const VkAllocationCallbacks *);
@@ -287,6 +293,7 @@ struct unix_funcs
     void (WINAPI *p_vkGetDeviceGroupPeerMemoryFeatures)(VkDevice, uint32_t, uint32_t, uint32_t, VkPeerMemoryFeatureFlags *);
     void (WINAPI *p_vkGetDeviceGroupPeerMemoryFeaturesKHR)(VkDevice, uint32_t, uint32_t, uint32_t, VkPeerMemoryFeatureFlags *);
     VkResult (WINAPI *p_vkGetDeviceGroupPresentCapabilitiesKHR)(VkDevice, VkDeviceGroupPresentCapabilitiesKHR *);
+    VkResult (WINAPI *p_vkGetDeviceGroupSurfacePresentModes2EXT)(VkDevice, const VkPhysicalDeviceSurfaceInfo2KHR *, VkDeviceGroupPresentModeFlagsKHR *);
     VkResult (WINAPI *p_vkGetDeviceGroupSurfacePresentModesKHR)(VkDevice, VkSurfaceKHR, VkDeviceGroupPresentModeFlagsKHR *);
     void (WINAPI *p_vkGetDeviceMemoryCommitment)(VkDevice, VkDeviceMemory, VkDeviceSize *);
     uint64_t (WINAPI *p_vkGetDeviceMemoryOpaqueCaptureAddress)(VkDevice, const VkDeviceMemoryOpaqueCaptureAddressInfo *);
@@ -303,6 +310,8 @@ struct unix_funcs
     void (WINAPI *p_vkGetImageSparseMemoryRequirements2)(VkDevice, const VkImageSparseMemoryRequirementsInfo2 *, uint32_t *, VkSparseImageMemoryRequirements2 *);
     void (WINAPI *p_vkGetImageSparseMemoryRequirements2KHR)(VkDevice, const VkImageSparseMemoryRequirementsInfo2 *, uint32_t *, VkSparseImageMemoryRequirements2 *);
     void (WINAPI *p_vkGetImageSubresourceLayout)(VkDevice, VkImage, const VkImageSubresource *, VkSubresourceLayout *);
+    VkResult (WINAPI *p_vkGetImageViewAddressNVX)(VkDevice, VkImageView, VkImageViewAddressPropertiesNVX *);
+    uint32_t (WINAPI *p_vkGetImageViewHandleNVX)(VkDevice, const VkImageViewHandleInfoNVX *);
     VkResult (WINAPI *p_vkGetMemoryHostPointerPropertiesEXT)(VkDevice, VkExternalMemoryHandleTypeFlagBits, const void *, VkMemoryHostPointerPropertiesEXT *);
     VkResult (WINAPI *p_vkGetPerformanceParameterINTEL)(VkDevice, VkPerformanceParameterTypeINTEL, VkPerformanceValueINTEL *);
     VkResult (WINAPI *p_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT)(VkPhysicalDevice, uint32_t *, VkTimeDomainEXT *);
@@ -343,6 +352,7 @@ struct unix_funcs
     VkResult (WINAPI *p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR)(VkPhysicalDevice, VkSurfaceKHR, VkSurfaceCapabilitiesKHR *);
     VkResult (WINAPI *p_vkGetPhysicalDeviceSurfaceFormats2KHR)(VkPhysicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR *, uint32_t *, VkSurfaceFormat2KHR *);
     VkResult (WINAPI *p_vkGetPhysicalDeviceSurfaceFormatsKHR)(VkPhysicalDevice, VkSurfaceKHR, uint32_t *, VkSurfaceFormatKHR *);
+    VkResult (WINAPI *p_vkGetPhysicalDeviceSurfacePresentModes2EXT)(VkPhysicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR *, uint32_t *, VkPresentModeKHR *);
     VkResult (WINAPI *p_vkGetPhysicalDeviceSurfacePresentModesKHR)(VkPhysicalDevice, VkSurfaceKHR, uint32_t *, VkPresentModeKHR *);
     VkResult (WINAPI *p_vkGetPhysicalDeviceSurfaceSupportKHR)(VkPhysicalDevice, uint32_t, VkSurfaceKHR, VkBool32 *);
     VkResult (WINAPI *p_vkGetPhysicalDeviceToolPropertiesEXT)(VkPhysicalDevice, uint32_t *, VkPhysicalDeviceToolPropertiesEXT *);
@@ -379,6 +389,7 @@ struct unix_funcs
     VkResult (WINAPI *p_vkQueueSubmit)(VkQueue, uint32_t, const VkSubmitInfo *, VkFence);
     VkResult (WINAPI *p_vkQueueSubmit2KHR)(VkQueue, uint32_t, const VkSubmitInfo2KHR *, VkFence);
     VkResult (WINAPI *p_vkQueueWaitIdle)(VkQueue);
+    VkResult (WINAPI *p_vkReleaseFullScreenExclusiveModeEXT)(VkDevice, VkSwapchainKHR);
     VkResult (WINAPI *p_vkReleasePerformanceConfigurationINTEL)(VkDevice, VkPerformanceConfigurationINTEL);
     void (WINAPI *p_vkReleaseProfilingLockKHR)(VkDevice);
     VkResult (WINAPI *p_vkResetCommandBuffer)(VkCommandBuffer, VkCommandBufferResetFlags);

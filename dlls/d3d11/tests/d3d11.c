@@ -1698,11 +1698,10 @@ static void release_test_context_(unsigned int line, struct d3d11_test_context *
     ok_(__FILE__, line)(!ref, "Device has %u references left.\n", ref);
 }
 
-#define draw_quad(context) draw_quad_vs_(__LINE__, context, NULL, 0, (context)->immediate_context)
-#define draw_quad_vs(a, b, c) draw_quad_vs_(__LINE__, a, b, c, (a)->immediate_context)
-#define draw_quad_ext(a, b, c, d) draw_quad_vs_(__LINE__, a, b, c, d)
+#define draw_quad(context) draw_quad_vs_(__LINE__, context, NULL, 0)
+#define draw_quad_vs(a, b, c) draw_quad_vs_(__LINE__, a, b, c)
 static void draw_quad_vs_(unsigned int line, struct d3d11_test_context *context,
-        const DWORD *vs_code, size_t vs_code_size, ID3D11DeviceContext *draw_context)
+        const DWORD *vs_code, size_t vs_code_size)
 {
     static const D3D11_INPUT_ELEMENT_DESC default_layout_desc[] =
     {
@@ -1771,14 +1770,14 @@ static void draw_quad_vs_(unsigned int line, struct d3d11_test_context *context,
     if (!context->vb)
         context->vb = create_buffer(device, D3D11_BIND_VERTEX_BUFFER, sizeof(quad), quad);
 
-    ID3D11DeviceContext_IASetInputLayout(draw_context, context->input_layout);
-    ID3D11DeviceContext_IASetPrimitiveTopology(draw_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+    ID3D11DeviceContext_IASetInputLayout(context->immediate_context, context->input_layout);
+    ID3D11DeviceContext_IASetPrimitiveTopology(context->immediate_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
     stride = sizeof(*quad);
     offset = 0;
-    ID3D11DeviceContext_IASetVertexBuffers(draw_context, 0, 1, &context->vb, &stride, &offset);
-    ID3D11DeviceContext_VSSetShader(draw_context, context->vs, NULL, 0);
+    ID3D11DeviceContext_IASetVertexBuffers(context->immediate_context, 0, 1, &context->vb, &stride, &offset);
+    ID3D11DeviceContext_VSSetShader(context->immediate_context, context->vs, NULL, 0);
 
-    ID3D11DeviceContext_Draw(draw_context, 4, 0);
+    ID3D11DeviceContext_Draw(context->immediate_context, 4, 0);
 }
 
 #define draw_quad_z(context, z) draw_quad_z_(__LINE__, context, z)
@@ -1814,27 +1813,19 @@ static void draw_quad_z_(unsigned int line, struct d3d11_test_context *context, 
             (ID3D11Resource *)context->vs_cb, 0, NULL, &data, 0, 0);
 
     ID3D11DeviceContext_VSSetConstantBuffers(context->immediate_context, 0, 1, &context->vs_cb);
-    draw_quad_vs_(__LINE__, context, vs_code, sizeof(vs_code), context->immediate_context);
-}
-
-static void set_quad_color_ext(struct d3d11_test_context *context, const struct vec4 *color,
-        ID3D11DeviceContext *draw_context)
-{
-    ID3D11DeviceContext_UpdateSubresource(draw_context,
-            (ID3D11Resource *)context->ps_cb, 0, NULL, color, 0, 0);
+    draw_quad_vs_(__LINE__, context, vs_code, sizeof(vs_code));
 }
 
 static void set_quad_color(struct d3d11_test_context *context, const struct vec4 *color)
 {
-    set_quad_color_ext(context, color, context->immediate_context);
+    ID3D11DeviceContext_UpdateSubresource(context->immediate_context,
+            (ID3D11Resource *)context->ps_cb, 0, NULL, color, 0, 0);
 }
 
-#define draw_color_quad(a, b) draw_color_quad_(__LINE__, a, b, NULL, 0, (a)->immediate_context)
-#define draw_color_quad_vs(a, b, c, d) draw_color_quad_(__LINE__, a, b, c, d, (a)->immediate_context)
-#define draw_color_quad_ext(a, b, c, d, e) draw_color_quad_(__LINE__, a, b, c, d, e)
+#define draw_color_quad(a, b) draw_color_quad_(__LINE__, a, b, NULL, 0)
+#define draw_color_quad_vs(a, b, c, d) draw_color_quad_(__LINE__, a, b, c, d)
 static void draw_color_quad_(unsigned int line, struct d3d11_test_context *context,
-        const struct vec4 *color, const DWORD *vs_code, size_t vs_code_size,
-        ID3D11DeviceContext *draw_context)
+        const struct vec4 *color, const DWORD *vs_code, size_t vs_code_size)
 {
     static const DWORD ps_color_code[] =
     {
@@ -1871,12 +1862,12 @@ static void draw_color_quad_(unsigned int line, struct d3d11_test_context *conte
     if (!context->ps_cb)
         context->ps_cb = create_buffer(device, D3D11_BIND_CONSTANT_BUFFER, sizeof(*color), NULL);
 
-    ID3D11DeviceContext_PSSetShader(draw_context, context->ps, NULL, 0);
-    ID3D11DeviceContext_PSSetConstantBuffers(draw_context, 0, 1, &context->ps_cb);
+    ID3D11DeviceContext_PSSetShader(context->immediate_context, context->ps, NULL, 0);
+    ID3D11DeviceContext_PSSetConstantBuffers(context->immediate_context, 0, 1, &context->ps_cb);
 
-    set_quad_color_ext(context, color, draw_context);
+    set_quad_color(context, color);
 
-    draw_quad_vs_(line, context, vs_code, vs_code_size, draw_context);
+    draw_quad_vs_(line, context, vs_code, vs_code_size);
 }
 
 static void test_create_device(void)
@@ -2103,59 +2094,6 @@ static void test_create_device(void)
     DestroyWindow(window);
 }
 
-static void test_draw_deferred_context(void)
-{
-    static const struct vec4 red = {1.0f, 0.0f, 0.0f, 1.0f};
-    static const float white[] = {1.0f, 1.0f, 1.0f, 1.0f};
-    static const float black[] = {0.0f, 0.0f, 0.0f, 0.0f};
-    ID3D11DeviceContext *context, *deferred_context;
-    struct d3d11_test_context test_context;
-    ID3D11CommandList *command_list;
-    ID3D11Device *device;
-    DWORD color;
-    HRESULT hr;
-
-    if (!init_test_context(&test_context, NULL))
-        return;
-
-    device = test_context.device;
-    context = test_context.immediate_context;
-
-    hr = ID3D11Device_CreateDeferredContext(device, 0, &deferred_context);
-    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
-
-    ID3D11DeviceContext_ClearRenderTargetView(context, test_context.backbuffer_rtv, white);
-    color = get_texture_color(test_context.backbuffer, 320, 240);
-    ok(color == 0xffffffff, "Got unexpected color 0x%08x.\n", color);
-
-    ID3D11DeviceContext_ClearRenderTargetView(deferred_context, test_context.backbuffer_rtv, black);
-
-    hr = ID3D11DeviceContext_FinishCommandList(deferred_context, FALSE, &command_list);
-    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
-
-    ID3D11DeviceContext_ExecuteCommandList(context, command_list, TRUE);
-    color = get_texture_color(test_context.backbuffer, 320, 240);
-    ok(color == 0x00000000, "Got unexpected color 0x%08x.\n", color);
-    ID3D11CommandList_Release(command_list);
-
-    ID3D11DeviceContext_OMSetRenderTargets(deferred_context, 1, &test_context.backbuffer_rtv, NULL);
-
-    draw_color_quad_ext(&test_context, &red, NULL, 0, deferred_context);
-    color = get_texture_color(test_context.backbuffer, 320, 240);
-    ok(color == 0x00000000, "Got unexpected color 0x%08x.\n", color);
-
-    hr = ID3D11DeviceContext_FinishCommandList(deferred_context, TRUE, &command_list);
-    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
-    ID3D11DeviceContext_ExecuteCommandList(context, command_list, TRUE);
-
-    color = get_texture_color(test_context.backbuffer, 320, 240);
-    ok(color == 0xff0000ff, "Got unexpected color 0x%08x.\n", color);
-    ID3D11CommandList_Release(command_list);
-
-    ID3D11DeviceContext_Release(deferred_context);
-    release_test_context(&test_context);
-}
-
 static void test_device_interfaces(const D3D_FEATURE_LEVEL feature_level)
 {
     struct device_desc device_desc;
@@ -2328,8 +2266,6 @@ static void test_create_deferred_context(void)
 
     hr = ID3D11Device_CreateDeferredContext(device, 0, &context);
     todo_wine ok(hr == DXGI_ERROR_INVALID_CALL, "Failed to create deferred context, hr %#x.\n", hr);
-    if (SUCCEEDED(hr))
-        ID3D11DeviceContext_Release(context);
 
     refcount = ID3D11Device_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
@@ -2342,7 +2278,7 @@ static void test_create_deferred_context(void)
 
     expected_refcount = get_refcount(device) + 1;
     hr = ID3D11Device_CreateDeferredContext(device, 0, &context);
-    ok(hr == S_OK, "Failed to create deferred context, hr %#x.\n", hr);
+    todo_wine ok(hr == S_OK, "Failed to create deferred context, hr %#x.\n", hr);
     if (FAILED(hr))
         goto done;
     refcount = get_refcount(device);
@@ -32297,7 +32233,7 @@ static void test_dual_source_blend(void)
 static void test_deferred_context_state(void)
 {
     ID3D11Buffer *green_buffer, *blue_buffer, *ret_buffer;
-    ID3D11DeviceContext *immediate, *deferred;
+    ID3D11DeviceContext *immediate, *deferred, *deferred2;
     ID3D11ShaderResourceView *srv, *ret_srv;
     struct d3d11_test_context test_context;
     ID3D11RenderTargetView *rtv, *ret_rtv;
@@ -32363,6 +32299,35 @@ static void test_deferred_context_state(void)
     ID3D11DeviceContext_PSGetConstantBuffers(immediate, 0, 1, &ret_buffer);
     ok(!ret_buffer, "Got unexpected buffer %p.\n", ret_buffer);
 
+    ID3D11CommandList_Release(list2);
+    ID3D11CommandList_Release(list1);
+
+    /* Test recording a command list into another deferred context. */
+
+    hr = ID3D11Device_CreateDeferredContext(device, 0, &deferred2);
+    ok(hr == S_OK, "Failed to create deferred context, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_PSSetConstantBuffers(deferred2, 0, 1, &green_buffer);
+
+    hr = ID3D11DeviceContext_FinishCommandList(deferred2, FALSE, &list1);
+    ok(hr == S_OK, "Failed to create command list, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_PSSetConstantBuffers(deferred, 0, 1, &blue_buffer);
+    ID3D11DeviceContext_ExecuteCommandList(deferred, list1, TRUE);
+    ID3D11DeviceContext_PSGetConstantBuffers(deferred, 0, 1, &ret_buffer);
+    ok(ret_buffer == blue_buffer, "Got unexpected buffer %p.\n", ret_buffer);
+    ID3D11Buffer_Release(ret_buffer);
+
+    ID3D11DeviceContext_PSSetConstantBuffers(deferred, 0, 1, &blue_buffer);
+    ID3D11DeviceContext_ExecuteCommandList(deferred, list1, FALSE);
+    ID3D11DeviceContext_PSGetConstantBuffers(deferred, 0, 1, &ret_buffer);
+    todo_wine ok(!ret_buffer, "Got unexpected buffer %p.\n", ret_buffer);
+    if (ret_buffer)
+        ID3D11Buffer_Release(ret_buffer);
+
+    ID3D11CommandList_Release(list1);
+    ID3D11DeviceContext_Release(deferred2);
+
     /* Test unbinding an SRV when using the same resource as RTV. */
 
     ID3D11Texture2D_GetDesc(test_context.backbuffer, &texture_desc);
@@ -32389,8 +32354,6 @@ static void test_deferred_context_state(void)
     ID3D11ShaderResourceView_Release(srv);
     ID3D11RenderTargetView_Release(rtv);
     ID3D11Texture2D_Release(texture);
-    ID3D11CommandList_Release(list2);
-    ID3D11CommandList_Release(list1);
     ID3D11DeviceContext_Release(deferred);
     ID3D11Buffer_Release(blue_buffer);
     ID3D11Buffer_Release(green_buffer);
@@ -32457,27 +32420,30 @@ out:
 
 static void test_deferred_context_rendering(void)
 {
-    ID3D11DeviceContext *immediate, *deferred;
+    ID3D11BlendState *red_blend, *green_blend, *blue_blend, *ret_blend;
+    ID3D11DeviceContext *immediate, *deferred, *deferred2;
     struct d3d11_test_context test_context;
     D3D11_TEXTURE2D_DESC texture_desc;
     ID3D11CommandList *list1, *list2;
     ID3D11RenderTargetView *rtv;
+    D3D11_BLEND_DESC blend_desc;
     ID3D11Texture2D *texture;
+    float blend_factor[4];
     ID3D11Device *device;
+    UINT sample_mask;
     DWORD color;
     HRESULT hr;
 
-    static const float white[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    static const struct vec4 white = {1.0f, 1.0f, 1.0f, 1.0f};
     static const float green[] = {0.0f, 1.0f, 0.0f, 1.0f};
     static const float blue[] = {0.0f, 0.0f, 1.0f, 1.0f};
+    static const float black[] = {0.0f, 0.0f, 0.0f, 1.0f};
 
     if (!init_test_context(&test_context, NULL))
         return;
 
     device = test_context.device;
     immediate = test_context.immediate_context;
-
-    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, white);
 
     hr = ID3D11Device_CreateDeferredContext(device, 0, &deferred);
     todo_wine ok(hr == S_OK, "Failed to create deferred context, hr %#x.\n", hr);
@@ -32486,6 +32452,20 @@ static void test_deferred_context_rendering(void)
         release_test_context(&test_context);
         return;
     }
+
+    memset(&blend_desc, 0, sizeof(blend_desc));
+
+    blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED;
+    hr = ID3D11Device_CreateBlendState(device, &blend_desc, &red_blend);
+    ok(hr == S_OK, "Failed to create blend state, hr %#x.\n", hr);
+    blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_GREEN;
+    hr = ID3D11Device_CreateBlendState(device, &blend_desc, &green_blend);
+    ok(hr == S_OK, "Failed to create blend state, hr %#x.\n", hr);
+    blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_BLUE;
+    hr = ID3D11Device_CreateBlendState(device, &blend_desc, &blue_blend);
+    ok(hr == S_OK, "Failed to create blend state, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, &white.x);
 
     ID3D11DeviceContext_ClearRenderTargetView(deferred, test_context.backbuffer_rtv, green);
 
@@ -32502,12 +32482,12 @@ static void test_deferred_context_rendering(void)
     color = get_texture_color(test_context.backbuffer, 320, 240);
     ok(color == 0xff00ff00, "Got unexpected color %#08x.\n", color);
 
-    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, white);
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, &white.x);
     ID3D11DeviceContext_ExecuteCommandList(immediate, list1, TRUE);
     color = get_texture_color(test_context.backbuffer, 320, 240);
     ok(color == 0xff00ff00, "Got unexpected color %#08x.\n", color);
 
-    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, white);
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, &white.x);
     ID3D11DeviceContext_ExecuteCommandList(immediate, list2, TRUE);
     color = get_texture_color(test_context.backbuffer, 320, 240);
     ok(color == 0xffffffff, "Got unexpected color %#08x.\n", color);
@@ -32518,7 +32498,7 @@ static void test_deferred_context_rendering(void)
     hr = ID3D11DeviceContext_FinishCommandList(deferred, TRUE, &list2);
     ok(hr == S_OK, "Failed to create command list, hr %#x.\n", hr);
 
-    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, white);
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, &white.x);
     ID3D11DeviceContext_ExecuteCommandList(immediate, list2, TRUE);
     color = get_texture_color(test_context.backbuffer, 320, 240);
     ok(color == 0xff00ff00, "Got unexpected color %#08x.\n", color);
@@ -32533,7 +32513,7 @@ static void test_deferred_context_rendering(void)
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, NULL, &rtv);
     ok(hr == S_OK, "Failed to create view, hr %#x.\n", hr);
 
-    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, white);
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, &white.x);
     ID3D11DeviceContext_ClearRenderTargetView(immediate, rtv, green);
 
     hr = ID3D11Device_CreateDeferredContext(device, 0, &deferred);
@@ -32552,6 +32532,153 @@ static void test_deferred_context_rendering(void)
     ID3D11CommandList_Release(list1);
     ID3D11DeviceContext_Release(deferred);
 
+    /* As Get* calls imply, state changes recorded into a command list do not
+     * affect subsequent draws after the state is restored or cleared. */
+
+    hr = ID3D11Device_CreateDeferredContext(device, 0, &deferred);
+    ok(hr == S_OK, "Failed to create deferred context, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_OMSetBlendState(deferred, green_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+
+    hr = ID3D11DeviceContext_FinishCommandList(deferred, TRUE, &list1);
+    ok(hr == S_OK, "Failed to create command list, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, black);
+    ID3D11DeviceContext_OMSetBlendState(immediate, blue_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+    ID3D11DeviceContext_ExecuteCommandList(immediate, list1, TRUE);
+    draw_color_quad(&test_context, &white);
+    color = get_texture_color(test_context.backbuffer, 320, 240);
+    ok(color == 0xffff0000, "Got unexpected color %#08x.\n", color);
+
+    ID3D11DeviceContext_OMGetBlendState(immediate, &ret_blend, blend_factor, &sample_mask);
+    ok(ret_blend == blue_blend, "Got unexpected blend state %p.\n", ret_blend);
+    ID3D11BlendState_Release(ret_blend);
+
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, black);
+    ID3D11DeviceContext_OMSetBlendState(immediate, blue_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+    ID3D11DeviceContext_ExecuteCommandList(immediate, list1, FALSE);
+    ID3D11DeviceContext_OMSetRenderTargets(immediate, 1, &test_context.backbuffer_rtv, NULL);
+    set_viewport(immediate, 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f);
+    draw_color_quad(&test_context, &white);
+    color = get_texture_color(test_context.backbuffer, 320, 240);
+    ok(color == 0xffffffff, "Got unexpected color %#08x.\n", color);
+
+    ID3D11DeviceContext_OMGetBlendState(immediate, &ret_blend, blend_factor, &sample_mask);
+    ok(!ret_blend, "Got unexpected blend state %p.\n", ret_blend);
+
+    ID3D11CommandList_Release(list1);
+    ID3D11DeviceContext_Release(deferred);
+
+    /* The clearing of state done by FinishCommandList is captured by a
+     * subsequent call to FinishCommandList... */
+
+    hr = ID3D11Device_CreateDeferredContext(device, 0, &deferred);
+    ok(hr == S_OK, "Failed to create deferred context, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_OMSetBlendState(deferred, green_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+    hr = ID3D11DeviceContext_FinishCommandList(deferred, FALSE, &list1);
+    ok(hr == S_OK, "Failed to create command list, hr %#x.\n", hr);
+    ID3D11CommandList_Release(list1);
+
+    ID3D11DeviceContext_OMSetRenderTargets(deferred, 1, &test_context.backbuffer_rtv, NULL);
+    set_viewport(deferred, 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f);
+    test_context.immediate_context = deferred;
+    draw_color_quad(&test_context, &white);
+    test_context.immediate_context = immediate;
+    hr = ID3D11DeviceContext_FinishCommandList(deferred, TRUE, &list1);
+    ok(hr == S_OK, "Failed to create command list, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, black);
+    ID3D11DeviceContext_OMSetBlendState(immediate, red_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+    ID3D11DeviceContext_ExecuteCommandList(immediate, list1, FALSE);
+    color = get_texture_color(test_context.backbuffer, 320, 240);
+    todo_wine ok(color == 0xffffffff, "Got unexpected color %#08x.\n", color);
+
+    ID3D11CommandList_Release(list1);
+
+    /* ...and so is the save/restore. */
+
+    ID3D11DeviceContext_OMSetBlendState(deferred, green_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+    hr = ID3D11DeviceContext_FinishCommandList(deferred, TRUE, &list1);
+    ok(hr == S_OK, "Failed to create command list, hr %#x.\n", hr);
+    ID3D11CommandList_Release(list1);
+
+    ID3D11DeviceContext_OMSetRenderTargets(deferred, 1, &test_context.backbuffer_rtv, NULL);
+    set_viewport(deferred, 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f);
+    test_context.immediate_context = deferred;
+    draw_color_quad(&test_context, &white);
+    test_context.immediate_context = immediate;
+    hr = ID3D11DeviceContext_FinishCommandList(deferred, TRUE, &list1);
+    ok(hr == S_OK, "Failed to create command list, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, black);
+    ID3D11DeviceContext_OMSetBlendState(immediate, red_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+    ID3D11DeviceContext_ExecuteCommandList(immediate, list1, FALSE);
+    color = get_texture_color(test_context.backbuffer, 320, 240);
+    todo_wine ok(color == 0xff00ff00, "Got unexpected color %#08x.\n", color);
+
+    ID3D11CommandList_Release(list1);
+
+    ID3D11DeviceContext_Release(deferred);
+
+    /* Similarly, clearing of state done by ExecuteCommandList is captured by a
+     * subsequent call to FinishCommandList. */
+
+    hr = ID3D11Device_CreateDeferredContext(device, 0, &deferred);
+    ok(hr == S_OK, "Failed to create deferred context, hr %#x.\n", hr);
+    hr = ID3D11Device_CreateDeferredContext(device, 0, &deferred2);
+    ok(hr == S_OK, "Failed to create deferred context, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_OMSetBlendState(deferred2, blue_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+
+    hr = ID3D11DeviceContext_FinishCommandList(deferred2, FALSE, &list1);
+    ok(hr == S_OK, "Failed to create command list, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_OMSetBlendState(deferred, green_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+    ID3D11DeviceContext_ExecuteCommandList(deferred, list1, FALSE);
+    ID3D11DeviceContext_OMSetRenderTargets(deferred, 1, &test_context.backbuffer_rtv, NULL);
+    set_viewport(deferred, 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f);
+    test_context.immediate_context = deferred;
+    draw_color_quad(&test_context, &white);
+    test_context.immediate_context = immediate;
+    hr = ID3D11DeviceContext_FinishCommandList(deferred, TRUE, &list2);
+    ok(hr == S_OK, "Failed to create command list, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, black);
+    ID3D11DeviceContext_OMSetBlendState(immediate, red_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+    ID3D11DeviceContext_ExecuteCommandList(immediate, list2, FALSE);
+    color = get_texture_color(test_context.backbuffer, 320, 240);
+    todo_wine ok(color == 0xffffffff, "Got unexpected color %#08x.\n", color);
+
+    ID3D11CommandList_Release(list2);
+
+    /* Make sure that save/restore is handled correctly as well. */
+
+    ID3D11DeviceContext_OMSetBlendState(deferred, green_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+    ID3D11DeviceContext_ExecuteCommandList(deferred, list1, TRUE);
+    ID3D11DeviceContext_OMSetRenderTargets(deferred, 1, &test_context.backbuffer_rtv, NULL);
+    set_viewport(deferred, 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f);
+    test_context.immediate_context = deferred;
+    draw_color_quad(&test_context, &white);
+    test_context.immediate_context = immediate;
+    hr = ID3D11DeviceContext_FinishCommandList(deferred, TRUE, &list2);
+    ok(hr == S_OK, "Failed to create command list, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_ClearRenderTargetView(immediate, test_context.backbuffer_rtv, black);
+    ID3D11DeviceContext_OMSetBlendState(immediate, red_blend, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+    ID3D11DeviceContext_ExecuteCommandList(immediate, list2, FALSE);
+    color = get_texture_color(test_context.backbuffer, 320, 240);
+    todo_wine ok(color == 0xff00ff00, "Got unexpected color %#08x.\n", color);
+
+    ID3D11CommandList_Release(list2);
+
+    ID3D11CommandList_Release(list1);
+    ID3D11DeviceContext_Release(deferred2);
+    ID3D11DeviceContext_Release(deferred);
+
+    ID3D11BlendState_Release(red_blend);
+    ID3D11BlendState_Release(green_blend);
+    ID3D11BlendState_Release(blue_blend);
     ID3D11RenderTargetView_Release(rtv);
     ID3D11Texture2D_Release(texture);
     release_test_context(&test_context);
@@ -32578,11 +32705,11 @@ START_TEST(d3d11)
     }
 
     print_adapter_info();
+
     queue_test(test_create_device);
     queue_for_each_feature_level(test_device_interfaces);
     queue_test(test_immediate_context);
     queue_test(test_create_deferred_context);
-    queue_test(test_draw_deferred_context);
     queue_test(test_create_texture1d);
     queue_test(test_texture1d_interfaces);
     queue_test(test_create_texture2d);

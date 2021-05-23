@@ -28,6 +28,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -743,7 +744,9 @@ static void free_ranges_insert_view( struct file_view *view )
         (range->end == view_base && next->base >= view_end))
     {
         /* on Win64, assert that it's correctly aligned so we're not going to be in trouble later */
-        assert( (!is_win64 && !is_wow64) || view->base == view_base );
+#ifdef _WIN64
+        assert( view->base == view_base );
+#endif
         WARN( "range %p - %p is already mapped\n", view_base, view_end );
         return;
     }
@@ -2932,8 +2935,8 @@ NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_nam
 /* set some initial values in the new PEB */
 static PEB *init_peb( void *ptr )
 {
-    PEB32 *peb32 = ptr;
-    PEB64 *peb64 = (PEB64 *)((char *)ptr + page_size);
+    PEB64 *peb64 = ptr;
+    PEB32 *peb32 = (PEB32 *)((char *)ptr + page_size);
 
     peb32->OSMajorVersion = peb64->OSMajorVersion = 6;
     peb32->OSMinorVersion = peb64->OSMinorVersion = 1;
@@ -2949,7 +2952,7 @@ static PEB *init_peb( void *ptr )
 
 
 /* set some initial values in a new TEB */
-static TEB *init_teb( void *ptr, PEB *peb )
+static TEB *init_teb( void *ptr, PEB *peb, BOOL is_wow )
 {
     struct ntdll_thread_data *thread_data;
     TEB *teb;
@@ -2958,7 +2961,7 @@ static TEB *init_teb( void *ptr, PEB *peb )
 
 #ifdef _WIN64
     teb = (TEB *)teb64;
-    teb32->Peb = PtrToUlong( (char *)peb - page_size );
+    teb32->Peb = PtrToUlong( (char *)peb + page_size );
     teb32->Tib.Self = PtrToUlong( teb32 );
     teb32->Tib.ExceptionList = ~0u;
     teb32->ActivationContextStackPointer = PtrToUlong( &teb32->ActivationContextStack );
@@ -2967,9 +2970,12 @@ static TEB *init_teb( void *ptr, PEB *peb )
             PtrToUlong( &teb32->ActivationContextStack.FrameListCache );
     teb32->StaticUnicodeString.Buffer = PtrToUlong( teb32->StaticUnicodeBuffer );
     teb32->StaticUnicodeString.MaximumLength = sizeof( teb32->StaticUnicodeBuffer );
+    teb32->GdiBatchCount = PtrToUlong( teb64 );
+    teb32->WowTebOffset  = -teb_offset;
+    if (is_wow) teb64->WowTebOffset = teb_offset;
 #else
     teb = (TEB *)teb32;
-    teb64->Peb = PtrToUlong( (char *)peb + page_size );
+    teb64->Peb = PtrToUlong( (char *)peb - page_size );
     teb64->Tib.Self = PtrToUlong( teb64 );
     teb64->Tib.ExceptionList = PtrToUlong( teb32 );
     teb64->ActivationContextStackPointer = PtrToUlong( &teb64->ActivationContextStack );
@@ -2978,6 +2984,12 @@ static TEB *init_teb( void *ptr, PEB *peb )
             PtrToUlong( &teb64->ActivationContextStack.FrameListCache );
     teb64->StaticUnicodeString.Buffer = PtrToUlong( teb64->StaticUnicodeBuffer );
     teb64->StaticUnicodeString.MaximumLength = sizeof( teb64->StaticUnicodeBuffer );
+    teb64->WowTebOffset = teb_offset;
+    if (is_wow)
+    {
+        teb32->GdiBatchCount = PtrToUlong( teb64 );
+        teb32->WowTebOffset  = -teb_offset;
+    }
 #endif
     teb->Peb = peb;
     teb->Tib.Self = &teb->Tib;
@@ -3029,7 +3041,7 @@ TEB *virtual_alloc_first_teb(void)
     data_size = 2 * block_size;
     NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &data_size, MEM_COMMIT, PAGE_READWRITE );
     peb = init_peb( (char *)teb_block + 31 * block_size );
-    teb = init_teb( ptr, peb );
+    teb = init_teb( ptr, peb, FALSE );
     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
     thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
     thread_data->debug_info = (struct debug_info *)((char *)teb_block + 31 * block_size + 2 * page_size);
@@ -3040,7 +3052,7 @@ TEB *virtual_alloc_first_teb(void)
 /***********************************************************************
  *           virtual_alloc_teb
  */
-NTSTATUS virtual_alloc_teb( TEB **ret_teb )
+NTSTATUS virtual_alloc_teb( TEB **ret_teb, ULONG_PTR zero_bits )
 {
     sigset_t sigset;
     TEB *teb;
@@ -3051,9 +3063,16 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb )
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
     if (next_free_teb)
     {
-        ptr = next_free_teb;
-        next_free_teb = *(void **)ptr;
-        memset( ptr, 0, teb_size );
+        /*Nioh 2 doesn't like the zero_bits check, so let's not check it*/
+        {
+            const char *sgi = getenv("SteamGameId");
+            if ((sgi && !strcmp(sgi, "1325200")) | !((UINT_PTR)next_free_teb & ~get_zero_bits_mask( zero_bits )))
+            {
+                ptr = next_free_teb;
+                next_free_teb = *(void **)ptr;
+                memset( ptr, 0, teb_size );
+            }
+        }
     }
     else
     {
@@ -3061,7 +3080,7 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb )
         {
             SIZE_T total = 32 * block_size;
 
-            if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &ptr, is_win64 ? 0x7fffffff : 0,
+            if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &ptr, zero_bits,
                                                    &total, MEM_RESERVE, PAGE_READWRITE )))
             {
                 server_leave_uninterrupted_section( &virtual_mutex, &sigset );
@@ -3074,7 +3093,7 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb )
         NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &block_size,
                                  MEM_COMMIT, PAGE_READWRITE );
     }
-    *ret_teb = teb = init_teb( ptr, NtCurrentTeb()->Peb );
+    *ret_teb = teb = init_teb( ptr, NtCurrentTeb()->Peb, !!NtCurrentTeb()->WowTebOffset );
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 
     if ((status = signal_alloc_thread( teb )))
@@ -3108,6 +3127,21 @@ void virtual_free_teb( TEB *teb )
     {
         size = 0;
         NtFreeVirtualMemory( GetCurrentProcess(), &thread_data->start_stack, &size, MEM_RELEASE );
+    }
+    if (teb->WowTebOffset)
+    {
+#ifdef _WIN64
+        TEB32 *teb32 = (TEB32 *)((char *)teb + teb->WowTebOffset);
+        void *addr = ULongToPtr( teb32->DeallocationStack );
+#else
+        TEB64 *teb64 = (TEB64 *)((char *)teb + teb->WowTebOffset);
+        void *addr = ULongToPtr( teb64->DeallocationStack );
+#endif
+        if (addr)
+        {
+            size = 0;
+            NtFreeVirtualMemory( GetCurrentProcess(), &addr, &size, MEM_RELEASE );
+        }
     }
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
@@ -3165,6 +3199,7 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR zero_bits, SI
     NTSTATUS status;
     sigset_t sigset;
     SIZE_T size, extra_size = 0;
+    unsigned int vprot = VPROT_READ | VPROT_WRITE | VPROT_COMMITTED;
 
     if (!reserve_size) reserve_size = main_image_info.MaximumStackSize;
     if (!commit_size) commit_size = main_image_info.CommittedStackSize;
@@ -3176,9 +3211,20 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR zero_bits, SI
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 
-    if ((status = map_view( &view, NULL, size + extra_size, FALSE,
-                            VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, zero_bits )) != STATUS_SUCCESS)
-        goto done;
+    /*More Nioh 2 being angry fixes*/
+    {
+        const char *sgi = getenv("SteamGameId");
+        if (sgi && !strcmp(sgi, "1325200"))
+        {
+            if ((status = map_view( &view, NULL, size + extra_size, FALSE,
+                                    VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, zero_bits )) != STATUS_SUCCESS)
+                goto done;
+        }
+    }
+
+    status = map_view( &view, NULL, size + extra_size, FALSE, vprot, zero_bits );
+    if (status == STATUS_NO_MEMORY) status = map_view( &view, NULL, size + extra_size, FALSE, vprot, 0 );
+    if (status != STATUS_SUCCESS) goto done;
 
 #ifdef VALGRIND_STACK_REGISTER
     VALGRIND_STACK_REGISTER( view->base, (char *)view->base + view->size );
@@ -3826,7 +3872,9 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
 
     if (!size) return STATUS_INVALID_PARAMETER;
     if (zero_bits > 21 && zero_bits < 32) return STATUS_INVALID_PARAMETER_3;
-    if (!is_win64 && !is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
+#ifndef _WIN64
+    if (!is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
+#endif
 
     if (type & MEM_WRITE_WATCH)
     {
@@ -4522,8 +4570,6 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
     /* Check parameters */
     if (zero_bits > 21 && zero_bits < 32)
         return STATUS_INVALID_PARAMETER_4;
-    if (!is_win64 && !is_wow64 && zero_bits >= 32)
-        return STATUS_INVALID_PARAMETER_4;
 
     /* If both addr_ptr and zero_bits are passed, they have match */
     if (*addr_ptr && zero_bits && zero_bits < 32 &&
@@ -4534,10 +4580,14 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
         return STATUS_INVALID_PARAMETER_4;
 
 #ifndef _WIN64
-    if (!is_wow64 && (alloc_type & AT_ROUND_TO_PAGE))
+    if (!is_wow64)
     {
-        *addr_ptr = ROUND_ADDR( *addr_ptr, page_mask );
-        mask = page_mask;
+        if (zero_bits >= 32) return STATUS_INVALID_PARAMETER_4;
+        if (alloc_type & AT_ROUND_TO_PAGE)
+        {
+            *addr_ptr = ROUND_ADDR( *addr_ptr, page_mask );
+            mask = page_mask;
+        }
     }
 #endif
 

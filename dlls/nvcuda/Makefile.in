@@ -1,8 +1,0 @@
-MODULE    = nvcuda.dll
-EXTRALIBS = $(PTHREAD_LIBS)
-
-C_SRCS = \
-	internal.c \
-	nvcuda.c
-
-RC_SRCS = nvcuda.rc

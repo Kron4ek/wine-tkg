@@ -64,7 +64,7 @@ from enum import Enum
 LOGGER = logging.Logger("vulkan")
 LOGGER.addHandler(logging.StreamHandler())
 
-VK_XML_VERSION = "1.2.176"
+VK_XML_VERSION = "1.2.178"
 WINE_VK_VERSION = (1, 2)
 
 # Filenames to create.
@@ -94,7 +94,6 @@ UNSUPPORTED_EXTENSIONS = [
 
     # Device extensions
     "VK_AMD_display_native_hdr",
-    "VK_EXT_full_screen_exclusive",
     "VK_EXT_hdr_metadata", # Needs WSI work.
     "VK_EXT_pipeline_creation_feedback",
     "VK_GOOGLE_display_timing",
@@ -129,6 +128,18 @@ CORE_EXTENSIONS = [
     "VK_KHR_surface",
     "VK_KHR_swapchain",
     "VK_KHR_win32_surface",
+    "VK_KHR_get_surface_capabilities2",
+]
+
+FAKED_EXTENSIONS = [
+    {"name": "VK_EXT_full_screen_exclusive", "version": 4}
+]
+
+# Some experimental extensions are used by shipping applications so their API is extremely unlikely
+# to change in a backwards-incompatible way. Allow translation of those extensions with WineVulkan.
+ALLOWED_X_EXTENSIONS = [
+    "VK_NVX_binary_import",
+    "VK_NVX_image_view_handle",
 ]
 
 # Functions part of our winevulkan graphics driver interface.
@@ -173,6 +184,7 @@ FUNCTION_OVERRIDES = {
     "vkGetPhysicalDeviceExternalFenceProperties" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
     "vkGetPhysicalDeviceExternalSemaphoreProperties" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
     "vkGetPhysicalDeviceImageFormatProperties2" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PRIVATE},
+    "vkGetPhysicalDeviceProperties" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PUBLIC, "loader_thunk" : ThunkType.PRIVATE},
     "vkGetPhysicalDeviceProperties2" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PUBLIC, "loader_thunk" : ThunkType.PRIVATE},
     "vkGetPhysicalDeviceProperties2KHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PUBLIC, "loader_thunk" : ThunkType.PRIVATE},
 
@@ -193,7 +205,7 @@ FUNCTION_OVERRIDES = {
     "vkGetPhysicalDeviceSurfaceSupportKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
     "vkGetPhysicalDeviceSurfaceCapabilitiesKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PRIVATE},
     "vkGetPhysicalDeviceSurfaceFormatsKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
-    "vkGetPhysicalDeviceSurfacePresentModesKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
+    "vkGetPhysicalDeviceSurfacePresentModesKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PRIVATE},
 
     # VK_KHR_get_surface_capabilities2
     "vkGetPhysicalDeviceSurfaceCapabilities2KHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PRIVATE},
@@ -225,8 +237,14 @@ FUNCTION_OVERRIDES = {
     "vkEnumeratePhysicalDeviceGroupsKHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
 
     # VK_KHR_device_group
-    "vkGetDeviceGroupSurfacePresentModesKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
+    "vkGetDeviceGroupSurfacePresentModesKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PRIVATE},
     "vkGetPhysicalDevicePresentRectanglesKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
+
+    # VK_EXT_full_screen_exclusive
+    "vkGetPhysicalDeviceSurfacePresentModes2EXT" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+    "vkGetDeviceGroupSurfacePresentModes2EXT" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+    "vkAcquireFullScreenExclusiveModeEXT" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
+    "vkReleaseFullScreenExclusiveModeEXT" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.NONE},
 
     # VK_EXT_private_data
     "vkGetPrivateDataEXT" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.NONE},
@@ -253,10 +271,11 @@ FUNCTION_OVERRIDES = {
     "vkDebugMarkerSetObjectTagEXT" : {"dispatch": True, "driver" : False, "thunk" : ThunkType.PRIVATE},
 }
 
-STRUCT_CHAIN_CONVERSIONS = [
-    "VkDeviceCreateInfo",
-    "VkInstanceCreateInfo",
-]
+STRUCT_CHAIN_CONVERSIONS = {
+    # Ignore to not confuse host loader.
+    "VkDeviceCreateInfo": ["VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO"],
+    "VkInstanceCreateInfo": ["VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO"],
+}
 
 shared_conversion_structs = ["VkBufferMemoryBarrier", "VkImageMemoryBarrier"]
 
@@ -2180,9 +2199,10 @@ class FreeFunction(object):
 
 
 class StructChainConversionFunction(object):
-    def __init__(self, direction, struct):
+    def __init__(self, direction, struct, ignores):
         self.direction = direction
         self.struct = struct
+        self.ignores = ignores
         self.type = struct.name
 
         self.name = "convert_{0}_struct_chain".format(self.type)
@@ -2207,9 +2227,8 @@ class StructChainConversionFunction(object):
         body += "        switch (in_header->sType)\n"
         body += "        {\n"
 
-        # Ignore to not confuse host loader.
-        body += "        case VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO:\n"
-        body += "        case VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO:\n"
+        for i in self.ignores:
+            body += "        case {0}:\n".format(i)
         body += "            break;\n\n"
 
         for e in self.struct.struct_extensions:
@@ -2217,6 +2236,9 @@ class StructChainConversionFunction(object):
                 continue
 
             stype = next(x for x in e.members if x.name == "sType")
+
+            if stype.values in self.ignores:
+                continue
 
             body += "        case {0}:\n".format(stype.values)
             body += "        {\n"
@@ -2315,7 +2337,7 @@ class VkGenerator(object):
 
         for struct in self.registry.structs:
             if struct.name in STRUCT_CHAIN_CONVERSIONS:
-                self.struct_chain_conversions.append(StructChainConversionFunction(Direction.INPUT, struct))
+                self.struct_chain_conversions.append(StructChainConversionFunction(Direction.INPUT, struct, STRUCT_CHAIN_CONVERSIONS[struct.name]))
                 self.struct_chain_conversions.append(FreeStructChainFunction(struct))
 
     def _generate_copyright(self, f, spec_file=False):
@@ -2386,6 +2408,12 @@ class VkGenerator(object):
             f.write("    \"{0}\",\n".format(ext["name"]))
         f.write("};\n\n")
 
+        # Create array of faked device extensions.
+        f.write("static const VkExtensionProperties vk_device_extension_discards[] =\n{\n")
+        for ext in FAKED_EXTENSIONS:
+            f.write("    {{\"{0}\", {1}}},\n".format(ext["name"], ext["version"]))
+        f.write("};\n\n")
+
         # Create array of instance extensions.
         f.write("static const char * const vk_instance_extensions[] =\n{\n")
         for ext in self.registry.extensions:
@@ -2404,6 +2432,27 @@ class VkGenerator(object):
         f.write("            return TRUE;\n")
         f.write("    }\n")
         f.write("    return FALSE;\n")
+        f.write("}\n\n")
+
+        f.write("BOOL wine_vk_device_extension_faked(const char *name)\n")
+        f.write("{\n")
+        f.write("    unsigned int i;\n")
+        f.write("    for (i = 0; i < ARRAY_SIZE(vk_device_extension_discards); i++)\n")
+        f.write("    {\n")
+        f.write("        if (strcmp(vk_device_extension_discards[i].extensionName, name) == 0)\n")
+        f.write("            return TRUE;\n")
+        f.write("    }\n")
+        f.write("    return FALSE;\n")
+        f.write("}\n\n")
+
+        f.write("unsigned int wine_vk_device_extension_faked_count(void)\n")
+        f.write("{\n")
+        f.write("    return ARRAY_SIZE(vk_device_extension_discards);\n")
+        f.write("}\n\n")
+
+        f.write("const VkExtensionProperties* wine_vk_device_extension_faked_idx(unsigned int idx)\n")
+        f.write("{\n")
+        f.write("    return &vk_device_extension_discards[idx];\n")
         f.write("}\n\n")
 
         f.write("BOOL wine_vk_instance_extension_supported(const char *name)\n")
@@ -3179,7 +3228,7 @@ class VkRegistry(object):
             # Disable highly experimental extensions as the APIs are unstable and can
             # change between minor Vulkan revisions until API is final and becomes KHR
             # or NV.
-            if "KHX" in ext_name or "NVX" in ext_name:
+            if ("KHX" in ext_name or "NVX" in ext_name) and ext_name not in ALLOWED_X_EXTENSIONS:
                 LOGGER.debug("Skipping experimental extension: {0}".format(ext_name))
                 skipped_exts.append(ext_name)
                 return

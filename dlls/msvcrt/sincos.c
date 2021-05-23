@@ -1,5 +1,7 @@
 /*
- * Copyright (C) 2014-2015 Michael Müller
+ * sincos implementation
+ *
+ * Copyright 2021 Jacek Caban for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,14 +18,23 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_NVCUDA_H
-#define __WINE_NVCUDA_H
-
-#include "windef.h"
-#include "winbase.h"
-#include "cuda.h"
-
-void cuda_process_tls_callbacks(DWORD reason) DECLSPEC_HIDDEN;
-CUresult cuda_get_table(const void **table, const CUuuid *id, const void *orig_table, CUresult orig_result) DECLSPEC_HIDDEN;
-
+#if 0
+#pragma makedep implib
 #endif
+
+#include <math.h>
+
+/* GCC may optimize a pair of sin(), cos() calls to a single sincos() call,
+ * which is not exported by any msvcrt version. */
+
+void sincos(double x, double *s, double *c)
+{
+    *s = sin(x);
+    *c = cos(x);
+}
+
+void sincosf(float x, float *s, float *c)
+{
+    *s = sinf(x);
+    *c = cosf(x);
+}

@@ -93,9 +93,7 @@ SOURCES = \
 	cryptuiapi.h \
 	ctfutb.idl \
 	ctxtcall.idl \
-	cuda.h \
 	custcntl.h \
-	cuviddec.h \
 	cvconst.h \
 	cvttyp.idl \
 	d2d1.idl \
@@ -547,9 +545,6 @@ SOURCES = \
 	ntsecapi.h \
 	ntsecpkg.h \
 	ntstatus.h \
-	nvapi.h \
-	nvcuvid.h \
-	nvencodeapi.h \
 	oaidl.idl \
 	objbase.h \
 	objectarray.idl \

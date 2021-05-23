@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat May  8 12:39:19 PM MSK 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Sun May 23 08:47:47 PM MSK 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.8.r0.g99e47361a37
-Using wine-staging patchset (version 6.8.r0.g0f00e37c)
+Wine (plain) version: 6.9.r0.g9561af9a7d8
+Using wine-staging patchset (version 6.9.r0.gcfe44f6d)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
@@ -14,7 +14,7 @@ use_clock_monotonic.patch -- ( Applied clock_monotonic patch )
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W ntdll-NtAlertThreadByThreadId -W bcrypt-ECDHSecretAgreement
+Staging overrides, if any: -W ntdll-NtAlertThreadByThreadId -W d3d11-Deferred_Context -W wined3d-CSMT_Main -W nvapi-Stub_DLL -W nvcuda-CUDA_Support -W nvcuvid-CUDA_Video_Support -W nvencodeapi-Video_Encoder -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW -W imm32-com-initialization -W bcrypt-ECDHSecretAgreement
 
 ffxiv-launcher-workaround.patch -- ( Applied Final Fantasy XIV Launcher fix )
 mk11.patch -- ( Applied Mortal Kombat 11 fix )
@@ -26,13 +26,15 @@ valve_proton_fullscreen_hack-staging.patch -- ( Applied Proton fullscreen hack p
 LAA-unix-staging.patch -- ( Applied large address aware override support )
 
 proton-tkg-staging.patch -- ( Using Steam-specific Proton-tkg patches (staging) 2/3 )
-proton-pa-staging.patch -- ( Enable Proton's PA additions )
 proton-cpu-topology-overrides.patch -- ( Enable Proton's CPU topology override support )
+proton-winevulkan.patch -- ( Using Proton winevulkan patches )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
 proton-bcrypt-staging.patch -- ( Using Proton Bcrypt patches )
 josh-flat-theme.patch -- ( Add Josh's better-theme )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
+Applied hotfix imm32-com-initialization_no_net_active_window.mypatch
+Applied hotfix virtual_alloc_remi.mypatch
 Applied your own patch amdags.mypatch
 Applied your own patch FinalFantasyXVHack.mypatch
 Applied your own patch origin_downloads_e4ca5dbe_revert.mypatch

@@ -540,14 +540,15 @@ struct d3d_device_context_state
     ID3D11Device2 *device;
 };
 
-/* ID3D11DeviceContext - immediate context */
-struct d3d11_immediate_context
+/* ID3D11DeviceContext */
+struct d3d11_device_context
 {
     ID3D11DeviceContext1 ID3D11DeviceContext1_iface;
     ID3D11Multithread ID3D11Multithread_iface;
     LONG refcount;
 
     struct wined3d_device_context *wined3d_context;
+    struct d3d_device *device;
 
     struct wined3d_private_store private_store;
 };
@@ -566,7 +567,7 @@ struct d3d_device
     BOOL d3d11_only;
 
     struct d3d_device_context_state *state;
-    struct d3d11_immediate_context immediate_context;
+    struct d3d11_device_context immediate_context;
 
     struct wined3d_device_parent device_parent;
     struct wined3d_device *wined3d_device;

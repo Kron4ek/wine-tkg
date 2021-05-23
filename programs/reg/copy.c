@@ -1,7 +1,5 @@
 /*
- * Top level resource file for nvcuda.dll
- *
- * Copyright (C) 2014-2015 Michael Müller
+ * Copyright 2021 Hugh McMaster
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,18 +14,11 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
- *
  */
 
-#include "winver.h"
+#include "reg.h"
 
-#define WINE_FILENAME_STR "nvcuda.dll"
-#define WINE_FILEDESCRIPTION_STR "NVIDIA CUDA Driver, Version 337.88"
-
-#define WINE_FILEVERSION      8,17,13,3788
-#define WINE_FILEVERSION_STR "8.17.13.3788"
-
-#define WINE_PRODUCTVERSION      8,17,13,3788
-#define WINE_PRODUCTVERSION_STR "8.17.13.3788"
-
-#include "wine/wine_common_ver.rc"
+int reg_copy(int argc, WCHAR *argvW[])
+{
+    return 1;
+}
