@@ -278,11 +278,7 @@ static void state_lighting(struct wined3d_context *context, const struct wined3d
 
     /* Lighting is not enabled if transformed vertices are drawn, but lighting
      * does not affect the stream sources, so it is not grouped for
-     * performance reasons. This state reads the decoded vertex declaration,
-     * so if it is dirty don't do anything. The vertex declaration applying
-     * function calls this function for updating. */
-    if (isStateDirty(context, STATE_VDECL))
-        return;
+     * performance reasons. */
 
     if (state->render_states[WINED3D_RS_LIGHTING]
             && !context->stream_info.position_transformed)
@@ -1510,12 +1506,6 @@ static void state_colormat(struct wined3d_context *context, const struct wined3d
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
     GLenum Parm = 0;
 
-    /* Depends on the decoded vertex declaration to read the existence of
-     * diffuse data. The vertex declaration will call this function if the
-     * fixed function pipeline is used. */
-    if (isStateDirty(&context_gl->c, STATE_VDECL))
-        return;
-
     context_gl->untracked_material_count = 0;
     if ((context_gl->c.stream_info.use_map & (1u << WINED3D_FFP_DIFFUSE))
             && state->render_states[WINED3D_RS_COLORVERTEX])
@@ -1655,9 +1645,6 @@ static void state_linepattern_w(struct wined3d_context *context, const struct wi
 static void state_normalize(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
     const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
-
-    if (isStateDirty(context, STATE_VDECL))
-        return;
 
     /* Without vertex normals, we set the current normal to 0/0/0 to remove the diffuse factor
      * from the opengl lighting equation, as d3d does. Normalization of 0/0/0 can lead to a division
@@ -2053,42 +2040,31 @@ static void state_tessellation(struct wined3d_context *context, const struct win
                 state->render_states[WINED3D_RS_ENABLEADAPTIVETESSELLATION]);
 }
 
-static void state_nvdb(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
+static void depth_bounds(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
     const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
-    union
-    {
-        uint32_t d;
-        float f;
-    } zmin, zmax;
+    float zmin = state->depth_bounds.min, zmax = state->depth_bounds.max;
 
-    if (state->render_states[WINED3D_RS_ADAPTIVETESS_X] == WINED3DFMT_NVDB)
+    /* If zmin is larger than zmax, an INVALID_VALUE error is generated.
+     * In d3d9, the test is not performed in this case. */
+    if (state->depth_bounds.enable && zmin <= zmax)
     {
-        zmin.d = state->render_states[WINED3D_RS_ADAPTIVETESS_Z];
-        zmax.d = state->render_states[WINED3D_RS_ADAPTIVETESS_W];
-
-        /* If zmin is larger than zmax INVALID_VALUE error is generated.
-         * In d3d9 test is not performed in this case*/
-        if (zmin.f <= zmax.f)
-        {
-            gl_info->gl_ops.gl.p_glEnable(GL_DEPTH_BOUNDS_TEST_EXT);
-            checkGLcall("glEnable(GL_DEPTH_BOUNDS_TEST_EXT)");
-            GL_EXTCALL(glDepthBoundsEXT(zmin.f, zmax.f));
-            checkGLcall("glDepthBoundsEXT(...)");
-        }
-        else
-        {
-            gl_info->gl_ops.gl.p_glDisable(GL_DEPTH_BOUNDS_TEST_EXT);
-            checkGLcall("glDisable(GL_DEPTH_BOUNDS_TEST_EXT)");
-        }
+        gl_info->gl_ops.gl.p_glEnable(GL_DEPTH_BOUNDS_TEST_EXT);
+        checkGLcall("glEnable(GL_DEPTH_BOUNDS_TEST_EXT)");
+        GL_EXTCALL(glDepthBoundsEXT(zmin, zmax));
+        checkGLcall("glDepthBoundsEXT(...)");
     }
     else
     {
         gl_info->gl_ops.gl.p_glDisable(GL_DEPTH_BOUNDS_TEST_EXT);
         checkGLcall("glDisable(GL_DEPTH_BOUNDS_TEST_EXT)");
     }
+}
 
-    state_tessellation(context, state, STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION));
+static void depth_bounds_w(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
+{
+    if (state->depth_bounds.enable)
+        WARN("Depth bounds test is not supported by this GL implementation.\n");
 }
 
 static void state_wrapu(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
@@ -3444,10 +3420,9 @@ static void transform_texture(struct wined3d_context *context, const struct wine
     unsigned int mapped_stage = context_gl->tex_unit_map[tex];
     struct wined3d_matrix mat;
 
-    /* Ignore this when a vertex shader is used, or if the streams aren't sorted out yet */
-    if (use_vs(state) || isStateDirty(context, STATE_VDECL))
+    if (use_vs(state))
     {
-        TRACE("Using a vertex shader, or stream sources not sorted out yet, skipping\n");
+        TRACE("Using a vertex shader, skipping.\n");
         return;
     }
 
@@ -4013,8 +3988,6 @@ static void transform_projection(struct wined3d_context *context, const struct w
 
 static void streamsrc(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    if (isStateDirty(context, STATE_VDECL))
-        return;
     wined3d_context_gl_update_stream_sources(wined3d_context_gl(context), state);
 }
 
@@ -4703,6 +4676,8 @@ const struct wined3d_state_entry_template misc_state_template_gl[] =
     { STATE_DEPTH_STENCIL,                                { STATE_DEPTH_STENCIL,                                depth_stencil_2s    }, EXT_STENCIL_TWO_SIDE            },
     { STATE_DEPTH_STENCIL,                                { STATE_DEPTH_STENCIL,                                depth_stencil       }, WINED3D_GL_EXT_NONE             },
     { STATE_STENCIL_REF,                                  { STATE_DEPTH_STENCIL,                                NULL                }, WINED3D_GL_EXT_NONE             },
+    { STATE_DEPTH_BOUNDS,                                 { STATE_DEPTH_BOUNDS,                                 depth_bounds        }, EXT_DEPTH_BOUNDS_TEST           },
+    { STATE_DEPTH_BOUNDS,                                 { STATE_DEPTH_BOUNDS,                                 depth_bounds_w      }, WINED3D_GL_EXT_NONE             },
     { STATE_STREAMSRC,                                    { STATE_STREAMSRC,                                    streamsrc           }, WINED3D_GL_EXT_NONE             },
     { STATE_VDECL,                                        { STATE_VDECL,                                        vdecl_miscpart      }, WINED3D_GL_EXT_NONE             },
     { STATE_RASTERIZER,                                   { STATE_RASTERIZER,                                   rasterizer_cc       }, ARB_CLIP_CONTROL                },
@@ -4816,7 +4791,6 @@ const struct wined3d_state_entry_template misc_state_template_gl[] =
     { STATE_RENDER(WINED3D_RS_ADAPTIVETESS_Y),            { STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION),NULL                }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_ADAPTIVETESS_Z),            { STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION),NULL                }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_ADAPTIVETESS_W),            { STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION),NULL                }, WINED3D_GL_EXT_NONE             },
-    { STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION),{ STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION),state_nvdb          }, EXT_DEPTH_BOUNDS_TEST           },
     { STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION),{ STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION),state_tessellation  }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),      { STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),      state_msaa          }, ARB_MULTISAMPLE                 },
     { STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),      { STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),      state_msaa_w        }, WINED3D_GL_EXT_NONE             },

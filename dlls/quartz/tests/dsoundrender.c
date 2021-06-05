@@ -928,7 +928,7 @@ static void test_eos(IPin *pin, IMemInputPin *input, IMediaControl *control)
     hr = IMediaControl_Run(control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
     ret = check_ec_complete(eventsrc, 0);
-    todo_wine ok(ret == 1, "Expected EC_COMPLETE.\n");
+    ok(ret == 1, "Expected EC_COMPLETE.\n");
 
     hr = IMediaControl_Stop(control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
@@ -952,7 +952,7 @@ static void test_eos(IPin *pin, IMemInputPin *input, IMediaControl *control)
     hr = IPin_EndOfStream(pin);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
     ret = check_ec_complete(eventsrc, 0);
-    ok(!ret, "Got unexpected EC_COMPLETE.\n");
+    todo_wine ok(!ret, "Got unexpected EC_COMPLETE.\n");
     ret = check_ec_complete(eventsrc, 2000);
     todo_wine ok(ret == 1, "Expected EC_COMPLETE.\n");
 
@@ -978,7 +978,7 @@ static void test_eos(IPin *pin, IMemInputPin *input, IMediaControl *control)
     hr = IMediaControl_Stop(control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
     ret = check_ec_complete(eventsrc, 0);
-    ok(!ret, "Got unexpected EC_COMPLETE.\n");
+    todo_wine ok(!ret, "Got unexpected EC_COMPLETE.\n");
 
     /* Test sending EOS and then flushing or stopping. */
 
@@ -996,7 +996,7 @@ static void test_eos(IPin *pin, IMemInputPin *input, IMediaControl *control)
     hr = IPin_EndOfStream(pin);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
     ret = check_ec_complete(eventsrc, 0);
-    ok(!ret, "Got unexpected EC_COMPLETE.\n");
+    todo_wine ok(!ret, "Got unexpected EC_COMPLETE.\n");
 
     hr = IPin_BeginFlush(pin);
     ok(hr == S_OK, "Got hr %#x.\n", hr);

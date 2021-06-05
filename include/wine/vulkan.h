@@ -4444,6 +4444,7 @@ typedef struct VkMemoryRequirements
     uint32_t memoryTypeBits;
 } VkMemoryRequirements;
 
+
 typedef struct VkMutableDescriptorTypeListVALVE
 {
     uint32_t descriptorTypeCount;
@@ -6511,6 +6512,7 @@ typedef struct VkPhysicalDeviceShaderClockFeaturesKHR
     VkBool32 shaderSubgroupClock;
     VkBool32 shaderDeviceClock;
 } VkPhysicalDeviceShaderClockFeaturesKHR;
+
 
 typedef struct VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT
 {
@@ -8598,6 +8600,7 @@ typedef struct VkPhysicalDeviceProperties2
     VkPhysicalDeviceProperties WINE_VK_ALIGN(8) properties;
 } VkPhysicalDeviceProperties2;
 typedef VkPhysicalDeviceProperties2 VkPhysicalDeviceProperties2KHR;
+
 
 typedef struct VkPipelineSampleLocationsStateCreateInfoEXT
 {

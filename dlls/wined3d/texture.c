@@ -1297,7 +1297,7 @@ void wined3d_texture_gl_bind(struct wined3d_texture_gl *texture_gl,
 
     if (texture_gl->t.flags & WINED3D_TEXTURE_COND_NP2)
     {
-        /* Conditinal non power of two textures use a different clamping
+        /* Conditional non power of two textures use a different clamping
          * default. If we're using the GL_WINE_normalized_texrect partial
          * driver emulation, we're dealing with a GL_TEXTURE_2D texture which
          * has the address mode set to repeat - something that prevents us
@@ -3525,6 +3525,30 @@ static void texture_resource_unload(struct wined3d_resource *resource)
     resource_unload(&texture->resource);
 }
 
+static HRESULT texture_resource_sub_resource_get_size(struct wined3d_resource *resource,
+        unsigned int sub_resource_idx, unsigned int *size, unsigned int *row_pitch, unsigned int *slice_pitch)
+{
+    struct wined3d_texture *texture = texture_from_resource(resource);
+    unsigned int texture_level = sub_resource_idx % texture->level_count;
+    struct wined3d_texture_sub_resource *sub_resource;
+
+    if (!(sub_resource = wined3d_texture_get_sub_resource(texture, sub_resource_idx)))
+        return E_INVALIDARG;
+
+    if (resource->format_flags & WINED3DFMT_FLAG_BROKEN_PITCH)
+    {
+        *row_pitch = wined3d_texture_get_level_width(texture, texture_level) * resource->format->byte_count;
+        *slice_pitch = wined3d_texture_get_level_height(texture, texture_level) * (*row_pitch);
+    }
+    else
+    {
+        wined3d_texture_get_pitch(texture, texture_level, row_pitch, slice_pitch);
+    }
+
+    *size = sub_resource->size;
+    return S_OK;
+}
+
 static HRESULT texture_resource_sub_resource_map(struct wined3d_resource *resource, unsigned int sub_resource_idx,
         struct wined3d_map_desc *map_desc, const struct wined3d_box *box, DWORD flags)
 {
@@ -3711,6 +3735,7 @@ static const struct wined3d_resource_ops texture_resource_ops =
     texture_resource_decref,
     texture_resource_preload,
     texture_resource_unload,
+    texture_resource_sub_resource_get_size,
     texture_resource_sub_resource_map,
     texture_resource_sub_resource_unmap,
 };

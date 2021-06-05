@@ -22,6 +22,8 @@
 #pragma makedep unix
 #endif
 
+#define _NTSYSTEM_
+
 #include <stdarg.h>
 #include <pthread.h>
 #include <math.h>
@@ -42,6 +44,37 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(pulse);
+
+struct pulse_stream
+{
+    EDataFlow dataflow;
+
+    pa_stream *stream;
+    pa_sample_spec ss;
+    pa_channel_map map;
+    pa_buffer_attr attr;
+
+    DWORD flags;
+    AUDCLNT_SHAREMODE share;
+    HANDLE event;
+    float vol[PA_CHANNELS_MAX];
+    BOOL mute;
+
+    INT32 locked;
+    BOOL started;
+    SIZE_T bufsize_frames, alloc_size, real_bufsize_bytes, period_bytes;
+    SIZE_T peek_ofs, read_offs_bytes, lcl_offs_bytes, pa_offs_bytes;
+    SIZE_T tmp_buffer_bytes, held_bytes, peek_len, peek_buffer_len, pa_held_bytes;
+    BYTE *local_buffer, *tmp_buffer, *peek_buffer;
+    void *locked_ptr;
+    BOOL please_quit, just_started, just_underran;
+    pa_usec_t last_time, mmdev_period_usec;
+
+    INT64 clock_lastpos, clock_written;
+
+    struct list packet_free_head;
+    struct list packet_filled_head;
+};
 
 typedef struct _ACPacket
 {
@@ -69,17 +102,17 @@ static pthread_cond_t pulse_cond = PTHREAD_COND_INITIALIZER;
 UINT8 mult_alaw_sample(UINT8, float);
 UINT8 mult_ulaw_sample(UINT8, float);
 
-static void WINAPI pulse_lock(void)
+static void pulse_lock(void)
 {
     pthread_mutex_lock(&pulse_mutex);
 }
 
-static void WINAPI pulse_unlock(void)
+static void pulse_unlock(void)
 {
     pthread_mutex_unlock(&pulse_mutex);
 }
 
-static int WINAPI pulse_cond_wait(void)
+static int pulse_cond_wait(void)
 {
     return pthread_cond_wait(&pulse_cond, &pulse_mutex);
 }
@@ -145,16 +178,18 @@ static int pulse_poll_func(struct pollfd *ufds, unsigned long nfds, int timeout,
     return r;
 }
 
-static void WINAPI pulse_main_loop(void)
+static NTSTATUS pulse_main_loop(void *args)
 {
+    struct main_loop_params *params = args;
     int ret;
+    pulse_lock();
     pulse_ml = pa_mainloop_new();
     pa_mainloop_set_poll_func(pulse_ml, pulse_poll_func, NULL);
-    pulse_lock();
-    pulse_broadcast();
+    NtSetEvent(params->event, NULL);
     pa_mainloop_run(pulse_ml, &ret);
-    pulse_unlock();
     pa_mainloop_free(pulse_ml);
+    pulse_unlock();
+    return STATUS_SUCCESS;
 }
 
 static void pulse_contextcallback(pa_context *c, void *userdata)
@@ -475,8 +510,10 @@ static void pulse_probe_settings(int render, WAVEFORMATEXTENSIBLE *fmt) {
  * have to do as much as possible without creating a new thread. this function
  * sets up a synchronous connection to verify the server is running and query
  * static data. */
-static HRESULT WINAPI pulse_test_connect(const char *name, struct pulse_config *config)
+static NTSTATUS pulse_test_connect(void *args)
 {
+    struct test_connect_params *params = args;
+    struct pulse_config *config = params->config;
     pa_operation *o;
     int ret;
 
@@ -485,13 +522,14 @@ static HRESULT WINAPI pulse_test_connect(const char *name, struct pulse_config *
 
     pa_mainloop_set_poll_func(pulse_ml, pulse_poll_func, NULL);
 
-    pulse_ctx = pa_context_new(pa_mainloop_get_api(pulse_ml), name);
+    pulse_ctx = pa_context_new(pa_mainloop_get_api(pulse_ml), params->name);
     if (!pulse_ctx) {
         ERR("Failed to create context\n");
         pa_mainloop_free(pulse_ml);
         pulse_ml = NULL;
         pulse_unlock();
-        return E_FAIL;
+        params->result = E_FAIL;
+        return STATUS_SUCCESS;
     }
 
     pa_context_set_state_callback(pulse_ctx, pulse_contextcallback, NULL);
@@ -545,7 +583,8 @@ static HRESULT WINAPI pulse_test_connect(const char *name, struct pulse_config *
 
     pulse_unlock();
 
-    return S_OK;
+    params->result = S_OK;
+    return STATUS_SUCCESS;
 
 fail:
     pa_context_unref(pulse_ctx);
@@ -553,8 +592,8 @@ fail:
     pa_mainloop_free(pulse_ml);
     pulse_ml = NULL;
     pulse_unlock();
-
-    return E_FAIL;
+    params->result = E_FAIL;
+    return STATUS_SUCCESS;
 }
 
 static DWORD get_channel_mask(unsigned int channels)
@@ -760,43 +799,51 @@ static HRESULT pulse_stream_connect(struct pulse_stream *stream, UINT32 period_b
     return S_OK;
 }
 
-static HRESULT WINAPI pulse_create_stream(const char *name, EDataFlow dataflow, AUDCLNT_SHAREMODE mode,
-                                          DWORD flags, REFERENCE_TIME duration, REFERENCE_TIME period,
-                                          const WAVEFORMATEX *fmt, UINT32 *channel_count,
-                                          struct pulse_stream **ret)
+static NTSTATUS pulse_create_stream(void *args)
 {
+    struct create_stream_params *params = args;
+    REFERENCE_TIME period, duration = params->duration;
     struct pulse_stream *stream;
     unsigned int i, bufsize_bytes;
     HRESULT hr;
 
-    if (FAILED(hr = pulse_connect(name)))
-        return hr;
+    pulse_lock();
 
-    if (!(stream = RtlAllocateHeap(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*stream))))
-        return E_OUTOFMEMORY;
+    if (FAILED(params->result = pulse_connect(params->name)))
+    {
+        pulse_unlock();
+        return STATUS_SUCCESS;
+    }
 
-    stream->dataflow = dataflow;
+    if (!(stream = calloc(1, sizeof(*stream))))
+    {
+        pulse_unlock();
+        params->result = E_OUTOFMEMORY;
+        return STATUS_SUCCESS;
+    }
+
+    stream->dataflow = params->dataflow;
     for (i = 0; i < ARRAY_SIZE(stream->vol); ++i)
         stream->vol[i] = 1.f;
 
-    hr = pulse_spec_from_waveformat(stream, fmt);
+    hr = pulse_spec_from_waveformat(stream, params->fmt);
     TRACE("Obtaining format returns %08x\n", hr);
 
     if (FAILED(hr))
         goto exit;
 
-    period = pulse_def_period[dataflow == eCapture];
+    period = pulse_def_period[stream->dataflow == eCapture];
     if (duration < 3 * period)
         duration = 3 * period;
 
     stream->period_bytes = pa_frame_size(&stream->ss) * muldiv(period, stream->ss.rate, 10000000);
 
-    stream->bufsize_frames = ceil((duration / 10000000.) * fmt->nSamplesPerSec);
+    stream->bufsize_frames = ceil((duration / 10000000.) * params->fmt->nSamplesPerSec);
     bufsize_bytes = stream->bufsize_frames * pa_frame_size(&stream->ss);
     stream->mmdev_period_usec = period / 10;
 
-    stream->share = mode;
-    stream->flags = flags;
+    stream->share = params->mode;
+    stream->flags = params->flags;
     hr = pulse_stream_connect(stream, stream->period_bytes);
     if (SUCCEEDED(hr)) {
         UINT32 unalign;
@@ -804,10 +851,11 @@ static HRESULT WINAPI pulse_create_stream(const char *name, EDataFlow dataflow, 
         stream->attr = *attr;
         /* Update frames according to new size */
         dump_attr(attr);
-        if (dataflow == eRender) {
-            stream->real_bufsize_bytes = stream->bufsize_frames * 2 * pa_frame_size(&stream->ss);
-            stream->local_buffer = RtlAllocateHeap(GetProcessHeap(), 0, stream->real_bufsize_bytes);
-            if(!stream->local_buffer)
+        if (stream->dataflow == eRender) {
+            stream->alloc_size = stream->real_bufsize_bytes =
+                stream->bufsize_frames * 2 * pa_frame_size(&stream->ss);
+            if (NtAllocateVirtualMemory(GetCurrentProcess(), (void **)&stream->local_buffer,
+                                        0, &stream->real_bufsize_bytes, MEM_COMMIT, PAGE_READWRITE))
                 hr = E_OUTOFMEMORY;
         } else {
             UINT32 i, capture_packets;
@@ -819,8 +867,9 @@ static HRESULT WINAPI pulse_create_stream(const char *name, EDataFlow dataflow, 
 
             capture_packets = stream->real_bufsize_bytes / stream->period_bytes;
 
-            stream->local_buffer = RtlAllocateHeap(GetProcessHeap(), 0, stream->real_bufsize_bytes + capture_packets * sizeof(ACPacket));
-            if (!stream->local_buffer)
+            stream->alloc_size = stream->real_bufsize_bytes + capture_packets * sizeof(ACPacket);
+            if (NtAllocateVirtualMemory(GetCurrentProcess(), (void **)&stream->local_buffer,
+                                        0, &stream->alloc_size, MEM_COMMIT, PAGE_READWRITE))
                 hr = E_OUTOFMEMORY;
             else {
                 ACPacket *cur_packet = (ACPacket*)((char*)stream->local_buffer + stream->real_bufsize_bytes);
@@ -837,28 +886,32 @@ static HRESULT WINAPI pulse_create_stream(const char *name, EDataFlow dataflow, 
         }
     }
 
+    *params->channel_count = stream->ss.channels;
+    *params->stream = stream;
+
 exit:
-    if (FAILED(hr)) {
+    if (FAILED(params->result = hr)) {
         free(stream->local_buffer);
         if (stream->stream) {
             pa_stream_disconnect(stream->stream);
             pa_stream_unref(stream->stream);
-            RtlFreeHeap(GetProcessHeap(), 0, stream);
+            free(stream);
         }
-        return hr;
     }
 
-    *channel_count = stream->ss.channels;
-    *ret = stream;
-    return S_OK;
+    pulse_unlock();
+    return STATUS_SUCCESS;
 }
 
-static void WINAPI pulse_release_stream(struct pulse_stream *stream, HANDLE timer)
+static NTSTATUS pulse_release_stream(void *args)
 {
-    if(timer) {
+    struct release_stream_params *params = args;
+    struct pulse_stream *stream = params->stream;
+
+    if(params->timer) {
         stream->please_quit = TRUE;
-        NtWaitForSingleObject(timer, FALSE, NULL);
-        NtClose(timer);
+        NtWaitForSingleObject(params->timer, FALSE, NULL);
+        NtClose(params->timer);
     }
 
     pulse_lock();
@@ -870,10 +923,15 @@ static void WINAPI pulse_release_stream(struct pulse_stream *stream, HANDLE time
     pa_stream_unref(stream->stream);
     pulse_unlock();
 
-    RtlFreeHeap(GetProcessHeap(), 0, stream->tmp_buffer);
-    RtlFreeHeap(GetProcessHeap(), 0, stream->peek_buffer);
-    RtlFreeHeap(GetProcessHeap(), 0, stream->local_buffer);
-    RtlFreeHeap(GetProcessHeap(), 0, stream);
+    if (stream->tmp_buffer)
+        NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer,
+                            &stream->tmp_buffer_bytes, MEM_RELEASE);
+    if (stream->local_buffer)
+        NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->local_buffer,
+                            &stream->alloc_size, MEM_RELEASE);
+    free(stream->peek_buffer);
+    free(stream);
+    return STATUS_SUCCESS;
 }
 
 static int write_buffer(const struct pulse_stream *stream, BYTE *buffer, UINT32 bytes)
@@ -1029,17 +1087,16 @@ static void pulse_write(struct pulse_stream *stream)
             to_write = bytes - stream->pa_held_bytes;
             TRACE("prebuffering %u frames of silence\n",
                     (int)(to_write / pa_frame_size(&stream->ss)));
-            buf = RtlAllocateHeap(GetProcessHeap(), HEAP_ZERO_MEMORY, to_write);
+            buf = calloc(1, to_write);
             pa_stream_write(stream->stream, buf, to_write, NULL, 0, PA_SEEK_RELATIVE);
-            RtlFreeHeap(GetProcessHeap(), 0, buf);
+            free(buf);
         }
 
         stream->just_underran = FALSE;
     }
 
     buf = stream->local_buffer + stream->pa_offs_bytes;
-    TRACE("held: %u, avail: %u\n",
-            stream->pa_held_bytes, bytes);
+    TRACE("held: %lu, avail: %u\n", stream->pa_held_bytes, bytes);
     bytes = min(stream->pa_held_bytes, bytes);
 
     if (stream->pa_offs_bytes + bytes > stream->real_bufsize_bytes)
@@ -1140,8 +1197,8 @@ static void pulse_read(struct pulse_stream *stream)
                 {
                     if (src_len > stream->peek_buffer_len)
                     {
-                        RtlFreeHeap(GetProcessHeap(), 0, stream->peek_buffer);
-                        stream->peek_buffer = RtlAllocateHeap(GetProcessHeap(), 0, src_len);
+                        free(stream->peek_buffer);
+                        stream->peek_buffer = malloc(src_len);
                         stream->peek_buffer_len = src_len;
                     }
 
@@ -1162,8 +1219,10 @@ static void pulse_read(struct pulse_stream *stream)
     }
 }
 
-static void WINAPI pulse_timer_loop(struct pulse_stream *stream)
+static NTSTATUS pulse_timer_loop(void *args)
 {
+    struct timer_loop_params *params = args;
+    struct pulse_stream *stream = params->stream;
     LARGE_INTEGER delay;
     UINT32 adv_bytes;
     int success;
@@ -1263,31 +1322,38 @@ static void WINAPI pulse_timer_loop(struct pulse_stream *stream)
 
         pulse_unlock();
     }
+
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_start(struct pulse_stream *stream)
+static NTSTATUS pulse_start(void *args)
 {
-    HRESULT hr = S_OK;
+    struct start_params *params = args;
+    struct pulse_stream *stream = params->stream;
     int success;
     pa_operation *o;
 
+    params->result = S_OK;
     pulse_lock();
     if (!pulse_stream_valid(stream))
     {
         pulse_unlock();
-        return hr;
+        params->result = S_OK;
+        return STATUS_SUCCESS;
     }
 
     if ((stream->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) && !stream->event)
     {
         pulse_unlock();
-        return AUDCLNT_E_EVENTHANDLE_NOT_SET;
+        params->result = AUDCLNT_E_EVENTHANDLE_NOT_SET;
+        return STATUS_SUCCESS;
     }
 
     if (stream->started)
     {
         pulse_unlock();
-        return AUDCLNT_E_NOT_STOPPED;
+        params->result = AUDCLNT_E_NOT_STOPPED;
+        return STATUS_SUCCESS;
     }
 
     pulse_write(stream);
@@ -1304,21 +1370,22 @@ static HRESULT WINAPI pulse_start(struct pulse_stream *stream)
         else
             success = 0;
         if (!success)
-            hr = E_FAIL;
+            params->result = E_FAIL;
     }
 
-    if (SUCCEEDED(hr))
+    if (SUCCEEDED(params->result))
     {
         stream->started = TRUE;
         stream->just_started = TRUE;
     }
     pulse_unlock();
-    return hr;
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_stop(struct pulse_stream *stream)
+static NTSTATUS pulse_stop(void *args)
 {
-    HRESULT hr = S_OK;
+    struct stop_params *params = args;
+    struct pulse_stream *stream = params->stream;
     pa_operation *o;
     int success;
 
@@ -1326,15 +1393,18 @@ static HRESULT WINAPI pulse_stop(struct pulse_stream *stream)
     if (!pulse_stream_valid(stream))
     {
         pulse_unlock();
-        return AUDCLNT_E_DEVICE_INVALIDATED;
+        params->result = AUDCLNT_E_DEVICE_INVALIDATED;
+        return STATUS_SUCCESS;
     }
 
     if (!stream->started)
     {
         pulse_unlock();
-        return S_FALSE;
+        params->result = S_FALSE;
+        return STATUS_SUCCESS;
     }
 
+    params->result = S_OK;
     if (stream->dataflow == eRender)
     {
         o = pa_stream_cork(stream->stream, 1, pulse_op_cb, &success);
@@ -1347,33 +1417,39 @@ static HRESULT WINAPI pulse_stop(struct pulse_stream *stream)
         else
             success = 0;
         if (!success)
-            hr = E_FAIL;
+            params->result = E_FAIL;
     }
-    if (SUCCEEDED(hr))
+    if (SUCCEEDED(params->result))
         stream->started = FALSE;
     pulse_unlock();
-    return hr;
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_reset(struct pulse_stream *stream)
+static NTSTATUS pulse_reset(void *args)
 {
+    struct reset_params *params = args;
+    struct pulse_stream *stream = params->stream;
+
     pulse_lock();
     if (!pulse_stream_valid(stream))
     {
         pulse_unlock();
-        return AUDCLNT_E_DEVICE_INVALIDATED;
+        params->result = AUDCLNT_E_DEVICE_INVALIDATED;
+        return STATUS_SUCCESS;
     }
 
     if (stream->started)
     {
         pulse_unlock();
-        return AUDCLNT_E_NOT_STOPPED;
+        params->result = AUDCLNT_E_NOT_STOPPED;
+        return STATUS_SUCCESS;
     }
 
     if (stream->locked)
     {
         pulse_unlock();
-        return AUDCLNT_E_BUFFER_OPERATION_PENDING;
+        params->result = AUDCLNT_E_BUFFER_OPERATION_PENDING;
+        return STATUS_SUCCESS;
     }
 
     if (stream->dataflow == eRender)
@@ -1411,17 +1487,28 @@ static HRESULT WINAPI pulse_reset(struct pulse_stream *stream)
         list_move_tail(&stream->packet_free_head, &stream->packet_filled_head);
     }
     pulse_unlock();
-    return S_OK;
+    params->result = S_OK;
+    return STATUS_SUCCESS;
 }
 
-static void alloc_tmp_buffer(struct pulse_stream *stream, UINT32 bytes)
+static BOOL alloc_tmp_buffer(struct pulse_stream *stream, SIZE_T bytes)
 {
     if (stream->tmp_buffer_bytes >= bytes)
-        return;
+        return TRUE;
 
-    RtlFreeHeap(GetProcessHeap(), 0, stream->tmp_buffer);
-    stream->tmp_buffer = RtlAllocateHeap(GetProcessHeap(), 0, bytes);
+    if (stream->tmp_buffer)
+    {
+        NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer,
+                            &stream->tmp_buffer_bytes, MEM_RELEASE);
+        stream->tmp_buffer = NULL;
+        stream->tmp_buffer_bytes = 0;
+    }
+    if (NtAllocateVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer,
+                                0, &bytes, MEM_COMMIT, PAGE_READWRITE))
+        return FALSE;
+
     stream->tmp_buffer_bytes = bytes;
+    return TRUE;
 }
 
 static UINT32 pulse_render_padding(struct pulse_stream *stream)
@@ -1441,8 +1528,10 @@ static UINT32 pulse_capture_padding(struct pulse_stream *stream)
     return stream->held_bytes / pa_frame_size(&stream->ss);
 }
 
-static HRESULT WINAPI pulse_get_render_buffer(struct pulse_stream *stream, UINT32 frames, BYTE **data)
+static NTSTATUS pulse_get_render_buffer(void *args)
 {
+    struct get_render_buffer_params *params = args;
+    struct pulse_stream *stream = params->stream;
     size_t bytes;
     UINT32 wri_offs_bytes;
 
@@ -1450,46 +1539,56 @@ static HRESULT WINAPI pulse_get_render_buffer(struct pulse_stream *stream, UINT3
     if (!pulse_stream_valid(stream))
     {
         pulse_unlock();
-        return AUDCLNT_E_DEVICE_INVALIDATED;
+        params->result = AUDCLNT_E_DEVICE_INVALIDATED;
+        return STATUS_SUCCESS;
     }
 
     if (stream->locked)
     {
         pulse_unlock();
-        return AUDCLNT_E_OUT_OF_ORDER;
+        params->result = AUDCLNT_E_OUT_OF_ORDER;
+        return STATUS_SUCCESS;
     }
 
-    if (!frames)
+    if (!params->frames)
     {
         pulse_unlock();
-        *data = NULL;
-        return S_OK;
+        *params->data = NULL;
+        params->result = S_OK;
+        return STATUS_SUCCESS;
     }
 
-    if (stream->held_bytes / pa_frame_size(&stream->ss) + frames > stream->bufsize_frames)
+    if (stream->held_bytes / pa_frame_size(&stream->ss) + params->frames > stream->bufsize_frames)
     {
         pulse_unlock();
-        return AUDCLNT_E_BUFFER_TOO_LARGE;
+        params->result = AUDCLNT_E_BUFFER_TOO_LARGE;
+        return STATUS_SUCCESS;
     }
 
-    bytes = frames * pa_frame_size(&stream->ss);
+    bytes = params->frames * pa_frame_size(&stream->ss);
     wri_offs_bytes = (stream->lcl_offs_bytes + stream->held_bytes) % stream->real_bufsize_bytes;
     if (wri_offs_bytes + bytes > stream->real_bufsize_bytes)
     {
-        alloc_tmp_buffer(stream, bytes);
-        *data = stream->tmp_buffer;
+        if (!alloc_tmp_buffer(stream, bytes))
+        {
+            pulse_unlock();
+            params->result = E_OUTOFMEMORY;
+            return STATUS_SUCCESS;
+        }
+        *params->data = stream->tmp_buffer;
         stream->locked = -bytes;
     }
     else
     {
-        *data = stream->local_buffer + wri_offs_bytes;
+        *params->data = stream->local_buffer + wri_offs_bytes;
         stream->locked = bytes;
     }
 
-    silence_buffer(stream->ss.format, *data, bytes);
+    silence_buffer(stream->ss.format, *params->data, bytes);
 
     pulse_unlock();
-    return S_OK;
+    params->result = S_OK;
+    return STATUS_SUCCESS;
 }
 
 static void pulse_wrap_buffer(struct pulse_stream *stream, BYTE *buffer, UINT32 written_bytes)
@@ -1508,24 +1607,28 @@ static void pulse_wrap_buffer(struct pulse_stream *stream, BYTE *buffer, UINT32 
     }
 }
 
-static HRESULT WINAPI pulse_release_render_buffer(struct pulse_stream *stream, UINT32 written_frames,
-                                                  DWORD flags)
+static NTSTATUS pulse_release_render_buffer(void *args)
 {
+    struct release_render_buffer_params *params = args;
+    struct pulse_stream *stream = params->stream;
     UINT32 written_bytes;
     BYTE *buffer;
 
     pulse_lock();
-    if (!stream->locked || !written_frames)
+    if (!stream->locked || !params->written_frames)
     {
         stream->locked = 0;
         pulse_unlock();
-        return written_frames ? AUDCLNT_E_OUT_OF_ORDER : S_OK;
+        params->result = params->written_frames ? AUDCLNT_E_OUT_OF_ORDER : S_OK;
+        return STATUS_SUCCESS;
     }
 
-    if (written_frames * pa_frame_size(&stream->ss) > (stream->locked >= 0 ? stream->locked : -stream->locked))
+    if (params->written_frames * pa_frame_size(&stream->ss) >
+        (stream->locked >= 0 ? stream->locked : -stream->locked))
     {
         pulse_unlock();
-        return AUDCLNT_E_INVALID_SIZE;
+        params->result = AUDCLNT_E_INVALID_SIZE;
+        return STATUS_SUCCESS;
     }
 
     if (stream->locked >= 0)
@@ -1533,8 +1636,8 @@ static HRESULT WINAPI pulse_release_render_buffer(struct pulse_stream *stream, U
     else
         buffer = stream->tmp_buffer;
 
-    written_bytes = written_frames * pa_frame_size(&stream->ss);
-    if (flags & AUDCLNT_BUFFERFLAGS_SILENT)
+    written_bytes = params->written_frames * pa_frame_size(&stream->ss);
+    if (params->flags & AUDCLNT_BUFFERFLAGS_SILENT)
         silence_buffer(stream->ss.format, buffer, written_bytes);
 
     if (stream->locked < 0)
@@ -1551,68 +1654,78 @@ static HRESULT WINAPI pulse_release_render_buffer(struct pulse_stream *stream, U
     stream->clock_written += written_bytes;
     stream->locked = 0;
 
-    TRACE("Released %u, held %zu\n", written_frames, stream->held_bytes / pa_frame_size(&stream->ss));
+    TRACE("Released %u, held %lu\n", params->written_frames, stream->held_bytes / pa_frame_size(&stream->ss));
 
     pulse_unlock();
-    return S_OK;
+    params->result = S_OK;
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_get_capture_buffer(struct pulse_stream *stream, BYTE **data,
-        UINT32 *frames, DWORD *flags, UINT64 *devpos, UINT64 *qpcpos)
+static NTSTATUS pulse_get_capture_buffer(void *args)
 {
+    struct get_capture_buffer_params *params = args;
+    struct pulse_stream *stream = params->stream;
     ACPacket *packet;
 
     pulse_lock();
     if (!pulse_stream_valid(stream))
     {
         pulse_unlock();
-        return AUDCLNT_E_DEVICE_INVALIDATED;
+        params->result = AUDCLNT_E_DEVICE_INVALIDATED;
+        return STATUS_SUCCESS;
     }
     if (stream->locked)
     {
         pulse_unlock();
-        return AUDCLNT_E_OUT_OF_ORDER;
+        params->result = AUDCLNT_E_OUT_OF_ORDER;
+        return STATUS_SUCCESS;
     }
 
     pulse_capture_padding(stream);
     if ((packet = stream->locked_ptr))
     {
-        *frames = stream->period_bytes / pa_frame_size(&stream->ss);
-        *flags = 0;
+        *params->frames = stream->period_bytes / pa_frame_size(&stream->ss);
+        *params->flags = 0;
         if (packet->discont)
-            *flags |= AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY;
-        if (devpos)
+            *params->flags |= AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY;
+        if (params->devpos)
         {
             if (packet->discont)
-                *devpos = (stream->clock_written + stream->period_bytes) / pa_frame_size(&stream->ss);
+                *params->devpos = (stream->clock_written + stream->period_bytes) / pa_frame_size(&stream->ss);
             else
-                *devpos = stream->clock_written / pa_frame_size(&stream->ss);
+                *params->devpos = stream->clock_written / pa_frame_size(&stream->ss);
         }
-        if (qpcpos)
-            *qpcpos = packet->qpcpos;
-        *data = packet->data;
+        if (params->qpcpos)
+            *params->qpcpos = packet->qpcpos;
+        *params->data = packet->data;
     }
     else
-        *frames = 0;
-    stream->locked = *frames;
+        *params->frames = 0;
+    stream->locked = *params->frames;
     pulse_unlock();
-    return *frames ? S_OK : AUDCLNT_S_BUFFER_EMPTY;
+    params->result =  *params->frames ? S_OK : AUDCLNT_S_BUFFER_EMPTY;
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_release_capture_buffer(struct pulse_stream *stream, BOOL done)
+static NTSTATUS pulse_release_capture_buffer(void *args)
 {
+    struct release_capture_buffer_params *params = args;
+    struct pulse_stream *stream = params->stream;
+
     pulse_lock();
-    if (!stream->locked && done)
+    if (!stream->locked && params->done)
     {
         pulse_unlock();
-        return AUDCLNT_E_OUT_OF_ORDER;
+        params->result = AUDCLNT_E_OUT_OF_ORDER;
+        return STATUS_SUCCESS;
     }
-    if (done && stream->locked != done)
+    if (params->done && stream->locked != params->done)
     {
         pulse_unlock();
-        return AUDCLNT_E_INVALID_SIZE;
+        params->result = AUDCLNT_E_INVALID_SIZE;
+        return STATUS_SUCCESS;
     }
-    if (done)
+    if (params->done)
     {
         ACPacket *packet = stream->locked_ptr;
         stream->locked_ptr = NULL;
@@ -1625,102 +1738,168 @@ static HRESULT WINAPI pulse_release_capture_buffer(struct pulse_stream *stream, 
     }
     stream->locked = 0;
     pulse_unlock();
-    return S_OK;
+    params->result = S_OK;
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_get_buffer_size(struct pulse_stream *stream, UINT32 *out)
+static NTSTATUS pulse_get_buffer_size(void *args)
 {
-    HRESULT hr = S_OK;
+    struct get_buffer_size_params *params = args;
+
+    params->result = S_OK;
 
     pulse_lock();
-    if (!pulse_stream_valid(stream))
-        hr = AUDCLNT_E_DEVICE_INVALIDATED;
+    if (!pulse_stream_valid(params->stream))
+        params->result = AUDCLNT_E_DEVICE_INVALIDATED;
     else
-        *out = stream->bufsize_frames;
+        *params->size = params->stream->bufsize_frames;
     pulse_unlock();
 
-    return hr;
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_get_latency(struct pulse_stream *stream, REFERENCE_TIME *latency)
+static NTSTATUS pulse_get_latency(void *args)
 {
+    struct get_latency_params *params = args;
+    struct pulse_stream *stream = params->stream;
     const pa_buffer_attr *attr;
     REFERENCE_TIME lat;
 
     pulse_lock();
     if (!pulse_stream_valid(stream)) {
         pulse_unlock();
-        return AUDCLNT_E_DEVICE_INVALIDATED;
+        params->result = AUDCLNT_E_DEVICE_INVALIDATED;
+        return STATUS_SUCCESS;
     }
     attr = pa_stream_get_buffer_attr(stream->stream);
     if (stream->dataflow == eRender)
         lat = attr->minreq / pa_frame_size(&stream->ss);
     else
         lat = attr->fragsize / pa_frame_size(&stream->ss);
-    *latency = (lat * 10000000) / stream->ss.rate + pulse_def_period[0];
+    *params->latency = (lat * 10000000) / stream->ss.rate + pulse_def_period[0];
     pulse_unlock();
-    TRACE("Latency: %u ms\n", (DWORD)(*latency / 10000));
-    return S_OK;
+    TRACE("Latency: %u ms\n", (DWORD)(*params->latency / 10000));
+    params->result = S_OK;
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_get_current_padding(struct pulse_stream *stream, UINT32 *out)
+static NTSTATUS pulse_get_current_padding(void *args)
 {
+    struct get_current_padding_params *params = args;
+    struct pulse_stream *stream = params->stream;
+
     pulse_lock();
     if (!pulse_stream_valid(stream))
     {
         pulse_unlock();
-        return AUDCLNT_E_DEVICE_INVALIDATED;
+        params->result = AUDCLNT_E_DEVICE_INVALIDATED;
+        return STATUS_SUCCESS;
     }
 
     if (stream->dataflow == eRender)
-        *out = pulse_render_padding(stream);
+        *params->padding = pulse_render_padding(stream);
     else
-        *out = pulse_capture_padding(stream);
+        *params->padding = pulse_capture_padding(stream);
     pulse_unlock();
 
-    TRACE("%p Pad: %u ms (%u)\n", stream, muldiv(*out, 1000, stream->ss.rate), *out);
-    return S_OK;
+    TRACE("%p Pad: %u ms (%u)\n", stream, muldiv(*params->padding, 1000, stream->ss.rate),
+          *params->padding);
+    params->result = S_OK;
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_get_next_packet_size(struct pulse_stream *stream, UINT32 *frames)
+static NTSTATUS pulse_get_next_packet_size(void *args)
 {
+    struct get_next_packet_size_params *params = args;
+    struct pulse_stream *stream = params->stream;
+
     pulse_lock();
     pulse_capture_padding(stream);
     if (stream->locked_ptr)
-        *frames = stream->period_bytes / pa_frame_size(&stream->ss);
+        *params->frames = stream->period_bytes / pa_frame_size(&stream->ss);
     else
-        *frames = 0;
+        *params->frames = 0;
     pulse_unlock();
-    return S_OK;
+    params->result = S_OK;
+
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_get_frequency(struct pulse_stream *stream, UINT64 *freq)
+static NTSTATUS pulse_get_frequency(void *args)
 {
+    struct get_frequency_params *params = args;
+    struct pulse_stream *stream = params->stream;
+
     pulse_lock();
     if (!pulse_stream_valid(stream))
     {
         pulse_unlock();
-        return AUDCLNT_E_DEVICE_INVALIDATED;
+        params->result = AUDCLNT_E_DEVICE_INVALIDATED;
+        return STATUS_SUCCESS;
     }
 
-    *freq = stream->ss.rate;
+    *params->freq = stream->ss.rate;
     if (stream->share == AUDCLNT_SHAREMODE_SHARED)
-        *freq *= pa_frame_size(&stream->ss);
+        *params->freq *= pa_frame_size(&stream->ss);
     pulse_unlock();
-    return S_OK;
+    params->result = S_OK;
+    return STATUS_SUCCESS;
 }
 
-static void WINAPI pulse_set_volumes(struct pulse_stream *stream, float master_volume,
-                                     const float *volumes, const float *session_volumes)
+static NTSTATUS pulse_get_position(void *args)
 {
+    struct get_position_params *params = args;
+    struct pulse_stream *stream = params->stream;
+
+    pulse_lock();
+    if (!pulse_stream_valid(stream))
+    {
+        pulse_unlock();
+        params->result = AUDCLNT_E_DEVICE_INVALIDATED;
+        return STATUS_SUCCESS;
+    }
+
+    *params->pos = stream->clock_written - stream->held_bytes;
+
+    if (stream->share == AUDCLNT_SHAREMODE_EXCLUSIVE || params->device)
+        *params->pos /= pa_frame_size(&stream->ss);
+
+    /* Make time never go backwards */
+    if (*params->pos < stream->clock_lastpos)
+        *params->pos = stream->clock_lastpos;
+    else
+        stream->clock_lastpos = *params->pos;
+    pulse_unlock();
+
+    TRACE("%p Position: %u\n", stream, (unsigned)*params->pos);
+
+    if (params->qpctime)
+    {
+        LARGE_INTEGER stamp, freq;
+        NtQueryPerformanceCounter(&stamp, &freq);
+        *params->qpctime = (stamp.QuadPart * (INT64)10000000) / freq.QuadPart;
+    }
+
+    params->result = S_OK;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS pulse_set_volumes(void *args)
+{
+    struct set_volumes_params *params = args;
+    struct pulse_stream *stream = params->stream;
     unsigned int i;
 
     for (i = 0; i < stream->ss.channels; i++)
-        stream->vol[i] = volumes[i] * master_volume * session_volumes[i];
+        stream->vol[i] = params->volumes[i] * params->master_volume * params->session_volumes[i];
+
+    return STATUS_SUCCESS;
 }
 
-static HRESULT WINAPI pulse_set_event_handle(struct pulse_stream *stream, HANDLE event)
+static NTSTATUS pulse_set_event_handle(void *args)
 {
+    struct set_event_handle_params *params = args;
+    struct pulse_stream *stream = params->stream;
     HRESULT hr = S_OK;
 
     pulse_lock();
@@ -1731,17 +1910,27 @@ static HRESULT WINAPI pulse_set_event_handle(struct pulse_stream *stream, HANDLE
     else if (stream->event)
         hr = HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
     else
-        stream->event = event;
+        stream->event = params->event;
     pulse_unlock();
 
-    return hr;
+    params->result = hr;
+    return STATUS_SUCCESS;
 }
 
-static const struct unix_funcs unix_funcs =
+static NTSTATUS pulse_is_started(void *args)
 {
-    pulse_lock,
-    pulse_unlock,
-    pulse_cond_wait,
+    struct is_started_params *params = args;
+    struct pulse_stream *stream = params->stream;
+
+    pulse_lock();
+    params->started = pulse_stream_valid(stream) && stream->started;
+    pulse_unlock();
+
+    return STATUS_SUCCESS;
+}
+
+static const unixlib_entry_t unix_funcs[] =
+{
     pulse_main_loop,
     pulse_create_stream,
     pulse_release_stream,
@@ -1758,9 +1947,11 @@ static const struct unix_funcs unix_funcs =
     pulse_get_current_padding,
     pulse_get_next_packet_size,
     pulse_get_frequency,
+    pulse_get_position,
     pulse_set_volumes,
     pulse_set_event_handle,
     pulse_test_connect,
+    pulse_is_started,
 };
 
 NTSTATUS CDECL __wine_init_unix_lib(HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out)
@@ -1776,7 +1967,7 @@ NTSTATUS CDECL __wine_init_unix_lib(HMODULE module, DWORD reason, const void *pt
         if (pthread_mutex_init(&pulse_mutex, &attr) != 0)
             pthread_mutex_init(&pulse_mutex, NULL);
 
-        *(const struct unix_funcs **)ptr_out = &unix_funcs;
+        *(UINT64 *)ptr_out = (UINT_PTR)&unix_funcs;
         break;
     case DLL_PROCESS_DETACH:
         if (pulse_ctx)

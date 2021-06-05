@@ -5242,6 +5242,8 @@ const char *debug_d3dstate(DWORD state)
         return "STATE_DEPTH_STENCIL";
     if (STATE_IS_STENCIL_REF(state))
         return "STATE_STENCIL_REF";
+    if (STATE_IS_DEPTH_BOUNDS(state))
+        return "STATE_DEPTH_BOUNDS";
 
     return wine_dbg_sprintf("UNKNOWN_STATE(%#x)", state);
 }
@@ -6051,7 +6053,7 @@ void multiply_matrix(struct wined3d_matrix *dst, const struct wined3d_matrix *sr
     *dst = tmp;
 }
 
-void gen_ffp_frag_op(const struct wined3d_context *context, const struct wined3d_state *state,
+void wined3d_ffp_get_fs_settings(const struct wined3d_context *context, const struct wined3d_state *state,
         struct ffp_frag_settings *settings, BOOL ignore_textype)
 {
 #define ARG1 0x01

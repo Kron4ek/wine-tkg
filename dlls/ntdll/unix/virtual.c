@@ -28,7 +28,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdarg.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -105,7 +104,34 @@ struct file_view
     unsigned int  protect;       /* protection for all pages at allocation time and SEC_* flags */
 };
 
-#define __EXCEPT_SYSCALL __EXCEPT_HANDLER(0)
+#undef __TRY
+#undef __EXCEPT
+#undef __ENDTRY
+
+#define __TRY \
+    do { __wine_jmp_buf __jmp; \
+         int __first = 1; \
+         assert( !ntdll_get_thread_data()->jmp_buf ); \
+         for (;;) if (!__first) \
+         { \
+             do {
+
+#define __EXCEPT \
+             } while(0); \
+             ntdll_get_thread_data()->jmp_buf = NULL; \
+             break; \
+         } else { \
+             if (__wine_setjmpex( &__jmp, NULL )) { \
+                 do {
+
+#define __ENDTRY \
+                 } while (0); \
+                 break; \
+             } \
+             ntdll_get_thread_data()->jmp_buf = &__jmp; \
+             __first = 0; \
+         } \
+    } while (0);
 
 /* per-page protection flags */
 #define VPROT_READ       0x01
@@ -2932,25 +2958,6 @@ NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_nam
 }
 
 
-/* set some initial values in the new PEB */
-static PEB *init_peb( void *ptr )
-{
-    PEB64 *peb64 = ptr;
-    PEB32 *peb32 = (PEB32 *)((char *)ptr + page_size);
-
-    peb32->OSMajorVersion = peb64->OSMajorVersion = 6;
-    peb32->OSMinorVersion = peb64->OSMinorVersion = 1;
-    peb32->OSBuildNumber  = peb64->OSBuildNumber  = 0x1db1;
-    peb32->OSPlatformId   = peb64->OSPlatformId   = VER_PLATFORM_WIN32_NT;
-    peb32->SessionId      = peb64->SessionId      = 1;
-#ifdef _WIN64
-    return (PEB *)peb64;
-#else
-    return (PEB *)peb32;
-#endif
-}
-
-
 /* set some initial values in a new TEB */
 static TEB *init_teb( void *ptr, PEB *peb, BOOL is_wow )
 {
@@ -3016,7 +3023,6 @@ static TEB *init_teb( void *ptr, PEB *peb, BOOL is_wow )
  */
 TEB *virtual_alloc_first_teb(void)
 {
-    struct ntdll_thread_data *thread_data;
     TEB *teb;
     PEB *peb;
     void *ptr;
@@ -3040,11 +3046,9 @@ TEB *virtual_alloc_first_teb(void)
     ptr = (char *)teb_block + 30 * block_size;
     data_size = 2 * block_size;
     NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &data_size, MEM_COMMIT, PAGE_READWRITE );
-    peb = init_peb( (char *)teb_block + 31 * block_size );
+    peb = (PEB *)((char *)teb_block + 31 * block_size + (is_win64 ? 0 : page_size));
     teb = init_teb( ptr, peb, FALSE );
     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
-    thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
-    thread_data->debug_info = (struct debug_info *)((char *)teb_block + 31 * block_size + 2 * page_size);
     return teb;
 }
 
@@ -3061,18 +3065,11 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb, ULONG_PTR zero_bits )
     SIZE_T block_size = signal_stack_mask + 1;
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
-    if (next_free_teb)
+    if (next_free_teb && !((UINT_PTR)next_free_teb & ~get_zero_bits_mask( zero_bits )))
     {
-        /*Nioh 2 doesn't like the zero_bits check, so let's not check it*/
-        {
-            const char *sgi = getenv("SteamGameId");
-            if ((sgi && !strcmp(sgi, "1325200")) | !((UINT_PTR)next_free_teb & ~get_zero_bits_mask( zero_bits )))
-            {
-                ptr = next_free_teb;
-                next_free_teb = *(void **)ptr;
-                memset( ptr, 0, teb_size );
-            }
-        }
+        ptr = next_free_teb;
+        next_free_teb = *(void **)ptr;
+        memset( ptr, 0, teb_size );
     }
     else
     {
@@ -3199,7 +3196,6 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR zero_bits, SI
     NTSTATUS status;
     sigset_t sigset;
     SIZE_T size, extra_size = 0;
-    unsigned int vprot = VPROT_READ | VPROT_WRITE | VPROT_COMMITTED;
 
     if (!reserve_size) reserve_size = main_image_info.MaximumStackSize;
     if (!commit_size) commit_size = main_image_info.CommittedStackSize;
@@ -3211,20 +3207,9 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR zero_bits, SI
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 
-    /*More Nioh 2 being angry fixes*/
-    {
-        const char *sgi = getenv("SteamGameId");
-        if (sgi && !strcmp(sgi, "1325200"))
-        {
-            if ((status = map_view( &view, NULL, size + extra_size, FALSE,
-                                    VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, zero_bits )) != STATUS_SUCCESS)
-                goto done;
-        }
-    }
-
-    status = map_view( &view, NULL, size + extra_size, FALSE, vprot, zero_bits );
-    if (status == STATUS_NO_MEMORY) status = map_view( &view, NULL, size + extra_size, FALSE, vprot, 0 );
-    if (status != STATUS_SUCCESS) goto done;
+    if ((status = map_view( &view, NULL, size + extra_size, FALSE,
+                            VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, zero_bits )) != STATUS_SUCCESS)
+        goto done;
 
 #ifdef VALGRIND_STACK_REGISTER
     VALGRIND_STACK_REGISTER( view->base, (char *)view->base + view->size );
@@ -3556,9 +3541,9 @@ ssize_t virtual_locked_pread( int fd, void *addr, size_t size, off_t offset )
 
 
 /***********************************************************************
- *           __wine_locked_recvmsg   (NTDLL.@)
+ *           virtual_locked_recvmsg
  */
-ssize_t CDECL __wine_locked_recvmsg( int fd, struct msghdr *hdr, int flags )
+ssize_t virtual_locked_recvmsg( int fd, struct msghdr *hdr, int flags )
 {
     sigset_t sigset;
     size_t i;
@@ -3628,7 +3613,7 @@ BOOL virtual_check_buffer_for_read( const void *ptr, SIZE_T size )
         dummy = p[0];
         dummy = p[count - 1];
     }
-    __EXCEPT_SYSCALL
+    __EXCEPT
     {
         return FALSE;
     }
@@ -3661,7 +3646,7 @@ BOOL virtual_check_buffer_for_write( void *ptr, SIZE_T size )
         p[0] |= 0;
         p[count - 1] |= 0;
     }
-    __EXCEPT_SYSCALL
+    __EXCEPT
     {
         return FALSE;
     }
