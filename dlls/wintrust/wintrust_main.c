@@ -304,7 +304,6 @@ static LONG WINTRUST_DefaultVerify(HWND hwnd, GUID *actionID,
     numSteps = WINTRUST_AddTrustStepsFromFunctions(verifySteps,
      provData->psPfns);
     err = WINTRUST_ExecuteSteps(verifySteps, numSteps, provData);
-    err = S_OK;
     goto done;
 
 error:

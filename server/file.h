@@ -132,6 +132,14 @@ static inline struct fd *get_obj_fd( struct object *obj ) { return obj->ops->get
 struct timeout_user;
 extern timeout_t current_time;
 extern timeout_t monotonic_time;
+
+struct hypervisor_shared_data
+{
+    UINT64 unknown;
+    UINT64 QpcMultiplier;
+    UINT64 QpcBias;
+};
+extern struct hypervisor_shared_data *hypervisor_shared_data;
 extern struct _KUSER_SHARED_DATA *user_shared_data;
 
 #define TICKS_PER_SEC 10000000
@@ -185,6 +193,8 @@ extern struct mapping *create_fd_mapping( struct object *root, const struct unic
                                           unsigned int attr, const struct security_descriptor *sd );
 extern struct object *create_user_data_mapping( struct object *root, const struct unicode_str *name,
                                                 unsigned int attr, const struct security_descriptor *sd );
+extern struct object *create_hypervisor_data_mapping( struct object *root, const struct unicode_str *name,
+                                                      unsigned int attr, const struct security_descriptor *sd );
 
 /* device functions */
 
@@ -239,7 +249,6 @@ extern void fd_copy_completion( struct fd *src, struct fd *dst );
 extern struct iosb *create_iosb( const void *in_data, data_size_t in_size, data_size_t out_size );
 extern struct iosb *async_get_iosb( struct async *async );
 extern struct thread *async_get_thread( struct async *async );
-extern int async_is_blocking( struct async *async );
 extern struct async *find_pending_async( struct async_queue *queue );
 extern void cancel_process_asyncs( struct process *process );
 

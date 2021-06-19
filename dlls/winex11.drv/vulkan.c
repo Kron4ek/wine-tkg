@@ -59,8 +59,6 @@ static CRITICAL_SECTION context_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 static XContext vulkan_hwnd_context;
 static XContext vulkan_swapchain_context;
 
-static struct vulkan_funcs vulkan_funcs;
-
 #define VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR 1000004000
 
 struct wine_vk_surface
@@ -158,13 +156,6 @@ static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
     LOAD_FUNCPTR(vkQueuePresentKHR);
     LOAD_OPTIONAL_FUNCPTR(vkGetDeviceGroupSurfacePresentModesKHR);
     LOAD_OPTIONAL_FUNCPTR(vkGetPhysicalDevicePresentRectanglesKHR);
-
-    if(!pvkGetPhysicalDeviceSurfaceCapabilities2KHR){
-        vulkan_funcs.p_vkGetPhysicalDeviceSurfaceCapabilities2KHR = NULL;
-    }
-    if(!pvkGetPhysicalDeviceSurfaceFormats2KHR){
-        vulkan_funcs.p_vkGetPhysicalDeviceSurfaceFormats2KHR = NULL;
-    }
     LOAD_FUNCPTR(vkWaitForFences);
     LOAD_FUNCPTR(vkCreateFence);
     LOAD_FUNCPTR(vkDestroyFence);
@@ -910,7 +901,7 @@ static VkBool32 X11DRV_query_fs_hack(VkSurfaceKHR surface, VkExtent2D *real_sz, 
     return VK_FALSE;
 }
 
-static struct vulkan_funcs vulkan_funcs =
+static const struct vulkan_funcs vulkan_funcs =
 {
     X11DRV_vkAcquireNextImage2KHR,
     X11DRV_vkAcquireNextImageKHR,

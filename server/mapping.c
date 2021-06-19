@@ -382,6 +382,9 @@ static void add_process_view( struct thread *thread, struct memory_view *view )
             /* main exe */
             set_process_machine( process, view );
             list_add_head( &process->views, &view->entry );
+
+            free( process->image );
+            process->image = NULL;
             if (get_view_nt_name( view, &name ) && (process->image = memdup( name.str, name.len )))
                 process->imagelen = name.len;
             return;
@@ -1089,6 +1092,20 @@ struct object *create_user_data_mapping( struct object *root, const struct unico
         user_shared_data = ptr;
         user_shared_data->SystemCall = 1;
     }
+    return &mapping->obj;
+}
+
+struct object *create_hypervisor_data_mapping( struct object *root, const struct unicode_str *name,
+                                               unsigned int attr, const struct security_descriptor *sd )
+{
+    void *ptr;
+    struct mapping *mapping;
+
+    if (!(mapping = create_mapping( root, name, attr, sizeof(struct hypervisor_shared_data),
+                                    SEC_COMMIT, 0, FILE_READ_DATA | FILE_WRITE_DATA, sd ))) return NULL;
+    ptr = mmap( NULL, mapping->size, PROT_WRITE, MAP_SHARED, get_unix_fd( mapping->fd ), 0 );
+    if (ptr != MAP_FAILED)
+        hypervisor_shared_data = ptr;
     return &mapping->obj;
 }
 

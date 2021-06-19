@@ -6632,8 +6632,9 @@ static VkResult WINAPI wine_vkGetDeviceGroupPresentCapabilitiesKHR(VkDevice devi
     return device->funcs.p_vkGetDeviceGroupPresentCapabilitiesKHR(device->device, pDeviceGroupPresentCapabilities);
 }
 
-VkResult thunk_vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device, VkSurfaceKHR surface, VkDeviceGroupPresentModeFlagsKHR *pModes)
+static VkResult WINAPI wine_vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device, VkSurfaceKHR surface, VkDeviceGroupPresentModeFlagsKHR *pModes)
 {
+    TRACE("%p, 0x%s, %p\n", device, wine_dbgstr_longlong(surface), pModes);
     return device->funcs.p_vkGetDeviceGroupSurfacePresentModesKHR(device->device, wine_surface_from_handle(surface)->driver_surface, pModes);
 }
 
@@ -7158,8 +7159,9 @@ static VkResult WINAPI wine_vkGetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevic
     return physicalDevice->instance->funcs.p_vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice->phys_dev, wine_surface_from_handle(surface)->driver_surface, pSurfaceFormatCount, pSurfaceFormats);
 }
 
-VkResult thunk_vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t *pPresentModeCount, VkPresentModeKHR *pPresentModes)
+static VkResult WINAPI wine_vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t *pPresentModeCount, VkPresentModeKHR *pPresentModes)
 {
+    TRACE("%p, 0x%s, %p, %p\n", physicalDevice, wine_dbgstr_longlong(surface), pPresentModeCount, pPresentModes);
     return physicalDevice->instance->funcs.p_vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice->phys_dev, wine_surface_from_handle(surface)->driver_surface, pPresentModeCount, pPresentModes);
 }
 
@@ -7695,7 +7697,6 @@ static const char * const vk_device_extensions[] =
     "VK_EXT_fragment_density_map",
     "VK_EXT_fragment_density_map2",
     "VK_EXT_fragment_shader_interlock",
-    "VK_EXT_full_screen_exclusive",
     "VK_EXT_global_priority",
     "VK_EXT_host_query_reset",
     "VK_EXT_image_robustness",
@@ -7832,11 +7833,6 @@ static const char * const vk_device_extensions[] =
     "VK_VALVE_mutable_descriptor_type",
 };
 
-static const VkExtensionProperties vk_device_extension_discards[] =
-{
-    {"VK_EXT_full_screen_exclusive", 4},
-};
-
 static const char * const vk_instance_extensions[] =
 {
     "VK_EXT_debug_report",
@@ -7863,27 +7859,6 @@ BOOL wine_vk_device_extension_supported(const char *name)
             return TRUE;
     }
     return FALSE;
-}
-
-BOOL wine_vk_device_extension_faked(const char *name)
-{
-    unsigned int i;
-    for (i = 0; i < ARRAY_SIZE(vk_device_extension_discards); i++)
-    {
-        if (strcmp(vk_device_extension_discards[i].extensionName, name) == 0)
-            return TRUE;
-    }
-    return FALSE;
-}
-
-unsigned int wine_vk_device_extension_faked_count(void)
-{
-    return ARRAY_SIZE(vk_device_extension_discards);
-}
-
-const VkExtensionProperties* wine_vk_device_extension_faked_idx(unsigned int idx)
-{
-    return &vk_device_extension_discards[idx];
 }
 
 BOOL wine_vk_instance_extension_supported(const char *name)
@@ -7943,7 +7918,6 @@ uint64_t wine_vk_unwrap_handle(VkObjectType type, uint64_t handle)
 
 const struct unix_funcs loader_funcs =
 {
-    &wine_vkAcquireFullScreenExclusiveModeEXT,
     &wine_vkAcquireNextImage2KHR,
     &wine_vkAcquireNextImageKHR,
     &wine_vkAcquirePerformanceConfigurationINTEL,
@@ -8222,7 +8196,6 @@ const struct unix_funcs loader_funcs =
     &wine_vkGetDeviceGroupPeerMemoryFeatures,
     &wine_vkGetDeviceGroupPeerMemoryFeaturesKHR,
     &wine_vkGetDeviceGroupPresentCapabilitiesKHR,
-    &wine_vkGetDeviceGroupSurfacePresentModes2EXT,
     &wine_vkGetDeviceGroupSurfacePresentModesKHR,
     &wine_vkGetDeviceMemoryCommitment,
     &wine_vkGetDeviceMemoryOpaqueCaptureAddress,
@@ -8281,7 +8254,6 @@ const struct unix_funcs loader_funcs =
     &wine_vkGetPhysicalDeviceSurfaceCapabilitiesKHR,
     &wine_vkGetPhysicalDeviceSurfaceFormats2KHR,
     &wine_vkGetPhysicalDeviceSurfaceFormatsKHR,
-    &wine_vkGetPhysicalDeviceSurfacePresentModes2EXT,
     &wine_vkGetPhysicalDeviceSurfacePresentModesKHR,
     &wine_vkGetPhysicalDeviceSurfaceSupportKHR,
     &wine_vkGetPhysicalDeviceToolPropertiesEXT,
@@ -8318,7 +8290,6 @@ const struct unix_funcs loader_funcs =
     &wine_vkQueueSubmit,
     &wine_vkQueueSubmit2KHR,
     &wine_vkQueueWaitIdle,
-    &wine_vkReleaseFullScreenExclusiveModeEXT,
     &wine_vkReleasePerformanceConfigurationINTEL,
     &wine_vkReleaseProfilingLockKHR,
     &wine_vkResetCommandBuffer,
