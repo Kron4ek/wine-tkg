@@ -94,9 +94,6 @@
 #ifdef HAVE_SYS_SYSCALL_H
 #include <sys/syscall.h>
 #endif
-#if defined(__i386__) || defined(__x86_64__)
-#include <x86intrin.h>
-#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -403,47 +400,12 @@ static struct list rel_timeout_list = LIST_INIT(rel_timeout_list); /* sorted rel
 timeout_t current_time;
 timeout_t monotonic_time;
 
-struct hypervisor_shared_data *hypervisor_shared_data = NULL;
 struct _KUSER_SHARED_DATA *user_shared_data = NULL;
 static const int user_shared_data_timeout = 16;
-
-/* 128-bit multiply a by b and return the high 64 bits, same as __umulh */
-static UINT64 multiply_tsc(UINT64 a, UINT64 b)
-{
-    UINT64 ah = a >> 32, al = (UINT32)a, bh = b >> 32, bl = (UINT32)b, m;
-    m = (ah * bl) + (bh * al) + ((al * bl) >> 32);
-    return (ah * bh) + (m >> 32);
-}
 
 static void set_user_shared_data_time(void)
 {
     timeout_t tick_count = monotonic_time / 10000;
-    unsigned __int64 tsc, qpc_bias, qpc_freq = user_shared_data->QpcFrequency;
-    unsigned int aux, qpc_shift = user_shared_data->QpcShift;
-    unsigned int qpc_bypass = user_shared_data->QpcBypassEnabled;
-
-    if (!(qpc_bypass & SHARED_GLOBAL_FLAGS_QPC_BYPASS_ENABLED))
-        tsc = 0;
-#if defined(__i386__) || defined(__x86_64__)
-    else if (qpc_bypass & SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_RDTSCP)
-        tsc = __rdtscp(&aux);
-    else
-    {
-        if (qpc_bypass & SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_MFENCE)
-            __asm__ __volatile__ ( "mfence" : : : "memory" );
-        if (qpc_bypass & SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_LFENCE)
-            __asm__ __volatile__ ( "lfence" : : : "memory" );
-        tsc = __rdtsc();
-    }
-#endif
-
-    if (!(qpc_bypass & SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_HV_PAGE))
-        qpc_bias = ((monotonic_time * qpc_freq / 10000000) << qpc_shift) - tsc;
-    else
-    {
-        tsc = multiply_tsc(tsc, hypervisor_shared_data->QpcMultiplier);
-        qpc_bias = monotonic_time - tsc;
-    }
 
     /* on X86 there should be total store order guarantees, so volatile is enough
      * to ensure the stores aren't reordered by the compiler, and then they will
@@ -462,10 +424,6 @@ static void set_user_shared_data_time(void)
     user_shared_data->TickCount.LowPart   = tick_count;
     user_shared_data->TickCount.High1Time = tick_count >> 32;
     *(volatile ULONG *)&user_shared_data->TickCountLowDeprecated = tick_count;
-    if (qpc_bypass & SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_HV_PAGE)
-        hypervisor_shared_data->QpcBias = qpc_bias;
-    else
-        user_shared_data->QpcBias = qpc_bias;
 #else
     __atomic_store_n(&user_shared_data->SystemTime.High2Time, current_time >> 32, __ATOMIC_SEQ_CST);
     __atomic_store_n(&user_shared_data->SystemTime.LowPart, current_time, __ATOMIC_SEQ_CST);
@@ -479,10 +437,6 @@ static void set_user_shared_data_time(void)
     __atomic_store_n(&user_shared_data->TickCount.LowPart, tick_count, __ATOMIC_SEQ_CST);
     __atomic_store_n(&user_shared_data->TickCount.High1Time, tick_count >> 32, __ATOMIC_SEQ_CST);
     __atomic_store_n(&user_shared_data->TickCountLowDeprecated, tick_count, __ATOMIC_SEQ_CST);
-    if (qpc_bypass & SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_HV_PAGE)
-        __atomic_store_n(&hypervisor_shared_data->QpcBias, qpc_bias, __ATOMIC_SEQ_CST);
-    else
-        __atomic_store_n(&user_shared_data->QpcBias, qpc_bias, __ATOMIC_SEQ_CST);
 #endif
 }
 
@@ -2717,7 +2671,6 @@ static int is_dir_empty( int fd )
 static void set_fd_disposition( struct fd *fd, int unlink )
 {
     struct stat st;
-    struct list *ptr;
 
     if (!fd->inode)
     {
@@ -2733,6 +2686,17 @@ static void set_fd_disposition( struct fd *fd, int unlink )
 
     if (unlink)
     {
+        struct fd *fd_ptr;
+
+        LIST_FOR_EACH_ENTRY( fd_ptr, &fd->inode->open, struct fd, inode_entry )
+        {
+            if (fd_ptr->access & FILE_MAPPING_ACCESS)
+            {
+                set_error( STATUS_CANNOT_DELETE );
+                return;
+            }
+        }
+
         if (fstat( fd->unix_fd, &st ) == -1)
         {
             file_set_error();
@@ -2761,17 +2725,6 @@ static void set_fd_disposition( struct fd *fd, int unlink )
         else  /* can't unlink special files */
         {
             set_error( STATUS_INVALID_PARAMETER );
-            return;
-        }
-    }
-
-    /* can't unlink files which are mapped to memory */
-    LIST_FOR_EACH( ptr, &fd->inode->open )
-    {
-        struct fd *fd_ptr = LIST_ENTRY( ptr, struct fd, inode_entry );
-        if (fd_ptr != fd && (fd_ptr->access & FILE_MAPPING_ACCESS))
-        {
-            set_error( STATUS_CANNOT_DELETE );
             return;
         }
     }
@@ -2915,9 +2868,7 @@ failed:
 
 static void set_fd_eof( struct fd *fd, file_pos_t eof )
 {
-    static const char zero;
     struct stat st;
-    struct list *ptr;
 
     if (!fd->inode)
     {
@@ -2930,40 +2881,25 @@ static void set_fd_eof( struct fd *fd, file_pos_t eof )
         set_error( fd->no_fd_status );
         return;
     }
-
-    if (fstat( fd->unix_fd, &st ) == -1)
+    if (fstat( fd->unix_fd, &st) == -1)
     {
         file_set_error();
         return;
     }
-
-    /* can't truncate files which are mapped to memory */
     if (eof < st.st_size)
     {
-        LIST_FOR_EACH( ptr, &fd->inode->open )
+        struct fd *fd_ptr;
+        LIST_FOR_EACH_ENTRY( fd_ptr, &fd->inode->open, struct fd, inode_entry )
         {
-            struct fd *fd_ptr = LIST_ENTRY( ptr, struct fd, inode_entry );
-            if (fd_ptr != fd && (fd_ptr->access & FILE_MAPPING_ACCESS))
+            if (fd_ptr->access & FILE_MAPPING_ACCESS)
             {
                 set_error( STATUS_USER_MAPPED_FILE );
                 return;
             }
         }
+        if (ftruncate( fd->unix_fd, eof ) == -1) file_set_error();
     }
-
-    /* first try normal truncate */
-    if (ftruncate( fd->unix_fd, eof ) != -1) return;
-
-    /* now check for the need to extend the file */
-    if (eof > st.st_size)
-    {
-        /* extend the file one byte beyond the requested size and then truncate it */
-        /* this should work around ftruncate implementations that can't extend files */
-        if (pwrite( fd->unix_fd, &zero, 1, eof ) != -1 &&
-            ftruncate( fd->unix_fd, eof) != -1) return;
-    }
-
-    file_set_error();
+    else grow_file( fd->unix_fd, eof );
 }
 
 struct completion *fd_get_completion( struct fd *fd, apc_param_t *p_key )

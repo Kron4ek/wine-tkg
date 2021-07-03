@@ -2432,6 +2432,7 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
                 nt_process->dwBasePriority = server_process->priority;
                 nt_process->UniqueProcessId = UlongToHandle(server_process->pid);
                 nt_process->ParentProcessId = UlongToHandle(server_process->parent_pid);
+                nt_process->SessionId = server_process->session_id;
                 nt_process->HandleCount = server_process->handle_count;
                 get_thread_times( server_process->unix_pid, -1, &nt_process->KernelTime, &nt_process->UserTime );
                 fill_vm_counters( &nt_process->vmCounters, server_process->unix_pid );
@@ -2978,18 +2979,6 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
         len = strlen(version) + strlen(wine_build) + strlen(buf.sysname) + strlen(buf.release) + 4;
         snprintf( info, size, "%s%c%s%c%s%c%s", version, 0, wine_build, 0, buf.sysname, 0, buf.release );
         if (size < len) ret = STATUS_INFO_LENGTH_MISMATCH;
-        break;
-    }
-
-    case SystemHypervisorSharedPageInformation:
-    {
-        len = sizeof(void *);
-        if (size >= len)
-        {
-            if (!info) ret = STATUS_ACCESS_VIOLATION;
-            else *(void **)info = hypervisor_shared_data;
-        }
-        else ret = STATUS_INFO_LENGTH_MISMATCH;
         break;
     }
 

@@ -83,8 +83,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(wineboot);
 
-#define TICKSPERSEC        10000000
-
 extern BOOL shutdown_close_windows( BOOL force );
 extern BOOL shutdown_all_desktops( BOOL force );
 extern void kill_processes( BOOL kill_desktop );
@@ -244,259 +242,15 @@ static void initialize_xstate_features(struct _KUSER_SHARED_DATA *data)
     TRACE("XSAVE feature 2 %#x, %#x, %#x, %#x.\n", regs[0], regs[1], regs[2], regs[3]);
 }
 
-static UINT64 read_tsc_frequency(void)
-{
-    UINT64 freq = 0;
-
-/* FIXME: Intel provides TSC freq in some CPUID but it's been slightly broken,
-   fix it properly and test it on real Intel hardware */
-
-#if 0
-    int regs[4], cpuid_level, tmp;
-    UINT64 denom, numer;
-
-    __cpuid(regs, 0);
-    tmp = regs[2];
-    regs[2] = regs[3];
-    regs[3] = tmp;
-
-    /* only available on some intel CPUs */
-    if (memcmp(regs + 1, "GenuineIntel", 12)) freq = 0;
-    else if ((cpuid_level = regs[0]) < 0x15) freq = 0;
-    else
-    {
-        __cpuid(regs, 0x15);
-        if (!(denom = regs[0]) || !(numer = regs[1])) freq = 0;
-        else
-        {
-            if ((freq = regs[2])) freq = freq * numer / denom;
-            else if (cpuid_level >= 0x16)
-            {
-                __cpuid(regs, 0x16); /* eax is base freq in MHz */
-                freq = regs[0] * (UINT64)1000000;
-            }
-            else freq = 0;
-        }
-
-        if (!freq) WARN("Failed to read TSC frequency from CPUID, falling back to calibration.\n");
-        else TRACE("TSC frequency read from CPUID, found %I64u Hz\n", freq);
-    }
-#endif
-
-    if (freq == 0)
-    {
-        LONGLONG time0, time1, tsc0, tsc1, tsc2, tsc3, freq0, freq1, error;
-        unsigned int aux;
-        UINT retries = 50;
-
-        do
-        {
-            tsc0 = __rdtscp(&aux);
-            time0 = RtlGetSystemTimePrecise();
-            tsc1 = __rdtscp(&aux);
-            Sleep(1);
-            tsc2 = __rdtscp(&aux);
-            time1 = RtlGetSystemTimePrecise();
-            tsc3 = __rdtscp(&aux);
-
-            freq0 = (tsc2 - tsc0) * 10000000 / (time1 - time0);
-            freq1 = (tsc3 - tsc1) * 10000000 / (time1 - time0);
-            error = llabs((freq1 - freq0) * 1000000 / min(freq1, freq0));
-        }
-        while (error > 100 && retries--);
-
-        if (!retries) WARN("TSC frequency calibration failed, unstable TSC?\n");
-        else
-        {
-            freq = (freq0 + freq1) / 2;
-            TRACE("TSC frequency calibration complete, found %I64u Hz\n", freq);
-        }
-    }
-
-    return freq;
-}
-
-static BOOL is_tsc_trusted_by_the_kernel(void)
-{
-    char buf[4] = {};
-    DWORD num_read;
-    HANDLE handle;
-    BOOL ret = TRUE;
-
-    handle = CreateFileA( "\\??\\unix\\sys\\bus\\clocksource\\devices\\clocksource0\\current_clocksource",
-                          GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0 );
-
-    if (handle == INVALID_HANDLE_VALUE)
-        return TRUE;
-
-    if (ReadFile( handle, buf, sizeof(buf)-1, &num_read, NULL ))
-    {
-        if (!!strcmp( "tsc", buf ))
-            ret = FALSE;
-    }
-
-    CloseHandle( handle );
-
-    return ret;
-}
-
-static void initialize_qpc_features(struct _KUSER_SHARED_DATA *data, UINT64 tsc_frequency)
-{
-    int regs[4];
-
-    if (data->QpcBypassEnabled) return;
-
-    data->QpcBypassEnabled = 0;
-    data->QpcFrequency = TICKSPERSEC;
-    data->QpcShift = 0;
-    data->QpcBias = 0;
-
-    if (!data->ProcessorFeatures[PF_RDTSC_INSTRUCTION_AVAILABLE])
-    {
-        WARN("No RDTSC support, disabling QpcBypass\n");
-        return;
-    }
-
-    __cpuid(regs, 0x80000000);
-    if (regs[0] < 0x80000007)
-    {
-        WARN("Unable to check invariant TSC, disabling QpcBypass\n");
-        return;
-    }
-
-    /* check for invariant tsc bit */
-    __cpuid(regs, 0x80000007);
-    if (!(regs[3] & (1 << 8)))
-    {
-        WARN("No invariant TSC, disabling QpcBypass\n");
-        return;
-    }
-
-    if (!is_tsc_trusted_by_the_kernel())
-    {
-        WARN("TSC is not trusted by the kernel, disabling QpcBypass.\n");
-        return;
-    }
-
-    data->QpcBypassEnabled |= SHARED_GLOBAL_FLAGS_QPC_BYPASS_ENABLED;
-
-    /* check for rdtscp support bit */
-    __cpuid(regs, 0x80000001);
-    if ((regs[3] & (1 << 27)))
-        data->QpcBypassEnabled |= SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_RDTSCP;
-    else if (data->ProcessorFeatures[PF_XMMI64_INSTRUCTIONS_AVAILABLE])
-        data->QpcBypassEnabled |= SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_LFENCE;
-    else
-        data->QpcBypassEnabled |= SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_MFENCE;
-
-    if ((data->QpcFrequency = (tsc_frequency >> 10)))
-    {
-        data->QpcShift = 10;
-        data->QpcBias = 0;
-    }
-
-    if (!data->QpcFrequency)
-    {
-        WARN("Unable to calibrate TSC frequency, disabling QpcBypass.\n");
-        data->QpcBypassEnabled = 0;
-        data->QpcFrequency = TICKSPERSEC;
-        data->QpcShift = 0;
-        data->QpcBias = 0;
-    }
-}
-
 #else
 
 static void initialize_xstate_features(struct _KUSER_SHARED_DATA *data)
 {
 }
 
-static void initialize_qpc_features(struct _KUSER_SHARED_DATA *data)
-{
-    data->QpcBypassEnabled = 0;
-    data->QpcFrequency = TICKSPERSEC;
-    data->QpcShift = 0;
-    data->QpcBias = 0;
-}
-
 #endif
 
-struct hypervisor_shared_data
-{
-    UINT64 unknown;
-    UINT64 QpcMultiplier;
-    UINT64 QpcBias;
-};
-
-static UINT64 muldiv_tsc(UINT64 a, UINT64 b, UINT64 c)
-{
-    UINT64 ka = a / c, ra = a % c, kb = b / c, rb = b % c;
-    return ka * kb * c + kb * ra + ka * rb + (ra * rb + c / 2) / c;
-}
-
-static void create_hypervisor_shared_data(UINT64 tsc_frequency)
-{
-    struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
-    struct hypervisor_shared_data *hypervisor_shared_data;
-    OBJECT_ATTRIBUTES attr = {sizeof(attr)};
-    UNICODE_STRING name;
-    NTSTATUS status;
-    HANDLE handle;
-
-    RtlInitUnicodeString( &name, L"\\KernelObjects\\__wine_hypervisor_shared_data" );
-    InitializeObjectAttributes( &attr, &name, OBJ_OPENIF, NULL, NULL );
-    if ((status = NtOpenSection( &handle, SECTION_ALL_ACCESS, &attr )))
-    {
-        ERR( "cannot open __wine_hypervisor_shared_data: %x\n", status );
-        return;
-    }
-    hypervisor_shared_data = MapViewOfFile( handle, FILE_MAP_WRITE, 0, 0, sizeof(*hypervisor_shared_data) );
-    CloseHandle( handle );
-    if (!hypervisor_shared_data)
-    {
-        ERR( "cannot map __wine_hypervisor_shared_data\n" );
-        return;
-    }
-
-    RtlInitUnicodeString( &name, L"\\KernelObjects\\__wine_user_shared_data" );
-    InitializeObjectAttributes( &attr, &name, OBJ_OPENIF, NULL, NULL );
-    if ((status = NtOpenSection( &handle, SECTION_ALL_ACCESS, &attr )))
-    {
-        ERR( "cannot open __wine_user_shared_data: %x\n", status );
-        UnmapViewOfFile( hypervisor_shared_data );
-        return;
-    }
-    user_shared_data = MapViewOfFile( handle, FILE_MAP_WRITE, 0, 0, sizeof(*user_shared_data) );
-    CloseHandle( handle );
-    if (!user_shared_data)
-    {
-        ERR( "cannot map __wine_user_shared_data\n" );
-        UnmapViewOfFile( hypervisor_shared_data );
-        return;
-    }
-
-    hypervisor_shared_data->unknown = 0;
-    hypervisor_shared_data->QpcMultiplier = 0;
-    hypervisor_shared_data->QpcBias = 0;
-
-    if (user_shared_data->QpcBypassEnabled & SHARED_GLOBAL_FLAGS_QPC_BYPASS_ENABLED)
-    {
-        hypervisor_shared_data->QpcMultiplier = muldiv_tsc((UINT64)5000 << 32, (UINT64)2000 << 32, tsc_frequency);
-        user_shared_data->QpcBypassEnabled |= SHARED_GLOBAL_FLAGS_QPC_BYPASS_USE_HV_PAGE;
-        user_shared_data->QpcInterruptTimeIncrement = (ULONGLONG)1 << 63;
-        user_shared_data->QpcInterruptTimeIncrementShift = 1;
-        user_shared_data->QpcSystemTimeIncrement = (ULONGLONG)1 << 63;
-        user_shared_data->QpcSystemTimeIncrementShift = 1;
-        user_shared_data->QpcFrequency = 10000000;
-        user_shared_data->QpcShift = 0;
-        user_shared_data->QpcBias = 0;
-    }
-
-    UnmapViewOfFile( user_shared_data );
-    UnmapViewOfFile( hypervisor_shared_data );
-}
-
-static void create_user_shared_data(UINT64 tsc_frequency)
+static void create_user_shared_data(void)
 {
     struct _KUSER_SHARED_DATA *data;
     RTL_OSVERSIONINFOEXW version;
@@ -583,7 +337,6 @@ static void create_user_shared_data(UINT64 tsc_frequency)
     data->ActiveGroupCount = 1;
 
     initialize_xstate_features( data );
-    initialize_qpc_features( data, tsc_frequency );
 
     UnmapViewOfFile( data );
 }
@@ -895,7 +648,7 @@ done:
 }
 
 /* create the volatile hardware registry keys */
-static void create_hardware_registry_keys(UINT64 tsc_frequency)
+static void create_hardware_registry_keys(void)
 {
     unsigned int i;
     HKEY hkey, system_key, cpu_key, fpu_key;
@@ -970,14 +723,12 @@ static void create_hardware_registry_keys(UINT64 tsc_frequency)
         if (!RegCreateKeyExW( cpu_key, numW, 0, NULL, REG_OPTION_VOLATILE,
                               KEY_ALL_ACCESS, NULL, &hkey, NULL ))
         {
-            DWORD tsc_freq_mhz = (DWORD)(tsc_frequency / 1000000ull); /* Hz -> Mhz */
-
             RegSetValueExW( hkey, L"FeatureSet", 0, REG_DWORD, (BYTE *)&sci.ProcessorFeatureBits, sizeof(DWORD) );
             set_reg_value( hkey, L"Identifier", id );
             /* TODO: report ARM properly */
             set_reg_value( hkey, L"ProcessorNameString", namestr );
             set_reg_value( hkey, L"VendorIdentifier", vendorid );
-            RegSetValueExW( hkey, L"~MHz", 0, REG_DWORD, (BYTE *)&tsc_freq_mhz, sizeof(DWORD) );
+            RegSetValueExW( hkey, L"~MHz", 0, REG_DWORD, (BYTE *)&power_info[i].MaxMhz, sizeof(DWORD) );
             RegCloseKey( hkey );
         }
         if (sci.ProcessorArchitecture != PROCESSOR_ARCHITECTURE_ARM &&
@@ -2003,11 +1754,8 @@ int __cdecl main( int argc, char *argv[] )
     BOOL end_session, force, init, kill, restart, shutdown, update;
     HANDLE event;
     OBJECT_ATTRIBUTES attr;
-    UINT64 tsc_frequency;
     UNICODE_STRING nameW;
     BOOL is_wow64;
-
-    tsc_frequency = read_tsc_frequency();
 
     end_session = force = init = kill = restart = shutdown = update = FALSE;
     GetWindowsDirectoryW( windowsdir, MAX_PATH );
@@ -2092,9 +1840,8 @@ int __cdecl main( int argc, char *argv[] )
 
     ResetEvent( event );  /* in case this is a restart */
 
-    create_user_shared_data(tsc_frequency);
-    create_hypervisor_shared_data(tsc_frequency);
-    create_hardware_registry_keys(tsc_frequency);
+    create_user_shared_data();
+    create_hardware_registry_keys();
     create_dynamic_registry_keys();
     create_environment_registry_keys();
     create_computer_name_keys();

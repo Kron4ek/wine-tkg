@@ -197,7 +197,6 @@ static void *user_space_limit    = (void *)0x7fff0000;
 static void *working_set_limit   = (void *)0x7fff0000;
 #endif
 
-void *hypervisor_shared_data = (void *)0x7ffd0000;
 struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
 
 /* TEB allocation blocks */
@@ -3026,14 +3025,6 @@ TEB *virtual_alloc_first_teb(void)
         exit(1);
     }
 
-    status = NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&hypervisor_shared_data, 0, &data_size,
-                                      MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
-    if (status)
-    {
-        ERR( "wine: failed to map the shared user data: %08x\n", status );
-        exit(1);
-    }
-
     NtAllocateVirtualMemory( NtCurrentProcess(), &teb_block, is_win64 ? 0x7fffffff : 0, &total,
                              MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE );
     teb_block_pos = 30;
@@ -3048,7 +3039,7 @@ TEB *virtual_alloc_first_teb(void)
 /***********************************************************************
  *           virtual_alloc_teb
  */
-NTSTATUS virtual_alloc_teb( TEB **ret_teb, ULONG_PTR zero_bits )
+NTSTATUS virtual_alloc_teb( TEB **ret_teb )
 {
     sigset_t sigset;
     TEB *teb;
@@ -3057,7 +3048,7 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb, ULONG_PTR zero_bits )
     SIZE_T block_size = signal_stack_mask + 1;
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
-    if (next_free_teb && !((UINT_PTR)next_free_teb & ~get_zero_bits_mask( zero_bits )))
+    if (next_free_teb)
     {
         ptr = next_free_teb;
         next_free_teb = *(void **)ptr;
@@ -3069,7 +3060,7 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb, ULONG_PTR zero_bits )
         {
             SIZE_T total = 32 * block_size;
 
-            if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &ptr, zero_bits,
+            if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &ptr, is_win64 ? 0x7fffffff : 0,
                                                    &total, MEM_RESERVE, PAGE_READWRITE )))
             {
                 server_leave_uninterrupted_section( &virtual_mutex, &sigset );
@@ -3148,6 +3139,11 @@ NTSTATUS virtual_clear_tls_index( ULONG index )
         LIST_FOR_EACH_ENTRY( thread_data, &teb_list, struct ntdll_thread_data, entry )
         {
             TEB *teb = CONTAINING_RECORD( (GDI_TEB_BATCH *)thread_data, TEB, GdiTebBatch );
+#ifdef _WIN64
+            WOW_TEB *wow_teb = get_wow_teb( teb );
+            if (wow_teb) wow_teb->TlsSlots[index] = 0;
+            else
+#endif
             teb->TlsSlots[index] = 0;
         }
         server_leave_uninterrupted_section( &virtual_mutex, &sigset );
@@ -3161,6 +3157,15 @@ NTSTATUS virtual_clear_tls_index( ULONG index )
         LIST_FOR_EACH_ENTRY( thread_data, &teb_list, struct ntdll_thread_data, entry )
         {
             TEB *teb = CONTAINING_RECORD( (GDI_TEB_BATCH *)thread_data, TEB, GdiTebBatch );
+#ifdef _WIN64
+            WOW_TEB *wow_teb = get_wow_teb( teb );
+            if (wow_teb)
+            {
+                if (wow_teb->TlsExpansionSlots)
+                    ((ULONG *)ULongToPtr( wow_teb->TlsExpansionSlots ))[index] = 0;
+            }
+            else
+#endif
             if (teb->TlsExpansionSlots) teb->TlsExpansionSlots[index] = 0;
         }
         server_leave_uninterrupted_section( &virtual_mutex, &sigset );
@@ -3293,35 +3298,6 @@ static BOOL is_inside_thread_stack( void *ptr, struct thread_stack_info *stack )
     stack->guaranteed = max( wow_teb->GuaranteedStackBytes, page_size * (is_win64 ? 1 : 2) );
     stack->is_wow = TRUE;
     return ((char *)ptr > stack->start && (char *)ptr <= stack->end);
-}
-
-
-/***********************************************************************
- *           virtual_map_hypervisor_shared_data
- */
-void virtual_map_hypervisor_shared_data(void)
-{
-    static const WCHAR nameW[] = {'\\','K','e','r','n','e','l','O','b','j','e','c','t','s',
-                                  '\\','_','_','w','i','n','e','_','h','y','p','e','r','v','i','s','o','r','_','s','h','a','r','e','d','_','d','a','t','a',0};
-    UNICODE_STRING name_str = { sizeof(nameW) - sizeof(WCHAR), sizeof(nameW), (WCHAR *)nameW };
-    OBJECT_ATTRIBUTES attr = { sizeof(attr), 0, &name_str };
-    NTSTATUS status;
-    HANDLE section;
-    int res, fd, needs_close;
-
-    if ((status = NtOpenSection( &section, SECTION_ALL_ACCESS, &attr )))
-    {
-        ERR( "failed to open the hypervisor shared data section: %08x\n", status );
-        exit(1);
-    }
-    if ((res = server_get_unix_fd( section, 0, &fd, &needs_close, NULL, NULL )) ||
-        (hypervisor_shared_data != mmap( hypervisor_shared_data, page_size, PROT_READ, MAP_SHARED|MAP_FIXED, fd, 0 )))
-    {
-        ERR( "failed to remap the process hypervisor shared data: %d\n", res );
-        exit(1);
-    }
-    if (needs_close) close( fd );
-    NtClose( section );
 }
 
 
@@ -3902,6 +3878,7 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
 
     if (!size) return STATUS_INVALID_PARAMETER;
     if (zero_bits > 21 && zero_bits < 32) return STATUS_INVALID_PARAMETER_3;
+    if (zero_bits > 32 && zero_bits < granularity_mask) return STATUS_INVALID_PARAMETER_3;
 #ifndef _WIN64
     if (!is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
 #endif
@@ -4240,10 +4217,18 @@ static int CDECL get_free_mem_state_callback( void *start, SIZE_T size, void *ar
     else /* outside of the reserved area, pretend it's allocated */
     {
         info->RegionSize        = (char *)start - (char *)info->BaseAddress;
+#ifdef __i386__
         info->State             = MEM_RESERVE;
         info->Protect           = PAGE_NOACCESS;
         info->AllocationProtect = PAGE_NOACCESS;
         info->Type              = MEM_PRIVATE;
+#else
+        info->State             = MEM_FREE;
+        info->Protect           = PAGE_NOACCESS;
+        info->AllocationBase    = 0;
+        info->AllocationProtect = 0;
+        info->Type              = 0;
+#endif
     }
     return 1;
 }
@@ -5062,3 +5047,126 @@ NTSTATUS WINAPI NtCreatePagingFile( UNICODE_STRING *name, LARGE_INTEGER *min_siz
     FIXME( "(%s %p %p %p) stub\n", debugstr_us(name), min_size, max_size, actual_size );
     return STATUS_SUCCESS;
 }
+
+#ifndef _WIN64
+
+/***********************************************************************
+ *             NtWow64AllocateVirtualMemory64   (NTDLL.@)
+ *             ZwWow64AllocateVirtualMemory64   (NTDLL.@)
+ */
+NTSTATUS WINAPI NtWow64AllocateVirtualMemory64( HANDLE process, ULONG64 *ret, ULONG64 zero_bits,
+                                                ULONG64 *size_ptr, ULONG type, ULONG protect )
+{
+    void *base;
+    SIZE_T size;
+    NTSTATUS status;
+
+    TRACE("%p %s %s %x %08x\n", process,
+          wine_dbgstr_longlong(*ret), wine_dbgstr_longlong(*size_ptr), type, protect );
+
+    if (!*size_ptr) return STATUS_INVALID_PARAMETER_4;
+    if (zero_bits > 21 && zero_bits < 32) return STATUS_INVALID_PARAMETER_3;
+
+    if (process != NtCurrentProcess())
+    {
+        apc_call_t call;
+        apc_result_t result;
+
+        memset( &call, 0, sizeof(call) );
+
+        call.virtual_alloc.type         = APC_VIRTUAL_ALLOC;
+        call.virtual_alloc.addr         = *ret;
+        call.virtual_alloc.size         = *size_ptr;
+        call.virtual_alloc.zero_bits    = zero_bits;
+        call.virtual_alloc.op_type      = type;
+        call.virtual_alloc.prot         = protect;
+        status = server_queue_process_apc( process, &call, &result );
+        if (status != STATUS_SUCCESS) return status;
+
+        if (result.virtual_alloc.status == STATUS_SUCCESS)
+        {
+            *ret      = result.virtual_alloc.addr;
+            *size_ptr = result.virtual_alloc.size;
+        }
+        return result.virtual_alloc.status;
+    }
+
+    base = (void *)(ULONG_PTR)*ret;
+    size = *size_ptr;
+    if ((ULONG_PTR)base != *ret) return STATUS_CONFLICTING_ADDRESSES;
+    if (size != *size_ptr) return STATUS_WORKING_SET_LIMIT_RANGE;
+
+    status = NtAllocateVirtualMemory( process, &base, zero_bits, &size, type, protect );
+    if (!status)
+    {
+        *ret = (ULONG_PTR)base;
+        *size_ptr = size;
+    }
+    return status;
+}
+
+
+/***********************************************************************
+ *             NtWow64ReadVirtualMemory64   (NTDLL.@)
+ *             ZwWow64ReadVirtualMemory64   (NTDLL.@)
+ */
+NTSTATUS WINAPI NtWow64ReadVirtualMemory64( HANDLE process, ULONG64 addr, void *buffer,
+                                            ULONG64 size, ULONG64 *bytes_read )
+{
+    NTSTATUS status;
+
+    if (size > MAXLONG) size = MAXLONG;
+
+    if (virtual_check_buffer_for_write( buffer, size ))
+    {
+        SERVER_START_REQ( read_process_memory )
+        {
+            req->handle = wine_server_obj_handle( process );
+            req->addr   = addr;
+            wine_server_set_reply( req, buffer, size );
+            if ((status = wine_server_call( req ))) size = 0;
+        }
+        SERVER_END_REQ;
+    }
+    else
+    {
+        status = STATUS_ACCESS_VIOLATION;
+        size = 0;
+    }
+    if (bytes_read) *bytes_read = size;
+    return status;
+}
+
+
+/***********************************************************************
+ *             NtWow64WriteVirtualMemory64   (NTDLL.@)
+ *             ZwWow64WriteVirtualMemory64   (NTDLL.@)
+ */
+NTSTATUS WINAPI NtWow64WriteVirtualMemory64( HANDLE process, ULONG64 addr, const void *buffer,
+                                             ULONG64 size, ULONG64 *bytes_written )
+{
+    NTSTATUS status;
+
+    if (size > MAXLONG) size = MAXLONG;
+
+    if (virtual_check_buffer_for_read( buffer, size ))
+    {
+        SERVER_START_REQ( write_process_memory )
+        {
+            req->handle     = wine_server_obj_handle( process );
+            req->addr       = addr;
+            wine_server_add_data( req, buffer, size );
+            if ((status = wine_server_call( req ))) size = 0;
+        }
+        SERVER_END_REQ;
+    }
+    else
+    {
+        status = STATUS_PARTIAL_COPY;
+        size = 0;
+    }
+    if (bytes_written) *bytes_written = size;
+    return status;
+}
+
+#endif  /* _WIN64 */

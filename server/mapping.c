@@ -247,7 +247,7 @@ static void shared_map_destroy( struct object *obj )
 }
 
 /* extend a file beyond the current end of file */
-static int grow_file( int unix_fd, file_pos_t new_size )
+int grow_file( int unix_fd, file_pos_t new_size )
 {
     static const char zero;
     off_t size = new_size;
@@ -723,7 +723,7 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
         break;
 
     case IMAGE_NT_OPTIONAL_HDR64_MAGIC:
-        if (!is_machine_64bit( supported_machines[0] )) return STATUS_INVALID_IMAGE_WIN_64;
+        if (!is_machine_64bit( native_machine )) return STATUS_INVALID_IMAGE_WIN_64;
         if (!is_machine_64bit( nt.FileHeader.Machine )) return STATUS_INVALID_IMAGE_FORMAT;
         if (!is_machine_supported( nt.FileHeader.Machine )) return STATUS_INVALID_IMAGE_FORMAT;
 
@@ -1092,20 +1092,6 @@ struct object *create_user_data_mapping( struct object *root, const struct unico
         user_shared_data = ptr;
         user_shared_data->SystemCall = 1;
     }
-    return &mapping->obj;
-}
-
-struct object *create_hypervisor_data_mapping( struct object *root, const struct unicode_str *name,
-                                               unsigned int attr, const struct security_descriptor *sd )
-{
-    void *ptr;
-    struct mapping *mapping;
-
-    if (!(mapping = create_mapping( root, name, attr, sizeof(struct hypervisor_shared_data),
-                                    SEC_COMMIT, 0, FILE_READ_DATA | FILE_WRITE_DATA, sd ))) return NULL;
-    ptr = mmap( NULL, mapping->size, PROT_WRITE, MAP_SHARED, get_unix_fd( mapping->fd ), 0 );
-    if (ptr != MAP_FAILED)
-        hypervisor_shared_data = ptr;
     return &mapping->obj;
 }
 
