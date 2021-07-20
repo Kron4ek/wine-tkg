@@ -42,6 +42,9 @@
 #ifdef HAVE_MACHINE_SYSARCH_H
 # include <machine/sysarch.h>
 #endif
+#ifdef HAVE_SYS_AUXV_H
+# include <sys/auxv.h>
+#endif
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
 #endif
@@ -71,6 +74,7 @@
 # include <linux/filter.h>
 # include <linux/seccomp.h>
 # include <sys/prctl.h>
+# include <linux/audit.h>
 #endif
 
 #define NONAMELESSUNION
@@ -95,6 +99,30 @@ WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
 #include <asm/prctl.h>
 static inline int arch_prctl( int func, void *ptr ) { return syscall( __NR_arch_prctl, func, ptr ); }
+
+extern int CDECL alloc_fs_sel( int sel, void *base );
+__ASM_GLOBAL_FUNC( alloc_fs_sel,
+                   /* switch to 32-bit stack */
+                   "pushq %rbx\n\t"
+                   "pushq %rdi\n\t"
+                   "movq %rsp,%rdi\n\t"
+                   "movq %gs:0x8,%rsp\n\t"    /* NtCurrentTeb()->Tib.StackBase */
+                   "subl $0x10,%esp\n\t"
+                   /* setup modify_ldt struct on 32-bit stack */
+                   "movl %ecx,(%rsp)\n\t"     /* entry_number */
+                   "movl %edx,4(%rsp)\n\t"    /* base */
+                   "movl $~0,8(%rsp)\n\t"     /* limit */
+                   "movl $0x41,12(%rsp)\n\t"  /* seg_32bit | usable */
+                   /* invoke 32-bit syscall */
+                   "movl %esp,%ebx\n\t"
+                   "movl $0xf3,%eax\n\t"      /* SYS_set_thread_area */
+                   "int $0x80\n\t"
+                   /* restore stack */
+                   "movl (%rsp),%eax\n\t"     /* entry_number */
+                   "movq %rdi,%rsp\n\t"
+                   "popq %rdi\n\t"
+                   "popq %rbx\n\t"
+                   "ret" );
 
 #ifndef FP_XSTATE_MAGIC1
 #define FP_XSTATE_MAGIC1 0x46505853
@@ -260,8 +288,10 @@ C_ASSERT( sizeof(XSTATE) == 0x140 );
 C_ASSERT( sizeof(struct stack_layout) == 0x590 ); /* Should match the size in call_user_exception_dispatcher(). */
 
 /* flags to control the behavior of the syscall dispatcher */
-#define SYSCALL_HAVE_XSAVE    1
-#define SYSCALL_HAVE_XSAVEC   2
+#define SYSCALL_HAVE_XSAVE       1
+#define SYSCALL_HAVE_XSAVEC      2
+#define SYSCALL_HAVE_PTHREAD_TEB 4
+#define SYSCALL_HAVE_WRFSGSBASE  8
 
 /* stack layout when calling an user apc function.
  * FIXME: match Windows ABI. */
@@ -319,11 +349,13 @@ struct amd64_thread_data
     DWORD_PTR             dr7;           /* 0318 */
     void                 *exit_frame;    /* 0320 exit frame pointer */
     struct syscall_frame *syscall_frame; /* 0328 syscall frame pointer */
+    void                 *pthread_teb;   /* 0330 thread data for pthread */
 };
 
 C_ASSERT( sizeof(struct amd64_thread_data) <= sizeof(((struct ntdll_thread_data *)0)->cpu_data) );
 C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct amd64_thread_data, exit_frame ) == 0x320 );
 C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct amd64_thread_data, syscall_frame ) == 0x328 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct amd64_thread_data, pthread_teb ) == 0x330 );
 
 static inline struct amd64_thread_data *amd64_thread_data(void)
 {
@@ -373,6 +405,7 @@ static inline void context_init_xstate( CONTEXT *context, void *xstate_buffer )
 static USHORT cs32_sel;  /* selector for %cs in 32-bit mode */
 static USHORT cs64_sel;  /* selector for %cs in 64-bit mode */
 static USHORT ds64_sel;  /* selector for %ds/%es/%ss in 64-bit mode */
+static USHORT fs32_sel;  /* selector for %fs in 32-bit mode */
 
 /***********************************************************************
  * Definitions for Dwarf unwind tables
@@ -1502,6 +1535,29 @@ static inline void set_sigcontext( const CONTEXT *context, ucontext_t *sigcontex
 
 
 /***********************************************************************
+ *           init_handler
+ */
+static inline void init_handler( const ucontext_t *sigcontext )
+{
+#ifdef __linux__
+    if (fs32_sel) arch_prctl( ARCH_SET_FS, amd64_thread_data()->pthread_teb );
+#endif
+}
+
+
+/***********************************************************************
+ *           leave_handler
+ */
+static inline void leave_handler( const ucontext_t *sigcontext )
+{
+#ifdef __linux__
+    if (fs32_sel && !is_inside_signal_stack( (void *)RSP_sig(sigcontext )))
+        __asm__ volatile( "movw %0,%%fs" :: "r" (fs32_sel) );
+#endif
+}
+
+
+/***********************************************************************
  *           save_context
  *
  * Set the register values from a sigcontext.
@@ -1509,6 +1565,8 @@ static inline void set_sigcontext( const CONTEXT *context, ucontext_t *sigcontex
 static void save_context( struct xcontext *xcontext, const ucontext_t *sigcontext )
 {
     CONTEXT *context = &xcontext->c;
+
+    init_handler( sigcontext );
 
     context->ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS | CONTEXT_DEBUG_REGISTERS;
     context->Rax    = RAX_sig(sigcontext);
@@ -1592,6 +1650,7 @@ static void restore_context( const struct xcontext *xcontext, ucontext_t *sigcon
     if (FPU_sig(sigcontext)) *FPU_sig(sigcontext) = context->u.FltSave;
     if ((cpu_info.ProcessorFeatureBits & CPU_FEATURE_AVX) && (xs = XState_sig(FPU_sig(sigcontext))))
         xs->CompactionMask = xcontext->host_compaction_mask;
+    leave_handler( sigcontext );
 }
 
 
@@ -1917,7 +1976,7 @@ NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
     {
         wow_frame->SegDs = ds64_sel;
         wow_frame->SegEs = ds64_sel;
-        wow_frame->SegFs = 0;  /* FIXME */
+        wow_frame->SegFs = fs32_sel;
         wow_frame->SegGs = ds64_sel;
     }
     if (flags & CONTEXT_I386_DEBUG_REGISTERS)
@@ -1948,7 +2007,7 @@ NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
             memcpy( &frame->xstate.YmmContext, &xs->YmmContext, sizeof(xs->YmmContext) );
         }
         else frame->xstate.Mask &= ~XSTATE_MASK_GSSE;
-        frame->restore_flags |= CONTEXT_I386_XSTATE;
+        frame->restore_flags |= CONTEXT_XSTATE;
     }
     return STATUS_SUCCESS;
 }
@@ -2120,6 +2179,7 @@ static void setup_raise_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec
     RSP_sig(sigcontext) = (ULONG_PTR)stack;
     /* clear single-step, direction, and align check flag */
     EFL_sig(sigcontext) &= ~(0x100|0x400|0x40000);
+    leave_handler( sigcontext );
 }
 
 
@@ -2422,36 +2482,33 @@ static void install_bpf(struct sigaction *sig_act)
 #   ifndef SECCOMP_SET_MODE_FILTER
 #       define SECCOMP_SET_MODE_FILTER 1
 #   endif
+    static const BYTE syscall_trap_test[] =
+    {
+        0x48, 0x89, 0xc8,   /* mov %rcx, %rax */
+        0x0f, 0x05,         /* syscall */
+        0xc3,               /* retq */
+    };
     static const unsigned int flags = SECCOMP_FILTER_FLAG_SPEC_ALLOW;
     static struct sock_filter filter[] =
     {
-       BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
-                (offsetof(struct seccomp_data, nr))),
-       BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0xf000, 0, 1),
-       BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
-       BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
-    };
-    static struct sock_filter filter_rdr2[] =
-    {
-        /* Trap anything called from RDR2 or the launcher (0x140000000 - 0x150000000)*/
-        /* > 0x140000000 */
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, instruction_pointer) + 0),
-        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x40000000 /*lsb*/, 0, 7),
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, instruction_pointer) + 4),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0x1 /*msb*/, 0, 5),
-
-        /* < 0x150000000 */
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, instruction_pointer) + 0),
-        BPF_JUMP(BPF_JMP | BPF_JGT | BPF_K, 0x50000000 /*lsb*/, 3, 0),
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, instruction_pointer) + 4),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0x1 /*msb*/, 0, 1),
+        /* Native libs are loaded at high addresses. */
+        BPF_JUMP(BPF_JMP | BPF_JGT | BPF_K, 0x7000 /*msb*/, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        /* Allow i386. */
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, arch)),
+        BPF_JUMP (BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        /* Allow wine64-preloader */
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, instruction_pointer)),
+        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x7d400000, 1, 0),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
-
-        /* Allow everything else */
+        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x7d402000, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     };
+    long (WINAPI *test_syscall)(long sc_number);
     struct sock_fprog prog;
-    BOOL rdr2 = FALSE;
     NTSTATUS status;
 
     sig_act->sa_sigaction = sigsys_handler;
@@ -2461,19 +2518,22 @@ static void install_bpf(struct sigaction *sig_act)
         const char *sgi = getenv("SteamGameId");
         if (sgi && (!strcmp(sgi, "1174180") || !strcmp(sgi, "1404210")))
         {
-            /* Use specific filter and signal handler for Red Dead Redemption 2 */
-            prog.len = ARRAY_SIZE(filter_rdr2);
-            prog.filter = filter_rdr2;
+            /* Use specific signal handler for Red Dead Redemption 2 */
             sig_act->sa_sigaction = sigsys_handler_rdr2;
-            rdr2 = TRUE;
         }
     }
 
     sigaction(SIGSYS, sig_act, NULL);
 
-    if (rdr2)
+    test_syscall = mmap((void *)0x600000000000, 0x1000, PROT_EXEC | PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (test_syscall != (void *)0x600000000000)
     {
         int ret;
+
+        ERR("Could not allocate test syscall, falling back to seccomp presence check, test_syscall %p, errno %d.\n",
+                test_syscall, errno);
+        if (test_syscall != MAP_FAILED) munmap(test_syscall, 0x1000);
 
         if ((ret = prctl(PR_GET_SECCOMP, 0, NULL, 0, 0)))
         {
@@ -2486,7 +2546,10 @@ static void install_bpf(struct sigaction *sig_act)
     }
     else
     {
-        if ((status = syscall(0xffff)) == STATUS_INVALID_PARAMETER)
+        memcpy(test_syscall, syscall_trap_test, sizeof(syscall_trap_test));
+        status = test_syscall(0xffff);
+        munmap(test_syscall, 0x1000);
+        if (status == STATUS_INVALID_PARAMETER)
         {
             TRACE("Seccomp filters already installed.\n");
             return;
@@ -2496,9 +2559,12 @@ static void install_bpf(struct sigaction *sig_act)
             ERR("Unexpected status %#x, errno %d.\n", status, errno);
             return;
         }
-        prog.len = ARRAY_SIZE(filter);
-        prog.filter = filter;
     }
+
+    TRACE("Installing seccomp filters.\n");
+
+    prog.len = ARRAY_SIZE(filter);
+    prog.filter = filter;
 
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
     {
@@ -2538,6 +2604,7 @@ static inline BOOL handle_interrupt( ucontext_t *sigcontext, EXCEPTION_RECORD *r
             case 4: /* BREAKPOINT_UNLOAD_SYMBOLS */
             case 5: /* BREAKPOINT_COMMAND_STRING (>= Win2003) */
                 RIP_sig(sigcontext) += 3;
+                leave_handler( sigcontext );
                 return TRUE;
         }
         context->Rip += 3;
@@ -2698,12 +2765,17 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
         rec.ExceptionCode = virtual_handle_fault( siginfo->si_addr, rec.ExceptionInformation[0],
                                                   (void *)RSP_sig(ucontext) );
-        if (!rec.ExceptionCode) return;
+        if (!rec.ExceptionCode)
+        {
+            leave_handler( sigcontext );
+            return;
+        }
         break;
     case TRAP_x86_ALIGNFLT:  /* Alignment check exception */
         if (EFL_sig(ucontext) & 0x00040000)
         {
             EFL_sig(ucontext) &= ~0x00040000;  /* reset AC flag */
+            leave_handler( sigcontext );
             return;
         }
         rec.ExceptionCode = EXCEPTION_DATATYPE_MISALIGNMENT;
@@ -2846,6 +2918,7 @@ static void abrt_handler( int signal, siginfo_t *siginfo, void *sigcontext )
  */
 static void quit_handler( int signal, siginfo_t *siginfo, void *ucontext )
 {
+    init_handler( ucontext );
     abort_thread(0);
 }
 
@@ -2986,6 +3059,8 @@ void signal_init_thread( TEB *teb )
 
 #if defined __linux__
     arch_prctl( ARCH_SET_GS, teb );
+    arch_prctl( ARCH_GET_FS, &amd64_thread_data()->pthread_teb );
+    if (fs32_sel) alloc_fs_sel( fs32_sel >> 3, (char *)teb + teb->WowTebOffset );
 #elif defined (__FreeBSD__) || defined (__FreeBSD_kernel__)
     amd64_set_gsbase( teb );
 #elif defined(__NetBSD__)
@@ -2997,11 +3072,12 @@ void signal_init_thread( TEB *teb )
     __asm__ volatile (".byte 0x65\n\tmovq %0,%c1"
                       :
                       : "r" (teb->ThreadLocalStoragePointer), "n" (FIELD_OFFSET(TEB, ThreadLocalStoragePointer)));
+    amd64_thread_data()->pthread_teb = mac_thread_gsbase();
 
     /* alloc_tls_slot() needs to poke a value to an address relative to each
        thread's gsbase.  Have each thread record its gsbase pointer into its
        TEB so alloc_tls_slot() can find it. */
-    teb->Reserved5[0] = mac_thread_gsbase();
+    teb->Reserved5[0] = amd64_thread_data()->pthread_teb;
 #else
 # error Please define setting %gs for your architecture
 #endif
@@ -3035,7 +3111,17 @@ void signal_init_process(void)
 #ifdef __linux__
     if (NtCurrentTeb()->WowTebOffset)
     {
+        void *teb32 = (char *)NtCurrentTeb() + NtCurrentTeb()->WowTebOffset;
+        int sel;
+
         cs32_sel = 0x23;
+        if ((sel = alloc_fs_sel( -1, teb32 )) != -1)
+        {
+            fs32_sel = (sel << 3) | 3;
+            __wine_syscall_flags |= SYSCALL_HAVE_PTHREAD_TEB;
+            if (getauxval( AT_HWCAP2 ) & 2) __wine_syscall_flags |= SYSCALL_HAVE_WRFSGSBASE;
+        }
+        else ERR( "failed to allocate %%fs selector\n" );
     }
 #endif
 
@@ -3108,6 +3194,7 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     context.SegCs  = cs64_sel;
     context.SegDs  = ds64_sel;
     context.SegEs  = ds64_sel;
+    context.SegFs  = fs32_sel;
     context.SegGs  = ds64_sel;
     context.SegSs  = ds64_sel;
     context.EFlags = 0x200;
@@ -3120,7 +3207,7 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
         wow_context->Eax = (ULONG_PTR)entry;
         wow_context->Ebx = (ULONG_PTR)arg;
         wow_context->Esp = get_wow_teb( teb )->Tib.StackBase - 16;
-        wow_context->Eip = (ULONG_PTR)pRtlUserThreadStart;
+        wow_context->Eip = pLdrSystemDllInitBlock->pRtlUserThreadStart;
         wow_context->SegCs = cs32_sel;
         wow_context->SegDs = context.SegDs;
         wow_context->SegEs = context.SegEs;

@@ -4753,8 +4753,7 @@ struct wined3d_device_context_ops
     void (*issue_query)(struct wined3d_device_context *context, struct wined3d_query *query, unsigned int flags);
     void (*flush)(struct wined3d_device_context *context);
     void (*acquire_resource)(struct wined3d_device_context *context, struct wined3d_resource *resource);
-    void (*execute_command_list)(struct wined3d_device_context *context,
-            struct wined3d_command_list *list, bool restore_state);
+    void (*acquire_command_list)(struct wined3d_device_context *context, struct wined3d_command_list *list);
 };
 
 struct wined3d_device_context
@@ -4834,6 +4833,8 @@ void wined3d_device_context_emit_draw(struct wined3d_device_context *context,
         enum wined3d_primitive_type primitive_type, unsigned int patch_vertex_count, int base_vertex_idx,
         unsigned int start_idx, unsigned int index_count, unsigned int start_instance, unsigned int instance_count,
         bool indexed) DECLSPEC_HIDDEN;
+void wined3d_device_context_emit_execute_command_list(struct wined3d_device_context *context,
+        struct wined3d_command_list *list, bool restore_state) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_generate_mipmaps(struct wined3d_device_context *context,
         struct wined3d_shader_resource_view *view) DECLSPEC_HIDDEN;
 HRESULT wined3d_device_context_emit_map(struct wined3d_device_context *context,
@@ -4845,8 +4846,9 @@ void wined3d_device_context_emit_set_blend_state(struct wined3d_device_context *
         unsigned int sample_mask) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_clip_plane(struct wined3d_device_context *context, unsigned int plane_idx,
         const struct wined3d_vec4 *plane) DECLSPEC_HIDDEN;
-void wined3d_device_context_emit_set_constant_buffer(struct wined3d_device_context *context,
-        enum wined3d_shader_type type, UINT cb_idx, struct wined3d_buffer *buffer) DECLSPEC_HIDDEN;
+void wined3d_device_context_emit_set_constant_buffers(struct wined3d_device_context *context,
+        enum wined3d_shader_type type, unsigned int start_idx, unsigned int count,
+        struct wined3d_buffer *const *buffers) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_depth_bounds(struct wined3d_device_context *context,
         BOOL enable, float min, float max) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_depth_stencil_state(struct wined3d_device_context *context,
@@ -4871,17 +4873,17 @@ void wined3d_device_context_emit_set_render_state(struct wined3d_device_context 
         enum wined3d_render_state state, unsigned int value) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_rendertarget_view(struct wined3d_device_context *context, unsigned int view_idx,
         struct wined3d_rendertarget_view *view) DECLSPEC_HIDDEN;
-void wined3d_device_context_emit_set_sampler(struct wined3d_device_context *context, enum wined3d_shader_type type,
-        unsigned int sampler_idx, struct wined3d_sampler *sampler) DECLSPEC_HIDDEN;
+void wined3d_device_context_emit_set_samplers(struct wined3d_device_context *context, enum wined3d_shader_type type,
+        unsigned int start_idx, unsigned int count, struct wined3d_sampler *const *samplers) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_sampler_state(struct wined3d_device_context *context, unsigned int sampler_idx,
         enum wined3d_sampler_state state, unsigned int value) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_scissor_rects(struct wined3d_device_context *context,
         unsigned int rect_count, const RECT *rects) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_shader(struct wined3d_device_context *context, enum wined3d_shader_type type,
         struct wined3d_shader *shader) DECLSPEC_HIDDEN;
-void wined3d_device_context_emit_set_shader_resource_view(struct wined3d_device_context *context,
-        enum wined3d_shader_type type, unsigned int view_idx,
-        struct wined3d_shader_resource_view *view) DECLSPEC_HIDDEN;
+void wined3d_device_context_emit_set_shader_resource_views(struct wined3d_device_context *context,
+        enum wined3d_shader_type type, unsigned int start_idx, unsigned int count,
+        struct wined3d_shader_resource_view *const *views) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_stream_output(struct wined3d_device_context *context, unsigned int stream_idx,
         struct wined3d_buffer *buffer, unsigned int offset) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_stream_source(struct wined3d_device_context *context, unsigned int stream_idx,
@@ -4892,9 +4894,9 @@ void wined3d_device_context_emit_set_texture_state(struct wined3d_device_context
         enum wined3d_texture_stage_state state, unsigned int value) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_transform(struct wined3d_device_context *context,
         enum wined3d_transform_state state, const struct wined3d_matrix *matrix) DECLSPEC_HIDDEN;
-void wined3d_device_context_emit_set_unordered_access_view(struct wined3d_device_context *context,
-        enum wined3d_pipeline pipeline, unsigned int view_idx, struct wined3d_unordered_access_view *view,
-        unsigned int initial_count) DECLSPEC_HIDDEN;
+void wined3d_device_context_emit_set_unordered_access_views(struct wined3d_device_context *context,
+        enum wined3d_pipeline pipeline, unsigned int start_idx, unsigned int count,
+        struct wined3d_unordered_access_view *const *views, const unsigned int *initial_count) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_vertex_declaration(struct wined3d_device_context *context,
         struct wined3d_vertex_declaration *declaration) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_viewports(struct wined3d_device_context *context, unsigned int viewport_count,
@@ -6078,9 +6080,9 @@ static inline void wined3d_from_cs(const struct wined3d_cs *cs)
         assert(cs->thread_id == GetCurrentThreadId());
 }
 
-static inline void wined3d_not_from_cs(const struct wined3d_device *device)
+static inline void wined3d_not_from_cs(const struct wined3d_cs *cs)
 {
-    assert(device->cs->thread_id != GetCurrentThreadId());
+    assert(cs->thread_id != GetCurrentThreadId());
 }
 
 static inline BOOL is_indexed_vertex_blending(const struct wined3d_context *context,

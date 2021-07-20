@@ -1719,26 +1719,15 @@ void CDECL wined3d_device_context_set_state(struct wined3d_device_context *conte
     for (i = 0; i < WINED3D_SHADER_TYPE_COUNT; ++i)
     {
         wined3d_device_context_emit_set_shader(context, i, state->shader[i]);
-        for (j = 0; j < MAX_CONSTANT_BUFFERS; ++j)
-            wined3d_device_context_emit_set_constant_buffer(context, i, j, state->cb[i][j]);
-        for (j = 0; j < MAX_SAMPLER_OBJECTS; ++j)
-        {
-            wined3d_device_context_emit_set_sampler(context, i, j, state->sampler[i][j]);
-        }
-        for (j = 0; j < MAX_SHADER_RESOURCE_VIEWS; ++j)
-        {
-            wined3d_device_context_emit_set_shader_resource_view(context, i, j, state->shader_resource_view[i][j]);
-        }
+        wined3d_device_context_emit_set_constant_buffers(context, i, 0, MAX_CONSTANT_BUFFERS, state->cb[i]);
+        wined3d_device_context_emit_set_samplers(context, i, 0, MAX_SAMPLER_OBJECTS, state->sampler[i]);
+        wined3d_device_context_emit_set_shader_resource_views(context, i, 0,
+                MAX_SHADER_RESOURCE_VIEWS, state->shader_resource_view[i]);
     }
 
     for (i = 0; i < WINED3D_PIPELINE_COUNT; ++i)
-    {
-        for (j = 0; j < MAX_UNORDERED_ACCESS_VIEWS; ++j)
-        {
-            wined3d_device_context_emit_set_unordered_access_view(context, i, j,
-                    state->unordered_access_view[i][j], ~0);
-        }
-    }
+        wined3d_device_context_emit_set_unordered_access_views(context, i, 0, MAX_UNORDERED_ACCESS_VIEWS,
+                state->unordered_access_view[i], NULL);
 
     wined3d_device_context_push_constants(context, WINED3D_PUSH_CONSTANTS_VS_F,
             0, WINED3D_MAX_VS_CONSTS_F, state->vs_consts_f);
@@ -1857,30 +1846,36 @@ struct wined3d_shader * CDECL wined3d_device_context_get_shader(const struct win
     return context->state->shader[type];
 }
 
-void CDECL wined3d_device_context_set_constant_buffer(struct wined3d_device_context *context,
-        enum wined3d_shader_type type, unsigned int idx, struct wined3d_buffer *buffer)
+void CDECL wined3d_device_context_set_constant_buffers(struct wined3d_device_context *context,
+        enum wined3d_shader_type type, unsigned int start_idx, unsigned int count,
+        struct wined3d_buffer *const *buffers)
 {
     struct wined3d_state *state = context->state;
-    struct wined3d_buffer *prev;
+    unsigned int i;
 
-    TRACE("context %p, type %#x, idx %u, buffer %p.\n", context, type, idx, buffer);
+    TRACE("context %p, type %#x, start_idx %u, count %u, buffers %p.\n", context, type, start_idx, count, buffers);
 
-    if (idx >= MAX_CONSTANT_BUFFERS)
+    if (!wined3d_bound_range(start_idx, count, MAX_CONSTANT_BUFFERS))
     {
-        WARN("Invalid constant buffer index %u.\n", idx);
+        WARN("Invalid constant buffer index %u, count %u.\n", start_idx, count);
         return;
     }
 
-    prev = state->cb[type][idx];
-    if (buffer == prev)
+    if (!memcmp(buffers, &state->cb[type][start_idx], count * sizeof(*buffers)))
         return;
 
-    if (buffer)
-        wined3d_buffer_incref(buffer);
-    state->cb[type][idx] = buffer;
-    wined3d_device_context_emit_set_constant_buffer(context, type, idx, buffer);
-    if (prev)
-        wined3d_buffer_decref(prev);
+    wined3d_device_context_emit_set_constant_buffers(context, type, start_idx, count, buffers);
+    for (i = 0; i < count; ++i)
+    {
+        struct wined3d_buffer *prev = state->cb[type][start_idx + i];
+        struct wined3d_buffer *buffer = buffers[i];
+
+        if (buffer)
+            wined3d_buffer_incref(buffer);
+        state->cb[type][start_idx + i] = buffer;
+        if (prev)
+            wined3d_buffer_decref(prev);
+    }
 }
 
 void CDECL wined3d_device_context_set_blend_state(struct wined3d_device_context *context,
@@ -2008,99 +2003,123 @@ void CDECL wined3d_device_context_set_scissor_rects(struct wined3d_device_contex
     wined3d_device_context_emit_set_scissor_rects(context, rect_count, rects);
 }
 
-void CDECL wined3d_device_context_set_shader_resource_view(struct wined3d_device_context *context,
-        enum wined3d_shader_type type, unsigned int idx, struct wined3d_shader_resource_view *view)
+void CDECL wined3d_device_context_set_shader_resource_views(struct wined3d_device_context *context,
+        enum wined3d_shader_type type, unsigned int start_idx, unsigned int count,
+        struct wined3d_shader_resource_view *const *const views)
 {
+    struct wined3d_shader_resource_view *real_views[MAX_SHADER_RESOURCE_VIEWS];
     struct wined3d_state *state = context->state;
-    const struct wined3d_rendertarget_view *dsv;
-    struct wined3d_shader_resource_view *prev;
+    const struct wined3d_rendertarget_view *dsv = state->fb.depth_stencil;
+    unsigned int i;
 
-    TRACE("context %p, type %#x, idx %u, view %p.\n", context, type, idx, view);
+    TRACE("context %p, type %#x, start_idx %u, count %u, views %p.\n", context, type, start_idx, count, views);
 
-    if (idx >= MAX_SHADER_RESOURCE_VIEWS)
+    if (!wined3d_bound_range(start_idx, count, MAX_SHADER_RESOURCE_VIEWS))
     {
-        WARN("Invalid view index %u.\n", idx);
+        WARN("Invalid view index %u, count %u.\n", start_idx, count);
         return;
     }
 
-    prev = state->shader_resource_view[type][idx];
-    if (view == prev)
+    if (!memcmp(views, &state->shader_resource_view[type][start_idx], count * sizeof(*views)))
         return;
 
-    if (view && (wined3d_is_srv_rtv_bound(state, view)
-            || ((dsv = state->fb.depth_stencil)
-            && dsv->resource == view->resource && wined3d_dsv_srv_conflict(dsv, view->format))))
+    memcpy(real_views, views, count * sizeof(*views));
+
+    for (i = 0; i < count; ++i)
     {
-        WARN("Application is trying to bind resource which is attached as render target.\n");
-        view = NULL;
+        struct wined3d_shader_resource_view *view = real_views[i];
+
+        if (view && (wined3d_is_srv_rtv_bound(state, view)
+                || (dsv && dsv->resource == view->resource && wined3d_dsv_srv_conflict(dsv, view->format))))
+        {
+            WARN("Application is trying to bind resource which is attached as render target.\n");
+            real_views[i] = NULL;
+        }
     }
 
-    if (view)
+    wined3d_device_context_emit_set_shader_resource_views(context, type, start_idx, count, real_views);
+    for (i = 0; i < count; ++i)
     {
-        wined3d_shader_resource_view_incref(view);
-        wined3d_srv_bind_count_inc(view);
-    }
+        struct wined3d_shader_resource_view *prev = state->shader_resource_view[type][start_idx + i];
+        struct wined3d_shader_resource_view *view = real_views[i];
 
-    state->shader_resource_view[type][idx] = view;
-    wined3d_device_context_emit_set_shader_resource_view(context, type, idx, view);
-    if (prev)
-    {
-        wined3d_srv_bind_count_dec(prev);
-        wined3d_shader_resource_view_decref(prev);
+        if (view)
+        {
+            wined3d_shader_resource_view_incref(view);
+            wined3d_srv_bind_count_inc(view);
+        }
+
+        state->shader_resource_view[type][start_idx + i] = view;
+        if (prev)
+        {
+            wined3d_srv_bind_count_dec(prev);
+            wined3d_shader_resource_view_decref(prev);
+        }
     }
 }
 
-void CDECL wined3d_device_context_set_sampler(struct wined3d_device_context *context,
-        enum wined3d_shader_type type, unsigned int idx, struct wined3d_sampler *sampler)
+void CDECL wined3d_device_context_set_samplers(struct wined3d_device_context *context, enum wined3d_shader_type type,
+        unsigned int start_idx, unsigned int count, struct wined3d_sampler *const *samplers)
 {
     struct wined3d_state *state = context->state;
-    struct wined3d_sampler *prev;
+    unsigned int i;
 
-    TRACE("context %p, type %#x, idx %u, sampler %p.\n", context, type, idx, sampler);
+    TRACE("context %p, type %#x, start_idx %u, count %u, samplers %p.\n", context, type, start_idx, count, samplers);
 
-    if (idx >= MAX_SAMPLER_OBJECTS)
+    if (!wined3d_bound_range(start_idx, count, MAX_SAMPLER_OBJECTS))
     {
-        WARN("Invalid sampler index %u.\n", idx);
+        WARN("Invalid sampler index %u, count %u.\n", start_idx, count);
         return;
     }
 
-    prev = state->sampler[type][idx];
-    if (sampler == prev)
+    if (!memcmp(samplers, &state->sampler[type][start_idx], count * sizeof(*samplers)))
         return;
 
-    if (sampler)
-        wined3d_sampler_incref(sampler);
-    state->sampler[type][idx] = sampler;
-    wined3d_device_context_emit_set_sampler(context, type, idx, sampler);
-    if (prev)
-        wined3d_sampler_decref(prev);
+    wined3d_device_context_emit_set_samplers(context, type, start_idx, count, samplers);
+    for (i = 0; i < count; ++i)
+    {
+        struct wined3d_sampler *prev = state->sampler[type][start_idx + i];
+        struct wined3d_sampler *sampler = samplers[i];
+
+        if (sampler)
+            wined3d_sampler_incref(sampler);
+        state->sampler[type][start_idx + i] = sampler;
+        if (prev)
+            wined3d_sampler_decref(prev);
+    }
 }
 
-void CDECL wined3d_device_context_set_unordered_access_view(struct wined3d_device_context *context,
-        enum wined3d_pipeline pipeline, unsigned int idx, struct wined3d_unordered_access_view *uav,
-        unsigned int initial_count)
+void CDECL wined3d_device_context_set_unordered_access_views(struct wined3d_device_context *context,
+        enum wined3d_pipeline pipeline, unsigned int start_idx, unsigned int count,
+        struct wined3d_unordered_access_view *const *uavs, const unsigned int *initial_counts)
 {
     struct wined3d_state *state = context->state;
-    struct wined3d_unordered_access_view *prev;
+    unsigned int i;
 
-    TRACE("context %p, pipeline %#x, idx %u, uav %p, initial_count %u.\n", context, pipeline, idx, uav, initial_count);
+    TRACE("context %p, pipeline %#x, start_idx %u, count %u, uavs %p, initial_counts %p.\n",
+            context, pipeline, start_idx, count, uavs, initial_counts);
 
-    if (idx >= MAX_UNORDERED_ACCESS_VIEWS)
+    if (!wined3d_bound_range(start_idx, count, MAX_UNORDERED_ACCESS_VIEWS))
     {
-        WARN("Invalid UAV index %u.\n", idx);
+        WARN("Invalid UAV index %u, count %u.\n", start_idx, count);
         return;
     }
 
-    prev = state->unordered_access_view[pipeline][idx];
-    if (uav == prev && initial_count == ~0u)
+    if (!memcmp(uavs, &state->unordered_access_view[pipeline][start_idx], count * sizeof(*uavs)) && !initial_counts)
         return;
 
-    if (uav)
-        wined3d_unordered_access_view_incref(uav);
-    state->unordered_access_view[pipeline][idx] = uav;
-    wined3d_device_context_emit_set_unordered_access_view(context, pipeline, idx, uav, initial_count);
-    if (prev)
-        wined3d_unordered_access_view_decref(prev);
+    wined3d_device_context_emit_set_unordered_access_views(context, pipeline, start_idx, count, uavs, initial_counts);
+    for (i = 0; i < count; ++i)
+    {
+        struct wined3d_unordered_access_view *prev = state->unordered_access_view[pipeline][start_idx + i];
+        struct wined3d_unordered_access_view *uav = uavs[i];
+
+        if (uav)
+            wined3d_unordered_access_view_incref(uav);
+        state->unordered_access_view[pipeline][start_idx + i] = uav;
+        if (prev)
+            wined3d_unordered_access_view_decref(prev);
+    }
 }
 
 static void wined3d_device_context_unbind_srv_for_rtv(struct wined3d_device_context *context,
@@ -2126,8 +2145,10 @@ static void wined3d_device_context_unbind_srv_for_rtv(struct wined3d_device_cont
                         && ((!dsv && wined3d_is_srv_rtv_bound(state, srv))
                         || (dsv && wined3d_dsv_srv_conflict(view, srv->format))))
                 {
+                    static struct wined3d_shader_resource_view *const null_srv;
+
                     WARN("Application sets bound resource as render target.\n");
-                    wined3d_device_context_set_shader_resource_view(context, i, j, NULL);
+                    wined3d_device_context_set_shader_resource_views(context, i, j, 1, &null_srv);
                 }
             }
         }
@@ -4983,7 +5004,7 @@ void CDECL wined3d_device_context_execute_command_list(struct wined3d_device_con
 {
     TRACE("context %p, list %p, restore_state %d.\n", context, list, restore_state);
 
-    context->ops->execute_command_list(context, list, restore_state);
+    wined3d_device_context_emit_execute_command_list(context, list, restore_state);
 }
 
 struct wined3d_rendertarget_view * CDECL wined3d_device_context_get_rendertarget_view(
@@ -5611,7 +5632,7 @@ void device_resource_add(struct wined3d_device *device, struct wined3d_resource 
 {
     TRACE("device %p, resource %p.\n", device, resource);
 
-    wined3d_not_from_cs(device);
+    wined3d_not_from_cs(device->cs);
 
     list_add_head(&device->resources, &resource->resource_list_entry);
 }
@@ -5620,7 +5641,7 @@ static void device_resource_remove(struct wined3d_device *device, struct wined3d
 {
     TRACE("device %p, resource %p.\n", device, resource);
 
-    wined3d_not_from_cs(device);
+    wined3d_not_from_cs(device->cs);
 
     list_remove(&resource->resource_list_entry);
 }

@@ -1,19 +1,21 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Jul  3 02:08:02 PM MSK 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Tue Jul 20 02:31:07 PM MSK 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.12.r0.g12d33d21d33
-Using wine-staging patchset (version 6.12.r0.gce643e9d)
+Wine (plain) version: 6.12.r182.g49cde099582
+Using wine-staging patchset (version 6.12.1.r4.g092f3b1e)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
+Applied reverting hotfix staging-pulseaudio-reverts.mystagingrevert
+Applied hotfix staging-reenable-pulse.mystagingpatch
 Applied hotfix protonify_stg_syscall_emu-003.mystagingpatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W ntdll-NtAlertThreadByThreadId -W ws2_32-connect-already-connected -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW -W imm32-com-initialization -W bcrypt-ECDHSecretAgreement
+Staging overrides, if any: -W ntdll-NtAlertThreadByThreadId -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW -W imm32-com-initialization -W bcrypt-ECDHSecretAgreement
 
 use_clock_monotonic-staging.patch -- ( Applied clock_monotonic patch )
 fsync-unix-staging.patch -- ( Applied fsync, an experimental replacement for esync (unix, staging) )
@@ -32,5 +34,6 @@ proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (s
 
 Applied hotfix wineserver-socket-spin-workaround.mypatch
 Applied hotfix imm32-com-initialization_no_net_active_window.mypatch
+Applied your own patch amd_fsr_fshack.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )

@@ -24,7 +24,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
-#include "gdi_private.h"
+#include "ntgdi_private.h"
 #include "mfdrv/metafiledrv.h"
 #include "wine/debug.h"
 
@@ -243,7 +243,7 @@ static DC *MFDRV_AllocMetaFile(void)
     DC *dc;
     METAFILEDRV_PDEVICE *physDev;
 
-    if (!(dc = alloc_dc_ptr( OBJ_METADC ))) return NULL;
+    if (!(dc = alloc_dc_ptr( NTGDI_OBJ_METADC ))) return NULL;
 
     physDev = HeapAlloc(GetProcessHeap(),0,sizeof(*physDev));
     if (!physDev)

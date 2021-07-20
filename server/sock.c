@@ -985,7 +985,10 @@ static void sock_dispatch_events( struct sock *sock, enum connection_state prevs
 
     case SOCK_CONNECTING:
         if (event & POLLOUT)
+        {
             post_socket_event( sock, AFD_POLL_BIT_CONNECT, 0 );
+            sock->errors[AFD_POLL_BIT_CONNECT_ERR] = 0;
+        }
         if (event & (POLLERR | POLLHUP))
             post_socket_event( sock, AFD_POLL_BIT_CONNECT_ERR, error );
         break;
@@ -2167,12 +2170,25 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
             return 0;
         }
 
-        if (sock->state == SOCK_CONNECTING)
+        switch (sock->state)
         {
-            /* FIXME: STATUS_ADDRESS_ALREADY_ASSOCIATED probably isn't right,
-             * but there's no status code that maps to WSAEALREADY... */
-            set_error( params->synchronous ? STATUS_ADDRESS_ALREADY_ASSOCIATED : STATUS_INVALID_PARAMETER );
-            return 0;
+            case SOCK_LISTENING:
+                set_error( STATUS_INVALID_PARAMETER );
+                return 0;
+
+            case SOCK_CONNECTING:
+                /* FIXME: STATUS_ADDRESS_ALREADY_ASSOCIATED probably isn't right,
+                 * but there's no status code that maps to WSAEALREADY... */
+                set_error( params->synchronous ? STATUS_ADDRESS_ALREADY_ASSOCIATED : STATUS_INVALID_PARAMETER );
+                return 0;
+
+            case SOCK_CONNECTED:
+                set_error( STATUS_CONNECTION_ACTIVE );
+                return 0;
+
+            case SOCK_UNCONNECTED:
+            case SOCK_CONNECTIONLESS:
+                break;
         }
 
         unix_len = sockaddr_to_unix( addr, params->addr_len, &unix_addr );
@@ -2593,7 +2609,7 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
             {
                 if (sock->errors[i])
                 {
-                    error = sock->errors[i];
+                    error = sock_get_error( sock->errors[i] );
                     break;
                 }
             }
@@ -2740,6 +2756,29 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
     }
 }
 
+static int poll_single_socket( struct sock *sock, int mask )
+{
+    struct pollfd pollfd;
+
+    pollfd.fd = get_unix_fd( sock->fd );
+    pollfd.events = poll_flags_from_afd( sock, mask );
+    if (pollfd.events < 0 || poll( &pollfd, 1, 0 ) < 0)
+        return 0;
+
+    if ((mask & AFD_POLL_HUP) && (pollfd.revents & POLLIN) && sock->type == WS_SOCK_STREAM)
+    {
+        char dummy;
+
+        if (!recv( get_unix_fd( sock->fd ), &dummy, 1, MSG_PEEK ))
+        {
+            pollfd.revents &= ~POLLIN;
+            pollfd.revents |= POLLHUP;
+        }
+    }
+
+    return get_poll_flags( sock, pollfd.revents ) & mask;
+}
+
 static int poll_socket( struct sock *poll_sock, struct async *async, timeout_t timeout,
                         unsigned int count, const struct poll_socket_input *input )
 {
@@ -2794,31 +2833,22 @@ static int poll_socket( struct sock *poll_sock, struct async *async, timeout_t t
     for (i = 0; i < count; ++i)
     {
         struct sock *sock = req->sockets[i].sock;
-        struct pollfd pollfd;
-        int flags;
+        int mask = req->sockets[i].flags;
+        int flags = poll_single_socket( sock, mask );
 
-        pollfd.fd = get_unix_fd( sock->fd );
-        pollfd.events = poll_flags_from_afd( sock, req->sockets[i].flags );
-        if (pollfd.events < 0 || poll( &pollfd, 1, 0 ) < 0) continue;
-
-        if ((req->sockets[i].flags & AFD_POLL_HUP) && (pollfd.revents & POLLIN) &&
-            sock->type == WS_SOCK_STREAM)
-        {
-            char dummy;
-
-            if (!recv( get_unix_fd( sock->fd ), &dummy, 1, MSG_PEEK ))
-            {
-                pollfd.revents &= ~POLLIN;
-                pollfd.revents |= POLLHUP;
-            }
-        }
-
-        flags = get_poll_flags( sock, pollfd.revents ) & req->sockets[i].flags;
         if (flags)
         {
             req->iosb->status = STATUS_SUCCESS;
             output[i].flags = flags;
             output[i].status = sock_get_ntstatus( sock_error( sock->fd ) );
+        }
+
+        /* FIXME: do other error conditions deserve a similar treatment? */
+        if (sock->state != SOCK_CONNECTING && sock->errors[AFD_POLL_BIT_CONNECT_ERR] && (mask & AFD_POLL_CONNECT_ERR))
+        {
+            req->iosb->status = STATUS_SUCCESS;
+            output[i].flags |= AFD_POLL_CONNECT_ERR;
+            output[i].status = sock_get_ntstatus( sock->errors[AFD_POLL_BIT_CONNECT_ERR] );
         }
     }
 

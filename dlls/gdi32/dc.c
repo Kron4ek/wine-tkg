@@ -29,7 +29,7 @@
 #include "winnls.h"
 #include "winternl.h"
 #include "winerror.h"
-#include "gdi_private.h"
+#include "ntgdi_private.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dc);
@@ -38,7 +38,6 @@ static BOOL DC_DeleteObject( HGDIOBJ handle );
 
 static const struct gdi_obj_funcs dc_funcs =
 {
-    NULL,             /* pGetObjectA */
     NULL,             /* pGetObjectW */
     NULL,             /* pUnrealizeObject */
     DC_DeleteObject   /* pDeleteObject */
@@ -53,10 +52,10 @@ static inline DC *get_dc_obj( HDC hdc )
 
     switch (type)
     {
-    case OBJ_DC:
-    case OBJ_MEMDC:
-    case OBJ_METADC:
-    case OBJ_ENHMETADC:
+    case NTGDI_OBJ_DC:
+    case NTGDI_OBJ_MEMDC:
+    case NTGDI_OBJ_METADC:
+    case NTGDI_OBJ_ENHMETADC:
         return dc;
     default:
         GDI_ReleaseObj( hdc );
@@ -419,13 +418,13 @@ INT CDECL nulldrv_SaveDC( PHYSDEV dev )
 
     if (dc->hClipRgn)
     {
-        newdc->hClipRgn = CreateRectRgn( 0, 0, 0, 0 );
-        CombineRgn( newdc->hClipRgn, dc->hClipRgn, 0, RGN_COPY );
+        newdc->hClipRgn = NtGdiCreateRectRgn( 0, 0, 0, 0 );
+        NtGdiCombineRgn( newdc->hClipRgn, dc->hClipRgn, 0, RGN_COPY );
     }
     if (dc->hMetaRgn)
     {
-        newdc->hMetaRgn = CreateRectRgn( 0, 0, 0, 0 );
-        CombineRgn( newdc->hMetaRgn, dc->hMetaRgn, 0, RGN_COPY );
+        newdc->hMetaRgn = NtGdiCreateRectRgn( 0, 0, 0, 0 );
+        NtGdiCombineRgn( newdc->hMetaRgn, dc->hMetaRgn, 0, RGN_COPY );
     }
 
     if (!PATH_SavePath( newdc, dc ))
@@ -494,8 +493,8 @@ BOOL CDECL nulldrv_RestoreDC( PHYSDEV dev, INT level )
 
     if (dcs->hClipRgn)
     {
-        if (!dc->hClipRgn) dc->hClipRgn = CreateRectRgn( 0, 0, 0, 0 );
-        CombineRgn( dc->hClipRgn, dcs->hClipRgn, 0, RGN_COPY );
+        if (!dc->hClipRgn) dc->hClipRgn = NtGdiCreateRectRgn( 0, 0, 0, 0 );
+        NtGdiCombineRgn( dc->hClipRgn, dcs->hClipRgn, 0, RGN_COPY );
     }
     else
     {
@@ -504,8 +503,8 @@ BOOL CDECL nulldrv_RestoreDC( PHYSDEV dev, INT level )
     }
     if (dcs->hMetaRgn)
     {
-        if (!dc->hMetaRgn) dc->hMetaRgn = CreateRectRgn( 0, 0, 0, 0 );
-        CombineRgn( dc->hMetaRgn, dcs->hMetaRgn, 0, RGN_COPY );
+        if (!dc->hMetaRgn) dc->hMetaRgn = NtGdiCreateRectRgn( 0, 0, 0, 0 );
+        NtGdiCombineRgn( dc->hMetaRgn, dcs->hMetaRgn, 0, RGN_COPY );
     }
     else
     {
@@ -645,7 +644,7 @@ HDC WINAPI CreateDCW( LPCWSTR driver, LPCWSTR device, LPCWSTR output,
         ERR( "no driver found for %s\n", debugstr_w(buf) );
         return 0;
     }
-    if (!(dc = alloc_dc_ptr( OBJ_DC ))) return 0;
+    if (!(dc = alloc_dc_ptr( NTGDI_OBJ_DC ))) return 0;
     hdc = dc->hSelf;
 
     dc->hBitmap = GDI_inc_ref_count( GetStockObject( DEFAULT_BITMAP ));
@@ -771,7 +770,7 @@ HDC WINAPI CreateCompatibleDC( HDC hdc )
     }
     else funcs = DRIVER_load_driver( L"display" );
 
-    if (!(dc = alloc_dc_ptr( OBJ_MEMDC ))) return 0;
+    if (!(dc = alloc_dc_ptr( NTGDI_OBJ_MEMDC ))) return 0;
 
     TRACE("(%p): returning %p\n", hdc, dc->hSelf );
 
