@@ -77,6 +77,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(iphlpapi);
 
 DWORD WINAPI AllocateAndGetIfTableFromStack( MIB_IFTABLE **table, BOOL sort, HANDLE heap, DWORD flags );
 
+static const NPI_MODULEID *ip_module_id( USHORT family )
+{
+    if (family == WS_AF_INET) return &NPI_MS_IPV4_MODULEID;
+    if (family == WS_AF_INET6) return &NPI_MS_IPV6_MODULEID;
+    return NULL;
+}
+
 DWORD WINAPI ConvertGuidToStringA( const GUID *guid, char *str, DWORD len )
 {
     if (len < CHARS_IN_GUID) return ERROR_INSUFFICIENT_BUFFER;
@@ -2651,149 +2658,141 @@ DWORD WINAPI GetExtendedUdpTable(PVOID pUdpTable, PDWORD pdwSize, BOOL bOrder,
     return ret;
 }
 
+static void unicast_row_fill( MIB_UNICASTIPADDRESS_ROW *row, USHORT fam, void *key, struct nsi_ip_unicast_rw *rw,
+                              struct nsi_ip_unicast_dynamic *dyn, struct nsi_ip_unicast_static *stat )
+{
+    struct nsi_ipv4_unicast_key *key4 = (struct nsi_ipv4_unicast_key *)key;
+    struct nsi_ipv6_unicast_key *key6 = (struct nsi_ipv6_unicast_key *)key;
+
+    if (fam == WS_AF_INET)
+    {
+        row->Address.Ipv4.sin_family = fam;
+        row->Address.Ipv4.sin_port = 0;
+        row->Address.Ipv4.sin_addr = key4->addr;
+        memset( row->Address.Ipv4.sin_zero, 0, sizeof(row->Address.Ipv4.sin_zero) );
+        row->InterfaceLuid.Value = key4->luid.Value;
+    }
+    else
+    {
+        row->Address.Ipv6.sin6_family = fam;
+        row->Address.Ipv6.sin6_port = 0;
+        row->Address.Ipv6.sin6_flowinfo = 0;
+        row->Address.Ipv6.sin6_addr = key6->addr;
+        row->Address.Ipv6.sin6_scope_id = dyn->scope_id;
+        row->InterfaceLuid.Value = key6->luid.Value;
+    }
+
+    ConvertInterfaceLuidToIndex( &row->InterfaceLuid, &row->InterfaceIndex );
+    row->PrefixOrigin = rw->prefix_origin;
+    row->SuffixOrigin = rw->suffix_origin;
+    row->ValidLifetime = rw->valid_lifetime;
+    row->PreferredLifetime = rw->preferred_lifetime;
+    row->OnLinkPrefixLength = rw->on_link_prefix;
+    row->SkipAsSource = 0;
+    row->DadState = dyn->dad_state;
+    row->ScopeId.u.Value = dyn->scope_id;
+    row->CreationTimeStamp.QuadPart = stat->creation_time;
+}
+
 DWORD WINAPI GetUnicastIpAddressEntry(MIB_UNICASTIPADDRESS_ROW *row)
 {
-    IP_ADAPTER_ADDRESSES *aa, *ptr;
-    ULONG size = 0;
-    DWORD ret;
+    struct nsi_ipv4_unicast_key key4;
+    struct nsi_ipv6_unicast_key key6;
+    struct nsi_ip_unicast_rw rw;
+    struct nsi_ip_unicast_dynamic dyn;
+    struct nsi_ip_unicast_static stat;
+    const NPI_MODULEID *mod;
+    DWORD err, key_size;
+    void *key;
 
-    TRACE("%p\n", row);
+    TRACE( "%p\n", row );
 
-    if (!row)
-        return ERROR_INVALID_PARAMETER;
+    if (!row) return ERROR_INVALID_PARAMETER;
+    mod = ip_module_id( row->Address.si_family );
+    if (!mod) return ERROR_INVALID_PARAMETER;
 
-    ret = GetAdaptersAddresses(row->Address.si_family, 0, NULL, NULL, &size);
-    if (ret != ERROR_BUFFER_OVERFLOW)
-        return ret;
-    if (!(ptr = HeapAlloc(GetProcessHeap(), 0, size)))
-        return ERROR_OUTOFMEMORY;
-    if ((ret = GetAdaptersAddresses(row->Address.si_family, 0, NULL, ptr, &size)))
+    if (!row->InterfaceLuid.Value)
     {
-        HeapFree(GetProcessHeap(), 0, ptr);
-        return ret;
+        err = ConvertInterfaceIndexToLuid( row->InterfaceIndex, &row->InterfaceLuid );
+        if (err) return err;
     }
 
-    ret = ERROR_FILE_NOT_FOUND;
-    for (aa = ptr; aa; aa = aa->Next)
+    if (row->Address.si_family == WS_AF_INET)
     {
-        IP_ADAPTER_UNICAST_ADDRESS *ua;
-
-        if (aa->u.s.IfIndex != row->InterfaceIndex &&
-            memcmp(&aa->Luid, &row->InterfaceLuid, sizeof(row->InterfaceLuid)))
-            continue;
-        ret = ERROR_NOT_FOUND;
-
-        ua = aa->FirstUnicastAddress;
-        while (ua)
-        {
-            SOCKADDR_INET *uaaddr = (SOCKADDR_INET *)ua->Address.lpSockaddr;
-
-            if ((row->Address.si_family == WS_AF_INET6 &&
-                 !memcmp(&row->Address.Ipv6.sin6_addr, &uaaddr->Ipv6.sin6_addr, sizeof(uaaddr->Ipv6.sin6_addr))) ||
-                (row->Address.si_family == WS_AF_INET &&
-                 row->Address.Ipv4.sin_addr.S_un.S_addr == uaaddr->Ipv4.sin_addr.S_un.S_addr))
-            {
-                memcpy(&row->InterfaceLuid, &aa->Luid, sizeof(aa->Luid));
-                row->InterfaceIndex     = aa->u.s.IfIndex;
-                row->PrefixOrigin       = ua->PrefixOrigin;
-                row->SuffixOrigin       = ua->SuffixOrigin;
-                row->ValidLifetime      = ua->ValidLifetime;
-                row->PreferredLifetime  = ua->PreferredLifetime;
-                row->OnLinkPrefixLength = ua->OnLinkPrefixLength;
-                row->SkipAsSource       = 0;
-                row->DadState           = ua->DadState;
-                if (row->Address.si_family == WS_AF_INET6)
-                    row->ScopeId.u.Value  = row->Address.Ipv6.sin6_scope_id;
-                else
-                    row->ScopeId.u.Value  = 0;
-                NtQuerySystemTime(&row->CreationTimeStamp);
-                HeapFree(GetProcessHeap(), 0, ptr);
-                return NO_ERROR;
-            }
-            ua = ua->Next;
-        }
+        key4.luid = row->InterfaceLuid;
+        key4.addr = row->Address.Ipv4.sin_addr;
+        key4.pad = 0;
+        key = &key4;
+        key_size = sizeof(key4);
     }
-    HeapFree(GetProcessHeap(), 0, ptr);
+    else if (row->Address.si_family == WS_AF_INET6)
+    {
+        key6.luid = row->InterfaceLuid;
+        key6.addr = row->Address.Ipv6.sin6_addr;
+        key = &key6;
+        key_size = sizeof(key6);
+    }
+    else return ERROR_INVALID_PARAMETER;
 
-    return ret;
+    err = NsiGetAllParameters( 1, mod, NSI_IP_UNICAST_TABLE, key, key_size, &rw, sizeof(rw),
+                               &dyn, sizeof(dyn), &stat, sizeof(stat) );
+    if (!err) unicast_row_fill( row, row->Address.si_family, key, &rw, &dyn, &stat );
+    return err;
 }
 
 DWORD WINAPI GetUnicastIpAddressTable(ADDRESS_FAMILY family, MIB_UNICASTIPADDRESS_TABLE **table)
 {
-    IP_ADAPTER_ADDRESSES *aa, *ptr;
-    MIB_UNICASTIPADDRESS_TABLE *data;
-    DWORD ret, count = 0;
-    ULONG size, flags;
+    void *key[2] = { NULL, NULL };
+    struct nsi_ip_unicast_rw *rw[2] = { NULL, NULL };
+    struct nsi_ip_unicast_dynamic *dyn[2] = { NULL, NULL };
+    struct nsi_ip_unicast_static *stat[2] = { NULL, NULL };
+    static const USHORT fam[2] = { WS_AF_INET, WS_AF_INET6 };
+    static const DWORD key_size[2] = { sizeof(struct nsi_ipv4_unicast_key), sizeof(struct nsi_ipv6_unicast_key) };
+    DWORD err, i, size, count[2] = { 0, 0 };
 
-    TRACE("%u, %p\n", family, table);
+    TRACE( "%u, %p\n", family, table );
 
     if (!table || (family != WS_AF_INET && family != WS_AF_INET6 && family != WS_AF_UNSPEC))
         return ERROR_INVALID_PARAMETER;
 
-    flags = GAA_FLAG_SKIP_ANYCAST |
-            GAA_FLAG_SKIP_MULTICAST |
-            GAA_FLAG_SKIP_DNS_SERVER |
-            GAA_FLAG_SKIP_FRIENDLY_NAME;
-
-    ret = GetAdaptersAddresses(family, flags, NULL, NULL, &size);
-    if (ret != ERROR_BUFFER_OVERFLOW)
-        return ret;
-    if (!(ptr = HeapAlloc(GetProcessHeap(), 0, size)))
-        return ERROR_OUTOFMEMORY;
-    if ((ret = GetAdaptersAddresses(family, flags, NULL, ptr, &size)))
+    for (i = 0; i < 2; i++)
     {
-        HeapFree(GetProcessHeap(), 0, ptr);
-        return ret;
+        if (family != WS_AF_UNSPEC && family != fam[i]) continue;
+
+        err = NsiAllocateAndGetTable( 1, ip_module_id( fam[i] ), NSI_IP_UNICAST_TABLE, key + i, key_size[i],
+                                      (void **)rw + i, sizeof(**rw), (void **)dyn + i, sizeof(**dyn),
+                                      (void **)stat + i, sizeof(**stat), count + i, 0 );
+        if (err) goto err;
     }
 
-    for (aa = ptr; aa; aa = aa->Next)
+    size = FIELD_OFFSET(MIB_UNICASTIPADDRESS_TABLE, Table[ count[0] + count[1] ]);
+    *table = heap_alloc( size );
+    if (!*table)
     {
-        IP_ADAPTER_UNICAST_ADDRESS *ua = aa->FirstUnicastAddress;
-        while (ua)
-        {
-            count++;
-            ua = ua->Next;
-        }
+        err = ERROR_NOT_ENOUGH_MEMORY;
+        goto err;
     }
 
-    if (!(data = HeapAlloc(GetProcessHeap(), 0, sizeof(*data) + (count - 1) * sizeof(data->Table[0]))))
+    (*table)->NumEntries = count[0] + count[1];
+    for (i = 0; i < count[0]; i++)
     {
-        HeapFree(GetProcessHeap(), 0, ptr);
-        return ERROR_OUTOFMEMORY;
+        MIB_UNICASTIPADDRESS_ROW *row = (*table)->Table + i;
+        struct nsi_ipv4_unicast_key *key4 = (struct nsi_ipv4_unicast_key *)key[0];
+
+        unicast_row_fill( row, fam[0], (void *)(key4 + i), rw[0] + i, dyn[0] + i, stat[0] + i );
     }
 
-    data->NumEntries = 0;
-    for (aa = ptr; aa; aa = aa->Next)
+    for (i = 0; i < count[1]; i++)
     {
-        IP_ADAPTER_UNICAST_ADDRESS *ua = aa->FirstUnicastAddress;
-        while (ua)
-        {
-            MIB_UNICASTIPADDRESS_ROW *row = &data->Table[data->NumEntries];
-            memcpy(&row->Address, ua->Address.lpSockaddr, ua->Address.iSockaddrLength);
-            memcpy(&row->InterfaceLuid, &aa->Luid, sizeof(aa->Luid));
-            row->InterfaceIndex     = aa->u.s.IfIndex;
-            row->PrefixOrigin       = ua->PrefixOrigin;
-            row->SuffixOrigin       = ua->SuffixOrigin;
-            row->ValidLifetime      = ua->ValidLifetime;
-            row->PreferredLifetime  = ua->PreferredLifetime;
-            row->OnLinkPrefixLength = ua->OnLinkPrefixLength;
-            row->SkipAsSource       = 0;
-            row->DadState           = ua->DadState;
-            if (row->Address.si_family == WS_AF_INET6)
-                row->ScopeId.u.Value  = row->Address.Ipv6.sin6_scope_id;
-            else
-                row->ScopeId.u.Value  = 0;
-            NtQuerySystemTime(&row->CreationTimeStamp);
+        MIB_UNICASTIPADDRESS_ROW *row = (*table)->Table + count[0] + i;
+        struct nsi_ipv6_unicast_key *key6 = (struct nsi_ipv6_unicast_key *)key[1];
 
-            data->NumEntries++;
-            ua = ua->Next;
-        }
+        unicast_row_fill( row, fam[1], (void *)(key6 + i), rw[1] + i, dyn[1] + i, stat[1] + i );
     }
 
-    HeapFree(GetProcessHeap(), 0, ptr);
-
-    *table = data;
-    return ret;
+err:
+    for (i = 0; i < 2; i++) NsiFreeTable( key[i], rw[i], dyn[i], stat[i] );
+    return err;
 }
 
 /******************************************************************

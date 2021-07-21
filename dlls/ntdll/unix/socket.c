@@ -1770,6 +1770,29 @@ NTSTATUS sock_ioctl( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, void *apc
         case IOCTL_AFD_WINE_SET_IP_OPTIONS:
             return do_setsockopt( handle, io, IPPROTO_IP, IP_OPTIONS, in_buffer, in_size );
 
+#ifdef IP_PKTINFO
+        case IOCTL_AFD_WINE_GET_IP_PKTINFO:
+            return do_getsockopt( handle, io, IPPROTO_IP, IP_PKTINFO, out_buffer, out_size );
+
+        case IOCTL_AFD_WINE_SET_IP_PKTINFO:
+            return do_setsockopt( handle, io, IPPROTO_IP, IP_PKTINFO, in_buffer, in_size );
+#elif defined(IP_RECVDSTADDR)
+        case IOCTL_AFD_WINE_GET_IP_PKTINFO:
+            return do_getsockopt( handle, io, IPPROTO_IP, IP_RECVDSTADDR, out_buffer, out_size );
+
+        case IOCTL_AFD_WINE_SET_IP_PKTINFO:
+            return do_setsockopt( handle, io, IPPROTO_IP, IP_RECVDSTADDR, in_buffer, in_size );
+#endif
+
+        case IOCTL_AFD_WINE_GET_IP_TOS:
+            return do_getsockopt( handle, io, IPPROTO_IP, IP_TOS, out_buffer, out_size );
+
+        case IOCTL_AFD_WINE_SET_IP_TOS:
+            return do_setsockopt( handle, io, IPPROTO_IP, IP_TOS, in_buffer, in_size );
+
+        case IOCTL_AFD_WINE_GET_IP_TTL:
+            return do_getsockopt( handle, io, IPPROTO_IP, IP_TTL, out_buffer, out_size );
+
         default:
         {
             if ((code >> 16) == FILE_DEVICE_NETWORK)

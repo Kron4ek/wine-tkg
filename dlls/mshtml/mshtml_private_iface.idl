@@ -89,4 +89,32 @@ interface IWineHTMLWindowPrivate : IDispatch
     HRESULT console([retval, out] IDispatch **console);
 }
 
+[
+    odl,
+    oleautomation,
+    dual,
+    hidden,
+    uuid(465908fd-f394-489f-b7a3-4c00fbbe9eec)
+]
+interface IWineHTMLElementPrivate : IDispatch
+{
+    [propget, id(1)]
+    HRESULT classList([retval, out] IDispatch **class_list);
+}
+
+[
+    odl,
+    oleautomation,
+    dual,
+    hidden,
+    uuid(08ef0edd-5fb8-4178-a2f0-9f686e00441b)
+]
+interface IWineDOMTokenList : IDispatch
+{
+    [id(1)]
+    HRESULT add([in] BSTR token);
+    [id(2)]
+    HRESULT remove([in] BSTR token);
+}
+
 } /* library MSHTML_private */

@@ -3302,19 +3302,18 @@ static void test_mf_Graphics(void)
     ok( ret, "MoveToEx error %d.\n", GetLastError());
     ret = LineTo(hdcMetafile, 2, 2);
     ok( ret, "LineTo error %d.\n", GetLastError());
+
+    oldpoint.x = oldpoint.y = 0xdeadbeef;
     ret = MoveToEx(hdcMetafile, 1, 1, &oldpoint);
     ok( ret, "MoveToEx error %d.\n", GetLastError());
-
-/* oldpoint gets garbage under Win XP, so the following test would
- * work under Wine but fails under Windows:
- *
- *   ok((oldpoint.x == 2) && (oldpoint.y == 2),
- *       "MoveToEx: (x, y) = (%ld, %ld), should be (2, 2).\n",
- *       oldpoint.x, oldpoint.y);
- */
+    ok(oldpoint.x == 0xdeadbeef && oldpoint.y == 0xdeadbeef,
+       "MoveToEx modified oldpoint\n");
 
     ret = Ellipse(hdcMetafile, 0, 0, 2, 2);
     ok( ret, "Ellipse error %d.\n", GetLastError());
+
+    ret = ArcTo(hdcMetafile, 1, 2, 30, 40, 11, 12, 23, 24 );
+    ok( !ret, "ArcTo succeeded\n" );
 
     hMetafile = CloseMetaFile(hdcMetafile);
     ok(hMetafile != 0, "CloseMetaFile error %d\n", GetLastError());

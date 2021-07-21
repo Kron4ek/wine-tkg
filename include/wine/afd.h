@@ -198,6 +198,11 @@ struct afd_get_events_params
 #define IOCTL_AFD_WINE_SET_IP_MULTICAST_TTL             WINE_AFD_IOC(253)
 #define IOCTL_AFD_WINE_GET_IP_OPTIONS                   WINE_AFD_IOC(254)
 #define IOCTL_AFD_WINE_SET_IP_OPTIONS                   WINE_AFD_IOC(255)
+#define IOCTL_AFD_WINE_GET_IP_PKTINFO                   WINE_AFD_IOC(256)
+#define IOCTL_AFD_WINE_SET_IP_PKTINFO                   WINE_AFD_IOC(257)
+#define IOCTL_AFD_WINE_GET_IP_TOS                       WINE_AFD_IOC(258)
+#define IOCTL_AFD_WINE_SET_IP_TOS                       WINE_AFD_IOC(259)
+#define IOCTL_AFD_WINE_GET_IP_TTL                       WINE_AFD_IOC(260)
 
 struct afd_create_params
 {

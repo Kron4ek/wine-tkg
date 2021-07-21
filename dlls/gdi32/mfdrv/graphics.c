@@ -31,52 +31,62 @@
 WINE_DEFAULT_DEBUG_CHANNEL(metafile);
 
 /**********************************************************************
- *	     MFDRV_MoveTo
+ *	     METADC_MoveTo
  */
-BOOL CDECL MFDRV_MoveTo(PHYSDEV dev, INT x, INT y)
+BOOL METADC_MoveTo( HDC hdc, INT x, INT y )
 {
-    return MFDRV_MetaParam2(dev,META_MOVETO,x,y);
+    return metadc_param2( hdc, META_MOVETO, x, y );
 }
 
 /***********************************************************************
- *           MFDRV_LineTo
+ *           METADC_LineTo
  */
-BOOL CDECL MFDRV_LineTo( PHYSDEV dev, INT x, INT y )
+BOOL METADC_LineTo( HDC hdc, INT x, INT y )
 {
-     return MFDRV_MetaParam2(dev, META_LINETO, x, y);
-}
-
-
-/***********************************************************************
- *           MFDRV_Arc
- */
-BOOL CDECL MFDRV_Arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
-                      INT xstart, INT ystart, INT xend, INT yend )
-{
-     return MFDRV_MetaParam8(dev, META_ARC, left, top, right, bottom,
-			     xstart, ystart, xend, yend);
+     return metadc_param2( hdc, META_LINETO, x, y );
 }
 
 
 /***********************************************************************
- *           MFDRV_Pie
+ *           METADC_Arc
  */
-BOOL CDECL MFDRV_Pie( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
-                      INT xstart, INT ystart, INT xend, INT yend )
+BOOL METADC_Arc( HDC hdc, INT left, INT top, INT right, INT bottom,
+                 INT xstart, INT ystart, INT xend, INT yend )
 {
-    return MFDRV_MetaParam8(dev, META_PIE, left, top, right, bottom,
-			    xstart, ystart, xend, yend);
+     return metadc_param8( hdc, META_ARC, left, top, right, bottom,
+                           xstart, ystart, xend, yend );
 }
 
 
 /***********************************************************************
- *           MFDRV_Chord
+ *           MFDRV_ArcTo
  */
-BOOL CDECL MFDRV_Chord( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+BOOL CDECL MFDRV_ArcTo( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
                         INT xstart, INT ystart, INT xend, INT yend )
 {
-    return MFDRV_MetaParam8(dev, META_CHORD, left, top, right, bottom,
-			    xstart, ystart, xend, yend);
+    return FALSE;
+}
+
+
+/***********************************************************************
+ *           METADC_Pie
+ */
+BOOL METADC_Pie( HDC hdc, INT left, INT top, INT right, INT bottom,
+                 INT xstart, INT ystart, INT xend, INT yend )
+{
+    return metadc_param8( hdc, META_PIE, left, top, right, bottom,
+                          xstart, ystart, xend, yend );
+}
+
+
+/***********************************************************************
+ *           METADC_Chord
+ */
+BOOL METADC_Chord( HDC hdc, INT left, INT top, INT right, INT bottom,
+                   INT xstart, INT ystart, INT xend, INT yend )
+{
+    return metadc_param8( hdc, META_CHORD, left, top, right, bottom,
+                          xstart, ystart, xend, yend );
 }
 
 /***********************************************************************

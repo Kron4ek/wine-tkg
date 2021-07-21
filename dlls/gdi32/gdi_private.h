@@ -22,8 +22,29 @@
 #ifndef __WINE_GDI_PRIVATE_H
 #define __WINE_GDI_PRIVATE_H
 
+#include <stdarg.h>
+
+#include "windef.h"
+#include "winbase.h"
+#include "ntgdi.h"
+
 void set_gdi_client_ptr( HGDIOBJ handle, void *ptr ) DECLSPEC_HIDDEN;
 void *get_gdi_client_ptr( HGDIOBJ handle, WORD type ) DECLSPEC_HIDDEN;
+
+static inline BOOL is_meta_dc( HDC hdc )
+{
+    unsigned int handle = HandleToULong( hdc );
+    return (handle & NTGDI_HANDLE_TYPE_MASK) >> NTGDI_HANDLE_TYPE_SHIFT == NTGDI_OBJ_METADC;
+}
+
+extern BOOL METADC_Arc( HDC hdc, INT left, INT top, INT right, INT bottom,
+                        INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
+extern BOOL METADC_Chord( HDC hdc, INT left, INT top, INT right, INT bottom, INT xstart,
+                          INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
+extern BOOL METADC_LineTo( HDC hdc, INT x, INT y ) DECLSPEC_HIDDEN;
+extern BOOL METADC_MoveTo( HDC hdc, INT x, INT y ) DECLSPEC_HIDDEN;
+extern BOOL METADC_Pie( HDC hdc, INT left, INT top, INT right, INT bottom,
+                        INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
 
 BOOL xform_has_rotate_and_uniform_scale_and_shear( const XFORM *xform ) DECLSPEC_HIDDEN;
 BOOL xform_decompose_rotation_and_translation( XFORM *xform, XFORM *rotation_and_translation ) DECLSPEC_HIDDEN;

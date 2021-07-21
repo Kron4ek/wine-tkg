@@ -1515,6 +1515,17 @@ NTSTATUS WINAPI NtSetInformationProcess( HANDLE handle, PROCESSINFOCLASS class, 
         }
         break;
 
+    case ProcessInstrumentationCallback:
+    {
+        PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION *instr = info;
+
+        FIXME( "ProcessInstrumentationCallback stub.\n" );
+
+        if (size < sizeof(*instr)) return STATUS_INFO_LENGTH_MISMATCH;
+        ret = STATUS_SUCCESS;
+        break;
+    }
+
     case ProcessThreadStackAllocation:
     {
         void *addr = NULL;
@@ -1547,22 +1558,6 @@ NTSTATUS WINAPI NtSetInformationProcess( HANDLE handle, PROCESSINFOCLASS class, 
         }
         SERVER_END_REQ;
         return ret;
-
-    case ProcessInstrumentationCallback:
-    {
-        PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION *instr = info;
-
-        FIXME("ProcessInstrumentationCallback version %#x, reserved %#x, callback %p, size %u stub.\n",
-                instr->version, instr->reserved, instr->callback, size);
-
-        if (size != sizeof(*instr))
-        {
-            WARN("Incorrect size %u.\n", size);
-            return STATUS_INVALID_PARAMETER;
-        }
-        ret = STATUS_SUCCESS;
-        break;
-    }
 
     default:
         FIXME( "(%p,0x%08x,%p,0x%08x) stub\n", handle, class, info, size );
