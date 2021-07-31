@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Wed Jul 21 01:14:01 PM MSK 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Jul 31 11:42:24 AM MSK 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.13.r0.gfeb088b2247
-Using wine-staging patchset (version 6.13.r0.g52dd3381)
+Wine (plain) version: 6.14.r0.g7bedd313c88
+Using wine-staging patchset (version 6.14.r0.g069adfd1)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
@@ -32,7 +32,6 @@ proton-bcrypt-staging.patch -- ( Using Proton Bcrypt patches )
 josh-flat-theme.patch -- ( Add Josh's better-theme )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
-Applied hotfix wineserver-socket-spin-workaround.mypatch
 Applied hotfix imm32-com-initialization_no_net_active_window.mypatch
 Applied hotfix virtual_alloc_remi2.mypatch
 Applied your own patch amd_fsr_fshack.mypatch
