@@ -1433,24 +1433,6 @@ static void dump_varargs_poll_socket_output( const char *prefix, data_size_t siz
     fputc( '}', stderr );
 }
 
-static void dump_varargs_cpu_topology_override( const char *prefix, data_size_t size )
-{
-    const struct cpu_topology_override *cpu_topology = cur_data;
-    unsigned int i;
-
-    if (size < sizeof(*cpu_topology))
-        return;
-
-    fprintf( stderr,"%s{", prefix );
-    for (i = 0; i < cpu_topology->cpu_count; ++i)
-    {
-        if (i) fputc( ',', stderr );
-        fprintf( stderr, "%u", cpu_topology->host_cpu_id[i] );
-    }
-    fputc( '}', stderr );
-    remove_data( size );
-}
-
 typedef void (*dump_func)( const void *req );
 
 /* Everything below this line is generated automatically by tools/make_requests */
@@ -1521,8 +1503,7 @@ static void dump_get_startup_info_reply( const struct get_startup_info_reply *re
 
 static void dump_init_process_done_request( const struct init_process_done_request *req )
 {
-    dump_varargs_cpu_topology_override( " cpu_override=", cur_size );
-    dump_uint64( ", teb=", &req->teb );
+    dump_uint64( " teb=", &req->teb );
     dump_uint64( ", peb=", &req->peb );
     dump_uint64( ", ldt_copy=", &req->ldt_copy );
 }
@@ -5667,6 +5648,7 @@ static const struct
     { "PIPE_LISTENING",              STATUS_PIPE_LISTENING },
     { "PIPE_NOT_AVAILABLE",          STATUS_PIPE_NOT_AVAILABLE },
     { "PORT_NOT_SET",                STATUS_PORT_NOT_SET },
+    { "PREDEFINED_HANDLE",           STATUS_PREDEFINED_HANDLE },
     { "PRIVILEGE_NOT_HELD",          STATUS_PRIVILEGE_NOT_HELD },
     { "PROCESS_IN_JOB",              STATUS_PROCESS_IN_JOB },
     { "PROCESS_IS_TERMINATING",      STATUS_PROCESS_IS_TERMINATING },

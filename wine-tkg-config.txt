@@ -1,16 +1,14 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Jul 31 11:42:24 AM MSK 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Sun Aug 15 02:44:36 PM MSK 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.14.r0.g7bedd313c88
-Using wine-staging patchset (version 6.14.r0.g069adfd1)
+Wine (plain) version: 6.15.r0.g7f144646ffa
+Using wine-staging patchset (version 6.15.r1.gb09fe464)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
-Applied reverting hotfix staging-pulseaudio-reverts.mystagingrevert
-Applied hotfix staging-reenable-pulse.mystagingpatch
 Applied hotfix protonify_stg_syscall_emu-003.mystagingpatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
@@ -26,7 +24,6 @@ valve_proton_fullscreen_hack-staging.patch -- ( Applied Proton fullscreen hack p
 LAA-unix-staging.patch -- ( Applied large address aware override support )
 
 proton-tkg-staging.patch -- ( Using Steam-specific Proton-tkg patches (staging) 2/3 )
-proton-cpu-topology-overrides.patch -- ( Enable Proton's CPU topology override support )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
 proton-bcrypt-staging.patch -- ( Using Proton Bcrypt patches )
 josh-flat-theme.patch -- ( Add Josh's better-theme )

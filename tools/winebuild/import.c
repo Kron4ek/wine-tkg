@@ -1615,6 +1615,7 @@ static void output_syscall_dispatcher(void)
         output( "\tleaq 0x28(%%rsp),%%rsi\n" );   /* first argument */
         output( "\tmovq %%rcx,%%rsp\n" );
         output( "\tmovq 0x00(%%rcx),%%rax\n" );
+        output( "\tsubq $0xf000,%%rax\n" );
         output( "\tmovq 0x18(%%rcx),%%rdx\n" );
         output( "\tmovl %%eax,%%ebx\n" );
         output( "\tshrl $8,%%ebx\n" );
@@ -1772,14 +1773,14 @@ static void output_syscall_dispatcher(void)
         output( "\tstp x4, x5, [sp, #32]\n" );
         output( "\tstp x6, x7, [sp, #48]\n" );
         output( "\tstp x8, x9, [sp, #64]\n" );
-        output( "\tstr lr, [sp, #80]\n" );
+        output( "\tstr x30,    [sp, #80]\n" );
         output( "\tbl %s\n", asm_name("NtCurrentTeb") );
         output( "\tmov x18, x0\n" );
         output( "\tldp x2, x3, [sp, #16]\n" );
         output( "\tldp x4, x5, [sp, #32]\n" );
         output( "\tldp x6, x7, [sp, #48]\n" );
         output( "\tldp x8, x9, [sp, #64]\n" );
-        output( "\tldr lr, [sp, #80]\n" );
+        output( "\tldr x30,    [sp, #80]\n" );
         output( "\tldp x0, x1, [sp], #96\n" );
 
         output( "\tldr x10, [x18, #0x2f8]\n" );  /* arm64_thread_data()->syscall_frame */
@@ -1792,7 +1793,7 @@ static void output_syscall_dispatcher(void)
         output( "\tmov x19, sp\n" );
         output( "\tstp x9, x19, [x10, #0xf0]\n" );
         output( "\tmrs x9, NZCV\n" );
-        output( "\tstp lr, x9, [x10, #0x100]\n" );
+        output( "\tstp x30, x9, [x10, #0x100]\n" );
         output( "\tstr xzr, [x10, #0x110]\n" );  /* frame->restore_flags */
         output( "\tmrs x9, FPCR\n" );
         output( "\tstr w9, [x10, #0x118]\n" );
@@ -1973,7 +1974,7 @@ void output_syscalls( DLLSPEC *spec )
              * validate that instruction, we can just put a jmp there instead. */
             output( "\t.byte 0x4c,0x8b,0xd1\n" ); /* movq %rcx,%r10 */
             output( "\t.byte 0xb8\n" );           /* movl $i,%eax */
-            output( "\t.long %u\n", i );
+            output( "\t.long %u\n", 0xf000 + i );
             output( "\t.byte 0xf6,0x04,0x25,0x08,0x03,0xfe,0x7f,0x01\n" ); /* testb $1,0x7ffe0308 */
             output( "\t.byte 0x75,0x03\n" );      /* jne 1f */
             output( "\t.byte 0x0f,0x05\n" );      /* syscall */
