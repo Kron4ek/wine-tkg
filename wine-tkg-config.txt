@@ -1,15 +1,18 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Aug 28 11:59:34 AM MSK 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Sep 11 12:29:05 PM MSK 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.16.r0.g8e2df64cf89
-Using wine-staging patchset (version 6.16.r0.g931daeff)
+Wine (plain) version: 6.17.r0.ga8583acae95
+Using wine-staging patchset (version 6.17.r0.g5f19a815)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
-Applied hotfix protonify_stg_syscall_emu-005.mystagingpatch
+Applied reverting hotfix staging-pulseaudio-reverts.mystagingrevert
+Applied hotfix staging-reenable-pulse.mystagingpatch
+Applied hotfix protonify_stg_syscall_emu-006.mystagingpatch
+Applied hotfix pulse_reverts-2.myearlypatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
