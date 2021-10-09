@@ -47,7 +47,6 @@ AC_ARG_WITH(faudio,    AS_HELP_STRING([--without-faudio],[do not use FAudio (XAu
 AC_ARG_WITH(float-abi, AS_HELP_STRING([--with-float-abi=abi],[specify the ABI (soft|softfp|hard) for ARM platforms]))
 AC_ARG_WITH(fontconfig,AS_HELP_STRING([--without-fontconfig],[do not use fontconfig]))
 AC_ARG_WITH(freetype,  AS_HELP_STRING([--without-freetype],[do not use the FreeType library]))
-AC_ARG_WITH(gcrypt,    AS_HELP_STRING([--without-gcrypt],[do not use libgcrypt]))
 AC_ARG_WITH(gettext,   AS_HELP_STRING([--without-gettext],[do not use gettext]))
 AC_ARG_WITH(gettextpo, AS_HELP_STRING([--with-gettextpo],[use the GetTextPO library to rebuild po files]),
             [if test "x$withval" = "xno"; then ac_cv_header_gettext_po_h=no; fi])
@@ -438,7 +437,6 @@ AC_CHECK_HEADERS(\
 	ApplicationServices/ApplicationServices.h \
 	CL/cl.h \
 	Carbon/Carbon.h \
-	CommonCrypto/CommonCryptor.h \
 	CoreAudio/CoreAudio.h \
 	DiskArbitration/DiskArbitration.h \
 	EGL/egl.h \
@@ -459,10 +457,7 @@ AC_CHECK_HEADERS(\
 	dlfcn.h \
 	elf.h \
 	float.h \
-	fnmatch.h \
-	getopt.h \
 	gettext-po.h \
-	grp.h \
 	gsm.h \
 	gsm/gsm.h \
 	ieeefp.h \
@@ -750,8 +745,7 @@ case $host_os in
                                      [LDDLLFLAGS="-Wl,--disable-stdcall-fixup"]) ;;
     esac
     dnl Disable modules that can't be used on Windows
-    enable_iphlpapi=${enable_iphlpapi:-no}
-    enable_nsiproxy_sys=${enable_nsiproxy_sys:-no}
+    enable_mountmgr_sys=${enable_mountmgr_sys:-no}
     enable_loader=${enable_loader:-no}
     enable_server=${enable_server:-no}
     dnl Disable dependencies that are not useful on Windows
@@ -807,11 +801,6 @@ case $host_os in
     if test "$ac_cv_header_Security_Security_h" = "yes"
     then
         AC_SUBST(SECURITY_LIBS,"-framework Security -framework CoreFoundation")
-        dnl Check for the SSLCopyPeerCertificates function
-        ac_save_LIBS="$LIBS"
-        LIBS="$LIBS $SECURITY_LIBS"
-        AC_CHECK_FUNCS(SSLCopyPeerCertificates)
-        LIBS="$ac_save_LIBS"
     fi
     if test "$ac_cv_header_CoreAudio_CoreAudio_h" = "yes"
     then
@@ -985,12 +974,14 @@ then
     then
         ac_save_CC="$CC"
         saved_CFLAGS=$CFLAGS
+        saved_LDFLAGS=$LDFLAGS
         AC_SUBST(CROSSCFLAGS,${CROSSCFLAGS:-"-g -O2"})
         AC_SUBST(EXTRACROSSCFLAGS,"-DWINE_CROSS_PE -Wall")
         AC_SUBST(CROSSLDFLAGS)
 
         CC="$CROSSCC"
         CFLAGS=$CROSSCFLAGS
+        LDFLAGS=$CROSSLDFLAGS
         AC_CACHE_CHECK([whether $CROSSCC works], wine_cv_crosscc,
             [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([])],[wine_cv_crosscc=yes],[wine_cv_crosscc=no])])
         if test $wine_cv_crosscc = yes
@@ -1085,6 +1076,7 @@ then
         fi
 
         CFLAGS=$saved_CFLAGS
+        LDFLAGS=$saved_LDFLAGS
         CC="$ac_save_CC"
     fi
 fi
@@ -1420,14 +1412,6 @@ then
 fi
 WINE_WARNING_WITH(gnutls,[test "x$ac_cv_lib_soname_gnutls" = "x"],
                  [libgnutls ${notice_platform}development files not found, no schannel support.])
-
-dnl **** Check for libgmp ****
-if test "x$with_gnutls" != "xno"
-then
-    WINE_PACKAGE_FLAGS(GMP,[gmp],[-lgmp],,,
-        [AC_CHECK_HEADERS([gmp.h],
-            [WINE_CHECK_SONAME(gmp,__gmpz_init,,[GMP_CFLAGS=""],[$GMP_LIBS],[[libgmp-*]])])])
-fi
 
 dnl **** Check for SANE ****
 if test "x$with_sane" != "xno"
@@ -1992,19 +1976,6 @@ WINE_NOTICE_WITH(vkd3d,[test "x$ac_cv_lib_soname_vkd3d" = "x"],
                  [vkd3d ${notice_platform}development files not found (or too old), Direct3D 12 won't be supported.])
 test "x$ac_cv_lib_soname_vkd3d" != "x" || enable_d3d12=${enable_d3d12:-no}
 
-dnl **** Check for gcrypt ****
-if test "x$with_gcrypt" != "xno"
-then
-    WINE_PACKAGE_FLAGS(GCRYPT,[libgcrypt],,,,
-        [AC_CHECK_HEADERS([gcrypt.h])
-        if test "$ac_cv_header_gcrypt_h" = "yes"
-        then
-            WINE_CHECK_SONAME(gcrypt,gcry_sexp_build,,,[$GCRYPT_LIBS])
-        fi])
-fi
-WINE_NOTICE_WITH(gcrypt,[test "x$ac_cv_lib_soname_gcrypt" = "x"],
-                 [libgcrypt ${notice_platform}development files not found, GCRYPT won't be supported.])
-
 dnl **** Check for gcc specific options ****
 
 AC_SUBST(EXTRACFLAGS,"")
@@ -2179,11 +2150,7 @@ dnl **** Check for functions ****
 ac_save_CFLAGS="$CFLAGS"
 CFLAGS="$CFLAGS $BUILTINFLAG"
 AC_CHECK_FUNCS(\
-        __res_get_state \
-        __res_getservers \
-	_spawnvp \
 	epoll_create \
-	fnmatch \
 	fork \
 	fstatfs \
 	futimens \
@@ -2192,27 +2159,21 @@ AC_CHECK_FUNCS(\
 	getattrlist \
 	getauxval \
 	getifaddrs \
-	getopt_long_only \
 	getrandom \
 	kqueue \
-	lstat \
 	mach_continuous_time \
 	pipe2 \
-	poll \
 	port_create \
 	posix_fadvise \
 	posix_fallocate \
 	ppoll \
 	prctl \
 	proc_pidinfo \
-	readlink \
 	renameat \
 	renameat2 \
-	sched_yield \
 	setproctitle \
 	setprogname \
 	sigprocmask \
-	symlink \
 	sysinfo \
 	tcdrain \
 	thr_kill2 \
@@ -2222,13 +2183,7 @@ CFLAGS="$ac_save_CFLAGS"
 
 dnl Check for -ldl
 AC_SEARCH_LIBS(dlopen, dl)
-WINE_CHECK_LIB_FUNCS(dladdr dlinfo,[$DL_LIBS])
-
-dnl Check for -lpoll for Mac OS X/Darwin
-if test "$ac_cv_func_poll" = no
-then
-    AC_CHECK_LIB(poll,poll,[AC_DEFINE(HAVE_POLL,1) AC_SUBST(POLL_LIBS,"-lpoll")])
-fi
+WINE_CHECK_LIB_FUNCS(dlinfo,[$DL_LIBS])
 
 dnl Check for -lnsl for Solaris
 AC_SEARCH_LIBS(gethostbyname, nsl)
@@ -2343,22 +2298,6 @@ AC_CHECK_MEMBERS([struct ff_effect.direction],,,
 #include <linux/input.h>
 #endif])
 
-AC_CACHE_CHECK([for if_nameindex],wine_cv_have_if_nameindex,
-               AC_LINK_IFELSE([AC_LANG_PROGRAM([[#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
-#ifdef HAVE_SYS_SOCKET_H
-#include <sys/socket.h>
-#endif
-#ifdef HAVE_NET_IF_H
-# include <net/if.h>
-#endif]],
-                              [[struct if_nameindex *p = if_nameindex(); return p->if_index;]])],[wine_cv_have_if_nameindex=yes],[wine_cv_have_if_nameindex=no]))
-if test "$wine_cv_have_if_nameindex" = "yes"
-then
-  AC_DEFINE(HAVE_IF_NAMEINDEX, 1, [Define to 1 if you have the `if_nameindex' function.])
-fi
-
 AC_CACHE_CHECK([for sigaddset],wine_cv_have_sigaddset,
                AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <signal.h>]], [[sigset_t set; sigaddset(&set,SIGTERM);]])],[wine_cv_have_sigaddset=yes],[wine_cv_have_sigaddset=no]))
 if test "$wine_cv_have_sigaddset" = "yes"
@@ -2413,7 +2352,7 @@ then
 fi
 
 dnl Check for socket structure members
-AC_CHECK_MEMBERS([struct msghdr.msg_accrights, struct sockaddr.sa_len, struct sockaddr_un.sun_len],,,
+AC_CHECK_MEMBERS([struct msghdr.msg_accrights, struct sockaddr_un.sun_len],,,
 [#include <sys/types.h>
 #ifdef HAVE_SYS_SOCKET_H
 # include <sys/socket.h>
@@ -2439,15 +2378,8 @@ AC_CHECK_MEMBERS([struct mtget.mt_blksiz, struct mtget.mt_gstat, struct mtget.mt
 #include <sys/mtio.h>
 #endif])
 
-dnl Check for struct option
-AC_CHECK_MEMBERS([struct option.name],,,
-[#ifdef HAVE_GETOPT_H
-#include <getopt.h>
-#endif])
-
 dnl Check for stat.st_blocks and ns-resolved times
 AC_CHECK_MEMBERS([
-	struct stat.st_blocks,
 	struct stat.st_mtim,
 	struct stat.st_mtimespec,
 	struct stat.st_ctim,
@@ -2485,18 +2417,6 @@ dnl Check for _u._ext.nscount6
 AC_CHECK_MEMBERS([struct __res_state._u._ext.nscount6],,,
 [#ifdef HAVE_RESOLV_H
 #include <resolv.h>
-#endif])
-
-dnl Check for ns_msg ptr member
-AC_CHECK_MEMBERS([ns_msg._msg_ptr],,,
-[#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
-#ifdef HAVE_NETINET_IN_H
-# include <netinet/in.h>
-#endif
-#ifdef HAVE_ARPA_NAMESER_H
-# include <arpa/nameser.h>
 #endif])
 
 dnl Check for struct icmpstat
@@ -2856,6 +2776,7 @@ WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-psapi-obsolete-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-psm-appnotify-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-quirks-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-realtime-l1-1-0)
+WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-realtime-l1-1-1)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-registry-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-registry-l2-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-registry-l2-2-0)
@@ -3944,7 +3865,6 @@ WINE_CONFIG_MAKEFILE(dlls/xpsprint)
 WINE_CONFIG_MAKEFILE(dlls/xpssvcs)
 WINE_CONFIG_MAKEFILE(fonts)
 WINE_CONFIG_MAKEFILE(include)
-WINE_CONFIG_MAKEFILE(libs/port)
 WINE_CONFIG_MAKEFILE(libs/wine)
 WINE_CONFIG_MAKEFILE(loader)
 WINE_CONFIG_MAKEFILE(nls)
@@ -4094,7 +4014,7 @@ then
 [wine_fn_output_makedep ()
 {
     AS_MKDIR_P(tools)
-    $CC -Iinclude -I$srcdir/include -D__WINESRC__ $EXTRACFLAGS $CPPFLAGS $CFLAGS -o tools/makedep$ac_exeext $srcdir/tools/makedep.c $LDFLAGS
+    $CC -I$srcdir/tools -Iinclude -I$srcdir/include -D__WINESRC__ $EXTRACFLAGS $CPPFLAGS $CFLAGS -o tools/makedep$ac_exeext $srcdir/tools/makedep.c $LDFLAGS
 }])
 fi
 

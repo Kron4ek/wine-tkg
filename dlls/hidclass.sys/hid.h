@@ -62,13 +62,10 @@ typedef struct _BASE_DEVICE_EXTENSION
             HANDLE thread;
             UINT32 rawinput_handle;
 
-            KSPIN_LOCK report_queues_lock;
-            struct list report_queues;
+            KSPIN_LOCK queues_lock;
+            struct list queues;
 
             UNICODE_STRING link_name;
-
-            KSPIN_LOCK irp_queue_lock;
-            LIST_ENTRY irp_queue;
 
             KSPIN_LOCK lock;
             BOOL removed;
@@ -96,7 +93,7 @@ struct hid_report
     BYTE  buffer[1];
 };
 
-struct hid_report_queue
+struct hid_queue
 {
     struct list        entry;
     KSPIN_LOCK         lock;
@@ -104,6 +101,7 @@ struct hid_report_queue
     ULONG              read_idx;
     ULONG              write_idx;
     struct hid_report *reports[512];
+    LIST_ENTRY         irp_queue;
 };
 
 typedef struct _minidriver
@@ -123,8 +121,8 @@ void call_minidriver( ULONG code, DEVICE_OBJECT *device, void *in_buff, ULONG in
 
 /* Internal device functions */
 void HID_StartDeviceThread(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
-
-IRP *pop_irp_from_queue(BASE_DEVICE_EXTENSION *ext) DECLSPEC_HIDDEN;
+void hid_queue_remove_pending_irps( struct hid_queue *queue );
+void hid_queue_destroy( struct hid_queue *queue );
 
 NTSTATUS WINAPI pdo_ioctl(DEVICE_OBJECT *device, IRP *irp) DECLSPEC_HIDDEN;
 NTSTATUS WINAPI pdo_read(DEVICE_OBJECT *device, IRP *irp) DECLSPEC_HIDDEN;
