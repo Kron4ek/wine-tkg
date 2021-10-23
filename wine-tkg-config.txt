@@ -1,22 +1,23 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Oct  9 12:34:02 PM UTC 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Oct 23 10:01:04 AM UTC 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.19.r0.g7554bd4b41a
-Using wine-staging patchset (version 6.19.r0.gd1ea5ced)
+Wine (plain) version: 6.20.r0.gfaf645d0163
+Using wine-staging patchset (version 6.20.r0.g3fb6eb99)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
 Applied reverting hotfix staging-pulseaudio-reverts.mystagingrevert
+Applied hotfix staging-6dcaff42.mystagingpatch
 Applied hotfix staging-reenable-pulse.mystagingpatch
-Applied hotfix protonify_stg_syscall_emu-006.mystagingpatch
+Applied hotfix protonify_stg_syscall_emu-007.mystagingpatch
 Applied hotfix pulse_reverts-6.myearlypatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W ntdll-NtAlertThreadByThreadId -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW -W imm32-com-initialization
+Staging overrides, if any: -W ntdll-NtAlertThreadByThreadId -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW
 
 use_clock_monotonic-staging.patch -- ( Applied clock_monotonic patch )
 fsync-unix-staging.patch -- ( Applied fsync, an experimental replacement for esync (unix, staging) )
@@ -32,7 +33,10 @@ msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then buil
 josh-flat-theme.patch -- ( Add Josh's better-theme )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
-Applied hotfix imm32-com-initialization_no_net_active_window.mypatch
+Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
+Applied hotfix memset.mypatch
+Applied hotfix 0001-proton-bcrypt_rdr2_fixes.mypatch
+Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
 Applied hotfix virtual_alloc_remi2.mypatch
 Applied hotfix a608ef1.mypatch
 Applied your own patch amd_fsr_fshack.mypatch

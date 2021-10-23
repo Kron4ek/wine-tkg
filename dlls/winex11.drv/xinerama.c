@@ -244,8 +244,6 @@ static BOOL xinerama_get_monitors( ULONG_PTR adapter_id, struct x11drv_monitor *
             monitor[index].rc_work = monitors[i].rcWork;
             /* Xinerama only reports monitors already attached */
             monitor[index].state_flags = DISPLAY_DEVICE_ATTACHED;
-            monitor[index].edid_len = 0;
-            monitor[index].edid = NULL;
             if (!IsRectEmpty( &monitors[i].rcMonitor ))
                 monitor[index].state_flags |= DISPLAY_DEVICE_ACTIVE;
 
@@ -258,7 +256,7 @@ static BOOL xinerama_get_monitors( ULONG_PTR adapter_id, struct x11drv_monitor *
     return TRUE;
 }
 
-static void xinerama_free_monitors( struct x11drv_monitor *monitors, int count )
+static void xinerama_free_monitors( struct x11drv_monitor *monitors )
 {
     heap_free( monitors );
 }

@@ -265,8 +265,6 @@ static BOOL X11DRV_desktop_get_monitors( ULONG_PTR adapter_id, struct x11drv_mon
     SetRect( &monitor->rc_work, 0, 0, desktop_width, desktop_height );
     query_desktop_work_area( &monitor->rc_work );
     monitor->state_flags = DISPLAY_DEVICE_ATTACHED;
-    monitor->edid_len = 0;
-    monitor->edid = NULL;
     if (desktop_width && desktop_height)
         monitor->state_flags |= DISPLAY_DEVICE_ACTIVE;
 
@@ -275,7 +273,7 @@ static BOOL X11DRV_desktop_get_monitors( ULONG_PTR adapter_id, struct x11drv_mon
     return TRUE;
 }
 
-static void X11DRV_desktop_free_monitors( struct x11drv_monitor *monitors, int count )
+static void X11DRV_desktop_free_monitors( struct x11drv_monitor *monitors )
 {
     heap_free( monitors );
 }

@@ -54,7 +54,6 @@ DEFINE_DEVPROPKEY(WINE_DEVPROPKEY_MONITOR_RCWORK, 0x233a9ef3, 0xafc4, 0x4abd, 0x
 DEFINE_DEVPROPKEY(WINE_DEVPROPKEY_MONITOR_ADAPTERNAME, 0x233a9ef3, 0xafc4, 0x4abd, 0xb5, 0x64, 0xc3, 0x2f, 0x21, 0xf1, 0x53, 0x5b, 5);
 
 static const WCHAR driver_date_dataW[] = {'D','r','i','v','e','r','D','a','t','e','D','a','t','a',0};
-static const WCHAR driver_dateW[] = {'D','r','i','v','e','r','D','a','t','e',0};
 static const WCHAR driver_descW[] = {'D','r','i','v','e','r','D','e','s','c',0};
 static const WCHAR displayW[] = {'D','I','S','P','L','A','Y',0};
 static const WCHAR pciW[] = {'P','C','I',0};
@@ -111,9 +110,6 @@ static const WCHAR monitor_instance_fmtW[] = {
 static const WCHAR monitor_hardware_idW[] = {
     'M','O','N','I','T','O','R','\\',
     'D','e','f','a','u','l','t','_','M','o','n','i','t','o','r',0,0};
-static const WCHAR driver_date_fmtW[] = {'%','u','-','%','u','-','%','u',0};
-static const WCHAR edidW[] = {'E','D','I','D',0};
-static const WCHAR bad_edidW[] = {'B','A','D','_','E','D','I','D',0};
 
 static struct x11drv_display_device_handler host_handler;
 struct x11drv_display_device_handler desktop_handler;
@@ -274,7 +270,7 @@ RECT get_host_primary_monitor_rect(void)
 
     if (gpus) host_handler.free_gpus(gpus);
     if (adapters) host_handler.free_adapters(adapters);
-    if (monitors) host_handler.free_monitors(monitors, monitor_count);
+    if (monitors) host_handler.free_monitors(monitors);
     return rect;
 }
 
@@ -542,7 +538,7 @@ static BOOL link_device(const WCHAR *instance, const GUID *guid)
         if (lr)
             continue;
 
-        length = ARRAY_SIZE(device_instance);
+        length = sizeof(device_instance);
         lr = RegQueryValueExW(device_key, device_instanceW, NULL, NULL, (BYTE *)device_instance, &length);
         if (lr || lstrcmpiW(device_instance, instance))
         {
@@ -575,15 +571,14 @@ static BOOL X11DRV_InitGpu(HDEVINFO devinfo, const struct x11drv_gpu *gpu, INT g
     SP_DEVINFO_DATA device_data = {sizeof(device_data)};
     WCHAR instanceW[MAX_PATH];
     DEVPROPTYPE property_type;
-    SYSTEMTIME systemtime;
     WCHAR bufferW[1024];
-    FILETIME filetime;
     HKEY hkey = NULL;
     GUID guid;
     LUID luid;
     INT written;
     DWORD size;
     BOOL ret = FALSE;
+    FILETIME filetime;
 
     TRACE("GPU id:0x%s name:%s.\n", wine_dbgstr_longlong(gpu->id), wine_dbgstr_w(gpu->name));
 
@@ -655,12 +650,8 @@ static BOOL X11DRV_InitGpu(HDEVINFO devinfo, const struct x11drv_gpu *gpu, INT g
     if (RegSetValueExW(hkey, driver_date_dataW, 0, REG_BINARY, (BYTE *)&filetime, sizeof(filetime)))
         goto done;
 
-    GetSystemTime(&systemtime);
-    sprintfW(bufferW, driver_date_fmtW, systemtime.wMonth, systemtime.wDay, systemtime.wYear);
-    if (RegSetValueExW(hkey, driver_dateW, 0, REG_SZ, (BYTE *)bufferW, (strlenW(bufferW) + 1) * sizeof(WCHAR)))
-        goto done;
-
     RegCloseKey(hkey);
+    hkey = NULL;
 
     /* Retrieve driver value for adapters */
     if (!SetupDiGetDeviceRegistryPropertyW(devinfo, &device_data, SPDRP_DRIVER, NULL, (BYTE *)bufferW, sizeof(bufferW),
@@ -794,13 +785,6 @@ static BOOL X11DRV_InitMonitor(HDEVINFO devinfo, const struct x11drv_monitor *mo
     if (!SetupDiSetDevicePropertyW(devinfo, &device_data, &DEVPROPKEY_MONITOR_OUTPUT_ID,
                                    DEVPROP_TYPE_UINT32, (const BYTE *)&output_id, sizeof(output_id), 0))
         goto done;
-
-    hkey = SetupDiCreateDevRegKeyW(devinfo, &device_data, DICS_FLAG_GLOBAL, 0, DIREG_DEV, NULL, NULL);
-    if (monitor->edid)
-        RegSetValueExW(hkey, edidW, 0, REG_BINARY, monitor->edid, monitor->edid_len);
-    else
-        RegSetValueExW(hkey, bad_edidW, 0, REG_BINARY, NULL, 0);
-    RegCloseKey(hkey);
 
     /* Create driver key */
     hkey = SetupDiCreateDevRegKeyW(devinfo, &device_data, DICS_FLAG_GLOBAL, 0, DIREG_DRV, NULL, NULL);
@@ -971,7 +955,7 @@ void X11DRV_DisplayDevices_Init(BOOL force)
                     goto done;
             }
 
-            handler->free_monitors(monitors, monitor_count);
+            handler->free_monitors(monitors);
             monitors = NULL;
             video_index++;
         }
@@ -991,5 +975,5 @@ done:
     if (adapters)
         handler->free_adapters(adapters);
     if (monitors)
-        handler->free_monitors(monitors, monitor_count);
+        handler->free_monitors(monitors);
 }
