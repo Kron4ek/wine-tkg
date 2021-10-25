@@ -144,17 +144,17 @@ static void test_wmsyncreader_interfaces(void)
     check_interface(reader, &IID_IWMReaderStreamClock, FALSE);
     check_interface(reader, &IID_IWMReaderTypeNegotiation, FALSE);
 
-    check_interface(reader, &IID_IWMHeaderInfo, TRUE);
-    check_interface(reader, &IID_IWMHeaderInfo2, TRUE);
-    check_interface(reader, &IID_IWMHeaderInfo3, TRUE);
-    check_interface(reader, &IID_IWMLanguageList, TRUE);
-    check_interface(reader, &IID_IWMPacketSize, TRUE);
-    check_interface(reader, &IID_IWMPacketSize2, TRUE);
+    todo_wine check_interface(reader, &IID_IWMHeaderInfo, TRUE);
+    todo_wine check_interface(reader, &IID_IWMHeaderInfo2, TRUE);
+    todo_wine check_interface(reader, &IID_IWMHeaderInfo3, TRUE);
+    todo_wine check_interface(reader, &IID_IWMLanguageList, TRUE);
+    todo_wine check_interface(reader, &IID_IWMPacketSize, TRUE);
+    todo_wine check_interface(reader, &IID_IWMPacketSize2, TRUE);
     check_interface(reader, &IID_IWMProfile, TRUE);
     check_interface(reader, &IID_IWMProfile2, TRUE);
     check_interface(reader, &IID_IWMProfile3, TRUE);
-    check_interface(reader, &IID_IWMReaderPlaylistBurn, TRUE);
-    check_interface(reader, &IID_IWMReaderTimecode, TRUE);
+    todo_wine check_interface(reader, &IID_IWMReaderPlaylistBurn, TRUE);
+    todo_wine check_interface(reader, &IID_IWMReaderTimecode, TRUE);
     check_interface(reader, &IID_IWMSyncReader, TRUE);
     check_interface(reader, &IID_IWMSyncReader2, TRUE);
 

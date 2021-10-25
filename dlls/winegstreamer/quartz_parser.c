@@ -100,6 +100,7 @@ static bool amt_from_wg_format_audio(AM_MEDIA_TYPE *mt, const struct wg_format *
     switch (format->u.audio.format)
     {
     case WG_AUDIO_FORMAT_UNKNOWN:
+    case WG_AUDIO_FORMAT_AAC:
         return false;
 
     case WG_AUDIO_FORMAT_MPEG1_LAYER1:
@@ -268,6 +269,7 @@ static unsigned int get_image_size(const struct wg_format *format)
             return width * height * 3;
 
         case WG_VIDEO_FORMAT_UNKNOWN:
+        case WG_VIDEO_FORMAT_H264:
             break;
     }
 
@@ -623,7 +625,7 @@ static HRESULT send_sample(struct parser_source *pin, IMediaSample *sample,
 
     IMediaSample_GetPointer(sample, &ptr);
 
-    if (!wg_parser_stream_copy_buffer(pin->wg_stream, ptr, offset, size))
+    if (!unix_funcs->wg_parser_stream_copy_buffer(pin->wg_stream, ptr, offset, size))
     {
         /* The GStreamer pin has been flushed. */
         return S_OK;
@@ -732,7 +734,7 @@ static void send_buffer(struct parser_source *pin, const struct wg_parser_event 
         }
     }
 
-    wg_parser_stream_release_buffer(pin->wg_stream);
+    unix_funcs->wg_parser_stream_release_buffer(pin->wg_stream);
 }
 
 static DWORD CALLBACK stream_thread(void *arg)
@@ -748,7 +750,7 @@ static DWORD CALLBACK stream_thread(void *arg)
 
         EnterCriticalSection(&pin->flushing_cs);
 
-        if (!wg_parser_stream_get_event(pin->wg_stream, &event))
+        if (!unix_funcs->wg_parser_stream_get_event(pin->wg_stream, &event))
         {
             LeaveCriticalSection(&pin->flushing_cs);
             continue;
@@ -785,14 +787,6 @@ static DWORD CALLBACK stream_thread(void *arg)
 static DWORD CALLBACK read_thread(void *arg)
 {
     struct parser *filter = arg;
-    LONGLONG file_size, unused;
-    size_t buffer_size = 4096;
-    void *data = NULL;
-
-    if (!(data = malloc(buffer_size)))
-        return 0;
-
-    IAsyncReader_Length(filter->reader, &file_size, &unused);
 
     TRACE("Starting read thread for filter %p.\n", filter);
 
@@ -801,29 +795,14 @@ static DWORD CALLBACK read_thread(void *arg)
         uint64_t offset;
         uint32_t size;
         HRESULT hr;
+        void *data;
 
-        if (!wg_parser_get_next_read_offset(filter->wg_parser, &offset, &size))
+        if (!unix_funcs->wg_parser_get_read_request(filter->wg_parser, &data, &offset, &size))
             continue;
-
-        if (offset >= file_size)
-            size = 0;
-        else if (offset + size >= file_size)
-            size = file_size - offset;
-
-        if (!array_reserve(&data, &buffer_size, size, 1))
-        {
-            free(data);
-            return 0;
-        }
-
         hr = IAsyncReader_SyncRead(filter->reader, offset, size, data);
-        if (FAILED(hr))
-            ERR("Failed to read %u bytes at offset %I64u, hr %#x.\n", size, offset, hr);
-
-        wg_parser_push_data(filter->wg_parser, SUCCEEDED(hr) ? data : NULL, size);
+        unix_funcs->wg_parser_complete_read_request(filter->wg_parser, SUCCEEDED(hr) ? WG_READ_SUCCESS : WG_READ_FAILURE, size);
     }
 
-    free(data);
     TRACE("Streaming stopped; exiting.\n");
     return 0;
 }
@@ -872,7 +851,7 @@ static void parser_destroy(struct strmbase_filter *iface)
         IAsyncReader_Release(filter->reader);
     filter->reader = NULL;
 
-    wg_parser_destroy(filter->wg_parser);
+    unix_funcs->wg_parser_destroy(filter->wg_parser);
 
     strmbase_sink_cleanup(&filter->sink);
     strmbase_filter_cleanup(&filter->filter);
@@ -890,7 +869,7 @@ static HRESULT parser_init_stream(struct strmbase_filter *iface)
         return S_OK;
 
     filter->streaming = true;
-    wg_parser_end_flush(filter->wg_parser);
+    unix_funcs->wg_parser_end_flush(filter->wg_parser);
 
     /* DirectShow retains the old seek positions, but resets to them every time
      * it transitions from stopped -> paused. */
@@ -898,7 +877,7 @@ static HRESULT parser_init_stream(struct strmbase_filter *iface)
     seeking = &filter->sources[0]->seek;
     if (seeking->llStop)
         stop_flags = AM_SEEKING_AbsolutePositioning;
-    wg_parser_stream_seek(filter->sources[0]->wg_stream, seeking->dRate,
+    unix_funcs->wg_parser_stream_seek(filter->sources[0]->wg_stream, seeking->dRate,
             seeking->llCurrent, seeking->llStop, AM_SEEKING_AbsolutePositioning, stop_flags);
 
     for (i = 0; i < filter->source_count; ++i)
@@ -926,7 +905,7 @@ static HRESULT parser_cleanup_stream(struct strmbase_filter *iface)
         return S_OK;
 
     filter->streaming = false;
-    wg_parser_begin_flush(filter->wg_parser);
+    unix_funcs->wg_parser_begin_flush(filter->wg_parser);
 
     for (i = 0; i < filter->source_count; ++i)
     {
@@ -981,20 +960,17 @@ static HRESULT parser_sink_connect(struct strmbase_sink *iface, IPin *peer, cons
     filter->sink_connected = true;
     filter->read_thread = CreateThread(NULL, 0, read_thread, filter, 0, NULL);
 
-    if (FAILED(hr = wg_parser_connect(filter->wg_parser, file_size)))
+    if (FAILED(hr = unix_funcs->wg_parser_connect(filter->wg_parser, file_size)))
         goto err;
 
     if (!filter->init_gst(filter))
-    {
-        hr = E_FAIL;
         goto err;
-    }
 
     for (i = 0; i < filter->source_count; ++i)
     {
         struct parser_source *pin = filter->sources[i];
 
-        pin->seek.llDuration = pin->seek.llStop = wg_parser_stream_get_duration(pin->wg_stream);
+        pin->seek.llDuration = pin->seek.llStop = unix_funcs->wg_parser_stream_get_duration(pin->wg_stream);
         pin->seek.llCurrent = 0;
     }
 
@@ -1029,11 +1005,11 @@ static BOOL decodebin_parser_filter_init_gst(struct parser *filter)
     unsigned int i, stream_count;
     WCHAR source_name[20];
 
-    stream_count = wg_parser_get_stream_count(parser);
+    stream_count = unix_funcs->wg_parser_get_stream_count(parser);
     for (i = 0; i < stream_count; ++i)
     {
         swprintf(source_name, ARRAY_SIZE(source_name), L"Stream %02u", i);
-        if (!create_pin(filter, wg_parser_get_stream(parser, i), source_name))
+        if (!create_pin(filter, unix_funcs->wg_parser_get_stream(parser, i), source_name))
             return FALSE;
     }
 
@@ -1072,7 +1048,7 @@ static HRESULT decodebin_parser_source_get_media_type(struct parser_source *pin,
         WG_VIDEO_FORMAT_RGB15,
     };
 
-    wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
+    unix_funcs->wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
 
     memset(mt, 0, sizeof(AM_MEDIA_TYPE));
 
@@ -1118,7 +1094,7 @@ HRESULT decodebin_parser_create(IUnknown *outer, IUnknown **out)
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
-    if (!(object->wg_parser = wg_parser_create(WG_PARSER_DECODEBIN, false)))
+    if (!(object->wg_parser = unix_funcs->wg_decodebin_parser_create()))
     {
         free(object);
         return E_OUTOFMEMORY;
@@ -1208,7 +1184,7 @@ static HRESULT WINAPI GST_ChangeRate(IMediaSeeking *iface)
 {
     struct parser_source *pin = impl_from_IMediaSeeking(iface);
 
-    wg_parser_stream_seek(pin->wg_stream, pin->seek.dRate, 0, 0,
+    unix_funcs->wg_parser_stream_seek(pin->wg_stream, pin->seek.dRate, 0, 0,
             AM_SEEKING_NoPositioning, AM_SEEKING_NoPositioning);
     return S_OK;
 }
@@ -1236,6 +1212,7 @@ static HRESULT WINAPI GST_Seeking_SetPositions(IMediaSeeking *iface,
 {
     struct parser_source *pin = impl_from_IMediaSeeking(iface);
     struct parser *filter = impl_from_strmbase_filter(pin->pin.pin.filter);
+    HRESULT hr = S_OK;
     int i;
 
     TRACE("pin %p, current %s, current_flags %#x, stop %s, stop_flags %#x.\n",
@@ -1250,7 +1227,7 @@ static HRESULT WINAPI GST_Seeking_SetPositions(IMediaSeeking *iface,
 
     if (!(current_flags & AM_SEEKING_NoFlush))
     {
-        wg_parser_begin_flush(filter->wg_parser);
+        unix_funcs->wg_parser_begin_flush(filter->wg_parser);
 
         for (i = 0; i < filter->source_count; ++i)
         {
@@ -1272,12 +1249,17 @@ static HRESULT WINAPI GST_Seeking_SetPositions(IMediaSeeking *iface,
 
     SourceSeekingImpl_SetPositions(iface, current, current_flags, stop, stop_flags);
 
-    wg_parser_stream_seek(pin->wg_stream, pin->seek.dRate,
-            pin->seek.llCurrent, pin->seek.llStop, current_flags, stop_flags);
+    if (!unix_funcs->wg_parser_stream_seek(pin->wg_stream, pin->seek.dRate,
+            pin->seek.llCurrent, pin->seek.llStop, current_flags, stop_flags))
+    {
+        ERR("Failed to seek (current %s, stop %s).\n",
+                debugstr_time(pin->seek.llCurrent), debugstr_time(pin->seek.llStop));
+        hr = E_FAIL;
+    }
 
     if (!(current_flags & AM_SEEKING_NoFlush))
     {
-        wg_parser_end_flush(filter->wg_parser);
+        unix_funcs->wg_parser_end_flush(filter->wg_parser);
 
         for (i = 0; i < filter->source_count; ++i)
         {
@@ -1296,7 +1278,7 @@ static HRESULT WINAPI GST_Seeking_SetPositions(IMediaSeeking *iface,
             LeaveCriticalSection(&pin->flushing_cs);
     }
 
-    return S_OK;
+    return hr;
 }
 
 static const IMediaSeekingVtbl GST_Seeking_Vtbl =
@@ -1386,7 +1368,7 @@ static HRESULT WINAPI GST_QualityControl_Notify(IQualityControl *iface, IBaseFil
     /* GST_QOS_TYPE_OVERFLOW is also used for buffers that arrive on time, but
      * DirectShow filters might use Famine, so check that there actually is an
      * underrun. */
-    wg_parser_stream_notify_qos(pin->wg_stream, q.Type == Famine && q.Proportion < 1000,
+    unix_funcs->wg_parser_stream_notify_qos(pin->wg_stream, q.Type == Famine && q.Proportion < 1000,
             1000.0 / q.Proportion, diff, timestamp);
 
     return S_OK;
@@ -1466,7 +1448,7 @@ static HRESULT WINAPI GSTOutPin_DecideBufferSize(struct strmbase_source *iface,
 
     ret = amt_to_wg_format(&pin->pin.pin.mt, &format);
     assert(ret);
-    wg_parser_stream_enable(pin->wg_stream, &format);
+    unix_funcs->wg_parser_stream_enable(pin->wg_stream, &format, NULL);
 
     /* We do need to drop any buffers that might have been sent with the old
      * caps, but this will be handled in parser_init_stream(). */
@@ -1481,7 +1463,7 @@ static void source_disconnect(struct strmbase_source *iface)
 {
     struct parser_source *pin = impl_source_from_IPin(&iface->pin.IPin_iface);
 
-    wg_parser_stream_disable(pin->wg_stream);
+    unix_funcs->wg_parser_stream_disable(pin->wg_stream);
 }
 
 static void free_source_pin(struct parser_source *pin)
@@ -1547,7 +1529,7 @@ static HRESULT GST_RemoveOutputPins(struct parser *This)
     if (!This->sink_connected)
         return S_OK;
 
-    wg_parser_disconnect(This->wg_parser);
+    unix_funcs->wg_parser_disconnect(This->wg_parser);
 
     /* read_thread() needs to stay alive to service any read requests GStreamer
      * sends, so we can only shut it down after GStreamer stops. */
@@ -1600,7 +1582,7 @@ static BOOL wave_parser_filter_init_gst(struct parser *filter)
 {
     struct wg_parser *parser = filter->wg_parser;
 
-    if (!create_pin(filter, wg_parser_get_stream(parser, 0), L"output"))
+    if (!create_pin(filter, unix_funcs->wg_parser_get_stream(parser, 0), L"output"))
         return FALSE;
 
     return TRUE;
@@ -1612,7 +1594,7 @@ static HRESULT wave_parser_source_query_accept(struct parser_source *pin, const 
     AM_MEDIA_TYPE pad_mt;
     HRESULT hr;
 
-    wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
+    unix_funcs->wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
     if (!amt_from_wg_format(&pad_mt, &format))
         return E_OUTOFMEMORY;
     hr = compare_media_types(mt, &pad_mt) ? S_OK : S_FALSE;
@@ -1627,7 +1609,7 @@ static HRESULT wave_parser_source_get_media_type(struct parser_source *pin,
 
     if (index > 0)
         return VFW_S_NO_MORE_ITEMS;
-    wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
+    unix_funcs->wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
     if (!amt_from_wg_format(mt, &format))
         return E_OUTOFMEMORY;
     return S_OK;
@@ -1643,7 +1625,7 @@ HRESULT wave_parser_create(IUnknown *outer, IUnknown **out)
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
-    if (!(object->wg_parser = wg_parser_create(WG_PARSER_WAVPARSE, false)))
+    if (!(object->wg_parser = unix_funcs->wg_wave_parser_create()))
     {
         free(object);
         return E_OUTOFMEMORY;
@@ -1681,11 +1663,11 @@ static BOOL avi_splitter_filter_init_gst(struct parser *filter)
     uint32_t i, stream_count;
     WCHAR source_name[20];
 
-    stream_count = wg_parser_get_stream_count(parser);
+    stream_count = unix_funcs->wg_parser_get_stream_count(parser);
     for (i = 0; i < stream_count; ++i)
     {
         swprintf(source_name, ARRAY_SIZE(source_name), L"Stream %02u", i);
-        if (!create_pin(filter, wg_parser_get_stream(parser, i), source_name))
+        if (!create_pin(filter, unix_funcs->wg_parser_get_stream(parser, i), source_name))
             return FALSE;
     }
 
@@ -1698,7 +1680,7 @@ static HRESULT avi_splitter_source_query_accept(struct parser_source *pin, const
     AM_MEDIA_TYPE pad_mt;
     HRESULT hr;
 
-    wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
+    unix_funcs->wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
     if (!amt_from_wg_format(&pad_mt, &format))
         return E_OUTOFMEMORY;
     hr = compare_media_types(mt, &pad_mt) ? S_OK : S_FALSE;
@@ -1713,7 +1695,7 @@ static HRESULT avi_splitter_source_get_media_type(struct parser_source *pin,
 
     if (index > 0)
         return VFW_S_NO_MORE_ITEMS;
-    wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
+    unix_funcs->wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
     if (!amt_from_wg_format(mt, &format))
         return E_OUTOFMEMORY;
     return S_OK;
@@ -1729,7 +1711,7 @@ HRESULT avi_splitter_create(IUnknown *outer, IUnknown **out)
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
-    if (!(object->wg_parser = wg_parser_create(WG_PARSER_AVIDEMUX, false)))
+    if (!(object->wg_parser = unix_funcs->wg_avi_parser_create()))
     {
         free(object);
         return E_OUTOFMEMORY;
@@ -1770,7 +1752,7 @@ static BOOL mpeg_splitter_filter_init_gst(struct parser *filter)
 {
     struct wg_parser *parser = filter->wg_parser;
 
-    if (!create_pin(filter, wg_parser_get_stream(parser, 0), L"Audio"))
+    if (!create_pin(filter, unix_funcs->wg_parser_get_stream(parser, 0), L"Audio"))
         return FALSE;
 
     return TRUE;
@@ -1782,7 +1764,7 @@ static HRESULT mpeg_splitter_source_query_accept(struct parser_source *pin, cons
     AM_MEDIA_TYPE pad_mt;
     HRESULT hr;
 
-    wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
+    unix_funcs->wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
     if (!amt_from_wg_format(&pad_mt, &format))
         return E_OUTOFMEMORY;
     hr = compare_media_types(mt, &pad_mt) ? S_OK : S_FALSE;
@@ -1797,7 +1779,7 @@ static HRESULT mpeg_splitter_source_get_media_type(struct parser_source *pin,
 
     if (index > 0)
         return VFW_S_NO_MORE_ITEMS;
-    wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
+    unix_funcs->wg_parser_stream_get_preferred_format(pin->wg_stream, &format);
     if (!amt_from_wg_format(mt, &format))
         return E_OUTOFMEMORY;
     return S_OK;
@@ -1836,7 +1818,7 @@ HRESULT mpeg_splitter_create(IUnknown *outer, IUnknown **out)
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
-    if (!(object->wg_parser = wg_parser_create(WG_PARSER_MPEGAUDIOPARSE, false)))
+    if (!(object->wg_parser = unix_funcs->wg_mpeg_audio_parser_create()))
     {
         free(object);
         return E_OUTOFMEMORY;
