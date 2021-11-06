@@ -2911,18 +2911,16 @@ __ASM_GLOBAL_FUNC( sse2_memset_aligned_32,
         "pshufd $0, %xmm0, %xmm0\n\t"
         "test $0x20, " LEN_REG "\n\t"
         "je 1f\n\t"
-        "add $0x20, " DEST_REG "\n\t"
         "sub $0x20, " LEN_REG "\n\t"
-        "movdqa %xmm0, -0x20(" DEST_REG ")\n\t"
-        "movdqa %xmm0, -0x10(" DEST_REG ")\n\t"
+        "movdqa %xmm0, 0x00(" DEST_REG ", " LEN_REG ")\n\t"
+        "movdqa %xmm0, 0x10(" DEST_REG ", " LEN_REG ")\n\t"
         "je 2f\n\t"
         "1:\n\t"
-        "add $0x40, " DEST_REG "\n\t"
         "sub $0x40, " LEN_REG "\n\t"
-        "movdqa %xmm0, -0x40(" DEST_REG ")\n\t"
-        "movdqa %xmm0, -0x30(" DEST_REG ")\n\t"
-        "movdqa %xmm0, -0x20(" DEST_REG ")\n\t"
-        "movdqa %xmm0, -0x10(" DEST_REG ")\n\t"
+        "movdqa %xmm0, 0x00(" DEST_REG ", " LEN_REG ")\n\t"
+        "movdqa %xmm0, 0x10(" DEST_REG ", " LEN_REG ")\n\t"
+        "movdqa %xmm0, 0x20(" DEST_REG ", " LEN_REG ")\n\t"
+        "movdqa %xmm0, 0x30(" DEST_REG ", " LEN_REG ")\n\t"
         "ja 1b\n\t"
         "2:\n\t"
         MEMSET_RET )
@@ -2937,14 +2935,14 @@ __ASM_GLOBAL_FUNC( sse2_memset_aligned_32,
 
 static inline void memset_aligned_32(unsigned char *d, uint64_t v, size_t n)
 {
-    while (n >= 32)
+    unsigned char *end = d + n;
+    while (d < end)
     {
         *(uint64_t *)(d + 0) = v;
         *(uint64_t *)(d + 8) = v;
         *(uint64_t *)(d + 16) = v;
         *(uint64_t *)(d + 24) = v;
         d += 32;
-        n -= 32;
     }
 }
 
