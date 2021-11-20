@@ -165,6 +165,7 @@ static const WCHAR BCRYPT_DES_ALGORITHM[] = {'D','E','S',0};
 static const WCHAR BCRYPT_DH_ALGORITHM[] = {'D','H',0};
 static const WCHAR BCRYPT_DSA_ALGORITHM[] = {'D','S','A',0};
 static const WCHAR BCRYPT_ECDH_P256_ALGORITHM[] = {'E','C','D','H','_','P','2','5','6',0};
+static const WCHAR BCRYPT_ECDH_P384_ALGORITHM[] =  {'E','C','D','H','_','P','3','8','4',0};
 static const WCHAR BCRYPT_ECDSA_P256_ALGORITHM[] = {'E','C','D','S','A','_','P','2','5','6',0};
 static const WCHAR BCRYPT_ECDSA_P384_ALGORITHM[] = {'E','C','D','S','A','_','P','3','8','4',0};
 static const WCHAR BCRYPT_ECDSA_P521_ALGORITHM[] = {'E','C','D','S','A','_','P','5','2','1',0};
@@ -286,6 +287,13 @@ typedef struct _BCRYPT_PKCS1_PADDING_INFO
 {
     LPCWSTR pszAlgId;
 } BCRYPT_PKCS1_PADDING_INFO;
+
+typedef struct _BCRYPT_OAEP_PADING_INFO
+{
+    LPCWSTR pszAlgId;
+    PUCHAR pbLabel;
+    ULONG cbLabel;
+} BCRYPT_OAEP_PADDING_INFO;
 
 #define BCRYPT_PAD_NONE                     0x00000001
 #define BCRYPT_PAD_PKCS1                    0x00000002

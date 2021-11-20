@@ -189,7 +189,7 @@ struct key
 {
     struct object hdr;
     enum alg_id   alg_id;
-    void         *private[2];  /* private data for backend */
+    UINT64        private[2];  /* private data for backend */
     union
     {
         struct key_symmetric s;
@@ -234,6 +234,18 @@ struct key_symmetric_get_tag_params
     struct key  *key;
     UCHAR       *tag;
     ULONG        len;
+};
+
+struct key_asymmetric_encrypt_params
+{
+    struct key  *key;
+    void        *padding;
+    UCHAR       *input;
+    ULONG        input_len;
+    UCHAR       *output;
+    ULONG        output_len;
+    ULONG       *ret_len;
+    ULONG        flags;
 };
 
 struct key_asymmetric_decrypt_params
@@ -308,6 +320,7 @@ enum key_funcs
     unix_key_symmetric_get_tag,
     unix_key_symmetric_destroy,
     unix_key_asymmetric_generate,
+    unix_key_asymmetric_encrypt,
     unix_key_asymmetric_decrypt,
     unix_key_asymmetric_duplicate,
     unix_key_asymmetric_sign,

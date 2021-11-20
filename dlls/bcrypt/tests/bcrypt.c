@@ -731,6 +731,17 @@ static void test_BCryptGenerateSymmetricKey(void)
 
     key = NULL;
     buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, len);
+
+    key = (BCRYPT_KEY_HANDLE)0xdeadbeef;
+    ret = pBCryptGenerateSymmetricKey(aes, &key, buf, len, secret, 1, 0);
+    ok(ret == STATUS_INVALID_PARAMETER, "got %08x\n", ret);
+    ok(key == (HANDLE)0xdeadbeef, "got unexpected key %p.\n", key);
+
+    key = (BCRYPT_KEY_HANDLE)0xdeadbeef;
+    ret = pBCryptGenerateSymmetricKey(aes, &key, buf, len, secret, sizeof(secret) + 1, 0);
+    ok(ret == STATUS_INVALID_PARAMETER, "got %08x\n", ret);
+    ok(key == (HANDLE)0xdeadbeef, "got unexpected key %p.\n", key);
+
     ret = pBCryptGenerateSymmetricKey(aes, &key, buf, len, secret, sizeof(secret), 0);
     ok(ret == STATUS_SUCCESS, "got %08x\n", ret);
     ok(key != NULL, "key not set\n");
@@ -1101,7 +1112,15 @@ static void test_BCryptEncrypt(void)
 
     /* 256 bit key */
     buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, len);
+
     ret = pBCryptGenerateSymmetricKey(aes, &key, buf, len, secret256, sizeof(secret256), 0);
+    ok(ret == STATUS_SUCCESS, "got %08x\n", ret);
+    ret = pBCryptDestroyKey(key);
+    ok(ret == STATUS_SUCCESS, "got %08x\n", ret);
+
+    /* Key generations succeeds if the key size exceeds maximum and uses maximum key length
+     * from secret. */
+    ret = pBCryptGenerateSymmetricKey(aes, &key, buf, len, secret256, sizeof(secret256) + 1, 0);
     ok(ret == STATUS_SUCCESS, "got %08x\n", ret);
 
     size = 0;
@@ -2248,13 +2267,14 @@ static void test_ECDH(void)
         goto raw_secret_end;
     }
 
-    ok(status == STATUS_SUCCESS, "got %08x\n", status);
+    todo_wine ok(status == STATUS_SUCCESS, "got %08x\n", status);
+
+    if (status != STATUS_SUCCESS)
+    {
+        goto raw_secret_end;
+    }
 
     ok(size == 32, "size of secret key incorrect, got %u, expected 32\n", size);
-    if (!size)
-        goto raw_secret_end;
-
-
     buf = HeapAlloc(GetProcessHeap(), 0, size);
     status = pBCryptDeriveKey(secret, BCRYPT_KDF_RAW_SECRET, NULL, buf, size, &size, 0);
     ok(status == STATUS_SUCCESS, "got %08x\n", status);
@@ -2264,7 +2284,7 @@ static void test_ECDH(void)
     raw_secret_end:
 
     status = pBCryptDeriveKey(secret, BCRYPT_KDF_HASH, &hash_params, NULL, 0, &size, 0);
-    ok (status == STATUS_SUCCESS, "got %08x\n", status);
+    todo_wine ok (status == STATUS_SUCCESS, "got %08x\n", status);
 
     if (status != STATUS_SUCCESS)
     {
@@ -2275,7 +2295,7 @@ static void test_ECDH(void)
     buf = HeapAlloc(GetProcessHeap(), 0, size);
     status = pBCryptDeriveKey(secret, BCRYPT_KDF_HASH, &hash_params, buf, size, &size, 0);
     ok(status == STATUS_SUCCESS, "got %08x\n", status);
-    ok(!(memcmp(hashed_secret, buf, size)), "wrong data\n");
+    todo_wine ok(!(memcmp(hashed_secret, buf, size)), "wrong data\n");
     HeapFree(GetProcessHeap(), 0, buf);
 
     /* ulVersion is not verified */
