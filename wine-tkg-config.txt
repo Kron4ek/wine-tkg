@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Nov 20 10:51:37 PM UTC 2021 :
+# Last wine-tkg-staging-fsync-git configuration - Sun Dec  5 10:37:26 AM UTC 2021 :
 
 Local cfg files used
 
-Wine (plain) version: 6.22.r0.g986254d6c17
-Using wine-staging patchset (version 6.22.r0.ga703038b)
+Wine (plain) version: 6.23.r0.g3f6102080e6
+Using wine-staging patchset (version 6.23.r0.g82e4617d)
 
 Disabled the local Esync patchset to use Staging impl instead.
 
@@ -11,6 +11,7 @@ Done applying reverting hotfixes (if any) - list available in prepare.log
 
 Applied reverting hotfix staging-pulseaudio-reverts.mystagingrevert
 Applied hotfix staging-6dcaff42.mystagingpatch
+Applied hotfix staging-4c51f4f.mystagingpatch
 Applied hotfix staging-reenable-pulse.mystagingpatch
 Applied hotfix protonify_stg_syscall_emu-008.mystagingpatch
 Applied hotfix 0001-Revert-winegstreamer-Get-rid-of-the-WMReader-typedef.myearlypatch
@@ -82,7 +83,7 @@ Staging overrides, if any: -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIV
 use_clock_monotonic-staging.patch -- ( Applied clock_monotonic patch )
 fsync-unix-staging.patch -- ( Applied fsync, an experimental replacement for esync (unix, staging) )
 server_Abort_waiting_on_a_completion_port_when_closing_it.patch -- ( Added Abort waiting on a completion port when closing it Proton patch )
-fsync_futex2.patch -- ( Add futex2 support to fsync )
+fsync_futex_waitv.patch -- ( Replace all fsync interfaces with futex_waitv )
 
 valve_proton_fullscreen_hack-staging.patch -- ( Applied Proton fullscreen hack patch (staging) )
 LAA-unix-staging.patch -- ( Applied large address aware override support )
@@ -94,10 +95,6 @@ josh-flat-theme.patch -- ( Add Josh's better-theme )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
-Applied hotfix ef6e33f.mypatch
-Applied hotfix 0001-proton-bcrypt_rdr2_fixes2.mypatch
-Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
-Applied hotfix 0003-bcrypt-Add-support-for-OAEP-padded-asymmetric-key-de.mypatch
 Applied hotfix a608ef1.mypatch
 Applied your own patch amd_fsr_fshack.mypatch
 
