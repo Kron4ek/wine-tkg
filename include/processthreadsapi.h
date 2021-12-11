@@ -1,7 +1,5 @@
 /*
- * WinMM joystick driver header
- *
- * Copyright 2015 Ken Thomases for CodeWeavers Inc.
+ * Copyright 2021 Brendan Shanks for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,17 +16,18 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#ifndef _PROCESSTHREADSAPI_H
+#define _PROCESSTHREADSAPI_H
 
-#include <stdarg.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#include "windef.h"
-#include "winbase.h"
-#include "mmddk.h"
-#include "winuser.h"
+WINBASEAPI HRESULT WINAPI GetThreadDescription(HANDLE,PWSTR *);
+WINBASEAPI HRESULT WINAPI SetThreadDescription(HANDLE,PCWSTR);
 
+#ifdef __cplusplus
+}
+#endif
 
-LRESULT driver_open(LPSTR str, DWORD index) DECLSPEC_HIDDEN;
-LRESULT driver_close(DWORD_PTR device_id) DECLSPEC_HIDDEN;
-LRESULT driver_joyGetDevCaps(DWORD_PTR device_id, JOYCAPSW* caps, DWORD size) DECLSPEC_HIDDEN;
-LRESULT driver_joyGetPosEx(DWORD_PTR device_id, JOYINFOEX* info) DECLSPEC_HIDDEN;
-LRESULT driver_joyGetPos(DWORD_PTR device_id, JOYINFO* info) DECLSPEC_HIDDEN;
+#endif  /* _PROCESSTHREADSAPI_H */

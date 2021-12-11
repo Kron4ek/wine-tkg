@@ -589,8 +589,6 @@ static VkSurfaceKHR macdrv_wine_get_native_surface(VkSurfaceKHR surface)
 
 static const struct vulkan_funcs vulkan_funcs =
 {
-    NULL,
-    NULL,
     macdrv_vkCreateInstance,
     macdrv_vkCreateSwapchainKHR,
     macdrv_vkCreateWin32SurfaceKHR,
@@ -652,14 +650,7 @@ static const struct vulkan_funcs *get_vulkan_driver(UINT version)
 
 #endif /* SONAME_LIBMOLTENVK */
 
-const struct vulkan_funcs * CDECL macdrv_wine_get_vulkan_driver(PHYSDEV dev, UINT version)
+const struct vulkan_funcs * CDECL macdrv_wine_get_vulkan_driver(UINT version)
 {
-    const struct vulkan_funcs *ret;
-
-    if (!(ret = get_vulkan_driver( version )))
-    {
-        dev = GET_NEXT_PHYSDEV( dev, wine_get_vulkan_driver );
-        ret = dev->funcs->wine_get_vulkan_driver( dev, version );
-    }
-    return ret;
+    return get_vulkan_driver( version );
 }

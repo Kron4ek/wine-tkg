@@ -222,20 +222,26 @@ static INT CDECL X11DRV_ExtEscape( PHYSDEV dev, INT escape, INT in_count, LPCVOI
                     return TRUE;
                 }
                 break;
-            case X11DRV_PRESENT_DRAWABLE:
-                if (in_count >= sizeof(struct x11drv_escape_present_drawable))
+            case X11DRV_GET_DRAWABLE:
+                if (out_count >= sizeof(struct x11drv_escape_get_drawable))
                 {
-                    const struct x11drv_escape_present_drawable *data = in_data;
+                    struct x11drv_escape_get_drawable *data = out_data;
+                    data->drawable = physDev->drawable;
+                    return TRUE;
+                }
+                break;
+            case X11DRV_FLUSH_GL_DRAWABLE:
+                if (in_count >= sizeof(struct x11drv_escape_flush_gl_drawable))
+                {
+                    const struct x11drv_escape_flush_gl_drawable *data = in_data;
                     RECT rect = physDev->dc_rect;
-                    RECT real_rect = physDev->dc_rect;
 
-                    fs_hack_rect_user_to_real( &real_rect );
                     OffsetRect( &rect, -physDev->dc_rect.left, -physDev->dc_rect.top );
                     if (data->flush) XFlush( gdi_display );
                     XSetFunction( gdi_display, physDev->gc, GXcopy );
-                    XCopyArea( gdi_display, data->drawable, physDev->drawable, physDev->gc,
-                               0, 0, real_rect.right - real_rect.left, real_rect.bottom - real_rect.top,
-                               real_rect.left, real_rect.top );
+                    XCopyArea( gdi_display, data->gl_drawable, physDev->drawable, physDev->gc,
+                               0, 0, rect.right, rect.bottom,
+                               physDev->dc_rect.left, physDev->dc_rect.top );
                     add_device_bounds( physDev, &rect );
                     return TRUE;
                 }
@@ -324,16 +330,9 @@ static struct opengl_funcs * CDECL X11DRV_wine_get_wgl_driver( PHYSDEV dev, UINT
 /**********************************************************************
  *           X11DRV_wine_get_vulkan_driver
  */
-static const struct vulkan_funcs * CDECL X11DRV_wine_get_vulkan_driver( PHYSDEV dev, UINT version )
+static const struct vulkan_funcs * CDECL X11DRV_wine_get_vulkan_driver( UINT version )
 {
-    const struct vulkan_funcs *ret;
-
-    if (!(ret = get_vulkan_driver( version )))
-    {
-        dev = GET_NEXT_PHYSDEV( dev, wine_get_vulkan_driver );
-        ret = dev->funcs->wine_get_vulkan_driver( dev, version );
-    }
-    return ret;
+    return get_vulkan_driver( version );
 }
 
 
@@ -382,7 +381,6 @@ static const struct user_driver_funcs x11drv_funcs =
     .dc_funcs.pD3DKMTCheckVidPnExclusiveOwnership = X11DRV_D3DKMTCheckVidPnExclusiveOwnership,
     .dc_funcs.pD3DKMTSetVidPnSourceOwner = X11DRV_D3DKMTSetVidPnSourceOwner,
     .dc_funcs.wine_get_wgl_driver = X11DRV_wine_get_wgl_driver,
-    .dc_funcs.wine_get_vulkan_driver = X11DRV_wine_get_vulkan_driver,
     .dc_funcs.priority = GDI_PRIORITY_GRAPHICS_DRV,
 
     .pActivateKeyboardLayout = X11DRV_ActivateKeyboardLayout,
@@ -398,6 +396,7 @@ static const struct user_driver_funcs x11drv_funcs =
     .pClipCursor = X11DRV_ClipCursor,
     .pChangeDisplaySettingsEx = X11DRV_ChangeDisplaySettingsEx,
     .pEnumDisplaySettingsEx = X11DRV_EnumDisplaySettingsEx,
+    .pUpdateDisplayDevices = X11DRV_UpdateDisplayDevices,
     .pCreateDesktopWindow = X11DRV_CreateDesktopWindow,
     .pCreateWindow = X11DRV_CreateWindow,
     .pDestroyWindow = X11DRV_DestroyWindow,
@@ -406,6 +405,7 @@ static const struct user_driver_funcs x11drv_funcs =
     .pMsgWaitForMultipleObjectsEx = X11DRV_MsgWaitForMultipleObjectsEx,
     .pReleaseDC = X11DRV_ReleaseDC,
     .pScrollDC = X11DRV_ScrollDC,
+    .pSetActiveWindow = X11DRV_SetActiveWindow,
     .pSetCapture = X11DRV_SetCapture,
     .pSetFocus = X11DRV_SetFocus,
     .pSetLayeredWindowAttributes = X11DRV_SetLayeredWindowAttributes,
@@ -422,6 +422,7 @@ static const struct user_driver_funcs x11drv_funcs =
     .pWindowPosChanging = X11DRV_WindowPosChanging,
     .pWindowPosChanged = X11DRV_WindowPosChanged,
     .pSystemParametersInfo = X11DRV_SystemParametersInfo,
+    .pwine_get_vulkan_driver = X11DRV_wine_get_vulkan_driver,
     .pUpdateCandidatePos = X11DRV_UpdateCandidatePos,
     .pThreadDetach = X11DRV_ThreadDetach,
 };

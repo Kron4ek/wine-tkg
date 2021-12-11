@@ -17,19 +17,12 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <stdarg.h>
-#include <stdlib.h>
-
-#include "windef.h"
-#include "winbase.h"
-#include "winternl.h"
+#include "vulkan_loader.h"
 #include "winreg.h"
-#include "winuser.h"
+#include "ntuser.h"
 #include "initguid.h"
 #include "devguid.h"
 #include "setupapi.h"
-
-#include "vulkan_loader.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 
@@ -42,6 +35,7 @@ DEFINE_DEVPROPKEY(DEVPROPKEY_GPU_LUID, 0x60b193cb, 0x5276, 0x4d0f, 0x96, 0xfc, 0
 DEFINE_DEVPROPKEY(WINE_DEVPROPKEY_GPU_VULKAN_UUID, 0x233a9ef3, 0xafc4, 0x4abd, 0xb5, 0x64, 0xc3, 0x2f, 0x21, 0xf1, 0x53, 0x5c, 2);
 
 const struct unix_funcs *unix_funcs;
+unixlib_handle_t unix_handle;
 
 static HINSTANCE hinstance;
 
@@ -221,16 +215,24 @@ VkResult WINAPI vk_icdNegotiateLoaderICDInterfaceVersion(uint32_t *supported_ver
 
 static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
 {
-    const struct vulkan_funcs *driver;
-    HDC hdc;
+    const void *driver;
 
-    hdc = GetDC(0);
-    driver = __wine_get_vulkan_driver(hdc, WINE_VULKAN_DRIVER_VERSION);
-    ReleaseDC(0, hdc);
+    driver = __wine_get_vulkan_driver(WINE_VULKAN_DRIVER_VERSION);
     if (!driver)
+    {
         ERR("Failed to load Wine graphics driver supporting Vulkan.\n");
+        return FALSE;
+    }
 
-    return driver && !__wine_init_unix_lib(hinstance, DLL_PROCESS_ATTACH, driver, &unix_funcs);
+    if (NtQueryVirtualMemory(GetCurrentProcess(), hinstance, MemoryWineUnixFuncs,
+                             &unix_handle, sizeof(unix_handle), NULL))
+        return FALSE;
+
+    if (vk_unix_call(unix_init, &driver) || !driver)
+        return FALSE;
+
+    unix_funcs = driver;
+    return TRUE;
 }
 
 static BOOL  wine_vk_init_once(void)
@@ -243,17 +245,24 @@ static BOOL  wine_vk_init_once(void)
 VkResult WINAPI vkCreateInstance(const VkInstanceCreateInfo *create_info,
         const VkAllocationCallbacks *allocator, VkInstance *instance)
 {
+    struct vkCreateInstance_params params;
+
     TRACE("create_info %p, allocator %p, instance %p\n", create_info, allocator, instance);
 
     if(!wine_vk_init_once())
         return VK_ERROR_INITIALIZATION_FAILED;
 
-    return unix_funcs->p_vkCreateInstance(create_info, allocator, instance);
+    params.pCreateInfo = create_info;
+    params.pAllocator = allocator;
+    params.pInstance = instance;
+    return unix_funcs->p_vk_call(unix_vkCreateInstance, &params);
 }
 
 VkResult WINAPI vkEnumerateInstanceExtensionProperties(const char *layer_name,
         uint32_t *count, VkExtensionProperties *properties)
 {
+    struct vkEnumerateInstanceExtensionProperties_params params;
+
     TRACE("%p, %p, %p\n", layer_name, count, properties);
 
     if (layer_name)
@@ -268,11 +277,16 @@ VkResult WINAPI vkEnumerateInstanceExtensionProperties(const char *layer_name,
         return VK_SUCCESS;
     }
 
-    return unix_funcs->p_vkEnumerateInstanceExtensionProperties(layer_name, count, properties);
+    params.pLayerName = layer_name;
+    params.pPropertyCount = count;
+    params.pProperties = properties;
+    return unix_funcs->p_vk_call(unix_vkEnumerateInstanceExtensionProperties, &params);
 }
 
 VkResult WINAPI vkEnumerateInstanceVersion(uint32_t *version)
 {
+    struct vkEnumerateInstanceVersion_params params;
+
     TRACE("%p\n", version);
 
     if (!wine_vk_init_once())
@@ -281,7 +295,8 @@ VkResult WINAPI vkEnumerateInstanceVersion(uint32_t *version)
         return VK_SUCCESS;
     }
 
-    return unix_funcs->p_vkEnumerateInstanceVersion(version);
+    params.pApiVersion = version;
+    return unix_funcs->p_vk_call(unix_vkEnumerateInstanceVersion, &params);
 }
 
 static HANDLE get_display_device_init_mutex(void)
@@ -353,70 +368,47 @@ static void fill_luid_property(VkPhysicalDeviceProperties2 *properties2)
             id->deviceNodeMask);
 }
 
-void WINAPI vkGetPhysicalDeviceProperties(VkPhysicalDevice phys_dev,
-        VkPhysicalDeviceProperties *properties)
-{
-    TRACE("%p, %p\n", phys_dev, properties);
-
-    unix_funcs->p_vkGetPhysicalDeviceProperties(phys_dev, properties);
-
-    {
-        const char *sgi = getenv("WINE_HIDE_NVIDIA_GPU");
-        if (sgi && *sgi != '0')
-        {
-            if (properties->vendorID == 0x10de /* NVIDIA */)
-            {
-                properties->vendorID = 0x1002; /* AMD */
-                properties->deviceID = 0x67df; /* RX 480 */
-            }
-        }
-    }
-}
-
 void WINAPI vkGetPhysicalDeviceProperties2(VkPhysicalDevice phys_dev,
         VkPhysicalDeviceProperties2 *properties2)
 {
+    struct vkGetPhysicalDeviceProperties2_params params;
+
     TRACE("%p, %p\n", phys_dev, properties2);
 
-    unix_funcs->p_vkGetPhysicalDeviceProperties2(phys_dev, properties2);
+    params.physicalDevice = phys_dev;
+    params.pProperties = properties2;
+    vk_unix_call(unix_vkGetPhysicalDeviceProperties2, &params);
     fill_luid_property(properties2);
-
-    {
-        const char *sgi = getenv("WINE_HIDE_NVIDIA_GPU");
-        if (sgi && *sgi != '0')
-        {
-            if (properties2->properties.vendorID == 0x10de /* NVIDIA */)
-            {
-                properties2->properties.vendorID = 0x1002; /* AMD */
-                properties2->properties.deviceID = 0x67df; /* RX 480 */
-            }
-        }
-    }
 }
 
 void WINAPI vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice phys_dev,
         VkPhysicalDeviceProperties2 *properties2)
 {
+    struct vkGetPhysicalDeviceProperties2KHR_params params;
+
     TRACE("%p, %p\n", phys_dev, properties2);
 
-    unix_funcs->p_vkGetPhysicalDeviceProperties2KHR(phys_dev, properties2);
+    params.physicalDevice = phys_dev;
+    params.pProperties = properties2;
+    vk_unix_call(unix_vkGetPhysicalDeviceProperties2KHR, &params);
     fill_luid_property(properties2);
+}
 
-    {
-        const char *sgi = getenv("WINE_HIDE_NVIDIA_GPU");
-        if (sgi && *sgi != '0')
-        {
-            if (properties2->properties.vendorID == 0x10de /* NVIDIA */)
-            {
-                properties2->properties.vendorID = 0x1002; /* AMD */
-                properties2->properties.deviceID = 0x67df; /* RX 480 */
-            }
-        }
-    }
+static BOOL WINAPI call_vulkan_debug_report_callback( struct wine_vk_debug_report_params *params, ULONG size )
+{
+    return params->user_callback(params->flags, params->object_type, params->object_handle, params->location,
+                                 params->code, params->layer_prefix, params->message, params->user_data);
+}
+
+static BOOL WINAPI call_vulkan_debug_utils_callback( struct wine_vk_debug_utils_params *params, ULONG size )
+{
+    return params->user_callback(params->severity, params->message_types, &params->data, params->user_data);
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, void *reserved)
 {
+    void **kernel_callback_table;
+
     TRACE("%p, %u, %p\n", hinst, reason, reserved);
 
     switch (reason)
@@ -424,6 +416,10 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, void *reserved)
         case DLL_PROCESS_ATTACH:
             hinstance = hinst;
             DisableThreadLibraryCalls(hinst);
+
+            kernel_callback_table = NtCurrentTeb()->Peb->KernelCallbackTable;
+            kernel_callback_table[NtUserCallVulkanDebugReportCallback] = call_vulkan_debug_report_callback;
+            kernel_callback_table[NtUserCallVulkanDebugUtilsCallback]  = call_vulkan_debug_utils_callback;
             break;
     }
     return TRUE;
