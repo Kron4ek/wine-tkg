@@ -208,10 +208,6 @@ static void CDECL nulldrv_ReleaseDC( HWND hwnd, HDC hdc )
 {
 }
 
-static void CDECL nulldrv_SetActiveWindow( HWND hwnd )
-{
-}
-
 static void CDECL nulldrv_SetCapture( HWND hwnd, UINT flags )
 {
 }
@@ -407,7 +403,6 @@ static struct user_driver_funcs lazy_load_driver =
     nulldrv_MsgWaitForMultipleObjectsEx,
     nulldrv_ReleaseDC,
     NULL,
-    nulldrv_SetActiveWindow,
     nulldrv_SetCapture,
     nulldrv_SetFocus,
     loaderdrv_SetLayeredWindowAttributes,

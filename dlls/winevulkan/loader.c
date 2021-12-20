@@ -17,6 +17,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <stdlib.h>
 #include "vulkan_loader.h"
 #include "winreg.h"
 #include "ntuser.h"
@@ -245,24 +246,17 @@ static BOOL  wine_vk_init_once(void)
 VkResult WINAPI vkCreateInstance(const VkInstanceCreateInfo *create_info,
         const VkAllocationCallbacks *allocator, VkInstance *instance)
 {
-    struct vkCreateInstance_params params;
-
     TRACE("create_info %p, allocator %p, instance %p\n", create_info, allocator, instance);
 
     if(!wine_vk_init_once())
         return VK_ERROR_INITIALIZATION_FAILED;
 
-    params.pCreateInfo = create_info;
-    params.pAllocator = allocator;
-    params.pInstance = instance;
-    return unix_funcs->p_vk_call(unix_vkCreateInstance, &params);
+    return unix_funcs->p_vkCreateInstance(create_info, allocator, instance);
 }
 
 VkResult WINAPI vkEnumerateInstanceExtensionProperties(const char *layer_name,
         uint32_t *count, VkExtensionProperties *properties)
 {
-    struct vkEnumerateInstanceExtensionProperties_params params;
-
     TRACE("%p, %p, %p\n", layer_name, count, properties);
 
     if (layer_name)
@@ -277,16 +271,11 @@ VkResult WINAPI vkEnumerateInstanceExtensionProperties(const char *layer_name,
         return VK_SUCCESS;
     }
 
-    params.pLayerName = layer_name;
-    params.pPropertyCount = count;
-    params.pProperties = properties;
-    return unix_funcs->p_vk_call(unix_vkEnumerateInstanceExtensionProperties, &params);
+    return unix_funcs->p_vkEnumerateInstanceExtensionProperties(layer_name, count, properties);
 }
 
 VkResult WINAPI vkEnumerateInstanceVersion(uint32_t *version)
 {
-    struct vkEnumerateInstanceVersion_params params;
-
     TRACE("%p\n", version);
 
     if (!wine_vk_init_once())
@@ -295,8 +284,7 @@ VkResult WINAPI vkEnumerateInstanceVersion(uint32_t *version)
         return VK_SUCCESS;
     }
 
-    params.pApiVersion = version;
-    return unix_funcs->p_vk_call(unix_vkEnumerateInstanceVersion, &params);
+    return unix_funcs->p_vkEnumerateInstanceVersion(version);
 }
 
 static HANDLE get_display_device_init_mutex(void)
@@ -368,30 +356,66 @@ static void fill_luid_property(VkPhysicalDeviceProperties2 *properties2)
             id->deviceNodeMask);
 }
 
+void WINAPI vkGetPhysicalDeviceProperties(VkPhysicalDevice phys_dev,
+        VkPhysicalDeviceProperties *properties)
+{
+    TRACE("%p, %p\n", phys_dev, properties);
+
+    unix_funcs->p_vkGetPhysicalDeviceProperties(phys_dev, properties);
+
+    {
+        const char *sgi = getenv("WINE_HIDE_NVIDIA_GPU");
+        if (sgi && *sgi != '0')
+        {
+            if (properties->vendorID == 0x10de /* NVIDIA */)
+            {
+                properties->vendorID = 0x1002; /* AMD */
+                properties->deviceID = 0x67df; /* RX 480 */
+            }
+        }
+    }
+}
+
 void WINAPI vkGetPhysicalDeviceProperties2(VkPhysicalDevice phys_dev,
         VkPhysicalDeviceProperties2 *properties2)
 {
-    struct vkGetPhysicalDeviceProperties2_params params;
-
     TRACE("%p, %p\n", phys_dev, properties2);
 
-    params.physicalDevice = phys_dev;
-    params.pProperties = properties2;
-    vk_unix_call(unix_vkGetPhysicalDeviceProperties2, &params);
+    unix_funcs->p_vkGetPhysicalDeviceProperties2(phys_dev, properties2);
     fill_luid_property(properties2);
+
+    {
+        const char *sgi = getenv("WINE_HIDE_NVIDIA_GPU");
+        if (sgi && *sgi != '0')
+        {
+            if (properties2->properties.vendorID == 0x10de /* NVIDIA */)
+            {
+                properties2->properties.vendorID = 0x1002; /* AMD */
+                properties2->properties.deviceID = 0x67df; /* RX 480 */
+            }
+        }
+    }
 }
 
 void WINAPI vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice phys_dev,
         VkPhysicalDeviceProperties2 *properties2)
 {
-    struct vkGetPhysicalDeviceProperties2KHR_params params;
-
     TRACE("%p, %p\n", phys_dev, properties2);
 
-    params.physicalDevice = phys_dev;
-    params.pProperties = properties2;
-    vk_unix_call(unix_vkGetPhysicalDeviceProperties2KHR, &params);
+    unix_funcs->p_vkGetPhysicalDeviceProperties2KHR(phys_dev, properties2);
     fill_luid_property(properties2);
+
+    {
+        const char *sgi = getenv("WINE_HIDE_NVIDIA_GPU");
+        if (sgi && *sgi != '0')
+        {
+            if (properties2->properties.vendorID == 0x10de /* NVIDIA */)
+            {
+                properties2->properties.vendorID = 0x1002; /* AMD */
+                properties2->properties.deviceID = 0x67df; /* RX 480 */
+            }
+        }
+    }
 }
 
 static BOOL WINAPI call_vulkan_debug_report_callback( struct wine_vk_debug_report_params *params, ULONG size )
