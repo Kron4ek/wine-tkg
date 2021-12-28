@@ -3040,6 +3040,16 @@ done:
     return status;
 }
 
+/***********************************************************************
+ *	is_apiset_dll_name
+ *
+ */
+static BOOL is_apiset_dll_name( const WCHAR *name )
+{
+    static const WCHAR name_prefix[] = L"api-ms-win-";
+
+    return !wcsnicmp( name, name_prefix, ARRAY_SIZE(name_prefix) - 1 );
+}
 
 /***********************************************************************
  *	find_dll_file
@@ -3083,6 +3093,8 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname, UNI
     if (RtlDetermineDosPathNameType_U( libname ) == RELATIVE_PATH)
     {
         status = search_dll_file( load_path, libname, nt_name, pwm, mapping, image_info, id );
+        if (status == STATUS_DLL_NOT_FOUND && load_path && is_apiset_dll_name( libname ))
+            status = search_dll_file( NULL, libname, nt_name, pwm, mapping, image_info, id );
         if (status == STATUS_DLL_NOT_FOUND)
             status = find_builtin_without_file( libname, nt_name, pwm, mapping, image_info, id );
     }
@@ -3177,24 +3189,6 @@ done:
 
 
 /***********************************************************************
- *              __wine_init_unix_lib
- */
-NTSTATUS __cdecl __wine_init_unix_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out )
-{
-    WINE_MODREF *wm;
-    NTSTATUS ret;
-
-    RtlEnterCriticalSection( &loader_section );
-
-    if ((wm = get_modref( module ))) ret = unix_funcs->init_unix_lib( module, reason, ptr_in, ptr_out );
-    else ret = STATUS_INVALID_HANDLE;
-
-    RtlLeaveCriticalSection( &loader_section );
-    return ret;
-}
-
-
-/***********************************************************************
  *              __wine_ctrl_routine
  */
 NTSTATUS WINAPI __wine_ctrl_routine( void *arg )
@@ -3280,7 +3274,7 @@ NTSTATUS WINAPI LdrGetDllHandleEx( ULONG flags, LPCWSTR load_path, ULONG *dll_ch
     WCHAR *dllname;
     HANDLE mapping;
 
-    TRACE( "flag %#x, load_path %p, dll_characteristics %p, name %p, base %p.\n",
+    TRACE( "flags %#x, load_path %p, dll_characteristics %p, name %p, base %p.\n",
             flags, load_path, dll_characteristics, name, base );
 
     if (flags & ~valid_flags) return STATUS_INVALID_PARAMETER;
@@ -4606,11 +4600,6 @@ static void CDECL init_builtin_dll_fallback( void *module )
 {
 }
 
-static NTSTATUS CDECL init_unix_lib_fallback( void *module, DWORD reason, const void *ptr_in, void *ptr_out )
-{
-    return STATUS_DLL_NOT_FOUND;
-}
-
 static NTSTATUS CDECL unwind_builtin_dll_fallback( ULONG type, struct _DISPATCHER_CONTEXT *dispatch,
                                                    CONTEXT *context )
 {
@@ -4628,7 +4617,6 @@ static const struct unix_funcs unix_fallbacks =
 {
     load_so_dll_fallback,
     init_builtin_dll_fallback,
-    init_unix_lib_fallback,
     unwind_builtin_dll_fallback,
     RtlGetSystemTimePrecise_fallback,
 };
