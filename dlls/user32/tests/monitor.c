@@ -1958,12 +1958,14 @@ static void test_display_config(void)
 static void test_DisplayConfigSetDeviceInfo(void)
 {
     static const unsigned int scales[] = {100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500};
+    static const DWORD enabled = 1;
     int current_scale, current_scale_idx, recommended_scale_idx, step, dpi, old_dpi;
     D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME open_adapter_gdi_desc;
     DISPLAYCONFIG_GET_SOURCE_DPI_SCALE get_scale_req;
     DISPLAYCONFIG_SET_SOURCE_DPI_SCALE set_scale_req;
     D3DKMT_CLOSEADAPTER close_adapter_desc;
     NTSTATUS status;
+    HKEY key;
     LONG ret;
 
 #define CHECK_FUNC(func)                       \
@@ -1997,6 +1999,12 @@ static void test_DisplayConfigSetDeviceInfo(void)
         goto failed;
     }
 
+    /* Set IgnorePerProcessSystemDPIToast to 1 to disable "fix blurry apps popup" on Windows 10,
+     * which may interfere other tests because it steals focus */
+    RegOpenKeyA(HKEY_CURRENT_USER, "Control Panel\\Desktop", &key);
+    RegSetValueExA(key, "IgnorePerProcessSystemDPIToast", 0, REG_DWORD, (const BYTE *)&enabled,
+                   sizeof(enabled));
+
     dpi = get_primary_dpi();
     old_dpi = dpi;
     current_scale = dpi * 100 / 96;
@@ -2027,6 +2035,10 @@ static void test_DisplayConfigSetDeviceInfo(void)
     ret = pDisplayConfigSetDeviceInfo(&set_scale_req.header);
     ok(ret == NO_ERROR, "DisplayConfigSetDeviceInfo failed, returned %d.\n", ret);
     ok(old_dpi == get_primary_dpi(), "Expected %d, got %d.\n", get_primary_dpi(), old_dpi);
+
+    /* Remove IgnorePerProcessSystemDPIToast registry value */
+    RegDeleteValueA(key, "IgnorePerProcessSystemDPIToast");
+    RegCloseKey(key);
 
 failed:
     close_adapter_desc.hAdapter = open_adapter_gdi_desc.hAdapter;
@@ -2180,13 +2192,17 @@ static void _check_display_dc(INT line, HDC hdc, const DEVMODEA *dm, BOOL allow_
 
 static void test_display_dc(void)
 {
+    static const INT bpps[] = {1, 4, 8, 16, 24, 32};
+    HBITMAP hbitmap, old_hbitmap;
+    INT count, old_count, i, bpp;
     DWORD device_idx, mode_idx;
     DEVMODEA dm, dm2, dm3;
-    INT count, old_count;
     DISPLAY_DEVICEA dd;
+    HDC hdc, mem_dc;
+    DIBSECTION dib;
+    BITMAP bitmap;
     BOOL ret;
     LONG res;
-    HDC hdc;
 
     /* Test DCs covering the entire virtual screen */
     hdc = CreateDCA("DISPLAY", NULL, NULL, NULL);
@@ -2198,6 +2214,51 @@ static void test_display_dc(void)
     ok(ret, "EnumDisplaySettingsA failed.\n");
 
     check_display_dc(hdc, &dm, FALSE);
+
+    /* Test that CreateCompatibleBitmap() for display DCs creates DDBs */
+    hbitmap = CreateCompatibleBitmap(hdc, dm.dmPelsWidth, dm.dmPelsHeight);
+    ok(!!hbitmap, "CreateCompatibleBitmap failed, error %d.\n", GetLastError());
+    count = GetObjectW(hbitmap, sizeof(dib), &dib);
+    ok(count == sizeof(BITMAP), "GetObject failed, count %d.\n", count);
+    count = GetObjectW(hbitmap, sizeof(bitmap), &bitmap);
+    ok(count == sizeof(BITMAP), "GetObject failed, count %d.\n", count);
+    ok(bitmap.bmBitsPixel == dm.dmBitsPerPel, "Expected %d, got %d.\n", dm.dmBitsPerPel,
+       bitmap.bmBitsPixel);
+    DeleteObject(hbitmap);
+
+    /* Test selecting a DDB of a different depth into a display compatible DC */
+    for (i = 0; i < ARRAY_SIZE(bpps); ++i)
+    {
+        winetest_push_context("bpp %d", bpps[i]);
+
+        mem_dc = CreateCompatibleDC(hdc);
+        hbitmap = CreateBitmap(dm.dmPelsWidth, dm.dmPelsHeight, 1, bpps[i], NULL);
+        ok(!!hbitmap, "CreateBitmap failed, error %d.\n", GetLastError());
+        old_hbitmap = SelectObject(mem_dc, hbitmap);
+        if (bpps[i] != 1 && bpps[i] != 32)
+            ok(!old_hbitmap, "Selecting bitmap succeeded.\n");
+        else
+            ok(!!old_hbitmap, "Failed to select bitmap.\n");
+
+        SelectObject(mem_dc, old_hbitmap);
+        DeleteObject(hbitmap);
+        DeleteDC(mem_dc);
+
+        winetest_pop_context();
+    }
+
+    /* Test selecting a DDB of the same color depth into a display compatible DC */
+    mem_dc = CreateCompatibleDC(hdc);
+    bpp = GetDeviceCaps(mem_dc, BITSPIXEL);
+    ok(bpp == dm.dmBitsPerPel, "Expected bpp %d, got %d.\n", dm.dmBitsPerPel, bpp);
+    hbitmap = CreateCompatibleBitmap(hdc, dm.dmPelsWidth, dm.dmPelsHeight);
+    count = GetObjectW(hbitmap, sizeof(bitmap), &bitmap);
+    ok(count == sizeof(BITMAP), "GetObject failed, count %d.\n", count);
+    ok(bitmap.bmBitsPixel == dm.dmBitsPerPel, "Expected %d, got %d.\n", dm.dmBitsPerPel, bitmap.bmBitsPixel);
+    old_hbitmap = SelectObject(mem_dc, hbitmap);
+    ok(!!old_hbitmap, "Failed to select bitmap.\n");
+    SelectObject(mem_dc, old_hbitmap);
+    DeleteDC(mem_dc);
 
     /* Tests after mode changes to a different resolution */
     memset(&dm2, 0, sizeof(dm2));
@@ -2226,7 +2287,7 @@ static void test_display_dc(void)
     dm2.dmSize = sizeof(dm2);
     for (mode_idx = 0; EnumDisplaySettingsA(NULL, mode_idx, &dm2); ++mode_idx)
     {
-        if (dm2.dmBitsPerPel != dm.dmBitsPerPel)
+        if (dm2.dmBitsPerPel != dm.dmBitsPerPel && dm2.dmBitsPerPel != 1)
             break;
     }
     if (dm2.dmBitsPerPel && dm2.dmBitsPerPel != dm.dmBitsPerPel)
@@ -2239,6 +2300,57 @@ static void test_display_dc(void)
         {
             check_display_dc(hdc, &dm2, FALSE);
 
+            /* Test selecting a compatible bitmap of a different color depth previously created for
+             * a display DC into a new compatible DC */
+            count = GetObjectW(hbitmap, sizeof(bitmap), &bitmap);
+            ok(count == sizeof(BITMAP), "GetObject failed, count %d.\n", count);
+            ok(bitmap.bmBitsPixel == dm.dmBitsPerPel, "Expected %d, got %d.\n", dm.dmBitsPerPel,
+               bitmap.bmBitsPixel);
+
+            /* Note that hbitmap is of a different color depth and it can be successfully selected
+             * into the new compatible DC */
+            mem_dc = CreateCompatibleDC(hdc);
+            bpp = GetDeviceCaps(mem_dc, BITSPIXEL);
+            ok(bpp == dm2.dmBitsPerPel, "Expected bpp %d, got %d.\n", dm2.dmBitsPerPel, bpp);
+            old_hbitmap = SelectObject(mem_dc, hbitmap);
+            ok(!!old_hbitmap, "Failed to select bitmap.\n");
+            bpp = GetDeviceCaps(mem_dc, BITSPIXEL);
+            ok(bpp == dm2.dmBitsPerPel, "Expected bpp %d, got %d.\n", dm2.dmBitsPerPel, bpp);
+            SelectObject(mem_dc, old_hbitmap);
+            DeleteDC(mem_dc);
+            DeleteObject(hbitmap);
+
+            /* Test selecting a DDB of a different color depth into a display compatible DC */
+            for (i = 0; i < ARRAY_SIZE(bpps); ++i)
+            {
+                winetest_push_context("bpp %d", bpps[i]);
+
+                mem_dc = CreateCompatibleDC(hdc);
+                hbitmap = CreateBitmap(dm2.dmPelsWidth, dm2.dmPelsHeight, 1, bpps[i], NULL);
+                ok(!!hbitmap, "CreateBitmap failed, error %d.\n", GetLastError());
+                old_hbitmap = SelectObject(mem_dc, hbitmap);
+                /* On Win7 dual-QXL test bot and XP, only 1-bit DDBs and DDBs with the same color
+                 * depth can be selected to the compatible DC. On newer versions of Windows, only
+                 * 1-bit and 32-bit DDBs can be selected into the compatible DC even if
+                 * GetDeviceCaps(BITSPIXEL) reports a different color depth, for example, 16-bit.
+                 * It's most likely due to the fact that lower color depth are emulated on newer
+                 * versions of Windows as the real color depth is still 32-bit */
+                if (bpps[i] != 1 && bpps[i] != 32)
+                    todo_wine_if(bpps[i] == dm2.dmBitsPerPel)
+                    ok(!old_hbitmap || broken(!!old_hbitmap) /* Win7 dual-QXL test bot and XP */,
+                       "Selecting bitmap succeeded.\n");
+                else
+                    ok(!!old_hbitmap || broken(!old_hbitmap) /* Win7 dual-QXL test bot and XP */,
+                       "Failed to select bitmap.\n");
+
+                SelectObject(mem_dc, old_hbitmap);
+                DeleteObject(hbitmap);
+                DeleteDC(mem_dc);
+
+                winetest_pop_context();
+            }
+            hbitmap = NULL;
+
             res = ChangeDisplaySettingsExA(NULL, NULL, NULL, 0, NULL);
             ok(res == DISP_CHANGE_SUCCESSFUL, "ChangeDisplaySettingsExA returned unexpected %d.\n", res);
         }
@@ -2248,6 +2360,8 @@ static void test_display_dc(void)
         win_skip("Failed to find a different color depth other than %u.\n", dm.dmBitsPerPel);
     }
 
+    if (hbitmap)
+        DeleteObject(hbitmap);
     DeleteDC(hdc);
 
     /* Test DCs covering a specific monitor */
