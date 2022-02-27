@@ -15,7 +15,6 @@ SOURCES = \
 	amsi.idl \
 	amstream.idl \
 	amvideo.idl \
-	apiset.h \
 	appcompatapi.h \
 	appmgmt.h \
 	appmodel.h \
@@ -783,6 +782,7 @@ SOURCES = \
 	windns.h \
 	windot11.h \
 	windows.devices.enumeration.idl \
+	windows.devices.haptics.idl \
 	windows.foundation.collections.idl \
 	windows.foundation.idl \
 	windows.gaming.input.forcefeedback.idl \
@@ -806,6 +806,7 @@ SOURCES = \
 	wine/itss.idl \
 	wine/orpc.idl \
 	wine/svcctl.idl \
+	wine/wined3d-interop.idl \
 	wine/winedxgi.idl \
 	winerror.h \
 	winevt.h \

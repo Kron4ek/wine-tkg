@@ -37,6 +37,7 @@ struct wg_format
         WG_MAJOR_TYPE_UNKNOWN,
         WG_MAJOR_TYPE_VIDEO,
         WG_MAJOR_TYPE_AUDIO,
+        WG_MAJOR_TYPE_WMA,
     } major_type;
 
     union
@@ -88,37 +89,28 @@ struct wg_format
             uint32_t channel_mask; /* In WinMM format. */
             uint32_t rate;
         } audio;
+        struct
+        {
+            uint32_t version;
+            uint32_t bitrate;
+            uint32_t rate;
+            uint32_t depth;
+            uint32_t channels;
+            uint32_t block_align;
+            uint32_t codec_data_len;
+            unsigned char codec_data[64];
+        } wma;
     } u;
 };
 
-enum wg_parser_event_type
+struct wg_parser_buffer
 {
-    WG_PARSER_EVENT_NONE = 0,
-    WG_PARSER_EVENT_BUFFER,
-    WG_PARSER_EVENT_EOS,
-    WG_PARSER_EVENT_SEGMENT,
+    /* pts and duration are in 100-nanosecond units. */
+    UINT64 pts, duration;
+    UINT32 size;
+    bool discontinuity, preroll, delta, has_pts, has_duration;
 };
-
-struct wg_parser_event
-{
-    enum wg_parser_event_type type;
-    union
-    {
-        struct
-        {
-            /* pts and duration are in 100-nanosecond units. */
-            ULONGLONG pts, duration;
-            uint32_t size;
-            bool discontinuity, preroll, delta, has_pts, has_duration;
-        } buffer;
-        struct
-        {
-            ULONGLONG position, stop;
-            DOUBLE rate;
-        } segment;
-    } u;
-};
-C_ASSERT(sizeof(struct wg_parser_event) == 40);
+C_ASSERT(sizeof(struct wg_parser_buffer) == 32);
 
 enum wg_parser_type
 {
@@ -180,10 +172,10 @@ struct wg_parser_stream_enable_params
     const struct wg_format *format;
 };
 
-struct wg_parser_stream_get_event_params
+struct wg_parser_stream_get_buffer_params
 {
     struct wg_parser_stream *stream;
-    struct wg_parser_event *event;
+    struct wg_parser_buffer *buffer;
 };
 
 struct wg_parser_stream_copy_buffer_params
@@ -217,6 +209,13 @@ struct wg_parser_stream_seek_params
     DWORD start_flags, stop_flags;
 };
 
+struct wg_transform_create_params
+{
+    struct wg_transform *transform;
+    const struct wg_format *input_format;
+    const struct wg_format *output_format;
+};
+
 enum unix_funcs
 {
     unix_wg_parser_create,
@@ -224,9 +223,6 @@ enum unix_funcs
 
     unix_wg_parser_connect,
     unix_wg_parser_disconnect,
-
-    unix_wg_parser_begin_flush,
-    unix_wg_parser_end_flush,
 
     unix_wg_parser_get_next_read_offset,
     unix_wg_parser_push_data,
@@ -238,13 +234,16 @@ enum unix_funcs
     unix_wg_parser_stream_enable,
     unix_wg_parser_stream_disable,
 
-    unix_wg_parser_stream_get_event,
+    unix_wg_parser_stream_get_buffer,
     unix_wg_parser_stream_copy_buffer,
     unix_wg_parser_stream_release_buffer,
     unix_wg_parser_stream_notify_qos,
 
     unix_wg_parser_stream_get_duration,
     unix_wg_parser_stream_seek,
+
+    unix_wg_transform_create,
+    unix_wg_transform_destroy,
 };
 
 #endif /* __WINE_WINEGSTREAMER_UNIXLIB_H */

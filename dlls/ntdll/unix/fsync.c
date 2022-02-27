@@ -116,6 +116,15 @@ static inline void futex_vector_set( struct futex_waitv *waitv, int *addr, int v
     waitv->__reserved = 0;
 }
 
+static void simulate_sched_quantum(void)
+{
+    if (!fsync_simulate_sched_quantum) return;
+    /* futex wait is often very quick to resume a waiting thread when woken.
+     * That reveals synchonization bugs in some games which happen to work on
+     * Windows due to the waiting threads having some minimal delay to wake up. */
+    usleep(0);
+}
+
 static inline int futex_wait_multiple( const struct futex_waitv *futexes,
         int count, const ULONGLONG *end )
 {
@@ -580,6 +589,9 @@ NTSTATUS fsync_set_event( HANDLE handle, LONG *prev )
     if ((ret = get_object( handle, &obj ))) return ret;
     event = obj->shm;
 
+    if (obj->type != FSYNC_MANUAL_EVENT && obj->type != FSYNC_AUTO_EVENT)
+        return STATUS_OBJECT_TYPE_MISMATCH;
+
     if (!(current = __atomic_exchange_n( &event->signaled, 1, __ATOMIC_SEQ_CST )))
         futex_wake( &event->signaled, INT_MAX );
 
@@ -757,8 +769,8 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
 
     struct futex_waitv futexes[MAXIMUM_WAIT_OBJECTS + 1];
     struct fsync *objs[MAXIMUM_WAIT_OBJECTS];
+    BOOL msgwait = FALSE, waited = FALSE;
     int has_fsync = 0, has_server = 0;
-    BOOL msgwait = FALSE;
     int dummy_futex = 0;
     unsigned int spin;
     LONGLONG timeleft;
@@ -880,6 +892,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                                     && __sync_val_compare_and_swap( &semaphore->count, current, current - 1 ) == current)
                             {
                                 TRACE("Woken up by handle %p [%d].\n", handles[i], i);
+                                if (waited) simulate_sched_quantum();
                                 return i;
                             }
                             small_pause();
@@ -897,6 +910,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                         {
                             TRACE("Woken up by handle %p [%d].\n", handles[i], i);
                             mutex->count++;
+                            if (waited) simulate_sched_quantum();
                             return i;
                         }
 
@@ -906,6 +920,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                             {
                                 TRACE("Woken up by handle %p [%d].\n", handles[i], i);
                                 mutex->count = 1;
+                                if (waited) simulate_sched_quantum();
                                 return i;
                             }
                             else if (tid == ~0 && (tid = __sync_val_compare_and_swap( &mutex->tid, ~0, GetCurrentThreadId() )) == ~0)
@@ -933,6 +948,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                                     usleep( 0 );
 
                                 TRACE("Woken up by handle %p [%d].\n", handles[i], i);
+                                if (waited) simulate_sched_quantum();
                                 return i;
                             }
                             small_pause();
@@ -955,6 +971,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                                     usleep( 0 );
 
                                 TRACE("Woken up by handle %p [%d].\n", handles[i], i);
+                                if (waited) simulate_sched_quantum();
                                 return i;
                             }
                             small_pause();
@@ -1009,6 +1026,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                 TRACE("Wait timed out.\n");
                 return STATUS_TIMEOUT;
             }
+            else waited = TRUE;
         } /* while (1) */
     }
     else
@@ -1113,6 +1131,7 @@ tryagain:
             for (i = 0; i < count; i++)
             {
                 struct fsync *obj = objs[i];
+                if (!obj) continue;
                 switch (obj->type)
                 {
                 case FSYNC_MUTEX:
@@ -1132,7 +1151,10 @@ tryagain:
                 case FSYNC_SEMAPHORE:
                 {
                     struct semaphore *semaphore = obj->shm;
-                    if (__sync_fetch_and_sub( &semaphore->count, 1 ) <= 0)
+                    int current;
+
+                    if (!(current = __atomic_load_n( &semaphore->count, __ATOMIC_SEQ_CST ))
+                            || __sync_val_compare_and_swap( &semaphore->count, current, current - 1 ) != current)
                         goto tooslow;
                     break;
                 }
@@ -1174,6 +1196,7 @@ tooslow:
             for (--i; i >= 0; i--)
             {
                 struct fsync *obj = objs[i];
+                if (!obj) continue;
                 switch (obj->type)
                 {
                 case FSYNC_MUTEX:

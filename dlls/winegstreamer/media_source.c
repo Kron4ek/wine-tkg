@@ -105,6 +105,7 @@ struct media_source
         SOURCE_RUNNING,
         SOURCE_SHUTDOWN,
     } state;
+    float rate;
 
     HANDLE read_thread;
     bool read_thread_shutdown;
@@ -387,7 +388,6 @@ static void start_pipeline(struct media_source *source, struct source_async_comm
     if (position->vt == VT_I8)
         wg_parser_stream_seek(source->streams[0]->wg_stream, 1.0, position->hVal.QuadPart, 0,
                 AM_SEEKING_AbsolutePositioning, AM_SEEKING_NoPositioning);
-    wg_parser_end_flush(source->wg_parser);
 
     for (i = 0; i < source->stream_count; i++)
         flush_token_queue(source->streams[i], position->vt == VT_EMPTY);
@@ -414,8 +414,6 @@ static void pause_pipeline(struct media_source *source)
 static void stop_pipeline(struct media_source *source)
 {
     unsigned int i;
-
-    wg_parser_begin_flush(source->wg_parser);
 
     for (i = 0; i < source->stream_count; i++)
     {
@@ -452,7 +450,7 @@ static void dispatch_end_of_presentation(struct media_source *source)
     IMFMediaEventQueue_QueueEventParamVar(source->event_queue, MEEndOfPresentation, &GUID_NULL, S_OK, &empty);
 }
 
-static void send_buffer(struct media_stream *stream, const struct wg_parser_event *event, IUnknown *token)
+static void send_buffer(struct media_stream *stream, const struct wg_parser_buffer *wg_buffer, IUnknown *token)
 {
     IMFMediaBuffer *buffer;
     IMFSample *sample;
@@ -465,7 +463,7 @@ static void send_buffer(struct media_stream *stream, const struct wg_parser_even
         return;
     }
 
-    if (FAILED(hr = MFCreateMemoryBuffer(event->u.buffer.size, &buffer)))
+    if (FAILED(hr = MFCreateMemoryBuffer(wg_buffer->size, &buffer)))
     {
         ERR("Failed to create buffer, hr %#lx.\n", hr);
         IMFSample_Release(sample);
@@ -478,7 +476,7 @@ static void send_buffer(struct media_stream *stream, const struct wg_parser_even
         goto out;
     }
 
-    if (FAILED(hr = IMFMediaBuffer_SetCurrentLength(buffer, event->u.buffer.size)))
+    if (FAILED(hr = IMFMediaBuffer_SetCurrentLength(buffer, wg_buffer->size)))
     {
         ERR("Failed to set size, hr %#lx.\n", hr);
         goto out;
@@ -490,7 +488,7 @@ static void send_buffer(struct media_stream *stream, const struct wg_parser_even
         goto out;
     }
 
-    if (!wg_parser_stream_copy_buffer(stream->wg_stream, data, 0, event->u.buffer.size))
+    if (!wg_parser_stream_copy_buffer(stream->wg_stream, data, 0, wg_buffer->size))
     {
         wg_parser_stream_release_buffer(stream->wg_stream);
         IMFMediaBuffer_Unlock(buffer);
@@ -504,13 +502,13 @@ static void send_buffer(struct media_stream *stream, const struct wg_parser_even
         goto out;
     }
 
-    if (FAILED(hr = IMFSample_SetSampleTime(sample, event->u.buffer.pts)))
+    if (FAILED(hr = IMFSample_SetSampleTime(sample, wg_buffer->pts)))
     {
         ERR("Failed to set sample time, hr %#lx.\n", hr);
         goto out;
     }
 
-    if (FAILED(hr = IMFSample_SetSampleDuration(sample, event->u.buffer.duration)))
+    if (FAILED(hr = IMFSample_SetSampleDuration(sample, wg_buffer->duration)))
     {
         ERR("Failed to set sample duration, hr %#lx.\n", hr);
         goto out;
@@ -530,35 +528,19 @@ out:
 static void wait_on_sample(struct media_stream *stream, IUnknown *token)
 {
     PROPVARIANT empty_var = {.vt = VT_EMPTY};
-    struct wg_parser_event event;
+    struct wg_parser_buffer buffer;
 
     TRACE("%p, %p\n", stream, token);
 
-    for (;;)
+    if (wg_parser_stream_get_buffer(stream->wg_stream, &buffer))
     {
-        if (!wg_parser_stream_get_event(stream->wg_stream, &event))
-            return;
-
-        TRACE("Got event of type %#x.\n", event.type);
-
-        switch (event.type)
-        {
-            case WG_PARSER_EVENT_BUFFER:
-                send_buffer(stream, &event, token);
-                return;
-
-            case WG_PARSER_EVENT_EOS:
-                stream->eos = TRUE;
-                IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEEndOfStream, &GUID_NULL, S_OK, &empty_var);
-                dispatch_end_of_presentation(stream->parent_source);
-                return;
-
-            case WG_PARSER_EVENT_SEGMENT:
-                break;
-
-            case WG_PARSER_EVENT_NONE:
-                assert(0);
-        }
+        send_buffer(stream, &buffer, token);
+    }
+    else
+    {
+        stream->eos = TRUE;
+        IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEEndOfStream, &GUID_NULL, S_OK, &empty_var);
+        dispatch_end_of_presentation(stream->parent_source);
     }
 }
 
@@ -1109,6 +1091,9 @@ static ULONG WINAPI media_source_rate_control_Release(IMFRateControl *iface)
 
 static HRESULT WINAPI media_source_rate_control_SetRate(IMFRateControl *iface, BOOL thin, float rate)
 {
+    struct media_source *source = impl_from_IMFRateControl(iface);
+    HRESULT hr;
+
     FIXME("%p, %d, %f.\n", iface, thin, rate);
 
     if (rate < 0.0f)
@@ -1117,20 +1102,24 @@ static HRESULT WINAPI media_source_rate_control_SetRate(IMFRateControl *iface, B
     if (thin)
         return MF_E_THINNING_UNSUPPORTED;
 
-    if (rate != 1.0f)
-        return MF_E_UNSUPPORTED_RATE;
+    if (FAILED(hr = IMFRateSupport_IsRateSupported(&source->IMFRateSupport_iface, thin, rate, NULL)))
+        return hr;
 
-    return S_OK;
+    source->rate = rate;
+
+    return IMFMediaEventQueue_QueueEventParamVar(source->event_queue, MESourceRateChanged, &GUID_NULL, S_OK, NULL);
 }
 
 static HRESULT WINAPI media_source_rate_control_GetRate(IMFRateControl *iface, BOOL *thin, float *rate)
 {
+    struct media_source *source = impl_from_IMFRateControl(iface);
+
     TRACE("%p, %p, %p.\n", iface, thin, rate);
 
     if (thin)
         *thin = FALSE;
 
-    *rate = 1.0f;
+    *rate = source->rate;
 
     return S_OK;
 }
@@ -1425,6 +1414,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     object->ref = 1;
     object->byte_stream = bytestream;
     IMFByteStream_AddRef(bytestream);
+    object->rate = 1.0f;
 
     if (FAILED(hr = MFCreateEventQueue(&object->event_queue)))
         goto fail;

@@ -147,6 +147,7 @@ extern struct ldt_copy __wine_ldt_copy DECLSPEC_HIDDEN;
 #endif
 
 extern BOOL ac_odyssey DECLSPEC_HIDDEN;
+extern BOOL fsync_simulate_sched_quantum DECLSPEC_HIDDEN;
 
 extern void init_environment( int argc, char *argv[], char *envp[] ) DECLSPEC_HIDDEN;
 extern void init_startup_info(void) DECLSPEC_HIDDEN;
@@ -400,11 +401,15 @@ static inline client_ptr_t iosb_client_ptr( IO_STATUS_BLOCK *io )
 
 #ifdef _WIN64
 typedef TEB32 WOW_TEB;
+typedef PEB32 WOW_PEB;
 static inline TEB64 *NtCurrentTeb64(void) { return NULL; }
 #else
 typedef TEB64 WOW_TEB;
+typedef PEB64 WOW_PEB;
 static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiBatchCount; }
 #endif
+
+extern WOW_PEB *wow_peb DECLSPEC_HIDDEN;
 
 static inline WOW_TEB *get_wow_teb( TEB *teb )
 {

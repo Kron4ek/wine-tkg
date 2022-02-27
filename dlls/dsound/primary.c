@@ -57,7 +57,7 @@ static DWORD speaker_config_to_channel_mask(DWORD speaker_config)
             return SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT | SPEAKER_FRONT_CENTER | SPEAKER_LOW_FREQUENCY | SPEAKER_BACK_LEFT | SPEAKER_BACK_RIGHT;
     }
 
-    WARN("unknown speaker_config %u\n", speaker_config);
+    WARN("unknown speaker_config %lu\n", speaker_config);
     return SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT;
 }
 
@@ -72,14 +72,14 @@ static DWORD DSOUND_FindSpeakerConfig(IMMDevice *mmdevice, int channels)
 
     hr = IMMDevice_OpenPropertyStore(mmdevice, STGM_READ, &store);
     if (FAILED(hr)) {
-        WARN("IMMDevice_OpenPropertyStore failed: %08x\n", hr);
+        WARN("IMMDevice_OpenPropertyStore failed: %08lx\n", hr);
         return def;
     }
 
     hr = IPropertyStore_GetValue(store, &PKEY_AudioEndpoint_PhysicalSpeakers, &pv);
 
     if (FAILED(hr)) {
-        WARN("IPropertyStore_GetValue failed: %08x\n", hr);
+        WARN("IPropertyStore_GetValue failed: %08lx\n", hr);
         IPropertyStore_Release(store);
         return def;
     }
@@ -261,7 +261,7 @@ static HRESULT DSOUND_WaveFormat(DirectSoundDevice *device, IAudioClient *client
         CoTaskMemFree(retwfe);
     }
     if (FAILED(hr)) {
-        WARN("IsFormatSupported failed: %08x\n", hr);
+        WARN("IsFormatSupported failed: %08lx\n", hr);
         HeapFree(GetProcessHeap(), 0, w);
         return hr;
     }
@@ -336,7 +336,7 @@ static HRESULT DSOUND_PrimaryOpen(DirectSoundDevice *device, WAVEFORMATEX *wfx, 
 
     device->writelead = (wfx->nSamplesPerSec / 100) * wfx->nBlockAlign;
 
-    TRACE("buflen: %u, frames %u\n", device->buflen, frames);
+    TRACE("buflen: %lu, frames %lu\n", device->buflen, frames);
 
     if (!mixfloat)
         device->normfunction = normfunctions[wfx->wBitsPerSample/8 - 1];
@@ -372,7 +372,7 @@ HRESULT DSOUND_ReopenDevice(DirectSoundDevice *device, BOOL forcewave)
     hres = IMMDevice_Activate(device->mmdevice, &IID_IAudioClient,
             CLSCTX_INPROC_SERVER, NULL, (void **)&client);
     if(FAILED(hres)){
-        WARN("Activate failed: %08x\n", hres);
+        WARN("Activate failed: %08lx\n", hres);
         return hres;
     }
 
@@ -387,13 +387,13 @@ HRESULT DSOUND_ReopenDevice(DirectSoundDevice *device, BOOL forcewave)
             AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 800000, 0, wfx, NULL);
     if(FAILED(hres)){
         IAudioClient_Release(client);
-        ERR("Initialize failed: %08x\n", hres);
+        ERR("Initialize failed: %08lx\n", hres);
         return hres;
     }
 
     hres = IAudioClient_SetEventHandle(client, device->sleepev);
     if (FAILED(hres)) {
-        WARN("SetEventHandle failed: %08x\n", hres);
+        WARN("SetEventHandle failed: %08lx\n", hres);
         goto err;
     }
 
@@ -408,17 +408,17 @@ HRESULT DSOUND_ReopenDevice(DirectSoundDevice *device, BOOL forcewave)
     /* Now kick off the timer so the event fires periodically */
     hres = IAudioClient_Start(client);
     if (FAILED(hres)) {
-        WARN("Start failed with %08x\n", hres);
+        WARN("Start failed with %08lx\n", hres);
         goto err;
     }
     hres = IAudioClient_GetStreamLatency(client, &period);
     if (FAILED(hres)) {
-        WARN("GetStreamLatency failed with %08x\n", hres);
+        WARN("GetStreamLatency failed with %08lx\n", hres);
         goto err;
     }
     hres = IAudioClient_GetBufferSize(client, &acbuf_frames);
     if (FAILED(hres)) {
-        WARN("GetBufferSize failed with %08x\n", hres);
+        WARN("GetBufferSize failed with %08lx\n", hres);
         goto err;
     }
 
@@ -427,7 +427,7 @@ HRESULT DSOUND_ReopenDevice(DirectSoundDevice *device, BOOL forcewave)
 
     aclen_frames = min(acbuf_frames, 3 * frag_frames);
 
-    TRACE("period %u ms frag_frames %u buf_frames %u\n", period_ms, frag_frames, aclen_frames);
+    TRACE("period %lu ms frag_frames %lu buf_frames %u\n", period_ms, frag_frames, aclen_frames);
 
     hres = DSOUND_PrimaryOpen(device, wfx, aclen_frames, forcewave);
     if(FAILED(hres))
@@ -448,7 +448,7 @@ HRESULT DSOUND_ReopenDevice(DirectSoundDevice *device, BOOL forcewave)
     return S_OK;
 
 err_service:
-    WARN("GetService failed: %08x\n", hres);
+    WARN("GetService failed: %08lx\n", hres);
 err:
     device->speaker_config = oldspeakerconfig;
     DSOUND_ParseSpeakerConfig(device);
@@ -469,7 +469,7 @@ HRESULT DSOUND_PrimaryDestroy(DirectSoundDevice *device)
 	EnterCriticalSection(&(device->mixlock));
 
 	if(device->primary && (device->primary->ref || device->primary->numIfaces))
-		WARN("Destroying primary buffer while references held (%u %u)\n", device->primary->ref, device->primary->numIfaces);
+		WARN("Destroying primary buffer while references held (%lu %lu)\n", device->primary->ref, device->primary->numIfaces);
 
 	HeapFree(GetProcessHeap(), 0, device->primary);
 	device->primary = NULL;
@@ -526,8 +526,8 @@ HRESULT primarybuffer_SetFormat(DirectSoundDevice *device, LPCWAVEFORMATEX passe
 		WARN("invalid parameter: passed_fmt==NULL!\n");
 		return DSERR_INVALIDPARAM;
 	}
-	TRACE("(formattag=0x%04x,chans=%d,samplerate=%d,"
-			  "bytespersec=%d,blockalign=%d,bitspersamp=%d,cbSize=%d)\n",
+	TRACE("(formattag=0x%04x,chans=%d,samplerate=%ld,"
+			  "bytespersec=%ld,blockalign=%d,bitspersamp=%d,cbSize=%d)\n",
 		  passed_fmt->wFormatTag, passed_fmt->nChannels, passed_fmt->nSamplesPerSec,
 		  passed_fmt->nAvgBytesPerSec, passed_fmt->nBlockAlign,
 		  passed_fmt->wBitsPerSample, passed_fmt->cbSize);
@@ -612,7 +612,7 @@ static HRESULT WINAPI PrimaryBufferImpl_SetVolume(IDirectSoundBuffer8 *iface, LO
 	float fvol;
 	int i;
 
-	TRACE("(%p,%d)\n", iface, vol);
+	TRACE("(%p,%ld)\n", iface, vol);
 
 	if (!(This->dsbd.dwFlags & DSBCAPS_CTRLVOLUME)) {
 		WARN("control unavailable\n");
@@ -620,7 +620,7 @@ static HRESULT WINAPI PrimaryBufferImpl_SetVolume(IDirectSoundBuffer8 *iface, LO
 	}
 
 	if ((vol > DSBVOLUME_MAX) || (vol < DSBVOLUME_MIN)) {
-		WARN("invalid parameter: vol = %d\n", vol);
+		WARN("invalid parameter: vol = %ld\n", vol);
 		return DSERR_INVALIDPARAM;
 	}
 
@@ -632,7 +632,7 @@ static HRESULT WINAPI PrimaryBufferImpl_SetVolume(IDirectSoundBuffer8 *iface, LO
 			hr = IAudioStreamVolume_GetChannelVolume(device->volume, i, &fvol);
 			if (FAILED(hr)){
 				LeaveCriticalSection(&device->mixlock);
-				WARN("GetChannelVolume failed: %08x\n", hr);
+				WARN("GetChannelVolume failed: %08lx\n", hr);
 				return hr;
 			}
 		} else
@@ -652,7 +652,7 @@ static HRESULT WINAPI PrimaryBufferImpl_SetVolume(IDirectSoundBuffer8 *iface, LO
 				hr = IAudioStreamVolume_SetChannelVolume(device->volume, i, fvol);
 				if (FAILED(hr)){
 					LeaveCriticalSection(&device->mixlock);
-					WARN("SetChannelVolume failed: %08x\n", hr);
+					WARN("SetChannelVolume failed: %08lx\n", hr);
 					return hr;
 				}
 			}
@@ -692,7 +692,7 @@ static HRESULT WINAPI PrimaryBufferImpl_GetVolume(IDirectSoundBuffer8 *iface, LO
 			hr = IAudioStreamVolume_GetChannelVolume(device->volume, i, &fvol);
 			if (FAILED(hr)){
 				LeaveCriticalSection(&device->mixlock);
-				WARN("GetChannelVolume failed: %08x\n", hr);
+				WARN("GetChannelVolume failed: %08lx\n", hr);
 				return hr;
 			}
 		} else
@@ -712,7 +712,7 @@ static HRESULT WINAPI PrimaryBufferImpl_GetVolume(IDirectSoundBuffer8 *iface, LO
 static HRESULT WINAPI PrimaryBufferImpl_SetFrequency(IDirectSoundBuffer8 *iface, DWORD freq)
 {
         IDirectSoundBufferImpl *This = impl_from_IDirectSoundBuffer8(iface);
-	TRACE("(%p,%d)\n",This,freq);
+	TRACE("(%p,%ld)\n",This,freq);
 
 	/* You cannot set the frequency of the primary buffer */
 	WARN("control unavailable\n");
@@ -724,10 +724,10 @@ static HRESULT WINAPI PrimaryBufferImpl_Play(IDirectSoundBuffer8 *iface, DWORD r
 {
         IDirectSoundBufferImpl *This = impl_from_IDirectSoundBuffer8(iface);
         DirectSoundDevice *device = This->device;
-	TRACE("(%p,%08x,%08x,%08x)\n", iface, reserved1, reserved2, flags);
+	TRACE("(%p,%08lx,%08lx,%08lx)\n", iface, reserved1, reserved2, flags);
 
 	if (!(flags & DSBPLAY_LOOPING)) {
-		WARN("invalid parameter: flags = %08x\n", flags);
+		WARN("invalid parameter: flags = %08lx\n", flags);
 		return DSERR_INVALIDPARAM;
 	}
 
@@ -751,7 +751,7 @@ static ULONG WINAPI PrimaryBufferImpl_AddRef(IDirectSoundBuffer8 *iface)
 {
     IDirectSoundBufferImpl *This = impl_from_IDirectSoundBuffer8(iface);
     ULONG ref = InterlockedIncrement(&(This->ref));
-    TRACE("(%p) ref %d\n", This, ref);
+    TRACE("(%p) ref %ld\n", This, ref);
     if(ref == 1)
         InterlockedIncrement(&This->numIfaces);
     return ref;
@@ -780,7 +780,7 @@ static ULONG WINAPI PrimaryBufferImpl_Release(IDirectSoundBuffer8 *iface)
     if(!ref)
         capped_refcount_dec(&This->numIfaces);
 
-    TRACE("(%p) primary ref %d\n", This, ref);
+    TRACE("(%p) primary ref %ld\n", This, ref);
 
     return ref;
 }
@@ -820,7 +820,7 @@ static HRESULT WINAPI PrimaryBufferImpl_GetCurrentPosition(IDirectSoundBuffer8 *
 	LeaveCriticalSection(&(device->mixlock));
 	/* **** */
 
-	TRACE("playpos = %d, writepos = %d (%p, time=%d)\n", playpos?*playpos:0, writepos?*writepos:0, device, GetTickCount());
+	TRACE("playpos = %ld, writepos = %ld (%p, time=%ld)\n", playpos?*playpos:0, writepos?*writepos:0, device, GetTickCount());
 	return DS_OK;
 }
 
@@ -839,7 +839,7 @@ static HRESULT WINAPI PrimaryBufferImpl_GetStatus(IDirectSoundBuffer8 *iface, DW
 	if (!device->stopped)
 		*status |= DSBSTATUS_PLAYING | DSBSTATUS_LOOPING;
 
-	TRACE("status=%x\n", *status);
+	TRACE("status=%lx\n", *status);
 	return DS_OK;
 }
 
@@ -850,7 +850,7 @@ static HRESULT WINAPI PrimaryBufferImpl_GetFormat(IDirectSoundBuffer8 *iface, WA
     DWORD size;
     IDirectSoundBufferImpl *This = impl_from_IDirectSoundBuffer8(iface);
     DirectSoundDevice *device = This->device;
-    TRACE("(%p,%p,%d,%p)\n", iface, lpwf, wfsize, wfwritten);
+    TRACE("(%p,%p,%ld,%p)\n", iface, lpwf, wfsize, wfwritten);
 
     size = sizeof(WAVEFORMATEX) + device->primary_pwfx->cbSize;
 
@@ -884,7 +884,7 @@ static HRESULT WINAPI PrimaryBufferImpl_Lock(IDirectSoundBuffer8 *iface, DWORD w
 	HRESULT hres;
         IDirectSoundBufferImpl *This = impl_from_IDirectSoundBuffer8(iface);
         DirectSoundDevice *device = This->device;
-	TRACE("(%p,%d,%d,%p,%p,%p,%p,0x%08x) at %d\n",
+	TRACE("(%p,%ld,%ld,%p,%p,%p,%p,0x%08lx) at %ld\n",
 		iface,
 		writecursor,
 		writebytes,
@@ -919,13 +919,13 @@ static HRESULT WINAPI PrimaryBufferImpl_Lock(IDirectSoundBuffer8 *iface, DWORD w
 		writebytes = device->buflen;
 
         if (writecursor >= device->buflen) {
-                WARN("Invalid parameter, writecursor: %u >= buflen: %u\n",
+                WARN("Invalid parameter, writecursor: %lu >= buflen: %lu\n",
 		     writecursor, device->buflen);
                 return DSERR_INVALIDPARAM;
         }
 
         if (writebytes > device->buflen) {
-                WARN("Invalid parameter, writebytes: %u > buflen: %u\n",
+                WARN("Invalid parameter, writebytes: %lu > buflen: %lu\n",
 		     writebytes, device->buflen);
                 return DSERR_INVALIDPARAM;
         }
@@ -937,7 +937,7 @@ static HRESULT WINAPI PrimaryBufferImpl_Lock(IDirectSoundBuffer8 *iface, DWORD w
 			*(LPBYTE*)lplpaudioptr2 = NULL;
 		if (audiobytes2)
 			*audiobytes2 = 0;
-		TRACE("->%d.0\n",writebytes);
+		TRACE("->%ld.0\n",writebytes);
 	} else {
 		*(LPBYTE*)lplpaudioptr1 = device->buffer+writecursor;
 		*audiobytes1 = device->buflen-writecursor;
@@ -945,7 +945,7 @@ static HRESULT WINAPI PrimaryBufferImpl_Lock(IDirectSoundBuffer8 *iface, DWORD w
 			*(LPBYTE*)lplpaudioptr2 = device->buffer;
 		if (audiobytes2)
 			*audiobytes2 = writebytes-(device->buflen-writecursor);
-		TRACE("->%d.%d\n",*audiobytes1,audiobytes2?*audiobytes2:0);
+		TRACE("->%ld.%ld\n",*audiobytes1,audiobytes2?*audiobytes2:0);
 	}
 	return DS_OK;
 }
@@ -953,7 +953,7 @@ static HRESULT WINAPI PrimaryBufferImpl_Lock(IDirectSoundBuffer8 *iface, DWORD w
 static HRESULT WINAPI PrimaryBufferImpl_SetCurrentPosition(IDirectSoundBuffer8 *iface, DWORD newpos)
 {
         IDirectSoundBufferImpl *This = impl_from_IDirectSoundBuffer8(iface);
-	TRACE("(%p,%d)\n",This,newpos);
+	TRACE("(%p,%ld)\n",This,newpos);
 
 	/* You cannot set the position of the primary buffer */
 	WARN("invalid call\n");
@@ -968,7 +968,7 @@ static HRESULT WINAPI PrimaryBufferImpl_SetPan(IDirectSoundBuffer8 *iface, LONG 
 	HRESULT hr;
 	int i;
 
-	TRACE("(%p,%d)\n", iface, pan);
+	TRACE("(%p,%ld)\n", iface, pan);
 
 	if (!(This->dsbd.dwFlags & DSBCAPS_CTRLPAN)) {
 		WARN("control unavailable\n");
@@ -976,7 +976,7 @@ static HRESULT WINAPI PrimaryBufferImpl_SetPan(IDirectSoundBuffer8 *iface, LONG 
 	}
 
 	if ((pan > DSBPAN_RIGHT) || (pan < DSBPAN_LEFT)) {
-		WARN("invalid parameter: pan = %d\n", pan);
+		WARN("invalid parameter: pan = %ld\n", pan);
 		return DSERR_INVALIDPARAM;
 	}
 
@@ -988,7 +988,7 @@ static HRESULT WINAPI PrimaryBufferImpl_SetPan(IDirectSoundBuffer8 *iface, LONG 
 			hr = IAudioStreamVolume_GetChannelVolume(device->volume, i, &fvol);
 			if (FAILED(hr)){
 				LeaveCriticalSection(&device->mixlock);
-				WARN("GetChannelVolume failed: %08x\n", hr);
+				WARN("GetChannelVolume failed: %08lx\n", hr);
 				return hr;
 			}
 		} else
@@ -1008,7 +1008,7 @@ static HRESULT WINAPI PrimaryBufferImpl_SetPan(IDirectSoundBuffer8 *iface, LONG 
 				hr = IAudioStreamVolume_SetChannelVolume(device->volume, i, fvol);
 				if (FAILED(hr)){
 					LeaveCriticalSection(&device->mixlock);
-					WARN("SetChannelVolume failed: %08x\n", hr);
+					WARN("SetChannelVolume failed: %08lx\n", hr);
 					return hr;
 				}
 			}
@@ -1048,7 +1048,7 @@ static HRESULT WINAPI PrimaryBufferImpl_GetPan(IDirectSoundBuffer8 *iface, LONG 
 			hr = IAudioStreamVolume_GetChannelVolume(device->volume, i, &fvol);
 			if (FAILED(hr)){
 				LeaveCriticalSection(&device->mixlock);
-				WARN("GetChannelVolume failed: %08x\n", hr);
+				WARN("GetChannelVolume failed: %08lx\n", hr);
 				return hr;
 			}
 		} else
@@ -1070,7 +1070,7 @@ static HRESULT WINAPI PrimaryBufferImpl_Unlock(IDirectSoundBuffer8 *iface, void 
 {
         IDirectSoundBufferImpl *This = impl_from_IDirectSoundBuffer8(iface);
         DirectSoundDevice *device = This->device;
-	TRACE("(%p,%p,%d,%p,%d)\n", iface, p1, x1, p2, x2);
+	TRACE("(%p,%p,%ld,%p,%ld)\n", iface, p1, x1, p2, x2);
 
 	if (device->priolevel != DSSCL_WRITEPRIMARY) {
 		WARN("failed priority check!\n");
@@ -1108,7 +1108,7 @@ static HRESULT WINAPI PrimaryBufferImpl_GetFrequency(IDirectSoundBuffer8 *iface,
 	}
 
 	*freq = device->pwfx->nSamplesPerSec;
-	TRACE("-> %d\n", *freq);
+	TRACE("-> %ld\n", *freq);
 
 	return DS_OK;
 }
@@ -1133,7 +1133,7 @@ static HRESULT WINAPI PrimaryBufferImpl_GetCaps(IDirectSoundBuffer8 *iface, DSBC
 	}
 
 	if (caps->dwSize < sizeof(*caps)) {
-		WARN("invalid parameter: caps->dwSize = %d\n", caps->dwSize);
+		WARN("invalid parameter: caps->dwSize = %ld\n", caps->dwSize);
 		return DSERR_INVALIDPARAM;
 	}
 
@@ -1276,8 +1276,8 @@ HRESULT primarybuffer_create(DirectSoundDevice *device, IDirectSoundBufferImpl *
         device->ds3dl_need_recalc = TRUE;
 
 	TRACE("Created primary buffer at %p\n", dsb);
-	TRACE("(formattag=0x%04x,chans=%d,samplerate=%d,"
-		"bytespersec=%d,blockalign=%d,bitspersamp=%d,cbSize=%d)\n",
+	TRACE("(formattag=0x%04x,chans=%d,samplerate=%ld,"
+		"bytespersec=%ld,blockalign=%d,bitspersamp=%d,cbSize=%d)\n",
 		device->pwfx->wFormatTag, device->pwfx->nChannels,
                 device->pwfx->nSamplesPerSec, device->pwfx->nAvgBytesPerSec,
                 device->pwfx->nBlockAlign, device->pwfx->wBitsPerSample,

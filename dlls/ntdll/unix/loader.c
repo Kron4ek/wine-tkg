@@ -1996,6 +1996,81 @@ static void load_ntdll(void)
 
 
 /***********************************************************************
+ *           load_apiset_dll
+ */
+static void load_apiset_dll(void)
+{
+    static WCHAR path[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\',
+                           's','y','s','t','e','m','3','2','\\',
+                           'a','p','i','s','e','t','s','c','h','e','m','a','.','d','l','l',0};
+    const char *pe_dir = get_pe_dir( current_machine );
+    const IMAGE_NT_HEADERS *nt;
+    const IMAGE_SECTION_HEADER *sec;
+    API_SET_NAMESPACE *map;
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING str;
+    NTSTATUS status;
+    HANDLE handle, mapping;
+    SIZE_T size;
+    char *name;
+    void *ptr;
+    UINT i;
+
+    init_unicode_string( &str, path );
+    InitializeObjectAttributes( &attr, &str, 0, 0, NULL );
+
+    name = malloc( strlen( ntdll_dir ) + strlen( pe_dir ) + sizeof("/apisetschema.dll") );
+    if (build_dir) sprintf( name, "%s/dlls/apisetschema/apisetschema.dll", build_dir );
+    else sprintf( name, "%s%s/apisetschema.dll", dll_dir, pe_dir );
+    status = open_unix_file( &handle, name, GENERIC_READ | SYNCHRONIZE, &attr, 0,
+                             FILE_SHARE_READ | FILE_SHARE_DELETE, FILE_OPEN,
+                             FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, NULL, 0 );
+    free( name );
+
+    if (!status)
+    {
+        status = NtCreateSection( &mapping, STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ,
+                                  NULL, NULL, PAGE_READONLY, SEC_COMMIT, handle );
+        NtClose( handle );
+    }
+    if (!status)
+    {
+        ptr = NULL;
+        size = 0;
+        status = NtMapViewOfSection( mapping, NtCurrentProcess(), &ptr,
+                                     is_win64 && wow_peb ? 0x7fffffff : 0, 0, NULL,
+                                     &size, ViewShare, 0, PAGE_READONLY );
+        NtClose( mapping );
+    }
+    if (!status)
+    {
+        nt = get_rva( ptr, ((IMAGE_DOS_HEADER *)ptr)->e_lfanew );
+        sec = (IMAGE_SECTION_HEADER *)((char *)&nt->OptionalHeader + nt->FileHeader.SizeOfOptionalHeader);
+
+        for (i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++)
+        {
+            if (memcmp( (char *)sec->Name, ".apiset", 8 )) continue;
+            map = (API_SET_NAMESPACE *)((char *)ptr + sec->PointerToRawData);
+            if (sec->PointerToRawData < size &&
+                size - sec->PointerToRawData >= sec->Misc.VirtualSize &&
+                map->Version == 6 &&
+                map->Size <= sec->Misc.VirtualSize)
+            {
+                NtCurrentTeb()->Peb->ApiSetMap = map;
+                if (wow_peb) wow_peb->ApiSetMap = PtrToUlong(map);
+                TRACE( "loaded %s apiset at %p\n", debugstr_w(path), map );
+                return;
+            }
+            break;
+        }
+        NtUnmapViewOfSection( NtCurrentProcess(), ptr );
+        status = STATUS_APISET_NOT_PRESENT;
+    }
+    ERR( "failed to load apiset: %x\n", status );
+}
+
+
+/***********************************************************************
  *           load_wow64_ntdll
  */
 static void load_wow64_ntdll( USHORT machine )
@@ -2073,24 +2148,31 @@ static struct unix_funcs unix_funcs =
 };
 
 BOOL ac_odyssey;
+BOOL fsync_simulate_sched_quantum;
 
 static void hacks_init(void)
 {
+    static const char upc_exe[] = "Ubisoft Game Launcher\\upc.exe";
     static const char ac_odyssey_exe[] = "ACOdyssey.exe";
-    char cur_exe[MAX_PATH];
-    DWORD cur_exe_len;
-    int fd;
+    const char *env_str;
 
-    fd = open("/proc/self/comm", O_RDONLY);
-    cur_exe_len = read(fd, cur_exe, sizeof(cur_exe));
-    close(fd);
-    cur_exe[cur_exe_len - 1] = 0;
-
-    if (!strcasecmp(cur_exe, ac_odyssey_exe))
+    if (main_argc > 1 && strstr(main_argv[1], ac_odyssey_exe))
     {
         ERR("HACK: AC Odyssey sync tweak on.\n");
         ac_odyssey = TRUE;
+        return;
     }
+    env_str = getenv("WINE_FSYNC_SIMULATE_SCHED_QUANTUM");
+    if (env_str)
+        fsync_simulate_sched_quantum = !!atoi(env_str);
+    else if (main_argc > 1)
+        fsync_simulate_sched_quantum = !!strstr(main_argv[1], upc_exe);
+    if (fsync_simulate_sched_quantum)
+        ERR("HACK: Simulating sched quantum in fsync.\n");
+
+    env_str = getenv("SteamGameId");
+    if (env_str && !strcmp(env_str, "50130"))
+        setenv("WINESTEAMNOEXEC", "1", 0);
 }
 
 /***********************************************************************
@@ -2120,10 +2202,11 @@ static void start_main_thread(void)
     if (p___wine_main_wargv) *p___wine_main_wargv = main_wargv;
     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
     set_load_order_app_name( main_wargv[0] );
-    init_thread_stack( teb, is_win64 ? 0x7fffffff : 0, 0, 0 );
+    init_thread_stack( teb, 0, 0, 0 );
     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
     load_ntdll();
     if (main_image_info.Machine != current_machine) load_wow64_ntdll( main_image_info.Machine );
+    load_apiset_dll();
     ntdll_init_syscalls( 0, &syscall_table, p__wine_syscall_dispatcher );
     status = p__wine_set_unix_funcs( NTDLL_UNIXLIB_VERSION, &unix_funcs );
     if (status == STATUS_REVISION_MISMATCH)

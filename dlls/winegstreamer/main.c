@@ -96,16 +96,6 @@ void wg_parser_disconnect(struct wg_parser *parser)
     __wine_unix_call(unix_handle, unix_wg_parser_disconnect, parser);
 }
 
-void wg_parser_begin_flush(struct wg_parser *parser)
-{
-    __wine_unix_call(unix_handle, unix_wg_parser_begin_flush, parser);
-}
-
-void wg_parser_end_flush(struct wg_parser *parser)
-{
-    __wine_unix_call(unix_handle, unix_wg_parser_end_flush, parser);
-}
-
 bool wg_parser_get_next_read_offset(struct wg_parser *parser, uint64_t *offset, uint32_t *size)
 {
     struct wg_parser_get_next_read_offset_params params =
@@ -182,15 +172,15 @@ void wg_parser_stream_disable(struct wg_parser_stream *stream)
     __wine_unix_call(unix_handle, unix_wg_parser_stream_disable, stream);
 }
 
-bool wg_parser_stream_get_event(struct wg_parser_stream *stream, struct wg_parser_event *event)
+bool wg_parser_stream_get_buffer(struct wg_parser_stream *stream, struct wg_parser_buffer *buffer)
 {
-    struct wg_parser_stream_get_event_params params =
+    struct wg_parser_stream_get_buffer_params params =
     {
         .stream = stream,
-        .event = event,
+        .buffer = buffer,
     };
 
-    return !__wine_unix_call(unix_handle, unix_wg_parser_stream_get_event, &params);
+    return !__wine_unix_call(unix_handle, unix_wg_parser_stream_get_buffer, &params);
 }
 
 bool wg_parser_stream_copy_buffer(struct wg_parser_stream *stream,
@@ -252,6 +242,25 @@ void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
     };
 
     __wine_unix_call(unix_handle, unix_wg_parser_stream_seek, &params);
+}
+
+struct wg_transform *wg_transform_create(const struct wg_format *input_format,
+        const struct wg_format *output_format)
+{
+    struct wg_transform_create_params params =
+    {
+        .input_format = input_format,
+        .output_format = output_format,
+    };
+
+    if (__wine_unix_call(unix_handle, unix_wg_transform_create, &params))
+        return NULL;
+    return params.transform;
+}
+
+void wg_transform_destroy(struct wg_transform *transform)
+{
+    __wine_unix_call(unix_handle, unix_wg_transform_destroy, transform);
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
