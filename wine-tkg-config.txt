@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sun Feb 27 03:08:28 PM UTC 2022 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Mar 12 06:32:09 PM UTC 2022 :
 
 Local cfg files used
 
-Wine (plain) version: 7.3.r0.g842452d4e79
-Using wine-staging patchset (version 7.3.r0.gaf985310)
+Wine (plain) version: 7.4.r0.g330dc601978
+Using wine-staging patchset (version 7.4.r0.ge5ddda02)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -29,7 +29,6 @@ rdr2.patch -- ( Enable Proton's RDR2 fixes from Paul Gofman )
 proton-cpu-topology-overrides.patch -- ( Enable Proton's CPU topology override support )
 proton-vr.patch -- ( Enable Proton vr-related wined3d additions )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
-josh-flat-theme.patch -- ( Add Josh's better-theme )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch

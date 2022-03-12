@@ -1120,8 +1120,13 @@ static void add_monitor( const struct gdi_monitor *monitor, void *param )
 
     if ((subkey = reg_create_key( hkey, device_parametersW, sizeof(device_parametersW), 0, NULL )))
     {
+        static const WCHAR bad_edidW[] = {'B','A','D','_','E','D','I','D',0};
         static const WCHAR edidW[] = {'E','D','I','D',0};
-        set_reg_value( subkey, edidW, REG_BINARY, monitor->edid, monitor->edid_len );
+
+        if (monitor->edid_len)
+            set_reg_value( subkey, edidW, REG_BINARY, monitor->edid, monitor->edid_len );
+        else
+            set_reg_value( subkey, bad_edidW, REG_BINARY, NULL, 0 );
         NtClose( subkey );
     }
 
@@ -1327,7 +1332,6 @@ static BOOL update_display_cache(void)
         ERR( "failed to read display config\n" );
         return FALSE;
     }
-
     return TRUE;
 }
 
@@ -1370,6 +1374,15 @@ void release_display_dc( HDC hdc )
  *           get_monitor_dpi
  */
 UINT get_monitor_dpi( HMONITOR monitor )
+{
+    /* FIXME: use the monitor DPI instead */
+    return system_dpi;
+}
+
+/**********************************************************************
+ *              get_win_monitor_dpi
+ */
+UINT get_win_monitor_dpi( HWND hwnd )
 {
     /* FIXME: use the monitor DPI instead */
     return system_dpi;
@@ -1421,6 +1434,48 @@ UINT get_system_dpi(void)
 {
     if (get_thread_dpi_awareness() == DPI_AWARENESS_UNAWARE) return USER_DEFAULT_SCREEN_DPI;
     return system_dpi;
+}
+
+/* see GetAwarenessFromDpiAwarenessContext */
+static DPI_AWARENESS get_awareness_from_dpi_awareness_context( DPI_AWARENESS_CONTEXT context )
+{
+    switch ((ULONG_PTR)context)
+    {
+    case 0x10:
+    case 0x11:
+    case 0x12:
+    case 0x80000010:
+    case 0x80000011:
+    case 0x80000012:
+        return (ULONG_PTR)context & 3;
+    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_UNAWARE:
+    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_SYSTEM_AWARE:
+    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE:
+        return ~(ULONG_PTR)context;
+    default:
+        return DPI_AWARENESS_INVALID;
+    }
+}
+
+/* see SetThreadDpiAwarenessContext */
+DPI_AWARENESS_CONTEXT set_thread_dpi_awareness_context( DPI_AWARENESS_CONTEXT context )
+{
+    struct user_thread_info *info = get_user_thread_info();
+    DPI_AWARENESS prev, val = get_awareness_from_dpi_awareness_context( context );
+
+    if (val == DPI_AWARENESS_INVALID)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+    if (!(prev = info->dpi_awareness))
+    {
+        prev = NtUserGetProcessDpiAwarenessContext( GetCurrentProcess() ) & 3;
+        prev |= 0x80000010;  /* restore to process default */
+    }
+    if (((ULONG_PTR)context & ~(ULONG_PTR)0x13) == 0x80000000) info->dpi_awareness = 0;
+    else info->dpi_awareness = val | 0x10;
+    return ULongToHandle( prev );
 }
 
 /**********************************************************************
@@ -1500,7 +1555,7 @@ RECT get_display_rect( const WCHAR *display )
     return map_dpi_rect( rect, system_dpi, get_thread_dpi() );
 }
 
-static RECT get_primary_monitor_rect(void)
+RECT get_primary_monitor_rect(void)
 {
     struct monitor *monitor;
     RECT rect = {0};
@@ -1932,7 +1987,7 @@ BOOL WINAPI NtUserEnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc
     return ret;
 }
 
-static BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info )
+BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info )
 {
     struct monitor *monitor;
     UINT dpi_from, dpi_to;
@@ -2046,6 +2101,27 @@ HMONITOR monitor_from_point( POINT pt, DWORD flags, UINT dpi )
 {
     RECT rect;
     SetRect( &rect, pt.x, pt.y, pt.x + 1, pt.y + 1 );
+    return monitor_from_rect( &rect, flags, dpi );
+}
+
+/* see MonitorFromWindow */
+HMONITOR monitor_from_window( HWND hwnd, DWORD flags, UINT dpi )
+{
+    RECT rect;
+    WINDOWPLACEMENT wp;
+
+    TRACE( "(%p, 0x%08x)\n", hwnd, flags );
+
+    wp.length = sizeof(wp);
+    if (is_iconic( hwnd ) && get_window_placement( hwnd, &wp ))
+        return monitor_from_rect( &wp.rcNormalPosition, flags, dpi );
+
+    if (get_window_rect( hwnd, &rect, dpi ))
+        return monitor_from_rect( &rect, flags, dpi );
+
+    if (!(flags & (MONITOR_DEFAULTTOPRIMARY|MONITOR_DEFAULTTONEAREST))) return 0;
+    /* retrieve the primary */
+    SetRect( &rect, 0, 0, 1, 1 );
     return monitor_from_rect( &rect, flags, dpi );
 }
 
@@ -2935,37 +3011,37 @@ static char spi_loaded[SPI_INDEX_COUNT];
 static struct sysparam_rgb_entry system_colors[] =
 {
 #define RGB_ENTRY(name,val,reg) { { get_rgb_entry, set_rgb_entry, init_rgb_entry, COLORS_KEY, reg }, (val) }
-    RGB_ENTRY( COLOR_SCROLLBAR, RGB(200, 200, 200), "Scrollbar" ),
-    RGB_ENTRY( COLOR_BACKGROUND, RGB(0, 0, 0), "Background" ),
-    RGB_ENTRY( COLOR_ACTIVECAPTION, RGB(153, 180, 209), "ActiveTitle" ),
-    RGB_ENTRY( COLOR_INACTIVECAPTION, RGB(191, 205, 219), "InactiveTitle" ),
-    RGB_ENTRY( COLOR_MENU, RGB(240, 240, 240), "Menu" ),
+    RGB_ENTRY( COLOR_SCROLLBAR, RGB(212, 208, 200), "Scrollbar" ),
+    RGB_ENTRY( COLOR_BACKGROUND, RGB(58, 110, 165), "Background" ),
+    RGB_ENTRY( COLOR_ACTIVECAPTION, RGB(10, 36, 106), "ActiveTitle" ),
+    RGB_ENTRY( COLOR_INACTIVECAPTION, RGB(128, 128, 128), "InactiveTitle" ),
+    RGB_ENTRY( COLOR_MENU, RGB(212, 208, 200), "Menu" ),
     RGB_ENTRY( COLOR_WINDOW, RGB(255, 255, 255), "Window" ),
-    RGB_ENTRY( COLOR_WINDOWFRAME, RGB(100, 100, 100), "WindowFrame" ),
+    RGB_ENTRY( COLOR_WINDOWFRAME, RGB(0, 0, 0), "WindowFrame" ),
     RGB_ENTRY( COLOR_MENUTEXT, RGB(0, 0, 0), "MenuText" ),
     RGB_ENTRY( COLOR_WINDOWTEXT, RGB(0, 0, 0), "WindowText" ),
-    RGB_ENTRY( COLOR_CAPTIONTEXT, RGB(0, 0, 0), "TitleText" ),
-    RGB_ENTRY( COLOR_ACTIVEBORDER, RGB(180, 180, 180), "ActiveBorder" ),
-    RGB_ENTRY( COLOR_INACTIVEBORDER, RGB(244, 247, 252), "InactiveBorder" ),
-    RGB_ENTRY( COLOR_APPWORKSPACE, RGB(171, 171, 171), "AppWorkSpace" ),
-    RGB_ENTRY( COLOR_HIGHLIGHT, RGB(0, 120, 215), "Hilight" ),
+    RGB_ENTRY( COLOR_CAPTIONTEXT, RGB(255, 255, 255), "TitleText" ),
+    RGB_ENTRY( COLOR_ACTIVEBORDER, RGB(212, 208, 200), "ActiveBorder" ),
+    RGB_ENTRY( COLOR_INACTIVEBORDER, RGB(212, 208, 200), "InactiveBorder" ),
+    RGB_ENTRY( COLOR_APPWORKSPACE, RGB(128, 128, 128), "AppWorkSpace" ),
+    RGB_ENTRY( COLOR_HIGHLIGHT, RGB(10, 36, 106), "Hilight" ),
     RGB_ENTRY( COLOR_HIGHLIGHTTEXT, RGB(255, 255, 255), "HilightText" ),
-    RGB_ENTRY( COLOR_BTNFACE, RGB(240, 240, 240), "ButtonFace" ),
-    RGB_ENTRY( COLOR_BTNSHADOW, RGB(160, 160, 160), "ButtonShadow" ),
-    RGB_ENTRY( COLOR_GRAYTEXT, RGB(109, 109, 109), "GrayText" ),
+    RGB_ENTRY( COLOR_BTNFACE, RGB(212, 208, 200), "ButtonFace" ),
+    RGB_ENTRY( COLOR_BTNSHADOW, RGB(128, 128, 128), "ButtonShadow" ),
+    RGB_ENTRY( COLOR_GRAYTEXT, RGB(128, 128, 128), "GrayText" ),
     RGB_ENTRY( COLOR_BTNTEXT, RGB(0, 0, 0), "ButtonText" ),
-    RGB_ENTRY( COLOR_INACTIVECAPTIONTEXT, RGB(0, 0, 0), "InactiveTitleText" ),
+    RGB_ENTRY( COLOR_INACTIVECAPTIONTEXT, RGB(212, 208, 200), "InactiveTitleText" ),
     RGB_ENTRY( COLOR_BTNHIGHLIGHT, RGB(255, 255, 255), "ButtonHilight" ),
-    RGB_ENTRY( COLOR_3DDKSHADOW, RGB(105, 105, 105), "ButtonDkShadow" ),
-    RGB_ENTRY( COLOR_3DLIGHT, RGB(227, 227, 227), "ButtonLight" ),
+    RGB_ENTRY( COLOR_3DDKSHADOW, RGB(64, 64, 64), "ButtonDkShadow" ),
+    RGB_ENTRY( COLOR_3DLIGHT, RGB(212, 208, 200), "ButtonLight" ),
     RGB_ENTRY( COLOR_INFOTEXT, RGB(0, 0, 0), "InfoText" ),
     RGB_ENTRY( COLOR_INFOBK, RGB(255, 255, 225), "InfoWindow" ),
-    RGB_ENTRY( COLOR_ALTERNATEBTNFACE, RGB(240, 240, 240), "ButtonAlternateFace" ),
-    RGB_ENTRY( COLOR_HOTLIGHT, RGB(0, 102, 204), "HotTrackingColor" ),
-    RGB_ENTRY( COLOR_GRADIENTACTIVECAPTION, RGB(185, 209, 234), "GradientActiveTitle" ),
-    RGB_ENTRY( COLOR_GRADIENTINACTIVECAPTION, RGB(215, 228, 242), "GradientInactiveTitle" ),
-    RGB_ENTRY( COLOR_MENUHILIGHT, RGB(51, 153, 255), "MenuHilight" ),
-    RGB_ENTRY( COLOR_MENUBAR, RGB(240, 240, 240), "MenuBar" )
+    RGB_ENTRY( COLOR_ALTERNATEBTNFACE, RGB(181, 181, 181), "ButtonAlternateFace" ),
+    RGB_ENTRY( COLOR_HOTLIGHT, RGB(0, 0, 200), "HotTrackingColor" ),
+    RGB_ENTRY( COLOR_GRADIENTACTIVECAPTION, RGB(166, 202, 240), "GradientActiveTitle" ),
+    RGB_ENTRY( COLOR_GRADIENTINACTIVECAPTION, RGB(192, 192, 192), "GradientInactiveTitle" ),
+    RGB_ENTRY( COLOR_MENUHILIGHT, RGB(10, 36, 106), "MenuHilight" ),
+    RGB_ENTRY( COLOR_MENUBAR, RGB(212, 208, 200), "MenuBar" )
 #undef RGB_ENTRY
 };
 
@@ -4533,8 +4609,12 @@ ULONG_PTR WINAPI NtUserCallNoParam( ULONG code )
 {
     switch(code)
     {
+    case NtUserGetDesktopWindow:
+        return HandleToUlong( get_desktop_window() );
     case NtUserGetInputState:
         return get_input_state();
+    case NtUserReleaseCapture:
+        return release_capture();
     /* temporary exports */
     case NtUserThreadDetach:
         thread_detach();
@@ -4576,13 +4656,16 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
     case NtUserCallHooks:
         {
             const struct win_hook_params *params = (struct win_hook_params *)arg;
-            call_hooks( params->id, params->code, params->wparam, params->lparam, params->next_unicode );
+            return call_hooks( params->id, params->code, params->wparam, params->lparam,
+                               params->next_unicode );
         }
     case NtUserFlushWindowSurfaces:
         flush_window_surfaces( arg );
         return 0;
     case NtUserGetDeskPattern:
         return get_entry( &entry_DESKPATTERN, 256, (WCHAR *)arg );
+    case NtUserGetWinProcPtr:
+        return (UINT_PTR)get_winproc_ptr( UlongToHandle(arg) );
     case NtUserHandleInternalMessage:
         {
             MSG *msg = (MSG *)arg;
@@ -4629,6 +4712,8 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
     /* temporary exports */
     case NtUserAllocHandle:
         return HandleToUlong( alloc_user_handle( (struct user_object *)arg1, arg2 ));
+    case NtUserAllocWinProc:
+        return (UINT_PTR)alloc_winproc( (WNDPROC)arg1, arg2 );
     case NtUserFreeHandle:
         return (UINT_PTR)free_user_handle( UlongToHandle(arg1), arg2 );
     case NtUserGetHandlePtr:
