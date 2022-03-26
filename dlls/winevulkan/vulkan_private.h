@@ -107,6 +107,7 @@ struct VkSwapchainKHR_T
     VkDescriptorSetLayout descriptor_set_layout;
     VkFormat format;
     BOOL fsr;
+    BOOL fsr_lite;
     float sharpness;
 
     struct fs_comp_pipeline blit_pipeline;

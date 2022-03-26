@@ -82,8 +82,6 @@ const WCHAR windows_dir[] = L"C:\\windows";
 /* system directory with trailing backslash */
 const WCHAR system_dir[] = L"C:\\windows\\system32\\";
 
-HMODULE kernel32_handle = 0;
-
 /* system search path */
 static const WCHAR system_path[] = L"C:\\windows\\system32;C:\\windows\\system;C:\\windows";
 
@@ -555,7 +553,7 @@ static WINE_MODREF *find_basename_module( LPCWSTR name )
         WINE_MODREF *mod = CONTAINING_RECORD(entry, WINE_MODREF, ldr.HashLinks);
         if (RtlEqualUnicodeString( &name_str, &mod->ldr.BaseDllName, TRUE ) && !mod->system)
         {
-            cached_modref = CONTAINING_RECORD(mod, WINE_MODREF, ldr);
+            cached_modref = CONTAINING_RECORD(&mod->ldr, WINE_MODREF, ldr);
             return cached_modref;
         }
     }
@@ -2964,6 +2962,30 @@ done:
 }
 
 
+
+/******************************************************************************
+ *	find_apiset_dll
+ */
+static NTSTATUS find_apiset_dll( const WCHAR *name, WCHAR **fullname )
+{
+    const API_SET_NAMESPACE *map = NtCurrentTeb()->Peb->ApiSetMap;
+    const API_SET_NAMESPACE_ENTRY *entry;
+    UNICODE_STRING str;
+    ULONG len;
+
+    if (get_apiset_entry( map, name, wcslen(name), &entry )) return STATUS_APISET_NOT_PRESENT;
+    if (get_apiset_target( map, entry, NULL, &str )) return STATUS_DLL_NOT_FOUND;
+
+    len = wcslen( system_dir ) + str.Length / sizeof(WCHAR);
+    if (!(*fullname = RtlAllocateHeap( GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR) )))
+        return STATUS_NO_MEMORY;
+    wcscpy( *fullname, system_dir );
+    memcpy( *fullname + wcslen( system_dir ), str.Buffer, str.Length );
+    (*fullname)[len] = 0;
+    return STATUS_SUCCESS;
+}
+
+
 /***********************************************************************
  *	get_env_var
  */
@@ -3126,17 +3148,6 @@ done:
 }
 
 /***********************************************************************
- *	is_apiset_dll_name
- *
- */
-static BOOL is_apiset_dll_name( const WCHAR *name )
-{
-    static const WCHAR name_prefix[] = L"api-ms-win-";
-
-    return !wcsnicmp( name, name_prefix, ARRAY_SIZE(name_prefix) - 1 );
-}
-
-/***********************************************************************
  *	find_dll_file
  *
  * Find the file (or already loaded module) for a given dll name.
@@ -3158,7 +3169,11 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname, UNI
 
     if (!contains_path( libname ))
     {
-        status = find_actctx_dll( libname, &fullname );
+        status = find_apiset_dll( libname, &fullname );
+        if (status == STATUS_DLL_NOT_FOUND) goto done;
+
+        if (status) status = find_actctx_dll( libname, &fullname );
+
         if (status == STATUS_SUCCESS)
         {
             TRACE ("found %s for %s\n", debugstr_w(fullname), debugstr_w(libname) );
@@ -3178,8 +3193,6 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname, UNI
     if (RtlDetermineDosPathNameType_U( libname ) == RELATIVE_PATH)
     {
         status = search_dll_file( load_path, libname, nt_name, pwm, mapping, image_info, id );
-        if (status == STATUS_DLL_NOT_FOUND && load_path && is_apiset_dll_name( libname ))
-            status = search_dll_file( NULL, libname, nt_name, pwm, mapping, image_info, id );
         if (status == STATUS_DLL_NOT_FOUND)
             status = find_builtin_without_file( libname, nt_name, pwm, mapping, image_info, id );
     }
@@ -4246,18 +4259,18 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unknown2, ULONG_PTR 
             MESSAGE( "wine: could not load kernel32.dll, status %x\n", status );
             NtTerminateProcess( GetCurrentProcess(), status );
         }
-        kernel32_handle = kernel32->ldr.DllBase;
         node_kernel32 = kernel32->ldr.DdagNode;
         RtlInitAnsiString( &func_name, "BaseThreadInitThunk" );
-        if ((status = LdrGetProcedureAddress( kernel32_handle, &func_name,
+        if ((status = LdrGetProcedureAddress( kernel32->ldr.DllBase, &func_name,
                                               0, (void **)&pBaseThreadInitThunk )) != STATUS_SUCCESS)
         {
             MESSAGE( "wine: could not find BaseThreadInitThunk in kernel32.dll, status %x\n", status );
             NtTerminateProcess( GetCurrentProcess(), status );
         }
         RtlInitAnsiString( &func_name, "CtrlRoutine" );
-        LdrGetProcedureAddress( kernel32_handle, &func_name, 0, (void **)&pCtrlRoutine );
+        LdrGetProcedureAddress( kernel32->ldr.DllBase, &func_name, 0, (void **)&pCtrlRoutine );
 
+        locale_init();
         actctx_init();
         if (wm->ldr.Flags & LDR_COR_ILONLY)
             status = fixup_imports_ilonly( wm, NULL, entry );

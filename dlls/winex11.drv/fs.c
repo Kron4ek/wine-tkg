@@ -67,7 +67,10 @@ static struct fs_monitor_size fs_monitor_sizes[] =
     {1024, 768},  /*  4:3 */
     {1600, 1200}, /*  4:3 */
     {960, 540},   /* 16:9 */
+    {1024, 576},  /* 16:9 */
+    {1024, 640},  /* 16:10 */
     {1130, 635},  /* 16:9 */
+    {1152, 720},  /* 16:10 */
     {1280, 720},  /* 16:9 */
     {1477, 831},  /* 16:9 */
     {1506, 847},  /* 16:9 */
@@ -552,15 +555,23 @@ BOOL fs_hack_is_integer(void)
     return is_int;
 }
 
-BOOL fs_hack_is_fsr(float *sharpness)
+BOOL fs_hack_is_fsr(BOOL *lite, float *sharpness)
 {
     static int is_fsr = -1;
+    static int is_fsr_lite = -1;
     int sharpness_int = 2;
     if (is_fsr < 0)
     {
         const char *e = getenv("WINE_FULLSCREEN_FSR");
         is_fsr = e && strcmp(e, "0");
     }
+    if (is_fsr_lite < 0)
+    {
+        const char *e = getenv("WINE_FULLSCREEN_FSR_LITE");
+        is_fsr_lite = e && strcmp(e, "0");
+    }
+    if (lite)
+         *lite = is_fsr_lite;
     if (sharpness)
     {
         const char *e = getenv("WINE_FULLSCREEN_FSR_STRENGTH");
@@ -570,7 +581,7 @@ BOOL fs_hack_is_fsr(float *sharpness)
         }
         *sharpness = (float) sharpness_int / 10.0f;
     }
-    TRACE("is_fsr: %s, sharpness: %2.4f\n", is_fsr ? "TRUE" : "FALSE", sharpness ? *sharpness : 0.0f);
+    TRACE("is_fsr: %s, is_lite = %s, sharpness: %2.4f\n", is_fsr ? "TRUE" : "FALSE", is_fsr_lite ? "TRUE" : "FALSE", sharpness ? *sharpness : 0.0f);
     return is_fsr;
 }
 
