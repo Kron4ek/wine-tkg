@@ -1,16 +1,16 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Mar 26 11:20:47 AM UTC 2022 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Apr  9 06:31:37 PM UTC 2022 :
 
 Local cfg files used
 
-Wine (plain) version: 7.5.r0.g4bbb43d6c7e
-Using wine-staging patchset (version 7.5.r0.g1e792e2d)
+Wine (plain) version: 7.6.r0.ga4e4e19fe0f
+Using wine-staging patchset (version 7.6.r0.g539ecd2f)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
-Applied reverting hotfix win32u_reverts.mystagingrevert
+Applied reverting hotfix win32u_reverts5.mystagingrevert
 Applied hotfix protonify_stg_syscall_emu-009.mystagingpatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
@@ -32,6 +32,8 @@ proton-vr-fshack.patch -- ( Enable Proton vr-related wined3d additions )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
+Applied hotfix remove_hooks_that_time_out-legacy.mypatch
+Applied hotfix user32.implement_rudimentary_EnableMouseInPointer_support.mypatch
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix ef6e33f.mypatch
 Applied hotfix 0001-proton-bcrypt_rdr2_fixes4.mypatch
