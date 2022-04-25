@@ -28,7 +28,6 @@
 #include "user_private.h"
 #include "controls.h"
 #include "wine/debug.h"
-#include "wine/gdi_driver.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(nonclient);
 
@@ -60,9 +59,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(nonclient);
 static void adjust_window_rect( RECT *rect, DWORD style, BOOL menu, DWORD exStyle, NONCLIENTMETRICSW *ncm )
 {
     int adjust = 0;
-
-    if (__wine_get_window_manager() == WINE_WM_X11_STEAMCOMPMGR && !((style & WS_POPUP) && (exStyle & WS_EX_TOOLWINDOW)))
-        return;
 
     if ((exStyle & (WS_EX_STATICEDGE|WS_EX_DLGMODALFRAME)) == WS_EX_STATICEDGE)
         adjust = 1; /* for the outer frame always present */
@@ -358,9 +354,6 @@ void NC_HandleNCCalcSize( HWND hwnd, WPARAM wparam, RECT *winRect )
 
     if (winRect == NULL)
         return;
-
-    if (__wine_get_window_manager() == WINE_WM_X11_STEAMCOMPMGR && !((style & WS_POPUP) && (exStyle & WS_EX_TOOLWINDOW)))
-        return 0;
 
     if (!(style & WS_MINIMIZE))
     {
@@ -1547,12 +1540,7 @@ LRESULT NC_HandleSysCommand( HWND hwnd, WPARAM wParam, LPARAM lParam )
 {
     TRACE("hwnd %p WM_SYSCOMMAND %lx %lx\n", hwnd, wParam, lParam );
 
-    if (!IsWindowEnabled( hwnd )) return 0;
-
-    if (HOOK_CallHooks( WH_CBT, HCBT_SYSCOMMAND, wParam, lParam, TRUE ))
-        return 0;
-
-    if (!USER_Driver->pSysCommand( hwnd, wParam, lParam ))
+    if (!NtUserMessageCall( hwnd, WM_SYSCOMMAND, wParam, lParam, 0, NtUserDefWindowProc, FALSE ))
         return 0;
 
     switch (wParam & 0xfff0)
@@ -1560,23 +1548,6 @@ LRESULT NC_HandleSysCommand( HWND hwnd, WPARAM wParam, LPARAM lParam )
     case SC_SIZE:
     case SC_MOVE:
         WINPOS_SysCommandSizeMove( hwnd, wParam );
-        break;
-
-    case SC_MINIMIZE:
-        ShowOwnedPopups(hwnd,FALSE);
-        NtUserShowWindow( hwnd, SW_MINIMIZE );
-        break;
-
-    case SC_MAXIMIZE:
-        if (IsIconic(hwnd))
-            ShowOwnedPopups(hwnd,TRUE);
-        NtUserShowWindow( hwnd, SW_MAXIMIZE );
-        break;
-
-    case SC_RESTORE:
-        if (IsIconic(hwnd))
-            ShowOwnedPopups(hwnd,TRUE);
-        NtUserShowWindow( hwnd, SW_RESTORE );
         break;
 
     case SC_CLOSE:

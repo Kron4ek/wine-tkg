@@ -625,7 +625,7 @@ static BOOL init_systray(void)
         sprintf( systray_buffer, "_NET_SYSTEM_TRAY_S%u", DefaultScreen( display ) );
         systray_atom = XInternAtom( display, systray_buffer, False );
     }
-    XSelectInput( display, root_window, StructureNotifyMask | PropertyChangeMask );
+    XSelectInput( display, root_window, StructureNotifyMask );
 
     init_done = TRUE;
     return TRUE;

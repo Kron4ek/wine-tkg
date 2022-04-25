@@ -444,7 +444,7 @@ BOOL WINAPI SystemParametersInfoA( UINT uiAction, UINT uiParam,
  */
 INT WINAPI GetSystemMetrics( INT index )
 {
-    return NtUserCallOneParam( index, NtUserGetSystemMetrics );
+    return NtUserGetSystemMetrics( index );
 }
 
 
@@ -453,7 +453,7 @@ INT WINAPI GetSystemMetrics( INT index )
  */
 INT WINAPI GetSystemMetricsForDpi( INT index, UINT dpi )
 {
-    return NtUserCallTwoParam( index, dpi, NtUserGetSystemMetricsForDpi );
+    return NtUserGetSystemMetricsForDpi( index, dpi );
 }
 
 
@@ -486,7 +486,7 @@ BOOL WINAPI SetDoubleClickTime( UINT interval )
  */
 COLORREF WINAPI DECLSPEC_HOTPATCH GetSysColor( INT index )
 {
-    return NtUserCallOneParam( index, NtUserGetSysColor );
+    return NtUserGetSysColor( index );
 }
 
 
@@ -505,7 +505,7 @@ DWORD_PTR WINAPI SetSysColorsTemp( const COLORREF *pPens, const HBRUSH *pBrushes
  */
 HBRUSH WINAPI DECLSPEC_HOTPATCH GetSysColorBrush( INT index )
 {
-    return UlongToHandle( NtUserCallOneParam( index, NtUserGetSysColorBrush ));
+    return NtUserGetSysColorBrush( index );
 }
 
 
@@ -514,7 +514,7 @@ HBRUSH WINAPI DECLSPEC_HOTPATCH GetSysColorBrush( INT index )
  */
 HPEN SYSCOLOR_GetPen( INT index )
 {
-    return UlongToHandle( NtUserCallOneParam( index, NtUserGetSysColorPen ));
+    return NtUserGetSysColorPen( index );
 }
 
 
@@ -523,7 +523,7 @@ HPEN SYSCOLOR_GetPen( INT index )
  */
 HBRUSH SYSCOLOR_Get55AABrush(void)
 {
-    return UlongToHandle( NtUserCallOneParam( COLOR_55AA_BRUSH, NtUserGetSysColorBrush ));
+    return NtUserGetSysColorBrush( COLOR_55AA_BRUSH );
 }
 
 /***********************************************************************
@@ -994,7 +994,7 @@ BOOL WINAPI PhysicalToLogicalPointForPerMonitorDPI( HWND hwnd, POINT *pt )
  */
 HMONITOR WINAPI MonitorFromRect( const RECT *rect, DWORD flags )
 {
-    return UlongToHandle( NtUserCallTwoParam( (LONG_PTR)rect, flags, NtUserMonitorFromRect ));
+    return NtUserMonitorFromRect( rect, flags );
 }
 
 /***********************************************************************
@@ -1013,7 +1013,7 @@ HMONITOR WINAPI MonitorFromPoint( POINT pt, DWORD flags )
  */
 HMONITOR WINAPI MonitorFromWindow( HWND hwnd, DWORD flags )
 {
-    return UlongToHandle( NtUserCallHwndParam(  hwnd, flags, NtUserMonitorFromWindow ));
+    return NtUserMonitorFromWindow( hwnd, flags );
 }
 
 /***********************************************************************
@@ -1045,7 +1045,7 @@ BOOL WINAPI GetMonitorInfoA( HMONITOR monitor, LPMONITORINFO info )
  */
 BOOL WINAPI GetMonitorInfoW( HMONITOR monitor, LPMONITORINFO info )
 {
-    return NtUserCallTwoParam( HandleToUlong(monitor), (ULONG_PTR)info, NtUserGetMonitorInfo );
+    return NtUserGetMonitorInfo( monitor, info );
 }
 
 #ifdef __i386__

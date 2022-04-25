@@ -42,8 +42,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(class);
 
 static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
 
-#define CLASS_OTHER_PROCESS ((CLASS *)1)
-
 static inline const char *debugstr_us( const UNICODE_STRING *us )
 {
     if (!us) return "<null>";
@@ -352,15 +350,6 @@ void register_desktop_class(void)
 
 
 /***********************************************************************
- *           get_class_winproc
- */
-WNDPROC get_class_winproc( CLASS *class )
-{
-    return class->winproc;
-}
-
-
-/***********************************************************************
  *		RegisterClassA (USER32.@)
  *
  * Register a window class.
@@ -504,7 +493,7 @@ BOOL WINAPI UnregisterClassW( LPCWSTR className, HINSTANCE hInstance )
  */
 WORD WINAPI GetClassWord( HWND hwnd, INT offset )
 {
-    return NtUserCallHwndParam( hwnd, offset, NtUserGetClassWord );
+    return NtUserGetClassWord( hwnd, offset );
 }
 
 
@@ -513,7 +502,7 @@ WORD WINAPI GetClassWord( HWND hwnd, INT offset )
  */
 DWORD WINAPI GetClassLongW( HWND hwnd, INT offset )
 {
-    return NtUserCallHwndParam( hwnd, offset, NtUserGetClassLongW );
+    return NtUserGetClassLongW( hwnd, offset );
 }
 
 
@@ -523,7 +512,7 @@ DWORD WINAPI GetClassLongW( HWND hwnd, INT offset )
  */
 DWORD WINAPI GetClassLongA( HWND hwnd, INT offset )
 {
-    return NtUserCallHwndParam( hwnd, offset, NtUserGetClassLongA );
+    return NtUserGetClassLongA( hwnd, offset );
 }
 
 
@@ -788,7 +777,7 @@ BOOL16 WINAPI ClassNext16( CLASSENTRY *pClassEntry )
  */
 ULONG_PTR WINAPI GetClassLongPtrA( HWND hwnd, INT offset )
 {
-    return NtUserCallHwndParam( hwnd, offset, NtUserGetClassLongPtrA );
+    return NtUserGetClassLongPtrA( hwnd, offset );
 }
 
 /***********************************************************************
@@ -796,7 +785,7 @@ ULONG_PTR WINAPI GetClassLongPtrA( HWND hwnd, INT offset )
  */
 ULONG_PTR WINAPI GetClassLongPtrW( HWND hwnd, INT offset )
 {
-    return NtUserCallHwndParam( hwnd, offset, NtUserGetClassLongPtrW );
+    return NtUserGetClassLongPtrW( hwnd, offset );
 }
 
 /***********************************************************************

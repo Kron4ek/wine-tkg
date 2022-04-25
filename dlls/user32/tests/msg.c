@@ -10816,8 +10816,7 @@ todo_wine
            || broken(syscount > 4000 && syscount < 12000) /* win2k3sp0 */,
            "did not get expected count for minimum timeout (%d != ~%d).\n",
            syscount, TIMER_COUNT_EXPECTED);
-        todo_wine ok(count == 0, "did not get expected count for callback timeout (%d != 0).\n",
-                                 count);
+        ok(count == 0, "did not get expected count for callback timeout (%d != 0).\n", count);
         ok(pKillSystemTimer(info.hWnd, id), "KillSystemTimer failed\n");
     }
 

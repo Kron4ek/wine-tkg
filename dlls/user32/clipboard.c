@@ -655,7 +655,7 @@ BOOL WINAPI OpenClipboard( HWND hwnd )
 
     TRACE( "%p\n", hwnd );
 
-    USER_Driver->pUpdateClipboard();
+    NtUserCallNoParam( NtUserUpdateClipboard );
 
     EnterCriticalSection( &clipboard_cs );
 
@@ -670,31 +670,6 @@ BOOL WINAPI OpenClipboard( HWND hwnd )
     if (ret && !WIN_IsCurrentProcess( owner )) invalidate_memory_formats();
 
     LeaveCriticalSection( &clipboard_cs );
-    return ret;
-}
-
-
-/**************************************************************************
- *		CloseClipboard (USER32.@)
- */
-BOOL WINAPI CloseClipboard(void)
-{
-    HWND viewer = 0, owner = 0;
-    BOOL ret;
-
-    TRACE( "\n" );
-
-    SERVER_START_REQ( close_clipboard )
-    {
-        if ((ret = !wine_server_call_err( req )))
-        {
-            viewer = wine_server_ptr_handle( reply->viewer );
-            owner = wine_server_ptr_handle( reply->owner );
-        }
-    }
-    SERVER_END_REQ;
-
-    if (viewer) SendNotifyMessageW( viewer, WM_DRAWCLIPBOARD, (WPARAM)owner, 0 );
     return ret;
 }
 
@@ -724,58 +699,6 @@ BOOL WINAPI EmptyClipboard(void)
 
     LeaveCriticalSection( &clipboard_cs );
     return ret;
-}
-
-
-/**************************************************************************
- *		SetClipboardViewer (USER32.@)
- */
-HWND WINAPI SetClipboardViewer( HWND hwnd )
-{
-    HWND prev = 0, owner = 0;
-
-    SERVER_START_REQ( set_clipboard_viewer )
-    {
-        req->viewer = wine_server_user_handle( hwnd );
-        if (!wine_server_call_err( req ))
-        {
-            prev = wine_server_ptr_handle( reply->old_viewer );
-            owner = wine_server_ptr_handle( reply->owner );
-        }
-    }
-    SERVER_END_REQ;
-
-    if (hwnd) SendNotifyMessageW( hwnd, WM_DRAWCLIPBOARD, (WPARAM)owner, 0 );
-
-    TRACE( "%p returning %p\n", hwnd, prev );
-    return prev;
-}
-
-
-/**************************************************************************
- *              ChangeClipboardChain (USER32.@)
- */
-BOOL WINAPI ChangeClipboardChain( HWND hwnd, HWND next )
-{
-    NTSTATUS status;
-    HWND viewer;
-
-    if (!hwnd) return FALSE;
-
-    SERVER_START_REQ( set_clipboard_viewer )
-    {
-        req->viewer = wine_server_user_handle( next );
-        req->previous = wine_server_user_handle( hwnd );
-        status = wine_server_call( req );
-        viewer = wine_server_ptr_handle( reply->old_viewer );
-    }
-    SERVER_END_REQ;
-
-    if (status == STATUS_PENDING)
-        return !SendMessageW( viewer, WM_CHANGECBCHAIN, (WPARAM)hwnd, (LPARAM)next );
-
-    if (status) SetLastError( RtlNtStatusToDosError( status ));
-    return !status;
 }
 
 
@@ -841,21 +764,7 @@ done:
  */
 UINT WINAPI EnumClipboardFormats( UINT format )
 {
-    UINT ret = 0;
-
-    SERVER_START_REQ( enum_clipboard_formats )
-    {
-        req->previous = format;
-        if (!wine_server_call_err( req ))
-        {
-            ret = reply->format;
-            SetLastError( ERROR_SUCCESS );
-        }
-    }
-    SERVER_END_REQ;
-
-    TRACE( "%s -> %s\n", debugstr_format( format ), debugstr_format( ret ));
-    return ret;
+    return NtUserEnumClipboardFormats( format );
 }
 
 

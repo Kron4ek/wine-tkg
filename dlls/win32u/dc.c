@@ -755,6 +755,13 @@ HDC WINAPI NtGdiOpenDCW( UNICODE_STRING *device, const DEVMODEW *devmode, UNICOD
 
     DC_InitDC( dc );
     release_dc_ptr( dc );
+
+    if (driver_info && driver_info->cVersion == NTGDI_WIN16_DIB &&
+        !create_dib_surface( hdc, pdev ))
+    {
+        NtGdiDeleteObjectApp( hdc );
+        return 0;
+    }
     return hdc;
 }
 
@@ -950,6 +957,109 @@ BOOL WINAPI NtGdiGetAndSetDCDword( HDC hdc, UINT method, DWORD value, DWORD *pre
     if (!ret || !prev_value) return FALSE;
     *prev_value = prev;
     return TRUE;
+}
+
+
+/***********************************************************************
+ *           NtGdiGetDCDword    (win32u.@)
+ */
+BOOL WINAPI NtGdiGetDCDword( HDC hdc, UINT method, DWORD *result )
+{
+    BOOL ret = TRUE;
+    DC *dc;
+
+    if (!(dc = get_dc_ptr( hdc ))) return 0;
+
+    switch (method)
+    {
+    case NtGdiGetArcDirection:
+        *result = dc->attr->arc_direction;
+        break;
+
+    case NtGdiGetBkColor:
+        *result = dc->attr->background_color;
+        break;
+
+    case NtGdiGetBkMode:
+        *result = dc->attr->background_mode;
+        break;
+
+    case NtGdiGetDCBrushColor:
+        *result = dc->attr->brush_color;
+        break;
+
+    case NtGdiGetDCPenColor:
+        *result = dc->attr->pen_color;
+        break;
+
+    case NtGdiGetGraphicsMode:
+        *result = dc->attr->graphics_mode;
+        break;
+
+    case NtGdiGetLayout:
+        *result = dc->attr->layout;
+        break;
+
+    case NtGdiGetPolyFillMode:
+        *result = dc->attr->poly_fill_mode;
+        break;
+
+    case NtGdiGetROP2:
+        *result = dc->attr->rop_mode;
+        break;
+
+    case NtGdiGetTextColor:
+        *result = dc->attr->text_color;
+        break;
+
+    case NtGdiIsMemDC:
+        *result = get_gdi_object_type( hdc ) == NTGDI_OBJ_MEMDC;
+        break;
+
+    default:
+        WARN( "unknown method %u\n", method );
+        ret = FALSE;
+        break;
+    }
+
+    release_dc_ptr( dc );
+    return ret;
+}
+
+
+/***********************************************************************
+ *           NtGdiGetDCPoint    (win32u.@)
+ */
+BOOL WINAPI NtGdiGetDCPoint( HDC hdc, UINT method, POINT *result )
+{
+    BOOL ret = TRUE;
+    DC *dc;
+
+    if (!(dc = get_dc_ptr( hdc ))) return 0;
+
+    switch (method)
+    {
+    case NtGdiGetBrushOrgEx:
+        *result = dc->attr->brush_org;
+        break;
+
+    case NtGdiGetCurrentPosition:
+        *result = dc->attr->cur_pos;
+        break;
+
+    case NtGdiGetDCOrg:
+        result->x = dc->attr->vis_rect.left;
+        result->y = dc->attr->vis_rect.top;
+        break;
+
+    default:
+        WARN( "unknown method %u\n", method );
+        ret = FALSE;
+        break;
+    }
+
+    release_dc_ptr( dc );
+    return ret;
 }
 
 
@@ -1230,7 +1340,7 @@ UINT WINAPI NtGdiGetBoundsRect( HDC hdc, RECT *rect, UINT flags )
 
     if (rect)
     {
-        if (is_rect_empty( &dc->bounds ))
+        if (IsRectEmpty( &dc->bounds ))
         {
             rect->left = rect->top = rect->right = rect->bottom = 0;
             ret = DCB_RESET;
@@ -1275,7 +1385,7 @@ UINT WINAPI NtGdiSetBoundsRect( HDC hdc, const RECT *rect, UINT flags )
     }
 
     ret = (dc->bounds_enabled ? DCB_ENABLE : DCB_DISABLE) |
-          (is_rect_empty( &dc->bounds ) ? ret & DCB_SET : DCB_SET);
+          (IsRectEmpty( &dc->bounds ) ? ret & DCB_SET : DCB_SET);
 
     if (flags & DCB_RESET) reset_bounds( &dc->bounds );
 

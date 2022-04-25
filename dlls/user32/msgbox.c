@@ -381,7 +381,7 @@ static void MSGBOX_CopyToClipbaord( HWND hwnd )
             OpenClipboard(hwnd);
             EmptyClipboard();
             SetClipboardData(CF_UNICODETEXT, hMem);
-            CloseClipboard();
+            NtUserCloseClipboard();
         }
 
         heap_free(text);

@@ -1600,7 +1600,7 @@ static BOOL set_pixel_format(HDC hdc, int fmt, BOOL allow_reset)
 
 done:
     release_win_data(data);
-    if (ret && gl_surface_mode == GL_SURFACE_BEHIND) __wine_set_pixel_format(hwnd, fmt);
+    if (ret && gl_surface_mode == GL_SURFACE_BEHIND) NtUserSetWindowPixelFormat(hwnd, fmt);
     return ret;
 }
 
@@ -4632,7 +4632,7 @@ static struct opengl_funcs opengl_funcs =
 /**********************************************************************
  *              macdrv_wine_get_wgl_driver
  */
-struct opengl_funcs * CDECL macdrv_wine_get_wgl_driver(UINT version)
+struct opengl_funcs *macdrv_wine_get_wgl_driver(UINT version)
 {
     static INIT_ONCE opengl_init = INIT_ONCE_STATIC_INIT;
 

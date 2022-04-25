@@ -749,6 +749,18 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
     return unix_funcs->pNtUserCallHwndParam( hwnd, param, code );
 }
 
+BOOL WINAPI NtUserCloseClipboard(void)
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserCloseClipboard();
+}
+
+BOOL WINAPI NtUserChangeClipboardChain( HWND hwnd, HWND next )
+{
+    if (!unix_funcs) return DISP_CHANGE_FAILED;
+    return unix_funcs->pNtUserChangeClipboardChain( hwnd, next );
+}
+
 LONG WINAPI NtUserChangeDisplaySettings( UNICODE_STRING *devname, DEVMODEW *devmode, HWND hwnd,
                                          DWORD flags, void *lparam )
 {
@@ -768,6 +780,18 @@ INT WINAPI NtUserCountClipboardFormats(void)
     return unix_funcs->pNtUserCountClipboardFormats();
 }
 
+HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
+                                  UNICODE_STRING *version, UNICODE_STRING *window_name,
+                                  DWORD style, INT x, INT y, INT width, INT height,
+                                  HWND parent, HMENU menu, HINSTANCE instance, void *params,
+                                  DWORD flags, CBT_CREATEWNDW *cbtc, DWORD unk, BOOL ansi )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserCreateWindowEx( ex_style, class_name, version, window_name,
+                                              style, x, y, width, height, parent, menu,
+                                              instance, params, flags, cbtc, unk, ansi );
+}
+
 HDWP WINAPI NtUserDeferWindowPosAndBand( HDWP hdwp, HWND hwnd, HWND after,
                                          INT x, INT y, INT cx, INT cy,
                                          UINT flags, UINT unk1, UINT unk2 )
@@ -783,10 +807,22 @@ BOOL WINAPI NtUserDestroyCursor( HCURSOR cursor, ULONG arg )
     return unix_funcs->pNtUserDestroyCursor( cursor, arg );
 }
 
+BOOL WINAPI NtUserDestroyMenu( HMENU handle )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserDestroyMenu( handle );
+}
+
 BOOL WINAPI NtUserDestroyWindow( HWND hwnd )
 {
     if (!unix_funcs) return FALSE;
     return unix_funcs->pNtUserDestroyWindow( hwnd );
+}
+
+LRESULT WINAPI NtUserDispatchMessage( const MSG *msg )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserDispatchMessage( msg );
 }
 
 BOOL WINAPI NtUserDrawIconEx( HDC hdc, INT x0, INT y0, HICON icon, INT width,
@@ -794,6 +830,12 @@ BOOL WINAPI NtUserDrawIconEx( HDC hdc, INT x0, INT y0, HICON icon, INT width,
 {
     if (!unix_funcs) return FALSE;
     return unix_funcs->pNtUserDrawIconEx( hdc, x0, y0, icon, width, height, istep, hbr, flags );
+}
+
+BOOL WINAPI NtUserEnableMenuItem( HMENU handle, UINT id, UINT flags )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserEnableMenuItem( handle, id, flags );
 }
 
 BOOL WINAPI NtUserEndDeferWindowPosEx( HDWP hdwp, BOOL async )
@@ -820,6 +862,12 @@ BOOL WINAPI NtUserEnumDisplaySettings( UNICODE_STRING *device, DWORD mode,
 {
     if (!unix_funcs) return FALSE;
     return unix_funcs->pNtUserEnumDisplaySettings( device, mode, dev_mode, flags );
+}
+
+INT WINAPI NtUserExcludeUpdateRgn( HDC hdc, HWND hwnd )
+{
+    if (!unix_funcs) return ERROR;
+    return unix_funcs->pNtUserExcludeUpdateRgn( hdc, hwnd );
 }
 
 BOOL WINAPI NtUserFlashWindowEx( FLASHWINFO *info )
@@ -879,6 +927,12 @@ INT WINAPI NtUserGetKeyNameText( LONG lparam, WCHAR *buffer, INT size )
     return unix_funcs->pNtUserGetKeyNameText( lparam, buffer, size );
 }
 
+BOOL WINAPI NtUserGetMessage( MSG *msg, HWND hwnd, UINT first, UINT last )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserGetMessage( msg, hwnd, first, last );
+}
+
 BOOL WINAPI NtUserGetUpdateRect( HWND hwnd, RECT *rect, BOOL erase )
 {
     if (!unix_funcs) return FALSE;
@@ -927,6 +981,38 @@ UINT WINAPI NtUserMapVirtualKeyEx( UINT code, UINT type, HKL layout )
     return unix_funcs->pNtUserMapVirtualKeyEx( code, type, layout );
 }
 
+LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                  void *result_info, DWORD type, BOOL ansi )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserMessageCall( hwnd, msg, wparam, lparam, result_info, type, ansi );
+}
+
+DWORD WINAPI NtUserMsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
+                                                DWORD timeout, DWORD mask, DWORD flags )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserMsgWaitForMultipleObjectsEx( count, handles, timeout, mask, flags );
+}
+
+BOOL WINAPI NtUserPeekMessage( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserPeekMessage( msg_out, hwnd, first, last, flags );
+}
+
+BOOL WINAPI NtUserPostMessage( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserPostMessage( hwnd, msg, wparam, lparam );
+}
+
+BOOL WINAPI NtUserPostThreadMessage( DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserPostThreadMessage( thread, msg, wparam, lparam );
+}
+
 BOOL WINAPI NtUserRedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags )
 {
     if (!unix_funcs) return FALSE;
@@ -966,6 +1052,12 @@ HPALETTE WINAPI NtUserSelectPalette( HDC hdc, HPALETTE hpal, WORD bkg )
     return unix_funcs->pNtUserSelectPalette( hdc, hpal, bkg );
 }
 
+UINT WINAPI NtUserSendInput( UINT count, INPUT *inputs, int size )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserSendInput( count, inputs, size );
+}
+
 HWND WINAPI NtUserSetActiveWindow( HWND hwnd )
 {
     if (!unix_funcs) return 0;
@@ -1002,6 +1094,12 @@ WORD WINAPI NtUserSetClassWord( HWND hwnd, INT offset, WORD newval )
     return unix_funcs->pNtUserSetClassWord( hwnd, offset, newval );
 }
 
+HWND WINAPI NtUserSetClipboardViewer( HWND hwnd )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserSetClipboardViewer( hwnd );
+}
+
 BOOL WINAPI NtUserSetCursorIconData( HCURSOR cursor, UNICODE_STRING *module, UNICODE_STRING *res_name,
                                      struct cursoricon_desc *desc )
 {
@@ -1025,6 +1123,12 @@ BOOL WINAPI NtUserSetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alph
 {
     if (!unix_funcs) return FALSE;
     return unix_funcs->pNtUserSetLayeredWindowAttributes( hwnd, key, alpha, flags );
+}
+
+BOOL WINAPI NtUserSetMenu( HWND hwnd, HMENU menu )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserSetMenu( hwnd, menu );
 }
 
 HWND WINAPI NtUserSetParent( HWND hwnd, HWND parent )
@@ -1106,6 +1210,12 @@ INT WINAPI NtUserToUnicodeEx( UINT virt, UINT scan, const BYTE *state,
     return unix_funcs->pNtUserToUnicodeEx( virt, scan, state, str, size, flags, layout );
 }
 
+BOOL WINAPI NtUserTranslateMessage( const MSG *msg, UINT flags )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserTranslateMessage( msg, flags );
+}
+
 BOOL WINAPI NtUserUnregisterClass( UNICODE_STRING *name, HINSTANCE instance,
                                    struct client_menu_name *client_menu_name )
 {
@@ -1134,6 +1244,12 @@ WORD WINAPI NtUserVkKeyScanEx( WCHAR chr, HKL layout )
     return unix_funcs->pNtUserVkKeyScanEx( chr, layout );
 }
 
+DWORD WINAPI NtUserWaitForInputIdle( HANDLE process, DWORD timeout, BOOL wow )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserWaitForInputIdle( process, timeout, wow );
+}
+
 HWND WINAPI NtUserWindowFromPoint( LONG x, LONG y )
 {
     if (!unix_funcs) return 0;
@@ -1152,13 +1268,6 @@ BOOL CDECL __wine_get_icm_profile( HDC hdc, BOOL allow_default, DWORD *size, WCH
 {
     if (!unix_funcs) return FALSE;
     return unix_funcs->get_icm_profile( hdc, allow_default, size, filename );
-}
-
-void CDECL __wine_set_visible_region( HDC hdc, HRGN hrgn, const RECT *vis_rect, const RECT *device_rect,
-                                      struct window_surface *surface )
-{
-    if (!unix_funcs) return;
-    unix_funcs->set_visible_region( hdc, hrgn, vis_rect, device_rect, surface );
 }
 
 BOOL CDECL __wine_get_brush_bitmap_info( HBRUSH handle, BITMAPINFO *info, void *bits, UINT *usage )
@@ -1185,13 +1294,19 @@ struct opengl_funcs * CDECL __wine_get_wgl_driver( HDC hdc, UINT version )
     return unix_funcs->get_wgl_driver( hdc, version );
 }
 
+BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->wine_send_input( hwnd, input, rawinput );
+}
+
 /***********************************************************************
- *           __wine_set_display_driver    (win32u.@)
+ *           __wine_set_user_driver    (win32u.@)
  */
-void CDECL __wine_set_display_driver( struct user_driver_funcs *funcs, UINT version )
+void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version )
 {
     if (!unix_funcs) return;
-    return unix_funcs->set_display_driver( funcs, version );
+    return unix_funcs->set_user_driver( funcs, version );
 }
 
 extern void wrappers_init( unixlib_handle_t handle )

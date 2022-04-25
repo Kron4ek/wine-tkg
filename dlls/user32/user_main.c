@@ -26,6 +26,7 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "imm.h"
+#include "ddk/imm.h"
 
 #include "controls.h"
 #include "user_private.h"
@@ -33,6 +34,7 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(graphics);
+WINE_DECLARE_DEBUG_CHANNEL(message);
 
 HMODULE user32_module = 0;
 
@@ -74,7 +76,7 @@ void USER_CheckNotLock(void)
  */
 UINT WINAPI UserRealizePalette( HDC hdc )
 {
-    return NtUserCallOneParam( HandleToUlong(hdc), NtUserRealizePalette );
+    return NtUserRealizePalette( hdc );
 }
 
 
@@ -140,16 +142,19 @@ static void CDECL notify_ime( HWND hwnd, UINT param )
     if (ime_default) SendMessageW( ime_default, WM_IME_INTERNAL, param, HandleToUlong(hwnd) );
 }
 
-void WINAPI unregister_imm( HWND hwnd )
+static BOOL WINAPI register_imm( HWND hwnd )
+{
+    return imm_register_window( hwnd );
+}
+
+static void WINAPI unregister_imm( HWND hwnd )
 {
     imm_unregister_window( hwnd );
 }
 
 static void CDECL free_win_ptr( WND *win )
 {
-    HeapFree( GetProcessHeap(), 0, win->text );
     HeapFree( GetProcessHeap(), 0, win->pScroll );
-    HeapFree( GetProcessHeap(), 0, win );
 }
 
 static const struct user_callbacks user_funcs =
@@ -157,24 +162,25 @@ static const struct user_callbacks user_funcs =
     AdjustWindowRectEx,
     CopyImage,
     DestroyCaret,
-    DestroyMenu,
     EndMenu,
     HideCaret,
-    PostMessageW,
-    SendInput,
-    SendMessageTimeoutW,
-    SendMessageW,
-    SendNotifyMessageW,
+    ImmProcessKey,
+    ImmTranslateMessage,
+    SetSystemMenu,
     ShowCaret,
-    WaitForInputIdle,
+    free_menu_items,
     free_win_ptr,
     MENU_IsMenuActive,
     notify_ime,
+    post_dde_message,
+    process_rawinput_message,
+    rawinput_device_get_usages,
     register_builtin_classes,
-    MSG_SendInternalMessageTimeout,
     SCROLL_SetStandardScrollPainted,
-    (void *)__wine_set_user_driver,
-    set_window_pos,
+    toggle_caret,
+    unpack_dde_message,
+    update_mouse_tracking_info,
+    register_imm,
     unregister_imm,
 };
 
@@ -186,7 +192,9 @@ static BOOL WINAPI User32LoadDriver( const WCHAR *path, ULONG size )
 static const void *kernel_callback_table[NtUserCallCount] =
 {
     User32CallEnumDisplayMonitor,
+    User32CallSendAsyncCallback,
     User32CallWinEventHook,
+    User32CallWindowProc,
     User32CallWindowsHook,
     User32LoadDriver,
 };
@@ -264,7 +272,6 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
         thread_detach();
         break;
     case DLL_PROCESS_DETACH:
-        USER_unload_driver();
         FreeLibrary(imm32_module);
         break;
     }
@@ -347,4 +354,25 @@ BOOL WINAPI ShutdownBlockReasonDestroy(HWND hwnd)
     FIXME("(%p): stub\n", hwnd);
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
+}
+
+const char *SPY_GetMsgName( UINT msg, HWND hwnd )
+{
+    return (const char *)NtUserCallHwndParam( hwnd, msg, NtUserSpyGetMsgName );
+}
+
+const char *SPY_GetVKeyName( WPARAM wparam )
+{
+    return (const char *)NtUserCallOneParam( wparam, NtUserSpyGetVKeyName );
+}
+
+void SPY_EnterMessage( INT flag, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+{
+    if (TRACE_ON(message)) NtUserMessageCall( hwnd, msg, wparam, lparam, 0, NtUserSpyEnter, flag );
+}
+
+void SPY_ExitMessage( INT flag, HWND hwnd, UINT msg, LRESULT lreturn, WPARAM wparam, LPARAM lparam )
+{
+    if (TRACE_ON(message)) NtUserMessageCall( hwnd, msg, wparam, lparam, (void *)lreturn,
+                                              NtUserSpyExit, flag );
 }

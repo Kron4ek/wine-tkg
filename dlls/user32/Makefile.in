@@ -19,7 +19,6 @@ C_SRCS = \
 	defwnd.c \
 	desktop.c \
 	dialog.c \
-	driver.c \
 	edit.c \
 	exticon.c \
 	focus.c \
@@ -39,7 +38,6 @@ C_SRCS = \
 	rawinput.c \
 	resource.c \
 	scroll.c \
-	spy.c \
 	static.c \
 	sysparams.c \
 	text.c \

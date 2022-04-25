@@ -15,7 +15,6 @@
 #define WINE_VK_VERSION VK_API_VERSION_1_3
 
 /* Functions for which we have custom implementations outside of the thunks. */
-NTSTATUS wine_vkAcquireNextImage2KHR(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkAllocateCommandBuffers(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkCreateCommandPool(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkCreateComputePipelines(void *args) DECLSPEC_HIDDEN;
@@ -26,7 +25,6 @@ NTSTATUS wine_vkCreateGraphicsPipelines(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkCreateInstance(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkCreateRayTracingPipelinesKHR(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkCreateRayTracingPipelinesNV(void *args) DECLSPEC_HIDDEN;
-NTSTATUS wine_vkCreateSwapchainKHR(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkCreateWin32SurfaceKHR(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkDestroyCommandPool(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkDestroyDebugReportCallbackEXT(void *args) DECLSPEC_HIDDEN;
@@ -34,7 +32,6 @@ NTSTATUS wine_vkDestroyDebugUtilsMessengerEXT(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkDestroyDevice(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkDestroyInstance(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkDestroySurfaceKHR(void *args) DECLSPEC_HIDDEN;
-NTSTATUS wine_vkDestroySwapchainKHR(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkEnumerateDeviceExtensionProperties(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkEnumerateDeviceLayerProperties(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkEnumerateInstanceExtensionProperties(void *args) DECLSPEC_HIDDEN;
@@ -60,8 +57,6 @@ NTSTATUS wine_vkGetPhysicalDeviceImageFormatProperties2(void *args) DECLSPEC_HID
 NTSTATUS wine_vkGetPhysicalDeviceImageFormatProperties2KHR(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkGetPhysicalDeviceSurfaceCapabilities2KHR(void *args) DECLSPEC_HIDDEN;
 NTSTATUS wine_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(void *args) DECLSPEC_HIDDEN;
-NTSTATUS wine_vkGetSwapchainImagesKHR(void *args) DECLSPEC_HIDDEN;
-NTSTATUS wine_vkQueuePresentKHR(void *args) DECLSPEC_HIDDEN;
 
 /* Private thunks */
 VkResult thunk_vkCreateComputePipelines(VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount, const VkComputePipelineCreateInfo *pCreateInfos, const VkAllocationCallbacks *pAllocator, VkPipeline *pPipelines) DECLSPEC_HIDDEN;
@@ -1659,22 +1654,6 @@ typedef struct VkBindSparseInfo_host
 } VkBindSparseInfo_host;
 #else
 typedef VkBindSparseInfo VkBindSparseInfo_host;
-#endif
-
-#if defined(USE_STRUCT_CONVERSION)
-typedef struct VkPresentInfoKHR_host
-{
-    VkStructureType sType;
-    const void *pNext;
-    uint32_t waitSemaphoreCount;
-    const VkSemaphore *pWaitSemaphores;
-    uint32_t swapchainCount;
-    const VkSwapchainKHR *pSwapchains;
-    const uint32_t *pImageIndices;
-    VkResult *pResults;
-} VkPresentInfoKHR_host;
-#else
-typedef VkPresentInfoKHR VkPresentInfoKHR_host;
 #endif
 
 #if defined(USE_STRUCT_CONVERSION)

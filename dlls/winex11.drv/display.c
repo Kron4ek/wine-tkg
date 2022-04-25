@@ -19,190 +19,51 @@
  */
 
 #include "config.h"
-
-#include <stdarg.h>
-#include <stdlib.h>
-
-#include "windef.h"
-#include "winbase.h"
-#include "rpc.h"
-#include "winreg.h"
-#include "cfgmgr32.h"
-#include "initguid.h"
-#include "devguid.h"
-#include "devpkey.h"
-#include "ntddvdeo.h"
-#include "setupapi.h"
-#define WIN32_NO_STATUS
-#include "winternl.h"
-#include "wine/debug.h"
-#include "wine/unicode.h"
 #include "x11drv.h"
+#include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(x11drv);
-
-/* Wine specific properties */
-DEFINE_DEVPROPKEY(WINE_DEVPROPKEY_MONITOR_RCMONITOR, 0x233a9ef3, 0xafc4, 0x4abd, 0xb5, 0x64, 0xc3, 0x2f, 0x21, 0xf1, 0x53, 0x5b, 3);
-
-static const WCHAR displayW[] = {'D','I','S','P','L','A','Y',0};
-static const WCHAR video_keyW[] = {
-    'H','A','R','D','W','A','R','E','\\',
-    'D','E','V','I','C','E','M','A','P','\\',
-    'V','I','D','E','O',0};
 
 static struct x11drv_display_device_handler host_handler;
 struct x11drv_display_device_handler desktop_handler;
 
-/* Cached screen information, protected by screen_section */
-static HKEY video_key;
-static RECT native_screen_rect;
-static RECT virtual_screen_rect;
-static RECT primary_monitor_rect;
-static FILETIME last_query_screen_time;
-static CRITICAL_SECTION screen_section;
-static CRITICAL_SECTION_DEBUG screen_critsect_debug =
-{
-    0, 0, &screen_section,
-    {&screen_critsect_debug.ProcessLocksList, &screen_critsect_debug.ProcessLocksList},
-     0, 0, {(DWORD_PTR)(__FILE__ ": screen_section")}
-};
-static CRITICAL_SECTION screen_section = {&screen_critsect_debug, -1, 0, 0, 0, 0};
-
 HANDLE get_display_device_init_mutex(void)
 {
-    static const WCHAR init_mutexW[] = {'d','i','s','p','l','a','y','_','d','e','v','i','c','e','_','i','n','i','t',0};
-    HANDLE mutex = CreateMutexW(NULL, FALSE, init_mutexW);
+    static const WCHAR init_mutexW[] = {'d','i','s','p','l','a','y','_','d','e','v','i','c','e','_','i','n','i','t'};
+    UNICODE_STRING name = { sizeof(init_mutexW), sizeof(init_mutexW), (WCHAR *)init_mutexW };
+    OBJECT_ATTRIBUTES attr;
+    HANDLE mutex = 0;
 
-    WaitForSingleObject(mutex, INFINITE);
+    InitializeObjectAttributes( &attr, &name, OBJ_OPENIF, NULL, NULL );
+    NtCreateMutant( &mutex, MUTEX_ALL_ACCESS, &attr, FALSE );
+    if (mutex) NtWaitForSingleObject( mutex, FALSE, NULL );
     return mutex;
 }
 
 void release_display_device_init_mutex(HANDLE mutex)
 {
-    ReleaseMutex(mutex);
-    CloseHandle(mutex);
-}
-
-/* Update screen rectangle cache from SetupAPI if it's outdated, return FALSE on failure and TRUE on success */
-static BOOL update_screen_cache(void)
-{
-    RECT virtual_rect = {0}, primary_rect = {0}, monitor_rect;
-    SP_DEVINFO_DATA device_data = {sizeof(device_data)};
-    HDEVINFO devinfo = INVALID_HANDLE_VALUE;
-    FILETIME filetime = {0};
-    HANDLE mutex = NULL;
-    DWORD i = 0;
-    INT result;
-    DWORD type;
-    BOOL ret = FALSE;
-
-    EnterCriticalSection(&screen_section);
-    if ((!video_key && RegOpenKeyW(HKEY_LOCAL_MACHINE, video_keyW, &video_key))
-        || RegQueryInfoKeyW(video_key, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, &filetime))
-    {
-        LeaveCriticalSection(&screen_section);
-        return FALSE;
-    }
-    result = CompareFileTime(&filetime, &last_query_screen_time);
-    LeaveCriticalSection(&screen_section);
-    if (result < 1)
-        return TRUE;
-
-    mutex = get_display_device_init_mutex();
-
-    devinfo = SetupDiGetClassDevsW(&GUID_DEVCLASS_MONITOR, displayW, NULL, DIGCF_PRESENT);
-    if (devinfo == INVALID_HANDLE_VALUE)
-        goto fail;
-
-    while (SetupDiEnumDeviceInfo(devinfo, i++, &device_data))
-    {
-        if (!SetupDiGetDevicePropertyW(devinfo, &device_data, &WINE_DEVPROPKEY_MONITOR_RCMONITOR, &type,
-                                       (BYTE *)&monitor_rect, sizeof(monitor_rect), NULL, 0))
-            goto fail;
-
-        UnionRect(&virtual_rect, &virtual_rect, &monitor_rect);
-        if (i == 1)
-            primary_rect = monitor_rect;
-    }
-
-    EnterCriticalSection(&screen_section);
-    if (!native_screen_rect.bottom) native_screen_rect = virtual_rect;
-    virtual_screen_rect = virtual_rect;
-    primary_monitor_rect = primary_rect;
-    last_query_screen_time = filetime;
-    LeaveCriticalSection(&screen_section);
-    ret = TRUE;
-fail:
-    SetupDiDestroyDeviceInfoList(devinfo);
-    release_display_device_init_mutex(mutex);
-    if (!ret)
-        WARN("Update screen cache failed!\n");
-    return ret;
+    NtReleaseMutant( mutex, NULL );
+    NtClose( mutex );
 }
 
 POINT virtual_screen_to_root(INT x, INT y)
 {
-    RECT virtual = fs_hack_get_real_virtual_screen();
+    RECT virtual = NtUserGetVirtualScreenRect();
     POINT pt;
 
-    TRACE("from %d,%d\n", x, y);
-
-    pt.x = x;
-    pt.y = y;
-    fs_hack_point_user_to_real(&pt);
-    TRACE("to real %d,%d\n", pt.x, pt.y);
-
-    pt.x -= virtual.left;
-    pt.y -= virtual.top;
-    TRACE("to root %d,%d\n", pt.x, pt.y);
+    pt.x = x - virtual.left;
+    pt.y = y - virtual.top;
     return pt;
 }
 
 POINT root_to_virtual_screen(INT x, INT y)
 {
-    RECT virtual = fs_hack_get_real_virtual_screen();
+    RECT virtual = NtUserGetVirtualScreenRect();
     POINT pt;
 
-    TRACE("from root %d,%d\n", x, y);
     pt.x = x + virtual.left;
     pt.y = y + virtual.top;
-    TRACE("to real %d,%d\n", pt.x, pt.y);
-    fs_hack_point_real_to_user(&pt);
-    TRACE("to user %d,%d\n", pt.x, pt.y);
     return pt;
-}
-
-RECT get_native_screen_rect(void)
-{
-    RECT rect;
-
-    update_screen_cache();
-    EnterCriticalSection(&screen_section);
-    rect = native_screen_rect;
-    LeaveCriticalSection(&screen_section);
-    return rect;
-}
-
-RECT get_virtual_screen_rect(void)
-{
-    RECT virtual;
-
-    update_screen_cache();
-    EnterCriticalSection(&screen_section);
-    virtual = virtual_screen_rect;
-    LeaveCriticalSection(&screen_section);
-    return virtual;
-}
-
-RECT get_primary_monitor_rect(void)
-{
-    RECT primary;
-
-    update_screen_cache();
-    EnterCriticalSection(&screen_section);
-    primary = primary_monitor_rect;
-    LeaveCriticalSection(&screen_section);
-    return primary;
 }
 
 /* Get the primary monitor rect from the host system */
@@ -309,11 +170,6 @@ void X11DRV_DisplayDevices_SetHandler(const struct x11drv_display_device_handler
     }
 }
 
-struct x11drv_display_device_handler X11DRV_DisplayDevices_GetHandler(void)
-{
-    return host_handler;
-}
-
 void X11DRV_DisplayDevices_RegisterEventHandlers(void)
 {
     struct x11drv_display_device_handler *handler = is_virtual_desktop() ? &desktop_handler : &host_handler;
@@ -322,86 +178,35 @@ void X11DRV_DisplayDevices_RegisterEventHandlers(void)
         handler->register_event_handlers();
 }
 
-BOOL CALLBACK fs_hack_update_child_window_client_surface(HWND hwnd, LPARAM enable_fs_hack)
+void X11DRV_DisplayDevices_Update(BOOL send_display_change)
 {
-    struct x11drv_win_data *data;
-    RECT client_rect;
+    RECT old_virtual_rect, new_virtual_rect;
+    DWORD tid, pid;
+    HWND foreground;
+    UINT mask = 0, i;
+    HWND *list;
 
-    if (!(data = get_win_data( hwnd )))
-        return TRUE;
+    old_virtual_rect = NtUserGetVirtualScreenRect();
+    X11DRV_DisplayDevices_Init(TRUE);
+    new_virtual_rect = NtUserGetVirtualScreenRect();
 
-    if (enable_fs_hack && data->client_window)
+    /* Calculate XReconfigureWMWindow() mask */
+    if (old_virtual_rect.left != new_virtual_rect.left)
+        mask |= CWX;
+    if (old_virtual_rect.top != new_virtual_rect.top)
+        mask |= CWY;
+
+    X11DRV_resize_desktop(send_display_change);
+
+    list = build_hwnd_list();
+    for (i = 0; list && list[i] != HWND_BOTTOM; i++)
     {
-        client_rect = data->client_rect;
-        ClientToScreen( hwnd, (POINT *)&client_rect.left );
-        ClientToScreen( hwnd, (POINT *)&client_rect.right );
-        fs_hack_rect_user_to_real( &client_rect );
+        struct x11drv_win_data *data;
 
-        FIXME( "Enabling child fshack, resizing window %p to %s.\n", hwnd, wine_dbgstr_rect( &client_rect ) );
-        XMoveResizeWindow( gdi_display, data->client_window,
-                           client_rect.left, client_rect.top,
-                           client_rect.right - client_rect.left,
-                           client_rect.bottom - client_rect.top );
-        data->fs_hack = TRUE;
-    }
-    else if (!enable_fs_hack && data->client_window)
-    {
-        FIXME( "Disabling child fshack, restoring window %p.\n", hwnd );
-        XMoveResizeWindow( gdi_display, data->client_window,
-                           data->client_rect.left - data->whole_rect.left,
-                           data->client_rect.top - data->whole_rect.top,
-                           data->client_rect.right - data->client_rect.left,
-                           data->client_rect.bottom - data->client_rect.top );
-        data->fs_hack = FALSE;
-    }
+        if (!(data = get_win_data( list[i] ))) continue;
 
-    if (data->client_window) sync_gl_drawable( hwnd, TRUE );
-    release_win_data( data );
-    return TRUE;
-}
-
-static BOOL CALLBACK update_windows_on_display_change(HWND hwnd, LPARAM lparam)
-{
-    struct x11drv_win_data *data;
-    UINT mask = (UINT)lparam;
-    HMONITOR monitor;
-
-    if (!(data = get_win_data(hwnd)))
-        return TRUE;
-
-    monitor = fs_hack_monitor_from_hwnd( hwnd );
-    if (fs_hack_mapping_required( monitor ) &&
-            fs_hack_matches_current_mode( monitor,
-                data->whole_rect.right - data->whole_rect.left,
-                data->whole_rect.bottom - data->whole_rect.top)){
-        if(!data->fs_hack){
-            RECT real_rect = fs_hack_real_mode( monitor );
-            MONITORINFO monitor_info;
-            UINT width, height;
-            POINT tl;
-
-            monitor_info.cbSize = sizeof(monitor_info);
-            GetMonitorInfoW( monitor, &monitor_info );
-            tl = virtual_screen_to_root( monitor_info.rcMonitor.left, monitor_info.rcMonitor.top );
-            width = real_rect.right - real_rect.left;
-            height = real_rect.bottom - real_rect.top;
-
-            TRACE("Enabling fs hack, resizing window %p to (%u,%u)-(%u,%u)\n", hwnd, tl.x, tl.y, width, height);
-            data->fs_hack = TRUE;
-            set_wm_hints( data );
-            XMoveResizeWindow(data->display, data->whole_window, tl.x, tl.y, width, height);
-            if(data->client_window)
-                XMoveResizeWindow(gdi_display, data->client_window, 0, 0, width, height);
-            sync_gl_drawable(hwnd, FALSE);
-            update_net_wm_states( data );
-            EnumChildWindows( hwnd, fs_hack_update_child_window_client_surface, TRUE );
-        }
-    } else {
         /* update the full screen state */
         update_net_wm_states(data);
-
-        if (data->fs_hack)
-            mask |= CWX | CWY;
 
         if (mask && data->whole_window)
         {
@@ -411,62 +216,24 @@ static BOOL CALLBACK update_windows_on_display_change(HWND hwnd, LPARAM lparam)
             changes.y = pos.y;
             XReconfigureWMWindow(data->display, data->whole_window, data->vis.screen, mask, &changes);
         }
-
-        if(data->fs_hack && (!fs_hack_mapping_required(monitor) ||
-            !fs_hack_matches_current_mode(monitor,
-                data->whole_rect.right - data->whole_rect.left,
-                data->whole_rect.bottom - data->whole_rect.top))){
-            TRACE("Disabling fs hack\n");
-            data->fs_hack = FALSE;
-            if(data->client_window){
-                XMoveResizeWindow(gdi_display, data->client_window,
-                        data->client_rect.left - data->whole_rect.left,
-                        data->client_rect.top - data->whole_rect.top,
-                        data->client_rect.right - data->client_rect.left,
-                        data->client_rect.bottom - data->client_rect.top);
-            }
-            sync_gl_drawable(hwnd, FALSE);
-            EnumChildWindows( hwnd, fs_hack_update_child_window_client_surface, FALSE );
-        }
+        release_win_data(data);
     }
-    release_win_data(data);
-    if (hwnd == GetForegroundWindow())
-        clip_fullscreen_window(hwnd, TRUE);
-    return TRUE;
-}
 
-void X11DRV_DisplayDevices_Update(BOOL send_display_change)
-{
-    RECT old_virtual_rect, new_virtual_rect;
-    DWORD tid, pid;
-    HWND foreground;
-    UINT mask = 0;
-
-    old_virtual_rect = get_virtual_screen_rect();
-    X11DRV_DisplayDevices_Init(TRUE);
-    new_virtual_rect = get_virtual_screen_rect();
-
-    /* Calculate XReconfigureWMWindow() mask */
-    if (old_virtual_rect.left != new_virtual_rect.left)
-        mask |= CWX;
-    if (old_virtual_rect.top != new_virtual_rect.top)
-        mask |= CWY;
-
-    X11DRV_resize_desktop(send_display_change);
-    EnumWindows(update_windows_on_display_change, (LPARAM)mask);
+    free( list );
 
     /* forward clip_fullscreen_window request to the foreground window */
-    if ((foreground = GetForegroundWindow()) && (tid = GetWindowThreadProcessId( foreground, &pid )) && pid == GetCurrentProcessId())
+    if ((foreground = NtUserGetForegroundWindow()) &&
+        (tid = NtUserGetWindowThread( foreground, &pid )) && pid == GetCurrentProcessId())
     {
         if (tid == GetCurrentThreadId()) clip_fullscreen_window( foreground, TRUE );
-        else SendNotifyMessageW( foreground, WM_X11DRV_CLIP_CURSOR_REQUEST, TRUE, TRUE );
+        else send_notify_message( foreground, WM_X11DRV_CLIP_CURSOR_REQUEST, TRUE, TRUE );
     }
 }
 
 static BOOL force_display_devices_refresh;
 
-void CDECL X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager,
-                                        BOOL force, void *param )
+void X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager,
+                                  BOOL force, void *param )
 {
     struct x11drv_display_device_handler *handler;
     struct gdi_adapter *adapters;
@@ -488,18 +255,6 @@ void CDECL X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_
 
     for (gpu = 0; gpu < gpu_count; gpu++)
     {
-        {
-            const char *sgi = getenv("WINE_HIDE_NVIDIA_GPU");
-            if (sgi && *sgi != '0')
-            {
-                if (gpus[gpu].vendor_id == 0x10de /* NVIDIA */)
-                {
-                    gpus[gpu].vendor_id = 0x1002; /* AMD */
-                    gpus[gpu].device_id = 0x67df; /* RX 480 */
-                }
-            }
-        }
-
         device_manager->add_gpu( &gpus[gpu], param );
 
         /* Initialize adapters */

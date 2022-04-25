@@ -2874,12 +2874,6 @@ typedef struct {
 #define	DSS_PREFIXONLY	0x0400
 #define	DSS_RIGHT	0x8000
 
-/* UserObjectInformation classes */
-#define UOI_FLAGS 1
-#define UOI_NAME 2
-#define UOI_TYPE 3
-#define UOI_USER_SID 4
-
 
 /* Sent as the lParam of a WM_DRAWITEM message to instruct how an
  * owner drawn control is to be drawn */
@@ -4249,7 +4243,7 @@ WINUSERAPI BOOL        WINAPI SetScrollRange(HWND,INT,INT,INT,BOOL);
 #define                       SetSysModalWindow(hwnd) ((HWND)0)
 WINUSERAPI BOOL        WINAPI SetSystemCursor(HCURSOR,DWORD);
 WINUSERAPI BOOL        WINAPI SetSystemMenu(HWND,HMENU);
-WINUSERAPI UINT_PTR    WINAPI SetSystemTimer(HWND,UINT_PTR,UINT,TIMERPROC);
+WINUSERAPI UINT_PTR    WINAPI SetSystemTimer(HWND,UINT_PTR,UINT,void*);
 WINUSERAPI BOOL        WINAPI SetThreadDesktop(HDESK);
 WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT);
 WINUSERAPI UINT_PTR    WINAPI SetTimer(HWND,UINT_PTR,UINT,TIMERPROC);
@@ -4470,7 +4464,7 @@ struct user_api_hook
     LRESULT (WINAPI *pScrollBarWndProc)(HWND, UINT, WPARAM, LPARAM, BOOL);
 };
 
-WINUSERAPI BOOL WINAPI RegisterUserApiHook(const struct user_api_hook *new, struct user_api_hook *old);
+WINUSERAPI BOOL WINAPI RegisterUserApiHook(const struct user_api_hook *new_hook, struct user_api_hook *old_hook);
 WINUSERAPI void WINAPI UnregisterUserApiHook(void);
 #endif
 

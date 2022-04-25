@@ -464,40 +464,22 @@ void make_gdi_object_system( HGDIOBJ handle, BOOL set)
 /******************************************************************************
  *      get_default_fonts
  */
-static const struct DefaultFontInfo* get_default_fonts(UINT charset)
+static const struct DefaultFontInfo* get_default_fonts(void)
 {
-        unsigned int n;
+    unsigned int n;
+    CHARSETINFO csi;
 
-        for(n = 0; n < ARRAY_SIZE( default_fonts ); n++)
-        {
-                if ( default_fonts[n].charset == charset )
-                        return &default_fonts[n];
-        }
+    if (ansi_cp.CodePage == CP_UTF8) return &default_fonts[0];
 
-        FIXME( "unhandled charset 0x%08x - use ANSI_CHARSET for default stock objects\n", charset );
-        return &default_fonts[0];
-}
-
-
-/******************************************************************************
- *      get_default_charset    (internal)
- *
- * get the language-dependent charset that can handle CP_ACP correctly.
- */
-static UINT get_default_charset( void )
-{
-    CHARSETINFO     csi;
-    UINT    uACP;
-
-    uACP = get_acp();
     csi.ciCharset = ANSI_CHARSET;
-    if ( !translate_charset_info( ULongToPtr(uACP), &csi, TCI_SRCCODEPAGE ) )
-    {
-        FIXME( "unhandled codepage %u - use ANSI_CHARSET for default stock objects\n", uACP );
-        return ANSI_CHARSET;
-    }
+    translate_charset_info( ULongToPtr(ansi_cp.CodePage), &csi, TCI_SRCCODEPAGE );
 
-    return csi.ciCharset;
+    for(n = 0; n < ARRAY_SIZE( default_fonts ); n++)
+        if ( default_fonts[n].charset == csi.ciCharset )
+            return &default_fonts[n];
+
+    FIXME( "unhandled charset 0x%08x - use ANSI_CHARSET for default stock objects\n", csi.ciCharset );
+    return &default_fonts[0];
 }
 
 
@@ -656,7 +638,7 @@ static void init_stock_objects( unsigned int dpi )
     create_font( &AnsiVarFont );
 
     /* language-dependent stock fonts */
-    deffonts = get_default_fonts(get_default_charset());
+    deffonts = get_default_fonts();
     create_font( &deffonts->SystemFont );
     create_font( &deffonts->DeviceDefaultFont );
 
@@ -1157,18 +1139,25 @@ static struct unix_funcs unix_funcs =
     NtUserCallNoParam,
     NtUserCallOneParam,
     NtUserCallTwoParam,
+    NtUserChangeClipboardChain,
     NtUserChangeDisplaySettings,
     NtUserClipCursor,
+    NtUserCloseClipboard,
     NtUserCountClipboardFormats,
+    NtUserCreateWindowEx,
     NtUserDeferWindowPosAndBand,
     NtUserDestroyCursor,
+    NtUserDestroyMenu,
     NtUserDestroyWindow,
+    NtUserDispatchMessage,
     NtUserDrawIconEx,
+    NtUserEnableMenuItem,
     NtUserEndDeferWindowPosEx,
     NtUserEndPaint,
     NtUserEnumDisplayDevices,
     NtUserEnumDisplayMonitors,
     NtUserEnumDisplaySettings,
+    NtUserExcludeUpdateRgn,
     NtUserFlashWindowEx,
     NtUserGetAsyncKeyState,
     NtUserGetClassInfoEx,
@@ -1178,6 +1167,7 @@ static struct unix_funcs unix_funcs =
     NtUserGetIconInfo,
     NtUserGetKeyNameText,
     NtUserGetKeyboardLayoutList,
+    NtUserGetMessage,
     NtUserGetPriorityClipboardFormat,
     NtUserGetQueueStatus,
     NtUserGetUpdateRect,
@@ -1185,23 +1175,31 @@ static struct unix_funcs unix_funcs =
     NtUserGetUpdatedClipboardFormats,
     NtUserIsClipboardFormatAvailable,
     NtUserMapVirtualKeyEx,
+    NtUserMessageCall,
     NtUserMoveWindow,
+    NtUserMsgWaitForMultipleObjectsEx,
+    NtUserPeekMessage,
+    NtUserPostMessage,
+    NtUserPostThreadMessage,
     NtUserRedrawWindow,
     NtUserRegisterClassExWOW,
     NtUserRegisterHotKey,
     NtUserReleaseDC,
     NtUserScrollDC,
     NtUserSelectPalette,
+    NtUserSendInput,
     NtUserSetActiveWindow,
     NtUserSetCapture,
     NtUserSetClassLong,
     NtUserSetClassLongPtr,
     NtUserSetClassWord,
+    NtUserSetClipboardViewer,
     NtUserSetCursor,
     NtUserSetCursorIconData,
     NtUserSetCursorPos,
     NtUserSetFocus,
     NtUserSetLayeredWindowAttributes,
+    NtUserSetMenu,
     NtUserSetParent,
     NtUserSetSysColors,
     NtUserSetWindowLong,
@@ -1215,10 +1213,12 @@ static struct unix_funcs unix_funcs =
     NtUserSystemParametersInfo,
     NtUserSystemParametersInfoForDpi,
     NtUserToUnicodeEx,
+    NtUserTranslateMessage,
     NtUserUnregisterClass,
     NtUserUnregisterHotKey,
     NtUserUpdateLayeredWindow,
     NtUserVkKeyScanEx,
+    NtUserWaitForInputIdle,
     NtUserWindowFromPoint,
 
     SetDIBits,
@@ -1227,8 +1227,8 @@ static struct unix_funcs unix_funcs =
     __wine_get_icm_profile,
     __wine_get_vulkan_driver,
     __wine_get_wgl_driver,
-    __wine_set_display_driver,
-    __wine_set_visible_region,
+    __wine_send_input,
+    __wine_set_user_driver,
 };
 
 NTSTATUS gdi_init(void)
