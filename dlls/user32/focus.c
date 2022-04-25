@@ -38,7 +38,7 @@
  */
 BOOL FOCUS_MouseActivate( HWND hwnd )
 {
-    return NtUserSetForegroundWindow( hwnd, TRUE );
+    return NtUserCallHwndParam( hwnd, TRUE, NtUserSetForegroundWindow );
 }
 
 
@@ -47,7 +47,7 @@ BOOL FOCUS_MouseActivate( HWND hwnd )
  */
 BOOL WINAPI SetForegroundWindow( HWND hwnd )
 {
-    return NtUserSetForegroundWindow( hwnd, FALSE );
+    return NtUserCallHwndParam( hwnd, FALSE, NtUserSetForegroundWindow );
 }
 
 

@@ -644,7 +644,7 @@ cleanup:
 /***********************************************************************
  *              DestroyCursorIcon (MACDRV.@)
  */
-void macdrv_DestroyCursorIcon(HCURSOR cursor)
+void CDECL macdrv_DestroyCursorIcon(HCURSOR cursor)
 {
     TRACE("cursor %p\n", cursor);
 
@@ -660,7 +660,7 @@ void macdrv_DestroyCursorIcon(HCURSOR cursor)
  *
  * Set the cursor clipping rectangle.
  */
-BOOL macdrv_ClipCursor(LPCRECT clip)
+BOOL CDECL macdrv_ClipCursor(LPCRECT clip)
 {
     CGRect rect;
 
@@ -684,7 +684,7 @@ BOOL macdrv_ClipCursor(LPCRECT clip)
 /***********************************************************************
  *              GetCursorPos (MACDRV.@)
  */
-BOOL macdrv_GetCursorPos(LPPOINT pos)
+BOOL CDECL macdrv_GetCursorPos(LPPOINT pos)
 {
     CGPoint pt;
     BOOL ret;
@@ -703,7 +703,7 @@ BOOL macdrv_GetCursorPos(LPPOINT pos)
 /***********************************************************************
  *              SetCapture (MACDRV.@)
  */
- void macdrv_SetCapture(HWND hwnd, UINT flags)
+ void CDECL macdrv_SetCapture(HWND hwnd, UINT flags)
 {
     struct macdrv_thread_data *thread_data = macdrv_thread_data();
     HWND top = GetAncestor(hwnd, GA_ROOT);
@@ -721,7 +721,7 @@ BOOL macdrv_GetCursorPos(LPPOINT pos)
 /***********************************************************************
  *              SetCursor (MACDRV.@)
  */
-void macdrv_SetCursor(HCURSOR cursor)
+void CDECL macdrv_SetCursor(HCURSOR cursor)
 {
     CFStringRef cursor_name = NULL;
     CFArrayRef cursor_frames = NULL;
@@ -814,7 +814,7 @@ done:
 /***********************************************************************
  *              SetCursorPos (MACDRV.@)
  */
-BOOL macdrv_SetCursorPos(INT x, INT y)
+BOOL CDECL macdrv_SetCursorPos(INT x, INT y)
 {
     BOOL ret = macdrv_set_cursor_position(CGPointMake(x, y));
     if (ret)

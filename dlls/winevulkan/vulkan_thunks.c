@@ -22,21 +22,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 
 #if defined(USE_STRUCT_CONVERSION)
-static inline void convert_VkAcquireNextImageInfoKHR_win_to_host(const VkAcquireNextImageInfoKHR *in, VkAcquireNextImageInfoKHR_host *out)
-{
-    if (!in) return;
-
-    out->sType = in->sType;
-    out->pNext = in->pNext;
-    out->swapchain = in->swapchain;
-    out->timeout = in->timeout;
-    out->semaphore = in->semaphore;
-    out->fence = in->fence;
-    out->deviceMask = in->deviceMask;
-}
-#endif /* USE_STRUCT_CONVERSION */
-
-#if defined(USE_STRUCT_CONVERSION)
 static inline void convert_VkAcquireProfilingLockInfoKHR_win_to_host(const VkAcquireProfilingLockInfoKHR *in, VkAcquireProfilingLockInfoKHR_host *out)
 {
     if (!in) return;
@@ -1584,34 +1569,6 @@ static inline void free_VkRayTracingPipelineCreateInfoNV_array(VkRayTracingPipel
     free(in);
 }
 #endif /* USE_STRUCT_CONVERSION */
-
-#if defined(USE_STRUCT_CONVERSION)
-static inline void convert_VkSwapchainCreateInfoKHR_win_to_host(const VkSwapchainCreateInfoKHR *in, VkSwapchainCreateInfoKHR_host *out)
-#else
-static inline void convert_VkSwapchainCreateInfoKHR_win_to_host(const VkSwapchainCreateInfoKHR *in, VkSwapchainCreateInfoKHR *out)
-#endif /* USE_STRUCT_CONVERSION */
-{
-    if (!in) return;
-
-    out->sType = in->sType;
-    out->pNext = in->pNext;
-    out->flags = in->flags;
-    out->surface = wine_surface_from_handle(in->surface)->driver_surface;
-    out->minImageCount = in->minImageCount;
-    out->imageFormat = in->imageFormat;
-    out->imageColorSpace = in->imageColorSpace;
-    out->imageExtent = in->imageExtent;
-    out->imageArrayLayers = in->imageArrayLayers;
-    out->imageUsage = in->imageUsage;
-    out->imageSharingMode = in->imageSharingMode;
-    out->queueFamilyIndexCount = in->queueFamilyIndexCount;
-    out->pQueueFamilyIndices = in->pQueueFamilyIndices;
-    out->preTransform = in->preTransform;
-    out->compositeAlpha = in->compositeAlpha;
-    out->presentMode = in->presentMode;
-    out->clipped = in->clipped;
-    out->oldSwapchain = in->oldSwapchain;
-}
 
 #if defined(USE_STRUCT_CONVERSION)
 static inline void convert_VkDebugMarkerObjectNameInfoEXT_win_to_host(const VkDebugMarkerObjectNameInfoEXT *in, VkDebugMarkerObjectNameInfoEXT_host *out)
@@ -4983,29 +4940,11 @@ void free_VkInstanceCreateInfo_struct_chain(VkInstanceCreateInfo *s)
     s->pNext = NULL;
 }
 
-static NTSTATUS wine_vkAcquireNextImage2KHR(void *args)
-{
-    struct vkAcquireNextImage2KHR_params *params = args;
-#if defined(USE_STRUCT_CONVERSION)
-    VkResult result;
-    VkAcquireNextImageInfoKHR_host pAcquireInfo_host;
-    TRACE("%p, %p, %p\n", params->device, params->pAcquireInfo, params->pImageIndex);
-
-    convert_VkAcquireNextImageInfoKHR_win_to_host(params->pAcquireInfo, &pAcquireInfo_host);
-    result = params->device->funcs.p_vkAcquireNextImage2KHR(params->device->device, &pAcquireInfo_host, params->pImageIndex);
-
-    return result;
-#else
-    TRACE("%p, %p, %p\n", params->device, params->pAcquireInfo, params->pImageIndex);
-    return params->device->funcs.p_vkAcquireNextImage2KHR(params->device->device, params->pAcquireInfo, params->pImageIndex);
-#endif
-}
-
 static NTSTATUS wine_vkAcquireNextImageKHR(void *args)
 {
     struct vkAcquireNextImageKHR_params *params = args;
     TRACE("%p, 0x%s, 0x%s, 0x%s, 0x%s, %p\n", params->device, wine_dbgstr_longlong(params->swapchain), wine_dbgstr_longlong(params->timeout), wine_dbgstr_longlong(params->semaphore), wine_dbgstr_longlong(params->fence), params->pImageIndex);
-    return params->device->funcs.p_vkAcquireNextImageKHR(params->device->device, params->swapchain, params->timeout, params->semaphore, params->fence, params->pImageIndex);
+    return params->device->funcs.p_vkAcquireNextImageKHR(params->device->device, ((struct VkSwapchainKHR_T *)(uintptr_t) (params->swapchain))->swapchain, params->timeout, params->semaphore, params->fence, params->pImageIndex);
 }
 
 static NTSTATUS wine_vkAcquirePerformanceConfigurationINTEL(void *args)
@@ -7543,30 +7482,6 @@ static NTSTATUS wine_vkCreateShaderModule(void *args)
     return params->device->funcs.p_vkCreateShaderModule(params->device->device, params->pCreateInfo, NULL, params->pShaderModule);
 }
 
-static NTSTATUS wine_vkCreateSwapchainKHR(void *args)
-{
-    struct vkCreateSwapchainKHR_params *params = args;
-#if defined(USE_STRUCT_CONVERSION)
-    VkResult result;
-    VkSwapchainCreateInfoKHR_host pCreateInfo_host;
-    TRACE("%p, %p, %p, %p\n", params->device, params->pCreateInfo, params->pAllocator, params->pSwapchain);
-
-    convert_VkSwapchainCreateInfoKHR_win_to_host(params->pCreateInfo, &pCreateInfo_host);
-    result = params->device->funcs.p_vkCreateSwapchainKHR(params->device->device, &pCreateInfo_host, NULL, params->pSwapchain);
-
-    return result;
-#else
-    VkResult result;
-    VkSwapchainCreateInfoKHR pCreateInfo_host;
-    TRACE("%p, %p, %p, %p\n", params->device, params->pCreateInfo, params->pAllocator, params->pSwapchain);
-
-    convert_VkSwapchainCreateInfoKHR_win_to_host(params->pCreateInfo, &pCreateInfo_host);
-    result = params->device->funcs.p_vkCreateSwapchainKHR(params->device->device, &pCreateInfo_host, NULL, params->pSwapchain);
-
-    return result;
-#endif
-}
-
 static NTSTATUS wine_vkCreateValidationCacheEXT(void *args)
 {
     struct vkCreateValidationCacheEXT_params *params = args;
@@ -7866,14 +7781,6 @@ static NTSTATUS wine_vkDestroyShaderModule(void *args)
     struct vkDestroyShaderModule_params *params = args;
     TRACE("%p, 0x%s, %p\n", params->device, wine_dbgstr_longlong(params->shaderModule), params->pAllocator);
     params->device->funcs.p_vkDestroyShaderModule(params->device->device, params->shaderModule, NULL);
-    return STATUS_SUCCESS;
-}
-
-static NTSTATUS wine_vkDestroySwapchainKHR(void *args)
-{
-    struct vkDestroySwapchainKHR_params *params = args;
-    TRACE("%p, 0x%s, %p\n", params->device, wine_dbgstr_longlong(params->swapchain), params->pAllocator);
-    params->device->funcs.p_vkDestroySwapchainKHR(params->device->device, params->swapchain, NULL);
     return STATUS_SUCCESS;
 }
 
@@ -9154,13 +9061,6 @@ static NTSTATUS wine_vkGetShaderInfoAMD(void *args)
     return params->device->funcs.p_vkGetShaderInfoAMD(params->device->device, params->pipeline, params->shaderStage, params->infoType, params->pInfoSize, params->pInfo);
 }
 
-static NTSTATUS wine_vkGetSwapchainImagesKHR(void *args)
-{
-    struct vkGetSwapchainImagesKHR_params *params = args;
-    TRACE("%p, 0x%s, %p, %p\n", params->device, wine_dbgstr_longlong(params->swapchain), params->pSwapchainImageCount, params->pSwapchainImages);
-    return params->device->funcs.p_vkGetSwapchainImagesKHR(params->device->device, params->swapchain, params->pSwapchainImageCount, params->pSwapchainImages);
-}
-
 static NTSTATUS wine_vkGetValidationCacheDataEXT(void *args)
 {
     struct vkGetValidationCacheDataEXT_params *params = args;
@@ -9256,13 +9156,6 @@ static NTSTATUS wine_vkQueueInsertDebugUtilsLabelEXT(void *args)
     TRACE("%p, %p\n", params->queue, params->pLabelInfo);
     params->queue->device->funcs.p_vkQueueInsertDebugUtilsLabelEXT(params->queue->queue, params->pLabelInfo);
     return STATUS_SUCCESS;
-}
-
-static NTSTATUS wine_vkQueuePresentKHR(void *args)
-{
-    struct vkQueuePresentKHR_params *params = args;
-    TRACE("%p, %p\n", params->queue, params->pPresentInfo);
-    return params->queue->device->funcs.p_vkQueuePresentKHR(params->queue->queue, params->pPresentInfo);
 }
 
 static NTSTATUS wine_vkQueueSetPerformanceConfigurationINTEL(void *args)
@@ -9629,7 +9522,7 @@ static NTSTATUS wine_vkWaitForPresentKHR(void *args)
 {
     struct vkWaitForPresentKHR_params *params = args;
     TRACE("%p, 0x%s, 0x%s, 0x%s\n", params->device, wine_dbgstr_longlong(params->swapchain), wine_dbgstr_longlong(params->presentId), wine_dbgstr_longlong(params->timeout));
-    return params->device->funcs.p_vkWaitForPresentKHR(params->device->device, params->swapchain, params->presentId, params->timeout);
+    return params->device->funcs.p_vkWaitForPresentKHR(params->device->device, ((struct VkSwapchainKHR_T *)(uintptr_t) (params->swapchain))->swapchain, params->presentId, params->timeout);
 }
 
 static NTSTATUS wine_vkWaitSemaphores(void *args)
@@ -9912,7 +9805,8 @@ BOOL wine_vk_is_type_wrapped(VkObjectType type)
         type == VK_OBJECT_TYPE_INSTANCE ||
         type == VK_OBJECT_TYPE_PHYSICAL_DEVICE ||
         type == VK_OBJECT_TYPE_QUEUE ||
-        type == VK_OBJECT_TYPE_SURFACE_KHR;
+        type == VK_OBJECT_TYPE_SURFACE_KHR ||
+        type == VK_OBJECT_TYPE_SWAPCHAIN_KHR;
 }
 
 uint64_t wine_vk_unwrap_handle(VkObjectType type, uint64_t handle)
@@ -9937,6 +9831,8 @@ uint64_t wine_vk_unwrap_handle(VkObjectType type, uint64_t handle)
         return (uint64_t) (uintptr_t) ((VkQueue) (uintptr_t) handle)->queue;
     case VK_OBJECT_TYPE_SURFACE_KHR:
         return (uint64_t) wine_surface_from_handle(handle)->surface;
+    case VK_OBJECT_TYPE_SWAPCHAIN_KHR:
+        return (uint64_t) ((struct VkSwapchainKHR_T *)(uintptr_t) (handle))->swapchain;
     default:
        return handle;
     }
@@ -10408,4 +10304,11 @@ const struct unix_funcs loader_funcs =
     wine_vk_call,
     wine_vk_is_available_instance_function,
     wine_vk_is_available_device_function,
+    __wine_get_native_VkDevice,
+    __wine_get_native_VkInstance,
+    __wine_get_native_VkPhysicalDevice,
+    __wine_get_native_VkQueue,
+    __wine_get_wrapped_VkPhysicalDevice,
+    __wine_create_vk_instance_with_callback,
+    __wine_create_vk_device_with_callback,
 };

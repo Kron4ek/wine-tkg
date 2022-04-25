@@ -31,6 +31,19 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(win);
 
+#define SWP_AGG_NOGEOMETRYCHANGE \
+    (SWP_NOSIZE | SWP_NOCLIENTSIZE | SWP_NOZORDER)
+#define SWP_AGG_NOPOSCHANGE \
+    (SWP_NOSIZE | SWP_NOMOVE | SWP_NOCLIENTSIZE | SWP_NOCLIENTMOVE | SWP_NOZORDER)
+#define SWP_AGG_STATUSFLAGS \
+    (SWP_AGG_NOPOSCHANGE | SWP_FRAMECHANGED | SWP_HIDEWINDOW | SWP_SHOWWINDOW)
+#define SWP_AGG_NOCLIENTCHANGE \
+        (SWP_NOCLIENTSIZE | SWP_NOCLIENTMOVE)
+
+#define HAS_DLGFRAME(style,exStyle) \
+    (((exStyle) & WS_EX_DLGMODALFRAME) || \
+     (((style) & WS_DLGFRAME) && !((style) & WS_BORDER)))
+
 #define HAS_THICKFRAME(style) \
     (((style) & WS_THICKFRAME) && \
      !(((style) & (WS_DLGFRAME|WS_BORDER)) == WS_DLGFRAME))
@@ -64,7 +77,7 @@ void WINAPI SwitchToThisWindow( HWND hwnd, BOOL alt_tab )
  */
 BOOL WINAPI GetWindowRect( HWND hwnd, LPRECT rect )
 {
-    BOOL ret = NtUserGetWindowRect( hwnd, rect );
+    BOOL ret = NtUserCallHwndParam( hwnd, (UINT_PTR)rect, NtUserGetWindowRect );
     if (ret) TRACE( "hwnd %p %s\n", hwnd, wine_dbgstr_rect(rect) );
     return ret;
 }
@@ -105,7 +118,7 @@ int WINAPI GetWindowRgnBox( HWND hwnd, LPRECT prect )
  */
 BOOL WINAPI GetClientRect( HWND hwnd, LPRECT rect )
 {
-    return NtUserGetClientRect( hwnd, rect );
+    return NtUserCallHwndParam( hwnd, (UINT_PTR)rect, NtUserGetClientRect );
 }
 
 
@@ -216,44 +229,216 @@ HWND WINAPI WindowFromPoint( POINT pt )
 /*******************************************************************
  *		ChildWindowFromPoint (USER32.@)
  */
-HWND WINAPI ChildWindowFromPoint( HWND parent, POINT pt )
+HWND WINAPI ChildWindowFromPoint( HWND hwndParent, POINT pt )
 {
-    return NtUserChildWindowFromPointEx( parent, pt.x, pt.y, CWP_ALL );
+    return ChildWindowFromPointEx( hwndParent, pt, CWP_ALL );
 }
 
 /*******************************************************************
  *		RealChildWindowFromPoint (USER32.@)
  */
-HWND WINAPI RealChildWindowFromPoint( HWND parent, POINT pt )
+HWND WINAPI RealChildWindowFromPoint( HWND hwndParent, POINT pt )
 {
-    return NtUserChildWindowFromPointEx( parent, pt.x, pt.y,
-                                         CWP_SKIPTRANSPARENT | CWP_SKIPINVISIBLE );
+    return ChildWindowFromPointEx( hwndParent, pt, CWP_SKIPTRANSPARENT | CWP_SKIPINVISIBLE );
 }
 
 /*******************************************************************
  *		ChildWindowFromPointEx (USER32.@)
  */
-HWND WINAPI ChildWindowFromPointEx( HWND parent, POINT pt, UINT flags )
+HWND WINAPI ChildWindowFromPointEx( HWND hwndParent, POINT pt, UINT uFlags)
 {
-    return NtUserChildWindowFromPointEx( parent, pt.x, pt.y, flags );
+    /* pt is in the client coordinates */
+    HWND *list;
+    int i;
+    RECT rect;
+    HWND retvalue;
+
+    GetClientRect( hwndParent, &rect );
+    if (!PtInRect( &rect, pt )) return 0;
+    if (!(list = WIN_ListChildren( hwndParent ))) return hwndParent;
+
+    for (i = 0; list[i]; i++)
+    {
+        if (!WIN_GetRectangles( list[i], COORDS_PARENT, &rect, NULL )) continue;
+        if (!PtInRect( &rect, pt )) continue;
+        if (uFlags & (CWP_SKIPINVISIBLE|CWP_SKIPDISABLED))
+        {
+            LONG style = GetWindowLongW( list[i], GWL_STYLE );
+            if ((uFlags & CWP_SKIPINVISIBLE) && !(style & WS_VISIBLE)) continue;
+            if ((uFlags & CWP_SKIPDISABLED) && (style & WS_DISABLED)) continue;
+        }
+        if (uFlags & CWP_SKIPTRANSPARENT)
+        {
+            if (GetWindowLongW( list[i], GWL_EXSTYLE ) & WS_EX_TRANSPARENT) continue;
+        }
+        break;
+    }
+    retvalue = list[i];
+    HeapFree( GetProcessHeap(), 0, list );
+    if (!retvalue) retvalue = hwndParent;
+    return retvalue;
+}
+
+
+/*******************************************************************
+ *         WINPOS_GetWinOffset
+ *
+ * Calculate the offset between the origin of the two windows. Used
+ * to implement MapWindowPoints.
+ */
+static BOOL WINPOS_GetWinOffset( HWND hwndFrom, HWND hwndTo, BOOL *mirrored, POINT *ret_offset )
+{
+    WND * wndPtr;
+    POINT offset;
+    BOOL mirror_from, mirror_to, ret;
+    HWND hwnd;
+
+    offset.x = offset.y = 0;
+    *mirrored = mirror_from = mirror_to = FALSE;
+
+    /* Translate source window origin to screen coords */
+    if (hwndFrom)
+    {
+        if (!(wndPtr = WIN_GetPtr( hwndFrom )))
+        {
+            SetLastError( ERROR_INVALID_WINDOW_HANDLE );
+            return FALSE;
+        }
+        if (wndPtr == WND_OTHER_PROCESS) goto other_process;
+        if (wndPtr != WND_DESKTOP)
+        {
+            if (wndPtr->dwExStyle & WS_EX_LAYOUTRTL)
+            {
+                mirror_from = TRUE;
+                offset.x += wndPtr->client_rect.right - wndPtr->client_rect.left;
+            }
+            while (wndPtr->parent)
+            {
+                offset.x += wndPtr->client_rect.left;
+                offset.y += wndPtr->client_rect.top;
+                hwnd = wndPtr->parent;
+                WIN_ReleasePtr( wndPtr );
+                if (!(wndPtr = WIN_GetPtr( hwnd ))) break;
+                if (wndPtr == WND_OTHER_PROCESS) goto other_process;
+                if (wndPtr == WND_DESKTOP) break;
+                if (wndPtr->flags & WIN_CHILDREN_MOVED)
+                {
+                    WIN_ReleasePtr( wndPtr );
+                    goto other_process;
+                }
+            }
+            if (wndPtr && wndPtr != WND_DESKTOP) WIN_ReleasePtr( wndPtr );
+            offset = point_win_to_thread_dpi( hwndFrom, offset );
+        }
+    }
+
+    /* Translate origin to destination window coords */
+    if (hwndTo)
+    {
+        if (!(wndPtr = WIN_GetPtr( hwndTo )))
+        {
+            SetLastError( ERROR_INVALID_WINDOW_HANDLE );
+            return FALSE;
+        }
+        if (wndPtr == WND_OTHER_PROCESS) goto other_process;
+        if (wndPtr != WND_DESKTOP)
+        {
+            POINT pt = { 0, 0 };
+            if (wndPtr->dwExStyle & WS_EX_LAYOUTRTL)
+            {
+                mirror_to = TRUE;
+                pt.x += wndPtr->client_rect.right - wndPtr->client_rect.left;
+            }
+            while (wndPtr->parent)
+            {
+                pt.x += wndPtr->client_rect.left;
+                pt.y += wndPtr->client_rect.top;
+                hwnd = wndPtr->parent;
+                WIN_ReleasePtr( wndPtr );
+                if (!(wndPtr = WIN_GetPtr( hwnd ))) break;
+                if (wndPtr == WND_OTHER_PROCESS) goto other_process;
+                if (wndPtr == WND_DESKTOP) break;
+                if (wndPtr->flags & WIN_CHILDREN_MOVED)
+                {
+                    WIN_ReleasePtr( wndPtr );
+                    goto other_process;
+                }
+            }
+            if (wndPtr && wndPtr != WND_DESKTOP) WIN_ReleasePtr( wndPtr );
+            pt = point_win_to_thread_dpi( hwndTo, pt );
+            offset.x -= pt.x;
+            offset.y -= pt.y;
+        }
+    }
+
+    *mirrored = mirror_from ^ mirror_to;
+    if (mirror_from) offset.x = -offset.x;
+    *ret_offset = offset;
+    return TRUE;
+
+ other_process:  /* one of the parents may belong to another process, do it the hard way */
+    SERVER_START_REQ( get_windows_offset )
+    {
+        req->from = wine_server_user_handle( hwndFrom );
+        req->to   = wine_server_user_handle( hwndTo );
+        req->dpi  = get_thread_dpi();
+        if ((ret = !wine_server_call_err( req )))
+        {
+            ret_offset->x = reply->x;
+            ret_offset->y = reply->y;
+            *mirrored = reply->mirror;
+        }
+    }
+    SERVER_END_REQ;
+    return ret;
 }
 
 
 /*******************************************************************
  *		MapWindowPoints (USER32.@)
  */
-INT WINAPI MapWindowPoints( HWND hwnd_from, HWND hwnd_to, POINT *points, UINT count )
+INT WINAPI MapWindowPoints( HWND hwndFrom, HWND hwndTo, LPPOINT lppt, UINT count )
 {
-    return NtUserMapWindowPoints( hwnd_from, hwnd_to, points, count );
+    BOOL mirrored;
+    POINT offset;
+    UINT i;
+
+    if (!WINPOS_GetWinOffset( hwndFrom, hwndTo, &mirrored, &offset )) return 0;
+
+    for (i = 0; i < count; i++)
+    {
+        lppt[i].x += offset.x;
+        lppt[i].y += offset.y;
+        if (mirrored) lppt[i].x = -lppt[i].x;
+    }
+    if (mirrored && count == 2)  /* special case for rectangle */
+    {
+        int tmp = lppt[0].x;
+        lppt[0].x = lppt[1].x;
+        lppt[1].x = tmp;
+    }
+    return MAKELONG( LOWORD(offset.x), LOWORD(offset.y) );
 }
 
 
 /*******************************************************************
  *		ClientToScreen (USER32.@)
  */
-BOOL WINAPI ClientToScreen( HWND hwnd, POINT *pt )
+BOOL WINAPI ClientToScreen( HWND hwnd, LPPOINT lppnt )
 {
-    return NtUserClientToScreen( hwnd, pt );
+    POINT offset;
+    BOOL mirrored;
+
+    if (!hwnd)
+    {
+        SetLastError( ERROR_INVALID_WINDOW_HANDLE );
+        return FALSE;
+    }
+    if (!WINPOS_GetWinOffset( hwnd, 0, &mirrored, &offset )) return FALSE;
+    lppnt->x += offset.x;
+    lppnt->y += offset.y;
+    if (mirrored) lppnt->x = -lppnt->x;
+    return TRUE;
 }
 
 
@@ -262,7 +447,7 @@ BOOL WINAPI ClientToScreen( HWND hwnd, POINT *pt )
  */
 BOOL WINAPI ScreenToClient( HWND hwnd, POINT *pt )
 {
-    return NtUserScreenToClient( hwnd, pt );
+    return NtUserCallHwndParam( hwnd, (UINT_PTR)pt, NtUserScreenToClient );
 }
 
 
@@ -342,6 +527,266 @@ static BOOL get_work_rect( HWND hwnd, RECT *rect )
 }
 
 
+/*******************************************************************
+ *           WINPOS_GetMinMaxInfo
+ *
+ * Get the minimized and maximized information for a window.
+ */
+MINMAXINFO WINPOS_GetMinMaxInfo( HWND hwnd )
+{
+    MINMAXINFO info;
+    NtUserCallHwndParam( hwnd, (UINT_PTR)&info, NtUserGetMinMaxInfo );
+    return info;
+}
+
+
+static POINT get_first_minimized_child_pos( const RECT *parent, const MINIMIZEDMETRICS *mm,
+                                            int width, int height )
+{
+    POINT ret;
+
+    if (mm->iArrange & ARW_STARTRIGHT)
+        ret.x = parent->right - mm->iHorzGap - width;
+    else
+        ret.x = parent->left + mm->iHorzGap;
+    if (mm->iArrange & ARW_STARTTOP)
+        ret.y = parent->top + mm->iVertGap;
+    else
+        ret.y = parent->bottom - mm->iVertGap - height;
+
+    return ret;
+}
+
+static void get_next_minimized_child_pos( const RECT *parent, const MINIMIZEDMETRICS *mm,
+                                          int width, int height, POINT *pos )
+{
+    BOOL next;
+
+    if (mm->iArrange & ARW_UP) /* == ARW_DOWN */
+    {
+        if (mm->iArrange & ARW_STARTTOP)
+        {
+            pos->y += height + mm->iVertGap;
+            if ((next = pos->y + height > parent->bottom))
+                pos->y = parent->top + mm->iVertGap;
+        }
+        else
+        {
+            pos->y -= height + mm->iVertGap;
+            if ((next = pos->y < parent->top))
+                pos->y = parent->bottom - mm->iVertGap - height;
+        }
+
+        if (next)
+        {
+            if (mm->iArrange & ARW_STARTRIGHT)
+                pos->x -= width + mm->iHorzGap;
+            else
+                pos->x += width + mm->iHorzGap;
+        }
+    }
+    else
+    {
+        if (mm->iArrange & ARW_STARTRIGHT)
+        {
+            pos->x -= width + mm->iHorzGap;
+            if ((next = pos->x < parent->left))
+                pos->x = parent->right - mm->iHorzGap - width;
+        }
+        else
+        {
+            pos->x += width + mm->iHorzGap;
+            if ((next = pos->x + width > parent->right))
+                pos->x = parent->left + mm->iHorzGap;
+        }
+
+        if (next)
+        {
+            if (mm->iArrange & ARW_STARTTOP)
+                pos->y += height + mm->iVertGap;
+            else
+                pos->y -= height + mm->iVertGap;
+        }
+    }
+}
+
+static POINT get_minimized_pos( HWND hwnd, POINT pt )
+{
+    RECT rect, rectParent;
+    HWND parent, child;
+    HRGN hrgn, tmp;
+    MINIMIZEDMETRICS metrics;
+    int width, height;
+
+    parent = NtUserGetAncestor( hwnd, GA_PARENT );
+    if (parent == GetDesktopWindow())
+    {
+        MONITORINFO mon_info;
+        HMONITOR monitor = MonitorFromWindow( hwnd, MONITOR_DEFAULTTOPRIMARY );
+
+        mon_info.cbSize = sizeof( mon_info );
+        GetMonitorInfoW( monitor, &mon_info );
+        rectParent = mon_info.rcWork;
+    }
+    else GetClientRect( parent, &rectParent );
+
+    if ((pt.x >= rectParent.left) && (pt.x + GetSystemMetrics( SM_CXMINIMIZED ) < rectParent.right) &&
+        (pt.y >= rectParent.top) && (pt.y + GetSystemMetrics( SM_CYMINIMIZED ) < rectParent.bottom))
+        return pt;  /* The icon already has a suitable position */
+
+    width = GetSystemMetrics( SM_CXMINIMIZED );
+    height = GetSystemMetrics( SM_CYMINIMIZED );
+
+    metrics.cbSize = sizeof(metrics);
+    SystemParametersInfoW( SPI_GETMINIMIZEDMETRICS, sizeof(metrics), &metrics, 0 );
+
+    /* Check if another icon already occupies this spot */
+    /* FIXME: this is completely inefficient */
+
+    hrgn = CreateRectRgn( 0, 0, 0, 0 );
+    tmp = CreateRectRgn( 0, 0, 0, 0 );
+    for (child = GetWindow( parent, GW_CHILD ); child; child = GetWindow( child, GW_HWNDNEXT ))
+    {
+        if (child == hwnd) continue;
+        if ((GetWindowLongW( child, GWL_STYLE ) & (WS_VISIBLE|WS_MINIMIZE)) != (WS_VISIBLE|WS_MINIMIZE))
+            continue;
+        if (WIN_GetRectangles( child, COORDS_PARENT, &rect, NULL ))
+        {
+            SetRectRgn( tmp, rect.left, rect.top, rect.right, rect.bottom );
+            CombineRgn( hrgn, hrgn, tmp, RGN_OR );
+        }
+    }
+    DeleteObject( tmp );
+
+    pt = get_first_minimized_child_pos( &rectParent, &metrics, width, height );
+    for (;;)
+    {
+        SetRect( &rect, pt.x, pt.y, pt.x + width, pt.y + height );
+        if (!RectInRegion( hrgn, &rect ))
+            break;
+
+        get_next_minimized_child_pos( &rectParent, &metrics, width, height, &pt );
+    }
+
+    DeleteObject( hrgn );
+    return pt;
+}
+
+
+/***********************************************************************
+ *           WINPOS_MinMaximize
+ */
+UINT WINPOS_MinMaximize( HWND hwnd, UINT cmd, LPRECT rect )
+{
+    UINT swpFlags = 0;
+    LONG old_style;
+    MINMAXINFO minmax;
+    WINDOWPLACEMENT wpl;
+
+    TRACE("%p %u\n", hwnd, cmd );
+
+    wpl.length = sizeof(wpl);
+    GetWindowPlacement( hwnd, &wpl );
+
+    if (HOOK_CallHooks( WH_CBT, HCBT_MINMAX, (WPARAM)hwnd, cmd, TRUE ))
+        return SWP_NOSIZE | SWP_NOMOVE;
+
+    if (IsIconic( hwnd ))
+    {
+        switch (cmd)
+        {
+        case SW_SHOWMINNOACTIVE:
+        case SW_SHOWMINIMIZED:
+        case SW_FORCEMINIMIZE:
+        case SW_MINIMIZE:
+            wpl.ptMinPosition = get_minimized_pos( hwnd, wpl.ptMinPosition );
+
+            SetRect( rect, wpl.ptMinPosition.x, wpl.ptMinPosition.y,
+                     wpl.ptMinPosition.x + GetSystemMetrics(SM_CXMINIMIZED),
+                     wpl.ptMinPosition.y + GetSystemMetrics(SM_CYMINIMIZED) );
+            return SWP_NOSIZE | SWP_NOMOVE;
+        }
+        if (!SendMessageW( hwnd, WM_QUERYOPEN, 0, 0 )) return SWP_NOSIZE | SWP_NOMOVE;
+        swpFlags |= SWP_NOCOPYBITS;
+    }
+
+    switch( cmd )
+    {
+    case SW_SHOWMINNOACTIVE:
+    case SW_SHOWMINIMIZED:
+    case SW_FORCEMINIMIZE:
+    case SW_MINIMIZE:
+        if (IsZoomed( hwnd )) win_set_flags( hwnd, WIN_RESTORE_MAX, 0 );
+        else win_set_flags( hwnd, 0, WIN_RESTORE_MAX );
+
+        if (GetFocus() == hwnd)
+        {
+            if (GetWindowLongW(hwnd, GWL_STYLE) & WS_CHILD)
+                NtUserSetFocus( NtUserGetAncestor( hwnd, GA_PARENT ));
+            else
+                NtUserSetFocus( 0 );
+        }
+
+        old_style = WIN_SetStyle( hwnd, WS_MINIMIZE, WS_MAXIMIZE );
+
+        wpl.ptMinPosition = get_minimized_pos( hwnd, wpl.ptMinPosition );
+
+        if (!(old_style & WS_MINIMIZE)) swpFlags |= SWP_STATECHANGED;
+        SetRect( rect, wpl.ptMinPosition.x, wpl.ptMinPosition.y,
+                 wpl.ptMinPosition.x + GetSystemMetrics(SM_CXMINIMIZED),
+                 wpl.ptMinPosition.y + GetSystemMetrics(SM_CYMINIMIZED) );
+        swpFlags |= SWP_NOCOPYBITS;
+        break;
+
+    case SW_MAXIMIZE:
+        old_style = GetWindowLongW( hwnd, GWL_STYLE );
+        if ((old_style & WS_MAXIMIZE) && (old_style & WS_VISIBLE)) return SWP_NOSIZE | SWP_NOMOVE;
+
+        minmax = WINPOS_GetMinMaxInfo( hwnd );
+
+        old_style = WIN_SetStyle( hwnd, WS_MAXIMIZE, WS_MINIMIZE );
+        if (old_style & WS_MINIMIZE)
+            win_set_flags( hwnd, WIN_RESTORE_MAX, 0 );
+
+        if (!(old_style & WS_MAXIMIZE)) swpFlags |= SWP_STATECHANGED;
+        SetRect( rect, minmax.ptMaxPosition.x, minmax.ptMaxPosition.y,
+                 minmax.ptMaxPosition.x + minmax.ptMaxSize.x, minmax.ptMaxPosition.y + minmax.ptMaxSize.y );
+        break;
+
+    case SW_SHOWNOACTIVATE:
+        win_set_flags( hwnd, 0, WIN_RESTORE_MAX );
+        /* fall through */
+    case SW_SHOWNORMAL:
+    case SW_RESTORE:
+    case SW_SHOWDEFAULT: /* FIXME: should have its own handler */
+        old_style = WIN_SetStyle( hwnd, 0, WS_MINIMIZE | WS_MAXIMIZE );
+        if (old_style & WS_MINIMIZE)
+        {
+            if (win_get_flags( hwnd ) & WIN_RESTORE_MAX)
+            {
+                /* Restore to maximized position */
+                minmax = WINPOS_GetMinMaxInfo( hwnd );
+                WIN_SetStyle( hwnd, WS_MAXIMIZE, 0 );
+                swpFlags |= SWP_STATECHANGED;
+                SetRect( rect, minmax.ptMaxPosition.x, minmax.ptMaxPosition.y,
+                         minmax.ptMaxPosition.x + minmax.ptMaxSize.x, minmax.ptMaxPosition.y + minmax.ptMaxSize.y );
+                break;
+            }
+        }
+        else if (!(old_style & WS_MAXIMIZE)) break;
+
+        swpFlags |= SWP_STATECHANGED;
+
+        /* Restore to normal position */
+
+        *rect = wpl.rcNormalPosition;
+        break;
+    }
+
+    return swpFlags;
+}
+
+
 /***********************************************************************
  *		GetInternalWindowPos (USER32.@)
  */
@@ -410,7 +855,7 @@ static void update_maximized_pos( WND *wnd, RECT *work_rect )
  */
 BOOL WINAPI GetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *wndpl )
 {
-    return NtUserGetWindowPlacement( hwnd, wndpl );
+    return NtUserCallHwndParam( hwnd, (UINT_PTR)wndpl, NtUserGetWindowPlacement );
 }
 
 /* make sure the specified rect is visible on screen */
@@ -665,9 +1110,17 @@ LONG WINPOS_HandleWindowPosChanging( HWND hwnd, WINDOWPOS *winpos )
     if (winpos->flags & SWP_NOSIZE) return 0;
     if ((style & WS_THICKFRAME) || ((style & (WS_POPUP | WS_CHILD)) == 0))
     {
-	MINMAXINFO info = NtUserGetMinMaxInfo( hwnd );
-        winpos->cx = min( winpos->cx, info.ptMaxTrackSize.x );
-        winpos->cy = min( winpos->cy, info.ptMaxTrackSize.y );
+	MINMAXINFO info = WINPOS_GetMinMaxInfo( hwnd );
+
+        /* HACK: This code changes the window's size to fit the display. However,
+         * some games (Bayonetta, Dragon's Dogma) will then have the incorrect
+         * render size. So just let windows be too big to fit the display. */
+        if (__wine_get_window_manager() != WINE_WM_X11_STEAMCOMPMGR)
+        {
+            winpos->cx = min( winpos->cx, info.ptMaxTrackSize.x );
+            winpos->cy = min( winpos->cy, info.ptMaxTrackSize.y );
+        }
+
 	if (!(style & WS_MINIMIZE))
 	{
             winpos->cx = max( winpos->cx, info.ptMinTrackSize.x );
@@ -679,11 +1132,238 @@ LONG WINPOS_HandleWindowPosChanging( HWND hwnd, WINDOWPOS *winpos )
 
 
 /***********************************************************************
+ *		update_surface_region
+ */
+static void update_surface_region( HWND hwnd )
+{
+    NTSTATUS status;
+    HRGN region = 0;
+    RGNDATA *data;
+    size_t size = 256;
+    WND *win = WIN_GetPtr( hwnd );
+
+    if (!win || win == WND_DESKTOP || win == WND_OTHER_PROCESS) return;
+    if (!win->surface) goto done;
+
+    do
+    {
+        if (!(data = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET( RGNDATA, Buffer[size] )))) goto done;
+
+        SERVER_START_REQ( get_surface_region )
+        {
+            req->window = wine_server_user_handle( hwnd );
+            wine_server_set_reply( req, data->Buffer, size );
+            if (!(status = wine_server_call( req )))
+            {
+                size_t reply_size = wine_server_reply_size( reply );
+                if (reply_size)
+                {
+                    data->rdh.dwSize   = sizeof(data->rdh);
+                    data->rdh.iType    = RDH_RECTANGLES;
+                    data->rdh.nCount   = reply_size / sizeof(RECT);
+                    data->rdh.nRgnSize = reply_size;
+                    region = ExtCreateRegion( NULL, data->rdh.dwSize + data->rdh.nRgnSize, data );
+                    OffsetRgn( region, -reply->visible_rect.left, -reply->visible_rect.top );
+                }
+            }
+            else size = reply->total_size;
+        }
+        SERVER_END_REQ;
+        HeapFree( GetProcessHeap(), 0, data );
+    } while (status == STATUS_BUFFER_OVERFLOW);
+
+    if (status) goto done;
+
+    win->surface->funcs->set_region( win->surface, region );
+    if (region) DeleteObject( region );
+
+done:
+    WIN_ReleasePtr( win );
+}
+
+
+/***********************************************************************
+ *		set_window_pos
+ *
+ * Backend implementation of SetWindowPos.
+ */
+BOOL set_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
+                     const RECT *window_rect, const RECT *client_rect, const RECT *valid_rects )
+{
+    WND *win;
+    HWND surface_win = 0, parent = NtUserGetAncestor( hwnd, GA_PARENT );
+    BOOL ret, needs_update = FALSE;
+    RECT visible_rect, old_visible_rect, old_window_rect, old_client_rect, extra_rects[3];
+    struct window_surface *old_surface, *new_surface = NULL;
+    struct window_surface *dummy_surface = (struct window_surface *)NtUserCallHwnd( 0, NtUserGetDummySurface );
+
+    if (!parent || parent == GetDesktopWindow())
+    {
+        new_surface = dummy_surface;  /* provide a default surface for top-level windows */
+        window_surface_add_ref( new_surface );
+    }
+    visible_rect = *window_rect;
+    if (!(ret = USER_Driver->pWindowPosChanging( hwnd, insert_after, swp_flags,
+                                                 window_rect, client_rect, &visible_rect, &new_surface )))
+    {
+        if (IsRectEmpty( window_rect )) visible_rect = *window_rect;
+        else
+        {
+            visible_rect = get_virtual_screen_rect();
+            IntersectRect( &visible_rect, &visible_rect, window_rect );
+        }
+    }
+
+    WIN_GetRectangles( hwnd, COORDS_SCREEN, &old_window_rect, NULL );
+    if (IsRectEmpty( &valid_rects[0] )) valid_rects = NULL;
+
+    if (!(win = WIN_GetPtr( hwnd )) || win == WND_DESKTOP || win == WND_OTHER_PROCESS)
+    {
+        if (new_surface) window_surface_release( new_surface );
+        return FALSE;
+    }
+
+    /* create or update window surface for top-level windows if the driver doesn't implement WindowPosChanging */
+    if (!ret && new_surface && !IsRectEmpty( &visible_rect ) &&
+        (!(GetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED) ||
+           NtUserGetLayeredWindowAttributes( hwnd, NULL, NULL, NULL )))
+    {
+        window_surface_release( new_surface );
+        if ((new_surface = win->surface)) window_surface_add_ref( new_surface );
+        create_offscreen_window_surface( &visible_rect, &new_surface );
+    }
+
+    old_visible_rect = win->visible_rect;
+    old_client_rect = win->client_rect;
+    old_surface = win->surface;
+    if (old_surface != new_surface) swp_flags |= SWP_FRAMECHANGED;  /* force refreshing non-client area */
+    if (new_surface == dummy_surface) swp_flags |= SWP_NOREDRAW;
+    else if (old_surface == dummy_surface)
+    {
+        swp_flags |= SWP_NOCOPYBITS;
+        valid_rects = NULL;
+    }
+
+    SERVER_START_REQ( set_window_pos )
+    {
+        req->handle        = wine_server_user_handle( hwnd );
+        req->previous      = wine_server_user_handle( insert_after );
+        req->swp_flags     = swp_flags;
+        req->window.left   = window_rect->left;
+        req->window.top    = window_rect->top;
+        req->window.right  = window_rect->right;
+        req->window.bottom = window_rect->bottom;
+        req->client.left   = client_rect->left;
+        req->client.top    = client_rect->top;
+        req->client.right  = client_rect->right;
+        req->client.bottom = client_rect->bottom;
+        if (!EqualRect( window_rect, &visible_rect ) || new_surface || valid_rects)
+        {
+            extra_rects[0] = extra_rects[1] = visible_rect;
+            if (new_surface)
+            {
+                extra_rects[1] = new_surface->rect;
+                OffsetRect( &extra_rects[1], visible_rect.left, visible_rect.top );
+            }
+            if (valid_rects) extra_rects[2] = valid_rects[0];
+            else SetRectEmpty( &extra_rects[2] );
+            wine_server_add_data( req, extra_rects, sizeof(extra_rects) );
+        }
+        if (new_surface) req->paint_flags |= SET_WINPOS_PAINT_SURFACE;
+        if (win->pixel_format) req->paint_flags |= SET_WINPOS_PIXEL_FORMAT;
+
+        if ((ret = !wine_server_call( req )))
+        {
+            win->dwStyle    = reply->new_style;
+            win->dwExStyle  = reply->new_ex_style;
+            win->window_rect  = *window_rect;
+            win->client_rect  = *client_rect;
+            win->visible_rect = visible_rect;
+            win->surface      = new_surface;
+            surface_win       = wine_server_ptr_handle( reply->surface_win );
+            needs_update      = reply->needs_update;
+            if (GetWindowLongW( win->parent, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL)
+            {
+                RECT client;
+                GetClientRect( win->parent, &client );
+                mirror_rect( &client, &win->window_rect );
+                mirror_rect( &client, &win->client_rect );
+                mirror_rect( &client, &win->visible_rect );
+            }
+            /* if an RTL window is resized the children have moved */
+            if (win->dwExStyle & WS_EX_LAYOUTRTL &&
+                client_rect->right - client_rect->left != old_client_rect.right - old_client_rect.left)
+                win->flags |= WIN_CHILDREN_MOVED;
+        }
+    }
+    SERVER_END_REQ;
+
+    if (ret)
+    {
+        if (needs_update) update_surface_region( surface_win );
+        if (((swp_flags & SWP_AGG_NOPOSCHANGE) != SWP_AGG_NOPOSCHANGE) ||
+            (swp_flags & (SWP_HIDEWINDOW | SWP_SHOWWINDOW | SWP_STATECHANGED | SWP_FRAMECHANGED)))
+            invalidate_dce( win, &old_window_rect );
+    }
+
+    WIN_ReleasePtr( win );
+
+    if (ret)
+    {
+        TRACE( "win %p surface %p -> %p\n", hwnd, old_surface, new_surface );
+        register_window_surface( old_surface, new_surface );
+        if (old_surface)
+        {
+            if (valid_rects)
+            {
+                move_window_bits( hwnd, old_surface, new_surface, &visible_rect,
+                                  &old_visible_rect, window_rect, valid_rects );
+                valid_rects = NULL;  /* prevent the driver from trying to also move the bits */
+            }
+            window_surface_release( old_surface );
+        }
+        else if (surface_win && surface_win != hwnd)
+        {
+            if (valid_rects)
+            {
+                RECT rects[2];
+                int x_offset = old_visible_rect.left - visible_rect.left;
+                int y_offset = old_visible_rect.top - visible_rect.top;
+
+                /* if all that happened is that the whole window moved, copy everything */
+                if (!(swp_flags & SWP_FRAMECHANGED) &&
+                    old_visible_rect.right  - visible_rect.right  == x_offset &&
+                    old_visible_rect.bottom - visible_rect.bottom == y_offset &&
+                    old_client_rect.left    - client_rect->left   == x_offset &&
+                    old_client_rect.right   - client_rect->right  == x_offset &&
+                    old_client_rect.top     - client_rect->top    == y_offset &&
+                    old_client_rect.bottom  - client_rect->bottom == y_offset &&
+                    EqualRect( &valid_rects[0], client_rect ))
+                {
+                    rects[0] = visible_rect;
+                    rects[1] = old_visible_rect;
+                    valid_rects = rects;
+                }
+                move_window_bits_parent( hwnd, surface_win, window_rect, valid_rects );
+                valid_rects = NULL;  /* prevent the driver from trying to also move the bits */
+            }
+        }
+
+        USER_Driver->pWindowPosChanged( hwnd, insert_after, swp_flags, window_rect,
+                                        client_rect, &visible_rect, valid_rects, new_surface );
+    }
+    else if (new_surface) window_surface_release( new_surface );
+
+    return ret;
+}
+
+
+/***********************************************************************
  *		BeginDeferWindowPos (USER32.@)
  */
 HDWP WINAPI BeginDeferWindowPos( INT count )
 {
-    return NtUserBeginDeferWindowPos( count );
+    return UlongToHandle( NtUserCallOneParam( count, NtUserBeginDeferWindowPos ));
 }
 
 
@@ -711,7 +1391,43 @@ BOOL WINAPI EndDeferWindowPos( HDWP hdwp )
  */
 UINT WINAPI ArrangeIconicWindows( HWND parent )
 {
-    return NtUserArrangeIconicWindows( parent );
+    int width, height, count = 0;
+    RECT rectParent;
+    HWND hwndChild;
+    POINT pt;
+    MINIMIZEDMETRICS metrics;
+
+    metrics.cbSize = sizeof(metrics);
+    SystemParametersInfoW( SPI_GETMINIMIZEDMETRICS, sizeof(metrics), &metrics, 0 );
+    width = GetSystemMetrics( SM_CXMINIMIZED );
+    height = GetSystemMetrics( SM_CYMINIMIZED );
+
+    if (parent == GetDesktopWindow())
+    {
+        MONITORINFO mon_info;
+        HMONITOR monitor = MonitorFromWindow( 0, MONITOR_DEFAULTTOPRIMARY );
+
+        mon_info.cbSize = sizeof( mon_info );
+        GetMonitorInfoW( monitor, &mon_info );
+        rectParent = mon_info.rcWork;
+    }
+    else GetClientRect( parent, &rectParent );
+
+    pt = get_first_minimized_child_pos( &rectParent, &metrics, width, height );
+
+    hwndChild = GetWindow( parent, GW_CHILD );
+    while (hwndChild)
+    {
+        if( IsIconic( hwndChild ) )
+        {
+            NtUserSetWindowPos( hwndChild, 0, pt.x, pt.y, 0, 0,
+                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE );
+            get_next_minimized_child_pos( &rectParent, &metrics, width, height, &pt );
+            count++;
+        }
+        hwndChild = GetWindow( hwndChild, GW_HWNDNEXT );
+    }
+    return count;
 }
 
 
@@ -897,7 +1613,7 @@ void WINPOS_SysCommandSizeMove( HWND hwnd, WPARAM wParam )
 
       /* Get min/max info */
 
-    minmax = NtUserGetMinMaxInfo( hwnd );
+    minmax = WINPOS_GetMinMaxInfo( hwnd );
     WIN_GetRectangles( hwnd, COORDS_PARENT, &sizingRect, NULL );
     origRect = sizingRect;
     if (style & WS_CHILD)

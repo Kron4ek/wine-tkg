@@ -93,8 +93,6 @@
     SYSCALL_ENTRY( NtUserAddClipboardFormatListener ) \
     SYSCALL_ENTRY( NtUserAttachThreadInput ) \
     SYSCALL_ENTRY( NtUserBuildHwndList ) \
-    SYSCALL_ENTRY( NtUserCheckMenuItem ) \
-    SYSCALL_ENTRY( NtUserChildWindowFromPointEx ) \
     SYSCALL_ENTRY( NtUserCloseDesktop ) \
     SYSCALL_ENTRY( NtUserCloseWindowStation ) \
     SYSCALL_ENTRY( NtUserCopyAcceleratorTable ) \
@@ -102,9 +100,7 @@
     SYSCALL_ENTRY( NtUserCreateDesktopEx ) \
     SYSCALL_ENTRY( NtUserCreateWindowStation ) \
     SYSCALL_ENTRY( NtUserDestroyAcceleratorTable ) \
-    SYSCALL_ENTRY( NtUserEnableMouseInPointer ) \
     SYSCALL_ENTRY( NtUserFindExistingCursorIcon ) \
-    SYSCALL_ENTRY( NtUserFindWindowEx ) \
     SYSCALL_ENTRY( NtUserGetAncestor ) \
     SYSCALL_ENTRY( NtUserGetAtomName ) \
     SYSCALL_ENTRY( NtUserGetClassName ) \
@@ -124,7 +120,6 @@
     SYSCALL_ENTRY( NtUserGetKeyboardLayoutName ) \
     SYSCALL_ENTRY( NtUserGetKeyboardState ) \
     SYSCALL_ENTRY( NtUserGetLayeredWindowAttributes ) \
-    SYSCALL_ENTRY( NtUserGetMenuItemRect ) \
     SYSCALL_ENTRY( NtUserGetMouseMovePointsEx ) \
     SYSCALL_ENTRY( NtUserGetObjectInformation ) \
     SYSCALL_ENTRY( NtUserGetOpenClipboardWindow ) \
@@ -144,8 +139,6 @@
     SYSCALL_ENTRY( NtUserRemoveClipboardFormatListener ) \
     SYSCALL_ENTRY( NtUserRemoveProp ) \
     SYSCALL_ENTRY( NtUserSetKeyboardState ) \
-    SYSCALL_ENTRY( NtUserSetMenuContextHelpId ) \
-    SYSCALL_ENTRY( NtUserSetMenuDefaultItem ) \
     SYSCALL_ENTRY( NtUserSetObjectInformation ) \
     SYSCALL_ENTRY( NtUserSetProcessDpiAwarenessContext ) \
     SYSCALL_ENTRY( NtUserSetProcessWindowStation ) \
@@ -155,7 +148,6 @@
     SYSCALL_ENTRY( NtUserSetTimer ) \
     SYSCALL_ENTRY( NtUserSetWinEventHook ) \
     SYSCALL_ENTRY( NtUserSetWindowsHookEx ) \
-    SYSCALL_ENTRY( NtUserThunkedMenuInfo ) \
     SYSCALL_ENTRY( NtUserUnhookWinEvent ) \
     SYSCALL_ENTRY( NtUserUnhookWindowsHookEx ) \
     SYSCALL_ENTRY( NtUserWindowFromDC )

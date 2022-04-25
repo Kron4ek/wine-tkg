@@ -5529,6 +5529,9 @@ winehid.inf,"@%12%\winehid.sys,-1"
 wineusb.inf,"@%12%\wineusb.sys,-1"
 winexinput.inf,"@%12%\winexinput.sys,-1"
 
+[ProtonOverrides]
+HKLM,Software\Khronos\OpenXR\1,"ActiveRuntime",,"C:\openxr\wineopenxr64.json"
+
 [NlsFiles]
 c_037.nls
 c_10000.nls

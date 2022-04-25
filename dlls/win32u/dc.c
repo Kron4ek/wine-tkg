@@ -755,13 +755,6 @@ HDC WINAPI NtGdiOpenDCW( UNICODE_STRING *device, const DEVMODEW *devmode, UNICOD
 
     DC_InitDC( dc );
     release_dc_ptr( dc );
-
-    if (driver_info && driver_info->cVersion == NTGDI_WIN16_DIB &&
-        !create_dib_surface( hdc, pdev ))
-    {
-        NtGdiDeleteObjectApp( hdc );
-        return 0;
-    }
     return hdc;
 }
 
@@ -1340,7 +1333,7 @@ UINT WINAPI NtGdiGetBoundsRect( HDC hdc, RECT *rect, UINT flags )
 
     if (rect)
     {
-        if (IsRectEmpty( &dc->bounds ))
+        if (is_rect_empty( &dc->bounds ))
         {
             rect->left = rect->top = rect->right = rect->bottom = 0;
             ret = DCB_RESET;
@@ -1385,7 +1378,7 @@ UINT WINAPI NtGdiSetBoundsRect( HDC hdc, const RECT *rect, UINT flags )
     }
 
     ret = (dc->bounds_enabled ? DCB_ENABLE : DCB_DISABLE) |
-          (IsRectEmpty( &dc->bounds ) ? ret & DCB_SET : DCB_SET);
+          (is_rect_empty( &dc->bounds ) ? ret & DCB_SET : DCB_SET);
 
     if (flags & DCB_RESET) reset_bounds( &dc->bounds );
 

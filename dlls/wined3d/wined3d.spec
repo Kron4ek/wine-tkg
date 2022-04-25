@@ -317,6 +317,11 @@
 
 @ cdecl wined3d_extract_shader_input_signature_from_dxbc(ptr ptr long)
 
+@ cdecl wined3d_access_gl_texture(ptr ptr ptr long)
+@ cdecl wined3d_device_run_cs_callback(ptr ptr ptr long)
+@ cdecl wined3d_device_wait_idle(ptr)
+@ cdecl wined3d_get_gl_texture(ptr)
+
 @ cdecl vkd3d_create_instance(ptr ptr)
 @ cdecl vkd3d_instance_decref(ptr)
 @ cdecl vkd3d_instance_get_vk_instance(ptr)

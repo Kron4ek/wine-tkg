@@ -317,7 +317,7 @@ static BOOL process_attach(void)
 /***********************************************************************
  *              ThreadDetach   (MACDRV.@)
  */
-void macdrv_ThreadDetach(void)
+void CDECL macdrv_ThreadDetach(void)
 {
     struct macdrv_thread_data *data = macdrv_thread_data();
 
@@ -419,7 +419,7 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
 /***********************************************************************
  *              SystemParametersInfo (MACDRV.@)
  */
-BOOL macdrv_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, UINT flags )
+BOOL CDECL macdrv_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, UINT flags )
 {
     switch (action)
     {

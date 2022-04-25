@@ -37,28 +37,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(class);
 WINE_DECLARE_DEBUG_CHANNEL(win);
 
 #define MAX_WINPROCS  4096
-#define WINPROC_PROC16  ((void *)1)  /* placeholder for 16-bit window procs */
-
-typedef struct tagCLASS
-{
-    struct list  entry;         /* Entry in class list */
-    UINT         style;         /* Class style */
-    BOOL         local;         /* Local class? */
-    WNDPROC      winproc;       /* Window procedure */
-    INT          cbClsExtra;    /* Class extra bytes */
-    INT          cbWndExtra;    /* Window extra bytes */
-    struct dce  *dce;           /* Opaque pointer to class DCE */
-    UINT_PTR     instance;      /* Module that created the task */
-    HICON        hIcon;         /* Default icon */
-    HICON        hIconSm;       /* Default small icon */
-    HICON        hIconSmIntern; /* Internal small icon, derived from hIcon */
-    HCURSOR      hCursor;       /* Default cursor */
-    HBRUSH       hbrBackground; /* Default background */
-    ATOM         atomName;      /* Name of the class */
-    WCHAR        name[MAX_ATOM_LEN + 1];
-    WCHAR       *basename;      /* Base name for redirected classes, pointer within 'name'. */
-    struct client_menu_name menu_name; /* Default menu name */
-} CLASS;
+#define WINPROC_PROC16  ((WINDOWPROC *)1)  /* placeholder for 16-bit window procs */
 
 static WINDOWPROC winproc_array[MAX_WINPROCS];
 static UINT winproc_used = NB_BUILTIN_WINPROCS;
@@ -184,25 +163,6 @@ BOOL is_winproc_unicode( WNDPROC proc, BOOL def_val )
     return ptr->procW != NULL;
 }
 
-void get_winproc_params( struct win_proc_params *params )
-{
-    WINDOWPROC *proc = get_winproc_ptr( params->func );
-
-    if (!proc)
-    {
-        params->procW = params->procA = NULL;
-    }
-    else if (proc == WINPROC_PROC16)
-    {
-        params->procW = params->procA = WINPROC_PROC16;
-    }
-    else
-    {
-        params->procA = proc->procA;
-        params->procW = proc->procW;
-    }
-}
-
 /***********************************************************************
  *	     NtUserInitializeClientPfnArrays   (win32u.@)
  */
@@ -321,14 +281,6 @@ static CLASS *find_class( HINSTANCE module, UNICODE_STRING *name )
     }
     user_unlock();
     return NULL;
-}
-
-/***********************************************************************
- *           get_class_winproc
- */
-WNDPROC get_class_winproc( CLASS *class )
-{
-    return class->winproc;
 }
 
 /***********************************************************************

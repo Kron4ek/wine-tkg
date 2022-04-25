@@ -29,6 +29,7 @@
 #include "winreg.h"
 #include "winternl.h"
 #include "hidusage.h"
+#include "wine/gdi_driver.h"
 #include "wine/heap.h"
 
 #define GET_WORD(ptr)  (*(const WORD *)(ptr))
@@ -37,6 +38,12 @@
 
 #define WINE_MOUSE_HANDLE       ((HANDLE)1)
 #define WINE_KEYBOARD_HANDLE    ((HANDLE)2)
+
+struct window_surface;
+
+extern const struct user_driver_funcs *USER_Driver DECLSPEC_HIDDEN;
+
+extern void USER_unload_driver(void) DECLSPEC_HIDDEN;
 
 struct received_message_info;
 
@@ -66,6 +73,7 @@ static inline struct user_thread_info *get_user_thread_info(void)
 }
 
 extern HMODULE user32_module DECLSPEC_HIDDEN;
+extern BOOL enable_mouse_in_pointer DECLSPEC_HIDDEN;
 
 struct dce;
 struct tagWND;
@@ -76,34 +84,40 @@ extern BOOL rawinput_device_get_usages(HANDLE handle, USAGE *usage_page, USAGE *
 extern struct rawinput_thread_data *rawinput_thread_data(void);
 extern void rawinput_update_device_list(void);
 
-extern BOOL post_dde_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWORD dest_tid,
-                              DWORD type ) DECLSPEC_HIDDEN;
-extern BOOL process_rawinput_message( MSG *msg, UINT hw_id,
-                                      const struct hardware_msg_data *msg_data ) DECLSPEC_HIDDEN;
-extern BOOL unpack_dde_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lparam,
-                                void **buffer, size_t size ) DECLSPEC_HIDDEN;
+extern void create_offscreen_window_surface( const RECT *visible_rect, struct window_surface **surface ) DECLSPEC_HIDDEN;
 
 extern void CLIPBOARD_ReleaseOwner( HWND hwnd ) DECLSPEC_HIDDEN;
 extern BOOL FOCUS_MouseActivate( HWND hwnd ) DECLSPEC_HIDDEN;
 extern BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret ) DECLSPEC_HIDDEN;
 extern HDC get_display_dc(void) DECLSPEC_HIDDEN;
 extern void release_display_dc( HDC hdc ) DECLSPEC_HIDDEN;
+extern void move_window_bits( HWND hwnd, struct window_surface *old_surface,
+                              struct window_surface *new_surface,
+                              const RECT *visible_rect, const RECT *old_visible_rect,
+                              const RECT *window_rect, const RECT *valid_rects ) DECLSPEC_HIDDEN;
+extern void move_window_bits_parent( HWND hwnd, HWND parent, const RECT *window_rect,
+                                     const RECT *valid_rects ) DECLSPEC_HIDDEN;
 extern void wait_graphics_driver_ready(void) DECLSPEC_HIDDEN;
 extern void *get_hook_proc( void *proc, const WCHAR *module, HMODULE *free_module ) DECLSPEC_HIDDEN;
 extern RECT get_virtual_screen_rect(void) DECLSPEC_HIDDEN;
 extern RECT get_primary_monitor_rect(void) DECLSPEC_HIDDEN;
 extern DWORD get_input_codepage( void ) DECLSPEC_HIDDEN;
 extern BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping mapping ) DECLSPEC_HIDDEN;
+extern NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput, UINT flags ) DECLSPEC_HIDDEN;
+extern LRESULT WINAPI MSG_SendInternalMessageTimeout( DWORD dest_pid, DWORD dest_tid,
+                                                      UINT msg, WPARAM wparam, LPARAM lparam,
+                                                      UINT flags, UINT timeout, PDWORD_PTR res_ptr ) DECLSPEC_HIDDEN;
 extern HPEN SYSCOLOR_GetPen( INT index ) DECLSPEC_HIDDEN;
 extern HBRUSH SYSCOLOR_Get55AABrush(void) DECLSPEC_HIDDEN;
 extern void SYSPARAMS_Init(void) DECLSPEC_HIDDEN;
 extern void USER_CheckNotLock(void) DECLSPEC_HIDDEN;
 extern BOOL USER_IsExitingThread( DWORD tid ) DECLSPEC_HIDDEN;
-extern void CDECL toggle_caret( HWND hwnd ) DECLSPEC_HIDDEN;
-extern void CDECL update_mouse_tracking_info( HWND hwnd ) DECLSPEC_HIDDEN;
 
 typedef LRESULT (*winproc_callback_t)( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
                                        LRESULT *result, void *arg );
+
+extern WNDPROC WINPROC_GetProc( WNDPROC proc, BOOL unicode ) DECLSPEC_HIDDEN;
+extern BOOL WINPROC_IsUnicode( WNDPROC proc, BOOL def_val ) DECLSPEC_HIDDEN;
 
 extern LRESULT WINPROC_CallProcAtoW( winproc_callback_t callback, HWND hwnd, UINT msg,
                                      WPARAM wParam, LPARAM lParam, LRESULT *result, void *arg,
@@ -111,8 +125,9 @@ extern LRESULT WINPROC_CallProcAtoW( winproc_callback_t callback, HWND hwnd, UIN
 
 extern INT_PTR WINPROC_CallDlgProcA( DLGPROC func, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam ) DECLSPEC_HIDDEN;
 extern INT_PTR WINPROC_CallDlgProcW( DLGPROC func, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam ) DECLSPEC_HIDDEN;
+extern BOOL WINPROC_call_window( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                                 LRESULT *result, BOOL unicode, enum wm_char_mapping mapping ) DECLSPEC_HIDDEN;
 extern void winproc_init(void) DECLSPEC_HIDDEN;
-extern void get_winproc_params( struct win_proc_params *params ) DECLSPEC_HIDDEN;
 
 extern ATOM get_class_info( HINSTANCE instance, const WCHAR *name, WNDCLASSEXW *info,
                             UNICODE_STRING *name_str, BOOL ansi ) DECLSPEC_HIDDEN;
@@ -120,12 +135,17 @@ extern ATOM get_class_info( HINSTANCE instance, const WCHAR *name, WNDCLASSEXW *
 /* kernel callbacks */
 
 BOOL WINAPI User32CallEnumDisplayMonitor( struct enum_display_monitor_params *params, ULONG size );
-BOOL WINAPI User32CallSendAsyncCallback( const struct send_async_params *params, ULONG size );
 BOOL WINAPI User32CallWinEventHook( const struct win_event_hook_params *params, ULONG size );
-BOOL WINAPI User32CallWindowProc( struct win_proc_params *params, ULONG size );
 BOOL WINAPI User32CallWindowsHook( const struct win_hook_params *params, ULONG size );
 
 /* message spy definitions */
+
+#define SPY_DISPATCHMESSAGE       0x0100
+#define SPY_SENDMESSAGE           0x0101
+#define SPY_DEFWNDPROC            0x0102
+
+#define SPY_RESULT_OK             0x0001
+#define SPY_RESULT_DEFWND         0x0002
 
 extern const char *SPY_GetMsgName( UINT msg, HWND hWnd ) DECLSPEC_HIDDEN;
 extern const char *SPY_GetVKeyName(WPARAM wParam) DECLSPEC_HIDDEN;

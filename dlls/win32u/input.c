@@ -26,8 +26,6 @@
 #pragma makedep unix
 #endif
 
-#include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "win32u_private.h"
 #include "ntuser_private.h"
 #include "wine/server.h"
@@ -68,110 +66,12 @@ BOOL WINAPI NtUserAttachThreadInput( DWORD from, DWORD to, BOOL attach )
 }
 
 /***********************************************************************
- *           __wine_send_input  (win32u.@)
- *
- * Internal SendInput function to allow the graphics driver to inject real events.
- */
-BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput )
-{
-    return set_ntstatus( send_hardware_message( hwnd, input, rawinput, 0 ));
-}
-
-/***********************************************************************
- *		update_mouse_coords
- *
- * Helper for NtUserSendInput.
- */
-static void update_mouse_coords( INPUT *input )
-{
-    if (!(input->mi.dwFlags & MOUSEEVENTF_MOVE)) return;
-
-    if (input->mi.dwFlags & MOUSEEVENTF_ABSOLUTE)
-    {
-        RECT rc;
-
-        if (input->mi.dwFlags & MOUSEEVENTF_VIRTUALDESK)
-            rc = get_virtual_screen_rect( 0 );
-        else
-            rc = get_primary_monitor_rect( 0 );
-
-        input->mi.dx = rc.left + ((input->mi.dx * (rc.right - rc.left)) >> 16);
-        input->mi.dy = rc.top  + ((input->mi.dy * (rc.bottom - rc.top)) >> 16);
-    }
-    else
-    {
-        int accel[3];
-
-        /* dx and dy can be negative numbers for relative movements */
-        NtUserSystemParametersInfo( SPI_GETMOUSE, 0, accel, 0 );
-
-        if (!accel[2]) return;
-
-        if (abs( input->mi.dx ) > accel[0])
-        {
-            input->mi.dx *= 2;
-            if (abs( input->mi.dx ) > accel[1] && accel[2] == 2) input->mi.dx *= 2;
-        }
-        if (abs(input->mi.dy) > accel[0])
-        {
-            input->mi.dy *= 2;
-            if (abs( input->mi.dy ) > accel[1] && accel[2] == 2) input->mi.dy *= 2;
-        }
-    }
-}
-
-/***********************************************************************
  *           NtUserSendInput  (win32u.@)
  */
 UINT WINAPI NtUserSendInput( UINT count, INPUT *inputs, int size )
 {
-    UINT i;
-    NTSTATUS status = STATUS_SUCCESS;
-    RAWINPUT rawinput;
-
-    if (size != sizeof(INPUT))
-    {
-        SetLastError( ERROR_INVALID_PARAMETER );
-        return 0;
-    }
-
-    if (!count)
-    {
-        SetLastError( ERROR_INVALID_PARAMETER );
-        return 0;
-    }
-
-    if (!inputs)
-    {
-        SetLastError( ERROR_NOACCESS );
-        return 0;
-    }
-
-    for (i = 0; i < count; i++)
-    {
-        INPUT input = inputs[i];
-        switch (input.type)
-        {
-        case INPUT_MOUSE:
-            /* we need to update the coordinates to what the server expects */
-            update_mouse_coords( &input );
-            /* fallthrough */
-        case INPUT_KEYBOARD:
-            status = send_hardware_message( 0, &input, &rawinput, SEND_HWMSG_INJECTED );
-            break;
-        case INPUT_HARDWARE:
-            SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-            return 0;
-        }
-
-        if (status)
-        {
-            SetLastError( RtlNtStatusToDosError(status) );
-            break;
-        }
-    }
-
-    return i;
+    if (!user_callbacks) return 0;
+    return user_callbacks->pSendInput( count, inputs, size );
 }
 
 /***********************************************************************
@@ -1141,18 +1041,6 @@ int WINAPI NtUserGetMouseMovePointsEx( UINT size, MOUSEMOVEPOINT *ptin, MOUSEMOV
     return copied;
 }
 
-BOOL enable_mouse_in_pointer = FALSE;
-
-/***********************************************************************
- *		NtUserEnableMouseInPointer (win32u.@)
- */
-BOOL WINAPI NtUserEnableMouseInPointer( BOOL enable )
-{
-    FIXME("(%#x) semi-stub\n", enable);
-    enable_mouse_in_pointer = TRUE;
-    return TRUE;
-}
-
 /**********************************************************************
  *		set_capture_window
  */
@@ -1240,14 +1128,6 @@ HWND get_active_window(void)
     GUITHREADINFO info;
     info.cbSize = sizeof(info);
     return NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ) ? info.hwndActive : 0;
-}
-
-/* see GetCapture */
-HWND get_capture(void)
-{
-    GUITHREADINFO info;
-    info.cbSize = sizeof(info);
-    return NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ) ? info.hwndCapture : 0;
 }
 
 /* see GetFocus */
@@ -1350,9 +1230,9 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
     if (hwnd)
     {
         /* send palette messages */
-        if (send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ))
-            send_message_timeout( HWND_BROADCAST, WM_PALETTEISCHANGING, (WPARAM)hwnd, 0,
-                                  SMTO_ABORTIFHUNG, 2000, NULL, FALSE );
+        if (send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ) && user_callbacks)
+            user_callbacks->pSendMessageTimeoutW( HWND_BROADCAST, WM_PALETTEISCHANGING, (WPARAM)hwnd, 0,
+                                                  SMTO_ABORTIFHUNG, 2000, NULL );
         if (!is_window(hwnd))
         {
             ret = FALSE;
@@ -1396,11 +1276,13 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
                       MAKEWPARAM( mouse ? WA_CLICKACTIVE : WA_ACTIVE, is_iconic(hwnd) ),
                       (LPARAM)previous );
         if (NtUserGetAncestor( hwnd, GA_PARENT ) == get_desktop_window())
-            NtUserPostMessage( get_desktop_window(), WM_PARENTNOTIFY, WM_NCACTIVATE, (LPARAM)hwnd );
+            post_message( get_desktop_window(), WM_PARENTNOTIFY, WM_NCACTIVATE, (LPARAM)hwnd );
 
-        if (hwnd == NtUserGetForegroundWindow() && !is_iconic( hwnd ))
-            NtUserSetActiveWindow( hwnd );
-
+        if (NtUserGetProp( hwnd, L"__WINE_RESTORE_WINDOW" ))
+        {
+            NtUserSetProp( hwnd, L"__WINE_RESTORE_WINDOW", NULL );
+            send_message( hwnd, WM_SYSCOMMAND, SC_RESTORE, 0 );
+        }
     }
 
     /* now change focus if necessary */
@@ -1537,13 +1419,13 @@ BOOL set_foreground_window( HWND hwnd, BOOL mouse )
     {
         if (send_msg_old)  /* old window belongs to other thread */
             NtUserMessageCall( previous, WM_WINE_SETACTIVEWINDOW, 0, 0,
-                               0, NtUserSendNotifyMessage, FALSE );
+                               0, FNID_SENDNOTIFYMESSAGE, FALSE );
         else if (send_msg_new)  /* old window belongs to us but new one to other thread */
             ret = set_active_window( 0, NULL, mouse, TRUE );
 
         if (send_msg_new)  /* new window belongs to other thread */
             NtUserMessageCall( hwnd, WM_WINE_SETACTIVEWINDOW, (WPARAM)hwnd, 0,
-                               0, NtUserSendNotifyMessage, FALSE );
+                               0, FNID_SENDNOTIFYMESSAGE, FALSE );
         else  /* new window belongs to us */
             ret = set_active_window( hwnd, NULL, mouse, TRUE );
     }

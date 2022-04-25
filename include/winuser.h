@@ -4243,7 +4243,7 @@ WINUSERAPI BOOL        WINAPI SetScrollRange(HWND,INT,INT,INT,BOOL);
 #define                       SetSysModalWindow(hwnd) ((HWND)0)
 WINUSERAPI BOOL        WINAPI SetSystemCursor(HCURSOR,DWORD);
 WINUSERAPI BOOL        WINAPI SetSystemMenu(HWND,HMENU);
-WINUSERAPI UINT_PTR    WINAPI SetSystemTimer(HWND,UINT_PTR,UINT,void*);
+WINUSERAPI UINT_PTR    WINAPI SetSystemTimer(HWND,UINT_PTR,UINT,TIMERPROC);
 WINUSERAPI BOOL        WINAPI SetThreadDesktop(HDESK);
 WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT);
 WINUSERAPI UINT_PTR    WINAPI SetTimer(HWND,UINT_PTR,UINT,TIMERPROC);
@@ -4464,7 +4464,7 @@ struct user_api_hook
     LRESULT (WINAPI *pScrollBarWndProc)(HWND, UINT, WPARAM, LPARAM, BOOL);
 };
 
-WINUSERAPI BOOL WINAPI RegisterUserApiHook(const struct user_api_hook *new_hook, struct user_api_hook *old_hook);
+WINUSERAPI BOOL WINAPI RegisterUserApiHook(const struct user_api_hook *new, struct user_api_hook *old);
 WINUSERAPI void WINAPI UnregisterUserApiHook(void);
 #endif
 

@@ -639,7 +639,7 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
     if (!hwnd)
     {
         if (hUserFont) DeleteObject( hUserFont );
-        if (hMenu) NtUserDestroyMenu( hMenu );
+        if (hMenu) DestroyMenu( hMenu );
         if (disabled_owner) EnableWindow( disabled_owner, TRUE );
         return 0;
     }

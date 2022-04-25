@@ -123,6 +123,119 @@ BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret )
 
 
 /***********************************************************************
+ *		__wine_send_input  (USER32.@)
+ *
+ * Internal SendInput function to allow the graphics driver to inject real events.
+ */
+BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput )
+{
+    NTSTATUS status = send_hardware_message( hwnd, input, rawinput, 0 );
+    if (status) SetLastError( RtlNtStatusToDosError(status) );
+    return !status;
+}
+
+
+/***********************************************************************
+ *		update_mouse_coords
+ *
+ * Helper for SendInput.
+ */
+static void update_mouse_coords( INPUT *input )
+{
+    if (!(input->u.mi.dwFlags & MOUSEEVENTF_MOVE)) return;
+
+    if (input->u.mi.dwFlags & MOUSEEVENTF_ABSOLUTE)
+    {
+        DPI_AWARENESS_CONTEXT context = SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
+        RECT rc;
+
+        if (input->u.mi.dwFlags & MOUSEEVENTF_VIRTUALDESK)
+            rc = get_virtual_screen_rect();
+        else
+            rc = get_primary_monitor_rect();
+
+        input->u.mi.dx = rc.left + ((input->u.mi.dx * (rc.right - rc.left)) >> 16);
+        input->u.mi.dy = rc.top  + ((input->u.mi.dy * (rc.bottom - rc.top)) >> 16);
+        SetThreadDpiAwarenessContext( context );
+    }
+    else
+    {
+        int accel[3];
+
+        /* dx and dy can be negative numbers for relative movements */
+        SystemParametersInfoW(SPI_GETMOUSE, 0, accel, 0);
+
+        if (!accel[2]) return;
+
+        if (abs(input->u.mi.dx) > accel[0])
+        {
+            input->u.mi.dx *= 2;
+            if ((abs(input->u.mi.dx) > accel[1]) && (accel[2] == 2)) input->u.mi.dx *= 2;
+        }
+        if (abs(input->u.mi.dy) > accel[0])
+        {
+            input->u.mi.dy *= 2;
+            if ((abs(input->u.mi.dy) > accel[1]) && (accel[2] == 2)) input->u.mi.dy *= 2;
+        }
+    }
+}
+
+/***********************************************************************
+ *		SendInput  (USER32.@)
+ */
+UINT WINAPI SendInput( UINT count, LPINPUT inputs, int size )
+{
+    UINT i;
+    NTSTATUS status = STATUS_SUCCESS;
+    RAWINPUT rawinput;
+
+    if (size != sizeof(INPUT))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    if (!count)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    if (!inputs)
+    {
+        SetLastError( ERROR_NOACCESS );
+        return 0;
+    }
+
+    for (i = 0; i < count; i++)
+    {
+        INPUT input = inputs[i];
+        switch (input.type)
+        {
+        case INPUT_MOUSE:
+            /* we need to update the coordinates to what the server expects */
+            update_mouse_coords( &input );
+            /* fallthrough */
+        case INPUT_KEYBOARD:
+            status = send_hardware_message( 0, &input, &rawinput, SEND_HWMSG_INJECTED );
+            break;
+        case INPUT_HARDWARE:
+            SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+            return 0;
+        }
+
+        if (status)
+        {
+            SetLastError( RtlNtStatusToDosError(status) );
+            break;
+        }
+    }
+
+    return i;
+}
+
+
+/***********************************************************************
  *		keybd_event (USER32.@)
  */
 void WINAPI keybd_event( BYTE bVk, BYTE bScan,
@@ -136,7 +249,7 @@ void WINAPI keybd_event( BYTE bVk, BYTE bScan,
     input.u.ki.dwFlags = dwFlags;
     input.u.ki.time = 0;
     input.u.ki.dwExtraInfo = dwExtraInfo;
-    NtUserSendInput( 1, &input, sizeof(input) );
+    SendInput( 1, &input, sizeof(input) );
 }
 
 
@@ -155,7 +268,7 @@ void WINAPI mouse_event( DWORD dwFlags, DWORD dx, DWORD dy,
     input.u.mi.dwFlags = dwFlags;
     input.u.mi.time = 0;
     input.u.mi.dwExtraInfo = dwExtraInfo;
-    NtUserSendInput( 1, &input, sizeof(input) );
+    SendInput( 1, &input, sizeof(input) );
 }
 
 
@@ -164,7 +277,7 @@ void WINAPI mouse_event( DWORD dwFlags, DWORD dx, DWORD dy,
  */
 BOOL WINAPI DECLSPEC_HOTPATCH GetCursorPos( POINT *pt )
 {
-    return NtUserGetCursorPos( pt );
+    return NtUserCallOneParam( (UINT_PTR)pt, NtUserGetCursorPos );
 }
 
 
@@ -173,7 +286,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetCursorPos( POINT *pt )
  */
 BOOL WINAPI DECLSPEC_HOTPATCH ReleaseCapture(void)
 {
-    return NtUserReleaseCapture();
+    return NtUserCallNoParam( NtUserReleaseCapture );
 }
 
 
@@ -193,7 +306,7 @@ HWND WINAPI GetCapture(void)
  */
 BOOL WINAPI GetInputState(void)
 {
-    return NtUserGetInputState();
+    return NtUserCallNoParam( NtUserGetInputState );
 }
 
 
@@ -536,6 +649,7 @@ typedef struct __TRACKINGLIST {
 
 /* FIXME: move tracking stuff into a per thread data */
 static _TRACKINGLIST tracking_info;
+static UINT_PTR timer;
 
 static void check_mouse_leave(HWND hwnd, int hittest)
 {
@@ -572,12 +686,13 @@ static void check_mouse_leave(HWND hwnd, int hittest)
     }
 }
 
-void CDECL update_mouse_tracking_info( HWND hwnd )
+static void CALLBACK TrackMouseEventProc(HWND hwnd, UINT uMsg, UINT_PTR idEvent,
+                                         DWORD dwTime)
 {
     POINT pos;
     INT hoverwidth = 0, hoverheight = 0, hittest;
 
-    TRACE( "hwnd %p\n", hwnd );
+    TRACE("hwnd %p, msg %04x, id %04lx, time %u\n", hwnd, uMsg, idEvent, dwTime);
 
     GetCursorPos(&pos);
     hwnd = WINPOS_WindowFromPoint(hwnd, pos, &hittest);
@@ -639,7 +754,8 @@ void CDECL update_mouse_tracking_info( HWND hwnd )
     /* stop the timer if the tracking list is empty */
     if (!(tracking_info.tme.dwFlags & (TME_HOVER | TME_LEAVE)))
     {
-        KillSystemTimer( tracking_info.tme.hwndTrack, SYSTEM_TIMER_TRACK_MOUSE );
+        KillSystemTimer(tracking_info.tme.hwndTrack, timer);
+        timer = 0;
         tracking_info.tme.hwndTrack = 0;
         tracking_info.tme.dwFlags = 0;
         tracking_info.tme.dwHoverTime = 0;
@@ -723,7 +839,8 @@ TrackMouseEvent (TRACKMOUSEEVENT *ptme)
             /* if we aren't tracking on hover or leave remove this entry */
             if (!(tracking_info.tme.dwFlags & (TME_HOVER | TME_LEAVE)))
             {
-                KillSystemTimer( tracking_info.tme.hwndTrack, SYSTEM_TIMER_TRACK_MOUSE );
+                KillSystemTimer(tracking_info.tme.hwndTrack, timer);
+                timer = 0;
                 tracking_info.tme.hwndTrack = 0;
                 tracking_info.tme.dwFlags = 0;
                 tracking_info.tme.dwHoverTime = 0;
@@ -736,10 +853,14 @@ TrackMouseEvent (TRACKMOUSEEVENT *ptme)
         if (tracking_info.tme.dwFlags & TME_LEAVE && tracking_info.tme.hwndTrack != NULL)
             check_mouse_leave(hwnd, hittest);
 
-        KillSystemTimer( tracking_info.tme.hwndTrack, SYSTEM_TIMER_TRACK_MOUSE );
-        tracking_info.tme.hwndTrack = 0;
-        tracking_info.tme.dwFlags = 0;
-        tracking_info.tme.dwHoverTime = 0;
+        if (timer)
+        {
+            KillSystemTimer(tracking_info.tme.hwndTrack, timer);
+            timer = 0;
+            tracking_info.tme.hwndTrack = 0;
+            tracking_info.tme.dwFlags = 0;
+            tracking_info.tme.dwHoverTime = 0;
+        }
 
         if (ptme->hwndTrack == hwnd)
         {
@@ -750,10 +871,23 @@ TrackMouseEvent (TRACKMOUSEEVENT *ptme)
             /* Initialize HoverInfo variables even if not hover tracking */
             tracking_info.pos = pos;
 
-            NtUserSetSystemTimer( tracking_info.tme.hwndTrack, SYSTEM_TIMER_TRACK_MOUSE, hover_time );
+            timer = NtUserSetSystemTimer( tracking_info.tme.hwndTrack, (UINT_PTR)&tracking_info.tme,
+                                          hover_time, TrackMouseEventProc );
         }
     }
 
+    return TRUE;
+}
+
+BOOL enable_mouse_in_pointer = FALSE;
+
+/***********************************************************************
+ *		EnableMouseInPointer (USER32.@)
+ */
+BOOL WINAPI EnableMouseInPointer(BOOL enable)
+{
+    FIXME("(%#x) semi-stub\n", enable);
+    enable_mouse_in_pointer = TRUE;
     return TRUE;
 }
 

@@ -165,7 +165,7 @@ struct gdi_dc_funcs
 };
 
 /* increment this when you change the DC function table */
-#define WINE_GDI_DRIVER_VERSION 77
+#define WINE_GDI_DRIVER_VERSION 75
 
 #define GDI_PRIORITY_NULL_DRV        0  /* null driver */
 #define GDI_PRIORITY_FONT_DRV      100  /* any font driver */
@@ -195,17 +195,15 @@ static inline void push_dc_driver( PHYSDEV *dev, PHYSDEV physdev, const struct g
 
 struct window_surface;
 
-#ifndef __WINE_USE_MSVCRT
-
 struct window_surface_funcs
 {
-    void  (*lock)( struct window_surface *surface );
-    void  (*unlock)( struct window_surface *surface );
-    void* (*get_info)( struct window_surface *surface, BITMAPINFO *info );
-    RECT* (*get_bounds)( struct window_surface *surface );
-    void  (*set_region)( struct window_surface *surface, HRGN region );
-    void  (*flush)( struct window_surface *surface );
-    void  (*destroy)( struct window_surface *surface );
+    void  (CDECL *lock)( struct window_surface *surface );
+    void  (CDECL *unlock)( struct window_surface *surface );
+    void* (CDECL *get_info)( struct window_surface *surface, BITMAPINFO *info );
+    RECT* (CDECL *get_bounds)( struct window_surface *surface );
+    void  (CDECL *set_region)( struct window_surface *surface, HRGN region );
+    void  (CDECL *flush)( struct window_surface *surface );
+    void  (CDECL *destroy)( struct window_surface *surface );
 };
 
 struct window_surface
@@ -272,68 +270,91 @@ struct user_driver_funcs
     struct gdi_dc_funcs dc_funcs;
 
     /* keyboard functions */
-    BOOL    (*pActivateKeyboardLayout)(HKL, UINT);
-    void    (*pBeep)(void);
-    INT     (*pGetKeyNameText)(LONG,LPWSTR,INT);
-    UINT    (*pGetKeyboardLayoutList)(INT, HKL *);
-    UINT    (*pMapVirtualKeyEx)(UINT,UINT,HKL);
-    BOOL    (*pRegisterHotKey)(HWND,UINT,UINT);
-    INT     (*pToUnicodeEx)(UINT,UINT,const BYTE *,LPWSTR,int,UINT,HKL);
-    void    (*pUnregisterHotKey)(HWND, UINT, UINT);
-    SHORT   (*pVkKeyScanEx)(WCHAR, HKL);
+    BOOL    (CDECL *pActivateKeyboardLayout)(HKL, UINT);
+    void    (CDECL *pBeep)(void);
+    INT     (CDECL *pGetKeyNameText)(LONG,LPWSTR,INT);
+    UINT    (CDECL *pGetKeyboardLayoutList)(INT, HKL *);
+    UINT    (CDECL *pMapVirtualKeyEx)(UINT,UINT,HKL);
+    BOOL    (CDECL *pRegisterHotKey)(HWND,UINT,UINT);
+    INT     (CDECL *pToUnicodeEx)(UINT,UINT,const BYTE *,LPWSTR,int,UINT,HKL);
+    void    (CDECL *pUnregisterHotKey)(HWND, UINT, UINT);
+    SHORT   (CDECL *pVkKeyScanEx)(WCHAR, HKL);
     /* cursor/icon functions */
-    void    (*pDestroyCursorIcon)(HCURSOR);
-    void    (*pSetCursor)(HCURSOR);
-    BOOL    (*pGetCursorPos)(LPPOINT);
-    BOOL    (*pSetCursorPos)(INT,INT);
-    BOOL    (*pClipCursor)(LPCRECT);
+    void    (CDECL *pDestroyCursorIcon)(HCURSOR);
+    void    (CDECL *pSetCursor)(HCURSOR);
+    BOOL    (CDECL *pGetCursorPos)(LPPOINT);
+    BOOL    (CDECL *pSetCursorPos)(INT,INT);
+    BOOL    (CDECL *pClipCursor)(LPCRECT);
     /* clipboard functions */
-    void    (*pUpdateClipboard)(void);
+    void    (CDECL *pUpdateClipboard)(void);
     /* display modes */
-    LONG    (*pChangeDisplaySettingsEx)(LPCWSTR,LPDEVMODEW,HWND,DWORD,LPVOID);
-    BOOL    (*pEnumDisplaySettingsEx)(LPCWSTR,DWORD,LPDEVMODEW,DWORD);
-    void    (*pUpdateDisplayDevices)(const struct gdi_device_manager *,BOOL,void*);
+    LONG    (CDECL *pChangeDisplaySettingsEx)(LPCWSTR,LPDEVMODEW,HWND,DWORD,LPVOID);
+    BOOL    (CDECL *pEnumDisplaySettingsEx)(LPCWSTR,DWORD,LPDEVMODEW,DWORD);
+    void    (CDECL *pUpdateDisplayDevices)(const struct gdi_device_manager *,BOOL,void*);
     /* windowing functions */
-    BOOL    (*pCreateDesktopWindow)(HWND);
-    BOOL    (*pCreateWindow)(HWND);
-    void    (*pDestroyWindow)(HWND);
-    void    (*pFlashWindowEx)(FLASHWINFO*);
-    void    (*pGetDC)(HDC,HWND,HWND,const RECT *,const RECT *,DWORD);
-    DWORD   (*pMsgWaitForMultipleObjectsEx)(DWORD,const HANDLE*,DWORD,DWORD,DWORD);
-    void    (*pReleaseDC)(HWND,HDC);
-    BOOL    (*pScrollDC)(HDC,INT,INT,HRGN);
-    void    (*pSetActiveWindow)(HWND);
-    void    (*pSetCapture)(HWND,UINT);
-    void    (*pSetFocus)(HWND);
-    void    (*pSetLayeredWindowAttributes)(HWND,COLORREF,BYTE,DWORD);
-    void    (*pSetParent)(HWND,HWND,HWND);
-    void    (*pSetWindowRgn)(HWND,HRGN,BOOL);
-    void    (*pSetWindowIcon)(HWND,UINT,HICON);
-    void    (*pSetWindowStyle)(HWND,INT,STYLESTRUCT*);
-    void    (*pSetWindowText)(HWND,LPCWSTR);
-    UINT    (*pShowWindow)(HWND,INT,RECT*,UINT);
-    LRESULT (*pSysCommand)(HWND,WPARAM,LPARAM);
-    BOOL    (*pUpdateLayeredWindow)(HWND,const struct tagUPDATELAYEREDWINDOWINFO *,const RECT *);
-    LRESULT (*pWindowMessage)(HWND,UINT,WPARAM,LPARAM);
-    BOOL    (*pWindowPosChanging)(HWND,HWND,UINT,const RECT *,const RECT *,RECT *,
-                                  struct window_surface**);
-    void    (*pWindowPosChanged)(HWND,HWND,UINT,const RECT *,const RECT *,const RECT *,
-                                 const RECT *,struct window_surface*);
+    BOOL    (CDECL *pCreateDesktopWindow)(HWND);
+    BOOL    (CDECL *pCreateWindow)(HWND);
+    void    (CDECL *pDestroyWindow)(HWND);
+    void    (CDECL *pFlashWindowEx)(FLASHWINFO*);
+    void    (CDECL *pGetDC)(HDC,HWND,HWND,const RECT *,const RECT *,DWORD);
+    DWORD   (CDECL *pMsgWaitForMultipleObjectsEx)(DWORD,const HANDLE*,DWORD,DWORD,DWORD);
+    void    (CDECL *pReleaseDC)(HWND,HDC);
+    BOOL    (CDECL *pScrollDC)(HDC,INT,INT,HRGN);
+    void    (CDECL *pSetCapture)(HWND,UINT);
+    void    (CDECL *pSetFocus)(HWND);
+    void    (CDECL *pSetLayeredWindowAttributes)(HWND,COLORREF,BYTE,DWORD);
+    void    (CDECL *pSetParent)(HWND,HWND,HWND);
+    void    (CDECL *pSetWindowRgn)(HWND,HRGN,BOOL);
+    void    (CDECL *pSetWindowIcon)(HWND,UINT,HICON);
+    void    (CDECL *pSetWindowStyle)(HWND,INT,STYLESTRUCT*);
+    void    (CDECL *pSetWindowText)(HWND,LPCWSTR);
+    UINT    (CDECL *pShowWindow)(HWND,INT,RECT*,UINT);
+    LRESULT (CDECL *pSysCommand)(HWND,WPARAM,LPARAM);
+    BOOL    (CDECL *pUpdateLayeredWindow)(HWND,const struct tagUPDATELAYEREDWINDOWINFO *,const RECT *);
+    LRESULT (CDECL *pWindowMessage)(HWND,UINT,WPARAM,LPARAM);
+    BOOL    (CDECL *pWindowPosChanging)(HWND,HWND,UINT,const RECT *,const RECT *,RECT *,
+                                        struct window_surface**);
+    void    (CDECL *pWindowPosChanged)(HWND,HWND,UINT,const RECT *,const RECT *,const RECT *,
+                                       const RECT *,struct window_surface*);
     /* system parameters */
-    BOOL    (*pSystemParametersInfo)(UINT,UINT,void*,UINT);
+    BOOL    (CDECL *pSystemParametersInfo)(UINT,UINT,void*,UINT);
+
     /* vulkan support */
-    const struct vulkan_funcs * (*pwine_get_vulkan_driver)(UINT);
+    const struct vulkan_funcs * (CDECL *pwine_get_vulkan_driver)(UINT);
+
     /* opengl support */
-    struct opengl_funcs * (*pwine_get_wgl_driver)(UINT);
+    struct opengl_funcs * (CDECL *pwine_get_wgl_driver)(UINT);
+
+    /* IME functions */
+    void    (CDECL *pUpdateCandidatePos)(HWND, const RECT *);
+
     /* thread management */
-    void    (*pThreadDetach)(void);
+    void    (CDECL *pThreadDetach)(void);
 };
 
-#endif /* __WINE_USE_MSVCRT */
-
-struct user_driver_funcs;
 extern void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version );
+extern void CDECL __wine_set_visible_region( HDC hdc, HRGN hrgn, const RECT *vis_rect,
+                                             const RECT *device_rect, struct window_surface *surface );
+extern void CDECL __wine_set_display_driver( struct user_driver_funcs *funcs, UINT version );
 extern struct opengl_funcs * CDECL __wine_get_wgl_driver( HDC hdc, UINT version );
 extern const struct vulkan_funcs * CDECL __wine_get_vulkan_driver( UINT version );
+
+/* HACK: We use some WM specific hacks in user32 and we need the user
+ * driver to export that information. */
+
+#define WINE_WM_UNKNOWN          0
+#define WINE_WM_X11_MUTTER       1
+#define WINE_WM_X11_STEAMCOMPMGR 2
+#define WINE_WM_X11_KDE          3
+
+static inline LONG_PTR __wine_get_window_manager(void)
+{
+    return (LONG_PTR)GetPropA(GetDesktopWindow(), "__wine_window_manager");
+}
+
+static inline void __wine_set_window_manager(LONG_PTR window_manager)
+{
+    SetPropA(GetDesktopWindow(), "__wine_window_manager", (HANDLE)window_manager);
+}
 
 #endif /* __WINE_WINE_GDI_DRIVER_H */

@@ -28,9 +28,6 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(xrandr);
-#ifdef HAVE_XRRGETPROVIDERRESOURCES
-WINE_DECLARE_DEBUG_CHANNEL(winediag);
-#endif
 
 #ifdef SONAME_LIBXRANDR
 
@@ -334,15 +331,22 @@ static struct current_mode
 } *current_modes;
 static int current_mode_count;
 
-static pthread_mutex_t xrandr_mutex = PTHREAD_MUTEX_INITIALIZER;
+static CRITICAL_SECTION current_modes_section;
+static CRITICAL_SECTION_DEBUG current_modes_critsect_debug =
+{
+    0, 0, &current_modes_section,
+    {&current_modes_critsect_debug.ProcessLocksList, &current_modes_critsect_debug.ProcessLocksList},
+     0, 0, {(DWORD_PTR)(__FILE__ ": current_modes_section")}
+};
+static CRITICAL_SECTION current_modes_section = {&current_modes_critsect_debug, -1, 0, 0, 0, 0};
 
 static void xrandr14_invalidate_current_mode_cache(void)
 {
-    pthread_mutex_lock( &xrandr_mutex );
+    EnterCriticalSection( &current_modes_section );
     heap_free( current_modes);
     current_modes = NULL;
     current_mode_count = 0;
-    pthread_mutex_unlock( &xrandr_mutex );
+    LeaveCriticalSection( &current_modes_section );
 }
 
 static XRRScreenResources *xrandr_get_screen_resources(void)
@@ -371,7 +375,6 @@ static BOOL is_broken_driver(void)
     XRRScreenResources *screen_resources;
     XRROutputInfo *output_info;
     XRRModeInfo *first_mode;
-    INT major, event, error;
     INT output_idx, i, j;
     BOOL only_one_mode;
 
@@ -422,15 +425,6 @@ static BOOL is_broken_driver(void)
 
         if (!only_one_mode)
             continue;
-
-        /* Check if it is NVIDIA proprietary driver */
-        if (XQueryExtension( gdi_display, "NV-CONTROL", &major, &event, &error ))
-        {
-            ERR_(winediag)("Broken NVIDIA RandR detected, falling back to RandR 1.0. "
-                           "Please consider using the Nouveau driver instead.\n");
-            pXRRFreeScreenResources( screen_resources );
-            return TRUE;
-        }
     }
     pXRRFreeScreenResources( screen_resources );
     return FALSE;
@@ -1304,7 +1298,7 @@ static void xrandr14_free_monitors( struct gdi_monitor *monitors, int count )
 static BOOL xrandr14_device_change_handler( HWND hwnd, XEvent *event )
 {
     xrandr14_invalidate_current_mode_cache();
-    if (hwnd == NtUserGetDesktopWindow() && NtUserGetWindowThread( hwnd, NULL ) == GetCurrentThreadId())
+    if (hwnd == GetDesktopWindow() && GetWindowThreadProcessId( hwnd, NULL ) == GetCurrentThreadId())
     {
         /* Don't send a WM_DISPLAYCHANGE message here because this event may be a result from
          * ChangeDisplaySettings(). Otherwise, ChangeDisplaySettings() would send multiple
@@ -1350,12 +1344,12 @@ static BOOL xrandr14_get_id( const WCHAR *device_name, ULONG_PTR *id )
         return FALSE;
 
     /* Update cache */
-    pthread_mutex_lock( &xrandr_mutex );
+    EnterCriticalSection( &current_modes_section );
     if (!current_modes)
     {
         if (!xrandr14_get_gpus2( &gpus, &gpu_count, FALSE ))
         {
-            pthread_mutex_unlock( &xrandr_mutex );
+            LeaveCriticalSection( &current_modes_section );
             return FALSE;
         }
 
@@ -1396,12 +1390,12 @@ static BOOL xrandr14_get_id( const WCHAR *device_name, ULONG_PTR *id )
 
     if (display_idx >= current_mode_count)
     {
-        pthread_mutex_unlock( &xrandr_mutex );
+        LeaveCriticalSection( &current_modes_section );
         return FALSE;
     }
 
     *id = current_modes[display_idx].id;
-    pthread_mutex_unlock( &xrandr_mutex );
+    LeaveCriticalSection( &current_modes_section );
     return TRUE;
 }
 
@@ -1562,7 +1556,7 @@ static BOOL xrandr14_get_current_mode( ULONG_PTR id, DEVMODEW *mode )
     RECT primary;
     INT mode_idx;
 
-    pthread_mutex_lock( &xrandr_mutex );
+    EnterCriticalSection( &current_modes_section );
     for (mode_idx = 0; mode_idx < current_mode_count; ++mode_idx)
     {
         if (current_modes[mode_idx].id != id)
@@ -1575,7 +1569,7 @@ static BOOL xrandr14_get_current_mode( ULONG_PTR id, DEVMODEW *mode )
         }
 
         memcpy( mode, &current_modes[mode_idx].mode, sizeof(*mode) );
-        pthread_mutex_unlock( &xrandr_mutex );
+        LeaveCriticalSection( &current_modes_section );
         return TRUE;
     }
 
@@ -1646,7 +1640,7 @@ done:
         mode_ptr->mode.dmDriverExtra = 0;
         mode_ptr->loaded = TRUE;
     }
-    pthread_mutex_unlock( &xrandr_mutex );
+    LeaveCriticalSection( &current_modes_section );
     if (crtc_info)
         pXRRFreeCrtcInfo( crtc_info );
     if (output_info)
@@ -1769,6 +1763,24 @@ done:
 
 #endif
 
+static void xrandr14_convert_coordinates( struct x11drv_display_setting *displays, UINT display_count )
+{
+    INT left_most = INT_MAX, top_most = INT_MAX;
+    UINT display_idx;
+
+    for (display_idx = 0; display_idx < display_count; ++display_idx)
+    {
+        left_most = min( left_most, displays[display_idx].desired_mode.u1.s2.dmPosition.x );
+        top_most = min( top_most, displays[display_idx].desired_mode.u1.s2.dmPosition.y );
+    }
+
+    for (display_idx = 0; display_idx < display_count; ++display_idx)
+    {
+        displays[display_idx].desired_mode.u1.s2.dmPosition.x -= left_most;
+        displays[display_idx].desired_mode.u1.s2.dmPosition.y -= top_most;
+    }
+}
+
 void X11DRV_XRandR_Init(void)
 {
     struct x11drv_display_device_handler display_handler;
@@ -1797,6 +1809,7 @@ void X11DRV_XRandR_Init(void)
     settings_handler.free_modes = xrandr10_free_modes;
     settings_handler.get_current_mode = xrandr10_get_current_mode;
     settings_handler.set_current_mode = xrandr10_set_current_mode;
+    settings_handler.convert_coordinates = NULL;
     X11DRV_Settings_SetHandler( &settings_handler );
 
 #ifdef HAVE_XRRGETPROVIDERRESOURCES
@@ -1855,6 +1868,7 @@ void X11DRV_XRandR_Init(void)
         settings_handler.free_modes = xrandr14_free_modes;
         settings_handler.get_current_mode = xrandr14_get_current_mode;
         settings_handler.set_current_mode = xrandr14_set_current_mode;
+        settings_handler.convert_coordinates = xrandr14_convert_coordinates;
         X11DRV_Settings_SetHandler( &settings_handler );
     }
 #endif

@@ -18,7 +18,6 @@ C_SRCS = \
 	cursoricon.c \
 	dc.c \
 	dce.c \
-	defwnd.c \
 	dib.c \
 	dibdrv/bitblt.c \
 	dibdrv/dc.c \
@@ -44,7 +43,6 @@ C_SRCS = \
 	pen.c \
 	printdrv.c \
 	region.c \
-	spy.c \
 	syscall.c \
 	sysparams.c \
 	vertical.c \

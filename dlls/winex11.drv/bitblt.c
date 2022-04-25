@@ -44,6 +44,8 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "wingdi.h"
+#include "winuser.h"
 #include "x11drv.h"
 #include "winternl.h"
 #include "wine/server.h"
@@ -848,14 +850,8 @@ BOOL CDECL X11DRV_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
         }
         if (physDevSrc->depth == 1)
         {
-            DWORD text_color, bk_color;
-            int text_pixel, bkgnd_pixel;
-
-            NtGdiGetDCDword( physDevDst->dev.hdc, NtGdiGetTextColor, &text_color );
-            text_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, text_color );
-
-            NtGdiGetDCDword( physDevDst->dev.hdc, NtGdiGetBkColor, &bk_color );
-            bkgnd_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, bk_color );
+            int text_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, GetTextColor(physDevDst->dev.hdc) );
+            int bkgnd_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, GetBkColor(physDevDst->dev.hdc) );
 
             XSetBackground( gdi_display, physDevDst->gc, text_pixel );
             XSetForeground( gdi_display, physDevDst->gc, bkgnd_pixel );
@@ -885,14 +881,8 @@ BOOL CDECL X11DRV_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
            to color or vice versa, the foreground and background color of
            the device context are used.  In fact, it also applies to the
            case when it is converted from mono to mono. */
-        DWORD text_color, bk_color;
-        int text_pixel, bkgnd_pixel;
-
-        NtGdiGetDCDword( physDevDst->dev.hdc, NtGdiGetTextColor, &text_color );
-        text_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, text_color );
-
-        NtGdiGetDCDword( physDevDst->dev.hdc, NtGdiGetBkColor, &bk_color );
-        bkgnd_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, bk_color );
+        int text_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, GetTextColor(physDevDst->dev.hdc) );
+        int bkgnd_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, GetBkColor(physDevDst->dev.hdc) );
 
         if (X11DRV_PALETTE_XPixelToPalette && physDevDst->depth != 1)
         {
@@ -1491,7 +1481,7 @@ Pixmap create_pixmap_from_image( HDC hdc, const XVisualInfo *vis, const BITMAPIN
     {
         if (dst_info->bmiHeader.biBitCount == 1)  /* set a default color table for 1-bpp */
             memcpy( dst_info->bmiColors, default_colortable, sizeof(default_colortable) );
-        dib = NtGdiCreateDIBSection( hdc, 0, 0, dst_info, coloruse, 0, 0, 0, &dst_bits.ptr );
+        dib = CreateDIBSection( hdc, dst_info, coloruse, &dst_bits.ptr, 0, 0 );
         if (dib)
         {
             if (src_info->bmiHeader.biBitCount == 1 && !src_info->bmiHeader.biClrUsed)
@@ -1500,7 +1490,7 @@ Pixmap create_pixmap_from_image( HDC hdc, const XVisualInfo *vis, const BITMAPIN
             dst_bits.free = NULL;
             dst_bits.is_copy = TRUE;
             err = put_pixmap_image( pixmap, vis, dst_info, &dst_bits );
-            NtGdiDeleteObjectApp( dib );
+            DeleteObject( dib );
         }
         else err = ERROR_OUTOFMEMORY;
     }
@@ -1584,7 +1574,7 @@ struct x11drv_window_surface
 #ifdef HAVE_LIBXXSHM
     XShmSegmentInfo       shminfo;
 #endif
-    pthread_mutex_t       mutex;
+    CRITICAL_SECTION      crit;
     BITMAPINFO            info;   /* variable size, must be last */
 };
 
@@ -1603,9 +1593,9 @@ static inline UINT get_color_component( UINT color, UINT mask )
 #ifdef HAVE_LIBXSHAPE
 static inline void flush_rgn_data( HRGN rgn, RGNDATA *data )
 {
-    HRGN tmp = NtGdiExtCreateRegion( NULL, data->rdh.dwSize + data->rdh.nRgnSize, data );
-    NtGdiCombineRgn( rgn, rgn, tmp, RGN_OR );
-    NtGdiDeleteObjectApp( tmp );
+    HRGN tmp = ExtCreateRegion( NULL, data->rdh.dwSize + data->rdh.nRgnSize, data );
+    CombineRgn( rgn, rgn, tmp, RGN_OR );
+    DeleteObject( tmp );
     data->rdh.nCount = 0;
 }
 
@@ -1636,9 +1626,9 @@ static void set_layer_region( struct x11drv_window_surface *surface, HRGN hrgn )
 
     if (hrgn)
     {
-        if (!(size = NtGdiGetRegionData( hrgn, 0, NULL ))) return;
+        if (!(size = GetRegionData( hrgn, 0, NULL ))) return;
         if (!(data = HeapAlloc( GetProcessHeap(), 0, size ))) return;
-        if (!NtGdiGetRegionData( hrgn, size, data ))
+        if (!GetRegionData( hrgn, size, data ))
         {
             HeapFree( GetProcessHeap(), 0, data );
             return;
@@ -1693,7 +1683,7 @@ static void update_surface_region( struct x11drv_window_surface *surface )
     data->rdh.nCount = 0;
     data->rdh.nRgnSize = sizeof(buffer) - sizeof(data->rdh);
 
-    rgn = NtGdiCreateRectRgn( 0, 0, 0, 0 );
+    rgn = CreateRectRgn( 0, 0, 0, 0 );
     width = surface->header.rect.right - surface->header.rect.left;
 
     switch (info->bmiHeader.biBitCount)
@@ -1790,13 +1780,26 @@ static void update_surface_region( struct x11drv_window_surface *surface )
 
     if ((data = X11DRV_GetRegionData( rgn, 0 )))
     {
-        XShapeCombineRectangles( gdi_display, surface->window, ShapeBounding, 0, 0,
-                                 (XRectangle *)data->Buffer, data->rdh.nCount, ShapeSet, YXBanded );
+        if (!data->rdh.nCount && wm_is_mutter(gdi_display))
+        {
+            XRectangle xrect;
+
+            xrect.x = xrect.y = -1;
+            xrect.width = 1;
+            xrect.height = 1;
+            XShapeCombineRectangles( gdi_display, surface->window, ShapeBounding, 0, 0,
+                                     &xrect, 1, ShapeSet, YXBanded );
+        }
+        else
+        {
+            XShapeCombineRectangles( gdi_display, surface->window, ShapeBounding, 0, 0,
+                                     (XRectangle *)data->Buffer, data->rdh.nCount, ShapeSet, YXBanded );
+        }
         HeapFree( GetProcessHeap(), 0, data );
     }
 
     set_layer_region( surface, rgn );
-    NtGdiDeleteObjectApp( rgn );
+    DeleteObject( rgn );
 #endif
 }
 
@@ -1872,27 +1875,27 @@ failed:
 /***********************************************************************
  *           x11drv_surface_lock
  */
-static void x11drv_surface_lock( struct window_surface *window_surface )
+static void CDECL x11drv_surface_lock( struct window_surface *window_surface )
 {
     struct x11drv_window_surface *surface = get_x11_surface( window_surface );
 
-    pthread_mutex_lock( &surface->mutex );
+    EnterCriticalSection( &surface->crit );
 }
 
 /***********************************************************************
  *           x11drv_surface_unlock
  */
-static void x11drv_surface_unlock( struct window_surface *window_surface )
+static void CDECL x11drv_surface_unlock( struct window_surface *window_surface )
 {
     struct x11drv_window_surface *surface = get_x11_surface( window_surface );
 
-    pthread_mutex_unlock( &surface->mutex );
+    LeaveCriticalSection( &surface->crit );
 }
 
 /***********************************************************************
  *           x11drv_surface_get_bitmap_info
  */
-static void *x11drv_surface_get_bitmap_info( struct window_surface *window_surface, BITMAPINFO *info )
+static void *CDECL x11drv_surface_get_bitmap_info( struct window_surface *window_surface, BITMAPINFO *info )
 {
     struct x11drv_window_surface *surface = get_x11_surface( window_surface );
 
@@ -1903,7 +1906,7 @@ static void *x11drv_surface_get_bitmap_info( struct window_surface *window_surfa
 /***********************************************************************
  *           x11drv_surface_get_bounds
  */
-static RECT *x11drv_surface_get_bounds( struct window_surface *window_surface )
+static RECT *CDECL x11drv_surface_get_bounds( struct window_surface *window_surface )
 {
     struct x11drv_window_surface *surface = get_x11_surface( window_surface );
 
@@ -1913,7 +1916,7 @@ static RECT *x11drv_surface_get_bounds( struct window_surface *window_surface )
 /***********************************************************************
  *           x11drv_surface_set_region
  */
-static void x11drv_surface_set_region( struct window_surface *window_surface, HRGN region )
+static void CDECL x11drv_surface_set_region( struct window_surface *window_surface, HRGN region )
 {
     RGNDATA *data;
     struct x11drv_window_surface *surface = get_x11_surface( window_surface );
@@ -1923,14 +1926,14 @@ static void x11drv_surface_set_region( struct window_surface *window_surface, HR
     window_surface->funcs->lock( window_surface );
     if (!region)
     {
-        if (surface->region) NtGdiDeleteObjectApp( surface->region );
+        if (surface->region) DeleteObject( surface->region );
         surface->region = 0;
         XSetClipMask( gdi_display, surface->gc, None );
     }
     else
     {
-        if (!surface->region) surface->region = NtGdiCreateRectRgn( 0, 0, 0, 0 );
-        NtGdiCombineRgn( surface->region, region, 0, RGN_COPY );
+        if (!surface->region) surface->region = CreateRectRgn( 0, 0, 0, 0 );
+        CombineRgn( surface->region, region, 0, RGN_COPY );
         if ((data = X11DRV_GetRegionData( surface->region, 0 )))
         {
             XSetClipRectangles( gdi_display, surface->gc, 0, 0,
@@ -1944,7 +1947,7 @@ static void x11drv_surface_set_region( struct window_surface *window_surface, HR
 /***********************************************************************
  *           x11drv_surface_flush
  */
-static void x11drv_surface_flush( struct window_surface *window_surface )
+static void CDECL x11drv_surface_flush( struct window_surface *window_surface )
 {
     struct x11drv_window_surface *surface = get_x11_surface( window_surface );
     unsigned char *src = surface->bits;
@@ -2011,7 +2014,7 @@ static void x11drv_surface_flush( struct window_surface *window_surface )
 /***********************************************************************
  *           x11drv_surface_destroy
  */
-static void x11drv_surface_destroy( struct window_surface *window_surface )
+static void CDECL x11drv_surface_destroy( struct window_surface *window_surface )
 {
     struct x11drv_window_surface *surface = get_x11_surface( window_surface );
 
@@ -2032,7 +2035,9 @@ static void x11drv_surface_destroy( struct window_surface *window_surface )
         surface->image->data = NULL;
         XDestroyImage( surface->image );
     }
-    if (surface->region) NtGdiDeleteObjectApp( surface->region );
+    surface->crit.DebugInfo->Spare[0] = 0;
+    DeleteCriticalSection( &surface->crit );
+    if (surface->region) DeleteObject( surface->region );
     HeapFree( GetProcessHeap(), 0, surface );
 }
 
@@ -2069,7 +2074,8 @@ struct window_surface *create_surface( Window window, const XVisualInfo *vis, co
     surface->info.bmiHeader.biSizeImage   = get_dib_image_size( &surface->info );
     if (format->bits_per_pixel > 8) set_color_info( vis, &surface->info, use_alpha );
 
-    init_recursive_mutex( &surface->mutex );
+    InitializeCriticalSection( &surface->crit );
+    surface->crit.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": surface");
 
     surface->header.funcs = &x11drv_surface_funcs;
     surface->header.rect  = *rect;
@@ -2151,10 +2157,10 @@ HRGN expose_surface( struct window_surface *window_surface, const RECT *rect )
     add_bounds_rect( &surface->bounds, &rc );
     if (surface->region)
     {
-        region = NtGdiCreateRectRgn( rect->left, rect->top, rect->right, rect->bottom );
-        if (NtGdiCombineRgn( region, region, surface->region, RGN_DIFF ) <= NULLREGION)
+        region = CreateRectRgnIndirect( rect );
+        if (CombineRgn( region, region, surface->region, RGN_DIFF ) <= NULLREGION)
         {
-            NtGdiDeleteObjectApp( region );
+            DeleteObject( region );
             region = 0;
         }
     }

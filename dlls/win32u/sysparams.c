@@ -230,8 +230,6 @@ static struct list monitors = LIST_INIT(monitors);
 static INT64 last_query_display_time;
 static pthread_mutex_t display_lock = PTHREAD_MUTEX_INITIALIZER;
 
-BOOL enable_thunk_lock = FALSE;
-
 static struct monitor virtual_monitor =
 {
     .handle = NULLDRV_DEFAULT_HMONITOR,
@@ -1393,7 +1391,7 @@ UINT get_win_monitor_dpi( HWND hwnd )
 /**********************************************************************
  *           get_thread_dpi_awareness
  */
-DPI_AWARENESS get_thread_dpi_awareness(void)
+static DPI_AWARENESS get_thread_dpi_awareness(void)
 {
     struct user_thread_info *info = get_user_thread_info();
     ULONG_PTR context = info->dpi_awareness;
@@ -1508,14 +1506,6 @@ POINT map_dpi_point( POINT pt, UINT dpi_from, UINT dpi_to )
     return pt;
 }
 
-/**********************************************************************
- *              point_phys_to_win_dpi
- */
-POINT point_phys_to_win_dpi( HWND hwnd, POINT pt )
-{
-    return map_dpi_point( pt, get_win_monitor_dpi( hwnd ), get_dpi_for_window( hwnd ));
-}
-
 /* map value from system dpi to standard 96 dpi for storing in the registry */
 static int map_from_system_dpi( int val )
 {
@@ -1547,27 +1537,6 @@ RECT get_virtual_screen_rect( UINT dpi )
     return rect;
 }
 
-static BOOL is_window_rect_full_screen( const RECT *rect )
-{
-    struct monitor *monitor;
-    BOOL ret = FALSE;
-
-    if (!lock_display_devices()) return FALSE;
-
-    LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
-    {
-        if (rect->left <= monitor->rc_monitor.left && rect->right >= monitor->rc_monitor.right &&
-            rect->top <= monitor->rc_monitor.top && rect->bottom >= monitor->rc_monitor.bottom)
-        {
-            ret = TRUE;
-            break;
-        }
-    }
-
-    unlock_display_devices();
-    return ret;
-}
-
 RECT get_display_rect( const WCHAR *display )
 {
     struct monitor *monitor;
@@ -1586,7 +1555,7 @@ RECT get_display_rect( const WCHAR *display )
     return map_dpi_rect( rect, system_dpi, get_thread_dpi() );
 }
 
-RECT get_primary_monitor_rect( UINT dpi )
+RECT get_primary_monitor_rect(void)
 {
     struct monitor *monitor;
     RECT rect = {0};
@@ -1601,7 +1570,7 @@ RECT get_primary_monitor_rect( UINT dpi )
     }
 
     unlock_display_devices();
-    return map_dpi_rect( rect, system_dpi, dpi );
+    return map_dpi_rect( rect, system_dpi, get_thread_dpi() );
 }
 
 /**********************************************************************
@@ -1991,7 +1960,7 @@ BOOL WINAPI NtUserEnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc
 
         monrect = map_dpi_rect( monitor->rc_monitor, get_monitor_dpi( monitor->handle ),
                                 get_thread_dpi() );
-        OffsetRect( &monrect, -origin.x, -origin.y );
+        offset_rect( &monrect, -origin.x, -origin.y );
         if (!intersect_rect( &monrect, &monrect, &limit )) continue;
 
         enum_info[count].handle = monitor->handle;
@@ -2070,7 +2039,7 @@ HMONITOR monitor_from_rect( const RECT *rect, DWORD flags, UINT dpi )
     RECT r;
 
     r = map_dpi_rect( *rect, dpi, system_dpi );
-    if (IsRectEmpty( &r ))
+    if (is_rect_empty( &r ))
     {
         r.right = r.left + 1;
         r.bottom = r.top + 1;
@@ -2680,7 +2649,7 @@ static void logfont16to32( const LOGFONT16 *font16, LPLOGFONTW font32 )
     font32->lfClipPrecision = font16->lfClipPrecision;
     font32->lfQuality = font16->lfQuality;
     font32->lfPitchAndFamily = font16->lfPitchAndFamily;
-    win32u_mbtowc( &ansi_cp, font32->lfFaceName, LF_FACESIZE, font16->lfFaceName,
+    win32u_mbtowc( NULL, font32->lfFaceName, LF_FACESIZE, font16->lfFaceName,
                    strlen( font16->lfFaceName ));
     font32->lfFaceName[LF_FACESIZE-1] = 0;
 }
@@ -4124,8 +4093,9 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
     {
         static const WCHAR emptyW[1];
         if (winini & (SPIF_SENDWININICHANGE | SPIF_SENDCHANGE))
-            send_message_timeout( HWND_BROADCAST, WM_SETTINGCHANGE, action, (LPARAM) emptyW,
-                                  SMTO_ABORTIFHUNG, 2000, NULL, FALSE );
+            user_callbacks->pSendMessageTimeoutW( HWND_BROADCAST, WM_SETTINGCHANGE,
+                                                  action, (LPARAM) emptyW,
+                                                  SMTO_ABORTIFHUNG, 2000, NULL );
     }
     TRACE( "(%u, %u, %p, %u) ret %d\n", action, val, ptr, winini, ret );
     return ret;
@@ -4250,7 +4220,7 @@ int get_system_metrics( int index )
     case SM_PENWINDOWS:
         return 0;
     case SM_DBCSENABLED:
-        return ansi_cp.MaximumCharacterSize > 1;
+        return get_cptable(get_acp())->MaximumCharacterSize > 1;
     case SM_CMOUSEBUTTONS:
         return 3;
     case SM_SECURE:
@@ -4341,10 +4311,10 @@ int get_system_metrics( int index )
     case SM_MOUSEWHEELPRESENT:
         return 1;
     case SM_CXSCREEN:
-        rect = get_primary_monitor_rect( get_thread_dpi() );
+        rect = get_primary_monitor_rect();
         return rect.right - rect.left;
     case SM_CYSCREEN:
-        rect = get_primary_monitor_rect( get_thread_dpi() );
+        rect = get_primary_monitor_rect();
         return rect.bottom - rect.top;
     case SM_XVIRTUALSCREEN:
         rect = get_virtual_screen_rect( get_thread_dpi() );
@@ -4567,8 +4537,8 @@ BOOL WINAPI NtUserSetSysColors( INT count, const INT *colors, const COLORREF *va
             set_entry( &system_colors[colors[i]], values[i], 0, 0 );
 
     /* Send WM_SYSCOLORCHANGE message to all windows */
-    send_message_timeout( HWND_BROADCAST, WM_SYSCOLORCHANGE, 0, 0,
-                          SMTO_ABORTIFHUNG, 2000, NULL, FALSE );
+    user_callbacks->pSendMessageTimeoutW( HWND_BROADCAST, WM_SYSCOLORCHANGE, 0, 0,
+                                          SMTO_ABORTIFHUNG, 2000, NULL );
     /* Repaint affected portions of all visible windows */
     NtUserRedrawWindow( 0, NULL, 0, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN );
     return TRUE;
@@ -4653,28 +4623,19 @@ ULONG_PTR WINAPI NtUserCallNoParam( ULONG code )
 {
     switch(code)
     {
-    case NtUserCallNoParam_GetDesktopWindow:
+    case NtUserGetDesktopWindow:
         return HandleToUlong( get_desktop_window() );
-
-    case NtUserCallNoParam_GetInputState:
+    case NtUserGetInputState:
         return get_input_state();
-
-    case NtUserCallNoParam_ReleaseCapture:
+    case NtUserReleaseCapture:
         return release_capture();
-
     /* temporary exports */
     case NtUserExitingThread:
         exiting_thread_id = GetCurrentThreadId();
         return 0;
-
     case NtUserThreadDetach:
         thread_detach();
         return 0;
-
-    case NtUserUpdateClipboard:
-        user_driver->pUpdateClipboard();
-        return 0;
-
     default:
         FIXME( "invalid code %u\n", code );
         return 0;
@@ -4688,66 +4649,30 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
 {
     switch(code)
     {
-    case NtUserCallOneParam_BeginDeferWindowPos:
+    case NtUserBeginDeferWindowPos:
         return HandleToUlong( begin_defer_window_pos( arg ));
-
-    case NtUserCallOneParam_CreateCursorIcon:
+    case NtUserCreateCursorIcon:
         return HandleToUlong( alloc_cursoricon_handle( arg ));
-
-    case NtUserCallOneParam_CreateMenu:
-        return HandleToUlong( create_menu( arg ) );
-
-    case NtUserCallOneParam_DispatchMessageA:
-        return dispatch_message( (const MSG *)arg, TRUE );
-
-    case NtUserCallOneParam_EnableDC:
+    case NtUserEnableDC:
         return set_dce_flags( UlongToHandle(arg), DCHF_ENABLEDC );
-
-    case NtUserCallOneParam_EnableThunkLock:
-        enable_thunk_lock = arg;
-        return 0;
-
-    case NtUserCallOneParam_EnumClipboardFormats:
-        return enum_clipboard_formats( arg );
-
-    case NtUserCallOneParam_GetClipCursor:
+    case NtUserGetClipCursor:
         return get_clip_cursor( (RECT *)arg );
-
-    case NtUserCallOneParam_GetCursorPos:
+    case NtUserGetCursorPos:
         return get_cursor_pos( (POINT *)arg );
-
-    case NtUserCallOneParam_GetIconParam:
+    case NtUserGetIconParam:
         return get_icon_param( UlongToHandle(arg) );
-
-    case NtUserCallOneParam_GetSysColor:
+    case NtUserGetSysColor:
         return get_sys_color( arg );
-
-    case NtUserCallOneParam_IsWindowRectFullScreen:
-        return is_window_rect_full_screen( (const RECT *)arg );
-
-    case NtUserCallOneParam_RealizePalette:
+    case NtUserRealizePalette:
         return realize_palette( UlongToHandle(arg) );
-
-    case NtUserCallOneParam_GetPrimaryMonitorRect:
-        *(RECT *)arg = get_primary_monitor_rect( 0 );
-        return 1;
-
-    case NtUserCallOneParam_GetSysColorBrush:
+    case NtUserGetSysColorBrush:
         return HandleToUlong( get_sys_color_brush(arg) );
-
-    case NtUserCallOneParam_GetSysColorPen:
+    case NtUserGetSysColorPen:
         return HandleToUlong( get_sys_color_pen(arg) );
-
-    case NtUserCallOneParam_GetSystemMetrics:
+    case NtUserGetSystemMetrics:
         return get_system_metrics( arg );
-
-    case NtUserCallOneParam_GetVirtualScreenRect:
-        *(RECT *)arg = get_virtual_screen_rect( 0 );
-        return 1;
-
-    case NtUserCallOneParam_MessageBeep:
+    case NtUserMessageBeep:
         return message_beep( arg );
-
     /* temporary exports */
     case NtUserCallHooks:
         {
@@ -4755,13 +4680,20 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
             return call_hooks( params->id, params->code, params->wparam, params->lparam,
                                params->next_unicode );
         }
-
+    case NtUserFlushWindowSurfaces:
+        flush_window_surfaces( arg );
+        return 0;
     case NtUserGetDeskPattern:
         return get_entry( &entry_DESKPATTERN, 256, (WCHAR *)arg );
-
     case NtUserGetWinProcPtr:
         return (UINT_PTR)get_winproc_ptr( UlongToHandle(arg) );
-
+    case NtUserHandleInternalMessage:
+        {
+            MSG *msg = (MSG *)arg;
+            return handle_internal_message( msg->hwnd, msg->message, msg->wParam, msg->lParam );
+        }
+    case NtUserIncrementKeyStateCounter:
+        return InterlockedAdd( &global_key_state_counter, arg );
     case NtUserLock:
         switch( arg )
         {
@@ -4769,13 +4701,8 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
         case 1: user_unlock(); return 0;
         default: user_check_not_lock(); return 0;
         }
-
     case NtUserSetCallbacks:
         return (UINT_PTR)InterlockedExchangePointer( (void **)&user_callbacks, (void *)arg );
-
-    case NtUserSpyGetVKeyName:
-        return (UINT_PTR)debugstr_vkey_name( arg );
-
     default:
         FIXME( "invalid code %u\n", code );
         return 0;
@@ -4789,34 +4716,36 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
 {
     switch(code)
     {
-    case NtUserCallTwoParam_GetMenuInfo:
-        return get_menu_info( UlongToHandle(arg1), (MENUINFO *)arg2 );
-
-    case NtUserCallTwoParam_GetMonitorInfo:
+    case NtUserGetMonitorInfo:
         return get_monitor_info( UlongToHandle(arg1), (MONITORINFO *)arg2 );
-
-    case NtUserCallTwoParam_GetSystemMetricsForDpi:
+    case NtUserGetSystemMetricsForDpi:
         return get_system_metrics_for_dpi( arg1, arg2 );
-
-    case NtUserCallTwoParam_MonitorFromRect:
+    case NtUserMirrorRgn:
+        return mirror_window_region( UlongToHandle(arg1), UlongToHandle(arg2) );
+    case NtUserMonitorFromRect:
         return HandleToUlong( monitor_from_rect( (const RECT *)arg1, arg2, get_thread_dpi() ));
-
-    case NtUserCallTwoParam_ReplyMessage:
-        return reply_message_result( arg1, (MSG *)arg2 );
-
-    case NtUserCallTwoParam_SetIconParam:
+    case NtUserSetIconParam:
         return set_icon_param( UlongToHandle(arg1), arg2 );
-
-    case NtUserCallTwoParam_UnhookWindowsHook:
+    case NtUserUnhookWindowsHook:
         return unhook_windows_hook( arg1, (HOOKPROC)arg2 );
-
     /* temporary exports */
+    case NtUserAllocHandle:
+        return HandleToUlong( alloc_user_handle( (struct user_object *)arg1, arg2 ));
     case NtUserAllocWinProc:
         return (UINT_PTR)alloc_winproc( (WNDPROC)arg1, arg2 );
-
+    case NtUserFreeHandle:
+        return (UINT_PTR)free_user_handle( UlongToHandle(arg1), arg2 );
     case NtUserGetHandlePtr:
         return (UINT_PTR)get_user_handle_ptr( UlongToHandle(arg1), arg2 );
-
+    case NtUserInvalidateDCE:
+        invalidate_dce( (void *)arg1, (const RECT *)arg2 );
+        return 0;
+    case NtUserRegisterWindowSurface:
+        register_window_surface( (struct window_surface *)arg1, (struct window_surface *)arg2 );
+        return 0;
+    case NtUserSetHandlePtr:
+        set_user_handle_ptr( UlongToHandle(arg1), (struct user_object *)arg2 );
+        return 0;
     default:
         FIXME( "invalid code %u\n", code );
         return 0;

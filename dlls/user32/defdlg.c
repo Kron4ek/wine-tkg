@@ -259,7 +259,7 @@ static LRESULT DEFDLG_Proc( HWND hwnd, UINT msg, WPARAM wParam,
                 WND *wndPtr;
 
                 if (dlgInfo->hUserFont) DeleteObject( dlgInfo->hUserFont );
-                if (dlgInfo->hMenu) NtUserDestroyMenu( dlgInfo->hMenu );
+                if (dlgInfo->hMenu) DestroyMenu( dlgInfo->hMenu );
                 HeapFree( GetProcessHeap(), 0, dlgInfo );
 
                 wndPtr = WIN_GetPtr( hwnd );

@@ -215,7 +215,7 @@ static INT CDECL nulldrv_GetDeviceCaps( PHYSDEV dev, INT cap )
             dc = get_nulldrv_dc( dev );
             memset( &devmode, 0, sizeof(devmode) );
             devmode.dmSize = sizeof(devmode);
-            RtlInitUnicodeString( &display, dc->display );
+            init_unicode_string( &display, dc->display );
             if (NtUserEnumDisplaySettings( &display, ENUM_CURRENT_SETTINGS, &devmode, 0 ) &&
                 (devmode.dmFields & DM_BITSPERPEL) && devmode.dmBitsPerPel)
                 return devmode.dmBitsPerPel;
@@ -267,7 +267,7 @@ static INT CDECL nulldrv_GetDeviceCaps( PHYSDEV dev, INT cap )
 
         memset( &devmode, 0, sizeof(devmode) );
         devmode.dmSize = sizeof(devmode);
-        RtlInitUnicodeString( &display, dc->display );
+        init_unicode_string( &display, dc->display );
         if (NtUserEnumDisplaySettings( &display, ENUM_CURRENT_SETTINGS, &devmode, 0 ) &&
             devmode.dmDisplayFrequency)
             return devmode.dmDisplayFrequency;
@@ -659,106 +659,106 @@ const struct gdi_dc_funcs null_driver =
  * These are fallbacks for entry points that are not implemented in the real driver.
  */
 
-static BOOL nulldrv_ActivateKeyboardLayout( HKL layout, UINT flags )
+static BOOL CDECL nulldrv_ActivateKeyboardLayout( HKL layout, UINT flags )
 {
     return TRUE;
 }
 
-static void nulldrv_Beep(void)
+static void CDECL nulldrv_Beep(void)
 {
 }
 
-static UINT nulldrv_GetKeyboardLayoutList( INT size, HKL *layouts )
+static UINT CDECL nulldrv_GetKeyboardLayoutList( INT size, HKL *layouts )
 {
     return ~0; /* use default implementation */
 }
 
-static INT nulldrv_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size )
+static INT CDECL nulldrv_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size )
 {
     return -1; /* use default implementation */
 }
 
-static UINT nulldrv_MapVirtualKeyEx( UINT code, UINT type, HKL layout )
+static UINT CDECL nulldrv_MapVirtualKeyEx( UINT code, UINT type, HKL layout )
 {
     return -1; /* use default implementation */
 }
 
-static BOOL nulldrv_RegisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
+static BOOL CDECL nulldrv_RegisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
 {
     return TRUE;
 }
 
-static INT nulldrv_ToUnicodeEx( UINT virt, UINT scan, const BYTE *state, LPWSTR str,
-                                int size, UINT flags, HKL layout )
+static INT CDECL nulldrv_ToUnicodeEx( UINT virt, UINT scan, const BYTE *state, LPWSTR str,
+                                      int size, UINT flags, HKL layout )
 {
     return -2; /* use default implementation */
 }
 
-static void nulldrv_UnregisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
+static void CDECL nulldrv_UnregisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
 {
 }
 
-static SHORT nulldrv_VkKeyScanEx( WCHAR ch, HKL layout )
+static SHORT CDECL nulldrv_VkKeyScanEx( WCHAR ch, HKL layout )
 {
     return -256; /* use default implementation */
 }
 
-static void nulldrv_DestroyCursorIcon( HCURSOR cursor )
+static void CDECL nulldrv_DestroyCursorIcon( HCURSOR cursor )
 {
 }
 
-static void nulldrv_SetCursor( HCURSOR cursor )
+static void CDECL nulldrv_SetCursor( HCURSOR cursor )
 {
 }
 
-static BOOL nulldrv_GetCursorPos( LPPOINT pt )
-{
-    return TRUE;
-}
-
-static BOOL nulldrv_SetCursorPos( INT x, INT y )
+static BOOL CDECL nulldrv_GetCursorPos( LPPOINT pt )
 {
     return TRUE;
 }
 
-static BOOL nulldrv_ClipCursor( LPCRECT clip )
+static BOOL CDECL nulldrv_SetCursorPos( INT x, INT y )
 {
     return TRUE;
 }
 
-static void nulldrv_UpdateClipboard(void)
+static BOOL CDECL nulldrv_ClipCursor( LPCRECT clip )
+{
+    return TRUE;
+}
+
+static void CDECL nulldrv_UpdateClipboard(void)
 {
 }
 
-static LONG nulldrv_ChangeDisplaySettingsEx( LPCWSTR name, LPDEVMODEW mode, HWND hwnd,
-                                             DWORD flags, LPVOID lparam )
+static LONG CDECL nulldrv_ChangeDisplaySettingsEx( LPCWSTR name, LPDEVMODEW mode, HWND hwnd,
+                                                   DWORD flags, LPVOID lparam )
 {
     return DISP_CHANGE_FAILED;
 }
 
-static BOOL nulldrv_EnumDisplaySettingsEx( LPCWSTR name, DWORD num, LPDEVMODEW mode, DWORD flags )
+static BOOL CDECL nulldrv_EnumDisplaySettingsEx( LPCWSTR name, DWORD num, LPDEVMODEW mode, DWORD flags )
 {
     return FALSE;
 }
 
-static void nulldrv_UpdateDisplayDevices( const struct gdi_device_manager *manager,
-                                          BOOL force, void *param )
+static void CDECL nulldrv_UpdateDisplayDevices( const struct gdi_device_manager *manager,
+                                                BOOL force, void *param )
 {
     manager->add_monitor( NULL, param ); /* use virtual monitor */
 }
 
-static BOOL nulldrv_CreateDesktopWindow( HWND hwnd )
+static BOOL CDECL nulldrv_CreateDesktopWindow( HWND hwnd )
 {
     return TRUE;
 }
 
-static BOOL nodrv_CreateWindow( HWND hwnd )
+static BOOL CDECL nodrv_CreateWindow( HWND hwnd )
 {
     static int warned;
     HWND parent = NtUserGetAncestor( hwnd, GA_PARENT );
 
     /* HWND_MESSAGE windows don't need a graphics driver */
-    if (!parent || parent == NtUserGetThreadInfo()->msg_window) return TRUE;
+    if (!parent || parent == get_user_thread_info()->msg_window) return TRUE;
     if (warned++) return FALSE;
 
     ERR_(winediag)( "Application tried to create a window, but no driver could be loaded.\n" );
@@ -766,21 +766,21 @@ static BOOL nodrv_CreateWindow( HWND hwnd )
     return FALSE;
 }
 
-static BOOL nulldrv_CreateWindow( HWND hwnd )
+static BOOL CDECL nulldrv_CreateWindow( HWND hwnd )
 {
     return TRUE;
 }
 
-static void nulldrv_DestroyWindow( HWND hwnd )
+static void CDECL nulldrv_DestroyWindow( HWND hwnd )
 {
 }
 
-static void nulldrv_FlashWindowEx( FLASHWINFO *info )
+static void CDECL nulldrv_FlashWindowEx( FLASHWINFO *info )
 {
 }
 
-static void nulldrv_GetDC( HDC hdc, HWND hwnd, HWND top_win, const RECT *win_rect,
-                           const RECT *top_rect, DWORD flags )
+static void CDECL nulldrv_GetDC( HDC hdc, HWND hwnd, HWND top_win, const RECT *win_rect,
+                                 const RECT *top_rect, DWORD flags )
 {
 }
 
@@ -804,8 +804,8 @@ static HANDLE normalize_std_handle( HANDLE handle )
     return handle;
 }
 
-static DWORD nulldrv_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles, DWORD timeout,
-                                                  DWORD mask, DWORD flags )
+static DWORD CDECL nulldrv_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles, DWORD timeout,
+                                                        DWORD mask, DWORD flags )
 {
     NTSTATUS status;
     HANDLE hloc[MAXIMUM_WAIT_OBJECTS];
@@ -830,11 +830,11 @@ static DWORD nulldrv_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *han
     return status;
 }
 
-static void nulldrv_ReleaseDC( HWND hwnd, HDC hdc )
+static void CDECL nulldrv_ReleaseDC( HWND hwnd, HDC hdc )
 {
 }
 
-static BOOL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
+static BOOL CDECL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
 {
     RECT rect;
 
@@ -843,94 +843,105 @@ static BOOL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
                         hdc, rect.left - dx, rect.top - dy, SRCCOPY, 0, 0 );
 }
 
-static void nulldrv_SetActiveWindow( HWND hwnd )
+static void CDECL nulldrv_SetCapture( HWND hwnd, UINT flags )
 {
 }
 
-static void nulldrv_SetCapture( HWND hwnd, UINT flags )
+static void CDECL nulldrv_SetFocus( HWND hwnd )
 {
 }
 
-static void nulldrv_SetFocus( HWND hwnd )
+static void CDECL nulldrv_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWORD flags )
 {
 }
 
-static void nulldrv_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWORD flags )
+static void CDECL nulldrv_SetParent( HWND hwnd, HWND parent, HWND old_parent )
 {
 }
 
-static void nulldrv_SetParent( HWND hwnd, HWND parent, HWND old_parent )
+static void CDECL nulldrv_SetWindowRgn( HWND hwnd, HRGN hrgn, BOOL redraw )
 {
 }
 
-static void nulldrv_SetWindowRgn( HWND hwnd, HRGN hrgn, BOOL redraw )
+static void CDECL nulldrv_SetWindowIcon( HWND hwnd, UINT type, HICON icon )
 {
 }
 
-static void nulldrv_SetWindowIcon( HWND hwnd, UINT type, HICON icon )
+static void CDECL nulldrv_SetWindowStyle( HWND hwnd, INT offset, STYLESTRUCT *style )
 {
 }
 
-static void nulldrv_SetWindowStyle( HWND hwnd, INT offset, STYLESTRUCT *style )
+static void CDECL nulldrv_SetWindowText( HWND hwnd, LPCWSTR text )
 {
 }
 
-static void nulldrv_SetWindowText( HWND hwnd, LPCWSTR text )
-{
-}
-
-static UINT nulldrv_ShowWindow( HWND hwnd, INT cmd, RECT *rect, UINT swp )
+static UINT CDECL nulldrv_ShowWindow( HWND hwnd, INT cmd, RECT *rect, UINT swp )
 {
     return ~0; /* use default implementation */
 }
 
-static LRESULT nulldrv_SysCommand( HWND hwnd, WPARAM wparam, LPARAM lparam )
+static LRESULT CDECL nulldrv_SysCommand( HWND hwnd, WPARAM wparam, LPARAM lparam )
 {
     return -1;
 }
 
-static BOOL nulldrv_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
-                                         const RECT *window_rect )
+static BOOL CDECL nulldrv_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
+                                               const RECT *window_rect )
 {
     return TRUE;
 }
 
-static LRESULT nulldrv_WindowMessage( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+static LRESULT CDECL nulldrv_WindowMessage( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
 {
     return 0;
 }
 
-static BOOL nulldrv_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
-                                       const RECT *window_rect, const RECT *client_rect,
-                                       RECT *visible_rect, struct window_surface **surface )
+static BOOL CDECL nulldrv_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
+                                             const RECT *window_rect, const RECT *client_rect,
+                                             RECT *visible_rect, struct window_surface **surface )
 {
     return FALSE;
 }
 
-static void nulldrv_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
-                                      const RECT *window_rect, const RECT *client_rect,
-                                      const RECT *visible_rect, const RECT *valid_rects,
-                                      struct window_surface *surface )
+static void CDECL nulldrv_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
+                                            const RECT *window_rect, const RECT *client_rect,
+                                            const RECT *visible_rect, const RECT *valid_rects,
+                                            struct window_surface *surface )
 {
 }
 
-static BOOL nulldrv_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, UINT flags )
+static BOOL CDECL nulldrv_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, UINT flags )
 {
     return FALSE;
 }
 
-static const struct vulkan_funcs *nulldrv_wine_get_vulkan_driver( UINT version )
+
+static const struct vulkan_funcs * CDECL nulldrv_wine_get_vulkan_driver( UINT version )
 {
     return NULL;
 }
 
-static struct opengl_funcs *nulldrv_wine_get_wgl_driver( UINT version )
+static struct opengl_funcs * CDECL nulldrv_wine_get_wgl_driver( UINT version )
 {
     return (void *)-1;
 }
 
-static void nulldrv_ThreadDetach( void )
+static void CDECL nulldrv_UpdateCandidatePos( HWND hwnd, const RECT *caret_rect )
 {
+
+}
+
+static void CDECL nulldrv_ThreadDetach( void )
+{
+}
+
+static BOOL setup_null_driver(void)
+{
+    if (user_callbacks)
+        user_callbacks->set_user_driver( &null_user_driver, WINE_GDI_DRIVER_VERSION );
+    else
+        __wine_set_display_driver( &null_user_driver, WINE_GDI_DRIVER_VERSION );
+    return TRUE;
 }
 
 static const WCHAR guid_key_prefixW[] =
@@ -989,11 +1000,7 @@ static BOOL load_desktop_driver( HWND hwnd )
             ret = KeUserModeCallback( NtUserLoadDriver, info->Data, info->DataLength,
                                       &ret_ptr, &ret_len );
         }
-        else
-        {
-            __wine_set_user_driver( &null_user_driver, WINE_GDI_DRIVER_VERSION );
-            ret = TRUE;
-        }
+        else ret = setup_null_driver();
     }
     else if ((size = query_reg_ascii_value( hkey, "DriverError", info, sizeof(buf) )))
     {
@@ -1024,7 +1031,7 @@ static const struct user_driver_funcs *load_driver(void)
             || (flags.dwFlags & WSF_VISIBLE))
             null_user_driver.pCreateWindow = nodrv_CreateWindow;
 
-        __wine_set_user_driver( &null_user_driver, WINE_GDI_DRIVER_VERSION );
+        setup_null_driver();
     }
 
     return user_driver;
@@ -1039,213 +1046,195 @@ const struct gdi_dc_funcs *get_display_driver(void)
     return &user_driver->dc_funcs;
 }
 
-static BOOL loaderdrv_ActivateKeyboardLayout( HKL layout, UINT flags )
+static BOOL CDECL loaderdrv_ActivateKeyboardLayout( HKL layout, UINT flags )
 {
     return load_driver()->pActivateKeyboardLayout( layout, flags );
 }
 
-static void loaderdrv_Beep(void)
+static void CDECL loaderdrv_Beep(void)
 {
     load_driver()->pBeep();
 }
 
-static INT loaderdrv_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size )
+static INT CDECL loaderdrv_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size )
 {
     return load_driver()->pGetKeyNameText( lparam, buffer, size );
 }
 
-static UINT loaderdrv_GetKeyboardLayoutList( INT size, HKL *layouts )
+static UINT CDECL loaderdrv_GetKeyboardLayoutList( INT size, HKL *layouts )
 {
     return load_driver()->pGetKeyboardLayoutList( size, layouts );
 }
 
-static UINT loaderdrv_MapVirtualKeyEx( UINT code, UINT type, HKL layout )
+static UINT CDECL loaderdrv_MapVirtualKeyEx( UINT code, UINT type, HKL layout )
 {
     return load_driver()->pMapVirtualKeyEx( code, type, layout );
 }
 
-static INT loaderdrv_ToUnicodeEx( UINT virt, UINT scan, const BYTE *state, LPWSTR str,
+static INT CDECL loaderdrv_ToUnicodeEx( UINT virt, UINT scan, const BYTE *state, LPWSTR str,
                                         int size, UINT flags, HKL layout )
 {
     return load_driver()->pToUnicodeEx( virt, scan, state, str, size, flags, layout );
 }
 
-static BOOL loaderdrv_RegisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
+static BOOL CDECL loaderdrv_RegisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
 {
     return load_driver()->pRegisterHotKey( hwnd, modifiers, vk );
 }
 
-static void loaderdrv_UnregisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
+static void CDECL loaderdrv_UnregisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
 {
     load_driver()->pUnregisterHotKey( hwnd, modifiers, vk );
 }
 
-static SHORT loaderdrv_VkKeyScanEx( WCHAR ch, HKL layout )
+static SHORT CDECL loaderdrv_VkKeyScanEx( WCHAR ch, HKL layout )
 {
     return load_driver()->pVkKeyScanEx( ch, layout );
 }
 
-static LONG loaderdrv_ChangeDisplaySettingsEx( LPCWSTR name, LPDEVMODEW mode, HWND hwnd,
+static LONG CDECL loaderdrv_ChangeDisplaySettingsEx( LPCWSTR name, LPDEVMODEW mode, HWND hwnd,
                                                      DWORD flags, LPVOID lparam )
 {
     return load_driver()->pChangeDisplaySettingsEx( name, mode, hwnd, flags, lparam );
 }
 
-static BOOL loaderdrv_EnumDisplaySettingsEx( LPCWSTR name, DWORD num, LPDEVMODEW mode, DWORD flags )
+static BOOL CDECL loaderdrv_EnumDisplaySettingsEx( LPCWSTR name, DWORD num, LPDEVMODEW mode, DWORD flags )
 {
     return load_driver()->pEnumDisplaySettingsEx( name, num, mode, flags );
 }
 
-static void loaderdrv_SetCursor( HCURSOR cursor )
+static void CDECL loaderdrv_SetCursor( HCURSOR cursor )
 {
     load_driver()->pSetCursor( cursor );
 }
 
-static BOOL loaderdrv_GetCursorPos( POINT *pt )
+static BOOL CDECL loaderdrv_GetCursorPos( POINT *pt )
 {
     return load_driver()->pGetCursorPos( pt );
 }
 
-static BOOL loaderdrv_SetCursorPos( INT x, INT y )
+static BOOL CDECL loaderdrv_SetCursorPos( INT x, INT y )
 {
     return load_driver()->pSetCursorPos( x, y );
 }
 
-static BOOL loaderdrv_ClipCursor( const RECT *clip )
+static BOOL CDECL loaderdrv_ClipCursor( const RECT *clip )
 {
     return load_driver()->pClipCursor( clip );
 }
 
-static void loaderdrv_UpdateClipboard(void)
+static void CDECL loaderdrv_UpdateClipboard(void)
 {
     load_driver()->pUpdateClipboard();
 }
 
-static void loaderdrv_UpdateDisplayDevices( const struct gdi_device_manager *manager,
-                                            BOOL force, void *param )
+static void CDECL loaderdrv_UpdateDisplayDevices( const struct gdi_device_manager *manager,
+                                                  BOOL force, void *param )
 {
     load_driver()->pUpdateDisplayDevices( manager, force, param );
 }
 
-static BOOL loaderdrv_CreateDesktopWindow( HWND hwnd )
+static BOOL CDECL loaderdrv_CreateDesktopWindow( HWND hwnd )
 {
     return load_driver()->pCreateDesktopWindow( hwnd );
 }
 
-static BOOL loaderdrv_CreateWindow( HWND hwnd )
-{
-    return load_driver()->pCreateWindow( hwnd );
-}
-
-static void loaderdrv_GetDC( HDC hdc, HWND hwnd, HWND top_win, const RECT *win_rect,
-                             const RECT *top_rect, DWORD flags )
+static void CDECL loaderdrv_GetDC( HDC hdc, HWND hwnd, HWND top_win, const RECT *win_rect,
+                                   const RECT *top_rect, DWORD flags )
 {
     load_driver()->pGetDC( hdc, hwnd, top_win, win_rect, top_rect, flags );
 }
 
-static void loaderdrv_FlashWindowEx( FLASHWINFO *info )
+static void CDECL loaderdrv_FlashWindowEx( FLASHWINFO *info )
 {
     load_driver()->pFlashWindowEx( info );
 }
 
-static void loaderdrv_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWORD flags )
+static void CDECL loaderdrv_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWORD flags )
 {
     load_driver()->pSetLayeredWindowAttributes( hwnd, key, alpha, flags );
 }
 
-static void loaderdrv_SetWindowRgn( HWND hwnd, HRGN hrgn, BOOL redraw )
+static void CDECL loaderdrv_SetWindowRgn( HWND hwnd, HRGN hrgn, BOOL redraw )
 {
     load_driver()->pSetWindowRgn( hwnd, hrgn, redraw );
 }
 
-static BOOL loaderdrv_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
-                                           const RECT *window_rect )
+static BOOL CDECL loaderdrv_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
+                                                 const RECT *window_rect )
 {
     return load_driver()->pUpdateLayeredWindow( hwnd, info, window_rect );
 }
 
-static const struct vulkan_funcs * loaderdrv_wine_get_vulkan_driver( UINT version )
+static const struct vulkan_funcs * CDECL loaderdrv_wine_get_vulkan_driver( UINT version )
 {
     return load_driver()->pwine_get_vulkan_driver( version );
 }
 
 static const struct user_driver_funcs lazy_load_driver =
 {
-    { NULL },
     /* keyboard functions */
-    loaderdrv_ActivateKeyboardLayout,
-    loaderdrv_Beep,
-    loaderdrv_GetKeyNameText,
-    loaderdrv_GetKeyboardLayoutList,
-    loaderdrv_MapVirtualKeyEx,
-    loaderdrv_RegisterHotKey,
-    loaderdrv_ToUnicodeEx,
-    loaderdrv_UnregisterHotKey,
-    loaderdrv_VkKeyScanEx,
+    .pActivateKeyboardLayout = loaderdrv_ActivateKeyboardLayout,
+    .pBeep = loaderdrv_Beep,
+    .pGetKeyNameText = loaderdrv_GetKeyNameText,
+    .pGetKeyboardLayoutList = loaderdrv_GetKeyboardLayoutList,
+    .pMapVirtualKeyEx = loaderdrv_MapVirtualKeyEx,
+    .pToUnicodeEx = loaderdrv_ToUnicodeEx,
+    .pRegisterHotKey = loaderdrv_RegisterHotKey,
+    .pUnregisterHotKey = loaderdrv_UnregisterHotKey,
+    .pVkKeyScanEx = loaderdrv_VkKeyScanEx,
     /* cursor/icon functions */
-    nulldrv_DestroyCursorIcon,
-    loaderdrv_SetCursor,
-    loaderdrv_GetCursorPos,
-    loaderdrv_SetCursorPos,
-    loaderdrv_ClipCursor,
+    .pDestroyCursorIcon = nulldrv_DestroyCursorIcon,
+    .pSetCursor = loaderdrv_SetCursor,
+    .pGetCursorPos = loaderdrv_GetCursorPos,
+    .pSetCursorPos = loaderdrv_SetCursorPos,
+    .pClipCursor = loaderdrv_ClipCursor,
     /* clipboard functions */
-    loaderdrv_UpdateClipboard,
+    .pUpdateClipboard = loaderdrv_UpdateClipboard,
     /* display modes */
-    loaderdrv_ChangeDisplaySettingsEx,
-    loaderdrv_EnumDisplaySettingsEx,
-    loaderdrv_UpdateDisplayDevices,
+    .pChangeDisplaySettingsEx = loaderdrv_ChangeDisplaySettingsEx,
+    .pEnumDisplaySettingsEx = loaderdrv_EnumDisplaySettingsEx,
+    .pUpdateDisplayDevices = loaderdrv_UpdateDisplayDevices,
     /* windowing functions */
-    loaderdrv_CreateDesktopWindow,
-    loaderdrv_CreateWindow,
-    nulldrv_DestroyWindow,
-    loaderdrv_FlashWindowEx,
-    loaderdrv_GetDC,
-    nulldrv_MsgWaitForMultipleObjectsEx,
-    nulldrv_ReleaseDC,
-    nulldrv_ScrollDC,
-    nulldrv_SetActiveWindow,
-    nulldrv_SetCapture,
-    nulldrv_SetFocus,
-    loaderdrv_SetLayeredWindowAttributes,
-    nulldrv_SetParent,
-    loaderdrv_SetWindowRgn,
-    nulldrv_SetWindowIcon,
-    nulldrv_SetWindowStyle,
-    nulldrv_SetWindowText,
-    nulldrv_ShowWindow,
-    nulldrv_SysCommand,
-    loaderdrv_UpdateLayeredWindow,
-    nulldrv_WindowMessage,
-    nulldrv_WindowPosChanging,
-    nulldrv_WindowPosChanged,
+    .pCreateDesktopWindow = loaderdrv_CreateDesktopWindow,
+    .pDestroyWindow = nulldrv_DestroyWindow,
+    .pFlashWindowEx = loaderdrv_FlashWindowEx,
+    .pGetDC = loaderdrv_GetDC,
+    .pSetCapture = nulldrv_SetCapture,
+    .pSetLayeredWindowAttributes = loaderdrv_SetLayeredWindowAttributes,
+    .pSetParent = nulldrv_SetParent,
+    .pSetWindowRgn = loaderdrv_SetWindowRgn,
+    .pSetWindowStyle = nulldrv_SetWindowStyle,
+    .pMsgWaitForMultipleObjectsEx = nulldrv_MsgWaitForMultipleObjectsEx,
+    .pReleaseDC =  nulldrv_ReleaseDC,
+    .pScrollDC = nulldrv_ScrollDC,
+    .pSetFocus = nulldrv_SetFocus,
+    .pShowWindow = nulldrv_ShowWindow,
+    .pUpdateLayeredWindow = loaderdrv_UpdateLayeredWindow,
+    .pWindowMessage = nulldrv_WindowMessage,
     /* system parameters */
-    nulldrv_SystemParametersInfo,
+    .pSystemParametersInfo = nulldrv_SystemParametersInfo,
     /* vulkan support */
-    loaderdrv_wine_get_vulkan_driver,
+    .pwine_get_vulkan_driver = loaderdrv_wine_get_vulkan_driver,
     /* opengl support */
-    nulldrv_wine_get_wgl_driver,
+    .pwine_get_wgl_driver = nulldrv_wine_get_wgl_driver,
     /* thread management */
-    nulldrv_ThreadDetach,
+    .pThreadDetach = nulldrv_ThreadDetach,
 };
 
 const struct user_driver_funcs *user_driver = &lazy_load_driver;
 
 /******************************************************************************
- *	     __wine_set_user_driver   (win32u.@)
+ *	     __wine_set_display_driver   (win32u.@)
  */
-void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version )
+void CDECL __wine_set_display_driver( struct user_driver_funcs *driver, UINT version )
 {
-    struct user_driver_funcs *driver, *prev;
-
     if (version != WINE_GDI_DRIVER_VERSION)
     {
         ERR( "version mismatch, driver wants %u but win32u has %u\n",
              version, WINE_GDI_DRIVER_VERSION );
         return;
     }
-
-    driver = malloc( sizeof(*driver) );
-    *driver = *funcs;
 
 #define SET_USER_FUNC(name) \
     do { if (!driver->p##name) driver->p##name = nulldrv_##name; } while(0)
@@ -1276,7 +1265,6 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
     SET_USER_FUNC(MsgWaitForMultipleObjectsEx);
     SET_USER_FUNC(ReleaseDC);
     SET_USER_FUNC(ScrollDC);
-    SET_USER_FUNC(SetActiveWindow);
     SET_USER_FUNC(SetCapture);
     SET_USER_FUNC(SetFocus);
     SET_USER_FUNC(SetLayeredWindowAttributes);
@@ -1294,16 +1282,11 @@ void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT v
     SET_USER_FUNC(SystemParametersInfo);
     SET_USER_FUNC(wine_get_vulkan_driver);
     SET_USER_FUNC(wine_get_wgl_driver);
+    SET_USER_FUNC(UpdateCandidatePos);
     SET_USER_FUNC(ThreadDetach);
 #undef SET_USER_FUNC
 
-    prev = InterlockedCompareExchangePointer( (void **)&user_driver, driver, (void *)&lazy_load_driver );
-    if (prev != &lazy_load_driver)
-    {
-        /* another thread beat us to it */
-        free( driver );
-        driver = prev;
-    }
+    InterlockedExchangePointer( (void **)&user_driver, driver );
 }
 
 /******************************************************************************

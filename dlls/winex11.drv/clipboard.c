@@ -2052,7 +2052,7 @@ static DWORD WINAPI clipboard_thread( void *arg )
 /**************************************************************************
  *		X11DRV_UpdateClipboard
  */
-void X11DRV_UpdateClipboard(void)
+void CDECL X11DRV_UpdateClipboard(void)
 {
     static ULONG last_update;
     ULONG now;

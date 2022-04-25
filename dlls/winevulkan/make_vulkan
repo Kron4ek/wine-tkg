@@ -205,6 +205,7 @@ FUNCTION_OVERRIDES = {
     "vkGetPhysicalDeviceExternalFenceProperties" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
     "vkGetPhysicalDeviceExternalSemaphoreProperties" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
     "vkGetPhysicalDeviceImageFormatProperties2" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PRIVATE},
+    "vkGetPhysicalDeviceProperties" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PUBLIC, "loader_thunk" : ThunkType.PRIVATE},
     "vkGetPhysicalDeviceProperties2" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PUBLIC, "loader_thunk" : ThunkType.PRIVATE},
     "vkGetPhysicalDeviceProperties2KHR" : {"dispatch" : True, "driver" : False, "thunk" : ThunkType.PUBLIC, "loader_thunk" : ThunkType.PRIVATE},
 
@@ -237,11 +238,11 @@ FUNCTION_OVERRIDES = {
 
     # VK_KHR_swapchain
     "vkAcquireNextImageKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
-    "vkAcquireNextImage2KHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
-    "vkCreateSwapchainKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
-    "vkDestroySwapchainKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
-    "vkGetSwapchainImagesKHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
-    "vkQueuePresentKHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.PUBLIC},
+    "vkAcquireNextImage2KHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
+    "vkCreateSwapchainKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
+    "vkDestroySwapchainKHR" : {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
+    "vkGetSwapchainImagesKHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
+    "vkQueuePresentKHR": {"dispatch" : True, "driver" : True, "thunk" : ThunkType.NONE},
 
     # VK_KHR_external_fence_capabilities
     "vkGetPhysicalDeviceExternalFencePropertiesKHR" : {"dispatch" : False, "driver" : False, "thunk" : ThunkType.NONE},
@@ -1098,6 +1099,8 @@ class VkHandle(object):
     def native_handle(self, name):
         """ Provide access to the native handle of a wrapped object. """
 
+        if self.name == "VkSwapchainKHR":
+            return "((struct VkSwapchainKHR_T *)(uintptr_t) ({0}))->swapchain".format(name)
         if self.name == "VkCommandPool":
             return "wine_cmd_pool_from_handle({0})->command_pool".format(name)
         if self.name == "VkDebugUtilsMessengerEXT":
@@ -2864,6 +2867,13 @@ class VkGenerator(object):
         f.write("    wine_vk_call,\n")
         f.write("    wine_vk_is_available_instance_function,\n")
         f.write("    wine_vk_is_available_device_function,\n")
+        f.write("    __wine_get_native_VkDevice,\n")
+        f.write("    __wine_get_native_VkInstance,\n")
+        f.write("    __wine_get_native_VkPhysicalDevice,\n")
+        f.write("    __wine_get_native_VkQueue,\n")
+        f.write("    __wine_get_wrapped_VkPhysicalDevice,\n")
+        f.write("    __wine_create_vk_instance_with_callback,\n")
+        f.write("    __wine_create_vk_device_with_callback,\n")
         f.write("};\n")
 
     def generate_thunks_h(self, f, prefix):
@@ -3206,6 +3216,18 @@ class VkGenerator(object):
         f.write("\n")
         f.write("    /* winevulkan specific functions */\n")
         f.write("    VkSurfaceKHR (*p_wine_get_native_surface)(VkSurfaceKHR);\n")
+        f.write("\n    /* Optional. Returns TRUE if FS hack is active, otherwise returns FALSE. If\n")
+        f.write("     * it returns TRUE, then real_sz will contain the actual display\n")
+        f.write("     * resolution; user_sz will contain the app's requested mode; and dst_blit\n")
+        f.write("     * will contain the area to blit the user image to in real coordinates.\n")
+        f.write("     * All parameters are optional. */\n")
+        f.write("    VkBool32 (*query_fs_hack)(VkSurfaceKHR surface, VkExtent2D *real_sz, VkExtent2D *user_sz, VkRect2D *dst_blit, VkFilter *filter, BOOL *fsr, BOOL *fsr_lite, float *sharpness);\n")
+
+        f.write("    VkResult (*create_vk_instance_with_callback)(const VkInstanceCreateInfo *create_info,\n")
+        f.write("            const VkAllocationCallbacks *allocator, VkInstance *instance,\n")
+        f.write("            VkResult (WINAPI *native_vkCreateInstance)(const VkInstanceCreateInfo *, const VkAllocationCallbacks *,\n")
+        f.write("            VkInstance *, void * (*)(VkInstance, const char *), void *), void *native_vkCreateInstance_context);\n")
+
         f.write("};\n\n")
 
         f.write("extern const struct vulkan_funcs * CDECL __wine_get_vulkan_driver(UINT version);\n\n")
@@ -3246,6 +3268,13 @@ class VkGenerator(object):
         f.write("@ stdcall -private vk_icdGetInstanceProcAddr(ptr str)\n")
         f.write("@ stdcall -private vk_icdGetPhysicalDeviceProcAddr(ptr str)\n")
         f.write("@ stdcall -private vk_icdNegotiateLoaderICDInterfaceVersion(ptr)\n")
+        f.write("@ stdcall __wine_get_native_VkDevice(ptr)\n")
+        f.write("@ stdcall __wine_get_native_VkInstance(ptr)\n")
+        f.write("@ stdcall __wine_get_native_VkPhysicalDevice(ptr)\n")
+        f.write("@ stdcall __wine_get_native_VkQueue(ptr)\n")
+        f.write("@ stdcall __wine_get_wrapped_VkPhysicalDevice(ptr ptr)\n")
+        f.write("@ stdcall __wine_create_vk_instance_with_callback(ptr ptr ptr ptr ptr)\n")
+        f.write("@ stdcall __wine_create_vk_device_with_callback(ptr ptr ptr ptr ptr ptr)\n")
 
         # Export symbols for all Vulkan Core functions.
         for func in self.registry.funcs.values():

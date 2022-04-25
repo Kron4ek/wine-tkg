@@ -212,6 +212,8 @@ void wined3d_device_cleanup(struct wined3d_device *device)
     if (device->swapchain_count)
         wined3d_device_uninit_3d(device);
 
+    wined3d_destroy_gl_vr_context(&device->vr_context);
+
     wined3d_cs_destroy(device->cs);
 
     for (i = 0; i < ARRAY_SIZE(device->multistate_funcs); ++i)
@@ -6309,4 +6311,19 @@ LRESULT device_process_message(struct wined3d_device *device, HWND window, BOOL 
         return CallWindowProcW(proc, window, message, wparam, lparam);
     else
         return CallWindowProcA(proc, window, message, wparam, lparam);
+}
+
+void CDECL wined3d_device_run_cs_callback(struct wined3d_device *device,
+        wined3d_cs_callback callback, const void *data, unsigned int size)
+{
+    TRACE("device %p, callback %p, data %p, size %u.\n", device, callback, data, size);
+
+    wined3d_cs_emit_user_callback(device->cs, callback, data, size);
+}
+
+void CDECL wined3d_device_wait_idle(struct wined3d_device *device)
+{
+    TRACE("device %p.\n", device);
+
+    device->cs->c.ops->finish(device->cs, WINED3D_CS_QUEUE_DEFAULT);
 }

@@ -259,22 +259,6 @@ NTSTATUS WINAPI wow64_NtUserBuildHwndList( UINT *args )
     return status;
 }
 
-NTSTATUS WINAPI wow64_NtUserFindWindowEx( UINT *args )
-{
-    HWND parent = get_handle( &args );
-    HWND child = get_handle( &args );
-    UNICODE_STRING32 *class32 = get_ptr( &args );
-    UNICODE_STRING32 *title32 = get_ptr( &args );
-    ULONG unk = get_ulong( &args );
-
-    UNICODE_STRING class, title;
-    HWND ret;
-
-    ret = NtUserFindWindowEx( parent, child, unicode_str_32to64( &class, class32 ),
-                              unicode_str_32to64( &title, title32 ), unk );
-    return HandleToUlong( ret );
-}
-
 NTSTATUS WINAPI wow64_NtUserInternalGetWindowText( UINT *args )
 {
     HWND hwnd = get_handle( &args );
@@ -432,16 +416,6 @@ NTSTATUS WINAPI wow64_NtUserGetMouseMovePointsEx( UINT *args )
     return NtUserGetMouseMovePointsEx( size, ptin, ptout, count, resolution );
 }
 
-NTSTATUS WINAPI wow64_NtUserChildWindowFromPointEx( UINT *args )
-{
-    HWND parent = get_handle( &args );
-    LONG x = get_ulong( &args );
-    LONG y = get_ulong( &args );
-    UINT flags = get_ulong( &args );
-
-    return HandleToUlong( NtUserChildWindowFromPointEx( parent, x, y, flags ));
-}
-
 NTSTATUS WINAPI wow64_NtUserSetProcessDpiAwarenessContext( UINT *args )
 {
     ULONG awareness = get_ulong( &args );
@@ -585,8 +559,9 @@ NTSTATUS WINAPI wow64_NtUserSetSystemTimer( UINT *args )
     HWND hwnd = get_handle( &args );
     UINT_PTR id = get_ulong( &args );
     UINT timeout = get_ulong( &args );
+    TIMERPROC proc = get_ptr( &args );
 
-    return NtUserSetSystemTimer( hwnd, id, timeout );
+    return NtUserSetSystemTimer( hwnd, id, timeout, proc );
 }
 
 NTSTATUS WINAPI wow64_NtUserSetTimer( UINT *args )
@@ -630,76 +605,4 @@ NTSTATUS WINAPI wow64_NtUserDestroyAcceleratorTable( UINT *args )
     HACCEL handle = get_handle( &args );
 
     return NtUserDestroyAcceleratorTable( handle );
-}
-
-NTSTATUS WINAPI wow64_NtUserCheckMenuItem( UINT *args )
-{
-    HMENU handle = get_handle( &args );
-    UINT id = get_ulong( &args );
-    UINT flags = get_ulong( &args );
-
-    return NtUserCheckMenuItem( handle, id, flags );
-}
-
-NTSTATUS WINAPI wow64_NtUserGetMenuItemRect( UINT *args )
-{
-    HWND hwnd = get_handle( &args );
-    HMENU handle = get_handle( &args );
-    UINT item = get_ulong( &args );
-    RECT *rect = get_ptr( &args );
-
-    return NtUserGetMenuItemRect( hwnd, handle, item, rect );
-}
-
-NTSTATUS WINAPI wow64_NtUserSetMenuContextHelpId( UINT *args )
-{
-    HMENU menu = get_handle( &args );
-    DWORD id = get_ulong( &args );
-
-    return NtUserSetMenuContextHelpId( menu, id );
-}
-
-NTSTATUS WINAPI wow64_NtUserSetMenuDefaultItem( UINT *args )
-{
-    HMENU handle = get_handle( &args );
-    UINT item = get_ulong( &args );
-    UINT bypos = get_ulong( &args );
-
-    return NtUserSetMenuDefaultItem( handle, item, bypos );
-}
-
-NTSTATUS WINAPI wow64_NtUserThunkedMenuInfo( UINT *args )
-{
-    HMENU menu = get_handle( &args );
-    const struct
-    {
-        DWORD cbSize;
-        DWORD fMask;
-        DWORD dwStyle;
-        UINT  cyMax;
-        ULONG hbrBack;
-        DWORD dwContextHelpID;
-        ULONG dwMenuData;
-    } *info32 = get_ptr( &args );
-    MENUINFO info;
-
-    if (info32)
-    {
-        info.cbSize = sizeof(info);
-        info.fMask = info32->fMask;
-        info.dwStyle = info32->dwStyle;
-        info.cyMax = info32->cyMax;
-        info.hbrBack = UlongToHandle( info32->hbrBack );
-        info.dwContextHelpID = info32->dwContextHelpID;
-        info.dwMenuData = info32->dwMenuData;
-    }
-
-    return NtUserThunkedMenuInfo( menu, info32 ? &info : NULL );
-}
-
-NTSTATUS WINAPI wow64_NtUserEnableMouseInPointer( UINT *args )
-{
-    BOOL enable = get_ulong( &args );
-
-    return NtUserEnableMouseInPointer( enable );
 }

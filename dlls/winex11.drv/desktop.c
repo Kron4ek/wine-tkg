@@ -118,7 +118,7 @@ static BOOL X11DRV_desktop_get_modes( ULONG_PTR id, DWORD flags, DEVMODEW **new_
     RECT primary_rect;
     DEVMODEW *modes;
 
-    primary_rect = NtUserGetPrimaryMonitorRect();
+    primary_rect = get_primary_monitor_rect();
     screen_width = primary_rect.right - primary_rect.left;
     screen_height = primary_rect.bottom - primary_rect.top;
 
@@ -166,7 +166,7 @@ static void X11DRV_desktop_free_modes( DEVMODEW *modes )
 
 static BOOL X11DRV_desktop_get_current_mode( ULONG_PTR id, DEVMODEW *mode )
 {
-    RECT primary_rect = NtUserGetPrimaryMonitorRect();
+    RECT primary_rect = get_primary_monitor_rect();
 
     mode->dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT |
                      DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY | DM_POSITION;
@@ -197,8 +197,8 @@ static void query_desktop_work_area( RECT *rc_work )
     RECT rect;
     HWND hwnd = FindWindowW( trayW, NULL );
 
-    if (!hwnd || !NtUserIsWindowVisible( hwnd )) return;
-    if (!NtUserGetWindowRect( hwnd, &rect )) return;
+    if (!hwnd || !IsWindowVisible( hwnd )) return;
+    if (!GetWindowRect( hwnd, &rect )) return;
     if (rect.top) rc_work->bottom = rect.top;
     else rc_work->top = rect.bottom;
     TRACE( "found tray %p %s work area %s\n", hwnd, wine_dbgstr_rect( &rect ), wine_dbgstr_rect( rc_work ) );
@@ -317,6 +317,7 @@ void X11DRV_init_desktop( Window win, unsigned int width, unsigned int height )
     settings_handler.free_modes = X11DRV_desktop_free_modes;
     settings_handler.get_current_mode = X11DRV_desktop_get_current_mode;
     settings_handler.set_current_mode = X11DRV_desktop_set_current_mode;
+    settings_handler.convert_coordinates = NULL;
     X11DRV_Settings_SetHandler( &settings_handler );
 }
 
@@ -334,8 +335,8 @@ BOOL CDECL X11DRV_create_desktop( UINT width, UINT height )
     Display *display = thread_init_display();
     WCHAR name[MAX_PATH];
 
-    if (!NtUserGetObjectInformation( NtUserGetThreadDesktop( GetCurrentThreadId() ),
-                                     UOI_NAME, name, sizeof(name), NULL ))
+    if (!GetUserObjectInformationW( GetThreadDesktop( GetCurrentThreadId() ),
+                                    UOI_NAME, name, sizeof(name), NULL ))
         name[0] = 0;
 
     TRACE( "%s %ux%u\n", debugstr_w(name), width, height );
@@ -375,7 +376,7 @@ BOOL CDECL X11DRV_create_desktop( UINT width, UINT height )
 
 BOOL is_desktop_fullscreen(void)
 {
-    RECT primary_rect = NtUserGetPrimaryMonitorRect();
+    RECT primary_rect = get_primary_monitor_rect();
     return (primary_rect.right - primary_rect.left == max_width &&
             primary_rect.bottom - primary_rect.top == max_height);
 }
@@ -419,31 +420,31 @@ static void update_desktop_fullscreen( unsigned int width, unsigned int height)
 void X11DRV_resize_desktop( BOOL send_display_change )
 {
     RECT primary_rect, virtual_rect;
-    HWND hwnd = NtUserGetDesktopWindow();
+    HWND hwnd = GetDesktopWindow();
     INT width, height;
 
-    virtual_rect = NtUserGetVirtualScreenRect();
-    primary_rect = NtUserGetPrimaryMonitorRect();
+    virtual_rect = get_virtual_screen_rect();
+    primary_rect = get_primary_monitor_rect();
     width = primary_rect.right;
     height = primary_rect.bottom;
 
-    if (NtUserGetWindowThread( hwnd, NULL ) != GetCurrentThreadId())
+    if (GetWindowThreadProcessId( hwnd, NULL ) != GetCurrentThreadId())
     {
-        send_message( hwnd, WM_X11DRV_RESIZE_DESKTOP, 0, (LPARAM)send_display_change );
+        SendMessageW( hwnd, WM_X11DRV_RESIZE_DESKTOP, 0, (LPARAM)send_display_change );
     }
     else
     {
         TRACE( "desktop %p change to (%dx%d)\n", hwnd, width, height );
         update_desktop_fullscreen( width, height );
-        NtUserSetWindowPos( hwnd, 0, virtual_rect.left, virtual_rect.top,
-                            virtual_rect.right - virtual_rect.left, virtual_rect.bottom - virtual_rect.top,
-                            SWP_NOZORDER | SWP_NOACTIVATE | SWP_DEFERERASE );
+        SetWindowPos( hwnd, 0, virtual_rect.left, virtual_rect.top,
+                      virtual_rect.right - virtual_rect.left, virtual_rect.bottom - virtual_rect.top,
+                      SWP_NOZORDER | SWP_NOACTIVATE | SWP_DEFERERASE );
         ungrab_clipping_window();
 
         if (send_display_change)
         {
-            send_message_timeout( HWND_BROADCAST, WM_DISPLAYCHANGE, screen_bpp, MAKELPARAM( width, height ),
-                                  SMTO_ABORTIFHUNG, 2000, NULL );
+            SendMessageTimeoutW( HWND_BROADCAST, WM_DISPLAYCHANGE, screen_bpp, MAKELPARAM( width, height ),
+                                 SMTO_ABORTIFHUNG, 2000, NULL );
         }
     }
 }

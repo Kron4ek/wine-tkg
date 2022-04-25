@@ -379,7 +379,7 @@ HHOOK WINAPI SetWindowsHookExW( INT id, HOOKPROC proc, HINSTANCE inst, DWORD tid
  */
 BOOL WINAPI UnhookWindowsHook( INT id, HOOKPROC proc )
 {
-    return NtUserUnhookWindowsHook( id, proc );
+    return NtUserCallTwoParam( id, (UINT_PTR)proc, NtUserUnhookWindowsHook );
 }
 
 
@@ -502,16 +502,16 @@ BOOL WINAPI IsWinEventHookInstalled(DWORD dwEvent)
 }
 
 /* Undocumented RegisterUserApiHook() */
-BOOL WINAPI RegisterUserApiHook(const struct user_api_hook *new_hook, struct user_api_hook *old_hook)
+BOOL WINAPI RegisterUserApiHook(const struct user_api_hook *new, struct user_api_hook *old)
 {
-    if (!new_hook)
+    if (!new)
         return FALSE;
 
     USER_Lock();
-    hooked_user_api = *new_hook;
+    hooked_user_api = *new;
     user_api = &hooked_user_api;
-    if (old_hook)
-        *old_hook = original_user_api;
+    if (old)
+        *old = original_user_api;
     USER_Unlock();
     return TRUE;
 }
