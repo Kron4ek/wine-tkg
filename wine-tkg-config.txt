@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Mon May  9 07:24:27 PM UTC 2022 :
+# Last wine-tkg-staging-fsync-git configuration - Sat May 21 03:07:39 PM UTC 2022 :
 
 Local cfg files used
 
-Wine (plain) version: 7.8.r0.g3ded60bd165
-Using wine-staging patchset (version 7.8.r0.g83824733)
+Wine (plain) version: 7.9.r0.g230e953e31f
+Using wine-staging patchset (version 7.9.r0.g2a411514)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -37,7 +37,7 @@ Applied hotfix protonify_stg_syscall_emu-009.mystagingpatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W user32-alttab-focus -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW -W winex11-MWM_Decorations -W winex11-key_translation
+Staging overrides, if any: -W user32-alttab-focus -W user32-alttab-focus -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW -W winex11-MWM_Decorations -W winex11-key_translation
 
 use_clock_monotonic.patch -- ( Applied clock_monotonic patch )
 fsync-unix-staging.patch -- ( Applied fsync, an experimental replacement for esync (unix, staging) )
@@ -63,6 +63,7 @@ Applied hotfix ef6e33f.mypatch
 Applied hotfix 0001-proton-bcrypt_rdr2_fixes4.mypatch
 Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
 Applied hotfix a608ef1.mypatch
+Applied hotfix Stub_RtlGetCurrentUmsThread.mypatch
 Applied your own patch amd_fsr_fshack.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )
