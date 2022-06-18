@@ -2212,13 +2212,3 @@ char WINAPI RtlQueryProcessPlaceholderCompatibilityMode(void)
     FIXME("stub\n");
     return PHCM_APPLICATION_DEFAULT;
 }
-
-/*********************************************************************
- *           RtlGetCurrentUmsThread [NTDLL.@]
- */
-DEFINE_FASTCALL_WRAPPER(RtlGetCurrentUmsThread, 16)
-LONG64 FASTCALL RtlGetCurrentUmsThread(struct _TEB *thread)
-{
-    FIXME("stub\n");
-    return STATUS_SUCCESS;
-}

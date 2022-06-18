@@ -1,15 +1,17 @@
-# Last wine-tkg-staging-fsync-git configuration - Sun Jun  5 07:45:56 AM UTC 2022 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Jun 18 01:40:16 PM UTC 2022 :
 
 Local cfg files used
 
-Wine (plain) version: 7.10.r0.g631f4d5e42b
-Using wine-staging patchset (version 7.10.r0.g94f00cd9)
+Wine (plain) version: 7.11.r0.g1a3217393e2
+Using wine-staging patchset (version 7.11.r0.ga8e56928)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
+Applied hotfix win32u_reverts27.earlystagingpatch
+Applied hotfix win32u_reverts26.earlystagingpatch
 Applied hotfix win32u_reverts25.earlystagingpatch
 Applied hotfix win32u_reverts24.earlystagingpatch
 Applied hotfix win32u_reverts23.earlystagingpatch
@@ -39,6 +41,7 @@ Applied hotfix commit-de2f0fe.earlystagingpatch
 Applied hotfix win32u_reverts6.earlystagingpatch
 Applied reverting hotfix win32u_reverts5.mystagingrevert
 Applied hotfix protonify_stg_syscall_emu-009.mystagingpatch
+Applied hotfix fshack-84bed15-a3ebf88-monolith-reverts.myearlypatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
@@ -59,6 +62,7 @@ proton-vr-fshack.patch -- ( Enable Proton vr-related wined3d additions )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
+Applied reverting hotfix proton-fshack-removeminimizestuff.myrevert
 Applied hotfix remove_hooks_that_time_out-legacy.mypatch
 Applied hotfix user32.implement_rudimentary_EnableMouseInPointer_support.mypatch
 Applied hotfix winex11.drv_Add_a_GPU_for_each_Vulkan_device_that_was_not_tied_to_an_XRandR_provider-legacy.mypatch
@@ -68,7 +72,6 @@ Applied hotfix ef6e33f.mypatch
 Applied hotfix 0001-proton-bcrypt_rdr2_fixes4.mypatch
 Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
 Applied hotfix a608ef1.mypatch
-Applied hotfix Stub_RtlGetCurrentUmsThread.mypatch
 Applied your own patch amd_fsr_fshack.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )
