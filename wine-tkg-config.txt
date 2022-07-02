@@ -1,15 +1,17 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Jun 18 01:40:16 PM UTC 2022 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Jul  2 08:05:32 PM UTC 2022 :
 
 Local cfg files used
 
-Wine (plain) version: 7.11.r0.g1a3217393e2
-Using wine-staging patchset (version 7.11.r0.ga8e56928)
+Wine (plain) version: 7.12.r0.gb2bf7b6b899
+Using wine-staging patchset (version 7.12.r0.g8699d2c2)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
+Applied hotfix win32u_reverts29.earlystagingpatch
+Applied hotfix win32u_reverts28.earlystagingpatch
 Applied hotfix win32u_reverts27.earlystagingpatch
 Applied hotfix win32u_reverts26.earlystagingpatch
 Applied hotfix win32u_reverts25.earlystagingpatch
@@ -23,7 +25,7 @@ Applied hotfix win32u_reverts18.earlystagingpatch
 Applied hotfix win32u_reverts17.earlystagingpatch
 Applied hotfix win32u_reverts16.earlystagingpatch
 Applied hotfix commit-596e7a7.earlystagingpatch
-Applied hotfix commit-ed0734c.earlystagingpatch
+Applied hotfix commit-ed0734c-2.earlystagingpatch
 Applied hotfix win32u_reverts15.earlystagingpatch
 Applied hotfix commit-35e4fa1.earlystagingpatch
 Applied hotfix commit-eea217b.earlystagingpatch
@@ -39,9 +41,9 @@ Applied hotfix win32u_reverts8.earlystagingpatch
 Applied hotfix win32u_reverts7.earlystagingpatch
 Applied hotfix commit-de2f0fe.earlystagingpatch
 Applied hotfix win32u_reverts6.earlystagingpatch
-Applied reverting hotfix win32u_reverts5.mystagingrevert
+Applied reverting hotfix win32u_reverts5-2.mystagingrevert
 Applied hotfix protonify_stg_syscall_emu-009.mystagingpatch
-Applied hotfix fshack-84bed15-a3ebf88-monolith-reverts.myearlypatch
+Applied hotfix fshack-84bed15-a3ebf88-monolith-reverts-2.myearlypatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
@@ -69,9 +71,10 @@ Applied hotfix winex11.drv_Add_a_GPU_for_each_Vulkan_device_that_was_not_tied_to
 Applied hotfix winex11.drv_Ignore_ClipCursor_if_desktop_window_is_foreground.mypatch
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix ef6e33f.mypatch
-Applied hotfix 0001-proton-bcrypt_rdr2_fixes4.mypatch
+Applied hotfix 0001-proton-bcrypt_rdr2_fixes5.mypatch
 Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
 Applied hotfix a608ef1.mypatch
+Applied hotfix larger_def_heap.mypatch
 Applied your own patch amd_fsr_fshack.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )
