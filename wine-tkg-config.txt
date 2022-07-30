@@ -1,15 +1,17 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Jul 16 12:38:53 PM UTC 2022 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Jul 30 12:26:29 PM UTC 2022 :
 
 Local cfg files used
 
-Wine (plain) version: 7.13.r0.gdfff9217746
-Using wine-staging patchset (version 7.13.r0.gcd8ca4d7)
+Wine (plain) version: 7.14.r0.gc86955d3806
+Using wine-staging patchset (version 7.14.r0.g1d21e2b6)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
+Applied hotfix win32u_reverts31.earlystagingpatch
+Applied hotfix win32u_reverts30.earlystagingpatch
 Applied hotfix win32u_reverts29.earlystagingpatch
 Applied hotfix win32u_reverts28.earlystagingpatch
 Applied hotfix win32u_reverts27.earlystagingpatch
@@ -47,7 +49,7 @@ Applied hotfix fshack-84bed15-a3ebf88-monolith-reverts-2.myearlypatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W user32-alttab-focus -W user32-alttab-focus -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW -W winex11-MWM_Decorations -W winex11-key_translation
+Staging overrides, if any: -W xactengine3_7-callbacks -W user32-alttab-focus -W user32-alttab-focus -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW -W winex11-MWM_Decorations -W winex11-key_translation
 
 use_clock_monotonic.patch -- ( Applied clock_monotonic patch )
 fsync-unix-staging.patch -- ( Applied fsync, an experimental replacement for esync (unix, staging) )
@@ -65,6 +67,7 @@ msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then buil
 proton-win10-default-staging.patch -- ( Enforce win10 as default wine version (staging) )
 
 Applied reverting hotfix proton-fshack-removeminimizestuff.myrevert
+Applied hotfix unicode.mypatch
 Applied hotfix remove_hooks_that_time_out-legacy.mypatch
 Applied hotfix user32.implement_rudimentary_EnableMouseInPointer_support.mypatch
 Applied hotfix winex11.drv_Add_a_GPU_for_each_Vulkan_device_that_was_not_tied_to_an_XRandR_provider-legacy.mypatch
