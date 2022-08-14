@@ -1,15 +1,17 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Jul 30 12:26:29 PM UTC 2022 :
+# Last wine-tkg-staging-fsync-git configuration - Sun Aug 14 08:40:20 PM UTC 2022 :
 
 Local cfg files used
 
-Wine (plain) version: 7.14.r0.gc86955d3806
-Using wine-staging patchset (version 7.14.r0.g1d21e2b6)
+Wine (plain) version: 7.15.r0.ga1af412482d
+Using wine-staging patchset (version 7.15.r0.g552b03f7)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
+Done applying backports hotfixes (if any) - list available in prepare.log
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
+Applied hotfix win32u_reverts32.earlystagingpatch
 Applied hotfix win32u_reverts31.earlystagingpatch
 Applied hotfix win32u_reverts30.earlystagingpatch
 Applied hotfix win32u_reverts29.earlystagingpatch
@@ -49,7 +51,7 @@ Applied hotfix fshack-84bed15-a3ebf88-monolith-reverts-2.myearlypatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W xactengine3_7-callbacks -W user32-alttab-focus -W user32-alttab-focus -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW -W winex11-MWM_Decorations -W winex11-key_translation
+Staging overrides, if any: -W user32-alttab-focus -W wined3d-adapter_create_output -W user32-alttab-focus -W winex11-WM_WINDOWPOSCHANGING -W winex11-_NET_ACTIVE_WINDOW -W winex11-MWM_Decorations -W winex11-key_translation
 
 use_clock_monotonic.patch -- ( Applied clock_monotonic patch )
 fsync-unix-staging.patch -- ( Applied fsync, an experimental replacement for esync (unix, staging) )
@@ -77,7 +79,6 @@ Applied hotfix ef6e33f.mypatch
 Applied hotfix 0001-proton-bcrypt_rdr2_fixes5.mypatch
 Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
 Applied hotfix a608ef1.mypatch
-Applied hotfix larger_def_heap.mypatch
 Applied your own patch amd_fsr_fshack.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )
