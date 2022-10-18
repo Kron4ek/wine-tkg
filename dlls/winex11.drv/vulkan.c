@@ -848,7 +848,7 @@ static VkSurfaceKHR X11DRV_wine_get_native_surface(VkSurfaceKHR surface)
 }
 
 static VkBool32 X11DRV_query_fs_hack(VkSurfaceKHR surface, VkExtent2D *real_sz, VkExtent2D *user_sz,
-        VkRect2D *dst_blit, VkFilter *filter, BOOL *fsr, BOOL *fsr_lite, float *sharpness)
+        VkRect2D *dst_blit, VkFilter *filter, BOOL *fsr, float *sharpness)
 {
     struct wine_vk_surface *x11_surface = surface_from_handle(surface);
     HMONITOR monitor;
@@ -900,7 +900,7 @@ static VkBool32 X11DRV_query_fs_hack(VkSurfaceKHR surface, VkExtent2D *real_sz, 
             *filter = fs_hack_is_integer() ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
 
         if (fsr)
-            *fsr = fs_hack_is_fsr(fsr_lite, sharpness);
+            *fsr = fs_hack_is_fsr(sharpness);
 
         return VK_TRUE;
     }
@@ -935,7 +935,7 @@ static VkBool32 X11DRV_query_fs_hack(VkSurfaceKHR surface, VkExtent2D *real_sz, 
             *filter = fs_hack_is_integer() ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
 
         if (fsr)
-            *fsr = fs_hack_is_fsr(fsr_lite, sharpness);
+            *fsr = fs_hack_is_fsr(sharpness);
 
         return VK_TRUE;
     }

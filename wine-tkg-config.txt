@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Sep 24 05:29:33 PM UTC 2022 :
+# Last wine-tkg-staging-fsync-git configuration - Tue Oct 18 12:42:33 PM UTC 2022 :
 
 Local cfg files used
 
-Wine (plain) version: 7.18.r0.gad26f04f69a
-Using wine-staging patchset (version 7.18.r0.gfe476e72)
+Wine (plain) version: 7.19.r0.ge3f00bf7c94
+Using wine-staging patchset (version 7.19.r0.g41a3c56c)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -85,6 +85,6 @@ Applied hotfix ef6e33f.mypatch
 Applied hotfix 0001-proton-bcrypt_rdr2_fixes5.mypatch
 Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
 Applied hotfix a608ef1.mypatch
-Applied your own patch amd_fsr_fshack.mypatch
+Applied your own patch amd_fsr_fshack-alternative.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )
