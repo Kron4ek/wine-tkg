@@ -2776,6 +2776,12 @@ static void dump_set_serial_info_request( const struct set_serial_info_request *
     fprintf( stderr, ", flags=%d", req->flags );
 }
 
+static void dump_cancel_sync_request( const struct cancel_sync_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+    dump_uint64( ", iosb=", &req->iosb );
+}
+
 static void dump_register_async_request( const struct register_async_request *req )
 {
     fprintf( stderr, " type=%d", req->type );
@@ -4767,6 +4773,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_is_window_hung_request,
     (dump_func)dump_get_serial_info_request,
     (dump_func)dump_set_serial_info_request,
+    (dump_func)dump_cancel_sync_request,
     (dump_func)dump_register_async_request,
     (dump_func)dump_cancel_async_request,
     (dump_func)dump_get_async_result_request,
@@ -5061,6 +5068,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     NULL,
     NULL,
     NULL,
+    NULL,
     (dump_func)dump_get_async_result_reply,
     (dump_func)dump_set_async_direct_result_reply,
     (dump_func)dump_read_reply,
@@ -5351,6 +5359,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "is_window_hung",
     "get_serial_info",
     "set_serial_info",
+    "cancel_sync",
     "register_async",
     "cancel_async",
     "get_async_result",

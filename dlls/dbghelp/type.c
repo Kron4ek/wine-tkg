@@ -94,8 +94,8 @@ const char* symt_get_name(const struct symt* sym)
     {
     /* lexical tree */
     case SymTagData:            return ((const struct symt_data*)sym)->hash_elt.name;
-    case SymTagFunction:        return ((const struct symt_function*)sym)->hash_elt.name;
-    case SymTagInlineSite:      return ((const struct symt_inlinesite*)sym)->func.hash_elt.name;
+    case SymTagFunction:
+    case SymTagInlineSite:      return ((const struct symt_function*)sym)->hash_elt.name;
     case SymTagPublicSymbol:    return ((const struct symt_public*)sym)->hash_elt.name;
     case SymTagLabel:           return ((const struct symt_hierarchy_point*)sym)->hash_elt.name;
     case SymTagThunk:           return ((const struct symt_thunk*)sym)->hash_elt.name;
@@ -150,13 +150,11 @@ BOOL symt_get_address(const struct symt* type, ULONG64* addr)
         }
         break;
     case SymTagBlock:
-        *addr = ((const struct symt_block*)type)->address;
+        *addr = ((const struct symt_block*)type)->ranges[0].low;
         break;
     case SymTagFunction:
-        *addr = ((const struct symt_function*)type)->address;
-        break;
     case SymTagInlineSite:
-        *addr = ((const struct symt_inlinesite*)type)->func.address;
+        *addr = ((const struct symt_function*)type)->ranges[0].low;
         break;
     case SymTagPublicSymbol:
         *addr = ((const struct symt_public*)type)->address;
@@ -685,8 +683,8 @@ BOOL symt_get_info(struct module* module, const struct symt* type,
             case SymTagUDT:          v = &((const struct symt_udt*)type)->vchildren; break;
             case SymTagEnum:         v = &((const struct symt_enum*)type)->vchildren; break;
             case SymTagFunctionType: v = &((const struct symt_function_signature*)type)->vchildren; break;
-            case SymTagFunction:     v = &((const struct symt_function*)type)->vchildren; break;
-            case SymTagInlineSite:   v = &((const struct symt_inlinesite*)type)->func.vchildren; break;
+            case SymTagFunction:
+            case SymTagInlineSite:   v = &((const struct symt_function*)type)->vchildren; break;
             case SymTagBlock:        v = &((const struct symt_block*)type)->vchildren; break;
             case SymTagPointerType:
             case SymTagArrayType:
@@ -756,10 +754,8 @@ BOOL symt_get_info(struct module* module, const struct symt* type,
             X(DWORD) = vector_length(&((const struct symt_function_signature*)type)->vchildren);
             break;
         case SymTagFunction:
-            X(DWORD) = vector_length(&((const struct symt_function*)type)->vchildren);
-            break;
         case SymTagInlineSite:
-            X(DWORD) = vector_length(&((const struct symt_inlinesite*)type)->func.vchildren);
+            X(DWORD) = vector_length(&((const struct symt_function*)type)->vchildren);
             break;
         case SymTagBlock:
             X(DWORD) = vector_length(&((const struct symt_block*)type)->vchildren);
@@ -816,10 +812,18 @@ BOOL symt_get_info(struct module* module, const struct symt* type,
             X(DWORD64) = ((const struct symt_basic*)type)->size;
             break;
         case SymTagFunction:
-            X(DWORD64) = ((const struct symt_function*)type)->size;
+            X(DWORD64) = addr_range_size(&((const struct symt_function*)type)->ranges[0]);
             break;
         case SymTagBlock:
-            X(DWORD64) = ((const struct symt_block*)type)->size;
+            /* When there are several ranges available, we can only return one contiguous chunk of memory.
+             * We return only the first range. It will lead to not report the other ranges
+             * being part of the block, but it will not return gaps (between the ranges) as being
+             * part of the block.
+             * So favor a correct (yet incomplete) value than an incorrect one.
+             */
+            if (((const struct symt_block*)type)->num_ranges > 1)
+                WARN("Only returning first range from multiple ranges\n");
+            X(DWORD64) = ((const struct symt_block*)type)->ranges[0].high - ((const struct symt_block*)type)->ranges[0].low;
             break;
         case SymTagPointerType:
             X(DWORD64) = ((const struct symt_pointer*)type)->size;
@@ -890,10 +894,8 @@ BOOL symt_get_info(struct module* module, const struct symt* type,
             X(DWORD) = symt_ptr2index(module, ((const struct symt_data*)type)->container);
             break;
         case SymTagFunction:
-            X(DWORD) = symt_ptr2index(module, ((const struct symt_function*)type)->container);
-            break;
         case SymTagInlineSite:
-            X(DWORD) = symt_ptr2index(module, ((const struct symt_inlinesite*)type)->func.container);
+            X(DWORD) = symt_ptr2index(module, ((const struct symt_function*)type)->container);
             break;
         case SymTagThunk:
             X(DWORD) = symt_ptr2index(module, ((const struct symt_thunk*)type)->container);
@@ -1035,10 +1037,8 @@ BOOL symt_get_info(struct module* module, const struct symt* type,
             X(DWORD) = symt_ptr2index(module, ((const struct symt_data*)type)->type);
             break;
         case SymTagFunction:
-            X(DWORD) = symt_ptr2index(module, ((const struct symt_function*)type)->type);
-            break;
         case SymTagInlineSite:
-            X(DWORD) = symt_ptr2index(module, ((const struct symt_inlinesite*)type)->func.type);
+            X(DWORD) = symt_ptr2index(module, ((const struct symt_function*)type)->type);
             break;
         case SymTagEnum:
             X(DWORD) = symt_ptr2index(module, ((const struct symt_enum*)type)->base_type);

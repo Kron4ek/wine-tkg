@@ -34,18 +34,15 @@
 
 #include "cvconst.h"
 
-/* #define USE_STATS */
-
 struct pool /* poor's man */
 {
-    struct list arena_list;
-    struct list arena_full;
-    size_t      arena_size;
+    HANDLE      heap;
 };
 
 void     pool_init(struct pool* a, size_t arena_size) DECLSPEC_HIDDEN;
 void     pool_destroy(struct pool* a) DECLSPEC_HIDDEN;
 void*    pool_alloc(struct pool* a, size_t len) DECLSPEC_HIDDEN;
+void*    pool_realloc(struct pool* a, void* ptr, size_t len) DECLSPEC_HIDDEN;
 char*    pool_strdup(struct pool* a, const char* str) DECLSPEC_HIDDEN;
 
 struct vector
@@ -116,6 +113,30 @@ extern unsigned dbghelp_options DECLSPEC_HIDDEN;
 extern BOOL     dbghelp_opt_native DECLSPEC_HIDDEN;
 extern SYSTEM_INFO sysinfo DECLSPEC_HIDDEN;
 
+/* FIXME: this could be optimized later on by using relative offsets and smaller integral sizes */
+struct addr_range
+{
+    DWORD64                     low;            /* absolute address of first byte of the range */
+    DWORD64                     high;           /* absolute address of first byte after the range */
+};
+
+static inline DWORD64 addr_range_size(const struct addr_range* ar)
+{
+    return ar->high - ar->low;
+}
+
+/* tests whether ar2 is inside ar1 */
+static inline BOOL addr_range_inside(const struct addr_range* ar1, const struct addr_range* ar2)
+{
+    return ar1->low <= ar2->low && ar2->high <= ar1->high;
+}
+
+/* tests whether ar1 and ar2 are disjoint */
+static inline BOOL addr_range_disjoint(const struct addr_range* ar1, const struct addr_range* ar2)
+{
+    return ar1->high <= ar2->low || ar2->high <= ar1->low;
+}
+
 enum location_kind {loc_error,          /* reg is the error code */
                     loc_unavailable,    /* location is not available */
                     loc_absolute,       /* offset is the location */
@@ -160,10 +181,10 @@ static inline BOOL symt_check_tag(const struct symt* s, enum SymTagEnum tag)
 struct symt_block
 {
     struct symt                 symt;
-    ULONG_PTR                   address;
-    ULONG_PTR                   size;
     struct symt*                container;      /* block, or func */
     struct vector               vchildren;      /* sub-blocks & local variables */
+    unsigned                    num_ranges;
+    struct addr_range           ranges[];
 };
 
 struct symt_module /* in fact any of .exe, .dll... */
@@ -216,75 +237,62 @@ struct symt_data
     } u;
 };
 
-/* We must take into account that most debug formats (dwarf and pdb) report for
- * code (esp. inlined functions) inside functions the following way:
- * - block
- *   + is represented by a contiguous area of memory,
- *     or at least have lo/hi addresses to encompass it's contents
- *   + but most importantly, block A's lo/hi range is always embedded within
- *     its parent (block or function)
- * - inline site:
- *   + is most of the times represented by a set of ranges (instead of a
- *     contiguous block)
- *   + native dbghelp only exports the start address, not its size
- *   + the set of ranges isn't always embedded in enclosing block (if any)
- *   + the set of ranges is always embedded in top function
- * - (top) function
- *   + is described as a contiguous block of memory
+/* Understanding functions internal storage:
+ * - functions, inline sites and blocks can be described as spreading across
+ *   several chunks of memory (hence describing potentially a non contiguous
+ *   memory space).
+ * - this is described internally as an array of address ranges
+ *   (struct addr_range)
  *
- * On top of the items above (taken as assumptions), we also assume that:
- * - a range in inline site A, is disjoint from all the other ranges in
- *   inline site A
- * - a range in inline site A, is either disjoint or embedded into any of
- *   the ranges of inline sites parent of A
+ * - there's a hierarchical (aka lexical) relationship:
+ *   + function's parent is a compiland or the module itself
+ *   + inline site's parent is either a function or another inline site
+ *   + block's parent is either a function, an inline site or another block.
  *
- * Therefore, we also store all inline sites inside a function:
- * - available as a linked list to simplify the walk among them
- * - this linked list shall preserve the weak order of the lexical-parent
- *   relationship (eg for any inline site A, which has inline site B
- *   as lexical parent, then A is present before B in the linked list)
- * - hence (from the assumptions above), when looking up which inline site
- *   contains a given address, the first range containing that address found
- *   while walking the list of inline sites is the right one.
+ * - internal storage rely on the following assumptions:
+ *   + in an array of address ranges, one address range doesn't overlap over
+ *     one of its siblings
+ *   + each address range of a block is inside a single range of its lexical
+ *     parent (and outside of the others since they don't overlap)
+ *   + each address range of an inline site is inside a single range its
+ *     lexical parent
+ *   + a function (as of today) is only represented by a single address range
+ *     (A).
+ *
+ * - all inline sites of a function are stored in a linked list:
+ *   + this linked list shall preserve the weak order of the lexical-parent
+ *     relationship (eg for any inline site A, which has inline site B
+ *     as lexical parent, A must appear before B in the linked list)
+ *
+ * - lookup:
+ *   + when looking up which inline site contains a given address, the first
+ *     range containing that address found while walking the list of inline
+ *     sites is the right one.
+ *   + when lookup up which inner-most block contains an address, descend the
+ *     blocks tree with branching on the block (if any) which contains the given
+ *     address in one of its ranges
+ *
+ * Notes:
+ *   (A): shall evolve but storage in native is awkward: from PGO testing, the
+ *        top function is stored with its first range of address; all the others
+ *        are stored as blocks, children of compiland, but which lexical parent
+ *        is the top function. This breaks the natural assumption that
+ *        children <> lexical parent is symmetrical.
+ *   (B): see dwarf.c for some gory discrepancies between native & builtin
+ *        DbgHelp.
  */
 
 struct symt_function
 {
-    struct symt                 symt;           /* SymTagFunction (or SymTagInlineSite when embedded in symt_inlinesite) */
-    struct hash_table_elt       hash_elt;       /* if global symbol */
-    ULONG_PTR                   address;
-    struct symt*                container;      /* compiland */
+    struct symt                 symt;           /* SymTagFunction or SymTagInlineSite */
+    struct hash_table_elt       hash_elt;       /* if global symbol, inline site */
+    struct symt*                container;      /* compiland (for SymTagFunction) or function (for SymTagInlineSite) */
     struct symt*                type;           /* points to function_signature */
-    ULONG_PTR                   size;
     struct vector               vlines;
     struct vector               vchildren;      /* locals, params, blocks, start/end, labels, inline sites */
-    struct symt_inlinesite*     next_inlinesite;/* linked list of inline sites in this function */
-};
-
-/* FIXME: this could be optimized later on by using relative offsets and smaller integral sizes */
-struct addr_range
-{
-    DWORD64                     low;            /* absolute address of first byte of the range */
-    DWORD64                     high;           /* absolute address of first byte after the range */
-};
-
-/* tests whether ar2 is inside ar1 */
-static inline BOOL addr_range_inside(const struct addr_range* ar1, const struct addr_range* ar2)
-{
-    return ar1->low <= ar2->low && ar2->high <= ar1->high;
-}
-
-/* tests whether ar1 and ar2 are disjoint */
-static inline BOOL addr_range_disjoint(const struct addr_range* ar1, const struct addr_range* ar2)
-{
-    return ar1->high <= ar2->low || ar2->high <= ar1->low;
-}
-
-/* a symt_inlinesite* can be casted to a symt_function* to access all function bits */
-struct symt_inlinesite
-{
-    struct symt_function        func;
-    struct vector               vranges;        /* of addr_range: where the inline site is actually defined */
+    struct symt_function*       next_inlinesite;/* linked list of inline sites in this function */
+    unsigned                    num_ranges;
+    struct addr_range           ranges[];
 };
 
 struct symt_hierarchy_point
@@ -835,13 +843,13 @@ extern struct symt_function*
                                       const char* name,
                                       ULONG_PTR addr, ULONG_PTR size,
                                       struct symt* type) DECLSPEC_HIDDEN;
-extern struct symt_inlinesite*
+extern struct symt_function*
                     symt_new_inlinesite(struct module* module,
                                         struct symt_function* func,
                                         struct symt* parent,
                                         const char* name,
-                                        ULONG_PTR addr,
-                                        struct symt* type) DECLSPEC_HIDDEN;
+                                        struct symt* type,
+                                        unsigned num_ranges) DECLSPEC_HIDDEN;
 extern void         symt_add_func_line(struct module* module,
                                        struct symt_function* func, 
                                        unsigned source_idx, int line_num, 
@@ -857,10 +865,10 @@ extern struct symt_data*
                                            struct symt_function* func, struct symt_block* block,
                                            struct symt* type, const char* name, VARIANT* v) DECLSPEC_HIDDEN;
 extern struct symt_block*
-                    symt_open_func_block(struct module* module, 
+                    symt_open_func_block(struct module* module,
                                          struct symt_function* func,
-                                         struct symt_block* block, 
-                                         unsigned pc, unsigned len) DECLSPEC_HIDDEN;
+                                         struct symt_block* block,
+                                         unsigned num_ranges) DECLSPEC_HIDDEN;
 extern struct symt_block*
                     symt_close_func_block(struct module* module,
                                           const struct symt_function* func,
@@ -871,11 +879,8 @@ extern struct symt_hierarchy_point*
                                             enum SymTagEnum point, 
                                             const struct location* loc,
                                             const char* name) DECLSPEC_HIDDEN;
-extern BOOL         symt_add_inlinesite_range(struct module* module,
-                                              struct symt_inlinesite* inlined,
-                                              ULONG_PTR low, ULONG_PTR high) DECLSPEC_HIDDEN;
 extern struct symt_thunk*
-                    symt_new_thunk(struct module* module, 
+                    symt_new_thunk(struct module* module,
                                    struct symt_compiland* parent,
                                    const char* name, THUNK_ORDINAL ord,
                                    ULONG_PTR addr, ULONG_PTR size) DECLSPEC_HIDDEN;
@@ -933,18 +938,18 @@ extern struct symt_pointer*
 extern struct symt_typedef*
                     symt_new_typedef(struct module* module, struct symt* ref, 
                                      const char* name) DECLSPEC_HIDDEN;
-extern struct symt_inlinesite*
+extern struct symt_function*
                     symt_find_lowest_inlined(struct symt_function* func, DWORD64 addr) DECLSPEC_HIDDEN;
 extern struct symt*
-                    symt_get_upper_inlined(struct symt_inlinesite* inlined) DECLSPEC_HIDDEN;
+                    symt_get_upper_inlined(struct symt_function* inlined) DECLSPEC_HIDDEN;
 static inline struct symt_function*
-                    symt_get_function_from_inlined(struct symt_inlinesite* inlined)
+                    symt_get_function_from_inlined(struct symt_function* inlined)
 {
-    while (!symt_check_tag(&inlined->func.symt, SymTagFunction))
-        inlined = (struct symt_inlinesite*)symt_get_upper_inlined(inlined);
-    return &inlined->func;
+    while (!symt_check_tag(&inlined->symt, SymTagFunction))
+        inlined = (struct symt_function*)symt_get_upper_inlined(inlined);
+    return inlined;
 }
-extern struct symt_inlinesite*
+extern struct symt_function*
                     symt_find_inlined_site(struct module* module,
                                            DWORD64 addr, DWORD inline_ctx) DECLSPEC_HIDDEN;
 extern DWORD        symt_get_inlinesite_depth(HANDLE hProcess, DWORD64 addr) DECLSPEC_HIDDEN;

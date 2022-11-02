@@ -67,7 +67,7 @@
 @ stdcall UiaGetReservedNotSupportedValue(ptr)
 @ stub UiaGetRootNode
 @ stdcall UiaGetRuntimeId(ptr ptr)
-@ stub UiaGetUpdatedCache
+@ stdcall UiaGetUpdatedCache(ptr ptr long ptr ptr ptr)
 @ stub UiaHPatternObjectFromVariant
 @ stub UiaHTextRangeFromVariant
 @ stdcall UiaHUiaNodeFromVariant(ptr ptr)
@@ -75,7 +75,7 @@
 @ stdcall UiaHostProviderFromHwnd(long ptr)
 #@ stub UiaIAccessibleFromProvider
 @ stdcall UiaLookupId(long ptr)
-@ stub UiaNavigate
+@ stdcall UiaNavigate(ptr long ptr ptr ptr ptr)
 @ stub UiaNodeFromFocus
 @ stdcall UiaNodeFromHandle(long ptr)
 @ stub UiaNodeFromPoint

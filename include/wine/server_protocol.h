@@ -2914,6 +2914,17 @@ struct set_serial_info_reply
 #define SERIALINFO_PENDING_WAIT  0x08
 
 
+struct cancel_sync_request
+{
+    struct request_header __header;
+    obj_handle_t handle;
+    client_ptr_t iosb;
+};
+struct cancel_sync_reply
+{
+    struct reply_header __header;
+};
+
 
 struct register_async_request
 {
@@ -5806,6 +5817,7 @@ enum request
     REQ_is_window_hung,
     REQ_get_serial_info,
     REQ_set_serial_info,
+    REQ_cancel_sync,
     REQ_register_async,
     REQ_cancel_async,
     REQ_get_async_result,
@@ -6102,6 +6114,7 @@ union generic_request
     struct is_window_hung_request is_window_hung_request;
     struct get_serial_info_request get_serial_info_request;
     struct set_serial_info_request set_serial_info_request;
+    struct cancel_sync_request cancel_sync_request;
     struct register_async_request register_async_request;
     struct cancel_async_request cancel_async_request;
     struct get_async_result_request get_async_result_request;
@@ -6396,6 +6409,7 @@ union generic_reply
     struct is_window_hung_reply is_window_hung_reply;
     struct get_serial_info_reply get_serial_info_reply;
     struct set_serial_info_reply set_serial_info_reply;
+    struct cancel_sync_reply cancel_sync_reply;
     struct register_async_reply register_async_reply;
     struct cancel_async_reply cancel_async_reply;
     struct get_async_result_reply get_async_result_reply;
