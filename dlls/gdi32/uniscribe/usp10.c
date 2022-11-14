@@ -31,6 +31,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "ntgdi.h"
+#include "ntuser.h"
 #include "winuser.h"
 #include "winnls.h"
 #include "winreg.h"
@@ -464,7 +465,7 @@ const scriptData scriptInformation[] = {
      MS_MAKE_TAG('k','h','m','r'), L"DaunPenh"},
     {{Script_CJK_Han, 0, 0, 0, 0, 0, 0, { 0,0,0,0,0,0,0,0,0,0,0}},
      {LANG_ENGLISH, 0, 0, 0, 0, ANSI_CHARSET, 0, 0, 0, 0, 0, 0, 1, 0, 0},
-     MS_MAKE_TAG('h','a','n','i'), L""},
+     MS_MAKE_TAG('h','a','n','i'), L"SimSun"},
     {{Script_Ideograph, 0, 0, 0, 0, 0, 0, { 0,0,0,0,0,0,0,0,0,0,0}},
      {LANG_ENGLISH, 0, 0, 0, 0, ANSI_CHARSET, 0, 0, 0, 0, 0, 0, 1, 0, 0},
      MS_MAKE_TAG('h','a','n','i'), L""},
@@ -473,7 +474,7 @@ const scriptData scriptInformation[] = {
      MS_MAKE_TAG('b','o','p','o'), L""},
     {{Script_Kana, 0, 0, 0, 0, 0, 0, { 0,0,0,0,0,0,0,0,0,0,0}},
      {LANG_ENGLISH, 0, 0, 0, 0, ANSI_CHARSET, 0, 0, 0, 0, 0, 0, 1, 0, 0},
-     MS_MAKE_TAG('k','a','n','a'), L""},
+     MS_MAKE_TAG('k','a','n','a'), L"SimSun"},
     {{Script_Hangul, 0, 0, 0, 0, 0, 0, { 0,0,0,0,0,0,0,0,0,0,0}},
      {LANG_KOREAN, 0, 1, 0, 1, DEFAULT_CHARSET, 0, 0, 0, 0, 0, 0, 1, 0, 0},
      MS_MAKE_TAG('h','a','n','g'), L""},
@@ -2107,19 +2108,6 @@ static inline BOOL does_glyph_start_cluster(const SCRIPT_VISATTR *pva, const WOR
     return FALSE;
 }
 
-static DWORD get_sys_color(INT index)
-{
-    static DWORD (WINAPI *pGetSysColor)(INT index);
-
-    if (!pGetSysColor)
-    {
-        HMODULE user = GetModuleHandleW( L"user32.dll" );
-        if (user) pGetSysColor = (void *)GetProcAddress( user, "GetSysColor" );
-    }
-
-    return pGetSysColor(index);
-}
-
 static HRESULT SS_ItemOut( SCRIPT_STRING_ANALYSIS ssa,
                            int iX,
                            int iY,
@@ -2159,11 +2147,11 @@ static HRESULT SS_ItemOut( SCRIPT_STRING_ANALYSIS ssa,
         BkMode = GetBkMode(analysis->hdc);
         SetBkMode( analysis->hdc, OPAQUE);
         BkColor = GetBkColor(analysis->hdc);
-        SetBkColor(analysis->hdc, get_sys_color(COLOR_HIGHLIGHT));
+        SetBkColor(analysis->hdc, NtUserGetSysColor(COLOR_HIGHLIGHT));
         if (!fDisabled)
         {
             TextColor = GetTextColor(analysis->hdc);
-            SetTextColor(analysis->hdc, get_sys_color(COLOR_HIGHLIGHTTEXT));
+            SetTextColor(analysis->hdc, NtUserGetSysColor(COLOR_HIGHLIGHTTEXT));
         }
     }
     if (analysis->glyphs[iItem].fallbackFont)

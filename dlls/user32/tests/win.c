@@ -88,8 +88,8 @@ static void dump_minmax_info( const MINMAXINFO *minmax )
 static void flush_events( BOOL remove_messages )
 {
     MSG msg;
-    int diff = 500;
-    int min_timeout = 200;
+    int diff = 200;
+    int min_timeout = 100;
     DWORD time = GetTickCount() + diff;
 
     while (diff > 0)
@@ -98,6 +98,7 @@ static void flush_events( BOOL remove_messages )
         if (remove_messages)
             while (PeekMessageA( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessageA( &msg );
         diff = time - GetTickCount();
+        min_timeout = 50;
     }
 }
 
@@ -3759,7 +3760,6 @@ static void test_SetActiveWindow_0_proc( char **argv )
     else /* < Win10 */
     {
         ok( tmp == hwnd, "SetActiveWindow returned %p\n", tmp );
-        todo_wine
         ok( GetLastError() == 0, "got error %lu\n", GetLastError() );
 
         tmp = GetForegroundWindow();
@@ -7177,33 +7177,25 @@ static void test_set_window_long_size(void)
     retval = GetWindowLongPtrA(hwnd, GWLP_USERDATA);
     ok(retval > 123, "Unexpected user data.\n");
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
     ret = SetWindowWord(hwnd, GWLP_USERDATA, 124);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 124, "Unexpected user data %#lx.\n", ret);
     retval = GetWindowLongPtrA(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(retval == 124, "Unexpected user data.\n");
 
     SetWindowLongA(hwnd, GWLP_USERDATA, (1 << 16) | 123);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
     ok(ret == ((1 << 16) | 123), "Unexpected user data %#lx.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
 
     ret = SetWindowWord(hwnd, GWLP_USERDATA, 124);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == ((1 << 16) | 124), "Unexpected user data %#lx.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 124, "Unexpected user data %#lx.\n", ret);
 
     /* GWLP_ID */
@@ -7225,7 +7217,6 @@ static void test_set_window_long_size(void)
     ok(retval > 123, "Unexpected id.\n");
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_ID);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected id %#lx.\n", ret);
 
     /* GWLP_HINSTANCE */
@@ -7242,7 +7233,6 @@ static void test_set_window_long_size(void)
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HINSTANCE);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected instance %#lx.\n", ret);
 
     SetLastError(0xdeadbeef);
@@ -7268,7 +7258,6 @@ static void test_set_window_long_size(void)
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HWNDPARENT);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected parent window %#lx.\n", ret);
 
     DestroyWindow(hwnd);
@@ -7308,16 +7297,12 @@ static void test_set_window_word_size(void)
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
     ok(ret > 123, "Unexpected user data %#lx.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
     ret = SetWindowWord(hwnd, GWLP_USERDATA, 124);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 124, "Unexpected user data %#lx.\n", ret);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == ((1 << 16) | 124), "Unexpected user data %#lx.\n", ret);
 
     /* GWLP_ID */
@@ -7328,11 +7313,9 @@ static void test_set_window_word_size(void)
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_ID);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected id %#lx.\n", ret);
     SetLastError(0xdeadbeef);
     ret = SetWindowWord(hwnd, GWLP_ID, 2);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected id %#lx.\n", ret);
 
     /* GWLP_HINSTANCE */
@@ -7341,12 +7324,10 @@ static void test_set_window_word_size(void)
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HINSTANCE);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected instance %#lx.\n", ret);
 
     SetLastError(0xdeadbeef);
     ret = SetWindowWord(hwnd, GWLP_HINSTANCE, 0xdead);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected instance %#lx.\n", ret);
 
     /* GWLP_HWNDPARENT */
@@ -7355,7 +7336,6 @@ static void test_set_window_word_size(void)
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HWNDPARENT);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected parent window %#lx.\n", ret);
 
     DestroyWindow(hwnd);
@@ -9212,29 +9192,6 @@ static LRESULT CALLBACK fullscreen_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPAR
     return DefWindowProcA(hwnd, msg, wp, lp);
 }
 
-struct monitor_info
-{
-    RECT first_monitor;
-    RECT second_monitor;
-};
-
-static BOOL CALLBACK enum_monitor_cb(HMONITOR monitor, HDC hdc, RECT *monitor_rect, LPARAM lparam)
-{
-    struct monitor_info *info = (struct monitor_info *)lparam;
-
-    if (IsRectEmpty(&info->first_monitor))
-    {
-        info->first_monitor = *monitor_rect;
-    }
-    else
-    {
-        info->second_monitor = *monitor_rect;
-        return FALSE;
-    }
-
-    return TRUE;
-}
-
 static void test_fullscreen(void)
 {
     static const DWORD t_style[] = {
@@ -9243,13 +9200,12 @@ static void test_fullscreen(void)
     static const DWORD t_ex_style[] = {
         0, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW
     };
-    struct monitor_info monitor_info;
+    RECT rc, virtual_rect, expected_rect;
     WNDCLASSA cls;
     int timeout;
     HWND hwnd;
     int i, j;
     POINT pt;
-    RECT rc;
     HMONITOR hmon;
     LRESULT ret;
 
@@ -9397,50 +9353,47 @@ static void test_fullscreen(void)
 
     UnregisterClassA("fullscreen_class", GetModuleHandleA(NULL));
 
-    /* Test moving a full screen window to another monitor */
-    memset(&monitor_info, 0, sizeof(monitor_info));
-    EnumDisplayMonitors(NULL, NULL, enum_monitor_cb, (LPARAM)&monitor_info);
-    if (!IsRectEmpty(&monitor_info.first_monitor) && !IsRectEmpty(&monitor_info.second_monitor))
+    /* Test fullscreen windows spanning multiple monitors */
+    if (GetSystemMetrics(SM_CMONITORS) > 1)
     {
-        hwnd = CreateWindowA("static", "static1", WS_POPUP | WS_VISIBLE,
-                monitor_info.first_monitor.left, monitor_info.first_monitor.top,
-                monitor_info.first_monitor.right - monitor_info.first_monitor.left,
-                monitor_info.first_monitor.bottom - monitor_info.first_monitor.top, NULL, NULL,
-                GetModuleHandleA(NULL), NULL);
-        ok(!!hwnd, "CreateWindow failed, error %#x.\n", GetLastError());
+        /* Test windows covering all monitors */
+        virtual_rect.left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        virtual_rect.top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        virtual_rect.right = virtual_rect.left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        virtual_rect.bottom = virtual_rect.top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+        hwnd = CreateWindowA("static", NULL, WS_POPUP | WS_VISIBLE, virtual_rect.left,
+                             virtual_rect.top, virtual_rect.right - virtual_rect.left,
+                             virtual_rect.bottom - virtual_rect.top, NULL, NULL, NULL, NULL);
+        ok(!!hwnd, "CreateWindow failed, error %#lx.\n", GetLastError());
         flush_events(TRUE);
 
         GetWindowRect(hwnd, &rc);
-        ok(EqualRect(&rc, &monitor_info.first_monitor), "Expected window rect %s, got %s.\n",
-                wine_dbgstr_rect(&monitor_info.first_monitor), wine_dbgstr_rect(&rc));
-
-        SetWindowPos(hwnd, 0, monitor_info.second_monitor.left, monitor_info.second_monitor.top,
-                monitor_info.second_monitor.right - monitor_info.second_monitor.left,
-                monitor_info.second_monitor.bottom - monitor_info.second_monitor.top, SWP_NOZORDER);
-        flush_events(TRUE);
-        GetWindowRect(hwnd, &rc);
-        ok(EqualRect(&rc, &monitor_info.second_monitor), "Expected window rect %s, got %s.\n",
-                wine_dbgstr_rect(&monitor_info.second_monitor), wine_dbgstr_rect(&rc));
+        /* FVWM used by TestBots doesn't support _NET_WM_FULLSCREEN_MONITORS */
+        todo_wine_if(!EqualRect(&rc, &virtual_rect))
+        ok(EqualRect(&rc, &virtual_rect), "Expected %s, got %s.\n",
+           wine_dbgstr_rect(&virtual_rect), wine_dbgstr_rect(&rc));
         DestroyWindow(hwnd);
 
-        hwnd = CreateWindowA("static", "static2", WS_POPUP | WS_VISIBLE,
-                monitor_info.second_monitor.left, monitor_info.second_monitor.top,
-                100, 100, NULL, NULL, NULL, NULL);
-        ok(!!hwnd, "CreateWindow failed, error %#x.\n", GetLastError());
+        /* Test windows covering one monitor and 1 pixel larger on available sides */
+        expected_rect = mi.rcMonitor;
+        InflateRect(&expected_rect, 1, 1);
+        IntersectRect(&expected_rect, &expected_rect, &virtual_rect);
+        hwnd = CreateWindowA("static", NULL, WS_POPUP | WS_VISIBLE, expected_rect.left,
+                             expected_rect.top, expected_rect.right - expected_rect.left,
+                             expected_rect.bottom - expected_rect.top, NULL, NULL, NULL, NULL);
+        ok(!!hwnd, "CreateWindow failed, error %#lx.\n", GetLastError());
         flush_events(TRUE);
 
-        SetWindowPos(hwnd, 0, monitor_info.first_monitor.left, monitor_info.first_monitor.top,
-                monitor_info.first_monitor.right - monitor_info.first_monitor.left,
-                monitor_info.first_monitor.bottom - monitor_info.first_monitor.top, SWP_NOZORDER);
-        flush_events(TRUE);
         GetWindowRect(hwnd, &rc);
-        ok(EqualRect(&rc, &monitor_info.first_monitor), "Expected window rect %s, got %s.\n",
-                wine_dbgstr_rect(&monitor_info.first_monitor), wine_dbgstr_rect(&rc));
+        todo_wine
+        ok(EqualRect(&rc, &expected_rect), "Expected %s, got %s.\n",
+           wine_dbgstr_rect(&expected_rect), wine_dbgstr_rect(&rc));
         DestroyWindow(hwnd);
     }
     else
     {
-        skip("This test requires two monitors present.\n");
+        skip("This test requires at least two monitors.\n");
     }
 }
 
@@ -12681,10 +12634,8 @@ static void test_window_placement(void)
     wp.length = 0;
     SetLastError(0xdeadbeef);
     ret = SetWindowPlacement(hwnd, &wp);
-todo_wine {
     ok(!ret, "SetWindowPlacement should have failed\n");
     ok(GetLastError() == ERROR_INVALID_PARAMETER, "wrong error %lu\n", GetLastError());
-}
 
     DestroyWindow(hwnd);
 }

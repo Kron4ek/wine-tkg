@@ -4124,7 +4124,6 @@ static void test_GetTextMetrics(void)
     old_hf = SelectObject(hdc, hf);
     ret = GetTextMetricsA(hdc, &tm);
     ok(ret, "GetTextMetricsA failed, error %lu\n", GetLastError());
-    todo_wine
     ok(tm.tmHeight <= 20, "Got unexpected tmHeight %ld\n", tm.tmHeight);
     SelectObject(hdc, old_hf);
     DeleteObject(hf);
@@ -6521,7 +6520,7 @@ static void test_max_height(void)
     r = GetTextMetricsA(hdc, &tm1);
     ok(r, "GetTextMetrics failed\n");
     ok(tm1.tmHeight > 0, "expected a positive value, got %ld\n", tm1.tmHeight);
-    ok(tm1.tmAveCharWidth > 0, "expected a positive value, got %ld\n", tm1.tmHeight);
+    ok(tm1.tmAveCharWidth > 0, "expected a positive value, got %ld\n", tm1.tmAveCharWidth);
     DeleteObject(SelectObject(hdc, hfont_old));
 
     /* test the largest value */

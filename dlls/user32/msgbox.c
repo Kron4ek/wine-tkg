@@ -109,6 +109,12 @@ static void MSGBOX_OnInit(HWND hwnd, LPMSGBOXPARAMSW lpmb)
        lpszText = lpmb->lpszText;
     }
 
+    /* handle modal message boxes */
+    if (((lpmb->dwStyle & MB_TASKMODAL) && (lpmb->hwndOwner==NULL)))
+        NtUserSetWindowPos( hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE );
+    else if (lpmb->dwStyle & MB_SYSTEMMODAL)
+        NtUserSetWindowPos( hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED );
+
     TRACE_(msgbox)("%s\n", debugstr_w(lpszText));
     SetWindowTextW(GetDlgItem(hwnd, MSGBOX_IDTEXT), lpszText);
 
@@ -309,10 +315,6 @@ static void MSGBOX_OnInit(HWND hwnd, LPMSGBOXPARAMSW lpmb)
 	}
     }
 
-    /*handle modal message boxes*/
-    if (lpmb->dwStyle & MB_SYSTEMMODAL)
-        NtUserSetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
-
     HeapFree( GetProcessHeap(), 0, buffer );
 }
 
@@ -379,9 +381,9 @@ static void MSGBOX_CopyToClipbaord( HWND hwnd )
             GlobalUnlock(hMem);
 
             OpenClipboard(hwnd);
-            EmptyClipboard();
+            NtUserEmptyClipboard();
             SetClipboardData(CF_UNICODETEXT, hMem);
-            CloseClipboard();
+            NtUserCloseClipboard();
         }
 
         heap_free(text);

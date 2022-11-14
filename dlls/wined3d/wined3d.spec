@@ -21,6 +21,9 @@
 @ cdecl wined3d_adapter_get_identifier(ptr long ptr)
 @ cdecl wined3d_adapter_get_output(ptr long)
 @ cdecl wined3d_adapter_get_output_count(ptr)
+@ cdecl wined3d_adapter_get_video_memory_info(ptr long long ptr)
+@ cdecl wined3d_adapter_register_budget_change_notification(ptr ptr ptr)
+@ cdecl wined3d_adapter_unregister_budget_change_notification(long)
 
 @ cdecl wined3d_blend_state_create(ptr ptr ptr ptr ptr)
 @ cdecl wined3d_blend_state_decref(ptr)
@@ -316,11 +319,6 @@
 @ cdecl wined3d_vertex_declaration_decref(ptr)
 @ cdecl wined3d_vertex_declaration_get_parent(ptr)
 @ cdecl wined3d_vertex_declaration_incref(ptr)
-
-@ cdecl wined3d_access_gl_texture(ptr ptr ptr long)
-@ cdecl wined3d_device_run_cs_callback(ptr ptr ptr long)
-@ cdecl wined3d_device_wait_idle(ptr)
-@ cdecl wined3d_get_gl_texture(ptr)
 
 @ cdecl vkd3d_create_instance(ptr ptr)
 @ cdecl vkd3d_instance_decref(ptr)

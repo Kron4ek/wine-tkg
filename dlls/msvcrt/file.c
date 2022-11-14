@@ -2756,6 +2756,8 @@ static int read_utf8(ioinfo *fdinfo, wchar_t *buf, unsigned int count)
                 return 0;
             }else {
                 msvcrt_set_errno(GetLastError());
+                if (GetLastError() == ERROR_ACCESS_DENIED)
+                    *_errno() = EBADF;
                 return -1;
             }
         }else if(!num_read) {
@@ -2813,6 +2815,8 @@ static int read_utf8(ioinfo *fdinfo, wchar_t *buf, unsigned int count)
             return 0;
         }else {
             msvcrt_set_errno(GetLastError());
+            if (GetLastError() == ERROR_ACCESS_DENIED)
+                *_errno() = EBADF;
             if (readbuf != min_buf) free(readbuf);
             return -1;
         }
@@ -3041,6 +3045,8 @@ static int read_i(int fd, ioinfo *fdinfo, void *buf, unsigned int count)
         {
             TRACE(":failed-last error (%ld)\n", GetLastError());
             msvcrt_set_errno(GetLastError());
+            if (GetLastError() == ERROR_ACCESS_DENIED)
+                *_errno() = EBADF;
             return -1;
         }
     }
@@ -3584,6 +3590,8 @@ int CDECL _write(int fd, const void* buf, unsigned int count)
             TRACE("WriteFile (fd %d, hand %p) failed-last error (%ld)\n", fd,
                     hand, GetLastError());
             msvcrt_set_errno(GetLastError());
+            if (GetLastError() == ERROR_ACCESS_DENIED)
+                *_errno() = EBADF;
             num_written = -1;
         }
 
@@ -3712,6 +3720,8 @@ int CDECL _write(int fd, const void* buf, unsigned int count)
             TRACE("WriteFile/WriteConsoleW (fd %d, hand %p) failed-last error (%ld)\n", fd,
                     hand, GetLastError());
             msvcrt_set_errno(GetLastError());
+            if (GetLastError() == ERROR_ACCESS_DENIED)
+                *_errno() = EBADF;
             release_ioinfo(info);
             return -1;
         }
@@ -4640,7 +4650,7 @@ FILE* CDECL freopen(const char *path, const char *mode, FILE* file)
 /*********************************************************************
  *      freopen_s (MSVCRT.@)
  */
-int CDECL freopen_s(FILE** pFile,
+errno_t CDECL freopen_s(FILE** pFile,
         const char *path, const char *mode, FILE* file)
 {
     if (!MSVCRT_CHECK_PMT(pFile != NULL)) return EINVAL;
@@ -5584,7 +5594,7 @@ int WINAPIV fprintf_s(FILE* file, const char *format, ...)
 /*********************************************************************
  *    _fprintf_l (MSVCRT.@)
  */
-int CDECL _fprintf_l(FILE* file, const char *format, _locale_t locale, ...)
+int WINAPIV _fprintf_l(FILE* file, const char *format, _locale_t locale, ...)
 {
     va_list valist;
     int res;
@@ -5598,7 +5608,7 @@ int CDECL _fprintf_l(FILE* file, const char *format, _locale_t locale, ...)
 /*********************************************************************
  *    _fprintf_p (MSVCRT.@)
  */
-int CDECL _fprintf_p(FILE* file, const char *format, ...)
+int WINAPIV _fprintf_p(FILE* file, const char *format, ...)
 {
     va_list valist;
     int res;
@@ -5611,7 +5621,7 @@ int CDECL _fprintf_p(FILE* file, const char *format, ...)
 /*********************************************************************
  *    _fprintf_p_l (MSVCRT.@)
  */
-int CDECL _fprintf_p_l(FILE* file, const char *format, _locale_t locale, ...)
+int WINAPIV _fprintf_p_l(FILE* file, const char *format, _locale_t locale, ...)
 {
     va_list valist;
     int res;
@@ -5624,7 +5634,7 @@ int CDECL _fprintf_p_l(FILE* file, const char *format, _locale_t locale, ...)
 /*********************************************************************
  *    _fprintf_s_l (MSVCRT.@)
  */
-int CDECL _fprintf_s_l(FILE* file, const char *format, _locale_t locale, ...)
+int WINAPIV _fprintf_s_l(FILE* file, const char *format, _locale_t locale, ...)
 {
     va_list valist;
     int res;

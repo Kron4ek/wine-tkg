@@ -672,6 +672,7 @@ SOURCES = \
 	schemadef.h \
 	schnlsp.h \
 	sddl.h \
+	sdkddkver.h \
 	secext.h \
 	security.h \
 	sensapi.h \
@@ -807,6 +808,7 @@ SOURCES = \
 	windows.gaming.input.custom.idl \
 	windows.gaming.input.forcefeedback.idl \
 	windows.gaming.input.idl \
+	windows.gaming.ui.idl \
 	windows.globalization.idl \
 	windows.h \
 	windows.media.closedcaptioning.idl \
@@ -859,7 +861,6 @@ SOURCES = \
 	wine/strmbase.h \
 	wine/svcctl.idl \
 	wine/test.h \
-	wine/unicode.h \
 	wine/unixlib.h \
 	wine/vulkan.h \
 	wine/vulkan_driver.h \
@@ -868,7 +869,6 @@ SOURCES = \
 	wine/winbase16.h \
 	wine/windef16.h \
 	wine/wine_common_ver.rc \
-	wine/wined3d-interop.idl \
 	wine/wined3d.h \
 	wine/winedxgi.idl \
 	wine/wingdi16.h \
