@@ -38,6 +38,8 @@
 #include "wine/winedxgi.h"
 #include "wine/rbtree.h"
 
+#include "wine/wined3d-interop.h"
+
 #define MAKE_TAG(ch0, ch1, ch2, ch3) \
     ((DWORD)(ch0) | ((DWORD)(ch1) << 8) | \
     ((DWORD)(ch2) << 16) | ((DWORD)(ch3) << 24 ))
@@ -144,7 +146,7 @@ struct d3d_texture1d *unsafe_impl_from_ID3D10Texture1D(ID3D10Texture1D *iface) D
 /* ID3D11Texture2D, ID3D10Texture2D */
 struct d3d_texture2d
 {
-    ID3D11Texture2D ID3D11Texture2D_iface;
+    IWineD3D11Texture2D ID3D11Texture2D_iface;
     ID3D10Texture2D ID3D10Texture2D_iface;
     LONG refcount;
 
@@ -545,7 +547,6 @@ struct d3d11_device_context
     ID3D11DeviceContext1 ID3D11DeviceContext1_iface;
     ID3D11Multithread ID3D11Multithread_iface;
     ID3DUserDefinedAnnotation ID3DUserDefinedAnnotation_iface;
-    IWineD3DDeviceContext IWineD3DDeviceContext_iface;
     LONG refcount;
 
     D3D11_DEVICE_CONTEXT_TYPE type;
@@ -562,9 +563,9 @@ struct d3d_device
     ID3D11Device2 ID3D11Device2_iface;
     ID3D10Device1 ID3D10Device1_iface;
     ID3D10Multithread ID3D10Multithread_iface;
-    IWineD3DDeviceContext IWineD3DDeviceContext_iface;
     IWineDXGIDeviceParent IWineDXGIDeviceParent_iface;
     IUnknown *outer_unk;
+    IWineD3D11Device IWineD3D11Device_iface;
     LONG refcount;
 
     BOOL d3d11_only;

@@ -127,7 +127,6 @@
 @ cdecl wined3d_device_context_resolve_sub_resource(ptr ptr long ptr long long)
 @ cdecl wined3d_device_context_set_blend_state(ptr ptr ptr long)
 @ cdecl wined3d_device_context_set_constant_buffers(ptr long long long ptr)
-@ cdecl wined3d_device_context_set_depth_bounds(ptr long float float)
 @ cdecl wined3d_device_context_set_depth_stencil_state(ptr ptr long)
 @ cdecl wined3d_device_context_set_depth_stencil_view(ptr ptr)
 @ cdecl wined3d_device_context_set_index_buffer(ptr ptr long long)
@@ -261,6 +260,8 @@
 @ cdecl wined3d_stateblock_set_vs_consts_f(ptr long long ptr)
 @ cdecl wined3d_stateblock_set_vs_consts_i(ptr long long ptr)
 
+@ cdecl wined3d_streaming_buffer_map(ptr ptr long long ptr ptr)
+@ cdecl wined3d_streaming_buffer_unmap(ptr)
 @ cdecl wined3d_streaming_buffer_upload(ptr ptr ptr long long ptr)
 
 @ cdecl wined3d_swapchain_create(ptr ptr ptr ptr ptr ptr)
@@ -319,6 +320,11 @@
 @ cdecl wined3d_vertex_declaration_decref(ptr)
 @ cdecl wined3d_vertex_declaration_get_parent(ptr)
 @ cdecl wined3d_vertex_declaration_incref(ptr)
+
+@ cdecl wined3d_access_gl_texture(ptr ptr ptr long)
+@ cdecl wined3d_device_run_cs_callback(ptr ptr ptr long)
+@ cdecl wined3d_device_wait_idle(ptr)
+@ cdecl wined3d_get_gl_texture(ptr)
 
 @ cdecl vkd3d_create_instance(ptr ptr)
 @ cdecl vkd3d_instance_decref(ptr)

@@ -1640,7 +1640,7 @@ BOOL X11DRV_SetCursorPos( INT x, INT y )
 
     if (keyboard_grabbed)
     {
-        WARN( "refusing to warp to %u, %u\n", pos.x, pos.y );
+        WARN( "refusing to warp to %u, %u\n", (int)pos.x, (int)pos.y );
         return FALSE;
     }
 
@@ -1649,7 +1649,7 @@ BOOL X11DRV_SetCursorPos( INT x, INT y )
                       PointerMotionMask | ButtonPressMask | ButtonReleaseMask,
                       GrabModeAsync, GrabModeAsync, None, None, CurrentTime ) != GrabSuccess)
     {
-        WARN( "refusing to warp pointer to %u, %u without exclusive grab\n", pos.x, pos.y );
+        WARN( "refusing to warp pointer to %u, %u without exclusive grab\n", (int)pos.x, (int)pos.y );
         return FALSE;
     }
 
@@ -1921,7 +1921,7 @@ BOOL X11DRV_MotionNotify( HWND hwnd, XEvent *xev )
 
     if (!hwnd && is_old_motion_event( event->serial ))
     {
-        TRACE( "pos %d,%d old serial %lu, ignoring\n", input.u.mi.dx, input.u.mi.dy, event->serial );
+        TRACE( "pos %d,%d old serial %lu, ignoring\n", event->x, event->y, event->serial );
         return FALSE;
     }
     map_event_coords( hwnd, event->window, event->root, event->x_root, event->y_root, &input );
@@ -1955,7 +1955,7 @@ BOOL X11DRV_EnterNotify( HWND hwnd, XEvent *xev )
 
     if (is_old_motion_event( event->serial ))
     {
-        TRACE( "pos %d,%d old serial %lu, ignoring\n", input.u.mi.dx, input.u.mi.dy, event->serial );
+        TRACE( "pos %d,%d old serial %lu, ignoring\n", event->x, event->y, event->serial );
         return FALSE;
     }
     map_event_coords( hwnd, event->window, event->root, event->x_root, event->y_root, &input );
@@ -2040,7 +2040,8 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input, RAWINPUT *raw
     if (y->mode != XIModeAbsolute) rawinput->data.mouse.lLastY = y_raw;
     else rawinput->data.mouse.lLastY = input->u.mi.dy;
 
-    TRACE( "event %f,%f value %f,%f input %d,%d\n", x_value, y_value, x->value, y->value, input->u.mi.dx, input->u.mi.dy );
+    TRACE( "event %f,%f value %f,%f input %d,%d\n", x_value, y_value, x->value, y->value,
+           (int)input->u.mi.dx, (int)input->u.mi.dy );
 
     x->value -= input->u.mi.dx;
     y->value -= input->u.mi.dy;

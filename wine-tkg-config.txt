@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Mon Nov 14 07:15:07 AM UTC 2022 :
+# Last wine-tkg-staging-fsync-git configuration - Mon Nov 28 09:47:26 PM UTC 2022 :
 
 Local cfg files used
 
-Wine (plain) version: 7.21.r0.g053ee2d23d8
-Using wine-staging patchset (version 7.21.r0.gd935a41e)
+Wine (plain) version: 7.22.r0.g20d86f34a06
+Using wine-staging patchset (version 7.22.r0.gd8881486)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -28,10 +28,11 @@ LAA-unix-staging.patch -- ( Applied large address aware override support )
 proton-tkg-staging.patch -- ( Using Steam-specific Proton-tkg patches (staging) 2/3 )
 proton-tkg-additions.patch -- ( Using additional Proton-tkg patches )
 proton-cpu-topology-overrides.patch -- ( Enable Proton's CPU topology override support )
+proton-vr.patch -- ( Enable Proton vr-related wined3d additions )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
 proton-win10-default.patch -- ( Enforce win10 as default wine version )
 
-Applied hotfix remove_hooks_that_time_out.mypatch
+Applied hotfix remove_hooks_that_time_out2.mypatch
 Applied hotfix winex11.drv_Add_a_GPU_for_each_Vulkan_device_that_was_not_tied_to_an_XRandR_provider.mypatch
 Applied hotfix winex11.drv_Ignore_ClipCursor_if_desktop_window_is_foreground.mypatch
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
@@ -40,5 +41,6 @@ Applied hotfix 0001-proton-bcrypt_rdr2_fixes5.mypatch
 Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
 Applied hotfix a608ef1.mypatch
 Applied hotfix 1148-staging.mypatch
+Applied hotfix opencl-fixup.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )
