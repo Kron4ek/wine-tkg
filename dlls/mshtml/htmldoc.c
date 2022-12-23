@@ -371,6 +371,7 @@ static event_target_vtbl_t DocumentType_event_target_vtbl = {
     },
     DocumentType_get_gecko_target,
     NULL,
+    NULL,
     DocumentType_get_parent_event_target,
     NULL,
     NULL,
@@ -4742,8 +4743,8 @@ static HRESULT WINAPI DocumentSelector_querySelector(IDocumentSelector *iface, B
     nsres = nsIDOMDocument_QuerySelector(This->dom_document, &nsstr, &nselem);
     nsAString_Finish(&nsstr);
     if(NS_FAILED(nsres)) {
-        ERR("QuerySelector failed: %08lx\n", nsres);
-        return E_FAIL;
+        WARN("QuerySelector failed: %08lx\n", nsres);
+        return map_nsresult(nsres);
     }
 
     if(!nselem) {
@@ -4765,16 +4766,17 @@ static HRESULT WINAPI DocumentSelector_querySelectorAll(IDocumentSelector *iface
     HTMLDocumentNode *This = impl_from_IDocumentSelector(iface);
     nsIDOMNodeList *node_list;
     nsAString nsstr;
+    nsresult nsres;
     HRESULT hres;
 
     TRACE("(%p)->(%s %p)\n", This, debugstr_w(v), pel);
 
     nsAString_InitDepend(&nsstr, v);
-    hres = map_nsresult(nsIDOMDocument_QuerySelectorAll(This->dom_document, &nsstr, &node_list));
+    nsres = nsIDOMDocument_QuerySelectorAll(This->dom_document, &nsstr, &node_list);
     nsAString_Finish(&nsstr);
-    if(FAILED(hres)) {
-        ERR("QuerySelectorAll failed: %08lx\n", hres);
-        return hres;
+    if(NS_FAILED(nsres)) {
+        WARN("QuerySelectorAll failed: %08lx\n", nsres);
+        return map_nsresult(nsres);
     }
 
     hres = create_child_collection(node_list, dispex_compat_mode(&This->node.event_target.dispex), pel);
@@ -5844,12 +5846,6 @@ void detach_document_node(HTMLDocumentNode *doc)
         doc->catmgr = NULL;
     }
 
-    if(!doc->dom_document && doc->window) {
-        /* document fragments own reference to inner window */
-        IHTMLWindow2_Release(&doc->window->base.IHTMLWindow2_iface);
-        doc->window = NULL;
-    }
-
     if(doc->browser) {
         list_remove(&doc->browser_entry);
         doc->browser = NULL;
@@ -5914,6 +5910,7 @@ static const NodeImplVtbl HTMLDocumentNodeImplVtbl = {
     NULL,
     NULL,
     NULL,
+    NULL,
     HTMLDocumentNode_traverse,
     HTMLDocumentNode_unlink
 };
@@ -5930,6 +5927,19 @@ static HRESULT HTMLDocumentFragment_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode
 
     *ret = &new_node->node;
     return S_OK;
+}
+
+static void HTMLDocumentFragment_unlink(HTMLDOMNode *iface)
+{
+    HTMLDocumentNode *This = impl_from_HTMLDOMNode(iface);
+
+    if(This->window) {
+        detach_document_node(This);
+
+        /* document fragments own reference to inner window */
+        IHTMLWindow2_Release(&This->window->base.IHTMLWindow2_iface);
+        This->window = NULL;
+    }
 }
 
 static inline HTMLDocumentNode *impl_from_DispatchEx(DispatchEx *iface)
@@ -6119,6 +6129,7 @@ static const event_target_vtbl_t HTMLDocumentNode_event_target_vtbl = {
     },
     HTMLDocumentNode_get_gecko_target,
     HTMLDocumentNode_bind_event,
+    NULL,
     HTMLDocumentNode_get_parent_event_target,
     NULL,
     HTMLDocumentNode_get_cp_container,
@@ -6130,7 +6141,21 @@ static const NodeImplVtbl HTMLDocumentFragmentImplVtbl = {
     HTMLDocumentNode_QI,
     HTMLDocumentNode_destructor,
     HTMLDocumentNode_cpc,
-    HTMLDocumentFragment_clone
+    HTMLDocumentFragment_clone,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    HTMLDocumentFragment_unlink
 };
 
 static const tid_t HTMLDocumentNode_iface_tids[] = {

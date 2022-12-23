@@ -37,13 +37,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(macdrv);
 
-#ifndef kIOPMAssertionTypePreventUserIdleDisplaySleep
-#define kIOPMAssertionTypePreventUserIdleDisplaySleep CFSTR("PreventUserIdleDisplaySleep")
-#endif
-#ifndef kCFCoreFoundationVersionNumber10_7
-#define kCFCoreFoundationVersionNumber10_7      635.00
-#endif
-
 #define IS_OPTION_TRUE(ch) \
     ((ch) == 'y' || (ch) == 'Y' || (ch) == 't' || (ch) == 'T' || (ch) == '1')
 
@@ -140,12 +133,12 @@ HKEY open_hkcu_key(const char *name)
 
         sid = ((TOKEN_USER *)sid_data)->User.Sid;
         len = sprintf(buffer, "\\Registry\\User\\S-%u-%u", sid->Revision,
-                       MAKELONG(MAKEWORD(sid->IdentifierAuthority.Value[5],
-                                         sid->IdentifierAuthority.Value[4]),
-                                MAKEWORD(sid->IdentifierAuthority.Value[3],
-                                         sid->IdentifierAuthority.Value[2])));
+                      (unsigned int)MAKELONG(MAKEWORD(sid->IdentifierAuthority.Value[5],
+                                                      sid->IdentifierAuthority.Value[4]),
+                                             MAKEWORD(sid->IdentifierAuthority.Value[3],
+                                                      sid->IdentifierAuthority.Value[2])));
         for (i = 0; i < sid->SubAuthorityCount; i++)
-            len += sprintf(buffer + len, "-%u", sid->SubAuthority[i]);
+            len += sprintf(buffer + len, "-%u", (unsigned int)sid->SubAuthority[i]);
 
         ascii_to_unicode(bufferW, buffer, len);
         hkcu = reg_open_key(NULL, bufferW, len * sizeof(WCHAR));
@@ -597,13 +590,7 @@ BOOL macdrv_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, 
             }
             else if (powerAssertion == kIOPMNullAssertionID)
             {
-                CFStringRef assertName;
-                /*Are we running Lion or later?*/
-                if (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber10_7)
-                    assertName = kIOPMAssertionTypePreventUserIdleDisplaySleep;
-                else
-                    assertName = kIOPMAssertionTypeNoDisplaySleep;
-                IOPMAssertionCreateWithName( assertName, kIOPMAssertionLevelOn,
+                IOPMAssertionCreateWithName( kIOPMAssertionTypePreventUserIdleDisplaySleep, kIOPMAssertionLevelOn,
                                              CFSTR("Wine Process requesting no screen saver"),
                                              &powerAssertion);
             }

@@ -120,12 +120,16 @@ static const event_info_t event_info[] = {
         EVENT_BUBBLES | EVENT_CANCELABLE},
     {L"abort",             EVENT_TYPE_EVENT,     DISPID_EVMETH_ONABORT,
         EVENT_BIND_TO_TARGET},
+    {L"afterprint",        EVENT_TYPE_EVENT,     DISPID_EVMETH_ONAFTERPRINT,
+        EVENT_DEFAULTLISTENER},
     {L"animationend",      EVENT_TYPE_EVENT,     DISPID_EVPROP_ONANIMATIONEND,
         EVENT_DEFAULTLISTENER | EVENT_BUBBLES},
     {L"animationstart",    EVENT_TYPE_EVENT,     DISPID_EVPROP_ONANIMATIONSTART,
         EVENT_DEFAULTLISTENER | EVENT_BUBBLES},
     {L"beforeactivate",    EVENT_TYPE_EVENT,     DISPID_EVMETH_ONBEFOREACTIVATE,
         EVENT_FIXME | EVENT_BUBBLES | EVENT_CANCELABLE},
+    {L"beforeprint",       EVENT_TYPE_EVENT,     DISPID_EVMETH_ONBEFOREPRINT,
+        EVENT_DEFAULTLISTENER},
     {L"beforeunload",      EVENT_TYPE_EVENT,     DISPID_EVMETH_ONBEFOREUNLOAD,
         EVENT_DEFAULTLISTENER | EVENT_CANCELABLE },
     {L"blur",              EVENT_TYPE_FOCUS,     DISPID_EVMETH_ONBLUR,
@@ -3679,10 +3683,13 @@ static HRESULT dispatch_event_object(EventTarget *event_target, DOMEvent *event,
         *r = variant_bool(!event->prevent_default);
 
     if(target_vtbl && target_vtbl->set_current_event) {
-        prev_event = target_vtbl->set_current_event(&event_target->dispex, prev_event);
-        if(prev_event)
-            IHTMLEventObj_Release(prev_event);
+        IHTMLEventObj *prev = target_vtbl->set_current_event(&event_target->dispex, prev_event);
+        if(prev)
+            IHTMLEventObj_Release(prev);
     }
+
+    if(prev_event)
+        IHTMLEventObj_Release(prev_event);
 
     if(event_info[event->event_id].flags & EVENT_HASDEFAULTHANDLERS) {
         BOOL prevent_default = event->prevent_default;

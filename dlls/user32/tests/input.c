@@ -60,6 +60,11 @@
 
 #include "wine/test.h"
 
+#define check_member_( file, line, val, exp, fmt, member )                                         \
+    ok_(file, line)( (val).member == (exp).member, "got " #member " " fmt "\n", (val).member )
+#define check_member( val, exp, fmt, member )                                                      \
+    check_member_( __FILE__, __LINE__, val, exp, fmt, member )
+
 /* globals */
 static HWND hWndTest;
 static LONG timetag = 0x10000000;
@@ -82,8 +87,14 @@ static struct {
     BOOL sendinput_broken;
 } key_status;
 
+static BOOL (WINAPI *pEnableMouseInPointer)( BOOL );
+static BOOL (WINAPI *pIsMouseInPointerEnabled)(void);
 static BOOL (WINAPI *pGetCurrentInputMessageSource)( INPUT_MESSAGE_SOURCE *source );
 static BOOL (WINAPI *pGetPointerType)(UINT32, POINTER_INPUT_TYPE*);
+static BOOL (WINAPI *pGetPointerInfo)(UINT32, POINTER_INFO*);
+static BOOL (WINAPI *pGetPointerInfoHistory)(UINT32, UINT32*, POINTER_INFO*);
+static BOOL (WINAPI *pGetPointerFrameInfo)(UINT32, UINT32*, POINTER_INFO*);
+static BOOL (WINAPI *pGetPointerFrameInfoHistory)(UINT32, UINT32*, UINT32*, POINTER_INFO*);
 static int (WINAPI *pGetMouseMovePointsEx) (UINT, LPMOUSEMOVEPOINT, LPMOUSEMOVEPOINT, int, DWORD);
 static UINT (WINAPI *pGetRawInputDeviceList) (PRAWINPUTDEVICELIST, PUINT, UINT);
 static UINT (WINAPI *pGetRawInputDeviceInfoW) (HANDLE, UINT, void *, UINT *);
@@ -150,8 +161,14 @@ static void init_function_pointers(void)
     if (!(p ## func = (void*)GetProcAddress(hdll, #func))) \
       trace("GetProcAddress(%s) failed\n", #func)
 
+    GET_PROC(EnableMouseInPointer);
+    GET_PROC(IsMouseInPointerEnabled);
     GET_PROC(GetCurrentInputMessageSource);
     GET_PROC(GetMouseMovePointsEx);
+    GET_PROC(GetPointerInfo);
+    GET_PROC(GetPointerInfoHistory);
+    GET_PROC(GetPointerFrameInfo);
+    GET_PROC(GetPointerFrameInfoHistory);
     GET_PROC(GetPointerType);
     GET_PROC(GetRawInputDeviceList);
     GET_PROC(GetRawInputDeviceInfoW);
@@ -4705,31 +4722,6 @@ static void test_input_message_source(void)
     UnregisterClassA( cls.lpszClassName, GetModuleHandleA(0) );
 }
 
-static void test_GetPointerType(void)
-{
-    BOOL ret;
-    POINTER_INPUT_TYPE type = -1;
-    UINT id = 0;
-
-    SetLastError(0xdeadbeef);
-    ret = pGetPointerType(id, NULL);
-    ok(!ret, "GetPointerType should have failed.\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER,
-       "expected error ERROR_INVALID_PARAMETER, got %lu.\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
-    ret = pGetPointerType(id, &type);
-    ok(GetLastError() == ERROR_INVALID_PARAMETER,
-       "expected error ERROR_INVALID_PARAMETER, got %lu.\n", GetLastError());
-    ok(!ret, "GetPointerType failed, got type %ld for %u.\n", type, id );
-    ok(type == -1, " type %ld\n", type );
-
-    id = 1;
-    ret = pGetPointerType(id, &type);
-    ok(ret, "GetPointerType failed, got type %ld for %u.\n", type, id );
-    ok(type == PT_MOUSE, " type %ld\n", type );
-}
-
 static void test_UnregisterDeviceNotification(void)
 {
     BOOL ret = UnregisterDeviceNotification(NULL);
@@ -4846,6 +4838,270 @@ static void test_SendInput(void)
     DestroyWindow( hwnd );
 }
 
+#define check_pointer_info( a, b ) check_pointer_info_( __LINE__, a, b )
+static void check_pointer_info_( int line, const POINTER_INFO *actual, const POINTER_INFO *expected )
+{
+    check_member( *actual, *expected, "%#lx", pointerType );
+    check_member( *actual, *expected, "%#x", pointerId );
+    check_member( *actual, *expected, "%#x", frameId );
+    check_member( *actual, *expected, "%#x", pointerFlags );
+    check_member( *actual, *expected, "%p", sourceDevice );
+    check_member( *actual, *expected, "%p", hwndTarget );
+    check_member( *actual, *expected, "%+ld", ptPixelLocation.x );
+    check_member( *actual, *expected, "%+ld", ptPixelLocation.y );
+    check_member( *actual, *expected, "%+ld", ptHimetricLocation.x );
+    check_member( *actual, *expected, "%+ld", ptHimetricLocation.y );
+    check_member( *actual, *expected, "%+ld", ptPixelLocationRaw.x );
+    check_member( *actual, *expected, "%+ld", ptPixelLocationRaw.y );
+    check_member( *actual, *expected, "%+ld", ptHimetricLocationRaw.x );
+    check_member( *actual, *expected, "%+ld", ptHimetricLocationRaw.y );
+    check_member( *actual, *expected, "%lu", dwTime );
+    check_member( *actual, *expected, "%u", historyCount );
+    check_member( *actual, *expected, "%#x", InputData );
+    check_member( *actual, *expected, "%#lx", dwKeyStates );
+    check_member( *actual, *expected, "%I64u", PerformanceCount );
+    check_member( *actual, *expected, "%#x", ButtonChangeType );
+}
+
+static DWORD CALLBACK test_GetPointerInfo_thread( void *arg )
+{
+    POINTER_INFO pointer_info;
+    HWND hwnd;
+    BOOL ret;
+
+    hwnd = CreateWindowW( L"test", L"test name", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, 200,
+                          200, 0, 0, NULL, 0 );
+
+    memset( &pointer_info, 0xcd, sizeof(pointer_info) );
+    ret = pGetPointerInfo( 1, &pointer_info );
+    ok( !ret, "GetPointerInfo succeeded\n" );
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+
+    DestroyWindow( hwnd );
+
+    return 0;
+}
+
+static void test_GetPointerInfo( BOOL mouse_in_pointer_enabled )
+{
+    POINTER_INFO pointer_info[4], expect_pointer;
+    void *invalid_ptr = (void *)0xdeadbeef;
+    UINT32 entry_count, pointer_count;
+    POINTER_INPUT_TYPE type;
+    WNDCLASSW cls =
+    {
+        .lpfnWndProc   = DefWindowProcW,
+        .hInstance     = GetModuleHandleW( NULL ),
+        .hbrBackground = GetStockObject( WHITE_BRUSH ),
+        .lpszClassName = L"test",
+    };
+    HANDLE thread;
+    ATOM class;
+    DWORD res;
+    HWND hwnd;
+    BOOL ret;
+
+    if (!pGetPointerType)
+    {
+        todo_wine
+        win_skip( "GetPointerType not found, skipping tests\n" );
+        return;
+    }
+
+    SetLastError( 0xdeadbeef );
+    ret = pGetPointerType( 1, NULL );
+    ok( !ret, "GetPointerType succeeded\n" );
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    ret = pGetPointerType( 0xdead, &type );
+    todo_wine
+    ok( !ret, "GetPointerType succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+    ret = pGetPointerType( 1, &type );
+    ok( ret, "GetPointerType failed, error %lu\n", GetLastError() );
+    ok( type == PT_MOUSE, " type %ld\n", type );
+
+    if (!pGetPointerInfo)
+    {
+        todo_wine
+        win_skip( "GetPointerInfo not found, skipping tests\n" );
+        return;
+    }
+
+    class = RegisterClassW( &cls );
+    ok( class, "RegisterClassW failed: %lu\n", GetLastError() );
+
+    ret = pGetPointerInfo( 1, invalid_ptr );
+    ok( !ret, "GetPointerInfo succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_NOACCESS || broken(GetLastError() == ERROR_INVALID_PARAMETER) /* w10 32bit */,
+        "got error %lu\n", GetLastError() );
+
+    memset( pointer_info, 0xcd, sizeof(pointer_info) );
+    ret = pGetPointerInfo( 1, pointer_info );
+    ok( !ret, "GetPointerInfo succeeded\n" );
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+
+    SetCursorPos( 500, 500 );  /* avoid generating mouse message on window creation */
+
+    hwnd = CreateWindowW( L"test", L"test name", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, 200,
+                          200, 0, 0, NULL, 0 );
+    empty_message_queue();
+
+    memset( pointer_info, 0xcd, sizeof(pointer_info) );
+    ret = pGetPointerInfo( 1, pointer_info );
+    ok( !ret, "GetPointerInfo succeeded\n" );
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+
+    SetCursorPos( 200, 200 );
+    empty_message_queue();
+    mouse_event( MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0 );
+    empty_message_queue();
+    mouse_event( MOUSEEVENTF_LEFTUP, 0, 0, 0, 0 );
+    empty_message_queue();
+    mouse_event( MOUSEEVENTF_MOVE, 10, 10, 0, 0 );
+    empty_message_queue();
+
+    memset( pointer_info, 0xcd, sizeof(pointer_info) );
+    ret = pGetPointerInfo( 0xdead, pointer_info );
+    ok( !ret, "GetPointerInfo succeeded\n" );
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+
+    memset( pointer_info, 0xcd, sizeof(pointer_info) );
+    ret = pGetPointerInfo( 1, pointer_info );
+    todo_wine_if(mouse_in_pointer_enabled)
+    ok( ret == mouse_in_pointer_enabled, "GetPointerInfo failed, error %lu\n", GetLastError() );
+    if (!mouse_in_pointer_enabled)
+    {
+        ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+        return;
+    }
+
+    todo_wine
+    ok( pointer_info[0].pointerType == PT_MOUSE, "got pointerType %lu\n", pointer_info[0].pointerType );
+    todo_wine
+    ok( pointer_info[0].pointerId == 1, "got pointerId %u\n", pointer_info[0].pointerId );
+    ok( !!pointer_info[0].frameId, "got frameId %u\n", pointer_info[0].frameId );
+    todo_wine
+    ok( pointer_info[0].pointerFlags == (0x20000 | POINTER_MESSAGE_FLAG_INRANGE | POINTER_MESSAGE_FLAG_PRIMARY),
+        "got pointerFlags %#x\n", pointer_info[0].pointerFlags );
+    todo_wine
+    ok( pointer_info[0].sourceDevice == INVALID_HANDLE_VALUE || broken(!!pointer_info[0].sourceDevice) /* < w10 & 32bit */,
+        "got sourceDevice %p\n", pointer_info[0].sourceDevice );
+    todo_wine
+    ok( pointer_info[0].hwndTarget == hwnd, "got hwndTarget %p\n", pointer_info[0].hwndTarget );
+    ok( !!pointer_info[0].ptPixelLocation.x, "got ptPixelLocation %s\n", wine_dbgstr_point( &pointer_info[0].ptPixelLocation ) );
+    ok( !!pointer_info[0].ptPixelLocation.y, "got ptPixelLocation %s\n", wine_dbgstr_point( &pointer_info[0].ptPixelLocation ) );
+    ok( !!pointer_info[0].ptHimetricLocation.x, "got ptHimetricLocation %s\n", wine_dbgstr_point( &pointer_info[0].ptHimetricLocation ) );
+    ok( !!pointer_info[0].ptHimetricLocation.y, "got ptHimetricLocation %s\n", wine_dbgstr_point( &pointer_info[0].ptHimetricLocation ) );
+    ok( !!pointer_info[0].ptPixelLocationRaw.x, "got ptPixelLocationRaw %s\n", wine_dbgstr_point( &pointer_info[0].ptPixelLocationRaw ) );
+    ok( !!pointer_info[0].ptPixelLocationRaw.y, "got ptPixelLocationRaw %s\n", wine_dbgstr_point( &pointer_info[0].ptPixelLocationRaw ) );
+    ok( !!pointer_info[0].ptHimetricLocationRaw.x, "got ptHimetricLocationRaw %s\n", wine_dbgstr_point( &pointer_info[0].ptHimetricLocationRaw ) );
+    ok( !!pointer_info[0].ptHimetricLocationRaw.y, "got ptHimetricLocationRaw %s\n", wine_dbgstr_point( &pointer_info[0].ptHimetricLocationRaw ) );
+    ok( !!pointer_info[0].dwTime, "got dwTime %lu\n", pointer_info[0].dwTime );
+    todo_wine
+    ok( pointer_info[0].historyCount == 1, "got historyCount %u\n", pointer_info[0].historyCount );
+    todo_wine
+    ok( pointer_info[0].InputData == 0, "got InputData %u\n", pointer_info[0].InputData );
+    todo_wine
+    ok( pointer_info[0].dwKeyStates == 0, "got dwKeyStates %lu\n", pointer_info[0].dwKeyStates );
+    ok( !!pointer_info[0].PerformanceCount, "got PerformanceCount %I64u\n", pointer_info[0].PerformanceCount );
+    todo_wine
+    ok( pointer_info[0].ButtonChangeType == 0, "got ButtonChangeType %u\n", pointer_info[0].ButtonChangeType );
+
+    thread = CreateThread( NULL, 0, test_GetPointerInfo_thread, NULL, 0, NULL );
+    res = WaitForSingleObject( thread, 5000 );
+    ok( !res, "WaitForSingleObject returned %#lx, error %lu\n", res, GetLastError() );
+
+    expect_pointer = pointer_info[0];
+
+    memset( pointer_info, 0xa5, sizeof(pointer_info) );
+    entry_count = pointer_count = 2;
+    if (!pGetPointerFrameInfo) ret = FALSE;
+    else ret = pGetPointerFrameInfo( 1, &pointer_count, pointer_info );
+    todo_wine_if(!pGetPointerFrameInfo)
+    ok( ret, "GetPointerFrameInfo failed, error %lu\n", GetLastError() );
+    todo_wine_if(!pGetPointerFrameInfo)
+    ok( pointer_count == 1, "got pointer_count %u\n", pointer_count );
+    todo_wine_if(!pGetPointerFrameInfo)
+    check_pointer_info( &pointer_info[0], &expect_pointer );
+    memset( pointer_info, 0xa5, sizeof(pointer_info) );
+    entry_count = pointer_count = 2;
+    if (!pGetPointerInfoHistory) ret = FALSE;
+    else ret = pGetPointerInfoHistory( 1, &entry_count, pointer_info );
+    todo_wine_if(!pGetPointerInfoHistory)
+    ok( ret, "GetPointerInfoHistory failed, error %lu\n", GetLastError() );
+    todo_wine_if(!pGetPointerInfoHistory)
+    ok( entry_count == 1, "got entry_count %u\n", entry_count );
+    todo_wine_if(!pGetPointerInfoHistory)
+    check_pointer_info( &pointer_info[0], &expect_pointer );
+    memset( pointer_info, 0xa5, sizeof(pointer_info) );
+    entry_count = pointer_count = 2;
+    if (!pGetPointerFrameInfoHistory) ret = FALSE;
+    else ret = pGetPointerFrameInfoHistory( 1, &entry_count, &pointer_count, pointer_info );
+    todo_wine_if(!pGetPointerFrameInfoHistory)
+    ok( ret, "GetPointerFrameInfoHistory failed, error %lu\n", GetLastError() );
+    todo_wine_if(!pGetPointerFrameInfoHistory)
+    ok( entry_count == 1, "got pointer_count %u\n", pointer_count );
+    todo_wine_if(!pGetPointerFrameInfoHistory)
+    ok( pointer_count == 1, "got pointer_count %u\n", pointer_count );
+    todo_wine_if(!pGetPointerFrameInfoHistory)
+    check_pointer_info( &pointer_info[0], &expect_pointer );
+
+    DestroyWindow( hwnd );
+
+    ret = UnregisterClassW( L"test", GetModuleHandleW( NULL ) );
+    ok( ret, "UnregisterClassW failed: %lu\n", GetLastError() );
+}
+
+static void test_EnableMouseInPointer_process( const char *arg )
+{
+    DWORD enable = strtoul( arg, 0, 10 );
+    BOOL ret;
+
+    ret = pEnableMouseInPointer( enable );
+    todo_wine
+    ok( ret, "EnableMouseInPointer failed, error %lu\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    ret = pEnableMouseInPointer( !enable );
+    ok( !ret, "EnableMouseInPointer succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_ACCESS_DENIED, "got error %lu\n", GetLastError() );
+    if (!pIsMouseInPointerEnabled) ret = !enable;
+    else ret = pIsMouseInPointerEnabled();
+    todo_wine_if(!pIsMouseInPointerEnabled)
+    ok( ret == enable, "IsMouseInPointerEnabled returned %u, error %lu\n", ret, GetLastError() );
+
+    ret = pEnableMouseInPointer( enable );
+    todo_wine
+    ok( ret, "EnableMouseInPointer failed, error %lu\n", GetLastError() );
+    if (!pIsMouseInPointerEnabled) ret = !enable;
+    else ret = pIsMouseInPointerEnabled();
+    todo_wine_if(!pIsMouseInPointerEnabled)
+    ok( ret == enable, "IsMouseInPointerEnabled returned %u, error %lu\n", ret, GetLastError() );
+
+    test_GetPointerInfo( enable );
+}
+
+static void test_EnableMouseInPointer( char **argv, BOOL enable )
+{
+    STARTUPINFOA startup = {.cb = sizeof(STARTUPINFOA)};
+    PROCESS_INFORMATION info = {0};
+    char cmdline[MAX_PATH * 2];
+    BOOL ret;
+
+    sprintf( cmdline, "%s %s EnableMouseInPointer %u", argv[0], argv[1], enable );
+    ret = CreateProcessA( NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &info );
+    ok( ret, "CreateProcessA failed, error %lu\n", GetLastError() );
+    if (!ret) return;
+
+    wait_child_process( info.hProcess );
+    CloseHandle( info.hThread );
+    CloseHandle( info.hProcess );
+}
+
 static void test_GetKeyboardLayoutList(void)
 {
     int cnt, cnt2;
@@ -4902,6 +5158,14 @@ START_TEST(input)
         return;
     }
 
+    if (argc >= 4 && strcmp( argv[2], "EnableMouseInPointer" ) == 0)
+    {
+        winetest_push_context( "enable %s", argv[3] );
+        test_EnableMouseInPointer_process( argv[3] );
+        winetest_pop_context();
+        return;
+    }
+
     test_SendInput();
     test_Input_blackbox();
     test_Input_whitebox();
@@ -4942,10 +5206,18 @@ START_TEST(input)
 
     SetCursorPos( pos.x, pos.y );
 
-    if(pGetPointerType)
-        test_GetPointerType();
+    if (pGetPointerType)
+        test_GetPointerInfo( FALSE );
     else
-        win_skip("GetPointerType is not available\n");
+        win_skip( "GetPointerType is not available\n" );
 
     test_UnregisterDeviceNotification();
+
+    if (!pEnableMouseInPointer)
+        win_skip( "EnableMouseInPointer not found, skipping tests\n" );
+    else
+    {
+        test_EnableMouseInPointer( argv, FALSE );
+        test_EnableMouseInPointer( argv, TRUE );
+    }
 }

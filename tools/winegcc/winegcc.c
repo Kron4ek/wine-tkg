@@ -482,7 +482,8 @@ static struct strarray get_link_args( struct options *opts, const char *output_n
         }
         if (opts->unicode_app) strarray_add( &flags, "-municode" );
         if (opts->nodefaultlibs || opts->use_msvcrt) strarray_add( &flags, "-nodefaultlibs" );
-        if (opts->nostartfiles || opts->use_msvcrt) strarray_add( &flags, "-nostartfiles" );
+        if (opts->nostartfiles) strarray_add( &flags, "-nostartfiles" );
+        if (opts->use_msvcrt) strarray_add( &flags, "-nostdlib" );
         if (opts->image_base) strarray_add( &flags, strmake("-Wl,-base:%s", opts->image_base ));
         if (opts->subsystem)
             strarray_add( &flags, strmake("-Wl,-subsystem:%s", opts->subsystem ));
@@ -1371,6 +1372,7 @@ static void build(struct options* opts)
 
     if (!opts->nostdlib && !is_pe)
     {
+	strarray_add(&link_args, "-ldl");
 	strarray_add(&link_args, "-lm");
 	strarray_add(&link_args, "-lc");
     }

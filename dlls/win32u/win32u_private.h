@@ -271,11 +271,16 @@ extern HWND get_capture(void) DECLSPEC_HIDDEN;
 extern BOOL get_cursor_pos( POINT *pt ) DECLSPEC_HIDDEN;
 extern HWND get_focus(void) DECLSPEC_HIDDEN;
 extern DWORD get_input_state(void) DECLSPEC_HIDDEN;
+extern HWND get_progman_window(void) DECLSPEC_HIDDEN;
+extern HWND get_shell_window(void) DECLSPEC_HIDDEN;
+extern HWND get_taskman_window(void) DECLSPEC_HIDDEN;
 extern BOOL WINAPI release_capture(void) DECLSPEC_HIDDEN;
 extern BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret ) DECLSPEC_HIDDEN;
 extern BOOL set_caret_blink_time( unsigned int time ) DECLSPEC_HIDDEN;
 extern BOOL set_caret_pos( int x, int y ) DECLSPEC_HIDDEN;
 extern BOOL set_foreground_window( HWND hwnd, BOOL mouse ) DECLSPEC_HIDDEN;
+extern HWND set_progman_window( HWND hwnd ) DECLSPEC_HIDDEN;
+extern HWND set_taskman_window( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void toggle_caret( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void update_mouse_tracking_info( HWND hwnd ) DECLSPEC_HIDDEN;
 
@@ -448,11 +453,14 @@ static inline WCHAR win32u_towupper( WCHAR ch )
 
 extern CPTABLEINFO ansi_cp DECLSPEC_HIDDEN;
 
+CPTABLEINFO *get_cptable( WORD cp ) DECLSPEC_HIDDEN;
+const NLS_LOCALE_DATA *get_locale_data( LCID lcid ) DECLSPEC_HIDDEN;
 DWORD win32u_mbtowc( CPTABLEINFO *info, WCHAR *dst, DWORD dstlen, const char *src,
                      DWORD srclen ) DECLSPEC_HIDDEN;
 DWORD win32u_wctomb( CPTABLEINFO *info, char *dst, DWORD dstlen, const WCHAR *src,
                      DWORD srclen ) DECLSPEC_HIDDEN;
 DWORD win32u_wctomb_size( CPTABLEINFO *info, const WCHAR *src, DWORD srclen ) DECLSPEC_HIDDEN;
+DWORD win32u_mbtowc_size( CPTABLEINFO *info, const char *src, DWORD srclen ) DECLSPEC_HIDDEN;
 
 static inline WCHAR *win32u_wcsdup( const WCHAR *str )
 {

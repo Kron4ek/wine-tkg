@@ -260,12 +260,12 @@ static struct base_device *find_device_from_fd(int fd)
     return NULL;
 }
 
-static struct base_device *find_device_from_udev(struct udev_device *dev)
+static struct base_device *find_device_from_devnode(const char *path)
 {
     struct base_device *impl;
 
     LIST_FOR_EACH_ENTRY(impl, &device_list, struct base_device, unix_device.entry)
-        if (impl->udev_device == dev) return impl;
+        if (!strcmp(impl->devnode, path)) return impl;
 
     return NULL;
 }
@@ -1329,7 +1329,9 @@ static void udev_add_device(struct udev_device *dev, int fd)
     if (!strcmp(subsystem, "hidraw"))
     {
         static const WCHAR hidraw[] = {'h','i','d','r','a','w',0};
+#ifdef HAVE_LINUX_HIDRAW_H
         char product[MAX_PATH];
+#endif
 
         if (!desc.manufacturer[0]) memcpy(desc.manufacturer, hidraw, sizeof(hidraw));
 
@@ -1556,16 +1558,6 @@ static int create_inotify(void)
     return fd;
 }
 
-static struct base_device *find_device_from_devnode(const char *path)
-{
-    struct base_device *impl;
-
-    LIST_FOR_EACH_ENTRY(impl, &device_list, struct base_device, unix_device.entry)
-        if (!strcmp(impl->devnode, path)) return impl;
-
-    return NULL;
-}
-
 static void maybe_remove_devnode(const char *base, const char *dir)
 {
     struct base_device *impl;
@@ -1745,7 +1737,7 @@ static void process_monitor_event(struct udev_monitor *monitor)
         udev_add_device(dev, -1);
     else
     {
-        impl = find_device_from_udev(dev);
+        impl = find_device_from_devnode(udev_device_get_devnode(dev));
         if (impl) bus_event_queue_device_removed(&event_queue, &impl->unix_device);
         else WARN("failed to find device for udev device %p\n", dev);
     }

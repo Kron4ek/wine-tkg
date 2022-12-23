@@ -1038,8 +1038,8 @@
 @ stdcall RtlTryAcquireSRWLockShared(ptr)
 @ stdcall RtlTryEnterCriticalSection(ptr)
 @ stdcall RtlUTF8ToUnicodeN(ptr long ptr ptr long)
-@ cdecl -i386 -norelay RtlUlongByteSwap() NTDLL_RtlUlongByteSwap
-@ cdecl -ret64 RtlUlonglongByteSwap(int64)
+@ stdcall -fastcall -arch=i386 -norelay RtlUlongByteSwap(long)
+@ stdcall -fastcall -arch=i386 -norelay RtlUlonglongByteSwap(int64)
 # @ stub RtlUnhandledExceptionFilter2
 # @ stub RtlUnhandledExceptionFilter
 @ stdcall RtlUnicodeStringToAnsiSize(ptr)
@@ -1072,7 +1072,7 @@
 @ stdcall RtlUpperString(ptr ptr)
 @ stub RtlUsageHeap
 @ stdcall -norelay RtlUserThreadStart(ptr ptr)
-@ cdecl -i386 -norelay RtlUshortByteSwap() NTDLL_RtlUshortByteSwap
+@ stdcall -fastcall -arch=i386 -norelay RtlUshortByteSwap(long)
 @ stdcall RtlValidAcl(ptr)
 @ stdcall RtlValidRelativeSecurityDescriptor(ptr long long)
 @ stdcall RtlValidSecurityDescriptor(ptr)
@@ -1690,10 +1690,11 @@
 @ cdecl -syscall wine_server_handle_to_fd(long long ptr ptr)
 
 # Unix interface
-@ stdcall -syscall __wine_unix_call(int64 long ptr)
+@ stdcall __wine_unix_call(int64 long ptr)
 @ stdcall -syscall __wine_unix_spawnvp(long ptr)
 @ stdcall __wine_ctrl_routine(ptr)
-@ extern __wine_syscall_dispatcher
+@ extern -private __wine_syscall_dispatcher
+@ extern -private __wine_unix_call_dispatcher
 @ extern -arch=arm64 __wine_current_teb
 
 # Debugging

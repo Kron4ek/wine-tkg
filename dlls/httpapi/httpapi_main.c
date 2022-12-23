@@ -278,6 +278,7 @@ ULONG WINAPI HttpReceiveRequestEntityBody(HANDLE queue, HTTP_REQUEST_ID id, ULON
         .bits = sizeof(void *) * 8,
     };
     ULONG ret = ERROR_SUCCESS;
+    ULONG local_ret_size;
     OVERLAPPED sync_ovl;
 
     TRACE("queue %p, id %s, flags %#lx, buffer %p, size %#lx, ret_size %p, ovl %p.\n",
@@ -291,6 +292,9 @@ ULONG WINAPI HttpReceiveRequestEntityBody(HANDLE queue, HTTP_REQUEST_ID id, ULON
         sync_ovl.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
         ovl = &sync_ovl;
     }
+
+    if (!ret_size)
+        ret_size = &local_ret_size;
 
     if (!DeviceIoControl(queue, IOCTL_HTTP_RECEIVE_BODY, &params, sizeof(params), buffer, size, ret_size, ovl))
         ret = GetLastError();
@@ -323,6 +327,7 @@ ULONG WINAPI HttpReceiveHttpRequest(HANDLE queue, HTTP_REQUEST_ID id, ULONG flag
         .bits = sizeof(void *) * 8,
     };
     ULONG ret = ERROR_SUCCESS;
+    ULONG local_ret_size;
     OVERLAPPED sync_ovl;
 
     TRACE("queue %p, id %s, flags %#lx, request %p, size %#lx, ret_size %p, ovl %p.\n",
@@ -339,6 +344,9 @@ ULONG WINAPI HttpReceiveHttpRequest(HANDLE queue, HTTP_REQUEST_ID id, ULONG flag
         sync_ovl.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
         ovl = &sync_ovl;
     }
+
+    if (!ret_size)
+        ret_size = &local_ret_size;
 
     if (!DeviceIoControl(queue, IOCTL_HTTP_RECEIVE_REQUEST, &params, sizeof(params), request, size, ret_size, ovl))
         ret = GetLastError();

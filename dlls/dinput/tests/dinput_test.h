@@ -50,12 +50,11 @@ extern const GUID expect_guid_product;
 extern const WCHAR expect_path[];
 extern const WCHAR expect_path_end[];
 
-extern HANDLE device_added, device_removed;
 extern HINSTANCE instance;
 extern BOOL localized; /* object names get translated */
 
-BOOL hid_device_start( struct hid_device_desc *desc );
-void hid_device_stop( struct hid_device_desc *desc );
+BOOL hid_device_start( struct hid_device_desc *desc, UINT count );
+void hid_device_stop( struct hid_device_desc *desc, UINT count );
 BOOL bus_device_start(void);
 void bus_device_stop(void);
 
@@ -108,5 +107,8 @@ void wait_hid_expect_( const char *file, int line, HANDLE device, struct hid_dev
 #define bus_send_hid_input( a, b, c, d ) send_hid_input_( __FILE__, __LINE__, a, b, c, d )
 void send_hid_input_( const char *file, int line, HANDLE device, struct hid_device_desc *desc,
                       struct hid_expect *expect, DWORD expect_size );
+
+#define msg_wait_for_events( a, b, c ) msg_wait_for_events_( __FILE__, __LINE__, a, b, c )
+DWORD msg_wait_for_events_( const char *file, int line, DWORD count, HANDLE *events, DWORD timeout );
 
 #endif /* __WINE_DINPUT_TEST_H */

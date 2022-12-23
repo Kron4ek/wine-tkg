@@ -20,6 +20,7 @@
 
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -422,6 +423,55 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file, DWO
             .report_id = 3,
             .report_len = 11,
             .report_buf = {0x03,0x01,0x02,0x08,0x01,0x00,version >= 0x700 ? 0x06 : 0x00,0x00,0x01,0x55,0xd5},
+        },
+    };
+    struct hid_expect expect_download_3[] =
+    {
+        /* set periodic */
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 5,
+            .report_len = 2,
+            .report_buf = {0x05,0x19},
+        },
+        /* set envelope */
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 6,
+            .report_len = 7,
+            .report_buf = {0x06,0x19,0x4c,0x01,0x00,0x04,0x00},
+        },
+        /* update effect */
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 3,
+            .report_len = 11,
+            .report_buf = {0x03,0x01,0x02,0x08,0xff,0xff,version >= 0x700 ? 0x06 : 0x00,0x00,0x01,0x55,0xd5},
+        },
+    };
+    struct hid_expect expect_download_4[] =
+    {
+        /* set periodic */
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 5,
+            .report_len = 2,
+            .report_buf = {0x05,0x19},
+        },
+        /* set envelope (wine) */
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 6,
+            .report_len = 7,
+            .report_buf = {0x06,0x19,0x4c,0x01,0x00,0x04,0x00},
+            .todo = TRUE, .wine_only = TRUE,
+        },
+        /* update effect */
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 3,
+            .report_len = 11,
+            .report_buf = {0x03,0x01,0x02,0x08,0xff,0xff,version >= 0x700 ? 0x06 : 0x00,0x00,0x01,0x55,0xd5},
         },
     };
     struct hid_expect expect_update[] =
@@ -1436,6 +1486,32 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file, DWO
     hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_NODOWNLOAD | DIEP_ENVELOPE );
     ok( hr == DI_DOWNLOADSKIPPED, "SetParameters returned %#lx\n", hr );
     set_hid_expect( file, expect_set_envelope, sizeof(expect_set_envelope) );
+    hr = IDirectInputEffect_SetParameters( effect, &expect_desc, 0 );
+    ok( hr == DI_OK, "SetParameters returned %#lx\n", hr );
+    wait_hid_expect( file, 100 ); /* these updates are sent asynchronously */
+
+    set_hid_expect( file, &expect_stop, sizeof(expect_stop) );
+    hr = IDirectInputEffect_Unload( effect );
+    ok( hr == DI_OK, "Unload returned %#lx\n", hr );
+    set_hid_expect( file, NULL, 0 );
+
+    hr = IDirectInputEffect_SetParameters( effect, &expect_desc, DIEP_NODOWNLOAD );
+    ok( hr == DI_DOWNLOADSKIPPED, "SetParameters returned %#lx\n", hr );
+    set_hid_expect( file, expect_download_3, sizeof(expect_download_3) );
+    hr = IDirectInputEffect_SetParameters( effect, &expect_desc, 0 );
+    ok( hr == DI_OK, "SetParameters returned %#lx\n", hr );
+    wait_hid_expect( file, 100 ); /* these updates are sent asynchronously */
+
+    set_hid_expect( file, &expect_stop, sizeof(expect_stop) );
+    hr = IDirectInputEffect_Unload( effect );
+    ok( hr == DI_OK, "Unload returned %#lx\n", hr );
+    set_hid_expect( file, NULL, 0 );
+
+    desc = expect_desc;
+    desc.lpEnvelope = NULL;
+    hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_NODOWNLOAD | DIEP_ENVELOPE );
+    ok( hr == DI_DOWNLOADSKIPPED, "SetParameters returned %#lx\n", hr );
+    set_hid_expect( file, expect_download_4, sizeof(expect_download_4) );
     hr = IDirectInputEffect_SetParameters( effect, &expect_desc, 0 );
     ok( hr == DI_OK, "SetParameters returned %#lx\n", hr );
     wait_hid_expect( file, 100 ); /* these updates are sent asynchronously */
@@ -2926,7 +3002,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
     memcpy( desc.report_descriptor_buf, report_descriptor, sizeof(report_descriptor) );
     fill_context( desc.context, ARRAY_SIZE(desc.context) );
 
-    if (!hid_device_start( &desc )) goto done;
+    if (!hid_device_start( &desc, 1 )) goto done;
     if (FAILED(hr = dinput_test_create_device( version, &devinst, &device ))) goto done;
 
     check_dinput_devices( version, &devinst );
@@ -3130,7 +3206,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
     CloseHandle( file );
 
 done:
-    hid_device_stop( &desc );
+    hid_device_stop( &desc, 1 );
     cleanup_registry_keys();
     winetest_pop_context();
 
@@ -4047,7 +4123,7 @@ static void test_device_managed_effect(void)
     memcpy( desc.expect, expect_pool, sizeof(expect_pool) );
     fill_context( desc.context, ARRAY_SIZE(desc.context) );
 
-    if (!hid_device_start( &desc )) goto done;
+    if (!hid_device_start( &desc, 1 )) goto done;
     if (FAILED(hr = dinput_test_create_device( DIRECTINPUT_VERSION, &devinst, &device ))) goto done;
 
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_GUIDANDPATH, &prop_guid_path.diph );
@@ -4456,7 +4532,7 @@ static void test_device_managed_effect(void)
     CloseHandle( file );
 
 done:
-    hid_device_stop( &desc );
+    hid_device_stop( &desc, 1 );
     cleanup_registry_keys();
     winetest_pop_context();
 }
@@ -4723,6 +4799,23 @@ static IAsyncOperationCompletedHandler_booleanVtbl bool_async_handler_vtbl =
 
 static struct bool_async_handler default_bool_async_handler = {{&bool_async_handler_vtbl}};
 
+#define await_bool( a ) await_bool_( __LINE__, a )
+static void await_bool_( int line, IAsyncOperation_boolean *async )
+{
+    struct bool_async_handler handler = default_bool_async_handler;
+    HRESULT hr;
+    DWORD ret;
+
+    handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
+    ok_(__FILE__, line)( !!handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
+    hr = IAsyncOperation_boolean_put_Completed( async, &handler.IAsyncOperationCompletedHandler_boolean_iface );
+    ok_(__FILE__, line)( hr == S_OK, "put_Completed returned %#lx\n", hr );
+    ret = WaitForSingleObject( handler.event, 5000 );
+    ok_(__FILE__, line)( !ret, "WaitForSingleObject returned %#lx\n", ret );
+    ret = CloseHandle( handler.event );
+    ok_(__FILE__, line)( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+}
+
 struct result_async_handler
 {
     IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult_iface;
@@ -4790,6 +4883,23 @@ static IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResultVtbl result_
 };
 
 static struct result_async_handler default_result_async_handler = {{&result_async_handler_vtbl}};
+
+#define await_result( a ) await_result_( __LINE__, a )
+static void await_result_( int line, IAsyncOperation_ForceFeedbackLoadEffectResult *async )
+{
+    struct result_async_handler handler = default_result_async_handler;
+    HRESULT hr;
+    DWORD ret;
+
+    handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
+    ok_(__FILE__, line)( !!handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
+    hr = IAsyncOperation_ForceFeedbackLoadEffectResult_put_Completed( async, &handler.IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult_iface );
+    ok_(__FILE__, line)( hr == S_OK, "put_Completed returned %#lx\n", hr );
+    ret = WaitForSingleObject( handler.event, 5000 );
+    ok_(__FILE__, line)( !ret, "WaitForSingleObject returned %#lx\n", ret );
+    ret = CloseHandle( handler.event );
+    ok_(__FILE__, line)( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+}
 
 static void test_windows_gaming_input(void)
 {
@@ -4990,7 +5100,7 @@ static void test_windows_gaming_input(void)
                 LOGICAL_MINIMUM(1, 0),
                 LOGICAL_MAXIMUM(2, 0x7fff),
                 PHYSICAL_MINIMUM(1, 0),
-                PHYSICAL_MAXIMUM(2, 0x7fff),
+                PHYSICAL_MAXIMUM(1, 0),
                 REPORT_SIZE(1, 16),
                 REPORT_COUNT(1, 4),
                 OUTPUT(1, Data|Var|Abs),
@@ -5675,6 +5785,54 @@ static void test_windows_gaming_input(void)
             .report_buf = {3,0x01,0x05,0x04,0x5a,0x00,0x00,0x00,0x00,0x00,0x0a,0x00,0xff,0xff,0x4e,0x01,0x00,0x00},
         },
     };
+    struct hid_expect expect_create_ramp_inf[] =
+    {
+        /* create new effect */
+        {
+            .code = IOCTL_HID_SET_FEATURE,
+            .report_id = 2,
+            .report_len = 3,
+            .report_buf = {2,0x05,0x00},
+        },
+        /* block load */
+        {
+            .code = IOCTL_HID_GET_FEATURE,
+            .report_id = 3,
+            .report_len = 5,
+            .report_buf = {3,0x01,0x01,0x00,0x00},
+        },
+        /* set ramp */
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 10,
+            .report_len = 6,
+            .report_buf = {10,0x01,0xe8,0x03,0xa0,0x0f},
+        },
+        /* set envelope (wine) */
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 8,
+            .report_len = 8,
+            .report_buf = {8,0x01,0x00,0x00,0x00,0x00,0x00,0x00},
+            .todo = TRUE, .wine_only = TRUE,
+        },
+        /* update effect (wine) */
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 3,
+            .report_len = 18,
+            .report_buf = {3,0x01,0x05,0x04,0x8f,0xe4,0x00,0x00,0x00,0x00,0x00,0x00,0xff,0xff,0x4e,0x01,0x00,0x00},
+            .todo = TRUE, .wine_only = TRUE,
+        },
+        /* update effect */
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 3,
+            .report_len = 18,
+            .report_buf = {3,0x01,0x05,0x04,0xff,0xff,0x00,0x00,0x00,0x00,0x00,0x00,0xff,0xff,0x4e,0x01,0x00,0x00},
+            .todo = TRUE,
+        },
+    };
     struct hid_expect expect_effect_start =
     {
         .code = IOCTL_HID_WRITE_REPORT,
@@ -5722,12 +5880,11 @@ static void test_windows_gaming_input(void)
             .dwHow = DIPH_DEVICE,
         },
     };
-    TimeSpan delay = {100000}, attack_duration = {200000}, release_duration = {300000}, duration = {400000};
+    TimeSpan delay = {100000}, attack_duration = {200000}, release_duration = {300000}, duration = {400000}, infinite_duration = {INT64_MAX};
     Vector3 direction = {0.1, 0.2, 0.3}, end_direction = {0.4, 0.5, 0.6};
     DIDEVICEINSTANCEW devinst = {.dwSize = sizeof(DIDEVICEINSTANCEW)};
     IAsyncOperation_ForceFeedbackLoadEffectResult *result_async;
     IAsyncOperationCompletedHandler_boolean *tmp_handler;
-    struct result_async_handler result_async_handler;
     IVectorView_RawGameController *controllers_view;
     IConditionForceEffectFactory *condition_factory;
     IRawGameControllerStatics *controller_statics;
@@ -5792,8 +5949,9 @@ static void test_windows_gaming_input(void)
     memcpy( desc.expect, expect_init, sizeof(expect_init) );
     fill_context( desc.context, ARRAY_SIZE(desc.context) );
 
-    if (!hid_device_start( &desc )) goto done;
-    WaitForSingleObject( controller_added.event, INFINITE );
+    if (!hid_device_start( &desc, 1 )) goto done;
+    ret = WaitForSingleObject( controller_added.event, 5000 );
+    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
     CloseHandle( controller_added.event );
 
     if (FAILED(hr = dinput_test_create_device( 0x800, &devinst, &device ))) goto done;
@@ -6120,15 +6278,7 @@ static void test_windows_gaming_input(void)
 
     hr = IForceFeedbackMotor_LoadEffectAsync( motor, effect, &result_async );
     ok( hr == S_OK, "LoadEffectAsync returned %#lx\n", hr );
-    result_async_handler = default_result_async_handler;
-    result_async_handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    ok( !!result_async_handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
-    hr = IAsyncOperation_ForceFeedbackLoadEffectResult_put_Completed( result_async, &result_async_handler.IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult_iface );
-    ok( hr == S_OK, "put_Completed returned %#lx\n", hr );
-    ret = WaitForSingleObject( result_async_handler.event, 5000 );
-    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
-    ret = CloseHandle( result_async_handler.event );
-    ok( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+    await_result( result_async );
     check_result_async( result_async, 1, Error, 0x86854008, ForceFeedbackLoadEffectResult_EffectNotSupported );
     IAsyncOperation_ForceFeedbackLoadEffectResult_Release( result_async );
 
@@ -6179,15 +6329,7 @@ static void test_windows_gaming_input(void)
     set_hid_expect( file, expect_create_periodic, sizeof(expect_create_periodic) );
     hr = IForceFeedbackMotor_LoadEffectAsync( motor, effect, &result_async );
     ok( hr == S_OK, "LoadEffectAsync returned %#lx\n", hr );
-    result_async_handler = default_result_async_handler;
-    result_async_handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    ok( !!result_async_handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
-    hr = IAsyncOperation_ForceFeedbackLoadEffectResult_put_Completed( result_async, &result_async_handler.IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult_iface );
-    ok( hr == S_OK, "put_Completed returned %#lx\n", hr );
-    ret = WaitForSingleObject( result_async_handler.event, 5000 );
-    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
-    ret = CloseHandle( result_async_handler.event );
-    ok( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+    await_result( result_async );
     check_result_async( result_async, 1, Completed, S_OK, ForceFeedbackLoadEffectResult_Succeeded );
     IAsyncOperation_ForceFeedbackLoadEffectResult_Release( result_async );
     set_hid_expect( file, NULL, 0 );
@@ -6209,15 +6351,7 @@ static void test_windows_gaming_input(void)
     set_hid_expect( file, expect_unload, sizeof(expect_unload) );
     hr = IForceFeedbackMotor_TryUnloadEffectAsync( motor, effect, &bool_async );
     ok( hr == S_OK, "TryUnloadEffectAsync returned %#lx\n", hr );
-    bool_async_handler = default_bool_async_handler;
-    bool_async_handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    ok( !!bool_async_handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
-    hr = IAsyncOperation_boolean_put_Completed( bool_async, &bool_async_handler.IAsyncOperationCompletedHandler_boolean_iface );
-    ok( hr == S_OK, "put_Completed returned %#lx\n", hr );
-    ret = WaitForSingleObject( bool_async_handler.event, 5000 );
-    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
-    ret = CloseHandle( bool_async_handler.event );
-    ok( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+    await_bool( bool_async );
     check_bool_async( bool_async, 1, Completed, S_OK, TRUE );
     IAsyncOperation_boolean_Release( bool_async );
     set_hid_expect( file, NULL, 0 );
@@ -6271,15 +6405,7 @@ static void test_windows_gaming_input(void)
     set_hid_expect( file, expect_create_condition, sizeof(expect_create_condition) );
     hr = IForceFeedbackMotor_LoadEffectAsync( motor, effect, &result_async );
     ok( hr == S_OK, "LoadEffectAsync returned %#lx\n", hr );
-    result_async_handler = default_result_async_handler;
-    result_async_handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    ok( !!result_async_handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
-    hr = IAsyncOperation_ForceFeedbackLoadEffectResult_put_Completed( result_async, &result_async_handler.IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult_iface );
-    ok( hr == S_OK, "put_Completed returned %#lx\n", hr );
-    ret = WaitForSingleObject( result_async_handler.event, 5000 );
-    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
-    ret = CloseHandle( result_async_handler.event );
-    ok( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+    await_result( result_async );
     check_result_async( result_async, 1, Completed, S_OK, ForceFeedbackLoadEffectResult_Succeeded );
     IAsyncOperation_ForceFeedbackLoadEffectResult_Release( result_async );
     set_hid_expect( file, NULL, 0 );
@@ -6301,15 +6427,7 @@ static void test_windows_gaming_input(void)
     set_hid_expect( file, expect_unload, sizeof(expect_unload) );
     hr = IForceFeedbackMotor_TryUnloadEffectAsync( motor, effect, &bool_async );
     ok( hr == S_OK, "TryUnloadEffectAsync returned %#lx\n", hr );
-    bool_async_handler = default_bool_async_handler;
-    bool_async_handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    ok( !!bool_async_handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
-    hr = IAsyncOperation_boolean_put_Completed( bool_async, &bool_async_handler.IAsyncOperationCompletedHandler_boolean_iface );
-    ok( hr == S_OK, "put_Completed returned %#lx\n", hr );
-    ret = WaitForSingleObject( bool_async_handler.event, 5000 );
-    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
-    ret = CloseHandle( bool_async_handler.event );
-    ok( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+    await_bool( bool_async );
     check_bool_async( bool_async, 1, Completed, S_OK, TRUE );
     IAsyncOperation_boolean_Release( bool_async );
     set_hid_expect( file, NULL, 0 );
@@ -6363,15 +6481,7 @@ static void test_windows_gaming_input(void)
     set_hid_expect( file, expect_create_constant, sizeof(expect_create_constant) );
     hr = IForceFeedbackMotor_LoadEffectAsync( motor, effect, &result_async );
     ok( hr == S_OK, "LoadEffectAsync returned %#lx\n", hr );
-    result_async_handler = default_result_async_handler;
-    result_async_handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    ok( !!result_async_handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
-    hr = IAsyncOperation_ForceFeedbackLoadEffectResult_put_Completed( result_async, &result_async_handler.IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult_iface );
-    ok( hr == S_OK, "put_Completed returned %#lx\n", hr );
-    ret = WaitForSingleObject( result_async_handler.event, 5000 );
-    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
-    ret = CloseHandle( result_async_handler.event );
-    ok( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+    await_result( result_async );
     check_result_async( result_async, 1, Completed, S_OK, ForceFeedbackLoadEffectResult_Succeeded );
     IAsyncOperation_ForceFeedbackLoadEffectResult_Release( result_async );
     set_hid_expect( file, NULL, 0 );
@@ -6393,15 +6503,7 @@ static void test_windows_gaming_input(void)
     set_hid_expect( file, expect_unload, sizeof(expect_unload) );
     hr = IForceFeedbackMotor_TryUnloadEffectAsync( motor, effect, &bool_async );
     ok( hr == S_OK, "TryUnloadEffectAsync returned %#lx\n", hr );
-    bool_async_handler = default_bool_async_handler;
-    bool_async_handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    ok( !!bool_async_handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
-    hr = IAsyncOperation_boolean_put_Completed( bool_async, &bool_async_handler.IAsyncOperationCompletedHandler_boolean_iface );
-    ok( hr == S_OK, "put_Completed returned %#lx\n", hr );
-    ret = WaitForSingleObject( bool_async_handler.event, 5000 );
-    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
-    ret = CloseHandle( bool_async_handler.event );
-    ok( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+    await_bool( bool_async );
     check_bool_async( bool_async, 1, Completed, S_OK, TRUE );
     IAsyncOperation_boolean_Release( bool_async );
     set_hid_expect( file, NULL, 0 );
@@ -6436,15 +6538,7 @@ static void test_windows_gaming_input(void)
     set_hid_expect( file, expect_create_ramp, sizeof(expect_create_ramp) );
     hr = IForceFeedbackMotor_LoadEffectAsync( motor, effect, &result_async );
     ok( hr == S_OK, "LoadEffectAsync returned %#lx\n", hr );
-    result_async_handler = default_result_async_handler;
-    result_async_handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    ok( !!result_async_handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
-    hr = IAsyncOperation_ForceFeedbackLoadEffectResult_put_Completed( result_async, &result_async_handler.IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult_iface );
-    ok( hr == S_OK, "put_Completed returned %#lx\n", hr );
-    ret = WaitForSingleObject( result_async_handler.event, 5000 );
-    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
-    ret = CloseHandle( result_async_handler.event );
-    ok( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+    await_result( result_async );
     check_result_async( result_async, 1, Completed, S_OK, ForceFeedbackLoadEffectResult_Succeeded );
     IAsyncOperation_ForceFeedbackLoadEffectResult_Release( result_async );
     set_hid_expect( file, NULL, 0 );
@@ -6466,18 +6560,34 @@ static void test_windows_gaming_input(void)
     set_hid_expect( file, expect_unload, sizeof(expect_unload) );
     hr = IForceFeedbackMotor_TryUnloadEffectAsync( motor, effect, &bool_async );
     ok( hr == S_OK, "TryUnloadEffectAsync returned %#lx\n", hr );
-    bool_async_handler = default_bool_async_handler;
-    bool_async_handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    ok( !!bool_async_handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
-    hr = IAsyncOperation_boolean_put_Completed( bool_async, &bool_async_handler.IAsyncOperationCompletedHandler_boolean_iface );
-    ok( hr == S_OK, "put_Completed returned %#lx\n", hr );
-    ret = WaitForSingleObject( bool_async_handler.event, 5000 );
-    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
-    ret = CloseHandle( bool_async_handler.event );
-    ok( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+    await_bool( bool_async );
     check_bool_async( bool_async, 1, Completed, S_OK, TRUE );
     IAsyncOperation_boolean_Release( bool_async );
     set_hid_expect( file, NULL, 0 );
+
+
+    hr = IForceFeedbackEffect_QueryInterface( effect, &IID_IRampForceEffect, (void **)&ramp_effect );
+    ok( hr == S_OK, "QueryInterface returned %#lx\n", hr );
+    hr = IRampForceEffect_SetParameters( ramp_effect, direction, end_direction, infinite_duration );
+    ok( hr == S_OK, "SetParameters returned %#lx\n", hr );
+    IRampForceEffect_Release( ramp_effect );
+
+    set_hid_expect( file, expect_create_ramp_inf, sizeof(expect_create_ramp_inf) );
+    hr = IForceFeedbackMotor_LoadEffectAsync( motor, effect, &result_async );
+    ok( hr == S_OK, "LoadEffectAsync returned %#lx\n", hr );
+    await_result( result_async );
+    check_result_async( result_async, 1, Completed, S_OK, ForceFeedbackLoadEffectResult_Succeeded );
+    IAsyncOperation_ForceFeedbackLoadEffectResult_Release( result_async );
+    set_hid_expect( file, NULL, 0 );
+
+    set_hid_expect( file, expect_unload, sizeof(expect_unload) );
+    hr = IForceFeedbackMotor_TryUnloadEffectAsync( motor, effect, &bool_async );
+    ok( hr == S_OK, "TryUnloadEffectAsync returned %#lx\n", hr );
+    await_bool( bool_async );
+    check_bool_async( bool_async, 1, Completed, S_OK, TRUE );
+    IAsyncOperation_boolean_Release( bool_async );
+    set_hid_expect( file, NULL, 0 );
+
 
     IForceFeedbackEffect_Release( effect );
 
@@ -6490,7 +6600,7 @@ static void test_windows_gaming_input(void)
     IRawGameControllerStatics_Release( controller_statics );
 
 done:
-    hid_device_stop( &desc );
+    hid_device_stop( &desc, 1 );
     cleanup_registry_keys();
 }
 

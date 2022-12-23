@@ -132,38 +132,45 @@ static void save_blackbox(const char* logfile, void* blackbox, int size, const c
 {
     HANDLE hFile;
     DWORD written;
+    BOOL ret;
 
-    hFile=CreateFileA(logfile, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, 0);
+    hFile = CreateFileA(logfile, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, 0, 0);
+    ok(hFile != INVALID_HANDLE_VALUE, "Couldn't create %s: %lu\n", logfile, GetLastError());
     if (hFile == INVALID_HANDLE_VALUE)
         return;
-    WriteFile(hFile, blackbox, size, &written, NULL);
+    ret = WriteFile(hFile, blackbox, size, &written, NULL);
+    ok(ret && written == size, "Error writing\n");
     if (dbgtrace && dbgtrace[0])
-        WriteFile(hFile, dbgtrace, strlen(dbgtrace), &written, NULL);
+    {
+        ret = WriteFile(hFile, dbgtrace, strlen(dbgtrace), &written, NULL);
+        ok(ret && written == strlen(dbgtrace), "Error writing\n");
+    }
     CloseHandle(hFile);
 }
 
-static int load_blackbox(const char* logfile, void* blackbox, int size)
+#define load_blackbox(a, b, c) _load_blackbox(__LINE__, (a), (b), (c))
+static int _load_blackbox(unsigned int line, const char* logfile, void* blackbox, int size)
 {
     HANDLE hFile;
     DWORD read;
     BOOL ret;
     char buf[4096];
 
-    hFile=CreateFileA(logfile, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, 0);
+    hFile = CreateFileA(logfile, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0);
     if (hFile == INVALID_HANDLE_VALUE)
     {
-        ok(0, "unable to open '%s'\n", logfile);
+        ok_(__FILE__, line)(0, "unable to open '%s': %#lx\n", logfile, GetLastError());
         return 0;
     }
     SetLastError(0xdeadbeef);
-    ret=ReadFile(hFile, blackbox, size, &read, NULL);
+    ret = ReadFile(hFile, blackbox, size, &read, NULL);
     ok(ret, "ReadFile failed: %ld\n", GetLastError());
     ok(read == size, "wrong size for '%s': read=%ld\n", logfile, read);
     ret = ReadFile(hFile, buf, sizeof(buf) - 1, &read, NULL);
     if (ret && read)
     {
         buf[read] = 0;
-        trace("debugger traces:\n%s", buf);
+        trace("debugger traces:>>>\n%s\n<<< Done.\n", buf);
     }
     CloseHandle(hFile);
     return 1;
@@ -318,16 +325,6 @@ static void set_thread_context_(unsigned line, struct debugger_context *ctx, str
     ok_(__FILE__,line)(ret, "SetThreadContext failed: %lu\n", GetLastError());
 }
 
-static void fetch_process_context(struct debugger_context *ctx)
-{
-    struct debuggee_thread *thread;
-
-    WINE_RB_FOR_EACH_ENTRY(thread, &ctx->threads, struct debuggee_thread, entry)
-    {
-        fetch_thread_context(thread);
-    }
-}
-
 #define WAIT_EVENT_TIMEOUT 20000
 #define POLL_EVENT_TIMEOUT 200
 
@@ -439,24 +436,30 @@ static void process_attach_events(struct debugger_context *ctx, BOOL pass_except
     ok(ctx->dll_cnt > 2, "dll_cnt = %d\n", ctx->dll_cnt);
 
     /* a new thread is created and it executes DbgBreakPoint, which causes the exception */
-    ok(ctx->ev.dwDebugEventCode == CREATE_THREAD_DEBUG_EVENT, "dwDebugEventCode = %ld\n", ctx->ev.dwDebugEventCode);
+    /* Win11 doesn't generate it at this point (Win <= 10 do) */
     if (ctx->ev.dwDebugEventCode == CREATE_THREAD_DEBUG_EVENT)
     {
-        DWORD last_thread = ctx->ev.dwThreadId;
-        next_event(ctx, WAIT_EVENT_TIMEOUT);
+        DWORD last_thread;
+
+        /* sometimes (at least Win10) several thread creations are reported here */
+        do
+        {
+            last_thread = ctx->ev.dwThreadId;
+            next_event(ctx, WAIT_EVENT_TIMEOUT);
+        } while (ctx->ev.dwDebugEventCode == CREATE_THREAD_DEBUG_EVENT);
         ok(ctx->ev.dwThreadId == last_thread, "unexpected thread\n");
-    }
 
-    ok(ctx->ev.dwDebugEventCode == EXCEPTION_DEBUG_EVENT, "dwDebugEventCode = %ld\n", ctx->ev.dwDebugEventCode);
-    ok(ctx->ev.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT, "ExceptionCode = %lx\n",
-       ctx->ev.u.Exception.ExceptionRecord.ExceptionCode);
-    ok(ctx->ev.u.Exception.ExceptionRecord.ExceptionAddress == pDbgBreakPoint, "ExceptionAddress != DbgBreakPoint\n");
+        ok(ctx->ev.dwDebugEventCode == EXCEPTION_DEBUG_EVENT, "dwDebugEventCode = %ld\n", ctx->ev.dwDebugEventCode);
+        ok(ctx->ev.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT, "ExceptionCode = %lx\n",
+           ctx->ev.u.Exception.ExceptionRecord.ExceptionCode);
+        ok(ctx->ev.u.Exception.ExceptionRecord.ExceptionAddress == pDbgBreakPoint, "ExceptionAddress != DbgBreakPoint\n");
 
-    if (pass_exception)
-    {
-        ret = ContinueDebugEvent(ctx->ev.dwProcessId, ctx->ev.dwThreadId, DBG_EXCEPTION_NOT_HANDLED);
-        ok(ret, "ContinueDebugEvent failed, last error %ld.\n", GetLastError());
-        ctx->ev.dwDebugEventCode = -1;
+        if (pass_exception)
+        {
+            ret = ContinueDebugEvent(ctx->ev.dwProcessId, ctx->ev.dwThreadId, DBG_EXCEPTION_NOT_HANDLED);
+            ok(ret, "ContinueDebugEvent failed, last error %ld.\n", GetLastError());
+            ctx->ev.dwDebugEventCode = -1;
+        }
     }
 
     /* flush debug events */
@@ -1024,7 +1027,8 @@ static void test_debug_loop(int argc, char **argv)
         if (!ret) break;
     }
 
-    ok( ole32_mod == (HMODULE)1, "ole32.dll was not reported\n" );
+    /* sometimes not all unload events are sent on win7 */
+    ok( ole32_mod == (HMODULE)1 || broken( ole32_mod != NULL ), "ole32.dll was not reported\n" );
     ok( oleaut32_mod == (HMODULE)1, "oleaut32.dll was not reported\n" );
 #ifdef _WIN64
     ok( oleacc_mod == (HMODULE)1, "oleacc.dll was not reported\n" );
@@ -1706,8 +1710,6 @@ static void test_debugger(const char *argv0)
 
     if (sizeof(loop_code) > 1)
     {
-        struct debuggee_thread *prev_thread;
-
         memset(buf, OP_BP, sizeof(buf));
         memcpy(proc_code, &loop_code, sizeof(loop_code));
         ret = WriteProcessMemory(pi.hProcess, mem, buf, sizeof(buf), NULL);
@@ -1735,9 +1737,6 @@ static void test_debugger(const char *argv0)
         expect_breakpoint_exception(&ctx, thread_proc + 1);
         exception_cnt = 1;
 
-        prev_thread = ctx.current_thread;
-        fetch_process_context(&ctx);
-
         byte = 0xc3; /* ret */
         ret = WriteProcessMemory(pi.hProcess, thread_proc + 1, &byte, 1, NULL);
         ok(ret, "WriteProcessMemory failed: %lu\n", GetLastError());
@@ -1746,6 +1745,10 @@ static void test_debugger(const char *argv0)
         {
             DEBUG_EVENT ev;
 
+            fetch_thread_context(ctx.current_thread);
+            ok(get_ip(&ctx.current_thread->ctx) == thread_proc + 2
+               || broken(get_ip(&ctx.current_thread->ctx) == thread_proc), /* sometimes observed on win10 */
+               "unexpected instruction pointer2 %p (%p)\n", get_ip(&ctx.current_thread->ctx), thread_proc);
             /* even when there are more pending events, they are not reported until current event is continued */
             ret = WaitForDebugEvent(&ev, 10);
             ok(GetLastError() == ERROR_SEM_TIMEOUT, "WaitForDebugEvent returned %x(%lu)\n", ret, GetLastError());
@@ -1757,17 +1760,8 @@ static void test_debugger(const char *argv0)
                ctx.ev.u.Exception.ExceptionRecord.ExceptionCode);
             ok(ctx.ev.u.Exception.ExceptionRecord.ExceptionAddress == thread_proc + 1,
                "ExceptionAddress = %p\n", ctx.ev.u.Exception.ExceptionRecord.ExceptionAddress);
-            ok(get_ip(&prev_thread->ctx) == thread_proc + 2
-               || broken(get_ip(&prev_thread->ctx) == thread_proc), /* sometimes observed on win10 */
-               "unexpected instruction pointer %p\n", get_ip(&prev_thread->ctx));
-            prev_thread = ctx.current_thread;
             exception_cnt++;
         }
-
-        /* for some reason sometimes on Windows one thread has a different address. this is always the thread
-         * with the last reported exception, so we simply skip the check for the last exception unless it's the only one. */
-        if (exception_cnt == 1)
-            ok(get_ip(&prev_thread->ctx) == thread_proc + 2, "unexpected instruction pointer %p\n", get_ip(&prev_thread->ctx));
 
         trace("received %u exceptions\n", exception_cnt);
 

@@ -641,10 +641,14 @@ DWORD WINAPI RtlComputeCrc32(DWORD dwInitial, const BYTE *pData, INT iLen)
  * RETURNS
  *  The value with its bytes swapped.
  */
-ULONGLONG __cdecl RtlUlonglongByteSwap(ULONGLONG i)
-{
-  return ((ULONGLONG)RtlUlongByteSwap(i) << 32) | RtlUlongByteSwap(i>>32);
-}
+#ifdef __i386__
+__ASM_FASTCALL_FUNC(RtlUlonglongByteSwap, 8,
+                    "movl 4(%esp),%edx\n\t"
+                    "bswap %edx\n\t"
+                    "movl 8(%esp),%eax\n\t"
+                    "bswap %eax\n\t"
+                    "ret $8")
+#endif
 
 /*************************************************************************
  * RtlUlongByteSwap    [NTDLL.@]
@@ -655,10 +659,10 @@ ULONGLONG __cdecl RtlUlonglongByteSwap(ULONGLONG i)
  *  ix86 version takes argument in %ecx. Other systems use the inline version.
  */
 #ifdef __i386__
-__ASM_GLOBAL_FUNC(NTDLL_RtlUlongByteSwap,
-                  "movl %ecx,%eax\n\t"
-                  "bswap %eax\n\t"
-                  "ret")
+__ASM_FASTCALL_FUNC(RtlUlongByteSwap, 4,
+                    "movl %ecx,%eax\n\t"
+                    "bswap %eax\n\t"
+                    "ret")
 #endif
 
 /*************************************************************************
@@ -670,10 +674,10 @@ __ASM_GLOBAL_FUNC(NTDLL_RtlUlongByteSwap,
  *  i386 version takes argument in %cx. Other systems use the inline version.
  */
 #ifdef __i386__
-__ASM_GLOBAL_FUNC(NTDLL_RtlUshortByteSwap,
-                  "movb %ch,%al\n\t"
-                  "movb %cl,%ah\n\t"
-                  "ret")
+__ASM_FASTCALL_FUNC(RtlUshortByteSwap, 4,
+                    "movb %ch,%al\n\t"
+                    "movb %cl,%ah\n\t"
+                    "ret")
 #endif
 
 

@@ -2185,6 +2185,35 @@ LONG FASTCALL NTOSKRNL_InterlockedIncrement( LONG volatile *dest )
     return InterlockedIncrement( dest );
 }
 
+#ifdef __i386__
+
+/*************************************************************************
+ *           RtlUshortByteSwap   (NTOSKRNL.EXE.@)
+ */
+__ASM_FASTCALL_FUNC(RtlUshortByteSwap, 4,
+                    "movb %ch,%al\n\t"
+                    "movb %cl,%ah\n\t"
+                    "ret")
+
+/*************************************************************************
+ *           RtlUlongByteSwap   (NTOSKRNL.EXE.@)
+ */
+__ASM_FASTCALL_FUNC(RtlUlongByteSwap, 4,
+                    "movl %ecx,%eax\n\t"
+                    "bswap %eax\n\t"
+                    "ret")
+
+/*************************************************************************
+ *           RtlUlonglongByteSwap   (NTOSKRNL.EXE.@)
+ */
+__ASM_FASTCALL_FUNC(RtlUlonglongByteSwap, 8,
+                    "movl 4(%esp),%edx\n\t"
+                    "bswap %edx\n\t"
+                    "movl 8(%esp),%eax\n\t"
+                    "bswap %eax\n\t"
+                    "ret $8")
+
+#endif  /* __i386__ */
 
 /***********************************************************************
  *           ExAllocatePool   (NTOSKRNL.EXE.@)
@@ -3437,7 +3466,7 @@ ULONG WINAPI KeQueryMaximumProcessorCountEx(USHORT group_number)
  */
 ULONG WINAPI KeQueryMaximumProcessorCount(void)
 {
-    return KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
+    return KeQueryMaximumProcessorCountEx(0);
 }
 
 /***********************************************************************

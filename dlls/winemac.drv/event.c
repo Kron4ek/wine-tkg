@@ -290,7 +290,7 @@ BOOL query_ime_char_rect(macdrv_query* query)
     void *himc = query->ime_char_rect.data;
     CFRange *range = &query->ime_char_rect.range;
     CGRect *rect = &query->ime_char_rect.rect;
-    struct ime_query_char_rect_result result = {0};
+    struct ime_query_char_rect_result result = { .location = 0 };
     struct ime_query_char_rect_params params;
     BOOL ret;
 
@@ -519,8 +519,8 @@ NTSTATUS macdrv_MsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *handles,
     struct macdrv_thread_data *data = macdrv_thread_data();
     macdrv_event_mask event_mask = get_event_mask(mask);
 
-    TRACE("count %d, handles %p, timeout %p, mask %x, flags %x\n", count,
-          handles, timeout, mask, flags);
+    TRACE("count %d, handles %p, timeout %p, mask %x, flags %x\n", (unsigned int)count,
+          handles, timeout, (unsigned int)mask, (unsigned int)flags);
 
     if (!data)
     {

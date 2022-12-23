@@ -12220,6 +12220,7 @@ static void test_pointsize(void)
                  * it does the "useful" thing on all the drivers I tried. */
                 /* On WARP it does draw some pixels, most of the time. */
                 color = getPixelColor(device, 64, 64);
+                todo_wine_if(!color_match(color, 0x0000ffff, 0))
                 ok(color_match(color, 0x0000ffff, 0)
                         || broken(color_match(color, 0x00ff0000, 0))
                         || broken(color_match(color, 0x00ffff00, 0))
@@ -17788,7 +17789,7 @@ static void test_multisample_get_front_buffer_data(void)
     hr = IDirect3DDevice9_GetFrontBufferData(device, 0, readback);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     color = getPixelColorFromSurface(readback, 320, 240);
-    ok(color == 0x00f0ff0f, "Got unexpected color 0x%08x.\n", color);
+    ok((color & 0x00ffffff) == 0x00f0ff0f, "Got unexpected color 0x%08x.\n", color);
     IDirect3DSurface9_Release(readback);
 
     hr = IDirect3DDevice9_CreateTexture(device, 640, 480, 1,
@@ -17800,7 +17801,7 @@ static void test_multisample_get_front_buffer_data(void)
     hr = IDirect3DDevice9_GetFrontBufferData(device, 0, readback);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     color = getPixelColorFromSurface(readback, 320, 240);
-    ok(color == 0x00f0ff0f, "Got unexpected color 0x%08x.\n", color);
+    ok((color & 0x00ffffff) == 0x00f0ff0f, "Got unexpected color 0x%08x.\n", color);
     IDirect3DSurface9_Release(readback);
     IDirect3DTexture9_Release(texture);
 
@@ -22848,23 +22849,29 @@ static void test_depthbias(void)
         /* The broken results are for the WARP driver on the testbot. It seems to initialize
          * a scaling factor based on the first depth format that is used. Other formats with
          * a different depth size then render incorrectly. */
+        todo_wine_if(!color_match(color, 0x000000ff, 1))
         ok(color_match(color, 0x000000ff, 1) || broken(color_match(color, 0x00ffffff, 1)),
                 "Got unexpected color %08x at x=64, format %u.\n", color, formats[i]);
         color = getPixelColor(device, 190, 240);
+        todo_wine_if(!color_match(color, 0x000000ff, 1))
         ok(color_match(color, 0x000000ff, 1) || broken(color_match(color, 0x00ffffff, 1)),
                 "Got unexpected color %08x at x=190, format %u.\n", color, formats[i]);
 
         color = getPixelColor(device, 194, 240);
+        todo_wine_if(!color_match(color, 0x0000ff00, 1))
         ok(color_match(color, 0x0000ff00, 1) || broken(color_match(color, 0x00ffffff, 1)),
                 "Got unexpected color %08x at x=194, format %u.\n", color, formats[i]);
         color = getPixelColor(device, 318, 240);
+        todo_wine_if(!color_match(color, 0x0000ff00, 1))
         ok(color_match(color, 0x0000ff00, 1) || broken(color_match(color, 0x00ffffff, 1)),
                 "Got unexpected color %08x at x=318, format %u.\n", color, formats[i]);
 
         color = getPixelColor(device, 322, 240);
+        todo_wine_if(!color_match(color, 0x00ff0000, 1))
         ok(color_match(color, 0x00ff0000, 1) || broken(color_match(color, 0x00000000, 1)),
                 "Got unexpected color %08x at x=322, format %u.\n", color, formats[i]);
         color = getPixelColor(device, 446, 240);
+        todo_wine_if(!color_match(color, 0x00ff0000, 1))
         ok(color_match(color, 0x00ff0000, 1) || broken(color_match(color, 0x00000000, 1)),
                 "Got unexpected color %08x at x=446, format %u.\n", color, formats[i]);
 
@@ -28229,6 +28236,39 @@ static void test_managed_reset(void)
     release_test_context(&context);
 }
 
+static void test_managed_generate_mipmap(void)
+{
+    struct d3d9_test_context context;
+    IDirect3DTexture9 *texture;
+    IDirect3DDevice9 *device;
+    HRESULT hr;
+
+    if (!init_test_context(&context))
+        return;
+    device = context.device;
+
+    hr = IDirect3DDevice9_CreateTexture(device, 16, 16, 0, D3DUSAGE_AUTOGENMIPMAP,
+            D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &texture, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    fill_texture(texture, 0x0000ff00, 0);
+
+    IDirect3DTexture9_GenerateMipSubLevels(texture);
+
+    hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff0000, 0.0, 0);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IDirect3DDevice9_SetSamplerState(device, 0, D3DSAMP_MIPFILTER, D3DTEXF_POINT);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IDirect3DDevice9_SetSamplerState(device, 0, D3DSAMP_MAXMIPLEVEL, 1);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    draw_textured_quad(&context, texture);
+    check_rt_color(context.backbuffer, 0x0000ff00);
+
+    IDirect3DTexture9_Release(texture);
+    release_test_context(&context);
+}
+
 START_TEST(visual)
 {
     D3DADAPTER_IDENTIFIER9 identifier;
@@ -28382,4 +28422,5 @@ START_TEST(visual)
     test_dynamic_map_synchronization();
     test_filling_convention();
     test_managed_reset();
+    test_managed_generate_mipmap();
 }
