@@ -959,12 +959,14 @@ static DWORD unicast_addresses_alloc( IP_ADAPTER_ADDRESSES *aa, ULONG family, UL
             {
                 SOCKADDR_IN *in = (SOCKADDR_IN *)addr->Address.lpSockaddr;
                 in->sin_addr = key4->addr;
+                aa->Ipv4Enabled = TRUE;
             }
             else
             {
                 SOCKADDR_IN6 *in6 = (SOCKADDR_IN6 *)addr->Address.lpSockaddr;
                 in6->sin6_addr = key6->addr;
                 in6->sin6_scope_id = dyn[i].scope_id;
+                aa->Ipv6Enabled = TRUE;
             }
             addr->PrefixOrigin = rw[i].prefix_origin;
             addr->SuffixOrigin = rw[i].suffix_origin;
@@ -2599,6 +2601,7 @@ static DWORD get_dns_server_list( const NET_LUID *luid, IP_ADDR_STRING *list, IP
     for (;;)
     {
         err = DnsQueryConfig( DnsConfigDnsServerList, 0, NULL, NULL, servers, &array_len );
+        if (err != ERROR_SUCCESS && err != ERROR_MORE_DATA) goto err;
         num = (array_len - FIELD_OFFSET(IP4_ARRAY, AddrArray[0])) / sizeof(IP4_ADDRESS);
         needed = num * sizeof(IP_ADDR_STRING);
         if (!list || *len < needed)

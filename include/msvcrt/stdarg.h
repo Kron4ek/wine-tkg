@@ -1,5 +1,7 @@
 /*
- * Copyright 2004  Tom Wickline
+ * Variable argument definitions
+ *
+ * Copyright 2022 Jacek Caban
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,12 +18,14 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define WINE_FILEDESCRIPTION_STR "Wine OpenGL Client"
-#define WINE_FILENAME_STR "opengl32.dll"
-#define WINE_FILEVERSION 5,1,2600,2082
-#define WINE_FILEVERSION_STR "5.1.2600.2082"
-#define WINE_LEGALCOPYRIGHT "Copyright (c) 1993-2023 the Wine project. Not Microsoft" /* CATIA needs 'Microsoft' in both CompanyName _and_ LegalCopyright */
-#define WINE_PRODUCTVERSION 5,1,2600,2082
-#define WINE_PRODUCTVERSION_STR "5.1"
+#ifndef _INC_STDARG
+#define _INC_STDARG
 
-#include "wine/wine_common_ver.rc"
+#include <vadefs.h>
+
+#define va_start(v,l)  _crt_va_start(v,l)
+#define va_arg(v,l)    _crt_va_arg(v,l)
+#define va_end(v)      _crt_va_end(v)
+#define va_copy(d,s)   _crt_va_copy(d,s)
+
+#endif /* _INC_STDARG */

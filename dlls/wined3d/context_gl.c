@@ -3062,6 +3062,7 @@ void wined3d_context_gl_copy_bo_address(struct wined3d_context_gl *context_gl,
         const struct wined3d_bo_address *dst, const struct wined3d_bo_address *src,
         unsigned int range_count, const struct wined3d_range *ranges)
 {
+    uint32_t map_flags = WINED3D_MAP_WRITE;
     const struct wined3d_gl_info *gl_info;
     struct wined3d_bo_gl *src_bo, *dst_bo;
     BYTE *dst_ptr, *src_ptr;
@@ -3070,6 +3071,9 @@ void wined3d_context_gl_copy_bo_address(struct wined3d_context_gl *context_gl,
     gl_info = context_gl->gl_info;
     src_bo = src->buffer_object ? wined3d_bo_gl(src->buffer_object) : NULL;
     dst_bo = dst->buffer_object ? wined3d_bo_gl(dst->buffer_object) : NULL;
+
+    if (dst_bo && !dst->addr && !ranges->offset && ranges->size == dst_bo->size)
+        map_flags |= WINED3D_MAP_DISCARD;
 
     if (dst_bo && src_bo)
     {
@@ -3092,7 +3096,7 @@ void wined3d_context_gl_copy_bo_address(struct wined3d_context_gl *context_gl,
             src_ptr = wined3d_context_gl_map_bo_address(context_gl, src,
                     src_bo->size - (uintptr_t)src->addr, WINED3D_MAP_READ);
             dst_ptr = wined3d_context_gl_map_bo_address(context_gl, dst,
-                    dst_bo->size - (uintptr_t)dst->addr, WINED3D_MAP_WRITE);
+                    dst_bo->size - (uintptr_t)dst->addr, map_flags);
 
             for (i = 0; i < range_count; ++i)
                 memcpy(dst_ptr + ranges[i].offset, src_ptr + ranges[i].offset, ranges[i].size);
@@ -3114,14 +3118,23 @@ void wined3d_context_gl_copy_bo_address(struct wined3d_context_gl *context_gl,
     }
     else if (dst_bo && !src_bo)
     {
-        wined3d_context_gl_bind_bo(context_gl, dst_bo->binding, dst_bo->id);
-        for (i = 0; i < range_count; ++i)
-            GL_EXTCALL(glBufferSubData(dst_bo->binding,
-                    dst_bo->b.buffer_offset + (GLintptr)dst->addr + ranges[i].offset,
-                    ranges[i].size, src->addr + ranges[i].offset));
-        checkGLcall("buffer upload");
+        if ((map_flags & WINED3D_MAP_DISCARD) && (dst_bo->flags & GL_MAP_WRITE_BIT))
+        {
+            dst_ptr = wined3d_context_gl_map_bo_address(context_gl, dst, dst_bo->size, map_flags);
+            memcpy(dst_ptr, src->addr, dst_bo->size);
+            wined3d_context_gl_unmap_bo_address(context_gl, dst, range_count, ranges);
+        }
+        else
+        {
+            wined3d_context_gl_bind_bo(context_gl, dst_bo->binding, dst_bo->id);
+            for (i = 0; i < range_count; ++i)
+                GL_EXTCALL(glBufferSubData(dst_bo->binding,
+                        dst_bo->b.buffer_offset + (GLintptr)dst->addr + ranges[i].offset,
+                        ranges[i].size, src->addr + ranges[i].offset));
+            checkGLcall("buffer upload");
 
-        wined3d_context_gl_reference_bo(context_gl, dst_bo);
+            wined3d_context_gl_reference_bo(context_gl, dst_bo);
+        }
     }
     else
     {

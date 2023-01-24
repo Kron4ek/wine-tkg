@@ -4692,8 +4692,8 @@ NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret, U
     else
         return nt_to_unix_file_name_internal( attr, name_ret, disposition );
 
-    name_len = sizeof(dosprefixW) + wcslen(prefix) * sizeof(WCHAR) +
-               nameW->Length - offset * sizeof(WCHAR) + sizeof(WCHAR);
+    name_len = sizeof(dosprefixW) + wcslen(prefix) * sizeof(WCHAR)
+               + sizeof(WCHAR) /* '\\' */ + nameW->Length - offset * sizeof(WCHAR) + sizeof(WCHAR);
     if (!(name = malloc( name_len )))
         return STATUS_NO_MEMORY;
 

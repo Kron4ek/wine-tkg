@@ -2641,7 +2641,9 @@ void signal_init_process(void)
         {
             amd64_thread_data()->fs = fs32_sel = (sel << 3) | 3;
             syscall_flags |= SYSCALL_HAVE_PTHREAD_TEB;
+#ifdef AT_HWCAP2
             if (getauxval( AT_HWCAP2 ) & 2) syscall_flags |= SYSCALL_HAVE_WRFSGSBASE;
+#endif
         }
         else ERR_(seh)( "failed to allocate %%fs selector\n" );
     }
@@ -2927,7 +2929,9 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movq %rdx,0x2e8(%rcx)\n\t"
                    "movq %rdx,0x2f0(%rcx)\n\t"
                    "movq %rdx,0x2f8(%rcx)\n\t"
-                   "xsavec64 0xc0(%rcx)\n\t"
+                   /* The xsavec instruction is not supported by
+                    * binutils < 2.25. */
+                   ".byte 0x48, 0x0f, 0xc7, 0xa1, 0xc0, 0x00, 0x00, 0x00\n\t" /* xsavec64 0xc0(%rcx) */
                    "jmp 3f\n"
                    "1:\txsave64 0xc0(%rcx)\n\t"
                    "jmp 3f\n"

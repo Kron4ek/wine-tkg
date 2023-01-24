@@ -102,6 +102,22 @@ typedef struct
 
     /* IObjectSafety */
     DWORD safeopt;
+
+    /* Properties */
+    DWORD no_prompt;
+    DWORD no_auth;
+    DWORD timeout;
+    BOOL no_headeres;
+    BOOL redirect;
+    BOOL cache;
+    BOOL extended;
+    BOOL query_utf8;
+    BOOL ignore_errors;
+    BOOL threshold;
+    DWORD enterrprised_id;
+    DWORD max_connections;
+
+    ULONGLONG request_body_size;
 } httprequest;
 
 typedef struct
@@ -722,27 +738,40 @@ static HRESULT BindStatusCallback_create(httprequest* This, BindStatusCallback *
         {
         case VT_BSTR:
         {
-            int len = SysStringLen(V_BSTR(body));
-            const WCHAR *str = V_BSTR(body);
-            UINT i, cp = CP_ACP;
+            int len = This->request_body_size ? This->request_body_size : SysStringLen(V_BSTR(body));
 
-            for (i = 0; i < len; i++)
+            if(!This->request_body_size)
             {
-                if (str[i] > 127)
+                const WCHAR *str = V_BSTR(body);
+                UINT i, cp = CP_ACP;
+
+                for (i = 0; i < len; i++)
                 {
-                    cp = CP_UTF8;
-                    break;
+                    if (str[i] > 127)
+                    {
+                        cp = CP_UTF8;
+                        break;
+                    }
                 }
+                size = WideCharToMultiByte(cp, 0, str, len, NULL, 0, NULL, NULL);
+                if (!(ptr = heap_alloc(size)))
+                {
+                    heap_free(bsc);
+                    return E_OUTOFMEMORY;
+                }
+                WideCharToMultiByte(cp, 0, str, len, ptr, size, NULL, NULL);
+                if (cp == CP_UTF8) This->use_utf8_content = TRUE;
             }
-
-            size = WideCharToMultiByte(cp, 0, str, len, NULL, 0, NULL, NULL);
-            if (!(ptr = heap_alloc(size)))
+            else
             {
-                heap_free(bsc);
-                return E_OUTOFMEMORY;
+                size = This->request_body_size;
+                if (!(ptr = heap_alloc(size)))
+                {
+                    heap_free(bsc);
+                    return E_OUTOFMEMORY;
+                }
+                memcpy(ptr, V_BSTR(body), size);
             }
-            WideCharToMultiByte(cp, 0, str, len, ptr, size, NULL, NULL);
-            if (cp == CP_UTF8) This->use_utf8_content = TRUE;
             break;
         }
         case VT_ARRAY|VT_UI1:
@@ -2230,8 +2259,52 @@ static HRESULT WINAPI xml_http_request_2_SetCustomResponseStream(IXMLHTTPRequest
 static HRESULT WINAPI xml_http_request_2_SetProperty(IXMLHTTPRequest3 *iface, XHR_PROPERTY property, ULONGLONG value)
 {
     struct xml_http_request_2 *This = impl_from_IXMLHTTPRequest3(iface);
-    FIXME("(%p)->(%#x %s) stub!\n", This, property, wine_dbgstr_longlong( value ));
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%#x %s) stub!\n", This, property, wine_dbgstr_longlong( value ));
+
+    switch (property)
+    {
+        case XHR_PROP_NO_CRED_PROMPT:
+            This->req.no_prompt = value;
+            break;
+        case XHR_PROP_NO_AUTH:
+            This->req.no_auth = value;
+            break;
+        case XHR_PROP_TIMEOUT:
+            This->req.timeout = value;
+            break;
+        case XHR_PROP_NO_DEFAULT_HEADERS:
+            This->req.no_headeres = value != 0;
+            break;
+        case XHR_PROP_REPORT_REDIRECT_STATUS:
+            This->req.redirect = value != 0;
+            break;
+        case XHR_PROP_NO_CACHE:
+            This->req.cache = value != 0;
+            break;
+        case XHR_PROP_EXTENDED_ERROR:
+            This->req.extended = value != 0;
+            break;
+        case XHR_PROP_QUERY_STRING_UTF8:
+            This->req.query_utf8 = value != 0;
+            break;
+        case XHR_PROP_IGNORE_CERT_ERRORS:
+            This->req.ignore_errors = value != 0;
+            break;
+        case XHR_PROP_ONDATA_THRESHOLD:
+            This->req.threshold = value;
+            break;
+        case XHR_PROP_SET_ENTERPRISEID:
+            This->req.enterrprised_id = value;
+            break;
+        case XHR_PROP_MAX_CONNECTIONS:
+            This->req.max_connections = value;
+            break;
+        default:
+            WARN("Invalid property %#x\n", property);
+            return E_INVALIDARG;
+    }
+    return S_OK;
 }
 
 static HRESULT WINAPI xml_http_request_2_SetRequestHeader(IXMLHTTPRequest3 *iface,
@@ -2266,8 +2339,7 @@ static HRESULT WINAPI xml_http_request_2_GetResponseHeader(IXMLHTTPRequest3 *ifa
 
     TRACE("(%p)->(%s %p)\n", This, debugstr_w(header), value);
 
-    if (FAILED(hr = httprequest_getResponseHeader(&This->req, (BSTR)header, value)))
-        return hr;
+    hr = httprequest_getResponseHeader(&This->req, (BSTR)header, value);
 
 #define E_FILE_NOT_FOUND                                   _HRESULT_TYPEDEF_(0x80070002)
 
@@ -2377,6 +2449,8 @@ static HRESULT WINAPI xml_http_request_2_IRtwqAsyncCallback_Invoke(IRtwqAsyncCal
 
         ISequentialStream_Release(This->request_body);
         This->request_body = NULL;
+
+        This->req.request_body_size = This->request_body_size;
     }
 
     hr = httprequest_send(&This->req, body_v);
@@ -2551,6 +2625,20 @@ static void init_httprequest(httprequest *req)
 
     req->site = NULL;
     req->safeopt = 0;
+
+    /* Properties */
+    req->no_prompt = XHR_CRED_PROMPT_ALL;
+    req->no_auth = XHR_AUTH_ALL;
+    req->timeout = 0xFFFFFFFF;
+    req->no_headeres = FALSE;
+    req->redirect = FALSE;
+    req->cache = FALSE;
+    req->extended = FALSE;
+    req->query_utf8 = FALSE;;
+    req->ignore_errors = FALSE;;
+    req->threshold = 0x100;
+    req->enterrprised_id = 0;
+    req->max_connections = 10;
 }
 
 HRESULT XMLHTTPRequest_create(void **obj)

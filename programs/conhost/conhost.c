@@ -96,6 +96,7 @@ static struct screen_buffer *create_screen_buffer( struct console *console, int 
         screen_buffer->attr       = console->active->attr;
         screen_buffer->popup_attr = console->active->attr;
         screen_buffer->font       = console->active->font;
+        memcpy( screen_buffer->color_map, console->active->color_map, sizeof(console->active->color_map) );
 
         if (screen_buffer->font.face_len)
         {
@@ -2859,9 +2860,18 @@ static int main_loop( struct console *console, HANDLE signal )
     return 0;
 }
 
+static void teardown( struct console *console )
+{
+    if (console->is_unix)
+    {
+        set_tty_attr( console, empty_char_info.attr );
+        tty_flush( console );
+    }
+}
+
 int __cdecl wmain(int argc, WCHAR *argv[])
 {
-    int headless = 0, i, width = 0, height = 0;
+    int headless = 0, i, width = 0, height = 0, ret;
     HANDLE signal = NULL;
     WCHAR *end;
 
@@ -2954,5 +2964,8 @@ int __cdecl wmain(int argc, WCHAR *argv[])
         ShowWindow( console.win, (si.dwFlags & STARTF_USESHOWWINDOW) ? si.wShowWindow : SW_SHOW );
     }
 
-    return main_loop( &console, signal );
+    ret = main_loop( &console, signal );
+    teardown( &console );
+
+    return ret;
 }

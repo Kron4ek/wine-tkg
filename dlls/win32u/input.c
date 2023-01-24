@@ -1624,6 +1624,8 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
 
     }
 
+    user_driver->pSetActiveWindow( hwnd );
+
     /* now change focus if necessary */
     if (focus)
     {

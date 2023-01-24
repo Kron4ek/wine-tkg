@@ -4262,6 +4262,7 @@ image_size_tests[] =
     { &MFVideoFormat_RGB565, 1, 1, 4, 0, 64, 4, 64 },
     { &MFVideoFormat_RGB24, 3, 5, 60, 0, 320, 60, 64 },
     { &MFVideoFormat_RGB24, 1, 1, 4, 0, 64, 4, 64 },
+    { &MFVideoFormat_RGB24, 4, 3, 36, 0, 192, 36, 64 },
     { &MFVideoFormat_RGB32, 3, 5, 60, 0, 320, 60, 64 },
     { &MFVideoFormat_RGB32, 1, 1, 4, 0, 64, 4, 64 },
     { &MFVideoFormat_ARGB32, 3, 5, 60, 0, 320, 60, 64 },
@@ -4278,6 +4279,7 @@ image_size_tests[] =
     { &MEDIASUBTYPE_RGB565, 1, 1, 4  },
     { &MEDIASUBTYPE_RGB24,  3, 5, 60 },
     { &MEDIASUBTYPE_RGB24,  1, 1, 4  },
+    { &MEDIASUBTYPE_RGB24,  4, 3, 36 },
     { &MEDIASUBTYPE_RGB32,  3, 5, 60 },
     { &MEDIASUBTYPE_RGB32,  1, 1, 4  },
 
@@ -4390,7 +4392,9 @@ static void test_MFCalculateImageSize(void)
         hr = MFCalculateImageSize(ptr->subtype, ptr->width, ptr->height, &size);
         todo_wine_if(is_MEDIASUBTYPE_RGB(ptr->subtype) || IsEqualGUID(ptr->subtype, &MFVideoFormat_NV11))
         ok(hr == S_OK || (is_broken && hr == E_INVALIDARG), "%u: failed to calculate image size, hr %#lx.\n", i, hr);
-        todo_wine_if(is_MEDIASUBTYPE_RGB(ptr->subtype) || IsEqualGUID(ptr->subtype, &MFVideoFormat_NV11))
+        todo_wine_if(is_MEDIASUBTYPE_RGB(ptr->subtype)
+                || IsEqualGUID(ptr->subtype, &MFVideoFormat_NV11)
+                || (IsEqualGUID(ptr->subtype, &MFVideoFormat_RGB24) && ptr->width % 4 == 0))
         ok(size == ptr->size, "%u: unexpected image size %u, expected %u. Size %u x %u, format %s.\n", i, size, ptr->size,
                 ptr->width, ptr->height, wine_dbgstr_an((char *)&ptr->subtype->Data1, 4));
     }
@@ -4418,11 +4422,12 @@ static void test_MFGetPlaneSize(void)
         const struct image_size_test *ptr = &image_size_tests[i];
         unsigned int plane_size = ptr->plane_size ? ptr->plane_size : ptr->size;
         if ((is_MEDIASUBTYPE_RGB(ptr->subtype)))
-            plane_size = 0;
+            continue;
 
         hr = pMFGetPlaneSize(ptr->subtype->Data1, ptr->width, ptr->height, &size);
         ok(hr == S_OK, "%u: failed to get plane size, hr %#lx.\n", i, hr);
-        todo_wine_if(IsEqualGUID(ptr->subtype, &MFVideoFormat_NV11))
+        todo_wine_if(IsEqualGUID(ptr->subtype, &MFVideoFormat_NV11)
+                || (IsEqualGUID(ptr->subtype, &MFVideoFormat_RGB24) && ptr->width % 4 == 0))
         ok(size == plane_size, "%u: unexpected plane size %lu, expected %u. Size %u x %u, format %s.\n", i, size, plane_size,
                 ptr->width, ptr->height, wine_dbgstr_an((char*)&ptr->subtype->Data1, 4));
     }
@@ -5739,6 +5744,9 @@ static void test_MFGetStrideForBitmapInfoHeader(void)
         { &MFVideoFormat_IYUV, 2, 2 },
         { &MFVideoFormat_IYUV, 3, 3 },
         { &MFVideoFormat_IYUV, 320, 320 },
+        { &MFVideoFormat_NV11, 1, 1 },
+        { &MFVideoFormat_NV11, 2, 2 },
+        { &MFVideoFormat_NV11, 3, 3 },
     };
     unsigned int i;
     LONG stride;
@@ -5756,7 +5764,9 @@ static void test_MFGetStrideForBitmapInfoHeader(void)
     for (i = 0; i < ARRAY_SIZE(stride_tests); ++i)
     {
         hr = pMFGetStrideForBitmapInfoHeader(stride_tests[i].subtype->Data1, stride_tests[i].width, &stride);
+        todo_wine_if(IsEqualGUID(stride_tests[i].subtype, &MFVideoFormat_NV11))
         ok(hr == S_OK, "%u: failed to get stride, hr %#lx.\n", i, hr);
+        todo_wine_if(IsEqualGUID(stride_tests[i].subtype, &MFVideoFormat_NV11))
         ok(stride == stride_tests[i].stride, "%u: format %s, unexpected stride %ld, expected %ld.\n", i,
                 wine_dbgstr_an((char *)&stride_tests[i].subtype->Data1, 4), stride, stride_tests[i].stride);
     }
@@ -5984,11 +5994,13 @@ static void test_MFCreate2DMediaBuffer(void)
 
         hr = IMF2DBuffer_GetContiguousLength(_2dbuffer, &length);
         ok(hr == S_OK, "Failed to get length, hr %#lx.\n", hr);
+        todo_wine_if(IsEqualGUID(ptr->subtype, &MFVideoFormat_RGB24) && ptr->width % 4 == 0)
         ok(length == ptr->contiguous_length, "%d: unexpected contiguous length %lu for %u x %u, format %s.\n",
                 i, length, ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
 
         hr = IMFMediaBuffer_Lock(buffer, &data, &length2, NULL);
         ok(hr == S_OK, "Failed to lock buffer, hr %#lx.\n", hr);
+        todo_wine_if(IsEqualGUID(ptr->subtype, &MFVideoFormat_RGB24) && ptr->width % 4 == 0)
         ok(length2 == ptr->contiguous_length, "%d: unexpected linear buffer length %lu for %u x %u, format %s.\n",
                 i, length2, ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
 

@@ -258,9 +258,7 @@ static DWORD getPixelColor(IDirect3DDevice9 *device, UINT x, UINT y)
     return ret;
 }
 
-#define check_rt_color(a, b) check_rt_color_(__LINE__, a, b, false)
-#define check_rt_color_todo(a, b) check_rt_color_(__LINE__, a, b, true)
-static void check_rt_color_(unsigned int line, IDirect3DSurface9 *rt, D3DCOLOR expected_color, bool todo)
+static D3DCOLOR check_expected_rt_color(unsigned int line, IDirect3DSurface9 *rt, D3DCOLOR expected_color)
 {
     unsigned int color = 0xdeadbeef;
     struct surface_readback rb;
@@ -284,6 +282,16 @@ static void check_rt_color_(unsigned int line, IDirect3DSurface9 *rt, D3DCOLOR e
             break;
     }
     release_surface_readback(&rb);
+    return color;
+}
+
+#define check_rt_color(a, b) check_rt_color_(__LINE__, a, b, false)
+#define check_rt_color_todo(a, b) check_rt_color_(__LINE__, a, b, true)
+#define check_rt_color_todo_if(a, b, c) check_rt_color_(__LINE__, a, b, c)
+static void check_rt_color_(unsigned int line, IDirect3DSurface9 *rt, D3DCOLOR expected_color, bool todo)
+{
+    unsigned int color = check_expected_rt_color(line, rt, expected_color);
+
     todo_wine_if (todo)
         ok_(__FILE__, line)(color == expected_color, "Got unexpected color 0x%08x.\n", color);
 }
@@ -26968,6 +26976,7 @@ static void test_mismatched_sample_types(void)
 
         colour = getPixelColor(device, 320, 240);
 
+        todo_wine_if(!color_match(colour, tests[i].expected_colour, 1))
         ok(color_match(colour, tests[i].expected_colour, 1)
                 || broken(tests[i].expected_broken && color_match(colour, tests[i].expected_broken, 1))
                 || broken(tests[i].expected_broken2 && color_match(colour, tests[i].expected_broken2, 1)),
@@ -27272,7 +27281,12 @@ static void test_sample_attached_rendertarget(void)
     if (is_warp || color == 0x00010101)
         skip("Sampling attached render targets is not supported.\n");
     else
-        check_rt_color(rt, 0x00c1c1c1);
+    {
+        unsigned int expected_color = 0x00c1c1c1;
+        unsigned int color = check_expected_rt_color(__LINE__, rt, expected_color);
+        todo_wine_if(color != expected_color)
+        ok(color == expected_color, "Got unexpected color 0x%08x.\n", color);
+    }
 
     IDirect3DQuery9_Release(event_query);
 
@@ -28269,6 +28283,78 @@ static void test_managed_generate_mipmap(void)
     release_test_context(&context);
 }
 
+/* Some applications lock a mipmapped texture at level 0, write every level at
+ * once, and expect it to be uploaded. */
+static void test_mipmap_upload(void)
+{
+    unsigned int i, j, width, level_count;
+    struct d3d9_test_context context;
+    IDirect3DTexture9 *texture;
+    D3DLOCKED_RECT locked_rect;
+    IDirect3DDevice9 *device;
+    unsigned int *mem;
+    HRESULT hr;
+
+    static const D3DPOOL pools[] =
+    {
+        D3DPOOL_MANAGED,
+        D3DPOOL_SYSTEMMEM,
+    };
+
+    if (!init_test_context(&context))
+        return;
+    device = context.device;
+
+    for (i = 0; i < ARRAY_SIZE(pools); ++i)
+    {
+        winetest_push_context("pool %#x", pools[i]);
+
+        hr = IDirect3DDevice9_CreateTexture(device, 32, 32, 0, 0,
+                D3DFMT_A8R8G8B8, pools[i], &texture, NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        level_count = IDirect3DBaseTexture9_GetLevelCount(texture);
+
+        hr = IDirect3DTexture9_LockRect(texture, 0, &locked_rect, NULL, 0);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        mem = locked_rect.pBits;
+
+        for (j = 0; j < level_count; ++j)
+        {
+            width = 32 >> j;
+            memset(mem, 0x11 * (j + 1), width * width * 4);
+            mem += width * width;
+        }
+
+        hr = IDirect3DTexture9_UnlockRect(texture, 0);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        for (j = 0; j < level_count; ++j)
+        {
+            winetest_push_context("level %u", j);
+
+            hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff0000, 0.0, 0);
+            ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+            hr = IDirect3DDevice9_SetSamplerState(device, 0, D3DSAMP_MIPFILTER, D3DTEXF_POINT);
+            ok(hr == S_OK, "Got hr %#lx.\n", hr);
+            hr = IDirect3DDevice9_SetSamplerState(device, 0, D3DSAMP_MAXMIPLEVEL, j);
+            ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+            draw_textured_quad(&context, texture);
+            check_rt_color(context.backbuffer, 0x00111111 * (j + 1));
+
+            winetest_pop_context();
+        }
+
+        IDirect3DTexture9_Release(texture);
+
+        winetest_pop_context();
+    }
+    release_test_context(&context);
+}
+
 START_TEST(visual)
 {
     D3DADAPTER_IDENTIFIER9 identifier;
@@ -28423,4 +28509,5 @@ START_TEST(visual)
     test_filling_convention();
     test_managed_reset();
     test_managed_generate_mipmap();
+    test_mipmap_upload();
 }

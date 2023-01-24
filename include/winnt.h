@@ -6084,6 +6084,9 @@ typedef enum _LOGICAL_PROCESSOR_RELATIONSHIP
     RelationCache            = 2,
     RelationProcessorPackage = 3,
     RelationGroup            = 4,
+    RelationProcessorDie     = 5,
+    RelationNumaNodeEx       = 6,
+    RelationProcessorModule  = 7,
     RelationAll              = 0xffff
 } LOGICAL_PROCESSOR_RELATIONSHIP;
 

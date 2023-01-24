@@ -54,10 +54,22 @@ struct parser
 
     struct wg_parser *wg_parser;
 
+    /* This protects the "streaming" and "flushing" fields, accessed by both
+     * the application and streaming threads.
+     * We cannot use the filter lock for this, since that is held while waiting
+     * for the streaming thread, and hence the streaming thread cannot take the
+     * filter lock.
+     * This lock must not be acquired before acquiring the filter lock or
+     * flushing_cs. */
+    CRITICAL_SECTION streaming_cs;
+    CONDITION_VARIABLE flushing_cv;
+
     /* FIXME: It would be nice to avoid duplicating these with strmbase.
      * However, synchronization is tricky; we need access to be protected by a
      * separate lock. */
     bool streaming, sink_connected;
+
+    bool flushing;
 
     HANDLE read_thread;
 
@@ -972,9 +984,22 @@ static DWORD CALLBACK stream_thread(void *arg)
 
     TRACE("Starting streaming thread for pin %p.\n", pin);
 
-    while (filter->streaming)
+    for (;;)
     {
         struct wg_parser_buffer buffer;
+
+        EnterCriticalSection(&filter->streaming_cs);
+
+        while (filter->flushing)
+            SleepConditionVariableCS(&filter->flushing_cv, &filter->streaming_cs, INFINITE);
+
+        if (!filter->streaming)
+        {
+            LeaveCriticalSection(&filter->streaming_cs);
+            break;
+        }
+
+        LeaveCriticalSection(&filter->streaming_cs);
 
         EnterCriticalSection(&pin->flushing_cs);
 
@@ -1095,6 +1120,9 @@ static void parser_destroy(struct strmbase_filter *iface)
 
     wg_parser_destroy(filter->wg_parser);
 
+    filter->streaming_cs.DebugInfo->Spare[0] = 0;
+    DeleteCriticalSection(&filter->streaming_cs);
+
     strmbase_sink_cleanup(&filter->sink);
     strmbase_filter_cleanup(&filter->filter);
     free(filter);
@@ -1167,7 +1195,9 @@ static HRESULT parser_cleanup_stream(struct strmbase_filter *iface)
     if (!filter->sink_connected)
         return S_OK;
 
+    EnterCriticalSection(&filter->streaming_cs);
     filter->streaming = false;
+    LeaveCriticalSection(&filter->streaming_cs);
 
     for (i = 0; i < filter->source_count; ++i)
     {
@@ -1343,28 +1373,38 @@ static HRESULT decodebin_parser_source_get_media_type(struct parser_source *pin,
     return VFW_S_NO_MORE_ITEMS;
 }
 
-static BOOL parser_init_gstreamer(void)
-{
-    if (!init_gstreamer())
-        return FALSE;
-    return TRUE;
-}
-
-HRESULT decodebin_parser_create(IUnknown *outer, IUnknown **out)
+static HRESULT parser_create(enum wg_parser_type type, struct parser **parser)
 {
     struct parser *object;
 
-    if (!parser_init_gstreamer())
+    if (!init_gstreamer())
         return E_FAIL;
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
-    if (!(object->wg_parser = wg_parser_create(WG_PARSER_DECODEBIN, false)))
+    if (!(object->wg_parser = wg_parser_create(type, false)))
     {
         free(object);
         return E_OUTOFMEMORY;
     }
+
+    InitializeCriticalSection(&object->streaming_cs);
+    object->streaming_cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": parser.streaming_cs");
+
+    InitializeConditionVariable(&object->flushing_cv);
+
+    *parser = object;
+    return S_OK;
+}
+
+HRESULT decodebin_parser_create(IUnknown *outer, IUnknown **out)
+{
+    struct parser *object;
+    HRESULT hr;
+
+    if (FAILED(hr = parser_create(WG_PARSER_DECODEBIN, &object)))
+        return hr;
 
     strmbase_filter_init(&object->filter, outer, &CLSID_decodebin_parser, &filter_ops);
     strmbase_sink_init(&object->sink, &object->filter, L"input pin", &sink_ops, NULL);
@@ -1502,8 +1542,13 @@ static HRESULT WINAPI GST_Seeking_SetPositions(IMediaSeeking *iface,
             IAsyncReader_BeginFlush(filter->reader);
     }
 
-    /* Acquire the flushing locks. This blocks the streaming threads, and
-     * ensures the seek is serialized between flushes. */
+    /* Signal the streaming threads to "pause". */
+    EnterCriticalSection(&filter->streaming_cs);
+    filter->flushing = true;
+    LeaveCriticalSection(&filter->streaming_cs);
+
+    /* Acquire the flushing locks, to make sure the streaming threads really
+     * are paused. This ensures the seek is serialized between flushes. */
     for (i = 0; i < filter->source_count; ++i)
     {
         struct parser_source *flush_pin = filter->sources[i];
@@ -1545,6 +1590,12 @@ static HRESULT WINAPI GST_Seeking_SetPositions(IMediaSeeking *iface,
             WakeConditionVariable(&flush_pin->eos_cv);
         }
     }
+
+    /* Signal the streaming threads to resume. */
+    EnterCriticalSection(&filter->streaming_cs);
+    filter->flushing = false;
+    LeaveCriticalSection(&filter->streaming_cs);
+    WakeConditionVariable(&filter->flushing_cv);
 
     return S_OK;
 }
@@ -1881,18 +1932,10 @@ static HRESULT wave_parser_source_get_media_type(struct parser_source *pin,
 HRESULT wave_parser_create(IUnknown *outer, IUnknown **out)
 {
     struct parser *object;
+    HRESULT hr;
 
-    if (!parser_init_gstreamer())
-        return E_FAIL;
-
-    if (!(object = calloc(1, sizeof(*object))))
-        return E_OUTOFMEMORY;
-
-    if (!(object->wg_parser = wg_parser_create(WG_PARSER_WAVPARSE, false)))
-    {
-        free(object);
-        return E_OUTOFMEMORY;
-    }
+    if (FAILED(hr = parser_create(WG_PARSER_WAVPARSE, &object)))
+        return hr;
 
     strmbase_filter_init(&object->filter, outer, &CLSID_WAVEParser, &filter_ops);
     strmbase_sink_init(&object->sink, &object->filter, L"input pin", &wave_parser_sink_ops, NULL);
@@ -1967,18 +2010,10 @@ static HRESULT avi_splitter_source_get_media_type(struct parser_source *pin,
 HRESULT avi_splitter_create(IUnknown *outer, IUnknown **out)
 {
     struct parser *object;
+    HRESULT hr;
 
-    if (!parser_init_gstreamer())
-        return E_FAIL;
-
-    if (!(object = calloc(1, sizeof(*object))))
-        return E_OUTOFMEMORY;
-
-    if (!(object->wg_parser = wg_parser_create(WG_PARSER_AVIDEMUX, false)))
-    {
-        free(object);
-        return E_OUTOFMEMORY;
-    }
+    if (FAILED(hr = parser_create(WG_PARSER_AVIDEMUX, &object)))
+        return hr;
 
     strmbase_filter_init(&object->filter, outer, &CLSID_AviSplitter, &filter_ops);
     strmbase_sink_init(&object->sink, &object->filter, L"input pin", &avi_splitter_sink_ops, NULL);
@@ -2074,18 +2109,10 @@ static const struct strmbase_filter_ops mpeg_splitter_ops =
 HRESULT mpeg_splitter_create(IUnknown *outer, IUnknown **out)
 {
     struct parser *object;
+    HRESULT hr;
 
-    if (!parser_init_gstreamer())
-        return E_FAIL;
-
-    if (!(object = calloc(1, sizeof(*object))))
-        return E_OUTOFMEMORY;
-
-    if (!(object->wg_parser = wg_parser_create(WG_PARSER_MPEGAUDIOPARSE, false)))
-    {
-        free(object);
-        return E_OUTOFMEMORY;
-    }
+    if (FAILED(hr = parser_create(WG_PARSER_MPEGAUDIOPARSE, &object)))
+        return hr;
 
     strmbase_filter_init(&object->filter, outer, &CLSID_MPEG1Splitter, &mpeg_splitter_ops);
     strmbase_sink_init(&object->sink, &object->filter, L"Input", &mpeg_splitter_sink_ops, NULL);

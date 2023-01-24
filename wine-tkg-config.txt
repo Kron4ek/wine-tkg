@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Fri Dec 23 12:59:06 PM UTC 2022 :
+# Last wine-tkg-staging-fsync-git configuration - Tue Jan 24 08:04:41 PM UTC 2023 :
 
 Local cfg files used
 
-Wine (plain) version: 8.0rc2.r0.g2d7d84a65ac
-Using wine-staging patchset (version 8.0rc2.r0.g3a1f2a42)
+Wine (plain) version: 8.0rc5.r0.geb3355bcf80
+Using wine-staging patchset (version 8.0rc5.r0.g8a7297ab)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -16,7 +16,6 @@ CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
 Staging overrides, if any:
 
-use_clock_monotonic.patch -- ( Applied clock_monotonic patch )
 fsync-unix-staging.patch -- ( Applied fsync, an experimental replacement for esync (unix, staging) )
 server_Abort_waiting_on_a_completion_port_when_closing_it.patch -- ( Added Abort waiting on a completion port when closing it Proton patch )
 fsync_futex_waitv.patch -- ( Replace all fsync interfaces with futex_waitv )
@@ -42,5 +41,6 @@ Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
 Applied hotfix a608ef1.mypatch
 Applied hotfix 1148-staging.mypatch
 Applied hotfix opencl-fixup.mypatch
+Applied hotfix nostale_mouse_fix.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )
