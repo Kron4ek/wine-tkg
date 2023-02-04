@@ -1288,7 +1288,7 @@ static inline void fill_texture(const struct pixel_format_desc *format, BYTE *po
         else if (format->type == FORMAT_ARGBF)
             v = *(DWORD *)&comp_value;
         else if (format->type == FORMAT_ARGB)
-            v = comp_value * ((1 << format->bits[c]) - 1) + 0.5f;
+            v = max(comp_value * ((1 << format->bits[c]) - 1) + 0.5f, 0);
         else
             FIXME("Unhandled format type %#x\n", format->type);
 
@@ -1380,12 +1380,6 @@ HRESULT WINAPI D3DXFillTexture(struct IDirect3DTexture9 *texture, LPD3DXFILL2D f
     }
 
     return D3D_OK;
-}
-
-HRESULT WINAPI D3DXFillTextureTX(struct IDirect3DTexture9 *texture, ID3DXTextureShader *texture_shader)
-{
-    FIXME("texture %p, texture_shader %p stub.\n", texture, texture_shader);
-    return E_NOTIMPL;
 }
 
 HRESULT WINAPI D3DXCreateCubeTextureFromFileInMemoryEx(IDirect3DDevice9 *device, const void *src_data,
@@ -1727,12 +1721,6 @@ HRESULT WINAPI D3DXFillCubeTexture(struct IDirect3DCubeTexture9 *texture, LPD3DX
     }
 
     return D3D_OK;
-}
-
-HRESULT WINAPI D3DXFillCubeTextureTX(struct IDirect3DCubeTexture9 *texture, ID3DXTextureShader *texture_shader)
-{
-    FIXME("texture %p, texture_shader %p stub.\n", texture, texture_shader);
-    return E_NOTIMPL;
 }
 
 HRESULT WINAPI D3DXFillVolumeTexture(struct IDirect3DVolumeTexture9 *texture, LPD3DXFILL3D function, void *funcdata)

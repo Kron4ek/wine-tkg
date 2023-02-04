@@ -11184,7 +11184,7 @@ static void LISTVIEW_UpdateSize(LISTVIEW_INFO *infoPtr)
 	    wp.cy = 0;
 	}
 
-	SetWindowPos(wp.hwnd, wp.hwndInsertAfter, wp.x, wp.y, wp.cx, wp.cy, wp.flags);
+	SetWindowPos(infoPtr->hwndHeader, wp.hwndInsertAfter, wp.x, wp.y, wp.cx, wp.cy, wp.flags);
 	TRACE("  after SWP wp=%d,%d (%dx%d)\n", wp.x, wp.y, wp.cx, wp.cy);
 
 	infoPtr->rcList.top = max(wp.cy, 0);
@@ -11212,6 +11212,7 @@ static INT LISTVIEW_StyleChanged(LISTVIEW_INFO *infoPtr, WPARAM wStyleType,
                                  const STYLESTRUCT *lpss)
 {
     UINT uNewView, uOldView;
+    BOOL repaint = FALSE;
     UINT style;
 
     TRACE("styletype %Ix, styleOld %#lx, styleNew %#lx\n",
@@ -11235,6 +11236,8 @@ static INT LISTVIEW_StyleChanged(LISTVIEW_INFO *infoPtr, WPARAM wStyleType,
     if (uNewView != uOldView)
     {
     	HIMAGELIST himl;
+
+        repaint = TRUE;
 
         /* LVM_SETVIEW doesn't change window style bits within LVS_TYPEMASK,
            changing style updates current view only when view bits change. */
@@ -11296,6 +11299,9 @@ static INT LISTVIEW_StyleChanged(LISTVIEW_INFO *infoPtr, WPARAM wStyleType,
 
     /* add scrollbars if needed */
     LISTVIEW_UpdateScroll(infoPtr);
+
+    if (repaint)
+        LISTVIEW_InvalidateList(infoPtr);
 
     return 0;
 }

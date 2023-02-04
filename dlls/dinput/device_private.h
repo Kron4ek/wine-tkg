@@ -36,7 +36,7 @@ typedef struct
 
 struct dinput_device_vtbl
 {
-    void (*release)( IDirectInputDevice8W *iface );
+    void (*destroy)( IDirectInputDevice8W *iface );
     HRESULT (*poll)( IDirectInputDevice8W *iface );
     HRESULT (*read)( IDirectInputDevice8W *iface );
     HRESULT (*acquire)( IDirectInputDevice8W *iface );
@@ -77,12 +77,13 @@ enum device_status
     STATUS_UNPLUGGED,
 };
 
-/* Device implementation */
 struct dinput_device
 {
     IDirectInputDevice8W        IDirectInputDevice8W_iface;
     IDirectInputDevice8A        IDirectInputDevice8A_iface;
+    LONG                        internal_ref;
     LONG                        ref;
+
     GUID                        guid;
     CRITICAL_SECTION            crit;
     struct dinput              *dinput;
@@ -93,9 +94,7 @@ struct dinput_device
     DWORD                       dwCoopLevel;
     HWND                        win;
     enum device_status          status;
-
     BOOL                        use_raw_input; /* use raw input instead of low-level messages */
-    RAWINPUTDEVICE              raw_device;    /* raw device to (un)register */
 
     LPDIDEVICEOBJECTDATA        data_queue;  /* buffer for 'GetDeviceData'.                 */
     int                         queue_len;   /* valid size of the queue                     */
@@ -126,14 +125,14 @@ struct dinput_device
 
 extern void dinput_device_init( struct dinput_device *device, const struct dinput_device_vtbl *vtbl,
                                 const GUID *guid, struct dinput *dinput );
+extern void dinput_device_internal_addref( struct dinput_device *device );
+extern void dinput_device_internal_release( struct dinput_device *device );
+
 extern HRESULT dinput_device_init_device_format( IDirectInputDevice8W *iface );
-extern void dinput_device_destroy( IDirectInputDevice8W *iface );
 
 extern BOOL get_app_key(HKEY*, HKEY*) DECLSPEC_HIDDEN;
 extern DWORD get_config_key( HKEY, HKEY, const WCHAR *, WCHAR *, DWORD ) DECLSPEC_HIDDEN;
 extern BOOL device_instance_is_disabled( DIDEVICEINSTANCEW *instance, BOOL *override ) DECLSPEC_HIDDEN;
-
-/* Routines to do DataFormat / WineFormat conversions */
 extern void queue_event( IDirectInputDevice8W *iface, int inst_id, DWORD data, DWORD time, DWORD seq ) DECLSPEC_HIDDEN;
 
 extern const GUID dinput_pidvid_guid DECLSPEC_HIDDEN;

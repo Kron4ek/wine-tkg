@@ -152,7 +152,7 @@ extern DWORD stretch_bits( const BITMAPINFO *src_info, struct bitblt_coords *src
 extern void get_mono_dc_colors( DC *dc, int color_table_size, BITMAPINFO *info, int count ) DECLSPEC_HIDDEN;
 
 /* brush.c */
-extern HBRUSH create_brush( const LOGBRUSH *brush );
+extern HBRUSH create_brush( const LOGBRUSH *brush ) DECLSPEC_HIDDEN;
 extern BOOL store_brush_pattern( LOGBRUSH *brush, struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern void free_brush_pattern( struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 
@@ -160,7 +160,7 @@ extern void free_brush_pattern( struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern BOOL clip_device_rect( DC *dc, RECT *dst, const RECT *src ) DECLSPEC_HIDDEN;
 extern BOOL clip_visrect( DC *dc, RECT *dst, const RECT *src ) DECLSPEC_HIDDEN;
 extern void set_visible_region( HDC hdc, HRGN hrgn, const RECT *vis_rect,
-                                const RECT *device_rect, struct window_surface *surface );
+                                const RECT *device_rect, struct window_surface *surface ) DECLSPEC_HIDDEN;
 extern void update_dc_clipping( DC * dc ) DECLSPEC_HIDDEN;
 
 /* Return the total DC region (if any) */

@@ -131,6 +131,7 @@
     SYSCALL_ENTRY( NtUserDrawIconEx ) \
     SYSCALL_ENTRY( NtUserEmptyClipboard ) \
     SYSCALL_ENTRY( NtUserEnableMenuItem ) \
+    SYSCALL_ENTRY( NtUserEnableMouseInPointer ) \
     SYSCALL_ENTRY( NtUserEnableScrollBar ) \
     SYSCALL_ENTRY( NtUserEndDeferWindowPosEx ) \
     SYSCALL_ENTRY( NtUserEndMenu ) \
@@ -178,6 +179,7 @@
     SYSCALL_ENTRY( NtUserGetMouseMovePointsEx ) \
     SYSCALL_ENTRY( NtUserGetObjectInformation ) \
     SYSCALL_ENTRY( NtUserGetOpenClipboardWindow ) \
+    SYSCALL_ENTRY( NtUserGetPointerInfoList ) \
     SYSCALL_ENTRY( NtUserGetPriorityClipboardFormat ) \
     SYSCALL_ENTRY( NtUserGetProcessDpiAwarenessContext ) \
     SYSCALL_ENTRY( NtUserGetProcessWindowStation ) \
@@ -207,6 +209,7 @@
     SYSCALL_ENTRY( NtUserInvalidateRect ) \
     SYSCALL_ENTRY( NtUserInvalidateRgn ) \
     SYSCALL_ENTRY( NtUserIsClipboardFormatAvailable ) \
+    SYSCALL_ENTRY( NtUserIsMouseInPointerEnabled ) \
     SYSCALL_ENTRY( NtUserKillTimer ) \
     SYSCALL_ENTRY( NtUserLockWindowUpdate ) \
     SYSCALL_ENTRY( NtUserLogicalToPerMonitorDPIPhysicalPoint ) \

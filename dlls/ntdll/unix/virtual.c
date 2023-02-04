@@ -1253,16 +1253,6 @@ static inline BOOL is_write_watch_range( const void *addr, size_t size )
 
 
 /***********************************************************************
- *           is_system_range
- */
-static inline BOOL is_system_range( const void *addr, size_t size )
-{
-    struct file_view *view = find_view( addr, size );
-    return view && (view->protect & VPROT_SYSTEM);
-}
-
-
-/***********************************************************************
  *           find_view_range
  *
  * Find the first view overlapping at least part of the specified range.
@@ -3573,19 +3563,6 @@ NTSTATUS virtual_handle_fault( void *addr, DWORD err, void *stack )
         }
         /* ignore fault if page is writable now */
         if (get_unix_prot( get_page_vprot( page ) ) & PROT_WRITE) ret = STATUS_SUCCESS;
-    }
-    else if (!err && (get_unix_prot( vprot ) & PROT_READ) && is_system_range( page, page_size ))
-    {
-        int unix_prot = get_unix_prot( vprot );
-        unsigned char vec;
-
-        mprotect_range( page, page_size, 0, 0 );
-        if (!mincore( page, page_size, &vec ) && (vec & 1))
-            ret = STATUS_SUCCESS;
-        else if (anon_mmap_fixed( page, page_size, unix_prot, 0 ) == page)
-            ret = STATUS_SUCCESS;
-        else
-            set_page_vprot_bits( page, page_size, 0, VPROT_READ | VPROT_EXEC );
     }
     mutex_unlock( &virtual_mutex );
     return ret;

@@ -18,6 +18,7 @@
 #define COBJMACROS
 #include <stdarg.h>
 
+#include "corerror.h"
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
@@ -1619,6 +1620,7 @@ static void test_Recognition(void)
     struct iterator_hstring iterator_hstring;
     struct iterable_hstring iterable_hstring;
     EventRegistrationToken token = { .value = 0 };
+    SpeechRecognizerState recog_state;
     HSTRING commands[3], hstr, tag;
     HANDLE put_thread;
     LONG ref, old_ref;
@@ -1717,6 +1719,11 @@ static void test_Recognition(void)
     ok(hr == S_OK, "ISpeechContinuousRecognitionSession_add_ResultGenerated failed, hr %#lx.\n", hr);
     ok(token.value != 0xdeadbeef, "Got unexpexted token: %#I64x.\n", token.value);
 
+    recog_state = 0xdeadbeef;
+    hr = ISpeechRecognizer2_get_State(recognizer2, &recog_state);
+    ok(hr == S_OK, "ISpeechRecognizer2_get_State failed, hr %#lx.\n", hr);
+    ok(recog_state == SpeechRecognizerState_Idle, "recog_state was %u.\n", recog_state);
+
     hr = ISpeechRecognizer_CompileConstraintsAsync(recognizer, &operation);
     ok(hr == S_OK, "ISpeechRecognizer_CompileConstraintsAsync failed, hr %#lx.\n", hr);
     await_async_inspectable((IAsyncOperation_IInspectable *)operation,
@@ -1734,6 +1741,11 @@ static void test_Recognition(void)
     ok(handler == NULL, "Handler was %p.\n", handler);
 
     await_async_void(action, &action_handler);
+
+    action2 = (void *)0xdeadbeef;
+    hr = ISpeechContinuousRecognitionSession_StartAsync(session, &action2);
+    ok(hr == COR_E_INVALIDOPERATION, "ISpeechContinuousRecognitionSession_StartAsync failed, hr %#lx.\n", hr);
+    ok(action2 == NULL, "action2 was %p.\n", action2);
 
     hr = IAsyncAction_QueryInterface(action, &IID_IAsyncInfo, (void **)&info);
     ok(hr == S_OK, "IAsyncAction_QueryInterface failed, hr %#lx.\n", hr);
@@ -1757,14 +1769,48 @@ static void test_Recognition(void)
 
     IAsyncInfo_Release(info);
 
+    recog_state = 0xdeadbeef;
+    hr = ISpeechRecognizer2_get_State(recognizer2, &recog_state);
+    ok(hr == S_OK, "ISpeechRecognizer2_get_State failed, hr %#lx.\n", hr);
+    ok(recog_state == SpeechRecognizerState_Capturing, "recog_state was %u.\n", recog_state);
+
     /*
      * TODO: Use a loopback device together with prerecorded audio files to test the recognizer's functionality.
      */
 
-    hr = ISpeechContinuousRecognitionSession_StopAsync(session, &action2);
-    todo_wine ok(hr == S_OK, "ISpeechContinuousRecognitionSession_StopAsync failed, hr %#lx.\n", hr);
+    hr = ISpeechContinuousRecognitionSession_PauseAsync(session, &action2);
+    ok(hr == S_OK, "ISpeechContinuousRecognitionSession_PauseAsync failed, hr %#lx.\n", hr);
+    await_async_void(action2, &action_handler);
+    check_async_info((IInspectable *)action2, 3, Completed, S_OK);
+    IAsyncAction_Release(action2);
 
-    if (FAILED(hr)) goto skip_action;
+    recog_state = 0xdeadbeef;
+    hr = ISpeechRecognizer2_get_State(recognizer2, &recog_state);
+    ok(hr == S_OK, "ISpeechRecognizer2_get_State failed, hr %#lx.\n", hr);
+    ok(recog_state == SpeechRecognizerState_Paused ||
+       broken(recog_state == SpeechRecognizerState_Capturing) /* Broken on Win10 1507 */, "recog_state was %u.\n", recog_state);
+
+    /* Check what happens if we try to pause again, when the session is already paused. */
+    hr = ISpeechContinuousRecognitionSession_PauseAsync(session, &action2);
+    ok(hr == S_OK, "ISpeechContinuousRecognitionSession_PauseAsync failed, hr %#lx.\n", hr);
+    await_async_void(action2, &action_handler);
+    check_async_info((IInspectable *)action2, 4, Completed, S_OK);
+    IAsyncAction_Release(action2);
+
+    hr = ISpeechContinuousRecognitionSession_Resume(session);
+    ok(hr == S_OK, "ISpeechContinuousRecognitionSession_Resume failed, hr %#lx.\n", hr);
+
+    /* Resume when already resumed. */
+    hr = ISpeechContinuousRecognitionSession_Resume(session);
+    ok(hr == S_OK, "ISpeechContinuousRecognitionSession_Resume failed, hr %#lx.\n", hr);
+
+    recog_state = 0xdeadbeef;
+    hr = ISpeechRecognizer2_get_State(recognizer2, &recog_state);
+    ok(hr == S_OK, "ISpeechRecognizer2_get_State failed, hr %#lx.\n", hr);
+    ok(recog_state == SpeechRecognizerState_Capturing, "recog_state was %u.\n", recog_state);
+
+    hr = ISpeechContinuousRecognitionSession_StopAsync(session, &action2);
+    ok(hr == S_OK, "ISpeechContinuousRecognitionSession_StopAsync failed, hr %#lx.\n", hr);
 
     async_void_handler_create_static(&action_handler);
     action_handler.event_block = CreateEventW(NULL, FALSE, FALSE, NULL);
@@ -1776,40 +1822,92 @@ static void test_Recognition(void)
     put_param.handler = &action_handler.IAsyncActionCompletedHandler_iface;
     put_param.action = action2;
     put_thread = CreateThread(NULL, 0, action_put_completed_thread, &put_param, 0, NULL);
-    todo_wine ok(!WaitForSingleObject(action_handler.event_finished , 5000), "Wait for event_finished failed.\n");
+    ok(!WaitForSingleObject(action_handler.event_finished , 5000), "Wait for event_finished failed.\n");
 
     handler = (void *)0xdeadbeef;
     old_ref = action_handler.ref;
     hr = IAsyncAction_get_Completed(action2, &handler);
-    todo_wine ok(hr == S_OK, "IAsyncAction_get_Completed failed, hr %#lx.\n", hr);
+    ok(hr == S_OK, "IAsyncAction_get_Completed failed, hr %#lx.\n", hr);
 
-    todo_wine ok(handler == &action_handler.IAsyncActionCompletedHandler_iface || /* Broken on 1507. */
-                            broken(handler != NULL && handler != (void *)0xdeadbeef), "Handler was %p.\n", handler);
+    todo_wine ok(handler == &action_handler.IAsyncActionCompletedHandler_iface, "Handler was %p.\n", handler);
 
     ref = action_handler.ref - old_ref;
     todo_wine ok(ref == 1, "The ref was increased by %lu.\n", ref);
-    IAsyncActionCompletedHandler_Release(handler);
+    if (handler) IAsyncActionCompletedHandler_Release(handler);
 
     hr = IAsyncAction_QueryInterface(action2, &IID_IAsyncInfo, (void **)&info);
-    todo_wine ok(hr == S_OK, "IAsyncAction_QueryInterface failed, hr %#lx.\n", hr);
+    ok(hr == S_OK, "IAsyncAction_QueryInterface failed, hr %#lx.\n", hr);
 
     hr = IAsyncInfo_Close(info); /* If IAsyncInfo_Close would wait for the handler to finish, the test would get stuck here. */
-    todo_wine ok(hr == S_OK, "IAsyncInfo_Close failed, hr %#lx.\n", hr);
-    check_async_info((IInspectable *)action2, 3, AsyncStatus_Closed, S_OK);
+    ok(hr == S_OK, "IAsyncInfo_Close failed, hr %#lx.\n", hr);
+    check_async_info((IInspectable *)action2, 5, AsyncStatus_Closed, S_OK);
 
     set = SetEvent(action_handler.event_block);
-    todo_wine ok(set == TRUE, "Event 'event_block' wasn't set.\n");
-    todo_wine ok(!WaitForSingleObject(put_thread , 1000), "Wait for put_thread failed.\n");
+    ok(set == TRUE, "Event 'event_block' wasn't set.\n");
+    ok(!WaitForSingleObject(put_thread, 1000), "Wait for put_thread failed.\n");
     IAsyncInfo_Release(info);
 
     CloseHandle(action_handler.event_finished);
     CloseHandle(action_handler.event_block);
     CloseHandle(put_thread);
 
-    todo_wine ok(action != action2, "actions were the same!\n");
+    ok(action != action2, "actions were the same!\n");
 
     IAsyncAction_Release(action2);
-skip_action:
+    IAsyncAction_Release(action);
+
+    recog_state = 0xdeadbeef;
+    hr = ISpeechRecognizer2_get_State(recognizer2, &recog_state);
+    ok(hr == S_OK, "ISpeechRecognizer2_get_State failed, hr %#lx.\n", hr);
+    ok(recog_state == SpeechRecognizerState_Idle, "recog_state was %u.\n", recog_state);
+
+    /* Try stopping, when already stopped. */
+    hr = ISpeechContinuousRecognitionSession_StopAsync(session, &action);
+    ok(hr == COR_E_INVALIDOPERATION, "ISpeechContinuousRecognitionSession_StopAsync failed, hr %#lx.\n", hr);
+    ok(action == NULL, "action was %p.\n", action);
+
+    /* Test, if Start/StopAsync resets the pause state. */
+    hr = ISpeechContinuousRecognitionSession_StartAsync(session, &action);
+    ok(hr == S_OK, "ISpeechContinuousRecognitionSession_StartAsync failed, hr %#lx.\n", hr);
+    await_async_void(action, &action_handler);
+    IAsyncAction_Release(action);
+
+    hr = ISpeechContinuousRecognitionSession_PauseAsync(session, &action);
+    ok(hr == S_OK, "ISpeechContinuousRecognitionSession_PauseAsync failed, hr %#lx.\n", hr);
+    await_async_void(action, &action_handler);
+    IAsyncAction_Release(action);
+
+    recog_state = 0xdeadbeef;
+    hr = ISpeechRecognizer2_get_State(recognizer2, &recog_state);
+    ok(hr == S_OK, "ISpeechRecognizer2_get_State failed, hr %#lx.\n", hr);
+    ok(recog_state == SpeechRecognizerState_Paused ||
+       broken(recog_state == SpeechRecognizerState_Capturing) /* Broken on Win10 1507 */, "recog_state was %u.\n", recog_state);
+
+    hr = ISpeechContinuousRecognitionSession_StopAsync(session, &action);
+    ok(hr == S_OK, "ISpeechContinuousRecognitionSession_PauseAsync failed, hr %#lx.\n", hr);
+    await_async_void(action, &action_handler);
+    IAsyncAction_Release(action);
+
+    recog_state = 0xdeadbeef;
+    hr = ISpeechRecognizer2_get_State(recognizer2, &recog_state);
+    ok(hr == S_OK, "ISpeechRecognizer2_get_State failed, hr %#lx.\n", hr);
+    ok(recog_state == SpeechRecognizerState_Idle, "recog_state was %u.\n", recog_state);
+
+    hr = ISpeechContinuousRecognitionSession_StartAsync(session, &action);
+    ok(hr == S_OK, "ISpeechContinuousRecognitionSession_PauseAsync failed, hr %#lx.\n", hr);
+    await_async_void(action, &action_handler);
+    IAsyncAction_Release(action);
+
+    recog_state = 0xdeadbeef;
+    hr = ISpeechRecognizer2_get_State(recognizer2, &recog_state);
+    ok(hr == S_OK, "ISpeechRecognizer2_get_State failed, hr %#lx.\n", hr);
+    ok(recog_state == SpeechRecognizerState_Capturing
+       || broken(recog_state == SpeechRecognizerState_Idle) /* Sometimes Windows is a little behind. */,
+       "recog_state was %u.\n", recog_state);
+
+    hr = ISpeechContinuousRecognitionSession_StopAsync(session, &action);
+    ok(hr == S_OK, "ISpeechContinuousRecognitionSession_PauseAsync failed, hr %#lx.\n", hr);
+    await_async_void(action, &action_handler);
     IAsyncAction_Release(action);
 
     hr = ISpeechContinuousRecognitionSession_remove_ResultGenerated(session, token);

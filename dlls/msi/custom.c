@@ -43,27 +43,27 @@ WINE_DEFAULT_DEBUG_CHANNEL(msi);
 
 #define CUSTOM_ACTION_TYPE_MASK 0x3F
 
-typedef struct tagMSIRUNNINGACTION
+struct running_action
 {
     struct list entry;
     HANDLE handle;
     BOOL   process;
     LPWSTR name;
-} MSIRUNNINGACTION;
+};
 
 typedef UINT (WINAPI *MsiCustomActionEntryPoint)( MSIHANDLE );
 
-static CRITICAL_SECTION msi_custom_action_cs;
-static CRITICAL_SECTION_DEBUG msi_custom_action_cs_debug =
+static CRITICAL_SECTION custom_action_cs;
+static CRITICAL_SECTION_DEBUG custom_action_cs_debug =
 {
-    0, 0, &msi_custom_action_cs,
-    { &msi_custom_action_cs_debug.ProcessLocksList,
-      &msi_custom_action_cs_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": msi_custom_action_cs") }
+    0, 0, &custom_action_cs,
+    { &custom_action_cs_debug.ProcessLocksList,
+      &custom_action_cs_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": custom_action_cs") }
 };
-static CRITICAL_SECTION msi_custom_action_cs = { &msi_custom_action_cs_debug, -1, 0, 0, 0, 0 };
+static CRITICAL_SECTION custom_action_cs = { &custom_action_cs_debug, -1, 0, 0, 0, 0 };
 
-static struct list msi_pending_custom_actions = LIST_INIT( msi_pending_custom_actions );
+static struct list pending_custom_actions = LIST_INIT( pending_custom_actions );
 
 void  __RPC_FAR * __RPC_USER MIDL_user_allocate(SIZE_T len)
 {
@@ -171,8 +171,8 @@ static BOOL check_execution_scheduling_options(MSIPACKAGE *package, LPCWSTR acti
  *
  *    [CustomActionData<=>UserSID<=>ProductCode]Action
  */
-static LPWSTR msi_get_deferred_action(LPCWSTR action, LPCWSTR actiondata,
-                                      LPCWSTR usersid, LPCWSTR prodcode)
+static WCHAR *get_deferred_action(const WCHAR *action, const WCHAR *actiondata, const WCHAR *usersid,
+                                  const WCHAR *prodcode)
 {
     LPWSTR deferred;
     DWORD len;
@@ -298,9 +298,9 @@ static MSIBINARY *get_temp_binary(MSIPACKAGE *package, LPCWSTR source)
 static void file_running_action(MSIPACKAGE* package, HANDLE Handle,
                                 BOOL process, LPCWSTR name)
 {
-    MSIRUNNINGACTION *action;
+    struct running_action *action;
 
-    action = malloc( sizeof(MSIRUNNINGACTION) );
+    action = malloc( sizeof(*action) );
 
     action->handle = Handle;
     action->process = process;
@@ -373,7 +373,8 @@ static UINT wait_process_handle(MSIPACKAGE* package, UINT type,
     return rc;
 }
 
-typedef struct _msi_custom_action_info {
+typedef struct
+{
     struct list entry;
     MSIPACKAGE *package;
     LPWSTR source;
@@ -383,11 +384,11 @@ typedef struct _msi_custom_action_info {
     INT type;
     GUID guid;
     DWORD arch;
-} msi_custom_action_info;
+} custom_action_info;
 
-static void free_custom_action_data( msi_custom_action_info *info )
+static void free_custom_action_data( custom_action_info *info )
 {
-    EnterCriticalSection( &msi_custom_action_cs );
+    EnterCriticalSection( &custom_action_cs );
 
     list_remove( &info->entry );
     if (info->handle)
@@ -398,10 +399,10 @@ static void free_custom_action_data( msi_custom_action_info *info )
     msiobj_release( &info->package->hdr );
     free( info );
 
-    LeaveCriticalSection( &msi_custom_action_cs );
+    LeaveCriticalSection( &custom_action_cs );
 }
 
-static UINT wait_thread_handle( msi_custom_action_info *info )
+static UINT wait_thread_handle( custom_action_info *info )
 {
     UINT rc = ERROR_SUCCESS;
 
@@ -424,14 +425,14 @@ static UINT wait_thread_handle( msi_custom_action_info *info )
     return rc;
 }
 
-static msi_custom_action_info *find_action_by_guid( const GUID *guid )
+static custom_action_info *find_action_by_guid( const GUID *guid )
 {
-    msi_custom_action_info *info;
+    custom_action_info *info;
     BOOL found = FALSE;
 
-    EnterCriticalSection( &msi_custom_action_cs );
+    EnterCriticalSection( &custom_action_cs );
 
-    LIST_FOR_EACH_ENTRY( info, &msi_pending_custom_actions, msi_custom_action_info, entry )
+    LIST_FOR_EACH_ENTRY( info, &pending_custom_actions, custom_action_info, entry )
     {
         if (IsEqualGUID( &info->guid, guid ))
         {
@@ -440,7 +441,7 @@ static msi_custom_action_info *find_action_by_guid( const GUID *guid )
         }
     }
 
-    LeaveCriticalSection( &msi_custom_action_cs );
+    LeaveCriticalSection( &custom_action_cs );
 
     if (!found)
         return NULL;
@@ -662,7 +663,7 @@ void custom_stop_server(HANDLE process, HANDLE pipe)
 
 static DWORD WINAPI custom_client_thread(void *arg)
 {
-    msi_custom_action_info *info = arg;
+    custom_action_info *info = arg;
     DWORD64 thread64;
     HANDLE process;
     HANDLE thread;
@@ -683,23 +684,23 @@ static DWORD WINAPI custom_client_thread(void *arg)
         pipe = info->package->custom_server_64_pipe;
     }
 
-    EnterCriticalSection(&msi_custom_action_cs);
+    EnterCriticalSection(&custom_action_cs);
 
     if (!WriteFile(pipe, &info->guid, sizeof(info->guid), &size, NULL) ||
         size != sizeof(info->guid))
     {
         ERR("failed to write to custom action client pipe: %lu\n", GetLastError());
-        LeaveCriticalSection(&msi_custom_action_cs);
+        LeaveCriticalSection(&custom_action_cs);
         return GetLastError();
     }
     if (!ReadFile(pipe, &thread64, sizeof(thread64), &size, NULL) || size != sizeof(thread64))
     {
         ERR("failed to read from custom action client pipe: %lu\n", GetLastError());
-        LeaveCriticalSection(&msi_custom_action_cs);
+        LeaveCriticalSection(&custom_action_cs);
         return GetLastError();
     }
 
-    LeaveCriticalSection(&msi_custom_action_cs);
+    LeaveCriticalSection(&custom_action_cs);
 
     if (DuplicateHandle(process, (HANDLE)(DWORD_PTR)thread64, GetCurrentProcess(),
         &thread, 0, FALSE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE))
@@ -760,10 +761,10 @@ static BOOL get_binary_type( const WCHAR *name, DWORD *type )
     }
 }
 
-static msi_custom_action_info *do_msidbCustomActionTypeDll(
+static custom_action_info *do_msidbCustomActionTypeDll(
     MSIPACKAGE *package, INT type, LPCWSTR source, LPCWSTR target, LPCWSTR action )
 {
-    msi_custom_action_info *info;
+    custom_action_info *info;
     RPC_STATUS status;
     BOOL ret;
 
@@ -779,9 +780,9 @@ static msi_custom_action_info *do_msidbCustomActionTypeDll(
     info->action = wcsdup( action );
     CoCreateGuid( &info->guid );
 
-    EnterCriticalSection( &msi_custom_action_cs );
-    list_add_tail( &msi_pending_custom_actions, &info->entry );
-    LeaveCriticalSection( &msi_custom_action_cs );
+    EnterCriticalSection( &custom_action_cs );
+    list_add_tail( &pending_custom_actions, &info->entry );
+    LeaveCriticalSection( &custom_action_cs );
 
     if (!package->rpc_server_started)
     {
@@ -833,7 +834,7 @@ static msi_custom_action_info *do_msidbCustomActionTypeDll(
 static UINT HANDLE_CustomType1( MSIPACKAGE *package, const WCHAR *source, const WCHAR *target,
                                 INT type, const WCHAR *action )
 {
-    msi_custom_action_info *info;
+    custom_action_info *info;
     MSIBINARY *binary;
 
     if (!(binary = get_temp_binary(package, source)))
@@ -935,7 +936,7 @@ static UINT HANDLE_CustomType2( MSIPACKAGE *package, const WCHAR *source, const 
 static UINT HANDLE_CustomType17( MSIPACKAGE *package, const WCHAR *source, const WCHAR *target,
                                  INT type, const WCHAR *action )
 {
-    msi_custom_action_info *info;
+    custom_action_info *info;
     MSIFILE *file;
 
     TRACE("%s %s\n", debugstr_w(source), debugstr_w(target));
@@ -1168,7 +1169,7 @@ static UINT HANDLE_CustomType34( MSIPACKAGE *package, const WCHAR *source, const
 
 static DWORD ACTION_CallScript( const GUID *guid )
 {
-    msi_custom_action_info *info;
+    custom_action_info *info;
     MSIHANDLE hPackage;
     UINT r = ERROR_FUNCTION_FAILED;
 
@@ -1209,10 +1210,10 @@ static DWORD WINAPI ScriptThread( LPVOID arg )
     return rc;
 }
 
-static msi_custom_action_info *do_msidbCustomActionTypeScript(
+static custom_action_info *do_msidbCustomActionTypeScript(
     MSIPACKAGE *package, INT type, LPCWSTR script, LPCWSTR function, LPCWSTR action )
 {
-    msi_custom_action_info *info;
+    custom_action_info *info;
 
     info = malloc( sizeof *info );
     if (!info)
@@ -1226,9 +1227,9 @@ static msi_custom_action_info *do_msidbCustomActionTypeScript(
     info->action = wcsdup( action );
     CoCreateGuid( &info->guid );
 
-    EnterCriticalSection( &msi_custom_action_cs );
-    list_add_tail( &msi_pending_custom_actions, &info->entry );
-    LeaveCriticalSection( &msi_custom_action_cs );
+    EnterCriticalSection( &custom_action_cs );
+    list_add_tail( &pending_custom_actions, &info->entry );
+    LeaveCriticalSection( &custom_action_cs );
 
     info->handle = CreateThread( NULL, 0, ScriptThread, &info->guid, 0, NULL );
     if (!info->handle)
@@ -1243,7 +1244,7 @@ static msi_custom_action_info *do_msidbCustomActionTypeScript(
 static UINT HANDLE_CustomType37_38( MSIPACKAGE *package, const WCHAR *source, const WCHAR *target,
                                     INT type, const WCHAR *action )
 {
-    msi_custom_action_info *info;
+    custom_action_info *info;
 
     TRACE("%s %s\n", debugstr_w(source), debugstr_w(target));
 
@@ -1255,7 +1256,7 @@ static UINT HANDLE_CustomType5_6( MSIPACKAGE *package, const WCHAR *source, cons
                                   INT type, const WCHAR *action )
 {
     MSIRECORD *row = NULL;
-    msi_custom_action_info *info;
+    custom_action_info *info;
     CHAR *buffer = NULL;
     WCHAR *bufferw = NULL;
     DWORD sz = 0;
@@ -1302,7 +1303,7 @@ done:
 static UINT HANDLE_CustomType21_22( MSIPACKAGE *package, const WCHAR *source, const WCHAR *target,
                                     INT type, const WCHAR *action )
 {
-    msi_custom_action_info *info;
+    custom_action_info *info;
     MSIFILE *file;
     HANDLE hFile;
     DWORD sz, szHighWord = 0, read;
@@ -1361,7 +1362,7 @@ done:
 static UINT HANDLE_CustomType53_54( MSIPACKAGE *package, const WCHAR *source, const WCHAR *target,
                                     INT type, const WCHAR *action )
 {
-    msi_custom_action_info *info;
+    custom_action_info *info;
     WCHAR *prop;
 
     TRACE("%s %s\n", debugstr_w(source), debugstr_w(target));
@@ -1397,7 +1398,7 @@ static UINT defer_custom_action( MSIPACKAGE *package, const WCHAR *action, UINT 
     WCHAR *actiondata = msi_dup_property( package->db, action );
     WCHAR *usersid = msi_dup_property( package->db, L"UserSID" );
     WCHAR *prodcode = msi_dup_property( package->db, L"ProductCode" );
-    WCHAR *deferred = msi_get_deferred_action( action, actiondata, usersid, prodcode );
+    WCHAR *deferred = get_deferred_action( action, actiondata, usersid, prodcode );
 
     if (!deferred)
     {
@@ -1578,11 +1579,11 @@ void ACTION_FinishCustomActions(const MSIPACKAGE* package)
     struct list *item;
     HANDLE *wait_handles;
     unsigned int handle_count, i;
-    msi_custom_action_info *info, *cursor;
+    custom_action_info *info, *cursor;
 
     while ((item = list_head( &package->RunningActions )))
     {
-        MSIRUNNINGACTION *action = LIST_ENTRY( item, MSIRUNNINGACTION, entry );
+        struct running_action *action = LIST_ENTRY( item, struct running_action, entry );
 
         list_remove( &action->entry );
 
@@ -1594,13 +1595,13 @@ void ACTION_FinishCustomActions(const MSIPACKAGE* package)
         free( action );
     }
 
-    EnterCriticalSection( &msi_custom_action_cs );
+    EnterCriticalSection( &custom_action_cs );
 
-    handle_count = list_count( &msi_pending_custom_actions );
+    handle_count = list_count( &pending_custom_actions );
     wait_handles = malloc( handle_count * sizeof(HANDLE) );
 
     handle_count = 0;
-    LIST_FOR_EACH_ENTRY_SAFE( info, cursor, &msi_pending_custom_actions, msi_custom_action_info, entry )
+    LIST_FOR_EACH_ENTRY_SAFE( info, cursor, &pending_custom_actions, custom_action_info, entry )
     {
         if (info->package == package )
         {
@@ -1609,7 +1610,7 @@ void ACTION_FinishCustomActions(const MSIPACKAGE* package)
         }
     }
 
-    LeaveCriticalSection( &msi_custom_action_cs );
+    LeaveCriticalSection( &custom_action_cs );
 
     for (i = 0; i < handle_count; i++)
     {
@@ -1618,18 +1619,18 @@ void ACTION_FinishCustomActions(const MSIPACKAGE* package)
     }
     free( wait_handles );
 
-    EnterCriticalSection( &msi_custom_action_cs );
-    LIST_FOR_EACH_ENTRY_SAFE( info, cursor, &msi_pending_custom_actions, msi_custom_action_info, entry )
+    EnterCriticalSection( &custom_action_cs );
+    LIST_FOR_EACH_ENTRY_SAFE( info, cursor, &pending_custom_actions, custom_action_info, entry )
     {
         if (info->package == package)
             free_custom_action_data( info );
     }
-    LeaveCriticalSection( &msi_custom_action_cs );
+    LeaveCriticalSection( &custom_action_cs );
 }
 
 UINT __cdecl s_remote_GetActionInfo(const GUID *guid, WCHAR **name, int *type, WCHAR **dll, char **func, MSIHANDLE *hinst)
 {
-    msi_custom_action_info *info;
+    custom_action_info *info;
 
     info = find_action_by_guid(guid);
     if (!info)

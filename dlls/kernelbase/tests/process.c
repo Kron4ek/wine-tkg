@@ -480,6 +480,21 @@ static void test_MapViewOfFileFromApp(void)
     ok(ret, "Failed to delete a test file.\n");
 }
 
+static void test_QueryProcessCycleTime(void)
+{
+    ULONG64 cycles1, cycles2;
+    BOOL ret;
+
+    ret = QueryProcessCycleTime( GetCurrentProcess(), &cycles1 );
+    ok( ret, "QueryProcessCycleTime failed, error %lu.\n", GetLastError() );
+
+    ret = QueryProcessCycleTime( GetCurrentProcess(), &cycles2 );
+    ok( ret, "QueryProcessCycleTime failed, error %lu.\n", GetLastError() );
+
+    todo_wine
+    ok( cycles2 > cycles1, "CPU cycles used by process should be increasing.\n" );
+}
+
 static void init_funcs(void)
 {
     HMODULE hmod = GetModuleHandleA("kernelbase.dll");
@@ -513,4 +528,5 @@ START_TEST(process)
     test_OpenFileMappingFromApp();
     test_CreateFileMappingFromApp();
     test_MapViewOfFileFromApp();
+    test_QueryProcessCycleTime();
 }

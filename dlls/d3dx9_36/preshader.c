@@ -144,6 +144,7 @@ static double pres_div(double *args, int n) {return 0.0;}
 #define FOURCC_CLIT 0x54494c43
 #define FOURCC_FXLC 0x434c5846
 #define FOURCC_PRSI 0x49535250
+#define FOURCC_TX_1 0x54580100
 #define PRES_SIGN 0x46580000
 
 struct op_info
@@ -1110,13 +1111,15 @@ static HRESULT parse_preshader(struct d3dx_preshader *pres, unsigned int *ptr, u
         struct d3dx_parameters_store *parameters)
 {
     unsigned int *p;
-    unsigned int i, j, const_count;
+    unsigned int i, j, const_count, magic;
     double *dconst;
     HRESULT hr;
     unsigned int saved_word;
     unsigned int section_size;
 
-    TRACE("Preshader version %#x.\n", *ptr & 0xffff);
+    magic = *ptr;
+
+    TRACE("Preshader version %#x.\n", *ptr);
 
     if (!count)
     {
@@ -1186,6 +1189,8 @@ static HRESULT parse_preshader(struct d3dx_preshader *pres, unsigned int *ptr, u
         return D3DXERR_INVALIDDATA;
     }
     pres->regs.table_sizes[PRES_REGTAB_IMMED] = get_reg_offset(PRES_REGTAB_IMMED, const_count);
+    if (magic == FOURCC_TX_1)
+        pres->regs.table_sizes[PRES_REGTAB_INPUT] = 2;
 
     update_table_sizes_consts(pres->regs.table_sizes, &pres->inputs);
     for (i = 0; i < pres->ins_count; ++i)
@@ -1723,16 +1728,20 @@ HRESULT d3dx_evaluate_parameter(struct d3dx_param_eval *peval, const struct d3dx
     HRESULT hr;
     unsigned int i;
     unsigned int elements, elements_param, elements_table;
+    BOOL is_dirty;
     float *oc;
 
     TRACE("peval %p, param %p, param_value %p.\n", peval, param, param_value);
 
-    if (is_const_tab_input_dirty(&peval->pres.inputs, ULONG64_MAX))
+    if ((is_dirty = is_const_tab_input_dirty(&peval->pres.inputs, ULONG64_MAX)))
     {
         set_constants(&peval->pres.regs, &peval->pres.inputs,
-                next_update_version(peval->version_counter),
-                NULL, NULL, peval->param_type, FALSE, FALSE);
+                next_update_version(peval->version_counter), NULL, NULL,
+                peval->param_type, FALSE, FALSE);
+    }
 
+    if (is_dirty || peval->pres.regs.table_sizes[PRES_REGTAB_INPUT])
+    {
         if (FAILED(hr = execute_preshader(&peval->pres)))
             return hr;
     }

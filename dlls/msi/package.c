@@ -573,11 +573,11 @@ static LPWSTR get_fusion_filename(MSIPACKAGE *package)
     return filename;
 }
 
-typedef struct tagLANGANDCODEPAGE
+struct lang_codepage
 {
   WORD wLanguage;
   WORD wCodePage;
-} LANGANDCODEPAGE;
+};
 
 static void set_msi_assembly_prop(MSIPACKAGE *package)
 {
@@ -586,7 +586,7 @@ static void set_msi_assembly_prop(MSIPACKAGE *package)
     LPVOID version = NULL;
     WCHAR buf[MAX_PATH];
     LPWSTR fusion, verstr;
-    LANGANDCODEPAGE *translate;
+    struct lang_codepage *translate;
 
     fusion = get_fusion_filename(package);
     if (!fusion)
@@ -940,7 +940,7 @@ static MSIPACKAGE *alloc_package( void )
     return package;
 }
 
-static UINT msi_load_admin_properties(MSIPACKAGE *package)
+static UINT load_admin_properties(MSIPACKAGE *package)
 {
     BYTE *data;
     UINT r, sz;
@@ -1009,7 +1009,7 @@ MSIPACKAGE *MSI_CreatePackage( MSIDATABASE *db )
         }
 
         if (package->WordCount & msidbSumInfoSourceTypeAdminImage)
-            msi_load_admin_properties( package );
+            load_admin_properties( package );
 
         package->log_file = INVALID_HANDLE_VALUE;
         package->script = SCRIPT_NONE;
@@ -1501,13 +1501,6 @@ UINT MSI_OpenPackageW(LPCWSTR szPackage, DWORD dwOptions, MSIPACKAGE **pPackage)
     if (gszLogFile)
         package->log_file = CreateFileW( gszLogFile, GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
                                          OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
-
-    if (!msi_init_assembly_caches( package ))
-    {
-        ERR("can't initialize assembly caches\n");
-        msiobj_release( &package->hdr );
-        return ERROR_FUNCTION_FAILED;
-    }
 
     /* FIXME: when should these messages be sent? */
     data_row = MSI_CreateRecord(3);
@@ -2117,7 +2110,7 @@ UINT WINAPI MsiSetPropertyW( MSIHANDLE hInstall, LPCWSTR szName, LPCWSTR szValue
     return ret;
 }
 
-static MSIRECORD *msi_get_property_row( MSIDATABASE *db, LPCWSTR name )
+static MSIRECORD *get_property_row( MSIDATABASE *db, const WCHAR *name )
 {
     MSIRECORD *rec, *row = NULL;
     MSIQUERY *view;
@@ -2192,7 +2185,7 @@ UINT msi_get_property( MSIDATABASE *db, LPCWSTR szName,
 
     TRACE("%p %s %p %p\n", db, debugstr_w(szName), szValueBuf, pchValueBuf);
 
-    row = msi_get_property_row( db, szName );
+    row = get_property_row( db, szName );
 
     if (*pchValueBuf > 0)
         szValueBuf[0] = 0;
@@ -2307,7 +2300,7 @@ UINT WINAPI MsiGetPropertyA(MSIHANDLE hinst, const char *name, char *buf, DWORD 
         return r;
     }
 
-    row = msi_get_property_row(package->db, nameW);
+    row = get_property_row(package->db, nameW);
     if (row)
         value = msi_record_get_string(row, 1, &len);
 
@@ -2370,7 +2363,7 @@ UINT WINAPI MsiGetPropertyW(MSIHANDLE hinst, const WCHAR *name, WCHAR *buf, DWOR
         return r;
     }
 
-    row = msi_get_property_row(package->db, name);
+    row = get_property_row(package->db, name);
     if (row)
         value = msi_record_get_string(row, 1, &len);
 

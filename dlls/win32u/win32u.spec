@@ -861,7 +861,7 @@
 @ stub NtUserEnableChildWindowDpiMessage
 @ stub NtUserEnableIAMAccess
 @ stdcall -syscall NtUserEnableMenuItem(long long long)
-@ stub NtUserEnableMouseInPointer
+@ stdcall -syscall NtUserEnableMouseInPointer(long)
 @ stub NtUserEnableMouseInPointerForWindow
 @ stub NtUserEnableMouseInputForCursorSuppression
 @ stub NtUserEnableNonClientDpiScaling
@@ -971,7 +971,7 @@
 @ stub NtUserGetPointerDeviceRects
 @ stub NtUserGetPointerDevices
 @ stub NtUserGetPointerFrameTimes
-@ stub NtUserGetPointerInfoList
+@ stdcall -syscall NtUserGetPointerInfoList(long long long long long ptr ptr ptr)
 @ stub NtUserGetPointerInputTransform
 @ stub NtUserGetPointerProprietaryId
 @ stub NtUserGetPointerType
@@ -1051,7 +1051,7 @@
 @ stdcall -syscall NtUserInvalidateRgn(long long long)
 @ stub NtUserIsChildWindowDpiMessageEnabled
 @ stdcall -syscall NtUserIsClipboardFormatAvailable(long)
-@ stub NtUserIsMouseInPointerEnabled
+@ stdcall -syscall NtUserIsMouseInPointerEnabled()
 @ stub NtUserIsMouseInputEnabled
 @ stub NtUserIsNonClientDpiScalingEnabled
 @ stub NtUserIsResizeLayoutSynchronizationEnabled

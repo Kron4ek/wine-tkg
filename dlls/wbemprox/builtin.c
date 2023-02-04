@@ -422,6 +422,7 @@ static const struct column col_stdregprov[] =
     { L"CreateKey",      CIM_FLAG_ARRAY|COL_FLAG_METHOD },
     { L"EnumKey",        CIM_FLAG_ARRAY|COL_FLAG_METHOD },
     { L"EnumValues",     CIM_FLAG_ARRAY|COL_FLAG_METHOD },
+    { L"GetBinaryValue", CIM_FLAG_ARRAY|COL_FLAG_METHOD },
     { L"GetStringValue", CIM_FLAG_ARRAY|COL_FLAG_METHOD },
     { L"SetStringValue", CIM_FLAG_ARRAY|COL_FLAG_METHOD },
     { L"SetDWORDValue",  CIM_FLAG_ARRAY|COL_FLAG_METHOD },
@@ -482,6 +483,13 @@ static const struct column col_videocontroller[] =
     { L"VideoModeDescription",        CIM_STRING|COL_FLAG_DYNAMIC },
     { L"VideoProcessor",              CIM_STRING|COL_FLAG_DYNAMIC },
 };
+
+static const struct column col_volume[] =
+{
+    { L"DeviceId",      CIM_STRING|COL_FLAG_DYNAMIC|COL_FLAG_KEY },
+    { L"DriveLetter",   CIM_STRING|COL_FLAG_DYNAMIC },
+};
+
 static const struct column col_winsat[] =
 {
     { L"CPUScore",              CIM_REAL32 },
@@ -864,6 +872,7 @@ struct record_stdregprov
     class_method *createkey;
     class_method *enumkey;
     class_method *enumvalues;
+    class_method *getbinaryvalue;
     class_method *getstringvalue;
     class_method *setstringvalue;
     class_method *setdwordvalue;
@@ -923,6 +932,13 @@ struct record_videocontroller
     const WCHAR *videomodedescription;
     const WCHAR *videoprocessor;
 };
+
+struct record_volume
+{
+    const WCHAR *deviceid;
+    const WCHAR *driveletter;
+};
+
 struct record_winsat
 {
     FLOAT        cpuscore;
@@ -966,6 +982,11 @@ static const struct record_param data_param[] =
     { L"StdRegProv", L"EnumValues", -1, L"ReturnValue", CIM_UINT32 },
     { L"StdRegProv", L"EnumValues", -1, L"sNames", CIM_STRING|CIM_FLAG_ARRAY },
     { L"StdRegProv", L"EnumValues", -1, L"Types", CIM_SINT32|CIM_FLAG_ARRAY },
+    { L"StdRegProv", L"GetBinaryValue", 1, L"hDefKey", CIM_SINT32, 0x80000002 },
+    { L"StdRegProv", L"GetBinaryValue", 1, L"sSubKeyName", CIM_STRING },
+    { L"StdRegProv", L"GetBinaryValue", 1, L"sValueName", CIM_STRING },
+    { L"StdRegProv", L"GetBinaryValue", -1, L"ReturnValue", CIM_UINT32 },
+    { L"StdRegProv", L"GetBinaryValue", -1, L"uValue", CIM_UINT8|CIM_FLAG_ARRAY },
     { L"StdRegProv", L"GetStringValue", 1, L"hDefKey", CIM_SINT32, 0x80000002 },
     { L"StdRegProv", L"GetStringValue", 1, L"sSubKeyName", CIM_STRING },
     { L"StdRegProv", L"GetStringValue", 1, L"sValueName", CIM_STRING },
@@ -1033,6 +1054,7 @@ static const struct record_stdregprov data_stdregprov[] =
         reg_create_key,
         reg_enum_key,
         reg_enum_values,
+        reg_get_binaryvalue,
         reg_get_stringvalue,
         reg_set_stringvalue,
         reg_set_dwordvalue,
@@ -3609,6 +3631,7 @@ static WCHAR *get_osbuildnumber( OSVERSIONINFOEXW *ver )
     if (ret) swprintf( ret, 11, L"%u", ver->dwBuildNumber );
     return ret;
 }
+
 static WCHAR *get_oscaption( OSVERSIONINFOEXW *ver )
 {
     static const WCHAR windowsW[] = L"Microsoft Windows ";
@@ -3623,12 +3646,17 @@ static WCHAR *get_oscaption( OSVERSIONINFOEXW *ver )
     static const WCHAR win8W[] = L"8 Pro";
     static const WCHAR win81W[] = L"8.1 Pro";
     static const WCHAR win10W[] = L"10 Pro";
+    static const WCHAR win11W[] = L"11 Pro";
     int len = ARRAY_SIZE( windowsW ) - 1;
     WCHAR *ret;
 
     if (!(ret = malloc( len * sizeof(WCHAR) + sizeof(win2003W) ))) return NULL;
     memcpy( ret, windowsW, sizeof(windowsW) );
-    if (ver->dwMajorVersion == 10 && ver->dwMinorVersion == 0) memcpy( ret + len, win10W, sizeof(win10W) );
+    if (ver->dwMajorVersion == 10 && ver->dwMinorVersion == 0)
+    {
+        if (ver->dwBuildNumber >= 22000) memcpy( ret + len, win11W, sizeof(win11W) );
+        else memcpy( ret + len, win10W, sizeof(win10W) );
+    }
     else if (ver->dwMajorVersion == 6 && ver->dwMinorVersion == 3) memcpy( ret + len, win81W, sizeof(win81W) );
     else if (ver->dwMajorVersion == 6 && ver->dwMinorVersion == 2) memcpy( ret + len, win8W, sizeof(win8W) );
     else if (ver->dwMajorVersion == 6 && ver->dwMinorVersion == 1)
@@ -3650,6 +3678,7 @@ static WCHAR *get_oscaption( OSVERSIONINFOEXW *ver )
     else memcpy( ret + len, win2000W, sizeof(win2000W) );
     return ret;
 }
+
 static WCHAR *get_osname( const WCHAR *caption )
 {
     static const WCHAR partitionW[] = L"|C:\\WINDOWS|\\Device\\Harddisk0\\Partition1";
@@ -3675,6 +3704,7 @@ static WCHAR *get_osversion( OSVERSIONINFOEXW *ver )
     if (ret) swprintf( ret, 33, L"%u.%u.%u", ver->dwMajorVersion, ver->dwMinorVersion, ver->dwBuildNumber );
     return ret;
 }
+
 static DWORD get_operatingsystemsku(void)
 {
     DWORD ret = PRODUCT_UNDEFINED;
@@ -4180,6 +4210,60 @@ static enum fill_status fill_videocontroller( struct table *table, const struct 
     return status;
 }
 
+static WCHAR *get_volume_driveletter( const WCHAR *volume )
+{
+    DWORD len = 0;
+    WCHAR *ret;
+
+    if (!GetVolumePathNamesForVolumeNameW( volume, NULL, 0, &len ) && GetLastError() != ERROR_MORE_DATA) return NULL;
+    if (!(ret = malloc( len * sizeof(WCHAR) ))) return NULL;
+    if (!GetVolumePathNamesForVolumeNameW( volume, ret, len, &len ) || !wcschr( ret, ':' ))
+    {
+        free( ret );
+        return NULL;
+    }
+    wcschr( ret, ':' )[1] = 0;
+    return ret;
+}
+
+static enum fill_status fill_volume( struct table *table, const struct expr *cond )
+{
+    struct record_volume *rec;
+    enum fill_status status = FILL_STATUS_UNFILTERED;
+    UINT row = 0, offset = 0;
+    WCHAR path[MAX_PATH];
+    HANDLE handle;
+
+    if (!resize_table( table, 2, sizeof(*rec) )) return FILL_STATUS_FAILED;
+
+    handle = FindFirstVolumeW( path, ARRAY_SIZE(path) );
+    while (handle != INVALID_HANDLE_VALUE)
+    {
+        if (!resize_table( table, row + 1, sizeof(*rec) )) return FILL_STATUS_FAILED;
+
+        rec = (struct record_volume *)(table->data + offset);
+        rec->deviceid    = wcsdup( path );
+        rec->driveletter = get_volume_driveletter( path );
+
+        if (!match_row( table, row, cond, &status )) free_row_values( table, row );
+        else
+        {
+            offset += sizeof(*rec);
+            row++;
+        }
+
+        if (!FindNextVolumeW( handle, path, ARRAY_SIZE(path) ))
+        {
+            FindVolumeClose( handle );
+            handle = INVALID_HANDLE_VALUE;
+        }
+    }
+
+    TRACE("created %u rows\n", row);
+    table->num_rows = row;
+    return status;
+}
+
 static WCHAR *get_sounddevice_pnpdeviceid( DXGI_ADAPTER_DESC *desc )
 {
     static const WCHAR fmtW[] = L"HDAUDIO\\FUNC_01&VEN_%04X&DEV_%04X&SUBSYS_%08X&REV_%04X\\0&DEADBEEF&0&DEAD";
@@ -4262,6 +4346,7 @@ static struct table cimv2_builtin_classes[] =
     { L"Win32_SoundDevice", C(col_sounddevice), 0, 0, NULL, fill_sounddevice },
     { L"Win32_SystemEnclosure", C(col_systemenclosure), 0, 0, NULL, fill_systemenclosure },
     { L"Win32_VideoController", C(col_videocontroller), 0, 0, NULL, fill_videocontroller },
+    { L"Win32_Volume", C(col_volume), 0, 0, NULL, fill_volume },
     { L"Win32_WinSAT", C(col_winsat), D(data_winsat) },
 };
 

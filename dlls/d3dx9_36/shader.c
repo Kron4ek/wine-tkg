@@ -19,7 +19,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <assert.h>
 #include <stdio.h>
+
 #include "d3dx9_private.h"
 #include "d3dcommon.h"
 #include "d3dcompiler.h"
@@ -2718,6 +2720,9 @@ struct d3dx9_texture_shader
     LONG ref;
 
     ID3DXBuffer *byte_code;
+    ULONG64 version_counter;
+    struct d3dx_parameters_store parameters;
+    struct d3dx_param_eval *eval;
 };
 
 static inline struct d3dx9_texture_shader *impl_from_ID3DXTextureShader(ID3DXTextureShader *iface)
@@ -2763,6 +2768,8 @@ static ULONG WINAPI d3dx9_texture_shader_Release(ID3DXTextureShader *iface)
     {
         if (texture_shader->byte_code)
             ID3DXBuffer_Release(texture_shader->byte_code);
+        d3dx_free_param_eval(texture_shader->eval);
+        d3dx_parameters_store_cleanup(&texture_shader->parameters);
         HeapFree(GetProcessHeap(), 0, texture_shader);
     }
 
@@ -2967,6 +2974,15 @@ static const struct ID3DXTextureShaderVtbl d3dx9_texture_shader_vtbl =
     d3dx9_texture_shader_SetMatrixTransposePointerArray
 };
 
+static inline struct d3dx9_texture_shader *unsafe_impl_from_ID3DXTextureShader(ID3DXTextureShader *iface)
+{
+    if (!iface)
+        return NULL;
+
+    assert(iface->lpVtbl == &d3dx9_texture_shader_vtbl);
+    return impl_from_ID3DXTextureShader(iface);
+}
+
 HRESULT WINAPI D3DXCreateTextureShader(const DWORD *function, ID3DXTextureShader **texture_shader)
 {
     struct d3dx9_texture_shader *object;
@@ -2994,9 +3010,88 @@ HRESULT WINAPI D3DXCreateTextureShader(const DWORD *function, ID3DXTextureShader
     }
     memcpy(ID3DXBuffer_GetBufferPointer(object->byte_code), function, size);
 
+    if (FAILED(hr = d3dx_init_parameters_store(&object->parameters, 0)))
+    {
+        IUnknown_Release(&object->ID3DXTextureShader_iface);
+        return hr;
+    }
+
+    if (FAILED(hr = d3dx_create_param_eval(&object->parameters, ID3DXBuffer_GetBufferPointer(object->byte_code),
+            size, D3DXPT_FLOAT, &object->eval, &object->version_counter, NULL, 0)))
+    {
+        IUnknown_Release(&object->ID3DXTextureShader_iface);
+        return hr;
+    }
+
     *texture_shader = &object->ID3DXTextureShader_iface;
 
     return D3D_OK;
+}
+
+void WINAPI texture_shader_fill_2d(D3DXVECTOR4 *out, const D3DXVECTOR2 *texcoord,
+        const D3DXVECTOR2 *texelsize, void *data)
+{
+    struct d3dx9_texture_shader *shader = data;
+    struct d3dx_parameter param = { 0 };
+    float *inputs;
+
+    inputs = (float *)shader->eval->pres.regs.tables[PRES_REGTAB_INPUT];
+
+    *(inputs++) = texcoord->x;
+    *(inputs++) = texcoord->y;
+    *(inputs++) = 0.0f;
+    *(inputs++) = 0.0f;
+
+    *(inputs++) = texelsize->x;
+    *(inputs++) = texelsize->y;
+    *(inputs++) = 0.0f;
+    *(inputs++) = 0.0f;
+
+    param.type = D3DXPT_FLOAT;
+    param.bytes = 4 * sizeof(float);
+    d3dx_evaluate_parameter(shader->eval, &param, out);
+}
+
+void WINAPI texture_shader_fill_3d(D3DXVECTOR4 *out, const D3DXVECTOR3 *texcoord,
+        const D3DXVECTOR3 *texelsize, void *data)
+{
+    struct d3dx9_texture_shader *shader = data;
+    struct d3dx_parameter param = { 0 };
+    float *inputs;
+
+    inputs = (float *)shader->eval->pres.regs.tables[PRES_REGTAB_INPUT];
+
+    *(inputs++) = texcoord->x;
+    *(inputs++) = texcoord->y;
+    *(inputs++) = texcoord->z;
+    *(inputs++) = 0.0f;
+
+    *(inputs++) = texelsize->x;
+    *(inputs++) = texelsize->y;
+    *(inputs++) = texelsize->z;
+    *(inputs++) = 0.0f;
+
+    param.type = D3DXPT_FLOAT;
+    param.bytes = 4 * sizeof(float);
+    d3dx_evaluate_parameter(shader->eval, &param, out);
+}
+
+HRESULT WINAPI D3DXFillTextureTX(struct IDirect3DTexture9 *texture, ID3DXTextureShader *texture_shader)
+{
+    struct d3dx9_texture_shader *shader = unsafe_impl_from_ID3DXTextureShader(texture_shader);
+
+    TRACE("texture %p, texture_shader %p.\n", texture, texture_shader);
+
+    return D3DXFillTexture(texture, texture_shader_fill_2d, shader);
+}
+
+HRESULT WINAPI D3DXFillCubeTextureTX(struct IDirect3DCubeTexture9 *cube, ID3DXTextureShader *texture_shader)
+{
+    struct d3dx9_texture_shader *shader = unsafe_impl_from_ID3DXTextureShader(texture_shader);
+
+    TRACE("cube %p, texture_shader %p.\n", cube, texture_shader);
+
+    return D3DXFillCubeTexture(cube, texture_shader_fill_3d, shader);
 }
 
 static unsigned int get_instr_length(const DWORD *byte_code, unsigned int major, unsigned int minor)

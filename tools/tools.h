@@ -21,15 +21,24 @@
 #ifndef __WINE_TOOLS_H
 #define __WINE_TOOLS_H
 
+#ifndef __WINE_CONFIG_H
+# error You must include config.h to use this header
+#endif
+
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <time.h>
 #include <errno.h>
+#ifdef HAVE_SYS_SYSCTL_H
+# include <sys/sysctl.h>
+#endif
 
 #ifdef _WIN32
 # include <direct.h>
@@ -322,6 +331,7 @@ static inline char *replace_extension( const char *name, const char *old_ext, co
 /* temp files management */
 
 extern const char *temp_dir;
+extern struct strarray temp_files;
 
 static inline char *make_temp_dir(void)
 {
@@ -348,10 +358,11 @@ static inline char *make_temp_dir(void)
     exit(1);
 }
 
-static inline int make_temp_file( const char *prefix, const char *suffix, char **name )
+static inline char *make_temp_file( const char *prefix, const char *suffix )
 {
     static unsigned int value;
     int fd, count;
+    char *name;
 
     if (!temp_dir) temp_dir = make_temp_dir();
     if (!suffix) suffix = "";
@@ -360,13 +371,48 @@ static inline int make_temp_file( const char *prefix, const char *suffix, char *
 
     for (count = 0; count < 0x8000; count++)
     {
-        *name = strmake( "%s/%s-%08x%s", temp_dir, prefix, value++, suffix );
-        fd = open( *name, O_RDWR | O_CREAT | O_EXCL, 0600 );
-        if (fd >= 0) return fd;
-        free( *name );
+        name = strmake( "%s/%s-%08x%s", temp_dir, prefix, value++, suffix );
+        fd = open( name, O_RDWR | O_CREAT | O_EXCL, 0600 );
+        if (fd >= 0)
+        {
+#ifdef HAVE_SIGPROCMASK /* block signals while manipulating the temp files list */
+            sigset_t mask_set, old_set;
+
+            sigemptyset( &mask_set );
+            sigaddset( &mask_set, SIGHUP );
+            sigaddset( &mask_set, SIGTERM );
+            sigaddset( &mask_set, SIGINT );
+            sigprocmask( SIG_BLOCK, &mask_set, &old_set );
+            strarray_add( &temp_files, name );
+            sigprocmask( SIG_SETMASK, &old_set, NULL );
+#else
+            strarray_add( &temp_files, name );
+#endif
+            close( fd );
+            return name;
+        }
+        free( name );
     }
     fprintf( stderr, "failed to create temp file for %s%s in %s\n", prefix, suffix, temp_dir );
     exit(1);
+}
+
+static inline void remove_temp_files(void)
+{
+    unsigned int i;
+
+    for (i = 0; i < temp_files.count; i++) if (temp_files.str[i]) unlink( temp_files.str[i] );
+    if (temp_dir) rmdir( temp_dir );
+}
+
+
+static inline void init_signals( void (*cleanup)(int) )
+{
+    signal( SIGTERM, cleanup );
+    signal( SIGINT, cleanup );
+#ifdef SIGHUP
+    signal( SIGHUP, cleanup );
+#endif
 }
 
 
@@ -600,6 +646,29 @@ static inline struct target init_argv0_target( const char *argv0 )
 
     free( name );
     return target;
+}
+
+
+static inline char *get_argv0_dir( const char *argv0 )
+{
+#ifndef _WIN32
+    char *dir = NULL;
+
+#if defined(__linux__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__)
+    dir = realpath( "/proc/self/exe", NULL );
+#elif defined (__FreeBSD__) || defined(__DragonFly__)
+    static int pathname[] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+    size_t path_size = PATH_MAX;
+    char *path = xmalloc( path_size );
+    if (!sysctl( pathname, ARRAY_SIZE(pathname), path, &path_size, NULL, 0 ))
+        dir = realpath( path, NULL );
+    free( path );
+#endif
+    if (!dir && !(dir = realpath( argv0, NULL ))) return NULL;
+    return get_dirname( dir );
+#else
+    return get_dirname( argv0 );
+#endif
 }
 
 

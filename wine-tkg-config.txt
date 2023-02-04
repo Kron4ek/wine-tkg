@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Tue Jan 24 08:04:41 PM UTC 2023 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Feb  4 10:04:10 AM UTC 2023 :
 
 Local cfg files used
 
-Wine (plain) version: 8.0rc5.r0.geb3355bcf80
-Using wine-staging patchset (version 8.0rc5.r0.g8a7297ab)
+Wine (plain) version: 8.1.r0.ga4ed65d5772
+Using wine-staging patchset (version 8.1.r0.gdde73435)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -11,14 +11,15 @@ Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 Done applying backports hotfixes (if any) - list available in prepare.log
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
+Applied hotfix python3_compat.mystagingpatch
 steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
 Staging overrides, if any:
 
-fsync-unix-staging.patch -- ( Applied fsync, an experimental replacement for esync (unix, staging) )
+fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
 server_Abort_waiting_on_a_completion_port_when_closing_it.patch -- ( Added Abort waiting on a completion port when closing it Proton patch )
-fsync_futex_waitv.patch -- ( Replace all fsync interfaces with futex_waitv )
+fsync_futex_waitv.patch -- ( Applied patches for fsync to support futex_waitv )
 
 childwindow-proton.patch -- ( Applied child window for vk patch )
 OPWR-proton.patch -- ( Applied other process window Vulkan rendering patchset )
@@ -29,7 +30,6 @@ proton-tkg-additions.patch -- ( Using additional Proton-tkg patches )
 proton-cpu-topology-overrides.patch -- ( Enable Proton's CPU topology override support )
 proton-vr.patch -- ( Enable Proton vr-related wined3d additions )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
-proton-win10-default.patch -- ( Enforce win10 as default wine version )
 
 Applied hotfix remove_hooks_that_time_out2.mypatch
 Applied hotfix winex11.drv_Add_a_GPU_for_each_Vulkan_device_that_was_not_tied_to_an_XRandR_provider.mypatch

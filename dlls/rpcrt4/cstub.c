@@ -38,8 +38,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
 
-#define STUB_HEADER(This) (((const CInterfaceStubHeader*)((This)->lpVtbl))[-1])
-
 static LONG WINAPI stub_filter(EXCEPTION_POINTERS *eptr)
 {
     if (eptr->ExceptionRecord->ExceptionFlags & EXCEPTION_NONCONTINUABLE)
@@ -47,9 +45,21 @@ static LONG WINAPI stub_filter(EXCEPTION_POINTERS *eptr)
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
+static CStdStubBuffer *impl_from_IRpcStubBuffer(IRpcStubBuffer *iface)
+{
+    return CONTAINING_RECORD(&iface->lpVtbl, CStdStubBuffer, lpVtbl);
+}
+
 static inline cstdstubbuffer_delegating_t *impl_from_delegating( IRpcStubBuffer *iface )
 {
-    return CONTAINING_RECORD((void *)iface, cstdstubbuffer_delegating_t, stub_buffer);
+    return CONTAINING_RECORD(impl_from_IRpcStubBuffer(iface), cstdstubbuffer_delegating_t, stub_buffer);
+}
+
+static const CInterfaceStubHeader *get_stub_header(const CStdStubBuffer *stub)
+{
+    const CInterfaceStubVtbl *vtbl = CONTAINING_RECORD(stub->lpVtbl, CInterfaceStubVtbl, Vtbl);
+
+    return &vtbl->header;
 }
 
 HRESULT CStdStubBuffer_Construct(REFIID riid,
@@ -100,15 +110,15 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
 };
 static CRITICAL_SECTION delegating_vtbl_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
-typedef struct
+struct delegating_vtbl
 {
     DWORD ref;
     DWORD size;
     IUnknownVtbl vtbl;
-    /* remaining entries in vtbl */
-} ref_counted_vtbl;
+    const void *methods[];
+};
 
-static ref_counted_vtbl *current_vtbl;
+static struct delegating_vtbl *current_vtbl;
 
 
 static HRESULT WINAPI delegating_QueryInterface(IUnknown *pUnk, REFIID iid, void **ppv)
@@ -241,24 +251,27 @@ static const vtbl_method_t *allocate_block( unsigned int num )
     return block;
 }
 
-static BOOL fill_delegated_stub_table(IUnknownVtbl *vtbl, DWORD num)
+static BOOL init_delegating_vtbl(struct delegating_vtbl *table, DWORD num)
 {
-    const void **entry = (const void **)(vtbl + 1);
     DWORD i, j;
+
+    table->ref = 0;
+    table->size = num;
 
     if (num - 3 > BLOCK_SIZE * MAX_BLOCKS)
     {
         FIXME( "%lu methods not supported\n", num );
         return FALSE;
     }
-    vtbl->QueryInterface = delegating_QueryInterface;
-    vtbl->AddRef = delegating_AddRef;
-    vtbl->Release = delegating_Release;
+    table->vtbl.QueryInterface = delegating_QueryInterface;
+    table->vtbl.AddRef = delegating_AddRef;
+    table->vtbl.Release = delegating_Release;
     for (i = 0; i < (num - 3 + BLOCK_SIZE - 1) / BLOCK_SIZE; i++)
     {
         const vtbl_method_t *block = method_blocks[i];
         if (!block && !(block = allocate_block( i ))) return FALSE;
-        for (j = 0; j < BLOCK_SIZE && j < num - 3 - i * BLOCK_SIZE; j++) *entry++ = &block[j];
+        for (j = 0; j < BLOCK_SIZE && j < num - 3 - i * BLOCK_SIZE; j++)
+            table->methods[j] = &block[j];
     }
     return TRUE;
 }
@@ -296,16 +309,14 @@ IUnknownVtbl *get_delegating_vtbl(DWORD num_methods)
 
     if(!current_vtbl || num_methods > current_vtbl->size)
     {
-        ref_counted_vtbl *table = malloc(FIELD_OFFSET(ref_counted_vtbl, vtbl) + num_methods * sizeof(void *));
+        struct delegating_vtbl *table = malloc(FIELD_OFFSET(struct delegating_vtbl, methods[num_methods]));
         if (!table)
         {
             LeaveCriticalSection(&delegating_vtbl_section);
             return NULL;
         }
 
-        table->ref = 0;
-        table->size = num_methods;
-        fill_delegated_stub_table(&table->vtbl, num_methods);
+        init_delegating_vtbl(table, num_methods);
 
         if (current_vtbl && current_vtbl->ref == 0)
         {
@@ -323,7 +334,7 @@ IUnknownVtbl *get_delegating_vtbl(DWORD num_methods)
 
 void release_delegating_vtbl(IUnknownVtbl *vtbl)
 {
-    ref_counted_vtbl *table = (ref_counted_vtbl*)((DWORD *)vtbl - 1);
+    struct delegating_vtbl *table = CONTAINING_RECORD(vtbl, struct delegating_vtbl, vtbl);
 
     EnterCriticalSection(&delegating_vtbl_section);
     table->ref--;
@@ -392,7 +403,7 @@ HRESULT WINAPI CStdStubBuffer_QueryInterface(LPRPCSTUBBUFFER iface,
                                             REFIID riid,
                                             LPVOID *obj)
 {
-  CStdStubBuffer *This = (CStdStubBuffer *)iface;
+  CStdStubBuffer *This = impl_from_IRpcStubBuffer(iface);
   TRACE("(%p)->QueryInterface(%s,%p)\n",This,debugstr_guid(riid),obj);
 
   if (IsEqualIID(&IID_IUnknown, riid) ||
@@ -408,7 +419,7 @@ HRESULT WINAPI CStdStubBuffer_QueryInterface(LPRPCSTUBBUFFER iface,
 
 ULONG WINAPI CStdStubBuffer_AddRef(LPRPCSTUBBUFFER iface)
 {
-  CStdStubBuffer *This = (CStdStubBuffer *)iface;
+  CStdStubBuffer *This = impl_from_IRpcStubBuffer(iface);
   TRACE("(%p)->AddRef()\n",This);
   return InterlockedIncrement(&This->RefCount);
 }
@@ -416,7 +427,7 @@ ULONG WINAPI CStdStubBuffer_AddRef(LPRPCSTUBBUFFER iface)
 ULONG WINAPI NdrCStdStubBuffer_Release(LPRPCSTUBBUFFER iface,
                                       LPPSFACTORYBUFFER pPSF)
 {
-  CStdStubBuffer *This = (CStdStubBuffer *)iface;
+  CStdStubBuffer *This = impl_from_IRpcStubBuffer(iface);
   ULONG refs;
 
   TRACE("(%p)->Release()\n",This);
@@ -462,13 +473,13 @@ ULONG WINAPI NdrCStdStubBuffer2_Release(LPRPCSTUBBUFFER iface,
 HRESULT WINAPI CStdStubBuffer_Connect(LPRPCSTUBBUFFER iface,
                                      LPUNKNOWN lpUnkServer)
 {
-    CStdStubBuffer *This = (CStdStubBuffer *)iface;
+    CStdStubBuffer *This = impl_from_IRpcStubBuffer(iface);
     HRESULT r;
     IUnknown *new = NULL;
 
     TRACE("(%p)->Connect(%p)\n",This,lpUnkServer);
 
-    r = IUnknown_QueryInterface(lpUnkServer, STUB_HEADER(This).piid, (void**)&new);
+    r = IUnknown_QueryInterface(lpUnkServer, get_stub_header(This)->piid, (void**)&new);
     new = InterlockedExchangePointer((void**)&This->pvServerObject, new);
     if(new)
         IUnknown_Release(new);
@@ -477,7 +488,7 @@ HRESULT WINAPI CStdStubBuffer_Connect(LPRPCSTUBBUFFER iface,
 
 void WINAPI CStdStubBuffer_Disconnect(LPRPCSTUBBUFFER iface)
 {
-    CStdStubBuffer *This = (CStdStubBuffer *)iface;
+    CStdStubBuffer *This = impl_from_IRpcStubBuffer(iface);
     IUnknown *old;
     TRACE("(%p)->Disconnect()\n",This);
 
@@ -491,7 +502,8 @@ HRESULT WINAPI CStdStubBuffer_Invoke(LPRPCSTUBBUFFER iface,
                                     PRPCOLEMESSAGE pMsg,
                                     LPRPCCHANNELBUFFER pChannel)
 {
-  CStdStubBuffer *This = (CStdStubBuffer *)iface;
+  CStdStubBuffer *This = impl_from_IRpcStubBuffer(iface);
+  const CInterfaceStubHeader *header = get_stub_header(This);
   DWORD dwPhase = STUB_UNMARSHAL;
   HRESULT hr = S_OK;
 
@@ -499,8 +511,8 @@ HRESULT WINAPI CStdStubBuffer_Invoke(LPRPCSTUBBUFFER iface,
 
   __TRY
   {
-    if (STUB_HEADER(This).pDispatchTable)
-      STUB_HEADER(This).pDispatchTable[pMsg->iMethod](iface, pChannel, (PRPC_MESSAGE)pMsg, &dwPhase);
+    if (header->pDispatchTable)
+      header->pDispatchTable[pMsg->iMethod](iface, pChannel, (PRPC_MESSAGE)pMsg, &dwPhase);
     else /* pure interpreted */
       NdrStubCall2(iface, pChannel, (PRPC_MESSAGE)pMsg, &dwPhase);
   }
@@ -521,14 +533,18 @@ HRESULT WINAPI CStdStubBuffer_Invoke(LPRPCSTUBBUFFER iface,
 LPRPCSTUBBUFFER WINAPI CStdStubBuffer_IsIIDSupported(LPRPCSTUBBUFFER iface,
                                                     REFIID riid)
 {
-  CStdStubBuffer *This = (CStdStubBuffer *)iface;
-  TRACE("(%p)->IsIIDSupported(%s)\n",This,debugstr_guid(riid));
-  return IsEqualGUID(STUB_HEADER(This).piid, riid) ? iface : NULL;
+    CStdStubBuffer *stub = impl_from_IRpcStubBuffer(iface);
+
+    TRACE("(%p)->IsIIDSupported(%s)\n", stub, debugstr_guid(riid));
+
+    if (IsEqualGUID(get_stub_header(stub)->piid, riid))
+        return iface;
+    return NULL;
 }
 
 ULONG WINAPI CStdStubBuffer_CountRefs(LPRPCSTUBBUFFER iface)
 {
-  CStdStubBuffer *This = (CStdStubBuffer *)iface;
+  CStdStubBuffer *This = impl_from_IRpcStubBuffer(iface);
   TRACE("(%p)->CountRefs()\n",This);
   return This->RefCount;
 }
@@ -536,7 +552,7 @@ ULONG WINAPI CStdStubBuffer_CountRefs(LPRPCSTUBBUFFER iface)
 HRESULT WINAPI CStdStubBuffer_DebugServerQueryInterface(LPRPCSTUBBUFFER iface,
                                                        LPVOID *ppv)
 {
-  CStdStubBuffer *This = (CStdStubBuffer *)iface;
+  CStdStubBuffer *This = impl_from_IRpcStubBuffer(iface);
   TRACE("(%p)->DebugServerQueryInterface(%p)\n",This,ppv);
   return S_OK;
 }
@@ -544,7 +560,7 @@ HRESULT WINAPI CStdStubBuffer_DebugServerQueryInterface(LPRPCSTUBBUFFER iface,
 void WINAPI CStdStubBuffer_DebugServerRelease(LPRPCSTUBBUFFER iface,
                                              LPVOID pv)
 {
-  CStdStubBuffer *This = (CStdStubBuffer *)iface;
+  CStdStubBuffer *This = impl_from_IRpcStubBuffer(iface);
   TRACE("(%p)->DebugServerRelease(%p)\n",This,pv);
 }
 
@@ -613,8 +629,9 @@ const IRpcStubBufferVtbl CStdStubBuffer_Delegating_Vtbl =
 
 const MIDL_SERVER_INFO *CStdStubBuffer_GetServerInfo(IRpcStubBuffer *iface)
 {
-  CStdStubBuffer *This = (CStdStubBuffer *)iface;
-  return STUB_HEADER(This).pServerInfo;
+    CStdStubBuffer *stub = impl_from_IRpcStubBuffer(iface);
+
+    return get_stub_header(stub)->pServerInfo;
 }
 
 /************************************************************************
@@ -654,14 +671,14 @@ void WINAPI NdrStubGetBuffer(LPRPCSTUBBUFFER iface,
                             LPRPCCHANNELBUFFER pRpcChannelBuffer,
                             PMIDL_STUB_MESSAGE pStubMsg)
 {
-  CStdStubBuffer *This = (CStdStubBuffer *)iface;
+  CStdStubBuffer *This = impl_from_IRpcStubBuffer(iface);
   HRESULT hr;
 
   TRACE("(%p, %p, %p)\n", This, pRpcChannelBuffer, pStubMsg);
 
   pStubMsg->RpcMsg->BufferLength = pStubMsg->BufferLength;
   hr = IRpcChannelBuffer_GetBuffer(pRpcChannelBuffer,
-    (RPCOLEMESSAGE *)pStubMsg->RpcMsg, STUB_HEADER(This).piid);
+    (RPCOLEMESSAGE *)pStubMsg->RpcMsg, get_stub_header(This)->piid);
   if (FAILED(hr))
   {
     RpcRaiseException(hr);

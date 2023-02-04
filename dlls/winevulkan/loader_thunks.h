@@ -100,6 +100,8 @@ enum unix_call
     unix_vkCmdDispatchBaseKHR,
     unix_vkCmdDispatchIndirect,
     unix_vkCmdDraw,
+    unix_vkCmdDrawClusterHUAWEI,
+    unix_vkCmdDrawClusterIndirectHUAWEI,
     unix_vkCmdDrawIndexed,
     unix_vkCmdDrawIndexedIndirect,
     unix_vkCmdDrawIndexedIndirectCount,
@@ -526,6 +528,7 @@ enum unix_call
     unix_vkSetDebugUtilsObjectTagEXT,
     unix_vkSetDeviceMemoryPriorityEXT,
     unix_vkSetEvent,
+    unix_vkSetHdrMetadataEXT,
     unix_vkSetPrivateData,
     unix_vkSetPrivateDataEXT,
     unix_vkSignalSemaphore,
@@ -1212,6 +1215,21 @@ struct vkCmdDraw_params
     uint32_t instanceCount;
     uint32_t firstVertex;
     uint32_t firstInstance;
+};
+
+struct vkCmdDrawClusterHUAWEI_params
+{
+    VkCommandBuffer commandBuffer;
+    uint32_t groupCountX;
+    uint32_t groupCountY;
+    uint32_t groupCountZ;
+};
+
+struct vkCmdDrawClusterIndirectHUAWEI_params
+{
+    VkCommandBuffer commandBuffer;
+    VkBuffer DECLSPEC_ALIGN(8) buffer;
+    VkDeviceSize DECLSPEC_ALIGN(8) offset;
 };
 
 struct vkCmdDrawIndexed_params
@@ -4509,6 +4527,14 @@ struct vkSetEvent_params
     VkDevice device;
     VkEvent DECLSPEC_ALIGN(8) event;
     VkResult result;
+};
+
+struct vkSetHdrMetadataEXT_params
+{
+    VkDevice device;
+    uint32_t swapchainCount;
+    const VkSwapchainKHR *pSwapchains;
+    const VkHdrMetadataEXT *pMetadata;
 };
 
 struct vkSetPrivateData_params

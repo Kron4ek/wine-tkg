@@ -1830,7 +1830,7 @@ static int fd_set_dos_attrib( int fd, UINT attr, BOOL force_set )
 
 
 /* set the stat info and file attributes for a file (by file descriptor) */
-NTSTATUS fd_set_file_info( int fd, UINT attr, BOOL force_set_xattr )
+static NTSTATUS fd_set_file_info( int fd, UINT attr, BOOL force_set_xattr )
 {
     struct stat st;
 

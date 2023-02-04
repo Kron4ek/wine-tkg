@@ -2402,6 +2402,14 @@ typedef struct VkPhysicalDeviceSubpassShadingFeaturesHUAWEI32
     VkBool32 subpassShading;
 } VkPhysicalDeviceSubpassShadingFeaturesHUAWEI32;
 
+typedef struct VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    VkBool32 clustercullingShader;
+    VkBool32 multiviewClusterCullingShader;
+} VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI32;
+
 typedef struct VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT32
 {
     VkStructureType sType;
@@ -2736,6 +2744,13 @@ typedef struct VkPhysicalDeviceFaultFeaturesEXT32
     VkBool32 deviceFault;
     VkBool32 deviceFaultVendorBinary;
 } VkPhysicalDeviceFaultFeaturesEXT32;
+
+typedef struct VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    VkBool32 pipelineLibraryGroupHandles;
+} VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT32;
 
 typedef struct VkPhysicalDeviceShaderCoreBuiltinsFeaturesARM32
 {
@@ -5212,6 +5227,15 @@ typedef struct VkPhysicalDeviceSubpassShadingPropertiesHUAWEI32
     uint32_t maxSubpassShadingWorkgroupSizeAspectRatio;
 } VkPhysicalDeviceSubpassShadingPropertiesHUAWEI32;
 
+typedef struct VkPhysicalDeviceClusterCullingShaderPropertiesHUAWEI32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    uint32_t maxWorkGroupCount[3];
+    uint32_t maxWorkGroupSize[3];
+    uint32_t maxOutputClusterCount;
+} VkPhysicalDeviceClusterCullingShaderPropertiesHUAWEI32;
+
 typedef struct VkPhysicalDeviceLineRasterizationPropertiesEXT32
 {
     VkStructureType sType;
@@ -6032,6 +6056,20 @@ typedef struct VkDebugUtilsObjectTagInfoEXT32
     PTR32 tagSize;
     PTR32 pTag;
 } VkDebugUtilsObjectTagInfoEXT32;
+
+typedef struct VkHdrMetadataEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    VkXYColorEXT displayPrimaryRed;
+    VkXYColorEXT displayPrimaryGreen;
+    VkXYColorEXT displayPrimaryBlue;
+    VkXYColorEXT whitePoint;
+    float maxLuminance;
+    float minLuminance;
+    float maxContentLightLevel;
+    float maxFrameAverageLightLevel;
+} VkHdrMetadataEXT32;
 
 typedef struct VkSemaphoreSignalInfo32
 {
@@ -10888,6 +10926,18 @@ static inline void convert_VkDeviceCreateInfo_win64_to_host(struct conversion_co
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_FEATURES_HUAWEI:
+        {
+            VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI *in_ext = (const VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_FEATURES_HUAWEI;
+            out_ext->pNext = NULL;
+            out_ext->clustercullingShader = in_ext->clustercullingShader;
+            out_ext->multiviewClusterCullingShader = in_ext->multiviewClusterCullingShader;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT:
         {
             VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
@@ -11388,6 +11438,17 @@ static inline void convert_VkDeviceCreateInfo_win64_to_host(struct conversion_co
             out_ext->pNext = NULL;
             out_ext->deviceFault = in_ext->deviceFault;
             out_ext->deviceFaultVendorBinary = in_ext->deviceFaultVendorBinary;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT:
+        {
+            VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT *in_ext = (const VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT;
+            out_ext->pNext = NULL;
+            out_ext->pipelineLibraryGroupHandles = in_ext->pipelineLibraryGroupHandles;
             out_header->pNext = (void *)out_ext;
             out_header = (void *)out_ext;
             break;
@@ -12738,6 +12799,18 @@ static inline void convert_VkDeviceCreateInfo_win32_to_host(struct conversion_co
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_FEATURES_HUAWEI:
+        {
+            VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI32 *in_ext = (const VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_FEATURES_HUAWEI;
+            out_ext->pNext = NULL;
+            out_ext->clustercullingShader = in_ext->clustercullingShader;
+            out_ext->multiviewClusterCullingShader = in_ext->multiviewClusterCullingShader;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT:
         {
             VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
@@ -13238,6 +13311,17 @@ static inline void convert_VkDeviceCreateInfo_win32_to_host(struct conversion_co
             out_ext->pNext = NULL;
             out_ext->deviceFault = in_ext->deviceFault;
             out_ext->deviceFaultVendorBinary = in_ext->deviceFaultVendorBinary;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT:
+        {
+            VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT32 *in_ext = (const VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT;
+            out_ext->pNext = NULL;
+            out_ext->pipelineLibraryGroupHandles = in_ext->pipelineLibraryGroupHandles;
             out_header->pNext = (void *)out_ext;
             out_header = (void *)out_ext;
             break;
@@ -19100,6 +19184,18 @@ static inline void convert_VkPhysicalDeviceFeatures2_win32_to_host(struct conver
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_FEATURES_HUAWEI:
+        {
+            VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI32 *in_ext = (const VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_FEATURES_HUAWEI;
+            out_ext->pNext = NULL;
+            out_ext->clustercullingShader = in_ext->clustercullingShader;
+            out_ext->multiviewClusterCullingShader = in_ext->multiviewClusterCullingShader;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT:
         {
             VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
@@ -19600,6 +19696,17 @@ static inline void convert_VkPhysicalDeviceFeatures2_win32_to_host(struct conver
             out_ext->pNext = NULL;
             out_ext->deviceFault = in_ext->deviceFault;
             out_ext->deviceFaultVendorBinary = in_ext->deviceFaultVendorBinary;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT:
+        {
+            VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT32 *in_ext = (const VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT;
+            out_ext->pNext = NULL;
+            out_ext->pipelineLibraryGroupHandles = in_ext->pipelineLibraryGroupHandles;
             out_header->pNext = (void *)out_ext;
             out_header = (void *)out_ext;
             break;
@@ -20698,6 +20805,16 @@ static inline void convert_VkPhysicalDeviceFeatures2_host_to_win32(const VkPhysi
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_FEATURES_HUAWEI:
+        {
+            VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_FEATURES_HUAWEI);
+            const VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI *in_ext = (const VkPhysicalDeviceClusterCullingShaderFeaturesHUAWEI *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_FEATURES_HUAWEI;
+            out_ext->clustercullingShader = in_ext->clustercullingShader;
+            out_ext->multiviewClusterCullingShader = in_ext->multiviewClusterCullingShader;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT:
         {
             VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT);
@@ -21111,6 +21228,15 @@ static inline void convert_VkPhysicalDeviceFeatures2_host_to_win32(const VkPhysi
             out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
             out_ext->deviceFault = in_ext->deviceFault;
             out_ext->deviceFaultVendorBinary = in_ext->deviceFaultVendorBinary;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT:
+        {
+            VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT);
+            const VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT *in_ext = (const VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT;
+            out_ext->pipelineLibraryGroupHandles = in_ext->pipelineLibraryGroupHandles;
             out_header = (void *)out_ext;
             break;
         }
@@ -22217,6 +22343,15 @@ static inline void convert_VkPhysicalDeviceProperties2_win32_to_host(struct conv
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_PROPERTIES_HUAWEI:
+        {
+            VkPhysicalDeviceClusterCullingShaderPropertiesHUAWEI *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_PROPERTIES_HUAWEI;
+            out_ext->pNext = NULL;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_PROPERTIES_EXT:
         {
             VkPhysicalDeviceLineRasterizationPropertiesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
@@ -23019,6 +23154,17 @@ static inline void convert_VkPhysicalDeviceProperties2_host_to_win32(const VkPhy
             const VkPhysicalDeviceSubpassShadingPropertiesHUAWEI *in_ext = (const VkPhysicalDeviceSubpassShadingPropertiesHUAWEI *)in_header;
             out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBPASS_SHADING_PROPERTIES_HUAWEI;
             out_ext->maxSubpassShadingWorkgroupSizeAspectRatio = in_ext->maxSubpassShadingWorkgroupSizeAspectRatio;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_PROPERTIES_HUAWEI:
+        {
+            VkPhysicalDeviceClusterCullingShaderPropertiesHUAWEI32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_PROPERTIES_HUAWEI);
+            const VkPhysicalDeviceClusterCullingShaderPropertiesHUAWEI *in_ext = (const VkPhysicalDeviceClusterCullingShaderPropertiesHUAWEI *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_CULLING_SHADER_PROPERTIES_HUAWEI;
+            memcpy(out_ext->maxWorkGroupCount, in_ext->maxWorkGroupCount, 3 * sizeof(uint32_t));
+            memcpy(out_ext->maxWorkGroupSize, in_ext->maxWorkGroupSize, 3 * sizeof(uint32_t));
+            out_ext->maxOutputClusterCount = in_ext->maxOutputClusterCount;
             out_header = (void *)out_ext;
             break;
         }
@@ -25206,6 +25352,40 @@ static inline void convert_VkDebugUtilsObjectTagInfoEXT_win32_to_host(const VkDe
     out->pTag = (const void *)UlongToPtr(in->pTag);
     if (in->pNext)
         FIXME("Unexpected pNext\n");
+}
+
+static inline void convert_VkHdrMetadataEXT_win32_to_host(const VkHdrMetadataEXT32 *in, VkHdrMetadataEXT *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = NULL;
+    out->displayPrimaryRed = in->displayPrimaryRed;
+    out->displayPrimaryGreen = in->displayPrimaryGreen;
+    out->displayPrimaryBlue = in->displayPrimaryBlue;
+    out->whitePoint = in->whitePoint;
+    out->maxLuminance = in->maxLuminance;
+    out->minLuminance = in->minLuminance;
+    out->maxContentLightLevel = in->maxContentLightLevel;
+    out->maxFrameAverageLightLevel = in->maxFrameAverageLightLevel;
+    if (in->pNext)
+        FIXME("Unexpected pNext\n");
+}
+
+static inline const VkHdrMetadataEXT *convert_VkHdrMetadataEXT_array_win32_to_host(struct conversion_context *ctx, const VkHdrMetadataEXT32 *in, uint32_t count)
+{
+    VkHdrMetadataEXT *out;
+    unsigned int i;
+
+    if (!in || !count) return NULL;
+
+    out = conversion_context_alloc(ctx, count * sizeof(*out));
+    for (i = 0; i < count; i++)
+    {
+        convert_VkHdrMetadataEXT_win32_to_host(&in[i], &out[i]);
+    }
+
+    return out;
 }
 
 static inline void convert_VkSemaphoreSignalInfo_win32_to_host(const VkSemaphoreSignalInfo32 *in, VkSemaphoreSignalInfo *out)
@@ -27551,6 +27731,49 @@ static void thunk32_vkCmdDraw(void *args)
     } *params = args;
 
     wine_cmd_buffer_from_handle((VkCommandBuffer)UlongToPtr(params->commandBuffer))->device->funcs.p_vkCmdDraw(wine_cmd_buffer_from_handle((VkCommandBuffer)UlongToPtr(params->commandBuffer))->command_buffer, params->vertexCount, params->instanceCount, params->firstVertex, params->firstInstance);
+}
+
+#ifdef _WIN64
+static void thunk64_vkCmdDrawClusterHUAWEI(void *args)
+{
+    struct vkCmdDrawClusterHUAWEI_params *params = args;
+
+    wine_cmd_buffer_from_handle(params->commandBuffer)->device->funcs.p_vkCmdDrawClusterHUAWEI(wine_cmd_buffer_from_handle(params->commandBuffer)->command_buffer, params->groupCountX, params->groupCountY, params->groupCountZ);
+}
+#endif /* _WIN64 */
+
+static void thunk32_vkCmdDrawClusterHUAWEI(void *args)
+{
+    struct
+    {
+        PTR32 commandBuffer;
+        uint32_t groupCountX;
+        uint32_t groupCountY;
+        uint32_t groupCountZ;
+    } *params = args;
+
+    wine_cmd_buffer_from_handle((VkCommandBuffer)UlongToPtr(params->commandBuffer))->device->funcs.p_vkCmdDrawClusterHUAWEI(wine_cmd_buffer_from_handle((VkCommandBuffer)UlongToPtr(params->commandBuffer))->command_buffer, params->groupCountX, params->groupCountY, params->groupCountZ);
+}
+
+#ifdef _WIN64
+static void thunk64_vkCmdDrawClusterIndirectHUAWEI(void *args)
+{
+    struct vkCmdDrawClusterIndirectHUAWEI_params *params = args;
+
+    wine_cmd_buffer_from_handle(params->commandBuffer)->device->funcs.p_vkCmdDrawClusterIndirectHUAWEI(wine_cmd_buffer_from_handle(params->commandBuffer)->command_buffer, params->buffer, params->offset);
+}
+#endif /* _WIN64 */
+
+static void thunk32_vkCmdDrawClusterIndirectHUAWEI(void *args)
+{
+    struct
+    {
+        PTR32 commandBuffer;
+        VkBuffer DECLSPEC_ALIGN(8) buffer;
+        VkDeviceSize DECLSPEC_ALIGN(8) offset;
+    } *params = args;
+
+    wine_cmd_buffer_from_handle((VkCommandBuffer)UlongToPtr(params->commandBuffer))->device->funcs.p_vkCmdDrawClusterIndirectHUAWEI(wine_cmd_buffer_from_handle((VkCommandBuffer)UlongToPtr(params->commandBuffer))->command_buffer, params->buffer, params->offset);
 }
 
 #ifdef _WIN64
@@ -39447,6 +39670,39 @@ static NTSTATUS thunk32_vkSetEvent(void *args)
 }
 
 #ifdef _WIN64
+static NTSTATUS thunk64_vkSetHdrMetadataEXT(void *args)
+{
+    struct vkSetHdrMetadataEXT_params *params = args;
+
+    TRACE("%p, %u, %p, %p\n", params->device, params->swapchainCount, params->pSwapchains, params->pMetadata);
+
+    wine_device_from_handle(params->device)->funcs.p_vkSetHdrMetadataEXT(wine_device_from_handle(params->device)->device, params->swapchainCount, params->pSwapchains, params->pMetadata);
+    return STATUS_SUCCESS;
+}
+#endif /* _WIN64 */
+
+static NTSTATUS thunk32_vkSetHdrMetadataEXT(void *args)
+{
+    struct
+    {
+        PTR32 device;
+        uint32_t swapchainCount;
+        PTR32 pSwapchains;
+        PTR32 pMetadata;
+    } *params = args;
+    const VkHdrMetadataEXT *pMetadata_host;
+    struct conversion_context ctx;
+
+    TRACE("%#x, %u, %#x, %#x\n", params->device, params->swapchainCount, params->pSwapchains, params->pMetadata);
+
+    init_conversion_context(&ctx);
+    pMetadata_host = convert_VkHdrMetadataEXT_array_win32_to_host(&ctx, (const VkHdrMetadataEXT32 *)UlongToPtr(params->pMetadata), params->swapchainCount);
+    wine_device_from_handle((VkDevice)UlongToPtr(params->device))->funcs.p_vkSetHdrMetadataEXT(wine_device_from_handle((VkDevice)UlongToPtr(params->device))->device, params->swapchainCount, (const VkSwapchainKHR *)UlongToPtr(params->pSwapchains), pMetadata_host);
+    free_conversion_context(&ctx);
+    return STATUS_SUCCESS;
+}
+
+#ifdef _WIN64
 static NTSTATUS thunk64_vkSetPrivateData(void *args)
 {
     struct vkSetPrivateData_params *params = args;
@@ -40027,6 +40283,7 @@ static const char * const vk_device_extensions[] =
     "VK_EXT_global_priority",
     "VK_EXT_global_priority_query",
     "VK_EXT_graphics_pipeline_library",
+    "VK_EXT_hdr_metadata",
     "VK_EXT_host_query_reset",
     "VK_EXT_image_2d_view_of_3d",
     "VK_EXT_image_compression_control",
@@ -40050,6 +40307,7 @@ static const char * const vk_device_extensions[] =
     "VK_EXT_pci_bus_info",
     "VK_EXT_pipeline_creation_cache_control",
     "VK_EXT_pipeline_creation_feedback",
+    "VK_EXT_pipeline_library_group_handles",
     "VK_EXT_pipeline_properties",
     "VK_EXT_pipeline_protected_access",
     "VK_EXT_pipeline_robustness",
@@ -40090,6 +40348,7 @@ static const char * const vk_device_extensions[] =
     "VK_GOOGLE_decorate_string",
     "VK_GOOGLE_hlsl_functionality1",
     "VK_GOOGLE_user_type",
+    "VK_HUAWEI_cluster_culling_shader",
     "VK_HUAWEI_invocation_mask",
     "VK_HUAWEI_subpass_shading",
     "VK_IMG_filter_cubic",
@@ -40357,6 +40616,8 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     (void *)thunk64_vkCmdDispatchBaseKHR,
     (void *)thunk64_vkCmdDispatchIndirect,
     (void *)thunk64_vkCmdDraw,
+    (void *)thunk64_vkCmdDrawClusterHUAWEI,
+    (void *)thunk64_vkCmdDrawClusterIndirectHUAWEI,
     (void *)thunk64_vkCmdDrawIndexed,
     (void *)thunk64_vkCmdDrawIndexedIndirect,
     (void *)thunk64_vkCmdDrawIndexedIndirectCount,
@@ -40783,6 +41044,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     thunk64_vkSetDebugUtilsObjectTagEXT,
     thunk64_vkSetDeviceMemoryPriorityEXT,
     thunk64_vkSetEvent,
+    thunk64_vkSetHdrMetadataEXT,
     thunk64_vkSetPrivateData,
     thunk64_vkSetPrivateDataEXT,
     thunk64_vkSignalSemaphore,
@@ -40898,6 +41160,8 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     (void *)thunk32_vkCmdDispatchBaseKHR,
     (void *)thunk32_vkCmdDispatchIndirect,
     (void *)thunk32_vkCmdDraw,
+    (void *)thunk32_vkCmdDrawClusterHUAWEI,
+    (void *)thunk32_vkCmdDrawClusterIndirectHUAWEI,
     (void *)thunk32_vkCmdDrawIndexed,
     (void *)thunk32_vkCmdDrawIndexedIndirect,
     (void *)thunk32_vkCmdDrawIndexedIndirectCount,
@@ -41324,6 +41588,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     thunk32_vkSetDebugUtilsObjectTagEXT,
     thunk32_vkSetDeviceMemoryPriorityEXT,
     thunk32_vkSetEvent,
+    thunk32_vkSetHdrMetadataEXT,
     thunk32_vkSetPrivateData,
     thunk32_vkSetPrivateDataEXT,
     thunk32_vkSignalSemaphore,

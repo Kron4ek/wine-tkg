@@ -338,8 +338,10 @@ static inline struct block *next_block( const SUBHEAP *subheap, const struct blo
     return (struct block *)next;
 }
 
-static inline BOOL check_subheap( const SUBHEAP *subheap )
+static inline BOOL check_subheap( const SUBHEAP *subheap, const struct heap *heap )
 {
+    if (subheap->user_value != heap) return FALSE;
+
     return contains( &subheap->block, subheap->block_size, subheap + 1, subheap->data_size );
 }
 
@@ -447,13 +449,13 @@ static inline void valgrind_notify_resize( void const *ptr, SIZE_T size_old, SIZ
 #endif
 }
 
-static void valgrind_notify_free_all( SUBHEAP *subheap )
+static void valgrind_notify_free_all( SUBHEAP *subheap, const struct heap *heap )
 {
 #ifdef VALGRIND_FREELIKE_BLOCK
     struct block *block;
 
     if (!RUNNING_ON_VALGRIND) return;
-    if (!check_subheap( subheap )) return;
+    if (!check_subheap( subheap, heap )) return;
 
     for (block = first_block( subheap ); block; block = next_block( subheap, block ))
     {
@@ -549,7 +551,7 @@ static void heap_dump( const struct heap *heap )
         TRACE( "    %p: base %p first %p last %p end %p\n", subheap, base, first_block( subheap ),
                last_block( subheap ), base + subheap_size( subheap ) );
 
-        if (!check_subheap( subheap )) return;
+        if (!check_subheap( subheap, heap )) return;
 
         overhead += subheap_overhead( subheap );
         for (block = first_block( subheap ); block; block = next_block( subheap, block ))
@@ -648,7 +650,7 @@ static SUBHEAP *find_subheap( const struct heap *heap, const struct block *block
     LIST_FOR_EACH_ENTRY( subheap, &heap->subheap_list, SUBHEAP, entry )
     {
         SIZE_T blocks_size = (char *)last_block( subheap ) - (char *)first_block( subheap );
-        if (!check_subheap( subheap )) return NULL;
+        if (!check_subheap( subheap, heap )) return NULL;
         if (contains( first_block( subheap ), blocks_size, block, sizeof(*block) )) return subheap;
         /* outside of blocks region, possible corruption or heap_walk */
         if (contains( subheap_base( subheap ), subheap_size( subheap ), block, 0 )) return heap_walk ? subheap : NULL;
@@ -1067,7 +1069,8 @@ static BOOL validate_free_block( const struct heap *heap, const SUBHEAP *subheap
 }
 
 
-static BOOL validate_used_block( const struct heap *heap, const SUBHEAP *subheap, const struct block *block )
+static BOOL validate_used_block( const struct heap *heap, const SUBHEAP *subheap, const struct block *block,
+                                 unsigned int expected_block_type )
 {
     const char *err = NULL, *base = subheap_base( subheap ), *commit_end = subheap_commit_end( subheap );
     DWORD flags = heap->flags;
@@ -1078,6 +1081,8 @@ static BOOL validate_used_block( const struct heap *heap, const SUBHEAP *subheap
         err = "invalid block BLOCK_ALIGN";
     else if (block_get_type( block ) != BLOCK_TYPE_USED && block_get_type( block ) != BLOCK_TYPE_DEAD)
         err = "invalid block header";
+    else if (expected_block_type && block_get_type( block ) != expected_block_type)
+        err = "invalid block type";
     else if (block_get_flags( block ) & BLOCK_FLAG_FREE)
         err = "invalid block flags";
     else if (!contains( base, commit_end - base, block, block_get_size( block ) ))
@@ -1131,14 +1136,14 @@ static BOOL heap_validate_ptr( const struct heap *heap, const void *ptr )
     {
         if (!find_large_block( heap, block ))
         {
-            if (WARN_ON(heap)) WARN("heap %p, ptr %p: block region not found\n", heap, ptr );
+            WARN("heap %p, ptr %p: block region not found\n", heap, ptr );
             return FALSE;
         }
 
         return validate_large_block( heap, block );
     }
 
-    return validate_used_block( heap, subheap, block );
+    return validate_used_block( heap, subheap, block, BLOCK_TYPE_USED );
 }
 
 static BOOL heap_validate( const struct heap *heap )
@@ -1149,9 +1154,9 @@ static BOOL heap_validate( const struct heap *heap )
 
     LIST_FOR_EACH_ENTRY( subheap, &heap->subheap_list, SUBHEAP, entry )
     {
-        if (!check_subheap( subheap ))
+        if (!check_subheap( subheap, heap ))
         {
-            ERR( "heap %p, subheap %p corrupted sizes\n", heap, subheap );
+            ERR( "heap %p, subheap %p corrupted sizes or user_value\n", heap, subheap );
             if (TRACE_ON(heap)) heap_dump( heap );
             return FALSE;
         }
@@ -1164,7 +1169,37 @@ static BOOL heap_validate( const struct heap *heap )
             }
             else
             {
-                if (!validate_used_block( heap, subheap, block )) return FALSE;
+                if (!validate_used_block( heap, subheap, block, 0 )) return FALSE;
+            }
+        }
+    }
+
+    if (heap->pending_free)
+    {
+        unsigned int i;
+
+        for (i = 0; i < MAX_FREE_PENDING; i++)
+        {
+            if (!(block = heap->pending_free[i])) break;
+
+            subheap = find_subheap( heap, block, FALSE );
+            if (!subheap)
+            {
+                ERR( "heap %p: cannot find valid subheap for delayed freed block %p\n", heap, block );
+                if (TRACE_ON(heap)) heap_dump( heap );
+                return FALSE;
+            }
+
+            if (!validate_used_block( heap, subheap, block, BLOCK_TYPE_DEAD )) return FALSE;
+        }
+
+        for (; i < MAX_FREE_PENDING; i++)
+        {
+            if ((block = heap->pending_free[i]))
+            {
+                ERR( "heap %p: unexpected delayed freed block %p at slot %u\n", heap, block, i );
+                if (TRACE_ON(heap)) heap_dump( heap );
+                return FALSE;
             }
         }
     }
@@ -1268,7 +1303,7 @@ static void heap_set_debug_flags( HANDLE handle )
         {
             const char *commit_end = subheap_commit_end( subheap );
 
-            if (!check_subheap( subheap )) break;
+            if (!check_subheap( subheap, heap )) break;
 
             for (block = first_block( subheap ); block; block = next_block( subheap, block ))
             {
@@ -1464,13 +1499,13 @@ HANDLE WINAPI RtlDestroyHeap( HANDLE handle )
     LIST_FOR_EACH_ENTRY_SAFE( subheap, next, &heap->subheap_list, SUBHEAP, entry )
     {
         if (subheap == &heap->subheap) continue;  /* do this one last */
-        valgrind_notify_free_all( subheap );
+        valgrind_notify_free_all( subheap, heap );
         list_remove( &subheap->entry );
         size = 0;
         addr = ROUND_ADDR( subheap, REGION_ALIGN - 1 );
         NtFreeVirtualMemory( NtCurrentProcess(), &addr, &size, MEM_RELEASE );
     }
-    valgrind_notify_free_all( &heap->subheap );
+    valgrind_notify_free_all( &heap->subheap, heap );
     size = 0;
     addr = heap;
     NtFreeVirtualMemory( NtCurrentProcess(), &addr, &size, MEM_RELEASE );

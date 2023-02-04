@@ -1350,6 +1350,7 @@ static IHTMLDocument2 *_get_doc_node(unsigned line, IHTMLDocument2 *doc)
     hres = IHTMLWindow2_get_document(window, &ret);
     ok_(__FILE__,line)(hres == S_OK, "get_document failed: %08lx\n", hres);
     ok_(__FILE__,line)(ret != NULL, "document = NULL\n");
+    IHTMLWindow2_Release(window);
 
     return ret;
 }
@@ -6313,6 +6314,7 @@ static void test_location(IHTMLDocument2 *doc)
     ok(hres == S_OK, "get_location failed: %08lx\n", hres);
     ok(location == location2, "location != location2\n");
     IHTMLLocation_Release(location2);
+    IHTMLWindow2_Release(window);
 
     test_ifaces((IUnknown*)location, location_iids);
     test_disp2((IUnknown*)location, &DIID_DispHTMLLocation, &IID_IHTMLLocation, NULL, L"about:blank");
@@ -7564,6 +7566,7 @@ static void test_xhr(IHTMLDocument2 *doc)
     SysFreeString(str);
 
     IHTMLWindow2_Release(window);
+    IDispatchEx_Release(dispex);
 }
 
 static void test_defaults(IHTMLDocument2 *doc)
@@ -10984,7 +10987,7 @@ static IHTMLDocument2 *create_docfrag(IHTMLDocument2 *doc)
 static void test_docfrag(IHTMLDocument2 *doc)
 {
     IHTMLDocument2 *frag, *owner_doc, *doc_node;
-    IHTMLElement *div, *body, *br;
+    IHTMLElement *div, *main_body, *frag_body, *br,*html;
     IHTMLElementCollection *col;
     IHTMLLocation *location;
     HRESULT hres;
@@ -10998,19 +11001,37 @@ static void test_docfrag(IHTMLDocument2 *doc)
         ET_BR
     };
 
+    static const elem_type_t empty_types[] = {};
+
+    static const elem_type_t frag_types[] = {
+            ET_HTML,
+            ET_DIV,
+            ET_DIV,
+            ET_BODY
+    };
+
     frag = create_docfrag(doc);
 
     test_disp((IUnknown*)frag, &DIID_DispHTMLDocument, &CLSID_HTMLDocument, L"[object]");
 
-    body = (void*)0xdeadbeef;
-    hres = IHTMLDocument2_get_body(frag, &body);
+    frag_body = (void*)0xdeadbeef;
+    hres = IHTMLDocument2_get_body(frag, &frag_body);
     ok(hres == S_OK, "get_body failed: %08lx\n", hres);
-    ok(!body, "body != NULL\n");
+    ok(!frag_body, "body != NULL\n");
 
     location = (void*)0xdeadbeef;
     hres = IHTMLDocument2_get_location(frag, &location);
     ok(hres == E_UNEXPECTED, "get_location failed: %08lx\n", hres);
     ok(location == (void*)0xdeadbeef, "location changed\n");
+
+    col = NULL;
+    hres = IHTMLDocument2_get_all(frag, &col);
+    ok(hres == S_OK, "get_all failed: %08lx\n", hres);
+    ok(col != NULL, "got null elements collection\n");
+    if (col) {
+        test_elem_collection((IUnknown *) col, empty_types, ARRAY_SIZE(empty_types));
+        IHTMLElementCollection_Release(col);
+    }
 
     br = test_create_elem(doc, L"BR");
     test_elem_source_index(br, -1);
@@ -11029,6 +11050,52 @@ static void test_docfrag(IHTMLDocument2 *doc)
     ok(hres == S_OK, "get_all failed: %08lx\n", hres);
     test_elem_collection((IUnknown*)col, all_types, ARRAY_SIZE(all_types));
     IHTMLElementCollection_Release(col);
+
+    html = test_create_elem(doc, L"HTML");
+    test_elem_source_index(html, -1);
+    test_node_append_child((IUnknown*)frag, (IUnknown*)html);
+    test_elem_source_index(html, 0);
+
+    div = test_create_elem(doc, L"DIV");
+    test_elem_source_index(div, -1);
+    test_node_append_child((IUnknown*)html, (IUnknown*)div);
+    test_elem_source_index(div, 1);
+    IHTMLElement_Release(div);
+
+    div = test_create_elem(doc, L"DIV");
+    test_elem_source_index(div, -1);
+    test_node_append_child((IUnknown*)html, (IUnknown*)div);
+    test_elem_source_index(div, 2);
+
+    frag_body = test_create_elem(doc, L"BODY");
+    test_elem_source_index(frag_body, -1);
+    test_node_append_child((IUnknown*)div, (IUnknown*)frag_body);
+    test_elem_source_index(frag_body, 3);
+    IHTMLElement_Release(frag_body);
+    IHTMLElement_Release(div);
+    IHTMLElement_Release(html);
+
+    hres = IHTMLDocument2_get_body(doc, &main_body);
+    ok(hres == S_OK, "get_body failed: %08lx\n", hres);
+    ok(main_body != NULL, "body == NULL\n");
+
+    hres = IHTMLDocument2_get_body(frag, &frag_body);
+    ok(hres == S_OK, "get_body failed: %08lx\n", hres);
+    ok(frag_body != NULL, "body == NULL\n");
+    if (frag_body) {
+        ok(!iface_cmp((IUnknown *) frag_body, (IUnknown *) main_body), "frag_body == main_body\n");
+        IHTMLElement_Release(frag_body);
+    }
+    IHTMLElement_Release(main_body);
+
+    col = NULL;
+    hres = IHTMLDocument2_get_all(frag, &col);
+    ok(hres == S_OK, "get_all failed: %08lx\n", hres);
+    ok(col != NULL, "got null elements collection\n");
+    if (col) {
+        test_elem_collection((IUnknown *) col, frag_types, ARRAY_SIZE(frag_types));
+        IHTMLElementCollection_Release(col);
+    }
 
     div = test_create_elem(frag, L"div");
     owner_doc = get_owner_doc((IUnknown*)div);
@@ -11733,13 +11800,27 @@ static void test_quirks_mode(void)
 
 static void test_document_mode_lock(void)
 {
+    IHTMLOptionElementFactory *option, *option2;
+    IHTMLDocument2 *doc, *doc_node, *doc_node2;
+    IHTMLImageElementFactory *image, *image2;
+    IOmNavigator *navigator, *navigator2;
+    IHTMLLocation *location, *location2;
+    IHTMLPerformance *perf, *perf2;
+    IOmHistory *history, *history2;
+    IHTMLScreen *screen, *screen2;
     IEventTarget *event_target;
     IPersistStreamInit *init;
-    IHTMLDocument2 *doc;
+    IHTMLWindow7 *window7;
+    IHTMLWindow5 *window5;
+    IHTMLWindow2 *window;
+    IDispatchEx *dispex;
     IStream *stream;
+    DISPID dispid;
     HRESULT hres;
     HGLOBAL mem;
+    VARIANT var;
     SIZE_T len;
+    BSTR bstr;
     MSG msg;
 
     notif_doc = doc = create_document();
@@ -11750,6 +11831,57 @@ static void test_document_mode_lock(void)
     hres = IHTMLDocument2_QueryInterface(doc, &IID_IEventTarget, (void**)&event_target);
     ok(hres == E_NOINTERFACE, "QueryInterface(IID_IEventTarget) returned %08lx.\n", hres);
     ok(event_target == NULL, "event_target != NULL\n");
+
+    hres = IHTMLDocument2_get_parentWindow(doc, &window);
+    ok(hres == S_OK, "get_parentWindow failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_document(window, &doc_node);
+    ok(hres == S_OK, "get_document failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_location(window, &location);
+    ok(hres == S_OK, "get_location failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_navigator(window, &navigator);
+    ok(hres == S_OK, "get_navigator failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_history(window, &history);
+    ok(hres == S_OK, "get_history failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_screen(window, &screen);
+    ok(hres == S_OK, "get_screen failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_Image(window, &image);
+    ok(hres == S_OK, "get_image failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_Option(window, &option);
+    ok(hres == S_OK, "get_option failed: %08lx\n", hres);
+
+    V_VT(&var) = VT_NULL;
+    hres = IHTMLWindow2_QueryInterface(window, &IID_IHTMLWindow5, (void**)&window5);
+    ok(hres == S_OK, "Could not get IHTMLWindow5: %08lx\n", hres);
+    hres = IHTMLWindow5_get_XMLHttpRequest(window5, &var);
+    ok(hres == S_OK, "get_XMLHttpRequest failed: %08lx\n", hres);
+    ok(V_VT(&var) == VT_EMPTY, "V_VT(XMLHttpRequest) = %d\n", V_VT(&var));
+    IHTMLWindow5_Release(window5);
+
+    hres = IHTMLWindow2_QueryInterface(window, &IID_IHTMLWindow7, (void**)&window7);
+    ok(hres == S_OK, "Could not get IHTMLWindow7: %08lx\n", hres);
+    hres = IHTMLWindow7_get_performance(window7, &var);
+    ok(hres == S_OK, "get_performance failed: %08lx\n", hres);
+    ok(V_VT(&var) == VT_DISPATCH, "V_VT(performance) = %d\n", V_VT(&var));
+    hres = IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IHTMLPerformance, (void**)&perf);
+    ok(hres == S_OK, "Could not get IHTMLPerformance: %08lx\n", hres);
+    IHTMLWindow7_Release(window7);
+    IHTMLWindow2_Release(window);
+    VariantClear(&var);
+
+    bstr = SysAllocString(L"wineTestProp");
+    hres = IHTMLLocation_QueryInterface(location, &IID_IDispatchEx, (void**)&dispex);
+    ok(hres == S_OK, "Could not get IDispatchEx: %08lx\n", hres);
+    hres = IDispatchEx_GetDispID(dispex, bstr, fdexNameEnsure, &dispid);
+    ok(hres == S_OK, "GetDispID(wineTestProp) returned: %08lx\n", hres);
+    IDispatchEx_Release(dispex);
+    SysFreeString(bstr);
 
     len = strlen(doc_blank_ie9);
     mem = GlobalAlloc(0, len);
@@ -11776,6 +11908,68 @@ static void test_document_mode_lock(void)
     ok(hres == S_OK, "QueryInterface(IID_IEventTarget) returned %08lx.\n", hres);
     ok(event_target != NULL, "event_target == NULL\n");
     IEventTarget_Release(event_target);
+
+    hres = IHTMLDocument2_get_parentWindow(doc, &window);
+    ok(hres == S_OK, "get_parentWindow failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_document(window, &doc_node2);
+    ok(hres == S_OK, "get_document failed: %08lx\n", hres);
+    ok(doc_node != doc_node2, "doc_node == doc_node2\n");
+    IHTMLDocument2_Release(doc_node2);
+    IHTMLDocument2_Release(doc_node);
+
+    hres = IHTMLWindow2_get_location(window, &location2);
+    ok(hres == S_OK, "get_location failed: %08lx\n", hres);
+    ok(location == location2, "location != location2\n");
+
+    bstr = SysAllocString(L"wineTestProp");
+    hres = IHTMLLocation_GetIDsOfNames(location2, &IID_NULL, &bstr, 1, 0, &dispid);
+    ok(hres == DISP_E_UNKNOWNNAME, "GetIDsOfNames(wineTestProp) returned: %08lx\n", hres);
+    IHTMLLocation_Release(location2);
+    IHTMLLocation_Release(location);
+    SysFreeString(bstr);
+
+    hres = IHTMLWindow2_get_navigator(window, &navigator2);
+    ok(hres == S_OK, "get_navigator failed: %08lx\n", hres);
+    ok(navigator != navigator2, "navigator == navigator2\n");
+    IOmNavigator_Release(navigator2);
+    IOmNavigator_Release(navigator);
+
+    hres = IHTMLWindow2_get_history(window, &history2);
+    ok(hres == S_OK, "get_history failed: %08lx\n", hres);
+    ok(history != history2, "history == history2\n");
+    IOmHistory_Release(history2);
+    IOmHistory_Release(history);
+
+    hres = IHTMLWindow2_get_screen(window, &screen2);
+    ok(hres == S_OK, "get_screen failed: %08lx\n", hres);
+    ok(screen != screen2, "screen == screen2\n");
+    IHTMLScreen_Release(screen2);
+    IHTMLScreen_Release(screen);
+
+    hres = IHTMLWindow2_get_Image(window, &image2);
+    ok(hres == S_OK, "get_image failed: %08lx\n", hres);
+    ok(image != image2, "image == image2\n");
+    IHTMLImageElementFactory_Release(image2);
+    IHTMLImageElementFactory_Release(image);
+
+    hres = IHTMLWindow2_get_Option(window, &option2);
+    ok(hres == S_OK, "get_option failed: %08lx\n", hres);
+    ok(option != option2, "option == option2\n");
+    IHTMLOptionElementFactory_Release(option2);
+    IHTMLOptionElementFactory_Release(option);
+
+    hres = IHTMLWindow2_QueryInterface(window, &IID_IHTMLWindow7, (void**)&window7);
+    ok(hres == S_OK, "Could not get IHTMLWindow7: %08lx\n", hres);
+    hres = IHTMLWindow7_get_performance(window7, &var);
+    ok(hres == S_OK, "get_performance failed: %08lx\n", hres);
+    ok(V_VT(&var) == VT_DISPATCH, "V_VT(performance) = %d\n", V_VT(&var));
+    hres = IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IHTMLPerformance, (void**)&perf2);
+    ok(hres == S_OK, "Could not get IHTMLPerformance: %08lx\n", hres);
+    ok(perf != perf2, "perf == perf2\n");
+    IHTMLWindow7_Release(window7);
+    IHTMLWindow2_Release(window);
+    VariantClear(&var);
 
     set_client_site(doc, FALSE);
     IHTMLDocument2_Release(doc);

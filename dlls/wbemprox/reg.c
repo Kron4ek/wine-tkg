@@ -75,7 +75,7 @@ static HRESULT to_i4_array( DWORD *values, DWORD count, VARIANT *var )
     return S_OK;
 }
 
-static unsigned int reg_get_access_mask( IWbemContext *context )
+static unsigned int get_access_mask( IWbemContext *context )
 {
     VARIANT value;
 
@@ -106,7 +106,7 @@ static HRESULT create_key( HKEY root, const WCHAR *subkey, IWbemContext *context
 
     TRACE("%p, %s\n", root, debugstr_w(subkey));
 
-    res = RegCreateKeyExW( root, subkey, 0, NULL, 0, reg_get_access_mask( context ), NULL, &hkey, NULL );
+    res = RegCreateKeyExW( root, subkey, 0, NULL, 0, get_access_mask( context ), NULL, &hkey, NULL );
     set_variant( VT_UI4, res, NULL, retval );
     if (!res)
     {
@@ -172,7 +172,7 @@ static HRESULT enum_key( HKEY root, const WCHAR *subkey, VARIANT *names, IWbemCo
     TRACE("%p, %s\n", root, debugstr_w(subkey));
 
     if (!(strings = malloc( count * sizeof(BSTR) ))) return E_OUTOFMEMORY;
-    if ((res = RegOpenKeyExW( root, subkey, 0, KEY_ENUMERATE_SUB_KEYS | reg_get_access_mask( context ), &hkey )))
+    if ((res = RegOpenKeyExW( root, subkey, 0, KEY_ENUMERATE_SUB_KEYS | get_access_mask( context ), &hkey )))
     {
         set_variant( VT_UI4, res, NULL, retval );
         free( strings );
@@ -271,7 +271,7 @@ done:
 }
 
 static HRESULT enum_values( HKEY root, const WCHAR *subkey, VARIANT *names, VARIANT *types, IWbemContext *context,
-        VARIANT *retval )
+                            VARIANT *retval )
 {
     HKEY hkey = NULL;
     HRESULT hr = S_OK;
@@ -282,7 +282,7 @@ static HRESULT enum_values( HKEY root, const WCHAR *subkey, VARIANT *names, VARI
 
     TRACE("%p, %s\n", root, debugstr_w(subkey));
 
-    if ((res = RegOpenKeyExW( root, subkey, 0, KEY_QUERY_VALUE | reg_get_access_mask( context ), &hkey ))) goto done;
+    if ((res = RegOpenKeyExW( root, subkey, 0, KEY_QUERY_VALUE | get_access_mask( context ), &hkey ))) goto done;
     if ((res = RegQueryInfoKeyW( hkey, NULL, NULL, NULL, NULL, NULL, NULL, &count, &buflen, NULL, NULL, NULL )))
         goto done;
 
@@ -386,7 +386,7 @@ done:
 }
 
 static HRESULT get_stringvalue( HKEY root, const WCHAR *subkey, const WCHAR *name, VARIANT *value,
-        IWbemContext *context, VARIANT *retval )
+                                IWbemContext *context, VARIANT *retval )
 {
     DWORD size, mask, flags = RRF_RT_REG_SZ;
     HRESULT hr = S_OK;
@@ -395,7 +395,7 @@ static HRESULT get_stringvalue( HKEY root, const WCHAR *subkey, const WCHAR *nam
 
     TRACE("%p, %s, %s\n", root, debugstr_w(subkey), debugstr_w(name));
 
-    mask = reg_get_access_mask( context );
+    mask = get_access_mask( context );
 
     if (mask & KEY_WOW64_64KEY)
         flags |= RRF_SUBKEY_WOW6464KEY;
@@ -403,13 +403,8 @@ static HRESULT get_stringvalue( HKEY root, const WCHAR *subkey, const WCHAR *nam
         flags |= RRF_SUBKEY_WOW6432KEY;
 
     if ((res = RegGetValueW( root, subkey, name, flags, NULL, NULL, &size ))) goto done;
-    if (!(str = SysAllocStringLen( NULL, size / sizeof(WCHAR) - 1 )))
-    {
-        hr = E_OUTOFMEMORY;
-        goto done;
-    }
-    if (!(res = RegGetValueW( root, subkey, name, flags, NULL, str, &size )))
-        set_variant( VT_BSTR, 0, str, value );
+    if (!(str = SysAllocStringLen( NULL, size / sizeof(WCHAR) - 1 ))) return E_OUTOFMEMORY;
+    if (!(res = RegGetValueW( root, subkey, name, flags, NULL, str, &size ))) set_variant( VT_BSTR, 0, str, value );
 
 done:
     set_variant( VT_UI4, res, NULL, retval );
@@ -480,15 +475,124 @@ done:
     return hr;
 }
 
+static HRESULT to_ui1_array( BYTE *value, DWORD size, VARIANT *var )
+{
+    SAFEARRAY *sa;
+    HRESULT hr;
+    LONG i;
+
+    if (!(sa = SafeArrayCreateVector( VT_UI1, 0, size ))) return E_OUTOFMEMORY;
+    for (i = 0; i < size; i++)
+    {
+        if ((hr = SafeArrayPutElement( sa, &i, &value[i] )) != S_OK)
+        {
+            SafeArrayDestroy( sa );
+            return hr;
+        }
+    }
+    set_variant( VT_UI1|VT_ARRAY, 0, sa, var );
+    return S_OK;
+}
+
+static HRESULT get_binaryvalue( HKEY root, const WCHAR *subkey, const WCHAR *name, VARIANT *value,
+                                IWbemContext *context, VARIANT *retval )
+{
+    DWORD size, mask, flags = RRF_RT_REG_BINARY;
+    HRESULT hr = S_OK;
+    BYTE *buf = NULL;
+    LONG res;
+
+    TRACE("%p, %s, %s\n", root, debugstr_w(subkey), debugstr_w(name));
+
+    mask = get_access_mask( context );
+
+    if (mask & KEY_WOW64_64KEY)
+        flags |= RRF_SUBKEY_WOW6464KEY;
+    else if (mask & KEY_WOW64_32KEY)
+        flags |= RRF_SUBKEY_WOW6432KEY;
+
+    if ((res = RegGetValueW( root, subkey, name, flags, NULL, NULL, &size ))) goto done;
+    if (!(buf = malloc( size ))) return E_OUTOFMEMORY;
+    if (!(res = RegGetValueW( root, subkey, name, flags, NULL, buf, &size ))) hr = to_ui1_array( buf, size, value );
+
+done:
+    set_variant( VT_UI4, res, NULL, retval );
+    free( buf );
+    return hr;
+}
+
+HRESULT reg_get_binaryvalue( IWbemClassObject *obj, IWbemContext *context, IWbemClassObject *in, IWbemClassObject **out )
+{
+    VARIANT defkey, subkey, name, value, retval;
+    IWbemClassObject *sig, *out_params = NULL;
+    HRESULT hr;
+
+    TRACE("%p, %p, %p, %p\n", obj, context, in, out);
+
+    hr = IWbemClassObject_Get( in, L"hDefKey", 0, &defkey, NULL, NULL );
+    if (hr != S_OK) return hr;
+    hr = IWbemClassObject_Get( in, L"sSubKeyName", 0, &subkey, NULL, NULL );
+    if (hr != S_OK) return hr;
+    hr = IWbemClassObject_Get( in, L"sValueName", 0, &name, NULL, NULL );
+    if (hr != S_OK)
+    {
+        VariantClear( &subkey );
+        return hr;
+    }
+
+    hr = create_signature( WBEMPROX_NAMESPACE_CIMV2, L"StdRegProv", L"GetBinaryValue", PARAM_OUT, &sig );
+    if (hr != S_OK)
+    {
+        VariantClear( &name );
+        VariantClear( &subkey );
+        return hr;
+    }
+    if (out)
+    {
+        hr = IWbemClassObject_SpawnInstance( sig, 0, &out_params );
+        if (hr != S_OK)
+        {
+            VariantClear( &name );
+            VariantClear( &subkey );
+            IWbemClassObject_Release( sig );
+            return hr;
+        }
+    }
+    VariantInit( &value );
+    hr = get_binaryvalue( (HKEY)(INT_PTR)V_I4(&defkey), V_BSTR(&subkey), V_BSTR(&name), &value, context, &retval );
+    if (hr != S_OK) goto done;
+    if (out_params)
+    {
+        if (!V_UI4( &retval ))
+        {
+            hr = IWbemClassObject_Put( out_params, L"uValue", 0, &value, CIM_UINT8|CIM_FLAG_ARRAY );
+            if (hr != S_OK) goto done;
+        }
+        hr = IWbemClassObject_Put( out_params, L"ReturnValue", 0, &retval, CIM_UINT32 );
+    }
+
+done:
+    VariantClear( &name );
+    VariantClear( &subkey );
+    IWbemClassObject_Release( sig );
+    if (hr == S_OK && out)
+    {
+        *out = out_params;
+        IWbemClassObject_AddRef( out_params );
+    }
+    if (out_params) IWbemClassObject_Release( out_params );
+    return hr;
+}
+
 static void set_stringvalue( HKEY root, const WCHAR *subkey, const WCHAR *name, const WCHAR *value,
-        IWbemContext *context, VARIANT *retval )
+                             IWbemContext *context, VARIANT *retval )
 {
     HKEY hkey;
     LONG res;
 
     TRACE("%p, %s, %s, %s\n", root, debugstr_w(subkey), debugstr_w(name), debugstr_w(value));
 
-    if ((res = RegOpenKeyExW( root, subkey, 0, KEY_SET_VALUE | reg_get_access_mask( context ), &hkey )))
+    if ((res = RegOpenKeyExW( root, subkey, 0, KEY_SET_VALUE | get_access_mask( context ), &hkey )))
     {
         set_variant( VT_UI4, res, NULL, retval );
         return;
@@ -571,7 +675,7 @@ static void set_dwordvalue( HKEY root, const WCHAR *subkey, const WCHAR *name, D
 
     TRACE( "%p, %s, %s, %#lx\n", root, debugstr_w(subkey), debugstr_w(name), value );
 
-    if ((res = RegOpenKeyExW( root, subkey, 0, KEY_SET_VALUE | reg_get_access_mask( context ), &hkey )))
+    if ((res = RegOpenKeyExW( root, subkey, 0, KEY_SET_VALUE | get_access_mask( context ), &hkey )))
     {
         set_variant( VT_UI4, res, NULL, retval );
         return;
@@ -648,7 +752,7 @@ static void delete_key( HKEY root, const WCHAR *subkey, IWbemContext *context, V
 
     TRACE("%p, %s\n", root, debugstr_w(subkey));
 
-    res = RegDeleteKeyExW( root, subkey, reg_get_access_mask( context ), 0 );
+    res = RegDeleteKeyExW( root, subkey, get_access_mask( context ), 0 );
     set_variant( VT_UI4, res, NULL, retval );
 }
 

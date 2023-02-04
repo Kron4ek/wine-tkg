@@ -273,6 +273,7 @@ struct dbg_process*	dbg_add_process(const struct be_process_io* pio, DWORD pid, 
     p->pio_data = NULL;
     p->imageName = NULL;
     list_init(&p->threads);
+    list_init(&p->modules);
     p->event_on_first_exception = NULL;
     p->active_debuggee = FALSE;
     p->next_bp = 1;  /* breakpoint 0 is reserved for step-over */
@@ -316,10 +317,15 @@ void dbg_del_process(struct dbg_process* p)
 {
     struct dbg_thread*  t;
     struct dbg_thread*  t2;
+    struct dbg_module*  mod;
+    struct dbg_module*  mod2;
     int	i;
 
     LIST_FOR_EACH_ENTRY_SAFE(t, t2, &p->threads, struct dbg_thread, entry)
         dbg_del_thread(t);
+
+    LIST_FOR_EACH_ENTRY_SAFE(mod, mod2, &p->modules, struct dbg_module, entry)
+        dbg_del_module(mod);
 
     for (i = 0; i < p->num_delayed_bp; i++)
         if (p->delayed_bp[i].is_symbol)
@@ -377,15 +383,85 @@ BOOL dbg_init(HANDLE hProc, const WCHAR* in, BOOL invade)
 
 BOOL dbg_load_module(HANDLE hProc, HANDLE hFile, const WCHAR* name, DWORD_PTR base, DWORD size)
 {
-    BOOL ret = SymLoadModuleExW(hProc, NULL, name, NULL, base, size, NULL, 0);
-    if (ret)
+    struct dbg_process* pcs = dbg_get_process_h(hProc);
+    struct dbg_module* mod;
+    IMAGEHLP_MODULEW64 info;
+    HANDLE hMap;
+    void* image;
+
+    if (!pcs) return FALSE;
+    mod = malloc(sizeof(struct dbg_module));
+    if (!mod) return FALSE;
+    if (!SymLoadModuleExW(hProc, hFile, name, NULL, base, size, NULL, 0))
     {
-        IMAGEHLP_MODULEW64      ihm;
-        ihm.SizeOfStruct = sizeof(ihm);
-        if (SymGetModuleInfoW64(hProc, base, &ihm) && (ihm.PdbUnmatched || ihm.DbgUnmatched))
-            dbg_printf("Loaded unmatched debug information for %s\n", wine_dbgstr_w(name));
+        free(mod);
+        return FALSE;
     }
-    return ret;
+    mod->base = base;
+    list_add_head(&pcs->modules, &mod->entry);
+
+    mod->tls_index_offset = 0;
+    if ((hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL)))
+    {
+        if ((image = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0)))
+        {
+            IMAGE_NT_HEADERS* nth = RtlImageNtHeader(image);
+            const void* tlsdir;
+            ULONG sz;
+
+            tlsdir = RtlImageDirectoryEntryToData(image, TRUE, IMAGE_DIRECTORY_ENTRY_TLS, &sz);
+            switch (nth->OptionalHeader.Magic)
+            {
+            case IMAGE_NT_OPTIONAL_HDR32_MAGIC:
+                if (tlsdir && sz >= sizeof(IMAGE_TLS_DIRECTORY32))
+                    mod->tls_index_offset = (const char*)tlsdir - (const char*)image +
+                        offsetof(IMAGE_TLS_DIRECTORY32, AddressOfIndex);
+                break;
+            case IMAGE_NT_OPTIONAL_HDR64_MAGIC:
+                if (tlsdir && sz >= sizeof(IMAGE_TLS_DIRECTORY64))
+                    mod->tls_index_offset = (const char*)tlsdir - (const char*)image +
+                        offsetof(IMAGE_TLS_DIRECTORY64, AddressOfIndex);
+                break;
+            }
+            UnmapViewOfFile(image);
+        }
+        CloseHandle(hMap);
+    }
+    info.SizeOfStruct = sizeof(info);
+    if (SymGetModuleInfoW64(hProc, base, &info))
+    if (info.PdbUnmatched || info.DbgUnmatched)
+        dbg_printf("Loaded unmatched debug information for %s\n", wine_dbgstr_w(name));
+
+    return TRUE;
+}
+
+void dbg_del_module(struct dbg_module* mod)
+{
+    list_remove(&mod->entry);
+    free(mod);
+}
+
+struct dbg_module* dbg_get_module(struct dbg_process* pcs, DWORD_PTR base)
+{
+    struct dbg_module* mod;
+
+    if (!pcs)
+        return NULL;
+    LIST_FOR_EACH_ENTRY(mod, &pcs->modules, struct dbg_module, entry)
+        if (mod->base == base)
+            return mod;
+    return NULL;
+}
+
+BOOL dbg_unload_module(struct dbg_process* pcs, DWORD_PTR base)
+{
+    struct dbg_module* mod = dbg_get_module(pcs, base);
+
+    types_unload_module(pcs, base);
+    SymUnloadModule64(pcs->handle, base);
+    dbg_del_module(mod);
+
+    return !!mod;
 }
 
 struct dbg_thread* dbg_get_thread(struct dbg_process* p, DWORD tid)

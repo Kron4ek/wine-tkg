@@ -1155,7 +1155,7 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
  *           call_user_mode_callback
  */
 extern NTSTATUS CDECL call_user_mode_callback( void *func, void *stack, void **ret_ptr,
-                                               ULONG *ret_len, TEB *teb );
+                                               ULONG *ret_len, TEB *teb ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "push {r2-r12,lr}\n\t"
                    "ldr r4, [sp, #0x30]\n\t"  /* teb */
@@ -1184,7 +1184,7 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
  *           user_mode_callback_return
  */
 extern void CDECL DECLSPEC_NORETURN user_mode_callback_return( void *ret_ptr, ULONG ret_len,
-                                                               NTSTATUS status, TEB *teb );
+                                                               NTSTATUS status, TEB *teb ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    "ldr r4, [r3, #0x1d8]\n\t" /* arm_thread_data()->syscall_frame */
                    "ldr r5, [r4, #0x4c]\n\t"  /* frame->prev_frame */

@@ -29,7 +29,6 @@
 
 extern HINSTANCE DINPUT_instance;
 
-/* Implementation specification */
 struct dinput
 {
     IDirectInput7A IDirectInput7A_iface;
@@ -37,9 +36,9 @@ struct dinput
     IDirectInput8A IDirectInput8A_iface;
     IDirectInput8W IDirectInput8W_iface;
     IDirectInputJoyConfig8 IDirectInputJoyConfig8_iface;
+    LONG internal_ref;
     LONG ref;
 
-    BOOL initialized;
     DWORD dwVersion;            /* direct input version number */
     DWORD evsequence;           /* unique sequence number for events */
     struct list device_players; /* device instance guid to player name */
@@ -47,6 +46,9 @@ struct dinput
 
 extern const IDirectInput7AVtbl dinput7_a_vtbl DECLSPEC_HIDDEN;
 extern const IDirectInput8AVtbl dinput8_a_vtbl DECLSPEC_HIDDEN;
+
+extern void dinput_internal_addref( struct dinput *dinput );
+extern void dinput_internal_release( struct dinput *dinput );
 
 extern HRESULT mouse_enum_device( DWORD type, DWORD flags, DIDEVICEINSTANCEW *instance, DWORD version );
 extern HRESULT mouse_create_device( struct dinput *dinput, const GUID *guid, IDirectInputDevice8W **out );
@@ -61,6 +63,9 @@ struct DevicePlayer {
     struct list entry;
 };
 
+extern void input_thread_add_user(void);
+extern void input_thread_remove_user(void);
+
 extern void dinput_hooks_acquire_device( IDirectInputDevice8W *iface );
 extern void dinput_hooks_unacquire_device( IDirectInputDevice8W *iface );
 extern int dinput_mouse_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPARAM lparam );
@@ -68,7 +73,6 @@ extern int dinput_keyboard_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPA
 extern void dinput_mouse_rawinput_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPARAM lparam,
                                         RAWINPUT *raw );
 
-extern void check_dinput_hooks( IDirectInputDevice8W *iface, BOOL acquired ) DECLSPEC_HIDDEN;
 extern void check_dinput_events(void) DECLSPEC_HIDDEN;
 
 extern HRESULT _configure_devices(IDirectInput8W *iface, LPDICONFIGUREDEVICESCALLBACK lpdiCallback, LPDICONFIGUREDEVICESPARAMSW lpdiCDParams, DWORD dwFlags, LPVOID pvRefData) DECLSPEC_HIDDEN;

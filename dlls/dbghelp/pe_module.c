@@ -26,6 +26,8 @@
 #include <string.h>
 #include <assert.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "dbghelp_private.h"
 #include "image_private.h"
 #include "winternl.h"
@@ -784,6 +786,7 @@ struct module* pe_load_native_module(struct process* pcs, const WCHAR* name,
     BOOL                        opened = FALSE;
     struct module_format*       modfmt;
     WCHAR                       loaded_name[MAX_PATH];
+    WCHAR*                      real_path = NULL;
 
     loaded_name[0] = '\0';
     if (!hFile)
@@ -795,18 +798,43 @@ struct module* pe_load_native_module(struct process* pcs, const WCHAR* name,
             return NULL;
         opened = TRUE;
     }
-    else if (name) lstrcpyW(loaded_name, name);
+    else
+    {
+        ULONG sz = sizeof(OBJECT_NAME_INFORMATION) + MAX_PATH * sizeof(WCHAR), needed;
+        OBJECT_NAME_INFORMATION *obj_name;
+        NTSTATUS nts;
+
+        obj_name = RtlAllocateHeap(GetProcessHeap(), 0, sz);
+        if (obj_name)
+        {
+            nts = NtQueryObject(hFile, ObjectNameInformation, obj_name, sz, &needed);
+            if (nts == STATUS_BUFFER_OVERFLOW)
+            {
+                sz = needed;
+                obj_name = RtlReAllocateHeap(GetProcessHeap(), 0, obj_name, sz);
+                nts = NtQueryObject(hFile, ObjectNameInformation, obj_name, sz, &needed);
+            }
+            if (!nts)
+            {
+                obj_name->Name.Buffer[obj_name->Name.Length / sizeof(WCHAR)] = L'\0';
+                real_path = wcsdup(obj_name->Name.Buffer);
+            }
+            RtlFreeHeap(GetProcessHeap(), 0, obj_name);
+        }
+        if (name) lstrcpyW(loaded_name, name);
+    }
     if (!(modfmt = HeapAlloc(GetProcessHeap(), 0, sizeof(struct module_format) + sizeof(struct pe_module_info))))
         return NULL;
     modfmt->u.pe_info = (struct pe_module_info*)(modfmt + 1);
     if (pe_map_file(hFile, &modfmt->u.pe_info->fmap, DMT_PE))
     {
         struct builtin_search builtin = { NULL };
-        if (modfmt->u.pe_info->fmap.u.pe.builtin && search_dll_path(pcs, loaded_name, search_builtin_pe, &builtin))
+        if (opened && modfmt->u.pe_info->fmap.u.pe.builtin && search_dll_path(pcs, loaded_name, search_builtin_pe, &builtin))
         {
             TRACE("reloaded %s from %s\n", debugstr_w(loaded_name), debugstr_w(builtin.path));
             image_unmap_file(&modfmt->u.pe_info->fmap);
             modfmt->u.pe_info->fmap = builtin.fmap;
+            real_path = builtin.path;
         }
         if (!base) base = PE_FROM_OPTHDR(&modfmt->u.pe_info->fmap, ImageBase);
         if (!size) size = PE_FROM_OPTHDR(&modfmt->u.pe_info->fmap, SizeOfImage);
@@ -817,7 +845,7 @@ struct module* pe_load_native_module(struct process* pcs, const WCHAR* name,
                             modfmt->u.pe_info->fmap.u.pe.file_header.Machine);
         if (module)
         {
-            module->real_path = builtin.path;
+            module->real_path = real_path;
             modfmt->module = module;
             modfmt->remove = pe_module_remove;
             modfmt->loc_compute = NULL;
@@ -827,7 +855,7 @@ struct module* pe_load_native_module(struct process* pcs, const WCHAR* name,
         else
         {
             ERR("could not load the module '%s'\n", debugstr_w(loaded_name));
-            heap_free(builtin.path);
+            heap_free(real_path);
             image_unmap_file(&modfmt->u.pe_info->fmap);
         }
     }

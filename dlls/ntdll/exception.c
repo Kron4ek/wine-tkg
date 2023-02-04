@@ -191,7 +191,7 @@ LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context )
  *
  * Implementation of RtlRaiseStatus with a specific exception record.
  */
-void raise_status( NTSTATUS status, EXCEPTION_RECORD *rec )
+void DECLSPEC_NORETURN raise_status( NTSTATUS status, EXCEPTION_RECORD *rec )
 {
     EXCEPTION_RECORD ExceptionRec;
 
@@ -208,7 +208,7 @@ void raise_status( NTSTATUS status, EXCEPTION_RECORD *rec )
  *
  * Raise an exception with ExceptionCode = status
  */
-void WINAPI RtlRaiseStatus( NTSTATUS status )
+void DECLSPEC_NORETURN WINAPI RtlRaiseStatus( NTSTATUS status )
 {
     raise_status( status, NULL );
 }
@@ -623,7 +623,7 @@ PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry( ULONG_PTR pc, ULONG_PTR *base,
 /*************************************************************
  *            _assert
  */
-void __cdecl _assert( const char *str, const char *file, unsigned int line )
+void DECLSPEC_NORETURN __cdecl _assert( const char *str, const char *file, unsigned int line )
 {
     ERR( "%s:%u: Assertion failed %s\n", file, line, debugstr_a(str) );
     RtlRaiseStatus( EXCEPTION_WINE_ASSERTION );
@@ -961,6 +961,32 @@ ULONG64 WINAPI RtlGetExtendedFeaturesMask( CONTEXT_EX *context_ex )
 }
 
 
+static void context_copy_ranges( BYTE *d, DWORD context_flags, BYTE *s, const struct context_parameters *p )
+{
+    const struct context_copy_range *range;
+    unsigned int start;
+
+    *((ULONG *)(d + p->flags_offset)) |= context_flags;
+
+    start = 0;
+    range = p->copy_ranges;
+    do
+    {
+        if (range->flag & context_flags)
+        {
+            if (!start)
+                start = range->start;
+        }
+        else if (start)
+        {
+            memcpy( d + start, s + start, range->start - start );
+            start = 0;
+        }
+    }
+    while (range++->start != p->context_size);
+}
+
+
 /***********************************************************************
  *              RtlCopyContext  (NTDLL.@)
  */
@@ -968,6 +994,7 @@ NTSTATUS WINAPI RtlCopyContext( CONTEXT *dst, DWORD context_flags, CONTEXT *src 
 {
     DWORD context_size, arch_flag, flags_offset, dst_flags, src_flags;
     static const DWORD arch_mask = CONTEXT_i386 | CONTEXT_AMD64;
+    const struct context_parameters *p;
     BYTE *d, *s;
 
     TRACE("dst %p, context_flags %#lx, src %p.\n", dst, context_flags, src);
@@ -1000,8 +1027,15 @@ NTSTATUS WINAPI RtlCopyContext( CONTEXT *dst, DWORD context_flags, CONTEXT *src 
     context_flags &= src_flags;
     if (context_flags & ~dst_flags & 0x40) return STATUS_BUFFER_OVERFLOW;
 
-    return RtlCopyExtendedContext( (CONTEXT_EX *)(d + context_size), context_flags,
-                                   (CONTEXT_EX *)(s + context_size) );
+    if (context_flags & 0x40)
+        return RtlCopyExtendedContext( (CONTEXT_EX *)(d + context_size), context_flags,
+                                       (CONTEXT_EX *)(s + context_size) );
+
+    if (!(p = context_get_parameters( context_flags )))
+        return STATUS_INVALID_PARAMETER;
+
+    context_copy_ranges( d, context_flags, s, p );
+    return STATUS_SUCCESS;
 }
 
 
@@ -1010,12 +1044,9 @@ NTSTATUS WINAPI RtlCopyContext( CONTEXT *dst, DWORD context_flags, CONTEXT *src 
  */
 NTSTATUS WINAPI RtlCopyExtendedContext( CONTEXT_EX *dst, ULONG context_flags, CONTEXT_EX *src )
 {
-    const struct context_copy_range *range;
     const struct context_parameters *p;
     XSTATE *dst_xs, *src_xs;
     ULONG64 feature_mask;
-    unsigned int start;
-    BYTE *d, *s;
 
     TRACE( "dst %p, context_flags %#lx, src %p.\n", dst, context_flags, src );
 
@@ -1025,27 +1056,7 @@ NTSTATUS WINAPI RtlCopyExtendedContext( CONTEXT_EX *dst, ULONG context_flags, CO
     if (!(feature_mask = RtlGetEnabledExtendedFeatures( ~(ULONG64)0 )) && context_flags & 0x40)
         return STATUS_NOT_SUPPORTED;
 
-    d = RtlLocateLegacyContext( dst, NULL );
-    s = RtlLocateLegacyContext( src, NULL );
-
-    *((ULONG *)(d + p->flags_offset)) |= context_flags;
-
-    start = 0;
-    range = p->copy_ranges;
-    do
-    {
-        if (range->flag & context_flags)
-        {
-            if (!start)
-                start = range->start;
-        }
-        else if (start)
-        {
-            memcpy( d + start, s + start, range->start - start );
-            start = 0;
-        }
-    }
-    while (range++->start != p->context_size);
+    context_copy_ranges( RtlLocateLegacyContext( dst, NULL ), context_flags, RtlLocateLegacyContext( src, NULL ), p );
 
     if (!(context_flags & 0x40))
         return STATUS_SUCCESS;

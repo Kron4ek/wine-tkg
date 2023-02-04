@@ -1575,7 +1575,7 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
  *           call_user_mode_callback
  */
 extern NTSTATUS CDECL call_user_mode_callback( void *func, void *stack, void **ret_ptr,
-                                               ULONG *ret_len, TEB *teb );
+                                               ULONG *ret_len, TEB *teb ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "pushl %ebp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
@@ -1610,7 +1610,7 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
  *           user_mode_callback_return
  */
 extern void CDECL DECLSPEC_NORETURN user_mode_callback_return( void *ret_ptr, ULONG ret_len,
-                                                               NTSTATUS status, TEB *teb );
+                                                               NTSTATUS status, TEB *teb ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    "movl 16(%esp),%edx\n"      /* teb */
                    "movl 0x1f8(%edx),%eax\n\t" /* x86_thread_data()->syscall_frame */

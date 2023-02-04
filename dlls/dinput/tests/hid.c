@@ -1841,6 +1841,11 @@ static void test_hidp( HANDLE file, HANDLE async_file, int report_id, BOOL polle
     ok( buffer[0] == (char)0xcd, "got report value %#x\n", buffer[0] );
     ok( buffer[1] == (char)0xcd, "got report value %#x\n", buffer[1] );
 
+    status = HidP_GetUsageValue( HidP_Input, HID_USAGE_PAGE_GENERIC, 0, 0, &value, preparsed_data, report, caps.InputReportByteLength );
+    ok( status == HIDP_STATUS_USAGE_NOT_FOUND, "HidP_GetUsageValue returned %#lx\n", status );
+    status = HidP_GetUsageValue( HidP_Input, 0, 0, HID_USAGE_GENERIC_X, &value, preparsed_data, report, caps.InputReportByteLength );
+    ok( status == HIDP_STATUS_USAGE_NOT_FOUND, "HidP_GetUsageValue returned %#lx\n", status );
+
     report[16] = 0xff;
     report[17] = 0xff;
     status = HidP_GetUsageValue( HidP_Input, HID_USAGE_PAGE_GENERIC, 0, HID_USAGE_GENERIC_HATSWITCH,
@@ -3684,7 +3689,6 @@ HRESULT dinput_test_create_device( DWORD version, DIDEVICEINSTANCEW *devinst, ID
         ok( hr == DI_OK, "CreateDevice returned %#lx\n", hr );
 
         ref = IDirectInput8_Release( di8 );
-        todo_wine
         ok( ref == 0, "Release returned %ld\n", ref );
     }
     else
@@ -3711,7 +3715,6 @@ HRESULT dinput_test_create_device( DWORD version, DIDEVICEINSTANCEW *devinst, ID
         ok( hr == DI_OK, "CreateDevice returned %#lx\n", hr );
 
         ref = IDirectInput_Release( di );
-        todo_wine
         ok( ref == 0, "Release returned %ld\n", ref );
     }
 
