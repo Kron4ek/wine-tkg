@@ -147,7 +147,7 @@ int uia_compare_safearrays(SAFEARRAY *sa1, SAFEARRAY *sa2, int prop_type)
 
     if (prop_type != UIAutomationType_IntArray)
     {
-        FIXME("Array type %#x value comparsion currently unimplemented.\n", prop_type);
+        FIXME("Array type %#x value comparison currently unimplemented.\n", prop_type);
         return -1;
     }
 
@@ -1391,10 +1391,89 @@ static HRESULT uia_provider_get_special_prop_val(struct uia_provider *prov,
         break;
     }
 
+    case UIA_BoundingRectanglePropertyId:
+    {
+        IRawElementProviderFragment *elfrag;
+        struct UiaRect rect = { 0 };
+        double rect_vals[4];
+        SAFEARRAY *sa;
+        LONG idx;
+
+        hr = IRawElementProviderSimple_QueryInterface(prov->elprov, &IID_IRawElementProviderFragment, (void **)&elfrag);
+        if (FAILED(hr) || !elfrag)
+            break;
+
+        hr = IRawElementProviderFragment_get_BoundingRectangle(elfrag, &rect);
+        IRawElementProviderFragment_Release(elfrag);
+        if (FAILED(hr) || (rect.width <= 0 || rect.height <= 0))
+            break;
+
+        if (!(sa = SafeArrayCreateVector(VT_R8, 0, ARRAY_SIZE(rect_vals))))
+            break;
+
+        rect_vals[0] = rect.left;
+        rect_vals[1] = rect.top;
+        rect_vals[2] = rect.width;
+        rect_vals[3] = rect.height;
+        for (idx = 0; idx < ARRAY_SIZE(rect_vals); idx++)
+        {
+            hr = SafeArrayPutElement(sa, &idx, &rect_vals[idx]);
+            if (FAILED(hr))
+            {
+                SafeArrayDestroy(sa);
+                break;
+            }
+        }
+
+        V_VT(ret_val) = VT_R8 | VT_ARRAY;
+        V_ARRAY(ret_val) = sa;
+        break;
+    }
+
     default:
         break;
     }
 
+    return S_OK;
+}
+
+static HRESULT uia_provider_get_pattern_prop_val(struct uia_provider *prov,
+        const struct uia_prop_info *prop_info, VARIANT *ret_val)
+{
+    const struct uia_pattern_info *pattern_info = uia_pattern_info_from_id(prop_info->pattern_id);
+    IUnknown *unk, *pattern_prov;
+    HRESULT hr;
+
+    unk = pattern_prov = NULL;
+    hr = IRawElementProviderSimple_GetPatternProvider(prov->elprov, prop_info->pattern_id, &unk);
+    if (FAILED(hr) || !unk)
+        return S_OK;
+
+    hr = IUnknown_QueryInterface(unk, pattern_info->pattern_iid, (void **)&pattern_prov);
+    IUnknown_Release(unk);
+    if (FAILED(hr) || !pattern_prov)
+    {
+        WARN("Failed to get pattern interface from object\n");
+        return S_OK;
+    }
+
+    switch (prop_info->prop_id)
+    {
+    case UIA_ValueIsReadOnlyPropertyId:
+    {
+        BOOL val;
+
+        hr = IValueProvider_get_IsReadOnly((IValueProvider *)pattern_prov, &val);
+        if (SUCCEEDED(hr))
+            variant_init_bool(ret_val, val);
+        break;
+    }
+
+    default:
+        break;
+    }
+
+    IUnknown_Release(pattern_prov);
     return S_OK;
 }
 
@@ -1413,6 +1492,9 @@ static HRESULT WINAPI uia_provider_get_prop_val(IWineUiaProvider *iface,
 
     case PROP_TYPE_SPECIAL:
         return uia_provider_get_special_prop_val(prov, prop_info, ret_val);
+
+    case PROP_TYPE_PATTERN_PROP:
+        return uia_provider_get_pattern_prop_val(prov, prop_info, ret_val);
 
     default:
         break;

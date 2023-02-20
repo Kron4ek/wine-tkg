@@ -457,6 +457,8 @@ extern BOOL use_system_cursors DECLSPEC_HIDDEN;
 extern BOOL show_systray DECLSPEC_HIDDEN;
 extern BOOL grab_pointer DECLSPEC_HIDDEN;
 extern BOOL grab_fullscreen DECLSPEC_HIDDEN;
+extern int keyboard_layout DECLSPEC_HIDDEN;
+extern BOOL keyboard_scancode_detect DECLSPEC_HIDDEN;
 extern BOOL usexcomposite DECLSPEC_HIDDEN;
 extern BOOL use_xfixes DECLSPEC_HIDDEN;
 extern BOOL use_xpresent DECLSPEC_HIDDEN;
@@ -733,6 +735,11 @@ extern RECT get_work_area( const RECT *monitor_rect ) DECLSPEC_HIDDEN;
 extern BOOL xinerama_get_fullscreen_monitors( const RECT *rect, long *indices ) DECLSPEC_HIDDEN;
 extern void xinerama_init( unsigned int width, unsigned int height ) DECLSPEC_HIDDEN;
 extern void init_recursive_mutex( pthread_mutex_t *mutex ) DECLSPEC_HIDDEN;
+
+/* keyboard.c */
+
+extern int x11drv_find_keyboard_layout( const WCHAR *layout ) DECLSPEC_HIDDEN;
+extern WCHAR *x11drv_get_keyboard_layout_list( DWORD *size ) DECLSPEC_HIDDEN;
 
 #define DEPTH_COUNT 3
 extern const unsigned int *depths DECLSPEC_HIDDEN;

@@ -20,9 +20,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <assert.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "windef.h"
@@ -118,6 +118,13 @@ static const WCHAR testWindowClassW[] =
 { 'T','e','s','t','W','i','n','d','o','w','C','l','a','s','s','W',0 };
 
 static LRESULT WINAPI ParentMsgCheckProcA(HWND, UINT, WPARAM, LPARAM);
+
+static void register_class(const WNDCLASSA *class)
+{
+    BOOL ret = RegisterClassA(class);
+    ok(ret, "Failed to register class %s, error %lu.\n",
+            debugstr_a(class->lpszClassName), GetLastError());
+}
 
 /*
 FIXME: add tests for these
@@ -2418,7 +2425,6 @@ static void add_message_(int line, const struct recvd_message *msg)
 	sequence_size *= 2;
 	sequence = HeapReAlloc( GetProcessHeap(), 0, sequence, sequence_size * sizeof(*sequence) );
     }
-    assert(sequence);
 
     seq = &sequence[sequence_cnt++];
     seq->hwnd = msg->hwnd;
@@ -4099,9 +4105,10 @@ static LRESULT WINAPI mdi_frame_wnd_proc(HWND hwnd, UINT message, WPARAM wParam,
     return ret;
 }
 
-static BOOL mdi_RegisterWindowClasses(void)
+static void mdi_register_classes(void)
 {
     WNDCLASSA cls;
+    BOOL ret;
 
     cls.style = 0;
     cls.lpfnWndProc = mdi_frame_wnd_proc;
@@ -4113,20 +4120,19 @@ static BOOL mdi_RegisterWindowClasses(void)
     cls.hbrBackground = GetStockObject(WHITE_BRUSH);
     cls.lpszMenuName = NULL;
     cls.lpszClassName = "MDI_frame_class";
-    if (!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = mdi_child_wnd_proc;
     cls.lpszClassName = "MDI_child_class";
-    if (!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
-    if (!GetClassInfoA(0, "MDIClient", &cls)) assert(0);
+    ret = GetClassInfoA(0, "MDIClient", &cls);
+    ok(ret, "Failed to get class info, error %lu.\n", GetLastError());
     old_mdi_client_proc = cls.lpfnWndProc;
     cls.hInstance = GetModuleHandleA(0);
     cls.lpfnWndProc = mdi_client_hook_proc;
     cls.lpszClassName = "MDI_client_class";
-    if (!RegisterClassA(&cls)) assert(0);
-
-    return TRUE;
+    register_class(&cls);
 }
 
 static void test_mdi_messages(void)
@@ -4139,7 +4145,7 @@ static void test_mdi_messages(void)
     HMENU hMenu = CreateMenu();
     LONG val;
 
-    if (!mdi_RegisterWindowClasses()) assert(0);
+    mdi_register_classes();
 
     flush_sequence();
 
@@ -4150,7 +4156,7 @@ static void test_mdi_messages(void)
                                 100, 100, CW_USEDEFAULT, CW_USEDEFAULT,
                                 GetDesktopWindow(), hMenu,
                                 GetModuleHandleA(0), NULL);
-    assert(mdi_frame);
+    ok(!!mdi_frame, "Failed to create window, error %lu.\n", GetLastError());
     ok_sequence(WmCreateMDIframeSeq, "Create MDI frame window", FALSE);
 
     ok(GetActiveWindow() == mdi_frame, "wrong active window %p\n", GetActiveWindow());
@@ -4165,7 +4171,7 @@ static void test_mdi_messages(void)
                                  WS_CHILD | WS_VISIBLE | MDIS_ALLCHILDSTYLES,
                                  rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
                                  mdi_frame, 0, GetModuleHandleA(0), &client_cs);
-    assert(mdi_client);
+    ok(!!mdi_client, "Failed to create window, error %lu.\n", GetLastError());
     SetWindowLongA(mdi_client, 0, 0xdeadbeef);
 
     ok_sequence(WmCreateMDIclientSeq, "Create visible MDI client window", FALSE);
@@ -4184,7 +4190,7 @@ static void test_mdi_messages(void)
                                 WS_CHILD,
                                 0, 0, CW_USEDEFAULT, CW_USEDEFAULT,
                                 mdi_client, 0, GetModuleHandleA(0), NULL);
-    assert(mdi_child);
+    ok(!!mdi_child, "Failed to create window, error %lu.\n", GetLastError());
 
     flush_sequence();
     ShowWindow(mdi_child, SW_SHOWNORMAL);
@@ -4225,7 +4231,7 @@ static void test_mdi_messages(void)
                                 WS_CHILD | WS_VISIBLE,
                                 0, 0, CW_USEDEFAULT, CW_USEDEFAULT,
                                 mdi_client, 0, GetModuleHandleA(0), NULL);
-    assert(mdi_child);
+    ok(!!mdi_child, "Failed to create window, error %lu.\n", GetLastError());
     ok_sequence(WmCreateMDIchildVisibleSeq, "Create visible MDI child window", FALSE);
 
     ok(GetWindowLongA(mdi_child, GWL_STYLE) & WS_VISIBLE, "MDI child should be visible\n");
@@ -4261,7 +4267,7 @@ static void test_mdi_messages(void)
                                 WS_CHILD,
                                 0, 0, CW_USEDEFAULT, CW_USEDEFAULT,
                                 mdi_client, 0, GetModuleHandleA(0), NULL);
-    assert(mdi_child2);
+    ok(!!mdi_child2, "Failed to create window, error %lu.\n", GetLastError());
     ok_sequence(WmCreateMDIchildInvisibleSeq, "Create invisible MDI child window", FALSE);
 
     ok(!(GetWindowLongA(mdi_child2, GWL_STYLE) & WS_VISIBLE), "MDI child should not be visible\n");
@@ -4425,7 +4431,7 @@ static void test_mdi_messages(void)
                                 WS_CHILD | WS_VISIBLE | WS_MAXIMIZEBOX | WS_MAXIMIZE,
                                 0, 0, CW_USEDEFAULT, CW_USEDEFAULT,
                                 mdi_client, 0, GetModuleHandleA(0), NULL);
-    assert(mdi_child);
+    ok(!!mdi_child, "Failed to create window, error %lu.\n", GetLastError());
     ok_sequence(WmCreateMDIchildVisibleMaxSeq1, "Create maximized visible 1st MDI child window", TRUE);
     ok(IsZoomed(mdi_child), "1st MDI child should be maximized\n");
 
@@ -4444,7 +4450,7 @@ static void test_mdi_messages(void)
                                 WS_CHILD | WS_VISIBLE | WS_MAXIMIZEBOX | WS_MAXIMIZE,
                                 0, 0, CW_USEDEFAULT, CW_USEDEFAULT,
                                 mdi_client, 0, GetModuleHandleA(0), NULL);
-    assert(mdi_child2);
+    ok(!!mdi_child2, "Failed to create window, error %lu.\n", GetLastError());
     ok_sequence(WmCreateMDIchildVisibleMaxSeq2, "Create maximized visible 2nd MDI child 2 window", TRUE);
     ok(IsZoomed(mdi_child2), "2nd MDI child should be maximized\n");
     ok(!IsZoomed(mdi_child), "1st MDI child should NOT be maximized\n");
@@ -4487,7 +4493,7 @@ static void test_mdi_messages(void)
                                 WS_CHILD | WS_VISIBLE | WS_MAXIMIZEBOX | WS_MAXIMIZE,
                                 0, 0, CW_USEDEFAULT, CW_USEDEFAULT,
                                 mdi_client, 0, GetModuleHandleA(0), NULL);
-    assert(mdi_child2);
+    ok(!!mdi_child2, "Failed to create window, error %lu.\n", GetLastError());
     ok_sequence(WmCreateMDIchildVisibleMaxSeq2, "Create maximized visible 2nd MDI child 2 window", TRUE);
     ok(IsZoomed(mdi_child2), "2nd MDI child should be maximized\n");
     ok(!IsZoomed(mdi_child), "1st MDI child should NOT be maximized\n");
@@ -4533,7 +4539,7 @@ static void test_mdi_messages(void)
                                 WS_CHILD | WS_MAXIMIZE | WS_CAPTION | WS_THICKFRAME,
                                 0, 0, CW_USEDEFAULT, CW_USEDEFAULT,
                                 mdi_client, 0, GetModuleHandleA(0), NULL);
-    assert(mdi_child2);
+    ok(!!mdi_child2, "Failed to create window, error %lu.\n", GetLastError());
     ok_sequence(WmCreateMDIchildInvisibleMaxSeq4, "Create maximized invisible MDI child window", FALSE);
     ok(IsZoomed(mdi_child2), "MDI child should be maximized\n");
     ok(!(GetWindowLongA(mdi_child2, GWL_STYLE) & WS_VISIBLE), "MDI child should be not visible\n");
@@ -4571,7 +4577,7 @@ static void test_mdi_messages(void)
                                 WS_CHILD | WS_VISIBLE | WS_MAXIMIZEBOX | WS_MAXIMIZE,
                                 0, 0, CW_USEDEFAULT, CW_USEDEFAULT,
                                 mdi_client, 0, GetModuleHandleA(0), NULL);
-    assert(mdi_child);
+    ok(!!mdi_child, "Failed to create window, error %lu.\n", GetLastError());
     ok_sequence(WmCreateMDIchildVisibleMaxSeq1, "Create maximized visible 1st MDI child window(Switch test)", TRUE);
     ok(IsZoomed(mdi_child), "1st MDI child should be maximized(Switch test)\n");
 
@@ -4590,7 +4596,7 @@ static void test_mdi_messages(void)
                                 WS_CHILD | WS_VISIBLE | WS_MAXIMIZEBOX | WS_MAXIMIZE,
                                 0, 0, CW_USEDEFAULT, CW_USEDEFAULT,
                                 mdi_client, 0, GetModuleHandleA(0), NULL);
-    assert(mdi_child2);
+    ok(!!mdi_child2, "Failed to create window, error %lu.\n", GetLastError());
     ok_sequence(WmCreateMDIchildVisibleMaxSeq2, "Create maximized visible 2nd MDI child window (Switch test)", TRUE);
 
     ok(IsZoomed(mdi_child2), "2nd MDI child should be maximized(Switch test)\n");
@@ -6766,8 +6772,10 @@ log_it:
 static void subclass_button(void)
 {
     WNDCLASSA cls;
+    BOOL ret;
 
-    if (!GetClassInfoA(0, "button", &cls)) assert(0);
+    ret = GetClassInfoA(0, "button", &cls);
+    ok(ret, "Failed to get class info, error %lu.\n", GetLastError());
 
     old_button_proc = cls.lpfnWndProc;
 
@@ -6775,7 +6783,7 @@ static void subclass_button(void)
     cls.lpfnWndProc = button_hook_proc;
     cls.lpszClassName = "my_button_class";
     UnregisterClassA(cls.lpszClassName, cls.hInstance);
-    if (!RegisterClassA(&cls)) assert(0);
+    register_class(&cls);
 }
 
 static void test_button_messages(void)
@@ -7696,8 +7704,10 @@ static LRESULT CALLBACK static_hook_proc(HWND hwnd, UINT message, WPARAM wParam,
 static void subclass_static(void)
 {
     WNDCLASSA cls;
+    BOOL ret;
 
-    if (!GetClassInfoA(0, "static", &cls)) assert(0);
+    ret = GetClassInfoA(0, "static", &cls);
+    ok(ret, "Failed to get class info, error %lu.\n", GetLastError());
 
     old_static_proc = cls.lpfnWndProc;
 
@@ -7705,7 +7715,7 @@ static void subclass_static(void)
     cls.lpfnWndProc = static_hook_proc;
     cls.lpszClassName = "my_static_class";
     UnregisterClassA(cls.lpszClassName, cls.hInstance);
-    if (!RegisterClassA(&cls)) assert(0);
+    register_class(&cls);
 }
 
 static void test_static_messages(void)
@@ -7971,8 +7981,10 @@ static LRESULT CALLBACK combobox_hook_proc(HWND hwnd, UINT message, WPARAM wPara
 static void subclass_combobox(void)
 {
     WNDCLASSA cls;
+    BOOL ret;
 
-    if (!GetClassInfoA(0, "ComboBox", &cls)) assert(0);
+    ret = GetClassInfoA(0, "ComboBox", &cls);
+    ok(ret, "Failed to get class info, error %lu.\n", GetLastError());
 
     old_combobox_proc = cls.lpfnWndProc;
 
@@ -7980,7 +7992,7 @@ static void subclass_combobox(void)
     cls.lpfnWndProc = combobox_hook_proc;
     cls.lpszClassName = "my_combobox_class";
     UnregisterClassA(cls.lpszClassName, cls.hInstance);
-    if (!RegisterClassA(&cls)) assert(0);
+    register_class(&cls);
 }
 
 static void test_combobox_messages(void)
@@ -8162,7 +8174,7 @@ static void register_wmime_keydown_class(void)
     cls.lpfnWndProc = wmime_keydown_procA;
     cls.hInstance = GetModuleHandleA(0);
     cls.lpszClassName = "wmime_keydown_class";
-    if (!RegisterClassA(&cls)) assert(0);
+    register_class(&cls);
 }
 
 static void test_wmime_keydown_message(void)
@@ -8395,6 +8407,7 @@ static void test_paint_messages(void)
 {
     BOOL ret;
     RECT rect, rect2;
+    DWORD style;
     POINT pt;
     MSG msg;
     HWND hparent, hchild;
@@ -8935,7 +8948,8 @@ static void test_paint_messages(void)
     flush_events();
     ok_sequence( WmParentOnlyPaint, "WmParentOnlyPaint", FALSE );
 
-    assert( GetWindowLongA(hparent, GWL_STYLE) & WS_CLIPCHILDREN );
+    style = GetWindowLongA(hparent, GWL_STYLE);
+    ok(style & WS_CLIPCHILDREN, "Got unexpected style %#lx.\n", style);
     UpdateWindow( hparent );
     flush_events();
     flush_sequence();
@@ -8962,7 +8976,8 @@ static void test_paint_messages(void)
     flush_events();
     ok_sequence( WmParentPaint, "WmParentPaint", FALSE );
 
-    assert( !(GetWindowLongA(hparent, GWL_STYLE) & WS_CLIPCHILDREN) );
+    style = GetWindowLongA(hparent, GWL_STYLE);
+    ok(!(style & WS_CLIPCHILDREN), "Got unexpected style %#lx.\n", style);
     UpdateWindow( hparent );
     flush_events();
     flush_sequence();
@@ -10201,7 +10216,7 @@ static void test_accelerators(void)
     BOOL us_kbd = (GetKeyboardLayout(0) == (HKL)(ULONG_PTR)0x04090409);
     BOOL ret;
 
-    assert(hwnd != 0);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
     UpdateWindow(hwnd);
     flush_events();
     flush_sequence();
@@ -10215,7 +10230,7 @@ static void test_accelerators(void)
     ok(state == 0, "wrong CapsLock state %04x\n", state);
 
     hAccel = LoadAcceleratorsA(GetModuleHandleA(NULL), MAKEINTRESOURCEA(1));
-    assert(hAccel != 0);
+    ok(!!hAccel, "Failed to load accelerators, error %lu.\n", GetLastError());
 
     flush_events();
     pump_msg_loop(hwnd, 0);
@@ -10281,7 +10296,7 @@ static void test_accelerators(void)
     ok( ret, "DestroyAcceleratorTable error %ld\n", GetLastError());
 
     hAccel = LoadAcceleratorsA(GetModuleHandleA(NULL), MAKEINTRESOURCEA(2));
-    assert(hAccel != 0);
+    ok(!!hAccel, "Failed to load accelerators, error %lu.\n", GetLastError());
 
     if (winetest_debug > 1) trace("testing VK_N press/release\n");
     flush_sequence();
@@ -10892,7 +10907,7 @@ static LRESULT WINAPI HotkeyMsgCheckProcA(HWND hwnd, UINT message, WPARAM wParam
     return ret;
 }
 
-static BOOL RegisterWindowClasses(void)
+static void register_classes(void)
 {
     WNDCLASSA cls;
     WNDCLASSW clsW;
@@ -10907,15 +10922,15 @@ static BOOL RegisterWindowClasses(void)
     cls.hbrBackground = GetStockObject(WHITE_BRUSH);
     cls.lpszMenuName = NULL;
     cls.lpszClassName = "TestWindowClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = HotkeyMsgCheckProcA;
     cls.lpszClassName = "HotkeyWindowClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = ShowWindowProcA;
     cls.lpszClassName = "ShowWindowClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = recursive_activation_wndprocA;
     cls.lpszClassName = "RecursiveActivationClass";
@@ -10923,27 +10938,27 @@ static BOOL RegisterWindowClasses(void)
 
     cls.lpfnWndProc = PopupMsgCheckProcA;
     cls.lpszClassName = "TestPopupClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = ParentMsgCheckProcA;
     cls.lpszClassName = "TestParentClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = StopQuitMsgCheckProcA;
     cls.lpszClassName = "StopQuitClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = DefWindowProcA;
     cls.lpszClassName = "SimpleWindowClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = PaintLoopProcA;
     cls.lpszClassName = "PaintLoopWindowClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.style = CS_NOCLOSE;
     cls.lpszClassName = "NoCloseWindowClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     ok(GetClassInfoA(0, "#32770", &cls), "GetClassInfo failed\n");
     cls.style = 0;
@@ -10951,27 +10966,27 @@ static BOOL RegisterWindowClasses(void)
     cls.hbrBackground = 0;
     cls.lpfnWndProc = TestDlgProcA;
     cls.lpszClassName = "TestDialogClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = DefWindowProcA;
     cls.style = CS_PARENTDC;
     cls.lpszClassName = "SimpleWindowClassWithParentDC";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = DefWindowProcA;
     cls.style = CS_HREDRAW;
     cls.lpszClassName = "SimpleWindowClassWithHRedraw";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = DefWindowProcA;
     cls.style = CS_VREDRAW;
     cls.lpszClassName = "SimpleWindowClassWithVRedraw";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = DefWindowProcA;
     cls.style = CS_HREDRAW | CS_VREDRAW;
     cls.lpszClassName = "SimpleWindowClassWithHVRedraw";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     clsW.style = 0;
     clsW.lpfnWndProc = MsgCheckProcW;
@@ -10984,8 +10999,6 @@ static BOOL RegisterWindowClasses(void)
     clsW.lpszMenuName = NULL;
     clsW.lpszClassName = testWindowClassW;
     RegisterClassW(&clsW);  /* ignore error, this fails on Win9x */
-
-    return TRUE;
 }
 
 static BOOL is_our_logged_class(HWND hwnd)
@@ -11106,8 +11119,12 @@ static void CALLBACK win_event_proc(HWINEVENTHOOK hevent,
 static const WCHAR wszUnicode[] = {'U','n','i','c','o','d','e',0};
 static const WCHAR wszAnsi[] = {'U',0};
 
+static const GUID iface_guid = {0x66666666};
+
 static LRESULT CALLBACK MsgConversionProcW(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+    const DEV_BROADCAST_DEVICEINTERFACE_A *ifaceA = (const void *)lParam;
+
     switch (uMsg)
     {
     case CB_FINDSTRINGEXACT:
@@ -11116,6 +11133,19 @@ static LRESULT CALLBACK MsgConversionProcW(HWND hwnd, UINT uMsg, WPARAM wParam, 
         if (!lstrcmpW((LPCWSTR)lParam, wszAnsi))
             return 0;
         return -1;
+
+    case WM_DEVICECHANGE:
+        if (wParam == DBT_DEVICEARRIVAL && IsEqualGUID(&ifaceA->dbcc_classguid, &iface_guid))
+        {
+            DWORD expect_size = offsetof(DEV_BROADCAST_DEVICEINTERFACE_A, dbcc_name[strlen(ifaceA->dbcc_name)]);
+
+            ok(ifaceA->dbcc_size == expect_size, "Expected %lu, got %lu.\n", expect_size, ifaceA->dbcc_size);
+            ok(ifaceA->dbcc_devicetype == DBT_DEVTYP_DEVICEINTERFACE,
+                    "Got notification type %#lx.\n", ifaceA->dbcc_devicetype);
+            ok(!ifaceA->dbcc_reserved, "Got reserved %#lx.\n", ifaceA->dbcc_reserved);
+            ok(!strcmp(ifaceA->dbcc_name, "test name"), "Got name %s.\n", debugstr_a(ifaceA->dbcc_name));
+            return 2;
+        }
     }
     return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
@@ -11147,6 +11177,8 @@ static void test_message_conversion(void)
 {
     static const WCHAR wszMsgConversionClass[] =
         {'M','s','g','C','o','n','v','e','r','s','i','o','n','C','l','a','s','s',0};
+    char buffer[200];
+    DEV_BROADCAST_DEVICEINTERFACE_A *dev_interface = (void *)buffer;
     WNDCLASSW cls;
     LRESULT lRes;
     HWND hwnd;
@@ -11229,12 +11261,25 @@ static void test_message_conversion(void)
     ok(lRes == 0 && (GetLastError() == ERROR_MESSAGE_SYNC_ONLY || GetLastError() == ERROR_INVALID_PARAMETER),
         "SendMessageCallback on sync only message returned %Id, last error %ld\n", lRes, GetLastError());
 
+    /* Test WM_DEVICECHANGE. */
+
+    dev_interface->dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+    dev_interface->dbcc_reserved = 0;
+    dev_interface->dbcc_classguid = iface_guid;
+    strcpy(dev_interface->dbcc_name, "test name");
+    dev_interface->dbcc_size = offsetof(DEV_BROADCAST_DEVICEINTERFACE_A,
+            dbcc_name[strlen(dev_interface->dbcc_name)]);
+    lRes = SendMessageA(hwnd, WM_DEVICECHANGE, DBT_DEVICEARRIVAL, (LPARAM)dev_interface);
+    ok(lRes == 2, "Got %Id, error %lu.\n", lRes, GetLastError());
+
+    DestroyWindow(hwnd);
+
     /* Check WM_GETTEXTLENGTH A->W behaviour, whether WM_GETTEXT is also sent or not */
 
     hwnd = CreateWindowW (testWindowClassW, wszUnicode,
                           WS_OVERLAPPEDWINDOW,
                           100, 100, 200, 200, 0, 0, 0, NULL);
-    assert(hwnd);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
     flush_sequence();
     lRes = SendMessageA (hwnd, WM_GETTEXTLENGTH, 0, 0);
     ok_sequence(WmGetTextLengthAfromW, "ANSI WM_GETTEXTLENGTH to Unicode window", FALSE);
@@ -11662,10 +11707,8 @@ static DWORD WINAPI win_event_global_thread_proc(void *param)
     MSG msg;
     HANDLE hevent = *(HANDLE *)param;
 
-    assert(pNotifyWinEvent);
-
     hwnd = CreateWindowExA(0, "static", NULL, WS_POPUP, 0,0,0,0,0,0,0, NULL);
-    assert(hwnd);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
     if (winetest_debug > 1) trace("created thread window %p\n", hwnd);
 
     *(HWND *)param = hwnd;
@@ -11697,7 +11740,7 @@ static DWORD WINAPI cbt_global_hook_thread_proc(void *param)
      */
 
     hwnd = CreateWindowExA(0, "static", NULL, WS_POPUP, 0,0,0,0,0,0,0, NULL);
-    assert(hwnd);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
     if (winetest_debug > 1) trace("created thread window %p\n", hwnd);
 
     *(HWND *)param = hwnd;
@@ -11728,7 +11771,7 @@ static DWORD WINAPI mouse_ll_global_thread_proc(void *param)
     HANDLE hevent = *(HANDLE *)param;
 
     hwnd = CreateWindowExA(0, "static", NULL, WS_POPUP, 0,0,0,0,0,0,0, NULL);
-    assert(hwnd);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
     if (winetest_debug > 1) trace("created thread window %p\n", hwnd);
 
     *(HWND *)param = hwnd;
@@ -11767,7 +11810,7 @@ static void test_winevents(void)
 			   WS_OVERLAPPEDWINDOW,
 			   CW_USEDEFAULT, CW_USEDEFAULT, 300, 300, 0,
 			   NULL, NULL, 0);
-    assert(hwnd);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
 
     /****** start of global hook test *************/
     hCBT_global_hook = SetWindowsHookExA(WH_CBT, cbt_global_hook_proc, GetModuleHandleA(0), 0);
@@ -11779,7 +11822,7 @@ static void test_winevents(void)
     }
 
     hevent = CreateEventA(NULL, 0, 0, NULL);
-    assert(hevent);
+    ok(!!hevent, "Failed to create event, error %lu.\n", GetLastError());
     hwnd2 = hevent;
 
     hthread = CreateThread(NULL, 0, cbt_global_hook_thread_proc, &hwnd2, 0, &tid);
@@ -11842,7 +11885,7 @@ static void test_winevents(void)
     ok(hhook != 0, "SetWinEventHook error %ld\n", GetLastError());
 
     hevent = CreateEventA(NULL, 0, 0, NULL);
-    assert(hevent);
+    ok(!!hevent, "Failed to create event, error %lu.\n", GetLastError());
     hwnd2 = hevent;
 
     hthread = CreateThread(NULL, 0, win_event_global_thread_proc, &hwnd2, 0, &tid);
@@ -11878,7 +11921,7 @@ static void test_winevents(void)
     ok(hhook != 0, "SetWinEventHook error %ld\n", GetLastError());
 
     hevent = CreateEventA(NULL, 0, 0, NULL);
-    assert(hevent);
+    ok(!!hevent, "Failed to create event, error %lu.\n", GetLastError());
     hwnd2 = hevent;
 
     flush_sequence();
@@ -11925,7 +11968,7 @@ static void test_winevents(void)
     }
 
     hevent = CreateEventA(NULL, 0, 0, NULL);
-    assert(hevent);
+    ok(!!hevent, "Failed to create event, error %lu.\n", GetLastError());
     hwnd2 = hevent;
 
     hthread = CreateThread(NULL, 0, mouse_ll_global_thread_proc, &hwnd2, 0, &tid);
@@ -12222,19 +12265,19 @@ static void test_DestroyWindow(void)
 
     parent = CreateWindowExA(0, "TestWindowClass", NULL, WS_OVERLAPPEDWINDOW,
 			     100, 100, 200, 200, 0, 0, 0, NULL);
-    assert(parent != 0);
+    ok(!!parent, "Failed to create window, error %lu.\n", GetLastError());
     child1 = CreateWindowExA(0, "TestWindowClass", NULL, WS_CHILD,
 			     0, 0, 50, 50, parent, (HMENU)child_id++, 0, NULL);
-    assert(child1 != 0);
+    ok(!!child1, "Failed to create window, error %lu.\n", GetLastError());
     child2 = CreateWindowExA(0, "TestWindowClass", NULL, WS_CHILD,
 			     0, 0, 50, 50, GetDesktopWindow(), (HMENU)child_id++, 0, NULL);
-    assert(child2 != 0);
+    ok(!!child2, "Failed to create window, error %lu.\n", GetLastError());
     child3 = CreateWindowExA(0, "TestWindowClass", NULL, WS_CHILD,
 			     0, 0, 50, 50, child1, (HMENU)child_id++, 0, NULL);
-    assert(child3 != 0);
+    ok(!!child3, "Failed to create window, error %lu.\n", GetLastError());
     child4 = CreateWindowExA(0, "TestWindowClass", NULL, WS_POPUP,
 			     0, 0, 50, 50, parent, 0, 0, NULL);
-    assert(child4 != 0);
+    ok(!!child4, "Failed to create window, error %lu.\n", GetLastError());
 
     /* test owner/parent of child2 */
     test = GetParent(child2);
@@ -12889,8 +12932,10 @@ static DWORD WINAPI test_edit_ime_messages(void *unused_arg)
 static void subclass_edit(void)
 {
     WNDCLASSA cls;
+    BOOL ret;
 
-    if (!GetClassInfoA(0, "edit", &cls)) assert(0);
+    ret = GetClassInfoA(0, "edit", &cls);
+    ok(ret, "Failed to get class info, error %lu.\n", GetLastError());
 
     old_edit_proc = cls.lpfnWndProc;
 
@@ -12898,7 +12943,7 @@ static void subclass_edit(void)
     cls.lpfnWndProc = edit_hook_proc;
     cls.lpszClassName = "my_edit_class";
     UnregisterClassA(cls.lpszClassName, cls.hInstance);
-    if (!RegisterClassA(&cls)) assert(0);
+    register_class(&cls);
 }
 
 static void test_edit_messages(void)
@@ -13064,8 +13109,7 @@ static DWORD CALLBACK send_msg_thread_2(void *param)
             break;
 
         default:
-            if (winetest_debug > 1) trace("unexpected return: %04lx\n", ret);
-            assert(0);
+            ok(0, "Unexpected return %#lx.\n", ret);
             break;
         }
     }
@@ -13084,7 +13128,7 @@ static void test_PeekMessage(void)
 
     info.hwnd = CreateWindowA("TestWindowClass", NULL, WS_OVERLAPPEDWINDOW,
                               100, 100, 200, 200, 0, 0, 0, NULL);
-    assert(info.hwnd);
+    ok(!!info.hwnd, "Failed to create window, error %lu.\n", GetLastError());
     ShowWindow(info.hwnd, SW_SHOW);
     UpdateWindow(info.hwnd);
     SetFocus(info.hwnd);
@@ -13597,7 +13641,7 @@ static void test_PeekMessage2(void)
     /* Initialise window and make sure it is ready for events */
     hwnd = CreateWindowA("TestWindowClass", "PeekMessage2", WS_OVERLAPPEDWINDOW,
                         10, 10, 800, 800, NULL, NULL, NULL, NULL);
-    assert(hwnd);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
     if (winetest_debug > 1) trace("Window for test_PeekMessage2 %p\n", hwnd);
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
@@ -14132,13 +14176,13 @@ static void test_TrackMouseEvent(void)
 			  WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 			  CW_USEDEFAULT, CW_USEDEFAULT, 300, 300, 0,
 			  NULL, NULL, 0);
-    assert(hwnd);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
 
     hchild = CreateWindowExA(0, "TestWindowClass", NULL,
 			  WS_CHILD | WS_BORDER | WS_VISIBLE,
 			  50, 50, 200, 200, hwnd,
 			  NULL, NULL, 0);
-    assert(hchild);
+    ok(!!hchild, "Failed to create window, error %lu.\n", GetLastError());
 
     SetWindowPos( hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE|SWP_NOMOVE );
     flush_events();
@@ -14802,7 +14846,7 @@ static void test_ShowWindow(void)
     hwnd = CreateWindowExA(0, "ShowWindowClass", NULL, WS_BASE,
                           120, 120, 90, 90,
                           0, 0, 0, NULL);
-    assert(hwnd);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
 
     style = GetWindowLongA(hwnd, GWL_STYLE) & ~WS_BASE;
     ok(style == 0, "expected style 0, got %08lx\n", style);
@@ -15236,7 +15280,7 @@ static void test_dialog_messages(void)
     cls.hInstance = GetModuleHandleA(NULL);
     /* need a cast since a dlgproc is used as a wndproc */
     cls.lpfnWndProc = (WNDPROC)test_dlg_proc;
-    if (!RegisterClassA(&cls)) assert(0);
+    register_class(&cls);
 
     SetFocus(0);
     flush_sequence();
@@ -15276,7 +15320,7 @@ static void test_dialog_messages(void)
 
     UnregisterClassA( cls.lpszClassName, cls.hInstance );
     cls.lpfnWndProc = test_dlg_proc4;
-    ok( RegisterClassA(&cls), "failed to register class again\n" );
+    register_class(&cls);
     hdlg = CreateDialogParamA(0, "FOCUS_TEST_DIALOG_4", 0, test_dlg_proc3, 0);
     ok(IsWindow(hdlg), "CreateDialogParam failed\n");
     ok_sequence(WmCreateDialogParamSeq_4, "CreateDialogParam_4", TRUE);
@@ -15389,7 +15433,7 @@ static void test_EndDialog(void)
     cls.lpszClassName = "MyDialogClass";
     cls.hInstance = GetModuleHandleA(NULL);
     cls.lpfnWndProc = (WNDPROC)test_dlg_proc;
-    if (!RegisterClassA(&cls)) assert(0);
+    register_class(&cls);
 
     flush_sequence();
     SetForegroundWindow(hother);
@@ -16734,7 +16778,7 @@ static void test_menu_messages(void)
     cls.lpszMenuName = NULL;
     cls.lpszClassName = "TestMenuClass";
     UnregisterClassA(cls.lpszClassName, cls.hInstance);
-    if (!RegisterClassA(&cls)) assert(0);
+    register_class(&cls);
 
     SetLastError(0xdeadbeef);
     hwnd = CreateWindowExA(0, "TestMenuClass", NULL, WS_OVERLAPPEDWINDOW | WS_VISIBLE,
@@ -17043,7 +17087,7 @@ static void test_defwinproc(void)
 
     hwnd = CreateWindowExA(0, "TestWindowClass", "test_defwndproc",
             WS_VISIBLE | WS_CAPTION | WS_OVERLAPPEDWINDOW, 0,0,500,100,0,0,0, NULL);
-    assert(hwnd);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
     flush_events();
 
     buffA[0] = 0;
@@ -17205,8 +17249,7 @@ static void test_desktop_winproc(void)
     cls.hCursor = LoadCursorA(0, (LPCSTR)IDC_ARROW);
     cls.hbrBackground = GetStockObject(WHITE_BRUSH);
     cls.lpszClassName = "TestDesktopClass";
-    ret = !!RegisterClassA(&cls);
-    ok(ret, "Failed to register class.\n");
+    register_class(&cls);
 
     hwnd = CreateWindowExA(0, cls.lpszClassName, "test_desktop_wndproc",
             WS_VISIBLE | WS_CAPTION | WS_OVERLAPPEDWINDOW, 0, 0, 500, 100, 0, 0, 0, NULL);
@@ -17311,16 +17354,18 @@ static void test_clipboard_viewers(void)
         WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
         GetDesktopWindow(), NULL, hInst, NULL);
+    ok(!!hWnd1, "Failed to create window, error %lu.\n", GetLastError());
     hWnd2 = CreateWindowExA(0, "SimpleWindowClass", "Clipboard viewer test wnd 2",
         WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
         GetDesktopWindow(), NULL, hInst, NULL);
+    ok(!!hWnd2, "Failed to create window, error %lu.\n", GetLastError());
     hWnd3 = CreateWindowExA(0, "SimpleWindowClass", "Clipboard viewer test wnd 3",
         WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
         GetDesktopWindow(), NULL, hInst, NULL);
+    ok(!!hWnd3, "Failed to create window, error %lu.\n", GetLastError());
     if (winetest_debug > 1) trace("clipbd viewers: hWnd1=%p, hWnd2=%p, hWnd3=%p\n", hWnd1, hWnd2, hWnd3);
-    assert(hWnd1 && hWnd2 && hWnd3);
 
     CountClipboardFormats(); /* Ensure that we do not have an X11 update to the clipboard */
     flush_sequence();
@@ -17440,7 +17485,7 @@ static void test_PostMessage(void)
         win_skip("Skipping some PostMessage tests on Win9x/WinMe\n");
         return;
     }
-    assert(hwnd);
+    ok(!!hwnd, "Failed to create window, error %lu.\n", GetLastError());
 
     flush_events();
 
@@ -17694,7 +17739,7 @@ static void do_wait_idle_child( int arg )
     cls.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     cls.hCursor       = LoadCursorA(0, (LPCSTR)IDC_ARROW);
     cls.lpszClassName = "TestClass";
-    RegisterClassA( &cls );
+    register_class(&cls);
 
     PeekMessageA( &msg, 0, 0, 0, PM_NOREMOVE );  /* create the msg queue */
 
@@ -17851,7 +17896,7 @@ static DWORD CALLBACK wait_idle_thread( void *arg )
     cls.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     cls.hCursor       = LoadCursorA(0, (LPCSTR)IDC_ARROW);
     cls.lpszClassName = "TestClass";
-    RegisterClassA( &cls );
+    register_class(&cls);
 
     hwnd = CreateWindowExA(0, "TestClass", NULL, WS_POPUP, 0, 0, 10, 10, 0, 0, 0, NULL);
     while (GetMessageA( &msg, 0, 0, 0 )) DispatchMessageA( &msg );
@@ -19400,7 +19445,7 @@ static void test_InSendMessage(void)
     cls.lpfnWndProc = insendmessage_wnd_proc;
     cls.hInstance = GetModuleHandleA(NULL);
     cls.lpszClassName = "InSendMessage_test";
-    RegisterClassA(&cls);
+    register_class(&cls);
 
     win = CreateWindowA( "InSendMessage_test", NULL, 0, 0, 0, 0, 0, NULL, 0, NULL, 0 );
     ok( win != NULL, "CreateWindow failed: %ld\n", GetLastError() );
@@ -19692,7 +19737,7 @@ START_TEST(msg)
     init_procs();
     ImmDisableIME(0);
 
-    if (!RegisterWindowClasses()) assert(0);
+    register_classes();
 
     if (pSetWinEventHook)
     {

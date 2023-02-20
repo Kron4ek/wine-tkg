@@ -25,6 +25,19 @@ struct uia_prop_info {
     int prop_id;
     int prop_type;
     int type;
+    int pattern_id;
+};
+
+struct uia_event_info {
+    const GUID *guid;
+    int event_id;
+    int event_arg_type;
+};
+
+struct uia_pattern_info {
+    const GUID *guid;
+    int pattern_id;
+    const GUID *pattern_iid;
 };
 
 [

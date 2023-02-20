@@ -25,7 +25,7 @@
 #include "winuser.h"
 #include "wingdi.h"
 #include "imm.h"
-#include "ddk/imm.h"
+#include "immdev.h"
 
 BOOL WINAPI ImmSetActiveContext(HWND, HIMC, BOOL);
 
@@ -92,12 +92,6 @@ typedef struct
         HARDWAREINPUT   hi;
     } u;
 } TEST_INPUT;
-
-typedef struct _tagTRANSMSG {
-    UINT message;
-    WPARAM wParam;
-    LPARAM lParam;
-} TRANSMSG, *LPTRANSMSG;
 
 static UINT (WINAPI *pSendInput) (UINT, INPUT*, size_t);
 
@@ -983,6 +977,14 @@ static void test_ImmThreads(void)
     ok(rc == 0, "ImmSetCompositionFont should fail\n");
     rc = ImmSetCompositionFontA(threadinfo.u_himc, &lf);
     ok(rc == 0, "ImmSetCompositionFont should fail\n");
+
+    /* CompositionString */
+    rc = ImmSetCompositionStringA(himc, SCS_SETSTR, "a", 2, NULL, 0);
+    ok(rc, "failed.\n");
+    rc = ImmSetCompositionStringA(otherHimc, SCS_SETSTR, "a", 2, NULL, 0);
+    ok(!rc, "should fail.\n");
+    rc = ImmSetCompositionStringA(threadinfo.u_himc, SCS_SETSTR, "a", 2, NULL, 0);
+    ok(!rc, "should fail.\n");
 
     /* CompositionWindow */
     rc = ImmSetCompositionWindow(himc, &cf);

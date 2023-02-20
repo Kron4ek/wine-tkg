@@ -59,12 +59,12 @@ static inline ULONG starts_with_path( const WCHAR *name, ULONG name_len, const W
 void init_file_redirects(void)
 {
     OBJECT_ATTRIBUTES attr;
-    UNICODE_STRING nameW;
+    UNICODE_STRING windows = RTL_CONSTANT_STRING( L"\\??\\C:\\windows" );
+    UNICODE_STRING system32 = RTL_CONSTANT_STRING( L"\\??\\C:\\windows\\system32" );
     IO_STATUS_BLOCK io;
     HANDLE handle;
 
-    InitializeObjectAttributes( &attr, &nameW, OBJ_CASE_INSENSITIVE, 0, NULL );
-    RtlInitUnicodeString( &nameW, L"\\??\\C:\\windows" );
+    InitializeObjectAttributes( &attr, &windows, OBJ_CASE_INSENSITIVE, 0, NULL );
     if (!NtOpenFile( &handle, SYNCHRONIZE | FILE_LIST_DIRECTORY, &attr, &io,
                      FILE_SHARE_READ, FILE_SYNCHRONOUS_IO_NONALERT |
                      FILE_OPEN_FOR_BACKUP_INTENT | FILE_DIRECTORY_FILE ))
@@ -72,7 +72,7 @@ void init_file_redirects(void)
         get_file_id( handle, &windir_id );
         NtClose( handle );
     }
-    RtlInitUnicodeString( &nameW, L"\\??\\C:\\windows\\system32" );
+    attr.ObjectName = &system32;
     if (!NtOpenFile( &handle, SYNCHRONIZE | FILE_LIST_DIRECTORY, &attr, &io,
                      FILE_SHARE_READ, FILE_SYNCHRONOUS_IO_NONALERT |
                      FILE_OPEN_FOR_BACKUP_INTENT | FILE_DIRECTORY_FILE ))
@@ -941,40 +941,6 @@ NTSTATUS WINAPI wow64_wine_nt_to_unix_file_name( UINT *args )
     struct object_attr64 attr;
 
     return wine_nt_to_unix_file_name( objattr_32to64_redirect( &attr, attr32 ), nameA, size, disposition );
-}
-
-
-/**********************************************************************
- *           wow64_wine_server_fd_to_handle
- */
-NTSTATUS WINAPI wow64_wine_server_fd_to_handle( UINT *args )
-{
-    int fd = get_ulong( &args );
-    ACCESS_MASK access = get_ulong( &args );
-    ULONG attributes = get_ulong( &args );
-    ULONG *handle_ptr = get_ptr( &args );
-
-    HANDLE handle = 0;
-    NTSTATUS status;
-
-    *handle_ptr = 0;
-    status = wine_server_fd_to_handle( fd, access, attributes, &handle );
-    put_handle( handle_ptr, handle );
-    return status;
-}
-
-
-/**********************************************************************
- *           wow64_wine_server_handle_to_fd
- */
-NTSTATUS WINAPI wow64_wine_server_handle_to_fd( UINT *args )
-{
-    HANDLE handle = get_handle( &args );
-    ACCESS_MASK access = get_ulong( &args );
-    int *unix_fd = get_ptr( &args );
-    unsigned int *options = get_ptr( &args );
-
-    return wine_server_handle_to_fd( handle, access, unix_fd, options );
 }
 
 

@@ -490,7 +490,7 @@
 # @ stub RtlAddRefMemoryStream
 @ stdcall RtlAddVectoredContinueHandler(long ptr)
 @ stdcall RtlAddVectoredExceptionHandler(long ptr)
-# @ stub RtlAddressInSectionTable
+@ stdcall RtlAddressInSectionTable(ptr long long)
 @ stdcall RtlAdjustPrivilege(long long long ptr)
 @ stdcall RtlAllocateAndInitializeSid (ptr long long long long long long long long long ptr)
 @ stdcall RtlAllocateHandle(ptr ptr)
@@ -1688,20 +1688,21 @@
 # or 'wine_' (for user-visible functions) to avoid namespace conflicts.
 
 # Server interface
-@ cdecl -syscall -norelay wine_server_call(ptr)
-@ cdecl -syscall wine_server_fd_to_handle(long long long ptr)
-@ cdecl -syscall wine_server_handle_to_fd(long long ptr ptr)
+@ cdecl -norelay wine_server_call(ptr)
+@ cdecl wine_server_fd_to_handle(long long long ptr)
+@ cdecl wine_server_handle_to_fd(long long ptr ptr)
 
 # Unix interface
 @ stdcall __wine_unix_call(int64 long ptr)
-@ stdcall -syscall __wine_unix_spawnvp(long ptr)
+@ stdcall __wine_unix_spawnvp(long ptr)
 @ stdcall __wine_ctrl_routine(ptr)
 @ extern -private __wine_syscall_dispatcher
 @ extern -private __wine_unix_call_dispatcher
+@ extern -private __wine_unixlib_handle
 @ extern -arch=arm64 __wine_current_teb
 
 # Debugging
-@ stdcall -syscall -norelay __wine_dbg_write(ptr long)
+@ stdcall -norelay __wine_dbg_write(ptr long)
 @ cdecl -norelay __wine_dbg_get_channel_flags(ptr)
 @ cdecl -norelay __wine_dbg_header(long long str)
 @ cdecl -norelay __wine_dbg_output(str)

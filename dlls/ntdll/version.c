@@ -168,7 +168,7 @@ static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
     },
     /* WIN10 */
     {
-        sizeof(RTL_OSVERSIONINFOEXW), 10, 0, 18362, VER_PLATFORM_WIN32_NT,
+        sizeof(RTL_OSVERSIONINFOEXW), 10, 0, 19043, VER_PLATFORM_WIN32_NT,
         L"", 0, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
     },
     /* WIN11 */
@@ -276,18 +276,36 @@ static BOOL get_nt_registry_version( RTL_OSVERSIONINFOEXW *version )
 
     memset( version, 0, sizeof(*version) );
 
-    RtlInitUnicodeString( &valueW, L"CurrentVersion" );
-    if (!NtQueryValueKey( hkey, &valueW, KeyValuePartialInformation, tmp, sizeof(tmp)-1, &count ))
+    RtlInitUnicodeString( &valueW, L"CurrentMajorVersionNumber" );
+    if (!NtQueryValueKey( hkey, &valueW, KeyValuePartialInformation, tmp, sizeof(tmp)-1, &count ) &&
+        info->Type == REG_DWORD)
     {
-        WCHAR *p, *str = (WCHAR *)info->Data;
-        str[info->DataLength / sizeof(WCHAR)] = 0;
-        p = wcschr( str, '.' );
-        if (p)
+        version->dwMajorVersion = *(DWORD *)info->Data;
+
+        RtlInitUnicodeString( &valueW, L"CurrentMinorVersionNumber" );
+        if (!NtQueryValueKey( hkey, &valueW, KeyValuePartialInformation, tmp, sizeof(tmp)-1, &count ) &&
+            info->Type == REG_DWORD)
         {
-            *p++ = 0;
-            version->dwMinorVersion = wcstoul( p, NULL, 10 );
+            version->dwMinorVersion = *(DWORD *)info->Data;
         }
-        version->dwMajorVersion = wcstoul( str, NULL, 10 );
+        else version->dwMajorVersion = 0;
+    }
+
+    if (!version->dwMajorVersion)
+    {
+        RtlInitUnicodeString( &valueW, L"CurrentVersion" );
+        if (!NtQueryValueKey( hkey, &valueW, KeyValuePartialInformation, tmp, sizeof(tmp)-1, &count ))
+        {
+            WCHAR *p, *str = (WCHAR *)info->Data;
+            str[info->DataLength / sizeof(WCHAR)] = 0;
+            p = wcschr( str, '.' );
+            if (p)
+            {
+                *p++ = 0;
+                version->dwMinorVersion = wcstoul( p, NULL, 10 );
+            }
+            version->dwMajorVersion = wcstoul( str, NULL, 10 );
+        }
     }
 
     if (version->dwMajorVersion)   /* we got the main version, now fetch the other fields */

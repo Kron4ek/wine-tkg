@@ -205,6 +205,47 @@ ULONGLONG WINAPI DECLSPEC_HOTPATCH GetTickCount64(void)
 }
 
 
+/******************************************************************************
+ *           QueryInterruptTime  (kernelbase.@)
+ */
+void WINAPI DECLSPEC_HOTPATCH QueryInterruptTime( ULONGLONG *time )
+{
+    ULONG high, low;
+
+    do
+    {
+        high = user_shared_data->InterruptTime.High1Time;
+        low = user_shared_data->InterruptTime.LowPart;
+    }
+    while (high != user_shared_data->InterruptTime.High2Time);
+    *time = (ULONGLONG)high << 32 | low;
+}
+
+
+/******************************************************************************
+ *           QueryInterruptTimePrecise  (kernelbase.@)
+ */
+void WINAPI DECLSPEC_HOTPATCH QueryInterruptTimePrecise( ULONGLONG *time )
+{
+    static int once;
+    if (!once++) FIXME( "(%p) semi-stub\n", time );
+
+    QueryInterruptTime( time );
+}
+
+
+/***********************************************************************
+ *           QueryUnbiasedInterruptTimePrecise  (kernelbase.@)
+ */
+void WINAPI DECLSPEC_HOTPATCH QueryUnbiasedInterruptTimePrecise( ULONGLONG *time )
+{
+    static int once;
+    if (!once++) FIXME( "(%p): semi-stub.\n", time );
+
+    RtlQueryUnbiasedInterruptTime( time );
+}
+
+
 /***********************************************************************
  * Waits
  ***********************************************************************/

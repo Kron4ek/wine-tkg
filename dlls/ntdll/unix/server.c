@@ -317,6 +317,17 @@ unsigned int CDECL wine_server_call( void *req_ptr )
 
 
 /***********************************************************************
+ *           unixcall_wine_server_call
+ *
+ * Perform a server call.
+ */
+NTSTATUS unixcall_wine_server_call( void *args )
+{
+    return wine_server_call( args );
+}
+
+
+/***********************************************************************
  *           server_enter_uninterrupted_section
  */
 void server_enter_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset )
@@ -1122,6 +1133,17 @@ NTSTATUS CDECL wine_server_fd_to_handle( int fd, unsigned int access, unsigned i
 
 
 /***********************************************************************
+ *           unixcall_wine_server_fd_to_handle
+ */
+NTSTATUS unixcall_wine_server_fd_to_handle( void *args )
+{
+    struct wine_server_fd_to_handle_params *params = args;
+
+    return wine_server_fd_to_handle( params->fd, params->access, params->attributes, params->handle );
+}
+
+
+/***********************************************************************
  *           wine_server_handle_to_fd
  *
  * Retrieve the file descriptor corresponding to a file handle.
@@ -1137,6 +1159,17 @@ NTSTATUS CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int
         if ((*unix_fd = dup(*unix_fd)) == -1) ret = STATUS_TOO_MANY_OPENED_FILES;
     }
     return ret;
+}
+
+
+/***********************************************************************
+ *           unixcall_wine_server_handle_to_fd
+ */
+NTSTATUS unixcall_wine_server_handle_to_fd( void *args )
+{
+    struct wine_server_handle_to_fd_params *params = args;
+
+    return wine_server_handle_to_fd( params->handle, params->access, params->unix_fd, params->options );
 }
 
 
@@ -1826,3 +1859,81 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
     }
     return ret;
 }
+
+#ifdef _WIN64
+
+struct __server_request_info32
+{
+    union
+    {
+        union generic_request req;
+        union generic_reply   reply;
+    } u;
+    unsigned int            data_count;
+    ULONG                   reply_data;
+    struct { ULONG ptr; data_size_t size; } data[__SERVER_MAX_DATA];
+};
+
+/**********************************************************************
+ *		wow64_wine_server_call
+ */
+NTSTATUS wow64_wine_server_call( void *args )
+{
+    struct __server_request_info32 *req32 = args;
+    unsigned int i;
+    NTSTATUS status;
+    struct __server_request_info req;
+
+    req.u.req = req32->u.req;
+    req.data_count = req32->data_count;
+    for (i = 0; i < req.data_count; i++)
+    {
+        req.data[i].ptr = ULongToPtr( req32->data[i].ptr );
+        req.data[i].size = req32->data[i].size;
+    }
+    req.reply_data = ULongToPtr( req32->reply_data );
+    status = wine_server_call( &req );
+    req32->u.reply = req.u.reply;
+    return status;
+}
+
+/***********************************************************************
+ *		wow64_wine_server_fd_to_handle
+ */
+NTSTATUS wow64_wine_server_fd_to_handle( void *args )
+{
+    struct
+    {
+        int          fd;
+        unsigned int access;
+        unsigned int attributes;
+        ULONG        handle;
+    } const *params32 = args;
+
+    ULONG *handle32 = ULongToPtr( params32->handle );
+    HANDLE handle;
+    NTSTATUS ret;
+
+    ret = wine_server_fd_to_handle( params32->fd, params32->access, params32->attributes, &handle );
+    *handle32 = HandleToULong( handle );
+    return ret;
+}
+
+/**********************************************************************
+ *           wow64_wine_server_handle_to_fd
+ */
+NTSTATUS wow64_wine_server_handle_to_fd( void *args )
+{
+    struct
+    {
+        ULONG        handle;
+        unsigned int access;
+        ULONG        unix_fd;
+        ULONG        options;
+    } const *params32 = args;
+
+    return wine_server_handle_to_fd( ULongToHandle( params32->handle ), params32->access,
+                                     ULongToPtr( params32->unix_fd ), ULongToPtr( params32->options ));
+}
+
+#endif /* _WIN64 */

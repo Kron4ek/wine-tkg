@@ -1,0 +1,8 @@
+MODULE       = ir50_32.dll
+IMPORTS      = user32 mfplat mfuuid
+DELAYIMPORTS = winegstreamer
+
+C_SRCS = \
+	ir50.c
+
+RC_SRCS = ir50_32.rc

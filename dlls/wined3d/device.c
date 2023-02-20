@@ -3979,6 +3979,7 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
     const unsigned int word_bit_count = sizeof(DWORD) * CHAR_BIT;
     struct wined3d_device_context *context = &device->cs->c;
     unsigned int i, j, start, idx, vs_uniform_count;
+    bool set_depth_bounds = false;
     struct wined3d_range range;
     uint32_t map;
 
@@ -4110,6 +4111,36 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                 case WINED3D_RS_SCISSORTESTENABLE:
                 case WINED3D_RS_ANTIALIASEDLINEENABLE:
                     set_rasterizer_state = TRUE;
+                    break;
+
+                case WINED3D_RS_ADAPTIVETESS_X:
+                case WINED3D_RS_ADAPTIVETESS_Z:
+                case WINED3D_RS_ADAPTIVETESS_W:
+                    set_depth_bounds = true;
+                    wined3d_device_set_render_state(device, idx, state->rs[idx]);
+                    break;
+
+                case WINED3D_RS_ANTIALIAS:
+                    if (state->rs[WINED3D_RS_ANTIALIAS])
+                        FIXME("Antialias not supported yet.\n");
+                    break;
+
+                case WINED3D_RS_TEXTUREPERSPECTIVE:
+                    break;
+
+                case WINED3D_RS_WRAPU:
+                    if (state->rs[WINED3D_RS_WRAPU])
+                        FIXME("Render state WINED3D_RS_WRAPU not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_WRAPV:
+                    if (state->rs[WINED3D_RS_WRAPV])
+                        FIXME("Render state WINED3D_RS_WRAPV not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_MONOENABLE:
+                    if (state->rs[WINED3D_RS_MONOENABLE])
+                        FIXME("Render state WINED3D_RS_MONOENABLE not implemented yet.\n");
                     break;
 
                 default:
@@ -4298,6 +4329,14 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                 wined3d_depth_stencil_state_decref(depth_stencil_state);
             }
         }
+    }
+
+    if (set_depth_bounds)
+    {
+        wined3d_device_context_set_depth_bounds(context,
+                state->rs[WINED3D_RS_ADAPTIVETESS_X] == WINED3DFMT_NVDB,
+                int_to_float(state->rs[WINED3D_RS_ADAPTIVETESS_Z]),
+                int_to_float(state->rs[WINED3D_RS_ADAPTIVETESS_W]));
     }
 
     for (i = 0; i < ARRAY_SIZE(changed->textureState); ++i)

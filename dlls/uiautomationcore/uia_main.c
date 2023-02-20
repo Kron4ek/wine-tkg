@@ -317,6 +317,57 @@ HRESULT WINAPI UiaRaiseAutomationPropertyChangedEvent(IRawElementProviderSimple 
     return S_OK;
 }
 
+/***********************************************************************
+ *          UiaRaiseStructureChangedEvent (uiautomationcore.@)
+ */
+HRESULT WINAPI UiaRaiseStructureChangedEvent(IRawElementProviderSimple *provider, enum StructureChangeType struct_change_type,
+        int *runtime_id, int runtime_id_len)
+{
+    FIXME("(%p, %d, %p, %d): stub\n", provider, struct_change_type, runtime_id, runtime_id_len);
+    return S_OK;
+}
+
+/***********************************************************************
+ *          UiaRaiseAsyncContentLoadedEvent (uiautomationcore.@)
+ */
+HRESULT WINAPI UiaRaiseAsyncContentLoadedEvent(IRawElementProviderSimple *provider,
+        enum AsyncContentLoadedState async_content_loaded_state, double percent_complete)
+{
+    FIXME("(%p, %d, %f): stub\n", provider, async_content_loaded_state, percent_complete);
+    return S_OK;
+}
+
+/***********************************************************************
+ *          UiaRaiseTextEditTextChangedEvent (uiautomationcore.@)
+ */
+HRESULT WINAPI UiaRaiseTextEditTextChangedEvent(IRawElementProviderSimple *provider,
+        enum TextEditChangeType text_edit_change_type, SAFEARRAY *changed_data)
+{
+    FIXME("(%p, %d, %p): stub\n", provider, text_edit_change_type, changed_data);
+    return S_OK;
+}
+
+/***********************************************************************
+ *          UiaRaiseNotificationEvent (uiautomationcore.@)
+ */
+HRESULT WINAPI UiaRaiseNotificationEvent(IRawElementProviderSimple *provider, enum NotificationKind notification_kind,
+        enum NotificationProcessing notification_processing, BSTR display_str, BSTR activity_id)
+{
+    FIXME("(%p, %d, %d, %s, %s): stub\n", provider, notification_kind, notification_processing,
+            debugstr_w(display_str), debugstr_w(activity_id));
+    return S_OK;
+}
+
+/***********************************************************************
+ *          UiaRaiseChangesEvent (uiautomationcore.@)
+ */
+HRESULT WINAPI UiaRaiseChangesEvent(IRawElementProviderSimple *provider, int event_id_count,
+        struct UiaChangeInfo *uia_changes)
+{
+    FIXME("(%p, %d, %p): stub\n", provider, event_id_count, uia_changes);
+    return S_OK;
+}
+
 HRESULT WINAPI UiaHostProviderFromHwnd(HWND hwnd, IRawElementProviderSimple **provider)
 {
     struct hwnd_host_provider *host_prov;

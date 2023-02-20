@@ -43,7 +43,7 @@
 #include "x11drv_dll.h"
 #include "wine/debug.h"
 #include "imm.h"
-#include "ddk/imm.h"
+#include "immdev.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(imm);
 
@@ -55,12 +55,6 @@ typedef struct _IMEPRIVATE {
     HFONT textfont;
     HWND hwndDefault;
 } IMEPRIVATE, *LPIMEPRIVATE;
-
-typedef struct _tagTRANSMSG {
-    UINT message;
-    WPARAM wParam;
-    LPARAM lParam;
-} TRANSMSG, *LPTRANSMSG;
 
 static const WCHAR UI_CLASS_NAME[] = {'W','i','n','e','X','1','1','I','M','E',0};
 
@@ -511,8 +505,7 @@ static void IME_AddToSelected(HIMC hIMC)
     hSelectedFrom[hSelectedCount-1] = hIMC;
 }
 
-BOOL WINAPI ImeInquire(LPIMEINFO lpIMEInfo, LPWSTR lpszUIClass,
-                       LPCWSTR lpszOption)
+BOOL WINAPI ImeInquire(LPIMEINFO lpIMEInfo, LPWSTR lpszUIClass, DWORD flags)
 {
     static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
 
@@ -619,7 +612,7 @@ BOOL WINAPI ImeSetActiveContext(HIMC hIMC,BOOL fFlag)
 }
 
 UINT WINAPI ImeToAsciiEx (UINT uVKey, UINT uScanCode, const LPBYTE lpbKeyState,
-                          LPDWORD lpdwTransKey, UINT fuState, HIMC hIMC)
+                          TRANSMSGLIST *lpdwTransKey, UINT fuState, HIMC hIMC)
 {
     /* See the comment at the head of this file */
     TRACE("We do no processing via this route\n");

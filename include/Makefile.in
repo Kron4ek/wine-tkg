@@ -195,7 +195,6 @@ SOURCES = \
 	ddk/hidport.h \
 	ddk/hidsdi.h \
 	ddk/hidtypes.h \
-	ddk/imm.h \
 	ddk/mountmgr.h \
 	ddk/ndis.h \
 	ddk/ntddcdvd.h \
@@ -359,6 +358,7 @@ SOURCES = \
 	imagehlp.h \
 	ime.h \
 	imm.h \
+	immdev.h \
 	imnact.idl \
 	imnxport.idl \
 	in6addr.h \
@@ -379,6 +379,7 @@ SOURCES = \
 	iptypes.h \
 	isguids.h \
 	ivectorchangedeventargs.idl \
+	kbd.h \
 	knownfolders.h \
 	ks.h \
 	ksguid.h \
@@ -630,6 +631,7 @@ SOURCES = \
 	ras.h \
 	rasdlg.h \
 	raserror.h \
+	realtimeapiset.h \
 	reason.h \
 	regstr.h \
 	relogger.idl \
@@ -828,6 +830,7 @@ SOURCES = \
 	windows.system.threading.idl \
 	windows.system.userprofile.idl \
 	windows.ui.idl \
+	windows.ui.viewmanagement.idl \
 	windowscontracts.idl \
 	windowsx.h \
 	wine/afd.h \

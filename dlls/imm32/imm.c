@@ -33,7 +33,7 @@
 #include "winerror.h"
 #include "wine/debug.h"
 #include "imm.h"
-#include "ddk/imm.h"
+#include "immdev.h"
 #include "winnls.h"
 #include "winreg.h"
 #include "wine/list.h"
@@ -62,13 +62,13 @@ typedef struct _tagImmHkl{
     HWND        UIWnd;
 
     /* Function Pointers */
-    BOOL (WINAPI *pImeInquire)(IMEINFO *, WCHAR *, const WCHAR *);
+    BOOL (WINAPI *pImeInquire)(IMEINFO *, WCHAR *, DWORD);
     BOOL (WINAPI *pImeConfigure)(HKL, HWND, DWORD, void *);
     BOOL (WINAPI *pImeDestroy)(UINT);
     LRESULT (WINAPI *pImeEscape)(HIMC, UINT, void *);
     BOOL (WINAPI *pImeSelect)(HIMC, BOOL);
     BOOL (WINAPI *pImeSetActiveContext)(HIMC, BOOL);
-    UINT (WINAPI *pImeToAsciiEx)(UINT, UINT, const BYTE *, DWORD *, UINT, HIMC);
+    UINT (WINAPI *pImeToAsciiEx)(UINT, UINT, const BYTE *, TRANSMSGLIST *, UINT, HIMC);
     BOOL (WINAPI *pNotifyIME)(HIMC, DWORD, DWORD, DWORD);
     BOOL (WINAPI *pImeRegisterWord)(const WCHAR *, DWORD, const WCHAR *);
     BOOL (WINAPI *pImeUnregisterWord)(const WCHAR *, DWORD, const WCHAR *);
@@ -96,12 +96,6 @@ typedef struct tagInputContextData
 } InputContextData;
 
 #define WINE_IMC_VALID_MAGIC 0x56434D49
-
-typedef struct _tagTRANSMSG {
-    UINT message;
-    WPARAM wParam;
-    LPARAM lParam;
-} TRANSMSG, *LPTRANSMSG;
 
 struct coinit_spy
 {
@@ -508,7 +502,7 @@ static ImmHkl *IMM_GetImmHkl(HKL hkl)
     if (ptr->hIME)
     {
         LOAD_FUNCPTR(ImeInquire);
-        if (!ptr->pImeInquire || !ptr->pImeInquire(&ptr->imeInfo, ptr->imeClassName, NULL))
+        if (!ptr->pImeInquire || !ptr->pImeInquire(&ptr->imeInfo, ptr->imeClassName, 0))
         {
             FreeLibrary(ptr->hIME);
             ptr->hIME = NULL;
@@ -2377,6 +2371,9 @@ BOOL WINAPI ImmSetCompositionStringA(
     if (!data)
         return FALSE;
 
+    if (IMM_IsCrossThreadAccess(NULL, hIMC))
+        return FALSE;
+
     if (!(dwIndex == SCS_SETSTR ||
           dwIndex == SCS_CHANGEATTR ||
           dwIndex == SCS_CHANGECLAUSE ||
@@ -2430,6 +2427,9 @@ BOOL WINAPI ImmSetCompositionStringW(
             hIMC, dwIndex, lpComp, dwCompLen, lpRead, dwReadLen);
 
     if (!data)
+        return FALSE;
+
+    if (IMM_IsCrossThreadAccess(NULL, hIMC))
         return FALSE;
 
     if (!(dwIndex == SCS_SETSTR ||
@@ -2998,7 +2998,7 @@ BOOL WINAPI ImmTranslateMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lKeyD
     HIMC imc = ImmGetContext(hwnd);
     BYTE state[256];
     UINT scancode;
-    LPVOID list = 0;
+    TRANSMSGLIST *list = NULL;
     UINT msg_count;
     UINT uVirtKey;
     static const DWORD list_count = 10;
@@ -3014,7 +3014,7 @@ BOOL WINAPI ImmTranslateMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lKeyD
     scancode = lKeyData >> 0x10 & 0xff;
 
     list = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, list_count * sizeof(TRANSMSG) + sizeof(DWORD));
-    ((DWORD*)list)[0] = list_count;
+    list->uMsgCount = list_count;
 
     if (data->immKbd->imeInfo.fdwProperty & IME_PROP_KBD_CHAR_FIRST)
     {
@@ -3034,7 +3034,7 @@ BOOL WINAPI ImmTranslateMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lKeyD
     if (msg_count && msg_count <= list_count)
     {
         UINT i;
-        LPTRANSMSG msgs = (LPTRANSMSG)((LPBYTE)list + sizeof(DWORD));
+        LPTRANSMSG msgs = list->TransMsg;
 
         for (i = 0; i < msg_count; i++)
             ImmInternalPostIMEMessage(data, msgs[i].message, msgs[i].wParam, msgs[i].lParam);
@@ -3116,7 +3116,7 @@ BOOL WINAPI ImmEnumInputContext(DWORD idThread, IMCENUMPROC lpfn, LPARAM lParam)
  *              ImmGetHotKey(IMM32.@)
  */
 
-BOOL WINAPI ImmGetHotKey(DWORD hotkey, UINT *modifiers, UINT *key, HKL hkl)
+BOOL WINAPI ImmGetHotKey(DWORD hotkey, UINT *modifiers, UINT *key, HKL *hkl)
 {
     FIXME("%lx, %p, %p, %p: stub\n", hotkey, modifiers, key, hkl);
     return FALSE;

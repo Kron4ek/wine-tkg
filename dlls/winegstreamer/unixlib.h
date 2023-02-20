@@ -43,6 +43,7 @@ struct wg_format
         WG_MAJOR_TYPE_VIDEO_CINEPAK,
         WG_MAJOR_TYPE_VIDEO_H264,
         WG_MAJOR_TYPE_VIDEO_WMV,
+        WG_MAJOR_TYPE_VIDEO_INDEO,
     } major_type;
 
     union
@@ -133,6 +134,12 @@ struct wg_format
             uint32_t fps_n, fps_d;
             uint32_t version;
         } video_wmv;
+        struct
+        {
+            int32_t width, height;
+            uint32_t fps_n, fps_d;
+            uint32_t version;
+        } video_indeo;
     } u;
 };
 
@@ -310,6 +317,12 @@ struct wg_transform_set_output_format_params
     const struct wg_format *format;
 };
 
+struct wg_transform_get_status_params
+{
+    struct wg_transform *transform;
+    UINT32 accepts_input;
+};
+
 enum unix_funcs
 {
     unix_wg_parser_create,
@@ -343,6 +356,7 @@ enum unix_funcs
 
     unix_wg_transform_push_data,
     unix_wg_transform_read_data,
+    unix_wg_transform_get_status,
 };
 
 #endif /* __WINE_WINEGSTREAMER_UNIXLIB_H */

@@ -2012,8 +2012,10 @@ char *normalize_path( const char *path, int flags )
 {
     char tmp[PATH_MAX], resolved_path[PATH_MAX], *p;
 
+#if defined(O_SYMLINK)
     if ((flags & O_SYMLINK) != O_SYMLINK)
         return realpath( path, NULL );
+#endif
 
     strcpy( tmp, path );
     p = dirname( tmp );

@@ -28,6 +28,7 @@
 #include "winternl.h"
 #include "wine/exception.h"
 #include "wine/unixlib.h"
+#include "wine/asm.h"
 #include "wow64_private.h"
 #include "wine/debug.h"
 
@@ -92,7 +93,10 @@ static HMODULE win32u_module;
 
 /* cpu backend dll functions */
 static void *   (WINAPI *pBTCpuGetBopCode)(void);
+static NTSTATUS (WINAPI *pBTCpuGetContext)(HANDLE,HANDLE,void *,void *);
 static void     (WINAPI *pBTCpuProcessInit)(void);
+static NTSTATUS (WINAPI *pBTCpuSetContext)(HANDLE,HANDLE,void *,void *);
+static void     (WINAPI *pBTCpuThreadInit)(void);
 static void     (WINAPI *pBTCpuSimulate)(void);
 static NTSTATUS (WINAPI *pBTCpuResetToConsistentState)( EXCEPTION_POINTERS * );
 static void *   (WINAPI *p__wine_get_unix_opcode)(void);
@@ -119,6 +123,169 @@ void __cdecl __wine_spec_unimplemented_stub( const char *module, const char *fun
     record.ExceptionInformation[1] = (ULONG_PTR)function;
     for (;;) RtlRaiseException( &record );
 }
+
+
+static EXCEPTION_RECORD *exception_record_32to64( const EXCEPTION_RECORD32 *rec32 )
+{
+    EXCEPTION_RECORD *rec;
+    unsigned int i;
+
+    rec = Wow64AllocateTemp( sizeof(*rec) );
+    rec->ExceptionCode = rec32->ExceptionCode;
+    rec->ExceptionFlags = rec32->ExceptionFlags;
+    rec->ExceptionRecord = rec32->ExceptionRecord ? exception_record_32to64( ULongToPtr(rec32->ExceptionRecord) ) : NULL;
+    rec->ExceptionAddress = ULongToPtr( rec32->ExceptionAddress );
+    rec->NumberParameters = rec32->NumberParameters;
+    for (i = 0; i < EXCEPTION_MAXIMUM_PARAMETERS; i++)
+        rec->ExceptionInformation[i] = rec32->ExceptionInformation[i];
+    return rec;
+}
+
+
+/**********************************************************************
+ *           call_user_exception_dispatcher
+ */
+static void call_user_exception_dispatcher( EXCEPTION_RECORD32 *rec, void *ctx32_ptr, void *ctx64_ptr )
+{
+    switch (current_machine)
+    {
+    case IMAGE_FILE_MACHINE_I386:
+        {
+            struct stack_layout
+            {
+                ULONG               rec_ptr;       /* first arg for KiUserExceptionDispatcher */
+                ULONG               context_ptr;   /* second arg for KiUserExceptionDispatcher */
+                EXCEPTION_RECORD32  rec;
+                I386_CONTEXT        context;
+            } *stack;
+            I386_CONTEXT *context, ctx = { CONTEXT_I386_ALL };
+            CONTEXT_EX *context_ex, *src_ex = NULL;
+            ULONG size, flags;
+
+            pBTCpuGetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
+
+            if (ctx32_ptr)
+            {
+                I386_CONTEXT *ctx32 = ctx32_ptr;
+
+                if ((ctx32->ContextFlags & CONTEXT_I386_XSTATE) == CONTEXT_I386_XSTATE)
+                    src_ex = (CONTEXT_EX *)(ctx32 + 1);
+            }
+            else if (native_machine == IMAGE_FILE_MACHINE_AMD64)
+            {
+                AMD64_CONTEXT *ctx64 = ctx64_ptr;
+
+                if ((ctx64->ContextFlags & CONTEXT_AMD64_FLOATING_POINT) == CONTEXT_AMD64_FLOATING_POINT)
+                    memcpy( ctx.ExtendedRegisters, &ctx64->FltSave, sizeof(ctx.ExtendedRegisters) );
+                if ((ctx64->ContextFlags & CONTEXT_AMD64_XSTATE) == CONTEXT_AMD64_XSTATE)
+                    src_ex = (CONTEXT_EX *)(ctx64 + 1);
+            }
+
+            flags = ctx.ContextFlags;
+            if (src_ex) flags |= CONTEXT_I386_XSTATE;
+            RtlGetExtendedContextLength( flags, &size );
+            size = ((size + 15) & ~15) + offsetof(struct stack_layout,context);
+
+            stack = (struct stack_layout *)(ULONG_PTR)(ctx.Esp - size);
+            stack->rec_ptr = PtrToUlong( &stack->rec );
+            stack->rec = *rec;
+            RtlInitializeExtendedContext( &stack->context, flags, &context_ex );
+            context = RtlLocateLegacyContext( context_ex, NULL );
+            *context = ctx;
+            context->ContextFlags = flags;
+            stack->context_ptr = PtrToUlong( context );
+
+            if (src_ex)
+            {
+                XSTATE *src_xs = (XSTATE *)((char *)src_ex + src_ex->XState.Offset);
+                XSTATE *dst_xs = (XSTATE *)((char *)context_ex + context_ex->XState.Offset);
+
+                dst_xs->Mask = src_xs->Mask & ~(ULONG64)3;
+                dst_xs->CompactionMask = src_xs->CompactionMask;
+                if ((dst_xs->Mask & 4) &&
+                    src_ex->XState.Length >= sizeof(XSTATE) &&
+                    context_ex->XState.Length >= sizeof(XSTATE))
+                    memcpy( &dst_xs->YmmContext, &src_xs->YmmContext, sizeof(dst_xs->YmmContext) );
+            }
+
+            ctx.Esp = PtrToUlong( stack );
+            ctx.Eip = pLdrSystemDllInitBlock->pKiUserExceptionDispatcher;
+            ctx.EFlags &= ~(0x100|0x400|0x40000);
+            pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
+
+            TRACE( "exception %08lx dispatcher %08lx stack %08lx eip %08lx\n",
+                   rec->ExceptionCode, ctx.Eip, ctx.Esp, stack->context.Eip );
+        }
+        break;
+
+    case IMAGE_FILE_MACHINE_ARMNT:
+        {
+            struct stack_layout
+            {
+                ARM_CONTEXT        context;
+                EXCEPTION_RECORD32 rec;
+            } *stack;
+            ARM_CONTEXT ctx = { CONTEXT_ARM_ALL };
+
+            pBTCpuGetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
+            stack = (struct stack_layout *)(ULONG_PTR)(ctx.Sp & ~3) - 1;
+            stack->rec = *rec;
+            stack->context = ctx;
+
+            ctx.R0 = PtrToUlong( &stack->rec );     /* first arg for KiUserExceptionDispatcher */
+            ctx.R1 = PtrToUlong( &stack->context ); /* second arg for KiUserExceptionDispatcher */
+            ctx.Sp = PtrToUlong( stack );
+            ctx.Pc = pLdrSystemDllInitBlock->pKiUserExceptionDispatcher;
+            if (ctx.Pc & 1) ctx.Cpsr |= 0x20;
+            else ctx.Cpsr &= ~0x20;
+            pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
+
+            TRACE( "exception %08lx dispatcher %08lx stack %08lx pc %08lx\n",
+                   rec->ExceptionCode, ctx.Pc, ctx.Sp, stack->context.Sp );
+        }
+        break;
+    }
+}
+
+
+/* based on RtlRaiseException: call NtRaiseException with context setup to return to caller */
+void WINAPI raise_exception( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL first_chance ) DECLSPEC_HIDDEN;
+#ifdef __x86_64__
+__ASM_GLOBAL_FUNC( raise_exception,
+                   "sub $0x28,%rsp\n\t"
+                   __ASM_SEH(".seh_stackalloc 0x28\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   __ASM_CFI(".cfi_adjust_cfa_offset 0x28\n\t")
+                   "movq %rcx,(%rsp)\n\t"
+                   "movq %rdx,%rcx\n\t"
+                   "call " __ASM_NAME("RtlCaptureContext") "\n\t"
+                   "leaq 0x30(%rsp),%rax\n\t"   /* orig stack pointer */
+                   "movq %rax,0x98(%rdx)\n\t"   /* context->Rsp */
+                   "movq (%rsp),%rcx\n\t"       /* original first parameter */
+                   "movq 0x28(%rsp),%rax\n\t"   /* return address */
+                   "movq %rax,0xf8(%rdx)\n\t"   /* context->Rip */
+                   "movq %rax,0x10(%rcx)\n\t"   /* rec->ExceptionAddress */
+                   "call " __ASM_NAME("NtRaiseException") )
+#elif defined(__aarch64__)
+__ASM_GLOBAL_FUNC( raise_exception,
+                   "stp x29, x30, [sp, #-32]!\n\t"
+                   __ASM_SEH(".seh_save_fplr_x 32\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   __ASM_CFI(".cfi_def_cfa x29, 32\n\t")
+                   __ASM_CFI(".cfi_offset x30, -24\n\t")
+                   __ASM_CFI(".cfi_offset x29, -32\n\t")
+                   "mov x29, sp\n\t"
+                   "stp x0, x1, [sp, #16]\n\t"
+                   "mov x0, x1\n\t"
+                   "bl " __ASM_NAME("RtlCaptureContext") "\n\t"
+                   "ldp x0, x1, [sp, #16]\n\t"    /* orig parameters */
+                   "ldp x4, x5, [sp]\n\t"         /* frame pointer, return address */
+                   "stp x4, x5, [x1, #0xf0]\n\t"  /* context->Fp, Lr */
+                   "add x4, sp, #32\n\t"          /* orig stack pointer */
+                   "stp x4, x5, [x1, #0x100]\n\t" /* context->Sp, Pc */
+                   "str x5, [x0, #0x10]\n\t"      /* rec->ExceptionAddress */
+                   "bl " __ASM_NAME("NtRaiseException") )
+#endif
 
 
 /**********************************************************************
@@ -191,6 +358,20 @@ NTSTATUS WINAPI wow64_NtClose( UINT *args )
 
 
 /**********************************************************************
+ *           wow64_NtContinue
+ */
+NTSTATUS WINAPI wow64_NtContinue( UINT *args )
+{
+    void *context = get_ptr( &args );
+    BOOLEAN alertable = get_ulong( &args );
+
+    pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, context );
+    if (alertable) NtTestAlert();
+    return STATUS_SUCCESS;
+}
+
+
+/**********************************************************************
  *           wow64_NtDeleteAtom
  */
 NTSTATUS WINAPI wow64_NtDeleteAtom( UINT *args )
@@ -211,6 +392,18 @@ NTSTATUS WINAPI wow64_NtFindAtom( UINT *args )
     RTL_ATOM *atom = get_ptr( &args );
 
     return NtFindAtom( name, len, atom );
+}
+
+
+/**********************************************************************
+ *           wow64_NtGetContextThread
+ */
+NTSTATUS WINAPI wow64_NtGetContextThread( UINT *args )
+{
+    HANDLE handle = get_handle( &args );
+    WOW64_CONTEXT *context = get_ptr( &args );
+
+    return RtlWow64GetThreadContext( handle, context );
 }
 
 
@@ -274,6 +467,45 @@ NTSTATUS WINAPI wow64_NtQueryInstallUILanguage( UINT *args )
 
 
 /**********************************************************************
+ *           wow64_NtRaiseException
+ */
+NTSTATUS WINAPI wow64_NtRaiseException( UINT *args )
+{
+    EXCEPTION_RECORD32 *rec32 = get_ptr( &args );
+    void *context32 = get_ptr( &args );
+    BOOL first_chance = get_ulong( &args );
+
+    EXCEPTION_RECORD *rec = exception_record_32to64( rec32 );
+    CONTEXT context;
+
+    pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, context32 );
+
+    __TRY
+    {
+        raise_exception( rec, &context, first_chance );
+    }
+    __EXCEPT_ALL
+    {
+        call_user_exception_dispatcher( rec32, context32, &context );
+    }
+    __ENDTRY
+    return STATUS_SUCCESS;
+}
+
+
+/**********************************************************************
+ *           wow64_NtSetContextThread
+ */
+NTSTATUS WINAPI wow64_NtSetContextThread( UINT *args )
+{
+    HANDLE handle = get_handle( &args );
+    WOW64_CONTEXT *context = get_ptr( &args );
+
+    return RtlWow64SetThreadContext( handle, context );
+}
+
+
+/**********************************************************************
  *           wow64_NtSetDebugFilterState
  */
 NTSTATUS WINAPI wow64_NtSetDebugFilterState( UINT *args )
@@ -306,62 +538,6 @@ NTSTATUS WINAPI wow64_NtSetDefaultUILanguage( UINT *args )
     LANGID lang = get_ulong( &args );
 
     return NtSetDefaultUILanguage( lang );
-}
-
-
-/**********************************************************************
- *           wow64___wine_dbg_write
- */
-NTSTATUS WINAPI wow64___wine_dbg_write( UINT *args )
-{
-    const char *str = get_ptr( &args );
-    ULONG len = get_ulong( &args );
-
-    return __wine_dbg_write( str, len );
-}
-
-
-/**********************************************************************
- *           wow64___wine_unix_spawnvp
- */
-NTSTATUS WINAPI wow64___wine_unix_spawnvp( UINT *args )
-{
-    ULONG *argv32 = get_ptr( &args );
-    int wait = get_ulong( &args );
-
-    unsigned int i, count = 0;
-    char **argv;
-
-    while (argv32[count]) count++;
-    argv = Wow64AllocateTemp( (count + 1) * sizeof(*argv) );
-    for (i = 0; i < count; i++) argv[i] = ULongToPtr( argv32[i] );
-    argv[count] = NULL;
-    return __wine_unix_spawnvp( argv, wait );
-}
-
-
-/**********************************************************************
- *           wow64_wine_server_call
- */
-NTSTATUS WINAPI wow64_wine_server_call( UINT *args )
-{
-    struct __server_request_info32 *req32 = get_ptr( &args );
-
-    unsigned int i;
-    NTSTATUS status;
-    struct __server_request_info req;
-
-    req.u.req = req32->u.req;
-    req.data_count = req32->data_count;
-    for (i = 0; i < req.data_count; i++)
-    {
-        req.data[i].ptr = ULongToPtr( req32->data[i].ptr );
-        req.data[i].size = req32->data[i].size;
-    }
-    req.reply_data = ULongToPtr( req32->reply_data );
-    status = wine_server_call( &req );
-    req32->u.reply = req.u.reply;
-    return status;
 }
 
 
@@ -520,7 +696,7 @@ static const WCHAR *get_cpu_dll_name(void)
 static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **context )
 {
     HMODULE module;
-    UNICODE_STRING str;
+    UNICODE_STRING str = RTL_CONSTANT_STRING( L"ntdll.dll" );
     SYSTEM_BASIC_INFORMATION info;
 
     RtlWow64GetProcessMachines( GetCurrentProcess(), &current_machine, &native_machine );
@@ -532,14 +708,16 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
 
 #define GET_PTR(name) p ## name = RtlFindExportedRoutineByName( module, #name )
 
-    RtlInitUnicodeString( &str, L"ntdll.dll" );
     LdrGetDllHandle( NULL, 0, &str, &module );
     GET_PTR( LdrSystemDllInitBlock );
 
     module = load_64bit_module( get_cpu_dll_name() );
     GET_PTR( BTCpuGetBopCode );
+    GET_PTR( BTCpuGetContext );
     GET_PTR( BTCpuProcessInit );
+    GET_PTR( BTCpuThreadInit );
     GET_PTR( BTCpuResetToConsistentState );
+    GET_PTR( BTCpuSetContext );
     GET_PTR( BTCpuSimulate );
     GET_PTR( __wine_get_unix_opcode );
 
@@ -566,17 +744,21 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
  */
 static void thread_init(void)
 {
+    void *cpu_area_ctx;
+
+    RtlWow64GetCurrentCpuArea( NULL, &cpu_area_ctx, NULL );
+    if (pBTCpuThreadInit) pBTCpuThreadInit();
+
     /* update initial context to jump to 32-bit LdrInitializeThunk (cf. 32-bit call_init_thunk) */
     switch (current_machine)
     {
     case IMAGE_FILE_MACHINE_I386:
         {
-            I386_CONTEXT *ctx_ptr, ctx = { CONTEXT_I386_ALL };
+            I386_CONTEXT *ctx_ptr, *ctx = cpu_area_ctx;
             ULONG *stack;
 
-            NtQueryInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx), NULL );
-            ctx_ptr = (I386_CONTEXT *)ULongToPtr( ctx.Esp ) - 1;
-            *ctx_ptr = ctx;
+            ctx_ptr = (I386_CONTEXT *)ULongToPtr( ctx->Esp ) - 1;
+            *ctx_ptr = *ctx;
 
             stack = (ULONG *)ctx_ptr;
             *(--stack) = 0;
@@ -584,24 +766,23 @@ static void thread_init(void)
             *(--stack) = 0;
             *(--stack) = PtrToUlong( ctx_ptr );
             *(--stack) = 0xdeadbabe;
-            ctx.Esp = PtrToUlong( stack );
-            ctx.Eip = pLdrSystemDllInitBlock->pLdrInitializeThunk;
-            NtSetInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx) );
+            ctx->Esp = PtrToUlong( stack );
+            ctx->Eip = pLdrSystemDllInitBlock->pLdrInitializeThunk;
+            pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, ctx );
         }
         break;
 
     case IMAGE_FILE_MACHINE_ARMNT:
         {
-            ARM_CONTEXT *ctx_ptr, ctx = { CONTEXT_ARM_ALL };
+            ARM_CONTEXT *ctx_ptr, *ctx = cpu_area_ctx;
 
-            NtQueryInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx), NULL );
-            ctx_ptr = (ARM_CONTEXT *)ULongToPtr( ctx.Sp & ~15 ) - 1;
-            *ctx_ptr = ctx;
+            ctx_ptr = (ARM_CONTEXT *)ULongToPtr( ctx->Sp & ~15 ) - 1;
+            *ctx_ptr = *ctx;
 
-            ctx.R0 = PtrToUlong( ctx_ptr );
-            ctx.Sp = PtrToUlong( ctx_ptr );
-            ctx.Pc = pLdrSystemDllInitBlock->pLdrInitializeThunk;
-            NtSetInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx) );
+            ctx->R0 = PtrToUlong( ctx_ptr );
+            ctx->Sp = PtrToUlong( ctx_ptr );
+            ctx->Pc = pLdrSystemDllInitBlock->pLdrInitializeThunk;
+            pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, ctx );
         }
         break;
 
@@ -749,7 +930,7 @@ void WINAPI Wow64ApcRoutine( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3, CON
             } *stack;
             I386_CONTEXT ctx = { CONTEXT_I386_FULL };
 
-            NtQueryInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx), NULL );
+            pBTCpuGetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
             stack = (struct apc_stack_layout *)ULongToPtr( ctx.Esp & ~3 ) - 1;
             stack->context_ptr = PtrToUlong( &stack->context );
             stack->func = arg1 >> 32;
@@ -760,7 +941,7 @@ void WINAPI Wow64ApcRoutine( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3, CON
             stack->context.Eax = retval;
             ctx.Esp = PtrToUlong( stack );
             ctx.Eip = pLdrSystemDllInitBlock->pKiUserApcDispatcher;
-            NtSetInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx) );
+            pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
         }
         break;
 
@@ -774,7 +955,7 @@ void WINAPI Wow64ApcRoutine( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3, CON
             } *stack;
             ARM_CONTEXT ctx = { CONTEXT_ARM_FULL };
 
-            NtQueryInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx), NULL );
+            pBTCpuGetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
             stack = (struct apc_stack_layout *)ULongToPtr( ctx.Sp & ~15 ) - 1;
             stack->func = arg1 >> 32;
             stack->context = ctx;
@@ -785,7 +966,7 @@ void WINAPI Wow64ApcRoutine( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3, CON
             ctx.R1 = arg1;
             ctx.R2 = arg2;
             ctx.R3 = arg3;
-            NtSetInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx) );
+            pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
         }
         break;
     }
@@ -798,9 +979,11 @@ void WINAPI Wow64ApcRoutine( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3, CON
 NTSTATUS WINAPI Wow64KiUserCallbackDispatcher( ULONG id, void *args, ULONG len,
                                                void **ret_ptr, ULONG *ret_len )
 {
+    WOW64_CPURESERVED *cpu = NtCurrentTeb()->TlsSlots[WOW64_TLS_CPURESERVED];
     TEB32 *teb32 = (TEB32 *)((char *)NtCurrentTeb() + NtCurrentTeb()->WowTebOffset);
     ULONG teb_frame = teb32->Tib.ExceptionList;
     struct user_callback_frame frame;
+    USHORT flags = cpu->Flags;
 
     frame.prev_frame = NtCurrentTeb()->TlsSlots[WOW64_TLS_USERCALLBACKDATA];
     frame.temp_list  = NtCurrentTeb()->TlsSlots[WOW64_TLS_TEMPLIST];
@@ -815,14 +998,14 @@ NTSTATUS WINAPI Wow64KiUserCallbackDispatcher( ULONG id, void *args, ULONG len,
     {
     case IMAGE_FILE_MACHINE_I386:
         {
-            I386_CONTEXT orig_ctx, *ctx;
+            I386_CONTEXT orig_ctx, ctx = { CONTEXT_I386_FULL };
             void *args_data;
             ULONG *stack;
 
-            RtlWow64GetCurrentCpuArea( NULL, (void **)&ctx, NULL );
-            orig_ctx = *ctx;
+            pBTCpuGetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
+            orig_ctx = ctx;
 
-            stack = args_data = ULongToPtr( (ctx->Esp - len) & ~15 );
+            stack = args_data = ULongToPtr( (ctx.Esp - len) & ~15 );
             memcpy( args_data, args, len );
             *(--stack) = 0;
             *(--stack) = len;
@@ -830,13 +1013,14 @@ NTSTATUS WINAPI Wow64KiUserCallbackDispatcher( ULONG id, void *args, ULONG len,
             *(--stack) = id;
             *(--stack) = 0xdeadbabe;
 
-            ctx->Esp = PtrToUlong( stack );
-            ctx->Eip = pLdrSystemDllInitBlock->pKiUserCallbackDispatcher;
+            ctx.Esp = PtrToUlong( stack );
+            ctx.Eip = pLdrSystemDllInitBlock->pKiUserCallbackDispatcher;
+            pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
 
             if (!__wine_setjmpex( &frame.jmpbuf, NULL ))
                 cpu_simulate();
             else
-                *ctx = orig_ctx;
+                pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &orig_ctx );
         }
         break;
 
@@ -845,7 +1029,8 @@ NTSTATUS WINAPI Wow64KiUserCallbackDispatcher( ULONG id, void *args, ULONG len,
             ARM_CONTEXT orig_ctx, ctx = { CONTEXT_ARM_FULL };
             void *args_data;
 
-            NtQueryInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx), NULL );
+            pBTCpuGetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
+            orig_ctx = ctx;
 
             args_data = ULongToPtr( (ctx.Sp - len) & ~15 );
             memcpy( args_data, args, len );
@@ -855,13 +1040,12 @@ NTSTATUS WINAPI Wow64KiUserCallbackDispatcher( ULONG id, void *args, ULONG len,
             ctx.R2 = len;
             ctx.Sp = PtrToUlong( args_data );
             ctx.Pc = pLdrSystemDllInitBlock->pKiUserCallbackDispatcher;
-            NtSetInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx) );
+            pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
 
             if (!__wine_setjmpex( &frame.jmpbuf, NULL ))
                 cpu_simulate();
             else
-                NtSetInformationThread( GetCurrentThread(), ThreadWow64Context,
-                                        &orig_ctx, sizeof(orig_ctx) );
+                pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &orig_ctx );
         }
         break;
     }
@@ -869,6 +1053,7 @@ NTSTATUS WINAPI Wow64KiUserCallbackDispatcher( ULONG id, void *args, ULONG len,
     teb32->Tib.ExceptionList = teb_frame;
     NtCurrentTeb()->TlsSlots[WOW64_TLS_USERCALLBACKDATA] = frame.prev_frame;
     NtCurrentTeb()->TlsSlots[WOW64_TLS_TEMPLIST] = frame.temp_list;
+    cpu->Flags = flags;
     return frame.status;
 }
 
@@ -894,4 +1079,25 @@ void WINAPI Wow64PrepareForException( EXCEPTION_RECORD *rec, CONTEXT *context )
     EXCEPTION_POINTERS ptrs = { rec, context };
 
     pBTCpuResetToConsistentState( &ptrs );
+}
+
+
+/**********************************************************************
+ *           Wow64PassExceptionToGuest  (wow64.@)
+ */
+void WINAPI Wow64PassExceptionToGuest( EXCEPTION_POINTERS *ptrs )
+{
+    EXCEPTION_RECORD *rec = ptrs->ExceptionRecord;
+    EXCEPTION_RECORD32 rec32;
+    ULONG i;
+
+    rec32.ExceptionCode    = rec->ExceptionCode;
+    rec32.ExceptionFlags   = rec->ExceptionFlags;
+    rec32.ExceptionRecord  = PtrToUlong( rec->ExceptionRecord );
+    rec32.ExceptionAddress = PtrToUlong( rec->ExceptionAddress );
+    rec32.NumberParameters = rec->NumberParameters;
+    for (i = 0; i < rec->NumberParameters; i++)
+        rec32.ExceptionInformation[i] = rec->ExceptionInformation[i];
+
+    call_user_exception_dispatcher( &rec32, NULL, ptrs->ContextRecord );
 }

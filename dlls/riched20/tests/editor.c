@@ -1405,10 +1405,48 @@ static void test_EM_SETCHARFORMAT(void)
   DestroyWindow(hwndRichEdit);
 }
 
+/* As the clipboard is a shared resource, it happens (on Windows) that the WM_PASTE
+ * is a no-op; likely because another app has opened the clipboard for inspection.
+ * In this case, WM_PASTE does nothing, and doesn't return an error code.
+ * So retry pasting a couple of times.
+ * Don't use this function if the paste operation shouldn't change the content of the
+ * editor (clipboard is empty without selection, edit control is read only...).
+ * Also impact on undo stack is not managed.
+ */
+#define send_paste(a) _send_paste(__LINE__, (a))
+static void _send_paste(unsigned int line, HWND wnd)
+{
+    int retries;
+
+    SendMessageA(wnd, EM_SETMODIFY, FALSE, 0);
+
+    for (retries = 0; retries < 7; retries++)
+    {
+        if (retries) Sleep(15);
+        SendMessageA(wnd, WM_PASTE, 0, 0);
+        if (SendMessageA(wnd, EM_GETMODIFY, 0, 0)) return;
+    }
+    ok_(__FILE__, line)(0, "Failed to paste clipboard content\n");
+    {
+        char classname[256];
+        HWND clipwnd = GetOpenClipboardWindow();
+        /* Provide a hint as to the source of interference:
+         * - The class name would typically be CLIPBRDWNDCLASS if the
+         *   clipboard was opened by a Windows application using the
+         *   ole32 API.
+         * - And it would be __wine_clipboard_manager if it was opened in
+         *   response to a native application.
+         */
+        GetClassNameA(clipwnd, classname, ARRAY_SIZE(classname));
+        trace("%p (%s) opened the clipboard\n", clipwnd, classname);
+    }
+}
+
 static void test_EM_SETTEXTMODE(void)
 {
   HWND hwndRichEdit = new_richedit(NULL);
   CHARFORMAT2A cf2, cf2test;
+  unsigned int len;
   CHARRANGE cr;
   int rc = 0;
 
@@ -1478,7 +1516,10 @@ static void test_EM_SETTEXTMODE(void)
   SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)"wine");
 
   /*Paste the italicized "wine" into the control*/
-  SendMessageA(hwndRichEdit, WM_PASTE, 0, 0);
+  send_paste(hwndRichEdit);
+
+  len = SendMessageA(hwndRichEdit, WM_GETTEXTLENGTH, 0, 0);
+  ok(len == 8 /*winewine*/, "Unexpected text length %u\n", len);
 
   /*Select a character from the first "wine" string*/
   cr.cpMin = 2;
@@ -1521,7 +1562,7 @@ static void test_EM_SETTEXTMODE(void)
   SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)"wine");
 
   /*Paste italicized "wine" into the control*/
-  SendMessageA(hwndRichEdit, WM_PASTE, 0, 0);
+  send_paste(hwndRichEdit);
 
   /*Select text from the first "wine" string*/
   cr.cpMin = 1;
@@ -1667,7 +1708,7 @@ static void test_TM_PLAINTEXT(void)
   /*Paste the plain text "wine" string, which should take the insert
    formatting, which at the moment is bold italics*/
 
-  SendMessageA(hwndRichEdit, WM_PASTE, 0, 0);
+  send_paste(hwndRichEdit);
 
   /*Select the first "wine" string and retrieve its formatting*/
 
@@ -4750,6 +4791,36 @@ static DWORD CALLBACK test_EM_GETMODIFY_esCallback(DWORD_PTR dwCookie,
   return 0;
 }
 
+#define open_clipboard(hwnd) open_clipboard_(__LINE__, hwnd)
+static BOOL open_clipboard_(int line, HWND hwnd)
+{
+    DWORD start = GetTickCount();
+    while (1)
+    {
+        BOOL ret = OpenClipboard(hwnd);
+        if (ret || GetLastError() != ERROR_ACCESS_DENIED)
+            return ret;
+        if (GetTickCount() - start > 100)
+        {
+            char classname[256];
+            DWORD le = GetLastError();
+            HWND clipwnd = GetOpenClipboardWindow();
+            /* Provide a hint as to the source of interference:
+             * - The class name would typically be CLIPBRDWNDCLASS if the
+             *   clipboard was opened by a Windows application using the
+             *   ole32 API.
+             * - And it would be __wine_clipboard_manager if it was opened in
+             *   response to a native application.
+             */
+            GetClassNameA(clipwnd, classname, ARRAY_SIZE(classname));
+            trace_(__FILE__, line)("%p (%s) opened the clipboard\n", clipwnd, classname);
+            SetLastError(le);
+            return ret;
+        }
+        Sleep(15);
+    }
+}
+
 static void test_EM_GETMODIFY(void)
 {
   HWND hwndRichEdit = new_richedit(NULL);
@@ -4766,6 +4837,8 @@ static void test_EM_GETMODIFY(void)
   CHARFORMAT2A cf2;
   PARAFORMAT2 pf2;
   EDITSTREAM es;
+  BOOL r;
+  HANDLE hclip;
   
   HFONT testFont = CreateFontA (0,0,0,0,FW_LIGHT, 0, 0, 0, ANSI_CHARSET, 
     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | 
@@ -4847,7 +4920,7 @@ static void test_EM_GETMODIFY(void)
   SendMessageA(hwndRichEdit, EM_SETMODIFY, FALSE, 0);
   SendMessageA(hwndRichEdit, EM_SETSEL, 0, 2);
   SendMessageA(hwndRichEdit, WM_COPY, 0, 0);
-  SendMessageA(hwndRichEdit, WM_PASTE, 0, 0);
+  send_paste(hwndRichEdit);
   result = SendMessageA(hwndRichEdit, EM_GETMODIFY, 0, 0);
   ok (result != 0,
       "EM_GETMODIFY returned zero, instead of non-zero when pasting identical text\n");
@@ -4857,7 +4930,7 @@ static void test_EM_GETMODIFY(void)
   SendMessageA(hwndRichEdit, EM_SETSEL, 0, 2);
   SendMessageA(hwndRichEdit, WM_COPY, 0, 0);
   SendMessageA(hwndRichEdit, EM_SETSEL, 0, 3);
-  SendMessageA(hwndRichEdit, WM_PASTE, 0, 0);
+  send_paste(hwndRichEdit);
   result = SendMessageA(hwndRichEdit, EM_GETMODIFY, 0, 0);
   ok (result != 0,
       "EM_GETMODIFY returned zero, instead of non-zero when pasting different text\n");
@@ -4912,7 +4985,28 @@ static void test_EM_GETMODIFY(void)
   ok (result != 0,
       "EM_GETMODIFY returned zero, instead of non-zero for EM_STREAM\n");
 
+  /* Check that the clipboard data is still available after destroying the
+   * editor window.
+   */
+  SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)"Stayin' alive");
+  SendMessageA(hwndRichEdit, EM_SETSEL, 8, -1);
+  SendMessageA(hwndRichEdit, WM_COPY, 0, 0);
+
   DestroyWindow(hwndRichEdit);
+
+  r = open_clipboard(NULL);
+  ok(r, "OpenClipboard failed le=%lu\n", GetLastError());
+
+  hclip = GetClipboardData(CF_TEXT);
+  todo_wine ok(hclip != NULL, "GetClipboardData() failed le=%lu\n", GetLastError());
+  if (hclip)
+  {
+      const char* str = GlobalLock(hclip);
+      ok(strcmp(str, "alive") == 0, "unexpected clipboard content: %s\n", str);
+      GlobalUnlock(hclip);
+  }
+
+  CloseClipboard();
 }
 
 struct exsetsel_s {
@@ -5557,7 +5651,7 @@ static void test_WM_PASTE(void)
                 (MapVirtualKeyA('C', MAPVK_VK_TO_VSC) << 16) | 1);
     release_key(VK_CONTROL);
     SendMessageA(hwndRichEdit, WM_SETTEXT, 0, 0);
-    SendMessageA(hwndRichEdit, WM_PASTE, 0, 0);
+    send_paste(hwndRichEdit);
     SendMessageA(hwndRichEdit, WM_GETTEXT, 1024, (LPARAM)buffer);
     result = strcmp(buffer,"testing");
     ok(result == 0,
@@ -5578,7 +5672,7 @@ static void test_WM_PASTE(void)
     ok(result == 0,
         "test paste: strcmp = %i, actual = '%s'\n", result, buffer);
     SendMessageA(hwndRichEdit, WM_SETTEXT, 0, 0);
-    SendMessageA(hwndRichEdit, WM_PASTE, 0, 0);
+    send_paste(hwndRichEdit);
     SendMessageA(hwndRichEdit, WM_GETTEXT, 1024, (LPARAM)buffer);
     result = strcmp(buffer,"cut\r\n");
     ok(result == 0,
@@ -5628,7 +5722,7 @@ static void test_WM_PASTE(void)
 
     /* Paste multi-line text into single-line control */
     hwndRichEdit = new_richedit_with_style(NULL, 0);
-    SendMessageA(hwndRichEdit, WM_PASTE, 0, 0);
+    send_paste(hwndRichEdit);
     SendMessageA(hwndRichEdit, WM_GETTEXT, 1024, (LPARAM)buffer);
     result = strcmp(buffer, "testing paste");
     ok(result == 0,
@@ -5690,6 +5784,7 @@ static void test_EM_FORMATRANGE(void)
     SIZE stringsize;
     int len;
 
+    winetest_push_context("%d", i);
     SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)fmtstrings[i].string);
 
     gtl.flags = GTL_NUMCHARS | GTL_PRECISE;
@@ -5746,6 +5841,7 @@ static void test_EM_FORMATRANGE(void)
     todo_wine {
     ok(r == len, "Expected %d, got %d\n", len, r);
     }
+    winetest_pop_context();
   }
 
   ReleaseDC(NULL, hdc);

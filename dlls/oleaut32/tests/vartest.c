@@ -3121,6 +3121,8 @@ static void test_VarAbs(void)
     VARABS(R4,-1,R4,1);
     VARABS(R8,1,R8,1);
     VARABS(R8,-1,R8,1);
+    VARABS(R4,1.40129846432481707e-45,R4,1.40129846432481707e-45);
+    VARABS(R8,4.94065645841246544e-324,R8,4.94065645841246544e-324);
     VARABS(DATE,1,DATE,1);
     VARABS(DATE,-1,DATE,1);
     V_VT(&v) = VT_CY;
@@ -3143,6 +3145,14 @@ static void test_VarAbs(void)
     hres = pVarAbs(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_R8 && V_R8(&vDst) == 1.1,
        "VarAbs: expected 0x0,%d,%g, got 0x%lX,%d,%g\n", VT_R8, 1.1, hres, V_VT(&vDst), V_R8(&vDst));
+
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = SysAllocString(L"30000");
+    memset(&vDst,0,sizeof(vDst));
+    hres = pVarAbs(&v,&vDst);
+    ok(hres == S_OK && V_VT(&vDst) == VT_R8 && V_R8(&vDst) == 30000.0,
+       "VarAbs: expected 0x0,%d,%g, got 0x%lX,%d,%g\n", VT_R8, 30000.0, hres, V_VT(&vDst), V_R8(&vDst));
+    SysFreeString(V_BSTR(&v));
 }
 
 static HRESULT (WINAPI *pVarNot)(LPVARIANT,LPVARIANT);

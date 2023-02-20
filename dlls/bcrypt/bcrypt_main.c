@@ -1081,12 +1081,12 @@ static BOOL is_equal_vector( const UCHAR *vector, ULONG len, const UCHAR *vector
 static NTSTATUS key_symmetric_set_vector( struct key *key, UCHAR *vector, ULONG vector_len, BOOL force_reset )
 {
     BOOL needs_reset = force_reset || !is_equal_vector( key->u.s.vector, key->u.s.vector_len, vector, vector_len );
-
-    free( key->u.s.vector );
-    key->u.s.vector = NULL;
-    key->u.s.vector_len = 0;
     if (vector)
     {
+        free( key->u.s.vector );
+        key->u.s.vector = NULL;
+        key->u.s.vector_len = 0;
+
         if (!(key->u.s.vector = malloc( vector_len ))) return STATUS_NO_MEMORY;
         memcpy( key->u.s.vector, vector, vector_len );
         key->u.s.vector_len = vector_len;
@@ -1307,6 +1307,16 @@ static NTSTATUS key_symmetric_encrypt( struct key *key,  UCHAR *input, ULONG inp
         free( buf );
     }
 
+    if (!status)
+    {
+        if (key->u.s.vector && *ret_len >= key->u.s.vector_len)
+        {
+            memcpy( key->u.s.vector, output + *ret_len - key->u.s.vector_len, key->u.s.vector_len );
+            if (iv) memcpy( iv, key->u.s.vector, min( iv_len, key->u.s.vector_len ));
+        }
+        else FIXME( "Unexpected vector len %lu, *ret_len %lu.\n", key->u.s.vector_len, *ret_len );
+    }
+
     return status;
 }
 
@@ -1402,6 +1412,16 @@ static NTSTATUS key_symmetric_decrypt( struct key *key, UCHAR *input, ULONG inpu
         }
         else status = STATUS_UNSUCCESSFUL; /* FIXME: invalid padding */
         free( buf );
+    }
+
+    if (!status)
+    {
+        if (key->u.s.vector && input_len >= key->u.s.vector_len)
+        {
+            memcpy( key->u.s.vector, input + input_len - key->u.s.vector_len, key->u.s.vector_len );
+            if (iv) memcpy( iv, key->u.s.vector, min( iv_len, key->u.s.vector_len ));
+        }
+        else FIXME( "Unexpected vector len %lu, *ret_len %lu.\n", key->u.s.vector_len, *ret_len );
     }
 
     return status;

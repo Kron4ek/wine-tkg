@@ -667,35 +667,15 @@ void *get_builtin_so_handle( void *module )
  */
 static NTSTATUS get_builtin_unix_funcs( void *module, BOOL wow, const void **funcs )
 {
-    const char *p, *ptr_name = wow ? "__wine_unix_call_wow64_funcs" : "__wine_unix_call_funcs";
+    const char *ptr_name = wow ? "__wine_unix_call_wow64_funcs" : "__wine_unix_call_funcs";
     sigset_t sigset;
     NTSTATUS status = STATUS_DLL_NOT_FOUND;
     struct builtin_module *builtin;
-
-    if (module == ntdll_module)
-    {
-#ifdef _WIN64
-        *funcs = wow ? __wine_unix_call_wow64_funcs : __wine_unix_call_funcs;
-#else
-        *funcs = __wine_unix_call_funcs;
-#endif
-        return STATUS_SUCCESS;
-    }
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
     LIST_FOR_EACH_ENTRY( builtin, &builtin_modules, struct builtin_module, entry )
     {
         if (builtin->module != module) continue;
-        if (builtin->unix_path && (p = strrchr( builtin->unix_path, '/' )) && !strcmp( p, "/ntdll.so" ))
-        {
-#ifdef _WIN64
-            *funcs = wow ? __wine_unix_call_wow64_funcs : __wine_unix_call_funcs;
-#else
-            *funcs = __wine_unix_call_funcs;
-#endif
-            status = STATUS_SUCCESS;
-            break;
-        }
         if (builtin->unix_path && !builtin->unix_handle)
             builtin->unix_handle = dlopen( builtin->unix_path, RTLD_NOW );
         if (builtin->unix_handle)
@@ -2168,6 +2148,8 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
     {
         if (is_beyond_limit( base, size, address_space_limit ))
             return STATUS_WORKING_SET_LIMIT_RANGE;
+        if (limit && is_beyond_limit( base, size, (void *)limit ))
+            return STATUS_CONFLICTING_ADDRESSES;
         status = map_fixed_area( base, size, vprot );
         if (status != STATUS_SUCCESS) return status;
         ptr = base;
@@ -3403,19 +3385,6 @@ done:
     return status;
 }
 
-BOOL CDECL __wine_needs_override_large_address_aware(void)
-{
-    static int needs_override = -1;
-
-    if (needs_override == -1)
-    {
-        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
-
-        needs_override = !str || atoi(str) == 1;
-    }
-    return needs_override;
-}
-
 
 /***********************************************************************
  *           virtual_map_user_shared_data
@@ -3424,7 +3393,7 @@ void virtual_map_user_shared_data(void)
 {
     static const WCHAR nameW[] = {'\\','K','e','r','n','e','l','O','b','j','e','c','t','s',
                                   '\\','_','_','w','i','n','e','_','u','s','e','r','_','s','h','a','r','e','d','_','d','a','t','a',0};
-    UNICODE_STRING name_str = { sizeof(nameW) - sizeof(WCHAR), sizeof(nameW), (WCHAR *)nameW };
+    UNICODE_STRING name_str = RTL_CONSTANT_STRING( nameW );
     OBJECT_ATTRIBUTES attr = { sizeof(attr), 0, &name_str };
     unsigned int status;
     HANDLE section;
@@ -3477,6 +3446,19 @@ static BOOL is_inside_thread_stack( void *ptr, struct thread_stack_info *stack )
     stack->guaranteed = max( wow_teb->GuaranteedStackBytes, page_size * (is_win64 ? 1 : 2) );
     stack->is_wow = TRUE;
     return ((char *)ptr > stack->start && (char *)ptr <= stack->end);
+}
+
+BOOL CDECL __wine_needs_override_large_address_aware(void)
+{
+    static int needs_override = -1;
+
+    if (needs_override == -1)
+    {
+        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
+
+        needs_override = !str || atoi(str) == 1;
+    }
+    return needs_override;
 }
 
 

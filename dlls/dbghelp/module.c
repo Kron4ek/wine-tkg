@@ -177,14 +177,16 @@ struct module* module_new(struct process* pcs, const WCHAR* name,
                           ULONG_PTR stamp, ULONG_PTR checksum, WORD machine)
 {
     struct module*      module;
+    struct module**     pmodule;
     unsigned            i;
 
     assert(type == DMT_ELF || type == DMT_PE || type == DMT_MACHO);
     if (!(module = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*module))))
 	return NULL;
 
-    module->next = pcs->lmodules;
-    pcs->lmodules = module;
+    for (pmodule = &pcs->lmodules; *pmodule; pmodule = &(*pmodule)->next);
+    module->next = NULL;
+    *pmodule = module;
 
     TRACE("=> %s %I64x-%I64x %s\n",
           get_module_type(type, virtual), mod_addr, mod_addr + size, debugstr_w(name));
@@ -990,17 +992,10 @@ DWORD64 WINAPI  SymLoadModuleExW(HANDLE hProcess, HANDLE hFile, PCWSTR wImageNam
     }
     if (altmodule)
     {
-        /* we have a conflict as the new module cannot be found by its base address
-         * we need to get rid of one on the two modules
+        /* We have a conflict as the new module cannot be found by its base address
+         * (it's hidden by altmodule).
+         * We need to decide which one the two modules we need to get rid of.
          */
-        if (lstrcmpW(module->modulename, altmodule->modulename) != 0)
-        {
-            /* module overlaps an existing but different module... unload new module and return error */
-            WARN("%ls overlaps %ls\n", module->modulename, altmodule->modulename);
-            module_remove(pcs, module);
-            SetLastError(ERROR_INVALID_PARAMETER);
-            return 0;
-        }
         /* loading same module at same address... don't change anything */
         if (module->module.BaseOfImage == altmodule->module.BaseOfImage)
         {
@@ -1008,9 +1003,10 @@ DWORD64 WINAPI  SymLoadModuleExW(HANDLE hProcess, HANDLE hFile, PCWSTR wImageNam
             SetLastError(ERROR_SUCCESS);
             return 0;
         }
-        /* replace old module with new one, which will look like a shift of base address */
-        WARN("Shift module %ls from %I64x to %I64x\n",
-             module->modulename, altmodule->module.BaseOfImage, module->module.BaseOfImage);
+        /* replace old module with new one */
+        WARN("Replace module %ls at %I64x by module %ls at %I64x\n",
+             altmodule->module.ImageName, altmodule->module.BaseOfImage,
+             module->module.ImageName, module->module.BaseOfImage);
         module_remove(pcs, altmodule);
     }
 
@@ -1270,14 +1266,21 @@ BOOL  WINAPI EnumerateLoadedModulesW64(HANDLE hProcess,
                                        PVOID UserContext)
 {
     HMODULE*    hMods;
-    WCHAR       baseW[256], modW[256];
+    WCHAR       imagenameW[MAX_PATH];
     DWORD       i, sz;
     MODULEINFO  mi;
+    BOOL        wow64;
+    DWORD       filter = LIST_MODULES_DEFAULT;
 
     hMods = HeapAlloc(GetProcessHeap(), 0, 256 * sizeof(hMods[0]));
     if (!hMods) return FALSE;
 
-    if (!EnumProcessModules(hProcess, hMods, 256 * sizeof(hMods[0]), &sz))
+    if (sizeof(void*) > sizeof(int) &&
+        IsWow64Process(hProcess, &wow64) &&
+        wow64)
+        filter = LIST_MODULES_32BIT;
+
+    if (!EnumProcessModulesEx(hProcess, hMods, 256 * sizeof(hMods[0]), &sz, filter))
     {
         /* hProcess should also be a valid process handle !! */
         HeapFree(GetProcessHeap(), 0, hMods);
@@ -1286,17 +1289,16 @@ BOOL  WINAPI EnumerateLoadedModulesW64(HANDLE hProcess,
     if (sz > 256 * sizeof(hMods[0]))
     {
         hMods = HeapReAlloc(GetProcessHeap(), 0, hMods, sz);
-        if (!hMods || !EnumProcessModules(hProcess, hMods, sz, &sz))
+        if (!hMods || !EnumProcessModulesEx(hProcess, hMods, sz, &sz, filter))
             return FALSE;
     }
     sz /= sizeof(HMODULE);
     for (i = 0; i < sz; i++)
     {
         if (!GetModuleInformation(hProcess, hMods[i], &mi, sizeof(mi)) ||
-            !GetModuleBaseNameW(hProcess, hMods[i], baseW, ARRAY_SIZE(baseW)))
+            !GetModuleFileNameExW(hProcess, hMods[i], imagenameW, ARRAY_SIZE(imagenameW)))
             continue;
-        module_fill_module(baseW, modW, ARRAY_SIZE(modW));
-        EnumLoadedModulesCallback(modW, (DWORD_PTR)mi.lpBaseOfDll, mi.SizeOfImage,
+        EnumLoadedModulesCallback(imagenameW, (DWORD_PTR)mi.lpBaseOfDll, mi.SizeOfImage,
                                   UserContext);
     }
     HeapFree(GetProcessHeap(), 0, hMods);

@@ -269,11 +269,6 @@ BOOL pe_map_file(HANDLE file, struct image_file_map* fmap, enum module_type mt)
             switch (nthdr->OptionalHeader.Magic)
             {
             case IMAGE_NT_OPTIONAL_HDR32_MAGIC:
-                if (sizeof(void*) == 8 && !(SymGetOptions() & SYMOPT_INCLUDE_32BIT_MODULES))
-                {
-                    TRACE("Won't load 32bit module in 64bit dbghelp when options don't ask for it\n");
-                    goto error;
-                }
                 fmap->addr_size = 32;
                 memcpy(&fmap->u.pe.opt.header32, &nthdr->OptionalHeader, sizeof(fmap->u.pe.opt.header32));
                 break;
@@ -829,7 +824,8 @@ struct module* pe_load_native_module(struct process* pcs, const WCHAR* name,
     if (pe_map_file(hFile, &modfmt->u.pe_info->fmap, DMT_PE))
     {
         struct builtin_search builtin = { NULL };
-        if (opened && modfmt->u.pe_info->fmap.u.pe.builtin && search_dll_path(pcs, loaded_name, search_builtin_pe, &builtin))
+        if (opened && modfmt->u.pe_info->fmap.u.pe.builtin &&
+            search_dll_path(pcs, loaded_name, modfmt->u.pe_info->fmap.u.pe.file_header.Machine, search_builtin_pe, &builtin))
         {
             TRACE("reloaded %s from %s\n", debugstr_w(loaded_name), debugstr_w(builtin.path));
             image_unmap_file(&modfmt->u.pe_info->fmap);

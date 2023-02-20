@@ -2178,6 +2178,12 @@ static HRESULT Global_Second(BuiltinDisp *This, VARIANT *arg, unsigned args_cnt,
     return FAILED(hres) ? hres : return_short(res, st.wSecond);
 }
 
+static HRESULT Global_SetLocale(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, VARIANT *res)
+{
+    FIXME("\n");
+    return E_NOTIMPL;
+}
+
 static HRESULT Global_DateValue(BuiltinDisp *This, VARIANT *arg, unsigned args_cnt, VARIANT *res)
 {
     FIXME("\n");
@@ -2578,12 +2584,12 @@ static HRESULT Global_Join(BuiltinDisp *This, VARIANT *arg, unsigned args_cnt, V
 
 static HRESULT Global_Split(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, VARIANT *res)
 {
-    BSTR str, string, delimiter = NULL;
+    BSTR string, delimiter = NULL;
     int count, max, mode, len, start, end, ret, delimiterlen = 1;
     int i, *indices = NULL, *new_indices, indices_max = 8;
     SAFEARRAYBOUND bounds;
     SAFEARRAY *sa = NULL;
-    VARIANT *data, var;
+    VARIANT *data;
     HRESULT hres = S_OK;
 
     TRACE("%s %u...\n", debugstr_variant(args), args_cnt);
@@ -2691,18 +2697,12 @@ static HRESULT Global_Split(BuiltinDisp *This, VARIANT *args, unsigned args_cnt,
 
     start = 0;
     for (i = 0; i < count; i++) {
-        str = SysAllocStringLen(string + start, indices[i] - start);
-        if (!str) {
+        V_VT(&data[i]) = VT_BSTR;
+        V_BSTR(&data[i]) = SysAllocStringLen(string + start, indices[i] - start);
+
+        if (!V_BSTR(&data[i])) {
             hres = E_OUTOFMEMORY;
             break;
-        }
-        V_VT(&var) = VT_BSTR;
-        V_BSTR(&var) = str;
-
-        hres = VariantCopyInd(data+i, &var);
-        if(FAILED(hres)) {
-            SafeArrayUnaccessData(sa);
-            goto error;
         }
         start = indices[i]+delimiterlen;
     }
@@ -3054,6 +3054,12 @@ static HRESULT Global_FormatPercent(BuiltinDisp *This, VARIANT *args, unsigned a
     return return_bstr(res, str);
 }
 
+static HRESULT Global_GetLocale(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, VARIANT *res)
+{
+    FIXME("\n");
+    return E_NOTIMPL;
+}
+
 static HRESULT Global_FormatDateTime(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, VARIANT *res)
 {
     int format = 0;
@@ -3276,6 +3282,7 @@ static const builtin_prop_t global_props[] = {
     {L"FormatDateTime",            Global_FormatDateTime, 0, 1, 2},
     {L"FormatNumber",              Global_FormatNumber, 0, 1, 5},
     {L"FormatPercent",             Global_FormatPercent, 0, 1, 5},
+    {L"GetLocale",                 Global_GetLocale, 0, 0},
     {L"GetObject",                 Global_GetObject, 0, 0, 2},
     {L"GetRef",                    Global_GetRef, 0, 1},
     {L"Hex",                       Global_Hex, 0, 1},
@@ -3322,6 +3329,7 @@ static const builtin_prop_t global_props[] = {
     {L"ScriptEngineMajorVersion",  Global_ScriptEngineMajorVersion, 0, 0},
     {L"ScriptEngineMinorVersion",  Global_ScriptEngineMinorVersion, 0, 0},
     {L"Second",                    Global_Second, 0, 1},
+    {L"SetLocale",                 Global_SetLocale, 0, 0, 1},
     {L"Sgn",                       Global_Sgn, 0, 1},
     {L"Sin",                       Global_Sin, 0, 1},
     {L"Space",                     Global_Space, 0, 1},

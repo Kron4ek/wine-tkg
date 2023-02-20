@@ -41,7 +41,6 @@ static const WORD current_machine = IMAGE_FILE_MACHINE_ARMNT;
 static const WORD current_machine = IMAGE_FILE_MACHINE_ARM64;
 #endif
 extern WORD native_machine DECLSPEC_HIDDEN;
-extern HMODULE ntdll_module DECLSPEC_HIDDEN;
 
 extern const unixlib_entry_t __wine_unix_call_funcs[] DECLSPEC_HIDDEN;
 extern const unixlib_entry_t __wine_unix_call_wow64_funcs[] DECLSPEC_HIDDEN;
@@ -292,6 +291,19 @@ extern void init_cpu_info(void) DECLSPEC_HIDDEN;
 extern struct cpu_topology_override *get_cpu_topology_override(void) DECLSPEC_HIDDEN;
 extern void add_completion( HANDLE handle, ULONG_PTR value, NTSTATUS status, ULONG info, BOOL async ) DECLSPEC_HIDDEN;
 extern void set_async_direct_result( HANDLE *async_handle, NTSTATUS status, ULONG_PTR information, BOOL mark_pending ) DECLSPEC_HIDDEN;
+
+extern NTSTATUS unixcall_wine_dbg_write( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS unixcall_wine_server_call( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS unixcall_wine_server_fd_to_handle( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS unixcall_wine_server_handle_to_fd( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS unixcall_wine_spawnvp( void *args ) DECLSPEC_HIDDEN;
+#ifdef _WIN64
+extern NTSTATUS wow64_wine_dbg_write( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS wow64_wine_server_call( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS wow64_wine_server_fd_to_handle( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS wow64_wine_server_handle_to_fd( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS wow64_wine_spawnvp( void *args ) DECLSPEC_HIDDEN;
+#endif
 
 extern void dbg_init(void) DECLSPEC_HIDDEN;
 

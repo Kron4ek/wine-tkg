@@ -83,22 +83,13 @@ static BYTE map_dik_code(DWORD scanCode, DWORD vkCode, DWORD subType, DWORD vers
     return (BYTE)scanCode;
 }
 
-int dinput_keyboard_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPARAM lparam )
+static void keyboard_handle_event( struct keyboard *impl, DWORD vkey, DWORD scan_code, BOOL up )
 {
-    struct keyboard *impl = impl_from_IDirectInputDevice8W( iface );
     BYTE new_diks, subtype = GET_DIDEVICE_SUBTYPE( impl->base.instance.dwDevType );
-    int dik_code, ret = impl->base.dwCoopLevel & DISCL_EXCLUSIVE;
-    KBDLLHOOKSTRUCT *hook = (KBDLLHOOKSTRUCT *)lparam;
-    DWORD scan_code;
+    IDirectInputDevice8W *iface = &impl->base.IDirectInputDevice8W_iface;
+    int dik_code;
 
-    if (wparam != WM_KEYDOWN && wparam != WM_KEYUP &&
-        wparam != WM_SYSKEYDOWN && wparam != WM_SYSKEYUP)
-        return 0;
-
-    TRACE( "iface %p, wparam %#Ix, lparam %#Ix, vkCode %#lx, scanCode %#lx.\n", iface, wparam,
-           lparam, hook->vkCode, hook->scanCode );
-
-    switch (hook->vkCode)
+    switch (vkey)
     {
         /* R-Shift is special - it is an extended key with separate scan code */
         case VK_RSHIFT  : dik_code = DIK_RSHIFT; break;
@@ -106,25 +97,53 @@ int dinput_keyboard_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPARAM lpa
         case VK_NUMLOCK : dik_code = DIK_NUMLOCK; break;
         case VK_SUBTRACT: dik_code = DIK_SUBTRACT; break;
         default:
-            scan_code = hook->scanCode & 0xff;
-            if (hook->flags & LLKHF_EXTENDED) scan_code |= 0x100;
-            dik_code = map_dik_code( scan_code, hook->vkCode, subtype, impl->base.dinput->dwVersion );
+            dik_code = map_dik_code( scan_code, vkey, subtype, impl->base.dinput->dwVersion );
+            break;
     }
-    new_diks = hook->flags & LLKHF_UP ? 0 : 0x80;
+    new_diks = (up ? 0 : 0x80);
 
     /* returns now if key event already known */
-    if (new_diks == impl->base.device_state[dik_code]) return ret;
+    if (new_diks == impl->base.device_state[dik_code]) return;
 
     impl->base.device_state[dik_code] = new_diks;
-    TRACE( " setting key %02x to %02x\n", dik_code, impl->base.device_state[dik_code] );
+    TRACE( "setting key %02x to %02x\n", dik_code, impl->base.device_state[dik_code] );
 
     EnterCriticalSection( &impl->base.crit );
     queue_event( iface, DIDFT_MAKEINSTANCE( dik_code ) | DIDFT_PSHBUTTON, new_diks,
                  GetCurrentTime(), impl->base.dinput->evsequence++ );
     if (impl->base.hEvent) SetEvent( impl->base.hEvent );
     LeaveCriticalSection( &impl->base.crit );
+}
 
-    return ret;
+void dinput_keyboard_rawinput_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPARAM lparam, RAWINPUT *ri )
+{
+    struct keyboard *impl = impl_from_IDirectInputDevice8W( iface );
+    DWORD scan_code;
+
+    TRACE("(%p) wparam %Ix, lparam %Ix\n", iface, wparam, lparam);
+
+    scan_code = ri->data.keyboard.MakeCode & 0xff;
+    if (ri->data.keyboard.Flags & RI_KEY_E0) scan_code |= 0x100;
+    keyboard_handle_event( impl, ri->data.keyboard.VKey, scan_code, ri->data.keyboard.Flags & RI_KEY_BREAK );
+}
+
+int dinput_keyboard_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPARAM lparam )
+{
+    struct keyboard *impl = impl_from_IDirectInputDevice8W( iface );
+    KBDLLHOOKSTRUCT *hook = (KBDLLHOOKSTRUCT *)lparam;
+    DWORD scan_code;
+
+    TRACE( "iface %p, wparam %#Ix, lparam %#Ix, vkCode %#lx, scanCode %#lx.\n", iface, wparam,
+           lparam, hook->vkCode, hook->scanCode );
+
+    if (wparam != WM_KEYDOWN && wparam != WM_KEYUP && wparam != WM_SYSKEYDOWN && wparam != WM_SYSKEYUP)
+        return 0;
+
+    scan_code = hook->scanCode & 0xff;
+    if (hook->flags & LLKHF_EXTENDED) scan_code |= 0x100;
+    keyboard_handle_event( impl, hook->vkCode, scan_code, hook->flags & LLKHF_UP );
+
+    return impl->base.dwCoopLevel & DISCL_EXCLUSIVE;
 }
 
 static DWORD get_keyboard_subtype(void)
@@ -181,6 +200,9 @@ HRESULT keyboard_create_device( struct dinput *dinput, const GUID *guid, IDirect
     impl->base.caps.dwDevType = impl->base.instance.dwDevType;
     impl->base.caps.dwFirmwareRevision = 100;
     impl->base.caps.dwHardwareRevision = 100;
+
+    if (dinput->dwVersion >= 0x0800)
+        impl->base.use_raw_input = TRUE;
 
     *out = &impl->base.IDirectInputDevice8W_iface;
     return DI_OK;

@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Feb  4 10:04:10 AM UTC 2023 :
+# Last wine-tkg-staging-fsync-git configuration - Mon Feb 20 01:05:50 PM UTC 2023 :
 
 Local cfg files used
 
-Wine (plain) version: 8.1.r0.ga4ed65d5772
-Using wine-staging patchset (version 8.1.r0.gdde73435)
+Wine (plain) version: 8.2.r0.g464be65ceec
+Using wine-staging patchset (version 8.2.r1.g1f76f7fa)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -11,8 +11,6 @@ Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 Done applying backports hotfixes (if any) - list available in prepare.log
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
-Applied hotfix python3_compat.mystagingpatch
-steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
 Staging overrides, if any:
@@ -30,6 +28,7 @@ proton-tkg-additions.patch -- ( Using additional Proton-tkg patches )
 proton-cpu-topology-overrides.patch -- ( Enable Proton's CPU topology override support )
 proton-vr.patch -- ( Enable Proton vr-related wined3d additions )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
+proton-win10-default.patch -- ( Enforce win10 as default wine version )
 
 Applied hotfix remove_hooks_that_time_out2.mypatch
 Applied hotfix winex11.drv_Add_a_GPU_for_each_Vulkan_device_that_was_not_tied_to_an_XRandR_provider.mypatch

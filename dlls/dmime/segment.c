@@ -33,6 +33,11 @@ typedef struct IDirectMusicSegment8Impl {
     DMUS_IO_SEGMENT_HEADER header;
     IDirectMusicGraph *pGraph;
     struct list Tracks;
+
+    PCMWAVEFORMAT wave_format;
+    void *wave_data;
+    int data_size;
+    IDirectSoundBuffer *buffer;
 } IDirectMusicSegment8Impl;
 
 IDirectMusicSegment8Impl *create_segment(void);
@@ -40,6 +45,12 @@ IDirectMusicSegment8Impl *create_segment(void);
 static inline IDirectMusicSegment8Impl *impl_from_IDirectMusicSegment8(IDirectMusicSegment8 *iface)
 {
   return CONTAINING_RECORD(iface, IDirectMusicSegment8Impl, IDirectMusicSegment8_iface);
+}
+
+IDirectSoundBuffer *get_segment_buffer(IDirectMusicSegment8 *iface)
+{
+    IDirectMusicSegment8Impl *This = impl_from_IDirectMusicSegment8(iface);
+    return This->buffer;
 }
 
 static HRESULT WINAPI IDirectMusicSegment8Impl_QueryInterface(IDirectMusicSegment8 *iface,
@@ -86,6 +97,11 @@ static ULONG WINAPI IDirectMusicSegment8Impl_Release(IDirectMusicSegment8 *iface
     TRACE("(%p) ref=%ld\n", This, ref);
 
     if (!ref) {
+        if (This->buffer)
+            IDirectSoundBuffer_Release(This->buffer);
+        if (This->wave_data)
+            free(This->wave_data);
+
         HeapFree(GetProcessHeap(), 0, This);
         DMIME_UnlockModule();
     }
@@ -552,9 +568,87 @@ static HRESULT WINAPI IDirectMusicSegment8Impl_Compose(IDirectMusicSegment8 *ifa
 static HRESULT WINAPI IDirectMusicSegment8Impl_Download(IDirectMusicSegment8 *iface,
         IUnknown *pAudioPath)
 {
-        IDirectMusicSegment8Impl *This = impl_from_IDirectMusicSegment8(iface);
-	FIXME("(%p, %p): stub\n", This, pAudioPath);
-	return S_OK;
+    IDirectMusicSegment8Impl *This = impl_from_IDirectMusicSegment8(iface);
+    IDirectMusicPerformance8 *perf;
+    IDirectMusicAudioPath *audio;
+    IDirectSound *dsound;
+    HRESULT hr;
+    DSBUFFERDESC dsbd = {.dwSize = sizeof(dsbd)};
+    void *data;
+    DWORD size;
+    DWORD buffer = 0;
+
+    TRACE("(%p, %p)\n", This, pAudioPath);
+
+    if (!pAudioPath)
+        return E_INVALIDARG;
+
+    if (This->buffer)
+    {
+        TRACE("Using Cached buffer\n");
+        return S_OK;
+    }
+
+    /* pAudioPath can either be IDirectMusicAudioPath or IDirectMusicPerformance */
+    hr = IUnknown_QueryInterface(pAudioPath, &IID_IDirectMusicPerformance8, (void**)&perf);
+    if (FAILED(hr))
+    {
+        TRACE("Checking for IDirectMusicAudioPath interface\n");
+        hr = IUnknown_QueryInterface(pAudioPath, &IID_IDirectMusicAudioPath, (void**)&audio);
+        if (FAILED(hr))
+        {
+            WARN("Cannot query for IDirectMusicAudioPath\n");
+            return E_INVALIDARG;
+        }
+
+        IDirectMusicAudioPath_GetObjectInPath(audio, DMUS_PCHANNEL_ALL, DMUS_PATH_PERFORMANCE, buffer, &GUID_NULL,
+                0, &IID_IDirectMusicPerformance, (void**)&perf);
+        IDirectMusicAudioPath_Release(audio);
+    }
+
+    if (!perf)
+    {
+        ERR("Failed to get IDirectMusicPerformance interface\n");
+        return E_INVALIDARG;
+    }
+
+    dsound = get_dsound_interface(perf);
+    if (!dsound)
+    {
+        ERR("Failed get_dsound_interface\n");
+        return E_INVALIDARG;
+    }
+
+    if (This->data_size == 0)
+    {
+        FIXME("No wave data skipping\n");
+        return S_OK;
+    }
+
+    dsbd.dwBufferBytes = This->data_size;
+    dsbd.lpwfxFormat = (WAVEFORMATEX*)&This->wave_format;
+
+    hr = IDirectSound_CreateSoundBuffer(dsound, &dsbd, &This->buffer, NULL);
+    if (FAILED(hr))
+    {
+        ERR("IDirectSound_CreateSoundBuffer failed 0x%08lx\n", hr);
+        return E_INVALIDARG;
+    }
+
+    TRACE("CreateSoundBuffer successful\n");
+
+    hr = IDirectSoundBuffer_Lock(This->buffer, 0, This->data_size, &data, &size, NULL, 0, 0);
+    TRACE("IDirectSoundBuffer_Lock hr 0x%08lx\n", hr);
+
+    memcpy(data, This->wave_data, This->data_size);
+
+    hr = IDirectSoundBuffer_Unlock(This->buffer, data, This->data_size, NULL, 0);
+    TRACE("IDirectSoundBuffer_Unlock hr 0x%08lx\n", hr);
+
+    /*hr = IDirectSoundBuffer_Play(This->buffer, 0, 0, 0);
+    TRACE("IDirectSoundBuffer_Play hr 0x%08lx\n", hr);*/
+
+    return S_OK;
 }
 
 static HRESULT WINAPI IDirectMusicSegment8Impl_Unload(IDirectMusicSegment8 *iface,
@@ -818,6 +912,49 @@ static inline IDirectMusicSegment8Impl *impl_from_IPersistStream(IPersistStream 
     return CONTAINING_RECORD(iface, IDirectMusicSegment8Impl, dmobj.IPersistStream_iface);
 }
 
+static HRESULT parse_wave_form(IDirectMusicSegment8Impl *This, IStream *stream, const struct chunk_entry *riff)
+{
+    HRESULT hr;
+    struct chunk_entry chunk = {.parent = riff};
+
+    TRACE("Parsing segment wave in %p: %s\n", stream, debugstr_chunk(riff));
+
+     while ((hr = stream_next_chunk(stream, &chunk)) == S_OK) {
+        switch (chunk.id) {
+            case mmioFOURCC('f','m','t',' '): {
+                if (FAILED(hr = stream_chunk_get_data(stream, &chunk, &This->wave_format, chunk.size)))
+                    return hr;
+                TRACE("Wave Format tag %d\n", This->wave_format.wf.wFormatTag);
+                break;
+            }
+            case mmioFOURCC('d','a','t','a'): {
+                TRACE("Wave Data size %lu\n", chunk.size);
+                This->wave_data = malloc(chunk.size);
+                This->data_size = chunk.size;
+                if (!This->wave_data)
+                    return E_OUTOFMEMORY;
+                if (FAILED(hr = stream_chunk_get_data(stream, &chunk, This->wave_data, chunk.size)))
+                    return hr;
+                break;
+            }
+            case FOURCC_LIST: {
+                FIXME("Skipping LIST tag\n");
+                break;
+            }
+            case mmioFOURCC('I','S','F','T'): {
+                FIXME("Skipping ISFT tag\n");
+                break;
+            }
+            case mmioFOURCC('f','a','c','t'): {
+                FIXME("Skipping fact tag\n");
+                break;
+            }
+        }
+    }
+
+    return S_OK;
+}
+
 static HRESULT WINAPI seg_IPersistStream_Load(IPersistStream *iface, IStream *stream)
 {
     IDirectMusicSegment8Impl *This = impl_from_IPersistStream(iface);
@@ -847,10 +984,8 @@ static HRESULT WINAPI seg_IPersistStream_Load(IPersistStream *iface, IStream *st
 
     if (riff.type == DMUS_FOURCC_SEGMENT_FORM)
         hr = parse_segment_form(This, stream, &riff);
-    else {
-        FIXME("WAVE form loading not implemented\n");
-        hr = S_OK;
-    }
+    else
+        hr = parse_wave_form(This, stream, &riff);
 
     return hr;
 }

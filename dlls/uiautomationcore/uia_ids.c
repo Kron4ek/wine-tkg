@@ -30,6 +30,20 @@ static int __cdecl uia_property_guid_compare(const void *a, const void *b)
     return memcmp(guid, property->guid, sizeof(*guid));
 }
 
+static int __cdecl uia_event_guid_compare(const void *a, const void *b)
+{
+    const GUID *guid = a;
+    const struct uia_event_info *event = b;
+    return memcmp(guid, event->guid, sizeof(*guid));
+}
+
+static int __cdecl uia_pattern_guid_compare(const void *a, const void *b)
+{
+    const GUID *guid = a;
+    const struct uia_pattern_info *pattern = b;
+    return memcmp(guid, pattern->guid, sizeof(*guid));
+}
+
 /* Sorted by GUID. */
 static const struct uia_prop_info default_uia_properties[] = {
     { &AutomationId_Property_GUID,                       UIA_AutomationIdPropertyId,
@@ -83,7 +97,9 @@ static const struct uia_prop_info default_uia_properties[] = {
     { &IsDropTargetPatternAvailable_Property_GUID,       UIA_IsDropTargetPatternAvailablePropertyId, },
     { &Dock_DockPosition_Property_GUID,                  UIA_DockDockPositionPropertyId, },
     { &Styles_StyleId_Property_GUID,                     UIA_StylesStyleIdPropertyId, },
-    { &Value_IsReadOnly_Property_GUID,                   UIA_ValueIsReadOnlyPropertyId, },
+    { &Value_IsReadOnly_Property_GUID,                   UIA_ValueIsReadOnlyPropertyId,
+      PROP_TYPE_PATTERN_PROP,                            UIAutomationType_Bool,
+      UIA_ValuePatternId, },
     { &IsSpreadsheetPatternAvailable_Property_GUID,      UIA_IsSpreadsheetPatternAvailablePropertyId, },
     { &Styles_StyleName_Property_GUID,                   UIA_StylesStyleNamePropertyId, },
     { &IsAnnotationPatternAvailable_Property_GUID,       UIA_IsAnnotationPatternAvailablePropertyId, },
@@ -211,7 +227,8 @@ static const struct uia_prop_info default_uia_properties[] = {
       PROP_TYPE_ELEM_PROP,                               UIAutomationType_Bool, },
     { &IsWindowPatternAvailable_Property_GUID,           UIA_IsWindowPatternAvailablePropertyId, },
     { &RangeValue_Minimum_Property_GUID,                 UIA_RangeValueMinimumPropertyId, },
-    { &BoundingRectangle_Property_GUID,                  UIA_BoundingRectanglePropertyId, },
+    { &BoundingRectangle_Property_GUID,                  UIA_BoundingRectanglePropertyId,
+      PROP_TYPE_SPECIAL,                                 UIAutomationType_Rect, },
     { &LegacyIAccessible_Value_Property_GUID,            UIA_LegacyIAccessibleValuePropertyId, },
     { &IsDragPatternAvailable_Property_GUID,             UIA_IsDragPatternAvailablePropertyId, },
     { &DescribedBy_Property_GUID,                        UIA_DescribedByPropertyId,
@@ -308,6 +325,195 @@ const struct uia_prop_info *uia_prop_info_from_id(PROPERTYID prop_id)
     return &default_uia_properties[prop_id_idx[prop_id - PROP_ID_MIN]];
 }
 
+/* Sorted by GUID. */
+static const struct uia_event_info default_uia_events[] = {
+    { &Selection_InvalidatedEvent_Event_GUID,                     UIA_Selection_InvalidatedEventId,
+      EventArgsType_Simple, },
+    { &Window_WindowOpened_Event_GUID,                            UIA_Window_WindowOpenedEventId,
+      EventArgsType_Simple, },
+    { &TextEdit_TextChanged_Event_GUID,                           UIA_TextEdit_TextChangedEventId,
+      EventArgsType_TextEditTextChanged, },
+    { &Drag_DragStart_Event_GUID,                                 UIA_Drag_DragStartEventId,
+      EventArgsType_Simple, },
+    { &Changes_Event_GUID,                                        UIA_ChangesEventId,
+      EventArgsType_Changes, },
+    { &DropTarget_DragLeave_Event_GUID,                           UIA_DropTarget_DragLeaveEventId,
+      EventArgsType_Simple, },
+    { &AutomationFocusChanged_Event_GUID,                         UIA_AutomationFocusChangedEventId,
+      EventArgsType_Simple, },
+    { &AsyncContentLoaded_Event_GUID,                             UIA_AsyncContentLoadedEventId,
+      EventArgsType_AsyncContentLoaded, },
+    { &MenuModeStart_Event_GUID,                                  UIA_MenuModeStartEventId,
+      EventArgsType_Simple, },
+    { &HostedFragmentRootsInvalidated_Event_GUID,                 UIA_HostedFragmentRootsInvalidatedEventId,
+      EventArgsType_Simple, },
+    { &LayoutInvalidated_Event_GUID,                              UIA_LayoutInvalidatedEventId,
+      EventArgsType_Simple, },
+    { &MenuOpened_Event_GUID,                                     UIA_MenuOpenedEventId,
+      EventArgsType_Simple, },
+    { &SystemAlert_Event_GUID,                                    UIA_SystemAlertEventId,
+      EventArgsType_Simple, },
+    { &StructureChanged_Event_GUID,                               UIA_StructureChangedEventId,
+      EventArgsType_StructureChanged, },
+    { &InputDiscarded_Event_GUID,                                 UIA_InputDiscardedEventId,
+      EventArgsType_Simple, },
+    { &MenuClosed_Event_GUID,                                     UIA_MenuClosedEventId,
+      EventArgsType_Simple, },
+    { &Text_TextChangedEvent_Event_GUID,                          UIA_Text_TextChangedEventId,
+      EventArgsType_Simple, },
+    { &TextEdit_ConversionTargetChanged_Event_GUID,               UIA_TextEdit_ConversionTargetChangedEventId,
+      EventArgsType_Simple, },
+    { &Drag_DragComplete_Event_GUID,                              UIA_Drag_DragCompleteEventId,
+      EventArgsType_Simple, },
+    { &InputReachedOtherElement_Event_GUID,                       UIA_InputReachedOtherElementEventId,
+      EventArgsType_Simple, },
+    { &LiveRegionChanged_Event_GUID,                              UIA_LiveRegionChangedEventId,
+      EventArgsType_Simple, },
+    { &InputReachedTarget_Event_GUID,                             UIA_InputReachedTargetEventId,
+      EventArgsType_Simple, },
+    { &DropTarget_DragEnter_Event_GUID,                           UIA_DropTarget_DragEnterEventId,
+      EventArgsType_Simple, },
+    { &MenuModeEnd_Event_GUID,                                    UIA_MenuModeEndEventId,
+      EventArgsType_Simple, },
+    { &Text_TextSelectionChangedEvent_Event_GUID,                 UIA_Text_TextSelectionChangedEventId,
+      EventArgsType_Simple, },
+    { &AutomationPropertyChanged_Event_GUID,                      UIA_AutomationPropertyChangedEventId,
+      EventArgsType_PropertyChanged, },
+    { &SelectionItem_ElementRemovedFromSelectionEvent_Event_GUID, UIA_SelectionItem_ElementRemovedFromSelectionEventId,
+      EventArgsType_Simple, },
+    { &SelectionItem_ElementAddedToSelectionEvent_Event_GUID,     UIA_SelectionItem_ElementAddedToSelectionEventId,
+      EventArgsType_Simple, },
+    { &DropTarget_Dropped_Event_GUID,                             UIA_DropTarget_DroppedEventId,
+      EventArgsType_Simple, },
+    { &ToolTipClosed_Event_GUID,                                  UIA_ToolTipClosedEventId,
+      EventArgsType_Simple, },
+    { &Invoke_Invoked_Event_GUID,                                 UIA_Invoke_InvokedEventId,
+      EventArgsType_Simple, },
+    { &Notification_Event_GUID,                                   UIA_NotificationEventId,
+      EventArgsType_Notification, },
+    { &Window_WindowClosed_Event_GUID,                            UIA_Window_WindowClosedEventId,
+      EventArgsType_WindowClosed, },
+    { &Drag_DragCancel_Event_GUID,                                UIA_Drag_DragCancelEventId,
+      EventArgsType_Simple, },
+    { &SelectionItem_ElementSelectedEvent_Event_GUID,             UIA_SelectionItem_ElementSelectedEventId,
+      EventArgsType_Simple, },
+    { &ToolTipOpened_Event_GUID,                                  UIA_ToolTipOpenedEventId,
+      EventArgsType_Simple, },
+};
+
+static const struct uia_event_info *uia_event_info_from_guid(const GUID *guid)
+{
+    struct uia_event_info *event;
+
+    if ((event = bsearch(guid, default_uia_events, ARRAY_SIZE(default_uia_events), sizeof(*event),
+            uia_event_guid_compare)))
+        return event;
+
+    return NULL;
+}
+
+/* Sorted by GUID. */
+static const struct uia_pattern_info default_uia_patterns[] = {
+    { &ScrollItem_Pattern_GUID,         UIA_ScrollItemPatternId,
+      &IID_IScrollItemProvider, },
+    { &Tranform_Pattern2_GUID,          UIA_TransformPattern2Id,
+      &IID_ITransformProvider2, },
+    { &ItemContainer_Pattern_GUID,      UIA_ItemContainerPatternId,
+      &IID_IItemContainerProvider, },
+    { &Drag_Pattern_GUID,               UIA_DragPatternId,
+      &IID_IDragProvider, },
+    { &Window_Pattern_GUID,             UIA_WindowPatternId,
+      &IID_IWindowProvider, },
+    { &VirtualizedItem_Pattern_GUID,    UIA_VirtualizedItemPatternId,
+      &IID_IVirtualizedItemProvider, },
+    { &Dock_Pattern_GUID,               UIA_DockPatternId,
+      &IID_IDockProvider, },
+    { &Styles_Pattern_GUID,             UIA_StylesPatternId,
+      &IID_IStylesProvider, },
+    { &DropTarget_Pattern_GUID,         UIA_DropTargetPatternId,
+      &IID_IDropTargetProvider, },
+    { &Text_Pattern_GUID,               UIA_TextPatternId,
+      &IID_ITextProvider, },
+    { &Toggle_Pattern_GUID,             UIA_TogglePatternId,
+      &IID_IToggleProvider, },
+    { &GridItem_Pattern_GUID,           UIA_GridItemPatternId,
+      &IID_IGridItemProvider, },
+    { &RangeValue_Pattern_GUID,         UIA_RangeValuePatternId,
+      &IID_IRangeValueProvider, },
+    { &TextEdit_Pattern_GUID,           UIA_TextEditPatternId,
+      &IID_ITextEditProvider, },
+    { &CustomNavigation_Pattern_GUID,   UIA_CustomNavigationPatternId,
+      &IID_ICustomNavigationProvider, },
+    { &Table_Pattern_GUID,              UIA_TablePatternId,
+      &IID_ITableProvider, },
+    { &Value_Pattern_GUID,              UIA_ValuePatternId,
+      &IID_IValueProvider, },
+    { &LegacyIAccessible_Pattern_GUID,  UIA_LegacyIAccessiblePatternId,
+      &IID_ILegacyIAccessibleProvider, },
+    { &Text_Pattern2_GUID,              UIA_TextPattern2Id,
+      &IID_ITextProvider2, },
+    { &ExpandCollapse_Pattern_GUID,     UIA_ExpandCollapsePatternId,
+      &IID_IExpandCollapseProvider, },
+    { &SynchronizedInput_Pattern_GUID,  UIA_SynchronizedInputPatternId,
+      &IID_ISynchronizedInputProvider, },
+    { &Scroll_Pattern_GUID,             UIA_ScrollPatternId,
+      &IID_IScrollProvider, },
+    { &TextChild_Pattern_GUID,          UIA_TextChildPatternId,
+      &IID_ITextChildProvider, },
+    { &TableItem_Pattern_GUID,          UIA_TableItemPatternId,
+      &IID_ITableItemProvider, },
+    { &Spreadsheet_Pattern_GUID,        UIA_SpreadsheetPatternId,
+      &IID_ISpreadsheetProvider, },
+    { &Grid_Pattern_GUID,               UIA_GridPatternId,
+      &IID_IGridProvider, },
+    { &Annotation_Pattern_GUID,         UIA_AnnotationPatternId,
+      &IID_IAnnotationProvider, },
+    { &Transform_Pattern_GUID,          UIA_TransformPatternId,
+      &IID_ITransformProvider, },
+    { &MultipleView_Pattern_GUID,       UIA_MultipleViewPatternId,
+      &IID_IMultipleViewProvider, },
+    { &Selection_Pattern_GUID,          UIA_SelectionPatternId,
+      &IID_ISelectionProvider, },
+    { &SelectionItem_Pattern_GUID,      UIA_SelectionItemPatternId,
+      &IID_ISelectionItemProvider, },
+    { &Invoke_Pattern_GUID,             UIA_InvokePatternId,
+      &IID_IInvokeProvider, },
+    { &ObjectModel_Pattern_GUID,        UIA_ObjectModelPatternId,
+      &IID_IObjectModelProvider, },
+    { &SpreadsheetItem_Pattern_GUID,    UIA_SpreadsheetItemPatternId,
+      &IID_ISpreadsheetItemProvider, },
+};
+
+static const int pattern_id_idx[] = {
+    0x1f, 0x1d, 0x10, 0x0c, 0x15, 0x13, 0x19, 0x0b,
+    0x1c, 0x04, 0x1e, 0x06, 0x0f, 0x17, 0x09, 0x0a,
+    0x1b, 0x00, 0x11, 0x02, 0x05, 0x14, 0x20, 0x1a,
+    0x12, 0x07, 0x18, 0x21, 0x01, 0x16, 0x03, 0x08,
+    0x0d, 0x0e,
+};
+
+#define PATTERN_ID_MIN 10000
+#define PATTERN_ID_MAX (PATTERN_ID_MIN + ARRAY_SIZE(default_uia_patterns))
+
+static const struct uia_pattern_info *uia_pattern_info_from_guid(const GUID *guid)
+{
+    struct uia_pattern_info *pattern;
+
+    if ((pattern = bsearch(guid, default_uia_patterns, ARRAY_SIZE(default_uia_patterns), sizeof(*pattern),
+            uia_pattern_guid_compare)))
+        return pattern;
+
+    return NULL;
+}
+
+const struct uia_pattern_info *uia_pattern_info_from_id(PATTERNID pattern_id)
+{
+    if ((pattern_id < PATTERN_ID_MIN) || (pattern_id > PATTERN_ID_MAX))
+        return NULL;
+
+    return &default_uia_patterns[pattern_id_idx[pattern_id - PATTERN_ID_MIN]];
+}
+
 /***********************************************************************
  *          UiaLookupId (uiautomationcore.@)
  */
@@ -331,8 +537,30 @@ int WINAPI UiaLookupId(enum AutomationIdentifierType type, const GUID *guid)
         break;
     }
 
-    case AutomationIdentifierType_Pattern:
     case AutomationIdentifierType_Event:
+    {
+        const struct uia_event_info *event = uia_event_info_from_guid(guid);
+
+        if (event)
+            ret_id = event->event_id;
+        else
+            FIXME("Failed to find eventId for GUID %s\n", debugstr_guid(guid));
+
+        break;
+    }
+
+    case AutomationIdentifierType_Pattern:
+    {
+        const struct uia_pattern_info *pattern = uia_pattern_info_from_guid(guid);
+
+        if (pattern)
+            ret_id = pattern->pattern_id;
+        else
+            FIXME("Failed to find patternId for GUID %s\n", debugstr_guid(guid));
+
+        break;
+    }
+
     case AutomationIdentifierType_ControlType:
     case AutomationIdentifierType_TextAttribute:
     case AutomationIdentifierType_LandmarkType:

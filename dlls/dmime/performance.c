@@ -252,6 +252,13 @@ static inline IDirectMusicPerformance8Impl *impl_from_IDirectMusicPerformance8(I
     return CONTAINING_RECORD(iface, IDirectMusicPerformance8Impl, IDirectMusicPerformance8_iface);
 }
 
+IDirectSound *get_dsound_interface(IDirectMusicPerformance8* iface)
+{
+    IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
+    return This->dsound;
+}
+
+
 /* IDirectMusicPerformance8 IUnknown part: */
 static HRESULT WINAPI IDirectMusicPerformance8Impl_QueryInterface(IDirectMusicPerformance8 *iface,
         REFIID riid, void **ppv)
@@ -1036,13 +1043,26 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_PlaySegmentEx(IDirectMusicPer
         __int64 i64StartTime, IDirectMusicSegmentState **ppSegmentState, IUnknown *pFrom,
         IUnknown *pAudioPath)
 {
-        IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
+    IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
+    IDirectMusicSegment8 *segment;
+    IDirectSoundBuffer *buffer;
+    HRESULT hr;
 
-	FIXME("(%p, %p, %p, %p, %ld, 0x%s, %p, %p, %p): stub\n", This, pSource, pwzSegmentName,
-	    pTransition, dwFlags, wine_dbgstr_longlong(i64StartTime), ppSegmentState, pFrom, pAudioPath);
-	if (ppSegmentState)
-          return create_dmsegmentstate(&IID_IDirectMusicSegmentState,(void**)ppSegmentState);
-	return S_OK;
+    FIXME("(%p, %p, %p, %p, %ld, 0x%s, %p, %p, %p): semi-stub\n", This, pSource, pwzSegmentName,
+        pTransition, dwFlags, wine_dbgstr_longlong(i64StartTime), ppSegmentState, pFrom, pAudioPath);
+
+    hr = IUnknown_QueryInterface(pSource, &IID_IDirectMusicSegment8, (void**)&segment);
+    if (FAILED(hr))
+        return hr;
+
+    buffer = get_segment_buffer(segment);
+
+    if (segment)
+        hr = IDirectSoundBuffer_Play(buffer, 0, 0, 0);
+
+    if (ppSegmentState)
+      return create_dmsegmentstate(&IID_IDirectMusicSegmentState,(void**)ppSegmentState);
+    return S_OK;
 }
 
 static HRESULT WINAPI IDirectMusicPerformance8Impl_StopEx(IDirectMusicPerformance8 *iface,

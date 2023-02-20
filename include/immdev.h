@@ -16,14 +16,15 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef _DDKIMM_H_
-#define _DDKIMM_H_
+#ifndef __WINE_IMMDEV_H
+#define __WINE_IMMDEV_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct _tagINPUTCONTEXT {
+typedef struct tagINPUTCONTEXT
+{
     HWND                hWnd;
     BOOL                fOpen;
     POINT               ptStatusWndPos;
@@ -46,7 +47,8 @@ typedef struct _tagINPUTCONTEXT {
     DWORD               dwReserve[3];
 } INPUTCONTEXT, *LPINPUTCONTEXT;
 
-typedef struct _tagIMEINFO {
+typedef struct tagIMEINFO
+{
     DWORD       dwPrivateDataSize;
     DWORD       fdwProperty;
     DWORD       fdwConversionCaps;
@@ -56,7 +58,8 @@ typedef struct _tagIMEINFO {
     DWORD       fdwSelectCaps;
 } IMEINFO, *LPIMEINFO;
 
-typedef struct tagCOMPOSITIONSTRING {
+typedef struct tagCOMPOSITIONSTRING
+{
     DWORD dwSize;
     DWORD dwCompReadAttrLen;
     DWORD dwCompReadAttrOffset;
@@ -84,7 +87,8 @@ typedef struct tagCOMPOSITIONSTRING {
     DWORD dwPrivateOffset;
 } COMPOSITIONSTRING, *LPCOMPOSITIONSTRING;
 
-typedef struct tagGUIDELINE {
+typedef struct tagGUIDELINE
+{
     DWORD dwSize;
     DWORD dwLevel;
     DWORD dwIndex;
@@ -94,13 +98,27 @@ typedef struct tagGUIDELINE {
     DWORD dwPrivateOffset;
 } GUIDELINE, *LPGUIDELINE;
 
-typedef struct tagCANDIDATEINFO {
+typedef struct tagCANDIDATEINFO
+{
     DWORD               dwSize;
     DWORD               dwCount;
     DWORD               dwOffset[32];
     DWORD               dwPrivateSize;
     DWORD               dwPrivateOffset;
 } CANDIDATEINFO, *LPCANDIDATEINFO;
+
+typedef struct tagTRANSMSG
+{
+    UINT message;
+    WPARAM wParam;
+    LPARAM lParam;
+} TRANSMSG, *LPTRANSMSG;
+
+typedef struct tagTRANSMSGLIST
+{
+    UINT uMsgCount;
+    TRANSMSG TransMsg[1];
+} TRANSMSGLIST, *LPTRANSMSGLIST;
 
 LPINPUTCONTEXT WINAPI ImmLockIMC(HIMC);
 BOOL  WINAPI ImmUnlockIMC(HIMC);
@@ -140,6 +158,8 @@ DWORD  WINAPI ImmGetIMCCSize(HIMCC);
 #define NI_SETCANDIDATE_PAGESIZE        0x0017
 #define NI_IMEMENUSELECTED              0x0018
 
+BOOL WINAPI ImmGetHotKey(DWORD,UINT*,UINT*,HKL*);
+BOOL WINAPI ImmSetHotKey(DWORD,UINT,UINT,HKL);
 BOOL WINAPI ImmGenerateMessage(HIMC);
 LRESULT WINAPI ImmRequestMessageA(HIMC, WPARAM, LPARAM);
 LRESULT WINAPI ImmRequestMessageW(HIMC, WPARAM, LPARAM);
@@ -149,7 +169,7 @@ HWND WINAPI ImmCreateSoftKeyboard(UINT, UINT, int, int);
 BOOL WINAPI ImmDestroySoftKeyboard(HWND);
 BOOL WINAPI ImmShowSoftKeyboard(HWND, int);
 
-BOOL WINAPI ImeInquire(LPIMEINFO, LPWSTR, LPCWSTR lpszOptions);
+BOOL WINAPI ImeInquire(LPIMEINFO, LPWSTR, DWORD);
 BOOL WINAPI ImeConfigure (HKL, HWND, DWORD, LPVOID);
 DWORD WINAPI ImeConversionList(HIMC, LPCWSTR, LPCANDIDATELIST,DWORD,UINT);
 BOOL WINAPI ImeDestroy(UINT);
@@ -157,7 +177,7 @@ LRESULT WINAPI ImeEscape(HIMC, UINT, LPVOID);
 BOOL WINAPI ImeProcessKey(HIMC, UINT, LPARAM, const LPBYTE);
 BOOL WINAPI ImeSelect(HIMC, BOOL);
 BOOL WINAPI ImeSetActiveContext(HIMC, BOOL);
-UINT WINAPI ImeToAsciiEx(UINT, UINT, const LPBYTE, LPDWORD, UINT, HIMC);
+UINT WINAPI ImeToAsciiEx(UINT, UINT, const LPBYTE, LPTRANSMSGLIST, UINT, HIMC);
 BOOL WINAPI NotifyIME(HIMC, DWORD, DWORD, DWORD);
 BOOL WINAPI ImeRegisterWord(LPCWSTR, DWORD, LPCWSTR);
 BOOL WINAPI ImeUnregisterWord(LPCWSTR, DWORD, LPCWSTR);
@@ -170,4 +190,4 @@ DWORD WINAPI ImeGetImeMenuItems(HIMC, DWORD, DWORD, LPIMEMENUITEMINFOW, LPIMEMEN
 } /* extern "C" */
 #endif
 
-#endif  /* _DDKIMM_H_ */
+#endif  /* __WINE_IMMDEV_H */

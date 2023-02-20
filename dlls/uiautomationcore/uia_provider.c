@@ -35,12 +35,6 @@ static void variant_init_i4(VARIANT *v, int val)
     V_I4(v) = val;
 }
 
-static void variant_init_bool(VARIANT *v, BOOL val)
-{
-    V_VT(v) = VT_BOOL;
-    V_BOOL(v) = val ? VARIANT_TRUE : VARIANT_FALSE;
-}
-
 static BOOL msaa_check_acc_state(IAccessible *acc, VARIANT cid, ULONG flag)
 {
     HRESULT hr;
@@ -670,6 +664,19 @@ HRESULT WINAPI msaa_provider_GetPropertyValue(IRawElementProviderSimple *iface,
                     STATE_SYSTEM_PROTECTED));
         break;
 
+    case UIA_NamePropertyId:
+    {
+        BSTR name;
+
+        hr = IAccessible_get_accName(msaa_prov->acc, msaa_prov->cid, &name);
+        if (SUCCEEDED(hr) && name)
+        {
+            V_VT(ret_val) = VT_BSTR;
+            V_BSTR(ret_val) = name;
+        }
+        break;
+    }
+
     default:
         FIXME("Unimplemented propertyId %d\n", prop_id);
         break;
@@ -874,8 +881,34 @@ static HRESULT WINAPI msaa_fragment_GetRuntimeId(IRawElementProviderFragment *if
 static HRESULT WINAPI msaa_fragment_get_BoundingRectangle(IRawElementProviderFragment *iface,
         struct UiaRect *ret_val)
 {
-    FIXME("%p, %p: stub!\n", iface, ret_val);
-    return E_NOTIMPL;
+    struct msaa_provider *msaa_prov = impl_from_msaa_fragment(iface);
+    LONG left, top, width, height;
+    HRESULT hr;
+
+    TRACE("%p, %p\n", iface, ret_val);
+
+    memset(ret_val, 0, sizeof(*ret_val));
+
+    /*
+     * If this IAccessible is at the root of its HWND, the BaseHwnd provider
+     * will supply the bounding rectangle.
+     */
+    if (msaa_check_root_acc(msaa_prov))
+        return S_OK;
+
+    if (msaa_check_acc_state(msaa_prov->acc, msaa_prov->cid, STATE_SYSTEM_OFFSCREEN))
+        return S_OK;
+
+    hr = IAccessible_accLocation(msaa_prov->acc, &left, &top, &width, &height, msaa_prov->cid);
+    if (FAILED(hr))
+        return hr;
+
+    ret_val->left = left;
+    ret_val->top = top;
+    ret_val->width = width;
+    ret_val->height = height;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI msaa_fragment_GetEmbeddedFragmentRoots(IRawElementProviderFragment *iface,

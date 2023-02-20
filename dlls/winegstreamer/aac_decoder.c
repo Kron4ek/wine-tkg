@@ -30,8 +30,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
-extern const GUID MFAudioFormat_RAW_AAC;
-
 static struct
 {
     const GUID *const guid;
@@ -500,8 +498,20 @@ static HRESULT WINAPI transform_GetOutputCurrentType(IMFTransform *iface, DWORD 
 
 static HRESULT WINAPI transform_GetInputStatus(IMFTransform *iface, DWORD id, DWORD *flags)
 {
-    FIXME("iface %p, id %#lx, flags %p stub!\n", iface, id, flags);
-    return E_NOTIMPL;
+    struct aac_decoder *decoder = impl_from_IMFTransform(iface);
+    bool accepts_input;
+    HRESULT hr;
+
+    TRACE("iface %p, id %#lx, flags %p.\n", iface, id, flags);
+
+    if (!decoder->wg_transform)
+        return MF_E_TRANSFORM_TYPE_NOT_SET;
+
+    if (FAILED(hr = wg_transform_get_status(decoder->wg_transform, &accepts_input)))
+        return hr;
+
+    *flags = accepts_input ? MFT_INPUT_STATUS_ACCEPT_DATA : 0;
+    return S_OK;
 }
 
 static HRESULT WINAPI transform_GetOutputStatus(IMFTransform *iface, DWORD *flags)
