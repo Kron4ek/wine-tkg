@@ -4143,6 +4143,84 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                         FIXME("Render state WINED3D_RS_MONOENABLE not implemented yet.\n");
                     break;
 
+                case WINED3D_RS_ROP2:
+                    if (state->rs[WINED3D_RS_ROP2])
+                        FIXME("Render state WINED3D_RS_ROP2 not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_PLANEMASK:
+                    if (state->rs[WINED3D_RS_PLANEMASK])
+                        FIXME("Render state WINED3D_RS_PLANEMASK not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_LASTPIXEL:
+                    if (!state->rs[WINED3D_RS_LASTPIXEL])
+                    {
+                        static bool warned;
+                        if (!warned)
+                        {
+                            FIXME("Last Pixel Drawing Disabled, not handled yet.\n");
+                            warned = true;
+                        }
+                    }
+                    break;
+
+                case WINED3D_RS_ZVISIBLE:
+                    if (state->rs[WINED3D_RS_ZVISIBLE])
+                        FIXME("WINED3D_RS_ZVISIBLE not implemented.\n");
+                    break;
+
+                case WINED3D_RS_SUBPIXEL:
+                    if (state->rs[WINED3D_RS_SUBPIXEL])
+                        FIXME("Render state WINED3D_RS_SUBPIXEL not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_SUBPIXELX:
+                    if (state->rs[WINED3D_RS_SUBPIXELX])
+                        FIXME("Render state WINED3D_RS_SUBPIXELX not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_STIPPLEDALPHA:
+                    if (state->rs[WINED3D_RS_STIPPLEDALPHA])
+                        FIXME("Stippled Alpha not supported yet.\n");
+                    break;
+
+                case WINED3D_RS_STIPPLEENABLE:
+                    if (state->rs[WINED3D_RS_STIPPLEENABLE])
+                        FIXME("Render state WINED3D_RS_STIPPLEENABLE not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_MIPMAPLODBIAS:
+                    if (state->rs[WINED3D_RS_MIPMAPLODBIAS])
+                        FIXME("Render state WINED3D_RS_MIPMAPLODBIAS not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_ANISOTROPY:
+                    if (state->rs[WINED3D_RS_ANISOTROPY])
+                        FIXME("Render state WINED3D_RS_ANISOTROPY not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_FLUSHBATCH:
+                    if (state->rs[WINED3D_RS_FLUSHBATCH])
+                        FIXME("Render state WINED3D_RS_FLUSHBATCH not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_TRANSLUCENTSORTINDEPENDENT:
+                    if (state->rs[WINED3D_RS_TRANSLUCENTSORTINDEPENDENT])
+                        FIXME("Render state WINED3D_RS_TRANSLUCENTSORTINDEPENDENT not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_WRAP13:
+                case WINED3D_RS_WRAP14:
+                case WINED3D_RS_WRAP15:
+                {
+                    static unsigned int once;
+
+                    if ((state->rs[idx]) && !once++)
+                        FIXME("(WINED3D_RS_WRAP0) Texture wrapping not yet supported.\n");
+                    break;
+                }
+
                 default:
                     wined3d_device_set_render_state(device, idx, state->rs[idx]);
                     break;

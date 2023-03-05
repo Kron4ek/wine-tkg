@@ -97,18 +97,7 @@ static const struct wined3d_state_entry_template misc_state_template_vk[] =
     {STATE_VIEWPORT,                                      {STATE_VIEWPORT,                                      state_nop}},
     {STATE_INDEXBUFFER,                                   {STATE_INDEXBUFFER,                                   state_nop}},
     {STATE_RENDER(WINED3D_RS_LINEPATTERN),                {STATE_RENDER(WINED3D_RS_LINEPATTERN),                state_nop}},
-    {STATE_RENDER(WINED3D_RS_ROP2),                       {STATE_RENDER(WINED3D_RS_ROP2),                       state_nop}},
-    {STATE_RENDER(WINED3D_RS_PLANEMASK),                  {STATE_RENDER(WINED3D_RS_PLANEMASK),                  state_nop}},
-    {STATE_RENDER(WINED3D_RS_LASTPIXEL),                  {STATE_RENDER(WINED3D_RS_LASTPIXEL),                  state_nop}},
     {STATE_RENDER(WINED3D_RS_DITHERENABLE),               {STATE_RENDER(WINED3D_RS_DITHERENABLE),               state_nop}},
-    {STATE_RENDER(WINED3D_RS_SUBPIXEL),                   {STATE_RENDER(WINED3D_RS_SUBPIXEL),                   state_nop}},
-    {STATE_RENDER(WINED3D_RS_SUBPIXELX),                  {STATE_RENDER(WINED3D_RS_SUBPIXELX),                  state_nop}},
-    {STATE_RENDER(WINED3D_RS_STIPPLEDALPHA),              {STATE_RENDER(WINED3D_RS_STIPPLEDALPHA),              state_nop}},
-    {STATE_RENDER(WINED3D_RS_STIPPLEENABLE),              {STATE_RENDER(WINED3D_RS_STIPPLEENABLE),              state_nop}},
-    {STATE_RENDER(WINED3D_RS_MIPMAPLODBIAS),              {STATE_RENDER(WINED3D_RS_MIPMAPLODBIAS),              state_nop}},
-    {STATE_RENDER(WINED3D_RS_ANISOTROPY),                 {STATE_RENDER(WINED3D_RS_ANISOTROPY),                 state_nop}},
-    {STATE_RENDER(WINED3D_RS_FLUSHBATCH),                 {STATE_RENDER(WINED3D_RS_FLUSHBATCH),                 state_nop}},
-    {STATE_RENDER(WINED3D_RS_TRANSLUCENTSORTINDEPENDENT), {STATE_RENDER(WINED3D_RS_TRANSLUCENTSORTINDEPENDENT), state_nop}},
     {STATE_RENDER(WINED3D_RS_WRAP0),                      {STATE_RENDER(WINED3D_RS_WRAP0),                      state_nop}},
     {STATE_RENDER(WINED3D_RS_WRAP1),                      {STATE_RENDER(WINED3D_RS_WRAP0)}},
     {STATE_RENDER(WINED3D_RS_WRAP2),                      {STATE_RENDER(WINED3D_RS_WRAP0)}},
@@ -122,9 +111,6 @@ static const struct wined3d_state_entry_template misc_state_template_vk[] =
     {STATE_RENDER(WINED3D_RS_WRAP10),                     {STATE_RENDER(WINED3D_RS_WRAP0)}},
     {STATE_RENDER(WINED3D_RS_WRAP11),                     {STATE_RENDER(WINED3D_RS_WRAP0)}},
     {STATE_RENDER(WINED3D_RS_WRAP12),                     {STATE_RENDER(WINED3D_RS_WRAP0)}},
-    {STATE_RENDER(WINED3D_RS_WRAP13),                     {STATE_RENDER(WINED3D_RS_WRAP0)}},
-    {STATE_RENDER(WINED3D_RS_WRAP14),                     {STATE_RENDER(WINED3D_RS_WRAP0)}},
-    {STATE_RENDER(WINED3D_RS_WRAP15),                     {STATE_RENDER(WINED3D_RS_WRAP0)}},
     {STATE_RENDER(WINED3D_RS_EXTENTS),                    {STATE_RENDER(WINED3D_RS_EXTENTS),                    state_nop}},
     {STATE_RENDER(WINED3D_RS_COLORKEYBLENDENABLE),        {STATE_RENDER(WINED3D_RS_COLORKEYBLENDENABLE),        state_nop}},
     {STATE_RENDER(WINED3D_RS_SOFTWAREVERTEXPROCESSING),   {STATE_RENDER(WINED3D_RS_SOFTWAREVERTEXPROCESSING),   state_nop}},
@@ -141,7 +127,6 @@ static const struct wined3d_state_entry_template misc_state_template_vk[] =
     {STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION), {STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION), state_nop}},
     {STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),       {STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),       state_nop}},
     {STATE_RENDER(WINED3D_RS_DEBUGMONITORTOKEN),          {STATE_RENDER(WINED3D_RS_DEBUGMONITORTOKEN),          state_nop}},
-    {STATE_RENDER(WINED3D_RS_ZVISIBLE),                   {STATE_RENDER(WINED3D_RS_ZVISIBLE),                   state_nop}},
     /* Samplers */
     {STATE_SAMPLER(0),                                    {STATE_SAMPLER(0),                                    state_nop}},
     {STATE_SAMPLER(1),                                    {STATE_SAMPLER(1),                                    state_nop}},
@@ -304,6 +289,7 @@ static void wined3d_disable_vulkan_features(struct wined3d_physical_device_info 
     features->shaderSampledImageArrayDynamicIndexing = VK_FALSE;
     features->shaderStorageBufferArrayDynamicIndexing = VK_FALSE;
     features->shaderStorageImageArrayDynamicIndexing = VK_FALSE;
+    features->shaderInt64 = VK_FALSE;
     features->shaderInt16 = VK_FALSE;
     features->shaderResourceResidency = VK_FALSE;
     features->shaderResourceMinLod = VK_FALSE;
@@ -1818,8 +1804,6 @@ static void adapter_vk_draw_primitive(struct wined3d_device *device,
     else
     {
         instance_count = parameters->u.direct.instance_count;
-        if (context_vk->c.instance_count)
-            instance_count = context_vk->c.instance_count;
         if (!instance_count)
             instance_count = 1;
 
@@ -2263,6 +2247,8 @@ static bool feature_level_10_supported(const struct wined3d_physical_device_info
             && info->features2.features.depthClamp
             && info->features2.features.depthBiasClamp
             && info->features2.features.pipelineStatisticsQuery
+            && info->features2.features.shaderClipDistance
+            && info->features2.features.shaderCullDistance
             && info->vertex_divisor_features.vertexAttributeInstanceRateDivisor
             && info->vertex_divisor_features.vertexAttributeInstanceRateZeroDivisor;
 }
@@ -2277,6 +2263,8 @@ static bool feature_level_11_supported(const struct wined3d_physical_device_info
     return shader_model >= 5
             && info->features2.features.multiDrawIndirect
             && info->features2.features.drawIndirectFirstInstance
+            && info->features2.features.fragmentStoresAndAtomics
+            && info->features2.features.shaderImageGatherExtended
             && info->features2.features.tessellationShader;
 }
 

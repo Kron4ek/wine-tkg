@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windows.h"
 #include "psapi.h"
 #include "verrsrc.h"
@@ -24,6 +26,8 @@
 #include "winternl.h"
 
 static const BOOL is_win64 = sizeof(void*) > sizeof(int);
+static WCHAR system_directory[MAX_PATH];
+static WCHAR wow64_directory[MAX_PATH];
 
 #if defined(__i386__) || defined(__x86_64__)
 
@@ -194,6 +198,31 @@ static void test_search_path(void)
     ok(!strcmp(search_path, "."), "Got search path '%s', expected '.'\n", search_path);
 }
 
+static BOOL ends_withW(const WCHAR* str, const WCHAR* suffix)
+{
+    size_t strlen = wcslen(str);
+    size_t sfxlen = wcslen(suffix);
+
+    return strlen >= sfxlen && !wcsicmp(str + strlen - sfxlen, suffix);
+}
+
+static unsigned get_machine_bitness(USHORT machine)
+{
+    switch (machine)
+    {
+    case IMAGE_FILE_MACHINE_I386:
+    case IMAGE_FILE_MACHINE_ARM:
+    case IMAGE_FILE_MACHINE_ARMNT:
+        return 32;
+    case IMAGE_FILE_MACHINE_AMD64:
+    case IMAGE_FILE_MACHINE_ARM64:
+        return 64;
+    default:
+        ok(0, "Unsupported machine %x\n", machine);
+        return 0;
+    }
+}
+
 static USHORT get_module_machine(const char* path)
 {
     HANDLE hFile, hMap;
@@ -283,7 +312,7 @@ struct nth_module
 {
     HANDLE              proc;
     unsigned int        index;
-    BOOL                will_fail;
+    BOOL                could_fail;
     IMAGEHLP_MODULE64   module;
 };
 
@@ -295,9 +324,10 @@ static BOOL CALLBACK nth_module_cb(const char* name, DWORD64 base, void* usr)
     if (nth->index--) return TRUE;
     nth->module.SizeOfStruct = sizeof(nth->module);
     ret = SymGetModuleInfo64(nth->proc, base, &nth->module);
-    if (nth->will_fail)
+    if (nth->could_fail)
     {
-        ok(!ret, "SymGetModuleInfo64 should have failed\n");
+        /* Windows11 succeeds into loading the overlapped module */
+        ok(!ret || broken(base == nth->module.BaseOfImage), "SymGetModuleInfo64 should have failed\n");
         nth->module.BaseOfImage = base;
     }
     else
@@ -306,6 +336,24 @@ static BOOL CALLBACK nth_module_cb(const char* name, DWORD64 base, void* usr)
         ok(nth->module.BaseOfImage == base, "Wrong base\n");
     }
     return FALSE;
+}
+
+/* wrapper around EnumerateLoadedModuleW64 which sometimes fails for unknown reasons on Win11,
+ * with STATUS_INFO_LENGTH_MISMATCH as GetLastError()!
+ */
+static BOOL wrapper_EnumerateLoadedModulesW64(HANDLE proc, PENUMLOADED_MODULES_CALLBACKW64 cb, void* usr)
+{
+    BOOL ret;
+    int retry;
+
+    for (retry = !strcmp(winetest_platform, "wine") ? 1 : 5; retry >= 0; retry--)
+    {
+        ret = EnumerateLoadedModulesW64(proc, cb, usr);
+        if (ret || GetLastError() != STATUS_INFO_LENGTH_MISMATCH)
+            break;
+        Sleep(10);
+    }
+    return ret;
 }
 
 static BOOL test_modules(void)
@@ -402,6 +450,9 @@ static void test_modules_overlap(void)
     const char* target1_dll = "c:\\windows\\system32\\kernel32.dll";
     const char* target2_dll = "c:\\windows\\system32\\winmm.dll";
     DWORD imsize = get_module_size(target1_dll);
+    char buffer[512];
+    IMAGEHLP_SYMBOL64* sym = (void*)buffer;
+
     int i, j;
     struct test_module
     {
@@ -448,6 +499,9 @@ static void test_modules_overlap(void)
 
         base = SymLoadModuleEx(dummy, NULL, target1_dll, NULL, base1, 0, NULL, 0);
         ok(base == base1, "SymLoadModuleEx failed: %lu\n", GetLastError());
+        ret = SymAddSymbol(dummy, base1, "winetest_symbol_virtual", base1 + (3 * imsize) / 4, 13, 0);
+        ok(ret, "SymAddSymbol failed: %lu\n", GetLastError());
+
         base = SymLoadModuleEx(dummy, NULL, tests[i].input.name, NULL, tests[i].input.base, tests[i].input.size, NULL, 0);
         if (tests[i].error_code != ~0)
         {
@@ -471,15 +525,72 @@ static void test_modules_overlap(void)
             }
             ok(nth.index == -1, "Expecting more modules\n");
             ok(nth.module.BaseOfImage == tests[i].outputs[j].base, "Wrong base\n");
-            if (!nth.will_fail)
+            if (!nth.could_fail)
             {
                 ok(nth.module.ImageSize == tests[i].outputs[j].size, "Wrong size\n");
                 ok(!strcasecmp(nth.module.ModuleName, tests[i].outputs[j].name), "Wrong name\n");
             }
         }
+        memset(sym, 0, sizeof(*sym));
+        sym->SizeOfStruct = sizeof(*sym);
+        sym->MaxNameLength = sizeof(buffer) - sizeof(*sym);
+        ret = SymGetSymFromName64(dummy, "winetest_symbol_virtual", sym);
+        if (tests[i].error_code == ERROR_SUCCESS || tests[i].outputs[1].base)
+        {
+            /* first module is not unloaded, so our added symbol should be present, with right attributes */
+            ok(ret, "SymGetSymFromName64 has failed: %lu (%d, %d)\n", GetLastError(), i, j);
+            ok(sym->Address == base1 + (3 * imsize) / 4, "Unexpected size %lu\n", sym->Size);
+            ok(sym->Size == 13, "Unexpected size %lu\n", sym->Size);
+            ok(sym->Flags & SYMFLAG_VIRTUAL, "Unexpected flag %lx\n", sym->Flags);
+        }
+        else
+        {
+            /* the first module is really unloaded, the our added symbol has disappead */
+            ok(!ret, "SymGetSymFromName64 should have failed %lu\n", GetLastError());
+        }
         ret = SymCleanup(dummy);
         ok(ret, "SymCleanup failed: %lu\n", GetLastError());
     }
+}
+
+enum process_kind
+{
+    PCSKIND_ERROR,
+    PCSKIND_64BIT,          /* 64 bit process */
+    PCSKIND_32BIT,          /* 32 bit only configuration (Wine, some Win 7...) */
+    PCSKIND_WINE_OLD_WOW64, /* Wine "old" wow64 configuration */
+    PCSKIND_WOW64,          /* Wine "new" wow64 configuration, and Windows with wow64 support */
+};
+
+static enum process_kind get_process_kind(HANDLE process)
+{
+    const BOOL is_win64 = sizeof(void*) == 8;
+    USHORT m1, m2;
+
+    if (!IsWow64Process2(process, &m1, &m2)) return PCSKIND_ERROR;
+    if (m1 == IMAGE_FILE_MACHINE_UNKNOWN && get_machine_bitness(m2) == 32) return PCSKIND_32BIT;
+    if (m1 == IMAGE_FILE_MACHINE_UNKNOWN && get_machine_bitness(m2) == 64) return PCSKIND_64BIT;
+    if (get_machine_bitness(m1) == 32 && get_machine_bitness(m2) == 64)
+    {
+        enum process_kind pcskind = PCSKIND_WOW64;
+        if (!strcmp(winetest_platform, "wine"))
+        {
+            PROCESS_BASIC_INFORMATION pbi;
+            PEB32 peb32;
+            const char* peb_addr;
+
+            if (NtQueryInformationProcess(process, ProcessBasicInformation, &pbi, sizeof(pbi), NULL))
+                return PCSKIND_ERROR;
+
+            peb_addr = (const char*)pbi.PebBaseAddress;
+            if (is_win64) peb_addr += 0x1000;
+            if (!ReadProcessMemory(process, peb_addr, &peb32, sizeof(peb32), NULL)) return PCSKIND_ERROR;
+            if (*(const DWORD*)((const char*)&peb32 + 0x460 /* CloudFileFlags */))
+                pcskind = PCSKIND_WINE_OLD_WOW64;
+        }
+        return pcskind;
+    }
+    return PCSKIND_ERROR;
 }
 
 struct loaded_module_aggregation
@@ -497,55 +608,39 @@ static BOOL CALLBACK aggregate_cb(PCWSTR imagename, DWORD64 base, ULONG sz, PVOI
 {
     struct loaded_module_aggregation* aggregation = usr;
     IMAGEHLP_MODULEW64 im;
-    size_t image_len;
     BOOL ret, wow64;
-    WCHAR buffer[MAX_PATH];
 
     memset(&im, 0, sizeof(im));
     im.SizeOfStruct = sizeof(im);
 
-    image_len = wcslen(imagename);
-
     ret = SymGetModuleInfoW64(aggregation->proc, base, &im);
     if (ret)
-        ok(aggregation->count_exe && image_len >= 4 && !wcscmp(imagename + image_len - 4, L".exe"),
+        ok(aggregation->count_exe && ends_withW(imagename, L".exe"),
            "%ls shouldn't already be loaded\n", imagename);
     else
     {
         ok(!ret, "Module %ls shouldn't be loaded\n", imagename);
         ret = SymLoadModuleExW(aggregation->proc, NULL, imagename, NULL, base, sz, NULL, 0);
-        ok(ret, "SymLoadModuleExW failed on %ls: %lu\n", imagename, GetLastError());
+        ok(ret || broken(GetLastError() == ERROR_SUCCESS) /* Win10/64 v1607 return this on bcryptPrimitives.DLL */,
+           "SymLoadModuleExW failed on %ls: %lu\n", imagename, GetLastError());
         ret = SymGetModuleInfoW64(aggregation->proc, base, &im);
         ok(ret, "SymGetModuleInfoW64 failed: %lu\n", GetLastError());
     }
 
-    switch (im.MachineType)
+    switch (get_machine_bitness(im.MachineType))
     {
-    case IMAGE_FILE_MACHINE_UNKNOWN:
-        break;
-    case IMAGE_FILE_MACHINE_I386:
-    case IMAGE_FILE_MACHINE_ARM:
-    case IMAGE_FILE_MACHINE_ARMNT:
-        aggregation->count_32bit++;
-        break;
-    case IMAGE_FILE_MACHINE_AMD64:
-    case IMAGE_FILE_MACHINE_ARM64:
-        aggregation->count_64bit++;
-        break;
-    default:
-        ok(0, "Unsupported machine %lx\n", im.MachineType);
-        break;
+    case 32: aggregation->count_32bit++; break;
+    case 64: aggregation->count_64bit++; break;
+    default: break;
     }
-    if (image_len >= 4 && !wcsicmp(imagename + image_len - 4, L".exe"))
+    if (ends_withW(imagename, L".exe"))
         aggregation->count_exe++;
     if (!wcsicmp(im.ModuleName, L"ntdll"))
         aggregation->count_ntdll++;
-    if (GetSystemDirectoryW(buffer, ARRAY_SIZE(buffer)) &&
-        !wcsnicmp(imagename, buffer, wcslen(buffer)))
+    if (!wcsnicmp(imagename, system_directory, wcslen(system_directory)))
         aggregation->count_systemdir++;
-    if (is_win64 && IsWow64Process(aggregation->proc, &wow64) && wow64 &&
-        GetSystemWow64DirectoryW(buffer, ARRAY_SIZE(buffer)) &&
-        !wcsnicmp(imagename, buffer, wcslen(buffer)))
+    if (IsWow64Process(aggregation->proc, &wow64) && wow64 &&
+        !wcsnicmp(imagename, wow64_directory, wcslen(wow64_directory)))
         aggregation->count_wowdir++;
 
     return TRUE;
@@ -576,7 +671,7 @@ static void test_loaded_modules(void)
     memset(&aggregation, 0, sizeof(aggregation));
     aggregation.proc = pi.hProcess;
 
-    ret = EnumerateLoadedModulesW64(pi.hProcess, aggregate_cb, &aggregation);
+    ret = wrapper_EnumerateLoadedModulesW64(pi.hProcess, aggregate_cb, &aggregation);
     ok(ret, "EnumerateLoadedModulesW64 failed: %lu\n", GetLastError());
 
     if (is_win64)
@@ -598,9 +693,26 @@ static void test_loaded_modules(void)
            aggregation.count_32bit, aggregation.count_64bit);
         ok(aggregation.count_exe == 1 && aggregation.count_ntdll == 1, "Wrong kind aggregation count %u %u\n",
            aggregation.count_exe, aggregation.count_ntdll);
-        todo_wine_if(is_wow64)
-        ok(aggregation.count_systemdir > 2 && !aggregation.count_wowdir, "Wrong directory aggregation count %u %u\n",
-           aggregation.count_systemdir, aggregation.count_wowdir);
+        switch (get_process_kind(pi.hProcess))
+        {
+        case PCSKIND_ERROR:
+            ok(0, "Unknown process kind\n");
+            break;
+        case PCSKIND_64BIT:
+        case PCSKIND_WOW64:
+            todo_wine
+            ok(aggregation.count_systemdir > 2 && aggregation.count_wowdir == 1, "Wrong directory aggregation count %u %u\n",
+               aggregation.count_systemdir, aggregation.count_wowdir);
+            break;
+        case PCSKIND_32BIT:
+            ok(aggregation.count_systemdir > 2 && aggregation.count_wowdir == 0, "Wrong directory aggregation count %u %u\n",
+               aggregation.count_systemdir, aggregation.count_wowdir);
+            break;
+        case PCSKIND_WINE_OLD_WOW64:
+            ok(aggregation.count_systemdir == 1 && aggregation.count_wowdir > 2, "Wrong directory aggregation count %u %u\n",
+               aggregation.count_systemdir, aggregation.count_wowdir);
+            break;
+        }
     }
 
     SymCleanup(pi.hProcess);
@@ -625,7 +737,7 @@ static void test_loaded_modules(void)
             memset(&aggregation, 0, sizeof(aggregation));
             aggregation.proc = pi.hProcess;
 
-            ret = EnumerateLoadedModulesW64(pi.hProcess, aggregate_cb, &aggregation);
+            ret = wrapper_EnumerateLoadedModulesW64(pi.hProcess, aggregate_cb, &aggregation);
             ok(ret, "EnumerateLoadedModulesW64 failed: %lu\n", GetLastError());
 
             todo_wine
@@ -663,7 +775,7 @@ static void test_loaded_modules(void)
             ok(ret, "SymInitialize failed: %lu\n", GetLastError());
             memset(&aggregation2, 0, sizeof(aggregation2));
             aggregation2.proc = pi.hProcess;
-            ret = EnumerateLoadedModulesW64(pi.hProcess, aggregate_cb, &aggregation2);
+            ret = wrapper_EnumerateLoadedModulesW64(pi.hProcess, aggregate_cb, &aggregation2);
             ok(ret, "EnumerateLoadedModulesW64 failed: %lu\n", GetLastError());
 
             ok(aggregation2.count_32bit && aggregation2.count_64bit, "Wrong bitness aggregation count %u %u\n",
@@ -705,6 +817,12 @@ START_TEST(dbghelp)
 
     ret = SymCleanup(GetCurrentProcess());
     ok(ret, "got error %lu\n", GetLastError());
+
+    ret = GetSystemDirectoryW(system_directory, ARRAY_SIZE(system_directory));
+    ok(ret, "GetSystemDirectoryW failed: %lu\n", GetLastError());
+    /* failure happens on a 32bit only wine setup */
+    if (!GetSystemWow64DirectoryW(wow64_directory, ARRAY_SIZE(wow64_directory)))
+        wow64_directory[0] = L'\0';
 
     if (test_modules())
     {

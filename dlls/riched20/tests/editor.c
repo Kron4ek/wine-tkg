@@ -1891,20 +1891,41 @@ static void test_EM_GETSELTEXT(void)
     const char * expect = "bar\rfoo";
     char buffer[1024] = {0};
     LRESULT result;
+    BOOL bad_getsel;
+    DWORD gle;
+
+    SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)"a");
+    SendMessageA(hwndRichEdit, EM_SETSEL, 0, -1);
+    SetLastError(0xdeadbeef);
+    result = SendMessageA(hwndRichEdit, EM_GETSELTEXT, 0, (LPARAM)buffer);
+    gle = GetLastError();
+    ok((result > 0 && gle == 0xdeadbeef) ||
+       broken(result == 0 && gle == ERROR_INVALID_PARAMETER /* Hindi */),
+       "EM_GETSELTEXT returned %Id gle=%lu\n", result, gle);
+    bad_getsel = (gle != 0xdeadbeef);
+    if (bad_getsel)
+        trace("EM_GETSELTEXT is broken, some tests will be ignored\n");
 
     SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)text1);
 
     SendMessageA(hwndRichEdit, EM_SETSEL, 4, 11);
+    SetLastError(0xdeadbeef);
     result = SendMessageA(hwndRichEdit, EM_GETSELTEXT, 0, (LPARAM)buffer);
-    ok(result == 7, "EM_GETSELTEXT returned %Id\n", result);
-    ok(!strcmp(expect, buffer), "EM_GETSELTEXT filled %s\n", buffer);
+    gle = GetLastError();
+    ok(result == 7 || broken(bad_getsel && result == 0),
+       "EM_GETSELTEXT returned %Id gle=%lu\n", result, gle);
+    ok(!strcmp(expect, buffer) || broken(bad_getsel &&  !*buffer),
+       "EM_GETSELTEXT filled %s gle=%lu\n", buffer, gle);
 
     SendMessageA(hwndRichEdit, WM_SETTEXT, 0, (LPARAM)text2);
 
     SendMessageA(hwndRichEdit, EM_SETSEL, 4, 11);
+    SetLastError(0xdeadbeef);
     result = SendMessageA(hwndRichEdit, EM_GETSELTEXT, 0, (LPARAM)buffer);
-    ok(result == 7, "EM_GETSELTEXT returned %Id\n", result);
-    ok(!strcmp(expect, buffer), "EM_GETSELTEXT filled %s\n", buffer);
+    ok(result == 7 || broken(bad_getsel && result == 0),
+       "EM_GETSELTEXT returned %Id gle=%lu\n", result, gle);
+    ok(!strcmp(expect, buffer) || broken(bad_getsel &&  !*buffer),
+       "EM_GETSELTEXT filled %s gle=%lu\n", buffer, gle);
 
     /* Test with multibyte character */
     if (!is_lang_japanese)
@@ -5094,7 +5115,7 @@ static void test_EM_EXSETSEL(void)
         cr.cpMin = 4; cr.cpMax = 8;
         result =  SendMessageA(hwndRichEdit, EM_EXSETSEL, 0, (LPARAM)&cr);
         ok(result == 8, "EM_EXSETSEL return %Id expected 8\n", result);
-        result = SendMessageA(hwndRichEdit, EM_GETSELTEXT, sizeof(bufA), (LPARAM)bufA);
+        result = SendMessageA(hwndRichEdit, EM_GETSELTEXT, 0, (LPARAM)bufA);
         ok(!strcmp(bufA, "ef\x8e\xf0g"), "EM_GETSELTEXT return incorrect string\n");
         SendMessageA(hwndRichEdit, EM_EXGETSEL, 0, (LPARAM)&cr);
         ok(cr.cpMin == 4, "Selection start incorrectly: %ld expected 4\n", cr.cpMin);
@@ -5169,7 +5190,7 @@ static void test_EM_SETSEL(void)
         /*                                                 012345     6  78901 */
         result =  SendMessageA(hwndRichEdit, EM_SETSEL, 4, 8);
         ok(result == 8, "EM_SETSEL return %Id expected 8\n", result);
-        result = SendMessageA(hwndRichEdit, EM_GETSELTEXT, sizeof(buffA), (LPARAM)buffA);
+        result = SendMessageA(hwndRichEdit, EM_GETSELTEXT, 0, (LPARAM)buffA);
         ok(!strcmp(buffA, "ef\x8e\xf0g"), "EM_GETSELTEXT return incorrect string\n");
         result = SendMessageA(hwndRichEdit, EM_GETSEL, (WPARAM)&sel_start, (LPARAM)&sel_end);
         ok(sel_start == 4, "Selection start incorrectly: %d expected 4\n", sel_start);
@@ -7301,6 +7322,51 @@ static void test_word_movement(void)
     DestroyWindow(hwnd);
 }
 
+static void test_word_movement_multiline(void)
+{
+    DWORD sel_start, sel_end;
+    LRESULT result;
+    HWND hwnd;
+
+    /* multi-line control inserts CR normally */
+    hwnd = new_richedit(NULL);
+
+    result = SendMessageA(hwnd, WM_SETTEXT, 0, (LPARAM)"Lorem ipsum\rdolor sit\rnamet");
+    ok(result == TRUE, "WM_SETTEXT returned %Iu.\n", result);
+    SendMessageA(hwnd, EM_SETSEL, 0, 0);
+    /* [|Lorem ipsum] [dolor sit] [amet] */
+
+    send_ctrl_key(hwnd, VK_RIGHT);
+    /* [Lorem |ipsum] [dolor sit] [amet] */
+    sel_start = sel_end = 0xdeadbeefUL;
+    SendMessageA(hwnd, EM_GETSEL, (WPARAM)&sel_start, (LPARAM)&sel_end);
+    ok(sel_start == sel_end, "expected sel length to be 0, got %lu.\n", sel_end - sel_start);
+    ok(sel_start == 6, "expected sel_start to be %u, got %lu.\n", 6, sel_start);
+
+    send_ctrl_key(hwnd, VK_RIGHT);
+    /* [Lorem ipsum|] [dolor sit] [amet] */
+    sel_start = sel_end = 0xdeadbeefUL;
+    SendMessageA(hwnd, EM_GETSEL, (WPARAM)&sel_start, (LPARAM)&sel_end);
+    ok(sel_start == sel_end, "expected sel length to be 0, got %lu.\n", sel_end - sel_start);
+    ok(sel_start == 11, "expected sel_start to be %u, got %lu.\n", 11, sel_start);
+
+    send_ctrl_key(hwnd, VK_RIGHT);
+    /* [Lorem ipsum] [|dolor sit] [amet] */
+    sel_start = sel_end = 0xdeadbeefUL;
+    SendMessageA(hwnd, EM_GETSEL, (WPARAM)&sel_start, (LPARAM)&sel_end);
+    ok(sel_start == sel_end, "expected sel length to be 0, got %lu.\n", sel_end - sel_start);
+    ok(sel_start == 12, "expected sel_start to be %u, got %lu.\n", 12, sel_start);
+
+    send_ctrl_key(hwnd, VK_LEFT);
+    /* [Lorem ipsum|] [dolor sit] [amet] */
+    sel_start = sel_end = 0xdeadbeefUL;
+    SendMessageA(hwnd, EM_GETSEL, (WPARAM)&sel_start, (LPARAM)&sel_end);
+    ok(sel_start == sel_end, "expected sel length to be 0, got %lu.\n", sel_end - sel_start);
+    ok(sel_start == 11, "expected sel_start to be %u, got %lu.\n", 11, sel_start);
+
+    DestroyWindow(hwnd);
+}
+
 static void test_EM_CHARFROMPOS(void)
 {
     HWND hwnd;
@@ -9209,6 +9275,7 @@ START_TEST( editor )
   test_eventMask();
   test_undo_coalescing();
   test_word_movement();
+  test_word_movement_multiline();
   test_EM_CHARFROMPOS();
   test_SETPARAFORMAT();
   test_word_wrap();

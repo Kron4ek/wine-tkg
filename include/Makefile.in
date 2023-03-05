@@ -182,6 +182,9 @@ SOURCES = \
 	dciddi.h \
 	dciman.h \
 	dcommon.idl \
+	dcomp.idl \
+	dcompanimation.idl \
+	dcomptypes.idl \
 	dde.h \
 	dde.rh \
 	ddeml.h \
@@ -822,6 +825,7 @@ SOURCES = \
 	windows.media.speechsynthesis.idl \
 	windows.networking.connectivity.idl \
 	windows.networking.idl \
+	windows.security.credentials.idl \
 	windows.security.cryptography.idl \
 	windows.storage.streams.idl \
 	windows.system.idl \

@@ -3045,6 +3045,7 @@ static void test_key_map(void)
 
 #define shift 1
 #define ctrl  2
+#define menu  4
 
 static const struct tounicode_tests
 {
@@ -3057,6 +3058,9 @@ static const struct tounicode_tests
 {
     { 0, 0, 'a', 1, {'a',0}},
     { 0, shift, 'a', 1, {'A',0}},
+    { 0, menu, 'a', 1, {'a',0}},
+    { 0, shift|menu, 'a', 1, {'A',0}},
+    { 0, shift|ctrl|menu, 'a', 0, {}},
     { 0, ctrl, 'a', 1, {1, 0}},
     { 0, shift|ctrl, 'a', 1, {1, 0}},
     { VK_TAB, ctrl, 0, 0, {}},
@@ -3145,6 +3149,7 @@ static void test_ToUnicode(void)
 
         state[VK_SHIFT]   = state[VK_LSHIFT]   = (mod & shift) ? HIGHEST_BIT : 0;
         state[VK_CONTROL] = state[VK_LCONTROL] = (mod & ctrl) ? HIGHEST_BIT : 0;
+        state[VK_MENU]    = state[VK_LMENU]    = (mod & menu) ? HIGHEST_BIT : 0;
 
         ret = ToUnicode(vk, scan, state, wStr, 4, 0);
         ok(ret == utests[i].expect_ret, "%d: got %d expected %d\n", i, ret, utests[i].expect_ret);
@@ -3189,7 +3194,7 @@ static void test_ToAscii(void)
     ok(character == '\r', "ToAscii for Return was %i (expected 13)\n", character);
 
     wstr[0] = 0;
-    ret = ToUnicode('A', SC_A, state, wstr, sizeof(wstr), 0);
+    ret = ToUnicode('A', SC_A, state, wstr, ARRAY_SIZE(wstr), 0);
     ok(ret == 1, "ToUnicode(A) returned %i, expected 1\n", ret);
 
     str[0] = '\0';

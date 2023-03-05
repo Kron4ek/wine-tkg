@@ -827,11 +827,8 @@ static void test_HeapCreate(void)
     size = 0;
     SetLastError( 0xdeadbeef );
     ret = pHeapQueryInformation( 0, HeapCompatibilityInformation, &compat_info, sizeof(compat_info), &size );
-    todo_wine
     ok( !ret, "HeapQueryInformation succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_NOACCESS, "got error %lu\n", GetLastError() );
-    todo_wine
     ok( size == 0, "got size %Iu\n", size );
 
     size = 0;
@@ -871,7 +868,6 @@ static void test_HeapCreate(void)
     ok( ret, "HeapSetInformation failed, error %lu\n", GetLastError() );
     ret = pHeapQueryInformation( heap, HeapCompatibilityInformation, &compat_info, sizeof(compat_info), &size );
     ok( ret, "HeapQueryInformation failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( compat_info == 2, "got HeapCompatibilityInformation %lu\n", compat_info );
 
     /* cannot be undone */
@@ -879,24 +875,43 @@ static void test_HeapCreate(void)
     compat_info = 0;
     SetLastError( 0xdeadbeef );
     ret = pHeapSetInformation( heap, HeapCompatibilityInformation, &compat_info, sizeof(compat_info) );
-    todo_wine
     ok( !ret, "HeapSetInformation succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_GEN_FAILURE, "got error %lu\n", GetLastError() );
     compat_info = 1;
     SetLastError( 0xdeadbeef );
     ret = pHeapSetInformation( heap, HeapCompatibilityInformation, &compat_info, sizeof(compat_info) );
-    todo_wine
     ok( !ret, "HeapSetInformation succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_GEN_FAILURE, "got error %lu\n", GetLastError() );
     ret = pHeapQueryInformation( heap, HeapCompatibilityInformation, &compat_info, sizeof(compat_info), &size );
     ok( ret, "HeapQueryInformation failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( compat_info == 2, "got HeapCompatibilityInformation %lu\n", compat_info );
 
     ret = HeapDestroy( heap );
     ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
+
+
+    /* cannot set LFH with HEAP_NO_SERIALIZE */
+
+    heap = HeapCreate( HEAP_NO_SERIALIZE, 0, 0 );
+    ok( !!heap, "HeapCreate failed, error %lu\n", GetLastError() );
+    ok( !((ULONG_PTR)heap & 0xffff), "wrong heap alignment\n" );
+
+    ret = pHeapQueryInformation( heap, HeapCompatibilityInformation, &compat_info, sizeof(compat_info), &size );
+    ok( ret, "HeapQueryInformation failed, error %lu\n", GetLastError() );
+    ok( compat_info == 0, "got HeapCompatibilityInformation %lu\n", compat_info );
+
+    compat_info = 2;
+    SetLastError( 0xdeadbeef );
+    ret = pHeapSetInformation( heap, HeapCompatibilityInformation, &compat_info, sizeof(compat_info) );
+    ok( !ret, "HeapSetInformation succeeded\n" );
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+    ret = pHeapQueryInformation( heap, HeapCompatibilityInformation, &compat_info, sizeof(compat_info), &size );
+    ok( ret, "HeapQueryInformation failed, error %lu\n", GetLastError() );
+    ok( compat_info == 0, "got HeapCompatibilityInformation %lu\n", compat_info );
+
+    ret = HeapDestroy( heap );
+    ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
+
 
     /* some allocation pattern automatically enables LFH */
 
@@ -913,7 +928,6 @@ static void test_HeapCreate(void)
 
     ret = pHeapQueryInformation( heap, HeapCompatibilityInformation, &compat_info, sizeof(compat_info), &size );
     ok( ret, "HeapQueryInformation failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( compat_info == 2, "got HeapCompatibilityInformation %lu\n", compat_info );
 
     ret = HeapDestroy( heap );
@@ -931,7 +945,6 @@ static void test_HeapCreate(void)
     ok( ret, "HeapSetInformation failed, error %lu\n", GetLastError() );
     ret = pHeapQueryInformation( heap, HeapCompatibilityInformation, &compat_info, sizeof(compat_info), &size );
     ok( ret, "HeapQueryInformation failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( compat_info == 2, "got HeapCompatibilityInformation %lu\n", compat_info );
 
     for (i = 0; i < 0x11; i++) ptrs[i] = pHeapAlloc( heap, 0, 24 + 2 * sizeof(void *) );
@@ -973,6 +986,7 @@ static void test_HeapCreate(void)
     ok( entries[0].cbData <= 0x1000 /* sizeof(*heap) */, "got cbData %#lx\n", entries[0].cbData );
     ok( entries[0].cbOverhead == 0, "got cbOverhead %#x\n", entries[0].cbOverhead );
     ok( entries[0].iRegionIndex == 0, "got iRegionIndex %d\n", entries[0].iRegionIndex );
+    todo_wine /* Wine currently reports the LFH group as a single block here */
     ok( entries[1].wFlags == 0, "got wFlags %#x\n", entries[1].wFlags );
 
     for (i = 0; i < 0x12; i++)
@@ -1053,6 +1067,7 @@ static void test_HeapCreate(void)
     for (i = 1; i < count - 2; i++)
     {
         if (entries[i].wFlags != PROCESS_HEAP_ENTRY_BUSY) continue;
+        todo_wine /* Wine currently reports the LFH group as a single block */
         ok( entries[i].cbData == 0x18 + 2 * sizeof(void *), "got cbData %#lx\n", entries[i].cbData );
         ok( entries[i].cbOverhead == 0x8, "got cbOverhead %#x\n", entries[i].cbOverhead );
     }
@@ -1205,7 +1220,6 @@ static void test_HeapCreate(void)
 
     ret = pHeapQueryInformation( heap, HeapCompatibilityInformation, &compat_info, sizeof(compat_info), &size );
     ok( ret, "HeapQueryInformation failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( compat_info == 2, "got HeapCompatibilityInformation %lu\n", compat_info );
 
     /* locking is serialized */
@@ -1232,7 +1246,6 @@ static void test_HeapCreate(void)
     thread_params.flags = 0;
     SetEvent( thread_params.start_event );
     res = WaitForSingleObject( thread_params.ready_event, 100 );
-    todo_wine
     ok( !res, "WaitForSingleObject returned %#lx, error %lu\n", res, GetLastError() );
     ret = HeapUnlock( heap );
     ok( ret, "HeapUnlock failed, error %lu\n", GetLastError() );
@@ -1679,9 +1692,7 @@ static void test_GlobalAlloc(void)
     ok( size == small_size, "GlobalSize returned %Iu\n", size );
     SetLastError( 0xdeadbeef );
     tmp_mem = GlobalReAlloc( mem, small_size, 0 );
-    todo_wine
     ok( !tmp_mem, "GlobalReAlloc succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_NOT_ENOUGH_MEMORY, "got error %lu\n", GetLastError() );
     if (tmp_mem) mem = tmp_mem;
     tmp_mem = GlobalReAlloc( mem, 1024 * 1024, GMEM_MODIFY );
@@ -1697,7 +1708,6 @@ static void test_GlobalAlloc(void)
     ok( !!mem, "GlobalAlloc failed, error %lu\n", GetLastError() );
     tmp_mem = GlobalReAlloc( mem, small_size + 1, GMEM_MOVEABLE );
     ok( !!tmp_mem, "GlobalReAlloc failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( tmp_mem != mem, "GlobalReAlloc didn't relocate memory\n" );
     ptr = GlobalLock( tmp_mem );
     ok( !!ptr, "GlobalLock failed, error %lu\n", GetLastError() );
@@ -1844,8 +1854,8 @@ static void test_GlobalAlloc(void)
         {
             ok( !is_mem_entry( tmp_mem ), "unexpected moveable %p\n", tmp_mem );
             if (flags == GMEM_MODIFY) ok( tmp_mem == mem, "GlobalReAlloc returned %p\n", tmp_mem );
-            else if (flags != GMEM_MOVEABLE) todo_wine_if(!flags) ok( !tmp_mem, "GlobalReAlloc succeeded\n" );
-            else todo_wine ok( tmp_mem != mem, "GlobalReAlloc returned %p\n", tmp_mem );
+            else if (flags != GMEM_MOVEABLE) ok( !tmp_mem, "GlobalReAlloc succeeded\n" );
+            else ok( tmp_mem != mem, "GlobalReAlloc returned %p\n", tmp_mem );
         }
         else
         {
@@ -1859,7 +1869,7 @@ static void test_GlobalAlloc(void)
 
         size = GlobalSize( mem );
         if (flags == GMEM_MOVEABLE) ok( size == 0 || broken( size == 1 ) /* w7 */, "GlobalSize returned %Iu\n", size );
-        else todo_wine_if(!flags) ok( size == small_size, "GlobalSize returned %Iu\n", size );
+        else ok( size == small_size, "GlobalSize returned %Iu\n", size );
 
         mem = GlobalFree( mem );
         ok( !mem, "GlobalFree failed, error %lu\n", GetLastError() );
@@ -2417,9 +2427,7 @@ static void test_LocalAlloc(void)
     ok( size == small_size, "LocalSize returned %Iu\n", size );
     SetLastError( 0xdeadbeef );
     tmp_mem = LocalReAlloc( mem, small_size, 0 );
-    todo_wine
     ok( !tmp_mem, "LocalReAlloc succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_NOT_ENOUGH_MEMORY, "got error %lu\n", GetLastError() );
     if (tmp_mem) mem = tmp_mem;
     tmp_mem = LocalReAlloc( mem, 1024 * 1024, LMEM_MODIFY );
@@ -2435,7 +2443,6 @@ static void test_LocalAlloc(void)
     ok( !!mem, "LocalAlloc failed, error %lu\n", GetLastError() );
     tmp_mem = LocalReAlloc( mem, small_size + 1, LMEM_MOVEABLE );
     ok( !!tmp_mem, "LocalReAlloc failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( tmp_mem != mem, "LocalReAlloc didn't relocate memory\n" );
     ptr = LocalLock( tmp_mem );
     ok( !!ptr, "LocalLock failed, error %lu\n", GetLastError() );
@@ -2528,13 +2535,13 @@ static void test_LocalAlloc(void)
         tmp_mem = LocalReAlloc( mem, 0, flags );
         ok( !is_mem_entry( tmp_mem ), "unexpected moveable %p\n", tmp_mem );
         if (flags & LMEM_MODIFY) ok( tmp_mem == mem, "LocalReAlloc returned %p\n", tmp_mem );
-        else if (flags != LMEM_MOVEABLE) todo_wine_if(!flags) ok( !tmp_mem, "LocalReAlloc succeeded\n" );
-        else todo_wine ok( tmp_mem != mem, "LocalReAlloc returned %p\n", tmp_mem );
+        else if (flags != LMEM_MOVEABLE) ok( !tmp_mem, "LocalReAlloc succeeded\n" );
+        else ok( tmp_mem != mem, "LocalReAlloc returned %p\n", tmp_mem );
         if (tmp_mem) mem = tmp_mem;
 
         size = LocalSize( mem );
         if (flags == LMEM_MOVEABLE) ok( size == 0 || broken( size == 1 ) /* w7 */, "LocalSize returned %Iu\n", size );
-        else todo_wine_if(!flags) ok( size == small_size, "LocalSize returned %Iu\n", size );
+        else ok( size == small_size, "LocalSize returned %Iu\n", size );
 
         mem = LocalFree( mem );
         ok( !mem, "LocalFree failed, error %lu\n", GetLastError() );

@@ -568,8 +568,8 @@ struct HTMLOuterWindow {
     struct list browser_entry;
 
     READYSTATE readystate;
-    BOOL readystate_locked;
-    unsigned readystate_pending;
+    unsigned readystate_locked;
+    BOOL readystate_pending;
 
     HTMLInnerWindow *pending_window;
     HTMLLocation location;
@@ -607,6 +607,7 @@ struct HTMLInnerWindow {
     VARIANT performance;
     HTMLPerformanceTiming *performance_timing;
 
+    unsigned blocking_depth;
     unsigned parser_callback_cnt;
     struct list script_queue;
 
@@ -1283,6 +1284,18 @@ struct task_t {
     struct list entry;
 };
 
+typedef struct event_task_t event_task_t;
+typedef void (*event_task_proc_t)(event_task_t*);
+
+struct event_task_t {
+    LONG target_magic;
+    BOOL thread_blocked;
+    event_task_proc_t proc;
+    event_task_proc_t destr;
+    struct list entry;
+    HTMLInnerWindow *window;
+};
+
 typedef struct {
     task_t header;
     HTMLDocumentObj *doc;
@@ -1291,17 +1304,22 @@ typedef struct {
 typedef struct {
     HWND thread_hwnd;
     struct list task_list;
+    struct list event_task_list;
     struct list timer_list;
+    struct list *pending_xhr_events_tail;
     struct wine_rb_tree session_storage_map;
+    void *blocking_xhr;
 } thread_data_t;
 
 thread_data_t *get_thread_data(BOOL) DECLSPEC_HIDDEN;
 HWND get_thread_hwnd(void) DECLSPEC_HIDDEN;
+void unblock_tasks_and_timers(thread_data_t*) DECLSPEC_HIDDEN;
 int session_storage_map_cmp(const void*,const struct wine_rb_entry*) DECLSPEC_HIDDEN;
 void destroy_session_storage(thread_data_t*) DECLSPEC_HIDDEN;
 
 LONG get_task_target_magic(void) DECLSPEC_HIDDEN;
 HRESULT push_task(task_t*,task_proc_t,task_proc_t,LONG) DECLSPEC_HIDDEN;
+HRESULT push_event_task(event_task_t*,HTMLInnerWindow*,event_task_proc_t,event_task_proc_t,LONG) DECLSPEC_HIDDEN;
 void remove_target_tasks(LONG) DECLSPEC_HIDDEN;
 ULONGLONG get_time_stamp(void) DECLSPEC_HIDDEN;
 

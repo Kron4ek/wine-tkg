@@ -135,8 +135,8 @@ static const VK_TO_BIT vk_to_bit[] =
 static const MODIFIERS modifiers =
 {
     .pVkToBit = (VK_TO_BIT *)vk_to_bit,
-    .wMaxModBits = 3,
-    .ModNumber = {0, 1, 2, 3},
+    .wMaxModBits = 7,
+    .ModNumber = {0, 1, 2, 3, 0, 1, 0, 0},
 };
 
 static const VK_TO_WCHARS2 vk_to_wchars2[] =
@@ -751,8 +751,7 @@ BOOL WINAPI NtUserGetCursorInfo( CURSORINFO *info )
 
 static void check_for_events( UINT flags )
 {
-    LARGE_INTEGER zero = { .QuadPart = 0 };
-    if (user_driver->pMsgWaitForMultipleObjectsEx( 0, NULL, &zero, flags, 0 ) == WAIT_TIMEOUT)
+    if (!user_driver->pProcessEvents( flags ))
         flush_window_surfaces( TRUE );
 }
 

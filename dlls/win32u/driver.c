@@ -761,7 +761,7 @@ static BOOL nulldrv_GetCurrentDisplaySettings( LPCWSTR name, BOOL is_primary, LP
 
 static INT nulldrv_GetDisplayDepth( LPCWSTR name, BOOL is_primary )
 {
-    return 32;
+    return -1; /* use default implementation */
 }
 
 static BOOL nulldrv_UpdateDisplayDevices( const struct gdi_device_manager *manager, BOOL force, void *param )
@@ -806,13 +806,9 @@ static void nulldrv_GetDC( HDC hdc, HWND hwnd, HWND top_win, const RECT *win_rec
 {
 }
 
-static NTSTATUS nulldrv_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
-                                                     const LARGE_INTEGER *timeout,
-                                                     DWORD mask, DWORD flags )
+static BOOL nulldrv_ProcessEvents( DWORD mask )
 {
-    if (!count && timeout && !timeout->QuadPart) return WAIT_TIMEOUT;
-    return NtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
-                                     !!(flags & MWMO_ALERTABLE), timeout );
+    return FALSE;
 }
 
 static void nulldrv_ReleaseDC( HWND hwnd, HDC hdc )
@@ -936,6 +932,8 @@ static const WCHAR guid_key_suffixW[] = {'}','\\','0','0','0','0'};
 
 static BOOL load_desktop_driver( HWND hwnd )
 {
+    static const WCHAR guid_nullW[] = {'0','0','0','0','0','0','0','0','-','0','0','0','0','-','0','0','0','0','-',
+                                       '0','0','0','0','-','0','0','0','0','0','0','0','0','0','0','0','0',0};
     WCHAR key[ARRAYSIZE(guid_key_prefixW) + 40 + ARRAYSIZE(guid_key_suffixW)], *ptr;
     char buf[4096];
     KEY_VALUE_PARTIAL_INFORMATION *info = (void *)buf;
@@ -959,9 +957,15 @@ static BOOL load_desktop_driver( HWND hwnd )
     memcpy( key, guid_key_prefixW, sizeof(guid_key_prefixW) );
     ptr = key + ARRAYSIZE(guid_key_prefixW);
     if (NtQueryInformationAtom( guid_atom, AtomBasicInformation, buf, sizeof(buf), NULL ))
-        return FALSE;
-    memcpy( ptr, abi->Name, abi->NameLength );
-    ptr += abi->NameLength / sizeof(WCHAR);
+    {
+        wcscpy( ptr, guid_nullW );
+        ptr += ARRAY_SIZE(guid_nullW) - 1;
+    }
+    else
+    {
+        memcpy( ptr, abi->Name, abi->NameLength );
+        ptr += abi->NameLength / sizeof(WCHAR);
+    }
     memcpy( ptr, guid_key_suffixW, sizeof(guid_key_suffixW) );
     ptr += ARRAY_SIZE(guid_key_suffixW);
 
@@ -1202,7 +1206,7 @@ static const struct user_driver_funcs lazy_load_driver =
     nulldrv_DestroyWindow,
     loaderdrv_FlashWindowEx,
     loaderdrv_GetDC,
-    nulldrv_MsgWaitForMultipleObjectsEx,
+    nulldrv_ProcessEvents,
     nulldrv_ReleaseDC,
     nulldrv_ScrollDC,
     nulldrv_SetActiveWindow,
@@ -1279,7 +1283,7 @@ void __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version
     SET_USER_FUNC(DestroyWindow);
     SET_USER_FUNC(FlashWindowEx);
     SET_USER_FUNC(GetDC);
-    SET_USER_FUNC(MsgWaitForMultipleObjectsEx);
+    SET_USER_FUNC(ProcessEvents);
     SET_USER_FUNC(ReleaseDC);
     SET_USER_FUNC(ScrollDC);
     SET_USER_FUNC(SetActiveWindow);

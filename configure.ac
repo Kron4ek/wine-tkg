@@ -51,6 +51,7 @@ AC_ARG_WITH(osmesa,     AS_HELP_STRING([--without-osmesa],[do not use the OSMesa
 AC_ARG_WITH(oss,       AS_HELP_STRING([--without-oss],[do not use the OSS sound support]))
 AC_ARG_WITH(pcap,      AS_HELP_STRING([--without-pcap],[do not use the Packet Capture library]),
             [if test "x$withval" = "xno"; then ac_cv_header_pcap_pcap_h=no; fi])
+AC_ARG_WITH(pcsclite,  AS_HELP_STRING([--without-pcsclite],[do not use PCSC lite]))
 AC_ARG_WITH(pthread,   AS_HELP_STRING([--without-pthread],[do not use the pthread library]),
             [if test "x$withval" = "xno"; then ac_cv_header_pthread_h=no; fi])
 AC_ARG_WITH(pulse,     AS_HELP_STRING([--without-pulse],[do not use PulseAudio sound support]))
@@ -652,8 +653,6 @@ LIBEXT="so"
 WINE_PATH_SONAME_TOOLS
 WINE_CONFIG_HELPERS
 
-libwine_soversion=`expr $libwine_version : '\([[0-9]]*\)\..*'`
-
 case $host_os in
   cygwin*|mingw32*)
     LIBEXT="dll"
@@ -731,10 +730,7 @@ case $host_os in
     AC_LANG_POP([Objective C])
 
     UNIXLDFLAGS="-dynamiclib -install_name @rpath/\$(UNIXLIB) -Wl,-rpath,@loader_path\/"
-    AC_SUBST(LIBWINE_SHAREDLIB,"libwine.$libwine_version.dylib")
-    AC_SUBST(LIBWINE_LDFLAGS,["-dynamiclib -install_name @rpath/libwine.$libwine_soversion.dylib -Wl,-rpath,@loader_path/ -compatibility_version $libwine_soversion -current_version $libwine_version"])
     AC_SUBST(WINELOADER_DEPENDS,"wine_info.plist")
-    TOP_INSTALL_LIB="$TOP_INSTALL_LIB libs/wine/libwine.$libwine_version.dylib libs/wine/libwine.$libwine_soversion.dylib"
     ;;
 
   linux-android*)
@@ -774,12 +770,6 @@ case $host_os in
         DLLFLAGS="$DLLFLAGS -fPIC"
         LDDLLFLAGS="-fPIC" ;;
     esac
-    LIBWINE_LDFLAGS="-shared -Wl,-soname,libwine.so.$libwine_soversion"
-
-    echo '{ global: *; };' >conftest.map
-    WINE_TRY_CFLAGS([-shared -Wl,--version-script=conftest.map],
-                    [LIBWINE_LDFLAGS="$LIBWINE_LDFLAGS -Wl,--version-script=\$(srcdir)/wine.map"])
-    rm -f conftest.map
 
     WINE_TRY_CFLAGS([-Wl,-z,defs],[UNIXLDFLAGS="$UNIXLDFLAGS -Wl,-z,defs"])
     WINE_TRY_CFLAGS([-Wl,--export-dynamic],[WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
@@ -796,19 +786,11 @@ case $host_os in
                                          [case $host_os in
                                             freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,--section-start,.interp=0x60000400" ;;
                                             *) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,--section-start,.interp=0x7d000400" ;;
-                                         esac])
-                         AC_PATH_PROG(PRELINK, prelink, false, [/sbin /usr/sbin $PATH])
-                         if test "x$PRELINK" = xfalse
-                         then
-                             WINE_WARNING([prelink not found and linker does not support relocation, base address of core dlls won't be set correctly.])
-                         fi])
+                                         esac])])
         WINE_TRY_CFLAGS([-Wl,-z,max-page-size=0x1000],
                         [WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-z,max-page-size=0x1000"])
         ;;
     esac
-    AC_SUBST(LIBWINE_SHAREDLIB,"libwine.so.$libwine_version")
-    AC_SUBST(LIBWINE_DEPENDS,"wine.map")
-    TOP_INSTALL_LIB="$TOP_INSTALL_LIB libs/wine/libwine.so.$libwine_version libs/wine/libwine.so.$libwine_soversion"
     ;;
 esac
 
@@ -1151,6 +1133,7 @@ WINE_EXTLIB_FLAGS(VKD3D, vkd3d, vkd3d, "-I\$(top_srcdir)/libs/vkd3d/include")
 WINE_EXTLIB_FLAGS(XML2, xml2, xml2, "-I\$(top_srcdir)/libs/xml2/include -DLIBXML_STATIC")
 WINE_EXTLIB_FLAGS(XSLT, xslt, xslt, "-I\$(top_srcdir)/libs/xslt/libxslt -I\$(top_srcdir)/libs/xslt -DLIBXSLT_STATIC")
 WINE_EXTLIB_FLAGS(ZLIB, zlib, z, "-I\$(top_srcdir)/libs/zlib -DFAR= -DZ_SOLO")
+WINE_EXTLIB_FLAGS(ZYDIS, zydis, zydis, "-I\$(top_srcdir)/libs/zydis/include")
 
 dnl **** Check for pthread ****
 
@@ -1198,13 +1181,6 @@ then
 #ifdef HAVE_X11_XUTIL_H
 # include <X11/Xutil.h>
 #endif])
-
-        dnl *** Check for X keyboard extension
-        if test "$ac_cv_header_X11_XKBlib_h" = "yes"
-        then
-              AC_CHECK_LIB(X11, XkbQueryExtension,
-              AC_DEFINE(HAVE_XKB, 1, [Define if you have the XKB extension]),,[$X_LIBS $X_EXTRA_LIBS])
-        fi
 
         dnl *** Check for X cursor
         if test "$ac_cv_header_X11_Xcursor_Xcursor_h" = "yes"
@@ -1394,6 +1370,15 @@ fi
 WINE_NOTICE_WITH(pcap,[test "x$ac_cv_lib_pcap_pcap_init" != xyes],
                  [pcap ${notice_platform}development files not found, wpcap won't be supported.],
                  [enable_wpcap])
+
+dnl **** Check for libpcsclite ****
+if test "x$with_pcsclite" != "xno"
+then
+    AC_CHECK_LIB(pcsclite,SCardEstablishContext,[AC_SUBST(PCSCLITE_LIBS,["-lpcsclite"])])
+fi
+WINE_NOTICE_WITH(pcsclite,[test "x$ac_cv_lib_pcsclite_SCardEstablishContext" != xyes],
+                 [libpcsclite not found, smart cards won't be supported.],
+                 [enable_winscard])
 
 dnl **** Check for inotify ****
 if test "x$with_inotify" != "xno"
@@ -2460,6 +2445,7 @@ WINE_CONFIG_MAKEFILE(dlls/cryptext/tests)
 WINE_CONFIG_MAKEFILE(dlls/cryptnet)
 WINE_CONFIG_MAKEFILE(dlls/cryptnet/tests)
 WINE_CONFIG_MAKEFILE(dlls/cryptowinrt)
+WINE_CONFIG_MAKEFILE(dlls/cryptowinrt/tests)
 WINE_CONFIG_MAKEFILE(dlls/cryptsp)
 WINE_CONFIG_MAKEFILE(dlls/cryptui)
 WINE_CONFIG_MAKEFILE(dlls/cryptui/tests)
@@ -3218,6 +3204,7 @@ WINE_CONFIG_MAKEFILE(dlls/winnls.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/winnls32)
 WINE_CONFIG_MAKEFILE(dlls/winprint)
 WINE_CONFIG_MAKEFILE(dlls/winscard)
+WINE_CONFIG_MAKEFILE(dlls/winscard/tests)
 WINE_CONFIG_MAKEFILE(dlls/winsock.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/winspool.drv)
 WINE_CONFIG_MAKEFILE(dlls/winspool.drv/tests)
@@ -3338,11 +3325,11 @@ WINE_CONFIG_MAKEFILE(libs/tiff)
 WINE_CONFIG_MAKEFILE(libs/uuid)
 WINE_CONFIG_MAKEFILE(libs/vkd3d)
 WINE_CONFIG_MAKEFILE(libs/wbemuuid)
-WINE_CONFIG_MAKEFILE(libs/wine)
 WINE_CONFIG_MAKEFILE(libs/wmcodecdspuuid)
 WINE_CONFIG_MAKEFILE(libs/xml2)
 WINE_CONFIG_MAKEFILE(libs/xslt)
 WINE_CONFIG_MAKEFILE(libs/zlib)
+WINE_CONFIG_MAKEFILE(libs/zydis)
 WINE_CONFIG_MAKEFILE(loader)
 WINE_CONFIG_MAKEFILE(nls)
 WINE_CONFIG_MAKEFILE(po)
@@ -3631,7 +3618,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-8.2.r1.g1f76f7fa\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-8.3.r0.g575f6f67\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

@@ -1261,6 +1261,12 @@ static struct prov_method_sequence *sequence;
     { prov , FRAG_NAVIGATE }, /* NavigateDirection_Parent */ \
     { prov , PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL } \
 
+#define NODE_CREATE_SEQ2_OPTIONAL(prov) \
+    { prov , PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, \
+    { prov , PROV_GET_HOST_RAW_ELEMENT_PROVIDER, METHOD_OPTIONAL }, \
+    { prov , FRAG_NAVIGATE, METHOD_OPTIONAL }, /* NavigateDirection_Parent */ \
+    { prov , PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL } \
+
 static void flush_method_sequence(void)
 {
     HeapFree(GetProcessHeap(), 0, sequence);
@@ -4342,6 +4348,51 @@ static const struct uia_lookup_id uia_pattern_lookup_ids[] = {
     { &CustomNavigation_Pattern_GUID,  UIA_CustomNavigationPatternId },
 };
 
+static const struct uia_lookup_id uia_control_type_lookup_ids[] = {
+    { &Button_Control_GUID,       UIA_ButtonControlTypeId },
+    { &Calendar_Control_GUID,     UIA_CalendarControlTypeId },
+    { &CheckBox_Control_GUID,     UIA_CheckBoxControlTypeId },
+    { &ComboBox_Control_GUID,     UIA_ComboBoxControlTypeId },
+    { &Edit_Control_GUID,         UIA_EditControlTypeId },
+    { &Hyperlink_Control_GUID,    UIA_HyperlinkControlTypeId },
+    { &Image_Control_GUID,        UIA_ImageControlTypeId },
+    { &ListItem_Control_GUID,     UIA_ListItemControlTypeId },
+    { &List_Control_GUID,         UIA_ListControlTypeId },
+    { &Menu_Control_GUID,         UIA_MenuControlTypeId },
+    { &MenuBar_Control_GUID,      UIA_MenuBarControlTypeId },
+    { &MenuItem_Control_GUID,     UIA_MenuItemControlTypeId },
+    { &ProgressBar_Control_GUID,  UIA_ProgressBarControlTypeId },
+    { &RadioButton_Control_GUID,  UIA_RadioButtonControlTypeId },
+    { &ScrollBar_Control_GUID,    UIA_ScrollBarControlTypeId },
+    { &Slider_Control_GUID,       UIA_SliderControlTypeId },
+    { &Spinner_Control_GUID,      UIA_SpinnerControlTypeId },
+    { &StatusBar_Control_GUID,    UIA_StatusBarControlTypeId },
+    { &Tab_Control_GUID,          UIA_TabControlTypeId },
+    { &TabItem_Control_GUID,      UIA_TabItemControlTypeId },
+    { &Text_Control_GUID,         UIA_TextControlTypeId },
+    { &ToolBar_Control_GUID,      UIA_ToolBarControlTypeId },
+    { &ToolTip_Control_GUID,      UIA_ToolTipControlTypeId },
+    { &Tree_Control_GUID,         UIA_TreeControlTypeId },
+    { &TreeItem_Control_GUID,     UIA_TreeItemControlTypeId },
+    { &Custom_Control_GUID,       UIA_CustomControlTypeId },
+    { &Group_Control_GUID,        UIA_GroupControlTypeId },
+    { &Thumb_Control_GUID,        UIA_ThumbControlTypeId },
+    { &DataGrid_Control_GUID,     UIA_DataGridControlTypeId },
+    { &DataItem_Control_GUID,     UIA_DataItemControlTypeId },
+    { &Document_Control_GUID,     UIA_DocumentControlTypeId },
+    { &SplitButton_Control_GUID,  UIA_SplitButtonControlTypeId },
+    { &Window_Control_GUID,       UIA_WindowControlTypeId },
+    { &Pane_Control_GUID,         UIA_PaneControlTypeId },
+    { &Header_Control_GUID,       UIA_HeaderControlTypeId },
+    { &HeaderItem_Control_GUID,   UIA_HeaderItemControlTypeId },
+    { &Table_Control_GUID,        UIA_TableControlTypeId },
+    { &TitleBar_Control_GUID,     UIA_TitleBarControlTypeId },
+    { &Separator_Control_GUID,    UIA_SeparatorControlTypeId },
+    /* Implemented on Win8+ */
+    { &SemanticZoom_Control_GUID, UIA_SemanticZoomControlTypeId },
+    { &AppBar_Control_GUID,       UIA_AppBarControlTypeId },
+};
+
 static void test_UiaLookupId(void)
 {
     static const struct {
@@ -4354,6 +4405,7 @@ static void test_UiaLookupId(void)
         { "property", AutomationIdentifierType_Property, uia_property_lookup_ids, ARRAY_SIZE(uia_property_lookup_ids) },
         { "event",    AutomationIdentifierType_Event,    uia_event_lookup_ids,    ARRAY_SIZE(uia_event_lookup_ids) },
         { "pattern",  AutomationIdentifierType_Pattern,  uia_pattern_lookup_ids,  ARRAY_SIZE(uia_pattern_lookup_ids) },
+        { "control_type", AutomationIdentifierType_ControlType, uia_control_type_lookup_ids, ARRAY_SIZE(uia_control_type_lookup_ids) },
     };
     unsigned int i, y;
 
@@ -4504,7 +4556,7 @@ static const struct prov_method_sequence node_from_prov8[] = {
     { 0 }
 };
 
-static void check_uia_prop_val(PROPERTYID prop_id, enum UIAutomationType type, VARIANT *v);
+static void check_uia_prop_val(PROPERTYID prop_id, enum UIAutomationType type, VARIANT *v, BOOL from_com);
 static DWORD WINAPI uia_node_from_provider_test_com_thread(LPVOID param)
 {
     HUIANODE node = param;
@@ -4523,7 +4575,7 @@ static DWORD WINAPI uia_node_from_provider_test_com_thread(LPVOID param)
 
     hr = UiaGetPropertyValue(node, UIA_ProcessIdPropertyId, &v);
     ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
-    check_uia_prop_val(UIA_ProcessIdPropertyId, UIAutomationType_Int, &v);
+    check_uia_prop_val(UIA_ProcessIdPropertyId, UIAutomationType_Int, &v, FALSE);
 
     /*
      * When retrieving a UIAutomationType_Element property, if UseComThreading
@@ -4537,7 +4589,7 @@ static DWORD WINAPI uia_node_from_provider_test_com_thread(LPVOID param)
     Provider_child.expected_tid = Provider.expected_tid;
     hr = UiaGetPropertyValue(node, UIA_LabeledByPropertyId, &v);
     ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
-    check_uia_prop_val(UIA_LabeledByPropertyId, UIAutomationType_Element, &v);
+    check_uia_prop_val(UIA_LabeledByPropertyId, UIAutomationType_Element, &v, FALSE);
 
     /* Unset ProviderOptions_UseComThreading. */
     Provider_child.prov_opts = ProviderOptions_ServerSideProvider;
@@ -4549,7 +4601,7 @@ static DWORD WINAPI uia_node_from_provider_test_com_thread(LPVOID param)
      * called on the current thread.
      */
     Provider_child.expected_tid = GetCurrentThreadId();
-    check_uia_prop_val(UIA_LabeledByPropertyId, UIAutomationType_Element, &v);
+    check_uia_prop_val(UIA_LabeledByPropertyId, UIAutomationType_Element, &v, FALSE);
 
     CoUninitialize();
 
@@ -4922,6 +4974,34 @@ static const struct prov_method_sequence get_bounding_rect_seq[] = {
     { 0 }
 };
 
+static const struct prov_method_sequence get_bounding_rect_seq2[] = {
+    { &Provider, PROV_GET_PROPERTY_VALUE },
+    NODE_CREATE_SEQ(&Provider_child),
+    { &Provider_child, FRAG_GET_BOUNDING_RECT },
+    /*
+     * Win10v21H2+ and above call these, attempting to get the fragment root's
+     * HWND. I'm guessing this is an attempt to get the HWND's DPI for DPI scaling.
+     */
+    { &Provider_child, FRAG_GET_FRAGMENT_ROOT, METHOD_OPTIONAL },
+    { &Provider, PROV_GET_HOST_RAW_ELEMENT_PROVIDER, METHOD_OPTIONAL },
+    { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_OPTIONAL }, /* UIA_NativeWindowHandlePropertyId */
+    { &Provider, FRAG_GET_FRAGMENT_ROOT, METHOD_OPTIONAL },
+    { 0 }
+};
+
+static const struct prov_method_sequence get_bounding_rect_seq3[] = {
+    { &Provider_child, FRAG_GET_BOUNDING_RECT },
+    /*
+     * Win10v21H2+ and above call these, attempting to get the fragment root's
+     * HWND. I'm guessing this is an attempt to get the HWND's DPI for DPI scaling.
+     */
+    { &Provider_child, FRAG_GET_FRAGMENT_ROOT, METHOD_OPTIONAL },
+    { &Provider, PROV_GET_HOST_RAW_ELEMENT_PROVIDER, METHOD_OPTIONAL },
+    { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_OPTIONAL }, /* UIA_NativeWindowHandlePropertyId */
+    { &Provider, FRAG_GET_FRAGMENT_ROOT, METHOD_OPTIONAL },
+    { 0 }
+};
+
 static const struct prov_method_sequence get_empty_bounding_rect_seq[] = {
     { &Provider_child, FRAG_GET_BOUNDING_RECT },
     { 0 }
@@ -4982,7 +5062,19 @@ static void check_uia_rect_val_(VARIANT *v, struct UiaRect *rect, const char *fi
     ok_(file, line)(tmp[3] == rect->height, "Unexpected height value %f, expected %f\n", tmp[3], rect->height);
 }
 
-static void check_uia_prop_val(PROPERTYID prop_id, enum UIAutomationType type, VARIANT *v)
+#define check_uia_rect_rect_val( rect, uia_rect ) \
+        check_uia_rect_rect_val_( (rect), (uia_rect), __FILE__, __LINE__)
+static void check_uia_rect_rect_val_(RECT *rect, struct UiaRect *uia_rect, const char *file, int line)
+{
+    ok_(file, line)(rect->left == (LONG)uia_rect->left, "Unexpected left value %ld, expected %ld\n", rect->left, (LONG)uia_rect->left);
+    ok_(file, line)(rect->top == (LONG)uia_rect->top, "Unexpected top value %ld, expected %ld\n", rect->top, (LONG)uia_rect->top);
+    ok_(file, line)(rect->right == (LONG)(uia_rect->left + uia_rect->width), "Unexpected right value %ld, expected %ld\n", rect->right,
+            (LONG)(uia_rect->left + uia_rect->width));
+    ok_(file, line)(rect->bottom == (LONG)(uia_rect->top + uia_rect->height), "Unexpected bottom value %ld, expected %ld\n", rect->bottom,
+            (LONG)(uia_rect->top + uia_rect->height));
+}
+
+static void check_uia_prop_val(PROPERTYID prop_id, enum UIAutomationType type, VARIANT *v, BOOL from_com)
 {
     LONG idx;
 
@@ -5053,22 +5145,40 @@ static void check_uia_prop_val(PROPERTYID prop_id, enum UIAutomationType type, V
         HRESULT hr;
         VARIANT v1;
 
-#ifdef _WIN64
-        ok(V_VT(v) == VT_I8, "Unexpected VT %d\n", V_VT(v));
-        tmp_node = (HUIANODE)V_I8(v);
-#else
-        ok(V_VT(v) == VT_I4, "Unexpected VT %d\n", V_VT(v));
-        tmp_node = (HUIANODE)V_I4(v);
-#endif
-        ok(Provider_child.ref == 2, "Unexpected refcnt %ld\n", Provider_child.ref);
+        if (from_com)
+        {
+            IUIAutomationElement *elem;
 
-        hr = UiaGetPropertyValue(tmp_node, UIA_ControlTypePropertyId, &v1);
-        ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+            ok(V_VT(v) == VT_UNKNOWN, "Unexpected VT %d\n", V_VT(v));
+            hr = IUnknown_QueryInterface(V_UNKNOWN(v), &IID_IUIAutomationElement, (void **)&elem);
+            VariantClear(v);
+            ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+            ok(Provider_child.ref == 2, "Unexpected refcnt %ld\n", Provider_child.ref);
+
+            hr = IUIAutomationElement_GetCurrentPropertyValueEx(elem, UIA_ControlTypePropertyId, TRUE, &v1);
+            ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+            IUIAutomationElement_Release(elem);
+        }
+        else
+        {
+#ifdef _WIN64
+            ok(V_VT(v) == VT_I8, "Unexpected VT %d\n", V_VT(v));
+            tmp_node = (HUIANODE)V_I8(v);
+#else
+            ok(V_VT(v) == VT_I4, "Unexpected VT %d\n", V_VT(v));
+            tmp_node = (HUIANODE)V_I4(v);
+#endif
+            ok(Provider_child.ref == 2, "Unexpected refcnt %ld\n", Provider_child.ref);
+
+            hr = UiaGetPropertyValue(tmp_node, UIA_ControlTypePropertyId, &v1);
+            ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+            ok(UiaNodeRelease(tmp_node), "Failed to release node\n");
+        }
+
         ok(V_VT(&v1) == VT_I4, "Unexpected VT %d\n", V_VT(&v1));
         ok(V_I4(&v1) == uia_i4_prop_val, "Unexpected I4 %#lx\n", V_I4(&v1));
-
-        ok(UiaNodeRelease(tmp_node), "Failed to release node\n");
         ok(Provider_child.ref == 1, "Unexpected refcnt %ld\n", Provider_child.ref);
+
         ok_method_sequence(get_elem_prop_seq, NULL);
         break;
     }
@@ -5214,7 +5324,7 @@ static void test_UiaGetPropertyValue(void)
         winetest_push_context("prop_id %d", prop_id);
         hr = UiaGetPropertyValue(node, prop_id, &v);
         ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-        check_uia_prop_val(prop_id, elem_prop->type, &v);
+        check_uia_prop_val(prop_id, elem_prop->type, &v, FALSE);
 
         /*
          * Some properties have special behavior if an invalid value is
@@ -5578,40 +5688,15 @@ static void test_UiaGetRuntimeId(void)
     CoUninitialize();
 }
 
-static LONG Object_ref = 1;
-static HRESULT WINAPI Object_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
-{
-    *ppv = NULL;
-    if (IsEqualIID(riid, &IID_IUnknown))
-    {
-        *ppv = iface;
-        IUnknown_AddRef(iface);
-        return S_OK;
-    }
-
-    return E_NOINTERFACE;
-}
-
-static ULONG WINAPI Object_AddRef(IUnknown *iface)
-{
-    return InterlockedIncrement(&Object_ref);
-}
-
-static ULONG WINAPI Object_Release(IUnknown *iface)
-{
-    return InterlockedDecrement(&Object_ref);
-}
-
-static IUnknownVtbl ObjectVtbl = {
-    Object_QueryInterface,
-    Object_AddRef,
-    Object_Release
+static const struct prov_method_sequence node_from_var_seq[] = {
+    NODE_CREATE_SEQ(&Provider),
+    { 0 },
 };
 
-static IUnknown Object = {&ObjectVtbl};
 static void test_UiaHUiaNodeFromVariant(void)
 {
-    HUIANODE node;
+    HUIANODE node, node2;
+    ULONG node_ref;
     HRESULT hr;
     VARIANT v;
 
@@ -5627,44 +5712,57 @@ static void test_UiaHUiaNodeFromVariant(void)
     ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
     ok(!node, "node != NULL\n");
 
-    node = (void *)0xdeadbeef;
-    V_VT(&v) = VT_UNKNOWN;
-    V_UNKNOWN(&v) = &Object;
-    hr = UiaHUiaNodeFromVariant(&v, &node);
+    node = NULL;
+    initialize_provider(&Provider, ProviderOptions_ServerSideProvider, NULL, FALSE);
+    hr = UiaNodeFromProvider(&Provider.IRawElementProviderSimple_iface, &node);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    ok(node == (void *)&Object, "node != NULL\n");
-    ok(Object_ref == 2, "Unexpected Object_ref %ld\n", Object_ref);
+    ok(Provider.ref == 2, "Unexpected refcnt %ld\n", Provider.ref);
+    ok(!!node, "node == NULL\n");
+    ok_method_sequence(node_from_var_seq, "node_from_var_seq");
+
+    node2 = (void *)0xdeadbeef;
+    V_VT(&v) = VT_UNKNOWN;
+    V_UNKNOWN(&v) = (IUnknown *)node;
+    hr = UiaHUiaNodeFromVariant(&v, &node2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(node == node2, "node != NULL\n");
+
+    node_ref = IUnknown_AddRef((IUnknown *)node);
+    ok(node_ref == 3, "Unexpected node_ref %ld\n", node_ref);
     VariantClear(&v);
+    IUnknown_Release((IUnknown *)node);
 
 #ifdef _WIN64
-    node = (void *)0xdeadbeef;
+    node2 = (void *)0xdeadbeef;
     V_VT(&v) = VT_I4;
     V_I4(&v) = 0xbeefdead;
-    hr = UiaHUiaNodeFromVariant(&v, &node);
+    hr = UiaHUiaNodeFromVariant(&v, &node2);
     ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
-    ok(!node, "node != NULL\n");
+    ok(!node2, "node2 != NULL\n");
 
-    node = (void *)0xdeadbeef;
+    node2 = (void *)0xdeadbeef;
     V_VT(&v) = VT_I8;
-    V_I8(&v) = 0xbeefdead;
-    hr = UiaHUiaNodeFromVariant(&v, &node);
+    V_I8(&v) = (UINT64)node;
+    hr = UiaHUiaNodeFromVariant(&v, &node2);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    ok(node == (void *)V_I8(&v), "node != V_I8\n");
+    ok(node2 == (void *)V_I8(&v), "node2 != V_I8\n");
 #else
-    node = (void *)0xdeadbeef;
+    node2 = (void *)0xdeadbeef;
     V_VT(&v) = VT_I8;
     V_I8(&v) = 0xbeefdead;
-    hr = UiaHUiaNodeFromVariant(&v, &node);
+    hr = UiaHUiaNodeFromVariant(&v, &node2);
     ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
-    ok(!node, "node != NULL\n");
+    ok(!node2, "node2 != NULL\n");
 
-    node = (void *)0xdeadbeef;
+    node2 = (void *)0xdeadbeef;
     V_VT(&v) = VT_I4;
-    V_I4(&v) = 0xbeefdead;
-    hr = UiaHUiaNodeFromVariant(&v, &node);
+    V_I4(&v) = (UINT32)node;
+    hr = UiaHUiaNodeFromVariant(&v, &node2);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    ok(node == (void *)V_I4(&v), "node != V_I8\n");
+    ok(node2 == (void *)V_I4(&v), "node2 != V_I4\n");
 #endif
+
+    UiaNodeRelease(node);
 }
 
 static const struct prov_method_sequence node_from_hwnd1[] = {
@@ -5688,13 +5786,13 @@ static const struct prov_method_sequence node_from_hwnd2[] = {
 };
 
 static const struct prov_method_sequence node_from_hwnd3[] = {
+    NODE_CREATE_SEQ2(&Provider),
     { &Provider, PROV_GET_PROVIDER_OPTIONS },
-    /* Win10v1507 and below call this. */
-    { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_OPTIONAL }, /* UIA_NativeWindowHandlePropertyId */
-    { &Provider, PROV_GET_HOST_RAW_ELEMENT_PROVIDER },
-    { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
-    { &Provider, PROV_GET_PROVIDER_OPTIONS },
-    { &Provider, PROV_GET_PROVIDER_OPTIONS },
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, /* Only done on Win11+ */
+    /* Windows 11 sends WM_GETOBJECT twice on nested nodes. */
+    NODE_CREATE_SEQ2_OPTIONAL(&Provider),
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL },
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL },
     { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { 0 }
 };
@@ -5773,18 +5871,19 @@ static const struct prov_method_sequence node_from_hwnd7[] = {
     { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
     { &Provider, PROV_GET_PROVIDER_OPTIONS },
     { &Provider, PROV_GET_PROVIDER_OPTIONS },
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, /* Only done on Win11+ */
     { &Provider_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { 0 }
 };
 
 static const struct prov_method_sequence node_from_hwnd8[] = {
+    NODE_CREATE_SEQ2(&Provider),
     { &Provider, PROV_GET_PROVIDER_OPTIONS },
-    /* Win10v1507 and below call this. */
-    { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_OPTIONAL }, /* UIA_NativeWindowHandlePropertyId */
-    { &Provider, PROV_GET_HOST_RAW_ELEMENT_PROVIDER },
-    { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
-    { &Provider, PROV_GET_PROVIDER_OPTIONS },
-    { &Provider, PROV_GET_PROVIDER_OPTIONS },
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, /* Only done on Win11+ */
+    /* Windows 11 sends WM_GETOBJECT twice on nested nodes. */
+    NODE_CREATE_SEQ2_OPTIONAL(&Provider),
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL },
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL },
     { &Provider, PROV_GET_PROPERTY_VALUE }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ControlTypePropertyId */
     { 0 }
@@ -5936,7 +6035,8 @@ static DWORD WINAPI uia_node_from_handle_test_thread(LPVOID param)
 
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
 
-    SET_EXPECT(winproc_GETOBJECT_UiaRoot);
+    /* Only sent twice on Windows 11. */
+    SET_EXPECT_MULTI(winproc_GETOBJECT_UiaRoot, 2);
     /* Only sent on Win7. */
     SET_EXPECT(winproc_GETOBJECT_CLIENT);
     prov_root = &Provider.IRawElementProviderSimple_iface;
@@ -5948,7 +6048,7 @@ static DWORD WINAPI uia_node_from_handle_test_thread(LPVOID param)
     Provider.ignore_hwnd_prop = TRUE;
     hr = UiaNodeFromHandle(hwnd, &node);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    ok(Provider.ref == 2, "Unexpected refcnt %ld\n", Provider.ref);
+    ok(Provider.ref >= 2, "Unexpected refcnt %ld\n", Provider.ref);
     CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
     called_winproc_GETOBJECT_CLIENT = expect_winproc_GETOBJECT_CLIENT = 0;
 
@@ -5973,7 +6073,7 @@ static DWORD WINAPI uia_node_from_handle_test_thread(LPVOID param)
 
     hr = UiaGetPropertyValue(node, UIA_ControlTypePropertyId, &v);
     ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
-    check_uia_prop_val(UIA_ControlTypePropertyId, UIAutomationType_Int, &v);
+    check_uia_prop_val(UIA_ControlTypePropertyId, UIAutomationType_Int, &v, FALSE);
 
     /*
      * On Windows, nested providers are always called on a separate thread if
@@ -6098,7 +6198,8 @@ static DWORD WINAPI uia_node_from_handle_test_thread(LPVOID param)
     /*
      * UiaDisconnectProvider tests.
      */
-    SET_EXPECT(winproc_GETOBJECT_UiaRoot);
+    /* Only sent twice on Windows 11. */
+    SET_EXPECT_MULTI(winproc_GETOBJECT_UiaRoot, 2);
     prov_root = &Provider.IRawElementProviderSimple_iface;
     Provider.prov_opts = ProviderOptions_ServerSideProvider;
     Provider.hwnd = hwnd;
@@ -6108,7 +6209,7 @@ static DWORD WINAPI uia_node_from_handle_test_thread(LPVOID param)
     Provider.prov_opts = ProviderOptions_ServerSideProvider;
     hr = UiaNodeFromHandle(hwnd, &node);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    ok(Provider.ref == 2, "Unexpected refcnt %ld\n", Provider.ref);
+    ok(Provider.ref >= 2, "Unexpected refcnt %ld\n", Provider.ref);
     CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
 
     hr = UiaGetPropertyValue(node, UIA_ProviderDescriptionPropertyId, &v);
@@ -6132,7 +6233,7 @@ static DWORD WINAPI uia_node_from_handle_test_thread(LPVOID param)
 
     hr = UiaGetPropertyValue(node, UIA_ControlTypePropertyId, &v);
     ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
-    check_uia_prop_val(UIA_ControlTypePropertyId, UIAutomationType_Int, &v);
+    check_uia_prop_val(UIA_ControlTypePropertyId, UIAutomationType_Int, &v, FALSE);
 
     /* Nodes returned from a nested node will be tracked and disconnectable. */
     Provider_child.prov_opts = ProviderOptions_ServerSideProvider;
@@ -6225,7 +6326,7 @@ static DWORD WINAPI uia_node_from_handle_test_thread(LPVOID param)
 
     hr = UiaGetPropertyValue(node, UIA_ControlTypePropertyId, &v);
     ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
-    check_uia_prop_val(UIA_ControlTypePropertyId, UIAutomationType_Int, &v);
+    check_uia_prop_val(UIA_ControlTypePropertyId, UIAutomationType_Int, &v, FALSE);
 
     /* Finally, disconnect node. */
     Provider.hwnd = hwnd;
@@ -6286,9 +6387,12 @@ static void test_UiaNodeFromHandle(const char *name)
     /* Only sent twice on Win7. */
     SET_EXPECT_MULTI(winproc_GETOBJECT_CLIENT, 2);
     hr = UiaNodeFromHandle(hwnd, &node);
-    todo_wine ok(hr == E_FAIL, "Unexpected hr %#lx.\n", hr);
+    /* Windows 10 and below return E_FAIL, Windows 11 returns S_OK. */
+    todo_wine ok(hr == S_OK || broken(hr == E_FAIL), "Unexpected hr %#lx.\n", hr);
     CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
     todo_wine CHECK_CALLED(winproc_GETOBJECT_CLIENT);
+    if (SUCCEEDED(hr))
+        UiaNodeRelease(node);
 
     /*
      * COM initialized, no provider returned by UiaReturnRawElementProvider.
@@ -6447,7 +6551,7 @@ static void test_UiaNodeFromHandle(const char *name)
     Provider.expected_tid = GetCurrentThreadId();
     hr = UiaGetPropertyValue(node, UIA_ControlTypePropertyId, &v);
     ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
-    check_uia_prop_val(UIA_ControlTypePropertyId, UIAutomationType_Int, &v);
+    check_uia_prop_val(UIA_ControlTypePropertyId, UIAutomationType_Int, &v, FALSE);
 
     /* UIAutomationType_Element properties will return a normal node. */
     Provider_child.prov_opts = ProviderOptions_ServerSideProvider;
@@ -6518,7 +6622,8 @@ static void test_UiaNodeFromHandle(const char *name)
     sprintf(cmdline, "\"%s\" uiautomation UiaNodeFromHandle_client_proc", name);
     memset(&startup, 0, sizeof(startup));
     startup.cb = sizeof(startup);
-    SET_EXPECT(winproc_GETOBJECT_UiaRoot);
+    /* Only called twice on Windows 11. */
+    SET_EXPECT_MULTI(winproc_GETOBJECT_UiaRoot, 2);
     /* Only sent on Win7. */
     SET_EXPECT(winproc_GETOBJECT_CLIENT);
     CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &proc);
@@ -9629,6 +9734,467 @@ static void test_UiaFind(void)
     CoUninitialize();
 }
 
+static HWND create_test_hwnd(const char *class_name)
+{
+    WNDCLASSA cls = { 0 };
+
+    cls.lpfnWndProc = test_wnd_proc;
+    cls.hInstance = GetModuleHandleA(NULL);
+    cls.lpszClassName = class_name;
+    RegisterClassA(&cls);
+
+    return CreateWindowA(class_name, "Test window", WS_OVERLAPPEDWINDOW,
+            0, 0, 100, 100, NULL, NULL, NULL, NULL);
+}
+
+static IUIAutomationElement *create_test_element_from_hwnd(IUIAutomation *uia_iface, HWND hwnd, BOOL block_hwnd_provs)
+{
+    IUIAutomationElement *element;
+    HRESULT hr;
+    VARIANT v;
+
+    if (block_hwnd_provs)
+    {
+        SET_EXPECT(prov_callback_base_hwnd);
+        SET_EXPECT(prov_callback_nonclient);
+        base_hwnd_prov = proxy_prov = parent_proxy_prov = nc_prov = NULL;
+        UiaRegisterProviderCallback(test_uia_provider_callback);
+    }
+    else
+        UiaRegisterProviderCallback(NULL);
+
+    initialize_provider(&Provider, ProviderOptions_ServerSideProvider, hwnd, TRUE);
+    prov_root = &Provider.IRawElementProviderSimple_iface;
+    SET_EXPECT(winproc_GETOBJECT_UiaRoot);
+    /* Only sent on Win7. */
+    SET_EXPECT(winproc_GETOBJECT_CLIENT);
+    hr = IUIAutomation_ElementFromHandle(uia_iface, hwnd, &element);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element, "element == NULL\n");
+    ok(Provider.ref == 2, "Unexpected refcnt %ld\n", Provider.ref);
+    CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
+    called_winproc_GETOBJECT_CLIENT = expect_winproc_GETOBJECT_CLIENT = 0;
+    if (block_hwnd_provs)
+    {
+        CHECK_CALLED(prov_callback_base_hwnd);
+        CHECK_CALLED(prov_callback_nonclient);
+    }
+
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element, UIA_ProviderDescriptionPropertyId, TRUE, &v);
+    todo_wine ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), hwnd);
+        if (!block_hwnd_provs)
+        {
+            check_node_provider_desc(V_BSTR(&v), L"Main", L"Provider", FALSE);
+            check_node_provider_desc(V_BSTR(&v), L"Nonclient", NULL, FALSE);
+            check_node_provider_desc(V_BSTR(&v), L"Hwnd", NULL, TRUE);
+        }
+        else
+            check_node_provider_desc(V_BSTR(&v), L"Main", L"Provider", TRUE);
+
+        VariantClear(&v);
+    }
+
+    ok_method_sequence(node_from_hwnd2, "create_test_element");
+    UiaRegisterProviderCallback(NULL);
+
+    return element;
+}
+
+static void test_ElementFromHandle(IUIAutomation *uia_iface, BOOL is_cui8)
+{
+    HWND hwnd = create_test_hwnd("test_ElementFromHandle class");
+    IUIAutomationElement2 *element_2;
+    IUIAutomationElement *element;
+    HRESULT hr;
+
+    element = create_test_element_from_hwnd(uia_iface, hwnd, FALSE);
+    hr = IUIAutomationElement_QueryInterface(element, &IID_IUIAutomationElement2, (void **)&element_2);
+    if (is_cui8)
+    {
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(!!element_2, "element_2 == NULL\n");
+        IUIAutomationElement2_Release(element_2);
+    }
+    else
+        ok(hr == E_NOINTERFACE, "Unexpected hr %#lx.\n", hr);
+
+    IUIAutomationElement_Release(element);
+    ok(Provider.ref == 1, "Unexpected refcnt %ld\n", Provider.ref);
+
+    DestroyWindow(hwnd);
+    UnregisterClassA("test_ElementFromHandle class", NULL);
+    prov_root = NULL;
+}
+
+static void test_Element_GetPropertyValue(IUIAutomation *uia_iface)
+{
+    HWND hwnd = create_test_hwnd("test_Element_GetPropertyValue class");
+    const struct uia_element_property *elem_prop;
+    struct Provider_prop_override prop_override;
+    IUIAutomationElement *element, *element2;
+    int i, prop_id, tmp_int;
+    struct UiaRect uia_rect;
+    IUnknown *unk_ns;
+    BSTR tmp_bstr;
+    HRESULT hr;
+    RECT rect;
+    VARIANT v;
+
+    element = create_test_element_from_hwnd(uia_iface, hwnd, TRUE);
+    Provider.frag_root = &Provider.IRawElementProviderFragmentRoot_iface;
+    initialize_provider(&Provider_child, ProviderOptions_ServerSideProvider, NULL, TRUE);
+    provider_add_child(&Provider, &Provider_child);
+
+    hr = UiaGetReservedNotSupportedValue(&unk_ns);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    VariantInit(&v);
+    for (i = 0; i < ARRAY_SIZE(element_properties); i++)
+    {
+        elem_prop = &element_properties[i];
+
+        /* Skip ElementArray properties for now. */
+        if (elem_prop->type == UIAutomationType_ElementArray)
+            continue;
+
+        Provider.ret_invalid_prop_type = FALSE;
+        VariantClear(&v);
+        if (!(prop_id = UiaLookupId(AutomationIdentifierType_Property, elem_prop->prop_guid)))
+        {
+            win_skip("No propertyId for GUID %s, skipping further tests.\n", debugstr_guid(elem_prop->prop_guid));
+            break;
+        }
+
+        winetest_push_context("Element prop_id %d", prop_id);
+        hr = IUIAutomationElement_GetCurrentPropertyValueEx(element, prop_id, TRUE, &v);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        check_uia_prop_val(prop_id, elem_prop->type, &v, TRUE);
+
+        /*
+         * Some properties have special behavior if an invalid value is
+         * returned, skip them here.
+         */
+        if (!elem_prop->skip_invalid)
+        {
+            Provider.ret_invalid_prop_type = TRUE;
+            hr = IUIAutomationElement_GetCurrentPropertyValueEx(element, prop_id, TRUE, &v);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+            if (SUCCEEDED(hr))
+            {
+                ok_method_sequence(get_prop_invalid_type_seq, NULL);
+                ok(V_VT(&v) == VT_UNKNOWN, "Unexpected vt %d\n", V_VT(&v));
+                ok(V_UNKNOWN(&v) == unk_ns, "unexpected IUnknown %p\n", V_UNKNOWN(&v));
+                VariantClear(&v);
+            }
+        }
+
+        winetest_pop_context();
+    }
+
+    /*
+     * IUIAutomationElement_get_CurrentControlType tests. If the value
+     * returned for UIA_ControlTypePropertyId is not a registered control
+     * type ID, we'll get back UIA_CustomControlTypeId.
+     */
+    tmp_int = 0xdeadb33f;
+    hr = IUIAutomationElement_get_CurrentControlType(element, &tmp_int);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /*
+     * Win10v1507 and below don't check whether or not the returned control
+     * type ID is valid.
+     */
+    ok(tmp_int == UIA_CustomControlTypeId || broken(tmp_int == 0xdeadbeef), "Unexpected control type %#x\n", tmp_int);
+    ok_method_sequence(get_prop_seq, NULL);
+
+    Provider.ret_invalid_prop_type = TRUE;
+    tmp_int = 0xdeadbeef;
+    hr = IUIAutomationElement_get_CurrentControlType(element, &tmp_int);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_int == UIA_CustomControlTypeId, "Unexpected control type %#x\n", tmp_int);
+    Provider.ret_invalid_prop_type = FALSE;
+    ok_method_sequence(get_prop_invalid_type_seq, NULL);
+
+    /* Finally, a valid control type. */
+    V_VT(&v) = VT_I4;
+    V_I4(&v) = UIA_HyperlinkControlTypeId;
+    set_property_override(&prop_override, UIA_ControlTypePropertyId, &v);
+    set_provider_prop_override(&Provider, &prop_override, 1);
+    hr = IUIAutomationElement_get_CurrentControlType(element, &tmp_int);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_int == UIA_HyperlinkControlTypeId, "Unexpected control type %#x\n", tmp_int);
+    set_provider_prop_override(&Provider, NULL, 0);
+    ok_method_sequence(get_prop_seq, NULL);
+
+    /*
+     * IUIAutomationElement_get_CurrentName tests.
+     */
+    tmp_bstr = NULL;
+    hr = IUIAutomationElement_get_CurrentName(element, &tmp_bstr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!lstrcmpW(tmp_bstr, uia_bstr_prop_str), "Unexpected BSTR %s\n", wine_dbgstr_w(tmp_bstr));
+    SysFreeString(tmp_bstr);
+    ok_method_sequence(get_prop_seq, NULL);
+
+    tmp_bstr = NULL;
+    Provider.ret_invalid_prop_type = TRUE;
+    hr = IUIAutomationElement_get_CurrentName(element, &tmp_bstr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!lstrcmpW(tmp_bstr, L""), "Unexpected BSTR %s\n", wine_dbgstr_w(tmp_bstr));
+    SysFreeString(tmp_bstr);
+    initialize_provider(&Provider, ProviderOptions_ServerSideProvider, NULL, FALSE);
+    ok_method_sequence(get_prop_invalid_type_seq, NULL);
+
+    /*
+     * Windows 7 will call get_FragmentRoot in an endless loop until the fragment root returns an HWND.
+     * It's the only version with this behavior.
+     */
+    if (!UiaLookupId(AutomationIdentifierType_Property, &OptimizeForVisualContent_Property_GUID))
+    {
+        win_skip("Skipping UIA_BoundingRectanglePropertyId tests for Win7\n");
+        goto exit;
+    }
+
+    /*
+     * IUIAutomationElement_get_CurrentBoundingRectangle/UIA_BoundRectanglePropertyId tests.
+     */
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element, UIA_LabeledByPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_UNKNOWN, "Unexpected vt %d\n", V_VT(&v));
+    ok(Provider_child.ref == 2, "Unexpected refcnt %ld\n", Provider.ref);
+
+    hr = IUnknown_QueryInterface(V_UNKNOWN(&v), &IID_IUIAutomationElement, (void **)&element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element2, "element2 == NULL\n");
+    VariantClear(&v);
+
+    /* Non-empty bounding rectangle, will return a VT_R8 SAFEARRAY. */
+    set_uia_rect(&uia_rect, 0, 0, 50, 50);
+    Provider_child.bounds_rect = uia_rect;
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element2, UIA_BoundingRectanglePropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_uia_rect_val(&v, &uia_rect);
+    VariantClear(&v);
+    ok_method_sequence(get_bounding_rect_seq2, "get_bounding_rect_seq2");
+
+    hr = IUIAutomationElement_get_CurrentBoundingRectangle(element2, &rect);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_uia_rect_rect_val(&rect, &uia_rect);
+    memset(&rect, 0, sizeof(rect));
+    ok_method_sequence(get_bounding_rect_seq3, "get_bounding_rect_seq3");
+
+    /* Empty bounding rectangle will return ReservedNotSupportedValue. */
+    set_uia_rect(&uia_rect, 0, 0, 0, 0);
+    Provider_child.bounds_rect = uia_rect;
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element2, UIA_BoundingRectanglePropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_UNKNOWN, "Unexpected vt %d\n", V_VT(&v));
+    ok(V_UNKNOWN(&v) == unk_ns, "unexpected IUnknown %p\n", V_UNKNOWN(&v));
+    VariantClear(&v);
+    ok_method_sequence(get_empty_bounding_rect_seq, "get_empty_bounding_rect_seq");
+
+    /* Returns an all 0 rect. */
+    hr = IUIAutomationElement_get_CurrentBoundingRectangle(element2, &rect);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_uia_rect_rect_val(&rect, &uia_rect);
+    ok_method_sequence(get_empty_bounding_rect_seq, "get_empty_bounding_rect_seq");
+
+    IUIAutomationElement_Release(element2);
+    ok(Provider_child.ref == 1, "Unexpected refcnt %ld\n", Provider_child.ref);
+    initialize_provider(&Provider_child, ProviderOptions_ServerSideProvider, NULL, FALSE);
+
+exit:
+    IUIAutomationElement_Release(element);
+    ok(Provider.ref == 1, "Unexpected refcnt %ld\n", Provider.ref);
+
+    DestroyWindow(hwnd);
+    UnregisterClassA("test_Element_GetPropertyValue class", NULL);
+}
+
+static void test_CUIAutomation_value_conversion(IUIAutomation *uia_iface)
+{
+    static const VARTYPE invalid_int_vts[] = { VT_I8, VT_INT };
+    int in_arr[3] = { 0xdeadbeef, 0xfeedbeef, 0x1337b33f };
+    int *out_arr, out_arr_count, i;
+    LONG lbound, ubound;
+    SAFEARRAY *sa;
+    VARTYPE vt;
+    HRESULT hr;
+    UINT dims;
+
+    /*
+     * Conversion from VT_I4 SAFEARRAY to native int array.
+     */
+    for (i = 0; i < ARRAY_SIZE(invalid_int_vts); i++)
+    {
+        vt = invalid_int_vts[i];
+        sa = SafeArrayCreateVector(vt, 0, 2);
+        ok(!!sa, "sa == NULL\n");
+
+        out_arr_count = 0xdeadbeef;
+        out_arr = (int *)0xdeadbeef;
+        hr = IUIAutomation_IntSafeArrayToNativeArray(uia_iface, sa, &out_arr, &out_arr_count);
+        ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+        ok(!out_arr, "out_arr != NULL\n");
+        ok(out_arr_count == 0xdeadbeef, "Unexpected out_arr_count %#x\n", out_arr_count);
+        SafeArrayDestroy(sa);
+    }
+
+    /* Only accepts VT_I4 as an input array type. */
+    sa = create_i4_safearray();
+    hr = IUIAutomation_IntSafeArrayToNativeArray(uia_iface, sa, &out_arr, &out_arr_count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(out_arr_count == ARRAY_SIZE(uia_i4_arr_prop_val), "Unexpected out_arr_count %#x\n", out_arr_count);
+    for (i = 0; i < ARRAY_SIZE(uia_i4_arr_prop_val); i++)
+        ok(out_arr[i] == uia_i4_arr_prop_val[i], "out_arr[%d]: Expected %ld, got %d\n", i, uia_i4_arr_prop_val[i], out_arr[i]);
+
+    SafeArrayDestroy(sa);
+    CoTaskMemFree(out_arr);
+
+    /*
+     * Conversion from native int array to VT_I4 SAFEARRAY.
+     */
+    sa = NULL;
+    hr = IUIAutomation_IntNativeArrayToSafeArray(uia_iface, in_arr, ARRAY_SIZE(in_arr), &sa);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = SafeArrayGetVartype(sa, &vt);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(vt == VT_I4, "Unexpected vt %d.\n", vt);
+
+    dims = SafeArrayGetDim(sa);
+    ok(dims == 1, "Unexpected array dims %d\n", dims);
+
+    hr = SafeArrayGetLBound(sa, 1, &lbound);
+    ok(hr == S_OK, "Failed to get LBound with hr %#lx\n", hr);
+    ok(lbound == 0, "Unexpected LBound %#lx\n", lbound);
+
+    hr = SafeArrayGetUBound(sa, 1, &ubound);
+    ok(hr == S_OK, "Failed to get UBound with hr %#lx\n", hr);
+    ok(((ubound - lbound) + 1) == ARRAY_SIZE(in_arr), "Unexpected array size %#lx\n", ((ubound - lbound) + 1));
+
+    for (i = 0; i < ARRAY_SIZE(in_arr); i++)
+    {
+        LONG idx = lbound + i;
+        int tmp_val;
+
+        hr = SafeArrayGetElement(sa, &idx, &tmp_val);
+        ok(hr == S_OK, "Failed to get element at idx %ld, hr %#lx\n", idx, hr);
+        ok(tmp_val == in_arr[i], "Expected %d at idx %d, got %d\n", in_arr[i], i, tmp_val);
+    }
+
+    SafeArrayDestroy(sa);
+}
+
+struct uia_com_classes {
+    const GUID *clsid;
+    const GUID *iid;
+};
+
+static const struct uia_com_classes com_classes[] = {
+    { &CLSID_CUIAutomation,  &IID_IUnknown },
+    { &CLSID_CUIAutomation,  &IID_IUIAutomation },
+    { &CLSID_CUIAutomation8, &IID_IUnknown },
+    { &CLSID_CUIAutomation8, &IID_IUIAutomation },
+    { &CLSID_CUIAutomation8, &IID_IUIAutomation2 },
+    { &CLSID_CUIAutomation8, &IID_IUIAutomation3 },
+    { &CLSID_CUIAutomation8, &IID_IUIAutomation4 },
+    { &CLSID_CUIAutomation8, &IID_IUIAutomation5 },
+    { &CLSID_CUIAutomation8, &IID_IUIAutomation6 },
+};
+
+static void test_CUIAutomation(void)
+{
+    BOOL has_cui8 = TRUE, tmp_b;
+    IUIAutomation *uia_iface;
+    IUnknown *unk1, *unk2;
+    HRESULT hr;
+    VARIANT v;
+    int i;
+
+    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    for (i = 0; i < ARRAY_SIZE(com_classes); i++)
+    {
+        IUnknown *iface = NULL;
+
+        hr = CoCreateInstance(com_classes[i].clsid, NULL, CLSCTX_INPROC_SERVER, com_classes[i].iid,
+                (void **)&iface);
+
+        if ((com_classes[i].clsid == &CLSID_CUIAutomation8) && (hr == REGDB_E_CLASSNOTREG))
+        {
+            win_skip("CLSID_CUIAutomation8 class not registered, skipping further tests.\n");
+            has_cui8 = FALSE;
+            break;
+        }
+        else if ((com_classes[i].clsid == &CLSID_CUIAutomation8) && (hr == E_NOINTERFACE) &&
+                (com_classes[i].iid != &IID_IUIAutomation2) && (com_classes[i].iid != &IID_IUIAutomation) &&
+                (com_classes[i].iid != &IID_IUnknown))
+        {
+            win_skip("No object for clsid %s, iid %s, skipping further tests.\n", debugstr_guid(com_classes[i].clsid),
+                debugstr_guid(com_classes[i].iid));
+            break;
+        }
+
+        ok(hr == S_OK, "Failed to create interface for clsid %s, iid %s, hr %#lx\n",
+                debugstr_guid(com_classes[i].clsid), debugstr_guid(com_classes[i].iid), hr);
+        ok(!!iface, "iface == NULL\n");
+        IUnknown_Release(iface);
+    }
+
+    if (has_cui8)
+        hr = CoCreateInstance(&CLSID_CUIAutomation8, NULL, CLSCTX_INPROC_SERVER, &IID_IUIAutomation,
+                (void **)&uia_iface);
+    else
+        hr = CoCreateInstance(&CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER, &IID_IUIAutomation,
+                (void **)&uia_iface);
+    ok(hr == S_OK, "Failed to create IUIAutomation interface, hr %#lx\n", hr);
+    ok(!!uia_iface, "uia_iface == NULL\n");
+
+    /* Reserved value retrieval methods. */
+    hr = UiaGetReservedNotSupportedValue(&unk1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomation_get_ReservedNotSupportedValue(uia_iface, &unk2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(unk1 == unk2, "unk1 != unk2\n");
+
+    V_VT(&v) = VT_UNKNOWN;
+    V_UNKNOWN(&v) = unk1;
+    hr = IUIAutomation_CheckNotSupported(uia_iface, v, &tmp_b);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_b == TRUE, "tmp_b != TRUE\n");
+
+    IUnknown_Release(unk1);
+    IUnknown_Release(unk2);
+
+    hr = UiaGetReservedMixedAttributeValue(&unk1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomation_get_ReservedMixedAttributeValue(uia_iface, &unk2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(unk1 == unk2, "unk1 != unk2\n");
+
+    V_VT(&v) = VT_UNKNOWN;
+    V_UNKNOWN(&v) = unk1;
+    hr = IUIAutomation_CheckNotSupported(uia_iface, v, &tmp_b);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_b == FALSE, "tmp_b != FALSE\n");
+
+    IUnknown_Release(unk1);
+    IUnknown_Release(unk2);
+
+    test_CUIAutomation_value_conversion(uia_iface);
+    test_ElementFromHandle(uia_iface, has_cui8);
+    test_Element_GetPropertyValue(uia_iface);
+
+    IUIAutomation_Release(uia_iface);
+    CoUninitialize();
+}
+
 /*
  * Once a process returns a UI Automation provider with
  * UiaReturnRawElementProvider it ends up in an implicit MTA until exit. This
@@ -9695,6 +10261,7 @@ START_TEST(uiautomation)
     test_UiaGetUpdatedCache();
     test_UiaNavigate();
     test_UiaFind();
+    test_CUIAutomation();
     if (uia_dll)
     {
         pUiaProviderFromIAccessible = (void *)GetProcAddress(uia_dll, "UiaProviderFromIAccessible");

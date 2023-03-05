@@ -1816,8 +1816,12 @@ static void test_GetNumberFormatEx(void)
   /* Test French formatting */
   if (pIsValidLocaleName(frW))
   {
+    const WCHAR *expected;
     ret = pGetNumberFormatEx(frW, NUO, L"-12345", NULL, buffer, ARRAY_SIZE(buffer));
-    expect_wstr(ret, buffer, L"-12\xa0\x33\x34\x35,00"); /* Non breaking space */
+    expected = (ret && wcschr(buffer, 0x202f)) ?
+               L"-12\x202f\x33\x34\x35,00" : /* Same but narrow (win11) */
+               L"-12\xa0\x33\x34\x35,00"; /* Non breaking space */
+    expect_wstr(ret, buffer, expected);
   }
 }
 
@@ -4974,6 +4978,11 @@ static void test_GetCPInfo(void)
             case 12:  /* normalization */
                 ok( status == STATUS_OBJECT_NAME_NOT_FOUND, "%u: failed %lx\n", i, status );
                 break;
+            case 14: /* unknown */
+                ok( status == STATUS_INVALID_PARAMETER_1 ||
+                    status == STATUS_SUCCESS, /* win11 */
+                    "%u: failed %lx\n", i, status );
+                break;
             default:
                 ok( status == STATUS_INVALID_PARAMETER_1, "%u: failed %lx\n", i, status );
                 break;
@@ -7865,13 +7874,13 @@ static void test_NLSVersion(void)
         ok( ret, "IsValidNLSVersion failed err %lu\n", GetLastError() );
         ok( GetLastError() == 0xdeadbeef, "wrong error %lu\n", GetLastError() );
 
-        info.dwNLSVersion += 0x100;
+        info.dwNLSVersion += 0x700; /* much higher ver -> surely invalid */
         SetLastError( 0xdeadbeef );
         ret = pIsValidNLSVersion( COMPARE_STRING, L"en-US", &info );
         ok( !ret, "IsValidNLSVersion succeeded\n" );
         ok( GetLastError() == 0, "wrong error %lu\n", GetLastError() );
 
-        info.dwNLSVersion -= 0x800;
+        info.dwNLSVersion -= 2 * 0x700; /* much lower ver -> surely invalid */
         SetLastError( 0xdeadbeef );
         ret = pIsValidNLSVersion( COMPARE_STRING, L"en-US", &info );
         ok( !ret, "IsValidNLSVersion succeeded\n" );

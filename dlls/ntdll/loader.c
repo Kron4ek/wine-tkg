@@ -1440,14 +1440,9 @@ static NTSTATUS fixup_imports( WINE_MODREF *wm, LPCWSTR load_path )
     {
         dep_after = wm->ldr.DdagNode->Dependencies.Tail;
         if (!import_dll( wm->ldr.DllBase, &imports[i], load_path, &imp ))
-        {
-            imp = NULL;
             status = STATUS_DLL_NOT_FOUND;
-        }
-        else if (imp && !is_import_dll_system( &wm->ldr, &imports[i] ))
-        {
+        else if (imp && imp->ldr.DdagNode != node_ntdll && imp->ldr.DdagNode != node_kernel32)
             add_module_dependency_after( wm->ldr.DdagNode, imp->ldr.DdagNode, dep_after );
-        }
     }
     current_modref = prev;
     if (wm->ldr.ActivationContext) RtlDeactivateActivationContext( 0, cookie );
@@ -3345,6 +3340,15 @@ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
 
 
 /***********************************************************************
+ *           __wine_needs_override_large_address_aware
+ */
+unsigned int CDECL __wine_needs_override_large_address_aware(void)
+{
+    return WINE_UNIX_CALL( unix_wine_needs_override_large_address_aware, NULL );
+}
+
+
+/***********************************************************************
  *           wine_server_call
  */
 unsigned int CDECL wine_server_call( void *req_ptr )
@@ -3913,6 +3917,8 @@ void WINAPI LdrShutdownThread(void)
     /* don't call DbgUiGetThreadDebugObject as some apps hook it and terminate if called */
     if (NtCurrentTeb()->DbgSsReserved[1]) NtClose( NtCurrentTeb()->DbgSsReserved[1] );
     RtlFreeThreadActivationContextStack();
+
+    heap_thread_detach();
 }
 
 
@@ -4314,7 +4320,8 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unknown2, ULONG_PTR 
         RtlInitializeBitMap( &tls_bitmap, peb->TlsBitmapBits, sizeof(peb->TlsBitmapBits) * 8 );
         RtlInitializeBitMap( &tls_expansion_bitmap, peb->TlsExpansionBitmapBits,
                              sizeof(peb->TlsExpansionBitmapBits) * 8 );
-        RtlSetBits( peb->TlsBitmap, 0, 1 ); /* TLS index 0 is reserved and should be initialized to NULL. */
+        /* TLS index 0 is always reserved, and wow64 reserves extra TLS entries */
+        RtlSetBits( peb->TlsBitmap, 0, NtCurrentTeb()->WowTebOffset ? WOW64_TLS_MAX_NUMBER : 1 );
 
         /* initialize hash table */
         for (i = 0; i < HASH_MAP_SIZE; i++)

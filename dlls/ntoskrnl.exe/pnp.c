@@ -725,13 +725,13 @@ NTSTATUS WINAPI IoSetDeviceInterfaceState( UNICODE_STRING *name, BOOLEAN enable 
 
     size_t namelen = name->Length / sizeof(WCHAR);
     DEV_BROADCAST_DEVICEINTERFACE_W *broadcast;
-    WCHAR *path, *refstr, *p, *upper_end;
     struct device_interface *iface;
     HANDLE iface_key, control_key;
     OBJECT_ATTRIBUTES attr = {0};
     struct wine_rb_entry *entry;
     UNICODE_STRING control = RTL_CONSTANT_STRING( L"Control" );
     UNICODE_STRING linked = RTL_CONSTANT_STRING( L"Linked" );
+    WCHAR *path, *refstr, *p;
     UNICODE_STRING string;
     DWORD data = enable;
     NTSTATUS ret;
@@ -817,12 +817,6 @@ NTSTATUS WINAPI IoSetDeviceInterfaceState( UNICODE_STRING *name, BOOLEAN enable 
         broadcast->dbcc_classguid  = iface->interface_class;
         lstrcpynW( broadcast->dbcc_name, name->Buffer, namelen + 1 );
         if (namelen > 1) broadcast->dbcc_name[1] = '\\';
-
-        upper_end = wcschr( broadcast->dbcc_name, '#' );
-        if (upper_end) upper_end = wcschr( upper_end + 1, '#' );
-        while (upper_end && upper_end-- != broadcast->dbcc_name)
-            *upper_end = towupper( *upper_end );
-
         send_devicechange( enable ? DBT_DEVICEARRIVAL : DBT_DEVICEREMOVECOMPLETE, broadcast, len );
         heap_free( broadcast );
     }
@@ -883,13 +877,12 @@ NTSTATUS WINAPI IoRegisterDeviceInterface(DEVICE_OBJECT *device, const GUID *cla
     SP_DEVICE_INTERFACE_DATA sp_iface = {sizeof(sp_iface)};
     SP_DEVINFO_DATA sp_device = {sizeof(sp_device)};
     WCHAR device_instance_id[MAX_DEVICE_ID_LEN];
-    SP_DEVICE_INTERFACE_DETAIL_DATA_W *data;
     NTSTATUS status = STATUS_SUCCESS;
     UNICODE_STRING device_path;
     struct device_interface *iface;
     struct wine_rb_entry *entry;
-    DWORD required;
     HDEVINFO set;
+    WCHAR *p;
 
     TRACE("device %p, class_guid %s, refstr %s, symbolic_link %p.\n",
             device, debugstr_guid(class_guid), debugstr_us(refstr), symbolic_link);
@@ -910,22 +903,31 @@ NTSTATUS WINAPI IoRegisterDeviceInterface(DEVICE_OBJECT *device, const GUID *cla
     if (!SetupDiCreateDeviceInterfaceW( set, &sp_device, class_guid, refstr ? refstr->Buffer : NULL, 0, &sp_iface ))
         return STATUS_UNSUCCESSFUL;
 
-    required = 0;
-    SetupDiGetDeviceInterfaceDetailW( set, &sp_iface, NULL, 0, &required, NULL );
-    if (required == 0) return STATUS_UNSUCCESSFUL;
+    /* setupapi mangles the case; construct the interface path manually. */
 
-    data = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, required );
-    data->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+    device_path.Length = (4 + wcslen( device_instance_id ) + 1 + 38) * sizeof(WCHAR);
+    if (refstr)
+        device_path.Length += sizeof(WCHAR) + refstr->Length;
+    device_path.MaximumLength = device_path.Length + sizeof(WCHAR);
 
-    if (!SetupDiGetDeviceInterfaceDetailW( set, &sp_iface, data, required, NULL, NULL ))
+    device_path.Buffer = RtlAllocateHeap( GetProcessHeap(), 0, device_path.MaximumLength );
+    swprintf( device_path.Buffer, device_path.MaximumLength / sizeof(WCHAR),
+            L"\\??\\%s#{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
+            device_instance_id, class_guid->Data1, class_guid->Data2, class_guid->Data3,
+            class_guid->Data4[0], class_guid->Data4[1], class_guid->Data4[2], class_guid->Data4[3],
+            class_guid->Data4[4], class_guid->Data4[5], class_guid->Data4[6], class_guid->Data4[7] );
+    for (p = device_path.Buffer + 4; *p; p++)
     {
-        HeapFree( GetProcessHeap(), 0, data );
-        return STATUS_UNSUCCESSFUL;
+        if (*p == '\\')
+            *p = '#';
+    }
+    if (refstr)
+    {
+        *p++ = '\\';
+        wcscpy( p, refstr->Buffer );
     }
 
-    data->DevicePath[1] = '?';
-    TRACE("Returning path %s.\n", debugstr_w(data->DevicePath));
-    RtlCreateUnicodeString( &device_path, data->DevicePath);
+    TRACE("Returning path %s.\n", debugstr_us(&device_path));
 
     entry = wine_rb_get( &device_interfaces, &device_path );
     if (entry)
@@ -937,7 +939,7 @@ NTSTATUS WINAPI IoRegisterDeviceInterface(DEVICE_OBJECT *device, const GUID *cla
     else
     {
         iface = heap_alloc_zero( sizeof(struct device_interface) );
-        RtlCreateUnicodeString(&iface->symbolic_link, data->DevicePath);
+        RtlDuplicateUnicodeString( 1, &device_path, &iface->symbolic_link );
         if (wine_rb_put( &device_interfaces, &iface->symbolic_link, &iface->entry ))
             ERR("Failed to insert interface %s into tree.\n", debugstr_us(&iface->symbolic_link));
     }
@@ -945,9 +947,7 @@ NTSTATUS WINAPI IoRegisterDeviceInterface(DEVICE_OBJECT *device, const GUID *cla
     iface->device = device;
     iface->interface_class = *class_guid;
     if (symbolic_link)
-        RtlCreateUnicodeString( symbolic_link, data->DevicePath);
-
-    HeapFree( GetProcessHeap(), 0, data );
+        RtlDuplicateUnicodeString( 1, &device_path, symbolic_link );
 
     RtlFreeUnicodeString( &device_path );
 

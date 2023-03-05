@@ -3492,6 +3492,11 @@ static NTSTATUS grow_thread_stack( char *page, struct thread_stack_info *stack_i
     return ret;
 }
 
+NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args )
+{
+    return __wine_needs_override_large_address_aware();
+}
+
 
 /***********************************************************************
  *           virtual_handle_fault

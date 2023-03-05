@@ -5221,17 +5221,22 @@ NTSTATUS WINAPI NtCreateNamedPipeFile( HANDLE *handle, ULONG access, OBJECT_ATTR
             (pipe_type ? NAMED_PIPE_MESSAGE_STREAM_WRITE   : 0) |
             (read_mode ? NAMED_PIPE_MESSAGE_STREAM_READ    : 0) |
             (completion_mode ? NAMED_PIPE_NONBLOCKING_MODE : 0);
+        req->disposition  = dispo;
         req->maxinstances = max_inst;
         req->outsize = outbound_quota;
         req->insize  = inbound_quota;
         req->timeout = timeout->QuadPart;
         wine_server_add_data( req, objattr, len );
-        if (!(status = wine_server_call( req ))) *handle = wine_server_ptr_handle( reply->handle );
+        if (!(status = wine_server_call( req )))
+        {
+            *handle = wine_server_ptr_handle( reply->handle );
+            io->Information = reply->created ? FILE_CREATED : FILE_OPENED;
+        }
     }
     SERVER_END_REQ;
 
     free( objattr );
-    return status;
+    return io->u.Status = status;
 }
 
 

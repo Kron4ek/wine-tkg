@@ -456,6 +456,7 @@ static void test_current_thread(BOOL is_system)
 
     ok(PsGetThreadId((PETHREAD)KeGetCurrentThread()) == PsGetCurrentThreadId(), "thread IDs don't match\n");
     ok(PsIsSystemThread((PETHREAD)KeGetCurrentThread()) == is_system, "unexpected system thread\n");
+    ok(ExGetPreviousMode() == is_system ? KernelMode : UserMode, "previous mode is not correct\n");
     if (!is_system)
     {
         ok(create_caller_thread == KeGetCurrentThread(), "thread is not create caller thread\n");
@@ -2296,6 +2297,38 @@ static void test_permanence(void)
     ok(status == STATUS_OBJECT_NAME_NOT_FOUND, "got %#lx\n", status);
 }
 
+static void test_driver_object_extension(void)
+{
+    NTSTATUS (WINAPI *pIoAllocateDriverObjectExtension)(PDRIVER_OBJECT, PVOID, ULONG, PVOID *);
+    PVOID (WINAPI *pIoGetDriverObjectExtension)(PDRIVER_OBJECT, PVOID);
+    NTSTATUS status;
+    void *driver_obj_ext = NULL;
+    void *get_obj_ext = NULL;
+
+    pIoAllocateDriverObjectExtension = get_proc_address("IoAllocateDriverObjectExtension");
+    pIoGetDriverObjectExtension = get_proc_address("IoGetDriverObjectExtension");
+
+    if (!pIoAllocateDriverObjectExtension)
+    {
+        win_skip("IoAllocateDriverObjectExtension is not available.\n");
+        return;
+    }
+
+    status = pIoAllocateDriverObjectExtension(driver_obj, NULL, 100, &driver_obj_ext);
+    todo_wine ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    todo_wine ok(driver_obj_ext != NULL, "got NULL\n");
+
+    get_obj_ext = pIoGetDriverObjectExtension(driver_obj, NULL);
+    todo_wine ok(get_obj_ext == driver_obj_ext && get_obj_ext != NULL, "got %p != %p\n", get_obj_ext, driver_obj_ext);
+
+    status = pIoAllocateDriverObjectExtension(driver_obj, NULL, 100, &driver_obj_ext);
+    todo_wine ok(status == STATUS_OBJECT_NAME_COLLISION, "got %#lx\n", status);
+    ok(driver_obj_ext == NULL, "got %p\n", driver_obj_ext);
+
+    get_obj_ext = pIoGetDriverObjectExtension(driver_obj, (void *)0xdead);
+    ok(get_obj_ext == NULL, "got %p\n", get_obj_ext);
+}
+
 static void test_default_modules(void)
 {
     BOOL win32k = FALSE, dxgkrnl = FALSE, dxgmms1 = FALSE;
@@ -2449,6 +2482,7 @@ static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *st
     test_dpc();
     test_process_memory(test_input);
     test_permanence();
+    test_driver_object_extension();
     test_default_security();
 
     IoMarkIrpPending(irp);

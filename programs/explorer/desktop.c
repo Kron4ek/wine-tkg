@@ -876,7 +876,7 @@ static BOOL get_default_enable_shell( const WCHAR *name )
     return result;
 }
 
-static HMODULE load_graphics_driver( const WCHAR *driver, const GUID *guid )
+static HMODULE load_graphics_driver( const WCHAR *driver, GUID *guid )
 {
     static const WCHAR video_keyW[] = {
         'S','y','s','t','e','m','\\',
@@ -926,6 +926,7 @@ static HMODULE load_graphics_driver( const WCHAR *driver, const GUID *guid )
 
         if (!wcscmp( name, L"null" ))
         {
+            memset( guid, 0, sizeof(*guid) );
             TRACE( "display %s using null driver\n", debugstr_guid(guid) );
             wcscpy( libname, L"null" );
             null_driver = TRUE;

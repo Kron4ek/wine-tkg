@@ -2315,7 +2315,6 @@ struct wined3d_context
     DWORD numbered_array_mask;
     enum fogsource fog_source;
 
-    UINT instance_count;
 
     void *shader_backend_data;
     void *fragment_pipe_data;

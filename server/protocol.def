@@ -2087,7 +2087,6 @@ enum message_type
     int             prev_y;
     int             new_x;     /* new cursor position */
     int             new_y;
-    VARARG(keystate,bytes);    /* global state array for all the keys */
 @END
 #define SEND_HWMSG_INJECTED    0x01
 #define SEND_HWMSG_RAWINPUT    0x02
@@ -2280,6 +2279,7 @@ enum message_type
     unsigned int   access;
     unsigned int   options;
     unsigned int   sharing;
+    unsigned int   disposition;
     unsigned int   maxinstances;
     unsigned int   outsize;
     unsigned int   insize;
@@ -2288,6 +2288,7 @@ enum message_type
     VARARG(objattr,object_attributes); /* object attributes */
 @REPLY
     obj_handle_t   handle;       /* handle to the pipe */
+    int            created;
 @END
 
 /* flags in create_named_pipe and get_named_pipe_info */

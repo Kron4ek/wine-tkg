@@ -127,7 +127,7 @@ static HRESULT DirectSoundDevice_Create(DirectSoundDevice ** ppDevice)
     TRACE("(%p)\n", ppDevice);
 
     /* Allocate memory */
-    device = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(DirectSoundDevice));
+    device = calloc(1, sizeof(DirectSoundDevice));
     if (device == NULL) {
         WARN("out of memory\n");
         return DSERR_OUTOFMEMORY;
@@ -161,10 +161,10 @@ static HRESULT DirectSoundDevice_Create(DirectSoundDevice ** ppDevice)
     device->guid = GUID_NULL;
 
     /* Set default wave format (may need it for waveOutOpen) */
-    device->primary_pwfx = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(WAVEFORMATEXTENSIBLE));
+    device->primary_pwfx = calloc(1, sizeof(WAVEFORMATEXTENSIBLE));
     if (!device->primary_pwfx) {
         WARN("out of memory\n");
-        HeapFree(GetProcessHeap(),0,device);
+        free(device);
         return DSERR_OUTOFMEMORY;
     }
 
@@ -235,15 +235,14 @@ static ULONG DirectSoundDevice_Release(DirectSoundDevice * device)
         if(device->mmdevice)
             IMMDevice_Release(device->mmdevice);
         CloseHandle(device->sleepev);
-
-        HeapFree(GetProcessHeap(), 0, device->dsp_buffer);
-        HeapFree(GetProcessHeap(), 0, device->tmp_buffer);
-        HeapFree(GetProcessHeap(), 0, device->cp_buffer);
-        HeapFree(GetProcessHeap(), 0, device->buffer);
+        free(device->dsp_buffer);
+        free(device->tmp_buffer);
+        free(device->cp_buffer);
+        free(device->buffer);
         device->mixlock.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&device->mixlock);
         TRACE("(%p) released\n", device);
-        HeapFree(GetProcessHeap(),0,device);
+        free(device);
     }
     return ref;
 }
@@ -328,7 +327,7 @@ static HRESULT DirectSoundDevice_Initialize(DirectSoundDevice ** ppDevice, LPCGU
     hr = DSOUND_ReopenDevice(device, FALSE);
     if (FAILED(hr))
     {
-        HeapFree(GetProcessHeap(), 0, device);
+        free(device);
         LeaveCriticalSection(&DSOUND_renderers_lock);
         IMMDevice_Release(mmdevice);
         WARN("DSOUND_ReopenDevice failed: %08lx\n", hr);
@@ -614,10 +613,7 @@ HRESULT DirectSoundDevice_AddBuffer(
 
     AcquireSRWLockExclusive(&device->buffer_list_lock);
 
-    if (device->buffers)
-        newbuffers = HeapReAlloc(GetProcessHeap(),0,device->buffers,sizeof(IDirectSoundBufferImpl*)*(device->nrofbuffers+1));
-    else
-        newbuffers = HeapAlloc(GetProcessHeap(),0,sizeof(IDirectSoundBufferImpl*)*(device->nrofbuffers+1));
+    newbuffers = realloc(device->buffers, sizeof(IDirectSoundBufferImpl*) * (device->nrofbuffers + 1));
 
     if (newbuffers) {
         device->buffers = newbuffers;
@@ -648,7 +644,7 @@ void DirectSoundDevice_RemoveBuffer(DirectSoundDevice * device, IDirectSoundBuff
 
     if (device->nrofbuffers == 1) {
         assert(device->buffers[0] == pDSB);
-        HeapFree(GetProcessHeap(), 0, device->buffers);
+        free(device->buffers);
         device->buffers = NULL;
     } else {
         for (i = 0; i < device->nrofbuffers; i++) {
@@ -674,7 +670,7 @@ static void directsound_destroy(IDirectSoundImpl *This)
     if (This->device)
         DirectSoundDevice_Release(This->device);
     TRACE("(%p) released\n", This);
-    HeapFree(GetProcessHeap(),0,This);
+    free(This);
 }
 
 static inline IDirectSoundImpl *impl_from_IUnknown(IUnknown *iface)
@@ -984,7 +980,7 @@ HRESULT IDirectSoundImpl_Create(IUnknown *outer_unk, REFIID riid, void **ppv, BO
     TRACE("(%s, %p)\n", debugstr_guid(riid), ppv);
 
     *ppv = NULL;
-    obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*obj));
+    obj = calloc(1, sizeof(*obj));
     if (!obj) {
         WARN("out of memory\n");
         return DSERR_OUTOFMEMORY;

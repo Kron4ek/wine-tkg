@@ -6006,10 +6006,11 @@ static HRESULT ddraw_surface_reserve_memory(struct wined3d_texture *wined3d_text
     return hr;
 }
 
-static HRESULT ddraw_surface_create_wined3d_texture(DDSURFACEDESC2 *desc, struct wined3d_device *wined3d_device,
+static HRESULT ddraw_surface_create_wined3d_texture(struct wined3d_device *wined3d_device,
         const struct wined3d_resource_desc *wined3d_desc, unsigned int layers, unsigned int levels,
         struct ddraw_texture *texture, struct wined3d_texture **wined3d_texture)
 {
+    const DDSURFACEDESC2 *desc = &texture->surface_desc;
     struct wined3d_resource_desc draw_texture_desc;
     struct wined3d_texture *draw_texture;
     struct ddraw_surface *parent;
@@ -6127,6 +6128,23 @@ HRESULT ddraw_surface_create(struct ddraw *ddraw, const DDSURFACEDESC2 *surface_
 
     /* Ensure DDSD_CAPS is always set. */
     desc->dwFlags |= DDSD_CAPS;
+
+    if ((desc->ddsCaps.dwCaps & DDSCAPS_COMPLEX)
+            && !(desc->ddsCaps.dwCaps & (DDSCAPS_FLIP | DDSCAPS_MIPMAP))
+            && !(desc->ddsCaps.dwCaps2 & DDSCAPS2_CUBEMAP))
+    {
+        WARN("DDSCAPS_COMPLEX specified for a surface which is neither flippable, mipmapped, nor a cubemap.\n");
+        heap_free(texture);
+        return DDERR_INVALIDCAPS;
+    }
+
+    if ((desc->dwFlags & DDSD_MIPMAPCOUNT) && !(desc->ddsCaps.dwCaps & DDSCAPS_COMPLEX))
+    {
+        /* This is illegal even if there is only one mipmap level. */
+        WARN("DDSD_MIPMAPCOUNT specified without DDSCAPS_COMPLEX.\n");
+        heap_free(texture);
+        return DDERR_INVALIDCAPS;
+    }
 
     if (desc->ddsCaps.dwCaps & DDSCAPS_FLIP)
     {
@@ -6583,7 +6601,7 @@ HRESULT ddraw_surface_create(struct ddraw *ddraw, const DDSURFACEDESC2 *surface_
         layers = 6;
     }
 
-    if (FAILED(hr = ddraw_surface_create_wined3d_texture(desc, ddraw->wined3d_device, &wined3d_desc, layers, levels,
+    if (FAILED(hr = ddraw_surface_create_wined3d_texture(ddraw->wined3d_device, &wined3d_desc, layers, levels,
             texture, &wined3d_texture)))
     {
         WARN("Failed to create wined3d texture, hr %#lx.\n", hr);
@@ -6717,7 +6735,7 @@ HRESULT ddraw_surface_create(struct ddraw *ddraw, const DDSURFACEDESC2 *surface_
                 desc->ddsCaps.dwCaps |= DDSCAPS_BACKBUFFER;
             desc->u5.dwBackBufferCount = 0;
 
-            if (FAILED(hr = ddraw_surface_create_wined3d_texture(desc, ddraw->wined3d_device, &wined3d_desc, 1, 1,
+            if (FAILED(hr = ddraw_surface_create_wined3d_texture(ddraw->wined3d_device, &wined3d_desc, 1, 1,
                     texture, &wined3d_texture)))
             {
                 heap_free(texture);

@@ -110,7 +110,7 @@ AddReg=\
     ContentIndex,\
     ControlClass,\
     CurrentVersion,\
-    CurrentVersionWow64,\
+    CurrentVersionWow64.ntamd64,\
     Debugger,\
     DirectX,\
     Fonts,\
@@ -124,7 +124,7 @@ AddReg=\
     SessionMgr,\
     Tapi,\
     ThemeManager,\
-    VersionInfo.ntamd64,\
+    VersionInfo,\
     LicenseInformation
 
 [DefaultInstall.ntarm64]
@@ -137,7 +137,7 @@ AddReg=\
     ContentIndex,\
     ControlClass,\
     CurrentVersion,\
-    CurrentVersionWow64,\
+    CurrentVersionWow64.ntarm64,\
     Debugger,\
     DirectX,\
     Fonts,\
@@ -150,16 +150,16 @@ AddReg=\
     SessionMgr,\
     Tapi,\
     ThemeManager,\
-    VersionInfo.ntamd64,\
+    VersionInfo,\
     LicenseInformation
 
-[Wow64Install]
+[Wow64Install.ntx86]
 RegisterDlls=RegisterDllsSection
 WineFakeDlls=FakeDllsWin32,FakeDllsWow64
 CopyFiles=NlsFiles
 AddReg=\
     CurrentVersion,\
-    CurrentVersionWow64,\
+    CurrentVersionWow64.ntx86,\
     Debugger,\
     DirectX,\
     KeyboardLayouts,\
@@ -167,11 +167,23 @@ AddReg=\
     Misc,\
     Packages.wow64,\
     Tapi,\
-    VersionInfo.ntamd64,\
+    VersionInfo,\
     LicenseInformation
 
-[Wow64Install.ntarm64]
-WineFakeDlls=FakeDllsWin32
+[Wow64Install.ntarm]
+RegisterDlls=RegisterDllsSection
+WineFakeDlls=FakeDllsWin32,FakeDllsWow64
+CopyFiles=NlsFiles
+AddReg=\
+    CurrentVersion,\
+    CurrentVersionWow64.ntarm,\
+    Debugger,\
+    DirectX,\
+    MCI,\
+    Misc,\
+    Tapi,\
+    VersionInfo,\
+    LicenseInformation
 
 [DefaultInstall.Services]
 AddService=BITS,0,BITSService
@@ -423,9 +435,26 @@ HKLM,%CurrentVersionNT%\Print,,16
 HKLM,%CurrentVersionNT%\ProfileList,,16
 HKLM,%CurrentVersionNT%\Winlogon,"Shell",,"explorer.exe"
 
-[CurrentVersionWow64]
+[CurrentVersionWow64.ntamd64]
 HKLM,%CurrentVersion%,"ProgramFilesDir (x86)",,"%16426%"
 HKLM,%CurrentVersion%,"CommonFilesDir (x86)",,"%16428%"
+HKLM,Software\Microsoft\Wow64\x86,,2,"wow64cpu.dll"
+
+[CurrentVersionWow64.ntarm64]
+HKLM,%CurrentVersion%,"ProgramFilesDir (x86)",,"%16426%"
+HKLM,%CurrentVersion%,"CommonFilesDir (x86)",,"%16428%"
+HKLM,%CurrentVersion%,"ProgramFilesDir (Arm)",,"C:\Program Files (Arm)"
+HKLM,%CurrentVersion%,"CommonFilesDir (Arm)",,"C:\Program Files (Arm)\Common Files"
+HKLM,Software\Microsoft\Wow64\arm,,2,"wowarmhw.dll"
+HKLM,Software\Microsoft\Wow64\x86,,2,"xtajit.dll"
+
+[CurrentVersionWow64.ntx86]
+HKLM,%CurrentVersion%,"ProgramFilesDir (x86)",,"%16422%"
+HKLM,%CurrentVersion%,"CommonFilesDir (x86)",,"%16427%"
+
+[CurrentVersionWow64.ntarm]
+HKLM,%CurrentVersion%,"ProgramFilesDir (Arm)",,"%16422%"
+HKLM,%CurrentVersion%,"CommonFilesDir (Arm)",,"%16427%"
 
 [Debugger]
 HKLM,%CurrentVersionNT%\AeDebug,"Debugger",2,"winedbg --auto %ld %ld"
@@ -2751,27 +2780,6 @@ HKLM,"System\CurrentControlSet\Services\Winsock\Parameters",,16
 HKLM,"System\CurrentControlSet\Services\Winsock2\Parameters\Protocol_Catalog9\Catalog_Entries",,16
 
 [VersionInfo]
-HKLM,%CurrentVersionNT%,"CurrentVersion",2,"10.0"
-HKLM,%CurrentVersionNT%,"CurrentMajorVersionNumber",0x10001,10
-HKLM,%CurrentVersionNT%,"CurrentMinorVersionNumber",0x10001,0
-HKLM,%CurrentVersionNT%,"CurrentBuild",2,"19043"
-HKLM,%CurrentVersionNT%,"CurrentBuildNumber",2,"19043"
-HKLM,%CurrentVersionNT%,"CurrentType",2,"Multiprocessor Free"
-HKLM,%CurrentVersionNT%,"DigitalProductId",2,00,00,00,00,00,00,00,00,00,00,00,\
-00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
-00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
-00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
-00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
-00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
-00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%,"DisplayVersion",2,"21H1"
-HKLM,%CurrentVersionNT%,"ProductName",2,"Windows 10 Pro"
-HKLM,%CurrentVersionNT%,"ReleaseId",,"2009"
-HKLM,%Control%\ProductOptions,"ProductType",2,"WinNT"
-HKLM,%Control%\Windows,"CSDVersion",0x10003,0
-HKLM,%Control%\Session Manager\Environment,"OS",2,"Windows_NT"
-
-[VersionInfo.ntamd64]
 HKLM,%CurrentVersionNT%,"CurrentVersion",2,"10.0"
 HKLM,%CurrentVersionNT%,"CurrentMajorVersionNumber",0x10001,10
 HKLM,%CurrentVersionNT%,"CurrentMinorVersionNumber",0x10001,0

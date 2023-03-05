@@ -1413,12 +1413,25 @@ DECL_HANDLER(create_named_pipe)
         if (!(root = get_handle_obj( current->process, objattr->rootdir, 0, NULL ))) return;
     }
 
-    pipe = create_named_object( root, &named_pipe_ops, &name, objattr->attributes | OBJ_OPENIF, NULL );
+    switch (req->disposition)
+    {
+    case FILE_OPEN:
+        pipe = open_named_object( root, &named_pipe_ops, &name, objattr->attributes );
+        break;
+    case FILE_CREATE:
+    case FILE_OPEN_IF:
+        pipe = create_named_object( root, &named_pipe_ops, &name, objattr->attributes | OBJ_OPENIF, NULL );
+        break;
+    default:
+        pipe = NULL;
+        set_error( STATUS_INVALID_PARAMETER );
+        break;
+    }
 
     if (root) release_object( root );
     if (!pipe) return;
 
-    if (get_error() != STATUS_OBJECT_NAME_EXISTS)
+    if (get_error() != STATUS_OBJECT_NAME_EXISTS && req->disposition != FILE_OPEN)
     {
         /* initialize it if it didn't already exist */
         pipe->instances = 0;
@@ -1434,6 +1447,7 @@ DECL_HANDLER(create_named_pipe)
                                                 GROUP_SECURITY_INFORMATION |
                                                 DACL_SECURITY_INFORMATION |
                                                 SACL_SECURITY_INFORMATION );
+        reply->created = 1;
     }
     else
     {
@@ -1443,7 +1457,7 @@ DECL_HANDLER(create_named_pipe)
             release_object( pipe );
             return;
         }
-        if (pipe->sharing != req->sharing)
+        if (pipe->sharing != req->sharing || req->disposition == FILE_CREATE)
         {
             set_error( STATUS_ACCESS_DENIED );
             release_object( pipe );
