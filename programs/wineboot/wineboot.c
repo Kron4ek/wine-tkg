@@ -422,6 +422,8 @@ static void create_user_shared_data( UINT64 *tsc_frequency )
     UNICODE_STRING name = RTL_CONSTANT_STRING( L"\\KernelObjects\\__wine_user_shared_data" );
     NTSTATUS status;
     HANDLE handle;
+    ULONG i, machines[8];
+    HANDLE process = 0;
 
     InitializeObjectAttributes( &attr, &name, OBJ_OPENIF, NULL, NULL );
     if ((status = NtOpenSection( &handle, SECTION_ALL_ACCESS, &attr )))
@@ -482,15 +484,46 @@ static void create_user_shared_data( UINT64 *tsc_frequency )
         features[PF_AVX_INSTRUCTIONS_AVAILABLE]           = !!(sci.ProcessorFeatureBits & CPU_FEATURE_AVX);
         features[PF_AVX2_INSTRUCTIONS_AVAILABLE]          = !!(sci.ProcessorFeatureBits & CPU_FEATURE_AVX2);
         break;
+
     case PROCESSOR_ARCHITECTURE_ARM:
         features[PF_ARM_VFP_32_REGISTERS_AVAILABLE]       = !!(sci.ProcessorFeatureBits & CPU_FEATURE_ARM_VFP_32);
         features[PF_ARM_NEON_INSTRUCTIONS_AVAILABLE]      = !!(sci.ProcessorFeatureBits & CPU_FEATURE_ARM_NEON);
         features[PF_ARM_V8_INSTRUCTIONS_AVAILABLE]        = (sci.ProcessorLevel >= 8);
         break;
+
     case PROCESSOR_ARCHITECTURE_ARM64:
         features[PF_ARM_V8_INSTRUCTIONS_AVAILABLE]        = TRUE;
         features[PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE]  = !!(sci.ProcessorFeatureBits & CPU_FEATURE_ARM_V8_CRC32);
         features[PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE] = !!(sci.ProcessorFeatureBits & CPU_FEATURE_ARM_V8_CRYPTO);
+        features[PF_COMPARE_EXCHANGE_DOUBLE]              = TRUE;
+        features[PF_NX_ENABLED]                           = TRUE;
+        features[PF_FASTFAIL_AVAILABLE]                   = TRUE;
+        /* add features for other architectures supported by wow64 */
+        if (!NtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
+                                         machines, sizeof(machines), NULL ))
+        {
+            for (i = 0; machines[i]; i++)
+            {
+                switch (LOWORD(machines[i]))
+                {
+                case IMAGE_FILE_MACHINE_ARMNT:
+                    features[PF_ARM_VFP_32_REGISTERS_AVAILABLE]  = TRUE;
+                    features[PF_ARM_NEON_INSTRUCTIONS_AVAILABLE] = TRUE;
+                    break;
+                case IMAGE_FILE_MACHINE_I386:
+                    features[PF_MMX_INSTRUCTIONS_AVAILABLE]    = TRUE;
+                    features[PF_XMMI_INSTRUCTIONS_AVAILABLE]   = TRUE;
+                    features[PF_RDTSC_INSTRUCTION_AVAILABLE]   = TRUE;
+                    features[PF_XMMI64_INSTRUCTIONS_AVAILABLE] = TRUE;
+                    features[PF_SSE3_INSTRUCTIONS_AVAILABLE]   = TRUE;
+                    features[PF_RDTSCP_INSTRUCTION_AVAILABLE]  = TRUE;
+                    features[PF_SSSE3_INSTRUCTIONS_AVAILABLE]  = TRUE;
+                    features[PF_SSE4_1_INSTRUCTIONS_AVAILABLE] = TRUE;
+                    features[PF_SSE4_2_INSTRUCTIONS_AVAILABLE] = TRUE;
+                    break;
+                }
+            }
+        }
         break;
     }
     data->ActiveProcessorCount = NtCurrentTeb()->Peb->NumberOfProcessors;
@@ -549,29 +582,10 @@ static void get_vendorid( WCHAR *buf )
     regs_to_str( regs + 1, 12, buf );
 }
 
-static void get_namestring( WCHAR *buf )
-{
-    int regs[4] = {0, 0, 0, 0};
-    int i;
-
-    __cpuid( regs, 0x80000000 );
-    if (regs[0] >= 0x80000004)
-    {
-        __cpuid( regs, 0x80000002 );
-        regs_to_str( regs, 16, buf );
-        __cpuid( regs, 0x80000003 );
-        regs_to_str( regs, 16, buf + 16 );
-        __cpuid( regs, 0x80000004 );
-        regs_to_str( regs, 16, buf + 32 );
-    }
-    for (i = lstrlenW(buf) - 1; i >= 0 && buf[i] == ' '; i--) buf[i] = 0;
-}
-
 #else  /* __i386__ || __x86_64__ */
 
 static void get_identifier( WCHAR *buf, size_t size, const WCHAR *arch ) { }
 static void get_vendorid( WCHAR *buf ) { }
-static void get_namestring( WCHAR *buf ) { }
 
 #endif  /* __i386__ || __x86_64__ */
 
@@ -816,11 +830,13 @@ static void create_hardware_registry_keys( UINT64 tsc_frequency )
     SYSTEM_CPU_INFORMATION sci;
     PROCESSOR_POWER_INFORMATION* power_info;
     ULONG sizeof_power_info = sizeof(PROCESSOR_POWER_INFORMATION) * NtCurrentTeb()->Peb->NumberOfProcessors;
-    WCHAR id[60], namestr[49], vendorid[13];
+    ULONG name_buffer[16];
+    WCHAR id[60], vendorid[13];
 
-    get_namestring( namestr );
     get_vendorid( vendorid );
     NtQuerySystemInformation( SystemCpuInformation, &sci, sizeof(sci), NULL );
+    if (NtQuerySystemInformation( SystemProcessorBrandString, name_buffer, sizeof(name_buffer), NULL ))
+        name_buffer[0] = 0;
 
     power_info = HeapAlloc( GetProcessHeap(), 0, sizeof_power_info );
     if (power_info == NULL)
@@ -890,7 +906,8 @@ static void create_hardware_registry_keys( UINT64 tsc_frequency )
             RegSetValueExW( hkey, L"FeatureSet", 0, REG_DWORD, (BYTE *)&sci.ProcessorFeatureBits, sizeof(DWORD) );
             set_reg_value( hkey, L"Identifier", id );
             /* TODO: report ARM properly */
-            set_reg_value( hkey, L"ProcessorNameString", namestr );
+            RegSetValueExA( hkey, "ProcessorNameString", 0, REG_SZ, (const BYTE *)name_buffer,
+                            strlen( (char *)name_buffer ) + 1 );
             set_reg_value( hkey, L"VendorIdentifier", vendorid );
             RegSetValueExW( hkey, L"~MHz", 0, REG_DWORD, (BYTE *)&tsc_freq_mhz, sizeof(DWORD) );
             RegCloseKey( hkey );

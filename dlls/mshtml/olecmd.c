@@ -438,7 +438,7 @@ static void refresh_proc(task_t *_task)
         IOleCommandTarget_Exec(window->browser->doc->client_cmdtrg, &CGID_ShellDocView, 37, 0, &var, NULL);
     }
 
-    load_uri(task->window, task->window->uri, BINDING_REFRESH|BINDING_NOFRAG);
+    load_uri(window, window->uri, BINDING_REFRESH|BINDING_NOFRAG);
 }
 
 static void refresh_destr(task_t *_task)
@@ -687,12 +687,19 @@ static HRESULT exec_browsemode(HTMLDocumentNode *doc, DWORD cmdexecopt, VARIANT 
 
 static HRESULT exec_editmode(HTMLDocumentNode *doc, DWORD cmdexecopt, VARIANT *in, VARIANT *out)
 {
+    HTMLDocumentObj *doc_obj;
+    HRESULT hres;
+
     TRACE("(%p)->(%08lx %p %p)\n", doc, cmdexecopt, in, out);
 
     if(in || out)
         FIXME("unsupported args\n");
 
-    return setup_edit_mode(doc->browser->doc);
+    doc_obj = doc->browser->doc;
+    IUnknown_AddRef(doc_obj->outer_unk);
+    hres = setup_edit_mode(doc_obj);
+    IUnknown_Release(doc_obj->outer_unk);
+    return hres;
 }
 
 static HRESULT exec_htmleditmode(HTMLDocumentNode *doc, DWORD cmdexecopt, VARIANT *in, VARIANT *out)

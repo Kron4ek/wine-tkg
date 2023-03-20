@@ -817,6 +817,9 @@ SOURCES = \
 	windows.gaming.input.idl \
 	windows.gaming.ui.idl \
 	windows.globalization.idl \
+	windows.graphics.directx.direct3d11.idl \
+	windows.graphics.directx.idl \
+	windows.graphics.holographic.idl \
 	windows.h \
 	windows.media.closedcaptioning.idl \
 	windows.media.devices.idl \
@@ -825,6 +828,8 @@ SOURCES = \
 	windows.media.speechsynthesis.idl \
 	windows.networking.connectivity.idl \
 	windows.networking.idl \
+	windows.perception.spatial.idl \
+	windows.perception.spatial.surfaces.idl \
 	windows.security.credentials.idl \
 	windows.security.cryptography.idl \
 	windows.storage.streams.idl \

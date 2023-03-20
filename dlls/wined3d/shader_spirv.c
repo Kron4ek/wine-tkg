@@ -18,8 +18,6 @@
  */
 
 #include "wined3d_private.h"
-#define LIBVKD3D_SHADER_SOURCE
-#include <vkd3d_shader.h>
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d_shader);
 
@@ -202,22 +200,6 @@ static void shader_spirv_init_compile_args(struct wined3d_shader_spirv_compile_a
     }
 }
 
-static const char *get_line(const char **ptr)
-{
-    const char *p, *q;
-
-    p = *ptr;
-    if (!(q = strstr(p, "\n")))
-    {
-        if (!*p) return NULL;
-        *ptr += strlen(p);
-        return p;
-    }
-    *ptr = q + 1;
-
-    return p;
-}
-
 static void shader_spirv_init_shader_interface_vk(struct wined3d_shader_spirv_shader_interface *iface,
         const struct shader_spirv_resource_bindings *b, const struct wined3d_stream_output_desc *so_desc)
 {
@@ -279,11 +261,12 @@ static VkShaderModule shader_spirv_compile_shader(struct wined3d_context_vk *con
     ret = vkd3d_shader_compile(&info, &spirv, &messages);
     if (messages && *messages && FIXME_ON(d3d_shader))
     {
-        const char *ptr = messages;
-        const char *line;
+        const char *ptr, *end, *line;
 
         FIXME("Shader log:\n");
-        while ((line = get_line(&ptr)))
+        ptr = messages;
+        end = ptr + strlen(ptr);
+        while ((line = wined3d_get_line(&ptr, end)))
         {
             FIXME("    %.*s", (int)(ptr - line), line);
         }
@@ -719,11 +702,12 @@ static void shader_spirv_scan_shader(struct wined3d_shader *shader,
         ERR("Failed to scan shader, ret %d.\n", ret);
     if (messages && *messages && FIXME_ON(d3d_shader))
     {
-        const char *ptr = messages;
-        const char *line;
+        const char *ptr, *end, *line;
 
         FIXME("Shader log:\n");
-        while ((line = get_line(&ptr)))
+        ptr = messages;
+        end = ptr + strlen(ptr);
+        while ((line = wined3d_get_line(&ptr, end)))
         {
             FIXME("    %.*s", (int)(ptr - line), line);
         }
@@ -1161,7 +1145,6 @@ static const struct wined3d_state_entry_template spirv_vertex_pipe_vk_vp_states[
     {STATE_RENDER(WINED3D_RS_POINTSCALE_B),             {STATE_RENDER(WINED3D_RS_POINTSCALE_B),             state_nop}},
     {STATE_RENDER(WINED3D_RS_POINTSCALE_C),             {STATE_RENDER(WINED3D_RS_POINTSCALE_C),             state_nop}},
     {STATE_RENDER(WINED3D_RS_POINTSIZE_MAX),            {STATE_RENDER(WINED3D_RS_POINTSIZE_MAX),            state_nop}},
-    {STATE_RENDER(WINED3D_RS_INDEXEDVERTEXBLENDENABLE), {STATE_RENDER(WINED3D_RS_INDEXEDVERTEXBLENDENABLE), state_nop}},
     {STATE_RENDER(WINED3D_RS_TWEENFACTOR),              {STATE_RENDER(WINED3D_RS_TWEENFACTOR),              state_nop}},
     {STATE_MATERIAL,                                    {STATE_MATERIAL,                                    state_nop}},
     {STATE_SHADER(WINED3D_SHADER_TYPE_VERTEX),          {STATE_SHADER(WINED3D_SHADER_TYPE_VERTEX),          state_nop}},

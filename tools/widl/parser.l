@@ -18,8 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+%option bison-bridge
 %option stack
 %option noinput nounput noyy_top_state
+%option noyywrap
 %option 8bit never-interactive prefix="parser_"
 
 nl	\r?\n
@@ -33,12 +35,9 @@ hex	0(x|X){hexd}+({l_suffix}?{u_suffix}?|{u_suffix}?{l_suffix}?)?
 uuid	{hexd}{8}-{hexd}{4}-{hexd}{4}-{hexd}{4}-{hexd}{12}
 double	[0-9]+\.[0-9]+([eE][+-]?[0-9]+)*
 
-%x QUOTE
-%x WSTRQUOTE
 %x ATTR
 %x PP_LINE
 %x PP_PRAGMA
-%x SQUOTE
 
 %{
 
@@ -58,30 +57,36 @@ double	[0-9]+\.[0-9]+([eE][+-]?[0-9]+)*
 #include "parser.h"
 #include "wpp_private.h"
 
+#define YYerror PARSER_error
+#define YYSTYPE PARSER_STYPE
+#define YYUNDEF PARSER_UNDEF
+#define yyerror parser_error
+
 #include "parser.tab.h"
 
-static void addcchar(char c);
-static char *get_buffered_cstring(void);
-
-static char *cbuffer;
-static int cbufidx;
-static int cbufalloc = 0;
-
-static int kw_token(const char *kw);
-static int attr_token(const char *kw);
+static int kw_token(const char *kw, YYSTYPE *yylval);
+static int attr_token(const char *kw, YYSTYPE *yylval);
 
 static void switch_to_acf(void);
 
 static warning_list_t *disabled_warnings = NULL;
 
-#define MAX_IMPORT_DEPTH 20
-struct {
-  YY_BUFFER_STATE state;
-  char *input_name;
-  int   line_number;
-  char *temp_name;
-} import_stack[MAX_IMPORT_DEPTH];
-int import_stack_ptr = 0;
+struct import_state
+{
+    YY_BUFFER_STATE buffer;
+    char *input_name;
+    int line_number;
+    struct list entry;
+};
+static struct list import_stack = LIST_INIT( import_stack );
+int parse_only = 0;
+
+struct import
+{
+    const char *name;
+    struct list entry;
+};
+static struct list imports = LIST_INIT( imports );
 
 /* converts an integer in string form to an unsigned long and prints an error
  * on overflow */
@@ -116,6 +121,32 @@ struct uuid *parse_uuid(const char *u)
   return uuid;
 }
 
+static int token_str( int token, const char *str, YYSTYPE *yylval )
+{
+    char *tmp = xstrdup( str );
+
+    if (token == aWSTRING || token == aSTRING || token == aSQSTRING)
+    {
+        char *src, *dst;
+        src = dst = ++tmp; /* skip first quote */
+        while (*src)
+        {
+            if (*src == '\\') src++;
+            *dst++ = *src++;
+        }
+        dst[-1] = 0; /* strip last quote */
+    }
+
+    yylval->str = tmp;
+    return token;
+}
+
+static int token_num( int token, const char *yytext, YYSTYPE *yylval )
+{
+    yylval->num = xstrtoul( yytext, NULL, 0 );
+    return token;
+}
+
 %}
 
 /*
@@ -124,8 +155,6 @@ struct uuid *parse_uuid(const char *u)
  **************************************************************************
  */
 %%
-<INITIAL>^{ws}*\#{ws}*pragma{ws}+ yy_push_state(PP_PRAGMA);
-<INITIAL,ATTR>^{ws}*\#{ws}*	yy_push_state(PP_LINE);
 <PP_LINE>[^\n]*         {
                             int lineno;
                             char *cptr, *fname;
@@ -146,7 +175,8 @@ struct uuid *parse_uuid(const char *u)
                         }
 <PP_PRAGMA>midl_echo[^\n]*  yyless(9); yy_pop_state(); return tCPPQUOTE;
 <PP_PRAGMA>winrt[^\n]*  {
-                            if(import_stack_ptr) {
+                            if (!list_empty( &import_stack ))
+                            {
                                 if(!winrt_mode)
                                     error_loc("winrt IDL file imported in non-winrt mode\n");
                             }else {
@@ -161,67 +191,59 @@ struct uuid *parse_uuid(const char *u)
                             }
                             yy_pop_state();
                         }
-<PP_PRAGMA>[^\n]*       parser_lval.str = xstrdup(yytext); yy_pop_state(); return aPRAGMA;
-<INITIAL>^{ws}*midl_pragma{ws}+warning return tPRAGMA_WARNING;
-<INITIAL,ATTR>\"	yy_push_state(QUOTE); cbufidx = 0;
-<QUOTE>\"		{
-				yy_pop_state();
-				parser_lval.str = get_buffered_cstring();
-				return aSTRING;
-			}
-<INITIAL,ATTR>L\"	yy_push_state(WSTRQUOTE); cbufidx = 0;
-<WSTRQUOTE>\"		{
-				yy_pop_state();
-				parser_lval.str = get_buffered_cstring();
-				return aWSTRING;
-			}
-<INITIAL,ATTR>\'	yy_push_state(SQUOTE); cbufidx = 0;
-<SQUOTE>\'		{
-				yy_pop_state();
-				parser_lval.str = get_buffered_cstring();
-				return aSQSTRING;
-			}
-<QUOTE,WSTRQUOTE,SQUOTE>\\\\	|
-<QUOTE,WSTRQUOTE>\\\"	addcchar(yytext[1]);
-<SQUOTE>\\\'	addcchar(yytext[1]);
-<QUOTE,WSTRQUOTE,SQUOTE>\\.	addcchar('\\'); addcchar(yytext[1]);
-<QUOTE,WSTRQUOTE,SQUOTE>.	addcchar(yytext[0]);
-<INITIAL,ATTR>\[	yy_push_state(ATTR); return '[';
-<ATTR>\]		yy_pop_state(); return ']';
-<ATTR>{cident}		return attr_token(yytext);
-<ATTR>{uuid}			{
-				parser_lval.uuid = parse_uuid(yytext);
-				return aUUID;
-			}
-<INITIAL,ATTR>{hex}	{
-				parser_lval.num = xstrtoul(yytext, NULL, 0);
-				return aHEXNUM;
-			}
-<INITIAL,ATTR>{int}	{
-				parser_lval.num = xstrtoul(yytext, NULL, 0);
-				return aNUM;
-			}
-<INITIAL>{double}	{
-				parser_lval.dbl = strtod(yytext, NULL);
-				return aDOUBLE;
-			}
+<PP_PRAGMA>[^\n]*       yylval->str = xstrdup(yytext); yy_pop_state(); return aPRAGMA;
+
+<ATTR>{
+    \]                                          { yy_pop_state(); return ']'; }
+
+    {cident}                                    { return attr_token( yytext, yylval ); }
+    {uuid}                                      {
+                                                    yylval->uuid = parse_uuid( yytext );
+                                                    return aUUID;
+                                                }
+}
+
+<INITIAL>{
+    ^{ws}*\#{ws}*pragma{ws}+                    { yy_push_state( PP_PRAGMA ); }
+    ^{ws}*midl_pragma{ws}+warning               { return tPRAGMA_WARNING; }
+
+    {double}                                    {
+                                                    yylval->dbl = strtod( yytext, NULL );
+                                                    return aDOUBLE;
+                                                }
+}
+
 SAFEARRAY{ws}*/\(	return tSAFEARRAY;
-{cident}		return kw_token(yytext);
-<INITIAL,ATTR>\n	line_number++;
-<INITIAL,ATTR>{ws}
-<INITIAL,ATTR>\<\<	return SHL;
-<INITIAL,ATTR>\>\>	return SHR;
-<INITIAL,ATTR>\-\>	return MEMBERPTR;
-<INITIAL,ATTR>==	return EQUALITY;
-<INITIAL,ATTR>!=	return INEQUALITY;
-<INITIAL,ATTR>\>=	return GREATEREQUAL;
-<INITIAL,ATTR>\<=	return LESSEQUAL;
-<INITIAL,ATTR>\|\|	return LOGICALOR;
-<INITIAL,ATTR>&&	return LOGICALAND;
-<INITIAL,ATTR>\.\.\.	return ELLIPSIS;
-<INITIAL,ATTR>.		return yytext[0];
+{cident}		return kw_token(yytext, yylval);
+
+<INITIAL,ATTR>{
+    ^{ws}*\#{ws}*                               { yy_push_state(PP_LINE); }
+    \[                                          { yy_push_state(ATTR); return '['; }
+
+    {hex}                                       { return token_num( aHEXNUM, yytext, yylval ); }
+    {int}                                       { return token_num( aNUM, yytext, yylval ); }
+
+    L\"(\\.|[^"\\])*\"                          { return token_str( aWSTRING, yytext + 1, yylval ); }
+    \"(\\.|[^"\\])*\"                           { return token_str( aSTRING, yytext, yylval ); }
+    \'(\\.|[^'\\])*\'                           { return token_str( aSQSTRING, yytext, yylval ); }
+
+    \n                                          { line_number++; }
+    {ws}                                        {}
+    \<\<                                        { return SHL; }
+    \>\>                                        { return SHR; }
+    \-\>                                        { return MEMBERPTR; }
+    ==                                          { return EQUALITY; }
+    !=                                          { return INEQUALITY; }
+    \>=                                         { return GREATEREQUAL; }
+    \<=                                         { return LESSEQUAL; }
+    \|\|                                        { return LOGICALOR; }
+    &&                                          { return LOGICALAND; }
+    \.\.\.                                      { return ELLIPSIS; }
+    .                                           { return yytext[0]; }
+}
+
 <<EOF>>			{
-                            if (import_stack_ptr)
+                            if (!list_empty( &import_stack ))
                                 return aEOF;
                             if (acf_name)
                             {
@@ -231,13 +253,6 @@ SAFEARRAY{ws}*/\(	return tSAFEARRAY;
                             yyterminate();
 			}
 %%
-
-#ifndef parser_wrap
-int parser_wrap(void)
-{
-	return 1;
-}
-#endif
 
 struct keyword {
 	const char *kw;
@@ -458,151 +473,96 @@ static int kw_cmp_func(const void *s1, const void *s2)
 	return strcmp(KWP(s1)->kw, KWP(s2)->kw);
 }
 
-static int kw_token(const char *kw)
+static int kw_token(const char *kw, YYSTYPE *yylval)
 {
 	struct keyword key, *kwp;
 	key.kw = kw;
 	kwp = bsearch(&key, keywords, NKEYWORDS, sizeof(keywords[0]), kw_cmp_func);
 	if (kwp && (!kwp->winrt_only || winrt_mode)) {
-		parser_lval.str = xstrdup(kwp->kw);
+		yylval->str = xstrdup(kwp->kw);
 		return kwp->token;
 	}
-	parser_lval.str = xstrdup(kw);
+	yylval->str = xstrdup(kw);
 	return is_type(kw) ? aKNOWNTYPE : aIDENTIFIER;
 }
 
-static int attr_token(const char *kw)
+static int attr_token(const char *kw, YYSTYPE *yylval)
 {
         struct keyword key, *kwp;
         key.kw = kw;
         kwp = bsearch(&key, attr_keywords, sizeof(attr_keywords)/sizeof(attr_keywords[0]),
                       sizeof(attr_keywords[0]), kw_cmp_func);
         if (kwp && (!kwp->winrt_only || winrt_mode)) {
-            parser_lval.str = xstrdup(kwp->kw);
+            yylval->str = xstrdup(kwp->kw);
             return kwp->token;
         }
-        return kw_token(kw);
-}
-
-static void addcchar(char c)
-{
-	if(cbufidx >= cbufalloc)
-	{
-		cbufalloc += 1024;
-		cbuffer = xrealloc(cbuffer, cbufalloc * sizeof(cbuffer[0]));
-		if(cbufalloc > 65536)
-			parser_warning("Reallocating string buffer larger than 64kB\n");
-	}
-	cbuffer[cbufidx++] = c;
-}
-
-static char *get_buffered_cstring(void)
-{
-	addcchar(0);
-	return xstrdup(cbuffer);
+        return kw_token(kw, yylval);
 }
 
 void pop_import(void)
 {
-	int ptr = import_stack_ptr-1;
+    struct list *entry = list_head( &import_stack );
+    struct import_state *state;
+    assert( entry );
 
-	fclose(yyin);
-	yy_delete_buffer( YY_CURRENT_BUFFER );
-	yy_switch_to_buffer( import_stack[ptr].state );
-	input_name = import_stack[ptr].input_name;
-	line_number = import_stack[ptr].line_number;
-	import_stack_ptr--;
+    state = LIST_ENTRY( entry, struct import_state, entry );
+    list_remove( &state->entry );
+    parse_only = !list_empty( &import_stack );
+
+    if (yyin) fclose( yyin );
+    yy_delete_buffer( YY_CURRENT_BUFFER );
+    yy_switch_to_buffer( state->buffer );
+
+    input_name = state->input_name;
+    line_number = state->line_number;
+    free( state );
 }
 
-struct imports {
-    char *name;
-    struct imports *next;
-} *first_import;
-
-int do_import(char *fname)
+void push_import( char *import_name )
 {
-    FILE *f;
-    char *path, *name;
-    struct imports *import;
-    int ptr = import_stack_ptr;
-    int ret;
+    struct import_state *state;
+    struct import *import;
+    FILE *file;
 
-    import = first_import;
-    while (import && strcmp(import->name, fname))
-        import = import->next;
-    if (import) return 0; /* already imported */
+    state = xmalloc( sizeof(struct import_state ));
+    list_add_head( &import_stack, &state->entry );
+    parse_only = !list_empty( &import_stack );
 
-    import = xmalloc(sizeof(struct imports));
-    import->name = xstrdup(fname);
-    import->next = first_import;
-    first_import = import;
+    state->buffer = YY_CURRENT_BUFFER;
+    state->input_name = input_name;
+    state->line_number = line_number;
+    input_name = NULL;
 
-    /* don't search for a file name with a path in the include directories,
-     * for compatibility with MIDL */
-    if (strchr( fname, '/' ) || strchr( fname, '\\' ))
-        path = xstrdup( fname );
-    else if (!(path = wpp_find_include( fname, input_name )))
-        error_loc("Unable to open include file %s\n", fname);
+    /* reset buffer for <<EOF>>, in case import fails or already imported */
+    yy_scan_string( "" );
 
-    if (import_stack_ptr == MAX_IMPORT_DEPTH)
-        error_loc("Exceeded max import depth\n");
+    LIST_FOR_EACH_ENTRY( import, &imports, struct import, entry )
+        if (!strcmp( import->name, import_name )) return;  /* already imported */
 
-    import_stack[ptr].input_name = input_name;
-    import_stack[ptr].line_number = line_number;
-    import_stack_ptr++;
-    input_name = path;
+    import = xmalloc( sizeof(struct import) );
+    import->name = xstrdup( import_name );
+    list_add_tail( &imports, &import->entry );
+
+    input_name = find_input_file( import_name, input_name );
+    file = open_input_file( input_name );
     line_number = 1;
 
-    name = make_temp_file( "widl-pp", NULL );
-    if (!(f = fopen(name, "wt")))
-        error("Could not open fd %s for writing\n", name);
-
-    ret = wpp_parse( path, f );
-    fclose( f );
-    if (ret) exit(1);
-
-    if((f = fopen(name, "r")) == NULL)
-        error_loc("Unable to open %s\n", name);
-
-    import_stack[ptr].state = YY_CURRENT_BUFFER;
-    yy_switch_to_buffer(yy_create_buffer(f, YY_BUF_SIZE));
-    return 1;
-}
-
-void abort_import(void)
-{
-	int ptr;
-
-	for (ptr=0; ptr<import_stack_ptr; ptr++)
-		unlink(import_stack[ptr].temp_name);
+    yy_switch_to_buffer( yy_create_buffer( file, YY_BUF_SIZE ) );
 }
 
 static void switch_to_acf(void)
 {
-    int ptr = import_stack_ptr;
-    int ret;
-    char *name;
-    FILE *f;
+    FILE *file;
 
-    assert(import_stack_ptr == 0);
+    if (yyin) fclose( yyin );
+    yy_delete_buffer( YY_CURRENT_BUFFER );
 
-    input_name = acf_name;
-    acf_name = NULL;
+    input_name = xstrdup( acf_name );
+    file = open_input_file( input_name );
     line_number = 1;
+    acf_name = NULL;
 
-    name = make_temp_file( "widl-acf", NULL );
-    if (!(f = fopen(name, "wt")))
-        error("Could not open fd %s for writing\n", name);
-
-    ret = wpp_parse(input_name, f);
-    fclose(f);
-    if (ret) exit(1);
-
-    if((f = fopen(name, "r")) == NULL)
-        error_loc("Unable to open %s\n", name);
-
-    import_stack[ptr].state = YY_CURRENT_BUFFER;
-    yy_switch_to_buffer(yy_create_buffer(f, YY_BUF_SIZE));
+    yy_switch_to_buffer( yy_create_buffer( file, YY_BUF_SIZE ) );
 }
 
 static void warning_disable(int warning)

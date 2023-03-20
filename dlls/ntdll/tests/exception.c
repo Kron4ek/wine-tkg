@@ -1905,8 +1905,7 @@ static void test_kiuserexceptiondispatcher(void)
         0x89, 0x79, 0x0c, /* mov %edi, 0xc(%ecx) */
         0x89, 0x69, 0x10, /* mov %ebp, 0x10(%ecx) */
         0x89, 0x61, 0x14, /* mov %esp, 0x14(%ecx) */
-
-        0x67, 0x48, 0x8b, 0x71, 0xf0, /* mov -0x10(%ecx),%esi */
+        0x8b, 0x71, 0xf0, /* mov -0x10(%ecx),%esi */
 
         0xc3,  /* ret  */
     };
@@ -8069,7 +8068,7 @@ static void test_debug_registers(void)
 
 static void test_debug_registers_wow64(void)
 {
-    char cmdline[] = "C:\\windows\\syswow64\\notepad.exe";
+    char cmdline[] = "C:\\windows\\syswow64\\msinfo32.exe";
     PROCESS_INFORMATION pi;
     STARTUPINFOA si = {0};
     WOW64_CONTEXT wow64_ctx;

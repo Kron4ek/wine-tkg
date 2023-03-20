@@ -1,0 +1,10 @@
+MODULE  = windows.perception.stub.dll
+IMPORTS = combase
+
+C_SRCS = \
+	holographicspace.c \
+	main.c \
+	observer.c
+
+IDL_SRCS = \
+	classes.idl

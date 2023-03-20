@@ -19,41 +19,10 @@
 #include "uia_private.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(uiautomation);
 
 static const struct UiaCondition UiaFalseCondition = { ConditionType_False };
-
-static BOOL uia_array_reserve(void **elements, SIZE_T *capacity, SIZE_T count, SIZE_T size)
-{
-    SIZE_T max_capacity, new_capacity;
-    void *new_elements;
-
-    if (count <= *capacity)
-        return TRUE;
-
-    max_capacity = ~(SIZE_T)0 / size;
-    if (count > max_capacity)
-        return FALSE;
-
-    new_capacity = max(1, *capacity);
-    while (new_capacity < count && new_capacity <= max_capacity / 2)
-        new_capacity *= 2;
-    if (new_capacity < count)
-        new_capacity = count;
-
-    if (!*elements)
-        new_elements = heap_alloc_zero(new_capacity * size);
-    else
-        new_elements = HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, *elements, new_capacity * size);
-    if (!new_elements)
-        return FALSE;
-
-    *elements = new_elements;
-    *capacity = new_capacity;
-    return TRUE;
-}
 
 struct uia_node_array {
     HUIANODE *nodes;
@@ -2787,6 +2756,7 @@ HRESULT WINAPI UiaGetUpdatedCache(HUIANODE huianode, struct UiaCacheRequest *cac
     LONG idx[2];
     HRESULT hr;
     VARIANT v;
+    int i;
 
     TRACE("(%p, %p, %u, %p, %p, %p)\n", huianode, cache_req, normalize_state, normalize_cond, out_req, tree_struct);
 
@@ -2800,6 +2770,18 @@ HRESULT WINAPI UiaGetUpdatedCache(HUIANODE huianode, struct UiaCacheRequest *cac
     {
         FIXME("Unsupported cache request scope %#x\n", cache_req->Scope);
         return E_NOTIMPL;
+    }
+
+    if (cache_req->cPatterns && cache_req->pPatterns)
+        FIXME("Pattern caching currently unimplemented\n");
+
+    if (cache_req->cProperties && cache_req->pProperties)
+    {
+        for (i = 0; i < cache_req->cProperties; i++)
+        {
+            if (!uia_prop_info_from_id(cache_req->pProperties[i]))
+                return E_INVALIDARG;
+        }
     }
 
     switch (normalize_state)
@@ -2834,7 +2816,8 @@ HRESULT WINAPI UiaGetUpdatedCache(HUIANODE huianode, struct UiaCacheRequest *cac
         }
     }
 
-    sabound[0].cElements = sabound[1].cElements = 1;
+    sabound[0].cElements = 1;
+    sabound[1].cElements = 1 + cache_req->cProperties;
     sabound[0].lLbound = sabound[1].lLbound = 0;
     if (!(sa = SafeArrayCreate(VT_VARIANT, 2, sabound)))
     {
@@ -2850,6 +2833,28 @@ HRESULT WINAPI UiaGetUpdatedCache(HUIANODE huianode, struct UiaCacheRequest *cac
     {
         SafeArrayDestroy(sa);
         return hr;
+    }
+
+    idx[0] = 0;
+    VariantClear(&v);
+    for (i = 0; i < cache_req->cProperties; i++)
+    {
+        hr = UiaGetPropertyValue(huianode, cache_req->pProperties[i], &v);
+        /* Don't fail on unimplemented properties. */
+        if (FAILED(hr) && hr != E_NOTIMPL)
+        {
+            SafeArrayDestroy(sa);
+            return hr;
+        }
+
+        idx[1] = 1 + i;
+        hr = SafeArrayPutElement(sa, idx, &v);
+        VariantClear(&v);
+        if (FAILED(hr))
+        {
+            SafeArrayDestroy(sa);
+            return hr;
+        }
     }
 
     /*

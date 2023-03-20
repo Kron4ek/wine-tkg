@@ -122,6 +122,12 @@ static BOOL check_variant_bool(VARIANT *v, BOOL val)
     return FALSE;
 }
 
+static void variant_init_bool(VARIANT *v, BOOL val)
+{
+    V_VT(v) = VT_BOOL;
+    V_BOOL(v) = val ? VARIANT_TRUE : VARIANT_FALSE;
+}
+
 static BOOL iface_cmp(IUnknown *iface1, IUnknown *iface2)
 {
     IUnknown *unk1, *unk2;
@@ -1140,6 +1146,8 @@ static struct Provider
 } Provider, Provider2, Provider_child, Provider_child2;
 static struct Provider Provider_hwnd, Provider_nc, Provider_proxy, Provider_proxy2, Provider_override;
 static void initialize_provider(struct Provider *prov, int prov_opts, HWND hwnd, BOOL initialize_nav_links);
+static void set_provider_prop_override(struct Provider *prov, struct Provider_prop_override *override, int count);
+static void set_property_override(struct Provider_prop_override *override, int prop_id, VARIANT *val);
 
 static const WCHAR *uia_bstr_prop_str = L"uia-string";
 static const ULONG uia_i4_prop_val = 0xdeadbeef;
@@ -1648,6 +1656,9 @@ HRESULT WINAPI ProviderSimple_GetPropertyValue(IRawElementProviderSimple *iface,
             if (This->prop_override[i].prop_id == prop_id)
             {
                 *ret_val = This->prop_override[i].val;
+                if (V_VT(ret_val) == VT_UNKNOWN)
+                    IUnknown_AddRef(V_UNKNOWN(ret_val));
+
                 return S_OK;
             }
         }
@@ -5184,27 +5195,70 @@ static void check_uia_prop_val(PROPERTYID prop_id, enum UIAutomationType type, V
     }
 
     case UIAutomationType_ElementArray:
-        ok(V_VT(v) == (VT_ARRAY | VT_UNKNOWN), "Unexpected VT %d\n", V_VT(v));
-        if (V_VT(v) != (VT_ARRAY | VT_UNKNOWN))
-            break;
-
         ok(Provider_child.ref == 2, "Unexpected refcnt %ld\n", Provider_child.ref);
         ok(Provider_child2.ref == 2, "Unexpected refcnt %ld\n", Provider_child2.ref);
-        for (idx = 0; idx < ARRAY_SIZE(uia_unk_arr_prop_val); idx++)
+        if (from_com)
         {
-            HUIANODE tmp_node;
+            IUIAutomationElementArray *elem_arr = NULL;
             HRESULT hr;
-            VARIANT v1;
+            int len;
 
-            SafeArrayGetElement(V_ARRAY(v), &idx, &tmp_node);
+            ok(V_VT(v) == VT_UNKNOWN, "Unexpected VT %d\n", V_VT(v));
+            hr = IUnknown_QueryInterface(V_UNKNOWN(v), &IID_IUIAutomationElementArray, (void **)&elem_arr);
+            ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+            ok(!!elem_arr, "elem_arr == NULL\n");
+            if (!elem_arr)
+            {
+                VariantClear(v);
+                break;
+            }
 
-            hr = UiaGetPropertyValue(tmp_node, UIA_ControlTypePropertyId, &v1);
-            ok(hr == S_OK, "node[%ld] Unexpected hr %#lx\n", idx, hr);
-            ok(V_VT(&v1) == VT_I4, "node[%ld] Unexpected VT %d\n", idx, V_VT(&v1));
-            ok(V_I4(&v1) == uia_i4_prop_val, "node[%ld] Unexpected I4 %#lx\n", idx, V_I4(&v1));
+            hr = IUIAutomationElementArray_get_Length(elem_arr, &len);
+            ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+            ok(len == ARRAY_SIZE(uia_unk_arr_prop_val), "Unexpected length %d\n", len);
 
-            ok(UiaNodeRelease(tmp_node), "Failed to release node[%ld]\n", idx);
-            VariantClear(&v1);
+            for (idx = 0; idx < ARRAY_SIZE(uia_unk_arr_prop_val); idx++)
+            {
+                IUIAutomationElement *tmp_elem = NULL;
+                VARIANT v1;
+
+                hr = IUIAutomationElementArray_GetElement(elem_arr, idx, &tmp_elem);
+                ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+                ok(!!tmp_elem, "tmp_elem == NULL\n");
+
+                hr = IUIAutomationElement_GetCurrentPropertyValueEx(tmp_elem, UIA_ControlTypePropertyId, TRUE, &v1);
+                ok(hr == S_OK, "elem[%ld] Unexpected hr %#lx\n", idx, hr);
+                ok(V_VT(&v1) == VT_I4, "elem[%ld] Unexpected VT %d\n", idx, V_VT(&v1));
+                ok(V_I4(&v1) == uia_i4_prop_val, "elem[%ld] Unexpected I4 %#lx\n", idx, V_I4(&v1));
+
+                IUIAutomationElement_Release(tmp_elem);
+                VariantClear(&v1);
+            }
+
+            IUIAutomationElementArray_Release(elem_arr);
+        }
+        else
+        {
+            ok(V_VT(v) == (VT_ARRAY | VT_UNKNOWN), "Unexpected VT %d\n", V_VT(v));
+            if (V_VT(v) != (VT_ARRAY | VT_UNKNOWN))
+                break;
+
+            for (idx = 0; idx < ARRAY_SIZE(uia_unk_arr_prop_val); idx++)
+            {
+                HUIANODE tmp_node;
+                HRESULT hr;
+                VARIANT v1;
+
+                SafeArrayGetElement(V_ARRAY(v), &idx, &tmp_node);
+
+                hr = UiaGetPropertyValue(tmp_node, UIA_ControlTypePropertyId, &v1);
+                ok(hr == S_OK, "node[%ld] Unexpected hr %#lx\n", idx, hr);
+                ok(V_VT(&v1) == VT_I4, "node[%ld] Unexpected VT %d\n", idx, V_VT(&v1));
+                ok(V_I4(&v1) == uia_i4_prop_val, "node[%ld] Unexpected I4 %#lx\n", idx, V_I4(&v1));
+
+                ok(UiaNodeRelease(tmp_node), "Failed to release node[%ld]\n", idx);
+                VariantClear(&v1);
+            }
         }
 
         VariantClear(v);
@@ -7534,25 +7588,37 @@ static const struct prov_method_sequence cache_req_seq6[] = {
     { 0 }
 };
 
+static const struct prov_method_sequence cache_req_seq7[] = {
+    { &Provider, FRAG_GET_RUNTIME_ID },
+    { &Provider, PROV_GET_PROPERTY_VALUE }, /* UIA_IsControlElementPropertyId. */
+    { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId. */
+    { 0 }
+};
+
 static const struct UiaCondition UiaTrueCondition  = { ConditionType_True };
 static const struct UiaCondition UiaFalseCondition = { ConditionType_False };
 static void test_UiaGetUpdatedCache(void)
 {
+    LONG exp_lbound[2], exp_elems[2], idx[2], i;
     struct Provider_prop_override prop_override;
     struct node_provider_desc exp_node_desc[2];
     struct UiaPropertyCondition prop_cond;
     struct UiaAndOrCondition and_or_cond;
-    LONG exp_lbound[2], exp_elems[2], i;
     struct UiaCacheRequest cache_req;
     struct UiaCondition *cond_arr[2];
     struct UiaNotCondition not_cond;
+    VARIANT v, v_arr[2];
     SAFEARRAY *out_req;
+    IUnknown *unk_ns;
     BSTR tree_struct;
+    int prop_ids[2];
     HUIANODE node;
     HRESULT hr;
-    VARIANT v;
 
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    hr = UiaGetReservedNotSupportedValue(&unk_ns);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     for (i = 0; i < ARRAY_SIZE(exp_node_desc); i++)
         init_node_provider_desc(&exp_node_desc[i], GetCurrentProcessId(), NULL);
@@ -7975,9 +8041,112 @@ static void test_UiaGetUpdatedCache(void)
     Provider.prop_override = NULL;
     Provider.prop_override_count = 0;
 
+    /*
+     * Tests for property value caching.
+     */
+    prop_ids[0] = UIA_RuntimeIdPropertyId;
+    /* Invalid property ID, no work will be done. */
+    prop_ids[1] = 1;
+    tree_struct = NULL; out_req = NULL;
+    set_cache_request(&cache_req, NULL, TreeScope_Element, prop_ids, ARRAY_SIZE(prop_ids), NULL, 0, AutomationElementMode_Full);
+    hr = UiaGetUpdatedCache(node, &cache_req, NormalizeState_None, NULL, &out_req, &tree_struct);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(!out_req, "out_req != NULL\n");
+    ok(!tree_struct, "tree_struct != NULL\n");
+
+    /*
+     * Retrieve values for UIA_RuntimeIdPropertyId and
+     * UIA_IsControlElementPropertyId in the returned cache.
+     */
+    prop_ids[0] = UIA_RuntimeIdPropertyId;
+    prop_ids[1] = UIA_IsControlElementPropertyId;
+    initialize_provider(&Provider, ProviderOptions_ServerSideProvider, NULL, FALSE);
+    init_node_provider_desc(&exp_node_desc[0], GetCurrentProcessId(), NULL);
+    add_provider_desc(&exp_node_desc[0], L"Main", L"Provider", TRUE);
+
+    tree_struct = NULL; out_req = NULL;
+    set_cache_request(&cache_req, NULL, TreeScope_Element, prop_ids, ARRAY_SIZE(prop_ids), NULL, 0, AutomationElementMode_Full);
+    hr = UiaGetUpdatedCache(node, &cache_req, NormalizeState_None, NULL, &out_req, &tree_struct);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!out_req, "out_req == NULL\n");
+    ok(!!tree_struct, "tree_struct == NULL\n");
+
+    exp_lbound[0] = exp_lbound[1] = 0;
+    exp_elems[0] = 1;
+    exp_elems[1] = 3;
+    test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
+    ok(!wcscmp(tree_struct, L"P)"), "tree structure %s\n", debugstr_w(tree_struct));
+
+    idx[0] = 0;
+    for (i = 0; i < ARRAY_SIZE(prop_ids); i++)
+    {
+        idx[1] = 1 + i;
+        VariantInit(&v_arr[i]);
+        hr = SafeArrayGetElement(out_req, idx, &v_arr[i]);
+        ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    }
+
+    ok(V_VT(&v_arr[0]) == VT_UNKNOWN, "Unexpected vt %d\n", V_VT(&v));
+    ok(V_UNKNOWN(&v_arr[0]) == unk_ns, "unexpected IUnknown %p\n", V_UNKNOWN(&v_arr[0]));
+    VariantClear(&v_arr[0]);
+
+    ok(check_variant_bool(&v_arr[1], TRUE), "V_BOOL(&v) = %#x\n", V_BOOL(&v_arr[1]));
+    VariantClear(&v_arr[1]);
+
+    ok_method_sequence(cache_req_seq7, "cache_req_seq7");
+    SafeArrayDestroy(out_req);
+    SysFreeString(tree_struct);
+
+    /*
+     * Again, but return a valid runtime ID and a different value for
+     * UIA_IsControlElementPropertyId.
+     */
+    V_VT(&v) = VT_BOOL;
+    V_BOOL(&v) = VARIANT_FALSE;
+    set_property_override(&prop_override, UIA_IsControlElementPropertyId, &v);
+    set_provider_prop_override(&Provider, &prop_override, 1);
+    Provider.runtime_id[0] = Provider.runtime_id[1] = 0xdeadbeef;
+    init_node_provider_desc(&exp_node_desc[0], GetCurrentProcessId(), NULL);
+    add_provider_desc(&exp_node_desc[0], L"Main", L"Provider", TRUE);
+
+    tree_struct = NULL; out_req = NULL;
+    set_cache_request(&cache_req, NULL, TreeScope_Element, prop_ids, ARRAY_SIZE(prop_ids), NULL, 0, AutomationElementMode_Full);
+    hr = UiaGetUpdatedCache(node, &cache_req, NormalizeState_None, NULL, &out_req, &tree_struct);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!out_req, "out_req == NULL\n");
+    ok(!!tree_struct, "tree_struct == NULL\n");
+
+    exp_lbound[0] = exp_lbound[1] = 0;
+    exp_elems[0] = 1;
+    exp_elems[1] = 3;
+    test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
+    ok(!wcscmp(tree_struct, L"P)"), "tree structure %s\n", debugstr_w(tree_struct));
+
+    idx[0] = 0;
+    for (i = 0; i < ARRAY_SIZE(prop_ids); i++)
+    {
+        idx[1] = 1 + i;
+        VariantInit(&v_arr[i]);
+        hr = SafeArrayGetElement(out_req, idx, &v_arr[i]);
+        ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    }
+
+    ok(V_VT(&v_arr[0]) == (VT_I4 | VT_ARRAY), "Unexpected vt %d\n", V_VT(&v_arr[0]));
+    check_runtime_id(Provider.runtime_id, ARRAY_SIZE(Provider.runtime_id), V_ARRAY(&v_arr[0]));
+    VariantClear(&v_arr[0]);
+
+    ok(check_variant_bool(&v_arr[1], FALSE), "V_BOOL(&v) = %#x\n", V_BOOL(&v_arr[1]));
+    VariantClear(&v_arr[1]);
+
+    ok_method_sequence(cache_req_seq7, "cache_req_seq7");
+    SafeArrayDestroy(out_req);
+    SysFreeString(tree_struct);
+
     ok(UiaNodeRelease(node), "UiaNodeRelease returned FALSE\n");
     ok(Provider.ref == 1, "Unexpected refcnt %ld\n", Provider.ref);
+    initialize_provider(&Provider, ProviderOptions_ServerSideProvider, NULL, FALSE);
 
+    IUnknown_Release(unk_ns);
     CoUninitialize();
 }
 
@@ -8933,6 +9102,13 @@ static const struct prov_method_sequence find_seq1[] = {
     { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
     /* Only done on Win10v1507 and below. */
     { &Provider, FRAG_NAVIGATE, METHOD_OPTIONAL }, /* NavigateDirection_Parent */
+    { &Provider, FRAG_GET_RUNTIME_ID },
+    { &Provider_child, FRAG_GET_RUNTIME_ID },
+    { &Provider_child_child, FRAG_GET_RUNTIME_ID },
+    { &Provider_child_child2, FRAG_GET_RUNTIME_ID },
+    { &Provider_child2, FRAG_GET_RUNTIME_ID },
+    { &Provider_child2_child, FRAG_GET_RUNTIME_ID },
+    { &Provider_child2_child_child, FRAG_GET_RUNTIME_ID },
     { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
@@ -8956,6 +9132,9 @@ static const struct prov_method_sequence find_seq2[] = {
     { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
     /* Only done on Win10v1507 and below. */
     { &Provider, FRAG_NAVIGATE, METHOD_OPTIONAL }, /* NavigateDirection_Parent */
+    { &Provider, FRAG_GET_RUNTIME_ID },
+    { &Provider_child, FRAG_GET_RUNTIME_ID },
+    { &Provider_child2, FRAG_GET_RUNTIME_ID },
     { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
@@ -8975,6 +9154,8 @@ static const struct prov_method_sequence find_seq3[] = {
     { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
     /* Only done on Win10v1507 and below. */
     { &Provider, FRAG_NAVIGATE, METHOD_OPTIONAL }, /* NavigateDirection_Parent */
+    { &Provider_child, FRAG_GET_RUNTIME_ID },
+    { &Provider_child2, FRAG_GET_RUNTIME_ID },
     { &Provider_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { 0 },
@@ -8984,6 +9165,7 @@ static const struct prov_method_sequence find_seq4[] = {
     { &Provider, FRAG_GET_RUNTIME_ID },
     { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_FirstChild */
     NODE_CREATE_SEQ(&Provider_child),
+    { &Provider_child, FRAG_GET_RUNTIME_ID },
     { &Provider_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { 0 },
 };
@@ -8997,12 +9179,15 @@ static const struct prov_method_sequence find_seq5[] = {
     NODE_CREATE_SEQ(&Provider),
     { &Provider_child2, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
     NODE_CREATE_SEQ(&Provider),
+    { &Provider_child, FRAG_GET_RUNTIME_ID },
+    { &Provider_child2, FRAG_GET_RUNTIME_ID },
     { &Provider_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { 0 },
 };
 
 static const struct prov_method_sequence find_seq6[] = {
+    { &Provider_child, FRAG_GET_RUNTIME_ID },
     { &Provider_child, FRAG_GET_RUNTIME_ID },
     { &Provider_child, FRAG_GET_RUNTIME_ID },
     { &Provider_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
@@ -9038,6 +9223,10 @@ static const struct prov_method_sequence find_seq7[] = {
     { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
     /* Only done on Win10v1507 and below. */
     { &Provider, FRAG_NAVIGATE, METHOD_OPTIONAL }, /* NavigateDirection_Parent */
+    { &Provider, FRAG_GET_RUNTIME_ID },
+    { &Provider_child_child, FRAG_GET_RUNTIME_ID },
+    { &Provider_child_child2, FRAG_GET_RUNTIME_ID },
+    { &Provider_child2, FRAG_GET_RUNTIME_ID },
     { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
@@ -9075,6 +9264,10 @@ static const struct prov_method_sequence find_seq8[] = {
     { &Provider_child2, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
     NODE_CREATE_SEQ(&Provider),
     { &Provider, FRAG_GET_RUNTIME_ID },
+    { &Provider, FRAG_GET_RUNTIME_ID },
+    { &Provider_child_child, FRAG_GET_RUNTIME_ID },
+    { &Provider_child_child2, FRAG_GET_RUNTIME_ID },
+    { &Provider_child2, FRAG_GET_RUNTIME_ID },
     { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
@@ -9114,6 +9307,9 @@ static const struct prov_method_sequence find_seq9[] = {
     { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
     /* Only done on Win10v1507 and below. */
     { &Provider, FRAG_NAVIGATE, METHOD_OPTIONAL }, /* NavigateDirection_Parent */
+    { &Provider_child_child2, FRAG_GET_RUNTIME_ID },
+    { &Provider_child2, FRAG_GET_RUNTIME_ID },
+    { &Provider_child2_child, FRAG_GET_RUNTIME_ID },
     { &Provider_child_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { &Provider_child2_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
@@ -9161,6 +9357,7 @@ static const struct prov_method_sequence find_seq10[] = {
     { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
     /* Only done on Win10v1507 and below. */
     { &Provider, FRAG_NAVIGATE, METHOD_OPTIONAL }, /* NavigateDirection_Parent */
+    { &Provider_child2, FRAG_GET_RUNTIME_ID },
     { &Provider_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { 0 },
 };
@@ -9179,6 +9376,7 @@ static const struct prov_method_sequence find_seq11[] = {
     NODE_CREATE_SEQ(&Provider_child_child2),
     { &Provider_child_child2, PROV_GET_PROPERTY_VALUE }, /* UIA_IsContentElementPropertyId */
     { &Provider_child_child2, PROV_GET_PROPERTY_VALUE }, /* UIA_IsControlElementPropertyId */
+    { &Provider_child_child2, FRAG_GET_RUNTIME_ID },
     { &Provider_child_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
     { 0 },
 };
@@ -9193,8 +9391,8 @@ static void test_UiaFind(void)
     struct UiaCacheRequest cache_req;
     struct UiaFindParams find_params;
     const WCHAR *exp_tree_struct[7];
+    int exp_offset[7], cache_prop;
     HUIANODE node, node2;
-    int exp_offset[7];
     HRESULT hr;
     VARIANT v;
 
@@ -9232,7 +9430,8 @@ static void test_UiaFind(void)
      * maximum depth of -1 will search the entire tree.
      */
     out_req = offsets = tree_structs = NULL;
-    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, NULL, 0, NULL, 0,
+    cache_prop = UIA_RuntimeIdPropertyId;
+    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, -1, FALSE, FALSE, (struct UiaCondition *)&UiaTrueCondition);
     hr = UiaFind(node, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9253,7 +9452,7 @@ static void test_UiaFind(void)
     add_provider_desc(&exp_node_desc[6], L"Main", L"Provider_child2_child_child", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
     exp_elems[0] = 7;
-    exp_elems[1] = 1;
+    exp_elems[1] = 2;
 
     test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
 
@@ -9275,7 +9474,7 @@ static void test_UiaFind(void)
     /*
      * Maximum find depth of 1, find first is FALSE, exclude root is FALSE.
      */
-    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, NULL, 0, NULL, 0,
+    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, 1, FALSE, FALSE, (struct UiaCondition *)&UiaTrueCondition);
     hr = UiaFind(node, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9288,7 +9487,7 @@ static void test_UiaFind(void)
     add_provider_desc(&exp_node_desc[2], L"Main", L"Provider_child2", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
     exp_elems[0] = 3;
-    exp_elems[1] = 1;
+    exp_elems[1] = 2;
 
     test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
 
@@ -9311,7 +9510,7 @@ static void test_UiaFind(void)
     /*
      * Maximum find depth of 1, find first is FALSE, exclude root is TRUE.
      */
-    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, NULL, 0, NULL, 0,
+    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, 1, FALSE, TRUE, (struct UiaCondition *)&UiaTrueCondition);
     hr = UiaFind(node, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9323,7 +9522,7 @@ static void test_UiaFind(void)
     add_provider_desc(&exp_node_desc[1], L"Main", L"Provider_child2", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
     exp_elems[0] = 2;
-    exp_elems[1] = 1;
+    exp_elems[1] = 2;
 
     test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
 
@@ -9346,7 +9545,7 @@ static void test_UiaFind(void)
      * Maximum find depth of 1, find first is TRUE, exclude root is TRUE. Will
      * retrieve only Provider_child.
      */
-    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, NULL, 0, NULL, 0,
+    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, 1, TRUE, TRUE, (struct UiaCondition *)&UiaTrueCondition);
     hr = UiaFind(node, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9355,7 +9554,8 @@ static void test_UiaFind(void)
 
     add_provider_desc(&exp_node_desc[0], L"Main", L"Provider_child", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
-    exp_elems[0] = exp_elems[1] = 1;
+    exp_elems[0] = 1;
+    exp_elems[1] = 2;
 
     idx[0] = idx[1] = 0;
     hr = SafeArrayGetElement(out_req, idx, &v);
@@ -9389,7 +9589,7 @@ static void test_UiaFind(void)
      * way to check if it has navigated back to the node that began the
      * search, so it will get siblings.
      */
-    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, NULL, 0, NULL, 0,
+    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, 0, FALSE, FALSE, (struct UiaCondition *)&UiaTrueCondition);
     hr = UiaFind(node2, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9400,7 +9600,7 @@ static void test_UiaFind(void)
     add_provider_desc(&exp_node_desc[1], L"Main", L"Provider_child2", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
     exp_elems[0] = 2;
-    exp_elems[1] = 1;
+    exp_elems[1] = 2;
 
     test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
 
@@ -9426,7 +9626,7 @@ static void test_UiaFind(void)
      * search, so it will stop at Provider_child.
      */
     Provider_child.runtime_id[0] = Provider_child.runtime_id[1] = 0xdeadbeef;
-    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, NULL, 0, NULL, 0,
+    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, 0, FALSE, FALSE, (struct UiaCondition *)&UiaTrueCondition);
     hr = UiaFind(node2, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9434,7 +9634,8 @@ static void test_UiaFind(void)
 
     add_provider_desc(&exp_node_desc[0], L"Main", L"Provider_child", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
-    exp_elems[0] = exp_elems[1] = 1;
+    exp_elems[0] = 1;
+    exp_elems[1] = 2;
 
     test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
 
@@ -9478,7 +9679,7 @@ static void test_UiaFind(void)
     set_provider_prop_override(&Provider_child_child, &prop_override, 1);
     set_provider_prop_override(&Provider_child_child2, &prop_override, 1);
 
-    set_cache_request(&cache_req, (struct UiaCondition *)&prop_cond[0], TreeScope_Element, NULL, 0, NULL, 0,
+    set_cache_request(&cache_req, (struct UiaCondition *)&prop_cond[0], TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, 1, FALSE, FALSE, (struct UiaCondition *)&prop_cond[1]);
     hr = UiaFind(node, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9493,7 +9694,7 @@ static void test_UiaFind(void)
     add_provider_desc(&exp_node_desc[3], L"Main", L"Provider_child2", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
     exp_elems[0] = 4;
-    exp_elems[1] = 1;
+    exp_elems[1] = 2;
 
     test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
 
@@ -9531,7 +9732,7 @@ static void test_UiaFind(void)
     set_provider_prop_override(&Provider_child_child, &prop_override, 1);
     set_provider_prop_override(&Provider_child_child2, &prop_override, 1);
 
-    set_cache_request(&cache_req, (struct UiaCondition *)&prop_cond[0], TreeScope_Element, NULL, 0, NULL, 0,
+    set_cache_request(&cache_req, (struct UiaCondition *)&prop_cond[0], TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, 1, FALSE, FALSE, (struct UiaCondition *)&prop_cond[1]);
     hr = UiaFind(node, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9546,7 +9747,7 @@ static void test_UiaFind(void)
     add_provider_desc(&exp_node_desc[3], L"Main", L"Provider_child2", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
     exp_elems[0] = 4;
-    exp_elems[1] = 1;
+    exp_elems[1] = 2;
 
     idx[0] = 2;
     idx[1] = 0;
@@ -9598,7 +9799,7 @@ static void test_UiaFind(void)
     set_provider_prop_override(&Provider_child2, &prop_override, 1);
     set_provider_prop_override(&Provider_child2_child, &prop_override, 1);
 
-    set_cache_request(&cache_req, (struct UiaCondition *)&prop_cond[0], TreeScope_Element, NULL, 0, NULL, 0,
+    set_cache_request(&cache_req, (struct UiaCondition *)&prop_cond[0], TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, 1, FALSE, FALSE, (struct UiaCondition *)&prop_cond[1]);
     hr = UiaFind(node2, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9611,7 +9812,7 @@ static void test_UiaFind(void)
     add_provider_desc(&exp_node_desc[2], L"Main", L"Provider_child2_child", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
     exp_elems[0] = 3;
-    exp_elems[1] = 1;
+    exp_elems[1] = 2;
 
     test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
 
@@ -9653,7 +9854,7 @@ static void test_UiaFind(void)
     set_provider_prop_override(&Provider_child, &prop_override, 1);
     set_provider_prop_override(&Provider_child2, &prop_override, 1);
 
-    set_cache_request(&cache_req, (struct UiaCondition *)&prop_cond[0], TreeScope_Element, NULL, 0, NULL, 0,
+    set_cache_request(&cache_req, (struct UiaCondition *)&prop_cond[0], TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, 1, FALSE, TRUE, (struct UiaCondition *)&prop_cond[1]);
     hr = UiaFind(node, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9663,7 +9864,7 @@ static void test_UiaFind(void)
     add_provider_desc(&exp_node_desc[0], L"Main", L"Provider_child2", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
     exp_elems[0] = 1;
-    exp_elems[1] = 1;
+    exp_elems[1] = 2;
 
     test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
 
@@ -9700,7 +9901,7 @@ static void test_UiaFind(void)
 
     set_provider_prop_override(&Provider_child_child2, &prop_override, 1);
 
-    set_cache_request(&cache_req, (struct UiaCondition *)&prop_cond[0], TreeScope_Element, NULL, 0, NULL, 0,
+    set_cache_request(&cache_req, (struct UiaCondition *)&prop_cond[0], TreeScope_Element, &cache_prop, 1, NULL, 0,
             AutomationElementMode_Full);
     set_find_params(&find_params, -1, TRUE, FALSE, (struct UiaCondition *)&prop_cond[1]);
     hr = UiaFind(node, &find_params, &cache_req, &out_req, &offsets, &tree_structs);
@@ -9710,7 +9911,7 @@ static void test_UiaFind(void)
     add_provider_desc(&exp_node_desc[0], L"Main", L"Provider_child_child2", TRUE);
     exp_lbound[0] = exp_lbound[1] = 0;
     exp_elems[0] = 1;
-    exp_elems[1] = 1;
+    exp_elems[1] = 2;
 
     test_cache_req_sa(out_req, exp_lbound, exp_elems, exp_node_desc);
 
@@ -9835,7 +10036,8 @@ static void test_Element_GetPropertyValue(IUIAutomation *uia_iface)
     const struct uia_element_property *elem_prop;
     struct Provider_prop_override prop_override;
     IUIAutomationElement *element, *element2;
-    int i, prop_id, tmp_int;
+    IUIAutomationElementArray *element_arr;
+    int i, len, prop_id, tmp_int;
     struct UiaRect uia_rect;
     IUnknown *unk_ns;
     BSTR tmp_bstr;
@@ -9851,14 +10053,18 @@ static void test_Element_GetPropertyValue(IUIAutomation *uia_iface)
     hr = UiaGetReservedNotSupportedValue(&unk_ns);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element, UIA_ControlTypePropertyId, TRUE, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
     VariantInit(&v);
+    V_VT(&v) = VT_BOOL;
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element, 1, TRUE, &v);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_EMPTY, "Unexpected vt %d\n", V_VT(&v));
+
     for (i = 0; i < ARRAY_SIZE(element_properties); i++)
     {
         elem_prop = &element_properties[i];
-
-        /* Skip ElementArray properties for now. */
-        if (elem_prop->type == UIAutomationType_ElementArray)
-            continue;
 
         Provider.ret_invalid_prop_type = FALSE;
         VariantClear(&v);
@@ -9893,6 +10099,63 @@ static void test_Element_GetPropertyValue(IUIAutomation *uia_iface)
 
         winetest_pop_context();
     }
+
+    /* Test IUIAutomationElementArray interface behavior. */
+    Provider.ret_invalid_prop_type = FALSE;
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element, UIA_ControllerForPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_UNKNOWN, "Unexpected vt %d\n", V_VT(&v));
+    ok(Provider_child.ref == 2, "Unexpected refcnt %ld\n", Provider_child.ref);
+    ok(Provider_child2.ref == 2, "Unexpected refcnt %ld\n", Provider_child2.ref);
+
+    element_arr = NULL;
+    hr = IUnknown_QueryInterface(V_UNKNOWN(&v), &IID_IUIAutomationElementArray, (void **)&element_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    ok(!!element_arr, "element_arr == NULL\n");
+    VariantClear(&v);
+
+    hr = IUIAutomationElementArray_get_Length(element_arr, &len);
+    ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    ok(len == ARRAY_SIZE(uia_unk_arr_prop_val), "Unexpected length %d\n", len);
+
+    /* Invalid argument tests. */
+    hr = IUIAutomationElementArray_get_Length(element_arr, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx\n", hr);
+
+    element2 = (void *)0xdeadbeef;
+    hr = IUIAutomationElementArray_GetElement(element_arr, len, &element2);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx\n", hr);
+    /* Pointer isn't cleared. */
+    ok(!!element2, "element2 == NULL\n");
+
+    hr = IUIAutomationElementArray_GetElement(element_arr, -1, &element2);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx\n", hr);
+    /* Pointer isn't cleared. */
+    ok(!!element2, "element2 == NULL\n");
+
+    hr = IUIAutomationElementArray_GetElement(element_arr, 0, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx\n", hr);
+
+    for (i = 0; i < len; i++)
+    {
+        element2 = NULL;
+        hr = IUIAutomationElementArray_GetElement(element_arr, i, &element2);
+        ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+        ok(!!element2, "element2 == NULL\n");
+
+        hr = IUIAutomationElement_GetCurrentPropertyValueEx(element2, UIA_ControlTypePropertyId, TRUE, &v);
+        ok(hr == S_OK, "element[%d] Unexpected hr %#lx\n", i, hr);
+        ok(V_VT(&v) == VT_I4, "element[%d] Unexpected VT %d\n", i, V_VT(&v));
+        ok(V_I4(&v) == uia_i4_prop_val, "element[%d] Unexpected I4 %#lx\n", i, V_I4(&v));
+
+        IUIAutomationElement_Release(element2);
+        VariantClear(&v);
+    }
+
+    IUIAutomationElementArray_Release(element_arr);
+    ok(Provider_child.ref == 1, "Unexpected refcnt %ld\n", Provider_child.ref);
+    ok(Provider_child2.ref == 1, "Unexpected refcnt %ld\n", Provider_child2.ref);
+    ok_method_sequence(get_elem_arr_prop_seq, NULL);
 
     /*
      * IUIAutomationElement_get_CurrentControlType tests. If the value
@@ -10089,6 +10352,1355 @@ static void test_CUIAutomation_value_conversion(IUIAutomation *uia_iface)
     SafeArrayDestroy(sa);
 }
 
+static HRESULT WINAPI Object_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
+{
+    *ppv = NULL;
+    if (IsEqualIID(riid, &IID_IUnknown))
+        *ppv = iface;
+    else
+        return E_NOINTERFACE;
+
+    return S_OK;
+}
+
+static ULONG WINAPI Object_AddRef(IUnknown *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI Object_Release(IUnknown *iface)
+{
+    return 1;
+}
+
+static IUnknownVtbl ObjectVtbl = {
+    Object_QueryInterface,
+    Object_AddRef,
+    Object_Release
+};
+static IUnknown Object = {&ObjectVtbl};
+
+static void test_CUIAutomation_condition_ifaces(IUIAutomation *uia_iface)
+{
+    IUIAutomationPropertyCondition *prop_cond, *prop_cond2;
+    IUIAutomationCondition *cond, **cond_arr;
+    enum PropertyConditionFlags prop_flags;
+    IUIAutomationBoolCondition *bool_cond;
+    IUIAutomationNotCondition *not_cond;
+    IUIAutomationOrCondition *or_cond;
+    PROPERTYID prop_id;
+    int child_count;
+    BOOL tmp_b;
+    HRESULT hr;
+    VARIANT v;
+    ULONG ref;
+
+    hr = IUIAutomation_CreateTrueCondition(uia_iface, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    cond = NULL;
+    hr = IUIAutomation_CreateTrueCondition(uia_iface, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationBoolCondition, (void **)&bool_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!bool_cond, "bool_cond == NULL\n");
+
+    hr = IUIAutomationBoolCondition_get_BooleanValue(bool_cond, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    tmp_b = FALSE;
+    hr = IUIAutomationBoolCondition_get_BooleanValue(bool_cond, &tmp_b);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_b == TRUE, "tmp_b != TRUE\n");
+    IUIAutomationBoolCondition_Release(bool_cond);
+
+    hr = IUIAutomation_CreateFalseCondition(uia_iface, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    cond = NULL;
+    hr = IUIAutomation_CreateFalseCondition(uia_iface, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationBoolCondition, (void **)&bool_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!bool_cond, "bool_cond == NULL\n");
+
+    hr = IUIAutomationBoolCondition_get_BooleanValue(bool_cond, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    tmp_b = TRUE;
+    hr = IUIAutomationBoolCondition_get_BooleanValue(bool_cond, &tmp_b);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_b == FALSE, "tmp_b != FALSE\n");
+    IUIAutomationBoolCondition_Release(bool_cond);
+
+    /*
+     * IUIAutomationPropertyCondition tests.
+     */
+    cond = (void *)0xdeadbeef;
+    VariantInit(&v);
+    /* Invalid property ID. */
+    hr = IUIAutomation_CreatePropertyCondition(uia_iface, 0, v, &cond);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(!cond, "cond != NULL\n");
+
+    /* Invalid variant type for property ID. */
+    cond = (void *)0xdeadbeef;
+    VariantInit(&v);
+    hr = IUIAutomation_CreatePropertyCondition(uia_iface, UIA_RuntimeIdPropertyId, v, &cond);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(!cond, "cond != NULL\n");
+
+    /* NULL Condition argument. */
+    V_VT(&v) = VT_I4 | VT_ARRAY;
+    V_ARRAY(&v) = create_i4_safearray();
+    hr = IUIAutomation_CreatePropertyCondition(uia_iface, UIA_RuntimeIdPropertyId, v, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    /* Finally, create property condition interface. */
+    cond = NULL;
+    hr = IUIAutomation_CreatePropertyCondition(uia_iface, UIA_RuntimeIdPropertyId, v, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationPropertyCondition, (void **)&prop_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!prop_cond, "prop_cond == NULL\n");
+
+    hr = IUIAutomationPropertyCondition_get_PropertyId(prop_cond, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomationPropertyCondition_get_PropertyId(prop_cond, &prop_id);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(prop_id == UIA_RuntimeIdPropertyId, "Unexpected prop_id %d.\n", prop_id);
+
+    hr = IUIAutomationPropertyCondition_get_PropertyValue(prop_cond, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    VariantClear(&v);
+    hr = IUIAutomationPropertyCondition_get_PropertyValue(prop_cond, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == (VT_I4 | VT_ARRAY), "Unexpected vt %d.\n", V_VT(&v));
+    ok(!!V_ARRAY(&v), "V_ARRAY(&v) == NULL\n");
+    VariantClear(&v);
+
+    hr = IUIAutomationPropertyCondition_get_PropertyConditionFlags(prop_cond, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomationPropertyCondition_get_PropertyConditionFlags(prop_cond, &prop_flags);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(prop_flags == PropertyConditionFlags_None, "Unexpected flags %#x.\n", prop_flags);
+
+    /*
+     * IUIAutomationNotCondition tests.
+     */
+    cond = (void *)0xdeadbeef;
+
+    /*
+     * Passing in an interface that isn't a valid IUIAutomationCondition
+     * interface.
+     */
+    hr = IUIAutomation_CreateNotCondition(uia_iface, (IUIAutomationCondition *)&Object, &cond);
+    ok(hr == E_FAIL, "Unexpected hr %#lx.\n", hr);
+    ok(!cond, "cond != NULL\n");
+
+    /* NULL input argument tests. */
+    cond = (void *)0xdeadbeef;
+    hr = IUIAutomation_CreateNotCondition(uia_iface, NULL, &cond);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+    ok(!cond, "cond != NULL\n");
+
+    hr = IUIAutomation_CreateNotCondition(uia_iface, (IUIAutomationCondition *)prop_cond, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    /* Create the IUIAutomationNotCondition with our property condition. */
+    cond = NULL;
+    hr = IUIAutomation_CreateNotCondition(uia_iface, (IUIAutomationCondition *)prop_cond, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    /* IUIAutomationNotCondition holds a reference to the passed in condition. */
+    ref = IUIAutomationPropertyCondition_Release(prop_cond);
+    ok(ref == 1, "Unexpected ref %ld\n", ref);
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationNotCondition, (void **)&not_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!not_cond, "not_cond == NULL\n");
+
+    hr = IUIAutomationNotCondition_GetChild(not_cond, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    cond = NULL;
+    hr = IUIAutomationNotCondition_GetChild(not_cond, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(iface_cmp((IUnknown *)cond, (IUnknown *)prop_cond), "cond != prop_cond\n");
+    IUIAutomationCondition_Release(cond);
+
+    IUIAutomationNotCondition_Release(not_cond);
+
+    /*
+     * IUIAutomationOrCondition tests.
+     */
+    cond = NULL;
+    VariantInit(&v);
+    V_VT(&v) = VT_BOOL;
+    V_BOOL(&v) = VARIANT_FALSE;
+    /* Create two condition interfaces to use for our IUIAutomationOrCondition. */
+    hr = IUIAutomation_CreatePropertyCondition(uia_iface, UIA_IsControlElementPropertyId, v, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationPropertyCondition, (void **)&prop_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!prop_cond, "prop_cond == NULL\n");
+
+    cond = NULL;
+    VariantInit(&v);
+    V_VT(&v) = VT_BOOL;
+    V_BOOL(&v) = VARIANT_TRUE;
+    hr = IUIAutomation_CreatePropertyCondition(uia_iface, UIA_IsContentElementPropertyId, v, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationPropertyCondition, (void **)&prop_cond2);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!prop_cond2, "prop_cond2 == NULL\n");
+
+    /* NULL input argument tests. */
+    hr = IUIAutomation_CreateOrCondition(uia_iface, (IUIAutomationCondition *)prop_cond,
+            (IUIAutomationCondition *)prop_cond2, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    cond = (void *)0xdeadbeef;
+    hr = IUIAutomation_CreateOrCondition(uia_iface, NULL, (IUIAutomationCondition *)prop_cond2, &cond);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+    ok(!cond, "cond != NULL\n");
+
+    cond = (void *)0xdeadbeef;
+    hr = IUIAutomation_CreateOrCondition(uia_iface, (IUIAutomationCondition *)prop_cond, NULL, &cond);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+    ok(!cond, "cond != NULL\n");
+
+    /* One of the IUIAutomationCondition interfaces are invalid. */
+    cond = (void *)0xdeadbeef;
+    hr = IUIAutomation_CreateOrCondition(uia_iface, (IUIAutomationCondition *)prop_cond,
+            (IUIAutomationCondition *)&Object, &cond);
+    ok(hr == E_FAIL, "Unexpected hr %#lx.\n", hr);
+    ok(!cond, "cond != NULL\n");
+
+    cond = NULL;
+    hr = IUIAutomation_CreateOrCondition(uia_iface, (IUIAutomationCondition *)prop_cond,
+            (IUIAutomationCondition *)prop_cond2, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    or_cond = NULL;
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationOrCondition, (void **)&or_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!or_cond, "or_cond == NULL\n");
+
+    /* References held to both passed in interfaces. */
+    ref = IUIAutomationPropertyCondition_Release(prop_cond);
+    ok(ref == 1, "Unexpected ref %ld\n", ref);
+
+    ref = IUIAutomationPropertyCondition_Release(prop_cond2);
+    ok(ref == 1, "Unexpected ref %ld\n", ref);
+
+    hr = IUIAutomationOrCondition_get_ChildCount(or_cond, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    child_count = 0;
+    hr = IUIAutomationOrCondition_get_ChildCount(or_cond, &child_count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(child_count == 2, "Unexpected child_count %d.\n", child_count);
+
+    child_count = 10;
+    hr = IUIAutomationOrCondition_GetChildrenAsNativeArray(or_cond, NULL, &child_count);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+    ok(child_count == 10, "Unexpected child_count %d.\n", child_count);
+
+    cond_arr = (void *)0xdeadbeef;
+    hr = IUIAutomationOrCondition_GetChildrenAsNativeArray(or_cond, &cond_arr, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+    ok(!cond_arr, "cond_arr != NULL\n");
+
+    child_count = 0;
+    cond_arr = NULL;
+    hr = IUIAutomationOrCondition_GetChildrenAsNativeArray(or_cond, &cond_arr, &child_count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(child_count == 2, "Unexpected child_count %d.\n", child_count);
+    ok(!!cond_arr, "cond_arr == NULL\n");
+
+    ok(iface_cmp((IUnknown *)cond_arr[0], (IUnknown *)prop_cond), "cond_arr[0] != prop_cond\n");
+    IUIAutomationCondition_Release(cond_arr[0]);
+
+    ok(iface_cmp((IUnknown *)cond_arr[1], (IUnknown *)prop_cond2), "cond_arr[1] != prop_cond2\n");
+    IUIAutomationCondition_Release(cond_arr[1]);
+
+    CoTaskMemFree(cond_arr);
+    IUIAutomationOrCondition_Release(or_cond);
+
+    /*
+     * Condition used to get the control TreeView. Equivalent to:
+     * if (!(UIA_IsControlElementPropertyId == VARIANT_FALSE))
+     */
+    hr = IUIAutomation_get_ControlViewCondition(uia_iface, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    cond = NULL;
+    hr = IUIAutomation_get_ControlViewCondition(uia_iface, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationNotCondition, (void **)&not_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!not_cond, "not_cond == NULL\n");
+
+    cond = NULL;
+    hr = IUIAutomationNotCondition_GetChild(not_cond, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationPropertyCondition, (void **)&prop_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!prop_cond, "prop_cond == NULL\n");
+
+    hr = IUIAutomationPropertyCondition_get_PropertyId(prop_cond, &prop_id);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(prop_id == UIA_IsControlElementPropertyId, "Unexpected prop_id %d.\n", prop_id);
+
+    VariantInit(&v);
+    hr = IUIAutomationPropertyCondition_get_PropertyValue(prop_cond, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(check_variant_bool(&v, FALSE), "Unexpected BOOL %#x\n", V_BOOL(&v));
+    VariantClear(&v);
+
+    hr = IUIAutomationPropertyCondition_get_PropertyConditionFlags(prop_cond, &prop_flags);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(prop_flags == PropertyConditionFlags_None, "Unexpected flags %#x.\n", prop_flags);
+
+    IUIAutomationPropertyCondition_Release(prop_cond);
+    IUIAutomationNotCondition_Release(not_cond);
+
+    /*
+     * Condition used to get the raw TreeView. Equivalent to:
+     * if (1)
+     */
+    hr = IUIAutomation_get_RawViewCondition(uia_iface, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    cond = NULL;
+    hr = IUIAutomation_get_RawViewCondition(uia_iface, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationBoolCondition, (void **)&bool_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!bool_cond, "bool_cond == NULL\n");
+
+    tmp_b = FALSE;
+    hr = IUIAutomationBoolCondition_get_BooleanValue(bool_cond, &tmp_b);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_b == TRUE, "tmp_b != TRUE\n");
+    IUIAutomationBoolCondition_Release(bool_cond);
+}
+
+static void test_CUIAutomation_cache_request_iface(IUIAutomation *uia_iface)
+{
+    IUIAutomationPropertyCondition *prop_cond;
+    enum PropertyConditionFlags prop_flags;
+    IUIAutomationCacheRequest *cache_req;
+    enum AutomationElementMode elem_mode;
+    IUIAutomationCondition *cond, *cond2;
+    IUIAutomationNotCondition *not_cond;
+    enum TreeScope scope;
+    PROPERTYID prop_id;
+    HRESULT hr;
+    VARIANT v;
+
+    hr = IUIAutomation_CreateCacheRequest(uia_iface, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    /*
+     * CreateCacheRequest returns an IUIAutomationCacheRequest with the
+     * default cache request values set.
+     */
+    cache_req = NULL;
+    hr = IUIAutomation_CreateCacheRequest(uia_iface, &cache_req);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cache_req, "cache_req == NULL\n");
+
+    /*
+     * TreeScope tests.
+     */
+    hr = IUIAutomationCacheRequest_get_TreeScope(cache_req, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    scope = 0;
+    hr = IUIAutomationCacheRequest_get_TreeScope(cache_req, &scope);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(scope == TreeScope_Element, "Unexpected scope %#x\n", scope);
+
+    /* Set it to something invalid. */
+    hr = IUIAutomationCacheRequest_put_TreeScope(cache_req, 0);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomationCacheRequest_put_TreeScope(cache_req, TreeScope_Parent);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomationCacheRequest_put_TreeScope(cache_req, TreeScope_Ancestors);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomationCacheRequest_put_TreeScope(cache_req, TreeScope_Parent | TreeScope_Element);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomationCacheRequest_put_TreeScope(cache_req, TreeScope_Ancestors | TreeScope_Element);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomationCacheRequest_put_TreeScope(cache_req, ~(TreeScope_SubTree | TreeScope_Parent | TreeScope_Ancestors));
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    /* Invalid values don't change anything. */
+    scope = 0;
+    hr = IUIAutomationCacheRequest_get_TreeScope(cache_req, &scope);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(scope == TreeScope_Element, "Unexpected scope %#x\n", scope);
+
+    /* Now set it to TreeScope_Children. */
+    hr = IUIAutomationCacheRequest_put_TreeScope(cache_req, TreeScope_Children);
+    todo_wine ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    scope = 0;
+    hr = IUIAutomationCacheRequest_get_TreeScope(cache_req, &scope);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    todo_wine ok(scope == TreeScope_Children, "Unexpected scope %#x\n", scope);
+
+    /*
+     * TreeFilter tests.
+     */
+    cond = NULL;
+    hr = IUIAutomationCacheRequest_get_TreeFilter(cache_req, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    cond = NULL;
+    hr = IUIAutomationCacheRequest_put_TreeFilter(cache_req, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    cond = NULL;
+    hr = IUIAutomationCacheRequest_put_TreeFilter(cache_req, (IUIAutomationCondition *)&Object);
+    ok(hr == E_FAIL, "Unexpected hr %#lx.\n", hr);
+
+    /* Default IUIAutomationCacheRequest has the ControlView condition. */
+    cond = NULL;
+    hr = IUIAutomationCacheRequest_get_TreeFilter(cache_req, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationNotCondition, (void **)&not_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!not_cond, "not_cond == NULL\n");
+
+    cond = NULL;
+    hr = IUIAutomationNotCondition_GetChild(not_cond, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCondition_QueryInterface(cond, &IID_IUIAutomationPropertyCondition, (void **)&prop_cond);
+    IUIAutomationCondition_Release(cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!prop_cond, "prop_cond == NULL\n");
+
+    hr = IUIAutomationPropertyCondition_get_PropertyId(prop_cond, &prop_id);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(prop_id == UIA_IsControlElementPropertyId, "Unexpected prop_id %d.\n", prop_id);
+
+    VariantInit(&v);
+    hr = IUIAutomationPropertyCondition_get_PropertyValue(prop_cond, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(check_variant_bool(&v, FALSE), "Unexpected BOOL %#x\n", V_BOOL(&v));
+    VariantClear(&v);
+
+    hr = IUIAutomationPropertyCondition_get_PropertyConditionFlags(prop_cond, &prop_flags);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(prop_flags == PropertyConditionFlags_None, "Unexpected flags %#x.\n", prop_flags);
+
+    IUIAutomationPropertyCondition_Release(prop_cond);
+    IUIAutomationNotCondition_Release(not_cond);
+
+    /* Set a new TreeFilter condition. */
+    cond = NULL;
+    hr = IUIAutomation_CreateTrueCondition(uia_iface, &cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond, "cond == NULL\n");
+
+    hr = IUIAutomationCacheRequest_put_TreeFilter(cache_req, cond);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomationCacheRequest_get_TreeFilter(cache_req, &cond2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cond2, "cond2 == NULL\n");
+    ok(iface_cmp((IUnknown *)cond, (IUnknown *)cond2), "cond != cond2\n");
+    IUIAutomationCondition_Release(cond);
+    IUIAutomationCondition_Release(cond2);
+
+    /*
+     * AutomationElementMode tests.
+     */
+    hr = IUIAutomationCacheRequest_get_AutomationElementMode(cache_req, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    elem_mode = 0;
+    hr = IUIAutomationCacheRequest_get_AutomationElementMode(cache_req, &elem_mode);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(elem_mode == AutomationElementMode_Full, "Unexpected element mode %#x\n", elem_mode);
+
+    /* Invalid value - maximum is AutomationElementMode_Full, 0x01. */
+    hr = IUIAutomationCacheRequest_put_AutomationElementMode(cache_req, 0x02);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUIAutomationCacheRequest_put_AutomationElementMode(cache_req, AutomationElementMode_None);
+    todo_wine ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    elem_mode = 0;
+    hr = IUIAutomationCacheRequest_get_AutomationElementMode(cache_req, &elem_mode);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    todo_wine ok(elem_mode == AutomationElementMode_None, "Unexpected element mode %#x\n", elem_mode);
+
+    /*
+     * AddProperty tests.
+     */
+    hr = IUIAutomationCacheRequest_AddProperty(cache_req, UIA_IsContentElementPropertyId);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* Invalid property ID. */
+    hr = IUIAutomationCacheRequest_AddProperty(cache_req, 1);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    IUIAutomationCacheRequest_Release(cache_req);
+}
+
+static const struct prov_method_sequence get_elem_cache_seq[] = {
+    { &Provider, PROV_GET_PROPERTY_VALUE },
+    NODE_CREATE_SEQ(&Provider_child),
+    { 0 },
+};
+
+static const struct prov_method_sequence get_cached_prop_val_seq[] = {
+    { &Provider_child, FRAG_GET_RUNTIME_ID },
+    { 0 },
+};
+
+static const struct prov_method_sequence get_cached_prop_val_seq2[] = {
+    { &Provider_child, FRAG_GET_RUNTIME_ID },
+    { &Provider_child, PROV_GET_PROPERTY_VALUE }, /* UIA_IsControlElementPropertyId */
+    { 0 },
+};
+
+static const struct prov_method_sequence get_cached_prop_val_seq3[] = {
+    { &Provider, PROV_GET_PROPERTY_VALUE },
+    NODE_CREATE_SEQ(&Provider_child),
+    { &Provider, PROV_GET_PROPERTY_VALUE },
+    NODE_CREATE_SEQ(&Provider_child),
+    NODE_CREATE_SEQ(&Provider_child2),
+    { &Provider_child, PROV_GET_PROPERTY_VALUE }, /* UIA_IsControlElementPropertyId */
+    { &Provider_child, PROV_GET_PROPERTY_VALUE }, /* UIA_ControlTypePropertyId */
+    { &Provider_child2, PROV_GET_PROPERTY_VALUE }, /* UIA_ControlTypePropertyId */
+    { 0 },
+};
+
+static void test_Element_cache_methods(IUIAutomation *uia_iface)
+{
+    HWND hwnd = create_test_hwnd("test_Element_cache_methods class");
+    IUIAutomationElement *element, *element2, *element3;
+    IUIAutomationCacheRequest *cache_req;
+    IUIAutomationElementArray *elem_arr;
+    int tmp_rt_id[2], i, len;
+    IUnknown *unk_ns;
+    HRESULT hr;
+    VARIANT v;
+
+    element = create_test_element_from_hwnd(uia_iface, hwnd, TRUE);
+    Provider.frag_root = &Provider.IRawElementProviderFragmentRoot_iface;
+    initialize_provider(&Provider_child, ProviderOptions_ServerSideProvider, NULL, TRUE);
+    provider_add_child(&Provider, &Provider_child);
+
+    hr = UiaGetReservedNotSupportedValue(&unk_ns);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    cache_req = NULL;
+    hr = IUIAutomation_CreateCacheRequest(uia_iface, &cache_req);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cache_req, "cache_req == NULL\n");
+
+    /*
+     * Run these tests on Provider_child, it doesn't have an HWND so it will
+     * get UIA_RuntimeIdPropertyId from GetRuntimeId.
+     */
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element, UIA_LabeledByPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_UNKNOWN, "Unexpected vt %d\n", V_VT(&v));
+    ok(Provider_child.ref == 2, "Unexpected refcnt %ld\n", Provider_child.ref);
+    ok_method_sequence(get_elem_cache_seq, "get_elem_cache_seq");
+
+    IUIAutomationElement_Release(element);
+    ok(Provider.ref == 1, "Unexpected refcnt %ld\n", Provider.ref);
+
+    hr = IUnknown_QueryInterface(V_UNKNOWN(&v), &IID_IUIAutomationElement, (void **)&element);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element, "element == NULL\n");
+    VariantClear(&v);
+
+    /*
+     * Passing in an invalid COM interface for IUIAutomationCacheRequest will
+     * cause an access violation on Windows.
+     */
+    if (0)
+    {
+        IUIAutomationElement_BuildUpdatedCache(element, (IUIAutomationCacheRequest *)&Object, &element2);
+    }
+
+    hr = IUIAutomationElement_BuildUpdatedCache(element, cache_req, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    element2 = (void *)0xdeadbeef;
+    hr = IUIAutomationElement_BuildUpdatedCache(element, NULL, &element2);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+    ok(!element2, "element2 != NULL\n");
+
+    /*
+     * Test cached property values. The default IUIAutomationCacheRequest
+     * always caches UIA_RuntimeIdPropertyId.
+     */
+    element2 = NULL;
+    hr = IUIAutomationElement_BuildUpdatedCache(element, cache_req, &element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element2, "element2 == NULL\n");
+    ok_method_sequence(get_cached_prop_val_seq, "get_cached_prop_val_seq");
+
+    /* RuntimeId is currently unset, so we'll get the NotSupported value. */
+    hr = IUIAutomationElement_GetCachedPropertyValueEx(element2, UIA_RuntimeIdPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_UNKNOWN, "Unexpected vt %d\n", V_VT(&v));
+    ok(V_UNKNOWN(&v) == unk_ns, "unexpected IUnknown %p\n", V_UNKNOWN(&v));
+    VariantClear(&v);
+
+    /* Attempting to get a cached value for a non-cached property. */
+    hr = IUIAutomationElement_GetCachedPropertyValueEx(element2, UIA_IsControlElementPropertyId, TRUE, &v);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_EMPTY, "Unexpected vt %d\n", V_VT(&v));
+    VariantClear(&v);
+
+    IUIAutomationElement_Release(element2);
+
+    /* RuntimeId is now set. */
+    Provider_child.runtime_id[0] = Provider_child.runtime_id[1] = 0xdeadbeef;
+    element2 = NULL;
+    hr = IUIAutomationElement_BuildUpdatedCache(element, cache_req, &element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element2, "element2 == NULL\n");
+    ok_method_sequence(get_cached_prop_val_seq, "get_cached_prop_val_seq");
+
+    hr = IUIAutomationElement_GetCachedPropertyValueEx(element2, UIA_RuntimeIdPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == (VT_I4 | VT_ARRAY), "Unexpected vt %d\n", V_VT(&v));
+    check_runtime_id(Provider_child.runtime_id, ARRAY_SIZE(Provider_child.runtime_id), V_ARRAY(&v));
+    VariantClear(&v);
+    IUIAutomationElement_Release(element2);
+
+    /*
+     * Add UIA_IsControlElementPropertyId to the list of cached property
+     * values.
+     */
+    hr = IUIAutomationCacheRequest_AddProperty(cache_req, UIA_IsControlElementPropertyId);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    Provider_child.runtime_id[0] = Provider_child.runtime_id[1] = 0xdeadb33f;
+    element2 = NULL;
+    hr = IUIAutomationElement_BuildUpdatedCache(element, cache_req, &element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element2, "element2 == NULL\n");
+    ok_method_sequence(get_cached_prop_val_seq2, "get_cached_prop_val_seq2");
+
+    hr = IUIAutomationElement_GetCachedPropertyValueEx(element2, UIA_RuntimeIdPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == (VT_I4 | VT_ARRAY), "Unexpected vt %d\n", V_VT(&v));
+    check_runtime_id(Provider_child.runtime_id, ARRAY_SIZE(Provider_child.runtime_id), V_ARRAY(&v));
+    VariantClear(&v);
+
+    hr = IUIAutomationElement_GetCachedPropertyValueEx(element2, UIA_IsControlElementPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(check_variant_bool(&v, TRUE), "V_BOOL(&v) = %#x\n", V_BOOL(&v));
+    VariantClear(&v);
+
+    IUIAutomationElement_Release(element2);
+    IUIAutomationCacheRequest_Release(cache_req);
+
+    IUIAutomationElement_Release(element);
+    ok(Provider_child.ref == 1, "Unexpected refcnt %ld\n", Provider_child.ref);
+
+    /* Test cached UIAutomationType_Element properties. */
+    element = create_test_element_from_hwnd(uia_iface, hwnd, TRUE);
+
+    cache_req = NULL;
+    hr = IUIAutomation_CreateCacheRequest(uia_iface, &cache_req);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cache_req, "cache_req == NULL\n");
+
+    /* UIAutomationType_Element property. */
+    hr = IUIAutomationCacheRequest_AddProperty(cache_req, UIA_LabeledByPropertyId);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* UIAutomationType_ElementArray property. */
+    hr = IUIAutomationCacheRequest_AddProperty(cache_req, UIA_ControllerForPropertyId);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    element2 = NULL;
+    hr = IUIAutomationElement_BuildUpdatedCache(element, cache_req, &element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element2, "element2 == NULL\n");
+    ok(Provider_child.ref == 3, "Unexpected refcnt %ld\n", Provider_child.ref);
+    ok(Provider_child2.ref == 2, "Unexpected refcnt %ld\n", Provider_child2.ref);
+
+    tmp_rt_id[0] = UIA_RUNTIME_ID_PREFIX;
+    tmp_rt_id[1] = HandleToULong(hwnd);
+    hr = IUIAutomationElement_GetCachedPropertyValueEx(element2, UIA_RuntimeIdPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == (VT_I4 | VT_ARRAY), "Unexpected vt %d\n", V_VT(&v));
+    check_runtime_id(tmp_rt_id, ARRAY_SIZE(tmp_rt_id), V_ARRAY(&v));
+    VariantClear(&v);
+
+    /* Cached IUIAutomationElement. */
+    hr = IUIAutomationElement_GetCachedPropertyValueEx(element2, UIA_LabeledByPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_UNKNOWN, "Unexpected vt %d\n", V_VT(&v));
+
+    element3 = NULL;
+    hr = IUnknown_QueryInterface(V_UNKNOWN(&v), &IID_IUIAutomationElement, (void **)&element3);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element3, "element3 == NULL\n");
+    VariantClear(&v);
+
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element3, UIA_IsControlElementPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(check_variant_bool(&v, TRUE), "V_BOOL(&v) = %#x\n", V_BOOL(&v));
+    IUIAutomationElement_Release(element3);
+    VariantClear(&v);
+
+    /* Cached IUIAutomationElementArray. */
+    hr = IUIAutomationElement_GetCachedPropertyValueEx(element2, UIA_ControllerForPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_UNKNOWN, "Unexpected vt %d\n", V_VT(&v));
+
+    hr = IUnknown_QueryInterface(V_UNKNOWN(&v), &IID_IUIAutomationElementArray, (void **)&elem_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    ok(!!elem_arr, "elem_arr == NULL\n");
+    VariantClear(&v);
+
+    hr = IUIAutomationElementArray_get_Length(elem_arr, &len);
+    ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    ok(len == ARRAY_SIZE(uia_unk_arr_prop_val), "Unexpected length %d\n", len);
+
+    for (i = 0; i < ARRAY_SIZE(uia_unk_arr_prop_val); i++)
+    {
+        hr = IUIAutomationElementArray_GetElement(elem_arr, i, &element3);
+        ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+        ok(!!element3, "element3 == NULL\n");
+
+        hr = IUIAutomationElement_GetCurrentPropertyValueEx(element3, UIA_ControlTypePropertyId, TRUE, &v);
+        ok(hr == S_OK, "elem[%d] Unexpected hr %#lx\n", i, hr);
+        ok(V_VT(&v) == VT_I4, "elem[%d] Unexpected VT %d\n", i, V_VT(&v));
+        ok(V_I4(&v) == uia_i4_prop_val, "elem[%d] Unexpected I4 %#lx\n", i, V_I4(&v));
+
+        IUIAutomationElement_Release(element3);
+        VariantClear(&v);
+    }
+
+    IUIAutomationElementArray_Release(elem_arr);
+    IUIAutomationCacheRequest_Release(cache_req);
+
+    /*
+     * Reference isn't released until the element holding the cache is
+     * destroyed.
+     */
+    ok(Provider_child.ref == 3, "Unexpected refcnt %ld\n", Provider_child.ref);
+    ok(Provider_child2.ref == 2, "Unexpected refcnt %ld\n", Provider_child2.ref);
+
+    IUIAutomationElement_Release(element2);
+    ok(Provider_child.ref == 1, "Unexpected refcnt %ld\n", Provider_child.ref);
+    ok(Provider_child2.ref == 1, "Unexpected refcnt %ld\n", Provider_child2.ref);
+    ok_method_sequence(get_cached_prop_val_seq3, "get_cached_prop_val_seq3");
+
+    IUIAutomationElement_Release(element);
+    ok(Provider.ref == 1, "Unexpected refcnt %ld\n", Provider.ref);
+    IUnknown_Release(unk_ns);
+
+    DestroyWindow(hwnd);
+    UnregisterClassA("test_Element_cache_methods class", NULL);
+}
+
+static const struct prov_method_sequence element_find_start_seq[] = {
+    { &Provider, PROV_GET_PROPERTY_VALUE }, /* UIA_LabeledByPropertyId */
+    NODE_CREATE_SEQ(&Provider),
+    { 0 }
+};
+
+/*
+ * Identical to find_seq7, except default cache request used by FindAll
+ * doesn't cache UIA_RuntimeIdPropertyId.
+ */
+static const struct prov_method_sequence element_find_seq1[] = {
+    { &Provider, FRAG_GET_RUNTIME_ID },
+    { &Provider, PROV_GET_PROPERTY_VALUE }, /* UIA_IsContentElementPropertyId */
+    { &Provider, PROV_GET_PROPERTY_VALUE }, /* UIA_IsControlElementPropertyId */
+    { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_FirstChild */
+    NODE_CREATE_SEQ(&Provider_child),
+    { &Provider_child, PROV_GET_PROPERTY_VALUE }, /* UIA_IsContentElementPropertyId */
+    { &Provider_child, FRAG_NAVIGATE }, /* NavigateDirection_FirstChild */
+    NODE_CREATE_SEQ(&Provider_child_child),
+    { &Provider_child_child, PROV_GET_PROPERTY_VALUE }, /* UIA_IsContentElementPropertyId */
+    { &Provider_child_child, PROV_GET_PROPERTY_VALUE }, /* UIA_IsControlElementPropertyId */
+    { &Provider_child_child, FRAG_NAVIGATE }, /* NavigateDirection_NextSibling */
+    NODE_CREATE_SEQ(&Provider_child_child2),
+    { &Provider_child_child2, PROV_GET_PROPERTY_VALUE }, /* UIA_IsContentElementPropertyId */
+    { &Provider_child_child2, PROV_GET_PROPERTY_VALUE }, /* UIA_IsControlElementPropertyId */
+    { &Provider_child_child2, FRAG_NAVIGATE }, /* NavigateDirection_NextSibling */
+    { &Provider_child_child2, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
+    NODE_CREATE_SEQ(&Provider_child),
+    { &Provider_child, FRAG_NAVIGATE }, /* NavigateDirection_NextSibling */
+    NODE_CREATE_SEQ(&Provider_child2),
+    { &Provider_child2, PROV_GET_PROPERTY_VALUE }, /* UIA_IsContentElementPropertyId */
+    { &Provider_child2, PROV_GET_PROPERTY_VALUE }, /* UIA_IsControlElementPropertyId */
+    { &Provider_child2, FRAG_NAVIGATE }, /* NavigateDirection_NextSibling */
+    { &Provider_child2, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
+    NODE_CREATE_SEQ(&Provider),
+    { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_NextSibling */
+    { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_Parent */
+    /* Only done on Win10v1507 and below. */
+    { &Provider, FRAG_NAVIGATE, METHOD_OPTIONAL }, /* NavigateDirection_Parent */
+    { &Provider, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
+    { &Provider_child_child, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
+    { &Provider_child_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
+    { &Provider_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
+    { 0 },
+};
+
+/*
+ * Identical to find_seq11, except default cache request used by FindFirst
+ * doesn't cache UIA_RuntimeIdPropertyId.
+ */
+static const struct prov_method_sequence element_find_seq2[] = {
+    { &Provider, FRAG_GET_RUNTIME_ID },
+    { &Provider, PROV_GET_PROPERTY_VALUE }, /* UIA_IsContentElementPropertyId */
+    { &Provider, FRAG_NAVIGATE }, /* NavigateDirection_FirstChild */
+    NODE_CREATE_SEQ(&Provider_child),
+    { &Provider_child, PROV_GET_PROPERTY_VALUE }, /* UIA_IsContentElementPropertyId */
+    { &Provider_child, FRAG_NAVIGATE }, /* NavigateDirection_FirstChild */
+    NODE_CREATE_SEQ(&Provider_child_child),
+    { &Provider_child_child, PROV_GET_PROPERTY_VALUE }, /* UIA_IsContentElementPropertyId */
+    { &Provider_child_child, FRAG_NAVIGATE }, /* NavigateDirection_FirstChild */
+    { &Provider_child_child, FRAG_NAVIGATE }, /* NavigateDirection_NextSibling */
+    NODE_CREATE_SEQ(&Provider_child_child2),
+    { &Provider_child_child2, PROV_GET_PROPERTY_VALUE }, /* UIA_IsContentElementPropertyId */
+    { &Provider_child_child2, PROV_GET_PROPERTY_VALUE }, /* UIA_IsControlElementPropertyId */
+    { &Provider_child_child2, PROV_GET_PROPERTY_VALUE, METHOD_TODO }, /* UIA_ProviderDescriptionPropertyId */
+    { 0 },
+};
+
+struct exp_elem_desc {
+    struct Provider *elem_prov;
+    struct node_provider_desc prov_desc;
+    ULONG exp_refcnt;
+    ULONG exp_release_refcnt;
+};
+
+static void set_elem_desc(struct exp_elem_desc *desc, struct Provider *prov, HWND hwnd, DWORD pid, ULONG exp_refcnt,
+        ULONG exp_release_refcnt)
+{
+    desc->elem_prov = prov;
+    init_node_provider_desc(&desc->prov_desc, pid, hwnd);
+    desc->exp_refcnt = exp_refcnt;
+    desc->exp_release_refcnt = exp_release_refcnt;
+}
+
+#define test_uia_element_arr( elem_arr, exp_elems, exp_elems_count ) \
+        test_uia_element_arr_( (elem_arr), (exp_elems), (exp_elems_count), __FILE__, __LINE__)
+static void test_uia_element_arr_(IUIAutomationElementArray *elem_arr, struct exp_elem_desc *exp_elems, int exp_elems_count,
+        const char *file, int line)
+{
+    int i, arr_length;
+    HRESULT hr;
+
+    hr = IUIAutomationElementArray_get_Length(elem_arr, &arr_length);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok_(file, line)(hr == S_OK, "IUIAutomationElementArray_get_Length: Unexpected hr %#lx\n", hr);
+    ok_(file, line)(arr_length == exp_elems_count, "Unexpected arr_length %d.\n", arr_length);
+
+    for (i = 0; i < arr_length; i++)
+    {
+        struct exp_elem_desc *desc = &exp_elems[i];
+        IUIAutomationElement *element;
+        VARIANT v;
+
+        ok_(file, line)(desc->elem_prov->ref == desc->exp_refcnt, "elem[%d]: Unexpected refcnt %ld\n", i, exp_elems[i].elem_prov->ref);
+
+        VariantInit(&v);
+        element = NULL;
+        hr = IUIAutomationElementArray_GetElement(elem_arr, i, &element);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(!!element, "element == NULL\n");
+
+        hr = IUIAutomationElement_GetCurrentPropertyValueEx(element, UIA_ProviderDescriptionPropertyId, TRUE, &v);
+        todo_wine ok_(file, line)(hr == S_OK, "Unexpected hr %#lx\n", hr);
+        if (SUCCEEDED(hr))
+            test_node_provider_desc_(&exp_elems[i].prov_desc, V_BSTR(&v), file, line);
+        VariantClear(&v);
+        IUIAutomationElement_Release(element);
+    }
+
+    IUIAutomationElementArray_Release(elem_arr);
+
+    for (i = 0; i < arr_length; i++)
+    {
+        struct exp_elem_desc *desc = &exp_elems[i];
+
+        ok_(file, line)(desc->elem_prov->ref == desc->exp_release_refcnt, "elem[%d]: Unexpected refcnt %ld\n", i, exp_elems[i].elem_prov->ref);
+    }
+}
+
+static void test_Element_Find(IUIAutomation *uia_iface)
+{
+    HWND hwnd = create_test_hwnd("test_Element_Find class");
+    IUIAutomationCondition *condition, *condition2;
+    struct Provider_prop_override prop_override;
+    struct exp_elem_desc exp_elems[7] = { 0 };
+    IUIAutomationElement *element, *element2;
+    IUIAutomationElementArray *element_arr;
+    IUIAutomationCacheRequest *cache_req;
+    HRESULT hr;
+    VARIANT v;
+
+    element = create_test_element_from_hwnd(uia_iface, hwnd, TRUE);
+
+    /*
+     * The COM API has no equivalent to UiaNodeFromProvider, so the only way
+     * we can get an initial element is with ElementFromHandle. This means our
+     * element representing Provider will have an HWND associated, which
+     * doesn't match our old UiaFind tests. To work around this, make Provider
+     * return itself for the UIA_LabeledByPropertyId to get an element without
+     * an HWND associated.
+     */
+    VariantInit(&v);
+    V_VT(&v) = VT_UNKNOWN;
+    V_UNKNOWN(&v) = (IUnknown *)&Provider.IRawElementProviderSimple_iface;
+    set_property_override(&prop_override, UIA_LabeledByPropertyId, &v);
+    set_provider_prop_override(&Provider, &prop_override, 1);
+    Provider.hwnd = NULL;
+
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element, UIA_LabeledByPropertyId, TRUE, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_UNKNOWN, "Unexpected vt %d\n", V_VT(&v));
+    ok(Provider.ref == 3, "Unexpected refcnt %ld\n", Provider.ref);
+
+    hr = IUnknown_QueryInterface(V_UNKNOWN(&v), &IID_IUIAutomationElement, (void **)&element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element2, "element2 == NULL\n");
+    VariantClear(&v);
+    ok_method_sequence(element_find_start_seq, "element_find_start_seq");
+    set_provider_prop_override(&Provider, NULL, 0);
+
+    IUIAutomationElement_Release(element);
+    ok(Provider.ref == 2, "Unexpected refcnt %ld\n", Provider.ref);
+
+    element = element2;
+    element2 = NULL;
+
+    initialize_provider_tree(TRUE);
+    Provider.frag_root = &Provider.IRawElementProviderFragmentRoot_iface;
+    provider_add_child(&Provider, &Provider_child);
+    provider_add_child(&Provider, &Provider_child2);
+    provider_add_child(&Provider_child, &Provider_child_child);
+    provider_add_child(&Provider_child, &Provider_child_child2);
+    provider_add_child(&Provider_child2, &Provider_child2_child);
+    provider_add_child(&Provider_child2_child, &Provider_child2_child_child);
+
+    /*
+     * In order to match the tests from test_UiaFind(), we need to create a
+     * custom IUIAutomationCacheRequest with a ConditionType_True treeview.
+     * The default cache request also caches the RuntimeId property.
+     */
+    cache_req = NULL;
+    hr = IUIAutomation_CreateCacheRequest(uia_iface, &cache_req);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cache_req, "cache_req == NULL\n");
+
+    /* Set view condition to ConditionType_True. */
+    condition = NULL;
+    hr = IUIAutomation_CreateTrueCondition(uia_iface, &condition);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!condition, "condition == NULL\n");
+
+    hr = IUIAutomationCacheRequest_put_TreeFilter(cache_req, condition);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /*
+     * Equivalent to: Maximum find depth of -1, find first is FALSE, exclude
+     * root is FALSE.
+     */
+    hr = IUIAutomationElement_FindAllBuildCache(element, TreeScope_SubTree, condition, cache_req, &element_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    set_elem_desc(&exp_elems[0], &Provider, NULL, GetCurrentProcessId(), 2, 2);
+    add_provider_desc(&exp_elems[0].prov_desc, L"Main", L"Provider", TRUE);
+    set_elem_desc(&exp_elems[1], &Provider_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[1].prov_desc, L"Main", L"Provider_child", TRUE);
+    set_elem_desc(&exp_elems[2], &Provider_child_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[2].prov_desc, L"Main", L"Provider_child_child", TRUE);
+    set_elem_desc(&exp_elems[3], &Provider_child_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[3].prov_desc, L"Main", L"Provider_child_child2", TRUE);
+    set_elem_desc(&exp_elems[4], &Provider_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[4].prov_desc, L"Main", L"Provider_child2", TRUE);
+    set_elem_desc(&exp_elems[5], &Provider_child2_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[5].prov_desc, L"Main", L"Provider_child2_child", TRUE);
+    set_elem_desc(&exp_elems[6], &Provider_child2_child_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[6].prov_desc, L"Main", L"Provider_child2_child_child", TRUE);
+
+    test_uia_element_arr(element_arr, exp_elems, 7);
+    ok_method_sequence(find_seq1, "find_seq1");
+
+    /*
+     * Equivalent to: Maximum find depth of 1, find first is FALSE, exclude root
+     * is FALSE.
+     */
+    hr = IUIAutomationElement_FindAllBuildCache(element, TreeScope_Element | TreeScope_Children, condition, cache_req, &element_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    set_elem_desc(&exp_elems[0], &Provider, NULL, GetCurrentProcessId(), 2, 2);
+    add_provider_desc(&exp_elems[0].prov_desc, L"Main", L"Provider", TRUE);
+    set_elem_desc(&exp_elems[1], &Provider_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[1].prov_desc, L"Main", L"Provider_child", TRUE);
+    set_elem_desc(&exp_elems[2], &Provider_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[2].prov_desc, L"Main", L"Provider_child2", TRUE);
+
+    test_uia_element_arr(element_arr, exp_elems, 3);
+    ok_method_sequence(find_seq2, "find_seq2");
+
+    /*
+     * Equivalent to: Maximum find depth of 1, find first is FALSE, exclude root
+     * is TRUE.
+     */
+    hr = IUIAutomationElement_FindAllBuildCache(element, TreeScope_Children, condition, cache_req, &element_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    set_elem_desc(&exp_elems[0], &Provider_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[0].prov_desc, L"Main", L"Provider_child", TRUE);
+    set_elem_desc(&exp_elems[1], &Provider_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[1].prov_desc, L"Main", L"Provider_child2", TRUE);
+
+    test_uia_element_arr(element_arr, exp_elems, 2);
+    ok_method_sequence(find_seq3, "find_seq3");
+
+    /*
+     * Equivalent to: Maximum find depth of 1, find first is TRUE, exclude
+     * root is TRUE. element2 now represents Provider_child.
+     */
+    hr = IUIAutomationElement_FindFirstBuildCache(element, TreeScope_Children, condition, cache_req, &element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(Provider_child.ref == 2, "Unexpected refcnt %ld\n", Provider_child.ref);
+
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element2, UIA_ProviderDescriptionPropertyId, TRUE, &v);
+    todo_wine ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), NULL);
+        check_node_provider_desc(V_BSTR(&v), L"Main", L"Provider_child", TRUE);
+        VariantClear(&v);
+    }
+
+    ok_method_sequence(find_seq4, "find_seq4");
+
+    /*
+     * Equivalent to: Maximum find depth of 0, find first is FALSE, exclude
+     * root is FALSE. Provider_child doesn't have a runtime id for UI
+     * Automation to use as a way to check if it has navigated back to the
+     * node that began the search, so it will get siblings.
+     */
+    hr = IUIAutomationElement_FindAllBuildCache(element2, TreeScope_Element, condition, cache_req, &element_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    set_elem_desc(&exp_elems[0], &Provider_child, NULL, GetCurrentProcessId(), 2, 2);
+    add_provider_desc(&exp_elems[0].prov_desc, L"Main", L"Provider_child", TRUE);
+    set_elem_desc(&exp_elems[1], &Provider_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[1].prov_desc, L"Main", L"Provider_child2", TRUE);
+
+    test_uia_element_arr(element_arr, exp_elems, 2);
+    ok_method_sequence(find_seq5, "find_seq5");
+
+    /*
+     * Equivalent to: Maximum find depth of 0, find first is FALSE, exclude
+     * root is FALSE. Provider_child now has a runtime ID, so we don't get
+     * its sibling.
+     */
+    Provider_child.runtime_id[0] = Provider_child.runtime_id[1] = 0xdeadbeef;
+    hr = IUIAutomationElement_FindAllBuildCache(element2, TreeScope_Element, condition, cache_req, &element_arr);
+    IUIAutomationElement_Release(element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    set_elem_desc(&exp_elems[0], &Provider_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[0].prov_desc, L"Main", L"Provider_child", TRUE);
+
+    test_uia_element_arr(element_arr, exp_elems, 1);
+    ok_method_sequence(find_seq6, "find_seq6");
+    initialize_provider_tree(FALSE);
+
+    IUIAutomationCondition_Release(condition);
+
+    /* condition is now UIA_IsContentElementPropertyId == FALSE. */
+    condition = NULL;
+    variant_init_bool(&v, FALSE);
+    hr = IUIAutomation_CreatePropertyCondition(uia_iface, UIA_IsContentElementPropertyId, v, &condition);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!condition, "condition == NULL\n");
+
+    /* Set view condition to this property condition. */
+    hr = IUIAutomationCacheRequest_put_TreeFilter(cache_req, condition);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* condition2 is UIA_IsControlElementPropertyId == TRUE. */
+    condition2 = NULL;
+    variant_init_bool(&v, TRUE);
+    hr = IUIAutomation_CreatePropertyCondition(uia_iface, UIA_IsControlElementPropertyId, v, &condition2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!condition2, "condition2 == NULL\n");
+
+    /* Override UIA_IsContentElementPropertyId, set it to FALSE. */
+    variant_init_bool(&v, FALSE);
+    set_property_override(&prop_override, UIA_IsContentElementPropertyId, &v);
+    set_provider_prop_override(&Provider, &prop_override, 1);
+    set_provider_prop_override(&Provider_child2, &prop_override, 1);
+    set_provider_prop_override(&Provider_child_child, &prop_override, 1);
+    set_provider_prop_override(&Provider_child_child2, &prop_override, 1);
+
+    /*
+     * Equivalent to: Maximum find depth of 1, find first is FALSE, exclude
+     * root is FALSE. The cache request view condition is used to determine
+     * tree depth, if an element matches the cache request view condition,
+     * depth is incremented. Since Provider_child does not, Provider_child_child,
+     * Provider_child_child2, and Provider_child2 are all considered to be at
+     * depth 1.
+     */
+    hr = IUIAutomationElement_FindAllBuildCache(element, TreeScope_Element | TreeScope_Children, condition2, cache_req, &element_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    set_elem_desc(&exp_elems[0], &Provider, NULL, GetCurrentProcessId(), 2, 2);
+    add_provider_desc(&exp_elems[0].prov_desc, L"Main", L"Provider", TRUE);
+    set_elem_desc(&exp_elems[1], &Provider_child_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[1].prov_desc, L"Main", L"Provider_child_child", TRUE);
+    set_elem_desc(&exp_elems[2], &Provider_child_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[2].prov_desc, L"Main", L"Provider_child_child2", TRUE);
+    set_elem_desc(&exp_elems[3], &Provider_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[3].prov_desc, L"Main", L"Provider_child2", TRUE);
+
+    test_uia_element_arr(element_arr, exp_elems, 4);
+    ok_method_sequence(find_seq7, "find_seq7");
+    initialize_provider_tree(FALSE);
+
+    /*
+     * Same test as before, except now Provider has a runtime ID.
+     */
+    Provider.runtime_id[0] = Provider.runtime_id[1] = 0xdeadbeef;
+    variant_init_bool(&v, FALSE);
+    set_property_override(&prop_override, UIA_IsContentElementPropertyId, &v);
+    set_provider_prop_override(&Provider, &prop_override, 1);
+    set_provider_prop_override(&Provider_child2, &prop_override, 1);
+    set_provider_prop_override(&Provider_child_child, &prop_override, 1);
+    set_provider_prop_override(&Provider_child_child2, &prop_override, 1);
+
+    hr = IUIAutomationElement_FindAllBuildCache(element, TreeScope_Element | TreeScope_Children, condition2, cache_req, &element_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    set_elem_desc(&exp_elems[0], &Provider, NULL, GetCurrentProcessId(), 2, 2);
+    add_provider_desc(&exp_elems[0].prov_desc, L"Main", L"Provider", TRUE);
+    set_elem_desc(&exp_elems[1], &Provider_child_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[1].prov_desc, L"Main", L"Provider_child_child", TRUE);
+    set_elem_desc(&exp_elems[2], &Provider_child_child2, NULL, GetCurrentProcessId(), 2, 2);
+    add_provider_desc(&exp_elems[2].prov_desc, L"Main", L"Provider_child_child2", TRUE);
+    set_elem_desc(&exp_elems[3], &Provider_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[3].prov_desc, L"Main", L"Provider_child2", TRUE);
+
+    /* element2 now represents Provider_child_child2. */
+    hr = IUIAutomationElementArray_GetElement(element_arr, 2, &element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    test_uia_element_arr(element_arr, exp_elems, 4);
+    ok_method_sequence(find_seq8, "find_seq8");
+    initialize_provider_tree(FALSE);
+
+    variant_init_bool(&v, FALSE);
+    set_property_override(&prop_override, UIA_IsContentElementPropertyId, &v);
+    set_provider_prop_override(&Provider_child_child2, &prop_override, 1);
+    set_provider_prop_override(&Provider_child2, &prop_override, 1);
+    set_provider_prop_override(&Provider_child2_child, &prop_override, 1);
+
+    /*
+     * Equivalent to: Maximum find depth of 1, find first is FALSE,
+     * exclude root is FALSE. Starting at Provider_child_child2, find
+     * will be able to traverse the tree in the same order as it would
+     * if we had started at the tree root Provider, retrieving
+     * Provider_child2 as a sibling and Provider_child2_child as a node
+     * at depth 1.
+     */
+    hr = IUIAutomationElement_FindAllBuildCache(element2, TreeScope_Element | TreeScope_Children, condition2, cache_req, &element_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IUIAutomationElement_Release(element2);
+
+    set_elem_desc(&exp_elems[0], &Provider_child_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[0].prov_desc, L"Main", L"Provider_child_child2", TRUE);
+    set_elem_desc(&exp_elems[1], &Provider_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[1].prov_desc, L"Main", L"Provider_child2", TRUE);
+    set_elem_desc(&exp_elems[2], &Provider_child2_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[2].prov_desc, L"Main", L"Provider_child2_child", TRUE);
+
+    test_uia_element_arr(element_arr, exp_elems, 3);
+    ok_method_sequence(find_seq9, "find_seq9");
+    initialize_provider_tree(FALSE);
+
+    /*
+     * Equivalent to: Maximum find depth of 1, find first is FALSE, exclude
+     * root is TRUE. Exclude root applies to the first node that matches the
+     * view condition, and not the node that is passed into UiaFind(). Since
+     * Provider doesn't match our view condition here, Provider_child will be
+     * excluded.
+     */
+    variant_init_bool(&v, FALSE);
+    set_property_override(&prop_override, UIA_IsContentElementPropertyId, &v);
+    set_provider_prop_override(&Provider_child, &prop_override, 1);
+    set_provider_prop_override(&Provider_child2, &prop_override, 1);
+    hr = IUIAutomationElement_FindAllBuildCache(element, TreeScope_Children, condition2, cache_req, &element_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    set_elem_desc(&exp_elems[0], &Provider_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[0].prov_desc, L"Main", L"Provider_child2", TRUE);
+
+    test_uia_element_arr(element_arr, exp_elems, 1);
+    ok_method_sequence(find_seq10, "find_seq10");
+    initialize_provider_tree(FALSE);
+
+    variant_init_bool(&v, FALSE);
+    set_property_override(&prop_override, UIA_IsContentElementPropertyId, &v);
+    set_provider_prop_override(&Provider_child_child2, &prop_override, 1);
+
+    /*
+     * Equivalent to: Maximum find depth of -1, find first is TRUE, exclude
+     * root is FALSE. Provider_child_child2 is the only element in the tree
+     * to match our condition.
+     */
+    hr = IUIAutomationElement_FindFirstBuildCache(element, TreeScope_SubTree, condition, cache_req, &element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(Provider_child_child2.ref == 2, "Unexpected refcnt %ld\n", Provider_child_child2.ref);
+
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element2, UIA_ProviderDescriptionPropertyId, TRUE, &v);
+    todo_wine ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), NULL);
+        check_node_provider_desc(V_BSTR(&v), L"Main", L"Provider_child_child2", TRUE);
+        VariantClear(&v);
+    }
+
+    IUIAutomationElement_Release(element2);
+    ok_method_sequence(find_seq11, "find_seq11");
+    initialize_provider_tree(FALSE);
+
+    IUIAutomationCondition_Release(condition);
+    IUIAutomationCondition_Release(condition2);
+    IUIAutomationCacheRequest_Release(cache_req);
+
+    /*
+     * Equivalent to: Maximum find depth of 1, find first is FALSE,
+     * exclude root is FALSE. FindAll() uses the default
+     * IUIAutomationCacheRequest, which uses the ControlView condition
+     * as its view condition. Since Provider_child doesn't match this view
+     * condition, it isn't a child of Provider in this treeview. No property
+     * values are cached by the default internal cache request, so we need to
+     * use a separate method sequence.
+     */
+    variant_init_bool(&v, FALSE);
+    set_property_override(&prop_override, UIA_IsControlElementPropertyId, &v);
+    set_provider_prop_override(&Provider_child, &prop_override, 1);
+
+    /* condition is now UIA_IsContentElementPropertyId == TRUE. */
+    variant_init_bool(&v, TRUE);
+    hr = IUIAutomation_CreatePropertyCondition(uia_iface, UIA_IsContentElementPropertyId, v, &condition);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!condition, "cond == NULL\n");
+
+    hr = IUIAutomationElement_FindAll(element, TreeScope_Element | TreeScope_Children, condition, &element_arr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    set_elem_desc(&exp_elems[0], &Provider, NULL, GetCurrentProcessId(), 2, 2);
+    add_provider_desc(&exp_elems[0].prov_desc, L"Main", L"Provider", TRUE);
+    set_elem_desc(&exp_elems[1], &Provider_child_child, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[1].prov_desc, L"Main", L"Provider_child_child", TRUE);
+    set_elem_desc(&exp_elems[2], &Provider_child_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[2].prov_desc, L"Main", L"Provider_child_child2", TRUE);
+    set_elem_desc(&exp_elems[3], &Provider_child2, NULL, GetCurrentProcessId(), 2, 1);
+    add_provider_desc(&exp_elems[3].prov_desc, L"Main", L"Provider_child2", TRUE);
+
+    test_uia_element_arr(element_arr, exp_elems, 4);
+    ok_method_sequence(element_find_seq1, "element_find_seq1");
+    initialize_provider_tree(FALSE);
+
+    /*
+     * Equivalent to: Maximum find depth of -1, find first is TRUE,
+     * exclude root is FALSE. FindFirst() also uses the default cache request.
+     * Provider_child_child2 will be the first provider in the tree to match
+     * this view condition, so it will be returned.
+     */
+    variant_init_bool(&v, FALSE);
+    set_property_override(&prop_override, UIA_IsControlElementPropertyId, &v);
+    set_provider_prop_override(&Provider, &prop_override, 1);
+    set_provider_prop_override(&Provider_child, &prop_override, 1);
+    set_provider_prop_override(&Provider_child_child, &prop_override, 1);
+
+    hr = IUIAutomationElement_FindFirst(element, TreeScope_SubTree, condition, &element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(Provider_child_child2.ref == 2, "Unexpected refcnt %ld\n", Provider_child_child2.ref);
+
+    hr = IUIAutomationElement_GetCurrentPropertyValueEx(element2, UIA_ProviderDescriptionPropertyId, TRUE, &v);
+    todo_wine ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), NULL);
+        check_node_provider_desc(V_BSTR(&v), L"Main", L"Provider_child_child2", TRUE);
+        VariantClear(&v);
+    }
+
+    IUIAutomationElement_Release(element2);
+    ok_method_sequence(element_find_seq2, "element_find_seq2");
+    initialize_provider_tree(TRUE);
+
+    IUIAutomationCondition_Release(condition);
+    IUIAutomationElement_Release(element);
+    ok(Provider.ref == 1, "Unexpected refcnt %ld\n", Provider.ref);
+
+    DestroyWindow(hwnd);
+    UnregisterClassA("test_Element_Find class", NULL);
+}
+
 struct uia_com_classes {
     const GUID *clsid;
     const GUID *iid;
@@ -10187,9 +11799,13 @@ static void test_CUIAutomation(void)
     IUnknown_Release(unk1);
     IUnknown_Release(unk2);
 
+    test_CUIAutomation_condition_ifaces(uia_iface);
     test_CUIAutomation_value_conversion(uia_iface);
+    test_CUIAutomation_cache_request_iface(uia_iface);
     test_ElementFromHandle(uia_iface, has_cui8);
     test_Element_GetPropertyValue(uia_iface);
+    test_Element_cache_methods(uia_iface);
+    test_Element_Find(uia_iface);
 
     IUIAutomation_Release(uia_iface);
     CoUninitialize();

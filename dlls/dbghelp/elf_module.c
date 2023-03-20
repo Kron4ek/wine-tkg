@@ -39,7 +39,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(dbghelp);
 struct elf_info
 {
     unsigned                    flags;          /* IN  one (or several) of the ELF_INFO constants */
-    DWORD_PTR                   dbg_hdr_addr;   /* OUT address of debug header (if ELF_INFO_DEBUG_HEADER is set) */
+    DWORD64                     dbg_hdr_addr;   /* OUT address of debug header (if ELF_INFO_DEBUG_HEADER is set) */
     struct module*              module;         /* OUT loaded module (if ELF_INFO_MODULE is set) */
     const WCHAR*                module_name;    /* OUT found module name (if ELF_INFO_NAME is set) */
 };
@@ -1339,39 +1339,51 @@ static BOOL elf_load_file_cb(void *param, HANDLE handle, const WCHAR *filename)
 /******************************************************************
  *		elf_search_auxv
  *
- * locate some a value from the debuggee auxiliary vector
+ * Locate a value from the debuggee auxiliary vector
  */
 static BOOL elf_search_auxv(const struct process* pcs, unsigned type, ULONG_PTR* val)
 {
     char        buffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME];
     SYMBOL_INFO*si = (SYMBOL_INFO*)buffer;
-    BYTE*       addr;
-    BYTE*       str;
-    BYTE*       str_max;
+    const unsigned ptr_size = pcs->is_system_64bit ? 8 : 4;
+    UINT64      envp;
+    UINT64      addr;
+    UINT64      str;
+    UINT64      str_max;
 
     si->SizeOfStruct = sizeof(*si);
     si->MaxNameLen = MAX_SYM_NAME;
-    if (!SymFromName(pcs->handle, "libwine.so.1!__wine_main_environ", si) ||
-        !(addr = (void*)(DWORD_PTR)si->Address) ||
-        !ReadProcessMemory(pcs->handle, addr, &addr, sizeof(addr), NULL) ||
-        !addr)
+    if (!SymFromName(pcs->handle, "ntdll.so!main_envp", si) ||
+        !si->Address ||
+        !read_process_integral_value(pcs, si->Address, &envp, ptr_size) ||
+        !envp)
     {
         FIXME("can't find symbol in module\n");
         return FALSE;
     }
     /* walk through envp[] */
     /* envp[] strings are located after the auxiliary vector, so protect the walk */
-    str_max = (void*)(DWORD_PTR)~0L;
-    while (ReadProcessMemory(pcs->handle, addr, &str, sizeof(str), NULL) &&
-           (addr = (void*)((DWORD_PTR)addr + sizeof(str))) != NULL && str != NULL)
-        str_max = min(str_max, str);
+    str_max = ~(UINT64)0u;
+    addr = envp;
+    for (;;)
+    {
+        if (!read_process_integral_value(pcs, addr, &str, ptr_size) || (addr += ptr_size) <= ptr_size)
+            return FALSE;
+        if (!str) break;
+        /* It can be some env vars have been changed, pointing to a different location */
+        if (str >= envp)
+            str_max = min(str_max, str);
+    }
 
     /* Walk through the end of envp[] array.
      * Actually, there can be several NULLs at the end of envp[]. This happens when an env variable is
      * deleted, the last entry is replaced by an extra NULL.
      */
-    while (addr < str_max && ReadProcessMemory(pcs->handle, addr, &str, sizeof(str), NULL) && str == NULL)
-        addr = (void*)((DWORD_PTR)addr + sizeof(str));
+    for (; addr < str_max; addr += ptr_size)
+    {
+        if (!read_process_integral_value(pcs, addr, &str, ptr_size)) return FALSE;
+        if (str) break;
+    }
 
     if (pcs->is_system_64bit)
     {
@@ -1381,7 +1393,7 @@ static BOOL elf_search_auxv(const struct process* pcs, unsigned type, ULONG_PTR*
             UINT64 a_val;
         } auxv;
 
-        while (ReadProcessMemory(pcs->handle, addr, &auxv, sizeof(auxv), NULL) && auxv.a_type)
+        while (read_process_memory(pcs, addr, &auxv, sizeof(auxv)) && auxv.a_type)
         {
             if (auxv.a_type == type)
             {
@@ -1399,7 +1411,7 @@ static BOOL elf_search_auxv(const struct process* pcs, unsigned type, ULONG_PTR*
             UINT32 a_val;
         } auxv;
 
-        while (ReadProcessMemory(pcs->handle, addr, &auxv, sizeof(auxv), NULL) && auxv.a_type)
+        while (read_process_memory(pcs, addr, &auxv, sizeof(auxv)) && auxv.a_type)
         {
             if (auxv.a_type == type)
             {
@@ -1770,8 +1782,14 @@ BOOL elf_read_wine_loader_dbg_info(struct process* pcs, ULONG_PTR addr)
         HeapFree(GetProcessHeap(), 0, loader);
     }
     if (!ret || !elf_info.dbg_hdr_addr) return FALSE;
-
-    TRACE("Found ELF debug header %#Ix\n", elf_info.dbg_hdr_addr);
+    if (elf_info.dbg_hdr_addr != (ULONG_PTR)elf_info.dbg_hdr_addr)
+    {
+        ERR("Unable to access ELF libraries (outside 32bit limit)\n");
+        module_remove(pcs, elf_info.module);
+        pcs->loader = &empty_loader_ops;
+        return FALSE;
+    }
+    TRACE("Found ELF debug header %#I64x\n", elf_info.dbg_hdr_addr);
     elf_info.module->format_info[DFI_ELF]->u.elf_info->elf_loader = 1;
     module_set_module(elf_info.module, S_WineLoaderW);
     pcs->dbg_hdr_addr = elf_info.dbg_hdr_addr;

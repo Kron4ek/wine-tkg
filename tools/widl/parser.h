@@ -28,20 +28,16 @@ extern char *parser_text;
 extern int parser_debug;
 extern int yy_flex_debug;
 
-int parser_lex(void);
-
-extern int import_stack_ptr;
-int do_import(char *fname);
-void abort_import(void);
+extern int parse_only;
+void push_import( char *import_name );
 void pop_import(void);
-
-#define parse_only import_stack_ptr
 
 int is_type(const char *name);
 
 int do_warning(const char *toggle, warning_list_t *wnum);
 int is_warning_enabled(int warning);
 
-extern char *temp_name;
+extern char *find_input_file( const char *name, const char *parent );
+extern FILE *open_input_file( const char *path );
 
 #endif

@@ -119,6 +119,11 @@ static const REFERENCE_TIME DefaultPeriod = 100000;
 static pthread_mutex_t pulse_mutex;
 static pthread_cond_t pulse_cond = PTHREAD_COND_INITIALIZER;
 
+static NTSTATUS pulse_not_implemented(void *args)
+{
+    return STATUS_SUCCESS;
+}
+
 static void pulse_lock(void)
 {
     pthread_mutex_lock(&pulse_mutex);
@@ -189,6 +194,14 @@ static int muldiv(int a, int b, int c)
 
     if (ret > 2147483647 || ret < -2147483647) return -1;
     return ret;
+}
+
+static char *wstr_to_str(const WCHAR *wstr)
+{
+    const int len = wcslen(wstr);
+    char *str = malloc(len * 3 + 1);
+    ntdll_wcstoumbs(wstr, len + 1, str, len * 3 + 1, FALSE);
+    return str;
 }
 
 /* Following pulseaudio design here, mainloop has the lock taken whenever
@@ -763,6 +776,7 @@ static NTSTATUS pulse_test_connect(void *args)
     PhysDevice *dev;
     pa_operation *o;
     int ret;
+    char *name = wstr_to_str(params->name);
     pa_mainloop *ml;
     pa_context *ctx;
 
@@ -771,7 +785,8 @@ static NTSTATUS pulse_test_connect(void *args)
 
     pa_mainloop_set_poll_func(ml, pulse_poll_func, NULL);
 
-    ctx = pa_context_new(pa_mainloop_get_api(ml), params->name);
+    ctx = pa_context_new(pa_mainloop_get_api(ml), name);
+    free(name);
     if (!ctx) {
         ERR("Failed to create context\n");
         pa_mainloop_free(ml);
@@ -1101,10 +1116,15 @@ static NTSTATUS pulse_create_stream(void *args)
     struct pulse_stream *stream;
     unsigned int i, bufsize_bytes;
     HRESULT hr;
+    char *name = wstr_to_str(params->name);
 
     pulse_lock();
 
-    if (FAILED(params->result = pulse_connect(params->name)))
+    params->result = pulse_connect(name);
+
+    free(name);
+
+    if (FAILED(params->result))
     {
         pulse_unlock();
         return STATUS_SUCCESS;
@@ -2375,7 +2395,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     pulse_release_render_buffer,
     pulse_get_capture_buffer,
     pulse_release_capture_buffer,
-    NULL,
+    pulse_not_implemented,
     pulse_get_mix_format,
     pulse_get_device_period,
     pulse_get_buffer_size,
@@ -2389,12 +2409,12 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     pulse_test_connect,
     pulse_is_started,
     pulse_get_prop_value,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
+    pulse_not_implemented,
+    pulse_not_implemented,
+    pulse_not_implemented,
+    pulse_not_implemented,
+    pulse_not_implemented,
+    pulse_not_implemented,
 };
 
 #ifdef _WIN64
@@ -2822,7 +2842,7 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     pulse_release_render_buffer,
     pulse_wow64_get_capture_buffer,
     pulse_release_capture_buffer,
-    NULL,
+    pulse_not_implemented,
     pulse_wow64_get_mix_format,
     pulse_wow64_get_device_period,
     pulse_wow64_get_buffer_size,
@@ -2836,12 +2856,12 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     pulse_wow64_test_connect,
     pulse_is_started,
     pulse_wow64_get_prop_value,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
+    pulse_not_implemented,
+    pulse_not_implemented,
+    pulse_not_implemented,
+    pulse_not_implemented,
+    pulse_not_implemented,
+    pulse_not_implemented,
 };
 
 #endif /* _WIN64 */

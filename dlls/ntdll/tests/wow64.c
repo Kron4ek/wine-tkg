@@ -21,6 +21,7 @@
 
 #include "ntdll_test.h"
 #include "winioctl.h"
+#include "ddk/wdm.h"
 
 static NTSTATUS (WINAPI *pNtQuerySystemInformation)(SYSTEM_INFORMATION_CLASS,void*,ULONG,ULONG*);
 static NTSTATUS (WINAPI *pNtQuerySystemInformationEx)(SYSTEM_INFORMATION_CLASS,void*,ULONG,void*,ULONG,ULONG*);
@@ -35,12 +36,31 @@ static NTSTATUS (WINAPI *pRtlWow64GetThreadSelectorEntry)(HANDLE,THREAD_DESCRIPT
 #else
 static NTSTATUS (WINAPI *pNtWow64AllocateVirtualMemory64)(HANDLE,ULONG64*,ULONG64,ULONG64*,ULONG,ULONG);
 static NTSTATUS (WINAPI *pNtWow64GetNativeSystemInformation)(SYSTEM_INFORMATION_CLASS,void*,ULONG,ULONG*);
+static NTSTATUS (WINAPI *pNtWow64IsProcessorFeaturePresent)(ULONG);
 static NTSTATUS (WINAPI *pNtWow64ReadVirtualMemory64)(HANDLE,ULONG64,void*,ULONG64,ULONG64*);
 static NTSTATUS (WINAPI *pNtWow64WriteVirtualMemory64)(HANDLE,ULONG64,const void *,ULONG64,ULONG64*);
 #endif
 
 static BOOL is_wow64;
+static BOOL old_wow64;  /* Wine old-style wow64 */
 static void *code_mem;
+
+#ifdef __i386__
+static USHORT current_machine = IMAGE_FILE_MACHINE_I386;
+static USHORT native_machine = IMAGE_FILE_MACHINE_I386;
+#elif defined __x86_64__
+static USHORT current_machine = IMAGE_FILE_MACHINE_AMD64;
+static USHORT native_machine = IMAGE_FILE_MACHINE_AMD64;
+#elif defined __arm__
+static USHORT current_machine = IMAGE_FILE_MACHINE_ARMNT;
+static USHORT native_machine = IMAGE_FILE_MACHINE_ARMNT;
+#elif defined __aarch64__
+static USHORT current_machine = IMAGE_FILE_MACHINE_ARM64;
+static USHORT native_machine = IMAGE_FILE_MACHINE_ARM64;
+#else
+static USHORT current_machine;
+static USHORT native_machine;
+#endif
 
 static void init(void)
 {
@@ -62,12 +82,35 @@ static void init(void)
 #else
     GET_PROC( NtWow64AllocateVirtualMemory64 );
     GET_PROC( NtWow64GetNativeSystemInformation );
+    GET_PROC( NtWow64IsProcessorFeaturePresent );
     GET_PROC( NtWow64ReadVirtualMemory64 );
     GET_PROC( NtWow64WriteVirtualMemory64 );
 #endif
 #undef GET_PROC
 
-    code_mem = VirtualAlloc( NULL, 65536, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE );
+    if (is_wow64)
+    {
+        SYSTEM_CPU_INFORMATION info;
+        ULONG len;
+
+        pRtlGetNativeSystemInformation( SystemCpuInformation, &info, sizeof(info), &len );
+        switch (info.ProcessorArchitecture)
+        {
+        case PROCESSOR_ARCHITECTURE_ARM64:
+            native_machine = IMAGE_FILE_MACHINE_ARM64;
+            break;
+        case PROCESSOR_ARCHITECTURE_AMD64:
+            native_machine = IMAGE_FILE_MACHINE_AMD64;
+            break;
+        case PROCESSOR_ARCHITECTURE_INTEL:
+            old_wow64 = TRUE;
+            native_machine = IMAGE_FILE_MACHINE_AMD64;
+            break;
+        }
+    }
+
+    if (native_machine == IMAGE_FILE_MACHINE_AMD64)
+        code_mem = VirtualAlloc( NULL, 65536, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE );
 }
 
 static void test_process_architecture( HANDLE process, USHORT expect_machine, USHORT expect_native )
@@ -122,22 +165,6 @@ static void test_process_architecture( HANDLE process, USHORT expect_machine, US
 
 static void test_query_architectures(void)
 {
-#ifdef __i386__
-    USHORT current_machine = IMAGE_FILE_MACHINE_I386;
-    USHORT native_machine = is_wow64 ? IMAGE_FILE_MACHINE_AMD64 : IMAGE_FILE_MACHINE_I386;
-#elif defined __x86_64__
-    USHORT current_machine = IMAGE_FILE_MACHINE_AMD64;
-    USHORT native_machine = IMAGE_FILE_MACHINE_AMD64;
-#elif defined __arm__
-    USHORT current_machine = IMAGE_FILE_MACHINE_ARMNT;
-    USHORT native_machine = is_wow64 ? IMAGE_FILE_MACHINE_ARM64 : IMAGE_FILE_MACHINE_ARMNT;
-#elif defined __aarch64__
-    USHORT current_machine = IMAGE_FILE_MACHINE_ARM64;
-    USHORT native_machine = IMAGE_FILE_MACHINE_ARM64;
-#else
-    USHORT current_machine = 0;
-    USHORT native_machine = 0;
-#endif
     PROCESS_INFORMATION pi;
     STARTUPINFOA si = { sizeof(si) };
     NTSTATUS status;
@@ -209,11 +236,11 @@ static void test_query_architectures(void)
         ret = 0xcc;
         status = pRtlWow64IsWowGuestMachineSupported( IMAGE_FILE_MACHINE_ARMNT, &ret );
         ok( !status, "failed %lx\n", status );
-        ok( ret == (native_machine == IMAGE_FILE_MACHINE_ARM64), "wrong result %u\n", ret );
+        ok( !ret || native_machine == IMAGE_FILE_MACHINE_ARM64, "wrong result %u\n", ret );
         ret = 0xcc;
         status = pRtlWow64IsWowGuestMachineSupported( IMAGE_FILE_MACHINE_AMD64, &ret );
         ok( !status, "failed %lx\n", status );
-        ok( !ret, "wrong result %u\n", ret );
+        ok( !ret || native_machine == IMAGE_FILE_MACHINE_ARM64, "wrong result %u\n", ret );
         ret = 0xcc;
         status = pRtlWow64IsWowGuestMachineSupported( IMAGE_FILE_MACHINE_ARM64, &ret );
         ok( !status, "failed %lx\n", status );
@@ -244,7 +271,7 @@ static void test_peb_teb(void)
 
     Wow64DisableWow64FsRedirection( &redir );
 
-    if (CreateProcessA( "C:\\windows\\syswow64\\notepad.exe", NULL, NULL, NULL,
+    if (CreateProcessA( "C:\\windows\\syswow64\\msinfo32.exe", NULL, NULL, NULL,
                         FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi ))
     {
         memset( &info, 0xcc, sizeof(info) );
@@ -344,7 +371,7 @@ static void test_peb_teb(void)
         CloseHandle( pi.hThread );
     }
 
-    if (CreateProcessA( "C:\\windows\\system32\\notepad.exe", NULL, NULL, NULL,
+    if (CreateProcessA( "C:\\windows\\system32\\msinfo32.exe", NULL, NULL, NULL,
                         FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi ))
     {
         memset( &info, 0xcc, sizeof(info) );
@@ -439,13 +466,14 @@ static void test_selectors(void)
     if (!pRtlWow64GetThreadContext || pRtlWow64GetThreadContext( GetCurrentThread(), &context ))
     {
         /* hardcoded values */
-        context.SegCs = 0x23;
 #ifdef __x86_64__
+        context.SegCs = 0x23;
         __asm__( "movw %%fs,%0" : "=m" (context.SegFs) );
         __asm__( "movw %%ss,%0" : "=m" (context.SegSs) );
 #else
-        context.SegSs = 0x2b;
-        context.SegFs = 0x53;
+        context.SegCs = 0x1b;
+        context.SegSs = 0x23;
+        context.SegFs = 0x3b;
 #endif
     }
 #define GET_ENTRY(info,size,ret) \
@@ -570,7 +598,7 @@ static void test_cpu_area(void)
         {
             USHORT machine;
             NTSTATUS expect;
-            ULONG align, size, offset, flag;
+            ULONG_PTR align, size, offset, flag;
         } tests[] =
         {
             { IMAGE_FILE_MACHINE_I386,  0,  4, 0x2cc, 0x00, 0x00010000 },
@@ -663,7 +691,7 @@ static NTSTATUS call_func64( ULONG64 func64, int nb_args, ULONG64 *args )
 }
 
 static ULONG64 main_module, ntdll_module, wow64_module, wow64base_module, wow64con_module,
-               wow64cpu_module, wow64win_module;
+               wow64cpu_module, xtajit_module, wow64win_module;
 
 static void enum_modules64( void (*func)(ULONG64,const WCHAR *) )
 {
@@ -692,7 +720,7 @@ static void enum_modules64( void (*func)(ULONG64,const WCHAR *) )
     ok( process != 0, "failed to open current process %lu\n", GetLastError() );
     status = pNtWow64ReadVirtualMemory64( process, teb64->Peb, &peb64, sizeof(peb64), NULL );
     ok( !status, "NtWow64ReadVirtualMemory64 failed %lx\n", status );
-    todo_wine
+    todo_wine_if( old_wow64 )
     ok( peb64.LdrData, "LdrData not initialized\n" );
     if (!peb64.LdrData) goto done;
     status = pNtWow64ReadVirtualMemory64( process, peb64.LdrData, &ldr, sizeof(ldr), NULL );
@@ -774,13 +802,16 @@ static void check_module( ULONG64 base, const WCHAR *name )
         main_module = base;
         return;
     }
-#define CHECK_MODULE(mod) if (!wcsicmp( name, L"" #mod ".dll" )) { mod ## _module = base; return; }
+#define CHECK_MODULE(mod) do { if (!wcsicmp( name, L"" #mod ".dll" )) { mod ## _module = base; return; } } while(0)
     CHECK_MODULE(ntdll);
     CHECK_MODULE(wow64);
     CHECK_MODULE(wow64base);
     CHECK_MODULE(wow64con);
-    CHECK_MODULE(wow64cpu);
     CHECK_MODULE(wow64win);
+    if (native_machine == IMAGE_FILE_MACHINE_ARM64)
+        CHECK_MODULE(xtajit);
+    else
+        CHECK_MODULE(wow64cpu);
 #undef CHECK_MODULE
     ok( 0, "unknown module %s %s found\n", wine_dbgstr_longlong(base), wine_dbgstr_w(name));
 }
@@ -790,12 +821,15 @@ static void test_modules(void)
     if (!is_wow64) return;
     if (!pNtWow64ReadVirtualMemory64) return;
     enum_modules64( check_module );
-    todo_wine
+    todo_wine_if( old_wow64 )
     {
     ok( main_module, "main module not found\n" );
     ok( ntdll_module, "64-bit ntdll not found\n" );
     ok( wow64_module, "wow64.dll not found\n" );
-    ok( wow64cpu_module, "wow64cpu.dll not found\n" );
+    if (native_machine == IMAGE_FILE_MACHINE_ARM64)
+        ok( xtajit_module, "xtajit.dll not found\n" );
+    else
+        ok( wow64cpu_module, "wow64cpu.dll not found\n" );
     ok( wow64win_module, "wow64win.dll not found\n" );
     }
 }
@@ -884,7 +918,7 @@ static void test_nt_wow64(void)
         ptr = 0x9876543210ull;
         status = pNtWow64AllocateVirtualMemory64( process, &ptr, 0, &size,
                                                   MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
-        todo_wine
+        todo_wine_if( !is_wow64 || old_wow64 )
         ok( !status || broken( status == STATUS_CONFLICTING_ADDRESSES ),
             "NtWow64AllocateVirtualMemory64 failed %lx\n", status );
         if (!status) ok( ptr == 0x9876540000ull || broken(ptr == 0x76540000), /* win 8.1 */
@@ -913,7 +947,7 @@ static void test_nt_wow64(void)
         ok( len == sizeof(sbi2), "wrong length %ld\n", len );
 
         ok( sbi.HighestUserAddress == (void *)0x7ffeffff, "wrong limit %p\n", sbi.HighestUserAddress);
-        todo_wine_if( is_wow64 )
+        todo_wine_if( old_wow64 )
         ok( sbi2.HighestUserAddress == (is_wow64 ? (void *)0xfffeffff : (void *)0x7ffeffff),
             "wrong limit %p\n", sbi.HighestUserAddress);
 
@@ -959,6 +993,26 @@ static void test_nt_wow64(void)
         }
     }
     else win_skip( "NtWow64GetNativeSystemInformation not supported\n" );
+
+    if (pNtWow64IsProcessorFeaturePresent)
+    {
+        ULONG i;
+
+        for (i = 0; i < 64; i++)
+            ok( pNtWow64IsProcessorFeaturePresent( i ) == IsProcessorFeaturePresent( i ),
+                "mismatch %lu wow64 returned %lx\n", i, pNtWow64IsProcessorFeaturePresent( i ));
+
+        if (native_machine == IMAGE_FILE_MACHINE_ARM64)
+        {
+            KSHARED_USER_DATA *user_shared_data = ULongToPtr( 0x7ffe0000 );
+
+            ok( user_shared_data->ProcessorFeatures[PF_ARM_V8_INSTRUCTIONS_AVAILABLE], "no ARM_V8\n" );
+            ok( user_shared_data->ProcessorFeatures[PF_MMX_INSTRUCTIONS_AVAILABLE], "no MMX\n" );
+            ok( !pNtWow64IsProcessorFeaturePresent( PF_ARM_V8_INSTRUCTIONS_AVAILABLE ), "ARM_V8 present\n" );
+            ok( pNtWow64IsProcessorFeaturePresent( PF_MMX_INSTRUCTIONS_AVAILABLE ), "MMX not present\n" );
+        }
+    }
+    else win_skip( "NtWow64IsProcessorFeaturePresent not supported\n" );
 
     NtClose( process );
 }
@@ -1064,7 +1118,8 @@ static void test_init_block(void)
             CHECK_FUNC( block64[6], "KiUserCallbackDispatcher" );
             CHECK_FUNC( block64[7], "RtlUserThreadStart" );
             CHECK_FUNC( block64[8], "RtlpQueryProcessDebugInformationRemote" );
-            todo_wine ok( block64[9] == (ULONG_PTR)ntdll, "got %p for ntdll %p\n",
+            todo_wine_if( old_wow64 )
+            ok( block64[9] == (ULONG_PTR)ntdll, "got %p for ntdll %p\n",
                 (void *)(ULONG_PTR)block64[9], ntdll );
             CHECK_FUNC( block64[10], "LdrSystemDllInitBlock" );
             CHECK_FUNC( block64[11], "RtlpFreezeTimeBias" );
@@ -1111,6 +1166,7 @@ static void test_iosb(void)
     ULONG64 args[] = { 0, 0, 0, 0, (ULONG_PTR)&iosb64, FSCTL_PIPE_LISTEN, 0, 0, 0, 0 };
 
     if (!is_wow64) return;
+    if (!code_mem) return;
     if (!ntdll_module) return;
     func = get_proc_address64( ntdll_module, "NtFsControlFile" );
 
@@ -1217,6 +1273,7 @@ static void test_syscalls(void)
     NTSTATUS status;
 
     if (!is_wow64) return;
+    if (!code_mem) return;
     if (!ntdll_module) return;
 
     func = get_proc_address64( wow64_module, "Wow64SystemServiceEx" );
@@ -1300,6 +1357,7 @@ static void test_cpu_area(void)
     NTSTATUS status;
 
     if (!is_wow64) return;
+    if (!code_mem) return;
     if (!ntdll_module) return;
 
     if ((ptr = get_proc_address64( ntdll_module, "RtlWow64GetCurrentCpuArea" )))

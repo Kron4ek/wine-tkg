@@ -496,22 +496,6 @@ static void shader_glsl_append_imm_ivec(struct wined3d_string_buffer *buffer,
         shader_addline(buffer, ")");
 }
 
-static const char *get_info_log_line(const char **ptr)
-{
-    const char *p, *q;
-
-    p = *ptr;
-    if (!(q = strstr(p, "\n")))
-    {
-        if (!*p) return NULL;
-        *ptr += strlen(p);
-        return p;
-    }
-    *ptr = q + 1;
-
-    return p;
-}
-
 /* Context activation is done by the caller. */
 void print_glsl_info_log(const struct wined3d_gl_info *gl_info, GLuint id, BOOL program)
 {
@@ -530,29 +514,35 @@ void print_glsl_info_log(const struct wined3d_gl_info *gl_info, GLuint id, BOOL 
      * that if there are errors. */
     if (length > 1)
     {
-        const char *ptr, *line;
+        const char *ptr, *end, *line;
 
         log = heap_alloc(length);
-        /* The info log is supposed to be zero-terminated, but at least some
-         * versions of fglrx don't terminate the string properly. The reported
-         * length does include the terminator, so explicitly set it to zero
-         * here. */
-        log[length - 1] = 0;
         if (program)
             GL_EXTCALL(glGetProgramInfoLog(id, length, NULL, log));
         else
             GL_EXTCALL(glGetShaderInfoLog(id, length, NULL, log));
 
         ptr = log;
+        /* The info log is supposed to be zero-terminated. Note that at least
+         * some versions of fglrx don't terminate the string properly. The
+         * reported length does include the supposed terminator though, so we
+         * don't care here. */
+        end = &ptr[length - 1];
         if (gl_info->quirks & WINED3D_QUIRK_INFO_LOG_SPAM)
         {
             WARN("Info log received from GLSL shader #%u:\n", id);
-            while ((line = get_info_log_line(&ptr))) WARN("    %.*s", (int)(ptr - line), line);
+            while ((line = wined3d_get_line(&ptr, end)))
+            {
+                WARN("    %.*s", (int)(ptr - line), line);
+            }
         }
         else
         {
             FIXME("Info log received from GLSL shader #%u:\n", id);
-            while ((line = get_info_log_line(&ptr))) FIXME("    %.*s", (int)(ptr - line), line);
+            while ((line = wined3d_get_line(&ptr, end)))
+            {
+                FIXME("    %.*s", (int)(ptr - line), line);
+            }
         }
         heap_free(log);
     }
@@ -561,14 +551,18 @@ void print_glsl_info_log(const struct wined3d_gl_info *gl_info, GLuint id, BOOL 
 /* Context activation is done by the caller. */
 static void shader_glsl_compile(const struct wined3d_gl_info *gl_info, GLuint shader, const char *src)
 {
-    const char *ptr, *line;
+    const char *ptr, *end, *line;
 
     TRACE("Compiling shader object %u.\n", shader);
 
     if (TRACE_ON(d3d_shader))
     {
         ptr = src;
-        while ((line = get_info_log_line(&ptr))) TRACE_(d3d_shader)("    %.*s", (int)(ptr - line), line);
+        end = ptr + strlen(ptr);
+        while ((line = wined3d_get_line(&ptr, end)))
+        {
+            TRACE_(d3d_shader)("    %.*s", (int)(ptr - line), line);
+        }
     }
 
     GL_EXTCALL(glShaderSource(shader, 1, &src, NULL));
@@ -595,7 +589,7 @@ static void shader_glsl_dump_program_source(const struct wined3d_gl_info *gl_inf
     GL_EXTCALL(glGetAttachedShaders(program, shader_count, NULL, shaders));
     for (i = 0; i < shader_count; ++i)
     {
-        const char *ptr, *line;
+        const char *ptr, *end, *line;
         GLint tmp;
 
         GL_EXTCALL(glGetShaderiv(shaders[i], GL_SHADER_SOURCE_LENGTH, &tmp));
@@ -604,7 +598,7 @@ static void shader_glsl_dump_program_source(const struct wined3d_gl_info *gl_inf
         {
             heap_free(source);
 
-            if (!(source = heap_alloc_zero(tmp)))
+            if (!(source = heap_alloc(tmp)))
             {
                 ERR("Failed to allocate %d bytes for shader source.\n", tmp);
                 heap_free(shaders);
@@ -613,16 +607,20 @@ static void shader_glsl_dump_program_source(const struct wined3d_gl_info *gl_inf
             source_size = tmp;
         }
 
+        GL_EXTCALL(glGetShaderSource(shaders[i], source_size, NULL, source));
+        ptr = source;
+        end = &ptr[tmp - 1];
+
         FIXME("Shader %u:\n", shaders[i]);
         GL_EXTCALL(glGetShaderiv(shaders[i], GL_SHADER_TYPE, &tmp));
         FIXME("    GL_SHADER_TYPE: %s.\n", debug_gl_shader_type(tmp));
         GL_EXTCALL(glGetShaderiv(shaders[i], GL_COMPILE_STATUS, &tmp));
         FIXME("    GL_COMPILE_STATUS: %d.\n", tmp);
         FIXME("\n");
-
-        ptr = source;
-        GL_EXTCALL(glGetShaderSource(shaders[i], source_size, NULL, source));
-        while ((line = get_info_log_line(&ptr))) FIXME("    %.*s", (int)(ptr - line), line);
+        while ((line = wined3d_get_line(&ptr, end)))
+        {
+            FIXME("    %.*s", (int)(ptr - line), line);
+        }
         FIXME("\n");
     }
 
@@ -12702,7 +12700,6 @@ static const struct wined3d_state_entry_template glsl_vertex_pipe_vp_states[] =
     {STATE_RENDER(WINED3D_RS_POINTSCALE_C),                      {STATE_RENDER(WINED3D_RS_POINTSCALEENABLE),                  NULL                   }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_POINTSIZE_MAX),                     {STATE_RENDER(WINED3D_RS_POINTSIZE_MIN),                     NULL                   }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_TWEENFACTOR),                       {STATE_SHADER(WINED3D_SHADER_TYPE_VERTEX),                   NULL                   }, WINED3D_GL_EXT_NONE          },
-    {STATE_RENDER(WINED3D_RS_INDEXEDVERTEXBLENDENABLE),          {STATE_SHADER(WINED3D_SHADER_TYPE_VERTEX),                   NULL                   }, WINED3D_GL_EXT_NONE          },
     /* NP2 texture matrix fixups. They are not needed if
      * GL_ARB_texture_non_power_of_two is supported. Otherwise, register
      * glsl_vertex_pipe_texmatrix(), which takes care of updating the texture

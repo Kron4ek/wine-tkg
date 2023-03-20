@@ -211,6 +211,25 @@ static unsigned int get_server_context_flags( const void *context, USHORT machin
 
 
 /***********************************************************************
+ *           get_native_context_flags
+ *
+ * Get flags for registers that are set from the native context in WoW mode.
+ */
+static unsigned int get_native_context_flags( USHORT native_machine, USHORT wow_machine )
+{
+    switch (MAKELONG( native_machine, wow_machine ))
+    {
+    case MAKELONG( IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_I386 ):
+        return SERVER_CTX_DEBUG_REGISTERS | SERVER_CTX_FLOATING_POINT | SERVER_CTX_YMM_REGISTERS;
+    case MAKELONG( IMAGE_FILE_MACHINE_ARM64, IMAGE_FILE_MACHINE_ARMNT ):
+        return SERVER_CTX_DEBUG_REGISTERS | SERVER_CTX_FLOATING_POINT;
+    default:
+        return 0;
+    }
+}
+
+
+/***********************************************************************
  *           context_to_server
  *
  * Convert a register context to the server format.
@@ -585,6 +604,10 @@ static NTSTATUS context_to_server( context_t *to, USHORT to_machine, const void 
         }
         return STATUS_SUCCESS;
     }
+
+    case MAKELONG( IMAGE_FILE_MACHINE_ARM64, IMAGE_FILE_MACHINE_I386 ):
+    case MAKELONG( IMAGE_FILE_MACHINE_I386, IMAGE_FILE_MACHINE_ARM64 ):
+        return STATUS_SUCCESS;
 
     default:
         return STATUS_INVALID_PARAMETER;
@@ -965,7 +988,6 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
         ARM64_NT_CONTEXT *to = dst;
 
         to_flags = to->ContextFlags & ~CONTEXT_ARM64;
-        to->ContextFlags = CONTEXT_ARM64;
         if ((from->flags & SERVER_CTX_CONTROL) && (to_flags & CONTEXT_ARM64_CONTROL))
         {
             to->ContextFlags |= CONTEXT_ARM64_CONTROL;
@@ -1001,6 +1023,10 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
         }
         return STATUS_SUCCESS;
     }
+
+    case MAKELONG( IMAGE_FILE_MACHINE_ARM64, IMAGE_FILE_MACHINE_I386 ):
+    case MAKELONG( IMAGE_FILE_MACHINE_I386, IMAGE_FILE_MACHINE_ARM64 ):
+        return STATUS_SUCCESS;
 
     default:
         return STATUS_INVALID_PARAMETER;
@@ -1719,6 +1745,7 @@ NTSTATUS set_thread_context( HANDLE handle, const void *context, BOOL *self, USH
     SERVER_START_REQ( set_thread_context )
     {
         req->handle  = wine_server_obj_handle( handle );
+        req->native_flags = server_contexts[0].flags & get_native_context_flags( native_machine, machine );
         wine_server_add_data( req, server_contexts, count * sizeof(server_contexts[0]) );
         ret = wine_server_call( req );
         *self = reply->self;
@@ -1745,6 +1772,7 @@ NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT ma
         req->handle  = wine_server_obj_handle( handle );
         req->flags   = flags;
         req->machine = machine;
+        req->native_flags = flags & get_native_context_flags( native_machine, machine );
         wine_server_set_reply( req, server_contexts, sizeof(server_contexts) );
         ret = wine_server_call( req );
         *self = reply->self;
@@ -1762,6 +1790,7 @@ NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT ma
             req->context = wine_server_obj_handle( context_handle );
             req->flags   = flags;
             req->machine = machine;
+            req->native_flags = flags & get_native_context_flags( native_machine, machine );
             wine_server_set_reply( req, server_contexts, sizeof(server_contexts) );
             ret = wine_server_call( req );
             count = wine_server_reply_size( reply ) / sizeof(server_contexts[0]);

@@ -230,6 +230,8 @@ struct smbios_chassis_args
 #define RSMB 0x52534D42
 
 SYSTEM_CPU_INFORMATION cpu_info = { 0 };
+static SYSTEM_PROCESSOR_FEATURES_INFORMATION cpu_features;
+static char cpu_name[49];
 static SYSTEM_LOGICAL_PROCESSOR_INFORMATION *logical_proc_info;
 static unsigned int logical_proc_info_len, logical_proc_info_alloc_len;
 static SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *logical_proc_info_ex;
@@ -332,9 +334,26 @@ static inline BOOL have_sse_daz_mode(void)
 #endif
 }
 
+static void get_cpuid_name( char *buffer )
+{
+    unsigned int regs[4];
+
+    do_cpuid( 0x80000002, 0, regs );
+    memcpy( buffer, regs, sizeof(regs) );
+    buffer += sizeof(regs);
+    do_cpuid( 0x80000003, 0, regs );
+    memcpy( buffer, regs, sizeof(regs) );
+    buffer += sizeof(regs);
+    do_cpuid( 0x80000004, 0, regs );
+    memcpy( buffer, regs, sizeof(regs) );
+    buffer += sizeof(regs);
+    *buffer = 0;
+}
+
 static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
 {
     unsigned int regs[4], regs2[4], regs3[4];
+    ULONGLONG features;
 
 #if defined(__i386__)
     info->ProcessorArchitecture = PROCESSOR_ARCHITECTURE_INTEL;
@@ -343,7 +362,7 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
 #endif
 
     /* We're at least a 386 */
-    info->ProcessorFeatureBits = CPU_FEATURE_VME | CPU_FEATURE_X86 | CPU_FEATURE_PGE;
+    features = CPU_FEATURE_VME | CPU_FEATURE_X86 | CPU_FEATURE_PGE;
     info->ProcessorLevel = 3;
 
     if (!have_cpuid()) return;
@@ -352,35 +371,35 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
     if (regs[0]>=0x00000001)   /* Check for supported cpuid version */
     {
         do_cpuid( 0x00000001, 0, regs2 ); /* get cpu features */
-        if (regs2[3] & (1 << 3 )) info->ProcessorFeatureBits |= CPU_FEATURE_PSE;
-        if (regs2[3] & (1 << 4 )) info->ProcessorFeatureBits |= CPU_FEATURE_TSC;
-        if (regs2[3] & (1 << 6 )) info->ProcessorFeatureBits |= CPU_FEATURE_PAE;
-        if (regs2[3] & (1 << 8 )) info->ProcessorFeatureBits |= CPU_FEATURE_CX8;
-        if (regs2[3] & (1 << 11)) info->ProcessorFeatureBits |= CPU_FEATURE_SEP;
-        if (regs2[3] & (1 << 12)) info->ProcessorFeatureBits |= CPU_FEATURE_MTRR;
-        if (regs2[3] & (1 << 15)) info->ProcessorFeatureBits |= CPU_FEATURE_CMOV;
-        if (regs2[3] & (1 << 16)) info->ProcessorFeatureBits |= CPU_FEATURE_PAT;
-        if (regs2[3] & (1 << 23)) info->ProcessorFeatureBits |= CPU_FEATURE_MMX;
-        if (regs2[3] & (1 << 24)) info->ProcessorFeatureBits |= CPU_FEATURE_FXSR;
-        if (regs2[3] & (1 << 25)) info->ProcessorFeatureBits |= CPU_FEATURE_SSE;
-        if (regs2[3] & (1 << 26)) info->ProcessorFeatureBits |= CPU_FEATURE_SSE2;
-        if (regs2[2] & (1 << 0 )) info->ProcessorFeatureBits |= CPU_FEATURE_SSE3;
-        if (regs2[2] & (1 << 9 )) info->ProcessorFeatureBits |= CPU_FEATURE_SSSE3;
-        if (regs2[2] & (1 << 13)) info->ProcessorFeatureBits |= CPU_FEATURE_CX128;
-        if (regs2[2] & (1 << 19)) info->ProcessorFeatureBits |= CPU_FEATURE_SSE41;
-        if (regs2[2] & (1 << 20)) info->ProcessorFeatureBits |= CPU_FEATURE_SSE42;
-        if (regs2[2] & (1 << 27)) info->ProcessorFeatureBits |= CPU_FEATURE_XSAVE;
-        if (regs2[2] & (1 << 28)) info->ProcessorFeatureBits |= CPU_FEATURE_AVX;
+        if (regs2[3] & (1 << 3 )) features |= CPU_FEATURE_PSE;
+        if (regs2[3] & (1 << 4 )) features |= CPU_FEATURE_TSC;
+        if (regs2[3] & (1 << 6 )) features |= CPU_FEATURE_PAE;
+        if (regs2[3] & (1 << 8 )) features |= CPU_FEATURE_CX8;
+        if (regs2[3] & (1 << 11)) features |= CPU_FEATURE_SEP;
+        if (regs2[3] & (1 << 12)) features |= CPU_FEATURE_MTRR;
+        if (regs2[3] & (1 << 15)) features |= CPU_FEATURE_CMOV;
+        if (regs2[3] & (1 << 16)) features |= CPU_FEATURE_PAT;
+        if (regs2[3] & (1 << 23)) features |= CPU_FEATURE_MMX;
+        if (regs2[3] & (1 << 24)) features |= CPU_FEATURE_FXSR;
+        if (regs2[3] & (1 << 25)) features |= CPU_FEATURE_SSE;
+        if (regs2[3] & (1 << 26)) features |= CPU_FEATURE_SSE2;
+        if (regs2[2] & (1 << 0 )) features |= CPU_FEATURE_SSE3;
+        if (regs2[2] & (1 << 9 )) features |= CPU_FEATURE_SSSE3;
+        if (regs2[2] & (1 << 13)) features |= CPU_FEATURE_CX128;
+        if (regs2[2] & (1 << 19)) features |= CPU_FEATURE_SSE41;
+        if (regs2[2] & (1 << 20)) features |= CPU_FEATURE_SSE42;
+        if (regs2[2] & (1 << 27)) features |= CPU_FEATURE_XSAVE;
+        if (regs2[2] & (1 << 28)) features |= CPU_FEATURE_AVX;
         if((regs2[3] & (1 << 26)) && (regs2[3] & (1 << 24)) && have_sse_daz_mode()) /* has SSE2 and FXSAVE/FXRSTOR */
-            info->ProcessorFeatureBits |= CPU_FEATURE_DAZ;
+            features |= CPU_FEATURE_DAZ;
 
         if (regs[0] >= 0x00000007)
         {
             do_cpuid( 0x00000007, 0, regs3 ); /* get extended features */
-            if (regs3[1] & (1 << 5)) info->ProcessorFeatureBits |= CPU_FEATURE_AVX2;
+            if (regs3[1] & (1 << 5)) features |= CPU_FEATURE_AVX2;
         }
 
-        if (info->ProcessorFeatureBits & CPU_FEATURE_XSAVE)
+        if (features & CPU_FEATURE_XSAVE)
         {
             do_cpuid( 0x0000000d, 1, regs3 ); /* get XSAVE details */
             if (regs3[0] & 2) xstate_compaction_enabled = TRUE;
@@ -401,11 +420,12 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
             if (regs[0] >= 0x80000001)
             {
                 do_cpuid( 0x80000001, 0, regs2 );  /* get vendor features */
-                if (regs2[2] & (1 << 2))   info->ProcessorFeatureBits |= CPU_FEATURE_VIRT;
-                if (regs2[3] & (1 << 20))  info->ProcessorFeatureBits |= CPU_FEATURE_NX;
-                if (regs2[3] & (1 << 27))  info->ProcessorFeatureBits |= CPU_FEATURE_TSC;
-                if (regs2[3] & (1u << 31)) info->ProcessorFeatureBits |= CPU_FEATURE_3DNOW;
+                if (regs2[2] & (1 << 2))   features |= CPU_FEATURE_VIRT;
+                if (regs2[3] & (1 << 20))  features |= CPU_FEATURE_NX;
+                if (regs2[3] & (1 << 27))  features |= CPU_FEATURE_TSC;
+                if (regs2[3] & (1u << 31)) features |= CPU_FEATURE_3DNOW;
             }
+            if (regs[0] >= 0x80000004) get_cpuid_name( cpu_name );
         }
         else if (regs[1] == GENU && regs[3] == INEI && regs[2] == NTEL)
         {
@@ -417,16 +437,17 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
             info->ProcessorRevision |= ((regs2[0] >> 4 ) & 0xf) << 8;  /* model          */
             info->ProcessorRevision |= regs2[0] & 0xf;                 /* stepping       */
 
-            if(regs2[2] & (1 << 5))  info->ProcessorFeatureBits |= CPU_FEATURE_VIRT;
-            if(regs2[3] & (1 << 21)) info->ProcessorFeatureBits |= CPU_FEATURE_DS;
+            if(regs2[2] & (1 << 5))  features |= CPU_FEATURE_VIRT;
+            if(regs2[3] & (1 << 21)) features |= CPU_FEATURE_DS;
 
             do_cpuid( 0x80000000, 0, regs );  /* get vendor cpuid level */
             if (regs[0] >= 0x80000001)
             {
                 do_cpuid( 0x80000001, 0, regs2 );  /* get vendor features */
-                if (regs2[3] & (1 << 20)) info->ProcessorFeatureBits |= CPU_FEATURE_NX;
-                if (regs2[3] & (1 << 27)) info->ProcessorFeatureBits |= CPU_FEATURE_TSC;
+                if (regs2[3] & (1 << 20)) features |= CPU_FEATURE_NX;
+                if (regs2[3] & (1 << 27)) features |= CPU_FEATURE_TSC;
             }
+            if (regs[0] >= 0x80000004) get_cpuid_name( cpu_name );
         }
         else
         {
@@ -437,6 +458,7 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
             info->ProcessorRevision |= regs2[0] & 0xf;                /* stepping */
         }
     }
+    info->ProcessorFeatureBits = cpu_features.ProcessorFeatureBits = features;
 }
 
 #elif defined(__arm__)
@@ -3095,6 +3117,8 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
             {
 #ifdef __arm__
                 *((DWORD *)info) = 32;
+#elif defined __aarch64__
+                *((DWORD *)info) = 128;
 #else
                 *((DWORD *)info) = 64;
 #endif
@@ -3292,6 +3316,16 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
         break;
     }
 
+    case SystemProcessorBrandString:  /* 105 */
+        if (!cpu_name[0]) return STATUS_NOT_SUPPORTED;
+        if ((ULONG_PTR)info & 3) return STATUS_DATATYPE_MISALIGNMENT;
+        len = sizeof(cpu_name);
+        if (size >= len)
+            memcpy( info, cpu_name, len );
+        else
+            ret = STATUS_INFO_LENGTH_MISMATCH;
+        break;
+
     case SystemKernelDebuggerInformationEx:  /* 149 */
     {
         SYSTEM_KERNEL_DEBUGGER_INFORMATION_EX skdi;
@@ -3309,6 +3343,12 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
         else ret = STATUS_INFO_LENGTH_MISMATCH;
         break;
     }
+
+    case SystemProcessorFeaturesInformation:  /* 154 */
+        len = sizeof(cpu_features);
+        if (size >= len) memcpy( info, &cpu_features, len );
+        else ret = STATUS_INFO_LENGTH_MISMATCH;
+        break;
 
     case SystemCpuSetInformation:  /* 175 */
         return NtQuerySystemInformationEx(class, NULL, 0, info, size, ret_size);

@@ -23,6 +23,7 @@
 
 #include <stdarg.h>
 #include <assert.h>
+#include <wchar.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -70,7 +71,7 @@ static GUID pulse_render_guid =
 static GUID pulse_capture_guid =
 { 0x25da76d0, 0x033c, 0x4235, { 0x90, 0x02, 0x19, 0xf4, 0x88, 0x94, 0xac, 0x6f } };
 
-static const WCHAR *drv_key_devicesW = L"Software\\Wine\\Drivers\\winepulse.drv\\devices";
+static WCHAR drv_key_devicesW[256];
 
 static CRITICAL_SECTION session_cs;
 static CRITICAL_SECTION_DEBUG session_cs_debug = {
@@ -84,17 +85,26 @@ static CRITICAL_SECTION session_cs = { &session_cs_debug, -1, 0, 0, 0, 0 };
 BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, void *reserved)
 {
     if (reason == DLL_PROCESS_ATTACH) {
+        WCHAR buf[MAX_PATH];
+        WCHAR *filename;
+
         DisableThreadLibraryCalls(dll);
         if (__wine_init_unix_call())
             return FALSE;
-        if (WINE_UNIX_CALL(process_attach, NULL))
-            return FALSE;
+
+        GetModuleFileNameW(dll, buf, ARRAY_SIZE(buf));
+
+        filename = wcsrchr(buf, '\\');
+        filename = filename ? filename + 1 : buf;
+
+        swprintf(drv_key_devicesW, ARRAY_SIZE(drv_key_devicesW),
+                 L"Software\\Wine\\Drivers\\%s\\devices", filename);
     } else if (reason == DLL_PROCESS_DETACH) {
         struct device_cache *device, *device_next;
 
         LIST_FOR_EACH_ENTRY_SAFE(device, device_next, &g_devices_cache, struct device_cache, entry)
             free(device);
-        WINE_UNIX_CALL(process_detach, NULL);
+
         if (pulse_thread) {
             WaitForSingleObject(pulse_thread, INFINITE);
             CloseHandle(pulse_thread);
@@ -249,11 +259,9 @@ static BOOL query_productname(void *data, LANGANDCODEPAGE *lang, LPVOID *buffer,
     return VerQueryValueW(data, pn, buffer, len) && *len;
 }
 
-static char *get_application_name(BOOL query_app_name)
+static WCHAR *get_application_name(BOOL query_app_name)
 {
     WCHAR path[MAX_PATH], *name;
-    char *str = NULL;
-    size_t len;
 
     GetModuleFileNameW(NULL, path, ARRAY_SIZE(path));
 
@@ -329,15 +337,9 @@ static char *get_application_name(BOOL query_app_name)
             }
         }
 
-        if (found) {
-            len = WideCharToMultiByte(CP_UTF8, 0, productname, -1, NULL, 0, NULL, NULL);
-            str = malloc(len);
-            if (str) WideCharToMultiByte(CP_UTF8, 0, productname, -1, str, len, NULL, NULL);
-        }
-
     skip:
         free(data);
-        if (str) return str;
+        if (found) return wcsdup(productname);
     }
 
     name = wcsrchr(path, '\\');
@@ -345,11 +347,7 @@ static char *get_application_name(BOOL query_app_name)
         name = path;
     else
         name++;
-    len = WideCharToMultiByte(CP_UTF8, 0, name, -1, NULL, 0, NULL, NULL);
-    if (!(str = malloc(len)))
-        return NULL;
-    WideCharToMultiByte(CP_UNIXCP, 0, name, -1, str, len, NULL, NULL);
-    return str;
+    return wcsdup(name);
 }
 
 static DWORD WINAPI pulse_timer_cb(void *user)
@@ -478,17 +476,6 @@ end:
         *def_index = params.default_idx;
     }
     return params.result;
-}
-
-int WINAPI AUDDRV_GetPriority(void)
-{
-    struct test_connect_params params;
-    char *name;
-
-    params.name = name = get_application_name(FALSE);
-    pulse_call(test_connect, &params);
-    free(name);
-    return params.priority;
 }
 
 static BOOL get_pulse_name_by_guid(const GUID *guid, char pulse_name[MAX_PULSE_NAME_LEN], EDataFlow *flow)
@@ -819,7 +806,7 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
     struct create_stream_params params;
     unsigned int i, channel_count;
     stream_handle stream;
-    char *name;
+    WCHAR *name;
     HRESULT hr;
 
     TRACE("(%p)->(%x, %lx, %s, %s, %p, %s)\n", This, mode, flags,

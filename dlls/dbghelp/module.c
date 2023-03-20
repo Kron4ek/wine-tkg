@@ -134,7 +134,7 @@ WCHAR *get_wine_loader_name(struct process *pcs)
     unsigned len;
 
     name = process_getenv(pcs, L"WINELOADER");
-    if (!name) name = pcs->is_64bit ? L"wine64" : L"wine";
+    if (!name) name = pcs->is_system_64bit ? L"wine64" : L"wine";
     len = lstrlenW(name);
 
     /* WINELOADER isn't properly updated in Wow64 process calling inside Windows env block
@@ -145,9 +145,14 @@ WCHAR *get_wine_loader_name(struct process *pcs)
     if (altname)
     {
         memcpy(altname, name, len * sizeof(WCHAR));
-        if (pcs->is_64bit && len >= 2 && memcmp(name + len - 2, L"64", 2 * sizeof(WCHAR)) != 0)
+        if (pcs->is_system_64bit && len >= 2 && memcmp(name + len - 2, L"64", 2 * sizeof(WCHAR)) != 0)
+        {
             lstrcpyW(altname + len, L"64");
-        else if (!pcs->is_64bit && len >= 2 && !memcmp(name + len - 2, L"64", 2 * sizeof(WCHAR)))
+            /* in multi-arch wow configuration, wine64 doesn't exist */
+            if (GetFileAttributesW(altname) == INVALID_FILE_ATTRIBUTES)
+                altname[len] = L'\0';
+        }
+        else if (!pcs->is_system_64bit && len >= 2 && !memcmp(name + len - 2, L"64", 2 * sizeof(WCHAR)))
             altname[len - 2] = '\0';
         else
             altname[len] = '\0';
@@ -1543,11 +1548,6 @@ PVOID WINAPI SymFunctionTableAccess64(HANDLE hProcess, DWORD64 AddrBase)
     return module->cpu->find_runtime_function(module, AddrBase);
 }
 
-static BOOL native_synchronize_module_list(struct process* pcs)
-{
-    return FALSE;
-}
-
 static struct module* native_load_module(struct process* pcs, const WCHAR* name, ULONG_PTR addr)
 {
     return NULL;
@@ -1559,22 +1559,48 @@ static BOOL native_load_debug_info(struct process* process, struct module* modul
     return FALSE;
 }
 
-static BOOL native_enum_modules(struct process *process, enum_modules_cb cb, void* user)
-{
-    return FALSE;
-}
-
 static BOOL native_fetch_file_info(struct process* process, const WCHAR* name, ULONG_PTR load_addr, DWORD_PTR* base,
                                    DWORD* size, DWORD* checksum)
 {
     return FALSE;
 }
 
+static BOOL noloader_synchronize_module_list(struct process* pcs)
+{
+    return FALSE;
+}
+
+static BOOL noloader_enum_modules(struct process *process, enum_modules_cb cb, void* user)
+{
+    return FALSE;
+}
+
+static BOOL empty_synchronize_module_list(struct process* pcs)
+{
+    return TRUE;
+}
+
+static BOOL empty_enum_modules(struct process *process, enum_modules_cb cb, void* user)
+{
+    return TRUE;
+}
+
+/* to be used when debuggee isn't a live target */
 const struct loader_ops no_loader_ops =
 {
-    native_synchronize_module_list,
+    noloader_synchronize_module_list,
     native_load_module,
     native_load_debug_info,
-    native_enum_modules,
+    noloader_enum_modules,
+    native_fetch_file_info,
+};
+
+/* to be used when debuggee is a live target, but which system information isn't available */
+const struct loader_ops empty_loader_ops =
+{
+    empty_synchronize_module_list,
+    native_load_module,
+    native_load_debug_info,
+    empty_enum_modules,
     native_fetch_file_info,
 };

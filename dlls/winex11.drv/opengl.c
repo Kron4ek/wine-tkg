@@ -1391,13 +1391,13 @@ static struct gl_drawable *create_gl_drawable( HWND hwnd, const struct wgl_pixel
 /***********************************************************************
  *              set_win_format
  */
-static BOOL set_win_format( HWND hwnd, const struct wgl_pixel_format *format, BOOL mutable_pf )
+static BOOL set_win_format( HWND hwnd, const struct wgl_pixel_format *format, BOOL internal )
 {
     struct gl_drawable *gl;
 
     if (!format->visual) return FALSE;
 
-    if (!(gl = create_gl_drawable( hwnd, format, FALSE, mutable_pf ))) return FALSE;
+    if (!(gl = create_gl_drawable( hwnd, format, FALSE, internal ))) return FALSE;
 
     TRACE( "created GL drawable %lx for win %p %s\n",
            gl->drawable, hwnd, debugstr_fbconfig( format->fbconfig ));
@@ -1405,16 +1405,17 @@ static BOOL set_win_format( HWND hwnd, const struct wgl_pixel_format *format, BO
     XFlush( gdi_display );
     release_gl_drawable( gl );
 
-    NtUserSetWindowPixelFormat( hwnd, pixel_format_index( format ));
+    win32u_set_window_pixel_format( hwnd, pixel_format_index( format ), internal );
     return TRUE;
 }
 
 
-static BOOL set_pixel_format(HDC hdc, int format, BOOL allow_change)
+static BOOL set_pixel_format( HDC hdc, int format, BOOL internal )
 {
     const struct wgl_pixel_format *fmt;
     int value;
     HWND hwnd = NtUserWindowFromDC( hdc );
+    int prev;
 
     TRACE("(%p,%d)\n", hdc, format);
 
@@ -1438,20 +1439,14 @@ static BOOL set_pixel_format(HDC hdc, int format, BOOL allow_change)
         return FALSE;
     }
 
-    if (!allow_change)
-    {
-        struct gl_drawable *gl;
-        if ((gl = get_gl_drawable( hwnd, hdc )))
-        {
-            int prev = pixel_format_index( gl->format );
-            BOOL mutable_pf = gl->mutable_pf;
-            release_gl_drawable( gl );
-            if (!mutable_pf)
-                return prev == format;  /* cannot change it if already set */
-        }
-    }
+    /* Even for internal pixel format fail setting it if the app has already set a
+     * different pixel format. Let wined3d create a backup GL context instead.
+     * Switching pixel format involves drawable recreation and is much more expensive
+     * than blitting from backup context. */
+    if ((prev = win32u_get_window_pixel_format( hwnd )))
+        return prev == format;
 
-    return set_win_format( hwnd, fmt, allow_change );
+    return set_win_format( hwnd, fmt, internal );
 }
 
 
@@ -1515,7 +1510,7 @@ void set_gl_drawable_parent( HWND hwnd, HWND parent )
     else
     {
         destroy_gl_drawable( hwnd );
-        NtUserSetWindowPixelFormat( hwnd, 0 );
+        win32u_set_window_pixel_format( hwnd, 0, FALSE );
     }
     release_gl_drawable( old );
 }
@@ -1690,8 +1685,12 @@ static int glxdrv_wglGetPixelFormat( HDC hdc )
 {
     struct gl_drawable *gl;
     int ret = 0;
+    HWND hwnd;
 
-    if ((gl = get_gl_drawable( NtUserWindowFromDC( hdc ), hdc )))
+    if ((hwnd = NtUserWindowFromDC( hdc )))
+        return win32u_get_window_pixel_format( hwnd );
+
+    if ((gl = get_gl_drawable( NULL, hdc )))
     {
         ret = pixel_format_index( gl->format );
         /* Offscreen formats can't be used with traditional WGL calls.

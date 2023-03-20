@@ -98,6 +98,7 @@ ULONG CDECL WLDAP32_ldap_count_entries( LDAP *ld, WLDAP32_LDAPMessage *res )
 {
     TRACE( "(%p, %p)\n", ld, res );
 
+    if (!res) return 0;
     if (!ld) return ~0u;
     return ldap_count_entries( CTX(ld), MSG(res) );
 }
@@ -444,6 +445,15 @@ ULONG CDECL WLDAP32_ldap_result( LDAP *ld, ULONG msgid, ULONG all, struct l_time
     MSG(msg) = msgU;
     *res = msg;
     return ret;
+}
+
+/***********************************************************************
+ *      ldap_set_dbg_flags     (WLDAP32.@)
+ */
+ULONG CDECL ldap_set_dbg_flags( ULONG flags )
+{
+    FIXME( "(0x%lx) stub\n", flags );
+    return 0;
 }
 
 /***********************************************************************

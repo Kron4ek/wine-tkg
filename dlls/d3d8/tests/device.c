@@ -3758,7 +3758,6 @@ static void test_fpu_setup(void)
 #if defined(D3D8_TEST_SET_FPU_CW) && defined(D3D8_TEST_GET_FPU_CW)
     struct device_desc device_desc;
     IDirect3DDevice8 *device;
-    D3DDISPLAYMODE d3ddm;
     IDirect3D8 *d3d8;
     HWND window;
     HRESULT hr;
@@ -3770,9 +3769,6 @@ static void test_fpu_setup(void)
     ok(!!window, "Failed to create a window.\n");
     d3d8 = Direct3DCreate8(D3D_SDK_VERSION);
     ok(!!d3d8, "Failed to create a D3D object.\n");
-
-    hr = IDirect3D8_GetAdapterDisplayMode(d3d8, D3DADAPTER_DEFAULT, &d3ddm);
-    ok(SUCCEEDED(hr), "GetAdapterDisplayMode failed, hr %#lx.\n", hr);
 
     device_desc.adapter_ordinal = D3DADAPTER_DEFAULT;
     device_desc.device_window = window;
@@ -7929,20 +7925,20 @@ static void test_pixel_format(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     test_format = GetPixelFormat(hdc3);
-    todo_wine ok(!test_format, "Expected no format, got %d.\n", test_format);
+    ok(!test_format, "Expected no format, got %d.\n", test_format);
 
     hr = IDirect3DDevice8_Present(device, NULL, NULL, NULL, NULL);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     test_format = GetPixelFormat(hdc3);
-    todo_wine ok(!test_format, "Expected no format, got %d.\n", test_format);
+    ok(!test_format, "Expected no format, got %d.\n", test_format);
 
     refcount = IDirect3DDevice8_Release(device);
     ok(!refcount, "Device has %lu references left.\n", refcount);
     IDirect3D8_Release(d3d8);
 
     test_format = GetPixelFormat(hdc3);
-    todo_wine ok(!test_format, "Expected no format, got %d.\n", test_format);
+    ok(!test_format, "Expected no format, got %d.\n", test_format);
 
     ret = SetPixelFormat(hdc3, format, &pfd);
     ok(ret, "Failed to set pixel format %d.\n", format);

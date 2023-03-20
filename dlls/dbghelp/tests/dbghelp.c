@@ -29,6 +29,8 @@ static const BOOL is_win64 = sizeof(void*) > sizeof(int);
 static WCHAR system_directory[MAX_PATH];
 static WCHAR wow64_directory[MAX_PATH];
 
+static BOOL (*WINAPI pIsWow64Process2)(HANDLE, USHORT*, USHORT*);
+
 #if defined(__i386__) || defined(__x86_64__)
 
 static DWORD CALLBACK stack_walk_thread(void *arg)
@@ -379,7 +381,7 @@ static BOOL test_modules(void)
     ok(ret, "SymInitialize failed: %lu\n", GetLastError());
 
     GetSystemWow64DirectoryA(file_wow64, MAX_PATH);
-    strcat(file_wow64, "\\notepad.exe");
+    strcat(file_wow64, "\\msinfo32.exe");
 
     /* not always present */
     machine_wow = get_module_machine(file_wow64);
@@ -395,7 +397,7 @@ static BOOL test_modules(void)
     }
 
     GetSystemDirectoryA(file_system, MAX_PATH);
-    strcat(file_system, "\\notepad.exe");
+    strcat(file_system, "\\msinfo32.exe");
 
     base = SymLoadModule(GetCurrentProcess(), NULL, file_system, NULL, base1, 0);
     ok(base == base1, "SymLoadModule failed: %lu\n", GetLastError());
@@ -421,6 +423,9 @@ static BOOL test_modules(void)
 
     ret = SymInitialize(dummy, NULL, FALSE);
     ok(ret, "got error %lu\n", GetLastError());
+
+    ret = SymRefreshModuleList(dummy);
+    ok(!ret, "SymRefreshModuleList should have failed\n");
 
     count = get_module_count(dummy);
     ok(count == 0, "Unexpected count (%u instead of 0)\n", count);
@@ -562,12 +567,18 @@ enum process_kind
     PCSKIND_WOW64,          /* Wine "new" wow64 configuration, and Windows with wow64 support */
 };
 
-static enum process_kind get_process_kind(HANDLE process)
+static enum process_kind get_process_kind_internal(HANDLE process)
 {
-    const BOOL is_win64 = sizeof(void*) == 8;
     USHORT m1, m2;
 
-    if (!IsWow64Process2(process, &m1, &m2)) return PCSKIND_ERROR;
+    if (!pIsWow64Process2)
+    {
+        BOOL is_wow64;
+        return is_win64 ? PCSKIND_64BIT :
+               IsWow64Process(process, &is_wow64) && is_wow64 ? PCSKIND_WOW64 :
+               PCSKIND_32BIT;
+    }
+    if (!pIsWow64Process2(process, &m1, &m2)) return PCSKIND_ERROR;
     if (m1 == IMAGE_FILE_MACHINE_UNKNOWN && get_machine_bitness(m2) == 32) return PCSKIND_32BIT;
     if (m1 == IMAGE_FILE_MACHINE_UNKNOWN && get_machine_bitness(m2) == 64) return PCSKIND_64BIT;
     if (get_machine_bitness(m1) == 32 && get_machine_bitness(m2) == 64)
@@ -591,6 +602,14 @@ static enum process_kind get_process_kind(HANDLE process)
         return pcskind;
     }
     return PCSKIND_ERROR;
+}
+
+static enum process_kind get_process_kind(HANDLE process)
+{
+    DWORD gle = GetLastError();
+    enum process_kind pcskind = get_process_kind_internal(process);
+    SetLastError(gle);
+    return pcskind;
 }
 
 struct loaded_module_aggregation
@@ -657,7 +676,7 @@ static void test_loaded_modules(void)
 
     ret = GetSystemDirectoryA(buffer, sizeof(buffer));
     ok(ret, "got error %lu\n", GetLastError());
-    strcat(buffer, "\\notepad.exe");
+    strcat(buffer, "\\msinfo32.exe");
 
     /* testing with child process of different machines */
     ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
@@ -715,6 +734,9 @@ static void test_loaded_modules(void)
         }
     }
 
+    ret = SymRefreshModuleList(pi.hProcess);
+    ok(ret || broken(GetLastError() == STATUS_PARTIAL_COPY /* Win11 in some cases */), "SymRefreshModuleList failed: %lu\n", GetLastError());
+
     SymCleanup(pi.hProcess);
     TerminateProcess(pi.hProcess, 0);
 
@@ -722,7 +744,7 @@ static void test_loaded_modules(void)
     {
         ret = GetSystemWow64DirectoryA(buffer, sizeof(buffer));
         ok(ret, "got error %lu\n", GetLastError());
-        strcat(buffer, "\\notepad.exe");
+        strcat(buffer, "\\msinfo32.exe");
 
         SymSetOptions(SymGetOptions() & ~SYMOPT_INCLUDE_32BIT_MODULES);
 
@@ -749,6 +771,9 @@ static void test_loaded_modules(void)
             ok(aggregation.count_systemdir > 2 && aggregation.count_64bit == aggregation.count_systemdir && aggregation.count_wowdir == 1,
                "Wrong directory aggregation count %u %u\n",
                aggregation.count_systemdir, aggregation.count_wowdir);
+
+            ret = SymRefreshModuleList(pi.hProcess);
+            ok(ret, "SymRefreshModuleList failed: %lu\n", GetLastError());
 
             SymCleanup(pi.hProcess);
             TerminateProcess(pi.hProcess, 0);
@@ -788,6 +813,9 @@ static void test_loaded_modules(void)
                "Wrong directory aggregation count %u %u\n",
                aggregation2.count_systemdir, aggregation2.count_wowdir);
 
+            ret = SymRefreshModuleList(pi.hProcess);
+            ok(ret, "SymRefreshModuleList failed: %lu\n", GetLastError());
+
             SymCleanup(pi.hProcess);
             TerminateProcess(pi.hProcess, 0);
         }
@@ -808,6 +836,8 @@ START_TEST(dbghelp)
     /* Don't let the user's environment influence our symbol path */
     SetEnvironmentVariableA("_NT_SYMBOL_PATH", NULL);
     SetEnvironmentVariableA("_NT_ALT_SYMBOL_PATH", NULL);
+
+    pIsWow64Process2 = (void*)GetProcAddress(GetModuleHandleA("kernel32.dll"), "IsWow64Process2");
 
     ret = SymInitialize(GetCurrentProcess(), NULL, TRUE);
     ok(ret, "got error %lu\n", GetLastError());

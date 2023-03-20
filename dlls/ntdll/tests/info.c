@@ -303,68 +303,113 @@ static void test_query_basic(void)
 
 static void test_query_cpu(void)
 {
-    DWORD status;
-    ULONG ReturnLength;
-    SYSTEM_CPU_INFORMATION sci, sci2;
+    NTSTATUS status;
+    ULONG len, buffer[16];
+    SYSTEM_PROCESSOR_FEATURES_INFORMATION features;
+    SYSTEM_CPU_INFORMATION sci, sci2, sci3;
 
     memset(&sci, 0xcc, sizeof(sci));
-    status = pNtQuerySystemInformation(SystemCpuInformation, &sci, sizeof(sci), &ReturnLength);
+    status = pNtQuerySystemInformation(SystemCpuInformation, &sci, sizeof(sci), &len);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08lx\n", status);
-    ok( sizeof(sci) == ReturnLength, "Inconsistent length %ld\n", ReturnLength);
-
-    /* Check if we have some return values */
-    if (winetest_debug > 1) trace("Processor FeatureSet : %08lx\n", sci.ProcessorFeatureBits);
-    ok( sci.ProcessorFeatureBits != 0, "Expected some features for this processor, got %08lx\n",
-        sci.ProcessorFeatureBits);
+    ok( sizeof(sci) == len, "Inconsistent length %ld\n", len);
 
     memset(&sci2, 0xcc, sizeof(sci2));
-    status = pRtlGetNativeSystemInformation(SystemCpuInformation, &sci2, sizeof(sci2), &ReturnLength);
+    status = pRtlGetNativeSystemInformation(SystemCpuInformation, &sci2, sizeof(sci2), &len);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08lx.\n", status);
-    ok( sizeof(sci2) == ReturnLength, "Unexpected length %lu.\n", ReturnLength);
+    ok( sizeof(sci2) == len, "Unexpected length %lu.\n", len);
 
     if (is_wow64)
     {
         ok( sci.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL, "ProcessorArchitecture wrong %x\n",
             sci.ProcessorArchitecture );
         todo_wine
-        ok( sci2.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64, "ProcessorArchitecture wrong %x\n",
-            sci2.ProcessorArchitecture );
+        ok( sci2.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64 ||
+            sci2.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64,
+            "ProcessorArchitecture wrong %x\n", sci2.ProcessorArchitecture );
     }
     else
         ok( sci.ProcessorArchitecture == sci2.ProcessorArchitecture,
             "ProcessorArchitecture differs %x / %x\n",
             sci.ProcessorArchitecture, sci2.ProcessorArchitecture );
 
-    ok( sci.ProcessorLevel == sci2.ProcessorLevel, "ProcessorLevel differs %x / %x\n",
-        sci.ProcessorLevel, sci2.ProcessorLevel );
-    ok( sci.ProcessorRevision == sci2.ProcessorRevision, "ProcessorRevision differs %x / %x\n",
-        sci.ProcessorRevision, sci2.ProcessorRevision );
-    ok( sci.MaximumProcessors == sci2.MaximumProcessors, "MaximumProcessors differs %x / %x\n",
-        sci.MaximumProcessors, sci2.MaximumProcessors );
-    ok( sci.ProcessorFeatureBits == sci2.ProcessorFeatureBits, "ProcessorFeatureBits differs %lx / %lx\n",
-        sci.ProcessorFeatureBits, sci2.ProcessorFeatureBits );
+    if (sci2.ProcessorArchitecture != PROCESSOR_ARCHITECTURE_ARM64)
+    {
+        /* Check if we have some return values */
+        if (winetest_debug > 1) trace("Processor FeatureSet : %08lx\n", sci.ProcessorFeatureBits);
+        ok( sci.ProcessorFeatureBits != 0, "Expected some features for this processor, got %08lx\n",
+            sci.ProcessorFeatureBits);
 
-    memset(&sci2, 0xcc, sizeof(sci2));
-    status = pNtQuerySystemInformation(SystemEmulationProcessorInformation, &sci2, sizeof(sci2), &ReturnLength);
+        ok( sci.ProcessorLevel == sci2.ProcessorLevel, "ProcessorLevel differs %x / %x\n",
+            sci.ProcessorLevel, sci2.ProcessorLevel );
+        ok( sci.ProcessorRevision == sci2.ProcessorRevision, "ProcessorRevision differs %x / %x\n",
+            sci.ProcessorRevision, sci2.ProcessorRevision );
+        ok( sci.MaximumProcessors == sci2.MaximumProcessors, "MaximumProcessors differs %x / %x\n",
+            sci.MaximumProcessors, sci2.MaximumProcessors );
+        ok( sci.ProcessorFeatureBits == sci2.ProcessorFeatureBits, "ProcessorFeatureBits differs %lx / %lx\n",
+            sci.ProcessorFeatureBits, sci2.ProcessorFeatureBits );
+    }
+
+    memset(&sci3, 0xcc, sizeof(sci3));
+    status = pNtQuerySystemInformation(SystemEmulationProcessorInformation, &sci3, sizeof(sci3), &len);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08lx.\n", status);
-    ok( sizeof(sci2) == ReturnLength, "Unexpected length %lu.\n", ReturnLength);
+    ok( sizeof(sci3) == len, "Unexpected length %lu.\n", len);
 
 #ifdef _WIN64
-    ok( sci2.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL, "ProcessorArchitecture wrong %x\n",
-        sci2.ProcessorArchitecture );
+    if (sci2.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64)
+        ok( sci3.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM, "ProcessorArchitecture wrong %x\n",
+            sci3.ProcessorArchitecture );
+    else
+        ok( sci3.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL, "ProcessorArchitecture wrong %x\n",
+            sci3.ProcessorArchitecture );
 #else
-    ok( sci.ProcessorArchitecture == sci2.ProcessorArchitecture,
+    ok( sci.ProcessorArchitecture == sci3.ProcessorArchitecture,
         "ProcessorArchitecture differs %x / %x\n",
-        sci.ProcessorArchitecture, sci2.ProcessorArchitecture );
+        sci.ProcessorArchitecture, sci3.ProcessorArchitecture );
 #endif
-    ok( sci.ProcessorLevel == sci2.ProcessorLevel, "ProcessorLevel differs %x / %x\n",
-        sci.ProcessorLevel, sci2.ProcessorLevel );
-    ok( sci.ProcessorRevision == sci2.ProcessorRevision, "ProcessorRevision differs %x / %x\n",
-        sci.ProcessorRevision, sci2.ProcessorRevision );
-    ok( sci.MaximumProcessors == sci2.MaximumProcessors, "MaximumProcessors differs %x / %x\n",
-        sci.MaximumProcessors, sci2.MaximumProcessors );
-    ok( sci.ProcessorFeatureBits == sci2.ProcessorFeatureBits, "ProcessorFeatureBits differs %lx / %lx\n",
-        sci.ProcessorFeatureBits, sci2.ProcessorFeatureBits );
+    ok( sci.ProcessorLevel == sci3.ProcessorLevel, "ProcessorLevel differs %x / %x\n",
+        sci.ProcessorLevel, sci3.ProcessorLevel );
+    ok( sci.ProcessorRevision == sci3.ProcessorRevision, "ProcessorRevision differs %x / %x\n",
+        sci.ProcessorRevision, sci3.ProcessorRevision );
+    ok( sci.MaximumProcessors == sci3.MaximumProcessors, "MaximumProcessors differs %x / %x\n",
+        sci.MaximumProcessors, sci3.MaximumProcessors );
+    ok( sci.ProcessorFeatureBits == sci3.ProcessorFeatureBits, "ProcessorFeatureBits differs %lx / %lx\n",
+        sci.ProcessorFeatureBits, sci3.ProcessorFeatureBits );
+
+    len = 0xdeadbeef;
+    status = pNtQuerySystemInformation( SystemProcessorFeaturesInformation, &features, sizeof(features), &len );
+    if (status != STATUS_NOT_SUPPORTED && status != STATUS_INVALID_INFO_CLASS)
+    {
+        ok( !status, "SystemProcessorFeaturesInformation failed %lx\n", status );
+        ok( len == sizeof(features), "wrong len %lu\n", len );
+        ok( (ULONG)features.ProcessorFeatureBits == sci.ProcessorFeatureBits, "wrong bits %I64x / %lx\n",
+            features.ProcessorFeatureBits, sci.ProcessorFeatureBits );
+    }
+    else skip( "SystemProcessorFeaturesInformation is not supported\n" );
+
+    len = 0xdeadbeef;
+    status = pNtQuerySystemInformation( SystemProcessorBrandString, buffer, sizeof(buffer), &len );
+    if (status != STATUS_NOT_SUPPORTED)
+    {
+        ok( !status, "SystemProcessorBrandString failed %lx\n", status );
+        ok( len == 49, "wrong len %lu\n", len );
+        trace( "got %s len %u\n", debugstr_a( (char *)buffer ), lstrlenA( (char *)buffer ));
+
+        len = 0xdeadbeef;
+        status = pNtQuerySystemInformation( SystemProcessorBrandString, buffer, 49, &len );
+        ok( !status, "SystemProcessorBrandString failed %lx\n", status );
+        ok( len == 49, "wrong len %lu\n", len );
+
+        len = 0xdeadbeef;
+        status = pNtQuerySystemInformation( SystemProcessorBrandString, buffer, 48, &len );
+        ok( status == STATUS_INFO_LENGTH_MISMATCH, "SystemProcessorBrandString failed %lx\n", status );
+        ok( len == 49, "wrong len %lu\n", len );
+
+        len = 0xdeadbeef;
+        status = pNtQuerySystemInformation( SystemProcessorBrandString, (char *)buffer + 1, 49, &len );
+        ok( status == STATUS_DATATYPE_MISALIGNMENT, "SystemProcessorBrandString failed %lx\n", status );
+        ok( len == 0xdeadbeef, "wrong len %lu\n", len );
+    }
+    else skip( "SystemProcessorBrandString is not supported\n" );
 }
 
 static void test_query_performance(void)
@@ -1133,9 +1178,9 @@ static void test_query_logicalproc(void)
     GetSystemInfo(&si);
 
     status = pNtQuerySystemInformation(SystemLogicalProcessorInformation, NULL, 0, &len);
-    if (status == STATUS_INVALID_INFO_CLASS) /* wow64 win8+ */
+    if (status == STATUS_INVALID_INFO_CLASS) /* wow64 win8+, arm64 */
     {
-        win_skip("SystemLogicalProcessorInformation is not supported\n");
+        skip("SystemLogicalProcessorInformation is not supported\n");
         return;
     }
     ok(status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08lx\n", status);
@@ -3308,19 +3353,29 @@ static void test_thread_start_address(void)
 
 static void test_query_data_alignment(void)
 {
-    ULONG ReturnLength;
+    SYSTEM_CPU_INFORMATION sci;
+    ULONG len;
     NTSTATUS status;
     DWORD value;
 
     value = 0xdeadbeef;
-    status = pNtQuerySystemInformation(SystemRecommendedSharedDataAlignment, &value, sizeof(value), &ReturnLength);
+    status = pNtQuerySystemInformation(SystemRecommendedSharedDataAlignment, &value, sizeof(value), &len);
     ok(status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08lx\n", status);
-    ok(sizeof(value) == ReturnLength, "Inconsistent length %lu\n", ReturnLength);
-#ifdef __arm__
-    ok(value == 32, "Expected 32, got %lu\n", value);
-#else
-    ok(value == 64, "Expected 64, got %lu\n", value);
-#endif
+    ok(sizeof(value) == len, "Inconsistent length %lu\n", len);
+
+    pRtlGetNativeSystemInformation(SystemCpuInformation, &sci, sizeof(sci), &len);
+    switch (sci.ProcessorArchitecture)
+    {
+    case PROCESSOR_ARCHITECTURE_ARM:
+        ok(value == 32, "Expected 32, got %lu\n", value);
+        break;
+    case PROCESSOR_ARCHITECTURE_ARM64:
+        ok(value == 128, "Expected 128, got %lu\n", value);
+        break;
+    default:
+        ok(value == 64, "Expected 64, got %lu\n", value);
+        break;
+    }
 }
 
 static void test_thread_lookup(void)

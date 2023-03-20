@@ -2118,6 +2118,46 @@ nt4_is_broken:
     }
 }
 
+static void check_tls_index(HANDLE dll, BOOL tls_initialized)
+{
+    BOOL found_dll = FALSE;
+    LIST_ENTRY *root = &NtCurrentTeb()->Peb->LdrData->InLoadOrderModuleList;
+    for (LIST_ENTRY *entry = root->Flink; entry != root; entry = entry->Flink)
+    {
+        LDR_DATA_TABLE_ENTRY *mod = CONTAINING_RECORD(entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+        if (wcsicmp(L"ntdll.dll", mod->BaseDllName.Buffer) == 0)
+        {
+            /* Pick ntdll as a dll that definitely won't have TLS */
+            ok(mod->TlsIndex == 0, "ntdll.dll TlsIndex: %d instead of 0\n", mod->TlsIndex);
+        }
+        else if (mod->DllBase == dll)
+        {
+            SHORT expected = tls_initialized ? -1 : 0;
+            ok(mod->TlsIndex == expected, "Test exe TlsIndex: %d instead of %d\n", mod->TlsIndex, expected);
+            found_dll = TRUE;
+        }
+        else
+        {
+            ok(mod->TlsIndex == 0 || mod->TlsIndex == -1, "%s TlsIndex: %d\n",
+               debugstr_w(mod->BaseDllName.Buffer), mod->TlsIndex);
+        }
+    }
+    ok(found_dll, "Couldn't find dll %p in module list\n", dll);
+}
+
+static int tls_init_fn_output;
+
+static DWORD WINAPI tls_thread_fn(void* tlsidx_v)
+{
+    int tls_index = (int)(DWORD_PTR)(tlsidx_v);
+    const char* str = ((char **)NtCurrentTeb()->ThreadLocalStoragePointer)[tls_index];
+    ok( !strcmp( str, "hello world" ), "wrong tls data '%s' at %p\n", str, str );
+    ok( tls_init_fn_output == DLL_THREAD_ATTACH,
+        "tls init function didn't run or got wrong reason: %d instead of %d\n", tls_init_fn_output, DLL_THREAD_ATTACH );
+    tls_init_fn_output = 9999;
+    return 0;
+}
+
 static void test_import_resolution(void)
 {
     char temp_path[MAX_PATH];
@@ -2135,14 +2175,48 @@ static void test_import_resolution(void)
         char module[16];
         struct { WORD hint; char name[32]; } function;
         IMAGE_TLS_DIRECTORY tls;
+        UINT_PTR tls_init_fn_list[2];
         char tls_data[16];
         SHORT tls_index;
+        SHORT tls_index_hi;
+        int* tls_init_fn_output;
+        UCHAR tls_init_fn[64]; /* Note: Uses rip-relative address of tls_init_fn_output, don't separate */
+        UCHAR entry_point_fn[16];
     } data, *ptr;
     IMAGE_NT_HEADERS nt;
     IMAGE_SECTION_HEADER section;
-    int test;
+    int test, tls_index_save;
+#if defined(__i386__)
+    static const UCHAR tls_init_code[] = {
+        0xE8, 0x00, 0x00, 0x00, 0x00, /* call 1f */
+        0x59,                         /* 1: pop ecx */
+        0x8B, 0x49, 0xF7,             /* mov ecx, [ecx - 9] ; mov ecx, [tls_init_fn_output] */
+        0x8B, 0x54, 0x24, 0x08,       /* mov edx, [esp + 8] */
+        0x89, 0x11,                   /* mov [ecx], edx */
+        0xB8, 0x01, 0x00, 0x00, 0x00, /* mov eax, 1 */
+        0xC2, 0x0C, 0x00,             /* ret 12 */
+    };
+    static const UCHAR entry_point_code[] = {
+        0xB8, 0x01, 0x00, 0x00, 0x00, /* mov eax, 1 */
+        0xC2, 0x0C, 0x00,             /* ret 12 */
+    };
+#elif defined(__x86_64__)
+    static const UCHAR tls_init_code[] = {
+        0x48, 0x8B, 0x0D, 0xF1, 0xFF, 0xFF, 0xFF, /* mov rcx, [rip + tls_init_fn_output] */
+        0x89, 0x11,                               /* mov [rcx], edx */
+        0xB8, 0x01, 0x00, 0x00, 0x00,             /* mov eax, 1 */
+        0xC3,                                     /* ret */
+    };
+    static const UCHAR entry_point_code[] = {
+        0xB8, 0x01, 0x00, 0x00, 0x00, /* mov eax, 1 */
+        0xC3,                         /* ret */
+    };
+#else
+    static const UCHAR tls_init_code[] = { 0x00 };
+    static const UCHAR entry_point_code[] = { 0x00 };
+#endif
 
-    for (test = 0; test < 3; test++)
+    for (test = 0; test < 4; test++)
     {
 #define DATA_RVA(ptr) (page_size + ((char *)(ptr) - (char *)&data))
         nt = nt_header_template;
@@ -2176,6 +2250,21 @@ static void test_import_resolution(void)
         data.tls.AddressOfIndex = nt.OptionalHeader.ImageBase + DATA_RVA( &data.tls_index );
         strcpy( data.tls_data, "hello world" );
         data.tls_index = 9999;
+        data.tls_index_hi = 9999;
+
+        if (test == 3 && sizeof(tls_init_code) > 1)
+        {
+            /* Windows doesn't consistently call tls init functions on dlls without entry points */
+            assert(sizeof(tls_init_code) <= sizeof(data.tls_init_fn));
+            assert(sizeof(entry_point_code) <= sizeof(data.entry_point_fn));
+            memcpy(data.tls_init_fn, tls_init_code, sizeof(tls_init_code));
+            memcpy(data.entry_point_fn, entry_point_code, sizeof(entry_point_code));
+            tls_init_fn_output = 9999;
+            data.tls_init_fn_output = &tls_init_fn_output;
+            data.tls_init_fn_list[0] = nt.OptionalHeader.ImageBase + DATA_RVA(&data.tls_init_fn);
+            data.tls.AddressOfCallBacks = nt.OptionalHeader.ImageBase + DATA_RVA(&data.tls_init_fn_list);
+            nt.OptionalHeader.AddressOfEntryPoint = DATA_RVA(&data.entry_point_fn);
+        }
 
         GetTempPathA(MAX_PATH, temp_path);
         GetTempFileNameA(temp_path, "ldr", 0, dll_name);
@@ -2190,6 +2279,7 @@ static void test_import_resolution(void)
         section.Misc.VirtualSize = sizeof(data);
         section.SizeOfRawData = sizeof(data);
         section.Characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE;
+        if (test == 3) section.Characteristics |= IMAGE_SCN_MEM_EXECUTE;
 
         WriteFile(hfile, &dos_header, sizeof(dos_header), &dummy, NULL);
         WriteFile(hfile, &nt, sizeof(nt), &dummy, NULL);
@@ -2216,7 +2306,9 @@ static void test_import_resolution(void)
             {
                 str = ((char **)NtCurrentTeb()->ThreadLocalStoragePointer)[ptr->tls_index];
                 ok( !strcmp( str, "hello world" ), "wrong tls data '%s' at %p\n", str, str );
+                ok(ptr->tls_index_hi == 0, "TLS Index written as a short, high half: %d\n", ptr->tls_index_hi);
             }
+            check_tls_index(mod, ptr->tls_index != 9999);
             FreeLibrary( mod );
             break;
         case 1:  /* load with DONT_RESOLVE_DLL_REFERENCES doesn't resolve imports */
@@ -2233,6 +2325,7 @@ static void test_import_resolution(void)
             ok( ptr->thunks[0].u1.Function == 0xdeadbeef, "thunk resolved to %p for %s.%s\n",
                 (void *)ptr->thunks[0].u1.Function, data.module, data.function.name );
             ok( ptr->tls_index == 9999, "wrong tls index %d\n", ptr->tls_index );
+            check_tls_index(mod, ptr->tls_index != 9999);
             FreeLibrary( mod2 );
             FreeLibrary( mod );
             break;
@@ -2244,8 +2337,35 @@ static void test_import_resolution(void)
             ok( ptr->thunks[0].u1.Function == 0xdeadbeef, "thunk resolved to %p for %s.%s\n",
                 (void *)ptr->thunks[0].u1.Function, data.module, data.function.name );
             ok( ptr->tls_index == 9999, "wrong tls index %d\n", ptr->tls_index );
+            check_tls_index(mod, ptr->tls_index != 9999);
             FreeLibrary( mod );
             break;
+        case 3:  /* load with tls init function */
+            mod = LoadLibraryA( dll_name );
+            ok( mod != NULL, "failed to load err %lu\n", GetLastError() );
+            if (!mod) break;
+            ptr = (struct imports *)((char *)mod + page_size);
+            tls_index_save = ptr->tls_index;
+            ok( ptr->tls_index < 32 || broken(ptr->tls_index == 9999), /* before vista */
+                "wrong tls index %d\n", ptr->tls_index );
+            if (ptr->tls_index != 9999 && sizeof(tls_init_code) > 1)
+            {
+                str = ((char **)NtCurrentTeb()->ThreadLocalStoragePointer)[ptr->tls_index];
+                ok( !strcmp( str, "hello world" ), "wrong tls data '%s' at %p\n", str, str );
+                /* tls init function will write the reason to *tls_init_fn_output */
+                ok( tls_init_fn_output == DLL_PROCESS_ATTACH,
+                    "tls init function didn't run or got wrong reason: %d instead of %d\n", tls_init_fn_output, DLL_PROCESS_ATTACH );
+                tls_init_fn_output = 9999;
+                WaitForSingleObject(CreateThread(NULL, 0, tls_thread_fn, (void*)(DWORD_PTR)ptr->tls_index, 0, NULL), INFINITE);
+                ok( tls_init_fn_output == DLL_THREAD_DETACH,
+                    "tls init function didn't run or got wrong reason: %d instead of %d\n", tls_init_fn_output, DLL_THREAD_DETACH );
+            }
+            check_tls_index(mod, ptr->tls_index != 9999);
+            tls_init_fn_output = 9999;
+            FreeLibrary( mod );
+            if (tls_index_save != 9999 && sizeof(tls_init_code) > 1)
+                ok( tls_init_fn_output == DLL_PROCESS_DETACH,
+                    "tls init function didn't run or got wrong reason: %d instead of %d\n", tls_init_fn_output, DLL_PROCESS_DETACH );
         }
         DeleteFileA( dll_name );
 #undef DATA_RVA

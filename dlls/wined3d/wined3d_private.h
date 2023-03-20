@@ -34,6 +34,8 @@
 #include <math.h>
 #include <limits.h>
 #include <float.h>
+#define LIBVKD3D_SHADER_SOURCE
+#include <vkd3d_shader.h>
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #define NONAMELESSUNION
@@ -72,6 +74,20 @@ static inline float int_to_float(uint32_t i)
 
     u.u = i;
     return u.f;
+}
+
+static inline const char *wined3d_get_line(const char **ptr, const char *end)
+{
+    const char *p, *q;
+
+    if ((p = *ptr) >= end)
+        return NULL;
+
+    if (!(q = memchr(p, '\n', end - p)))
+        *ptr = end;
+    else
+        *ptr = q + 1;
+    return p;
 }
 
 #define MAKEDWORD_VERSION(maj, min) (((maj & 0xffffu) << 16) | (min & 0xffffu))
@@ -550,12 +566,6 @@ struct wined3d_settings
 };
 
 extern struct wined3d_settings wined3d_settings DECLSPEC_HIDDEN;
-
-enum wined3d_shader_byte_code_format
-{
-    WINED3D_SHADER_BYTE_CODE_FORMAT_SM1,
-    WINED3D_SHADER_BYTE_CODE_FORMAT_SM4,
-};
 
 enum wined3d_shader_resource_type
 {
@@ -1462,7 +1472,7 @@ extern const struct wined3d_shader_frontend sm1_shader_frontend DECLSPEC_HIDDEN;
 extern const struct wined3d_shader_frontend sm4_shader_frontend DECLSPEC_HIDDEN;
 
 HRESULT shader_extract_from_dxbc(struct wined3d_shader *shader,
-        unsigned int max_shader_version, enum wined3d_shader_byte_code_format *format) DECLSPEC_HIDDEN;
+        unsigned int max_shader_version, enum vkd3d_shader_source_type *source_type) DECLSPEC_HIDDEN;
 BOOL shader_get_stream_output_register_info(const struct wined3d_shader *shader,
         const struct wined3d_stream_output_element *so_element, unsigned int *register_idx,
         unsigned int *component_idx) DECLSPEC_HIDDEN;
@@ -2354,8 +2364,9 @@ struct wined3d_context_gl
     uint32_t rebind_fbo : 1;
     uint32_t untracked_material_count : 2; /* Max value 2 */
     uint32_t needs_set : 1;
+    uint32_t internal_format_set : 1;
     uint32_t valid : 1;
-    uint32_t padding : 23;
+    uint32_t padding : 22;
 
     uint32_t default_attrib_value_set;
 

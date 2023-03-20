@@ -192,6 +192,7 @@ __ASM_GLOBAL_FUNC( syscall_32to64,
                    "movq %rax,%rcx\n\t"         /* syscall number */
                    "leaq 8(%r14),%rdx\n\t"      /* parameters */
                    "call " __ASM_NAME("Wow64SystemServiceEx") "\n\t"
+                   "movl %eax,0xb0(%r13)\n\t"   /* context->Eax */
 
                    "syscall_32to64_return:\n\t"
                    "movl 0x9c(%r13),%edi\n\t"   /* context->Edi */
@@ -289,12 +290,15 @@ NTSTATUS WINAPI BTCpuProcessInit(void)
     HMODULE module;
     UNICODE_STRING str;
     void **p__wine_unix_call_dispatcher;
+    WOW64INFO *wow64info = NtCurrentTeb()->TlsSlots[WOW64_TLS_WOW64INFO];
 
     if ((ULONG_PTR)syscall_32to64 >> 32)
     {
         ERR( "wow64cpu loaded above 4G, disabling\n" );
         return STATUS_INVALID_ADDRESS;
     }
+
+    wow64info->CpuFlags |= WOW64_CPUFLAGS_MSFT64;
 
     RtlInitUnicodeString( &str, L"ntdll.dll" );
     LdrGetDllHandle( NULL, 0, &str, &module );
@@ -349,6 +353,16 @@ void * WINAPI __wine_get_unix_opcode(void)
 
 
 /**********************************************************************
+ *           BTCpuIsProcessorFeaturePresent  (wow64cpu.@)
+ */
+BOOLEAN WINAPI BTCpuIsProcessorFeaturePresent( UINT feature )
+{
+    /* assume CPU features are the same for 32- and 64-bit */
+    return RtlIsProcessorFeaturePresent( feature );
+}
+
+
+/**********************************************************************
  *           BTCpuGetContext  (wow64cpu.@)
  */
 NTSTATUS WINAPI BTCpuGetContext( HANDLE thread, HANDLE process, void *unknown, I386_CONTEXT *ctx )
@@ -373,6 +387,8 @@ NTSTATUS WINAPI BTCpuResetToConsistentState( EXCEPTION_POINTERS *ptrs )
 {
     CONTEXT *context = ptrs->ContextRecord;
     I386_CONTEXT wow_context;
+
+    if (context->SegCs == cs64_sel) return STATUS_SUCCESS;  /* exception in 64-bit code, nothing to do */
 
     copy_context_64to32( &wow_context, CONTEXT_I386_ALL, context );
     wow_context.EFlags &= ~(0x100|0x40000);

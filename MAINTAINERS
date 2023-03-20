@@ -29,7 +29,8 @@ Maintainers List
 		-----------------------------------
 
 ARM, ARM64
-M:	André Zwing <nerv@dawncrow.de>
+M:	Alexandre Julliard <julliard@winehq.org>
+P:	André Zwing <nerv@dawncrow.de>
 F:	dlls/dbghelp/cpu_arm*
 F:	dlls/msvcrt/except_arm.c
 F:	dlls/ntdll/signal_arm*
@@ -184,8 +185,12 @@ F:	server/queue.c
 F:	programs/winecfg/input.c
 
 Input methods
-M:	Aric Stewart <aric@codeweavers.com>
+M:	Rémi Bernon <rbernon@codeweavers.com>
+P:	Aric Stewart <aric@codeweavers.com>
 F:	dlls/imm32/
+F:	dlls/win32u/imm.c
+F:	dlls/winemac.drv/ime.c
+F:	dlls/winex11.drv/ime.c
 
 JavaScript
 M:	Jacek Caban <jacek@codeweavers.com>
