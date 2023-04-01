@@ -487,6 +487,8 @@ enum wine_internal_message
 #define WM_IME_INTERNAL 0x287
 #define IME_INTERNAL_ACTIVATE   0x17
 #define IME_INTERNAL_DEACTIVATE 0x18
+#define IME_INTERNAL_HKL_ACTIVATE    0x19
+#define IME_INTERNAL_HKL_DEACTIVATE  0x20
 
 #define WM_SYSTIMER  0x0118
 
@@ -648,6 +650,7 @@ BOOL    WINAPI NtUserAddClipboardFormatListener( HWND hwnd );
 UINT    WINAPI NtUserAssociateInputContext( HWND hwnd, HIMC ctx, ULONG flags );
 BOOL    WINAPI NtUserAttachThreadInput( DWORD from, DWORD to, BOOL attach );
 HDC     WINAPI NtUserBeginPaint( HWND hwnd, PAINTSTRUCT *ps );
+NTSTATUS WINAPI NtUserBuildHimcList( UINT thread_id, UINT count, HIMC *buffer, UINT *size );
 NTSTATUS WINAPI NtUserBuildHwndList( HDESK desktop, ULONG unk2, ULONG unk3, ULONG unk4,
                                      ULONG thread_id, ULONG count, HWND *buffer, ULONG *size );
 ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code );

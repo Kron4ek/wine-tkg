@@ -25,47 +25,62 @@ WINE_DEFAULT_DEBUG_CHANNEL(ui);
 
 struct uisettings
 {
+    IUISettings IUISettings_iface;
+    IUISettings2 IUISettings2_iface;
     IUISettings3 IUISettings3_iface;
     LONG ref;
 };
 
-static inline struct uisettings *impl_from_IUISettings3( IUISettings3 *iface )
+static inline struct uisettings *impl_from_IUISettings( IUISettings *iface )
 {
-    return CONTAINING_RECORD( iface, struct uisettings, IUISettings3_iface );
+    return CONTAINING_RECORD( iface, struct uisettings, IUISettings_iface );
 }
 
-static HRESULT WINAPI uisettings3_QueryInterface( IUISettings3 *iface, REFIID iid, void **out )
+static HRESULT WINAPI uisettings_QueryInterface( IUISettings *iface, REFIID iid, void **out )
 {
-    struct uisettings *impl = impl_from_IUISettings3( iface );
+    struct uisettings *impl = impl_from_IUISettings( iface );
 
     TRACE( "iface %p, iid %s, out %p.\n", iface, debugstr_guid( iid ), out );
+
+    *out = NULL;
 
     if (IsEqualGUID( iid, &IID_IUnknown ) ||
         IsEqualGUID( iid, &IID_IInspectable ) ||
         IsEqualGUID( iid, &IID_IAgileObject ) ||
-        IsEqualGUID( iid, &IID_IUISettings3 ))
+        IsEqualGUID( iid, &IID_IUISettings ))
+    {
+        *out = &impl->IUISettings_iface;
+    }
+    else if (IsEqualGUID( iid, &IID_IUISettings2 ))
+    {
+        *out = &impl->IUISettings2_iface;
+    }
+    else if (IsEqualGUID( iid, &IID_IUISettings3 ))
     {
         *out = &impl->IUISettings3_iface;
-        IInspectable_AddRef( *out );
-        return S_OK;
     }
 
-    FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( iid ) );
-    *out = NULL;
-    return E_NOINTERFACE;
+    if (!*out)
+    {
+        FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( iid ) );
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef( (IUnknown*)*out );
+    return S_OK;
 }
 
-static ULONG WINAPI uisettings3_AddRef( IUISettings3 *iface )
+static ULONG WINAPI uisettings_AddRef( IUISettings *iface )
 {
-    struct uisettings *impl = impl_from_IUISettings3( iface );
+    struct uisettings *impl = impl_from_IUISettings( iface );
     ULONG ref = InterlockedIncrement( &impl->ref );
     TRACE( "iface %p, ref %lu.\n", iface, ref );
     return ref;
 }
 
-static ULONG WINAPI uisettings3_Release( IUISettings3 *iface )
+static ULONG WINAPI uisettings_Release( IUISettings *iface )
 {
-    struct uisettings *impl = impl_from_IUISettings3( iface );
+    struct uisettings *impl = impl_from_IUISettings( iface );
     ULONG ref = InterlockedDecrement( &impl->ref );
 
     TRACE( "iface %p, ref %lu.\n", iface, ref );
@@ -74,23 +89,168 @@ static ULONG WINAPI uisettings3_Release( IUISettings3 *iface )
     return ref;
 }
 
-static HRESULT WINAPI uisettings3_GetIids( IUISettings3 *iface, ULONG *iid_count, IID **iids )
+static HRESULT WINAPI uisettings_GetIids( IUISettings *iface, ULONG *iid_count, IID **iids )
 {
     FIXME( "iface %p, iid_count %p, iids %p stub!\n", iface, iid_count, iids );
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI uisettings3_GetRuntimeClassName( IUISettings3 *iface, HSTRING *class_name )
+static HRESULT WINAPI uisettings_GetRuntimeClassName( IUISettings *iface, HSTRING *class_name )
 {
     FIXME( "iface %p, class_name %p stub!\n", iface, class_name );
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI uisettings3_GetTrustLevel( IUISettings3 *iface, TrustLevel *trust_level )
+static HRESULT WINAPI uisettings_GetTrustLevel( IUISettings *iface, TrustLevel *trust_level )
 {
     FIXME( "iface %p, trust_level %p stub!\n", iface, trust_level );
     return E_NOTIMPL;
 }
+
+static HRESULT WINAPI uisettings_get_HandPreference( IUISettings *iface, enum HandPreference *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_CursorSize( IUISettings *iface, struct Size *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_ScrollBarSize( IUISettings *iface, struct Size *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_ScrollBarArrowSize( IUISettings *iface, struct Size *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_ScrollBarThumbBoxSize( IUISettings *iface, struct Size *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_MessageDuration( IUISettings *iface, UINT32 *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_AnimationsEnabled( IUISettings *iface, boolean *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_CaretBrowsingEnabled( IUISettings *iface, boolean *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_CaretBlinkRate( IUISettings *iface, UINT32 *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_CaretWidth( IUISettings *iface, UINT32 *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_DoubleClickTime( IUISettings *iface, UINT32 *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_get_MouseHoverTime( IUISettings *iface, UINT32 *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings_UIElementColor( IUISettings *iface, enum UIElementType element, struct Color *value )
+{
+    FIXME( "iface %p, element %d value %p stub!\n", iface, element, value );
+    return E_NOTIMPL;
+}
+
+static const struct IUISettingsVtbl uisettings_vtbl =
+{
+    uisettings_QueryInterface,
+    uisettings_AddRef,
+    uisettings_Release,
+
+    /* IInspectable methods */
+    uisettings_GetIids,
+    uisettings_GetRuntimeClassName,
+    uisettings_GetTrustLevel,
+
+    /* IUISettings methods */
+    uisettings_get_HandPreference,
+    uisettings_get_CursorSize,
+    uisettings_get_ScrollBarSize,
+    uisettings_get_ScrollBarArrowSize,
+    uisettings_get_ScrollBarThumbBoxSize,
+    uisettings_get_MessageDuration,
+    uisettings_get_AnimationsEnabled,
+    uisettings_get_CaretBrowsingEnabled,
+    uisettings_get_CaretBlinkRate,
+    uisettings_get_CaretWidth,
+    uisettings_get_DoubleClickTime,
+    uisettings_get_MouseHoverTime,
+    uisettings_UIElementColor
+};
+
+DEFINE_IINSPECTABLE( uisettings2, IUISettings2, struct uisettings, IUISettings_iface );
+
+static HRESULT WINAPI uisettings2_get_TextScaleFactor( IUISettings2 *iface, DOUBLE *value )
+{
+    FIXME( "iface %p, value %p stub!\n", iface, value );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings2_add_TextScaleFactorChanged( IUISettings2 *iface, ITypedEventHandler_UISettings_IInspectable *handler,
+        EventRegistrationToken *cookie )
+{
+    FIXME( "iface %p, handler %p, cookie %p stub!\n", iface, handler, cookie );
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisettings2_remove_TextScaleFactorChanged( IUISettings2 *iface, EventRegistrationToken cookie )
+{
+    FIXME( "iface %p, cookie %#I64x stub!\n", iface, cookie.value );
+    return E_NOTIMPL;
+}
+
+static const struct IUISettings2Vtbl uisettings2_vtbl =
+{
+    uisettings2_QueryInterface,
+    uisettings2_AddRef,
+    uisettings2_Release,
+
+    /* IInspectable methods */
+    uisettings2_GetIids,
+    uisettings2_GetRuntimeClassName,
+    uisettings2_GetTrustLevel,
+
+    /* IUISettings2 methods */
+    uisettings2_get_TextScaleFactor,
+    uisettings2_add_TextScaleFactorChanged,
+    uisettings2_remove_TextScaleFactorChanged
+};
+
+DEFINE_IINSPECTABLE( uisettings3, IUISettings3, struct uisettings, IUISettings_iface );
 
 static DWORD get_app_theme(void)
 {
@@ -244,6 +404,8 @@ static HRESULT WINAPI factory_ActivateInstance( IActivationFactory *iface, IInsp
         return E_OUTOFMEMORY;
     }
 
+    impl->IUISettings_iface.lpVtbl = &uisettings_vtbl;
+    impl->IUISettings2_iface.lpVtbl = &uisettings2_vtbl;
     impl->IUISettings3_iface.lpVtbl = &uisettings3_vtbl;
     impl->ref = 1;
 

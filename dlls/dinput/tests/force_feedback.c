@@ -1455,7 +1455,7 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file, DWO
     set_hid_expect( file, NULL, 0 );
     desc = expect_desc;
     desc.dwDuration = INFINITE;
-    desc.dwTriggerButton = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE( 0 ) | DIDFT_FFEFFECTTRIGGER,
+    desc.dwTriggerButton = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE( 0 ) | DIDFT_FFEFFECTTRIGGER;
     hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_NODOWNLOAD | DIEP_DURATION | DIEP_TRIGGERBUTTON );
     ok( hr == DI_DOWNLOADSKIPPED, "SetParameters returned %#lx\n", hr );
     set_hid_expect( file, expect_update, sizeof(expect_update) );
@@ -1464,7 +1464,7 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file, DWO
     wait_hid_expect( file, 100 ); /* these updates are sent asynchronously */
     desc = expect_desc;
     desc.dwDuration = INFINITE;
-    desc.dwTriggerButton = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE( 0 ) | DIDFT_FFEFFECTTRIGGER,
+    desc.dwTriggerButton = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE( 0 ) | DIDFT_FFEFFECTTRIGGER;
     hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_NODOWNLOAD | DIEP_DURATION | DIEP_TRIGGERBUTTON );
     ok( hr == DI_DOWNLOADSKIPPED, "SetParameters returned %#lx\n", hr );
     set_hid_expect( file, expect_update, sizeof(expect_update) );
@@ -2950,7 +2950,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
         .expect_count = version < 0x700 ? ARRAY_SIZE(expect_objects_5) : ARRAY_SIZE(expect_objects),
         .expect_objs = version < 0x700 ? expect_objects_5 : expect_objects,
         .todo_objs = version < 0x700 ? todo_objects_5 : NULL,
-        .todo_extra = version < 0x700 ? TRUE : FALSE,
+        .todo_extra = version < 0x700,
     };
     struct check_effects_params check_effects_params =
     {

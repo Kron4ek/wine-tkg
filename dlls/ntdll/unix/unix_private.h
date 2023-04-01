@@ -52,6 +52,34 @@ static inline BOOL is_machine_64bit( WORD machine )
     return (machine == IMAGE_FILE_MACHINE_AMD64 || machine == IMAGE_FILE_MACHINE_ARM64);
 }
 
+#ifdef _WIN64
+typedef TEB32 WOW_TEB;
+typedef PEB32 WOW_PEB;
+static inline TEB64 *NtCurrentTeb64(void) { return NULL; }
+#else
+typedef TEB64 WOW_TEB;
+typedef PEB64 WOW_PEB;
+static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiBatchCount; }
+#endif
+
+extern WOW_PEB *wow_peb DECLSPEC_HIDDEN;
+
+static inline WOW_TEB *get_wow_teb( TEB *teb )
+{
+    return teb->WowTebOffset ? (WOW_TEB *)((char *)teb + teb->WowTebOffset) : NULL;
+}
+
+static inline BOOL is_wow64(void)
+{
+    return !!wow_peb;
+}
+
+/* check for old-style Wow64 (using a 32-bit ntdll.so) */
+static inline BOOL is_old_wow64(void)
+{
+    return !is_win64 && wow_peb;
+}
+
 /* thread private data, stored in NtCurrentTeb()->GdiTebBatch */
 struct ntdll_thread_data
 {
@@ -142,9 +170,6 @@ extern timeout_t server_start_time DECLSPEC_HIDDEN;
 extern sigset_t server_block_set DECLSPEC_HIDDEN;
 extern struct _KUSER_SHARED_DATA *user_shared_data DECLSPEC_HIDDEN;
 extern SYSTEM_CPU_INFORMATION cpu_info DECLSPEC_HIDDEN;
-#ifndef _WIN64
-extern BOOL is_wow64 DECLSPEC_HIDDEN;
-#endif
 #ifdef __i386__
 extern struct ldt_copy __wine_ldt_copy DECLSPEC_HIDDEN;
 #endif
@@ -157,6 +182,7 @@ extern void init_startup_info(void) DECLSPEC_HIDDEN;
 extern void *create_startup_info( const UNICODE_STRING *nt_image, const RTL_USER_PROCESS_PARAMETERS *params,
                                   DWORD *info_size ) DECLSPEC_HIDDEN;
 extern char **build_envp( const WCHAR *envW ) DECLSPEC_HIDDEN;
+extern char *get_alternate_wineloader( WORD machine ) DECLSPEC_HIDDEN;
 extern NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_info ) DECLSPEC_HIDDEN;
 extern NTSTATUS load_builtin( const pe_image_info_t *image_info, WCHAR *filename,
                               void **addr_ptr, SIZE_T *size_ptr, ULONG_PTR zero_bits ) DECLSPEC_HIDDEN;
@@ -386,10 +412,7 @@ static inline NTSTATUS wait_async( HANDLE handle, BOOL alertable )
 
 static inline BOOL in_wow64_call(void)
 {
-#ifdef _WIN64
-    return !!NtCurrentTeb()->WowTebOffset;
-#endif
-    return FALSE;
+    return is_win64 && is_wow64();
 }
 
 static inline void set_async_iosb( client_ptr_t iosb, NTSTATUS status, ULONG_PTR info )
@@ -444,23 +467,6 @@ static inline client_ptr_t iosb_client_ptr( IO_STATUS_BLOCK *io )
     if (io && in_wow64_call()) return wine_server_client_ptr( io->Pointer );
 #endif
     return wine_server_client_ptr( io );
-}
-
-#ifdef _WIN64
-typedef TEB32 WOW_TEB;
-typedef PEB32 WOW_PEB;
-static inline TEB64 *NtCurrentTeb64(void) { return NULL; }
-#else
-typedef TEB64 WOW_TEB;
-typedef PEB64 WOW_PEB;
-static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiBatchCount; }
-#endif
-
-extern WOW_PEB *wow_peb DECLSPEC_HIDDEN;
-
-static inline WOW_TEB *get_wow_teb( TEB *teb )
-{
-    return teb->WowTebOffset ? (WOW_TEB *)((char *)teb + teb->WowTebOffset) : NULL;
 }
 
 enum loadorder

@@ -626,7 +626,8 @@ static const struct wined3d_gpu_description gpu_description_table[] =
     {HW_VENDOR_INTEL,      CARD_INTEL_HD620,               "Intel(R) HD Graphics 620",                                  DRIVER_INTEL_HD4000,  3072},
     {HW_VENDOR_INTEL,      CARD_INTEL_HD630_1,             "Intel(R) HD Graphics 630",                                  DRIVER_INTEL_HD4000,  3072},
     {HW_VENDOR_INTEL,      CARD_INTEL_HD630_2,             "Intel(R) HD Graphics 630",                                  DRIVER_INTEL_HD4000,  3072},
-    {HW_VENDOR_INTEL,      CARD_INTEL_UHD630,              "Intel(R) UHD Graphics 630",                                 DRIVER_INTEL_HD4000,  3072},
+    {HW_VENDOR_INTEL,      CARD_INTEL_UHD630_1,            "Intel(R) UHD Graphics 630",                                 DRIVER_INTEL_HD4000,  3072},
+    {HW_VENDOR_INTEL,      CARD_INTEL_UHD630_2,            "Intel(R) UHD Graphics 630",                                 DRIVER_INTEL_HD4000,  3072},
 };
 
 static const struct driver_version_information *get_driver_version_info(enum wined3d_display_driver driver,
@@ -2812,15 +2813,6 @@ static const struct wined3d_state_entry_template misc_state_template_no3d[] =
     {STATE_RENDER(WINED3D_RS_LINEPATTERN),                {STATE_VDECL}},
     {STATE_RENDER(WINED3D_RS_ZFUNC),                      {STATE_VDECL}},
     {STATE_RENDER(WINED3D_RS_DITHERENABLE),               {STATE_VDECL}},
-    {STATE_RENDER(WINED3D_RS_POSITIONDEGREE),             {STATE_VDECL}},
-    {STATE_RENDER(WINED3D_RS_NORMALDEGREE),               {STATE_VDECL}},
-    {STATE_RENDER(WINED3D_RS_MINTESSELLATIONLEVEL),       {STATE_VDECL}},
-    {STATE_RENDER(WINED3D_RS_MAXTESSELLATIONLEVEL),       {STATE_VDECL}},
-    {STATE_RENDER(WINED3D_RS_ADAPTIVETESS_X),             {STATE_VDECL}},
-    {STATE_RENDER(WINED3D_RS_ADAPTIVETESS_Y),             {STATE_VDECL}},
-    {STATE_RENDER(WINED3D_RS_ADAPTIVETESS_Z),             {STATE_VDECL}},
-    {STATE_RENDER(WINED3D_RS_ADAPTIVETESS_W),             {STATE_VDECL}},
-    {STATE_RENDER(WINED3D_RS_ENABLEADAPTIVETESSELLATION), {STATE_VDECL}},
     {STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),       {STATE_VDECL}},
     /* Samplers */
     {STATE_SAMPLER(0),                                    {STATE_VDECL}},

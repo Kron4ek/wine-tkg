@@ -1905,7 +1905,6 @@ HRESULT CDECL wined3d_texture_update_desc(struct wined3d_texture *texture, unsig
     const struct wined3d_format *format;
     struct wined3d_device *device;
     unsigned int resource_size;
-    const struct wined3d *d3d;
     unsigned int slice_pitch;
     bool update_memory_only;
     bool create_dib = false;
@@ -1916,7 +1915,6 @@ HRESULT CDECL wined3d_texture_update_desc(struct wined3d_texture *texture, unsig
             sub_resource_idx);
 
     device = texture->resource.device;
-    d3d = device->wined3d;
     gl_info = &device->adapter->gl_info;
     d3d_info = &device->adapter->d3d_info;
     format = wined3d_get_format(device->adapter, format_id, texture->resource.bind_flags);
@@ -2014,7 +2012,8 @@ HRESULT CDECL wined3d_texture_update_desc(struct wined3d_texture *texture, unsig
         texture->resource.multisample_quality = multisample_quality;
         texture->resource.width = width;
         texture->resource.height = height;
-        if (!(texture->resource.access & WINED3D_RESOURCE_ACCESS_CPU) && d3d->flags & WINED3D_VIDMEM_ACCOUNTING)
+        if (!(texture->resource.access & WINED3D_RESOURCE_ACCESS_CPU)
+                && texture->resource.usage & WINED3DUSAGE_VIDMEM_ACCOUNTING)
             adapter_adjust_memory(device->adapter,  (INT64)texture->slice_pitch - texture->resource.size);
         texture->resource.size = texture->slice_pitch;
         sub_resource->size = texture->slice_pitch;
@@ -4354,7 +4353,7 @@ void * CDECL wined3d_texture_get_sub_resource_parent(struct wined3d_texture *tex
 }
 
 void CDECL wined3d_texture_set_sub_resource_parent(struct wined3d_texture *texture,
-        unsigned int sub_resource_idx, void *parent)
+        unsigned int sub_resource_idx, void *parent, const struct wined3d_parent_ops *parent_ops)
 {
     TRACE("texture %p, sub_resource_idx %u, parent %p.\n", texture, sub_resource_idx, parent);
 
@@ -4362,6 +4361,7 @@ void CDECL wined3d_texture_set_sub_resource_parent(struct wined3d_texture *textu
         return;
 
     texture->sub_resources[sub_resource_idx].parent = parent;
+    texture->sub_resources[sub_resource_idx].parent_ops = parent_ops;
 }
 
 HRESULT CDECL wined3d_texture_get_sub_resource_desc(const struct wined3d_texture *texture,

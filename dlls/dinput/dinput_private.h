@@ -78,7 +78,6 @@ extern void dinput_keyboard_rawinput_hook( IDirectInputDevice8W *iface, WPARAM w
 extern void check_dinput_events(void) DECLSPEC_HIDDEN;
 
 extern HRESULT _configure_devices(IDirectInput8W *iface, LPDICONFIGUREDEVICESCALLBACK lpdiCallback, LPDICONFIGUREDEVICESPARAMSW lpdiCDParams, DWORD dwFlags, LPVOID pvRefData) DECLSPEC_HIDDEN;
-extern HRESULT save_mapping_settings(IDirectInputDevice8W *iface, LPDIACTIONFORMATW lpdiaf, LPCWSTR lpszUsername) DECLSPEC_HIDDEN;
 
 extern WCHAR* get_mapping_path(const WCHAR *device, const WCHAR *username) DECLSPEC_HIDDEN;
 extern DWORD get_device_type(DWORD version, BOOL is_joystick) DECLSPEC_HIDDEN;

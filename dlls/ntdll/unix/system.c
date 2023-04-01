@@ -2705,11 +2705,7 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
     }
 
     case SystemCpuInformation:  /* 1 */
-        if (size >= (len = sizeof(cpu_info)))
-        {
-            if (!info) ret = STATUS_ACCESS_VIOLATION;
-            else memcpy(info, &cpu_info, len);
-        }
+        if (size >= (len = sizeof(cpu_info))) memcpy(info, &cpu_info, len);
         else ret = STATUS_INFO_LENGTH_MISMATCH;
         break;
 
@@ -3132,7 +3128,7 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
     {
         SYSTEM_BASIC_INFORMATION sbi;
 
-        virtual_get_system_info( &sbi, !!NtCurrentTeb()->WowTebOffset );
+        virtual_get_system_info( &sbi, is_wow64() );
         len = sizeof(sbi);
         if (size == len)
         {

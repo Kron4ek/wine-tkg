@@ -252,6 +252,64 @@ static void pres_cos(float **args, unsigned int n, const struct preshader_instr 
         retval[i] = cos(args[0][i]);
 }
 
+static void pres_asin(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    float *retval = args[1];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+        retval[i] = asinf(args[0][i]);
+}
+
+static void pres_acos(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    float *retval = args[1];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+        retval[i] = acosf(args[0][i]);
+}
+
+static void pres_atan(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    float *retval = args[1];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+        retval[i] = atanf(args[0][i]);
+}
+
+static void pres_ineg(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    int *arg1 = (int *)args[0];
+    float *retval = args[1];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        int v = -arg1[i];
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_itof(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    float *retval = args[1];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+        retval[i] = *(int *)&args[0][i];
+}
+
+static void pres_utof(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    float *retval = args[1];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+        retval[i] = *(unsigned int *)&args[0][i];
+}
+
 static void pres_ftou(float **args, unsigned int n, const struct preshader_instr *instr)
 {
     float *retval = args[1];
@@ -312,6 +370,15 @@ static void pres_mul(float **args, unsigned int n, const struct preshader_instr 
         retval[i] = args[0][instr->scalar ? 0 : i] * args[1][i];
 }
 
+static void pres_atan2(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+        retval[i] = atan2f(args[0][instr->scalar ? 0 : i], args[1][i]);
+}
+
 static void pres_div(float **args, unsigned int n, const struct preshader_instr *instr)
 {
     float *retval = args[2];
@@ -319,6 +386,96 @@ static void pres_div(float **args, unsigned int n, const struct preshader_instr 
 
     for (i = 0; i < instr->comp_count; ++i)
         retval[i] = args[0][instr->scalar ? 0 : i] / args[1][i];
+}
+
+static void pres_iadd(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    int *arg1 = (int *)args[0];
+    int *arg2 = (int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        int v = arg1[instr->scalar ? 0 : i] + arg2[i];
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_udiv(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    unsigned int *arg1 = (unsigned int *)args[0];
+    unsigned int *arg2 = (unsigned int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        unsigned int v = arg2[i] ? arg1[instr->scalar ? 0 : i] / arg2[i] : UINT_MAX;
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_imin(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    int *arg1 = (int *)args[0], *arg2 = (int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        int v = min(arg1[instr->scalar ? 0 : i], arg2[i]);
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_imax(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    int *arg1 = (int *)args[0], *arg2 = (int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        int v = max(arg1[instr->scalar ? 0 : i], arg2[i]);
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_umin(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    unsigned int *arg1 = (unsigned int *)args[0], *arg2 = (unsigned int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        unsigned int v = min(arg1[instr->scalar ? 0 : i], arg2[i]);
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_umax(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    unsigned int *arg1 = (unsigned int *)args[0], *arg2 = (unsigned int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        unsigned int v = max(arg1[instr->scalar ? 0 : i], arg2[i]);
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_movc(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    float *arg1 = args[0], *arg2 = args[1], *arg3 = args[2];
+    float *retval = args[3];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+        retval[i] = arg1[i] ? arg2[i] : arg3[i];
 }
 
 struct preshader_op_info
@@ -335,13 +492,27 @@ static const struct preshader_op_info preshader_ops[] =
     { 0x104, "frc",  pres_frc  },
     { 0x108, "sin",  pres_sin  },
     { 0x109, "cos",  pres_cos  },
+    { 0x10a, "asin", pres_asin },
+    { 0x10b, "acos", pres_acos },
+    { 0x10c, "atan", pres_atan },
+    { 0x120, "ineg", pres_ineg },
+    { 0x130, "itof", pres_itof },
+    { 0x131, "utof", pres_utof },
     { 0x133, "ftou", pres_ftou },
     { 0x137, "ftob", pres_ftob },
     { 0x200, "min",  pres_min  },
     { 0x201, "max",  pres_max  },
     { 0x204, "add",  pres_add  },
     { 0x205, "mul",  pres_mul  },
+    { 0x206, "atan2",pres_atan2},
     { 0x208, "div",  pres_div  },
+    { 0x216, "iadd", pres_iadd },
+    { 0x21a, "udiv", pres_udiv },
+    { 0x21d, "imin", pres_imin },
+    { 0x21e, "imax", pres_imax },
+    { 0x21f, "umin", pres_umin },
+    { 0x220, "umax", pres_umax },
+    { 0x301, "movc", pres_movc },
 };
 
 static int __cdecl preshader_op_compare(const void *a, const void *b)

@@ -180,6 +180,18 @@ typedef struct
     void *event;
 } _StructuredTaskCollection;
 
+typedef enum
+{
+    TASK_COLLECTION_SUCCESS = 1,
+    TASK_COLLECTION_CANCELLED
+} _TaskCollectionStatus;
+
+typedef enum
+{
+    STRUCTURED_TASK_COLLECTION_CANCELLED   = 0x2,
+    STRUCTURED_TASK_COLLECTION_STATUS_MASK = 0x7
+} _StructuredTaskCollectionStatusBits;
+
 typedef struct _UnrealizedChore
 {
     const vtable_ptr *vtable;
@@ -1955,6 +1967,64 @@ struct execute_chore_data {
     _StructuredTaskCollection *task_collection;
 };
 
+/* ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAAXXZ */
+/* ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAEXXZ */
+/* ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QEAAXXZ */
+DEFINE_THISCALL_WRAPPER(_StructuredTaskCollection__Cancel, 4)
+void __thiscall _StructuredTaskCollection__Cancel(
+        _StructuredTaskCollection *this)
+{
+    ThreadScheduler *scheduler;
+    void *prev_exception, *new_exception;
+    struct scheduled_chore *sc, *next;
+    LONG removed = 0;
+    LONG prev_finished, new_finished;
+
+    TRACE("(%p)\n", this);
+
+    if (!this->context)
+        this->context = get_current_context();
+    scheduler = get_thread_scheduler_from_context(this->context);
+    if (!scheduler)
+        return;
+
+    new_exception = this->exception;
+    do {
+        prev_exception = new_exception;
+        if ((ULONG_PTR)prev_exception & STRUCTURED_TASK_COLLECTION_CANCELLED)
+            return;
+        new_exception = (void*)((ULONG_PTR)prev_exception |
+                STRUCTURED_TASK_COLLECTION_CANCELLED);
+    } while ((new_exception = InterlockedCompareExchangePointer(
+                    &this->exception, new_exception, prev_exception))
+             != prev_exception);
+
+    EnterCriticalSection(&scheduler->cs);
+    LIST_FOR_EACH_ENTRY_SAFE(sc, next, &scheduler->scheduled_chores,
+                             struct scheduled_chore, entry) {
+        if (sc->chore->task_collection != this)
+            continue;
+        sc->chore->task_collection = NULL;
+        list_remove(&sc->entry);
+        removed++;
+        operator_delete(sc);
+    }
+    LeaveCriticalSection(&scheduler->cs);
+    if (!removed)
+        return;
+
+    new_finished = this->finished;
+    do {
+        prev_finished = new_finished;
+        if (prev_finished == FINISHED_INITIAL)
+            new_finished = removed;
+        else
+            new_finished = prev_finished + removed;
+    } while ((new_finished = InterlockedCompareExchange(&this->finished,
+                    new_finished, prev_finished)) != prev_finished);
+    RtlWakeAddressAll((LONG*)&this->finished);
+}
+
 static LONG CALLBACK execute_chore_except(EXCEPTION_POINTERS *pexc, void *_data)
 {
     struct execute_chore_data *data = _data;
@@ -1964,13 +2034,15 @@ static LONG CALLBACK execute_chore_except(EXCEPTION_POINTERS *pexc, void *_data)
     if (pexc->ExceptionRecord->ExceptionCode != CXX_EXCEPTION)
         return EXCEPTION_CONTINUE_SEARCH;
 
+    _StructuredTaskCollection__Cancel(data->task_collection);
+
     ptr = operator_new(sizeof(*ptr));
     __ExceptionPtrCreate(ptr);
     exception_ptr_from_record(ptr, pexc->ExceptionRecord);
 
     new_exception = data->task_collection->exception;
     do {
-        if ((ULONG_PTR)new_exception & ~0x7) {
+        if ((ULONG_PTR)new_exception & ~STRUCTURED_TASK_COLLECTION_STATUS_MASK) {
             __ExceptionPtrDestroy(ptr);
             operator_delete(ptr);
             break;
@@ -1993,7 +2065,8 @@ static void execute_chore(_UnrealizedChore *chore,
 
     __TRY
     {
-        if (!((ULONG_PTR)task_collection->exception & ~0x7) && chore->chore_proc)
+        if (!((ULONG_PTR)task_collection->exception & ~STRUCTURED_TASK_COLLECTION_STATUS_MASK) &&
+                chore->chore_proc)
             chore->chore_proc(chore);
     }
     __EXCEPT_CTX(execute_chore_except, &data)
@@ -2005,7 +2078,7 @@ static void execute_chore(_UnrealizedChore *chore,
 static void CALLBACK chore_wrapper_finally(BOOL normal, void *data)
 {
     _UnrealizedChore *chore = data;
-    LONG prev_finished, new_finished;
+    LONG count, prev_finished, new_finished;
     volatile LONG *ptr;
 
     TRACE("(%u %p)\n", normal, data);
@@ -2013,6 +2086,7 @@ static void CALLBACK chore_wrapper_finally(BOOL normal, void *data)
     if (!chore->task_collection)
         return;
     ptr = &chore->task_collection->finished;
+    count = chore->task_collection->count;
     chore->task_collection = NULL;
 
     do {
@@ -2023,7 +2097,8 @@ static void CALLBACK chore_wrapper_finally(BOOL normal, void *data)
             new_finished = prev_finished + 1;
     } while (InterlockedCompareExchange(ptr, new_finished, prev_finished)
              != prev_finished);
-    RtlWakeAddressSingle((LONG*)ptr);
+    if (new_finished >= count)
+        RtlWakeAddressSingle((LONG*)ptr);
 }
 
 static void __cdecl chore_wrapper(_UnrealizedChore *chore)
@@ -2159,11 +2234,12 @@ static void CALLBACK exception_ptr_rethrow_finally(BOOL normal, void *data)
 /* ?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QAA?AW4_TaskCollectionStatus@23@PAV_UnrealizedChore@23@@Z */
 /* ?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QAG?AW4_TaskCollectionStatus@23@PAV_UnrealizedChore@23@@Z */
 /* ?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QEAA?AW4_TaskCollectionStatus@23@PEAV_UnrealizedChore@23@@Z */
-/*_TaskCollectionStatus*/int __stdcall _StructuredTaskCollection__RunAndWait(
+_TaskCollectionStatus __stdcall _StructuredTaskCollection__RunAndWait(
         _StructuredTaskCollection *this, _UnrealizedChore *chore)
 {
     LONG expected, val;
     ULONG_PTR exception;
+    exception_ptr *ep;
 
     TRACE("(%p %p)\n", this, chore);
 
@@ -2191,8 +2267,8 @@ static void CALLBACK exception_ptr_rethrow_finally(BOOL normal, void *data)
     this->count = 0;
 
     exception = (ULONG_PTR)this->exception;
-    if (exception & ~0x7) {
-        exception_ptr *ep = (exception_ptr*)(exception & ~0x7);
+    ep = (exception_ptr*)(exception & ~STRUCTURED_TASK_COLLECTION_STATUS_MASK);
+    if (ep) {
         this->exception = 0;
         __TRY
         {
@@ -2200,17 +2276,9 @@ static void CALLBACK exception_ptr_rethrow_finally(BOOL normal, void *data)
         }
         __FINALLY_CTX(exception_ptr_rethrow_finally, ep)
     }
-    return 1;
-}
-
-/* ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAAXXZ */
-/* ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAEXXZ */
-/* ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QEAAXXZ */
-DEFINE_THISCALL_WRAPPER(_StructuredTaskCollection__Cancel, 4)
-void __thiscall _StructuredTaskCollection__Cancel(
-        _StructuredTaskCollection *this)
-{
-    FIXME("(%p): stub!\n", this);
+    if (exception & STRUCTURED_TASK_COLLECTION_CANCELLED)
+        return TASK_COLLECTION_CANCELLED;
+    return TASK_COLLECTION_SUCCESS;
 }
 
 /* ?_IsCanceling@_StructuredTaskCollection@details@Concurrency@@QAA_NXZ */
@@ -2220,8 +2288,16 @@ DEFINE_THISCALL_WRAPPER(_StructuredTaskCollection__IsCanceling, 4)
 bool __thiscall _StructuredTaskCollection__IsCanceling(
         _StructuredTaskCollection *this)
 {
-    FIXME("(%p): stub!\n", this);
-    return FALSE;
+    TRACE("(%p)\n", this);
+    return !!((ULONG_PTR)this->exception & STRUCTURED_TASK_COLLECTION_CANCELLED);
+}
+
+/* ?_CheckTaskCollection@_UnrealizedChore@details@Concurrency@@IAEXXZ */
+/* ?_CheckTaskCollection@_UnrealizedChore@details@Concurrency@@IEAAXXZ */
+DEFINE_THISCALL_WRAPPER(_UnrealizedChore__CheckTaskCollection, 4)
+void __thiscall _UnrealizedChore__CheckTaskCollection(_UnrealizedChore *this)
+{
+    FIXME("() stub\n");
 }
 
 /* ??0critical_section@Concurrency@@QAE@XZ */

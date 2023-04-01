@@ -290,7 +290,10 @@ ULONG CDECL ldap_set_optionA( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_ERROR_NUMBER:
     case WLDAP32_LDAP_OPT_PROTOCOL_VERSION:
     case WLDAP32_LDAP_OPT_REFERRALS:
+    case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
+    case WLDAP32_LDAP_OPT_SERVER_CERTIFICATE:
     case WLDAP32_LDAP_OPT_SIZELIMIT:
+    case WLDAP32_LDAP_OPT_SSL:
     case WLDAP32_LDAP_OPT_TIMELIMIT:
         return ldap_set_optionW( ld, option, value );
 
@@ -324,16 +327,13 @@ ULONG CDECL ldap_set_optionA( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_PROMPT_CREDENTIALS:
     case WLDAP32_LDAP_OPT_REF_DEREF_CONN_PER_MSG:
     case WLDAP32_LDAP_OPT_REFERRAL_CALLBACK:
-    case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
     case WLDAP32_LDAP_OPT_ROOTDSE_CACHE:
     case WLDAP32_LDAP_OPT_SASL_METHOD:
     case WLDAP32_LDAP_OPT_SECURITY_CONTEXT:
     case WLDAP32_LDAP_OPT_SEND_TIMEOUT:
-    case WLDAP32_LDAP_OPT_SERVER_CERTIFICATE:
     case WLDAP32_LDAP_OPT_SERVER_ERROR:
     case WLDAP32_LDAP_OPT_SERVER_EXT_ERROR:
     case WLDAP32_LDAP_OPT_SIGN:
-    case WLDAP32_LDAP_OPT_SSL:
     case WLDAP32_LDAP_OPT_SSL_INFO:
     case WLDAP32_LDAP_OPT_SSPI_FLAGS:
     case WLDAP32_LDAP_OPT_TCP_KEEPALIVE:
@@ -439,6 +439,14 @@ ULONG CDECL ldap_set_optionW( LDAP *ld, int option, void *value )
         }
         return map_error( ldap_set_option( CTX(ld), option, value ) );
     }
+    case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
+        FIXME( "ignoring referral hop limit\n" );
+        return WLDAP32_LDAP_SUCCESS;
+
+    case WLDAP32_LDAP_OPT_SERVER_CERTIFICATE:
+        CERT_CALLBACK(ld) = value;
+        return WLDAP32_LDAP_SUCCESS;
+
     case WLDAP32_LDAP_OPT_DEREF:
     case WLDAP32_LDAP_OPT_DESC:
     case WLDAP32_LDAP_OPT_ERROR_NUMBER:
@@ -446,6 +454,36 @@ ULONG CDECL ldap_set_optionW( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_SIZELIMIT:
     case WLDAP32_LDAP_OPT_TIMELIMIT:
         return map_error( ldap_set_option( CTX(ld), option, value ) );
+
+    case WLDAP32_LDAP_OPT_SSL:
+    {
+        BOOL turn_on;
+        char *uri, *new_uri;
+
+        if (value == WLDAP32_LDAP_OPT_ON)
+            turn_on = TRUE;
+        else if (value == WLDAP32_LDAP_OPT_OFF)
+            turn_on = FALSE;
+        else if (*(ULONG *)value == 1)
+            turn_on = TRUE;
+        else if (*(ULONG *)value == 0)
+            turn_on = FALSE;
+        else
+            return WLDAP32_LDAP_PARAM_ERROR;
+
+        ret = ldap_get_option( CTX(ld), LDAP_OPT_URI, &uri );
+        if (ret != LDAP_SUCCESS) return map_error( ret );
+
+        if (turn_on)
+            new_uri = strreplace( uri, "ldap://", "ldaps://" );
+        else
+            new_uri = strreplace( uri, "ldaps://", "ldap://" );
+
+        ret = map_error( ldap_set_option( CTX(ld), LDAP_OPT_URI, new_uri ) );
+        ldap_memfree(uri);
+        free(new_uri);
+        return ret;
+    }
 
     case WLDAP32_LDAP_OPT_CACHE_ENABLE:
     case WLDAP32_LDAP_OPT_CACHE_FN_PTRS:
@@ -477,16 +515,13 @@ ULONG CDECL ldap_set_optionW( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_PROMPT_CREDENTIALS:
     case WLDAP32_LDAP_OPT_REF_DEREF_CONN_PER_MSG:
     case WLDAP32_LDAP_OPT_REFERRAL_CALLBACK:
-    case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
     case WLDAP32_LDAP_OPT_ROOTDSE_CACHE:
     case WLDAP32_LDAP_OPT_SASL_METHOD:
     case WLDAP32_LDAP_OPT_SECURITY_CONTEXT:
     case WLDAP32_LDAP_OPT_SEND_TIMEOUT:
-    case WLDAP32_LDAP_OPT_SERVER_CERTIFICATE:
     case WLDAP32_LDAP_OPT_SERVER_ERROR:
     case WLDAP32_LDAP_OPT_SERVER_EXT_ERROR:
     case WLDAP32_LDAP_OPT_SIGN:
-    case WLDAP32_LDAP_OPT_SSL:
     case WLDAP32_LDAP_OPT_SSL_INFO:
     case WLDAP32_LDAP_OPT_SSPI_FLAGS:
     case WLDAP32_LDAP_OPT_TCP_KEEPALIVE:

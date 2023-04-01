@@ -322,7 +322,6 @@ static void test_query_cpu(void)
     {
         ok( sci.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL, "ProcessorArchitecture wrong %x\n",
             sci.ProcessorArchitecture );
-        todo_wine
         ok( sci2.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64 ||
             sci2.ProcessorArchitecture == PROCESSOR_ARCHITECTURE_ARM64,
             "ProcessorArchitecture wrong %x\n", sci2.ProcessorArchitecture );
@@ -2131,7 +2130,7 @@ static void subtest_query_process_debug_port_custom_dacl(int argc, char **argv, 
     InitializeObjectAttributes(&attr, NULL, 0, NULL, &sd);
     status = NtCreateDebugObject(&debug_obj, MAXIMUM_ALLOWED, &attr, DEBUG_KILL_ON_CLOSE);
     ok(SUCCEEDED(status), "Failed to create debug object: %#010lx\n", status);
-    if (!SUCCEEDED(status)) return;
+    if (FAILED(status)) return;
 
     old_debug_obj = pDbgUiGetThreadDebugObject();
     pDbgUiSetThreadDebugObject(debug_obj);

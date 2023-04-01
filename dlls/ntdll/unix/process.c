@@ -1151,15 +1151,13 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
                             pbi.BasePriority = reply->priority;
                             pbi.UniqueProcessId = reply->pid;
                             pbi.InheritedFromUniqueProcessId = reply->ppid;
-#ifndef _WIN64
-                            if (is_wow64)
+                            if (is_old_wow64())
                             {
                                 if (reply->machine != native_machine)
                                     pbi.PebBaseAddress = (PEB *)((char *)pbi.PebBaseAddress + 0x1000);
                                 else
                                     pbi.PebBaseAddress = NULL;
                             }
-#endif
                         }
                     }
                     SERVER_END_REQ;
@@ -1466,7 +1464,7 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
         if (size != len) ret = STATUS_INFO_LENGTH_MISMATCH;
         else if (!info) ret = STATUS_ACCESS_VIOLATION;
         else if (!handle) ret = STATUS_INVALID_HANDLE;
-        else if (handle == GetCurrentProcess()) *(ULONG_PTR *)info = !!NtCurrentTeb()->WowTebOffset;
+        else if (handle == GetCurrentProcess()) *(ULONG_PTR *)info = is_wow64();
         else
         {
             ULONG_PTR val = 0;
@@ -1508,7 +1506,7 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
         len = sizeof(ULONG);
         if (size != len)
             ret = STATUS_INFO_LENGTH_MISMATCH;
-        else if (is_win64 && !NtCurrentTeb()->WowTebOffset)
+        else if (is_win64 && !is_wow64())
             *(ULONG *)info = MEM_EXECUTE_OPTION_DISABLE |
                              MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION |
                              MEM_EXECUTE_OPTION_PERMANENT;
@@ -1671,7 +1669,7 @@ NTSTATUS WINAPI NtSetInformationProcess( HANDLE handle, PROCESSINFOCLASS class, 
         break;
 
     case ProcessExecuteFlags:
-        if ((is_win64 && !NtCurrentTeb()->WowTebOffset) || size != sizeof(ULONG)) return STATUS_INVALID_PARAMETER;
+        if ((is_win64 && !is_wow64()) || size != sizeof(ULONG)) return STATUS_INVALID_PARAMETER;
         if (execute_flags & MEM_EXECUTE_OPTION_PERMANENT) return STATUS_ACCESS_DENIED;
         else
         {

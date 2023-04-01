@@ -188,14 +188,14 @@
 @ cdecl wined3d_rendertarget_view_get_resource(ptr)
 @ cdecl wined3d_rendertarget_view_get_sub_resource_parent(ptr)
 @ cdecl wined3d_rendertarget_view_incref(ptr)
-@ cdecl wined3d_rendertarget_view_set_parent(ptr ptr)
+@ cdecl wined3d_rendertarget_view_set_parent(ptr ptr ptr)
 
 @ cdecl wined3d_resource_get_desc(ptr ptr)
 @ cdecl wined3d_resource_get_parent(ptr)
 @ cdecl wined3d_resource_get_priority(ptr)
 @ cdecl wined3d_resource_map(ptr long ptr ptr long)
 @ cdecl wined3d_resource_preload(ptr)
-@ cdecl wined3d_resource_set_parent(ptr ptr)
+@ cdecl wined3d_resource_set_parent(ptr ptr ptr)
 @ cdecl wined3d_resource_set_priority(ptr long)
 @ cdecl wined3d_resource_unmap(ptr long)
 
@@ -307,7 +307,7 @@
 @ cdecl wined3d_texture_set_color_key(ptr long ptr)
 @ cdecl wined3d_texture_set_lod(ptr long)
 @ cdecl wined3d_texture_set_overlay_position(ptr long long long)
-@ cdecl wined3d_texture_set_sub_resource_parent(ptr long ptr)
+@ cdecl wined3d_texture_set_sub_resource_parent(ptr long ptr ptr)
 @ cdecl wined3d_texture_update_desc(ptr long long long long long long ptr long)
 @ cdecl wined3d_texture_update_overlay(ptr long ptr ptr long ptr long)
 

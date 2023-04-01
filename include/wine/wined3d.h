@@ -927,6 +927,7 @@ enum wined3d_memory_segment_group
 #define WINED3DUSAGE_STATICDECL                                 0x04000000
 #define WINED3DUSAGE_OVERLAY                                    0x08000000
 #define WINED3DUSAGE_MANAGED                                    0x20000000
+#define WINED3DUSAGE_VIDMEM_ACCOUNTING                          0x40000000
 
 #define WINED3DUSAGE_QUERY_GENMIPMAP                            0x00000400
 #define WINED3DUSAGE_QUERY_LEGACYBUMPMAP                        0x00008000
@@ -1311,7 +1312,6 @@ enum wined3d_memory_segment_group
 
 #define WINED3D_LEGACY_DEPTH_BIAS                               0x00000001
 #define WINED3D_NO3D                                            0x00000002
-#define WINED3D_VIDMEM_ACCOUNTING                               0x00000004
 #define WINED3D_PRESENT_CONVERSION                              0x00000008
 #define WINED3D_RESTORE_MODE_ON_ACTIVATE                        0x00000010
 #define WINED3D_FOCUS_MESSAGES                                  0x00000020
@@ -2681,7 +2681,8 @@ unsigned int __cdecl wined3d_resource_get_priority(const struct wined3d_resource
 HRESULT __cdecl wined3d_resource_map(struct wined3d_resource *resource, unsigned int sub_resource_idx,
         struct wined3d_map_desc *map_desc, const struct wined3d_box *box, uint32_t flags);
 void __cdecl wined3d_resource_preload(struct wined3d_resource *resource);
-void __cdecl wined3d_resource_set_parent(struct wined3d_resource *resource, void *parent);
+void __cdecl wined3d_resource_set_parent(struct wined3d_resource *resource,
+        void *parent, const struct wined3d_parent_ops *parent_ops);
 unsigned int __cdecl wined3d_resource_set_priority(struct wined3d_resource *resource, unsigned int priority);
 HRESULT __cdecl wined3d_resource_unmap(struct wined3d_resource *resource, unsigned int sub_resource_idx);
 
@@ -2696,7 +2697,8 @@ void * __cdecl wined3d_rendertarget_view_get_parent(const struct wined3d_rendert
 struct wined3d_resource * __cdecl wined3d_rendertarget_view_get_resource(const struct wined3d_rendertarget_view *view);
 void * __cdecl wined3d_rendertarget_view_get_sub_resource_parent(const struct wined3d_rendertarget_view *view);
 ULONG __cdecl wined3d_rendertarget_view_incref(struct wined3d_rendertarget_view *view);
-void __cdecl wined3d_rendertarget_view_set_parent(struct wined3d_rendertarget_view *view, void *parent);
+void __cdecl wined3d_rendertarget_view_set_parent(struct wined3d_rendertarget_view *view,
+        void *parent, const struct wined3d_parent_ops *parent_ops);
 
 HRESULT __cdecl wined3d_sampler_create(struct wined3d_device *device, const struct wined3d_sampler_desc *desc,
         void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_sampler **sampler);
@@ -2868,7 +2870,7 @@ unsigned int __cdecl wined3d_texture_set_lod(struct wined3d_texture *texture, un
 HRESULT __cdecl wined3d_texture_set_overlay_position(struct wined3d_texture *texture,
         unsigned int sub_resource_idx, LONG x, LONG y);
 void __cdecl wined3d_texture_set_sub_resource_parent(struct wined3d_texture *texture,
-        unsigned int sub_resource_idx, void *parent);
+        unsigned int sub_resource_idx, void *parent, const struct wined3d_parent_ops *parent_ops);
 HRESULT __cdecl wined3d_texture_update_desc(struct wined3d_texture *texture, unsigned int sub_resource_idx,
         UINT width, UINT height, enum wined3d_format_id format_id,
         enum wined3d_multisample_type multisample_type, UINT multisample_quality,

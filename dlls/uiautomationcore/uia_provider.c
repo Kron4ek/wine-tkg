@@ -28,12 +28,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(uiautomation);
 
 DEFINE_GUID(SID_AccFromDAWrapper, 0x33f139ee, 0xe509, 0x47f7, 0xbf,0x39, 0x83,0x76,0x44,0xf7,0x45,0x76);
 
-static void variant_init_i4(VARIANT *v, int val)
-{
-    V_VT(v) = VT_I4;
-    V_I4(v) = val;
-}
-
 static BOOL msaa_check_acc_state(IAccessible *acc, VARIANT cid, ULONG flag)
 {
     HRESULT hr;
@@ -676,6 +670,45 @@ HRESULT WINAPI msaa_provider_GetPropertyValue(IRawElementProviderSimple *iface,
         break;
     }
 
+    case UIA_IsOffscreenPropertyId:
+    {
+        RECT rect[2] = { 0 };
+        RECT intersect_rect;
+        LONG width, height;
+
+        variant_init_bool(ret_val, FALSE);
+        if (msaa_check_acc_state(msaa_prov->acc, msaa_prov->cid, STATE_SYSTEM_OFFSCREEN))
+        {
+            variant_init_bool(ret_val, TRUE);
+            break;
+        }
+
+        hr = IAccessible_accLocation(msaa_prov->acc, &rect[0].left, &rect[0].top, &width, &height, msaa_prov->cid);
+        if (FAILED(hr))
+            break;
+
+        rect[0].right = rect[0].left + width;
+        rect[0].bottom = rect[0].top + height;
+        SetLastError(NOERROR);
+        if (!GetClientRect(msaa_prov->hwnd, &rect[1]))
+        {
+            if (GetLastError() == ERROR_INVALID_WINDOW_HANDLE)
+                variant_init_bool(ret_val, TRUE);
+            break;
+        }
+
+        SetLastError(NOERROR);
+        if (!MapWindowPoints(msaa_prov->hwnd, NULL, (POINT *)&rect[1], 2) && GetLastError())
+        {
+            if (GetLastError() == ERROR_INVALID_WINDOW_HANDLE)
+                variant_init_bool(ret_val, TRUE);
+            break;
+        }
+
+        variant_init_bool(ret_val, !IntersectRect(&intersect_rect, &rect[0], &rect[1]));
+        break;
+    }
+
     default:
         FIXME("Unimplemented propertyId %d\n", prop_id);
         break;
@@ -1033,8 +1066,19 @@ static HRESULT WINAPI msaa_acc_provider_get_Description(ILegacyIAccessibleProvid
 
 static HRESULT WINAPI msaa_acc_provider_get_Role(ILegacyIAccessibleProvider *iface, DWORD *out_role)
 {
-    FIXME("%p, %p: stub!\n", iface, out_role);
-    return E_NOTIMPL;
+    struct msaa_provider *msaa_prov = impl_from_msaa_acc_provider(iface);
+    HRESULT hr;
+    VARIANT v;
+
+    TRACE("%p, %p\n", iface, out_role);
+
+    *out_role = 0;
+    VariantInit(&v);
+    hr = IAccessible_get_accRole(msaa_prov->acc, msaa_prov->cid, &v);
+    if (SUCCEEDED(hr) && V_VT(&v) == VT_I4)
+        *out_role = V_I4(&v);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI msaa_acc_provider_get_State(ILegacyIAccessibleProvider *iface, DWORD *out_state)

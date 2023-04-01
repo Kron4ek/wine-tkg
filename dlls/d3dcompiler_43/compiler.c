@@ -462,6 +462,8 @@ HRESULT WINAPI D3DCompile2(const void *data, SIZE_T data_size, const char *filen
     if (secondary_flags)
         FIXME("Ignoring secondary flags %#x.\n", secondary_flags);
 
+    if (shader_blob)
+        *shader_blob = NULL;
     if (messages_blob)
         *messages_blob = NULL;
 
@@ -550,21 +552,25 @@ HRESULT WINAPI D3DCompile2(const void *data, SIZE_T data_size, const char *filen
             }
             memcpy(ID3D10Blob_GetBufferPointer(*messages_blob), messages, size);
         }
-        else
-            vkd3d_shader_free_messages(messages);
+
+        vkd3d_shader_free_messages(messages);
     }
 
-    if (!ret)
+    if (ret)
+        return hresult_from_vkd3d_result(ret);
+
+    if (!shader_blob)
     {
-        if (FAILED(hr = D3DCreateBlob(byte_code.size, shader_blob)))
-        {
-            vkd3d_shader_free_shader_code(&byte_code);
-            return hr;
-        }
-        memcpy(ID3D10Blob_GetBufferPointer(*shader_blob), byte_code.code, byte_code.size);
+        vkd3d_shader_free_shader_code(&byte_code);
+        return S_OK;
     }
 
-    return hresult_from_vkd3d_result(ret);
+    if (SUCCEEDED(hr = D3DCreateBlob(byte_code.size, shader_blob)))
+        memcpy(ID3D10Blob_GetBufferPointer(*shader_blob), byte_code.code, byte_code.size);
+
+    vkd3d_shader_free_shader_code(&byte_code);
+
+    return hr;
 }
 
 HRESULT WINAPI D3DCompile(const void *data, SIZE_T data_size, const char *filename,

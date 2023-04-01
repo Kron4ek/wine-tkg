@@ -1208,7 +1208,8 @@ HKL WINAPI NtUserActivateKeyboardLayout( HKL layout, UINT flags )
         return 0;
     }
 
-    if (NtQueryDefaultLocale( TRUE, &locale ) || LOWORD(layout) != locale)
+    if (LOWORD(layout) != MAKELANGID(LANG_INVARIANT, SUBLANG_DEFAULT) &&
+        (NtQueryDefaultLocale( TRUE, &locale ) || LOWORD(layout) != locale))
     {
         RtlSetLastWin32Error( ERROR_CALL_NOT_IMPLEMENTED );
         FIXME_(keyboard)( "Changing user locale is not supported\n" );
@@ -1219,11 +1220,13 @@ HKL WINAPI NtUserActivateKeyboardLayout( HKL layout, UINT flags )
         return 0;
 
     old_layout = info->kbd_layout;
-    info->kbd_layout = layout;
     if (old_layout != layout)
     {
+        HWND ime_hwnd = get_default_ime_window( 0 );
         const NLS_LOCALE_DATA *data;
         CHARSETINFO cs = {0};
+
+        if (ime_hwnd) send_message( ime_hwnd, WM_IME_INTERNAL, IME_INTERNAL_HKL_DEACTIVATE, HandleToUlong(old_layout) );
 
         if (HIWORD(layout) & 0x8000)
             FIXME( "Aliased keyboard layout not yet implemented\n" );
@@ -1232,7 +1235,11 @@ HKL WINAPI NtUserActivateKeyboardLayout( HKL layout, UINT flags )
         else
             translate_charset_info( ULongToPtr(data->idefaultansicodepage), &cs, TCI_SRCCODEPAGE );
 
+        info->kbd_layout = layout;
         info->kbd_layout_id = 0;
+
+        if (ime_hwnd) send_message( ime_hwnd, WM_IME_INTERNAL, IME_INTERNAL_HKL_ACTIVATE, HandleToUlong(layout) );
+
         if ((focus = get_focus()) && get_window_thread( focus, NULL ) == GetCurrentThreadId())
             send_message( focus, WM_INPUTLANGCHANGE, cs.ciCharset, (LPARAM)layout );
     }
@@ -2453,7 +2460,7 @@ BOOL WINAPI NtUserGetPointerInfoList( UINT32 id, POINTER_INPUT_TYPE type, UINT_P
                                       UINT32 *entry_count, UINT32 *pointer_count, void *pointer_info )
 {
     FIXME( "id %#x, type %#x, unk0 %#zx, unk1 %#zx, size %#zx, entry_count %p, pointer_count %p, pointer_info %p stub!\n",
-           id, (int)type, unk0, unk1, (size_t)size, entry_count, pointer_count, pointer_info );
+           id, (int)type, (size_t)unk0, (size_t)unk1, (size_t)size, entry_count, pointer_count, pointer_info );
     RtlSetLastWin32Error( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }

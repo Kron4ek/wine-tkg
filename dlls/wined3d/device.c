@@ -4117,7 +4117,9 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                 case WINED3D_RS_ADAPTIVETESS_Z:
                 case WINED3D_RS_ADAPTIVETESS_W:
                     set_depth_bounds = true;
-                    wined3d_device_set_render_state(device, idx, state->rs[idx]);
+                    break;
+
+                case WINED3D_RS_ADAPTIVETESS_Y:
                     break;
 
                 case WINED3D_RS_ANTIALIAS:
@@ -4286,6 +4288,33 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                     break;
 
                 case WINED3D_RS_INDEXEDVERTEXBLENDENABLE:
+                    break;
+
+                case WINED3D_RS_TWEENFACTOR:
+                    break;
+
+                case WINED3D_RS_POSITIONDEGREE:
+                    if (state->rs[WINED3D_RS_POSITIONDEGREE] != WINED3D_DEGREE_CUBIC)
+                        FIXME("WINED3D_RS_POSITIONDEGREE %#x not yet implemented.\n",
+                                state->rs[WINED3D_RS_POSITIONDEGREE]);
+                    break;
+
+                case WINED3D_RS_NORMALDEGREE:
+                    if (state->rs[WINED3D_RS_NORMALDEGREE] != WINED3D_DEGREE_LINEAR)
+                        FIXME("WINED3D_RS_NORMALDEGREE %#x not yet implemented.\n",
+                                state->rs[WINED3D_RS_NORMALDEGREE]);
+                    break;
+
+                case WINED3D_RS_MINTESSELLATIONLEVEL:
+                    break;
+
+                case WINED3D_RS_MAXTESSELLATIONLEVEL:
+                    break;
+
+                case WINED3D_RS_ENABLEADAPTIVETESSELLATION:
+                    if (state->rs[WINED3D_RS_ENABLEADAPTIVETESSELLATION])
+                        FIXME("WINED3D_RS_ENABLEADAPTIVETESSELLATION %#x not yet implemented.\n",
+                                state->rs[WINED3D_RS_ENABLEADAPTIVETESSELLATION]);
                     break;
 
                 default:

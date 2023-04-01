@@ -1071,7 +1071,10 @@ static void contexts_from_server( CONTEXT *context, context_t server_contexts[2]
     if (native_context)
     {
         context_from_server( native_context, &server_contexts[0], native_machine );
-        if (wow_context) context_from_server( wow_context, &server_contexts[1], main_image_info.Machine );
+        if (wow_context)
+            context_from_server( wow_context, &server_contexts[1], main_image_info.Machine );
+        else
+            context_from_server( native_context, &server_contexts[1], native_machine );
     }
     else context_from_server( wow_context, &server_contexts[0], main_image_info.Machine );
 }
@@ -1133,7 +1136,7 @@ void *get_cpu_area( USHORT machine )
     WOW64_CPURESERVED *cpu;
     ULONG align;
 
-    if (!NtCurrentTeb()->WowTebOffset) return NULL;
+    if (!is_wow64()) return NULL;
 #ifdef _WIN64
     cpu = NtCurrentTeb()->TlsSlots[WOW64_TLS_CPURESERVED];
 #else
@@ -1293,7 +1296,7 @@ NTSTATUS WINAPI NtCreateThreadEx( HANDLE *handle, ACCESS_MASK access, OBJECT_ATT
 
     if (zero_bits > 21 && zero_bits < 32) return STATUS_INVALID_PARAMETER_3;
 #ifndef _WIN64
-    if (!is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
+    if (!is_old_wow64() && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
 #endif
 
     if (process != NtCurrentProcess())
@@ -1377,8 +1380,7 @@ NTSTATUS WINAPI NtCreateThreadEx( HANDLE *handle, ACCESS_MASK access, OBJECT_ATT
     thread_data->param = param;
 
     pthread_attr_init( &pthread_attr );
-    pthread_attr_setstack( &pthread_attr, teb->DeallocationStack,
-                           (char *)thread_data->kernel_stack + kernel_stack_size - (char *)teb->DeallocationStack );
+    pthread_attr_setstack( &pthread_attr, thread_data->kernel_stack, kernel_stack_size );
     pthread_attr_setguardsize( &pthread_attr, 0 );
     pthread_attr_setscope( &pthread_attr, PTHREAD_SCOPE_SYSTEM ); /* force creating a kernel thread */
     InterlockedIncrement( &nb_threads );
@@ -1978,14 +1980,13 @@ static void set_native_thread_name( HANDLE handle, const UNICODE_STRING *name )
 #endif
 }
 
-#ifndef _WIN64
 static BOOL is_process_wow64( const CLIENT_ID *id )
 {
     HANDLE handle;
     ULONG_PTR info;
     BOOL ret = FALSE;
 
-    if (id->UniqueProcess == ULongToHandle(GetCurrentProcessId())) return is_wow64;
+    if (id->UniqueProcess == ULongToHandle(GetCurrentProcessId())) return is_old_wow64();
     if (!NtOpenProcess( &handle, PROCESS_QUERY_LIMITED_INFORMATION, NULL, id ))
     {
         if (!NtQueryInformationProcess( handle, ProcessWow64Information, &info, sizeof(info), NULL ))
@@ -1994,7 +1995,6 @@ static BOOL is_process_wow64( const CLIENT_ID *id )
     }
     return ret;
 }
-#endif
 
 /******************************************************************************
  *              NtQueryInformationThread  (NTDLL.@)
@@ -2030,15 +2030,13 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
         SERVER_END_REQ;
         if (status == STATUS_SUCCESS)
         {
-#ifndef _WIN64
-            if (is_wow64)
+            if (is_old_wow64())
             {
                 if (is_process_wow64( &info.ClientId ))
                     info.TebBaseAddress = (char *)info.TebBaseAddress + teb_offset;
                 else
                     info.TebBaseAddress = NULL;
             }
-#endif
             if (data) memcpy( data, &info, min( length, sizeof(info) ));
             if (ret_len) *ret_len = min( length, sizeof(info) );
         }

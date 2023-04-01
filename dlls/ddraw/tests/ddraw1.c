@@ -6145,6 +6145,12 @@ static void test_create_surface_pitch(void)
         {DDSCAPS_SYSTEMMEMORY | DDSCAPS_TEXTURE | DDSCAPS_ALLOCONLOAD,
                 DDSD_LPSURFACE | DDSD_PITCH,    0x100,  DDERR_INVALIDPARAMS,
                 0,                              0,      0    },
+        {DDSCAPS_SYSTEMMEMORY | DDSCAPS_OFFSCREENPLAIN | DDSCAPS_3DDEVICE,
+                0,                              0,      DD_OK,
+                DDSD_PITCH,                     0x100,  0x0fc},
+        {DDSCAPS_VIDEOMEMORY | DDSCAPS_OFFSCREENPLAIN | DDSCAPS_3DDEVICE,
+                0,                              0,      DD_OK,
+                DDSD_PITCH,                     0x100,  0x100},
     };
     DWORD flags_mask = DDSD_PITCH | DDSD_LPSURFACE | DDSD_LINEARSIZE;
 
@@ -14742,6 +14748,7 @@ static void test_texture_wrong_caps(const GUID *device_guid)
     ptr = (BYTE *)exec_desc.lpData + sizeof(quad);
     emit_process_vertices(&ptr, D3DPROCESSVERTICES_COPY, 0, 4);
     emit_set_rs(&ptr, D3DRENDERSTATE_TEXTUREHANDLE, texture_handle);
+    emit_set_rs(&ptr, D3DRENDERSTATE_LIGHTING, FALSE);
     emit_tquad(&ptr, 0);
     emit_end(&ptr);
     inst_length = (BYTE *)ptr - (BYTE *)exec_desc.lpData - sizeof(quad);

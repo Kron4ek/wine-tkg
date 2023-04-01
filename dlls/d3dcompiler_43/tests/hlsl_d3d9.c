@@ -691,7 +691,7 @@ static void test_trig(void)
         return;
     device = test_context.device;
 
-    todo_wine ps_code = compile_shader(ps_source, "ps_2_0");
+    ps_code = compile_shader(ps_source, "ps_2_0");
     if (ps_code)
     {
         draw_quad(device, ps_code);
@@ -702,6 +702,7 @@ static void test_trig(void)
             float expect_x = (sinf(i * 2 * M_PI / 32) + 1.0f) / 2.0f;
             float expect_y = (cosf(i * 2 * M_PI / 32) + 1.0f) / 2.0f;
             v = get_readback_vec4(&rb, i * 640 / 32, 0);
+            todo_wine
             ok(compare_vec4(v, expect_x, expect_y, 0.0f, 0.0f, 4096),
                     "Test %u: Got {%.8e, %.8e, %.8e, %.8e}, expected {%.8e, %.8e, %.8e, %.8e}.\n",
                     i, v->x, v->y, v->z, v->w, expect_x, expect_y, 0.0f, 0.0f);
@@ -767,7 +768,7 @@ static void test_return(void)
     draw_quad(test_context.device, ps_code);
 
     v = get_color_vec4(test_context.device, 0, 0);
-    todo_wine ok(compare_vec4(&v, 0.1f, 0.2f, 0.3f, 0.4f, 0),
+    ok(compare_vec4(&v, 0.1f, 0.2f, 0.3f, 0.4f, 0),
             "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
 
     ID3D10Blob_Release(ps_code);
@@ -1102,7 +1103,7 @@ static void test_samplers(void)
     {
         hr = IDirect3DDevice9_Clear(test_context.device, 0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(255, 0, 0), 1.0f, 0);
         ok(hr == D3D_OK, "Test %u: Got unexpected hr %#lx.\n", i, hr);
-        todo_wine_if (i < 3) ps_code = compile_shader(tests[i], "ps_2_0");
+        ps_code = compile_shader(tests[i], "ps_2_0");
         if (ps_code)
         {
             draw_quad(test_context.device, ps_code);
@@ -1412,7 +1413,8 @@ static void test_fail(void)
     {
         for (i = 0; i < ARRAY_SIZE(tests); ++i)
         {
-            compiled = errors = NULL;
+            errors = NULL;
+            compiled = (void *)0xdeadbeef;
             hr = D3DCompile(tests[i], strlen(tests[i]), NULL, NULL, NULL, "test", targets[j], 0, 0, &compiled, &errors);
             ok(hr == E_FAIL, "Test %u, target %s: Got unexpected hr %#lx.\n", i, targets[j], hr);
             ok(!!errors, "Test %u, target %s, expected non-NULL error blob.\n", i, targets[j]);
@@ -1741,6 +1743,22 @@ static void test_include(void)
     delete_directory(L"include");
 }
 
+static void test_no_output_blob(void)
+{
+    static const char vs_source[] =
+        "float4 main(float4 pos : POSITION, inout float2 texcoord : TEXCOORD0) : POSITION\n"
+        "{\n"
+        "   return pos;\n"
+        "}";
+    ID3D10Blob *errors;
+    HRESULT hr;
+
+    errors = (void *)0xdeadbeef;
+    hr = D3DCompile(vs_source, strlen(vs_source), NULL, NULL, NULL, "main", "vs_2_0", 0, 0, NULL, &errors);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!errors, "Unexpected errors blob.\n");
+}
+
 START_TEST(hlsl_d3d9)
 {
     HMODULE mod;
@@ -1769,4 +1787,5 @@ START_TEST(hlsl_d3d9)
     test_constant_table();
     test_fail();
     test_include();
+    test_no_output_blob();
 }

@@ -1512,7 +1512,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
             }
             strW = malloc(len * sizeof(*strW));
             if (MultiByteToWideChar(CP_UTF8, 0, str, -1, strW, len))
-                IMFStreamDescriptor_SetString(descriptors[i], tags[j].mf_attr, strW);
+                IMFStreamDescriptor_SetString(descriptors[object->stream_count - 1 - i], tags[j].mf_attr, strW);
             free(strW);
             free(str);
         }

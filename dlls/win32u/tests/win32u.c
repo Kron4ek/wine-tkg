@@ -221,6 +221,223 @@ static void test_class(void)
 
 }
 
+static void test_NtUserCreateInputContext(void)
+{
+    UINT_PTR value, attr3;
+    HIMC himc;
+    UINT ret;
+
+    SetLastError( 0xdeadbeef );
+    himc = NtUserCreateInputContext( 0 );
+    todo_wine
+    ok( !himc, "NtUserCreateInputContext succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    ret = NtUserDestroyInputContext( himc );
+    todo_wine
+    ok( !ret, "NtUserDestroyInputContext succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
+
+
+    himc = NtUserCreateInputContext( 0xdeadbeef );
+    ok( !!himc, "NtUserCreateInputContext failed, error %lu\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    value = NtUserQueryInputContext( himc, 0 );
+    todo_wine
+    ok( value == GetCurrentProcessId(), "NtUserQueryInputContext 0 returned %#Ix\n", value );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    value = NtUserQueryInputContext( himc, 1 );
+    ok( value == GetCurrentThreadId(), "NtUserQueryInputContext 1 returned %#Ix\n", value );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    value = NtUserQueryInputContext( himc, 2 );
+    ok( value == 0, "NtUserQueryInputContext 2 returned %#Ix\n", value );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    value = NtUserQueryInputContext( himc, 3 );
+    todo_wine
+    ok( !!value, "NtUserQueryInputContext 3 returned %#Ix\n", value );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    attr3 = value;
+    SetLastError( 0xdeadbeef );
+    value = NtUserQueryInputContext( himc, 4 );
+    todo_wine
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    ret = NtUserUpdateInputContext( himc, 0, 0 );
+    todo_wine
+    ok( !ret, "NtUserUpdateInputContext 0 succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_ALREADY_INITIALIZED, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    ret = NtUserUpdateInputContext( himc, 1, 0xdeadbeef );
+    todo_wine
+    ok( !!ret, "NtUserUpdateInputContext 1 failed\n" );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    ret = NtUserUpdateInputContext( himc, 2, 0xdeadbeef );
+    ok( !ret, "NtUserUpdateInputContext 2 succeeded\n" );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    ret = NtUserUpdateInputContext( himc, 3, 0x0badf00d );
+    ok( !ret, "NtUserUpdateInputContext 3 succeeded\n" );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    ret = NtUserUpdateInputContext( himc, 4, 0xdeadbeef );
+    ok( !ret, "NtUserUpdateInputContext 4 succeeded\n" );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    value = NtUserQueryInputContext( himc, 0 );
+    todo_wine
+    ok( value == GetCurrentProcessId(), "NtUserQueryInputContext 0 returned %#Ix\n", value );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    value = NtUserQueryInputContext( himc, 1 );
+    ok( value == GetCurrentThreadId(), "NtUserQueryInputContext 1 returned %#Ix\n", value );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    value = NtUserQueryInputContext( himc, 2 );
+    ok( value == 0, "NtUserQueryInputContext 2 returned %#Ix\n", value );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    value = NtUserQueryInputContext( himc, 3 );
+    ok( value == attr3, "NtUserQueryInputContext 3 returned %#Ix\n", value );
+    ok( GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    value = NtUserQueryInputContext( himc, 4 );
+    todo_wine
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError() );
+
+    ret = NtUserDestroyInputContext( himc );
+    ok( !!ret, "NtUserDestroyInputContext failed, error %lu\n", GetLastError() );
+}
+
+static int himc_compare( const void *a, const void *b )
+{
+    return (UINT_PTR)*(HIMC *)a - (UINT_PTR)*(HIMC *)b;
+}
+
+static DWORD CALLBACK test_NtUserBuildHimcList_thread( void *arg )
+{
+    HIMC buf[8], *himc = arg;
+    NTSTATUS status;
+    UINT size;
+
+    size = 0xdeadbeef;
+    memset( buf, 0xcd, sizeof(buf) );
+    status = NtUserBuildHimcList( GetCurrentThreadId(), ARRAYSIZE( buf ), buf, &size );
+    ok( !status, "NtUserBuildHimcList failed: %#lx\n", status );
+    todo_wine
+    ok( size == 1, "size = %u\n", size );
+    ok( !!buf[0], "buf[0] = %p\n", buf[0] );
+
+    ok( buf[0] != himc[0], "buf[0] = %p\n", buf[0] );
+    ok( buf[0] != himc[1], "buf[0] = %p\n", buf[0] );
+    himc[2] = buf[0];
+    qsort( himc, 3, sizeof(*himc), himc_compare );
+
+    size = 0xdeadbeef;
+    memset( buf, 0xcd, sizeof(buf) );
+    status = NtUserBuildHimcList( -1, ARRAYSIZE( buf ), buf, &size );
+    ok( !status, "NtUserBuildHimcList failed: %#lx\n", status );
+    todo_wine
+    ok( size == 3, "size = %u\n", size );
+
+    qsort( buf, size, sizeof(*buf), himc_compare );
+    /* FIXME: Wine only lazily creates a default thread IMC */
+    todo_wine
+    ok( buf[0] == himc[0], "buf[0] = %p\n", buf[0] );
+    todo_wine
+    ok( buf[1] == himc[1], "buf[1] = %p\n", buf[1] );
+    todo_wine
+    ok( buf[2] == himc[2], "buf[2] = %p\n", buf[2] );
+
+    return 0;
+}
+
+static void test_NtUserBuildHimcList(void)
+{
+    HIMC buf[8], himc[3], new_himc;
+    NTSTATUS status;
+    UINT size, ret;
+    HANDLE thread;
+
+    size = 0xdeadbeef;
+    memset( buf, 0xcd, sizeof(buf) );
+    status = NtUserBuildHimcList( GetCurrentThreadId(), ARRAYSIZE( buf ), buf, &size );
+    ok( !status, "NtUserBuildHimcList failed: %#lx\n", status );
+    ok( size == 1, "size = %u\n", size );
+    ok( !!buf[0], "buf[0] = %p\n", buf[0] );
+    himc[0] = buf[0];
+
+
+    new_himc = NtUserCreateInputContext( 0xdeadbeef );
+    ok( !!new_himc, "NtUserCreateInputContext failed, error %lu\n", GetLastError() );
+
+    himc[1] = new_himc;
+    qsort( himc, 2, sizeof(*himc), himc_compare );
+
+    size = 0xdeadbeef;
+    memset( buf, 0xcd, sizeof(buf) );
+    status = NtUserBuildHimcList( GetCurrentThreadId(), ARRAYSIZE( buf ), buf, &size );
+    ok( !status, "NtUserBuildHimcList failed: %#lx\n", status );
+    ok( size == 2, "size = %u\n", size );
+
+    qsort( buf, size, sizeof(*buf), himc_compare );
+    ok( buf[0] == himc[0], "buf[0] = %p\n", buf[0] );
+    ok( buf[1] == himc[1], "buf[1] = %p\n", buf[1] );
+
+    size = 0xdeadbeef;
+    memset( buf, 0xcd, sizeof(buf) );
+    status = NtUserBuildHimcList( 0, ARRAYSIZE( buf ), buf, &size );
+    ok( !status, "NtUserBuildHimcList failed: %#lx\n", status );
+    ok( size == 2, "size = %u\n", size );
+
+    qsort( buf, size, sizeof(*buf), himc_compare );
+    ok( buf[0] == himc[0], "buf[0] = %p\n", buf[0] );
+    ok( buf[1] == himc[1], "buf[1] = %p\n", buf[1] );
+
+    size = 0xdeadbeef;
+    memset( buf, 0xcd, sizeof(buf) );
+    status = NtUserBuildHimcList( -1, ARRAYSIZE( buf ), buf, &size );
+    ok( !status, "NtUserBuildHimcList failed: %#lx\n", status );
+    ok( size == 2, "size = %u\n", size );
+
+    qsort( buf, size, sizeof(*buf), himc_compare );
+    ok( buf[0] == himc[0], "buf[0] = %p\n", buf[0] );
+    ok( buf[1] == himc[1], "buf[1] = %p\n", buf[1] );
+
+    thread = CreateThread( NULL, 0, test_NtUserBuildHimcList_thread, himc, 0, NULL );
+    ok( !!thread, "CreateThread failed, error %lu\n", GetLastError() );
+    ret = WaitForSingleObject( thread, 5000 );
+    ok( !ret, "WaitForSingleObject returned %#x\n", ret );
+
+    size = 0xdeadbeef;
+    status = NtUserBuildHimcList( 1, ARRAYSIZE( buf ), buf, &size );
+    todo_wine
+    ok( status == STATUS_INVALID_PARAMETER, "NtUserBuildHimcList returned %#lx\n", status );
+    size = 0xdeadbeef;
+    status = NtUserBuildHimcList( GetCurrentProcessId(), ARRAYSIZE( buf ), buf, &size );
+    todo_wine
+    ok( status == STATUS_INVALID_PARAMETER, "NtUserBuildHimcList returned %#lx\n", status );
+    size = 0xdeadbeef;
+    status = NtUserBuildHimcList( GetCurrentThreadId(), 1, NULL, &size );
+    ok( status == STATUS_UNSUCCESSFUL, "NtUserBuildHimcList returned %#lx\n", status );
+    size = 0xdeadbeef;
+    status = NtUserBuildHimcList( GetCurrentThreadId(), 0, buf, &size );
+    ok( !status, "NtUserBuildHimcList failed: %#lx\n", status );
+    ok( size == 0, "size = %u\n", size );
+
+    ret = NtUserDestroyInputContext( new_himc );
+    ok( !!ret, "NtUserDestroyInputContext failed, error %lu\n", GetLastError() );
+}
+
 static BOOL WINAPI count_win( HWND hwnd, LPARAM lparam )
 {
     ULONG *cnt = (ULONG *)lparam;
@@ -1148,6 +1365,8 @@ START_TEST(win32u)
     test_NtUserEnumDisplayDevices();
     test_window_props();
     test_class();
+    test_NtUserCreateInputContext();
+    test_NtUserBuildHimcList();
     test_NtUserBuildHwndList();
     test_cursoricon();
     test_message_call();

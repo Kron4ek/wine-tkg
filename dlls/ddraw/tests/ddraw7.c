@@ -20,6 +20,7 @@
 
 #define COBJMACROS
 
+#include <stdbool.h>
 #include "wine/test.h"
 #include "wine/heap.h"
 #include <limits.h>
@@ -48,6 +49,15 @@ struct vec3
 struct vec4
 {
     float x, y, z, w;
+};
+
+struct ddraw_test_context
+{
+    HWND window;
+    IDirectDraw7 *ddraw;
+    IDirect3D7 *d3d;
+    IDirect3DDevice7 *device;
+    IDirectDrawSurface7 *backbuffer;
 };
 
 struct create_window_thread_param
@@ -110,6 +120,16 @@ static BOOL compare_mode_rect(const DEVMODEW *mode1, const DEVMODEW *mode2)
             && mode1->dmPosition.y == mode2->dmPosition.y
             && mode1->dmPelsWidth == mode2->dmPelsWidth
             && mode1->dmPelsHeight == mode2->dmPelsHeight;
+}
+
+static void init_format_b8g8r8x8(DDPIXELFORMAT *format)
+{
+    format->dwSize = sizeof(*format);
+    format->dwFlags = DDPF_RGB;
+    U1(*format).dwRGBBitCount = 32;
+    U2(*format).dwRBitMask = 0x00ff0000;
+    U3(*format).dwGBitMask = 0x0000ff00;
+    U4(*format).dwBBitMask = 0x000000ff;
 }
 
 static ULONG get_refcount(IUnknown *iface)
@@ -600,6 +620,53 @@ static IDirect3DDevice7 *create_device(HWND window, DWORD coop_level)
     IDirect3D7_Release(d3d7);
 
     return create_device_ex(window, coop_level, device_guid);
+}
+
+static bool init_3d_test_context_guid(struct ddraw_test_context *context, const GUID *device_guid)
+{
+    HRESULT hr;
+
+    memset(context, 0, sizeof(*context));
+
+    context->window = create_window();
+    if (!(context->device = create_device_ex(context->window, DDSCL_NORMAL, device_guid)))
+    {
+        skip("Failed to create a D3D device.\n");
+        DestroyWindow(context->window);
+        return false;
+    }
+
+    hr = IDirect3DDevice7_GetDirect3D(context->device, &context->d3d);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IDirect3D7_QueryInterface(context->d3d, &IID_IDirectDraw7, (void **)&context->ddraw);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IDirect3DDevice7_GetRenderTarget(context->device, &context->backbuffer);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    return true;
+}
+
+#define release_test_context(a) release_test_context_(__LINE__, a)
+static void release_test_context_(unsigned int line, struct ddraw_test_context *context)
+{
+    ULONG refcount;
+
+    IDirectDrawSurface7_Release(context->backbuffer);
+    refcount = IDirect3DDevice7_Release(context->device);
+    ok_(__FILE__, line)(!refcount, "Device has %lu references left.\n", refcount);
+    IDirect3D7_Release(context->d3d);
+    refcount = IDirectDraw7_Release(context->ddraw);
+    ok_(__FILE__, line)(!refcount, "D3D object has %lu references left.\n", refcount);
+    DestroyWindow(context->window);
+}
+
+static void clear_surface(IDirectDrawSurface7 *surface, unsigned int colour)
+{
+    DDBLTFX fx = {.dwSize = sizeof(fx)};
+    HRESULT hr;
+
+    U5(fx).dwFillColor = colour;
+    hr = IDirectDrawSurface7_Blt(surface, NULL, NULL, NULL, DDBLT_COLORFILL | DDBLT_WAIT, &fx);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
 }
 
 struct message
@@ -9013,6 +9080,12 @@ static void test_create_surface_pitch(void)
         {DDSCAPS_SYSTEMMEMORY | DDSCAPS_TEXTURE | DDSCAPS_ALLOCONLOAD,
                 DDSD_LPSURFACE | DDSD_PITCH,                    0x100,  DD_OK,
                 DDSD_PITCH,                                     0x100,  0    },
+        {DDSCAPS_SYSTEMMEMORY | DDSCAPS_OFFSCREENPLAIN | DDSCAPS_3DDEVICE,
+                0,                                              0,      DD_OK,
+                DDSD_PITCH,                                     0x100,  0x0fc},
+        {DDSCAPS_VIDEOMEMORY | DDSCAPS_OFFSCREENPLAIN | DDSCAPS_3DDEVICE,
+                0,                                              0,      DD_OK,
+                DDSD_PITCH,                                     0x100,  0x100},
     };
     DWORD flags_mask = DDSD_PITCH | DDSD_LPSURFACE | DDSD_LINEARSIZE;
 
@@ -9034,12 +9107,18 @@ static void test_create_surface_pitch(void)
     hr = IDirectDraw7_CreateSurface(ddraw, &surface_desc, &primary, NULL);
     ok(SUCCEEDED(hr), "Failed to create a primary surface, hr %#lx.\n", hr);
 
-    hr = IDirectDraw7_GetAvailableVidMem(ddraw, &vidmem_caps, &vidmem_total, &vidmem_free);
-    ok(SUCCEEDED(hr) || hr == DDERR_NODIRECTDRAWHW,
-            "Failed to get available video memory, hr %#lx.\n", hr);
-
     for (i = 0; i < ARRAY_SIZE(test_data); ++i)
     {
+        /* 64 bit ddraw can leak video memory when trying to create a DDSCAPS_TEXTURE surface.
+         * Surface creation fails, but video memory is consumed anyway. Update the free vidmem
+         * every iteration.
+         *
+         * This E_NOINTERFACE texture creation failure does not happen in earlier versions of
+         * the API, so we get to release the surface and avoid the vidmem leak. */
+        hr = IDirectDraw7_GetAvailableVidMem(ddraw, &vidmem_caps, &vidmem_total, &vidmem_free);
+        ok(SUCCEEDED(hr) || hr == DDERR_NODIRECTDRAWHW,
+                "Failed to get available video memory, hr %#lx.\n", hr);
+
         memset(&surface_desc, 0, sizeof(surface_desc));
         surface_desc.dwSize = sizeof(surface_desc);
         surface_desc.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | test_data[i].flags_in;
@@ -18952,21 +19031,22 @@ static void test_texture_wrong_caps(const GUID *device_guid)
     static struct
     {
         struct vec3 position;
+        unsigned int diffuse;
         struct vec2 texcoord;
     }
     quad[] =
     {
-        {{-1.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
-        {{-1.0f,  1.0f, 0.0f}, {0.0f, 0.0f}},
-        {{ 1.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
-        {{ 1.0f,  1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{-1.0f, -1.0f, 0.0f}, 0x00ff0000, {0.0f, 1.0f}},
+        {{-1.0f,  1.0f, 0.0f}, 0x00ff0000, {0.0f, 0.0f}},
+        {{ 1.0f, -1.0f, 0.0f}, 0x00ff0000, {1.0f, 1.0f}},
+        {{ 1.0f,  1.0f, 0.0f}, 0x00ff0000, {1.0f, 0.0f}},
     };
     static DDPIXELFORMAT fmt =
     {
         sizeof(DDPIXELFORMAT), DDPF_RGB | DDPF_ALPHAPIXELS, 0,
                 {32}, {0x00ff0000}, {0x0000ff00}, {0x000000ff}, {0xff000000}
     };
-    IDirectDrawSurface7 *surface, *rt;
+    IDirectDrawSurface7 *surface, *rt, *ret_surface;
     IDirect3DDevice7 *device;
     IDirectDraw7 *ddraw;
     DDSURFACEDESC2 ddsd;
@@ -19004,6 +19084,8 @@ static void test_texture_wrong_caps(const GUID *device_guid)
 
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_ZENABLE, D3DZB_FALSE);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_LIGHTING, FALSE);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
@@ -19016,6 +19098,9 @@ static void test_texture_wrong_caps(const GUID *device_guid)
 
     hr = IDirect3DDevice7_SetTexture(device, 0, surface);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = IDirect3DDevice7_GetTexture(device, 0, &ret_surface);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!ret_surface, "Got surface %p.\n", ret_surface);
 
     hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0x000000ff, 0.0f, 0);
     ok(hr == DD_OK, "Got unexpected hr %#lx.\n", hr);
@@ -19025,13 +19110,13 @@ static void test_texture_wrong_caps(const GUID *device_guid)
     hr = IDirect3DDevice7_BeginScene(device);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP,
-            D3DFVF_XYZ | D3DFVF_TEX1, quad, 4, 0);
+            D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1, quad, 4, 0);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     hr = IDirect3DDevice7_EndScene(device);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     color = get_surface_color(rt, 320, 240);
-    ok(color == 0, "Got unexpected color 0x%08x.\n", color);
+    ok(color == 0x00ff0000, "Got unexpected color 0x%08x.\n", color);
 
     IDirectDrawSurface7_Release(surface);
     IDirectDrawSurface7_Release(rt);
@@ -19549,10 +19634,245 @@ static void test_enum_devices(void)
     ok(!refcount, "Device has %lu references left.\n", refcount);
 }
 
+static void test_user_memory(const GUID *device_guid)
+{
+    IDirectDrawSurface7 *surfaces[6], *dst_surface;
+    struct ddraw_test_context context;
+    unsigned int i, color;
+    DDSURFACEDESC2 desc;
+    HRESULT hr;
+    void *mem;
+    RECT rect;
+
+    static const struct
+    {
+        DWORD flags;
+        DWORD caps;
+        DWORD caps2;
+        HRESULT hr;
+    }
+    create_tests[] =
+    {
+        {0, DDSCAPS_MIPMAP, 0, S_OK},
+        {0, DDSCAPS_MIPMAP | DDSCAPS_COMPLEX, 0, DDERR_INVALIDCAPS},
+        {DDSD_MIPMAPCOUNT, DDSCAPS_MIPMAP | DDSCAPS_COMPLEX, 0, DDERR_INVALIDCAPS},
+        {0, DDSCAPS_COMPLEX, DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_ALLFACES, DDERR_INVALIDCAPS},
+    };
+
+    if (!init_3d_test_context_guid(&context, device_guid))
+    {
+        winetest_pop_context();
+        return;
+    }
+
+    mem = malloc(16 * 16 * 5 * 4);
+
+    reset_ddsd(&desc);
+    desc.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
+    desc.dwWidth = 16;
+    desc.dwHeight = 16;
+    desc.ddsCaps.dwCaps = DDSCAPS_TEXTURE;
+    init_format_b8g8r8x8(&U4(desc).ddpfPixelFormat);
+    hr = IDirectDraw7_CreateSurface(context.ddraw, &desc, &dst_surface, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    /* Test creating and using a normal user memory surface. */
+
+    reset_ddsd(&desc);
+    desc.dwFlags = DDSD_WIDTH | DDSD_PITCH | DDSD_HEIGHT | DDSD_CAPS | DDSD_LPSURFACE;
+    desc.dwWidth = 16;
+    U1(desc).lPitch = 16 * 4;
+    desc.dwHeight = 16;
+    desc.ddsCaps.dwCaps = DDSCAPS_TEXTURE | DDSCAPS_SYSTEMMEMORY;
+    init_format_b8g8r8x8(&U4(desc).ddpfPixelFormat);
+    desc.lpSurface = mem;
+    hr = IDirectDraw7_CreateSurface(context.ddraw, &desc, &surfaces[0], NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    reset_ddsd(&desc);
+    hr = IDirectDrawSurface7_Lock(surfaces[0], NULL, &desc, DDLOCK_WAIT, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(desc.lpSurface == mem, "Surface pointers didn't match.\n");
+    memset(desc.lpSurface, 0x55, desc.dwHeight * U1(desc).lPitch);
+    hr = IDirectDrawSurface7_Unlock(surfaces[0], NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    /* Drawing from the user memory surface doesn't seem to work.
+     * Windows 10 WARP succeeds, but Windows 10 on real NVidia hardware fails in
+     * EndScene() with an undocumented error code 0x887602fb. */
+
+    clear_surface(dst_surface, 0x00999999);
+    SetRect(&rect, 0, 0, 16, 16);
+    hr = IDirectDrawSurface7_Blt(dst_surface, &rect, surfaces[0], &rect, DDBLT_WAIT, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    color = get_surface_color(dst_surface, 1, 1);
+    ok(color == 0x00555555, "Got unexpected color 0x%08x.\n", color);
+
+    IDirectDrawSurface7_Release(surfaces[0]);
+
+    /* Creating a texture with DDSCAPS_MIPMAP and DDSD_LPSURFACE is legal, but
+     * such a texture isn't really mipmapped and only has one level.
+     * Trying to create a mipmapped texture with DDSD_COMPLEX, or a
+     * cubemap texture, fails if user memory is specified, even with a mipmap
+     * count of 1. */
+
+    for (i = 0; i < ARRAY_SIZE(create_tests); ++i)
+    {
+        reset_ddsd(&desc);
+        desc.dwFlags = DDSD_WIDTH | DDSD_PITCH | DDSD_HEIGHT | DDSD_CAPS
+                | DDSD_PIXELFORMAT | DDSD_LPSURFACE | create_tests[i].flags;
+        desc.dwWidth = 16;
+        U1(desc).lPitch = 16 * 4;
+        desc.dwHeight = 16;
+        desc.ddsCaps.dwCaps = DDSCAPS_TEXTURE | DDSCAPS_SYSTEMMEMORY | create_tests[i].caps;
+        desc.ddsCaps.dwCaps2 = create_tests[i].caps2;
+        init_format_b8g8r8x8(&U4(desc).ddpfPixelFormat);
+        U2(desc).dwMipMapCount = 1;
+        desc.lpSurface = mem;
+        hr = IDirectDraw7_CreateSurface(context.ddraw, &desc, &surfaces[0], NULL);
+        todo_wine_if (create_tests[i].caps & DDSCAPS_COMPLEX)
+            ok(hr == create_tests[i].hr, "Flags %#lx, caps %#lx: got hr %#lx.\n",
+                    create_tests[i].flags, create_tests[i].caps, hr);
+
+        if (hr == S_OK)
+            IDirectDrawSurface7_Release(surfaces[0]);
+    }
+
+    /* Mipmap surfaces. */
+
+    reset_ddsd(&desc);
+    desc.dwFlags = DDSD_WIDTH | DDSD_PITCH | DDSD_HEIGHT | DDSD_CAPS | DDSD_PIXELFORMAT | DDSD_MIPMAPCOUNT;
+    desc.dwWidth = 16;
+    U1(desc).lPitch = 16 * 4;
+    desc.dwHeight = 16;
+    desc.ddsCaps.dwCaps = DDSCAPS_TEXTURE | DDSCAPS_SYSTEMMEMORY | DDSCAPS_MIPMAP | DDSCAPS_COMPLEX;
+    init_format_b8g8r8x8(&U4(desc).ddpfPixelFormat);
+    U2(desc).dwMipMapCount = 5;
+    hr = IDirectDraw7_CreateSurface(context.ddraw, &desc, &surfaces[0], NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    for (i = 0; i < 4; ++i)
+    {
+        DDSCAPS2 mip_caps = {.dwCaps2 = DDSCAPS2_MIPMAPSUBLEVEL};
+
+        hr = IDirectDrawSurface7_GetAttachedSurface(surfaces[i], &mip_caps, &surfaces[i + 1]);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    }
+
+    reset_ddsd(&desc);
+    desc.dwFlags = DDSD_LPSURFACE;
+    desc.lpSurface = mem;
+    hr = IDirectDrawSurface7_SetSurfaceDesc(surfaces[2], &desc, 0);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    for (i = 0; i < 5; ++i)
+    {
+        reset_ddsd(&desc);
+        hr = IDirectDrawSurface7_GetSurfaceDesc(surfaces[i], &desc);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(desc.dwWidth == (16u >> i), "Got width %lu.\n", desc.dwWidth);
+
+        reset_ddsd(&desc);
+        hr = IDirectDrawSurface7_Lock(surfaces[i], NULL, &desc, DDLOCK_WAIT, NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        if (i == 2)
+            ok(desc.lpSurface == mem, "Got surface pointer %p.\n", desc.lpSurface);
+        memset(desc.lpSurface, 0x11 * (i + 1), desc.dwHeight * U1(desc).lPitch);
+        hr = IDirectDrawSurface7_Unlock(surfaces[i], NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    }
+
+    for (i = 0; i < 5; ++i)
+    {
+        winetest_push_context("level %u", i);
+
+        clear_surface(dst_surface, 0x00999999);
+        SetRect(&rect, 0, 0, (16u >> i), (16u >> i));
+        hr = IDirectDrawSurface7_Blt(dst_surface, &rect, surfaces[i], &rect, DDBLT_WAIT, NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        color = get_surface_color(dst_surface, 0, 0);
+        ok(color == 0x00111111 * (i + 1), "Got unexpected color 0x%08x.\n", color);
+
+        winetest_pop_context();
+    }
+
+    for (i = 0; i < 5; ++i)
+        IDirectDrawSurface7_Release(surfaces[4 - i]);
+
+    /* Cube maps. */
+
+    reset_ddsd(&desc);
+    desc.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_CAPS | DDSD_PIXELFORMAT;
+    desc.dwWidth = 16;
+    U1(desc).lPitch = 16 * 4;
+    desc.dwHeight = 16;
+    desc.ddsCaps.dwCaps = DDSCAPS_TEXTURE | DDSCAPS_SYSTEMMEMORY | DDSCAPS_COMPLEX;
+    desc.ddsCaps.dwCaps2 = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_ALLFACES;
+    init_format_b8g8r8x8(&U4(desc).ddpfPixelFormat);
+    hr = IDirectDraw7_CreateSurface(context.ddraw, &desc, &surfaces[0], NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    for (i = 0; i < 5; ++i)
+    {
+        DDSCAPS2 face_caps = {.dwCaps2 = DDSCAPS2_CUBEMAP | (DDSCAPS2_CUBEMAP_POSITIVEX << (i + 1))};
+
+        hr = IDirectDrawSurface7_GetAttachedSurface(surfaces[0], &face_caps, &surfaces[i + 1]);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    }
+
+    reset_ddsd(&desc);
+    desc.dwFlags = DDSD_LPSURFACE;
+    desc.lpSurface = mem;
+    hr = IDirectDrawSurface7_SetSurfaceDesc(surfaces[2], &desc, 0);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    for (i = 0; i < 6; ++i)
+    {
+        reset_ddsd(&desc);
+        hr = IDirectDrawSurface7_GetSurfaceDesc(surfaces[i], &desc);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        reset_ddsd(&desc);
+        hr = IDirectDrawSurface7_Lock(surfaces[i], NULL, &desc, DDLOCK_WAIT, NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        if (i == 2)
+            ok(desc.lpSurface == mem, "Got surface pointer %p.\n", desc.lpSurface);
+        memset(desc.lpSurface, 0x11 * (i + 1), desc.dwHeight * U1(desc).lPitch);
+        hr = IDirectDrawSurface7_Unlock(surfaces[i], NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    }
+
+    for (i = 0; i < 6; ++i)
+    {
+        winetest_push_context("face %u", i);
+
+        clear_surface(dst_surface, 0x00999999);
+        SetRect(&rect, 0, 0, 16, 16);
+        hr = IDirectDrawSurface7_Blt(dst_surface, &rect, surfaces[i], &rect, DDBLT_WAIT, NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        color = get_surface_color(dst_surface, 0, 0);
+        ok(color == 0x00111111 * (i + 1), "Got unexpected color 0x%08x.\n", color);
+
+        winetest_pop_context();
+    }
+
+    for (i = 0; i < 6; ++i)
+        IDirectDrawSurface7_Release(surfaces[5 - i]);
+
+    free(mem);
+
+    IDirectDrawSurface7_Release(dst_surface);
+    release_test_context(&context);
+}
+
 static void run_for_each_device_type(void (*test_func)(const GUID *))
 {
+    winetest_push_context("Hardware device");
     test_func(hw_device_guid);
+    winetest_pop_context();
+    winetest_push_context("Software device");
     test_func(&IID_IDirect3DRGBDevice);
+    winetest_pop_context();
 }
 
 START_TEST(ddraw7)
@@ -19728,4 +20048,5 @@ START_TEST(ddraw7)
     run_for_each_device_type(test_texture_wrong_caps);
     test_filling_convention();
     test_enum_devices();
+    run_for_each_device_type(test_user_memory);
 }

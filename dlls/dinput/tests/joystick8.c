@@ -51,6 +51,7 @@
 
 DEFINE_GUID(GUID_action_mapping_1,0x00000001,0x0002,0x0003,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b);
 DEFINE_GUID(GUID_action_mapping_2,0x00010001,0x0002,0x0003,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b);
+DEFINE_GUID(GUID_map_other_device,0x00020001,0x0002,0x0003,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b);
 
 static HRESULT (WINAPI *pRoGetActivationFactory)( HSTRING, REFIID, void** );
 static HRESULT (WINAPI *pRoInitialize)( RO_INIT_TYPE );
@@ -208,16 +209,8 @@ static BOOL CALLBACK check_no_created_effect_objects( IDirectInputEffect *effect
     return DIENUM_CONTINUE;
 }
 
-struct diaction_todo
-{
-    BOOL instance;
-    BOOL objid;
-    BOOL how;
-};
-
-#define check_diactionw( a, b ) check_diactionw_( __LINE__, a, b, NULL )
-static void check_diactionw_( int line, const DIACTIONW *actual, const DIACTIONW *expected,
-                              const struct diaction_todo *todos )
+#define check_diactionw( a, b ) check_diactionw_( __LINE__, a, b )
+static void check_diactionw_( int line, const DIACTIONW *actual, const DIACTIONW *expected )
 {
     check_member_( __FILE__, line, *actual, *expected, "%#Ix", uAppData );
     check_member_( __FILE__, line, *actual, *expected, "%#lx", dwSemantic );
@@ -226,17 +219,13 @@ static void check_diactionw_( int line, const DIACTIONW *actual, const DIACTIONW
         check_member_wstr_( __FILE__, line, *actual, *expected, lptszActionName );
     else
         check_member_( __FILE__, line, *actual, *expected, "%p", lptszActionName );
-    todo_wine_if( todos->instance )
     check_member_guid_( __FILE__, line, *actual, *expected, guidInstance );
-    todo_wine_if( todos->objid )
     check_member_( __FILE__, line, *actual, *expected, "%#lx", dwObjID );
-    todo_wine_if( todos->how )
     check_member_( __FILE__, line, *actual, *expected, "%#lx", dwHow );
 }
 
-#define check_diactionformatw( a, b ) check_diactionformatw_( __LINE__, a, b, NULL )
-static void check_diactionformatw_( int line, const DIACTIONFORMATW *actual, const DIACTIONFORMATW *expected,
-                                    const struct diaction_todo *todos )
+#define check_diactionformatw( a, b ) check_diactionformatw_( __LINE__, a, b )
+static void check_diactionformatw_( int line, const DIACTIONFORMATW *actual, const DIACTIONFORMATW *expected )
 {
     DWORD i;
     check_member_( __FILE__, line, *actual, *expected, "%#lx", dwSize );
@@ -246,7 +235,7 @@ static void check_diactionformatw_( int line, const DIACTIONFORMATW *actual, con
     for (i = 0; i < min( actual->dwNumActions, expected->dwNumActions ); ++i)
     {
         winetest_push_context( "action[%lu]", i );
-        check_diactionw_( line, actual->rgoAction + i, expected->rgoAction + i, todos ? todos + i : NULL );
+        check_diactionw_( line, actual->rgoAction + i, expected->rgoAction + i );
         winetest_pop_context();
         if (expected->dwActionSize != sizeof(DIACTIONW)) break;
         if (actual->dwActionSize != sizeof(DIACTIONW)) break;
@@ -417,6 +406,76 @@ static void check_dinput_devices( DWORD version, DIDEVICEINSTANCEW *devinst )
     }
 }
 
+static BOOL CALLBACK enum_devices_by_semantic( const DIDEVICEINSTANCEW *instance, IDirectInputDevice8W *device,
+                                               DWORD flags, DWORD remaining, void *context )
+{
+    const DIDEVICEINSTANCEW expect_joystick =
+    {
+        .dwSize = sizeof(DIDEVICEINSTANCEW),
+        .guidInstance = expect_guid_product,
+        .guidProduct = expect_guid_product,
+        .dwDevType = DIDEVTYPE_HID | (DI8DEVTYPEJOYSTICK_LIMITED << 8) | DI8DEVTYPE_JOYSTICK,
+        .tszInstanceName = L"Wine Test",
+        .tszProductName = L"Wine Test",
+        .wUsagePage = HID_USAGE_PAGE_GENERIC,
+        .wUsage = HID_USAGE_GENERIC_JOYSTICK,
+    };
+    const DIDEVICEINSTANCEW expect_keyboard =
+    {
+        .dwSize = sizeof(DIDEVICEINSTANCEW),
+        .guidInstance = GUID_SysKeyboard,
+        .guidProduct = GUID_SysKeyboard,
+        .dwDevType = (DI8DEVTYPEKEYBOARD_PCENH << 8) | DI8DEVTYPE_KEYBOARD,
+        .tszInstanceName = L"Keyboard",
+        .tszProductName = L"Keyboard",
+    };
+    const DIDEVICEINSTANCEW expect_mouse =
+    {
+        .dwSize = sizeof(DIDEVICEINSTANCEW),
+        .guidInstance = GUID_SysMouse,
+        .guidProduct = GUID_SysMouse,
+        .dwDevType = (DI8DEVTYPEMOUSE_UNKNOWN << 8) | DI8DEVTYPE_MOUSE,
+        .tszInstanceName = L"Mouse",
+        .tszProductName = L"Mouse",
+    };
+    const DIDEVICEINSTANCEW *expect_instance = NULL;
+
+    ok( remaining <= 2, "got remaining %lu\n", remaining );
+
+    if (remaining == 2)
+    {
+        expect_instance = &expect_joystick;
+        ok( flags == (context ? 3 : 0), "got flags %#lx\n", flags );
+    }
+    else if (remaining == 1)
+    {
+        expect_instance = &expect_keyboard;
+        ok( flags == 1, "got flags %#lx\n", flags );
+    }
+    else if (remaining == 0)
+    {
+        expect_instance = &expect_mouse;
+        ok( flags == 1, "got flags %#lx\n", flags );
+    }
+
+    check_member( *instance, *expect_instance, "%#lx", dwSize );
+    if (expect_instance != &expect_joystick) check_member_guid( *instance, *expect_instance, guidInstance );
+    check_member_guid( *instance, *expect_instance, guidProduct );
+    todo_wine_if( expect_instance == &expect_mouse )
+    check_member( *instance, *expect_instance, "%#lx", dwDevType );
+    if (!localized)
+    {
+        check_member_wstr( *instance, *expect_instance, tszInstanceName );
+        todo_wine_if( expect_instance != &expect_joystick )
+        check_member_wstr( *instance, *expect_instance, tszProductName );
+    }
+    check_member_guid( *instance, *expect_instance, guidFFDriver );
+    check_member( *instance, *expect_instance, "%#x", wUsagePage );
+    check_member( *instance, *expect_instance, "%#x", wUsage );
+
+    return DIENUM_CONTINUE;
+}
+
 static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE event )
 {
     const DIACTIONW expect_actions[] =
@@ -462,6 +521,68 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
             .guidInstance = expect_guid_product,
             .dwHow = DIAH_DEFAULT,
             .dwObjID = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 0 ),
+        },
+        {
+            .dwSemantic = DIAXIS_ANY_Y_1,
+            .guidInstance = expect_guid_product,
+            .dwHow = DIAH_DEFAULT,
+            .dwObjID = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 1 ),
+        },
+        {
+            .dwSemantic = DIMOUSE_WHEEL,
+        },
+        {
+            .dwSemantic = 0x81000410,
+        },
+    };
+    const DIACTIONW expect_actions_3[] =
+    {
+        {
+            .dwSemantic = DIAXIS_DRIVINGR_STEER,
+            .guidInstance = expect_guid_product,
+            .dwHow = DIAH_DEFAULT,
+            .dwObjID = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 0 ),
+        },
+        {
+            .dwSemantic = DIAXIS_ANY_Y_1,
+            .guidInstance = expect_guid_product,
+            .dwHow = DIAH_DEFAULT,
+            .dwObjID = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 1 ),
+        },
+        {
+            .dwSemantic = DIMOUSE_WHEEL,
+            .dwObjID = DIDFT_RELAXIS | DIDFT_MAKEINSTANCE( 2 ),
+        },
+        {
+            .dwSemantic = 0x81000410,
+            .dwObjID = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE( 0x10 ),
+        },
+    };
+    const DIACTIONW expect_actions_4[] =
+    {
+        {
+            .dwSemantic = DIAXIS_DRIVINGR_STEER,
+            .guidInstance = expect_guid_product,
+            .dwHow = DIAH_DEFAULT,
+            .dwObjID = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 0 ),
+        },
+        {
+            .dwSemantic = DIAXIS_ANY_Y_1,
+            .guidInstance = expect_guid_product,
+            .dwHow = DIAH_DEFAULT,
+            .dwObjID = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 1 ),
+        },
+        {
+            .dwSemantic = DIMOUSE_WHEEL,
+            .guidInstance = GUID_SysMouse,
+            .dwObjID = DIDFT_RELAXIS | DIDFT_MAKEINSTANCE( 2 ),
+            .dwHow = DIAH_DEFAULT,
+        },
+        {
+            .dwSemantic = 0x81000410,
+            .guidInstance = GUID_SysKeyboard,
+            .dwObjID = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE( 0x10 ),
+            .dwHow = DIAH_DEFAULT,
         },
     };
     const DIACTIONW expect_filled_actions[ARRAY_SIZE(expect_actions)] =
@@ -532,6 +653,25 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
             .lptszActionName = L"Steer",
             .uAppData = 8,
         },
+        {
+            .dwSemantic = DIAXIS_ANY_Y_1,
+            .guidInstance = expect_guid_product,
+            .dwHow = DIAH_DEFAULT,
+            .dwObjID = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 1 ),
+            .lptszActionName = L"Y Axis",
+            .uAppData = 9,
+        },
+        {
+            .dwSemantic = DIMOUSE_WHEEL,
+            .lptszActionName = L"Wheel",
+            .uAppData = 10,
+        },
+        {
+            .dwSemantic = 0x81000410,
+            .lptszActionName = L"Key",
+            .dwFlags = DIA_APPFIXED,
+            .uAppData = 11,
+        },
     };
     const DIACTIONFORMATW expect_action_format_1 =
     {
@@ -553,7 +693,29 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
         .rgoAction = (DIACTIONW *)expect_actions,
         .dwGenre = DIVIRTUAL_DRIVING_RACE,
         .guidActionMap = GUID_action_mapping_2,
-        .dwCRC = 0x9a7bb5e6,
+        .dwCRC = 0x6981e1f7,
+    };
+    const DIACTIONFORMATW expect_action_format_3 =
+    {
+        .dwSize = sizeof(DIACTIONFORMATW),
+        .dwActionSize = sizeof(DIACTIONW),
+        .dwNumActions = ARRAY_SIZE(expect_actions_3),
+        .dwDataSize = 4 * ARRAY_SIZE(expect_actions_3),
+        .rgoAction = (DIACTIONW *)expect_actions_3,
+        .dwGenre = DIVIRTUAL_DRIVING_RACE,
+        .guidActionMap = GUID_action_mapping_2,
+        .dwCRC = 0xf8748d65,
+    };
+    const DIACTIONFORMATW expect_action_format_4 =
+    {
+        .dwSize = sizeof(DIACTIONFORMATW),
+        .dwActionSize = sizeof(DIACTIONW),
+        .dwNumActions = ARRAY_SIZE(expect_actions_4),
+        .dwDataSize = 4 * ARRAY_SIZE(expect_actions_4),
+        .rgoAction = (DIACTIONW *)expect_actions_4,
+        .dwGenre = DIVIRTUAL_DRIVING_RACE,
+        .guidActionMap = GUID_action_mapping_2,
+        .dwCRC = 0xf8748d65,
     };
     const DIACTIONFORMATW expect_action_format_2_filled =
     {
@@ -568,7 +730,7 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
         .lAxisMin = -128,
         .lAxisMax = +128,
         .tszActionMap = L"Action Map Filled",
-        .dwCRC = 0x3d98f717,
+        .dwCRC = 0x5ebf86a6,
     };
     struct hid_expect injected_input[] =
     {
@@ -606,14 +768,17 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
         {   0, 0, 0,     -1, 0, 0, 0,  -43},
         {+128, 0, 0,     -1, 0, 0, 0, -128},
     };
-    const DIDEVICEOBJECTDATA expect_objdata[8] =
+    const DIDEVICEOBJECTDATA expect_objdata[11] =
     {
+        {.dwOfs = 0x20, .dwData = +128, .uAppData = 9},
         {.dwOfs = 0x1c, .dwData = +128, .uAppData = 8},
         {.dwOfs = 0xc, .dwData = +31500, .uAppData = 4},
         {.dwOfs = 0, .dwData = +128, .uAppData = 1},
+        {.dwOfs = 0x20, .dwData = -67, .uAppData = 9},
         {.dwOfs = 0x1c, .dwData = -43, .uAppData = 8},
         {.dwOfs = 0xc, .dwData = -1, .uAppData = 4},
         {.dwOfs = 0, .dwData = 0, .uAppData = 1},
+        {.dwOfs = 0x20, .dwData = -128, .uAppData = 9},
         {.dwOfs = 0x1c, .dwData = -128, .uAppData = 8},
         {.dwOfs = 0, .dwData = +128, .uAppData = 1},
     };
@@ -641,6 +806,9 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
         {.dwSemantic = DIAXIS_ANY_Z_2},
         {.dwSemantic = DIAXIS_ANY_4},
         {.dwSemantic = DIAXIS_DRIVINGR_STEER},
+        {.dwSemantic = DIAXIS_ANY_Y_1},
+        {.dwSemantic = DIMOUSE_WHEEL},
+        {.dwSemantic = 0x81000410},
     };
     DIACTIONFORMATW action_format_1 =
     {
@@ -658,6 +826,16 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
         .dwActionSize = sizeof(*default_actions),
         .dwNumActions = ARRAY_SIZE(expect_actions),
         .dwDataSize = 4 * ARRAY_SIZE(expect_actions),
+        .rgoAction = default_actions,
+        .dwGenre = DIVIRTUAL_DRIVING_RACE,
+        .guidActionMap = GUID_action_mapping_2,
+    };
+    DIACTIONFORMATW action_format_3 =
+    {
+        .dwSize = sizeof(DIACTIONFORMATW),
+        .dwActionSize = sizeof(*default_actions),
+        .dwNumActions = ARRAY_SIZE(expect_actions_3),
+        .dwDataSize = 4 * ARRAY_SIZE(expect_actions_3),
         .rgoAction = default_actions,
         .dwGenre = DIVIRTUAL_DRIVING_RACE,
         .guidActionMap = GUID_action_mapping_2,
@@ -734,6 +912,26 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
             .lptszActionName = L"Steer",
             .uAppData = 8,
         },
+        {
+            .dwSemantic = DIAXIS_ANY_Y_1,
+            .guidInstance = expect_guid_product,
+            .dwObjID = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 1 ),
+            .lptszActionName = L"Y Axis",
+            .uAppData = 9,
+        },
+        {
+            .dwSemantic = DIMOUSE_WHEEL,
+            .guidInstance = expect_guid_product,
+            .lptszActionName = L"Wheel",
+            .uAppData = 10,
+        },
+        {
+            .dwSemantic = 0x81000410,
+            .guidInstance = expect_guid_product,
+            .lptszActionName = L"Key",
+            .dwFlags = DIA_APPFIXED,
+            .uAppData = 11,
+        },
     };
     DIACTIONFORMATW action_format_2_filled =
     {
@@ -748,29 +946,6 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
         .lAxisMin = -128,
         .lAxisMax = +128,
         .tszActionMap = L"Action Map Filled",
-    };
-    struct diaction_todo actions_todos_1 = {.instance = TRUE, .objid = TRUE, .how = TRUE};
-    struct diaction_todo actions_todos_2[ARRAY_SIZE(expect_actions)] =
-    {
-        {.instance = TRUE, .objid = TRUE, .how = TRUE},
-        {.instance = TRUE, .objid = TRUE, .how = TRUE},
-        {0},
-        {.instance = TRUE, .objid = TRUE, .how = TRUE},
-        {.instance = TRUE, .objid = TRUE, .how = TRUE},
-        {.instance = TRUE, .objid = TRUE, .how = TRUE},
-        {.instance = TRUE, .objid = TRUE, .how = TRUE},
-        {.objid = TRUE},
-    };
-    struct diaction_todo actions_todos_2_filled[ARRAY_SIZE(expect_actions)] =
-    {
-        {.how = TRUE},
-        {0},
-        {.instance = TRUE, .how = TRUE},
-        {.how = TRUE},
-        {.instance = TRUE, .how = TRUE},
-        {.objid = TRUE, .how = TRUE},
-        {.objid = TRUE},
-        {.objid = TRUE, .how = TRUE},
     };
     DIPROPRANGE prop_range =
     {
@@ -810,7 +985,9 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     DIDEVICEOBJECTDATA objdata[ARRAY_SIZE(expect_objdata)];
     DIACTIONW actions[ARRAY_SIZE(expect_actions)];
     DWORD state[ARRAY_SIZE(expect_actions)];
+    IDirectInputDevice8W *mouse, *keyboard;
     DIACTIONFORMATW action_format;
+    IDirectInput8W *dinput;
     WCHAR username[256];
     DWORD i, res, flags;
     HRESULT hr;
@@ -827,26 +1004,21 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     hr = IDirectInputDevice8_BuildActionMap( device, NULL, L"username", DIDBAM_DEFAULT );
     ok( hr == DIERR_INVALIDPARAM, "BuildActionMap returned %#lx\n", hr );
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format_1, L"username", 0xdeadbeef );
-    todo_wine
     ok( hr == DIERR_INVALIDPARAM, "BuildActionMap returned %#lx\n", hr );
     flags = DIDBAM_HWDEFAULTS | DIDBAM_INITIALIZE;
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format_1, L"username", flags );
-    todo_wine
     ok( hr == DIERR_INVALIDPARAM, "BuildActionMap returned %#lx\n", hr );
     flags = DIDBAM_HWDEFAULTS | DIDBAM_PRESERVE;
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format_1, L"username", flags );
-    todo_wine
     ok( hr == DIERR_INVALIDPARAM, "BuildActionMap returned %#lx\n", hr );
     flags = DIDBAM_INITIALIZE | DIDBAM_PRESERVE;
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format_1, L"username", flags );
-    todo_wine
     ok( hr == DIERR_INVALIDPARAM, "BuildActionMap returned %#lx\n", hr );
 
     hr = IDirectInputDevice8_SetActionMap( device, NULL, NULL, DIDSAM_DEFAULT );
     ok( hr == DIERR_INVALIDPARAM, "SetActionMap returned %#lx\n", hr );
     flags = DIDSAM_FORCESAVE | DIDSAM_NOUSER;
     hr = IDirectInputDevice8_SetActionMap( device, &action_format_1, NULL, flags );
-    todo_wine
     ok( hr == DIERR_INVALIDPARAM, "SetActionMap returned %#lx\n", hr );
 
 
@@ -858,27 +1030,21 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     /* first SetActionMap call for a user always return DI_SETTINGSNOTSAVED */
 
     hr = IDirectInputDevice8_SetActionMap( device, &voice_action_format, NULL, DIDSAM_FORCESAVE );
-    todo_wine
     ok( hr == DI_SETTINGSNOTSAVED, "SetActionMap returned %#lx\n", hr );
 
     memset( prop_username.wsz, 0, sizeof(prop_username.wsz) );
     hr = IDirectInputDevice_GetProperty( device, DIPROP_USERNAME, &prop_username.diph );
-    todo_wine
     ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
-    todo_wine
     ok( !wcscmp( prop_username.wsz, username ), "got username %s\n", debugstr_w(prop_username.wsz) );
 
     hr = IDirectInputDevice8_SetActionMap( device, &voice_action_format, NULL, DIDSAM_DEFAULT );
     ok( hr == DI_NOEFFECT, "SetActionMap returned %#lx\n", hr );
     hr = IDirectInputDevice8_SetActionMap( device, &voice_action_format, NULL, DIDSAM_FORCESAVE );
-    todo_wine
     ok( hr == DI_SETTINGSNOTSAVED, "SetActionMap returned %#lx\n", hr );
 
     memset( prop_username.wsz, 0, sizeof(prop_username.wsz) );
     hr = IDirectInputDevice_GetProperty( device, DIPROP_USERNAME, &prop_username.diph );
-    todo_wine
     ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
-    todo_wine
     ok( !wcscmp( prop_username.wsz, username ), "got username %s\n", debugstr_w(prop_username.wsz) );
 
 
@@ -887,13 +1053,11 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     memset( actions, 0, sizeof(actions) );
     actions[0] = default_actions[0];
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, NULL, DIDBAM_DEFAULT );
-    todo_wine
     ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_1, &actions_todos_1 );
+    check_diactionformatw( &action_format, &expect_action_format_1 );
     hr = IDirectInputDevice8_SetActionMap( device, &action_format, NULL, DIDSAM_DEFAULT );
-    todo_wine
     ok( hr == DI_OK, "SetActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_1, &actions_todos_1 );
+    check_diactionformatw( &action_format, &expect_action_format_1 );
 
 
     action_format = action_format_1;
@@ -901,9 +1065,8 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     memset( actions, 0, sizeof(actions) );
     actions[0] = default_actions[0];
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_DEFAULT );
-    todo_wine
     ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_1, &actions_todos_1 );
+    check_diactionformatw( &action_format, &expect_action_format_1 );
 
     /* first SetActionMap call for a user always return DI_SETTINGSNOTSAVED */
 
@@ -911,24 +1074,20 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     todo_wine
     ok( hr == DI_SETTINGSNOTSAVED, "SetActionMap returned %#lx\n", hr );
     hr = IDirectInputDevice8_SetActionMap( device, &action_format, L"username", DIDSAM_DEFAULT );
-    todo_wine
     ok( hr == DI_OK, "SetActionMap returned %#lx\n", hr );
 
     /* same SetActionMap call returns DI_OK */
 
     hr = IDirectInputDevice8_SetActionMap( device, &action_format, L"username", DIDSAM_DEFAULT );
-    todo_wine
     ok( hr == DI_OK, "SetActionMap returned %#lx\n", hr );
 
     /* DIDSAM_FORCESAVE always returns DI_SETTINGSNOTSAVED */
 
     hr = IDirectInputDevice8_SetActionMap( device, &action_format, L"username", DIDSAM_FORCESAVE );
-    todo_wine
     ok( hr == DI_SETTINGSNOTSAVED, "SetActionMap returned %#lx\n", hr );
     hr = IDirectInputDevice8_SetActionMap( device, &action_format, L"username", DIDSAM_FORCESAVE );
-    todo_wine
     ok( hr == DI_SETTINGSNOTSAVED, "SetActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_1, &actions_todos_1 );
+    check_diactionformatw( &action_format, &expect_action_format_1 );
 
 
     /* action format dwDataSize and dwNumActions have to match, actions require a dwSemantic */
@@ -939,11 +1098,9 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     actions[0] = default_actions[0];
     action_format.dwDataSize = 8;
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_DEFAULT );
-    todo_wine
     ok( hr == DIERR_INVALIDPARAM, "BuildActionMap returned %#lx\n", hr );
     action_format.dwNumActions = 2;
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_DEFAULT );
-    todo_wine
     ok( hr == DIERR_INVALIDPARAM, "BuildActionMap returned %#lx\n", hr );
     action_format.dwNumActions = 1;
     action_format.dwDataSize = 4;
@@ -954,7 +1111,14 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     memcpy( actions, default_actions, sizeof(default_actions) );
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_DEFAULT );
     ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_2, actions_todos_2 );
+    check_diactionformatw( &action_format, &expect_action_format_2 );
+
+    action_format = action_format_2;
+    action_format.rgoAction = actions;
+    memcpy( actions, default_actions, sizeof(default_actions) );
+    hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_PRESERVE );
+    ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
+    check_diactionformatw( &action_format, &expect_action_format_2 );
 
     hr = IDirectInputDevice8_SetActionMap( device, &action_format, L"username", DIDSAM_DEFAULT );
     ok( hr == DI_OK, "SetActionMap returned %#lx\n", hr );
@@ -963,7 +1127,6 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     prop_pointer.diph.dwHow = DIPH_BYUSAGE;
     prop_pointer.diph.dwObj = MAKELONG(HID_USAGE_GENERIC_X, HID_USAGE_PAGE_GENERIC);
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_APPDATA, &prop_pointer.diph );
-    todo_wine
     ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
     ok( prop_pointer.uData == 0, "got uData %#Ix\n", prop_pointer.uData );
 
@@ -971,23 +1134,18 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     prop_range.diph.dwObj = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 2 );
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_RANGE, &prop_range.diph );
     ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
-    todo_wine
     ok( prop_range.lMin == +1000, "got lMin %+ld\n", prop_range.lMin );
-    todo_wine
     ok( prop_range.lMax == +51000, "got lMax %+ld\n", prop_range.lMax );
 
     prop_range.diph.dwHow = DIPH_BYUSAGE;
     prop_range.diph.dwObj = MAKELONG(HID_USAGE_GENERIC_X, HID_USAGE_PAGE_GENERIC);
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_RANGE, &prop_range.diph );
     ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
-    todo_wine
     ok( prop_range.lMin == -14000, "got lMin %+ld\n", prop_range.lMin );
-    todo_wine
     ok( prop_range.lMax == -4000, "got lMax %+ld\n", prop_range.lMax );
 
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_BUFFERSIZE, &prop_dword.diph );
     ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
-    todo_wine
     ok( prop_dword.dwData == 0, "got dwData %#lx\n", prop_dword.dwData );
 
 
@@ -997,16 +1155,14 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     action_format.rgoAction = actions;
     memcpy( actions, filled_actions, sizeof(filled_actions) );
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_DEFAULT );
-    todo_wine
     ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_2_filled, actions_todos_2_filled );
+    check_diactionformatw( &action_format, &expect_action_format_2_filled );
     hr = IDirectInputDevice8_SetActionMap( device, &action_format, L"username", DIDSAM_DEFAULT );
     ok( hr == DI_OK, "SetActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_2_filled, actions_todos_2_filled );
+    check_diactionformatw( &action_format, &expect_action_format_2_filled );
     hr = IDirectInputDevice8_SetActionMap( device, &action_format, L"username", DIDSAM_FORCESAVE );
-    todo_wine
     ok( hr == DI_SETTINGSNOTSAVED, "SetActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_2_filled, actions_todos_2_filled );
+    check_diactionformatw( &action_format, &expect_action_format_2_filled );
 
 
     prop_pointer.diph.dwHow = DIPH_DEVICE;
@@ -1017,23 +1173,18 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     prop_pointer.diph.dwHow = DIPH_BYID;
     prop_pointer.diph.dwObj = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 3 );
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_APPDATA, &prop_pointer.diph );
-    todo_wine
     ok( hr == DIERR_NOTFOUND, "GetProperty returned %#lx\n", hr );
 
     prop_pointer.diph.dwHow = DIPH_BYID;
     prop_pointer.diph.dwObj = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 2 );
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_APPDATA, &prop_pointer.diph );
-    todo_wine
     ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
-    todo_wine
     ok( prop_pointer.uData == 6, "got uData %#Ix\n", prop_pointer.uData );
 
     prop_pointer.diph.dwHow = DIPH_BYUSAGE;
     prop_pointer.diph.dwObj = MAKELONG(HID_USAGE_GENERIC_X, HID_USAGE_PAGE_GENERIC);
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_APPDATA, &prop_pointer.diph );
-    todo_wine
     ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
-    todo_wine
     ok( prop_pointer.uData == 8, "got uData %#Ix\n", prop_pointer.uData );
 
     prop_range.diph.dwHow = DIPH_BYID;
@@ -1060,27 +1211,25 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     memcpy( actions, default_actions, sizeof(default_actions) );
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_HWDEFAULTS );
     ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_2, actions_todos_2 );
+    check_diactionformatw( &action_format, &expect_action_format_2 );
 
     action_format = action_format_2;
     action_format.rgoAction = actions;
     memcpy( actions, default_actions, sizeof(default_actions) );
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_INITIALIZE );
     ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_2, actions_todos_2 );
+    check_diactionformatw( &action_format, &expect_action_format_2 );
 
     action_format = action_format_2;
     action_format.rgoAction = actions;
     memcpy( actions, default_actions, sizeof(default_actions) );
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_PRESERVE );
     ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
-    check_diactionformatw_( __LINE__, &action_format, &expect_action_format_2, actions_todos_2 );
+    check_diactionformatw( &action_format, &expect_action_format_2 );
 
 
     hr = IDirectInputDevice8_Acquire( device );
-    todo_wine
     ok( hr == DI_OK, "Acquire returned: %#lx\n", hr );
-    if (hr != DI_OK) goto skip_input;
 
     hr = IDirectInputDevice8_SetActionMap( device, &action_format, L"username", DIDSAM_DEFAULT );
     ok( hr == DIERR_ACQUIRED, "SetActionMap returned %#lx\n", hr );
@@ -1092,7 +1241,6 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
         send_hid_input( file, &injected_input[0], sizeof(*injected_input) );
         res = WaitForSingleObject( event, 100 );
     }
-    todo_wine
     ok( res == WAIT_OBJECT_0, "WaitForSingleObject failed\n" );
 
     for (i = 0; i < ARRAY_SIZE(injected_input); ++i)
@@ -1100,23 +1248,14 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
         winetest_push_context( "state[%ld]", i );
 
         hr = IDirectInputDevice8_GetDeviceState( device, sizeof(state), state );
-        todo_wine
         ok( hr == DI_OK, "GetDeviceState returned: %#lx\n", hr );
-        todo_wine_if( expect_state[i][0] )
         ok( state[0] == expect_state[i][0], "got state[0] %+ld\n", state[0] );
-        todo_wine_if( expect_state[i][1] )
         ok( state[1] == expect_state[i][1], "got state[1] %+ld\n", state[1] );
-        todo_wine_if( expect_state[i][2] )
         ok( state[2] == expect_state[i][2], "got state[2] %+ld\n", state[2] );
-        todo_wine_if( expect_state[i][3] )
         ok( state[3] == expect_state[i][3], "got state[3] %+ld\n", state[3] );
-        todo_wine_if( expect_state[i][4] )
         ok( state[4] == expect_state[i][4], "got state[4] %+ld\n", state[4] );
-        todo_wine_if( expect_state[i][5] )
         ok( state[5] == expect_state[i][5], "got state[5] %+ld\n", state[5] );
-        todo_wine_if( expect_state[i][6] )
         ok( state[6] == expect_state[i][6], "got state[6] %+ld\n", state[6] );
-        todo_wine_if( expect_state[i][7] )
         ok( state[7] == expect_state[i][7] ||
             broken(state[7] == -45 && expect_state[i][7] == -43) /* 32-bit rounding */,
             "got state[7] %+ld\n", state[7] );
@@ -1125,7 +1264,7 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
 
         res = WaitForSingleObject( event, 100 );
         if (i == 0 || i == 3) ok( res == WAIT_TIMEOUT, "WaitForSingleObject succeeded\n" );
-        else todo_wine ok( res == WAIT_OBJECT_0, "WaitForSingleObject failed\n" );
+        else ok( res == WAIT_OBJECT_0, "WaitForSingleObject failed\n" );
         ResetEvent( event );
         winetest_pop_context();
     }
@@ -1134,27 +1273,23 @@ static void test_action_map( IDirectInputDevice8W *device, HANDLE file, HANDLE e
     hr = IDirectInputDevice8_GetDeviceData( device, sizeof(*objdata), objdata, &res, DIGDD_PEEK );
     todo_wine
     ok( hr == DI_BUFFEROVERFLOW, "GetDeviceData returned %#lx\n", hr );
-    ok( res == 8, "got %lu expected %u\n", res, 8 );
+    ok( res == ARRAY_SIZE(objdata), "got %lu expected %u\n", res, 8 );
     while (res--)
     {
         winetest_push_context( "%lu", res );
-        todo_wine_if( expect_objdata[res].dwOfs )
         check_member( objdata[res], expect_objdata[res], "%#lx", dwOfs );
-        todo_wine_if( expect_objdata[res].dwData )
         ok( objdata[res].dwData == expect_objdata[res].dwData ||
-            broken(objdata[res].dwData == -45 && expect_objdata[res].dwData == -43) /* 32-bit rounding */,
+            broken(objdata[res].dwData == -45 && expect_objdata[res].dwData == -43) /* 32-bit rounding */ ||
+            broken(objdata[res].dwData == -71 && expect_objdata[res].dwData == -67) /* 32-bit rounding */,
             "got dwData %+ld\n", objdata[res].dwData );
-        todo_wine
         check_member( objdata[res], expect_objdata[res], "%#Ix", uAppData );
         winetest_pop_context();
     }
 
-skip_input:
     hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_DEFAULT );
     ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
 
     hr = IDirectInputDevice8_Unacquire( device );
-    todo_wine
     ok( hr == DI_OK, "Acquire returned: %#lx\n", hr );
 
 
@@ -1163,9 +1298,7 @@ skip_input:
     prop_pointer.diph.dwHow = DIPH_BYUSAGE;
     prop_pointer.diph.dwObj = MAKELONG(HID_USAGE_GENERIC_X, HID_USAGE_PAGE_GENERIC);
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_APPDATA, &prop_pointer.diph );
-    todo_wine
     ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
-    todo_wine
     ok( prop_pointer.uData == 8, "got uData %#Ix\n", prop_pointer.uData );
 
     hr = IDirectInputDevice8_SetDataFormat( device, &c_dfDIJoystick2 );
@@ -1174,9 +1307,7 @@ skip_input:
     prop_pointer.diph.dwHow = DIPH_BYUSAGE;
     prop_pointer.diph.dwObj = MAKELONG(HID_USAGE_GENERIC_X, HID_USAGE_PAGE_GENERIC);
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_APPDATA, &prop_pointer.diph );
-    todo_wine
     ok( hr == DI_OK, "GetProperty returned %#lx\n", hr );
-    todo_wine
     ok( prop_pointer.uData == -1, "got uData %#Ix\n", prop_pointer.uData );
 
     prop_range.diph.dwHow = DIPH_BYID;
@@ -1212,6 +1343,64 @@ skip_input:
     hr = IDirectInputDevice_GetProperty( device, DIPROP_USERNAME, &prop_username.diph );
     ok( hr == DI_NOEFFECT, "GetProperty returned %#lx\n", hr );
     ok( !wcscmp( prop_username.wsz, L"" ), "got username %s\n", debugstr_w(prop_username.wsz) );
+
+
+    /* test BuildActionMap with multiple devices and EnumDevicesBySemantics */
+
+    hr = DirectInput8Create( instance, 0x800, &IID_IDirectInput8W, (void **)&dinput, NULL );
+    ok( hr == DI_OK, "DirectInput8Create returned %#lx\n", hr );
+
+    hr = IDirectInput8_CreateDevice( dinput, &GUID_SysMouse, &mouse, NULL );
+    ok( hr == DI_OK, "DirectInput8Create returned %#lx\n", hr );
+    hr = IDirectInput8_CreateDevice( dinput, &GUID_SysKeyboard, &keyboard, NULL );
+    ok( hr == DI_OK, "DirectInput8Create returned %#lx\n", hr );
+
+    action_format = action_format_3;
+    action_format.rgoAction = actions;
+    memcpy( actions, default_actions + 7, sizeof(expect_actions_3) );
+    hr = IDirectInputDevice8_BuildActionMap( mouse, &action_format, L"username", DIDBAM_DEFAULT );
+    ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
+    hr = IDirectInputDevice8_BuildActionMap( keyboard, &action_format, L"username", DIDBAM_DEFAULT );
+    ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
+    hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_DEFAULT );
+    ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
+    check_diactionformatw( &action_format, &expect_action_format_3 );
+
+    action_format = action_format_3;
+    action_format.rgoAction = actions;
+    memcpy( actions, default_actions + 7, sizeof(expect_actions_4) );
+    hr = IDirectInputDevice8_BuildActionMap( mouse, &action_format, L"username", DIDBAM_PRESERVE );
+    ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
+    hr = IDirectInputDevice8_BuildActionMap( keyboard, &action_format, L"username", DIDBAM_PRESERVE );
+    ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
+    hr = IDirectInputDevice8_BuildActionMap( device, &action_format, L"username", DIDBAM_PRESERVE );
+    ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
+    check_diactionformatw( &action_format, &expect_action_format_4 );
+
+    IDirectInputDevice8_Release( keyboard );
+    IDirectInputDevice8_Release( mouse );
+
+    action_format = action_format_2;
+    action_format.rgoAction = actions;
+    memcpy( actions, default_actions, sizeof(default_actions) );
+    hr = IDirectInput8_EnumDevicesBySemantics( dinput, NULL, &action_format, enum_devices_by_semantic, (void *)0xdeadbeef, 0 );
+    ok( hr == DI_OK, "EnumDevicesBySemantics returned %#lx\n", hr );
+
+    action_format = action_format_3;
+    action_format.rgoAction = actions;
+    memcpy( actions, default_actions + 7, sizeof(expect_actions_4) );
+    hr = IDirectInput8_EnumDevicesBySemantics( dinput, NULL, &action_format, enum_devices_by_semantic, (void *)0xdeadbeef, 0 );
+    ok( hr == DI_OK, "EnumDevicesBySemantics returned %#lx\n", hr );
+
+    action_format = action_format_3;
+    action_format.rgoAction = actions;
+    memcpy( actions, default_actions + 9, 2 * sizeof(DIACTIONW) );
+    action_format.dwNumActions = 2;
+    action_format.dwDataSize = 8;
+    hr = IDirectInput8_EnumDevicesBySemantics( dinput, NULL, &action_format, enum_devices_by_semantic, NULL, 0 );
+    ok( hr == DI_OK, "EnumDevicesBySemantics returned %#lx\n", hr );
+
+    IDirectInput8_Release( dinput );
 }
 
 static void test_simple_joystick( DWORD version )
@@ -1592,7 +1781,7 @@ static void test_simple_joystick( DWORD version )
         .expect_count = version < 0x700 ? ARRAY_SIZE(expect_objects_5) : ARRAY_SIZE(expect_objects),
         .expect_objs = version < 0x700 ? expect_objects_5 : expect_objects,
         .todo_objs = version < 0x700 ? todo_objects_5 : NULL,
-        .todo_extra = version < 0x700 ? TRUE : FALSE,
+        .todo_extra = version < 0x700,
     };
 
     const DIEFFECTINFOW expect_effects[] = {};
@@ -2773,7 +2962,6 @@ static void test_simple_joystick( DWORD version )
     prop_pointer.diph.dwHow = DIPH_BYUSAGE;
     prop_pointer.diph.dwObj = MAKELONG( HID_USAGE_GENERIC_X, HID_USAGE_PAGE_GENERIC );
     hr = IDirectInputDevice8_GetProperty( device, DIPROP_APPDATA, &prop_pointer.diph );
-    todo_wine_if( version >= 0x0800 )
     ok( hr == (version < 0x0800 ? DIERR_UNSUPPORTED : DI_OK),
         "GetProperty DIPROP_APPDATA returned %#lx\n", hr );
     if (hr == DI_OK) ok( prop_pointer.uData == 0xfeedcafe, "got %p\n", (void *)prop_pointer.uData );

@@ -381,6 +381,23 @@ int get_node_provider_type_at_idx(struct uia_node *node, int idx)
     return 0;
 }
 
+static HRESULT get_prop_val_from_node_provider(IWineUiaNode *node, const struct uia_prop_info *prop_info, int idx,
+        VARIANT *out_val)
+{
+    IWineUiaProvider *prov;
+    HRESULT hr;
+
+    VariantInit(out_val);
+    hr = IWineUiaNode_get_provider(node, idx, &prov);
+    if (FAILED(hr))
+        return hr;
+
+    hr = IWineUiaProvider_get_prop_val(prov, prop_info, out_val);
+    IWineUiaProvider_Release(prov);
+
+    return hr;
+}
+
 static HRESULT get_prov_opts_from_node_provider(IWineUiaNode *node, int idx, int *out_opts)
 {
     IWineUiaProvider *prov;
@@ -1104,6 +1121,94 @@ static HRESULT traverse_uia_node_tree(HUIANODE huianode, struct UiaCondition *vi
     return hr;
 }
 
+static HRESULT bstrcat_realloc(BSTR *bstr, const WCHAR *cat_str)
+{
+    if (!SysReAllocStringLen(bstr, NULL, SysStringLen(*bstr) + lstrlenW(cat_str)))
+    {
+        SysFreeString(*bstr);
+        *bstr = NULL;
+        return E_OUTOFMEMORY;
+    }
+
+    lstrcatW(*bstr, cat_str);
+    return S_OK;
+}
+
+static const WCHAR *prov_desc_type_str[] = {
+    L"Override",
+    L"Main",
+    L"Nonclient",
+    L"Hwnd",
+};
+
+static HRESULT get_node_provider_description_string(struct uia_node *node, VARIANT *out_desc)
+{
+    const struct uia_prop_info *prop_info = uia_prop_info_from_id(UIA_ProviderDescriptionPropertyId);
+    WCHAR buf[256] = { 0 };
+    HRESULT hr = S_OK;
+    BSTR node_desc;
+    int i;
+
+    VariantInit(out_desc);
+
+    /*
+     * If we have a single provider, and it's a nested node provider, we just
+     * return the string directly from the nested node.
+     */
+    if ((node->prov_count == 1) && is_nested_node_provider(node->prov[get_node_provider_type_at_idx(node, 0)]))
+        return get_prop_val_from_node_provider(&node->IWineUiaNode_iface, prop_info, 0, out_desc);
+
+    wsprintfW(buf, L"[pid:%d,providerId:%#x ", GetCurrentProcessId(), node->hwnd);
+    if (!(node_desc = SysAllocString(buf)))
+        return E_OUTOFMEMORY;
+
+    for (i = 0; i < node->prov_count; i++)
+    {
+        int prov_type = get_node_provider_type_at_idx(node, i);
+        VARIANT v;
+
+        buf[0] = 0;
+        /* There's a provider preceding this one, add a "; " separator. */
+        if (i)
+            lstrcatW(buf, L"; ");
+
+        /* Generate the provider type prefix string. */
+        lstrcatW(buf, prov_desc_type_str[prov_type]);
+        if (node->parent_link_idx == i)
+            lstrcatW(buf, L"(parent link)");
+        lstrcatW(buf, L":");
+        if (is_nested_node_provider(node->prov[prov_type]))
+            lstrcatW(buf, L"Nested ");
+
+        hr = bstrcat_realloc(&node_desc, buf);
+        if (FAILED(hr))
+            goto exit;
+
+        VariantInit(&v);
+        hr = get_prop_val_from_node_provider(&node->IWineUiaNode_iface, prop_info, i, &v);
+        if (FAILED(hr))
+            goto exit;
+
+        hr = bstrcat_realloc(&node_desc, V_BSTR(&v));
+        VariantClear(&v);
+        if (FAILED(hr))
+            goto exit;
+    }
+
+    hr = bstrcat_realloc(&node_desc, L"]");
+    if (SUCCEEDED(hr))
+    {
+        V_VT(out_desc) = VT_BSTR;
+        V_BSTR(out_desc) = node_desc;
+    }
+
+exit:
+    if (FAILED(hr))
+        SysFreeString(node_desc);
+
+    return hr;
+}
+
 /*
  * IWineUiaProvider interface.
  */
@@ -1399,6 +1504,34 @@ static HRESULT uia_provider_get_special_prop_val(struct uia_provider *prov,
         break;
     }
 
+    case UIA_ProviderDescriptionPropertyId:
+    {
+        /* FIXME: Get actual name of the executable our provider comes from. */
+        static const WCHAR *provider_origin = L" (unmanaged:uiautomationcore.dll)";
+        static const WCHAR *default_desc = L"Unidentified provider";
+        BSTR prov_desc_str;
+        VARIANT v;
+
+        hr = uia_provider_get_elem_prop_val(prov, prop_info, &v);
+        if (FAILED(hr))
+            return hr;
+
+        if (V_VT(&v) == VT_BSTR)
+            prov_desc_str = SysAllocStringLen(V_BSTR(&v), lstrlenW(V_BSTR(&v)) + lstrlenW(provider_origin));
+        else
+            prov_desc_str = SysAllocStringLen(default_desc, lstrlenW(default_desc) + lstrlenW(provider_origin));
+
+        VariantClear(&v);
+        if (!prov_desc_str)
+            return E_OUTOFMEMORY;
+
+        /* Append the name of the executable our provider comes from. */
+        wsprintfW(&prov_desc_str[lstrlenW(prov_desc_str)], L"%s", provider_origin);
+        V_VT(ret_val) = VT_BSTR;
+        V_BSTR(ret_val) = prov_desc_str;
+        break;
+    }
+
     default:
         break;
     }
@@ -1435,6 +1568,26 @@ static HRESULT uia_provider_get_pattern_prop_val(struct uia_provider *prov,
         hr = IValueProvider_get_IsReadOnly((IValueProvider *)pattern_prov, &val);
         if (SUCCEEDED(hr))
             variant_init_bool(ret_val, val);
+        break;
+    }
+
+    case UIA_LegacyIAccessibleChildIdPropertyId:
+    {
+        int val;
+
+        hr = ILegacyIAccessibleProvider_get_ChildId((ILegacyIAccessibleProvider *)pattern_prov, &val);
+        if (SUCCEEDED(hr))
+            variant_init_i4(ret_val, val);
+        break;
+    }
+
+    case UIA_LegacyIAccessibleRolePropertyId:
+    {
+        DWORD val;
+
+        hr = ILegacyIAccessibleProvider_get_Role((ILegacyIAccessibleProvider *)pattern_prov, &val);
+        if (SUCCEEDED(hr))
+            variant_init_i4(ret_val, val);
         break;
     }
 
@@ -2231,22 +2384,16 @@ BOOL WINAPI UiaNodeRelease(HUIANODE huianode)
     return TRUE;
 }
 
-static HRESULT get_prop_val_from_node_provider(struct uia_node *node,
+static HRESULT get_prop_val_from_node(struct uia_node *node,
         const struct uia_prop_info *prop_info, VARIANT *v)
 {
-    IWineUiaProvider *prov;
     HRESULT hr = S_OK;
     int i;
 
+    VariantInit(v);
     for (i = 0; i < node->prov_count; i++)
     {
-        hr = IWineUiaNode_get_provider(&node->IWineUiaNode_iface, i, &prov);
-        if (FAILED(hr))
-            return hr;
-
-        VariantInit(v);
-        hr = IWineUiaProvider_get_prop_val(prov, prop_info, v);
-        IWineUiaProvider_Release(prov);
+        hr = get_prop_val_from_node_provider(&node->IWineUiaNode_iface, prop_info, i, v);
         if (FAILED(hr) || V_VT(v) != VT_EMPTY)
             break;
     }
@@ -2297,11 +2444,17 @@ HRESULT WINAPI UiaGetPropertyValue(HUIANODE huianode, PROPERTYID prop_id, VARIAN
         return S_OK;
     }
 
+    case UIA_ProviderDescriptionPropertyId:
+        hr = get_node_provider_description_string(node, &v);
+        if (SUCCEEDED(hr) && (V_VT(&v) == VT_BSTR))
+            *out_val = v;
+        return hr;
+
     default:
         break;
     }
 
-    hr = get_prop_val_from_node_provider(node, prop_info, &v);
+    hr = get_prop_val_from_node(node, prop_info, &v);
     if (SUCCEEDED(hr) && V_VT(&v) != VT_EMPTY)
     {
         /*
@@ -2440,7 +2593,7 @@ HRESULT WINAPI UiaGetRuntimeId(HUIANODE huianode, SAFEARRAY **runtime_id)
     {
         VARIANT v;
 
-        hr = get_prop_val_from_node_provider(node, prop_info, &v);
+        hr = get_prop_val_from_node(node, prop_info, &v);
         if (FAILED(hr))
         {
             VariantClear(&v);

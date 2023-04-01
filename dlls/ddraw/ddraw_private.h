@@ -63,10 +63,9 @@ struct FvfToDecl
 
 #define DDRAW_STRIDE_ALIGNMENT  8
 
-#define DDRAW_WINED3D_FLAGS     (WINED3D_LEGACY_DEPTH_BIAS | WINED3D_VIDMEM_ACCOUNTING \
-        | WINED3D_RESTORE_MODE_ON_ACTIVATE | WINED3D_FOCUS_MESSAGES | WINED3D_PIXEL_CENTER_INTEGER \
-        | WINED3D_LEGACY_UNBOUND_RESOURCE_COLOR | WINED3D_NO_PRIMITIVE_RESTART \
-        | WINED3D_LEGACY_CUBEMAP_FILTERING | WINED3D_NO_DRAW_INDIRECT)
+#define DDRAW_WINED3D_FLAGS     (WINED3D_LEGACY_DEPTH_BIAS | WINED3D_RESTORE_MODE_ON_ACTIVATE \
+        | WINED3D_FOCUS_MESSAGES | WINED3D_PIXEL_CENTER_INTEGER | WINED3D_LEGACY_UNBOUND_RESOURCE_COLOR \
+        | WINED3D_NO_PRIMITIVE_RESTART | WINED3D_LEGACY_CUBEMAP_FILTERING | WINED3D_NO_DRAW_INDIRECT)
 
 #define DDRAW_MAX_ACTIVE_LIGHTS 32
 #define DDRAW_MAX_TEXTURES 8
@@ -238,9 +237,6 @@ struct ddraw_texture
 HRESULT ddraw_surface_create(struct ddraw *ddraw, const DDSURFACEDESC2 *surface_desc,
         struct ddraw_surface **surface, IUnknown *outer_unknown, unsigned int version) DECLSPEC_HIDDEN;
 struct wined3d_rendertarget_view *ddraw_surface_get_rendertarget_view(struct ddraw_surface *surface) DECLSPEC_HIDDEN;
-void ddraw_surface_init(struct ddraw_surface *surface, struct ddraw *ddraw,
-        struct wined3d_texture *wined3d_texture, unsigned int sub_resource_idx,
-        const struct wined3d_parent_ops **parent_ops) DECLSPEC_HIDDEN;
 HRESULT ddraw_surface_update_frontbuffer(struct ddraw_surface *surface,
         const RECT *rect, BOOL read, unsigned int swap_interval) DECLSPEC_HIDDEN;
 

@@ -25,6 +25,8 @@
 #endif
 
 #include <pthread.h>
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "win32u_private.h"
 #include "ntuser_private.h"
 #include "immdev.h"
@@ -391,6 +393,32 @@ void cleanup_imm_thread(void)
     }
 
     NtUserDestroyInputContext( UlongToHandle( thread_info->client_info.default_imc ));
+}
+
+/*****************************************************************************
+ *           NtUserBuildHimcList (win32u.@)
+ */
+NTSTATUS WINAPI NtUserBuildHimcList( UINT thread_id, UINT count, HIMC *buffer, UINT *size )
+{
+    HANDLE handle = 0;
+    struct imc *imc;
+
+    TRACE( "thread_id %#x, count %u, buffer %p, size %p\n", thread_id, count, buffer, size );
+
+    if (!buffer) return STATUS_UNSUCCESSFUL;
+    if (!thread_id) thread_id = GetCurrentThreadId();
+
+    *size = 0;
+    user_lock();
+    while (count && (imc = next_process_user_handle_ptr( &handle, NTUSER_OBJ_IMC )))
+    {
+        if (thread_id != -1 && imc->thread_id != thread_id) continue;
+        buffer[(*size)++] = handle;
+        count--;
+    }
+    user_unlock();
+
+    return STATUS_SUCCESS;
 }
 
 BOOL WINAPI DECLSPEC_HIDDEN ImmProcessKey( HWND hwnd, HKL hkl, UINT vkey, LPARAM key_data, DWORD unknown )
