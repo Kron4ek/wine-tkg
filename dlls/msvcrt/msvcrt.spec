@@ -367,8 +367,8 @@
 @ cdecl _control87(long long)
 @ cdecl _controlfp(long long)
 @ cdecl _controlfp_s(ptr long long)
-@ cdecl _copysign(double double)
-@ cdecl -arch=!i386 _copysignf(float float)
+@ cdecl _copysign(double double) copysign
+@ cdecl -arch=!i386 _copysignf(float float) copysignf
 @ varargs _cprintf(str)
 # stub _cprintf_l(str ptr)
 # stub _cprintf_p(str)
@@ -670,8 +670,8 @@
 @ cdecl _lock(long)
 @ cdecl _lock_file(ptr)
 @ cdecl _locking(long long long)
-@ cdecl _logb(double)
-@ cdecl -arch=!i386 _logbf(float)
+@ cdecl _logb(double) logb
+@ cdecl -arch=!i386 _logbf(float) logbf
 @ cdecl -arch=i386 _longjmpex(ptr long) MSVCRT_longjmp
 @ cdecl _lrotl(long long) MSVCRT__lrotl
 @ cdecl _lrotr(long long) MSVCRT__lrotr
@@ -840,8 +840,8 @@
 @ cdecl _msize(ptr)
 # stub -arch=win32 _msize_debug(ptr long)
 # stub -arch=win64 _msize_dbg(ptr long)
-@ cdecl _nextafter(double double)
-@ cdecl -arch=x86_64 _nextafterf(float float)
+@ cdecl _nextafter(double double) nextafter
+@ cdecl -arch=x86_64 _nextafterf(float float) nextafterf
 @ cdecl _onexit(ptr)
 @ varargs _open(str long)
 @ cdecl _open_osfhandle(long long)
@@ -1253,11 +1253,11 @@
 @ cdecl -arch=!i386 acosf(float)
 @ cdecl asctime(ptr)
 @ cdecl asctime_s(ptr long ptr)
-@ cdecl asin(double)
-@ cdecl atan(double)
+@ cdecl asin(double) MSVCRT_asin
+@ cdecl atan(double) MSVCRT_atan
 @ cdecl atan2(double double)
 @ cdecl -arch=!i386 asinf(float)
-@ cdecl -arch=!i386 atanf(float)
+@ cdecl -arch=!i386 atanf(float) MSVCRT_atanf
 @ cdecl -arch=!i386 atan2f(float float)
 @ cdecl -private atexit(ptr) MSVCRT_atexit  # not imported to avoid conflicts with Mingw
 @ cdecl atof(str)
@@ -1282,7 +1282,7 @@
 @ cdecl -arch=win64 difftime(long long) _difftime64
 @ cdecl -ret64 div(long long)
 @ cdecl exit(long)
-@ cdecl exp(double)
+@ cdecl exp(double) MSVCRT_exp
 @ cdecl -arch=!i386 expf(float)
 @ cdecl fabs(double)
 @ cdecl -arch=arm,arm64 fabsf(float)
@@ -1297,8 +1297,6 @@
 @ cdecl fgetws(ptr long ptr)
 @ cdecl floor(double)
 @ cdecl -arch=!i386 floorf(float)
-@ cdecl fma(double double double)
-@ cdecl -arch=!i386 fmaf(float float float)
 @ cdecl fmod(double double)
 @ cdecl -arch=!i386 fmodf(float float)
 @ cdecl fopen(str str)
@@ -1424,8 +1422,8 @@
 @ cdecl -arch=!i386 sinhf(float)
 @ varargs sprintf(ptr str)
 @ varargs sprintf_s(ptr long str)
-@ cdecl sqrt(double)
-@ cdecl -arch=!i386 sqrtf(float)
+@ cdecl sqrt(double) MSVCRT_sqrt
+@ cdecl -arch=!i386 sqrtf(float) MSVCRT_sqrtf
 @ cdecl srand(long)
 @ varargs sscanf(str str)
 @ varargs sscanf_s(str str)
@@ -1463,9 +1461,9 @@
 @ varargs swscanf_s(wstr wstr)
 @ cdecl system(str)
 @ cdecl tan(double)
-@ cdecl tanh(double)
+@ cdecl tanh(double) MSVCRT_tanh
 @ cdecl -arch=!i386 tanf(float)
-@ cdecl -arch=!i386 tanhf(float)
+@ cdecl -arch=!i386 tanhf(float) MSVCRT_tanhf
 @ cdecl -arch=win32 time(ptr) _time32
 @ cdecl -arch=win64 time(ptr) _time64
 @ cdecl tmpfile()

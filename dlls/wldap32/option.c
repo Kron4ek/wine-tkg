@@ -96,6 +96,9 @@ ULONG CDECL ldap_get_optionA( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_TIMELIMIT:
         return ldap_get_optionW( ld, option, value );
 
+    case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
+        return ldap_get_optionW( ld, LDAP_OPT_REFHOPLIMIT, value );
+
     case WLDAP32_LDAP_OPT_CACHE_ENABLE:
     case WLDAP32_LDAP_OPT_CACHE_FN_PTRS:
     case WLDAP32_LDAP_OPT_CACHE_STRATEGY:
@@ -122,7 +125,6 @@ ULONG CDECL ldap_get_optionA( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_PROMPT_CREDENTIALS:
     case WLDAP32_LDAP_OPT_REF_DEREF_CONN_PER_MSG:
     case WLDAP32_LDAP_OPT_REFERRAL_CALLBACK:
-    case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
     case WLDAP32_LDAP_OPT_ROOTDSE_CACHE:
     case WLDAP32_LDAP_OPT_SASL_METHOD:
     case WLDAP32_LDAP_OPT_SECURITY_CONTEXT:
@@ -215,6 +217,9 @@ ULONG CDECL ldap_get_optionW( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_TIMELIMIT:
         return map_error( ldap_get_option( CTX(ld), option, value ) );
 
+    case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
+        return map_error( ldap_get_option( CTX(ld), LDAP_OPT_REFHOPLIMIT, value ) );
+
     case WLDAP32_LDAP_OPT_CACHE_ENABLE:
     case WLDAP32_LDAP_OPT_CACHE_FN_PTRS:
     case WLDAP32_LDAP_OPT_CACHE_STRATEGY:
@@ -241,7 +246,6 @@ ULONG CDECL ldap_get_optionW( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_PROMPT_CREDENTIALS:
     case WLDAP32_LDAP_OPT_REF_DEREF_CONN_PER_MSG:
     case WLDAP32_LDAP_OPT_REFERRAL_CALLBACK:
-    case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
     case WLDAP32_LDAP_OPT_ROOTDSE_CACHE:
     case WLDAP32_LDAP_OPT_SASL_METHOD:
     case WLDAP32_LDAP_OPT_SECURITY_CONTEXT:
@@ -431,17 +435,35 @@ ULONG CDECL ldap_set_optionW( LDAP *ld, int option, void *value )
     }
     case WLDAP32_LDAP_OPT_REFERRALS:
     {
-        if (value == WLDAP32_LDAP_OPT_OFF) value = LDAP_OPT_OFF;
-        else if (value != WLDAP32_LDAP_OPT_ON)
+        if (value == WLDAP32_LDAP_OPT_ON)
+            value = LDAP_OPT_ON;
+        else if (value == WLDAP32_LDAP_OPT_OFF)
+            value = LDAP_OPT_OFF;
+        else if (value == (void *)LDAP_CHASE_SUBORDINATE_REFERRALS ||
+                 value == (void *)LDAP_CHASE_EXTERNAL_REFERRALS ||
+                 value == (void *)(LDAP_CHASE_SUBORDINATE_REFERRALS|LDAP_CHASE_EXTERNAL_REFERRALS))
         {
             FIXME( "upgrading referral value %p to LDAP_OPT_ON (OpenLDAP lacks sufficient granularity)\n", value );
             value = LDAP_OPT_ON;
         }
+        else if (*(ULONG *)value == 1)
+            value = LDAP_OPT_ON;
+        else if (*(ULONG *)value == 0)
+            value = LDAP_OPT_OFF;
+        else if (*(ULONG *)value == LDAP_CHASE_SUBORDINATE_REFERRALS ||
+                 *(ULONG *)value == LDAP_CHASE_EXTERNAL_REFERRALS ||
+                 *(ULONG *)value == (LDAP_CHASE_SUBORDINATE_REFERRALS|LDAP_CHASE_EXTERNAL_REFERRALS))
+        {
+            FIXME( "upgrading referral value 0x%lx to LDAP_OPT_ON (OpenLDAP lacks sufficient granularity)\n", *(ULONG *)value );
+            value = LDAP_OPT_ON;
+        }
+        else
+            return WLDAP32_LDAP_PARAM_ERROR;
+
         return map_error( ldap_set_option( CTX(ld), option, value ) );
     }
     case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
-        FIXME( "ignoring referral hop limit\n" );
-        return WLDAP32_LDAP_SUCCESS;
+        return map_error( ldap_set_option( CTX(ld), LDAP_OPT_REFHOPLIMIT, value ) );
 
     case WLDAP32_LDAP_OPT_SERVER_CERTIFICATE:
         CERT_CALLBACK(ld) = value;

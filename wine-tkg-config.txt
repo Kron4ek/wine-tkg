@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Apr  1 10:34:24 AM UTC 2023 :
+# Last wine-tkg-staging-fsync-git configuration - Mon Apr 17 02:43:02 PM UTC 2023 :
 
 Local cfg files used
 
-Wine (plain) version: 8.5.r0.g02876a4b132
-Using wine-staging patchset (version 8.5.r0.gabe75a77)
+Wine (plain) version: 8.6.r0.g4d610717bbc
+Using wine-staging patchset (version 8.6.1.r3.g4eb322dc)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -13,7 +13,7 @@ Done applying reverting hotfixes (if any) - list available in prepare.log
 
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W ntdll-hidden_file_attr
+Staging overrides, if any:
 
 fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
 server_Abort_waiting_on_a_completion_port_when_closing_it.patch -- ( Added Abort waiting on a completion port when closing it Proton patch )
@@ -29,6 +29,8 @@ proton-cpu-topology-overrides.patch -- ( Enable Proton's CPU topology override s
 proton-vr.patch -- ( Enable Proton vr-related wined3d additions )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
 proton-win10-default.patch -- ( Enforce win10 as default wine version )
+proton_battleye.patch -- ( Add support for Proton's Battleye runtime )
+proton-eac_bridge.patch -- ( Add support for Proton's EAC bridge )
 
 Applied hotfix remove_hooks_that_time_out2.mypatch
 Applied hotfix winex11.drv_Add_a_GPU_for_each_Vulkan_device_that_was_not_tied_to_an_XRandR_provider.mypatch
@@ -38,7 +40,6 @@ Applied hotfix ef6e33f.mypatch
 Applied hotfix 0001-proton-bcrypt_rdr2_fixes5.mypatch
 Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
 Applied hotfix a608ef1.mypatch
-Applied hotfix 1148-staging.mypatch
 Applied hotfix opencl-fixup.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
 

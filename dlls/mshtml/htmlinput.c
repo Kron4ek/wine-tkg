@@ -684,8 +684,17 @@ static HRESULT WINAPI HTMLInputElement_get_readyState(IHTMLInputElement *iface, 
 static HRESULT WINAPI HTMLInputElement_get_complete(IHTMLInputElement *iface, VARIANT_BOOL *p)
 {
     HTMLInputElement *This = impl_from_IHTMLInputElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    cpp_bool complete;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsres = nsIDOMHTMLInputElement_GetComplete(This->nsinput, &complete);
+    if(NS_FAILED(nsres))
+        return map_nsresult(nsres);
+
+    *p = variant_bool(complete);
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLInputElement_put_loop(IHTMLInputElement *iface, VARIANT v)
@@ -1423,7 +1432,6 @@ static const NodeImplVtbl HTMLInputElementImplVtbl = {
     HTMLElement_destructor,
     HTMLElement_cpc,
     HTMLElement_clone,
-    HTMLElement_dispatch_nsevent_hook,
     HTMLElement_handle_event,
     HTMLElement_get_attr_col,
     NULL,
@@ -1633,7 +1641,6 @@ static const NodeImplVtbl HTMLLabelElementImplVtbl = {
     HTMLElement_destructor,
     HTMLElement_cpc,
     HTMLElement_clone,
-    HTMLElement_dispatch_nsevent_hook,
     HTMLElement_handle_event,
     HTMLElement_get_attr_col,
 };
@@ -1970,7 +1977,6 @@ static const NodeImplVtbl HTMLButtonElementImplVtbl = {
     HTMLElement_destructor,
     HTMLElement_cpc,
     HTMLElement_clone,
-    HTMLElement_dispatch_nsevent_hook,
     HTMLElement_handle_event,
     HTMLElement_get_attr_col,
     NULL,

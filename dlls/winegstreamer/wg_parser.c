@@ -49,14 +49,6 @@ typedef enum
     GST_AUTOPLUG_SELECT_SKIP,
 } GstAutoplugSelectResult;
 
-/* GStreamer callbacks may be called on threads not created by Wine, and
- * therefore cannot access the Wine TEB. This means that we must use GStreamer
- * debug logging instead of Wine debug logging. In order to be safe we forbid
- * any use of Wine debug logging in this entire file. */
-
-GST_DEBUG_CATEGORY(wine);
-#define GST_CAT_DEFAULT wine
-
 typedef BOOL (*init_gst_cb)(struct wg_parser *parser);
 
 struct wg_parser
@@ -103,7 +95,7 @@ struct wg_parser_stream
     struct wg_parser *parser;
     uint32_t number;
 
-    GstPad *their_src, *post_sink, *post_src, *my_sink;
+    GstPad *their_src, *my_sink;
     GstElement *flip;
     GstSegment segment;
     struct wg_format preferred_format, current_format;
@@ -225,27 +217,6 @@ static NTSTATUS wg_parser_stream_enable(void *args)
     if (format->major_type == WG_MAJOR_TYPE_VIDEO)
     {
         bool flip = (format->u.video.height < 0);
-
-        switch (format->u.video.format)
-        {
-            case WG_VIDEO_FORMAT_BGRA:
-            case WG_VIDEO_FORMAT_BGRx:
-            case WG_VIDEO_FORMAT_BGR:
-            case WG_VIDEO_FORMAT_RGB15:
-            case WG_VIDEO_FORMAT_RGB16:
-                flip = !flip;
-                break;
-
-            case WG_VIDEO_FORMAT_AYUV:
-            case WG_VIDEO_FORMAT_I420:
-            case WG_VIDEO_FORMAT_NV12:
-            case WG_VIDEO_FORMAT_UYVY:
-            case WG_VIDEO_FORMAT_YUY2:
-            case WG_VIDEO_FORMAT_YV12:
-            case WG_VIDEO_FORMAT_YVYU:
-            case WG_VIDEO_FORMAT_UNKNOWN:
-                break;
-        }
 
         gst_util_set_object_arg(G_OBJECT(stream->flip), "method", flip ? "vertical-flip" : "none");
     }
@@ -756,16 +727,6 @@ static gboolean sink_query_cb(GstPad *pad, GstObject *parent, GstQuery *query)
     }
 }
 
-GstElement *create_element(const char *name, const char *plugin_set)
-{
-    GstElement *element;
-
-    if (!(element = gst_element_factory_make(name, NULL)))
-        fprintf(stderr, "winegstreamer: failed to create %s, are %u-bit GStreamer \"%s\" plugins installed?\n",
-                name, 8 * (unsigned int)sizeof(void *), plugin_set);
-    return element;
-}
-
 static struct wg_parser_stream *create_stream(struct wg_parser *parser)
 {
     struct wg_parser_stream *stream, **new_array;
@@ -802,15 +763,7 @@ static void free_stream(struct wg_parser_stream *stream)
     unsigned int i;
 
     if (stream->their_src)
-    {
-        if (stream->post_sink)
-        {
-            gst_object_unref(stream->post_src);
-            gst_object_unref(stream->post_sink);
-            stream->post_src = stream->post_sink = NULL;
-        }
         gst_object_unref(stream->their_src);
-    }
     gst_object_unref(stream->my_sink);
 
     pthread_cond_destroy(&stream->event_cond);
@@ -826,6 +779,7 @@ static void free_stream(struct wg_parser_stream *stream)
 
 static void pad_added_cb(GstElement *element, GstPad *pad, gpointer user)
 {
+    GstElement *first = NULL, *last = NULL;
     struct wg_parser *parser = user;
     struct wg_parser_stream *stream;
     const char *name;
@@ -845,88 +799,49 @@ static void pad_added_cb(GstElement *element, GstPad *pad, gpointer user)
 
     if (!strcmp(name, "video/x-raw"))
     {
-        GstElement *deinterlace, *vconv, *flip, *vconv2;
-
         /* DirectShow can express interlaced video, but downstream filters can't
          * necessarily consume it. In particular, the video renderer can't. */
-        if (!(deinterlace = create_element("deinterlace", "good")))
+        if (!(element = create_element("deinterlace", "good"))
+                || !append_element(parser->container, element, &first, &last))
             goto out;
 
         /* decodebin considers many YUV formats to be "raw", but some quartz
          * filters can't handle those. Also, videoflip can't handle all "raw"
          * formats either. Add a videoconvert to swap color spaces. */
-        if (!(vconv = create_element("videoconvert", "base")))
+        if (!(element = create_element("videoconvert", "base"))
+                || !append_element(parser->container, element, &first, &last))
             goto out;
 
         /* Let GStreamer choose a default number of threads. */
-        gst_util_set_object_arg(G_OBJECT(vconv), "n-threads", "0");
+        gst_util_set_object_arg(G_OBJECT(element), "n-threads", "0");
 
         /* GStreamer outputs RGB video top-down, but DirectShow expects bottom-up. */
-        if (!(flip = create_element("videoflip", "good")))
+        if (!(element = create_element("videoflip", "good"))
+                || !append_element(parser->container, element, &first, &last))
             goto out;
+        stream->flip = element;
 
         /* videoflip does not support 15 and 16-bit RGB so add a second videoconvert
          * to do the final conversion. */
-        if (!(vconv2 = create_element("videoconvert", "base")))
+        if (!(element = create_element("videoconvert", "base"))
+                || !append_element(parser->container, element, &first, &last))
             goto out;
 
-        /* The bin takes ownership of these elements. */
-        gst_bin_add(GST_BIN(parser->container), deinterlace);
-        gst_element_sync_state_with_parent(deinterlace);
-        gst_bin_add(GST_BIN(parser->container), vconv);
-        gst_element_sync_state_with_parent(vconv);
-        gst_bin_add(GST_BIN(parser->container), flip);
-        gst_element_sync_state_with_parent(flip);
-        gst_bin_add(GST_BIN(parser->container), vconv2);
-        gst_element_sync_state_with_parent(vconv2);
-
-        gst_element_link(deinterlace, vconv);
-        gst_element_link(vconv, flip);
-        gst_element_link(flip, vconv2);
-
-        stream->post_sink = gst_element_get_static_pad(deinterlace, "sink");
-        stream->post_src = gst_element_get_static_pad(vconv2, "src");
-        stream->flip = flip;
+        if (!link_src_to_element(pad, first) || !link_element_to_sink(last, stream->my_sink))
+            goto out;
     }
     else if (!strcmp(name, "audio/x-raw"))
     {
-        GstElement *convert;
-
         /* Currently our dsound can't handle 64-bit formats or all
          * surround-sound configurations. Native dsound can't always handle
          * 64-bit formats either. Add an audioconvert to allow changing bit
          * depth and channel count. */
-        if (!(convert = create_element("audioconvert", "base")))
+        if (!(element = create_element("audioconvert", "base"))
+                || !append_element(parser->container, element, &first, &last))
             goto out;
 
-        gst_bin_add(GST_BIN(parser->container), convert);
-        gst_element_sync_state_with_parent(convert);
-
-        stream->post_sink = gst_element_get_static_pad(convert, "sink");
-        stream->post_src = gst_element_get_static_pad(convert, "src");
-    }
-
-    if (stream->post_sink)
-    {
-        if ((ret = gst_pad_link(pad, stream->post_sink)) < 0)
-        {
-            GST_ERROR("Failed to link decodebin source pad to post-processing elements, error %s.",
-                    gst_pad_link_get_name(ret));
-            gst_object_unref(stream->post_sink);
-            stream->post_sink = NULL;
+        if (!link_src_to_element(pad, first) || !link_element_to_sink(last, stream->my_sink))
             goto out;
-        }
-
-        if ((ret = gst_pad_link(stream->post_src, stream->my_sink)) < 0)
-        {
-            GST_ERROR("Failed to link post-processing elements to our sink pad, error %s.",
-                    gst_pad_link_get_name(ret));
-            gst_object_unref(stream->post_src);
-            stream->post_src = NULL;
-            gst_object_unref(stream->post_sink);
-            stream->post_sink = NULL;
-            goto out;
-        }
     }
     else if ((ret = gst_pad_link(pad, stream->my_sink)) < 0)
     {
@@ -955,10 +870,6 @@ static void pad_removed_cb(GstElement *element, GstPad *pad, gpointer user)
 
         if (stream->their_src == pad)
         {
-            if (stream->post_sink)
-                gst_pad_unlink(stream->their_src, stream->post_sink);
-            else
-                gst_pad_unlink(stream->their_src, stream->my_sink);
             gst_object_unref(stream->their_src);
             stream->their_src = NULL;
             return;
@@ -1704,35 +1615,6 @@ static BOOL wave_parser_init_gst(struct wg_parser *parser)
     return TRUE;
 }
 
-static void init_gstreamer_once(void)
-{
-    char arg0[] = "wine";
-    char arg1[] = "--gst-disable-registry-fork";
-    char *args[] = {arg0, arg1, NULL};
-    int argc = ARRAY_SIZE(args) - 1;
-    char **argv = args;
-    GError *err;
-
-    if (!gst_init_check(&argc, &argv, &err))
-    {
-        fprintf(stderr, "winegstreamer: failed to initialize GStreamer: %s\n", err->message);
-        g_error_free(err);
-        return;
-    }
-
-    GST_DEBUG_CATEGORY_INIT(wine, "WINE", GST_DEBUG_FG_RED, "Wine GStreamer support");
-
-    GST_INFO("GStreamer library version %s; wine built with %d.%d.%d.",
-            gst_version_string(), GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO);
-}
-
-bool init_gstreamer(void)
-{
-    static pthread_once_t init_once = PTHREAD_ONCE_INIT;
-
-    return !pthread_once(&init_once, init_gstreamer_once);
-}
-
 static NTSTATUS wg_parser_create(void *args)
 {
     static const init_gst_cb init_funcs[] =
@@ -1745,9 +1627,6 @@ static NTSTATUS wg_parser_create(void *args)
 
     struct wg_parser_create_params *params = args;
     struct wg_parser *parser;
-
-    if (!init_gstreamer())
-        return E_FAIL;
 
     if (!(parser = calloc(1, sizeof(*parser))))
         return E_OUTOFMEMORY;
@@ -1787,6 +1666,8 @@ static NTSTATUS wg_parser_destroy(void *args)
 const unixlib_entry_t __wine_unix_call_funcs[] =
 {
 #define X(name) [unix_ ## name] = name
+    X(wg_init_gstreamer),
+
     X(wg_parser_create),
     X(wg_parser_destroy),
 

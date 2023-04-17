@@ -2461,20 +2461,37 @@ static NTSTATUS scroll_output( struct screen_buffer *screen_buffer, const struct
     return STATUS_SUCCESS;
 }
 
+static WCHAR *set_title( const WCHAR *in_title, size_t size )
+{
+    WCHAR *title = NULL;
+
+    title = malloc( size + sizeof(WCHAR) );
+    if (!title) return NULL;
+
+    memcpy( title, in_title, size );
+    title[ size / sizeof(WCHAR) ] = 0;
+
+    return title;
+}
+
 static NTSTATUS set_console_title( struct console *console, const WCHAR *in_title, size_t size )
 {
     WCHAR *title = NULL;
 
     TRACE( "%s\n", debugstr_wn(in_title, size / sizeof(WCHAR)) );
 
-    if (size)
-    {
-        if (!(title = malloc( size + sizeof(WCHAR) ))) return STATUS_NO_MEMORY;
-        memcpy( title, in_title, size );
-        title[size / sizeof(WCHAR)] = 0;
-    }
+    if (!(title = set_title( in_title, size )))
+        return STATUS_NO_MEMORY;
+
     free( console->title );
     console->title = title;
+
+    if (!console->title_orig && !(console->title_orig = set_title( in_title, size )))
+    {
+        free( console->title );
+        console->title = NULL;
+        return STATUS_NO_MEMORY;
+    }
 
     if (console->tty_output)
     {
@@ -2709,15 +2726,19 @@ static NTSTATUS console_input_ioctl( struct console *console, unsigned int code,
 
     case IOCTL_CONDRV_GET_TITLE:
         {
+            BOOL current_title;
+            WCHAR *title;
             size_t title_len, str_size;
             struct condrv_title_params *params;
-            if (in_size) return STATUS_INVALID_PARAMETER;
-            title_len = console->title ? wcslen( console->title ) : 0;
+            if (in_size != sizeof(BOOL)) return STATUS_INVALID_PARAMETER;
+            current_title = *(BOOL *)in_data;
+            title = current_title ? console->title : console->title_orig;
+            title_len = title ? wcslen( title ) : 0;
             str_size = min( *out_size - sizeof(*params), title_len * sizeof(WCHAR) );
             *out_size = sizeof(*params) + str_size;
             if (!(params = alloc_ioctl_buffer( *out_size ))) return STATUS_NO_MEMORY;
-            TRACE( "returning title %s\n", debugstr_w(console->title) );
-            if (str_size) memcpy( params->buffer, console->title, str_size );
+            TRACE( "returning %s %s\n", current_title ? "title" : "original title", debugstr_w(title) );
+            if (str_size) memcpy( params->buffer, title, str_size );
             params->title_len = title_len;
             return STATUS_SUCCESS;
         }

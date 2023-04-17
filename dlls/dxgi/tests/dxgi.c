@@ -908,8 +908,8 @@ static IDXGIAdapter *get_adapter_(unsigned int line, IUnknown *device, BOOL is_d
     return adapter;
 }
 
-#define create_swapchain(a, b, c) create_swapchain_(__LINE__, a, b, c)
-static IDXGISwapChain *create_swapchain_(unsigned int line, IUnknown *device, BOOL is_d3d12, HWND window)
+#define create_swapchain(a, b, c, d) create_swapchain_(__LINE__, a, b, c, d)
+static IDXGISwapChain *create_swapchain_(unsigned int line, IUnknown *device, BOOL is_d3d12, HWND window, UINT flags)
 {
     DXGI_SWAP_CHAIN_DESC desc;
     IDXGISwapChain *swapchain;
@@ -930,7 +930,7 @@ static IDXGISwapChain *create_swapchain_(unsigned int line, IUnknown *device, BO
     desc.OutputWindow = window;
     desc.Windowed = TRUE;
     desc.SwapEffect = is_d3d12 ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_DISCARD;
-    desc.Flags = 0;
+    desc.Flags = flags;
 
     get_factory(device, is_d3d12, &factory);
     hr = IDXGIFactory_CreateSwapChain(factory, device, &desc, &swapchain);
@@ -6977,17 +6977,21 @@ static void test_factory_check_feature_support(void)
 static void test_frame_latency_event(IUnknown *device, BOOL is_d3d12)
 {
     DXGI_SWAP_CHAIN_DESC1 swapchain_desc;
+    HANDLE semaphore, semaphore2;
     IDXGISwapChain2 *swapchain2;
     IDXGISwapChain1 *swapchain1;
+    ID3D12Device *d3d12_device;
+    ID3D12CommandQueue *queue;
     IDXGIFactory2 *factory2;
     IDXGIFactory *factory;
+    ID3D12Fence *fence;
     UINT frame_latency;
     DWORD wait_result;
     ULONG ref_count;
     unsigned int i;
-    HANDLE event;
     HWND window;
     HRESULT hr;
+    BOOL ret;
 
     get_factory(device, is_d3d12, &factory);
 
@@ -7035,8 +7039,8 @@ static void test_frame_latency_event(IUnknown *device, BOOL is_d3d12)
     ok(frame_latency == 0xdeadbeef, "Got unexpected frame latency %#x.\n", frame_latency);
     hr = IDXGISwapChain2_SetMaximumFrameLatency(swapchain2, 1);
     ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#lx.\n", hr);
-    event = IDXGISwapChain2_GetFrameLatencyWaitableObject(swapchain2);
-    ok(!event, "Got unexpected event %p.\n", event);
+    semaphore = IDXGISwapChain2_GetFrameLatencyWaitableObject(swapchain2);
+    ok(!semaphore, "Got unexpected semaphore %p.\n", semaphore);
 
     ref_count = IDXGISwapChain2_Release(swapchain2);
     ok(!ref_count, "Swap chain has %lu references left.\n", ref_count);
@@ -7051,13 +7055,25 @@ static void test_frame_latency_event(IUnknown *device, BOOL is_d3d12)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     IDXGISwapChain1_Release(swapchain1);
 
-    event = IDXGISwapChain2_GetFrameLatencyWaitableObject(swapchain2);
-    ok(!!event, "Got unexpected event %p.\n", event);
+    semaphore = IDXGISwapChain2_GetFrameLatencyWaitableObject(swapchain2);
+    ok(!!semaphore, "Got unexpected NULL semaphore.\n");
 
-    /* auto-reset event */
-    wait_result = WaitForSingleObject(event, 0);
+    /* a new duplicate handle is returned each time */
+    semaphore2 = IDXGISwapChain2_GetFrameLatencyWaitableObject(swapchain2);
+    ok(!!semaphore2, "Got unexpected NULL semaphore.\n");
+    ok(semaphore != semaphore2, "Got the same semaphore twice %p.\n", semaphore);
+
+    ret = CloseHandle(semaphore);
+    ok(!!ret, "Failed to close handle, last error %lu.\n", GetLastError());
+    ret = CloseHandle(semaphore2);
+    ok(!!ret, "Failed to close handle, last error %lu.\n", GetLastError());
+
+    semaphore = IDXGISwapChain2_GetFrameLatencyWaitableObject(swapchain2);
+    ok(!!semaphore, "Got unexpected NULL semaphore.\n");
+
+    wait_result = WaitForSingleObject(semaphore, 0);
     ok(!wait_result, "Got unexpected wait result %#lx.\n", wait_result);
-    wait_result = WaitForSingleObject(event, 0);
+    wait_result = WaitForSingleObject(semaphore, 0);
     ok(wait_result == WAIT_TIMEOUT, "Got unexpected wait result %#lx.\n", wait_result);
 
     hr = IDXGISwapChain2_GetMaximumFrameLatency(swapchain2, &frame_latency);
@@ -7070,17 +7086,30 @@ static void test_frame_latency_event(IUnknown *device, BOOL is_d3d12)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ok(frame_latency == 1, "Got unexpected frame latency %#x.\n", frame_latency);
 
+    /* raising the maximum frame latency releases the semaphore the
+     * corresponding number of times */
     hr = IDXGISwapChain2_SetMaximumFrameLatency(swapchain2, 3);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     hr = IDXGISwapChain2_GetMaximumFrameLatency(swapchain2, &frame_latency);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ok(frame_latency == 3, "Got unexpected frame latency %#x.\n", frame_latency);
 
-    wait_result = WaitForSingleObject(event, 0);
+    wait_result = WaitForSingleObject(semaphore, 0);
     todo_wine ok(!wait_result, "Got unexpected wait result %#lx.\n", wait_result);
-    wait_result = WaitForSingleObject(event, 0);
+    wait_result = WaitForSingleObject(semaphore, 0);
     todo_wine ok(!wait_result, "Got unexpected wait result %#lx.\n", wait_result);
-    wait_result = WaitForSingleObject(event, 100);
+    wait_result = WaitForSingleObject(semaphore, 100);
+    ok(wait_result == WAIT_TIMEOUT, "Got unexpected wait result %#lx.\n", wait_result);
+
+    /* lowering the maximum frame latency doesn't seem to impact the
+     * semaphore */
+    hr = IDXGISwapChain2_SetMaximumFrameLatency(swapchain2, 1);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = IDXGISwapChain2_GetMaximumFrameLatency(swapchain2, &frame_latency);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(frame_latency == 1, "Got unexpected frame latency %#x.\n", frame_latency);
+
+    wait_result = WaitForSingleObject(semaphore, 100);
     ok(wait_result == WAIT_TIMEOUT, "Got unexpected wait result %#lx.\n", wait_result);
 
     for (i = 0; i < 5; i++)
@@ -7088,12 +7117,90 @@ static void test_frame_latency_event(IUnknown *device, BOOL is_d3d12)
         hr = IDXGISwapChain2_Present(swapchain2, 0, 0);
         ok(hr == S_OK, "Present %u failed with hr %#lx.\n", i, hr);
 
-        wait_result = WaitForSingleObject(event, 100);
+        wait_result = WaitForSingleObject(semaphore, 100);
         ok(!wait_result, "Got unexpected wait result %#lx.\n", wait_result);
     }
 
-    wait_result = WaitForSingleObject(event, 100);
+    wait_result = WaitForSingleObject(semaphore, 100);
     ok(wait_result == WAIT_TIMEOUT, "Got unexpected wait result %#lx.\n", wait_result);
+
+    /* each frame presentation releases the semaphore */
+    for (i = 0; i < 5; i++)
+    {
+        hr = IDXGISwapChain2_Present(swapchain2, 0, 0);
+        ok(hr == S_OK, "Present %u failed with hr %#lx.\n", i, hr);
+    }
+
+    Sleep(100);
+
+    for (i = 0; i < 5; i++)
+    {
+        wait_result = WaitForSingleObject(semaphore, 100);
+        todo_wine_if(i != 0)
+        ok(!wait_result, "Got unexpected wait result %#lx.\n", wait_result);
+    }
+
+    wait_result = WaitForSingleObject(semaphore, 100);
+    ok(wait_result == WAIT_TIMEOUT, "Got unexpected wait result %#lx.\n", wait_result);
+
+    if (is_d3d12)
+    {
+        hr = IUnknown_QueryInterface(device, &IID_ID3D12CommandQueue, (void **)&queue);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+        hr = ID3D12CommandQueue_GetDevice(queue, &IID_ID3D12Device, (void **)&d3d12_device);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+        hr = ID3D12Device_CreateFence(d3d12_device, 0, 0, &IID_ID3D12Fence, (void **)&fence);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+        /* the semaphore is released when the frame is really
+         * presented, not when Present() is called */
+        for (i = 0; i < 3; i++)
+        {
+            hr = IDXGISwapChain2_Present(swapchain2, 0, 0);
+            ok(hr == S_OK, "Present %u failed with hr %#lx.\n", i, hr);
+        }
+
+        hr = ID3D12CommandQueue_Wait(queue, fence, 1);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+        for (i = 0; i < 4; i++)
+        {
+            hr = IDXGISwapChain2_Present(swapchain2, 0, 0);
+            ok(hr == S_OK, "Present %u failed with hr %#lx.\n", i, hr);
+        }
+
+        for (i = 0; i < 3; i++)
+        {
+            wait_result = WaitForSingleObject(semaphore, 100);
+            todo_wine_if(i != 0)
+            ok(!wait_result, "Got unexpected wait result %#lx.\n", wait_result);
+        }
+
+        wait_result = WaitForSingleObject(semaphore, 100);
+        ok(wait_result == WAIT_TIMEOUT, "Got unexpected wait result %#lx.\n", wait_result);
+
+        hr = ID3D12Fence_Signal(fence, 1);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+        Sleep(100);
+
+        for (i = 0; i < 4; i++)
+        {
+            wait_result = WaitForSingleObject(semaphore, 100);
+            todo_wine_if(i != 0)
+            ok(!wait_result, "Got unexpected wait result %#lx.\n", wait_result);
+        }
+
+        wait_result = WaitForSingleObject(semaphore, 100);
+        ok(wait_result == WAIT_TIMEOUT, "Got unexpected wait result %#lx.\n", wait_result);
+
+        ref_count = ID3D12Fence_Release(fence);
+        ok(!ref_count, "Fence has %lu references left.\n", ref_count);
+        ID3D12Device_Release(d3d12_device);
+        ID3D12CommandQueue_Release(queue);
+    }
 
     ref_count = IDXGISwapChain2_Release(swapchain2);
     ok(!ref_count, "Swap chain has %lu references left.\n", ref_count);
@@ -7564,57 +7671,74 @@ done:
 
 static void test_swapchain_present_count(IUnknown *device, BOOL is_d3d12)
 {
+    static const UINT test_flags[] =
+    {
+        0,
+        DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT,
+    };
+
     UINT present_count, expected;
     IDXGISwapChain *swapchain;
+    unsigned int i;
     HWND window;
     HRESULT hr;
 
     window = create_window();
-    swapchain = create_swapchain(device, is_d3d12, window);
 
-    present_count = ~0u;
-    hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(!present_count, "Got unexpected present count %u.\n", present_count);
+    for (i = 0; i < ARRAY_SIZE(test_flags); ++i)
+    {
+        UINT flags = test_flags[i];
 
-    hr = IDXGISwapChain_Present(swapchain, 0, 0);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    expected = present_count + 1;
-    hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(present_count == expected, "Got unexpected present count %u, expected %u.\n", present_count, expected);
+        if (!is_d3d12 && (flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT))
+            continue;
 
-    hr = IDXGISwapChain_Present(swapchain, 10, 0);
-    ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#lx.\n", hr);
-    expected = present_count;
-    hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(present_count == expected, "Got unexpected present count %u, expected %u.\n", present_count, expected);
+        swapchain = create_swapchain(device, is_d3d12, window, flags);
 
-    hr = IDXGISwapChain_Present(swapchain, 0, DXGI_PRESENT_TEST);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    expected = present_count;
-    hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(present_count == expected, "Got unexpected present count %u, expected %u.\n", present_count, expected);
+        present_count = ~0u;
+        hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(!present_count, "Got unexpected present count %u.\n", present_count);
 
-    ShowWindow(window, SW_MINIMIZE);
-    hr = IDXGISwapChain_Present(swapchain, 0, 0);
-    ok(hr == (is_d3d12 ? S_OK : DXGI_STATUS_OCCLUDED), "Got unexpected hr %#lx.\n", hr);
-    expected = present_count + !!is_d3d12;
-    hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(present_count == expected, "Got unexpected present count %u, expected %u.\n", present_count, expected);
+        hr = IDXGISwapChain_Present(swapchain, 0, 0);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        expected = present_count + 1;
+        hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(present_count == expected, "Got unexpected present count %u, expected %u.\n", present_count, expected);
 
-    ShowWindow(window, SW_NORMAL);
-    hr = IDXGISwapChain_Present(swapchain, 0, 0);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    expected = present_count + 1;
-    hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
-    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(present_count == expected, "Got unexpected present count %u, expected %u.\n", present_count, expected);
+        hr = IDXGISwapChain_Present(swapchain, 10, 0);
+        ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#lx.\n", hr);
+        expected = present_count;
+        hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(present_count == expected, "Got unexpected present count %u, expected %u.\n", present_count, expected);
 
-    IDXGISwapChain_Release(swapchain);
+        hr = IDXGISwapChain_Present(swapchain, 0, DXGI_PRESENT_TEST);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        expected = present_count;
+        hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(present_count == expected, "Got unexpected present count %u, expected %u.\n", present_count, expected);
+
+        ShowWindow(window, SW_MINIMIZE);
+        hr = IDXGISwapChain_Present(swapchain, 0, 0);
+        ok(hr == (is_d3d12 ? S_OK : DXGI_STATUS_OCCLUDED), "Got unexpected hr %#lx.\n", hr);
+        expected = present_count + !!is_d3d12;
+        hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(present_count == expected, "Got unexpected present count %u, expected %u.\n", present_count, expected);
+
+        ShowWindow(window, SW_NORMAL);
+        hr = IDXGISwapChain_Present(swapchain, 0, 0);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        expected = present_count + 1;
+        hr = IDXGISwapChain_GetLastPresentCount(swapchain, &present_count);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(present_count == expected, "Got unexpected present count %u, expected %u.\n", present_count, expected);
+
+        IDXGISwapChain_Release(swapchain);
+    }
+
     DestroyWindow(window);
 }
 

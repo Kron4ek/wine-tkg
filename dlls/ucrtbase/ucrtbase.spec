@@ -237,8 +237,8 @@
 @ cdecl _control87(long long)
 @ cdecl _controlfp(long long)
 @ cdecl _controlfp_s(ptr long long)
-@ cdecl _copysign(double double)
-@ cdecl _copysignf(float float)
+@ cdecl _copysign(double double) copysign
+@ cdecl _copysignf(float float) copysignf
 @ cdecl _cputs(str)
 @ cdecl _cputws(wstr)
 @ cdecl _creat(str long)
@@ -568,8 +568,8 @@
 @ cdecl _lock_file(ptr)
 @ cdecl _lock_locales()
 @ cdecl _locking(long long long)
-@ cdecl _logb(double)
-@ cdecl -arch=!i386 _logbf(float)
+@ cdecl _logb(double) logb
+@ cdecl -arch=!i386 _logbf(float) logbf
 @ cdecl -arch=i386 _longjmpex(ptr long) MSVCRT_longjmp
 @ cdecl _lrotl(long long) MSVCRT__lrotl
 @ cdecl _lrotr(long long) MSVCRT__lrotr
@@ -731,8 +731,8 @@
 @ cdecl _mktime32(ptr)
 @ cdecl _mktime64(ptr)
 @ cdecl _msize(ptr)
-@ cdecl _nextafter(double double)
-@ cdecl -arch=x86_64 _nextafterf(float float)
+@ cdecl _nextafter(double double) nextafter
+@ cdecl -arch=x86_64 _nextafterf(float float) nextafterf
 @ cdecl -arch=i386 _o__CIacos() _CIacos
 @ cdecl -arch=i386 _o__CIasin() _CIasin
 @ cdecl -arch=i386 _o__CIatan() _CIatan
@@ -1142,8 +1142,8 @@
 @ cdecl _o__localtime64_s(ptr ptr) _localtime64_s
 @ cdecl _o__lock_file(ptr) _lock_file
 @ cdecl _o__locking(long long long) _locking
-@ cdecl _o__logb(double) _logb
-@ cdecl -arch=!i386 _o__logbf(float) _logbf
+@ cdecl _o__logb(double) logb
+@ cdecl -arch=!i386 _o__logbf(float) logbf
 @ cdecl _o__lsearch(ptr ptr ptr long ptr) _lsearch
 @ stub _o__lsearch_s
 @ cdecl _o__lseek(long long long) _lseek
@@ -1299,8 +1299,8 @@
 @ cdecl _o__mktime32(ptr) _mktime32
 @ cdecl _o__mktime64(ptr) _mktime64
 @ cdecl _o__msize(ptr) _msize
-@ cdecl _o__nextafter(double double) _nextafter
-@ cdecl -arch=x86_64 _o__nextafterf(float float) _nextafterf
+@ cdecl _o__nextafter(double double) nextafter
+@ cdecl -arch=x86_64 _o__nextafterf(float float) nextafterf
 @ cdecl _o__open_osfhandle(long long) _open_osfhandle
 @ cdecl _o__pclose(ptr) _pclose
 @ cdecl _o__pipe(ptr long long) _pipe
@@ -1562,12 +1562,12 @@
 @ cdecl _o_abort() abort
 @ cdecl _o_acos(double) acos
 @ cdecl -arch=!i386 _o_acosf(float) acosf
-@ cdecl _o_acosh(double) acosh
-@ cdecl _o_acoshf(float) acoshf
-@ cdecl _o_acoshl(double) acosh
+@ cdecl _o_acosh(double) MSVCRT_acosh
+@ cdecl _o_acoshf(float) MSVCRT_acoshf
+@ cdecl _o_acoshl(double) MSVCRT_acosh
 @ cdecl _o_asctime(ptr) asctime
 @ cdecl _o_asctime_s(ptr long ptr) asctime_s
-@ cdecl _o_asin(double) asin
+@ cdecl _o_asin(double) MSVCRT_asin
 @ cdecl -arch=!i386 _o_asinf(float) asinf
 @ cdecl _o_asinh(double) asinh
 @ cdecl _o_asinhf(float) asinhf
@@ -1576,9 +1576,9 @@
 @ cdecl _o_atan2(double double) atan2
 @ cdecl -arch=!i386 _o_atan2f(float float) atan2f
 @ cdecl -arch=!i386 _o_atanf(float) atanf
-@ cdecl _o_atanh(double) atanh
-@ cdecl _o_atanhf(float) atanhf
-@ cdecl _o_atanhl(double) atanh
+@ cdecl _o_atanh(double) MSVCRT_atanh
+@ cdecl _o_atanhf(float) MSVCRT_atanhf
+@ cdecl _o_atanhl(double) MSVCRT_atanh
 @ cdecl _o_atof(str) atof
 @ cdecl _o_atoi(str) atoi
 @ cdecl _o_atol(str) atol
@@ -1699,9 +1699,9 @@
 @ cdecl _o_log2(double) log2
 @ cdecl _o_log2f(float) log2f
 @ cdecl _o_log2l(double) log2
-@ cdecl _o_logb(double) _logb
-@ cdecl _o_logbf(float) _logbf
-@ cdecl _o_logbl(double) _logb
+@ cdecl _o_logb(double) logb
+@ cdecl _o_logbf(float) logbf
+@ cdecl _o_logbl(double) logb
 @ cdecl -arch=!i386 _o_logf(float) logf
 @ cdecl _o_lrint(double) lrint
 @ cdecl _o_lrintf(float) lrintf
@@ -1730,12 +1730,12 @@
 @ cdecl _o_nearbyint(double) nearbyint
 @ cdecl _o_nearbyintf(float) nearbyintf
 @ cdecl _o_nearbyintl(double) nearbyint
-@ cdecl _o_nextafter(double double) _nextafter
-@ cdecl _o_nextafterf(float float) _nextafterf
-@ cdecl _o_nextafterl(double double) _nextafter
-@ cdecl _o_nexttoward(double double) MSVCRT_nexttoward
-@ cdecl _o_nexttowardf(float double) MSVCRT_nexttowardf
-@ cdecl _o_nexttowardl(double double) MSVCRT_nexttoward
+@ cdecl _o_nextafter(double double) nextafter
+@ cdecl _o_nextafterf(float float) nextafterf
+@ cdecl _o_nextafterl(double double) nextafter
+@ cdecl _o_nexttoward(double double) __nexttoward
+@ cdecl _o_nexttowardf(float double) __nexttowardf
+@ cdecl _o_nexttowardl(double double) __nexttoward
 @ cdecl _o_pow(double double) pow
 @ cdecl -arch=!i386 _o_powf(float float) powf
 @ cdecl _o_putc(long ptr) putc
@@ -1758,9 +1758,9 @@
 @ cdecl _o_remquol(double double ptr) remquo
 @ cdecl _o_rename(str str) rename
 @ cdecl _o_rewind(ptr) rewind
-@ cdecl _o_rint(double) rint
+@ cdecl _o_rint(double) MSVCRT_rint
 @ cdecl _o_rintf(float) rintf
-@ cdecl _o_rintl(double) rint
+@ cdecl _o_rintl(double) MSVCRT_rint
 @ cdecl _o_round(double) round
 @ cdecl _o_roundf(float) roundf
 @ cdecl _o_roundl(double) round
@@ -1778,8 +1778,8 @@
 @ cdecl -arch=!i386 _o_sinf(float) sinf
 @ cdecl _o_sinh(double) sinh
 @ cdecl -arch=!i386 _o_sinhf(float) sinhf
-@ cdecl _o_sqrt(double) sqrt
-@ cdecl -arch=!i386 _o_sqrtf(float) sqrtf
+@ cdecl _o_sqrt(double) MSVCRT_sqrt
+@ cdecl -arch=!i386 _o_sqrtf(float) MSVCRT_sqrtf
 @ cdecl _o_srand(long) srand
 @ cdecl _o_strcat_s(str long str) strcat_s
 @ cdecl _o_strcoll(str str) strcoll
@@ -2156,12 +2156,12 @@
 @ cdecl abs(long)
 @ cdecl acos(double)
 @ cdecl -arch=!i386 acosf(float)
-@ cdecl acosh(double)
-@ cdecl acoshf(float)
-@ cdecl acoshl(double) acosh
+@ cdecl acosh(double) MSVCRT_acosh
+@ cdecl acoshf(float) MSVCRT_acoshf
+@ cdecl acoshl(double) MSVCRT_acosh
 @ cdecl asctime(ptr)
 @ cdecl asctime_s(ptr long ptr)
-@ cdecl asin(double)
+@ cdecl asin(double) MSVCRT_asin
 @ cdecl -arch=!i386 asinf(float)
 @ cdecl asinh(double)
 @ cdecl asinhf(float)
@@ -2170,9 +2170,9 @@
 @ cdecl atan2(double double)
 @ cdecl -arch=!i386 atan2f(float float)
 @ cdecl -arch=!i386 atanf(float)
-@ cdecl atanh(double)
-@ cdecl atanhf(float)
-@ cdecl atanhl(double) atanh
+@ cdecl atanh(double) MSVCRT_atanh
+@ cdecl atanhf(float) MSVCRT_atanhf
+@ cdecl atanhl(double) MSVCRT_atanh
 @ cdecl atof(str)
 @ cdecl atoi(str)
 @ cdecl atol(str)
@@ -2236,9 +2236,9 @@
 @ stub conj
 @ stub conjf
 @ stub conjl
-@ cdecl copysign(double double) _copysign
-@ cdecl copysignf(float float) _copysignf
-@ cdecl copysignl(double double) _copysign
+@ cdecl copysign(double double)
+@ cdecl copysignf(float float)
+@ cdecl copysignl(double double) copysign
 @ cdecl cos(double)
 @ cdecl -arch=!i386 cosf(float)
 @ cdecl cosh(double)
@@ -2401,9 +2401,9 @@
 @ cdecl log2(double)
 @ cdecl log2f(float)
 @ cdecl log2l(double) log2
-@ cdecl logb(double) _logb
-@ cdecl logbf(float) _logbf
-@ cdecl logbl(double) _logb
+@ cdecl logb(double)
+@ cdecl logbf(float)
+@ cdecl logbl(double) logb
 @ cdecl -arch=!i386 logf(float)
 @ cdecl -arch=i386,x86_64,arm,arm64 longjmp(ptr long) MSVCRT_longjmp
 @ cdecl lrint(double)
@@ -2438,12 +2438,12 @@
 @ cdecl nearbyint(double)
 @ cdecl nearbyintf(float)
 @ cdecl nearbyintl(double) nearbyint
-@ cdecl nextafter(double double) _nextafter
-@ cdecl nextafterf(float float) _nextafterf
-@ cdecl nextafterl(double double) _nextafter
-@ cdecl nexttoward(double double) MSVCRT_nexttoward
-@ cdecl nexttowardf(float double) MSVCRT_nexttowardf
-@ cdecl nexttowardl(double double) MSVCRT_nexttoward
+@ cdecl nextafter(double double)
+@ cdecl nextafterf(float float)
+@ cdecl nextafterl(double double) nextafter
+@ cdecl nexttoward(double double) __nexttoward
+@ cdecl nexttowardf(float double) __nexttowardf
+@ cdecl nexttowardl(double double) __nexttoward
 @ stub norm
 @ stub normf
 @ stub norml
@@ -2471,9 +2471,9 @@
 @ cdecl remquol(double double ptr) remquo
 @ cdecl rename(str str)
 @ cdecl rewind(ptr)
-@ cdecl rint(double)
+@ cdecl rint(double) MSVCRT_rint
 @ cdecl rintf(float)
-@ cdecl rintl(double) rint
+@ cdecl rintl(double) MSVCRT_rint
 @ cdecl round(double)
 @ cdecl roundf(float)
 @ cdecl roundl(double) round
@@ -2494,8 +2494,8 @@
 @ cdecl -arch=!i386 sinf(float)
 @ cdecl sinh(double)
 @ cdecl -arch=!i386 sinhf(float)
-@ cdecl sqrt(double)
-@ cdecl -arch=!i386 sqrtf(float)
+@ cdecl sqrt(double) MSVCRT_sqrt
+@ cdecl -arch=!i386 sqrtf(float) MSVCRT_sqrtf
 @ cdecl srand(long)
 @ cdecl strcat(str str)
 @ cdecl strcat_s(str long str)

@@ -4075,9 +4075,7 @@ static void test_file_attribute_tag_information(void)
     CloseHandle( h );
 }
 
-#define lok ok_(__FILE__, line)
-#define rename_file(h,f) rename_file_(__LINE__,(h),(f))
-static BOOL rename_file_( int line, HANDLE h, const WCHAR *filename )
+static void rename_file( HANDLE h, const WCHAR *filename )
 {
     FILE_RENAME_INFORMATION *fri;
     UNICODE_STRING ntpath;
@@ -4087,13 +4085,11 @@ static BOOL rename_file_( int line, HANDLE h, const WCHAR *filename )
     ULONG size;
 
     ret = pRtlDosPathNameToNtPathName_U( filename, &ntpath, NULL, NULL );
-    lok( ret, "RtlDosPathNameToNtPathName_U failed\n" );
-    if (!ret) return FALSE;
+    ok( ret, "RtlDosPathNameToNtPathName_U failed\n" );
 
     size = offsetof( FILE_RENAME_INFORMATION, FileName ) + ntpath.Length;
     fri = HeapAlloc( GetProcessHeap(), 0, size );
-    lok( fri != NULL, "HeapAlloc failed\n" );
-    if (!fri) return FALSE;
+    ok( fri != NULL, "HeapAlloc failed\n" );
     fri->ReplaceIfExists = TRUE;
     fri->RootDirectory = NULL;
     fri->FileNameLength = ntpath.Length;
@@ -4102,10 +4098,8 @@ static BOOL rename_file_( int line, HANDLE h, const WCHAR *filename )
 
     status = pNtSetInformationFile( h, &io, fri, size, FileRenameInformation );
     HeapFree( GetProcessHeap(), 0, fri );
-    lok( status == STATUS_SUCCESS, "got %#lx\n", status );
-    return status == STATUS_SUCCESS;
+    ok( status == STATUS_SUCCESS, "got %#lx\n", status );
 }
-#undef lok
 
 static void test_dotfile_file_attributes(void)
 {
@@ -4121,14 +4115,27 @@ static void test_dotfile_file_attributes(void)
     GetTempFileNameA( temppath, ".foo", 0, filename );
     h = CreateFileA( filename, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_DELETE_ON_CLOSE, 0 );
     ok( h != INVALID_HANDLE_VALUE, "failed to create temp file\n" );
-    if (h == INVALID_HANDLE_VALUE) return;
 
     status = nt_get_file_attrs(filename, &attrs);
     ok( status == STATUS_SUCCESS, "got %#lx\n", status );
-    ok( !(attrs & FILE_ATTRIBUTE_HIDDEN), "got attributes %#lx\n", info.FileAttributes );
+    ok( !(attrs & FILE_ATTRIBUTE_HIDDEN), "got attributes %#lx\n", attrs );
 
     status = pNtQueryInformationFile( h, &io, &info, sizeof(info), FileBasicInformation );
     ok( status == STATUS_SUCCESS, "got %#lx\n", status );
+    ok( !(info.FileAttributes & FILE_ATTRIBUTE_HIDDEN), "got attributes %#lx\n", info.FileAttributes );
+
+    info.FileAttributes = FILE_ATTRIBUTE_SYSTEM;
+    status = pNtSetInformationFile( h, &io, &info, sizeof(info), FileBasicInformation );
+    ok( status == STATUS_SUCCESS, "got %#lx\n", status );
+
+    status = nt_get_file_attrs(filename, &attrs);
+    ok( status == STATUS_SUCCESS, "got %#lx\n", status );
+    ok( attrs & FILE_ATTRIBUTE_SYSTEM, "got attributes %#lx\n", attrs );
+    ok( !(attrs & FILE_ATTRIBUTE_HIDDEN), "got attributes %#lx\n", attrs );
+
+    status = pNtQueryInformationFile( h, &io, &info, sizeof(info), FileBasicInformation );
+    ok( status == STATUS_SUCCESS, "got %#lx\n", status );
+    ok( info.FileAttributes & FILE_ATTRIBUTE_SYSTEM, "got attributes %#lx\n", info.FileAttributes );
     ok( !(info.FileAttributes & FILE_ATTRIBUTE_HIDDEN), "got attributes %#lx\n", info.FileAttributes );
 
     CloseHandle( h );
@@ -4137,17 +4144,20 @@ static void test_dotfile_file_attributes(void)
     GetTempFileNameW( temppathW, L"foo", 0, filenameW );
     h = CreateFileW( filenameW, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_DELETE_ON_CLOSE, 0 );
     ok( h != INVALID_HANDLE_VALUE, "failed to create temp file\n" );
-    if (h == INVALID_HANDLE_VALUE) return;
 
     GetTempFileNameW( temppathW, L".foo", 0, filenameW );
-    if (!rename_file( h, filenameW )) return;
+    winetest_push_context("foo -> .foo");
+    rename_file( h, filenameW );
+    winetest_pop_context();
 
     status = pNtQueryInformationFile( h, &io, &info, sizeof(info), FileBasicInformation );
     ok( status == STATUS_SUCCESS, "got %#lx\n", status );
     ok( !(info.FileAttributes & FILE_ATTRIBUTE_HIDDEN), "got attributes %#lx\n", info.FileAttributes );
 
     GetTempFileNameW( temppathW, L"foo", 0, filenameW );
-    if (!rename_file( h, filenameW )) return;
+    winetest_push_context(".foo -> foo");
+    rename_file( h, filenameW );
+    winetest_pop_context();
 
     status = pNtQueryInformationFile( h, &io, &info, sizeof(info), FileBasicInformation );
     ok( status == STATUS_SUCCESS, "got %#lx\n", status );

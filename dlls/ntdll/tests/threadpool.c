@@ -1563,18 +1563,18 @@ static void test_tp_window_length(void)
     info2.ticks = 0;
 
     NtQuerySystemTime( &when );
-    when.QuadPart += (ULONGLONG)250 * 10000;
+    when.QuadPart += (ULONGLONG)500 * 10000;
     pTpSetTimer(timer2, &when, 0, 0);
-    Sleep(50);
-    when.QuadPart -= (ULONGLONG)150 * 10000;
-    pTpSetTimer(timer1, &when, 0, 75);
+    Sleep(100);
+    when.QuadPart -= (ULONGLONG)300 * 10000;
+    pTpSetTimer(timer1, &when, 0, 150);
 
     result = WaitForSingleObject(semaphore, 1000);
     ok(result == WAIT_OBJECT_0, "WaitForSingleObject returned %lu\n", result);
     result = WaitForSingleObject(semaphore, 1000);
     ok(result == WAIT_OBJECT_0, "WaitForSingleObject returned %lu\n", result);
     ok(info1.ticks != 0 && info2.ticks != 0, "expected that ticks are nonzero\n");
-    ok(info2.ticks >= info1.ticks + 75 || broken(info2.ticks < info1.ticks + 75) /* Win 2008 */,
+    ok(info2.ticks >= info1.ticks + 150 || broken(info2.ticks < info1.ticks + 150) /* Win 2008 */,
        "expected that timers are not merged\n");
 
     /* timers will be merged */

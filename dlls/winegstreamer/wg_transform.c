@@ -39,9 +39,6 @@
 
 #include "unix_private.h"
 
-GST_DEBUG_CATEGORY_EXTERN(wine);
-#define GST_CAT_DEFAULT wine
-
 #define GST_SAMPLE_FLAG_WG_CAPS_CHANGED (GST_MINI_OBJECT_FLAG_LAST << 0)
 
 struct wg_transform
@@ -49,7 +46,6 @@ struct wg_transform
     GstElement *container;
     GstAllocator *allocator;
     GstPad *my_src, *my_sink;
-    GstPad *their_sink, *their_src;
     GstSegment segment;
     GstQuery *drain_query;
 
@@ -63,17 +59,6 @@ struct wg_transform
     bool output_caps_changed;
     GstCaps *output_caps;
 };
-
-static bool is_caps_video(GstCaps *caps)
-{
-    const gchar *media_type;
-
-    if (!caps || !gst_caps_get_size(caps))
-        return false;
-
-    media_type = gst_structure_get_name(gst_caps_get_structure(caps, 0));
-    return g_str_has_prefix(media_type, "video/");
-}
 
 static void align_video_info_planes(gsize plane_align, GstVideoInfo *info, GstVideoAlignment *align)
 {
@@ -131,7 +116,7 @@ static gboolean transform_sink_query_cb(GstPad *pad, GstObject *parent, GstQuery
             GstCaps *caps;
 
             gst_query_parse_allocation(query, &caps, &needs_pool);
-            if (!is_caps_video(caps) || !needs_pool)
+            if (stream_type_from_caps(caps) != GST_STREAM_TYPE_VIDEO || !needs_pool)
                 break;
 
             if (!gst_video_info_from_caps(&info, caps)
@@ -257,8 +242,6 @@ NTSTATUS wg_transform_destroy(void *args)
         gst_sample_unref(sample);
 
     wg_allocator_destroy(transform->allocator);
-    g_object_unref(transform->their_sink);
-    g_object_unref(transform->their_src);
     g_object_unref(transform->container);
     g_object_unref(transform->my_sink);
     g_object_unref(transform->my_src);
@@ -268,74 +251,6 @@ NTSTATUS wg_transform_destroy(void *args)
     free(transform);
 
     return STATUS_SUCCESS;
-}
-
-static GstElement *transform_find_element(GstElementFactoryListType type, GstCaps *src_caps, GstCaps *sink_caps)
-{
-    GstElement *element = NULL;
-    GList *tmp, *transforms;
-    const gchar *name;
-
-    if (!(transforms = gst_element_factory_list_get_elements(type, GST_RANK_MARGINAL)))
-        goto done;
-
-    tmp = gst_element_factory_list_filter(transforms, src_caps, GST_PAD_SINK, FALSE);
-    gst_plugin_feature_list_free(transforms);
-    if (!(transforms = tmp))
-        goto done;
-
-    tmp = gst_element_factory_list_filter(transforms, sink_caps, GST_PAD_SRC, FALSE);
-    gst_plugin_feature_list_free(transforms);
-    if (!(transforms = tmp))
-        goto done;
-
-    transforms = g_list_sort(transforms, gst_plugin_feature_rank_compare_func);
-    for (tmp = transforms; tmp != NULL && element == NULL; tmp = tmp->next)
-    {
-        name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(tmp->data));
-        if (!(element = gst_element_factory_create(GST_ELEMENT_FACTORY(tmp->data), NULL)))
-            GST_WARNING("Failed to create %s element.", name);
-    }
-    gst_plugin_feature_list_free(transforms);
-
-done:
-    if (element)
-    {
-        GST_DEBUG("Created %s element %p.", name, element);
-    }
-    else
-    {
-        gchar *src_str = gst_caps_to_string(src_caps), *sink_str = gst_caps_to_string(sink_caps);
-        GST_WARNING("Failed to create transform matching caps %s / %s.", src_str, sink_str);
-        g_free(sink_str);
-        g_free(src_str);
-    }
-
-    return element;
-}
-
-static bool transform_append_element(struct wg_transform *transform, GstElement *element,
-        GstElement **first, GstElement **last)
-{
-    gchar *name = gst_element_get_name(element);
-    bool success = false;
-
-    if (!gst_bin_add(GST_BIN(transform->container), element) ||
-            (*last && !gst_element_link(*last, element)))
-    {
-        GST_ERROR("Failed to link %s element.", name);
-    }
-    else
-    {
-        GST_DEBUG("Linked %s element %p.", name, element);
-        if (!*first)
-            *first = element;
-        *last = element;
-        success = true;
-    }
-
-    g_free(name);
-    return success;
 }
 
 static struct wg_sample *transform_request_sample(gsize size, void *context)
@@ -359,9 +274,6 @@ NTSTATUS wg_transform_create(void *args)
     struct wg_transform *transform;
     const gchar *media_type;
     GstEvent *event;
-
-    if (!init_gstreamer())
-        return STATUS_UNSUCCESSFUL;
 
     if (!(transform = calloc(1, sizeof(*transform))))
         return STATUS_NO_MEMORY;
@@ -420,7 +332,7 @@ NTSTATUS wg_transform_create(void *args)
             transform->input_max_length = 16;
             transform->output_plane_align = 15;
             if (!(element = create_element("h264parse", "base"))
-                    || !transform_append_element(transform, element, &first, &last))
+                    || !append_element(transform->container, element, &first, &last))
                 goto out;
             /* fallthrough */
         case WG_MAJOR_TYPE_AUDIO_MPEG1:
@@ -429,8 +341,8 @@ NTSTATUS wg_transform_create(void *args)
         case WG_MAJOR_TYPE_VIDEO_CINEPAK:
         case WG_MAJOR_TYPE_VIDEO_INDEO:
         case WG_MAJOR_TYPE_VIDEO_WMV:
-            if (!(element = transform_find_element(GST_ELEMENT_FACTORY_TYPE_DECODER, src_caps, raw_caps))
-                    || !transform_append_element(transform, element, &first, &last))
+            if (!(element = find_element(GST_ELEMENT_FACTORY_TYPE_DECODER, src_caps, raw_caps))
+                    || !append_element(transform->container, element, &first, &last))
             {
                 gst_caps_unref(raw_caps);
                 goto out;
@@ -461,17 +373,17 @@ NTSTATUS wg_transform_create(void *args)
              * non-interleaved format.
              */
             if (!(element = create_element("audioconvert", "base"))
-                    || !transform_append_element(transform, element, &first, &last))
+                    || !append_element(transform->container, element, &first, &last))
                 goto out;
             if (!(element = create_element("audioresample", "base"))
-                    || !transform_append_element(transform, element, &first, &last))
+                    || !append_element(transform->container, element, &first, &last))
                 goto out;
             break;
 
         case WG_MAJOR_TYPE_VIDEO:
         case WG_MAJOR_TYPE_VIDEO_WMV:
             if (!(element = create_element("videoconvert", "base"))
-                    || !transform_append_element(transform, element, &first, &last))
+                    || !append_element(transform->container, element, &first, &last))
                 goto out;
             /* Let GStreamer choose a default number of threads. */
             gst_util_set_object_arg(G_OBJECT(element), "n-threads", "0");
@@ -488,13 +400,9 @@ NTSTATUS wg_transform_create(void *args)
             goto out;
     }
 
-    if (!(transform->their_sink = gst_element_get_static_pad(first, "sink")))
+    if (!link_src_to_element(transform->my_src, first))
         goto out;
-    if (!(transform->their_src = gst_element_get_static_pad(last, "src")))
-        goto out;
-    if (gst_pad_link(transform->my_src, transform->their_sink) < 0)
-        goto out;
-    if (gst_pad_link(transform->their_src, transform->my_sink) < 0)
+    if (!link_element_to_sink(last, transform->my_sink))
         goto out;
     if (!gst_pad_set_active(transform->my_sink, 1))
         goto out;
@@ -528,10 +436,6 @@ NTSTATUS wg_transform_create(void *args)
     return STATUS_SUCCESS;
 
 out:
-    if (transform->their_sink)
-        gst_object_unref(transform->their_sink);
-    if (transform->their_src)
-        gst_object_unref(transform->their_src);
     if (transform->my_sink)
         gst_object_unref(transform->my_sink);
     if (transform->output_caps)
@@ -756,7 +660,7 @@ static NTSTATUS read_transform_output_data(GstBuffer *buffer, GstCaps *caps, gsi
 
     if ((ret = !needs_copy))
         total_size = sample->size = info.size;
-    else if (is_caps_video(caps))
+    else if (stream_type_from_caps(caps) == GST_STREAM_TYPE_VIDEO)
         ret = copy_video_buffer(buffer, caps, plane_align, sample, &total_size);
     else
         ret = copy_buffer(buffer, caps, sample, &total_size);
@@ -792,7 +696,7 @@ static NTSTATUS read_transform_output_data(GstBuffer *buffer, GstCaps *caps, gsi
 
     if (needs_copy)
     {
-        if (is_caps_video(caps))
+        if (stream_type_from_caps(caps) == GST_STREAM_TYPE_VIDEO)
             GST_WARNING("Copied %u bytes, sample %p, flags %#x", sample->size, sample, sample->flags);
         else
             GST_INFO("Copied %u bytes, sample %p, flags %#x", sample->size, sample, sample->flags);

@@ -288,7 +288,20 @@ static void test_choosepixelformat(void)
     pfd.iPixelType = PFD_TYPE_RGBA;
 
     pfd.cColorBits = 32;
-    ok( test_pfd(&pfd, NULL), "Simple pfd failed\n" );
+    ok( test_pfd(&pfd, &ret_fmt), "Simple pfd failed\n" );
+    ok( ret_fmt.cColorBits == 32, "Got %u.\n", ret_fmt.cColorBits );
+    ok( !ret_fmt.cBlueShift, "Got %u.\n", ret_fmt.cBlueShift );
+    ok( ret_fmt.cBlueBits == 8, "Got %u.\n", ret_fmt.cBlueBits );
+    ok( ret_fmt.cRedBits == 8, "Got %u.\n", ret_fmt.cRedBits );
+    ok( ret_fmt.cGreenBits == 8, "Got %u.\n", ret_fmt.cGreenBits );
+    ok( ret_fmt.cGreenShift == 8, "Got %u.\n", ret_fmt.cGreenShift );
+    ok( ret_fmt.cRedShift == 16, "Got %u.\n", ret_fmt.cRedShift );
+    ok( !ret_fmt.cAlphaBits || ret_fmt.cAlphaBits == 8, "Got %u.\n", ret_fmt.cAlphaBits );
+    if (ret_fmt.cAlphaBits)
+        ok( ret_fmt.cAlphaShift == 24, "Got %u.\n", ret_fmt.cAlphaShift );
+    else
+        ok( !ret_fmt.cAlphaShift, "Got %u.\n", ret_fmt.cAlphaShift );
+
     pfd.dwFlags |= PFD_DOUBLEBUFFER_DONTCARE;
     ok( test_pfd(&pfd, NULL), "PFD_DOUBLEBUFFER_DONTCARE failed\n" );
     pfd.dwFlags |= PFD_STEREO_DONTCARE;
@@ -541,54 +554,83 @@ static void test_setpixelformat(HDC winhdc)
 
 static void test_sharelists(HDC winhdc)
 {
-    HGLRC hglrc1, hglrc2, hglrc3;
-    BOOL res;
+    BOOL res, nvidia, amd, source_current, source_sharing, dest_current, dest_sharing;
+    HGLRC source, dest, other;
 
-    hglrc1 = wglCreateContext(winhdc);
-    res = wglShareLists(0, 0);
-    ok(res == FALSE, "Sharing display lists for no contexts passed!\n");
+    res = wglShareLists(NULL, NULL);
+    ok(!res, "Sharing display lists for no contexts passed!\n");
 
-    /* Test 1: Create a context and just share lists without doing anything special */
-    hglrc2 = wglCreateContext(winhdc);
-    if(hglrc2)
+    nvidia = !!strstr((const char*)glGetString(GL_VENDOR), "NVIDIA");
+    amd = strstr((const char*)glGetString(GL_VENDOR), "AMD") ||
+          strstr((const char*)glGetString(GL_VENDOR), "ATI");
+
+    for (source_current = FALSE; source_current <= TRUE; source_current++)
     {
-        res = wglShareLists(hglrc1, hglrc2);
-        ok(res, "Sharing of display lists failed\n");
-        wglDeleteContext(hglrc2);
-    }
+        for (source_sharing = FALSE; source_sharing <= TRUE; source_sharing++)
+        {
+            for (dest_current = FALSE; dest_current <= TRUE; dest_current++)
+            {
+                for (dest_sharing = FALSE; dest_sharing <= TRUE; dest_sharing++)
+                {
+                    winetest_push_context("source_current=%d source_sharing=%d dest_current=%d dest_sharing=%d",
+                                          source_current, source_sharing, dest_current, dest_sharing);
 
-    /* Test 2: Share display lists with a 'destination' context which has been made current */
-    hglrc2 = wglCreateContext(winhdc);
-    if(hglrc2)
-    {
-        res = wglMakeCurrent(winhdc, hglrc2);
-        ok(res, "Make current failed\n");
-        res = wglShareLists(hglrc1, hglrc2);
-        ok(res, "Sharing display lists with a destination context which has been made current failed\n");
-        wglMakeCurrent(0, 0);
-        wglDeleteContext(hglrc2);
-    }
+                    source = wglCreateContext(winhdc);
+                    ok(!!source, "Create source context failed\n");
+                    dest = wglCreateContext(winhdc);
+                    ok(!!dest, "Create dest context failed\n");
+                    other = wglCreateContext(winhdc);
+                    ok(!!other, "Create other context failed\n");
 
-    /* Test 3: Share display lists with a context which already shares display lists with another context.
-     * According to MSDN the second parameter cannot share any display lists but some buggy drivers might allow it */
-    hglrc3 = wglCreateContext(winhdc);
-    if(hglrc3)
-    {
-        res = wglShareLists(hglrc3, hglrc1);
-        ok(res == FALSE, "Sharing of display lists passed for a context which already shared lists before\n");
-        wglDeleteContext(hglrc3);
-    }
+                    if (source_current)
+                    {
+                        res = wglMakeCurrent(winhdc, source);
+                        ok(res, "Make source current failed\n");
+                    }
+                    if (source_sharing)
+                    {
+                        res = wglShareLists(other, source);
+                        ok(res, "Sharing of display lists from other to source failed\n");
+                    }
+                    if (dest_current)
+                    {
+                        res = wglMakeCurrent(winhdc, dest);
+                        ok(res, "Make dest current failed\n");
+                    }
+                    if (dest_sharing)
+                    {
+                        res = wglShareLists(other, dest);
+                        todo_wine_if(source_sharing && dest_current)
+                        ok(res, "Sharing of display lists from other to dest failed\n");
+                    }
 
-    /* Test 4: Share display lists with a 'source' context which has been made current */
-    hglrc2 = wglCreateContext(winhdc);
-    if(hglrc2)
-    {
-        res = wglMakeCurrent(winhdc, hglrc1);
-        ok(res, "Make current failed\n");
-        res = wglShareLists(hglrc1, hglrc2);
-        ok(res, "Sharing display lists with a source context which has been made current failed\n");
-        wglMakeCurrent(0, 0);
-        wglDeleteContext(hglrc2);
+                    res = wglShareLists(source, dest);
+                    todo_wine_if((source_current || source_sharing) && (dest_current || dest_sharing))
+                    ok(res || broken(nvidia && !source_sharing && dest_sharing),
+                       "Sharing of display lists from source to dest failed\n");
+
+                    if (source_current || dest_current)
+                    {
+                        res = wglMakeCurrent(NULL, NULL);
+                        ok(res, "Make none current failed\n");
+                    }
+                    res = wglDeleteContext(source);
+                    ok(res, "Delete source context failed\n");
+                    res = wglDeleteContext(dest);
+                    ok(res, "Delete dest context failed\n");
+                    if (!strcmp(winetest_platform, "wine") || !amd || source_sharing || !dest_sharing)
+                    {
+                        /* If source_sharing=FALSE and dest_sharing=TRUE, wglShareLists succeeds on AMD, but
+                         * sometimes wglDeleteContext crashes afterwards. On Wine, both functions should always
+                         * succeed in this case. */
+                        res = wglDeleteContext(other);
+                        ok(res, "Delete other context failed\n");
+                    }
+
+                    winetest_pop_context();
+                }
+            }
+        }
     }
 }
 

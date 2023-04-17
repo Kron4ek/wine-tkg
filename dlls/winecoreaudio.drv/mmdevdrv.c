@@ -42,70 +42,14 @@
 #include "audiopolicy.h"
 #include "unixlib.h"
 
+#include "../mmdevapi/mmdevdrv.h"
+
 WINE_DEFAULT_DEBUG_CHANNEL(coreaudio);
 
 #define NULL_PTR_ERR MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32, RPC_X_NULL_REF_POINTER)
 
 static const REFERENCE_TIME DefaultPeriod = 100000;
 static const REFERENCE_TIME MinimumPeriod = 50000;
-
-struct ACImpl;
-typedef struct ACImpl ACImpl;
-
-typedef struct _AudioSession {
-    GUID guid;
-    struct list clients;
-
-    IMMDevice *device;
-
-    float master_vol;
-    UINT32 channel_count;
-    float *channel_vols;
-    BOOL mute;
-
-    struct list entry;
-} AudioSession;
-
-typedef struct _AudioSessionWrapper {
-    IAudioSessionControl2 IAudioSessionControl2_iface;
-    IChannelAudioVolume IChannelAudioVolume_iface;
-    ISimpleAudioVolume ISimpleAudioVolume_iface;
-
-    LONG ref;
-
-    ACImpl *client;
-    AudioSession *session;
-} AudioSessionWrapper;
-
-struct ACImpl {
-    IAudioClient3 IAudioClient3_iface;
-    IAudioRenderClient IAudioRenderClient_iface;
-    IAudioCaptureClient IAudioCaptureClient_iface;
-    IAudioClock IAudioClock_iface;
-    IAudioClock2 IAudioClock2_iface;
-    IAudioStreamVolume IAudioStreamVolume_iface;
-
-    LONG ref;
-
-    IMMDevice *parent;
-    IUnknown *pUnkFTMarshal;
-
-    EDataFlow dataflow;
-    UINT32 channel_count, period_ms;
-    DWORD flags;
-    HANDLE event;
-    float *vols;
-
-    HANDLE timer;
-
-    AudioSession *session;
-    AudioSessionWrapper *session_wrapper;
-
-    stream_handle stream;
-    struct list entry;
-
-    char device_name[1];
-};
 
 static const IAudioClient3Vtbl AudioClient3_Vtbl;
 static const IAudioRenderClientVtbl AudioRenderClient_Vtbl;
@@ -118,17 +62,7 @@ static const IAudioStreamVolumeVtbl AudioStreamVolume_Vtbl;
 static const IChannelAudioVolumeVtbl ChannelAudioVolume_Vtbl;
 static const IAudioSessionManager2Vtbl AudioSessionManager2_Vtbl;
 
-typedef struct _SessionMgr {
-    IAudioSessionManager2 IAudioSessionManager2_iface;
-
-    LONG ref;
-
-    IMMDevice *device;
-} SessionMgr;
-
 static WCHAR drv_key_devicesW[256];
-
-static HANDLE g_timer_q;
 
 static CRITICAL_SECTION g_sessions_lock;
 static CRITICAL_SECTION_DEBUG g_sessions_lock_debug =
@@ -213,15 +147,11 @@ BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, void *reserved)
         swprintf(drv_key_devicesW, ARRAY_SIZE(drv_key_devicesW),
                  L"Software\\Wine\\Drivers\\%s\\devices", filename);
 
-        g_timer_q = CreateTimerQueue();
-        if(!g_timer_q)
-            return FALSE;
         break;
     }
     case DLL_PROCESS_DETACH:
         if (reserved) break;
         DeleteCriticalSection(&g_sessions_lock);
-        CloseHandle(g_timer_q);
         break;
     }
     return TRUE;
@@ -465,7 +395,7 @@ HRESULT WINAPI AUDDRV_GetAudioEndpoint(GUID *guid, IMMDevice *dev, IAudioClient 
     This->dataflow = dataflow;
     memcpy(This->device_name, name, name_len + 1);
 
-    hr = CoCreateFreeThreadedMarshaler((IUnknown *)&This->IAudioClient3_iface, &This->pUnkFTMarshal);
+    hr = CoCreateFreeThreadedMarshaler((IUnknown *)&This->IAudioClient3_iface, &This->marshal);
     if (FAILED(hr)) {
         HeapFree(GetProcessHeap(), 0, This);
         return hr;
@@ -495,7 +425,7 @@ static HRESULT WINAPI AudioClient_QueryInterface(IAudioClient3 *iface,
             IsEqualIID(riid, &IID_IAudioClient3))
         *ppv = iface;
     else if(IsEqualIID(riid, &IID_IMarshal))
-        return IUnknown_QueryInterface(This->pUnkFTMarshal, riid, ppv);
+        return IUnknown_QueryInterface(This->marshal, riid, ppv);
 
     if(*ppv){
         IUnknown_AddRef((IUnknown*)*ppv);
@@ -517,35 +447,24 @@ static ULONG WINAPI AudioClient_AddRef(IAudioClient3 *iface)
 static ULONG WINAPI AudioClient_Release(IAudioClient3 *iface)
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
-    struct release_stream_params params;
     ULONG ref;
-
     ref = InterlockedDecrement(&This->ref);
     TRACE("(%p) Refcount now %lu\n", This, ref);
     if(!ref){
-        if(This->timer){
-            HANDLE event;
-            BOOL wait;
-            event = CreateEventW(NULL, TRUE, FALSE, NULL);
-            wait = !DeleteTimerQueueTimer(g_timer_q, This->timer, event);
-            wait = wait && GetLastError() == ERROR_IO_PENDING;
-            if(event && wait)
-                WaitForSingleObject(event, INFINITE);
-            CloseHandle(event);
-        }
         if(This->stream){
+            struct release_stream_params params;
             params.stream = This->stream;
-            params.timer_thread = NULL;
+            params.timer_thread = This->timer_thread;
             UNIX_CALL(release_stream, &params);
-        }
-        if(This->session){
+            This->stream = 0;
+
             EnterCriticalSection(&g_sessions_lock);
             list_remove(&This->entry);
             LeaveCriticalSection(&g_sessions_lock);
         }
         HeapFree(GetProcessHeap(), 0, This->vols);
         IMMDevice_Release(This->parent);
-        IUnknown_Release(This->pUnkFTMarshal);
+        IUnknown_Release(This->marshal);
         HeapFree(GetProcessHeap(), 0, This);
     }
     return ref;
@@ -752,9 +671,7 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
         return params.result;
     }
 
-    This->flags = flags;
     This->channel_count = fmt->nChannels;
-    This->period_ms = period / 10000;
 
     This->vols = HeapAlloc(GetProcessHeap(), 0, This->channel_count * sizeof(float));
     if(!This->vols){
@@ -924,42 +841,38 @@ static HRESULT WINAPI AudioClient_GetDevicePeriod(IAudioClient3 *iface,
     return S_OK;
 }
 
-void CALLBACK ca_period_cb(void *user, BOOLEAN timer)
+static DWORD WINAPI ca_timer_thread(void *user)
 {
+    struct timer_loop_params params;
     ACImpl *This = user;
-
-    if(This->event)
-        SetEvent(This->event);
+    params.stream = This->stream;
+    SetThreadDescription(GetCurrentThread(), L"winecoreaudio_timer_loop");
+    UNIX_CALL(timer_loop, &params);
+    return 0;
 }
 
 static HRESULT WINAPI AudioClient_Start(IAudioClient3 *iface)
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
     struct start_params params;
+    HRESULT hr;
 
     TRACE("(%p)\n", This);
 
     if(!This->stream)
         return AUDCLNT_E_NOT_INITIALIZED;
 
-    if((This->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) && !This->event)
-        return AUDCLNT_E_EVENTHANDLE_NOT_SET;
-
     params.stream = This->stream;
     UNIX_CALL(start, &params);
+    if(FAILED(hr = params.result))
+        return hr;
 
-    if(SUCCEEDED(params.result)){
-        if(This->event && !This->timer){
-            if(!CreateTimerQueueTimer(&This->timer, g_timer_q, ca_period_cb, This, 0,
-                                      This->period_ms, WT_EXECUTEINTIMERTHREAD)){
-                This->timer = NULL;
-                IAudioClient3_Stop(iface);
-                WARN("Unable to create timer: %lu\n", GetLastError());
-                return E_OUTOFMEMORY;
-            }
-        }
+    if(!This->timer_thread) {
+        This->timer_thread = CreateThread(NULL, 0, ca_timer_thread, This, 0, NULL);
+        SetThreadPriority(This->timer_thread, THREAD_PRIORITY_TIME_CRITICAL);
     }
-    return params.result;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI AudioClient_Stop(IAudioClient3 *iface)
@@ -996,7 +909,7 @@ static HRESULT WINAPI AudioClient_SetEventHandle(IAudioClient3 *iface,
         HANDLE event)
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
-    HRESULT hr = S_OK;
+    struct set_event_handle_params params;
 
     TRACE("(%p)->(%p)\n", This, event);
 
@@ -1006,19 +919,10 @@ static HRESULT WINAPI AudioClient_SetEventHandle(IAudioClient3 *iface,
     if(!This->stream)
         return AUDCLNT_E_NOT_INITIALIZED;
 
-    EnterCriticalSection(&g_sessions_lock);
-
-    if(!(This->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK))
-        hr = AUDCLNT_E_EVENTHANDLE_NOT_EXPECTED;
-    else if(This->event){
-        FIXME("called twice\n");
-        hr = HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
-    }else
-        This->event = event;
-
-    LeaveCriticalSection(&g_sessions_lock);
-
-    return hr;
+    params.stream = This->stream;
+    params.event = event;
+    UNIX_CALL(set_event_handle, &params);
+    return params.result;
 }
 
 static HRESULT WINAPI AudioClient_GetService(IAudioClient3 *iface, REFIID riid,
@@ -1234,7 +1138,7 @@ static HRESULT WINAPI AudioRenderClient_QueryInterface(
             IsEqualIID(riid, &IID_IAudioRenderClient))
         *ppv = iface;
     else if(IsEqualIID(riid, &IID_IMarshal))
-        return IUnknown_QueryInterface(This->pUnkFTMarshal, riid, ppv);
+        return IUnknown_QueryInterface(This->marshal, riid, ppv);
 
     if(*ppv){
         IUnknown_AddRef((IUnknown*)*ppv);
@@ -1313,7 +1217,7 @@ static HRESULT WINAPI AudioCaptureClient_QueryInterface(
             IsEqualIID(riid, &IID_IAudioCaptureClient))
         *ppv = iface;
     else if(IsEqualIID(riid, &IID_IMarshal))
-        return IUnknown_QueryInterface(This->pUnkFTMarshal, riid, ppv);
+        return IUnknown_QueryInterface(This->marshal, riid, ppv);
 
     if(*ppv){
         IUnknown_AddRef((IUnknown*)*ppv);

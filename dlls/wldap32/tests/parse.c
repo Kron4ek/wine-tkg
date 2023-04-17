@@ -114,25 +114,34 @@ static void test_ldap_search_extW( LDAP *ld )
     ok( !ret, "ldap_search_extW failed %#lx\n", ret );
 }
 
-static void test_ldap_set_optionW( LDAP *ld )
+static void test_opt_referrals( LDAP *ld )
 {
-    ULONG ret, oldvalue;
+    ULONG ret, value;
 
-    ret = ldap_get_optionW( ld, LDAP_OPT_REFERRALS, &oldvalue );
-    if (ret == LDAP_SERVER_DOWN || ret == LDAP_UNAVAILABLE)
-    {
-        skip("test server can't be reached\n");
-        return;
-    }
+    value = 0xdeadbeef;
+    ret = ldap_get_optionW( ld, LDAP_OPT_REFERRALS, &value );
+    ok( !ret, "ldap_get_optionW failed %#lx\n", ret );
+    todo_wine ok( value == 1, "got %lu\n", value );
 
-    ret = ldap_set_optionW( ld, LDAP_OPT_REFERRALS, LDAP_OPT_OFF );
+    value = 0;
+    ret = ldap_set_optionW( ld, LDAP_OPT_REFERRALS, (void *)&value );
     ok( !ret, "ldap_set_optionW failed %#lx\n", ret );
 
-    ret = ldap_set_optionW( ld, LDAP_OPT_REFERRALS, (void *)&oldvalue );
+    value = 0xdeadbeef;
+    ret = ldap_get_optionW( ld, LDAP_OPT_REFERRALS, &value );
+    ok( !ret, "ldap_get_optionW failed %#lx\n", ret );
+    ok( !value, "got %lu\n", value );
+
+    ret = ldap_set_optionW( ld, LDAP_OPT_REFERRALS, LDAP_OPT_ON );
     ok( !ret, "ldap_set_optionW failed %#lx\n", ret );
+
+    value = 0xdeadbeef;
+    ret = ldap_get_optionW( ld, LDAP_OPT_REFERRALS, &value );
+    ok( !ret, "ldap_get_optionW failed %#lx\n", ret );
+    todo_wine ok( value == 1, "got %lu\n", value );
 }
 
-static void test_ldap_get_optionW( LDAP *ld )
+static void test_opt_protocol_version( LDAP *ld )
 {
     ULONG ret, version;
 
@@ -577,6 +586,8 @@ static void test_opt_server_certificate(void)
     ok( !ret, "ldap_set_optionA should succeed, got %#lx\n", ret );
     ret = ldap_set_optionA( ld, LDAP_OPT_SERVER_CERTIFICATE, &verify_certificate );
     ok( !ret, "ldap_set_optionA should succeed, got %#lx\n", ret );
+    ret = ldap_connect( ld, NULL );
+    ok( !ret, "ldap_connect should succeed, got %#lx\n", ret );
     ret = ldap_start_tls_sA( ld, NULL, NULL, NULL, NULL );
     ok( ret == LDAP_LOCAL_ERROR, "ldap_start_tls_sA should fail, got %#lx\n", ret );
     ldap_unbind( ld );
@@ -601,7 +612,7 @@ START_TEST (parse)
     test_ldap_delete( ld );
     test_ldap_parse_sort_control( ld );
     test_ldap_search_extW( ld );
-    test_ldap_get_optionW( ld );
-    test_ldap_set_optionW( ld );
+    test_opt_referrals( ld );
+    test_opt_protocol_version( ld );
     ldap_unbind( ld );
 }

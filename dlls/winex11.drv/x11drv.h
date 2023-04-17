@@ -662,7 +662,6 @@ struct x11drv_win_data
 extern struct x11drv_win_data *get_win_data( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void release_win_data( struct x11drv_win_data *data ) DECLSPEC_HIDDEN;
 extern Window X11DRV_get_whole_window( HWND hwnd ) DECLSPEC_HIDDEN;
-extern XIC X11DRV_get_ic( HWND hwnd ) DECLSPEC_HIDDEN;
 extern Window get_dummy_parent(void) DECLSPEC_HIDDEN;
 
 extern void sync_gl_drawable( HWND hwnd, BOOL known_child ) DECLSPEC_HIDDEN;
@@ -741,6 +740,9 @@ extern WCHAR *x11drv_get_keyboard_layout_list( DWORD *size ) DECLSPEC_HIDDEN;
 #define DEPTH_COUNT 3
 extern const unsigned int *depths DECLSPEC_HIDDEN;
 
+/* Use a distinct type for the settings id, to avoid mixups other types of ids */
+typedef struct { ULONG_PTR id; } x11drv_settings_id;
+
 /* Required functions for changing and enumerating display settings */
 struct x11drv_settings_handler
 {
@@ -754,7 +756,7 @@ struct x11drv_settings_handler
      * Following functions use this id to identify the device.
      *
      * Return FALSE if the device cannot be found and TRUE on success */
-    BOOL (*get_id)(const WCHAR *device_name, BOOL is_primary, ULONG_PTR *id);
+    BOOL (*get_id)(const WCHAR *device_name, BOOL is_primary, x11drv_settings_id *id);
 
     /* get_modes() will be called to get a list of supported modes of the device of id in modes
      * with respect to flags, which could be 0, EDS_RAWMODE or EDS_ROTATEDMODE. If the implementation
@@ -765,7 +767,7 @@ struct x11drv_settings_handler
      * dmDisplayFlags and dmDisplayFrequency
      *
      * Return FALSE on failure with parameters unchanged and error code set. Return TRUE on success */
-    BOOL (*get_modes)(ULONG_PTR id, DWORD flags, DEVMODEW **modes, UINT *mode_count);
+    BOOL (*get_modes)(x11drv_settings_id id, DWORD flags, DEVMODEW **modes, UINT *mode_count);
 
     /* free_modes() will be called to free the mode list returned from get_modes() */
     void (*free_modes)(DEVMODEW *modes);
@@ -777,20 +779,19 @@ struct x11drv_settings_handler
      * dmDisplayFrequency and dmPosition
      *
      * Return FALSE on failure with parameters unchanged and error code set. Return TRUE on success */
-    BOOL (*get_current_mode)(ULONG_PTR id, DEVMODEW *mode);
+    BOOL (*get_current_mode)(x11drv_settings_id id, DEVMODEW *mode);
 
     /* set_current_mode() will be called to change the display mode of the display device of id.
      * mode must be a valid mode from get_modes() with optional fields, such as dmPosition set.
      *
      * Return DISP_CHANGE_*, same as ChangeDisplaySettingsExW() return values */
-    LONG (*set_current_mode)(ULONG_PTR id, const DEVMODEW *mode);
+    LONG (*set_current_mode)(x11drv_settings_id id, const DEVMODEW *mode);
 };
 
 extern void X11DRV_Settings_SetHandler(const struct x11drv_settings_handler *handler) DECLSPEC_HIDDEN;
 
 extern void X11DRV_init_desktop( Window win, unsigned int width, unsigned int height ) DECLSPEC_HIDDEN;
 extern void X11DRV_resize_desktop(void) DECLSPEC_HIDDEN;
-extern void init_registry_display_settings(void) DECLSPEC_HIDDEN;
 extern BOOL is_virtual_desktop(void) DECLSPEC_HIDDEN;
 extern BOOL is_desktop_fullscreen(void) DECLSPEC_HIDDEN;
 extern BOOL is_detached_mode(const DEVMODEW *) DECLSPEC_HIDDEN;
@@ -852,10 +853,10 @@ extern BOOL X11DRV_DisplayDevices_SupportEventHandlers(void) DECLSPEC_HIDDEN;
 extern struct x11drv_display_device_handler desktop_handler DECLSPEC_HIDDEN;
 
 /* XIM support */
-extern BOOL X11DRV_InitXIM( const WCHAR *input_style ) DECLSPEC_HIDDEN;
-extern XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data) DECLSPEC_HIDDEN;
-extern void X11DRV_SetupXIM(void) DECLSPEC_HIDDEN;
+extern BOOL xim_init( const WCHAR *input_style ) DECLSPEC_HIDDEN;
+extern void xim_thread_attach( struct x11drv_thread_data *data ) DECLSPEC_HIDDEN;
 extern void X11DRV_XIMLookupChars( const char *str, UINT count ) DECLSPEC_HIDDEN;
+extern XIC X11DRV_get_ic( HWND hwnd ) DECLSPEC_HIDDEN;
 
 #define XEMBED_MAPPED  (1 << 0)
 

@@ -20,6 +20,7 @@
 
 #define COBJMACROS
 
+#include <assert.h>
 #include "windows.h"
 #include "initguid.h"
 #include "uiautomation.h"
@@ -1291,9 +1292,13 @@ static void flush_method_sequence(void)
     sequence_cnt = sequence_size = 0;
 }
 
+static BOOL method_sequences_enabled = TRUE;
 static void add_method_call(struct Provider *prov, int method)
 {
     struct prov_method_sequence prov_method = {0};
+
+    if (!method_sequences_enabled)
+        return;
 
     if (!sequence)
     {
@@ -1321,6 +1326,7 @@ static void ok_method_sequence_(const struct prov_method_sequence *expected_list
     const struct prov_method_sequence *actual;
     unsigned int count = 0;
 
+    assert(method_sequences_enabled);
     add_method_call(NULL, 0);
     actual = sequence;
 
@@ -6526,15 +6532,14 @@ static DWORD WINAPI uia_node_from_handle_test_thread(LPVOID param)
     ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
 
     memset(buf, 0, sizeof(buf));
-    todo_wine ok(get_nested_provider_desc(V_BSTR(&v), L"Main", TRUE, buf), "Failed to get nested provider description\n");
-    if (lstrlenW(buf))
-    {
-        check_node_provider_desc_prefix(buf, GetCurrentProcessId(), hwnd);
-        check_node_provider_desc(buf, L"Main", L"Provider_child", TRUE);
-        check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), hwnd);
-        check_node_provider_desc(V_BSTR(&v), L"Nonclient", NULL, FALSE);
-        check_node_provider_desc(V_BSTR(&v), L"Hwnd", NULL, FALSE);
-    }
+    ok(get_nested_provider_desc(V_BSTR(&v), L"Main", TRUE, buf), "Failed to get nested provider description\n");
+
+    check_node_provider_desc_prefix(buf, GetCurrentProcessId(), hwnd);
+    check_node_provider_desc(buf, L"Main", L"Provider_child", TRUE);
+
+    check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), hwnd);
+    check_node_provider_desc_todo(V_BSTR(&v), L"Nonclient", NULL, FALSE);
+    check_node_provider_desc(V_BSTR(&v), L"Hwnd", NULL, FALSE);
     VariantClear(&v);
 
     Provider_child.ignore_hwnd_prop = FALSE;
@@ -6743,7 +6748,7 @@ static void test_UiaNodeFromHandle(const char *name)
     SET_EXPECT_MULTI(winproc_GETOBJECT_CLIENT, 2);
     hr = UiaNodeFromHandle(hwnd, &node);
     /* Windows 10 and below return E_FAIL, Windows 11 returns S_OK. */
-    todo_wine ok(hr == S_OK || broken(hr == E_FAIL), "Unexpected hr %#lx.\n", hr);
+    ok(hr == S_OK || broken(hr == E_FAIL), "Unexpected hr %#lx.\n", hr);
     CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
     todo_wine CHECK_CALLED(winproc_GETOBJECT_CLIENT);
     if (SUCCEEDED(hr))
@@ -6759,23 +6764,20 @@ static void test_UiaNodeFromHandle(const char *name)
     SET_EXPECT(winproc_GETOBJECT_UiaRoot);
     SET_EXPECT_MULTI(winproc_GETOBJECT_CLIENT, 2);
     hr = UiaNodeFromHandle(hwnd, &node);
-    todo_wine ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
     todo_wine CHECK_CALLED(winproc_GETOBJECT_CLIENT);
 
     hr = UiaGetPropertyValue(node, UIA_ProviderDescriptionPropertyId, &v);
-    todo_wine ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
-    if (SUCCEEDED(hr))
-    {
-        check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), hwnd);
-        check_node_provider_desc(V_BSTR(&v), L"Annotation", NULL, FALSE);
-        check_node_provider_desc(V_BSTR(&v), L"Main", NULL, FALSE);
-        check_node_provider_desc(V_BSTR(&v), L"Nonclient", NULL, FALSE);
-        check_node_provider_desc(V_BSTR(&v), L"Hwnd", NULL, TRUE);
-        VariantClear(&v);
-    }
+    ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), hwnd);
+    check_node_provider_desc_todo(V_BSTR(&v), L"Annotation", NULL, FALSE);
+    check_node_provider_desc_todo(V_BSTR(&v), L"Main", NULL, FALSE);
+    check_node_provider_desc_todo(V_BSTR(&v), L"Nonclient", NULL, FALSE);
+    check_node_provider_desc(V_BSTR(&v), L"Hwnd", NULL, TRUE);
+    VariantClear(&v);
 
-    todo_wine ok(UiaNodeRelease(node), "UiaNodeRelease returned FALSE\n");
+    ok(UiaNodeRelease(node), "UiaNodeRelease returned FALSE\n");
 
     /*
      * COM initialized, but provider passed into UiaReturnRawElementProvider
@@ -6788,24 +6790,22 @@ static void test_UiaNodeFromHandle(const char *name)
     SET_EXPECT(winproc_GETOBJECT_UiaRoot);
     SET_EXPECT_MULTI(winproc_GETOBJECT_CLIENT, 2);
     hr = UiaNodeFromHandle(hwnd, &node);
-    todo_wine ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
     todo_wine CHECK_CALLED(winproc_GETOBJECT_CLIENT);
 
     hr = UiaGetPropertyValue(node, UIA_ProviderDescriptionPropertyId, &v);
-    todo_wine ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
-    if (SUCCEEDED(hr))
-    {
-        check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), hwnd);
-        check_node_provider_desc(V_BSTR(&v), L"Annotation", NULL, FALSE);
-        check_node_provider_desc(V_BSTR(&v), L"Main", NULL, FALSE);
-        check_node_provider_desc(V_BSTR(&v), L"Nonclient", NULL, FALSE);
-        check_node_provider_desc(V_BSTR(&v), L"Hwnd", NULL, TRUE);
-        VariantClear(&v);
-    }
+    ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), hwnd);
+    check_node_provider_desc_todo(V_BSTR(&v), L"Annotation", NULL, FALSE);
+    check_node_provider_desc_todo(V_BSTR(&v), L"Main", NULL, FALSE);
+    check_node_provider_desc_todo(V_BSTR(&v), L"Nonclient", NULL, FALSE);
+    check_node_provider_desc(V_BSTR(&v), L"Hwnd", NULL, TRUE);
+    VariantClear(&v);
+
     ok_method_sequence(node_from_hwnd1, "node_from_hwnd1");
 
-    todo_wine ok(UiaNodeRelease(node), "UiaNodeRelease returned FALSE\n");
+    ok(UiaNodeRelease(node), "UiaNodeRelease returned FALSE\n");
 
     /*
      * COM initialized, but provider passed into UiaReturnRawElementProvider
@@ -6824,31 +6824,29 @@ static void test_UiaNodeFromHandle(const char *name)
     Provider.runtime_id[0] = UiaAppendRuntimeId;
     Provider.runtime_id[1] = 1;
     hr = UiaNodeFromHandle(hwnd, &node);
-    todo_wine ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(Provider.ref == 1 || broken(Provider.ref == 2), "Unexpected refcnt %ld\n", Provider.ref);
     CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
     todo_wine CHECK_CALLED(winproc_GETOBJECT_CLIENT);
 
     hr = UiaGetPropertyValue(node, UIA_ProviderDescriptionPropertyId, &v);
-    todo_wine ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
-    if (SUCCEEDED(hr))
+    ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+
+    check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), hwnd);
+    if (Provider.ref == 1 || get_provider_desc(V_BSTR(&v), L"Annotation:", NULL))
     {
-        check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), hwnd);
-
-        if (get_provider_desc(V_BSTR(&v), L"Annotation:", NULL))
-        {
-            check_node_provider_desc(V_BSTR(&v), L"Annotation", NULL, FALSE);
-            check_node_provider_desc(V_BSTR(&v), L"Main", NULL, FALSE);
-        }
-        else
-            check_node_provider_desc(V_BSTR(&v), L"Main", L"Provider", FALSE);
-
-        check_node_provider_desc(V_BSTR(&v), L"Nonclient", NULL, FALSE);
-        check_node_provider_desc(V_BSTR(&v), L"Hwnd", NULL, TRUE);
-        VariantClear(&v);
+        check_node_provider_desc_todo(V_BSTR(&v), L"Annotation", NULL, FALSE);
+        check_node_provider_desc_todo(V_BSTR(&v), L"Main", NULL, FALSE);
     }
+    else
+        check_node_provider_desc(V_BSTR(&v), L"Main", L"Provider", FALSE);
+
+    check_node_provider_desc_todo(V_BSTR(&v), L"Nonclient", NULL, FALSE);
+    check_node_provider_desc(V_BSTR(&v), L"Hwnd", NULL, TRUE);
+    VariantClear(&v);
+
     ok_method_sequence(node_from_hwnd9, "node_from_hwnd9");
-    todo_wine ok(UiaNodeRelease(node), "UiaNodeRelease returned FALSE\n");
+    ok(UiaNodeRelease(node), "UiaNodeRelease returned FALSE\n");
     /*
      * Bug on Windows 8 through Win10v1709 - if we have a RuntimeId failure,
      * refcount doesn't get decremented.
@@ -12297,6 +12295,128 @@ static void test_CUIAutomation(void)
     CoUninitialize();
 }
 
+static const struct prov_method_sequence default_hwnd_prov_props_seq[] = {
+    { &Provider, PROV_GET_PROPERTY_VALUE }, /* UIA_NativeWindowHandlePropertyId */
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, /* Only done on Windows 7. */
+    { &Provider_nc, PROV_GET_PROPERTY_VALUE }, /* UIA_NativeWindowHandlePropertyId */
+    { &Provider_nc, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, /* Only done on Windows 7. */
+    { &Provider, PROV_GET_PROPERTY_VALUE }, /* UIA_NamePropertyId */
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, /* Only done on Windows 7. */
+    { &Provider_nc, PROV_GET_PROPERTY_VALUE }, /* UIA_NamePropertyId */
+    { &Provider_nc, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, /* Only done on Windows 7. */
+    { &Provider, PROV_GET_PROPERTY_VALUE }, /* UIA_ClassNamePropertyId */
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, /* Only done on Windows 7. */
+    { &Provider_nc, PROV_GET_PROPERTY_VALUE }, /* UIA_ClassNamePropertyId */
+    { &Provider_nc, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, /* Only done on Windows 7. */
+    { &Provider, PROV_GET_PROPERTY_VALUE }, /* UIA_ProcessIdPropertyId */
+    { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_TODO },
+    { &Provider_nc, PROV_GET_PROPERTY_VALUE }, /* UIA_ProcessIdPropertyId */
+    { &Provider_nc, PROV_GET_PROVIDER_OPTIONS, METHOD_TODO },
+    { 0 }
+};
+
+#define test_node_hwnd_provider( node, hwnd ) \
+        test_node_hwnd_provider_( (node), (hwnd), __FILE__, __LINE__)
+static void test_node_hwnd_provider_(HUIANODE node, HWND hwnd, const char *file, int line)
+{
+    WCHAR buf[1024] = { 0 };
+    HRESULT hr;
+    VARIANT v;
+    DWORD pid;
+
+    winetest_push_context("UIA_NativeWindowHandlePropertyId");
+    hr = UiaGetPropertyValue(node, UIA_NativeWindowHandlePropertyId, &v);
+    ok_(file, line)(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    ok_(file, line)(V_VT(&v) == VT_I4, "Unexpected VT %d\n", V_VT(&v));
+    ok_(file, line)(V_I4(&v) == HandleToUlong(hwnd), "V_I4(&v) = %#lx, expected %#lx\n", V_I4(&v), HandleToUlong(hwnd));
+    VariantClear(&v);
+    winetest_pop_context();
+
+    winetest_push_context("UIA_NamePropertyId");
+    SendMessageW(hwnd, WM_GETTEXT, ARRAY_SIZE(buf), (LPARAM)buf);
+    hr = UiaGetPropertyValue(node, UIA_NamePropertyId, &v);
+    ok_(file, line)(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    ok_(file, line)(V_VT(&v) == VT_BSTR, "Unexpected VT %d\n", V_VT(&v));
+    ok(!lstrcmpW(V_BSTR(&v), buf), "Unexpected BSTR %s\n", wine_dbgstr_w(V_BSTR(&v)));
+    VariantClear(&v);
+    winetest_pop_context();
+
+    winetest_push_context("UIA_ClassNamePropertyId");
+    memset(buf, 0, sizeof(buf));
+    GetClassNameW(hwnd, buf, ARRAY_SIZE(buf));
+    hr = UiaGetPropertyValue(node, UIA_ClassNamePropertyId, &v);
+    ok_(file, line)(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    ok_(file, line)(V_VT(&v) == VT_BSTR, "Unexpected VT %d\n", V_VT(&v));
+    ok(!lstrcmpW(V_BSTR(&v), buf), "Unexpected BSTR %s\n", wine_dbgstr_w(V_BSTR(&v)));
+    VariantClear(&v);
+    winetest_pop_context();
+
+    GetWindowThreadProcessId(hwnd, &pid);
+    winetest_push_context("UIA_ProcessIdPropertyId");
+    hr = UiaGetPropertyValue(node, UIA_ProcessIdPropertyId, &v);
+    ok_(file, line)(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    ok_(file, line)(V_VT(&v) == VT_I4, "Unexpected VT %d\n", V_VT(&v));
+    ok_(file, line)(V_I4(&v) == pid, "V_I4(&v) = %#lx, expected %#lx\n", V_I4(&v), pid);
+    VariantClear(&v);
+    winetest_pop_context();
+}
+
+static void test_default_clientside_providers(void)
+{
+    HUIANODE node;
+    HRESULT hr;
+    HWND hwnd;
+    VARIANT v;
+
+    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    hwnd = create_test_hwnd("test_default_clientside_providers class");
+    method_sequences_enabled = FALSE;
+
+    /*
+     * Test default BaseHwnd provider. Unlike the other default providers, the
+     * default BaseHwnd IRawElementProviderSimple is not available to test
+     * directly. To isolate the BaseHwnd provider, we set the node's nonclient
+     * provider to Provider_nc, and its Main provider to Provider. These
+     * providers will return nothing so that we can isolate properties coming
+     * from the BaseHwnd provider.
+     */
+    initialize_provider(&Provider_nc, ProviderOptions_ClientSideProvider | ProviderOptions_NonClientAreaProvider, hwnd, TRUE);
+    initialize_provider(&Provider, ProviderOptions_ClientSideProvider, hwnd, TRUE);
+    Provider_nc.ignore_hwnd_prop = Provider.ignore_hwnd_prop = TRUE;
+    prov_root = &Provider.IRawElementProviderSimple_iface;
+    SET_EXPECT(winproc_GETOBJECT_UiaRoot);
+    /* Only sent on Win7. */
+    SET_EXPECT(winproc_GETOBJECT_CLIENT);
+    hr = UiaNodeFromProvider(&Provider_nc.IRawElementProviderSimple_iface, &node);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(Provider.ref == 2, "Unexpected refcnt %ld\n", Provider.ref);
+    ok(Provider_nc.ref == 2, "Unexpected refcnt %ld\n", Provider_nc.ref);
+    CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
+    called_winproc_GETOBJECT_CLIENT = expect_winproc_GETOBJECT_CLIENT = 0;
+
+    hr = UiaGetPropertyValue(node, UIA_ProviderDescriptionPropertyId, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+    check_node_provider_desc_prefix(V_BSTR(&v), GetCurrentProcessId(), hwnd);
+    check_node_provider_desc(V_BSTR(&v), L"Nonclient", L"Provider_nc", FALSE);
+    check_node_provider_desc_todo(V_BSTR(&v), L"Main", L"Provider", FALSE);
+    check_node_provider_desc_todo(V_BSTR(&v), L"Hwnd", NULL, TRUE);
+    VariantClear(&v);
+
+    method_sequences_enabled = TRUE;
+    Provider.ret_invalid_prop_type = Provider_nc.ret_invalid_prop_type = TRUE;
+    test_node_hwnd_provider(node, hwnd);
+    ok_method_sequence(default_hwnd_prov_props_seq, "default_hwnd_prov_props_seq");
+
+    UiaNodeRelease(node);
+    ok(Provider.ref == 1, "Unexpected refcnt %ld\n", Provider.ref);
+    ok(Provider_nc.ref == 1, "Unexpected refcnt %ld\n", Provider_nc.ref);
+
+    DestroyWindow(hwnd);
+    UnregisterClassA("test_default_clientside_providers class", NULL);
+
+    CoUninitialize();
+}
+
 /*
  * Once a process returns a UI Automation provider with
  * UiaReturnRawElementProvider it ends up in an implicit MTA until exit. This
@@ -12364,6 +12484,7 @@ START_TEST(uiautomation)
     test_UiaNavigate();
     test_UiaFind();
     test_CUIAutomation();
+    test_default_clientside_providers();
     if (uia_dll)
     {
         pUiaProviderFromIAccessible = (void *)GetProcAddress(uia_dll, "UiaProviderFromIAccessible");

@@ -81,11 +81,15 @@ struct coreaudio_stream
     AudioConverterRef converter;
     AudioStreamBasicDescription dev_desc; /* audio unit format, not necessarily the same as fmt */
     AudioDeviceID dev_id;
-    EDataFlow flow;
-    AUDCLNT_SHAREMODE share;
 
-    BOOL playing;
-    UINT32 period_ms, period_frames;
+    EDataFlow flow;
+    DWORD flags;
+    AUDCLNT_SHAREMODE share;
+    HANDLE event;
+
+    BOOL playing, please_quit;
+    REFERENCE_TIME period;
+    UINT32 period_frames;
     UINT32 bufsize_frames, resamp_bufsize_frames;
     UINT32 lcl_offs_frames, held_frames, wri_offs_frames, tmp_buffer_frames;
     UINT32 cap_bufsize_frames, cap_offs_frames, cap_held_frames;
@@ -658,10 +662,11 @@ static NTSTATUS unix_create_stream(void *args)
         goto end;
     }
 
-    stream->period_ms = params->period / 10000;
+    stream->period = params->period;
     stream->period_frames = muldiv(params->period, stream->fmt->nSamplesPerSec, 10000000);
     stream->dev_id = dev_id_from_device(params->device);
     stream->flow = params->flow;
+    stream->flags = params->flags;
     stream->share = params->share;
 
     stream->bufsize_frames = muldiv(params->duration, stream->fmt->nSamplesPerSec, 10000000);
@@ -739,6 +744,12 @@ static NTSTATUS unix_release_stream( void *args )
     struct release_stream_params *params = args;
     struct coreaudio_stream *stream = handle_get_stream(params->stream);
     SIZE_T size;
+
+    if(params->timer_thread){
+        stream->please_quit = TRUE;
+        NtWaitForSingleObject(params->timer_thread, FALSE, NULL);
+        NtClose(params->timer_thread);
+    }
 
     if(stream->unit){
         AudioOutputUnitStop(stream->unit);
@@ -1272,8 +1283,7 @@ static NTSTATUS unix_get_latency(void *args)
     latency += stream_latency;
     /* pretend we process audio in Period chunks, so max latency includes
      * the period time */
-    *params->latency = muldiv(latency, 10000000, stream->fmt->nSamplesPerSec)
-        + stream->period_ms * 10000;
+    *params->latency = muldiv(latency, 10000000, stream->fmt->nSamplesPerSec) + stream->period;
 
     OSSpinLockUnlock(&stream->lock);
     params->result = S_OK;
@@ -1305,7 +1315,9 @@ static NTSTATUS unix_start(void *args)
 
     OSSpinLockLock(&stream->lock);
 
-    if(stream->playing)
+    if((stream->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) && !stream->event)
+        params->result = AUDCLNT_E_EVENTHANDLE_NOT_SET;
+    else if(stream->playing)
         params->result = AUDCLNT_E_NOT_STOPPED;
     else{
         stream->playing = TRUE;
@@ -1361,6 +1373,35 @@ static NTSTATUS unix_reset(void *args)
     }
 
     OSSpinLockUnlock(&stream->lock);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS unix_timer_loop(void *args)
+{
+    struct timer_loop_params *params = args;
+    struct coreaudio_stream *stream = handle_get_stream(params->stream);
+    LARGE_INTEGER delay, next, last;
+    int adjust;
+
+    delay.QuadPart = -stream->period;
+    NtQueryPerformanceCounter(&last, NULL);
+    next.QuadPart = last.QuadPart + stream->period;
+
+    while(!stream->please_quit){
+        NtSetEvent(stream->event, NULL);
+        NtDelayExecution(FALSE, &delay);
+        NtQueryPerformanceCounter(&last, NULL);
+
+        adjust = next.QuadPart - last.QuadPart;
+        if(adjust > stream->period / 2)
+            adjust = stream->period / 2;
+        else if(adjust < -stream->period / 2)
+            adjust = -stream->period / 2;
+
+        delay.QuadPart = -(stream->period + adjust);
+        next.QuadPart += stream->period;
+    }
+
     return STATUS_SUCCESS;
 }
 
@@ -1650,6 +1691,27 @@ static NTSTATUS unix_set_volumes(void *args)
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS unix_set_event_handle(void *args)
+{
+    struct set_event_handle_params *params = args;
+    struct coreaudio_stream *stream = handle_get_stream(params->stream);
+    HRESULT hr = S_OK;
+
+    OSSpinLockLock(&stream->lock);
+    if(!stream->unit)
+        hr = AUDCLNT_E_DEVICE_INVALIDATED;
+    else if(!(stream->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK))
+        hr = AUDCLNT_E_EVENTHANDLE_NOT_EXPECTED;
+    else if(stream->event)
+        hr = HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
+    else
+        stream->event = params->event;
+    OSSpinLockUnlock(&stream->lock);
+
+    params->result = hr;
+    return STATUS_SUCCESS;
+}
+
 unixlib_entry_t __wine_unix_call_funcs[] =
 {
     unix_not_implemented,
@@ -1661,7 +1723,7 @@ unixlib_entry_t __wine_unix_call_funcs[] =
     unix_start,
     unix_stop,
     unix_reset,
-    unix_not_implemented,
+    unix_timer_loop,
     unix_get_render_buffer,
     unix_release_render_buffer,
     unix_get_capture_buffer,
@@ -1676,7 +1738,7 @@ unixlib_entry_t __wine_unix_call_funcs[] =
     unix_get_frequency,
     unix_get_position,
     unix_set_volumes,
-    unix_not_implemented,
+    unix_set_event_handle,
     unix_not_implemented,
     unix_is_started,
     unix_not_implemented,
@@ -1994,6 +2056,24 @@ static NTSTATUS unix_wow64_set_volumes(void *args)
     return unix_set_volumes(&params);
 }
 
+static NTSTATUS unix_wow64_set_event_handle(void *args)
+{
+    struct
+    {
+        stream_handle stream;
+        PTR32 event;
+        HRESULT result;
+    } *params32 = args;
+    struct set_event_handle_params params =
+    {
+        .stream = params32->stream,
+        .event = ULongToHandle(params32->event)
+    };
+    unix_set_event_handle(&params);
+    params32->result = params.result;
+    return STATUS_SUCCESS;
+}
+
 unixlib_entry_t __wine_unix_call_wow64_funcs[] =
 {
     unix_not_implemented,
@@ -2005,7 +2085,7 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     unix_start,
     unix_stop,
     unix_reset,
-    unix_not_implemented,
+    unix_timer_loop,
     unix_wow64_get_render_buffer,
     unix_release_render_buffer,
     unix_wow64_get_capture_buffer,
@@ -2020,7 +2100,7 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     unix_wow64_get_frequency,
     unix_wow64_get_position,
     unix_wow64_set_volumes,
-    unix_not_implemented,
+    unix_wow64_set_event_handle,
     unix_not_implemented,
     unix_is_started,
     unix_not_implemented,

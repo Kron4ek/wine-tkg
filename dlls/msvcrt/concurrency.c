@@ -68,8 +68,14 @@ typedef struct {
         unsigned int, (const Context*), (this))
 #define call_Context_GetScheduleGroupId(this) CALL_VTBL_FUNC(this, 8, \
         unsigned int, (const Context*), (this))
+#define call_Context_Unblock(this) CALL_VTBL_FUNC(this, 12, \
+        void, (Context*), (this))
+#define call_Context_IsSynchronouslyBlocked(this) CALL_VTBL_FUNC(this, 16, \
+        bool, (const Context*), (this))
 #define call_Context_dtor(this, flags) CALL_VTBL_FUNC(this, 20, \
         Context*, (Context*, unsigned int), (this, flags))
+#define call_Context_Block(this) CALL_VTBL_FUNC(this, 24, \
+        void, (Context*), (this))
 
 typedef struct {
     Context *context;
@@ -96,6 +102,7 @@ typedef struct {
     struct scheduler_list scheduler;
     unsigned int id;
     union allocator_cache_entry *allocator_cache[8];
+    LONG blocked;
 } ExternalContextBase;
 extern const vtable_ptr ExternalContextBase_vtable;
 static void ExternalContextBase_ctor(ExternalContextBase*);
@@ -319,6 +326,7 @@ typedef struct {
 typedef struct rwl_queue
 {
     struct rwl_queue *next;
+    Context *ctx;
 } rwl_queue;
 
 #define WRITER_WAITING 0x80000000
@@ -822,7 +830,9 @@ unsigned int __cdecl Context_Id(void)
 /* ?Block@Context@Concurrency@@SAXXZ */
 void __cdecl Context_Block(void)
 {
-    FIXME("()\n");
+    Context *ctx = get_current_context();
+    TRACE("()\n");
+    call_Context_Block(ctx);
 }
 
 /* ?Yield@Context@Concurrency@@SAXXZ */
@@ -875,6 +885,13 @@ _Context *__cdecl _Context__CurrentContext(_Context *ret)
     ret->context = Context_CurrentContext();
     return ret;
 }
+
+DEFINE_THISCALL_WRAPPER(_Context_IsSynchronouslyBlocked, 4)
+BOOL __thiscall _Context_IsSynchronouslyBlocked(const _Context *this)
+{
+    TRACE("(%p)\n", this);
+    return call_Context_IsSynchronouslyBlocked(this->context);
+}
 #endif
 
 DEFINE_THISCALL_WRAPPER(ExternalContextBase_GetId, 4)
@@ -901,14 +918,107 @@ unsigned int __thiscall ExternalContextBase_GetScheduleGroupId(const ExternalCon
 DEFINE_THISCALL_WRAPPER(ExternalContextBase_Unblock, 4)
 void __thiscall ExternalContextBase_Unblock(ExternalContextBase *this)
 {
-    FIXME("(%p)->() stub\n", this);
+    TRACE("(%p)->()\n", this);
+
+    /* TODO: throw context_unblock_unbalanced if this->blocked goes below -1 */
+    if (!InterlockedDecrement(&this->blocked))
+        RtlWakeAddressSingle(&this->blocked);
 }
 
 DEFINE_THISCALL_WRAPPER(ExternalContextBase_IsSynchronouslyBlocked, 4)
 bool __thiscall ExternalContextBase_IsSynchronouslyBlocked(const ExternalContextBase *this)
 {
+    TRACE("(%p)->()\n", this);
+    return this->blocked >= 1;
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_Block, 4)
+void __thiscall ExternalContextBase_Block(ExternalContextBase *this)
+{
+    LONG blocked;
+
+    TRACE("(%p)->()\n", this);
+
+    blocked = InterlockedIncrement(&this->blocked);
+    while (blocked >= 1)
+    {
+        RtlWaitOnAddress(&this->blocked, &blocked, sizeof(LONG), NULL);
+        blocked = this->blocked;
+    }
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_Yield, 4)
+void __thiscall ExternalContextBase_Yield(ExternalContextBase *this)
+{
     FIXME("(%p)->() stub\n", this);
-    return FALSE;
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_SpinYield, 4)
+void __thiscall ExternalContextBase_SpinYield(ExternalContextBase *this)
+{
+    FIXME("(%p)->() stub\n", this);
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_Oversubscribe, 8)
+void __thiscall ExternalContextBase_Oversubscribe(
+        ExternalContextBase *this, bool oversubscribe)
+{
+    FIXME("(%p)->(%x) stub\n", this, oversubscribe);
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_Alloc, 8)
+void* __thiscall ExternalContextBase_Alloc(ExternalContextBase *this, size_t size)
+{
+    FIXME("(%p)->(%Iu) stub\n", this, size);
+    return NULL;
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_Free, 8)
+void __thiscall ExternalContextBase_Free(ExternalContextBase *this, void *addr)
+{
+    FIXME("(%p)->(%p) stub\n", this, addr);
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_EnterCriticalRegionHelper, 4)
+int __thiscall ExternalContextBase_EnterCriticalRegionHelper(ExternalContextBase *this)
+{
+    FIXME("(%p)->() stub\n", this);
+    return 0;
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_EnterHyperCriticalRegionHelper, 4)
+int __thiscall ExternalContextBase_EnterHyperCriticalRegionHelper(ExternalContextBase *this)
+{
+    FIXME("(%p)->() stub\n", this);
+    return 0;
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_ExitCriticalRegionHelper, 4)
+int __thiscall ExternalContextBase_ExitCriticalRegionHelper(ExternalContextBase *this)
+{
+    FIXME("(%p)->() stub\n", this);
+    return 0;
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_ExitHyperCriticalRegionHelper, 4)
+int __thiscall ExternalContextBase_ExitHyperCriticalRegionHelper(ExternalContextBase *this)
+{
+    FIXME("(%p)->() stub\n", this);
+    return 0;
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_GetCriticalRegionType, 4)
+int __thiscall ExternalContextBase_GetCriticalRegionType(const ExternalContextBase *this)
+{
+    FIXME("(%p)->() stub\n", this);
+    return 0;
+}
+
+DEFINE_THISCALL_WRAPPER(ExternalContextBase_GetContextKind, 4)
+int __thiscall ExternalContextBase_GetContextKind(const ExternalContextBase *this)
+{
+    FIXME("(%p)->() stub\n", this);
+    return 0;
 }
 
 static void remove_scheduled_chores(Scheduler *scheduler, const ExternalContextBase *context)
@@ -3022,14 +3132,6 @@ reader_writer_lock* __thiscall reader_writer_lock_ctor(reader_writer_lock *this)
 {
     TRACE("(%p)\n", this);
 
-    if (!keyed_event) {
-        HANDLE event;
-
-        NtCreateKeyedEvent(&event, GENERIC_READ|GENERIC_WRITE, NULL, 0);
-        if (InterlockedCompareExchangePointer(&keyed_event, event, NULL) != NULL)
-            NtClose(event);
-    }
-
     memset(this, 0, sizeof(*this));
     return this;
 }
@@ -3063,7 +3165,7 @@ static inline void spin_wait_for_next_rwl(rwl_queue *q)
 DEFINE_THISCALL_WRAPPER(reader_writer_lock_lock, 4)
 void __thiscall reader_writer_lock_lock(reader_writer_lock *this)
 {
-    rwl_queue q = { NULL }, *last;
+    rwl_queue q = { NULL, get_current_context() }, *last;
 
     TRACE("(%p)\n", this);
 
@@ -3076,11 +3178,11 @@ void __thiscall reader_writer_lock_lock(reader_writer_lock *this)
     last = InterlockedExchangePointer((void**)&this->writer_tail, &q);
     if (last) {
         last->next = &q;
-        NtWaitForKeyedEvent(keyed_event, &q, 0, NULL);
+        call_Context_Block(q.ctx);
     } else {
         this->writer_head = &q;
         if (InterlockedOr(&this->count, WRITER_WAITING))
-            NtWaitForKeyedEvent(keyed_event, &q, 0, NULL);
+            call_Context_Block(q.ctx);
     }
 
     this->thread_id = GetCurrentThreadId();
@@ -3097,7 +3199,7 @@ void __thiscall reader_writer_lock_lock(reader_writer_lock *this)
 DEFINE_THISCALL_WRAPPER(reader_writer_lock_lock_read, 4)
 void __thiscall reader_writer_lock_lock_read(reader_writer_lock *this)
 {
-    rwl_queue q;
+    rwl_queue q = { NULL, get_current_context() };
 
     TRACE("(%p)\n", this);
 
@@ -3119,17 +3221,17 @@ void __thiscall reader_writer_lock_lock_read(reader_writer_lock *this)
             if (InterlockedCompareExchange(&this->count, count+1, count) == count) break;
 
         if (count & WRITER_WAITING)
-            NtWaitForKeyedEvent(keyed_event, &q, 0, NULL);
+            call_Context_Block(q.ctx);
 
         head = InterlockedExchangePointer((void**)&this->reader_head, NULL);
         while(head && head != &q) {
             rwl_queue *next = head->next;
             InterlockedIncrement(&this->count);
-            NtReleaseKeyedEvent(keyed_event, head, 0, NULL);
+            call_Context_Unblock(head->ctx);
             head = next;
         }
     } else {
-        NtWaitForKeyedEvent(keyed_event, &q, 0, NULL);
+        call_Context_Block(q.ctx);
     }
 }
 
@@ -3207,7 +3309,7 @@ void __thiscall reader_writer_lock_unlock(reader_writer_lock *this)
     this->thread_id = 0;
     next = this->writer_head->next;
     if (next) {
-        NtReleaseKeyedEvent(keyed_event, next, 0, NULL);
+        call_Context_Unblock(next->ctx);
         return;
     }
     InterlockedAnd(&this->count, ~WRITER_WAITING);
@@ -3215,7 +3317,7 @@ void __thiscall reader_writer_lock_unlock(reader_writer_lock *this)
     while (head) {
         next = head->next;
         InterlockedIncrement(&this->count);
-        NtReleaseKeyedEvent(keyed_event, head, 0, NULL);
+        call_Context_Unblock(head->ctx);
         head = next;
     }
 
@@ -3474,7 +3576,19 @@ __ASM_BLOCK_BEGIN(concurrency_vtables)
             VTABLE_ADD_FUNC(ExternalContextBase_GetScheduleGroupId)
             VTABLE_ADD_FUNC(ExternalContextBase_Unblock)
             VTABLE_ADD_FUNC(ExternalContextBase_IsSynchronouslyBlocked)
-            VTABLE_ADD_FUNC(ExternalContextBase_vector_dtor));
+            VTABLE_ADD_FUNC(ExternalContextBase_vector_dtor)
+            VTABLE_ADD_FUNC(ExternalContextBase_Block)
+            VTABLE_ADD_FUNC(ExternalContextBase_Yield)
+            VTABLE_ADD_FUNC(ExternalContextBase_SpinYield)
+            VTABLE_ADD_FUNC(ExternalContextBase_Oversubscribe)
+            VTABLE_ADD_FUNC(ExternalContextBase_Alloc)
+            VTABLE_ADD_FUNC(ExternalContextBase_Free)
+            VTABLE_ADD_FUNC(ExternalContextBase_EnterCriticalRegionHelper)
+            VTABLE_ADD_FUNC(ExternalContextBase_EnterHyperCriticalRegionHelper)
+            VTABLE_ADD_FUNC(ExternalContextBase_ExitCriticalRegionHelper)
+            VTABLE_ADD_FUNC(ExternalContextBase_ExitHyperCriticalRegionHelper)
+            VTABLE_ADD_FUNC(ExternalContextBase_GetCriticalRegionType)
+            VTABLE_ADD_FUNC(ExternalContextBase_GetContextKind));
     __ASM_VTABLE(ThreadScheduler,
             VTABLE_ADD_FUNC(ThreadScheduler_vector_dtor)
             VTABLE_ADD_FUNC(ThreadScheduler_Id)

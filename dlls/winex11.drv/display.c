@@ -37,7 +37,7 @@ static struct x11drv_settings_handler settings_handler;
 struct x11drv_display_depth
 {
     struct list entry;
-    ULONG_PTR display_id;
+    x11drv_settings_id display_id;
     DWORD depth;
 };
 
@@ -66,13 +66,13 @@ void X11DRV_Settings_SetHandler(const struct x11drv_settings_handler *new_handle
  * Default handlers if resolution switching is not enabled
  *
  */
-static BOOL nores_get_id(const WCHAR *device_name, BOOL is_primary, ULONG_PTR *id)
+static BOOL nores_get_id(const WCHAR *device_name, BOOL is_primary, x11drv_settings_id *id)
 {
-    *id = is_primary ? 1 : 0;
+    id->id = is_primary ? 1 : 0;
     return TRUE;
 }
 
-static BOOL nores_get_modes(ULONG_PTR id, DWORD flags, DEVMODEW **new_modes, UINT *mode_count)
+static BOOL nores_get_modes(x11drv_settings_id id, DWORD flags, DEVMODEW **new_modes, UINT *mode_count)
 {
     RECT primary = get_host_primary_monitor_rect();
     DEVMODEW *modes;
@@ -105,7 +105,7 @@ static void nores_free_modes(DEVMODEW *modes)
     free(modes);
 }
 
-static BOOL nores_get_current_mode(ULONG_PTR id, DEVMODEW *mode)
+static BOOL nores_get_current_mode(x11drv_settings_id id, DEVMODEW *mode)
 {
     RECT primary = get_host_primary_monitor_rect();
 
@@ -116,7 +116,7 @@ static BOOL nores_get_current_mode(ULONG_PTR id, DEVMODEW *mode)
     mode->dmPosition.x = 0;
     mode->dmPosition.y = 0;
 
-    if (id != 1)
+    if (id.id != 1)
     {
         FIXME("Non-primary adapters are unsupported.\n");
         mode->dmBitsPerPel = 0;
@@ -133,7 +133,7 @@ static BOOL nores_get_current_mode(ULONG_PTR id, DEVMODEW *mode)
     return TRUE;
 }
 
-static LONG nores_set_current_mode(ULONG_PTR id, const DEVMODEW *mode)
+static LONG nores_set_current_mode(x11drv_settings_id id, const DEVMODEW *mode)
 {
     WARN("NoRes settings handler, ignoring mode change request.\n");
     return DISP_CHANGE_SUCCESSFUL;
@@ -156,49 +156,14 @@ void X11DRV_Settings_Init(void)
     X11DRV_Settings_SetHandler(&nores_handler);
 }
 
-/* Initialize registry display settings when new display devices are added */
-void init_registry_display_settings(void)
-{
-    DEVMODEW dm = {.dmSize = sizeof(dm)};
-    DISPLAY_DEVICEW dd = {sizeof(dd)};
-    UNICODE_STRING device_name;
-    DWORD i = 0;
-    int ret;
-
-    while (!NtUserEnumDisplayDevices( NULL, i++, &dd, 0 ))
-    {
-        RtlInitUnicodeString( &device_name, dd.DeviceName );
-
-        /* Skip if the device already has registry display settings */
-        if (NtUserEnumDisplaySettings( &device_name, ENUM_REGISTRY_SETTINGS, &dm, 0 ))
-            continue;
-
-        if (!NtUserEnumDisplaySettings( &device_name, ENUM_CURRENT_SETTINGS, &dm, 0 ))
-        {
-            ERR("Failed to query current display settings for %s.\n", wine_dbgstr_w(dd.DeviceName));
-            continue;
-        }
-
-        TRACE("Device %s current display mode %ux%u %ubits %uHz at %d,%d.\n",
-              wine_dbgstr_w(dd.DeviceName), (int)dm.dmPelsWidth, (int)dm.dmPelsHeight,
-              (int)dm.dmBitsPerPel, (int)dm.dmDisplayFrequency, (int)dm.dmPosition.x, (int)dm.dmPosition.y);
-
-        ret = NtUserChangeDisplaySettings( &device_name, &dm, NULL,
-                                           CDS_GLOBAL | CDS_NORESET | CDS_UPDATEREGISTRY, NULL );
-        if (ret != DISP_CHANGE_SUCCESSFUL)
-            ERR("Failed to save registry display settings for %s, returned %d.\n",
-                wine_dbgstr_w(dd.DeviceName), ret);
-    }
-}
-
-static void set_display_depth(ULONG_PTR display_id, DWORD depth)
+static void set_display_depth(x11drv_settings_id display_id, DWORD depth)
 {
     struct x11drv_display_depth *display_depth;
 
     pthread_mutex_lock( &settings_mutex );
     LIST_FOR_EACH_ENTRY(display_depth, &x11drv_display_depth_list, struct x11drv_display_depth, entry)
     {
-        if (display_depth->display_id == display_id)
+        if (display_depth->display_id.id == display_id.id)
         {
             display_depth->depth = depth;
             pthread_mutex_unlock( &settings_mutex );
@@ -220,7 +185,7 @@ static void set_display_depth(ULONG_PTR display_id, DWORD depth)
     pthread_mutex_unlock( &settings_mutex );
 }
 
-static DWORD get_display_depth(ULONG_PTR display_id)
+static DWORD get_display_depth(x11drv_settings_id display_id)
 {
     struct x11drv_display_depth *display_depth;
     DWORD depth;
@@ -228,7 +193,7 @@ static DWORD get_display_depth(ULONG_PTR display_id)
     pthread_mutex_lock( &settings_mutex );
     LIST_FOR_EACH_ENTRY(display_depth, &x11drv_display_depth_list, struct x11drv_display_depth, entry)
     {
-        if (display_depth->display_id == display_id)
+        if (display_depth->display_id.id == display_id.id)
         {
             depth = display_depth->depth;
             pthread_mutex_unlock( &settings_mutex );
@@ -241,7 +206,7 @@ static DWORD get_display_depth(ULONG_PTR display_id)
 
 INT X11DRV_GetDisplayDepth(LPCWSTR name, BOOL is_primary)
 {
-    ULONG_PTR id;
+    x11drv_settings_id id;
 
     if (settings_handler.get_id( name, is_primary, &id ))
         return get_display_depth( id );
@@ -256,7 +221,7 @@ INT X11DRV_GetDisplayDepth(LPCWSTR name, BOOL is_primary)
 BOOL X11DRV_GetCurrentDisplaySettings( LPCWSTR name, BOOL is_primary, LPDEVMODEW devmode )
 {
     DEVMODEW mode;
-    ULONG_PTR id;
+    x11drv_settings_id id;
 
     if (!settings_handler.get_id( name, is_primary, &id ) || !settings_handler.get_current_mode( id, &mode ))
     {
@@ -278,9 +243,18 @@ BOOL is_detached_mode(const DEVMODEW *mode)
            mode->dmPelsHeight == 0;
 }
 
+static BOOL is_same_devmode( const DEVMODEW *a, const DEVMODEW *b )
+{
+    return a->dmDisplayOrientation == b->dmDisplayOrientation &&
+           a->dmBitsPerPel == b->dmBitsPerPel &&
+           a->dmPelsWidth == b->dmPelsWidth &&
+           a->dmPelsHeight == b->dmPelsHeight &&
+           a->dmDisplayFrequency == b->dmDisplayFrequency;
+}
+
 /* Get the full display mode with all the necessary fields set.
  * Return NULL on failure. Caller should call free_full_mode() to free the returned mode. */
-static DEVMODEW *get_full_mode(ULONG_PTR id, DEVMODEW *dev_mode)
+static DEVMODEW *get_full_mode(x11drv_settings_id id, DEVMODEW *dev_mode)
 {
     DEVMODEW *modes, *full_mode, *found_mode = NULL;
     UINT mode_count, mode_idx;
@@ -294,19 +268,7 @@ static DEVMODEW *get_full_mode(ULONG_PTR id, DEVMODEW *dev_mode)
     for (mode_idx = 0; mode_idx < mode_count; ++mode_idx)
     {
         found_mode = (DEVMODEW *)((BYTE *)modes + (sizeof(*modes) + modes[0].dmDriverExtra) * mode_idx);
-
-        if (found_mode->dmBitsPerPel != dev_mode->dmBitsPerPel)
-            continue;
-        if (found_mode->dmPelsWidth != dev_mode->dmPelsWidth)
-            continue;
-        if (found_mode->dmPelsHeight != dev_mode->dmPelsHeight)
-            continue;
-        if (found_mode->dmDisplayFrequency != dev_mode->dmDisplayFrequency)
-            continue;
-        if (found_mode->dmDisplayOrientation != dev_mode->dmDisplayOrientation)
-            continue;
-
-        break;
+        if (is_same_devmode( found_mode, dev_mode )) break;
     }
 
     if (!found_mode || mode_idx == mode_count)
@@ -335,7 +297,7 @@ static void free_full_mode(DEVMODEW *mode)
         free(mode);
 }
 
-static LONG apply_display_settings( DEVMODEW *displays, ULONG_PTR *ids, BOOL do_attach )
+static LONG apply_display_settings( DEVMODEW *displays, x11drv_settings_id *ids, BOOL do_attach )
 {
     DEVMODEW *full_mode;
     BOOL attached_mode;
@@ -344,7 +306,7 @@ static LONG apply_display_settings( DEVMODEW *displays, ULONG_PTR *ids, BOOL do_
 
     for (count = 0, mode = displays; mode->dmSize; mode = NEXT_DEVMODEW(mode), count++)
     {
-        ULONG_PTR *id = ids + count;
+        x11drv_settings_id *id = ids + count;
 
         attached_mode = !is_detached_mode(mode);
         if ((attached_mode && !do_attach) || (!attached_mode && do_attach))
@@ -381,7 +343,7 @@ LONG X11DRV_ChangeDisplaySettings( LPDEVMODEW displays, LPCWSTR primary_name, HW
 {
     INT left_most = INT_MAX, top_most = INT_MAX;
     LONG count, ret = DISP_CHANGE_BADPARAM;
-    ULONG_PTR *ids;
+    x11drv_settings_id *ids;
     DEVMODEW *mode;
 
     /* Convert virtual screen coordinates to root coordinates, and find display ids.
@@ -551,6 +513,25 @@ BOOL X11DRV_DisplayDevices_SupportEventHandlers(void)
 
 static BOOL force_display_devices_refresh;
 
+static const char *debugstr_devmodew( const DEVMODEW *devmode )
+{
+    char position[32] = {0};
+
+    if (devmode->dmFields & DM_POSITION)
+    {
+        snprintf( position, sizeof(position), " at (%d,%d)",
+                 (int)devmode->dmPosition.x, (int)devmode->dmPosition.y );
+    }
+
+    return wine_dbg_sprintf( "%ux%u %ubits %uHz rotated %u degrees%s",
+                             (unsigned int)devmode->dmPelsWidth,
+                             (unsigned int)devmode->dmPelsHeight,
+                             (unsigned int)devmode->dmBitsPerPel,
+                             (unsigned int)devmode->dmDisplayFrequency,
+                             (unsigned int)devmode->dmDisplayOrientation * 90,
+                             position );
+}
+
 BOOL X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, BOOL force, void *param )
 {
     struct x11drv_display_device_handler *handler;
@@ -561,10 +542,12 @@ BOOL X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manage
     INT gpu, adapter, monitor;
     DEVMODEW *modes, *mode;
     UINT mode_count;
+    BOOL virtual_desktop;
 
     if (!force && !force_display_devices_refresh) return TRUE;
     force_display_devices_refresh = FALSE;
-    handler = is_virtual_desktop() ? &desktop_handler : &host_handler;
+    virtual_desktop = is_virtual_desktop();
+    handler = virtual_desktop ? &desktop_handler : &host_handler;
 
     TRACE("via %s\n", wine_dbgstr_a(handler->name));
 
@@ -582,6 +565,12 @@ BOOL X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manage
 
         for (adapter = 0; adapter < adapter_count; adapter++)
         {
+            DEVMODEW current_mode = {.dmSize = sizeof(current_mode)};
+            WCHAR devname[32];
+            char buffer[32];
+            x11drv_settings_id settings_id;
+            BOOL is_primary = adapters[adapter].state_flags & DISPLAY_DEVICE_PRIMARY_DEVICE;
+
             device_manager->add_adapter( &adapters[adapter], param );
 
             if (!handler->get_monitors(adapters[adapter].id, &monitors, &monitor_count)) break;
@@ -593,13 +582,31 @@ BOOL X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manage
 
             handler->free_monitors(monitors, monitor_count);
 
-            if (!settings_handler.get_modes( adapters[adapter].id, EDS_ROTATEDMODE, &modes, &mode_count ))
+            /* Get the settings handler id for the adapter */
+            snprintf( buffer, sizeof(buffer), "\\\\.\\DISPLAY%d", adapter + 1 );
+            asciiz_to_unicode( devname, buffer );
+            if (!settings_handler.get_id( devname, is_primary, &settings_id )) break;
+
+            /* We don't need to set the win32u current mode when we are in
+             * virtual desktop mode, and, additionally, skipping this avoids a
+             * deadlock, since the desktop get_current_mode() implementation
+             * recurses into win32u. */
+            if (!virtual_desktop) settings_handler.get_current_mode( settings_id, &current_mode );
+            if (!settings_handler.get_modes( settings_id, EDS_ROTATEDMODE, &modes, &mode_count ))
                 continue;
 
             for (mode = modes; mode_count; mode_count--)
             {
-                TRACE( "mode: %p\n", mode );
-                device_manager->add_mode( mode, param );
+                if (is_same_devmode( mode, &current_mode ))
+                {
+                    TRACE( "current mode: %s\n", debugstr_devmodew( &current_mode ) );
+                    device_manager->add_mode( &current_mode, TRUE, param );
+                }
+                else
+                {
+                    TRACE( "mode: %s\n", debugstr_devmodew( mode ) );
+                    device_manager->add_mode( mode, FALSE, param );
+                }
                 mode = (DEVMODEW *)((char *)mode + sizeof(*modes) + modes[0].dmDriverExtra);
             }
 

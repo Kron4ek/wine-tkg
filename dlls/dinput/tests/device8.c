@@ -395,11 +395,13 @@ void test_overlapped_format( DWORD version )
     /* press D */
     keybd_event( 0, DIK_D, KEYEVENTF_SCANCODE, 0 );
     res = WaitForSingleObject( event, 5000 );
+    flaky_wine_if( GetForegroundWindow() != hwnd && version == 0x800 ) /* FIXME: fvwm sometimes steals input focus */
     ok( res == WAIT_OBJECT_0, "WaitForSingleObject returned %#lx\n", res );
 
     count = 10;
     hr = IDirectInputDevice_GetDeviceData( keyboard, data_size, NULL, &count, 0 );
     ok( hr == DI_OK, "GetDeviceData returned %#lx\n", hr );
+    flaky_wine_if( GetForegroundWindow() != hwnd && version == 0x800 ) /* FIXME: fvwm sometimes steals input focus */
     ok( count == 1, "got count %lu\n", count );
 
     memset( &state, 0xFF, sizeof(state) );
@@ -415,11 +417,13 @@ void test_overlapped_format( DWORD version )
     /* release D */
     keybd_event( 0, DIK_D, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, 0 );
     res = WaitForSingleObject( event, 5000 );
+    flaky_wine_if( GetForegroundWindow() != hwnd && version == 0x800 ) /* FIXME: fvwm sometimes steals input focus */
     ok( res == WAIT_OBJECT_0, "WaitForSingleObject returned %#lx\n", res );
 
     count = 10;
     hr = IDirectInputDevice_GetDeviceData( keyboard, data_size, NULL, &count, 0 );
     ok( hr == DI_OK, "GetDeviceData returned %#lx\n", hr );
+    flaky_wine_if( GetForegroundWindow() != hwnd && version == 0x800 ) /* FIXME: fvwm sometimes steals input focus */
     ok( count == 1, "got count %lu\n", count );
 
 
@@ -682,14 +686,19 @@ static void test_mouse_keyboard(void)
     IDirectInputDevice8_SetCooperativeLevel(di_keyboard, hwnd, DISCL_FOREGROUND|DISCL_EXCLUSIVE);
 
     hr = IDirectInputDevice8_Acquire(di_keyboard);
+    flaky_wine_if( GetForegroundWindow() != hwnd ) /* FIXME: fvwm sometimes steals input focus */
     ok(SUCCEEDED(hr), "IDirectInputDevice8_Acquire failed: %#lx\n", hr);
     hr = IDirectInputDevice8_Acquire(di_mouse);
+    flaky_wine_if( GetForegroundWindow() != hwnd ) /* FIXME: fvwm sometimes steals input focus */
     ok(SUCCEEDED(hr), "IDirectInputDevice8_Acquire failed: %#lx\n", hr);
     raw_devices_count = ARRAY_SIZE(raw_devices);
     memset(raw_devices, 0, sizeof(raw_devices));
     hr = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+    flaky_wine_if( GetForegroundWindow() != hwnd ) /* FIXME: fvwm sometimes steals input focus */
     ok(hr == 3, "GetRegisteredRawInputDevices returned %ld, raw_devices_count: %d\n", hr, raw_devices_count);
+    flaky_wine_if( GetForegroundWindow() != hwnd ) /* FIXME: fvwm sometimes steals input focus */
     ok(raw_devices[0].dwFlags == (RIDEV_CAPTUREMOUSE|RIDEV_NOLEGACY), "Unexpected raw device flags: %#lx\n", raw_devices[0].dwFlags);
+    flaky_wine_if( GetForegroundWindow() != hwnd ) /* FIXME: fvwm sometimes steals input focus */
     ok(raw_devices[2].dwFlags == (RIDEV_NOHOTKEYS|RIDEV_NOLEGACY), "Unexpected raw device flags: %#lx\n", raw_devices[1].dwFlags);
     hr = IDirectInputDevice8_Unacquire(di_keyboard);
     ok(SUCCEEDED(hr), "IDirectInputDevice8_Acquire failed: %#lx\n", hr);
@@ -989,6 +998,13 @@ static BOOL CALLBACK check_object_count( const DIDEVICEOBJECTINSTANCEW *obj, voi
     DWORD *count = args;
     *count = *count + 1;
     return DIENUM_CONTINUE;
+}
+
+static BOOL CALLBACK check_object_count_bad_retval( const DIDEVICEOBJECTINSTANCEW *obj, void *args )
+{
+    DWORD *count = args;
+    *count = *count + 1;
+    return -1; /* Invalid, but should CONTINUE. Only explicit DIENUM_STOP will stop enumeration. */
 }
 
 static void test_sys_mouse( DWORD version )
@@ -1336,6 +1352,11 @@ static void test_sys_mouse( DWORD version )
     ok( check_objects_params.index >= check_objects_params.expect_count, "missing %u objects\n",
         check_objects_params.expect_count - check_objects_params.index );
 
+    res = 0;
+    hr = IDirectInputDevice8_EnumObjects( device, check_object_count_bad_retval, &res, DIDFT_AXIS );
+    ok( hr == DI_OK, "EnumObjects returned %#lx\n", hr );
+    ok( res == 3, "got %lu expected 3\n", res );
+
     objinst.dwSize = sizeof(DIDEVICEOBJECTINSTANCEW);
     res = MAKELONG( HID_USAGE_GENERIC_X, HID_USAGE_PAGE_GENERIC );
     hr = IDirectInputDevice8_GetObjectInfo( device, &objinst, res, DIPH_BYUSAGE );
@@ -1569,7 +1590,7 @@ cleanup:
     localized = old_localized;
 }
 
-static void test_dik_codes( IDirectInputDevice8W *device, HANDLE event, HWND hwnd )
+static void test_dik_codes( IDirectInputDevice8W *device, HANDLE event, HWND hwnd, DWORD version )
 {
     static const struct key2dik
     {
@@ -1673,6 +1694,7 @@ static void test_dik_codes( IDirectInputDevice8W *device, HANDLE event, HWND hwn
 
             keybd_event( vkey, scan, KEYEVENTF_KEYUP, 0 );
             res = WaitForSingleObject( event, 5000 );
+            flaky_wine_if( GetForegroundWindow() != hwnd && version == 0x800 ) /* FIXME: fvwm sometimes steals input focus */
             ok( !res, "WaitForSingleObject returned %#lx\n", res );
 
             winetest_pop_context();
@@ -2131,7 +2153,7 @@ static void test_sys_keyboard( DWORD version )
     hr = IDirectInputDevice8_GetDeviceState( device, sizeof(full_state), full_state );
     ok( hr == DI_OK, "GetDeviceState returned %#lx\n", hr );
     hr = IDirectInputDevice8_Unacquire( device );
-    ok( hr == DI_OK, "Uncquire returned %#lx\n", hr );
+    ok( hr == DI_OK, "Unacquire returned %#lx\n", hr );
     hr = IDirectInputDevice8_SetDataFormat( device, &data_format );
     ok( hr == DI_OK, "SetDataFormat returned %#lx\n", hr );
     hr = IDirectInputDevice8_Acquire( device );
@@ -2178,7 +2200,7 @@ skip_key_tests:
     ActivateKeyboardLayout( old_hkl, 0 );
     UnloadKeyboardLayout( hkl );
 
-    test_dik_codes( device, event, hwnd );
+    test_dik_codes( device, event, hwnd, version );
 
     CloseHandle( event );
     DestroyWindow( hwnd );

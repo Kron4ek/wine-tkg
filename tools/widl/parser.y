@@ -186,6 +186,7 @@ void pop_import( PARSER_LTYPE *yylloc );
 %token tAPPOBJECT tASYNC tASYNCUUID
 %token tAUTOHANDLE tBINDABLE tBOOLEAN tBROADCAST tBYTE tBYTECOUNT
 %token tCALLAS tCALLBACK tCASE tCHAR tCOCLASS tCODE tCOMMSTATUS
+%token tCOMPOSABLE
 %token tCONST tCONTEXTHANDLE tCONTEXTHANDLENOSERIALIZE
 %token tCONTEXTHANDLESERIALIZE
 %token tCONTRACT
@@ -249,6 +250,7 @@ void pop_import( PARSER_LTYPE *yylloc );
 %token tPRAGMA_WARNING
 %token tPROGID tPROPERTIES
 %token tPROPGET tPROPPUT tPROPPUTREF
+%token tPROTECTED
 %token tPROXY tPTR
 %token tPUBLIC
 %token tRANGE
@@ -284,6 +286,7 @@ void pop_import( PARSER_LTYPE *yylloc );
 %token tWCHAR tWIREMARSHAL
 %token tAPARTMENT tNEUTRAL tSINGLE tFREE tBOTH
 
+%type <attr> access_attr
 %type <attr> attribute acf_attribute
 %type <attr_list> m_attributes attributes attrib_list
 %type <attr_list> acf_attributes acf_attribute_list
@@ -294,6 +297,7 @@ void pop_import( PARSER_LTYPE *yylloc );
 %type <expr> contract_req
 %type <expr> static_attr
 %type <expr> activatable_attr
+%type <expr> composable_attr
 %type <type> delegatedef
 %type <stgclass> storage_cls_spec
 %type <type_qualifier> type_qualifier m_type_qual_list
@@ -611,6 +615,19 @@ activatable_attr:
 	| contract_req				{ $$ = $1; } /* activatable on the default activation factory */
 	;
 
+access_attr
+        : tPUBLIC                               { $$ = attr_int( @$, ATTR_PUBLIC, 0 ); }
+        | tPROTECTED                            { $$ = attr_int( @$, ATTR_PROTECTED, 0 ); }
+        ;
+
+composable_attr
+        : decl_spec ',' access_attr ',' contract_req
+                                                { if ($1->type->type_type != TYPE_INTERFACE)
+                                                      error_loc( "type %s is not an interface\n", $1->type->name );
+                                                  $$ = make_exprt( EXPR_MEMBER, declare_var( append_attr( NULL, $3 ), $1, make_declarator( NULL ), 0 ), $5 );
+                                                }
+        ;
+
 attribute
         : %empty                                { $$ = NULL; }
         | tACTIVATABLE '(' activatable_attr ')' { $$ = attr_ptr( @$, ATTR_ACTIVATABLE, $3 ); }
@@ -624,6 +641,7 @@ attribute
         | tCALLAS '(' ident ')'                 { $$ = attr_ptr( @$, ATTR_CALLAS, $3 ); }
         | tCASE '(' expr_list_int_const ')'     { $$ = attr_ptr( @$, ATTR_CASE, $3 ); }
         | tCODE                                 { $$ = attr_int( @$, ATTR_CODE, 0 ); }
+        | tCOMPOSABLE '(' composable_attr ')'   { $$ = attr_ptr( @$, ATTR_COMPOSABLE, $3 ); }
         | tCOMMSTATUS                           { $$ = attr_int( @$, ATTR_COMMSTATUS, 0 ); }
         | tCONTEXTHANDLE                        { $$ = attr_int( @$, ATTR_CONTEXTHANDLE, 0 ); }
         | tCONTEXTHANDLENOSERIALIZE             { $$ = attr_int( @$, ATTR_CONTEXTHANDLE, 0 ); /* RPC_CONTEXT_HANDLE_DONT_SERIALIZE */ }
@@ -703,6 +721,7 @@ attribute
         | tPROPGET                              { $$ = attr_int( @$, ATTR_PROPGET, 0 ); }
         | tPROPPUT                              { $$ = attr_int( @$, ATTR_PROPPUT, 0 ); }
         | tPROPPUTREF                           { $$ = attr_int( @$, ATTR_PROPPUTREF, 0 ); }
+        | tPROTECTED                            { $$ = attr_int( @$, ATTR_PROTECTED, 0 ); }
         | tPROXY                                { $$ = attr_int( @$, ATTR_PROXY, 0 ); }
         | tPUBLIC                               { $$ = attr_int( @$, ATTR_PUBLIC, 0 ); }
         | tRANGE '(' expr_int_const ',' expr_int_const ')'
@@ -1009,8 +1028,9 @@ coclassdef: attributes coclass '{' class_interfaces '}' semicolon_opt
 runtimeclass: tRUNTIMECLASS typename		{ $$ = type_runtimeclass_declare($2, current_namespace); }
 	;
 
-runtimeclass_def: attributes runtimeclass '{' class_interfaces '}' semicolon_opt
-						{ $$ = type_runtimeclass_define($2, $1, $4); }
+runtimeclass_def: attributes runtimeclass inherit '{' class_interfaces '}' semicolon_opt
+						{ if ($3 && type_get_type($3) != TYPE_RUNTIMECLASS) error_loc("%s is not a runtimeclass\n", $3->name);
+						  $$ = type_runtimeclass_define($2, $1, $5); }
 	;
 
 apicontract: tAPICONTRACT typename		{ $$ = type_apicontract_declare($2, current_namespace); }
@@ -2461,8 +2481,12 @@ static void check_field_common(const type_t *container_type,
             break;
         }
         case TGT_POINTER:
-            type = type_pointer_get_ref_type(type);
-            more_to_do = TRUE;
+            if (type_get_type(type_pointer_get_ref_type(type)) != TYPE_VOID ||
+                !type->name || strcmp(type->name, "HANDLE"))
+            {
+                type = type_pointer_get_ref_type(type);
+                more_to_do = TRUE;
+            }
             break;
         case TGT_ARRAY:
             type = type_array_get_element_type(type);

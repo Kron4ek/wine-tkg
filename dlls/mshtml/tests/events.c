@@ -155,7 +155,12 @@ static const char img_doc_ie9_str[] =
     "<body><img id=\"imgid\"></img></body></html>";
 
 static const char input_image_doc_str[] =
-    "<html><body><input type=\"image\" id=\"inputid\"></input></body></html>";
+    "<html><head><meta http-equiv=\"x-ua-compatible\" content=\"IE=8\" /></head>"
+    "<body><input type=\"image\" id=\"inputid\"></input></body></html>";
+
+static const char input_image_doc_ie9_str[] =
+    "<html><head><meta http-equiv=\"x-ua-compatible\" content=\"IE=9\" /></head>"
+    "<body><input type=\"image\" id=\"inputid\"></input></body></html>";
 
 static const char link_doc_str[] =
     "<html><body><link id=\"linkid\" rel=\"stylesheet\" type=\"text/css\"></link></body></html>";
@@ -1101,7 +1106,7 @@ static HRESULT WINAPI input_onload(IDispatchEx *iface, DISPID id, LCID lcid, WOR
         VARIANT *pvarRes, EXCEPINFO *pei, IServiceProvider *pspCaller)
 {
     CHECK_EXPECT(input_onload);
-    test_event_args(&DIID_DispHTMLInputElement, id, wFlags, pdp, pvarRes, pei, pspCaller);
+    test_event_args(document_mode < 9 ? &DIID_DispHTMLInputElement : NULL, id, wFlags, pdp, pvarRes, pei, pspCaller);
     test_event_src(L"INPUT");
     return S_OK;
 }
@@ -2412,13 +2417,13 @@ static void test_inputload(IHTMLDocument2 *doc)
 {
     IHTMLInputElement *input;
     IHTMLElement *elem;
+    VARIANT_BOOL b;
     VARIANT v;
     BSTR str;
     HRESULT hres;
 
     elem = get_elem_id(doc, L"inputid");
     hres = IHTMLElement_QueryInterface(elem, &IID_IHTMLInputElement, (void**)&input);
-    IHTMLElement_Release(elem);
     ok(hres == S_OK, "Could not get IHTMLInputElement iface: %08lx\n", hres);
 
     V_VT(&v) = VT_EMPTY;
@@ -2438,16 +2443,60 @@ static void test_inputload(IHTMLDocument2 *doc)
     ok(V_DISPATCH(&v) == (IDispatch*)&input_onload_obj, "V_DISPATCH(onload) != input_onload_obj\n");
     VariantClear(&v);
 
+    hres = IHTMLInputElement_get_complete(input, &b);
+    ok(hres == S_OK, "get_complete failed: %08lx\n", hres);
+    ok(b == VARIANT_FALSE, "complete = %x\n", b);
+
     str = SysAllocString(L"http://test.winehq.org/tests/winehq_snapshot/index_files/winehq_logo_text.png?v=2");
     hres = IHTMLInputElement_put_src(input, str);
     ok(hres == S_OK, "put_src failed: %08lx\n", hres);
-    SysFreeString(str);
+
+    hres = IHTMLInputElement_get_complete(input, &b);
+    ok(hres == S_OK, "get_complete failed: %08lx\n", hres);
+    ok(b == VARIANT_FALSE, "complete = %x\n", b);
 
     SET_EXPECT(input_onload);
     pump_msgs(&called_input_onload);
     CHECK_CALLED(input_onload);
 
+    hres = IHTMLInputElement_get_complete(input, &b);
+    ok(hres == S_OK, "get_complete failed: %08lx\n", hres);
+    ok(b == VARIANT_TRUE, "complete = %x\n", b);
+
+    /* cached images send synchronous load event in legacy modes */
+    if(document_mode < 9)
+        SET_EXPECT(input_onload);
+    hres = IHTMLInputElement_put_src(input, str);
+    ok(hres == S_OK, "put_src failed: %08lx\n", hres);
+    if(document_mode < 9) {
+        CHECK_CALLED(input_onload);
+        pump_msgs(NULL);
+    }else {
+        SET_EXPECT(input_onload);
+        pump_msgs(&called_input_onload);
+        CHECK_CALLED(input_onload);
+    }
+
+    if(document_mode < 9)
+        SET_EXPECT(input_onload);
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = str;
+    str = SysAllocString(L"src");
+    hres = IHTMLElement_setAttribute(elem, str, v, 0);
+    ok(hres == S_OK, "setAttribute failed: %08lx\n", hres);
+    SysFreeString(str);
+    VariantClear(&v);
+    if(document_mode < 9) {
+        CHECK_CALLED(input_onload);
+        pump_msgs(NULL);
+    }else {
+        SET_EXPECT(input_onload);
+        pump_msgs(&called_input_onload);
+        CHECK_CALLED(input_onload);
+    }
+
     IHTMLInputElement_Release(input);
+    IHTMLElement_Release(elem);
 }
 
 static void test_link_load(IHTMLDocument2 *doc)
@@ -2494,15 +2543,37 @@ static void test_link_load(IHTMLDocument2 *doc)
 
 static void test_focus(IHTMLDocument2 *doc)
 {
+    IHTMLInputElement *input;
     IHTMLElement2 *elem2;
     IHTMLElement4 *div;
     IHTMLElement *elem;
+    VARIANT_BOOL b;
     VARIANT v;
+    BSTR str;
     HRESULT hres;
 
     elem = get_elem_id(doc, L"inputid");
     elem2 = get_elem2_iface((IUnknown*)elem);
+
+    hres = IHTMLElement_QueryInterface(elem, &IID_IHTMLInputElement, (void**)&input);
     IHTMLElement_Release(elem);
+    ok(hres == S_OK, "Could not get IHTMLInputElement iface: %08lx\n", hres);
+
+    hres = IHTMLInputElement_get_complete(input, &b);
+    ok(hres == S_OK, "get_complete failed: %08lx\n", hres);
+    ok(b == VARIANT_FALSE, "complete = %x\n", b);
+
+    str = SysAllocString(L"http://test.winehq.org/tests/winehq_snapshot/index_files/winehq_logo_text.png?v=3");
+    hres = IHTMLInputElement_put_src(input, str);
+    ok(hres == S_OK, "put_src failed: %08lx\n", hres);
+    SysFreeString(str);
+
+    pump_msgs(NULL);
+
+    hres = IHTMLInputElement_get_complete(input, &b);
+    ok(hres == S_OK, "get_complete failed: %08lx\n", hres);
+    ok(b == VARIANT_FALSE, "complete = %x\n", b);
+    IHTMLInputElement_Release(input);
 
     elem = get_elem_id(doc, L"divid");
     div = get_elem4_iface((IUnknown*)elem);
@@ -2779,7 +2850,9 @@ static void test_unload_event(IHTMLDocument2 *doc)
 static void test_submit(IHTMLDocument2 *doc)
 {
     IHTMLElement *elem, *submit;
+    IHTMLInputElement *input;
     IHTMLFormElement *form;
+    VARIANT_BOOL b;
     VARIANT v;
     DWORD cp_cookie;
     HRESULT hres;
@@ -2809,6 +2882,14 @@ static void test_submit(IHTMLDocument2 *doc)
     IHTMLFormElement_Release(form);
 
     submit = get_elem_id(doc, L"submitid");
+
+    hres = IHTMLElement_QueryInterface(submit, &IID_IHTMLInputElement, (void**)&input);
+    ok(hres == S_OK, "Could not get IHTMLInputElement iface: %08lx\n", hres);
+
+    hres = IHTMLInputElement_get_complete(input, &b);
+    ok(hres == S_OK, "get_complete failed: %08lx\n", hres);
+    ok(b == VARIANT_FALSE, "complete = %x\n", b);
+    IHTMLInputElement_Release(input);
 
     SET_EXPECT(form_onclick);
     SET_EXPECT(form_onsubmit);
@@ -6261,6 +6342,7 @@ START_TEST(events)
             run_test_from_res(L"iframe.html", test_unload_event);
             run_test(empty_doc_ie9_str, test_create_event);
             run_test(img_doc_ie9_str, test_imgload);
+            run_test(input_image_doc_ie9_str, test_inputload);
         }
 
         test_empty_document();

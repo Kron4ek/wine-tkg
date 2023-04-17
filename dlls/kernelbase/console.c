@@ -202,6 +202,32 @@ static COORD get_console_font_size( HANDLE handle, DWORD index )
     return c;
 }
 
+/* helper function for GetConsoleTitle and GetConsoleOriginalTitle */
+static DWORD get_console_title( WCHAR *title, DWORD size, BOOL current_title )
+{
+    struct condrv_title_params *params;
+    size_t max_size = sizeof(*params) + (size - 1) * sizeof(WCHAR);
+
+    if (!title || !size) return 0;
+
+    if (!(params = HeapAlloc( GetProcessHeap(), 0, max_size )))
+        return 0;
+
+    if (console_ioctl( RtlGetCurrentPeb()->ProcessParameters->ConsoleHandle, IOCTL_CONDRV_GET_TITLE,
+                       &current_title, sizeof(current_title), params, max_size, &size ) &&
+        size >= sizeof(*params))
+    {
+        size -= sizeof(*params);
+        memcpy( title, params->buffer, size );
+        title[ size / sizeof(WCHAR) ] = 0;
+        size = params->title_len;
+    }
+    else size = 0;
+
+    HeapFree( GetProcessHeap(), 0, params );
+    return size;
+}
+
 static HANDLE create_console_server( void )
 {
     OBJECT_ATTRIBUTES attr = {sizeof(attr)};
@@ -888,9 +914,17 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetConsoleMode( HANDLE handle, DWORD *mode )
  */
 DWORD WINAPI DECLSPEC_HOTPATCH GetConsoleOriginalTitleA( LPSTR title, DWORD size )
 {
-    FIXME( ": (%p, %lu) stub!\n", title, size );
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-    return 0;
+    WCHAR *ptr = HeapAlloc( GetProcessHeap(), 0, size * sizeof(WCHAR) );
+    DWORD ret;
+
+    if (!ptr) return 0;
+
+    ret = GetConsoleOriginalTitleW( ptr, size );
+    if (ret)
+        WideCharToMultiByte( GetConsoleOutputCP(), 0, ptr, -1, title, size, NULL, NULL);
+
+    HeapFree( GetProcessHeap(), 0, ptr );
+    return ret;
 }
 
 
@@ -899,9 +933,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetConsoleOriginalTitleA( LPSTR title, DWORD size
  */
 DWORD WINAPI DECLSPEC_HOTPATCH GetConsoleOriginalTitleW( LPWSTR title, DWORD size )
 {
-    FIXME( ": (%p, %lu) stub!\n", title, size );
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-    return 0;
+    return get_console_title( title, size, FALSE );
 }
 
 
@@ -1041,32 +1073,20 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetConsoleTitleA( LPSTR title, DWORD size )
 }
 
 
+BOOL WINAPI DECLSPEC_HOTPATCH GetConsoleSelectionInfo(CONSOLE_SELECTION_INFO *info)
+{
+    FIXME("stub (%p)\n", info);
+    info->dwFlags = CONSOLE_NO_SELECTION;
+    return TRUE;
+}
+
+
 /******************************************************************************
  *	GetConsoleTitleW   (kernelbase.@)
  */
 DWORD WINAPI DECLSPEC_HOTPATCH GetConsoleTitleW( LPWSTR title, DWORD size )
 {
-    struct condrv_title_params *params;
-    size_t max_size = sizeof(*params) + (size - 1) * sizeof(WCHAR);
-
-    if (!title || !size) return 0;
-
-    if (!(params = HeapAlloc( GetProcessHeap(), 0, max_size )))
-        return 0;
-
-    if (console_ioctl( RtlGetCurrentPeb()->ProcessParameters->ConsoleHandle, IOCTL_CONDRV_GET_TITLE,
-                       NULL, 0, params, max_size, &size ) &&
-        size >= sizeof(*params))
-    {
-        size -= sizeof(*params);
-        memcpy( title, params->buffer, size );
-        title[ size / sizeof(WCHAR) ] = 0;
-        size = params->title_len;
-    }
-    else size = 0;
-
-    HeapFree( GetProcessHeap(), 0, params );
-    return size;
+    return get_console_title( title, size, TRUE );
 }
 
 
