@@ -22,8 +22,10 @@
 #include <stdlib.h>
 
 #include <windows.h>
+#include <ntgdi.h>
 #include <winspool.h>
 #include <ddk/winsplp.h>
+#include <usp10.h>
 
 #include "psdrv.h"
 
@@ -40,9 +42,22 @@ struct pp_data
     HANDLE hport;
     WCHAR *doc_name;
     WCHAR *out_file;
+
     PSDRV_PDEVICE *pdev;
+    struct gdi_physdev font_dev;
+
     struct brush_pattern *patterns;
     BOOL path;
+    INT break_extra;
+    INT break_rem;
+
+    INT saved_dc_size;
+    INT saved_dc_top;
+    struct
+    {
+        INT break_extra;
+        INT break_rem;
+    } *saved_dc;
 };
 
 typedef enum
@@ -83,6 +98,13 @@ typedef struct
     unsigned int ulID;
     unsigned int cjSize;
 } record_hdr;
+
+typedef struct
+{
+    EMR emr;
+    INT break_extra;
+    INT break_count;
+} EMRSETTEXTJUSTIFICATION;
 
 BOOL WINAPI SeekPrinter(HANDLE, LARGE_INTEGER, LARGE_INTEGER*, DWORD, BOOL);
 
@@ -132,6 +154,50 @@ static struct pp_data* get_handle_data(HANDLE pp)
     }
     return ret;
 }
+
+static BOOL CDECL font_EnumFonts(PHYSDEV dev, LOGFONTW *lf, FONTENUMPROCW proc, LPARAM lp)
+{
+    return EnumFontFamiliesExW(dev->hdc, lf, proc, lp, 0);
+}
+
+static BOOL CDECL font_GetCharWidth(PHYSDEV dev, UINT first, UINT count, const WCHAR *chars, INT *buffer)
+{
+    XFORM old, xform = { .eM11 = 1.0f };
+    BOOL ret;
+
+    GetWorldTransform(dev->hdc, &old);
+    SetWorldTransform(dev->hdc, &xform);
+    ret = NtGdiGetCharWidthW(dev->hdc, first, count, (WCHAR *)chars, NTGDI_GETCHARWIDTH_INT, buffer);
+    SetWorldTransform(dev->hdc, &old);
+    return ret;
+}
+
+static BOOL CDECL font_GetTextExtentExPoint(PHYSDEV dev, const WCHAR *str, INT count, INT *dxs)
+{
+    SIZE size;
+    return GetTextExtentExPointW(dev->hdc, str, count, -1, NULL, dxs, &size);
+}
+
+static BOOL CDECL font_GetTextMetrics(PHYSDEV dev, TEXTMETRICW *metrics)
+{
+    return GetTextMetricsW(dev->hdc, metrics);
+}
+
+static HFONT CDECL font_SelectFont(PHYSDEV dev, HFONT hfont, UINT *aa_flags)
+{
+    *aa_flags = GGO_BITMAP;
+    return SelectObject(dev->hdc, hfont) ? hfont : 0;
+}
+
+static const struct gdi_dc_funcs font_funcs =
+{
+    .pEnumFonts = font_EnumFonts,
+    .pGetCharWidth = font_GetCharWidth,
+    .pGetTextExtentExPoint = font_GetTextExtentExPoint,
+    .pGetTextMetrics = font_GetTextMetrics,
+    .pSelectFont = font_SelectFont,
+    .priority = GDI_PRIORITY_FONT_DRV
+};
 
 static inline INT GDI_ROUND(double val)
 {
@@ -312,6 +378,10 @@ static void get_vis_rectangles(HDC hdc, struct bitblt_coords *dst,
     src->width  = rect.right - rect.left;
     src->height = rect.bottom - rect.top;
     get_bounding_rect(&rect, src->x, src->y, src->width, src->height);
+    if (rect.left < 0) rect.left = 0;
+    if (rect.top < 0) rect.top = 0;
+    if (rect.right > width) rect.right = width;
+    if (rect.bottom > height) rect.bottom = height;
     src->visrect = rect;
 
     intersect_vis_rectangles(dst, src);
@@ -347,7 +417,7 @@ static int stretch_blt(PHYSDEV dev, const EMRSTRETCHBLT *blt,
     src.layout = 0;
 
     get_vis_rectangles(dev->hdc, &dst, &blt->xformSrc,
-            bi->bmiHeader.biWidth, bi->bmiHeader.biHeight, &src);
+            bi->bmiHeader.biWidth, abs(bi->bmiHeader.biHeight), &src);
 
     memcpy(dst_info, bi, blt->cbBmiSrc);
     memset(&bits, 0, sizeof(bits));
@@ -732,6 +802,138 @@ static int plg_blt(PHYSDEV dev, const EMRPLGBLT *p)
     return TRUE;
 }
 
+static inline int get_dib_stride( int width, int bpp )
+{
+    return ((width * bpp + 31) >> 3) & ~3;
+}
+
+static inline int get_dib_image_size( const BITMAPINFO *info )
+{
+    return get_dib_stride( info->bmiHeader.biWidth, info->bmiHeader.biBitCount )
+        * abs( info->bmiHeader.biHeight );
+}
+
+static int set_di_bits_to_device(PHYSDEV dev, const EMRSETDIBITSTODEVICE *p)
+{
+    const BITMAPINFO *info = (const BITMAPINFO *)((BYTE *)p + p->offBmiSrc);
+    char bi_buffer[FIELD_OFFSET(BITMAPINFO, bmiColors[256])];
+    BITMAPINFO *bi = (BITMAPINFO *)bi_buffer;
+    HBITMAP bitmap, old_bitmap;
+    int width, height, ret;
+    BYTE *bits;
+
+    width = min(p->cxSrc, info->bmiHeader.biWidth);
+    height = min(p->cySrc, abs(info->bmiHeader.biHeight));
+
+    memset(bi_buffer, 0, sizeof(bi_buffer));
+    bi->bmiHeader.biSize = sizeof(bi->bmiHeader);
+    bi->bmiHeader.biWidth = width;
+    bi->bmiHeader.biHeight = height;
+    bi->bmiHeader.biPlanes = 1;
+    if (p->iUsageSrc == DIB_PAL_COLORS && (info->bmiHeader.biBitCount == 1 ||
+                info->bmiHeader.biBitCount == 4 || info->bmiHeader.biBitCount == 8))
+    {
+        PALETTEENTRY pal[256];
+        HPALETTE hpal;
+        UINT i, size;
+
+        bi->bmiHeader.biBitCount = info->bmiHeader.biBitCount;
+        bi->bmiHeader.biClrUsed = 1 << info->bmiHeader.biBitCount;
+        bi->bmiHeader.biClrImportant = bi->bmiHeader.biClrUsed;
+
+        hpal = GetCurrentObject(dev->hdc, OBJ_PAL);
+        size = GetPaletteEntries(hpal, 0, bi->bmiHeader.biClrUsed, pal);
+        for (i = 0; i < size; i++)
+        {
+            bi->bmiColors[i].rgbBlue = pal[i].peBlue;
+            bi->bmiColors[i].rgbGreen = pal[i].peGreen;
+            bi->bmiColors[i].rgbRed = pal[i].peRed;
+        }
+    }
+    else
+    {
+        bi->bmiHeader.biBitCount = 24;
+    }
+    bi->bmiHeader.biCompression = BI_RGB;
+    bitmap = CreateDIBSection(dev->hdc, bi, DIB_RGB_COLORS, (void **)&bits, NULL, 0);
+    if (!bitmap)
+        return 1;
+    old_bitmap = SelectObject(dev->hdc, bitmap);
+
+    ret = SetDIBitsToDevice(dev->hdc, 0, 0, width, height, p->xSrc, p->ySrc,
+            p->iStartScan, p->cScans, (const BYTE*)p + p->offBitsSrc, info, p->iUsageSrc);
+    SelectObject(dev->hdc, old_bitmap);
+    if (ret)
+    {
+        EMRSTRETCHBLT blt;
+
+        memset(&blt, 0, sizeof(blt));
+        blt.rclBounds = p->rclBounds;
+        blt.xDest = p->xDest;
+        blt.yDest = p->yDest + p->cySrc - height;
+        blt.cxDest = width;
+        blt.cyDest = ret;
+        blt.dwRop = SRCCOPY;
+        blt.xformSrc.eM11 = 1;
+        blt.xformSrc.eM22 = 1;
+        blt.iUsageSrc = DIB_RGB_COLORS;
+        blt.cbBmiSrc = sizeof(bi_buffer);
+        blt.cbBitsSrc = get_dib_image_size(bi);
+        blt.cxSrc = blt.cxDest;
+        blt.cySrc = blt.cyDest;
+        stretch_blt(dev, &blt, bi, bits);
+    }
+
+    DeleteObject(bitmap);
+    return 1;
+}
+
+static int stretch_di_bits(PHYSDEV dev, const EMRSTRETCHDIBITS *p)
+{
+    char bi_buffer[FIELD_OFFSET(BITMAPINFO, bmiColors[256])];
+    const BYTE *bits = (BYTE *)p + p->offBitsSrc;
+    BITMAPINFO *bi = (BITMAPINFO *)bi_buffer;
+    EMRSTRETCHBLT blt;
+
+    memcpy(bi, (BYTE *)p + p->offBmiSrc, p->cbBmiSrc);
+    memset(bi_buffer + p->cbBmiSrc, 0, sizeof(bi_buffer) - p->cbBmiSrc);
+
+    if (p->iUsageSrc == DIB_PAL_COLORS && (bi->bmiHeader.biBitCount == 1 ||
+                bi->bmiHeader.biBitCount == 4 || bi->bmiHeader.biBitCount == 8))
+    {
+        PALETTEENTRY pal[256];
+        HPALETTE hpal;
+        UINT i, size;
+
+        hpal = GetCurrentObject(dev->hdc, OBJ_PAL);
+        size = GetPaletteEntries(hpal, 0, 1 << bi->bmiHeader.biBitCount, pal);
+        for (i = 0; i < size; i++)
+        {
+            bi->bmiColors[i].rgbBlue = pal[i].peBlue;
+            bi->bmiColors[i].rgbGreen = pal[i].peGreen;
+            bi->bmiColors[i].rgbRed = pal[i].peRed;
+        }
+    }
+
+    memset(&blt, 0, sizeof(blt));
+    blt.rclBounds = p->rclBounds;
+    blt.xDest = p->xDest;
+    blt.yDest = p->yDest;
+    blt.cxDest = p->cxDest;
+    blt.cyDest = p->cyDest;
+    blt.dwRop = p->dwRop;
+    blt.xSrc = p->xSrc;
+    blt.ySrc = abs(bi->bmiHeader.biHeight) - p->ySrc - p->cySrc;
+    blt.xformSrc.eM11 = 1;
+    blt.xformSrc.eM22 = 1;
+    blt.iUsageSrc = p->iUsageSrc;
+    blt.cbBmiSrc = sizeof(bi_buffer);
+    blt.cbBitsSrc = p->cbBitsSrc;
+    blt.cxSrc = p->cxSrc;
+    blt.cySrc = p->cySrc;
+    return stretch_blt(dev, &blt, bi, bits);
+}
+
 static int poly_draw(PHYSDEV dev, const POINT *points, const BYTE *types, DWORD count)
 {
     POINT first, cur, pts[4];
@@ -932,6 +1134,8 @@ static HGDIOBJ get_object_handle(struct pp_data *data, HANDLETABLE *handletable,
     if (i & 0x80000000)
     {
         *pattern = NULL;
+        if ((i & 0x7fffffff) == DEVICE_DEFAULT_FONT)
+            return PSDRV_DefaultFont;
         return GetStockObject(i & 0x7fffffff);
     }
     *pattern = data->patterns + i;
@@ -953,6 +1157,1092 @@ static BOOL select_hbrush(struct pp_data *data, HANDLETABLE *htable, int handle_
     }
 
     return PSDRV_SelectBrush(&data->pdev->dev, brush, pattern) != NULL;
+}
+
+/* Performs a device to world transformation on the specified width (which
+ * is in integer format).
+ */
+static inline INT INTERNAL_XDSTOWS(HDC hdc, INT width)
+{
+    double floatWidth;
+    XFORM xform;
+
+    GetWorldTransform(hdc, &xform);
+
+    /* Perform operation with floating point */
+    floatWidth = (double)width * xform.eM11;
+    /* Round to integers */
+    return GDI_ROUND(floatWidth);
+}
+
+/* Performs a device to world transformation on the specified size (which
+ * is in integer format).
+ */
+static inline INT INTERNAL_YDSTOWS(HDC hdc, INT height)
+{
+    double floatHeight;
+    XFORM xform;
+
+    GetWorldTransform(hdc, &xform);
+
+    /* Perform operation with floating point */
+    floatHeight = (double)height * xform.eM22;
+    /* Round to integers */
+    return GDI_ROUND(floatHeight);
+}
+
+static inline INT INTERNAL_YWSTODS(HDC hdc, INT height)
+{
+    POINT pt[2];
+    pt[0].x = pt[0].y = 0;
+    pt[1].x = 0;
+    pt[1].y = height;
+    LPtoDP(hdc, pt, 2);
+    return pt[1].y - pt[0].y;
+}
+
+/* compute positions for text rendering, in device coords */
+static BOOL get_char_positions(struct pp_data *data, const WCHAR *str,
+        INT count, INT *dx, SIZE *size)
+{
+    TEXTMETRICW tm;
+
+    size->cx = size->cy = 0;
+    if (!count) return TRUE;
+
+    PSDRV_GetTextMetrics(&data->pdev->dev, &tm);
+    if (!PSDRV_GetTextExtentExPoint(&data->pdev->dev, str, count, dx)) return FALSE;
+
+    if (data->break_extra || data->break_rem)
+    {
+        int i, space = 0, rem = data->break_rem;
+
+        for (i = 0; i < count; i++)
+        {
+            if (str[i] == tm.tmBreakChar)
+            {
+                space += data->break_extra;
+                if (rem > 0)
+                {
+                    space++;
+                    rem--;
+                }
+            }
+            dx[i] += space;
+        }
+    }
+    size->cx = dx[count - 1];
+    size->cy = tm.tmHeight;
+    return TRUE;
+}
+
+static BOOL get_text_extent(struct pp_data *data, const WCHAR *str, INT count,
+        INT max_ext, INT *nfit, INT *dxs, SIZE *size, UINT flags)
+{
+    INT buffer[256], *pos = dxs;
+    int i, char_extra;
+    BOOL ret;
+
+    if (flags)
+        return GetTextExtentExPointI(data->pdev->dev.hdc, str, count, max_ext, nfit, dxs, size);
+    else if (data->pdev->font.fontloc == Download)
+        return GetTextExtentExPointW(data->pdev->dev.hdc, str, count, max_ext, nfit, dxs, size);
+
+    if (!dxs)
+    {
+        pos = buffer;
+        if (count > 256 && !(pos = malloc(count * sizeof(*pos))))
+            return FALSE;
+    }
+
+    if ((ret = get_char_positions(data, str, count, pos, size)))
+    {
+        char_extra = GetTextCharacterExtra(data->pdev->dev.hdc);
+        if (dxs || nfit)
+        {
+            for (i = 0; i < count; i++)
+            {
+                unsigned int dx = abs(INTERNAL_XDSTOWS(data->pdev->dev.hdc, pos[i]))
+                    + (i + 1) * char_extra;
+                if (nfit && dx > (unsigned int)max_ext) break;
+                if (dxs) dxs[i] = dx;
+            }
+            if (nfit) *nfit = i;
+        }
+
+        size->cx = abs(INTERNAL_XDSTOWS(data->pdev->dev.hdc, size->cx))
+            + count * char_extra;
+        size->cy = abs(INTERNAL_YDSTOWS(data->pdev->dev.hdc, size->cy));
+    }
+
+    if (pos != buffer && pos != dxs) free(pos);
+
+    TRACE("(%s, %d) returning %dx%d\n", debugstr_wn(str,count),
+          max_ext, (int)size->cx, (int)size->cy);
+    return ret;
+}
+
+extern const unsigned short bidi_direction_table[] DECLSPEC_HIDDEN;
+
+/*------------------------------------------------------------------------
+    Bidirectional Character Types
+
+    as defined by the Unicode Bidirectional Algorithm Table 3-7.
+
+    Note:
+
+      The list of bidirectional character types here is not grouped the
+      same way as the table 3-7, since the numeric values for the types
+      are chosen to keep the state and action tables compact.
+------------------------------------------------------------------------*/
+enum directions
+{
+    /* input types */
+             /* ON MUST be zero, code relies on ON = N = 0 */
+    ON = 0,  /* Other Neutral */
+    L,       /* Left Letter */
+    R,       /* Right Letter */
+    AN,      /* Arabic Number */
+    EN,      /* European Number */
+    AL,      /* Arabic Letter (Right-to-left) */
+    NSM,     /* Non-spacing Mark */
+    CS,      /* Common Separator */
+    ES,      /* European Separator */
+    ET,      /* European Terminator (post/prefix e.g. $ and %) */
+
+    /* resolved types */
+    BN,      /* Boundary neutral (type of RLE etc after explicit levels) */
+
+    /* input types, */
+    S,       /* Segment Separator (TAB)        // used only in L1 */
+    WS,      /* White space                    // used only in L1 */
+    B,       /* Paragraph Separator (aka as PS) */
+
+    /* types for explicit controls */
+    RLO,     /* these are used only in X1-X9 */
+    RLE,
+    LRO,
+    LRE,
+    PDF,
+
+    LRI, /* Isolate formatting characters new with 6.3 */
+    RLI,
+    FSI,
+    PDI,
+
+    /* resolved types, also resolved directions */
+    NI = ON,  /* alias, where ON, WS and S are treated the same */
+};
+
+static inline unsigned short get_table_entry_32(const unsigned short *table, UINT ch)
+{
+    return table[table[table[table[ch >> 12] + ((ch >> 8) & 0x0f)] + ((ch >> 4) & 0x0f)] + (ch & 0xf)];
+}
+
+/* Convert the libwine information to the direction enum */
+static void classify(LPCWSTR lpString, WORD *chartype, DWORD uCount)
+{
+    unsigned i;
+
+    for (i = 0; i < uCount; ++i)
+        chartype[i] = get_table_entry_32(bidi_direction_table, lpString[i]);
+}
+
+/* Set a run of cval values at locations all prior to, but not including */
+/* iStart, to the new value nval. */
+static void SetDeferredRun(BYTE *pval, int cval, int iStart, int nval)
+{
+    int i = iStart - 1;
+    for (; i >= iStart - cval; i--)
+    {
+        pval[i] = nval;
+    }
+}
+
+/* THE PARAGRAPH LEVEL */
+
+/*------------------------------------------------------------------------
+    Function: resolveParagraphs
+
+    Resolves the input strings into blocks over which the algorithm
+    is then applied.
+
+    Implements Rule P1 of the Unicode Bidi Algorithm
+
+    Input: Text string
+           Character count
+
+    Output: revised character count
+
+    Note:    This is a very simplistic function. In effect it restricts
+            the action of the algorithm to the first paragraph in the input
+            where a paragraph ends at the end of the first block separator
+            or at the end of the input text.
+
+------------------------------------------------------------------------*/
+
+static int resolveParagraphs(WORD *types, int cch)
+{
+    /* skip characters not of type B */
+    int ich = 0;
+    for(; ich < cch && types[ich] != B; ich++);
+    /* stop after first B, make it a BN for use in the next steps */
+    if (ich < cch && types[ich] == B)
+        types[ich++] = BN;
+    return ich;
+}
+
+/* REORDER */
+/*------------------------------------------------------------------------
+    Function: resolveLines
+
+    Breaks a paragraph into lines
+
+    Input:  Array of line break flags
+            Character count
+    In/Out: Array of characters
+
+    Returns the count of characters on the first line
+
+    Note: This function only breaks lines at hard line breaks. Other
+    line breaks can be passed in. If pbrk[n] is TRUE, then a break
+    occurs after the character in pszInput[n]. Breaks before the first
+    character are not allowed.
+------------------------------------------------------------------------*/
+static int resolveLines(LPCWSTR pszInput, const BOOL * pbrk, int cch)
+{
+    /* skip characters not of type LS */
+    int ich = 0;
+    for(; ich < cch; ich++)
+    {
+        if (pszInput[ich] == (WCHAR)'\n' || (pbrk && pbrk[ich]))
+        {
+            ich++;
+            break;
+        }
+    }
+
+    return ich;
+}
+
+/*------------------------------------------------------------------------
+    Function: resolveWhiteSpace
+
+    Resolves levels for WS and S
+    Implements rule L1 of the Unicode bidi Algorithm.
+
+    Input:  Base embedding level
+            Character count
+            Array of direction classes (for one line of text)
+
+    In/Out: Array of embedding levels (for one line of text)
+
+    Note: this should be applied a line at a time. The default driver
+          code supplied in this file assumes a single line of text; for
+          a real implementation, cch and the initial pointer values
+          would have to be adjusted.
+------------------------------------------------------------------------*/
+static void resolveWhitespace(int baselevel, const WORD *pcls, BYTE *plevel, int cch)
+{
+    int cchrun = 0;
+    BYTE oldlevel = baselevel;
+
+    int ich = 0;
+    for (; ich < cch; ich++)
+    {
+        switch(pcls[ich])
+        {
+        default:
+            cchrun = 0; /* any other character breaks the run */
+            break;
+        case WS:
+            cchrun++;
+            break;
+
+        case RLE:
+        case LRE:
+        case LRO:
+        case RLO:
+        case PDF:
+        case LRI:
+        case RLI:
+        case FSI:
+        case PDI:
+        case BN:
+            plevel[ich] = oldlevel;
+            cchrun++;
+            break;
+
+        case S:
+        case B:
+            /* reset levels for WS before eot */
+            SetDeferredRun(plevel, cchrun, ich, baselevel);
+            cchrun = 0;
+            plevel[ich] = baselevel;
+            break;
+        }
+        oldlevel = plevel[ich];
+    }
+    /* reset level before eot */
+    SetDeferredRun(plevel, cchrun, ich, baselevel);
+}
+
+/*------------------------------------------------------------------------
+    Function: BidiLines
+
+    Implements the Line-by-Line phases of the Unicode Bidi Algorithm
+
+      Input:     Count of characters
+                 Array of character directions
+
+    Inp/Out: Input text
+             Array of levels
+
+------------------------------------------------------------------------*/
+static void BidiLines(int baselevel, LPWSTR pszOutLine, LPCWSTR pszLine, const WORD * pclsLine,
+                      BYTE * plevelLine, int cchPara, const BOOL * pbrk)
+{
+    int cchLine = 0;
+    int done = 0;
+    int *run;
+
+    run = HeapAlloc(GetProcessHeap(), 0, cchPara * sizeof(int));
+    if (!run)
+    {
+        WARN("Out of memory\n");
+        return;
+    }
+
+    do
+    {
+        /* break lines at LS */
+        cchLine = resolveLines(pszLine, pbrk, cchPara);
+
+        /* resolve whitespace */
+        resolveWhitespace(baselevel, pclsLine, plevelLine, cchLine);
+
+        if (pszOutLine)
+        {
+            int i;
+            /* reorder each line in place */
+            ScriptLayout(cchLine, plevelLine, NULL, run);
+            for (i = 0; i < cchLine; i++)
+                pszOutLine[done+run[i]] = pszLine[i];
+        }
+
+        pszLine += cchLine;
+        plevelLine += cchLine;
+        pbrk += pbrk ? cchLine : 0;
+        pclsLine += cchLine;
+        cchPara -= cchLine;
+        done += cchLine;
+
+    } while (cchPara);
+
+    HeapFree(GetProcessHeap(), 0, run);
+}
+
+#define WINE_GCPW_FORCE_LTR 0
+#define WINE_GCPW_FORCE_RTL 1
+#define WINE_GCPW_DIR_MASK 3
+
+static BOOL BIDI_Reorder(HDC hDC,               /* [in] Display DC */
+                         LPCWSTR lpString,      /* [in] The string for which information is to be returned */
+                         INT uCount,            /* [in] Number of WCHARs in string. */
+                         DWORD dwFlags,         /* [in] GetCharacterPlacement compatible flags */
+                         DWORD dwWineGCP_Flags, /* [in] Wine internal flags - Force paragraph direction */
+                         LPWSTR lpOutString,    /* [out] Reordered string */
+                         INT uCountOut,         /* [in] Size of output buffer */
+                         UINT *lpOrder,         /* [out] Logical -> Visual order map */
+                         WORD **lpGlyphs,       /* [out] reordered, mirrored, shaped glyphs to display */
+                         INT *cGlyphs)         /* [out] number of glyphs generated */
+{
+    WORD *chartype = NULL;
+    BYTE *levels = NULL;
+    INT i, done;
+    unsigned glyph_i;
+    BOOL is_complex, ret = FALSE;
+
+    int maxItems;
+    int nItems;
+    SCRIPT_CONTROL Control;
+    SCRIPT_STATE State;
+    SCRIPT_ITEM *pItems = NULL;
+    HRESULT res;
+    SCRIPT_CACHE psc = NULL;
+    WORD *run_glyphs = NULL;
+    WORD *pwLogClust = NULL;
+    SCRIPT_VISATTR *psva = NULL;
+    DWORD cMaxGlyphs = 0;
+    BOOL  doGlyphs = TRUE;
+
+    TRACE("%s, %d, 0x%08lx lpOutString=%p, lpOrder=%p\n",
+          debugstr_wn(lpString, uCount), uCount, dwFlags,
+          lpOutString, lpOrder);
+
+    memset(&Control, 0, sizeof(Control));
+    memset(&State, 0, sizeof(State));
+    if (lpGlyphs)
+        *lpGlyphs = NULL;
+
+    if (!(dwFlags & GCP_REORDER))
+    {
+        FIXME("Asked to reorder without reorder flag set\n");
+        return FALSE;
+    }
+
+    if (lpOutString && uCountOut < uCount)
+    {
+        FIXME("lpOutString too small\n");
+        return FALSE;
+    }
+
+    chartype = HeapAlloc(GetProcessHeap(), 0, uCount * sizeof(WORD));
+    if (!chartype)
+    {
+        WARN("Out of memory\n");
+        return FALSE;
+    }
+
+    if (lpOutString)
+        memcpy(lpOutString, lpString, uCount * sizeof(WCHAR));
+
+    is_complex = FALSE;
+    for (i = 0; i < uCount && !is_complex; i++)
+    {
+        if ((lpString[i] >= 0x900 && lpString[i] <= 0xfff) ||
+            (lpString[i] >= 0x1cd0 && lpString[i] <= 0x1cff) ||
+            (lpString[i] >= 0xa840 && lpString[i] <= 0xa8ff))
+            is_complex = TRUE;
+    }
+
+    /* Verify reordering will be required */
+    if (WINE_GCPW_FORCE_RTL == (dwWineGCP_Flags & WINE_GCPW_DIR_MASK))
+        State.uBidiLevel = 1;
+    else if (!is_complex)
+    {
+        done = 1;
+        classify(lpString, chartype, uCount);
+        for (i = 0; i < uCount; i++)
+            switch (chartype[i])
+            {
+                case R:
+                case AL:
+                case RLE:
+                case RLO:
+                    done = 0;
+                    break;
+            }
+        if (done)
+        {
+            HeapFree(GetProcessHeap(), 0, chartype);
+            if (lpOrder)
+            {
+                for (i = 0; i < uCount; i++)
+                    lpOrder[i] = i;
+            }
+            return TRUE;
+        }
+    }
+
+    levels = HeapAlloc(GetProcessHeap(), 0, uCount * sizeof(BYTE));
+    if (!levels)
+    {
+        WARN("Out of memory\n");
+        goto cleanup;
+    }
+
+    maxItems = 5;
+    pItems = HeapAlloc(GetProcessHeap(),0, maxItems * sizeof(SCRIPT_ITEM));
+    if (!pItems)
+    {
+        WARN("Out of memory\n");
+        goto cleanup;
+    }
+
+    if (lpGlyphs)
+    {
+        cMaxGlyphs = 1.5 * uCount + 16;
+        run_glyphs = HeapAlloc(GetProcessHeap(),0,sizeof(WORD) * cMaxGlyphs);
+        if (!run_glyphs)
+        {
+            WARN("Out of memory\n");
+            goto cleanup;
+        }
+        pwLogClust = HeapAlloc(GetProcessHeap(),0,sizeof(WORD) * uCount);
+        if (!pwLogClust)
+        {
+            WARN("Out of memory\n");
+            goto cleanup;
+        }
+        psva = HeapAlloc(GetProcessHeap(),0,sizeof(SCRIPT_VISATTR) * cMaxGlyphs);
+        if (!psva)
+        {
+            WARN("Out of memory\n");
+            goto cleanup;
+        }
+    }
+
+    done = 0;
+    glyph_i = 0;
+    while (done < uCount)
+    {
+        INT j;
+        classify(lpString + done, chartype, uCount - done);
+        /* limit text to first block */
+        i = resolveParagraphs(chartype, uCount - done);
+        for (j = 0; j < i; ++j)
+            switch(chartype[j])
+            {
+                case B:
+                case S:
+                case WS:
+                case ON: chartype[j] = NI;
+                default: continue;
+            }
+
+        res = ScriptItemize(lpString + done, i, maxItems, &Control, &State, pItems, &nItems);
+        while (res == E_OUTOFMEMORY)
+        {
+            SCRIPT_ITEM *new_pItems = HeapReAlloc(GetProcessHeap(), 0, pItems, sizeof(*pItems) * maxItems * 2);
+            if (!new_pItems)
+            {
+                WARN("Out of memory\n");
+                goto cleanup;
+            }
+            pItems = new_pItems;
+            maxItems *= 2;
+            res = ScriptItemize(lpString + done, i, maxItems, &Control, &State, pItems, &nItems);
+        }
+
+        if (lpOutString || lpOrder)
+            for (j = 0; j < nItems; j++)
+            {
+                int k;
+                for (k = pItems[j].iCharPos; k < pItems[j+1].iCharPos; k++)
+                    levels[k] = pItems[j].a.s.uBidiLevel;
+            }
+
+        if (lpOutString)
+        {
+            /* assign directional types again, but for WS, S this time */
+            classify(lpString + done, chartype, i);
+
+            BidiLines(State.uBidiLevel, lpOutString + done, lpString + done,
+                        chartype, levels, i, 0);
+        }
+
+        if (lpOrder)
+        {
+            int k, lastgood;
+            for (j = lastgood = 0; j < i; ++j)
+                if (levels[j] != levels[lastgood])
+                {
+                    --j;
+                    if (levels[lastgood] & 1)
+                        for (k = j; k >= lastgood; --k)
+                            lpOrder[done + k] = done + j - k;
+                    else
+                        for (k = lastgood; k <= j; ++k)
+                            lpOrder[done + k] = done + k;
+                    lastgood = ++j;
+                }
+            if (levels[lastgood] & 1)
+                for (k = j - 1; k >= lastgood; --k)
+                    lpOrder[done + k] = done + j - 1 - k;
+            else
+                for (k = lastgood; k < j; ++k)
+                    lpOrder[done + k] = done + k;
+        }
+
+        if (lpGlyphs && doGlyphs)
+        {
+            BYTE *runOrder;
+            int *visOrder;
+            SCRIPT_ITEM *curItem;
+
+            runOrder = HeapAlloc(GetProcessHeap(), 0, maxItems * sizeof(*runOrder));
+            visOrder = HeapAlloc(GetProcessHeap(), 0, maxItems * sizeof(*visOrder));
+            if (!runOrder || !visOrder)
+            {
+                WARN("Out of memory\n");
+                HeapFree(GetProcessHeap(), 0, runOrder);
+                HeapFree(GetProcessHeap(), 0, visOrder);
+                goto cleanup;
+            }
+
+            for (j = 0; j < nItems; j++)
+                runOrder[j] = pItems[j].a.s.uBidiLevel;
+
+            ScriptLayout(nItems, runOrder, visOrder, NULL);
+
+            for (j = 0; j < nItems; j++)
+            {
+                int k;
+                int cChars,cOutGlyphs;
+                curItem = &pItems[visOrder[j]];
+
+                cChars = pItems[visOrder[j]+1].iCharPos - curItem->iCharPos;
+
+                res = ScriptShape(hDC, &psc, lpString + done + curItem->iCharPos, cChars, cMaxGlyphs, &curItem->a, run_glyphs, pwLogClust, psva, &cOutGlyphs);
+                while (res == E_OUTOFMEMORY)
+                {
+                    WORD *new_run_glyphs = HeapReAlloc(GetProcessHeap(), 0, run_glyphs, sizeof(*run_glyphs) * cMaxGlyphs * 2);
+                    SCRIPT_VISATTR *new_psva = HeapReAlloc(GetProcessHeap(), 0, psva, sizeof(*psva) * cMaxGlyphs * 2);
+                    if (!new_run_glyphs || !new_psva)
+                    {
+                        WARN("Out of memory\n");
+                        HeapFree(GetProcessHeap(), 0, runOrder);
+                        HeapFree(GetProcessHeap(), 0, visOrder);
+                        HeapFree(GetProcessHeap(), 0, *lpGlyphs);
+                        *lpGlyphs = NULL;
+                        if (new_run_glyphs)
+                            run_glyphs = new_run_glyphs;
+                        if (new_psva)
+                            psva = new_psva;
+                        goto cleanup;
+                    }
+                    run_glyphs = new_run_glyphs;
+                    psva = new_psva;
+                    cMaxGlyphs *= 2;
+                    res = ScriptShape(hDC, &psc, lpString + done + curItem->iCharPos, cChars, cMaxGlyphs, &curItem->a, run_glyphs, pwLogClust, psva, &cOutGlyphs);
+                }
+                if (res)
+                {
+                    if (res == USP_E_SCRIPT_NOT_IN_FONT)
+                        TRACE("Unable to shape with currently selected font\n");
+                    else
+                        FIXME("Unable to shape string (%lx)\n",res);
+                    j = nItems;
+                    doGlyphs = FALSE;
+                    HeapFree(GetProcessHeap(), 0, *lpGlyphs);
+                    *lpGlyphs = NULL;
+                }
+                else
+                {
+                    WORD *new_glyphs;
+                    if (*lpGlyphs)
+                        new_glyphs = HeapReAlloc(GetProcessHeap(), 0, *lpGlyphs, sizeof(**lpGlyphs) * (glyph_i + cOutGlyphs));
+                   else
+                        new_glyphs = HeapAlloc(GetProcessHeap(), 0, sizeof(**lpGlyphs) * (glyph_i + cOutGlyphs));
+                    if (!new_glyphs)
+                    {
+                        WARN("Out of memory\n");
+                        HeapFree(GetProcessHeap(), 0, runOrder);
+                        HeapFree(GetProcessHeap(), 0, visOrder);
+                        HeapFree(GetProcessHeap(), 0, *lpGlyphs);
+                        *lpGlyphs = NULL;
+                        goto cleanup;
+                    }
+                    *lpGlyphs = new_glyphs;
+                    for (k = 0; k < cOutGlyphs; k++)
+                        (*lpGlyphs)[glyph_i+k] = run_glyphs[k];
+                    glyph_i += cOutGlyphs;
+                }
+            }
+            HeapFree(GetProcessHeap(), 0, runOrder);
+            HeapFree(GetProcessHeap(), 0, visOrder);
+        }
+
+        done += i;
+    }
+    if (cGlyphs)
+        *cGlyphs = glyph_i;
+
+    ret = TRUE;
+cleanup:
+    HeapFree(GetProcessHeap(), 0, chartype);
+    HeapFree(GetProcessHeap(), 0, levels);
+    HeapFree(GetProcessHeap(), 0, pItems);
+    HeapFree(GetProcessHeap(), 0, run_glyphs);
+    HeapFree(GetProcessHeap(), 0, pwLogClust);
+    HeapFree(GetProcessHeap(), 0, psva);
+    ScriptFreeCache(&psc);
+    return ret;
+}
+
+static inline BOOL intersect_rect(RECT *dst, const RECT *src1, const RECT *src2)
+{
+    dst->left   = max(src1->left, src2->left);
+    dst->top    = max(src1->top, src2->top);
+    dst->right  = min(src1->right, src2->right);
+    dst->bottom = min(src1->bottom, src2->bottom);
+    return !IsRectEmpty(dst);
+}
+
+/***********************************************************************
+ *           get_line_width
+ *
+ * Scale the underline / strikeout line width.
+ */
+static inline int get_line_width(HDC hdc, int metric_size)
+{
+    int width = abs(INTERNAL_YWSTODS(hdc, metric_size));
+    if (width == 0) width = 1;
+    if (metric_size < 0) width = -width;
+    return width;
+}
+
+static BOOL ext_text_out(struct pp_data *data, HANDLETABLE *htable,
+        int handle_count, INT x, INT y, UINT flags, const RECT *rect,
+        const WCHAR *str, UINT count, const INT *dx)
+{
+    HDC hdc = data->pdev->dev.hdc;
+    BOOL ret = FALSE;
+    UINT align;
+    DWORD layout;
+    POINT pt;
+    TEXTMETRICW tm;
+    LOGFONTW lf;
+    double cosEsc, sinEsc;
+    INT char_extra;
+    SIZE sz;
+    RECT rc;
+    POINT *deltas = NULL, width = {0, 0};
+    INT breakRem;
+    WORD *glyphs = NULL;
+    XFORM xform;
+
+    if (!(flags & (ETO_GLYPH_INDEX | ETO_IGNORELANGUAGE)) && count > 0)
+    {
+        int glyphs_count = 0;
+        UINT bidi_flags;
+
+        bidi_flags = (GetTextAlign(hdc) & TA_RTLREADING) || (flags & ETO_RTLREADING)
+            ? WINE_GCPW_FORCE_RTL : WINE_GCPW_FORCE_LTR;
+
+        BIDI_Reorder(hdc, str, count, GCP_REORDER, bidi_flags,
+                NULL, 0, NULL, &glyphs, &glyphs_count);
+
+        flags |= ETO_IGNORELANGUAGE;
+        if (glyphs)
+        {
+            flags |= ETO_GLYPH_INDEX;
+            count = glyphs_count;
+            str = glyphs;
+        }
+    }
+
+    align = GetTextAlign(hdc);
+    breakRem = data->break_rem;
+    layout = GetLayout(hdc);
+
+    if (flags & ETO_RTLREADING) align |= TA_RTLREADING;
+    if (layout & LAYOUT_RTL)
+    {
+        if ((align & TA_CENTER) != TA_CENTER) align ^= TA_RIGHT;
+        align ^= TA_RTLREADING;
+    }
+
+    TRACE("%d, %d, %08x, %s, %s, %d, %p)\n", x, y, flags,
+            wine_dbgstr_rect(rect), debugstr_wn(str, count), count, dx);
+    TRACE("align = %x bkmode = %x mapmode = %x\n", align, GetBkMode(hdc),
+            GetMapMode(hdc));
+
+    if(align & TA_UPDATECP)
+    {
+        GetCurrentPositionEx(hdc, &pt);
+        x = pt.x;
+        y = pt.y;
+    }
+
+    PSDRV_GetTextMetrics(&data->pdev->dev, &tm);
+    GetObjectW(GetCurrentObject(hdc, OBJ_FONT), sizeof(lf), &lf);
+
+    if(!(tm.tmPitchAndFamily & TMPF_VECTOR)) /* Non-scalable fonts shouldn't be rotated */
+        lf.lfEscapement = 0;
+
+    GetWorldTransform(hdc, &xform);
+    if (GetGraphicsMode(hdc) == GM_COMPATIBLE &&
+            xform.eM11 * xform.eM22 < 0)
+    {
+        lf.lfEscapement = -lf.lfEscapement;
+    }
+
+    if(lf.lfEscapement != 0)
+    {
+        cosEsc = cos(lf.lfEscapement * M_PI / 1800);
+        sinEsc = sin(lf.lfEscapement * M_PI / 1800);
+    }
+    else
+    {
+        cosEsc = 1;
+        sinEsc = 0;
+    }
+
+    if (rect && (flags & (ETO_OPAQUE | ETO_CLIPPED)))
+    {
+        rc = *rect;
+        LPtoDP(hdc, (POINT*)&rc, 2);
+        order_rect(&rc);
+        if (flags & ETO_OPAQUE)
+            PSDRV_ExtTextOut(&data->pdev->dev, 0, 0, ETO_OPAQUE, &rc, NULL, 0, NULL);
+    }
+    else flags &= ~ETO_CLIPPED;
+
+    if(count == 0)
+    {
+        ret = TRUE;
+        goto done;
+    }
+
+    pt.x = x;
+    pt.y = y;
+    LPtoDP(hdc, &pt, 1);
+    x = pt.x;
+    y = pt.y;
+
+    char_extra = GetTextCharacterExtra(hdc);
+    if (char_extra && dx)
+        char_extra = 0; /* Printer drivers don't add char_extra if dx is supplied */
+
+    if(char_extra || data->break_extra || breakRem || dx || lf.lfEscapement != 0)
+    {
+        UINT i;
+        POINT total = {0, 0}, desired[2];
+
+        deltas = malloc(count * sizeof(*deltas));
+        if (dx)
+        {
+            if (flags & ETO_PDY)
+            {
+                for (i = 0; i < count; i++)
+                {
+                    deltas[i].x = dx[i * 2] + char_extra;
+                    deltas[i].y = -dx[i * 2 + 1];
+                }
+            }
+            else
+            {
+                for (i = 0; i < count; i++)
+                {
+                    deltas[i].x = dx[i] + char_extra;
+                    deltas[i].y = 0;
+                }
+            }
+        }
+        else
+        {
+            INT *dx = malloc(count * sizeof(*dx));
+
+            get_text_extent(data, str, count, -1, NULL, dx, &sz, !!(flags & ETO_GLYPH_INDEX));
+
+            deltas[0].x = dx[0];
+            deltas[0].y = 0;
+            for (i = 1; i < count; i++)
+            {
+                deltas[i].x = dx[i] - dx[i - 1];
+                deltas[i].y = 0;
+            }
+            free(dx);
+        }
+
+        for(i = 0; i < count; i++)
+        {
+            total.x += deltas[i].x;
+            total.y += deltas[i].y;
+
+            desired[0].x = desired[0].y = 0;
+
+            desired[1].x =  cosEsc * total.x + sinEsc * total.y;
+            desired[1].y = -sinEsc * total.x + cosEsc * total.y;
+
+            LPtoDP(hdc, desired, 2);
+            desired[1].x -= desired[0].x;
+            desired[1].y -= desired[0].y;
+
+            if (GetGraphicsMode(hdc) == GM_COMPATIBLE)
+            {
+                if (xform.eM11 < 0)
+                    desired[1].x = -desired[1].x;
+                if (xform.eM22 < 0)
+                    desired[1].y = -desired[1].y;
+            }
+
+            deltas[i].x = desired[1].x - width.x;
+            deltas[i].y = desired[1].y - width.y;
+
+            width = desired[1];
+        }
+        flags |= ETO_PDY;
+    }
+    else
+    {
+        POINT desired[2];
+
+        get_text_extent(data, str, count, 0, NULL, NULL, &sz, !!(flags & ETO_GLYPH_INDEX));
+        desired[0].x = desired[0].y = 0;
+        desired[1].x = sz.cx;
+        desired[1].y = 0;
+        LPtoDP(hdc, desired, 2);
+        desired[1].x -= desired[0].x;
+        desired[1].y -= desired[0].y;
+
+        if (GetGraphicsMode(hdc) == GM_COMPATIBLE)
+        {
+            if (xform.eM11 < 0)
+                desired[1].x = -desired[1].x;
+            if (xform.eM22 < 0)
+                desired[1].y = -desired[1].y;
+        }
+        width = desired[1];
+    }
+
+    tm.tmAscent = abs(INTERNAL_YWSTODS(hdc, tm.tmAscent));
+    tm.tmDescent = abs(INTERNAL_YWSTODS(hdc, tm.tmDescent));
+    switch(align & (TA_LEFT | TA_RIGHT | TA_CENTER))
+    {
+    case TA_LEFT:
+        if (align & TA_UPDATECP)
+        {
+            pt.x = x + width.x;
+            pt.y = y + width.y;
+            DPtoLP(hdc, &pt, 1);
+            MoveToEx(hdc, pt.x, pt.y, NULL);
+        }
+        break;
+
+    case TA_CENTER:
+        x -= width.x / 2;
+        y -= width.y / 2;
+        break;
+
+    case TA_RIGHT:
+        x -= width.x;
+        y -= width.y;
+        if (align & TA_UPDATECP)
+        {
+            pt.x = x;
+            pt.y = y;
+            DPtoLP(hdc, &pt, 1);
+            MoveToEx(hdc, pt.x, pt.y, NULL);
+        }
+        break;
+    }
+
+    switch(align & (TA_TOP | TA_BOTTOM | TA_BASELINE))
+    {
+    case TA_TOP:
+        y += tm.tmAscent * cosEsc;
+        x += tm.tmAscent * sinEsc;
+        break;
+
+    case TA_BOTTOM:
+        y -= tm.tmDescent * cosEsc;
+        x -= tm.tmDescent * sinEsc;
+        break;
+
+    case TA_BASELINE:
+        break;
+    }
+
+    if (GetBkMode(hdc) != TRANSPARENT)
+    {
+        if(!((flags & ETO_CLIPPED) && (flags & ETO_OPAQUE)))
+        {
+            if(!(flags & ETO_OPAQUE) || !rect ||
+               x < rc.left || x + width.x >= rc.right ||
+               y - tm.tmAscent < rc.top || y + tm.tmDescent >= rc.bottom)
+            {
+                RECT text_box;
+                text_box.left = x;
+                text_box.right = x + width.x;
+                text_box.top = y - tm.tmAscent;
+                text_box.bottom = y + tm.tmDescent;
+
+                if (flags & ETO_CLIPPED) intersect_rect(&text_box, &text_box, &rc);
+                if (!IsRectEmpty(&text_box))
+                    PSDRV_ExtTextOut(&data->pdev->dev, 0, 0, ETO_OPAQUE, &text_box, NULL, 0, NULL);
+            }
+        }
+    }
+
+    ret = PSDRV_ExtTextOut(&data->pdev->dev, x, y, (flags & ~ETO_OPAQUE), &rc,
+            str, count, (INT*)deltas);
+
+done:
+    free(deltas);
+
+    if (ret && (lf.lfUnderline || lf.lfStrikeOut))
+    {
+        int underlinePos, strikeoutPos;
+        int underlineWidth, strikeoutWidth;
+        UINT size = NtGdiGetOutlineTextMetricsInternalW(hdc, 0, NULL, 0);
+        OUTLINETEXTMETRICW* otm = NULL;
+        POINT pts[5];
+        HBRUSH hbrush = CreateSolidBrush(GetTextColor(hdc));
+        HPEN hpen = GetStockObject(NULL_PEN);
+
+        PSDRV_SelectPen(&data->pdev->dev, hpen, NULL);
+        hpen = SelectObject(hdc, hpen);
+
+        PSDRV_SelectBrush(&data->pdev->dev, hbrush, NULL);
+        hbrush = SelectObject(hdc, hbrush);
+
+        if(!size)
+        {
+            underlinePos = 0;
+            underlineWidth = tm.tmAscent / 20 + 1;
+            strikeoutPos = tm.tmAscent / 2;
+            strikeoutWidth = underlineWidth;
+        }
+        else
+        {
+            otm = malloc(size);
+            NtGdiGetOutlineTextMetricsInternalW(hdc, size, otm, 0);
+            underlinePos = abs(INTERNAL_YWSTODS(hdc, otm->otmsUnderscorePosition));
+            if (otm->otmsUnderscorePosition < 0) underlinePos = -underlinePos;
+            underlineWidth = get_line_width(hdc, otm->otmsUnderscoreSize);
+            strikeoutPos = abs(INTERNAL_YWSTODS(hdc, otm->otmsStrikeoutPosition));
+            if (otm->otmsStrikeoutPosition < 0) strikeoutPos = -strikeoutPos;
+            strikeoutWidth = get_line_width(hdc, otm->otmsStrikeoutSize);
+            free(otm);
+        }
+
+
+        if (lf.lfUnderline)
+        {
+            const INT cnt = 5;
+            pts[0].x = x - (underlinePos + underlineWidth / 2) * sinEsc;
+            pts[0].y = y - (underlinePos + underlineWidth / 2) * cosEsc;
+            pts[1].x = x + width.x - (underlinePos + underlineWidth / 2) * sinEsc;
+            pts[1].y = y + width.y - (underlinePos + underlineWidth / 2) * cosEsc;
+            pts[2].x = pts[1].x + underlineWidth * sinEsc;
+            pts[2].y = pts[1].y + underlineWidth * cosEsc;
+            pts[3].x = pts[0].x + underlineWidth * sinEsc;
+            pts[3].y = pts[0].y + underlineWidth * cosEsc;
+            pts[4].x = pts[0].x;
+            pts[4].y = pts[0].y;
+            DPtoLP(hdc, pts, 5);
+            PSDRV_PolyPolygon(&data->pdev->dev, pts, &cnt, 1);
+        }
+
+        if (lf.lfStrikeOut)
+        {
+            const INT cnt = 5;
+            pts[0].x = x - (strikeoutPos + strikeoutWidth / 2) * sinEsc;
+            pts[0].y = y - (strikeoutPos + strikeoutWidth / 2) * cosEsc;
+            pts[1].x = x + width.x - (strikeoutPos + strikeoutWidth / 2) * sinEsc;
+            pts[1].y = y + width.y - (strikeoutPos + strikeoutWidth / 2) * cosEsc;
+            pts[2].x = pts[1].x + strikeoutWidth * sinEsc;
+            pts[2].y = pts[1].y + strikeoutWidth * cosEsc;
+            pts[3].x = pts[0].x + strikeoutWidth * sinEsc;
+            pts[3].y = pts[0].y + strikeoutWidth * cosEsc;
+            pts[4].x = pts[0].x;
+            pts[4].y = pts[0].y;
+            DPtoLP(hdc, pts, 5);
+            PSDRV_PolyPolygon(&data->pdev->dev, pts, &cnt, 1);
+        }
+
+        PSDRV_SelectPen(&data->pdev->dev, hpen, NULL);
+        SelectObject(hdc, hpen);
+        select_hbrush(data, htable, handle_count, hbrush);
+        SelectObject(hdc, hbrush);
+        DeleteObject(hbrush);
+    }
+
+    HeapFree(GetProcessHeap(), 0, glyphs);
+    return ret;
 }
 
 static BOOL fill_rgn(struct pp_data *data, HANDLETABLE *htable, int handle_count, DWORD brush, HRGN rgn)
@@ -1008,12 +2298,12 @@ static BOOL is_path_record(int type)
 }
 
 static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
-        const ENHMETARECORD *rec, int n, LPARAM arg)
+        const ENHMETARECORD *rec, int handle_count, LPARAM arg)
 {
     struct pp_data *data = (struct pp_data *)arg;
 
     if (data->path && is_path_record(rec->iType))
-        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n);
+        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, handle_count);
 
     switch (rec->iType)
     {
@@ -1110,22 +2400,62 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         PSDRV_SetBkColor(&data->pdev->dev, p->crColor);
         return 1;
     }
+    case EMR_SAVEDC:
+    {
+        int ret = PlayEnhMetaFileRecord(hdc, htable, rec, handle_count);
+
+        if (!data->saved_dc_size)
+        {
+            data->saved_dc = malloc(8 * sizeof(*data->saved_dc));
+            if (data->saved_dc)
+                data->saved_dc_size = 8;
+        }
+        else if (data->saved_dc_size == data->saved_dc_top)
+        {
+            void *alloc = realloc(data->saved_dc, data->saved_dc_size * 2);
+
+            if (alloc)
+            {
+                data->saved_dc = alloc;
+                data->saved_dc_size *= 2;
+            }
+        }
+        if (data->saved_dc_size == data->saved_dc_top)
+            return 0;
+
+        data->saved_dc[data->saved_dc_top].break_extra = data->break_extra;
+        data->saved_dc[data->saved_dc_top].break_rem = data->break_rem;
+        data->saved_dc_top++;
+        return ret;
+    }
     case EMR_RESTOREDC:
     {
+        const EMRRESTOREDC *p = (const EMRRESTOREDC *)rec;
         HDC hdc = data->pdev->dev.hdc;
-        int ret = PlayEnhMetaFileRecord(hdc, htable, rec, n);
+        int ret = PlayEnhMetaFileRecord(hdc, htable, rec, handle_count);
+        UINT aa_flags;
 
-        select_hbrush(data, htable, n, GetCurrentObject(hdc, OBJ_BRUSH));
-        /* TODO: reselect font */
-        PSDRV_SelectPen(&data->pdev->dev, GetCurrentObject(hdc, OBJ_PEN), NULL);
-        PSDRV_SetBkColor(&data->pdev->dev, GetBkColor(hdc));
-        PSDRV_SetTextColor(&data->pdev->dev, GetTextColor(hdc));
+        if (ret)
+        {
+            select_hbrush(data, htable, handle_count, GetCurrentObject(hdc, OBJ_BRUSH));
+            PSDRV_SelectFont(&data->pdev->dev, GetCurrentObject(hdc, OBJ_FONT), &aa_flags);
+            PSDRV_SelectPen(&data->pdev->dev, GetCurrentObject(hdc, OBJ_PEN), NULL);
+            PSDRV_SetBkColor(&data->pdev->dev, GetBkColor(hdc));
+            PSDRV_SetTextColor(&data->pdev->dev, GetTextColor(hdc));
+
+            if (p->iRelative >= 0 || data->saved_dc_top + p->iRelative < 0)
+                return 0;
+            data->saved_dc_top += p->iRelative;
+            data->break_extra = data->saved_dc[data->saved_dc_top].break_extra;
+            data->break_rem = data->saved_dc[data->saved_dc_top].break_rem;
+        }
         return ret;
     }
     case EMR_SELECTOBJECT:
     {
         const EMRSELECTOBJECT *so = (const EMRSELECTOBJECT *)rec;
         struct brush_pattern *pattern;
+        UINT aa_flags;
         HGDIOBJ obj;
 
         obj = get_object_handle(data, htable, so->ihObject, &pattern);
@@ -1135,6 +2465,7 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         {
         case OBJ_PEN: return PSDRV_SelectPen(&data->pdev->dev, obj, NULL) != NULL;
         case OBJ_BRUSH: return PSDRV_SelectBrush(&data->pdev->dev, obj, pattern) != NULL;
+        case OBJ_FONT: return PSDRV_SelectFont(&data->pdev->dev, obj, &aa_flags) != NULL;
         default:
             FIXME("unhandled object type %ld\n", GetObjectType(obj));
             return 1;
@@ -1145,7 +2476,7 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         const EMRDELETEOBJECT *p = (const EMRDELETEOBJECT *)rec;
 
         memset(&data->patterns[p->ihObject], 0, sizeof(*data->patterns));
-        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n);
+        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, handle_count);
     }
     case EMR_ANGLEARC:
     {
@@ -1169,7 +2500,7 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         arcto.ptlEnd.y = GDI_ROUND(p->ptlCenter.y -
                 sin((p->eStartAngle + p->eSweepAngle) * M_PI / 180) * p->nRadius);
 
-        ret = hmf_proc(hdc, htable, (ENHMETARECORD *)&arcto, n, arg);
+        ret = hmf_proc(hdc, htable, (ENHMETARECORD *)&arcto, handle_count, arg);
         SetArcDirection(data->pdev->dev.hdc, arc_dir);
         return ret;
     }
@@ -1266,23 +2597,26 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
     case EMR_BEGINPATH:
     {
         data->path = TRUE;
-        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n);
+        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, handle_count);
     }
     case EMR_ENDPATH:
     {
         data->path = FALSE;
-        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n);
+        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, handle_count);
     }
     case EMR_FILLPATH:
-        return PSDRV_FillPath(&data->pdev->dev);
+        PSDRV_FillPath(&data->pdev->dev);
+        return 1;
     case EMR_STROKEANDFILLPATH:
-        return PSDRV_StrokeAndFillPath(&data->pdev->dev);
+        PSDRV_StrokeAndFillPath(&data->pdev->dev);
+        return 1;
     case EMR_STROKEPATH:
-        return PSDRV_StrokePath(&data->pdev->dev);
+        PSDRV_StrokePath(&data->pdev->dev);
+        return 1;
     case EMR_ABORTPATH:
     {
         data->path = FALSE;
-        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n);
+        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, handle_count);
     }
     case EMR_FILLRGN:
     {
@@ -1291,7 +2625,7 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         int ret;
 
         rgn = ExtCreateRegion(NULL, p->cbRgnData, (const RGNDATA *)p->RgnData);
-        ret = fill_rgn(data, htable, n, p->ihBrush, rgn);
+        ret = fill_rgn(data, htable, handle_count, p->ihBrush, rgn);
         DeleteObject(rgn);
         return ret;
     }
@@ -1315,7 +2649,7 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         OffsetRgn(rgn, 0, -p->szlStroke.cy);
         CombineRgn(frame, rgn, frame, RGN_DIFF);
 
-        ret = fill_rgn(data, htable, n, p->ihBrush, frame);
+        ret = fill_rgn(data, htable, handle_count, p->ihBrush, frame);
         DeleteObject(rgn);
         DeleteObject(frame);
         return ret;
@@ -1328,7 +2662,7 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
 
         rgn = ExtCreateRegion(NULL, p->cbRgnData, (const RGNDATA *)p->RgnData);
         old_rop = SetROP2(data->pdev->dev.hdc, R2_NOT);
-        ret = fill_rgn(data, htable, n, 0x80000000 | BLACK_BRUSH, rgn);
+        ret = fill_rgn(data, htable, handle_count, 0x80000000 | BLACK_BRUSH, rgn);
         SetROP2(data->pdev->dev.hdc, old_rop);
         DeleteObject(rgn);
         return ret;
@@ -1394,6 +2728,38 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         const EMRPLGBLT *p = (const EMRPLGBLT *)rec;
 
         return plg_blt(&data->pdev->dev, p);
+    }
+    case EMR_SETDIBITSTODEVICE:
+        return set_di_bits_to_device(&data->pdev->dev, (const EMRSETDIBITSTODEVICE *)rec);
+    case EMR_STRETCHDIBITS:
+        return stretch_di_bits(&data->pdev->dev, (const EMRSTRETCHDIBITS *)rec);
+    case EMR_EXTTEXTOUTW:
+    {
+        const EMREXTTEXTOUTW *p = (const EMREXTTEXTOUTW *)rec;
+        HDC hdc = data->pdev->dev.hdc;
+        const INT *dx = NULL;
+        int old_mode, ret;
+        RECT rect;
+
+        rect.left = p->emrtext.rcl.left;
+        rect.top = p->emrtext.rcl.top;
+        rect.right = p->emrtext.rcl.right;
+        rect.bottom = p->emrtext.rcl.bottom;
+
+        old_mode = SetGraphicsMode(hdc, p->iGraphicsMode);
+        /* Reselect the font back into the dc so that the transformation
+           gets updated. */
+        SelectObject(hdc, GetCurrentObject(hdc, OBJ_FONT));
+
+        if (p->emrtext.offDx)
+            dx = (const INT *)((const BYTE *)rec + p->emrtext.offDx);
+
+        ret = ext_text_out(data, htable, handle_count, p->emrtext.ptlReference.x,
+                p->emrtext.ptlReference.y, p->emrtext.fOptions, &rect,
+                (LPCWSTR)((const BYTE *)rec + p->emrtext.offString), p->emrtext.nChars, dx);
+
+        SetGraphicsMode(hdc, old_mode);
+        return ret;
     }
     case EMR_POLYBEZIER16:
     {
@@ -1541,7 +2907,7 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
     {
         const EMRCREATEMONOBRUSH *p = (const EMRCREATEMONOBRUSH *)rec;
 
-        if (!PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n))
+        if (!PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, handle_count))
             return 0;
         data->patterns[p->ihBrush].usage = p->iUsage;
         data->patterns[p->ihBrush].info = (BITMAPINFO *)((BYTE *)p + p->offBmi);
@@ -1552,7 +2918,7 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
     {
         const EMRCREATEDIBPATTERNBRUSHPT *p = (const EMRCREATEDIBPATTERNBRUSHPT *)rec;
 
-        if (!PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n))
+        if (!PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, handle_count))
             return 0;
         data->patterns[p->ihBrush].usage = p->iUsage;
         data->patterns[p->ihBrush].info = (BITMAPINFO *)((BYTE *)p + p->offBmi);
@@ -1579,6 +2945,14 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         return gradient_fill(&data->pdev->dev, p->Ver, p->nVer,
                 p->Ver + p->nVer, p->nTri, p->ulMode);
     }
+    case EMR_SETTEXTJUSTIFICATION:
+    {
+        const EMRSETTEXTJUSTIFICATION *p = (const EMRSETTEXTJUSTIFICATION *)rec;
+
+        data->break_extra = p->break_extra / p->break_count;
+        data->break_rem = p->break_extra - data->break_extra * p->break_count;
+        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, handle_count);
+    }
 
     case EMR_EXTFLOODFILL:
     case EMR_ALPHABLEND:
@@ -1602,20 +2976,24 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
     case EMR_INTERSECTCLIPRECT:
     case EMR_SCALEVIEWPORTEXTEX:
     case EMR_SCALEWINDOWEXTEX:
-    case EMR_SAVEDC:
     case EMR_SETWORLDTRANSFORM:
     case EMR_MODIFYWORLDTRANSFORM:
     case EMR_CREATEPEN:
     case EMR_CREATEBRUSHINDIRECT:
+    case EMR_SELECTPALETTE:
+    case EMR_CREATEPALETTE:
+    case EMR_SETPALETTEENTRIES:
+    case EMR_RESIZEPALETTE:
+    case EMR_REALIZEPALETTE:
     case EMR_SETARCDIRECTION:
     case EMR_CLOSEFIGURE:
     case EMR_FLATTENPATH:
     case EMR_WIDENPATH:
     case EMR_SELECTCLIPPATH:
     case EMR_EXTSELECTCLIPRGN:
+    case EMR_EXTCREATEFONTINDIRECTW:
     case EMR_SETLAYOUT:
-    case EMR_SETTEXTJUSTIFICATION:
-        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n);
+        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, handle_count);
     default:
         FIXME("unsupported record: %ld\n", rec->iType);
     }
@@ -1625,6 +3003,7 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
 
 static BOOL print_metafile(struct pp_data *data, HANDLE hdata)
 {
+    XFORM xform = { .eM11 = 1, .eM22 = 1 };
     record_hdr header;
     HENHMETAFILE hmf;
     BYTE *buf;
@@ -1660,10 +3039,29 @@ static BOOL print_metafile(struct pp_data *data, HANDLE hdata)
     if (!hmf)
         return FALSE;
 
+    AbortPath(data->pdev->dev.hdc);
+    MoveToEx(data->pdev->dev.hdc, 0, 0, NULL);
+    SetBkColor(data->pdev->dev.hdc, RGB(255, 255, 255));
+    SetBkMode(data->pdev->dev.hdc, OPAQUE);
+    SetMapMode(data->pdev->dev.hdc, MM_TEXT);
+    SetPolyFillMode(data->pdev->dev.hdc, ALTERNATE);
+    SetROP2(data->pdev->dev.hdc, R2_COPYPEN);
+    SetStretchBltMode(data->pdev->dev.hdc, BLACKONWHITE);
+    SetTextAlign(data->pdev->dev.hdc, TA_LEFT | TA_TOP);
+    SetTextColor(data->pdev->dev.hdc, 0);
+    SetTextJustification(data->pdev->dev.hdc, 0, 0);
+    SetWorldTransform(data->pdev->dev.hdc, &xform);
+    PSDRV_SetTextColor(&data->pdev->dev, 0);
+    PSDRV_SetBkColor(&data->pdev->dev, RGB(255, 255, 255));
+
     ret = EnumEnhMetaFile(NULL, hmf, hmf_proc, (void *)data, NULL);
     DeleteEnhMetaFile(hmf);
     free(data->patterns);
     data->patterns = NULL;
+    data->path = FALSE;
+    data->break_extra = 0;
+    data->break_rem = 0;
+    data->saved_dc_top = 0;
     return ret;
 }
 
@@ -1748,6 +3146,9 @@ HANDLE WINAPI OpenPrintProcessor(WCHAR *port, PRINTPROCESSOROPENDATA *open_data)
         return NULL;
     }
     data->pdev->dev.hdc = hdc;
+    data->pdev->dev.next = &data->font_dev;
+    data->font_dev.funcs = &font_funcs;
+    data->font_dev.hdc = hdc;
     return (HANDLE)data;
 }
 
@@ -1827,6 +3228,30 @@ BOOL WINAPI PrintDocumentOnPrintProcessor(HANDLE pp, WCHAR *doc_name)
 
         switch (record.ulID)
         {
+        case EMRI_DEVMODE:
+        {
+            DEVMODEW *devmode = NULL;
+
+            if (record.cjSize)
+            {
+                devmode = malloc(record.cjSize);
+                if (!devmode)
+                    goto cleanup;
+                ret = ReadPrinter(spool_data, devmode, record.cjSize, &r);
+                if (ret && r != record.cjSize)
+                {
+                    SetLastError(ERROR_INVALID_DATA);
+                    ret = FALSE;
+                }
+            }
+
+            if (ret)
+                ret = PSDRV_ResetDC(&data->pdev->dev, devmode);
+            free(devmode);
+            if (!ret)
+                goto cleanup;
+            break;
+        }
         case EMRI_METAFILE_DATA:
             pos.QuadPart = record.cjSize;
             ret = SeekPrinter(spool_data, pos, NULL, FILE_CURRENT, FALSE);
@@ -1841,7 +3266,7 @@ BOOL WINAPI PrintDocumentOnPrintProcessor(HANDLE pp, WCHAR *doc_name)
             {
                 cur.QuadPart += record.cjSize;
                 ret = ReadPrinter(spool_data, &pos, sizeof(pos), &r);
-                if (r != sizeof(pos))
+                if (ret && r != sizeof(pos))
                 {
                     SetLastError(ERROR_INVALID_DATA);
                     ret = FALSE;
@@ -1898,6 +3323,7 @@ BOOL WINAPI ClosePrintProcessor(HANDLE pp)
     DeleteDC(data->pdev->dev.hdc);
     HeapFree(GetProcessHeap(), 0, data->pdev->Devmode);
     HeapFree(GetProcessHeap(), 0, data->pdev);
+    free(data->saved_dc);
 
     memset(data, 0, sizeof(*data));
     LocalFree(data);

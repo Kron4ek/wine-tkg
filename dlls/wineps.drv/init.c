@@ -92,7 +92,7 @@ static const PSDRV_DEVMODE DefaultDevmode =
 HINSTANCE PSDRV_hInstance = 0;
 HANDLE PSDRV_Heap = 0;
 
-static HFONT PSDRV_DefaultFont = 0;
+HFONT PSDRV_DefaultFont = 0;
 static const LOGFONTA DefaultLogFont = {
     100, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET, 0, 0,
     DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, ""
@@ -436,7 +436,7 @@ static BOOL CDECL PSDRV_DeleteDC( PHYSDEV dev )
 /**********************************************************************
  *	     ResetDC   (WINEPS.@)
  */
-static BOOL CDECL PSDRV_ResetDC( PHYSDEV dev, const DEVMODEW *lpInitData )
+BOOL CDECL PSDRV_ResetDC( PHYSDEV dev, const DEVMODEW *lpInitData )
 {
     PSDRV_PDEVICE *physDev = get_psdrv_dev( dev );
 

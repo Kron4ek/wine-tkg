@@ -56,6 +56,7 @@ struct buffer
         unsigned int height;
         int pitch;
         unsigned int locks;
+        MF2DBuffer_LockFlags lock_flags;
         p_copy_image_func copy_image;
     } _2d;
     struct
@@ -663,12 +664,14 @@ static HRESULT d3d9_surface_buffer_lock(struct buffer *buffer, MF2DBuffer_LockFl
     if (buffer->_2d.linear_buffer)
         hr = MF_E_UNEXPECTED;
     else if (!buffer->_2d.locks)
-    {
         hr = IDirect3DSurface9_LockRect(buffer->d3d9_surface.surface, &buffer->d3d9_surface.rect, NULL, 0);
-    }
+    else if (buffer->_2d.lock_flags == MF2DBuffer_LockFlags_Write && flags != MF2DBuffer_LockFlags_Write)
+        hr = HRESULT_FROM_WIN32(ERROR_WAS_LOCKED);
 
     if (SUCCEEDED(hr))
     {
+        if (!buffer->_2d.locks)
+            buffer->_2d.lock_flags = flags;
         buffer->_2d.locks++;
         *scanline0 = buffer->d3d9_surface.rect.pBits;
         *pitch = buffer->d3d9_surface.rect.Pitch;
@@ -715,6 +718,7 @@ static HRESULT WINAPI d3d9_surface_buffer_Unlock2D(IMF2DBuffer2 *iface)
         {
             IDirect3DSurface9_UnlockRect(buffer->d3d9_surface.surface);
             memset(&buffer->d3d9_surface.rect, 0, sizeof(buffer->d3d9_surface.rect));
+            buffer->_2d.lock_flags = 0;
         }
     }
     else
@@ -901,7 +905,7 @@ static HRESULT dxgi_surface_buffer_create_readback_texture(struct buffer *buffer
     return hr;
 }
 
-static HRESULT dxgi_surface_buffer_map(struct buffer *buffer)
+static HRESULT dxgi_surface_buffer_map(struct buffer *buffer, MF2DBuffer_LockFlags flags)
 {
     ID3D11DeviceContext *immediate_context;
     ID3D11Device *device;
@@ -912,8 +916,12 @@ static HRESULT dxgi_surface_buffer_map(struct buffer *buffer)
 
     ID3D11Texture2D_GetDevice(buffer->dxgi_surface.texture, &device);
     ID3D11Device_GetImmediateContext(device, &immediate_context);
-    ID3D11DeviceContext_CopySubresourceRegion(immediate_context, (ID3D11Resource *)buffer->dxgi_surface.rb_texture,
-            0, 0, 0, 0, (ID3D11Resource *)buffer->dxgi_surface.texture, buffer->dxgi_surface.sub_resource_idx, NULL);
+
+    if (flags == MF2DBuffer_LockFlags_Read || flags == MF2DBuffer_LockFlags_ReadWrite)
+    {
+        ID3D11DeviceContext_CopySubresourceRegion(immediate_context, (ID3D11Resource *)buffer->dxgi_surface.rb_texture,
+                0, 0, 0, 0, (ID3D11Resource *)buffer->dxgi_surface.texture, buffer->dxgi_surface.sub_resource_idx, NULL);
+    }
 
     memset(&buffer->dxgi_surface.map_desc, 0, sizeof(buffer->dxgi_surface.map_desc));
     if (FAILED(hr = ID3D11DeviceContext_Map(immediate_context, (ID3D11Resource *)buffer->dxgi_surface.rb_texture,
@@ -928,7 +936,7 @@ static HRESULT dxgi_surface_buffer_map(struct buffer *buffer)
     return hr;
 }
 
-static void dxgi_surface_buffer_unmap(struct buffer *buffer)
+static void dxgi_surface_buffer_unmap(struct buffer *buffer, MF2DBuffer_LockFlags flags)
 {
     ID3D11DeviceContext *immediate_context;
     ID3D11Device *device;
@@ -938,8 +946,11 @@ static void dxgi_surface_buffer_unmap(struct buffer *buffer)
     ID3D11DeviceContext_Unmap(immediate_context, (ID3D11Resource *)buffer->dxgi_surface.rb_texture, 0);
     memset(&buffer->dxgi_surface.map_desc, 0, sizeof(buffer->dxgi_surface.map_desc));
 
-    ID3D11DeviceContext_CopySubresourceRegion(immediate_context, (ID3D11Resource *)buffer->dxgi_surface.texture,
-            buffer->dxgi_surface.sub_resource_idx, 0, 0, 0, (ID3D11Resource *)buffer->dxgi_surface.rb_texture, 0, NULL);
+    if (flags == MF2DBuffer_LockFlags_Write || flags == MF2DBuffer_LockFlags_ReadWrite)
+    {
+        ID3D11DeviceContext_CopySubresourceRegion(immediate_context, (ID3D11Resource *)buffer->dxgi_surface.texture,
+                buffer->dxgi_surface.sub_resource_idx, 0, 0, 0, (ID3D11Resource *)buffer->dxgi_surface.rb_texture, 0, NULL);
+    }
 
     ID3D11DeviceContext_Release(immediate_context);
     ID3D11Device_Release(device);
@@ -967,7 +978,7 @@ static HRESULT WINAPI dxgi_surface_buffer_Lock(IMFMediaBuffer *iface, BYTE **dat
 
         if (SUCCEEDED(hr))
         {
-            hr = dxgi_surface_buffer_map(buffer);
+            hr = dxgi_surface_buffer_map(buffer, MF2DBuffer_LockFlags_ReadWrite);
             if (SUCCEEDED(hr))
             {
                 copy_image(buffer, buffer->_2d.linear_buffer, buffer->_2d.width, buffer->dxgi_surface.map_desc.pData,
@@ -1006,7 +1017,7 @@ static HRESULT WINAPI dxgi_surface_buffer_Unlock(IMFMediaBuffer *iface)
     {
         copy_image(buffer, buffer->dxgi_surface.map_desc.pData, buffer->dxgi_surface.map_desc.RowPitch,
                 buffer->_2d.linear_buffer, buffer->_2d.width, buffer->_2d.width, buffer->_2d.height);
-        dxgi_surface_buffer_unmap(buffer);
+        dxgi_surface_buffer_unmap(buffer, MF2DBuffer_LockFlags_ReadWrite);
 
         free(buffer->_2d.linear_buffer);
         buffer->_2d.linear_buffer = NULL;
@@ -1035,17 +1046,24 @@ static HRESULT dxgi_surface_buffer_lock(struct buffer *buffer, MF2DBuffer_LockFl
 
     if (buffer->_2d.linear_buffer)
         hr = MF_E_UNEXPECTED;
-    else if (!buffer->_2d.locks++)
-        hr = dxgi_surface_buffer_map(buffer);
+    else if (!buffer->_2d.locks)
+        hr = dxgi_surface_buffer_map(buffer, flags);
+    else if (buffer->_2d.lock_flags == MF2DBuffer_LockFlags_Write && flags != MF2DBuffer_LockFlags_Write)
+        hr = HRESULT_FROM_WIN32(ERROR_WAS_LOCKED);
 
     if (SUCCEEDED(hr))
     {
+        if (!buffer->_2d.locks)
+            buffer->_2d.lock_flags = flags;
+        else
+            buffer->_2d.lock_flags |= flags;
+        buffer->_2d.locks++;
         *scanline0 = buffer->dxgi_surface.map_desc.pData;
         *pitch = buffer->dxgi_surface.map_desc.RowPitch;
         if (buffer_start)
             *buffer_start = *scanline0;
         if (buffer_length)
-            *buffer_length = buffer->dxgi_surface.map_desc.RowPitch * buffer->_2d.height;
+            *buffer_length = buffer->dxgi_surface.map_desc.DepthPitch;
     }
 
     return hr;
@@ -1082,7 +1100,10 @@ static HRESULT WINAPI dxgi_surface_buffer_Unlock2D(IMF2DBuffer2 *iface)
     if (buffer->_2d.locks)
     {
         if (!--buffer->_2d.locks)
-            dxgi_surface_buffer_unmap(buffer);
+        {
+            dxgi_surface_buffer_unmap(buffer, buffer->_2d.lock_flags);
+            buffer->_2d.lock_flags = 0;
+        }
     }
     else
         hr = HRESULT_FROM_WIN32(ERROR_WAS_UNLOCKED);

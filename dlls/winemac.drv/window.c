@@ -216,7 +216,7 @@ static void macdrv_mac_to_window_rect(struct macdrv_win_data *data, RECT *rect)
  * Alter a window frame rectangle to fit within a) Cocoa's documented
  * limits, and b) sane sizes, like twice the desktop rect.
  */
-static void constrain_window_frame(CGRect* frame)
+static void constrain_window_frame(CGPoint* origin, CGSize* size)
 {
     CGRect desktop_rect = macdrv_get_desktop_rect();
     int max_width, max_height;
@@ -224,12 +224,18 @@ static void constrain_window_frame(CGRect* frame)
     max_width = min(32000, 2 * CGRectGetWidth(desktop_rect));
     max_height = min(32000, 2 * CGRectGetHeight(desktop_rect));
 
-    if (frame->origin.x < -16000) frame->origin.x = -16000;
-    if (frame->origin.y < -16000) frame->origin.y = -16000;
-    if (frame->origin.x > 16000) frame->origin.x = 16000;
-    if (frame->origin.y > 16000) frame->origin.y = 16000;
-    if (frame->size.width > max_width) frame->size.width = max_width;
-    if (frame->size.height > max_height) frame->size.height = max_height;
+    if (origin)
+    {
+        if (origin->x < -16000) origin->x = -16000;
+        if (origin->y < -16000) origin->y = -16000;
+        if (origin->x > 16000) origin->x = 16000;
+        if (origin->y > 16000) origin->y = 16000;
+    }
+    if (size)
+    {
+        if (size->width > max_width) size->width = max_width;
+        if (size->height > max_height) size->height = max_height;
+    }
 }
 
 
@@ -635,6 +641,8 @@ static void sync_window_min_max_info(HWND hwnd)
             max_size = CGSizeMake(max_rect.right - max_rect.left, max_rect.bottom - max_rect.top);
         }
 
+        constrain_window_frame(NULL, &max_size);
+
         TRACE("min_size (%g,%g) max_size (%g,%g)\n", min_size.width, min_size.height, max_size.width, max_size.height);
         macdrv_set_window_min_max_sizes(data->cocoa_window, min_size, max_size);
     }
@@ -698,7 +706,7 @@ static void create_cocoa_window(struct macdrv_win_data *data)
     get_cocoa_window_features(data, style, ex_style, &wf, &data->window_rect, &data->client_rect);
 
     frame = cgrect_from_rect(data->whole_rect);
-    constrain_window_frame(&frame);
+    constrain_window_frame(&frame.origin, &frame.size);
     if (frame.size.width < 1 || frame.size.height < 1)
         frame.size.width = frame.size.height = 1;
 
@@ -1139,7 +1147,7 @@ static void sync_window_position(struct macdrv_win_data *data, UINT swp_flags, c
     {
         if (data->minimized) return;
 
-        constrain_window_frame(&frame);
+        constrain_window_frame(&frame.origin, &frame.size);
         if (frame.size.width < 1 || frame.size.height < 1)
             frame.size.width = frame.size.height = 1;
 
@@ -2029,10 +2037,8 @@ LRESULT macdrv_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 static inline RECT get_surface_rect(const RECT *visible_rect)
 {
-    RECT rect;
-    RECT desktop_rect = rect_from_cgrect(macdrv_get_desktop_rect());
+    RECT rect = *visible_rect;
 
-    intersect_rect(&rect, visible_rect, &desktop_rect);
     OffsetRect(&rect, -visible_rect->left, -visible_rect->top);
     rect.left &= ~127;
     rect.top  &= ~127;

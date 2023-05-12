@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Mon Apr 17 02:43:02 PM UTC 2023 :
+# Last wine-tkg-staging-fsync-git configuration - Fri May 12 04:01:59 AM UTC 2023 :
 
 Local cfg files used
 
-Wine (plain) version: 8.6.r0.g4d610717bbc
-Using wine-staging patchset (version 8.6.1.r3.g4eb322dc)
+Wine (plain) version: 8.7.r0.gc732d245899
+Using wine-staging patchset (version 8.7.r0.g00ec1171)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -11,6 +11,7 @@ Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 Done applying backports hotfixes (if any) - list available in prepare.log
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
+steam.patch -- ( Applied steam crossover hack )
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
 Staging overrides, if any:
@@ -26,7 +27,6 @@ LAA-unix-staging.patch -- ( Applied large address aware override support (legacy
 proton-tkg-staging.patch -- ( Using Steam-specific Proton-tkg patches (staging) 2/3 )
 proton-tkg-additions.patch -- ( Using additional Proton-tkg patches )
 proton-cpu-topology-overrides.patch -- ( Enable Proton's CPU topology override support )
-proton-vr.patch -- ( Enable Proton vr-related wined3d additions )
 msvcrt_nativebuiltin_mainline.patch -- ( Enforce msvcrt Dlls to native then builtin (from Proton) )
 proton-win10-default.patch -- ( Enforce win10 as default wine version )
 proton_battleye.patch -- ( Add support for Proton's Battleye runtime )

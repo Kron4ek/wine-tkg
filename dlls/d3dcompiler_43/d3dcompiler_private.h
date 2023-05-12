@@ -38,6 +38,8 @@
 #include <assert.h>
 #include <stdint.h>
 
+#include <vkd3d_shader.h>
+
 /*
  * This doesn't belong here, but for some functions it is possible to return that value,
  * see http://msdn.microsoft.com/en-us/library/bb205278%28v=VS.85%29.aspx
@@ -532,6 +534,8 @@ struct bwriter_shader *SlAssembleShader(const char *text, char **messages) DECLS
 HRESULT shader_write_bytecode(const struct bwriter_shader *shader, uint32_t **result, uint32_t *size) DECLSPEC_HIDDEN;
 void SlDeleteShader(struct bwriter_shader *shader) DECLSPEC_HIDDEN;
 
+#define DXBC_HEADER_SIZE (8 * sizeof(uint32_t))
+
 #define MAKE_TAG(ch0, ch1, ch2, ch3) \
     ((DWORD)(ch0) | ((DWORD)(ch1) << 8) | \
     ((DWORD)(ch2) << 16) | ((DWORD)(ch3) << 24 ))
@@ -548,31 +552,5 @@ void SlDeleteShader(struct bwriter_shader *shader) DECLSPEC_HIDDEN;
 #define TAG_STAT MAKE_TAG('S', 'T', 'A', 'T')
 #define TAG_XNAP MAKE_TAG('X', 'N', 'A', 'P')
 #define TAG_XNAS MAKE_TAG('X', 'N', 'A', 'S')
-
-struct dxbc_section
-{
-    DWORD tag;
-    const char *data;
-    DWORD data_size;
-};
-
-struct dxbc
-{
-    UINT size;
-    UINT count;
-    struct dxbc_section *sections;
-};
-
-HRESULT dxbc_write_blob(struct dxbc *dxbc, ID3DBlob **blob) DECLSPEC_HIDDEN;
-void dxbc_destroy(struct dxbc *dxbc) DECLSPEC_HIDDEN;
-HRESULT dxbc_parse(const char *data, SIZE_T data_size, struct dxbc *dxbc) DECLSPEC_HIDDEN;
-HRESULT dxbc_add_section(struct dxbc *dxbc, DWORD tag, const char *data, size_t data_size) DECLSPEC_HIDDEN;
-HRESULT dxbc_init(struct dxbc *dxbc, unsigned int size) DECLSPEC_HIDDEN;
-
-static inline void write_u32(char **ptr, uint32_t u32)
-{
-    memcpy(*ptr, &u32, sizeof(u32));
-    *ptr += sizeof(u32);
-}
 
 #endif /* __WINE_D3DCOMPILER_PRIVATE_H */

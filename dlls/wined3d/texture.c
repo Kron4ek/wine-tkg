@@ -4787,140 +4787,6 @@ void wined3d_texture_update_sub_resource(struct wined3d_texture *texture, unsign
     wined3d_texture_invalidate_location(texture, sub_resource_idx, ~WINED3D_LOCATION_TEXTURE_RGB);
 }
 
-void CDECL wined3d_access_gl_texture(struct wined3d_texture *texture,
-        wined3d_gl_texture_callback callback, struct wined3d_texture *depth_texture,
-        const void *data, unsigned int size)
-{
-    struct wined3d_device *device = texture->resource.device;
-
-    TRACE("texture %p, depth_texture %p, callback %p, data %p, size %u.\n", texture, depth_texture, callback, data, size);
-
-    wined3d_cs_emit_gl_texture_callback(device->cs, texture, callback, depth_texture, data, size);
-}
-
-static const struct wined3d_gl_info *wined3d_prepare_vr_gl_context(struct wined3d_device *device)
-{
-    const struct wined3d_adapter *adapter = device->adapter;
-    const struct wined3d_gl_info *gl_info = &adapter->gl_info;
-    struct wined3d_vr_gl_context *ctx = &device->vr_context;
-    PIXELFORMATDESCRIPTOR pfd;
-    int pixel_format;
-    HGLRC share_ctx;
-
-    if (ctx->gl_info)
-        return gl_info;
-
-    TRACE("Creating GL context.\n");
-
-    if (!gl_info->p_wglCreateContextAttribsARB)
-    {
-        ERR("wglCreateContextAttribsARB is not supported.\n");
-        return NULL;
-    }
-
-    if (!gl_info->supported[ARB_SYNC])
-    {
-        FIXME("ARB_sync is not supported.\n");
-        return NULL;
-    }
-
-    ctx->window = CreateWindowA(WINED3D_OPENGL_WINDOW_CLASS_NAME, "WineD3D VR window",
-            WS_OVERLAPPEDWINDOW, 10, 10, 10, 10, NULL, NULL, NULL, NULL);
-    if (!ctx->window)
-    {
-        ERR("Failed to create a window.\n");
-        return NULL;
-    }
-
-    ctx->dc = GetDC(ctx->window);
-    if (!ctx->dc)
-    {
-        ERR("Failed to get a DC.\n");
-        goto fail;
-    }
-
-    memset(&pfd, 0, sizeof(pfd));
-    pfd.nSize = sizeof(pfd);
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_DRAW_TO_WINDOW;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 32;
-    pfd.iLayerType = PFD_MAIN_PLANE;
-
-    if (!(pixel_format = ChoosePixelFormat(ctx->dc, &pfd)))
-    {
-        ERR("Failed to find a suitable pixel format.\n");
-        goto fail;
-    }
-    DescribePixelFormat(ctx->dc, pixel_format, sizeof(pfd), &pfd);
-    SetPixelFormat(ctx->dc, pixel_format, &pfd);
-
-    share_ctx = device->context_count ? wined3d_context_gl(device->contexts[0])->gl_ctx : NULL;
-    if (!(ctx->gl_ctx = context_create_wgl_attribs(gl_info, ctx->dc, share_ctx)))
-    {
-        WARN("Failed to create GL context for VR.\n");
-        goto fail;
-    }
-
-    if (!wglMakeCurrent(ctx->dc, ctx->gl_ctx))
-    {
-        ERR("Failed to make GL context current.\n");
-        goto fail;
-    }
-
-    checkGLcall("create context");
-
-    ctx->gl_info = gl_info;
-    return gl_info;
-
-fail:
-    if (ctx->gl_ctx)
-        wglDeleteContext(ctx->gl_ctx);
-    ctx->gl_ctx = NULL;
-    if (ctx->dc)
-        ReleaseDC(ctx->window, ctx->dc);
-    ctx->dc = NULL;
-    if (ctx->window)
-        DestroyWindow(ctx->window);
-    ctx->window = NULL;
-    return NULL;
-}
-
-void wined3d_destroy_gl_vr_context(struct wined3d_vr_gl_context *ctx)
-{
-    if (!ctx->gl_info)
-        return;
-
-    TRACE("Destroying GL context.\n");
-
-    wglMakeCurrent(NULL, NULL);
-    wglDeleteContext(ctx->gl_ctx);
-    ReleaseDC(ctx->window, ctx->dc);
-    DestroyWindow(ctx->window);
-}
-
-unsigned int CDECL wined3d_get_gl_texture(struct wined3d_texture *texture)
-{
-    struct wined3d_device *device = texture->resource.device;
-    const struct wined3d_gl_info *gl_info;
-    struct wined3d_texture_gl *gl_texture;
-    GLsync fence;
-
-    TRACE("texture %p.\n", texture);
-
-    if (!(gl_info = wined3d_prepare_vr_gl_context(device)))
-        return 0;
-
-    fence = wined3d_cs_synchronize(device->cs, texture);
-    GL_EXTCALL(glWaitSync(fence, 0, GL_TIMEOUT_IGNORED));
-    GL_EXTCALL(glDeleteSync(fence));
-
-    checkGLcall("synchronize CS");
-
-    gl_texture = wined3d_texture_gl(texture);
-    return gl_texture->texture_rgb.name;
-}
-
 static void wined3d_texture_no3d_upload_data(struct wined3d_context *context,
         const struct wined3d_const_bo_address *src_bo_addr, const struct wined3d_format *src_format,
         const struct wined3d_box *src_box, unsigned int src_row_pitch, unsigned int src_slice_pitch,
@@ -5065,7 +4931,20 @@ const VkDescriptorImageInfo *wined3d_texture_vk_get_default_image_info(struct wi
     TRACE("Created image view 0x%s.\n", wine_dbgstr_longlong(texture_vk->default_image_info.imageView));
 
     texture_vk->default_image_info.sampler = VK_NULL_HANDLE;
-    texture_vk->default_image_info.imageLayout = texture_vk->layout;
+
+    /* The default image view is used for SRVs, UAVs and RTVs when the d3d view encompasses the entire
+     * resource. Any UAV capable resource will always use VK_IMAGE_LAYOUT_GENERAL, so we can use the
+     * same image info for SRVs and UAVs. For render targets wined3d_rendertarget_view_vk_get_image_view
+     * only cares about the VkImageView, not entire image info. So using SHADER_READ_ONLY_OPTIMAL works,
+     * but relies on what the callers of the function do and don't do with the descriptor we return.
+     *
+     * Note that VkWriteDescriptorSet for SRV/UAV use takes a VkDescriptorImageInfo *, so we need a
+     * place to store the VkDescriptorImageInfo. So returning onlky a VkImageView from this function
+     * would bring its own problems. */
+    if (texture_vk->layout == VK_IMAGE_LAYOUT_GENERAL)
+        texture_vk->default_image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    else
+        texture_vk->default_image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     return &texture_vk->default_image_info;
 }
@@ -5670,26 +5549,18 @@ BOOL wined3d_texture_vk_prepare_texture(struct wined3d_texture_vk *texture_vk,
     if (resource->bind_flags & WINED3D_BIND_UNORDERED_ACCESS)
         vk_usage |= VK_IMAGE_USAGE_STORAGE_BIT;
 
-    texture_vk->layout = VK_IMAGE_LAYOUT_GENERAL;
-    if (wined3d_popcount(resource->bind_flags) == 1)
+    if (resource->bind_flags & WINED3D_BIND_UNORDERED_ACCESS)
+        texture_vk->layout = VK_IMAGE_LAYOUT_GENERAL;
+    else if (resource->bind_flags & WINED3D_BIND_RENDER_TARGET)
+        texture_vk->layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    else if (resource->bind_flags & WINED3D_BIND_DEPTH_STENCIL)
+        texture_vk->layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    else if (resource->bind_flags & WINED3D_BIND_SHADER_RESOURCE)
+        texture_vk->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    else
     {
-        switch (resource->bind_flags)
-        {
-            case WINED3D_BIND_RENDER_TARGET:
-                texture_vk->layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-                break;
-
-            case WINED3D_BIND_DEPTH_STENCIL:
-                texture_vk->layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                break;
-
-            case WINED3D_BIND_SHADER_RESOURCE:
-                texture_vk->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                break;
-
-            default:
-                break;
-        }
+        FIXME("unexpected bind flags %s, using VK_IMAGE_LAYOUT_GENERAL\n", wined3d_debug_bind_flags(resource->bind_flags));
+        texture_vk->layout = VK_IMAGE_LAYOUT_GENERAL;
     }
 
     if (!wined3d_context_vk_create_image(context_vk, vk_image_type, vk_usage, format_vk->vk_format,
@@ -5698,6 +5569,10 @@ BOOL wined3d_texture_vk_prepare_texture(struct wined3d_texture_vk *texture_vk,
     {
         return FALSE;
     }
+
+    /* We can't use a zero src access mask without synchronization2. Set the last-used bind mask to something
+     * non-zero to avoid this. */
+    texture_vk->bind_mask = resource->bind_flags;
 
     vk_range.aspectMask = vk_aspect_mask_from_format(&format_vk->f);
     vk_range.baseMipLevel = 0;
@@ -5865,15 +5740,48 @@ HRESULT wined3d_texture_vk_init(struct wined3d_texture_vk *texture_vk, struct wi
             flags, device, parent, parent_ops, &texture_vk[1], &wined3d_texture_vk_ops);
 }
 
+enum VkImageLayout wined3d_layout_from_bind_mask(const struct wined3d_texture_vk *texture_vk, const uint32_t bind_mask)
+{
+    assert(wined3d_popcount(bind_mask) == 1);
+
+    /* We want to avoid switching between LAYOUT_GENERAL and other layouts. In Radeon GPUs (and presumably
+     * others), this will trigger decompressing and recompressing the texture. We also hardcode the layout
+     * into views when they are created. */
+    if (texture_vk->layout == VK_IMAGE_LAYOUT_GENERAL)
+        return VK_IMAGE_LAYOUT_GENERAL;
+
+    switch (bind_mask)
+    {
+        case WINED3D_BIND_RENDER_TARGET:
+            return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        case WINED3D_BIND_DEPTH_STENCIL:
+            return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        case WINED3D_BIND_SHADER_RESOURCE:
+            return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        default:
+            ERR("Unexpected bind mask %s.\n", wined3d_debug_bind_flags(bind_mask));
+            return VK_IMAGE_LAYOUT_GENERAL;
+    }
+}
+
 void wined3d_texture_vk_barrier(struct wined3d_texture_vk *texture_vk,
         struct wined3d_context_vk *context_vk, uint32_t bind_mask)
 {
+    enum VkImageLayout new_layout;
     uint32_t src_bind_mask = 0;
 
     TRACE("texture_vk %p, context_vk %p, bind_mask %s.\n",
             texture_vk, context_vk, wined3d_debug_bind_flags(bind_mask));
 
-    if (bind_mask & ~WINED3D_READ_ONLY_BIND_MASK)
+    new_layout = wined3d_layout_from_bind_mask(texture_vk, bind_mask);
+
+    /* A layout transition is potentially a read-write operation, so even if we
+     * prepare the texture to e.g. read only shader resource mode, we have to wait
+     * for past operations to finish. */
+    if (bind_mask & ~WINED3D_READ_ONLY_BIND_MASK || new_layout != texture_vk->layout)
     {
         src_bind_mask = texture_vk->bind_mask & WINED3D_READ_ONLY_BIND_MASK;
         if (!src_bind_mask)
@@ -5891,8 +5799,9 @@ void wined3d_texture_vk_barrier(struct wined3d_texture_vk *texture_vk,
     {
         VkImageSubresourceRange vk_range;
 
-        TRACE("    %s -> %s.\n",
-                wined3d_debug_bind_flags(src_bind_mask), wined3d_debug_bind_flags(bind_mask));
+        TRACE("    %s(%x) -> %s(%x).\n",
+                wined3d_debug_bind_flags(src_bind_mask), texture_vk->layout,
+                wined3d_debug_bind_flags(bind_mask), new_layout);
 
         vk_range.aspectMask = vk_aspect_mask_from_format(texture_vk->t.resource.format);
         vk_range.baseMipLevel = 0;
@@ -5904,8 +5813,39 @@ void wined3d_texture_vk_barrier(struct wined3d_texture_vk *texture_vk,
                 vk_pipeline_stage_mask_from_bind_flags(src_bind_mask),
                 vk_pipeline_stage_mask_from_bind_flags(bind_mask),
                 vk_access_mask_from_bind_flags(src_bind_mask), vk_access_mask_from_bind_flags(bind_mask),
-                texture_vk->layout, texture_vk->layout, texture_vk->image.vk_image, &vk_range);
+                texture_vk->layout, new_layout, texture_vk->image.vk_image, &vk_range);
+
+        texture_vk->layout = new_layout;
     }
+}
+
+/* This is called when a texture is used as render target and shader resource
+ * or depth stencil and shader resource at the same time. This can either be
+ * read-only simultaneos use as depth stencil, but also for rendering to one
+ * subresource while reading from another. Without tracking of barriers and
+ * layouts per subresource VK_IMAGE_LAYOUT_GENERAL is the only thing we can do. */
+void wined3d_texture_vk_make_generic(struct wined3d_texture_vk *texture_vk,
+        struct wined3d_context_vk *context_vk)
+{
+    VkImageSubresourceRange vk_range;
+
+    if (texture_vk->layout == VK_IMAGE_LAYOUT_GENERAL)
+        return;
+
+    vk_range.aspectMask = vk_aspect_mask_from_format(texture_vk->t.resource.format);
+    vk_range.baseMipLevel = 0;
+    vk_range.levelCount = VK_REMAINING_MIP_LEVELS;
+    vk_range.baseArrayLayer = 0;
+    vk_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+    wined3d_context_vk_image_barrier(context_vk, wined3d_context_vk_get_command_buffer(context_vk),
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            0, 0,
+            texture_vk->layout, VK_IMAGE_LAYOUT_GENERAL, texture_vk->image.vk_image, &vk_range);
+
+    texture_vk->layout = VK_IMAGE_LAYOUT_GENERAL;
+    texture_vk->default_image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 }
 
 static void ffp_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_context *context)

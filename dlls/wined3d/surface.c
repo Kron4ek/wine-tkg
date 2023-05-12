@@ -209,7 +209,7 @@ static void convert_yuy2_r5g6b5(const BYTE *src, BYTE *dst,
 }
 
 static void convert_x8r8g8b8_l8(const BYTE *src, BYTE *dst,
-        DWORD pitch_in, DWORD pitch_out, unsigned int w, unsigned int h)
+        unsigned int pitch_in, unsigned int pitch_out, unsigned int w, unsigned int h)
 {
     unsigned int x, y;
 

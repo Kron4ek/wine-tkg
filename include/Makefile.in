@@ -19,6 +19,7 @@ SOURCES = \
 	appcompatapi.h \
 	appmgmt.h \
 	appmodel.h \
+	appnotify.h \
 	asferr.h \
 	asptlb.idl \
 	asyncinfo.idl \
@@ -819,6 +820,7 @@ SOURCES = \
 	windows.gaming.ui.idl \
 	windows.globalization.idl \
 	windows.graphics.capture.idl \
+	windows.graphics.capture.interop.idl \
 	windows.graphics.directx.direct3d11.idl \
 	windows.graphics.directx.idl \
 	windows.graphics.effects.idl \
@@ -890,7 +892,6 @@ SOURCES = \
 	wine/winbase16.h \
 	wine/windef16.h \
 	wine/wine_common_ver.rc \
-	wine/wined3d-interop.idl \
 	wine/wined3d.h \
 	wine/winedxgi.idl \
 	wine/wingdi16.h \

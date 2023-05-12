@@ -347,16 +347,20 @@ static const struct wined3d_parent_ops d3d9_surface_wined3d_parent_ops =
     surface_wined3d_object_destroyed,
 };
 
-void surface_init(struct d3d9_surface *surface, struct wined3d_texture *wined3d_texture,
-        unsigned int sub_resource_idx, const struct wined3d_parent_ops **parent_ops)
+struct d3d9_surface *d3d9_surface_create(struct wined3d_texture *wined3d_texture,
+        unsigned int sub_resource_idx, IUnknown *container)
 {
     IDirect3DBaseTexture9 *texture;
+    struct d3d9_surface *surface;
+
+    if (!(surface = heap_alloc_zero(sizeof(*surface))))
+        return NULL;
 
     surface->IDirect3DSurface9_iface.lpVtbl = &d3d9_surface_vtbl;
     d3d9_resource_init(&surface->resource);
     surface->resource.refcount = 0;
     list_init(&surface->rtv_entry);
-    surface->container = wined3d_texture_get_parent(wined3d_texture);
+    surface->container = container;
     surface->wined3d_texture = wined3d_texture;
     surface->sub_resource_idx = sub_resource_idx;
 
@@ -367,7 +371,11 @@ void surface_init(struct d3d9_surface *surface, struct wined3d_texture *wined3d_
         IDirect3DBaseTexture9_Release(texture);
     }
 
-    *parent_ops = &d3d9_surface_wined3d_parent_ops;
+    wined3d_texture_set_sub_resource_parent(wined3d_texture, sub_resource_idx,
+            surface, &d3d9_surface_wined3d_parent_ops);
+
+    TRACE("Created surface %p.\n", surface);
+    return surface;
 }
 
 static void STDMETHODCALLTYPE view_wined3d_object_destroyed(void *parent)

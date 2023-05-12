@@ -150,6 +150,17 @@ static void test_get_blob_part(void)
     ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
     ok(blob2 == blob, "D3DGetBlobPart failed got %p, expected %p\n", blob, blob2);
 
+    hr = D3DGetBlobPart(test_blob_part, 7 * sizeof(DWORD), D3D_BLOB_INPUT_SIGNATURE_BLOB, 0, &blob);
+    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+    ok(blob2 == blob, "D3DGetBlobPart failed got %p, expected %p\n", blob, blob2);
+
+    hr = D3DGetBlobPart(test_blob_part, 8 * sizeof(DWORD), D3D_BLOB_INPUT_SIGNATURE_BLOB, 0, &blob);
+#if D3D_COMPILER_VERSION >= 46
+    todo_wine
+#endif
+    ok(hr == expected, "Got unexpected hr %#lx.\n", hr);
+    ok(blob2 == blob, "D3DGetBlobPart failed got %p, expected %p\n", blob, blob2);
+
     hr = D3DGetBlobPart(test_blob_part, test_blob_part[6], D3D_BLOB_INPUT_SIGNATURE_BLOB, 0, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
 
@@ -360,8 +371,14 @@ static void test_get_blob_part(void)
     hr = D3DStripShader(NULL, test_blob_part[6], 0, &blob);
     ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
 
-    hr = D3DStripShader(test_blob_part, 2, 0, &blob);
+    hr = D3DStripShader(test_blob_part, 7 * sizeof(DWORD), 0, &blob);
     ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+
+    hr = D3DStripShader(test_blob_part, 8 * sizeof(DWORD), 0, &blob);
+#if D3D_COMPILER_VERSION >= 46
+    todo_wine
+#endif
+    ok(hr == expected, "Got unexpected hr %#lx.\n", hr);
 
     hr = D3DStripShader(test_blob_part, test_blob_part[6], 0, NULL);
     ok(hr == E_FAIL, "Got unexpected hr %#lx.\n", hr);
@@ -747,7 +764,7 @@ static void test_get_blob_part2(void)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
     size = ID3D10Blob_GetBufferSize(blob);
-    ok(size == 4735, "Got unexpected size %Iu.\n", size);
+    todo_wine ok(size == 4735, "Got unexpected size %Iu.\n", size);
 
     dword = ((DWORD*)ID3D10Blob_GetBufferPointer(blob));
     ok(TAG_DXBC == *dword, "DXBC got %#lx, expected %#lx.\n", *dword, TAG_DXBC);

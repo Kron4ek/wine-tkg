@@ -828,13 +828,6 @@ static void imc_post_message( struct imc *imc, TRANSMSG *message )
     PostMessageW( target, message->message, message->wParam, message->lParam );
 }
 
-static void imc_send_message( struct imc *imc, TRANSMSG *message )
-{
-    HWND target;
-    if (!(target = GetFocus()) && !(target = imc->IMC.hWnd)) return;
-    SendMessageW( target, message->message, message->wParam, message->lParam );
-}
-
 /***********************************************************************
  *		ImmSetActiveContext (IMM32.@)
  */
@@ -852,7 +845,7 @@ BOOL WINAPI ImmSetActiveContext(HWND hwnd, HIMC himc, BOOL activate)
 
     if (data)
     {
-        data->IMC.hWnd = activate ? hwnd : NULL;
+        if (activate) data->IMC.hWnd = hwnd;
         if ((ime = imc_select_ime( data ))) ime->pImeSetActiveContext( himc, activate );
     }
 
@@ -863,66 +856,6 @@ BOOL WINAPI ImmSetActiveContext(HWND hwnd, HIMC himc, BOOL activate)
     }
     SetLastError(0);
     return TRUE;
-}
-
-/***********************************************************************
- *		ImmAssociateContext (IMM32.@)
- */
-HIMC WINAPI ImmAssociateContext(HWND hwnd, HIMC imc)
-{
-    HIMC old;
-    UINT ret;
-
-    TRACE("(%p, %p):\n", hwnd, imc);
-
-    old = NtUserGetWindowInputContext(hwnd);
-    ret = NtUserAssociateInputContext(hwnd, imc, 0);
-    if (ret == AICR_FOCUS_CHANGED)
-    {
-        ImmSetActiveContext(hwnd, old, FALSE);
-        ImmSetActiveContext(hwnd, imc, TRUE);
-    }
-    return ret == AICR_FAILED ? 0 : old;
-}
-
-
-/*
- * Helper function for ImmAssociateContextEx
- */
-static BOOL CALLBACK _ImmAssociateContextExEnumProc(HWND hwnd, LPARAM lParam)
-{
-    HIMC hImc = (HIMC)lParam;
-    ImmAssociateContext(hwnd,hImc);
-    return TRUE;
-}
-
-/***********************************************************************
- *              ImmAssociateContextEx (IMM32.@)
- */
-BOOL WINAPI ImmAssociateContextEx(HWND hwnd, HIMC imc, DWORD flags)
-{
-    HIMC old;
-    UINT ret;
-
-    TRACE("(%p, %p, 0x%lx):\n", hwnd, imc, flags);
-
-    if (!hwnd)
-        return FALSE;
-
-    if (flags == IACE_CHILDREN)
-    {
-        EnumChildWindows(hwnd, _ImmAssociateContextExEnumProc, (LPARAM)imc);
-        return TRUE;
-    }
-
-    old = NtUserGetWindowInputContext(hwnd);
-    ret = NtUserAssociateInputContext(hwnd, imc, flags);
-    if (ret == AICR_FOCUS_CHANGED)
-    {
-        ImmSetActiveContext(hwnd, old, FALSE);
-        ImmSetActiveContext(hwnd, imc, TRUE);
-    }
-    return ret != AICR_FAILED;
 }
 
 /***********************************************************************
@@ -1032,9 +965,16 @@ static HWND get_ime_ui_window(void)
     {
         imc->ui_hwnd = CreateWindowExW( WS_EX_TOOLWINDOW, ime->ui_class, NULL, WS_POPUP, 0, 0, 1, 1,
                                         ImmGetDefaultIMEWnd( 0 ), 0, ime->module, 0 );
-        SetWindowLongPtrW( imc->ui_hwnd, IMMGWL_IMC, (LONG_PTR)imc->handle );
+        SetWindowLongPtrW( imc->ui_hwnd, IMMGWL_IMC, (LONG_PTR)NtUserGetWindowInputContext( GetFocus() ) );
     }
     return imc->ui_hwnd;
+}
+
+static void set_ime_ui_window_himc( HIMC himc )
+{
+    HWND hwnd;
+    if (!(hwnd = get_ime_ui_window())) return;
+    SetWindowLongPtrW( hwnd, IMMGWL_IMC, (LONG_PTR)himc );
 }
 
 /***********************************************************************
@@ -1063,6 +1003,64 @@ BOOL WINAPI ImmDestroyContext(HIMC hIMC)
     if ((UINT_PTR)hIMC == NtUserGetThreadInfo()->default_imc) return FALSE;
     if (NtUserQueryInputContext( hIMC, NtUserInputContextThreadId ) != GetCurrentThreadId()) return FALSE;
     return IMM_DestroyContext(hIMC);
+}
+
+/***********************************************************************
+ *      ImmAssociateContext (IMM32.@)
+ */
+HIMC WINAPI ImmAssociateContext( HWND hwnd, HIMC new_himc )
+{
+    HIMC old_himc;
+    UINT ret;
+
+    TRACE( "hwnd %p, new_himc %p\n", hwnd, new_himc );
+
+    old_himc = NtUserGetWindowInputContext( hwnd );
+    ret = NtUserAssociateInputContext( hwnd, new_himc, 0 );
+    if (ret == AICR_FOCUS_CHANGED)
+    {
+        ImmSetActiveContext( hwnd, old_himc, FALSE );
+        ImmSetActiveContext( hwnd, new_himc, TRUE );
+        if (hwnd == GetFocus()) set_ime_ui_window_himc( new_himc );
+    }
+
+    return ret == AICR_FAILED ? 0 : old_himc;
+}
+
+static BOOL CALLBACK enum_associate_context( HWND hwnd, LPARAM lparam )
+{
+    ImmAssociateContext( hwnd, (HIMC)lparam );
+    return TRUE;
+}
+
+/***********************************************************************
+ *              ImmAssociateContextEx (IMM32.@)
+ */
+BOOL WINAPI ImmAssociateContextEx( HWND hwnd, HIMC new_himc, DWORD flags )
+{
+    HIMC old_himc;
+    UINT ret;
+
+    TRACE( "hwnd %p, new_himc %p, flags %#lx\n", hwnd, new_himc, flags );
+
+    if (!hwnd) return FALSE;
+
+    if (flags == IACE_CHILDREN)
+    {
+        EnumChildWindows( hwnd, enum_associate_context, (LPARAM)new_himc );
+        return TRUE;
+    }
+
+    old_himc = NtUserGetWindowInputContext( hwnd );
+    ret = NtUserAssociateInputContext( hwnd, new_himc, flags );
+    if (ret == AICR_FOCUS_CHANGED)
+    {
+        ImmSetActiveContext( hwnd, old_himc, FALSE );
+        ImmSetActiveContext( hwnd, new_himc, TRUE );
+        if (hwnd == GetFocus()) set_ime_ui_window_himc( new_himc );
+    }
+
+    return ret != AICR_FAILED;
 }
 
 struct enum_register_word_params_WtoA
@@ -1776,24 +1774,10 @@ BOOL WINAPI ImmGetCompositionWindow( HIMC himc, COMPOSITIONFORM *composition )
  *		ImmGetContext (IMM32.@)
  *
  */
-HIMC WINAPI ImmGetContext(HWND hWnd)
+HIMC WINAPI ImmGetContext( HWND hwnd )
 {
-    HIMC rc;
-
-    TRACE("%p\n", hWnd);
-
-    rc = NtUserGetWindowInputContext(hWnd);
-
-    if (rc)
-    {
-        struct imc *data = get_imc_data( rc );
-        if (data) data->IMC.hWnd = hWnd;
-        else rc = 0;
-    }
-
-    TRACE("returning %p\n", rc);
-
-    return rc;
+    TRACE( "hwnd %p\n", hwnd );
+    return NtUserGetWindowInputContext( hwnd );
 }
 
 /***********************************************************************
@@ -2643,9 +2627,7 @@ BOOL WINAPI ImmSetCompositionStringW(
  */
 BOOL WINAPI ImmSetCompositionWindow( HIMC himc, COMPOSITIONFORM *composition )
 {
-    BOOL reshow = FALSE;
     INPUTCONTEXT *ctx;
-    HWND ui_hwnd;
 
     TRACE( "himc %p, composition %s\n", himc, debugstr_composition( composition ) );
 
@@ -2654,14 +2636,6 @@ BOOL WINAPI ImmSetCompositionWindow( HIMC himc, COMPOSITIONFORM *composition )
 
     ctx->cfCompForm = *composition;
     ctx->fdwInit |= INIT_COMPFORM;
-
-    if ((ui_hwnd = get_ime_ui_window()) && IsWindowVisible( ui_hwnd ))
-    {
-        reshow = TRUE;
-        ShowWindow( ui_hwnd, SW_HIDE );
-    }
-
-    if (ui_hwnd && reshow) ShowWindow( ui_hwnd, SW_SHOWNOACTIVATE );
 
     ImmNotifyIME( himc, NI_CONTEXTUPDATED, 0, IMC_SETCOMPOSITIONWINDOW );
     SendMessageW( ctx->hWnd, WM_IME_NOTIFY, IMN_SETCOMPOSITIONWINDOW, 0 );
@@ -2711,14 +2685,11 @@ BOOL WINAPI ImmSetConversionStatus( HIMC himc, DWORD conversion, DWORD sentence 
 BOOL WINAPI ImmSetOpenStatus( HIMC himc, BOOL status )
 {
     INPUTCONTEXT *ctx;
-    HWND ui_hwnd;
 
     TRACE( "himc %p, status %u\n", himc, status );
 
     if (NtUserQueryInputContext( himc, NtUserInputContextThreadId ) != GetCurrentThreadId()) return FALSE;
     if (!(ctx = ImmLockIMC( himc ))) return FALSE;
-
-    if ((ui_hwnd = get_ime_ui_window())) SetWindowLongPtrW( ui_hwnd, IMMGWL_IMC, (LONG_PTR)himc );
 
     if (status != ctx->fOpen)
     {
@@ -3071,36 +3042,25 @@ DWORD WINAPI ImmGetIMCCSize(HIMCC imcc)
 /***********************************************************************
 *		ImmGenerateMessage(IMM32.@)
 */
-BOOL WINAPI ImmGenerateMessage(HIMC hIMC)
+BOOL WINAPI ImmGenerateMessage( HIMC himc )
 {
-    struct imc *data = get_imc_data( hIMC );
+    INPUTCONTEXT *ctx;
 
-    if (!data)
+    TRACE( "himc %p\n", himc );
+
+    if (NtUserQueryInputContext( himc, NtUserInputContextThreadId ) != GetCurrentThreadId()) return FALSE;
+    if (!(ctx = ImmLockIMC( himc ))) return FALSE;
+
+    while (ctx->dwNumMsgBuf--)
     {
-        SetLastError(ERROR_INVALID_HANDLE);
-        return FALSE;
+        TRANSMSG *msgs, msg;
+        if (!(msgs = ImmLockIMCC( ctx->hMsgBuf ))) return FALSE;
+        msg = msgs[0];
+        memmove( msgs, msgs + 1, ctx->dwNumMsgBuf * sizeof(*msgs) );
+        ImmUnlockIMCC( ctx->hMsgBuf );
+        SendMessageW( ctx->hWnd, msg.message, msg.wParam, msg.lParam );
     }
-
-    TRACE("%li messages queued\n",data->IMC.dwNumMsgBuf);
-    if (data->IMC.dwNumMsgBuf > 0)
-    {
-        LPTRANSMSG lpTransMsg;
-        HIMCC hMsgBuf;
-        DWORD i, dwNumMsgBuf;
-
-        /* We are going to detach our hMsgBuff so that if processing messages
-           generates new messages they go into a new buffer */
-        hMsgBuf = data->IMC.hMsgBuf;
-        dwNumMsgBuf = data->IMC.dwNumMsgBuf;
-
-        data->IMC.hMsgBuf = ImmCreateIMCC(0);
-        data->IMC.dwNumMsgBuf = 0;
-
-        lpTransMsg = ImmLockIMCC(hMsgBuf);
-        for (i = 0; i < dwNumMsgBuf; i++) imc_send_message( data, lpTransMsg + i );
-        ImmUnlockIMCC(hMsgBuf);
-        ImmDestroyIMCC(hMsgBuf);
-    }
+    ctx->dwNumMsgBuf++;
 
     return TRUE;
 }
@@ -3268,11 +3228,15 @@ static LRESULT ime_internal_msg( WPARAM wparam, LPARAM lparam)
     switch (wparam)
     {
     case IME_INTERNAL_ACTIVATE:
+        hwnd = (HWND)lparam;
+        himc = NtUserGetWindowInputContext( hwnd );
+        ImmSetActiveContext( hwnd, himc, TRUE );
+        set_ime_ui_window_himc( himc );
+        break;
     case IME_INTERNAL_DEACTIVATE:
         hwnd = (HWND)lparam;
-        himc = ImmGetContext(hwnd);
-        ImmSetActiveContext(hwnd, himc, wparam == IME_INTERNAL_ACTIVATE);
-        ImmReleaseContext(hwnd, himc);
+        himc = NtUserGetWindowInputContext( hwnd );
+        ImmSetActiveContext( hwnd, himc, FALSE );
         break;
     case IME_INTERNAL_HKL_ACTIVATE:
         ImmEnumInputContext( 0, enum_activate_layout, 0 );

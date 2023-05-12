@@ -2781,8 +2781,8 @@ HKLM,"System\CurrentControlSet\Services\Winsock2\Parameters\Protocol_Catalog9\Ca
 
 [VersionInfo]
 HKLM,%CurrentVersionNT%,"CurrentVersion",2,"10.0"
-HKLM,%CurrentVersionNT%,"CurrentMajorVersionNumber",0x10001,10
-HKLM,%CurrentVersionNT%,"CurrentMinorVersionNumber",0x10001,0
+HKLM,%CurrentVersionNT%,"CurrentMajorVersionNumber",0x10003,10
+HKLM,%CurrentVersionNT%,"CurrentMinorVersionNumber",0x10003,0
 HKLM,%CurrentVersionNT%,"CurrentBuild",2,"19043"
 HKLM,%CurrentVersionNT%,"CurrentBuildNumber",2,"19043"
 HKLM,%CurrentVersionNT%,"CurrentType",2,"Multiprocessor Free"

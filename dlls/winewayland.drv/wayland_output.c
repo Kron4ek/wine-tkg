@@ -97,6 +97,22 @@ static void wayland_output_add_mode(struct wayland_output *output,
     if (current) output->current_mode = mode;
 }
 
+static void wayland_output_done(struct wayland_output *output)
+{
+    struct wayland_output_mode *mode;
+
+    TRACE("name=%s logical=%d,%d+%dx%d\n",
+          output->name, output->logical_x, output->logical_y,
+          output->logical_w, output->logical_h);
+
+    RB_FOR_EACH_ENTRY(mode, &output->modes, struct wayland_output_mode, entry)
+    {
+        TRACE("mode %dx%d @ %d %s\n",
+              mode->width, mode->height, mode->refresh,
+              output->current_mode == mode ? "*" : "");
+    }
+}
+
 static void output_handle_geometry(void *data, struct wl_output *wl_output,
                                    int32_t x, int32_t y,
                                    int32_t physical_width, int32_t physical_height,
@@ -122,18 +138,12 @@ static void output_handle_mode(void *data, struct wl_output *wl_output,
 static void output_handle_done(void *data, struct wl_output *wl_output)
 {
     struct wayland_output *output = data;
-    struct wayland_output_mode *mode;
 
-    TRACE("name=%s\n", output->name);
-
-    RB_FOR_EACH_ENTRY(mode, &output->modes, struct wayland_output_mode, entry)
+    if (!output->zxdg_output_v1 ||
+        zxdg_output_v1_get_version(output->zxdg_output_v1) >= 3)
     {
-        TRACE("mode %dx%d @ %d %s\n",
-              mode->width, mode->height, mode->refresh,
-              output->current_mode == mode ? "*" : "");
+        wayland_output_done(output);
     }
-
-    wayland_init_display_devices();
 }
 
 static void output_handle_scale(void *data, struct wl_output *wl_output,
@@ -148,6 +158,62 @@ static const struct wl_output_listener output_listener = {
     output_handle_scale
 };
 
+static void zxdg_output_v1_handle_logical_position(void *data,
+                                                   struct zxdg_output_v1 *zxdg_output_v1,
+                                                   int32_t x,
+                                                   int32_t y)
+{
+    struct wayland_output *output = data;
+    TRACE("logical_x=%d logical_y=%d\n", x, y);
+    output->logical_x = x;
+    output->logical_y = y;
+}
+
+static void zxdg_output_v1_handle_logical_size(void *data,
+                                               struct zxdg_output_v1 *zxdg_output_v1,
+                                               int32_t width,
+                                               int32_t height)
+{
+    struct wayland_output *output = data;
+    TRACE("logical_w=%d logical_h=%d\n", width, height);
+    output->logical_w = width;
+    output->logical_h = height;
+}
+
+static void zxdg_output_v1_handle_done(void *data,
+                                       struct zxdg_output_v1 *zxdg_output_v1)
+{
+    if (zxdg_output_v1_get_version(zxdg_output_v1) < 3)
+    {
+        struct wayland_output *output = data;
+        wayland_output_done(output);
+    }
+}
+
+static void zxdg_output_v1_handle_name(void *data,
+                                       struct zxdg_output_v1 *zxdg_output_v1,
+                                       const char *name)
+{
+    struct wayland_output *output = data;
+
+    free(output->name);
+    output->name = strdup(name);
+}
+
+static void zxdg_output_v1_handle_description(void *data,
+                                              struct zxdg_output_v1 *zxdg_output_v1,
+                                              const char *description)
+{
+}
+
+static const struct zxdg_output_v1_listener zxdg_output_v1_listener = {
+    zxdg_output_v1_handle_logical_position,
+    zxdg_output_v1_handle_logical_size,
+    zxdg_output_v1_handle_done,
+    zxdg_output_v1_handle_name,
+    zxdg_output_v1_handle_description,
+};
+
 /**********************************************************************
  *          wayland_output_create
  *
@@ -156,6 +222,7 @@ static const struct wl_output_listener output_listener = {
 BOOL wayland_output_create(uint32_t id, uint32_t version)
 {
     struct wayland_output *output = calloc(1, sizeof(*output));
+    int name_len;
 
     if (!output)
     {
@@ -172,8 +239,21 @@ BOOL wayland_output_create(uint32_t id, uint32_t version)
     wl_list_init(&output->link);
     rb_init(&output->modes, wayland_output_mode_cmp_rb);
 
-    snprintf(output->name, sizeof(output->name), "WaylandOutput%d",
-             next_output_id++);
+    /* Have a fallback while we don't have compositor given name. */
+    name_len = snprintf(NULL, 0, "WaylandOutput%d", next_output_id);
+    output->name = malloc(name_len + 1);
+    if (output->name)
+    {
+        snprintf(output->name, name_len + 1, "WaylandOutput%d", next_output_id++);
+    }
+    else
+    {
+        ERR("Couldn't allocate space for output name\n");
+        goto err;
+    }
+
+    if (process_wayland->zxdg_output_manager_v1)
+        wayland_output_use_xdg_extension(output);
 
     wl_list_insert(process_wayland->output_list.prev, &output->link);
 
@@ -198,6 +278,23 @@ void wayland_output_destroy(struct wayland_output *output)
 {
     rb_destroy(&output->modes, wayland_output_mode_free_rb, NULL);
     wl_list_remove(&output->link);
+    if (output->zxdg_output_v1)
+        zxdg_output_v1_destroy(output->zxdg_output_v1);
     wl_output_destroy(output->wl_output);
+    free(output->name);
     free(output);
+}
+
+/**********************************************************************
+ *          wayland_output_use_xdg_extension
+ *
+ *  Use the zxdg_output_v1 extension to get output information.
+ */
+void wayland_output_use_xdg_extension(struct wayland_output *output)
+{
+    output->zxdg_output_v1 =
+        zxdg_output_manager_v1_get_xdg_output(process_wayland->zxdg_output_manager_v1,
+                                              output->wl_output);
+    zxdg_output_v1_add_listener(output->zxdg_output_v1, &zxdg_output_v1_listener,
+                                output);
 }

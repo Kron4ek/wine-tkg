@@ -43,7 +43,6 @@ const char *get_machine_str(int mach)
     switch (mach)
     {
     case IMAGE_FILE_MACHINE_UNKNOWN:	return "Unknown";
-    case IMAGE_FILE_MACHINE_I860:	return "i860";
     case IMAGE_FILE_MACHINE_I386:	return "i386";
     case IMAGE_FILE_MACHINE_R3000:	return "R3000";
     case IMAGE_FILE_MACHINE_R4000:	return "R4000";
@@ -56,6 +55,10 @@ const char *get_machine_str(int mach)
     case IMAGE_FILE_MACHINE_ARM:        return "ARM";
     case IMAGE_FILE_MACHINE_ARMNT:      return "ARMNT";
     case IMAGE_FILE_MACHINE_THUMB:      return "ARM Thumb";
+    case IMAGE_FILE_MACHINE_ALPHA64:	return "Alpha64";
+    case IMAGE_FILE_MACHINE_CHPE_X86:	return "CHPE-x86";
+    case IMAGE_FILE_MACHINE_ARM64EC:	return "ARM64EC";
+    case IMAGE_FILE_MACHINE_ARM64X:	return "ARM64X";
     }
     return "???";
 }
@@ -644,16 +647,40 @@ static void dump_section_apiset(void)
     }
 }
 
+static const char *find_export_from_rva( UINT rva )
+{
+    UINT i, *func_names;
+    const UINT *funcs;
+    const UINT *names;
+    const WORD *ordinals;
+    const IMAGE_EXPORT_DIRECTORY *dir;
+    const char *ret = NULL;
+
+    if (!(dir = get_dir( IMAGE_FILE_EXPORT_DIRECTORY ))) return NULL;
+    if (!(funcs = RVA( dir->AddressOfFunctions, dir->NumberOfFunctions * sizeof(DWORD) ))) return NULL;
+    names = RVA( dir->AddressOfNames, dir->NumberOfNames * sizeof(DWORD) );
+    ordinals = RVA( dir->AddressOfNameOrdinals, dir->NumberOfNames * sizeof(WORD) );
+    func_names = calloc( dir->NumberOfFunctions, sizeof(*func_names) );
+
+    for (i = 0; i < dir->NumberOfNames; i++) func_names[ordinals[i]] = names[i];
+    for (i = 0; i < dir->NumberOfFunctions && !ret; i++)
+        if (funcs[i] == rva) ret = get_symbol_str( RVA( func_names[i], sizeof(DWORD) ));
+
+    free( func_names );
+    if (!ret && rva == PE_nt_headers->OptionalHeader.AddressOfEntryPoint) return "<EntryPoint>";
+    return ret;
+}
+
 static	void	dump_dir_exported_functions(void)
 {
     unsigned int size;
-    const IMAGE_EXPORT_DIRECTORY *dir;
+    const IMAGE_EXPORT_DIRECTORY *dir = get_dir_and_size(IMAGE_FILE_EXPORT_DIRECTORY, &size);
     UINT i, *funcs;
     const UINT *pFunc;
     const UINT *pName;
     const WORD *pOrdl;
 
-    dir = get_dir_and_size(IMAGE_FILE_EXPORT_DIRECTORY, &size);
+    if (!dir) return;
 
     printf("\n");
     printf("  Name:            %s\n", (const char*)RVA(dir->Name, sizeof(DWORD)));
@@ -1774,99 +1801,134 @@ static	void	dump_dir_imported_functions(void)
 static void dump_hybrid_metadata(void)
 {
     unsigned int i;
-    const struct
-    {
-        unsigned int version;
-        unsigned int code_map;
-        unsigned int code_map_count;
-        unsigned int code_ranges_to_ep;
-        unsigned int redir_metadata;
-        unsigned int __os_arm64x_dispatch_call_no_redirect;
-        unsigned int __os_arm64x_dispatch_ret;
-        unsigned int __os_arm64x_check_call;
-        unsigned int __os_arm64x_check_icall;
-        unsigned int __os_arm64x_check_icall_cfg;
-        unsigned int alt_entry;
-        unsigned int aux_iat;
-        unsigned int code_ranges_to_ep_count;
-        unsigned int redir_metadata_count;
-        unsigned int __os_arm64x_get_x64_information;
-        unsigned int __os_arm64x_set_x64_information;
-        unsigned int except_data;
-        unsigned int except_data_size;
-        unsigned int __os_arm64x_jump;
-        unsigned int aux_iat_copy;
-    } *data = get_hybrid_metadata();
+    const void *metadata = get_hybrid_metadata();
 
-    if (!data) return;
+    if (!metadata) return;
     printf( "Hybrid metadata\n" );
-    print_dword( "Version", data->version );
-    print_dword( "Code map", data->code_map );
-    print_dword( "Code map count", data->code_map_count );
-    print_dword( "Code ranges to entry points", data->code_ranges_to_ep );
-    print_dword( "Redirection metadata", data->redir_metadata );
-    print_dword( "__os_arm64x_dispatch_call_no_redirect", data->__os_arm64x_dispatch_call_no_redirect );
-    print_dword( "__os_arm64x_dispatch_ret", data->__os_arm64x_dispatch_ret );
-    print_dword( "__os_arm64x_check_call", data->__os_arm64x_check_call );
-    print_dword( "__os_arm64x_check_icall", data->__os_arm64x_check_icall );
-    print_dword( "__os_arm64x_check_icall_cfg", data->__os_arm64x_check_icall_cfg );
-    print_dword( "Alternate entry point", data->alt_entry );
-    print_dword( "Auxiliary IAT", data->aux_iat );
-    print_dword( "Code ranges to entry points count", data->code_ranges_to_ep_count );
-    print_dword( "Redirection metadata count", data->redir_metadata_count );
-    print_dword( "__os_arm64x_get_x64_information", data->__os_arm64x_get_x64_information );
-    print_dword( "__os_arm64x_set_x64_information", data->__os_arm64x_set_x64_information );
-    print_dword( "Exception data", data->except_data );
-    print_dword( "Exception data size", data->except_data_size );
-    print_dword( "__os_arm64x_jump", data->__os_arm64x_jump );
-    print_dword( "Auxiliary IAT copy", data->aux_iat_copy );
 
-    if (data->code_map)
+    switch (PE_nt_headers->FileHeader.Machine)
     {
-        const struct
-        {
-            unsigned int start : 30;
-            unsigned int type : 2;
-            unsigned int len;
-        } *map = RVA( data->code_map, data->code_map_count * sizeof(*map) );
+    case IMAGE_FILE_MACHINE_I386:
+    {
+        const IMAGE_CHPE_METADATA_X86 *data = metadata;
 
-        printf( "\nCode ranges\n" );
-        for (i = 0; i < data->code_map_count; i++)
+        printf( "  Version                                       %#x\n", (int)data->Version );
+        printf( "  CHPECodeAddressRangeOffset                    %#x\n", (int)data->CHPECodeAddressRangeOffset );
+        printf( "  CHPECodeAddressRangeCount                     %#x\n", (int)data->CHPECodeAddressRangeCount );
+        printf( "  WowA64ExceptionHandlerFunctionPointer         %#x\n", (int)data->WowA64ExceptionHandlerFunctionPointer );
+        printf( "  WowA64DispatchCallFunctionPointer             %#x\n", (int)data->WowA64DispatchCallFunctionPointer );
+        printf( "  WowA64DispatchIndirectCallFunctionPointer     %#x\n", (int)data->WowA64DispatchIndirectCallFunctionPointer );
+        printf( "  WowA64DispatchIndirectCallCfgFunctionPointer  %#x\n", (int)data->WowA64DispatchIndirectCallCfgFunctionPointer );
+        printf( "  WowA64DispatchRetFunctionPointer              %#x\n", (int)data->WowA64DispatchRetFunctionPointer );
+        printf( "  WowA64DispatchRetLeafFunctionPointer          %#x\n", (int)data->WowA64DispatchRetLeafFunctionPointer );
+        printf( "  WowA64DispatchJumpFunctionPointer             %#x\n", (int)data->WowA64DispatchJumpFunctionPointer );
+        if (data->Version >= 2)
+            printf( "  CompilerIATPointer                            %#x\n", (int)data->CompilerIATPointer );
+        if (data->Version >= 3)
+            printf( "  WowA64RdtscFunctionPointer                    %#x\n", (int)data->WowA64RdtscFunctionPointer );
+        if (data->Version >= 4)
         {
-            static const char *types[] = { "ARM64", "ARM64EC", "x64", "??" };
-            unsigned int start = map[i].start & ~0x3;
-            unsigned int type = map[i].start & 0x3;
-            printf(  "  %08x - %08x  %s\n", start, start + map[i].len, types[type] );
+            printf( "  unknown[0]                                    %#x\n", (int)data->unknown[0] );
+            printf( "  unknown[1]                                    %#x\n", (int)data->unknown[1] );
+            printf( "  unknown[2]                                    %#x\n", (int)data->unknown[2] );
+            printf( "  unknown[3]                                    %#x\n", (int)data->unknown[3] );
         }
-    }
 
-    if (data->code_ranges_to_ep)
-    {
-        const struct
+        if (data->CHPECodeAddressRangeOffset)
         {
-            unsigned int start;
-            unsigned int end;
-            unsigned int func;
-        } *map = RVA( data->code_ranges_to_ep, data->code_ranges_to_ep_count * sizeof(*map) );
+            const IMAGE_CHPE_RANGE_ENTRY *map = RVA( data->CHPECodeAddressRangeOffset,
+                                                     data->CHPECodeAddressRangeCount * sizeof(*map) );
 
-        printf( "\nCode ranges to entry points\n" );
-        printf( "    Start  -   End      Entry point\n" );
-        for (i = 0; i < data->code_ranges_to_ep_count; i++)
-            printf(  "  %08x - %08x   %08x\n", map[i].start, map[i].end, map[i].func );
+            printf( "\nCode ranges\n" );
+            for (i = 0; i < data->CHPECodeAddressRangeCount; i++)
+            {
+                static const char *types[] = { "x86", "ARM64" };
+                unsigned int start = map[i].StartOffset & ~1;
+                unsigned int type = map[i].StartOffset & 1;
+                printf(  "  %08x - %08x  %s\n", start, start + (int)map[i].Length, types[type] );
+            }
+        }
+
+        break;
     }
 
-    if (data->redir_metadata)
+    case IMAGE_FILE_MACHINE_AMD64:
+    case IMAGE_FILE_MACHINE_ARM64:
     {
-        const struct
-        {
-            unsigned int func;
-            unsigned int redir;
-        } *map = RVA( data->redir_metadata, data->redir_metadata_count * sizeof(*map) );
+        const IMAGE_ARM64EC_METADATA *data = metadata;
 
-        printf( "\nEntry point redirection\n" );
-        for (i = 0; i < data->redir_metadata_count; i++)
-            printf(  "  %08x -> %08x\n", map[i].func, map[i].redir );
+        printf( "  Version                                %#x\n", (int)data->Version );
+        printf( "  CodeMap                                %#x\n", (int)data->CodeMap );
+        printf( "  CodeMapCount                           %#x\n", (int)data->CodeMapCount );
+        printf( "  CodeRangesToEntryPoints                %#x\n", (int)data->CodeRangesToEntryPoints );
+        printf( "  RedirectionMetadata                    %#x\n", (int)data->RedirectionMetadata );
+        printf( "  __os_arm64x_dispatch_call_no_redirect  %#x\n", (int)data->__os_arm64x_dispatch_call_no_redirect );
+        printf( "  __os_arm64x_dispatch_ret               %#x\n", (int)data->__os_arm64x_dispatch_ret );
+        printf( "  __os_arm64x_dispatch_call              %#x\n", (int)data->__os_arm64x_dispatch_call );
+        printf( "  __os_arm64x_dispatch_icall             %#x\n", (int)data->__os_arm64x_dispatch_icall );
+        printf( "  __os_arm64x_dispatch_icall_cfg         %#x\n", (int)data->__os_arm64x_dispatch_icall_cfg );
+        printf( "  AlternateEntryPoint                    %#x\n", (int)data->AlternateEntryPoint );
+        printf( "  AuxiliaryIAT                           %#x\n", (int)data->AuxiliaryIAT );
+        printf( "  CodeRangesToEntryPointsCount           %#x\n", (int)data->CodeRangesToEntryPointsCount );
+        printf( "  RedirectionMetadataCount               %#x\n", (int)data->RedirectionMetadataCount );
+        printf( "  GetX64InformationFunctionPointer       %#x\n", (int)data->GetX64InformationFunctionPointer );
+        printf( "  SetX64InformationFunctionPointer       %#x\n", (int)data->SetX64InformationFunctionPointer );
+        printf( "  ExtraRFETable                          %#x\n", (int)data->ExtraRFETable );
+        printf( "  ExtraRFETableSize                      %#x\n", (int)data->ExtraRFETableSize );
+        printf( "  __os_arm64x_dispatch_fptr              %#x\n", (int)data->__os_arm64x_dispatch_fptr );
+        printf( "  AuxiliaryIATCopy                       %#x\n", (int)data->AuxiliaryIATCopy );
+
+        if (data->CodeMap)
+        {
+            const IMAGE_CHPE_RANGE_ENTRY *map = RVA( data->CodeMap, data->CodeMapCount * sizeof(*map) );
+
+            printf( "\nCode ranges\n" );
+            for (i = 0; i < data->CodeMapCount; i++)
+            {
+                static const char *types[] = { "ARM64", "ARM64EC", "x64", "??" };
+                unsigned int start = map[i].StartOffset & ~0x3;
+                unsigned int type = map[i].StartOffset & 0x3;
+                printf(  "  %08x - %08x  %s\n", start, start + (int)map[i].Length, types[type] );
+            }
+        }
+
+        if (PE_nt_headers->FileHeader.Machine == IMAGE_FILE_MACHINE_ARM64) break;
+
+        if (data->CodeRangesToEntryPoints)
+        {
+            const IMAGE_ARM64EC_CODE_RANGE_ENTRY_POINT *map = RVA( data->CodeRangesToEntryPoints,
+                                                     data->CodeRangesToEntryPointsCount * sizeof(*map) );
+
+            printf( "\nCode ranges to entry points\n" );
+            printf( "    Start  -   End      Entry point\n" );
+            for (i = 0; i < data->CodeRangesToEntryPointsCount; i++)
+            {
+                const char *name = find_export_from_rva( map[i].EntryPoint );
+                printf(  "  %08x - %08x   %08x",
+                         (int)map[i].StartRva, (int)map[i].EndRva, (int)map[i].EntryPoint );
+                if (name) printf( "  %s", name );
+                printf( "\n" );
+            }
+        }
+
+        if (data->RedirectionMetadata)
+        {
+            const IMAGE_ARM64EC_REDIRECTION_ENTRY *map = RVA( data->RedirectionMetadata,
+                                                     data->RedirectionMetadataCount * sizeof(*map) );
+
+            printf( "\nEntry point redirection\n" );
+            for (i = 0; i < data->RedirectionMetadataCount; i++)
+            {
+                const char *name = find_export_from_rva( map[i].Source );
+                printf(  "  %08x -> %08x", (int)map[i].Source, (int)map[i].Destination );
+                if (name) printf( "  (%s)", name );
+                printf( "\n" );
+            }
+        }
+        break;
     }
+    }
+    printf( "\n" );
 }
 
 static void dump_dir_loadconfig(void)
@@ -1900,52 +1962,52 @@ static void dump_dir_loadconfig(void)
         print_word(     "CSDVersion",                   loadcfg64->CSDVersion );
         print_word(     "DependentLoadFlags",           loadcfg64->DependentLoadFlags );
         print_longlong( "SecurityCookie",               loadcfg64->SecurityCookie );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, SEHandlerTable )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, SEHandlerTable )) goto done;
         print_longlong( "SEHandlerTable",               loadcfg64->SEHandlerTable );
         print_longlong( "SEHandlerCount",               loadcfg64->SEHandlerCount );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardCFCheckFunctionPointer )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardCFCheckFunctionPointer )) goto done;
         print_longlong( "GuardCFCheckFunctionPointer",  loadcfg64->GuardCFCheckFunctionPointer );
         print_longlong( "GuardCFDispatchFunctionPointer", loadcfg64->GuardCFDispatchFunctionPointer );
         print_longlong( "GuardCFFunctionTable",         loadcfg64->GuardCFFunctionTable );
         print_longlong( "GuardCFFunctionCount",         loadcfg64->GuardCFFunctionCount );
         print_dword(    "GuardFlags",                   loadcfg64->GuardFlags );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, CodeIntegrity )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, CodeIntegrity )) goto done;
         print_word(     "CodeIntegrity.Flags",          loadcfg64->CodeIntegrity.Flags );
         print_word(     "CodeIntegrity.Catalog",        loadcfg64->CodeIntegrity.Catalog );
         print_dword(    "CodeIntegrity.CatalogOffset",  loadcfg64->CodeIntegrity.CatalogOffset );
         print_dword(    "CodeIntegrity.Reserved",       loadcfg64->CodeIntegrity.Reserved );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardAddressTakenIatEntryTable )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardAddressTakenIatEntryTable )) goto done;
         print_longlong( "GuardAddressTakenIatEntryTable", loadcfg64->GuardAddressTakenIatEntryTable );
         print_longlong( "GuardAddressTakenIatEntryCount", loadcfg64->GuardAddressTakenIatEntryCount );
         print_longlong( "GuardLongJumpTargetTable",     loadcfg64->GuardLongJumpTargetTable );
         print_longlong( "GuardLongJumpTargetCount",     loadcfg64->GuardLongJumpTargetCount );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, DynamicValueRelocTable )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, DynamicValueRelocTable )) goto done;
         print_longlong( "DynamicValueRelocTable",       loadcfg64->DynamicValueRelocTable );
         print_longlong( "CHPEMetadataPointer",          loadcfg64->CHPEMetadataPointer );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardRFFailureRoutine )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardRFFailureRoutine )) goto done;
         print_longlong( "GuardRFFailureRoutine",        loadcfg64->GuardRFFailureRoutine );
-        print_longlong( "GuardRFFailureRoutineFunctionPointer", loadcfg64->GuardRFFailureRoutineFunctionPointer );
+        print_longlong( "GuardRFFailureRoutineFuncPtr", loadcfg64->GuardRFFailureRoutineFunctionPointer );
         print_dword(    "DynamicValueRelocTableOffset", loadcfg64->DynamicValueRelocTableOffset );
         print_word(     "DynamicValueRelocTableSection",loadcfg64->DynamicValueRelocTableSection );
         print_word(     "Reserved2",                    loadcfg64->Reserved2 );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardRFVerifyStackPointerFunctionPointer )) return;
-        print_longlong( "GuardRFVerifyStackPointerFunctionPointer", loadcfg64->GuardRFVerifyStackPointerFunctionPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardRFVerifyStackPointerFunctionPointer )) goto done;
+        print_longlong( "GuardRFVerifyStackPointerFuncPtr", loadcfg64->GuardRFVerifyStackPointerFunctionPointer );
         print_dword(    "HotPatchTableOffset",          loadcfg64->HotPatchTableOffset );
         print_dword(    "Reserved3",                    loadcfg64->Reserved3 );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, EnclaveConfigurationPointer )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, EnclaveConfigurationPointer )) goto done;
         print_longlong( "EnclaveConfigurationPointer",  loadcfg64->EnclaveConfigurationPointer );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, VolatileMetadataPointer )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, VolatileMetadataPointer )) goto done;
         print_longlong( "VolatileMetadataPointer",      loadcfg64->VolatileMetadataPointer );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardEHContinuationTable )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardEHContinuationTable )) goto done;
         print_longlong( "GuardEHContinuationTable",     loadcfg64->GuardEHContinuationTable );
         print_longlong( "GuardEHContinuationCount",     loadcfg64->GuardEHContinuationCount );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardXFGCheckFunctionPointer )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardXFGCheckFunctionPointer )) goto done;
         print_longlong( "GuardXFGCheckFunctionPointer", loadcfg64->GuardXFGCheckFunctionPointer );
         print_longlong( "GuardXFGDispatchFunctionPointer", loadcfg64->GuardXFGDispatchFunctionPointer );
-        print_longlong( "GuardXFGTableDispatchFunctionPointer", loadcfg64->GuardXFGTableDispatchFunctionPointer );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, CastGuardOsDeterminedFailureMode )) return;
+        print_longlong( "GuardXFGTableDispatchFuncPtr", loadcfg64->GuardXFGTableDispatchFunctionPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, CastGuardOsDeterminedFailureMode )) goto done;
         print_longlong( "CastGuardOsDeterminedFailureMode", loadcfg64->CastGuardOsDeterminedFailureMode );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardMemcpyFunctionPointer )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardMemcpyFunctionPointer )) goto done;
         print_longlong( "GuardMemcpyFunctionPointer",   loadcfg64->GuardMemcpyFunctionPointer );
     }
     else
@@ -1959,54 +2021,55 @@ static void dump_dir_loadconfig(void)
         print_word(  "CSDVersion",                      loadcfg32->CSDVersion );
         print_word(  "DependentLoadFlags",              loadcfg32->DependentLoadFlags );
         print_dword( "SecurityCookie",                  loadcfg32->SecurityCookie );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, SEHandlerTable )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, SEHandlerTable )) goto done;
         print_dword( "SEHandlerTable",                  loadcfg32->SEHandlerTable );
         print_dword( "SEHandlerCount",                  loadcfg32->SEHandlerCount );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardCFCheckFunctionPointer )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardCFCheckFunctionPointer )) goto done;
         print_dword( "GuardCFCheckFunctionPointer",     loadcfg32->GuardCFCheckFunctionPointer );
         print_dword( "GuardCFDispatchFunctionPointer",  loadcfg32->GuardCFDispatchFunctionPointer );
         print_dword( "GuardCFFunctionTable",            loadcfg32->GuardCFFunctionTable );
         print_dword( "GuardCFFunctionCount",            loadcfg32->GuardCFFunctionCount );
         print_dword( "GuardFlags",                      loadcfg32->GuardFlags );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, CodeIntegrity )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, CodeIntegrity )) goto done;
         print_word(  "CodeIntegrity.Flags",             loadcfg32->CodeIntegrity.Flags );
         print_word(  "CodeIntegrity.Catalog",           loadcfg32->CodeIntegrity.Catalog );
         print_dword( "CodeIntegrity.CatalogOffset",     loadcfg32->CodeIntegrity.CatalogOffset );
         print_dword( "CodeIntegrity.Reserved",          loadcfg32->CodeIntegrity.Reserved );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardAddressTakenIatEntryTable )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardAddressTakenIatEntryTable )) goto done;
         print_dword( "GuardAddressTakenIatEntryTable",  loadcfg32->GuardAddressTakenIatEntryTable );
         print_dword( "GuardAddressTakenIatEntryCount",  loadcfg32->GuardAddressTakenIatEntryCount );
         print_dword( "GuardLongJumpTargetTable",        loadcfg32->GuardLongJumpTargetTable );
         print_dword( "GuardLongJumpTargetCount",        loadcfg32->GuardLongJumpTargetCount );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, DynamicValueRelocTable )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, DynamicValueRelocTable )) goto done;
         print_dword( "DynamicValueRelocTable",          loadcfg32->DynamicValueRelocTable );
         print_dword( "CHPEMetadataPointer",             loadcfg32->CHPEMetadataPointer );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardRFFailureRoutine )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardRFFailureRoutine )) goto done;
         print_dword( "GuardRFFailureRoutine",           loadcfg32->GuardRFFailureRoutine );
-        print_dword( "GuardRFFailureRoutineFunctionPointer", loadcfg32->GuardRFFailureRoutineFunctionPointer );
+        print_dword( "GuardRFFailureRoutineFuncPtr",    loadcfg32->GuardRFFailureRoutineFunctionPointer );
         print_dword( "DynamicValueRelocTableOffset",    loadcfg32->DynamicValueRelocTableOffset );
         print_word(  "DynamicValueRelocTableSection",   loadcfg32->DynamicValueRelocTableSection );
         print_word(  "Reserved2",                       loadcfg32->Reserved2 );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardRFVerifyStackPointerFunctionPointer )) return;
-        print_dword( "GuardRFVerifyStackPointerFunctionPointer", loadcfg32->GuardRFVerifyStackPointerFunctionPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardRFVerifyStackPointerFunctionPointer )) goto done;
+        print_dword( "GuardRFVerifyStackPointerFuncPtr", loadcfg32->GuardRFVerifyStackPointerFunctionPointer );
         print_dword( "HotPatchTableOffset",             loadcfg32->HotPatchTableOffset );
         print_dword( "Reserved3",                       loadcfg32->Reserved3 );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, EnclaveConfigurationPointer )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, EnclaveConfigurationPointer )) goto done;
         print_dword( "EnclaveConfigurationPointer",     loadcfg32->EnclaveConfigurationPointer );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, VolatileMetadataPointer )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, VolatileMetadataPointer )) goto done;
         print_dword( "VolatileMetadataPointer",         loadcfg32->VolatileMetadataPointer );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardEHContinuationTable )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardEHContinuationTable )) goto done;
         print_dword( "GuardEHContinuationTable",        loadcfg32->GuardEHContinuationTable );
         print_dword( "GuardEHContinuationCount",        loadcfg32->GuardEHContinuationCount );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardXFGCheckFunctionPointer )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardXFGCheckFunctionPointer )) goto done;
         print_dword( "GuardXFGCheckFunctionPointer",    loadcfg32->GuardXFGCheckFunctionPointer );
         print_dword( "GuardXFGDispatchFunctionPointer", loadcfg32->GuardXFGDispatchFunctionPointer );
-        print_dword( "GuardXFGTableDispatchFunctionPointer", loadcfg32->GuardXFGTableDispatchFunctionPointer );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, CastGuardOsDeterminedFailureMode )) return;
+        print_dword( "GuardXFGTableDispatchFuncPtr", loadcfg32->GuardXFGTableDispatchFunctionPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, CastGuardOsDeterminedFailureMode )) goto done;
         print_dword( "CastGuardOsDeterminedFailureMode", loadcfg32->CastGuardOsDeterminedFailureMode );
-        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardMemcpyFunctionPointer )) return;
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardMemcpyFunctionPointer )) goto done;
         print_dword( "GuardMemcpyFunctionPointer",      loadcfg32->GuardMemcpyFunctionPointer );
     }
+done:
     printf( "\n" );
     dump_hybrid_metadata();
 }
@@ -2196,16 +2259,16 @@ static void dump_dynamic_relocs_arm64x( const IMAGE_BASE_RELOCATION *base_reloc,
             rel++;
             switch (type)
             {
-            case 0:  /* zero-fill */
+            case IMAGE_DVRT_ARM64X_FIXUP_TYPE_ZEROFILL:
                 printf( "    off %04x zero-fill %u bytes\n", offset, 1 << arg );
                 break;
-            case 1:  /* set value */
+            case IMAGE_DVRT_ARM64X_FIXUP_TYPE_VALUE:
                 printf( "    off %04x set %u bytes value ", offset, 1 << arg );
                 for (i = (1 << arg ) / sizeof(USHORT); i > 0; i--) printf( "%04x", rel[i - 1] );
                 rel += (1 << arg) / sizeof(USHORT);
                 printf( "\n" );
                 break;
-            case 2:  /* add value */
+            case IMAGE_DVRT_ARM64X_FIXUP_TYPE_DELTA:
                 printf( "    off %04x add offset ", offset );
                 if (arg & 1) printf( "-" );
                 printf( "%08x\n", (UINT)*rel++ * ((arg & 2) ? 8 : 4) );
@@ -2408,14 +2471,14 @@ static BOOL get_alt_header( void )
             rel++;
             switch (type)
             {
-            case 0:  /* zero-fill */
+            case IMAGE_DVRT_ARM64X_FIXUP_TYPE_ZEROFILL:
                 memset( page + offset, 0, 1 << arg );
                 break;
-            case 1:  /* set value */
+            case IMAGE_DVRT_ARM64X_FIXUP_TYPE_VALUE:
                 memcpy( page + offset, rel, 1 << arg );
                 rel += (1 << arg) / sizeof(USHORT);
                 break;
-            case 2:  /* add value */
+            case IMAGE_DVRT_ARM64X_FIXUP_TYPE_DELTA:
                 val = (unsigned int)*rel++ * ((arg & 2) ? 8 : 4);
                 if (arg & 1) val = -val;
                 *(int *)(page + offset) += val;
@@ -2899,8 +2962,13 @@ void pe_dump(void)
 
     for (;;)
     {
-        if (alt) printf( "\n**** Alternate (%s) data ****\n\n",
-                         get_machine_str(PE_nt_headers->FileHeader.Machine));
+        if (alt)
+            printf( "\n**** Alternate (%s) data ****\n\n",
+                    get_machine_str(PE_nt_headers->FileHeader.Machine));
+        else if (get_dyn_reloc_table())
+            printf( "**** Native (%s) data ****\n\n",
+                    get_machine_str(PE_nt_headers->FileHeader.Machine));
+
         if (globals.do_dumpheader)
         {
             dump_pe_header();

@@ -2811,6 +2811,7 @@ struct wined3d_texture * __cdecl wined3d_swapchain_get_back_buffer(const struct 
 struct wined3d_device * __cdecl wined3d_swapchain_get_device(const struct wined3d_swapchain *swapchain);
 HRESULT __cdecl wined3d_swapchain_get_display_mode(const struct wined3d_swapchain *swapchain,
         struct wined3d_display_mode *mode, enum wined3d_display_rotation *rotation);
+struct wined3d_texture * __cdecl wined3d_swapchain_get_front_buffer(const struct wined3d_swapchain *swapchain);
 HRESULT __cdecl wined3d_swapchain_get_front_buffer_data(const struct wined3d_swapchain *swapchain,
         struct wined3d_texture *dst_texture, unsigned int sub_resource_idx);
 HRESULT __cdecl wined3d_swapchain_get_gamma_ramp(const struct wined3d_swapchain *swapchain,
@@ -2909,19 +2910,6 @@ static inline void wined3d_streaming_buffer_cleanup(struct wined3d_streaming_buf
     buffer->buffer = NULL;
     buffer->pos = 0;
 }
-
-typedef void (__cdecl *wined3d_gl_texture_callback)(unsigned int gl_texture, unsigned int gl_depth_texture, const void *data, unsigned int size);
-
-void __cdecl wined3d_access_gl_texture(struct wined3d_texture *texture,
-        wined3d_gl_texture_callback callback, struct wined3d_texture *depth_texture, const void *data, unsigned int size);
-
-unsigned int __cdecl wined3d_get_gl_texture(struct wined3d_texture *texture);
-
-typedef void (__cdecl *wined3d_cs_callback)(const void *data, unsigned int size);
-
-void __cdecl wined3d_device_run_cs_callback(struct wined3d_device *device,
-        wined3d_cs_callback callback, const void *data, unsigned int size);
-void __cdecl wined3d_device_wait_idle(struct wined3d_device *device);
 
 /* Return the integer base-2 logarithm of x. Undefined for x == 0. */
 static inline unsigned int wined3d_log2i(unsigned int x)

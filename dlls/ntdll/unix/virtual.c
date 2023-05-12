@@ -3320,7 +3320,7 @@ NTSTATUS virtual_clear_tls_index( ULONG index )
  *           virtual_alloc_thread_stack
  */
 NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR zero_bits, SIZE_T reserve_size,
-                                     SIZE_T commit_size, SIZE_T extra_size )
+                                     SIZE_T commit_size, BOOL guard_page )
 {
     struct file_view *view;
     char *kernel_stack;
@@ -3337,9 +3337,8 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR zero_bits, SI
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 
-    if ((status = map_view( &view, NULL, size + extra_size, 0,
-                            VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, get_zero_bits_mask( zero_bits ), 0 ))
-                            != STATUS_SUCCESS)
+    if ((status = map_view( &view, NULL, size, 0, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED,
+                            get_zero_bits_mask( zero_bits ), 0 )) != STATUS_SUCCESS)
         goto done;
 
 #ifdef VALGRIND_STACK_REGISTER
@@ -3347,39 +3346,25 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR zero_bits, SI
 #endif
 
     /* setup no access guard page */
-    set_page_vprot( view->base, page_size, VPROT_COMMITTED );
-    set_page_vprot( (char *)view->base + page_size, page_size,
-                    VPROT_READ | VPROT_WRITE | VPROT_COMMITTED | VPROT_GUARD );
-    mprotect_range( view->base, 2 * page_size, 0, 0 );
-    VIRTUAL_DEBUG_DUMP_VIEW( view );
-
-    if (extra_size)
+    if (guard_page)
     {
-        struct file_view *extra_view;
-
-        /* shrink the first view and create a second one for the extra size */
-        /* this allows the app to free the stack without freeing the thread start portion */
-        view->size -= extra_size;
-        status = create_view( &extra_view, (char *)view->base + view->size, extra_size,
-                              VPROT_READ | VPROT_WRITE | VPROT_COMMITTED );
-        if (status != STATUS_SUCCESS)
-        {
-            view->size += extra_size;
-            delete_view( view );
-            goto done;
-        }
+        set_page_vprot( view->base, page_size, VPROT_COMMITTED );
+        set_page_vprot( (char *)view->base + page_size, page_size,
+                        VPROT_READ | VPROT_WRITE | VPROT_COMMITTED | VPROT_GUARD );
+        mprotect_range( view->base, 2 * page_size , 0, 0 );
         /* setup kernel stack no access guard page */
         kernel_stack = (char *)view->base + view->size;
         set_page_vprot( kernel_stack, kernel_stack_guard_size, VPROT_COMMITTED | VPROT_READ );
         mprotect_range( kernel_stack, kernel_stack_guard_size, 0, 0 );
     }
+    VIRTUAL_DEBUG_DUMP_VIEW( view );
 
     /* note: limit is lower than base since the stack grows down */
     stack->OldStackBase = 0;
     stack->OldStackLimit = 0;
     stack->DeallocationStack = view->base;
     stack->StackBase = (char *)view->base + view->size;
-    stack->StackLimit = (char *)view->base + 2 * page_size;
+    stack->StackLimit = (char *)view->base + (guard_page ? 2 * page_size : 0);
 done:
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
     return status;
@@ -3492,11 +3477,6 @@ static NTSTATUS grow_thread_stack( char *page, struct thread_stack_info *stack_i
     return ret;
 }
 
-NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args )
-{
-    return __wine_needs_override_large_address_aware();
-}
-
 
 /***********************************************************************
  *           virtual_handle_fault
@@ -3553,6 +3533,11 @@ NTSTATUS virtual_handle_fault( void *addr, DWORD err, void *stack )
     }
     mutex_unlock( &virtual_mutex );
     return ret;
+}
+
+NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args )
+{
+    return __wine_needs_override_large_address_aware();
 }
 
 

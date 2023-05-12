@@ -1681,12 +1681,13 @@ err_out:
     return hr;
 }
 
-static HRESULT d3dcompiler_parse_signature(struct d3dcompiler_shader_signature *s, struct dxbc_section *section)
+static HRESULT d3dcompiler_parse_signature(struct d3dcompiler_shader_signature *s,
+        const struct vkd3d_shader_dxbc_section_desc *section)
 {
     enum D3DCOMPILER_SIGNATURE_ELEMENT_SIZE element_size;
+    const char *ptr = section->data.code;
     D3D11_SIGNATURE_PARAMETER_DESC *d;
     unsigned int string_data_offset;
-    const char *ptr = section->data;
     unsigned int string_data_size;
     unsigned int i, count;
     char *string_data;
@@ -1723,7 +1724,7 @@ static HRESULT d3dcompiler_parse_signature(struct d3dcompiler_shader_signature *
 
     /* 2 u32s for the header, element_size for each element. */
     string_data_offset = 2 * sizeof(uint32_t) + count * element_size * sizeof(uint32_t);
-    string_data_size = section->data_size - string_data_offset;
+    string_data_size = section->data.size - string_data_offset;
 
     string_data = HeapAlloc(GetProcessHeap(), 0, string_data_size);
     if (!string_data)
@@ -1732,7 +1733,7 @@ static HRESULT d3dcompiler_parse_signature(struct d3dcompiler_shader_signature *
         HeapFree(GetProcessHeap(), 0, d);
         return E_OUTOFMEMORY;
     }
-    memcpy(string_data, section->data + string_data_offset, string_data_size);
+    memcpy(string_data, (const char *)section->data.code + string_data_offset, string_data_size);
 
     for (i = 0; i < count; ++i)
     {
@@ -1861,27 +1862,28 @@ static HRESULT d3dcompiler_parse_shdr(struct d3dcompiler_shader_reflection *r, c
 static HRESULT d3dcompiler_shader_reflection_init(struct d3dcompiler_shader_reflection *reflection,
         const void *data, SIZE_T data_size)
 {
-    struct dxbc src_dxbc;
-    HRESULT hr;
+    const struct vkd3d_shader_code src_dxbc = {.code = data, .size = data_size};
+    struct vkd3d_shader_dxbc_desc src_dxbc_desc;
+    HRESULT hr = S_OK;
     unsigned int i;
+    int ret;
 
     wine_rb_init(&reflection->types, d3dcompiler_shader_reflection_type_compare);
 
-    hr = dxbc_parse(data, data_size, &src_dxbc);
-    if (FAILED(hr))
+    if ((ret = vkd3d_shader_parse_dxbc(&src_dxbc, 0, &src_dxbc_desc, NULL)) < 0)
     {
-        WARN("Failed to parse reflection\n");
-        return hr;
+        WARN("Failed to parse reflection, ret %d.\n", ret);
+        return E_FAIL;
     }
 
-    for (i = 0; i < src_dxbc.count; ++i)
+    for (i = 0; i < src_dxbc_desc.section_count; ++i)
     {
-        struct dxbc_section *section = &src_dxbc.sections[i];
+        const struct vkd3d_shader_dxbc_section_desc *section = &src_dxbc_desc.sections[i];
 
         switch (section->tag)
         {
             case TAG_RDEF:
-                hr = d3dcompiler_parse_rdef(reflection, section->data, section->data_size);
+                hr = d3dcompiler_parse_rdef(reflection, section->data.code, section->data.size);
                 if (FAILED(hr))
                 {
                     WARN("Failed to parse RDEF section.\n");
@@ -1943,7 +1945,7 @@ static HRESULT d3dcompiler_shader_reflection_init(struct d3dcompiler_shader_refl
 
             case TAG_SHEX:
             case TAG_SHDR:
-                hr = d3dcompiler_parse_shdr(reflection, section->data, section->data_size);
+                hr = d3dcompiler_parse_shdr(reflection, section->data.code, section->data.size);
                 if (FAILED(hr))
                 {
                     WARN("Failed to parse SHDR section.\n");
@@ -1952,7 +1954,7 @@ static HRESULT d3dcompiler_shader_reflection_init(struct d3dcompiler_shader_refl
                 break;
 
             case TAG_STAT:
-                hr = d3dcompiler_parse_stat(reflection, section->data, section->data_size);
+                hr = d3dcompiler_parse_stat(reflection, section->data.code, section->data.size);
                 if (FAILED(hr))
                 {
                     WARN("Failed to parse section STAT.\n");
@@ -1966,13 +1968,13 @@ static HRESULT d3dcompiler_shader_reflection_init(struct d3dcompiler_shader_refl
         }
     }
 
-    dxbc_destroy(&src_dxbc);
+    vkd3d_shader_free_dxbc(&src_dxbc_desc);
 
     return hr;
 
 err_out:
     reflection_cleanup(reflection);
-    dxbc_destroy(&src_dxbc);
+    vkd3d_shader_free_dxbc(&src_dxbc_desc);
 
     return hr;
 }

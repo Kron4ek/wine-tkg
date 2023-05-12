@@ -100,7 +100,7 @@ static BOOL load_driver(const WCHAR *name, DriverFuncs *driver)
         if(!driver->p##n) { goto fail; } } while(0)
     LDFC(GetEndpointIDs);
     LDFC(GetAudioEndpoint);
-    LDFC(GetAudioSessionManager);
+    LDFC(GetAudioSessionWrapper);
 #undef LDFC
 
     /* optional - do not fail if not found */

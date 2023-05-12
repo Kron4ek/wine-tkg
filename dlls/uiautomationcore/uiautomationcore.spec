@@ -65,7 +65,7 @@
 @ stdcall UiaGetPropertyValue(ptr long ptr)
 @ stdcall UiaGetReservedMixedAttributeValue(ptr)
 @ stdcall UiaGetReservedNotSupportedValue(ptr)
-@ stub UiaGetRootNode
+@ stdcall UiaGetRootNode(ptr)
 @ stdcall UiaGetRuntimeId(ptr ptr)
 @ stdcall UiaGetUpdatedCache(ptr ptr long ptr ptr ptr)
 @ stub UiaHPatternObjectFromVariant
@@ -76,7 +76,7 @@
 #@ stub UiaIAccessibleFromProvider
 @ stdcall UiaLookupId(long ptr)
 @ stdcall UiaNavigate(ptr long ptr ptr ptr ptr)
-@ stub UiaNodeFromFocus
+@ stdcall UiaNodeFromFocus(ptr ptr ptr)
 @ stdcall UiaNodeFromHandle(long ptr)
 @ stub UiaNodeFromPoint
 @ stdcall UiaNodeFromProvider(ptr ptr)

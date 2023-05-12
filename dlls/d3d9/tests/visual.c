@@ -285,15 +285,18 @@ static D3DCOLOR check_expected_rt_color(unsigned int line, IDirect3DSurface9 *rt
     return color;
 }
 
-#define check_rt_color(a, b) check_rt_color_(__LINE__, a, b, false)
-#define check_rt_color_todo(a, b) check_rt_color_(__LINE__, a, b, true)
-#define check_rt_color_todo_if(a, b, c) check_rt_color_(__LINE__, a, b, c)
-static void check_rt_color_(unsigned int line, IDirect3DSurface9 *rt, D3DCOLOR expected_color, bool todo)
+#define check_rt_color(a, b) check_rt_color_(__LINE__, a, b, false, 0, false)
+#define check_rt_color_broken(a, b, c, d) check_rt_color_(__LINE__, a, b, false, c, d)
+#define check_rt_color_todo(a, b) check_rt_color_(__LINE__, a, b, true, 0, false)
+#define check_rt_color_todo_if(a, b, c) check_rt_color_(__LINE__, a, b, c, 0, false)
+static void check_rt_color_(unsigned int line, IDirect3DSurface9 *rt, D3DCOLOR expected_color, bool todo,
+        D3DCOLOR broken_color, bool is_broken)
 {
     unsigned int color = check_expected_rt_color(line, rt, expected_color);
 
     todo_wine_if (todo)
-        ok_(__FILE__, line)(color == expected_color, "Got unexpected color 0x%08x.\n", color);
+        ok_(__FILE__, line)(color == expected_color || broken(is_broken && color == broken_color),
+                "Got unexpected color 0x%08x.\n", color);
 }
 
 static IDirect3DDevice9 *create_device(IDirect3D9 *d3d, HWND device_window, HWND focus_window, BOOL windowed)
@@ -2805,7 +2808,10 @@ static void test_cube_wrap(void)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         color = getPixelColor(device, 320, 240);
-        ok(color_match(color, D3DCOLOR_ARGB(0x00, 0x00, 0x00, 0xff), 1),
+        /* Modern AMD GPUs do slip into reading the border color. */
+        ok(color_match(color, D3DCOLOR_ARGB(0x00, 0x00, 0x00, 0xff), 1)
+                || broken(color_match(color, D3DCOLOR_ARGB(0x00, 0x00, 0xbf, 0x40), 1)
+                && address_modes[x].mode == D3DTADDRESS_BORDER),
                 "Got color 0x%08x for addressing mode %s, expected 0x000000ff.\n",
                 color, address_modes[x].name);
 
@@ -19782,7 +19788,9 @@ static void add_dirty_rect_test(void)
     ok(hr == S_OK, "Failed to set texture, hr %#lx.\n", hr);
     add_dirty_rect_test_draw(device);
     color = getPixelColor(device, 320, 240);
-    ok(color_match(color, 0x000000ff, 1), "Got unexpected color 0x%08x.\n", color);
+    /* Radeon GPUs read zero from sysmem textures. */
+    ok(color_match(color, 0x000000ff, 1) || broken(color_match(color, 0x00000000, 1)),
+            "Got unexpected color 0x%08x.\n", color);
 
     /* Tests with managed textures. */
     fill_surface(surface_managed0, 0x00ff0000, 0);
@@ -26820,10 +26828,10 @@ static void test_mismatched_sample_types(void)
     static IDirect3DVolumeTexture9 *volume;
     IDirect3DVertexShader9 *vertex_shader;
     static IDirect3DTexture9 *tex_2d;
+    unsigned int colour, i, r, g, b;
     D3DLOCKED_RECT locked_rect;
     D3DLOCKED_BOX locked_box;
     IDirect3DDevice9 *device;
-    unsigned int colour, i;
     IDirect3D9 *d3d;
     ULONG refcount;
     D3DCAPS9 caps;
@@ -26892,21 +26900,23 @@ static void test_mismatched_sample_types(void)
 
     static DWORD ps_code[ARRAY_SIZE(ps_header) + TEST_MISMATCHED_SAMPLE_BODY_WORDS + ARRAY_SIZE(ps_footer)];
 
+#define SAMPLE_ZERO 0x1
+#define RANDOM_W    0x2
     static const struct
     {
         const char *name;
         IDirect3DBaseTexture9 **texture;
         IDirect3DPixelShader9 **pixel_shader;
         unsigned int expected_colour;
-        unsigned int expected_broken;
-        unsigned int expected_broken2;
+        unsigned int broken;
     }
     tests[] =
     {
         {"2d_2d", (IDirect3DBaseTexture9 **)&tex_2d, &ps_2d, 0x00707070},
         {"3d_3d", (IDirect3DBaseTexture9 **)&volume, &ps_3d, 0x00303030},
-        {"2d_3d", (IDirect3DBaseTexture9 **)&tex_2d, &ps_3d, 0x00707070, 0x00b2cce5},
-        {"3d_2d", (IDirect3DBaseTexture9 **)&volume, &ps_2d, 0x00303030, 0x00b2cce5, 0x00202020},
+        /* Star Wars: The Old Republic uses mismatched samplers for rendering water. */
+        {"2d_3d", (IDirect3DBaseTexture9 **)&tex_2d, &ps_3d, 0x00707070, SAMPLE_ZERO},
+        {"3d_2d", (IDirect3DBaseTexture9 **)&volume, &ps_2d, 0x00303030, SAMPLE_ZERO | RANDOM_W},
     };
 
     window = create_window();
@@ -27003,10 +27013,17 @@ static void test_mismatched_sample_types(void)
 
         colour = getPixelColor(device, 320, 240);
 
+        /* If texld returns zero, the test writes vec4(0.7, 0.8, 0.9, 0.0) - 0x00b2cce5.
+         *
+         * When sampling the 3D texture with a 2D sampler, most drivers sample at the depth
+         * coordinate we provide (0.5), but some use 0.0, while my radeon GPU uses 0.89. */
+        r = (colour & 0x00ff0000) >> 16;
+        g = (colour & 0x0000ff00) >> 8;
+        b = (colour & 0x000000ff);
         todo_wine_if(!color_match(colour, tests[i].expected_colour, 1))
         ok(color_match(colour, tests[i].expected_colour, 1)
-                || broken(tests[i].expected_broken && color_match(colour, tests[i].expected_broken, 1))
-                || broken(tests[i].expected_broken2 && color_match(colour, tests[i].expected_broken2, 1)),
+                || broken((tests[i].broken & SAMPLE_ZERO) && color_match(colour, 0x00b2cce5, 1))
+                || broken((tests[i].broken & RANDOM_W) && r >= 0x1f && r <= 0x41 && r == g && r == b),
                 "test %s, expected 0x%08x, got 0x%08x.\n",
                 tests[i].name, tests[i].expected_colour, colour);
     }
@@ -27026,6 +27043,9 @@ done:
     ok(!refcount, "Device has %lu references left.\n", refcount);
     IDirect3D9_Release(d3d);
     DestroyWindow(window);
+
+#undef SAMPLE_ZERO
+#undef RANDOM_W
 }
 
 static void test_draw_mapped_buffer(void)
@@ -28370,7 +28390,8 @@ static void test_mipmap_upload(void)
             ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
             draw_textured_quad(&context, texture);
-            check_rt_color(context.backbuffer, 0x00111111 * (j + 1));
+            /* AMD Windows drivers don't sample from sysmem textures. */
+            check_rt_color_broken(context.backbuffer, 0x00111111 * (j + 1), 0x00000000, pools[i] == D3DPOOL_SYSTEMMEM);
 
             winetest_pop_context();
         }

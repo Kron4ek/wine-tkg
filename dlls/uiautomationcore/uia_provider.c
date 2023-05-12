@@ -796,7 +796,7 @@ static HRESULT WINAPI msaa_fragment_Navigate(IRawElementProviderFragment *iface,
         else
             acc = msaa_prov->acc;
 
-        hr = UiaProviderFromIAccessible(acc, CHILDID_SELF, 0, &elprov);
+        hr = create_msaa_provider(acc, CHILDID_SELF, NULL, FALSE, &elprov);
         if (SUCCEEDED(hr))
         {
             struct msaa_provider *prov = impl_from_msaa_provider(elprov);
@@ -827,7 +827,7 @@ static HRESULT WINAPI msaa_fragment_Navigate(IRawElementProviderFragment *iface,
         if (FAILED(hr) || !acc)
             break;
 
-        hr = UiaProviderFromIAccessible(acc, child_id, 0, &elprov);
+        hr = create_msaa_provider(acc, child_id, NULL, FALSE, &elprov);
         if (SUCCEEDED(hr))
         {
             struct msaa_provider *prov = impl_from_msaa_provider(elprov);
@@ -877,7 +877,7 @@ static HRESULT WINAPI msaa_fragment_Navigate(IRawElementProviderFragment *iface,
         if (FAILED(hr) || !acc)
             break;
 
-        hr = UiaProviderFromIAccessible(acc, child_id, 0, &elprov);
+        hr = create_msaa_provider(acc, child_id, NULL, FALSE, &elprov);
         if (SUCCEEDED(hr))
         {
             struct msaa_provider *prov = impl_from_msaa_provider(elprov);
@@ -1134,13 +1134,48 @@ static const ILegacyIAccessibleProviderVtbl msaa_acc_provider_vtbl = {
     msaa_acc_provider_get_DefaultAction,
 };
 
+HRESULT create_msaa_provider(IAccessible *acc, long child_id, HWND hwnd, BOOL known_root_acc,
+        IRawElementProviderSimple **elprov)
+{
+    struct msaa_provider *msaa_prov = heap_alloc_zero(sizeof(*msaa_prov));
+
+    if (!msaa_prov)
+        return E_OUTOFMEMORY;
+
+    msaa_prov->IRawElementProviderSimple_iface.lpVtbl = &msaa_provider_vtbl;
+    msaa_prov->IRawElementProviderFragment_iface.lpVtbl = &msaa_fragment_vtbl;
+    msaa_prov->ILegacyIAccessibleProvider_iface.lpVtbl = &msaa_acc_provider_vtbl;
+    msaa_prov->refcount = 1;
+    variant_init_i4(&msaa_prov->cid, child_id);
+    msaa_prov->acc = acc;
+    IAccessible_AddRef(acc);
+    msaa_prov->ia2 = msaa_acc_get_ia2(acc);
+
+    if (!hwnd)
+    {
+        HRESULT hr;
+
+        hr = WindowFromAccessibleObject(acc, &msaa_prov->hwnd);
+        if (FAILED(hr))
+            WARN("WindowFromAccessibleObject failed with hr %#lx\n", hr);
+    }
+    else
+        msaa_prov->hwnd = hwnd;
+
+    if (known_root_acc)
+        msaa_prov->root_acc_check_ran = msaa_prov->is_root_acc = TRUE;
+
+    *elprov = &msaa_prov->IRawElementProviderSimple_iface;
+
+    return S_OK;
+}
+
 /***********************************************************************
  *          UiaProviderFromIAccessible (uiautomationcore.@)
  */
 HRESULT WINAPI UiaProviderFromIAccessible(IAccessible *acc, long child_id, DWORD flags,
         IRawElementProviderSimple **elprov)
 {
-    struct msaa_provider *msaa_prov;
     IServiceProvider *serv_prov;
     HWND hwnd = NULL;
     HRESULT hr;
@@ -1184,22 +1219,7 @@ HRESULT WINAPI UiaProviderFromIAccessible(IAccessible *acc, long child_id, DWORD
     if (!hwnd)
         return E_FAIL;
 
-    msaa_prov = heap_alloc_zero(sizeof(*msaa_prov));
-    if (!msaa_prov)
-        return E_OUTOFMEMORY;
-
-    msaa_prov->IRawElementProviderSimple_iface.lpVtbl = &msaa_provider_vtbl;
-    msaa_prov->IRawElementProviderFragment_iface.lpVtbl = &msaa_fragment_vtbl;
-    msaa_prov->ILegacyIAccessibleProvider_iface.lpVtbl = &msaa_acc_provider_vtbl;
-    msaa_prov->refcount = 1;
-    msaa_prov->hwnd = hwnd;
-    variant_init_i4(&msaa_prov->cid, child_id);
-    msaa_prov->acc = acc;
-    IAccessible_AddRef(acc);
-    msaa_prov->ia2 = msaa_acc_get_ia2(acc);
-    *elprov = &msaa_prov->IRawElementProviderSimple_iface;
-
-    return S_OK;
+    return create_msaa_provider(acc, child_id, hwnd, FALSE, elprov);
 }
 
 static HRESULT uia_get_hr_for_last_error(void)
@@ -1229,11 +1249,51 @@ static HRESULT uia_send_message_timeout(HWND hwnd, UINT msg, WPARAM wparam, LPAR
     return S_OK;
 }
 
+static BOOL is_top_level_hwnd(HWND hwnd)
+{
+    return GetAncestor(hwnd, GA_PARENT) == GetDesktopWindow();
+}
+
+static HRESULT get_uia_control_type_for_hwnd(HWND hwnd, int *control_type)
+{
+    LONG_PTR style, ex_style;
+
+    *control_type = 0;
+    if ((ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)) & WS_EX_APPWINDOW)
+    {
+        *control_type = UIA_WindowControlTypeId;
+        return S_OK;
+    }
+
+    SetLastError(NO_ERROR);
+    if (!(style = GetWindowLongPtrW(hwnd, GWL_STYLE)) && (GetLastError() != NO_ERROR))
+        return uia_get_hr_for_last_error();
+
+    /*
+     * Non-caption HWNDs that are popups or tool windows aren't considered full
+     * windows, only panes.
+     */
+    if (((style & WS_CAPTION) != WS_CAPTION) && ((ex_style & WS_EX_TOOLWINDOW) || (style & WS_POPUP)))
+    {
+        *control_type = UIA_PaneControlTypeId;
+        return S_OK;
+    }
+
+    /* Non top-level HWNDs are considered panes as well. */
+    if (!is_top_level_hwnd(hwnd))
+        *control_type = UIA_PaneControlTypeId;
+    else
+        *control_type = UIA_WindowControlTypeId;
+
+    return S_OK;
+}
+
 /*
  * Default ProviderType_BaseHwnd IRawElementProviderSimple interface.
  */
 struct base_hwnd_provider {
     IRawElementProviderSimple IRawElementProviderSimple_iface;
+    IRawElementProviderFragment IRawElementProviderFragment_iface;
     LONG refcount;
 
     HWND hwnd;
@@ -1246,9 +1306,13 @@ static inline struct base_hwnd_provider *impl_from_base_hwnd_provider(IRawElemen
 
 static HRESULT WINAPI base_hwnd_provider_QueryInterface(IRawElementProviderSimple *iface, REFIID riid, void **ppv)
 {
+    struct base_hwnd_provider *base_hwnd_prov = impl_from_base_hwnd_provider(iface);
+
     *ppv = NULL;
     if (IsEqualIID(riid, &IID_IRawElementProviderSimple) || IsEqualIID(riid, &IID_IUnknown))
         *ppv = iface;
+    else if (IsEqualIID(riid, &IID_IRawElementProviderFragment))
+        *ppv = &base_hwnd_prov->IRawElementProviderFragment_iface;
     else
         return E_NOINTERFACE;
 
@@ -1366,6 +1430,19 @@ static HRESULT WINAPI base_hwnd_provider_GetPropertyValue(IRawElementProviderSim
         break;
     }
 
+    case UIA_ControlTypePropertyId:
+    {
+        int control_type;
+
+        hr = get_uia_control_type_for_hwnd(base_hwnd_prov->hwnd, &control_type);
+        if (SUCCEEDED(hr))
+        {
+            V_VT(ret_val) = VT_I4;
+            V_I4(ret_val) = control_type;
+        }
+        break;
+    }
+
     default:
         break;
     }
@@ -1394,6 +1471,153 @@ static const IRawElementProviderSimpleVtbl base_hwnd_provider_vtbl = {
     base_hwnd_provider_get_HostRawElementProvider,
 };
 
+/*
+ * IRawElementProviderFragment interface for default ProviderType_BaseHwnd
+ * providers.
+ */
+static inline struct base_hwnd_provider *impl_from_base_hwnd_fragment(IRawElementProviderFragment *iface)
+{
+    return CONTAINING_RECORD(iface, struct base_hwnd_provider, IRawElementProviderFragment_iface);
+}
+
+static HRESULT WINAPI base_hwnd_fragment_QueryInterface(IRawElementProviderFragment *iface, REFIID riid,
+        void **ppv)
+{
+    struct base_hwnd_provider *base_hwnd_prov = impl_from_base_hwnd_fragment(iface);
+    return IRawElementProviderSimple_QueryInterface(&base_hwnd_prov->IRawElementProviderSimple_iface, riid, ppv);
+}
+
+static ULONG WINAPI base_hwnd_fragment_AddRef(IRawElementProviderFragment *iface)
+{
+    struct base_hwnd_provider *base_hwnd_prov = impl_from_base_hwnd_fragment(iface);
+    return IRawElementProviderSimple_AddRef(&base_hwnd_prov->IRawElementProviderSimple_iface);
+}
+
+static ULONG WINAPI base_hwnd_fragment_Release(IRawElementProviderFragment *iface)
+{
+    struct base_hwnd_provider *base_hwnd_prov = impl_from_base_hwnd_fragment(iface);
+    return IRawElementProviderSimple_Release(&base_hwnd_prov->IRawElementProviderSimple_iface);
+}
+
+static HRESULT WINAPI base_hwnd_fragment_Navigate(IRawElementProviderFragment *iface,
+        enum NavigateDirection direction, IRawElementProviderFragment **ret_val)
+{
+    struct base_hwnd_provider *base_hwnd_prov = impl_from_base_hwnd_fragment(iface);
+    IRawElementProviderSimple *elprov = NULL;
+    HRESULT hr = S_OK;
+
+    TRACE("%p, %d, %p\n", iface, direction, ret_val);
+
+    *ret_val = NULL;
+
+    switch (direction)
+    {
+    case NavigateDirection_Parent:
+    {
+        HWND parent, owner;
+
+        /*
+         * Top level owned windows have their owner window as a parent instead
+         * of the desktop window.
+         */
+        if (is_top_level_hwnd(base_hwnd_prov->hwnd) && (owner = GetWindow(base_hwnd_prov->hwnd, GW_OWNER)))
+            parent = owner;
+        else
+            parent = GetAncestor(base_hwnd_prov->hwnd, GA_PARENT);
+
+        if (parent)
+            hr = create_base_hwnd_provider(parent, &elprov);
+        break;
+    }
+
+    case NavigateDirection_FirstChild:
+    case NavigateDirection_LastChild:
+    case NavigateDirection_PreviousSibling:
+    case NavigateDirection_NextSibling:
+        FIXME("Unimplemented NavigateDirection %d\n", direction);
+        return E_NOTIMPL;
+
+    default:
+        FIXME("Invalid NavigateDirection %d\n", direction);
+        return E_INVALIDARG;
+    }
+
+    if (elprov)
+    {
+        hr = IRawElementProviderSimple_QueryInterface(elprov, &IID_IRawElementProviderFragment, (void **)ret_val);
+        IRawElementProviderSimple_Release(elprov);
+    }
+
+    return hr;
+}
+
+static HRESULT WINAPI base_hwnd_fragment_GetRuntimeId(IRawElementProviderFragment *iface,
+        SAFEARRAY **ret_val)
+{
+    FIXME("%p, %p: stub!\n", iface, ret_val);
+    *ret_val = NULL;
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI base_hwnd_fragment_get_BoundingRectangle(IRawElementProviderFragment *iface,
+        struct UiaRect *ret_val)
+{
+    struct base_hwnd_provider *base_hwnd_prov = impl_from_base_hwnd_fragment(iface);
+    RECT rect = { 0 };
+
+    TRACE("%p, %p\n", iface, ret_val);
+
+    memset(ret_val, 0, sizeof(*ret_val));
+
+    /* Top level minimized window - Return empty rect. */
+    if (is_top_level_hwnd(base_hwnd_prov->hwnd) && IsIconic(base_hwnd_prov->hwnd))
+        return S_OK;
+
+    if (!GetWindowRect(base_hwnd_prov->hwnd, &rect))
+        return uia_get_hr_for_last_error();
+
+    ret_val->left = rect.left;
+    ret_val->top = rect.top;
+    ret_val->width = (rect.right - rect.left);
+    ret_val->height = (rect.bottom - rect.top);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI base_hwnd_fragment_GetEmbeddedFragmentRoots(IRawElementProviderFragment *iface,
+        SAFEARRAY **ret_val)
+{
+    FIXME("%p, %p: stub!\n", iface, ret_val);
+    *ret_val = NULL;
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI base_hwnd_fragment_SetFocus(IRawElementProviderFragment *iface)
+{
+    FIXME("%p: stub!\n", iface);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI base_hwnd_fragment_get_FragmentRoot(IRawElementProviderFragment *iface,
+        IRawElementProviderFragmentRoot **ret_val)
+{
+    FIXME("%p, %p: stub!\n", iface, ret_val);
+    *ret_val = NULL;
+    return E_NOTIMPL;
+}
+
+static const IRawElementProviderFragmentVtbl base_hwnd_fragment_vtbl = {
+    base_hwnd_fragment_QueryInterface,
+    base_hwnd_fragment_AddRef,
+    base_hwnd_fragment_Release,
+    base_hwnd_fragment_Navigate,
+    base_hwnd_fragment_GetRuntimeId,
+    base_hwnd_fragment_get_BoundingRectangle,
+    base_hwnd_fragment_GetEmbeddedFragmentRoots,
+    base_hwnd_fragment_SetFocus,
+    base_hwnd_fragment_get_FragmentRoot,
+};
+
 HRESULT create_base_hwnd_provider(HWND hwnd, IRawElementProviderSimple **elprov)
 {
     struct base_hwnd_provider *base_hwnd_prov;
@@ -1410,6 +1634,7 @@ HRESULT create_base_hwnd_provider(HWND hwnd, IRawElementProviderSimple **elprov)
         return E_OUTOFMEMORY;
 
     base_hwnd_prov->IRawElementProviderSimple_iface.lpVtbl = &base_hwnd_provider_vtbl;
+    base_hwnd_prov->IRawElementProviderFragment_iface.lpVtbl = &base_hwnd_fragment_vtbl;
     base_hwnd_prov->refcount = 1;
     base_hwnd_prov->hwnd = hwnd;
     *elprov = &base_hwnd_prov->IRawElementProviderSimple_iface;
@@ -1519,19 +1744,15 @@ exit:
     LeaveCriticalSection(&provider_thread_cs);
 }
 
-static HRESULT uia_provider_thread_add_node(HUIANODE node)
+static HRESULT uia_provider_thread_add_node(HUIANODE node, SAFEARRAY *rt_id)
 {
     struct uia_node *node_data = impl_from_IWineUiaNode((IWineUiaNode *)node);
     int prov_type = get_node_provider_type_at_idx(node_data, 0);
     struct uia_provider *prov_data;
-    SAFEARRAY *sa;
-    HRESULT hr;
+    HRESULT hr = S_OK;
 
     prov_data = impl_from_IWineUiaProvider(node_data->prov[prov_type]);
     node_data->nested_node = prov_data->return_nested_node = TRUE;
-    hr = UiaGetRuntimeId(node, &sa);
-    if (FAILED(hr))
-        return hr;
 
     TRACE("Adding node %p\n", node);
 
@@ -1539,38 +1760,40 @@ static HRESULT uia_provider_thread_add_node(HUIANODE node)
     list_add_tail(&provider_thread.nodes_list, &node_data->prov_thread_list_entry);
 
     /* If we have a runtime ID, create an entry in the rb tree. */
-    if (sa)
+    if (rt_id)
     {
         struct uia_provider_thread_map_entry *prov_map;
         struct rb_entry *rb_entry;
 
-        if ((rb_entry = rb_get(&provider_thread.node_map, sa)))
-        {
+        if ((rb_entry = rb_get(&provider_thread.node_map, rt_id)))
             prov_map = RB_ENTRY_VALUE(rb_entry, struct uia_provider_thread_map_entry, entry);
-            SafeArrayDestroy(sa);
-        }
         else
         {
             prov_map = heap_alloc_zero(sizeof(*prov_map));
             if (!prov_map)
             {
-                SafeArrayDestroy(sa);
-                LeaveCriticalSection(&provider_thread_cs);
-                return E_OUTOFMEMORY;
+                hr = E_OUTOFMEMORY;
+                goto exit;
             }
 
-            prov_map->runtime_id = sa;
+            hr = SafeArrayCopy(rt_id, &prov_map->runtime_id);
+            if (FAILED(hr))
+            {
+                heap_free(prov_map);
+                goto exit;
+            }
             list_init(&prov_map->nodes_list);
-            rb_put(&provider_thread.node_map, sa, &prov_map->entry);
+            rb_put(&provider_thread.node_map, prov_map->runtime_id, &prov_map->entry);
         }
 
         list_add_tail(&prov_map->nodes_list, &node_data->node_map_list_entry);
         node_data->map = prov_map;
     }
 
+exit:
     LeaveCriticalSection(&provider_thread_cs);
 
-    return S_OK;
+    return hr;
 }
 
 #define WM_GET_OBJECT_UIA_NODE (WM_USER + 1)
@@ -1582,13 +1805,13 @@ static LRESULT CALLBACK uia_provider_thread_msg_proc(HWND hwnd, UINT msg, WPARAM
     {
     case WM_GET_OBJECT_UIA_NODE:
     {
+        SAFEARRAY *rt_id = (SAFEARRAY *)wparam;
         HUIANODE node = (HUIANODE)lparam;
         LRESULT lr;
 
-        if (FAILED(uia_provider_thread_add_node(node)))
+        if (FAILED(uia_provider_thread_add_node(node, rt_id)))
         {
             WARN("Failed to add node %p to provider thread list.\n", node);
-            UiaNodeRelease(node);
             return 0;
         }
 
@@ -1603,11 +1826,6 @@ static LRESULT CALLBACK uia_provider_thread_msg_proc(HWND hwnd, UINT msg, WPARAM
             lr = 0;
         }
 
-        /*
-         * LresultFromObject increases refcnt by 1. If LresultFromObject
-         * failed, this is expected to release the node.
-         */
-        UiaNodeRelease(node);
         return lr;
     }
 
@@ -1723,13 +1941,24 @@ void uia_stop_provider_thread(void)
  */
 LRESULT uia_lresult_from_node(HUIANODE huianode)
 {
-    if (!uia_start_provider_thread())
-    {
-        UiaNodeRelease(huianode);
-        return 0;
-    }
+    SAFEARRAY *rt_id;
+    LRESULT lr = 0;
+    HRESULT hr;
 
-    return SendMessageW(provider_thread.hwnd, WM_GET_OBJECT_UIA_NODE, 0, (LPARAM)huianode);
+    hr = UiaGetRuntimeId(huianode, &rt_id);
+    if (SUCCEEDED(hr) && uia_start_provider_thread())
+        lr = SendMessageW(provider_thread.hwnd, WM_GET_OBJECT_UIA_NODE, (WPARAM)rt_id, (LPARAM)huianode);
+
+    if (FAILED(hr))
+        WARN("UiaGetRuntimeId failed with hr %#lx\n", hr);
+
+    /*
+     * LresultFromObject increases refcnt by 1. If LresultFromObject
+     * failed or wasn't called, this is expected to release the node.
+     */
+    UiaNodeRelease(huianode);
+    SafeArrayDestroy(rt_id);
+    return lr;
 }
 
 /***********************************************************************

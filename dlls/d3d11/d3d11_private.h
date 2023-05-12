@@ -38,8 +38,6 @@
 #include "wine/winedxgi.h"
 #include "wine/rbtree.h"
 
-#include "wine/wined3d-interop.h"
-
 struct d3d_device;
 
 /* TRACE helper functions */
@@ -134,7 +132,7 @@ struct d3d_texture1d *unsafe_impl_from_ID3D10Texture1D(ID3D10Texture1D *iface) D
 /* ID3D11Texture2D, ID3D10Texture2D */
 struct d3d_texture2d
 {
-    IWineD3D11Texture2D ID3D11Texture2D_iface;
+    ID3D11Texture2D ID3D11Texture2D_iface;
     ID3D10Texture2D ID3D10Texture2D_iface;
     LONG refcount;
 
@@ -150,7 +148,8 @@ static inline struct d3d_texture2d *impl_from_ID3D11Texture2D(ID3D11Texture2D *i
 }
 
 HRESULT d3d_texture2d_create(struct d3d_device *device, const D3D11_TEXTURE2D_DESC *desc,
-        const D3D11_SUBRESOURCE_DATA *data, struct d3d_texture2d **texture) DECLSPEC_HIDDEN;
+        struct wined3d_texture *wined3d_texture,
+        const D3D11_SUBRESOURCE_DATA *data, struct d3d_texture2d **out) DECLSPEC_HIDDEN;
 struct d3d_texture2d *unsafe_impl_from_ID3D11Texture2D(ID3D11Texture2D *iface) DECLSPEC_HIDDEN;
 struct d3d_texture2d *unsafe_impl_from_ID3D10Texture2D(ID3D10Texture2D *iface) DECLSPEC_HIDDEN;
 
@@ -553,7 +552,6 @@ struct d3d_device
     ID3D10Multithread ID3D10Multithread_iface;
     IWineDXGIDeviceParent IWineDXGIDeviceParent_iface;
     IUnknown *outer_unk;
-    IWineD3D11Device IWineD3D11Device_iface;
     LONG refcount;
 
     BOOL d3d11_only;
