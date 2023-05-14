@@ -1472,14 +1472,18 @@ static BOOLEAN get_dir_case_sensitivity( const char *dir )
  */
 static BOOL is_hidden_file( const char *name )
 {
-    const char *p, *end;
+    const char *p;
 
     if (show_dot_files) return FALSE;
 
-    end = p = name + strlen( name );
+    p = name + strlen( name );
     while (p > name && p[-1] == '/') p--;
     while (p > name && p[-1] != '/') p--;
-    return (p < end && p + 1 != end && p[0] == '.' && p[1] != '\\' && (p[1] != '.' || (p + 2 != end && p[2] != '\\')));
+    if (*p++ != '.') return FALSE;
+    if (!*p || *p == '/') return FALSE;  /* "." directory */
+    if (*p++ != '.') return FALSE;
+    if (!*p || *p == '/') return FALSE;  /* ".." directory */
+    return TRUE;
 }
 
 
@@ -1847,7 +1851,10 @@ static NTSTATUS fd_set_file_info( int fd, UINT attr, BOOL force_set_xattr )
     }
     if (fchmod( fd, st.st_mode ) == -1) return errno_to_status( errno );
 
+    /* if the file has multiple names, we can't be sure that it is safe to not
+       set the extended attribute, since any of the names could start with a dot */
     force_set_xattr = force_set_xattr || st.st_nlink > 1;
+
     if (fd_set_dos_attrib( fd, attr, force_set_xattr ) == -1 && errno != ENOTSUP)
         WARN( "Failed to set extended attribute " SAMBA_XATTR_DOS_ATTRIB ". errno %d (%s)\n",
               errno, strerror( errno ) );
@@ -5664,8 +5671,7 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
                 return io->u.Status = status;
 
-            if ((status = server_get_unix_name( handle, &unix_name )))
-                unix_name = NULL;
+            if (server_get_unix_name( handle, &unix_name )) unix_name = NULL;
 
             mtime.QuadPart = info->LastWriteTime.QuadPart == -1 ? 0 : info->LastWriteTime.QuadPart;
             atime.QuadPart = info->LastAccessTime.QuadPart == -1 ? 0 : info->LastAccessTime.QuadPart;
@@ -5673,11 +5679,9 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             if (atime.QuadPart || mtime.QuadPart)
                 status = set_file_times( fd, &mtime, &atime );
 
-            if (status == STATUS_SUCCESS && info->FileAttributes)
-            {
-                BOOL force_xattr = unix_name && is_hidden_file( unix_name );
-                status = fd_set_file_info( fd, info->FileAttributes, force_xattr );
-            }
+            if (status == STATUS_SUCCESS)
+                status = fd_set_file_info( fd, info->FileAttributes,
+                                           unix_name && is_hidden_file( unix_name ));
 
             if (needs_close) close( fd );
             free( unix_name );

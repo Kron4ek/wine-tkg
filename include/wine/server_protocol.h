@@ -485,6 +485,7 @@ enum apc_type
     APC_VIRTUAL_LOCK,
     APC_VIRTUAL_UNLOCK,
     APC_MAP_VIEW,
+    APC_MAP_VIEW_EX,
     APC_UNMAP_VIEW,
     APC_CREATE_THREAD,
     APC_DUP_HANDLE
@@ -528,6 +529,7 @@ typedef union
         mem_size_t       limit;
         mem_size_t       align;
         unsigned int     prot;
+        unsigned int     attributes;
     } virtual_alloc_ex;
     struct
     {
@@ -584,9 +586,19 @@ typedef union
     struct
     {
         enum apc_type    type;
+        obj_handle_t     handle;
+        client_ptr_t     addr;
+        mem_size_t       size;
+        file_pos_t       offset;
+        mem_size_t       limit;
+        unsigned int     alloc_type;
+        unsigned int     prot;
+    } map_view_ex;
+    struct
+    {
+        enum apc_type    type;
         int              __pad;
         client_ptr_t     addr;
-        unsigned int     flags;
     } unmap_view;
     struct
     {
@@ -687,6 +699,13 @@ typedef union
         client_ptr_t     addr;
         mem_size_t       size;
     } map_view;
+    struct
+    {
+        enum apc_type    type;
+        unsigned int     status;
+        client_ptr_t     addr;
+        mem_size_t       size;
+    } map_view_ex;
     struct
     {
         enum apc_type    type;
@@ -815,7 +834,9 @@ typedef struct
     unsigned short image_charact;
     unsigned short dll_charact;
     unsigned short machine;
-    unsigned char  contains_code;
+    unsigned char  contains_code : 1;
+    unsigned char  wine_builtin : 1;
+    unsigned char  wine_fakedll : 1;
     unsigned char  image_flags;
     unsigned int   loader_flags;
     unsigned int   header_size;
@@ -830,8 +851,6 @@ typedef struct
 #define IMAGE_FLAGS_ImageMappedFlat           0x08
 #define IMAGE_FLAGS_BaseBelow4gb              0x10
 #define IMAGE_FLAGS_ComPlusPrefer32bit        0x20
-#define IMAGE_FLAGS_WineBuiltin               0x40
-#define IMAGE_FLAGS_WineFakeDll               0x80
 
 struct rawinput_device
 {
@@ -1971,10 +1990,22 @@ struct map_view_request
     client_ptr_t base;
     mem_size_t   size;
     file_pos_t   start;
-    /* VARARG(image,pe_image_info); */
-    /* VARARG(name,unicode_str); */
 };
 struct map_view_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct map_builtin_view_request
+{
+    struct request_header __header;
+    /* VARARG(image,pe_image_info); */
+    /* VARARG(name,unicode_str); */
+    char __pad_12[4];
+};
+struct map_builtin_view_reply
 {
     struct reply_header __header;
 };
@@ -5766,6 +5797,7 @@ enum request
     REQ_open_mapping,
     REQ_get_mapping_info,
     REQ_map_view,
+    REQ_map_builtin_view,
     REQ_unmap_view,
     REQ_get_mapping_committed_range,
     REQ_add_mapping_committed_range,
@@ -6062,6 +6094,7 @@ union generic_request
     struct open_mapping_request open_mapping_request;
     struct get_mapping_info_request get_mapping_info_request;
     struct map_view_request map_view_request;
+    struct map_builtin_view_request map_builtin_view_request;
     struct unmap_view_request unmap_view_request;
     struct get_mapping_committed_range_request get_mapping_committed_range_request;
     struct add_mapping_committed_range_request add_mapping_committed_range_request;
@@ -6356,6 +6389,7 @@ union generic_reply
     struct open_mapping_reply open_mapping_reply;
     struct get_mapping_info_reply get_mapping_info_reply;
     struct map_view_reply map_view_reply;
+    struct map_builtin_view_reply map_builtin_view_reply;
     struct unmap_view_reply unmap_view_reply;
     struct get_mapping_committed_range_reply get_mapping_committed_range_reply;
     struct add_mapping_committed_range_reply add_mapping_committed_range_reply;
@@ -6584,7 +6618,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 764
+#define SERVER_PROTOCOL_VERSION 768
 
 /* ### protocol_version end ### */
 

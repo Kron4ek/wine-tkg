@@ -8224,22 +8224,70 @@ static void test_pseudo_handle_security(void)
     }
 }
 
+static const LUID_AND_ATTRIBUTES *find_privilege(const TOKEN_PRIVILEGES *privs, const LUID *luid)
+{
+    DWORD i;
+
+    for (i = 0; i < privs->PrivilegeCount; ++i)
+    {
+        if (!memcmp(luid, &privs->Privileges[i].Luid, sizeof(LUID)))
+            return &privs->Privileges[i];
+    }
+
+    return NULL;
+}
+
 static void test_duplicate_token(void)
 {
+    const DWORD orig_access = TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_PRIVILEGES;
+    char prev_privs_buffer[128], ret_privs_buffer[1024];
+    TOKEN_PRIVILEGES *prev_privs = (void *)prev_privs_buffer;
+    TOKEN_PRIVILEGES *ret_privs = (void *)ret_privs_buffer;
+    const LUID_AND_ATTRIBUTES *priv;
+    TOKEN_PRIVILEGES privs;
+    SECURITY_QUALITY_OF_SERVICE qos = {.Length = sizeof(qos)};
+    OBJECT_ATTRIBUTES attr = {.Length = sizeof(attr)};
+    SECURITY_IMPERSONATION_LEVEL level;
     HANDLE token, token2;
+    DWORD size;
     BOOL ret;
 
-    ret = OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ADJUST_DEFAULT, &token);
+    ret = OpenProcessToken(GetCurrentProcess(), orig_access, &token);
+    ok(ret, "got error %lu\n", GetLastError());
+
+    /* Disable a privilege, to see if that privilege modification is preserved
+     * in the duplicated tokens. */
+    privs.PrivilegeCount = 1;
+    ret = LookupPrivilegeValueA(NULL, "SeChangeNotifyPrivilege", &privs.Privileges[0].Luid);
+    ok(ret, "got error %lu\n", GetLastError());
+    privs.Privileges[0].Attributes = 0;
+    ret = AdjustTokenPrivileges(token, FALSE, &privs, sizeof(prev_privs_buffer), prev_privs, &size);
     ok(ret, "got error %lu\n", GetLastError());
 
     ret = DuplicateToken(token, SecurityAnonymous, &token2);
     ok(ret, "got error %lu\n", GetLastError());
     TEST_GRANTED_ACCESS(token2, TOKEN_QUERY | TOKEN_IMPERSONATE);
+    ret = GetTokenInformation(token2, TokenImpersonationLevel, &level, sizeof(level), &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    ok(level == SecurityAnonymous, "got impersonation level %#x\n", level);
+    ret = GetTokenInformation(token2, TokenPrivileges, ret_privs, sizeof(ret_privs_buffer), &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    priv = find_privilege(ret_privs, &privs.Privileges[0].Luid);
+    ok(!!priv, "Privilege should exist\n");
+    todo_wine ok(priv->Attributes == SE_GROUP_MANDATORY, "Got attributes %#lx\n", priv->Attributes);
     CloseHandle(token2);
 
     ret = DuplicateTokenEx(token, 0, NULL, SecurityAnonymous, TokenPrimary, &token2);
     ok(ret, "got error %lu\n", GetLastError());
-    TEST_GRANTED_ACCESS(token2, TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ADJUST_DEFAULT);
+    TEST_GRANTED_ACCESS(token2, orig_access);
+    ret = GetTokenInformation(token2, TokenImpersonationLevel, &level, sizeof(level), &size);
+    ok(!ret, "expected failure\n");
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "Got error %lu.\n", GetLastError());
+    ret = GetTokenInformation(token2, TokenPrivileges, ret_privs, sizeof(ret_privs_buffer), &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    priv = find_privilege(ret_privs, &privs.Privileges[0].Luid);
+    ok(!!priv, "Privilege should exist\n");
+    todo_wine ok(priv->Attributes == SE_GROUP_MANDATORY, "Got attributes %#lx\n", priv->Attributes);
     CloseHandle(token2);
 
     ret = DuplicateTokenEx(token, MAXIMUM_ALLOWED, NULL, SecurityAnonymous, TokenPrimary, &token2);
@@ -8251,6 +8299,57 @@ static void test_duplicate_token(void)
     ok(ret, "got error %lu\n", GetLastError());
     TEST_GRANTED_ACCESS(token2, TOKEN_QUERY_SOURCE);
     CloseHandle(token2);
+
+    ret = DuplicateTokenEx(token, 0, NULL, SecurityIdentification, TokenImpersonation, &token2);
+    ok(ret, "got error %lu\n", GetLastError());
+    TEST_GRANTED_ACCESS(token2, orig_access);
+    ret = GetTokenInformation(token2, TokenImpersonationLevel, &level, sizeof(level), &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    ok(level == SecurityIdentification, "got impersonation level %#x\n", level);
+    ret = GetTokenInformation(token2, TokenPrivileges, ret_privs, sizeof(ret_privs_buffer), &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    priv = find_privilege(ret_privs, &privs.Privileges[0].Luid);
+    ok(!!priv, "Privilege should exist\n");
+    todo_wine ok(priv->Attributes == SE_GROUP_MANDATORY, "Got attributes %#lx\n", priv->Attributes);
+    CloseHandle(token2);
+
+    ret = NtDuplicateToken(token, 0, &attr, FALSE, TokenImpersonation, &token2);
+    ok(ret == STATUS_SUCCESS, "Got status %#x.\n", ret);
+    TEST_GRANTED_ACCESS(token2, orig_access);
+    ret = GetTokenInformation(token2, TokenImpersonationLevel, &level, sizeof(level), &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    ok(level == SecurityAnonymous, "got impersonation level %#x\n", level);
+    ret = GetTokenInformation(token2, TokenPrivileges, ret_privs, sizeof(ret_privs_buffer), &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    priv = find_privilege(ret_privs, &privs.Privileges[0].Luid);
+    ok(!!priv, "Privilege should exist\n");
+    todo_wine ok(priv->Attributes == SE_GROUP_MANDATORY, "Got attributes %#lx\n", priv->Attributes);
+    CloseHandle(token2);
+
+    ret = NtDuplicateToken(token, 0, &attr, TRUE, TokenImpersonation, &token2);
+    ok(ret == STATUS_SUCCESS, "Got status %#x.\n", ret);
+    TEST_GRANTED_ACCESS(token2, orig_access);
+    ret = GetTokenInformation(token2, TokenPrivileges, ret_privs, sizeof(ret_privs_buffer), &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    priv = find_privilege(ret_privs, &privs.Privileges[0].Luid);
+    todo_wine ok(!priv, "Privilege shouldn't exist\n");
+    CloseHandle(token2);
+
+    qos.ImpersonationLevel = SecurityIdentification;
+    qos.ContextTrackingMode = SECURITY_STATIC_TRACKING;
+    qos.EffectiveOnly = FALSE;
+    attr.SecurityQualityOfService = &qos;
+    ret = NtDuplicateToken(token, 0, &attr, FALSE, TokenImpersonation, &token2);
+    ok(ret == STATUS_SUCCESS, "Got status %#x.\n", ret);
+    TEST_GRANTED_ACCESS(token2, orig_access);
+    ret = GetTokenInformation(token2, TokenImpersonationLevel, &level, sizeof(level), &size);
+    ok(ret, "got error %lu\n", GetLastError());
+    ok(level == SecurityIdentification, "got impersonation level %#x\n", level);
+    CloseHandle(token2);
+
+    privs.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    ret = AdjustTokenPrivileges(token, FALSE, &privs, sizeof(prev_privs_buffer), prev_privs, &size);
+    ok(ret, "got error %lu\n", GetLastError());
 
     CloseHandle(token);
 }
@@ -8693,6 +8792,34 @@ static void test_group_as_file_owner(void)
     ok(ret, "got error %lu\n", GetLastError());
 }
 
+static void test_IsValidSecurityDescriptor(void)
+{
+    SECURITY_DESCRIPTOR *sd;
+    BOOL ret;
+
+    SetLastError(0xdeadbeef);
+    ret = IsValidSecurityDescriptor(NULL);
+    ok(!ret, "Unexpected return value %d.\n", ret);
+    ok(GetLastError() == ERROR_INVALID_SECURITY_DESCR, "Unexpected error %ld.\n", GetLastError());
+
+    sd = calloc(1, SECURITY_DESCRIPTOR_MIN_LENGTH);
+
+    SetLastError(0xdeadbeef);
+    ret = IsValidSecurityDescriptor(sd);
+    ok(!ret, "Unexpected return value %d.\n", ret);
+    ok(GetLastError() == ERROR_INVALID_SECURITY_DESCR, "Unexpected error %ld.\n", GetLastError());
+
+    ret = InitializeSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION);
+    ok(ret, "Unexpected return value %d, error %ld.\n", ret, GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = IsValidSecurityDescriptor(sd);
+    ok(ret, "Unexpected return value %d.\n", ret);
+    ok(GetLastError() == 0xdeadbeef, "Unexpected error %ld.\n", GetLastError());
+
+    free(sd);
+}
+
 START_TEST(security)
 {
     init();
@@ -8762,6 +8889,7 @@ START_TEST(security)
     test_GetKernelObjectSecurity();
     test_elevation();
     test_group_as_file_owner();
+    test_IsValidSecurityDescriptor();
 
     /* Must be the last test, modifies process token */
     test_token_security_descriptor();

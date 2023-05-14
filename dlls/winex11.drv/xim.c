@@ -45,10 +45,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(xim);
 
 BOOL ximInComposeMode=FALSE;
 
-/* moved here from imm32 for dll separation */
-static DWORD dwCompStringLength = 0;
-static LPBYTE CompositionString = NULL;
-static DWORD dwCompStringSize = 0;
+static WCHAR *ime_comp_buf;
 
 static XIMStyle input_style = 0;
 static XIMStyle input_style_req = XIMPreeditCallbacks | XIMStatusCallbacks;
@@ -73,38 +70,28 @@ static const char *debugstr_xim_style( XIMStyle style )
     return wine_dbg_sprintf( "%s", buffer );
 }
 
-static void X11DRV_ImmSetInternalString(UINT offset, UINT selLength, LPWSTR lpComp, UINT len)
+static void xim_update_comp_string( UINT offset, UINT old_len, const WCHAR *text, UINT new_len )
 {
-    /* Composition strings are edited in chunks */
-    unsigned int byte_length = len * sizeof(WCHAR);
-    unsigned int byte_offset = offset * sizeof(WCHAR);
-    unsigned int byte_selection = selLength * sizeof(WCHAR);
-    int byte_expansion = byte_length - byte_selection;
-    LPBYTE ptr_new;
+    UINT len = ime_comp_buf ? wcslen( ime_comp_buf ) : 0;
+    int diff = new_len - old_len;
+    WCHAR *ptr;
 
-    TRACE("( %i, %i, %p, %d):\n", offset, selLength, lpComp, len );
+    TRACE( "offset %u, old_len %u, text %s\n", offset, old_len, debugstr_wn(text, new_len) );
 
-    if (byte_expansion + dwCompStringLength >= dwCompStringSize)
+    if (!(ptr = realloc( ime_comp_buf, (len + max(0, diff) + 1) * sizeof(WCHAR) )))
     {
-        ptr_new = realloc( CompositionString, dwCompStringSize + byte_expansion );
-        if (ptr_new == NULL)
-        {
-            ERR("Couldn't expand composition string buffer\n");
-            return;
-        }
-
-        CompositionString = ptr_new;
-        dwCompStringSize += byte_expansion;
+        ERR( "Failed to reallocate composition string buffer\n" );
+        return;
     }
 
-    ptr_new = CompositionString + byte_offset;
-    memmove(ptr_new + byte_length, ptr_new + byte_selection,
-            dwCompStringLength - byte_offset - byte_selection);
-    if (lpComp) memcpy(ptr_new, lpComp, byte_length);
-    dwCompStringLength += byte_expansion;
+    ime_comp_buf = ptr;
+    ptr = ime_comp_buf + offset;
+    memmove( ptr + new_len, ptr + old_len, (len - offset - old_len) * sizeof(WCHAR) );
+    if (text) memcpy( ptr, text, new_len * sizeof(WCHAR) );
+    len += diff;
+    ime_comp_buf[len] = 0;
 
-    x11drv_client_func( client_func_ime_set_composition_string,
-                        CompositionString, dwCompStringLength );
+    x11drv_client_func( client_func_ime_set_composition_string, ime_comp_buf, len * sizeof(WCHAR) );
 }
 
 void X11DRV_XIMLookupChars( const char *str, UINT count )
@@ -114,8 +101,9 @@ void X11DRV_XIMLookupChars( const char *str, UINT count )
 
     TRACE("%p %u\n", str, count);
 
-    if (!(output = malloc( count * sizeof(WCHAR) ))) return;
+    if (!(output = malloc( (count + 1) * sizeof(WCHAR) ))) return;
     len = ntdll_umbstowcs( str, count, output, count );
+    output[len] = 0;
 
     x11drv_client_func( client_func_ime_set_result, output, len * sizeof(WCHAR) );
     free( output );
@@ -162,11 +150,9 @@ static int xic_preedit_done( XIC xic, XPointer user, XPointer arg )
     TRACE( "xic %p, hwnd %p, arg %p\n", xic, hwnd, arg );
 
     ximInComposeMode = FALSE;
-    if (dwCompStringSize)
-        free( CompositionString );
-    dwCompStringSize = 0;
-    dwCompStringLength = 0;
-    CompositionString = NULL;
+    free( ime_comp_buf );
+    ime_comp_buf = NULL;
+
     x11drv_client_call( client_ime_set_composition_status, FALSE );
     return 0;
 }
@@ -175,39 +161,35 @@ static int xic_preedit_draw( XIC xic, XPointer user, XPointer arg )
 {
     XIMPreeditDrawCallbackStruct *params = (void *)arg;
     HWND hwnd = (HWND)user;
+    size_t text_len;
     XIMText *text;
+    WCHAR *output;
+    char *str;
+    int len;
 
     TRACE( "xic %p, hwnd %p, arg %p\n", xic, hwnd, arg );
 
     if (!params) return 0;
 
-    if (!(text = params->text))
-        X11DRV_ImmSetInternalString( params->chg_first, params->chg_length, NULL, 0 );
+    if (!(text = params->text)) str = NULL;
+    else if (!text->encoding_is_wchar) str = text->string.multi_byte;
+    else if ((len = wcstombs( NULL, text->string.wide_char, text->length )) < 0) str = NULL;
+    else if ((str = malloc( len + 1 )))
+    {
+        wcstombs( str, text->string.wide_char, len );
+        str[len] = 0;
+    }
+
+    if (!str || !(text_len = strlen( str )) || !(output = malloc( text_len * sizeof(WCHAR) )))
+        xim_update_comp_string( params->chg_first, params->chg_length, NULL, 0 );
     else
     {
-        size_t text_len;
-        WCHAR *output;
-        char *str;
-        int len;
-
-        if (!text->encoding_is_wchar) str = text->string.multi_byte;
-        else if ((len = wcstombs( NULL, text->string.wide_char, text->length )) < 0) str = NULL;
-        else if ((str = malloc( len + 1 )))
-        {
-            wcstombs( str, text->string.wide_char, len );
-            str[len] = 0;
-        }
-
-        text_len = str ? strlen( str ) : 0;
-        if ((output = malloc( text_len * sizeof(WCHAR) )))
-        {
-            text_len = ntdll_umbstowcs( str, text_len, output, text_len );
-            X11DRV_ImmSetInternalString( params->chg_first, params->chg_length, output, text_len );
-            free( output );
-        }
-
-        if (str != text->string.multi_byte) free( str );
+        text_len = ntdll_umbstowcs( str, text_len, output, text_len );
+        xim_update_comp_string( params->chg_first, params->chg_length, output, text_len );
+        free( output );
     }
+
+    if (text && str != text->string.multi_byte) free( str );
 
     x11drv_client_call( client_ime_set_cursor_pos, params->caret );
 
@@ -279,42 +261,26 @@ static int xic_status_draw( XIC xic, XPointer user, XPointer arg )
     return 0;
 }
 
-NTSTATUS x11drv_xim_reset( void *hwnd )
+/***********************************************************************
+ *      NotifyIMEStatus (X11DRV.@)
+ */
+void X11DRV_NotifyIMEStatus( HWND hwnd, UINT status )
 {
-    XIC ic = X11DRV_get_ic(hwnd);
-    if (ic)
-    {
-        char* leftover;
-        TRACE("Forcing Reset %p\n",ic);
-        leftover = XmbResetIC(ic);
-        XFree(leftover);
-    }
-    return 0;
-}
-
-NTSTATUS x11drv_xim_preedit_state( void *arg )
-{
-    struct xim_preedit_state_params *params = arg;
-    XIC ic;
-    XIMPreeditState state;
+    XIMPreeditState state = status ? XIMPreeditEnable : XIMPreeditDisable;
     XVaNestedList attr;
+    XIC xic;
 
-    ic = X11DRV_get_ic( params->hwnd );
-    if (!ic)
-        return 0;
+    TRACE( "hwnd %p, status %#x\n", hwnd, status );
 
-    if (params->open)
-        state = XIMPreeditEnable;
-    else
-        state = XIMPreeditDisable;
+    if (!(xic = X11DRV_get_ic( hwnd ))) return;
 
-    attr = XVaCreateNestedList(0, XNPreeditState, state, NULL);
-    if (attr != NULL)
+    if ((attr = XVaCreateNestedList( 0, XNPreeditState, state, NULL )))
     {
-        XSetICValues(ic, XNPreeditAttributes, attr, NULL);
-        XFree(attr);
+        XSetICValues( xic, XNPreeditAttributes, attr, NULL );
+        XFree( attr );
     }
-    return 0;
+
+    if (!status) XFree( XmbResetIC( xic ) );
 }
 
 /***********************************************************************

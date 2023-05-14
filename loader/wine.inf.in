@@ -343,16 +343,6 @@ HKCR,http\shell\open\command,,2,"""%11%\winebrowser.exe"" ""%1"""
 HKCR,https\shell\open\command,,2,"""%11%\winebrowser.exe"" ""%1"""
 HKCR,mailto\shell\open\command,,2,"""%11%\winebrowser.exe"" ""%1"""
 
-HKCU,Software\Wine\FileOpenBlacklist\.htm,"winebrowser",,"""%11%\winebrowser.exe"" -nohome"
-HKCU,Software\Wine\FileOpenBlacklist\.html,"winebrowser",,"""%11%\winebrowser.exe"" -nohome"
-HKCU,Software\Wine\FileOpenBlacklist\.ini,"notepad",,"%11%\notepad.exe %1"
-HKCU,Software\Wine\FileOpenBlacklist\.pdf,"winebrowser",,"""%11%\winebrowser.exe"" -nohome"
-HKCU,Software\Wine\FileOpenBlacklist\.rtf,"wordpad",,"""%16422%\Windows NT\Accessories\wordpad.exe"" %1"
-HKCU,Software\Wine\FileOpenBlacklist\.txt,"notepad",,"%11%\notepad.exe %1"
-HKCU,Software\Wine\FileOpenBlacklist\.url,"ieframe",,"rundll32.exe ieframe.dll,OpenURL %l"
-HKCU,Software\Wine\FileOpenBlacklist\.wri,"wordpad",,"""%16422%\Windows NT\Accessories\wordpad.exe"" %1"
-HKCU,Software\Wine\FileOpenBlacklist\.xml,"winebrowser",,"""%11%\winebrowser.exe"" -nohome"
-
 [ContentIndex]
 HKLM,System\CurrentControlSet\Control\ContentIndex\Language\Neutral,"WBreakerClass",,"{369647e0-17b0-11ce-9950-00aa004bbb1f}"
 HKLM,System\CurrentControlSet\Control\ContentIndex\Language\Neutral,"StemmerClass",,""
@@ -2876,33 +2866,6 @@ HKLM,Software\Wine\LicenseInformation,"Shell-InBoxGames-Shanghai-EnableGame",0x1
 HKLM,Software\Wine\LicenseInformation,"Shell-InBoxGames-Solitaire-EnableGame",0x10001,0x00000001
 HKLM,Software\Wine\LicenseInformation,"Shell-InBoxGames-SpiderSolitaire-EnableGame",0x10001,0x00000001
 HKLM,Software\Wine\LicenseInformation,"Shell-PremiumInBoxGames-Chess-EnableGame",0x10001,0x00000001
-;;Likely want *80 and *90 too, but those require removing Wine's manifest files.
-HKCU,Software\Wine\DllOverrides,"atl100",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"msvcp100",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"msvcr100",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"vcomp100",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"atl110",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"msvcp110",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"msvcr110",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"vcomp110",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"atl120",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"msvcp120",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"msvcr120",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"vcomp120",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"api-ms-win-crt-conio-l1-1-0",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"api-ms-win-crt-heap-l1-1-0",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"api-ms-win-crt-locale-l1-1-0",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"api-ms-win-crt-math-l1-1-0",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"api-ms-win-crt-runtime-l1-1-0",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"api-ms-win-crt-stdio-l1-1-0",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"api-ms-win-crt-time-l1-1-0",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"atl140",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"concrt140",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"msvcp140",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"msvcr140",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"ucrtbase",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"vcomp140",0x2,"native,builtin"
-HKCU,Software\Wine\DllOverrides,"vcruntime140",0x2,"native,builtin"
 
 [ColorFiles]
 srgb color space profile.icm,"@%11%\mscms.dll,-1"

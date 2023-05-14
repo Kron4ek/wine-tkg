@@ -28,6 +28,9 @@
 #endif
 
 #include "macdrv_cocoa.h"
+
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "ntgdi.h"
@@ -163,11 +166,14 @@ extern BOOL macdrv_SetCursorPos(INT x, INT y) DECLSPEC_HIDDEN;
 extern BOOL macdrv_RegisterHotKey(HWND hwnd, UINT mod_flags, UINT vkey) DECLSPEC_HIDDEN;
 extern void macdrv_UnregisterHotKey(HWND hwnd, UINT modifiers, UINT vkey) DECLSPEC_HIDDEN;
 extern SHORT macdrv_VkKeyScanEx(WCHAR wChar, HKL hkl) DECLSPEC_HIDDEN;
+extern UINT macdrv_ImeProcessKey(HIMC himc, UINT wparam, UINT lparam, const BYTE *state) DECLSPEC_HIDDEN;
+extern UINT macdrv_ImeToAsciiEx(UINT vkey, UINT vsc, const BYTE *state, COMPOSITIONSTRING *compstr, HIMC himc) DECLSPEC_HIDDEN;
 extern UINT macdrv_MapVirtualKeyEx(UINT wCode, UINT wMapType, HKL hkl) DECLSPEC_HIDDEN;
 extern INT macdrv_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
                               LPWSTR bufW, int bufW_size, UINT flags, HKL hkl) DECLSPEC_HIDDEN;
 extern UINT macdrv_GetKeyboardLayoutList(INT size, HKL *list) DECLSPEC_HIDDEN;
 extern INT macdrv_GetKeyNameText(LONG lparam, LPWSTR buffer, INT size) DECLSPEC_HIDDEN;
+extern void macdrv_NotifyIMEStatus( HWND hwnd, UINT status ) DECLSPEC_HIDDEN;
 extern BOOL macdrv_SystemParametersInfo(UINT action, UINT int_param, void *ptr_param,
                                         UINT flags) DECLSPEC_HIDDEN;
 extern BOOL macdrv_ProcessEvents(DWORD mask) DECLSPEC_HIDDEN;
@@ -277,7 +283,6 @@ extern NTSTATUS macdrv_dnd_get_formats(void *arg) DECLSPEC_HIDDEN;
 extern NTSTATUS macdrv_dnd_have_format(void *arg) DECLSPEC_HIDDEN;
 extern NTSTATUS macdrv_dnd_release(void *arg) DECLSPEC_HIDDEN;
 extern NTSTATUS macdrv_dnd_retain(void *arg) DECLSPEC_HIDDEN;
-extern NTSTATUS macdrv_ime_process_text_input(void *arg) DECLSPEC_HIDDEN;
 extern NTSTATUS macdrv_notify_icon(void *arg) DECLSPEC_HIDDEN;
 
 extern NTSTATUS macdrv_client_func(enum macdrv_client_funcs func, const void *params,

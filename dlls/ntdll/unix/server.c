@@ -396,7 +396,7 @@ static NTSTATUS invoke_user_apc( CONTEXT *context, const user_apc_t *apc, NTSTAT
  */
 static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOOL self )
 {
-    SIZE_T size, bits, limit, align;
+    SIZE_T size, bits;
     void *addr;
 
     memset( result, 0, sizeof(*result) );
@@ -441,32 +441,50 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOO
         break;
     case APC_VIRTUAL_ALLOC_EX:
     {
-        MEM_ADDRESS_REQUIREMENTS r = { NULL };
-        MEM_EXTENDED_PARAMETER ext =
-        {
-            .Type = MemExtendedParameterAddressRequirements,
-            .Pointer = &r
-        };
-        SYSTEM_BASIC_INFORMATION sbi;
+        MEM_ADDRESS_REQUIREMENTS r;
+        MEM_EXTENDED_PARAMETER ext[2];
+        ULONG count = 0;
 
-        virtual_get_system_info( &sbi, is_wow64() );
         result->type = call->type;
         addr = wine_server_get_ptr( call->virtual_alloc_ex.addr );
         size = call->virtual_alloc_ex.size;
-        limit = min( (ULONG_PTR)sbi.HighestUserAddress, call->virtual_alloc_ex.limit );
-        align = call->virtual_alloc_ex.align;
-        if ((ULONG_PTR)addr == call->virtual_alloc_ex.addr && size == call->virtual_alloc_ex.size
-            && align == call->virtual_alloc_ex.align)
+        if ((ULONG_PTR)addr != call->virtual_alloc_ex.addr || size != call->virtual_alloc_ex.size)
         {
+            result->virtual_alloc_ex.status = STATUS_WORKING_SET_LIMIT_RANGE;
+            break;
+        }
+        if (call->virtual_alloc_ex.limit || call->virtual_alloc_ex.align)
+        {
+            SYSTEM_BASIC_INFORMATION sbi;
+            SIZE_T limit, align;
+
+            virtual_get_system_info( &sbi, is_wow64() );
+            limit = min( (ULONG_PTR)sbi.HighestUserAddress, call->virtual_alloc_ex.limit );
+            align = call->virtual_alloc_ex.align;
+            if (align != call->virtual_alloc_ex.align)
+            {
+                result->virtual_alloc_ex.status = STATUS_WORKING_SET_LIMIT_RANGE;
+                break;
+            }
+            r.LowestStartingAddress = NULL;
             r.HighestEndingAddress = (void *)limit;
             r.Alignment = align;
-            result->virtual_alloc_ex.status = NtAllocateVirtualMemoryEx( NtCurrentProcess(), &addr, &size,
-                                                                         call->virtual_alloc_ex.op_type,
-                                                                         call->virtual_alloc_ex.prot, &ext, 1 );
-            result->virtual_alloc_ex.addr = wine_server_client_ptr( addr );
-            result->virtual_alloc_ex.size = size;
+            ext[count].Type = MemExtendedParameterAddressRequirements;
+            ext[count].Pointer = &r;
+            count++;
         }
-        else result->virtual_alloc_ex.status = STATUS_WORKING_SET_LIMIT_RANGE;
+        if (call->virtual_alloc_ex.attributes)
+        {
+            ext[count].Type = MemExtendedParameterAttributeFlags;
+            ext[count].ULong64 = call->virtual_alloc_ex.attributes;
+            count++;
+        }
+        result->virtual_alloc_ex.status = NtAllocateVirtualMemoryEx( NtCurrentProcess(), &addr, &size,
+                                                                     call->virtual_alloc_ex.op_type,
+                                                                     call->virtual_alloc_ex.prot,
+                                                                     ext, count );
+        result->virtual_alloc_ex.addr = wine_server_client_ptr( addr );
+        result->virtual_alloc_ex.size = size;
         break;
     }
     case APC_VIRTUAL_FREE:
@@ -578,11 +596,50 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOO
         else result->map_view.status = STATUS_INVALID_PARAMETER;
         if (!self) NtClose( wine_server_ptr_handle(call->map_view.handle) );
         break;
+    case APC_MAP_VIEW_EX:
+    {
+        MEM_ADDRESS_REQUIREMENTS addr_req;
+        MEM_EXTENDED_PARAMETER ext[1];
+        ULONG count = 0;
+        LARGE_INTEGER offset;
+
+        result->type = call->type;
+        addr = wine_server_get_ptr( call->map_view_ex.addr );
+        size = call->map_view_ex.size;
+        offset.QuadPart = call->map_view_ex.offset;
+        if ((ULONG_PTR)addr != call->map_view_ex.addr || size != call->map_view_ex.size)
+        {
+            result->map_view_ex.status = STATUS_WORKING_SET_LIMIT_RANGE;
+            break;
+        }
+        if (call->map_view_ex.limit)
+        {
+            SYSTEM_BASIC_INFORMATION sbi;
+            ULONG_PTR limit;
+
+            virtual_get_system_info( &sbi, is_wow64() );
+            limit = min( (ULONG_PTR)sbi.HighestUserAddress, call->map_view_ex.limit );
+            addr_req.LowestStartingAddress = NULL;
+            addr_req.HighestEndingAddress = (void *)limit;
+            addr_req.Alignment = 0;
+            ext[count].Type = MemExtendedParameterAddressRequirements;
+            ext[count].Pointer = &addr_req;
+            count++;
+        }
+        result->map_view_ex.status = NtMapViewOfSectionEx( wine_server_ptr_handle(call->map_view_ex.handle),
+                                                           NtCurrentProcess(), &addr, &offset, &size,
+                                                           call->map_view_ex.alloc_type,
+                                                           call->map_view_ex.prot, ext, count );
+        result->map_view_ex.addr = wine_server_client_ptr( addr );
+        result->map_view_ex.size = size;
+        if (!self) NtClose( wine_server_ptr_handle(call->map_view_ex.handle) );
+        break;
+    }
     case APC_UNMAP_VIEW:
         result->type = call->type;
         addr = wine_server_get_ptr( call->unmap_view.addr );
         if ((ULONG_PTR)addr == call->unmap_view.addr)
-            result->unmap_view.status = NtUnmapViewOfSectionEx( NtCurrentProcess(), addr, call->unmap_view.flags );
+            result->unmap_view.status = NtUnmapViewOfSection( NtCurrentProcess(), addr );
         else
             result->unmap_view.status = STATUS_INVALID_PARAMETER;
         break;

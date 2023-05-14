@@ -1318,6 +1318,12 @@ static NTSTATUS oss_get_position(void *args)
     struct oss_stream *stream = handle_get_stream(params->stream);
     UINT64 *pos = params->pos, *qpctime = params->qpctime;
 
+    if (params->device) {
+        FIXME("Device position reporting not implemented\n");
+        params->result = E_NOTIMPL;
+        return STATUS_SUCCESS;
+    }
+
     oss_lock(stream);
 
     if(stream->flow == eRender){
@@ -1360,6 +1366,16 @@ static NTSTATUS oss_set_volumes(void *args)
 {
     struct set_volumes_params *params = args;
     struct oss_stream *stream = handle_get_stream(params->stream);
+    UINT16 i;
+
+    if (params->master_volume) {
+        for (i = 0; i < stream->fmt->nChannels; ++i) {
+            if (params->master_volume * params->volumes[i] * params->session_volumes[i] != 1.0f) {
+                FIXME("Volume control is not implemented\n");
+                break;
+            }
+        }
+    }
 
     oss_lock(stream);
     stream->mute = !params->master_volume;
@@ -1964,7 +1980,6 @@ static NTSTATUS oss_wow64_set_volumes(void *args)
         float master_volume;
         PTR32 volumes;
         PTR32 session_volumes;
-        int channel;
     } *params32 = args;
     struct set_volumes_params params =
     {
@@ -1972,7 +1987,6 @@ static NTSTATUS oss_wow64_set_volumes(void *args)
         .master_volume = params32->master_volume,
         .volumes = ULongToPtr(params32->volumes),
         .session_volumes = ULongToPtr(params32->session_volumes),
-        .channel = params32->channel
     };
     return oss_set_volumes(&params);
 }

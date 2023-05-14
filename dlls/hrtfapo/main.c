@@ -1,5 +1,5 @@
 /*
- * Copyright 2013 Austin English
+ * Copyright (C) 2023 Mohamad Al-Jaf
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,11 +16,14 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define WINE_FILEDESCRIPTION_STR "Wine tasklist"
-#define WINE_FILENAME_STR "tasklist.exe"
-#define WINE_FILEVERSION 6,1,7601,16385
-#define WINE_FILEVERSION_STR "6.1.7601.16385"
-#define WINE_PRODUCTVERSION 6,1,7601,16385
-#define WINE_PRODUCTVERSION_STR "6.1.7601.16385"
+#include "hrtfapoapi.h"
 
-#include "wine/wine_common_ver.rc"
+#include "wine/debug.h"
+
+WINE_DEFAULT_DEBUG_CHANNEL(xaudio2);
+
+HRESULT WINAPI CreateHrtfApo(const HrtfApoInit *init, IXAPO **xapo)
+{
+    FIXME("(%p, %p): stub!\n", init, xapo);
+    return E_NOTIMPL;
+}

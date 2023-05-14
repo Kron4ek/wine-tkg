@@ -1616,6 +1616,12 @@ static NTSTATUS unix_get_position(void *args)
     struct coreaudio_stream *stream = handle_get_stream(params->stream);
     LARGE_INTEGER stamp, freq;
 
+    if (params->device) {
+        FIXME("Device position reporting not implemented\n");
+        params->result = E_NOTIMPL;
+        return STATUS_SUCCESS;
+    }
+
     OSSpinLockLock(&stream->lock);
 
     *params->pos = stream->written_frames - stream->held_frames;
@@ -1665,28 +1671,31 @@ static NTSTATUS unix_set_volumes(void *args)
 {
     struct set_volumes_params *params = args;
     struct coreaudio_stream *stream = handle_get_stream(params->stream);
-    Float32 level = 1.0, tmp;
+    Float32 level = params->master_volume;
     OSStatus sc;
     UINT32 i;
+    AudioObjectPropertyAddress prop_addr = {
+        kAudioDevicePropertyVolumeScalar,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMaster
+    };
 
-    if(params->channel >= stream->fmt->nChannels || params->channel < -1){
-        ERR("Incorrect channel %d\n", params->channel);
-        return STATUS_SUCCESS;
-    }
+    sc = AudioObjectSetPropertyData(stream->dev_id, &prop_addr, 0, NULL, sizeof(float), &level);
+    if (sc == noErr)
+        level = 1.0f;
+    else
+        WARN("Couldn't set master volume, applying it directly to the channels: %x\n", (int)sc);
 
-    if(params->channel == -1){
-        for(i = 0; i < stream->fmt->nChannels; ++i){
-            tmp = params->master_volume * params->volumes[i] * params->session_volumes[i];
-            level = tmp < level ? tmp : level;
+    for (i = 1; i <= stream->fmt->nChannels; ++i) {
+        const float vol = level * params->session_volumes[i - 1] * params->volumes[i - 1];
+
+        prop_addr.mElement = i;
+
+        sc = AudioObjectSetPropertyData(stream->dev_id, &prop_addr, 0, NULL, sizeof(float), &vol);
+        if (sc != noErr) {
+            WARN("Couldn't set channel #%u volume: %x\n", i, (int)sc);
         }
-    }else
-        level = params->master_volume * params->volumes[params->channel] *
-            params->session_volumes[params->channel];
-
-    sc = AudioUnitSetParameter(stream->unit, kHALOutputParam_Volume,
-                               kAudioUnitScope_Global, 0, level, 0);
-    if(sc != noErr)
-        WARN("Couldn't set volume: %x\n", (int)sc);
+    }
 
     return STATUS_SUCCESS;
 }
@@ -2043,7 +2052,6 @@ static NTSTATUS unix_wow64_set_volumes(void *args)
         float master_volume;
         PTR32 volumes;
         PTR32 session_volumes;
-        int channel;
     } *params32 = args;
     struct set_volumes_params params =
     {
@@ -2051,7 +2059,6 @@ static NTSTATUS unix_wow64_set_volumes(void *args)
         .master_volume = params32->master_volume,
         .volumes = ULongToPtr(params32->volumes),
         .session_volumes = ULongToPtr(params32->session_volumes),
-        .channel = params32->channel
     };
     return unix_set_volumes(&params);
 }

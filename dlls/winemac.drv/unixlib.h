@@ -26,9 +26,6 @@ enum macdrv_funcs
     unix_dnd_have_format,
     unix_dnd_release,
     unix_dnd_retain,
-    unix_ime_clear,
-    unix_ime_process_text_input,
-    unix_ime_using_input_method,
     unix_init,
     unix_notify_icon,
     unix_quit_result,
@@ -58,17 +55,6 @@ struct dnd_have_format_params
 {
     UINT64 handle;
     UINT format;
-};
-
-/* macdrv_ime_process_text_input params */
-struct process_text_input_params
-{
-    UINT himc;
-    UINT vkey;
-    UINT scan;
-    UINT repeat;
-    const BYTE *key_state;
-    int *done;
 };
 
 /* macdrv_init params */
@@ -106,7 +92,6 @@ enum macdrv_client_funcs
     client_func_dnd_query_drop,
     client_func_dnd_query_exited,
     client_func_ime_query_char_rect,
-    client_func_ime_set_text,
     client_func_last
 };
 
@@ -180,16 +165,6 @@ struct ime_query_char_rect_params
     UINT32 himc;
     UINT64 result; /* FIXME: Use NtCallbackReturn instead */
     UINT32 length;
-};
-
-/* macdrv_ime_set_text params */
-struct ime_set_text_params
-{
-    UINT32 hwnd;
-    UINT32 cursor_pos;
-    UINT32 himc;
-    UINT32 complete;
-    WCHAR text[1];
 };
 
 static inline void *param_ptr(UINT64 param)

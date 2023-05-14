@@ -15420,6 +15420,25 @@ msgstr "„Start“ meni"
 msgid "&Run..."
 msgstr ""
 
+#: programs/findstr/findstr.rc:28
+#, fuzzy
+#| msgid "LAN Connection"
+msgid "Usage: findstr /options string\n"
+msgstr "LAN veza"
+
+#: programs/findstr/findstr.rc:29
+#, fuzzy
+msgid "FINDSTR: Bad command line\n"
+msgstr "Neispravna sintaksa.\n"
+
+#: programs/findstr/findstr.rc:30
+msgid "FINDSTR: Cannot open %s\n"
+msgstr ""
+
+#: programs/findstr/findstr.rc:31
+msgid "FINDSTR: /%c ignored\n"
+msgstr ""
+
 #: programs/fsutil/fsutil.mc:28
 msgid ""
 "- Supported Commands -\n"
@@ -17894,6 +17913,56 @@ msgid ""
 "Sent termination signal to process with PID %1!u!, child of PID %2!u!.\n"
 msgstr ""
 
+#: include/wine/wine_common_ver.rc:138
+#, fuzzy
+#| msgid "page tab list"
+msgid "Wine tasklist"
+msgstr "spisak listova"
+
+#: programs/tasklist/tasklist.rc:29
+msgid "Usage: tasklist [/?]\n"
+msgstr ""
+
+#: programs/tasklist/tasklist.rc:30 programs/taskmgr/taskmgr.rc:272
+#, fuzzy
+msgid "Image Name"
+msgstr "Slika"
+
+#: programs/tasklist/tasklist.rc:31 programs/taskmgr/taskmgr.rc:273
+msgid "PID"
+msgstr ""
+
+#: programs/tasklist/tasklist.rc:32
+#, fuzzy
+msgid "Session Name"
+msgstr "Korisnik je otkazan.\n"
+
+#: programs/tasklist/tasklist.rc:33
+#, fuzzy
+#| msgid "Version"
+msgid "Session#"
+msgstr "Izdanje"
+
+#: programs/tasklist/tasklist.rc:34 programs/taskmgr/taskmgr.rc:276
+msgid "Mem Usage"
+msgstr ""
+
+#: programs/tasklist/tasklist.rc:35
+#, fuzzy
+#| msgid "OK"
+msgid "K"
+msgstr "U redu"
+
+#: programs/tasklist/tasklist.rc:36
+#, fuzzy
+msgid "ERROR: Invalid syntax\n"
+msgstr "Neispravna sintaksa.\n"
+
+#: programs/tasklist/tasklist.rc:37
+#, fuzzy
+msgid "ERROR: The search filter cannot be recognized.\n"
+msgstr "Datoteka „%s“ nije pronađena."
+
 #: programs/taskmgr/taskmgr.rc:37 programs/taskmgr/taskmgr.rc:108
 msgid "&New Task (Run...)"
 msgstr ""
@@ -18575,25 +18644,12 @@ msgstr ""
 msgid "Mem Usage: %1!u!kB / %2!u!kB"
 msgstr ""
 
-#: programs/taskmgr/taskmgr.rc:272
-#, fuzzy
-msgid "Image Name"
-msgstr "Slika"
-
-#: programs/taskmgr/taskmgr.rc:273
-msgid "PID"
-msgstr ""
-
 #: programs/taskmgr/taskmgr.rc:274
 msgid "CPU"
 msgstr ""
 
 #: programs/taskmgr/taskmgr.rc:275
 msgid "CPU Time"
-msgstr ""
-
-#: programs/taskmgr/taskmgr.rc:276
-msgid "Mem Usage"
 msgstr ""
 
 #: programs/taskmgr/taskmgr.rc:277

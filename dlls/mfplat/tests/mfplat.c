@@ -397,6 +397,7 @@ static HRESULT (WINAPI *pMFCreate2DMediaBuffer)(DWORD width, DWORD height, DWORD
         IMFMediaBuffer **buffer);
 static HRESULT (WINAPI *pMFCreateMediaBufferFromMediaType)(IMFMediaType *media_type, LONGLONG duration, DWORD min_length,
         DWORD min_alignment, IMFMediaBuffer **buffer);
+static HRESULT (WINAPI *pMFCreatePathFromURL)(const WCHAR *url, WCHAR **path);
 static HRESULT (WINAPI *pMFCreateDXSurfaceBuffer)(REFIID riid, IUnknown *surface, BOOL bottom_up, IMFMediaBuffer **buffer);
 static HRESULT (WINAPI *pMFCreateTrackedSample)(IMFTrackedSample **sample);
 static DWORD (WINAPI *pMFMapDXGIFormatToDX9Format)(DXGI_FORMAT dxgi_format);
@@ -1277,6 +1278,7 @@ static void init_functions(void)
     X(MFCreateSourceResolver);
     X(MFCreateMediaBufferFromMediaType);
     X(MFCreateMFByteStreamOnStream);
+    X(MFCreatePathFromURL);
     X(MFCreateTrackedSample);
     X(MFCreateTransformActivate);
     X(MFCreateVideoMediaTypeFromSubtype);
@@ -3142,7 +3144,7 @@ static void test_allocate_queue(void)
 
 static void test_MFCopyImage(void)
 {
-    BYTE dest[16], src[16];
+    DWORD dest[4], src[4];
     HRESULT hr;
 
     if (!pMFCopyImage)
@@ -3154,21 +3156,36 @@ static void test_MFCopyImage(void)
     memset(dest, 0xaa, sizeof(dest));
     memset(src, 0x11, sizeof(src));
 
-    hr = pMFCopyImage(dest, 8, src, 8, 4, 1);
+    hr = pMFCopyImage((BYTE *)dest, 8, (const BYTE *)src, 8, 4, 1);
     ok(hr == S_OK, "Failed to copy image %#lx.\n", hr);
-    ok(!memcmp(dest, src, 4) && dest[4] == 0xaa, "Unexpected buffer contents.\n");
+    ok(dest[0] == src[0] && dest[1] == 0xaaaaaaaa, "Unexpected buffer contents.\n");
+
+    /* Negative destination stride. */
+    memset(dest, 0xaa, sizeof(dest));
+
+    src[0] = 0x11111111;
+    src[1] = 0x22222222;
+    src[2] = 0x33333333;
+    src[3] = 0x44444444;
+
+    hr = pMFCopyImage((BYTE *)(dest + 2), -8, (const BYTE *)src, 8, 4, 2);
+    ok(hr == S_OK, "Failed to copy image %#lx.\n", hr);
+    ok(dest[0] == 0x33333333, "Unexpected buffer contents %#lx.\n", dest[0]);
+    ok(dest[1] == 0xaaaaaaaa, "Unexpected buffer contents %#lx.\n", dest[1]);
+    ok(dest[2] == 0x11111111, "Unexpected buffer contents %#lx.\n", dest[2]);
+    ok(dest[3] == 0xaaaaaaaa, "Unexpected buffer contents %#lx.\n", dest[3]);
 
     memset(dest, 0xaa, sizeof(dest));
     memset(src, 0x11, sizeof(src));
 
-    hr = pMFCopyImage(dest, 8, src, 8, 16, 1);
+    hr = pMFCopyImage((BYTE *)dest, 8, (const BYTE *)src, 8, 16, 1);
     ok(hr == S_OK, "Failed to copy image %#lx.\n", hr);
     ok(!memcmp(dest, src, 16), "Unexpected buffer contents.\n");
 
     memset(dest, 0xaa, sizeof(dest));
     memset(src, 0x11, sizeof(src));
 
-    hr = pMFCopyImage(dest, 8, src, 8, 8, 2);
+    hr = pMFCopyImage((BYTE *)dest, 8, (const BYTE *)src, 8, 8, 2);
     ok(hr == S_OK, "Failed to copy image %#lx.\n", hr);
     ok(!memcmp(dest, src, 16), "Unexpected buffer contents.\n");
 }
@@ -4410,21 +4427,30 @@ image_size_tests[] =
     /* RGB */
     { &MFVideoFormat_RGB8, 3, 5, 20, 0, 320, 20, 64 },
     { &MFVideoFormat_RGB8, 1, 1, 4, 0, 64, 4, 64 },
+    { &MFVideoFormat_RGB8, 320, 240, 76800, 0, 76800, 76800, 320 },
     { &MFVideoFormat_RGB555, 3, 5, 40, 0, 320, 40, 64 },
     { &MFVideoFormat_RGB555, 1, 1, 4, 0, 64, 4, 64 },
+    { &MFVideoFormat_RGB555, 320, 240, 153600, 0, 153600, 153600, 640 },
     { &MFVideoFormat_RGB565, 3, 5, 40, 0, 320, 40, 64 },
     { &MFVideoFormat_RGB565, 1, 1, 4, 0, 64, 4, 64 },
+    { &MFVideoFormat_RGB565, 320, 240, 153600, 0, 153600, 153600, 640 },
     { &MFVideoFormat_RGB24, 3, 5, 60, 0, 320, 60, 64 },
     { &MFVideoFormat_RGB24, 1, 1, 4, 0, 64, 4, 64 },
     { &MFVideoFormat_RGB24, 4, 3, 36, 0, 192, 36, 64 },
+    { &MFVideoFormat_RGB24, 320, 240, 230400, 0, 230400, 230400, 960 },
     { &MFVideoFormat_RGB32, 3, 5, 60, 0, 320, 60, 64 },
     { &MFVideoFormat_RGB32, 1, 1, 4, 0, 64, 4, 64 },
+    { &MFVideoFormat_RGB32, 320, 240, 307200, 0, 307200, 307200, 1280 },
     { &MFVideoFormat_ARGB32, 3, 5, 60, 0, 320, 60, 64 },
     { &MFVideoFormat_ARGB32, 1, 1, 4, 0, 64, 4, 64 },
+    { &MFVideoFormat_ARGB32, 320, 240, 307200, 0, 307200, 307200, 1280 },
     { &MFVideoFormat_A2R10G10B10, 3, 5, 60, 0, 320, 60, 64 },
     { &MFVideoFormat_A2R10G10B10, 1, 1, 4, 0, 64, 4, 64 },
+    { &MFVideoFormat_A2R10G10B10, 320, 240, 307200, 0, 307200, 307200, 1280 },
     { &MFVideoFormat_A16B16G16R16F, 3, 5, 120, 0, 320, 120, 64 },
     { &MFVideoFormat_A16B16G16R16F, 1, 1, 8, 0, 64, 8, 64 },
+    { &MFVideoFormat_A16B16G16R16F, 320, 240, 614400, 0, 614400, 614400, 2560 },
+
     { &MEDIASUBTYPE_RGB8,   3, 5, 20 },
     { &MEDIASUBTYPE_RGB8,   1, 1, 4  },
     { &MEDIASUBTYPE_RGB555, 3, 5, 40 },
@@ -4522,6 +4548,42 @@ image_size_tests[] =
     { &MFVideoFormat_NV11, 3,   2,   12,     9,  384,    8,      128 },
     { &MFVideoFormat_NV11, 4,   2,   12,     0,  384,    12,     128 },
     { &MFVideoFormat_NV11, 320, 240, 115200, 0,  138240, 115200, 384 },
+
+    { &MFVideoFormat_YV12, 1, 1, 3, 1, 192, 1, 128 },
+    { &MFVideoFormat_YV12, 1, 2, 6, 3, 384, 2, 128 },
+    { &MFVideoFormat_YV12, 1, 3, 9, 4, 576, 3, 128 },
+    { &MFVideoFormat_YV12, 2, 1, 3, 0, 192, 3, 128 },
+    { &MFVideoFormat_YV12, 2, 2, 6, 6, 384, 6, 128 },
+    { &MFVideoFormat_YV12, 2, 4, 12, 0, 768, 12, 128 },
+    { &MFVideoFormat_YV12, 3, 2, 12, 9, 384, 8, 128 },
+    { &MFVideoFormat_YV12, 3, 5, 30, 22, 960, 20, 128 },
+    { &MFVideoFormat_YV12, 4, 2, 12, 0, 384, 12, 128 },
+    { &MFVideoFormat_YV12, 4, 3, 18, 0, 576, 18, 128 },
+    { &MFVideoFormat_YV12, 320, 240, 115200, 0, 138240, 115200, 384 },
+
+    { &MFVideoFormat_I420, 1, 1, 3, 1, 192, 1, 128 },
+    { &MFVideoFormat_I420, 1, 2, 6, 3, 384, 2, 128 },
+    { &MFVideoFormat_I420, 1, 3, 9, 4, 576, 3, 128 },
+    { &MFVideoFormat_I420, 2, 1, 3, 0, 192, 3, 128 },
+    { &MFVideoFormat_I420, 2, 2, 6, 6, 384, 6, 128 },
+    { &MFVideoFormat_I420, 2, 4, 12, 0, 768, 12, 128 },
+    { &MFVideoFormat_I420, 3, 2, 12, 9, 384, 8, 128 },
+    { &MFVideoFormat_I420, 3, 5, 30, 22, 960, 20, 128 },
+    { &MFVideoFormat_I420, 4, 2, 12, 0, 384, 12, 128 },
+    { &MFVideoFormat_I420, 4, 3, 18, 0, 576, 18, 128 },
+    { &MFVideoFormat_I420, 320, 240, 115200, 0, 138240, 115200, 384 },
+
+    { &MFVideoFormat_IYUV, 1, 1, 3, 1, 192, 1, 128 },
+    { &MFVideoFormat_IYUV, 1, 2, 6, 3, 384, 2, 128 },
+    { &MFVideoFormat_IYUV, 1, 3, 9, 4, 576, 3, 128 },
+    { &MFVideoFormat_IYUV, 2, 1, 3, 0, 192, 3, 128 },
+    { &MFVideoFormat_IYUV, 2, 2, 6, 6, 384, 6, 128 },
+    { &MFVideoFormat_IYUV, 2, 4, 12, 0, 768, 12, 128 },
+    { &MFVideoFormat_IYUV, 3, 2, 12, 9, 384, 8, 128 },
+    { &MFVideoFormat_IYUV, 3, 5, 30, 22, 960, 20, 128 },
+    { &MFVideoFormat_IYUV, 4, 2, 12, 0, 384, 12, 128 },
+    { &MFVideoFormat_IYUV, 4, 3, 18, 0, 576, 18, 128 },
+    { &MFVideoFormat_IYUV, 320, 240, 115200, 0, 138240, 115200, 384 },
 };
 
 static void test_MFCalculateImageSize(void)
@@ -6124,21 +6186,137 @@ static void test_MFCreate2DMediaBuffer(void)
         if (is_MEDIASUBTYPE_RGB(ptr->subtype))
             continue;
 
+        winetest_push_context("%u, %u x %u, format %s", i, ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
+
         hr = pMFCreate2DMediaBuffer(ptr->width, ptr->height, ptr->subtype->Data1, FALSE, &buffer);
         ok(hr == S_OK, "Failed to create a buffer, hr %#lx.\n", hr);
 
         hr = IMFMediaBuffer_GetMaxLength(buffer, &length);
         ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-        ok(length == ptr->max_length, "%u: unexpected maximum length %lu for %u x %u, format %s.\n",
-                i, length, ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
+        ok(length == ptr->max_length, "Unexpected maximum length %lu.\n", length);
 
         hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMF2DBuffer, (void **)&_2dbuffer);
         ok(hr == S_OK, "Failed to get interface, hr %#lx.\n", hr);
 
+        hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMF2DBuffer2, (void **)&_2dbuffer2);
+        ok(hr == S_OK, "Failed to get interface, hr %#lx.\n", hr);
+
         hr = IMF2DBuffer_GetContiguousLength(_2dbuffer, &length);
         ok(hr == S_OK, "Failed to get length, hr %#lx.\n", hr);
-        ok(length == ptr->contiguous_length, "%d: unexpected contiguous length %lu for %u x %u, format %s.\n",
-                i, length, ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
+        ok(length == ptr->contiguous_length, "Unexpected contiguous length %lu.\n", length);
+
+        data2 = malloc(ptr->contiguous_length + 16);
+        ok(!!data2, "Failed to allocate buffer.\n");
+
+        for (j = 0; j < ptr->contiguous_length + 16; j++)
+            data2[j] = j & 0x7f;
+
+        hr = IMF2DBuffer2_ContiguousCopyFrom(_2dbuffer2, data2, ptr->contiguous_length - 1);
+        ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+        hr = IMFMediaBuffer_Lock(buffer, &data, &length2, NULL);
+        ok(hr == S_OK, "Failed to lock buffer, hr %#lx.\n", hr);
+        ok(length2 == ptr->contiguous_length, "Unexpected linear buffer length %lu.\n", length2);
+
+        memset(data, 0xff, length2);
+
+        hr = IMFMediaBuffer_Unlock(buffer);
+        ok(hr == S_OK, "Failed to unlock buffer, hr %#lx.\n", hr);
+
+        hr = IMF2DBuffer2_ContiguousCopyFrom(_2dbuffer2, data2, ptr->contiguous_length + 16);
+        ok(hr == S_OK, "Failed to copy from contiguous buffer, hr %#lx.\n", hr);
+
+        hr = IMFMediaBuffer_Lock(buffer, &data, &length2, NULL);
+        ok(hr == S_OK, "Failed to lock buffer, hr %#lx.\n", hr);
+        ok(length2 == ptr->contiguous_length, "%d: unexpected linear buffer length %lu for %u x %u, format %s.\n",
+                i, length2, ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
+
+        for (j = 0; j < ptr->contiguous_length; j++)
+        {
+            if (IsEqualGUID(ptr->subtype, &MFVideoFormat_IMC1) || IsEqualGUID(ptr->subtype, &MFVideoFormat_IMC3))
+            {
+                if (j < ptr->height * ptr->pitch && j % ptr->pitch >= ptr->width)
+                    continue;
+                if (j >= ptr->height * ptr->pitch && j % ptr->pitch >= ptr->width / 2)
+                    continue;
+            }
+            if (data[j] != (j & 0x7f))
+                break;
+        }
+        ok(j == ptr->contiguous_length, "Unexpected byte %02x instead of %02x at position %u.\n", data[j], j & 0x7f, j);
+
+        memset(data, 0xff, length2);
+
+        hr = IMFMediaBuffer_Unlock(buffer);
+        ok(hr == S_OK, "Failed to unlock buffer, hr %#lx.\n", hr);
+
+        hr = IMF2DBuffer2_ContiguousCopyFrom(_2dbuffer2, data2, ptr->contiguous_length);
+        ok(hr == S_OK, "Failed to copy from contiguous buffer, hr %#lx.\n", hr);
+
+        hr = IMFMediaBuffer_Lock(buffer, &data, &length2, NULL);
+        ok(hr == S_OK, "Failed to lock buffer, hr %#lx.\n", hr);
+        ok(length2 == ptr->contiguous_length, "%d: unexpected linear buffer length %lu for %u x %u, format %s.\n",
+                i, length2, ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
+
+        for (j = 0; j < ptr->contiguous_length; j++)
+        {
+            if (IsEqualGUID(ptr->subtype, &MFVideoFormat_IMC1) || IsEqualGUID(ptr->subtype, &MFVideoFormat_IMC3))
+            {
+                if (j < ptr->height * ptr->pitch && j % ptr->pitch >= ptr->width)
+                    continue;
+                if (j >= ptr->height * ptr->pitch && j % ptr->pitch >= ptr->width / 2)
+                    continue;
+            }
+            if (data[j] != (j & 0x7f))
+                break;
+        }
+        ok(j == ptr->contiguous_length, "Unexpected byte %02x instead of %02x at position %u.\n", data[j], j & 0x7f, j);
+
+        hr = IMFMediaBuffer_Unlock(buffer);
+        ok(hr == S_OK, "Failed to unlock buffer, hr %#lx.\n", hr);
+
+        hr = IMF2DBuffer2_ContiguousCopyTo(_2dbuffer2, data2, ptr->contiguous_length - 1);
+        ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+        memset(data2, 0xff, ptr->contiguous_length + 16);
+
+        hr = IMF2DBuffer2_ContiguousCopyTo(_2dbuffer2, data2, ptr->contiguous_length + 16);
+        ok(hr == S_OK, "Failed to copy to contiguous buffer, hr %#lx.\n", hr);
+
+        for (j = 0; j < ptr->contiguous_length; j++)
+        {
+            if (IsEqualGUID(ptr->subtype, &MFVideoFormat_IMC1) || IsEqualGUID(ptr->subtype, &MFVideoFormat_IMC3))
+            {
+                if (j < ptr->height * ptr->pitch && j % ptr->pitch >= ptr->width)
+                    continue;
+                if (j >= ptr->height * ptr->pitch && j % ptr->pitch >= ptr->width / 2)
+                    continue;
+            }
+            if (data2[j] != (j & 0x7f))
+                break;
+        }
+        ok(j == ptr->contiguous_length, "Unexpected byte %02x instead of %02x at position %u.\n", data2[j], j & 0x7f, j);
+
+        memset(data2, 0xff, ptr->contiguous_length + 16);
+
+        hr = IMF2DBuffer2_ContiguousCopyTo(_2dbuffer2, data2, ptr->contiguous_length);
+        ok(hr == S_OK, "Failed to copy to contiguous buffer, hr %#lx.\n", hr);
+
+        for (j = 0; j < ptr->contiguous_length; j++)
+        {
+            if (IsEqualGUID(ptr->subtype, &MFVideoFormat_IMC1) || IsEqualGUID(ptr->subtype, &MFVideoFormat_IMC3))
+            {
+                if (j < ptr->height * ptr->pitch && j % ptr->pitch >= ptr->width)
+                    continue;
+                if (j >= ptr->height * ptr->pitch && j % ptr->pitch >= ptr->width / 2)
+                    continue;
+            }
+            if (data2[j] != (j & 0x7f))
+                break;
+        }
+        ok(j == ptr->contiguous_length, "Unexpected byte %02x instead of %02x at position %u.\n", data2[j], j & 0x7f, j);
+
+        free(data2);
 
         hr = IMFMediaBuffer_Lock(buffer, &data, &length2, NULL);
         ok(hr == S_OK, "Failed to lock buffer, hr %#lx.\n", hr);
@@ -6172,6 +6350,10 @@ static void test_MFCreate2DMediaBuffer(void)
 
             case MAKEFOURCC('I','M','C','2'):
             case MAKEFOURCC('I','M','C','4'):
+            case MAKEFOURCC('N','V','1','1'):
+            case MAKEFOURCC('Y','V','1','2'):
+            case MAKEFOURCC('I','4','2','0'):
+            case MAKEFOURCC('I','Y','U','V'):
                 ok(stride * 3 / 2 * ptr->height <= length2, "Insufficient buffer space: expected at least %lu bytes, got only %lu\n",
                         stride * 3 / 2 * ptr->height, length2);
                 for (j = 0; j < ptr->height; j++)
@@ -6203,8 +6385,8 @@ static void test_MFCreate2DMediaBuffer(void)
         for (j = 0; j < ptr->height; j++)
             for (k = 0; k < stride; k++)
                 ok(data[j * pitch + k] == ((j % 16) << 4) + (k % 16),
-                        "Unexpected byte %02x instead of %02x at test %d row %d column %d.\n",
-                        data[j * pitch + k], ((j % 16) << 4) + (k % 16), i, j, k);
+                        "Unexpected byte %02x instead of %02x at row %d column %d.\n",
+                        data[j * pitch + k], ((j % 16) << 4) + (k % 16), j, k);
 
         data += ptr->height * pitch;
 
@@ -6216,25 +6398,29 @@ static void test_MFCreate2DMediaBuffer(void)
                 for (j = 0; j < ptr->height; j++)
                     for (k = 0; k < stride / 2; k++)
                         ok(data[j * pitch + k] == (((j + ptr->height) % 16) << 4) + (k % 16),
-                                "Unexpected byte %02x instead of %02x at test %d row %d column %d.\n",
-                                data[j * pitch + k], (((j + ptr->height) % 16) << 4) + (k % 16), i, j + ptr->height, k);
+                                "Unexpected byte %02x instead of %02x at row %d column %d.\n",
+                                data[j * pitch + k], (((j + ptr->height) % 16) << 4) + (k % 16), j + ptr->height, k);
                 break;
 
             case MAKEFOURCC('I','M','C','2'):
             case MAKEFOURCC('I','M','C','4'):
+            case MAKEFOURCC('N','V','1','1'):
+            case MAKEFOURCC('Y','V','1','2'):
+            case MAKEFOURCC('I','4','2','0'):
+            case MAKEFOURCC('I','Y','U','V'):
                 for (j = 0; j < ptr->height; j++)
                     for (k = 0; k < stride / 2; k++)
                         ok(data[j * (pitch / 2) + k] == (((j + ptr->height) % 16) << 4) + (k % 16),
-                                "Unexpected byte %02x instead of %02x at test %d row %d column %d.\n",
-                                data[j * (pitch / 2) + k], (((j + ptr->height) % 16) << 4) + (k % 16), i, j + ptr->height, k);
+                                "Unexpected byte %02x instead of %02x at row %d column %d.\n",
+                                data[j * (pitch / 2) + k], (((j + ptr->height) % 16) << 4) + (k % 16), j + ptr->height, k);
                 break;
 
             case MAKEFOURCC('N','V','1','2'):
                 for (j = 0; j < ptr->height / 2; j++)
                     for (k = 0; k < stride; k++)
                         ok(data[j * pitch + k] == (((j + ptr->height) % 16) << 4) + (k % 16),
-                                "Unexpected byte %02x instead of %02x at test %d row %d column %d.\n",
-                                data[j * pitch + k], (((j + ptr->height) % 16) << 4) + (k % 16), i, j + ptr->height, k);
+                                "Unexpected byte %02x instead of %02x at row %d column %d.\n",
+                                data[j * pitch + k], (((j + ptr->height) % 16) << 4) + (k % 16), j + ptr->height, k);
                 break;
 
             default:
@@ -6244,8 +6430,7 @@ static void test_MFCreate2DMediaBuffer(void)
         hr = IMF2DBuffer_Unlock2D(_2dbuffer);
         ok(hr == S_OK, "Failed to unlock buffer, hr %#lx.\n", hr);
 
-        ok(pitch == ptr->pitch, "%d: unexpected pitch %ld, expected %d, %u x %u, format %s.\n", i, pitch, ptr->pitch,
-                ptr->width, ptr->height, wine_dbgstr_guid(ptr->subtype));
+        ok(pitch == ptr->pitch, "Unexpected pitch %ld, expected %d.\n", pitch, ptr->pitch);
 
         ret = TRUE;
         hr = IMF2DBuffer_IsContiguousFormat(_2dbuffer, &ret);
@@ -6253,8 +6438,11 @@ static void test_MFCreate2DMediaBuffer(void)
         ok(!ret, "%d: unexpected format flag %d.\n", i, ret);
 
         IMF2DBuffer_Release(_2dbuffer);
+        IMF2DBuffer2_Release(_2dbuffer2);
 
         IMFMediaBuffer_Release(buffer);
+
+        winetest_pop_context();
     }
 
     /* Alignment tests */
@@ -8952,6 +9140,131 @@ static void test_MFInitMediaTypeFromAMMediaType(void)
     IMFMediaType_Release(media_type);
 }
 
+static void test_MFCreatePathFromURL(void)
+{
+    static const struct
+    {
+        const WCHAR *url;
+        const WCHAR *path;
+        HRESULT hr;
+    }
+    tests[] =
+    {
+        /* 0 leading slash */
+        { L"file:c:/foo/bar", L"c:\\foo\\bar" },
+        { L"file:c|/foo/bar", L"c:\\foo\\bar" },
+        { L"file:cx|/foo/bar", L"cx|\\foo\\bar" },
+        { L"file:c:foo/bar", L"c:foo\\bar" },
+        { L"file:c|foo/bar", L"c:foo\\bar" },
+        { L"file:c:/foo%20ba%2fr", L"c:\\foo ba/r" },
+        { L"file:foo%20ba%2fr", L"foo ba/r" },
+        { L"file:foo/bar/", L"foo\\bar\\" },
+
+        /* 1 leading (back)slash */
+        { L"file:/c:/foo/bar", L"c:\\foo\\bar" },
+        { L"file:\\c:/foo/bar", L"c:\\foo\\bar" },
+        { L"file:/c|/foo/bar", L"c:\\foo\\bar" },
+        { L"file:/cx|/foo/bar", L"\\cx|\\foo\\bar" },
+        { L"file:/c:foo/bar", L"c:foo\\bar" },
+        { L"file:/c|foo/bar", L"c:foo\\bar" },
+        { L"file:/c:/foo%20ba%2fr", L"c:\\foo ba/r" },
+        { L"file:/foo%20ba%2fr", L"\\foo ba/r" },
+        { L"file:/foo/bar/", L"\\foo\\bar\\" },
+
+        /* 2 leading (back)slashes */
+        { L"file://c:/foo/bar", L"c:\\foo\\bar" },
+        { L"file://c:/d:/foo/bar", L"c:\\d:\\foo\\bar" },
+        { L"file://c|/d|/foo/bar", L"c:\\d|\\foo\\bar" },
+        { L"file://cx|/foo/bar", L"\\\\cx|\\foo\\bar" },
+        { L"file://c:foo/bar", L"c:foo\\bar" },
+        { L"file://c|foo/bar", L"c:foo\\bar" },
+        { L"file://c:/foo%20ba%2fr", L"c:\\foo%20ba%2fr" },
+        { L"file://c%3a/foo/../bar", L"\\\\c:\\foo\\..\\bar" },
+        { L"file://c%7c/foo/../bar", L"\\\\c|\\foo\\..\\bar" },
+        { L"file://foo%20ba%2fr", L"\\\\foo ba/r" },
+        { L"file://localhost/c:/foo/bar", L"c:\\foo\\bar" },
+        { L"file://localhost/c:/foo%20ba%5Cr", L"c:\\foo ba\\r" },
+        { L"file://LocalHost/c:/foo/bar", L"c:\\foo\\bar" },
+        { L"file:\\\\localhost\\c:\\foo\\bar", L"c:\\foo\\bar" },
+        { L"file://incomplete", L"\\\\incomplete" },
+
+        /* 3 leading (back)slashes (omitting hostname) */
+        { L"file:///c:/foo/bar", L"c:\\foo\\bar" },
+        { L"File:///c:/foo/bar", L"c:\\foo\\bar" },
+        { L"file:///c:/foo%20ba%2fr", L"c:\\foo ba/r" },
+        { L"file:///foo%20ba%2fr", L"\\foo ba/r" },
+        { L"file:///foo/bar/", L"\\foo\\bar\\" },
+        { L"file:///localhost/c:/foo/bar", L"\\localhost\\c:\\foo\\bar" },
+
+        /* 4 leading (back)slashes */
+        { L"file:////c:/foo/bar", L"c:\\foo\\bar" },
+        { L"file:////c:/foo%20ba%2fr", L"c:\\foo%20ba%2fr" },
+        { L"file:////foo%20ba%2fr", L"\\\\foo%20ba%2fr" },
+
+        /* 5 and more leading (back)slashes */
+        { L"file://///c:/foo/bar", L"\\\\c:\\foo\\bar" },
+        { L"file://///c:/foo%20ba%2fr", L"\\\\c:\\foo ba/r" },
+        { L"file://///foo%20ba%2fr", L"\\\\foo ba/r" },
+        { L"file://////c:/foo/bar", L"\\\\c:\\foo\\bar" },
+
+        /* Leading (back)slashes cannot be escaped */
+        { L"file:%2f%2flocalhost%2fc:/foo/bar", L"//localhost/c:\\foo\\bar" },
+        { L"file:%5C%5Clocalhost%5Cc:/foo/bar", L"\\\\localhost\\c:\\foo\\bar" },
+
+        /* Hostname handling */
+        { L"file://l%6fcalhost/c:/foo/bar", L"\\\\localhostc:\\foo\\bar" },
+        { L"file://localhost:80/c:/foo/bar", L"\\\\localhost:80c:\\foo\\bar" },
+        { L"file://host/c:/foo/bar", L"\\\\hostc:\\foo\\bar" },
+        { L"file://host//c:/foo/bar", L"\\\\host\\\\c:\\foo\\bar" },
+        { L"file://host/\\c:/foo/bar", L"\\\\host\\\\c:\\foo\\bar" },
+        { L"file://host/c:foo/bar", L"\\\\hostc:foo\\bar" },
+        { L"file://host/foo/bar", L"\\\\host\\foo\\bar" },
+        { L"file:\\\\host\\c:\\foo\\bar", L"\\\\hostc:\\foo\\bar" },
+        { L"file:\\\\host\\ca\\foo\\bar", L"\\\\host\\ca\\foo\\bar" },
+        { L"file:\\\\host\\c|\\foo\\bar", L"\\\\hostc|\\foo\\bar" },
+        { L"file:\\%5Chost\\c:\\foo\\bar", L"\\\\host\\c:\\foo\\bar" },
+        { L"file:\\\\host\\cx:\\foo\\bar", L"\\\\host\\cx:\\foo\\bar" },
+        { L"file:///host/c:/foo/bar", L"\\host\\c:\\foo\\bar" },
+
+        /* Not file URLs */
+        { L"c:\\foo\\bar", NULL, E_INVALIDARG },
+        { L"foo/bar", NULL, E_INVALIDARG },
+        { L"http://foo/bar", NULL, E_INVALIDARG },
+    };
+    unsigned int i;
+    WCHAR *path;
+    HRESULT hr;
+
+    if (!pMFCreatePathFromURL)
+    {
+        win_skip("MFCreatePathFromURL() is not available.\n");
+        return;
+    }
+
+    hr = pMFCreatePathFromURL(NULL, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    path = (void *)0xdeadbeef;
+    hr = pMFCreatePathFromURL(NULL, &path);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+    ok(path == (void *)0xdeadbeef, "Unexpected pointer %p.\n", path);
+
+    hr = pMFCreatePathFromURL(L"file://foo", NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
+        hr = pMFCreatePathFromURL(tests[i].url, &path);
+        ok(hr == tests[i].hr, "Unexpected hr %#lx, expected %#lx.\n", hr, tests[i].hr);
+        if (SUCCEEDED(hr))
+        {
+            ok(!wcscmp(path, tests[i].path), "Unexpected path %s, expected %s.\n",
+                    debugstr_w(path), debugstr_w(tests[i].path));
+            CoTaskMemFree(path);
+        }
+    }
+}
+
 START_TEST(mfplat)
 {
     char **argv;
@@ -9035,6 +9348,7 @@ START_TEST(mfplat)
     test_MFCreateVideoMediaTypeFromVideoInfoHeader();
     test_MFInitMediaTypeFromVideoInfoHeader();
     test_MFInitMediaTypeFromAMMediaType();
+    test_MFCreatePathFromURL();
 
     CoUninitialize();
 }

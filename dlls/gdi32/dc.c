@@ -42,7 +42,7 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
 };
 static CRITICAL_SECTION driver_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
-typedef const void * (CDECL *driver_entry_point)( unsigned int version );
+typedef const void * (CDECL *driver_entry_point)( unsigned int version, const WCHAR *device );
 
 struct graphics_driver
 {
@@ -56,6 +56,7 @@ enum print_flags
     CALL_START_PAGE = 0x1,
     CALL_END_PAGE   = 0x2,
     WRITE_DEVMODE   = 0x4,
+    BANDING         = 0x8,
 };
 
 struct print
@@ -560,6 +561,24 @@ INT WINAPI Escape( HDC hdc, INT escape, INT in_count, const char *in_data, void 
     case ABORTDOC:
         return AbortDoc( hdc );
 
+    case NEXTBAND:
+    {
+        RECT *rect = out_data;
+        struct print *print;
+        DC_ATTR *dc_attr;
+
+        if (!(dc_attr = get_dc_attr( hdc )) || !(print = get_dc_print( dc_attr ))) break;
+        if (print->flags & BANDING)
+        {
+            print->flags &= ~BANDING;
+            SetRectEmpty( rect );
+            return EndPage( hdc );
+        }
+        print->flags |= BANDING;
+        SetRect( rect, 0, 0, GetDeviceCaps(hdc, HORZRES), GetDeviceCaps(hdc, VERTRES) );
+        return 1;
+    }
+
     case ENDDOC:
         return EndDoc( hdc );
 
@@ -637,6 +656,12 @@ INT WINAPI Escape( HDC hdc, INT escape, INT in_count, const char *in_data, void 
             }
             break;
         }
+
+    case PASSTHROUGH:
+    case POSTSCRIPT_PASSTHROUGH:
+        in_count = *(const WORD *)in_data + sizeof(WORD);
+        out_data = NULL;
+        break;
     }
 
     /* if not handled internally, pass it to the driver */
@@ -649,8 +674,17 @@ INT WINAPI Escape( HDC hdc, INT escape, INT in_count, const char *in_data, void 
 INT WINAPI ExtEscape( HDC hdc, INT escape, INT input_size, const char *input,
                       INT output_size, char *output )
 {
+    struct print *print;
+    DC_ATTR *dc_attr;
+
     if (is_meta_dc( hdc ))
         return METADC_ExtEscape( hdc, escape, input_size, input, output_size, output );
+    if (!(dc_attr = get_dc_attr( hdc ))) return 0;
+    if ((print = get_dc_print( dc_attr )) && dc_attr->emf)
+    {
+        int ret = EMFDC_ExtEscape( dc_attr, escape, input_size, input, output_size, output );
+        if (ret) return ret;
+    }
     return NtGdiExtEscape( hdc, NULL, 0, escape, input_size, input, output_size, output );
 }
 
@@ -1489,7 +1523,7 @@ BOOL WINAPI AngleArc( HDC hdc, INT x, INT y, DWORD radius, FLOAT start_angle, FL
     if (dc_attr->print) print_call_start_page( dc_attr );
     if (dc_attr->emf && !EMFDC_AngleArc( dc_attr, x, y, radius, start_angle, sweep_angle ))
         return FALSE;
-    return NtGdiAngleArc( hdc, x, y, radius, start_angle, sweep_angle );
+    return NtGdiAngleArc( hdc, x, y, radius, *(DWORD *)&start_angle, *(DWORD *)&sweep_angle );
 }
 
 /***********************************************************************
@@ -2443,6 +2477,7 @@ INT WINAPI EndPage( HDC hdc )
     {
         BOOL write = print->flags & WRITE_DEVMODE;
 
+        if (!(print->flags & CALL_END_PAGE)) return SP_ERROR;
         print->flags = (print->flags & ~(CALL_END_PAGE | WRITE_DEVMODE)) | CALL_START_PAGE;
         if (dc_attr->emf)
             return spool_end_page( dc_attr, print->printer, print->devmode, write );

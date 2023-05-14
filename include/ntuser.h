@@ -22,6 +22,7 @@
 #include <winuser.h>
 #include <wingdi.h>
 #include <imm.h>
+#include <immdev.h>
 #include <winternl.h>
 
 /* KernelCallbackTable codes, not compatible with Windows */
@@ -305,6 +306,7 @@ enum
     NtUserSpyEnter            = 0x0304,
     NtUserSpyExit             = 0x0305,
     NtUserWinProcResult       = 0x0306,
+    NtUserImeDriverCall       = 0x0307,
 };
 
 /* NtUserThunkedMenuItemInfo codes */
@@ -490,6 +492,21 @@ enum wine_internal_message
 #define IME_INTERNAL_HKL_ACTIVATE    0x19
 #define IME_INTERNAL_HKL_DEACTIVATE  0x20
 
+/* builtin IME driver calls */
+enum wine_ime_call
+{
+    WINE_IME_PROCESS_KEY,
+    WINE_IME_TO_ASCII_EX,
+};
+
+/* NtUserImeDriverCall params */
+struct ime_driver_call_params
+{
+    HIMC himc;
+    const BYTE *state;
+    COMPOSITIONSTRING *compstr;
+};
+
 /* internal IME private */
 typedef struct ime_private
 {
@@ -497,7 +514,6 @@ typedef struct ime_private
     BOOL bInternalState;
     HFONT textfont;
     HWND hwndDefault;
-    UINT repeat;
 } IMEPRIVATE, *LPIMEPRIVATE;
 
 #define WM_SYSTIMER  0x0118
@@ -818,6 +834,7 @@ LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 BOOL    WINAPI NtUserMoveWindow( HWND hwnd, INT x, INT y, INT cx, INT cy, BOOL repaint );
 DWORD   WINAPI NtUserMsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
                                                   DWORD timeout, DWORD mask, DWORD flags );
+void    WINAPI NtUserNotifyIMEStatus( HWND hwnd, UINT status );
 void    WINAPI NtUserNotifyWinEvent( DWORD event, HWND hwnd, LONG object_id, LONG child_id );
 HWINSTA WINAPI NtUserOpenWindowStation( OBJECT_ATTRIBUTES *attr, ACCESS_MASK access );
 BOOL    WINAPI NtUserOpenClipboard( HWND hwnd, ULONG unk );

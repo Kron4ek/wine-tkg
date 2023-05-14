@@ -3116,6 +3116,21 @@ NTSTATUS WINAPI wow64_NtUserMessageCall( UINT *args )
             return message_call_32to64( hwnd, msg, wparam, lparam,
                                         LongToPtr( result32 ), type, ansi );
         }
+
+    case NtUserImeDriverCall:
+        {
+            struct
+            {
+                ULONG himc;
+                ULONG state;
+                ULONG compstr;
+            } *params32 = result_info;
+            struct ime_driver_call_params params;
+            params.himc = UlongToPtr( params32->himc );
+            params.state = UlongToPtr( params32->state );
+            params.compstr = UlongToPtr( params32->compstr );
+            return NtUserMessageCall( hwnd, msg, wparam, lparam, &params, type, ansi );
+        }
     }
 
     return message_call_32to64( hwnd, msg, wparam, lparam, result_info, type, ansi );
@@ -3152,6 +3167,15 @@ NTSTATUS WINAPI wow64_NtUserMsgWaitForMultipleObjectsEx( UINT *args )
     for (i = 0; i < count; i++) handles[i] = LongToHandle( handles32[i] );
 
     return NtUserMsgWaitForMultipleObjectsEx( count, handles, timeout, mask, flags );
+}
+
+NTSTATUS WINAPI wow64_NtUserNotifyIMEStatus( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    ULONG status = get_ulong( &args );
+
+    NtUserNotifyIMEStatus( hwnd, status );
+    return 0;
 }
 
 NTSTATUS WINAPI wow64_NtUserNotifyWinEvent( UINT *args )

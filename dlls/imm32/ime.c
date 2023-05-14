@@ -83,6 +83,55 @@ static WCHAR *input_context_get_comp_str( INPUTCONTEXT *ctx, BOOL result, UINT *
     return text;
 }
 
+static void input_context_set_comp_str( INPUTCONTEXT *ctx, const WCHAR *str, UINT len )
+{
+    COMPOSITIONSTRING *compstr;
+    HIMCC himcc;
+    UINT size;
+    BYTE *dst;
+
+    size = sizeof(*compstr);
+    size += len * sizeof(WCHAR); /* GCS_COMPSTR */
+    size += len; /* GCS_COMPSTRATTR */
+    size += 2 * sizeof(DWORD); /* GCS_COMPSTRCLAUSE */
+
+    if (!(himcc = ImmReSizeIMCC( ctx->hCompStr, size )))
+        WARN( "Failed to resize input context composition string\n" );
+    else if (!(compstr = ImmLockIMCC( (ctx->hCompStr = himcc) )))
+        WARN( "Failed to lock input context composition string\n" );
+    else
+    {
+        memset( compstr, 0, sizeof(*compstr) );
+        compstr->dwSize = sizeof(*compstr);
+
+        if (len)
+        {
+            compstr->dwCursorPos = len;
+
+            compstr->dwCompStrLen = len;
+            compstr->dwCompStrOffset = compstr->dwSize;
+            dst = (BYTE *)compstr + compstr->dwCompStrOffset;
+            memcpy( dst, str, compstr->dwCompStrLen * sizeof(WCHAR) );
+            compstr->dwSize += compstr->dwCompStrLen * sizeof(WCHAR);
+
+            compstr->dwCompClauseLen = 2 * sizeof(DWORD);
+            compstr->dwCompClauseOffset = compstr->dwSize;
+            dst = (BYTE *)compstr + compstr->dwCompClauseOffset;
+            *((DWORD *)dst + 0) = 0;
+            *((DWORD *)dst + 1) = compstr->dwCompStrLen;
+            compstr->dwSize += compstr->dwCompClauseLen;
+
+            compstr->dwCompAttrLen = compstr->dwCompStrLen;
+            compstr->dwCompAttrOffset = compstr->dwSize;
+            dst = (BYTE *)compstr + compstr->dwCompAttrOffset;
+            memset( dst, ATTR_INPUT, compstr->dwCompAttrLen );
+            compstr->dwSize += compstr->dwCompAttrLen;
+        }
+
+        ImmUnlockIMCC( ctx->hCompStr );
+    }
+}
+
 static HFONT input_context_select_ui_font( INPUTCONTEXT *ctx, HDC hdc )
 {
     struct ime_private *priv;
@@ -91,6 +140,47 @@ static HFONT input_context_select_ui_font( INPUTCONTEXT *ctx, HDC hdc )
     if (priv->textfont) font = SelectObject( hdc, priv->textfont );
     ImmUnlockIMCC( ctx->hPrivate );
     return font;
+}
+
+static void ime_send_message( HIMC himc, UINT message, WPARAM wparam, LPARAM lparam )
+{
+    INPUTCONTEXT *ctx;
+    TRANSMSG *msgs;
+    HIMCC himcc;
+
+    if (!(ctx = ImmLockIMC( himc ))) return;
+    if (!(himcc = ImmReSizeIMCC( ctx->hMsgBuf, (ctx->dwNumMsgBuf + 1) * sizeof(*msgs) )))
+        WARN( "Failed to resize input context message buffer\n" );
+    else if (!(msgs = ImmLockIMCC( (ctx->hMsgBuf = himcc) )))
+        WARN( "Failed to lock input context message buffer\n" );
+    else
+    {
+        TRANSMSG msg = {.message = message, .wParam = wparam, .lParam = lparam};
+        msgs[ctx->dwNumMsgBuf++] = msg;
+        ImmUnlockIMCC( ctx->hMsgBuf );
+    }
+
+    ImmUnlockIMC( himc );
+    ImmGenerateMessage( himc );
+}
+
+static UINT ime_set_composition_status( HIMC himc, BOOL composition )
+{
+    struct ime_private *priv;
+    INPUTCONTEXT *ctx;
+    UINT msg = 0;
+
+    if (!(ctx = ImmLockIMC( himc ))) return 0;
+    if ((priv = ImmLockIMCC( ctx->hPrivate )))
+    {
+        if (!priv->bInComposition && composition) msg = WM_IME_STARTCOMPOSITION;
+        else if (priv->bInComposition && !composition) msg = WM_IME_ENDCOMPOSITION;
+        priv->bInComposition = composition;
+        ImmUnlockIMCC( ctx->hPrivate );
+    }
+    ImmUnlockIMC( himc );
+
+    return msg;
 }
 
 static void ime_ui_paint( HIMC himc, HWND hwnd )
@@ -349,19 +439,83 @@ BOOL WINAPI ImeSetActiveContext( HIMC himc, BOOL flag )
     return TRUE;
 }
 
-BOOL WINAPI ImeProcessKey( HIMC himc, UINT vkey, LPARAM key_data, BYTE *key_state )
+BOOL WINAPI ImeProcessKey( HIMC himc, UINT vkey, LPARAM lparam, BYTE *state )
 {
-    FIXME( "himc %p, vkey %u, key_data %#Ix, key_state %p stub!\n", himc, vkey, key_data, key_state );
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-    return FALSE;
+    struct ime_driver_call_params params = {.himc = himc, .state = state};
+    INPUTCONTEXT *ctx;
+    LRESULT ret;
+
+    TRACE( "himc %p, vkey %#x, lparam %#Ix, state %p\n", himc, vkey, lparam, state );
+
+    if (!(ctx = ImmLockIMC( himc ))) return FALSE;
+    ret = NtUserMessageCall( ctx->hWnd, WINE_IME_PROCESS_KEY, vkey, lparam, &params,
+                             NtUserImeDriverCall, FALSE );
+    ImmUnlockIMC( himc );
+
+    return ret;
 }
 
-UINT WINAPI ImeToAsciiEx( UINT vkey, UINT scan_code, BYTE *key_state, TRANSMSGLIST *msgs, UINT state, HIMC himc )
+UINT WINAPI ImeToAsciiEx( UINT vkey, UINT vsc, BYTE *state, TRANSMSGLIST *msgs, UINT flags, HIMC himc )
 {
-    FIXME( "vkey %u, scan_code %u, key_state %p, msgs %p, state %u, himc %p stub!\n",
-           vkey, scan_code, key_state, msgs, state, himc );
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-    return 0;
+    COMPOSITIONSTRING *compstr;
+    UINT size, count = 0;
+    INPUTCONTEXT *ctx;
+    NTSTATUS status;
+
+    TRACE( "vkey %#x, vsc %#x, state %p, msgs %p, flags %#x, himc %p\n",
+           vkey, vsc, state, msgs, flags, himc );
+
+    if (!(ctx = ImmLockIMC( himc ))) return 0;
+    if (!(compstr = ImmLockIMCC( ctx->hCompStr ))) goto done;
+    size = compstr->dwSize;
+
+    do
+    {
+        struct ime_driver_call_params params = {.himc = himc, .state = state};
+        HIMCC himcc;
+
+        ImmUnlockIMCC( ctx->hCompStr );
+        if (!(himcc = ImmReSizeIMCC( ctx->hCompStr, size ))) goto done;
+        if (!(compstr = ImmLockIMCC( (ctx->hCompStr = himcc) ))) goto done;
+
+        params.compstr = compstr;
+        status = NtUserMessageCall( ctx->hWnd, WINE_IME_TO_ASCII_EX, vkey, vsc, &params,
+                                    NtUserImeDriverCall, FALSE );
+        size = compstr->dwSize;
+    } while (status == STATUS_BUFFER_TOO_SMALL);
+
+    if (status) WARN( "WINE_IME_TO_ASCII_EX returned status %#lx\n", status );
+    else
+    {
+        TRANSMSG status_msg = {.message = ime_set_composition_status( himc, !!compstr->dwCompStrOffset )};
+        if (status_msg.message) msgs->TransMsg[count++] = status_msg;
+
+        if (compstr->dwResultStrLen)
+        {
+            const WCHAR *result = (WCHAR *)((BYTE *)compstr + compstr->dwResultStrOffset);
+            TRANSMSG msg = {.message = WM_IME_COMPOSITION, .wParam = result[0], .lParam = GCS_RESULTSTR};
+            if (compstr->dwResultClauseOffset) msg.lParam |= GCS_RESULTCLAUSE;
+            msgs->TransMsg[count++] = msg;
+        }
+
+        if (compstr->dwCompStrLen)
+        {
+            const WCHAR *comp = (WCHAR *)((BYTE *)compstr + compstr->dwCompStrOffset);
+            TRANSMSG msg = {.message = WM_IME_COMPOSITION, .wParam = comp[0], .lParam = GCS_COMPSTR | GCS_CURSORPOS | GCS_DELTASTART};
+            if (compstr->dwCompAttrOffset) msg.lParam |= GCS_COMPATTR;
+            if (compstr->dwCompClauseOffset) msg.lParam |= GCS_COMPCLAUSE;
+            else msg.lParam |= CS_INSERTCHAR|CS_NOMOVECARET;
+            msgs->TransMsg[count++] = msg;
+        }
+    }
+
+    ImmUnlockIMCC( ctx->hCompStr );
+
+done:
+    if (count >= msgs->uMsgCount) FIXME( "More than %u messages queued, messages possibly lost\n", msgs->uMsgCount );
+    else TRACE( "Returning %u messages queued\n", count );
+    ImmUnlockIMC( himc );
+    return count;
 }
 
 BOOL WINAPI ImeConfigure( HKL hkl, HWND hwnd, DWORD mode, void *data )
@@ -382,17 +536,116 @@ DWORD WINAPI ImeConversionList( HIMC himc, const WCHAR *source, CANDIDATELIST *d
 BOOL WINAPI ImeSetCompositionString( HIMC himc, DWORD index, const void *comp, DWORD comp_len,
                                      const void *read, DWORD read_len )
 {
-    FIXME( "himc %p, index %lu, comp %p, comp_len %lu, read %p, read_len %lu stub!\n",
-           himc, index, comp, comp_len, read, read_len );
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-    return FALSE;
+    INPUTCONTEXT *ctx;
+
+    FIXME( "himc %p, index %lu, comp %p, comp_len %lu, read %p, read_len %lu semi-stub!\n",
+            himc, index, comp, comp_len, read, read_len );
+    if (read && read_len) FIXME( "Read string unimplemented\n" );
+    if (index != SCS_SETSTR && index != SCS_CHANGECLAUSE && index != SCS_CHANGEATTR) return FALSE;
+
+    if (!(ctx = ImmLockIMC( himc ))) return FALSE;
+
+    if (index != SCS_SETSTR)
+        FIXME( "index %#lx not implemented\n", index );
+    else
+    {
+        UINT msg, flags = GCS_COMPSTR | GCS_COMPCLAUSE | GCS_COMPATTR | GCS_DELTASTART | GCS_CURSORPOS;
+        WCHAR wparam = comp && comp_len >= sizeof(WCHAR) ? *(WCHAR *)comp : 0;
+        input_context_set_comp_str( ctx, comp, comp_len / sizeof(WCHAR) );
+        if ((msg = ime_set_composition_status( himc, TRUE ))) ime_send_message( himc, msg, 0, 0 );
+        ime_send_message( himc, WM_IME_COMPOSITION, wparam, flags );
+    }
+
+    ImmUnlockIMC( himc );
+
+    return TRUE;
 }
 
 BOOL WINAPI NotifyIME( HIMC himc, DWORD action, DWORD index, DWORD value )
 {
-    FIXME( "himc %p, action %lu, index %lu, value %lu stub!\n", himc, action, index, value );
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-    return FALSE;
+    struct ime_private *priv;
+    INPUTCONTEXT *ctx;
+    UINT msg;
+
+    TRACE( "himc %p, action %#lx, index %#lx, value %#lx stub!\n", himc, action, index, value );
+
+    if (!(ctx = ImmLockIMC( himc ))) return FALSE;
+
+    switch (action)
+    {
+    case NI_CONTEXTUPDATED:
+        switch (value)
+        {
+        case IMC_SETCOMPOSITIONFONT:
+            if ((priv = ImmLockIMCC( ctx->hPrivate )))
+            {
+                if (priv->textfont) DeleteObject( priv->textfont );
+                priv->textfont = CreateFontIndirectW( &ctx->lfFont.W );
+                ImmUnlockIMCC( ctx->hPrivate );
+            }
+            break;
+        case IMC_SETOPENSTATUS:
+            if (!ctx->fOpen)
+            {
+                input_context_set_comp_str( ctx, NULL, 0 );
+                if ((msg = ime_set_composition_status( himc, TRUE ))) ime_send_message( himc, msg, 0, 0 );
+            }
+            NtUserNotifyIMEStatus( ctx->hWnd, ctx->fOpen );
+            break;
+        default:
+            FIXME( "himc %p, action %#lx, index %#lx, value %#lx stub!\n", himc, action, index, value );
+            break;
+        }
+        break;
+
+    case NI_COMPOSITIONSTR:
+        switch (index)
+        {
+        case CPS_COMPLETE:
+        {
+            COMPOSITIONSTRING *compstr;
+
+            if (!(compstr = ImmLockIMCC( ctx->hCompStr )))
+                WARN( "Failed to lock input context composition string\n" );
+            else
+            {
+                WCHAR wchr = *(WCHAR *)((BYTE *)compstr + compstr->dwCompStrOffset);
+                COMPOSITIONSTRING tmp = *compstr;
+                UINT flags = 0;
+
+                memset( compstr, 0, sizeof(*compstr) );
+                compstr->dwSize = tmp.dwSize;
+                compstr->dwResultStrLen = tmp.dwCompStrLen;
+                compstr->dwResultStrOffset = tmp.dwCompStrOffset;
+                compstr->dwResultClauseLen = tmp.dwCompClauseLen;
+                compstr->dwResultClauseOffset = tmp.dwCompClauseOffset;
+                ImmUnlockIMCC( ctx->hCompStr );
+
+                if (tmp.dwCompStrLen) flags |= GCS_RESULTSTR;
+                if (tmp.dwCompClauseLen) flags |= GCS_RESULTCLAUSE;
+                if (flags) ime_send_message( himc, WM_IME_COMPOSITION, wchr, flags );
+            }
+
+            ImmSetOpenStatus( himc, FALSE );
+            break;
+        }
+        case CPS_CANCEL:
+            input_context_set_comp_str( ctx, NULL, 0 );
+            ImmSetOpenStatus( himc, FALSE );
+            break;
+        default:
+            FIXME( "himc %p, action %#lx, index %#lx, value %#lx stub!\n", himc, action, index, value );
+            break;
+        }
+        break;
+
+    default:
+        FIXME( "himc %p, action %#lx, index %#lx, value %#lx stub!\n", himc, action, index, value );
+        break;
+    }
+
+    ImmUnlockIMC( himc );
+    return TRUE;
 }
 
 LRESULT WINAPI ImeEscape( HIMC himc, UINT escape, void *data )

@@ -294,19 +294,8 @@ DWORD WINAPI RtlLengthSid(PSID pSid)
 
 /**************************************************************************
  *                 RtlInitializeSid			[NTDLL.@]
- *
- * Initialise a SID.
- *
- * PARAMS
- *  pSid                 [I] SID to initialise
- *  pIdentifierAuthority [I] Identifier Authority
- *  nSubAuthorityCount   [I] Number of Sub Authorities
- *
- * RETURNS
- *  Success: TRUE. pSid is initialised with the details given.
- *  Failure: FALSE, if nSubAuthorityCount is >= SID_MAX_SUB_AUTHORITIES.
  */
-BOOL WINAPI RtlInitializeSid(
+NTSTATUS WINAPI RtlInitializeSid(
 	PSID pSid,
 	PSID_IDENTIFIER_AUTHORITY pIdentifierAuthority,
 	BYTE nSubAuthorityCount)
@@ -314,8 +303,8 @@ BOOL WINAPI RtlInitializeSid(
 	int i;
 	SID* pisid=pSid;
 
-	if (nSubAuthorityCount >= SID_MAX_SUB_AUTHORITIES)
-	  return FALSE;
+	if (nSubAuthorityCount > SID_MAX_SUB_AUTHORITIES)
+	  return STATUS_INVALID_PARAMETER;
 
 	pisid->Revision = SID_REVISION;
 	pisid->SubAuthorityCount = nSubAuthorityCount;
@@ -325,7 +314,7 @@ BOOL WINAPI RtlInitializeSid(
 	for (i = 0; i < nSubAuthorityCount; i++)
 	  *RtlSubAuthoritySid(pSid, i) = 0;
 
-	return TRUE;
+	return STATUS_SUCCESS;
 }
 
 /**************************************************************************
@@ -545,25 +534,11 @@ NTSTATUS WINAPI RtlCopySecurityDescriptor(PSECURITY_DESCRIPTOR pSourceSD, PSECUR
 
 /**************************************************************************
  * RtlValidSecurityDescriptor			[NTDLL.@]
- *
- * Determine if a SECURITY_DESCRIPTOR is valid.
- *
- * PARAMS
- *  SecurityDescriptor [I] Descriptor to check.
- *
- * RETURNS
- *   Success: STATUS_SUCCESS.
- *   Failure: STATUS_INVALID_SECURITY_DESCR or STATUS_UNKNOWN_REVISION.
  */
-NTSTATUS WINAPI RtlValidSecurityDescriptor(
-	PSECURITY_DESCRIPTOR SecurityDescriptor)
+BOOLEAN WINAPI RtlValidSecurityDescriptor(PSECURITY_DESCRIPTOR descriptor)
 {
-	if ( ! SecurityDescriptor )
-		return STATUS_INVALID_SECURITY_DESCR;
-	if ( ((SECURITY_DESCRIPTOR*)SecurityDescriptor)->Revision != SECURITY_DESCRIPTOR_REVISION )
-		return STATUS_UNKNOWN_REVISION;
-
-	return STATUS_SUCCESS;
+    SECURITY_DESCRIPTOR *sd = descriptor;
+    return sd && sd->Revision == SECURITY_DESCRIPTOR_REVISION;
 }
 
 /**************************************************************************
@@ -1672,8 +1647,9 @@ RtlAdjustPrivilege(ULONG Privilege,
 NTSTATUS WINAPI
 RtlImpersonateSelf(SECURITY_IMPERSONATION_LEVEL ImpersonationLevel)
 {
+    SECURITY_QUALITY_OF_SERVICE qos;
     NTSTATUS Status;
-    OBJECT_ATTRIBUTES ObjectAttributes;
+    OBJECT_ATTRIBUTES attr;
     HANDLE ProcessToken;
     HANDLE ImpersonationToken;
 
@@ -1684,14 +1660,15 @@ RtlImpersonateSelf(SECURITY_IMPERSONATION_LEVEL ImpersonationLevel)
     if (Status != STATUS_SUCCESS)
         return Status;
 
-    InitializeObjectAttributes( &ObjectAttributes, NULL, 0, NULL, NULL );
+    qos.Length = sizeof(qos);
+    qos.ImpersonationLevel = ImpersonationLevel;
+    qos.ContextTrackingMode = SECURITY_STATIC_TRACKING;
+    qos.EffectiveOnly = FALSE;
+    InitializeObjectAttributes( &attr, NULL, 0, NULL, NULL );
+    attr.SecurityQualityOfService = &qos;
 
-    Status = NtDuplicateToken( ProcessToken,
-                               TOKEN_IMPERSONATE,
-                               &ObjectAttributes,
-                               ImpersonationLevel,
-                               TokenImpersonation,
-                               &ImpersonationToken );
+    Status = NtDuplicateToken( ProcessToken, TOKEN_IMPERSONATE, &attr, FALSE,
+                               TokenImpersonation, &ImpersonationToken );
     if (Status != STATUS_SUCCESS)
     {
         NtClose( ProcessToken );

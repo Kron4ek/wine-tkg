@@ -184,17 +184,19 @@ static void dump_apc_call( const char *prefix, const apc_call_t *call )
         fprintf( stderr, ",status=%s,result=%u", get_status_name(call->async_io.status), call->async_io.result );
         break;
     case APC_VIRTUAL_ALLOC:
-        dump_uint64( "APC_VIRTUAL_ALLOC,addr==", &call->virtual_alloc.addr );
+        dump_uint64( "APC_VIRTUAL_ALLOC,addr=", &call->virtual_alloc.addr );
         dump_uint64( ",size=", &call->virtual_alloc.size );
         dump_uint64( ",zero_bits=", &call->virtual_alloc.zero_bits );
         fprintf( stderr, ",op_type=%x,prot=%x", call->virtual_alloc.op_type, call->virtual_alloc.prot );
         break;
     case APC_VIRTUAL_ALLOC_EX:
-        dump_uint64( "APC_VIRTUAL_ALLOC,addr==", &call->virtual_alloc_ex.addr );
+        dump_uint64( "APC_VIRTUAL_ALLOC_EX,addr=", &call->virtual_alloc_ex.addr );
         dump_uint64( ",size=", &call->virtual_alloc_ex.size );
         dump_uint64( ",limit=", &call->virtual_alloc_ex.limit );
         dump_uint64( ",align=", &call->virtual_alloc_ex.align );
-        fprintf( stderr, ",op_type=%x,prot=%x", call->virtual_alloc_ex.op_type, call->virtual_alloc_ex.prot );
+        fprintf( stderr, ",op_type=%x,prot=%x,attributes=%x",
+                 call->virtual_alloc_ex.op_type, call->virtual_alloc_ex.prot,
+                 call->virtual_alloc_ex.attributes );
         break;
     case APC_VIRTUAL_FREE:
         dump_uint64( "APC_VIRTUAL_FREE,addr=", &call->virtual_free.addr );
@@ -228,6 +230,14 @@ static void dump_apc_call( const char *prefix, const apc_call_t *call )
         dump_uint64( ",offset=", &call->map_view.offset );
         dump_uint64( ",zero_bits=", &call->map_view.zero_bits );
         fprintf( stderr, ",alloc_type=%x,prot=%x", call->map_view.alloc_type, call->map_view.prot );
+        break;
+    case APC_MAP_VIEW_EX:
+        fprintf( stderr, "APC_MAP_VIEW_EX,handle=%04x", call->map_view_ex.handle );
+        dump_uint64( ",addr=", &call->map_view_ex.addr );
+        dump_uint64( ",size=", &call->map_view_ex.size );
+        dump_uint64( ",offset=", &call->map_view_ex.offset );
+        dump_uint64( ",limit=", &call->map_view_ex.limit );
+        fprintf( stderr, ",alloc_type=%x,prot=%x", call->map_view_ex.alloc_type, call->map_view_ex.prot );
         break;
     case APC_UNMAP_VIEW:
         dump_uint64( "APC_UNMAP_VIEW,addr=", &call->unmap_view.addr );
@@ -2185,7 +2195,11 @@ static void dump_map_view_request( const struct map_view_request *req )
     dump_uint64( ", base=", &req->base );
     dump_uint64( ", size=", &req->size );
     dump_uint64( ", start=", &req->start );
-    dump_varargs_pe_image_info( ", image=", cur_size );
+}
+
+static void dump_map_builtin_view_request( const struct map_builtin_view_request *req )
+{
+    dump_varargs_pe_image_info( " image=", cur_size );
     dump_varargs_unicode_str( ", name=", cur_size );
 }
 
@@ -4715,6 +4729,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_open_mapping_request,
     (dump_func)dump_get_mapping_info_request,
     (dump_func)dump_map_view_request,
+    (dump_func)dump_map_builtin_view_request,
     (dump_func)dump_unmap_view_request,
     (dump_func)dump_get_mapping_committed_range_request,
     (dump_func)dump_add_mapping_committed_range_request,
@@ -5008,6 +5023,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_mapping_info_reply,
     NULL,
     NULL,
+    NULL,
     (dump_func)dump_get_mapping_committed_range_reply,
     NULL,
     NULL,
@@ -5299,6 +5315,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "open_mapping",
     "get_mapping_info",
     "map_view",
+    "map_builtin_view",
     "unmap_view",
     "get_mapping_committed_range",
     "add_mapping_committed_range",

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Fabian Maurer
+ * Copyright 2023 Zhiyi Zhang for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,12 +16,16 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "resources.h"
+#include "findstr.h"
+
+#pragma makedep po
+
+LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
 STRINGTABLE
 {
-    IDS_INVALID_PARAMETER "FINDSTR: Parameter format not correct\r\n"
-    IDS_INVALID_SWITCH    "FINDSTR: Invalid switch\r\n"
-    IDS_FILE_NOT_FOUND    "File not found - %s\r\n"
-    IDS_USAGE             "Usage: findstr /options string filename\r\n"
+    STRING_USAGE,               "Usage: findstr /options string\n"
+    STRING_BAD_COMMAND_LINE,    "FINDSTR: Bad command line\n"
+    STRING_CANNOT_OPEN,         "FINDSTR: Cannot open %s\n"
+    STRING_IGNORED,             "FINDSTR: /%c ignored\n"
 }

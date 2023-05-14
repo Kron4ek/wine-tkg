@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: Wine\n"
 "Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
-"PO-Revision-Date: 2023-04-27 09:31+0300\n"
+"PO-Revision-Date: 2023-05-03 00:00+0300\n"
 "Last-Translator: Aurimas Fišeras <aurimas@members.fsf.org>\n"
 "Language-Team: Lithuanian <komp_lt@konf.lt>\n"
 "Language: lt\n"
@@ -14710,6 +14710,22 @@ msgstr "Pradžia"
 msgid "&Run..."
 msgstr "&Vykdyti..."
 
+#: programs/findstr/findstr.rc:28
+msgid "Usage: findstr /options string\n"
+msgstr "Naudojimas: findstr /parinktys eilutė\n"
+
+#: programs/findstr/findstr.rc:29
+msgid "FINDSTR: Bad command line\n"
+msgstr "FINDSTR: Neteisinga komandos eilutė\n"
+
+#: programs/findstr/findstr.rc:30
+msgid "FINDSTR: Cannot open %s\n"
+msgstr "FINDSTR: Nepavyko atverti %s\n"
+
+#: programs/findstr/findstr.rc:31
+msgid "FINDSTR: /%c ignored\n"
+msgstr "FINDSTR: /%c ignoruotas\n"
+
 #: programs/fsutil/fsutil.mc:28
 msgid ""
 "- Supported Commands -\n"
@@ -17279,6 +17295,46 @@ msgstr ""
 "Nusiųstas priverstinio nutraukimo signalas procesui su PID %1!u!, pavaldžiam "
 "PID %2!u!.\n"
 
+#: include/wine/wine_common_ver.rc:138
+msgid "Wine tasklist"
+msgstr "„Wine“ procesų sąrašas"
+
+#: programs/tasklist/tasklist.rc:29
+msgid "Usage: tasklist [/?]\n"
+msgstr "Naudojimas: tasklist [/?]\n"
+
+#: programs/tasklist/tasklist.rc:30 programs/taskmgr/taskmgr.rc:272
+msgid "Image Name"
+msgstr "Proceso vardas"
+
+#: programs/tasklist/tasklist.rc:31 programs/taskmgr/taskmgr.rc:273
+msgid "PID"
+msgstr "PID"
+
+#: programs/tasklist/tasklist.rc:32
+msgid "Session Name"
+msgstr "Seanso vardas"
+
+#: programs/tasklist/tasklist.rc:33
+msgid "Session#"
+msgstr "Seanso nr."
+
+#: programs/tasklist/tasklist.rc:34 programs/taskmgr/taskmgr.rc:276
+msgid "Mem Usage"
+msgstr "Atm naudojimas"
+
+#: programs/tasklist/tasklist.rc:35
+msgid "K"
+msgstr "K"
+
+#: programs/tasklist/tasklist.rc:36
+msgid "ERROR: Invalid syntax\n"
+msgstr "Klaida: Netinkama sintaksė\n"
+
+#: programs/tasklist/tasklist.rc:37
+msgid "ERROR: The search filter cannot be recognized.\n"
+msgstr "Klaida: Nepavyko atpažinti paieškos filtro.\n"
+
 #: programs/taskmgr/taskmgr.rc:37 programs/taskmgr/taskmgr.rc:108
 msgid "&New Task (Run...)"
 msgstr "&Nauja užduotis (vykdyti...)"
@@ -17946,14 +18002,6 @@ msgstr "Procesai: %d"
 msgid "Mem Usage: %1!u!kB / %2!u!kB"
 msgstr "Atminties naudojimas: %1!u! kB / %2!u! kB"
 
-#: programs/taskmgr/taskmgr.rc:272
-msgid "Image Name"
-msgstr "Proceso vardas"
-
-#: programs/taskmgr/taskmgr.rc:273
-msgid "PID"
-msgstr "PID"
-
 #: programs/taskmgr/taskmgr.rc:274
 msgid "CPU"
 msgstr "CP"
@@ -17961,10 +18009,6 @@ msgstr "CP"
 #: programs/taskmgr/taskmgr.rc:275
 msgid "CPU Time"
 msgstr "CP laikas"
-
-#: programs/taskmgr/taskmgr.rc:276
-msgid "Mem Usage"
-msgstr "Atm naudojimas"
 
 #: programs/taskmgr/taskmgr.rc:277
 msgid "Mem Delta"

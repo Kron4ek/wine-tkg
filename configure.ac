@@ -2678,6 +2678,7 @@ WINE_CONFIG_MAKEFILE(dlls/hlink)
 WINE_CONFIG_MAKEFILE(dlls/hlink/tests)
 WINE_CONFIG_MAKEFILE(dlls/hnetcfg)
 WINE_CONFIG_MAKEFILE(dlls/hnetcfg/tests)
+WINE_CONFIG_MAKEFILE(dlls/hrtfapo)
 WINE_CONFIG_MAKEFILE(dlls/http.sys)
 WINE_CONFIG_MAKEFILE(dlls/httpapi)
 WINE_CONFIG_MAKEFILE(dlls/httpapi/tests)
@@ -3387,6 +3388,7 @@ WINE_CONFIG_MAKEFILE(programs/fc)
 WINE_CONFIG_MAKEFILE(programs/find)
 WINE_CONFIG_MAKEFILE(programs/find/tests)
 WINE_CONFIG_MAKEFILE(programs/findstr)
+WINE_CONFIG_MAKEFILE(programs/findstr/tests)
 WINE_CONFIG_MAKEFILE(programs/fsutil)
 WINE_CONFIG_MAKEFILE(programs/fsutil/tests)
 WINE_CONFIG_MAKEFILE(programs/hh)
@@ -3442,6 +3444,7 @@ WINE_CONFIG_MAKEFILE(programs/svchost)
 WINE_CONFIG_MAKEFILE(programs/systeminfo)
 WINE_CONFIG_MAKEFILE(programs/taskkill)
 WINE_CONFIG_MAKEFILE(programs/tasklist)
+WINE_CONFIG_MAKEFILE(programs/tasklist/tests)
 WINE_CONFIG_MAKEFILE(programs/taskmgr)
 WINE_CONFIG_MAKEFILE(programs/termsv)
 WINE_CONFIG_MAKEFILE(programs/uninstaller)
@@ -3642,7 +3645,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-8.7.r0.g00ec1171\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-8.7.r7.gcc0df4cd\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

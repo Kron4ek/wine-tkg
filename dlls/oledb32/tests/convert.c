@@ -2680,6 +2680,26 @@ static void test_converttoguid(void)
     ok(hr == S_OK, "got %08lx\n", hr);
     ok(dst_status == DBSTATUS_S_ISNULL, "got %08lx\n", dst_status);
     ok(dst_len == 44, "got %Id\n", dst_len);
+
+    dst_len = 0x1234;
+    dst = IID_IDCInfo;
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = SysAllocStringLen(L"{0c733a8d-2a1c-11ce-ade5-00aa0044773d}", 38);
+    hr = IDataConvert_DataConvert(convert, DBTYPE_VARIANT, DBTYPE_GUID, 0, &dst_len, &v, &dst, sizeof(dst), 0, &dst_status, 0, 0, 0);
+    ok(hr == S_OK, "got %08lx\n", hr);
+    ok(dst_status == DBSTATUS_S_OK, "got %08lx\n", dst_status);
+    ok(dst_len == sizeof(GUID), "got %Id\n", dst_len);
+    ok(IsEqualGUID(&dst, &IID_IDataConvert), "didn't get IID_IDataConvert\n");
+    SysFreeString(V_BSTR(&v));
+
+    dst_len = 0x1234;
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = SysAllocStringLen(L"{invalid0-0000-0000-0000-000000000000}", 38);
+    hr = IDataConvert_DataConvert(convert, DBTYPE_VARIANT, DBTYPE_GUID, 0, &dst_len, &v, &dst, sizeof(dst), 0, &dst_status, 0, 0, 0);
+    ok(hr == CO_E_CLASSSTRING, "got %08lx\n", hr);
+    ok(dst_status == DBSTATUS_E_CANTCONVERTVALUE, "got %08lx\n", dst_status);
+    ok(dst_len == sizeof(GUID), "got %Id\n", dst_len);
+    SysFreeString(V_BSTR(&v));
 }
 
 static void test_converttofiletime(void)
@@ -3077,6 +3097,15 @@ static void test_converttoui8(void)
     ok(hr == S_OK, "got %08lx\n", hr);
     ok(dst_status == DBSTATUS_S_ISNULL, "got %08lx\n", dst_status);
     ok(dst_len == 44, "got %Id\n", dst_len);
+
+    V_VT(&v) = VT_UI8;
+    V_UI8(&v) = 4321;
+    dst_len = 0x1234;
+    hr = IDataConvert_DataConvert(convert, DBTYPE_VARIANT, DBTYPE_UI8, 0, &dst_len, &v, &dst, sizeof(dst), 0, &dst_status, 0, 0, 0);
+    ok(hr == S_OK, "got %08lx\n", hr);
+    ok(dst_status == DBSTATUS_S_OK, "got %08lx\n", dst_status);
+    ok(dst_len == sizeof(dst), "got %Id\n", dst_len);
+    ok(dst.QuadPart == 4321, "got %d\n", (int)dst.QuadPart);
 }
 
 static void test_getconversionsize(void)
@@ -3914,6 +3943,16 @@ static void test_converttovar(void)
     ok(dst_status == DBSTATUS_S_ISNULL, "got %08lx\n", dst_status);
     ok(dst_len == sizeof(VARIANT), "got %Id\n", dst_len);
 
+    dst_len = 44;
+    V_VT(&var) = VT_UINT;
+    V_UINT(&var) = 1234;
+    hr = IDataConvert_DataConvert(convert, DBTYPE_VARIANT, DBTYPE_VARIANT, 0, &dst_len, &var, &dst, sizeof(dst), 0, &dst_status, 0, 0, 0);
+    ok(hr == S_OK, "got %08lx\n", hr);
+    ok(dst_status == DBSTATUS_S_OK, "got %08lx\n", dst_status);
+    ok(dst_len == sizeof(VARIANT), "got %Id\n", dst_len);
+    ok(V_VT(&dst) == VT_UINT, "got %d\n", V_VT(&dst));
+    ok(V_UINT(&dst) == 1234, "got %u\n", V_UINT(&dst));
+    VariantClear(&dst);
 }
 
 static void test_converttotimestamp(void)

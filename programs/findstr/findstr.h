@@ -1,7 +1,5 @@
 /*
- * Resource IDs
- *
- * Copyright 2019 Fabian Maurer
+ * Copyright 2023 Zhiyi Zhang for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,12 +16,23 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_FINDSTR_RESOURCES_H
-#define __WINE_FINDSTR_RESOURCES_H
+#include <windef.h>
 
-#define IDS_INVALID_PARAMETER 1000
-#define IDS_INVALID_SWITCH    1001
-#define IDS_FILE_NOT_FOUND    1002
-#define IDS_USAGE             1003
+#define MAXSTRING 8192
 
-#endif  /* __WINE_FINDSTR_RESOURCES_H */
+#define STRING_USAGE            101
+#define STRING_BAD_COMMAND_LINE 102
+#define STRING_CANNOT_OPEN      103
+#define STRING_IGNORED          104
+
+struct findstr_string
+{
+    const WCHAR *string;
+    struct findstr_string *next;
+};
+
+struct findstr_file
+{
+    FILE *file;
+    struct findstr_file *next;
+};

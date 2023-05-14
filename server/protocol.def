@@ -501,6 +501,7 @@ enum apc_type
     APC_VIRTUAL_LOCK,
     APC_VIRTUAL_UNLOCK,
     APC_MAP_VIEW,
+    APC_MAP_VIEW_EX,
     APC_UNMAP_VIEW,
     APC_CREATE_THREAD,
     APC_DUP_HANDLE
@@ -544,6 +545,7 @@ typedef union
         mem_size_t       limit;        /* allocation address limit */
         mem_size_t       align;        /* allocation alignment */
         unsigned int     prot;         /* memory protection flags */
+        unsigned int     attributes;   /* memory extended attributes */
     } virtual_alloc_ex;
     struct
     {
@@ -599,10 +601,20 @@ typedef union
     } map_view;
     struct
     {
+        enum apc_type    type;         /* APC_MAP_VIEW_EX */
+        obj_handle_t     handle;       /* mapping handle */
+        client_ptr_t     addr;         /* requested address */
+        mem_size_t       size;         /* allocation size */
+        file_pos_t       offset;       /* file offset */
+        mem_size_t       limit;        /* allocation address limit */
+        unsigned int     alloc_type;   /* allocation type */
+        unsigned int     prot;         /* memory protection flags */
+    } map_view_ex;
+    struct
+    {
         enum apc_type    type;      /* APC_UNMAP_VIEW */
         int              __pad;
         client_ptr_t     addr;      /* view address */
-        unsigned int     flags;     /* unmap flags */
     } unmap_view;
     struct
     {
@@ -643,7 +655,7 @@ typedef union
     } virtual_alloc;
     struct
     {
-        enum apc_type    type;      /* APC_VIRTUAL_ALLOC */
+        enum apc_type    type;      /* APC_VIRTUAL_ALLOC_EX */
         unsigned int     status;    /* status returned by call */
         client_ptr_t     addr;      /* resulting address */
         mem_size_t       size;      /* resulting size */
@@ -703,6 +715,13 @@ typedef union
         client_ptr_t     addr;      /* resulting address */
         mem_size_t       size;      /* resulting size */
     } map_view;
+    struct
+    {
+        enum apc_type    type;      /* APC_MAP_VIEW_EX */
+        unsigned int     status;    /* status returned by call */
+        client_ptr_t     addr;      /* resulting address */
+        mem_size_t       size;      /* resulting size */
+    } map_view_ex;
     struct
     {
         enum apc_type    type;      /* APC_UNMAP_VIEW */
@@ -831,7 +850,9 @@ typedef struct
     unsigned short image_charact;
     unsigned short dll_charact;
     unsigned short machine;
-    unsigned char  contains_code;
+    unsigned char  contains_code : 1;
+    unsigned char  wine_builtin : 1;
+    unsigned char  wine_fakedll : 1;
     unsigned char  image_flags;
     unsigned int   loader_flags;
     unsigned int   header_size;
@@ -846,8 +867,6 @@ typedef struct
 #define IMAGE_FLAGS_ImageMappedFlat           0x08
 #define IMAGE_FLAGS_BaseBelow4gb              0x10
 #define IMAGE_FLAGS_ComPlusPrefer32bit        0x20
-#define IMAGE_FLAGS_WineBuiltin               0x40
-#define IMAGE_FLAGS_WineFakeDll               0x80
 
 struct rawinput_device
 {
@@ -1586,13 +1605,18 @@ enum server_fd_type
 
 /* Add a memory view in the current process */
 @REQ(map_view)
-    obj_handle_t mapping;       /* file mapping handle, or 0 for .so builtin */
+    obj_handle_t mapping;       /* file mapping handle */
     unsigned int access;        /* wanted access rights */
     client_ptr_t base;          /* view base address (page-aligned) */
     mem_size_t   size;          /* view size */
     file_pos_t   start;         /* start offset in mapping */
-    VARARG(image,pe_image_info);/* image info for .so builtins */
-    VARARG(name,unicode_str);   /* image filename for .so builtins */
+@END
+
+
+/* Add a memory view for a builtin dll in the current process */
+@REQ(map_builtin_view)
+    VARARG(image,pe_image_info);/* image info */
+    VARARG(name,unicode_str);   /* image filename */
 @END
 
 

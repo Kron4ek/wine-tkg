@@ -85,8 +85,8 @@ struct imc
         DWORD           dwLock;
         INPUTCONTEXT    IMC;
 
-        struct ime     *ime;
-        UINT            lastVK;
+    struct ime *ime;
+    UINT vkey;
 
     HWND ui_hwnd; /* IME UI window, on the default input context */
 };
@@ -819,13 +819,6 @@ BOOL WINAPI DllMain( HINSTANCE instance, DWORD reason, void *reserved )
     }
 
     return TRUE;
-}
-
-static void imc_post_message( struct imc *imc, TRANSMSG *message )
-{
-    HWND target;
-    if (!(target = GetFocus()) && !(target = imc->IMC.hWnd)) return;
-    PostMessageW( target, message->message, message->wParam, message->lParam );
 }
 
 /***********************************************************************
@@ -2111,27 +2104,15 @@ BOOL WINAPI ImmGetStatusWindowPos( HIMC himc, POINT *pos )
 /***********************************************************************
  *		ImmGetVirtualKey (IMM32.@)
  */
-UINT WINAPI ImmGetVirtualKey(HWND hWnd)
+UINT WINAPI ImmGetVirtualKey( HWND hwnd )
 {
-  OSVERSIONINFOA version;
-  struct imc *data = get_imc_data( ImmGetContext( hWnd ) );
-  TRACE("%p\n", hWnd);
+    HIMC himc = ImmGetContext( hwnd );
+    struct imc *imc;
 
-  if ( data )
-      return data->lastVK;
+    TRACE( "%p\n", hwnd );
 
-  version.dwOSVersionInfoSize = sizeof(OSVERSIONINFOA);
-  GetVersionExA( &version );
-  switch(version.dwPlatformId)
-  {
-  case VER_PLATFORM_WIN32_WINDOWS:
-      return VK_PROCESSKEY;
-  case VER_PLATFORM_WIN32_NT:
-      return 0;
-  default:
-      FIXME("%ld not supported\n",version.dwPlatformId);
-      return VK_PROCESSKEY;
-  }
+    if ((imc = get_imc_data( himc ))) return imc->vkey;
+    return VK_PROCESSKEY;
 }
 
 /***********************************************************************
@@ -2380,31 +2361,67 @@ BOOL WINAPI ImmReleaseContext(HWND hWnd, HIMC hIMC)
 /***********************************************************************
 *              ImmRequestMessageA(IMM32.@)
 */
-LRESULT WINAPI ImmRequestMessageA(HIMC hIMC, WPARAM wParam, LPARAM lParam)
+LRESULT WINAPI ImmRequestMessageA( HIMC himc, WPARAM wparam, LPARAM lparam )
 {
-    struct imc *data = get_imc_data( hIMC );
+    INPUTCONTEXT *ctx;
+    LRESULT res;
 
-    TRACE("%p %Id %Id\n", hIMC, wParam, wParam);
+    TRACE( "himc %p, wparam %#Ix, lparam %#Ix\n", himc, wparam, lparam );
 
-    if (data) return SendMessageA(data->IMC.hWnd, WM_IME_REQUEST, wParam, lParam);
+    if (NtUserQueryInputContext( himc, NtUserInputContextThreadId ) != GetCurrentThreadId()) return FALSE;
 
-    SetLastError(ERROR_INVALID_HANDLE);
-    return 0;
+    switch (wparam)
+    {
+    case IMR_CANDIDATEWINDOW:
+    case IMR_COMPOSITIONFONT:
+    case IMR_COMPOSITIONWINDOW:
+    case IMR_CONFIRMRECONVERTSTRING:
+    case IMR_DOCUMENTFEED:
+    case IMR_QUERYCHARPOSITION:
+    case IMR_RECONVERTSTRING:
+        break;
+    default:
+        return FALSE;
+    }
+
+    if (!(ctx = ImmLockIMC( himc ))) return FALSE;
+    res = SendMessageA( ctx->hWnd, WM_IME_REQUEST, wparam, lparam );
+    ImmUnlockIMC( himc );
+
+    return res;
 }
 
 /***********************************************************************
 *              ImmRequestMessageW(IMM32.@)
 */
-LRESULT WINAPI ImmRequestMessageW(HIMC hIMC, WPARAM wParam, LPARAM lParam)
+LRESULT WINAPI ImmRequestMessageW( HIMC himc, WPARAM wparam, LPARAM lparam )
 {
-    struct imc *data = get_imc_data( hIMC );
+    INPUTCONTEXT *ctx;
+    LRESULT res;
 
-    TRACE("%p %Id %Id\n", hIMC, wParam, wParam);
+    TRACE( "himc %p, wparam %#Ix, lparam %#Ix\n", himc, wparam, lparam );
 
-    if (data) return SendMessageW(data->IMC.hWnd, WM_IME_REQUEST, wParam, lParam);
+    if (NtUserQueryInputContext( himc, NtUserInputContextThreadId ) != GetCurrentThreadId()) return FALSE;
 
-    SetLastError(ERROR_INVALID_HANDLE);
-    return 0;
+    switch (wparam)
+    {
+    case IMR_CANDIDATEWINDOW:
+    case IMR_COMPOSITIONFONT:
+    case IMR_COMPOSITIONWINDOW:
+    case IMR_CONFIRMRECONVERTSTRING:
+    case IMR_DOCUMENTFEED:
+    case IMR_QUERYCHARPOSITION:
+    case IMR_RECONVERTSTRING:
+        break;
+    default:
+        return FALSE;
+    }
+
+    if (!(ctx = ImmLockIMC( himc ))) return FALSE;
+    res = SendMessageW( ctx->hWnd, WM_IME_REQUEST, wparam, lparam );
+    ImmUnlockIMC( himc );
+
+    return res;
 }
 
 /***********************************************************************
@@ -3080,6 +3097,7 @@ BOOL WINAPI ImmTranslateMessage( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
         };
         TRANSMSGLIST list;
     } buffer = {.uMsgCount = ARRAY_SIZE(buffer.TransMsg)};
+    TRANSMSG *msgs = buffer.TransMsg;
     UINT scan, vkey, count, i;
     struct imc *data;
     struct ime *ime;
@@ -3088,28 +3106,27 @@ BOOL WINAPI ImmTranslateMessage( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 
     TRACE( "hwnd %p, msg %#x, wparam %#Ix, lparam %#Ix\n", hwnd, msg, wparam, lparam );
 
+    if (msg < WM_KEYDOWN || msg > WM_KEYUP) return FALSE;
     if (!(data = get_imc_data( ImmGetContext( hwnd ) ))) return FALSE;
     if (!(ime = imc_select_ime( data ))) return FALSE;
-    if (data->lastVK == VK_PROCESSKEY) return FALSE;
 
+    if ((vkey = data->vkey) == VK_PROCESSKEY) return FALSE;
+    data->vkey = VK_PROCESSKEY;
     GetKeyboardState( state );
-    scan = lparam >> 0x10 & 0xff;
-    vkey = data->lastVK;
+    scan = lparam >> 0x10;
 
     if (ime->info.fdwProperty & IME_PROP_KBD_CHAR_FIRST)
     {
-        if (!ime_is_unicode( ime )) ToAscii( data->lastVK, scan, state, &chr, 0 );
-        else ToUnicodeEx( data->lastVK, scan, state, &chr, 1, 0, GetKeyboardLayout( 0 ) );
-        vkey = MAKELONG( data->lastVK, chr );
+        if (!ime_is_unicode( ime )) ToAscii( vkey, scan, state, &chr, 0 );
+        else ToUnicodeEx( vkey, scan, state, &chr, 1, 0, GetKeyboardLayout( 0 ) );
+        vkey = MAKELONG( vkey, chr );
     }
 
     count = ime->pImeToAsciiEx( vkey, scan, state, &buffer.list, 0, data->handle );
+    if (count >= ARRAY_SIZE(buffer.TransMsg)) return 0;
+
+    for (i = 0; i < count; i++) PostMessageW( hwnd, msgs[i].message, msgs[i].wParam, msgs[i].lParam );
     TRACE( "%u messages generated\n", count );
-
-    if (count > ARRAY_SIZE(buffer.TransMsg)) ImmGenerateMessage( data->handle );
-    else for (i = 0; i < count; i++) imc_post_message( data, buffer.TransMsg + i );
-
-    data->lastVK = VK_PROCESSKEY;
 
     return count > 0;
 }
@@ -3134,7 +3151,7 @@ BOOL WINAPI ImmProcessKey( HWND hwnd, HKL hkl, UINT vkey, LPARAM lparam, DWORD u
     GetKeyboardState( state );
 
     ret = ime->pImeProcessKey( imc->handle, vkey, lparam, state );
-    imc->lastVK = ret ? vkey : VK_PROCESSKEY;
+    imc->vkey = ret ? vkey : VK_PROCESSKEY;
 
     return ret;
 }

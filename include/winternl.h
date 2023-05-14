@@ -394,7 +394,7 @@ typedef struct _PEB
     ULONG                        FlsHighIndex;                      /* 22c/350 */
     PVOID                        WerRegistrationData;               /* 230/358 */
     PVOID                        WerShipAssertPtr;                  /* 234/360 */
-    PVOID                        pUnused;                           /* 238/368 */
+    PVOID                        EcCodeBitMap;                      /* 238/368 */
     PVOID                        pImageHeaderHash;                  /* 23c/370 */
     ULONG                        HeapTracingEnabled : 1;            /* 240/378 */
     ULONG                        CritSecTracingEnabled : 1;
@@ -3251,12 +3251,7 @@ typedef struct _SECTION_IMAGE_INFORMATION {
           UCHAR ImageMappedFlat           : 1;
           UCHAR BaseBelow4gb              : 1;
           UCHAR ComPlusPrefer32bit        : 1;
-#ifdef __WINESRC__  /* Wine extensions */
-          UCHAR WineBuiltin               : 1;
-          UCHAR WineFakeDll               : 1;
-#else
           UCHAR Reserved                  : 2;
-#endif
       } DUMMYSTRUCTNAME;
   } DUMMYUNIONNAME;
   ULONG LoaderFlags;
@@ -4169,7 +4164,7 @@ NTSYSAPI NTSTATUS  WINAPI NtDeleteValueKey(HANDLE,const UNICODE_STRING *);
 NTSYSAPI NTSTATUS  WINAPI NtDeviceIoControlFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,PVOID,ULONG,PVOID,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtDisplayString(PUNICODE_STRING);
 NTSYSAPI NTSTATUS  WINAPI NtDuplicateObject(HANDLE,HANDLE,HANDLE,PHANDLE,ACCESS_MASK,ULONG,ULONG);
-NTSYSAPI NTSTATUS  WINAPI NtDuplicateToken(HANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,SECURITY_IMPERSONATION_LEVEL,TOKEN_TYPE,PHANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtDuplicateToken(HANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,BOOLEAN,TOKEN_TYPE,PHANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtEnumerateKey(HANDLE,ULONG,KEY_INFORMATION_CLASS,void *,DWORD,DWORD *);
 NTSYSAPI NTSTATUS  WINAPI NtEnumerateValueKey(HANDLE,ULONG,KEY_VALUE_INFORMATION_CLASS,PVOID,ULONG,PULONG);
 NTSYSAPI NTSTATUS  WINAPI NtExtendSection(HANDLE,PLARGE_INTEGER);
@@ -4607,7 +4602,7 @@ NTSYSAPI NTSTATUS  WINAPI RtlInitializeExtendedContext2(void*,ULONG,CONTEXT_EX**
 NTSYSAPI void      WINAPI RtlInitializeHandleTable(ULONG,ULONG,RTL_HANDLE_TABLE *);
 NTSYSAPI void      WINAPI RtlInitializeResource(LPRTL_RWLOCK);
 NTSYSAPI void      WINAPI RtlInitializeSRWLock(RTL_SRWLOCK*);
-NTSYSAPI BOOL      WINAPI RtlInitializeSid(PSID,PSID_IDENTIFIER_AUTHORITY,BYTE);
+NTSYSAPI NTSTATUS  WINAPI RtlInitializeSid(PSID,PSID_IDENTIFIER_AUTHORITY,BYTE);
 NTSYSAPI NTSTATUS  WINAPI RtlInt64ToUnicodeString(ULONGLONG,ULONG,UNICODE_STRING *);
 NTSYSAPI NTSTATUS  WINAPI RtlIntegerToChar(ULONG,ULONG,ULONG,PCHAR);
 NTSYSAPI NTSTATUS  WINAPI RtlIntegerToUnicodeString(ULONG,ULONG,UNICODE_STRING *);
@@ -4615,6 +4610,9 @@ NTSYSAPI BOOLEAN   WINAPI RtlIsActivationContextActive(HANDLE);
 NTSYSAPI BOOL      WINAPI RtlIsCriticalSectionLocked(RTL_CRITICAL_SECTION *);
 NTSYSAPI BOOL      WINAPI RtlIsCriticalSectionLockedByThread(RTL_CRITICAL_SECTION *);
 NTSYSAPI ULONG     WINAPI RtlIsDosDeviceName_U(PCWSTR);
+#ifdef __x86_64__
+NTSYSAPI BOOLEAN   WINAPI RtlIsEcCode(const void*);
+#endif
 NTSYSAPI BOOLEAN   WINAPI RtlIsNameLegalDOS8Dot3(const UNICODE_STRING*,POEM_STRING,PBOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI RtlIsNormalizedString(ULONG,const WCHAR*,INT,BOOLEAN*);
 NTSYSAPI BOOLEAN   WINAPI RtlIsProcessorFeaturePresent(UINT);
@@ -4763,7 +4761,7 @@ NTSYSAPI void      WINAPI RtlUpperString(STRING *,const STRING *);
 NTSYSAPI void      WINAPI RtlUserThreadStart(PRTL_THREAD_START_ROUTINE,void*);
 NTSYSAPI BOOLEAN   WINAPI RtlValidAcl(PACL);
 NTSYSAPI BOOLEAN   WINAPI RtlValidRelativeSecurityDescriptor(PSECURITY_DESCRIPTOR,ULONG,SECURITY_INFORMATION);
-NTSYSAPI NTSTATUS  WINAPI RtlValidSecurityDescriptor(PSECURITY_DESCRIPTOR);
+NTSYSAPI BOOLEAN   WINAPI RtlValidSecurityDescriptor(PSECURITY_DESCRIPTOR);
 NTSYSAPI BOOLEAN   WINAPI RtlValidSid(PSID);
 NTSYSAPI BOOLEAN   WINAPI RtlValidateHeap(HANDLE,ULONG,LPCVOID);
 NTSYSAPI NTSTATUS  WINAPI RtlVerifyVersionInfo(const RTL_OSVERSIONINFOEXW*,DWORD,DWORDLONG);

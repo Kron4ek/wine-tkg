@@ -1972,7 +1972,7 @@ static BOOL write_freedesktop_mime_type_entry(const WCHAR *packages_dir, const W
     return ret;
 }
 
-static BOOL is_extension_banned(const WCHAR *extension)
+static BOOL is_extension_banned(LPCWSTR extension)
 {
     /* These are managed through external tools like wine.desktop, to evade malware created file type associations */
     if (!wcsicmp(extension, L".com") ||
@@ -1982,40 +1982,44 @@ static BOOL is_extension_banned(const WCHAR *extension)
     return FALSE;
 }
 
-static BOOL is_soft_blacklisted(const WCHAR *extension, const WCHAR *command)
+static BOOL on_exclude_list(const WCHAR *command)
 {
-    static const WCHAR FileOpenBlacklistW[] = {'S','o','f','t','w','a','r','e','\\',
-                                               'W','i','n','e','\\',
-                                               'F','i','l','e','O','p','e','n','B','l','a','c','k','l','i','s','t','\\',0};
-    WCHAR blacklist_key_path[MAX_PATH];
-    HKEY blacklist_key;
-    WCHAR program_name[MAX_PATH], *blacklisted_command;
-    DWORD len = ARRAY_SIZE(program_name);
-    DWORD i = 0;
+    static const WCHAR default_exclude_list[] = L"ieframe.dll\0iexplore.exe\0notepad.exe\0"
+                                                L"winebrowser.exe\0wordpad.exe\0";
+    WCHAR *exclude_list = NULL;
+    const WCHAR *pattern;
+    HKEY key;
+    DWORD size;
+    LSTATUS status;
+    BOOL found = FALSE;
 
-    if (ARRAY_SIZE(FileOpenBlacklistW) + lstrlenW(extension) > ARRAY_SIZE(blacklist_key_path))
-        return FALSE;
-
-    lstrcpyW(blacklist_key_path, FileOpenBlacklistW);
-    lstrcatW(blacklist_key_path, extension);
-
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, blacklist_key_path, 0, KEY_QUERY_VALUE, &blacklist_key) != ERROR_SUCCESS)
-        return FALSE;
-
-    while (RegEnumValueW(blacklist_key, i, program_name, &len, NULL, NULL, NULL, NULL) == ERROR_SUCCESS)
+    if ((key = open_associations_reg_key()))
     {
-        blacklisted_command = reg_get_valW(HKEY_CURRENT_USER, blacklist_key_path, program_name);
-        if (wcscmp(command, blacklisted_command) == 0)
+        status = RegGetValueW(key, NULL, L"Exclude", RRF_RT_REG_MULTI_SZ, NULL, NULL, &size);
+        if (status == ERROR_SUCCESS)
         {
-            RegCloseKey(blacklist_key);
-            return TRUE;
+            exclude_list = xmalloc(size);
+            status = RegGetValueW(key, NULL, L"Exclude", RRF_RT_REG_MULTI_SZ, NULL, exclude_list, &size);
+            if (status != ERROR_SUCCESS)
+            {
+                heap_free(exclude_list);
+                exclude_list = NULL;
+            }
         }
-        len = ARRAY_SIZE(program_name);
-        i++;
+        RegCloseKey(key);
     }
 
-    RegCloseKey(blacklist_key);
-    return FALSE;
+    for (pattern = exclude_list ? exclude_list : default_exclude_list; *pattern; pattern += wcslen(pattern) + 1)
+    {
+        if (wcsstr(command, pattern))
+        {
+            found = TRUE;
+            break;
+        }
+    }
+
+    heap_free(exclude_list);
+    return found;
 }
 
 static WCHAR *get_special_mime_type(LPCWSTR extension)
@@ -2103,8 +2107,8 @@ static BOOL generate_associations(const WCHAR *packages_dir, const WCHAR *applic
                 /* no command => no application is associated */
                 goto end;
 
-            if (is_soft_blacklisted(extensionW, commandW))
-                /* command is on the blacklist => desktop integration is not desirable */
+            if (on_exclude_list(commandW))
+                /* command is on the exclude list => desktop integration is not desirable */
                 goto end;
 
             wcslwr(extensionW);

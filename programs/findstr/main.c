@@ -1,6 +1,6 @@
 /*
  * Copyright 2012 Qian Hong
- * Copyright 2018 Fabian Maurer
+ * Copyright 2023 Zhiyi Zhang for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,251 +18,216 @@
  */
 
 #include <windows.h>
-#include <stdlib.h>
-#include <shlwapi.h>
-
-#include "wine/heap.h"
+#include <stdio.h>
+#include "findstr.h"
 #include "wine/debug.h"
-#include "resources.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(findstr);
 
-static BOOL read_char_from_handle(HANDLE handle, char *char_out)
+static int WINAPIV findstr_error_wprintf(int msg, ...)
 {
-    static char buffer[4096];
-    static DWORD buffer_max = 0;
-    static DWORD buffer_pos = 0;
+    WCHAR msg_buffer[MAXSTRING];
+    va_list va_args;
+    int ret;
 
-    /* Read next content into buffer */
-    if (buffer_pos >= buffer_max)
+    LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer, ARRAY_SIZE(msg_buffer));
+    va_start(va_args, msg);
+    ret = vfwprintf(stderr, msg_buffer, va_args);
+    va_end(va_args);
+    return ret;
+}
+
+static int findstr_message(int msg)
+{
+    WCHAR msg_buffer[MAXSTRING];
+
+    LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer, ARRAY_SIZE(msg_buffer));
+    return wprintf(msg_buffer);
+}
+
+static BOOL add_file(struct findstr_file **head, const WCHAR *path)
+{
+    struct findstr_file **ptr, *new_file;
+
+    ptr = head;
+    while (*ptr)
+        ptr = &((*ptr)->next);
+
+    new_file = calloc(1, sizeof(*new_file));
+    if (!new_file)
     {
-        BOOL success = ReadFile(handle, buffer, 4096, &buffer_max, NULL);
-        if (!success || !buffer_max)
-            return FALSE;
-        buffer_pos = 0;
+        WINE_ERR("Out of memory.\n");
+        return FALSE;
     }
 
-    *char_out = buffer[buffer_pos++];
+    if (!path)
+    {
+        new_file->file = stdin;
+    }
+    else
+    {
+        new_file->file = _wfopen(path, L"rt,ccs=unicode");
+        if (!new_file->file)
+        {
+            findstr_error_wprintf(STRING_CANNOT_OPEN, path);
+            return FALSE;
+        }
+    }
+
+    *ptr = new_file;
     return TRUE;
 }
 
-/* Read a line from a handle, returns NULL if the end is reached */
-static WCHAR* read_line_from_handle(HANDLE handle)
+static void add_string(struct findstr_string **head, const WCHAR *string)
 {
-    int line_max = 4096;
-    int length = 0;
-    WCHAR *line_converted;
-    int line_converted_length;
-    BOOL success;
-    char *line = heap_alloc(line_max);
+    struct findstr_string **ptr, *new_string;
 
-    for (;;)
+    ptr = head;
+    while (*ptr)
+        ptr = &((*ptr)->next);
+
+    new_string = calloc(1, sizeof(*new_string));
+    if (!new_string)
     {
-        char c;
-        success = read_char_from_handle(handle, &c);
-
-        /* Check for EOF */
-        if (!success)
-        {
-            if (length == 0)
-                return NULL;
-            else
-                break;
-        }
-
-        if (c == '\n')
-            break;
-
-        /* Make sure buffer is large enough */
-        if (length + 1 >= line_max)
-        {
-            line_max *= 2;
-            line = heap_realloc(line, line_max);
-        }
-
-        line[length++] = c;
+        WINE_ERR("Out of memory.\n");
+        return;
     }
 
-    line[length] = 0;
-    if (length - 1 >= 0 && line[length - 1] == '\r') /* Strip \r of windows line endings */
-        line[length - 1] = 0;
-
-    line_converted_length = MultiByteToWideChar(CP_ACP, 0, line, -1, 0, 0);
-    line_converted = heap_alloc(line_converted_length * sizeof(WCHAR));
-    MultiByteToWideChar(CP_ACP, 0, line, -1, line_converted, line_converted_length);
-
-    heap_free(line);
-
-    return line_converted;
-}
-
-static void write_to_stdout(const WCHAR *str)
-{
-    char *str_converted;
-    UINT str_converted_length;
-    DWORD bytes_written;
-    UINT str_length = lstrlenW(str);
-    int codepage = CP_ACP;
-
-    str_converted_length = WideCharToMultiByte(codepage, 0, str, str_length, NULL, 0, NULL, NULL);
-    str_converted = heap_alloc(str_converted_length);
-    WideCharToMultiByte(codepage, 0, str, str_length, str_converted, str_converted_length, NULL, NULL);
-
-    WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), str_converted, str_converted_length, &bytes_written, NULL);
-    if (bytes_written < str_converted_length)
-        ERR("Failed to write output\n");
-
-    heap_free(str_converted);
-}
-
-static BOOL run_find_for_line(const WCHAR *line, const WCHAR *tofind)
-{
-    WCHAR *found;
-    WCHAR lineending[] = {'\r', '\n', 0};
-
-    if (lstrlenW(line) == 0 || lstrlenW(tofind) == 0)
-        return FALSE;
-
-    found = wcsstr(line, tofind);
-
-    if (found)
-    {
-        write_to_stdout(line);
-        write_to_stdout(lineending);
-        return TRUE;
-    }
-
-    return FALSE;
-}
-
-static void output_resource_message(int id)
-{
-    WCHAR buffer[64];
-    LoadStringW(GetModuleHandleW(NULL), id, buffer, ARRAY_SIZE(buffer));
-    write_to_stdout(buffer);
+    new_string->string = string;
+    *ptr = new_string;
 }
 
 int __cdecl wmain(int argc, WCHAR *argv[])
 {
-    WCHAR *line;
-    WCHAR *pattern = NULL; WCHAR *tofind = NULL;
-    int i;
-    int exitcode;
-    int file_paths_len = 0;
-    int file_paths_max = 0;
-    WCHAR** file_paths = NULL;
-    BOOL exact_match = FALSE;
+    struct findstr_string *string_head = NULL, *current_string, *next_string;
+    struct findstr_file *file_head = NULL, *current_file, *next_file;
+    WCHAR *string, *ptr, *buffer, line[MAXSTRING];
+    BOOL has_string = FALSE, has_file = FALSE;
+    int ret = 1, i, j;
 
-    TRACE("running find:");
     for (i = 0; i < argc; i++)
+        WINE_TRACE("%s ", wine_dbgstr_w(argv[i]));
+    WINE_TRACE("\n");
+
+    if (argc == 1)
     {
-        FIXME(" %s", wine_dbgstr_w(argv[i]));
+        findstr_error_wprintf(STRING_BAD_COMMAND_LINE);
+        return 2;
     }
-    TRACE("\n");
 
     for (i = 1; i < argc; i++)
     {
         if (argv[i][0] == '/')
         {
-            switch(argv[i][1])
+            if (argv[i][1] == '\0')
             {
-            case '?':
-                output_resource_message(IDS_USAGE);
-                return 0;
-            case 'C':
-            case 'c':
-                 if (argv[i][2] == ':')
-                 {
-                     pattern = argv[i] + 3;
-                     exact_match = TRUE;
-                 }
-                 break;
-            default:
-                ;
+                findstr_error_wprintf(STRING_BAD_COMMAND_LINE);
+                return 2;
+            }
+
+            j = 1;
+            while (argv[i][j] != '\0')
+            {
+                switch(argv[i][j])
+                {
+                case '?':
+                    findstr_message(STRING_USAGE);
+                    ret = 0;
+                    goto done;
+                case 'C':
+                case 'c':
+                    if (argv[i][j + 1] == ':')
+                    {
+                        ptr = argv[i] + j + 2;
+                        if (*ptr == '"')
+                            ptr++;
+
+                        string = ptr;
+                        while (*ptr != '"' && *ptr != '\0' )
+                            ptr++;
+                        *ptr = '\0';
+                        j = ptr - argv[i] - 1;
+                        add_string(&string_head, string);
+                        has_string = TRUE;
+                    }
+                    break;
+                default:
+                    findstr_error_wprintf(STRING_IGNORED, argv[i][j]);
+                    break;
+                }
+
+                j++;
             }
         }
-        else if (pattern == NULL)
+        else if (!has_string)
         {
-            pattern = argv[i];
+            string = wcstok(argv[i], L" ", &buffer);
+            if (string)
+            {
+                add_string(&string_head, string);
+                has_string = TRUE;
+            }
+            while ((string = wcstok(NULL, L" ", &buffer)))
+                add_string(&string_head, string);
         }
         else
         {
-            if (file_paths_len >= file_paths_max)
-            {
-                file_paths_max = file_paths_max ? file_paths_max * 2 : 2;
-                file_paths = heap_realloc(file_paths, sizeof(WCHAR*) * file_paths_max);
-            }
-            file_paths[file_paths_len++] = argv[i];
+            if (!add_file(&file_head, argv[i]))
+                goto done;
+            has_file = TRUE;
         }
     }
 
-    if (pattern == NULL)
+    if (!has_string)
     {
-        output_resource_message(IDS_INVALID_PARAMETER);
-        return 2;
+        findstr_error_wprintf(STRING_BAD_COMMAND_LINE);
+        ret = 2;
+        goto done;
     }
 
-    exitcode = 1;
+    if (!has_file)
+        add_file(&file_head, NULL);
 
-    if (file_paths_len > 0)
+    current_file = file_head;
+    while (current_file)
     {
-        for (i = 0; i < file_paths_len; i++)
+        while (fgetws(line, ARRAY_SIZE(line), current_file->file))
         {
-            HANDLE input;
-            WCHAR file_path_upper[MAX_PATH];
-
-            wcscpy(file_path_upper, file_paths[i]);
-            wcsupr(file_path_upper);
-
-            input = CreateFileW(file_paths[i], GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
-
-            if (input == INVALID_HANDLE_VALUE)
+            current_string = string_head;
+            while (current_string)
             {
-                WCHAR buffer_message[64];
-                WCHAR message[300];
-
-                LoadStringW(GetModuleHandleW(NULL), IDS_FILE_NOT_FOUND, buffer_message, ARRAY_SIZE(buffer_message));
-
-                wsprintfW(message, buffer_message, file_path_upper);
-                write_to_stdout(message);
-                continue;
-            }
-            while ((line = read_line_from_handle(input)) != NULL)
-            {
-                tofind = _wcstok (pattern, exact_match ? L"" : L" |" ); /* break up (if necessary) search pattern like "foo bar" or "foo | bar" into "foo" and "bar" */
-                    while (tofind != NULL)
-                    {
-                        if (run_find_for_line(line, tofind))
-                        {
-                            exitcode = 0;
-                            break;
-                        }
-                        tofind = _wcstok (NULL, L" |");
-                     }
-            heap_free(line);
-            }
-            CloseHandle(input);
-        }
-    }
-    else
-    {
-        HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-        while ((line = read_line_from_handle(input)) != NULL)
-        {
-            tofind = _wcstok (pattern, exact_match ? L"" : L" |" ); /* break up (if necessary) search pattern like "foo bar" or "foo | bar" into "foo" and "bar" */
-            while (tofind != NULL)
-            {
-                if (run_find_for_line(line, tofind))
+                if (wcsstr(line, current_string->string))
                 {
-                    exitcode = 0;
-                    break;
+                    wprintf(line);
+                    if (current_file->file == stdin)
+                        wprintf(L"\n");
+                    ret = 0;
                 }
-                tofind = _wcstok (NULL, L" |");
-             }
-        heap_free(line);
+
+                current_string = current_string->next;
+            }
         }
+
+        current_file = current_file->next;
     }
 
-    heap_free(file_paths);
-    return exitcode;
+done:
+    current_file = file_head;
+    while (current_file)
+    {
+        next_file = current_file->next;
+        if (current_file->file != stdin)
+            fclose(current_file->file);
+        free(current_file);
+        current_file = next_file;
+    }
+
+    current_string = string_head;
+    while (current_string)
+    {
+        next_string = current_string->next;
+        free(current_string);
+        current_string = next_string;
+    }
+    return ret;
 }

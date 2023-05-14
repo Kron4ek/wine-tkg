@@ -601,16 +601,54 @@ static HRESULT WINAPI memory_2d_buffer_GetContiguousLength(IMF2DBuffer2 *iface, 
 
 static HRESULT WINAPI memory_2d_buffer_ContiguousCopyTo(IMF2DBuffer2 *iface, BYTE *dest_buffer, DWORD dest_length)
 {
-    FIXME("%p, %p, %lu.\n", iface, dest_buffer, dest_length);
+    struct buffer *buffer = impl_from_IMF2DBuffer2(iface);
+    BYTE *src_scanline0, *src_buffer_start;
+    DWORD src_length;
+    LONG src_pitch;
+    HRESULT hr;
 
-    return E_NOTIMPL;
+    TRACE("%p, %p, %lu.\n", iface, dest_buffer, dest_length);
+
+    if (dest_length < buffer->_2d.plane_size)
+        return E_INVALIDARG;
+
+    hr = IMF2DBuffer2_Lock2DSize(iface, MF2DBuffer_LockFlags_Read, &src_scanline0, &src_pitch, &src_buffer_start, &src_length);
+
+    if (SUCCEEDED(hr))
+    {
+        copy_image(buffer, dest_buffer, buffer->_2d.width, src_scanline0, src_pitch, buffer->_2d.width, buffer->_2d.height);
+
+        if (FAILED(IMF2DBuffer2_Unlock2D(iface)))
+            WARN("Couldn't unlock source buffer %p, hr %#lx.\n", iface, hr);
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI memory_2d_buffer_ContiguousCopyFrom(IMF2DBuffer2 *iface, const BYTE *src_buffer, DWORD src_length)
 {
-    FIXME("%p, %p, %lu.\n", iface, src_buffer, src_length);
+    struct buffer *buffer = impl_from_IMF2DBuffer2(iface);
+    BYTE *dst_scanline0, *dst_buffer_start;
+    DWORD dst_length;
+    LONG dst_pitch;
+    HRESULT hr;
 
-    return E_NOTIMPL;
+    TRACE("%p, %p, %lu.\n", iface, src_buffer, src_length);
+
+    if (src_length < buffer->_2d.plane_size)
+        return E_INVALIDARG;
+
+    hr = IMF2DBuffer2_Lock2DSize(iface, MF2DBuffer_LockFlags_Write, &dst_scanline0, &dst_pitch, &dst_buffer_start, &dst_length);
+
+    if (SUCCEEDED(hr))
+    {
+        copy_image(buffer, dst_scanline0, dst_pitch, src_buffer, buffer->_2d.width, buffer->_2d.width, buffer->_2d.height);
+
+        if (FAILED(IMF2DBuffer2_Unlock2D(iface)))
+            WARN("Couldn't unlock destination buffer %p, hr %#lx.\n", iface, hr);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI memory_2d_buffer_Lock2DSize(IMF2DBuffer2 *iface, MF2DBuffer_LockFlags flags, BYTE **scanline0,
@@ -1336,13 +1374,26 @@ static HRESULT create_1d_buffer(DWORD max_length, DWORD alignment, IMFMediaBuffe
 
 static p_copy_image_func get_2d_buffer_copy_func(DWORD fourcc)
 {
-    if (fourcc == MAKEFOURCC('N','V','1','2'))
-        return copy_image_nv12;
-    if (fourcc == MAKEFOURCC('I','M','C','1') || fourcc == MAKEFOURCC('I','M','C','3'))
-        return copy_image_imc1;
-    if (fourcc == MAKEFOURCC('I','M','C','2') || fourcc == MAKEFOURCC('I','M','C','4'))
-        return copy_image_imc2;
-    return NULL;
+    switch (fourcc)
+    {
+        case MAKEFOURCC('I','M','C','1'):
+        case MAKEFOURCC('I','M','C','3'):
+            return copy_image_imc1;
+
+        case MAKEFOURCC('I','M','C','2'):
+        case MAKEFOURCC('I','M','C','4'):
+        case MAKEFOURCC('N','V','1','1'):
+        case MAKEFOURCC('Y','V','1','2'):
+        case MAKEFOURCC('I','4','2','0'):
+        case MAKEFOURCC('I','Y','U','V'):
+            return copy_image_imc2;
+
+        case MAKEFOURCC('N','V','1','2'):
+            return copy_image_nv12;
+
+        default:
+            return NULL;
+    }
 }
 
 static HRESULT create_2d_buffer(DWORD width, DWORD height, DWORD fourcc, BOOL bottom_up, IMFMediaBuffer **buffer)
@@ -1379,12 +1430,12 @@ static HRESULT create_2d_buffer(DWORD width, DWORD height, DWORD fourcc, BOOL bo
         case MAKEFOURCC('I','M','C','2'):
         case MAKEFOURCC('I','M','C','4'):
         case MAKEFOURCC('N','V','1','1'):
-            plane_size = stride * 3 / 2 * height;
-            break;
-        case MAKEFOURCC('N','V','1','2'):
         case MAKEFOURCC('Y','V','1','2'):
         case MAKEFOURCC('I','4','2','0'):
         case MAKEFOURCC('I','Y','U','V'):
+            plane_size = stride * 3 / 2 * height;
+            break;
+        case MAKEFOURCC('N','V','1','2'):
             plane_size = stride * height * 3 / 2;
             break;
         default:
@@ -1402,6 +1453,8 @@ static HRESULT create_2d_buffer(DWORD width, DWORD height, DWORD fourcc, BOOL bo
         case MAKEFOURCC('I','M','C','4'):
         case MAKEFOURCC('Y','V','1','2'):
         case MAKEFOURCC('N','V','1','1'):
+        case MAKEFOURCC('I','4','2','0'):
+        case MAKEFOURCC('I','Y','U','V'):
             row_alignment = MF_128_BYTE_ALIGNMENT;
             break;
         default:
@@ -1421,6 +1474,8 @@ static HRESULT create_2d_buffer(DWORD width, DWORD height, DWORD fourcc, BOOL bo
         case MAKEFOURCC('I','M','C','2'):
         case MAKEFOURCC('I','M','C','4'):
         case MAKEFOURCC('N','V','1','1'):
+        case MAKEFOURCC('I','4','2','0'):
+        case MAKEFOURCC('I','Y','U','V'):
             max_length = pitch * height * 3 / 2;
             break;
         default:
