@@ -349,6 +349,8 @@ static void check_dinput_devices( DWORD version, DIDEVICEINSTANCEW *devinst )
 
         ref = IDirectInputDevice8_Release( device );
         ok( ref == 0, "Release returned %ld\n", ref );
+        ref = IDirectInput8_Release( di8 );
+        ok( ref == 0, "Release returned %ld\n", ref );
     }
     else
     {
@@ -403,6 +405,8 @@ static void check_dinput_devices( DWORD version, DIDEVICEINSTANCEW *devinst )
 
         hr = IDirectInput_EnumDevices( di, 0x14, enum_device_count, &count, DIEDFL_ALLDEVICES );
         ok( hr == DIERR_INVALIDPARAM, "EnumDevices returned: %#lx\n", hr );
+        ref = IDirectInput_Release( di );
+        ok( ref == 0, "Release returned %ld\n", ref );
     }
 }
 
@@ -5082,6 +5086,11 @@ static void test_windows_gaming_input(void)
     check_interface( game_controller, &IID_IGamepad, FALSE );
 
     hr = IRawGameControllerStatics_FromGameController( controller_statics, game_controller, &tmp_raw_controller );
+    ok( hr == S_OK, "FromGameController returned %#lx\n", hr );
+    ok( tmp_raw_controller == raw_controller, "got unexpected IGameController interface\n" );
+    IRawGameController_Release( tmp_raw_controller );
+
+    hr = IRawGameControllerStatics_FromGameController( controller_statics, (IGameController *)raw_controller, &tmp_raw_controller );
     ok( hr == S_OK, "FromGameController returned %#lx\n", hr );
     ok( tmp_raw_controller == raw_controller, "got unexpected IGameController interface\n" );
     IRawGameController_Release( tmp_raw_controller );

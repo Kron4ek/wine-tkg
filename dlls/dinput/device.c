@@ -323,19 +323,20 @@ int dinput_device_object_index_from_id( IDirectInputDevice8W *iface, DWORD id )
  * Retrieves an open registry key to save the mapping, parametrized for an username,
  * specific device and specific action mapping guid.
  */
-static HKEY get_mapping_key(const WCHAR *device, const WCHAR *username, const WCHAR *guid)
+static HKEY get_mapping_key( const WCHAR *device, const WCHAR *username, const WCHAR *guid, BOOL delete )
 {
-    static const WCHAR *subkey = L"Software\\Wine\\DirectInput\\Mappings\\%s\\%s\\%s";
-    HKEY hkey;
+    static const WCHAR format[] = L"Software\\Wine\\DirectInput\\Mappings\\%s\\%s\\%s";
+    SIZE_T len = wcslen( format ) + wcslen( username ) + wcslen( device ) + wcslen( guid ) + 1;
     WCHAR *keyname;
+    HKEY hkey;
 
-    SIZE_T len = wcslen( subkey ) + wcslen( username ) + wcslen( device ) + wcslen( guid ) + 1;
-    keyname = malloc( sizeof(WCHAR) * len );
-    swprintf( keyname, len, subkey, username, device, guid );
+    if (!(keyname = malloc( sizeof(WCHAR) * len ))) return 0;
 
     /* The key used is HKCU\Software\Wine\DirectInput\Mappings\[username]\[device]\[mapping_guid] */
-    if (RegCreateKeyW(HKEY_CURRENT_USER, keyname, &hkey))
-        hkey = 0;
+    swprintf( keyname, len, format, username, device, guid );
+
+    if (delete) RegDeleteTreeW( HKEY_CURRENT_USER, keyname );
+    if (RegCreateKeyW( HKEY_CURRENT_USER, keyname, &hkey )) hkey = 0;
 
     free( keyname );
 
@@ -355,9 +356,7 @@ static HRESULT save_mapping_settings(IDirectInputDevice8W *iface, LPDIACTIONFORM
     if (StringFromCLSID(&lpdiaf->guidActionMap, &guid_str) != S_OK)
         return DI_SETTINGSNOTSAVED;
 
-    hkey = get_mapping_key(didev.tszInstanceName, lpszUsername, guid_str);
-
-    if (!hkey)
+    if (!(hkey = get_mapping_key( didev.tszInstanceName, lpszUsername, guid_str, TRUE )))
     {
         CoTaskMemFree(guid_str);
         return DI_SETTINGSNOTSAVED;
@@ -398,9 +397,7 @@ static BOOL load_mapping_settings( struct dinput_device *This, LPDIACTIONFORMATW
     if (StringFromCLSID(&lpdiaf->guidActionMap, &guid_str) != S_OK)
         return FALSE;
 
-    hkey = get_mapping_key(didev.tszInstanceName, username, guid_str);
-
-    if (!hkey)
+    if (!(hkey = get_mapping_key( didev.tszInstanceName, username, guid_str, FALSE )))
     {
         CoTaskMemFree(guid_str);
         return FALSE;
@@ -1853,6 +1850,9 @@ static HRESULT WINAPI dinput_device_BuildActionMap( IDirectInputDevice8W *iface,
             !IsEqualCLSID( &action->guidInstance, &impl->guid )) continue;
         if (action->dwFlags & DIA_APPMAPPED) action->dwHow = DIAH_APPREQUESTED;
         else action->dwHow = 0;
+        if (action->dwHow == DIAH_APPREQUESTED || action->dwHow == DIAH_USERCONFIG) continue;
+        if ((action->dwSemantic & 0xf0000000) == 0x80000000) action->dwFlags &= ~DIA_APPNOMAP;
+        if (!(action->dwFlags & DIA_APPNOMAP)) action->guidInstance = GUID_NULL;
     }
 
     /* Unless asked the contrary by these flags, try to load a previous mapping */
@@ -1864,19 +1864,25 @@ static HRESULT WINAPI dinput_device_BuildActionMap( IDirectInputDevice8W *iface,
         load_mapping_settings( impl, format, username_buf );
     }
 
+    if (!(mapped = calloc( impl->device_format.dwNumObjs, sizeof(*mapped) ))) return DIERR_OUTOFMEMORY;
+
+    /* check already mapped objects */
     action_end = format->rgoAction + format->dwNumActions;
     for (action = format->rgoAction; action < action_end; action++)
     {
-        if (action->dwHow == DIAH_APPREQUESTED || action->dwHow == DIAH_USERCONFIG) continue;
-        if (flags == DIDBAM_PRESERVE && !IsEqualCLSID( &action->guidInstance, &GUID_NULL ) &&
-            !IsEqualCLSID( &action->guidInstance, &impl->guid )) continue;
-        if (action->dwFlags & DIA_APPNOMAP) continue;
-        action->guidInstance = GUID_NULL;
-        action->dwHow = 0;
+        if (!action->dwHow || !action->dwObjID) continue;
+        if (!IsEqualGUID(&action->guidInstance, &impl->guid)) continue;
+
+        object_end = impl->device_format.rgodf + impl->device_format.dwNumObjs;
+        for (object = impl->device_format.rgodf; object < object_end; object++)
+        {
+            if (action->dwObjID != object->dwType) continue;
+            mapped[object - impl->device_format.rgodf] = TRUE;
+            break;
+        }
     }
 
-    if (!(mapped = calloc( impl->device_format.dwNumObjs, sizeof(*mapped) ))) return DIERR_OUTOFMEMORY;
-
+    /* map any unmapped priority 1 objects */
     action_end = format->rgoAction + format->dwNumActions;
     for (action = format->rgoAction; action < action_end; action++)
     {
@@ -1897,6 +1903,7 @@ static HRESULT WINAPI dinput_device_BuildActionMap( IDirectInputDevice8W *iface,
         }
     }
 
+    /* map any unmapped priority 2 objects */
     for (action = format->rgoAction; action < action_end; action++)
     {
         if (action->dwHow || (action->dwFlags & DIA_APPNOMAP)) continue; /* already mapped */

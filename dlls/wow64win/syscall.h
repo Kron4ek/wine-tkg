@@ -22,71 +22,177 @@
 #define __WOW64WIN_SYSCALL_H
 
 #define ALL_WIN32_SYSCALLS \
+    SYSCALL_ENTRY( NtGdiAbortDoc ) \
+    SYSCALL_ENTRY( NtGdiAbortPath ) \
     SYSCALL_ENTRY( NtGdiAddFontMemResourceEx ) \
     SYSCALL_ENTRY( NtGdiAddFontResourceW ) \
+    SYSCALL_ENTRY( NtGdiAlphaBlend ) \
+    SYSCALL_ENTRY( NtGdiAngleArc ) \
+    SYSCALL_ENTRY( NtGdiArcInternal ) \
+    SYSCALL_ENTRY( NtGdiBeginPath ) \
+    SYSCALL_ENTRY( NtGdiBitBlt ) \
+    SYSCALL_ENTRY( NtGdiCloseFigure ) \
     SYSCALL_ENTRY( NtGdiCombineRgn ) \
+    SYSCALL_ENTRY( NtGdiComputeXformCoefficients ) \
     SYSCALL_ENTRY( NtGdiCreateBitmap ) \
     SYSCALL_ENTRY( NtGdiCreateClientObj ) \
+    SYSCALL_ENTRY( NtGdiCreateCompatibleBitmap ) \
+    SYSCALL_ENTRY( NtGdiCreateCompatibleDC ) \
     SYSCALL_ENTRY( NtGdiCreateDIBBrush ) \
     SYSCALL_ENTRY( NtGdiCreateDIBSection ) \
+    SYSCALL_ENTRY( NtGdiCreateDIBitmapInternal ) \
     SYSCALL_ENTRY( NtGdiCreateEllipticRgn ) \
     SYSCALL_ENTRY( NtGdiCreateHalftonePalette ) \
     SYSCALL_ENTRY( NtGdiCreateHatchBrushInternal ) \
+    SYSCALL_ENTRY( NtGdiCreateMetafileDC ) \
     SYSCALL_ENTRY( NtGdiCreatePaletteInternal ) \
     SYSCALL_ENTRY( NtGdiCreatePatternBrushInternal ) \
     SYSCALL_ENTRY( NtGdiCreatePen ) \
     SYSCALL_ENTRY( NtGdiCreateRectRgn ) \
     SYSCALL_ENTRY( NtGdiCreateRoundRectRgn ) \
     SYSCALL_ENTRY( NtGdiCreateSolidBrush ) \
+    SYSCALL_ENTRY( NtGdiDdDDICheckVidPnExclusiveOwnership ) \
+    SYSCALL_ENTRY( NtGdiDdDDICloseAdapter ) \
+    SYSCALL_ENTRY( NtGdiDdDDICreateDCFromMemory ) \
     SYSCALL_ENTRY( NtGdiDdDDICreateDevice ) \
+    SYSCALL_ENTRY( NtGdiDdDDIDestroyDCFromMemory ) \
+    SYSCALL_ENTRY( NtGdiDdDDIDestroyDevice ) \
+    SYSCALL_ENTRY( NtGdiDdDDIEscape ) \
+    SYSCALL_ENTRY( NtGdiDdDDIOpenAdapterFromDeviceName ) \
     SYSCALL_ENTRY( NtGdiDdDDIOpenAdapterFromHdc ) \
+    SYSCALL_ENTRY( NtGdiDdDDIOpenAdapterFromLuid ) \
     SYSCALL_ENTRY( NtGdiDdDDIQueryStatistics ) \
+    SYSCALL_ENTRY( NtGdiDdDDIQueryVideoMemoryInfo ) \
     SYSCALL_ENTRY( NtGdiDdDDISetQueuedLimit ) \
+    SYSCALL_ENTRY( NtGdiDdDDISetVidPnSourceOwner ) \
     SYSCALL_ENTRY( NtGdiDeleteClientObj ) \
+    SYSCALL_ENTRY( NtGdiDeleteObjectApp ) \
     SYSCALL_ENTRY( NtGdiDescribePixelFormat ) \
+    SYSCALL_ENTRY( NtGdiDoPalette ) \
     SYSCALL_ENTRY( NtGdiDrawStream ) \
+    SYSCALL_ENTRY( NtGdiEllipse ) \
+    SYSCALL_ENTRY( NtGdiEndDoc ) \
+    SYSCALL_ENTRY( NtGdiEndPage ) \
+    SYSCALL_ENTRY( NtGdiEndPath ) \
+    SYSCALL_ENTRY( NtGdiEnumFonts ) \
     SYSCALL_ENTRY( NtGdiEqualRgn ) \
+    SYSCALL_ENTRY( NtGdiExcludeClipRect ) \
     SYSCALL_ENTRY( NtGdiExtCreatePen ) \
     SYSCALL_ENTRY( NtGdiExtCreateRegion ) \
+    SYSCALL_ENTRY( NtGdiExtEscape ) \
+    SYSCALL_ENTRY( NtGdiExtFloodFill ) \
     SYSCALL_ENTRY( NtGdiExtGetObjectW ) \
+    SYSCALL_ENTRY( NtGdiExtSelectClipRgn ) \
+    SYSCALL_ENTRY( NtGdiExtTextOutW ) \
+    SYSCALL_ENTRY( NtGdiFillPath ) \
+    SYSCALL_ENTRY( NtGdiFillRgn ) \
     SYSCALL_ENTRY( NtGdiFlattenPath ) \
     SYSCALL_ENTRY( NtGdiFlush ) \
+    SYSCALL_ENTRY( NtGdiFontIsLinked ) \
+    SYSCALL_ENTRY( NtGdiFrameRgn ) \
+    SYSCALL_ENTRY( NtGdiGetAndSetDCDword ) \
+    SYSCALL_ENTRY( NtGdiGetAppClipBox ) \
     SYSCALL_ENTRY( NtGdiGetBitmapBits ) \
     SYSCALL_ENTRY( NtGdiGetBitmapDimension ) \
+    SYSCALL_ENTRY( NtGdiGetBoundsRect ) \
+    SYSCALL_ENTRY( NtGdiGetCharABCWidthsW ) \
+    SYSCALL_ENTRY( NtGdiGetCharWidthInfo ) \
+    SYSCALL_ENTRY( NtGdiGetCharWidthW ) \
     SYSCALL_ENTRY( NtGdiGetColorAdjustment ) \
     SYSCALL_ENTRY( NtGdiGetDCDword ) \
     SYSCALL_ENTRY( NtGdiGetDCObject ) \
     SYSCALL_ENTRY( NtGdiGetDCPoint ) \
+    SYSCALL_ENTRY( NtGdiGetDIBitsInternal ) \
+    SYSCALL_ENTRY( NtGdiGetDeviceCaps ) \
+    SYSCALL_ENTRY( NtGdiGetDeviceGammaRamp ) \
+    SYSCALL_ENTRY( NtGdiGetFontData ) \
     SYSCALL_ENTRY( NtGdiGetFontFileData ) \
     SYSCALL_ENTRY( NtGdiGetFontFileInfo ) \
+    SYSCALL_ENTRY( NtGdiGetFontUnicodeRanges ) \
+    SYSCALL_ENTRY( NtGdiGetGlyphIndicesW ) \
+    SYSCALL_ENTRY( NtGdiGetGlyphOutline ) \
+    SYSCALL_ENTRY( NtGdiGetKerningPairs ) \
+    SYSCALL_ENTRY( NtGdiGetNearestColor ) \
     SYSCALL_ENTRY( NtGdiGetNearestPaletteIndex ) \
+    SYSCALL_ENTRY( NtGdiGetOutlineTextMetricsInternalW ) \
     SYSCALL_ENTRY( NtGdiGetPath ) \
+    SYSCALL_ENTRY( NtGdiGetPixel ) \
+    SYSCALL_ENTRY( NtGdiGetRandomRgn ) \
+    SYSCALL_ENTRY( NtGdiGetRasterizerCaps ) \
+    SYSCALL_ENTRY( NtGdiGetRealizationInfo ) \
     SYSCALL_ENTRY( NtGdiGetRegionData ) \
     SYSCALL_ENTRY( NtGdiGetRgnBox ) \
     SYSCALL_ENTRY( NtGdiGetSpoolMessage ) \
     SYSCALL_ENTRY( NtGdiGetSystemPaletteUse ) \
+    SYSCALL_ENTRY( NtGdiGetTextCharsetInfo ) \
+    SYSCALL_ENTRY( NtGdiGetTextExtentExW ) \
+    SYSCALL_ENTRY( NtGdiGetTextFaceW ) \
+    SYSCALL_ENTRY( NtGdiGetTextMetricsW ) \
     SYSCALL_ENTRY( NtGdiGetTransform ) \
+    SYSCALL_ENTRY( NtGdiGradientFill ) \
     SYSCALL_ENTRY( NtGdiHfontCreate ) \
     SYSCALL_ENTRY( NtGdiInitSpool ) \
+    SYSCALL_ENTRY( NtGdiIntersectClipRect ) \
+    SYSCALL_ENTRY( NtGdiInvertRgn ) \
+    SYSCALL_ENTRY( NtGdiLineTo ) \
+    SYSCALL_ENTRY( NtGdiMaskBlt ) \
+    SYSCALL_ENTRY( NtGdiModifyWorldTransform ) \
+    SYSCALL_ENTRY( NtGdiMoveTo ) \
+    SYSCALL_ENTRY( NtGdiOffsetClipRgn ) \
     SYSCALL_ENTRY( NtGdiOffsetRgn ) \
+    SYSCALL_ENTRY( NtGdiOpenDCW ) \
+    SYSCALL_ENTRY( NtGdiPatBlt ) \
     SYSCALL_ENTRY( NtGdiPathToRegion ) \
+    SYSCALL_ENTRY( NtGdiPlgBlt ) \
+    SYSCALL_ENTRY( NtGdiPolyDraw ) \
+    SYSCALL_ENTRY( NtGdiPolyPolyDraw ) \
     SYSCALL_ENTRY( NtGdiPtInRegion ) \
+    SYSCALL_ENTRY( NtGdiPtVisible ) \
     SYSCALL_ENTRY( NtGdiRectInRegion ) \
+    SYSCALL_ENTRY( NtGdiRectVisible ) \
+    SYSCALL_ENTRY( NtGdiRectangle ) \
     SYSCALL_ENTRY( NtGdiRemoveFontMemResourceEx ) \
     SYSCALL_ENTRY( NtGdiRemoveFontResourceW ) \
+    SYSCALL_ENTRY( NtGdiResetDC ) \
+    SYSCALL_ENTRY( NtGdiResizePalette ) \
+    SYSCALL_ENTRY( NtGdiRestoreDC ) \
+    SYSCALL_ENTRY( NtGdiRoundRect ) \
     SYSCALL_ENTRY( NtGdiSaveDC ) \
+    SYSCALL_ENTRY( NtGdiScaleViewportExtEx ) \
+    SYSCALL_ENTRY( NtGdiScaleWindowExtEx ) \
+    SYSCALL_ENTRY( NtGdiSelectBitmap ) \
+    SYSCALL_ENTRY( NtGdiSelectBrush ) \
+    SYSCALL_ENTRY( NtGdiSelectClipPath ) \
+    SYSCALL_ENTRY( NtGdiSelectFont ) \
+    SYSCALL_ENTRY( NtGdiSelectPen ) \
     SYSCALL_ENTRY( NtGdiSetBitmapBits ) \
     SYSCALL_ENTRY( NtGdiSetBitmapDimension ) \
+    SYSCALL_ENTRY( NtGdiSetBoundsRect ) \
     SYSCALL_ENTRY( NtGdiSetBrushOrg ) \
     SYSCALL_ENTRY( NtGdiSetColorAdjustment ) \
+    SYSCALL_ENTRY( NtGdiSetDIBitsToDeviceInternal ) \
+    SYSCALL_ENTRY( NtGdiSetDeviceGammaRamp ) \
+    SYSCALL_ENTRY( NtGdiSetLayout ) \
     SYSCALL_ENTRY( NtGdiSetMagicColors ) \
     SYSCALL_ENTRY( NtGdiSetMetaRgn ) \
+    SYSCALL_ENTRY( NtGdiSetPixel ) \
     SYSCALL_ENTRY( NtGdiSetPixelFormat ) \
     SYSCALL_ENTRY( NtGdiSetRectRgn ) \
+    SYSCALL_ENTRY( NtGdiSetSystemPaletteUse ) \
     SYSCALL_ENTRY( NtGdiSetTextJustification ) \
     SYSCALL_ENTRY( NtGdiSetVirtualResolution ) \
+    SYSCALL_ENTRY( NtGdiStartDoc ) \
+    SYSCALL_ENTRY( NtGdiStartPage ) \
+    SYSCALL_ENTRY( NtGdiStretchBlt ) \
+    SYSCALL_ENTRY( NtGdiStretchDIBitsInternal ) \
+    SYSCALL_ENTRY( NtGdiStrokeAndFillPath ) \
+    SYSCALL_ENTRY( NtGdiStrokePath ) \
     SYSCALL_ENTRY( NtGdiSwapBuffers ) \
     SYSCALL_ENTRY( NtGdiTransformPoints ) \
+    SYSCALL_ENTRY( NtGdiTransparentBlt ) \
+    SYSCALL_ENTRY( NtGdiUnrealizeObject ) \
+    SYSCALL_ENTRY( NtGdiUpdateColors ) \
+    SYSCALL_ENTRY( NtGdiWidenPath ) \
     SYSCALL_ENTRY( NtUserActivateKeyboardLayout ) \
     SYSCALL_ENTRY( NtUserAddClipboardFormatListener ) \
     SYSCALL_ENTRY( NtUserAssociateInputContext ) \

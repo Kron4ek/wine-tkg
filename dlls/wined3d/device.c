@@ -212,6 +212,8 @@ void wined3d_device_cleanup(struct wined3d_device *device)
     if (device->swapchain_count)
         wined3d_device_uninit_3d(device);
 
+    wined3d_destroy_gl_vr_context(&device->vr_context);
+
     wined3d_cs_destroy(device->cs);
 
     for (i = 0; i < ARRAY_SIZE(device->multistate_funcs); ++i)
@@ -1772,8 +1774,8 @@ static void wined3d_device_set_light_enable(struct wined3d_device *device, UINT 
         }
     }
 
-    wined3d_light_state_enable_light(light_state, &device->adapter->d3d_info, light_info, enable);
-    wined3d_device_context_emit_set_light_enable(&device->cs->c, light_idx, enable);
+    if (wined3d_light_state_enable_light(light_state, &device->adapter->d3d_info, light_info, enable))
+        wined3d_device_context_emit_set_light_enable(&device->cs->c, light_idx, enable);
 }
 
 static HRESULT wined3d_device_set_clip_plane(struct wined3d_device *device,
@@ -1984,7 +1986,7 @@ void CDECL wined3d_device_context_reset_state(struct wined3d_device_context *con
 
 void CDECL wined3d_device_context_set_state(struct wined3d_device_context *context, struct wined3d_state *state)
 {
-    const struct wined3d_light_info *light;
+    struct wined3d_light_info *light;
     unsigned int i, j;
 
     TRACE("context %p, state %p.\n", context, state);
@@ -2068,13 +2070,10 @@ void CDECL wined3d_device_context_set_state(struct wined3d_device_context *conte
     wined3d_device_context_emit_set_viewports(context, state->viewport_count, state->viewports);
     wined3d_device_context_emit_set_scissor_rects(context, state->scissor_rect_count, state->scissor_rects);
 
-    for (i = 0; i < LIGHTMAP_SIZE; ++i)
+    RB_FOR_EACH_ENTRY(light, &state->light_state.lights_tree, struct wined3d_light_info, entry)
     {
-        LIST_FOR_EACH_ENTRY(light, &state->light_state.light_map[i], struct wined3d_light_info, entry)
-        {
-            wined3d_device_context_set_light(context, light->OriginalIndex, &light->OriginalParms);
-            wined3d_device_context_emit_set_light_enable(context, light->OriginalIndex, light->glIndex != -1);
-        }
+        wined3d_device_context_set_light(context, light->OriginalIndex, &light->OriginalParms);
+        wined3d_device_context_emit_set_light_enable(context, light->OriginalIndex, light->glIndex != -1);
     }
 
     for (i = 0; i < WINEHIGHEST_RENDER_STATE + 1; ++i)
@@ -3151,6 +3150,7 @@ static void init_transformed_lights(struct lights_settings *ls,
 {
     const struct wined3d_light_info *lights[WINED3D_MAX_SOFTWARE_ACTIVE_LIGHTS];
     const struct wined3d_light_info *light_info;
+    struct wined3d_light_info *light_iter;
     struct light_transformed *light;
     struct wined3d_vec4 vec4;
     unsigned int light_count;
@@ -3182,39 +3182,37 @@ static void init_transformed_lights(struct lights_settings *ls,
     ls->normalise = !!state->render_states[WINED3D_RS_NORMALIZENORMALS];
     ls->localviewer = !!state->render_states[WINED3D_RS_LOCALVIEWER];
 
-    for (i = 0, index = 0; i < LIGHTMAP_SIZE && index < ARRAY_SIZE(lights); ++i)
+    index = 0;
+    RB_FOR_EACH_ENTRY(light_iter, &state->light_state.lights_tree, struct wined3d_light_info, entry)
     {
-        LIST_FOR_EACH_ENTRY(light_info, &state->light_state.light_map[i], struct wined3d_light_info, entry)
+        if (!light_iter->enabled)
+            continue;
+
+        switch (light_iter->OriginalParms.type)
         {
-            if (!light_info->enabled)
-                continue;
-
-            switch (light_info->OriginalParms.type)
-            {
-                case WINED3D_LIGHT_DIRECTIONAL:
-                    ++ls->directional_light_count;
-                    break;
-
-                case WINED3D_LIGHT_POINT:
-                    ++ls->point_light_count;
-                    break;
-
-                case WINED3D_LIGHT_SPOT:
-                    ++ls->spot_light_count;
-                    break;
-
-                case WINED3D_LIGHT_PARALLELPOINT:
-                    ++ls->parallel_point_light_count;
-                    break;
-
-                default:
-                    FIXME("Unhandled light type %#x.\n", light_info->OriginalParms.type);
-                    continue;
-            }
-            lights[index++] = light_info;
-            if (index == WINED3D_MAX_SOFTWARE_ACTIVE_LIGHTS)
+            case WINED3D_LIGHT_DIRECTIONAL:
+                ++ls->directional_light_count;
                 break;
+
+            case WINED3D_LIGHT_POINT:
+                ++ls->point_light_count;
+                break;
+
+            case WINED3D_LIGHT_SPOT:
+                ++ls->spot_light_count;
+                break;
+
+            case WINED3D_LIGHT_PARALLELPOINT:
+                ++ls->parallel_point_light_count;
+                break;
+
+            default:
+                FIXME("Unhandled light type %#x.\n", light_iter->OriginalParms.type);
+                continue;
         }
+        lights[index++] = light_iter;
+        if (index == WINED3D_MAX_SOFTWARE_ACTIVE_LIGHTS)
+            break;
     }
 
     light_count = index;
@@ -4044,15 +4042,14 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
 
     if (changed->lights)
     {
-        for (i = 0; i < ARRAY_SIZE(state->light_state->light_map); ++i)
-        {
-            const struct wined3d_light_info *light;
+        struct wined3d_light_info *light, *cursor;
 
-            LIST_FOR_EACH_ENTRY(light, &state->light_state->light_map[i], struct wined3d_light_info, entry)
-            {
-                wined3d_device_context_set_light(context, light->OriginalIndex, &light->OriginalParms);
-                wined3d_device_set_light_enable(device, light->OriginalIndex, light->glIndex != -1);
-            }
+        LIST_FOR_EACH_ENTRY_SAFE(light, cursor, &changed->changed_lights, struct wined3d_light_info, changed_entry)
+        {
+            wined3d_device_context_set_light(context, light->OriginalIndex, &light->OriginalParms);
+            wined3d_device_set_light_enable(device, light->OriginalIndex, light->glIndex != -1);
+            list_remove(&light->changed_entry);
+            light->changed = false;
         }
     }
 
@@ -4578,7 +4575,9 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
         wined3d_device_set_clip_plane(device, i, &state->clip_planes[i]);
     }
 
+    assert(list_empty(&stateblock->changed.changed_lights));
     memset(&stateblock->changed, 0, sizeof(stateblock->changed));
+    list_init(&stateblock->changed.changed_lights);
 
     TRACE("Applied stateblock %p.\n", stateblock);
 }
@@ -6554,4 +6553,19 @@ LRESULT device_process_message(struct wined3d_device *device, HWND window, BOOL 
         return CallWindowProcW(proc, window, message, wparam, lparam);
     else
         return CallWindowProcA(proc, window, message, wparam, lparam);
+}
+
+void CDECL wined3d_device_run_cs_callback(struct wined3d_device *device,
+        wined3d_cs_callback callback, const void *data, unsigned int size)
+{
+    TRACE("device %p, callback %p, data %p, size %u.\n", device, callback, data, size);
+
+    wined3d_cs_emit_user_callback(device->cs, callback, data, size);
+}
+
+void CDECL wined3d_device_wait_idle(struct wined3d_device *device)
+{
+    TRACE("device %p.\n", device);
+
+    device->cs->c.ops->finish(device->cs, WINED3D_CS_QUEUE_DEFAULT);
 }

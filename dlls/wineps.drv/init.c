@@ -29,7 +29,8 @@
 #include "winnls.h"
 #include "winuser.h"
 #include "psdrv.h"
-#include "unixlib.h"
+#include "ddk/winddi.h"
+#include "ntf.h"
 #include "winspool.h"
 #include "wine/debug.h"
 
@@ -87,6 +88,193 @@ static const PSDRV_DEVMODE DefaultDevmode =
 HINSTANCE PSDRV_hInstance = 0;
 HANDLE PSDRV_Heap = 0;
 
+static BOOL import_ntf_from_reg(void)
+{
+    struct import_ntf_params params;
+    HANDLE hfile, hmap = NULL;
+    WCHAR path[MAX_PATH];
+    LARGE_INTEGER size;
+    char *data = NULL;
+    LSTATUS status;
+    HKEY hkey;
+    DWORD len;
+    BOOL ret;
+
+    if (RegOpenKeyW(HKEY_CURRENT_USER, L"Software\\Wine\\Fonts", &hkey))
+        return TRUE;
+    status = RegQueryValueExW(hkey, L"NTFFile", NULL, NULL, (BYTE *)path, &len);
+    RegCloseKey(hkey);
+    if (status)
+        return TRUE;
+
+    hfile = CreateFileW(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, 0);
+    if (hfile != INVALID_HANDLE_VALUE)
+    {
+        if (!GetFileSizeEx(hfile, &size))
+            size.QuadPart = 0;
+        hmap = CreateFileMappingW(hfile, NULL, PAGE_READONLY, 0, 0, NULL);
+        CloseHandle(hfile);
+    }
+    if (hmap)
+    {
+        data = MapViewOfFile(hmap, FILE_MAP_READ, 0, 0, 0);
+        CloseHandle(hmap);
+    }
+    if (!data)
+    {
+        WARN("Error loading NTF file: %s\n", debugstr_w(path));
+        return TRUE;
+    }
+
+    params.data = data;
+    params.size = size.QuadPart;
+    ret = WINE_UNIX_CALL(unix_import_ntf, &params);
+    UnmapViewOfFile(data);
+    return ret;
+}
+
+static BOOL convert_afm_to_ntf(void)
+{
+    int i, count, size, off, metrics_size;
+    struct import_ntf_params params;
+    struct width_range *width_range;
+    struct glyph_set *glyph_set;
+    struct ntf_header *header;
+    struct font_mtx *font_mtx;
+    struct list_entry *list;
+    struct code_page *cp;
+    char glyph_set_name[9];
+    char *data, *new_data;
+    AFMLISTENTRY *afmle;
+    IFIMETRICS *metrics;
+    FONTFAMILY *family;
+
+    count = 0;
+    for (family = PSDRV_AFMFontList; family; family = family->next)
+    {
+        for(afmle = family->afmlist; afmle; afmle = afmle->next)
+            count++;
+    }
+    size = sizeof(*header) + sizeof(*list) * count * 2;
+    data = calloc(size, 1);
+
+    if (!data)
+        return FALSE;
+    header = (void *)data;
+    header->glyph_set_count = count;
+    header->glyph_set_off = sizeof(*header);
+    header->font_mtx_count = count;
+    header->font_mtx_off = header->glyph_set_off + sizeof(*list) * count;
+
+    count = 0;
+    off = size;
+    for (family = PSDRV_AFMFontList; family; family = family->next)
+    {
+        for(afmle = family->afmlist; afmle; afmle = afmle->next)
+        {
+            sprintf(glyph_set_name, "%x", count);
+
+            list = (void *)(data + header->glyph_set_off + sizeof(*list) * count);
+            list->name_off = off + sizeof(*glyph_set);
+            list->size = sizeof(*glyph_set) + strlen(glyph_set_name) + 1 + sizeof(*cp) +
+                sizeof(short) * afmle->afm->NumofMetrics;
+            list->off = off;
+            size += list->size;
+            new_data = realloc(data, size);
+            if (!new_data)
+            {
+                free(data);
+                return FALSE;
+            }
+            data = new_data;
+            header = (void *)data;
+            memset(data + off, 0, size - off);
+
+            glyph_set = (void *)(data + off);
+            glyph_set->size = size - off;
+            glyph_set->flags = 1;
+            glyph_set->name_off = sizeof(*glyph_set);
+            glyph_set->glyph_count = afmle->afm->NumofMetrics;
+            glyph_set->cp_count = 1;
+            glyph_set->cp_off = glyph_set->name_off + strlen(glyph_set_name) + 1;
+            glyph_set->glyph_set_off = glyph_set->cp_off + sizeof(*cp);
+            strcpy(data + off + glyph_set->name_off, glyph_set_name);
+            cp = (void *)(data + off + glyph_set->cp_off);
+            cp->cp = 0xffff;
+            for (i = 0; i < afmle->afm->NumofMetrics; i++)
+                *(WCHAR*)(data + off + glyph_set->glyph_set_off + i * sizeof(short)) = afmle->afm->Metrics[i].UV;
+            off = size;
+
+            metrics_size = sizeof(IFIMETRICS) +
+                (wcslen(afmle->afm->FullName) + 1) * sizeof(WCHAR);
+            list = (void *)(data + header->font_mtx_off + sizeof(*list) * count);
+            list->name_off = off + sizeof(*font_mtx);
+            list->size = sizeof(*font_mtx) + strlen(afmle->afm->FontName) + 1 +
+                strlen(glyph_set_name) + 1 + metrics_size +
+                (afmle->afm->IsFixedPitch ? 0 : sizeof(*width_range) * afmle->afm->NumofMetrics);
+            list->off = off;
+            size += list->size;
+            new_data = realloc(data, size);
+            if (!new_data)
+            {
+                free(data);
+                return FALSE;
+            }
+            data = new_data;
+            header = (void *)data;
+            memset(data + off, 0, size - off);
+
+            font_mtx = (void *)(data + off);
+            font_mtx->size = size - off;
+            font_mtx->name_off = sizeof(*font_mtx);
+            font_mtx->glyph_set_name_off = font_mtx->name_off + strlen(afmle->afm->FontName) + 1;
+            font_mtx->glyph_count = afmle->afm->NumofMetrics;
+            font_mtx->metrics_off = font_mtx->glyph_set_name_off + strlen(glyph_set_name) + 1;
+            font_mtx->width_count = afmle->afm->IsFixedPitch ? 0 : afmle->afm->NumofMetrics;
+            font_mtx->width_off = font_mtx->metrics_off + metrics_size;
+            font_mtx->def_width = afmle->afm->Metrics[0].WX;
+            strcpy(data + off + font_mtx->name_off, afmle->afm->FontName);
+            strcpy(data + off + font_mtx->glyph_set_name_off, glyph_set_name);
+            metrics = (void *)(data + off + font_mtx->metrics_off);
+            metrics->cjThis = metrics_size;
+            metrics->dpwszFaceName = sizeof(*metrics);
+            if (afmle->afm->IsFixedPitch)
+                metrics->jWinPitchAndFamily |= FIXED_PITCH;
+            metrics->usWinWeight = afmle->afm->Weight;
+            if (afmle->afm->ItalicAngle != 0.0)
+                metrics->fsSelection |= FM_SEL_ITALIC;
+            if (afmle->afm->Weight == FW_BOLD)
+                metrics->fsSelection |= FM_SEL_BOLD;
+            metrics->fwdUnitsPerEm = afmle->afm->WinMetrics.usUnitsPerEm;
+            metrics->fwdWinAscender = afmle->afm->WinMetrics.usWinAscent;
+            metrics->fwdWinDescender = afmle->afm->WinMetrics.usWinDescent;
+            metrics->fwdMacAscender = afmle->afm->WinMetrics.sAscender;
+            metrics->fwdMacDescender = afmle->afm->WinMetrics.sDescender;
+            metrics->fwdMacLineGap = afmle->afm->WinMetrics.sLineGap;
+            metrics->fwdAveCharWidth = afmle->afm->WinMetrics.sAvgCharWidth;
+            metrics->rclFontBox.left = afmle->afm->FontBBox.llx;
+            metrics->rclFontBox.top = afmle->afm->FontBBox.ury;
+            metrics->rclFontBox.right = afmle->afm->FontBBox.urx;
+            metrics->rclFontBox.bottom = afmle->afm->FontBBox.lly;
+            wcscpy((WCHAR *)((char *)metrics + metrics->dpwszFaceName), afmle->afm->FullName);
+            width_range = (void *)(data + off + font_mtx->width_off);
+            for (i = 0; i < font_mtx->width_count; i++)
+            {
+                width_range[i].first = i;
+                width_range[i].count = 1;
+                width_range[i].width = afmle->afm->Metrics[i].WX;
+            }
+            off = size;
+
+            count++;
+        }
+    }
+
+    params.data = data;
+    params.size = size;
+    return WINE_UNIX_CALL(unix_import_ntf, &params);
+}
+
 /*********************************************************************
  *	     DllMain
  *
@@ -115,6 +303,13 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
 		HeapDestroy(PSDRV_Heap);
 		return FALSE;
 	    }
+
+            if (!convert_afm_to_ntf() || !import_ntf_from_reg())
+            {
+                WINE_UNIX_CALL(unix_free_printer_info, NULL);
+                HeapDestroy(PSDRV_Heap);
+                return FALSE;
+            }
             break;
         }
 
@@ -213,117 +408,6 @@ static void dump_devmode(const DEVMODEW *dm)
     TRACE("dmPelsHeight %lu\n", dm->dmPelsHeight);
 }
 
-static void PSDRV_UpdateDevCaps( print_ctx *ctx )
-{
-    PAGESIZE *page;
-    RESOLUTION *res;
-    INT width = 0, height = 0, resx = 0, resy = 0;
-
-    dump_devmode(&ctx->Devmode->dmPublic);
-
-    if (ctx->Devmode->dmPublic.dmFields & (DM_PRINTQUALITY | DM_YRESOLUTION | DM_LOGPIXELS))
-    {
-        if (ctx->Devmode->dmPublic.dmFields & DM_PRINTQUALITY)
-            resx = resy = ctx->Devmode->dmPublic.dmPrintQuality;
-
-        if (ctx->Devmode->dmPublic.dmFields & DM_YRESOLUTION)
-            resy = ctx->Devmode->dmPublic.dmYResolution;
-
-        if (ctx->Devmode->dmPublic.dmFields & DM_LOGPIXELS)
-            resx = resy = ctx->Devmode->dmPublic.dmLogPixels;
-
-        LIST_FOR_EACH_ENTRY(res, &ctx->pi->ppd->Resolutions, RESOLUTION, entry)
-        {
-            if (res->resx == resx && res->resy == resy)
-            {
-                ctx->logPixelsX = resx;
-                ctx->logPixelsY = resy;
-                break;
-            }
-        }
-
-        if (&res->entry == &ctx->pi->ppd->Resolutions)
-        {
-            WARN("Requested resolution %dx%d is not supported by device\n", resx, resy);
-            ctx->logPixelsX = ctx->pi->ppd->DefaultResolution;
-            ctx->logPixelsY = ctx->logPixelsX;
-        }
-    }
-    else
-    {
-        WARN("Using default device resolution %d\n", ctx->pi->ppd->DefaultResolution);
-        ctx->logPixelsX = ctx->pi->ppd->DefaultResolution;
-        ctx->logPixelsY = ctx->logPixelsX;
-    }
-
-    if(ctx->Devmode->dmPublic.dmFields & DM_PAPERSIZE) {
-        LIST_FOR_EACH_ENTRY(page, &ctx->pi->ppd->PageSizes, PAGESIZE, entry) {
-	    if(page->WinPage == ctx->Devmode->dmPublic.dmPaperSize)
-	        break;
-	}
-
-	if(&page->entry == &ctx->pi->ppd->PageSizes) {
-	    FIXME("Can't find page\n");
-            SetRectEmpty(&ctx->ImageableArea);
-	    ctx->PageSize.cx = 0;
-	    ctx->PageSize.cy = 0;
-	} else if(page->ImageableArea) {
-	  /* ctx sizes in device units; ppd sizes in 1/72" */
-            SetRect(&ctx->ImageableArea, page->ImageableArea->llx * ctx->logPixelsX / 72,
-                    page->ImageableArea->ury * ctx->logPixelsY / 72,
-                    page->ImageableArea->urx * ctx->logPixelsX / 72,
-                    page->ImageableArea->lly * ctx->logPixelsY / 72);
-	    ctx->PageSize.cx = page->PaperDimension->x *
-	      ctx->logPixelsX / 72;
-	    ctx->PageSize.cy = page->PaperDimension->y *
-	      ctx->logPixelsY / 72;
-	} else {
-	    ctx->ImageableArea.left = ctx->ImageableArea.bottom = 0;
-	    ctx->ImageableArea.right = ctx->PageSize.cx =
-	      page->PaperDimension->x * ctx->logPixelsX / 72;
-	    ctx->ImageableArea.top = ctx->PageSize.cy =
-	      page->PaperDimension->y * ctx->logPixelsY / 72;
-	}
-    } else if((ctx->Devmode->dmPublic.dmFields & DM_PAPERLENGTH) &&
-	      (ctx->Devmode->dmPublic.dmFields & DM_PAPERWIDTH)) {
-      /* ctx sizes in device units; Devmode sizes in 1/10 mm */
-        ctx->ImageableArea.left = ctx->ImageableArea.bottom = 0;
-	ctx->ImageableArea.right = ctx->PageSize.cx =
-	  ctx->Devmode->dmPublic.dmPaperWidth * ctx->logPixelsX / 254;
-	ctx->ImageableArea.top = ctx->PageSize.cy =
-	  ctx->Devmode->dmPublic.dmPaperLength * ctx->logPixelsY / 254;
-    } else {
-        FIXME("Odd dmFields %lx\n", ctx->Devmode->dmPublic.dmFields);
-        SetRectEmpty(&ctx->ImageableArea);
-	ctx->PageSize.cx = 0;
-	ctx->PageSize.cy = 0;
-    }
-
-    TRACE("ImageableArea = %s: PageSize = %ldx%ld\n", wine_dbgstr_rect(&ctx->ImageableArea),
-	  ctx->PageSize.cx, ctx->PageSize.cy);
-
-    /* these are in device units */
-    width = ctx->ImageableArea.right - ctx->ImageableArea.left;
-    height = ctx->ImageableArea.top - ctx->ImageableArea.bottom;
-
-    if(ctx->Devmode->dmPublic.dmOrientation == DMORIENT_PORTRAIT) {
-        ctx->horzRes = width;
-        ctx->vertRes = height;
-    } else {
-        ctx->horzRes = height;
-        ctx->vertRes = width;
-    }
-
-    /* these are in mm */
-    ctx->horzSize = (ctx->horzRes * 25.4) / ctx->logPixelsX;
-    ctx->vertSize = (ctx->vertRes * 25.4) / ctx->logPixelsY;
-
-    TRACE("devcaps: horzSize = %dmm, vertSize = %dmm, "
-	  "horzRes = %d, vertRes = %d\n",
-	  ctx->horzSize, ctx->vertSize,
-	  ctx->horzRes, ctx->vertRes);
-}
-
 print_ctx *create_print_ctx( HDC hdc, const WCHAR *device,
                                      const DEVMODEW *devmode )
 {
@@ -358,8 +442,7 @@ print_ctx *create_print_ctx( HDC hdc, const WCHAR *device,
     memcpy( ctx->Devmode, pi->Devmode,
             pi->Devmode->dmPublic.dmSize + pi->Devmode->dmPublic.dmDriverExtra );
     ctx->pi = pi;
-    ctx->logPixelsX = pi->ppd->DefaultResolution;
-    ctx->logPixelsY = pi->ppd->DefaultResolution;
+    ctx->hdc = hdc;
 
     if (devmode)
     {
@@ -367,8 +450,6 @@ print_ctx *create_print_ctx( HDC hdc, const WCHAR *device,
         PSDRV_MergeDevmodes( ctx->Devmode, devmode, pi );
     }
 
-    PSDRV_UpdateDevCaps( ctx );
-    ctx->hdc = hdc;
     SelectObject( hdc, GetStockObject( DEVICE_DEFAULT_FONT ));
     return ctx;
 }
@@ -376,12 +457,12 @@ print_ctx *create_print_ctx( HDC hdc, const WCHAR *device,
 /**********************************************************************
  *	     ResetDC   (WINEPS.@)
  */
-BOOL CDECL PSDRV_ResetDC( print_ctx *ctx, const DEVMODEW *lpInitData )
+BOOL CDECL PSDRV_ResetDC( print_ctx *ctx, const DEVMODEW *devmode )
 {
-    if (lpInitData)
+    if (devmode)
     {
-        PSDRV_MergeDevmodes(ctx->Devmode, lpInitData, ctx->pi);
-        PSDRV_UpdateDevCaps(ctx);
+        dump_devmode( devmode );
+        PSDRV_MergeDevmodes( ctx->Devmode, devmode, ctx->pi );
     }
     return TRUE;
 }
@@ -448,14 +529,16 @@ static PSDRV_DEVMODE *get_devmode( HANDLE printer, const WCHAR *name, BOOL *is_d
 
     *is_default = FALSE;
 
-    if (dm)
+    if (dm && (dm->dmPublic.dmFields & DefaultDevmode.dmPublic.dmFields) ==
+            DefaultDevmode.dmPublic.dmFields)
     {
         TRACE( "Retrieved devmode from winspool\n" );
         return dm;
     }
 
     TRACE( "Using default devmode\n" );
-    dm = HeapAlloc( PSDRV_Heap, 0, size );
+    if (!dm)
+        dm = HeapAlloc( PSDRV_Heap, 0, size );
     if (dm)
     {
         memcpy( dm, &DefaultDevmode, min(sizeof(DefaultDevmode), size) );
@@ -503,11 +586,12 @@ PRINTERINFO *PSDRV_FindPrinterInfo(LPCWSTR name)
     WCHAR *ppd_filename = NULL;
     char *nameA = NULL;
     BOOL using_default_devmode = FALSE;
-    int i, len, input_slots, resolutions, page_sizes, font_subs, size;
+    int i, len, input_slots, resolutions, page_sizes, font_subs, installed_fonts, size;
     struct input_slot *dm_slot;
     struct resolution *dm_res;
     struct page_size *dm_page;
     struct font_sub *dm_sub;
+    struct installed_font *dm_font;
     INPUTSLOT *slot;
     RESOLUTION *res;
     PAGESIZE *page;
@@ -551,11 +635,13 @@ PRINTERINFO *PSDRV_FindPrinterInfo(LPCWSTR name)
     resolutions = list_count( &pi->ppd->Resolutions );
     page_sizes = list_count( &pi->ppd->PageSizes );
     font_subs = pi->FontSubTableSize;
+    installed_fonts = list_count( &pi->ppd->InstalledFonts );
     size = FIELD_OFFSET(PSDRV_DEVMODE, data[
             input_slots * sizeof(struct input_slot) +
             resolutions * sizeof(struct resolution) +
             page_sizes * sizeof(struct page_size) +
-            font_subs * sizeof(struct font_sub)]);
+            font_subs * sizeof(struct font_sub) +
+            installed_fonts * sizeof(struct installed_font)]);
 
     pi->Devmode = get_devmode( hPrinter, name, &using_default_devmode, size );
     if (!pi->Devmode) goto fail;
@@ -590,6 +676,8 @@ PRINTERINFO *PSDRV_FindPrinterInfo(LPCWSTR name)
         pi->Devmode->input_slots = input_slots;
         pi->Devmode->resolutions = resolutions;
         pi->Devmode->page_sizes = page_sizes;
+        pi->Devmode->font_subs = font_subs;
+        pi->Devmode->installed_fonts = installed_fonts;
 
         dm_slot = (struct input_slot *)pi->Devmode->data;
         LIST_FOR_EACH_ENTRY( slot, &pi->ppd->InputSlots, INPUTSLOT, entry )
@@ -636,6 +724,13 @@ PRINTERINFO *PSDRV_FindPrinterInfo(LPCWSTR name)
             lstrcpynW(dm_sub->name, pi->FontSubTable[i].pValueName, ARRAY_SIZE(dm_sub->name));
             lstrcpynW(dm_sub->sub, (WCHAR *)pi->FontSubTable[i].pData, ARRAY_SIZE(dm_sub->sub));
             dm_sub++;
+        }
+
+        dm_font = (struct installed_font *)dm_sub;
+        LIST_FOR_EACH_ENTRY( font, &pi->ppd->InstalledFonts, FONTNAME, entry )
+        {
+            lstrcpynA(dm_font->name, font->Name, ARRAY_SIZE(dm_font->name));
+            dm_font++;
         }
     }
 
@@ -689,21 +784,27 @@ fail:
 }
 
 /******************************************************************************
- *      PSDRV_get_gdi_driver
+ *      PSDRV_open_printer_dc
  */
-const struct gdi_dc_funcs * CDECL PSDRV_get_gdi_driver( unsigned int version, const WCHAR *name )
+HDC CDECL PSDRV_open_printer_dc( const WCHAR *device,
+        const DEVMODEW *devmode, const WCHAR *output )
 {
-    PRINTERINFO *pi = PSDRV_FindPrinterInfo( name );
-    struct init_dc_params params = { NULL, pi, pi->friendly_name };
+    struct open_dc_params params;
+    PRINTERINFO *pi;
 
+    if (!device)
+        return 0;
+
+    pi = PSDRV_FindPrinterInfo( device );
     if (!pi)
-        return NULL;
-    if (version != WINE_GDI_DRIVER_VERSION)
-    {
-        ERR( "version mismatch, gdi32 wants %u but wineps has %u\n", version, WINE_GDI_DRIVER_VERSION );
-        return NULL;
-    }
-    if (!WINE_UNIX_CALL( unix_init_dc, &params ))
-        return FALSE;
-    return params.funcs;
+        return 0;
+
+    params.device = pi->friendly_name;
+    params.devmode = devmode;
+    params.output = output;
+    params.def_devmode = pi->Devmode;
+    params.hdc = 0;
+    if (!WINE_UNIX_CALL( unix_open_dc, &params ))
+        return 0;
+    return params.hdc;
 }

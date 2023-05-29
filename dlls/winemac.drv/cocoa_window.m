@@ -359,7 +359,6 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
     NSMutableAttributedString* markedText;
     NSRange markedTextSelection;
 
-    BOOL _retinaMode;
     int backingSize[2];
 
     WineMetalView *_metalView;
@@ -469,6 +468,18 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 @implementation WineContentView
 
 @synthesize everHadGLContext = _everHadGLContext;
+
+    - (instancetype) initWithFrame:(NSRect)frame
+    {
+        self = [super initWithFrame:frame];
+        if (self)
+        {
+            [self setWantsLayer:YES];
+            [self setLayerRetinaProperties:retina_on];
+            [self setAutoresizesSubviews:NO];
+        }
+        return self;
+    }
 
     - (void) dealloc
     {
@@ -664,6 +675,29 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         return _metalView;
     }
 
+    - (void) setLayerRetinaProperties:(int)mode
+    {
+        [self layer].contentsScale = mode ? 2.0 : 1.0;
+        [self layer].minificationFilter = mode ? kCAFilterLinear : kCAFilterNearest;
+        [self layer].magnificationFilter = mode ? kCAFilterLinear : kCAFilterNearest;
+
+        /* On macOS 10.13 and earlier, the desired minificationFilter seems to be
+         * ignored and "nearest" filtering is used, which looks terrible.
+         * Enabling rasterization seems to work around this, only enable
+         * it when there may be down-scaling (retina mode enabled).
+         */
+        if (floor(NSAppKitVersionNumber) < 1671 /*NSAppKitVersionNumber10_14*/)
+        {
+            if (mode)
+            {
+                [self layer].shouldRasterize = YES;
+                [self layer].rasterizationScale = 2.0;
+            }
+            else
+                [self layer].shouldRasterize = NO;
+        }
+    }
+
     - (void) setRetinaMode:(int)mode
     {
         double scale = mode ? 0.5 : 2.0;
@@ -675,17 +709,27 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         [self setFrame:frame];
         [self setWantsBestResolutionOpenGLSurface:mode];
         [self updateGLContexts];
+        [self setLayerRetinaProperties:mode];
 
-        _retinaMode = !!mode;
-        [self layer].contentsScale = mode ? 2.0 : 1.0;
-        [self layer].minificationFilter = mode ? kCAFilterLinear : kCAFilterNearest;
-        [self layer].magnificationFilter = mode ? kCAFilterLinear : kCAFilterNearest;
         [super setRetinaMode:mode];
     }
 
     - (BOOL) layer:(CALayer*)layer shouldInheritContentsScale:(CGFloat)newScale fromWindow:(NSWindow*)window
     {
-        return (_retinaMode || newScale == 1.0);
+        /* This method is invoked when the contentsScale of the layer is not
+         * equal to the contentsScale of the window.
+         * (Initially when the layer is first created, and later if the window
+         * contentsScale changes, i.e. moved between retina/non-retina monitors).
+         *
+         * We usually want to return YES, so the "moving windows between
+         * retina/non-retina monitors" case works right.
+         * But return NO when we need an intentional mismatch between the
+         * window and layer contentsScale
+         * (non-retina mode with a retina monitor, and vice-versa).
+         */
+        if (layer.contentsScale != window.backingScaleFactor)
+            return NO;
+        return YES;
     }
 
     - (void) viewDidHide
@@ -995,11 +1039,6 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         contentView = [[[WineContentView alloc] initWithFrame:NSZeroRect] autorelease];
         if (!contentView)
             return nil;
-        [contentView setWantsLayer:YES];
-        [contentView layer].minificationFilter = retina_on ? kCAFilterLinear : kCAFilterNearest;
-        [contentView layer].magnificationFilter = retina_on ? kCAFilterLinear : kCAFilterNearest;
-        [contentView layer].contentsScale = retina_on ? 2.0 : 1.0;
-        [contentView setAutoresizesSubviews:NO];
 
         /* We use tracking areas in addition to setAcceptsMouseMovedEvents:YES
            because they give us mouse moves in the background. */
@@ -3589,11 +3628,6 @@ macdrv_view macdrv_create_view(CGRect rect)
         NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
 
         view = [[WineContentView alloc] initWithFrame:NSRectFromCGRect(cgrect_mac_from_win(rect))];
-        [view setWantsLayer:YES];
-        [view layer].minificationFilter = retina_on ? kCAFilterLinear : kCAFilterNearest;
-        [view layer].magnificationFilter = retina_on ? kCAFilterLinear : kCAFilterNearest;
-        [view layer].contentsScale = retina_on ? 2.0 : 1.0;
-        [view setAutoresizesSubviews:NO];
         [view setAutoresizingMask:NSViewNotSizable];
         [view setHidden:YES];
         [view setWantsBestResolutionOpenGLSurface:retina_on];

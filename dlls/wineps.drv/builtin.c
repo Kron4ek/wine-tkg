@@ -31,7 +31,6 @@
 #include "winternl.h"
 
 #include "psdrv.h"
-#include "unixlib.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(psdrv);
@@ -50,55 +49,38 @@ BOOL PSDRV_WriteSetBuiltinFont(print_ctx *ctx)
             font_info.escapement, FALSE);
 }
 
+static int __cdecl agl_by_uv(const void *a, const void *b)
+{
+    return (int)(((const UNICODEGLYPH *)a)->UV - ((const UNICODEGLYPH *)b)->UV);
+}
+
+static const char *find_ag_name(WCHAR wch)
+{
+    UNICODEGLYPH key = { .UV = wch };
+    UNICODEGLYPH *needle;
+
+    needle = bsearch(&key, PSDRV_AGLbyUV, PSDRV_AGLbyUVSize, sizeof(key), agl_by_uv);
+    return needle ? needle->name->sz : NULL;
+}
+
 BOOL PSDRV_WriteBuiltinGlyphShow(print_ctx *ctx, LPCWSTR str, INT count)
 {
-    char name[32];
+    const char *name;
+    WCHAR wch;
     int i;
 
     for (i = 0; i < count; ++i)
     {
-        ExtEscape(ctx->hdc, PSDRV_GET_GLYPH_NAME, sizeof(str[i]), (const char *)&str[i], sizeof(name), name);
+        ExtEscape(ctx->hdc, PSDRV_CHECK_WCHAR, sizeof(str[i]),
+                (const char *)&str[i], sizeof(wch), (char *)&wch);
+        name = find_ag_name(wch);
+        if (!name)
+        {
+            ERR("can't find glyph name for %x\n", wch);
+            continue;
+        }
 	PSDRV_WriteGlyphShow(ctx, name);
     }
 
     return TRUE;
-}
-
-/******************************************************************************
- *  	PSDRV_UVMetrics
- *
- *  Find the AFMMETRICS for a given UV.  Returns first glyph in the font
- *  (space?) if the font does not have a glyph for the given UV.
- */
-static int __cdecl MetricsByUV(const void *a, const void *b)
-{
-    return (int)(((const AFMMETRICS *)a)->UV - ((const AFMMETRICS *)b)->UV);
-}
-
-const AFMMETRICS *PSDRV_UVMetrics(LONG UV, const AFM *afm)
-{
-    AFMMETRICS	    	key;
-    const AFMMETRICS	*needle;
-
-    /*
-     *	Ugly work-around for symbol fonts.  Wine is sending characters which
-     *	belong in the Unicode private use range (U+F020 - U+F0FF) as ASCII
-     *	characters (U+0020 - U+00FF).
-     */
-
-    if ((afm->Metrics->UV & 0xff00) == 0xf000 && UV < 0x100)
-    	UV |= 0xf000;
-
-    key.UV = UV;
-
-    needle = bsearch(&key, afm->Metrics, afm->NumofMetrics, sizeof(AFMMETRICS),
-	    MetricsByUV);
-
-    if (needle == NULL)
-    {
-	WARN("No glyph for U+%.4lX in %s\n", UV, afm->FontName);
-    	needle = afm->Metrics;
-    }
-
-    return needle;
 }

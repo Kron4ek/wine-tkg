@@ -22,6 +22,8 @@
 #include <stdio.h>
 #include <math.h>
 
+/* VKD3D_DEBUG_ENV_NAME("VKD3D_SHADER_DEBUG"); */
+
 static inline int char_to_int(char c)
 {
     if ('0' <= c && c <= '9')
@@ -338,22 +340,35 @@ void vkd3d_shader_error(struct vkd3d_shader_message_context *context, const stru
     va_end(args);
 }
 
+size_t bytecode_align(struct vkd3d_bytecode_buffer *buffer)
+{
+    size_t aligned_size = align(buffer->size, 4);
+
+    if (!vkd3d_array_reserve((void **)&buffer->data, &buffer->capacity, aligned_size, 1))
+    {
+        buffer->status = VKD3D_ERROR_OUT_OF_MEMORY;
+        return aligned_size;
+    }
+
+    memset(buffer->data + buffer->size, 0xab, aligned_size - buffer->size);
+    buffer->size = aligned_size;
+    return aligned_size;
+}
+
 size_t bytecode_put_bytes(struct vkd3d_bytecode_buffer *buffer, const void *bytes, size_t size)
 {
-    size_t aligned_size = align(size, 4);
-    size_t offset = buffer->size;
+    size_t offset = bytecode_align(buffer);
 
     if (buffer->status)
         return offset;
 
-    if (!vkd3d_array_reserve((void **)&buffer->data, &buffer->capacity, offset + aligned_size, 1))
+    if (!vkd3d_array_reserve((void **)&buffer->data, &buffer->capacity, offset + size, 1))
     {
         buffer->status = VKD3D_ERROR_OUT_OF_MEMORY;
         return offset;
     }
     memcpy(buffer->data + offset, bytes, size);
-    memset(buffer->data + offset + size, 0xab, aligned_size - size);
-    buffer->size = offset + aligned_size;
+    buffer->size = offset + size;
     return offset;
 }
 
@@ -1070,7 +1085,7 @@ static int scan_with_parser(const struct vkd3d_shader_compile_info *compile_info
 
     if (TRACE_ON())
     {
-        vkd3d_shader_trace(parser);
+        vkd3d_shader_trace(&parser->instructions, &parser->shader_version);
     }
 
     for (i = 0; i < parser->instructions.count; ++i)
@@ -1167,75 +1182,73 @@ int vkd3d_shader_scan(const struct vkd3d_shader_compile_info *compile_info, char
     return ret;
 }
 
-static int compile_dxbc_tpf(const struct vkd3d_shader_compile_info *compile_info,
+static int vkd3d_shader_parser_compile(struct vkd3d_shader_parser *parser,
+        const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context)
 {
     struct vkd3d_shader_scan_descriptor_info scan_descriptor_info;
+    struct vkd3d_glsl_generator *glsl_generator;
     struct vkd3d_shader_compile_info scan_info;
-    struct spirv_compiler *spirv_compiler;
-    struct vkd3d_shader_parser *parser;
     int ret;
+
+    vkd3d_shader_dump_shader(compile_info->source_type, parser->shader_version.type, &compile_info->source);
 
     scan_info = *compile_info;
     scan_descriptor_info.type = VKD3D_SHADER_STRUCTURE_TYPE_SCAN_DESCRIPTOR_INFO;
     scan_descriptor_info.next = scan_info.next;
     scan_info.next = &scan_descriptor_info;
 
-    if ((ret = scan_dxbc(&scan_info, message_context)) < 0)
+    if ((ret = scan_with_parser(&scan_info, message_context, parser)) < 0)
         return ret;
+
+    switch (compile_info->target_type)
+    {
+        case VKD3D_SHADER_TARGET_D3D_ASM:
+            ret = vkd3d_dxbc_binary_to_text(&parser->instructions, &parser->shader_version, compile_info, out);
+            break;
+
+        case VKD3D_SHADER_TARGET_GLSL:
+            if (!(glsl_generator = vkd3d_glsl_generator_create(&parser->shader_version,
+                    message_context, &parser->location)))
+            {
+                ERR("Failed to create GLSL generator.\n");
+                vkd3d_shader_free_scan_descriptor_info(&scan_descriptor_info);
+                return VKD3D_ERROR;
+            }
+
+            ret = vkd3d_glsl_generator_generate(glsl_generator, parser, out);
+            vkd3d_glsl_generator_destroy(glsl_generator);
+            break;
+
+        case VKD3D_SHADER_TARGET_SPIRV_BINARY:
+        case VKD3D_SHADER_TARGET_SPIRV_TEXT:
+            ret = spirv_compile(parser, &scan_descriptor_info, compile_info, out, message_context);
+            break;
+
+        default:
+            /* Validation should prevent us from reaching this. */
+            assert(0);
+    }
+
+    vkd3d_shader_free_scan_descriptor_info(&scan_descriptor_info);
+    return ret;
+}
+
+static int compile_dxbc_tpf(const struct vkd3d_shader_compile_info *compile_info,
+        struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context)
+{
+    struct vkd3d_shader_parser *parser;
+    int ret;
 
     if ((ret = vkd3d_shader_sm4_parser_create(compile_info, message_context, &parser)) < 0)
     {
         WARN("Failed to initialise shader parser.\n");
-        vkd3d_shader_free_scan_descriptor_info(&scan_descriptor_info);
         return ret;
     }
 
-    vkd3d_shader_dump_shader(compile_info->source_type, parser->shader_version.type, &compile_info->source);
+    ret = vkd3d_shader_parser_compile(parser, compile_info, out, message_context);
 
-    if (compile_info->target_type == VKD3D_SHADER_TARGET_D3D_ASM)
-    {
-        vkd3d_shader_free_scan_descriptor_info(&scan_descriptor_info);
-        ret = vkd3d_dxbc_binary_to_text(parser, compile_info, out);
-        vkd3d_shader_parser_destroy(parser);
-        return ret;
-    }
-
-    if (compile_info->target_type == VKD3D_SHADER_TARGET_GLSL)
-    {
-        struct vkd3d_glsl_generator *glsl_generator;
-
-        if (!(glsl_generator = vkd3d_glsl_generator_create(&parser->shader_version,
-                message_context, &parser->location)))
-        {
-            ERR("Failed to create GLSL generator.\n");
-            vkd3d_shader_parser_destroy(parser);
-            vkd3d_shader_free_scan_descriptor_info(&scan_descriptor_info);
-            return VKD3D_ERROR;
-        }
-
-        ret = vkd3d_glsl_generator_generate(glsl_generator, parser, out);
-
-        vkd3d_glsl_generator_destroy(glsl_generator);
-        vkd3d_shader_parser_destroy(parser);
-        vkd3d_shader_free_scan_descriptor_info(&scan_descriptor_info);
-        return ret;
-    }
-
-    if (!(spirv_compiler = spirv_compiler_create(&parser->shader_version, &parser->shader_desc,
-            compile_info, &scan_descriptor_info, message_context, &parser->location)))
-    {
-        ERR("Failed to create DXBC compiler.\n");
-        vkd3d_shader_parser_destroy(parser);
-        vkd3d_shader_free_scan_descriptor_info(&scan_descriptor_info);
-        return VKD3D_ERROR;
-    }
-
-    ret = spirv_compiler_generate_spirv(spirv_compiler, compile_info, parser, out);
-
-    spirv_compiler_destroy(spirv_compiler);
     vkd3d_shader_parser_destroy(parser);
-    vkd3d_shader_free_scan_descriptor_info(&scan_descriptor_info);
     return ret;
 }
 
@@ -1270,7 +1283,7 @@ static int compile_d3d_bytecode(const struct vkd3d_shader_compile_info *compile_
 
     if (compile_info->target_type == VKD3D_SHADER_TARGET_D3D_ASM)
     {
-        ret = vkd3d_dxbc_binary_to_text(parser, compile_info, out);
+        ret = vkd3d_dxbc_binary_to_text(&parser->instructions, &parser->shader_version, compile_info, out);
         vkd3d_shader_parser_destroy(parser);
         return ret;
     }
@@ -1388,10 +1401,54 @@ void vkd3d_shader_free_root_signature(struct vkd3d_shader_versioned_root_signatu
     desc->version = 0;
 }
 
+static bool vkd3d_shader_signature_from_shader_signature(struct vkd3d_shader_signature *signature,
+        const struct shader_signature *src)
+{
+    unsigned int i;
+
+    signature->element_count = src->element_count;
+    if (!src->elements)
+    {
+        assert(!signature->element_count);
+        signature->elements = NULL;
+        return true;
+    }
+
+    if (!(signature->elements = vkd3d_calloc(signature->element_count, sizeof(*signature->elements))))
+        return false;
+
+    for (i = 0; i < signature->element_count; ++i)
+    {
+        struct vkd3d_shader_signature_element *d = &signature->elements[i];
+        struct signature_element *e = &src->elements[i];
+
+        d->semantic_name = e->semantic_name;
+        d->semantic_index = e->semantic_index;
+        d->stream_index = e->stream_index;
+        d->sysval_semantic = e->sysval_semantic;
+        d->component_type = e->component_type;
+        d->register_index = e->register_index;
+        if (e->register_count > 1)
+            FIXME("Arrayed elements are not supported yet.\n");
+        d->mask = e->mask;
+        d->used_mask = e->used_mask;
+        d->min_precision = e->min_precision;
+    }
+
+    return true;
+}
+
+void shader_signature_cleanup(struct shader_signature *signature)
+{
+    vkd3d_free(signature->elements);
+    signature->elements = NULL;
+}
+
 int vkd3d_shader_parse_input_signature(const struct vkd3d_shader_code *dxbc,
         struct vkd3d_shader_signature *signature, char **messages)
 {
     struct vkd3d_shader_message_context message_context;
+    struct shader_signature shader_signature;
     int ret;
 
     TRACE("dxbc {%p, %zu}, signature %p, messages %p.\n", dxbc->code, dxbc->size, signature, messages);
@@ -1400,13 +1457,17 @@ int vkd3d_shader_parse_input_signature(const struct vkd3d_shader_code *dxbc,
         *messages = NULL;
     vkd3d_shader_message_context_init(&message_context, VKD3D_SHADER_LOG_INFO);
 
-    ret = shader_parse_input_signature(dxbc, &message_context, signature);
+    ret = shader_parse_input_signature(dxbc, &message_context, &shader_signature);
     vkd3d_shader_message_context_trace_messages(&message_context);
     if (!vkd3d_shader_message_context_copy_messages(&message_context, messages))
         ret = VKD3D_ERROR_OUT_OF_MEMORY;
 
     vkd3d_shader_message_context_cleanup(&message_context);
 
+    if (!vkd3d_shader_signature_from_shader_signature(signature, &shader_signature))
+        ret = VKD3D_ERROR_OUT_OF_MEMORY;
+
+    shader_signature_cleanup(&shader_signature);
     return ret;
 }
 
@@ -1640,6 +1701,84 @@ bool shader_instruction_array_add_icb(struct vkd3d_shader_instruction_array *ins
         return false;
     instructions->icbs[instructions->icb_count++] = icb;
     return true;
+}
+
+static struct vkd3d_shader_src_param *shader_instruction_array_clone_src_params(
+        struct vkd3d_shader_instruction_array *instructions, const struct vkd3d_shader_src_param *params,
+        unsigned int count);
+
+static bool shader_register_clone_relative_addresses(struct vkd3d_shader_register *reg,
+        struct vkd3d_shader_instruction_array *instructions)
+{
+    unsigned int i;
+
+    for (i = 0; i < reg->idx_count; ++i)
+    {
+        if (!reg->idx[i].rel_addr)
+            continue;
+
+        if (!(reg->idx[i].rel_addr = shader_instruction_array_clone_src_params(instructions, reg->idx[i].rel_addr, 1)))
+            return false;
+    }
+
+    return true;
+}
+
+static struct vkd3d_shader_dst_param *shader_instruction_array_clone_dst_params(
+        struct vkd3d_shader_instruction_array *instructions, const struct vkd3d_shader_dst_param *params,
+        unsigned int count)
+{
+    struct vkd3d_shader_dst_param *dst_params;
+    unsigned int i;
+
+    if (!(dst_params = shader_dst_param_allocator_get(&instructions->dst_params, count)))
+        return NULL;
+
+    memcpy(dst_params, params, count * sizeof(*params));
+    for (i = 0; i < count; ++i)
+    {
+        if (!shader_register_clone_relative_addresses(&dst_params[i].reg, instructions))
+            return NULL;
+    }
+
+    return dst_params;
+}
+
+static struct vkd3d_shader_src_param *shader_instruction_array_clone_src_params(
+        struct vkd3d_shader_instruction_array *instructions, const struct vkd3d_shader_src_param *params,
+        unsigned int count)
+{
+    struct vkd3d_shader_src_param *src_params;
+    unsigned int i;
+
+    if (!(src_params = shader_src_param_allocator_get(&instructions->src_params, count)))
+        return NULL;
+
+    memcpy(src_params, params, count * sizeof(*params));
+    for (i = 0; i < count; ++i)
+    {
+        if (!shader_register_clone_relative_addresses(&src_params[i].reg, instructions))
+            return NULL;
+    }
+
+    return src_params;
+}
+
+/* NOTE: Immediate constant buffers are not cloned, so the source must not be destroyed while the
+ * destination is in use. This seems like a reasonable requirement given how this is currently used. */
+bool shader_instruction_array_clone_instruction(struct vkd3d_shader_instruction_array *instructions,
+        unsigned int dst, unsigned int src)
+{
+    struct vkd3d_shader_instruction *ins = &instructions->elements[dst];
+
+    *ins = instructions->elements[src];
+
+    if (ins->dst_count && ins->dst && !(ins->dst = shader_instruction_array_clone_dst_params(instructions,
+            ins->dst, ins->dst_count)))
+        return false;
+
+    return !ins->src_count || !!(ins->src = shader_instruction_array_clone_src_params(instructions,
+            ins->src, ins->src_count));
 }
 
 void shader_instruction_array_destroy(struct vkd3d_shader_instruction_array *instructions)

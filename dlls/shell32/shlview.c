@@ -2709,25 +2709,20 @@ static HRESULT WINAPI FolderView_GetCurrentViewMode(IFolderView2 *iface, UINT *m
 
 static HRESULT WINAPI FolderView_SetCurrentViewMode(IFolderView2 *iface, UINT mode)
 {
-    IShellViewImpl *This = impl_from_IFolderView2(iface);
-    DWORD dwStyle;
+    IShellViewImpl *shellview = impl_from_IFolderView2(iface);
+    DWORD style;
 
-    TRACE("%p, %u.\n", This, mode);
+    TRACE("folder view %p, mode %u.\n", iface, mode);
 
-    if((mode < FVM_FIRST || mode > FVM_LAST) &&
-       (mode != FVM_AUTO))
-        return E_INVALIDARG;
+    if (mode == FVM_AUTO)
+        mode = FVM_ICON;
 
-    /* Windows before Vista uses LVM_SETVIEW and possibly
-       LVM_SETEXTENDEDLISTVIEWSTYLE to set the style of the listview,
-       while later versions seem to accomplish this through other
-       means. */
-    dwStyle = ViewModeToListStyle(mode);
-    SetStyle(This, dwStyle, LVS_TYPEMASK);
-
-    /* This will not necessarily be the actual mode set above.
-       This mimics the behavior of Windows XP. */
-    This->FolderSettings.ViewMode = mode;
+    if (mode >= FVM_FIRST && mode <= FVM_LAST)
+    {
+        style = ViewModeToListStyle(mode);
+        SetStyle(shellview, style, LVS_TYPEMASK);
+        shellview->FolderSettings.ViewMode = mode;
+    }
 
     return S_OK;
 }
@@ -2945,16 +2940,23 @@ static HRESULT WINAPI FolderView2_SetText(IFolderView2 *iface, FVTEXTTYPE type, 
 
 static HRESULT WINAPI FolderView2_SetCurrentFolderFlags(IFolderView2 *iface, DWORD mask, DWORD flags)
 {
-    IShellViewImpl *This = impl_from_IFolderView2(iface);
-    FIXME("(%p)->(0x%08lx 0x%08lx), stub\n", This, mask, flags);
-    return E_NOTIMPL;
+    IShellViewImpl *shellview = impl_from_IFolderView2(iface);
+
+    TRACE("folder view %p, mask %#lx, flags %#lx.\n", iface, mask, flags);
+
+    shellview->FolderSettings.fFlags = (shellview->FolderSettings.fFlags & ~mask) | (flags & mask);
+    return S_OK;
 }
 
 static HRESULT WINAPI FolderView2_GetCurrentFolderFlags(IFolderView2 *iface, DWORD *flags)
 {
-    IShellViewImpl *This = impl_from_IFolderView2(iface);
-    FIXME("(%p)->(%p), stub\n", This, flags);
-    return E_NOTIMPL;
+    IShellViewImpl *shellview = impl_from_IFolderView2(iface);
+
+    TRACE("folder view %p, flags %p.\n", iface, flags);
+
+    if (flags)
+        *flags = shellview->FolderSettings.fFlags;
+    return S_OK;
 }
 
 static HRESULT WINAPI FolderView2_GetSortColumnCount(IFolderView2 *iface, int *columns)

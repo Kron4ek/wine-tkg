@@ -1869,7 +1869,6 @@ static void init_peb( RTL_USER_PROCESS_PARAMETERS *params, void *module )
         break;
     case IMAGE_FILE_MACHINE_AMD64:
         if (main_image_info.Machine == current_machine) break;
-        peb->EcCodeBitMap = virtual_alloc_arm64ec_map();
         ERR( "starting %s in experimental ARM64EC mode\n", debugstr_us(&params->ImagePathName) );
         break;
     }
@@ -1997,6 +1996,7 @@ void init_startup_info(void)
     SIZE_T size, info_size, env_size, env_pos;
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
     startup_info_t *info;
+    USHORT machine;
 
     if (!startup_info_size)
     {
@@ -2011,6 +2011,7 @@ void init_startup_info(void)
     {
         wine_server_set_reply( req, info, startup_info_size );
         status = wine_server_call( req );
+        machine = reply->machine;
         info_size = reply->info_size;
         env_size = (wine_server_reply_size( reply ) - info_size) / sizeof(WCHAR);
     }
@@ -2089,8 +2090,8 @@ void init_startup_info(void)
     free( env );
     free( info );
 
-    status = load_main_exe( params->ImagePathName.Buffer, NULL,
-                            params->CommandLine.Buffer, &image, &module );
+    status = load_main_exe( params->ImagePathName.Buffer, NULL, params->CommandLine.Buffer,
+                            machine, &image, &module );
     if (status)
     {
         MESSAGE( "wine: failed to start %s\n", debugstr_us(&params->ImagePathName) );

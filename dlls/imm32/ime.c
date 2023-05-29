@@ -23,6 +23,12 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(imm);
 
+struct ime_private
+{
+    BOOL in_composition;
+    HFONT hfont;
+};
+
 static const char *debugstr_imn( WPARAM wparam )
 {
     switch (wparam)
@@ -40,6 +46,8 @@ static const char *debugstr_imn( WPARAM wparam )
     case IMN_SETCOMPOSITIONWINDOW: return "IMN_SETCOMPOSITIONWINDOW";
     case IMN_GUIDELINE: return "IMN_GUIDELINE";
     case IMN_SETSTATUSWINDOWPOS: return "IMN_SETSTATUSWINDOWPOS";
+    case IMN_WINE_SET_OPEN_STATUS: return "IMN_WINE_SET_OPEN_STATUS";
+    case IMN_WINE_SET_COMP_STRING: return "IMN_WINE_SET_COMP_STRING";
     default: return wine_dbg_sprintf( "%#Ix", wparam );
     }
 }
@@ -137,7 +145,7 @@ static HFONT input_context_select_ui_font( INPUTCONTEXT *ctx, HDC hdc )
     struct ime_private *priv;
     HFONT font = NULL;
     if (!(priv = ImmLockIMCC( ctx->hPrivate ))) return NULL;
-    if (priv->textfont) font = SelectObject( hdc, priv->textfont );
+    if (priv->hfont) font = SelectObject( hdc, priv->hfont );
     ImmUnlockIMCC( ctx->hPrivate );
     return font;
 }
@@ -173,9 +181,9 @@ static UINT ime_set_composition_status( HIMC himc, BOOL composition )
     if (!(ctx = ImmLockIMC( himc ))) return 0;
     if ((priv = ImmLockIMCC( ctx->hPrivate )))
     {
-        if (!priv->bInComposition && composition) msg = WM_IME_STARTCOMPOSITION;
-        else if (priv->bInComposition && !composition) msg = WM_IME_ENDCOMPOSITION;
-        priv->bInComposition = composition;
+        if (!priv->in_composition && composition) msg = WM_IME_STARTCOMPOSITION;
+        else if (priv->in_composition && !composition) msg = WM_IME_ENDCOMPOSITION;
+        priv->in_composition = composition;
         ImmUnlockIMCC( ctx->hPrivate );
     }
     ImmUnlockIMC( himc );
@@ -186,7 +194,7 @@ static UINT ime_set_composition_status( HIMC himc, BOOL composition )
 static void ime_ui_paint( HIMC himc, HWND hwnd )
 {
     PAINTSTRUCT ps;
-    RECT rect;
+    RECT rect, new_rect;
     HDC hdc;
     HMONITOR monitor;
     MONITORINFO mon_info;
@@ -201,6 +209,7 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
 
     GetClientRect( hwnd, &rect );
     FillRect( hdc, &rect, (HBRUSH)(COLOR_WINDOW + 1) );
+    new_rect = rect;
 
     if ((str = input_context_get_comp_str( ctx, FALSE, &len )))
     {
@@ -233,6 +242,7 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
             rect.top = cpt.y;
             rect.right = rect.left + pt.x;
             rect.bottom = rect.top + pt.y;
+            offset.x = offset.y = 0;
             monitor = MonitorFromPoint( cpt, MONITOR_DEFAULTTOPRIMARY );
         }
         else /* CFS_DEFAULT */
@@ -251,11 +261,10 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
 
         if (ctx->cfCompForm.dwStyle == CFS_RECT)
         {
-            RECT client;
-            client = ctx->cfCompForm.rcArea;
+            RECT client = ctx->cfCompForm.rcArea;
             MapWindowPoints( ctx->hWnd, 0, (POINT *)&client, 2 );
             IntersectRect( &rect, &rect, &client );
-            /* TODO:  Wrap the input if needed */
+            DrawTextW( hdc, str, len, &rect, DT_WORDBREAK | DT_CALCRECT );
         }
 
         if (ctx->cfCompForm.dwStyle == CFS_DEFAULT)
@@ -283,9 +292,9 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
             }
         }
 
-        SetWindowPos( hwnd, HWND_TOPMOST, rect.left, rect.top, rect.right - rect.left,
-                      rect.bottom - rect.top, SWP_NOACTIVATE );
-        TextOutW( hdc, offset.x, offset.y, str, len );
+        new_rect = rect;
+        OffsetRect( &rect, offset.x - rect.left, offset.y - rect.top );
+        DrawTextW( hdc, str, len, &rect, DT_WORDBREAK );
 
         if (font) SelectObject( hdc, font );
         free( str );
@@ -293,6 +302,10 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
 
     EndPaint( hwnd, &ps );
     ImmUnlockIMC( himc );
+
+    if (!EqualRect( &rect, &new_rect ))
+        SetWindowPos( hwnd, HWND_TOPMOST, new_rect.left, new_rect.top, new_rect.right - new_rect.left,
+                      new_rect.bottom - new_rect.top, SWP_NOACTIVATE );
 }
 
 static void ime_ui_update_window( INPUTCONTEXT *ctx, HWND hwnd )
@@ -332,10 +345,64 @@ static void ime_ui_start_composition( HIMC himc, HWND hwnd )
     ImmUnlockIMC( himc );
 }
 
+static UINT ime_set_comp_string( HIMC himc, LPARAM lparam )
+{
+    union
+    {
+        struct
+        {
+            UINT uMsgCount;
+            TRANSMSG TransMsg[10];
+        };
+        TRANSMSGLIST list;
+    } buffer = {.uMsgCount = ARRAY_SIZE(buffer.TransMsg)};
+    INPUTCONTEXT *ctx;
+    TRANSMSG *msgs;
+    HIMCC himcc;
+    UINT count;
+
+    TRACE( "himc %p\n", himc );
+
+    if (!(ctx = ImmLockIMC( himc ))) return 0;
+
+    count = ImeToAsciiEx( VK_PROCESSKEY, lparam, NULL, &buffer.list, 0, himc );
+    if (count >= buffer.uMsgCount)
+        WARN( "ImeToAsciiEx returned %#x messages\n", count );
+    else if (!(himcc = ImmReSizeIMCC( ctx->hMsgBuf, (ctx->dwNumMsgBuf + count) * sizeof(*msgs) )))
+        WARN( "Failed to resize input context message buffer\n" );
+    else if (!(msgs = ImmLockIMCC( (ctx->hMsgBuf = himcc) )))
+        WARN( "Failed to lock input context message buffer\n" );
+    else
+    {
+        memcpy( msgs + ctx->dwNumMsgBuf, buffer.TransMsg, count * sizeof(*msgs) );
+        ImmUnlockIMCC( ctx->hMsgBuf );
+        ctx->dwNumMsgBuf += count;
+    }
+
+    ImmUnlockIMC( himc );
+    ImmGenerateMessage( himc );
+
+    return count;
+}
+
+static LRESULT ime_ui_notify( HIMC himc, HWND hwnd, WPARAM wparam, LPARAM lparam )
+{
+    TRACE( "himc %p, hwnd %p, wparam %s, lparam %#Ix\n", hwnd, himc, debugstr_imn(wparam), lparam );
+
+    switch (wparam)
+    {
+    case IMN_WINE_SET_OPEN_STATUS:
+        return ImmSetOpenStatus( himc, lparam );
+    case IMN_WINE_SET_COMP_STRING:
+        return ime_set_comp_string( himc, lparam );
+    default:
+        return 0;
+    }
+}
+
 static LRESULT WINAPI ime_ui_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
 {
     HIMC himc = (HIMC)GetWindowLongPtrW( hwnd, IMMGWL_IMC );
-    INPUTCONTEXT *ctx;
 
     TRACE( "hwnd %p, himc %p, msg %s, wparam %#Ix, lparam %#Ix\n",
            hwnd, himc, debugstr_wm_ime(msg), wparam, lparam );
@@ -343,20 +410,7 @@ static LRESULT WINAPI ime_ui_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
     switch (msg)
     {
     case WM_CREATE:
-    {
-        struct ime_private *priv;
-
-        SetWindowTextA( hwnd, "Wine Ime Active" );
-
-        if (!(ctx = ImmLockIMC( himc ))) return TRUE;
-        if ((priv = ImmLockIMCC( ctx->hPrivate )))
-        {
-            priv->hwndDefault = hwnd;
-            ImmUnlockIMCC( ctx->hPrivate );
-        }
-        ImmUnlockIMC( himc );
         return TRUE;
-    }
     case WM_PAINT:
         ime_ui_paint( himc, hwnd );
         return FALSE;
@@ -374,9 +428,7 @@ static LRESULT WINAPI ime_ui_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
         ShowWindow( hwnd, SW_HIDE );
         break;
     case WM_IME_NOTIFY:
-        FIXME( "hwnd %p, himc %p, msg %s, wparam %s, lparam %#Ix stub!\n", hwnd, himc,
-               debugstr_wm_ime(msg), debugstr_imn(wparam), lparam );
-        return 0;
+        return ime_ui_notify( himc, hwnd, wparam, lparam );
     case WM_IME_CONTROL:
         FIXME( "hwnd %p, himc %p, msg %s, wparam %s, lparam %#Ix stub!\n", hwnd, himc,
                debugstr_wm_ime(msg), debugstr_imc(wparam), lparam );
@@ -407,7 +459,7 @@ BOOL WINAPI ImeInquire( IMEINFO *info, WCHAR *ui_class, DWORD flags )
 
     wcscpy( ui_class, ime_ui_class.lpszClassName );
     memset( info, 0, sizeof(*info) );
-    info->dwPrivateDataSize = sizeof(IMEPRIVATE);
+    info->dwPrivateDataSize = sizeof(struct ime_private);
     info->fdwProperty = IME_PROP_UNICODE | IME_PROP_AT_CARET;
     info->fdwConversionCaps = IME_CMODE_NATIVE | IME_CMODE_FULLSHAPE;
     info->fdwSentenceCaps = IME_SMODE_AUTOMATIC;
@@ -428,14 +480,29 @@ BOOL WINAPI ImeDestroy( UINT force )
 
 BOOL WINAPI ImeSelect( HIMC himc, BOOL select )
 {
-    FIXME( "himc %p, select %d semi-stub!\n", himc, select );
+    struct ime_private *priv;
+    INPUTCONTEXT *ctx;
+
+    TRACE( "himc %p, select %u\n", himc, select );
+
+    if (!himc || !select) return TRUE;
+    if (!(ctx = ImmLockIMC( himc ))) return FALSE;
+
+    ImmSetOpenStatus( himc, FALSE );
+
+    if ((priv = ImmLockIMCC( ctx->hPrivate )))
+    {
+        memset( priv, 0, sizeof(*priv) );
+        ImmUnlockIMCC( ctx->hPrivate );
+    }
+
+    ImmUnlockIMC( himc );
     return TRUE;
 }
 
 BOOL WINAPI ImeSetActiveContext( HIMC himc, BOOL flag )
 {
-    static int once;
-    if (!once++) FIXME( "himc %p, flag %#x stub!\n", himc, flag );
+    TRACE( "himc %p, flag %#x stub!\n", himc, flag );
     return TRUE;
 }
 
@@ -579,8 +646,8 @@ BOOL WINAPI NotifyIME( HIMC himc, DWORD action, DWORD index, DWORD value )
         case IMC_SETCOMPOSITIONFONT:
             if ((priv = ImmLockIMCC( ctx->hPrivate )))
             {
-                if (priv->textfont) DeleteObject( priv->textfont );
-                priv->textfont = CreateFontIndirectW( &ctx->lfFont.W );
+                if (priv->hfont) DeleteObject( priv->hfont );
+                priv->hfont = CreateFontIndirectW( &ctx->lfFont.W );
                 ImmUnlockIMCC( ctx->hPrivate );
             }
             break;
@@ -588,12 +655,9 @@ BOOL WINAPI NotifyIME( HIMC himc, DWORD action, DWORD index, DWORD value )
             if (!ctx->fOpen)
             {
                 input_context_set_comp_str( ctx, NULL, 0 );
-                if ((msg = ime_set_composition_status( himc, TRUE ))) ime_send_message( himc, msg, 0, 0 );
+                if ((msg = ime_set_composition_status( himc, FALSE ))) ime_send_message( himc, msg, 0, 0 );
             }
             NtUserNotifyIMEStatus( ctx->hWnd, ctx->fOpen );
-            break;
-        default:
-            FIXME( "himc %p, action %#lx, index %#lx, value %#lx stub!\n", himc, action, index, value );
             break;
         }
         break;

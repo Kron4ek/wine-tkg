@@ -599,7 +599,7 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOO
     case APC_MAP_VIEW_EX:
     {
         MEM_ADDRESS_REQUIREMENTS addr_req;
-        MEM_EXTENDED_PARAMETER ext[1];
+        MEM_EXTENDED_PARAMETER ext[2];
         ULONG count = 0;
         LARGE_INTEGER offset;
 
@@ -626,6 +626,12 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOO
             ext[count].Pointer = &addr_req;
             count++;
         }
+        if (call->map_view_ex.machine)
+        {
+            ext[count].Type = MemExtendedParameterImageMachine;
+            ext[count].ULong = call->map_view_ex.machine;
+            count++;
+        }
         result->map_view_ex.status = NtMapViewOfSectionEx( wine_server_ptr_handle(call->map_view_ex.handle),
                                                            NtCurrentProcess(), &addr, &offset, &size,
                                                            call->map_view_ex.alloc_type,
@@ -639,7 +645,7 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOO
         result->type = call->type;
         addr = wine_server_get_ptr( call->unmap_view.addr );
         if ((ULONG_PTR)addr == call->unmap_view.addr)
-            result->unmap_view.status = NtUnmapViewOfSection( NtCurrentProcess(), addr );
+            result->unmap_view.status = NtUnmapViewOfSectionEx( NtCurrentProcess(), addr, call->unmap_view.flags );
         else
             result->unmap_view.status = STATUS_INVALID_PARAMETER;
         break;

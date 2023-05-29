@@ -323,6 +323,11 @@
 @ cdecl wined3d_vertex_declaration_get_parent(ptr)
 @ cdecl wined3d_vertex_declaration_incref(ptr)
 
+@ cdecl wined3d_access_gl_texture(ptr ptr ptr long)
+@ cdecl wined3d_device_run_cs_callback(ptr ptr ptr long)
+@ cdecl wined3d_device_wait_idle(ptr)
+@ cdecl wined3d_get_gl_texture(ptr)
+
 @ cdecl vkd3d_acquire_vk_queue(ptr)
 @ cdecl vkd3d_create_device(ptr ptr ptr)
 @ cdecl vkd3d_create_image_resource(ptr ptr ptr)

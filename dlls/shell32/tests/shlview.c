@@ -1110,13 +1110,23 @@ static void test_GetSetCurrentViewMode(void)
 
         hr = IFolderView_SetCurrentViewMode(fview, FVM_AUTO);
         ok(hr == S_OK, "got (0x%08lx)\n", hr);
+        viewmode = 0xdeadbeef;
+        hr = IFolderView_GetCurrentViewMode(fview, &viewmode);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(viewmode == FVM_ICON || broken(viewmode == FVM_AUTO) /* pre vista */, "Got view mode %d.\n", viewmode);
 
+        hr = IFolderView_SetCurrentViewMode(fview, FVM_LIST);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        viewmode = 0xdeadbeef;
+        hr = IFolderView_GetCurrentViewMode(fview, &viewmode);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(viewmode == FVM_LIST, "Got view mode %d.\n", viewmode);
         hr = IFolderView_SetCurrentViewMode(fview, 0);
-        ok(hr == E_INVALIDARG || broken(hr == S_OK),
-           "got (0x%08lx)\n", hr);
-
+        ok(hr == S_OK || broken(hr == E_INVALIDARG) /* pre win7 */, "Got hr %#lx.\n", hr);
+        viewmode = 0xdeadbeef;
         hr = IFolderView_GetCurrentViewMode(fview, &viewmode);
         ok(hr == S_OK, "got (0x%08lx)\n", hr);
+        ok(viewmode == FVM_LIST || broken(viewmode == 0) /* pre vista */, "Got view mode %d.\n", viewmode);
 
         for(i = 1; i < 9; i++)
         {
@@ -1134,8 +1144,12 @@ static void test_GetSetCurrentViewMode(void)
         }
 
         hr = IFolderView_SetCurrentViewMode(fview, 9);
-        ok(hr == E_INVALIDARG || broken(hr == S_OK),
-           "got (0x%08lx)\n", hr);
+        ok(hr == S_OK || broken(hr == E_INVALIDARG) /* pre win7 */, "Got hr %#lx.\n", hr);
+        viewmode = 0xdeadbeef;
+        hr = IFolderView_GetCurrentViewMode(fview, &viewmode);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(viewmode == FVM_CONTENT || broken(viewmode == 9) /* pre vista */ ||
+                broken(viewmode == FVM_THUMBSTRIP) /* vista */, "Got view mode %d.\n", viewmode);
 
         /* Test messages */
         hwnd_lv = subclass_listview(hwnd);
@@ -1500,10 +1514,26 @@ static void test_newmenu(void)
 
 static void test_folder_flags(void)
 {
+    IFolderView2 *folderview;
     FOLDERSETTINGS settings;
     IShellFolder *desktop;
     IShellView *shellview;
+    DWORD flags;
     HRESULT hr;
+    int i;
+    static const struct
+    {
+        DWORD mask, flags;
+        DWORD expected;
+    } tests[] =
+    {
+        { FWF_USESEARCHFOLDER, FWF_NONE, FWF_NONE },
+        { FWF_NONE, FWF_AUTOARRANGE, FWF_NONE },
+        { FWF_AUTOARRANGE, FWF_AUTOARRANGE, FWF_AUTOARRANGE },
+        { FWF_OWNERDATA, FWF_AUTOARRANGE, FWF_NONE },
+        { FWF_AUTOARRANGE, FWF_OWNERDATA | FWF_AUTOARRANGE, FWF_AUTOARRANGE },
+        { ~FWF_NONE, FWF_AUTOARRANGE, FWF_AUTOARRANGE },
+    };
 
     create_interfaces(&desktop, &shellview);
 
@@ -1514,6 +1544,37 @@ static void test_folder_flags(void)
     ok(settings.fFlags == FWF_USESEARCHFOLDER || broken(!settings.fFlags) /* pre vista */,
             "Got flags %#x.\n", settings.fFlags);
 
+    hr = IShellView_QueryInterface(shellview, &IID_IFolderView2, (void **)&folderview);
+    ok(hr == S_OK || broken(hr == E_NOINTERFACE) /* pre vista */, "Got hr %#lx.\n", hr);
+    if (hr != S_OK)
+    {
+        win_skip("No IFolderView2 for the desktop folder.\n");
+        destroy_interfaces(desktop, shellview);
+        return;
+    }
+
+    hr = IFolderView2_GetCurrentFolderFlags(folderview, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    flags = 0xdeadbeef;
+    hr = IFolderView2_GetCurrentFolderFlags(folderview, &flags);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(flags == FWF_USESEARCHFOLDER, "Got flags %#lx.\n", flags);
+
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
+        hr = IFolderView2_SetCurrentFolderFlags(folderview, tests[i].mask, tests[i].flags);
+        ok(hr == S_OK, "Test %u: Got hr %#lx.\n", i, hr);
+        flags = 0xdeadbeef;
+        hr = IFolderView2_GetCurrentFolderFlags(folderview, &flags);
+        ok(hr == S_OK, "Test %u: Got hr %#lx.\n", i, hr);
+        ok(flags == tests[i].expected, "Test %u: Got flags %#lx.\n", i, flags);
+
+        hr = IFolderView2_SetCurrentFolderFlags(folderview, ~FWF_NONE, FWF_NONE);
+        ok(hr == S_OK, "Test %u: Got hr %#lx.\n", i, hr);
+    }
+
+    IFolderView2_Release(folderview);
     destroy_interfaces(desktop, shellview);
 }
 

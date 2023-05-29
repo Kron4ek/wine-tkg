@@ -608,13 +608,15 @@ typedef union
         file_pos_t       offset;       /* file offset */
         mem_size_t       limit;        /* allocation address limit */
         unsigned int     alloc_type;   /* allocation type */
-        unsigned int     prot;         /* memory protection flags */
+        unsigned short   prot;         /* memory protection flags */
+        unsigned short   machine;      /* requested machine for image mappings */
     } map_view_ex;
     struct
     {
         enum apc_type    type;      /* APC_UNMAP_VIEW */
         int              __pad;
         client_ptr_t     addr;      /* view address */
+        unsigned int     flags;     /* unmap flags */
     } unmap_view;
     struct
     {
@@ -944,6 +946,7 @@ struct cpu_topology_override
 @REQ(get_startup_info)
 @REPLY
     data_size_t  info_size;    /* size of startup info */
+    unsigned short machine;    /* architecture for the new process */
     VARARG(info,startup_info,info_size); /* startup information */
     VARARG(env,unicode_str);   /* environment */
 @END
@@ -1610,6 +1613,16 @@ enum server_fd_type
     client_ptr_t base;          /* view base address (page-aligned) */
     mem_size_t   size;          /* view size */
     file_pos_t   start;         /* start offset in mapping */
+@END
+
+
+/* Add a memory view for an image mapping in the current process */
+@REQ(map_image_view)
+    obj_handle_t mapping;       /* file mapping handle */
+    client_ptr_t base;          /* view base address (page-aligned) */
+    mem_size_t   size;          /* view size */
+    unsigned int entry;         /* entry point in mapped view */
+    unsigned short machine;     /* machine in the mapped view */
 @END
 
 

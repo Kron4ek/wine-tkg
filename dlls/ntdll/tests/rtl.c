@@ -1142,7 +1142,7 @@ static void test_RtlIpv4StringToAddressEx(void)
 
     if (!pRtlIpv4StringToAddressExA)
     {
-        skip("RtlIpv4StringToAddressEx not available\n");
+        win_skip("RtlIpv4StringToAddressEx not available\n");
         return;
     }
 
@@ -1789,7 +1789,7 @@ static void test_RtlIpv6AddressToStringEx(void)
 
     if (!pRtlIpv6AddressToStringExA)
     {
-        skip("RtlIpv6AddressToStringExA not available\n");
+        win_skip("RtlIpv6AddressToStringExA not available\n");
         return;
     }
 
@@ -2075,13 +2075,13 @@ static void test_RtlIpv6StringToAddressEx(void)
 
     if (!pRtlIpv6StringToAddressExW)
     {
-        skip("RtlIpv6StringToAddressExW not available\n");
+        win_skip("RtlIpv6StringToAddressExW not available\n");
         /* we can continue, just not test W */
     }
 
     if (!pRtlIpv6StringToAddressExA)
     {
-        skip("RtlIpv6StringToAddressExA not available\n");
+        win_skip("RtlIpv6StringToAddressExA not available\n");
         return;
     }
 

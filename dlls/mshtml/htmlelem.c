@@ -7464,7 +7464,7 @@ static const WCHAR *find_token(const WCHAR *list, const WCHAR *token, unsigned i
     return NULL;
 }
 
-static HRESULT token_list_add_remove(IWineDOMTokenList *iface, BSTR token, BOOL remove)
+static HRESULT token_list_add_remove(IWineDOMTokenList *iface, BSTR token, BOOL remove, VARIANT_BOOL *toggle_ret)
 {
     struct token_list *token_list = impl_from_IWineDOMTokenList(iface);
     unsigned int i, len, old_len, new_len;
@@ -7472,7 +7472,7 @@ static HRESULT token_list_add_remove(IWineDOMTokenList *iface, BSTR token, BOOL 
     BSTR new, old;
     HRESULT hr;
 
-    TRACE("iface %p, token %s, remove %#x.\n", iface, debugstr_w(token), remove);
+    TRACE("token_list %p, token %s, remove %#x, toggle_ret %p.\n", token_list, debugstr_w(token), remove, toggle_ret);
 
     len = token ? lstrlenW(token) : 0;
     if (!len)
@@ -7493,8 +7493,13 @@ static HRESULT token_list_add_remove(IWineDOMTokenList *iface, BSTR token, BOOL 
 
     TRACE("old %s.\n", debugstr_w(old));
 
-    if (((old_pos = find_token(old, token, len)) && !remove)
-            || (!old_pos && remove))
+    old_pos = find_token(old, token, len);
+    if (toggle_ret)
+    {
+        remove = !!old_pos;
+        *toggle_ret = !remove;
+    }
+    else if (!!old_pos != remove)
     {
         SysFreeString(old);
         return S_OK;
@@ -7553,12 +7558,130 @@ static HRESULT token_list_add_remove(IWineDOMTokenList *iface, BSTR token, BOOL 
 
 static HRESULT WINAPI token_list_add(IWineDOMTokenList *iface, BSTR token)
 {
-    return token_list_add_remove(iface, token, FALSE);
+    return token_list_add_remove(iface, token, FALSE, NULL);
 }
 
 static HRESULT WINAPI token_list_remove(IWineDOMTokenList *iface, BSTR token)
 {
-    return token_list_add_remove(iface, token, TRUE);
+    return token_list_add_remove(iface, token, TRUE, NULL);
+}
+
+static HRESULT WINAPI token_list_toggle(IWineDOMTokenList *iface, BSTR token, VARIANT_BOOL *p)
+{
+    return token_list_add_remove(iface, token, FALSE, p);
+}
+
+static HRESULT WINAPI token_list_contains(IWineDOMTokenList *iface, BSTR token, VARIANT_BOOL *p)
+{
+    struct token_list *token_list = impl_from_IWineDOMTokenList(iface);
+    unsigned len;
+    HRESULT hres;
+    BSTR list;
+
+    TRACE("(%p)->(%s %p)\n", token_list, debugstr_w(token), p);
+
+    if(!token || !*token)
+        return E_INVALIDARG;
+
+    for(len = 0; token[len]; len++)
+        if(iswspace(token[len]))
+            return E_INVALIDARG;
+
+    hres = IHTMLElement_get_className(token_list->element, &list);
+    if(FAILED(hres))
+        return hres;
+
+    *p = find_token(list, token, len) ? VARIANT_TRUE : VARIANT_FALSE;
+    SysFreeString(list);
+    return S_OK;
+}
+
+static HRESULT WINAPI token_list_get_length(IWineDOMTokenList *iface, LONG *p)
+{
+    struct token_list *token_list = impl_from_IWineDOMTokenList(iface);
+    unsigned length = 0;
+    const WCHAR *ptr;
+    HRESULT hres;
+    BSTR list;
+
+    TRACE("(%p)->(%p)\n", token_list, p);
+
+    hres = IHTMLElement_get_className(token_list->element, &list);
+    if(FAILED(hres))
+        return hres;
+
+    if(!list) {
+        *p = 0;
+        return S_OK;
+    }
+
+    ptr = list;
+    do {
+        while(iswspace(*ptr))
+            ptr++;
+        if(!*ptr)
+            break;
+        length++;
+        ptr++;
+        while(*ptr && !iswspace(*ptr))
+            ptr++;
+    } while(*ptr++);
+
+    SysFreeString(list);
+    *p = length;
+    return S_OK;
+}
+
+static HRESULT WINAPI token_list_item(IWineDOMTokenList *iface, LONG index, VARIANT *p)
+{
+    struct token_list *token_list = impl_from_IWineDOMTokenList(iface);
+    BSTR list, token = NULL;
+    unsigned i = 0;
+    HRESULT hres;
+    WCHAR *ptr;
+
+    TRACE("(%p)->(%ld %p)\n", token_list, index, p);
+
+    hres = IHTMLElement_get_className(token_list->element, &list);
+    if(FAILED(hres))
+        return hres;
+
+    if(!list) {
+        V_VT(p) = VT_NULL;
+        return S_OK;
+    }
+
+    ptr = list;
+    do {
+        while(iswspace(*ptr))
+            ptr++;
+        if(!*ptr)
+            break;
+        if(i == index) {
+            token = ptr++;
+            while(*ptr && !iswspace(*ptr))
+                ptr++;
+            token = SysAllocStringLen(token, ptr - token);
+            if(!token) {
+                SysFreeString(list);
+                return E_OUTOFMEMORY;
+            }
+            break;
+        }
+        i++;
+        ptr++;
+        while(*ptr && !iswspace(*ptr))
+            ptr++;
+    } while(*ptr++);
+
+    SysFreeString(list);
+    if(!token)
+        V_VT(p) = VT_NULL;
+    else {
+        V_VT(p) = VT_BSTR;
+        V_BSTR(p) = token;
+    }
+    return S_OK;
 }
 
 static HRESULT WINAPI token_list_toString(IWineDOMTokenList *iface, BSTR *String)
@@ -7580,8 +7703,15 @@ static const IWineDOMTokenListVtbl WineDOMTokenListVtbl = {
     token_list_Invoke,
     token_list_add,
     token_list_remove,
+    token_list_toggle,
+    token_list_contains,
+    token_list_get_length,
+    token_list_item,
     token_list_toString
 };
+
+/* idx can be negative, so offset it halfway through custom dispids */
+#define DISPID_TOKENLIST_0 (MSHTML_DISPID_CUSTOM_MIN + (MSHTML_DISPID_CUSTOM_MAX+1 - MSHTML_DISPID_CUSTOM_MIN) / 2)
 
 static inline struct token_list *token_list_from_DispatchEx(DispatchEx *iface)
 {
@@ -7609,8 +7739,64 @@ static HRESULT token_list_value(DispatchEx *dispex, LCID lcid, WORD flags, DISPP
     return S_OK;
 }
 
+static HRESULT token_list_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
+{
+    WCHAR *end;
+    LONG idx;
+    ULONG i;
+
+    idx = wcstol(name, &end, 10);
+    if(*end)
+        return DISP_E_UNKNOWNNAME;
+
+    i = idx + DISPID_TOKENLIST_0 - MSHTML_DISPID_CUSTOM_MIN;
+    if(i > MSHTML_CUSTOM_DISPID_CNT)
+        return DISP_E_UNKNOWNNAME;
+
+    *dispid = MSHTML_DISPID_CUSTOM_MIN + i;
+    return S_OK;
+}
+
+static HRESULT token_list_get_name(DispatchEx *dispex, DISPID id, BSTR *name)
+{
+    LONG idx = id - MSHTML_DISPID_CUSTOM_MIN;
+    WCHAR buf[12];
+    UINT len;
+
+    len = swprintf(buf, ARRAY_SIZE(buf), L"%d", idx);
+    return (*name = SysAllocStringLen(buf, len)) ? S_OK : E_OUTOFMEMORY;
+}
+
+static HRESULT token_list_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params,
+        VARIANT *res, EXCEPINFO *ei, IServiceProvider *caller)
+{
+    struct token_list *token_list = token_list_from_DispatchEx(dispex);
+
+    TRACE("(%p)->(%lx %lx %x %p %p %p %p)\n", token_list, id, lcid, flags, params, res, ei, caller);
+
+    switch(flags) {
+    case DISPATCH_PROPERTYGET:
+        return token_list_item(&token_list->IWineDOMTokenList_iface, id - DISPID_TOKENLIST_0, res);
+    case DISPATCH_PROPERTYPUTREF|DISPATCH_PROPERTYPUT:
+    case DISPATCH_PROPERTYPUTREF:
+    case DISPATCH_PROPERTYPUT:
+        /* Ignored by IE */
+        return S_OK;
+    case DISPATCH_METHOD|DISPATCH_PROPERTYGET:
+    case DISPATCH_METHOD:
+        return MSHTML_E_NOT_FUNC;
+    default:
+        break;
+    }
+
+    return MSHTML_E_INVALID_ACTION;
+}
+
 static const dispex_static_data_vtbl_t token_list_dispex_vtbl = {
-    token_list_value
+    token_list_value,
+    token_list_get_dispid,
+    token_list_get_name,
+    token_list_invoke
 };
 
 static const tid_t token_list_iface_tids[] = {

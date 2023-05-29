@@ -260,13 +260,14 @@ struct _PROC_THREAD_ATTRIBUTE_LIST
 static NTSTATUS create_nt_process( HANDLE token, HANDLE debug, SECURITY_ATTRIBUTES *psa,
                                    SECURITY_ATTRIBUTES *tsa, DWORD process_flags,
                                    RTL_USER_PROCESS_PARAMETERS *params,
-                                   RTL_USER_PROCESS_INFORMATION *info, HANDLE parent,
+                                   RTL_USER_PROCESS_INFORMATION *info,
+                                   HANDLE parent, USHORT machine,
                                    const struct proc_thread_attr *handle_list,
                                    const struct proc_thread_attr *job_list)
 {
     OBJECT_ATTRIBUTES process_attr, thread_attr;
     PS_CREATE_INFO create_info;
-    ULONG_PTR buffer[offsetof( PS_ATTRIBUTE_LIST, Attributes[8] ) / sizeof(ULONG_PTR)];
+    ULONG_PTR buffer[offsetof( PS_ATTRIBUTE_LIST, Attributes[9] ) / sizeof(ULONG_PTR)];
     PS_ATTRIBUTE_LIST *attr = (PS_ATTRIBUTE_LIST *)buffer;
     UNICODE_STRING nameW;
     NTSTATUS status;
@@ -333,6 +334,14 @@ static NTSTATUS create_nt_process( HANDLE token, HANDLE debug, SECURITY_ATTRIBUT
             attr->Attributes[pos].ReturnLength = NULL;
             pos++;
         }
+        if (machine)
+        {
+            attr->Attributes[pos].Attribute    = PS_ATTRIBUTE_MACHINE_TYPE;
+            attr->Attributes[pos].Size         = sizeof(machine);
+            attr->Attributes[pos].Value        = machine;
+            attr->Attributes[pos].ReturnLength = NULL;
+            pos++;
+        }
         attr->TotalLength = offsetof( PS_ATTRIBUTE_LIST, Attributes[pos] );
 
         InitializeObjectAttributes( &process_attr, NULL, 0, NULL, psa ? psa->lpSecurityDescriptor : NULL );
@@ -374,7 +383,7 @@ static NTSTATUS create_vdm_process( HANDLE token, HANDLE debug, SECURITY_ATTRIBU
               winevdm, params->ImagePathName.Buffer, params->CommandLine.Buffer );
     RtlInitUnicodeString( &params->ImagePathName, winevdm );
     RtlInitUnicodeString( &params->CommandLine, newcmdline );
-    status = create_nt_process( token, debug, psa, tsa, flags, params, info, NULL, NULL, NULL );
+    status = create_nt_process( token, debug, psa, tsa, flags, params, info, 0, 0, NULL, NULL );
     HeapFree( GetProcessHeap(), 0, newcmdline );
     return status;
 }
@@ -403,7 +412,7 @@ static NTSTATUS create_cmd_process( HANDLE token, HANDLE debug, SECURITY_ATTRIBU
     swprintf( newcmdline, len, L"%s /s/c \"%s\"", comspec, params->CommandLine.Buffer );
     RtlInitUnicodeString( &params->ImagePathName, comspec );
     RtlInitUnicodeString( &params->CommandLine, newcmdline );
-    status = create_nt_process( token, debug, psa, tsa, flags, params, info, NULL, NULL, NULL );
+    status = create_nt_process( token, debug, psa, tsa, flags, params, info, 0, 0, NULL, NULL );
     RtlFreeHeap( GetProcessHeap(), 0, newcmdline );
     return status;
 }
@@ -648,6 +657,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     RTL_USER_PROCESS_INFORMATION rtl_info;
     HANDLE parent = 0, debug = 0, elevated_token = NULL;
     ULONG nt_flags = 0;
+    USHORT machine = 0;
     NTSTATUS status;
 
     /* Process the AppName and/or CmdLine to get module name and path */
@@ -772,6 +782,10 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
                         TRACE( "PROC_THREAD_ATTRIBUTE_JOB_LIST handle count %Iu.\n",
                                attrs->attrs[i].size / sizeof(HANDLE) );
                         break;
+                    case PROC_THREAD_ATTRIBUTE_MACHINE_TYPE:
+                        machine = *(USHORT *)attrs->attrs[i].value;
+                        TRACE( "PROC_THREAD_ATTRIBUTE_MACHINE %x.\n", machine );
+                        break;
                     default:
                         FIXME("Unsupported attribute %#Ix.\n", attrs->attrs[i].attr);
                         break;
@@ -789,7 +803,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
         token = elevated_token = get_elevated_token();
 
     status = create_nt_process( token, debug, process_attr, thread_attr,
-                                nt_flags, params, &rtl_info, parent, handle_list, job_list );
+                                nt_flags, params, &rtl_info, parent, machine, handle_list, job_list );
     switch (status)
     {
     case STATUS_SUCCESS:
@@ -1870,6 +1884,43 @@ BOOL WINAPI DECLSPEC_HOTPATCH InitializeProcThreadAttributeList( struct _PROC_TH
 }
 
 
+static inline DWORD validate_proc_thread_attribute( DWORD_PTR attr, SIZE_T size )
+{
+    switch (attr)
+    {
+    case PROC_THREAD_ATTRIBUTE_PARENT_PROCESS:
+        if (size != sizeof(HANDLE)) return ERROR_BAD_LENGTH;
+        break;
+    case PROC_THREAD_ATTRIBUTE_HANDLE_LIST:
+        if ((size / sizeof(HANDLE)) * sizeof(HANDLE) != size) return ERROR_BAD_LENGTH;
+        break;
+    case PROC_THREAD_ATTRIBUTE_IDEAL_PROCESSOR:
+        if (size != sizeof(PROCESSOR_NUMBER)) return ERROR_BAD_LENGTH;
+        break;
+    case PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY:
+       if (size != sizeof(DWORD) && size != sizeof(DWORD64)) return ERROR_BAD_LENGTH;
+       break;
+    case PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY:
+        if (size != sizeof(DWORD) && size != sizeof(DWORD64) && size != sizeof(DWORD64) * 2)
+            return ERROR_BAD_LENGTH;
+        break;
+    case PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE:
+       if (size != sizeof(HPCON)) return ERROR_BAD_LENGTH;
+       break;
+    case PROC_THREAD_ATTRIBUTE_JOB_LIST:
+        if ((size / sizeof(HANDLE)) * sizeof(HANDLE) != size) return ERROR_BAD_LENGTH;
+        break;
+    case PROC_THREAD_ATTRIBUTE_MACHINE_TYPE:
+        if (size != sizeof(USHORT)) return ERROR_BAD_LENGTH;
+        break;
+    default:
+        FIXME( "Unhandled attribute %Iu\n", attr & PROC_THREAD_ATTRIBUTE_NUMBER );
+        return ERROR_NOT_SUPPORTED;
+    }
+    return 0;
+}
+
+
 /***********************************************************************
  *           UpdateProcThreadAttribute   (kernelbase.@)
  */
@@ -1877,7 +1928,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH UpdateProcThreadAttribute( struct _PROC_THREAD_ATT
                                                          DWORD flags, DWORD_PTR attr, void *value,
                                                          SIZE_T size, void *prev_ret, SIZE_T *size_ret )
 {
-    DWORD mask;
+    DWORD mask, err;
     struct proc_thread_attr *entry;
 
     TRACE( "(%p %lx %08Ix %p %Id %p %p)\n", list, flags, attr, value, size, prev_ret, size_ret );
@@ -1887,68 +1938,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH UpdateProcThreadAttribute( struct _PROC_THREAD_ATT
         SetLastError( ERROR_GEN_FAILURE );
         return FALSE;
     }
-
-    switch (attr)
+    if ((err = validate_proc_thread_attribute( attr, size )))
     {
-    case PROC_THREAD_ATTRIBUTE_PARENT_PROCESS:
-        if (size != sizeof(HANDLE))
-        {
-            SetLastError( ERROR_BAD_LENGTH );
-            return FALSE;
-        }
-        break;
-
-    case PROC_THREAD_ATTRIBUTE_HANDLE_LIST:
-        if ((size / sizeof(HANDLE)) * sizeof(HANDLE) != size)
-        {
-            SetLastError( ERROR_BAD_LENGTH );
-            return FALSE;
-        }
-        break;
-
-    case PROC_THREAD_ATTRIBUTE_IDEAL_PROCESSOR:
-        if (size != sizeof(PROCESSOR_NUMBER))
-        {
-            SetLastError( ERROR_BAD_LENGTH );
-            return FALSE;
-        }
-        break;
-
-    case PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY:
-       if (size != sizeof(DWORD) && size != sizeof(DWORD64))
-       {
-           SetLastError( ERROR_BAD_LENGTH );
-           return FALSE;
-       }
-       break;
-
-    case PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY:
-        if (size != sizeof(DWORD) && size != sizeof(DWORD64) && size != sizeof(DWORD64) * 2)
-        {
-            SetLastError( ERROR_BAD_LENGTH );
-            return FALSE;
-        }
-        break;
-
-    case PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE:
-       if (size != sizeof(HPCON))
-       {
-           SetLastError( ERROR_BAD_LENGTH );
-           return FALSE;
-       }
-       break;
-
-    case PROC_THREAD_ATTRIBUTE_JOB_LIST:
-        if ((size / sizeof(HANDLE)) * sizeof(HANDLE) != size)
-        {
-            SetLastError( ERROR_BAD_LENGTH );
-            return FALSE;
-        }
-        break;
-
-    default:
-        SetLastError( ERROR_NOT_SUPPORTED );
-        FIXME( "Unhandled attribute %Iu\n", attr & PROC_THREAD_ATTRIBUTE_NUMBER );
+        SetLastError( err );
         return FALSE;
     }
 

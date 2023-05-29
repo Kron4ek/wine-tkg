@@ -49,8 +49,8 @@
 #include "dsound.h"
 #include "dsound_private.h"
 
-/* default velocity of sound in the air */
-#define DEFAULT_VELOCITY 340
+/* according to the tests, native uses 360 as the speed of sound */
+#define DEFAULT_VELOCITY 360
 
 WINE_DEFAULT_DEBUG_CHANNEL(dsound3d);
 
@@ -167,6 +167,8 @@ void DSOUND_Calc3DBuffer(IDirectSoundBufferImpl *dsb)
 	int i, num_main_speakers;
 	float a, ingain;
 	/* doppler shift related stuff */
+	D3DVECTOR vRelativeVel;
+	D3DVALUE flFreq, flRelativeVel, flLimitedVel, flVelocityFactor;
 
 	TRACE("(%p)\n",dsb);
 
@@ -180,18 +182,22 @@ void DSOUND_Calc3DBuffer(IDirectSoundBufferImpl *dsb)
 			/* we need to calculate distance between buffer and listener*/
 			vDistance = VectorBetweenTwoPoints(&dsb->device->ds3dl.vPosition, &dsb->ds3db_ds3db.vPosition);
 			flDistance = VectorMagnitude (&vDistance);
+			vRelativeVel = VectorBetweenTwoPoints(&dsb->device->ds3dl.vVelocity, &dsb->ds3db_ds3db.vVelocity);
 			break;
 		case DS3DMODE_HEADRELATIVE:
 			TRACE("Head-relative 3D processing mode\n");
 			/* distance between buffer and listener is same as buffer's position */
 			vDistance = dsb->ds3db_ds3db.vPosition;
 			flDistance = VectorMagnitude (&vDistance);
+			vRelativeVel = dsb->ds3db_ds3db.vVelocity;
 			break;
 		default:
 			TRACE("3D processing disabled\n");
 			/* this one is here only to eliminate annoying warning message */
 			dsb->volpan.lVolume = dsb->ds3db_lVolume;
 			DSOUND_RecalcVolPan (&dsb->volpan);
+			dsb->freq = dsb->ds3db_freq;
+			DSOUND_RecalcFormat(dsb);
 			return;
 	}
 	
@@ -288,37 +294,30 @@ void DSOUND_Calc3DBuffer(IDirectSoundBufferImpl *dsb)
 	}
 	TRACE("panning: Angle = %f rad, lPan = %ld\n", flAngle, dsb->volpan.lPan);
 
-	/* FIXME: Doppler Effect disabled since i have no idea which frequency to change and how to do it */
-if(0)
-{
-	D3DVALUE flFreq, flBufferVel, flListenerVel;
+	dsb->freq = dsb->ds3db_freq;
+
 	/* doppler shift*/
 	if (!VectorMagnitude(&dsb->ds3db_ds3db.vVelocity) && !VectorMagnitude(&dsb->device->ds3dl.vVelocity))
 	{
 		TRACE("doppler: Buffer and Listener don't have velocities\n");
 	}
-	else if (!(dsb->ds3db_ds3db.vVelocity.x == dsb->device->ds3dl.vVelocity.x &&
-	           dsb->ds3db_ds3db.vVelocity.y == dsb->device->ds3dl.vVelocity.y &&
-	           dsb->ds3db_ds3db.vVelocity.z == dsb->device->ds3dl.vVelocity.z))
+	else if (!(vRelativeVel.x == 0.0f && vRelativeVel.y == 0.0f && vRelativeVel.z == 0.0f) &&
+	         !(vDistance.x == 0.0f && vDistance.y == 0.0f && vDistance.z == 0.0f))
 	{
-		/* calculate length of ds3db_ds3db.vVelocity component which causes Doppler Effect
+		/* calculate length of vRelativeVel component which causes Doppler Effect
 		   NOTE: if buffer moves TOWARDS the listener, its velocity component is NEGATIVE
 		         if buffer moves AWAY from listener, its velocity component is POSITIVE */
-		flBufferVel = ProjectVector(&dsb->ds3db_ds3db.vVelocity, &vDistance);
-		/* calculate length of ds3dl.vVelocity component which causes Doppler Effect
-		   NOTE: if listener moves TOWARDS the buffer, its velocity component is POSITIVE
-		         if listener moves AWAY from buffer, its velocity component is NEGATIVE */
-		flListenerVel = ProjectVector(&dsb->device->ds3dl.vVelocity, &vDistance);
+		flRelativeVel = ProjectVector(&vRelativeVel, &vDistance);
+		flVelocityFactor = dsb->device->ds3dl.flDistanceFactor * dsb->device->ds3dl.flDopplerFactor;
+		flLimitedVel = max(-DEFAULT_VELOCITY/2, min(DEFAULT_VELOCITY/2, flRelativeVel * flVelocityFactor));
 		/* formula taken from Gianicoli D.: Physics, 4th edition: */
-		/* FIXME: replace dsb->freq with appropriate frequency ! */
-		flFreq = dsb->freq * ((DEFAULT_VELOCITY + flListenerVel)/(DEFAULT_VELOCITY + flBufferVel));
-		TRACE("doppler: Buffer velocity (component) = %f, Listener velocity (component) = %f => Doppler shift: %ld Hz -> %f Hz\n",
-		      flBufferVel, flListenerVel, dsb->freq, flFreq);
-		/* FIXME: replace following line with correct frequency setting ! */
-		dsb->freq = flFreq;
-		DSOUND_RecalcFormat(dsb);
+		flFreq = dsb->ds3db_freq * (DEFAULT_VELOCITY/(DEFAULT_VELOCITY + flLimitedVel));
+		TRACE("doppler: Relative velocity (component) = %f => Doppler shift: %ld Hz -> %f Hz\n",
+		      flRelativeVel, dsb->ds3db_freq, flFreq);
+		dsb->freq = max(DSBFREQUENCY_MIN, min(DSBFREQUENCY_MAX, (DWORD)flFreq));
 	}
-}
+
+	DSOUND_RecalcFormat(dsb);
 
 	for (i = 0; i < dsb->device->pwfx->nChannels; i++)
 		dsb->volpan.dwTotalAmpFactor[i] = 0;

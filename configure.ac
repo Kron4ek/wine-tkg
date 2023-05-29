@@ -2375,7 +2375,7 @@ wine_srcdir=
 test "$srcdir" = . || wine_srcdir="$srcdir/"
 
 WINE_CONFIG_SYMLINK(wine,tools/winewrapper)
-WINE_CONFIG_SYMLINK(wine64,tools/winewrapper,["$HOST_ARCH" = x86_64 -o -n "$with_wine64"])
+WINE_CONFIG_SYMLINK(wine64,tools/winewrapper,["$wine_binary" = wine64 -o -n "$with_wine64"])
 
 WINE_CONFIG_MAKEFILE(dlls/acledit)
 WINE_CONFIG_MAKEFILE(dlls/aclui)
@@ -3645,7 +3645,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-8.7.r7.gcc0df4cd\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-8.9.1.r0.g2dcacd0d\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

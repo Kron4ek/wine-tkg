@@ -492,6 +492,10 @@ enum wine_internal_message
 #define IME_INTERNAL_HKL_ACTIVATE    0x19
 #define IME_INTERNAL_HKL_DEACTIVATE  0x20
 
+/* internal WM_IME_NOTIFY wparams, not compatible with Windows */
+#define IMN_WINE_SET_OPEN_STATUS  0x000f
+#define IMN_WINE_SET_COMP_STRING  0x0010
+
 /* builtin IME driver calls */
 enum wine_ime_call
 {
@@ -506,15 +510,6 @@ struct ime_driver_call_params
     const BYTE *state;
     COMPOSITIONSTRING *compstr;
 };
-
-/* internal IME private */
-typedef struct ime_private
-{
-    BOOL bInComposition;
-    BOOL bInternalState;
-    HFONT textfont;
-    HWND hwndDefault;
-} IMEPRIVATE, *LPIMEPRIVATE;
 
 #define WM_SYSTIMER  0x0118
 

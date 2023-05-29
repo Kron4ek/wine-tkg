@@ -69,6 +69,9 @@ struct oss_stream
 
 WINE_DEFAULT_DEBUG_CHANNEL(oss);
 
+static const REFERENCE_TIME def_period = 100000;
+static const REFERENCE_TIME min_period = 50000;
+
 static NTSTATUS oss_not_implemented(void *args)
 {
     return STATUS_SUCCESS;
@@ -552,10 +555,42 @@ static ULONG_PTR zero_bits(void)
 static NTSTATUS oss_create_stream(void *args)
 {
     struct create_stream_params *params = args;
-    WAVEFORMATEXTENSIBLE *fmtex;
+    WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE *)params->fmt;
     struct oss_stream *stream;
     oss_audioinfo ai;
     SIZE_T size;
+
+    params->result = S_OK;
+
+    if (params->share == AUDCLNT_SHAREMODE_SHARED) {
+        params->period = def_period;
+        if (params->duration < 3 * params->period)
+            params->duration = 3 * params->period;
+    } else {
+        if (fmtex->Format.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+           (fmtex->dwChannelMask == 0 || fmtex->dwChannelMask & SPEAKER_RESERVED))
+            params->result = AUDCLNT_E_UNSUPPORTED_FORMAT;
+        else {
+            if (!params->period)
+                params->period = def_period;
+            if (params->period < min_period || params->period > 5000000)
+                params->result = AUDCLNT_E_INVALID_DEVICE_PERIOD;
+            else if (params->duration > 20000000) /* The smaller the period, the lower this limit. */
+                params->result = AUDCLNT_E_BUFFER_SIZE_ERROR;
+            else if (params->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) {
+                if (params->duration != params->period)
+                    params->result = AUDCLNT_E_BUFDURATION_PERIOD_NOT_EQUAL;
+
+                FIXME("EXCLUSIVE mode with EVENTCALLBACK\n");
+
+                params->result = AUDCLNT_E_DEVICE_IN_USE;
+            } else if (params->duration < 8 * params->period)
+                params->duration = 8 * params->period; /* May grow above 2s. */
+        }
+    }
+
+    if (FAILED(params->result))
+        return STATUS_SUCCESS;
 
     stream = calloc(1, sizeof(*stream));
     if(!stream){
@@ -1245,6 +1280,20 @@ static NTSTATUS oss_get_mix_format(void *args)
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS oss_get_device_period(void *args)
+{
+    struct get_device_period_params *params = args;
+
+    if (params->def_period)
+        *params->def_period = def_period;
+    if (params->min_period)
+        *params->min_period = min_period;
+
+    params->result = S_OK;
+
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS oss_get_buffer_size(void *args)
 {
     struct get_buffer_size_params *params = args;
@@ -1649,7 +1698,7 @@ unixlib_entry_t __wine_unix_call_funcs[] =
     oss_release_capture_buffer,
     oss_is_format_supported,
     oss_get_mix_format,
-    oss_not_implemented,
+    oss_get_device_period,
     oss_get_buffer_size,
     oss_get_latency,
     oss_get_current_padding,
@@ -1860,6 +1909,28 @@ static NTSTATUS oss_wow64_get_mix_format(void *args)
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS oss_wow64_get_device_period(void *args)
+{
+    struct
+    {
+        PTR32 device;
+        EDataFlow flow;
+        HRESULT result;
+        PTR32 def_period;
+        PTR32 min_period;
+    } *params32 = args;
+    struct get_device_period_params params =
+    {
+        .device = ULongToPtr(params32->device),
+        .flow = params32->flow,
+        .def_period = ULongToPtr(params32->def_period),
+        .min_period = ULongToPtr(params32->min_period),
+    };
+    oss_get_device_period(&params);
+    params32->result = params.result;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS oss_wow64_get_buffer_size(void *args)
 {
     struct
@@ -2051,7 +2122,7 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     oss_release_capture_buffer,
     oss_wow64_is_format_supported,
     oss_wow64_get_mix_format,
-    oss_not_implemented,
+    oss_wow64_get_device_period,
     oss_wow64_get_buffer_size,
     oss_wow64_get_latency,
     oss_wow64_get_current_padding,

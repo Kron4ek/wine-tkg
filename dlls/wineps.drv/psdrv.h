@@ -28,6 +28,8 @@
 #include "wingdi.h"
 #include "winspool.h"
 
+#include "unixlib.h"
+
 #include "wine/gdi_driver.h"
 #include "wine/list.h"
 
@@ -143,15 +145,6 @@ typedef struct _tagPAGESIZE {
     WORD		WinPage; /*eg DMPAPER_A4. Doesn't really belong here */
 } PAGESIZE;
 
-
-/* For BANDINFO Escape */
-typedef struct _BANDINFOSTRUCT
-{
-    BOOL GraphicsFlag;
-    BOOL TextFlag;
-    RECT GraphicsRect;
-} BANDINFOSTRUCT, *PBANDINFOSTRUCT;
-
 typedef struct
 {
     struct list                 entry;
@@ -218,18 +211,6 @@ typedef struct {
     struct list         Duplexes;
     DUPLEX              *DefaultDuplex;
 } PPD;
-
-typedef struct {
-    DEVMODEW dmPublic;
-    int default_resolution;
-    int landscape_orientation;
-    int duplex;
-    int input_slots;
-    int resolutions;
-    int page_sizes;
-    int font_subs;
-    BYTE data[1];
-} PSDRV_DEVMODE;
 
 typedef struct
 {
@@ -308,9 +289,6 @@ typedef struct {
     matrix              size;
     PSCOLOR             color;
     enum fontset        set;    /* Have we done a setfont yet */
-
-  /* These are needed by PSDRV_ExtTextOut */
-    int                 escapement;
 } PSFONT;
 
 typedef struct {
@@ -357,23 +335,9 @@ typedef struct
     PSPEN		pen;
     PSBRUSH		brush;
     PSCOLOR		bkColor;
-    PSCOLOR		inkColor;	/* Last colour set */
     JOB			job;
     PSDRV_DEVMODE	*Devmode;
     PRINTERINFO		*pi;
-    SIZE                PageSize;      /* Physical page size in device units */
-    RECT                ImageableArea; /* Imageable area in device units */
-                                       /* NB both PageSize and ImageableArea
-					  are not rotated in landscape mode,
-					  so PageSize.cx is generally
-					  < PageSize.cy */
-    int                 horzRes;       /* device caps */
-    int                 vertRes;
-    int                 horzSize;
-    int                 vertSize;
-    int                 logPixelsX;
-    int                 logPixelsY;
-
     int                 pathdepth;
 } print_ctx;
 
@@ -465,7 +429,6 @@ extern void PSDRV_AddClip( print_ctx *ctx, HRGN hrgn ) DECLSPEC_HIDDEN;
 extern void PSDRV_SetClip( print_ctx *ctx ) DECLSPEC_HIDDEN;
 extern void PSDRV_ResetClip( print_ctx *ctx ) DECLSPEC_HIDDEN;
 
-extern BOOL PSDRV_CopyColor(PSCOLOR *col1, PSCOLOR *col2) DECLSPEC_HIDDEN;
 extern void PSDRV_CreateColor( print_ctx *ctx, PSCOLOR *pscolor,
 		     COLORREF wincolor ) DECLSPEC_HIDDEN;
 extern PSRGB rgb_to_grayscale_scale( void ) DECLSPEC_HIDDEN;
@@ -520,13 +483,11 @@ INT PSDRV_GlyphListInit(void) DECLSPEC_HIDDEN;
 const GLYPHNAME *PSDRV_GlyphName(LPCSTR szName) DECLSPEC_HIDDEN;
 VOID PSDRV_IndexGlyphList(void) DECLSPEC_HIDDEN;
 BOOL PSDRV_GetType1Metrics(void) DECLSPEC_HIDDEN;
-const AFMMETRICS *PSDRV_UVMetrics(LONG UV, const AFM *afm) DECLSPEC_HIDDEN;
 SHORT PSDRV_CalcAvgCharWidth(const AFM *afm) DECLSPEC_HIDDEN;
 
 extern BOOL PSDRV_WriteSetBuiltinFont(print_ctx *ctx) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteBuiltinGlyphShow(print_ctx *ctx, LPCWSTR str, INT count) DECLSPEC_HIDDEN;
 
-extern BOOL PSDRV_SelectDownloadFont(print_ctx *ctx) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteSetDownloadFont(print_ctx *ctx, BOOL vertical) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteDownloadGlyphShow(print_ctx *ctx, const WORD *glyphs, UINT count) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_EmptyDownloadList(print_ctx *ctx, BOOL write_undef) DECLSPEC_HIDDEN;
@@ -562,7 +523,6 @@ extern void passthrough_leave(print_ctx *ctx) DECLSPEC_HIDDEN;
 	setlocale(LC_NUMERIC,tmplocale);			\
 } while (0)
 
-#ifndef WINE_UNIX_LIB
 static inline WCHAR *strdupW( const WCHAR *str )
 {
     int size;
@@ -574,6 +534,5 @@ static inline WCHAR *strdupW( const WCHAR *str )
     if (ret) memcpy( ret, str, size );
     return ret;
 }
-#endif
 
 #endif

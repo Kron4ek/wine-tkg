@@ -54,6 +54,8 @@ static WORD cb_count, cb_count_sys;
 static DWORD page_size;
 static BOOL is_win64 = sizeof(void *) > sizeof(int);
 static BOOL is_wow64;
+static char system_dir[MAX_PATH];
+static char syswow_dir[MAX_PATH]; /* only available if is_wow64 */
 
 static NTSTATUS (WINAPI *pNtCreateSection)(HANDLE *, ACCESS_MASK, const OBJECT_ATTRIBUTES *,
                                            const LARGE_INTEGER *, ULONG, ULONG, HANDLE );
@@ -4048,10 +4050,18 @@ static void test_InMemoryOrderModuleList(void)
     ok(entry2 == mark2, "expected entry2 == mark2, got %p and %p\n", entry2, mark2);
 }
 
-static void test_wow64_redirection_for_dll(const char *libname)
+static BOOL is_path_made_of(const char *filename, const char *pfx, const char *sfx)
+{
+    const size_t len = strlen(pfx);
+    return !strncasecmp(filename, pfx, len) && filename[len] == '\\' &&
+        !strcasecmp(filename + len + 1, sfx);
+}
+
+static void test_wow64_redirection_for_dll(const char *libname, BOOL will_fail)
 {
     HMODULE lib;
     char buf[256];
+    const char *modname;
 
     if (!GetModuleHandleA(libname))
     {
@@ -4067,6 +4077,12 @@ static void test_wow64_redirection_for_dll(const char *libname)
             ok(lib != NULL, "Loading %s from full path should succeed with WOW64 redirection disabled\n", libname);
             if (lib)
                 FreeLibrary(lib);
+            modname = strrchr(libname, '\\');
+            modname = modname ? modname + 1 : libname;
+            todo_wine_if(will_fail)
+            ok(is_path_made_of(buf, system_dir, modname) ||
+               /* Win7 report from syswow64 */ broken(is_path_made_of(buf, syswow_dir, modname)),
+               "Unexpected loaded DLL name %s for %s\n", buf, libname);
         }
     }
     else
@@ -4078,6 +4094,9 @@ static void test_wow64_redirection_for_dll(const char *libname)
 static void test_wow64_redirection(void)
 {
     void *OldValue;
+    char buffer[MAX_PATH];
+    static const char *dlls[] = {"wlanapi.dll", "dxgi.dll", "dwrite.dll"};
+    unsigned i;
 
     if (!is_wow64)
         return;
@@ -4086,10 +4105,22 @@ static void test_wow64_redirection(void)
      * already be loaded in this process).
      */
     ok(pWow64DisableWow64FsRedirection(&OldValue), "Disabling FS redirection failed\n");
-    test_wow64_redirection_for_dll("wlanapi.dll");
-    test_wow64_redirection_for_dll("dxgi.dll");
-    test_wow64_redirection_for_dll("dwrite.dll");
+    for (i = 0; i < ARRAY_SIZE(dlls); i++)
+    {
+        test_wow64_redirection_for_dll(dlls[i], FALSE);
+        /* even absolute paths to syswow64 are loaded with path to system32 */
+        snprintf(buffer, ARRAY_SIZE(buffer), "%s\\%s", syswow_dir, dlls[i]);
+        test_wow64_redirection_for_dll(buffer, TRUE);
+    }
+
     ok(pWow64RevertWow64FsRedirection(OldValue), "Re-enabling FS redirection failed\n");
+    /* and results don't depend whether redirection is enabled or not */
+    for (i = 0; i < ARRAY_SIZE(dlls); i++)
+    {
+        test_wow64_redirection_for_dll(dlls[i], FALSE);
+        snprintf(buffer, ARRAY_SIZE(buffer), "%s\\%s", syswow_dir, dlls[i]);
+        test_wow64_redirection_for_dll(buffer, TRUE);
+    }
 }
 
 static void test_dll_file( const char *name )
@@ -4256,6 +4287,7 @@ START_TEST(loader)
     char **argv;
     HANDLE ntdll, mapping, kernel32;
     SYSTEM_INFO si;
+    DWORD len;
 
     ntdll = GetModuleHandleA("ntdll.dll");
     kernel32 = GetModuleHandleA("kernel32.dll");
@@ -4311,6 +4343,14 @@ START_TEST(loader)
         test_dll_phase = atoi(argv[4]);
         child_process(argv[2], atol(argv[3]));
         return;
+    }
+
+    len = GetSystemDirectoryA(system_dir, ARRAY_SIZE(system_dir));
+    ok(len && len < ARRAY_SIZE(system_dir), "Couldn't get system directory: %lu\n", GetLastError());
+    if (is_wow64)
+    {
+        len = GetSystemWow64DirectoryA(syswow_dir, ARRAY_SIZE(syswow_dir));
+        ok(len && len < ARRAY_SIZE(syswow_dir), "Couldn't get wow directory: %lu\n", GetLastError());
     }
 
     test_filenames();

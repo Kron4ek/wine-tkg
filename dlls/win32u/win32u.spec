@@ -104,26 +104,26 @@
 @ stub NtFlipObjectRemovePoolBuffer
 @ stub NtFlipObjectSetContent
 @ stub NtFlipObjectSetMaximumBackchannelQueueDepth
-@ stdcall NtGdiAbortDoc(long)
-@ stdcall NtGdiAbortPath(long)
+@ stdcall -syscall NtGdiAbortDoc(long)
+@ stdcall -syscall NtGdiAbortPath(long)
 @ stub NtGdiAddEmbFontToDC
 @ stdcall -syscall NtGdiAddFontMemResourceEx(ptr long ptr long ptr)
 @ stdcall -syscall NtGdiAddFontResourceW(wstr long long long long ptr)
 @ stub NtGdiAddInitialFonts
 @ stub NtGdiAddRemoteFontToDC
 @ stub NtGdiAddRemoteMMInstanceToDC
-@ stdcall NtGdiAlphaBlend(long long long long long long long long long long long ptr)
-@ stdcall NtGdiAngleArc(long long long long long long)
+@ stdcall -syscall NtGdiAlphaBlend(long long long long long long long long long long long ptr)
+@ stdcall -syscall NtGdiAngleArc(long long long long long long)
 @ stub NtGdiAnyLinkedFonts
-@ stdcall NtGdiArcInternal(long long long long long long long long long long)
+@ stdcall -syscall NtGdiArcInternal(long long long long long long long long long long)
 @ stub NtGdiBRUSHOBJ_DeleteRbrush
 @ stub NtGdiBRUSHOBJ_hGetColorTransform
 @ stub NtGdiBRUSHOBJ_pvAllocRbrush
 @ stub NtGdiBRUSHOBJ_pvGetRbrush
 @ stub NtGdiBRUSHOBJ_ulGetBrushColor
 @ stub NtGdiBeginGdiRendering
-@ stdcall NtGdiBeginPath(long)
-@ stdcall NtGdiBitBlt(long long long long long long long long long long long)
+@ stdcall -syscall NtGdiBeginPath(long)
+@ stdcall -syscall NtGdiBitBlt(long long long long long long long long long long long)
 @ stub NtGdiCLIPOBJ_bEnum
 @ stub NtGdiCLIPOBJ_cEnumStart
 @ stub NtGdiCLIPOBJ_ppoGetPath
@@ -132,11 +132,11 @@
 @ stub NtGdiCheckBitmapBits
 @ stub NtGdiClearBitmapAttributes
 @ stub NtGdiClearBrushAttributes
-@ stdcall NtGdiCloseFigure(long)
+@ stdcall -syscall NtGdiCloseFigure(long)
 @ stub NtGdiColorCorrectPalette
 @ stdcall -syscall NtGdiCombineRgn(long long long long)
 @ stub NtGdiCombineTransform
-@ stdcall NtGdiComputeXformCoefficients(long)
+@ stdcall -syscall NtGdiComputeXformCoefficients(long)
 @ stub NtGdiConfigureOPMProtectedOutput
 @ stub NtGdiConvertMetafileRect
 @ stdcall -syscall NtGdiCreateBitmap(long long long long ptr)
@@ -145,15 +145,15 @@
 @ stdcall -syscall NtGdiCreateClientObj(long)
 @ stub NtGdiCreateColorSpace
 @ stub NtGdiCreateColorTransform
-@ stdcall NtGdiCreateCompatibleBitmap(long long long)
-@ stdcall NtGdiCreateCompatibleDC(long)
+@ stdcall -syscall NtGdiCreateCompatibleBitmap(long long long)
+@ stdcall -syscall NtGdiCreateCompatibleDC(long)
 @ stdcall -syscall NtGdiCreateDIBBrush(ptr long long long long ptr)
 @ stdcall -syscall NtGdiCreateDIBSection(long long long ptr long long long long ptr)
-@ stdcall NtGdiCreateDIBitmapInternal(long long long long ptr ptr long long long long long)
+@ stdcall -syscall NtGdiCreateDIBitmapInternal(long long long long ptr ptr long long long long long)
 @ stdcall -syscall NtGdiCreateEllipticRgn(long long long long)
 @ stdcall -syscall NtGdiCreateHalftonePalette(long)
 @ stdcall -syscall NtGdiCreateHatchBrushInternal(long long long)
-@ stdcall NtGdiCreateMetafileDC(long)
+@ stdcall -syscall NtGdiCreateMetafileDC(long)
 @ stub NtGdiCreateOPMProtectedOutput
 @ stub NtGdiCreateOPMProtectedOutputs
 @ stdcall -syscall NtGdiCreatePaletteInternal(ptr long)
@@ -186,14 +186,14 @@
 @ stub NtGdiDdDDICheckMultiPlaneOverlaySupport3
 @ stub NtGdiDdDDICheckOcclusion
 @ stub NtGdiDdDDICheckSharedResourceAccess
-@ stdcall NtGdiDdDDICheckVidPnExclusiveOwnership(ptr)
-@ stdcall NtGdiDdDDICloseAdapter(ptr)
+@ stdcall -syscall NtGdiDdDDICheckVidPnExclusiveOwnership(ptr)
+@ stdcall -syscall NtGdiDdDDICloseAdapter(ptr)
 @ stub NtGdiDdDDIConfigureSharedResource
 @ stub NtGdiDdDDICreateAllocation
 @ stub NtGdiDdDDICreateBundleObject
 @ stub NtGdiDdDDICreateContext
 @ stub NtGdiDdDDICreateContextVirtual
-@ stdcall NtGdiDdDDICreateDCFromMemory(ptr)
+@ stdcall -syscall NtGdiDdDDICreateDCFromMemory(ptr)
 @ stdcall -syscall NtGdiDdDDICreateDevice(ptr)
 @ stub NtGdiDdDDICreateHwContext
 @ stub NtGdiDdDDICreateHwQueue
@@ -209,8 +209,8 @@
 @ stub NtGdiDdDDIDestroyAllocation
 @ stub NtGdiDdDDIDestroyAllocation2
 @ stub NtGdiDdDDIDestroyContext
-@ stdcall NtGdiDdDDIDestroyDCFromMemory(ptr)
-@ stdcall NtGdiDdDDIDestroyDevice(ptr)
+@ stdcall -syscall NtGdiDdDDIDestroyDCFromMemory(ptr)
+@ stdcall -syscall NtGdiDdDDIDestroyDevice(ptr)
 @ stub NtGdiDdDDIDestroyHwContext
 @ stub NtGdiDdDDIDestroyHwQueue
 @ stub NtGdiDdDDIDestroyKeyedMutex
@@ -224,7 +224,7 @@
 @ stub NtGdiDdDDIDispMgrTargetOperation
 @ stub NtGdiDdDDIEnumAdapters
 @ stub NtGdiDdDDIEnumAdapters2
-@ stdcall NtGdiDdDDIEscape(ptr)
+@ stdcall -syscall NtGdiDdDDIEscape(ptr)
 @ stub NtGdiDdDDIEvict
 @ stub NtGdiDdDDIExtractBundleObject
 @ stub NtGdiDdDDIFlipOverlay
@@ -268,9 +268,9 @@
 @ stub NtGdiDdDDINetDispStartMiracastDisplayDevice
 @ stub NtGdiDdDDINetDispStopMiracastDisplayDevice
 @ stub NtGdiDdDDIOfferAllocations
-@ stdcall NtGdiDdDDIOpenAdapterFromDeviceName(ptr)
+@ stdcall -syscall NtGdiDdDDIOpenAdapterFromDeviceName(ptr)
 @ stdcall -syscall NtGdiDdDDIOpenAdapterFromHdc(ptr)
-@ stdcall NtGdiDdDDIOpenAdapterFromLuid(ptr)
+@ stdcall -syscall NtGdiDdDDIOpenAdapterFromLuid(ptr)
 @ stub NtGdiDdDDIOpenBundleObjectNtHandleFromName
 @ stub NtGdiDdDDIOpenKeyedMutex
 @ stub NtGdiDdDDIOpenKeyedMutex2
@@ -307,7 +307,7 @@
 @ stub NtGdiDdDDIQueryResourceInfoFromNtHandle
 @ stdcall -syscall NtGdiDdDDIQueryStatistics(ptr)
 @ stub NtGdiDdDDIQueryVidPnExclusiveOwnership
-@ stdcall NtGdiDdDDIQueryVideoMemoryInfo(ptr)
+@ stdcall -syscall NtGdiDdDDIQueryVideoMemoryInfo(ptr)
 @ stub NtGdiDdDDIReclaimAllocations
 @ stub NtGdiDdDDIReclaimAllocations2
 @ stub NtGdiDdDDIReleaseKeyedMutex
@@ -335,7 +335,7 @@
 @ stub NtGdiDdDDISetStereoEnabled
 @ stub NtGdiDdDDISetSyncRefreshCountWaitTarget
 @ stub NtGdiDdDDISetVidPnSourceHwProtection
-@ stdcall NtGdiDdDDISetVidPnSourceOwner(ptr)
+@ stdcall -syscall NtGdiDdDDISetVidPnSourceOwner(ptr)
 @ stub NtGdiDdDDISetYieldPercentage
 @ stub NtGdiDdDDIShareObjects
 @ stub NtGdiDdDDISharedPrimaryLockNotification
@@ -367,21 +367,21 @@
 @ stdcall -syscall NtGdiDeleteClientObj(long)
 @ stub NtGdiDeleteColorSpace
 @ stub NtGdiDeleteColorTransform
-@ stdcall NtGdiDeleteObjectApp(long )
+@ stdcall -syscall NtGdiDeleteObjectApp(long )
 @ stdcall -syscall NtGdiDescribePixelFormat(long long long ptr)
 @ stub NtGdiDestroyOPMProtectedOutput
 @ stub NtGdiDestroyPhysicalMonitor
 @ stub NtGdiDoBanding
-@ stdcall NtGdiDoPalette(long long long ptr long long)
+@ stdcall -syscall NtGdiDoPalette(long long long ptr long long)
 @ stub NtGdiDrawEscape
 @ stdcall -syscall NtGdiDrawStream(long long ptr)
 @ stub NtGdiDwmCreatedBitmapRemotingOutput
-@ stdcall NtGdiEllipse(long long long long long)
+@ stdcall -syscall NtGdiEllipse(long long long long long)
 @ stub NtGdiEnableEudc
-@ stdcall NtGdiEndDoc(long)
+@ stdcall -syscall NtGdiEndDoc(long)
 @ stub NtGdiEndGdiRendering
-@ stdcall NtGdiEndPage(long)
-@ stdcall NtGdiEndPath(long)
+@ stdcall -syscall NtGdiEndPage(long)
+@ stdcall -syscall NtGdiEndPath(long)
 @ stub NtGdiEngAlphaBlend
 @ stub NtGdiEngAssociateSurface
 @ stub NtGdiEngBitBlt
@@ -413,18 +413,18 @@
 @ stub NtGdiEngTransparentBlt
 @ stub NtGdiEngUnlockSurface
 @ stub NtGdiEnsureDpiDepDefaultGuiFontForPlateau
-@ stdcall NtGdiEnumFonts(long long long long wstr long ptr ptr)
+@ stdcall -syscall NtGdiEnumFonts(long long long long wstr long ptr ptr)
 @ stub NtGdiEnumObjects
 @ stdcall -syscall NtGdiEqualRgn(long long)
 @ stub NtGdiEudcLoadUnloadLink
-@ stdcall NtGdiExcludeClipRect(long long long long long)
+@ stdcall -syscall NtGdiExcludeClipRect(long long long long long)
 @ stdcall -syscall NtGdiExtCreatePen(long long long long long long long ptr long long long)
 @ stdcall -syscall NtGdiExtCreateRegion(ptr long ptr)
-@ stdcall NtGdiExtEscape(long wstr long long long ptr long ptr)
-@ stdcall NtGdiExtFloodFill(long long long long long)
+@ stdcall -syscall NtGdiExtEscape(long wstr long long long ptr long ptr)
+@ stdcall -syscall NtGdiExtFloodFill(long long long long long)
 @ stdcall -syscall NtGdiExtGetObjectW(long long ptr)
-@ stdcall NtGdiExtSelectClipRgn(long long long)
-@ stdcall NtGdiExtTextOutW(long long long long ptr ptr long ptr long)
+@ stdcall -syscall NtGdiExtSelectClipRgn(long long long)
+@ stdcall -syscall NtGdiExtTextOutW(long long long long ptr ptr long ptr long)
 @ stub NtGdiFONTOBJ_cGetAllGlyphHandles
 @ stub NtGdiFONTOBJ_cGetGlyphs
 @ stub NtGdiFONTOBJ_pQueryGlyphAttrs
@@ -433,30 +433,30 @@
 @ stub NtGdiFONTOBJ_pvTrueTypeFontFile
 @ stub NtGdiFONTOBJ_pxoGetXform
 @ stub NtGdiFONTOBJ_vGetInfo
-@ stdcall NtGdiFillPath(long)
-@ stdcall NtGdiFillRgn(long long long)
+@ stdcall -syscall NtGdiFillPath(long)
+@ stdcall -syscall NtGdiFillRgn(long long long)
 @ stdcall -syscall NtGdiFlattenPath(long)
 @ stdcall -syscall NtGdiFlush()
-@ stdcall NtGdiFontIsLinked(long)
+@ stdcall -syscall NtGdiFontIsLinked(long)
 @ stub NtGdiForceUFIMapping
-@ stdcall NtGdiFrameRgn(long long long long long)
+@ stdcall -syscall NtGdiFrameRgn(long long long long long)
 @ stub NtGdiFullscreenControl
-@ stdcall NtGdiGetAndSetDCDword(long long long ptr)
-@ stdcall NtGdiGetAppClipBox(long ptr)
+@ stdcall -syscall NtGdiGetAndSetDCDword(long long long ptr)
+@ stdcall -syscall NtGdiGetAppClipBox(long ptr)
 @ stub NtGdiGetAppliedDeviceGammaRamp
 @ stdcall -syscall NtGdiGetBitmapBits(long long ptr)
 @ stdcall -syscall NtGdiGetBitmapDimension(long ptr)
 @ stub NtGdiGetBitmapDpiScaleValue
-@ stdcall NtGdiGetBoundsRect(long ptr long)
+@ stdcall -syscall NtGdiGetBoundsRect(long ptr long)
 @ stub NtGdiGetCOPPCompatibleOPMInformation
 @ stub NtGdiGetCertificate
 @ stub NtGdiGetCertificateByHandle
 @ stub NtGdiGetCertificateSize
 @ stub NtGdiGetCertificateSizeByHandle
-@ stdcall NtGdiGetCharABCWidthsW(long long long ptr long ptr)
+@ stdcall -syscall NtGdiGetCharABCWidthsW(long long long ptr long ptr)
 @ stub NtGdiGetCharSet
-@ stdcall NtGdiGetCharWidthInfo(long ptr)
-@ stdcall NtGdiGetCharWidthW(long long long ptr long ptr)
+@ stdcall -syscall NtGdiGetCharWidthInfo(long ptr)
+@ stdcall -syscall NtGdiGetCharWidthW(long long long ptr long ptr)
 @ stub NtGdiGetCharacterPlacementW
 @ stdcall -syscall NtGdiGetColorAdjustment(long ptr)
 @ stub NtGdiGetColorSpaceforBitmap
@@ -466,10 +466,10 @@
 @ stdcall -syscall NtGdiGetDCObject(long long)
 @ stdcall -syscall NtGdiGetDCPoint(long long ptr)
 @ stub NtGdiGetDCforBitmap
-@ stdcall NtGdiGetDIBitsInternal(long long long long ptr ptr long long long)
-@ stdcall NtGdiGetDeviceCaps(long long)
+@ stdcall -syscall NtGdiGetDIBitsInternal(long long long long ptr ptr long long long)
+@ stdcall -syscall NtGdiGetDeviceCaps(long long)
 @ stub NtGdiGetDeviceCapsAll
-@ stdcall NtGdiGetDeviceGammaRamp(long ptr)
+@ stdcall -syscall NtGdiGetDeviceGammaRamp(long ptr)
 @ stub NtGdiGetDeviceWidth
 @ stub NtGdiGetDhpdev
 @ stub NtGdiGetETM
@@ -477,36 +477,36 @@
 @ stub NtGdiGetEmbedFonts
 @ stub NtGdiGetEntry
 @ stub NtGdiGetEudcTimeStampEx
-@ stdcall NtGdiGetFontData(long long long ptr long)
+@ stdcall -syscall NtGdiGetFontData(long long long ptr long)
 @ stdcall -syscall NtGdiGetFontFileData(long long ptr ptr long)
 @ stdcall -syscall NtGdiGetFontFileInfo(long long ptr long ptr)
 @ stub NtGdiGetFontResourceInfoInternalW
-@ stdcall NtGdiGetFontUnicodeRanges(long ptr)
+@ stdcall -syscall NtGdiGetFontUnicodeRanges(long ptr)
 @ stub NtGdiGetGammaRampCapability
-@ stdcall NtGdiGetGlyphIndicesW(long wstr long ptr long)
+@ stdcall -syscall NtGdiGetGlyphIndicesW(long wstr long ptr long)
 @ stub NtGdiGetGlyphIndicesWInternal
-@ stdcall NtGdiGetGlyphOutline(long long long ptr long ptr ptr long)
-@ stdcall NtGdiGetKerningPairs(long long ptr)
+@ stdcall -syscall NtGdiGetGlyphOutline(long long long ptr long ptr ptr long)
+@ stdcall -syscall NtGdiGetKerningPairs(long long ptr)
 @ stub NtGdiGetLinkedUFIs
 @ stub NtGdiGetMiterLimit
 @ stub NtGdiGetMonitorID
-@ stdcall NtGdiGetNearestColor(long long)
+@ stdcall -syscall NtGdiGetNearestColor(long long)
 @ stdcall -syscall NtGdiGetNearestPaletteIndex(long long)
 @ stub NtGdiGetNumberOfPhysicalMonitors
 @ stub NtGdiGetOPMInformation
 @ stub NtGdiGetOPMRandomNumber
 @ stub NtGdiGetObjectBitmapHandle
-@ stdcall NtGdiGetOutlineTextMetricsInternalW(long long ptr long)
+@ stdcall -syscall NtGdiGetOutlineTextMetricsInternalW(long long ptr long)
 @ stdcall -syscall NtGdiGetPath(long ptr ptr long)
 @ stub NtGdiGetPerBandInfo
 @ stub NtGdiGetPhysicalMonitorDescription
 @ stub NtGdiGetPhysicalMonitors
-@ stdcall NtGdiGetPixel(long long long)
+@ stdcall -syscall NtGdiGetPixel(long long long)
 @ stub NtGdiGetProcessSessionFonts
 @ stub NtGdiGetPublicFontTableChangeCookie
-@ stdcall NtGdiGetRandomRgn(long long long)
-@ stdcall NtGdiGetRasterizerCaps(ptr long)
-@ stdcall NtGdiGetRealizationInfo(long ptr)
+@ stdcall -syscall NtGdiGetRandomRgn(long long long)
+@ stdcall -syscall NtGdiGetRasterizerCaps(ptr long)
+@ stdcall -syscall NtGdiGetRealizationInfo(long ptr)
 @ stdcall -syscall NtGdiGetRegionData(long long ptr)
 @ stdcall -syscall NtGdiGetRgnBox(long ptr)
 @ stub NtGdiGetServerMetaFileBits
@@ -515,16 +515,16 @@
 @ stub NtGdiGetStringBitmapW
 @ stub NtGdiGetSuggestedOPMProtectedOutputArraySize
 @ stdcall -syscall NtGdiGetSystemPaletteUse(long)
-@ stdcall NtGdiGetTextCharsetInfo(long ptr long)
+@ stdcall -syscall NtGdiGetTextCharsetInfo(long ptr long)
 @ stub NtGdiGetTextExtent
-@ stdcall NtGdiGetTextExtentExW(long wstr long long ptr ptr ptr long)
-@ stdcall NtGdiGetTextFaceW(long long ptr long)
-@ stdcall NtGdiGetTextMetricsW(long ptr long)
+@ stdcall -syscall NtGdiGetTextExtentExW(long wstr long long ptr ptr ptr long)
+@ stdcall -syscall NtGdiGetTextFaceW(long long ptr long)
+@ stdcall -syscall NtGdiGetTextMetricsW(long ptr long)
 @ stdcall -syscall NtGdiGetTransform(long long ptr)
 @ stub NtGdiGetUFI
 @ stub NtGdiGetUFIPathname
 @ stub NtGdiGetWidthTable
-@ stdcall NtGdiGradientFill(long ptr long ptr long long)
+@ stdcall -syscall NtGdiGradientFill(long ptr long ptr long long)
 @ stub NtGdiHLSurfGetInformation
 @ stub NtGdiHLSurfSetInformation
 @ stub NtGdiHT_Get8BPPFormatPalette
@@ -533,47 +533,47 @@
 @ stub NtGdiIcmBrushInfo
 @ stub NtGdiInit
 @ stdcall -syscall NtGdiInitSpool()
-@ stdcall NtGdiIntersectClipRect(long long long long long)
-@ stdcall NtGdiInvertRgn(long long)
-@ stdcall NtGdiLineTo(long long long)
+@ stdcall -syscall NtGdiIntersectClipRect(long long long long long)
+@ stdcall -syscall NtGdiInvertRgn(long long)
+@ stdcall -syscall NtGdiLineTo(long long long)
 @ stub NtGdiMakeFontDir
 @ stub NtGdiMakeInfoDC
 @ stub NtGdiMakeObjectUnXferable
 @ stub NtGdiMakeObjectXferable
-@ stdcall NtGdiMaskBlt(long long long long long long long long long long long long long)
+@ stdcall -syscall NtGdiMaskBlt(long long long long long long long long long long long long long)
 @ stub NtGdiMirrorWindowOrg
-@ stdcall NtGdiModifyWorldTransform(long ptr long)
+@ stdcall -syscall NtGdiModifyWorldTransform(long ptr long)
 @ stub NtGdiMonoBitmap
-@ stdcall NtGdiMoveTo(long long long ptr)
-@ stdcall NtGdiOffsetClipRgn(long long long)
+@ stdcall -syscall NtGdiMoveTo(long long long ptr)
+@ stdcall -syscall NtGdiOffsetClipRgn(long long long)
 @ stdcall -syscall NtGdiOffsetRgn(long long long)
-@ stdcall NtGdiOpenDCW(ptr ptr ptr long long ptr ptr ptr)
+@ stdcall -syscall NtGdiOpenDCW(ptr ptr ptr long long ptr ptr ptr)
 @ stub NtGdiPATHOBJ_bEnum
 @ stub NtGdiPATHOBJ_bEnumClipLines
 @ stub NtGdiPATHOBJ_vEnumStart
 @ stub NtGdiPATHOBJ_vEnumStartClipLines
 @ stub NtGdiPATHOBJ_vGetBounds
-@ stdcall NtGdiPatBlt(long long long long long long)
+@ stdcall -syscall NtGdiPatBlt(long long long long long long)
 @ stdcall -syscall NtGdiPathToRegion(long)
-@ stdcall NtGdiPlgBlt(long ptr long long long long long long long long long)
-@ stdcall NtGdiPolyDraw(long ptr ptr long)
+@ stdcall -syscall NtGdiPlgBlt(long ptr long long long long long long long long long)
+@ stdcall -syscall NtGdiPolyDraw(long ptr ptr long)
 @ stub NtGdiPolyPatBlt
-@ stdcall NtGdiPolyPolyDraw(long ptr ptr long long)
+@ stdcall -syscall NtGdiPolyPolyDraw(long ptr ptr long long)
 @ stub NtGdiPolyTextOutW
 @ stdcall -syscall NtGdiPtInRegion(long long long)
-@ stdcall NtGdiPtVisible(long long long)
+@ stdcall -syscall NtGdiPtVisible(long long long)
 @ stub NtGdiQueryFontAssocInfo
 @ stub NtGdiQueryFonts
 @ stdcall -syscall NtGdiRectInRegion(long ptr)
-@ stdcall NtGdiRectVisible(long ptr)
-@ stdcall NtGdiRectangle(long long long long long)
+@ stdcall -syscall NtGdiRectVisible(long ptr)
+@ stdcall -syscall NtGdiRectangle(long long long long long)
 @ stdcall -syscall NtGdiRemoveFontMemResourceEx(long)
 @ stdcall -syscall NtGdiRemoveFontResourceW(wstr long long long long ptr)
 @ stub NtGdiRemoveMergeFont
-@ stdcall NtGdiResetDC(long ptr ptr ptr ptr)
-@ stdcall NtGdiResizePalette(long long)
-@ stdcall NtGdiRestoreDC(long long)
-@ stdcall NtGdiRoundRect(long long long long long long long)
+@ stdcall -syscall NtGdiResetDC(long ptr ptr ptr ptr)
+@ stdcall -syscall NtGdiResizePalette(long long)
+@ stdcall -syscall NtGdiRestoreDC(long long)
+@ stdcall -syscall NtGdiRoundRect(long long long long long long long)
 @ stub NtGdiSTROBJ_bEnum
 @ stub NtGdiSTROBJ_bEnumPositionsOnly
 @ stub NtGdiSTROBJ_bGetAdvanceWidths
@@ -582,58 +582,58 @@
 @ stdcall -syscall NtGdiSaveDC(long)
 @ stub NtGdiScaleRgn
 @ stub NtGdiScaleValues
-@ stdcall NtGdiScaleViewportExtEx(long long long long long ptr)
-@ stdcall NtGdiScaleWindowExtEx(long long long long long ptr)
-@ stdcall NtGdiSelectBitmap(long long)
-@ stdcall NtGdiSelectBrush(long long)
-@ stdcall NtGdiSelectClipPath(long long)
-@ stdcall NtGdiSelectFont(long long)
-@ stdcall NtGdiSelectPen(long long)
+@ stdcall -syscall NtGdiScaleViewportExtEx(long long long long long ptr)
+@ stdcall -syscall NtGdiScaleWindowExtEx(long long long long long ptr)
+@ stdcall -syscall NtGdiSelectBitmap(long long)
+@ stdcall -syscall NtGdiSelectBrush(long long)
+@ stdcall -syscall NtGdiSelectClipPath(long long)
+@ stdcall -syscall NtGdiSelectFont(long long)
+@ stdcall -syscall NtGdiSelectPen(long long)
 @ stub NtGdiSetBitmapAttributes
 @ stdcall -syscall NtGdiSetBitmapBits(long long ptr)
 @ stdcall -syscall NtGdiSetBitmapDimension(long long long ptr)
-@ stdcall NtGdiSetBoundsRect(long ptr long)
+@ stdcall -syscall NtGdiSetBoundsRect(long ptr long)
 @ stub NtGdiSetBrushAttributes
 @ stdcall -syscall NtGdiSetBrushOrg(long long long ptr)
 @ stdcall -syscall NtGdiSetColorAdjustment(long ptr)
 @ stub NtGdiSetColorSpace
-@ stdcall NtGdiSetDIBitsToDeviceInternal(long long long long long long long long long ptr ptr long long long long long)
-@ stdcall NtGdiSetDeviceGammaRamp(ptr ptr)
+@ stdcall -syscall NtGdiSetDIBitsToDeviceInternal(long long long long long long long long long ptr ptr long long long long long)
+@ stdcall -syscall NtGdiSetDeviceGammaRamp(ptr ptr)
 @ stub NtGdiSetFontEnumeration
 @ stub NtGdiSetFontXform
 @ stub NtGdiSetIcmMode
-@ stdcall NtGdiSetLayout(long long long)
+@ stdcall -syscall NtGdiSetLayout(long long long)
 @ stub NtGdiSetLinkedUFIs
 @ stdcall -syscall NtGdiSetMagicColors(long long long)
 @ stdcall -syscall NtGdiSetMetaRgn(long)
 @ stub NtGdiSetMiterLimit
 @ stub NtGdiSetOPMSigningKeyAndSequenceNumbers
 @ stub NtGdiSetPUMPDOBJ
-@ stdcall NtGdiSetPixel(long long long long)
+@ stdcall -syscall NtGdiSetPixel(long long long long)
 @ stdcall -syscall NtGdiSetPixelFormat(long long)
 @ stub NtGdiSetPrivateDeviceGammaRamp
 @ stdcall -syscall NtGdiSetRectRgn(long long long long long)
 @ stub NtGdiSetSizeDevice
-@ stdcall NtGdiSetSystemPaletteUse(long long)
+@ stdcall -syscall NtGdiSetSystemPaletteUse(long long)
 @ stdcall -syscall NtGdiSetTextJustification(long long long)
 @ stub NtGdiSetUMPDSandboxState
 @ stdcall -syscall NtGdiSetVirtualResolution(long long long long long)
-@ stdcall NtGdiStartDoc(long ptr ptr long)
-@ stdcall NtGdiStartPage(long)
-@ stdcall NtGdiStretchBlt(long long long long long long long long long long long long)
-@ stdcall NtGdiStretchDIBitsInternal(long long long long long long long long long ptr ptr long long long long long)
-@ stdcall NtGdiStrokeAndFillPath(long)
-@ stdcall NtGdiStrokePath(long)
+@ stdcall -syscall NtGdiStartDoc(long ptr ptr long)
+@ stdcall -syscall NtGdiStartPage(long)
+@ stdcall -syscall NtGdiStretchBlt(long long long long long long long long long long long long)
+@ stdcall -syscall NtGdiStretchDIBitsInternal(long long long long long long long long long ptr ptr long long long long long)
+@ stdcall -syscall NtGdiStrokeAndFillPath(long)
+@ stdcall -syscall NtGdiStrokePath(long)
 @ stdcall -syscall NtGdiSwapBuffers(long)
 @ stdcall -syscall NtGdiTransformPoints(long ptr ptr long long)
-@ stdcall NtGdiTransparentBlt(long long long long long long long long long long long)
+@ stdcall -syscall NtGdiTransparentBlt(long long long long long long long long long long long)
 @ stub NtGdiUMPDEngFreeUserMem
 @ stub NtGdiUnloadPrinterDriver
 @ stub NtGdiUnmapMemFont
-@ stdcall NtGdiUnrealizeObject(long)
-@ stdcall NtGdiUpdateColors(long)
+@ stdcall -syscall NtGdiUnrealizeObject(long)
+@ stdcall -syscall NtGdiUpdateColors(long)
 @ stub NtGdiUpdateTransform
-@ stdcall NtGdiWidenPath(long)
+@ stdcall -syscall NtGdiWidenPath(long)
 @ stub NtGdiXFORMOBJ_bApplyXform
 @ stub NtGdiXFORMOBJ_iGetXform
 @ stub NtGdiXLATEOBJ_cGetPalette

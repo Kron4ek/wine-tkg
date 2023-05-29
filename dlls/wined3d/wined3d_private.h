@@ -1472,7 +1472,7 @@ struct wined3d_shader_frontend
 extern const struct wined3d_shader_frontend sm1_shader_frontend DECLSPEC_HIDDEN;
 extern const struct wined3d_shader_frontend sm4_shader_frontend DECLSPEC_HIDDEN;
 
-HRESULT shader_extract_from_dxbc(struct wined3d_shader *shader,
+HRESULT wined3d_shader_extract_from_dxbc(struct wined3d_shader *shader,
         unsigned int max_shader_version, enum vkd3d_shader_source_type *source_type) DECLSPEC_HIDDEN;
 BOOL shader_get_stream_output_register_info(const struct wined3d_shader *shader,
         const struct wined3d_stream_output_element *so_element, unsigned int *register_idx,
@@ -2999,7 +2999,9 @@ struct wined3d_light_info
     float exponent;
     float cutoff;
 
-    struct list entry;
+    struct rb_entry entry;
+    struct list changed_entry;
+    bool changed;
 };
 
 /* The default light parameters */
@@ -3888,13 +3890,9 @@ struct wined3d_rasterizer_state
     struct wine_rb_entry entry;
 };
 
-#define LIGHTMAP_SIZE 43
-#define LIGHTMAP_HASHFUNC(x) ((x) % LIGHTMAP_SIZE)
-
 struct wined3d_light_state
 {
-    /* Light hashmap. Collisions are handled using linked lists. */
-    struct list light_map[LIGHTMAP_SIZE];
+    struct rb_tree lights_tree;
     const struct wined3d_light_info *lights[WINED3D_MAX_ACTIVE_LIGHTS];
 };
 
@@ -4024,6 +4022,14 @@ struct wined3d_so_desc_entry
     struct wined3d_stream_output_element elements[1];
 };
 
+struct wined3d_vr_gl_context
+{
+    HWND window;
+    HDC dc;
+    HGLRC gl_ctx;
+    const struct wined3d_gl_info *gl_info;
+};
+
 struct wined3d_device
 {
     LONG ref;
@@ -4095,6 +4101,8 @@ struct wined3d_device
     /* Context management */
     struct wined3d_context **contexts;
     UINT context_count;
+
+    struct wined3d_vr_gl_context vr_context;
 
     CRITICAL_SECTION bo_map_lock;
 };
@@ -5062,6 +5070,8 @@ struct wined3d_saved_states
     DWORD lights : 1;
     DWORD transforms : 1;
     DWORD padding : 1;
+
+    struct list changed_lights;
 };
 
 struct StageState {
@@ -5095,7 +5105,7 @@ void wined3d_stateblock_state_init(struct wined3d_stateblock_state *state,
         const struct wined3d_device *device, uint32_t flags) DECLSPEC_HIDDEN;
 void wined3d_stateblock_state_cleanup(struct wined3d_stateblock_state *state) DECLSPEC_HIDDEN;
 
-void wined3d_light_state_enable_light(struct wined3d_light_state *state, const struct wined3d_d3d_info *d3d_info,
+bool wined3d_light_state_enable_light(struct wined3d_light_state *state, const struct wined3d_d3d_info *d3d_info,
         struct wined3d_light_info *light_info, BOOL enable) DECLSPEC_HIDDEN;
 struct wined3d_light_info *wined3d_light_state_get_light(const struct wined3d_light_state *state,
         unsigned int idx) DECLSPEC_HIDDEN;
@@ -5220,6 +5230,17 @@ static inline void wined3d_cs_finish(struct wined3d_cs *cs, enum wined3d_cs_queu
 {
     cs->c.ops->finish(&cs->c, queue_id);
 }
+
+void wined3d_cs_emit_gl_texture_callback(struct wined3d_cs *cs, struct wined3d_texture *texture,
+        wined3d_gl_texture_callback callback, struct wined3d_texture *depth_texture,
+        const void *data, unsigned int size) DECLSPEC_HIDDEN;
+void wined3d_cs_emit_user_callback(struct wined3d_cs *cs,
+        wined3d_cs_callback callback, const void *data, unsigned int size) DECLSPEC_HIDDEN;
+
+GLsync wined3d_cs_synchronize(struct wined3d_cs *cs, struct wined3d_texture *texture) DECLSPEC_HIDDEN;
+
+void wined3d_destroy_gl_vr_context(struct wined3d_vr_gl_context *ctx) DECLSPEC_HIDDEN;
+
 
 static inline void wined3d_device_context_push_constants(struct wined3d_device_context *context,
         enum wined3d_push_constants p, unsigned int start_idx, unsigned int count, const void *constants)

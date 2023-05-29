@@ -213,6 +213,7 @@ SOURCES = \
 	ddk/usbioctl.h \
 	ddk/usbiodef.h \
 	ddk/wdm.h \
+	ddk/winddi.h \
 	ddk/winddiui.h \
 	ddk/winsplp.h \
 	ddk/wsk.h \
@@ -893,6 +894,7 @@ SOURCES = \
 	wine/winbase16.h \
 	wine/windef16.h \
 	wine/wine_common_ver.rc \
+	wine/wined3d-interop.idl \
 	wine/wined3d.h \
 	wine/winedxgi.idl \
 	wine/wingdi16.h \

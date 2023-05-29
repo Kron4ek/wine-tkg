@@ -27,6 +27,8 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
@@ -43,8 +45,19 @@ WINE_DEFAULT_DEBUG_CHANNEL(xim);
 #define XICProc XIMProc
 #endif
 
-BOOL ximInComposeMode=FALSE;
+struct ime_update
+{
+    struct list entry;
+    DWORD id;
+    DWORD cursor_pos;
+    WCHAR *comp_str;
+    WCHAR *result_str;
+    WCHAR buffer[];
+};
 
+static pthread_mutex_t ime_mutex = PTHREAD_MUTEX_INITIALIZER;
+static struct list ime_updates = LIST_INIT(ime_updates);
+static DWORD ime_update_count;
 static WCHAR *ime_comp_buf;
 
 static XIMStyle input_style = 0;
@@ -70,6 +83,32 @@ static const char *debugstr_xim_style( XIMStyle style )
     return wine_dbg_sprintf( "%s", buffer );
 }
 
+BOOL xim_in_compose_mode(void)
+{
+    return !!ime_comp_buf;
+}
+
+static void post_ime_update( HWND hwnd, UINT cursor_pos, WCHAR *comp_str, WCHAR *result_str )
+{
+    UINT id, comp_len, result_len;
+    struct ime_update *update;
+
+    comp_len = comp_str ? wcslen( comp_str ) + 1 : 0;
+    result_len = result_str ? wcslen( result_str ) + 1 : 0;
+
+    if (!(update = malloc( offsetof(struct ime_update, buffer[comp_len + result_len]) ))) return;
+    update->cursor_pos = cursor_pos;
+    update->comp_str = comp_str ? memcpy( update->buffer, comp_str, comp_len * sizeof(WCHAR) ) : NULL;
+    update->result_str = result_str ? memcpy( update->buffer + comp_len, result_str, result_len * sizeof(WCHAR) ) : NULL;
+
+    pthread_mutex_lock( &ime_mutex );
+    id = update->id = ++ime_update_count;
+    list_add_tail( &ime_updates, &update->entry );
+    pthread_mutex_unlock( &ime_mutex );
+
+    NtUserPostMessage( hwnd, WM_IME_NOTIFY, IMN_WINE_SET_COMP_STRING, id );
+}
+
 static void xim_update_comp_string( UINT offset, UINT old_len, const WCHAR *text, UINT new_len )
 {
     UINT len = ime_comp_buf ? wcslen( ime_comp_buf ) : 0;
@@ -88,24 +127,22 @@ static void xim_update_comp_string( UINT offset, UINT old_len, const WCHAR *text
     ptr = ime_comp_buf + offset;
     memmove( ptr + new_len, ptr + old_len, (len - offset - old_len) * sizeof(WCHAR) );
     if (text) memcpy( ptr, text, new_len * sizeof(WCHAR) );
-    len += diff;
-    ime_comp_buf[len] = 0;
-
-    x11drv_client_func( client_func_ime_set_composition_string, ime_comp_buf, len * sizeof(WCHAR) );
+    ime_comp_buf[len + diff] = 0;
 }
 
-void X11DRV_XIMLookupChars( const char *str, UINT count )
+void xim_set_result_string( HWND hwnd, const char *str, UINT count )
 {
     WCHAR *output;
     DWORD len;
 
-    TRACE("%p %u\n", str, count);
+    TRACE( "hwnd %p, string %s\n", hwnd, debugstr_an(str, count) );
 
     if (!(output = malloc( (count + 1) * sizeof(WCHAR) ))) return;
     len = ntdll_umbstowcs( str, count, output, count );
     output[len] = 0;
 
-    x11drv_client_func( client_func_ime_set_result, output, len * sizeof(WCHAR) );
+    post_ime_update( hwnd, 0, ime_comp_buf, output );
+
     free( output );
 }
 
@@ -120,12 +157,10 @@ static BOOL xic_preedit_state_notify( XIC xic, XPointer user, XPointer arg )
     switch (state)
     {
     case XIMPreeditEnable:
-        x11drv_client_call( client_ime_set_open_status, TRUE );
+        NtUserPostMessage( hwnd, WM_IME_NOTIFY, IMN_WINE_SET_OPEN_STATUS, TRUE );
         break;
     case XIMPreeditDisable:
-        x11drv_client_call( client_ime_set_open_status, FALSE );
-        break;
-    default:
+        NtUserPostMessage( hwnd, WM_IME_NOTIFY, IMN_WINE_SET_OPEN_STATUS, FALSE );
         break;
     }
 
@@ -138,8 +173,11 @@ static int xic_preedit_start( XIC xic, XPointer user, XPointer arg )
 
     TRACE( "xic %p, hwnd %p, arg %p\n", xic, hwnd, arg );
 
-    x11drv_client_call( client_ime_set_composition_status, TRUE );
-    ximInComposeMode = TRUE;
+    if ((ime_comp_buf = realloc( ime_comp_buf, sizeof(WCHAR) ))) *ime_comp_buf = 0;
+    else ERR( "Failed to allocate preedit buffer\n" );
+
+    post_ime_update( hwnd, 0, ime_comp_buf, NULL );
+
     return -1;
 }
 
@@ -149,11 +187,11 @@ static int xic_preedit_done( XIC xic, XPointer user, XPointer arg )
 
     TRACE( "xic %p, hwnd %p, arg %p\n", xic, hwnd, arg );
 
-    ximInComposeMode = FALSE;
     free( ime_comp_buf );
     ime_comp_buf = NULL;
 
-    x11drv_client_call( client_ime_set_composition_status, FALSE );
+    post_ime_update( hwnd, 0, NULL, NULL );
+
     return 0;
 }
 
@@ -191,13 +229,14 @@ static int xic_preedit_draw( XIC xic, XPointer user, XPointer arg )
 
     if (text && str != text->string.multi_byte) free( str );
 
-    x11drv_client_call( client_ime_set_cursor_pos, params->caret );
+    post_ime_update( hwnd, params->caret, ime_comp_buf, NULL );
 
     return 0;
 }
 
 static int xic_preedit_caret( XIC xic, XPointer user, XPointer arg )
 {
+    static int xim_caret_pos;
     XIMPreeditCaretCallbackStruct *params = (void *)arg;
     HWND hwnd = (HWND)user;
     int pos;
@@ -206,7 +245,7 @@ static int xic_preedit_caret( XIC xic, XPointer user, XPointer arg )
 
     if (!params) return 0;
 
-    pos = x11drv_client_call( client_ime_get_cursor_pos, 0 );
+    pos = xim_caret_pos;
     switch (params->direction)
     {
     case XIMForwardChar:
@@ -234,8 +273,9 @@ static int xic_preedit_caret( XIC xic, XPointer user, XPointer arg )
         FIXME( "Not implemented\n" );
         break;
     }
-    x11drv_client_call( client_ime_set_cursor_pos, pos );
-    params->position = pos;
+    params->position = xim_caret_pos = pos;
+
+    post_ime_update( hwnd, pos, ime_comp_buf, NULL );
 
     return 0;
 }
@@ -371,8 +411,6 @@ static void xim_open( Display *display, XPointer user, XPointer arg )
     TRACE( "display %p, data %p, arg %p\n", display, user, arg );
     if (!(data->xim = xim_create( data ))) return;
     XUnregisterIMInstantiateCallback( display, NULL, NULL, NULL, xim_open, user );
-
-    x11drv_client_call( client_ime_update_association, 0 );
 }
 
 static void xim_destroy( XIM xim, XPointer user, XPointer arg )
@@ -395,8 +433,8 @@ void xim_thread_attach( struct x11drv_thread_data *data )
     for (i = 0; list && i < count; ++i) TRACE( "  %d: %s\n", i, list[i] );
     if (list) XFreeStringList( list );
 
-    if ((data->xim = xim_create( data ))) x11drv_client_call( client_ime_update_association, 0 );
-    else XRegisterIMInstantiateCallback( display, NULL, NULL, NULL, xim_open, (XPointer)data );
+    if ((data->xim = xim_create( data ))) return;
+    XRegisterIMInstantiateCallback( display, NULL, NULL, NULL, xim_open, (XPointer)data );
 }
 
 /***********************************************************************
@@ -542,4 +580,127 @@ XIC X11DRV_get_ic( HWND hwnd )
     release_win_data( data );
 
     return ret;
+}
+
+void xim_set_focus( HWND hwnd, BOOL focus )
+{
+    struct list updates = LIST_INIT(updates);
+    struct ime_update *update, *next;
+    XIC xic;
+
+    if (!(xic = X11DRV_get_ic( hwnd ))) return;
+
+    if (focus) XSetICFocus( xic );
+    else XUnsetICFocus( xic );
+
+    pthread_mutex_lock( &ime_mutex );
+    list_move_tail( &updates, &ime_updates );
+    pthread_mutex_unlock( &ime_mutex );
+
+    LIST_FOR_EACH_ENTRY_SAFE( update, next, &updates, struct ime_update, entry ) free( update );
+}
+
+static struct ime_update *find_ime_update( UINT id )
+{
+    struct ime_update *update;
+    LIST_FOR_EACH_ENTRY( update, &ime_updates, struct ime_update, entry )
+        if (update->id == id) return update;
+    return NULL;
+}
+
+/***********************************************************************
+ *      ImeToAsciiEx (X11DRV.@)
+ *
+ * As XIM filters key events upfront, we don't use ImeProcessKey and ImeToAsciiEx is instead called
+ * back from the IME UI window procedure when WM_IME_NOTIFY / IMN_WINE_SET_COMP_STRING messages are
+ * sent to it, to retrieve composition string updates and generate WM_IME messages.
+ */
+UINT X11DRV_ImeToAsciiEx( UINT vkey, UINT lparam, const BYTE *state, COMPOSITIONSTRING *compstr, HIMC himc )
+{
+    UINT needed = sizeof(COMPOSITIONSTRING), comp_len, result_len;
+    struct ime_update *update;
+    void *dst;
+
+    TRACE( "vkey %#x, lparam %#x, state %p, compstr %p, himc %p\n", vkey, lparam, state, compstr, himc );
+
+    pthread_mutex_lock( &ime_mutex );
+
+    if (!(update = find_ime_update( lparam )))
+    {
+        pthread_mutex_unlock( &ime_mutex );
+        return 0;
+    }
+
+    if (!update->comp_str) comp_len = 0;
+    else
+    {
+        comp_len = wcslen( update->comp_str );
+        needed += comp_len * sizeof(WCHAR); /* GCS_COMPSTR */
+        needed += comp_len; /* GCS_COMPATTR */
+        needed += 2 * sizeof(DWORD); /* GCS_COMPCLAUSE */
+    }
+
+    if (!update->result_str) result_len = 0;
+    else
+    {
+        result_len = wcslen( update->result_str );
+        needed += result_len * sizeof(WCHAR); /* GCS_RESULTSTR */
+        needed += 2 * sizeof(DWORD); /* GCS_RESULTCLAUSE */
+    }
+
+    if (compstr->dwSize < needed)
+    {
+        compstr->dwSize = needed;
+        pthread_mutex_unlock( &ime_mutex );
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+
+    list_remove( &update->entry );
+    pthread_mutex_unlock( &ime_mutex );
+
+    memset( compstr, 0, sizeof(*compstr) );
+    compstr->dwSize = sizeof(*compstr);
+
+    if (update->comp_str)
+    {
+        compstr->dwCursorPos = update->cursor_pos;
+
+        compstr->dwCompStrLen = comp_len;
+        compstr->dwCompStrOffset = compstr->dwSize;
+        dst = (BYTE *)compstr + compstr->dwCompStrOffset;
+        memcpy( dst, update->comp_str, compstr->dwCompStrLen * sizeof(WCHAR) );
+        compstr->dwSize += compstr->dwCompStrLen * sizeof(WCHAR);
+
+        compstr->dwCompClauseLen = 2 * sizeof(DWORD);
+        compstr->dwCompClauseOffset = compstr->dwSize;
+        dst = (BYTE *)compstr + compstr->dwCompClauseOffset;
+        *((DWORD *)dst + 0) = 0;
+        *((DWORD *)dst + 1) = compstr->dwCompStrLen;
+        compstr->dwSize += compstr->dwCompClauseLen;
+
+        compstr->dwCompAttrLen = compstr->dwCompStrLen;
+        compstr->dwCompAttrOffset = compstr->dwSize;
+        dst = (BYTE *)compstr + compstr->dwCompAttrOffset;
+        memset( dst, ATTR_INPUT, compstr->dwCompAttrLen );
+        compstr->dwSize += compstr->dwCompAttrLen;
+    }
+
+    if (update->result_str)
+    {
+        compstr->dwResultStrLen = result_len;
+        compstr->dwResultStrOffset = compstr->dwSize;
+        dst = (BYTE *)compstr + compstr->dwResultStrOffset;
+        memcpy( dst, update->result_str, compstr->dwResultStrLen * sizeof(WCHAR) );
+        compstr->dwSize += compstr->dwResultStrLen * sizeof(WCHAR);
+
+        compstr->dwResultClauseLen = 2 * sizeof(DWORD);
+        compstr->dwResultClauseOffset = compstr->dwSize;
+        dst = (BYTE *)compstr + compstr->dwResultClauseOffset;
+        *((DWORD *)dst + 0) = 0;
+        *((DWORD *)dst + 1) = compstr->dwResultStrLen;
+        compstr->dwSize += compstr->dwResultClauseLen;
+    }
+
+    free( update );
+    return 0;
 }

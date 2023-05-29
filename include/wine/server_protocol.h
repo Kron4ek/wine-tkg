@@ -592,13 +592,15 @@ typedef union
         file_pos_t       offset;
         mem_size_t       limit;
         unsigned int     alloc_type;
-        unsigned int     prot;
+        unsigned short   prot;
+        unsigned short   machine;
     } map_view_ex;
     struct
     {
         enum apc_type    type;
         int              __pad;
         client_ptr_t     addr;
+        unsigned int     flags;
     } unmap_view;
     struct
     {
@@ -953,9 +955,10 @@ struct get_startup_info_reply
 {
     struct reply_header __header;
     data_size_t  info_size;
+    unsigned short machine;
     /* VARARG(info,startup_info,info_size); */
     /* VARARG(env,unicode_str); */
-    char __pad_12[4];
+    char __pad_14[2];
 };
 
 
@@ -1992,6 +1995,23 @@ struct map_view_request
     file_pos_t   start;
 };
 struct map_view_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct map_image_view_request
+{
+    struct request_header __header;
+    obj_handle_t mapping;
+    client_ptr_t base;
+    mem_size_t   size;
+    unsigned int entry;
+    unsigned short machine;
+    char __pad_38[2];
+};
+struct map_image_view_reply
 {
     struct reply_header __header;
 };
@@ -5797,6 +5817,7 @@ enum request
     REQ_open_mapping,
     REQ_get_mapping_info,
     REQ_map_view,
+    REQ_map_image_view,
     REQ_map_builtin_view,
     REQ_unmap_view,
     REQ_get_mapping_committed_range,
@@ -6094,6 +6115,7 @@ union generic_request
     struct open_mapping_request open_mapping_request;
     struct get_mapping_info_request get_mapping_info_request;
     struct map_view_request map_view_request;
+    struct map_image_view_request map_image_view_request;
     struct map_builtin_view_request map_builtin_view_request;
     struct unmap_view_request unmap_view_request;
     struct get_mapping_committed_range_request get_mapping_committed_range_request;
@@ -6389,6 +6411,7 @@ union generic_reply
     struct open_mapping_reply open_mapping_reply;
     struct get_mapping_info_reply get_mapping_info_reply;
     struct map_view_reply map_view_reply;
+    struct map_image_view_reply map_image_view_reply;
     struct map_builtin_view_reply map_builtin_view_reply;
     struct unmap_view_reply unmap_view_reply;
     struct get_mapping_committed_range_reply get_mapping_committed_range_reply;
@@ -6618,7 +6641,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 768
+#define SERVER_PROTOCOL_VERSION 772
 
 /* ### protocol_version end ### */
 

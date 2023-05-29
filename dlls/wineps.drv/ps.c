@@ -429,10 +429,34 @@ INT PSDRV_WriteHeader( print_ctx *ctx, LPCWSTR title )
 
     /* BBox co-ords are in default user co-ord system so urx < ury even in
        landscape mode */
-    llx = ctx->ImageableArea.left * 72.0 / ctx->logPixelsX;
-    lly = ctx->ImageableArea.bottom * 72.0 / ctx->logPixelsY;
-    urx = ctx->ImageableArea.right * 72.0 / ctx->logPixelsX;
-    ury = ctx->ImageableArea.top * 72.0 / ctx->logPixelsY;
+    if ((ctx->Devmode->dmPublic.dmFields & DM_PAPERSIZE) && page)
+    {
+        if (page->ImageableArea)
+        {
+            llx = page->ImageableArea->llx;
+            lly = page->ImageableArea->lly;
+            urx = page->ImageableArea->urx;
+            ury = page->ImageableArea->ury;
+        }
+        else
+        {
+            llx = lly = 0;
+            urx = page->PaperDimension->x;
+            ury = page->PaperDimension->y;
+        }
+    }
+    else if ((ctx->Devmode->dmPublic.dmFields & DM_PAPERLENGTH) &&
+            (ctx->Devmode->dmPublic.dmFields & DM_PAPERWIDTH))
+    {
+        /* Devmode sizes in 1/10 mm */
+        llx = lly = 0;
+        urx = ctx->Devmode->dmPublic.dmPaperWidth * 72.0 / 254.0;
+        ury = ctx->Devmode->dmPublic.dmPaperLength * 72.0 / 254.0;
+    }
+    else
+    {
+        llx = lly = urx = ury = 0;
+    }
     /* FIXME should do something better with BBox */
 
     dmOrientation = (ctx->Devmode->dmPublic.dmOrientation == DMORIENT_LANDSCAPE ? "Landscape" : "Portrait");
@@ -517,22 +541,25 @@ INT PSDRV_WriteNewPage( print_ctx *ctx )
 
     if(ctx->Devmode->dmPublic.dmOrientation == DMORIENT_LANDSCAPE) {
         if(ctx->pi->ppd->LandscapeOrientation == -90) {
-	    xtrans = ctx->ImageableArea.right;
-	    ytrans = ctx->ImageableArea.top;
-	    rotation = 90;
-	} else {
-	    xtrans = ctx->ImageableArea.left;
-	    ytrans = ctx->ImageableArea.bottom;
-	    rotation = -90;
-	}
+            xtrans = GetDeviceCaps(ctx->hdc, PHYSICALHEIGHT) -
+                GetDeviceCaps(ctx->hdc, PHYSICALOFFSETY);
+            ytrans = GetDeviceCaps(ctx->hdc, PHYSICALWIDTH) -
+                GetDeviceCaps(ctx->hdc, PHYSICALOFFSETX);
+            rotation = 90;
+        } else {
+            xtrans = GetDeviceCaps(ctx->hdc, PHYSICALOFFSETY);
+            ytrans = GetDeviceCaps(ctx->hdc, PHYSICALOFFSETX);
+            rotation = -90;
+        }
     } else {
-        xtrans = ctx->ImageableArea.left;
-	ytrans = ctx->ImageableArea.top;
-	rotation = 0;
+        xtrans = GetDeviceCaps(ctx->hdc, PHYSICALOFFSETX);
+        ytrans = GetDeviceCaps(ctx->hdc, PHYSICALHEIGHT) -
+            GetDeviceCaps(ctx->hdc, PHYSICALOFFSETY);
+        rotation = 0;
     }
 
     sprintf(buf, psnewpage, name, ctx->job.PageNo,
-	    ctx->logPixelsX, ctx->logPixelsY,
+	    GetDeviceCaps(ctx->hdc, ASPECTX), GetDeviceCaps(ctx->hdc, ASPECTY),
 	    xtrans, ytrans, rotation);
 
     if( write_spool( ctx, buf, strlen(buf) ) != strlen(buf) ) {
@@ -635,7 +662,6 @@ BOOL PSDRV_WriteSetColor(print_ctx *ctx, PSCOLOR *color)
 {
     char buf[256];
 
-    PSDRV_CopyColor(&ctx->inkColor, color);
     switch(color->type) {
     case PSCOLOR_RGB:
         push_lc_numeric("C");
@@ -982,8 +1008,8 @@ BOOL PSDRV_WriteDIBPatternDict(print_ctx *ctx, const BITMAPINFO *bmi, BYTE *bits
     PSDRV_WriteIndexColorSpaceEnd(ctx);
 
     /* Windows seems to scale patterns so that a one pixel corresponds to 1/300" */
-    w_mult = (ctx->logPixelsX + 150) / 300;
-    h_mult = (ctx->logPixelsY + 150) / 300;
+    w_mult = (GetDeviceCaps(ctx->hdc, ASPECTX) + 150) / 300;
+    h_mult = (GetDeviceCaps(ctx->hdc, ASPECTY) + 150) / 300;
     sprintf(buf, do_pattern, w * w_mult, h * h_mult, w * w_mult, h * h_mult, w * w_mult, h * h_mult);
     PSDRV_WriteSpool(ctx,  buf, strlen(buf));
     HeapFree( GetProcessHeap(), 0, buf );

@@ -49,8 +49,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(event);
 WINE_DECLARE_DEBUG_CHANNEL(xdnd);
 
-extern BOOL ximInComposeMode;
-
 #define DndNotDnd       -1    /* OffiX drag&drop */
 #define DndUnknown      0
 #define DndRawData      1
@@ -781,7 +779,6 @@ static const char * const focus_modes[] =
 static BOOL X11DRV_FocusIn( HWND hwnd, XEvent *xev )
 {
     XFocusChangeEvent *event = &xev->xfocus;
-    XIC xic;
 
     if (!hwnd) return FALSE;
 
@@ -810,7 +807,8 @@ static BOOL X11DRV_FocusIn( HWND hwnd, XEvent *xev )
         return TRUE; /* ignore wm specific NotifyUngrab / NotifyGrab events w.r.t focus */
     }
 
-    if ((xic = X11DRV_get_ic( hwnd ))) XSetICFocus( xic );
+    xim_set_focus( hwnd, TRUE );
+
     if (use_take_focus)
     {
         if (hwnd == NtUserGetForegroundWindow()) clip_fullscreen_window( hwnd, FALSE );
@@ -837,12 +835,11 @@ static void focus_out( Display *display , HWND hwnd )
     HWND hwnd_tmp;
     Window focus_win;
     int revert;
-    XIC xic;
 
-    if (ximInComposeMode) return;
+    if (xim_in_compose_mode()) return;
 
     x11drv_thread_data()->last_focus = hwnd;
-    if ((xic = X11DRV_get_ic( hwnd ))) XUnsetICFocus( xic );
+    xim_set_focus( hwnd, FALSE );
 
     if (is_virtual_desktop())
     {

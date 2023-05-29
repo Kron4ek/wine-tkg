@@ -20,7 +20,6 @@
 
 %{
 
-#include "preproc.h"
 #include "preproc.tab.h"
 
 #undef ERROR  /* defined in wingdi.h */
@@ -41,6 +40,7 @@ static void update_location(struct preproc_ctx *ctx);
 %option bison-locations
 %option extra-type="struct preproc_ctx *"
 %option never-interactive
+%option nodefault
 %option noinput
 %option nounput
 %option noyy_top_state
@@ -75,6 +75,7 @@ INT_SUFFIX      [uUlL]{0,2}
 <C_COMMENT>"*/"                     {yy_pop_state(yyscanner);}
 <C_COMMENT,CXX_COMMENT><<EOF>>      {yy_pop_state(yyscanner);}
 <C_COMMENT,CXX_COMMENT>.            {}
+<C_COMMENT>\n                       {}
 
 <ERROR>(\\{NEWLINE}|[^\n])*         {return T_STRING;}
 
@@ -176,9 +177,9 @@ INT_SUFFIX      [uUlL]{0,2}
         return T_NEWLINE;
     }
 
-<INITIAL>{WS}+                      {}
+<INITIAL,INCLUDE,LINE>{WS}+         {}
 <INITIAL>[-()\[\]{},+!*/<>&|^?:]    {return yytext[0];}
-<INITIAL>.                          {return T_TEXT;}
+<INITIAL,INCLUDE,LINE>.             {return T_TEXT;}
 
 %%
 

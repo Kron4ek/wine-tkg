@@ -50,9 +50,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(oss);
 
 #define NULL_PTR_ERR MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32, RPC_X_NULL_REF_POINTER)
 
-static const REFERENCE_TIME DefaultPeriod = 100000;
-static const REFERENCE_TIME MinimumPeriod = 50000;
-
 typedef struct _OSSDevice {
     struct list entry;
     EDataFlow flow;
@@ -78,8 +75,8 @@ static struct list g_sessions = LIST_INIT(g_sessions);
 static AudioSessionWrapper *AudioSessionWrapper_Create(ACImpl *client);
 
 static const IAudioClient3Vtbl AudioClient3_Vtbl;
-static const IAudioRenderClientVtbl AudioRenderClient_Vtbl;
-static const IAudioCaptureClientVtbl AudioCaptureClient_Vtbl;
+extern const IAudioRenderClientVtbl AudioRenderClient_Vtbl;
+extern const IAudioCaptureClientVtbl AudioCaptureClient_Vtbl;
 extern const IAudioSessionControl2Vtbl AudioSessionControl2_Vtbl;
 extern const ISimpleAudioVolumeVtbl SimpleAudioVolume_Vtbl;
 extern const IAudioClockVtbl AudioClock_Vtbl;
@@ -100,16 +97,6 @@ void DECLSPEC_HIDDEN sessions_unlock(void)
 static inline ACImpl *impl_from_IAudioClient3(IAudioClient3 *iface)
 {
     return CONTAINING_RECORD(iface, ACImpl, IAudioClient3_iface);
-}
-
-static inline ACImpl *impl_from_IAudioRenderClient(IAudioRenderClient *iface)
-{
-    return CONTAINING_RECORD(iface, ACImpl, IAudioRenderClient_iface);
-}
-
-static inline ACImpl *impl_from_IAudioCaptureClient(IAudioCaptureClient *iface)
-{
-    return CONTAINING_RECORD(iface, ACImpl, IAudioCaptureClient_iface);
 }
 
 BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, void *reserved)
@@ -591,28 +578,6 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
         return E_INVALIDARG;
     }
 
-    if(mode == AUDCLNT_SHAREMODE_SHARED){
-        period = DefaultPeriod;
-        if( duration < 3 * period)
-            duration = 3 * period;
-    }else{
-        if(!period)
-            period = DefaultPeriod; /* not minimum */
-        if(period < MinimumPeriod || period > 5000000)
-            return AUDCLNT_E_INVALID_DEVICE_PERIOD;
-        if(duration > 20000000) /* the smaller the period, the lower this limit */
-            return AUDCLNT_E_BUFFER_SIZE_ERROR;
-        if(flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK){
-            if(duration != period)
-                return AUDCLNT_E_BUFDURATION_PERIOD_NOT_EQUAL;
-            FIXME("EXCLUSIVE mode with EVENTCALLBACK\n");
-            return AUDCLNT_E_DEVICE_IN_USE;
-        }else{
-            if( duration < 8 * period)
-                duration = 8 * period; /* may grow above 2s */
-        }
-    }
-
     sessions_lock();
 
     if(This->stream){
@@ -795,18 +760,21 @@ static HRESULT WINAPI AudioClient_GetDevicePeriod(IAudioClient3 *iface,
         REFERENCE_TIME *defperiod, REFERENCE_TIME *minperiod)
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
+    struct get_device_period_params params;
 
     TRACE("(%p)->(%p, %p)\n", This, defperiod, minperiod);
 
-    if(!defperiod && !minperiod)
+    if (!defperiod && !minperiod)
         return E_POINTER;
 
-    if(defperiod)
-        *defperiod = DefaultPeriod;
-    if(minperiod)
-        *minperiod = MinimumPeriod;
+    params.device     = This->device_name;
+    params.flow       = This->dataflow;
+    params.def_period = defperiod;
+    params.min_period = minperiod;
 
-    return S_OK;
+    OSS_CALL(get_device_period, &params);
+
+    return params.result;
 }
 
 static HRESULT WINAPI AudioClient_Start(IAudioClient3 *iface)
@@ -1087,195 +1055,6 @@ static const IAudioClient3Vtbl AudioClient3_Vtbl =
     AudioClient_GetSharedModeEnginePeriod,
     AudioClient_GetCurrentSharedModeEnginePeriod,
     AudioClient_InitializeSharedAudioStream,
-};
-
-static HRESULT WINAPI AudioRenderClient_QueryInterface(
-        IAudioRenderClient *iface, REFIID riid, void **ppv)
-{
-    ACImpl *This = impl_from_IAudioRenderClient(iface);
-    TRACE("(%p)->(%s, %p)\n", iface, debugstr_guid(riid), ppv);
-
-    if(!ppv)
-        return E_POINTER;
-    *ppv = NULL;
-
-    if(IsEqualIID(riid, &IID_IUnknown) ||
-            IsEqualIID(riid, &IID_IAudioRenderClient))
-        *ppv = iface;
-    else if(IsEqualIID(riid, &IID_IMarshal))
-        return IUnknown_QueryInterface(This->marshal, riid, ppv);
-    if(*ppv){
-        IUnknown_AddRef((IUnknown*)*ppv);
-        return S_OK;
-    }
-
-    WARN("Unknown interface %s\n", debugstr_guid(riid));
-    return E_NOINTERFACE;
-}
-
-static ULONG WINAPI AudioRenderClient_AddRef(IAudioRenderClient *iface)
-{
-    ACImpl *This = impl_from_IAudioRenderClient(iface);
-    return IAudioClient3_AddRef(&This->IAudioClient3_iface);
-}
-
-static ULONG WINAPI AudioRenderClient_Release(IAudioRenderClient *iface)
-{
-    ACImpl *This = impl_from_IAudioRenderClient(iface);
-    return IAudioClient3_Release(&This->IAudioClient3_iface);
-}
-
-static HRESULT WINAPI AudioRenderClient_GetBuffer(IAudioRenderClient *iface,
-        UINT32 frames, BYTE **data)
-{
-    ACImpl *This = impl_from_IAudioRenderClient(iface);
-    struct get_render_buffer_params params;
-
-    TRACE("(%p)->(%u, %p)\n", This, frames, data);
-
-    if(!data)
-        return E_POINTER;
-
-    *data = NULL;
-
-    params.stream = This->stream;
-    params.frames = frames;
-    params.data = data;
-    OSS_CALL(get_render_buffer, &params);
-
-    return params.result;
-}
-
-static HRESULT WINAPI AudioRenderClient_ReleaseBuffer(
-        IAudioRenderClient *iface, UINT32 written_frames, DWORD flags)
-{
-    ACImpl *This = impl_from_IAudioRenderClient(iface);
-    struct release_render_buffer_params params;
-
-    TRACE("(%p)->(%u, %lx)\n", This, written_frames, flags);
-
-    params.stream = This->stream;
-    params.written_frames = written_frames;
-    params.flags = flags;
-    OSS_CALL(release_render_buffer, &params);
-
-    return params.result;
-}
-
-static const IAudioRenderClientVtbl AudioRenderClient_Vtbl = {
-    AudioRenderClient_QueryInterface,
-    AudioRenderClient_AddRef,
-    AudioRenderClient_Release,
-    AudioRenderClient_GetBuffer,
-    AudioRenderClient_ReleaseBuffer
-};
-
-static HRESULT WINAPI AudioCaptureClient_QueryInterface(
-        IAudioCaptureClient *iface, REFIID riid, void **ppv)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    TRACE("(%p)->(%s, %p)\n", iface, debugstr_guid(riid), ppv);
-
-    if(!ppv)
-        return E_POINTER;
-    *ppv = NULL;
-
-    if(IsEqualIID(riid, &IID_IUnknown) ||
-            IsEqualIID(riid, &IID_IAudioCaptureClient))
-        *ppv = iface;
-    else if(IsEqualIID(riid, &IID_IMarshal))
-        return IUnknown_QueryInterface(This->marshal, riid, ppv);
-    if(*ppv){
-        IUnknown_AddRef((IUnknown*)*ppv);
-        return S_OK;
-    }
-
-    WARN("Unknown interface %s\n", debugstr_guid(riid));
-    return E_NOINTERFACE;
-}
-
-static ULONG WINAPI AudioCaptureClient_AddRef(IAudioCaptureClient *iface)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    return IAudioClient3_AddRef(&This->IAudioClient3_iface);
-}
-
-static ULONG WINAPI AudioCaptureClient_Release(IAudioCaptureClient *iface)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    return IAudioClient3_Release(&This->IAudioClient3_iface);
-}
-
-static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
-        BYTE **data, UINT32 *frames, DWORD *flags, UINT64 *devpos,
-        UINT64 *qpcpos)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    struct get_capture_buffer_params params;
-
-    TRACE("(%p)->(%p, %p, %p, %p, %p)\n", This, data, frames, flags,
-            devpos, qpcpos);
-
-    if(!data)
-        return E_POINTER;
-
-    *data = NULL;
-
-    if(!frames || !flags)
-        return E_POINTER;
-
-    params.stream = This->stream;
-    params.data = data;
-    params.frames = frames;
-    params.flags = (UINT*)flags;
-    params.devpos = devpos;
-    params.qpcpos = qpcpos;
-    OSS_CALL(get_capture_buffer, &params);
-
-    return params.result;
-}
-
-static HRESULT WINAPI AudioCaptureClient_ReleaseBuffer(
-        IAudioCaptureClient *iface, UINT32 done)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    struct release_capture_buffer_params params;
-
-    TRACE("(%p)->(%u)\n", This, done);
-
-    params.stream = This->stream;
-    params.done = done;
-    OSS_CALL(release_capture_buffer, &params);
-
-    return params.result;
-}
-
-static HRESULT WINAPI AudioCaptureClient_GetNextPacketSize(
-        IAudioCaptureClient *iface, UINT32 *frames)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    struct get_next_packet_size_params params;
-
-    TRACE("(%p)->(%p)\n", This, frames);
-
-    if(!frames)
-        return E_POINTER;
-
-    params.stream = This->stream;
-    params.frames = frames;
-    OSS_CALL(get_next_packet_size, &params);
-
-    return params.result;
-}
-
-static const IAudioCaptureClientVtbl AudioCaptureClient_Vtbl =
-{
-    AudioCaptureClient_QueryInterface,
-    AudioCaptureClient_AddRef,
-    AudioCaptureClient_Release,
-    AudioCaptureClient_GetBuffer,
-    AudioCaptureClient_ReleaseBuffer,
-    AudioCaptureClient_GetNextPacketSize
 };
 
 static AudioSessionWrapper *AudioSessionWrapper_Create(ACImpl *client)

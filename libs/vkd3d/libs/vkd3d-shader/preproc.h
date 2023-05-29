@@ -22,7 +22,7 @@
 #define __VKD3D_SHADER_PREPROC_H
 
 #include "vkd3d_shader_private.h"
-#include "wine/rbtree.h"
+#include "rbtree.h"
 
 struct preproc_if_state
 {

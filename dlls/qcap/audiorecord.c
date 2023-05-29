@@ -29,7 +29,24 @@ struct audio_record
     IPersistPropertyBag IPersistPropertyBag_iface;
 
     struct strmbase_source source;
+    IAMBufferNegotiation IAMBufferNegotiation_iface;
     IAMStreamConfig IAMStreamConfig_iface;
+    IKsPropertySet IKsPropertySet_iface;
+
+    unsigned int id;
+    HWAVEIN device;
+    HANDLE event;
+    HANDLE thread;
+
+    /* FIXME: It would be nice to avoid duplicating this variable with strmbase.
+     * However, synchronization is tricky; we need access to be protected by a
+     * separate lock. */
+    FILTER_STATE state;
+    CONDITION_VARIABLE state_cv;
+    CRITICAL_SECTION state_cs;
+
+    AM_MEDIA_TYPE format;
+    ALLOCATOR_PROPERTIES props;
 };
 
 static struct audio_record *impl_from_strmbase_filter(struct strmbase_filter *filter)
@@ -41,8 +58,12 @@ static HRESULT audio_record_source_query_interface(struct strmbase_pin *iface, R
 {
     struct audio_record *filter = impl_from_strmbase_filter(iface->filter);
 
-    if (IsEqualGUID(iid, &IID_IAMStreamConfig))
+    if (IsEqualGUID(iid, &IID_IAMBufferNegotiation))
+        *out = &filter->IAMBufferNegotiation_iface;
+    else if (IsEqualGUID(iid, &IID_IAMStreamConfig))
         *out = &filter->IAMStreamConfig_iface;
+    else if (IsEqualGUID(iid, &IID_IKsPropertySet))
+        *out = &filter->IKsPropertySet_iface;
     else
         return E_NOINTERFACE;
 
@@ -132,9 +153,43 @@ static HRESULT audio_record_source_get_media_type(struct strmbase_pin *iface,
 static HRESULT WINAPI audio_record_source_DecideBufferSize(struct strmbase_source *iface,
         IMemAllocator *allocator, ALLOCATOR_PROPERTIES *props)
 {
+    struct audio_record *filter = impl_from_strmbase_filter(iface->pin.filter);
+    const WAVEFORMATEX *format = (void *)filter->source.pin.mt.pbFormat;
     ALLOCATOR_PROPERTIES ret_props;
+    MMRESULT ret;
+    HRESULT hr;
 
-    return IMemAllocator_SetProperties(allocator, props, &ret_props);
+    props->cBuffers = (filter->props.cBuffers == -1) ? 4 : filter->props.cBuffers;
+    /* This is the algorithm that native uses. The alignment to an even number
+     * doesn't make much sense, and may be a bug. */
+    if (filter->props.cbBuffer == -1)
+        props->cbBuffer = (format->nAvgBytesPerSec / 2) & ~1;
+    else
+        props->cbBuffer = filter->props.cbBuffer & ~1;
+    if (filter->props.cbAlign == -1 || filter->props.cbAlign == 0)
+        props->cbAlign = 1;
+    else
+        props->cbAlign = filter->props.cbAlign;
+    props->cbPrefix = (filter->props.cbPrefix == -1) ? 0 : filter->props.cbPrefix;
+
+    if (FAILED(hr = IMemAllocator_SetProperties(allocator, props, &ret_props)))
+        return hr;
+
+    if ((ret = waveInOpen(&filter->device, filter->id, format,
+            (DWORD_PTR)filter->event, 0, CALLBACK_EVENT)) != MMSYSERR_NOERROR)
+    {
+        ERR("Failed to open device %u, error %u.\n", filter->id, ret);
+        return E_FAIL;
+    }
+
+    return S_OK;
+}
+
+static void audio_record_source_disconnect(struct strmbase_source *iface)
+{
+    struct audio_record *filter = impl_from_strmbase_filter(iface->pin.filter);
+
+    waveInClose(filter->device);
 }
 
 static const struct strmbase_source_ops source_ops =
@@ -145,6 +200,7 @@ static const struct strmbase_source_ops source_ops =
     .pfnAttemptConnection = BaseOutputPinImpl_AttemptConnection,
     .pfnDecideAllocator = BaseOutputPinImpl_DecideAllocator,
     .pfnDecideBufferSize = audio_record_source_DecideBufferSize,
+    .source_disconnect = audio_record_source_disconnect,
 };
 
 static struct audio_record *impl_from_IAMStreamConfig(IAMStreamConfig *iface)
@@ -172,15 +228,52 @@ static ULONG WINAPI stream_config_Release(IAMStreamConfig *iface)
 
 static HRESULT WINAPI stream_config_SetFormat(IAMStreamConfig *iface, AM_MEDIA_TYPE *mt)
 {
-    FIXME("iface %p, mt %p, stub!\n", iface, mt);
+    struct audio_record *filter = impl_from_IAMStreamConfig(iface);
+    HRESULT hr;
+
+    TRACE("iface %p, mt %p.\n", iface, mt);
     strmbase_dump_media_type(mt);
-    return E_NOTIMPL;
+
+    if (!mt)
+        return E_POINTER;
+
+    EnterCriticalSection(&filter->filter.filter_cs);
+
+    if ((hr = CopyMediaType(&filter->format, mt)))
+    {
+        LeaveCriticalSection(&filter->filter.filter_cs);
+        return hr;
+    }
+
+    LeaveCriticalSection(&filter->filter.filter_cs);
+
+    return S_OK;
 }
 
-static HRESULT WINAPI stream_config_GetFormat(IAMStreamConfig *iface, AM_MEDIA_TYPE **mt)
+static HRESULT WINAPI stream_config_GetFormat(IAMStreamConfig *iface, AM_MEDIA_TYPE **ret_mt)
 {
-    FIXME("iface %p, mt %p, stub!\n", iface, mt);
-    return E_NOTIMPL;
+    struct audio_record *filter = impl_from_IAMStreamConfig(iface);
+    AM_MEDIA_TYPE *mt;
+    HRESULT hr;
+
+    TRACE("iface %p, mt %p.\n", iface, ret_mt);
+
+    if (!(mt = CoTaskMemAlloc(sizeof(AM_MEDIA_TYPE))))
+        return E_OUTOFMEMORY;
+
+    EnterCriticalSection(&filter->filter.filter_cs);
+
+    if ((hr = CopyMediaType(mt, &filter->format)))
+    {
+        LeaveCriticalSection(&filter->filter.filter_cs);
+        CoTaskMemFree(mt);
+        return hr;
+    }
+
+    LeaveCriticalSection(&filter->filter.filter_cs);
+
+    *ret_mt = mt;
+    return S_OK;
 }
 
 static HRESULT WINAPI stream_config_GetNumberOfCapabilities(IAMStreamConfig *iface,
@@ -244,6 +337,141 @@ static const IAMStreamConfigVtbl stream_config_vtbl =
     stream_config_GetStreamCaps,
 };
 
+static struct audio_record *impl_from_IAMBufferNegotiation(IAMBufferNegotiation *iface)
+{
+    return CONTAINING_RECORD(iface, struct audio_record, IAMBufferNegotiation_iface);
+}
+
+static HRESULT WINAPI buffer_negotiation_QueryInterface(IAMBufferNegotiation *iface, REFIID iid, void **out)
+{
+    struct audio_record *filter = impl_from_IAMBufferNegotiation(iface);
+    return IPin_QueryInterface(&filter->source.pin.IPin_iface, iid, out);
+}
+
+static ULONG WINAPI buffer_negotiation_AddRef(IAMBufferNegotiation *iface)
+{
+    struct audio_record *filter = impl_from_IAMBufferNegotiation(iface);
+    return IPin_AddRef(&filter->source.pin.IPin_iface);
+}
+
+static ULONG WINAPI buffer_negotiation_Release(IAMBufferNegotiation *iface)
+{
+    struct audio_record *filter = impl_from_IAMBufferNegotiation(iface);
+    return IPin_Release(&filter->source.pin.IPin_iface);
+}
+
+static HRESULT WINAPI buffer_negotiation_SuggestAllocatorProperties(
+        IAMBufferNegotiation *iface, const ALLOCATOR_PROPERTIES *props)
+{
+    struct audio_record *filter = impl_from_IAMBufferNegotiation(iface);
+
+    TRACE("filter %p, props %p.\n", filter, props);
+    TRACE("Requested %ld buffers, size %ld, alignment %ld, prefix %ld.\n",
+            props->cBuffers, props->cbBuffer, props->cbAlign, props->cbPrefix);
+
+    EnterCriticalSection(&filter->state_cs);
+    filter->props = *props;
+    LeaveCriticalSection(&filter->state_cs);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI buffer_negotiation_GetAllocatorProperties(
+        IAMBufferNegotiation *iface, ALLOCATOR_PROPERTIES *props)
+{
+    FIXME("iface %p, props %p, stub!\n", iface, props);
+    return E_NOTIMPL;
+}
+
+static const IAMBufferNegotiationVtbl buffer_negotiation_vtbl =
+{
+    buffer_negotiation_QueryInterface,
+    buffer_negotiation_AddRef,
+    buffer_negotiation_Release,
+    buffer_negotiation_SuggestAllocatorProperties,
+    buffer_negotiation_GetAllocatorProperties,
+};
+
+static struct audio_record *impl_from_IKsPropertySet(IKsPropertySet *iface)
+{
+    return CONTAINING_RECORD(iface, struct audio_record, IKsPropertySet_iface);
+}
+
+static HRESULT WINAPI property_set_QueryInterface(IKsPropertySet *iface, REFIID iid, void **out)
+{
+    struct audio_record *filter = impl_from_IKsPropertySet(iface);
+    return IPin_QueryInterface(&filter->source.pin.IPin_iface, iid, out);
+}
+
+static ULONG WINAPI property_set_AddRef(IKsPropertySet *iface)
+{
+    struct audio_record *filter = impl_from_IKsPropertySet(iface);
+    return IPin_AddRef(&filter->source.pin.IPin_iface);
+}
+
+static ULONG WINAPI property_set_Release(IKsPropertySet *iface)
+{
+    struct audio_record *filter = impl_from_IKsPropertySet(iface);
+    return IPin_Release(&filter->source.pin.IPin_iface);
+}
+
+static HRESULT WINAPI property_set_Set(IKsPropertySet *iface, const GUID *set, DWORD id,
+        void *instance, DWORD instance_size, void *data, DWORD size)
+{
+    FIXME("iface %p, set %s, id %lu, instance %p, instance_size %lu, data %p, size %lu, stub!\n",
+            iface, debugstr_guid(set), id, instance, instance_size, data, size);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI property_set_Get(IKsPropertySet *iface, const GUID *set, DWORD id,
+        void *instance, DWORD instance_size, void *data, DWORD size, DWORD *ret_size)
+{
+    struct audio_record *filter = impl_from_IKsPropertySet(iface);
+
+    TRACE("filter %p, set %s, id %lu, instance %p, instance_size %lu, data %p, size %lu, ret_size %p.\n",
+            filter, debugstr_guid(set), id, instance, instance_size, data, size, ret_size);
+
+    if (!IsEqualGUID(set, &AMPROPSETID_Pin))
+    {
+        FIXME("Unknown set %s, returning E_PROP_SET_UNSUPPORTED.\n", debugstr_guid(set));
+        return E_PROP_SET_UNSUPPORTED;
+    }
+
+    if (id != AMPROPERTY_PIN_CATEGORY)
+    {
+        FIXME("Unknown id %lu, returning E_PROP_ID_UNSUPPORTED.\n", id);
+        return E_PROP_ID_UNSUPPORTED;
+    }
+
+    if (instance || instance_size)
+        FIXME("Unexpected instance data %p, size %lu.\n", instance, instance_size);
+
+    *ret_size = sizeof(GUID);
+
+    if (size < sizeof(GUID))
+        return E_UNEXPECTED;
+
+    *(GUID *)data = PIN_CATEGORY_CAPTURE;
+    return S_OK;
+}
+
+static HRESULT WINAPI property_set_QuerySupported(IKsPropertySet *iface,
+        const GUID *set, DWORD id, DWORD *support)
+{
+    FIXME("iface %p, set %s, id %lu, support %p, stub!\n", iface, debugstr_guid(set), id, support);
+    return E_NOTIMPL;
+}
+
+static const IKsPropertySetVtbl property_set_vtbl =
+{
+    property_set_QueryInterface,
+    property_set_AddRef,
+    property_set_Release,
+    property_set_Set,
+    property_set_Get,
+    property_set_QuerySupported,
+};
+
 static struct audio_record *impl_from_IPersistPropertyBag(IPersistPropertyBag *iface)
 {
     return CONTAINING_RECORD(iface, struct audio_record, IPersistPropertyBag_iface);
@@ -262,6 +490,10 @@ static void audio_record_destroy(struct strmbase_filter *iface)
 {
     struct audio_record *filter = impl_from_strmbase_filter(iface);
 
+    filter->state_cs.DebugInfo->Spare[0] = 0;
+    DeleteCriticalSection(&filter->state_cs);
+    CloseHandle(filter->event);
+    FreeMediaType(&filter->format);
     strmbase_source_cleanup(&filter->source);
     strmbase_filter_cleanup(&filter->filter);
     free(filter);
@@ -280,11 +512,200 @@ static HRESULT audio_record_query_interface(struct strmbase_filter *iface, REFII
     return S_OK;
 }
 
+static DWORD WINAPI stream_thread(void *arg)
+{
+    struct audio_record *filter = arg;
+    const WAVEFORMATEX *format = (void *)filter->source.pin.mt.pbFormat;
+    bool started = false;
+    MMRESULT ret;
+
+    /* FIXME: We should probably queue several buffers instead of just one. */
+
+    EnterCriticalSection(&filter->state_cs);
+
+    for (;;)
+    {
+        IMediaSample *sample;
+        WAVEHDR header = {0};
+        HRESULT hr;
+        BYTE *data;
+
+        while (filter->state == State_Paused)
+            SleepConditionVariableCS(&filter->state_cv, &filter->state_cs, INFINITE);
+
+        if (filter->state == State_Stopped)
+            break;
+
+        if (FAILED(hr = IMemAllocator_GetBuffer(filter->source.pAllocator, &sample, NULL, NULL, 0)))
+        {
+            ERR("Failed to get sample, hr %#lx.\n", hr);
+            break;
+        }
+
+        IMediaSample_GetPointer(sample, &data);
+
+        header.lpData = (void *)data;
+        header.dwBufferLength = IMediaSample_GetSize(sample);
+        if ((ret = waveInPrepareHeader(filter->device, &header, sizeof(header))) != MMSYSERR_NOERROR)
+            ERR("Failed to prepare header, error %u.\n", ret);
+
+        if ((ret = waveInAddBuffer(filter->device, &header, sizeof(header))) != MMSYSERR_NOERROR)
+            ERR("Failed to add buffer, error %u.\n", ret);
+
+        if (!started)
+        {
+            if ((ret = waveInStart(filter->device)) != MMSYSERR_NOERROR)
+                ERR("Failed to start, error %u.\n", ret);
+            started = true;
+        }
+
+        while (!(header.dwFlags & WHDR_DONE) && filter->state == State_Running)
+        {
+            LeaveCriticalSection(&filter->state_cs);
+
+            if ((ret = WaitForSingleObject(filter->event, INFINITE)))
+                ERR("Failed to wait, error %u.\n", ret);
+
+            EnterCriticalSection(&filter->state_cs);
+        }
+
+        if (filter->state != State_Running)
+        {
+            TRACE("State is %#x; resetting.\n", filter->state);
+            if ((ret = waveInReset(filter->device)) != MMSYSERR_NOERROR)
+                ERR("Failed to reset, error %u.\n", ret);
+        }
+
+        if ((ret = waveInUnprepareHeader(filter->device, &header, sizeof(header))) != MMSYSERR_NOERROR)
+            ERR("Failed to unprepare header, error %u.\n", ret);
+
+        IMediaSample_SetActualDataLength(sample, header.dwBytesRecorded);
+
+        if (filter->state == State_Running)
+        {
+            REFERENCE_TIME start_pts, end_pts;
+            MMTIME time;
+
+            time.wType = TIME_BYTES;
+            if ((ret = waveInGetPosition(filter->device, &time, sizeof(time))) != MMSYSERR_NOERROR)
+                ERR("Failed to get position, error %u.\n", ret);
+            if (time.wType != TIME_BYTES)
+                ERR("Got unexpected type %#x.\n", time.wType);
+            end_pts = MulDiv(time.u.cb, 10000000, format->nAvgBytesPerSec);
+            start_pts = MulDiv(time.u.cb - header.dwBytesRecorded, 10000000, format->nAvgBytesPerSec);
+            IMediaSample_SetTime(sample, &start_pts, &end_pts);
+
+            TRACE("Sending buffer %p.\n", sample);
+            hr = IMemInputPin_Receive(filter->source.pMemInputPin, sample);
+            IMediaSample_Release(sample);
+            if (FAILED(hr))
+            {
+                ERR("IMemInputPin::Receive() returned %#lx.\n", hr);
+                break;
+            }
+        }
+    }
+
+    LeaveCriticalSection(&filter->state_cs);
+
+    if (started && (ret = waveInStop(filter->device)) != MMSYSERR_NOERROR)
+        ERR("Failed to stop, error %u.\n", ret);
+
+    return 0;
+}
+
+static HRESULT audio_record_init_stream(struct strmbase_filter *iface)
+{
+    struct audio_record *filter = impl_from_strmbase_filter(iface);
+    HRESULT hr;
+
+    if (!filter->source.pin.peer)
+        return S_OK;
+
+    if (FAILED(hr = IMemAllocator_Commit(filter->source.pAllocator)))
+        ERR("Failed to commit allocator, hr %#lx.\n", hr);
+
+    EnterCriticalSection(&filter->state_cs);
+    filter->state = State_Paused;
+    LeaveCriticalSection(&filter->state_cs);
+
+    filter->thread = CreateThread(NULL, 0, stream_thread, filter, 0, NULL);
+
+    return S_OK;
+}
+
+static HRESULT audio_record_start_stream(struct strmbase_filter *iface, REFERENCE_TIME time)
+{
+    struct audio_record *filter = impl_from_strmbase_filter(iface);
+
+    if (!filter->source.pin.peer)
+        return S_OK;
+
+    EnterCriticalSection(&filter->state_cs);
+    filter->state = State_Running;
+    LeaveCriticalSection(&filter->state_cs);
+    WakeConditionVariable(&filter->state_cv);
+    return S_OK;
+}
+
+static HRESULT audio_record_stop_stream(struct strmbase_filter *iface)
+{
+    struct audio_record *filter = impl_from_strmbase_filter(iface);
+
+    if (!filter->source.pin.peer)
+        return S_OK;
+
+    EnterCriticalSection(&filter->state_cs);
+    filter->state = State_Paused;
+    LeaveCriticalSection(&filter->state_cs);
+    SetEvent(filter->event);
+    return S_OK;
+}
+
+static HRESULT audio_record_cleanup_stream(struct strmbase_filter *iface)
+{
+    struct audio_record *filter = impl_from_strmbase_filter(iface);
+    HRESULT hr;
+
+    if (!filter->source.pin.peer)
+        return S_OK;
+
+    EnterCriticalSection(&filter->state_cs);
+    filter->state = State_Stopped;
+    LeaveCriticalSection(&filter->state_cs);
+    WakeConditionVariable(&filter->state_cv);
+    SetEvent(filter->event);
+
+    WaitForSingleObject(filter->thread, INFINITE);
+    CloseHandle(filter->thread);
+    filter->thread = NULL;
+
+    hr = IMemAllocator_Decommit(filter->source.pAllocator);
+    if (hr != S_OK && hr != VFW_E_NOT_COMMITTED)
+        ERR("Failed to decommit allocator, hr %#lx.\n", hr);
+
+    return S_OK;
+}
+
+static HRESULT audio_record_wait_state(struct strmbase_filter *iface, DWORD timeout)
+{
+    struct audio_record *filter = impl_from_strmbase_filter(iface);
+
+    if (filter->filter.state == State_Paused)
+        return VFW_S_CANT_CUE;
+    return S_OK;
+}
+
 static const struct strmbase_filter_ops filter_ops =
 {
     .filter_get_pin = audio_record_get_pin,
     .filter_destroy = audio_record_destroy,
     .filter_query_interface = audio_record_query_interface,
+    .filter_init_stream = audio_record_init_stream,
+    .filter_start_stream = audio_record_start_stream,
+    .filter_stop_stream = audio_record_stop_stream,
+    .filter_cleanup_stream = audio_record_cleanup_stream,
+    .filter_wait_state = audio_record_wait_state,
 };
 
 static HRESULT WINAPI PPB_QueryInterface(IPersistPropertyBag *iface, REFIID riid, LPVOID *ppv)
@@ -322,21 +743,21 @@ static HRESULT WINAPI PPB_InitNew(IPersistPropertyBag *iface)
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI PPB_Load(IPersistPropertyBag *iface, IPropertyBag *pPropBag,
-        IErrorLog *pErrorLog)
+static HRESULT WINAPI PPB_Load(IPersistPropertyBag *iface, IPropertyBag *bag, IErrorLog *error_log)
 {
-    struct audio_record *This = impl_from_IPersistPropertyBag(iface);
-    HRESULT hr;
+    struct audio_record *filter = impl_from_IPersistPropertyBag(iface);
     VARIANT var;
+    HRESULT hr;
 
-    TRACE("(%p/%p)->(%p, %p)\n", iface, This, pPropBag, pErrorLog);
+    TRACE("filter %p, bag %p, error_log %p.\n", filter, bag, error_log);
 
     V_VT(&var) = VT_I4;
-    hr = IPropertyBag_Read(pPropBag, L"WaveInID", &var, pErrorLog);
-    if (SUCCEEDED(hr))
-    {
-        FIXME("FIXME: implement opening waveIn device %ld\n", V_I4(&var));
-    }
+    if (FAILED(hr = IPropertyBag_Read(bag, L"WaveInID", &var, error_log)))
+        return hr;
+
+    EnterCriticalSection(&filter->filter.filter_cs);
+    filter->id = V_I4(&var);
+    LeaveCriticalSection(&filter->filter.filter_cs);
 
     return hr;
 }
@@ -363,15 +784,41 @@ static const IPersistPropertyBagVtbl PersistPropertyBagVtbl =
 HRESULT audio_record_create(IUnknown *outer, IUnknown **out)
 {
     struct audio_record *object;
+    HRESULT hr;
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
+
+    if (!(object->event = CreateEventW(NULL, FALSE, FALSE, NULL)))
+    {
+        free(object);
+        return E_OUTOFMEMORY;
+    }
+
+    if ((hr = fill_media_type(0, &object->format)))
+    {
+        CloseHandle(object->event);
+        free(object);
+        return hr;
+    }
+
+    object->props.cBuffers = -1;
+    object->props.cbBuffer = -1;
+    object->props.cbAlign = -1;
+    object->props.cbPrefix = -1;
 
     object->IPersistPropertyBag_iface.lpVtbl = &PersistPropertyBagVtbl;
     strmbase_filter_init(&object->filter, outer, &CLSID_AudioRecord, &filter_ops);
 
     strmbase_source_init(&object->source, &object->filter, L"Capture", &source_ops);
+    object->IAMBufferNegotiation_iface.lpVtbl = &buffer_negotiation_vtbl;
     object->IAMStreamConfig_iface.lpVtbl = &stream_config_vtbl;
+    object->IKsPropertySet_iface.lpVtbl = &property_set_vtbl;
+
+    object->state = State_Stopped;
+    InitializeConditionVariable(&object->state_cv);
+    InitializeCriticalSection(&object->state_cs);
+    object->state_cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": audio_record.state_cs");
 
     TRACE("Created audio recorder %p.\n", object);
     *out = &object->filter.IUnknown_inner;

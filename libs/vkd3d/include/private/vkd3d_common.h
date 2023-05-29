@@ -28,6 +28,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -84,7 +85,7 @@ static inline unsigned int vkd3d_popcount(unsigned int v)
 {
 #ifdef _MSC_VER
     return __popcnt(v);
-#elif defined(__MINGW32__)
+#elif defined(HAVE_BUILTIN_POPCOUNT)
     return __builtin_popcount(v);
 #else
     v -= (v >> 1) & 0x55555555;
@@ -249,6 +250,7 @@ static inline LONG InterlockedDecrement(LONG volatile *x)
 # else
 #  error "InterlockedDecrement() not implemented for this platform"
 # endif
+
 #endif  /* _WIN32 */
 
 static inline void vkd3d_parse_version(const char *version, int *major, int *minor)

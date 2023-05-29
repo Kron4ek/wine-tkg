@@ -288,10 +288,17 @@ static HRESULT WINAPI IDirectSoundBufferImpl_SetFrequency(IDirectSoundBuffer8 *i
 
 	AcquireSRWLockExclusive(&This->lock);
 
-	oldFreq = This->freq;
-	This->freq = freq;
-	if (freq != oldFreq)
-		DSOUND_RecalcFormat(This);
+	if (This->dsbd.dwFlags & DSBCAPS_CTRL3D) {
+		oldFreq = This->ds3db_freq;
+		This->ds3db_freq = freq;
+		if (freq != oldFreq)
+			DSOUND_Calc3DBuffer(This);
+	} else {
+		oldFreq = This->freq;
+		This->freq = freq;
+		if (freq != oldFreq)
+			DSOUND_RecalcFormat(This);
+	}
 
 	ReleaseSRWLockExclusive(&This->lock);
 
@@ -701,7 +708,7 @@ static HRESULT WINAPI IDirectSoundBufferImpl_GetFrequency(IDirectSoundBuffer8 *i
 		return DSERR_INVALIDPARAM;
 	}
 
-	*freq = This->freq;
+	*freq = (This->dsbd.dwFlags & DSBCAPS_CTRL3D) ? This->ds3db_freq : This->freq;
 	TRACE("-> %ld\n", *freq);
 
 	return DS_OK;
@@ -1101,15 +1108,6 @@ HRESULT secondarybuffer_create(DirectSoundDevice *device, const DSBUFFERDESC *ds
 	dsb->sec_mixpos = 0;
 	dsb->state = STATE_STOPPED;
 
-	/* calculate fragment size and write lead */
-	DSOUND_RecalcFormat(dsb);
-
-	dsb->committedbuff = malloc(dsb->maxwritelead);
-	if(!dsb->committedbuff) {
-		IDirectSoundBuffer8_Release(&dsb->IDirectSoundBuffer8_iface);
-		return DSERR_OUTOFMEMORY;
-	}
-
 	dsb->eax.reverb_mix = EAX_REVERBMIX_USEDISTANCE;
 
 	if (dsb->dsbd.dwFlags & DSBCAPS_CTRL3D) {
@@ -1130,10 +1128,22 @@ HRESULT secondarybuffer_create(DirectSoundDevice *device, const DSBUFFERDESC *ds
 		dsb->ds3db_ds3db.flMaxDistance = DS3D_DEFAULTMAXDISTANCE;
 		dsb->ds3db_ds3db.dwMode = DS3DMODE_NORMAL;
 
+		dsb->ds3db_freq = dsbd->lpwfxFormat->nSamplesPerSec;
+
 		dsb->ds3db_need_recalc = FALSE;
 		DSOUND_Calc3DBuffer(dsb);
-	} else
+	} else {
 		DSOUND_RecalcVolPan(&(dsb->volpan));
+
+		/* calculate fragment size and write lead */
+		DSOUND_RecalcFormat(dsb);
+	}
+
+	dsb->committedbuff = malloc(dsb->maxwritelead);
+	if(!dsb->committedbuff) {
+		IDirectSoundBuffer8_Release(&dsb->IDirectSoundBuffer8_iface);
+		return DSERR_OUTOFMEMORY;
+	}
 
         InitializeSRWLock(&dsb->lock);
 	if (dsb->device->eax.using_eax)

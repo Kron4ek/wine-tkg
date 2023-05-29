@@ -125,8 +125,8 @@ BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, void *reserved)
 }
 
 static const IAudioClient3Vtbl AudioClient3_Vtbl;
-static const IAudioRenderClientVtbl AudioRenderClient_Vtbl;
-static const IAudioCaptureClientVtbl AudioCaptureClient_Vtbl;
+extern const IAudioRenderClientVtbl AudioRenderClient_Vtbl;
+extern const IAudioCaptureClientVtbl AudioCaptureClient_Vtbl;
 extern const IAudioSessionControl2Vtbl AudioSessionControl2_Vtbl;
 extern const ISimpleAudioVolumeVtbl SimpleAudioVolume_Vtbl;
 extern const IChannelAudioVolumeVtbl ChannelAudioVolume_Vtbl;
@@ -139,26 +139,6 @@ static AudioSessionWrapper *AudioSessionWrapper_Create(ACImpl *client);
 static inline ACImpl *impl_from_IAudioClient3(IAudioClient3 *iface)
 {
     return CONTAINING_RECORD(iface, ACImpl, IAudioClient3_iface);
-}
-
-static inline ACImpl *impl_from_IAudioRenderClient(IAudioRenderClient *iface)
-{
-    return CONTAINING_RECORD(iface, ACImpl, IAudioRenderClient_iface);
-}
-
-static inline ACImpl *impl_from_IAudioCaptureClient(IAudioCaptureClient *iface)
-{
-    return CONTAINING_RECORD(iface, ACImpl, IAudioCaptureClient_iface);
-}
-
-static inline ACImpl *impl_from_IAudioClock(IAudioClock *iface)
-{
-    return CONTAINING_RECORD(iface, ACImpl, IAudioClock_iface);
-}
-
-static inline ACImpl *impl_from_IAudioClock2(IAudioClock2 *iface)
-{
-    return CONTAINING_RECORD(iface, ACImpl, IAudioClock2_iface);
 }
 
 static void pulse_call(enum unix_funcs code, void *params)
@@ -640,27 +620,6 @@ static void dump_fmt(const WAVEFORMATEX *fmt)
     }
 }
 
-static WAVEFORMATEX *clone_format(const WAVEFORMATEX *fmt)
-{
-    WAVEFORMATEX *ret;
-    size_t size;
-
-    if (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
-        size = sizeof(WAVEFORMATEXTENSIBLE);
-    else
-        size = sizeof(WAVEFORMATEX);
-
-    ret = CoTaskMemAlloc(size);
-    if (!ret)
-        return NULL;
-
-    memcpy(ret, fmt, size);
-
-    ret->cbSize = size - sizeof(WAVEFORMATEX);
-
-    return ret;
-}
-
 static void session_init_vols(AudioSession *session, UINT channels)
 {
     if (session->channel_count < channels) {
@@ -908,152 +867,33 @@ static HRESULT WINAPI AudioClient_IsFormatSupported(IAudioClient3 *iface,
         WAVEFORMATEX **out)
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
-    HRESULT hr = S_OK;
-    WAVEFORMATEX *closest = NULL;
-    BOOL exclusive;
+    struct is_format_supported_params params;
 
     TRACE("(%p)->(%x, %p, %p)\n", This, mode, fmt, out);
 
-    if (!fmt)
-        return E_POINTER;
+    if (fmt)
+        dump_fmt(fmt);
 
-    if (out)
+    params.device  = This->device_name;
+    params.flow    = This->dataflow;
+    params.share   = mode;
+    params.fmt_in  = fmt;
+    params.fmt_out = NULL;
+
+    if (out) {
         *out = NULL;
-
-    if (mode == AUDCLNT_SHAREMODE_EXCLUSIVE) {
-        exclusive = 1;
-        out = NULL;
-    } else if (mode == AUDCLNT_SHAREMODE_SHARED) {
-        exclusive = 0;
-        if (!out)
-            return E_POINTER;
-    } else
-        return E_INVALIDARG;
-
-    if (fmt->nChannels == 0)
-        return AUDCLNT_E_UNSUPPORTED_FORMAT;
-
-    closest = clone_format(fmt);
-    if (!closest)
-        return E_OUTOFMEMORY;
-
-    dump_fmt(fmt);
-
-    switch (fmt->wFormatTag) {
-    case WAVE_FORMAT_EXTENSIBLE: {
-        WAVEFORMATEXTENSIBLE *ext = (WAVEFORMATEXTENSIBLE*)closest;
-
-        if ((fmt->cbSize != sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
-             fmt->cbSize != sizeof(WAVEFORMATEXTENSIBLE)) ||
-            fmt->nBlockAlign != fmt->wBitsPerSample / 8 * fmt->nChannels ||
-            ext->Samples.wValidBitsPerSample > fmt->wBitsPerSample ||
-            fmt->nAvgBytesPerSec != fmt->nBlockAlign * fmt->nSamplesPerSec) {
-            hr = E_INVALIDARG;
-            break;
-        }
-
-        if (exclusive) {
-            UINT32 mask = 0, i, channels = 0;
-
-            if (!(ext->dwChannelMask & (SPEAKER_ALL | SPEAKER_RESERVED))) {
-                for (i = 1; !(i & SPEAKER_RESERVED); i <<= 1) {
-                    if (i & ext->dwChannelMask) {
-                        mask |= i;
-                        channels++;
-                    }
-                }
-
-                if (channels != fmt->nChannels || (ext->dwChannelMask & ~mask)) {
-                    hr = AUDCLNT_E_UNSUPPORTED_FORMAT;
-                    break;
-                }
-            } else {
-                hr = AUDCLNT_E_UNSUPPORTED_FORMAT;
-                break;
-            }
-        }
-
-        if (IsEqualGUID(&ext->SubFormat, &KSDATAFORMAT_SUBTYPE_IEEE_FLOAT)) {
-            if (fmt->wBitsPerSample != 32) {
-                hr = E_INVALIDARG;
-                break;
-            }
-
-            if (ext->Samples.wValidBitsPerSample != fmt->wBitsPerSample) {
-                hr = S_FALSE;
-                ext->Samples.wValidBitsPerSample = fmt->wBitsPerSample;
-            }
-        } else if (IsEqualGUID(&ext->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM)) {
-            if (!fmt->wBitsPerSample || fmt->wBitsPerSample > 32 || fmt->wBitsPerSample % 8) {
-                hr = E_INVALIDARG;
-                break;
-            }
-
-            if (ext->Samples.wValidBitsPerSample != fmt->wBitsPerSample &&
-                !(fmt->wBitsPerSample == 32 &&
-                  ext->Samples.wValidBitsPerSample == 24)) {
-                hr = S_FALSE;
-                ext->Samples.wValidBitsPerSample = fmt->wBitsPerSample;
-                break;
-            }
-        } else {
-            hr = AUDCLNT_E_UNSUPPORTED_FORMAT;
-            break;
-        }
-
-        break;
+        if (mode == AUDCLNT_SHAREMODE_SHARED)
+            params.fmt_out = CoTaskMemAlloc(sizeof(*params.fmt_out));
     }
 
-    case WAVE_FORMAT_ALAW:
-    case WAVE_FORMAT_MULAW:
-        if (fmt->wBitsPerSample != 8) {
-            hr = E_INVALIDARG;
-            break;
-        }
-        /* Fall-through */
-    case WAVE_FORMAT_IEEE_FLOAT:
-        if (fmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT && fmt->wBitsPerSample != 32) {
-            hr = E_INVALIDARG;
-            break;
-        }
-        /* Fall-through */
-    case WAVE_FORMAT_PCM:
-        if (fmt->wFormatTag == WAVE_FORMAT_PCM &&
-            (!fmt->wBitsPerSample || fmt->wBitsPerSample > 32 || fmt->wBitsPerSample % 8)) {
-            hr = E_INVALIDARG;
-            break;
-        }
+    pulse_call(is_format_supported, &params);
 
-        if (fmt->nChannels > 2) {
-            hr = AUDCLNT_E_UNSUPPORTED_FORMAT;
-            break;
-        }
-        /*
-         * fmt->cbSize, fmt->nBlockAlign and fmt->nAvgBytesPerSec seem to be
-         * ignored, invalid values are happily accepted.
-         */
-        break;
-    default:
-        hr = AUDCLNT_E_UNSUPPORTED_FORMAT;
-        break;
-    }
-
-    if (exclusive && hr != S_OK) {
-        hr = AUDCLNT_E_UNSUPPORTED_FORMAT;
-        CoTaskMemFree(closest);
-    } else if (hr != S_FALSE)
-        CoTaskMemFree(closest);
+    if (params.result == S_FALSE)
+        *out = &params.fmt_out->Format;
     else
-        *out = closest;
+        CoTaskMemFree(params.fmt_out);
 
-    /* Winepulse does not currently support exclusive mode, if you know of an
-     * application that uses it, I will correct this..
-     */
-    if (hr == S_OK && exclusive)
-        return This->dataflow == eCapture ? AUDCLNT_E_UNSUPPORTED_FORMAT : AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED;
-
-    TRACE("returning: %08lx %p\n", hr, out ? *out : NULL);
-    return hr;
+    return params.result;
 }
 
 static HRESULT WINAPI AudioClient_GetMixFormat(IAudioClient3 *iface,
@@ -1345,201 +1185,6 @@ static const IAudioClient3Vtbl AudioClient3_Vtbl =
     AudioClient_GetSharedModeEnginePeriod,
     AudioClient_GetCurrentSharedModeEnginePeriod,
     AudioClient_InitializeSharedAudioStream,
-};
-
-static HRESULT WINAPI AudioRenderClient_QueryInterface(
-        IAudioRenderClient *iface, REFIID riid, void **ppv)
-{
-    ACImpl *This = impl_from_IAudioRenderClient(iface);
-    TRACE("(%p)->(%s, %p)\n", iface, debugstr_guid(riid), ppv);
-
-    if (!ppv)
-        return E_POINTER;
-    *ppv = NULL;
-
-    if (IsEqualIID(riid, &IID_IUnknown) ||
-        IsEqualIID(riid, &IID_IAudioRenderClient))
-        *ppv = iface;
-    if (*ppv) {
-        IUnknown_AddRef((IUnknown*)*ppv);
-        return S_OK;
-    }
-
-    if (IsEqualIID(riid, &IID_IMarshal))
-        return IUnknown_QueryInterface(This->marshal, riid, ppv);
-
-    WARN("Unknown interface %s\n", debugstr_guid(riid));
-    return E_NOINTERFACE;
-}
-
-static ULONG WINAPI AudioRenderClient_AddRef(IAudioRenderClient *iface)
-{
-    ACImpl *This = impl_from_IAudioRenderClient(iface);
-    return IAudioClient3_AddRef(&This->IAudioClient3_iface);
-}
-
-static ULONG WINAPI AudioRenderClient_Release(IAudioRenderClient *iface)
-{
-    ACImpl *This = impl_from_IAudioRenderClient(iface);
-    return IAudioClient3_Release(&This->IAudioClient3_iface);
-}
-
-static HRESULT WINAPI AudioRenderClient_GetBuffer(IAudioRenderClient *iface,
-        UINT32 frames, BYTE **data)
-{
-    ACImpl *This = impl_from_IAudioRenderClient(iface);
-    struct get_render_buffer_params params;
-
-    TRACE("(%p)->(%u, %p)\n", This, frames, data);
-
-    if (!data)
-        return E_POINTER;
-    if (!This->stream)
-        return AUDCLNT_E_NOT_INITIALIZED;
-    *data = NULL;
-
-    params.stream = This->stream;
-    params.frames = frames;
-    params.data   = data;
-    pulse_call(get_render_buffer, &params);
-    return params.result;
-}
-
-static HRESULT WINAPI AudioRenderClient_ReleaseBuffer(
-        IAudioRenderClient *iface, UINT32 written_frames, DWORD flags)
-{
-    ACImpl *This = impl_from_IAudioRenderClient(iface);
-    struct release_render_buffer_params params;
-
-    TRACE("(%p)->(%u, %lx)\n", This, written_frames, flags);
-
-    if (!This->stream)
-        return AUDCLNT_E_NOT_INITIALIZED;
-
-    params.stream         = This->stream;
-    params.written_frames = written_frames;
-    params.flags          = flags;
-    pulse_call(release_render_buffer, &params);
-    return params.result;
-}
-
-static const IAudioRenderClientVtbl AudioRenderClient_Vtbl = {
-    AudioRenderClient_QueryInterface,
-    AudioRenderClient_AddRef,
-    AudioRenderClient_Release,
-    AudioRenderClient_GetBuffer,
-    AudioRenderClient_ReleaseBuffer
-};
-
-static HRESULT WINAPI AudioCaptureClient_QueryInterface(
-        IAudioCaptureClient *iface, REFIID riid, void **ppv)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    TRACE("(%p)->(%s, %p)\n", iface, debugstr_guid(riid), ppv);
-
-    if (!ppv)
-        return E_POINTER;
-    *ppv = NULL;
-
-    if (IsEqualIID(riid, &IID_IUnknown) ||
-        IsEqualIID(riid, &IID_IAudioCaptureClient))
-        *ppv = iface;
-    if (*ppv) {
-        IUnknown_AddRef((IUnknown*)*ppv);
-        return S_OK;
-    }
-
-    if (IsEqualIID(riid, &IID_IMarshal))
-        return IUnknown_QueryInterface(This->marshal, riid, ppv);
-
-    WARN("Unknown interface %s\n", debugstr_guid(riid));
-    return E_NOINTERFACE;
-}
-
-static ULONG WINAPI AudioCaptureClient_AddRef(IAudioCaptureClient *iface)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    return IAudioClient3_AddRef(&This->IAudioClient3_iface);
-}
-
-static ULONG WINAPI AudioCaptureClient_Release(IAudioCaptureClient *iface)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    return IAudioClient3_Release(&This->IAudioClient3_iface);
-}
-
-static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
-        BYTE **data, UINT32 *frames, DWORD *flags, UINT64 *devpos,
-        UINT64 *qpcpos)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    struct get_capture_buffer_params params;
-
-    TRACE("(%p)->(%p, %p, %p, %p, %p)\n", This, data, frames, flags,
-            devpos, qpcpos);
-
-    if (!data)
-       return E_POINTER;
-    *data = NULL;
-    if (!frames || !flags)
-        return E_POINTER;
-    if (!This->stream)
-        return AUDCLNT_E_NOT_INITIALIZED;
-
-    params.stream = This->stream;
-    params.data   = data;
-    params.frames = frames;
-    params.flags  = (UINT*)flags;
-    params.devpos = devpos;
-    params.qpcpos = qpcpos;
-    pulse_call(get_capture_buffer, &params);
-    return params.result;
-}
-
-static HRESULT WINAPI AudioCaptureClient_ReleaseBuffer(
-        IAudioCaptureClient *iface, UINT32 done)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    struct release_capture_buffer_params params;
-
-    TRACE("(%p)->(%u)\n", This, done);
-
-    if (!This->stream)
-        return AUDCLNT_E_NOT_INITIALIZED;
-
-    params.stream = This->stream;
-    params.done   = done;
-    pulse_call(release_capture_buffer, &params);
-    return params.result;
-}
-
-static HRESULT WINAPI AudioCaptureClient_GetNextPacketSize(
-        IAudioCaptureClient *iface, UINT32 *frames)
-{
-    ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    struct get_next_packet_size_params params;
-
-    TRACE("(%p)->(%p)\n", This, frames);
-
-    if (!frames)
-        return E_POINTER;
-    if (!This->stream)
-        return AUDCLNT_E_NOT_INITIALIZED;
-
-    params.stream = This->stream;
-    params.frames = frames;
-    pulse_call(get_next_packet_size, &params);
-    return params.result;
-}
-
-static const IAudioCaptureClientVtbl AudioCaptureClient_Vtbl =
-{
-    AudioCaptureClient_QueryInterface,
-    AudioCaptureClient_AddRef,
-    AudioCaptureClient_Release,
-    AudioCaptureClient_GetBuffer,
-    AudioCaptureClient_ReleaseBuffer,
-    AudioCaptureClient_GetNextPacketSize
 };
 
 static AudioSessionWrapper *AudioSessionWrapper_Create(ACImpl *client)

@@ -237,7 +237,8 @@ static void dump_apc_call( const char *prefix, const apc_call_t *call )
         dump_uint64( ",size=", &call->map_view_ex.size );
         dump_uint64( ",offset=", &call->map_view_ex.offset );
         dump_uint64( ",limit=", &call->map_view_ex.limit );
-        fprintf( stderr, ",alloc_type=%x,prot=%x", call->map_view_ex.alloc_type, call->map_view_ex.prot );
+        fprintf( stderr, ",alloc_type=%x,prot=%x,machine=%04x",
+                 call->map_view_ex.alloc_type, call->map_view_ex.prot, call->map_view_ex.machine );
         break;
     case APC_UNMAP_VIEW:
         dump_uint64( "APC_UNMAP_VIEW,addr=", &call->unmap_view.addr );
@@ -1448,6 +1449,7 @@ static void dump_get_startup_info_request( const struct get_startup_info_request
 static void dump_get_startup_info_reply( const struct get_startup_info_reply *req )
 {
     fprintf( stderr, " info_size=%u", req->info_size );
+    fprintf( stderr, ", machine=%04x", req->machine );
     dump_varargs_startup_info( ", info=", min(cur_size,req->info_size) );
     dump_varargs_unicode_str( ", env=", cur_size );
 }
@@ -2195,6 +2197,15 @@ static void dump_map_view_request( const struct map_view_request *req )
     dump_uint64( ", base=", &req->base );
     dump_uint64( ", size=", &req->size );
     dump_uint64( ", start=", &req->start );
+}
+
+static void dump_map_image_view_request( const struct map_image_view_request *req )
+{
+    fprintf( stderr, " mapping=%04x", req->mapping );
+    dump_uint64( ", base=", &req->base );
+    dump_uint64( ", size=", &req->size );
+    fprintf( stderr, ", entry=%08x", req->entry );
+    fprintf( stderr, ", machine=%04x", req->machine );
 }
 
 static void dump_map_builtin_view_request( const struct map_builtin_view_request *req )
@@ -4729,6 +4740,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_open_mapping_request,
     (dump_func)dump_get_mapping_info_request,
     (dump_func)dump_map_view_request,
+    (dump_func)dump_map_image_view_request,
     (dump_func)dump_map_builtin_view_request,
     (dump_func)dump_unmap_view_request,
     (dump_func)dump_get_mapping_committed_range_request,
@@ -5024,6 +5036,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     NULL,
     NULL,
     NULL,
+    NULL,
     (dump_func)dump_get_mapping_committed_range_reply,
     NULL,
     NULL,
@@ -5315,6 +5328,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "open_mapping",
     "get_mapping_info",
     "map_view",
+    "map_image_view",
     "map_builtin_view",
     "unmap_view",
     "get_mapping_committed_range",
@@ -5591,6 +5605,7 @@ static const struct
     { "HANDLE_NOT_CLOSABLE",         STATUS_HANDLE_NOT_CLOSABLE },
     { "HOST_UNREACHABLE",            STATUS_HOST_UNREACHABLE },
     { "ILLEGAL_FUNCTION",            STATUS_ILLEGAL_FUNCTION },
+    { "IMAGE_MACHINE_TYPE_MISMATCH", STATUS_IMAGE_MACHINE_TYPE_MISMATCH },
     { "IMAGE_NOT_AT_BASE",           STATUS_IMAGE_NOT_AT_BASE },
     { "INFO_LENGTH_MISMATCH",        STATUS_INFO_LENGTH_MISMATCH },
     { "INSTANCE_NOT_AVAILABLE",      STATUS_INSTANCE_NOT_AVAILABLE },

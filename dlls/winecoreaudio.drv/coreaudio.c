@@ -100,6 +100,9 @@ struct coreaudio_stream
     BYTE *local_buffer, *cap_buffer, *wrap_buffer, *resamp_buffer, *tmp_buffer;
 };
 
+static const REFERENCE_TIME def_period = 100000;
+static const REFERENCE_TIME min_period = 50000;
+
 static NTSTATUS unix_not_implemented(void *args)
 {
     return STATUS_SUCCESS;
@@ -646,12 +649,45 @@ static AudioDeviceID dev_id_from_device(const char *device)
 static NTSTATUS unix_create_stream(void *args)
 {
     struct create_stream_params *params = args;
-    struct coreaudio_stream *stream = calloc(1, sizeof(*stream));
+    struct coreaudio_stream *stream;
     AURenderCallbackStruct input;
     OSStatus sc;
     SIZE_T size;
 
-    if(!stream){
+    params->result = S_OK;
+
+    if (params->share == AUDCLNT_SHAREMODE_SHARED) {
+        params->period = def_period;
+        if (params->duration < 3 * params->period)
+            params->duration = 3 * params->period;
+    } else {
+        const WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE *)params->fmt;
+        if (fmtex->Format.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+           (fmtex->dwChannelMask == 0 || fmtex->dwChannelMask & SPEAKER_RESERVED))
+            params->result = AUDCLNT_E_UNSUPPORTED_FORMAT;
+        else {
+            if (!params->period)
+                params->period = def_period;
+            if (params->period < min_period || params->period > 5000000)
+                params->result = AUDCLNT_E_INVALID_DEVICE_PERIOD;
+            else if (params->duration > 20000000) /* The smaller the period, the lower this limit. */
+                params->result = AUDCLNT_E_BUFFER_SIZE_ERROR;
+            else if (params->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) {
+                if (params->duration != params->period)
+                    params->result = AUDCLNT_E_BUFDURATION_PERIOD_NOT_EQUAL;
+
+                FIXME("EXCLUSIVE mode with EVENTCALLBACK\n");
+
+                params->result = AUDCLNT_E_DEVICE_IN_USE;
+            } else if (params->duration < 8 * params->period)
+                params->duration = 8 * params->period; /* May grow above 2s. */
+        }
+    }
+
+    if (FAILED(params->result))
+        return STATUS_SUCCESS;
+
+    if (!(stream = calloc(1, sizeof(*stream)))) {
         params->result = E_OUTOFMEMORY;
         return STATUS_SUCCESS;
     }
@@ -1084,6 +1120,20 @@ unsupported:
         if(SUCCEEDED(params->result)) params->result = S_FALSE;
     }
     else params->result = AUDCLNT_E_UNSUPPORTED_FORMAT;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS unix_get_device_period(void *args)
+{
+    struct get_device_period_params *params = args;
+
+    if (params->def_period)
+        *params->def_period = def_period;
+    if (params->min_period)
+        *params->min_period = min_period;
+
+    params->result = S_OK;
+
     return STATUS_SUCCESS;
 }
 
@@ -1739,7 +1789,7 @@ unixlib_entry_t __wine_unix_call_funcs[] =
     unix_release_capture_buffer,
     unix_is_format_supported,
     unix_get_mix_format,
-    unix_not_implemented,
+    unix_get_device_period,
     unix_get_buffer_size,
     unix_get_latency,
     unix_get_current_padding,
@@ -1934,6 +1984,28 @@ static NTSTATUS unix_wow64_get_mix_format(void *args)
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS unix_wow64_get_device_period(void *args)
+{
+    struct
+    {
+        PTR32 device;
+        EDataFlow flow;
+        HRESULT result;
+        PTR32 def_period;
+        PTR32 min_period;
+    } *params32 = args;
+    struct get_device_period_params params =
+    {
+        .device = ULongToPtr(params32->device),
+        .flow = params32->flow,
+        .def_period = ULongToPtr(params32->def_period),
+        .min_period = ULongToPtr(params32->min_period),
+    };
+    unix_get_device_period(&params);
+    params32->result = params.result;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS unix_wow64_get_buffer_size(void *args)
 {
     struct
@@ -2099,7 +2171,7 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     unix_release_capture_buffer,
     unix_wow64_is_format_supported,
     unix_wow64_get_mix_format,
-    unix_not_implemented,
+    unix_wow64_get_device_period,
     unix_wow64_get_buffer_size,
     unix_wow64_get_latency,
     unix_wow64_get_current_padding,

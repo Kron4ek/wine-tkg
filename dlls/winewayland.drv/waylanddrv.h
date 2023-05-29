@@ -25,6 +25,7 @@
 # error You must include config.h to use this header
 #endif
 
+#include <pthread.h>
 #include <wayland-client.h>
 #include "xdg-output-unstable-v1-client-protocol.h"
 
@@ -39,19 +40,27 @@
  *          Globals
  */
 
-extern struct wl_display *process_wl_display DECLSPEC_HIDDEN;
-extern struct wayland *process_wayland DECLSPEC_HIDDEN;
+extern struct wayland process_wayland DECLSPEC_HIDDEN;
 
 /**********************************************************************
  *          Definitions for wayland types
  */
 
+enum wayland_window_message
+{
+    WM_WAYLAND_INIT_DISPLAY_DEVICES = 0x80001000
+};
+
 struct wayland
 {
+    BOOL initialized;
+    struct wl_display *wl_display;
     struct wl_event_queue *wl_event_queue;
     struct wl_registry *wl_registry;
     struct zxdg_output_manager_v1 *zxdg_output_manager_v1;
     struct wl_list output_list;
+    /* Protects the output_list and the wayland_output.current states. */
+    pthread_mutex_t output_mutex;
 };
 
 struct wayland_output_mode
@@ -62,17 +71,24 @@ struct wayland_output_mode
     int32_t refresh;
 };
 
-struct wayland_output
+struct wayland_output_state
 {
-    struct wl_list link;
-    struct wl_output *wl_output;
-    struct zxdg_output_v1 *zxdg_output_v1;
     struct rb_tree modes;
     struct wayland_output_mode *current_mode;
     char *name;
     int logical_x, logical_y;
     int logical_w, logical_h;
+};
+
+struct wayland_output
+{
+    struct wl_list link;
+    struct wl_output *wl_output;
+    struct zxdg_output_v1 *zxdg_output_v1;
     uint32_t global_id;
+    unsigned int pending_flags;
+    struct wayland_output_state pending;
+    struct wayland_output_state current;
 };
 
 /**********************************************************************
@@ -80,7 +96,7 @@ struct wayland_output
  */
 
 BOOL wayland_process_init(void) DECLSPEC_HIDDEN;
-void wayland_init_display_devices(void) DECLSPEC_HIDDEN;
+void wayland_init_display_devices(BOOL force) DECLSPEC_HIDDEN;
 
 /**********************************************************************
  *          Wayland output
@@ -94,7 +110,9 @@ void wayland_output_use_xdg_extension(struct wayland_output *output) DECLSPEC_HI
  *          USER driver functions
  */
 
+LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) DECLSPEC_HIDDEN;
 BOOL WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager,
                                   BOOL force, void *param) DECLSPEC_HIDDEN;
+LRESULT WAYLAND_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) DECLSPEC_HIDDEN;
 
 #endif /* __WINE_WAYLANDDRV_H */

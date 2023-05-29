@@ -208,6 +208,8 @@ extern INT X11DRV_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size ) DECLSPE
 extern UINT X11DRV_MapVirtualKeyEx( UINT code, UINT map_type, HKL hkl ) DECLSPEC_HIDDEN;
 extern INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
                                LPWSTR bufW, int bufW_size, UINT flags, HKL hkl ) DECLSPEC_HIDDEN;
+extern UINT X11DRV_ImeToAsciiEx( UINT vkey, UINT vsc, const BYTE *state,
+                                 COMPOSITIONSTRING *compstr, HIMC himc ) DECLSPEC_HIDDEN;
 extern SHORT X11DRV_VkKeyScanEx( WCHAR wChar, HKL hkl ) DECLSPEC_HIDDEN;
 extern void X11DRV_NotifyIMEStatus( HWND hwnd, UINT status ) DECLSPEC_HIDDEN;
 extern void X11DRV_DestroyCursorIcon( HCURSOR handle ) DECLSPEC_HIDDEN;
@@ -450,7 +452,6 @@ extern BOOL keyboard_grabbed DECLSPEC_HIDDEN;
 extern unsigned int screen_bpp DECLSPEC_HIDDEN;
 extern BOOL usexrandr DECLSPEC_HIDDEN;
 extern BOOL usexvidmode DECLSPEC_HIDDEN;
-extern BOOL ximInComposeMode DECLSPEC_HIDDEN;
 extern BOOL use_take_focus DECLSPEC_HIDDEN;
 extern BOOL use_primary_selection DECLSPEC_HIDDEN;
 extern BOOL use_system_cursors DECLSPEC_HIDDEN;
@@ -856,8 +857,10 @@ extern struct x11drv_display_device_handler desktop_handler DECLSPEC_HIDDEN;
 /* XIM support */
 extern BOOL xim_init( const WCHAR *input_style ) DECLSPEC_HIDDEN;
 extern void xim_thread_attach( struct x11drv_thread_data *data ) DECLSPEC_HIDDEN;
-extern void X11DRV_XIMLookupChars( const char *str, UINT count ) DECLSPEC_HIDDEN;
+extern BOOL xim_in_compose_mode(void) DECLSPEC_HIDDEN;
+extern void xim_set_result_string( HWND hwnd, const char *str, UINT count ) DECLSPEC_HIDDEN;
 extern XIC X11DRV_get_ic( HWND hwnd ) DECLSPEC_HIDDEN;
+extern void xim_set_focus( HWND hwnd, BOOL focus ) DECLSPEC_HIDDEN;
 
 #define XEMBED_MAPPED  (1 << 0)
 

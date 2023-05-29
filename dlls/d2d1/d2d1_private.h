@@ -183,6 +183,7 @@ struct d2d_device_context
             struct d2d_bitmap *bitmap;
             struct d2d_command_list *command_list;
         };
+        HDC hdc;
     } target;
     struct d2d_shape_resources shape_resources[D2D_SHAPE_TYPE_COUNT];
     ID3D11Buffer *vs_cb;
@@ -242,13 +243,14 @@ struct d2d_dc_render_target
     LONG refcount;
 
     IDXGISurface1 *dxgi_surface;
-    D2D1_PIXEL_FORMAT pixel_format;
     ID3D10Device1 *d3d_device;
     ID2D1RenderTarget *dxgi_target;
     IUnknown *dxgi_inner;
 
     RECT dst_rect;
     HDC hdc;
+
+    D2D1_RENDER_TARGET_PROPERTIES desc;
 };
 
 HRESULT d2d_dc_render_target_init(struct d2d_dc_render_target *render_target, ID2D1Factory1 *factory,
@@ -264,6 +266,8 @@ struct d2d_hwnd_render_target
     IDXGISwapChain *swapchain;
     UINT sync_interval;
     HWND hwnd;
+
+    D2D1_RENDER_TARGET_PROPERTIES desc;
 };
 
 HRESULT d2d_hwnd_render_target_init(struct d2d_hwnd_render_target *render_target, ID2D1Factory1 *factory,

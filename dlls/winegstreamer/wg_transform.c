@@ -134,7 +134,10 @@ static gboolean transform_sink_query_cb(GstPad *pad, GstObject *parent, GstQuery
                     "padding-left", G_TYPE_UINT, align.padding_left,
                     "padding-right", G_TYPE_UINT, align.padding_right,
                     NULL)))
+            {
                 gst_query_add_allocation_meta(query, GST_VIDEO_META_API_TYPE, params);
+                gst_structure_free(params);
+            }
 
             if (!(config = gst_buffer_pool_get_config(pool)))
                 GST_ERROR("Failed to get pool %p config.", pool);
@@ -390,6 +393,9 @@ NTSTATUS wg_transform_create(void *args)
 
         case WG_MAJOR_TYPE_VIDEO:
         case WG_MAJOR_TYPE_VIDEO_WMV:
+            if (!(element = create_element("videoconvert", "base"))
+                    || !append_element(transform->container, element, &first, &last))
+                goto out;
             if (!(transform->video_flip = create_element("videoflip", "base"))
                     || !append_element(transform->container, transform->video_flip, &first, &last))
                 goto out;
