@@ -216,6 +216,7 @@ struct scheduled_chore {
 /* keep in sync with msvcp90/msvcp90.h */
 typedef struct cs_queue
 {
+    Context *ctx;
     struct cs_queue *next;
 #if _MSVCR_VER >= 110
     LONG free;
@@ -225,7 +226,6 @@ typedef struct cs_queue
 
 typedef struct
 {
-    ULONG_PTR unk_thread_id;
     cs_queue unk_active;
 #if _MSVCR_VER >= 110
     void *unknown[2];
@@ -297,6 +297,7 @@ typedef struct thread_wait_entry
 
 typedef struct thread_wait
 {
+    Context *ctx;
     void *signaled;
     LONG pending_waits;
     thread_wait_entry entries[1];
@@ -312,6 +313,7 @@ typedef struct
 #if _MSVCR_VER >= 110
 #define CV_WAKE (void*)1
 typedef struct cv_queue {
+    Context *ctx;
     struct cv_queue *next;
     LONG expired;
 } cv_queue;
@@ -414,8 +416,6 @@ static CRITICAL_SECTION_DEBUG default_scheduler_cs_debug =
 static CRITICAL_SECTION default_scheduler_cs = { &default_scheduler_cs_debug, -1, 0, 0, 0, 0 };
 static SchedulerPolicy default_scheduler_policy;
 static ThreadScheduler *default_scheduler;
-
-static HANDLE keyed_event;
 
 static void create_default_scheduler(void);
 
@@ -2417,15 +2417,7 @@ critical_section* __thiscall critical_section_ctor(critical_section *this)
 {
     TRACE("(%p)\n", this);
 
-    if(!keyed_event) {
-        HANDLE event;
-
-        NtCreateKeyedEvent(&event, GENERIC_READ|GENERIC_WRITE, NULL, 0);
-        if(InterlockedCompareExchangePointer(&keyed_event, event, NULL) != NULL)
-            NtClose(event);
-    }
-
-    this->unk_thread_id = 0;
+    this->unk_active.ctx = NULL;
     this->head = this->tail = NULL;
     return this;
 }
@@ -2458,7 +2450,7 @@ static inline void spin_wait_for_next_cs(cs_queue *q)
 
 static inline void cs_set_head(critical_section *cs, cs_queue *q)
 {
-    cs->unk_thread_id = GetCurrentThreadId();
+    cs->unk_active.ctx = get_current_context();
     cs->unk_active.next = q->next;
     cs->head = &cs->unk_active;
 }
@@ -2467,17 +2459,18 @@ static inline void cs_lock(critical_section *cs, cs_queue *q)
 {
     cs_queue *last;
 
-    if(cs->unk_thread_id == GetCurrentThreadId()) {
+    if(cs->unk_active.ctx == get_current_context()) {
         improper_lock e;
         improper_lock_ctor_str(&e, "Already locked");
         _CxxThrowException(&e, &improper_lock_exception_type);
     }
 
     memset(q, 0, sizeof(*q));
+    q->ctx = get_current_context();
     last = InterlockedExchangePointer(&cs->tail, q);
     if(last) {
         last->next = q;
-        NtWaitForKeyedEvent(keyed_event, q, 0, NULL);
+        call_Context_Block(q->ctx);
     }
 
     cs_set_head(cs, q);
@@ -2507,7 +2500,7 @@ bool __thiscall critical_section_try_lock(critical_section *this)
 
     TRACE("(%p)\n", this);
 
-    if(this->unk_thread_id == GetCurrentThreadId())
+    if(this->unk_active.ctx == get_current_context())
         return FALSE;
 
     memset(&q, 0, sizeof(q));
@@ -2529,7 +2522,7 @@ void __thiscall critical_section_unlock(critical_section *this)
 {
     TRACE("(%p)\n", this);
 
-    this->unk_thread_id = 0;
+    this->unk_active.ctx = NULL;
     this->head = NULL;
     if(InterlockedCompareExchangePointer(&this->tail, NULL, &this->unk_active)
             == &this->unk_active) return;
@@ -2554,7 +2547,7 @@ void __thiscall critical_section_unlock(critical_section *this)
     }
 #endif
 
-    NtReleaseKeyedEvent(keyed_event, this->unk_active.next, 0, NULL);
+    call_Context_Unblock(this->unk_active.next->ctx);
 }
 
 /* ?native_handle@critical_section@Concurrency@@QAEAAV12@XZ */
@@ -2566,6 +2559,58 @@ critical_section* __thiscall critical_section_native_handle(critical_section *th
     return this;
 }
 
+static void set_timeout(FILETIME *ft, unsigned int timeout)
+{
+    LARGE_INTEGER to;
+
+    GetSystemTimeAsFileTime(ft);
+    to.QuadPart = ((LONGLONG)ft->dwHighDateTime << 32) +
+        ft->dwLowDateTime + (LONGLONG)timeout * TICKSPERMSEC;
+    ft->dwHighDateTime = to.QuadPart >> 32;
+    ft->dwLowDateTime = to.QuadPart;
+}
+
+struct timeout_unlock
+{
+    Context *ctx;
+    BOOL timed_out;
+};
+
+static void WINAPI timeout_unlock(TP_CALLBACK_INSTANCE *instance, void *ctx, TP_TIMER *timer)
+{
+    struct timeout_unlock *tu = ctx;
+    tu->timed_out = TRUE;
+    call_Context_Unblock(tu->ctx);
+}
+
+/* returns TRUE if wait has timed out */
+static BOOL block_context_for(Context *ctx, unsigned int timeout)
+{
+    struct timeout_unlock tu = { ctx };
+    TP_TIMER *tp_timer;
+    FILETIME ft;
+
+    if(timeout == COOPERATIVE_TIMEOUT_INFINITE) {
+        call_Context_Block(ctx);
+        return FALSE;
+    }
+
+    tp_timer = CreateThreadpoolTimer(timeout_unlock, &tu, NULL);
+    if(!tp_timer) {
+        FIXME("throw exception?\n");
+        return TRUE;
+    }
+    set_timeout(&ft, timeout);
+    SetThreadpoolTimer(tp_timer, &ft, 0, 0);
+
+    call_Context_Block(ctx);
+
+    SetThreadpoolTimer(tp_timer, NULL, 0, 0);
+    WaitForThreadpoolTimerCallbacks(tp_timer, TRUE);
+    CloseThreadpoolTimer(tp_timer);
+    return tu.timed_out;
+}
+
 #if _MSVCR_VER >= 110
 /* ?try_lock_for@critical_section@Concurrency@@QAE_NI@Z */
 /* ?try_lock_for@critical_section@Concurrency@@QEAA_NI@Z */
@@ -2573,11 +2618,12 @@ DEFINE_THISCALL_WRAPPER(critical_section_try_lock_for, 8)
 bool __thiscall critical_section_try_lock_for(
         critical_section *this, unsigned int timeout)
 {
+    Context *ctx = get_current_context();
     cs_queue *q, *last;
 
     TRACE("(%p %d)\n", this, timeout);
 
-    if(this->unk_thread_id == GetCurrentThreadId()) {
+    if(this->unk_active.ctx == ctx) {
         improper_lock e;
         improper_lock_ctor_str(&e, "Already locked");
         _CxxThrowException(&e, &improper_lock_exception_type);
@@ -2585,24 +2631,18 @@ bool __thiscall critical_section_try_lock_for(
 
     if(!(q = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*q))))
         return critical_section_try_lock(this);
+    q->ctx = ctx;
 
     last = InterlockedExchangePointer(&this->tail, q);
     if(last) {
-        LARGE_INTEGER to;
-        NTSTATUS status;
-        FILETIME ft;
-
         last->next = q;
-        GetSystemTimeAsFileTime(&ft);
-        to.QuadPart = ((LONGLONG)ft.dwHighDateTime << 32) +
-            ft.dwLowDateTime + (LONGLONG)timeout * TICKSPERMSEC;
-        status = NtWaitForKeyedEvent(keyed_event, q, 0, &to);
-        if(status == STATUS_TIMEOUT) {
+
+        if(block_context_for(q->ctx, timeout))
+        {
             if(!InterlockedExchange(&q->free, TRUE))
                 return FALSE;
-            /* A thread has signaled the event and is block waiting. */
-            /* We need to catch the event to wake the thread.        */
-            NtWaitForKeyedEvent(keyed_event, q, 0, NULL);
+            /* Context was unblocked because of timeout and unlock operation */
+            call_Context_Block(ctx);
         }
     }
 
@@ -2775,13 +2815,6 @@ unsigned int __cdecl _GetConcurrency(void)
     return val;
 }
 
-static inline PLARGE_INTEGER evt_timeout(PLARGE_INTEGER pTime, unsigned int timeout)
-{
-    if(timeout == COOPERATIVE_TIMEOUT_INFINITE) return NULL;
-    pTime->QuadPart = (ULONGLONG)timeout * -TICKSPERMSEC;
-    return pTime;
-}
-
 static void evt_add_queue(thread_wait_entry **head, thread_wait_entry *entry)
 {
     entry->next = *head;
@@ -2821,8 +2854,6 @@ static inline int evt_transition(void **state, void *from, void *to)
 static size_t evt_wait(thread_wait *wait, event **events, int count, bool wait_all, unsigned int timeout)
 {
     int i;
-    NTSTATUS status;
-    LARGE_INTEGER ntto;
 
     wait->signaled = EVT_RUNNING;
     wait->pending_waits = wait_all ? count : 1;
@@ -2848,10 +2879,9 @@ static size_t evt_wait(thread_wait *wait, event **events, int count, bool wait_a
     if(!evt_transition(&wait->signaled, EVT_RUNNING, EVT_WAITING))
         return evt_end_wait(wait, events, count);
 
-    status = NtWaitForKeyedEvent(keyed_event, wait, 0, evt_timeout(&ntto, timeout));
-
-    if(status && !evt_transition(&wait->signaled, EVT_WAITING, EVT_RUNNING))
-        NtWaitForKeyedEvent(keyed_event, wait, 0, NULL);
+    if(block_context_for(wait->ctx, timeout) &&
+            !evt_transition(&wait->signaled, EVT_WAITING, EVT_RUNNING))
+        call_Context_Block(wait->ctx);
 
     return evt_end_wait(wait, events, count);
 }
@@ -2927,7 +2957,7 @@ void __thiscall event_set(event *this)
     for(entry=wakeup; entry; entry=next) {
         next = entry->next;
         entry->next = entry->prev = NULL;
-        NtReleaseKeyedEvent(keyed_event, entry->wait, 0, NULL);
+        call_Context_Unblock(entry->wait->ctx);
     }
 }
 
@@ -2946,6 +2976,7 @@ size_t __thiscall event_wait(event *this, unsigned int timeout)
     critical_section_unlock(&this->cs);
 
     if(!timeout) return signaled ? 0 : COOPERATIVE_WAIT_TIMEOUT;
+    wait.ctx = get_current_context();
     return signaled ? 0 : evt_wait(&wait, &this, 1, FALSE, timeout);
 }
 
@@ -2962,6 +2993,7 @@ int __cdecl event_wait_for_multiple(event **events, size_t count, bool wait_all,
         return 0;
 
     wait = operator_new(FIELD_OFFSET(thread_wait, entries[count]));
+    wait->ctx = get_current_context();
     ret = evt_wait(wait, events, count, wait_all, timeout);
     operator_delete(wait);
 
@@ -3004,20 +3036,19 @@ void __thiscall _Condition_variable_dtor(_Condition_variable *this)
 DEFINE_THISCALL_WRAPPER(_Condition_variable_wait, 8)
 void __thiscall _Condition_variable_wait(_Condition_variable *this, critical_section *cs)
 {
-    cv_queue q, *next;
+    cv_queue q;
 
     TRACE("(%p, %p)\n", this, cs);
 
+    q.ctx = get_current_context();
+    q.expired = FALSE;
     critical_section_lock(&this->lock);
     q.next = this->queue;
-    q.expired = FALSE;
-    next = q.next;
     this->queue = &q;
     critical_section_unlock(&this->lock);
 
     critical_section_unlock(cs);
-    while (q.next != CV_WAKE)
-        RtlWaitOnAddress(&q.next, &next, sizeof(next), NULL);
+    call_Context_Block(q.ctx);
     critical_section_lock(cs);
 }
 
@@ -3027,35 +3058,26 @@ DEFINE_THISCALL_WRAPPER(_Condition_variable_wait_for, 12)
 bool __thiscall _Condition_variable_wait_for(_Condition_variable *this,
         critical_section *cs, unsigned int timeout)
 {
-    LARGE_INTEGER to;
-    NTSTATUS status;
-    FILETIME ft;
-    cv_queue *q, *next;
+    cv_queue *q;
 
     TRACE("(%p %p %d)\n", this, cs, timeout);
 
     q = operator_new(sizeof(cv_queue));
+    q->ctx = get_current_context();
+    q->expired = FALSE;
     critical_section_lock(&this->lock);
     q->next = this->queue;
-    q->expired = FALSE;
-    next = q->next;
     this->queue = q;
     critical_section_unlock(&this->lock);
 
     critical_section_unlock(cs);
 
-    GetSystemTimeAsFileTime(&ft);
-    to.QuadPart = ((LONGLONG)ft.dwHighDateTime << 32) +
-        ft.dwLowDateTime + (LONGLONG)timeout * TICKSPERMSEC;
-    while (q->next != CV_WAKE) {
-        status = RtlWaitOnAddress(&q->next, &next, sizeof(next), &to);
-        if(status == STATUS_TIMEOUT) {
-            if(!InterlockedExchange(&q->expired, TRUE)) {
-                critical_section_lock(cs);
-                return FALSE;
-            }
-            break;
+    if(block_context_for(q->ctx, timeout)) {
+        if(!InterlockedExchange(&q->expired, TRUE)) {
+            critical_section_lock(cs);
+            return FALSE;
         }
+        call_Context_Block(q->ctx);
     }
 
     operator_delete(q);
@@ -3087,7 +3109,7 @@ void __thiscall _Condition_variable_notify_one(_Condition_variable *this)
 
         node->next = CV_WAKE;
         if(!InterlockedExchange(&node->expired, TRUE)) {
-            RtlWakeAddressSingle(&node->next);
+            call_Context_Unblock(node->ctx);
             return;
         } else {
             operator_delete(node);
@@ -3117,7 +3139,7 @@ void __thiscall _Condition_variable_notify_all(_Condition_variable *this)
 
         ptr->next = CV_WAKE;
         if(!InterlockedExchange(&ptr->expired, TRUE))
-            RtlWakeAddressSingle(&ptr->next);
+            call_Context_Unblock(ptr->ctx);
         else
             operator_delete(ptr);
         ptr = next;
@@ -3302,7 +3324,7 @@ void __thiscall reader_writer_lock_unlock(reader_writer_lock *this)
         count = InterlockedDecrement(&this->count);
         if (count != WRITER_WAITING)
             return;
-        NtReleaseKeyedEvent(keyed_event, this->writer_head, 0, NULL);
+        call_Context_Unblock(this->writer_head->ctx);
         return;
     }
 
@@ -3423,11 +3445,8 @@ bool __thiscall _ReentrantBlockingLock__TryAcquire(_ReentrantBlockingLock *this)
 /* ?wait@Concurrency@@YAXI@Z */
 void __cdecl Concurrency_wait(unsigned int time)
 {
-    static int once;
-
-    if (!once++) FIXME("(%d) stub!\n", time);
-
-    Sleep(time);
+    TRACE("(%d)\n", time);
+    block_context_for(get_current_context(), time);
 }
 
 #if _MSVCR_VER>=110
@@ -3660,9 +3679,6 @@ void msvcrt_free_concurrency(void)
         ThreadScheduler_dtor(default_scheduler);
         operator_delete(default_scheduler);
     }
-
-    if(keyed_event)
-      NtClose(keyed_event);
 }
 
 void msvcrt_free_scheduler_thread(void)

@@ -113,7 +113,6 @@
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
-#define NONAMELESSUNION
 #include "windef.h"
 #include "winnt.h"
 #include "winioctl.h"
@@ -2267,13 +2266,13 @@ static NTSTATUS server_get_file_info( HANDLE handle, IO_STATUS_BLOCK *io, void *
         req->handle = wine_server_obj_handle( handle );
         req->info_class = info_class;
         wine_server_set_reply( req, buffer, length );
-        io->u.Status = wine_server_call( req );
+        io->Status = wine_server_call( req );
         io->Information = wine_server_reply_size( reply );
     }
     SERVER_END_REQ;
-    if (io->u.Status == STATUS_NOT_IMPLEMENTED)
+    if (io->Status == STATUS_NOT_IMPLEMENTED)
         FIXME( "Unsupported info class %x\n", info_class );
-    return io->u.Status;
+    return io->Status;
 
 }
 
@@ -2902,7 +2901,7 @@ NTSTATUS WINAPI NtQueryDirectoryFile( HANDLE handle, HANDLE event, PIO_APC_ROUTI
             if (!last_info) status = STATUS_NO_MORE_FILES;
             else if (status == STATUS_MORE_ENTRIES) status = STATUS_SUCCESS;
 
-            io->u.Status = status;
+            io->Status = status;
         }
         if (cwd == -1 || fchdir( cwd ) == -1) chdir( "/" );
     }
@@ -5084,7 +5083,7 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
         status = server_open_file_object( handle, access, &new_attr, sharing, options );
         if (status == STATUS_SUCCESS) io->Information = FILE_OPENED;
         free( nt_name.Buffer );
-        return io->u.Status = status;
+        return io->Status = status;
     }
 
     if (status == STATUS_NO_SUCH_FILE && disposition != FILE_OPEN && disposition != FILE_OVERWRITE)
@@ -5145,7 +5144,7 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
     }
 
     free( nt_name.Buffer );
-    return io->u.Status = status;
+    return io->Status = status;
 }
 
 
@@ -5242,7 +5241,7 @@ NTSTATUS WINAPI NtCreateNamedPipeFile( HANDLE *handle, ULONG access, OBJECT_ATTR
     SERVER_END_REQ;
 
     free( objattr );
-    return io->u.Status = status;
+    return io->Status = status;
 }
 
 
@@ -5431,15 +5430,15 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
     io->Information = 0;
 
     if (class <= 0 || class >= FileMaximumInformation)
-        return io->u.Status = STATUS_INVALID_INFO_CLASS;
+        return io->Status = STATUS_INVALID_INFO_CLASS;
     if (!info_sizes[class])
         return server_get_file_info( handle, io, ptr, len, class );
     if (len < info_sizes[class])
-        return io->u.Status = STATUS_INFO_LENGTH_MISMATCH;
+        return io->Status = STATUS_INFO_LENGTH_MISMATCH;
 
     if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, &options )))
     {
-        if (status != STATUS_BAD_DEVICE_TYPE) return io->u.Status = status;
+        if (status != STATUS_BAD_DEVICE_TYPE) return io->Status = status;
         return server_get_file_info( handle, io, ptr, len, class );
     }
 
@@ -5644,7 +5643,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
     }
     if (needs_close) close( fd );
     if (status == STATUS_SUCCESS && !io->Information) io->Information = info_sizes[class];
-    return io->u.Status = status;
+    return io->Status = status;
 }
 
 
@@ -5669,7 +5668,7 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             char *unix_name;
 
             if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
-                return io->u.Status = status;
+                return io->Status = status;
 
             if (server_get_unix_name( handle, &unix_name )) unix_name = NULL;
 
@@ -5695,7 +5694,7 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             const FILE_POSITION_INFORMATION *info = ptr;
 
             if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
-                return io->u.Status = status;
+                return io->Status = status;
 
             if (lseek( fd, info->CurrentByteOffset.QuadPart, SEEK_SET ) == (off_t)-1)
                 status = errno_to_status( errno );
@@ -5818,7 +5817,7 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             const FILE_VALID_DATA_LENGTH_INFORMATION *info = ptr;
 
             if ((status = server_get_unix_fd( handle, FILE_WRITE_DATA, &fd, &needs_close, NULL, NULL )))
-                return io->u.Status = status;
+                return io->Status = status;
 
             if (fstat( fd, &st ) == -1) status = errno_to_status( errno );
             else if (info->ValidDataLength.QuadPart <= 0 || (off_t)info->ValidDataLength.QuadPart > st.st_size)
@@ -5957,7 +5956,7 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         break;
     }
     io->Information = 0;
-    return io->u.Status = status;
+    return io->Status = status;
 }
 
 
@@ -6181,7 +6180,7 @@ static unsigned int server_read_file( HANDLE handle, HANDLE event, PIO_APC_ROUTI
         options     = reply->options;
         if (wait_handle && status != STATUS_PENDING)
         {
-            io->u.Status    = status;
+            io->Status      = status;
             io->Information = wine_server_reply_size( reply );
         }
     }
@@ -6219,7 +6218,7 @@ static unsigned int server_write_file( HANDLE handle, HANDLE event, PIO_APC_ROUT
         options     = reply->options;
         if (wait_handle && status != STATUS_PENDING)
         {
-            io->u.Status    = status;
+            io->Status      = status;
             io->Information = reply->size;
         }
     }
@@ -6260,7 +6259,7 @@ static NTSTATUS server_ioctl_file( HANDLE handle, HANDLE event,
         options     = reply->options;
         if (wait_handle && status != STATUS_PENDING)
         {
-            io->u.Status    = status;
+            io->Status      = status;
             io->Information = wine_server_reply_size( reply );
         }
     }
@@ -6490,7 +6489,7 @@ static struct async_file_read_job *async_file_read_running, *async_file_read_fre
 
 static void async_file_complete_io( struct async_file_read_job *job, NTSTATUS status, ULONG total )
 {
-    job->io->u.Status = status;
+    job->io->Status = status;
     job->io->Information = total;
 
     if (job->event) NtSetEvent( job->event, NULL );
@@ -6884,7 +6883,7 @@ err:
     if (needs_close) close( unix_handle );
     if (status == STATUS_SUCCESS || (status == STATUS_END_OF_FILE && (!async_read || type == FD_TYPE_FILE)))
     {
-        io->u.Status = status;
+        io->Status = status;
         io->Information = total;
         TRACE("= SUCCESS (%u)\n", total);
         if (event) NtSetEvent( event, NULL );
@@ -6965,7 +6964,7 @@ NTSTATUS WINAPI NtReadFileScatter( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
     send_completion = cvalue != 0;
 
     if (needs_close) close( unix_handle );
-    io->u.Status = status;
+    io->Status = status;
     io->Information = total;
     TRACE("= 0x%08x (%u)\n", status, total);
     if (event) NtSetEvent( event, NULL );
@@ -7194,7 +7193,7 @@ err:
 
     if (status == STATUS_SUCCESS)
     {
-        io->u.Status = status;
+        io->Status = status;
         io->Information = total;
         TRACE("= SUCCESS (%u)\n", total);
         if (event) NtSetEvent( event, NULL );
@@ -7283,7 +7282,7 @@ NTSTATUS WINAPI NtWriteFileGather( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
     if (needs_close) close( unix_handle );
     if (status == STATUS_SUCCESS)
     {
-        io->u.Status = status;
+        io->Status = status;
         io->Information = total;
         TRACE("= SUCCESS (%u)\n", total);
         if (event) NtSetEvent( event, NULL );
@@ -7347,7 +7346,7 @@ NTSTATUS WINAPI NtDeviceIoControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUT
         return server_ioctl_file( handle, event, apc, apc_context, io, code,
                                   in_buffer, in_size, out_buffer, out_size );
 
-    if (status != STATUS_PENDING && !NT_ERROR(status)) io->u.Status = status;
+    if (status != STATUS_PENDING && !NT_ERROR(status)) io->Status = status;
     return status;
 }
 
@@ -7490,7 +7489,7 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
                                   in_buffer, in_size, out_buffer, out_size );
     }
 
-    if (status != STATUS_PENDING) io->u.Status = status;
+    if (status != STATUS_PENDING) io->Status = status;
     return status;
 }
 
@@ -7514,7 +7513,7 @@ NTSTATUS WINAPI NtFlushBuffersFile( HANDLE handle, IO_STATUS_BLOCK *io )
     if (!ret && (type == FD_TYPE_FILE || type == FD_TYPE_DIR || type == FD_TYPE_CHAR))
     {
         if (fsync(fd)) ret = errno_to_status( errno );
-        io->u.Status    = ret;
+        io->Status      = ret;
         io->Information = 0;
     }
     else if (!ret && type == FD_TYPE_SERIAL)
@@ -7537,7 +7536,7 @@ NTSTATUS WINAPI NtFlushBuffersFile( HANDLE handle, IO_STATUS_BLOCK *io )
             wait_handle = wine_server_ptr_handle( reply->event );
             if (wait_handle && ret != STATUS_PENDING)
             {
-                io->u.Status    = ret;
+                io->Status      = ret;
                 io->Information = 0;
             }
         }
@@ -7563,7 +7562,7 @@ NTSTATUS WINAPI NtCancelIoFile( HANDLE handle, IO_STATUS_BLOCK *io_status )
     TRACE( "%p %p\n", handle, io_status );
 
     if (ac_odyssey && !cancel_async_file_read( handle, NULL ))
-        return (io_status->u.Status = STATUS_SUCCESS);
+        return (io_status->Status = STATUS_SUCCESS);
 
     SERVER_START_REQ( cancel_async )
     {
@@ -7571,7 +7570,7 @@ NTSTATUS WINAPI NtCancelIoFile( HANDLE handle, IO_STATUS_BLOCK *io_status )
         req->only_thread = TRUE;
         if (!(status = wine_server_call( req )))
         {
-            io_status->u.Status = status;
+            io_status->Status = status;
             io_status->Information = 0;
         }
     }
@@ -7591,7 +7590,7 @@ NTSTATUS WINAPI NtCancelIoFileEx( HANDLE handle, IO_STATUS_BLOCK *io, IO_STATUS_
     TRACE( "%p %p %p\n", handle, io, io_status );
 
     if (ac_odyssey && !cancel_async_file_read( handle, io ))
-        return (io_status->u.Status = STATUS_SUCCESS);
+        return (io_status->Status = STATUS_SUCCESS);
 
     SERVER_START_REQ( cancel_async )
     {
@@ -7599,7 +7598,7 @@ NTSTATUS WINAPI NtCancelIoFileEx( HANDLE handle, IO_STATUS_BLOCK *io, IO_STATUS_
         req->iosb   = wine_server_client_ptr( io );
         if (!(status = wine_server_call( req )))
         {
-            io_status->u.Status = status;
+            io_status->Status = status;
             io_status->Information = 0;
         }
     }
@@ -7626,7 +7625,7 @@ NTSTATUS WINAPI NtCancelSynchronousIoFile( HANDLE handle, IO_STATUS_BLOCK *io, I
     }
     SERVER_END_REQ;
 
-    io_status->u.Status = status;
+    io_status->Status = status;
     io_status->Information = 0;
     return status;
 }
@@ -8074,7 +8073,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
             status = wine_server_call( req );
             if (status != STATUS_PENDING)
             {
-                io->u.Status = status;
+                io->Status = status;
                 io->Information = wine_server_reply_size( reply );
             }
             wait_handle = wine_server_ptr_handle( reply->wait );
@@ -8084,7 +8083,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
         if (wait_handle) status = wait_async( wait_handle, FALSE );
         return status;
     }
-    else if (status) return io->u.Status = status;
+    else if (status) return io->Status = status;
 
     io->Information = 0;
 
@@ -8278,7 +8277,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
         break;
     }
     if (needs_close) close( fd );
-    return io->u.Status = status;
+    return io->Status = status;
 }
 
 

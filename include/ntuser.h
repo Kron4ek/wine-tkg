@@ -286,6 +286,9 @@ struct unpack_dde_message_params
 #define SPY_RESULT_OK      0x0001
 #define SPY_RESULT_DEFWND  0x0002
 
+/* CreateDesktop wine specific flag */
+#define DF_WINE_CREATE_DESKTOP   0x80000000
+
 /* NtUserMessageCall codes */
 enum
 {
@@ -480,6 +483,7 @@ enum wine_internal_message
     WM_WINE_KEYBOARD_LL_HOOK,
     WM_WINE_MOUSE_LL_HOOK,
     WM_WINE_CLIPCURSOR,
+    WM_WINE_SETCURSOR,
     WM_WINE_UPDATEWINDOWSTATE,
     WM_WINE_FIRST_DRIVER_MSG = 0x80001000,  /* range of messages reserved for the USER driver */
     WM_WINE_LAST_DRIVER_MSG = 0x80001fff
@@ -840,6 +844,9 @@ BOOL    WINAPI NtUserPerMonitorDPIPhysicalToLogicalPoint( HWND hwnd, POINT *pt )
 BOOL    WINAPI NtUserPostMessage( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam );
 BOOL    WINAPI NtUserPostThreadMessage( DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam );
 BOOL    WINAPI NtUserPrintWindow( HWND hwnd, HDC hdc, UINT flags );
+LONG    WINAPI NtUserQueryDisplayConfig( UINT32 flags, UINT32 *paths_count, DISPLAYCONFIG_PATH_INFO *paths,
+                                         UINT32 *modes_count, DISPLAYCONFIG_MODE_INFO *modes,
+                                         DISPLAYCONFIG_TOPOLOGY_ID *topology_id);
 UINT_PTR WINAPI NtUserQueryInputContext( HIMC handle, UINT attr );
 HWND    WINAPI NtUserRealChildWindowFromPoint( HWND parent, LONG x, LONG y );
 BOOL    WINAPI NtUserRedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags );
@@ -1526,5 +1533,8 @@ static inline BOOL NtUserShowOwnedPopups( HWND hwnd, BOOL show )
 {
     return NtUserCallHwndParam( hwnd, show, NtUserCallHwndParam_ShowOwnedPopups );
 }
+
+/* Wine extensions */
+BOOL WINAPI __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput );
 
 #endif /* _NTUSER_ */

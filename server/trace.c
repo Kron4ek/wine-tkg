@@ -192,7 +192,8 @@ static void dump_apc_call( const char *prefix, const apc_call_t *call )
     case APC_VIRTUAL_ALLOC_EX:
         dump_uint64( "APC_VIRTUAL_ALLOC_EX,addr=", &call->virtual_alloc_ex.addr );
         dump_uint64( ",size=", &call->virtual_alloc_ex.size );
-        dump_uint64( ",limit=", &call->virtual_alloc_ex.limit );
+        dump_uint64( ",limit_low=", &call->virtual_alloc_ex.limit_low );
+        dump_uint64( ",limit_high=", &call->virtual_alloc_ex.limit_high );
         dump_uint64( ",align=", &call->virtual_alloc_ex.align );
         fprintf( stderr, ",op_type=%x,prot=%x,attributes=%x",
                  call->virtual_alloc_ex.op_type, call->virtual_alloc_ex.prot,
@@ -236,7 +237,8 @@ static void dump_apc_call( const char *prefix, const apc_call_t *call )
         dump_uint64( ",addr=", &call->map_view_ex.addr );
         dump_uint64( ",size=", &call->map_view_ex.size );
         dump_uint64( ",offset=", &call->map_view_ex.offset );
-        dump_uint64( ",limit=", &call->map_view_ex.limit );
+        dump_uint64( ",limit_low=", &call->map_view_ex.limit_low );
+        dump_uint64( ",limit_high=", &call->map_view_ex.limit_high );
         fprintf( stderr, ",alloc_type=%x,prot=%x,machine=%04x",
                  call->map_view_ex.alloc_type, call->map_view_ex.prot, call->map_view_ex.machine );
         break;
@@ -537,6 +539,19 @@ static void dump_varargs_ushorts( const char *prefix, data_size_t size )
         if (--len) fputc( ',', stderr );
     }
     fputc( '}', stderr );
+    remove_data( size );
+}
+
+static void dump_varargs_apc_call( const char *prefix, data_size_t size )
+{
+    const apc_call_t *call = cur_data;
+
+    if (size >= sizeof(*call))
+    {
+        dump_apc_call( prefix, call );
+        size = sizeof(*call);
+    }
+    else fprintf( stderr, "%s{}", prefix );
     remove_data( size );
 }
 
@@ -1659,7 +1674,7 @@ static void dump_resume_thread_reply( const struct resume_thread_reply *req )
 static void dump_queue_apc_request( const struct queue_apc_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
-    dump_apc_call( ", call=", &req->call );
+    dump_varargs_apc_call( ", call=", cur_size );
 }
 
 static void dump_queue_apc_reply( const struct queue_apc_reply *req )
@@ -1759,9 +1774,9 @@ static void dump_select_request( const struct select_request *req )
 
 static void dump_select_reply( const struct select_reply *req )
 {
-    dump_apc_call( " call=", &req->call );
-    fprintf( stderr, ", apc_handle=%04x", req->apc_handle );
+    fprintf( stderr, " apc_handle=%04x", req->apc_handle );
     fprintf( stderr, ", signaled=%d", req->signaled );
+    dump_varargs_apc_call( ", call=", cur_size );
     dump_varargs_contexts( ", contexts=", cur_size );
 }
 
@@ -4432,7 +4447,6 @@ static void dump_set_cursor_request( const struct set_cursor_request *req )
     fprintf( stderr, ", x=%d", req->x );
     fprintf( stderr, ", y=%d", req->y );
     dump_rectangle( ", clip=", &req->clip );
-    fprintf( stderr, ", clip_msg=%08x", req->clip_msg );
 }
 
 static void dump_set_cursor_reply( const struct set_cursor_reply *req )

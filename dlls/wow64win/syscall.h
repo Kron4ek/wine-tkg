@@ -131,6 +131,7 @@
     SYSCALL_ENTRY( NtGdiGetTransform ) \
     SYSCALL_ENTRY( NtGdiGradientFill ) \
     SYSCALL_ENTRY( NtGdiHfontCreate ) \
+    SYSCALL_ENTRY( NtGdiIcmBrushInfo ) \
     SYSCALL_ENTRY( NtGdiInitSpool ) \
     SYSCALL_ENTRY( NtGdiIntersectClipRect ) \
     SYSCALL_ENTRY( NtGdiInvertRgn ) \
@@ -235,16 +236,20 @@
     SYSCALL_ENTRY( NtUserDisplayConfigGetDeviceInfo ) \
     SYSCALL_ENTRY( NtUserDragDetect ) \
     SYSCALL_ENTRY( NtUserDragObject ) \
+    SYSCALL_ENTRY( NtUserDrawCaptionTemp ) \
     SYSCALL_ENTRY( NtUserDrawIconEx ) \
+    SYSCALL_ENTRY( NtUserDrawMenuBarTemp ) \
     SYSCALL_ENTRY( NtUserEmptyClipboard ) \
     SYSCALL_ENTRY( NtUserEnableMenuItem ) \
     SYSCALL_ENTRY( NtUserEnableMouseInPointer ) \
     SYSCALL_ENTRY( NtUserEnableScrollBar ) \
     SYSCALL_ENTRY( NtUserEndDeferWindowPosEx ) \
     SYSCALL_ENTRY( NtUserEndMenu ) \
+    SYSCALL_ENTRY( NtUserEndPaint ) \
     SYSCALL_ENTRY( NtUserEnumDisplayDevices ) \
     SYSCALL_ENTRY( NtUserEnumDisplayMonitors ) \
     SYSCALL_ENTRY( NtUserEnumDisplaySettings ) \
+    SYSCALL_ENTRY( NtUserExcludeUpdateRgn ) \
     SYSCALL_ENTRY( NtUserFindExistingCursorIcon ) \
     SYSCALL_ENTRY( NtUserFindWindowEx ) \
     SYSCALL_ENTRY( NtUserFlashWindowEx ) \
@@ -336,16 +341,20 @@
     SYSCALL_ENTRY( NtUserPostMessage ) \
     SYSCALL_ENTRY( NtUserPostThreadMessage ) \
     SYSCALL_ENTRY( NtUserPrintWindow ) \
+    SYSCALL_ENTRY( NtUserQueryDisplayConfig ) \
     SYSCALL_ENTRY( NtUserQueryInputContext ) \
     SYSCALL_ENTRY( NtUserRealChildWindowFromPoint ) \
     SYSCALL_ENTRY( NtUserRedrawWindow ) \
     SYSCALL_ENTRY( NtUserRegisterClassExWOW ) \
     SYSCALL_ENTRY( NtUserRegisterHotKey ) \
     SYSCALL_ENTRY( NtUserRegisterRawInputDevices ) \
+    SYSCALL_ENTRY( NtUserReleaseDC ) \
     SYSCALL_ENTRY( NtUserRemoveClipboardFormatListener ) \
     SYSCALL_ENTRY( NtUserRemoveMenu ) \
     SYSCALL_ENTRY( NtUserRemoveProp ) \
+    SYSCALL_ENTRY( NtUserScrollDC ) \
     SYSCALL_ENTRY( NtUserScrollWindowEx ) \
+    SYSCALL_ENTRY( NtUserSelectPalette ) \
     SYSCALL_ENTRY( NtUserSendInput ) \
     SYSCALL_ENTRY( NtUserSetActiveWindow ) \
     SYSCALL_ENTRY( NtUserSetCapture ) \
@@ -403,11 +412,15 @@
     SYSCALL_ENTRY( NtUserUnregisterClass ) \
     SYSCALL_ENTRY( NtUserUnregisterHotKey ) \
     SYSCALL_ENTRY( NtUserUpdateInputContext ) \
+    SYSCALL_ENTRY( NtUserUpdateLayeredWindow ) \
     SYSCALL_ENTRY( NtUserValidateRect ) \
     SYSCALL_ENTRY( NtUserVkKeyScanEx ) \
     SYSCALL_ENTRY( NtUserWaitForInputIdle ) \
     SYSCALL_ENTRY( NtUserWaitMessage ) \
     SYSCALL_ENTRY( NtUserWindowFromDC ) \
-    SYSCALL_ENTRY( NtUserWindowFromPoint )
+    SYSCALL_ENTRY( NtUserWindowFromPoint ) \
+    SYSCALL_ENTRY( __wine_get_file_outline_text_metric ) \
+    SYSCALL_ENTRY( __wine_get_icm_profile ) \
+    SYSCALL_ENTRY( __wine_send_input )
 
 #endif /* __WOW64WIN_SYSCALL_H */

@@ -348,32 +348,21 @@ void X11DRV_init_desktop( Window win, unsigned int width, unsigned int height )
     desktop_handler.free_monitors = X11DRV_desktop_free_monitors;
     desktop_handler.register_event_handlers = NULL;
     TRACE("Display device functions are now handled by: Virtual Desktop\n");
-    X11DRV_DisplayDevices_Init( TRUE );
 }
 
 
 /***********************************************************************
- *           x11drv_create_desktop
+ *           X11DRV_CreateDesktop
  *
  * Create the X11 desktop window for the desktop mode.
  */
-NTSTATUS x11drv_create_desktop( void *arg )
+BOOL X11DRV_CreateDesktop( const WCHAR *name, UINT width, UINT height )
 {
-    static const WCHAR rootW[] = {'r','o','o','t',0};
-    const struct create_desktop_params *params = arg;
     XSetWindowAttributes win_attr;
     Window win;
     Display *display = thread_init_display();
-    WCHAR name[MAX_PATH];
 
-    if (!NtUserGetObjectInformation( NtUserGetThreadDesktop( GetCurrentThreadId() ),
-                                     UOI_NAME, name, sizeof(name), NULL ))
-        name[0] = 0;
-
-    TRACE( "%s %ux%u\n", debugstr_w(name), params->width, params->height );
-
-    /* magic: desktop "root" means use the root window */
-    if (!wcsicmp( name, rootW )) return FALSE;
+    TRACE( "%s %ux%u\n", debugstr_w(name), width, height );
 
     /* Create window */
     win_attr.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | EnterWindowMask |
@@ -387,21 +376,14 @@ NTSTATUS x11drv_create_desktop( void *arg )
         win_attr.colormap = None;
 
     win = XCreateWindow( display, DefaultRootWindow(display),
-                         0, 0, params->width, params->height, 0, default_visual.depth, InputOutput,
+                         0, 0, width, height, 0, default_visual.depth, InputOutput,
                          default_visual.visual, CWEventMask | CWCursor | CWColormap, &win_attr );
     if (!win) return FALSE;
-    x11drv_xinput_enable( display, win, win_attr.event_mask );
-    if (!create_desktop_win_data( win )) return FALSE;
 
-    X11DRV_init_desktop( win, params->width, params->height );
-    if (is_desktop_fullscreen())
-    {
-        TRACE("setting desktop to fullscreen\n");
-        XChangeProperty( display, win, x11drv_atom(_NET_WM_STATE), XA_ATOM, 32,
-            PropModeReplace, (unsigned char*)&x11drv_atom(_NET_WM_STATE_FULLSCREEN),
-            1);
-    }
+    x11drv_xinput_enable( display, win, win_attr.event_mask );
     XFlush( display );
+
+    X11DRV_init_desktop( win, width, height );
     return TRUE;
 }
 
@@ -466,14 +448,10 @@ void X11DRV_resize_desktop(void)
     NtUserSetWindowPos( hwnd, 0, virtual_rect.left, virtual_rect.top,
                         virtual_rect.right - virtual_rect.left, virtual_rect.bottom - virtual_rect.top,
                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_DEFERERASE );
-    ungrab_clipping_window();
 
     if (old_virtual_rect.left != virtual_rect.left || old_virtual_rect.top != virtual_rect.top)
         send_message_timeout( HWND_BROADCAST, WM_X11DRV_DESKTOP_RESIZED, old_virtual_rect.left,
                               old_virtual_rect.top, SMTO_ABORTIFHUNG, 2000, FALSE );
-
-    /* forward clip_fullscreen_window request to the foreground window */
-    send_notify_message( NtUserGetForegroundWindow(), WM_X11DRV_CLIP_CURSOR_REQUEST, TRUE, TRUE );
 
     old_virtual_rect = virtual_rect;
 }

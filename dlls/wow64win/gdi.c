@@ -1377,6 +1377,20 @@ NTSTATUS WINAPI wow64_NtGdiGradientFill( UINT *args )
     return NtGdiGradientFill( hdc, vert_array, nvert, grad_array, ngrad, mode );
 }
 
+NTSTATUS WINAPI wow64_NtGdiIcmBrushInfo( UINT *args )
+{
+    HDC hdc = get_handle( &args );
+    HBRUSH handle = get_handle( &args );
+    BITMAPINFO *info = get_ptr( &args );
+    void *bits = get_ptr( &args );
+    ULONG *bits_size = get_ptr( &args );
+    UINT *usage = get_ptr( &args );
+    BOOL *unk = get_ptr( &args );
+    UINT mode = get_ulong( &args );
+
+    return NtGdiIcmBrushInfo( hdc, handle, info, bits, bits_size, usage, unk, mode );
+}
+
 NTSTATUS WINAPI wow64_NtGdiInvertRgn( UINT *args )
 {
     HDC hdc = get_handle( &args );
@@ -2066,4 +2080,24 @@ NTSTATUS WINAPI wow64_NtGdiWidenPath( UINT *args )
     HDC hdc = get_handle( &args );
 
     return NtGdiWidenPath( hdc );
+}
+
+NTSTATUS WINAPI wow64___wine_get_icm_profile( UINT *args )
+{
+    HDC hdc = get_handle( &args );
+    BOOL allow_default = get_ulong( &args );
+    DWORD *size = get_ptr( &args );
+    WCHAR *filename = get_ptr( &args );
+
+    return __wine_get_icm_profile( hdc, allow_default, size, filename );
+}
+
+NTSTATUS WINAPI wow64___wine_get_file_outline_text_metric( UINT *args )
+{
+    const WCHAR *path = get_ptr( &args );
+    TEXTMETRICW *otm = get_ptr( &args );
+    UINT *em_square = get_ptr( &args );
+    WCHAR *face_name = get_ptr( &args );
+
+    return __wine_get_file_outline_text_metric( path, otm, em_square, face_name );
 }

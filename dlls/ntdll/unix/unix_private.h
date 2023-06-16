@@ -44,6 +44,9 @@ extern WORD native_machine DECLSPEC_HIDDEN;
 
 static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
 
+static const ULONG_PTR limit_2g = (ULONG_PTR)1 << 31;
+static const ULONG_PTR limit_4g = (ULONG_PTR)((ULONGLONG)1 << 32);
+
 static inline BOOL is_machine_64bit( WORD machine )
 {
     return (machine == IMAGE_FILE_MACHINE_AMD64 || machine == IMAGE_FILE_MACHINE_ARM64);
@@ -125,16 +128,15 @@ static const LONG teb_offset = 0x2000;
 #define FILE_USE_FILE_POINTER_POSITION ((LONGLONG)-2)
 
 /* callbacks to PE ntdll from the Unix side */
-extern void     (WINAPI *pDbgUiRemoteBreakin)( void *arg ) DECLSPEC_HIDDEN;
-extern NTSTATUS (WINAPI *pKiRaiseUserExceptionDispatcher)(void) DECLSPEC_HIDDEN;
-extern NTSTATUS (WINAPI *pKiUserExceptionDispatcher)(EXCEPTION_RECORD*,CONTEXT*) DECLSPEC_HIDDEN;
-extern void     (WINAPI *pKiUserApcDispatcher)(CONTEXT*,ULONG_PTR,ULONG_PTR,ULONG_PTR,PNTAPCFUNC) DECLSPEC_HIDDEN;
-extern void     (WINAPI *pKiUserCallbackDispatcher)(ULONG,void*,ULONG) DECLSPEC_HIDDEN;
-extern void     (WINAPI *pLdrInitializeThunk)(CONTEXT*,void**,ULONG_PTR,ULONG_PTR) DECLSPEC_HIDDEN;
-extern void     (WINAPI *pRtlUserThreadStart)( PRTL_THREAD_START_ROUTINE entry, void *arg ) DECLSPEC_HIDDEN;
-extern void     (WINAPI *p__wine_ctrl_routine)(void *) DECLSPEC_HIDDEN;
+extern void *pDbgUiRemoteBreakin DECLSPEC_HIDDEN;
+extern void *pKiRaiseUserExceptionDispatcher DECLSPEC_HIDDEN;
+extern void *pKiUserExceptionDispatcher DECLSPEC_HIDDEN;
+extern void *pKiUserApcDispatcher DECLSPEC_HIDDEN;
+extern void *pKiUserCallbackDispatcher DECLSPEC_HIDDEN;
+extern void *pLdrInitializeThunk DECLSPEC_HIDDEN;
+extern void *pRtlUserThreadStart DECLSPEC_HIDDEN;
+extern void *p__wine_ctrl_routine DECLSPEC_HIDDEN;
 extern SYSTEM_DLL_INIT_BLOCK *pLdrSystemDllInitBlock DECLSPEC_HIDDEN;
-extern LONGLONG CDECL fast_RtlGetSystemTimePrecise(void) DECLSPEC_HIDDEN;
 
 struct _FILE_FS_DEVICE_INFORMATION;
 
@@ -182,7 +184,7 @@ extern char **build_envp( const WCHAR *envW ) DECLSPEC_HIDDEN;
 extern char *get_alternate_wineloader( WORD machine ) DECLSPEC_HIDDEN;
 extern NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_info ) DECLSPEC_HIDDEN;
 extern NTSTATUS load_builtin( const pe_image_info_t *image_info, WCHAR *filename, USHORT machine,
-                              void **addr_ptr, SIZE_T *size_ptr, ULONG_PTR limit ) DECLSPEC_HIDDEN;
+                              void **addr_ptr, SIZE_T *size_ptr, ULONG_PTR limit_low, ULONG_PTR limit_high ) DECLSPEC_HIDDEN;
 extern BOOL is_builtin_path( const UNICODE_STRING *path, WORD *machine ) DECLSPEC_HIDDEN;
 extern NTSTATUS load_main_exe( const WCHAR *name, const char *unix_name, const WCHAR *curdir,
                                USHORT load_machine, WCHAR **image, void **module ) DECLSPEC_HIDDEN;
@@ -228,18 +230,20 @@ extern void *anon_mmap_alloc( size_t size, int prot ) DECLSPEC_HIDDEN;
 extern void virtual_init(void) DECLSPEC_HIDDEN;
 extern ULONG_PTR get_system_affinity_mask(void) DECLSPEC_HIDDEN;
 extern void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 ) DECLSPEC_HIDDEN;
-extern NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size, SECTION_IMAGE_INFORMATION *info,
-                                            ULONG_PTR limit, WORD machine, BOOL prefer_native ) DECLSPEC_HIDDEN;
-extern NTSTATUS virtual_map_module( HANDLE mapping, void **module, SIZE_T *size, SECTION_IMAGE_INFORMATION *info,
-                                    ULONG_PTR limit, USHORT machine ) DECLSPEC_HIDDEN;
+extern NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size,
+                                            SECTION_IMAGE_INFORMATION *info, ULONG_PTR limit_low,
+                                            ULONG_PTR limit_high, WORD machine, BOOL prefer_native ) DECLSPEC_HIDDEN;
+extern NTSTATUS virtual_map_module( HANDLE mapping, void **module, SIZE_T *size,
+                                    SECTION_IMAGE_INFORMATION *info, ULONG_PTR limit_low,
+                                    ULONG_PTR limit_high, USHORT machine ) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_name,
                                              pe_image_info_t *info, void *so_handle ) DECLSPEC_HIDDEN;
 extern TEB *virtual_alloc_first_teb(void) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_alloc_teb( TEB **ret_teb ) DECLSPEC_HIDDEN;
 extern void virtual_free_teb( TEB *teb ) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_clear_tls_index( ULONG index ) DECLSPEC_HIDDEN;
-extern NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit, SIZE_T reserve_size,
-                                            SIZE_T commit_size, BOOL guard_page ) DECLSPEC_HIDDEN;
+extern NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_low, ULONG_PTR limit_high,
+                                            SIZE_T reserve_size, SIZE_T commit_size, BOOL guard_page ) DECLSPEC_HIDDEN;
 extern void virtual_map_user_shared_data(void) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_handle_fault( void *addr, DWORD err, void *stack ) DECLSPEC_HIDDEN;
 extern unsigned int virtual_locked_server_call( void *req_ptr ) DECLSPEC_HIDDEN;
@@ -275,7 +279,7 @@ extern void DECLSPEC_NORETURN signal_start_thread( PRTL_THREAD_START_ROUTINE ent
 extern void DECLSPEC_NORETURN signal_exit_thread( int status, void (*func)(int), TEB *teb ) DECLSPEC_HIDDEN;
 extern SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4] DECLSPEC_HIDDEN;
 extern void __wine_syscall_dispatcher(void) DECLSPEC_HIDDEN;
-extern void WINAPI DECLSPEC_NORETURN __wine_syscall_dispatcher_return( void *frame, ULONG_PTR retval ) DECLSPEC_HIDDEN;
+extern void DECLSPEC_NORETURN __wine_syscall_dispatcher_return( void *frame, ULONG_PTR retval ) DECLSPEC_HIDDEN;
 extern void __wine_unix_call_dispatcher(void) DECLSPEC_HIDDEN;
 extern NTSTATUS signal_set_full_context( CONTEXT *context ) DECLSPEC_HIDDEN;
 extern NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size ) DECLSPEC_HIDDEN;
@@ -450,21 +454,13 @@ static inline void set_async_iosb( client_ptr_t iosb, NTSTATUS status, ULONG_PTR
     {
         IO_STATUS_BLOCK *io = wine_server_get_ptr( iosb );
         io->Information = info;
-#ifdef NONAMELESSUNION
-        WriteRelease( &io->u.Status, status );
-#else
         WriteRelease( &io->Status, status );
-#endif
     }
 }
 
 static inline client_ptr_t iosb_client_ptr( IO_STATUS_BLOCK *io )
 {
-#ifdef NONAMELESSUNION
-    if (io && in_wow64_call()) return wine_server_client_ptr( io->u.Pointer );
-#else
     if (io && in_wow64_call()) return wine_server_client_ptr( io->Pointer );
-#endif
     return wine_server_client_ptr( io );
 }
 
@@ -537,7 +533,7 @@ static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, UL
 {
     *ptr = NULL;
     *size = 0;
-    return NtMapViewOfSection( mapping, NtCurrentProcess(), ptr, is_win64 && wow_peb ? 0x7fffffff : 0,
+    return NtMapViewOfSection( mapping, NtCurrentProcess(), ptr, is_win64 && wow_peb ? limit_2g - 1 : 0,
                                0, NULL, size, ViewShare, 0, protect );
 }
 

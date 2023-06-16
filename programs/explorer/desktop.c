@@ -42,7 +42,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(explorer);
 
 static const WCHAR default_driver[] = {'m','a','c',',','x','1','1',0};
 
-static BOOL using_root;
+static BOOL using_root = TRUE;
 
 struct launcher
 {
@@ -771,20 +771,6 @@ static LRESULT WINAPI desktop_wnd_proc( HWND hwnd, UINT message, WPARAM wp, LPAR
     return desktop_orig_wndproc( hwnd, message, wp, lp );
 }
 
-/* create the desktop and the associated driver window, and make it the current desktop */
-static BOOL create_desktop( HMODULE driver, const WCHAR *name, unsigned int width, unsigned int height )
-{
-    BOOL ret = FALSE;
-    BOOL (CDECL *create_desktop_func)(unsigned int, unsigned int);
-
-    if (driver)
-    {
-        create_desktop_func = (void *)GetProcAddress( driver, "wine_create_desktop" );
-        if (create_desktop_func) ret = create_desktop_func( width, height );
-    }
-    return ret;
-}
-
 /* parse the desktop size specification */
 static BOOL parse_size( const WCHAR *size, unsigned int *width, unsigned int *height )
 {
@@ -1092,19 +1078,23 @@ void manage_desktop( WCHAR *arg )
     if (name)
         enable_shell = get_default_enable_shell( name );
 
+    UuidCreate( &guid );
+    TRACE( "display guid %s\n", debugstr_guid(&guid) );
+    graphics_driver = load_graphics_driver( driver, &guid );
+
     if (name && width && height)
     {
-        if (!(desktop = CreateDesktopW( name, NULL, NULL, 0, DESKTOP_ALL_ACCESS, NULL )))
+        DEVMODEW devmode = {.dmPelsWidth = width, .dmPelsHeight = height};
+        /* magic: desktop "root" means use the root window */
+        if ((using_root = !wcsicmp( name, L"root" ))) desktop = CreateDesktopW( name, NULL, NULL, 0, DESKTOP_ALL_ACCESS, NULL );
+        else desktop = CreateDesktopW( name, NULL, &devmode, DF_WINE_CREATE_DESKTOP, DESKTOP_ALL_ACCESS, NULL );
+        if (!desktop)
         {
             WINE_ERR( "failed to create desktop %s error %ld\n", wine_dbgstr_w(name), GetLastError() );
             ExitProcess( 1 );
         }
         SetThreadDesktop( desktop );
     }
-
-    UuidCreate( &guid );
-    TRACE( "display guid %s\n", debugstr_guid(&guid) );
-    graphics_driver = load_graphics_driver( driver, &guid );
 
     /* create the desktop window */
     hwnd = CreateWindowExW( 0, DESKTOP_CLASS_ATOM, NULL,
@@ -1118,7 +1108,6 @@ void manage_desktop( WCHAR *arg )
 
         desktop_orig_wndproc = (WNDPROC)SetWindowLongPtrW( hwnd, GWLP_WNDPROC,
             (LONG_PTR)desktop_wnd_proc );
-        using_root = !desktop || !create_desktop( graphics_driver, name, width, height );
         SendMessageW( hwnd, WM_SETICON, ICON_BIG, (LPARAM)LoadIconW( 0, MAKEINTRESOURCEW(OIC_WINLOGO)));
         if (name) set_desktop_window_title( hwnd, name );
         SetWindowPos( hwnd, 0, GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),

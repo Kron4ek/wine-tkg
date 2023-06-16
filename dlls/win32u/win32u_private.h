@@ -32,40 +32,14 @@
 #include "wine/debug.h"
 #include "wine/server.h"
 
-struct unix_funcs
-{
-    /* win32u functions */
-    BOOL     (WINAPI *pNtUserDrawCaptionTemp)( HWND hwnd, HDC hdc, const RECT *rect, HFONT font,
-                                               HICON icon, const WCHAR *str, UINT flags );
-    DWORD    (WINAPI *pNtUserDrawMenuBarTemp)( HWND hwnd, HDC hdc, RECT *rect, HMENU handle, HFONT font );
-    BOOL     (WINAPI *pNtUserEndPaint)( HWND hwnd, const PAINTSTRUCT *ps );
-    INT      (WINAPI *pNtUserExcludeUpdateRgn)( HDC hdc, HWND hwnd );
-    INT      (WINAPI *pNtUserReleaseDC)( HWND hwnd, HDC hdc );
-    BOOL     (WINAPI *pNtUserScrollDC)( HDC hdc, INT dx, INT dy, const RECT *scroll, const RECT *clip,
-                                        HRGN ret_update_rgn, RECT *update_rect );
-    HPALETTE (WINAPI *pNtUserSelectPalette)( HDC hdc, HPALETTE hpal, WORD bkg );
-    BOOL     (WINAPI *pNtUserUpdateLayeredWindow)( HWND hwnd, HDC hdc_dst, const POINT *pts_dst,
-                                                   const SIZE *size, HDC hdc_src, const POINT *pts_src,
-                                                   COLORREF key, const BLENDFUNCTION *blend,
-                                                   DWORD flags, const RECT *dirty );
-
-    /* Wine-specific functions */
-    INT (WINAPI *pSetDIBits)( HDC hdc, HBITMAP hbitmap, UINT startscan,
-                              UINT lines, const void *bits, const BITMAPINFO *info,
-                              UINT coloruse );
-    BOOL (CDECL *get_brush_bitmap_info)( HBRUSH handle, BITMAPINFO *info, void *bits, UINT *usage );
-    BOOL (CDECL *get_file_outline_text_metric)( const WCHAR *path, OUTLINETEXTMETRICW *otm );
-    BOOL (CDECL *get_icm_profile)( HDC hdc, BOOL allow_default, DWORD *size, WCHAR *filename );
-    BOOL (CDECL *wine_send_input)( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput );
-};
 
 /* clipboard.c */
 extern UINT enum_clipboard_formats( UINT format ) DECLSPEC_HIDDEN;
 extern void release_clipboard_owner( HWND hwnd ) DECLSPEC_HIDDEN;
 
 /* cursoricon.c */
+extern BOOL process_wine_setcursor( HWND hwnd, HWND window, HCURSOR handle ) DECLSPEC_HIDDEN;
 extern HICON alloc_cursoricon_handle( BOOL is_icon ) DECLSPEC_HIDDEN;
-extern BOOL get_clip_cursor( RECT *rect ) DECLSPEC_HIDDEN;
 extern ULONG_PTR get_icon_param( HICON handle ) DECLSPEC_HIDDEN;
 extern ULONG_PTR set_icon_param( HICON handle, ULONG_PTR param ) DECLSPEC_HIDDEN;
 
@@ -113,6 +87,8 @@ extern BOOL register_imm_window( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void unregister_imm_window( HWND hwnd ) DECLSPEC_HIDDEN;
 
 /* input.c */
+extern BOOL grab_pointer DECLSPEC_HIDDEN;
+extern BOOL grab_fullscreen DECLSPEC_HIDDEN;
 extern BOOL destroy_caret(void) DECLSPEC_HIDDEN;
 extern LONG global_key_state_counter DECLSPEC_HIDDEN;
 extern HWND get_active_window(void) DECLSPEC_HIDDEN;
@@ -120,18 +96,16 @@ extern HWND get_capture(void) DECLSPEC_HIDDEN;
 extern BOOL get_cursor_pos( POINT *pt ) DECLSPEC_HIDDEN;
 extern HWND get_focus(void) DECLSPEC_HIDDEN;
 extern DWORD get_input_state(void) DECLSPEC_HIDDEN;
-extern HWND get_progman_window(void) DECLSPEC_HIDDEN;
-extern HWND get_shell_window(void) DECLSPEC_HIDDEN;
-extern HWND get_taskman_window(void) DECLSPEC_HIDDEN;
-extern BOOL WINAPI release_capture(void) DECLSPEC_HIDDEN;
+extern BOOL release_capture(void) DECLSPEC_HIDDEN;
 extern BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret ) DECLSPEC_HIDDEN;
 extern BOOL set_caret_blink_time( unsigned int time ) DECLSPEC_HIDDEN;
 extern BOOL set_caret_pos( int x, int y ) DECLSPEC_HIDDEN;
 extern BOOL set_foreground_window( HWND hwnd, BOOL mouse ) DECLSPEC_HIDDEN;
-extern HWND set_progman_window( HWND hwnd ) DECLSPEC_HIDDEN;
-extern HWND set_taskman_window( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void toggle_caret( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void update_mouse_tracking_info( HWND hwnd ) DECLSPEC_HIDDEN;
+extern BOOL get_clip_cursor( RECT *rect ) DECLSPEC_HIDDEN;
+extern BOOL process_wine_clipcursor( HWND hwnd, BOOL empty, BOOL reset ) DECLSPEC_HIDDEN;
+extern BOOL clip_fullscreen_window( HWND hwnd, BOOL reset ) DECLSPEC_HIDDEN;
 
 /* menu.c */
 extern HMENU create_menu( BOOL is_popup ) DECLSPEC_HIDDEN;
@@ -212,6 +186,9 @@ extern void user_lock(void) DECLSPEC_HIDDEN;
 extern void user_unlock(void) DECLSPEC_HIDDEN;
 extern void user_check_not_lock(void) DECLSPEC_HIDDEN;
 
+/* winstation.c */
+extern BOOL is_virtual_desktop(void) DECLSPEC_HIDDEN;
+
 /* window.c */
 struct tagWND;
 extern HDWP begin_defer_window_pos( INT count ) DECLSPEC_HIDDEN;
@@ -258,6 +235,11 @@ extern ULONG set_window_style( HWND hwnd, ULONG set_bits, ULONG clear_bits ) DEC
 extern BOOL show_owned_popups( HWND owner, BOOL show ) DECLSPEC_HIDDEN;
 extern void update_window_state( HWND hwnd ) DECLSPEC_HIDDEN;
 extern HWND window_from_point( HWND hwnd, POINT pt, INT *hittest ) DECLSPEC_HIDDEN;
+extern HWND get_shell_window(void) DECLSPEC_HIDDEN;
+extern HWND get_progman_window(void) DECLSPEC_HIDDEN;
+extern HWND set_progman_window( HWND hwnd ) DECLSPEC_HIDDEN;
+extern HWND get_taskman_window(void) DECLSPEC_HIDDEN;
+extern HWND set_taskman_window( HWND hwnd ) DECLSPEC_HIDDEN;
 
 /* to release pointers retrieved by win_get_ptr */
 static inline void release_win_ptr( struct tagWND *ptr )
@@ -265,9 +247,7 @@ static inline void release_win_ptr( struct tagWND *ptr )
     user_unlock();
 }
 
-extern void wrappers_init( unixlib_handle_t handle ) DECLSPEC_HIDDEN;
 extern void gdi_init(void) DECLSPEC_HIDDEN;
-extern NTSTATUS callbacks_init( void *args ) DECLSPEC_HIDDEN;
 extern void winstation_init(void) DECLSPEC_HIDDEN;
 extern void sysparams_init(void) DECLSPEC_HIDDEN;
 extern int muldiv( int a, int b, int c ) DECLSPEC_HIDDEN;
@@ -371,6 +351,15 @@ static inline const char *debugstr_color( COLORREF color )
     if (color >> 16 == 0x10ff)  /* DIBINDEX */
         return wine_dbg_sprintf( "DIBINDEX(%u)", LOWORD(color) );
     return wine_dbg_sprintf( "RGB(%02x,%02x,%02x)", GetRValue(color), GetGValue(color), GetBValue(color) );
+}
+
+static inline BOOL intersect_rect( RECT *dst, const RECT *src1, const RECT *src2 )
+{
+    dst->left   = max( src1->left, src2->left );
+    dst->top    = max( src1->top, src2->top );
+    dst->right  = min( src1->right, src2->right );
+    dst->bottom = min( src1->bottom, src2->bottom );
+    return !IsRectEmpty( dst );
 }
 
 #endif /* __WINE_WIN32U_PRIVATE */

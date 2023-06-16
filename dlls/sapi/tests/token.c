@@ -109,12 +109,73 @@ static void test_data_key(void)
     ISpRegDataKey_Release( data_key );
 }
 
+static void setup_test_voice_tokens(void)
+{
+    HKEY key;
+    ISpRegDataKey *data_key;
+    ISpDataKey *attrs_key;
+    LSTATUS ret;
+    HRESULT hr;
+
+    ret = RegCreateKeyExA( HKEY_CURRENT_USER, "Software\\Winetest\\sapi\\TestVoices\\Tokens", 0, NULL, 0,
+                           KEY_ALL_ACCESS, NULL, &key, NULL );
+    ok( ret == ERROR_SUCCESS, "got %ld\n", ret );
+
+    hr = CoCreateInstance( &CLSID_SpDataKey, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_ISpRegDataKey, (void **)&data_key );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    hr = ISpRegDataKey_SetKey( data_key, key, FALSE );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    ISpRegDataKey_CreateKey( data_key, L"Voice1\\Attributes", &attrs_key );
+    ISpDataKey_SetStringValue( attrs_key, L"Language", L"409" );
+    ISpDataKey_SetStringValue( attrs_key, L"Gender", L"Female" );
+    ISpDataKey_SetStringValue( attrs_key, L"Age", L"Child" );
+    ISpDataKey_SetStringValue( attrs_key, L"Vendor", L"Vendor2" );
+    ISpDataKey_Release( attrs_key );
+
+    ISpRegDataKey_CreateKey( data_key, L"Voice2\\Attributes", &attrs_key );
+    ISpDataKey_SetStringValue( attrs_key, L"Language", L"406;407;408;409;40a" );
+    ISpDataKey_SetStringValue( attrs_key, L"Gender", L"Female" );
+    ISpDataKey_SetStringValue( attrs_key, L"Age", L"Adult" );
+    ISpDataKey_SetStringValue( attrs_key, L"Vendor", L"Vendor1" );
+    ISpDataKey_Release( attrs_key );
+
+    ISpRegDataKey_CreateKey( data_key, L"Voice3\\Attributes", &attrs_key );
+    ISpDataKey_SetStringValue( attrs_key, L"Language", L"409;411" );
+    ISpDataKey_SetStringValue( attrs_key, L"Gender", L"Female" );
+    ISpDataKey_SetStringValue( attrs_key, L"Age", L"Child" );
+    ISpDataKey_SetStringValue( attrs_key, L"Vendor", L"Vendor1" );
+    ISpDataKey_Release( attrs_key );
+
+    ISpRegDataKey_CreateKey( data_key, L"Voice4\\Attributes", &attrs_key );
+    ISpDataKey_SetStringValue( attrs_key, L"Language", L"411" );
+    ISpDataKey_SetStringValue( attrs_key, L"Gender", L"Male" );
+    ISpDataKey_SetStringValue( attrs_key, L"Age", L"Adult" );
+    ISpDataKey_Release( attrs_key );
+
+    ISpRegDataKey_CreateKey( data_key, L"Voice5\\Attributes", &attrs_key );
+    ISpDataKey_SetStringValue( attrs_key, L"Language", L"411" );
+    ISpDataKey_SetStringValue( attrs_key, L"Gender", L"Female" );
+    ISpDataKey_SetStringValue( attrs_key, L"Age", L"Adult" );
+    ISpDataKey_SetStringValue( attrs_key, L"Vendor", L"Vendor2" );
+    ISpDataKey_Release( attrs_key );
+
+    ISpRegDataKey_Release( data_key );
+}
+
+static const WCHAR test_cat[] = L"HKEY_CURRENT_USER\\Software\\Winetest\\sapi\\TestVoices";
+
 static void test_token_category(void)
 {
     ISpObjectTokenCategory *cat;
     IEnumSpObjectTokens *enum_tokens;
     HRESULT hr;
     ULONG count;
+    int i;
+    ISpObjectToken *token;
+    WCHAR *token_id;
+    WCHAR tmp[MAX_PATH];
 
     hr = CoCreateInstance( &CLSID_SpObjectTokenCategory, NULL, CLSCTX_INPROC_SERVER,
                            &IID_ISpObjectTokenCategory, (void **)&cat );
@@ -126,19 +187,58 @@ static void test_token_category(void)
     hr = ISpObjectTokenCategory_SetId( cat, L"bogus", FALSE );
     ok( hr == SPERR_INVALID_REGISTRY_KEY, "got %08lx\n", hr );
 
-    hr = ISpObjectTokenCategory_SetId( cat, SPCAT_VOICES, FALSE );
+    hr = ISpObjectTokenCategory_SetId( cat, test_cat, FALSE );
     ok( hr == S_OK, "got %08lx\n", hr );
 
-    hr = ISpObjectTokenCategory_SetId( cat, SPCAT_VOICES, FALSE );
+    hr = ISpObjectTokenCategory_SetId( cat, test_cat, FALSE );
     ok( hr == SPERR_ALREADY_INITIALIZED, "got %08lx\n", hr );
 
     hr = ISpObjectTokenCategory_EnumTokens( cat, NULL, NULL, &enum_tokens );
     ok( hr == S_OK, "got %08lx\n", hr );
 
+    count = 0xdeadbeef;
     hr = IEnumSpObjectTokens_GetCount( enum_tokens, &count );
     ok( hr == S_OK, "got %08lx\n", hr );
+    ok( count == 5, "got %lu\n", count );
 
     IEnumSpObjectTokens_Release( enum_tokens );
+
+    hr = ISpObjectTokenCategory_EnumTokens( cat, L"Language=409", NULL, &enum_tokens );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    count = 0xdeadbeef;
+    hr = IEnumSpObjectTokens_GetCount( enum_tokens, &count );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( count == 3, "got %lu\n", count );
+
+    IEnumSpObjectTokens_Release( enum_tokens );
+
+    hr = ISpObjectTokenCategory_EnumTokens( cat, L"Language=409", L"Vendor=Vendor1;Age=Child;Gender=Female",
+                                            &enum_tokens );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    count = 0xdeadbeef;
+    hr = IEnumSpObjectTokens_GetCount( enum_tokens, &count );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( count == 3, "got %lu\n", count );
+
+    for ( i = 0; i < 3; i++ ) {
+        token = NULL;
+        hr = IEnumSpObjectTokens_Item( enum_tokens, i, &token );
+        ok( hr == S_OK, "i = %d: got %08lx\n", i, hr );
+
+        token_id = NULL;
+        hr = ISpObjectToken_GetId( token, &token_id );
+        ok( hr == S_OK, "i = %d: got %08lx\n", i, hr );
+        swprintf( tmp, MAX_PATH, L"%ls\\Tokens\\Voice%d", test_cat, 3 - i );
+        ok( !wcscmp( token_id, tmp ), "i = %d: got %s\n", i, wine_dbgstr_w(token_id) );
+
+        CoTaskMemFree( token_id );
+        ISpObjectToken_Release( token );
+    }
+
+    IEnumSpObjectTokens_Release( enum_tokens );
+
     ISpObjectTokenCategory_Release( cat );
 }
 
@@ -146,8 +246,11 @@ static void test_token_enum(void)
 {
     ISpObjectTokenEnumBuilder *token_enum;
     HRESULT hr;
-    ISpObjectToken *token;
+    ISpObjectToken *tokens[5];
+    ISpObjectToken *out_tokens[5];
+    WCHAR token_id[MAX_PATH];
     ULONG count;
+    int i;
 
     hr = CoCreateInstance( &CLSID_SpObjectTokenEnum, NULL, CLSCTX_INPROC_SERVER,
                            &IID_ISpObjectTokenEnumBuilder, (void **)&token_enum );
@@ -156,7 +259,7 @@ static void test_token_enum(void)
     hr = ISpObjectTokenEnumBuilder_GetCount( token_enum, &count );
     ok( hr == SPERR_UNINITIALIZED, "got %08lx\n", hr );
 
-    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 1, &token, &count );
+    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 1, tokens, &count );
     ok( hr == SPERR_UNINITIALIZED, "got %08lx\n", hr );
 
     hr = ISpObjectTokenEnumBuilder_SetAttribs( token_enum, NULL, NULL );
@@ -168,11 +271,139 @@ static void test_token_enum(void)
     ok( count == 0, "got %lu\n", count );
 
     count = 0xdeadbeef;
-    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 1, &token, &count );
+    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 1, &out_tokens[0], &count );
     ok( hr == S_FALSE, "got %08lx\n", hr );
     ok( count == 0, "got %lu\n", count );
 
+    for ( i = 0; i < 5; i++ ) {
+        hr = CoCreateInstance( &CLSID_SpObjectToken, NULL, CLSCTX_INPROC_SERVER,
+                               &IID_ISpObjectToken, (void **)&tokens[i] );
+        ok( hr == S_OK, "got %08lx\n", hr );
+
+        swprintf( token_id, MAX_PATH, L"%ls\\Tokens\\Voice%d", test_cat, i + 1 );
+        hr = ISpObjectToken_SetId( tokens[i], NULL, token_id, FALSE );
+        ok( hr == S_OK, "got %08lx\n", hr );
+    }
+
+    hr = ISpObjectTokenEnumBuilder_AddTokens( token_enum, 3, tokens );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    out_tokens[0] = (ISpObjectToken *)0xdeadbeef;
+    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 1, &out_tokens[0], NULL );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( out_tokens[0] == tokens[0], "got %p\n", out_tokens[0] );
+
+    out_tokens[0] = (ISpObjectToken *)0xdeadbeef;
+    hr = ISpObjectTokenEnumBuilder_Item( token_enum, 0, &out_tokens[0] );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( out_tokens[0] == tokens[0], "got %p\n", out_tokens[0] );
+
+    hr = ISpObjectTokenEnumBuilder_Item( token_enum, 3, &out_tokens[0] );
+    ok( hr == SPERR_NO_MORE_ITEMS, "got %08lx\n", hr );
+
+    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 3, &out_tokens[1], NULL );
+    ok( hr == E_POINTER, "got %08lx\n", hr );
+
+    count = 0xdeadbeef;
+    out_tokens[1] = out_tokens[2] = (ISpObjectToken *)0xdeadbeef;
+    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 3, &out_tokens[1], &count );
+    ok( hr == S_FALSE, "got %08lx\n", hr );
+    ok( count == 2, "got %lu\n", count );
+    ok( out_tokens[1] == tokens[1], "got %p\n", out_tokens[1] );
+    ok( out_tokens[2] == tokens[2], "got %p\n", out_tokens[2] );
+
     ISpObjectTokenEnumBuilder_Release( token_enum );
+
+    hr = CoCreateInstance( &CLSID_SpObjectTokenEnum, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_ISpObjectTokenEnumBuilder, (void **)&token_enum );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    /* Vendor attribute must exist */
+    hr = ISpObjectTokenEnumBuilder_SetAttribs( token_enum, L"Vendor", NULL );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    hr = ISpObjectTokenEnumBuilder_AddTokens( token_enum, 5, tokens );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    count = 0xdeadbeef;
+    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 5, &out_tokens[0], &count );
+    ok( hr == S_FALSE, "got %08lx\n", hr );
+    ok( count == 4, "got %lu\n", count );
+
+    ISpObjectTokenEnumBuilder_Release( token_enum );
+
+    hr = CoCreateInstance( &CLSID_SpObjectTokenEnum, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_ISpObjectTokenEnumBuilder, (void **)&token_enum );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    /* Vendor attribute must contain Vendor1 */
+    hr = ISpObjectTokenEnumBuilder_SetAttribs( token_enum, L"Vendor=Vendor1", NULL );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    hr = ISpObjectTokenEnumBuilder_AddTokens( token_enum, 5, tokens );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    count = 0xdeadbeef;
+    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 5, &out_tokens[0], &count );
+    ok( hr == S_FALSE, "got %08lx\n", hr );
+    ok( count == 2, "got %lu\n", count );
+
+    ISpObjectTokenEnumBuilder_Release( token_enum );
+
+    hr = CoCreateInstance( &CLSID_SpObjectTokenEnum, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_ISpObjectTokenEnumBuilder, (void **)&token_enum );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    /* Vendor attribute must not contain Vendor1 */
+    hr = ISpObjectTokenEnumBuilder_SetAttribs( token_enum, L"Vendor!=Vendor1", NULL );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    hr = ISpObjectTokenEnumBuilder_AddTokens( token_enum, 5, tokens );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    count = 0xdeadbeef;
+    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 5, &out_tokens[0], &count );
+    ok( hr == S_FALSE, "got %08lx\n", hr );
+    ok( count == 3, "got %lu\n", count );
+
+    ISpObjectTokenEnumBuilder_Release( token_enum );
+
+    hr = CoCreateInstance( &CLSID_SpObjectTokenEnum, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_ISpObjectTokenEnumBuilder, (void **)&token_enum );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    /* Vendor attribute must contain Vendor1 and Language attribute must contain 407 */
+    hr = ISpObjectTokenEnumBuilder_SetAttribs( token_enum, L"Vendor=Vendor1;Language=407", NULL );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    hr = ISpObjectTokenEnumBuilder_AddTokens( token_enum, 5, tokens );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    count = 0xdeadbeef;
+    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 5, &out_tokens[0], &count );
+    ok( hr == S_FALSE, "got %08lx\n", hr );
+    ok( count == 1, "got %lu\n", count );
+
+    hr = CoCreateInstance( &CLSID_SpObjectTokenEnum, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_ISpObjectTokenEnumBuilder, (void **)&token_enum );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    hr = ISpObjectTokenEnumBuilder_SetAttribs( token_enum, L"Language=409",
+                                               L"Vendor=Vendor1;Age=Child;Gender=Female" );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    hr = ISpObjectTokenEnumBuilder_AddTokens( token_enum, 5, tokens );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    hr = ISpObjectTokenEnumBuilder_Sort( token_enum, NULL );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    count = 0xdeadbeef;
+    hr = ISpObjectTokenEnumBuilder_Next( token_enum, 5, &out_tokens[0], &count );
+    ok( hr == S_FALSE, "got %08lx\n", hr );
+    ok( count == 3, "got %lu\n", count );
+    ok( out_tokens[0] == tokens[2], "got %p\n", out_tokens[0] );
+    ok( out_tokens[1] == tokens[1], "got %p\n", out_tokens[1] );
+    ok( out_tokens[2] == tokens[0], "got %p\n", out_tokens[2] );
+
+    ISpObjectTokenEnumBuilder_Release( token_enum );
+
+    for ( i = 0; i < 5; i++ ) ISpObjectToken_Release( tokens[i] );
 }
 
 static void test_default_token_id(void)
@@ -513,6 +744,10 @@ static void test_object_token(void)
     hr = ISpObjectToken_SetId( token, NULL, test_token_id, TRUE );
     ok( hr == S_OK, "got %08lx\n", hr );
 
+    hr = ISpObjectToken_CreateKey( token, L"Attributes", &sub_key );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ISpDataKey_Release( sub_key );
+
     hr = ISpObjectToken_SetStringValue( token, L"CLSID", TESTCLASS_CLSID );
     ok( hr == S_OK, "got %08lx\n", hr );
 
@@ -554,6 +789,7 @@ START_TEST(token)
     CoInitialize( NULL );
     RegDeleteTreeA( HKEY_CURRENT_USER, "Software\\Winetest\\sapi" );
     test_data_key();
+    setup_test_voice_tokens();
     test_token_category();
     test_token_enum();
     test_default_token_id();

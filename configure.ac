@@ -777,7 +777,7 @@ case $host_os in
     WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"
 
     case $host_cpu in
-      *i[[3456789]]86* | x86_64 | *aarch64* | arm*)
+      *i[[3456789]]86* | arm*)
         WINE_TRY_CFLAGS([-Wl,-Ttext-segment=0x7bc00000],
                         [case $host_os in
                          freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-Ttext-segment=0x60000000" ;;
@@ -790,6 +790,10 @@ case $host_os in
                                          esac])])
         WINE_TRY_CFLAGS([-Wl,-z,max-page-size=0x1000],
                         [WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-z,max-page-size=0x1000"])
+        ;;
+      *)
+        WINE_TRY_CFLAGS([-Wl,-pie],
+                        [WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-pie"])
         ;;
     esac
     ;;
@@ -849,11 +853,13 @@ do
 
     saved_CC=$CC
     saved_CFLAGS=$CFLAGS
+    saved_LDFLAGS=$LDFLAGS
 
     CFLAGS=${CROSSCFLAGS:-"-g -O2"}
+    LDFLAGS=$CROSSLDFLAGS
     AS_VAR_COPY([CC],[${wine_arch}_CC])
     AS_VAR_COPY([${wine_arch}_CFLAGS],[CFLAGS])
-    AS_VAR_COPY([${wine_arch}_LDFLAGS],[CROSSLDFLAGS])
+    AS_VAR_COPY([${wine_arch}_LDFLAGS],[LDFLAGS])
     AS_VAR_SET([${wine_arch}_EXTRACFLAGS],["-D__WINE_PE_BUILD -Wall"])
 
     target=""
@@ -899,6 +905,7 @@ do
     then
         CC=$saved_CC
         CFLAGS=$saved_CFLAGS
+        LDFLAGS=$saved_LDFLAGS
         continue
     fi
     AS_VAR_APPEND([PE_ARCHS],[" $wine_arch"])
@@ -989,6 +996,7 @@ do
 
     CC=$saved_CC
     CFLAGS=$saved_CFLAGS
+    LDFLAGS=$saved_LDFLAGS
 done
 
 if test $HOST_ARCH = aarch64 -a "x$PE_ARCHS" = x
@@ -3313,6 +3321,7 @@ WINE_CONFIG_MAKEFILE(dlls/xaudio2_6)
 WINE_CONFIG_MAKEFILE(dlls/xaudio2_7)
 WINE_CONFIG_MAKEFILE(dlls/xaudio2_7/tests)
 WINE_CONFIG_MAKEFILE(dlls/xaudio2_8)
+WINE_CONFIG_MAKEFILE(dlls/xaudio2_8/tests)
 WINE_CONFIG_MAKEFILE(dlls/xaudio2_9)
 WINE_CONFIG_MAKEFILE(dlls/xinput1_1)
 WINE_CONFIG_MAKEFILE(dlls/xinput1_2)
@@ -3511,7 +3520,7 @@ then
 [wine_fn_output_makedep ()
 {
     AS_MKDIR_P(tools)
-    $CC -I${wine_srcdir}tools -Iinclude -I${wine_srcdir}include -D__WINESRC__ $EXTRACFLAGS $CPPFLAGS $CFLAGS -o tools/makedep$ac_exeext ${wine_srcdir}tools/makedep.c $LDFLAGS
+    $CC -I${wine_srcdir}tools -Iinclude -I${wine_srcdir}include -D__WINESRC__ -DWINE_UNIX_LIB $EXTRACFLAGS $CPPFLAGS $CFLAGS -o tools/makedep$ac_exeext ${wine_srcdir}tools/makedep.c $LDFLAGS
 }])
 fi
 
@@ -3645,7 +3654,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-8.9.1.r0.g2dcacd0d\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-8.10.r4.gdb6b4795\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

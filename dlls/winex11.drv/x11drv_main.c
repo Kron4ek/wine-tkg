@@ -78,7 +78,6 @@ BOOL use_take_focus = FALSE;
 BOOL use_primary_selection = FALSE;
 BOOL use_system_cursors = TRUE;
 BOOL show_systray = TRUE;
-BOOL grab_pointer = TRUE;
 BOOL grab_fullscreen = TRUE;
 int keyboard_layout = -1;
 BOOL keyboard_scancode_detect = FALSE;
@@ -237,6 +236,7 @@ static inline BOOL ignore_error( Display *display, XErrorEvent *event )
 {
     if ((event->request_code == X_SetInputFocus ||
          event->request_code == X_ChangeWindowAttributes ||
+         event->request_code == X_ConfigureWindow ||
          event->request_code == X_SendEvent) &&
         (event->error_code == BadMatch ||
          event->error_code == BadWindow)) return TRUE;
@@ -579,9 +579,6 @@ static void setup_options(void)
 
     if (!get_config_key( hkey, appkey, "ShowSystray", buffer, sizeof(buffer) ))
         show_systray = IS_OPTION_TRUE( buffer[0] );
-
-    if (!get_config_key( hkey, appkey, "GrabPointer", buffer, sizeof(buffer) ))
-        grab_pointer = IS_OPTION_TRUE( buffer[0] );
 
     if (!get_config_key( hkey, appkey, "GrabFullscreen", buffer, sizeof(buffer) ))
         grab_fullscreen = IS_OPTION_TRUE( buffer[0] );
@@ -1059,7 +1056,7 @@ BOOL X11DRV_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, 
     return FALSE;  /* let user32 handle it */
 }
 
-NTSTATUS CDECL X11DRV_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
+NTSTATUS X11DRV_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
 {
     const struct vulkan_funcs *vulkan_funcs = get_vulkan_driver(WINE_VULKAN_DRIVER_VERSION);
     struct x11_d3dkmt_adapter *adapter;
@@ -1090,7 +1087,7 @@ NTSTATUS CDECL X11DRV_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
 /**********************************************************************
  *           X11DRV_D3DKMTSetVidPnSourceOwner
  */
-NTSTATUS CDECL X11DRV_D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc )
+NTSTATUS X11DRV_D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc )
 {
     struct d3dkmt_vidpn_source *source, *source2;
     NTSTATUS status = STATUS_SUCCESS;
@@ -1205,7 +1202,7 @@ done:
 /**********************************************************************
  *           X11DRV_D3DKMTCheckVidPnExclusiveOwnership
  */
-NTSTATUS CDECL X11DRV_D3DKMTCheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc )
+NTSTATUS X11DRV_D3DKMTCheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc )
 {
     struct d3dkmt_vidpn_source *source;
 
@@ -1356,7 +1353,7 @@ static BOOL get_vulkan_uuid_from_luid( const LUID *luid, GUID *uuid )
     return FALSE;
 }
 
-NTSTATUS CDECL X11DRV_D3DKMTOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc )
+NTSTATUS X11DRV_D3DKMTOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc )
 {
     static const char *extensions[] =
     {
@@ -1470,7 +1467,7 @@ done:
     return status;
 }
 
-NTSTATUS CDECL X11DRV_D3DKMTQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc )
+NTSTATUS X11DRV_D3DKMTQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc )
 {
     const struct vulkan_funcs *vulkan_funcs = get_vulkan_driver(WINE_VULKAN_DRIVER_VERSION);
     PFN_vkGetPhysicalDeviceMemoryProperties2KHR pvkGetPhysicalDeviceMemoryProperties2KHR;
@@ -1546,7 +1543,6 @@ NTSTATUS x11drv_client_call( enum client_callback func, UINT arg )
 
 const unixlib_entry_t __wine_unix_call_funcs[] =
 {
-    x11drv_create_desktop,
     x11drv_init,
     x11drv_systray_clear,
     x11drv_systray_dock,
@@ -1634,7 +1630,6 @@ static NTSTATUS x11drv_wow64_tablet_info( void *arg )
 
 const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
 {
-    x11drv_create_desktop,
     x11drv_wow64_init,
     x11drv_wow64_systray_clear,
     x11drv_wow64_systray_dock,

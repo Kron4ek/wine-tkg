@@ -765,7 +765,7 @@ SOCKET WINAPI accept( SOCKET s, struct sockaddr *addr, int *len )
                                     NULL, 0, &accept_handle, sizeof(accept_handle) );
     if (status == STATUS_PENDING)
     {
-        if (WaitForSingleObject( sync_event, INFINITE ) == WAIT_FAILED)
+        if (wait_event_alertable( sync_event ) == WAIT_FAILED)
             return SOCKET_ERROR;
         status = io.u.Status;
     }
@@ -1240,7 +1240,7 @@ int WINAPI connect( SOCKET s, const struct sockaddr *addr, int len )
     free( params );
     if (status == STATUS_PENDING)
     {
-        if (WaitForSingleObject( sync_event, INFINITE ) == WAIT_FAILED) return -1;
+        if (wait_event_alertable( sync_event ) == WAIT_FAILED) return -1;
         status = io.u.Status;
     }
     if (status)
@@ -2994,7 +2994,7 @@ int WINAPI WSAPoll( WSAPOLLFD *fds, ULONG count, int timeout )
                                     params, params_size, params, params_size );
     if (status == STATUS_PENDING)
     {
-        if (WaitForSingleObject( sync_event, INFINITE ) == WAIT_FAILED)
+        if (wait_event_alertable( sync_event ) == WAIT_FAILED)
         {
             free( params );
             return -1;

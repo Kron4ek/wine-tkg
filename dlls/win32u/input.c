@@ -404,9 +404,11 @@ static const KBDTABLES kbdus_tables =
     .fLocaleFlags = MAKELONG(0, KBD_VERSION),
 };
 
+static LONG clipping_cursor; /* clipping thread counter */
 
 LONG global_key_state_counter = 0;
-
+BOOL grab_pointer = TRUE;
+BOOL grab_fullscreen = FALSE;
 
 static void kbd_tables_init_vsc2vk( const KBDTABLES *tables, BYTE vsc2vk[0x300] )
 {
@@ -598,7 +600,7 @@ BOOL WINAPI NtUserAttachThreadInput( DWORD from, DWORD to, BOOL attach )
  *
  * Internal SendInput function to allow the graphics driver to inject real events.
  */
-BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput )
+BOOL WINAPI __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput )
 {
     return set_ntstatus( send_hardware_message( hwnd, input, rawinput, 0 ));
 }
@@ -1738,7 +1740,7 @@ HWND WINAPI NtUserSetCapture( HWND hwnd )
 /**********************************************************************
  *           release_capture
  */
-BOOL WINAPI release_capture(void)
+BOOL release_capture(void)
 {
     BOOL ret = set_capture_window( 0, 0, NULL );
 
@@ -1814,7 +1816,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
     if (previous == hwnd)
     {
         if (prev) *prev = hwnd;
-        return TRUE;
+        goto done;
     }
 
     /* Prevent a recursive activation loop with the activation messages */
@@ -1846,7 +1848,7 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
     SERVER_END_REQ;
     if (!ret) return FALSE;
     if (prev) *prev = previous;
-    if (previous == hwnd) return TRUE;
+    if (previous == hwnd) goto done;
 
     if (hwnd)
     {
@@ -1919,7 +1921,6 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
         /* Do not change focus if the window is no more active */
         if (hwnd == info.hwndActive)
         {
-            /* this line exists to keep this patch from applying in the wrong place */
             if (!info.hwndFocus || !hwnd || NtUserGetAncestor( info.hwndFocus, GA_ROOT ) != hwnd)
                 set_focus_window( hwnd );
         }
@@ -1927,6 +1928,10 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
 
 clear_flags:
     win_set_flags(hwnd, 0, WIN_IS_IN_ACTIVATION);
+
+done:
+    if (hwnd) clip_fullscreen_window( hwnd, FALSE );
+
     return ret;
 }
 
@@ -2453,6 +2458,50 @@ BOOL WINAPI NtUserIsMouseInPointerEnabled(void)
     return FALSE;
 }
 
+/***********************************************************************
+ *      clip_fullscreen_window
+ *
+ * Turn on clipping if the active window is fullscreen.
+ */
+BOOL clip_fullscreen_window( HWND hwnd, BOOL reset )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    MONITORINFO monitor_info = {.cbSize = sizeof(MONITORINFO)};
+    RECT rect, virtual_rect = NtUserGetVirtualScreenRect();
+    HMONITOR monitor;
+    DWORD style;
+
+    if (hwnd == NtUserGetDesktopWindow()) return FALSE;
+    if (hwnd != NtUserGetForegroundWindow()) return FALSE;
+
+    style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
+    if (!(style & WS_VISIBLE)) return FALSE;
+    if ((style & (WS_POPUP | WS_CHILD)) == WS_CHILD) return FALSE;
+    /* maximized windows don't count as full screen */
+    if ((style & WS_MAXIMIZE) && (style & WS_CAPTION) == WS_CAPTION) return FALSE;
+
+    if (!NtUserGetWindowRect( hwnd, &rect )) return FALSE;
+    if (!NtUserIsWindowRectFullScreen( &rect )) return FALSE;
+    if (!reset) {
+        if (NtGetTickCount() - thread_info->clipping_reset < 1000) return FALSE;
+        if (!reset && clipping_cursor && thread_info->clipping_cursor) return FALSE;  /* already clipping */
+    }
+    if (!(monitor = NtUserMonitorFromWindow( hwnd, MONITOR_DEFAULTTONEAREST ))) return FALSE;
+    if (!NtUserGetMonitorInfo( monitor, &monitor_info )) return FALSE;
+    if (!grab_fullscreen)
+    {
+        RECT virtual_rect = NtUserGetVirtualScreenRect();
+        if (!EqualRect( &monitor_info.rcMonitor, &virtual_rect )) return FALSE;
+        if (is_virtual_desktop()) return FALSE;
+    }
+
+    /* shrink the clipping rect to make sure it is not ignored for being fullscreen */
+    if (EqualRect( &monitor_info.rcMonitor, &virtual_rect )) InflateRect( &monitor_info.rcMonitor, -1, -1 );
+
+    TRACE( "win %p clipping fullscreen\n", hwnd );
+    return NtUserClipCursor( &monitor_info.rcMonitor );
+}
+
 /**********************************************************************
  *       NtUserGetPointerInfoList    (win32u.@)
  */
@@ -2465,114 +2514,113 @@ BOOL WINAPI NtUserGetPointerInfoList( UINT32 id, POINTER_INPUT_TYPE type, UINT_P
     return FALSE;
 }
 
-HWND get_shell_window(void)
+BOOL get_clip_cursor( RECT *rect )
 {
-    HWND hwnd = 0;
+    UINT dpi;
+    BOOL ret;
 
-    SERVER_START_REQ(set_global_windows)
+    if (!rect) return FALSE;
+
+    SERVER_START_REQ( set_cursor )
     {
         req->flags = 0;
-        if (!wine_server_call_err(req))
-            hwnd = wine_server_ptr_handle( reply->old_shell_window );
+        if ((ret = !wine_server_call( req )))
+        {
+            rect->left   = reply->new_clip.left;
+            rect->top    = reply->new_clip.top;
+            rect->right  = reply->new_clip.right;
+            rect->bottom = reply->new_clip.bottom;
+        }
     }
     SERVER_END_REQ;
 
-    return hwnd;
+    if (ret && (dpi = get_thread_dpi()))
+    {
+        HMONITOR monitor = monitor_from_rect( rect, MONITOR_DEFAULTTOPRIMARY, 0 );
+        *rect = map_dpi_rect( *rect, get_monitor_dpi( monitor ), dpi );
+    }
+    return ret;
+}
+
+BOOL process_wine_clipcursor( HWND hwnd, BOOL empty, BOOL reset )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    RECT rect, virtual_rect = NtUserGetVirtualScreenRect();
+    BOOL was_clipping;
+
+    TRACE( "hwnd %p, empty %u, reset %u\n", hwnd, empty, reset );
+
+    if ((was_clipping = thread_info->clipping_cursor)) InterlockedDecrement( &clipping_cursor );
+    thread_info->clipping_cursor = FALSE;
+
+    if (reset)
+    {
+        thread_info->clipping_reset = NtGetTickCount();
+        return user_driver->pClipCursor( NULL, TRUE );
+    }
+
+    if (!grab_pointer) return TRUE;
+
+    /* we are clipping if the clip rectangle is smaller than the screen */
+    get_clip_cursor( &rect );
+    intersect_rect( &rect, &rect, &virtual_rect );
+    if (EqualRect( &rect, &virtual_rect )) empty = TRUE;
+    if (empty)
+    {
+        /* if currently clipping, check if we should switch to fullscreen clipping */
+        if (was_clipping && clip_fullscreen_window( hwnd, TRUE )) return TRUE;
+        return user_driver->pClipCursor( NULL, FALSE );
+    }
+
+    if (!user_driver->pClipCursor( &rect, FALSE )) return FALSE;
+    InterlockedIncrement( &clipping_cursor );
+    thread_info->clipping_cursor = TRUE;
+    return TRUE;
 }
 
 /***********************************************************************
-*            NtUserSetShellWindowEx (win32u.@)
-*/
-BOOL WINAPI NtUserSetShellWindowEx( HWND shell, HWND list_view )
+ *       NtUserClipCursor (win32u.@)
+ */
+BOOL WINAPI NtUserClipCursor( const RECT *rect )
 {
+    UINT dpi;
     BOOL ret;
+    RECT new_rect;
 
-    /* shell =     Progman[Program Manager]
-     *             |-> SHELLDLL_DefView
-     * list_view = |   |-> SysListView32
-     *             |   |   |-> tooltips_class32
-     *             |   |
-     *             |   |-> SysHeader32
-     *             |
-     *             |-> ProxyTarget
-     */
+    TRACE( "Clipping to %s\n", wine_dbgstr_rect(rect) );
 
-    if (get_shell_window())
-        return FALSE;
-
-    if (get_window_long( shell, GWL_EXSTYLE ) & WS_EX_TOPMOST)
-        return FALSE;
-
-    if (list_view != shell && (get_window_long( list_view, GWL_EXSTYLE ) & WS_EX_TOPMOST))
-        return FALSE;
-
-    if (list_view && list_view != shell)
-        NtUserSetWindowPos( list_view, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
-
-    NtUserSetWindowPos( shell, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
-
-    SERVER_START_REQ(set_global_windows)
+    if (rect)
     {
-        req->flags          = SET_GLOBAL_SHELL_WINDOWS;
-        req->shell_window   = wine_server_user_handle( shell );
-        req->shell_listview = wine_server_user_handle( list_view );
-        ret = !wine_server_call_err(req);
+        if (rect->left > rect->right || rect->top > rect->bottom) return FALSE;
+        if ((dpi = get_thread_dpi()))
+        {
+            HMONITOR monitor = monitor_from_rect( rect, MONITOR_DEFAULTTOPRIMARY, dpi );
+            new_rect = map_dpi_rect( *rect, dpi, get_monitor_dpi( monitor ));
+            rect = &new_rect;
+        }
+    }
+
+    SERVER_START_REQ( set_cursor )
+    {
+        if (rect)
+        {
+            req->flags       = SET_CURSOR_CLIP;
+            req->clip.left   = rect->left;
+            req->clip.top    = rect->top;
+            req->clip.right  = rect->right;
+            req->clip.bottom = rect->bottom;
+        }
+        else req->flags = SET_CURSOR_NOCLIP;
+
+        if ((ret = !wine_server_call( req )))
+        {
+            new_rect.left   = reply->new_clip.left;
+            new_rect.top    = reply->new_clip.top;
+            new_rect.right  = reply->new_clip.right;
+            new_rect.bottom = reply->new_clip.bottom;
+        }
     }
     SERVER_END_REQ;
+
     return ret;
-}
-
-HWND get_progman_window(void)
-{
-    HWND ret = 0;
-
-    SERVER_START_REQ(set_global_windows)
-    {
-        req->flags = 0;
-        if (!wine_server_call_err(req))
-            ret = wine_server_ptr_handle( reply->old_progman_window );
-    }
-    SERVER_END_REQ;
-    return ret;
-}
-
-HWND set_progman_window( HWND hwnd )
-{
-    SERVER_START_REQ(set_global_windows)
-    {
-        req->flags          = SET_GLOBAL_PROGMAN_WINDOW;
-        req->progman_window = wine_server_user_handle( hwnd );
-        if (wine_server_call_err( req )) hwnd = 0;
-    }
-    SERVER_END_REQ;
-    return hwnd;
-}
-
-HWND get_taskman_window(void)
-{
-    HWND ret = 0;
-
-    SERVER_START_REQ(set_global_windows)
-    {
-        req->flags = 0;
-        if (!wine_server_call_err(req))
-            ret = wine_server_ptr_handle( reply->old_taskman_window );
-    }
-    SERVER_END_REQ;
-    return ret;
-}
-
-HWND set_taskman_window( HWND hwnd )
-{
-    /* hwnd = MSTaskSwWClass
-     *        |-> SysTabControl32
-     */
-    SERVER_START_REQ(set_global_windows)
-    {
-        req->flags          = SET_GLOBAL_TASKMAN_WINDOW;
-        req->taskman_window = wine_server_user_handle( hwnd );
-        if (wine_server_call_err( req )) hwnd = 0;
-    }
-    SERVER_END_REQ;
-    return hwnd;
 }

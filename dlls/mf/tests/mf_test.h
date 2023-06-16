@@ -94,7 +94,8 @@ struct sample_desc
     const struct buffer_desc *buffers;
     DWORD repeat_count;
     BOOL todo_length;
-    LONGLONG todo_time;
+    BOOL todo_duration;
+    BOOL todo_time;
 };
 
 #define check_mf_sample_collection(a, b, c) check_mf_sample_collection_(__FILE__, __LINE__, a, b, c)

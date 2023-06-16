@@ -28,7 +28,6 @@
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
-#define NONAMELESSUNION
 #include "winternl.h"
 #include "ddk/wdm.h"
 #include "ntdll_misc.h"
@@ -54,8 +53,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(actctx);
 /* we don't want to include winuser.h */
 #define RT_MANIFEST                        ((ULONG_PTR)24)
 #define CREATEPROCESS_MANIFEST_RESOURCE_ID ((ULONG_PTR)1)
-#define MINIMUM_RESERVED_MANIFEST_RESOURCE_ID ((ULONG_PTR)1)
-#define MAXIMUM_RESERVED_MANIFEST_RESOURCE_ID ((ULONG_PTR)16)
 
 /* from oaidl.h */
 typedef enum tagLIBFLAGS {
@@ -2931,6 +2928,24 @@ static NTSTATUS open_nt_file( HANDLE *handle, UNICODE_STRING *name )
                        FILE_SHARE_READ | FILE_SHARE_DELETE, FILE_SYNCHRONOUS_IO_ALERT );
 }
 
+static NTSTATUS find_first_manifest_resource_in_module( HANDLE hModule, const WCHAR **resname )
+{
+    static const LDR_RESOURCE_INFO manifest_res_info = { RT_MANIFEST };
+    const IMAGE_RESOURCE_DIRECTORY_ENTRY *entry_base, *entry;
+    const IMAGE_RESOURCE_DIRECTORY *resdir;
+    NTSTATUS status;
+
+    status = LdrFindResourceDirectory_U( hModule, &manifest_res_info, 1, &resdir );
+    if (status != STATUS_SUCCESS) return status;
+
+    if (!resdir->NumberOfIdEntries) return STATUS_RESOURCE_NAME_NOT_FOUND;
+    entry_base = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(resdir + 1);
+    entry = entry_base + resdir->NumberOfNamedEntries;
+    *resname = (const WCHAR *)(ULONG_PTR)entry->Id;
+
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS get_manifest_in_module( struct actctx_loader* acl, struct assembly_identity* ai,
                                         LPCWSTR filename, LPCWSTR directory, BOOL shared,
                                         HANDLE hModule, LPCWSTR resname, ULONG lang )
@@ -2953,7 +2968,11 @@ static NTSTATUS get_manifest_in_module( struct actctx_loader* acl, struct assemb
                     hModule, debugstr_w(filename) );
     }
 
-    if (!resname) return STATUS_INVALID_PARAMETER;
+    if (!resname)
+    {
+        status = find_first_manifest_resource_in_module( hModule, &resname );
+        if (status != STATUS_SUCCESS) return status;
+    }
 
     info.Type = RT_MANIFEST;
     info.Language = lang;
@@ -3265,14 +3284,14 @@ static NTSTATUS lookup_winsxs(struct actctx_loader* acl, struct assembly_identit
 
     if (!open_nt_file( &handle, &path_us ))
     {
-        io.u.Status = get_manifest_in_manifest_file(acl, &sxs_ai, path_us.Buffer, file, TRUE, handle);
+        io.Status = get_manifest_in_manifest_file(acl, &sxs_ai, path_us.Buffer, file, TRUE, handle);
         NtClose( handle );
     }
-    else io.u.Status = STATUS_NO_SUCH_FILE;
+    else io.Status = STATUS_NO_SUCH_FILE;
 
     RtlFreeHeap( GetProcessHeap(), 0, file );
     RtlFreeUnicodeString( &path_us );
-    return io.u.Status;
+    return io.Status;
 }
 
 static NTSTATUS lookup_assembly(struct actctx_loader* acl,
@@ -3334,14 +3353,7 @@ static NTSTATUS lookup_assembly(struct actctx_loader* acl,
             status = open_nt_file( &file, &nameW );
             if (!status)
             {
-                INT rid;
-                for (rid = MINIMUM_RESERVED_MANIFEST_RESOURCE_ID;
-                     rid <= MAXIMUM_RESERVED_MANIFEST_RESOURCE_ID; rid++)
-                {
-                    status = get_manifest_in_pe_file( acl, ai, nameW.Buffer, directory, FALSE, file,
-                                                      (LPCWSTR)(ULONG_PTR)rid, 0 );
-                    if (status == STATUS_SUCCESS) break;
-                }
+                status = get_manifest_in_pe_file( acl, ai, nameW.Buffer, directory, FALSE, file, NULL, 0 );
                 NtClose( file );
                 if (status == STATUS_SUCCESS)
                     break;
@@ -5238,6 +5250,9 @@ NTSTATUS WINAPI RtlCreateActivationContext( HANDLE *handle, const void *ptr )
 
     if (!pActCtx || pActCtx->cbSize < sizeof(*pActCtx) ||
         (pActCtx->dwFlags & ~ACTCTX_FLAGS_ALL))
+        return STATUS_INVALID_PARAMETER;
+
+    if ((pActCtx->dwFlags & ACTCTX_FLAG_RESOURCE_NAME_VALID) && !pActCtx->lpResourceName)
         return STATUS_INVALID_PARAMETER;
 
     if (!(actctx = RtlAllocateHeap( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*actctx) )))

@@ -1717,8 +1717,6 @@ static void create_whole_window( struct x11drv_win_data *data )
 
     XFlush( data->display );  /* make sure the window exists before we start painting to it */
 
-    sync_window_cursor( data->whole_window );
-
 done:
     if (win_rgn) NtGdiDeleteObjectApp( win_rgn );
 }
@@ -1915,13 +1913,13 @@ BOOL X11DRV_DestroyNotify( HWND hwnd, XEvent *event )
 
 
 /* initialize the desktop window id in the desktop manager process */
-BOOL create_desktop_win_data( Window win )
+static BOOL create_desktop_win_data( Window win, HWND hwnd )
 {
     struct x11drv_thread_data *thread_data = x11drv_thread_data();
     Display *display = thread_data->display;
     struct x11drv_win_data *data;
 
-    if (!(data = alloc_win_data( display, NtUserGetDesktopWindow() ))) return FALSE;
+    if (!(data = alloc_win_data( display, hwnd ))) return FALSE;
     data->whole_window = win;
     data->managed = TRUE;
     NtUserSetProp( data->hwnd, whole_window_prop, (HANDLE)win );
@@ -1932,9 +1930,9 @@ BOOL create_desktop_win_data( Window win )
 }
 
 /**********************************************************************
- *		CreateDesktopWindow   (X11DRV.@)
+ *		SetDesktopWindow   (X11DRV.@)
  */
-BOOL X11DRV_CreateDesktopWindow( HWND hwnd )
+void X11DRV_SetDesktopWindow( HWND hwnd )
 {
     unsigned int width, height;
 
@@ -1951,7 +1949,10 @@ BOOL X11DRV_CreateDesktopWindow( HWND hwnd )
 
     if (!width && !height)  /* not initialized yet */
     {
-        RECT rect = NtUserGetVirtualScreenRect();
+        RECT rect;
+
+        X11DRV_DisplayDevices_Init( TRUE );
+        rect = NtUserGetVirtualScreenRect();
 
         SERVER_START_REQ( set_window_pos )
         {
@@ -1966,13 +1967,30 @@ BOOL X11DRV_CreateDesktopWindow( HWND hwnd )
             wine_server_call( req );
         }
         SERVER_END_REQ;
+
+        if (!is_virtual_desktop()) return;
+        if (!create_desktop_win_data( root_window, hwnd ))
+        {
+            ERR( "Failed to create virtual desktop window data\n" );
+            root_window = DefaultRootWindow( gdi_display );
+        }
+        else if (is_desktop_fullscreen())
+        {
+            Display *display = x11drv_thread_data()->display;
+            TRACE("setting desktop to fullscreen\n");
+            XChangeProperty( display, root_window, x11drv_atom(_NET_WM_STATE), XA_ATOM, 32, PropModeReplace,
+                             (unsigned char*)&x11drv_atom(_NET_WM_STATE_FULLSCREEN), 1 );
+        }
     }
     else
     {
         Window win = (Window)NtUserGetProp( hwnd, whole_window_prop );
-        if (win && win != root_window) X11DRV_init_desktop( win, width, height );
+        if (win && win != root_window)
+        {
+            X11DRV_init_desktop( win, width, height );
+            X11DRV_DisplayDevices_Init( TRUE );
+        }
     }
-    return TRUE;
 }
 
 
@@ -2499,7 +2517,7 @@ void X11DRV_SetActiveWindow( HWND hwnd )
 
     if (!(data = get_win_data( hwnd ))) return;
 
-    if (data->mapped && data->managed)
+    if (data->mapped && data->managed && !data->iconic)
     {
         XEvent xev;
         struct x11drv_win_data *active = get_win_data( thread_data->active_window );
@@ -2814,7 +2832,7 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
         {
             release_win_data( data );
             unmap_window( hwnd );
-            if (NtUserIsWindowRectFullScreen( &old_window_rect )) reset_clipping_window();
+            if (NtUserIsWindowRectFullScreen( &old_window_rect )) NtUserClipCursor( NULL );
             if (!(data = get_win_data( hwnd ))) return;
         }
     }
@@ -3214,31 +3232,6 @@ LRESULT X11DRV_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
             release_win_data( data );
         }
         return 0;
-    case WM_X11DRV_SET_CURSOR:
-    {
-        Window win = 0;
-
-        if ((data = get_win_data( hwnd )))
-        {
-            win = data->whole_window;
-            release_win_data( data );
-        }
-        else if (hwnd == x11drv_thread_data()->clip_hwnd)
-            win = x11drv_thread_data()->clip_window;
-
-        if (win)
-        {
-            if (wp == GetCurrentThreadId())
-                set_window_cursor( win, (HCURSOR)lp );
-            else
-                sync_window_cursor( win );
-        }
-        return 0;
-    }
-    case WM_X11DRV_CLIP_CURSOR_NOTIFY:
-        return clip_cursor_notify( hwnd, (HWND)wp, (HWND)lp );
-    case WM_X11DRV_CLIP_CURSOR_REQUEST:
-        return clip_cursor_request( hwnd, (BOOL)wp, (BOOL)lp );
     case WM_X11DRV_DELETE_TAB:
         taskbar_delete_tab( hwnd );
         return 0;

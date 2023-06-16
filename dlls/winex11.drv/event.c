@@ -809,11 +809,7 @@ static BOOL X11DRV_FocusIn( HWND hwnd, XEvent *xev )
 
     xim_set_focus( hwnd, TRUE );
 
-    if (use_take_focus)
-    {
-        if (hwnd == NtUserGetForegroundWindow()) clip_fullscreen_window( hwnd, FALSE );
-        return TRUE;
-    }
+    if (use_take_focus) return TRUE;
 
     if (!can_activate_window(hwnd))
     {
@@ -843,7 +839,7 @@ static void focus_out( Display *display , HWND hwnd )
 
     if (is_virtual_desktop())
     {
-        if (hwnd == NtUserGetDesktopWindow()) reset_clipping_window();
+        if (hwnd == NtUserGetDesktopWindow()) NtUserClipCursor( NULL );
         return;
     }
     if (hwnd != NtUserGetForegroundWindow()) return;
@@ -889,7 +885,7 @@ static BOOL X11DRV_FocusOut( HWND hwnd, XEvent *xev )
 
     if (event->detail == NotifyPointer)
     {
-        if (!hwnd && event->window == x11drv_thread_data()->clip_window) reset_clipping_window();
+        if (!hwnd && event->window == x11drv_thread_data()->clip_window) NtUserClipCursor( NULL );
         return TRUE;
     }
     if (!hwnd) return FALSE;

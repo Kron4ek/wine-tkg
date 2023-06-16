@@ -24,7 +24,6 @@
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
-#define NONAMELESSUNION
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
@@ -919,7 +918,7 @@ void WINAPI switch_fiber( CONTEXT *old, CONTEXT *new )
 /* call the fiber initial function once we have switched stack */
 static void CDECL start_fiber(void)
 {
-    struct fiber_data *fiber = NtCurrentTeb()->Tib.u.FiberData;
+    struct fiber_data *fiber = NtCurrentTeb()->Tib.FiberData;
     LPFIBER_START_ROUTINE start = fiber->start;
 
     __TRY
@@ -1033,12 +1032,12 @@ LPVOID WINAPI DECLSPEC_HOTPATCH CreateFiberEx( SIZE_T stack_commit, SIZE_T stack
  */
 BOOL WINAPI DECLSPEC_HOTPATCH ConvertFiberToThread(void)
 {
-    struct fiber_data *fiber = NtCurrentTeb()->Tib.u.FiberData;
+    struct fiber_data *fiber = NtCurrentTeb()->Tib.FiberData;
 
     if (fiber)
     {
         relocate_thread_actctx_stack( &NtCurrentTeb()->ActivationContextStack );
-        NtCurrentTeb()->Tib.u.FiberData = NULL;
+        NtCurrentTeb()->Tib.FiberData = NULL;
         HeapFree( GetProcessHeap(), 0, fiber );
     }
     return TRUE;
@@ -1048,7 +1047,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH ConvertFiberToThread(void)
 /***********************************************************************
  *           ConvertThreadToFiber   (kernelbase.@)
  */
-LPVOID WINAPI DECLSPEC_HOTPATCH ConvertThreadToFiber( LPVOID param )
+LPVOID WINAPI /* DECLSPEC_HOTPATCH */ ConvertThreadToFiber( LPVOID param )
 {
     return ConvertThreadToFiberEx( param, 0 );
 }
@@ -1061,7 +1060,7 @@ LPVOID WINAPI DECLSPEC_HOTPATCH ConvertThreadToFiberEx( LPVOID param, DWORD flag
 {
     struct fiber_data *fiber;
 
-    if (NtCurrentTeb()->Tib.u.FiberData)
+    if (NtCurrentTeb()->Tib.FiberData)
     {
         SetLastError( ERROR_ALREADY_FIBER );
         return NULL;
@@ -1081,7 +1080,7 @@ LPVOID WINAPI DECLSPEC_HOTPATCH ConvertThreadToFiberEx( LPVOID param, DWORD flag
     fiber->flags            = flags;
     fiber->fls_slots        = NtCurrentTeb()->FlsSlots;
     relocate_thread_actctx_stack( &fiber->actctx.stack_space );
-    NtCurrentTeb()->Tib.u.FiberData = fiber;
+    NtCurrentTeb()->Tib.FiberData = fiber;
     return fiber;
 }
 
@@ -1094,7 +1093,7 @@ void WINAPI DECLSPEC_HOTPATCH DeleteFiber( LPVOID fiber_ptr )
     struct fiber_data *fiber = fiber_ptr;
 
     if (!fiber) return;
-    if (fiber == NtCurrentTeb()->Tib.u.FiberData)
+    if (fiber == NtCurrentTeb()->Tib.FiberData)
     {
         relocate_thread_actctx_stack( &NtCurrentTeb()->ActivationContextStack );
         HeapFree( GetProcessHeap(), 0, fiber );
@@ -1112,7 +1111,7 @@ void WINAPI DECLSPEC_HOTPATCH DeleteFiber( LPVOID fiber_ptr )
  */
 BOOL WINAPI DECLSPEC_HOTPATCH IsThreadAFiber(void)
 {
-    return NtCurrentTeb()->Tib.u.FiberData != NULL;
+    return NtCurrentTeb()->Tib.FiberData != NULL;
 }
 
 
@@ -1122,7 +1121,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH IsThreadAFiber(void)
 void WINAPI DECLSPEC_HOTPATCH SwitchToFiber( LPVOID fiber )
 {
     struct fiber_data *new_fiber = fiber;
-    struct fiber_data *current_fiber = NtCurrentTeb()->Tib.u.FiberData;
+    struct fiber_data *current_fiber = NtCurrentTeb()->Tib.FiberData;
 
     current_fiber->except      = NtCurrentTeb()->Tib.ExceptionList;
     current_fiber->stack_limit = NtCurrentTeb()->Tib.StackLimit;
@@ -1131,7 +1130,7 @@ void WINAPI DECLSPEC_HOTPATCH SwitchToFiber( LPVOID fiber )
     /* stack_allocation and stack_base never change */
 
     /* FIXME: should save floating point context if requested in fiber->flags */
-    NtCurrentTeb()->Tib.u.FiberData   = new_fiber;
+    NtCurrentTeb()->Tib.FiberData     = new_fiber;
     NtCurrentTeb()->Tib.ExceptionList = new_fiber->except;
     NtCurrentTeb()->Tib.StackBase     = new_fiber->stack_base;
     NtCurrentTeb()->Tib.StackLimit    = new_fiber->stack_limit;
@@ -1226,7 +1225,7 @@ PTP_CLEANUP_GROUP WINAPI DECLSPEC_HOTPATCH CreateThreadpoolCleanupGroup(void)
 static void WINAPI tp_io_callback( TP_CALLBACK_INSTANCE *instance, void *userdata, void *cvalue, IO_STATUS_BLOCK *iosb, TP_IO *io )
 {
     PTP_WIN32_IO_CALLBACK callback = *(void **)io;
-    callback( instance, userdata, cvalue, RtlNtStatusToDosError( iosb->u.Status ), iosb->Information, io );
+    callback( instance, userdata, cvalue, RtlNtStatusToDosError( iosb->Status ), iosb->Information, io );
 }
 
 

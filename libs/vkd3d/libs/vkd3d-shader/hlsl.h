@@ -105,6 +105,7 @@ enum hlsl_base_type
 enum hlsl_sampler_dim
 {
     HLSL_SAMPLER_DIM_GENERIC,
+    HLSL_SAMPLER_DIM_COMPARISON,
     HLSL_SAMPLER_DIM_1D,
     HLSL_SAMPLER_DIM_2D,
     HLSL_SAMPLER_DIM_3D,
@@ -614,6 +615,8 @@ enum hlsl_resource_load_type
 {
     HLSL_RESOURCE_LOAD,
     HLSL_RESOURCE_SAMPLE,
+    HLSL_RESOURCE_SAMPLE_CMP,
+    HLSL_RESOURCE_SAMPLE_CMP_LZ,
     HLSL_RESOURCE_SAMPLE_LOD,
     HLSL_RESOURCE_SAMPLE_LOD_BIAS,
     HLSL_RESOURCE_SAMPLE_GRAD,
@@ -628,7 +631,7 @@ struct hlsl_ir_resource_load
     struct hlsl_ir_node node;
     enum hlsl_resource_load_type load_type;
     struct hlsl_deref resource, sampler;
-    struct hlsl_src coords, lod, ddx, ddy, sample_index, texel_offset;
+    struct hlsl_src coords, lod, ddx, ddy, cmp, sample_index, texel_offset;
     enum hlsl_sampler_dim sampling_dim;
 };
 
@@ -830,7 +833,7 @@ struct hlsl_resource_load_params
     struct hlsl_type *format;
     enum hlsl_resource_load_type type;
     struct hlsl_ir_node *resource, *sampler;
-    struct hlsl_ir_node *coords, *lod, *ddx, *ddy, *sample_index, *texel_offset;
+    struct hlsl_ir_node *coords, *lod, *ddx, *ddy, *cmp, *sample_index, *texel_offset;
     enum hlsl_sampler_dim sampling_dim;
 };
 
@@ -1103,8 +1106,8 @@ struct hlsl_ir_node *hlsl_new_call(struct hlsl_ctx *ctx, struct hlsl_ir_function
         const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_cast(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, struct hlsl_type *type,
         const struct vkd3d_shader_location *loc);
-struct hlsl_ir_constant *hlsl_new_constant(struct hlsl_ctx *ctx, struct hlsl_type *type,
-        const struct vkd3d_shader_location *loc);
+struct hlsl_ir_node *hlsl_new_constant(struct hlsl_ctx *ctx, struct hlsl_type *type,
+        const struct hlsl_constant_value *value, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_copy(struct hlsl_ctx *ctx, struct hlsl_ir_node *node);
 struct hlsl_ir_node *hlsl_new_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
         struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS],
@@ -1126,6 +1129,8 @@ struct hlsl_ir_load *hlsl_new_var_load(struct hlsl_ctx *ctx, struct hlsl_ir_var 
         const struct vkd3d_shader_location *loc);
 struct hlsl_ir_load *hlsl_new_load_index(struct hlsl_ctx *ctx, const struct hlsl_deref *deref,
         struct hlsl_ir_node *idx, const struct vkd3d_shader_location *loc);
+struct hlsl_ir_load *hlsl_new_load_parent(struct hlsl_ctx *ctx, const struct hlsl_deref *deref,
+        const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_load_component(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_deref *deref, unsigned int comp, const struct vkd3d_shader_location *loc);
 

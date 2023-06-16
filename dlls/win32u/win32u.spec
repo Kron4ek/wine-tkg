@@ -530,7 +530,7 @@
 @ stub NtGdiHT_Get8BPPFormatPalette
 @ stub NtGdiHT_Get8BPPMaskPalette
 @ stdcall -syscall NtGdiHfontCreate(ptr long long long ptr)
-@ stub NtGdiIcmBrushInfo
+@ stdcall -syscall NtGdiIcmBrushInfo(long long ptr ptr ptr ptr ptr long)
 @ stub NtGdiInit
 @ stdcall -syscall NtGdiInitSpool()
 @ stdcall -syscall NtGdiIntersectClipRect(long long long long long)
@@ -849,9 +849,9 @@
 @ stdcall -syscall NtUserDragObject(long long long long long)
 @ stub NtUserDrawAnimatedRects
 @ stub NtUserDrawCaption
-@ stdcall NtUserDrawCaptionTemp(long long ptr long long wstr long)
+@ stdcall -syscall NtUserDrawCaptionTemp(long long ptr long long wstr long)
 @ stdcall -syscall NtUserDrawIconEx(long long long long long long long long long)
-@ stdcall NtUserDrawMenuBarTemp(long long ptr long long)
+@ stdcall -syscall NtUserDrawMenuBarTemp(long long ptr long long)
 @ stub NtUserDwmGetRemoteSessionOcclusionEvent
 @ stub NtUserDwmGetRemoteSessionOcclusionState
 @ stub NtUserDwmKernelShutdown
@@ -874,12 +874,12 @@
 @ stub NtUserEnableWindowResizeOptimization
 @ stdcall -syscall NtUserEndDeferWindowPosEx(long long)
 @ stdcall -syscall NtUserEndMenu()
-@ stdcall NtUserEndPaint(long ptr)
+@ stdcall -syscall NtUserEndPaint(long ptr)
 @ stdcall -syscall NtUserEnumDisplayDevices(ptr long ptr long)
 @ stdcall -syscall NtUserEnumDisplayMonitors(long ptr ptr long)
 @ stdcall -syscall NtUserEnumDisplaySettings(ptr long ptr long)
 @ stub NtUserEvent
-@ stdcall NtUserExcludeUpdateRgn(long long)
+@ stdcall -syscall NtUserExcludeUpdateRgn(long long)
 @ stub NtUserFillWindow
 @ stdcall -syscall NtUserFindExistingCursorIcon(ptr ptr ptr)
 @ stdcall -syscall NtUserFindWindowEx(long long ptr ptr long)
@@ -1112,7 +1112,7 @@
 @ stub NtUserPromotePointer
 @ stub NtUserQueryActivationObject
 @ stub NtUserQueryBSDRWindow
-@ stub NtUserQueryDisplayConfig
+@ stdcall -syscall NtUserQueryDisplayConfig(long ptr ptr ptr ptr ptr)
 @ stub NtUserQueryInformationThread
 @ stdcall -syscall NtUserQueryInputContext(long long)
 @ stub NtUserQuerySendMessage
@@ -1139,7 +1139,7 @@
 @ stub NtUserRegisterTouchPadCapable
 @ stub NtUserRegisterUserApiHook
 @ stub NtUserRegisterWindowMessage
-@ stdcall NtUserReleaseDC(long long)
+@ stdcall -syscall NtUserReleaseDC(long long)
 @ stub NtUserReleaseDwmHitTestWaiters
 @ stub NtUserRemoteConnect
 @ stub NtUserRemoteRedrawRectangle
@@ -1155,9 +1155,9 @@
 @ stub NtUserResolveDesktopForWOW
 @ stub NtUserRestoreWindowDpiChanges
 @ stub NtUserSBGetParms
-@ stdcall NtUserScrollDC(long long long ptr ptr long ptr)
+@ stdcall -syscall NtUserScrollDC(long long long ptr ptr long ptr)
 @ stdcall -syscall NtUserScrollWindowEx(long long long ptr ptr long ptr long)
-@ stdcall NtUserSelectPalette(long long long)
+@ stdcall -syscall NtUserSelectPalette(long long long)
 @ stub NtUserSendEventMessage
 @ stdcall -syscall NtUserSendInput(long ptr long)
 @ stub NtUserSendInteracsetiveControlHapticsReport
@@ -1295,7 +1295,7 @@
 @ stub NtUserUpdateDefaultDesktopThumbnail
 @ stdcall -syscall NtUserUpdateInputContext(long long ptr)
 @ stub NtUserUpdateInstance
-@ stdcall NtUserUpdateLayeredWindow(long long ptr ptr long ptr long ptr long ptr)
+@ stdcall -syscall NtUserUpdateLayeredWindow(long long ptr ptr long ptr long ptr long ptr)
 @ stub NtUserUpdatePerUserSystemParameters
 @ stub NtUserUpdateWindowInputSinkHints
 @ stub NtUserUpdateWindowTrackingInfo
@@ -1320,11 +1320,6 @@
 ################################################################
 # Wine internal extensions
 
-# Graphics drivers
-@ cdecl __wine_send_input(long ptr ptr)
-
-# gdi32
-@ stdcall SetDIBits(long long long long ptr ptr long)
-@ cdecl __wine_get_brush_bitmap_info(long ptr ptr ptr)
-@ cdecl __wine_get_icm_profile(long long ptr ptr)
-@ cdecl __wine_get_file_outline_text_metric(wstr ptr)
+@ stdcall -syscall __wine_get_icm_profile(long long ptr ptr)
+@ stdcall -syscall __wine_get_file_outline_text_metric(wstr ptr ptr ptr)
+@ stdcall -syscall __wine_send_input(long ptr ptr)

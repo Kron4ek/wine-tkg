@@ -25,13 +25,40 @@
 
 #include "windef.h"
 #include "winbase.h"
-#include "wingdi.h"
+#include "ntgdi.h"
 #include "winspool.h"
 
 #include "unixlib.h"
 
-#include "wine/gdi_driver.h"
 #include "wine/list.h"
+
+struct ps_bitblt_coords
+{
+    int  log_x;     /* original position and size, in logical coords */
+    int  log_y;
+    int  log_width;
+    int  log_height;
+    int  x;         /* mapped position and size, in device coords */
+    int  y;
+    int  width;
+    int  height;
+    RECT visrect;   /* rectangle clipped to the visible part, in device coords */
+    DWORD layout;   /* DC layout */
+};
+
+struct ps_image_bits
+{
+    void   *ptr;       /* pointer to the bits */
+    BOOL    is_copy;   /* whether this is a copy of the bits that can be modified */
+    void  (*free)(struct ps_image_bits *);  /* callback for freeing the bits */
+};
+
+struct ps_brush_pattern
+{
+    BITMAPINFO          *info;     /* DIB info */
+    struct ps_image_bits bits;     /* DIB bits */
+    UINT                 usage;    /* color usage for DIB info */
+};
 
 typedef struct {
     INT		    index;
@@ -292,9 +319,9 @@ typedef struct {
 } PSFONT;
 
 typedef struct {
-    PSCOLOR              color;
-    BOOL                 set;
-    struct brush_pattern pattern;
+    PSCOLOR                 color;
+    BOOL                    set;
+    struct ps_brush_pattern pattern;
 } PSBRUSH;
 
 #define MAX_DASHLEN 16
@@ -371,44 +398,44 @@ extern PAGESIZE *find_pagesize( PPD *ppd, const DEVMODEW *dm ) DECLSPEC_HIDDEN;
 extern DUPLEX *find_duplex( PPD *ppd, const DEVMODEW *dm ) DECLSPEC_HIDDEN;
 
 /* GDI driver functions */
-extern BOOL CDECL PSDRV_Arc( print_ctx *ctx, INT left, INT top, INT right, INT bottom,
-                             INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_Chord( print_ctx *ctx, INT left, INT top, INT right, INT bottom,
-                               INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_Ellipse( print_ctx *ctx, INT left, INT top, INT right, INT bottom) DECLSPEC_HIDDEN;
-extern INT CDECL PSDRV_EndPage( print_ctx *ctx ) DECLSPEC_HIDDEN;
-extern INT CDECL PSDRV_ExtEscape( print_ctx *ctx, INT nEscape, INT cbInput, LPCVOID in_data,
+extern BOOL PSDRV_Arc( print_ctx *ctx, INT left, INT top, INT right, INT bottom,
+                       INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_Chord( print_ctx *ctx, INT left, INT top, INT right, INT bottom,
+                         INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_Ellipse( print_ctx *ctx, INT left, INT top, INT right, INT bottom) DECLSPEC_HIDDEN;
+extern INT PSDRV_EndPage( print_ctx *ctx ) DECLSPEC_HIDDEN;
+extern INT PSDRV_ExtEscape( print_ctx *ctx, INT nEscape, INT cbInput, LPCVOID in_data,
                             INT cbOutput, LPVOID out_data ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_ExtTextOut( print_ctx *ctx, INT x, INT y, UINT flags,
-                                    const RECT *lprect, LPCWSTR str, UINT count, const INT *lpDx ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_FillPath( print_ctx *ctx ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_LineTo(print_ctx *ctx, INT x, INT y) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_PaintRgn( print_ctx *ctx, HRGN hrgn ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_PatBlt(print_ctx *ctx, struct bitblt_coords *dst, DWORD dwRop) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_Pie( print_ctx *ctx, INT left, INT top, INT right, INT bottom,
-                             INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_PolyBezier( print_ctx *ctx, const POINT *pts, DWORD count ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_PolyBezierTo( print_ctx *ctx, const POINT *pts, DWORD count ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_PolyPolygon( print_ctx *ctx, const POINT* pts, const INT* counts, UINT polygons ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_PolyPolyline( print_ctx *ctx, const POINT* pts, const DWORD* counts, DWORD polylines ) DECLSPEC_HIDDEN;
-extern DWORD CDECL PSDRV_PutImage( print_ctx *ctx, HRGN clip, BITMAPINFO *info,
-                                   const struct gdi_image_bits *bits, struct bitblt_coords *src,
-                                   struct bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_Rectangle( print_ctx *ctx, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_RoundRect( print_ctx *ctx, INT left, INT top, INT right,
-                                   INT bottom, INT ell_width, INT ell_height ) DECLSPEC_HIDDEN;
-extern HBRUSH CDECL PSDRV_SelectBrush( print_ctx *ctx, HBRUSH hbrush, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
-extern HFONT CDECL PSDRV_SelectFont( print_ctx *ctx, HFONT hfont, UINT *aa_flags ) DECLSPEC_HIDDEN;
-extern HPEN CDECL PSDRV_SelectPen( print_ctx *ctx, HPEN hpen, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
-extern COLORREF CDECL PSDRV_SetBkColor( print_ctx *ctx, COLORREF color ) DECLSPEC_HIDDEN;
-extern COLORREF CDECL PSDRV_SetDCBrushColor( print_ctx *ctx, COLORREF color ) DECLSPEC_HIDDEN;
-extern COLORREF CDECL PSDRV_SetDCPenColor( print_ctx *ctx, COLORREF color ) DECLSPEC_HIDDEN;
-extern COLORREF CDECL PSDRV_SetPixel( print_ctx *ctx, INT x, INT y, COLORREF color ) DECLSPEC_HIDDEN;
-extern COLORREF CDECL PSDRV_SetTextColor( print_ctx *ctx, COLORREF color ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_StrokeAndFillPath( print_ctx *ctx ) DECLSPEC_HIDDEN;
-extern BOOL CDECL PSDRV_StrokePath( print_ctx *ctx ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_ExtTextOut( print_ctx *ctx, INT x, INT y, UINT flags,
+                              const RECT *lprect, LPCWSTR str, UINT count, const INT *lpDx ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_FillPath( print_ctx *ctx ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_LineTo(print_ctx *ctx, INT x, INT y) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_PaintRgn( print_ctx *ctx, HRGN hrgn ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_PatBlt(print_ctx *ctx, struct ps_bitblt_coords *dst, DWORD dwRop) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_Pie( print_ctx *ctx, INT left, INT top, INT right, INT bottom,
+                       INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_PolyBezier( print_ctx *ctx, const POINT *pts, DWORD count ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_PolyBezierTo( print_ctx *ctx, const POINT *pts, DWORD count ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_PolyPolygon( print_ctx *ctx, const POINT* pts, const INT* counts, UINT polygons ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_PolyPolyline( print_ctx *ctx, const POINT* pts, const DWORD* counts, DWORD polylines ) DECLSPEC_HIDDEN;
+extern DWORD PSDRV_PutImage( print_ctx *ctx, HRGN clip, BITMAPINFO *info,
+                             const struct ps_image_bits *bits, struct ps_bitblt_coords *src,
+                             struct ps_bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_Rectangle( print_ctx *ctx, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_RoundRect( print_ctx *ctx, INT left, INT top, INT right,
+                             INT bottom, INT ell_width, INT ell_height ) DECLSPEC_HIDDEN;
+extern HBRUSH PSDRV_SelectBrush( print_ctx *ctx, HBRUSH hbrush, const struct ps_brush_pattern *pattern ) DECLSPEC_HIDDEN;
+extern HFONT PSDRV_SelectFont( print_ctx *ctx, HFONT hfont, UINT *aa_flags ) DECLSPEC_HIDDEN;
+extern HPEN PSDRV_SelectPen( print_ctx *ctx, HPEN hpen, const struct ps_brush_pattern *pattern ) DECLSPEC_HIDDEN;
+extern COLORREF PSDRV_SetBkColor( print_ctx *ctx, COLORREF color ) DECLSPEC_HIDDEN;
+extern COLORREF PSDRV_SetDCBrushColor( print_ctx *ctx, COLORREF color ) DECLSPEC_HIDDEN;
+extern COLORREF PSDRV_SetDCPenColor( print_ctx *ctx, COLORREF color ) DECLSPEC_HIDDEN;
+extern COLORREF PSDRV_SetPixel( print_ctx *ctx, INT x, INT y, COLORREF color ) DECLSPEC_HIDDEN;
+extern COLORREF PSDRV_SetTextColor( print_ctx *ctx, COLORREF color ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_StrokeAndFillPath( print_ctx *ctx ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_StrokePath( print_ctx *ctx ) DECLSPEC_HIDDEN;
 
-extern BOOL CDECL PSDRV_ResetDC( print_ctx *ctx, const DEVMODEW *lpInitData ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_ResetDC( print_ctx *ctx, const DEVMODEW *lpInitData ) DECLSPEC_HIDDEN;
 extern void PSDRV_MergeDevmodes(PSDRV_DEVMODE *dm1, const DEVMODEW *dm2,
 			 PRINTERINFO *pi) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_GetFontMetrics(void) DECLSPEC_HIDDEN;
@@ -477,7 +504,7 @@ extern BOOL PSDRV_WriteDIBPatternDict(print_ctx *ctx, const BITMAPINFO *bmi, BYT
 extern BOOL PSDRV_WriteArrayPut(print_ctx *ctx, CHAR *pszArrayName, INT nIndex, LONG lCoord) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteArrayDef(print_ctx *ctx, CHAR *pszArrayName, INT nSize) DECLSPEC_HIDDEN;
 
-extern INT CDECL PSDRV_StartPage( print_ctx *ctx ) DECLSPEC_HIDDEN;
+extern INT PSDRV_StartPage( print_ctx *ctx ) DECLSPEC_HIDDEN;
 
 INT PSDRV_GlyphListInit(void) DECLSPEC_HIDDEN;
 const GLYPHNAME *PSDRV_GlyphName(LPCSTR szName) DECLSPEC_HIDDEN;

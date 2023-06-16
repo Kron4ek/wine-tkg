@@ -1447,44 +1447,35 @@ static BOOL get_icon_info( HICON handle, ICONINFOEXW *ret )
 /***********************************************************************
  *           ANDROID_SetCursor
  */
-void ANDROID_SetCursor( HCURSOR handle )
+void ANDROID_SetCursor( HWND hwnd, HCURSOR handle )
 {
-    static HCURSOR last_cursor;
-    static DWORD last_cursor_change;
-
-    if (InterlockedExchangePointer( (void **)&last_cursor, handle ) != handle ||
-        NtGetTickCount() - last_cursor_change > 100)
+    if (handle)
     {
-        last_cursor_change = NtGetTickCount();
+        unsigned int width = 0, height = 0, *bits = NULL;
+        ICONINFOEXW info;
+        int id;
 
-        if (handle)
+        if (!get_icon_info( handle, &info )) return;
+
+        if (!(id = get_cursor_system_id( &info )))
         {
-            unsigned int width = 0, height = 0, *bits = NULL;
-            ICONINFOEXW info;
-            int id;
+            HDC hdc = NtGdiCreateCompatibleDC( 0 );
+            bits = get_bitmap_argb( hdc, info.hbmColor, info.hbmMask, &width, &height );
+            NtGdiDeleteObjectApp( hdc );
 
-            if (!get_icon_info( handle, &info )) return;
-
-            if (!(id = get_cursor_system_id( &info )))
+            /* make sure hotspot is valid */
+            if (info.xHotspot >= width || info.yHotspot >= height)
             {
-                HDC hdc = NtGdiCreateCompatibleDC( 0 );
-                bits = get_bitmap_argb( hdc, info.hbmColor, info.hbmMask, &width, &height );
-                NtGdiDeleteObjectApp( hdc );
-
-                /* make sure hotspot is valid */
-                if (info.xHotspot >= width || info.yHotspot >= height)
-                {
-                    info.xHotspot = width / 2;
-                    info.yHotspot = height / 2;
-                }
+                info.xHotspot = width / 2;
+                info.yHotspot = height / 2;
             }
-            ioctl_set_cursor( id, width, height, info.xHotspot, info.yHotspot, bits );
-            free( bits );
-            NtGdiDeleteObjectApp( info.hbmColor );
-            NtGdiDeleteObjectApp( info.hbmMask );
         }
-        else ioctl_set_cursor( 0, 0, 0, 0, 0, NULL );
+        ioctl_set_cursor( id, width, height, info.xHotspot, info.yHotspot, bits );
+        free( bits );
+        NtGdiDeleteObjectApp( info.hbmColor );
+        NtGdiDeleteObjectApp( info.hbmMask );
     }
+    else ioctl_set_cursor( 0, 0, 0, 0, 0, NULL );
 }
 
 
@@ -1671,9 +1662,9 @@ LRESULT ANDROID_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 
 
 /***********************************************************************
- *           android_create_desktop
+ *           ANDROID_CreateDesktop
  */
-NTSTATUS android_create_desktop( void *arg )
+BOOL ANDROID_CreateDesktop( const WCHAR *name, UINT width, UINT height )
 {
     /* wait until we receive the surface changed event */
     while (!screen_width)

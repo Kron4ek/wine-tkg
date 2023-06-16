@@ -1574,8 +1574,8 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
 /***********************************************************************
  *           call_user_mode_callback
  */
-extern NTSTATUS CDECL call_user_mode_callback( void *func, void *stack, void **ret_ptr,
-                                               ULONG *ret_len, TEB *teb ) DECLSPEC_HIDDEN;
+extern NTSTATUS call_user_mode_callback( ULONG id, void *args, ULONG len, void **ret_ptr,
+                                         ULONG *ret_len, void *func, TEB *teb ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "pushl %ebp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
@@ -1588,7 +1588,7 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    __ASM_CFI(".cfi_rel_offset %esi,-8\n\t")
                    "pushl %edi\n\t"
                    __ASM_CFI(".cfi_rel_offset %edi,-12\n\t")
-                   "movl 0x18(%ebp),%edx\n\t"  /* teb */
+                   "movl 0x20(%ebp),%edx\n\t"  /* teb */
                    "pushl 0(%edx)\n\t"         /* teb->Tib.ExceptionList */
                    "subl $0x384,%esp\n\t"      /* sizeof(struct syscall_frame) + ebp */
                    "andl $~63,%esp\n\t"
@@ -1600,8 +1600,13 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "movl %eax,0x38(%esp)\n\t"
                    "movl %ecx,0x3c(%esp)\n\t"  /* frame->prev_frame */
                    "movl %esp,0x1f8(%edx)\n\t" /* x86_thread_data()->syscall_frame */
-                   "movl 8(%ebp),%ecx\n\t"     /* func */
-                   "movl 12(%ebp),%esp\n\t"    /* stack */
+                   "movl 0x1c(%ebp),%ecx\n\t"  /* func */
+                   "movl 0x0c(%ebp),%edx\n\t"  /* args */
+                   "leal -4(%edx),%esp\n\t"
+                   "pushl 0x10(%ebp)\n\t"      /* len */
+                   "pushl %edx\n\t"            /* args */
+                   "pushl 0x08(%ebp)\n\t"      /* id */
+                   "pushl $0\n\t"
                    "xorl %ebp,%ebp\n\t"
                    "jmpl *%ecx" )
 
@@ -1609,8 +1614,8 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
 /***********************************************************************
  *           user_mode_callback_return
  */
-extern void CDECL DECLSPEC_NORETURN user_mode_callback_return( void *ret_ptr, ULONG ret_len,
-                                                               NTSTATUS status, TEB *teb ) DECLSPEC_HIDDEN;
+extern void DECLSPEC_NORETURN user_mode_callback_return( void *ret_ptr, ULONG ret_len,
+                                                         NTSTATUS status, TEB *teb ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    "movl 16(%esp),%edx\n"      /* teb */
                    "movl 0x1f8(%edx),%eax\n\t" /* x86_thread_data()->syscall_frame */
@@ -1627,9 +1632,9 @@ __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    "movl 8(%esp),%edi\n\t"     /* ret_len */
                    "movl 12(%esp),%eax\n\t"    /* status */
                    "leal -16(%ebp),%esp\n\t"
-                   "movl 0x10(%ebp),%ecx\n\t"  /* ret_ptr */
+                   "movl 0x14(%ebp),%ecx\n\t"  /* ret_ptr */
                    "movl %esi,(%ecx)\n\t"
-                   "movl 0x14(%ebp),%ecx\n\t"  /* ret_len */
+                   "movl 0x18(%ebp),%ecx\n\t"  /* ret_len */
                    "movl %edi,(%ecx)\n\t"
                    "popl 0(%edx)\n\t"          /* teb->Tib.ExceptionList */
                    "popl %edi\n\t"
@@ -1647,31 +1652,17 @@ __ASM_GLOBAL_FUNC( user_mode_callback_return,
 /***********************************************************************
  *           KeUserModeCallback
  */
-NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
+NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
 {
     struct syscall_frame *frame = x86_thread_data()->syscall_frame;
     void *args_data = (void *)((frame->esp - len) & ~15);
-    ULONG_PTR *stack = args_data;
-
-    /* if we have no syscall frame, call the callback directly */
-    if ((char *)&frame < (char *)ntdll_get_thread_data()->kernel_stack ||
-        (char *)&frame > (char *)x86_thread_data()->syscall_frame)
-    {
-        NTSTATUS (WINAPI *func)(const void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-        return func( args, len );
-    }
 
     if ((char *)ntdll_get_thread_data()->kernel_stack + min_kernel_stack > (char *)&frame)
         return STATUS_STACK_OVERFLOW;
 
     memcpy( args_data, args, len );
-    *(--stack) = 0;
-    *(--stack) = len;
-    *(--stack) = (ULONG_PTR)args_data;
-    *(--stack) = id;
-    *(--stack) = 0xdeadbabe;
-
-    return call_user_mode_callback( pKiUserCallbackDispatcher, stack, ret_ptr, ret_len, NtCurrentTeb() );
+    return call_user_mode_callback( id, args_data, len, ret_ptr, ret_len,
+                                    pKiUserCallbackDispatcher, NtCurrentTeb() );
 }
 
 
@@ -1771,7 +1762,7 @@ static BOOL handle_syscall_fault( ucontext_t *sigcontext, void *stack_ptr,
     struct syscall_frame *frame = x86_thread_data()->syscall_frame;
     UINT i, *stack;
 
-    if (!is_inside_syscall( sigcontext ) && !ntdll_get_thread_data()->jmp_buf) return FALSE;
+    if (!is_inside_syscall( sigcontext )) return FALSE;
 
     TRACE( "code=%lx flags=%lx addr=%p ip=%08lx\n",
            rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress, context->Eip );

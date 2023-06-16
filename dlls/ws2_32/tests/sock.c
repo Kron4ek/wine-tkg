@@ -836,12 +836,7 @@ static VOID WINAPI simple_mixed_client ( client_params *par )
     ((struct sockaddr_in*)&test)->sin_addr.s_addr = inet_addr("0.0.0.0");
 
     /* Receive data echoed back & check it */
-    n_recvd = do_synchronous_recvfrom ( mem->s,
-					mem->recv_buf,
-					n_expected,
-					0,
-					(struct sockaddr *)&test,
-					&fromLen,
+    n_recvd = do_synchronous_recvfrom ( mem->s, mem->recv_buf, n_expected, 0, &test, &fromLen,
 					par->buflen );
     ok ( n_recvd == n_expected,
          "simple_client (%x): received less data than expected: %d of %d\n", id, n_recvd, n_expected );
@@ -4648,10 +4643,37 @@ static SOCKET setup_connector_socket(const struct sockaddr_in *addr, int len, BO
     return connector;
 }
 
+struct connect_apc_func_param
+{
+    HANDLE event;
+    struct sockaddr_in addr;
+    SOCKET connector;
+    unsigned int apc_count;
+};
+
+static DWORD WINAPI test_accept_connect_thread(void *param)
+{
+    struct connect_apc_func_param *p = (struct connect_apc_func_param *)param;
+
+    WaitForSingleObject(p->event, INFINITE);
+    p->connector = setup_connector_socket(&p->addr, sizeof(p->addr), FALSE);
+    ok(p->connector != INVALID_SOCKET, "failed connecting from APC func.\n");
+    return 0;
+}
+
+static void WINAPI connect_apc_func(ULONG_PTR param)
+{
+    struct connect_apc_func_param *p = (struct connect_apc_func_param *)param;
+
+    ++p->apc_count;
+    SetEvent(p->event);
+}
+
 static void test_accept(void)
 {
     int ret;
     SOCKET server_socket, accepted = INVALID_SOCKET, connector;
+    struct connect_apc_func_param apc_param;
     struct sockaddr_in address;
     SOCKADDR_STORAGE ss, ss_empty;
     int socklen;
@@ -4665,6 +4687,23 @@ static void test_accept(void)
 
     socklen = sizeof(address);
     server_socket = setup_server_socket(&address, &socklen);
+
+    memset(&apc_param, 0, sizeof(apc_param));
+    apc_param.event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    apc_param.addr = address;
+    /* Connecting directly from APC function randomly crashes on Windows for some reason,
+     * so do it from a thread and only signal it from the APC when we are in accept() call. */
+    thread_handle = CreateThread(NULL, 0, test_accept_connect_thread, &apc_param, 0, NULL);
+    ret = QueueUserAPC(connect_apc_func, GetCurrentThread(), (ULONG_PTR)&apc_param);
+    ok(ret, "QueueUserAPC returned %d\n", ret);
+    accepted = accept(server_socket, NULL, NULL);
+    ok(accepted != INVALID_SOCKET, "Failed to accept connection, %d\n", WSAGetLastError());
+    ok(apc_param.apc_count == 1, "APC was called %u times\n", apc_param.apc_count);
+    closesocket(accepted);
+    closesocket(apc_param.connector);
+    WaitForSingleObject(thread_handle, INFINITE);
+    CloseHandle(thread_handle);
+    CloseHandle(apc_param.event);
 
     connector = setup_connector_socket(&address, socklen, FALSE);
     if (connector == INVALID_SOCKET) goto done;
@@ -8083,7 +8122,11 @@ static void test_WSAPoll(void)
     fds[0].fd = client;
     fds[0].events = POLLRDNORM | POLLRDBAND;
     fds[0].revents = 0xdead;
+    apc_count = 0;
+    ret = QueueUserAPC(apc_func, GetCurrentThread(), (ULONG_PTR)&apc_count);
+    ok(ret, "QueueUserAPC returned %d\n", ret);
     ret = pWSAPoll(fds, 1, 2000);
+    ok(apc_count == 1, "APC was called %u times\n", apc_count);
     ok(ret == 1, "got %d\n", ret);
     ok(fds[0].revents == POLLNVAL, "got events %#x\n", fds[0].revents);
     ret = WaitForSingleObject(thread_handle, 1000);
@@ -8403,6 +8446,28 @@ static void test_connect(void)
 
     WSACloseEvent(overlapped.hEvent);
     closesocket(connector);
+
+    if (0)
+    {
+        /* Wait in connect() is alertable. This may take a very long time before connection fails,
+         * so disable the test. Testing with localhost is unreliable as that may avoid waiting in
+         * accept(). */
+        connector = socket(AF_INET, SOCK_STREAM, 0);
+        ok(connector != INVALID_SOCKET, "failed to create socket, error %u\n", WSAGetLastError());
+        address.sin_addr.s_addr = inet_addr("8.8.8.8");
+        address.sin_port = htons(255);
+
+        apc_count = 0;
+        SleepEx(0, TRUE);
+        ok(apc_count == 0, "got apc_count %d.\n", apc_count);
+        bret = QueueUserAPC(apc_func, GetCurrentThread(), (ULONG_PTR)&apc_count);
+        ok(bret, "QueueUserAPC returned %d\n", bret);
+        iret = connect(connector, (struct sockaddr *)&address, sizeof(address));
+        ok(apc_count == 1, "got apc_count %d.\n", apc_count);
+        ok(iret == -1 && (WSAGetLastError() == WSAECONNREFUSED || WSAGetLastError() == WSAETIMEDOUT),
+                "unexpected iret %d, error %d.\n", iret, WSAGetLastError());
+        closesocket(connector);
+    }
 
     /* Test connect after previous connect attempt failure. */
     connector = socket(AF_INET, SOCK_STREAM, 0);
@@ -12592,6 +12657,20 @@ static void test_WSAGetOverlappedResult(void)
         }
     }
 
+    overlapped.Internal = STATUS_PENDING;
+    overlapped.hEvent = CreateEventW(NULL, TRUE, TRUE, NULL);
+
+    apc_count = 0;
+    ret = QueueUserAPC(apc_func, GetCurrentThread(), (ULONG_PTR)&apc_count);
+    ok(ret, "QueueUserAPC returned %d\n", ret);
+    ret = WSAGetOverlappedResult(s, &overlapped, &size, TRUE, &flags);
+    ok(ret && (GetLastError() == ERROR_IO_PENDING || !WSAGetLastError()),
+            "Got ret %d, err %lu.\n", ret, GetLastError());
+    ok(!apc_count, "got apc_count %d.\n", apc_count);
+    SleepEx(0, TRUE);
+    ok(apc_count == 1, "got apc_count %d.\n", apc_count);
+
+    CloseHandle(overlapped.hEvent);
     closesocket(s);
 }
 

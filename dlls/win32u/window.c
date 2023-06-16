@@ -4952,12 +4952,10 @@ static WND *create_window_handle( HWND parent, HWND owner, UNICODE_STRING *name,
 
         if (name->Buffer == (const WCHAR *)DESKTOP_CLASS_ATOM)
         {
-            if (!thread_info->top_window)
-                thread_info->top_window = HandleToUlong( full_parent ? full_parent : handle );
+            if (!thread_info->top_window) thread_info->top_window = HandleToUlong( full_parent ? full_parent : handle );
             else assert( full_parent == UlongToHandle( thread_info->top_window ));
-            if (full_parent &&
-                !user_driver->pCreateDesktopWindow( UlongToHandle( thread_info->top_window )))
-                ERR( "failed to create desktop window\n" );
+            if (!thread_info->top_window) ERR_(win)( "failed to create desktop window\n" );
+            else user_driver->pSetDesktopWindow( UlongToHandle( thread_info->top_window ));
             register_builtin_classes();
         }
         else  /* HWND_MESSAGE parent */
@@ -5647,4 +5645,117 @@ DWORD WINAPI NtUserDragObject( HWND parent, HWND hwnd, UINT fmt, ULONG_PTR data,
     FIXME( "%p, %p, %u, %#lx, %p stub!\n", parent, hwnd, fmt, data, cursor );
 
     return 0;
+}
+
+
+HWND get_shell_window(void)
+{
+    HWND hwnd = 0;
+
+    SERVER_START_REQ(set_global_windows)
+    {
+        req->flags = 0;
+        if (!wine_server_call_err(req))
+            hwnd = wine_server_ptr_handle( reply->old_shell_window );
+    }
+    SERVER_END_REQ;
+
+    return hwnd;
+}
+
+/***********************************************************************
+*            NtUserSetShellWindowEx (win32u.@)
+*/
+BOOL WINAPI NtUserSetShellWindowEx( HWND shell, HWND list_view )
+{
+    BOOL ret;
+
+    /* shell =     Progman[Program Manager]
+     *             |-> SHELLDLL_DefView
+     * list_view = |   |-> SysListView32
+     *             |   |   |-> tooltips_class32
+     *             |   |
+     *             |   |-> SysHeader32
+     *             |
+     *             |-> ProxyTarget
+     */
+
+    if (get_shell_window())
+        return FALSE;
+
+    if (get_window_long( shell, GWL_EXSTYLE ) & WS_EX_TOPMOST)
+        return FALSE;
+
+    if (list_view != shell && (get_window_long( list_view, GWL_EXSTYLE ) & WS_EX_TOPMOST))
+        return FALSE;
+
+    if (list_view && list_view != shell)
+        NtUserSetWindowPos( list_view, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
+
+    NtUserSetWindowPos( shell, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
+
+    SERVER_START_REQ(set_global_windows)
+    {
+        req->flags          = SET_GLOBAL_SHELL_WINDOWS;
+        req->shell_window   = wine_server_user_handle( shell );
+        req->shell_listview = wine_server_user_handle( list_view );
+        ret = !wine_server_call_err(req);
+    }
+    SERVER_END_REQ;
+    return ret;
+}
+
+HWND get_progman_window(void)
+{
+    HWND ret = 0;
+
+    SERVER_START_REQ(set_global_windows)
+    {
+        req->flags = 0;
+        if (!wine_server_call_err(req))
+            ret = wine_server_ptr_handle( reply->old_progman_window );
+    }
+    SERVER_END_REQ;
+    return ret;
+}
+
+HWND set_progman_window( HWND hwnd )
+{
+    SERVER_START_REQ(set_global_windows)
+    {
+        req->flags          = SET_GLOBAL_PROGMAN_WINDOW;
+        req->progman_window = wine_server_user_handle( hwnd );
+        if (wine_server_call_err( req )) hwnd = 0;
+    }
+    SERVER_END_REQ;
+    return hwnd;
+}
+
+HWND get_taskman_window(void)
+{
+    HWND ret = 0;
+
+    SERVER_START_REQ(set_global_windows)
+    {
+        req->flags = 0;
+        if (!wine_server_call_err(req))
+            ret = wine_server_ptr_handle( reply->old_taskman_window );
+    }
+    SERVER_END_REQ;
+    return ret;
+}
+
+HWND set_taskman_window( HWND hwnd )
+{
+    /* hwnd = MSTaskSwWClass
+     *        |-> SysTabControl32
+     */
+    SERVER_START_REQ(set_global_windows)
+    {
+        req->flags          = SET_GLOBAL_TASKMAN_WINDOW;
+        req->taskman_window = wine_server_user_handle( hwnd );
+        if (wine_server_call_err( req )) hwnd = 0;
+    }
+    SERVER_END_REQ;
+    return hwnd;
 }

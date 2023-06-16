@@ -19,6 +19,7 @@
  */
 
 #include <stdarg.h>
+#include <stdint.h>
 
 #define COBJMACROS
 
@@ -328,6 +329,7 @@ struct token_category
     LONG ref;
 
     ISpRegDataKey *data_key;
+    WCHAR *id;
 };
 
 static struct token_category *impl_from_ISpObjectTokenCategory( ISpObjectTokenCategory *iface )
@@ -375,6 +377,7 @@ static ULONG WINAPI token_category_Release( ISpObjectTokenCategory *iface )
     if (!ref)
     {
         if (This->data_key) ISpRegDataKey_Release( This->data_key );
+        free( This->id );
         free( This );
     }
     return ref;
@@ -541,6 +544,8 @@ static HRESULT WINAPI token_category_SetId( ISpObjectTokenCategory *iface,
         return hr;
     }
 
+    This->id = wcsdup( id );
+
     return hr;
 }
 
@@ -559,6 +564,12 @@ static HRESULT WINAPI token_category_GetDataKey( ISpObjectTokenCategory *iface,
     return E_NOTIMPL;
 }
 
+struct token_with_score
+{
+    ISpObjectToken *token;
+    uint64_t score;
+};
+
 struct token_enum
 {
     ISpObjectTokenEnumBuilder ISpObjectTokenEnumBuilder_iface;
@@ -566,8 +577,8 @@ struct token_enum
 
     BOOL init;
     WCHAR *req, *opt;
-    ULONG count;
-    HKEY key;
+    struct token_with_score *tokens;
+    ULONG capacity, count;
     DWORD index;
 };
 
@@ -582,8 +593,12 @@ static HRESULT WINAPI token_category_EnumTokens( ISpObjectTokenCategory *iface,
 {
     struct token_category *This = impl_from_ISpObjectTokenCategory( iface );
     ISpObjectTokenEnumBuilder *builder;
-    struct token_enum *tokenenum;
     struct data_key *this_data_key;
+    HKEY tokens_key;
+    DWORD count, max_subkey_size, root_len, token_id_size;
+    DWORD size, i;
+    WCHAR *token_id = NULL;
+    ISpObjectToken *token = NULL;
     HRESULT hr;
 
     TRACE( "(%p)->(%s %s %p)\n", This, debugstr_w( req ), debugstr_w( opt ), enum_tokens );
@@ -599,12 +614,43 @@ static HRESULT WINAPI token_category_EnumTokens( ISpObjectTokenCategory *iface,
 
     this_data_key = impl_from_ISpRegDataKey( This->data_key );
 
-    tokenenum = impl_from_ISpObjectTokenEnumBuilder( builder );
-
-    if (!RegOpenKeyExW( this_data_key->key, L"Tokens", 0, KEY_ALL_ACCESS, &tokenenum->key ))
+    if (!RegOpenKeyExW( this_data_key->key, L"Tokens", 0, KEY_ALL_ACCESS, &tokens_key ))
     {
-        RegQueryInfoKeyW(tokenenum->key, NULL, NULL, NULL, &tokenenum->count, NULL, NULL,
-                NULL, NULL, NULL, NULL, NULL);
+        RegQueryInfoKeyW( tokens_key, NULL, NULL, NULL, &count, &max_subkey_size, NULL,
+                NULL, NULL, NULL, NULL, NULL );
+        max_subkey_size++;
+
+        root_len = wcslen( This->id );
+        token_id_size = root_len + sizeof("\\Tokens\\") + max_subkey_size;
+        token_id = malloc( token_id_size * sizeof(WCHAR) );
+        if (!token_id)
+        {
+            hr = E_OUTOFMEMORY;
+            goto fail;
+        }
+        root_len = swprintf( token_id, token_id_size, L"%ls%lsTokens\\",
+                             This->id, This->id[root_len - 1] == L'\\' ? L"" : L"\\" );
+
+        for ( i = 0; i < count; i++ )
+        {
+            size = max_subkey_size;
+            hr = HRESULT_FROM_WIN32(RegEnumKeyExW( tokens_key, i, token_id + root_len, &size, NULL, NULL, NULL, NULL ));
+            if (FAILED(hr)) goto fail;
+
+            hr = token_create( NULL, &IID_ISpObjectToken, (void **)&token );
+            if (FAILED(hr)) goto fail;
+
+            hr = ISpObjectToken_SetId( token, NULL, token_id, FALSE );
+            if (FAILED(hr)) goto fail;
+
+            hr = ISpObjectTokenEnumBuilder_AddTokens( builder, 1, &token );
+            if (FAILED(hr)) goto fail;
+            ISpObjectToken_Release( token );
+            token = NULL;
+        }
+
+        hr = ISpObjectTokenEnumBuilder_Sort( builder, NULL );
+        if (FAILED(hr)) goto fail;
     }
 
     hr = ISpObjectTokenEnumBuilder_QueryInterface( builder, &IID_IEnumSpObjectTokens,
@@ -612,6 +658,8 @@ static HRESULT WINAPI token_category_EnumTokens( ISpObjectTokenCategory *iface,
 
 fail:
     ISpObjectTokenEnumBuilder_Release( builder );
+    if ( token ) ISpObjectToken_Release( token );
+    free( token_id );
     return hr;
 }
 
@@ -693,6 +741,7 @@ HRESULT token_category_create( IUnknown *outer, REFIID iid, void **obj )
     This->ISpObjectTokenCategory_iface.lpVtbl = &token_category_vtbl;
     This->ref = 1;
     This->data_key = NULL;
+    This->id = NULL;
 
     hr = ISpObjectTokenCategory_QueryInterface( &This->ISpObjectTokenCategory_iface, iid, obj );
 
@@ -739,10 +788,16 @@ static ULONG WINAPI token_enum_Release( ISpObjectTokenEnumBuilder *iface )
 
     if (!ref)
     {
-        if (This->key)
-            RegCloseKey(This->key);
         free( This->req );
         free( This->opt );
+        if (This->tokens)
+        {
+            ULONG i;
+            for ( i = 0; i < This->count; i++ )
+                if ( This->tokens[i].token )
+                    ISpObjectToken_Release( This->tokens[i].token );
+            free( This->tokens );
+        }
         free( This );
     }
 
@@ -754,64 +809,23 @@ static HRESULT WINAPI token_enum_Next( ISpObjectTokenEnumBuilder *iface,
                                        ULONG *fetched )
 {
     struct token_enum *This = impl_from_ISpObjectTokenEnumBuilder( iface );
-    struct object_token *object;
-    HRESULT hr;
-    DWORD retCode;
-    WCHAR *subkey_name;
-    HKEY sub_key;
-    DWORD size;
-    ISpRegDataKey *data_key;
+    ULONG i;
 
     TRACE( "(%p)->(%lu %p %p)\n", This, num, tokens, fetched );
 
     if (!This->init) return SPERR_UNINITIALIZED;
-    if (fetched) *fetched = 0;
+    if (!fetched && num != 1) return E_POINTER;
+    if (!tokens) return E_POINTER;
 
-    *tokens = NULL;
-
-    RegQueryInfoKeyW( This->key, NULL, NULL, NULL, NULL, &size, NULL, NULL, NULL, NULL, NULL, NULL );
-    size = (size+1) * sizeof(WCHAR);
-    subkey_name = malloc( size );
-    if (!subkey_name)
-        return E_OUTOFMEMORY;
-
-    retCode = RegEnumKeyExW( This->key, This->index, subkey_name, &size, NULL, NULL, NULL, NULL );
-    if (retCode != ERROR_SUCCESS)
+    for ( i = 0; i < num && This->index < This->count; i++, This->index++ )
     {
-        free( subkey_name );
-        return S_FALSE;
+        ISpObjectToken_AddRef( This->tokens[This->index].token );
+        tokens[i] = This->tokens[This->index].token;
     }
 
-    This->index++;
+    if (fetched) *fetched = i;
 
-    if (RegOpenKeyExW( This->key, subkey_name, 0, KEY_READ, &sub_key ) != ERROR_SUCCESS)
-    {
-        free( subkey_name );
-        return E_FAIL;
-    }
-
-    hr = create_data_key_with_hkey( sub_key, &data_key );
-    if (FAILED(hr))
-    {
-        free( subkey_name );
-        RegCloseKey( sub_key );
-        return hr;
-    }
-
-    hr = token_create( NULL, &IID_ISpObjectToken, (void**)tokens );
-    if (FAILED(hr))
-    {
-        free( subkey_name );
-        ISpRegDataKey_Release( data_key );
-        return hr;
-    }
-
-    object = impl_from_ISpObjectToken( *tokens );
-    object->data_key = data_key;
-    object->token_id = subkey_name;
-
-    if (fetched) *fetched = 1;
-    return hr;
+    return i == num ? S_OK : S_FALSE;
 }
 
 static HRESULT WINAPI token_enum_Skip( ISpObjectTokenEnumBuilder *iface,
@@ -838,63 +852,18 @@ static HRESULT WINAPI token_enum_Item( ISpObjectTokenEnumBuilder *iface,
                                        ULONG index, ISpObjectToken **token )
 {
     struct token_enum *This = impl_from_ISpObjectTokenEnumBuilder( iface );
-    struct object_token *object;
-    ISpObjectToken *subtoken;
-    HRESULT hr;
-    WCHAR *subkey;
-    DWORD size;
-    LONG ret;
-    HKEY key;
-    ISpRegDataKey *data_key;
 
-    TRACE( "%p, %lu, %p\n", This, index, token );
+    TRACE( "(%p)->(%lu %p)\n", This, index, token );
 
-    if (!This->init)
-        return SPERR_UNINITIALIZED;
+    if (!This->init) return SPERR_UNINITIALIZED;
 
-    RegQueryInfoKeyW(This->key, NULL, NULL, NULL, NULL, &size, NULL, NULL, NULL, NULL, NULL, NULL);
-    size = (size+1) * sizeof(WCHAR);
-    subkey = malloc( size );
-    if (!subkey)
-        return E_OUTOFMEMORY;
+    if (!token) return E_POINTER;
+    if (index >= This->count) return SPERR_NO_MORE_ITEMS;
 
-    ret = RegEnumKeyExW(This->key, index, subkey, &size, NULL, NULL, NULL, NULL);
-    if (ret != ERROR_SUCCESS)
-    {
-        free( subkey );
-        return HRESULT_FROM_WIN32(ret);
-    }
+    ISpObjectToken_AddRef( This->tokens[index].token );
+    *token = This->tokens[index].token;
 
-    ret = RegOpenKeyExW (This->key, subkey, 0, KEY_READ, &key);
-    if (ret != ERROR_SUCCESS)
-    {
-        free( subkey );
-        return HRESULT_FROM_WIN32(ret);
-    }
-
-    hr = create_data_key_with_hkey( key, &data_key );
-    if (FAILED(hr))
-    {
-        free( subkey );
-        RegCloseKey( key );
-        return hr;
-    }
-
-    hr = token_create( NULL, &IID_ISpObjectToken, (void**)&subtoken );
-    if (FAILED(hr))
-    {
-        free( subkey );
-        ISpRegDataKey_Release( data_key );
-        return hr;
-    }
-
-    object = impl_from_ISpObjectToken( subtoken );
-    object->data_key = data_key;
-    object->token_id = subkey;
-
-    *token = subtoken;
-
-    return hr;
+    return S_OK;
 }
 
 static HRESULT WINAPI token_enum_GetCount( ISpObjectTokenEnumBuilder *iface,
@@ -939,11 +908,161 @@ out_of_mem:
     return E_OUTOFMEMORY;
 }
 
+static HRESULT score_attributes( ISpObjectToken *token, const WCHAR *attrs,
+                                 BOOL match_all, uint64_t *score )
+{
+    ISpDataKey *attrs_key;
+    WCHAR *attr, *attr_ctx, *buf;
+    BOOL match[64];
+    unsigned int i, j;
+    HRESULT hr;
+
+    if (!attrs)
+    {
+        *score = 1;
+        return S_OK;
+    }
+    *score = 0;
+
+    if (FAILED(hr = ISpObjectToken_OpenKey( token, L"Attributes", &attrs_key )))
+        return hr == SPERR_NOT_FOUND ? S_OK : hr;
+
+    memset( match, 0, sizeof(match) );
+
+    /* attrs is a semicolon-separated list of attribute clauses.
+     * Each clause consists of an attribute name and an optional operator and value.
+     * The meaning of a clause depends on the operator given:
+     *   If no operator is given, the attribute must exist.
+     *   If the operator is '=', the attribute must contain the given value.
+     *   If the operator is '!=', the attribute must not exist or contain the given value.
+     */
+    if (!(buf = wcsdup( attrs ))) return E_OUTOFMEMORY;
+    for ( attr = wcstok_s( buf, L";", &attr_ctx ), i = 0; attr && i < 64;
+          attr = wcstok_s( NULL, L";", &attr_ctx ), i++ )
+    {
+        WCHAR *p = wcspbrk( attr, L"!=" );
+        WCHAR op = p ? *p : L'\0';
+        WCHAR *value = NULL, *res;
+        if ( p )
+        {
+            if ( op == L'=' )
+                value = p + 1;
+            else if ( op == L'!' )
+            {
+                if ( *(p + 1) != L'=' )
+                {
+                    WARN( "invalid attr operator '!%lc'.\n", *(p + 1) );
+                    hr = E_INVALIDARG;
+                    goto done;
+                }
+                value = p + 2;
+            }
+            *p = L'\0';
+        }
+
+        hr = ISpDataKey_GetStringValue( attrs_key, attr, &res );
+        if ( p ) *p = op;
+        if (SUCCEEDED(hr))
+        {
+            if ( !op )
+                match[i] = TRUE;
+            else
+            {
+                WCHAR *val, *val_ctx;
+
+                match[i] = FALSE;
+                for ( val = wcstok_s( res,  L";", &val_ctx ); val && !match[i];
+                      val = wcstok_s( NULL, L";", &val_ctx ) )
+                    match[i] = !wcscmp( val, value );
+
+                if (op == L'!') match[i] = !match[i];
+            }
+            CoTaskMemFree( res );
+        }
+        else if (hr == SPERR_NOT_FOUND)
+        {
+            hr = S_OK;
+            if (op == L'!') match[i] = TRUE;
+        }
+        else
+            goto done;
+
+        if ( match_all && !match[i] )
+            goto done;
+    }
+
+    if ( attr )
+        hr = E_INVALIDARG;
+    else
+    {
+        /* Attributes in attrs are ordered from highest to lowest priority. */
+        for ( j = 0; j < i; j++ )
+            if ( match[j] )
+                *score |= 1ULL << (i - 1 - j);
+    }
+
+done:
+    free( buf );
+    return hr;
+}
+
+static BOOL grow_tokens_array( struct token_enum *This )
+{
+    struct token_with_score *new_tokens;
+    ULONG new_cap;
+
+    if (This->count < This->capacity) return TRUE;
+
+    if (This->capacity > 0)
+    {
+        new_cap = This->capacity * 2;
+        new_tokens = realloc( This->tokens, new_cap * sizeof(*new_tokens) );
+    }
+    else
+    {
+        new_cap = 1;
+        new_tokens = malloc( sizeof(*new_tokens) );
+    }
+
+    if (!new_tokens) return FALSE;
+
+    This->tokens = new_tokens;
+    This->capacity = new_cap;
+    return TRUE;
+}
+
 static HRESULT WINAPI token_enum_AddTokens( ISpObjectTokenEnumBuilder *iface,
                                             ULONG num, ISpObjectToken **tokens )
 {
-    FIXME( "stub\n" );
-    return E_NOTIMPL;
+    struct token_enum *This = impl_from_ISpObjectTokenEnumBuilder( iface );
+    ULONG i;
+    uint64_t score;
+    HRESULT hr;
+
+    TRACE( "(%p)->(%lu %p)\n", iface, num, tokens );
+
+    if (!This->init) return SPERR_UNINITIALIZED;
+    if (!tokens) return E_POINTER;
+
+    for ( i = 0; i < num; i++ )
+    {
+        if (!tokens[i]) return E_POINTER;
+
+        hr = score_attributes( tokens[i], This->req, TRUE, &score );
+        if (FAILED(hr)) return hr;
+        if (!score) continue;
+
+        hr = score_attributes( tokens[i], This->opt, FALSE, &score );
+        if (FAILED(hr)) return hr;
+
+        if (!grow_tokens_array( This )) return E_OUTOFMEMORY;
+        ISpObjectToken_AddRef( tokens[i] );
+        This->tokens[This->count].token = tokens[i];
+        This->tokens[This->count].score = score;
+        This->count++;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI token_enum_AddTokensFromDataKey( ISpObjectTokenEnumBuilder *iface,
@@ -961,11 +1080,35 @@ static HRESULT WINAPI token_enum_AddTokensFromTokenEnum( ISpObjectTokenEnumBuild
     return E_NOTIMPL;
 }
 
+static int __cdecl token_with_score_cmp( const void *a, const void *b )
+{
+    const struct token_with_score *ta = a, *tb = b;
+
+    if (ta->score > tb->score) return -1;
+    else if (ta->score < tb->score) return 1;
+    else return 0;
+}
+
 static HRESULT WINAPI token_enum_Sort( ISpObjectTokenEnumBuilder *iface,
                                        LPCWSTR first )
 {
-    FIXME( "stub\n" );
-    return E_NOTIMPL;
+    struct token_enum *This = impl_from_ISpObjectTokenEnumBuilder( iface );
+
+    TRACE( "(%p)->(%s).\n", iface, debugstr_w(first) );
+
+    if (!This->init) return SPERR_UNINITIALIZED;
+    if (!This->tokens) return S_OK;
+
+    if (first)
+    {
+        FIXME( "first != NULL is not implemented.\n" );
+        return E_NOTIMPL;
+    }
+
+    if (This->opt)
+        qsort( This->tokens, This->count, sizeof(*This->tokens), token_with_score_cmp );
+
+    return S_OK;
 }
 
 const struct ISpObjectTokenEnumBuilderVtbl token_enum_vtbl =
@@ -997,8 +1140,8 @@ HRESULT token_enum_create( IUnknown *outer, REFIID iid, void **obj )
     This->req = NULL;
     This->opt = NULL;
     This->init = FALSE;
-    This->count = 0;
-    This->key = NULL;
+    This->tokens = NULL;
+    This->capacity = This->count = 0;
     This->index = 0;
 
     hr = ISpObjectTokenEnumBuilder_QueryInterface( &This->ISpObjectTokenEnumBuilder_iface, iid, obj );
@@ -1117,8 +1260,11 @@ static HRESULT WINAPI token_OpenKey( ISpObjectToken *iface,
 static HRESULT WINAPI token_CreateKey( ISpObjectToken *iface,
                                        LPCWSTR name, ISpDataKey **sub_key )
 {
-    FIXME( "stub\n" );
-    return E_NOTIMPL;
+    struct object_token *This = impl_from_ISpObjectToken( iface );
+
+    TRACE( "%p, %s, %p\n", iface, debugstr_w(name), sub_key );
+
+    return ISpRegDataKey_CreateKey( This->data_key, name, sub_key );
 }
 
 static HRESULT WINAPI token_DeleteKey( ISpObjectToken *iface,

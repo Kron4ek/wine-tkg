@@ -1146,8 +1146,8 @@ struct hlsl_ir_node *hlsl_new_call(struct hlsl_ctx *ctx, struct hlsl_ir_function
     return &call->node;
 }
 
-struct hlsl_ir_constant *hlsl_new_constant(struct hlsl_ctx *ctx, struct hlsl_type *type,
-        const struct vkd3d_shader_location *loc)
+struct hlsl_ir_node *hlsl_new_constant(struct hlsl_ctx *ctx, struct hlsl_type *type,
+        const struct hlsl_constant_value *value, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_constant *c;
 
@@ -1157,54 +1157,43 @@ struct hlsl_ir_constant *hlsl_new_constant(struct hlsl_ctx *ctx, struct hlsl_typ
         return NULL;
 
     init_node(&c->node, HLSL_IR_CONSTANT, type, loc);
+    c->value = *value;
 
-    return c;
+    return &c->node;
 }
 
 struct hlsl_ir_node *hlsl_new_bool_constant(struct hlsl_ctx *ctx, bool b, const struct vkd3d_shader_location *loc)
 {
-    struct hlsl_ir_constant *c;
+    struct hlsl_constant_value value;
 
-    if ((c = hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_BOOL), loc)))
-        c->value.u[0].u = b ? ~0u : 0;
-
-    return &c->node;
+    value.u[0].u = b ? ~0u : 0;
+    return hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_BOOL), &value, loc);
 }
 
 struct hlsl_ir_node *hlsl_new_float_constant(struct hlsl_ctx *ctx, float f,
         const struct vkd3d_shader_location *loc)
 {
-    struct hlsl_ir_constant *c;
+    struct hlsl_constant_value value;
 
-    if ((c = hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_FLOAT), loc)))
-        c->value.u[0].f = f;
-
-    return &c->node;
+    value.u[0].f = f;
+    return hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_FLOAT), &value, loc);
 }
 
 struct hlsl_ir_node *hlsl_new_int_constant(struct hlsl_ctx *ctx, int32_t n, const struct vkd3d_shader_location *loc)
 {
-    struct hlsl_ir_constant *c;
+    struct hlsl_constant_value value;
 
-    c = hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_INT), loc);
-
-    if (c)
-        c->value.u[0].i = n;
-
-    return &c->node;
+    value.u[0].i = n;
+    return hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_INT), &value, loc);
 }
 
 struct hlsl_ir_node *hlsl_new_uint_constant(struct hlsl_ctx *ctx, unsigned int n,
         const struct vkd3d_shader_location *loc)
 {
-    struct hlsl_ir_constant *c;
+    struct hlsl_constant_value value;
 
-    c = hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_UINT), loc);
-
-    if (c)
-        c->value.u[0].u = n;
-
-    return &c->node;
+    value.u[0].u = n;
+    return hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_UINT), &value, loc);
 }
 
 struct hlsl_ir_node *hlsl_new_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
@@ -1287,6 +1276,19 @@ struct hlsl_ir_load *hlsl_new_load_index(struct hlsl_ctx *ctx, const struct hlsl
     return load;
 }
 
+struct hlsl_ir_load *hlsl_new_load_parent(struct hlsl_ctx *ctx, const struct hlsl_deref *deref,
+        const struct vkd3d_shader_location *loc)
+{
+    /* This deref can only exists temporarily because it is not the real owner of its members. */
+    struct hlsl_deref tmp_deref;
+
+    assert(deref->path_len >= 1);
+
+    tmp_deref = *deref;
+    tmp_deref.path_len = deref->path_len - 1;
+    return hlsl_new_load_index(ctx, &tmp_deref, NULL, loc);
+}
+
 struct hlsl_ir_load *hlsl_new_var_load(struct hlsl_ctx *ctx, struct hlsl_ir_var *var,
         const struct vkd3d_shader_location *loc)
 {
@@ -1356,6 +1358,7 @@ struct hlsl_ir_node *hlsl_new_resource_load(struct hlsl_ctx *ctx,
     hlsl_src_from_node(&load->lod, params->lod);
     hlsl_src_from_node(&load->ddx, params->ddx);
     hlsl_src_from_node(&load->ddy, params->ddy);
+    hlsl_src_from_node(&load->cmp, params->cmp);
     load->sampling_dim = params->sampling_dim;
     if (load->sampling_dim == HLSL_SAMPLER_DIM_GENERIC)
         load->sampling_dim = hlsl_deref_get_type(ctx, &load->resource)->sampler_dim;
@@ -1545,12 +1548,7 @@ static struct hlsl_ir_node *clone_call(struct hlsl_ctx *ctx, struct hlsl_ir_call
 
 static struct hlsl_ir_node *clone_constant(struct hlsl_ctx *ctx, struct hlsl_ir_constant *src)
 {
-    struct hlsl_ir_constant *dst;
-
-    if (!(dst = hlsl_new_constant(ctx, src->node.data_type, &src->node.loc)))
-        return NULL;
-    dst->value = src->value;
-    return &dst->node;
+    return hlsl_new_constant(ctx, src->node.data_type, &src->value, &src->node.loc);
 }
 
 static struct hlsl_ir_node *clone_expr(struct hlsl_ctx *ctx, struct clone_instr_map *map, struct hlsl_ir_expr *src)
@@ -1649,6 +1647,7 @@ static struct hlsl_ir_node *clone_resource_load(struct hlsl_ctx *ctx,
     clone_src(map, &dst->ddx, &src->ddx);
     clone_src(map, &dst->ddy, &src->ddy);
     clone_src(map, &dst->sample_index, &src->sample_index);
+    clone_src(map, &dst->cmp, &src->cmp);
     clone_src(map, &dst->texel_offset, &src->texel_offset);
     dst->sampling_dim = src->sampling_dim;
     return &dst->node;
@@ -2442,6 +2441,8 @@ static void dump_ir_resource_load(struct vkd3d_string_buffer *buffer, const stru
     {
         [HLSL_RESOURCE_LOAD] = "load_resource",
         [HLSL_RESOURCE_SAMPLE] = "sample",
+        [HLSL_RESOURCE_SAMPLE_CMP] = "sample_cmp",
+        [HLSL_RESOURCE_SAMPLE_CMP_LZ] = "sample_cmp_lz",
         [HLSL_RESOURCE_SAMPLE_LOD] = "sample_lod",
         [HLSL_RESOURCE_SAMPLE_LOD_BIAS] = "sample_biased",
         [HLSL_RESOURCE_SAMPLE_GRAD] = "sample_grad",
@@ -2482,6 +2483,11 @@ static void dump_ir_resource_load(struct vkd3d_string_buffer *buffer, const stru
     {
         vkd3d_string_buffer_printf(buffer, ", ddy = ");
         dump_src(buffer, &load->ddy);
+    }
+    if (load->cmp.node)
+    {
+        vkd3d_string_buffer_printf(buffer, ", cmp = ");
+        dump_src(buffer, &load->cmp);
     }
     vkd3d_string_buffer_printf(buffer, ")");
 }
@@ -2720,6 +2726,7 @@ static void free_ir_resource_load(struct hlsl_ir_resource_load *load)
     hlsl_src_remove(&load->lod);
     hlsl_src_remove(&load->ddx);
     hlsl_src_remove(&load->ddy);
+    hlsl_src_remove(&load->cmp);
     hlsl_src_remove(&load->texel_offset);
     hlsl_src_remove(&load->sample_index);
     vkd3d_free(load);
@@ -3061,11 +3068,12 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
 
     static const char *const sampler_names[] =
     {
-        [HLSL_SAMPLER_DIM_GENERIC] = "sampler",
-        [HLSL_SAMPLER_DIM_1D]      = "sampler1D",
-        [HLSL_SAMPLER_DIM_2D]      = "sampler2D",
-        [HLSL_SAMPLER_DIM_3D]      = "sampler3D",
-        [HLSL_SAMPLER_DIM_CUBE]    = "samplerCUBE",
+        [HLSL_SAMPLER_DIM_GENERIC]    = "sampler",
+        [HLSL_SAMPLER_DIM_COMPARISON] = "SamplerComparisonState",
+        [HLSL_SAMPLER_DIM_1D]         = "sampler1D",
+        [HLSL_SAMPLER_DIM_2D]         = "sampler2D",
+        [HLSL_SAMPLER_DIM_3D]         = "sampler3D",
+        [HLSL_SAMPLER_DIM_CUBE]       = "samplerCUBE",
     };
 
     static const struct

@@ -46,6 +46,12 @@ HRESULT WINAPI WICCreateImagingFactory_Proxy(UINT, IWICImagingFactory**);
 
 typedef ARGB EmfPlusARGB;
 
+typedef struct EmfPlusPointF
+{
+    float X;
+    float Y;
+} EmfPlusPointF;
+
 typedef struct EmfPlusRecordHeader
 {
     WORD Type;
@@ -177,6 +183,12 @@ enum PenDataFlags
     PenDataCustomEndCap     = 0x1000
 };
 
+enum CustomLineCapData
+{
+    CustomLineCapDataFillPath = 0x1,
+    CustomLineCapDataLinePath = 0x2,
+};
+
 typedef struct EmfPlusTransformMatrix
 {
     REAL TransformMatrix[6];
@@ -287,14 +299,20 @@ typedef struct EmfPlusBrush
     } BrushData;
 } EmfPlusBrush;
 
-typedef struct EmfPlusPen
+typedef struct EmfPlusCustomLineCapArrowData
 {
-    DWORD Version;
-    DWORD Type;
-    /* EmfPlusPenData */
-    /* EmfPlusBrush */
-    BYTE data[1];
-} EmfPlusPen;
+    REAL Width;
+    REAL Height;
+    REAL MiddleInset;
+    BOOL FillState;
+    DWORD LineStartCap;
+    DWORD LineEndCap;
+    DWORD LineJoin;
+    REAL LineMiterLimit;
+    REAL WidthScale;
+    EmfPlusPointF FillHotSpot;
+    EmfPlusPointF LineHotSpot;
+} EmfPlusCustomLineCapArrowData;
 
 typedef struct EmfPlusPath
 {
@@ -306,6 +324,55 @@ typedef struct EmfPlusPath
     /* AlignmentPadding */
     BYTE data[1];
 } EmfPlusPath;
+
+typedef struct EmfPlusCustomLineCapDataFillPath
+{
+    INT FillPathLength;
+    /* EmfPlusPath */
+    BYTE FillPath[1];
+} EmfPlusCustomLineCapDataFillPath;
+
+typedef struct EmfPlusCustomLineCapDataLinePath
+{
+    INT LinePathLength;
+    /* EmfPlusPath */
+    BYTE LinePath[1];
+} EmfPlusCustomLineCapDataLinePath;
+
+typedef struct EmfPlusCustomLineCapData
+{
+    DWORD CustomLineCapDataFlags;
+    DWORD BaseCap;
+    REAL BaseInset;
+    DWORD StrokeStartCap;
+    DWORD StrokeEndCap;
+    DWORD StrokeJoin;
+    REAL StrokeMiterLimit;
+    REAL WidthScale;
+    EmfPlusPointF FillHotSpot;
+    EmfPlusPointF LineHotSpot;
+    /* EmfPlusCustomLineCapDataFillPath */
+    /* EmfPlusCustomLineCapDataLinePath */
+    BYTE OptionalData[1];
+} EmfPlusCustomLineCapData;
+
+typedef struct EmfPlusCustomLineCap
+{
+    DWORD Version;
+    DWORD Type;
+    /* EmfPlusCustomLineCapArrowData */
+    /* EmfPlusCustomLineCapData */
+    BYTE CustomLineCapData[1];
+} EmfPlusCustomLineCap;
+
+typedef struct EmfPlusPen
+{
+    DWORD Version;
+    DWORD Type;
+    /* EmfPlusPenData */
+    /* EmfPlusBrush */
+    BYTE data[1];
+} EmfPlusPen;
 
 typedef struct EmfPlusRegionNodePath
 {
@@ -415,12 +482,6 @@ typedef struct EmfPlusPoint
     short X;
     short Y;
 } EmfPlusPoint;
-
-typedef struct EmfPlusPointF
-{
-    float X;
-    float Y;
-} EmfPlusPointF;
 
 typedef struct EmfPlusDrawImage
 {
@@ -1052,6 +1113,127 @@ static void METAFILE_FillBrushData(GDIPCONST GpBrush *brush, EmfPlusBrush *data)
     }
     default:
         FIXME("unsupported brush type: %d\n", brush->bt);
+    }
+}
+
+static void METAFILE_PrepareCustomLineCapData(GDIPCONST GpCustomLineCap *cap, DWORD *ret_cap_size,
+                                              DWORD *ret_cap_data_size, DWORD *ret_path_size)
+{
+    DWORD cap_size, path_size = 0;
+
+    /* EmfPlusCustomStartCapData */
+    cap_size = FIELD_OFFSET(EmfPlusCustomStartCapData, data);
+    /*   -> EmfPlusCustomLineCap */
+    cap_size += FIELD_OFFSET(EmfPlusCustomLineCap, CustomLineCapData);
+    /*      -> EmfPlusCustomLineCapArrowData */
+    if (cap->type == CustomLineCapTypeAdjustableArrow)
+        cap_size += sizeof(EmfPlusCustomLineCapArrowData);
+    /*      -> EmfPlusCustomLineCapData */
+    else
+    {
+        /*     -> EmfPlusCustomLineCapOptionalData */
+        cap_size += FIELD_OFFSET(EmfPlusCustomLineCapData, OptionalData);
+        if (cap->fill)
+            /*    -> EmfPlusCustomLineCapDataFillPath */
+            cap_size += FIELD_OFFSET(EmfPlusCustomLineCapDataFillPath, FillPath);
+        else
+            /*    -> EmfPlusCustomLineCapDataLinePath */
+            cap_size += FIELD_OFFSET(EmfPlusCustomLineCapDataLinePath, LinePath);
+
+        /*           -> EmfPlusPath in EmfPlusCustomLineCapDataFillPath and EmfPlusCustomLineCapDataLinePath */
+        path_size = FIELD_OFFSET(EmfPlusPath, data);
+        path_size += sizeof(PointF) * cap->pathdata.Count;
+        path_size += sizeof(BYTE) * cap->pathdata.Count;
+        path_size = (path_size + 3) & ~3;
+
+        cap_size += path_size;
+    }
+
+    *ret_cap_size = cap_size;
+    *ret_cap_data_size = cap_size - FIELD_OFFSET(EmfPlusCustomStartCapData, data);
+    *ret_path_size = path_size;
+}
+
+static void METAFILE_FillCustomLineCapData(GDIPCONST GpCustomLineCap *cap, BYTE *ptr,
+                                           REAL line_miter_limit, DWORD data_size, DWORD path_size)
+{
+    EmfPlusCustomStartCapData *cap_data;
+    EmfPlusCustomLineCap *line_cap;
+    DWORD i;
+
+    cap_data = (EmfPlusCustomStartCapData *)ptr;
+    cap_data->CustomStartCapSize = data_size;
+    i = FIELD_OFFSET(EmfPlusCustomStartCapData, data);
+
+    line_cap = (EmfPlusCustomLineCap *)(ptr + i);
+    line_cap->Version = VERSION_MAGIC2;
+    line_cap->Type = cap->type;
+    i += FIELD_OFFSET(EmfPlusCustomLineCap, CustomLineCapData);
+
+    if (cap->type == CustomLineCapTypeAdjustableArrow)
+    {
+        EmfPlusCustomLineCapArrowData *arrow_data;
+        GpAdjustableArrowCap *arrow_cap;
+
+        arrow_data = (EmfPlusCustomLineCapArrowData *)(ptr + i);
+        arrow_cap = (GpAdjustableArrowCap *)cap;
+        arrow_data->Width = arrow_cap->width;
+        arrow_data->Height = arrow_cap->height;
+        arrow_data->MiddleInset = arrow_cap->middle_inset;
+        arrow_data->FillState = arrow_cap->cap.fill;
+        arrow_data->LineStartCap = arrow_cap->cap.strokeStartCap;
+        arrow_data->LineEndCap = arrow_cap->cap.strokeEndCap;
+        arrow_data->LineJoin = arrow_cap->cap.join;
+        arrow_data->LineMiterLimit = line_miter_limit;
+        arrow_data->WidthScale = arrow_cap->cap.scale;
+        arrow_data->FillHotSpot.X = 0;
+        arrow_data->FillHotSpot.Y = 0;
+        arrow_data->LineHotSpot.X = 0;
+        arrow_data->LineHotSpot.Y = 0;
+    }
+    else
+    {
+        EmfPlusCustomLineCapData *line_cap_data = (EmfPlusCustomLineCapData *)(ptr + i);
+        EmfPlusPath *path;
+
+        if (cap->fill)
+            line_cap_data->CustomLineCapDataFlags = CustomLineCapDataFillPath;
+        else
+            line_cap_data->CustomLineCapDataFlags = CustomLineCapDataLinePath;
+        line_cap_data->BaseCap = cap->basecap;
+        line_cap_data->BaseInset = cap->inset;
+        line_cap_data->StrokeStartCap = cap->strokeStartCap;
+        line_cap_data->StrokeEndCap = cap->strokeEndCap;
+        line_cap_data->StrokeJoin = cap->join;
+        line_cap_data->StrokeMiterLimit = line_miter_limit;
+        line_cap_data->WidthScale = cap->scale;
+        line_cap_data->FillHotSpot.X = 0;
+        line_cap_data->FillHotSpot.Y = 0;
+        line_cap_data->LineHotSpot.X = 0;
+        line_cap_data->LineHotSpot.Y = 0;
+        i += FIELD_OFFSET(EmfPlusCustomLineCapData, OptionalData);
+
+        if (cap->fill)
+        {
+            EmfPlusCustomLineCapDataFillPath *fill_path = (EmfPlusCustomLineCapDataFillPath *)(ptr + i);
+            fill_path->FillPathLength = path_size;
+            i += FIELD_OFFSET(EmfPlusCustomLineCapDataFillPath, FillPath);
+        }
+        else
+        {
+            EmfPlusCustomLineCapDataLinePath *line_path = (EmfPlusCustomLineCapDataLinePath *)(ptr + i);
+            line_path->LinePathLength = path_size;
+            i += FIELD_OFFSET(EmfPlusCustomLineCapDataLinePath, LinePath);
+        }
+
+        path = (EmfPlusPath *)(ptr + i);
+        path->Version = VERSION_MAGIC2;
+        path->PathPointCount = cap->pathdata.Count;
+        path->PathPointFlags = 0;
+        i += FIELD_OFFSET(EmfPlusPath, data);
+        memcpy(ptr + i, cap->pathdata.Points, cap->pathdata.Count * sizeof(PointF));
+        i += cap->pathdata.Count * sizeof(PointF);
+        memcpy(ptr + i, cap->pathdata.Types, cap->pathdata.Count * sizeof(BYTE));
     }
 }
 
@@ -2158,6 +2340,122 @@ static GpStatus metafile_deserialize_brush(const BYTE *record_data, UINT data_si
     return status;
 }
 
+static GpStatus metafile_deserialize_custom_line_cap(const BYTE *record_data, UINT data_size, GpCustomLineCap **cap)
+{
+    EmfPlusCustomStartCapData *custom_cap_data = (EmfPlusCustomStartCapData *)record_data;
+    EmfPlusCustomLineCap *line_cap;
+    GpStatus status;
+    UINT offset;
+
+    *cap = NULL;
+
+    if (data_size < FIELD_OFFSET(EmfPlusCustomStartCapData, data))
+        return InvalidParameter;
+    if (data_size < FIELD_OFFSET(EmfPlusCustomStartCapData, data) + custom_cap_data->CustomStartCapSize)
+        return InvalidParameter;
+    offset = FIELD_OFFSET(EmfPlusCustomStartCapData, data);
+    line_cap = (EmfPlusCustomLineCap *)(record_data + offset);
+
+    if (data_size < offset + FIELD_OFFSET(EmfPlusCustomLineCap, CustomLineCapData))
+        return InvalidParameter;
+    offset += FIELD_OFFSET(EmfPlusCustomLineCap, CustomLineCapData);
+
+    if (line_cap->Type == CustomLineCapTypeAdjustableArrow)
+    {
+        EmfPlusCustomLineCapArrowData *arrow_data;
+        GpAdjustableArrowCap *arrow_cap;
+
+        arrow_data = (EmfPlusCustomLineCapArrowData *)(record_data + offset);
+
+        if (data_size < offset + sizeof(EmfPlusCustomLineCapArrowData))
+            return InvalidParameter;
+
+        if ((status = GdipCreateAdjustableArrowCap(arrow_data->Height, arrow_data->Width,
+                                                   arrow_data->FillState, &arrow_cap)))
+            return status;
+
+        if ((status = GdipSetAdjustableArrowCapMiddleInset(arrow_cap, arrow_data->MiddleInset)))
+            goto arrow_cap_failed;
+        if ((status = GdipSetCustomLineCapStrokeCaps((GpCustomLineCap *)arrow_cap, arrow_data->LineStartCap, arrow_data->LineEndCap)))
+            goto arrow_cap_failed;
+        if ((status = GdipSetCustomLineCapStrokeJoin((GpCustomLineCap *)arrow_cap, arrow_data->LineJoin)))
+            goto arrow_cap_failed;
+        if ((status = GdipSetCustomLineCapWidthScale((GpCustomLineCap *)arrow_cap, arrow_data->WidthScale)))
+            goto arrow_cap_failed;
+
+        *cap = (GpCustomLineCap *)arrow_cap;
+        return Ok;
+
+    arrow_cap_failed:
+        GdipDeleteCustomLineCap((GpCustomLineCap *)arrow_cap);
+        return status;
+    }
+    else
+    {
+        GpPath *path, *fill_path = NULL, *stroke_path = NULL;
+        EmfPlusCustomLineCapData *line_cap_data;
+        GpCustomLineCap *line_cap = NULL;
+        GpStatus status;
+
+        line_cap_data = (EmfPlusCustomLineCapData *)(record_data + offset);
+
+        if (data_size < offset + FIELD_OFFSET(EmfPlusCustomLineCapData, OptionalData))
+            return InvalidParameter;
+        offset += FIELD_OFFSET(EmfPlusCustomLineCapData, OptionalData);
+
+        if (line_cap_data->CustomLineCapDataFlags == CustomLineCapDataFillPath)
+        {
+            EmfPlusCustomLineCapDataFillPath *fill_path = (EmfPlusCustomLineCapDataFillPath *)(record_data + offset);
+
+            if (data_size < offset + FIELD_OFFSET(EmfPlusCustomLineCapDataFillPath, FillPath))
+                return InvalidParameter;
+            if (data_size < offset + fill_path->FillPathLength)
+                return InvalidParameter;
+
+            offset += FIELD_OFFSET(EmfPlusCustomLineCapDataFillPath, FillPath);
+        }
+        else
+        {
+            EmfPlusCustomLineCapDataLinePath *line_path = (EmfPlusCustomLineCapDataLinePath *)(record_data + offset);
+
+            if (data_size < offset + FIELD_OFFSET(EmfPlusCustomLineCapDataLinePath, LinePath))
+                return InvalidParameter;
+            if (data_size < offset + line_path->LinePathLength)
+                return InvalidParameter;
+
+            offset += FIELD_OFFSET(EmfPlusCustomLineCapDataLinePath, LinePath);
+        }
+
+        if ((status = metafile_deserialize_path(record_data + offset, data_size - offset, &path)))
+            return status;
+
+        if (line_cap_data->CustomLineCapDataFlags == CustomLineCapDataFillPath)
+            fill_path = path;
+        else
+            stroke_path = path;
+
+        if ((status = GdipCreateCustomLineCap(fill_path, stroke_path, line_cap_data->BaseCap,
+                                              line_cap_data->BaseInset, &line_cap)))
+            goto default_cap_failed;
+        if ((status = GdipSetCustomLineCapStrokeCaps(line_cap, line_cap_data->StrokeStartCap, line_cap_data->StrokeEndCap)))
+            goto default_cap_failed;
+        if ((status = GdipSetCustomLineCapStrokeJoin(line_cap, line_cap_data->StrokeJoin)))
+            goto default_cap_failed;
+        if ((status = GdipSetCustomLineCapWidthScale(line_cap, line_cap_data->WidthScale)))
+            goto default_cap_failed;
+
+        GdipDeletePath(path);
+        *cap = line_cap;
+        return Ok;
+
+    default_cap_failed:
+        if (line_cap)
+            GdipDeleteCustomLineCap(line_cap);
+        GdipDeletePath(path);
+        return status;
+    }
+}
+
 static GpStatus metafile_get_pen_brush_data_offset(EmfPlusPen *data, UINT data_size, DWORD *ret)
 {
     EmfPlusPenData *pendata = (EmfPlusPenData *)data->data;
@@ -2264,6 +2562,7 @@ static GpStatus METAFILE_PlaybackObject(GpMetafile *metafile, UINT flags, UINT d
     {
         EmfPlusPen *data = (EmfPlusPen *)record_data;
         EmfPlusPenData *pendata = (EmfPlusPenData *)data->data;
+        GpCustomLineCap *custom_line_cap;
         GpBrush *brush;
         DWORD offset;
         GpPen *pen;
@@ -2360,14 +2659,24 @@ static GpStatus METAFILE_PlaybackObject(GpMetafile *metafile, UINT flags, UINT d
         if (pendata->PenDataFlags & PenDataCustomStartCap)
         {
             EmfPlusCustomStartCapData *startcap = (EmfPlusCustomStartCapData *)((BYTE *)pendata + offset);
-            FIXME("PenDataCustomStartCap is not supported.\n");
+            if ((status = metafile_deserialize_custom_line_cap((BYTE *)startcap, data_size, &custom_line_cap)) != Ok)
+                goto penfailed;
+            status = GdipSetPenCustomStartCap(pen, custom_line_cap);
+            GdipDeleteCustomLineCap(custom_line_cap);
+            if (status != Ok)
+                goto penfailed;
             offset += FIELD_OFFSET(EmfPlusCustomStartCapData, data) + startcap->CustomStartCapSize;
         }
 
         if (pendata->PenDataFlags & PenDataCustomEndCap)
         {
             EmfPlusCustomEndCapData *endcap = (EmfPlusCustomEndCapData *)((BYTE *)pendata + offset);
-            FIXME("PenDataCustomEndCap is not supported.\n");
+            if ((status = metafile_deserialize_custom_line_cap((BYTE *)endcap, data_size, &custom_line_cap)) != Ok)
+                goto penfailed;
+            status = GdipSetPenCustomEndCap(pen, custom_line_cap);
+            GdipDeleteCustomLineCap(custom_line_cap);
+            if (status != Ok)
+                goto penfailed;
             offset += FIELD_OFFSET(EmfPlusCustomEndCapData, data) + endcap->CustomEndCapSize;
         }
 
@@ -4562,6 +4871,8 @@ static GpStatus METAFILE_AddPathObject(GpMetafile *metafile, GpPath *path, DWORD
 
 static GpStatus METAFILE_AddPenObject(GpMetafile *metafile, GpPen *pen, DWORD *id)
 {
+    DWORD custom_start_cap_size = 0, custom_start_cap_data_size = 0, custom_start_cap_path_size = 0;
+    DWORD custom_end_cap_size = 0, custom_end_cap_data_size = 0, custom_end_cap_path_size = 0;
     DWORD i, data_flags, pen_data_size, brush_size;
     EmfPlusObject *object_record;
     EmfPlusPenData *pen_data;
@@ -4626,11 +4937,17 @@ static GpStatus METAFILE_AddPenObject(GpMetafile *metafile, GpPen *pen, DWORD *i
     /* TODO: Add support for PenDataCompoundLine */
     if (pen->customstart)
     {
-        FIXME("ignoring custom start cup\n");
+        data_flags |= PenDataCustomStartCap;
+        METAFILE_PrepareCustomLineCapData(pen->customstart, &custom_start_cap_size,
+                                          &custom_start_cap_data_size, &custom_start_cap_path_size);
+        pen_data_size += custom_start_cap_size;
     }
     if (pen->customend)
     {
-        FIXME("ignoring custom end cup\n");
+        data_flags |= PenDataCustomEndCap;
+        METAFILE_PrepareCustomLineCapData(pen->customend, &custom_end_cap_size,
+                                          &custom_end_cap_data_size, &custom_end_cap_path_size);
+        pen_data_size += custom_end_cap_size;
     }
 
     stat = METAFILE_PrepareBrushData(pen->brush, &brush_size);
@@ -4718,6 +5035,20 @@ static GpStatus METAFILE_AddPenObject(GpMetafile *metafile, GpPen *pen, DWORD *i
     {
         *(REAL*)(pen_data->OptionalData + i) = pen->align;
         i += sizeof(DWORD);
+    }
+    if (data_flags & PenDataCustomStartCap)
+    {
+        METAFILE_FillCustomLineCapData(pen->customstart, pen_data->OptionalData + i,
+                                       pen->miterlimit, custom_start_cap_data_size,
+                                       custom_start_cap_path_size);
+        i += custom_start_cap_size;
+    }
+    if (data_flags & PenDataCustomEndCap)
+    {
+        METAFILE_FillCustomLineCapData(pen->customend, pen_data->OptionalData + i,
+                                       pen->miterlimit, custom_end_cap_data_size,
+                                       custom_end_cap_path_size);
+        i += custom_end_cap_size;
     }
 
     METAFILE_FillBrushData(pen->brush,

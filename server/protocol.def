@@ -472,6 +472,7 @@ typedef union
     {
         enum select_op  op;      /* SELECT_WAIT or SELECT_WAIT_ALL */
         obj_handle_t    handles[MAXIMUM_WAIT_OBJECTS];
+        int             __pad;
     } wait;
     struct
     {
@@ -542,7 +543,8 @@ typedef union
         unsigned int     op_type;      /* type of operation */
         client_ptr_t     addr;         /* requested address */
         mem_size_t       size;         /* allocation size */
-        mem_size_t       limit;        /* allocation address limit */
+        mem_size_t       limit_low;    /* allocation address limits */
+        mem_size_t       limit_high;
         mem_size_t       align;        /* allocation alignment */
         unsigned int     prot;         /* memory protection flags */
         unsigned int     attributes;   /* memory extended attributes */
@@ -606,17 +608,18 @@ typedef union
         client_ptr_t     addr;         /* requested address */
         mem_size_t       size;         /* allocation size */
         file_pos_t       offset;       /* file offset */
-        mem_size_t       limit;        /* allocation address limit */
+        mem_size_t       limit_low;    /* allocation address limits */
+        mem_size_t       limit_high;
         unsigned int     alloc_type;   /* allocation type */
-        unsigned short   prot;         /* memory protection flags */
+        unsigned int     prot;         /* memory protection flags */
         unsigned short   machine;      /* requested machine for image mappings */
+        unsigned short   __pad[3];
     } map_view_ex;
     struct
     {
         enum apc_type    type;      /* APC_UNMAP_VIEW */
-        int              __pad;
-        client_ptr_t     addr;      /* view address */
         unsigned int     flags;     /* unmap flags */
+        client_ptr_t     addr;      /* view address */
     } unmap_view;
     struct
     {
@@ -1141,7 +1144,7 @@ struct cpu_topology_override
 /* Queue an APC for a thread or process */
 @REQ(queue_apc)
     obj_handle_t handle;       /* thread or process handle */
-    apc_call_t   call;         /* call arguments */
+    VARARG(call,apc_call);     /* call arguments */
 @REPLY
     obj_handle_t handle;       /* APC handle */
     int          self;         /* run APC in caller itself? */
@@ -1229,9 +1232,9 @@ struct cpu_topology_override
     VARARG(data,select_op,size); /* operation-specific data */
     VARARG(contexts,contexts);   /* suspend context(s) */
 @REPLY
-    apc_call_t   call;         /* APC call arguments */
     obj_handle_t apc_handle;   /* handle to next APC */
     int          signaled;     /* were the handles immediately signaled? */
+    VARARG(call,apc_call);     /* APC call arguments */
     VARARG(contexts,contexts); /* suspend context(s) */
 @END
 #define SELECT_ALERTABLE     1
@@ -3717,7 +3720,6 @@ struct handle_info
     int            x;             /* cursor position */
     int            y;
     rectangle_t    clip;          /* cursor clip rectangle */
-    unsigned int   clip_msg;      /* message to post on cursor clip changes */
 @REPLY
     user_handle_t  prev_handle;   /* previous handle */
     int            prev_count;    /* previous show count */

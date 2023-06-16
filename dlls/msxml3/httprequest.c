@@ -2639,6 +2639,8 @@ static void init_httprequest(httprequest *req)
     req->threshold = 0x100;
     req->enterrprised_id = 0;
     req->max_connections = 10;
+
+    req->request_body_size = 0;
 }
 
 HRESULT XMLHTTPRequest_create(void **obj)

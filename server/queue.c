@@ -34,6 +34,7 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "winternl.h"
+#include "ntuser.h"
 
 #include "handle.h"
 #include "file.h"
@@ -427,8 +428,48 @@ static struct message *alloc_hardware_message( lparam_t info, struct hw_msg_sour
     return msg;
 }
 
-static int update_desktop_cursor_pos( struct desktop *desktop, int x, int y )
+static int is_cursor_clipped( struct desktop *desktop )
 {
+    rectangle_t top_rect, clip_rect = desktop->cursor.clip;
+    get_top_window_rectangle( desktop, &top_rect );
+    return !is_rect_equal( &clip_rect, &top_rect );
+}
+
+static void queue_cursor_message( struct desktop *desktop, user_handle_t win, unsigned int message,
+                                  lparam_t wparam, lparam_t lparam )
+{
+    static const struct hw_msg_source source = { IMDT_UNAVAILABLE, IMO_SYSTEM };
+    struct thread_input *input;
+    struct message *msg;
+
+    if (!(msg = alloc_hardware_message( 0, source, get_tick_count(), 0 ))) return;
+
+    msg->msg = message;
+    msg->wparam = wparam;
+    msg->lparam = lparam;
+    msg->x = desktop->cursor.x;
+    msg->y = desktop->cursor.y;
+    if (!(msg->win = win) && (input = desktop->foreground_input)) msg->win = input->active;
+    queue_hardware_message( desktop, msg, 1 );
+}
+
+static int update_desktop_cursor_window( struct desktop *desktop, user_handle_t win )
+{
+    int updated = win != desktop->cursor.win;
+    user_handle_t handle = desktop->cursor.handle;
+    desktop->cursor.win = win;
+    if (updated)
+    {
+        /* when clipping send the message to the foreground window as well, as some driver have an artificial overlay window */
+        if (is_cursor_clipped( desktop )) queue_cursor_message( desktop, 0, WM_WINE_SETCURSOR, win, handle );
+        queue_cursor_message( desktop, win, WM_WINE_SETCURSOR, win, handle );
+    }
+    return updated;
+}
+
+static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win, int x, int y )
+{
+    struct thread_input *input;
     int updated;
 
     x = max( min( x, desktop->cursor.clip.right - 1 ), desktop->cursor.clip.left );
@@ -438,7 +479,25 @@ static int update_desktop_cursor_pos( struct desktop *desktop, int x, int y )
     desktop->cursor.y = y;
     desktop->cursor.last_change = get_tick_count();
 
+    if (!win && (input = desktop->foreground_input)) win = input->capture;
+    if (!win || !is_window_visible( win ) || is_window_transparent( win ))
+        win = shallow_window_from_point( desktop, x, y );
+    if (update_desktop_cursor_window( desktop, win )) updated = 1;
+
     return updated;
+}
+
+static void update_desktop_cursor_handle( struct desktop *desktop, user_handle_t handle )
+{
+    int updated = desktop->cursor.handle != handle;
+    user_handle_t win = desktop->cursor.win;
+    desktop->cursor.handle = handle;
+    if (updated)
+    {
+        /* when clipping send the message to the foreground window as well, as some driver have an artificial overlay window */
+        if (is_cursor_clipped( desktop )) queue_cursor_message( desktop, 0, WM_WINE_SETCURSOR, win, handle );
+        queue_cursor_message( desktop, win, WM_WINE_SETCURSOR, win, handle );
+    }
 }
 
 /* set the cursor position and queue the corresponding mouse message */
@@ -450,7 +509,7 @@ static void set_cursor_pos( struct desktop *desktop, int x, int y )
 
     if ((device = current->process->rawinput_mouse) && (device->flags & RIDEV_NOLEGACY))
     {
-        update_desktop_cursor_pos( desktop, x, y );
+        update_desktop_cursor_pos( desktop, 0, x, y );
         return;
     }
 
@@ -473,7 +532,7 @@ static void get_message_defaults( struct msg_queue *queue, int *x, int *y, unsig
 }
 
 /* set the cursor clip rectangle */
-static void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect, int send_clip_msg )
+void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect, int reset )
 {
     rectangle_t top_rect;
     int x, y;
@@ -491,13 +550,16 @@ static void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect
     }
     else desktop->cursor.clip = top_rect;
 
-    if (desktop->cursor.clip_msg && send_clip_msg)
-        post_desktop_message( desktop, desktop->cursor.clip_msg, rect != NULL, 0 );
-
     /* warp the mouse to be inside the clip rect */
     x = max( min( desktop->cursor.x, desktop->cursor.clip.right - 1 ), desktop->cursor.clip.left );
     y = max( min( desktop->cursor.y, desktop->cursor.clip.bottom - 1 ), desktop->cursor.clip.top );
     if (x != desktop->cursor.x || y != desktop->cursor.y) set_cursor_pos( desktop, x, y );
+
+    /* request clip cursor rectangle reset to the desktop thread */
+    if (reset) post_desktop_message( desktop, WM_WINE_CLIPCURSOR, TRUE, FALSE );
+
+    /* notify foreground thread, of reset, or to apply new cursor clipping rect */
+    queue_cursor_message( desktop, 0, WM_WINE_CLIPCURSOR, rect == NULL, reset );
 }
 
 /* change the foreground input and reset the cursor clip rect */
@@ -561,12 +623,6 @@ static inline void clear_queue_bits( struct msg_queue *queue, unsigned int bits 
         esync_clear( queue->esync_fd );
 }
 
-/* check whether msg is a keyboard message */
-static inline int is_keyboard_msg( struct message *msg )
-{
-    return (msg->msg >= WM_KEYFIRST && msg->msg <= WM_KEYLAST);
-}
-
 /* check if message is matched by the filter */
 static inline int check_msg_filter( unsigned int msg, unsigned int first, unsigned int last )
 {
@@ -589,11 +645,13 @@ static inline int filter_contains_hw_range( unsigned int first, unsigned int las
 }
 
 /* get the QS_* bit corresponding to a given hardware message */
-static inline int get_hardware_msg_bit( struct message *msg )
+static inline int get_hardware_msg_bit( unsigned int message )
 {
-    if (msg->msg == WM_INPUT_DEVICE_CHANGE || msg->msg == WM_INPUT) return QS_RAWINPUT;
-    if (msg->msg == WM_MOUSEMOVE || msg->msg == WM_NCMOUSEMOVE) return QS_MOUSEMOVE;
-    if (is_keyboard_msg( msg )) return QS_KEY;
+    if (message == WM_INPUT_DEVICE_CHANGE || message == WM_INPUT) return QS_RAWINPUT;
+    if (message == WM_MOUSEMOVE || message == WM_NCMOUSEMOVE) return QS_MOUSEMOVE;
+    if (message >= WM_KEYFIRST && message <= WM_KEYLAST) return QS_KEY;
+    if (message == WM_WINE_CLIPCURSOR) return QS_RAWINPUT;
+    if (message == WM_WINE_SETCURSOR) return QS_RAWINPUT;
     return QS_MOUSEBUTTON;
 }
 
@@ -621,13 +679,12 @@ static inline unsigned int get_unique_post_id(void)
     return id;
 }
 
-/* try to merge a message with the last in the list; return 1 if successful */
-static int merge_message( struct thread_input *input, const struct message *msg )
+/* try to merge a WM_MOUSEMOVE message with the last in the list; return 1 if successful */
+static int merge_mousemove( struct thread_input *input, const struct message *msg )
 {
     struct message *prev;
     struct list *ptr;
 
-    if (msg->msg != WM_MOUSEMOVE) return 0;
     for (ptr = list_tail( &input->msg_list ); ptr; ptr = list_prev( &input->msg_list, ptr ))
     {
         prev = LIST_ENTRY( ptr, struct message, entry );
@@ -653,6 +710,40 @@ static int merge_message( struct thread_input *input, const struct message *msg 
     list_remove( ptr );
     list_add_tail( &input->msg_list, ptr );
     return 1;
+}
+
+/* try to merge a unique message with the last in the list; return 1 if successful */
+static int merge_unique_message( struct thread_input *input, unsigned int message, const struct message *msg )
+{
+    struct message *prev;
+
+    LIST_FOR_EACH_ENTRY_REV( prev, &input->msg_list, struct message, entry )
+        if (prev->msg == message) break;
+    if (&prev->entry == &input->msg_list) return 0;
+
+    if (prev->result) return 0;
+    if (prev->win != msg->win) return 0;
+    if (prev->type != msg->type) return 0;
+
+    /* now we can merge it */
+    prev->wparam  = msg->wparam;
+    prev->lparam  = msg->lparam;
+    prev->x       = msg->x;
+    prev->y       = msg->y;
+    prev->time    = msg->time;
+    list_remove( &prev->entry );
+    list_add_tail( &input->msg_list, &prev->entry );
+
+    return 1;
+}
+
+/* try to merge a message with the messages in the list; return 1 if successful */
+static int merge_message( struct thread_input *input, const struct message *msg )
+{
+    if (msg->msg == WM_MOUSEMOVE) return merge_mousemove( input, msg );
+    if (msg->msg == WM_WINE_CLIPCURSOR) return merge_unique_message( input, WM_WINE_CLIPCURSOR, msg );
+    if (msg->msg == WM_WINE_SETCURSOR) return merge_unique_message( input, WM_WINE_SETCURSOR, msg );
+    return 0;
 }
 
 /* free a result structure */
@@ -1160,12 +1251,13 @@ static void thread_input_dump( struct object *obj, int verbose )
 static void thread_input_destroy( struct object *obj )
 {
     struct thread_input *input = (struct thread_input *)obj;
+    struct desktop *desktop;
 
     empty_msg_list( &input->msg_list );
-    if (input->desktop)
+    if ((desktop = input->desktop))
     {
-        if (input->desktop->foreground_input == input) set_foreground_input( input->desktop, NULL );
-        release_object( input->desktop );
+        if (desktop->foreground_input == input) desktop->foreground_input = NULL;
+        release_object( desktop );
     }
 }
 
@@ -1469,11 +1561,8 @@ static void update_input_key_state( struct desktop *desktop, unsigned char *keys
 }
 
 /* update the desktop key state according to a mouse message flags */
-static void update_desktop_mouse_state( struct desktop *desktop, unsigned int flags,
-                                        int x, int y, lparam_t wparam )
+static void update_desktop_mouse_state( struct desktop *desktop, unsigned int flags, lparam_t wparam )
 {
-    if (flags & MOUSEEVENTF_MOVE)
-        update_desktop_cursor_pos( desktop, x, y );
     if (flags & MOUSEEVENTF_LEFTDOWN)
         update_input_key_state( desktop, desktop->keystate, WM_LBUTTONDOWN, wparam );
     if (flags & MOUSEEVENTF_LEFTUP)
@@ -1506,10 +1595,10 @@ static void release_hardware_message( struct msg_queue *queue, unsigned int hw_i
     if (&msg->entry == &input->msg_list) return;  /* not found */
 
     /* clear the queue bit for that message */
-    clr_bit = get_hardware_msg_bit( msg );
+    clr_bit = get_hardware_msg_bit( msg->msg );
     LIST_FOR_EACH_ENTRY( other, &input->msg_list, struct message, entry )
     {
-        if (other != msg && get_hardware_msg_bit( other ) == clr_bit)
+        if (other != msg && get_hardware_msg_bit( other->msg ) == clr_bit)
         {
             clr_bit = 0;
             break;
@@ -1569,24 +1658,27 @@ static user_handle_t find_hardware_message_window( struct desktop *desktop, stru
 
     *thread = NULL;
     *msg_code = msg->msg;
-    if (msg->msg == WM_INPUT || msg->msg == WM_INPUT_DEVICE_CHANGE)
+    switch (get_hardware_msg_bit( msg->msg ))
     {
+    case QS_RAWINPUT:
         if (!(win = msg->win) && input) win = input->focus;
-    }
-    else if (is_keyboard_msg( msg ))
-    {
+        break;
+    case QS_KEY:
         if (input && !(win = input->focus))
         {
             win = input->active;
             if (*msg_code < WM_SYSKEYDOWN) *msg_code += WM_SYSKEYDOWN - WM_KEYDOWN;
         }
-    }
-    else if (!input || !(win = input->capture)) /* mouse message */
-    {
-        if (is_window_visible( msg->win ) && !is_window_transparent( msg->win )) win = msg->win;
-        else win = shallow_window_from_point( desktop, msg->x, msg->y );
-
-        *thread = window_thread_from_point( win, msg->x, msg->y );
+        break;
+    case QS_MOUSEMOVE:
+    case QS_MOUSEBUTTON:
+        if (!input || !(win = input->capture))
+        {
+            if (is_window_visible( msg->win ) && !is_window_transparent( msg->win )) win = msg->win;
+            else win = shallow_window_from_point( desktop, msg->x, msg->y );
+            *thread = window_thread_from_point( win, msg->x, msg->y );
+        }
+        break;
     }
 
     if (!*thread)
@@ -1630,20 +1722,19 @@ static void queue_hardware_message( struct desktop *desktop, struct message *msg
     last_input_time = get_tick_count();
     if (msg->msg != WM_MOUSEMOVE) always_queue = 1;
 
-    if (is_keyboard_msg( msg ))
+    switch (get_hardware_msg_bit( msg->msg ))
     {
+    case QS_KEY:
         if (queue_hotkey_message( desktop, msg )) return;
         if (desktop->keystate[VK_MENU] & 0x80) msg->lparam |= KF_ALTDOWN << 16;
         if (msg->wparam == VK_SHIFT || msg->wparam == VK_LSHIFT || msg->wparam == VK_RSHIFT)
             msg->lparam &= ~(KF_EXTENDED << 16);
-    }
-    else if (msg->msg != WM_INPUT && msg->msg != WM_INPUT_DEVICE_CHANGE)
-    {
-        if (msg->msg == WM_MOUSEMOVE)
-        {
-            prepend_cursor_history( msg->x, msg->y, msg->time, msg_data->info );
-            if (update_desktop_cursor_pos( desktop, msg->x, msg->y )) always_queue = 1;
-        }
+        break;
+    case QS_MOUSEMOVE:
+        prepend_cursor_history( msg->x, msg->y, msg->time, msg_data->info );
+        if (update_desktop_cursor_pos( desktop, msg->win, msg->x, msg->y )) always_queue = 1;
+        /* fallthrough */
+    case QS_MOUSEBUTTON:
         if (desktop->keystate[VK_LBUTTON] & 0x80)  msg->wparam |= MK_LBUTTON;
         if (desktop->keystate[VK_MBUTTON] & 0x80)  msg->wparam |= MK_MBUTTON;
         if (desktop->keystate[VK_RBUTTON] & 0x80)  msg->wparam |= MK_RBUTTON;
@@ -1651,6 +1742,7 @@ static void queue_hardware_message( struct desktop *desktop, struct message *msg
         if (desktop->keystate[VK_CONTROL] & 0x80)  msg->wparam |= MK_CONTROL;
         if (desktop->keystate[VK_XBUTTON1] & 0x80) msg->wparam |= MK_XBUTTON1;
         if (desktop->keystate[VK_XBUTTON2] & 0x80) msg->wparam |= MK_XBUTTON2;
+        break;
     }
     msg->x = desktop->cursor.x;
     msg->y = desktop->cursor.y;
@@ -1671,15 +1763,12 @@ static void queue_hardware_message( struct desktop *desktop, struct message *msg
     }
     input = thread->queue->input;
 
-    if (win != desktop->cursor.win) always_queue = 1;
-    desktop->cursor.win = win;
-
     if (!always_queue || merge_message( input, msg )) free_message( msg );
     else
     {
         msg->unique_id = 0;  /* will be set once we return it to the app */
         list_add_tail( &input->msg_list, &msg->entry );
-        set_queue_bits( thread->queue, get_hardware_msg_bit(msg) );
+        set_queue_bits( thread->queue, get_hardware_msg_bit( msg->msg ) );
     }
     release_object( thread );
 }
@@ -1896,7 +1985,8 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
 
     if ((device = current->process->rawinput_mouse) && (device->flags & RIDEV_NOLEGACY))
     {
-        update_desktop_mouse_state( desktop, flags, x, y, input->mouse.data << 16 );
+        if (flags & MOUSEEVENTF_MOVE) update_desktop_cursor_pos( desktop, win, x, y );
+        update_desktop_mouse_state( desktop, flags, input->mouse.data << 16 );
         return 0;
     }
 
@@ -2126,19 +2216,19 @@ static void queue_custom_hardware_message( struct desktop *desktop, user_handle_
 static int check_hw_message_filter( user_handle_t win, unsigned int msg_code,
                                     user_handle_t filter_win, unsigned int first, unsigned int last )
 {
-    if (msg_code >= WM_KEYFIRST && msg_code <= WM_KEYLAST)
+    switch (get_hardware_msg_bit( msg_code ))
     {
+    case QS_KEY:
         /* we can only test the window for a keyboard message since the
          * dest window for a mouse message depends on hittest */
         if (filter_win && win != filter_win && !is_child_window( filter_win, win ))
             return 0;
         /* the message code is final for a keyboard message, we can simply check it */
         return check_msg_filter( msg_code, first, last );
-    }
-    else  /* mouse message */
-    {
-        /* we need to check all possible values that the message can have in the end */
 
+    case QS_MOUSEMOVE:
+    case QS_MOUSEBUTTON:
+        /* we need to check all possible values that the message can have in the end */
         if (check_msg_filter( msg_code, first, last )) return 1;
         if (msg_code == WM_MOUSEWHEEL) return 0;  /* no other possible value for this one */
 
@@ -2153,6 +2243,9 @@ static int check_hw_message_filter( user_handle_t win, unsigned int msg_code,
             if (check_msg_filter( msg_code + (WM_NCLBUTTONDBLCLK - WM_LBUTTONDOWN), first, last )) return 1;
         }
         return 0;
+
+    default:
+        return check_msg_filter( msg_code, first, last );
     }
 }
 
@@ -2207,7 +2300,7 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
             if (win_thread->queue->input == input)
             {
                 /* wake the other thread */
-                set_queue_bits( win_thread->queue, get_hardware_msg_bit(msg) );
+                set_queue_bits( win_thread->queue, get_hardware_msg_bit( msg->msg ) );
                 got_one = 1;
             }
             else
@@ -2226,7 +2319,7 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
          * match the filter we skip it */
         if (got_one || !check_hw_message_filter( win, msg_code, filter_win, first, last ))
         {
-            clear_bits &= ~get_hardware_msg_bit( msg );
+            clear_bits &= ~get_hardware_msg_bit( msg->msg );
             continue;
         }
 
@@ -2250,7 +2343,7 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
 
         data->hw_id = msg->unique_id;
         set_reply_data( msg->data, msg->data_size );
-        if ((msg->msg == WM_INPUT || msg->msg == WM_INPUT_DEVICE_CHANGE) && (flags & PM_REMOVE))
+        if (get_hardware_msg_bit( msg->msg ) == QS_RAWINPUT && (flags & PM_REMOVE))
             release_hardware_message( current->queue, data->hw_id );
         return 1;
     }
@@ -2344,6 +2437,7 @@ void post_message( user_handle_t win, unsigned int message, lparam_t wparam, lpa
         msg->result    = NULL;
         msg->data      = NULL;
         msg->data_size = 0;
+        msg->unique_id = get_unique_post_id();
 
         get_message_defaults( thread->queue, &msg->x, &msg->y, &msg->time );
 
@@ -2376,7 +2470,6 @@ void send_notify_message( user_handle_t win, unsigned int message, lparam_t wpar
         msg->result    = NULL;
         msg->data      = NULL;
         msg->data_size = 0;
-        msg->unique_id = get_unique_post_id();
 
         get_message_defaults( thread->queue, &msg->x, &msg->y, &msg->time );
 
@@ -3368,14 +3461,16 @@ DECL_HANDLER(set_cursor)
 {
     struct msg_queue *queue = get_current_queue();
     struct thread_input *input;
+    struct desktop *desktop;
 
     if (!queue) return;
     input = queue->input;
+    desktop = input->desktop;
 
     reply->prev_handle = input->cursor;
     reply->prev_count  = input->cursor_count;
-    reply->prev_x      = input->desktop->cursor.x;
-    reply->prev_y      = input->desktop->cursor.y;
+    reply->prev_x      = desktop->cursor.x;
+    reply->prev_y      = desktop->cursor.y;
 
     if (req->flags & SET_CURSOR_HANDLE)
     {
@@ -3391,25 +3486,20 @@ DECL_HANDLER(set_cursor)
         queue->cursor_count += req->show_count;
         input->cursor_count += req->show_count;
     }
-    if (req->flags & SET_CURSOR_POS)
-    {
-        set_cursor_pos( input->desktop, req->x, req->y );
-    }
-    if (req->flags & (SET_CURSOR_CLIP | SET_CURSOR_NOCLIP))
-    {
-        struct desktop *desktop = input->desktop;
+    if (req->flags & SET_CURSOR_POS) set_cursor_pos( desktop, req->x, req->y );
+    if (req->flags & SET_CURSOR_CLIP) set_clip_rectangle( desktop, &req->clip, 0 );
+    if (req->flags & SET_CURSOR_NOCLIP) set_clip_rectangle( desktop, NULL, 0 );
 
-        /* only the desktop owner can set the message */
-        if (req->clip_msg && get_top_window_owner(desktop) == current->process)
-            desktop->cursor.clip_msg = req->clip_msg;
-
-        set_clip_rectangle( desktop, (req->flags & SET_CURSOR_NOCLIP) ? NULL : &req->clip, 0 );
+    if (req->flags & (SET_CURSOR_HANDLE | SET_CURSOR_COUNT))
+    {
+        if (input->cursor_count < 0) update_desktop_cursor_handle( desktop, 0 );
+        else update_desktop_cursor_handle( desktop, input->cursor );
     }
 
-    reply->new_x       = input->desktop->cursor.x;
-    reply->new_y       = input->desktop->cursor.y;
-    reply->new_clip    = input->desktop->cursor.clip;
-    reply->last_change = input->desktop->cursor.last_change;
+    reply->new_x       = desktop->cursor.x;
+    reply->new_y       = desktop->cursor.y;
+    reply->new_clip    = desktop->cursor.clip;
+    reply->last_change = desktop->cursor.last_change;
 }
 
 /* Get the history of the 64 last cursor positions */

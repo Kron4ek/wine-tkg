@@ -235,15 +235,17 @@ static void test_VirtualAlloc2(void)
     ok(info.Type == MEM_MAPPED, "Unexpected type %#lx.\n", info.Type);
     ok(info.RegionSize == size, "Unexpected size.\n");
 
-    CloseHandle(section);
     ret = pUnmapViewOfFile2(NULL, view1, MEM_PRESERVE_PLACEHOLDER);
     ok(!ret && GetLastError() == ERROR_INVALID_HANDLE, "Got error %lu.\n", GetLastError());
 
     ret = VirtualFree( placeholder1, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER );
     ok(!ret && GetLastError() == ERROR_INVALID_PARAMETER, "Got ret %d, error %lu.\n", ret, GetLastError());
 
+    ret = pUnmapViewOfFile2(GetCurrentProcess(), view1, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
+    ok(!ret && GetLastError() == ERROR_INVALID_PARAMETER, "Got ret %d, error %lu.\n", ret, GetLastError());
     ret = pUnmapViewOfFile2(GetCurrentProcess(), view1, MEM_PRESERVE_PLACEHOLDER);
     ok(ret, "Got error %lu.\n", GetLastError());
+
     memset(&info, 0, sizeof(info));
     VirtualQuery(placeholder1, &info, sizeof(info));
     ok(info.AllocationProtect == PAGE_NOACCESS, "Unexpected protection %#lx.\n", info.AllocationProtect);
@@ -256,6 +258,16 @@ static void test_VirtualAlloc2(void)
 
     ret = UnmapViewOfFile(view1);
     ok(!ret && GetLastError() == ERROR_INVALID_ADDRESS, "Got error %lu.\n", GetLastError());
+
+    view1 = pMapViewOfFile3(section, NULL, placeholder1, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, NULL, 0);
+    ok(view1 == placeholder1, "Address does not match.\n");
+    CloseHandle(section);
+
+    ret = VirtualFree( view1, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER );
+    ok(!ret && GetLastError() == ERROR_INVALID_PARAMETER, "Got ret %d, error %lu.\n", ret, GetLastError());
+
+    ret = pUnmapViewOfFile2(GetCurrentProcess(), view1, MEM_UNMAP_WITH_TRANSIENT_BOOST | MEM_PRESERVE_PLACEHOLDER);
+    ok(ret, "Got error %lu.\n", GetLastError());
 
     ret = VirtualFree( placeholder1, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER );
     ok(!ret && GetLastError() == ERROR_INVALID_ADDRESS, "Got ret %d, error %lu.\n", ret, GetLastError());

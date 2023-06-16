@@ -337,12 +337,13 @@ void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
 }
 
 struct wg_transform *wg_transform_create(const struct wg_format *input_format,
-        const struct wg_format *output_format)
+        const struct wg_format *output_format, const struct wg_transform_attrs *attrs)
 {
     struct wg_transform_create_params params =
     {
         .input_format = input_format,
         .output_format = output_format,
+        .attrs = attrs,
     };
 
     TRACE("input_format %p, output_format %p.\n", input_format, output_format);
@@ -424,6 +425,36 @@ bool wg_transform_set_output_format(struct wg_transform *transform, struct wg_fo
     TRACE("transform %p, format %p.\n", transform, format);
 
     return !WINE_UNIX_CALL(unix_wg_transform_set_output_format, &params);
+}
+
+HRESULT wg_transform_drain(struct wg_transform *transform)
+{
+    NTSTATUS status;
+
+    TRACE("transform %p.\n", transform);
+
+    if ((status = WINE_UNIX_CALL(unix_wg_transform_drain, transform)))
+    {
+        WARN("wg_transform_drain returned status %#lx\n", status);
+        return HRESULT_FROM_NT(status);
+    }
+
+    return S_OK;
+}
+
+HRESULT wg_transform_flush(struct wg_transform *transform)
+{
+    NTSTATUS status;
+
+    TRACE("transform %p.\n", transform);
+
+    if ((status = WINE_UNIX_CALL(unix_wg_transform_flush, transform)))
+    {
+        WARN("wg_transform_flush returned status %#lx\n", status);
+        return HRESULT_FROM_NT(status);
+    }
+
+    return S_OK;
 }
 
 #define ALIGN(n, alignment) (((n) + (alignment) - 1) & ~((alignment) - 1))

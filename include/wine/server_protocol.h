@@ -456,6 +456,7 @@ typedef union
     {
         enum select_op  op;
         obj_handle_t    handles[MAXIMUM_WAIT_OBJECTS];
+        int             __pad;
     } wait;
     struct
     {
@@ -526,7 +527,8 @@ typedef union
         unsigned int     op_type;
         client_ptr_t     addr;
         mem_size_t       size;
-        mem_size_t       limit;
+        mem_size_t       limit_low;
+        mem_size_t       limit_high;
         mem_size_t       align;
         unsigned int     prot;
         unsigned int     attributes;
@@ -590,17 +592,18 @@ typedef union
         client_ptr_t     addr;
         mem_size_t       size;
         file_pos_t       offset;
-        mem_size_t       limit;
+        mem_size_t       limit_low;
+        mem_size_t       limit_high;
         unsigned int     alloc_type;
-        unsigned short   prot;
+        unsigned int     prot;
         unsigned short   machine;
+        unsigned short   __pad[3];
     } map_view_ex;
     struct
     {
         enum apc_type    type;
-        int              __pad;
-        client_ptr_t     addr;
         unsigned int     flags;
+        client_ptr_t     addr;
     } unmap_view;
     struct
     {
@@ -1244,7 +1247,7 @@ struct queue_apc_request
 {
     struct request_header __header;
     obj_handle_t handle;
-    apc_call_t   call;
+    /* VARARG(call,apc_call); */
 };
 struct queue_apc_reply
 {
@@ -1389,9 +1392,9 @@ struct select_request
 struct select_reply
 {
     struct reply_header __header;
-    apc_call_t   call;
     obj_handle_t apc_handle;
     int          signaled;
+    /* VARARG(call,apc_call); */
     /* VARARG(contexts,contexts); */
 };
 #define SELECT_ALERTABLE     1
@@ -5357,8 +5360,6 @@ struct set_cursor_request
     int            x;
     int            y;
     rectangle_t    clip;
-    unsigned int   clip_msg;
-    char __pad_52[4];
 };
 struct set_cursor_reply
 {
@@ -6641,7 +6642,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 772
+#define SERVER_PROTOCOL_VERSION 778
 
 /* ### protocol_version end ### */
 

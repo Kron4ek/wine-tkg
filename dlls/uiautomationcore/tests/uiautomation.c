@@ -13746,7 +13746,7 @@ static const struct prov_method_sequence event_seq5[] = {
     { &Provider, FRAG_GET_RUNTIME_ID, METHOD_OPTIONAL }, /* Only done on Win10v1809+. */
     { &Provider, FRAG_GET_FRAGMENT_ROOT },
     { &Provider, FRAG_GET_FRAGMENT_ROOT, METHOD_OPTIONAL }, /* Called twice on Win11. */
-    { &Provider, FRAG_GET_EMBEDDED_FRAGMENT_ROOTS, METHOD_TODO },
+    { &Provider, FRAG_GET_EMBEDDED_FRAGMENT_ROOTS },
     NODE_CREATE_SEQ_OPTIONAL(&Provider), /* Only done in Win11. */
     { &Provider, FRAG_GET_RUNTIME_ID, METHOD_OPTIONAL }, /* Only done on Win8+. */
     { &Provider, PROV_GET_PROVIDER_OPTIONS, METHOD_OPTIONAL }, /* Only done on Win10v1809+. */
@@ -13756,8 +13756,8 @@ static const struct prov_method_sequence event_seq5[] = {
 
 static const struct prov_method_sequence event_seq6[] = {
     { &Provider, ADVISE_EVENTS_EVENT_REMOVED },
-    { &Provider_child, ADVISE_EVENTS_EVENT_REMOVED, METHOD_TODO },
-    { &Provider_child2, ADVISE_EVENTS_EVENT_REMOVED, METHOD_TODO },
+    { &Provider_child, ADVISE_EVENTS_EVENT_REMOVED },
+    { &Provider_child2, ADVISE_EVENTS_EVENT_REMOVED },
     { 0 },
 };
 
@@ -13810,7 +13810,7 @@ static DWORD WINAPI uia_add_event_test_thread(LPVOID param)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(Provider.ref == 2, "Unexpected refcnt %ld\n", Provider.ref);
     ok(Provider2.ref == 1, "Unexpected refcnt %ld\n", Provider2.ref);
-    todo_wine ok(Provider2.last_call_tid == data->exp_thread_id ||
+    ok(Provider2.last_call_tid == data->exp_thread_id ||
             broken(Provider2.last_call_tid == GetCurrentThreadId()), "Expected method call on separate thread\n");
     ok(Provider2.advise_events_removed_event_id == UIA_AutomationFocusChangedEventId,
             "Unexpected advise event removed, event ID %d\n", Provider.advise_events_removed_event_id);
@@ -13869,6 +13869,32 @@ static void test_UiaRemoveEvent_args(HUIANODE node)
     ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
 }
 
+static void test_UiaRaiseAutomationEvent_args(void)
+{
+    HRESULT hr;
+
+    hr = UiaRaiseAutomationEvent(NULL, UIA_AutomationFocusChangedEventId);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    /* Returns failure code from get_ProviderOptions. */
+    initialize_provider(&Provider2, 0, NULL, TRUE);
+    hr = UiaRaiseAutomationEvent(&Provider2.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
+    /* Windows 7 returns S_OK. */
+    ok(hr == E_NOTIMPL || broken(hr == S_OK), "Unexpected hr %#lx.\n", hr);
+
+    /* Invalid event ID - doesn't return failure code. */
+    initialize_provider(&Provider2, ProviderOptions_ServerSideProvider, NULL, TRUE);
+    hr = UiaRaiseAutomationEvent(&Provider2.IRawElementProviderSimple_iface, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /*
+     * UIA_StructureChangedEventId should use UiaRaiseStructureChangedEvent.
+     * No failure code is returned, however.
+     */
+    hr = UiaRaiseAutomationEvent(&Provider2.IRawElementProviderSimple_iface, UIA_StructureChangedEventId);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+}
+
 static void test_UiaAddEvent(void)
 {
     IRawElementProviderFragmentRoot *embedded_roots[2] = { &Provider_child.IRawElementProviderFragmentRoot_iface,
@@ -13908,6 +13934,7 @@ static void test_UiaAddEvent(void)
     /* Test valid function input arguments. */
     test_UiaAddEvent_args(node);
     test_UiaRemoveEvent_args(node);
+    test_UiaRaiseAutomationEvent_args();
 
     /*
      * Raise event without any registered event handlers.
@@ -13915,8 +13942,7 @@ static void test_UiaAddEvent(void)
     method_sequences_enabled = TRUE;
     hr = UiaRaiseAutomationEvent(&Provider.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    if (SUCCEEDED(hr) && sequence_cnt)
-        ok_method_sequence(event_seq1, "event_seq1");
+    ok_method_sequence(event_seq1, "event_seq1");
 
     /*
      * Register an event on a node without an HWND/RuntimeId. The event will
@@ -13941,8 +13967,7 @@ static void test_UiaAddEvent(void)
      */
     hr = UiaRaiseAutomationEvent(&Provider.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    if (SUCCEEDED(hr) && sequence_cnt)
-        ok_method_sequence(event_seq3, "event_seq3");
+    ok_method_sequence(event_seq3, "event_seq3");
 
     hr = UiaRemoveEvent(event);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -13976,7 +14001,7 @@ static void test_UiaAddEvent(void)
     SET_EXPECT(uia_event_callback);
     hr = UiaRaiseAutomationEvent(&Provider.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine CHECK_CALLED(uia_event_callback);
+    CHECK_CALLED(uia_event_callback);
 
     /*
      * Runtime ID matches so event callback is invoked, but nothing matches
@@ -13991,7 +14016,7 @@ static void test_UiaAddEvent(void)
     SET_EXPECT(uia_event_callback);
     hr = UiaRaiseAutomationEvent(&Provider.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine CHECK_CALLED(uia_event_callback);
+    CHECK_CALLED(uia_event_callback);
     set_provider_prop_override(&Provider, NULL, 0);
 
     method_sequences_enabled = TRUE;
@@ -14027,7 +14052,7 @@ static void test_UiaAddEvent(void)
     SET_EXPECT(uia_event_callback);
     hr = UiaRaiseAutomationEvent(&Provider_child.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine CHECK_CALLED(uia_event_callback);
+    CHECK_CALLED(uia_event_callback);
 
     /* Provider_child doesn't match the view condition, but Provider does. */
     variant_init_bool(&v, FALSE);
@@ -14040,7 +14065,7 @@ static void test_UiaAddEvent(void)
     SET_EXPECT(uia_event_callback);
     hr = UiaRaiseAutomationEvent(&Provider_child.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine CHECK_CALLED(uia_event_callback);
+    CHECK_CALLED(uia_event_callback);
     set_provider_prop_override(&Provider_child, NULL, 0);
 
     hr = UiaRemoveEvent(event);
@@ -14061,7 +14086,7 @@ static void test_UiaAddEvent(void)
     SET_EXPECT(uia_event_callback);
     hr = UiaRaiseAutomationEvent(&Provider_child_child.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine CHECK_CALLED(uia_event_callback);
+    CHECK_CALLED(uia_event_callback);
 
     hr = UiaRemoveEvent(event);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -14121,13 +14146,13 @@ static void test_UiaAddEvent(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(!!event, "event == NULL\n");
     ok(Provider.ref == 3, "Unexpected refcnt %ld\n", Provider.ref);
-    todo_wine ok(Provider_child.ref == 2, "Unexpected refcnt %ld\n", Provider_child.ref);
-    todo_wine ok(Provider_child2.ref == 2, "Unexpected refcnt %ld\n", Provider_child2.ref);
+    ok(Provider_child.ref == 2, "Unexpected refcnt %ld\n", Provider_child.ref);
+    ok(Provider_child2.ref == 2, "Unexpected refcnt %ld\n", Provider_child2.ref);
     ok(Provider.advise_events_added_event_id == UIA_AutomationFocusChangedEventId,
             "Unexpected advise event added, event ID %d\n", Provider.advise_events_added_event_id);
-    todo_wine ok(Provider_child.advise_events_added_event_id == UIA_AutomationFocusChangedEventId,
+    ok(Provider_child.advise_events_added_event_id == UIA_AutomationFocusChangedEventId,
             "Unexpected advise event added, event ID %d\n", Provider_child.advise_events_added_event_id);
-    todo_wine ok(Provider_child2.advise_events_added_event_id == UIA_AutomationFocusChangedEventId,
+    ok(Provider_child2.advise_events_added_event_id == UIA_AutomationFocusChangedEventId,
             "Unexpected advise event added, event ID %d\n", Provider_child2.advise_events_added_event_id);
 
     method_sequences_enabled = TRUE;
@@ -14206,11 +14231,54 @@ static void test_UiaAddEvent(void)
     Provider_hwnd2.prov_opts = ProviderOptions_ClientSideProvider;
     hr = UiaRaiseAutomationEvent(&Provider_hwnd2.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
-    todo_wine CHECK_CALLED(prov_callback_base_hwnd);
-    todo_wine CHECK_CALLED(prov_callback_nonclient);
+    CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
+    CHECK_CALLED(prov_callback_base_hwnd);
+    CHECK_CALLED(prov_callback_nonclient);
     todo_wine CHECK_CALLED_MULTI(prov_callback_proxy, 2);
-    todo_wine CHECK_CALLED(uia_event_callback);
+    CHECK_CALLED(uia_event_callback);
+
+    hr = UiaRemoveEvent(event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /*
+     * Register an event on the desktop HWND with a scope of TreeScope_Element
+     * and TreeScope_Descendants. This is a special case where all providers
+     * will match, regardless of whether or not they can navigate to the
+     * desktop node.
+     */
+    set_cache_request(&cache_req, (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, NULL, 0, NULL, 0,
+            AutomationElementMode_Full);
+    hr = UiaAddEvent(node, UIA_AutomationFocusChangedEventId, uia_event_callback, TreeScope_Element | TreeScope_Descendants, NULL, 0,
+            &cache_req, &event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!event, "event == NULL\n");
+
+    /*
+     * Raise an event on Provider2 - completely disconnected from all other
+     * providers, will still trigger the event callback.
+     */
+    initialize_provider(&Provider2, ProviderOptions_ServerSideProvider, NULL, TRUE);
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), NULL);
+    add_provider_desc(&exp_node_desc, L"Main", L"Provider2", TRUE);
+    set_event_data(0, 0, 1, 1, &exp_node_desc, L"P)");
+    SET_EXPECT(uia_event_callback);
+    hr = UiaRaiseAutomationEvent(&Provider2.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    CHECK_CALLED(uia_event_callback);
+
+    /*
+     * No clientside providers to match us to the desktop node through
+     * navigation, but event will still be triggered.
+     */
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), hwnd);
+    add_provider_desc(&exp_node_desc, L"Main", L"Provider_hwnd2", TRUE);
+    set_event_data(0, 0, 1, 1, &exp_node_desc, L"P)");
+    SET_EXPECT(uia_event_callback);
+    Provider_hwnd2.prov_opts = ProviderOptions_ServerSideProvider;
+    Provider_hwnd2.ignore_hwnd_prop = TRUE;
+    hr = UiaRaiseAutomationEvent(&Provider_hwnd2.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    CHECK_CALLED(uia_event_callback);
 
     hr = UiaRemoveEvent(event);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);

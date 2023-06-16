@@ -102,10 +102,12 @@ void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
         uint64_t start_pos, uint64_t stop_pos, DWORD start_flags, DWORD stop_flags);
 
 struct wg_transform *wg_transform_create(const struct wg_format *input_format,
-        const struct wg_format *output_format);
+        const struct wg_format *output_format, const struct wg_transform_attrs *attrs);
 void wg_transform_destroy(struct wg_transform *transform);
 bool wg_transform_set_output_format(struct wg_transform *transform, struct wg_format *format);
 bool wg_transform_get_status(struct wg_transform *transform, bool *accepts_input);
+HRESULT wg_transform_drain(struct wg_transform *transform);
+HRESULT wg_transform_flush(struct wg_transform *transform);
 
 unsigned int wg_format_get_max_size(const struct wg_format *format);
 

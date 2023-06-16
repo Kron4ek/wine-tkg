@@ -57,9 +57,9 @@ struct global_cursor
     int                  x;                /* cursor position */
     int                  y;
     rectangle_t          clip;             /* cursor clip rectangle */
-    unsigned int         clip_msg;         /* message to post for cursor clip changes */
     unsigned int         last_change;      /* time of last position change */
     user_handle_t        win;              /* window that contains the cursor */
+    user_handle_t        handle;           /* last set cursor handle */
 };
 
 struct desktop
@@ -110,6 +110,7 @@ extern void queue_cleanup_window( struct thread *thread, user_handle_t win );
 extern int init_thread_queue( struct thread *thread );
 extern int attach_thread_input( struct thread *thread_from, struct thread *thread_to );
 extern void detach_thread_input( struct thread *thread_from );
+extern void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect, int reset );
 extern void post_message( user_handle_t win, unsigned int message,
                           lparam_t wparam, lparam_t lparam );
 extern void send_notify_message( user_handle_t win, unsigned int message,

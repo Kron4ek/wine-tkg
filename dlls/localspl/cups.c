@@ -219,12 +219,15 @@ static BOOL lpr_start_doc(doc_t *doc, const WCHAR *printer_name)
     static const WCHAR quote[] = { '\'',0 };
     int printer_len = wcslen(printer_name);
     WCHAR *cmd;
+    BOOL ret;
 
     cmd = malloc(printer_len * sizeof(WCHAR) + sizeof(lpr) + sizeof(quote));
     memcpy(cmd, lpr, sizeof(lpr));
     memcpy(cmd + ARRAY_SIZE(lpr), printer_name, printer_len * sizeof(WCHAR));
     memcpy(cmd + ARRAY_SIZE(lpr) + printer_len, quote, sizeof(quote));
-    return pipe_start_doc(doc, cmd);
+    ret = pipe_start_doc(doc, cmd);
+    free(cmd);
+    return ret;
 }
 
 #ifdef SONAME_LIBCUPS
@@ -362,7 +365,7 @@ static BOOL cups_write_doc(doc_t *doc, const BYTE *buf, unsigned int size)
         }
 
         if (pcupsStartDocument(CUPS_HTTP_DEFAULT, doc->cups.queue, job_id,
-                    doc->cups.doc_title, format, TRUE) != HTTP_STATUS_CONTINUE)
+                    NULL, format, TRUE) != HTTP_STATUS_CONTINUE)
         {
             if (pcupsLastErrorString)
                 WARN("cupsStartDocument failed: %s\n", debugstr_a(pcupsLastErrorString()));

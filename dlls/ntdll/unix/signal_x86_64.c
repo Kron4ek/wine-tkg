@@ -99,17 +99,17 @@ WINE_DECLARE_DEBUG_CHANNEL(seh);
 #include <asm/prctl.h>
 static inline int arch_prctl( int func, void *ptr ) { return syscall( __NR_arch_prctl, func, ptr ); }
 
-extern int CDECL alloc_fs_sel( int sel, void *base ) DECLSPEC_HIDDEN;
+extern int alloc_fs_sel( int sel, void *base ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( alloc_fs_sel,
                    /* switch to 32-bit stack */
                    "pushq %rbx\n\t"
-                   "pushq %rdi\n\t"
-                   "movq %rsp,%rdi\n\t"
-                   "movl 0x4(%rdx),%esp\n\t"  /* Tib.StackBase */
+                   "pushq %r12\n\t"
+                   "movq %rsp,%r12\n\t"
+                   "movl 0x4(%rsi),%esp\n\t"  /* Tib.StackBase */
                    "subl $0x20,%esp\n\t"
                    /* setup modify_ldt struct on 32-bit stack */
-                   "movl %ecx,(%rsp)\n\t"     /* entry_number */
-                   "movl %edx,4(%rsp)\n\t"    /* base */
+                   "movl %edi,(%rsp)\n\t"     /* entry_number */
+                   "movl %esi,4(%rsp)\n\t"    /* base */
                    "movl $~0,8(%rsp)\n\t"     /* limit */
                    "movl $0x41,12(%rsp)\n\t"  /* seg_32bit | usable */
                    /* invoke 32-bit syscall */
@@ -118,8 +118,8 @@ __ASM_GLOBAL_FUNC( alloc_fs_sel,
                    "int $0x80\n\t"
                    /* restore stack */
                    "movl (%rsp),%eax\n\t"     /* entry_number */
-                   "movq %rdi,%rsp\n\t"
-                   "popq %rdi\n\t"
+                   "movq %r12,%rsp\n\t"
+                   "popq %r12\n\t"
                    "popq %rbx\n\t"
                    "ret" );
 
@@ -1584,47 +1584,30 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
 /***********************************************************************
  *           call_user_mode_callback
  */
-extern NTSTATUS CDECL call_user_mode_callback( void *func, void *stack, void **ret_ptr,
-                                               ULONG *ret_len, TEB *teb ) DECLSPEC_HIDDEN;
+extern NTSTATUS call_user_mode_callback( ULONG id, void *args, ULONG len, void **ret_ptr,
+                                         ULONG *ret_len, void *func, TEB *teb ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( call_user_mode_callback,
-                   "subq $0xe8,%rsp\n\t"
-                   __ASM_SEH(".seh_stackalloc 0xf0\n\t")
-                   __ASM_SEH(".seh_endprologue\n\t")
-                   __ASM_CFI(".cfi_adjust_cfa_offset 0xe8\n\t")
-                   "movq %rbp,0xe0(%rsp)\n\t"
-                   __ASM_CFI(".cfi_rel_offset %rbp,0xe0\n\t")
-                   "leaq 0xe0(%rsp),%rbp\n\t"
+                   "subq $0x48,%rsp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset 0x48\n\t")
+                   "movq %rbp,0x40(%rsp)\n\t"
+                   __ASM_CFI(".cfi_rel_offset %rbp,0x40\n\t")
+                   "leaq 0x40(%rsp),%rbp\n\t"
                    __ASM_CFI(".cfi_def_cfa_register %rbp\n\t")
                    "movq %rbx,-0x08(%rbp)\n\t"
                    __ASM_CFI(".cfi_rel_offset %rbx,-0x08\n\t")
-                   "movq %rsi,-0x10(%rbp)\n\t"
-                   __ASM_CFI(".cfi_rel_offset %rbx,-0x10\n\t")
-                   "movq %rdi,-0x18(%rbp)\n\t"
-                   __ASM_CFI(".cfi_rel_offset %rbx,-0x18\n\t")
-                   "movq %r12,-0x20(%rbp)\n\t"
-                   __ASM_CFI(".cfi_rel_offset %r12,-0x20\n\t")
-                   "movq %r13,-0x28(%rbp)\n\t"
-                   __ASM_CFI(".cfi_rel_offset %r13,-0x28\n\t")
-                   "movq %r14,-0x30(%rbp)\n\t"
-                   __ASM_CFI(".cfi_rel_offset %r14,-0x30\n\t")
-                   "movq %r15,-0x38(%rbp)\n\t"
-                   __ASM_CFI(".cfi_rel_offset %r15,-0x38\n\t")
-                   "stmxcsr -0x40(%rbp)\n\t"
-                   "fnstcw -0x3c(%rbp)\n\t"
-                   "movdqa %xmm6,-0x50(%rbp)\n\t"
-                   "movdqa %xmm7,-0x60(%rbp)\n\t"
-                   "movdqa %xmm8,-0x70(%rbp)\n\t"
-                   "movdqa %xmm9,-0x80(%rbp)\n\t"
-                   "movdqa %xmm10,-0x90(%rbp)\n\t"
-                   "movdqa %xmm11,-0xa0(%rbp)\n\t"
-                   "movdqa %xmm12,-0xb0(%rbp)\n\t"
-                   "movdqa %xmm13,-0xc0(%rbp)\n\t"
-                   "movdqa %xmm14,-0xd0(%rbp)\n\t"
-                   "movdqa %xmm15,-0xe0(%rbp)\n\t"
-                   "movq %r8,0x10(%rbp)\n\t"   /* ret_ptr */
-                   "movq %r9,0x18(%rbp)\n\t"   /* ret_len */
-                   "movq 0x30(%rbp),%r11\n\t"  /* teb */
-
+                   "movq %r12,-0x10(%rbp)\n\t"
+                   __ASM_CFI(".cfi_rel_offset %r12,-0x10\n\t")
+                   "movq %r13,-0x18(%rbp)\n\t"
+                   __ASM_CFI(".cfi_rel_offset %r13,-0x18\n\t")
+                   "movq %r14,-0x20(%rbp)\n\t"
+                   __ASM_CFI(".cfi_rel_offset %r14,-0x20\n\t")
+                   "movq %r15,-0x28(%rbp)\n\t"
+                   __ASM_CFI(".cfi_rel_offset %r15,-0x28\n\t")
+                   "stmxcsr -0x30(%rbp)\n\t"
+                   "fnstcw -0x2c(%rbp)\n\t"
+                   "movq %rcx,-0x38(%rbp)\n\t" /* ret_ptr */
+                   "movq %r8,-0x40(%rbp)\n\t"  /* ret_len */
+                   "mov 0x10(%rbp),%r11\n\t"   /* teb */
                    "subq $0x410,%rsp\n\t"      /* sizeof(struct syscall_frame) + ebp + exception */
                    "andq $~63,%rsp\n\t"
                    "movq %rbp,0x400(%rsp)\n\t"
@@ -1643,101 +1626,70 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "movw 0x338(%r11),%fs\n"    /* amd64_thread_data()->fs */
                    "1:\n\t"
 #endif
-                   "movq %rcx,%r9\n\t"         /* func */
-                   "movq %rdx,%rax\n\t"        /* stack */
-                   "movq 0x8(%rax),%rcx\n\t"   /* id */
-                   "movq 0x10(%rax),%rdx\n\t"  /* args */
-                   "movq 0x18(%rax),%r8\n\t"   /* len */
-                   "movq %rax,%rsp\n\t"
+                   "movq %rdi,%rcx\n\t"        /* id */
+                   "movq %rdx,%r8\n\t"         /* len */
+                   "movq %rsi,%rdx\n\t"        /* args */
+                   "leaq -0x20(%rsi),%rsp\n\t"
+                   "push $0\n\t"
                    "jmpq *%r9" )
 
 
 /***********************************************************************
  *           user_mode_callback_return
  */
-extern void CDECL DECLSPEC_NORETURN user_mode_callback_return( void *ret_ptr, ULONG ret_len,
-                                                               NTSTATUS status, TEB *teb ) DECLSPEC_HIDDEN;
+extern void DECLSPEC_NORETURN user_mode_callback_return( void *ret_ptr, ULONG ret_len,
+                                                         NTSTATUS status, TEB *teb ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( user_mode_callback_return,
-                   "movq 0x328(%r9),%r10\n\t"  /* amd64_thread_data()->syscall_frame */
+                   "movq 0x328(%rcx),%r10\n\t" /* amd64_thread_data()->syscall_frame */
                    "movq 0xa0(%r10),%r11\n\t"  /* frame->prev_frame */
-                   "movq %r11,0x328(%r9)\n\t"  /* amd64_thread_data()->syscall_frame = prev_frame */
+                   "movq %r11,0x328(%rcx)\n\t" /* amd64_thread_data()->syscall_frame = prev_frame */
                    "movq 0x400(%r10),%rbp\n\t" /* call_user_mode_callback rbp */
                    __ASM_CFI(".cfi_def_cfa_register %rbp\n\t")
                    __ASM_CFI(".cfi_rel_offset %rbx,-0x08\n\t")
-                   __ASM_CFI(".cfi_rel_offset %rbx,-0x10\n\t")
-                   __ASM_CFI(".cfi_rel_offset %rbx,-0x18\n\t")
-                   __ASM_CFI(".cfi_rel_offset %r12,-0x20\n\t")
-                   __ASM_CFI(".cfi_rel_offset %r13,-0x28\n\t")
-                   __ASM_CFI(".cfi_rel_offset %r14,-0x30\n\t")
-                   __ASM_CFI(".cfi_rel_offset %r15,-0x38\n\t")
-                   "movq 0x408(%r10),%rsi\n\t" /* exception list */
-                   "movq %rsi,0(%r9)\n\t"      /* teb->Tib.ExceptionList */
-                   "movq 0x10(%rbp),%rsi\n\t"  /* ret_ptr */
-                   "movq 0x18(%rbp),%rdi\n\t"  /* ret_len */
-                   "movq %rcx,(%rsi)\n\t"
-                   "movl %edx,(%rdi)\n\t"
-                   "movdqa -0xe0(%rbp),%xmm15\n\t"
-                   "movdqa -0xd0(%rbp),%xmm14\n\t"
-                   "movdqa -0xc0(%rbp),%xmm13\n\t"
-                   "movdqa -0xb0(%rbp),%xmm12\n\t"
-                   "movdqa -0xa0(%rbp),%xmm11\n\t"
-                   "movdqa -0x90(%rbp),%xmm10\n\t"
-                   "movdqa -0x80(%rbp),%xmm9\n\t"
-                   "movdqa -0x70(%rbp),%xmm8\n\t"
-                   "movdqa -0x60(%rbp),%xmm7\n\t"
-                   "movdqa -0x50(%rbp),%xmm6\n\t"
-                   "ldmxcsr -0x40(%rbp)\n\t"
+                   __ASM_CFI(".cfi_rel_offset %r12,-0x10\n\t")
+                   __ASM_CFI(".cfi_rel_offset %r13,-0x18\n\t")
+                   __ASM_CFI(".cfi_rel_offset %r14,-0x20\n\t")
+                   __ASM_CFI(".cfi_rel_offset %r15,-0x28\n\t")
+                   "movq 0x408(%r10),%rax\n\t" /* exception list */
+                   "movq %rax,0(%rcx)\n\t"     /* teb->Tib.ExceptionList */
+                   "movq -0x38(%rbp),%r10\n\t"  /* ret_ptr */
+                   "movq -0x40(%rbp),%r11\n\t"  /* ret_len */
+                   "movq %rdi,(%r10)\n\t"
+                   "movl %esi,(%r11)\n\t"
+                   "ldmxcsr -0x30(%rbp)\n\t"
                    "fnclex\n\t"
-                   "fldcw -0x3c(%rbp)\n\t"
-                   "movq -0x38(%rbp),%r15\n\t"
+                   "fldcw -0x2c(%rbp)\n\t"
+                   "movq -0x28(%rbp),%r15\n\t"
                    __ASM_CFI(".cfi_same_value %r15\n\t")
-                   "movq -0x30(%rbp),%r14\n\t"
+                   "movq -0x20(%rbp),%r14\n\t"
                    __ASM_CFI(".cfi_same_value %r14\n\t")
-                   "movq -0x28(%rbp),%r13\n\t"
+                   "movq -0x18(%rbp),%r13\n\t"
                    __ASM_CFI(".cfi_same_value %r13\n\t")
-                   "movq -0x20(%rbp),%r12\n\t"
+                   "movq -0x10(%rbp),%r12\n\t"
                    __ASM_CFI(".cfi_same_value %r12\n\t")
-                   "movq -0x18(%rbp),%rdi\n\t"
-                   __ASM_CFI(".cfi_same_value %rdi\n\t")
-                   "movq -0x10(%rbp),%rsi\n\t"
-                   __ASM_CFI(".cfi_same_value %rsi\n\t")
                    "movq -0x08(%rbp),%rbx\n\t"
                    __ASM_CFI(".cfi_same_value %rbx\n\t")
                    "leave\n"
                    __ASM_CFI(".cfi_def_cfa %rsp,8\n\t")
                    __ASM_CFI(".cfi_same_value %rbp\n\t")
-                   "movq %r8,%rax\n\t"
+                   "movq %rdx,%rax\n\t"
                    "retq" )
 
 
 /***********************************************************************
  *           KeUserModeCallback
  */
-NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
+NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
 {
     struct syscall_frame *frame = amd64_thread_data()->syscall_frame;
     void *args_data = (void *)((frame->rsp - len) & ~15);
-    ULONG_PTR *stack = args_data;
-
-    /* if we have no syscall frame, call the callback directly */
-    if ((char *)&frame < (char *)ntdll_get_thread_data()->kernel_stack ||
-        (char *)&frame > (char *)amd64_thread_data()->syscall_frame)
-    {
-        NTSTATUS (WINAPI *func)(const void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-        return func( args, len );
-    }
 
     if ((char *)ntdll_get_thread_data()->kernel_stack + min_kernel_stack > (char *)&frame)
         return STATUS_STACK_OVERFLOW;
 
     memcpy( args_data, args, len );
-    *(--stack) = 0;
-    *(--stack) = len;
-    *(--stack) = (ULONG_PTR)args_data;
-    *(--stack) = id;
-    *(--stack) = 0xdeadbabe;
-
-    return call_user_mode_callback( pKiUserCallbackDispatcher, stack, ret_ptr, ret_len, NtCurrentTeb() );
+    return call_user_mode_callback( id, args_data, len, ret_ptr, ret_len,
+                                    pKiUserCallbackDispatcher, NtCurrentTeb() );
 }
 
 
@@ -2066,7 +2018,7 @@ static BOOL handle_syscall_fault( ucontext_t *sigcontext, EXCEPTION_RECORD *rec,
     struct syscall_frame *frame = amd64_thread_data()->syscall_frame;
     DWORD i;
 
-    if (!is_inside_syscall( sigcontext ) && !ntdll_get_thread_data()->jmp_buf) return FALSE;
+    if (!is_inside_syscall( sigcontext )) return FALSE;
 
     TRACE_(seh)( "code=%x flags=%x addr=%p ip=%lx tid=%04x\n",
                  rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
@@ -2089,16 +2041,16 @@ static BOOL handle_syscall_fault( ucontext_t *sigcontext, EXCEPTION_RECORD *rec,
     if (ntdll_get_thread_data()->jmp_buf)
     {
         TRACE_(seh)( "returning to handler\n" );
-        RCX_sig(sigcontext) = (ULONG_PTR)ntdll_get_thread_data()->jmp_buf;
-        RDX_sig(sigcontext) = 1;
+        RDI_sig(sigcontext) = (ULONG_PTR)ntdll_get_thread_data()->jmp_buf;
+        RSI_sig(sigcontext) = 1;
         RIP_sig(sigcontext) = (ULONG_PTR)__wine_longjmp;
         ntdll_get_thread_data()->jmp_buf = NULL;
     }
     else
     {
         TRACE_(seh)( "returning to user mode ip=%016lx ret=%08x\n", frame->rip, rec->ExceptionCode );
-        RCX_sig(sigcontext) = (ULONG_PTR)frame;
-        RDX_sig(sigcontext) = rec->ExceptionCode;
+        RDI_sig(sigcontext) = (ULONG_PTR)frame;
+        RSI_sig(sigcontext) = rec->ExceptionCode;
         RIP_sig(sigcontext) = (ULONG_PTR)__wine_syscall_dispatcher_return;
     }
     return TRUE;
@@ -2978,10 +2930,12 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "leaq -0x98(%rbp),%rcx\n"
                    "2:\n\t"
 #endif
-                   "leaq 0x28(%rsp),%rsi\n\t"      /* first argument */
+                   "movq 0x28(%rsp),%r12\n\t"      /* 5th argument */
+                   "movq 0x30(%rsp),%r13\n\t"      /* 6th argument */
+                   "leaq 0x38(%rsp),%rsi\n\t"      /* 7th argument */
                    "movq %rcx,%rsp\n\t"
                    "movq 0x00(%rcx),%rax\n\t"
-                   "movq 0x18(%rcx),%rdx\n\t"
+                   "movq 0x18(%rcx),%r11\n\t"      /* 2nd argument */
                    "movl %eax,%ebx\n\t"
                    "shrl $8,%ebx\n\t"
                    "andl $0x30,%ebx\n\t"           /* syscall table number */
@@ -2992,7 +2946,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "jae 5f\n\t"
                    "movq 24(%rbx),%rcx\n\t"        /* table->ArgumentTable */
                    "movzbl (%rcx,%rax),%ecx\n\t"
-                   "subq $0x20,%rcx\n\t"
+                   "subq $0x30,%rcx\n\t"
                    "jbe 1f\n\t"
                    "subq %rcx,%rsp\n\t"
                    "shrq $3,%rcx\n\t"
@@ -3000,8 +2954,12 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movq %rsp,%rdi\n\t"
                    "cld\n\t"
                    "rep; movsq\n"
-                   "1:\tmovq %r10,%rcx\n\t"
-                   "subq $0x20,%rsp\n\t"
+                   "1:\tmovq %r10,%rdi\n\t"        /* 1st argument */
+                   "movq %r11,%rsi\n\t"            /* 2nd argument */
+                   "movq %r8,%rdx\n\t"             /* 3rd argument */
+                   "movq %r9,%rcx\n\t"             /* 4th argument */
+                   "movq %r12,%r8\n\t"             /* 5th argument */
+                   "movq %r13,%r9\n\t"             /* 6th argument */
                    "movq (%rbx),%r10\n\t"          /* table->ServiceTable */
                    "callq *(%r10,%rax,8)\n\t"
                    "leaq -0x98(%rbp),%rcx\n\t"
@@ -3016,8 +2974,19 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "1:\n\t"
 #endif
                    "testl $0x48,%edx\n\t"          /* CONTEXT_FLOATING_POINT | CONTEXT_XSTATE */
-                   "jz 4f\n\t"
-                   "testl $3,%r14d\n\t"            /* SYSCALL_HAVE_XSAVE | SYSCALL_HAVE_XSAVEC */
+                   "jnz 2f\n\t"
+                   "movaps 0x1c0(%rcx),%xmm6\n\t"
+                   "movaps 0x1d0(%rcx),%xmm7\n\t"
+                   "movaps 0x1e0(%rcx),%xmm8\n\t"
+                   "movaps 0x1f0(%rcx),%xmm9\n\t"
+                   "movaps 0x200(%rcx),%xmm10\n\t"
+                   "movaps 0x210(%rcx),%xmm11\n\t"
+                   "movaps 0x220(%rcx),%xmm12\n\t"
+                   "movaps 0x230(%rcx),%xmm13\n\t"
+                   "movaps 0x240(%rcx),%xmm14\n\t"
+                   "movaps 0x250(%rcx),%xmm15\n\t"
+                   "jmp 4f\n"
+                   "2:\ttestl $3,%r14d\n\t"        /* SYSCALL_HAVE_XSAVE | SYSCALL_HAVE_XSAVEC */
                    "jz 3f\n\t"
                    "movq %rax,%r11\n\t"
                    "movl $7,%eax\n\t"
@@ -3091,14 +3060,16 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    __ASM_CFI_REG_IS_AT1(r14, rbp, 0x48)
                    __ASM_CFI_REG_IS_AT1(r15, rbp, 0x50)
                    __ASM_CFI_REG_IS_AT1(rbp, rbp, 0x00)
-                   "5:\tmovl $0xc000000d,%edx\n\t" /* STATUS_INVALID_PARAMETER */
+                   "5:\tmovl $0xc000000d,%eax\n\t" /* STATUS_INVALID_PARAMETER */
                    "movq %rsp,%rcx\n\t"
                    /* $rcx is now pointing to "frame" again */
                    __ASM_CFI(".cfi_restore_state\n\t")
+                   "jmp " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") "\n\t"
                    ".globl " __ASM_NAME("__wine_syscall_dispatcher_return") "\n"
                    __ASM_NAME("__wine_syscall_dispatcher_return") ":\n\t"
+                   "movq %rdi,%rcx\n\t"
                    "movl 0xb0(%rcx),%r14d\n\t"     /* frame->syscall_flags */
-                   "movq %rdx,%rax\n\t"
+                   "movq %rsi,%rax\n\t"
                    "jmp " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") )
 
 
@@ -3205,31 +3176,19 @@ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
  *           __wine_setjmpex
  */
 __ASM_GLOBAL_FUNC( __wine_setjmpex,
-                   "movq %rdx,(%rcx)\n\t"          /* jmp_buf->Frame */
-                   "movq %rbx,0x8(%rcx)\n\t"       /* jmp_buf->Rbx */
+                   "movq %rsi,(%rdi)\n\t"          /* jmp_buf->Frame */
+                   "movq %rbx,0x8(%rdi)\n\t"       /* jmp_buf->Rbx */
                    "leaq 0x8(%rsp),%rax\n\t"
-                   "movq %rax,0x10(%rcx)\n\t"      /* jmp_buf->Rsp */
-                   "movq %rbp,0x18(%rcx)\n\t"      /* jmp_buf->Rbp */
-                   "movq %rsi,0x20(%rcx)\n\t"      /* jmp_buf->Rsi */
-                   "movq %rdi,0x28(%rcx)\n\t"      /* jmp_buf->Rdi */
-                   "movq %r12,0x30(%rcx)\n\t"      /* jmp_buf->R12 */
-                   "movq %r13,0x38(%rcx)\n\t"      /* jmp_buf->R13 */
-                   "movq %r14,0x40(%rcx)\n\t"      /* jmp_buf->R14 */
-                   "movq %r15,0x48(%rcx)\n\t"      /* jmp_buf->R15 */
+                   "movq %rax,0x10(%rdi)\n\t"      /* jmp_buf->Rsp */
+                   "movq %rbp,0x18(%rdi)\n\t"      /* jmp_buf->Rbp */
+                   "movq %r12,0x30(%rdi)\n\t"      /* jmp_buf->R12 */
+                   "movq %r13,0x38(%rdi)\n\t"      /* jmp_buf->R13 */
+                   "movq %r14,0x40(%rdi)\n\t"      /* jmp_buf->R14 */
+                   "movq %r15,0x48(%rdi)\n\t"      /* jmp_buf->R15 */
                    "movq (%rsp),%rax\n\t"
-                   "movq %rax,0x50(%rcx)\n\t"      /* jmp_buf->Rip */
-                   "stmxcsr 0x58(%rcx)\n\t"        /* jmp_buf->MxCsr */
-                   "fnstcw 0x5c(%rcx)\n\t"         /* jmp_buf->FpCsr */
-                   "movdqa %xmm6,0x60(%rcx)\n\t"   /* jmp_buf->Xmm6 */
-                   "movdqa %xmm7,0x70(%rcx)\n\t"   /* jmp_buf->Xmm7 */
-                   "movdqa %xmm8,0x80(%rcx)\n\t"   /* jmp_buf->Xmm8 */
-                   "movdqa %xmm9,0x90(%rcx)\n\t"   /* jmp_buf->Xmm9 */
-                   "movdqa %xmm10,0xa0(%rcx)\n\t"  /* jmp_buf->Xmm10 */
-                   "movdqa %xmm11,0xb0(%rcx)\n\t"  /* jmp_buf->Xmm11 */
-                   "movdqa %xmm12,0xc0(%rcx)\n\t"  /* jmp_buf->Xmm12 */
-                   "movdqa %xmm13,0xd0(%rcx)\n\t"  /* jmp_buf->Xmm13 */
-                   "movdqa %xmm14,0xe0(%rcx)\n\t"  /* jmp_buf->Xmm14 */
-                   "movdqa %xmm15,0xf0(%rcx)\n\t"  /* jmp_buf->Xmm15 */
+                   "movq %rax,0x50(%rdi)\n\t"      /* jmp_buf->Rip */
+                   "stmxcsr 0x58(%rdi)\n\t"        /* jmp_buf->MxCsr */
+                   "fnstcw 0x5c(%rdi)\n\t"         /* jmp_buf->FpCsr */
                    "xorq %rax,%rax\n\t"
                    "retq" )
 
@@ -3238,30 +3197,18 @@ __ASM_GLOBAL_FUNC( __wine_setjmpex,
  *           __wine_longjmp
  */
 __ASM_GLOBAL_FUNC( __wine_longjmp,
-                   "movq %rdx,%rax\n\t"            /* retval */
-                   "movq 0x8(%rcx),%rbx\n\t"       /* jmp_buf->Rbx */
-                   "movq 0x18(%rcx),%rbp\n\t"      /* jmp_buf->Rbp */
-                   "movq 0x20(%rcx),%rsi\n\t"      /* jmp_buf->Rsi */
-                   "movq 0x28(%rcx),%rdi\n\t"      /* jmp_buf->Rdi */
-                   "movq 0x30(%rcx),%r12\n\t"      /* jmp_buf->R12 */
-                   "movq 0x38(%rcx),%r13\n\t"      /* jmp_buf->R13 */
-                   "movq 0x40(%rcx),%r14\n\t"      /* jmp_buf->R14 */
-                   "movq 0x48(%rcx),%r15\n\t"      /* jmp_buf->R15 */
-                   "ldmxcsr 0x58(%rcx)\n\t"        /* jmp_buf->MxCsr */
+                   "movq %rsi,%rax\n\t"            /* retval */
+                   "movq 0x8(%rdi),%rbx\n\t"       /* jmp_buf->Rbx */
+                   "movq 0x18(%rdi),%rbp\n\t"      /* jmp_buf->Rbp */
+                   "movq 0x30(%rdi),%r12\n\t"      /* jmp_buf->R12 */
+                   "movq 0x38(%rdi),%r13\n\t"      /* jmp_buf->R13 */
+                   "movq 0x40(%rdi),%r14\n\t"      /* jmp_buf->R14 */
+                   "movq 0x48(%rdi),%r15\n\t"      /* jmp_buf->R15 */
+                   "ldmxcsr 0x58(%rdi)\n\t"        /* jmp_buf->MxCsr */
                    "fnclex\n\t"
-                   "fldcw 0x5c(%rcx)\n\t"          /* jmp_buf->FpCsr */
-                   "movdqa 0x60(%rcx),%xmm6\n\t"   /* jmp_buf->Xmm6 */
-                   "movdqa 0x70(%rcx),%xmm7\n\t"   /* jmp_buf->Xmm7 */
-                   "movdqa 0x80(%rcx),%xmm8\n\t"   /* jmp_buf->Xmm8 */
-                   "movdqa 0x90(%rcx),%xmm9\n\t"   /* jmp_buf->Xmm9 */
-                   "movdqa 0xa0(%rcx),%xmm10\n\t"  /* jmp_buf->Xmm10 */
-                   "movdqa 0xb0(%rcx),%xmm11\n\t"  /* jmp_buf->Xmm11 */
-                   "movdqa 0xc0(%rcx),%xmm12\n\t"  /* jmp_buf->Xmm12 */
-                   "movdqa 0xd0(%rcx),%xmm13\n\t"  /* jmp_buf->Xmm13 */
-                   "movdqa 0xe0(%rcx),%xmm14\n\t"  /* jmp_buf->Xmm14 */
-                   "movdqa 0xf0(%rcx),%xmm15\n\t"  /* jmp_buf->Xmm15 */
-                   "movq 0x50(%rcx),%rdx\n\t"      /* jmp_buf->Rip */
-                   "movq 0x10(%rcx),%rsp\n\t"      /* jmp_buf->Rsp */
+                   "fldcw 0x5c(%rdi)\n\t"          /* jmp_buf->FpCsr */
+                   "movq 0x50(%rdi),%rdx\n\t"      /* jmp_buf->Rip */
+                   "movq 0x10(%rdi),%rsp\n\t"      /* jmp_buf->Rsp */
                    "jmp *%rdx" )
 
 #endif  /* __x86_64__ */

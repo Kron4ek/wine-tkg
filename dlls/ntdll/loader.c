@@ -25,8 +25,6 @@
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "windef.h"
 #include "winnt.h"
 #include "winioctl.h"
@@ -1093,8 +1091,8 @@ static BOOL import_dll( HMODULE module, const IMAGE_IMPORT_DESCRIPTOR *descr, LP
     DWORD protect_old;
 
     thunk_list = get_rva( module, (DWORD)descr->FirstThunk );
-    if (descr->u.OriginalFirstThunk)
-        import_list = get_rva( module, (DWORD)descr->u.OriginalFirstThunk );
+    if (descr->OriginalFirstThunk)
+        import_list = get_rva( module, (DWORD)descr->OriginalFirstThunk );
     else
         import_list = thunk_list;
 
@@ -2265,7 +2263,7 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name, 
 
     if (id) wm->id = *id;
     if (image_info->LoaderFlags) wm->ldr.Flags |= LDR_COR_IMAGE;
-    if (image_info->u.s.ComPlusILOnly) wm->ldr.Flags |= LDR_COR_ILONLY;
+    if (image_info->ComPlusILOnly) wm->ldr.Flags |= LDR_COR_ILONLY;
     wm->system = system;
 
     set_security_cookie( *module, map_size );
@@ -2486,7 +2484,7 @@ static BOOL is_valid_binary( HANDLE file, const SECTION_IMAGE_INFORMATION *info 
     if (current_machine == IMAGE_FILE_MACHINE_AMD64 && has_chpe_metadata( file, info )) return TRUE;
     /* support 32-bit IL-only images on 64-bit */
     if (!info->ImageContainsCode) return TRUE;
-    if (info->u.s.ComPlusNativeReady) return TRUE;
+    if (info->ComPlusNativeReady) return TRUE;
     return is_com_ilonly( file, info );
 }
 
@@ -4336,7 +4334,7 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unknown2, ULONG_PTR 
 #elif defined(__arm__)
     entry = (void **)&context->R0;
 #elif defined(__aarch64__)
-    entry = (void **)&context->u.s.X0;
+    entry = (void **)&context->X0;
 #endif
 
     if (process_detaching) NtTerminateThread( GetCurrentThread(), 0 );

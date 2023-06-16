@@ -97,14 +97,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(menubuilder);
 #define IS_OPTION_TRUE(ch) \
     ((ch) == 'y' || (ch) == 'Y' || (ch) == 't' || (ch) == 'T' || (ch) == '1')
 
-/* On linux we create all menu item entries with an absolute path to wine,
- * in order to allow using multiple wine versions at the same time. */
-#ifdef __linux__
-    static const char wine_path[] = BINDIR "/wine";
-#else
-    static const char wine_path[] = "wine";
-#endif
-
 /* link file formats */
 
 #include "pshpack1.h"
@@ -1301,7 +1293,7 @@ static BOOL write_desktop_entry(const WCHAR *link, const WCHAR *location, const 
         fprintf(file, "env WINEPREFIX=\"%s\" ", path);
         heap_free( path );
     }
-    fprintf(file, "%s %s", wine_path, escape(path));
+    fprintf(file, "wine %s", escape(path));
     if (args) fprintf(file, " %s", escape(args) );
     fputc( '\n', file );
     fprintf(file, "Type=Application\n");
@@ -2051,7 +2043,7 @@ static BOOL write_freedesktop_association_entry(const WCHAR *desktopPath, const 
         if (prefix)
         {
             char *path = wine_get_unix_file_name( prefix );
-            fprintf(desktop, "Exec=env WINEPREFIX=\"%s\" %s start /ProgIDOpen %s %%f\n", path, wine_path, escape(progId));
+            fprintf(desktop, "Exec=env WINEPREFIX=\"%s\" wine start /ProgIDOpen %s %%f\n", path, escape(progId));
             heap_free( path );
         }
         else

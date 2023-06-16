@@ -23,8 +23,6 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "winerror.h"
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -78,7 +76,7 @@ static BOOL oem_file_apis;
 static void WINAPI read_write_apc( void *apc_user, PIO_STATUS_BLOCK io, ULONG reserved )
 {
     LPOVERLAPPED_COMPLETION_ROUTINE func = apc_user;
-    func( RtlNtStatusToDosError( io->u.Status ), io->Information, (LPOVERLAPPED)io );
+    func( RtlNtStatusToDosError( io->Status ), io->Information, (LPOVERLAPPED)io );
 }
 
 static const WCHAR *get_machine_wow64_dir( WORD machine )
@@ -3525,12 +3523,12 @@ BOOL WINAPI DECLSPEC_HOTPATCH LockFileEx( HANDLE file, DWORD flags, DWORD reserv
     }
 
     TRACE( "%p %lx%08lx %lx%08lx flags %lx\n",
-           file, overlapped->u.s.OffsetHigh, overlapped->u.s.Offset, count_high, count_low, flags );
+           file, overlapped->OffsetHigh, overlapped->Offset, count_high, count_low, flags );
 
     count.u.LowPart = count_low;
     count.u.HighPart = count_high;
-    offset.u.LowPart = overlapped->u.s.Offset;
-    offset.u.HighPart = overlapped->u.s.OffsetHigh;
+    offset.u.LowPart = overlapped->Offset;
+    offset.u.HighPart = overlapped->OffsetHigh;
 
     if (((ULONG_PTR)overlapped->hEvent & 1) == 0) cvalue = overlapped;
 
@@ -3571,7 +3569,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenFileById( HANDLE handle, LPFILE_ID_DESCRIPTO
     flags &= FILE_ATTRIBUTE_VALID_FLAGS;
 
     objectName.Length             = sizeof(ULONGLONG);
-    objectName.Buffer             = (WCHAR *)&id->u.FileId;
+    objectName.Buffer             = (WCHAR *)&id->FileId;
     attr.Length                   = sizeof(attr);
     attr.RootDirectory            = handle;
     attr.Attributes               = 0;
@@ -3631,7 +3629,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH ReOpenFile( HANDLE handle, DWORD access, DWORD s
 static void WINAPI invoke_completion( void *context, IO_STATUS_BLOCK *io, ULONG res )
 {
     LPOVERLAPPED_COMPLETION_ROUTINE completion = context;
-    completion( RtlNtStatusToDosError( io->u.Status ), io->Information, (LPOVERLAPPED)io );
+    completion( RtlNtStatusToDosError( io->Status ), io->Information, (LPOVERLAPPED)io );
 }
 
 /****************************************************************************
@@ -3664,7 +3662,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH ReadDirectoryChangesW( HANDLE handle, LPVOID buffe
     }
 
     ios = (PIO_STATUS_BLOCK)pov;
-    ios->u.Status = STATUS_PENDING;
+    ios->Status = STATUS_PENDING;
 
     status = NtNotifyChangeDirectoryFile( handle, completion && overlapped ? NULL : pov->hEvent,
                                           completion && overlapped ? invoke_completion : NULL,
@@ -3674,7 +3672,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH ReadDirectoryChangesW( HANDLE handle, LPVOID buffe
         if (overlapped) return TRUE;
         WaitForSingleObjectEx( ov.hEvent, INFINITE, TRUE );
         if (returned) *returned = ios->Information;
-        status = ios->u.Status;
+        status = ios->Status;
     }
     if (!overlapped) CloseHandle( ov.hEvent );
     return set_ntstatus( status );
@@ -3701,22 +3699,22 @@ BOOL WINAPI DECLSPEC_HOTPATCH ReadFile( HANDLE file, LPVOID buffer, DWORD count,
 
     if (overlapped)
     {
-        offset.u.LowPart = overlapped->u.s.Offset;
-        offset.u.HighPart = overlapped->u.s.OffsetHigh;
+        offset.u.LowPart = overlapped->Offset;
+        offset.u.HighPart = overlapped->OffsetHigh;
         poffset = &offset;
         event = overlapped->hEvent;
         io_status = (PIO_STATUS_BLOCK)overlapped;
         if (((ULONG_PTR)event & 1) == 0) cvalue = overlapped;
     }
     else io_status->Information = 0;
-    io_status->u.Status = STATUS_PENDING;
+    io_status->Status = STATUS_PENDING;
 
     status = NtReadFile( file, event, NULL, cvalue, io_status, buffer, count, poffset, NULL);
 
     if (status == STATUS_PENDING && !overlapped)
     {
         WaitForSingleObject( file, INFINITE );
-        status = io_status->u.Status;
+        status = io_status->Status;
     }
 
     if (result) *result = overlapped && status ? 0 : io_status->Information;
@@ -3756,10 +3754,10 @@ BOOL WINAPI DECLSPEC_HOTPATCH ReadFileEx( HANDLE file, LPVOID buffer, DWORD coun
         SetLastError( ERROR_INVALID_PARAMETER );
         return FALSE;
     }
-    offset.u.LowPart = overlapped->u.s.Offset;
-    offset.u.HighPart = overlapped->u.s.OffsetHigh;
+    offset.u.LowPart = overlapped->Offset;
+    offset.u.HighPart = overlapped->OffsetHigh;
     io = (PIO_STATUS_BLOCK)overlapped;
-    io->u.Status = STATUS_PENDING;
+    io->Status = STATUS_PENDING;
     io->Information = 0;
 
     status = NtReadFile( file, NULL, read_write_apc, completion, io, buffer, count, &offset, NULL);
@@ -3780,11 +3778,11 @@ BOOL WINAPI DECLSPEC_HOTPATCH ReadFileScatter( HANDLE file, FILE_SEGMENT_ELEMENT
 
     TRACE( "(%p %p %lu %p)\n", file, segments, count, overlapped );
 
-    offset.u.LowPart = overlapped->u.s.Offset;
-    offset.u.HighPart = overlapped->u.s.OffsetHigh;
+    offset.u.LowPart = overlapped->Offset;
+    offset.u.HighPart = overlapped->OffsetHigh;
     if (!((ULONG_PTR)overlapped->hEvent & 1)) cvalue = overlapped;
     io = (PIO_STATUS_BLOCK)overlapped;
-    io->u.Status = STATUS_PENDING;
+    io->Status = STATUS_PENDING;
     io->Information = 0;
 
     return set_ntstatus( NtReadFileScatter( file, overlapped->hEvent, NULL, cvalue, io,
@@ -3997,7 +3995,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH SetFilePointerEx( HANDLE file, LARGE_INTEGER dista
     }
 
 error:
-    return set_ntstatus( io.u.Status );
+    return set_ntstatus( io.Status );
 }
 
 
@@ -4074,7 +4072,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH UnlockFileEx( HANDLE file, DWORD reserved,
     }
     if (overlapped->hEvent) FIXME("Unimplemented overlapped operation\n");
 
-    return UnlockFile( file, overlapped->u.s.Offset, overlapped->u.s.OffsetHigh, count_low, count_high );
+    return UnlockFile( file, overlapped->Offset, overlapped->OffsetHigh, count_low, count_high );
 }
 
 
@@ -4096,22 +4094,22 @@ BOOL WINAPI DECLSPEC_HOTPATCH WriteFile( HANDLE file, LPCVOID buffer, DWORD coun
 
     if (overlapped)
     {
-        offset.u.LowPart = overlapped->u.s.Offset;
-        offset.u.HighPart = overlapped->u.s.OffsetHigh;
+        offset.u.LowPart = overlapped->Offset;
+        offset.u.HighPart = overlapped->OffsetHigh;
         poffset = &offset;
         event = overlapped->hEvent;
         piosb = (PIO_STATUS_BLOCK)overlapped;
         if (((ULONG_PTR)event & 1) == 0) cvalue = overlapped;
     }
     else piosb->Information = 0;
-    piosb->u.Status = STATUS_PENDING;
+    piosb->Status = STATUS_PENDING;
 
     status = NtWriteFile( file, event, NULL, cvalue, piosb, buffer, count, poffset, NULL );
 
     if (status == STATUS_PENDING && !overlapped)
     {
         WaitForSingleObject( file, INFINITE );
-        status = piosb->u.Status;
+        status = piosb->Status;
     }
 
     if (result) *result = overlapped && status ? 0 : piosb->Information;
@@ -4143,11 +4141,11 @@ BOOL WINAPI DECLSPEC_HOTPATCH WriteFileEx( HANDLE file, LPCVOID buffer,
         SetLastError( ERROR_INVALID_PARAMETER );
         return FALSE;
     }
-    offset.u.LowPart = overlapped->u.s.Offset;
-    offset.u.HighPart = overlapped->u.s.OffsetHigh;
+    offset.u.LowPart = overlapped->Offset;
+    offset.u.HighPart = overlapped->OffsetHigh;
 
     io = (PIO_STATUS_BLOCK)overlapped;
-    io->u.Status = STATUS_PENDING;
+    io->Status = STATUS_PENDING;
     io->Information = 0;
 
     status = NtWriteFile( file, NULL, read_write_apc, completion, io, buffer, count, &offset, NULL );
@@ -4168,11 +4166,11 @@ BOOL WINAPI DECLSPEC_HOTPATCH WriteFileGather( HANDLE file, FILE_SEGMENT_ELEMENT
 
     TRACE( "%p %p %lu %p\n", file, segments, count, overlapped );
 
-    offset.u.LowPart = overlapped->u.s.Offset;
-    offset.u.HighPart = overlapped->u.s.OffsetHigh;
+    offset.u.LowPart = overlapped->Offset;
+    offset.u.HighPart = overlapped->OffsetHigh;
     if (!((ULONG_PTR)overlapped->hEvent & 1)) cvalue = overlapped;
     io = (PIO_STATUS_BLOCK)overlapped;
-    io->u.Status = STATUS_PENDING;
+    io->Status = STATUS_PENDING;
     io->Information = 0;
 
     return set_ntstatus( NtWriteFileGather( file, overlapped->hEvent, NULL, cvalue,

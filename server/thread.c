@@ -558,7 +558,8 @@ static struct thread_apc *create_apc( struct object *owner, const apc_call_t *ca
 
     if ((apc = alloc_object( &thread_apc_ops )))
     {
-        apc->call        = *call_data;
+        if (call_data) apc->call = *call_data;
+        else apc->call.type = APC_NONE;
         apc->caller      = NULL;
         apc->owner       = owner;
         apc->executed    = 0;
@@ -1767,17 +1768,19 @@ DECL_HANDLER(select)
 
     reply->signaled = select_on( &select_op, op_size, req->cookie, req->flags, req->timeout );
 
-    if (get_error() == STATUS_USER_APC)
+    if (get_error() == STATUS_USER_APC && get_reply_max_size() >= sizeof(apc_call_t))
     {
         apc = thread_dequeue_apc( current, 0 );
-        reply->call = apc->call;
+        set_reply_data( &apc->call, sizeof(apc->call) );
         release_object( apc );
     }
-    else if (get_error() == STATUS_KERNEL_APC)
+    else if (get_error() == STATUS_KERNEL_APC && get_reply_max_size() >= sizeof(apc_call_t))
     {
         apc = thread_dequeue_apc( current, 1 );
         if ((reply->apc_handle = alloc_handle( current->process, apc, SYNCHRONIZE, 0 )))
-            reply->call = apc->call;
+        {
+            set_reply_data( &apc->call, sizeof(apc->call) );
+        }
         else
         {
             apc->executed = 1;
@@ -1785,16 +1788,23 @@ DECL_HANDLER(select)
         }
         release_object( apc );
     }
-    else if (reply->signaled && get_reply_max_size() >= sizeof(context_t) &&
+    else if (reply->signaled && get_reply_max_size() >= sizeof(apc_call_t) + sizeof(context_t) &&
              current->context && current->suspend_cookie == req->cookie)
     {
         ctx = current->context;
         if (ctx->regs[CTX_NATIVE].flags || ctx->regs[CTX_WOW].flags)
         {
-            data_size_t size = (ctx->regs[CTX_WOW].flags ? 2 : 1) * sizeof(context_t);
+            apc_call_t *data;
+            data_size_t size = sizeof(*data) + (ctx->regs[CTX_WOW].flags ? 2 : 1) * sizeof(context_t);
             unsigned int flags = system_flags & ctx->regs[CTX_NATIVE].flags;
+
             if (flags) set_thread_context( current, &ctx->regs[CTX_NATIVE], flags );
-            set_reply_data( ctx->regs, min( size, get_reply_max_size() ));
+            size = min( size, get_reply_max_size() );
+            if ((data = set_reply_data_size( size )))
+            {
+                memset( data, 0, sizeof(*data) );
+                memcpy( data + 1, ctx->regs, size - sizeof(*data) );
+            }
         }
         release_object( ctx );
         current->context = NULL;
@@ -1811,8 +1821,11 @@ DECL_HANDLER(queue_apc)
     struct thread *thread = NULL;
     struct process *process = NULL;
     struct thread_apc *apc;
+    const apc_call_t *call = get_req_data();
 
-    if (!(apc = create_apc( NULL, &req->call ))) return;
+    if (get_req_data_size() < sizeof(*call)) call = NULL;
+
+    if (!(apc = create_apc( NULL, call ))) return;
 
     switch (apc->call.type)
     {

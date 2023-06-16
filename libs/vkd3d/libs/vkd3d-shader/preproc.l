@@ -20,6 +20,7 @@
 
 %{
 
+#include "preproc.h"
 #include "preproc.tab.h"
 
 #undef ERROR  /* defined in wingdi.h */

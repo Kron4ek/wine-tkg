@@ -598,12 +598,23 @@ static GpStatus alpha_blend_pixels(GpGraphics *graphics, INT dst_x, INT dst_y,
     return alpha_blend_pixels_hrgn(graphics, dst_x, dst_y, src, src_width, src_height, src_stride, NULL, fmt);
 }
 
+/* NOTE: start and end pixels must be in pre-multiplied ARGB format */
+static FORCEINLINE ARGB blend_colors_premult(ARGB start, ARGB end, REAL position)
+{
+    UINT pos = position * 255.0f + 0.5f;
+    return
+        (((((start >> 24)       ) << 8) + (((end >> 24)       ) - ((start >> 24)       )) * pos) >> 8) << 24 |
+        (((((start >> 16) & 0xff) << 8) + (((end >> 16) & 0xff) - ((start >> 16) & 0xff)) * pos) >> 8) << 16 |
+        (((((start >>  8) & 0xff) << 8) + (((end >>  8) & 0xff) - ((start >>  8) & 0xff)) * pos) >> 8) <<  8 |
+        (((((start      ) & 0xff) << 8) + (((end      ) & 0xff) - ((start      ) & 0xff)) * pos) >> 8);
+}
+
 static ARGB blend_colors(ARGB start, ARGB end, REAL position)
 {
     INT start_a, end_a, final_a;
     INT pos;
 
-    pos = gdip_round(position * 0xff);
+    pos = (INT)(position * 255.0f + 0.5f);
 
     start_a = ((start >> 24) & 0xff) * (pos ^ 0xff);
     end_a = ((end >> 24) & 0xff) * pos;
@@ -1009,6 +1020,11 @@ static ARGB sample_bitmap_pixel(GDIPCONST GpRect *src_rect, LPBYTE bits, UINT wi
     return ((DWORD*)(bits))[(x - src_rect->X) + (y - src_rect->Y) * src_rect->Width];
 }
 
+static FORCEINLINE int positive_ceilf(float f)
+{
+    return f - (int)f > 0.0f ? f + 1.0f : f;
+}
+
 static ARGB resample_bitmap_pixel(GDIPCONST GpRect *src_rect, LPBYTE bits, UINT width,
     UINT height, GpPointF *point, GDIPCONST GpImageAttributes *attributes,
     InterpolationMode interpolation, PixelOffsetMode offset_mode)
@@ -1029,12 +1045,12 @@ static ARGB resample_bitmap_pixel(GDIPCONST GpRect *src_rect, LPBYTE bits, UINT 
         ARGB top, bottom;
         float x_offset;
 
-        leftxf = floorf(point->X);
-        leftx = (INT)leftxf;
-        rightx = (INT)ceilf(point->X);
-        topyf = floorf(point->Y);
-        topy = (INT)topyf;
-        bottomy = (INT)ceilf(point->Y);
+        leftx = (INT)point->X;
+        leftxf = (REAL)leftx;
+        rightx = positive_ceilf(point->X);
+        topy = (INT)point->Y;
+        topyf = (REAL)topy;
+        bottomy = positive_ceilf(point->Y);
 
         if (leftx == rightx && topy == bottomy)
             return sample_bitmap_pixel(src_rect, bits, width, height,
@@ -1073,6 +1089,75 @@ static ARGB resample_bitmap_pixel(GDIPCONST GpRect *src_rect, LPBYTE bits, UINT 
         }
         return sample_bitmap_pixel(src_rect, bits, width, height,
             floorf(point->X + pixel_offset), floorf(point->Y + pixel_offset), attributes);
+    }
+
+    }
+}
+
+static ARGB resample_bitmap_pixel_premult(GDIPCONST GpRect *src_rect, LPBYTE bits, UINT width,
+    UINT height, GpPointF *point, GDIPCONST GpImageAttributes *attributes,
+    InterpolationMode interpolation, PixelOffsetMode offset_mode)
+{
+    static int fixme;
+
+    switch (interpolation)
+    {
+    default:
+        if (!fixme++)
+            FIXME("Unimplemented interpolation %i\n", interpolation);
+        /* fall-through */
+    case InterpolationModeBilinear:
+    {
+        REAL leftxf, topyf;
+        INT leftx, rightx, topy, bottomy;
+        ARGB topleft, topright, bottomleft, bottomright;
+        ARGB top, bottom;
+        float x_offset;
+
+        leftx = (INT)point->X;
+        leftxf = (REAL)leftx;
+        rightx = positive_ceilf(point->X);
+        topy = (INT)point->Y;
+        topyf = (REAL)topy;
+        bottomy = positive_ceilf(point->Y);
+
+        if (leftx == rightx && topy == bottomy)
+            return sample_bitmap_pixel(src_rect, bits, width, height,
+                leftx, topy, attributes);
+
+        topleft = sample_bitmap_pixel(src_rect, bits, width, height,
+            leftx, topy, attributes);
+        topright = sample_bitmap_pixel(src_rect, bits, width, height,
+            rightx, topy, attributes);
+        bottomleft = sample_bitmap_pixel(src_rect, bits, width, height,
+            leftx, bottomy, attributes);
+        bottomright = sample_bitmap_pixel(src_rect, bits, width, height,
+            rightx, bottomy, attributes);
+
+        x_offset = point->X - leftxf;
+        top = blend_colors_premult(topleft, topright, x_offset);
+        bottom = blend_colors_premult(bottomleft, bottomright, x_offset);
+
+        return blend_colors_premult(top, bottom, point->Y - topyf);
+    }
+    case InterpolationModeNearestNeighbor:
+    {
+        FLOAT pixel_offset;
+        switch (offset_mode)
+        {
+        default:
+        case PixelOffsetModeNone:
+        case PixelOffsetModeHighSpeed:
+            pixel_offset = 0.5;
+            break;
+
+        case PixelOffsetModeHalf:
+        case PixelOffsetModeHighQuality:
+            pixel_offset = 0.0;
+            break;
+        }
+        return sample_bitmap_pixel(src_rect, bits, width, height,
+            floorf(point->X + pixel_offset), point->Y + pixel_offset, attributes);
     }
 
     }
@@ -3211,8 +3296,10 @@ GpStatus WINGDIPAPI GdipDrawImagePointsRect(GpGraphics *graphics, GpImage *image
             lockeddata.Scan0 = src_data;
             if (!do_resampling && bitmap->format == PixelFormat32bppPARGB)
                 lockeddata.PixelFormat = apply_image_attributes(imageAttributes, NULL, 0, 0, 0, ColorAdjustTypeBitmap, bitmap->format);
-            else
+            else if (imageAttributes != &defaultImageAttributes)
                 lockeddata.PixelFormat = PixelFormat32bppARGB;
+            else
+                lockeddata.PixelFormat = PixelFormat32bppPARGB;
 
             stat = GdipBitmapLockBits(bitmap, &src_area, ImageLockModeRead|ImageLockModeUserInputBuf,
                 lockeddata.PixelFormat, &lockeddata);
@@ -3280,8 +3367,14 @@ GpStatus WINGDIPAPI GdipDrawImagePointsRect(GpGraphics *graphics, GpImage *image
                     {
                         if (src_pointf.X >= srcx && src_pointf.X < srcx + srcwidth &&
                             src_pointf.Y >= srcy && src_pointf.Y < srcy + srcheight)
-                            *dst_color = resample_bitmap_pixel(&src_area, src_data, bitmap->width, bitmap->height, &src_pointf,
-                                                               imageAttributes, interpolation, offset_mode);
+                        {
+                            if (lockeddata.PixelFormat != PixelFormat32bppPARGB)
+                                *dst_color = resample_bitmap_pixel(&src_area, src_data, bitmap->width, bitmap->height, &src_pointf,
+                                                                   imageAttributes, interpolation, offset_mode);
+                            else
+                                *dst_color = resample_bitmap_pixel_premult(&src_area, src_data, bitmap->width, bitmap->height, &src_pointf,
+                                                                           imageAttributes, interpolation, offset_mode);
+                        }
                         dst_color++;
                     }
                 }
@@ -5186,7 +5279,7 @@ GpStatus gdip_format_string(HDC hdc,
     INT *hotkeyprefix_offsets=NULL;
     INT hotkeyprefix_count=0;
     INT hotkeyprefix_pos=0, hotkeyprefix_end_pos=0;
-    BOOL seen_prefix = FALSE;
+    BOOL seen_prefix = FALSE, unixstyle_newline = TRUE;
 
     if(length == -1) length = lstrlenW(string);
 
@@ -5259,9 +5352,20 @@ GpStatus gdip_format_string(HDC hdc,
         if(fit == 0)
             break;
 
-        for(lret = 0; lret < fit; lret++)
+        for(lret = 0; lret < fit; lret++) {
             if(*(stringdup + sum + lret) == '\n')
-                break;
+            {
+               unixstyle_newline = TRUE;
+               break;
+            }
+
+            if(*(stringdup + sum + lret) == '\r' && lret + 1 < fit
+               && *(stringdup + sum + lret + 1) == '\n')
+            {
+               unixstyle_newline = FALSE;
+               break;
+            }
+        }
 
         /* Line break code (may look strange, but it imitates windows). */
         if(lret < fit)
@@ -5332,9 +5436,19 @@ GpStatus gdip_format_string(HDC hdc,
         if (stat != Ok)
             break;
 
-        sum += fit + (lret < fitcpy ? 1 : 0);
-        height += size.cy;
-        lineno++;
+
+        if (unixstyle_newline)
+        {
+            height += size.cy;
+            lineno++;
+            sum += fit + (lret < fitcpy ? 1 : 0);
+        }
+        else
+        {
+            height += size.cy;
+            lineno++;
+            sum += fit + (lret < fitcpy ? 2 : 0);
+        }
 
         hotkeyprefix_pos = hotkeyprefix_end_pos;
 

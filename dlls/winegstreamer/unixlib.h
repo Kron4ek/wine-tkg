@@ -305,11 +305,19 @@ struct wg_parser_stream_seek_params
     DWORD start_flags, stop_flags;
 };
 
+struct wg_transform_attrs
+{
+    UINT32 output_plane_align;
+    UINT32 input_queue_length;
+    BOOL low_latency;
+};
+
 struct wg_transform_create_params
 {
     struct wg_transform *transform;
     const struct wg_format *input_format;
     const struct wg_format *output_format;
+    const struct wg_transform_attrs *attrs;
 };
 
 struct wg_transform_push_data_params
@@ -376,6 +384,8 @@ enum unix_funcs
     unix_wg_transform_push_data,
     unix_wg_transform_read_data,
     unix_wg_transform_get_status,
+    unix_wg_transform_drain,
+    unix_wg_transform_flush,
 };
 
 #endif /* __WINE_WINEGSTREAMER_UNIXLIB_H */

@@ -18,8 +18,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include <stdarg.h>
 #include <stdio.h>
 #include <assert.h>
@@ -41,7 +39,7 @@
 
 struct PROCESS_BASIC_INFORMATION_PRIVATE
 {
-    DWORD_PTR ExitStatus;
+    NTSTATUS  ExitStatus;
     PPEB      PebBaseAddress;
     DWORD_PTR AffinityMask;
     DWORD_PTR BasePriority;
@@ -3007,7 +3005,7 @@ static void child_process(const char *dll_name, DWORD target_offset)
         ret = pNtQueryInformationProcess(process, ProcessBasicInformation, &pbi, sizeof(pbi), NULL);
         ok(!ret, "NtQueryInformationProcess error %#lx\n", ret);
         ok(pbi.ExitStatus == STILL_ACTIVE || pbi.ExitStatus == 195,
-           "expected STILL_ACTIVE, got %Iu\n", pbi.ExitStatus);
+           "expected STILL_ACTIVE, got %lu\n", pbi.ExitStatus);
         affinity = 1;
         ret = pNtSetInformationProcess(process, ProcessAffinityMask, &affinity, sizeof(affinity));
         ok(!ret, "NtSetInformationProcess error %#lx\n", ret);
@@ -3043,7 +3041,7 @@ static void child_process(const char *dll_name, DWORD target_offset)
         ret = pNtQueryInformationProcess(process, ProcessBasicInformation, &pbi, sizeof(pbi), NULL);
         ok(!ret, "NtQueryInformationProcess error %#lx\n", ret);
         ok(pbi.ExitStatus == STILL_ACTIVE || pbi.ExitStatus == 195,
-           "expected STILL_ACTIVE, got %Iu\n", pbi.ExitStatus);
+           "expected STILL_ACTIVE, got %lu\n", pbi.ExitStatus);
         affinity = 1;
         ret = pNtSetInformationProcess(process, ProcessAffinityMask, &affinity, sizeof(affinity));
         ok(!ret, "NtSetInformationProcess error %#lx\n", ret);
@@ -3558,7 +3556,7 @@ static void test_ExitProcess(void)
     memset(&pbi, 0, sizeof(pbi));
     ret = pNtQueryInformationProcess(pi.hProcess, ProcessBasicInformation, &pbi, sizeof(pbi), NULL);
     ok(!ret, "NtQueryInformationProcess error %#lx\n", ret);
-    ok(pbi.ExitStatus == 198, "expected 198, got %Iu\n", pbi.ExitStatus);
+    ok(pbi.ExitStatus == 198, "expected 198, got %lu\n", pbi.ExitStatus);
     affinity = 1;
     ret = pNtSetInformationProcess(pi.hProcess, ProcessAffinityMask, &affinity, sizeof(affinity));
     ok(ret == STATUS_PROCESS_IS_TERMINATING, "expected STATUS_PROCESS_IS_TERMINATING, got %#lx\n", ret);

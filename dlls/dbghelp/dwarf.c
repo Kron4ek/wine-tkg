@@ -1177,7 +1177,10 @@ static const char* dwarf2_get_cpp_name(dwarf2_debug_info_t* di, const char* name
     }
 
     if (!di->unit_ctx->cpp_name)
+    {
         di->unit_ctx->cpp_name = pool_alloc(&di->unit_ctx->pool, MAX_SYM_NAME);
+        if (!di->unit_ctx->cpp_name) return name;
+    }
     last = di->unit_ctx->cpp_name + MAX_SYM_NAME - strlen(name) - 1;
     strcpy(last, name);
 
@@ -1194,7 +1197,11 @@ static const char* dwarf2_get_cpp_name(dwarf2_debug_info_t* di, const char* name
             {
                 size_t  len = strlen(diname.u.string);
                 last -= 2 + len;
-                if (last < di->unit_ctx->cpp_name) return NULL;
+                if (last < di->unit_ctx->cpp_name)
+                {
+                    WARN("Too long C++ qualified identifier for %s... using unqualified identifier\n", name);
+                    return name;
+                }
                 memcpy(last, diname.u.string, len);
                 last[len] = last[len + 1] = ':';
             }
@@ -2141,7 +2148,7 @@ static void dwarf2_parse_inlined_subroutine(dwarf2_subprogram_t* subpgm,
                                   subpgm->current_block ? &subpgm->current_block->symt : &subpgm->current_func->symt,
                                   dwarf2_get_cpp_name(di, name.u.string),
                                   &sig_type->symt, num_ranges);
-    subpgm->current_func = (struct symt_function*)inlined;
+    subpgm->current_func = inlined;
     subpgm->current_block = NULL;
 
     if (!dwarf2_fill_ranges(di, inlined->ranges, num_ranges))

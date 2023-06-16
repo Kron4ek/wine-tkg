@@ -170,8 +170,7 @@ static MACDRV_PDEVICE *create_mac_physdev(void)
 /**********************************************************************
  *              CreateDC (MACDRV.@)
  */
-static BOOL CDECL macdrv_CreateDC(PHYSDEV *pdev, LPCWSTR device, LPCWSTR output,
-                                  const DEVMODEW* initData)
+static BOOL macdrv_CreateDC(PHYSDEV *pdev, LPCWSTR device, LPCWSTR output, const DEVMODEW* initData)
 {
     MACDRV_PDEVICE *physDev = create_mac_physdev();
 
@@ -188,7 +187,7 @@ static BOOL CDECL macdrv_CreateDC(PHYSDEV *pdev, LPCWSTR device, LPCWSTR output,
 /**********************************************************************
  *              CreateCompatibleDC (MACDRV.@)
  */
-static BOOL CDECL macdrv_CreateCompatibleDC(PHYSDEV orig, PHYSDEV *pdev)
+static BOOL macdrv_CreateCompatibleDC(PHYSDEV orig, PHYSDEV *pdev)
 {
     MACDRV_PDEVICE *physDev = create_mac_physdev();
 
@@ -205,7 +204,7 @@ static BOOL CDECL macdrv_CreateCompatibleDC(PHYSDEV orig, PHYSDEV *pdev)
 /**********************************************************************
  *              DeleteDC (MACDRV.@)
  */
-static BOOL CDECL macdrv_DeleteDC(PHYSDEV dev)
+static BOOL macdrv_DeleteDC(PHYSDEV dev)
 {
     MACDRV_PDEVICE *physDev = get_macdrv_dev(dev);
 
@@ -219,7 +218,7 @@ static BOOL CDECL macdrv_DeleteDC(PHYSDEV dev)
 /***********************************************************************
  *              GetDeviceCaps (MACDRV.@)
  */
-static INT CDECL macdrv_GetDeviceCaps(PHYSDEV dev, INT cap)
+static INT macdrv_GetDeviceCaps(PHYSDEV dev, INT cap)
 {
     INT ret;
 
@@ -271,7 +270,6 @@ static const struct user_driver_funcs macdrv_funcs =
     .pChangeDisplaySettings = macdrv_ChangeDisplaySettings,
     .pClipCursor = macdrv_ClipCursor,
     .pClipboardWindowProc = macdrv_ClipboardWindowProc,
-    .pCreateDesktopWindow = macdrv_CreateDesktopWindow,
     .pDesktopWindowProc = macdrv_DesktopWindowProc,
     .pDestroyCursorIcon = macdrv_DestroyCursorIcon,
     .pDestroyWindow = macdrv_DestroyWindow,
@@ -287,6 +285,7 @@ static const struct user_driver_funcs macdrv_funcs =
     .pSetCapture = macdrv_SetCapture,
     .pSetCursor = macdrv_SetCursor,
     .pSetCursorPos = macdrv_SetCursorPos,
+    .pSetDesktopWindow = macdrv_SetDesktopWindow,
     .pSetFocus = macdrv_SetFocus,
     .pSetLayeredWindowAttributes = macdrv_SetLayeredWindowAttributes,
     .pSetParent = macdrv_SetParent,

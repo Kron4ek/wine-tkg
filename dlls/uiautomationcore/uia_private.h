@@ -98,14 +98,20 @@ struct uia_event
     IWineUiaEvent IWineUiaEvent_iface;
     LONG ref;
 
+    BOOL desktop_subtree_event;
     SAFEARRAY *runtime_id;
     int event_id;
     int scope;
 
-    IRawElementProviderAdviseEvents **event_advisers;
+    IWineUiaEventAdviser **event_advisers;
     int event_advisers_count;
     SIZE_T event_advisers_arr_size;
 
+    struct list event_list_entry;
+    struct uia_event_map_entry *event_map_entry;
+    LONG event_defunct;
+
+    struct UiaCacheRequest cache_req;
     UiaEventCallback *cback;
 };
 
@@ -152,12 +158,13 @@ static inline BOOL uia_array_reserve(void **elements, SIZE_T *capacity, SIZE_T c
 }
 
 /* uia_client.c */
-HRESULT get_safearray_bounds(SAFEARRAY *sa, LONG *lbound, LONG *elems) DECLSPEC_HIDDEN;
-int uia_compare_safearrays(SAFEARRAY *sa1, SAFEARRAY *sa2, int prop_type) DECLSPEC_HIDDEN;
 int get_node_provider_type_at_idx(struct uia_node *node, int idx) DECLSPEC_HIDDEN;
 HRESULT attach_event_to_uia_node(HUIANODE node, struct uia_event *event) DECLSPEC_HIDDEN;
+HRESULT navigate_uia_node(struct uia_node *node, int nav_dir, HUIANODE *out_node) DECLSPEC_HIDDEN;
 HRESULT create_uia_node_from_elprov(IRawElementProviderSimple *elprov, HUIANODE *out_node,
         BOOL get_hwnd_providers) DECLSPEC_HIDDEN;
+HRESULT uia_condition_check(HUIANODE node, struct UiaCondition *condition) DECLSPEC_HIDDEN;
+BOOL uia_condition_matched(HRESULT hr) DECLSPEC_HIDDEN;
 
 /* uia_com_client.c */
 HRESULT create_uia_iface(IUnknown **iface, BOOL is_cui8) DECLSPEC_HIDDEN;
@@ -179,3 +186,14 @@ void uia_provider_thread_remove_node(HUIANODE node) DECLSPEC_HIDDEN;
 LRESULT uia_lresult_from_node(HUIANODE huianode) DECLSPEC_HIDDEN;
 HRESULT create_msaa_provider(IAccessible *acc, long child_id, HWND hwnd, BOOL known_root_acc,
         IRawElementProviderSimple **elprov) DECLSPEC_HIDDEN;
+
+/* uia_utils.c */
+HRESULT register_interface_in_git(IUnknown *iface, REFIID riid, DWORD *ret_cookie) DECLSPEC_HIDDEN;
+HRESULT unregister_interface_in_git(DWORD git_cookie) DECLSPEC_HIDDEN;
+HRESULT get_interface_in_git(REFIID riid, DWORD git_cookie, IUnknown **ret_iface) DECLSPEC_HIDDEN;
+HRESULT write_runtime_id_base(SAFEARRAY *sa, HWND hwnd) DECLSPEC_HIDDEN;
+void uia_cache_request_destroy(struct UiaCacheRequest *cache_req) DECLSPEC_HIDDEN;
+HRESULT uia_cache_request_clone(struct UiaCacheRequest *dst, struct UiaCacheRequest *src) DECLSPEC_HIDDEN;
+HRESULT get_safearray_dim_bounds(SAFEARRAY *sa, UINT dim, LONG *lbound, LONG *elems) DECLSPEC_HIDDEN;
+HRESULT get_safearray_bounds(SAFEARRAY *sa, LONG *lbound, LONG *elems) DECLSPEC_HIDDEN;
+int uia_compare_safearrays(SAFEARRAY *sa1, SAFEARRAY *sa2, int prop_type) DECLSPEC_HIDDEN;

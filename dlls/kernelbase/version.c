@@ -30,8 +30,6 @@
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "windef.h"
 #include "winbase.h"
 #include "winver.h"
@@ -290,13 +288,13 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_by_id( const IMAGE_RESOURCE_DI
     while (min <= max)
     {
         pos = (min + max) / 2;
-        if (entry[pos].u.Id == id)
+        if (entry[pos].Id == id)
         {
-            DWORD offset = entry[pos].u2.s2.OffsetToDirectory;
+            DWORD offset = entry[pos].OffsetToDirectory;
             if (offset > root_size - sizeof(*dir)) return NULL;
             return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + offset);
         }
-        if (entry[pos].u.Id > id) max = pos - 1;
+        if (entry[pos].Id > id) max = pos - 1;
         else min = pos + 1;
     }
     return NULL;
@@ -315,7 +313,7 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_default( const IMAGE_RESOURCE_
     const IMAGE_RESOURCE_DIRECTORY_ENTRY *entry;
 
     entry = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
-    return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry->u2.s2.OffsetToDirectory);
+    return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry->OffsetToDirectory);
 }
 
 
@@ -1697,19 +1695,19 @@ LONG WINAPI PackageIdFromFullName(const WCHAR *full_name, UINT32 flags, UINT32 *
     }
     buffer += sizeof(*id);
 
-    id->version.u.s.Major = wcstol(version_str, NULL, 10);
+    id->version.Major = wcstol(version_str, NULL, 10);
     if (!(s = wcschr(version_str, L'.')))
         return ERROR_INVALID_PARAMETER;
     ++s;
-    id->version.u.s.Minor = wcstol(s, NULL, 10);
+    id->version.Minor = wcstol(s, NULL, 10);
     if (!(s = wcschr(s, L'.')))
         return ERROR_INVALID_PARAMETER;
     ++s;
-    id->version.u.s.Build = wcstol(s, NULL, 10);
+    id->version.Build = wcstol(s, NULL, 10);
     if (!(s = wcschr(s, L'.')))
         return ERROR_INVALID_PARAMETER;
     ++s;
-    id->version.u.s.Revision = wcstol(s, NULL, 10);
+    id->version.Revision = wcstol(s, NULL, 10);
 
     id->name = (WCHAR *)buffer;
     len = version_str - name - 1;
@@ -1753,8 +1751,8 @@ LONG WINAPI PackageFullNameFromId(const PACKAGE_ID *package_id, UINT32 *length, 
             || !(arch_str = string_from_processor_arch(package_id->processorArchitecture)))
         return ERROR_INVALID_PARAMETER;
 
-    swprintf(ver_str, ARRAY_SIZE(ver_str), L"%u.%u.%u.%u", package_id->version.u.s.Major,
-            package_id->version.u.s.Minor, package_id->version.u.s.Build, package_id->version.u.s.Revision);
+    swprintf(ver_str, ARRAY_SIZE(ver_str), L"%u.%u.%u.%u", package_id->version.Major,
+            package_id->version.Minor, package_id->version.Build, package_id->version.Revision);
     have_length = *length;
     *length = lstrlenW(package_id->name) + 1 + lstrlenW(ver_str) + 1 + lstrlenW(arch_str) + 1
             + lstrlenW(package_id->resourceId) + 1 + lstrlenW(package_id->publisherId) + 1;

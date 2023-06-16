@@ -419,12 +419,12 @@ static void testGetIpNetTable(void)
             }
 
             igmp3_found = ssdp_found = FALSE;
-            prev_idx = ~0ul;
+            prev_idx = ~0u;
             for (i = 0; i < buf->dwNumEntries; ++i)
             {
                 if (buf->table[i].dwIndex != prev_idx)
                 {
-                    if (prev_idx != ~0ul)
+                    if (prev_idx != ~0u)
                     {
                         ok( igmp3_found, "%s not found, iface index %lu.\n", ntoa( igmp3_addr ), prev_idx);
                         ok( ssdp_found || broken(!ssdp_found) /* 239.255.255.250 is always present since Win10 */,
@@ -2893,6 +2893,14 @@ static void test_ConvertGuidToString( void )
     ok( err == ERROR_INVALID_PARAMETER, "got %ld\n", err );
 }
 
+static void test_compartments(void)
+{
+    NET_IF_COMPARTMENT_ID id;
+
+    id = GetCurrentThreadCompartmentId();
+    ok(id == NET_IF_COMPARTMENT_ID_PRIMARY, "got %u\n", id);
+}
+
 START_TEST(iphlpapi)
 {
 
@@ -2927,6 +2935,7 @@ START_TEST(iphlpapi)
     test_ParseNetworkString();
     test_NotifyUnicastIpAddressChange();
     test_ConvertGuidToString();
+    test_compartments();
     freeIPHlpApi();
   }
 }

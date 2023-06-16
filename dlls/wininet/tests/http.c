@@ -6940,9 +6940,7 @@ typedef struct {
 static const cert_struct_test_t test_winehq_org_cert = {
     "US\r\n"
     "Minnesota\r\n"
-    "Saint Paul\r\n"
-    "\"CodeWeavers, Inc.\"\r\n"
-    "IT\r\n"
+    "CodeWeavers\r\n"
     "*.winehq.org",
 
     "US\r\n"
