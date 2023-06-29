@@ -532,7 +532,7 @@ static void get_message_defaults( struct msg_queue *queue, int *x, int *y, unsig
 }
 
 /* set the cursor clip rectangle */
-void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect, int reset )
+void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect, unsigned int flags, int reset )
 {
     rectangle_t top_rect;
     int x, y;
@@ -556,17 +556,17 @@ void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect, int r
     if (x != desktop->cursor.x || y != desktop->cursor.y) set_cursor_pos( desktop, x, y );
 
     /* request clip cursor rectangle reset to the desktop thread */
-    if (reset) post_desktop_message( desktop, WM_WINE_CLIPCURSOR, TRUE, FALSE );
+    if (reset) post_desktop_message( desktop, WM_WINE_CLIPCURSOR, flags, FALSE );
 
     /* notify foreground thread, of reset, or to apply new cursor clipping rect */
-    queue_cursor_message( desktop, 0, WM_WINE_CLIPCURSOR, rect == NULL, reset );
+    queue_cursor_message( desktop, 0, WM_WINE_CLIPCURSOR, flags, reset );
 }
 
 /* change the foreground input and reset the cursor clip rect */
 static void set_foreground_input( struct desktop *desktop, struct thread_input *input )
 {
     if (desktop->foreground_input == input) return;
-    set_clip_rectangle( desktop, NULL, 1 );
+    set_clip_rectangle( desktop, NULL, SET_CURSOR_NOCLIP, 1 );
     desktop->foreground_input = input;
 }
 
@@ -1785,6 +1785,7 @@ static int send_hook_ll_message( struct desktop *desktop, struct message *hardwa
 
     if (!(hook_thread = get_first_global_hook( id ))) return 0;
     if (!(queue = hook_thread->queue)) return 0;
+    if (is_queue_hung( queue )) return 0;
 
     if (!(msg = mem_alloc( sizeof(*msg) ))) return 0;
 
@@ -3487,8 +3488,8 @@ DECL_HANDLER(set_cursor)
         input->cursor_count += req->show_count;
     }
     if (req->flags & SET_CURSOR_POS) set_cursor_pos( desktop, req->x, req->y );
-    if (req->flags & SET_CURSOR_CLIP) set_clip_rectangle( desktop, &req->clip, 0 );
-    if (req->flags & SET_CURSOR_NOCLIP) set_clip_rectangle( desktop, NULL, 0 );
+    if (req->flags & SET_CURSOR_CLIP) set_clip_rectangle( desktop, &req->clip, req->flags, 0 );
+    if (req->flags & SET_CURSOR_NOCLIP) set_clip_rectangle( desktop, NULL, SET_CURSOR_NOCLIP, 0 );
 
     if (req->flags & (SET_CURSOR_HANDLE | SET_CURSOR_COUNT))
     {

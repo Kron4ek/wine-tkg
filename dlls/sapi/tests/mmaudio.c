@@ -158,11 +158,136 @@ static void test_formats(void)
     ISpMMSysAudio_Release(mmaudio);
 }
 
+static void test_audio_out(void)
+{
+    ISpMMSysAudio *mmaudio;
+    GUID fmtid;
+    WAVEFORMATEX *wfx = NULL;
+    WAVEFORMATEX wfx2;
+    UINT devid;
+    char *buf = NULL;
+    ULONG written;
+    DWORD start, end;
+    HANDLE event = NULL;
+    HRESULT hr;
+
+    if (waveOutGetNumDevs() == 0) {
+        skip("no wave out devices.\n");
+        return;
+    }
+
+    hr = CoCreateInstance(&CLSID_SpMMAudioOut, NULL, CLSCTX_INPROC_SERVER,
+                          &IID_ISpMMSysAudio, (void **)&mmaudio);
+    ok(hr == S_OK, "failed to create SPMMAudioOut instance: %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_SetState(mmaudio, SPAS_CLOSED, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_GetFormat(mmaudio, &fmtid, &wfx);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(IsEqualGUID(&fmtid, &SPDFID_WaveFormatEx), "got %s.\n", wine_dbgstr_guid(&fmtid));
+    ok(wfx != NULL, "wfx == NULL.\n");
+    ok(wfx->wFormatTag == WAVE_FORMAT_PCM, "got %u.\n", wfx->wFormatTag);
+    ok(wfx->cbSize == 0, "got %u.\n", wfx->cbSize);
+
+    hr = ISpMMSysAudio_SetFormat(mmaudio, &fmtid, wfx);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_SetDeviceId(mmaudio, WAVE_MAPPER);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_SetState(mmaudio, SPAS_RUN, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_SetDeviceId(mmaudio, WAVE_MAPPER);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_SetDeviceId(mmaudio, 0);
+    ok(hr == SPERR_DEVICE_BUSY, "got %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_SetFormat(mmaudio, &fmtid, wfx);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    memcpy(&wfx2, wfx, sizeof(wfx2));
+    wfx2.nChannels = wfx->nChannels == 1 ? 2 : 1;
+    wfx2.nAvgBytesPerSec = wfx2.nSamplesPerSec * wfx2.nChannels * wfx2.wBitsPerSample / 8;
+    wfx2.nBlockAlign = wfx2.nChannels * wfx2.wBitsPerSample / 8;
+
+    hr = ISpMMSysAudio_SetFormat(mmaudio, &fmtid, &wfx2);
+    ok(hr == SPERR_DEVICE_BUSY, "got %#lx.\n", hr);
+
+    devid = 0xdeadbeef;
+    hr = ISpMMSysAudio_GetDeviceId(mmaudio, &devid);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(devid == WAVE_MAPPER, "got %#x.\n", devid);
+
+    hr = ISpMMSysAudio_SetState(mmaudio, SPAS_CLOSED, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    buf = calloc(1, wfx->nAvgBytesPerSec);
+    ok(buf != NULL, "failed to allocate buffer.\n");
+
+    hr = ISpMMSysAudio_Write(mmaudio, buf, wfx->nAvgBytesPerSec, NULL);
+    ok(hr == SP_AUDIO_STOPPED, "got %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_SetState(mmaudio, SPAS_STOP, 0);
+    todo_wine ok(hr == S_OK, "got %#lx.\n", hr);
+    if (hr == S_OK)
+    {
+        hr = ISpMMSysAudio_Write(mmaudio, buf, wfx->nAvgBytesPerSec, NULL);
+        ok(hr == SP_AUDIO_STOPPED, "got %#lx.\n", hr);
+    }
+
+    hr = ISpMMSysAudio_SetState(mmaudio, SPAS_CLOSED, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_SetState(mmaudio, SPAS_RUN, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_Write(mmaudio, buf, wfx->nAvgBytesPerSec, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    Sleep(200);
+
+    hr = ISpMMSysAudio_SetState(mmaudio, SPAS_CLOSED, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpMMSysAudio_SetState(mmaudio, SPAS_RUN, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    written = 0xdeadbeef;
+    hr = ISpMMSysAudio_Write(mmaudio, buf, wfx->nAvgBytesPerSec * 200 / 1000, &written);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(written == wfx->nAvgBytesPerSec * 200 / 1000, "got %lu.\n", written);
+
+    hr = ISpMMSysAudio_Write(mmaudio, buf, wfx->nAvgBytesPerSec * 200 / 1000, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    start = GetTickCount();
+
+    event = ISpMMSysAudio_EventHandle(mmaudio);
+    ok(event != NULL, "event == NULL.\n");
+
+    hr = WaitForSingleObject(event, 1000);
+    ok(hr == WAIT_OBJECT_0, "got %#lx.\n", hr);
+
+    end = GetTickCount();
+    ok(end - start <= 500, "waited for %lu ms.\n", end - start);
+
+    hr = ISpMMSysAudio_SetState(mmaudio, SPAS_CLOSED, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    CoTaskMemFree(wfx);
+    free(buf);
+    ISpMMSysAudio_Release(mmaudio);
+}
+
 START_TEST(mmaudio)
 {
     CoInitialize(NULL);
     test_interfaces();
     test_device_id();
     test_formats();
+    test_audio_out();
     CoUninitialize();
 }

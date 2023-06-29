@@ -3609,7 +3609,6 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_low, UL
                                      SIZE_T reserve_size, SIZE_T commit_size, BOOL guard_page )
 {
     struct file_view *view;
-    char *kernel_stack;
     NTSTATUS status;
     sigset_t sigset;
     SIZE_T size;
@@ -3638,10 +3637,6 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_low, UL
         set_page_vprot( (char *)view->base + page_size, page_size,
                         VPROT_READ | VPROT_WRITE | VPROT_COMMITTED | VPROT_GUARD );
         mprotect_range( view->base, 2 * page_size , 0, 0 );
-        /* setup kernel stack no access guard page */
-        kernel_stack = (char *)view->base + view->size;
-        set_page_vprot( kernel_stack, kernel_stack_guard_size, VPROT_COMMITTED | VPROT_READ );
-        mprotect_range( kernel_stack, kernel_stack_guard_size, 0, 0 );
     }
     VIRTUAL_DEBUG_DUMP_VIEW( view );
 
@@ -3762,6 +3757,16 @@ NTSTATUS virtual_handle_fault( void *addr, DWORD err, void *stack )
 
     mutex_lock( &virtual_mutex );  /* no need for signal masking inside signal handler */
     vprot = get_page_vprot( page );
+
+#ifdef __APPLE__
+    /* Rosetta on Apple Silicon misreports certain write faults as read faults. */
+    if (err == EXCEPTION_READ_FAULT && (get_unix_prot( vprot ) & PROT_READ))
+    {
+        WARN( "treating read fault in a readable page as a write fault, addr %p\n", addr );
+        err = EXCEPTION_WRITE_FAULT;
+    }
+#endif
+
     if (stack && !is_inside_signal_stack( stack ) && (vprot & VPROT_GUARD))
     {
         struct thread_stack_info stack_info;
@@ -4381,22 +4386,6 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
     if (!is_old_wow64() && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
 #endif
     if (type & ~type_mask) return STATUS_INVALID_PARAMETER;
-
-    if (type & MEM_WRITE_WATCH)
-    {
-        static int disable = -1;
-
-        if (disable == -1)
-        {
-            const char *env_var;
-
-            if ((disable = (env_var = getenv("WINE_DISABLE_WRITE_WATCH")) && atoi(env_var)))
-                FIXME("Disabling write watch support.\n");
-        }
-
-        if (disable)
-            return STATUS_NOT_SUPPORTED;
-    }
 
     if (process != NtCurrentProcess())
     {

@@ -773,39 +773,41 @@ static const char * const focus_modes[] =
     "NotifyWhileGrabbed"
 };
 
+BOOL is_current_process_focused(void)
+{
+    Display *display = x11drv_thread_data()->display;
+    Window focus;
+    int revert;
+    HWND hwnd;
+
+    XGetInputFocus( display, &focus, &revert );
+    if (focus && !XFindContext( display, focus, winContext, (char **)&hwnd )) return TRUE;
+    return FALSE;
+}
+
 /**********************************************************************
  *              X11DRV_FocusIn
  */
 static BOOL X11DRV_FocusIn( HWND hwnd, XEvent *xev )
 {
     XFocusChangeEvent *event = &xev->xfocus;
+    BOOL was_grabbed;
 
     if (!hwnd) return FALSE;
 
     TRACE( "win %p xwin %lx detail=%s mode=%s\n", hwnd, event->window, focus_details[event->detail], focus_modes[event->mode] );
 
     if (event->detail == NotifyPointer) return FALSE;
+    /* when focusing in the virtual desktop window, re-apply the cursor clipping rect */
+    if (is_virtual_desktop() && hwnd == NtUserGetDesktopWindow()) retry_grab_clipping_window();
     if (hwnd == NtUserGetDesktopWindow()) return FALSE;
 
-    x11drv_thread_data()->keymapnotify_hwnd = hwnd;
-
-    switch (event->mode)
-    {
-    case NotifyGrab:
-        /* these are received when moving undecorated managed windows on mutter */
-        keyboard_grabbed = TRUE;
-        return FALSE;
-    case NotifyWhileGrabbed:
-        keyboard_grabbed = TRUE;
-        break;
-    case NotifyNormal:
-        keyboard_grabbed = FALSE;
-        break;
-    case NotifyUngrab:
-        keyboard_grabbed = FALSE;
-        retry_grab_clipping_window();
-        return TRUE; /* ignore wm specific NotifyUngrab / NotifyGrab events w.r.t focus */
-    }
+    /* when keyboard grab is released, re-apply the cursor clipping rect */
+    was_grabbed = keyboard_grabbed;
+    keyboard_grabbed = event->mode == NotifyGrab || event->mode == NotifyWhileGrabbed;
+    if (was_grabbed > keyboard_grabbed) retry_grab_clipping_window();
+    /* ignore wm specific NotifyUngrab / NotifyGrab events w.r.t focus */
+    if (event->mode == NotifyGrab || event->mode == NotifyUngrab) return FALSE;
 
     xim_set_focus( hwnd, TRUE );
 
@@ -828,20 +830,12 @@ static BOOL X11DRV_FocusIn( HWND hwnd, XEvent *xev )
  */
 static void focus_out( Display *display , HWND hwnd )
  {
-    HWND hwnd_tmp;
-    Window focus_win;
-    int revert;
-
     if (xim_in_compose_mode()) return;
 
     x11drv_thread_data()->last_focus = hwnd;
     xim_set_focus( hwnd, FALSE );
 
-    if (is_virtual_desktop())
-    {
-        if (hwnd == NtUserGetDesktopWindow()) NtUserClipCursor( NULL );
-        return;
-    }
+    if (is_virtual_desktop()) return;
     if (hwnd != NtUserGetForegroundWindow()) return;
     if (!(NtUserGetWindowLongW( hwnd, GWL_STYLE ) & WS_MINIMIZE))
         send_message( hwnd, WM_CANCELMODE, 0, 0 );
@@ -849,14 +843,7 @@ static void focus_out( Display *display , HWND hwnd )
     /* don't reset the foreground window, if the window which is
        getting the focus is a Wine window */
 
-    XGetInputFocus( display, &focus_win, &revert );
-    if (focus_win)
-    {
-        if (XFindContext( display, focus_win, winContext, (char **)&hwnd_tmp ) != 0)
-            focus_win = 0;
-    }
-
-    if (!focus_win)
+    if (!is_current_process_focused())
     {
         x11drv_thread_data()->active_window = 0;
 
@@ -890,29 +877,11 @@ static BOOL X11DRV_FocusOut( HWND hwnd, XEvent *xev )
     }
     if (!hwnd) return FALSE;
 
-    switch (event->mode)
-    {
-    case NotifyUngrab:
-        /* these are received when moving undecorated managed windows on mutter */
-        keyboard_grabbed = FALSE;
-        return FALSE;
-    case NotifyNormal:
-        keyboard_grabbed = FALSE;
-        break;
-    case NotifyWhileGrabbed:
-        keyboard_grabbed = TRUE;
-        break;
-    case NotifyGrab:
-        keyboard_grabbed = TRUE;
-
-        /* This will do nothing due to keyboard_grabbed == TRUE, but it
-         * will save the current clipping rect so we can restore it on
-         * FocusIn with NotifyUngrab mode.
-         */
-        retry_grab_clipping_window();
-
-        return TRUE; /* ignore wm specific NotifyUngrab / NotifyGrab events w.r.t focus */
-    }
+    /* in virtual desktop mode or when keyboard is grabbed, release any cursor grab but keep the clipping rect */
+    keyboard_grabbed = event->mode == NotifyGrab || event->mode == NotifyWhileGrabbed;
+    if (is_virtual_desktop() || keyboard_grabbed) ungrab_clipping_window();
+    /* ignore wm specific NotifyUngrab / NotifyGrab events w.r.t focus */
+    if (event->mode == NotifyGrab || event->mode == NotifyUngrab) return FALSE;
 
     focus_out( event->display, hwnd );
     return TRUE;
@@ -1137,12 +1106,6 @@ static BOOL X11DRV_ConfigureNotify( HWND hwnd, XEvent *xev )
                event->serial, data->configure_serial );
         goto done;
     }
-    if (data->pending_fullscreen)
-    {
-        TRACE( "win %p/%lx event %d,%d,%dx%d pending_fullscreen is pending, so ignoring\n",
-               hwnd, data->whole_window, event->x, event->y, event->width, event->height );
-        goto done;
-    }
 
     /* Get geometry */
 
@@ -1353,7 +1316,7 @@ static void handle_wm_state_notify( HWND hwnd, XPropertyEvent *event, BOOL updat
                 TRACE( "restoring win %p/%lx\n", data->hwnd, data->whole_window );
                 release_win_data( data );
                 if ((style & (WS_MINIMIZE | WS_VISIBLE)) == (WS_MINIMIZE | WS_VISIBLE))
-                    NtUserSetForegroundWindow( hwnd );
+                    NtUserSetActiveWindow( hwnd );
                 send_message( hwnd, WM_SYSCOMMAND, SC_RESTORE, 0 );
                 return;
             }
@@ -1377,44 +1340,15 @@ done:
 }
 
 
-static void handle__net_wm_state_notify( HWND hwnd, XPropertyEvent *event )
-{
-    struct x11drv_win_data *data = get_win_data( hwnd );
-
-    if(data->pending_fullscreen)
-    {
-        read_net_wm_states( event->display, data );
-        if(data->net_wm_state & (1 << NET_WM_STATE_FULLSCREEN)){
-            data->pending_fullscreen = FALSE;
-            TRACE("PropertyNotify _NET_WM_STATE, now 0x%x, pending_fullscreen no longer pending.\n",
-                    data->net_wm_state);
-        }else
-            TRACE("PropertyNotify _NET_WM_STATE, now 0x%x, pending_fullscreen still pending.\n",
-                    data->net_wm_state);
-    }
-
-    release_win_data( data );
-}
-
-
 /***********************************************************************
  *           X11DRV_PropertyNotify
  */
 static BOOL X11DRV_PropertyNotify( HWND hwnd, XEvent *xev )
 {
     XPropertyEvent *event = &xev->xproperty;
-    char *name;
 
     if (!hwnd) return FALSE;
-
-    name = XGetAtomName(event->display, event->atom);
-    if(name){
-        TRACE("win %p PropertyNotify atom: %s, state: 0x%x\n", hwnd, name, event->state);
-        XFree(name);
-    }
-
     if (event->atom == x11drv_atom(WM_STATE)) handle_wm_state_notify( hwnd, event, TRUE );
-    else if (event->atom == x11drv_atom(_NET_WM_STATE)) handle__net_wm_state_notify( hwnd, event );
     return TRUE;
 }
 

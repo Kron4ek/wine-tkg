@@ -4518,18 +4518,12 @@ NTSTATUS nt_to_unix_file_name_internal( const OBJECT_ATTRIBUTES *attr, char **na
     int name_len, unix_len;
     NTSTATUS status;
 
-    if (!attr->ObjectName->Buffer && attr->ObjectName->Length)
-        return STATUS_ACCESS_VIOLATION;
-
     fileobj.FileName = *attr->ObjectName;
 reparse:
     if (reparse_count++ == 31)
         return STATUS_REPARSE_POINT_NOT_RESOLVED;
     if (!rootdir) /* without root dir fall back to normal lookup */
     {
-        if (!attr->ObjectName->Buffer)
-            return STATUS_OBJECT_PATH_SYNTAX_BAD;
-
         status = nt_to_unix_file_name_no_root( &fileobj, name_ret, disposition );
         if (status == STATUS_REPARSE) goto reparse;
         if (fileobj.FileName.Buffer != attr->ObjectName->Buffer) free( fileobj.FileName.Buffer);

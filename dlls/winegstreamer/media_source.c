@@ -293,6 +293,152 @@ static IMFStreamDescriptor *stream_descriptor_from_id(IMFPresentationDescriptor 
     return NULL;
 }
 
+static HRESULT stream_descriptor_set_tag(IMFStreamDescriptor *descriptor, struct wg_parser_stream *stream,
+    const GUID *attr, enum wg_parser_tag tag)
+{
+    WCHAR *strW;
+    HRESULT hr;
+    DWORD len;
+    char *str;
+
+    if (!(str = wg_parser_stream_get_tag(stream, tag))
+            || !(len = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0)))
+        hr = S_OK;
+    else if (!(strW = malloc(len * sizeof(*strW))))
+        hr = E_OUTOFMEMORY;
+    else
+    {
+        if (MultiByteToWideChar(CP_UTF8, 0, str, -1, strW, len))
+            hr = IMFStreamDescriptor_SetString(descriptor, attr, strW);
+        else
+            hr = E_FAIL;
+        free(strW);
+    }
+
+    free(str);
+    return hr;
+}
+
+static HRESULT init_video_media_types(struct wg_format *format, IMFMediaType *types[6], DWORD *types_count)
+{
+    /* Try to prefer YUV formats over RGB ones. Most decoders output in the
+     * YUV color space, and it's generally much less expensive for
+     * videoconvert to do YUV -> YUV transformations. */
+    static const enum wg_video_format video_formats[] =
+    {
+        WG_VIDEO_FORMAT_NV12,
+        WG_VIDEO_FORMAT_YV12,
+        WG_VIDEO_FORMAT_YUY2,
+        WG_VIDEO_FORMAT_I420,
+    };
+    UINT count = *types_count, i;
+    GUID base_subtype;
+    HRESULT hr;
+
+    if (FAILED(hr = IMFMediaType_GetGUID(types[0], &MF_MT_SUBTYPE, &base_subtype)))
+        return hr;
+
+    for (i = 0; i < ARRAY_SIZE(video_formats); ++i)
+    {
+        struct wg_format new_format = *format;
+        IMFMediaType *new_type;
+
+        new_format.u.video.format = video_formats[i];
+
+        if (!(new_type = mf_media_type_from_wg_format(&new_format)))
+        {
+            hr = E_OUTOFMEMORY;
+            goto done;
+        }
+        types[count++] = new_type;
+
+        if (video_formats[i] == WG_VIDEO_FORMAT_I420)
+        {
+            IMFMediaType *iyuv_type;
+
+            if (FAILED(hr = MFCreateMediaType(&iyuv_type)))
+                goto done;
+            if (FAILED(hr = IMFMediaType_CopyAllItems(new_type, (IMFAttributes *)iyuv_type)))
+                goto done;
+            if (FAILED(hr = IMFMediaType_SetGUID(iyuv_type, &MF_MT_SUBTYPE, &MFVideoFormat_IYUV)))
+                goto done;
+            types[count++] = iyuv_type;
+        }
+    }
+
+done:
+    *types_count = count;
+    return hr;
+}
+
+static HRESULT init_audio_media_types(struct wg_format *format, IMFMediaType *types[6], DWORD *types_count)
+{
+    /* Expose at least one PCM and one floating point type for the
+       consumer to pick from. */
+    static const enum wg_audio_format audio_types[] =
+    {
+        WG_AUDIO_FORMAT_S16LE,
+        WG_AUDIO_FORMAT_F32LE,
+    };
+    UINT count = *types_count, i;
+
+    for (i = 0; i < ARRAY_SIZE(audio_types); i++)
+    {
+        struct wg_format new_format = *format;
+        if (new_format.u.audio.format == audio_types[i])
+            continue;
+        new_format.u.audio.format = audio_types[i];
+        if ((types[count] = mf_media_type_from_wg_format(&new_format)))
+            count++;
+    }
+
+    *types_count = count;
+    return S_OK;
+}
+
+static HRESULT stream_descriptor_create(UINT32 id, struct wg_format *format, IMFStreamDescriptor **out)
+{
+    IMFStreamDescriptor *descriptor;
+    IMFMediaTypeHandler *handler;
+    IMFMediaType *types[6];
+    DWORD count = 0;
+    HRESULT hr;
+
+    if (!(types[0] = mf_media_type_from_wg_format(format)))
+        return MF_E_INVALIDMEDIATYPE;
+    count = 1;
+
+    if (format->major_type == WG_MAJOR_TYPE_VIDEO)
+    {
+        if (FAILED(hr = init_video_media_types(format, types, &count)))
+            goto done;
+    }
+    else if (format->major_type == WG_MAJOR_TYPE_AUDIO)
+    {
+        if (FAILED(hr = init_audio_media_types(format, types, &count)))
+            goto done;
+    }
+
+    assert(count <= ARRAY_SIZE(types));
+
+    if (FAILED(hr = MFCreateStreamDescriptor(id, count, types, &descriptor)))
+        goto done;
+
+    if (FAILED(hr = IMFStreamDescriptor_GetMediaTypeHandler(descriptor, &handler)))
+        IMFStreamDescriptor_Release(descriptor);
+    else
+    {
+        hr = IMFMediaTypeHandler_SetCurrentMediaType(handler, types[0]);
+        IMFMediaTypeHandler_Release(handler);
+    }
+
+done:
+    while (count--)
+        IMFMediaType_Release(types[count]);
+    *out = SUCCEEDED(hr) ? descriptor : NULL;
+    return hr;
+}
+
 static BOOL enqueue_token(struct media_stream *stream, IUnknown *token)
 {
     if (stream->token_queue_count == stream->token_queue_cap)
@@ -854,14 +1000,13 @@ static const IMFMediaStreamVtbl media_stream_vtbl =
     media_stream_RequestSample
 };
 
-static HRESULT media_stream_create(IMFMediaSource *source, DWORD id,
-        struct media_stream **out)
+static HRESULT media_stream_create(IMFMediaSource *source, IMFStreamDescriptor *descriptor,
+        struct wg_parser_stream *wg_stream, struct media_stream **out)
 {
-    struct wg_parser *wg_parser = impl_from_IMFMediaSource(source)->wg_parser;
     struct media_stream *object;
     HRESULT hr;
 
-    TRACE("source %p, id %lu.\n", source, id);
+    TRACE("source %p, descriptor %p, wg_stream %p.\n", source, descriptor, wg_stream);
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
@@ -877,143 +1022,17 @@ static HRESULT media_stream_create(IMFMediaSource *source, DWORD id,
 
     IMFMediaSource_AddRef(source);
     object->media_source = source;
-    object->stream_id = id;
+    IMFStreamDescriptor_AddRef(descriptor);
+    object->descriptor = descriptor;
 
     object->active = TRUE;
     object->eos = FALSE;
-    object->wg_stream = wg_parser_get_stream(wg_parser, id);
+    object->wg_stream = wg_stream;
 
     TRACE("Created stream object %p.\n", object);
 
     *out = object;
     return S_OK;
-}
-
-static HRESULT media_stream_init_desc(struct media_stream *stream)
-{
-    IMFMediaTypeHandler *type_handler = NULL;
-    IMFMediaType *stream_types[6];
-    struct wg_format format;
-    DWORD type_count = 0;
-    unsigned int i;
-    HRESULT hr;
-
-    wg_parser_stream_get_preferred_format(stream->wg_stream, &format);
-
-    if (format.major_type == WG_MAJOR_TYPE_VIDEO)
-    {
-        /* Try to prefer YUV formats over RGB ones. Most decoders output in the
-         * YUV color space, and it's generally much less expensive for
-         * videoconvert to do YUV -> YUV transformations. */
-        static const enum wg_video_format video_formats[] =
-        {
-            WG_VIDEO_FORMAT_NV12,
-            WG_VIDEO_FORMAT_YV12,
-            WG_VIDEO_FORMAT_YUY2,
-            WG_VIDEO_FORMAT_I420,
-        };
-
-        IMFMediaType *base_type = mf_media_type_from_wg_format(&format);
-        GUID base_subtype;
-
-        if (!base_type)
-        {
-            hr = MF_E_INVALIDMEDIATYPE;
-            goto done;
-        }
-
-        IMFMediaType_GetGUID(base_type, &MF_MT_SUBTYPE, &base_subtype);
-
-        stream_types[0] = base_type;
-        type_count = 1;
-
-        for (i = 0; i < ARRAY_SIZE(video_formats); ++i)
-        {
-            struct wg_format new_format = format;
-            IMFMediaType *new_type;
-
-            new_format.u.video.format = video_formats[i];
-
-            if (!(new_type = mf_media_type_from_wg_format(&new_format)))
-            {
-                hr = E_OUTOFMEMORY;
-                goto done;
-            }
-            stream_types[type_count++] = new_type;
-
-            if (video_formats[i] == WG_VIDEO_FORMAT_I420)
-            {
-                IMFMediaType *iyuv_type;
-
-                if (FAILED(hr = MFCreateMediaType(&iyuv_type)))
-                    goto done;
-                if (FAILED(hr = IMFMediaType_CopyAllItems(new_type, (IMFAttributes *)iyuv_type)))
-                    goto done;
-                if (FAILED(hr = IMFMediaType_SetGUID(iyuv_type, &MF_MT_SUBTYPE, &MFVideoFormat_IYUV)))
-                    goto done;
-                stream_types[type_count++] = iyuv_type;
-            }
-        }
-    }
-    else if (format.major_type == WG_MAJOR_TYPE_AUDIO)
-    {
-        /* Expose at least one PCM and one floating point type for the
-           consumer to pick from. */
-        static const enum wg_audio_format audio_types[] =
-        {
-            WG_AUDIO_FORMAT_S16LE,
-            WG_AUDIO_FORMAT_F32LE,
-        };
-
-        if ((stream_types[0] = mf_media_type_from_wg_format(&format)))
-            type_count = 1;
-
-        for (i = 0; i < ARRAY_SIZE(audio_types); i++)
-        {
-            struct wg_format new_format;
-            if (format.u.audio.format == audio_types[i])
-                continue;
-            new_format = format;
-            new_format.u.audio.format = audio_types[i];
-            if ((stream_types[type_count] = mf_media_type_from_wg_format(&new_format)))
-                type_count++;
-        }
-    }
-    else
-    {
-        if ((stream_types[0] = mf_media_type_from_wg_format(&format)))
-            type_count = 1;
-    }
-
-    assert(type_count <= ARRAY_SIZE(stream_types));
-
-    if (!type_count)
-    {
-        ERR("Failed to establish an IMFMediaType from any of the possible stream caps!\n");
-        return E_FAIL;
-    }
-
-    if (FAILED(hr = MFCreateStreamDescriptor(stream->stream_id, type_count, stream_types, &stream->descriptor)))
-        goto done;
-
-    if (FAILED(hr = IMFStreamDescriptor_GetMediaTypeHandler(stream->descriptor, &type_handler)))
-    {
-        IMFStreamDescriptor_Release(stream->descriptor);
-        goto done;
-    }
-
-    if (FAILED(hr = IMFMediaTypeHandler_SetCurrentMediaType(type_handler, stream_types[0])))
-    {
-        IMFStreamDescriptor_Release(stream->descriptor);
-        goto done;
-    }
-
-done:
-    if (type_handler)
-        IMFMediaTypeHandler_Release(type_handler);
-    for (i = 0; i < type_count; i++)
-        IMFMediaType_Release(stream_types[i]);
-    return hr;
 }
 
 static HRESULT WINAPI media_source_get_service_QueryInterface(IMFGetService *iface, REFIID riid, void **obj)
@@ -1476,6 +1495,25 @@ static const IMFMediaSourceVtbl IMFMediaSource_vtbl =
     media_source_Shutdown,
 };
 
+static void media_source_init_descriptors(struct media_source *source)
+{
+    HRESULT hr = S_OK;
+    UINT i;
+
+    for (i = 0; i < source->stream_count; i++)
+    {
+        struct media_stream *stream = source->streams[i];
+        IMFStreamDescriptor *descriptor = stream->descriptor;
+
+        if (FAILED(hr = stream_descriptor_set_tag(descriptor, stream->wg_stream,
+                &MF_SD_LANGUAGE, WG_PARSER_TAG_LANGUAGE)))
+            WARN("Failed to set stream descriptor language, hr %#lx\n", hr);
+        if (FAILED(hr = stream_descriptor_set_tag(descriptor, stream->wg_stream,
+                &MF_SD_STREAM_NAME, WG_PARSER_TAG_NAME)))
+            WARN("Failed to set stream descriptor name, hr %#lx\n", hr);
+    }
+}
+
 static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_source **out_media_source)
 {
     unsigned int stream_count = UINT_MAX;
@@ -1554,62 +1592,28 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
 
     for (i = 0; i < stream_count; ++i)
     {
+        struct wg_parser_stream *wg_stream = wg_parser_get_stream(object->wg_parser, i);
+        IMFStreamDescriptor *descriptor;
         struct media_stream *stream;
+        struct wg_format format;
 
-        if (FAILED(hr = media_stream_create(&object->IMFMediaSource_iface, i, &stream)))
+        wg_parser_stream_get_preferred_format(wg_stream, &format);
+        if (FAILED(hr = stream_descriptor_create(i, &format, &descriptor)))
             goto fail;
-        if (FAILED(hr = media_stream_init_desc(stream)))
+        if (FAILED(hr = media_stream_create(&object->IMFMediaSource_iface, descriptor, wg_stream, &stream)))
         {
-            ERR("Failed to finish initialization of media stream %p, hr %#lx.\n", stream, hr);
-            IMFMediaSource_Release(stream->media_source);
-            IMFMediaEventQueue_Release(stream->event_queue);
-            free(stream);
+            IMFStreamDescriptor_Release(descriptor);
             goto fail;
         }
 
-        object->duration = max(object->duration, wg_parser_stream_get_duration(stream->wg_stream));
-        IMFStreamDescriptor_AddRef(stream->descriptor);
-        object->descriptors[i] = stream->descriptor;
+        object->duration = max(object->duration, wg_parser_stream_get_duration(wg_stream));
+        IMFStreamDescriptor_AddRef(descriptor);
+        object->descriptors[i] = descriptor;
         object->streams[i] = stream;
         object->stream_count++;
     }
 
-    /* init presentation descriptor */
-
-    for (i = 0; i < object->stream_count; i++)
-    {
-        static const struct
-        {
-            enum wg_parser_tag tag;
-            const GUID *mf_attr;
-        }
-        tags[] =
-        {
-            {WG_PARSER_TAG_LANGUAGE, &MF_SD_LANGUAGE},
-            {WG_PARSER_TAG_NAME, &MF_SD_STREAM_NAME},
-        };
-        unsigned int j;
-        WCHAR *strW;
-        DWORD len;
-        char *str;
-
-        for (j = 0; j < ARRAY_SIZE(tags); ++j)
-        {
-            if (!(str = wg_parser_stream_get_tag(object->streams[i]->wg_stream, tags[j].tag)))
-                continue;
-            if (!(len = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0)))
-            {
-                free(str);
-                continue;
-            }
-            strW = malloc(len * sizeof(*strW));
-            if (MultiByteToWideChar(CP_UTF8, 0, str, -1, strW, len))
-                IMFStreamDescriptor_SetString(object->descriptors[i], tags[j].mf_attr, strW);
-            free(strW);
-            free(str);
-        }
-    }
-
+    media_source_init_descriptors(object);
     object->state = SOURCE_STOPPED;
 
     *out_media_source = object;

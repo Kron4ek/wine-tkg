@@ -43,7 +43,7 @@ static void init_dialog( HWND dialog )
 
     updating_ui = TRUE;
 
-    buffer = get_reg_key( config_key, keypath( L"X11 Driver" ), L"GrabFullscreen", L"Y" );
+    buffer = get_reg_key( config_key, keypath( L"X11 Driver" ), L"GrabFullscreen", L"N" );
     if (IS_OPTION_TRUE( *buffer )) CheckDlgButton( dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED );
     else CheckDlgButton( dialog, IDC_FULLSCREEN_GRAB, BST_UNCHECKED );
     free( buffer );

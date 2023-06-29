@@ -135,12 +135,12 @@ static HRESULT WINAPI HTMLDOMChildrenCollectionEnum_Next(IEnumVARIANT *iface, UL
         hres = get_node(nsnode, TRUE, &node);
         nsIDOMNode_Release(nsnode);
         if(FAILED(hres)) {
-            ERR("get_node failed: %08lx\n", hres);
-            break;
+            while(fetched--)
+                VariantClear(rgVar+fetched);
+            return hres;
         }
 
         V_VT(rgVar+fetched) = VT_DISPATCH;
-        IHTMLDOMNode_AddRef(&node->IHTMLDOMNode_iface);
         V_DISPATCH(rgVar+fetched) = (IDispatch*)&node->IHTMLDOMNode_iface;
         fetched++;
     }
@@ -338,6 +338,7 @@ static HRESULT WINAPI HTMLDOMChildrenCollection_item(IHTMLDOMChildrenCollection 
     }
 
     hres = get_node(nsnode, TRUE, &node);
+    nsIDOMNode_Release(nsnode);
     if(FAILED(hres))
         return hres;
 

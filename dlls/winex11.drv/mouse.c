@@ -126,9 +126,6 @@ static const UINT button_up_data[NB_BUTTONS] =
 
 XContext cursor_context = 0;
 
-static RECT last_clip_rect;
-static HWND last_clip_foreground_window;
-static BOOL last_clip_refused;
 static RECT clip_rect;
 static Cursor create_cursor( HANDLE handle );
 
@@ -472,59 +469,45 @@ void x11drv_xinput_disable( Display *display, Window window, long event_mask )
 static BOOL grab_clipping_window( const RECT *clip )
 {
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
-    static const WCHAR messageW[] = {'M','e','s','s','a','g','e',0};
     struct x11drv_thread_data *data = x11drv_thread_data();
-    UNICODE_STRING class_name = RTL_CONSTANT_STRING( messageW );
     Window clip_window;
-    HWND msg_hwnd = 0;
     HCURSOR cursor;
     POINT pos;
 
-    if (NtUserGetWindowThread( NtUserGetDesktopWindow(), NULL ) == GetCurrentThreadId())
-        return TRUE;  /* don't clip in the desktop process */
+    /* don't clip in the desktop process */
+    if (NtUserGetWindowThread( NtUserGetDesktopWindow(), NULL ) == GetCurrentThreadId()) return TRUE;
+    /* don't clip the cursor if the X input focus is on another process window */
+    if (!is_current_process_focused()) return TRUE;
 
     if (!data) return FALSE;
     if (!(clip_window = init_clip_window())) return TRUE;
 
-    if (!(msg_hwnd = NtUserCreateWindowEx( 0, &class_name, &class_name, NULL, 0, 0, 0, 0, 0,
-                                           HWND_MESSAGE, 0, NtCurrentTeb()->Peb->ImageBaseAddress,
-                                           NULL, 0, NULL, 0, FALSE )))
-        return TRUE;
-
     if (keyboard_grabbed)
     {
         WARN( "refusing to clip to %s\n", wine_dbgstr_rect(clip) );
-        last_clip_refused = TRUE;
-        last_clip_foreground_window = NtUserGetForegroundWindow();
-        last_clip_rect = *clip;
         return FALSE;
-    }
-    else
-    {
-        last_clip_refused = FALSE;
     }
 
     /* enable XInput2 unless we are already clipping */
-    if (!data->clip_hwnd) x11drv_xinput_enable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
+    if (!data->clipping_cursor) x11drv_xinput_enable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
 
     if (data->xi2_state != xi_enabled)
     {
         WARN( "XInput2 not supported, refusing to clip to %s\n", wine_dbgstr_rect(clip) );
-        NtUserDestroyWindow( msg_hwnd );
         NtUserClipCursor( NULL );
         return TRUE;
     }
 
     TRACE( "clipping to %s win %lx\n", wine_dbgstr_rect(clip), clip_window );
 
-    if (!data->clip_hwnd) XUnmapWindow( data->display, clip_window );
+    if (!data->clipping_cursor) XUnmapWindow( data->display, clip_window );
     pos = virtual_screen_to_root( clip->left, clip->top );
     XMoveResizeWindow( data->display, clip_window, pos.x, pos.y,
                        max( 1, clip->right - clip->left ), max( 1, clip->bottom - clip->top ) );
     XMapWindow( data->display, clip_window );
 
     /* if the rectangle is shrinking we may get a pointer warp */
-    if (!data->clip_hwnd || clip->left > clip_rect.left || clip->top > clip_rect.top ||
+    if (!data->clipping_cursor || clip->left > clip_rect.left || clip->top > clip_rect.top ||
         clip->right < clip_rect.right || clip->bottom < clip_rect.bottom)
         data->warp_serial = NextRequest( data->display );
 
@@ -547,11 +530,10 @@ static BOOL grab_clipping_window( const RECT *clip )
     if (!clipping_cursor)
     {
         x11drv_xinput_disable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
-        NtUserDestroyWindow( msg_hwnd );
         return FALSE;
     }
     clip_rect = *clip;
-    data->clip_hwnd = msg_hwnd;
+    data->clipping_cursor = TRUE;
     return TRUE;
 #else
     WARN( "XInput2 was not available at compile time\n" );
@@ -564,7 +546,7 @@ static BOOL grab_clipping_window( const RECT *clip )
  *
  * Release the pointer grab on the clip window.
  */
-static void ungrab_clipping_window(void)
+void ungrab_clipping_window(void)
 {
     struct x11drv_thread_data *data = x11drv_init_thread_data();
     Window clip_window = init_clip_window();
@@ -575,22 +557,19 @@ static void ungrab_clipping_window(void)
     XUnmapWindow( data->display, clip_window );
     if (clipping_cursor) XUngrabPointer( data->display, CurrentTime );
     clipping_cursor = FALSE;
-    NtUserDestroyWindow( data->clip_hwnd );
-    data->clip_hwnd = 0;
+    data->clipping_cursor = FALSE;
 }
 
 /***********************************************************************
  *      retry_grab_clipping_window
  *
- * Restore the current clip rectangle or retry the last one if it has
- * been refused because of an active keyboard grab.
+ * Restore the current clip rectangle.
  */
 void retry_grab_clipping_window(void)
 {
-    if (clipping_cursor)
-        NtUserClipCursor( &clip_rect );
-    else if (last_clip_refused && NtUserGetForegroundWindow() == last_clip_foreground_window)
-        NtUserClipCursor( &last_clip_rect );
+    RECT rect;
+    NtUserGetClipCursor( &rect );
+    NtUserClipCursor( &rect );
 }
 
 
@@ -625,7 +604,7 @@ static void map_event_coords( HWND hwnd, Window window, Window event_root, int x
     if (!hwnd)
     {
         thread_data = x11drv_thread_data();
-        if (!thread_data->clip_hwnd) return;
+        if (!thread_data->clipping_cursor) return;
         if (thread_data->clip_window != window) return;
         pt.x += clip_rect.left;
         pt.y += clip_rect.top;
@@ -663,18 +642,14 @@ static void map_event_coords( HWND hwnd, Window window, Window event_root, int x
 static void send_mouse_input( HWND hwnd, Window window, unsigned int state, INPUT *input )
 {
     struct x11drv_win_data *data;
-    RAWINPUT rawinput;
 
     input->type = INPUT_MOUSE;
 
     if (!hwnd)
     {
         struct x11drv_thread_data *thread_data = x11drv_thread_data();
-        HWND clip_hwnd = thread_data->clip_hwnd;
-
-        if (!clip_hwnd) return;
-        if (thread_data->clip_window != window) return;
-         __wine_send_input( hwnd, input, NULL );
+        if (!thread_data->clipping_cursor || thread_data->clip_window != window) return;
+        __wine_send_input( hwnd, input, NULL );
         return;
     }
 
@@ -1756,8 +1731,6 @@ BOOL X11DRV_EnterNotify( HWND hwnd, XEvent *xev )
     INPUT input;
 
     TRACE( "hwnd %p/%lx pos %d,%d detail %d\n", hwnd, event->window, event->x, event->y, event->detail );
-
-    x11drv_thread_data()->keymapnotify_hwnd = hwnd;
 
     if (hwnd == x11drv_thread_data()->grab_hwnd) return FALSE;
 

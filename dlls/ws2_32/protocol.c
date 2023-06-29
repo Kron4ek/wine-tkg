@@ -167,13 +167,6 @@ int WINAPI getaddrinfo( const char *node, const char *service,
         return WSAHOST_NOT_FOUND;
     }
 
-    if (node && !strcmp(node, "download-alt.easyanticheat.net"))
-    {
-        ERR("HACK: failing download-alt.easyanticheat.net resolution.\n");
-        SetLastError(WSAHOST_NOT_FOUND);
-        return WSAHOST_NOT_FOUND;
-    }
-
     if (node)
     {
         if (!node[0])

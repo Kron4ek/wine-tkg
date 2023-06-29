@@ -44,12 +44,9 @@ BOOL is_virtual_desktop(void)
 {
     HANDLE desktop = NtUserGetThreadDesktop( GetCurrentThreadId() );
     USEROBJECTFLAGS flags = {0};
-    NTSTATUS status;
     DWORD len;
 
-    status = NtUserGetObjectInformation( desktop, UOI_FLAGS, &flags, sizeof(flags), &len );
-    if (status) return FALSE;
-
+    if (!NtUserGetObjectInformation( desktop, UOI_FLAGS, &flags, sizeof(flags), &len )) return FALSE;
     return !!(flags.dwFlags & DF_WINE_CREATE_DESKTOP);
 }
 
@@ -186,6 +183,8 @@ HDESK WINAPI NtUserCreateDesktopEx( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *dev
         return 0;
     }
 
+    /* force update display cache to use virtual desktop display settings */
+    if (flags & DF_WINE_CREATE_DESKTOP) update_display_cache( TRUE );
     return ret;
 }
 

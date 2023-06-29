@@ -21,6 +21,7 @@
 #include "uiautomation.h"
 #include "uia_classes.h"
 #include "wine/list.h"
+#include "wine/rbtree.h"
 #include "wine/heap.h"
 
 extern HMODULE huia_module DECLSPEC_HIDDEN;
@@ -93,6 +94,11 @@ static inline struct uia_provider *impl_from_IWineUiaProvider(IWineUiaProvider *
     return CONTAINING_RECORD(iface, struct uia_provider, IWineUiaProvider_iface);
 }
 
+enum uia_event_type {
+    EVENT_TYPE_CLIENTSIDE,
+    EVENT_TYPE_SERVERSIDE,
+};
+
 struct uia_event
 {
     IWineUiaEvent IWineUiaEvent_iface;
@@ -111,8 +117,34 @@ struct uia_event
     struct uia_event_map_entry *event_map_entry;
     LONG event_defunct;
 
-    struct UiaCacheRequest cache_req;
-    UiaEventCallback *cback;
+    LONG event_cookie;
+    int event_type;
+    union
+    {
+        struct {
+            struct UiaCacheRequest cache_req;
+            UiaEventCallback *cback;
+
+            /*
+             * This is temporarily used to keep the MTA alive prior to our
+             * introduction of a dedicated event thread.
+             */
+            CO_MTA_USAGE_COOKIE mta_cookie;
+            DWORD git_cookie;
+        } clientside;
+        struct {
+            /*
+             * Similar to the client MTA cookie, used to keep the provider
+             * thread alive as a temporary measure before introducing the
+             * event thread.
+             */
+            IWineUiaNode *node;
+
+            IWineUiaEvent *event_iface;
+            struct rb_entry serverside_event_entry;
+            LONG proc_id;
+        } serverside;
+     } u;
 };
 
 static inline void variant_init_bool(VARIANT *v, BOOL val)
@@ -170,8 +202,10 @@ BOOL uia_condition_matched(HRESULT hr) DECLSPEC_HIDDEN;
 HRESULT create_uia_iface(IUnknown **iface, BOOL is_cui8) DECLSPEC_HIDDEN;
 
 /* uia_event.c */
+HRESULT create_serverside_uia_event(struct uia_event **out_event, LONG process_id, LONG event_cookie) DECLSPEC_HIDDEN;
 HRESULT uia_event_add_provider_event_adviser(IRawElementProviderAdviseEvents *advise_events,
         struct uia_event *event) DECLSPEC_HIDDEN;
+HRESULT uia_event_add_serverside_event_adviser(IWineUiaEvent *serverside_event, struct uia_event *event) DECLSPEC_HIDDEN;
 
 /* uia_ids.c */
 const struct uia_prop_info *uia_prop_info_from_id(PROPERTYID prop_id) DECLSPEC_HIDDEN;

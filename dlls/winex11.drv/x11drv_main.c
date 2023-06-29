@@ -74,11 +74,11 @@ BOOL usexrandr = TRUE;
 BOOL usexcomposite = TRUE;
 BOOL use_xfixes = FALSE;
 BOOL use_xpresent = FALSE;
-BOOL use_take_focus = FALSE;
+BOOL use_take_focus = TRUE;
 BOOL use_primary_selection = FALSE;
 BOOL use_system_cursors = TRUE;
 BOOL show_systray = TRUE;
-BOOL grab_fullscreen = TRUE;
+BOOL grab_fullscreen = FALSE;
 int keyboard_layout = -1;
 BOOL keyboard_scancode_detect = FALSE;
 BOOL managed_mode = TRUE;
@@ -94,7 +94,6 @@ int xrender_error_base = 0;
 int xfixes_event_base = 0;
 char *process_name = NULL;
 WNDPROC client_foreign_window_proc = NULL;
-BOOL vulkan_gdi_blit_source_hack = FALSE;
 
 static x11drv_error_callback err_callback;   /* current callback for error */
 static Display *err_callback_display;        /* display callback is set for */
@@ -915,16 +914,6 @@ static NTSTATUS x11drv_init( void *arg )
     X11DRV_InitKeyboard( gdi_display );
     X11DRV_InitMouse( gdi_display );
     if (use_xim) use_xim = xim_init( input_style );
-
-    {
-        const char *sgi = getenv("SteamGameId");
-        const char *e = getenv("WINE_VK_GDI_BLIT_SOURCE_HACK");
-        vulkan_gdi_blit_source_hack =
-            (sgi && (
-                !strcmp(sgi, "803600") /* Disgaea 5 Complete     */
-            )) ||
-            (e && *e != '\0' && *e != '0');
-    }
 
     init_user_driver();
     X11DRV_DisplayDevices_Init(FALSE);

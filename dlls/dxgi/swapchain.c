@@ -221,7 +221,7 @@ static ULONG STDMETHODCALLTYPE d3d11_swapchain_AddRef(IDXGISwapChain1 *iface)
     return refcount;
 }
 
-static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_Release(IDXGISwapChain1 *iface)
+static ULONG STDMETHODCALLTYPE d3d11_swapchain_Release(IDXGISwapChain1 *iface)
 {
     struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
     ULONG refcount = InterlockedDecrement(&swapchain->refcount);
@@ -314,7 +314,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDevice(IDXGISwapChain1 *ifac
 
 /* IDXGISwapChain1 methods */
 
-static HRESULT DECLSPEC_HOTPATCH d3d11_swapchain_present(struct d3d11_swapchain *swapchain,
+static HRESULT d3d11_swapchain_present(struct d3d11_swapchain *swapchain,
         unsigned int sync_interval, unsigned int flags)
 {
     HRESULT hr;
@@ -710,7 +710,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetCoreWindow(IDXGISwapChain1 *
     return DXGI_ERROR_INVALID_CALL;
 }
 
-static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_Present1(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_Present1(IDXGISwapChain1 *iface,
         UINT sync_interval, UINT flags, const DXGI_PRESENT_PARAMETERS *present_parameters)
 {
     struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
@@ -1271,9 +1271,6 @@ static HRESULT d3d12_swapchain_create_user_buffers(struct d3d12_swapchain *swapc
     VkResult vr;
     HRESULT hr;
 
-    if (swapchain->vk_images[0])
-        return S_OK;
-
     memset(&image_info, 0, sizeof(image_info));
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image_info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
@@ -1456,8 +1453,7 @@ static VkResult d3d12_swapchain_record_swapchain_blit(struct d3d12_swapchain *sw
     return vr;
 }
 
-static HRESULT d3d12_swapchain_create_command_buffers(struct d3d12_swapchain *swapchain,
-        uint32_t queue_family_index)
+static HRESULT d3d12_swapchain_create_command_buffers(struct d3d12_swapchain *swapchain)
 {
     const struct dxgi_vk_funcs *vk_funcs = &swapchain->vk_funcs;
     VkDevice vk_device = swapchain->vk_device;
@@ -1470,7 +1466,7 @@ static HRESULT d3d12_swapchain_create_command_buffers(struct d3d12_swapchain *sw
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_info.pNext = NULL;
     pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    pool_info.queueFamilyIndex = queue_family_index;
+    pool_info.queueFamilyIndex = vkd3d_get_vk_queue_family_index(swapchain->command_queue);
 
     assert(swapchain->vk_cmd_pool == VK_NULL_HANDLE);
     if ((vr = vk_funcs->p_vkCreateCommandPool(vk_device, &pool_info,
@@ -1520,9 +1516,6 @@ static HRESULT d3d12_swapchain_create_image_resources(struct d3d12_swapchain *sw
     unsigned int i;
     HRESULT hr;
 
-    if (swapchain->buffers[0])
-        return S_OK;
-
     resource_info.type = VKD3D_STRUCTURE_TYPE_IMAGE_RESOURCE_CREATE_INFO;
     resource_info.next = NULL;
     resource_info.desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -1541,6 +1534,9 @@ static HRESULT d3d12_swapchain_create_image_resources(struct d3d12_swapchain *sw
 
     for (i = 0; i < swapchain->desc.BufferCount; ++i)
     {
+        assert(swapchain->vk_images[i]);
+        assert(!swapchain->buffers[i]);
+
         resource_info.vk_image = swapchain->vk_images[i];
 
         if (FAILED(hr = vkd3d_create_image_resource(device, &resource_info, &swapchain->buffers[i])))
@@ -1554,23 +1550,6 @@ static HRESULT d3d12_swapchain_create_image_resources(struct d3d12_swapchain *sw
     }
 
     return S_OK;
-}
-
-static HRESULT d3d12_swapchain_create_buffers(struct d3d12_swapchain *swapchain)
-{
-    ID3D12CommandQueue *queue = swapchain->command_queue;
-    uint32_t queue_family_index;
-    HRESULT hr;
-
-    queue_family_index = vkd3d_get_vk_queue_family_index(queue);
-
-    if (FAILED(hr = d3d12_swapchain_create_user_buffers(swapchain)))
-        return hr;
-
-    if (FAILED(hr = d3d12_swapchain_create_command_buffers(swapchain, queue_family_index)))
-        return hr;
-
-    return d3d12_swapchain_create_image_resources(swapchain);
 }
 
 static VkResult d3d12_swapchain_acquire_next_vulkan_image(struct d3d12_swapchain *swapchain)
@@ -1600,7 +1579,7 @@ static VkResult d3d12_swapchain_acquire_next_vulkan_image(struct d3d12_swapchain
     return vr;
 }
 
-static void d3d12_swapchain_destroy_buffers(struct d3d12_swapchain *swapchain, BOOL destroy_user_buffers)
+static void d3d12_swapchain_destroy_vulkan_resources(struct d3d12_swapchain *swapchain)
 {
     const struct dxgi_vk_funcs *vk_funcs = &swapchain->vk_funcs;
     VkQueue vk_queue;
@@ -1620,20 +1599,6 @@ static void d3d12_swapchain_destroy_buffers(struct d3d12_swapchain *swapchain, B
         }
     }
 
-    for (i = 0; i < swapchain->desc.BufferCount; ++i)
-    {
-        if (swapchain->buffers[i] && (destroy_user_buffers || !swapchain->vk_images[0]))
-        {
-            vkd3d_resource_decref(swapchain->buffers[i]);
-            swapchain->buffers[i] = NULL;
-        }
-        if (swapchain->vk_device && destroy_user_buffers)
-        {
-            vk_funcs->p_vkDestroyImage(swapchain->vk_device, swapchain->vk_images[i], NULL);
-            swapchain->vk_images[i] = VK_NULL_HANDLE;
-        }
-    }
-
     if (swapchain->vk_device)
     {
         for (i = 0; i < swapchain->buffer_count; ++i)
@@ -1641,13 +1606,34 @@ static void d3d12_swapchain_destroy_buffers(struct d3d12_swapchain *swapchain, B
             vk_funcs->p_vkDestroySemaphore(swapchain->vk_device, swapchain->vk_semaphores[i], NULL);
             swapchain->vk_semaphores[i] = VK_NULL_HANDLE;
         }
-        if (destroy_user_buffers)
+
+        vk_funcs->p_vkDestroyCommandPool(swapchain->vk_device, swapchain->vk_cmd_pool, NULL);
+        swapchain->vk_cmd_pool = VK_NULL_HANDLE;
+    }
+}
+
+static void d3d12_swapchain_destroy_resources(struct d3d12_swapchain *swapchain)
+{
+    const struct dxgi_vk_funcs *vk_funcs = &swapchain->vk_funcs;
+    unsigned int i;
+
+    d3d12_swapchain_destroy_vulkan_resources(swapchain);
+
+    for (i = 0; i < swapchain->desc.BufferCount; ++i)
+    {
+        if (swapchain->buffers[i])
         {
+            vkd3d_resource_decref(swapchain->buffers[i]);
+            swapchain->buffers[i] = NULL;
+        }
+        if (swapchain->vk_device)
+        {
+            vk_funcs->p_vkDestroyImage(swapchain->vk_device, swapchain->vk_images[i], NULL);
+            swapchain->vk_images[i] = VK_NULL_HANDLE;
+
             vk_funcs->p_vkFreeMemory(swapchain->vk_device, swapchain->vk_memory, NULL);
             swapchain->vk_memory = VK_NULL_HANDLE;
         }
-        vk_funcs->p_vkDestroyCommandPool(swapchain->vk_device, swapchain->vk_cmd_pool, NULL);
-        swapchain->vk_cmd_pool = VK_NULL_HANDLE;
     }
 }
 
@@ -1777,6 +1763,16 @@ static HRESULT d3d12_swapchain_create_vulkan_swapchain(struct d3d12_swapchain *s
     return S_OK;
 }
 
+static HRESULT d3d12_swapchain_create_vulkan_resources(struct d3d12_swapchain *swapchain)
+{
+    HRESULT hr;
+
+    if (FAILED(hr = d3d12_swapchain_create_vulkan_swapchain(swapchain)))
+        return hr;
+
+    return d3d12_swapchain_create_command_buffers(swapchain);
+}
+
 static HRESULT d3d12_swapchain_create_resources(struct d3d12_swapchain *swapchain)
 {
     HRESULT hr;
@@ -1787,10 +1783,13 @@ static HRESULT d3d12_swapchain_create_resources(struct d3d12_swapchain *swapchai
         return DXGI_ERROR_INVALID_CALL;
     }
 
-    if (FAILED(hr = d3d12_swapchain_create_vulkan_swapchain(swapchain)))
+    if (FAILED(hr = d3d12_swapchain_create_user_buffers(swapchain)))
         return hr;
 
-    return d3d12_swapchain_create_buffers(swapchain);
+    if (FAILED(hr = d3d12_swapchain_create_image_resources(swapchain)))
+        return hr;
+
+    return d3d12_swapchain_create_vulkan_resources(swapchain);
 }
 
 static inline struct d3d12_swapchain *d3d12_swapchain_from_IDXGISwapChain4(IDXGISwapChain4 *iface)
@@ -1839,7 +1838,7 @@ static void d3d12_swapchain_destroy(struct d3d12_swapchain *swapchain)
     const struct dxgi_vk_funcs *vk_funcs = &swapchain->vk_funcs;
     void *vulkan_module = vk_funcs->vulkan_module;
 
-    d3d12_swapchain_destroy_buffers(swapchain, TRUE);
+    d3d12_swapchain_destroy_resources(swapchain);
 
     if (swapchain->frame_latency_event)
         CloseHandle(swapchain->frame_latency_event);
@@ -1974,9 +1973,9 @@ static HRESULT d3d12_swapchain_set_sync_interval(struct d3d12_swapchain *swapcha
         return S_OK;
     }
 
-    d3d12_swapchain_destroy_buffers(swapchain, FALSE);
+    d3d12_swapchain_destroy_vulkan_resources(swapchain);
     swapchain->present_mode = present_mode;
-    return d3d12_swapchain_create_resources(swapchain);
+    return d3d12_swapchain_create_vulkan_resources(swapchain);
 }
 
 static VkResult d3d12_swapchain_queue_present(struct d3d12_swapchain *swapchain, VkQueue vk_queue)
@@ -2082,8 +2081,8 @@ static HRESULT d3d12_swapchain_present(struct d3d12_swapchain *swapchain,
 
         TRACE("Recreating Vulkan swapchain.\n");
 
-        d3d12_swapchain_destroy_buffers(swapchain, FALSE);
-        if (FAILED(hr = d3d12_swapchain_create_resources(swapchain)))
+        d3d12_swapchain_destroy_vulkan_resources(swapchain);
+        if (FAILED(hr = d3d12_swapchain_create_vulkan_resources(swapchain)))
             return hr;
 
         if (!(vk_queue = vkd3d_acquire_vk_queue(swapchain->command_queue)))
@@ -2360,7 +2359,7 @@ static HRESULT d3d12_swapchain_resize_buffers(struct d3d12_swapchain *swapchain,
             && desc->Format == new_desc.Format && desc->BufferCount == new_desc.BufferCount)
         return S_OK;
 
-    d3d12_swapchain_destroy_buffers(swapchain, TRUE);
+    d3d12_swapchain_destroy_resources(swapchain);
     swapchain->desc = new_desc;
     return d3d12_swapchain_create_resources(swapchain);
 }

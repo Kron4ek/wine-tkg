@@ -650,6 +650,7 @@ AC_SUBST(TOP_INSTALL_LIB,"")
 AC_SUBST(TOP_INSTALL_DEV,"")
 AC_SUBST(WINELOADER_LDFLAGS,"")
 AC_SUBST(WINEPRELOADER_LDFLAGS,"")
+AC_SUBST(DLLEXT,".so")
 LIBEXT="so"
 WINE_PATH_SONAME_TOOLS
 WINE_CONFIG_HELPERS
@@ -657,6 +658,7 @@ WINE_CONFIG_HELPERS
 case $host_os in
   cygwin*|mingw32*)
     LIBEXT="dll"
+    DLLEXT=""
     EXTRACFLAGS="-D__WINE_PE_BUILD"
     dnl Disable stdcall fixups to catch prototype mismatches
     case $host_cpu in
@@ -774,26 +776,33 @@ case $host_os in
 
     WINE_TRY_CFLAGS([-Wl,-z,defs],[UNIXLDFLAGS="$UNIXLDFLAGS -Wl,-z,defs"])
     WINE_TRY_CFLAGS([-Wl,--export-dynamic],[WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
-    WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"
+    WINEPRELOADER_LDFLAGS="-nostartfiles -nodefaultlibs"
 
-    case $host_cpu in
-      *i[[3456789]]86* | arm*)
-        WINE_TRY_CFLAGS([-Wl,-Ttext-segment=0x7bc00000],
-                        [case $host_os in
-                         freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-Ttext-segment=0x60000000" ;;
-                         *) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-Ttext-segment=0x7d000000" ;;
-                         esac],
-                        [WINE_TRY_CFLAGS([-Wl,--section-start,.interp=0x7d000400],
-                                         [case $host_os in
-                                            freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,--section-start,.interp=0x60000400" ;;
-                                            *) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,--section-start,.interp=0x7d000400" ;;
-                                         esac])])
-        WINE_TRY_CFLAGS([-Wl,-z,max-page-size=0x1000],
-                        [WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-z,max-page-size=0x1000"])
+    case $host_os in
+      linux*)
+        AS_VAR_APPEND([WINELOADER_LDFLAGS],[" -pie"])
+        case $HOST_ARCH in
+          i386|arm)
+            AS_VAR_APPEND([WINEPRELOADER_LDFLAGS],[" -static -Wl,-Ttext=0x7d400000"]) ;;
+          *)
+            WINE_TRY_CFLAGS([-static-pie],
+                            [AS_VAR_APPEND([WINEPRELOADER_LDFLAGS],[" -static-pie"])],
+                            [AS_VAR_APPEND([WINEPRELOADER_LDFLAGS],[" -static -Wl,-Ttext=0x7d7d00000000"])])
+            ;;
+        esac
         ;;
       *)
-        WINE_TRY_CFLAGS([-Wl,-pie],
-                        [WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-pie"])
+        case $HOST_ARCH in
+          i386|arm)
+            WINE_TRY_CFLAGS([-Wl,-Ttext-segment=0x60000000],
+                            [AS_VAR_APPEND([WINELOADER_LDFLAGS],[" -Wl,-Ttext-segment=0x60000000"])],
+                            [WINE_TRY_CFLAGS([-Wl,--section-start,.interp=0x60000400],
+                                [AS_VAR_APPEND([WINELOADER_LDFLAGS],[" -Wl,--section-start,.interp=0x60000400"])])])
+            ;;
+          *)
+            AS_VAR_APPEND([WINELOADER_LDFLAGS],[" -pie"])
+            ;;
+        esac
         ;;
     esac
     ;;
@@ -958,7 +967,8 @@ do
                                [AS_VAR_APPEND([${wine_arch}_LDFLAGS],[" -Wl,--disable-stdcall-fixup"])]) ;;
       x86_64) WINE_TRY_PE_CFLAGS([-Wformat-overflow])
               WINE_TRY_PE_CFLAGS([-Wnonnull])
-              WINE_TRY_PE_CFLAGS([-mcx16]) ;;
+              WINE_TRY_PE_CFLAGS([-mcx16])
+              WINE_TRY_PE_CFLAGS([-mcmodel=small]) ;;
     esac
 
     dnl Determine debug info format
@@ -999,13 +1009,14 @@ do
     LDFLAGS=$saved_LDFLAGS
 done
 
-if test $HOST_ARCH = aarch64 -a "x$PE_ARCHS" = x
+if test $HOST_ARCH = aarch64
 then
-    AC_MSG_ERROR([PE cross-compilation is required for ARM64, please install clang/llvm-dlltool/lld, or llvm-mingw.])
-fi
-
-WINE_NOTICE_WITH(mingw,[test "x$PE_ARCHS" = "x"],
+    test "x$PE_ARCHS" != x || AC_MSG_ERROR([PE cross-compilation is required for ARM64, please install clang/llvm-dlltool/lld, or llvm-mingw.])
+    DLLEXT=""
+else
+    WINE_NOTICE_WITH(mingw,[test "x$PE_ARCHS" = "x"],
                  [MinGW compiler not found, cross-compiling PE files won't be supported.])
+fi
 
 dnl **** External libraries ****
 
@@ -1937,6 +1948,7 @@ char*f(const char *h,char n) {return strchr(h,n);}]])],[ac_cv_c_logicalop_noisy=
     *) MSVCRTFLAGS="-D_WIN32"
        WINE_TRY_CFLAGS([-fno-builtin],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-builtin"])
        WINE_TRY_CFLAGS([-fshort-wchar],[MSVCRTFLAGS="$MSVCRTFLAGS -fshort-wchar"])
+       WINE_TRY_CFLAGS([-fvisibility=hidden],[MSVCRTFLAGS="$MSVCRTFLAGS -fvisibility=hidden"])
        WINE_TRY_CFLAGS([-Wno-format],[MSVCRTFLAGS="$MSVCRTFLAGS -Wno-format"]) ;;
   esac
 
@@ -2417,7 +2429,6 @@ WINE_CONFIG_MAKEFILE(dlls/atl90)
 WINE_CONFIG_MAKEFILE(dlls/atlthunk)
 WINE_CONFIG_MAKEFILE(dlls/atlthunk/tests)
 WINE_CONFIG_MAKEFILE(dlls/atmlib)
-WINE_CONFIG_MAKEFILE(dlls/audioses)
 WINE_CONFIG_MAKEFILE(dlls/authz)
 WINE_CONFIG_MAKEFILE(dlls/avicap32)
 WINE_CONFIG_MAKEFILE(dlls/avifil32)
@@ -3383,7 +3394,6 @@ WINE_CONFIG_MAKEFILE(programs/control)
 WINE_CONFIG_MAKEFILE(programs/cscript)
 WINE_CONFIG_MAKEFILE(programs/dism)
 WINE_CONFIG_MAKEFILE(programs/dllhost)
-WINE_CONFIG_MAKEFILE(programs/dotnetfx35)
 WINE_CONFIG_MAKEFILE(programs/dplaysvr)
 WINE_CONFIG_MAKEFILE(programs/dpnsvr)
 WINE_CONFIG_MAKEFILE(programs/dpvsetup)
@@ -3654,7 +3664,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-8.10.r4.gdb6b4795\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-8.11.r0.gfcff74d6\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

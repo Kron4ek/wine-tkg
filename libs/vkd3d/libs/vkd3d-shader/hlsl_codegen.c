@@ -1649,7 +1649,7 @@ static bool copy_propagation_transform_block(struct hlsl_ctx *ctx, struct hlsl_b
     return progress;
 }
 
-static bool copy_propagation_execute(struct hlsl_ctx *ctx, struct hlsl_block *block)
+bool hlsl_copy_propagation_execute(struct hlsl_ctx *ctx, struct hlsl_block *block)
 {
     struct copy_propagation_state state;
     bool progress;
@@ -2698,7 +2698,7 @@ static void allocate_register_reservations(struct hlsl_ctx *ctx)
             continue;
         regset = hlsl_type_get_regset(var->data_type);
 
-        if (var->reg_reservation.reg_type)
+        if (var->reg_reservation.reg_type && var->regs[regset].bind_count)
         {
             if (var->reg_reservation.reg_type != get_regset_name(regset))
             {
@@ -2714,7 +2714,6 @@ static void allocate_register_reservations(struct hlsl_ctx *ctx)
             {
                 var->regs[regset].allocated = true;
                 var->regs[regset].id = var->reg_reservation.reg_index;
-                var->regs[regset].bind_count = var->data_type->reg_size[regset];
                 TRACE("Allocated reserved %s to %c%u-%c%u.\n", var->name, var->reg_reservation.reg_type,
                         var->reg_reservation.reg_index, var->reg_reservation.reg_type,
                         var->reg_reservation.reg_index + var->regs[regset].bind_count);
@@ -3626,11 +3625,23 @@ static const struct hlsl_ir_var *get_allocated_object(struct hlsl_ctx *ctx, enum
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, const struct hlsl_ir_var, extern_entry)
     {
-        if (!var->regs[regset].allocated)
+        if (var->reg_reservation.reg_type == get_regset_name(regset)
+                && var->data_type->reg_size[regset])
+        {
+            /* Vars with a reservation prevent non-reserved vars from being
+             * bound there even if the reserved vars aren't used. */
+            start = var->reg_reservation.reg_index;
+            count = var->data_type->reg_size[regset];
+        }
+        else if (var->regs[regset].allocated)
+        {
+            start = var->regs[regset].id;
+            count = var->regs[regset].bind_count;
+        }
+        else
+        {
             continue;
-
-        start = var->regs[regset].id;
-        count = var->regs[regset].bind_count;
+        }
 
         if (start <= index && index < start + count)
             return var;
@@ -3977,7 +3988,7 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     unsigned int i;
     bool progress;
 
-    list_move_head(&body->instrs, &ctx->static_initializers);
+    list_move_head(&body->instrs, &ctx->static_initializers.instrs);
 
     memset(&recursive_call_ctx, 0, sizeof(recursive_call_ctx));
     hlsl_transform_ir(ctx, find_recursive_calls, body, &recursive_call_ctx);
@@ -4073,7 +4084,7 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     {
         progress = hlsl_transform_ir(ctx, hlsl_fold_constant_exprs, body, NULL);
         progress |= hlsl_transform_ir(ctx, hlsl_fold_constant_swizzles, body, NULL);
-        progress |= copy_propagation_execute(ctx, body);
+        progress |= hlsl_copy_propagation_execute(ctx, body);
         progress |= hlsl_transform_ir(ctx, fold_swizzle_chains, body, NULL);
         progress |= hlsl_transform_ir(ctx, remove_trivial_swizzles, body, NULL);
     }
@@ -4112,9 +4123,9 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     if (TRACE_ON())
         rb_for_each_entry(&ctx->functions, dump_function, ctx);
 
-    allocate_register_reservations(ctx);
-
     calculate_resource_register_counts(ctx);
+
+    allocate_register_reservations(ctx);
 
     allocate_temp_registers(ctx, entry_func);
     if (profile->major_version < 4)

@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Fri Jun 16 03:41:53 PM UTC 2023 :
+# Last wine-tkg-staging-fsync-git configuration - Thu Jun 29 07:05:04 AM UTC 2023 :
 
 Local cfg files used
 
-Wine (plain) version: 8.10.r49.g766448f8ffe
-Using wine-staging patchset (version 8.10.r4.gdb6b4795)
+Wine (plain) version: 8.11.r0.gc13e7ae474d
+Using wine-staging patchset (version 8.11.r0.gfcff74d6)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -11,29 +11,20 @@ Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 Done applying backports hotfixes (if any) - list available in prepare.log
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
-bd89ab3040e30c11b34a95072d88f635ade03bdc reverted
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
 Staging overrides, if any:
 
 fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
-server_Abort_waiting_on_a_completion_port_when_closing_it.patch -- ( Added Abort waiting on a completion port when closing it Proton patch )
 fsync_futex_waitv.patch -- ( Applied patches for fsync to support futex_waitv )
 
 childwindow-proton.patch -- ( Applied child window for vk patch )
-OPWR-proton.patch -- ( Applied other process window Vulkan rendering patchset )
 LAA-unix-staging.patch -- ( Applied large address aware override support (legacy) )
 
-proton-tkg-staging.patch -- ( Using Steam-specific Proton-tkg patches (staging) 2/3 )
-proton-tkg-additions.patch -- ( Using additional Proton-tkg patches )
-proton-cpu-topology-overrides.patch -- ( Enable Proton's CPU topology override support )
-proton-vr.patch -- ( Enable Proton vr-related wined3d additions )
 proton-win10-default.patch -- ( Enforce win10 as default wine version )
 proton_battleye.patch -- ( Add support for Proton's Battleye runtime )
 proton-eac_bridge.patch -- ( Add support for Proton's EAC bridge )
 
-Applied hotfix remove_hooks_that_time_out2.mypatch
-Applied hotfix winex11.drv_Add_a_GPU_for_each_Vulkan_device_that_was_not_tied_to_an_XRandR_provider.mypatch
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix ef6e33f.mypatch
 Applied hotfix 0001-proton-bcrypt_rdr2_fixes5.mypatch

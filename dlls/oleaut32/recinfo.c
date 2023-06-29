@@ -179,9 +179,9 @@ static ULONG WINAPI IRecordInfoImpl_Release(IRecordInfo *iface)
         for(i=0; i<This->n_vars; i++)
             SysFreeString(This->fields[i].name);
         SysFreeString(This->name);
-        HeapFree(GetProcessHeap(), 0, This->fields);
+        free(This->fields);
         ITypeInfo_Release(This->pTypeInfo);
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
     }
     return ref;
 }
@@ -524,7 +524,7 @@ static PVOID WINAPI IRecordInfoImpl_RecordCreate(IRecordInfo *iface)
 
     TRACE("(%p)\n", This);
 
-    record = HeapAlloc(GetProcessHeap(), 0, This->size);
+    record = CoTaskMemAlloc(This->size);
     IRecordInfo_RecordInit(iface, record);
     TRACE("created record at %p\n", record);
     return record;
@@ -555,9 +555,7 @@ static HRESULT WINAPI IRecordInfoImpl_RecordDestroy(IRecordInfo *iface, PVOID pv
     if(FAILED(hres))
         return hres;
 
-    if(!HeapFree(GetProcessHeap(), 0, pvRecord))
-        return E_INVALIDARG;
-
+    CoTaskMemFree(pvRecord);
     return S_OK;
 }
 
@@ -597,7 +595,7 @@ HRESULT WINAPI GetRecordInfoFromGuids(REFGUID rGuidTypeLib, ULONG uVerMajor,
     ITypeLib *pTypeLib;
     HRESULT hres;
 
-    TRACE("%p, %lu, %lu, %#lx, %s, %p.\n", rGuidTypeLib, uVerMajor, uVerMinor,
+    TRACE("%s, %lu, %lu, %#lx, %s, %p.\n", debugstr_guid(rGuidTypeLib), uVerMajor, uVerMinor,
             lcid, debugstr_guid(rGuidTypeInfo), ppRecInfo);
 
     hres = LoadRegTypeLib(rGuidTypeLib, uVerMajor, uVerMinor, lcid, &pTypeLib);
@@ -667,7 +665,7 @@ HRESULT WINAPI GetRecordInfoFromTypeInfo(ITypeInfo* pTI, IRecordInfo** ppRecInfo
         return E_INVALIDARG;
     }
 
-    ret = HeapAlloc(GetProcessHeap(), 0, sizeof(*ret));
+    ret = calloc(1, sizeof(*ret));
     ret->IRecordInfo_iface.lpVtbl = &IRecordInfoImplVtbl;
     ret->ref = 1;
     ret->pTypeInfo = pTypeInfo;
@@ -687,7 +685,7 @@ HRESULT WINAPI GetRecordInfoFromTypeInfo(ITypeInfo* pTI, IRecordInfo** ppRecInfo
         ret->name = NULL;
     }
 
-    ret->fields = HeapAlloc(GetProcessHeap(), 0, ret->n_vars*sizeof(fieldstr));
+    ret->fields = calloc(ret->n_vars, sizeof(fieldstr));
     for(i = 0; i<ret->n_vars; i++) {
         VARDESC *vardesc;
         hres = ITypeInfo_GetVarDesc(pTypeInfo, i, &vardesc);

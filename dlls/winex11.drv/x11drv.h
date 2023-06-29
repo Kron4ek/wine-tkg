@@ -397,14 +397,13 @@ struct x11drv_thread_data
     HWND     grab_hwnd;            /* window that currently grabs the mouse */
     HWND     active_window;        /* active window */
     HWND     last_focus;           /* last window that had focus */
-    HWND     keymapnotify_hwnd;    /* window that should receive modifier release events */
     XIM      xim;                  /* input method */
     HWND     last_xic_hwnd;        /* last xic window */
     XFontSet font_set;             /* international text drawing font set */
     Window   selection_wnd;        /* window used for selection interactions */
     unsigned long warp_serial;     /* serial number of last pointer warp request */
     Window   clip_window;          /* window used for cursor clipping */
-    HWND     clip_hwnd;            /* message window stored in desktop while clipping is active */
+    BOOL     clipping_cursor;      /* whether thread is currently clipping the cursor */
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
     enum xi2_state xi2_state;      /* XInput2 state */
     XIValuatorClassInfo x_valuator;
@@ -645,7 +644,6 @@ struct x11drv_win_data
     BOOL        use_alpha : 1;  /* does window use an alpha channel? */
     BOOL        skip_taskbar : 1; /* does window should be deleted from taskbar */
     BOOL        add_taskbar : 1; /* does window should be added to taskbar regardless of style */
-    BOOL        pending_fullscreen : 1;
     int         wm_state;       /* current value of the WM_STATE property */
     DWORD       net_wm_state;   /* bit mask of active x11drv_net_wm_state values */
     Window      embedder;       /* window id of embedder */
@@ -669,7 +667,6 @@ extern void destroy_vk_surface( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void sync_vk_surface( HWND hwnd, BOOL known_child ) DECLSPEC_HIDDEN;
 extern void resize_vk_surfaces( HWND hwnd, Window active, int mask, XWindowChanges *changes ) DECLSPEC_HIDDEN;
 extern Window wine_vk_active_surface( HWND hwnd ) DECLSPEC_HIDDEN;
-extern BOOL wine_vk_direct_window_draw( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void vulkan_thread_detach(void) DECLSPEC_HIDDEN;
 
 extern void wait_for_withdrawn_state( HWND hwnd, BOOL set ) DECLSPEC_HIDDEN;
@@ -702,9 +699,11 @@ extern XContext winContext DECLSPEC_HIDDEN;
 /* X context to associate an X cursor to a Win32 cursor handle */
 extern XContext cursor_context DECLSPEC_HIDDEN;
 
+extern BOOL is_current_process_focused(void) DECLSPEC_HIDDEN;
 extern void X11DRV_SetFocus( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void set_window_cursor( Window window, HCURSOR handle ) DECLSPEC_HIDDEN;
 extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
+extern void ungrab_clipping_window(void) DECLSPEC_HIDDEN;
 extern void move_resize_window( HWND hwnd, int dir ) DECLSPEC_HIDDEN;
 extern void X11DRV_InitKeyboard( Display *display ) DECLSPEC_HIDDEN;
 extern void X11DRV_InitMouse( Display *display ) DECLSPEC_HIDDEN;
@@ -835,7 +834,6 @@ struct x11drv_display_device_handler
     void (*register_event_handlers)(void);
 };
 
-extern BOOL get_host_primary_gpu(struct gdi_gpu *gpu) DECLSPEC_HIDDEN;
 extern void X11DRV_DisplayDevices_SetHandler(const struct x11drv_display_device_handler *handler) DECLSPEC_HIDDEN;
 extern void X11DRV_DisplayDevices_Init(BOOL force) DECLSPEC_HIDDEN;
 extern void X11DRV_DisplayDevices_RegisterEventHandlers(void) DECLSPEC_HIDDEN;
@@ -954,7 +952,5 @@ static inline UINT asciiz_to_unicode( WCHAR *dst, const char *src )
     while ((*p++ = *src++));
     return (p - dst) * sizeof(WCHAR);
 }
-
-extern BOOL vulkan_gdi_blit_source_hack;
 
 #endif  /* __WINE_X11DRV_H */

@@ -631,7 +631,7 @@
 # @ stub GetPackageInfo
 # @ stub GetPackageInstallTime
 # @ stub GetPackageOSMaxVersionTested
-@ stdcall GetPackagePath(ptr long ptr ptr)
+# @ stub GetPackagePath
 # @ stub GetPackagePathByFullName
 # @ stub GetPackagePathOnVolume
 # @ stub GetPackageProperty
@@ -1044,7 +1044,7 @@
 # @ stub PackageFamilyNameFromFullName
 # @ stub PackageFamilyNameFromId
 # @ stub PackageFamilyNameFromProductId
-@ stdcall PackageFullNameFromId(ptr ptr ptr)
+# @ stub PackageFullNameFromId
 # @ stub PackageFullNameFromProductId
 @ stdcall PackageIdFromFullName(wstr long ptr ptr)
 # @ stub PackageIdFromProductId

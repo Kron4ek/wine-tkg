@@ -839,3 +839,108 @@ BOOL search_unix_path(const WCHAR *name, const WCHAR *path, BOOL (*match)(void*,
     heap_free(buf);
     return ret;
 }
+
+/******************************************************************
+ *      SymSrvGetFileIndexInfo (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSrvGetFileIndexInfo(const char *file, SYMSRV_INDEX_INFO* info, DWORD flags)
+{
+    SYMSRV_INDEX_INFOW infoW;
+    WCHAR fileW[MAX_PATH];
+    BOOL ret;
+
+    TRACE("(%s, %p, 0x%08lx)\n", debugstr_a(file), info, flags);
+
+    if (info->sizeofstruct < sizeof(*info))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    MultiByteToWideChar(CP_ACP, 0, file, -1, fileW, ARRAY_SIZE(fileW));
+    infoW.sizeofstruct = sizeof(infoW);
+    ret = SymSrvGetFileIndexInfoW(fileW, &infoW, flags);
+    if (ret)
+    {
+        WideCharToMultiByte(CP_ACP, 0, infoW.file, -1, info->file, ARRAY_SIZE(info->file), NULL, NULL);
+        info->stripped = infoW.stripped;
+        info->timestamp = infoW.timestamp;
+        info->size = infoW.size;
+        WideCharToMultiByte(CP_ACP, 0, infoW.dbgfile, -1, info->dbgfile, ARRAY_SIZE(info->dbgfile), NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, infoW.pdbfile, -1, info->pdbfile, ARRAY_SIZE(info->pdbfile), NULL, NULL);
+        info->guid = infoW.guid;
+        info->sig = infoW.sig;
+        info->age = infoW.age;
+    }
+    return ret;
+}
+
+/******************************************************************
+ *      SymSrvGetFileIndexInfoW (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSrvGetFileIndexInfoW(const WCHAR *file, SYMSRV_INDEX_INFOW* info, DWORD flags)
+{
+    HANDLE      hFile, hMap = NULL;
+    void*       image = NULL;
+    DWORD       fsize, ret;
+
+    TRACE("(%s, %p, 0x%08lx)\n", debugstr_w(file), info, flags);
+
+    if (info->sizeofstruct < sizeof(*info))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if ((hFile = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ, NULL,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)) != INVALID_HANDLE_VALUE &&
+        ((hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL)) != NULL) &&
+        ((image = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0)) != NULL))
+    {
+        /* must handle PE, or .dbg or .pdb files. So each helper will return:
+         * - ERROR_SUCCESS: if the file format is recognized and index info filled,
+         * - ERROR_BAD_FORMAT: if the file doesn't match the expected format,
+         * - any other error: if the file has expected format, but internal errors
+         */
+        fsize = GetFileSize(hFile, NULL);
+        /* try PE module first */
+        ret = pe_get_file_indexinfo(image, fsize, info);
+        /* handle (ret == ERROR_BAD_FORMAT) with .dbg and .pdb format */
+    }
+    else ret = ERROR_FILE_NOT_FOUND;
+
+    if (image) UnmapViewOfFile(image);
+    if (hMap) CloseHandle(hMap);
+    if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
+
+    if (ret == ERROR_SUCCESS) wcscpy(info->file, file_name(file)); /* overflow? */
+    SetLastError(ret);
+    return ret == ERROR_SUCCESS;
+}
+
+/******************************************************************
+ *      SymSrvGetFileIndexes (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSrvGetFileIndexes(PCSTR file, GUID* guid, PDWORD pdw1, PDWORD pdw2, DWORD flags)
+{
+    WCHAR fileW[MAX_PATH];
+
+    TRACE("(%s, %p, %p, %p, 0x%08lx)\n", debugstr_a(file), guid, pdw1, pdw2, flags);
+
+    MultiByteToWideChar(CP_ACP, 0, file, -1, fileW, ARRAY_SIZE(fileW));
+    return SymSrvGetFileIndexesW(fileW, guid, pdw1, pdw2, flags);
+}
+
+/******************************************************************
+ *      SymSrvGetFileIndexesW (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSrvGetFileIndexesW(PCWSTR file, GUID* guid, PDWORD pdw1, PDWORD pdw2, DWORD flags)
+{
+    FIXME("(%s, %p, %p, %p, 0x%08lx): stub!\n", debugstr_w(file), guid, pdw1, pdw2, flags);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}

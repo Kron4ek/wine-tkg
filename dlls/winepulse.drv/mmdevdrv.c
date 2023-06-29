@@ -133,6 +133,12 @@ extern HRESULT main_loop_start(void) DECLSPEC_HIDDEN;
 extern struct audio_session_wrapper *session_wrapper_create(
     struct audio_client *client) DECLSPEC_HIDDEN;
 
+extern HRESULT stream_release(stream_handle stream, HANDLE timer_thread);
+
+extern WCHAR *get_application_name(void);
+
+extern void set_stream_volumes(struct audio_client *This);
+
 static inline ACImpl *impl_from_IAudioClient3(IAudioClient3 *iface)
 {
     return CONTAINING_RECORD(iface, ACImpl, IAudioClient3_iface);
@@ -143,133 +149,6 @@ static void pulse_call(enum unix_funcs code, void *params)
     NTSTATUS status;
     status = WINE_UNIX_CALL(code, params);
     assert(!status);
-}
-
-static void pulse_release_stream(stream_handle stream, HANDLE timer)
-{
-    struct release_stream_params params;
-    params.stream       = stream;
-    params.timer_thread = timer;
-    pulse_call(release_stream, &params);
-}
-
-typedef struct tagLANGANDCODEPAGE
-{
-    WORD wLanguage;
-    WORD wCodePage;
-} LANGANDCODEPAGE;
-
-static BOOL query_productname(void *data, LANGANDCODEPAGE *lang, LPVOID *buffer, UINT *len)
-{
-    WCHAR pn[37];
-    swprintf(pn, ARRAY_SIZE(pn), L"\\StringFileInfo\\%04x%04x\\ProductName", lang->wLanguage, lang->wCodePage);
-    return VerQueryValueW(data, pn, buffer, len) && *len;
-}
-
-static WCHAR *get_application_name(BOOL query_app_name)
-{
-    WCHAR path[MAX_PATH], *name;
-
-    GetModuleFileNameW(NULL, path, ARRAY_SIZE(path));
-
-    if (query_app_name)
-    {
-        UINT translate_size, productname_size;
-        LANGANDCODEPAGE *translate;
-        LPVOID productname;
-        BOOL found = FALSE;
-        void *data = NULL;
-        unsigned int i;
-        LCID locale;
-        DWORD size;
-
-        size = GetFileVersionInfoSizeW(path, NULL);
-        if (!size)
-            goto skip;
-
-        data = malloc(size);
-        if (!data)
-            goto skip;
-
-        if (!GetFileVersionInfoW(path, 0, size, data))
-            goto skip;
-
-        if (!VerQueryValueW(data, L"\\VarFileInfo\\Translation", (LPVOID *)&translate, &translate_size))
-            goto skip;
-
-        /* no translations found */
-        if (translate_size < sizeof(LANGANDCODEPAGE))
-            goto skip;
-
-        /* The following code will try to find the best translation. We first search for an
-         * exact match of the language, then a match of the language PRIMARYLANGID, then we
-         * search for a LANG_NEUTRAL match, and if that still doesn't work we pick the
-         * first entry which contains a proper productname. */
-        locale = GetThreadLocale();
-
-        for (i = 0; i < translate_size / sizeof(LANGANDCODEPAGE); i++) {
-            if (translate[i].wLanguage == locale &&
-                    query_productname(data, &translate[i], &productname, &productname_size)) {
-                found = TRUE;
-                break;
-            }
-        }
-
-        if (!found) {
-            for (i = 0; i < translate_size / sizeof(LANGANDCODEPAGE); i++) {
-                if (PRIMARYLANGID(translate[i].wLanguage) == PRIMARYLANGID(locale) &&
-                        query_productname(data, &translate[i], &productname, &productname_size)) {
-                    found = TRUE;
-                    break;
-                }
-            }
-        }
-
-        if (!found) {
-            for (i = 0; i < translate_size / sizeof(LANGANDCODEPAGE); i++) {
-                if (PRIMARYLANGID(translate[i].wLanguage) == LANG_NEUTRAL &&
-                        query_productname(data, &translate[i], &productname, &productname_size)) {
-                    found = TRUE;
-                    break;
-                }
-            }
-        }
-
-        if (!found) {
-            for (i = 0; i < translate_size / sizeof(LANGANDCODEPAGE); i++) {
-                if (query_productname(data, &translate[i], &productname, &productname_size)) {
-                    found = TRUE;
-                    break;
-                }
-            }
-        }
-
-    skip:
-        if (found)
-        {
-            name = wcsdup(productname);
-            free(data);
-            return name;
-        }
-        free(data);
-    }
-
-    name = wcsrchr(path, '\\');
-    if (!name)
-        name = path;
-    else
-        name++;
-    return wcsdup(name);
-}
-
-static void set_stream_volumes(ACImpl *This)
-{
-    struct set_volumes_params params;
-    params.stream          = This->stream;
-    params.master_volume   = This->session->mute ? 0.0f : This->session->master_vol;
-    params.volumes         = This->vols;
-    params.session_volumes = This->session->channel_vols;
-    pulse_call(set_volumes, &params);
 }
 
 static void get_device_guid(HKEY drv_key, EDataFlow flow, const char *pulse_name, GUID *guid)
@@ -551,7 +430,7 @@ static ULONG WINAPI AudioClient_Release(IAudioClient3 *iface)
     TRACE("(%p) Refcount now %lu\n", This, ref);
     if (!ref) {
         if (This->stream) {
-            pulse_release_stream(This->stream, This->timer_thread);
+            stream_release(This->stream, This->timer_thread);
             This->stream = 0;
             sessions_lock();
             list_remove(&This->entry);
@@ -684,10 +563,9 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
     struct create_stream_params params;
-    unsigned int i, channel_count;
+    UINT32 i, channel_count;
     stream_handle stream;
     WCHAR *name;
-    HRESULT hr;
 
     TRACE("(%p)->(%x, %lx, %s, %s, %p, %s)\n", This, mode, flags,
           wine_dbgstr_longlong(duration), wine_dbgstr_longlong(period), fmt, debugstr_guid(sessionguid));
@@ -698,8 +576,6 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
 
     if (mode != AUDCLNT_SHAREMODE_SHARED && mode != AUDCLNT_SHAREMODE_EXCLUSIVE)
         return E_INVALIDARG;
-    if (mode == AUDCLNT_SHAREMODE_EXCLUSIVE)
-        return AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED;
 
     if (flags & ~(AUDCLNT_STREAMFLAGS_CROSSPROCESS |
                 AUDCLNT_STREAMFLAGS_LOOPBACK |
@@ -722,13 +598,13 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
         return AUDCLNT_E_ALREADY_INITIALIZED;
     }
 
-    if (FAILED(hr = main_loop_start()))
+    if (FAILED(params.result = main_loop_start()))
     {
         sessions_unlock();
-        return hr;
+        return params.result;
     }
 
-    params.name = name = get_application_name(TRUE);
+    params.name = name = get_application_name();
     params.device   = This->device_name;
     params.flow     = This->dataflow;
     params.share    = mode;
@@ -740,38 +616,37 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
     params.channel_count = &channel_count;
     pulse_call(create_stream, &params);
     free(name);
-    if (FAILED(hr = params.result))
+    if (FAILED(params.result))
     {
         sessions_unlock();
-        return hr;
+        return params.result;
     }
 
     if (!(This->vols = malloc(channel_count * sizeof(*This->vols))))
     {
-        pulse_release_stream(stream, NULL);
-        sessions_unlock();
-        return E_OUTOFMEMORY;
+        params.result = E_OUTOFMEMORY;
+        goto exit;
     }
     for (i = 0; i < channel_count; i++)
         This->vols[i] = 1.f;
 
-    hr = get_audio_session(sessionguid, This->parent, channel_count, &This->session);
-    if (FAILED(hr))
-    {
+    params.result = get_audio_session(sessionguid, This->parent, channel_count, &This->session);
+
+exit:
+    if (FAILED(params.result)) {
+        stream_release(stream, NULL);
         free(This->vols);
         This->vols = NULL;
-        sessions_unlock();
-        pulse_release_stream(stream, NULL);
-        return E_OUTOFMEMORY;
+    } else {
+        list_add_tail(&This->session->clients, &This->entry);
+        This->stream = stream;
+        This->channel_count = channel_count;
+        set_stream_volumes(This);
     }
 
-    This->stream = stream;
-    This->channel_count = channel_count;
-    list_add_tail(&This->session->clients, &This->entry);
-    set_stream_volumes(This);
-
     sessions_unlock();
-    return S_OK;
+
+    return params.result;
 }
 
 extern HRESULT WINAPI client_GetBufferSize(IAudioClient3 *iface,

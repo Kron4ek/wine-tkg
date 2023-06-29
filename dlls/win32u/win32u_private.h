@@ -104,7 +104,7 @@ extern BOOL set_foreground_window( HWND hwnd, BOOL mouse ) DECLSPEC_HIDDEN;
 extern void toggle_caret( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void update_mouse_tracking_info( HWND hwnd ) DECLSPEC_HIDDEN;
 extern BOOL get_clip_cursor( RECT *rect ) DECLSPEC_HIDDEN;
-extern BOOL process_wine_clipcursor( HWND hwnd, BOOL empty, BOOL reset ) DECLSPEC_HIDDEN;
+extern BOOL process_wine_clipcursor( HWND hwnd, UINT flags, BOOL reset ) DECLSPEC_HIDDEN;
 extern BOOL clip_fullscreen_window( HWND hwnd, BOOL reset ) DECLSPEC_HIDDEN;
 
 /* menu.c */
@@ -182,6 +182,7 @@ extern RECT rect_thread_to_win_dpi( HWND hwnd, RECT rect ) DECLSPEC_HIDDEN;
 extern HMONITOR monitor_from_point( POINT pt, UINT flags, UINT dpi ) DECLSPEC_HIDDEN;
 extern HMONITOR monitor_from_rect( const RECT *rect, UINT flags, UINT dpi ) DECLSPEC_HIDDEN;
 extern HMONITOR monitor_from_window( HWND hwnd, UINT flags, UINT dpi ) DECLSPEC_HIDDEN;
+extern BOOL update_display_cache( BOOL force ) DECLSPEC_HIDDEN;
 extern void user_lock(void) DECLSPEC_HIDDEN;
 extern void user_unlock(void) DECLSPEC_HIDDEN;
 extern void user_check_not_lock(void) DECLSPEC_HIDDEN;

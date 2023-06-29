@@ -25,6 +25,7 @@
     X(bool,       1, ARG_INT,    0)        \
     X(bneg,       1, 0,0)                  \
     X(call,       1, ARG_UINT,   ARG_UINT) \
+    X(call_eval,  1, ARG_UINT,   ARG_UINT) \
     X(call_member,1, ARG_UINT,   ARG_UINT) \
     X(carray,     1, ARG_UINT,   0)        \
     X(carray_set, 1, ARG_UINT,   0)        \
@@ -221,11 +222,17 @@ static inline bytecode_t *bytecode_addref(bytecode_t *code)
     return code;
 }
 
+struct vars_buffer {
+    function_code_t *func_code;
+    unsigned argc;
+    jsval_t var[];
+};
+
 typedef struct _scope_chain_t {
-    jsdisp_t dispex;  /* FIXME: don't wrap it in a jsdisp (it holds ref and traverse for the garbage collector) */
-    jsdisp_t *jsobj;
+    jsdisp_t dispex;
     IDispatch *obj;
     unsigned int scope_index;
+    struct vars_buffer *detached_vars;
     struct _call_frame_t *frame;
     struct _scope_chain_t *next;
 } scope_chain_t;
@@ -303,4 +310,4 @@ HRESULT exec_source(script_ctx_t*,DWORD,bytecode_t*,function_code_t*,scope_chain
 
 HRESULT create_source_function(script_ctx_t*,bytecode_t*,function_code_t*,scope_chain_t*,jsdisp_t**) DECLSPEC_HIDDEN;
 HRESULT setup_arguments_object(script_ctx_t*,call_frame_t*) DECLSPEC_HIDDEN;
-void detach_arguments_object(jsdisp_t*) DECLSPEC_HIDDEN;
+void detach_arguments_object(call_frame_t*) DECLSPEC_HIDDEN;

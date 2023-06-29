@@ -1357,7 +1357,7 @@ static WCHAR *get_bios_string( BYTE id, const char *buf, UINT len )
 static WCHAR *get_bios_manufacturer( const char *buf, UINT len )
 {
     WCHAR *ret = get_bios_string( 1, buf, len );
-    if (!ret) return wcsdup( L"The Proton Project" );
+    if (!ret) return wcsdup( L"The Wine Project" );
     return ret;
 }
 
@@ -1410,7 +1410,7 @@ static WCHAR *get_bios_serialnumber( const char *buf, UINT len )
 static WCHAR *get_bios_smbiosbiosversion( const char *buf, UINT len )
 {
     WCHAR *ret = get_bios_string( 2, buf, len );
-    if (!ret) return wcsdup( L"Proton" );
+    if (!ret) return wcsdup( L"Wine" );
     return ret;
 }
 
@@ -1490,7 +1490,7 @@ static enum fill_status fill_bios( struct table *table, const struct expr *cond 
     rec->smbiosminorversion     = get_bios_smbiosminorversion( buf, len );
     rec->systembiosmajorversion = get_bios_system_bios_major_release( buf, len );
     rec->systembiosminorversion = get_bios_system_bios_minor_release( buf, len );
-    rec->version                = L"PROTON - 1";
+    rec->version                = L"WINE   - 1";
     if (!match_row( table, row, cond, &status )) free_row_values( table, row );
     else row++;
 
@@ -1672,14 +1672,14 @@ static WCHAR *get_compsysproduct_string( BYTE id, const char *buf, UINT len )
 static WCHAR *get_compsysproduct_name( const char *buf, UINT len )
 {
     WCHAR *ret = get_compsysproduct_string( 2, buf, len );
-    if (!ret) return wcsdup( L"Proton" );
+    if (!ret) return wcsdup( L"Wine" );
     return ret;
 }
 
 static WCHAR *get_compsysproduct_vendor( const char *buf, UINT len )
 {
     WCHAR *ret = get_compsysproduct_string( 1, buf, len );
-    if (!ret) return wcsdup( L"The Proton Project" );
+    if (!ret) return wcsdup( L"The Wine Project" );
     return ret;
 }
 
@@ -2887,7 +2887,7 @@ static enum fill_status fill_networkadapter( struct table *table, const struct e
         rec->index                = aa->u.s.IfIndex;
         rec->interface_index      = aa->u.s.IfIndex;
         rec->mac_address          = get_mac_address( aa->PhysicalAddress, aa->PhysicalAddressLength );
-        rec->manufacturer         = L"The Proton Project";
+        rec->manufacturer         = L"The Wine Project";
         rec->name                 = wcsdup( aa->FriendlyName );
         rec->netconnection_status = get_connection_status( aa->OperStatus );
         rec->physicaladapter      = physical;
@@ -3752,7 +3752,7 @@ static enum fill_status fill_operatingsystem( struct table *table, const struct 
     rec->lastbootuptime         = get_lastbootuptime();
     rec->localdatetime          = get_localdatetime();
     rec->locale                 = get_locale();
-    rec->manufacturer           = L"The Proton Project";
+    rec->manufacturer           = L"The Wine Project";
     rec->name                   = get_osname( rec->caption );
     rec->operatingsystemsku     = get_operatingsystemsku();
     rec->organization           = get_organization();
@@ -4022,7 +4022,7 @@ static WCHAR *get_systemenclosure_string( BYTE id, const char *buf, UINT len )
 static WCHAR *get_systemenclosure_manufacturer( const char *buf, UINT len )
 {
     WCHAR *ret = get_systemenclosure_string( 1, buf, len );
-    if (!ret) return wcsdup( L"Proton" );
+    if (!ret) return wcsdup( L"Wine" );
     return ret;
 }
 
@@ -4288,7 +4288,7 @@ static enum fill_status fill_sounddevice( struct table *table, const struct expr
 
     rec = (struct record_sounddevice *)table->data;
     rec->deviceid = get_sounddevice_pnpdeviceid( &desc );
-    rec->manufacturer = L"The Proton Project";
+    rec->manufacturer = L"The Wine Project";
     rec->name = L"Wine Audio Device";
     rec->pnpdeviceid = get_sounddevice_pnpdeviceid( &desc );
     rec->productname = L"Wine Audio Device";

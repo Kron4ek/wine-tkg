@@ -2225,6 +2225,7 @@ static HRESULT WINAPI mfsession_Shutdown(IMFMediaSession *iface)
         IMFPresentationClock_Release(session->clock);
         session->clock = NULL;
         session_clear_presentation(session);
+        session_clear_queued_topologies(session);
         session_submit_simple_command(session, SESSION_CMD_SHUTDOWN);
     }
     LeaveCriticalSection(&session->cs);
@@ -2396,6 +2397,7 @@ static HRESULT session_get_renderer_node_service(struct media_session *session,
                             if (FAILED(hr = MFGetService((IUnknown *)sink, service, riid, obj)))
                                 WARN("Failed to get service from renderer node, %#lx.\n", hr);
                         }
+                        IMFMediaSink_Release(sink);
                     }
                     IMFStreamSink_Release(stream_sink);
                 }

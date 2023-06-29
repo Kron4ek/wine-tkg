@@ -34,7 +34,6 @@
 #include "kernelbase.h"
 #include "wine/debug.h"
 #include "wine/condrv.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(process);
 
@@ -675,31 +674,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     }
     else
     {
-        static const WCHAR *opt = L" --use-angle=gl";
-        WCHAR *cmdline_new = NULL;
-
-        if (cmd_line && wcsstr( cmd_line, L"UplayWebCore.exe" ))
-        {
-            FIXME( "HACK: appending %s to command line %s.\n", debugstr_w(opt), debugstr_w(cmd_line) );
-
-            cmdline_new = heap_alloc( sizeof(WCHAR) * (lstrlenW(cmd_line) + lstrlenW(opt) + 1) );
-            lstrcpyW(cmdline_new, cmd_line);
-            lstrcatW(cmdline_new, opt);
-        }
-
-        tidy_cmdline = get_file_name( cmdline_new ? cmdline_new : cmd_line, name, ARRAY_SIZE(name) );
-
-        if (!tidy_cmdline)
-        {
-            heap_free( cmdline_new );
-            return FALSE;
-        }
-
-        if (cmdline_new)
-        {
-            if (cmdline_new == tidy_cmdline) cmd_line = NULL;
-            else heap_free( cmdline_new );
-        }
+        if (!(tidy_cmdline = get_file_name( cmd_line, name, ARRAY_SIZE(name) ))) return FALSE;
         app_name = name;
     }
 

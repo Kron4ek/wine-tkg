@@ -201,7 +201,7 @@ enum vkd3d_shader_input_sysval_semantic vkd3d_siv_from_sysval_indexed(enum vkd3d
 
 #define VKD3D_SPIRV_VERSION 0x00010000
 #define VKD3D_SPIRV_GENERATOR_ID 18
-#define VKD3D_SPIRV_GENERATOR_VERSION 7
+#define VKD3D_SPIRV_GENERATOR_VERSION 8
 #define VKD3D_SPIRV_GENERATOR_MAGIC vkd3d_make_u32(VKD3D_SPIRV_GENERATOR_VERSION, VKD3D_SPIRV_GENERATOR_ID)
 
 struct vkd3d_spirv_stream
@@ -2324,11 +2324,15 @@ static void spirv_compiler_destroy(struct spirv_compiler *compiler)
 
     vkd3d_string_buffer_cache_cleanup(&compiler->string_buffers);
 
+    shader_signature_cleanup(&compiler->input_signature);
+    shader_signature_cleanup(&compiler->output_signature);
+    shader_signature_cleanup(&compiler->patch_constant_signature);
+
     vkd3d_free(compiler);
 }
 
 static struct spirv_compiler *spirv_compiler_create(const struct vkd3d_shader_version *shader_version,
-        const struct vkd3d_shader_desc *shader_desc, const struct vkd3d_shader_compile_info *compile_info,
+        struct vkd3d_shader_desc *shader_desc, const struct vkd3d_shader_compile_info *compile_info,
         const struct vkd3d_shader_scan_descriptor_info *scan_descriptor_info,
         struct vkd3d_shader_message_context *message_context, const struct vkd3d_shader_location *location)
 {
@@ -2428,6 +2432,9 @@ static struct spirv_compiler *spirv_compiler_create(const struct vkd3d_shader_ve
     compiler->input_signature = shader_desc->input_signature;
     compiler->output_signature = shader_desc->output_signature;
     compiler->patch_constant_signature = shader_desc->patch_constant_signature;
+    memset(&shader_desc->input_signature, 0, sizeof(shader_desc->input_signature));
+    memset(&shader_desc->output_signature, 0, sizeof(shader_desc->output_signature));
+    memset(&shader_desc->patch_constant_signature, 0, sizeof(shader_desc->patch_constant_signature));
 
     if ((shader_interface = vkd3d_find_struct(compile_info->next, INTERFACE_INFO)))
     {
@@ -4479,7 +4486,8 @@ static uint32_t spirv_compiler_emit_input(struct spirv_compiler *compiler,
     element_idx = shader_register_get_io_indices(reg, array_sizes);
     signature_element = &shader_signature->elements[element_idx];
 
-    if (compiler->shader_type == VKD3D_SHADER_TYPE_HULL && !sysval && signature_element->sysval_semantic)
+    if ((compiler->shader_type == VKD3D_SHADER_TYPE_HULL || compiler->shader_type == VKD3D_SHADER_TYPE_GEOMETRY)
+            && !sysval && signature_element->sysval_semantic)
         sysval = vkd3d_siv_from_sysval(signature_element->sysval_semantic);
 
     builtin = get_spirv_builtin_for_sysval(compiler, sysval);
@@ -9450,7 +9458,7 @@ static int spirv_compiler_generate_spirv(struct spirv_compiler *compiler,
             && (result = instruction_array_flatten_hull_shader_phases(&instructions)) >= 0)
     {
         result = instruction_array_normalise_hull_shader_control_point_io(&instructions,
-                &parser->shader_desc.input_signature);
+                &compiler->input_signature);
     }
     if (result >= 0)
         result = instruction_array_normalise_io_registers(&instructions, parser->shader_version.type,

@@ -756,6 +756,57 @@ sync_test("JS objs", function() {
     test_parses("if(false) { o.if; }", v >= 9);
 });
 
+sync_test("eval", function() {
+    var i, context, code = "this.foobar = 1234", v = document.documentMode;
+
+    var direct = [
+        function() { eval(code); },
+        function() { (eval)(code); },
+        function() { (function(eval) { eval(code); }).call(this, eval); },
+        function() { eval("eval(" + code + ")"); }
+    ];
+
+    for(i = 0; i < direct.length; i++) {
+        context = {};
+        direct[i].call(context);
+        ok(context.foobar === 1234, "direct[" + i + "] context foobar = " + context.foobar);
+    }
+
+    var indirect = [
+        function() { (true, eval)(code); },
+        function() { (eval, eval)(code); },
+        function() { (true ? eval : false)(code); },
+        function() { [eval][0](code); },
+        function() { eval.call(this, code); },
+        function() { var f; (f = eval)(code); },
+        function() { var f = eval; f(code); },
+        function() { (function(f) { f(code); }).call(this, eval); },
+        function() { (function(f) { return f; }).call(this, eval)(code); },
+        function() { (function() { arguments[0](code) }).call(this, eval); },
+        function() { window.eval(code); },
+        function() { window["eval"](code); },
+        function() { eval("eval")(code); }
+    ];
+
+    for(i = 0; i < indirect.length; i++) {
+        context = {};
+        ok(!("foobar" in window), "indirect[" + i + "] has global foobar before call");
+        indirect[i].call(context);
+        if(v < 9) {
+            ok(context.foobar === 1234, "indirect[" + i + "] context foobar = " + context.foobar);
+            ok(!("foobar" in window), "indirect[" + i + "] has global foobar");
+        }else {
+            ok(!("foobar" in context), "indirect[" + i + "] has foobar");
+            ok(window.foobar === 1234, "indirect[" + i + "] global foobar = " + context.foobar);
+            delete window.foobar;
+        }
+    }
+
+    context = {};
+    (function(eval) { eval(code); })(function() { context.barfoo = 4321; });
+    ok(context.barfoo === 4321, "context.barfoo = " + context.barfoo);
+});
+
 sync_test("for..in", function() {
     var v = document.documentMode, found = 0, r;
 
@@ -787,6 +838,27 @@ sync_test("for..in", function() {
         if(r === "ondragstart")
             found++;
     ok(found === 1, "ondragstart enumerated " + found + " times in document after set to empty string");
+});
+
+sync_test("function caller", function() {
+    ok(Function.prototype.hasOwnProperty("caller"), "caller not prop of Function.prototype");
+
+    function test_caller(expected_caller, stop) {
+        ok(test_caller.caller === expected_caller, "caller = " + test_caller.caller);
+        if(stop) return;
+        function nested() {
+            ok(nested.caller === test_caller, "nested caller = " + nested.caller);
+            test_caller(nested, true);
+            ok(test_caller.caller === expected_caller, "caller within nested = " + test_caller.caller);
+        }
+        nested();
+        ok(test_caller.caller === expected_caller, "caller after nested = " + test_caller.caller);
+    }
+    ok(test_caller.hasOwnProperty("caller"), "caller not prop of test_caller");
+    ok(test_caller.caller === null, "test_caller.caller = " + test_caller.caller);
+
+    function f1() { test_caller(f1); } f1();
+    function f2() { test_caller(f2); } f2();
 });
 
 sync_test("elem_by_id", function() {
@@ -1154,6 +1226,56 @@ sync_test("delete_prop", function() {
     ok(r, "delete returned " + r);
     todo_wine.
     ok(!("globalprop4" in obj), "globalprop4 is still in obj");
+});
+
+sync_test("detached arguments", function() {
+    var args, get_a, set_a, get_x, set_x;
+
+    function test_args() {
+        ok(args[0] === 1, "args[0] = " + args[0]);
+        set_x(2);
+        ok(args[0] === 2, "args[0] = " + args[0]);
+        args[0] = 3;
+        ok(get_x() === 3, "get_x() = " + get_x());
+        ok(args[0] === 3, "args[0] = " + args[0]);
+    }
+
+    (function(x) {
+        args = arguments;
+        get_x = function() { return x; };
+        set_x = function(v) { x = v; };
+
+        test_args();
+        x = 1;
+    })(1);
+    test_args();
+
+    (function(a, a, b, c) {
+        get_a = function() { return a; }
+        set_a = function(v) { a = v; }
+        ok(get_a() === 2, "get_a() = " + get_a());
+        ok(a === 2, "a = " + a);
+        ok(b === 3, "b = " + b);
+        ok(c === 4, "c = " + c);
+        a = 42;
+        ok(arguments[0] === 1, "arguments[0] = " + arguments[0]);
+        ok(arguments[1] === 42, "arguments[1] = " + arguments[1]);
+        ok(get_a() === 42, "get_a() after assign = " + get_a());
+        args = arguments;
+    })(1, 2, 3, 4);
+
+    ok(get_a() === 42, "get_a() after detach = " + get_a());
+    set_a(100);
+    ok(get_a() === 100, "get_a() after set_a() = " + get_a());
+    ok(args[0] === 1, "detached args[0] = " + args[0]);
+    ok(args[1] === 100, "detached args[1] = " + args[1]);
+
+    (function(a, a) {
+        eval("var a = 7;");
+        ok(a === 7, "function(a, a) a = " + a);
+        ok(arguments[0] === 5, "function(a, a) arguments[0] = " + arguments[0]);
+        ok(arguments[1] === 7, "function(a, a) arguments[1] = " + arguments[1]);
+    })(5, 6);
 });
 
 var func_scope_val = 1;

@@ -3292,65 +3292,6 @@ static ULONG STDMETHODCALLTYPE d3d11_device_Release(ID3D11Device2 *iface)
     return IUnknown_Release(device->outer_unk);
 }
 
-/* IWineD3D11Device methods */
-
-static inline struct d3d_device *impl_from_IWineD3D11Device(IWineD3D11Device *iface)
-{
-    return CONTAINING_RECORD(iface, struct d3d_device, IWineD3D11Device_iface);
-}
-
-static HRESULT STDMETHODCALLTYPE wine_device_QueryInterface(IWineD3D11Device *iface, REFIID riid, void **out)
-{
-    struct d3d_device *device = impl_from_IWineD3D11Device(iface);
-    return IUnknown_QueryInterface(device->outer_unk, riid, out);
-}
-
-static ULONG STDMETHODCALLTYPE wine_device_AddRef(IWineD3D11Device *iface)
-{
-    struct d3d_device *device = impl_from_IWineD3D11Device(iface);
-    return IUnknown_AddRef(device->outer_unk);
-}
-
-static ULONG STDMETHODCALLTYPE wine_device_Release(IWineD3D11Device *iface)
-{
-    struct d3d_device *device = impl_from_IWineD3D11Device(iface);
-    return IUnknown_Release(device->outer_unk);
-}
-
-static void STDMETHODCALLTYPE wine_device_run_on_command_stream(IWineD3D11Device *iface,
-        user_cs_callback callback, const void *data, unsigned int data_size)
-{
-    struct d3d_device *device = impl_from_IWineD3D11Device(iface);
-
-    TRACE("iface %p, callback %p, data %p, data_size %u.\n", iface, callback, data, data_size);
-
-    wined3d_mutex_lock();
-    wined3d_device_run_cs_callback(device->wined3d_device, callback, data, data_size);
-    wined3d_mutex_unlock();
-}
-
-static void STDMETHODCALLTYPE wine_device_wait_idle(IWineD3D11Device *iface)
-{
-    struct d3d_device *device = impl_from_IWineD3D11Device(iface);
-
-    TRACE("iface %p.\n", iface);
-
-    wined3d_mutex_lock();
-    wined3d_device_wait_idle(device->wined3d_device);
-    wined3d_mutex_unlock();
-}
-
-static const struct IWineD3D11DeviceVtbl wine_device_vtbl =
-{
-    /* IUnknown methods */
-    wine_device_QueryInterface,
-    wine_device_AddRef,
-    wine_device_Release,
-    /* IWineD3D11Device methods */
-    wine_device_run_on_command_stream,
-    wine_device_wait_idle,
-};
-
 static HRESULT STDMETHODCALLTYPE d3d11_device_CreateBuffer(ID3D11Device2 *iface, const D3D11_BUFFER_DESC *desc,
         const D3D11_SUBRESOURCE_DATA *data, ID3D11Buffer **buffer)
 {
@@ -3397,7 +3338,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_device_CreateTexture2D(ID3D11Device2 *ifa
     if (FAILED(hr = d3d_texture2d_create(device, desc, NULL, data, &object)))
         return hr;
 
-    *texture = (ID3D11Texture2D *)&object->ID3D11Texture2D_iface;
+    *texture = &object->ID3D11Texture2D_iface;
 
     return S_OK;
 }
@@ -4634,10 +4575,6 @@ static HRESULT STDMETHODCALLTYPE d3d_device_inner_QueryInterface(IUnknown *iface
     else if (IsEqualGUID(riid, &IID_IWineDXGIDeviceParent))
     {
         *out = &device->IWineDXGIDeviceParent_iface;
-    }
-    else if (IsEqualGUID(riid, &IID_IWineD3D11Device))
-    {
-        *out = &device->IWineD3D11Device_iface;
     }
     else
     {
@@ -6879,7 +6816,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_device_parent_register_swapchain_texture(I
         return hr;
 
     hr = IUnknown_QueryInterface(object->dxgi_resource, &IID_IDXGISurface, (void **)ret_surface);
-    IWineD3D11Texture2D_Release(&object->ID3D11Texture2D_iface);
+    ID3D11Texture2D_Release(&object->ID3D11Texture2D_iface);
     return hr;
 }
 
@@ -7004,7 +6941,6 @@ void d3d_device_init(struct d3d_device *device, void *outer_unknown)
     device->ID3D10Device1_iface.lpVtbl = &d3d10_device1_vtbl;
     device->ID3D10Multithread_iface.lpVtbl = &d3d10_multithread_vtbl;
     device->IWineDXGIDeviceParent_iface.lpVtbl = &d3d_dxgi_device_parent_vtbl;
-    device->IWineD3D11Device_iface.lpVtbl = &wine_device_vtbl;
     device->device_parent.ops = &d3d_wined3d_device_parent_ops;
     device->refcount = 1;
     /* COM aggregation always takes place */

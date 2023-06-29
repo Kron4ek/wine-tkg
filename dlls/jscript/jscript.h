@@ -254,6 +254,7 @@ HRESULT jsdisp_propput_idx(jsdisp_t*,DWORD,jsval_t) DECLSPEC_HIDDEN;
 HRESULT jsdisp_propget_name(jsdisp_t*,LPCWSTR,jsval_t*) DECLSPEC_HIDDEN;
 HRESULT jsdisp_get_idx(jsdisp_t*,DWORD,jsval_t*) DECLSPEC_HIDDEN;
 HRESULT jsdisp_get_id(jsdisp_t*,const WCHAR*,DWORD,DISPID*) DECLSPEC_HIDDEN;
+HRESULT jsdisp_get_idx_id(jsdisp_t*,DWORD,DISPID*) DECLSPEC_HIDDEN;
 HRESULT disp_delete(IDispatch*,DISPID,BOOL*) DECLSPEC_HIDDEN;
 HRESULT disp_delete_name(script_ctx_t*,IDispatch*,jsstr_t*,BOOL*) DECLSPEC_HIDDEN;
 HRESULT jsdisp_delete_idx(jsdisp_t*,DWORD) DECLSPEC_HIDDEN;
@@ -464,6 +465,8 @@ BOOL bool_obj_value(jsdisp_t*) DECLSPEC_HIDDEN;
 unsigned array_get_length(jsdisp_t*) DECLSPEC_HIDDEN;
 HRESULT localize_number(script_ctx_t*,DOUBLE,BOOL,jsstr_t**) DECLSPEC_HIDDEN;
 
+BOOL is_builtin_eval_func(jsdisp_t*) DECLSPEC_HIDDEN;
+HRESULT builtin_eval(script_ctx_t*,struct _call_frame_t*,WORD,unsigned,jsval_t*,jsval_t*) DECLSPEC_HIDDEN;
 HRESULT JSGlobal_eval(script_ctx_t*,jsval_t,WORD,unsigned,jsval_t*,jsval_t*) DECLSPEC_HIDDEN;
 HRESULT Object_get_proto_(script_ctx_t*,jsval_t,WORD,unsigned,jsval_t*,jsval_t*) DECLSPEC_HIDDEN;
 HRESULT Object_set_proto_(script_ctx_t*,jsval_t,WORD,unsigned,jsval_t*,jsval_t*) DECLSPEC_HIDDEN;

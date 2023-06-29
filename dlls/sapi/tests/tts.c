@@ -93,9 +93,125 @@ static void test_interfaces(void)
     ISpeechVoice_Release(speech_voice);
 }
 
+static void test_spvoice(void)
+{
+    ISpVoice *voice;
+    ISpMMSysAudio *audio_out;
+    ISpObjectTokenCategory *token_cat;
+    ISpObjectToken *token;
+    WCHAR *token_id = NULL, *default_token_id = NULL;
+    LONG rate;
+    USHORT volume;
+    HRESULT hr;
+
+    if (waveOutGetNumDevs() == 0) {
+        skip("no wave out devices.\n");
+        return;
+    }
+
+    hr = CoCreateInstance(&CLSID_SpVoice, NULL, CLSCTX_INPROC_SERVER,
+                          &IID_ISpVoice, (void **)&voice);
+    ok(hr == S_OK, "Failed to create SpVoice: %#lx.\n", hr);
+
+    hr = ISpVoice_SetOutput(voice, NULL, TRUE);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = CoCreateInstance(&CLSID_SpMMAudioOut, NULL, CLSCTX_INPROC_SERVER,
+                          &IID_ISpMMSysAudio, (void **)&audio_out);
+    ok(hr == S_OK, "Failed to create SpMMAudioOut: %#lx.\n", hr);
+
+    hr = ISpVoice_SetOutput(voice, (IUnknown *)audio_out, TRUE);
+    todo_wine ok(hr == S_FALSE, "got %#lx.\n", hr);
+
+    hr = ISpVoice_SetVoice(voice, NULL);
+    todo_wine ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpVoice_GetVoice(voice, &token);
+    todo_wine ok(hr == S_OK, "got %#lx.\n", hr);
+
+    if (SUCCEEDED(hr))
+    {
+        hr = ISpObjectToken_GetId(token, &token_id);
+        ok(hr == S_OK, "got %#lx.\n", hr);
+
+        hr = CoCreateInstance(&CLSID_SpObjectTokenCategory, NULL, CLSCTX_INPROC_SERVER,
+                              &IID_ISpObjectTokenCategory, (void **)&token_cat);
+        ok(hr == S_OK, "Failed to create SpObjectTokenCategory: %#lx.\n", hr);
+
+        hr = ISpObjectTokenCategory_SetId(token_cat, SPCAT_VOICES, FALSE);
+        ok(hr == S_OK, "got %#lx.\n", hr);
+        hr = ISpObjectTokenCategory_GetDefaultTokenId(token_cat, &default_token_id);
+        ok(hr == S_OK, "got %#lx.\n", hr);
+
+        ok(!wcscmp(token_id, default_token_id), "token_id != default_token_id\n");
+
+        CoTaskMemFree(token_id);
+        CoTaskMemFree(default_token_id);
+        ISpObjectToken_Release(token);
+        ISpObjectTokenCategory_Release(token_cat);
+    }
+
+    rate = 0xdeadbeef;
+    hr = ISpVoice_GetRate(voice, &rate);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(rate == 0, "rate = %ld\n", rate);
+
+    hr = ISpVoice_SetRate(voice, 1);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    rate = 0xdeadbeef;
+    hr = ISpVoice_GetRate(voice, &rate);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(rate == 1, "rate = %ld\n", rate);
+
+    hr = ISpVoice_SetRate(voice, -1000);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    rate = 0xdeadbeef;
+    hr = ISpVoice_GetRate(voice, &rate);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(rate == -1000, "rate = %ld\n", rate);
+
+    hr = ISpVoice_SetRate(voice, 1000);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    rate = 0xdeadbeef;
+    hr = ISpVoice_GetRate(voice, &rate);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(rate == 1000, "rate = %ld\n", rate);
+
+    volume = 0xbeef;
+    hr = ISpVoice_GetVolume(voice, &volume);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(volume == 100, "volume = %d\n", volume);
+
+    hr = ISpVoice_SetVolume(voice, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    volume = 0xbeef;
+    hr = ISpVoice_GetVolume(voice, &volume);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(volume == 0, "volume = %d\n", volume);
+
+    hr = ISpVoice_SetVolume(voice, 100);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    volume = 0xbeef;
+    hr = ISpVoice_GetVolume(voice, &volume);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(volume == 100, "volume = %d\n", volume);
+
+    hr = ISpVoice_SetVolume(voice, 101);
+    ok(hr == E_INVALIDARG, "got %#lx.\n", hr);
+
+    ISpVoice_Release(voice);
+    ISpMMSysAudio_Release(audio_out);
+}
+
 START_TEST(tts)
 {
     CoInitialize(NULL);
     test_interfaces();
+    test_spvoice();
     CoUninitialize();
 }

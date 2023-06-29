@@ -101,10 +101,9 @@ static inline BOOL is_function_prop(dispex_prop_t *prop)
 
     if (is_object_instance(prop->u.val))
     {
-        jsdisp_t *jsdisp = iface_to_jsdisp(get_object(prop->u.val));
+        jsdisp_t *jsdisp = to_jsdisp(get_object(prop->u.val));
 
         if (jsdisp) ret = is_class(jsdisp, JSCLASS_FUNCTION);
-        jsdisp_release(jsdisp);
     }
     return ret;
 }
@@ -2331,6 +2330,14 @@ HRESULT jsdisp_get_id(jsdisp_t *jsdisp, const WCHAR *name, DWORD flags, DISPID *
     TRACE("not found %s\n", debugstr_w(name));
     *id = DISPID_UNKNOWN;
     return DISP_E_UNKNOWNNAME;
+}
+
+HRESULT jsdisp_get_idx_id(jsdisp_t *jsdisp, DWORD idx, DISPID *id)
+{
+    WCHAR name[11];
+
+    swprintf(name, ARRAY_SIZE(name), L"%u", idx);
+    return jsdisp_get_id(jsdisp, name, 0, id);
 }
 
 HRESULT jsdisp_call_value(jsdisp_t *jsfunc, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv, jsval_t *r)

@@ -396,13 +396,11 @@ static HRESULT JSON_parse(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned
 
         if(SUCCEEDED(hres)) {
             struct transform_json_object_ctx proc_ctx = { ctx, get_object(argv[1]), S_OK };
-            if(!(str = jsstr_alloc(L"")))
-                hres = E_OUTOFMEMORY;
-            else {
-                ret = transform_json_object(&proc_ctx, root, str);
-                jsstr_release(str);
-                hres = proc_ctx.hres;
-            }
+
+            str = jsstr_empty();
+            ret = transform_json_object(&proc_ctx, root, str);
+            jsstr_release(str);
+            hres = proc_ctx.hres;
         }
         jsdisp_release(root);
         if(FAILED(hres))
@@ -754,14 +752,13 @@ static HRESULT stringify(stringify_ctx_t *ctx, jsdisp_t *object, const WCHAR *na
         jsdisp_t *obj;
         DISPID id;
 
-        obj = iface_to_jsdisp(get_object(value));
+        obj = to_jsdisp(get_object(value));
         if(!obj) {
             jsval_release(value);
             return S_FALSE;
         }
 
         hres = jsdisp_get_id(obj, L"toJSON", 0, &id);
-        jsdisp_release(obj);
         if(hres == S_OK)
             FIXME("Use toJSON.\n");
     }

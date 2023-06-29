@@ -90,6 +90,7 @@ struct key
     unsigned int      flags;       /* flags */
     timeout_t         modif;       /* last modification time */
     struct list       notify_list; /* list of notifications */
+    abstime_t         timestamp_counter; /* timestamp counter at last change */
 };
 
 /* key flags */
@@ -118,19 +119,18 @@ struct key_value
 #define MAX_NAME_LEN  256    /* max. length of a key name */
 #define MAX_VALUE_LEN 16383  /* max. length of a value name */
 
+static abstime_t change_timestamp_counter;
+
 /* the root of the registry tree */
 static struct key *root_key;
 
 static const timeout_t ticks_1601_to_1970 = (timeout_t)86400 * (369 * 365 + 89) * TICKS_PER_SEC;
-static const timeout_t save_period = 30 * -TICKS_PER_SEC;  /* delay between periodic saves */
-static struct timeout_user *save_timeout_user;  /* saving timer */
-static enum prefix_type { PREFIX_UNKNOWN, PREFIX_32BIT, PREFIX_64BIT } prefix_type;
+static enum prefix_type prefix_type;
 
 static const WCHAR wow6432node[] = {'W','o','w','6','4','3','2','N','o','d','e'};
 static const WCHAR symlink_value[] = {'S','y','m','b','o','l','i','c','L','i','n','k','V','a','l','u','e'};
 static const struct unicode_str symlink_str = { symlink_value, sizeof(symlink_value) };
 
-static void set_periodic_save_timer(void);
 static struct key_value *find_value( const struct key *key, const struct unicode_str *name, int *index );
 
 /* information about where to save a registry branch */
@@ -710,6 +710,7 @@ static struct key *create_key_object( struct object *parent, const struct unicod
             key->last_value  = -1;
             key->values      = NULL;
             key->modif       = modif;
+            key->timestamp_counter = 0;
             list_init( &key->notify_list );
 
             if (options & REG_OPTION_CREATE_LINK) key->flags |= KEY_SYMLINK;
@@ -730,23 +731,25 @@ static struct key *create_key_object( struct object *parent, const struct unicod
 /* mark a key and all its parents as dirty (modified) */
 static void make_dirty( struct key *key )
 {
+    ++change_timestamp_counter;
     while (key)
     {
         if (key->flags & (KEY_DIRTY|KEY_VOLATILE)) return;  /* nothing to do */
         key->flags |= KEY_DIRTY;
+        key->timestamp_counter = change_timestamp_counter;
         key = get_parent( key );
     }
 }
 
 /* mark a key and all its subkeys as clean (not modified) */
-static void make_clean( struct key *key )
+static void make_clean( struct key *key, abstime_t timestamp_counter )
 {
     int i;
 
     if (key->flags & KEY_VOLATILE) return;
     if (!(key->flags & KEY_DIRTY)) return;
-    key->flags &= ~KEY_DIRTY;
-    for (i = 0; i <= key->last_subkey; i++) make_clean( key->subkeys[i] );
+    if (key->timestamp_counter <= timestamp_counter) key->flags &= ~KEY_DIRTY;
+    for (i = 0; i <= key->last_subkey; i++) make_clean( key->subkeys[i], timestamp_counter );
 }
 
 /* go through all the notifications and send them if necessary */
@@ -1978,9 +1981,6 @@ void init_registry(void)
     release_object( hklm );
     release_object( hkcu );
 
-    /* start the periodic save timer */
-    set_periodic_save_timer();
-
     /* create windows directories */
 
     if (!mkdir( "drive_c/windows", 0777 ))
@@ -2005,6 +2005,7 @@ void init_registry(void)
 /* save a registry branch to a file */
 static void save_all_subkeys( struct key *key, FILE *f )
 {
+    /* Registry format in ntdll/registry.c:save_all_subkeys() should match. */
     fprintf( f, "WINE REGISTRY Version 2\n" );
     fprintf( f, ";; All keys relative to " );
     dump_path( key, NULL, f );
@@ -2023,29 +2024,104 @@ static void save_all_subkeys( struct key *key, FILE *f )
     save_subkeys( key, key, f );
 }
 
-/* save a registry branch to a file handle */
-static void save_registry( struct key *key, obj_handle_t handle )
+static data_size_t serialize_value( const struct key_value *value, char *buf )
 {
-    struct file *file;
-    int fd;
+    data_size_t size;
 
-    if (!(file = get_file_obj( current->process, handle, FILE_WRITE_DATA ))) return;
-    fd = dup( get_file_unix_fd( file ) );
-    release_object( file );
-    if (fd != -1)
+    size = sizeof(data_size_t) + value->namelen + sizeof(unsigned int) + sizeof(data_size_t) + value->len;
+    if (!buf) return size;
+
+    *(data_size_t *)buf = value->namelen;
+    buf += sizeof(data_size_t);
+    memcpy( buf, value->name, value->namelen );
+    buf += value->namelen;
+
+    *(unsigned int *)buf = value->type;
+    buf += sizeof(unsigned int);
+
+    *(data_size_t *)buf = value->len;
+    buf += sizeof(data_size_t);
+    memcpy( buf, value->data, value->len );
+
+    return size;
+}
+
+/* save a registry key with subkeys to a buffer */
+static data_size_t serialize_key( const struct key *key, char *buf )
+{
+    data_size_t size;
+    int subkey_count, i;
+
+    if (key->flags & KEY_VOLATILE) return 0;
+
+    size = sizeof(data_size_t) + key->obj.name->len + sizeof(data_size_t) + key->classlen + sizeof(int) + sizeof(int)
+           + sizeof(unsigned int) + sizeof(timeout_t);
+    for (i = 0; i <= key->last_value; i++)
+        size += serialize_value( &key->values[i], buf ? buf + size : NULL );
+    subkey_count = 0;
+    for (i = 0; i <= key->last_subkey; i++)
     {
-        FILE *f = fdopen( fd, "w" );
-        if (f)
-        {
-            save_all_subkeys( key, f );
-            if (fclose( f )) file_set_error();
-        }
-        else
-        {
-            file_set_error();
-            close( fd );
-        }
+        if (key->subkeys[i]->flags & KEY_VOLATILE) continue;
+        size += serialize_key( key->subkeys[i], buf ? buf + size : NULL );
+        ++subkey_count;
     }
+    if (!buf) return size;
+
+    *(data_size_t *)buf = key->obj.name->len;
+    buf += sizeof(data_size_t);
+    memcpy( buf, key->obj.name->name, key->obj.name->len );
+    buf += key->obj.name->len;
+
+    *(data_size_t *)buf = key->classlen;
+    buf += sizeof(data_size_t);
+    memcpy( buf, key->class, key->classlen );
+    buf += key->classlen;
+
+    *(int *)buf = key->last_value + 1;
+    buf += sizeof(int);
+
+    *(int *)buf = subkey_count;
+    buf += sizeof(int);
+
+    *(unsigned int *)buf = key->flags & KEY_SYMLINK;
+    buf += sizeof(unsigned int);
+
+    *(timeout_t *)buf = key->modif;
+
+    return size;
+}
+
+/* save registry branch to buffer */
+static data_size_t save_registry( const struct key *key, char *buf )
+{
+    int *parent_count = NULL;
+    const struct key *parent;
+    data_size_t size;
+
+    size = sizeof(int) + sizeof(int);
+    if (buf)
+    {
+        *(int *)buf = prefix_type;
+        buf += sizeof(int);
+        parent_count = (int *)buf;
+        buf += sizeof(int);
+        *parent_count = 0;
+    }
+
+    parent = key;
+    do
+    {
+        size += sizeof(data_size_t) + parent->obj.name->len;
+        if (!buf) continue;
+        ++*parent_count;
+        *(data_size_t *)buf = parent->obj.name->len;
+        buf += sizeof(data_size_t);
+        memcpy( buf, parent->obj.name->name, parent->obj.name->len );
+        buf += parent->obj.name->len;
+    } while ((parent = get_parent( parent )));
+
+    size += serialize_key( key, buf );
+    return size;
 }
 
 /* save a registry branch to a file */
@@ -2118,28 +2194,8 @@ static int save_branch( struct key *key, const char *path )
 
 done:
     free( tmp );
-    if (ret) make_clean( key );
+    if (ret) make_clean( key, key->timestamp_counter );
     return ret;
-}
-
-/* periodic saving of the registry */
-static void periodic_save( void *arg )
-{
-    int i;
-
-    if (fchdir( config_dir_fd ) == -1) return;
-    save_timeout_user = NULL;
-    for (i = 0; i < save_branch_count; i++)
-        save_branch( save_branch_info[i].key, save_branch_info[i].path );
-    if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
-    set_periodic_save_timer();
-}
-
-/* start the periodic save timer */
-static void set_periodic_save_timer(void)
-{
-    if (save_timeout_user) remove_timeout_user( save_timeout_user );
-    save_timeout_user = add_timeout_user( save_period, periodic_save, NULL );
 }
 
 /* save the modified registry branches to disk */
@@ -2166,6 +2222,36 @@ static int is_wow64_thread( struct thread *thread )
     return (is_machine_64bit( native_machine ) && !is_machine_64bit( thread->process->machine ));
 }
 
+/* find all the branches inside the specified key or the branch containing the key */
+static void find_branches_for_key( struct key *key, int *branches, int *branch_count )
+{
+    struct key *k;
+    int i;
+
+    *branch_count = 0;
+    for (i = 0; i < save_branch_count; i++)
+    {
+        k = save_branch_info[i].key;
+        while ((k = get_parent(k)))
+        {
+            if (k != key) continue;
+            branches[(*branch_count)++] = i;
+            break;
+        }
+    }
+
+    if (*branch_count) return;
+
+    do
+    {
+        for (i = 0; i < save_branch_count; i++)
+        {
+            if(key != save_branch_info[i].key) continue;
+            branches[(*branch_count)++] = i;
+            return;
+        }
+    } while ((key = get_parent( key )));
+}
 
 /* create a registry key */
 DECL_HANDLER(create_key)
@@ -2230,15 +2316,56 @@ DECL_HANDLER(delete_key)
     }
 }
 
-/* flush a registry key */
+/* return registry branches snaphot data for flushing key */
 DECL_HANDLER(flush_key)
 {
     struct key *key = get_hkey_obj( req->hkey, 0 );
-    if (key)
+    int branches[3], branch_count = 0, i, path_len;
+    char *data;
+
+    if (!key) return;
+
+    reply->total = 0;
+    reply->branch_count = 0;
+    if ((key->flags & KEY_DIRTY) && !(key->flags & KEY_VOLATILE))
+        find_branches_for_key( key, branches, &branch_count );
+    release_object( key );
+
+    reply->timestamp_counter = change_timestamp_counter;
+    for (i = 0; i < branch_count; ++i)
     {
-        /* we don't need to do anything here with the current implementation */
-        release_object( key );
+        if (!(save_branch_info[branches[i]].key->flags & KEY_DIRTY)) continue;
+        ++reply->branch_count;
+        path_len = strlen( save_branch_info[branches[i]].path ) + 1;
+        reply->total += sizeof(int) + sizeof(int) + path_len + save_registry( save_branch_info[branches[i]].key, NULL );
     }
+    if (reply->total > get_reply_max_size())
+    {
+        set_error( STATUS_BUFFER_TOO_SMALL );
+        return;
+    }
+
+    if (!(data = set_reply_data_size( reply->total ))) return;
+
+    for (i = 0; i < branch_count; ++i)
+    {
+        if (!(save_branch_info[branches[i]].key->flags & KEY_DIRTY)) continue;
+        *(int *)data = branches[i];
+        data += sizeof(int);
+        path_len = strlen( save_branch_info[branches[i]].path ) + 1;
+        *(int *)data = path_len;
+        data += sizeof(int);
+        memcpy( data, save_branch_info[branches[i]].path, path_len );
+        data += path_len;
+        data += save_registry( save_branch_info[branches[i]].key, data );
+    }
+}
+
+/* clear dirty state after successful registry branch flush */
+DECL_HANDLER(flush_key_done)
+{
+    if (req->branch < save_branch_count) make_clean( save_branch_info[req->branch].key, req->timestamp_counter );
+    else set_error( STATUS_INVALID_PARAMETER );
 }
 
 /* enumerate registry subkeys */
@@ -2372,6 +2499,7 @@ DECL_HANDLER(unload_registry)
 DECL_HANDLER(save_registry)
 {
     struct key *key;
+    char *data;
 
     if (!thread_single_check_privilege( current, SeBackupPrivilege ))
     {
@@ -2381,7 +2509,13 @@ DECL_HANDLER(save_registry)
 
     if ((key = get_hkey_obj( req->hkey, 0 )))
     {
-        save_registry( key, req->file );
+        reply->total = save_registry( key, NULL );
+        if (reply->total <= get_reply_max_size())
+        {
+            if ((data = set_reply_data_size( reply->total )))
+                save_registry( key, data );
+        }
+        else set_error( STATUS_BUFFER_TOO_SMALL );
         release_object( key );
     }
 }

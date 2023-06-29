@@ -87,6 +87,12 @@ extern HRESULT main_loop_start(void) DECLSPEC_HIDDEN;
 extern struct audio_session_wrapper *session_wrapper_create(
     struct audio_client *client) DECLSPEC_HIDDEN;
 
+extern HRESULT stream_release(stream_handle stream, HANDLE timer_thread);
+
+extern WCHAR *get_application_name(void);
+
+extern void set_stream_volumes(struct audio_client *This);
+
 void DECLSPEC_HIDDEN sessions_lock(void)
 {
     EnterCriticalSection(&g_sessions_lock);
@@ -137,17 +143,6 @@ BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, void *reserved)
         break;
     }
     return TRUE;
-}
-
-static HRESULT stream_release(stream_handle stream, HANDLE timer_thread)
-{
-    struct release_stream_params params;
-
-    params.stream = stream;
-    params.timer_thread = timer_thread;
-    OSS_CALL(release_stream, &params);
-
-    return params.result;
 }
 
 static void set_device_guid(EDataFlow flow, HKEY drv_key, const WCHAR *key_name,
@@ -220,17 +215,6 @@ static void get_device_guid(EDataFlow flow, const char *device, GUID *guid)
 
     if(key)
         RegCloseKey(key);
-}
-
-static void set_stream_volumes(ACImpl *This)
-{
-    struct set_volumes_params params;
-
-    params.stream = This->stream;
-    params.master_volume = (This->session->mute ? 0.0f : This->session->master_vol);
-    params.volumes = This->vols;
-    params.session_volumes = This->session->channel_vols;
-    OSS_CALL(set_volumes, &params);
 }
 
 static const OSSDevice *get_ossdevice_from_guid(const GUID *guid)
@@ -543,7 +527,8 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
     ACImpl *This = impl_from_IAudioClient3(iface);
     struct create_stream_params params;
     stream_handle stream;
-    unsigned int i;
+    unsigned int i, channel_count;
+    WCHAR *name;
 
     TRACE("(%p)->(%x, %lx, %s, %s, %p, %s)\n", This, mode, flags,
           wine_dbgstr_longlong(duration), wine_dbgstr_longlong(period), fmt, debugstr_guid(sessionguid));
@@ -582,7 +567,7 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
         return params.result;
     }
 
-    params.name = NULL;
+    params.name = name = get_application_name();
     params.device = This->device_name;
     params.flow = This->dataflow;
     params.share = mode;
@@ -590,26 +575,27 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
     params.duration = duration;
     params.period = period;
     params.fmt = fmt;
-    params.channel_count = NULL;
+    params.channel_count = &channel_count;
     params.stream = &stream;
 
     OSS_CALL(create_stream, &params);
+
+    free(name);
+
     if(FAILED(params.result)){
         sessions_unlock();
         return params.result;
     }
 
-    This->channel_count = fmt->nChannels;
-    This->vols = HeapAlloc(GetProcessHeap(), 0, This->channel_count * sizeof(float));
+    This->vols = HeapAlloc(GetProcessHeap(), 0, channel_count * sizeof(float));
     if(!This->vols){
         params.result = E_OUTOFMEMORY;
         goto exit;
     }
-    for(i = 0; i < This->channel_count; ++i)
+    for(i = 0; i < channel_count; ++i)
         This->vols[i] = 1.f;
 
-    params.result = get_audio_session(sessionguid, This->parent, This->channel_count,
-            &This->session);
+    params.result = get_audio_session(sessionguid, This->parent, channel_count, &This->session);
 
 exit:
     if(FAILED(params.result)){
@@ -619,6 +605,7 @@ exit:
     } else {
         list_add_tail(&This->session->clients, &This->entry);
         This->stream = stream;
+        This->channel_count = channel_count;
         set_stream_volumes(This);
     }
 

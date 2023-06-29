@@ -118,8 +118,10 @@ BOOL WINAPI DECLSPEC_HOTPATCH DebugActiveProcessStop( DWORD pid )
 /***********************************************************************
  *           DebugBreak   (kernelbase.@)
  */
-#if defined(__i386__) || defined(__x86_64__)
+#ifdef __i386__
 __ASM_STDCALL_FUNC( DebugBreak, 0, "jmp " __ASM_STDCALL("DbgBreakPoint", 0) )
+#elif defined(__x86_64__)
+__ASM_GLOBAL_FUNC( DebugBreak, "jmp " __ASM_NAME("DbgBreakPoint") )
 #else
 void WINAPI DebugBreak(void)
 {
@@ -364,7 +366,12 @@ void WINAPI DECLSPEC_HOTPATCH RaiseException( DWORD code, DWORD flags, DWORD cou
     RtlRaiseException( &record );
 }
 #endif
+
+#ifdef __i386__
 __ASM_STDCALL_IMPORT(RaiseException,16)
+#else
+__ASM_GLOBAL_IMPORT(RaiseException)
+#endif
 
 /*******************************************************************
  *           RaiseFailFastException  (kernelbase.@)
@@ -1646,8 +1653,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetWsChangesEx( HANDLE process, PSAPI_WS_WATCH_INF
 BOOL WINAPI /* DECLSPEC_HOTPATCH */ InitializeProcessForWsWatch( HANDLE process )
 {
     FIXME( "(process=%p): stub\n", process );
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-    return FALSE;
+    return TRUE;
 }
 
 

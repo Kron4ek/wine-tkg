@@ -1592,6 +1592,14 @@ void WINAPI vkCmdSetDepthBias(VkCommandBuffer commandBuffer, float depthBiasCons
     UNIX_CALL(vkCmdSetDepthBias, &params);
 }
 
+void WINAPI vkCmdSetDepthBias2EXT(VkCommandBuffer commandBuffer, const VkDepthBiasInfoEXT *pDepthBiasInfo)
+{
+    struct vkCmdSetDepthBias2EXT_params params;
+    params.commandBuffer = commandBuffer;
+    params.pDepthBiasInfo = pDepthBiasInfo;
+    UNIX_CALL(vkCmdSetDepthBias2EXT, &params);
+}
+
 void WINAPI vkCmdSetDepthBiasEnable(VkCommandBuffer commandBuffer, VkBool32 depthBiasEnable)
 {
     struct vkCmdSetDepthBiasEnable_params params;
@@ -3832,6 +3840,20 @@ VkResult WINAPI vkGetBufferOpaqueCaptureDescriptorDataEXT(VkDevice device, const
     return params.result;
 }
 
+VkResult WINAPI vkGetCalibratedTimestampsEXT(VkDevice device, uint32_t timestampCount, const VkCalibratedTimestampInfoEXT *pTimestampInfos, uint64_t *pTimestamps, uint64_t *pMaxDeviation)
+{
+    struct vkGetCalibratedTimestampsEXT_params params;
+    NTSTATUS status;
+    params.device = device;
+    params.timestampCount = timestampCount;
+    params.pTimestampInfos = pTimestampInfos;
+    params.pTimestamps = pTimestamps;
+    params.pMaxDeviation = pMaxDeviation;
+    status = UNIX_CALL(vkGetCalibratedTimestampsEXT, &params);
+    assert(!status && "vkGetCalibratedTimestampsEXT");
+    return params.result;
+}
+
 uint32_t WINAPI vkGetDeferredOperationMaxConcurrencyKHR(VkDevice device, VkDeferredOperationKHR operation)
 {
     struct vkGetDeferredOperationMaxConcurrencyKHR_params params;
@@ -5931,6 +5953,7 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkCmdSetCullMode", vkCmdSetCullMode},
     {"vkCmdSetCullModeEXT", vkCmdSetCullModeEXT},
     {"vkCmdSetDepthBias", vkCmdSetDepthBias},
+    {"vkCmdSetDepthBias2EXT", vkCmdSetDepthBias2EXT},
     {"vkCmdSetDepthBiasEnable", vkCmdSetDepthBiasEnable},
     {"vkCmdSetDepthBiasEnableEXT", vkCmdSetDepthBiasEnableEXT},
     {"vkCmdSetDepthBounds", vkCmdSetDepthBounds},

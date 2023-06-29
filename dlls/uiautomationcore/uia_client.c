@@ -539,6 +539,55 @@ static HRESULT WINAPI uia_node_get_hwnd(IWineUiaNode *iface, ULONG *out_hwnd)
     return S_OK;
 }
 
+static HRESULT WINAPI uia_node_attach_event(IWineUiaNode *iface, long proc_id, long event_cookie,
+        IWineUiaEvent **ret_event)
+{
+    struct uia_node *node = impl_from_IWineUiaNode(iface);
+    struct uia_event *event = NULL;
+    int old_event_advisers_count;
+    HRESULT hr;
+
+    TRACE("%p, %ld, %ld, %p\n", node, proc_id, event_cookie, ret_event);
+
+    *ret_event = NULL;
+    hr = create_serverside_uia_event(&event, proc_id, event_cookie);
+    if (FAILED(hr))
+        return hr;
+
+    /* Newly created serverside event. */
+    if (hr == S_OK)
+        *ret_event = &event->IWineUiaEvent_iface;
+
+    old_event_advisers_count = event->event_advisers_count;
+    hr = attach_event_to_node_provider(iface, 0, (HUIAEVENT)event);
+    if (FAILED(hr))
+    {
+        IWineUiaEvent_Release(&event->IWineUiaEvent_iface);
+        *ret_event = NULL;
+        return hr;
+    }
+
+    /*
+     * Attach this nested node to the serverside event to keep the provider
+     * thread alive.
+     */
+    if (*ret_event)
+    {
+        IWineUiaNode_AddRef(iface);
+        event->u.serverside.node = iface;
+    }
+
+    /*
+     * Pre-existing serverside event that has already had its initial
+     * advise call and gotten event data - if we've got new advisers, we need
+     * to advise them here.
+     */
+    if (!(*ret_event) && event->event_id && (event->event_advisers_count != old_event_advisers_count))
+        hr = IWineUiaEvent_advise_events(&event->IWineUiaEvent_iface, TRUE, old_event_advisers_count);
+
+    return hr;
+}
+
 static const IWineUiaNodeVtbl uia_node_vtbl = {
     uia_node_QueryInterface,
     uia_node_AddRef,
@@ -547,6 +596,7 @@ static const IWineUiaNodeVtbl uia_node_vtbl = {
     uia_node_get_prop_val,
     uia_node_disconnect,
     uia_node_get_hwnd,
+    uia_node_attach_event,
 };
 
 static struct uia_node *unsafe_impl_from_IWineUiaNode(IWineUiaNode *iface)
@@ -2243,8 +2293,21 @@ static HRESULT WINAPI uia_nested_node_provider_get_focus(IWineUiaProvider *iface
 
 static HRESULT WINAPI uia_nested_node_provider_attach_event(IWineUiaProvider *iface, LONG_PTR huiaevent)
 {
-    FIXME("%p, %#Ix: stub\n", iface, huiaevent);
-    return E_NOTIMPL;
+    struct uia_nested_node_provider *prov = impl_from_nested_node_IWineUiaProvider(iface);
+    struct uia_event *event = (struct uia_event *)huiaevent;
+    IWineUiaEvent *remote_event = NULL;
+    HRESULT hr;
+
+    TRACE("%p, %#Ix\n", iface, huiaevent);
+
+    hr = IWineUiaNode_attach_event(prov->nested_node, GetCurrentProcessId(), event->event_cookie, &remote_event);
+    if (FAILED(hr) || !remote_event)
+        return hr;
+
+    hr = uia_event_add_serverside_event_adviser(remote_event, event);
+    IWineUiaEvent_Release(remote_event);
+
+    return hr;
 }
 
 static const IWineUiaProviderVtbl uia_nested_node_provider_vtbl = {
@@ -3487,15 +3550,6 @@ exit:
     }
 
     return hr;
-}
-
-/***********************************************************************
- *          UiaEventAddWindow (uiautomationcore.@)
- */
-HRESULT WINAPI UiaEventAddWindow(HUIAEVENT huiaevent, HWND hwnd)
-{
-    FIXME("(%p, %p): stub\n", huiaevent, hwnd);
-    return E_NOTIMPL;
 }
 
 /***********************************************************************

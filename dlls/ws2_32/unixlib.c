@@ -985,12 +985,6 @@ static NTSTATUS unix_gethostbyname( void *args )
     int locerr;
     int ret;
 
-    if (!strcmp(params->name, "download-alt.easyanticheat.net"))
-    {
-        ERR("HACK: failing download-alt.easyanticheat.net resolution.\n");
-        return HOST_NOT_FOUND;
-    }
-
     if (!(unix_buffer = malloc( unix_size )))
         return WSAENOBUFS;
 

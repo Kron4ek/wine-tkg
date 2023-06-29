@@ -4365,6 +4365,7 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unknown2, ULONG_PTR 
                              sizeof(peb->TlsExpansionBitmapBits) * 8 );
         /* TLS index 0 is always reserved, and wow64 reserves extra TLS entries */
         RtlSetBits( peb->TlsBitmap, 0, NtCurrentTeb()->WowTebOffset ? WOW64_TLS_MAX_NUMBER : 1 );
+        RtlSetBits( peb->TlsBitmap, NTDLL_TLS_ERRNO, 1 );
 
         /* initialize hash table */
         for (i = 0; i < HASH_MAP_SIZE; i++)

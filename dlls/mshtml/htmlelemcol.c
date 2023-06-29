@@ -656,8 +656,6 @@ static void create_all_list(HTMLDOMNode *elem, elem_vector_t *buf)
     }
 
     nsIDOMNodeList_GetLength(nsnode_list, &list_len);
-    if(!list_len)
-        return;
 
     for(i=0; i<list_len; i++) {
         nsres = nsIDOMNodeList_Item(nsnode_list, i, &iter);
@@ -672,13 +670,18 @@ static void create_all_list(HTMLDOMNode *elem, elem_vector_t *buf)
             hres = get_node(iter, TRUE, &node);
             if(FAILED(hres)) {
                 FIXME("get_node failed: %08lx\n", hres);
+                nsIDOMNode_Release(iter);
                 continue;
             }
 
             elem_vector_add(buf, elem_from_HTMLDOMNode(node));
             create_all_list(node, buf);
         }
+
+        nsIDOMNode_Release(iter);
     }
+
+    nsIDOMNodeList_Release(nsnode_list);
 }
 
 IHTMLElementCollection *create_all_collection(HTMLDOMNode *node, BOOL include_root)
@@ -775,8 +778,8 @@ HRESULT get_elem_source_index(HTMLElement *elem, LONG *ret)
     nsIDOMNode *parent_node, *iter;
     UINT16 parent_type;
     HTMLDOMNode *node;
-    int i;
     nsresult nsres;
+    unsigned i, j;
     HRESULT hres;
 
     iter = elem->node.nsnode;
@@ -827,7 +830,11 @@ HRESULT get_elem_source_index(HTMLElement *elem, LONG *ret)
             break;
     }
     IHTMLDOMNode_Release(&node->IHTMLDOMNode_iface);
+
+    for(j = 0; j < buf.len; j++)
+        IHTMLDOMNode_Release(&buf.buf[j]->node.IHTMLDOMNode_iface);
     free(buf.buf);
+
     if(i == buf.len) {
         FIXME("The element is not in parent's child list?\n");
         return E_UNEXPECTED;
