@@ -280,6 +280,7 @@ struct dbg_process
     struct backend_cpu*         be_cpu;
     HANDLE                      event_on_first_exception;
     BOOL                        active_debuggee;
+    BOOL                        is_wow64;
     struct dbg_breakpoint       bp[MAX_BREAKPOINTS];
     unsigned                    next_bp;
     struct dbg_delayed_bp*      delayed_bp;
@@ -393,6 +394,7 @@ extern void             info_win32_frame_exceptions(DWORD tid);
 extern void             info_win32_virtual(DWORD pid);
 extern void             info_win32_segments(DWORD start, int length);
 extern void             info_win32_exception(void);
+extern void             info_win32_system(void);
 extern void             info_wine_dbg_channel(BOOL add, const char* chnl, const char* name);
 extern WCHAR*           fetch_thread_description(DWORD tid);
 

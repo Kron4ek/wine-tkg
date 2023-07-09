@@ -9,6 +9,9 @@ SOURCES = \
 	version.rc \
 	wayland.c \
 	wayland_output.c \
+	wayland_surface.c \
 	waylanddrv_main.c \
 	window.c \
-	xdg-output-unstable-v1.xml
+	window_surface.c \
+	xdg-output-unstable-v1.xml \
+	xdg-shell.xml

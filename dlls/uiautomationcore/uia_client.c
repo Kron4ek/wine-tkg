@@ -539,7 +539,7 @@ static HRESULT WINAPI uia_node_get_hwnd(IWineUiaNode *iface, ULONG *out_hwnd)
     return S_OK;
 }
 
-static HRESULT WINAPI uia_node_attach_event(IWineUiaNode *iface, long proc_id, long event_cookie,
+static HRESULT WINAPI uia_node_attach_event(IWineUiaNode *iface, LONG proc_id, LONG event_cookie,
         IWineUiaEvent **ret_event)
 {
     struct uia_node *node = impl_from_IWineUiaNode(iface);
@@ -565,16 +565,6 @@ static HRESULT WINAPI uia_node_attach_event(IWineUiaNode *iface, long proc_id, l
         IWineUiaEvent_Release(&event->IWineUiaEvent_iface);
         *ret_event = NULL;
         return hr;
-    }
-
-    /*
-     * Attach this nested node to the serverside event to keep the provider
-     * thread alive.
-     */
-    if (*ret_event)
-    {
-        IWineUiaNode_AddRef(iface);
-        event->u.serverside.node = iface;
     }
 
     /*
@@ -681,6 +671,73 @@ static HRESULT prepare_uia_node(struct uia_node *node)
     }
 
     return S_OK;
+}
+
+static HRESULT create_wine_uia_provider(struct uia_node *node, IRawElementProviderSimple *elprov, int prov_type);
+HRESULT clone_uia_node(HUIANODE in_node, HUIANODE *out_node)
+{
+    struct uia_node *in_node_data = impl_from_IWineUiaNode((IWineUiaNode *)in_node);
+    struct uia_node *node;
+    HRESULT hr = S_OK;
+    int i;
+
+    *out_node = NULL;
+    if (in_node_data->nested_node)
+    {
+        FIXME("Cloning of nested nodes currently unimplemented\n");
+        return E_NOTIMPL;
+    }
+
+    for (i = 0; i < PROV_TYPE_COUNT; i++)
+    {
+        if (in_node_data->prov[i] && is_nested_node_provider(in_node_data->prov[i]))
+        {
+            FIXME("Cloning of nested node providers currently unimplemented\n");
+            return E_NOTIMPL;
+        }
+    }
+
+    if (!(node = heap_alloc_zero(sizeof(*node))))
+        return E_OUTOFMEMORY;
+
+    node->IWineUiaNode_iface.lpVtbl = &uia_node_vtbl;
+    list_init(&node->prov_thread_list_entry);
+    list_init(&node->node_map_list_entry);
+    node->ref = 1;
+    node->hwnd = in_node_data->hwnd;
+
+    for (i = 0; i < PROV_TYPE_COUNT; i++)
+    {
+        struct uia_provider *in_prov_data;
+
+        if (!in_node_data->prov[i])
+            continue;
+
+        in_prov_data = impl_from_IWineUiaProvider(in_node_data->prov[i]);
+        hr = create_wine_uia_provider(node, in_prov_data->elprov, i);
+        if (FAILED(hr))
+            goto exit;
+
+        if (in_node_data->git_cookie[i])
+        {
+            hr = register_interface_in_git((IUnknown *)node->prov[i], &IID_IWineUiaProvider, &node->git_cookie[i]);
+            if (FAILED(hr))
+                goto exit;
+        }
+    }
+
+    node->parent_link_idx = in_node_data->parent_link_idx;
+    node->creator_prov_idx = in_node_data->creator_prov_idx;
+    node->creator_prov_type = in_node_data->creator_prov_type;
+
+    *out_node = (void *)&node->IWineUiaNode_iface;
+    TRACE("Created clone node %p from node %p\n", *out_node, in_node);
+
+exit:
+    if (FAILED(hr))
+        IWineUiaNode_Release(&node->IWineUiaNode_iface);
+
+    return hr;
 }
 
 static BOOL node_creator_is_parent_link(struct uia_node *node)
@@ -1274,17 +1331,6 @@ static ULONG WINAPI uia_provider_Release(IWineUiaProvider *iface)
     }
 
     return ref;
-}
-
-static void get_variant_for_node(HUIANODE node, VARIANT *v)
-{
-#ifdef _WIN64
-            V_VT(v) = VT_I8;
-            V_I8(v) = (UINT64)node;
-#else
-            V_VT(v) = VT_I4;
-            V_I4(v) = (UINT32)node;
-#endif
 }
 
 static HRESULT get_variant_for_elprov_node(IRawElementProviderSimple *elprov, BOOL out_nested,
@@ -2181,7 +2227,6 @@ static ULONG WINAPI uia_nested_node_provider_Release(IWineUiaProvider *iface)
     return ref;
 }
 
-static HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode);
 static HRESULT WINAPI uia_nested_node_provider_get_prop_val(IWineUiaProvider *iface,
         const struct uia_prop_info *prop_info, VARIANT *ret_val)
 {
@@ -2440,7 +2485,7 @@ static HRESULT create_wine_uia_nested_node_provider(struct uia_node *node, LRESU
     return S_OK;
 }
 
-static HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode)
+HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode)
 {
     struct uia_node *node;
     HRESULT hr;

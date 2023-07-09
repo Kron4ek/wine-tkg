@@ -989,6 +989,8 @@ static void shader_sm4_read_declaration_count(struct vkd3d_shader_instruction *i
         uint32_t opcode_token, const uint32_t *tokens, unsigned int token_count, struct vkd3d_shader_sm4_parser *priv)
 {
     ins->declaration.count = *tokens;
+    if (opcode == VKD3D_SM4_OP_DCL_TEMPS)
+        priv->p.shader_desc.temp_count = max(priv->p.shader_desc.temp_count, *tokens);
 }
 
 static void shader_sm4_read_declaration_dst(struct vkd3d_shader_instruction *ins, uint32_t opcode,
@@ -2442,6 +2444,7 @@ int vkd3d_shader_sm4_parser_create(const struct vkd3d_shader_compile_info *compi
     }
 
     shader_desc = &sm4->p.shader_desc;
+    shader_desc->is_dxil = false;
     if ((ret = shader_extract_from_dxbc(&compile_info->source,
             message_context, compile_info->source_name, shader_desc)) < 0)
     {
@@ -4369,9 +4372,29 @@ static void write_sm4_expr(struct hlsl_ctx *ctx,
             write_sm4_unary_op(buffer, VKD3D_SM4_OP_DERIV_RTX, &expr->node, arg1, 0);
             break;
 
+        case HLSL_OP1_DSX_COARSE:
+            assert(type_is_float(dst_type));
+            write_sm4_unary_op(buffer, VKD3D_SM5_OP_DERIV_RTX_COARSE, &expr->node, arg1, 0);
+            break;
+
+        case HLSL_OP1_DSX_FINE:
+            assert(type_is_float(dst_type));
+            write_sm4_unary_op(buffer, VKD3D_SM5_OP_DERIV_RTX_FINE, &expr->node, arg1, 0);
+            break;
+
         case HLSL_OP1_DSY:
             assert(type_is_float(dst_type));
             write_sm4_unary_op(buffer, VKD3D_SM4_OP_DERIV_RTY, &expr->node, arg1, 0);
+            break;
+
+        case HLSL_OP1_DSY_COARSE:
+            assert(type_is_float(dst_type));
+            write_sm4_unary_op(buffer, VKD3D_SM5_OP_DERIV_RTY_COARSE, &expr->node, arg1, 0);
+            break;
+
+        case HLSL_OP1_DSY_FINE:
+            assert(type_is_float(dst_type));
+            write_sm4_unary_op(buffer, VKD3D_SM5_OP_DERIV_RTY_FINE, &expr->node, arg1, 0);
             break;
 
         case HLSL_OP1_EXP2:
@@ -4780,19 +4803,13 @@ static void write_sm4_jump(struct hlsl_ctx *ctx,
             instr.opcode = VKD3D_SM4_OP_BREAK;
             break;
 
-        case HLSL_IR_JUMP_DISCARD:
+        case HLSL_IR_JUMP_DISCARD_NZ:
         {
-            struct sm4_register *reg = &instr.srcs[0].reg;
-
             instr.opcode = VKD3D_SM4_OP_DISCARD | VKD3D_SM4_CONDITIONAL_NZ;
 
             memset(&instr.srcs[0], 0, sizeof(*instr.srcs));
-            instr.srcs[0].swizzle_type = VKD3D_SM4_SWIZZLE_NONE;
             instr.src_count = 1;
-            reg->type = VKD3D_SM4_RT_IMMCONST;
-            reg->dim = VKD3D_SM4_DIMENSION_SCALAR;
-            reg->immconst_uint[0] = ~0u;
-
+            sm4_src_from_node(&instr.srcs[0], jump->condition.node, VKD3DSP_WRITEMASK_ALL);
             break;
         }
 
@@ -4800,7 +4817,7 @@ static void write_sm4_jump(struct hlsl_ctx *ctx,
             vkd3d_unreachable();
 
         default:
-            hlsl_fixme(ctx, &jump->node.loc, "Jump type %s.\n", hlsl_jump_type_to_string(jump->type));
+            hlsl_fixme(ctx, &jump->node.loc, "Jump type %s.", hlsl_jump_type_to_string(jump->type));
             return;
     }
 
@@ -5016,7 +5033,7 @@ static void write_sm4_resource_store(struct hlsl_ctx *ctx,
 
     if (resource_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
     {
-        hlsl_fixme(ctx, &store->node.loc, "Structured buffers store is not implemented.\n");
+        hlsl_fixme(ctx, &store->node.loc, "Structured buffers store is not implemented.");
         return;
     }
 

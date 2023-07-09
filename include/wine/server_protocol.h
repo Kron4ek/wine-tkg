@@ -2028,6 +2028,21 @@ struct map_builtin_view_reply
 
 
 
+struct get_image_view_info_request
+{
+    struct request_header __header;
+    obj_handle_t process;
+    client_ptr_t addr;
+};
+struct get_image_view_info_reply
+{
+    struct reply_header __header;
+    client_ptr_t base;
+    mem_size_t   size;
+};
+
+
+
 struct unmap_view_request
 {
     struct request_header __header;
@@ -5271,7 +5286,7 @@ struct set_fd_disp_info_request
 {
     struct request_header __header;
     obj_handle_t handle;
-    int          unlink;
+    unsigned int flags;
     char __pad_20[4];
 };
 struct set_fd_disp_info_reply
@@ -5840,6 +5855,7 @@ enum request
     REQ_map_view,
     REQ_map_image_view,
     REQ_map_builtin_view,
+    REQ_get_image_view_info,
     REQ_unmap_view,
     REQ_get_mapping_committed_range,
     REQ_add_mapping_committed_range,
@@ -6139,6 +6155,7 @@ union generic_request
     struct map_view_request map_view_request;
     struct map_image_view_request map_image_view_request;
     struct map_builtin_view_request map_builtin_view_request;
+    struct get_image_view_info_request get_image_view_info_request;
     struct unmap_view_request unmap_view_request;
     struct get_mapping_committed_range_request get_mapping_committed_range_request;
     struct add_mapping_committed_range_request add_mapping_committed_range_request;
@@ -6436,6 +6453,7 @@ union generic_reply
     struct map_view_reply map_view_reply;
     struct map_image_view_reply map_image_view_reply;
     struct map_builtin_view_reply map_builtin_view_reply;
+    struct get_image_view_info_reply get_image_view_info_reply;
     struct unmap_view_reply unmap_view_reply;
     struct get_mapping_committed_range_reply get_mapping_committed_range_reply;
     struct add_mapping_committed_range_reply add_mapping_committed_range_reply;
@@ -6665,7 +6683,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 779
+#define SERVER_PROTOCOL_VERSION 781
 
 /* ### protocol_version end ### */
 

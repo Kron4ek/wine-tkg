@@ -319,7 +319,7 @@ static void invalidate_icons( unsigned int start, unsigned int end )
 /* make an icon visible */
 static BOOL show_icon(struct icon *icon)
 {
-    WINE_TRACE("id=0x%x, hwnd=%p\n", icon->id, icon->owner);
+    TRACE( "id=0x%x, hwnd=%p\n", icon->id, icon->owner );
 
     if (icon->display != -1) return TRUE;  /* already displayed */
 
@@ -327,9 +327,7 @@ static BOOL show_icon(struct icon *icon)
     {
         unsigned int new_count = max( alloc_displayed * 2, 32 );
         struct icon **ptr;
-        if (displayed) ptr = HeapReAlloc( GetProcessHeap(), 0, displayed, new_count * sizeof(*ptr) );
-        else ptr = HeapAlloc( GetProcessHeap(), 0, new_count * sizeof(*ptr) );
-        if (!ptr) return FALSE;
+        if (!(ptr = realloc( displayed, new_count * sizeof(*ptr) ))) return FALSE;
         displayed = ptr;
         alloc_displayed = new_count;
     }
@@ -351,7 +349,7 @@ static BOOL hide_icon(struct icon *icon)
 {
     unsigned int i;
 
-    WINE_TRACE("id=0x%x, hwnd=%p\n", icon->id, icon->owner);
+    TRACE( "id=0x%x, hwnd=%p\n", icon->id, icon->owner );
 
     if (icon->display == -1) return TRUE;  /* already hidden */
 
@@ -376,12 +374,12 @@ static BOOL hide_icon(struct icon *icon)
 /* Modifies an existing icon record */
 static BOOL modify_icon( struct icon *icon, NOTIFYICONDATAW *nid )
 {
-    WINE_TRACE("id=0x%x, hwnd=%p\n", nid->uID, nid->hWnd);
+    TRACE( "id=0x%x, hwnd=%p\n", nid->uID, nid->hWnd );
 
     /* demarshal the request from the NID */
     if (!icon)
     {
-        WINE_WARN("Invalid icon ID (0x%x) for HWND %p\n", nid->uID, nid->hWnd);
+        WARN( "Invalid icon ID (0x%x) for HWND %p\n", nid->uID, nid->hWnd );
         return FALSE;
     }
 
@@ -425,17 +423,17 @@ static BOOL add_icon(NOTIFYICONDATAW *nid)
 {
     struct icon  *icon;
 
-    WINE_TRACE("id=0x%x, hwnd=%p\n", nid->uID, nid->hWnd);
+    TRACE( "id=0x%x, hwnd=%p\n", nid->uID, nid->hWnd );
 
     if ((icon = get_icon(nid->hWnd, nid->uID)))
     {
-        WINE_WARN("duplicate tray icon add, buggy app?\n");
+        WARN( "duplicate tray icon add, buggy app?\n" );
         return FALSE;
     }
 
-    if (!(icon = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*icon))))
+    if (!(icon = calloc( 1, sizeof(*icon) )))
     {
-        WINE_ERR("out of memory\n");
+        ERR( "out of memory\n" );
         return FALSE;
     }
 
@@ -455,7 +453,7 @@ static BOOL delete_icon(struct icon *icon)
     hide_icon(icon);
     list_remove(&icon->entry);
     DestroyIcon(icon->image);
-    HeapFree(GetProcessHeap(), 0, icon);
+    free( icon );
     return TRUE;
 }
 
@@ -556,7 +554,7 @@ static BOOL handle_incoming(HWND hwndSource, COPYDATASTRUCT *cds)
 
         if (cds->cbData < sizeof(*data) + cbMaskBits + cbColourBits)
         {
-            WINE_ERR("buffer underflow\n");
+            ERR( "buffer underflow\n" );
             return FALSE;
         }
         nid.hIcon = CreateIcon(NULL, data->width, data->height, data->planes, data->bpp,
@@ -593,7 +591,7 @@ static BOOL handle_incoming(HWND hwndSource, COPYDATASTRUCT *cds)
         }
         break;
     default:
-        WINE_FIXME("unhandled tray message: %Id\n", cds->dwData);
+        FIXME( "unhandled tray message: %Id\n", cds->dwData );
         break;
     }
 
@@ -615,7 +613,7 @@ static void add_taskbar_button( HWND hwnd )
         if (!GetWindowThreadProcessId( hwnd, &process ) || process == GetCurrentProcessId()) return;
     }
 
-    if (!(win = HeapAlloc( GetProcessHeap(), 0, sizeof(*win) ))) return;
+    if (!(win = malloc( sizeof(*win) ))) return;
     win->hwnd = hwnd;
     win->button = CreateWindowW( WC_BUTTONW, NULL, WS_CHILD | BS_OWNERDRAW,
                                  0, 0, 0, 0, tray_window, (HMENU)hwnd, 0, 0 );
@@ -639,7 +637,7 @@ static void remove_taskbar_button( HWND hwnd )
     if (!win) return;
     list_remove( &win->entry );
     DestroyWindow( win->button );
-    HeapFree( GetProcessHeap(), 0, win );
+    free( win );
 }
 
 static void paint_taskbar_button( const DRAWITEMSTRUCT *dis )
@@ -894,7 +892,6 @@ void handle_parent_notify( HWND hwnd, WPARAM wp )
 void initialize_systray( HMODULE graphics_driver, BOOL using_root, BOOL arg_enable_shell )
 {
     WNDCLASSEXW class;
-    static const WCHAR classname[] = {'S','h','e','l','l','_','T','r','a','y','W','n','d',0};
     RECT work_rect, primary_rect, taskbar_rect;
 
     if (using_root && graphics_driver) wine_notify_icon = (void *)GetProcAddress( graphics_driver, "wine_notify_icon" );
@@ -913,11 +910,11 @@ void initialize_systray( HMODULE graphics_driver, BOOL using_root, BOOL arg_enab
     class.hIcon         = LoadIconW(0, (LPCWSTR)IDI_WINLOGO);
     class.hCursor       = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
     class.hbrBackground = (HBRUSH) COLOR_WINDOW;
-    class.lpszClassName = classname;
+    class.lpszClassName = L"Shell_TrayWnd";
 
     if (!RegisterClassExW(&class))
     {
-        WINE_ERR("Could not register SysTray window class\n");
+        ERR( "Could not register SysTray window class\n" );
         return;
     }
 
@@ -925,12 +922,12 @@ void initialize_systray( HMODULE graphics_driver, BOOL using_root, BOOL arg_enab
     SetRect( &primary_rect, 0, 0, GetSystemMetrics( SM_CXSCREEN ), GetSystemMetrics( SM_CYSCREEN ) );
     SubtractRect( &taskbar_rect, &primary_rect, &work_rect );
 
-    tray_window = CreateWindowExW( WS_EX_NOACTIVATE, classname, NULL, WS_POPUP, taskbar_rect.left,
+    tray_window = CreateWindowExW( WS_EX_NOACTIVATE, class.lpszClassName, NULL, WS_POPUP, taskbar_rect.left,
                                    taskbar_rect.top, taskbar_rect.right - taskbar_rect.left,
                                    taskbar_rect.bottom - taskbar_rect.top, 0, 0, 0, 0 );
     if (!tray_window)
     {
-        WINE_ERR("Could not create tray window\n");
+        ERR( "Could not create tray window\n" );
         return;
     }
 

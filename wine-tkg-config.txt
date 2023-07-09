@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Thu Jun 29 07:05:04 AM UTC 2023 :
+# Last wine-tkg-staging-fsync-git configuration - Sun Jul  9 07:29:05 AM UTC 2023 :
 
 Local cfg files used
 
-Wine (plain) version: 8.11.r0.gc13e7ae474d
-Using wine-staging patchset (version 8.11.r0.gfcff74d6)
+Wine (plain) version: 8.12.r0.gaaf304f2441
+Using wine-staging patchset (version 8.12.r0.gd745d08c)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -26,9 +26,6 @@ proton_battleye.patch -- ( Add support for Proton's Battleye runtime )
 proton-eac_bridge.patch -- ( Add support for Proton's EAC bridge )
 
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
-Applied hotfix ef6e33f.mypatch
-Applied hotfix 0001-proton-bcrypt_rdr2_fixes5.mypatch
-Applied hotfix 0002-bcrypt-Add-support-for-calculating-secret-ecc-keys.mypatch
 Applied hotfix a608ef1.mypatch
 Applied hotfix opencl-fixup.mypatch
 Applied hotfix nostale_mouse_fix.mypatch

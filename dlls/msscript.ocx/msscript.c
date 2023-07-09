@@ -3381,7 +3381,7 @@ static HRESULT WINAPI PersistStreamInit_Load(IPersistStreamInit *iface, IStream 
 
     FIXME("(%p)->(%p)\n", This, stream);
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static HRESULT WINAPI PersistStreamInit_Save(IPersistStreamInit *iface, IStream *stream, BOOL clear_dirty)
@@ -3471,7 +3471,7 @@ static HRESULT WINAPI OleControl_OnAmbientPropertyChange(IOleControl *iface, DIS
 
     FIXME("(%p)->(%#lx)\n", This, dispid);
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static HRESULT WINAPI OleControl_FreezeEvents(IOleControl *iface, BOOL freeze)
@@ -3480,7 +3480,7 @@ static HRESULT WINAPI OleControl_FreezeEvents(IOleControl *iface, BOOL freeze)
 
     FIXME("(%p)->(%d)\n", This, freeze);
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static const IOleControlVtbl OleControlVtbl = {

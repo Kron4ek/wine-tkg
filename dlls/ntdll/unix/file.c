@@ -5411,6 +5411,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         0,                                             /* FileReplaceCompletionInformation */
         0,                                             /* FileHardLinkFullIdInformation */
         0,                                             /* FileIdExtdBothDirectoryInformation */
+        0,                                             /* FileDispositionInformationEx */
     };
 
     struct stat st;
@@ -5842,7 +5843,26 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             SERVER_START_REQ( set_fd_disp_info )
             {
                 req->handle   = wine_server_obj_handle( handle );
-                req->unlink   = info->DoDeleteFile;
+                req->flags    = info->DoDeleteFile ? FILE_DISPOSITION_DELETE : FILE_DISPOSITION_DO_NOT_DELETE;
+                status = wine_server_call( req );
+            }
+            SERVER_END_REQ;
+        }
+        else status = STATUS_INVALID_PARAMETER_3;
+        break;
+
+    case FileDispositionInformationEx:
+        if (len >= sizeof(FILE_DISPOSITION_INFORMATION_EX))
+        {
+            FILE_DISPOSITION_INFORMATION_EX *info = ptr;
+
+            if (info->Flags & FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK)
+                FIXME( "FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK not supported\n" );
+
+            SERVER_START_REQ( set_fd_disp_info )
+            {
+                req->handle   = wine_server_obj_handle( handle );
+                req->flags    = info->Flags;
                 status = wine_server_call( req );
             }
             SERVER_END_REQ;

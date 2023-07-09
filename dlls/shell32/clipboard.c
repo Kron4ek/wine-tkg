@@ -38,8 +38,6 @@
 #include <stdarg.h>
 #include <string.h>
 
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
 #include "winreg.h"
@@ -242,12 +240,12 @@ HRESULT GetPREFERREDDROPEFFECT (STGMEDIUM *pmedium, DWORD *value)
 
     TRACE("(%p, %p)\n", pmedium, value);
 
-    pEffect = GlobalLock(pmedium->u.hGlobal);
+    pEffect = GlobalLock(pmedium->hGlobal);
     if (pEffect)
     {
         *value = *pEffect;
         result = S_OK;
-        GlobalUnlock(pmedium->u.hGlobal);
+        GlobalUnlock(pmedium->hGlobal);
     }
 
     return result;

@@ -1255,6 +1255,19 @@ typedef enum _FILE_INFORMATION_CLASS {
     FileReplaceCompletionInformation,
     FileHardLinkFullIdInformation,
     FileIdExtdBothDirectoryInformation,
+    FileDispositionInformationEx,
+    FileRenameInformationEx,
+    FileRenameInformationExBypassAccessCheck,
+    FileDesiredStorageClassInformation,
+    FileStatInformation,
+    FileMemoryPartitionInformation,
+    FileStatLxInformation,
+    FileCaseSensitiveInformation,
+    FileLinkInformationEx,
+    FileLinkInformationExBypassAccessCheck,
+    FileStorageReserveIdInformation,
+    FileCaseSensitiveInformationForceAccessCheck,
+    FileKnownFolderInformation,
     FileMaximumInformation
 } FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
 
@@ -1423,6 +1436,17 @@ typedef struct _FILE_NAMES_INFORMATION {
 typedef struct _FILE_DISPOSITION_INFORMATION {
     BOOLEAN DoDeleteFile;
 } FILE_DISPOSITION_INFORMATION, *PFILE_DISPOSITION_INFORMATION;
+
+typedef struct _FILE_DISPOSITION_INFORMATION_EX {
+    ULONG Flags;
+} FILE_DISPOSITION_INFORMATION_EX, *PFILE_DISPOSITION_INFORMATION_EX;
+
+#define FILE_DISPOSITION_DO_NOT_DELETE              0x00000000
+#define FILE_DISPOSITION_DELETE                     0x00000001
+#define FILE_DISPOSITION_POSIX_SEMANTICS            0x00000002
+#define FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK  0x00000004
+#define FILE_DISPOSITION_ON_CLOSE                   0x00000008
+#define FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE  0x00000010
 
 typedef struct _FILE_POSITION_INFORMATION {
     LARGE_INTEGER CurrentByteOffset;
@@ -2102,6 +2126,23 @@ typedef struct _MEMORY_REGION_INFORMATION
     ULONG_PTR PartitionId;
     ULONG_PTR NodePreference;
 } MEMORY_REGION_INFORMATION, *PMEMORY_REGION_INFORMATION;
+
+typedef struct _MEMORY_IMAGE_INFORMATION
+{
+    PVOID ImageBase;
+    SIZE_T SizeOfImage;
+    union
+    {
+        ULONG ImageFlags;
+        struct
+        {
+            ULONG ImagePartialMap : 1;
+            ULONG ImageNotExecutable : 1;
+            ULONG ImageSigningLevel : 4;
+            ULONG Reserved : 26;
+        };
+    };
+} MEMORY_IMAGE_INFORMATION, *PMEMORY_IMAGE_INFORMATION;
 
 typedef enum _MUTANT_INFORMATION_CLASS
 {
@@ -4526,8 +4567,10 @@ NTSYSAPI NTSTATUS  WINAPI RtlFlsFree(ULONG);
 NTSYSAPI NTSTATUS  WINAPI RtlFlsGetValue(ULONG,void **);
 NTSYSAPI NTSTATUS  WINAPI RtlFlsSetValue(ULONG,void *);
 NTSYSAPI NTSTATUS  WINAPI RtlFormatCurrentUserKeyPath(PUNICODE_STRING);
+#ifdef __ms_va_list
 NTSYSAPI NTSTATUS  WINAPI RtlFormatMessage(LPCWSTR,ULONG,BOOLEAN,BOOLEAN,BOOLEAN,__ms_va_list *,LPWSTR,ULONG,ULONG*);
 NTSYSAPI NTSTATUS  WINAPI RtlFormatMessageEx(LPCWSTR,ULONG,BOOLEAN,BOOLEAN,BOOLEAN,__ms_va_list *,LPWSTR,ULONG,ULONG*,ULONG);
+#endif
 NTSYSAPI void      WINAPI RtlFreeActivationContextStack(ACTIVATION_CONTEXT_STACK *);
 NTSYSAPI void      WINAPI RtlFreeAnsiString(PANSI_STRING);
 NTSYSAPI BOOLEAN   WINAPI RtlFreeHandle(RTL_HANDLE_TABLE *,RTL_HANDLE *);
@@ -4609,6 +4652,8 @@ NTSYSAPI NTSTATUS  WINAPI RtlIntegerToUnicodeString(ULONG,ULONG,UNICODE_STRING *
 NTSYSAPI BOOLEAN   WINAPI RtlIsActivationContextActive(HANDLE);
 NTSYSAPI BOOL      WINAPI RtlIsCriticalSectionLocked(RTL_CRITICAL_SECTION *);
 NTSYSAPI BOOL      WINAPI RtlIsCriticalSectionLockedByThread(RTL_CRITICAL_SECTION *);
+NTSYSAPI BOOLEAN   WINAPI RtlIsCurrentProcess(HANDLE);
+NTSYSAPI BOOLEAN   WINAPI RtlIsCurrentThread(HANDLE);
 NTSYSAPI ULONG     WINAPI RtlIsDosDeviceName_U(PCWSTR);
 #ifdef __x86_64__
 NTSYSAPI BOOLEAN   WINAPI RtlIsEcCode(const void*);
@@ -4820,8 +4865,10 @@ NTSYSAPI void      WINAPI TpWaitForIoCompletion(TP_IO *,BOOL);
 NTSYSAPI void      WINAPI TpWaitForTimer(TP_TIMER *,BOOL);
 NTSYSAPI void      WINAPI TpWaitForWait(TP_WAIT *,BOOL);
 NTSYSAPI void      WINAPI TpWaitForWork(TP_WORK *,BOOL);
+#ifdef __ms_va_list
 NTSYSAPI NTSTATUS  WINAPI vDbgPrintEx(ULONG,ULONG,LPCSTR,__ms_va_list);
 NTSYSAPI NTSTATUS  WINAPI vDbgPrintExWithPrefix(LPCSTR,ULONG,ULONG,LPCSTR,__ms_va_list);
+#endif
 
 /* 32-bit or 64-bit only functions */
 

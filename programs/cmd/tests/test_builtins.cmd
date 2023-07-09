@@ -176,6 +176,15 @@ del foo
 echo foo> foo
 echo foo7 7>> foo || (echo not supported & del foo)
 if exist foo (type foo) else echo not supported
+echo --- redirect at beginning of line
+>foo (echo foo)
+type foo
+1>foo (echo foo1)
+type foo
+2>foo (echo foo2 >&2)
+type foo
+>>foo (echo fooA)
+type foo
 echo --- redirections within IF statements
 if 1==1 echo foo1>bar
 type bar & del bar
@@ -1138,9 +1147,9 @@ if exist subdir (
    echo ERROR exist subdir not working
 )
 if exist subdir\. (
-   echo exist subdir with . ok
+   echo exist subdir with \. ok
 ) else (
-   echo ERROR exist subdir with . not working
+   echo ERROR exist subdir with \. not working
 )
 if exist subdir\ (
    echo exist subdir with \ ok
@@ -1151,6 +1160,21 @@ if exist "subdir\" (
    echo exist subdir with \ and quotes ok
 ) else (
    echo ERROR exist subdir with \ and quotes not working
+)
+if exist subdir/. (
+   echo exist subdir with /. ok
+) else (
+   echo ERROR exist subdir with /. not working
+)
+if exist subdir/ (
+   echo exist subdir with / ok
+) else (
+   echo ERROR exist subdir with / not working
+)
+if exist "subdir/" (
+   echo exist subdir with / and quotes ok
+) else (
+   echo ERROR exist subdir with / and quotes not working
 )
 del foo subdir\bar
 rd subdir

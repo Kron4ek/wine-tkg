@@ -779,6 +779,7 @@ static HRESULT vkd3d_create_image(struct d3d12_device *device,
     VkImageFormatListCreateInfoKHR format_list;
     const struct vkd3d_format *format;
     VkImageCreateInfo image_info;
+    uint32_t count;
     VkResult vr;
 
     if (resource)
@@ -914,6 +915,20 @@ static HRESULT vkd3d_create_image(struct d3d12_device *device,
     if (resource && image_info.tiling == VK_IMAGE_TILING_LINEAR)
         resource->flags |= VKD3D_RESOURCE_LINEAR_TILING;
 
+    if (sparse_resource)
+    {
+        count = 0;
+        VK_CALL(vkGetPhysicalDeviceSparseImageFormatProperties(device->vk_physical_device, image_info.format,
+                image_info.imageType, image_info.samples, image_info.usage, image_info.tiling, &count, NULL));
+
+        if (!count)
+        {
+            FIXME("Sparse images are not supported with format %u, type %u, samples %u, usage %#x.\n",
+                    image_info.format, image_info.imageType, image_info.samples, image_info.usage);
+            return E_INVALIDARG;
+        }
+    }
+
     if ((vr = VK_CALL(vkCreateImage(device->vk_device, &image_info, NULL, vk_image))) < 0)
         WARN("Failed to create Vulkan image, vr %d.\n", vr);
 
@@ -928,6 +943,7 @@ HRESULT vkd3d_get_image_allocation_info(struct d3d12_device *device,
     D3D12_RESOURCE_DESC validated_desc;
     VkMemoryRequirements requirements;
     VkImage vk_image;
+    bool tiled;
     HRESULT hr;
 
     assert(desc->Dimension != D3D12_RESOURCE_DIMENSION_BUFFER);
@@ -940,8 +956,10 @@ HRESULT vkd3d_get_image_allocation_info(struct d3d12_device *device,
         desc = &validated_desc;
     }
 
+    tiled = desc->Layout == D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE;
+
     /* XXX: We have to create an image to get its memory requirements. */
-    if (SUCCEEDED(hr = vkd3d_create_image(device, &heap_properties, 0, desc, NULL, &vk_image)))
+    if (SUCCEEDED(hr = vkd3d_create_image(device, tiled ? NULL : &heap_properties, 0, desc, NULL, &vk_image)))
     {
         VK_CALL(vkGetImageMemoryRequirements(device->vk_device, vk_image, &requirements));
         VK_CALL(vkDestroyImage(device->vk_device, vk_image, NULL));
@@ -1039,12 +1057,12 @@ static void d3d12_resource_get_level_box(const struct d3d12_resource *resource,
     box->back = d3d12_resource_desc_get_depth(&resource->desc, level);
 }
 
-/* ID3D12Resource */
-static inline struct d3d12_resource *impl_from_ID3D12Resource(ID3D12Resource *iface)
+static void d3d12_resource_init_tiles(struct d3d12_resource *resource)
 {
-    return CONTAINING_RECORD(iface, struct d3d12_resource, ID3D12Resource_iface);
+    resource->tiles.subresource_count = d3d12_resource_desc_get_sub_resource_count(&resource->desc);
 }
 
+/* ID3D12Resource */
 static HRESULT STDMETHODCALLTYPE d3d12_resource_QueryInterface(ID3D12Resource *iface,
         REFIID riid, void **object)
 {
@@ -1661,6 +1679,21 @@ HRESULT d3d12_resource_validate_desc(const D3D12_RESOURCE_DESC *desc, struct d3d
                 return E_INVALIDARG;
             }
 
+            if (desc->Layout == D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE)
+            {
+                if (desc->Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D && !device->vk_info.sparse_residency_3d)
+                {
+                    WARN("The device does not support tiled 3D images.\n");
+                    return E_INVALIDARG;
+                }
+                if (format->plane_count > 1)
+                {
+                    WARN("Invalid format %#x. D3D12 does not support multiplanar formats for tiled resources.\n",
+                            format->dxgi_format);
+                    return E_INVALIDARG;
+                }
+            }
+
             if (!d3d12_resource_validate_texture_format(desc, format)
                     || !d3d12_resource_validate_texture_alignment(desc, format))
                 return E_INVALIDARG;
@@ -1721,6 +1754,12 @@ static HRESULT d3d12_resource_init(struct d3d12_resource *resource, struct d3d12
     resource->internal_refcount = 1;
 
     resource->desc = *desc;
+
+    if (!heap_properties && !device->vk_info.sparse_binding)
+    {
+        WARN("The device does not support tiled images.\n");
+        return E_INVALIDARG;
+    }
 
     if (heap_properties && !d3d12_resource_validate_heap_properties(resource, heap_properties, initial_state))
         return E_INVALIDARG;
@@ -1786,6 +1825,8 @@ static HRESULT d3d12_resource_init(struct d3d12_resource *resource, struct d3d12
 
     resource->heap = NULL;
     resource->heap_offset = 0;
+
+    memset(&resource->tiles, 0, sizeof(resource->tiles));
 
     if (FAILED(hr = vkd3d_private_store_init(&resource->private_store)))
     {
@@ -1971,6 +2012,8 @@ HRESULT d3d12_reserved_resource_create(struct d3d12_device *device,
     if (FAILED(hr = d3d12_resource_create(device, NULL, 0,
             desc, initial_state, optimized_clear_value, &object)))
         return hr;
+
+    d3d12_resource_init_tiles(object);
 
     TRACE("Created reserved resource %p.\n", object);
 

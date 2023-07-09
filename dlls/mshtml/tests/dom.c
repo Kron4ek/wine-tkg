@@ -810,7 +810,7 @@ static void _set_dispex_value(unsigned line, IUnknown *unk, const WCHAR *name, V
     memset(&ei, 0, sizeof(ei));
     hres = IDispatchEx_InvokeEx(dispex, id, LOCALE_NEUTRAL, INVOKE_PROPERTYPUT, &dp, NULL, &ei, NULL);
     ok_(__FILE__,line)(hres == S_OK, "InvokeEx failed: %08lx\n", hres);
-
+    IDispatchEx_Release(dispex);
 }
 
 #define get_elem_iface(u) _get_elem_iface(__LINE__,u)
@@ -1550,6 +1550,7 @@ static void _test_anchor_href(unsigned line, IUnknown *unk, const WCHAR *exhref)
     hres = IHTMLAnchorElement_get_href(anchor, &str);
     ok_(__FILE__,line)(hres == S_OK, "get_href failed: %08lx\n", hres);
     ok_(__FILE__,line)(!lstrcmpW(str, exhref), "href = %s, expected %s\n", wine_dbgstr_w(str), wine_dbgstr_w(exhref));
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 
     _test_disp_value(line, unk, exhref);
@@ -1565,6 +1566,7 @@ static void _test_anchor_put_href(unsigned line, IUnknown *unk, const WCHAR *exh
     str = SysAllocString(exhref);
     hres = IHTMLAnchorElement_put_href(anchor, str);
     ok_(__FILE__,line)(hres == S_OK, "get_href failed: %08lx\n", hres);
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 
     _test_disp_value(line, unk, exhref);
@@ -1583,6 +1585,7 @@ static void _test_anchor_rel(unsigned line, IUnknown *unk, const WCHAR *exrel)
         ok_(__FILE__,line)(!lstrcmpW(str, exrel), "rel = %s, expected %s\n", wine_dbgstr_w(str), wine_dbgstr_w(exrel));
     else
         ok_(__FILE__,line)(!str, "rel = %s, expected NULL\n", wine_dbgstr_w(str));
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 }
 
@@ -1596,6 +1599,7 @@ static void _test_anchor_put_rel(unsigned line, IUnknown *unk, const WCHAR *exre
     str = SysAllocString(exrel);
     hres = IHTMLAnchorElement_put_rel(anchor, str);
     ok_(__FILE__,line)(hres == S_OK, "get_rel failed: %08lx\n", hres);
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 }
 
@@ -1612,6 +1616,7 @@ static void _test_anchor_get_target(unsigned line, IUnknown *unk, const WCHAR *t
         ok_(__FILE__,line)(!lstrcmpW(str, target), "target = %s, expected %s\n", wine_dbgstr_w(str), wine_dbgstr_w(target));
     else
         ok_(__FILE__,line)(str == NULL, "target = %s, expected NULL\n", wine_dbgstr_w(str));
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 }
 
@@ -1625,6 +1630,7 @@ static void _test_anchor_put_target(unsigned line, IUnknown *unk, const WCHAR *t
     str = target ? SysAllocString(target) : NULL;
     hres = IHTMLAnchorElement_put_target(anchor, str);
     ok_(__FILE__,line)(hres == S_OK, "put_target failed: %08lx\n", hres);
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 }
 
@@ -1641,6 +1647,7 @@ static void _test_anchor_name(unsigned line, IUnknown *unk, const WCHAR *name)
         ok_(__FILE__,line)(!lstrcmpW(str, name), "name = %s, expected %s\n", wine_dbgstr_w(str), wine_dbgstr_w(name));
     else
         ok_(__FILE__,line)(str == NULL, "name = %s, expected NULL\n", wine_dbgstr_w(str));
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 }
 
@@ -1654,6 +1661,7 @@ static void _test_anchor_put_name(unsigned line, IUnknown *unk, const WCHAR *nam
     str = name ? SysAllocString(name) : NULL;
     hres = IHTMLAnchorElement_put_name(anchor, str);
     ok_(__FILE__,line)(hres == S_OK, "put_name failed: %08lx\n", hres);
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 
     _test_anchor_name(line, unk, name);
@@ -1672,6 +1680,7 @@ static void _test_anchor_hostname(unsigned line, IUnknown *unk, const WCHAR *hos
         ok_(__FILE__,line)(!lstrcmpW(str, hostname), "hostname = %s, expected %s\n", wine_dbgstr_w(str), wine_dbgstr_w(hostname));
     else
         ok_(__FILE__,line)(str == NULL, "hostname = %s, expected NULL\n", wine_dbgstr_w(str));
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 }
 
@@ -1688,6 +1697,7 @@ static void _test_anchor_port(unsigned line, IUnknown *unk, const WCHAR *port)
         ok_(__FILE__,line)(!lstrcmpW(str, port), "port = %s, expected %s\n", wine_dbgstr_w(str), wine_dbgstr_w(port));
     else
         ok_(__FILE__,line)(str == NULL, "port = %s, expected NULL\n", wine_dbgstr_w(str));
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 }
 
@@ -1706,6 +1716,7 @@ static void _test_anchor_search(unsigned line, IUnknown *elem, const WCHAR *sear
         ok_(__FILE__,line)(!lstrcmpW(str, search), "search = %s, expected %s\n", wine_dbgstr_w(str), wine_dbgstr_w(search));
     else
         ok_(__FILE__,line)(!str, "search = %s, expected NULL\n", wine_dbgstr_w(str));
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 }
 
@@ -1719,6 +1730,7 @@ static void _test_anchor_put_search(unsigned line, IUnknown *unk, const WCHAR *s
     str = search ? SysAllocString(search) : NULL;
     hres = IHTMLAnchorElement_put_search(anchor, str);
     ok_(__FILE__,line)(hres == S_OK, "put_search failed: %08lx\n", hres);
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 }
 
@@ -1735,6 +1747,7 @@ static void _test_anchor_hash(unsigned line, IHTMLElement *elem, const WCHAR *ex
         ok_(__FILE__,line)(!lstrcmpW(str, exhash), "hash = %s, expected %s\n", wine_dbgstr_w(str), wine_dbgstr_w(exhash));
     else
         ok_(__FILE__,line)(!str, "hash = %s, expected NULL\n", wine_dbgstr_w(str));
+    IHTMLAnchorElement_Release(anchor);
     SysFreeString(str);
 }
 
@@ -1748,6 +1761,7 @@ static void _test_area_href(unsigned line, IUnknown *unk, const WCHAR *exhref)
     hres = IHTMLAreaElement_get_href(area, &str);
     ok_(__FILE__,line)(hres == S_OK, "get_href failed: %08lx\n", hres);
     ok_(__FILE__,line)(!lstrcmpW(str, exhref), "href = %s, expected %s\n", wine_dbgstr_w(str), wine_dbgstr_w(exhref));
+    IHTMLAreaElement_Release(area);
     SysFreeString(str);
 
     _test_disp_value(line, unk, exhref);
@@ -1763,6 +1777,7 @@ static void _test_area_put_href(unsigned line, IUnknown *unk, const WCHAR *exhre
     str = SysAllocString(exhref);
     hres = IHTMLAreaElement_put_href(area, str);
     ok_(__FILE__,line)(hres == S_OK, "get_href failed: %08lx\n", hres);
+    IHTMLAreaElement_Release(area);
     SysFreeString(str);
 
     _test_disp_value(line, unk, exhref);
@@ -3488,6 +3503,7 @@ static void _test_img_alt(unsigned line, IUnknown *unk, const WCHAR *exalt)
         ok_(__FILE__,line) (!lstrcmpW(alt, exalt), "unexpected alt %s\n", wine_dbgstr_w(alt));
     else
         ok_(__FILE__,line) (!alt, "alt != NULL\n");
+    IHTMLImgElement_Release(img);
     SysFreeString(alt);
 }
 
@@ -3501,6 +3517,7 @@ static void _test_img_set_alt(unsigned line, IUnknown *unk, const WCHAR *alt)
     tmp = SysAllocString(alt);
     hres = IHTMLImgElement_put_alt(img, tmp);
     ok_(__FILE__,line) (hres == S_OK, "get_alt failed: %08lx\n", hres);
+    IHTMLImgElement_Release(img);
     SysFreeString(tmp);
 
     _test_img_alt(line, unk, alt);
@@ -3521,6 +3538,7 @@ static void _test_img_align(unsigned line, IUnknown *unk, const WCHAR *align)
     hres = IHTMLImgElement_get_align(img, &tmp);
     ok_(__FILE__,line) (hres == S_OK, "put_align failed: %08lx\n", hres);
     ok_(__FILE__,line) (!lstrcmpW(tmp, align), "Expect %s, got %s\n", wine_dbgstr_w(align), wine_dbgstr_w(tmp));
+    IHTMLImgElement_Release(img);
     SysFreeString(tmp);
 }
 
@@ -5084,6 +5102,7 @@ static IHTMLDocument2 *_get_elem_doc(unsigned line, IUnknown *unk)
     hres = IHTMLElement_get_document(elem, &disp);
     ok(hres == S_OK, "get_document failed: %08lx\n", hres);
     ok(disp != NULL, "disp == NULL\n");
+    IHTMLElement_Release(elem);
 
     hres = IDispatch_QueryInterface(disp, &IID_IHTMLDocument2, (void**)&doc);
     IDispatch_Release(disp);
@@ -5236,6 +5255,13 @@ static IHTMLDOMNode *_test_node_append_child(unsigned line, IUnknown *node_unk, 
     IHTMLDOMNode_Release(child);
 
     return new_child;
+}
+
+#define test_node_append_child_discard(n,c) _test_node_append_child_discard(__LINE__,n,c)
+static void _test_node_append_child_discard(unsigned line, IUnknown *node_unk, IUnknown *child_unk)
+{
+    IHTMLDOMNode *node = _test_node_append_child(line, node_unk, child_unk);
+    IHTMLDOMNode_Release(node);
 }
 
 #define test_node_insertbefore(n,c,v) _test_node_insertbefore(__LINE__,n,c,v)
@@ -5782,6 +5808,8 @@ static void test_form_item(IHTMLElement *elem)
     ok(hres == S_FALSE, "Next failed: %08lx\n", hres);
     ok(fetched == 0, "fetched = %lu\n", fetched);
     IEnumVARIANT_Release(enum_var);
+
+    IHTMLFormElement_Release(form);
 }
 
 static void test_create_option_elem(IHTMLDocument2 *doc)
@@ -7367,7 +7395,7 @@ static void test_window(IHTMLDocument2 *doc)
             hres = IDispatch_QueryInterface(V_DISPATCH(&v), &IID_IHTMLPerformance,
                                             (void**)&performance);
             ok(hres == S_OK, "Could not get IHTMLPerformance iface: %08lx\n", hres);
-
+            IDispatch_Release(V_DISPATCH(&v));
             IHTMLPerformance_Release(performance);
 
             V_VT(&v) = VT_I2;
@@ -9441,6 +9469,8 @@ static void test_elems(IHTMLDocument2 *doc)
 
         set_elem_language(elem, L"vbscript");
         set_elem_language(elem, L"xxx");
+
+        IHTMLElement_Release(elem);
     }
 
     elem = get_elem_by_id(doc, L"in", TRUE);
@@ -9940,6 +9970,7 @@ static void test_attr(IHTMLDocument2 *doc, IHTMLElement *elem)
     V_BSTR(&v) = SysAllocString(L"newvalue");
     put_attr_node_value(attr, v);
     VariantClear(&v);
+    IHTMLDOMAttribute_Release(attr);
 
     attr = get_elem_attr_node((IUnknown*)elem, L"emptyattr", TRUE);
     get_attr_node_value(attr, &v, VT_BSTR);
@@ -10449,8 +10480,9 @@ static void test_create_elems(IHTMLDocument2 *doc)
     node = test_create_text(doc, L" Test");
     V_VT(&var) = VT_DISPATCH;
     V_DISPATCH(&var) = NULL;
-    test_node_insertbefore((IUnknown*)body, node, &var);
+    node2 = test_node_insertbefore((IUnknown*)body, node, &var);
     test_elem_innertext(body, L"insert test Test");
+    IHTMLDOMNode_Release(node2);
     IHTMLDOMNode_Release(node);
 
     doc5 = get_htmldoc5_iface((IUnknown*)doc);
@@ -10518,6 +10550,7 @@ static void test_replacechild_elems(IHTMLDocument2 *doc)
     IHTMLDOMNode_Release(node2);
     IHTMLDOMNode_Release(node3);
     IHTMLDOMNode_Release(nodeBody);
+    IHTMLDOMNode_Release(nodeNew);
 
     IHTMLElement_Release(body);
 }
@@ -10947,6 +10980,7 @@ static void test_frameset(IHTMLDocument2 *doc)
         ok(hres == S_OK, "getElementById failed: %08lx\n", hres);
         ok(elem2 != NULL, "elem2 is NULL\n");
         test_elem_id((IUnknown*)elem2, L"fr1");
+        IHTMLElement2_Release(elem2);
         SysFreeString(str);
 
         IHTMLDocument6_Release(doc6);
@@ -11040,7 +11074,7 @@ static void test_docfrag(IHTMLDocument2 *doc)
 
     br = test_create_elem(doc, L"BR");
     test_elem_source_index(br, -1);
-    test_node_append_child((IUnknown*)frag, (IUnknown*)br);
+    test_node_append_child_discard((IUnknown*)frag, (IUnknown*)br);
     test_elem_source_index(br, 0);
     IHTMLElement_Release(br);
 
@@ -11048,7 +11082,7 @@ static void test_docfrag(IHTMLDocument2 *doc)
     test_doc_getelembytag(frag, "Br", ET_BR, 1);
 
     div = get_elem_by_id(doc, L"divid", TRUE);
-    test_node_append_child((IUnknown*)div, (IUnknown*)frag);
+    test_node_append_child_discard((IUnknown*)div, (IUnknown*)frag);
     IHTMLElement_Release(div);
 
     hres = IHTMLDocument2_get_all(doc, &col);
@@ -11058,23 +11092,23 @@ static void test_docfrag(IHTMLDocument2 *doc)
 
     html = test_create_elem(doc, L"HTML");
     test_elem_source_index(html, -1);
-    test_node_append_child((IUnknown*)frag, (IUnknown*)html);
+    test_node_append_child_discard((IUnknown*)frag, (IUnknown*)html);
     test_elem_source_index(html, 0);
 
     div = test_create_elem(doc, L"DIV");
     test_elem_source_index(div, -1);
-    test_node_append_child((IUnknown*)html, (IUnknown*)div);
+    test_node_append_child_discard((IUnknown*)html, (IUnknown*)div);
     test_elem_source_index(div, 1);
     IHTMLElement_Release(div);
 
     div = test_create_elem(doc, L"DIV");
     test_elem_source_index(div, -1);
-    test_node_append_child((IUnknown*)html, (IUnknown*)div);
+    test_node_append_child_discard((IUnknown*)html, (IUnknown*)div);
     test_elem_source_index(div, 2);
 
     frag_body = test_create_elem(doc, L"BODY");
     test_elem_source_index(frag_body, -1);
-    test_node_append_child((IUnknown*)div, (IUnknown*)frag_body);
+    test_node_append_child_discard((IUnknown*)div, (IUnknown*)frag_body);
     test_elem_source_index(frag_body, 3);
     IHTMLElement_Release(frag_body);
     IHTMLElement_Release(div);
@@ -11972,6 +12006,8 @@ static void test_document_mode_lock(void)
     hres = IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IHTMLPerformance, (void**)&perf2);
     ok(hres == S_OK, "Could not get IHTMLPerformance: %08lx\n", hres);
     ok(perf != perf2, "perf == perf2\n");
+    IHTMLPerformance_Release(perf2);
+    IHTMLPerformance_Release(perf);
     IHTMLWindow7_Release(window7);
     IHTMLWindow2_Release(window);
     VariantClear(&var);

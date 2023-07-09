@@ -125,22 +125,11 @@ struct uia_event
             struct UiaCacheRequest cache_req;
             UiaEventCallback *cback;
 
-            /*
-             * This is temporarily used to keep the MTA alive prior to our
-             * introduction of a dedicated event thread.
-             */
-            CO_MTA_USAGE_COOKIE mta_cookie;
             DWORD git_cookie;
         } clientside;
         struct {
-            /*
-             * Similar to the client MTA cookie, used to keep the provider
-             * thread alive as a temporary measure before introducing the
-             * event thread.
-             */
-            IWineUiaNode *node;
-
             IWineUiaEvent *event_iface;
+
             struct rb_entry serverside_event_entry;
             LONG proc_id;
         } serverside;
@@ -157,6 +146,17 @@ static inline void variant_init_i4(VARIANT *v, int val)
 {
     V_VT(v) = VT_I4;
     V_I4(v) = val;
+}
+
+static inline void get_variant_for_node(HUIANODE node, VARIANT *v)
+{
+#ifdef _WIN64
+    V_VT(v) = VT_I8;
+    V_I8(v) = (UINT64)node;
+#else
+    V_VT(v) = VT_I4;
+    V_I4(v) = (UINT32)node;
+#endif
 }
 
 static inline BOOL uia_array_reserve(void **elements, SIZE_T *capacity, SIZE_T count, SIZE_T size)
@@ -192,9 +192,11 @@ static inline BOOL uia_array_reserve(void **elements, SIZE_T *capacity, SIZE_T c
 /* uia_client.c */
 int get_node_provider_type_at_idx(struct uia_node *node, int idx) DECLSPEC_HIDDEN;
 HRESULT attach_event_to_uia_node(HUIANODE node, struct uia_event *event) DECLSPEC_HIDDEN;
+HRESULT clone_uia_node(HUIANODE in_node, HUIANODE *out_node) DECLSPEC_HIDDEN;
 HRESULT navigate_uia_node(struct uia_node *node, int nav_dir, HUIANODE *out_node) DECLSPEC_HIDDEN;
 HRESULT create_uia_node_from_elprov(IRawElementProviderSimple *elprov, HUIANODE *out_node,
         BOOL get_hwnd_providers) DECLSPEC_HIDDEN;
+HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode) DECLSPEC_HIDDEN;
 HRESULT uia_condition_check(HUIANODE node, struct UiaCondition *condition) DECLSPEC_HIDDEN;
 BOOL uia_condition_matched(HRESULT hr) DECLSPEC_HIDDEN;
 
@@ -218,7 +220,7 @@ HRESULT create_base_hwnd_provider(HWND hwnd, IRawElementProviderSimple **elprov)
 void uia_stop_provider_thread(void) DECLSPEC_HIDDEN;
 void uia_provider_thread_remove_node(HUIANODE node) DECLSPEC_HIDDEN;
 LRESULT uia_lresult_from_node(HUIANODE huianode) DECLSPEC_HIDDEN;
-HRESULT create_msaa_provider(IAccessible *acc, long child_id, HWND hwnd, BOOL known_root_acc,
+HRESULT create_msaa_provider(IAccessible *acc, LONG child_id, HWND hwnd, BOOL known_root_acc,
         IRawElementProviderSimple **elprov) DECLSPEC_HIDDEN;
 
 /* uia_utils.c */

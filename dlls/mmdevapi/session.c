@@ -40,6 +40,8 @@ extern void sessions_unlock(void) DECLSPEC_HIDDEN;
 
 extern void set_stream_volumes(struct audio_client *This) DECLSPEC_HIDDEN;
 
+struct list sessions = LIST_INIT(sessions);
+
 static inline struct audio_session_wrapper *impl_from_IAudioSessionControl2(IAudioSessionControl2 *iface)
 {
     return CONTAINING_RECORD(iface, struct audio_session_wrapper, IAudioSessionControl2_iface);
@@ -550,6 +552,49 @@ const ISimpleAudioVolumeVtbl SimpleAudioVolume_Vtbl =
     simplevolume_SetMute,
     simplevolume_GetMute
 };
+
+void session_init_vols(struct audio_session *session, UINT channels)
+{
+    if (session->channel_count < channels) {
+        UINT i;
+
+        if (session->channel_vols)
+            session->channel_vols = HeapReAlloc(GetProcessHeap(), 0, session->channel_vols,
+                                                sizeof(float) * channels);
+        else
+            session->channel_vols = HeapAlloc(GetProcessHeap(), 0, sizeof(float) * channels);
+
+        if (!session->channel_vols)
+            return;
+
+        for (i = session->channel_count; i < channels; i++)
+            session->channel_vols[i] = 1.f;
+
+        session->channel_count = channels;
+    }
+}
+
+struct audio_session *session_create(const GUID *guid, IMMDevice *device, UINT channels)
+{
+    struct audio_session *ret = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                                          sizeof(struct audio_session));
+    if (!ret)
+        return NULL;
+
+    memcpy(&ret->guid, guid, sizeof(GUID));
+
+    ret->device = device;
+
+    list_init(&ret->clients);
+
+    list_add_head(&sessions, &ret->entry);
+
+    session_init_vols(ret, channels);
+
+    ret->master_vol = 1.f;
+
+    return ret;
+}
 
 struct audio_session_wrapper *session_wrapper_create(struct audio_client *client)
 {

@@ -119,8 +119,6 @@ static BOOL sha_check(const WCHAR *file_name)
     const unsigned char *file_map;
     HANDLE file, map;
     DWORD size, i;
-    BCRYPT_HASH_HANDLE hash = NULL;
-    BCRYPT_ALG_HANDLE alg = NULL;
     UCHAR sha[32];
     char buf[1024];
     BOOL ret = FALSE;
@@ -143,26 +141,16 @@ static BOOL sha_check(const WCHAR *file_name)
     if(!file_map)
         return FALSE;
 
-    if(BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, MS_PRIMITIVE_PROVIDER, 0))
-        goto end;
-    if(BCryptCreateHash(alg, &hash, NULL, 0, NULL, 0, 0))
-        goto end;
-    if(BCryptHashData(hash, (UCHAR *)file_map, size, 0))
-        goto end;
-    if(BCryptFinishHash(hash, sha, sizeof(sha), 0))
-        goto end;
+    if(!BCryptHash(BCRYPT_SHA256_ALG_HANDLE, NULL, 0, (UCHAR *)file_map, size, sha, sizeof(sha))) {
+        for(i=0; i < sizeof(sha); i++)
+            sprintf(buf + i * 2, "%02x", sha[i]);
 
-    for(i=0; i < sizeof(sha); i++)
-        sprintf(buf + i * 2, "%02x", sha[i]);
+        ret = !strcmp(buf, addon->sha);
+        if(!ret)
+            WARN("Got %s, expected %s\n", buf, addon->sha);
+    }
 
-    ret = !strcmp(buf, addon->sha);
-    if(!ret)
-        WARN("Got %s, expected %s\n", buf, addon->sha);
-
-end:
     UnmapViewOfFile(file_map);
-    if(hash) BCryptDestroyHash(hash);
-    if(alg) BCryptCloseAlgorithmProvider(alg, 0);
     return ret;
 }
 

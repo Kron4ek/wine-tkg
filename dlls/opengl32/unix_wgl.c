@@ -43,6 +43,13 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(opengl);
 
+static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
+
+static BOOL is_wow64(void)
+{
+    return !!NtCurrentTeb()->WowTebOffset;
+}
+
 static pthread_mutex_t wgl_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* handle management */
@@ -168,7 +175,13 @@ static GLubyte *filter_extensions_list( const char *extensions, const char *disa
         memcpy( p, extensions, end - extensions );
         p[end - extensions] = 0;
 
-        if (!has_extension( disabled, p, strlen( p ) ))
+        /* We do not support GL_MAP_PERSISTENT_BIT, and hence
+         * ARB_buffer_storage, on wow64. */
+        if (is_win64 && is_wow64() && (!strcmp( p, "GL_ARB_buffer_storage" ) || !strcmp( p, "GL_EXT_buffer_storage" )))
+        {
+            TRACE( "-- %s (disabled due to wow64)\n", p );
+        }
+        else if (!has_extension( disabled, p, strlen( p ) ))
         {
             TRACE( "++ %s\n", p );
             p += end - extensions;
@@ -208,7 +221,15 @@ static GLuint *filter_extensions_index( TEB *teb, const char *disabled )
     for (j = 0; j < extensions_count; ++j)
     {
         ext = (const char *)funcs->ext.p_glGetStringi( GL_EXTENSIONS, j );
-        if (!has_extension( disabled, ext, strlen( ext ) ))
+
+        /* We do not support GL_MAP_PERSISTENT_BIT, and hence
+         * ARB_buffer_storage, on wow64. */
+        if (is_win64 && is_wow64() && (!strcmp( ext, "GL_ARB_buffer_storage" ) || !strcmp( ext, "GL_EXT_buffer_storage" )))
+        {
+            TRACE( "-- %s (disabled due to wow64)\n", ext );
+            disabled_index[i++] = j;
+        }
+        else if (!has_extension( disabled, ext, strlen( ext ) ))
         {
             TRACE( "++ %s\n", ext );
         }
@@ -329,7 +350,6 @@ static BOOL filter_extensions( TEB * teb, const char *extensions, GLubyte **exts
         else disabled = "";
     }
 
-    if (!disabled[0]) return FALSE;
     if (extensions && !*exts_list) *exts_list = filter_extensions_list( extensions, disabled );
     if (!*disabled_exts) *disabled_exts = filter_extensions_index( teb, disabled );
     return (exts_list && *exts_list) || *disabled_exts;
@@ -392,6 +412,21 @@ static BOOL check_extension_support( TEB *teb, const char *extension, const char
     return FALSE;
 }
 
+static void parse_gl_version( const char *gl_version, int *major, int *minor )
+{
+    const char *ptr = gl_version;
+
+    *major = atoi( ptr );
+    if (*major <= 0)
+        ERR( "Invalid OpenGL major version %d.\n", *major );
+
+    while (isdigit( *ptr )) ++ptr;
+    if (*ptr++ != '.')
+        ERR( "Invalid OpenGL version string %s.\n", debugstr_a(gl_version) );
+
+    *minor = atoi( ptr );
+}
+
 static void wrap_glGetIntegerv( TEB *teb, GLenum pname, GLint *data )
 {
     const struct opengl_funcs *funcs = teb->glTable;
@@ -401,6 +436,21 @@ static void wrap_glGetIntegerv( TEB *teb, GLenum pname, GLint *data )
 
     if (pname == GL_NUM_EXTENSIONS && (disabled = disabled_extensions_index( teb )))
         while (*disabled++ != ~0u) (*data)--;
+
+    if (is_win64 && is_wow64())
+    {
+        /* 4.4 depends on ARB_buffer_storage, which we don't support on wow64. */
+        if (pname == GL_MAJOR_VERSION && *data > 4)
+            *data = 4;
+        else if (pname == GL_MINOR_VERSION)
+        {
+            GLint major;
+
+            funcs->gl.p_glGetIntegerv( GL_MAJOR_VERSION, &major );
+            if (major == 4 && *data > 3)
+                *data = 3;
+        }
+    }
 }
 
 static const GLubyte *wrap_glGetString( TEB *teb, GLenum name )
@@ -408,12 +458,25 @@ static const GLubyte *wrap_glGetString( TEB *teb, GLenum name )
     const struct opengl_funcs *funcs = teb->glTable;
     const GLubyte *ret;
 
-    if ((ret = funcs->gl.p_glGetString( name )) && name == GL_EXTENSIONS)
+    if ((ret = funcs->gl.p_glGetString( name )))
     {
-        struct wgl_handle *ptr = get_current_context_ptr( teb );
-        GLubyte **extensions = &ptr->u.context->extensions;
-        GLuint **disabled = &ptr->u.context->disabled_exts;
-        if (*extensions || filter_extensions( teb, (const char *)ret, extensions, disabled )) return *extensions;
+        if (name == GL_EXTENSIONS)
+        {
+            struct wgl_handle *ptr = get_current_context_ptr( teb );
+            GLubyte **extensions = &ptr->u.context->extensions;
+            GLuint **disabled = &ptr->u.context->disabled_exts;
+            if (*extensions || filter_extensions( teb, (const char *)ret, extensions, disabled )) return *extensions;
+        }
+        else if (name == GL_VERSION && is_win64 && is_wow64())
+        {
+            int major, minor;
+
+            parse_gl_version( (const char *)ret, &major, &minor );
+
+            /* 4.4 depends on ARB_buffer_storage, which we don't support on wow64. */
+            if (major > 4 || (major == 4 && minor >= 4))
+                return (const GLubyte *)"4.3";
+        }
     }
 
     return ret;

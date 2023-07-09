@@ -22,12 +22,29 @@
 WINE_DEFAULT_DEBUG_CHANNEL(twinapi);
 
 /***********************************************************************
+ *           RegisterAppConstrainedChangeNotification (twinapi.appcore.@)
+ */
+ULONG WINAPI RegisterAppConstrainedChangeNotification( PAPPCONSTRAIN_CHANGE_ROUTINE routine, void *context, PAPPCONSTRAIN_REGISTRATION *reg )
+{
+    FIXME( "routine %p, context %p, reg %p - stub.\n", routine, context, reg );
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/***********************************************************************
  *           RegisterAppStateChangeNotification (twinapi.appcore.@)
  */
 ULONG WINAPI RegisterAppStateChangeNotification( PAPPSTATE_CHANGE_ROUTINE routine, void *context, PAPPSTATE_REGISTRATION *reg )
 {
     FIXME( "routine %p, context %p, reg %p - stub.\n", routine, context, reg );
     return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/***********************************************************************
+ *           UnregisterAppConstrainedChangeNotification (twinapi.appcore.@)
+ */
+void WINAPI UnregisterAppConstrainedChangeNotification( PAPPCONSTRAIN_REGISTRATION reg )
+{
+    FIXME( "reg %p - stub.\n", reg );
 }
 
 /***********************************************************************

@@ -1432,7 +1432,7 @@ struct hlsl_ir_node *hlsl_new_index(struct hlsl_ctx *ctx, struct hlsl_ir_node *v
 }
 
 struct hlsl_ir_node *hlsl_new_jump(struct hlsl_ctx *ctx, enum hlsl_ir_jump_type type,
-        const struct vkd3d_shader_location *loc)
+        struct hlsl_ir_node *condition, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_jump *jump;
 
@@ -1440,6 +1440,7 @@ struct hlsl_ir_node *hlsl_new_jump(struct hlsl_ctx *ctx, enum hlsl_ir_jump_type 
         return NULL;
     init_node(&jump->node, HLSL_IR_JUMP, NULL, loc);
     jump->type = type;
+    hlsl_src_from_node(&jump->condition, condition);
     return &jump->node;
 }
 
@@ -1585,9 +1586,9 @@ static struct hlsl_ir_node *clone_if(struct hlsl_ctx *ctx, struct clone_instr_ma
     return dst;
 }
 
-static struct hlsl_ir_node *clone_jump(struct hlsl_ctx *ctx, struct hlsl_ir_jump *src)
+static struct hlsl_ir_node *clone_jump(struct hlsl_ctx *ctx, struct clone_instr_map *map, struct hlsl_ir_jump *src)
 {
-    return hlsl_new_jump(ctx, src->type, &src->node.loc);
+    return hlsl_new_jump(ctx, src->type, map_instr(map, src->condition.node), &src->node.loc);
 }
 
 static struct hlsl_ir_node *clone_load(struct hlsl_ctx *ctx, struct clone_instr_map *map, struct hlsl_ir_load *src)
@@ -1728,7 +1729,7 @@ static struct hlsl_ir_node *clone_instr(struct hlsl_ctx *ctx,
             return clone_index(ctx, map, hlsl_ir_index(instr));
 
         case HLSL_IR_JUMP:
-            return clone_jump(ctx, hlsl_ir_jump(instr));
+            return clone_jump(ctx, map, hlsl_ir_jump(instr));
 
         case HLSL_IR_LOAD:
             return clone_load(ctx, map, hlsl_ir_load(instr));
@@ -2123,18 +2124,18 @@ const char *hlsl_node_type_to_string(enum hlsl_ir_node_type type)
 {
     static const char * const names[] =
     {
-        "HLSL_IR_CALL",
-        "HLSL_IR_CONSTANT",
-        "HLSL_IR_EXPR",
-        "HLSL_IR_IF",
-        "HLSL_IR_INDEX",
-        "HLSL_IR_LOAD",
-        "HLSL_IR_LOOP",
-        "HLSL_IR_JUMP",
-        "HLSL_IR_RESOURCE_LOAD",
-        "HLSL_IR_RESOURCE_STORE",
-        "HLSL_IR_STORE",
-        "HLSL_IR_SWIZZLE",
+        [HLSL_IR_CALL          ] = "HLSL_IR_CALL",
+        [HLSL_IR_CONSTANT      ] = "HLSL_IR_CONSTANT",
+        [HLSL_IR_EXPR          ] = "HLSL_IR_EXPR",
+        [HLSL_IR_IF            ] = "HLSL_IR_IF",
+        [HLSL_IR_INDEX         ] = "HLSL_IR_INDEX",
+        [HLSL_IR_LOAD          ] = "HLSL_IR_LOAD",
+        [HLSL_IR_LOOP          ] = "HLSL_IR_LOOP",
+        [HLSL_IR_JUMP          ] = "HLSL_IR_JUMP",
+        [HLSL_IR_RESOURCE_LOAD ] = "HLSL_IR_RESOURCE_LOAD",
+        [HLSL_IR_RESOURCE_STORE] = "HLSL_IR_RESOURCE_STORE",
+        [HLSL_IR_STORE         ] = "HLSL_IR_STORE",
+        [HLSL_IR_SWIZZLE       ] = "HLSL_IR_SWIZZLE",
     };
 
     if (type >= ARRAY_SIZE(names))
@@ -2146,10 +2147,11 @@ const char *hlsl_jump_type_to_string(enum hlsl_ir_jump_type type)
 {
     static const char * const names[] =
     {
-        "HLSL_IR_JUMP_BREAK",
-        "HLSL_IR_JUMP_CONTINUE",
-        "HLSL_IR_JUMP_DISCARD",
-        "HLSL_IR_JUMP_RETURN",
+        [HLSL_IR_JUMP_BREAK]       = "HLSL_IR_JUMP_BREAK",
+        [HLSL_IR_JUMP_CONTINUE]    = "HLSL_IR_JUMP_CONTINUE",
+        [HLSL_IR_JUMP_DISCARD_NEG] = "HLSL_IR_JUMP_DISCARD_NEG",
+        [HLSL_IR_JUMP_DISCARD_NZ]  = "HLSL_IR_JUMP_DISCARD_NZ",
+        [HLSL_IR_JUMP_RETURN]      = "HLSL_IR_JUMP_RETURN",
     };
 
     assert(type < ARRAY_SIZE(names));
@@ -2337,7 +2339,11 @@ const char *debug_hlsl_expr_op(enum hlsl_ir_expr_op op)
         [HLSL_OP1_COS]          = "cos",
         [HLSL_OP1_COS_REDUCED]  = "cos_reduced",
         [HLSL_OP1_DSX]          = "dsx",
+        [HLSL_OP1_DSX_COARSE]   = "dsx_coarse",
+        [HLSL_OP1_DSX_FINE]     = "dsx_fine",
         [HLSL_OP1_DSY]          = "dsy",
+        [HLSL_OP1_DSY_COARSE]   = "dsy_coarse",
+        [HLSL_OP1_DSY_FINE]     = "dsy_fine",
         [HLSL_OP1_EXP2]         = "exp2",
         [HLSL_OP1_FRACT]        = "fract",
         [HLSL_OP1_LOG2]         = "log2",
@@ -2418,8 +2424,12 @@ static void dump_ir_jump(struct vkd3d_string_buffer *buffer, const struct hlsl_i
             vkd3d_string_buffer_printf(buffer, "continue");
             break;
 
-        case HLSL_IR_JUMP_DISCARD:
-            vkd3d_string_buffer_printf(buffer, "discard");
+        case HLSL_IR_JUMP_DISCARD_NEG:
+            vkd3d_string_buffer_printf(buffer, "discard_neg");
+            break;
+
+        case HLSL_IR_JUMP_DISCARD_NZ:
+            vkd3d_string_buffer_printf(buffer, "discard_nz");
             break;
 
         case HLSL_IR_JUMP_RETURN:
@@ -2703,6 +2713,7 @@ static void free_ir_if(struct hlsl_ir_if *if_node)
 
 static void free_ir_jump(struct hlsl_ir_jump *jump)
 {
+    hlsl_src_remove(&jump->condition);
     vkd3d_free(jump);
 }
 
@@ -3127,8 +3138,8 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
 
     for (bt = 0; bt <= HLSL_TYPE_LAST_SCALAR; ++bt)
     {
-        unsigned int n_variants = 0;
         const char *const *variants;
+        unsigned int n_variants;
 
         switch (bt)
         {
@@ -3148,6 +3159,8 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
                 break;
 
             default:
+                n_variants = 0;
+                variants = NULL;
                 break;
         }
 

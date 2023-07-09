@@ -53,6 +53,14 @@
 #define WINED3D_RESOURCE_ACCESS_MAP_R                           0x4u
 #define WINED3D_RESOURCE_ACCESS_MAP_W                           0x8u
 
+enum wined3d_renderer
+{
+    WINED3D_RENDERER_AUTO,
+    WINED3D_RENDERER_VULKAN,
+    WINED3D_RENDERER_OPENGL,
+    WINED3D_RENDERER_NO3D,
+};
+
 enum wined3d_light_type
 {
     WINED3D_LIGHT_POINT                     = 1,
@@ -2313,6 +2321,7 @@ struct wined3d_adapter * __cdecl wined3d_get_adapter(const struct wined3d *wined
 UINT __cdecl wined3d_get_adapter_count(const struct wined3d *wined3d);
 HRESULT __cdecl wined3d_get_device_caps(const struct wined3d_adapter *adapter,
         enum wined3d_device_type device_type, struct wined3d_caps *caps);
+enum wined3d_renderer __cdecl wined3d_get_renderer(void);
 ULONG __cdecl wined3d_incref(struct wined3d *wined3d);
 HRESULT __cdecl wined3d_register_software_device(struct wined3d *wined3d, void *init_function);
 BOOL __cdecl wined3d_register_window(struct wined3d *wined3d, HWND window,
@@ -2870,10 +2879,8 @@ HRESULT __cdecl wined3d_texture_set_overlay_position(struct wined3d_texture *tex
         unsigned int sub_resource_idx, LONG x, LONG y);
 void __cdecl wined3d_texture_set_sub_resource_parent(struct wined3d_texture *texture,
         unsigned int sub_resource_idx, void *parent, const struct wined3d_parent_ops *parent_ops);
-HRESULT __cdecl wined3d_texture_update_desc(struct wined3d_texture *texture, unsigned int sub_resource_idx,
-        UINT width, UINT height, enum wined3d_format_id format_id,
-        enum wined3d_multisample_type multisample_type, UINT multisample_quality,
-        void *mem, UINT pitch);
+HRESULT __cdecl wined3d_texture_update_desc(struct wined3d_texture *texture,
+        unsigned int sub_resource_idx, void *mem, unsigned int pitch);
 HRESULT __cdecl wined3d_texture_update_overlay(struct wined3d_texture *texture, unsigned int sub_resource_idx,
         const RECT *src_rect, struct wined3d_texture *dst_texture, unsigned int dst_sub_resource_idx,
         const RECT *dst_rect, uint32_t flags);

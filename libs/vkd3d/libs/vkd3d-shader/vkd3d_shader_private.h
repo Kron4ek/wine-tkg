@@ -145,8 +145,21 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_D3DBC_INVALID_OPCODE             = 7002,
     VKD3D_SHADER_ERROR_D3DBC_INVALID_RESOURCE_TYPE      = 7003,
     VKD3D_SHADER_ERROR_D3DBC_OUT_OF_MEMORY              = 7004,
+    VKD3D_SHADER_ERROR_D3DBC_INVALID_REGISTER_INDEX     = 7005,
+    VKD3D_SHADER_ERROR_D3DBC_UNDECLARED_SEMANTIC        = 7006,
 
     VKD3D_SHADER_WARNING_D3DBC_IGNORED_INSTRUCTION_FLAGS= 7300,
+
+    VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY               = 8000,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_SIZE                = 8001,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_CHUNK_OFFSET        = 8002,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_CHUNK_SIZE          = 8003,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_BITCODE             = 8004,
+
+    VKD3D_SHADER_WARNING_DXIL_UNKNOWN_MAGIC_NUMBER      = 8300,
+    VKD3D_SHADER_WARNING_DXIL_UNKNOWN_SHADER_TYPE       = 8301,
+    VKD3D_SHADER_WARNING_DXIL_INVALID_BLOCK_LENGTH      = 8302,
+    VKD3D_SHADER_WARNING_DXIL_INVALID_MODULE_LENGTH     = 8303,
 };
 
 enum vkd3d_shader_opcode
@@ -802,6 +815,7 @@ struct signature_element
 struct shader_signature
 {
     struct signature_element *elements;
+    size_t elements_capacity;
     unsigned int element_count;
 };
 
@@ -811,9 +825,12 @@ struct vkd3d_shader_desc
 {
     const uint32_t *byte_code;
     size_t byte_code_size;
+    bool is_dxil;
     struct shader_signature input_signature;
     struct shader_signature output_signature;
     struct shader_signature patch_constant_signature;
+
+    uint32_t temp_count;
 };
 
 struct vkd3d_shader_register_semantic
@@ -1167,6 +1184,8 @@ int vkd3d_shader_sm1_parser_create(const struct vkd3d_shader_compile_info *compi
         struct vkd3d_shader_message_context *message_context, struct vkd3d_shader_parser **parser);
 int vkd3d_shader_sm4_parser_create(const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_message_context *message_context, struct vkd3d_shader_parser **parser);
+int vkd3d_shader_sm6_parser_create(const struct vkd3d_shader_compile_info *compile_info,
+        struct vkd3d_shader_message_context *message_context, struct vkd3d_shader_parser **parser);
 
 void free_shader_desc(struct vkd3d_shader_desc *desc);
 
@@ -1339,6 +1358,7 @@ static inline void *vkd3d_find_struct_(const struct vkd3d_struct *chain,
 }
 
 #define VKD3D_DXBC_HEADER_SIZE (8 * sizeof(uint32_t))
+#define VKD3D_DXBC_CHUNK_ALIGNMENT sizeof(uint32_t)
 
 #define TAG_AON9 VKD3D_MAKE_TAG('A', 'o', 'n', '9')
 #define TAG_DXBC VKD3D_MAKE_TAG('D', 'X', 'B', 'C')

@@ -75,9 +75,6 @@
 /* Define to 1 if you have the `futimesat' function. */
 #undef HAVE_FUTIMESAT
 
-/* Define to 1 if you have the <gcrypt.h> header file. */
-#undef HAVE_GCRYPT_H
-
 /* Define to 1 if you have the `getaddrinfo' function. */
 #undef HAVE_GETADDRINFO
 
@@ -95,9 +92,6 @@
 
 /* Define to 1 if you have the <gettext-po.h> header file. */
 #undef HAVE_GETTEXT_PO_H
-
-/* Define to 1 if you have the <gmp.h> header file. */
-#undef HAVE_GMP_H
 
 /* Define to 1 if you have the `gnutls_cipher_init' function. */
 #undef HAVE_GNUTLS_CIPHER_INIT
@@ -191,9 +185,6 @@
 
 /* Define to 1 if you have the <linux/rtnetlink.h> header file. */
 #undef HAVE_LINUX_RTNETLINK_H
-
-/* Define to 1 if you have the <linux/seccomp.h> header file. */
-#undef HAVE_LINUX_SECCOMP_H
 
 /* Define to 1 if you have the <linux/serial.h> header file. */
 #undef HAVE_LINUX_SERIAL_H
@@ -786,17 +777,11 @@
 /* Define to the soname of the libfreetype library. */
 #undef SONAME_LIBFREETYPE
 
-/* Define to the soname of the libgcrypt library. */
-#undef SONAME_LIBGCRYPT
-
 /* Define to the soname of the libGL library. */
 #undef SONAME_LIBGL
 
 /* Define to the soname of the libGLESv2 library. */
 #undef SONAME_LIBGLESV2
-
-/* Define to the soname of the libgmp library. */
-#undef SONAME_LIBGMP
 
 /* Define to the soname of the libgnutls library. */
 #undef SONAME_LIBGNUTLS

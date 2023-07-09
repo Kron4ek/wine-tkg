@@ -666,7 +666,7 @@ static void insert_early_return_break(struct hlsl_ctx *ctx,
         return;
     list_add_after(&cf_instr->entry, &load->node.entry);
 
-    if (!(jump = hlsl_new_jump(ctx, HLSL_IR_JUMP_BREAK, &cf_instr->loc)))
+    if (!(jump = hlsl_new_jump(ctx, HLSL_IR_JUMP_BREAK, NULL, &cf_instr->loc)))
         return;
     hlsl_block_add_instr(&then_block, jump);
 
@@ -1889,7 +1889,7 @@ static bool split_matrix_copies(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr
 
     if (rhs->type != HLSL_IR_LOAD)
     {
-        hlsl_fixme(ctx, &instr->loc, "Copying from unsupported node type.\n");
+        hlsl_fixme(ctx, &instr->loc, "Copying from unsupported node type.");
         return false;
     }
 
@@ -2584,6 +2584,61 @@ static bool lower_float_modulus(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr
     return true;
 }
 
+static bool lower_discard_neg(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
+{
+    struct hlsl_ir_node *zero, *bool_false, *or, *cmp, *load;
+    static const struct hlsl_constant_value zero_value;
+    struct hlsl_type *arg_type, *cmp_type;
+    struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = { 0 };
+    struct hlsl_ir_jump *jump;
+    unsigned int i, count;
+    struct list instrs;
+
+    if (instr->type != HLSL_IR_JUMP)
+        return false;
+    jump = hlsl_ir_jump(instr);
+    if (jump->type != HLSL_IR_JUMP_DISCARD_NEG)
+        return false;
+
+    list_init(&instrs);
+
+    arg_type = jump->condition.node->data_type;
+    if (!(zero = hlsl_new_constant(ctx, arg_type, &zero_value, &instr->loc)))
+        return false;
+    list_add_tail(&instrs, &zero->entry);
+
+    operands[0] = jump->condition.node;
+    operands[1] = zero;
+    cmp_type = hlsl_get_numeric_type(ctx, arg_type->class, HLSL_TYPE_BOOL, arg_type->dimx, arg_type->dimy);
+    if (!(cmp = hlsl_new_expr(ctx, HLSL_OP2_LESS, operands, cmp_type, &instr->loc)))
+        return false;
+    list_add_tail(&instrs, &cmp->entry);
+
+    if (!(bool_false = hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_BOOL), &zero_value, &instr->loc)))
+        return false;
+    list_add_tail(&instrs, &bool_false->entry);
+
+    or = bool_false;
+
+    count = hlsl_type_component_count(cmp_type);
+    for (i = 0; i < count; ++i)
+    {
+        if (!(load = hlsl_add_load_component(ctx, &instrs, cmp, i, &instr->loc)))
+            return false;
+
+        if (!(or = hlsl_new_binary_expr(ctx, HLSL_OP2_LOGIC_OR, or, load)))
+                return NULL;
+        list_add_tail(&instrs, &or->entry);
+    }
+
+    list_move_tail(&instr->entry, &instrs);
+    hlsl_src_remove(&jump->condition);
+    hlsl_src_from_node(&jump->condition, or);
+    jump->type = HLSL_IR_JUMP_DISCARD_NZ;
+
+    return true;
+}
+
 static bool dce(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
 {
     switch (instr->type)
@@ -2848,8 +2903,15 @@ static void compute_liveness_recurse(struct hlsl_block *block, unsigned int loop
             index->idx.node->last_read = last_read;
             break;
         }
-        case HLSL_IR_CONSTANT:
         case HLSL_IR_JUMP:
+        {
+            struct hlsl_ir_jump *jump = hlsl_ir_jump(instr);
+
+            if (jump->condition.node)
+                jump->condition.node->last_read = last_read;
+            break;
+        }
+        case HLSL_IR_CONSTANT:
             break;
         }
     }
@@ -3192,10 +3254,33 @@ static void allocate_temp_registers_recurse(struct hlsl_ctx *ctx,
     }
 }
 
+static void record_constant(struct hlsl_ctx *ctx, unsigned int component_index, float f)
+{
+    struct hlsl_constant_defs *defs = &ctx->constant_defs;
+    struct hlsl_constant_register *reg;
+    size_t i;
+
+    for (i = 0; i < defs->count; ++i)
+    {
+        reg = &defs->regs[i];
+        if (reg->index == (component_index / 4))
+        {
+            reg->value.f[component_index % 4] = f;
+            return;
+        }
+    }
+
+    if (!hlsl_array_reserve(ctx, (void **)&defs->regs, &defs->size, defs->count + 1, sizeof(*defs->regs)))
+        return;
+    reg = &defs->regs[defs->count++];
+    memset(reg, 0, sizeof(*reg));
+    reg->index = component_index / 4;
+    reg->value.f[component_index % 4] = f;
+}
+
 static void allocate_const_registers_recurse(struct hlsl_ctx *ctx,
         struct hlsl_block *block, struct register_allocator *allocator)
 {
-    struct hlsl_constant_defs *defs = &ctx->constant_defs;
     struct hlsl_ir_node *instr;
 
     LIST_FOR_EACH_ENTRY(instr, &block->instrs, struct hlsl_ir_node, entry)
@@ -3206,66 +3291,52 @@ static void allocate_const_registers_recurse(struct hlsl_ctx *ctx,
             {
                 struct hlsl_ir_constant *constant = hlsl_ir_constant(instr);
                 const struct hlsl_type *type = instr->data_type;
-                unsigned int x, y, i, writemask, end_reg;
-                unsigned int reg_size = type->reg_size[HLSL_REGSET_NUMERIC];
+                unsigned int x, i;
 
                 constant->reg = allocate_numeric_registers_for_type(ctx, allocator, 1, UINT_MAX, type);
                 TRACE("Allocated constant @%u to %s.\n", instr->index, debug_register('c', constant->reg, type));
 
-                if (!hlsl_array_reserve(ctx, (void **)&defs->values, &defs->size,
-                        constant->reg.id + reg_size / 4, sizeof(*defs->values)))
-                    return;
-                end_reg = constant->reg.id + reg_size / 4;
-                if (end_reg > defs->count)
-                {
-                    memset(&defs->values[defs->count], 0, sizeof(*defs->values) * (end_reg - defs->count));
-                    defs->count = end_reg;
-                }
-
                 assert(type->class <= HLSL_CLASS_LAST_NUMERIC);
+                assert(type->dimy == 1);
+                assert(constant->reg.writemask);
 
-                if (!(writemask = constant->reg.writemask))
-                    writemask = (1u << type->dimx) - 1;
-
-                for (y = 0; y < type->dimy; ++y)
+                for (x = 0, i = 0; x < 4; ++x)
                 {
-                    for (x = 0, i = 0; x < 4; ++x)
+                    const union hlsl_constant_value_component *value;
+                    float f;
+
+                    if (!(constant->reg.writemask & (1u << x)))
+                        continue;
+                    value = &constant->value.u[i++];
+
+                    switch (type->base_type)
                     {
-                        const union hlsl_constant_value_component *value;
-                        float f;
+                        case HLSL_TYPE_BOOL:
+                            f = !!value->u;
+                            break;
 
-                        if (!(writemask & (1u << x)))
-                            continue;
-                        value = &constant->value.u[i++];
+                        case HLSL_TYPE_FLOAT:
+                        case HLSL_TYPE_HALF:
+                            f = value->f;
+                            break;
 
-                        switch (type->base_type)
-                        {
-                            case HLSL_TYPE_BOOL:
-                                f = !!value->u;
-                                break;
+                        case HLSL_TYPE_INT:
+                            f = value->i;
+                            break;
 
-                            case HLSL_TYPE_FLOAT:
-                            case HLSL_TYPE_HALF:
-                                f = value->f;
-                                break;
+                        case HLSL_TYPE_UINT:
+                            f = value->u;
+                            break;
 
-                            case HLSL_TYPE_INT:
-                                f = value->i;
-                                break;
+                        case HLSL_TYPE_DOUBLE:
+                            FIXME("Double constant.\n");
+                            return;
 
-                            case HLSL_TYPE_UINT:
-                                f = value->u;
-                                break;
-
-                            case HLSL_TYPE_DOUBLE:
-                                FIXME("Double constant.\n");
-                                return;
-
-                            default:
-                                vkd3d_unreachable();
-                        }
-                        defs->values[constant->reg.id + y].f[x] = f;
+                        default:
+                            vkd3d_unreachable();
                     }
+
+                    record_constant(ctx, constant->reg.id * 4 + x, f);
                 }
 
                 break;
@@ -3297,8 +3368,6 @@ static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_ir_functi
     struct register_allocator allocator = {0};
     struct hlsl_ir_var *var;
 
-    allocate_const_registers_recurse(ctx, &entry_func->body, &allocator);
-
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
         if (var->is_uniform && var->last_read)
@@ -3314,6 +3383,8 @@ static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_ir_functi
                     debug_register('c', var->regs[HLSL_REGSET_NUMERIC], var->data_type));
         }
     }
+
+    allocate_const_registers_recurse(ctx, &entry_func->body, &allocator);
 
     vkd3d_free(allocator.allocations);
 }
@@ -4062,6 +4133,10 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
         hlsl_error(ctx, &entry_func->loc, VKD3D_SHADER_ERROR_HLSL_MISSING_ATTRIBUTE,
                 "Entry point \"%s\" is missing a [numthreads] attribute.", entry_func->func->name);
 
+    if (profile->major_version >= 4)
+    {
+        hlsl_transform_ir(ctx, lower_discard_neg, body, NULL);
+    }
     hlsl_transform_ir(ctx, lower_broadcasts, body, NULL);
     while (hlsl_transform_ir(ctx, fold_redundant_casts, body, NULL));
     do

@@ -3451,9 +3451,17 @@ BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y )
         goto done;
 
     if (winpos->flags & SWP_HIDEWINDOW)
+    {
+        NtUserNotifyWinEvent( EVENT_OBJECT_HIDE, winpos->hwnd, 0, 0 );
+
         NtUserHideCaret( winpos->hwnd );
+    }
     else if (winpos->flags & SWP_SHOWWINDOW)
+    {
+        NtUserNotifyWinEvent( EVENT_OBJECT_SHOW, winpos->hwnd, 0, 0 );
+
         NtUserShowCaret( winpos->hwnd );
+    }
 
     if (!(winpos->flags & (SWP_NOACTIVATE|SWP_HIDEWINDOW)))
     {
@@ -4514,11 +4522,11 @@ BOOL WINAPI NtUserFlashWindowEx( FLASHWINFO *info )
 
         win = get_win_ptr( info->hwnd );
         if (!win || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
-        if (info->dwFlags && !(win->flags & WIN_NCACTIVATED))
+        if (info->dwFlags & FLASHW_CAPTION && !(win->flags & WIN_NCACTIVATED))
         {
             win->flags |= WIN_NCACTIVATED;
         }
-        else
+        else if (!info->dwFlags)
         {
             win->flags &= ~WIN_NCACTIVATED;
         }
@@ -4538,7 +4546,10 @@ BOOL WINAPI NtUserFlashWindowEx( FLASHWINFO *info )
         wparam = (win->flags & WIN_NCACTIVATED) != 0;
 
         release_win_ptr( win );
-        send_message( hwnd, WM_NCACTIVATE, wparam, 0 );
+
+        if (!info->dwFlags || info->dwFlags & FLASHW_CAPTION)
+            send_message( hwnd, WM_NCACTIVATE, wparam, 0 );
+
         user_driver->pFlashWindowEx( info );
         return (info->dwFlags & FLASHW_CAPTION) ? TRUE : wparam;
     }

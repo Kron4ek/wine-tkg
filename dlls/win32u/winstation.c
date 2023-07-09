@@ -248,7 +248,7 @@ HDESK WINAPI NtUserGetThreadDesktop( DWORD thread )
  */
 BOOL WINAPI NtUserSetThreadDesktop( HDESK handle )
 {
-    BOOL ret;
+    BOOL ret, was_virtual_desktop = is_virtual_desktop();
 
     SERVER_START_REQ( set_thread_desktop )
     {
@@ -264,6 +264,7 @@ BOOL WINAPI NtUserSetThreadDesktop( HDESK handle )
         thread_info->client_info.top_window = 0;
         thread_info->client_info.msg_window = 0;
         if (key_state_info) key_state_info->time = 0;
+        if (was_virtual_desktop != is_virtual_desktop()) update_display_cache( TRUE );
     }
     return ret;
 }
@@ -419,14 +420,24 @@ static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiB
 
 HWND get_desktop_window(void)
 {
+    static const WCHAR wine_service_station_name[] =
+        {'_','_','w','i','n','e','s','e','r','v','i','c','e','_','w','i','n','s','t','a','t','i','o','n',0};
     struct ntuser_thread_info *thread_info = NtUserGetThreadInfo();
+    WCHAR name[MAX_PATH];
+    BOOL is_service;
 
     if (thread_info->top_window) return UlongToHandle( thread_info->top_window );
 
+    /* don't create an actual explorer desktop window for services */
+    if (NtUserGetObjectInformation( NtUserGetProcessWindowStation(), UOI_NAME, name, sizeof(name), NULL )
+        && !wcscmp( name, wine_service_station_name ))
+        is_service = TRUE;
+    else
+        is_service = FALSE;
 
     SERVER_START_REQ( get_desktop_window )
     {
-        req->force = 0;
+        req->force = is_service;
         if (!wine_server_call( req ))
         {
             thread_info->top_window = reply->top_window;
@@ -445,7 +456,8 @@ HWND get_desktop_window(void)
         static const WCHAR system_dir[] = {'C',':','\\','w','i','n','d','o','w','s','\\',
             's','y','s','t','e','m','3','2','\\',0};
         RTL_USER_PROCESS_PARAMETERS params = { sizeof(params), sizeof(params) };
-        PS_ATTRIBUTE_LIST ps_attr;
+        ULONG_PTR buffer[offsetof( PS_ATTRIBUTE_LIST, Attributes[2] ) / sizeof(ULONG_PTR)];
+        PS_ATTRIBUTE_LIST *ps_attr = (PS_ATTRIBUTE_LIST *)buffer;
         PS_CREATE_INFO create_info;
         WCHAR desktop[MAX_PATH];
         PEB *peb = NtCurrentTeb()->Peb;
@@ -478,24 +490,30 @@ HWND get_desktop_window(void)
         RtlInitUnicodeString( &params.WindowTitle, appnameW + 4 );
         RtlInitUnicodeString( &params.Desktop, desktop );
 
-        ps_attr.TotalLength = sizeof(ps_attr);
-        ps_attr.Attributes[0].Attribute    = PS_ATTRIBUTE_IMAGE_NAME;
-        ps_attr.Attributes[0].Size         = sizeof(appnameW) - sizeof(WCHAR);
-        ps_attr.Attributes[0].ValuePtr     = (WCHAR *)appnameW;
-        ps_attr.Attributes[0].ReturnLength = NULL;
+        ps_attr->Attributes[0].Attribute    = PS_ATTRIBUTE_IMAGE_NAME;
+        ps_attr->Attributes[0].Size         = sizeof(appnameW) - sizeof(WCHAR);
+        ps_attr->Attributes[0].ValuePtr     = (WCHAR *)appnameW;
+        ps_attr->Attributes[0].ReturnLength = NULL;
+
+        ps_attr->Attributes[1].Attribute    = PS_ATTRIBUTE_TOKEN;
+        ps_attr->Attributes[1].Size         = sizeof(HANDLE);
+        ps_attr->Attributes[1].ValuePtr     = GetCurrentThreadEffectiveToken();
+        ps_attr->Attributes[1].ReturnLength = NULL;
+
+        ps_attr->TotalLength = offsetof( PS_ATTRIBUTE_LIST, Attributes[2] );
 
         if (NtCurrentTeb64() && !NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR])
         {
             NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR] = TRUE;
             status = NtCreateUserProcess( &process, &thread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
                                           NULL, NULL, 0, THREAD_CREATE_FLAGS_CREATE_SUSPENDED, &params,
-                                          &create_info, &ps_attr );
+                                          &create_info, ps_attr );
             NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR] = FALSE;
         }
         else
             status = NtCreateUserProcess( &process, &thread, PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS,
                                           NULL, NULL, 0, THREAD_CREATE_FLAGS_CREATE_SUSPENDED, &params,
-                                          &create_info, &ps_attr );
+                                          &create_info, ps_attr );
         if (!status)
         {
             NtResumeThread( thread, NULL );

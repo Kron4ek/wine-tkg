@@ -32,8 +32,11 @@
 static const struct user_driver_funcs waylanddrv_funcs =
 {
     .pDesktopWindowProc = WAYLAND_DesktopWindowProc,
+    .pDestroyWindow = WAYLAND_DestroyWindow,
     .pUpdateDisplayDevices = WAYLAND_UpdateDisplayDevices,
-    .pWindowMessage = WAYLAND_WindowMessage
+    .pWindowMessage = WAYLAND_WindowMessage,
+    .pWindowPosChanged = WAYLAND_WindowPosChanged,
+    .pWindowPosChanging = WAYLAND_WindowPosChanging
 };
 
 static NTSTATUS waylanddrv_unix_init(void *arg)

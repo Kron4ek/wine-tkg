@@ -32,7 +32,6 @@ AC_ARG_WITH(dbus,      AS_HELP_STRING([--without-dbus],[do not use DBus (dynamic
 AC_ARG_WITH(float-abi, AS_HELP_STRING([--with-float-abi=abi],[specify the ABI (soft|softfp|hard) for ARM platforms]))
 AC_ARG_WITH(fontconfig,AS_HELP_STRING([--without-fontconfig],[do not use fontconfig]))
 AC_ARG_WITH(freetype,  AS_HELP_STRING([--without-freetype],[do not use the FreeType library]))
-AC_ARG_WITH(gcrypt,    AS_HELP_STRING([--without-gcrypt],[do not use libgcrypt]))
 AC_ARG_WITH(gettext,   AS_HELP_STRING([--without-gettext],[do not use gettext]))
 AC_ARG_WITH(gettextpo, AS_HELP_STRING([--with-gettextpo],[use the GetTextPO library to rebuild po files]),
             [if test "x$withval" = "xno"; then ac_cv_header_gettext_po_h=no; fi])
@@ -137,13 +136,6 @@ case $host in
       export PKG_CONFIG_LIBDIR
       with_unwind=${with_unwind:-no}
     else
-      if test "x${GCC}" = "xyes"
-      then
-        AC_CACHE_CHECK([whether $CC supports __builtin_ms_va_list],wine_cv_builtin_ms_va_list,
-            [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdarg.h>]], [[void func(__builtin_ms_va_list *args);]])],
-                          [wine_cv_builtin_ms_va_list=yes],[wine_cv_builtin_ms_va_list=no])])
-        test $wine_cv_builtin_ms_va_list != no || AC_MSG_ERROR([You need gcc >= 4.4 or clang >= 3.8 to build Wine as 64-bit.])
-      fi
       CC="$CC -m64"
       CXX="$CXX -m64"
       host_cpu="x86_64"
@@ -430,7 +422,6 @@ AC_CHECK_HEADERS(\
 	linux/ioctl.h \
 	linux/major.h \
 	linux/param.h \
-	linux/seccomp.h \
 	linux/serial.h \
 	linux/types.h \
 	linux/ucdrom.h \
@@ -832,14 +823,13 @@ AS_VAR_SET_IF([enable_archs],
     [if test "x$with_mingw" != xno
      then
          test $HOST_ARCH = unknown || cross_archs=$HOST_ARCH
-         case "x$with_mingw" in
-           x|xyes) ;;
-           *) AS_VAR_SET(${cross_archs}_CC,$with_mingw) ;;
-         esac
      fi])
 
 for wine_arch in $cross_archs
 do
+    case "x$with_mingw" in
+      xclang|x*/clang) AS_VAR_SET(${wine_arch}_CC,$with_mingw) ;;
+    esac
     AS_VAR_IF([${wine_arch}_CC],[],
         [case $wine_arch in
           aarch64)
@@ -917,13 +907,12 @@ do
         LDFLAGS=$saved_LDFLAGS
         continue
     fi
-    AS_VAR_APPEND([PE_ARCHS],[" $wine_arch"])
 
     AS_VAR_PUSHDEF([wine_cv_crosscc_c99],[ac_cv_${wine_arch}_crosscc_c99])
     AC_MSG_CHECKING([for $CC option to enable C99 features])
     AC_CACHE_VAL([wine_cv_crosscc_c99],
         [AS_VAR_SET([wine_cv_crosscc_c99],[no])
-         for arg in '' '-std=gnu99'
+         for arg in '' '-std=gnu99' '-D__STDC__'
          do
              test -z "$arg" || CC="$CC $arg"
              AC_COMPILE_IFELSE([AC_LANG_SOURCE([$ac_c_conftest_c99_program])],
@@ -933,14 +922,20 @@ do
              AS_VAR_IF([wine_cv_crosscc_c99],[no],[],[break])
          done])
     AS_VAR_COPY([res],[wine_cv_crosscc_c99])
+    AS_VAR_POPDEF([wine_cv_crosscc_c99])
     case "x$res" in
       x) AC_MSG_RESULT([none needed]) ;;
-      xno) AC_MSG_RESULT([unsupported]) ;;
+      xno) AC_MSG_RESULT([unsupported])
+           CC=$saved_CC
+           CFLAGS=$saved_CFLAGS
+           LDFLAGS=$saved_LDFLAGS
+           continue
+           ;;
       x*) AC_MSG_RESULT([$res])
           AS_VAR_APPEND([${wine_arch}_CC],[" $res"]) ;;
     esac
-    AS_VAR_POPDEF([wine_cv_crosscc_c99])
 
+    AS_VAR_APPEND([PE_ARCHS],[" $wine_arch"])
     WINE_TRY_PE_CFLAGS([-fno-strict-aliasing])
     dnl clang needs to be told to fail on unknown options
     WINE_TRY_PE_CFLAGS([-Werror=unknown-warning-option],[CFLAGS="$CFLAGS -Werror=unknown-warning-option"])
@@ -1453,14 +1448,6 @@ fi
 WINE_WARNING_WITH(gnutls,[test "x$ac_cv_lib_soname_gnutls" = "x"],
                  [libgnutls ${notice_platform}development files not found, no schannel support.])
 
-dnl **** Check for libgmp ****
-if test "x$with_gnutls" != "xno"
-then
-    WINE_PACKAGE_FLAGS(GMP,[gmp],[-lgmp],,,
-        [AC_CHECK_HEADERS([gmp.h],
-            [WINE_CHECK_SONAME(gmp,__gmpz_init,,[GMP_CFLAGS=""],[$GMP_LIBS],[[libgmp-*]])])])
-fi
-
 dnl **** Check for SANE ****
 if test "x$with_sane" != "xno"
 then
@@ -1840,19 +1827,6 @@ then
 fi
 WINE_NOTICE_WITH(vulkan,[test "x$ac_cv_lib_soname_vulkan" = "x" -a "x$ac_cv_lib_soname_MoltenVK" = "x"],
                  [libvulkan and libMoltenVK ${notice_platform}development files not found, Vulkan won't be supported.])
-
-dnl **** Check for gcrypt ****
-if test "x$with_gcrypt" != "xno"
-then
-    WINE_PACKAGE_FLAGS(GCRYPT,[libgcrypt],,,,
-        [AC_CHECK_HEADERS([gcrypt.h])
-        if test "$ac_cv_header_gcrypt_h" = "yes"
-        then
-            WINE_CHECK_SONAME(gcrypt,gcry_sexp_build,,,[$GCRYPT_LIBS])
-        fi])
-fi
-WINE_NOTICE_WITH(gcrypt,[test "x$ac_cv_lib_soname_gcrypt" = "x"],
-                 [libgcrypt ${notice_platform}development files not found, GCRYPT won't be supported.])
 
 dnl **** Check for gcc specific options ****
 
@@ -3189,8 +3163,12 @@ WINE_CONFIG_MAKEFILE(dlls/win32u/tests)
 WINE_CONFIG_MAKEFILE(dlls/win87em.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/winaspi.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/windebug.dll16,enable_win16)
+WINE_CONFIG_MAKEFILE(dlls/windows.devices.bluetooth)
+WINE_CONFIG_MAKEFILE(dlls/windows.devices.bluetooth/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.devices.enumeration)
 WINE_CONFIG_MAKEFILE(dlls/windows.devices.enumeration/tests)
+WINE_CONFIG_MAKEFILE(dlls/windows.devices.geolocation.geolocator)
+WINE_CONFIG_MAKEFILE(dlls/windows.devices.geolocation.geolocator/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.gaming.input)
 WINE_CONFIG_MAKEFILE(dlls/windows.gaming.input/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.gaming.ui.gamebar)
@@ -3204,6 +3182,8 @@ WINE_CONFIG_MAKEFILE(dlls/windows.media.speech/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.media)
 WINE_CONFIG_MAKEFILE(dlls/windows.media/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.networking.connectivity)
+WINE_CONFIG_MAKEFILE(dlls/windows.networking.hostname)
+WINE_CONFIG_MAKEFILE(dlls/windows.networking.hostname/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.networking)
 WINE_CONFIG_MAKEFILE(dlls/windows.perception.stub)
 WINE_CONFIG_MAKEFILE(dlls/windows.perception.stub/tests)
@@ -3430,6 +3410,7 @@ WINE_CONFIG_MAKEFILE(programs/notepad)
 WINE_CONFIG_MAKEFILE(programs/oleview)
 WINE_CONFIG_MAKEFILE(programs/ping)
 WINE_CONFIG_MAKEFILE(programs/plugplay)
+WINE_CONFIG_MAKEFILE(programs/pnputil)
 WINE_CONFIG_MAKEFILE(programs/powershell)
 WINE_CONFIG_MAKEFILE(programs/presentationfontcache)
 WINE_CONFIG_MAKEFILE(programs/progman)
@@ -3664,7 +3645,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-8.11.r0.gfcff74d6\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-8.12.r0.gd745d08c\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

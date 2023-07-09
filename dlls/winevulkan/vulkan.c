@@ -41,10 +41,7 @@ static BOOL use_external_memory(void)
     return is_wow64();
 }
 
-static ULONG_PTR zero_bits(void)
-{
-    return is_wow64() ? 0x7fffffff : 0;
-}
+static ULONG_PTR zero_bits = 0;
 
 #define wine_vk_count_struct(s, t) wine_vk_count_struct_((void *)s, VK_STRUCTURE_TYPE_##t)
 static uint32_t wine_vk_count_struct_(void *s, VkStructureType t)
@@ -469,6 +466,14 @@ NTSTATUS init_vulkan(void *args)
     {
         ERR("Failed to load Wine graphics driver supporting Vulkan.\n");
         return STATUS_UNSUCCESSFUL;
+    }
+
+    if (is_wow64())
+    {
+        SYSTEM_BASIC_INFORMATION info;
+
+        NtQuerySystemInformation(SystemEmulationBasicInformation, &info, sizeof(info), NULL);
+        zero_bits = (ULONG_PTR)info.HighestUserAddress | 0x7fffffff;
     }
 
     return STATUS_SUCCESS;
@@ -1519,7 +1524,7 @@ VkResult wine_vkAllocateMemory(VkDevice handle, const VkMemoryAllocateInfo *allo
         if (!once++)
             FIXME("Using VK_EXT_external_memory_host\n");
 
-        if (NtAllocateVirtualMemory(GetCurrentProcess(), &mapping, zero_bits(), &alloc_size,
+        if (NtAllocateVirtualMemory(GetCurrentProcess(), &mapping, zero_bits, &alloc_size,
                                     MEM_COMMIT, PAGE_READWRITE))
         {
             ERR("NtAllocateVirtualMemory failed\n");
@@ -1891,6 +1896,56 @@ void wine_vkDestroyDebugReportCallbackEXT(VkInstance handle, VkDebugReportCallba
 
     WINE_VK_REMOVE_HANDLE_MAPPING(instance, object);
 
+    free(object);
+}
+
+VkResult wine_vkCreateDeferredOperationKHR(VkDevice                     handle,
+                                           const VkAllocationCallbacks* allocator,
+                                           VkDeferredOperationKHR*      deferredOperation)
+{
+    struct wine_device *device = wine_device_from_handle(handle);
+    struct wine_deferred_operation *object;
+    VkResult res;
+
+    if (allocator)
+        FIXME("Support for allocation callbacks not implemented yet\n");
+
+    if (!(object = calloc(1, sizeof(*object))))
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+    res = device->funcs.p_vkCreateDeferredOperationKHR(device->device, NULL, &object->deferred_operation);
+
+    if (res != VK_SUCCESS)
+    {
+        free(object);
+        return res;
+    }
+
+    init_conversion_context(&object->ctx);
+
+    WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, object, object->deferred_operation, object);
+    *deferredOperation = wine_deferred_operation_to_handle(object);
+
+    return VK_SUCCESS;
+}
+
+void wine_vkDestroyDeferredOperationKHR(VkDevice                     handle,
+                                        VkDeferredOperationKHR       operation,
+                                        const VkAllocationCallbacks* allocator)
+{
+    struct wine_device *device = wine_device_from_handle(handle);
+    struct wine_deferred_operation *object;
+
+    object = wine_deferred_operation_from_handle(operation);
+
+    if (!object)
+        return;
+
+    device->funcs.p_vkDestroyDeferredOperationKHR(device->device, object->deferred_operation, NULL);
+
+    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, object);
+
+    free_conversion_context(&object->ctx);
     free(object);
 }
 

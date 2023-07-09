@@ -2982,7 +2982,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
                     LPBYTE pJob, DWORD Command)
 {
     BOOL ret;
-    LPBYTE JobW;
+    void *JobW;
     UNICODE_STRING usBuffer;
 
     TRACE("(%p, %ld, %ld, %p, %ld)\n",hPrinter, JobId, Level, pJob, Command);
@@ -2999,7 +2999,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
         JOB_INFO_1W *info1W = malloc(sizeof(*info1W));
         JOB_INFO_1A *info1A = (JOB_INFO_1A*)pJob;
 
-        JobW = (LPBYTE)info1W;
+        JobW = info1W;
         info1W->pUserName = asciitounicode(&usBuffer, info1A->pUserName);
         info1W->pDocument = asciitounicode(&usBuffer, info1A->pDocument);
         info1W->pDatatype = asciitounicode(&usBuffer, info1A->pDatatype);
@@ -3015,7 +3015,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
         JOB_INFO_2W *info2W = malloc(sizeof(*info2W));
         JOB_INFO_2A *info2A = (JOB_INFO_2A*)pJob;
 
-        JobW = (LPBYTE)info2W;
+        JobW = info2W;
         info2W->pUserName = asciitounicode(&usBuffer, info2A->pUserName);
         info2W->pDocument = asciitounicode(&usBuffer, info2A->pDocument);
         info2W->pNotifyName = asciitounicode(&usBuffer, info2A->pNotifyName);
@@ -3048,7 +3048,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
     {
     case 1:
       {
-        JOB_INFO_1W *info1W = (JOB_INFO_1W*)JobW;
+        JOB_INFO_1W *info1W = JobW;
         free(info1W->pUserName);
         free(info1W->pDocument);
         free(info1W->pDatatype);
@@ -3057,7 +3057,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
       }
     case 2:
       {
-        JOB_INFO_2W *info2W = (JOB_INFO_2W*)JobW;
+        JOB_INFO_2W *info2W = JobW;
         free(info2W->pUserName);
         free(info2W->pDocument);
         free(info2W->pNotifyName);

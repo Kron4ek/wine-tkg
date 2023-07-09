@@ -44,6 +44,7 @@ void     pool_destroy(struct pool* a) DECLSPEC_HIDDEN;
 void*    pool_alloc(struct pool* a, size_t len) __WINE_ALLOC_SIZE(2) __WINE_MALLOC DECLSPEC_HIDDEN;
 void*    pool_realloc(struct pool* a, void* ptr, size_t len) __WINE_ALLOC_SIZE(3) DECLSPEC_HIDDEN;
 char*    pool_strdup(struct pool* a, const char* str) __WINE_MALLOC DECLSPEC_HIDDEN;
+WCHAR*   pool_wcsdup(struct pool* a, const WCHAR* str) __WINE_MALLOC DECLSPEC_HIDDEN;
 
 struct vector
 {
@@ -772,6 +773,7 @@ struct pdb_cmd_pair {
 };
 extern BOOL pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
     union ctx *context, struct pdb_cmd_pair *cpair) DECLSPEC_HIDDEN;
+extern DWORD pdb_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW* info);
 
 /* path.c */
 extern BOOL         path_find_symbol_file(const struct process* pcs, const struct module* module,

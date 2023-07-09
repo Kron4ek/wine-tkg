@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 Alistair Leslie-Hughes
+ * Copyright (C) 2023 Mohamad Al-Jaf
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -25,6 +25,8 @@ import "asyncinfo.idl";
 import "eventtoken.idl";
 import "windowscontracts.idl";
 import "windows.foundation.idl";
+/* import "windows.networking.idl"; */
+import "windows.storage.streams.idl";
 
 namespace Windows
 {

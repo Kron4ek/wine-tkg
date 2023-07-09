@@ -502,7 +502,11 @@ enum hlsl_ir_expr_op
     HLSL_OP1_COS,
     HLSL_OP1_COS_REDUCED,    /* Reduced range [-pi, pi] */
     HLSL_OP1_DSX,
+    HLSL_OP1_DSX_COARSE,
+    HLSL_OP1_DSX_FINE,
     HLSL_OP1_DSY,
+    HLSL_OP1_DSY_COARSE,
+    HLSL_OP1_DSY_FINE,
     HLSL_OP1_EXP2,
     HLSL_OP1_FLOOR,
     HLSL_OP1_FRACT,
@@ -558,7 +562,8 @@ enum hlsl_ir_jump_type
 {
     HLSL_IR_JUMP_BREAK,
     HLSL_IR_JUMP_CONTINUE,
-    HLSL_IR_JUMP_DISCARD,
+    HLSL_IR_JUMP_DISCARD_NEG,
+    HLSL_IR_JUMP_DISCARD_NZ,
     HLSL_IR_JUMP_RETURN,
 };
 
@@ -566,6 +571,8 @@ struct hlsl_ir_jump
 {
     struct hlsl_ir_node node;
     enum hlsl_ir_jump_type type;
+    /* Argument used for HLSL_IR_JUMP_DISCARD_NZ and HLSL_IR_JUMP_DISCARD_NEG. */
+    struct hlsl_src condition;
 };
 
 struct hlsl_ir_swizzle
@@ -803,7 +810,11 @@ struct hlsl_ctx
      * Only used for SM1 profiles. */
     struct hlsl_constant_defs
     {
-        struct hlsl_vec4 *values;
+        struct hlsl_constant_register
+        {
+            uint32_t index;
+            struct hlsl_vec4 value;
+        } *regs;
         size_t count, size;
     } constant_defs;
     /* Number of temp. registers required for the shader to run, i.e. the largest temp register
@@ -1120,7 +1131,7 @@ struct hlsl_ir_node *hlsl_new_if(struct hlsl_ctx *ctx, struct hlsl_ir_node *cond
         struct hlsl_block *then_block, struct hlsl_block *else_block, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_int_constant(struct hlsl_ctx *ctx, int32_t n, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_jump(struct hlsl_ctx *ctx,
-        enum hlsl_ir_jump_type type, const struct vkd3d_shader_location *loc);
+        enum hlsl_ir_jump_type type, struct hlsl_ir_node *condition, const struct vkd3d_shader_location *loc);
 
 void hlsl_init_simple_deref_from_var(struct hlsl_deref *deref, struct hlsl_ir_var *var);
 
@@ -1132,6 +1143,8 @@ struct hlsl_ir_load *hlsl_new_load_parent(struct hlsl_ctx *ctx, const struct hls
         const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_load_component(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_deref *deref, unsigned int comp, const struct vkd3d_shader_location *loc);
+struct hlsl_ir_node *hlsl_add_load_component(struct hlsl_ctx *ctx, struct list *instrs,
+        struct hlsl_ir_node *var_instr, unsigned int comp, const struct vkd3d_shader_location *loc);
 
 struct hlsl_ir_node *hlsl_new_simple_store(struct hlsl_ctx *ctx, struct hlsl_ir_var *lhs, struct hlsl_ir_node *rhs);
 struct hlsl_ir_node *hlsl_new_store_index(struct hlsl_ctx *ctx, const struct hlsl_deref *lhs,
