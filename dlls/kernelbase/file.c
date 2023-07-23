@@ -36,6 +36,7 @@
 #include "shlwapi.h"
 #include "ddk/ntddk.h"
 #include "ddk/ntddser.h"
+#include "ioringapi.h"
 #include "ntifs.h"
 
 #include "kernelbase.h"
@@ -4668,4 +4669,15 @@ BOOL WINAPI DECLSPEC_HOTPATCH WaitCommEvent( HANDLE handle, DWORD *events, OVERL
 {
     return DeviceIoControl( handle, IOCTL_SERIAL_WAIT_ON_MASK, NULL, 0, events, sizeof(*events),
                             NULL, overlapped );
+}
+
+
+/***********************************************************************
+ *	QueryIoRingCapabilities   (kernelbase.@)
+ */
+HRESULT WINAPI QueryIoRingCapabilities(IORING_CAPABILITIES *caps)
+{
+    FIXME( "caps %p stub.\n", caps );
+
+    return E_NOTIMPL;
 }

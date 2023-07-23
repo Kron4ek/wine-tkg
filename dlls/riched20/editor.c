@@ -224,8 +224,6 @@
  *
  */
 
-#define NONAMELESSUNION
-
 #include "editor.h"
 #include "commdlg.h"
 #include "winreg.h"
@@ -1129,13 +1127,13 @@ static HRESULT insert_static_object(ME_TextEditor *editor, HENHMETAFILE hemf, HB
   if (hemf)
   {
       stgm.tymed = TYMED_ENHMF;
-      stgm.u.hEnhMetaFile = hemf;
+      stgm.hEnhMetaFile = hemf;
       fm.cfFormat = CF_ENHMETAFILE;
   }
   else if (hbmp)
   {
       stgm.tymed = TYMED_GDI;
-      stgm.u.hBitmap = hbmp;
+      stgm.hBitmap = hbmp;
       fm.cfFormat = CF_BITMAP;
   }
   else return E_FAIL;
@@ -2150,9 +2148,10 @@ int set_selection( ME_TextEditor *editor, int to, int from )
 
     if (!editor->bHideSelection) ME_InvalidateSelection( editor );
     end = set_selection_cursors( editor, to, from );
-    ME_UpdateRepaint( editor, FALSE );
+    editor_ensure_visible( editor, &editor->pCursors[0] );
     if (!editor->bHideSelection) ME_InvalidateSelection( editor );
     update_caret( editor );
+    ME_Repaint( editor );
     ME_SendSelChange( editor );
 
     return end;
@@ -2205,7 +2204,7 @@ static HRESULT paste_rtf(ME_TextEditor *editor, FORMATETC *fmt, STGMEDIUM *med)
     ME_GlobalDestStruct gds;
     HRESULT hr;
 
-    gds.hData = med->u.hGlobal;
+    gds.hData = med->hGlobal;
     gds.nLength = 0;
     es.dwCookie = (DWORD_PTR)&gds;
     es.pfnCallback = ME_ReadFromHGLOBALRTF;
@@ -2220,7 +2219,7 @@ static HRESULT paste_text(ME_TextEditor *editor, FORMATETC *fmt, STGMEDIUM *med)
     ME_GlobalDestStruct gds;
     HRESULT hr;
 
-    gds.hData = med->u.hGlobal;
+    gds.hData = med->hGlobal;
     gds.nLength = 0;
     es.dwCookie = (DWORD_PTR)&gds;
     es.pfnCallback = ME_ReadFromHGLOBALUnicode;
@@ -2234,7 +2233,7 @@ static HRESULT paste_emf(ME_TextEditor *editor, FORMATETC *fmt, STGMEDIUM *med)
     HRESULT hr;
     SIZEL sz = {0, 0};
 
-    hr = insert_static_object( editor, med->u.hEnhMetaFile, NULL, &sz );
+    hr = insert_static_object( editor, med->hEnhMetaFile, NULL, &sz );
     if (SUCCEEDED(hr))
     {
         ME_CommitUndo( editor );
@@ -2932,6 +2931,7 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
   int i;
   LONG selbarwidth;
   HRESULT hr;
+  HDC hdc;
 
   ed->sizeWindow.cx = ed->sizeWindow.cy = 0;
   if (ITextHost_QueryInterface( texthost, &IID_ITextHost2, (void **)&ed->texthost ) == S_OK)
@@ -2958,7 +2958,9 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
   ed->nZoomNumerator = ed->nZoomDenominator = 0;
   ed->nAvailWidth = 0; /* wrap to client area */
   list_init( &ed->style_list );
-  ME_MakeFirstParagraph(ed);
+
+  hdc = ITextHost_TxGetDC( ed->texthost );
+  ME_MakeFirstParagraph( ed, hdc );
   /* The four cursors are for:
    * 0 - The position where the caret is shown
    * 1 - The anchored end of the selection (for normal selection)
@@ -3057,6 +3059,9 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
 
   list_init( &ed->reobj_list );
   OleInitialize(NULL);
+
+  wrap_marked_paras_dc( ed, hdc, FALSE );
+  ITextHost_TxReleaseDC( ed->texthost, hdc );
 
   return ed;
 }

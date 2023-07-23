@@ -422,6 +422,7 @@ struct hlsl_ir_var
     uint32_t is_output_semantic : 1;
     uint32_t is_uniform : 1;
     uint32_t is_param : 1;
+    uint32_t is_separated_resource : 1;
 };
 
 /* Sized array of variables representing a function's parameters. */
@@ -607,9 +608,11 @@ struct hlsl_deref
      *   components, within the pertaining regset), from the start of the variable, of the part
      *   referenced.
      * The path is lowered to this single offset -- whose value may vary between SM1 and SM4 --
-     *   before writing the bytecode. */
+     *   before writing the bytecode.
+     * Since the type information cannot longer be retrieved from the offset alone, the type is
+     *   stored in the data_type field. */
     struct hlsl_src offset;
-    enum hlsl_regset offset_regset;
+    struct hlsl_type *data_type;
 };
 
 struct hlsl_ir_load
@@ -1066,6 +1069,8 @@ const char *debug_hlsl_writemask(unsigned int writemask);
 const char *debug_hlsl_swizzle(unsigned int swizzle, unsigned int count);
 
 struct vkd3d_string_buffer *hlsl_type_to_string(struct hlsl_ctx *ctx, const struct hlsl_type *type);
+struct vkd3d_string_buffer *hlsl_component_to_string(struct hlsl_ctx *ctx, const struct hlsl_ir_var *var,
+        unsigned int index);
 struct vkd3d_string_buffer *hlsl_modifiers_to_string(struct hlsl_ctx *ctx, unsigned int modifiers);
 const char *hlsl_node_type_to_string(enum hlsl_ir_node_type type);
 
@@ -1169,6 +1174,8 @@ struct hlsl_ir_node *hlsl_new_swizzle(struct hlsl_ctx *ctx, DWORD s, unsigned in
         struct hlsl_ir_node *val, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_var *hlsl_new_synthetic_var(struct hlsl_ctx *ctx, const char *template,
         struct hlsl_type *type, const struct vkd3d_shader_location *loc);
+struct hlsl_ir_var *hlsl_new_synthetic_var_named(struct hlsl_ctx *ctx, const char *name,
+    struct hlsl_type *type, const struct vkd3d_shader_location *loc, bool dummy_scope);
 struct hlsl_type *hlsl_new_texture_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim, struct hlsl_type *format,
         unsigned int sample_count);
 struct hlsl_type *hlsl_new_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim, struct hlsl_type *format);
@@ -1200,6 +1207,8 @@ unsigned int hlsl_type_component_count(const struct hlsl_type *type);
 unsigned int hlsl_type_get_array_element_reg_size(const struct hlsl_type *type, enum hlsl_regset regset);
 struct hlsl_type *hlsl_type_get_component_type(struct hlsl_ctx *ctx, struct hlsl_type *type,
         unsigned int index);
+unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_type *type,
+        enum hlsl_regset regset, unsigned int index);
 bool hlsl_type_is_row_major(const struct hlsl_type *type);
 unsigned int hlsl_type_minor_size(const struct hlsl_type *type);
 unsigned int hlsl_type_major_size(const struct hlsl_type *type);

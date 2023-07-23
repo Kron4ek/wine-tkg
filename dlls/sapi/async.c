@@ -52,6 +52,8 @@ void async_empty_queue(struct async_queue *queue)
 {
     struct async_task *task, *next;
 
+    if (!queue->init) return;
+
     EnterCriticalSection(&queue->cs);
     LIST_FOR_EACH_ENTRY_SAFE(task, next, &queue->tasks, struct async_task, entry)
     {
@@ -163,13 +165,14 @@ HRESULT async_queue_task(struct async_queue *queue, struct async_task *task)
     list_add_tail(&queue->tasks, &task->entry);
     LeaveCriticalSection(&queue->cs);
 
+    ResetEvent(queue->empty);
     SetEvent(queue->wait);
 
     return S_OK;
 }
 
-void async_wait_queue_empty(struct async_queue *queue, DWORD timeout)
+HRESULT async_wait_queue_empty(struct async_queue *queue, DWORD timeout)
 {
-    if (!queue->init) return;
-    WaitForSingleObject(queue->empty, timeout);
+    if (!queue->init) return WAIT_OBJECT_0;
+    return WaitForSingleObject(queue->empty, timeout);
 }

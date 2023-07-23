@@ -194,8 +194,8 @@ namespace Windows
             [uuid(d85145e0-138f-47d7-9b3a-36bb488cef33)]
             interface IIPInformation : IInspectable
             {
-                [propget] HRESULT NetworkAdapter([out, retval] Windows.Networking.Connectivity.NetworkAdapter** value);
-                [propget] HRESULT PrefixLength([out, retval] /*Windows.Foundation.IReference<BYTE>** */ BYTE **value);
+                [propget] HRESULT NetworkAdapter([out, retval] Windows.Networking.Connectivity.NetworkAdapter **value);
+                [propget] HRESULT PrefixLength([out, retval] Windows.Foundation.IReference<BYTE> **value);
             }
 
             [contract(Windows.Foundation.UniversalApiContract, 1.0)]

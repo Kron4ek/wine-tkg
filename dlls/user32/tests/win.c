@@ -7380,6 +7380,15 @@ static void test_SetWindowLong(void)
             "SetWindowLongPtr on invalid window proc shouldn't have changed the value returned by GetWindowLongPtr, instead of changing it to 0x%Ix\n", retval);
         ok(IsWindowUnicode(hwndMain), "hwndMain should now be Unicode\n");
 
+        /* Make sure nothing changes if we set the same proc */
+        retval = SetWindowLongPtrW(hwndMain, GWLP_WNDPROC, (LONG_PTR)old_window_procW);
+        todo_wine
+        ok((WNDPROC)retval == main_window_procA, "unexpected proc 0x%Ix\n", retval);
+        retval = GetWindowLongPtrW(hwndMain, GWLP_WNDPROC);
+        ok((WNDPROC)retval == old_window_procW, "unexpected proc 0x%Ix\n", retval);
+        retval = GetWindowLongPtrA(hwndMain, GWLP_WNDPROC);
+        ok((WNDPROC)retval == main_window_procA, "unexpected proc 0x%Ix\n", retval);
+
         /* set it back to ANSI */
         SetWindowLongPtrA(hwndMain, GWLP_WNDPROC, 0);
     }
@@ -10279,13 +10288,13 @@ static void simulate_click(int x, int y)
     SetCursorPos(x, y);
     memset(input, 0, sizeof(input));
     input[0].type = INPUT_MOUSE;
-    U(input[0]).mi.dx = x;
-    U(input[0]).mi.dy = y;
-    U(input[0]).mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    input[0].mi.dx = x;
+    input[0].mi.dy = y;
+    input[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
     input[1].type = INPUT_MOUSE;
-    U(input[1]).mi.dx = x;
-    U(input[1]).mi.dy = y;
-    U(input[1]).mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    input[1].mi.dx = x;
+    input[1].mi.dy = y;
+    input[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
     events_no = SendInput(2, input, sizeof(input[0]));
     ok(events_no == 2, "SendInput returned %d\n", events_no);
     SetCursorPos(pt.x, pt.y);

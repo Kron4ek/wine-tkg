@@ -1024,6 +1024,12 @@ struct d3d12_swapchain
     VkDevice vk_device;
     VkPhysicalDevice vk_physical_device;
 
+    HANDLE worker_thread;
+    CRITICAL_SECTION worker_cs;
+    CONDITION_VARIABLE worker_cv;
+    bool worker_running;
+    struct list worker_ops;
+
     /* D3D12 side of the swapchain (frontend): these objects are
      * visible to the IDXGISwapChain client, so they must never be
      * recreated, except when ResizeBuffers*() is called. */
@@ -1048,6 +1054,9 @@ struct d3d12_swapchain
     unsigned int vk_swapchain_width;
     unsigned int vk_swapchain_height;
     VkPresentModeKHR present_mode;
+    DXGI_SWAP_CHAIN_DESC1 backend_desc;
+
+    ID3D12Fence *present_fence;
 
     uint32_t vk_image_index;
 
@@ -1069,6 +1078,101 @@ struct d3d12_swapchain
     uint64_t frame_number;
     uint32_t frame_latency;
 };
+
+enum d3d12_swapchain_op_type
+{
+    D3D12_SWAPCHAIN_OP_PRESENT,
+    D3D12_SWAPCHAIN_OP_RESIZE_BUFFERS,
+};
+
+struct d3d12_swapchain_op
+{
+    struct list entry;
+    enum d3d12_swapchain_op_type type;
+    union
+    {
+        struct
+        {
+            unsigned int sync_interval;
+            VkImage vk_image;
+            unsigned int frame_number;
+        } present;
+        struct
+        {
+            /* The resize buffers op takes ownership of the memory and
+             * images used to back the previous ID3D12Resource
+             * objects, so that they're only released once the worker
+             * thread is done with them. */
+            VkDeviceMemory vk_memory;
+            VkImage vk_images[DXGI_MAX_SWAP_CHAIN_BUFFERS];
+            DXGI_SWAP_CHAIN_DESC1 desc;
+        } resize_buffers;
+    };
+};
+
+static void d3d12_swapchain_op_destroy(struct d3d12_swapchain *swapchain, struct d3d12_swapchain_op *op)
+{
+    const struct dxgi_vk_funcs *vk_funcs = &swapchain->vk_funcs;
+    unsigned int i;
+
+    if (op->type == D3D12_SWAPCHAIN_OP_RESIZE_BUFFERS)
+    {
+        assert(swapchain->vk_device);
+
+        for (i = 0; i < DXGI_MAX_SWAP_CHAIN_BUFFERS; ++i)
+            vk_funcs->p_vkDestroyImage(swapchain->vk_device, op->resize_buffers.vk_images[i], NULL);
+
+        vk_funcs->p_vkFreeMemory(swapchain->vk_device, op->resize_buffers.vk_memory, NULL);
+    }
+
+    heap_free(op);
+}
+
+static HRESULT d3d12_swapchain_op_present_execute(struct d3d12_swapchain *swapchain, struct d3d12_swapchain_op *op);
+static HRESULT d3d12_swapchain_op_resize_buffers_execute(struct d3d12_swapchain *swapchain, struct d3d12_swapchain_op *op);
+
+static DWORD WINAPI d3d12_swapchain_worker_proc(void *data)
+{
+    struct d3d12_swapchain *swapchain = data;
+
+    EnterCriticalSection(&swapchain->worker_cs);
+
+    while (swapchain->worker_running)
+    {
+        if (!list_empty(&swapchain->worker_ops))
+        {
+            struct d3d12_swapchain_op *op = LIST_ENTRY(list_head(&swapchain->worker_ops), struct d3d12_swapchain_op, entry);
+
+            list_remove(&op->entry);
+
+            LeaveCriticalSection(&swapchain->worker_cs);
+
+            switch (op->type)
+            {
+                case D3D12_SWAPCHAIN_OP_PRESENT:
+                    d3d12_swapchain_op_present_execute(swapchain, op);
+                    break;
+
+                case D3D12_SWAPCHAIN_OP_RESIZE_BUFFERS:
+                    d3d12_swapchain_op_resize_buffers_execute(swapchain, op);
+                    break;
+            }
+
+            d3d12_swapchain_op_destroy(swapchain, op);
+
+            EnterCriticalSection(&swapchain->worker_cs);
+        }
+        else if (!SleepConditionVariableCS(&swapchain->worker_cv, &swapchain->worker_cs, INFINITE))
+        {
+            ERR("Cannot sleep on condition variable, last error %ld.\n", GetLastError());
+            break;
+        }
+    }
+
+    LeaveCriticalSection(&swapchain->worker_cs);
+
+    return 0;
+}
 
 static DXGI_FORMAT dxgi_format_from_vk_format(VkFormat vk_format)
 {
@@ -1561,16 +1665,9 @@ static void d3d12_swapchain_destroy_vulkan_resources(struct d3d12_swapchain *swa
 
     if (swapchain->command_queue)
     {
-        if ((vk_queue = vkd3d_acquire_vk_queue(swapchain->command_queue)))
-        {
-            vk_funcs->p_vkQueueWaitIdle(vk_queue);
-
-            vkd3d_release_vk_queue(swapchain->command_queue);
-        }
-        else
-        {
-            WARN("Failed to acquire Vulkan queue.\n");
-        }
+        vk_queue = vkd3d_acquire_vk_queue(swapchain->command_queue);
+        vk_funcs->p_vkQueueWaitIdle(vk_queue);
+        vkd3d_release_vk_queue(swapchain->command_queue);
     }
 
     if (swapchain->vk_device)
@@ -1626,7 +1723,7 @@ static HRESULT d3d12_swapchain_create_vulkan_swapchain(struct d3d12_swapchain *s
     HRESULT hr;
 
     if (FAILED(hr = select_vk_format(vk_funcs, vk_physical_device,
-            swapchain->vk_surface, &swapchain->desc, &vk_swapchain_format)))
+            swapchain->vk_surface, &swapchain->backend_desc, &vk_swapchain_format)))
         return hr;
 
     if ((vr = vk_funcs->p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk_physical_device,
@@ -1636,28 +1733,28 @@ static HRESULT d3d12_swapchain_create_vulkan_swapchain(struct d3d12_swapchain *s
         return hresult_from_vk_result(vr);
     }
 
-    image_count = swapchain->desc.BufferCount;
+    image_count = swapchain->backend_desc.BufferCount;
     image_count = max(image_count, surface_caps.minImageCount);
     if (surface_caps.maxImageCount)
         image_count = min(image_count, surface_caps.maxImageCount);
 
-    if (image_count != swapchain->desc.BufferCount)
+    if (image_count != swapchain->backend_desc.BufferCount)
     {
-        WARN("Buffer count %u is not supported (%u-%u).\n", swapchain->desc.BufferCount,
+        WARN("Buffer count %u is not supported (%u-%u).\n", swapchain->backend_desc.BufferCount,
                 surface_caps.minImageCount, surface_caps.maxImageCount);
     }
 
-    width = swapchain->desc.Width;
-    height = swapchain->desc.Height;
+    width = swapchain->backend_desc.Width;
+    height = swapchain->backend_desc.Height;
     width = max(width, surface_caps.minImageExtent.width);
     width = min(width, surface_caps.maxImageExtent.width);
     height = max(height, surface_caps.minImageExtent.height);
     height = min(height, surface_caps.maxImageExtent.height);
 
-    if (width != swapchain->desc.Width || height != swapchain->desc.Height)
+    if (width != swapchain->backend_desc.Width || height != swapchain->backend_desc.Height)
     {
         WARN("Swapchain dimensions %ux%u are not supported (%u-%u x %u-%u).\n",
-                swapchain->desc.Width, swapchain->desc.Height,
+                swapchain->backend_desc.Width, swapchain->backend_desc.Height,
                 surface_caps.minImageExtent.width, surface_caps.maxImageExtent.width,
                 surface_caps.minImageExtent.height, surface_caps.maxImageExtent.height);
     }
@@ -1675,7 +1772,7 @@ static HRESULT d3d12_swapchain_create_vulkan_swapchain(struct d3d12_swapchain *s
     usage |= surface_caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     if (!(usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || !(usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
         WARN("Transfer not supported for swapchain images.\n");
-    if (swapchain->desc.BufferUsage & DXGI_USAGE_SHADER_INPUT)
+    if (swapchain->backend_desc.BufferUsage & DXGI_USAGE_SHADER_INPUT)
     {
         usage |= surface_caps.supportedUsageFlags & VK_IMAGE_USAGE_SAMPLED_BIT;
         if (!(usage & VK_IMAGE_USAGE_SAMPLED_BIT))
@@ -1808,9 +1905,35 @@ static void d3d12_swapchain_destroy(struct d3d12_swapchain *swapchain)
 {
     const struct dxgi_vk_funcs *vk_funcs = &swapchain->vk_funcs;
     void *vulkan_module = vk_funcs->vulkan_module;
+    struct d3d12_swapchain_op *op, *op2;
+    DWORD ret;
+
+    EnterCriticalSection(&swapchain->worker_cs);
+    swapchain->worker_running = false;
+    WakeAllConditionVariable(&swapchain->worker_cv);
+    LeaveCriticalSection(&swapchain->worker_cs);
+
+    if (swapchain->worker_thread)
+    {
+        if ((ret = WaitForSingleObject(swapchain->worker_thread, INFINITE)) != WAIT_OBJECT_0)
+            ERR("Failed to wait for worker thread, return value %ld.\n", ret);
+
+        if (!CloseHandle(swapchain->worker_thread))
+            ERR("Failed to close worker thread, last error %ld.\n", GetLastError());
+    }
+
+    DeleteCriticalSection(&swapchain->worker_cs);
+
+    LIST_FOR_EACH_ENTRY_SAFE(op, op2, &swapchain->worker_ops, struct d3d12_swapchain_op, entry)
+    {
+        d3d12_swapchain_op_destroy(swapchain, op);
+    }
 
     d3d12_swapchain_destroy_vulkan_resources(swapchain);
     d3d12_swapchain_destroy_d3d12_resources(swapchain);
+
+    if (swapchain->present_fence)
+        ID3D12Fence_Release(swapchain->present_fence);
 
     if (swapchain->frame_latency_event)
         CloseHandle(swapchain->frame_latency_event);
@@ -1950,14 +2073,17 @@ static HRESULT d3d12_swapchain_set_sync_interval(struct d3d12_swapchain *swapcha
     return d3d12_swapchain_create_vulkan_resources(swapchain);
 }
 
-static VkResult d3d12_swapchain_queue_present(struct d3d12_swapchain *swapchain, VkQueue vk_queue, VkImage vk_src_image)
+static VkResult d3d12_swapchain_queue_present(struct d3d12_swapchain *swapchain, VkImage vk_src_image,
+        uint64_t frame_number)
 {
     const struct dxgi_vk_funcs *vk_funcs = &swapchain->vk_funcs;
     VkPresentInfoKHR present_info;
     VkCommandBuffer vk_cmd_buffer;
     VkSubmitInfo submit_info;
     VkImage vk_dst_image;
+    VkQueue vk_queue;
     VkResult vr;
+    HRESULT hr;
 
     if (swapchain->vk_image_index == INVALID_VK_IMAGE_INDEX)
     {
@@ -1980,6 +2106,14 @@ static VkResult d3d12_swapchain_queue_present(struct d3d12_swapchain *swapchain,
             vk_cmd_buffer, vk_dst_image, vk_src_image)) < 0 )
         return vr;
 
+    if (FAILED(hr = ID3D12Fence_SetEventOnCompletion(swapchain->present_fence, frame_number + 1, NULL)))
+    {
+        ERR("Failed to wait for present event, hr %#lx.\n", hr);
+        return VK_ERROR_UNKNOWN;
+    }
+
+    vk_queue = vkd3d_acquire_vk_queue(swapchain->command_queue);
+
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit_info.pNext = NULL;
     submit_info.waitSemaphoreCount = 0;
@@ -1993,6 +2127,7 @@ static VkResult d3d12_swapchain_queue_present(struct d3d12_swapchain *swapchain,
     if ((vr = vk_funcs->p_vkQueueSubmit(vk_queue, 1, &submit_info, VK_NULL_HANDLE)) < 0)
     {
         ERR("Failed to blit swapchain buffer, vr %d.\n", vr);
+        vkd3d_release_vk_queue(swapchain->command_queue);
         return vr;
     }
 
@@ -2010,15 +2145,60 @@ static VkResult d3d12_swapchain_queue_present(struct d3d12_swapchain *swapchain,
     if ((vr = vk_funcs->p_vkQueuePresentKHR(vk_queue, &present_info)) >= 0)
         swapchain->vk_image_index = INVALID_VK_IMAGE_INDEX;
 
+    vkd3d_release_vk_queue(swapchain->command_queue);
+
     return vr;
+}
+
+static HRESULT d3d12_swapchain_op_present_execute(struct d3d12_swapchain *swapchain, struct d3d12_swapchain_op *op)
+{
+    VkResult vr;
+    HRESULT hr;
+
+    if (FAILED(hr = d3d12_swapchain_set_sync_interval(swapchain, op->present.sync_interval)))
+        return hr;
+
+    vr = d3d12_swapchain_queue_present(swapchain, op->present.vk_image, op->present.frame_number);
+    if (vr == VK_ERROR_OUT_OF_DATE_KHR)
+    {
+        TRACE("Recreating Vulkan swapchain.\n");
+
+        d3d12_swapchain_destroy_vulkan_resources(swapchain);
+        if (FAILED(hr = d3d12_swapchain_create_vulkan_resources(swapchain)))
+            return hr;
+
+        if ((vr = d3d12_swapchain_queue_present(swapchain, op->present.vk_image, op->present.frame_number)) < 0)
+            ERR("Failed to present after recreating swapchain, vr %d.\n", vr);
+    }
+
+    if (vr < 0)
+    {
+        ERR("Failed to queue present, vr %d.\n", vr);
+        return hresult_from_vk_result(vr);
+    }
+
+    if (swapchain->frame_latency_fence)
+    {
+        /* Use the same bias as d3d12_swapchain_present(). Add one to
+         * account for the "++swapchain->frame_numer" there. */
+        uint64_t number = op->present.frame_number + DXGI_MAX_SWAP_CHAIN_BUFFERS + 1;
+
+        if (FAILED(hr = ID3D12CommandQueue_Signal(swapchain->command_queue,
+                swapchain->frame_latency_fence, number)))
+        {
+            ERR("Failed to signal frame latency fence, hr %#lx.\n", hr);
+            return hr;
+        }
+    }
+
+    return S_OK;
 }
 
 static HRESULT d3d12_swapchain_present(struct d3d12_swapchain *swapchain,
         unsigned int sync_interval, unsigned int flags)
 {
+    struct d3d12_swapchain_op *op;
     HANDLE frame_latency_event;
-    VkQueue vk_queue;
-    VkResult vr;
     HRESULT hr;
 
     if (sync_interval > 4)
@@ -2035,45 +2215,21 @@ static HRESULT d3d12_swapchain_present(struct d3d12_swapchain *swapchain,
         return S_OK;
     }
 
-    if (FAILED(hr = d3d12_swapchain_set_sync_interval(swapchain, sync_interval)))
-        return hr;
-
-    if (!(vk_queue = vkd3d_acquire_vk_queue(swapchain->command_queue)))
+    if (!(op = heap_alloc_zero(sizeof(*op))))
     {
-        ERR("Failed to acquire Vulkan queue.\n");
-        return E_FAIL;
+        WARN("Cannot allocate memory.\n");
+        return E_OUTOFMEMORY;
     }
 
-    vr = d3d12_swapchain_queue_present(swapchain, vk_queue,
-            swapchain->vk_images[swapchain->current_buffer_index]);
-    if (vr == VK_ERROR_OUT_OF_DATE_KHR)
-    {
-        vkd3d_release_vk_queue(swapchain->command_queue);
+    op->type = D3D12_SWAPCHAIN_OP_PRESENT;
+    op->present.sync_interval = sync_interval;
+    op->present.vk_image = swapchain->vk_images[swapchain->current_buffer_index];
+    op->present.frame_number = swapchain->frame_number;
 
-        TRACE("Recreating Vulkan swapchain.\n");
-
-        d3d12_swapchain_destroy_vulkan_resources(swapchain);
-        if (FAILED(hr = d3d12_swapchain_create_vulkan_resources(swapchain)))
-            return hr;
-
-        if (!(vk_queue = vkd3d_acquire_vk_queue(swapchain->command_queue)))
-        {
-            ERR("Failed to acquire Vulkan queue.\n");
-            return E_FAIL;
-        }
-
-        if ((vr = d3d12_swapchain_queue_present(swapchain, vk_queue,
-                swapchain->vk_images[swapchain->current_buffer_index])) < 0)
-            ERR("Failed to present after recreating swapchain, vr %d.\n", vr);
-    }
-
-    vkd3d_release_vk_queue(swapchain->command_queue);
-
-    if (vr < 0)
-    {
-        ERR("Failed to queue present, vr %d.\n", vr);
-        return hresult_from_vk_result(vr);
-    }
+    EnterCriticalSection(&swapchain->worker_cs);
+    list_add_tail(&swapchain->worker_ops, &op->entry);
+    WakeAllConditionVariable(&swapchain->worker_cv);
+    LeaveCriticalSection(&swapchain->worker_cs);
 
     ++swapchain->frame_number;
     if ((frame_latency_event = swapchain->frame_latency_event))
@@ -2082,19 +2238,19 @@ static HRESULT d3d12_swapchain_present(struct d3d12_swapchain *swapchain,
          * SetEventOnCompletion(). */
         uint64_t number = swapchain->frame_number + DXGI_MAX_SWAP_CHAIN_BUFFERS;
 
-        if (FAILED(hr = ID3D12CommandQueue_Signal(swapchain->command_queue,
-                swapchain->frame_latency_fence, number)))
-        {
-            ERR("Failed to signal frame latency fence, hr %#lx.\n", hr);
-            return hr;
-        }
-
         if (FAILED(hr = ID3D12Fence_SetEventOnCompletion(swapchain->frame_latency_fence,
                 number - swapchain->frame_latency, frame_latency_event)))
         {
             ERR("Failed to enqueue frame latency event, hr %#lx.\n", hr);
             return hr;
         }
+    }
+
+    if (FAILED(hr = ID3D12CommandQueue_Signal(swapchain->command_queue,
+            swapchain->present_fence, swapchain->frame_number)))
+    {
+        ERR("Failed to signal present fence, hf %#lx.\n", hr);
+        return hr;
     }
 
     swapchain->current_buffer_index = (swapchain->current_buffer_index + 1) % swapchain->desc.BufferCount;
@@ -2276,13 +2432,22 @@ static HRESULT STDMETHODCALLTYPE d3d12_swapchain_GetDesc(IDXGISwapChain4 *iface,
     return S_OK;
 }
 
+static HRESULT d3d12_swapchain_op_resize_buffers_execute(struct d3d12_swapchain *swapchain, struct d3d12_swapchain_op *op)
+{
+    d3d12_swapchain_destroy_vulkan_resources(swapchain);
+
+    swapchain->backend_desc = op->resize_buffers.desc;
+
+    return d3d12_swapchain_create_vulkan_resources(swapchain);
+}
+
 static HRESULT d3d12_swapchain_resize_buffers(struct d3d12_swapchain *swapchain,
         UINT buffer_count, UINT width, UINT height, DXGI_FORMAT format, UINT flags)
 {
     DXGI_SWAP_CHAIN_DESC1 *desc, new_desc;
+    struct d3d12_swapchain_op *op;
     unsigned int i;
     ULONG refcount;
-    HRESULT hr;
 
     if (flags)
         FIXME("Ignoring flags %#x.\n", flags);
@@ -2326,20 +2491,38 @@ static HRESULT d3d12_swapchain_resize_buffers(struct d3d12_swapchain *swapchain,
     if (!dxgi_validate_swapchain_desc(&new_desc))
         return DXGI_ERROR_INVALID_CALL;
 
-    swapchain->current_buffer_index = 0;
-
     if (desc->Width == new_desc.Width && desc->Height == new_desc.Height
             && desc->Format == new_desc.Format && desc->BufferCount == new_desc.BufferCount)
+    {
+        swapchain->current_buffer_index = 0;
         return S_OK;
+    }
 
-    d3d12_swapchain_destroy_vulkan_resources(swapchain);
+    if (!(op = heap_alloc_zero(sizeof(*op))))
+    {
+        WARN("Cannot allocate memory.\n");
+        return E_OUTOFMEMORY;
+    }
+
+    op->type = D3D12_SWAPCHAIN_OP_RESIZE_BUFFERS;
+    op->resize_buffers.vk_memory = swapchain->vk_memory;
+    swapchain->vk_memory = VK_NULL_HANDLE;
+    memcpy(&op->resize_buffers.vk_images, &swapchain->vk_images, sizeof(swapchain->vk_images));
+    memset(&swapchain->vk_images, 0, sizeof(swapchain->vk_images));
+    op->resize_buffers.desc = new_desc;
+
+    EnterCriticalSection(&swapchain->worker_cs);
+    list_add_tail(&swapchain->worker_ops, &op->entry);
+    WakeAllConditionVariable(&swapchain->worker_cv);
+    LeaveCriticalSection(&swapchain->worker_cs);
+
+    swapchain->current_buffer_index = 0;
+
     d3d12_swapchain_destroy_d3d12_resources(swapchain);
+
     swapchain->desc = new_desc;
 
-    if (FAILED(hr = d3d12_swapchain_create_d3d12_resources(swapchain)))
-        return hr;
-
-    return d3d12_swapchain_create_vulkan_resources(swapchain);
+    return d3d12_swapchain_create_d3d12_resources(swapchain);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d12_swapchain_ResizeBuffers(IDXGISwapChain4 *iface,
@@ -2906,6 +3089,7 @@ static HRESULT d3d12_swapchain_init(struct d3d12_swapchain *swapchain, IWineDXGI
 
     swapchain->window = window;
     swapchain->desc = *swapchain_desc;
+    swapchain->backend_desc = *swapchain_desc;
     swapchain->fullscreen_desc = *fullscreen_desc;
 
     swapchain->present_mode = VK_PRESENT_MODE_FIFO_KHR;
@@ -2996,6 +3180,11 @@ static HRESULT d3d12_swapchain_init(struct d3d12_swapchain *swapchain, IWineDXGI
 
     wined3d_private_store_init(&swapchain->private_store);
 
+    InitializeCriticalSection(&swapchain->worker_cs);
+    InitializeConditionVariable(&swapchain->worker_cv);
+    swapchain->worker_running = true;
+    list_init(&swapchain->worker_ops);
+
     surface_desc.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
     surface_desc.pNext = NULL;
     surface_desc.flags = 0;
@@ -3067,7 +3256,23 @@ static HRESULT d3d12_swapchain_init(struct d3d12_swapchain *swapchain, IWineDXGI
         }
     }
 
+    if (FAILED(hr = ID3D12Device_CreateFence(device, 0, 0,
+            &IID_ID3D12Fence, (void **)&swapchain->present_fence)))
+    {
+        WARN("Failed to create present fence, hr %#lx.\n", hr);
+        d3d12_swapchain_destroy(swapchain);
+        return hr;
+    }
+
     IWineDXGIFactory_AddRef(swapchain->factory = factory);
+
+    if (!(swapchain->worker_thread = CreateThread(NULL, 0, d3d12_swapchain_worker_proc, swapchain, 0, NULL)))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        WARN("Failed to create worker thread, hr %#lx.\n", hr);
+        d3d12_swapchain_destroy(swapchain);
+        return hr;
+    }
 
     return S_OK;
 }

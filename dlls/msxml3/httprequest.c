@@ -20,7 +20,6 @@
  */
 
 #define COBJMACROS
-#define NONAMELESSUNION
 
 #include <stdarg.h>
 
@@ -393,7 +392,7 @@ static HRESULT WINAPI BindStatusCallback_GetBindInfo(IBindStatusCallback *iface,
     if (This->request->verb != BINDVERB_GET && This->body)
     {
         pbindinfo->stgmedData.tymed = TYMED_HGLOBAL;
-        pbindinfo->stgmedData.u.hGlobal = This->body;
+        pbindinfo->stgmedData.hGlobal = This->body;
         pbindinfo->cbstgmedData = GlobalSize(This->body);
         /* callback owns passed body pointer */
         IBindStatusCallback_QueryInterface(iface, &IID_IUnknown, (void**)&pbindinfo->stgmedData.pUnkForRelease);
@@ -421,7 +420,7 @@ static HRESULT WINAPI BindStatusCallback_OnDataAvailable(IBindStatusCallback *if
 
     do
     {
-        hr = IStream_Read(stgmed->u.pstm, buf, sizeof(buf), &read);
+        hr = IStream_Read(stgmed->pstm, buf, sizeof(buf), &read);
         if (hr != S_OK) break;
 
         hr = IStream_Write(This->stream, buf, read, &written);

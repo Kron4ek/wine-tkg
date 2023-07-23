@@ -100,6 +100,7 @@ static HMODULE win32u_module;
 static WOW64INFO *wow64info;
 
 /* cpu backend dll functions */
+/* the function prototypes most likely differ from Windows */
 static void *   (WINAPI *pBTCpuGetBopCode)(void);
 static NTSTATUS (WINAPI *pBTCpuGetContext)(HANDLE,HANDLE,void *,void *);
 static BOOLEAN  (WINAPI *pBTCpuIsProcessorFeaturePresent)(UINT);
@@ -110,6 +111,13 @@ static void     (WINAPI *pBTCpuSimulate)(void);
 static NTSTATUS (WINAPI *pBTCpuResetToConsistentState)( EXCEPTION_POINTERS * );
 static void *   (WINAPI *p__wine_get_unix_opcode)(void);
 static void *   (WINAPI *pKiRaiseUserExceptionDispatcher)(void);
+void (WINAPI *pBTCpuNotifyFlushInstructionCache2)( const void *, SIZE_T ) = NULL;
+void (WINAPI *pBTCpuNotifyMapViewOfSection)( void * ) = NULL;
+void (WINAPI *pBTCpuNotifyMemoryAlloc)( void *, SIZE_T, ULONG, ULONG ) = NULL;
+void (WINAPI *pBTCpuNotifyMemoryDirty)( void *, SIZE_T ) = NULL;
+void (WINAPI *pBTCpuNotifyMemoryFree)( void *, SIZE_T ) = NULL;
+void (WINAPI *pBTCpuNotifyMemoryProtect)( void *, SIZE_T, ULONG ) = NULL;
+void (WINAPI *pBTCpuNotifyUnmapViewOfSection)( void * ) = NULL;
 void (WINAPI *pBTCpuUpdateProcessorInformation)( SYSTEM_CPU_INFORMATION * ) = NULL;
 
 void *dummy = RtlUnwind;
@@ -865,7 +873,7 @@ static const WCHAR *get_cpu_dll_name(void)
  */
 static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **context )
 {
-    TEB32 *teb32 = (TEB32 *)((char *)NtCurrentTeb() + NtCurrentTeb()->WowTebOffset);
+    PEB32 *peb32;
     HMODULE module, ntdll;
     UNICODE_STRING str = RTL_CONSTANT_STRING( L"ntdll.dll" );
     SYSTEM_BASIC_INFORMATION info;
@@ -876,7 +884,8 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
     NtQuerySystemInformation( SystemEmulationBasicInformation, &info, sizeof(info), NULL );
     highest_user_address = (ULONG_PTR)info.HighestUserAddress;
     default_zero_bits = (ULONG_PTR)info.HighestUserAddress | 0x7fffffff;
-    wow64info = (WOW64INFO *)((PEB32 *)ULongToPtr( teb32->Peb ) + 1);
+    NtQueryInformationProcess( GetCurrentProcess(), ProcessWow64Information, &peb32, sizeof(peb32), NULL );
+    wow64info = (WOW64INFO *)(peb32 + 1);
     wow64info->NativeSystemPageSize = 0x1000;
     wow64info->NativeMachineType    = native_machine;
     wow64info->EmulatedMachineType  = current_machine;
@@ -896,6 +905,13 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
     GET_PTR( BTCpuResetToConsistentState );
     GET_PTR( BTCpuSetContext );
     GET_PTR( BTCpuSimulate );
+    GET_PTR( BTCpuNotifyFlushInstructionCache2 );
+    GET_PTR( BTCpuNotifyMapViewOfSection );
+    GET_PTR( BTCpuNotifyMemoryAlloc );
+    GET_PTR( BTCpuNotifyMemoryDirty );
+    GET_PTR( BTCpuNotifyMemoryFree );
+    GET_PTR( BTCpuNotifyMemoryProtect );
+    GET_PTR( BTCpuNotifyUnmapViewOfSection );
     GET_PTR( BTCpuUpdateProcessorInformation );
     GET_PTR( __wine_get_unix_opcode );
 

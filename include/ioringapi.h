@@ -1,6 +1,5 @@
-/* Runtime Classes for windows.devices.geolocation.geolocator.dll
- *
- * Copyright 2023 Fabian Maurer
+/*
+ * Copyright (C) 2023 Paul Gofman for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,10 +16,27 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#pragma makedep register
+#ifndef __IORINGAPI_H_
+#define __IORINGAPI_H_
 
-#ifdef __WIDL__
-#pragma winrt ns_prefix
+#include <ntioring_x.h>
+
+struct IORING_CAPABILITIES
+{
+    IORING_VERSION       MaxVersion;
+    UINT32               MaxSubmissionQueueSize;
+    UINT32               MaxCompletionQueueSize;
+    IORING_FEATURE_FLAGS FeatureFlags;
+};
+typedef struct IORING_CAPABILITIES IORING_CAPABILITIES;
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#include "windows.devices.geolocation.idl"
+HRESULT WINAPI QueryIoRingCapabilities(IORING_CAPABILITIES *caps);
+
+#ifdef __cplusplus
+}
+#endif
+#endif

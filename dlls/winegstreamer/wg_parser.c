@@ -49,6 +49,8 @@ typedef enum
     GST_AUTOPLUG_SELECT_SKIP,
 } GstAutoplugSelectResult;
 
+struct wg_parser;
+
 typedef BOOL (*init_gst_cb)(struct wg_parser *parser);
 
 struct input_cache_chunk
@@ -119,6 +121,16 @@ struct wg_parser_stream
     gchar *tags[WG_PARSER_TAG_COUNT];
 };
 
+static struct wg_parser *get_parser(wg_parser_t parser)
+{
+    return (struct wg_parser *)(ULONG_PTR)parser;
+}
+
+static struct wg_parser_stream *get_stream(wg_parser_stream_t stream)
+{
+    return (struct wg_parser_stream *)(ULONG_PTR)stream;
+}
+
 static bool format_is_compressed(struct wg_format *format)
 {
     return format->major_type != WG_MAJOR_TYPE_UNKNOWN
@@ -130,7 +142,7 @@ static NTSTATUS wg_parser_get_stream_count(void *args)
 {
     struct wg_parser_get_stream_count_params *params = args;
 
-    params->count = params->parser->stream_count;
+    params->count = get_parser(params->parser)->stream_count;
     return S_OK;
 }
 
@@ -138,14 +150,14 @@ static NTSTATUS wg_parser_get_stream(void *args)
 {
     struct wg_parser_get_stream_params *params = args;
 
-    params->stream = params->parser->streams[params->index];
+    params->stream = (wg_parser_stream_t)(ULONG_PTR)get_parser(params->parser)->streams[params->index];
     return S_OK;
 }
 
 static NTSTATUS wg_parser_get_next_read_offset(void *args)
 {
     struct wg_parser_get_next_read_offset_params *params = args;
-    struct wg_parser *parser = params->parser;
+    struct wg_parser *parser = get_parser(params->parser);
 
     pthread_mutex_lock(&parser->mutex);
 
@@ -168,7 +180,7 @@ static NTSTATUS wg_parser_get_next_read_offset(void *args)
 static NTSTATUS wg_parser_push_data(void *args)
 {
     const struct wg_parser_push_data_params *params = args;
-    struct wg_parser *parser = params->parser;
+    struct wg_parser *parser = get_parser(params->parser);
     const void *data = params->data;
     uint32_t size = params->size;
 
@@ -212,24 +224,25 @@ static NTSTATUS wg_parser_stream_get_preferred_format(void *args)
 {
     const struct wg_parser_stream_get_preferred_format_params *params = args;
 
-    *params->format = params->stream->preferred_format;
+    *params->format = get_stream(params->stream)->preferred_format;
     return S_OK;
 }
 
 static NTSTATUS wg_parser_stream_get_codec_format(void *args)
 {
     struct wg_parser_stream_get_codec_format_params *params = args;
+    struct wg_parser_stream *stream = get_stream(params->stream);
 
-    *params->format = format_is_compressed(&params->stream->codec_format) ?
-            params->stream->codec_format :
-            params->stream->preferred_format;
+    *params->format = format_is_compressed(&stream->codec_format) ?
+            stream->codec_format :
+            stream->preferred_format;
     return S_OK;
 }
 
 static NTSTATUS wg_parser_stream_enable(void *args)
 {
     const struct wg_parser_stream_enable_params *params = args;
-    struct wg_parser_stream *stream = params->stream;
+    struct wg_parser_stream *stream = get_stream(params->stream);
     const struct wg_format *format = params->format;
     struct wg_parser *parser = stream->parser;
 
@@ -253,7 +266,7 @@ static NTSTATUS wg_parser_stream_enable(void *args)
 
 static NTSTATUS wg_parser_stream_disable(void *args)
 {
-    struct wg_parser_stream *stream = args;
+    struct wg_parser_stream *stream = get_stream(*(wg_parser_stream_t *)args);
     struct wg_parser *parser = stream->parser;
 
     pthread_mutex_lock(&parser->mutex);
@@ -281,8 +294,8 @@ static NTSTATUS wg_parser_stream_get_buffer(void *args)
 {
     const struct wg_parser_stream_get_buffer_params *params = args;
     struct wg_parser_buffer *wg_buffer = params->buffer;
-    struct wg_parser_stream *stream = params->stream;
-    struct wg_parser *parser = params->parser;
+    struct wg_parser_stream *stream = get_stream(params->stream);
+    struct wg_parser *parser = get_parser(params->parser);
     GstBuffer *buffer;
     unsigned int i;
 
@@ -352,7 +365,7 @@ static NTSTATUS wg_parser_stream_get_buffer(void *args)
 static NTSTATUS wg_parser_stream_copy_buffer(void *args)
 {
     const struct wg_parser_stream_copy_buffer_params *params = args;
-    struct wg_parser_stream *stream = params->stream;
+    struct wg_parser_stream *stream = get_stream(params->stream);
     struct wg_parser *parser = stream->parser;
     uint32_t offset = params->offset;
     uint32_t size = params->size;
@@ -375,7 +388,7 @@ static NTSTATUS wg_parser_stream_copy_buffer(void *args)
 
 static NTSTATUS wg_parser_stream_release_buffer(void *args)
 {
-    struct wg_parser_stream *stream = args;
+    struct wg_parser_stream *stream = get_stream(*(wg_parser_stream_t *)args);
     struct wg_parser *parser = stream->parser;
 
     pthread_mutex_lock(&parser->mutex);
@@ -396,25 +409,26 @@ static NTSTATUS wg_parser_stream_get_duration(void *args)
 {
     struct wg_parser_stream_get_duration_params *params = args;
 
-    params->duration = params->stream->duration;
+    params->duration = get_stream(params->stream)->duration;
     return S_OK;
 }
 
 static NTSTATUS wg_parser_stream_get_tag(void *args)
 {
     struct wg_parser_stream_get_tag_params *params = args;
+    struct wg_parser_stream *stream = get_stream(params->stream);
     uint32_t len;
 
     if (params->tag >= WG_PARSER_TAG_COUNT)
         return STATUS_INVALID_PARAMETER;
-    if (!params->stream->tags[params->tag])
+    if (!stream->tags[params->tag])
         return STATUS_NOT_FOUND;
-    if ((len = strlen(params->stream->tags[params->tag]) + 1) > *params->size)
+    if ((len = strlen(stream->tags[params->tag]) + 1) > *params->size)
     {
         *params->size = len;
         return STATUS_BUFFER_TOO_SMALL;
     }
-    memcpy(params->buffer, params->stream->tags[params->tag], len);
+    memcpy(params->buffer, stream->tags[params->tag], len);
     return STATUS_SUCCESS;
 }
 
@@ -438,7 +452,7 @@ static NTSTATUS wg_parser_stream_seek(void *args)
     if ((stop_flags & AM_SEEKING_PositioningBitsMask) == AM_SEEKING_NoPositioning)
         stop_type = GST_SEEK_TYPE_NONE;
 
-    if (!gst_pad_push_event(params->stream->my_sink, gst_event_new_seek(params->rate, GST_FORMAT_TIME,
+    if (!gst_pad_push_event(get_stream(params->stream)->my_sink, gst_event_new_seek(params->rate, GST_FORMAT_TIME,
             flags, start_type, params->start_pos * 100, stop_type, params->stop_pos * 100)))
         GST_ERROR("Failed to seek.\n");
 
@@ -448,7 +462,7 @@ static NTSTATUS wg_parser_stream_seek(void *args)
 static NTSTATUS wg_parser_stream_notify_qos(void *args)
 {
     const struct wg_parser_stream_notify_qos_params *params = args;
-    struct wg_parser_stream *stream = params->stream;
+    struct wg_parser_stream *stream = get_stream(params->stream);
     GstClockTime stream_time;
     GstEvent *event;
 
@@ -1535,7 +1549,7 @@ static NTSTATUS wg_parser_connect(void *args)
     GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE("quartz_src",
             GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
     const struct wg_parser_connect_params *params = args;
-    struct wg_parser *parser = params->parser;
+    struct wg_parser *parser = get_parser(params->parser);
     unsigned int i;
     int ret;
 
@@ -1700,7 +1714,7 @@ out:
 
 static NTSTATUS wg_parser_disconnect(void *args)
 {
-    struct wg_parser *parser = args;
+    struct wg_parser *parser = get_parser(*(wg_parser_t *)args);
     unsigned int i;
 
     /* Unblock all of our streams. */
@@ -1878,13 +1892,13 @@ static NTSTATUS wg_parser_create(void *args)
     parser->err_on = params->err_on;
     parser->warn_on = params->warn_on;
     GST_DEBUG("Created winegstreamer parser %p.", parser);
-    params->parser = parser;
+    params->parser = (wg_parser_t)(ULONG_PTR)parser;
     return S_OK;
 }
 
 static NTSTATUS wg_parser_destroy(void *args)
 {
-    struct wg_parser *parser = args;
+    struct wg_parser *parser = get_parser(*(wg_parser_t *)args);
 
     if (parser->bus)
     {
@@ -1942,3 +1956,252 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     X(wg_transform_drain),
     X(wg_transform_flush),
 };
+
+#ifdef _WIN64
+
+typedef ULONG PTR32;
+
+static NTSTATUS wow64_wg_parser_push_data(void *args) {
+    struct
+    {
+        wg_parser_t parser;
+        PTR32 data;
+        UINT32 size;
+    } *params32 = args;
+    struct wg_parser_push_data_params params =
+    {
+        .parser = params32->parser,
+        .data = ULongToPtr(params32->data),
+        .size = params32->size,
+    };
+
+    return wg_parser_push_data(&params);
+}
+
+static NTSTATUS wow64_wg_parser_stream_get_preferred_format(void *args)
+{
+    struct
+    {
+        wg_parser_stream_t stream;
+        PTR32 format;
+    } *params32 = args;
+    struct wg_parser_stream_get_preferred_format_params params =
+    {
+        .stream = params32->stream,
+        .format = ULongToPtr(params32->format),
+    };
+
+    return wg_parser_stream_get_preferred_format(&params);
+}
+
+static NTSTATUS wow64_wg_parser_stream_get_codec_format(void *args)
+{
+    struct
+    {
+        wg_parser_stream_t stream;
+        PTR32 format;
+    } *params32 = args;
+    struct wg_parser_stream_get_codec_format_params params =
+    {
+        .stream = params32->stream,
+        .format = ULongToPtr(params32->format),
+    };
+
+    return wg_parser_stream_get_codec_format(&params);
+}
+
+static NTSTATUS wow64_wg_parser_stream_enable(void *args)
+{
+    struct
+    {
+        wg_parser_stream_t stream;
+        PTR32 format;
+    } *params32 = args;
+    struct wg_parser_stream_enable_params params =
+    {
+        .stream = params32->stream,
+        .format = ULongToPtr(params32->format),
+    };
+
+    return wg_parser_stream_enable(&params);
+}
+
+static NTSTATUS wow64_wg_parser_stream_get_buffer(void *args)
+{
+    struct
+    {
+        wg_parser_t parser;
+        wg_parser_stream_t stream;
+        PTR32 buffer;
+    } *params32 = args;
+    struct wg_parser_stream_get_buffer_params params =
+    {
+        .parser = params32->parser,
+        .stream = params32->stream,
+        .buffer = ULongToPtr(params32->buffer),
+    };
+    return wg_parser_stream_get_buffer(&params);
+}
+
+static NTSTATUS wow64_wg_parser_stream_copy_buffer(void *args)
+{
+    struct
+    {
+        wg_parser_stream_t stream;
+        PTR32 data;
+        UINT32 offset;
+        UINT32 size;
+    } *params32 = args;
+    struct wg_parser_stream_copy_buffer_params params =
+    {
+        .stream = params32->stream,
+        .data = ULongToPtr(params32->data),
+        .offset = params32->offset,
+        .size = params32->size,
+    };
+    return wg_parser_stream_copy_buffer(&params);
+}
+
+
+static NTSTATUS wow64_wg_parser_stream_get_tag(void *args)
+{
+    struct
+    {
+        wg_parser_stream_t stream;
+        wg_parser_tag tag;
+        PTR32 buffer;
+        PTR32 size;
+    } *params32 = args;
+    struct wg_parser_stream_get_tag_params params =
+    {
+        .stream = params32->stream,
+        .tag = params32->tag,
+        .buffer = ULongToPtr(params32->buffer),
+        .size = ULongToPtr(params32->size),
+    };
+
+    return wg_parser_stream_get_tag(&params);
+}
+
+NTSTATUS wow64_wg_transform_create(void *args)
+{
+    struct
+    {
+        wg_transform_t transform;
+        PTR32 input_format;
+        PTR32 output_format;
+        PTR32 attrs;
+    } *params32 = args;
+    struct wg_transform_create_params params =
+    {
+        .input_format = ULongToPtr(params32->input_format),
+        .output_format = ULongToPtr(params32->output_format),
+        .attrs = ULongToPtr(params32->attrs),
+    };
+    NTSTATUS ret;
+
+    ret = wg_transform_create(&params);
+    params32->transform = params.transform;
+    return ret;
+}
+
+NTSTATUS wow64_wg_transform_set_output_format(void *args)
+{
+    struct
+    {
+        wg_transform_t transform;
+        PTR32 format;
+    } *params32 = args;
+    struct wg_transform_set_output_format_params params =
+    {
+        .transform = params32->transform,
+        .format = ULongToPtr(params32->format),
+    };
+    return wg_transform_set_output_format(&params);
+}
+
+NTSTATUS wow64_wg_transform_push_data(void *args)
+{
+    struct
+    {
+        wg_transform_t transform;
+        PTR32 sample;
+        HRESULT result;
+    } *params32 = args;
+    struct wg_transform_push_data_params params =
+    {
+        .transform = params32->transform,
+        .sample = ULongToPtr(params32->sample),
+    };
+    NTSTATUS ret;
+
+    ret = wg_transform_push_data(&params);
+    params32->result = params.result;
+    return ret;
+}
+
+NTSTATUS wow64_wg_transform_read_data(void *args)
+{
+    struct
+    {
+        wg_transform_t transform;
+        PTR32 sample;
+        PTR32 format;
+        HRESULT result;
+    } *params32 = args;
+    struct wg_transform_read_data_params params =
+    {
+        .transform = params32->transform,
+        .sample = ULongToPtr(params32->sample),
+        .format = ULongToPtr(params32->format),
+    };
+    NTSTATUS ret;
+
+    ret = wg_transform_read_data(&params);
+    params32->result = params.result;
+    return ret;
+}
+
+const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
+{
+#define X64(name) [unix_ ## name] = wow64_ ## name
+    X(wg_init_gstreamer),
+
+    X(wg_parser_create),
+    X(wg_parser_destroy),
+
+    X(wg_parser_connect),
+    X(wg_parser_disconnect),
+
+    X(wg_parser_get_next_read_offset),
+    X64(wg_parser_push_data),
+
+    X(wg_parser_get_stream_count),
+    X(wg_parser_get_stream),
+
+    X64(wg_parser_stream_get_preferred_format),
+    X64(wg_parser_stream_get_codec_format),
+    X64(wg_parser_stream_enable),
+    X(wg_parser_stream_disable),
+
+    X64(wg_parser_stream_get_buffer),
+    X64(wg_parser_stream_copy_buffer),
+    X(wg_parser_stream_release_buffer),
+    X(wg_parser_stream_notify_qos),
+
+    X(wg_parser_stream_get_duration),
+    X64(wg_parser_stream_get_tag),
+    X(wg_parser_stream_seek),
+
+    X64(wg_transform_create),
+    X(wg_transform_destroy),
+    X64(wg_transform_set_output_format),
+
+    X64(wg_transform_push_data),
+    X64(wg_transform_read_data),
+    X(wg_transform_get_status),
+    X(wg_transform_drain),
+    X(wg_transform_flush),
+};
+
+#endif  /* _WIN64 */

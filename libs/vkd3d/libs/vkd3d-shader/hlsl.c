@@ -430,6 +430,51 @@ struct hlsl_type *hlsl_type_get_component_type(struct hlsl_ctx *ctx, struct hlsl
     return type;
 }
 
+unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_type *type,
+        enum hlsl_regset regset, unsigned int index)
+{
+    struct hlsl_type *next_type;
+    unsigned int offset = 0;
+    unsigned int idx;
+
+    while (!type_is_single_component(type))
+    {
+        next_type = type;
+        idx = traverse_path_from_component_index(ctx, &next_type, &index);
+
+        switch (type->class)
+        {
+            case HLSL_CLASS_SCALAR:
+            case HLSL_CLASS_VECTOR:
+            case HLSL_CLASS_MATRIX:
+                if (regset == HLSL_REGSET_NUMERIC)
+                    offset += idx;
+                break;
+
+            case HLSL_CLASS_STRUCT:
+                offset += type->e.record.fields[idx].reg_offset[regset];
+                break;
+
+            case HLSL_CLASS_ARRAY:
+                if (regset == HLSL_REGSET_NUMERIC)
+                    offset += idx * align(type->e.array.type->reg_size[regset], 4);
+                else
+                    offset += idx * type->e.array.type->reg_size[regset];
+                break;
+
+            case HLSL_CLASS_OBJECT:
+                assert(idx == 0);
+                break;
+
+            default:
+                vkd3d_unreachable();
+        }
+        type = next_type;
+    }
+
+    return offset;
+}
+
 static bool init_deref(struct hlsl_ctx *ctx, struct hlsl_deref *deref, struct hlsl_ir_var *var,
         unsigned int path_len)
 {
@@ -524,7 +569,9 @@ struct hlsl_type *hlsl_deref_get_type(struct hlsl_ctx *ctx, const struct hlsl_de
     unsigned int i;
 
     assert(deref);
-    assert(!deref->offset.node);
+
+    if (deref->offset.node)
+        return deref->data_type;
 
     type = deref->var->data_type;
     for (i = 0; i < deref->path_len; ++i)
@@ -626,6 +673,7 @@ struct hlsl_type *hlsl_new_array_type(struct hlsl_ctx *ctx, struct hlsl_type *ba
     type->e.array.type = basic_type;
     type->dimx = basic_type->dimx;
     type->dimy = basic_type->dimy;
+    type->sampler_dim = basic_type->sampler_dim;
     hlsl_type_calculate_reg_size(ctx, type);
 
     list_add_tail(&ctx->types, &type->entry);
@@ -992,20 +1040,31 @@ struct hlsl_ir_var *hlsl_new_synthetic_var(struct hlsl_ctx *ctx, const char *tem
     struct vkd3d_string_buffer *string;
     struct hlsl_ir_var *var;
     static LONG counter;
-    const char *name;
 
     if (!(string = hlsl_get_string_buffer(ctx)))
         return NULL;
     vkd3d_string_buffer_printf(string, "<%s-%u>", template, InterlockedIncrement(&counter));
-    if (!(name = hlsl_strdup(ctx, string->buffer)))
-    {
-        hlsl_release_string_buffer(ctx, string);
-        return NULL;
-    }
-    var = hlsl_new_var(ctx, name, type, loc, NULL, 0, NULL);
+    var = hlsl_new_synthetic_var_named(ctx, string->buffer, type, loc, true);
     hlsl_release_string_buffer(ctx, string);
+    return var;
+}
+
+struct hlsl_ir_var *hlsl_new_synthetic_var_named(struct hlsl_ctx *ctx, const char *name,
+    struct hlsl_type *type, const struct vkd3d_shader_location *loc, bool dummy_scope)
+{
+    struct hlsl_ir_var *var;
+    const char *name_copy;
+
+    if (!(name_copy = hlsl_strdup(ctx, name)))
+        return NULL;
+    var = hlsl_new_var(ctx, name_copy, type, loc, NULL, 0, NULL);
     if (var)
-        list_add_tail(&ctx->dummy_scope->vars, &var->scope_entry);
+    {
+        if (dummy_scope)
+            list_add_tail(&ctx->dummy_scope->vars, &var->scope_entry);
+        else
+            list_add_tail(&ctx->globals->vars, &var->scope_entry);
+    }
     return var;
 }
 
@@ -2064,6 +2123,31 @@ struct vkd3d_string_buffer *hlsl_type_to_string(struct hlsl_ctx *ctx, const stru
             vkd3d_string_buffer_printf(string, "<unexpected type>");
             return string;
     }
+}
+
+struct vkd3d_string_buffer *hlsl_component_to_string(struct hlsl_ctx *ctx, const struct hlsl_ir_var *var,
+        unsigned int index)
+{
+    struct hlsl_type *type = var->data_type, *current_type;
+    struct vkd3d_string_buffer *buffer;
+    unsigned int element_index;
+
+    if (!(buffer = hlsl_get_string_buffer(ctx)))
+        return NULL;
+
+    vkd3d_string_buffer_printf(buffer, "%s", var->name);
+
+    while (!type_is_single_component(type))
+    {
+        current_type = type;
+        element_index = traverse_path_from_component_index(ctx, &type, &index);
+        if (current_type->class == HLSL_CLASS_STRUCT)
+            vkd3d_string_buffer_printf(buffer, ".%s", current_type->e.record.fields[element_index].name);
+        else
+            vkd3d_string_buffer_printf(buffer, "[%u]", element_index);
+    }
+
+    return buffer;
 }
 
 const char *debug_hlsl_type(struct hlsl_ctx *ctx, const struct hlsl_type *type)

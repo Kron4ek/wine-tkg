@@ -1,6 +1,5 @@
-/* WinRT Windows.Devices.Geolocation.Geolocator Implementation
- *
- * Copyright 2023 Fabian Maurer
+/*
+ * Copyright (C) 2023 Maxim Karasev <mxkrsv@etersoft.ru>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,23 +16,22 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_WINDOWS_DEVICES_GEOLOCATION_GEOLOCATOR_PRIVATE_H
-#define __WINE_WINDOWS_DEVICES_GEOLOCATION_GEOLOCATOR_PRIVATE_H
+#include "resources.h"
 
-#include <stdarg.h>
+#pragma makedep po
 
-#define COBJMACROS
-#include "windef.h"
-#include "winbase.h"
-#include "winstring.h"
+LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
-#include "activation.h"
-#include "weakreference.h"
-
-#define WIDL_using_Windows_Foundation
-#define WIDL_using_Windows_Foundation_Collections
-#include "windows.foundation.h"
-#define WIDL_using_Windows_Devices_Geolocation
-#include "windows.devices.geolocation.h"
-
-#endif
+STRINGTABLE
+{
+    STRING_USAGE, "Usage: klist <tickets | tgt | purge | get [service principal name]>\n"
+    STRING_UNKNOWN_ERROR, "Unknown error\n"
+    STRING_START_TIME, "Start Time"
+    STRING_END_TIME, "End Time"
+    STRING_RENEW_TIME, "Renew Time"
+    STRING_TICKET_FLAGS, "Ticket Flags"
+    STRING_CACHED_TICKETS, "Cached Tickets"
+    STRING_SERVER, "Server"
+    STRING_ENCRYPTION_TYPE, "KerbTicket Encryption Type"
+    STRING_LOGON_ID, "Current LogonId is"
+}

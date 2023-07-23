@@ -97,6 +97,7 @@ static struct hlsl_ir_node *new_offset_from_path_index(struct hlsl_ctx *ctx, str
 static struct hlsl_ir_node *new_offset_instr_from_deref(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_deref *deref, const struct vkd3d_shader_location *loc)
 {
+    enum hlsl_regset regset = hlsl_type_get_regset(deref->data_type);
     struct hlsl_ir_node *offset = NULL;
     struct hlsl_type *type;
     unsigned int i;
@@ -111,7 +112,7 @@ static struct hlsl_ir_node *new_offset_instr_from_deref(struct hlsl_ctx *ctx, st
         struct hlsl_block idx_block;
 
         if (!(offset = new_offset_from_path_index(ctx, &idx_block, type, offset, deref->path[i].node,
-                deref->offset_regset, loc)))
+                regset, loc)))
             return NULL;
 
         hlsl_block_add_block(block, &idx_block);
@@ -126,7 +127,7 @@ static struct hlsl_ir_node *new_offset_instr_from_deref(struct hlsl_ctx *ctx, st
 static bool replace_deref_path_with_offset(struct hlsl_ctx *ctx, struct hlsl_deref *deref,
         struct hlsl_ir_node *instr)
 {
-    const struct hlsl_type *type;
+    struct hlsl_type *type;
     struct hlsl_ir_node *offset;
     struct hlsl_block block;
 
@@ -145,7 +146,7 @@ static bool replace_deref_path_with_offset(struct hlsl_ctx *ctx, struct hlsl_der
         return true;
     }
 
-    deref->offset_regset = hlsl_type_get_regset(type);
+    deref->data_type = type;
 
     if (!(offset = new_offset_instr_from_deref(ctx, &block, deref, &instr->loc)))
         return false;
@@ -1689,7 +1690,7 @@ static bool validate_static_object_references(struct hlsl_ctx *ctx, struct hlsl_
     {
         struct hlsl_ir_resource_load *load = hlsl_ir_resource_load(instr);
 
-        if (!(load->resource.var->storage_modifiers & HLSL_STORAGE_UNIFORM))
+        if (!load->resource.var->is_uniform)
         {
             hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_NON_STATIC_OBJECT_REF,
                     "Loaded resource must have a single uniform source.");
@@ -1704,7 +1705,7 @@ static bool validate_static_object_references(struct hlsl_ctx *ctx, struct hlsl_
 
         if (load->sampler.var)
         {
-            if (!(load->sampler.var->storage_modifiers & HLSL_STORAGE_UNIFORM))
+            if (!load->sampler.var->is_uniform)
             {
                 hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_NON_STATIC_OBJECT_REF,
                         "Resource load sampler must have a single uniform source.");
@@ -1722,7 +1723,7 @@ static bool validate_static_object_references(struct hlsl_ctx *ctx, struct hlsl_
     {
         struct hlsl_ir_resource_store *store = hlsl_ir_resource_store(instr);
 
-        if (!(store->resource.var->storage_modifiers & HLSL_STORAGE_UNIFORM))
+        if (!store->resource.var->is_uniform)
         {
             hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_NON_STATIC_OBJECT_REF,
                     "Accessed resource must have a single uniform source.");
@@ -2064,6 +2065,97 @@ static bool lower_nonconstant_vector_derefs(struct hlsl_ctx *ctx, struct hlsl_ir
     }
 
     return false;
+}
+
+/* Lower combined samples and sampler variables to synthesized separated textures and samplers.
+ * That is, translate SM1-style samples in the source to SM4-style samples in the bytecode. */
+static bool lower_combined_samples(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
+{
+    struct hlsl_ir_resource_load *load;
+    struct vkd3d_string_buffer *name;
+    struct hlsl_ir_var *var;
+    unsigned int i;
+
+    if (instr->type != HLSL_IR_RESOURCE_LOAD)
+        return false;
+    load = hlsl_ir_resource_load(instr);
+
+    switch (load->load_type)
+    {
+        case HLSL_RESOURCE_LOAD:
+        case HLSL_RESOURCE_GATHER_RED:
+        case HLSL_RESOURCE_GATHER_GREEN:
+        case HLSL_RESOURCE_GATHER_BLUE:
+        case HLSL_RESOURCE_GATHER_ALPHA:
+        case HLSL_RESOURCE_SAMPLE_CMP:
+        case HLSL_RESOURCE_SAMPLE_CMP_LZ:
+        case HLSL_RESOURCE_SAMPLE_GRAD:
+            return false;
+
+        case HLSL_RESOURCE_SAMPLE:
+        case HLSL_RESOURCE_SAMPLE_LOD:
+        case HLSL_RESOURCE_SAMPLE_LOD_BIAS:
+            break;
+    }
+    if (load->sampler.var)
+        return false;
+
+    if (!hlsl_type_is_resource(load->resource.var->data_type))
+    {
+        hlsl_fixme(ctx, &instr->loc, "Lower combined samplers within structs.");
+        return false;
+    }
+
+    assert(hlsl_type_get_regset(load->resource.var->data_type) == HLSL_REGSET_SAMPLERS);
+
+    if (!(name = hlsl_get_string_buffer(ctx)))
+        return false;
+    vkd3d_string_buffer_printf(name, "<resource>%s", load->resource.var->name);
+
+    TRACE("Lowering to separate resource %s.\n", debugstr_a(name->buffer));
+
+    if (!(var = hlsl_get_var(ctx->globals, name->buffer)))
+    {
+        struct hlsl_type *texture_array_type = hlsl_new_texture_type(ctx, load->sampling_dim,
+                hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, 4), 0);
+
+        /* Create (possibly multi-dimensional) texture array type with the same dims as the sampler array. */
+        struct hlsl_type *arr_type = load->resource.var->data_type;
+        for (i = 0; i < load->resource.path_len; ++i)
+        {
+            assert(arr_type->class == HLSL_CLASS_ARRAY);
+            texture_array_type = hlsl_new_array_type(ctx, texture_array_type, arr_type->e.array.elements_count);
+            arr_type = arr_type->e.array.type;
+        }
+
+        if (!(var = hlsl_new_synthetic_var_named(ctx, name->buffer, texture_array_type, &instr->loc, false)))
+        {
+            hlsl_release_string_buffer(ctx, name);
+            return false;
+        }
+        var->is_uniform = 1;
+        var->is_separated_resource = true;
+
+        list_add_tail(&ctx->extern_vars, &var->extern_entry);
+    }
+    hlsl_release_string_buffer(ctx, name);
+
+    if (load->sampling_dim != var->data_type->sampler_dim)
+    {
+        hlsl_error(ctx, &load->node.loc, VKD3D_SHADER_ERROR_HLSL_INCONSISTENT_SAMPLER,
+                "Cannot split combined samplers from \"%s\" if they have different usage dimensions.",
+                load->resource.var->name);
+        hlsl_note(ctx, &var->loc, VKD3D_SHADER_LOG_ERROR, "First use as combined sampler is here.");
+        return false;
+
+    }
+
+    hlsl_copy_deref(ctx, &load->sampler, &load->resource);
+    load->resource.var = var;
+    assert(hlsl_deref_get_type(ctx, &load->resource)->base_type == HLSL_TYPE_TEXTURE);
+    assert(hlsl_deref_get_type(ctx, &load->sampler)->base_type == HLSL_TYPE_SAMPLER);
+
+    return true;
 }
 
 /* Lower DIV to RCP + MUL. */
@@ -3096,7 +3188,7 @@ static const char *debug_register(char class, struct hlsl_reg reg, const struct 
     return vkd3d_dbg_sprintf("%c%u%s", class, reg.id, debug_hlsl_writemask(reg.writemask));
 }
 
-static bool track_object_components_usage(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
+static bool track_object_components_sampler_dim(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
 {
     struct hlsl_ir_resource_load *load;
     struct hlsl_ir_var *var;
@@ -3108,15 +3200,16 @@ static bool track_object_components_usage(struct hlsl_ctx *ctx, struct hlsl_ir_n
 
     load = hlsl_ir_resource_load(instr);
     var = load->resource.var;
+
     regset = hlsl_type_get_regset(hlsl_deref_get_type(ctx, &load->resource));
+    if (!hlsl_regset_index_from_deref(ctx, &load->resource, regset, &index))
+        return false;
 
     if (regset == HLSL_REGSET_SAMPLERS)
     {
         enum hlsl_sampler_dim dim;
 
         assert(!load->sampler.var);
-        if (!hlsl_regset_index_from_deref(ctx, &load->resource, regset, &index))
-            return false;
 
         dim = var->objects_usage[regset][index].sampler_dim;
         if (dim != load->sampling_dim)
@@ -3134,25 +3227,37 @@ static bool track_object_components_usage(struct hlsl_ctx *ctx, struct hlsl_ir_n
                 return false;
             }
         }
-        var->objects_usage[regset][index].used = true;
-        var->objects_usage[regset][index].sampler_dim = load->sampling_dim;
     }
-    else
+    var->objects_usage[regset][index].sampler_dim = load->sampling_dim;
+
+    return false;
+}
+
+static bool track_object_components_usage(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
+{
+    struct hlsl_ir_resource_load *load;
+    struct hlsl_ir_var *var;
+    enum hlsl_regset regset;
+    unsigned int index;
+
+    if (instr->type != HLSL_IR_RESOURCE_LOAD)
+        return false;
+
+    load = hlsl_ir_resource_load(instr);
+    var = load->resource.var;
+
+    regset = hlsl_type_get_regset(hlsl_deref_get_type(ctx, &load->resource));
+    if (!hlsl_regset_index_from_deref(ctx, &load->resource, regset, &index))
+        return false;
+
+    var->objects_usage[regset][index].used = true;
+    if (load->sampler.var)
     {
-        if (!hlsl_regset_index_from_deref(ctx, &load->resource, regset, &index))
+        var = load->sampler.var;
+        if (!hlsl_regset_index_from_deref(ctx, &load->sampler, HLSL_REGSET_SAMPLERS, &index))
             return false;
 
-        var->objects_usage[regset][index].used = true;
-        var->objects_usage[regset][index].sampler_dim = load->sampling_dim;
-
-        if (load->sampler.var)
-        {
-            var = load->sampler.var;
-            if (!hlsl_regset_index_from_deref(ctx, &load->sampler, HLSL_REGSET_SAMPLERS, &index))
-                return false;
-
-            var->objects_usage[HLSL_REGSET_SAMPLERS][index].used = true;
-        }
+        var->objects_usage[HLSL_REGSET_SAMPLERS][index].used = true;
     }
 
     return false;
@@ -3172,9 +3277,12 @@ static void calculate_resource_register_counts(struct hlsl_ctx *ctx)
         {
             for (i = 0; i < type->reg_size[k]; ++i)
             {
-                /* Samplers are only allocated until the last used one. */
+                bool is_separated = var->is_separated_resource;
+
+                /* Samplers (and textures separated from them) are only allocated until the last
+                 * used one. */
                 if (var->objects_usage[k][i].used)
-                    var->regs[k].bind_count = (k == HLSL_REGSET_SAMPLERS) ? i + 1 : type->reg_size[k];
+                    var->regs[k].bind_count = (k == HLSL_REGSET_SAMPLERS || is_separated) ? i + 1 : type->reg_size[k];
             }
         }
     }
@@ -3568,7 +3676,7 @@ static void validate_buffer_offsets(struct hlsl_ctx *ctx)
 
     LIST_FOR_EACH_ENTRY(var1, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
-        if (!var1->is_uniform || var1->data_type->class == HLSL_CLASS_OBJECT)
+        if (!var1->is_uniform || hlsl_type_is_resource(var1->data_type))
             continue;
 
         buffer = var1->buffer;
@@ -3579,7 +3687,7 @@ static void validate_buffer_offsets(struct hlsl_ctx *ctx)
         {
             unsigned int var1_reg_size, var2_reg_size;
 
-            if (!var2->is_uniform || var2->data_type->class == HLSL_CLASS_OBJECT)
+            if (!var2->is_uniform || hlsl_type_is_resource(var2->data_type))
                 continue;
 
             if (var1 == var2 || var1->buffer != var2->buffer)
@@ -3629,7 +3737,7 @@ static void allocate_buffers(struct hlsl_ctx *ctx)
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
-        if (var->is_uniform && var->data_type->class != HLSL_CLASS_OBJECT)
+        if (var->is_uniform && !hlsl_type_is_resource(var->data_type))
         {
             if (var->is_param)
                 var->buffer = ctx->params_buffer;
@@ -3689,7 +3797,7 @@ static void allocate_buffers(struct hlsl_ctx *ctx)
 }
 
 static const struct hlsl_ir_var *get_allocated_object(struct hlsl_ctx *ctx, enum hlsl_regset regset,
-        uint32_t index)
+        uint32_t index, bool allocated_only)
 {
     const struct hlsl_ir_var *var;
     unsigned int start, count;
@@ -3703,6 +3811,9 @@ static const struct hlsl_ir_var *get_allocated_object(struct hlsl_ctx *ctx, enum
              * bound there even if the reserved vars aren't used. */
             start = var->reg_reservation.reg_index;
             count = var->data_type->reg_size[regset];
+
+            if (!var->regs[regset].allocated && allocated_only)
+                continue;
         }
         else if (var->regs[regset].allocated)
         {
@@ -3743,6 +3854,7 @@ static void allocate_objects(struct hlsl_ctx *ctx, enum hlsl_regset regset)
         if (count == 0)
             continue;
 
+        /* The variable was already allocated if it has a reservation. */
         if (var->regs[regset].allocated)
         {
             const struct hlsl_ir_var *reserved_object, *last_reported = NULL;
@@ -3761,7 +3873,10 @@ static void allocate_objects(struct hlsl_ctx *ctx, enum hlsl_regset regset)
             {
                 index = var->regs[regset].id + i;
 
-                reserved_object = get_allocated_object(ctx, regset, index);
+                /* get_allocated_object() may return "var" itself, but we
+                 * actually want that, otherwise we'll end up reporting the
+                 * same conflict between the same two variables twice. */
+                reserved_object = get_allocated_object(ctx, regset, index, true);
                 if (reserved_object && reserved_object != var && reserved_object != last_reported)
                 {
                     hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_OVERLAPPING_RESERVATIONS,
@@ -3780,7 +3895,7 @@ static void allocate_objects(struct hlsl_ctx *ctx, enum hlsl_regset regset)
 
             while (available < count)
             {
-                if (get_allocated_object(ctx, regset, index))
+                if (get_allocated_object(ctx, regset, index, false))
                     available = 0;
                 else
                     ++available;
@@ -3924,6 +4039,7 @@ bool hlsl_regset_index_from_deref(struct hlsl_ctx *ctx, const struct hlsl_deref 
 bool hlsl_offset_from_deref(struct hlsl_ctx *ctx, const struct hlsl_deref *deref, unsigned int *offset)
 {
     struct hlsl_ir_node *offset_node = deref->offset.node;
+    enum hlsl_regset regset;
     unsigned int size;
 
     if (!offset_node)
@@ -3940,8 +4056,9 @@ bool hlsl_offset_from_deref(struct hlsl_ctx *ctx, const struct hlsl_deref *deref
         return false;
 
     *offset = hlsl_ir_constant(offset_node)->value.u[0].u;
+    regset = hlsl_type_get_regset(deref->data_type);
 
-    size = deref->var->data_type->reg_size[deref->offset_regset];
+    size = deref->var->data_type->reg_size[regset];
     if (*offset >= size)
     {
         hlsl_error(ctx, &deref->offset.node->loc, VKD3D_SHADER_ERROR_HLSL_OFFSET_OUT_OF_BOUNDS,
@@ -3971,7 +4088,8 @@ struct hlsl_reg hlsl_reg_from_deref(struct hlsl_ctx *ctx, const struct hlsl_dere
     struct hlsl_reg ret = var->regs[HLSL_REGSET_NUMERIC];
     unsigned int offset = hlsl_offset_from_deref_safe(ctx, deref);
 
-    assert(deref->offset_regset == HLSL_REGSET_NUMERIC);
+    assert(deref->data_type);
+    assert(deref->data_type->class <= HLSL_CLASS_LAST_NUMERIC);
 
     ret.id += offset / 4;
 
@@ -4169,6 +4287,12 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     hlsl_transform_ir(ctx, lower_casts_to_bool, body, NULL);
     hlsl_transform_ir(ctx, lower_int_dot, body, NULL);
 
+    hlsl_transform_ir(ctx, validate_static_object_references, body, NULL);
+    hlsl_transform_ir(ctx, track_object_components_sampler_dim, body, NULL);
+    if (profile->major_version >= 4)
+        hlsl_transform_ir(ctx, lower_combined_samples, body, NULL);
+    hlsl_transform_ir(ctx, track_object_components_usage, body, NULL);
+
     if (profile->major_version < 4)
     {
         hlsl_transform_ir(ctx, lower_division, body, NULL);
@@ -4181,9 +4305,6 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     {
         hlsl_transform_ir(ctx, lower_abs, body, NULL);
     }
-
-    hlsl_transform_ir(ctx, validate_static_object_references, body, NULL);
-    hlsl_transform_ir(ctx, track_object_components_usage, body, NULL);
 
     /* TODO: move forward, remove when no longer needed */
     transform_derefs(ctx, replace_deref_path_with_offset, body);

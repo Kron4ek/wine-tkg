@@ -185,6 +185,7 @@ static NTSTATUS dwarf_virtual_unwind( ULONG64 ip, ULONG64 *frame, CONTEXT *conte
     struct frame_state state_stack[MAX_SAVED_STATES];
     int aug_z_format = 0;
     unsigned char lsda_encoding = DW_EH_PE_omit;
+    DWORD64 prev_x28 = context->X28;
 
     memset( &info, 0, sizeof(info) );
     info.state_stack = state_stack;
@@ -274,13 +275,13 @@ static NTSTATUS dwarf_virtual_unwind( ULONG64 ip, ULONG64 *frame, CONTEXT *conte
     context->Pc = context->Lr;
 
     if (bases->func == (void *)raise_func_trampoline) {
-        /* raise_func_trampoline has a full CONTEXT stored on the stack;
-         * restore the original Lr value from there. The function we unwind
-         * to might be a leaf function that hasn't backed up its own original
-         * Lr value on the stack.
+        /* raise_func_trampoline has a pointer to a full CONTEXT stored in x28;
+         * restore the original Lr value from there. The function we unwind to
+         * might be a leaf function that hasn't backed up its own original Lr
+         * value on the stack.
          * We could also just restore the full context here without doing
          * unw_step at all. */
-        const CONTEXT *next_ctx = (const CONTEXT *) *frame;
+        const CONTEXT *next_ctx = (const CONTEXT *)prev_x28;
         context->Lr = next_ctx->Lr;
     }
 
@@ -314,6 +315,7 @@ static NTSTATUS libunwind_virtual_unwind( ULONG_PTR ip, ULONG_PTR *frame, CONTEX
     unw_cursor_t cursor;
     unw_proc_info_t info;
     int rc;
+    DWORD64 prev_x28 = context->X28;
 
 #ifdef __APPLE__
     rc = unw_getcontext( &unw_context );
@@ -420,13 +422,13 @@ static NTSTATUS libunwind_virtual_unwind( ULONG_PTR ip, ULONG_PTR *frame, CONTEX
     context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
 
     if (info.start_ip == (unw_word_t)raise_func_trampoline) {
-        /* raise_func_trampoline has a full CONTEXT stored on the stack;
-         * restore the original Lr value from there. The function we unwind
-         * to might be a leaf function that hasn't backed up its own original
-         * Lr value on the stack.
+        /* raise_func_trampoline has a pointer to a full CONTEXT stored in x28;
+         * restore the original Lr value from there. The function we unwind to
+         * might be a leaf function that hasn't backed up its own original Lr
+         * value on the stack.
          * We could also just restore the full context here without doing
          * unw_step at all. */
-        const CONTEXT *next_ctx = (const CONTEXT *) *frame;
+        const CONTEXT *next_ctx = (const CONTEXT *)prev_x28;
         context->Lr = next_ctx->Lr;
     }
 
@@ -476,6 +478,21 @@ NTSTATUS unwind_builtin_dll( void *args )
 #endif
 }
 
+
+/***********************************************************************
+ *           syscall_frame_fixup_for_fastpath
+ *
+ * Fixes up the given syscall frame such that the syscall dispatcher
+ * can return via the fast path if CONTEXT_INTEGER is set in
+ * restore_flags.
+ *
+ * Clobbers the frame's X16 and X17 register values.
+ */
+static void syscall_frame_fixup_for_fastpath( struct syscall_frame *frame )
+{
+    frame->x[16] = frame->pc;
+    frame->x[17] = frame->sp;
+}
 
 /***********************************************************************
  *           save_fpu
@@ -569,7 +586,8 @@ NTSTATUS signal_set_full_context( CONTEXT *context )
 {
     NTSTATUS status = NtSetContextThread( GetCurrentThread(), context );
 
-    if (!status && (context->ContextFlags & CONTEXT_INTEGER) == CONTEXT_INTEGER) raise( SIGUSR2 );
+    if (!status && (context->ContextFlags & CONTEXT_INTEGER) == CONTEXT_INTEGER)
+        arm64_thread_data()->syscall_frame->restore_flags |= CONTEXT_INTEGER;
     return status;
 }
 
@@ -934,48 +952,40 @@ NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
 
 
 /* Note, unwind_builtin_dll above has hardcoded assumptions on how this
- * function stores things on the stack; if modified, modify that one in
+ * function stores a CONTEXT pointer in x28; if modified, modify that one in
  * sync as well. */
 __ASM_GLOBAL_FUNC( raise_func_trampoline,
-                   "stp x29, x30, [sp, #-0x30]!\n\t"
-                   __ASM_CFI(".cfi_def_cfa_offset 48\n\t")
-                   __ASM_CFI(".cfi_offset 29, -48\n\t")
-                   __ASM_CFI(".cfi_offset 30, -40\n\t")
-                   "stp x0,  x1,  [sp, #0x10]\n\t"
-                   "str x2,       [sp, #0x20]\n\t"
+                   "stp x29, x30, [sp, #-0x20]!\n\t"
+                   "str x28, [sp, #0x10]\n\t"
+                   __ASM_CFI(".cfi_def_cfa_offset 32\n\t")
+                   __ASM_CFI(".cfi_offset 29, -32\n\t")
+                   __ASM_CFI(".cfi_offset 30, -24\n\t")
+                   __ASM_CFI(".cfi_offset 28, -16\n\t")
                    "mov x29, sp\n\t"
                    __ASM_CFI(".cfi_def_cfa_register 29\n\t")
                    __ASM_CFI(".cfi_remember_state\n\t")
-
-                   /* Memcpy the context onto the stack */
-                   "sub sp, sp, #0x390\n\t"
-                   "mov x0,  sp\n\t"
-                   "mov x2,  #0x390\n\t"
-                   "bl " __ASM_NAME("memcpy") "\n\t"
-                   __ASM_CFI(".cfi_def_cfa 31, 0\n\t")
-                   __ASM_CFI(".cfi_escape 0x0f,0x04,0x8f,0x80,0x02,0x06\n\t") /* CFA, DW_OP_breg31 + 0x100, DW_OP_deref */
-                   __ASM_CFI(".cfi_escape 0x10,0x13,0x03,0x8f,0xa0,0x01\n\t") /* x19, DW_OP_breg31 + 0xA0 */
-                   __ASM_CFI(".cfi_escape 0x10,0x14,0x03,0x8f,0xa8,0x01\n\t") /* x20 */
-                   __ASM_CFI(".cfi_escape 0x10,0x15,0x03,0x8f,0xb0,0x01\n\t") /* x21 */
-                   __ASM_CFI(".cfi_escape 0x10,0x16,0x03,0x8f,0xb8,0x01\n\t") /* x22 */
-                   __ASM_CFI(".cfi_escape 0x10,0x17,0x03,0x8f,0xc0,0x01\n\t") /* x23 */
-                   __ASM_CFI(".cfi_escape 0x10,0x18,0x03,0x8f,0xc8,0x01\n\t") /* x24 */
-                   __ASM_CFI(".cfi_escape 0x10,0x19,0x03,0x8f,0xd0,0x01\n\t") /* x25 */
-                   __ASM_CFI(".cfi_escape 0x10,0x1a,0x03,0x8f,0xd8,0x01\n\t") /* x26 */
-                   __ASM_CFI(".cfi_escape 0x10,0x1b,0x03,0x8f,0xe0,0x01\n\t") /* x27 */
-                   __ASM_CFI(".cfi_escape 0x10,0x1c,0x03,0x8f,0xe8,0x01\n\t") /* x28 */
-                   __ASM_CFI(".cfi_escape 0x10,0x1d,0x03,0x8f,0xf0,0x01\n\t") /* x29 */
-                   __ASM_CFI(".cfi_escape 0x10,0x1e,0x03,0x8f,0x88,0x02\n\t") /* x30 = pc */
-                   __ASM_CFI(".cfi_escape 0x10,0x48,0x03,0x8f,0x90,0x03\n\t") /* d8  */
-                   __ASM_CFI(".cfi_escape 0x10,0x49,0x03,0x8f,0x98,0x03\n\t") /* d9  */
-                   __ASM_CFI(".cfi_escape 0x10,0x4a,0x03,0x8f,0xa0,0x03\n\t") /* d10 */
-                   __ASM_CFI(".cfi_escape 0x10,0x4b,0x03,0x8f,0xa8,0x03\n\t") /* d11 */
-                   __ASM_CFI(".cfi_escape 0x10,0x4c,0x03,0x8f,0xb0,0x03\n\t") /* d12 */
-                   __ASM_CFI(".cfi_escape 0x10,0x4d,0x03,0x8f,0xb8,0x03\n\t") /* d13 */
-                   __ASM_CFI(".cfi_escape 0x10,0x4e,0x03,0x8f,0xc0,0x03\n\t") /* d14 */
-                   __ASM_CFI(".cfi_escape 0x10,0x4f,0x03,0x8f,0xc8,0x03\n\t") /* d15 */
-                   "ldp x0,  x1,  [x29, #0x10]\n\t"
-                   "ldr x2,       [x29, #0x20]\n\t"
+                   "mov x28, x1\n\t"
+                   __ASM_CFI_REG_IS_AT2(x19, x28, 0xa0, 0x01)
+                   __ASM_CFI_REG_IS_AT2(x20, x28, 0xa8, 0x01)
+                   __ASM_CFI_REG_IS_AT2(x21, x28, 0xb0, 0x01)
+                   __ASM_CFI_REG_IS_AT2(x22, x28, 0xb8, 0x01)
+                   __ASM_CFI_REG_IS_AT2(x23, x28, 0xc0, 0x01)
+                   __ASM_CFI_REG_IS_AT2(x24, x28, 0xc8, 0x01)
+                   __ASM_CFI_REG_IS_AT2(x25, x28, 0xd0, 0x01)
+                   __ASM_CFI_REG_IS_AT2(x26, x28, 0xd8, 0x01)
+                   __ASM_CFI_REG_IS_AT2(x27, x28, 0xe0, 0x01)
+                   __ASM_CFI_REG_IS_AT2(x28, x28, 0xe8, 0x01)
+                   __ASM_CFI_REG_IS_AT2(x29, x28, 0xf0, 0x01)
+                   __ASM_CFI_CFA_IS_AT2(x28, 0x80, 0x02)
+                   __ASM_CFI_REG_IS_AT2(x30, x28, 0x88, 0x02)
+                   __ASM_CFI_REG_IS_AT2(v8, x28, 0x90, 0x03)
+                   __ASM_CFI_REG_IS_AT2(v9, x28, 0x98, 0x03)
+                   __ASM_CFI_REG_IS_AT2(v10, x28, 0xa0, 0x03)
+                   __ASM_CFI_REG_IS_AT2(v11, x28, 0xa8, 0x03)
+                   __ASM_CFI_REG_IS_AT2(v12, x28, 0xb0, 0x03)
+                   __ASM_CFI_REG_IS_AT2(v13, x28, 0xb8, 0x03)
+                   __ASM_CFI_REG_IS_AT2(v14, x28, 0xc8, 0x03)
+                   __ASM_CFI_REG_IS_AT2(v15, x28, 0xc8, 0x03)
                    "blr x2\n\t"
                    __ASM_CFI(".cfi_restore_state\n\t")
                    "brk #1")
@@ -1053,6 +1063,7 @@ NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR a
     frame->x[3] = arg3;
     frame->x[4] = (ULONG64)func;
     frame->restore_flags |= CONTEXT_CONTROL | CONTEXT_INTEGER;
+    syscall_frame_fixup_for_fastpath( frame );
     return status;
 }
 
@@ -1085,6 +1096,7 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
     frame->lr   = lr;
     frame->sp   = sp;
     frame->restore_flags |= CONTEXT_INTEGER | CONTEXT_CONTROL;
+    syscall_frame_fixup_for_fastpath( frame );
     return status;
 }
 
@@ -1584,6 +1596,14 @@ void signal_init_early(void)
 }
 
 /***********************************************************************
+ *           syscall_dispatcher_return_slowpath
+ */
+void DECLSPEC_HIDDEN syscall_dispatcher_return_slowpath(void)
+{
+    raise( SIGUSR2 );
+}
+
+/***********************************************************************
  *           call_init_thunk
  */
 void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB *teb )
@@ -1643,6 +1663,7 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     frame->x[18] = (ULONG64)teb;
     frame->prev_frame = NULL;
     frame->restore_flags |= CONTEXT_INTEGER;
+    syscall_frame_fixup_for_fastpath( frame );
     frame->syscall_table = KeServiceDescriptorTable;
 
     pthread_sigmask( SIG_UNBLOCK, &server_block_set, NULL );
@@ -1739,13 +1760,28 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "blr x16\n\t"
                    "mov sp, x22\n"
                    __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") ":\n\t"
-                   "ldp x18, x19, [sp, #0x90]\n\t"
+                   "ldr w16, [sp, #0x10c]\n\t"  /* frame->restore_flags */
+                   "tbz x16, #1, 2f\n\t"        /* CONTEXT_INTEGER */
+                   "ldp x12, x13, [sp, #0x80]\n\t" /* frame->x[16..17] */
+                   "ldp x14, x15, [sp, #0xf8]\n\t" /* frame->sp, frame->pc */
+                   "cmp x12, x15\n\t"              /* frame->x16 == frame->pc? */
+                   "ccmp x13, x14, #0, eq\n\t"     /* frame->x17 == frame->sp? */
+                   "beq 1f\n\t"                    /* take slowpath if unequal */
+                   "bl " __ASM_NAME("syscall_dispatcher_return_slowpath") "\n"
+                   "1:\tldp x0, x1, [sp, #0x00]\n\t"
+                   "ldp x2, x3, [sp, #0x10]\n\t"
+                   "ldp x4, x5, [sp, #0x20]\n\t"
+                   "ldp x6, x7, [sp, #0x30]\n\t"
+                   "ldp x8, x9, [sp, #0x40]\n\t"
+                   "ldp x10, x11, [sp, #0x50]\n\t"
+                   "ldp x12, x13, [sp, #0x60]\n\t"
+                   "ldp x14, x15, [sp, #0x70]\n"
+                   "2:\tldp x18, x19, [sp, #0x90]\n\t"
                    "ldp x20, x21, [sp, #0xa0]\n\t"
                    "ldp x22, x23, [sp, #0xb0]\n\t"
                    "ldp x24, x25, [sp, #0xc0]\n\t"
                    "ldp x26, x27, [sp, #0xd0]\n\t"
                    "ldp x28, x29, [sp, #0xe0]\n\t"
-                   "ldr w16, [sp, #0x10c]\n\t"  /* frame->restore_flags */
                    "tbz x16, #2, 1f\n\t"        /* CONTEXT_FLOATING_POINT */
                    "ldp q0,  q1,  [sp, #0x130]\n\t"
                    "ldp q2,  q3,  [sp, #0x150]\n\t"
@@ -1763,19 +1799,10 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "ldp q26, q27, [sp, #0x2d0]\n\t"
                    "ldp q28, q29, [sp, #0x2f0]\n\t"
                    "ldp q30, q31, [sp, #0x310]\n\t"
-                   "ldr w9, [sp, #0x128]\n\t"
-                   "msr FPCR, x9\n\t"
-                   "ldr w9, [sp, #0x12c]\n\t"
-                   "msr FPSR, x9\n"
-                   "1:\ttbz x16, #1, 1f\n\t"    /* CONTEXT_INTEGER */
-                   "ldp x0, x1, [sp, #0x00]\n\t"
-                   "ldp x2, x3, [sp, #0x10]\n\t"
-                   "ldp x4, x5, [sp, #0x20]\n\t"
-                   "ldp x6, x7, [sp, #0x30]\n\t"
-                   "ldp x8, x9, [sp, #0x40]\n\t"
-                   "ldp x10, x11, [sp, #0x50]\n\t"
-                   "ldp x12, x13, [sp, #0x60]\n\t"
-                   "ldp x14, x15, [sp, #0x70]\n"
+                   "ldr w17, [sp, #0x128]\n\t"
+                   "msr FPCR, x17\n\t"
+                   "ldr w17, [sp, #0x12c]\n\t"
+                   "msr FPSR, x17\n"
                    "1:\tldp x16, x17, [sp, #0x100]\n\t"
                    "msr NZCV, x17\n\t"
                    "ldp x30, x17, [sp, #0xf0]\n\t"

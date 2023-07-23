@@ -147,7 +147,6 @@ struct win_proc_params
     UINT msg;
     WPARAM wparam;
     LPARAM lparam;
-    LRESULT *result;
     BOOL ansi;
     BOOL ansi_dst;
     BOOL needs_unpack;
@@ -168,9 +167,9 @@ struct win_hook_params
     int code;
     WPARAM wparam;
     LPARAM lparam;
-    UINT lparam_size;
     BOOL prev_unicode;
     BOOL next_unicode;
+    WCHAR module[1];
 };
 
 /* NtUserCopyImage params */
@@ -189,7 +188,6 @@ struct draw_text_params
     HDC hdc;
     int count;
     RECT rect;
-    RECT *ret_rect; /* FIXME: Use NtCallbackReturn instead */
     UINT flags;
     WCHAR str[1];
 };

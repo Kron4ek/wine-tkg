@@ -112,6 +112,24 @@ static BOOL get_encoder_clsid(LPCWSTR mime, GUID *format, CLSID *clsid)
     return ret;
 }
 
+static const char * dbgstr_hexdata(const BYTE *data, UINT len)
+{
+    UINT i, offset = 0;
+    char buffer[770];
+    const UINT max_len = 256;
+    const UINT output_len = (len <= max_len) ? len : max_len - 1;
+
+    if (!len) return "";
+
+    for (i = 0; i < output_len; i++)
+        offset += sprintf(buffer + offset, " %02x", data[i]);
+
+    if (len > output_len)
+        offset += sprintf(buffer + offset, " ...");
+
+    return __wine_dbg_strdup( buffer );
+}
+
 static void test_bufferrawformat(void* buff, int size, REFGUID expected, int line, BOOL todo)
 {
     LPSTREAM stream;
@@ -1769,7 +1787,7 @@ static void test_loadwmf(void)
         expect(0, header.Y);
         expect(320, header.Width);
         expect(320, header.Height);
-        expect(1, U(header).WmfHeader.mtType);
+        expect(1, header.WmfHeader.mtType);
         expect(0, header.EmfPlusHeaderSize);
         expect(0, header.LogicalDpiX);
         expect(0, header.LogicalDpiY);
@@ -1827,7 +1845,7 @@ static void test_createfromwmf(void)
         expect(0, header.Y);
         expect(320, header.Width);
         expect(320, header.Height);
-        expect(1, U(header).WmfHeader.mtType);
+        expect(1, header.WmfHeader.mtType);
         expect(0, header.EmfPlusHeaderSize);
         expect(0, header.LogicalDpiX);
         expect(0, header.LogicalDpiY);
@@ -3644,24 +3662,26 @@ static void test_image_properties(void)
         UINT image_size;
         ImageType image_type;
         UINT prop_count;
-        UINT prop_count2; /* if win7 behaves differently */
+        UINT prop_count2; /* if win7+ behaves differently, else ~0 */
         /* 1st property attributes */
         UINT prop_size;
-        UINT prop_size2; /* if win7 behaves differently */
+        UINT prop_size2; /* if win7+ behaves differently, else ~0 */
         UINT prop_id;
-        UINT prop_id2; /* if win7 behaves differently */
+        UINT prop_id2; /* if win7+ behaves differently, else ~0 */
         INT palette_size;
     }
     td[] =
     {
         { pngimage, sizeof(pngimage), ImageTypeBitmap, 4, ~0, 1, 20, 0x5110, 0x132, 12 },
-        { jpgimage, sizeof(jpgimage), ImageTypeBitmap, 2, ~0, 128, 0, 0x5090, 0x5091, 12 },
-        { tiffimage, sizeof(tiffimage), ImageTypeBitmap, 16, 0, 4, 0, 0xfe, 0, 12 },
-        { bmpimage, sizeof(bmpimage), ImageTypeBitmap, 0, 0, 0, 0, 0, 0, 16 },
-        { wmfimage, sizeof(wmfimage), ImageTypeMetafile, 0, 0, 0, 0, 0, 0, -GenericError }
+        { jpgimage, sizeof(jpgimage), ImageTypeBitmap, 2, ~0, 128, ~0, 0x5090, 0x5091, 12 },
+        { tiffimage, sizeof(tiffimage), ImageTypeBitmap, 16, ~0, 4, ~0, 0xfe, ~0, 12 },
+        { bmpimage, sizeof(bmpimage), ImageTypeBitmap, 0, ~0, 0, ~0, 0, ~0, 16 },
+        { gifimage, sizeof(gifimage), ImageTypeBitmap, 1, 4, 4, ~0, 0x5100, ~0, 16 },
+        { wmfimage, sizeof(wmfimage), ImageTypeMetafile, 0, ~0, 0, ~0, 0, ~0, -GenericError }
     };
-    GpStatus status;
+    GpStatus status, expected;
     GpImage *image;
+    PropertyItem *prop_item;
     UINT prop_count, prop_size, i;
     PROPID prop_id[16] = { 0 };
     ImageType image_type;
@@ -3674,39 +3694,42 @@ static void test_image_properties(void)
 
     for (i = 0; i < ARRAY_SIZE(td); i++)
     {
+        winetest_push_context("%u", i);
+
         image = load_image(td[i].image_data, td[i].image_size, TRUE, FALSE);
         if (!image)
         {
-            trace("%u: failed to load image data\n", i);
+            trace("failed to load image data\n");
+            winetest_pop_context();
             continue;
         }
 
         status = GdipGetImageType(image, &image_type);
-        ok(status == Ok, "%u: GdipGetImageType error %d\n", i, status);
-        ok(td[i].image_type == image_type, "%u: expected image_type %d, got %d\n",
-           i, td[i].image_type, image_type);
+        ok(status == Ok, "GdipGetImageType error %d\n", status);
+        ok(td[i].image_type == image_type, "expected image_type %d, got %d\n",
+           td[i].image_type, image_type);
 
         palette_size = -1;
         status = GdipGetImagePaletteSize(image, &palette_size);
         if (td[i].palette_size >= 0)
         {
-            ok(status == Ok, "%u: GdipGetImagePaletteSize error %d\n", i, status);
-            ok(td[i].palette_size == palette_size, "%u: expected palette_size %d, got %d\n",
-               i, td[i].palette_size, palette_size);
+            ok(status == Ok, "GdipGetImagePaletteSize error %d\n", status);
+            ok(td[i].palette_size == palette_size, "expected palette_size %d, got %d\n",
+               td[i].palette_size, palette_size);
         }
         else
         {
-            ok(status == -td[i].palette_size, "%u: GdipGetImagePaletteSize returned %d\n", i, status);
-            ok(palette_size == 0, "%u: expected palette_size 0, got %d\n",
-               i, palette_size);
+            ok(status == -td[i].palette_size, "GdipGetImagePaletteSize returned %d\n", status);
+            ok(palette_size == 0, "expected palette_size 0, got %d\n",
+               palette_size);
         }
 
         status = GdipGetPropertyCount(image, &prop_count);
-        ok(status == Ok, "%u: GdipGetPropertyCount error %d\n", i, status);
-        todo_wine_if(td[i].image_data == pngimage || td[i].image_data == jpgimage)
-        ok(td[i].prop_count == prop_count || td[i].prop_count2 == prop_count,
-           " %u: expected property count %u or %u, got %u\n",
-           i, td[i].prop_count, td[i].prop_count2, prop_count);
+        ok(status == Ok, "GdipGetPropertyCount error %d\n", status);
+        todo_wine_if(td[i].image_data == pngimage || td[i].image_data == jpgimage || td[i].image_data == gifimage)
+        ok(td[i].prop_count == prop_count || (td[i].prop_count2 != ~0 && td[i].prop_count2 == prop_count),
+           "expected property count %u or %u, got %u\n",
+           td[i].prop_count, td[i].prop_count2, prop_count);
 
         status = GdipGetPropertyItemSize(NULL, 0, &prop_size);
         expect(InvalidParameter, status);
@@ -3728,80 +3751,100 @@ static void test_image_properties(void)
         else
             expect(PropertyNotFound, status);
 
-        /* FIXME: remove once Wine is fixed */
-        if (td[i].prop_count != prop_count)
-        {
-            GdipDisposeImage(image);
-            continue;
-        }
-
         status = GdipGetPropertyIdList(NULL, prop_count, prop_id);
         expect(InvalidParameter, status);
         status = GdipGetPropertyIdList(image, prop_count, NULL);
         expect(InvalidParameter, status);
+        expected = (image_type == ImageTypeMetafile) ? NotImplemented : InvalidParameter;
+        status = GdipGetPropertyIdList(image, prop_count - 1, prop_id);
+        expect(expected, status);
+        status = GdipGetPropertyIdList(image, prop_count + 1, prop_id);
+        expect(expected, status);
+        if (image_type != ImageTypeMetafile && prop_count == 0)
+            expected = Ok;
         status = GdipGetPropertyIdList(image, 0, prop_id);
+        expect(expected, status);
+        expected = (image_type == ImageTypeMetafile) ? NotImplemented : Ok;
+        status = GdipGetPropertyIdList(image, prop_count, prop_id);
+        expect(expected, status);
+
+        status = GdipGetPropertyItemSize(image, prop_id[0], &prop_size);
         if (image_type == ImageTypeMetafile)
             expect(NotImplemented, status);
         else if (prop_count == 0)
-            expect(Ok, status);
-        else
-            expect(InvalidParameter, status);
-        status = GdipGetPropertyIdList(image, prop_count - 1, prop_id);
-        if (image_type == ImageTypeMetafile)
-            expect(NotImplemented, status);
-        else
-            expect(InvalidParameter, status);
-        status = GdipGetPropertyIdList(image, prop_count + 1, prop_id);
-        if (image_type == ImageTypeMetafile)
-            expect(NotImplemented, status);
-        else
-            expect(InvalidParameter, status);
-        status = GdipGetPropertyIdList(image, prop_count, prop_id);
-        if (image_type == ImageTypeMetafile)
-            expect(NotImplemented, status);
-        else
+            expect(PropertyNotFound, status);
+        /* FIXME: remove condition once Wine is fixed, i.e. this should just be an else */
+        else if (td[i].prop_count == prop_count || (td[i].prop_count2 != ~0 && td[i].prop_count2 == prop_count))
         {
+            ok(td[i].prop_id == prop_id[0] || (td[i].prop_id2 != ~0 && td[i].prop_id2 == prop_id[0]),
+               "expected property id %#x or %#x, got %#lx\n",
+               td[i].prop_id, td[i].prop_id2, prop_id[0]);
+
             expect(Ok, status);
-            if (prop_count != 0)
-                ok(td[i].prop_id == prop_id[0] || td[i].prop_id2 == prop_id[0],
-                   " %u: expected property id %#x or %#x, got %#lx\n",
-                   i, td[i].prop_id, td[i].prop_id2, prop_id[0]);
+
+            assert(sizeof(item) >= prop_size);
+            ok(prop_size > sizeof(PropertyItem), "got too small prop_size %u\n",
+               prop_size);
+            ok(td[i].prop_size + sizeof(PropertyItem) == prop_size ||
+               (td[i].prop_size2 != ~0 && td[i].prop_size2 + sizeof(PropertyItem) == prop_size),
+               "expected property size (%u or %u)+%u, got %u\n",
+               td[i].prop_size, td[i].prop_size2, (UINT) sizeof(PropertyItem), prop_size);
+
+            status = GdipGetPropertyItem(image, prop_id[0], 0, &item.data);
+            ok(status == InvalidParameter || status == GenericError /* Win7 */,
+               "expected InvalidParameter, got %d\n", status);
+            status = GdipGetPropertyItem(image, prop_id[0], prop_size - 1, &item.data);
+            ok(status == InvalidParameter || status == GenericError /* Win7 */,
+               "expected InvalidParameter, got %d\n", status);
+            status = GdipGetPropertyItem(image, prop_id[0], prop_size + 1, &item.data);
+            ok(status == InvalidParameter || status == GenericError /* Win7 */,
+               "expected InvalidParameter, got %d\n", status);
+            status = GdipGetPropertyItem(image, prop_id[0], prop_size, &item.data);
+            expect(Ok, status);
+            ok(prop_id[0] == item.data.id,
+               "expected property id %#lx, got %#lx\n", prop_id[0], item.data.id);
         }
 
-        if (status == Ok)
+        status = GdipGetPropertySize(NULL, &prop_size, &prop_count);
+        expect(InvalidParameter, status);
+        status = GdipGetPropertySize(image, &prop_size, NULL);
+        expect(InvalidParameter, status);
+        status = GdipGetPropertySize(image, NULL, &prop_count);
+        expect(InvalidParameter, status);
+        status = GdipGetPropertySize(image, NULL, NULL);
+        expect(InvalidParameter, status);
+        expected = (image_type == ImageTypeMetafile) ? NotImplemented : Ok;
+        status = GdipGetPropertySize(image, &prop_size, &prop_count);
+        expect(expected, status);
+
+        status = GdipGetAllPropertyItems(image, 0, 0, NULL);
+        expect(InvalidParameter, status);
+        status = GdipGetAllPropertyItems(image, prop_size, prop_count, NULL);
+        expect(InvalidParameter, status);
+        prop_item = HeapAlloc(GetProcessHeap(), 0, prop_size);
+        expected = (image_type == ImageTypeMetafile) ? NotImplemented : InvalidParameter;
+        if (prop_count != 1)
         {
-            status = GdipGetPropertyItemSize(image, prop_id[0], &prop_size);
-            if (prop_count == 0)
-                expect(PropertyNotFound, status);
-            else
-            {
-                expect(Ok, status);
-
-                assert(sizeof(item) >= prop_size);
-                ok(prop_size > sizeof(PropertyItem), "%u: got too small prop_size %u\n",
-                   i, prop_size);
-                ok(td[i].prop_size + sizeof(PropertyItem) == prop_size ||
-                   td[i].prop_size2 + sizeof(PropertyItem) == prop_size,
-                   " %u: expected property size %u or %u, got %u\n",
-                   i, td[i].prop_size, td[i].prop_size2, prop_size);
-
-                status = GdipGetPropertyItem(image, prop_id[0], 0, &item.data);
-                ok(status == InvalidParameter || status == GenericError /* Win7 */,
-                   "%u: expected InvalidParameter, got %d\n", i, status);
-                status = GdipGetPropertyItem(image, prop_id[0], prop_size - 1, &item.data);
-                ok(status == InvalidParameter || status == GenericError /* Win7 */,
-                   "%u: expected InvalidParameter, got %d\n", i, status);
-                status = GdipGetPropertyItem(image, prop_id[0], prop_size + 1, &item.data);
-                ok(status == InvalidParameter || status == GenericError /* Win7 */,
-                   "%u: expected InvalidParameter, got %d\n", i, status);
-                status = GdipGetPropertyItem(image, prop_id[0], prop_size, &item.data);
-                expect(Ok, status);
-                ok(prop_id[0] == item.data.id,
-                   "%u: expected property id %#lx, got %#lx\n", i, prop_id[0], item.data.id);
-            }
+            status = GdipGetAllPropertyItems(image, prop_size, 1, prop_item);
+            expect(expected, status);
         }
+        if (prop_size != 0)
+        {
+            status = GdipGetAllPropertyItems(image, 0, prop_count, prop_item);
+            expect(expected, status);
+        }
+        status = GdipGetAllPropertyItems(image, prop_size + 1, prop_count, prop_item);
+        expect(expected, status);
+        if (image_type != ImageTypeMetafile)
+            expected = (prop_count == 0) ? GenericError : Ok;
+        status = GdipGetAllPropertyItems(image, prop_size, prop_count, prop_item);
+        ok(status == expected || broken(status == Ok && prop_count == 0), /* XP */
+           "Expected %d, got %d\n", expected, status);
+        HeapFree(GetProcessHeap(), 0, prop_item);
 
         GdipDisposeImage(image);
+
+        winetest_pop_context();
     }
 }
 
@@ -4043,14 +4086,7 @@ static void test_tiff_properties(void)
             int match = memcmp(td[i].value, prop_item->value, td[i].length) == 0;
             ok(match || broken(td[i].length <= 4 && !match), "%u: data mismatch\n", i);
             if (!match)
-            {
-                UINT j;
-                BYTE *data = prop_item->value;
-                trace("id %#lx:", prop_item->id);
-                for (j = 0; j < prop_item->length; j++)
-                    trace(" %02x", data[j]);
-                trace("\n");
-            }
+                trace("id %#lx:%s\n", prop_item->id, dbgstr_hexdata(prop_item->value, prop_item->length));
         }
         HeapFree(GetProcessHeap(), 0, prop_item);
     }
@@ -4149,28 +4185,13 @@ static void test_GdipGetAllPropertyItems(void)
             int match = memcmp(td[i].value, prop_item->value, td[i].length) == 0;
             ok(match, "%u: data mismatch\n", i);
             if (!match)
-            {
-                UINT j;
-                BYTE *data = prop_item->value;
-                trace("id %#lx:", prop_item->id);
-                for (j = 0; j < prop_item->length; j++)
-                    trace(" %02x", data[j]);
-                trace("\n");
-            }
+                trace("id %#lx:%s\n", prop_item->id, dbgstr_hexdata(prop_item->value, prop_item->length));
         }
         HeapFree(GetProcessHeap(), 0, prop_item);
     }
 
     HeapFree(GetProcessHeap(), 0, prop_id);
 
-    status = GdipGetPropertySize(NULL, &total_size, &total_count);
-    expect(InvalidParameter, status);
-    status = GdipGetPropertySize(image, &total_size, NULL);
-    expect(InvalidParameter, status);
-    status = GdipGetPropertySize(image, NULL, &total_count);
-    expect(InvalidParameter, status);
-    status = GdipGetPropertySize(image, NULL, NULL);
-    expect(InvalidParameter, status);
     total_size = 0xdeadbeef;
     total_count = 0xdeadbeef;
     status = GdipGetPropertySize(image, &total_size, &total_count);
@@ -4181,19 +4202,6 @@ static void test_GdipGetAllPropertyItems(void)
        "expected total property size %u, got %u\n", prop_size, total_size);
 
     prop_item = HeapAlloc(GetProcessHeap(), 0, prop_size);
-
-    status = GdipGetAllPropertyItems(image, 0, prop_count, prop_item);
-    expect(InvalidParameter, status);
-    status = GdipGetAllPropertyItems(image, prop_size, 1, prop_item);
-    expect(InvalidParameter, status);
-    status = GdipGetAllPropertyItems(image, prop_size, prop_count, NULL);
-    expect(InvalidParameter, status);
-    status = GdipGetAllPropertyItems(image, prop_size, prop_count, NULL);
-    expect(InvalidParameter, status);
-    status = GdipGetAllPropertyItems(image, 0, 0, NULL);
-    expect(InvalidParameter, status);
-    status = GdipGetAllPropertyItems(image, prop_size + 1, prop_count, prop_item);
-    expect(InvalidParameter, status);
     status = GdipGetAllPropertyItems(image, prop_size, prop_count, prop_item);
     expect(Ok, status);
 
@@ -4211,14 +4219,7 @@ static void test_GdipGetAllPropertyItems(void)
             int match = memcmp(td[i].value, prop_item[i].value, td[i].length) == 0;
             ok(match, "%u: data mismatch\n", i);
             if (!match)
-            {
-                UINT j;
-                BYTE *data = prop_item[i].value;
-                trace("id %#lx:", prop_item[i].id);
-                for (j = 0; j < prop_item[i].length; j++)
-                    trace(" %02x", data[j]);
-                trace("\n");
-            }
+                trace("id %#lx:%s\n", prop_item[i].id, dbgstr_hexdata(prop_item[i].value, prop_item[i].length));
         }
         item_data += prop_item[i].length;
     }
@@ -4444,13 +4445,8 @@ static void test_bitmapbits(void)
                 ok(match,
                    "%u: data should match\n", i);
                 if (!match)
-                {
-                    BYTE *bits = data.Scan0;
-                    trace("%u: data mismatch for format %#x:", i, td[i].format);
-                    for (j = 0; j < td[i].size; j++)
-                        trace(" %02x", bits[j]);
-                    trace("\n");
-                }
+                    trace("%u: data mismatch for format %#x:%s\n", i, td[i].format,
+                            dbgstr_hexdata(data.Scan0, td[i].size));
             }
             else
                 ok(!match, "%u: data shouldn't match\n", i);
@@ -4474,14 +4470,7 @@ static void test_bitmapbits(void)
             int match = memcmp(data.Scan0, td[i].pixels_unlocked, 48) == 0;
             ok(match, "%u: data should match\n", i);
             if (!match)
-            {
-                UINT j;
-                BYTE *bits = data.Scan0;
-                trace("%u: data mismatch for format %#x:", i, td[i].format);
-                for (j = 0; j < 48; j++)
-                    trace(" %02x", bits[j]);
-                trace("\n");
-            }
+                trace("%u: data mismatch for format %#x:%s\n", i, td[i].format, dbgstr_hexdata(data.Scan0, 48));
         }
 
         status = GdipBitmapUnlockBits(bitmap, &data);
@@ -4528,13 +4517,7 @@ static void test_DrawImage(void)
     match = memcmp(white_2x2, black_2x2, sizeof(black_2x2)) == 0;
     ok(match, "data should match\n");
     if (!match)
-    {
-        UINT i, size = sizeof(white_2x2);
-        BYTE *bits = white_2x2;
-        for (i = 0; i < size; i++)
-            trace(" %02x", bits[i]);
-        trace("\n");
-    }
+        trace("%s\n", dbgstr_hexdata(white_2x2, sizeof(white_2x2)));
 
     status = GdipDeleteGraphics(graphics);
     expect(Ok, status);
@@ -4624,13 +4607,7 @@ static void test_GdipDrawImagePointRect(void)
     match = memcmp(white_2x2, black_2x2, sizeof(black_2x2)) == 0;
     ok(match, "data should match\n");
     if (!match)
-    {
-        UINT i, size = sizeof(white_2x2);
-        BYTE *bits = white_2x2;
-        for (i = 0; i < size; i++)
-            trace(" %02x", bits[i]);
-        trace("\n");
-    }
+        trace("%s\n", dbgstr_hexdata(white_2x2, sizeof(white_2x2)));
 
     status = GdipDeleteGraphics(graphics);
     expect(Ok, status);
@@ -4830,13 +4807,7 @@ static void test_DrawImage_scale(void)
         todo_wine_if (!match && td[i].todo)
             ok(match, "%d: data should match\n", i);
         if (!match)
-        {
-            UINT i, size = sizeof(dst_8x1);
-            const BYTE *bits = dst_8x1;
-            for (i = 0; i < size; i++)
-                trace(" %02x", bits[i]);
-            trace("\n");
-        }
+            trace("%s\n", dbgstr_hexdata(dst_8x1, sizeof(dst_8x1)));
     }
 
     status = GdipDeleteGraphics(graphics);
@@ -4957,28 +4928,13 @@ static void test_gif_properties(void)
             int match = memcmp(td[i].value, prop_item->value, td[i].length) == 0;
             ok(match, "%u: data mismatch\n", i);
             if (!match)
-            {
-                UINT j;
-                BYTE *data = prop_item->value;
-                trace("id %#lx:", prop_item->id);
-                for (j = 0; j < prop_item->length; j++)
-                    trace(" %02x", data[j]);
-                trace("\n");
-            }
+                trace("id %#lx:%s\n", prop_item->id, dbgstr_hexdata(prop_item->value, prop_item->length));
         }
         HeapFree(GetProcessHeap(), 0, prop_item);
     }
 
     HeapFree(GetProcessHeap(), 0, prop_id);
 
-    status = GdipGetPropertySize(NULL, &total_size, &total_count);
-    expect(InvalidParameter, status);
-    status = GdipGetPropertySize(image, &total_size, NULL);
-    expect(InvalidParameter, status);
-    status = GdipGetPropertySize(image, NULL, &total_count);
-    expect(InvalidParameter, status);
-    status = GdipGetPropertySize(image, NULL, NULL);
-    expect(InvalidParameter, status);
     total_size = 0xdeadbeef;
     total_count = 0xdeadbeef;
     status = GdipGetPropertySize(image, &total_size, &total_count);
@@ -4989,19 +4945,6 @@ static void test_gif_properties(void)
        "expected total property size %u, got %u\n", prop_size, total_size);
 
     prop_item = HeapAlloc(GetProcessHeap(), 0, prop_size);
-
-    status = GdipGetAllPropertyItems(image, 0, prop_count, prop_item);
-    expect(InvalidParameter, status);
-    status = GdipGetAllPropertyItems(image, prop_size, 1, prop_item);
-    expect(InvalidParameter, status);
-    status = GdipGetAllPropertyItems(image, prop_size, prop_count, NULL);
-    expect(InvalidParameter, status);
-    status = GdipGetAllPropertyItems(image, prop_size, prop_count, NULL);
-    expect(InvalidParameter, status);
-    status = GdipGetAllPropertyItems(image, 0, 0, NULL);
-    expect(InvalidParameter, status);
-    status = GdipGetAllPropertyItems(image, prop_size + 1, prop_count, prop_item);
-    expect(InvalidParameter, status);
     status = GdipGetAllPropertyItems(image, prop_size, prop_count, prop_item);
     expect(Ok, status);
 
@@ -5019,14 +4962,7 @@ static void test_gif_properties(void)
             int match = memcmp(td[i].value, prop_item[i].value, td[i].length) == 0;
             ok(match, "%u: data mismatch\n", i);
             if (!match)
-            {
-                UINT j;
-                BYTE *data = prop_item[i].value;
-                trace("id %#lx:", prop_item[i].id);
-                for (j = 0; j < prop_item[i].length; j++)
-                    trace(" %02x", data[j]);
-                trace("\n");
-            }
+                trace("id %#lx:%s\n", prop_item[i].id, dbgstr_hexdata(prop_item[i].value, prop_item[i].length));
         }
         item_data += prop_item[i].length;
     }
