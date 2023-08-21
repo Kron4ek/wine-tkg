@@ -1,4 +1,4 @@
-# Last wine-tkg-staging-fsync-git configuration - Mon Aug 21 04:35:36 AM UTC 2023 :
+# Last wine-tkg-staging-fsync-git configuration - Mon Aug 21 08:22:31 AM UTC 2023 :
 
 Local cfg files used
 
@@ -13,7 +13,7 @@ Done applying reverting hotfixes (if any) - list available in prepare.log
 
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any:
+Staging overrides, if any: -W mshtml-TranslateAccelerator
 
 fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
 fsync_futex_waitv.patch -- ( Applied patches for fsync to support futex_waitv )
