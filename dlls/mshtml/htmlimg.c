@@ -693,34 +693,20 @@ static void HTMLImgElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTravers
 static void HTMLImgElement_unlink(HTMLDOMNode *iface)
 {
     HTMLImg *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nsimg) {
-        nsIDOMHTMLImageElement *nsimg = This->nsimg;
-
-        This->nsimg = NULL;
-        nsIDOMHTMLImageElement_Release(nsimg);
-    }
+    unlink_ref(&This->nsimg);
 }
 
 static const NodeImplVtbl HTMLImgElementImplVtbl = {
-    &CLSID_HTMLImg,
-    HTMLImgElement_QI,
-    HTMLElement_destructor,
-    HTMLElement_cpc,
-    HTMLElement_clone,
-    HTMLElement_handle_event,
-    HTMLElement_get_attr_col,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    HTMLImgElement_get_readystate,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    HTMLImgElement_traverse,
-    HTMLImgElement_unlink
+    .clsid                 = &CLSID_HTMLImg,
+    .qi                    = HTMLImgElement_QI,
+    .destructor            = HTMLElement_destructor,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLElement_clone,
+    .handle_event          = HTMLElement_handle_event,
+    .get_attr_col          = HTMLElement_get_attr_col,
+    .get_readystate        = HTMLImgElement_get_readystate,
+    .traverse              = HTMLImgElement_traverse,
+    .unlink                = HTMLImgElement_unlink
 };
 
 static const tid_t HTMLImgElement_iface_tids[] = {
@@ -741,8 +727,8 @@ static void HTMLImgElement_init_dispex_info(dispex_data_t *info, compat_mode_t m
 }
 
 static dispex_static_data_t HTMLImgElement_dispex = {
-    L"HTMLImageElement",
-    NULL,
+    "HTMLImageElement",
+    &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLImg_tid,
     HTMLImgElement_iface_tids,
     HTMLImgElement_init_dispex_info
@@ -785,7 +771,7 @@ static HRESULT WINAPI HTMLImageElementFactory_QueryInterface(IHTMLImageElementFa
         *ppv = &This->IHTMLImageElementFactory_iface;
     }else if(IsEqualGUID(&IID_IHTMLImageElementFactory, riid)) {
         *ppv = &This->IHTMLImageElementFactory_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         *ppv = NULL;
@@ -814,10 +800,8 @@ static ULONG WINAPI HTMLImageElementFactory_Release(IHTMLImageElementFactory *if
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -947,6 +931,12 @@ static inline HTMLImageElementFactory *impl_from_DispatchEx(DispatchEx *iface)
     return CONTAINING_RECORD(iface, HTMLImageElementFactory, dispex);
 }
 
+static void HTMLImageElementFactory_destructor(DispatchEx *dispex)
+{
+    HTMLImageElementFactory *This = impl_from_DispatchEx(dispex);
+    free(This);
+}
+
 static HRESULT HTMLImageElementFactory_value(DispatchEx *dispex, LCID lcid,
         WORD flags, DISPPARAMS *params, VARIANT *res, EXCEPINFO *ei,
         IServiceProvider *caller)
@@ -981,14 +971,12 @@ static const tid_t HTMLImageElementFactory_iface_tids[] = {
 };
 
 static const dispex_static_data_vtbl_t HTMLImageElementFactory_dispex_vtbl = {
-    HTMLImageElementFactory_value,
-    NULL,
-    NULL,
-    NULL
+    .destructor       = HTMLImageElementFactory_destructor,
+    .value            = HTMLImageElementFactory_value,
 };
 
 static dispex_static_data_t HTMLImageElementFactory_dispex = {
-    L"Function",
+    "Function",
     &HTMLImageElementFactory_dispex_vtbl,
     IHTMLImageElementFactory_tid,
     HTMLImageElementFactory_iface_tids

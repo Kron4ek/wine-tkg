@@ -66,17 +66,16 @@ bool array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
     return TRUE;
 }
 
-wg_parser_t wg_parser_create(enum wg_parser_type type, bool unlimited_buffering)
+wg_parser_t wg_parser_create(enum wg_parser_type type)
 {
     struct wg_parser_create_params params =
     {
         .type = type,
-        .unlimited_buffering = unlimited_buffering,
         .err_on = ERR_ON(quartz),
         .warn_on = WARN_ON(quartz),
     };
 
-    TRACE("type %#x, unlimited_buffering %d.\n", type, unlimited_buffering);
+    TRACE("type %#x.\n", type);
 
     if (WINE_UNIX_CALL(unix_wg_parser_create, &params))
         return 0;
@@ -613,6 +612,7 @@ static struct class_factory wma_decoder_cf = {{&class_factory_vtbl}, wma_decoder
 static struct class_factory wmv_decoder_cf = {{&class_factory_vtbl}, wmv_decoder_create};
 static struct class_factory resampler_cf = {{&class_factory_vtbl}, resampler_create};
 static struct class_factory color_convert_cf = {{&class_factory_vtbl}, color_convert_create};
+static struct class_factory sink_class_factory_cf = {{&class_factory_vtbl}, sink_class_factory_create};
 
 HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void **out)
 {
@@ -647,6 +647,8 @@ HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void **out)
         factory = &resampler_cf;
     else if (IsEqualGUID(clsid, &CLSID_CColorConvertDMO))
         factory = &color_convert_cf;
+    else if (IsEqualGUID(clsid, &CLSID_MFMP3SinkClassFactory))
+        factory = &sink_class_factory_cf;
     else
     {
         FIXME("%s not implemented, returning CLASS_E_CLASSNOTAVAILABLE.\n", debugstr_guid(clsid));

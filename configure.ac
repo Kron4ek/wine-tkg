@@ -32,6 +32,7 @@ AC_ARG_WITH(dbus,      AS_HELP_STRING([--without-dbus],[do not use DBus (dynamic
 AC_ARG_WITH(float-abi, AS_HELP_STRING([--with-float-abi=abi],[specify the ABI (soft|softfp|hard) for ARM platforms]))
 AC_ARG_WITH(fontconfig,AS_HELP_STRING([--without-fontconfig],[do not use fontconfig]))
 AC_ARG_WITH(freetype,  AS_HELP_STRING([--without-freetype],[do not use the FreeType library]))
+AC_ARG_WITH(gcrypt,    AS_HELP_STRING([--without-gcrypt],[do not use libgcrypt]))
 AC_ARG_WITH(gettext,   AS_HELP_STRING([--without-gettext],[do not use gettext]))
 AC_ARG_WITH(gettextpo, AS_HELP_STRING([--with-gettextpo],[use the GetTextPO library to rebuild po files]),
             [if test "x$withval" = "xno"; then ac_cv_header_gettext_po_h=no; fi])
@@ -422,9 +423,11 @@ AC_CHECK_HEADERS(\
 	linux/ioctl.h \
 	linux/major.h \
 	linux/param.h \
+	linux/seccomp.h \
 	linux/serial.h \
 	linux/types.h \
 	linux/ucdrom.h \
+	linux/wireless.h \
 	lwp.h \
 	mach-o/loader.h \
 	mach/mach.h \
@@ -852,8 +855,6 @@ do
             ;;
         esac])
 
-    AS_VAR_IF([${wine_arch}_CC],[false],[continue])
-
     saved_CC=$CC
     saved_CFLAGS=$CFLAGS
     saved_LDFLAGS=$LDFLAGS
@@ -867,9 +868,10 @@ do
 
     target=""
     AS_VAR_PUSHDEF([wine_cv_crosscc],[ac_cv_${wine_arch}_crosscc])
-    AC_CACHE_CHECK([whether $CC works],[wine_cv_crosscc],
-       [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([])],
-               [AS_VAR_SET([wine_cv_crosscc],[yes])],[AS_VAR_SET([wine_cv_crosscc],[no])])])
+    AS_VAR_IF([${wine_arch}_CC],[false],[],
+        [AC_CACHE_CHECK([whether $CC works],[wine_cv_crosscc],
+            [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([])],
+                [AS_VAR_SET([wine_cv_crosscc],[yes])],[AS_VAR_SET([wine_cv_crosscc],[no])])])])
     AS_VAR_IF([wine_cv_crosscc],[yes],
        [set x $CC
         shift
@@ -906,6 +908,9 @@ do
 
     if test -z "$target"
     then
+        AS_VAR_SET_IF([enable_archs],
+            [AC_MSG_ERROR([MinGW $wine_arch compiler not found.
+This is an error since --enable-archs=$wine_arch was requested.])])
         CC=$saved_CC
         CFLAGS=$saved_CFLAGS
         LDFLAGS=$saved_LDFLAGS
@@ -933,6 +938,9 @@ do
            CC=$saved_CC
            CFLAGS=$saved_CFLAGS
            LDFLAGS=$saved_LDFLAGS
+           AS_VAR_SET_IF([enable_archs],
+                [AC_MSG_ERROR([MinGW $wine_arch compiler supporting C99 not found.
+This is an error since --enable-archs=$wine_arch was requested.])])
            continue
            ;;
       x*) AC_MSG_RESULT([$res])
@@ -1012,9 +1020,6 @@ if test $HOST_ARCH = aarch64
 then
     test "x$PE_ARCHS" != x || AC_MSG_ERROR([PE cross-compilation is required for ARM64, please install clang/llvm-dlltool/lld, or llvm-mingw.])
     DLLEXT=""
-else
-    WINE_NOTICE_WITH(mingw,[test "x$PE_ARCHS" = "x"],
-                 [MinGW compiler not found, cross-compiling PE files won't be supported.])
 fi
 
 dnl **** External libraries ****
@@ -1178,16 +1183,13 @@ then
     WINE_CHECK_SONAME(Xext,XextCreateExtension,[X_LIBS="$X_LIBS -lXext"],,[$X_LIBS -lX11 $X_EXTRA_LIBS])
     X_LIBS="$X_LIBS -lX11"
 
+    xlib_includes="#include <X11/Xlib.h>
+#include <X11/Xutil.h>"
+
     dnl *** All of the following tests require X11/Xlib.h
-    AC_CHECK_HEADERS([X11/Xlib.h \
-                      X11/XKBlib.h \
-                      X11/Xutil.h \
-                      X11/Xcursor/Xcursor.h \
-                      X11/extensions/shape.h \
-                      X11/extensions/XInput.h \
+    AC_CHECK_HEADERS([X11/extensions/shape.h \
                       X11/extensions/XInput2.h \
                       X11/extensions/XShm.h \
-                      X11/extensions/Xcomposite.h \
                       X11/extensions/Xfixes.h \
                       X11/extensions/Xinerama.h \
                       X11/extensions/Xpresent.h \
@@ -1195,26 +1197,19 @@ then
                       X11/extensions/Xrender.h \
                       X11/extensions/xf86vmode.h \
                       X11/extensions/xf86vmproto.h],,,
-[#ifdef HAVE_X11_XLIB_H
-# include <X11/Xlib.h>
-#endif
-#ifdef HAVE_X11_XUTIL_H
-# include <X11/Xutil.h>
-#endif])
+                      [$xlib_includes])
 
         dnl *** Check for X cursor
-        if test "$ac_cv_header_X11_Xcursor_Xcursor_h" = "yes"
-        then
-            WINE_CHECK_SONAME(Xcursor,XcursorImageLoadCursor,,,[$X_LIBS $X_EXTRA_LIBS])
-        fi
+        AC_CHECK_HEADER([X11/Xcursor/Xcursor.h],
+                        [WINE_CHECK_SONAME(Xcursor,XcursorImageLoadCursor,,,[$X_LIBS $X_EXTRA_LIBS])],,
+                        [$xlib_includes])
         WINE_NOTICE_WITH(xcursor,[test "x$ac_cv_lib_soname_Xcursor" = "x"],
                          [libxcursor ${notice_platform}development files not found, the Xcursor extension won't be supported.])
 
         dnl *** Check for X input extension
-        if test "$ac_cv_header_X11_extensions_XInput_h" = "yes"
-        then
-            WINE_CHECK_SONAME(Xi,XOpenDevice,,,[$X_LIBS $X_EXTRA_LIBS])
-        fi
+        AC_CHECK_HEADER([X11/extensions/XInput.h],
+                        [WINE_CHECK_SONAME(Xi,XOpenDevice,,,[$X_LIBS $X_EXTRA_LIBS])],,
+                        [$xlib_includes])
         WINE_NOTICE_WITH(xinput,[test "x$ac_cv_lib_soname_Xi" = "x"],
                          [libxi ${notice_platform}development files not found, the Xinput extension won't be supported.])
 
@@ -1312,18 +1307,14 @@ then
                          [libXpresent ${notice_platform}development files not found, Xpresent won't be supported.])
 
         dnl *** Check for X Composite extension
-        if test "$ac_cv_header_X11_extensions_Xcomposite_h" = "yes"
-        then
-            WINE_CHECK_SONAME(Xcomposite,XCompositeRedirectWindow,,,[$X_LIBS $X_EXTRA_LIBS])
-        fi
+        AC_CHECK_HEADER([X11/extensions/Xcomposite.h],
+                        [WINE_CHECK_SONAME(Xcomposite,XCompositeRedirectWindow,,,[$X_LIBS $X_EXTRA_LIBS])],,
+                        [$xlib_includes])
         WINE_NOTICE_WITH(xcomposite,[test "x$ac_cv_lib_soname_Xcomposite" = "x"],
                          [libxcomposite ${notice_platform}development files not found, Xcomposite won't be supported.])
 
         dnl *** Check for XICCallback struct
-        AC_CHECK_MEMBERS([XICCallback.callback, XEvent.xcookie],,,
-[#ifdef HAVE_X11_XLIB_H
-#include <X11/Xlib.h>
-#endif])
+        AC_CHECK_MEMBERS([XICCallback.callback, XEvent.xcookie],,,[$xlib_includes])
 
     dnl *** End of X11/Xlib.h check
 
@@ -1376,7 +1367,7 @@ fi
 if test "x$with_wayland" != "xno"
 then
     WINE_PACKAGE_FLAGS(WAYLAND_CLIENT,[wayland-client],,,,
-        [AC_CHECK_HEADERS([wayland-client.h],
+        [AC_CHECK_HEADER([wayland-client.h],
            [AC_CHECK_LIB(wayland-client,wl_display_connect,
               [AC_PATH_PROG(WAYLAND_SCANNER,wayland-scanner,
                             [`test -n "$PKG_CONFIG" && $PKG_CONFIG --variable=wayland_scanner wayland-scanner 2>/dev/null`])],
@@ -1407,9 +1398,12 @@ WINE_NOTICE_WITH(pcap,[test "x$ac_cv_lib_pcap_pcap_init" != xyes],
 dnl **** Check for libpcsclite ****
 if test "x$with_pcsclite" != "xno"
 then
-    AC_CHECK_LIB(pcsclite,SCardEstablishContext,[AC_SUBST(PCSCLITE_LIBS,["-lpcsclite"])])
+    AC_CHECK_LIB(pcsclite,SCardEstablishContext,[AC_SUBST(PCSCLITE_LIBS,["-lpcsclite"])],
+                 [case $host_os in
+                    darwin*|macosx*) AC_SUBST(PCSCLITE_LIBS,"-framework PCSC") ;;
+                  esac])
 fi
-WINE_NOTICE_WITH(pcsclite,[test "x$ac_cv_lib_pcsclite_SCardEstablishContext" != xyes],
+WINE_NOTICE_WITH(pcsclite,[test "x$PCSCLITE_LIBS" = x],
                  [libpcsclite not found, smart cards won't be supported.],
                  [enable_winscard])
 
@@ -1451,6 +1445,14 @@ then
 fi
 WINE_WARNING_WITH(gnutls,[test "x$ac_cv_lib_soname_gnutls" = "x"],
                  [libgnutls ${notice_platform}development files not found, no schannel support.])
+
+dnl **** Check for libgmp ****
+if test "x$with_gnutls" != "xno"
+then
+    WINE_PACKAGE_FLAGS(GMP,[gmp],[-lgmp],,,
+        [AC_CHECK_HEADERS([gmp.h],
+            [WINE_CHECK_SONAME(gmp,__gmpz_init,,[GMP_CFLAGS=""],[$GMP_LIBS],[[libgmp-*]])])])
+fi
 
 dnl **** Check for SANE ****
 if test "x$with_sane" != "xno"
@@ -1595,7 +1597,7 @@ dnl **** Check for PulseAudio ****
 if test "x$with_pulse" != "xno";
 then
     WINE_PACKAGE_FLAGS(PULSE,[libpulse],,,,
-        [AC_CHECK_HEADERS(pulse/pulseaudio.h,
+        [AC_CHECK_HEADER([pulse/pulseaudio.h],
             [AC_CHECK_LIB(pulse, pa_stream_is_corked,[:],[PULSE_LIBS=""],[$PULSE_LIBS])],
             [PULSE_LIBS=""])])
 fi
@@ -1749,13 +1751,9 @@ dnl **** Check for fontconfig ****
 if test "x$with_fontconfig" != "xno"
 then
     WINE_PACKAGE_FLAGS(FONTCONFIG,[fontconfig],,[$X_CFLAGS],[$X_LIBS],
-        [AC_CHECK_HEADERS([fontconfig/fontconfig.h])
-        if test "$ac_cv_header_fontconfig_fontconfig_h" = "yes"
-        then
-            WINE_CHECK_SONAME(fontconfig,FcInit,,[FONTCONFIG_CFLAGS=""],[$FONTCONFIG_LIBS])
-        else
-            FONTCONFIG_CFLAGS=""
-        fi])
+        [AC_CHECK_HEADER([fontconfig/fontconfig.h],
+                         [WINE_CHECK_SONAME(fontconfig,FcInit,,[FONTCONFIG_CFLAGS=""],[$FONTCONFIG_LIBS])],
+                         [FONTCONFIG_CFLAGS=""])])
 fi
 WINE_NOTICE_WITH(fontconfig,[test "x$ac_cv_lib_soname_fontconfig" = "x"],
                  [fontconfig ${notice_platform}development files not found, fontconfig won't be supported.])
@@ -1832,6 +1830,19 @@ then
 fi
 WINE_NOTICE_WITH(vulkan,[test "x$ac_cv_lib_soname_vulkan" = "x" -a "x$ac_cv_lib_soname_MoltenVK" = "x"],
                  [libvulkan and libMoltenVK ${notice_platform}development files not found, Vulkan won't be supported.])
+
+dnl **** Check for gcrypt ****
+if test "x$with_gcrypt" != "xno"
+then
+    WINE_PACKAGE_FLAGS(GCRYPT,[libgcrypt],,,,
+        [AC_CHECK_HEADERS([gcrypt.h])
+        if test "$ac_cv_header_gcrypt_h" = "yes"
+        then
+            WINE_CHECK_SONAME(gcrypt,gcry_sexp_build,,,[$GCRYPT_LIBS])
+        fi])
+fi
+WINE_NOTICE_WITH(gcrypt,[test "x$ac_cv_lib_soname_gcrypt" = "x"],
+                 [libgcrypt ${notice_platform}development files not found, GCRYPT won't be supported.])
 
 dnl **** Check for gcc specific options ****
 
@@ -2683,6 +2694,8 @@ WINE_CONFIG_MAKEFILE(dlls/hrtfapo)
 WINE_CONFIG_MAKEFILE(dlls/http.sys)
 WINE_CONFIG_MAKEFILE(dlls/httpapi)
 WINE_CONFIG_MAKEFILE(dlls/httpapi/tests)
+WINE_CONFIG_MAKEFILE(dlls/hvsimanagementapi)
+WINE_CONFIG_MAKEFILE(dlls/hvsimanagementapi/tests)
 WINE_CONFIG_MAKEFILE(dlls/ia2comproxy)
 WINE_CONFIG_MAKEFILE(dlls/iccvid)
 WINE_CONFIG_MAKEFILE(dlls/icmp)
@@ -2740,6 +2753,7 @@ WINE_CONFIG_MAKEFILE(dlls/localui/tests)
 WINE_CONFIG_MAKEFILE(dlls/lz32)
 WINE_CONFIG_MAKEFILE(dlls/lz32/tests)
 WINE_CONFIG_MAKEFILE(dlls/lzexpand.dll16,enable_win16)
+WINE_CONFIG_MAKEFILE(dlls/magnification)
 WINE_CONFIG_MAKEFILE(dlls/mapi32)
 WINE_CONFIG_MAKEFILE(dlls/mapi32/tests)
 WINE_CONFIG_MAKEFILE(dlls/mapistub)
@@ -2855,6 +2869,7 @@ WINE_CONFIG_MAKEFILE(dlls/msvcp140_1/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcp140_2)
 WINE_CONFIG_MAKEFILE(dlls/msvcp140_atomic_wait)
 WINE_CONFIG_MAKEFILE(dlls/msvcp140_atomic_wait/tests)
+WINE_CONFIG_MAKEFILE(dlls/msvcp140_codecvt_ids)
 WINE_CONFIG_MAKEFILE(dlls/msvcp60)
 WINE_CONFIG_MAKEFILE(dlls/msvcp60/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcp70)
@@ -3175,6 +3190,8 @@ WINE_CONFIG_MAKEFILE(dlls/windows.devices.bluetooth)
 WINE_CONFIG_MAKEFILE(dlls/windows.devices.bluetooth/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.devices.enumeration)
 WINE_CONFIG_MAKEFILE(dlls/windows.devices.enumeration/tests)
+WINE_CONFIG_MAKEFILE(dlls/windows.devices.usb)
+WINE_CONFIG_MAKEFILE(dlls/windows.devices.usb/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.gaming.input)
 WINE_CONFIG_MAKEFILE(dlls/windows.gaming.input/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.gaming.ui.gamebar)
@@ -3652,7 +3669,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-8.13.r0.g1942fb8b\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-8.14.r0.gda76250f\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

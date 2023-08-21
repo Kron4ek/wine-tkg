@@ -1120,6 +1120,13 @@ static ULONG get_refcount(void *iface)
     return IUnknown_Release(unknown);
 }
 
+static BOOL compare_uint(unsigned int x, unsigned int y, unsigned int max_diff)
+{
+    unsigned int diff = x > y ? x - y : y - x;
+
+    return diff <= max_diff;
+}
+
 static BOOL compare_float(float f, float g, unsigned int ulps)
 {
     int x = *(int *)&f;
@@ -1130,10 +1137,7 @@ static BOOL compare_float(float f, float g, unsigned int ulps)
     if (y < 0)
         y = INT_MIN - y;
 
-    if (abs(x - y) > ulps)
-        return FALSE;
-
-    return TRUE;
+    return compare_uint(x, y, ulps);
 }
 
 static char *get_str_a(const WCHAR *wstr)
@@ -1727,8 +1731,8 @@ float4 main(float4 color : COLOR) : SV_TARGET
 
     srv_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     srv_desc.ViewDimension = D3D10_SRV_DIMENSION_BUFFER;
-    U(srv_desc).Buffer.ElementOffset = 0;
-    U(srv_desc).Buffer.ElementWidth = 64;
+    srv_desc.Buffer.ElementOffset = 0;
+    srv_desc.Buffer.ElementWidth = 64;
 
     for (i = 0; i < D3D10_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; ++i)
     {

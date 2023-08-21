@@ -28,22 +28,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(msg);
 WINE_DECLARE_DEBUG_CHANNEL(relay);
 
-union packed_structs
-{
-    struct packed_CREATESTRUCTW cs;
-    struct packed_DRAWITEMSTRUCT dis;
-    struct packed_MEASUREITEMSTRUCT mis;
-    struct packed_DELETEITEMSTRUCT dls;
-    struct packed_COMPAREITEMSTRUCT cis;
-    struct packed_WINDOWPOS wp;
-    struct packed_COPYDATASTRUCT cds;
-    struct packed_HELPINFO hi;
-    struct packed_NCCALCSIZE_PARAMS ncp;
-    struct packed_MSG msg;
-    struct packed_MDINEXTMENU mnm;
-    struct packed_MDICREATESTRUCTW mcs;
-};
-
 static inline void *get_buffer( void *static_buffer, size_t size, size_t need )
 {
     if (size >= need) return static_buffer;
@@ -192,8 +176,7 @@ LRESULT WINPROC_CallProcAtoW( winproc_callback_t callback, HWND hwnd, UINT msg, 
 {
     LRESULT ret = 0;
 
-    TRACE_(msg)("(hwnd=%p,msg=%s,wp=%08Ix,lp=%08Ix)\n",
-                hwnd, SPY_GetMsgName(msg, hwnd), wParam, lParam);
+    TRACE( "(hwnd=%p,msg=%s,wp=%08Ix,lp=%08Ix)\n", hwnd, SPY_GetMsgName(msg, hwnd), wParam, lParam );
 
     switch(msg)
     {
@@ -431,8 +414,8 @@ LRESULT WINPROC_CallProcAtoW( winproc_callback_t callback, HWND hwnd, UINT msg, 
 
     case WM_PAINTCLIPBOARD:
     case WM_SIZECLIPBOARD:
-        FIXME_(msg)( "message %s (0x%x) needs translation, please report\n",
-                     SPY_GetMsgName(msg, hwnd), msg );
+        FIXME( "message %s (0x%x) needs translation, please report\n",
+               SPY_GetMsgName(msg, hwnd), msg );
         break;
 
     default:
@@ -453,8 +436,7 @@ static LRESULT WINPROC_CallProcWtoA( winproc_callback_t callback, HWND hwnd, UIN
 {
     LRESULT ret = 0;
 
-    TRACE_(msg)("(hwnd=%p,msg=%s,wp=%08Ix,lp=%08Ix)\n",
-                hwnd, SPY_GetMsgName(msg, hwnd), wParam, lParam);
+    TRACE( "(hwnd=%p,msg=%s,wp=%08Ix,lp=%08Ix)\n", hwnd, SPY_GetMsgName(msg, hwnd), wParam, lParam );
 
     switch(msg)
     {
@@ -699,8 +681,8 @@ static LRESULT WINPROC_CallProcWtoA( winproc_callback_t callback, HWND hwnd, UIN
 
     case WM_PAINTCLIPBOARD:
     case WM_SIZECLIPBOARD:
-        FIXME_(msg)( "message %s (%04x) needs translation, please report\n",
-                     SPY_GetMsgName(msg, hwnd), msg );
+        FIXME( "message %s (%04x) needs translation, please report\n",
+               SPY_GetMsgName(msg, hwnd), msg );
         break;
 
     default:
@@ -746,472 +728,104 @@ LRESULT dispatch_win_proc_params( struct win_proc_params *params )
     return result;
 }
 
-/* make sure that there is space for 'size' bytes in buffer, growing it if needed */
-static inline void *get_buffer_space( void **buffer, size_t size, size_t prev_size )
+static size_t string_size( const void *str, BOOL ansi )
 {
-    if (prev_size < size)
-        *buffer = HeapAlloc( GetProcessHeap(), 0, size );
-    return *buffer;
-}
-
-/* check whether a combobox expects strings or ids in CB_ADDSTRING/CB_INSERTSTRING */
-static inline BOOL combobox_has_strings( HWND hwnd )
-{
-    DWORD style = GetWindowLongA( hwnd, GWL_STYLE );
-    return (!(style & (CBS_OWNERDRAWFIXED | CBS_OWNERDRAWVARIABLE)) || (style & CBS_HASSTRINGS));
-}
-
-/* check whether a listbox expects strings or ids in LB_ADDSTRING/LB_INSERTSTRING */
-static inline BOOL listbox_has_strings( HWND hwnd )
-{
-    DWORD style = GetWindowLongA( hwnd, GWL_STYLE );
-    return (!(style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE)) || (style & LBS_HASSTRINGS));
-}
-
-/* unpack a potentially 64-bit pointer, returning 0 when truncated */
-static inline void *unpack_ptr( ULONGLONG ptr64 )
-{
-    if ((ULONG_PTR)ptr64 != ptr64) return 0;
-    return (void *)(ULONG_PTR)ptr64;
-}
-
-/* convert a server handle to a generic handle */
-static inline HANDLE unpack_handle( UINT handle )
-{
-    return (HANDLE)(INT_PTR)(int)handle;
-}
-
-/* make sure that the buffer contains a valid null-terminated Unicode string */
-static inline BOOL check_string( LPCWSTR str, size_t size )
-{
-    for (size /= sizeof(WCHAR); size; size--, str++)
-        if (!*str) return TRUE;
-    return FALSE;
+    return ansi ? strlen( str ) + 1 : (wcslen( str ) + 1) * sizeof(WCHAR);
 }
 
 /***********************************************************************
  *		unpack_message
  *
- * Unpack a message received from another process.
+ * Unpack a message received from win32u.
  */
-static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lparam,
-                            void **buffer, size_t size )
+void unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lparam,
+                     void *buffer, size_t size, BOOL ansi )
 {
-    size_t minsize = 0, prev_size = size;
-    union packed_structs *ps = *buffer;
-
     switch(message)
     {
     case WM_NCCREATE:
     case WM_CREATE:
     {
-        CREATESTRUCTW cs;
-        WCHAR *str = (WCHAR *)(&ps->cs + 1);
-        if (size < sizeof(ps->cs)) return FALSE;
-        size -= sizeof(ps->cs);
-        cs.lpCreateParams = unpack_ptr( ps->cs.lpCreateParams );
-        cs.hInstance      = unpack_ptr( ps->cs.hInstance );
-        cs.hMenu          = unpack_handle( ps->cs.hMenu );
-        cs.hwndParent     = unpack_handle( ps->cs.hwndParent );
-        cs.cy             = ps->cs.cy;
-        cs.cx             = ps->cs.cx;
-        cs.y              = ps->cs.y;
-        cs.x              = ps->cs.x;
-        cs.style          = ps->cs.style;
-        cs.dwExStyle      = ps->cs.dwExStyle;
-        cs.lpszName       = unpack_ptr( ps->cs.lpszName );
-        cs.lpszClass      = unpack_ptr( ps->cs.lpszClass );
-        if (ps->cs.lpszName >> 16)
+        CREATESTRUCTA *cs = buffer;
+        char *str = (char *)(cs + 1);
+
+        if (!IS_INTRESOURCE(cs->lpszName))
         {
-            if (!check_string( str, size )) return FALSE;
-            cs.lpszName = str;
-            size -= (lstrlenW(str) + 1) * sizeof(WCHAR);
-            str += lstrlenW(str) + 1;
+            cs->lpszName = str;
+            str += string_size( str, ansi );
         }
-        if (ps->cs.lpszClass >> 16)
+        if (!IS_INTRESOURCE(cs->lpszClass))
         {
-            if (!check_string( str, size )) return FALSE;
-            cs.lpszClass = str;
+            cs->lpszClass = str;
         }
-        memcpy( *buffer, &cs, sizeof(cs) );
         break;
     }
-    case WM_GETTEXT:
-    case WM_ASKCBFORMATNAME:
-        if (!get_buffer_space( buffer, (*wparam * sizeof(WCHAR)), size )) return FALSE;
+    case WM_NCCALCSIZE:
+        if (*wparam)
+        {
+            NCCALCSIZE_PARAMS *ncp = buffer;
+            ncp->lppos = (WINDOWPOS *)((NCCALCSIZE_PARAMS *)ncp + 1);
+        }
         break;
-    case WM_WININICHANGE:
-        if (!*lparam) return TRUE;
-        /* fall through */
-    case WM_SETTEXT:
-    case WM_DEVMODECHANGE:
-    case CB_DIR:
-    case LB_DIR:
-    case LB_ADDFILE:
-    case EM_REPLACESEL:
-        if (!check_string( *buffer, size )) return FALSE;
-        break;
-    case WM_GETMINMAXINFO:
-        minsize = sizeof(MINMAXINFO);
-        break;
-    case WM_DRAWITEM:
-    {
-        DRAWITEMSTRUCT dis;
-        if (size < sizeof(ps->dis)) return FALSE;
-        dis.CtlType    = ps->dis.CtlType;
-        dis.CtlID      = ps->dis.CtlID;
-        dis.itemID     = ps->dis.itemID;
-        dis.itemAction = ps->dis.itemAction;
-        dis.itemState  = ps->dis.itemState;
-        dis.hwndItem   = unpack_handle( ps->dis.hwndItem );
-        dis.hDC        = unpack_handle( ps->dis.hDC );
-        dis.rcItem     = ps->dis.rcItem;
-        dis.itemData   = (ULONG_PTR)unpack_ptr( ps->dis.itemData );
-        memcpy( *buffer, &dis, sizeof(dis) );
-        break;
-    }
-    case WM_MEASUREITEM:
-    {
-        MEASUREITEMSTRUCT mis;
-        if (size < sizeof(ps->mis)) return FALSE;
-        mis.CtlType    = ps->mis.CtlType;
-        mis.CtlID      = ps->mis.CtlID;
-        mis.itemID     = ps->mis.itemID;
-        mis.itemWidth  = ps->mis.itemWidth;
-        mis.itemHeight = ps->mis.itemHeight;
-        mis.itemData   = (ULONG_PTR)unpack_ptr( ps->mis.itemData );
-        memcpy( *buffer, &mis, sizeof(mis) );
-        break;
-    }
-    case WM_DELETEITEM:
-    {
-        DELETEITEMSTRUCT dls;
-        if (size < sizeof(ps->dls)) return FALSE;
-        dls.CtlType    = ps->dls.CtlType;
-        dls.CtlID      = ps->dls.CtlID;
-        dls.itemID     = ps->dls.itemID;
-        dls.hwndItem   = unpack_handle( ps->dls.hwndItem );
-        dls.itemData   = (ULONG_PTR)unpack_ptr( ps->dls.itemData );
-        memcpy( *buffer, &dls, sizeof(dls) );
-        break;
-    }
-    case WM_COMPAREITEM:
-    {
-        COMPAREITEMSTRUCT cis;
-        if (size < sizeof(ps->cis)) return FALSE;
-        cis.CtlType    = ps->cis.CtlType;
-        cis.CtlID      = ps->cis.CtlID;
-        cis.hwndItem   = unpack_handle( ps->cis.hwndItem );
-        cis.itemID1    = ps->cis.itemID1;
-        cis.itemData1  = (ULONG_PTR)unpack_ptr( ps->cis.itemData1 );
-        cis.itemID2    = ps->cis.itemID2;
-        cis.itemData2  = (ULONG_PTR)unpack_ptr( ps->cis.itemData2 );
-        cis.dwLocaleId = ps->cis.dwLocaleId;
-        memcpy( *buffer, &cis, sizeof(cis) );
-        break;
-    }
-    case WM_WINDOWPOSCHANGING:
-    case WM_WINDOWPOSCHANGED:
-    {
-        WINDOWPOS wp;
-        if (size < sizeof(ps->wp)) return FALSE;
-        wp.hwnd            = unpack_handle( ps->wp.hwnd );
-        wp.hwndInsertAfter = unpack_handle( ps->wp.hwndInsertAfter );
-        wp.x               = ps->wp.x;
-        wp.y               = ps->wp.y;
-        wp.cx              = ps->wp.cx;
-        wp.cy              = ps->wp.cy;
-        wp.flags           = ps->wp.flags;
-        memcpy( *buffer, &wp, sizeof(wp) );
-        break;
-    }
     case WM_COPYDATA:
     {
-        COPYDATASTRUCT cds;
-        if (size < sizeof(ps->cds)) return FALSE;
-        cds.dwData = (ULONG_PTR)unpack_ptr( ps->cds.dwData );
-        if (ps->cds.lpData)
-        {
-            cds.cbData = ps->cds.cbData;
-            cds.lpData = &ps->cds + 1;
-            minsize = sizeof(ps->cds) + cds.cbData;
-        }
-        else
-        {
-            cds.cbData = 0;
-            cds.lpData = 0;
-        }
-        memcpy( &ps->cds, &cds, sizeof(cds) );
+        COPYDATASTRUCT *cds = buffer;
+        if (cds->lpData) cds->lpData = cds + 1;
         break;
     }
-    case WM_NOTIFY:
-        /* WM_NOTIFY cannot be sent across processes (MSDN) */
-        return FALSE;
-    case WM_HELP:
-    {
-        HELPINFO hi;
-        if (size < sizeof(ps->hi)) return FALSE;
-        hi.cbSize       = sizeof(hi);
-        hi.iContextType = ps->hi.iContextType;
-        hi.iCtrlId      = ps->hi.iCtrlId;
-        hi.hItemHandle  = unpack_handle( ps->hi.hItemHandle );
-        hi.dwContextId  = (ULONG_PTR)unpack_ptr( ps->hi.dwContextId );
-        hi.MousePos     = ps->hi.MousePos;
-        memcpy( &ps->hi, &hi, sizeof(hi) );
-        break;
-    }
-    case WM_STYLECHANGING:
-    case WM_STYLECHANGED:
-        minsize = sizeof(STYLESTRUCT);
-        break;
-    case WM_NCCALCSIZE:
-        if (!*wparam) minsize = sizeof(RECT);
-        else
-        {
-            NCCALCSIZE_PARAMS ncp;
-            WINDOWPOS wp;
-            if (size < sizeof(ps->ncp)) return FALSE;
-            ncp.rgrc[0]        = ps->ncp.rgrc[0];
-            ncp.rgrc[1]        = ps->ncp.rgrc[1];
-            ncp.rgrc[2]        = ps->ncp.rgrc[2];
-            wp.hwnd            = unpack_handle( ps->ncp.hwnd );
-            wp.hwndInsertAfter = unpack_handle( ps->ncp.hwndInsertAfter );
-            wp.x               = ps->ncp.x;
-            wp.y               = ps->ncp.y;
-            wp.cx              = ps->ncp.cx;
-            wp.cy              = ps->ncp.cy;
-            wp.flags           = ps->ncp.flags;
-            ncp.lppos = (WINDOWPOS *)((NCCALCSIZE_PARAMS *)&ps->ncp + 1);
-            memcpy( &ps->ncp, &ncp, sizeof(ncp) );
-            *ncp.lppos = wp;
-        }
-        break;
-    case WM_GETDLGCODE:
-        if (*lparam)
-        {
-            MSG msg;
-            if (size < sizeof(ps->msg)) return FALSE;
-            msg.hwnd    = unpack_handle( ps->msg.hwnd );
-            msg.message = ps->msg.message;
-            msg.wParam  = (ULONG_PTR)unpack_ptr( ps->msg.wParam );
-            msg.lParam  = (ULONG_PTR)unpack_ptr( ps->msg.lParam );
-            msg.time    = ps->msg.time;
-            msg.pt      = ps->msg.pt;
-            memcpy( &ps->msg, &msg, sizeof(msg) );
-            break;
-        }
-        return TRUE;
-    case SBM_SETSCROLLINFO:
-        minsize = sizeof(SCROLLINFO);
-        break;
-    case SBM_GETSCROLLINFO:
-        if (!get_buffer_space( buffer, sizeof(SCROLLINFO), size )) return FALSE;
-        break;
-    case SBM_GETSCROLLBARINFO:
-        if (!get_buffer_space( buffer, sizeof(SCROLLBARINFO), size )) return FALSE;
-        break;
     case EM_GETSEL:
     case SBM_GETRANGE:
     case CB_GETEDITSEL:
-        if (*wparam || *lparam)
-        {
-            if (!get_buffer_space( buffer, 2*sizeof(DWORD), size )) return FALSE;
-            if (*wparam) *wparam = (WPARAM)*buffer;
-            if (*lparam) *lparam = (LPARAM)((DWORD *)*buffer + 1);
-        }
-        return TRUE;
-    case EM_GETRECT:
-    case LB_GETITEMRECT:
-    case CB_GETDROPPEDCONTROLRECT:
-        if (!get_buffer_space( buffer, sizeof(RECT), size )) return FALSE;
-        break;
-    case EM_SETRECT:
-    case EM_SETRECTNP:
-        minsize = sizeof(RECT);
-        break;
-    case EM_GETLINE:
     {
-        WORD len;
-        if (size < sizeof(WORD)) return FALSE;
-        len = *(WORD *)*buffer;
-        if (!get_buffer_space( buffer, (len + 1) * sizeof(WCHAR), size )) return FALSE;
-        *lparam = (LPARAM)*buffer + sizeof(WORD);  /* don't erase WORD at start of buffer */
-        return TRUE;
+        DWORD *ptr = buffer;
+        *wparam = (WPARAM)ptr++;
+        *lparam = (LPARAM)ptr;
+        return;
     }
-    case EM_SETTABSTOPS:
-    case LB_SETTABSTOPS:
-        if (!*wparam) return TRUE;
-        minsize = *wparam * sizeof(UINT);
-        break;
-    case CB_ADDSTRING:
-    case CB_INSERTSTRING:
-    case CB_FINDSTRING:
-    case CB_FINDSTRINGEXACT:
-    case CB_SELECTSTRING:
-    case LB_ADDSTRING:
-    case LB_INSERTSTRING:
-    case LB_FINDSTRING:
-    case LB_FINDSTRINGEXACT:
-    case LB_SELECTSTRING:
-        if (!*buffer) return TRUE;
-        if (!check_string( *buffer, size )) return FALSE;
-        break;
-    case CB_GETLBTEXT:
-    {
-        size = sizeof(ULONG_PTR);
-        if (combobox_has_strings( hwnd ))
-            size = (SendMessageW( hwnd, CB_GETLBTEXTLEN, *wparam, 0 ) + 1) * sizeof(WCHAR);
-        if (!get_buffer_space( buffer, size, prev_size )) return FALSE;
-        break;
-    }
-    case LB_GETTEXT:
-    {
-        size = sizeof(ULONG_PTR);
-        if (listbox_has_strings( hwnd ))
-            size = (SendMessageW( hwnd, LB_GETTEXTLEN, *wparam, 0 ) + 1) * sizeof(WCHAR);
-        if (!get_buffer_space( buffer, size, prev_size )) return FALSE;
-        break;
-    }
-    case LB_GETSELITEMS:
-        if (!get_buffer_space( buffer, *wparam * sizeof(UINT), size )) return FALSE;
-        break;
-    case WM_NEXTMENU:
-    {
-        MDINEXTMENU mnm;
-        if (size < sizeof(ps->mnm)) return FALSE;
-        mnm.hmenuIn   = unpack_handle( ps->mnm.hmenuIn );
-        mnm.hmenuNext = unpack_handle( ps->mnm.hmenuNext );
-        mnm.hwndNext  = unpack_handle( ps->mnm.hwndNext );
-        memcpy( *buffer, &mnm, sizeof(mnm) );
-        break;
-    }
-    case WM_SIZING:
-    case WM_MOVING:
-        minsize = sizeof(RECT);
-        if (!get_buffer_space( buffer, sizeof(RECT), size )) return FALSE;
-        break;
     case WM_MDICREATE:
     {
-        MDICREATESTRUCTW mcs;
-        WCHAR *str = (WCHAR *)(&ps->mcs + 1);
-        if (size < sizeof(ps->mcs)) return FALSE;
-        size -= sizeof(ps->mcs);
+        MDICREATESTRUCTA *mcs = buffer;
+        char *str = (char *)(mcs + 1);
 
-        mcs.szClass = unpack_ptr( ps->mcs.szClass );
-        mcs.szTitle = unpack_ptr( ps->mcs.szTitle );
-        mcs.hOwner  = unpack_ptr( ps->mcs.hOwner );
-        mcs.x       = ps->mcs.x;
-        mcs.y       = ps->mcs.y;
-        mcs.cx      = ps->mcs.cx;
-        mcs.cy      = ps->mcs.cy;
-        mcs.style   = ps->mcs.style;
-        mcs.lParam  = (LPARAM)unpack_ptr( ps->mcs.lParam );
-        if (ps->mcs.szClass >> 16)
+        if (!IS_INTRESOURCE(mcs->szClass))
         {
-            if (!check_string( str, size )) return FALSE;
-            mcs.szClass = str;
-            size -= (lstrlenW(str) + 1) * sizeof(WCHAR);
-            str += lstrlenW(str) + 1;
+            mcs->szClass = str;
+            str += string_size( mcs->szClass, ansi );
         }
-        if (ps->mcs.szTitle >> 16)
+        if (!IS_INTRESOURCE(mcs->szTitle))
         {
-            if (!check_string( str, size )) return FALSE;
-            mcs.szTitle = str;
+            mcs->szTitle = str;
         }
-        memcpy( *buffer, &mcs, sizeof(mcs) );
         break;
     }
-    case WM_MDIGETACTIVE:
-        if (!*lparam) return TRUE;
-        if (!get_buffer_space( buffer, sizeof(BOOL), size )) return FALSE;
-        break;
-    case WM_DEVICECHANGE:
-        if (!(*wparam & 0x8000)) return TRUE;
-        minsize = sizeof(DEV_BROADCAST_HDR);
-        break;
-    case WM_NCPAINT:
-        if (*wparam <= 1) return TRUE;
-        FIXME( "WM_NCPAINT hdc unpacking not supported\n" );
-        return FALSE;
-    case WM_PAINT:
-        if (!*wparam) return TRUE;
-        /* fall through */
-
-    /* these contain an HFONT */
-    case WM_SETFONT:
-    case WM_GETFONT:
-    /* these contain an HDC */
-    case WM_ERASEBKGND:
-    case WM_ICONERASEBKGND:
-    case WM_CTLCOLORMSGBOX:
-    case WM_CTLCOLOREDIT:
-    case WM_CTLCOLORLISTBOX:
-    case WM_CTLCOLORBTN:
-    case WM_CTLCOLORDLG:
-    case WM_CTLCOLORSCROLLBAR:
-    case WM_CTLCOLORSTATIC:
-    case WM_PRINT:
-    case WM_PRINTCLIENT:
-    /* these contain an HGLOBAL */
-    case WM_PAINTCLIPBOARD:
-    case WM_SIZECLIPBOARD:
-    /* these contain HICON */
-    case WM_GETICON:
-    case WM_SETICON:
-    case WM_QUERYDRAGICON:
-    case WM_QUERYPARKICON:
-    /* these contain pointers */
-    case WM_DROPOBJECT:
-    case WM_QUERYDROPOBJECT:
-    case WM_DRAGLOOP:
-    case WM_DRAGSELECT:
-    case WM_DRAGMOVE:
-        FIXME( "msg %x (%s) not supported yet\n", message, SPY_GetMsgName(message, hwnd) );
-        return FALSE;
-
-    default:
-        return TRUE; /* message doesn't need any unpacking */
     }
 
-    /* default exit for most messages: check minsize and store buffer in lparam */
-    if (size < minsize) return FALSE;
-    *lparam = (LPARAM)*buffer;
-    return TRUE;
+    *lparam = (LPARAM)buffer;
 }
 
 BOOL WINAPI User32CallWindowProc( struct win_proc_params *params, ULONG size )
 {
+    size_t packed_size = 0;
+    void *buffer = NULL;
     LRESULT result;
 
-    if (params->needs_unpack)
+    if (size > sizeof(*params))
     {
-        char stack_buffer[128];
-        void *buffer;
+        const size_t offset = (sizeof(*params) + 15) & ~15;
+        packed_size = size - offset;
+        buffer = (char *)params + offset;
 
-        if (size > sizeof(*params))
-        {
-            size -= sizeof(*params);
-            buffer = params + 1;
-        }
-        else
-        {
-            size = sizeof(stack_buffer);
-            buffer = stack_buffer;
-        }
-        if (!unpack_message( params->hwnd, params->msg, &params->wparam,
-                             &params->lparam, &buffer, size ))
-            return 0;
-
-        result = dispatch_win_proc_params( params );
-
-        NtUserMessageCall( params->hwnd, params->msg, params->wparam, params->lparam,
-                           (void *)result, NtUserWinProcResult, FALSE );
-        if (buffer != stack_buffer && buffer != params + 1)
-            HeapFree( GetProcessHeap(), 0, buffer );
+        unpack_message( params->hwnd, params->msg, &params->wparam, &params->lparam,
+                        buffer, packed_size, params->ansi );
     }
-    else
+
+    result = dispatch_win_proc_params( params );
+
+    if (packed_size)
     {
-        result = dispatch_win_proc_params( params );
+        LRESULT *result_ptr = (LRESULT *)buffer - 1;
+        *result_ptr = result;
+        return NtCallbackReturn( result_ptr, sizeof(*result_ptr) + packed_size, TRUE );
     }
     return NtCallbackReturn( &result, sizeof(result), TRUE );
 }

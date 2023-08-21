@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <assert.h>
+
 #include <endpointvolume.h>
 #include <spatialaudioclient.h>
 #include <winternl.h>
@@ -40,6 +42,7 @@ typedef struct _DriverFuncs {
      * valid. See enum _DriverPriority. */
     int priority;
 
+    BOOL (WINAPI *pget_device_name_from_guid)(GUID *guid, char **name, EDataFlow *flow);
     /* ids gets an array of human-friendly endpoint names
      * keys gets an array of driver-specific stuff that is used
      *   in GetAudioEndpoint to identify the endpoint
@@ -47,12 +50,6 @@ typedef struct _DriverFuncs {
      *   all of the elements in both arrays with HeapFree() */
     HRESULT (WINAPI *pGetEndpointIDs)(EDataFlow flow, WCHAR ***ids,
             GUID **guids, UINT *num, UINT *default_index);
-    HRESULT (WINAPI *pGetAudioEndpoint)(void *key, IMMDevice *dev,
-            IAudioClient **out);
-    HRESULT (WINAPI *pGetAudioSessionWrapper)(const GUID *guid, IMMDevice *device,
-                                              struct audio_session_wrapper **out);
-    HRESULT (WINAPI *pGetPropValue)(GUID *guid,
-            const PROPERTYKEY *prop, PROPVARIANT *out);
 } DriverFuncs;
 
 extern DriverFuncs drvs DECLSPEC_HIDDEN;
@@ -72,7 +69,13 @@ typedef struct MMDevice {
     struct list entry;
 } MMDevice;
 
-extern HRESULT AudioClient_Create(MMDevice *parent, IAudioClient **ppv) DECLSPEC_HIDDEN;
+static inline void wine_unix_call(const unsigned int code, void *args)
+{
+    const NTSTATUS status = __wine_unix_call(drvs.module_unixlib, code, args);
+    assert(!status);
+}
+
+extern HRESULT AudioClient_Create(GUID *guid, IMMDevice *device, IAudioClient **out) DECLSPEC_HIDDEN;
 extern HRESULT AudioEndpointVolume_Create(MMDevice *parent, IAudioEndpointVolumeEx **ppv) DECLSPEC_HIDDEN;
 extern HRESULT AudioSessionManager_Create(IMMDevice *device, IAudioSessionManager2 **ppv) DECLSPEC_HIDDEN;
 extern HRESULT SpatialAudioClient_Create(IMMDevice *device, ISpatialAudioClient **out) DECLSPEC_HIDDEN;

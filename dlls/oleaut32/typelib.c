@@ -4602,7 +4602,7 @@ static ITypeLib2* ITypeLib2_Constructor_SLTG(LPVOID pLib, DWORD dwTLBLength)
     len = *(DWORD*)ptr;
 
     hlp_strings = (const BYTE *)ptr + sizeof(DWORD);
-    TRACE("max help string length %#x, help strings length %#x\n",
+    TRACE("max help string length %#x, help strings length %#lx\n",
         *(WORD *)hlp_strings, *(DWORD *)(hlp_strings + 2));
 
     /* Now add this to pLibBLk look at what we're pointing at and

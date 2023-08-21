@@ -253,6 +253,11 @@ static inline void vkd3d_cond_destroy(struct vkd3d_cond *cond)
 {
 }
 
+static inline unsigned int vkd3d_atomic_increment(unsigned int volatile *x)
+{
+    return InterlockedIncrement((LONG volatile *)x);
+}
+
 static inline unsigned int vkd3d_atomic_decrement(unsigned int volatile *x)
 {
     return InterlockedDecrement((LONG volatile *)x);
@@ -387,6 +392,15 @@ static inline unsigned int vkd3d_atomic_decrement(unsigned int volatile *x)
 }
 # else
 #  error "vkd3d_atomic_decrement() not implemented for this platform"
+# endif  /* HAVE_SYNC_SUB_AND_FETCH */
+
+# if HAVE_SYNC_ADD_AND_FETCH
+static inline unsigned int vkd3d_atomic_increment(unsigned int volatile *x)
+{
+    return __sync_add_and_fetch(x, 1);
+}
+# else
+#  error "vkd3d_atomic_increment() not implemented for this platform"
 # endif  /* HAVE_SYNC_ADD_AND_FETCH */
 
 # if HAVE_SYNC_BOOL_COMPARE_AND_SWAP
@@ -602,9 +616,11 @@ struct vkd3d_signaled_semaphore
 /* ID3D12Fence */
 struct d3d12_fence
 {
-    ID3D12Fence ID3D12Fence_iface;
+    ID3D12Fence1 ID3D12Fence1_iface;
     LONG internal_refcount;
     LONG refcount;
+
+    D3D12_FENCE_FLAGS flags;
 
     uint64_t value;
     uint64_t max_pending_value;
@@ -673,9 +689,28 @@ struct d3d12_heap *unsafe_impl_from_ID3D12Heap(ID3D12Heap *iface);
 #define VKD3D_RESOURCE_DEDICATED_HEAP 0x00000008
 #define VKD3D_RESOURCE_LINEAR_TILING  0x00000010
 
+struct vkd3d_tiled_region_extent
+{
+    unsigned int width;
+    unsigned int height;
+    unsigned int depth;
+};
+
+struct vkd3d_subresource_tile_info
+{
+    unsigned int offset;
+    unsigned int count;
+    struct vkd3d_tiled_region_extent extent;
+};
+
 struct d3d12_resource_tile_info
 {
+    VkExtent3D tile_extent;
+    unsigned int total_count;
+    unsigned int standard_mip_count;
+    unsigned int packed_mip_tile_count;
     unsigned int subresource_count;
+    struct vkd3d_subresource_tile_info *subresources;
 };
 
 /* ID3D12Resource */
@@ -728,6 +763,10 @@ static inline bool d3d12_resource_is_texture(const struct d3d12_resource *resour
 
 bool d3d12_resource_is_cpu_accessible(const struct d3d12_resource *resource);
 HRESULT d3d12_resource_validate_desc(const D3D12_RESOURCE_DESC *desc, struct d3d12_device *device);
+void d3d12_resource_get_tiling(struct d3d12_device *device, const struct d3d12_resource *resource,
+        UINT *total_tile_count, D3D12_PACKED_MIP_INFO *packed_mip_info, D3D12_TILE_SHAPE *standard_tile_shape,
+        UINT *sub_resource_tiling_count, UINT first_sub_resource_tiling,
+        D3D12_SUBRESOURCE_TILING *sub_resource_tilings);
 
 HRESULT d3d12_committed_resource_create(struct d3d12_device *device,
         const D3D12_HEAP_PROPERTIES *heap_properties, D3D12_HEAP_FLAGS heap_flags,
@@ -868,8 +907,9 @@ static inline void *d3d12_desc_get_object_ref(const volatile struct d3d12_desc *
     {
         do
         {
-            view = src->s.u.object;
-        } while (view && !vkd3d_view_incref(view));
+            if (!(view = src->s.u.object))
+                return NULL;
+        } while (!vkd3d_view_incref(view));
 
         /* Check if the object is still in src to handle the case where it was
          * already freed and reused elsewhere when the refcount was incremented. */
@@ -895,7 +935,10 @@ static inline void d3d12_desc_copy_raw(struct d3d12_desc *dst, const struct d3d1
     dst->s = src->s;
 }
 
-void d3d12_desc_copy(struct d3d12_desc *dst, const struct d3d12_desc *src, struct d3d12_device *device);
+struct d3d12_descriptor_heap;
+
+void d3d12_desc_copy(struct d3d12_desc *dst, const struct d3d12_desc *src, struct d3d12_descriptor_heap *dst_heap,
+        struct d3d12_device *device);
 void d3d12_desc_create_cbv(struct d3d12_desc *descriptor,
         struct d3d12_device *device, const D3D12_CONSTANT_BUFFER_VIEW_DESC *desc);
 void d3d12_desc_create_srv(struct d3d12_desc *descriptor,
@@ -998,6 +1041,7 @@ struct d3d12_descriptor_heap
     D3D12_DESCRIPTOR_HEAP_DESC desc;
 
     struct d3d12_device *device;
+    bool use_vk_heaps;
 
     struct vkd3d_private_store private_store;
 
@@ -1382,7 +1426,7 @@ enum vkd3d_pipeline_bind_point
 /* ID3D12CommandList */
 struct d3d12_command_list
 {
-    ID3D12GraphicsCommandList2 ID3D12GraphicsCommandList2_iface;
+    ID3D12GraphicsCommandList3 ID3D12GraphicsCommandList3_iface;
     LONG refcount;
 
     D3D12_COMMAND_LIST_TYPE type;
@@ -1575,6 +1619,7 @@ struct d3d12_command_signature
 {
     ID3D12CommandSignature ID3D12CommandSignature_iface;
     LONG refcount;
+    unsigned int internal_refcount;
 
     D3D12_COMMAND_SIGNATURE_DESC desc;
 

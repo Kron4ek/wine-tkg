@@ -55,7 +55,6 @@ enum streaming_thread_message
 {
     EVRM_STOP = WM_USER,
     EVRM_PRESENT = WM_USER + 1,
-    EVRM_PROCESS_INPUT = WM_USER + 2,
 };
 
 struct sample_queue
@@ -66,6 +65,7 @@ struct sample_queue
     unsigned int front;
     unsigned int back;
     IMFSample *last_presented;
+    CRITICAL_SECTION cs;
 };
 
 struct streaming_thread
@@ -425,6 +425,7 @@ static HRESULT video_presenter_sample_queue_init(struct video_presenter *present
 
     queue->size = presenter->allocator_capacity;
     queue->back = queue->size - 1;
+    InitializeCriticalSection(&queue->cs);
 
     return S_OK;
 }
@@ -435,7 +436,7 @@ static void video_presenter_sample_queue_push(struct video_presenter *presenter,
     struct sample_queue *queue = &presenter->thread.queue;
     unsigned int idx;
 
-    EnterCriticalSection(&presenter->cs);
+    EnterCriticalSection(&queue->cs);
     if (queue->used != queue->size)
     {
         if (at_front)
@@ -446,14 +447,14 @@ static void video_presenter_sample_queue_push(struct video_presenter *presenter,
         queue->used++;
         IMFSample_AddRef(sample);
     }
-    LeaveCriticalSection(&presenter->cs);
+    LeaveCriticalSection(&queue->cs);
 }
 
 static BOOL video_presenter_sample_queue_pop(struct video_presenter *presenter, IMFSample **sample)
 {
     struct sample_queue *queue = &presenter->thread.queue;
 
-    EnterCriticalSection(&presenter->cs);
+    EnterCriticalSection(&queue->cs);
     if (queue->used)
     {
         *sample = queue->samples[queue->front];
@@ -462,9 +463,22 @@ static BOOL video_presenter_sample_queue_pop(struct video_presenter *presenter, 
     }
     else
         *sample = NULL;
-    LeaveCriticalSection(&presenter->cs);
+    LeaveCriticalSection(&queue->cs);
 
     return *sample != NULL;
+}
+
+
+static void video_presenter_sample_queue_free(struct video_presenter *presenter)
+{
+    struct sample_queue *queue = &presenter->thread.queue;
+    IMFSample *sample;
+
+    while (video_presenter_sample_queue_pop(presenter, &sample))
+        IMFSample_Release(sample);
+
+    free(queue->samples);
+    DeleteCriticalSection(&queue->cs);
 }
 
 static HRESULT video_presenter_get_sample_surface(IMFSample *sample, IDirect3DSurface9 **surface)
@@ -490,6 +504,7 @@ static void video_presenter_sample_present(struct video_presenter *presenter, IM
 {
     IDirect3DSurface9 *surface, *backbuffer;
     IDirect3DDevice9 *device;
+    struct sample_queue *queue = &presenter->thread.queue;
     HRESULT hr;
 
     if (FAILED(hr = video_presenter_get_sample_surface(sample, &surface)))
@@ -515,12 +530,12 @@ static void video_presenter_sample_present(struct video_presenter *presenter, IM
             WARN("Failed to get a backbuffer, hr %#lx.\n", hr);
     }
 
-    EnterCriticalSection(&presenter->cs);
-    if (presenter->thread.queue.last_presented)
-        IMFSample_Release(presenter->thread.queue.last_presented);
-    presenter->thread.queue.last_presented = sample;
-    IMFSample_AddRef(presenter->thread.queue.last_presented);
-    LeaveCriticalSection(&presenter->cs);
+    EnterCriticalSection(&queue->cs);
+    if (queue->last_presented)
+        IMFSample_Release(queue->last_presented);
+    queue->last_presented = sample;
+    IMFSample_AddRef(queue->last_presented);
+    LeaveCriticalSection(&queue->cs);
 
     IDirect3DSurface9_Release(surface);
 }
@@ -690,11 +705,6 @@ static DWORD CALLBACK video_presenter_streaming_thread(void *arg)
                     }
                     break;
 
-                case EVRM_PROCESS_INPUT:
-                    EnterCriticalSection(&presenter->cs);
-                    video_presenter_process_input(presenter);
-                    LeaveCriticalSection(&presenter->cs);
-                    break;
                 default:
                     ;
             }
@@ -754,6 +764,7 @@ static HRESULT video_presenter_end_streaming(struct video_presenter *presenter)
 
     if (presenter->thread.queue.last_presented)
         IMFSample_Release(presenter->thread.queue.last_presented);
+    video_presenter_sample_queue_free(presenter);
     memset(&presenter->thread, 0, sizeof(presenter->thread));
     video_presenter_set_allocator_callback(presenter, NULL);
 
@@ -1794,9 +1805,9 @@ static HRESULT WINAPI video_presenter_allocator_cb_NotifyRelease(IMFVideoSampleA
 {
     struct video_presenter *presenter = impl_from_IMFVideoSampleAllocatorNotify(iface);
 
-    /* Release notification is executed under allocator lock, instead of processing samples here
-       notify streaming thread. */
-    PostThreadMessageW(presenter->thread.tid, EVRM_PROCESS_INPUT, 0, 0);
+    EnterCriticalSection(&presenter->cs);
+    video_presenter_process_input(presenter);
+    LeaveCriticalSection(&presenter->cs);
 
     return S_OK;
 }
@@ -2132,7 +2143,7 @@ static HRESULT video_presenter_init_d3d(struct video_presenter *presenter)
     if (FAILED(hr))
         WARN("Failed to set new device for the manager, hr %#lx.\n", hr);
 
-    if (SUCCEEDED(hr = MFCreateVideoSampleAllocator(&IID_IMFVideoSampleAllocator, (void **)&presenter->allocator)))
+    if (SUCCEEDED(hr = create_video_sample_allocator(FALSE, &IID_IMFVideoSampleAllocator, (void **)&presenter->allocator)))
     {
         hr = IMFVideoSampleAllocator_SetDirectXManager(presenter->allocator, (IUnknown *)presenter->device_manager);
     }

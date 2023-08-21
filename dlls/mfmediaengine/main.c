@@ -63,6 +63,12 @@ static BOOL mf_array_reserve(void **elements, size_t *capacity, size_t count, si
     return TRUE;
 }
 
+/* Convert 100ns to seconds */
+static double mftime_to_seconds(MFTIME time)
+{
+    return (double)time / 10000000.0;
+}
+
 enum media_engine_mode
 {
     MEDIA_ENGINE_INVALID,
@@ -1048,7 +1054,7 @@ static HRESULT media_engine_create_effects(struct effect *effects, size_t count,
 
         if (FAILED(hr = MFCreateTopologyNode(MF_TOPOLOGY_TRANSFORM_NODE, &node)))
         {
-            WARN("Failed to create transform node, hr %#lx", hr);
+            WARN("Failed to create transform node, hr %#lx.\n", hr);
             break;
         }
 
@@ -1248,10 +1254,7 @@ static HRESULT media_engine_create_topology(struct media_engine *engine, IMFMedi
 
     /* Assume live source if duration was not provided. */
     if (SUCCEEDED(IMFPresentationDescriptor_GetUINT64(pd, &MF_PD_DURATION, &duration)))
-    {
-        /* Convert 100ns to seconds. */
-        engine->duration = duration / 10000000;
-    }
+        engine->duration = mftime_to_seconds(duration);
     else
         engine->duration = INFINITY;
 
@@ -1749,7 +1752,7 @@ static double WINAPI media_engine_GetCurrentTime(IMFMediaEngineEx *iface)
     }
     else if (SUCCEEDED(IMFPresentationClock_GetTime(engine->clock, &clocktime)))
     {
-        ret = (double)clocktime / 10000000.0;
+        ret = mftime_to_seconds(clocktime);
     }
     LeaveCriticalSection(&engine->cs);
 
@@ -1896,17 +1899,35 @@ static HRESULT WINAPI media_engine_GetPlayed(IMFMediaEngineEx *iface, IMFMediaTi
 static HRESULT WINAPI media_engine_GetSeekable(IMFMediaEngineEx *iface, IMFMediaTimeRange **seekable)
 {
     struct media_engine *engine = impl_from_IMFMediaEngineEx(iface);
-    HRESULT hr = E_NOTIMPL;
+    IMFMediaTimeRange *time_range = NULL;
+    DWORD flags;
+    HRESULT hr;
 
-    FIXME("(%p, %p): stub.\n", iface, seekable);
+    TRACE("%p, %p.\n", iface, seekable);
 
     EnterCriticalSection(&engine->cs);
 
     if (engine->flags & FLAGS_ENGINE_SHUT_DOWN)
         hr = MF_E_SHUTDOWN;
+    else
+    {
+        hr = create_time_range(&time_range);
+        if (SUCCEEDED(hr) && !isnan(engine->duration) && engine->presentation.source)
+        {
+            hr = IMFMediaSource_GetCharacteristics(engine->presentation.source, &flags);
+            if (SUCCEEDED(hr) && (flags & MFBYTESTREAM_IS_SEEKABLE))
+                hr = IMFMediaTimeRange_AddRange(time_range, 0.0, engine->duration);
+        }
+    }
 
     LeaveCriticalSection(&engine->cs);
 
+    if (FAILED(hr) && time_range)
+    {
+        IMFMediaTimeRange_Release(time_range);
+        time_range = NULL;
+    }
+    *seekable = time_range;
     return hr;
 }
 
@@ -2719,9 +2740,22 @@ static HRESULT WINAPI media_engine_InsertAudioEffect(IMFMediaEngineEx *iface, IU
 
 static HRESULT WINAPI media_engine_RemoveAllEffects(IMFMediaEngineEx *iface)
 {
-    FIXME("%p stub.\n", iface);
+    struct media_engine *engine = impl_from_IMFMediaEngineEx(iface);
+    HRESULT hr = S_OK;
 
-    return E_NOTIMPL;
+    TRACE("%p.\n", iface);
+
+    EnterCriticalSection(&engine->cs);
+    if (engine->flags & FLAGS_ENGINE_SHUT_DOWN)
+        hr = MF_E_SHUTDOWN;
+    else
+    {
+        media_engine_clear_effects(&engine->audio_effects);
+        media_engine_clear_effects(&engine->video_effects);
+    }
+    LeaveCriticalSection(&engine->cs);
+
+    return hr;
 }
 
 static HRESULT WINAPI media_engine_SetTimelineMarkerTimer(IMFMediaEngineEx *iface, double timeout)

@@ -560,7 +560,7 @@ struct WLDAP32_berval ** CDECL ldap_get_values_lenA( LDAP *, LDAPMessage *,
 struct WLDAP32_berval ** CDECL ldap_get_values_lenW( LDAP *, LDAPMessage *,
                                                      WCHAR * ) __WINE_DEALLOC(WLDAP32_ldap_value_free_len);
 
-ULONG map_error( int ) DECLSPEC_HIDDEN;
+ULONG map_error( int );
 
 static inline char *strWtoU( const WCHAR *str )
 {
@@ -868,6 +868,7 @@ static inline void modfreeU( LDAPMod *mod )
         bvarrayfreeU( mod->mod_vals.modv_bvals );
     else
         strarrayfreeU( mod->mod_vals.modv_strvals );
+    free( mod->mod_type );
     free( mod );
 }
 
@@ -1010,6 +1011,7 @@ static inline void modfreeW( LDAPModW *mod )
         bvarrayfreeW( mod->mod_vals.modv_bvals );
     else
         strarrayfreeW( mod->mod_vals.modv_strvals );
+    free( mod->mod_type );
     free( mod );
 }
 

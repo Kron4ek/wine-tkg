@@ -200,7 +200,7 @@ TW_UINT16 sane_option_get_int( const char *option_name, int *val ) DECLSPEC_HIDD
 TW_UINT16 sane_option_set_int( const char *option_name, int val, BOOL *reload ) DECLSPEC_HIDDEN;
 TW_UINT16 sane_option_get_str( const char *option_name, char *val, int len ) DECLSPEC_HIDDEN;
 TW_UINT16 sane_option_set_str( const char *option_name, char *val, BOOL *reload ) DECLSPEC_HIDDEN;
-TW_UINT16 sane_option_probe_resolution( const char *option_name, int *minval, int *maxval, int *quant) DECLSPEC_HIDDEN;
+TW_UINT16 sane_option_probe_resolution( const char *option_name, struct option_descriptor *opt ) DECLSPEC_HIDDEN;
 TW_UINT16 sane_option_probe_mode(TW_UINT16 *current, TW_UINT32 *choices, int *count) DECLSPEC_HIDDEN;
 TW_UINT16 sane_option_get_bool( const char *option_name, BOOL *val ) DECLSPEC_HIDDEN;
 TW_UINT16 sane_option_set_bool( const char *option_name, BOOL val ) DECLSPEC_HIDDEN;
@@ -208,6 +208,7 @@ TW_UINT16 sane_option_get_scan_area( int *tlx, int *tly, int *brx, int *bry ) DE
 TW_UINT16 sane_option_get_max_scan_area( int *tlx, int *tly, int *brx, int *bry ) DECLSPEC_HIDDEN;
 TW_UINT16 sane_option_set_scan_area( int tlx, int tly, int brx, int bry, BOOL *reload ) DECLSPEC_HIDDEN;
 TW_FIX32 convert_sane_res_to_twain( int res ) DECLSPEC_HIDDEN;
+int convert_twain_res_to_sane( TW_FIX32 res ) DECLSPEC_HIDDEN;
 TW_UINT16 get_sane_params( struct frame_parameters *params ) DECLSPEC_HIDDEN;
 
 #endif

@@ -456,7 +456,6 @@ GpStatus WINGDIPAPI GdipGetLogFontW(GpFont *font, GpGraphics *graphics, LOGFONTW
 {
     REAL angle, rel_height, height;
     GpMatrix matrix;
-    GpPointF pt[3];
 
     TRACE("(%p, %p, %p)\n", font, graphics, lf);
 
@@ -479,35 +478,17 @@ GpStatus WINGDIPAPI GdipGetLogFontW(GpFont *font, GpGraphics *graphics, LOGFONTW
             height = units_to_pixels(font->emSize, font->unit, graphics->yres, graphics->printer_display);
     }
 
-    pt[0].X = 0.0;
-    pt[0].Y = 0.0;
-    pt[1].X = 1.0;
-    pt[1].Y = 0.0;
-    pt[2].X = 0.0;
-    pt[2].Y = 1.0;
-    GdipTransformMatrixPoints(&matrix, pt, 3);
-    angle = -gdiplus_atan2((pt[1].Y - pt[0].Y), (pt[1].X - pt[0].X));
-    rel_height = sqrt((pt[2].Y - pt[0].Y) * (pt[2].Y - pt[0].Y)+
-                      (pt[2].X - pt[0].X) * (pt[2].X - pt[0].X));
+    GdipMultiplyMatrix(&matrix, &graphics->gdi_transform, MatrixOrderAppend);
+    transform_properties(graphics, &matrix, FALSE, NULL, &rel_height, &angle);
+    get_log_fontW(font, graphics, lf);
 
     lf->lfHeight = -gdip_round(height * rel_height);
-    lf->lfWidth = 0;
     lf->lfEscapement = lf->lfOrientation = gdip_round((angle / M_PI) * 1800.0);
     if (lf->lfEscapement < 0)
     {
         lf->lfEscapement += 3600;
         lf->lfOrientation += 3600;
     }
-    lf->lfWeight = font->otm.otmTextMetrics.tmWeight;
-    lf->lfItalic = font->otm.otmTextMetrics.tmItalic ? 1 : 0;
-    lf->lfUnderline = font->otm.otmTextMetrics.tmUnderlined ? 1 : 0;
-    lf->lfStrikeOut = font->otm.otmTextMetrics.tmStruckOut ? 1 : 0;
-    lf->lfCharSet = font->otm.otmTextMetrics.tmCharSet;
-    lf->lfOutPrecision = OUT_DEFAULT_PRECIS;
-    lf->lfClipPrecision = CLIP_DEFAULT_PRECIS;
-    lf->lfQuality = DEFAULT_QUALITY;
-    lf->lfPitchAndFamily = 0;
-    lstrcpyW(lf->lfFaceName, font->family->FamilyName);
 
     TRACE("=> %s,%ld\n", debugstr_w(lf->lfFaceName), lf->lfHeight);
 

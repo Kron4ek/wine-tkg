@@ -596,7 +596,7 @@ static BOOL init_xpcom(const PRUnichar *gre_path)
         ERR("NS_GetComponentRegistrar failed: %08lx\n", nsres);
     }
 
-    init_node_cc();
+    init_dispex_cc();
 
     return TRUE;
 }
@@ -1217,15 +1217,8 @@ void setup_editor_controller(GeckoBrowser *This)
     nsIControllerContext *ctrlctx;
     nsresult nsres;
 
-    if(This->editor) {
-        nsIEditor_Release(This->editor);
-        This->editor = NULL;
-    }
-
-    if(This->editor_controller) {
-        nsIController_Release(This->editor_controller);
-        This->editor_controller = NULL;
-    }
+    unlink_ref(&This->editor);
+    unlink_ref(&This->editor_controller);
 
     nsres = get_nsinterface((nsISupports*)This->webbrowser, &IID_nsIEditingSession,
             (void**)&editing_session);
@@ -1304,7 +1297,7 @@ BOOL is_gecko_path(const char *path)
             *ptr = '/';
     }
 
-    UrlUnescapeW(buf, NULL, NULL, URL_UNESCAPE_INPLACE);
+    UrlUnescapeW(buf, NULL, NULL, URL_UNESCAPE_INPLACE | URL_UNESCAPE_AS_UTF8);
     buf[gecko_path_len] = 0;
 
     ret = !wcsicmp(buf, gecko_path);

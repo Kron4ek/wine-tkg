@@ -6,6 +6,7 @@ SOURCES = \
 	activation.idl \
 	activaut.idl \
 	activdbg.idl \
+	activeds.h \
 	activscp.idl \
 	adserr.h \
 	adshlp.h \
@@ -711,6 +712,7 @@ SOURCES = \
 	softpub.h \
 	spatialaudioclient.idl \
 	specstrings.h \
+	specstrings_strict.h \
 	sperror.h \
 	sql.h \
 	sqlext.h \
@@ -818,6 +820,7 @@ SOURCES = \
 	windows.devices.haptics.idl \
 	windows.devices.power.idl \
 	windows.devices.radios.idl \
+	windows.devices.usb.idl \
 	windows.foundation.collections.idl \
 	windows.foundation.idl \
 	windows.foundation.metadata.idl \
@@ -845,7 +848,10 @@ SOURCES = \
 	windows.perception.spatial.surfaces.idl \
 	windows.security.credentials.idl \
 	windows.security.cryptography.idl \
+	windows.security.isolation.idl \
+	windows.storage.fileproperties.idl \
 	windows.storage.idl \
+	windows.storage.search.idl \
 	windows.storage.streams.idl \
 	windows.system.idl \
 	windows.system.power.idl \
@@ -857,6 +863,7 @@ SOURCES = \
 	windows.ui.core.idl \
 	windows.ui.idl \
 	windows.ui.viewmanagement.idl \
+	windows.ui.xaml.hosting.desktopwindowxamlsource.idl \
 	windowscontracts.idl \
 	windowsx.h \
 	wine/afd.h \
@@ -982,6 +989,7 @@ SOURCES = \
 	xact2wb.h \
 	xact3.h \
 	xact3wb.h \
+	xamlom.idl \
 	xapo.idl \
 	xapofx.h \
 	xaudio2.idl \

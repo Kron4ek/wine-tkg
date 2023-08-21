@@ -1541,7 +1541,7 @@ Window get_dummy_parent(void)
         dummy_parent = XCreateWindow( gdi_display, root_window, -1, -1, 1, 1, 0, default_visual.depth,
                                       InputOutput, default_visual.visual,
                                       CWColormap | CWBorderPixel | CWOverrideRedirect, &attrib );
-        WARN("Xshape support is not compiled in. Applications under XWayland may have poor performance.");
+        WARN("Xshape support is not compiled in. Applications under XWayland may have poor performance.\n");
 #endif
         XMapWindow( gdi_display, dummy_parent );
     }
@@ -1948,6 +1948,7 @@ static BOOL create_desktop_win_data( Window win, HWND hwnd )
 void X11DRV_SetDesktopWindow( HWND hwnd )
 {
     unsigned int width, height;
+    Display *display;
 
     /* retrieve the real size of the desktop */
     SERVER_START_REQ( get_window_rectangles )
@@ -1986,14 +1987,19 @@ void X11DRV_SetDesktopWindow( HWND hwnd )
         {
             ERR( "Failed to create virtual desktop window data\n" );
             root_window = DefaultRootWindow( gdi_display );
+            return;
         }
-        else if (is_desktop_fullscreen())
+
+        display = x11drv_thread_data()->display;
+        if (is_desktop_fullscreen())
         {
-            Display *display = x11drv_thread_data()->display;
             TRACE("setting desktop to fullscreen\n");
             XChangeProperty( display, root_window, x11drv_atom(_NET_WM_STATE), XA_ATOM, 32, PropModeReplace,
                              (unsigned char*)&x11drv_atom(_NET_WM_STATE_FULLSCREEN), 1 );
         }
+
+        FIXME("Enabling xinput in desktop thread\n");
+        x11drv_xinput_enable( display, DefaultRootWindow( display ), PointerMotionMask );
     }
     else
     {

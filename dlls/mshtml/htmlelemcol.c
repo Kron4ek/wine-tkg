@@ -223,7 +223,7 @@ static HRESULT WINAPI HTMLElementCollection_QueryInterface(IHTMLElementCollectio
         *ppv = &This->IHTMLElementCollection_iface;
     }else if(IsEqualGUID(&IID_IHTMLElementCollection, riid)) {
         *ppv = &This->IHTMLElementCollection_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         *ppv = NULL;
@@ -252,16 +252,8 @@ static ULONG WINAPI HTMLElementCollection_Release(IHTMLElementCollection *iface)
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
-        unsigned i;
-
-        for(i=0; i < This->len; i++)
-            node_release(&This->elems[i]->node);
-        free(This->elems);
-
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -550,6 +542,25 @@ static inline HTMLElementCollection *impl_from_DispatchEx(DispatchEx *iface)
     return CONTAINING_RECORD(iface, HTMLElementCollection, dispex);
 }
 
+static void HTMLElementCollection_unlink(DispatchEx *dispex)
+{
+    HTMLElementCollection *This = impl_from_DispatchEx(dispex);
+    unsigned i, len = This->len;
+
+    if(len) {
+        This->len = 0;
+        for(i = 0; i < len; i++)
+            node_release(&This->elems[i]->node);
+        free(This->elems);
+    }
+}
+
+static void HTMLElementCollection_destructor(DispatchEx *dispex)
+{
+    HTMLElementCollection *This = impl_from_DispatchEx(dispex);
+    free(This);
+}
+
 #define DISPID_ELEMCOL_0 MSHTML_DISPID_CUSTOM_MIN
 
 static HRESULT HTMLElementCollection_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
@@ -622,11 +633,11 @@ static HRESULT HTMLElementCollection_invoke(DispatchEx *dispex, DISPID id, LCID 
 }
 
 static const dispex_static_data_vtbl_t HTMLElementColection_dispex_vtbl = {
-    NULL,
-    HTMLElementCollection_get_dispid,
-    HTMLElementCollection_get_name,
-    HTMLElementCollection_invoke,
-    NULL
+    .destructor       = HTMLElementCollection_destructor,
+    .unlink           = HTMLElementCollection_unlink,
+    .get_dispid       = HTMLElementCollection_get_dispid,
+    .get_name         = HTMLElementCollection_get_name,
+    .invoke           = HTMLElementCollection_invoke,
 };
 
 static const tid_t HTMLElementCollection_iface_tids[] = {
@@ -635,7 +646,7 @@ static const tid_t HTMLElementCollection_iface_tids[] = {
 };
 
 static dispex_static_data_t HTMLElementCollection_dispex = {
-    L"HTMLCollection",
+    "HTMLCollection",
     &HTMLElementColection_dispex_vtbl,
     DispHTMLElementCollection_tid,
     HTMLElementCollection_iface_tids

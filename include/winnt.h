@@ -536,7 +536,8 @@ typedef CHAR           *PZZSTR;
 typedef const CHAR     *PCZZSTR;
 
 /* Unicode string types */
-typedef const WCHAR    *PCWCHAR,    *LPCUWCHAR, *PCUWCHAR;
+typedef const WCHAR    *PCWCHAR,    *LPCWCHAR;
+typedef const WCHAR    *PCUWCHAR,   *LPCUWCHAR;
 typedef WCHAR          *PWCH,       *LPWCH;
 typedef const WCHAR    *PCWCH,      *LPCWCH;
 typedef WCHAR          *PNZWCH,     *PUNZWCH;
@@ -5474,12 +5475,6 @@ typedef struct _QUOTA_LIMITS_EX {
 #define	FILE_128_BYTE_ALIGNMENT		0x0000007f
 #define	FILE_256_BYTE_ALIGNMENT		0x000000ff
 #define	FILE_512_BYTE_ALIGNMENT		0x000001ff
-
-#define COMPRESSION_FORMAT_NONE         0
-#define COMPRESSION_FORMAT_DEFAULT      1
-#define COMPRESSION_FORMAT_LZNT1        2
-#define COMPRESSION_ENGINE_STANDARD     0
-#define COMPRESSION_ENGINE_MAXIMUM      256
 
 #define MAILSLOT_NO_MESSAGE             ((DWORD)-1)
 #define MAILSLOT_WAIT_FOREVER           ((DWORD)-1)

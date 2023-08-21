@@ -44,6 +44,7 @@ const UINT D3D12_DEFAULT_STENCIL_WRITE_MASK = 0xff;
 const UINT D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND = 0xffffffff;
 cpp_quote("#define D3D12_FLOAT32_MAX (3.402823466e+38f)")
 const UINT D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT = 32;
+const UINT D3D12_PACKED_TILE = 0xffffffff;
 const UINT D3D12_UAV_SLOT_COUNT = 64;
 const UINT D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT = 4096;
 const UINT D3D12_REQ_IMMEDIATE_CONSTANT_BUFFER_ELEMENT_COUNT = 4096;
@@ -72,6 +73,7 @@ const UINT D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT = 4096;
 const UINT D3D12_STANDARD_MAXIMUM_ELEMENT_ALIGNMENT_BYTE_MULTIPLE = 4;
 const UINT D3D12_TEXTURE_DATA_PITCH_ALIGNMENT = 256;
 const UINT D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT = 512;
+const UINT D3D12_TILED_RESOURCE_TILE_SIZE_IN_BYTES = 65536;
 const UINT D3D12_UAV_COUNTER_PLACEMENT_ALIGNMENT = 4096;
 const UINT D3D12_VS_INPUT_REGISTER_COUNT = 32;
 const UINT D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE = 16;
@@ -1853,6 +1855,24 @@ typedef struct D3D12_WRITEBUFFERIMMEDIATE_PARAMETER
     UINT32 Value;
 } D3D12_WRITEBUFFERIMMEDIATE_PARAMETER;
 
+typedef enum D3D12_PROTECTED_RESOURCE_SESSION_FLAGS
+{
+    D3D12_PROTECTED_RESOURCE_SESSION_FLAG_NONE = 0,
+} D3D12_PROTECTED_RESOURCE_SESSION_FLAGS;
+cpp_quote("DEFINE_ENUM_FLAG_OPERATORS(D3D12_PROTECTED_RESOURCE_SESSION_FLAGS);")
+
+typedef enum D3D12_PROTECTED_SESSION_STATUS
+{
+    D3D12_PROTECTED_SESSION_STATUS_OK = 0,
+    D3D12_PROTECTED_SESSION_STATUS_INVALID = 1,
+} D3D12_PROTECTED_SESSION_STATUS;
+
+typedef struct D3D12_PROTECTED_RESOURCE_SESSION_DESC
+{
+    UINT NodeMask;
+    D3D12_PROTECTED_RESOURCE_SESSION_FLAGS Flags;
+} D3D12_PROTECTED_RESOURCE_SESSION_DESC;
+
 [
     uuid(c4fec28f-7966-4e95-9f94-f431cb56c3b8),
     object,
@@ -2214,6 +2234,41 @@ interface ID3D12GraphicsCommandList2 : ID3D12GraphicsCommandList1
             const D3D12_WRITEBUFFERIMMEDIATE_MODE *modes);
 }
 
+[
+    uuid(a1533d18-0ac1-4084-85b9-89a96116806b),
+    object,
+    local,
+    pointer_default(unique)
+]
+interface ID3D12ProtectedSession : ID3D12DeviceChild
+{
+    HRESULT GetStatusFence(REFIID riid, void **fence);
+
+    D3D12_PROTECTED_SESSION_STATUS GetSessionStatus();
+}
+
+[
+    uuid(6cd696f4-f289-40cc-8091-5a6c0a099c3d),
+    object,
+    local,
+    pointer_default(unique)
+]
+interface ID3D12ProtectedResourceSession : ID3D12ProtectedSession
+{
+    D3D12_PROTECTED_RESOURCE_SESSION_DESC GetDesc();
+}
+
+[
+    uuid(6fda83a7-b84c-4e38-9ac8-c7bd22016b3d),
+    object,
+    local,
+    pointer_default(unique)
+]
+interface ID3D12GraphicsCommandList3 : ID3D12GraphicsCommandList2
+{
+    void SetProtectedResourceSession(ID3D12ProtectedResourceSession *protected_resource_session);
+}
+
 typedef enum D3D12_TILE_RANGE_FLAGS
 {
     D3D12_TILE_RANGE_FLAG_NONE = 0x0,
@@ -2376,6 +2431,17 @@ interface ID3D12Fence : ID3D12Pageable
     UINT64 GetCompletedValue();
     HRESULT SetEventOnCompletion(UINT64 value, HANDLE event);
     HRESULT Signal(UINT64 value);
+}
+
+[
+    uuid(433685fe-e22b-4ca0-a8db-b5b4f4dd0e4a),
+    object,
+    local,
+    pointer_default(unique)
+]
+interface ID3D12Fence1 : ID3D12Fence
+{
+    D3D12_FENCE_FLAGS GetCreationFlags();
 }
 
 [

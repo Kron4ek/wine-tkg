@@ -27,6 +27,7 @@
 #include "ole2.h"
 
 #include "mshtml_private.h"
+#include "htmlevent.h"
 
 #include "wine/debug.h"
 
@@ -184,13 +185,13 @@ static HRESULT HTMLCommentElement_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, 
 }
 
 static const NodeImplVtbl HTMLCommentElementImplVtbl = {
-    &CLSID_HTMLCommentElement,
-    HTMLCommentElement_QI,
-    HTMLCommentElement_destructor,
-    HTMLElement_cpc,
-    HTMLCommentElement_clone,
-    HTMLElement_handle_event,
-    HTMLElement_get_attr_col
+    .clsid                 = &CLSID_HTMLCommentElement,
+    .qi                    = HTMLCommentElement_QI,
+    .destructor            = HTMLCommentElement_destructor,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLCommentElement_clone,
+    .handle_event          = HTMLElement_handle_event,
+    .get_attr_col          = HTMLElement_get_attr_col
 };
 
 static const tid_t HTMLCommentElement_iface_tids[] = {
@@ -199,8 +200,8 @@ static const tid_t HTMLCommentElement_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLCommentElement_dispex = {
-    L"Comment",
-    NULL,
+    "Comment",
+    &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLCommentElement_tid,
     HTMLCommentElement_iface_tids,
     HTMLElement_init_dispex_info

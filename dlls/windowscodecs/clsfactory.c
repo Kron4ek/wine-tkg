@@ -35,7 +35,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(wincodecs);
 
-extern HRESULT WINAPI WIC_DllGetClassObject(REFCLSID, REFIID, LPVOID *) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI WIC_DllGetClassObject(REFCLSID, REFIID, LPVOID *);
 
 typedef struct {
     REFCLSID classid;
@@ -65,7 +65,9 @@ static const classinfo wic_classes[] = {
     {&CLSID_WICIfdMetadataReader, IfdMetadataReader_CreateInstance},
     {&CLSID_WICPngChrmMetadataReader, PngChrmReader_CreateInstance},
     {&CLSID_WICPngGamaMetadataReader, PngGamaReader_CreateInstance},
+    {&CLSID_WICPngHistMetadataReader, PngHistReader_CreateInstance},
     {&CLSID_WICPngTextMetadataReader, PngTextReader_CreateInstance},
+    {&CLSID_WICPngTimeMetadataReader, PngTimeReader_CreateInstance},
     {&CLSID_WICLSDMetadataReader, LSDReader_CreateInstance},
     {&CLSID_WICIMDMetadataReader, IMDReader_CreateInstance},
     {&CLSID_WICGCEMetadataReader, GCEReader_CreateInstance},

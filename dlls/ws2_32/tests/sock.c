@@ -4904,9 +4904,9 @@ static void test_accept_inheritance(void)
     ok(linger.l_onoff == 1, "got on/off %u\n", linger.l_onoff);
     ok(linger.l_linger == 555, "got linger %u\n", linger.l_onoff);
 
-    close(server);
-    close(client);
-    close(listener);
+    closesocket(server);
+    closesocket(client);
+    closesocket(listener);
 }
 
 static void test_extendedSocketOptions(void)
@@ -6842,7 +6842,7 @@ static void test_close_events(struct event_test_ctx *ctx)
 
     closesocket(client);
 
-    check_events(ctx, FD_CLOSE, 0, 200);
+    check_events(ctx, FD_CLOSE, 0, 1000);
     check_events(ctx, 0, 0, 0);
     select_events(ctx, server, FD_ACCEPT | FD_CLOSE | FD_CONNECT | FD_OOB | FD_READ);
     if (ctx->is_message)
@@ -6869,7 +6869,7 @@ static void test_close_events(struct event_test_ctx *ctx)
 
     shutdown(client, SD_SEND);
 
-    check_events(ctx, FD_CLOSE, 0, 200);
+    check_events(ctx, FD_CLOSE, 0, 1000);
     check_events(ctx, 0, 0, 0);
 
     closesocket(client);
@@ -6920,7 +6920,7 @@ static void test_close_events(struct event_test_ctx *ctx)
     ret = recv(server, buffer, 5, 0);
     ok(ret == 2, "got %d\n", ret);
 
-    check_events_todo(ctx, 0, 0, 0);
+    check_events_todo(ctx, 0, 0, !strcmp(winetest_platform, "wine") ? 200 : 0);
 
     closesocket(server);
 
@@ -7700,6 +7700,8 @@ static void test_write_watch(void)
         return;
     }
 
+    /* Windows 11 no longer triggers write watches anymore. */
+
     tcp_socketpair(&src, &dest);
 
     memset(&ov, 0, sizeof(ov));
@@ -7730,7 +7732,7 @@ static void test_write_watch(void)
     count = 64;
     ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
     ok( !ret, "GetWriteWatch failed %lu\n", GetLastError() );
-    ok( count == 9, "wrong count %Iu\n", count );
+    ok( count == 9 || !count /* Win 11 */, "wrong count %Iu\n", count );
     ok( !base[0], "data set\n" );
 
     send(src, "test message", sizeof("test message"), 0);
@@ -7761,7 +7763,7 @@ static void test_write_watch(void)
     count = 64;
     ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
     ok( !ret, "GetWriteWatch failed %lu\n", GetLastError() );
-    ok( count == 5, "wrong count %Iu\n", count );
+    ok( count == 5 || !count /* Win 11 */, "wrong count %Iu\n", count );
     ok( !base[0], "data set\n" );
 
     send(src, "test message", sizeof("test message"), 0);
@@ -7795,7 +7797,7 @@ static void test_write_watch(void)
         count = 64;
         ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
         ok( !ret, "GetWriteWatch failed %lu\n", GetLastError() );
-        ok( count == 8, "wrong count %Iu\n", count );
+        ok( count == 8 || !count /* Win 11 */, "wrong count %Iu\n", count );
 
         send(src, "test message", sizeof("test message"), 0);
         WaitForSingleObject( thread, 10000 );
@@ -13875,7 +13877,6 @@ START_TEST( sock )
     test_WSARecv();
     test_WSAPoll();
     test_write_watch();
-    test_iocp();
 
     test_events();
 
@@ -13900,6 +13901,31 @@ START_TEST( sock )
     test_icmp();
     test_connect_udp();
     test_tcp_sendto_recvfrom();
+
+    /* There is apparently an obscure interaction between this test and
+     * test_WSAGetOverlappedResult().
+     *
+     * One thing this test does is to close socket handles through CloseHandle()
+     * and NtClose(), to prove that that is sufficient to cancel I/O on the
+     * socket. This has the obscure side effect that ws2_32.dll's internal
+     * per-process list of sockets never has that socket removed.
+     *
+     * test_WSAGetOverlappedResult() effectively proves that the per-process
+     * list of sockets exists, by calling DuplicateHandle() on a socket and then
+     * passing it to a function which cares about socket handle validity, which
+     * checks that handle against the internal list, finds it invalid, and
+     * returns WSAENOTSOCK.
+     *
+     * The problem is that if we close an NT handle without removing it from the
+     * ws2_32 list, then duplicate another handle, it *may* end up allocated to
+     * the same handle value, and thus re-validate that handle right under the
+     * nose of ws2_32. This causes the test_WSAGetOverlappedResult() test to
+     * sometimes succeed where it's expected to fail with ENOTSOCK.
+     *
+     * In order to avoid this, make sure that this test—which is evidently
+     * destructive to ws2_32 internal state in obscure ways—is executed last.
+     */
+    test_iocp();
 
     /* this is an io heavy test, do it at the end so the kernel doesn't start dropping packets */
     test_send();

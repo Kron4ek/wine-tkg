@@ -158,6 +158,25 @@ static const char metadata_cHRM[] = {
     0xff,0xff,0xff,0xff /* chunk CRC */
 };
 
+static const char metadata_hIST[] = {
+    0,0,0,40, /* chunk length */
+    'h','I','S','T', /* chunk type */
+    0,1,  0,2,  0,3,  0,4,
+    0,5,  0,6,  0,7,  0,8,
+    0,9,  0,10, 0,11, 0,12,
+    0,13, 0,14, 0,15, 0,16,
+    0,17, 0,18, 0,19, 0,20,
+    0xff,0xff,0xff,0xff
+};
+
+static const char metadata_tIME[] = {
+    0,0,0,7, /* chunk length */
+    't','I','M','E', /* chunk type */
+    0x07,0xd0,0x01,0x02, /* year (2 bytes), month, day */
+    0x0c,0x22,0x38, /* hour, minute, second */
+    0xff,0xff,0xff,0xff
+};
+
 static const char pngimage[285] = {
 0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,
 0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x02,0x00,0x00,0x00,0x90,0x77,0x53,
@@ -257,6 +276,118 @@ static void load_stream(IUnknown *reader, const char *data, int data_size, DWORD
        "current stream pos is at %lx/%lx, data size %x\n", cur_pos.u.LowPart, cur_pos.u.HighPart, data_size);
 
     IStream_Release(stream);
+}
+
+struct test_data
+{
+    ULONG type, id;
+    int count; /* if VT_VECTOR */
+    LONGLONG value[13];
+    const char *string;
+    const WCHAR id_string[32];
+};
+
+static void compare_metadata(IWICMetadataReader *reader, const struct test_data *td, ULONG count)
+{
+    HRESULT hr;
+    IWICEnumMetadataItem *enumerator;
+    PROPVARIANT schema, id, value;
+    ULONG items_returned, i;
+
+    hr = IWICMetadataReader_GetEnumerator(reader, NULL);
+    ok(hr == E_INVALIDARG, "GetEnumerator error %#lx\n", hr);
+
+    hr = IWICMetadataReader_GetEnumerator(reader, &enumerator);
+    ok(hr == S_OK, "GetEnumerator error %#lx\n", hr);
+
+    PropVariantInit(&schema);
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+
+    for (i = 0; i < count; i++)
+    {
+        hr = IWICEnumMetadataItem_Next(enumerator, 1, &schema, &id, &value, &items_returned);
+        ok(hr == S_OK, "Next error %#lx\n", hr);
+        ok(items_returned == 1, "unexpected item count %lu\n", items_returned);
+
+        ok(schema.vt == VT_EMPTY, "%lu: unexpected vt: %u\n", i, schema.vt);
+        ok(id.vt == VT_UI2 || id.vt == VT_LPWSTR || id.vt == VT_EMPTY, "%lu: unexpected vt: %u\n", i, id.vt);
+        if (id.vt == VT_UI2)
+            ok(id.uiVal == td[i].id, "%lu: expected id %#lx, got %#x\n", i, td[i].id, id.uiVal);
+        else if (id.vt == VT_LPWSTR)
+            ok(!lstrcmpW(td[i].id_string, id.pwszVal),
+               "%lu: expected %s, got %s\n", i, wine_dbgstr_w(td[i].id_string), wine_dbgstr_w(id.pwszVal));
+
+        ok(value.vt == td[i].type, "%lu: expected vt %#lx, got %#x\n", i, td[i].type, value.vt);
+        if (value.vt & VT_VECTOR)
+        {
+            ULONG j;
+            switch (value.vt & ~VT_VECTOR)
+            {
+            case VT_I1:
+            case VT_UI1:
+                ok(td[i].count == value.caub.cElems, "%lu: expected cElems %d, got %ld\n", i, td[i].count, value.caub.cElems);
+                for (j = 0; j < value.caub.cElems; j++)
+                    ok(td[i].value[j] == value.caub.pElems[j], "%lu: expected value[%ld] %#I64x, got %#x\n", i, j, td[i].value[j], value.caub.pElems[j]);
+                break;
+            case VT_I2:
+            case VT_UI2:
+                ok(td[i].count == value.caui.cElems, "%lu: expected cElems %d, got %ld\n", i, td[i].count, value.caui.cElems);
+                for (j = 0; j < value.caui.cElems; j++)
+                    ok(td[i].value[j] == value.caui.pElems[j], "%lu: expected value[%ld] %#I64x, got %#x\n", i, j, td[i].value[j], value.caui.pElems[j]);
+                break;
+            case VT_I4:
+            case VT_UI4:
+            case VT_R4:
+                ok(td[i].count == value.caul.cElems, "%lu: expected cElems %d, got %ld\n", i, td[i].count, value.caul.cElems);
+                for (j = 0; j < value.caul.cElems; j++)
+                    ok(td[i].value[j] == value.caul.pElems[j], "%lu: expected value[%ld] %#I64x, got %#lx\n", i, j, td[i].value[j], value.caul.pElems[j]);
+                break;
+            case VT_I8:
+            case VT_UI8:
+            case VT_R8:
+                ok(td[i].count == value.cauh.cElems, "%lu: expected cElems %d, got %ld\n", i, td[i].count, value.cauh.cElems);
+                for (j = 0; j < value.cauh.cElems; j++)
+                    ok(td[i].value[j] == value.cauh.pElems[j].QuadPart, "%lu: expected value[%ld] %I64x, got %08lx/%08lx\n", i, j, td[i].value[j], value.cauh.pElems[j].u.LowPart, value.cauh.pElems[j].u.HighPart);
+                break;
+            case VT_LPSTR:
+                ok(td[i].count == value.calpstr.cElems, "%lu: expected cElems %d, got %ld\n", i, td[i].count, value.caub.cElems);
+                for (j = 0; j < value.calpstr.cElems; j++)
+                    trace("%lu: %s\n", j, value.calpstr.pElems[j]);
+                /* fall through to not handled message */
+            default:
+                ok(0, "%lu: array of type %d is not handled\n", i, value.vt & ~VT_VECTOR);
+                break;
+            }
+        }
+        else if (value.vt == VT_LPSTR)
+        {
+            ok(td[i].count == strlen(value.pszVal) ||
+               broken(td[i].count == strlen(value.pszVal) + 1), /* before Win7 */
+               "%lu: expected count %d, got %d\n", i, td[i].count, lstrlenA(value.pszVal));
+            if (td[i].count == strlen(value.pszVal))
+                ok(!strcmp(td[i].string, value.pszVal),
+                   "%lu: expected %s, got %s\n", i, td[i].string, value.pszVal);
+        }
+        else if (value.vt == VT_BLOB)
+        {
+            ok(td[i].count == value.blob.cbSize, "%lu: expected count %d, got %ld\n", i, td[i].count, value.blob.cbSize);
+            ok(!memcmp(td[i].string, value.blob.pBlobData, td[i].count), "%lu: expected %s, got %s\n", i, td[i].string, value.blob.pBlobData);
+        }
+        else
+            ok(value.uhVal.QuadPart == td[i].value[0], "%lu: expected value %#I64x got %#lx/%#lx\n",
+               i, td[i].value[0], value.uhVal.u.LowPart, value.uhVal.u.HighPart);
+
+        PropVariantClear(&schema);
+        PropVariantClear(&id);
+        PropVariantClear(&value);
+    }
+
+    hr = IWICEnumMetadataItem_Next(enumerator, 1, &schema, &id, &value, &items_returned);
+    ok(hr == S_FALSE, "Next should fail\n");
+    ok(items_returned == 0, "unexpected item count %lu\n", items_returned);
+
+    IWICEnumMetadataItem_Release(enumerator);
 }
 
 static void test_metadata_unknown(void)
@@ -555,6 +686,89 @@ static void test_metadata_cHRM(void)
     IWICMetadataReader_Release(reader);
 }
 
+static void test_metadata_hIST(void)
+{
+    HRESULT hr;
+    IWICMetadataReader *reader;
+    PROPVARIANT schema, id, value;
+    UINT count, i;
+    GUID format;
+    static const WCHAR Frequencies[] = L"Frequencies";
+
+    PropVariantInit(&schema);
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+
+    hr = CoCreateInstance(&CLSID_WICPngHistMetadataReader, NULL, CLSCTX_INPROC_SERVER,
+        &IID_IWICMetadataReader, (void**)&reader);
+    ok(hr == S_OK || broken(hr == REGDB_E_CLASSNOTREG) /*winxp*/, "CoCreateInstance failed, hr=%lx\n", hr);
+    if (FAILED(hr)) return;
+
+    load_stream((IUnknown*)reader, metadata_hIST, sizeof(metadata_hIST), WICPersistOptionDefault);
+
+    hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+    ok(hr == S_OK, "GetMetadataFormat failed, hr=%lx\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatChunkhIST), "unexpected format %s\n", wine_dbgstr_guid(&format));
+
+    hr = IWICMetadataReader_GetCount(reader, &count);
+    ok(hr == S_OK, "GetCount failed, hr=%lx\n", hr);
+    ok(count == 1, "unexpected count %i\n", count);
+
+    hr = IWICMetadataReader_GetValueByIndex(reader, 0, &schema, &id, &value);
+    ok(hr == S_OK, "GetValue failed, hr=%lx\n", hr);
+
+    ok(schema.vt == VT_EMPTY, "unexpected vt: %i\n", schema.vt);
+    PropVariantClear(&schema);
+
+    ok(id.vt == VT_LPWSTR, "unexpected vt: %i\n", id.vt);
+    ok(!lstrcmpW(id.pwszVal, Frequencies), "unexpected value: %s\n", wine_dbgstr_w(id.pwszVal));
+    PropVariantClear(&id);
+
+    ok(value.vt == (VT_UI2|VT_VECTOR), "unexpected vt: %i\n", value.vt);
+    ok(20 == value.caui.cElems, "expected cElems %d, got %ld\n", 20, value.caub.cElems);
+    for (i = 0; i < value.caui.cElems; i++)
+        ok(i+1 == value.caui.pElems[i], "%u: expected value %u, got %u\n", i, i+1, value.caui.pElems[i]);
+    PropVariantClear(&value);
+
+    IWICMetadataReader_Release(reader);
+}
+
+static void test_metadata_tIME(void)
+{
+    HRESULT hr;
+    IWICMetadataReader *reader;
+    UINT count;
+    GUID format;
+    static const struct test_data td[] =
+    {
+        { VT_UI2, 0, 0, { 2000 }, NULL, L"Year" },
+        { VT_UI1, 0, 0, { 1 }, NULL, L"Month" },
+        { VT_UI1, 0, 0, { 2 }, NULL, L"Day" },
+        { VT_UI1, 0, 0, { 12 }, NULL, L"Hour" },
+        { VT_UI1, 0, 0, { 34 }, NULL, L"Minute" },
+        { VT_UI1, 0, 0, { 56 }, NULL, L"Second" },
+    };
+
+    hr = CoCreateInstance(&CLSID_WICPngTimeMetadataReader, NULL, CLSCTX_INPROC_SERVER,
+        &IID_IWICMetadataReader, (void**)&reader);
+    ok(hr == S_OK || broken(hr == REGDB_E_CLASSNOTREG) /*winxp*/, "CoCreateInstance failed, hr=%lx\n", hr);
+    if (FAILED(hr)) return;
+
+    load_stream((IUnknown*)reader, metadata_tIME, sizeof(metadata_tIME), WICPersistOptionDefault);
+
+    hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+    ok(hr == S_OK, "GetMetadataFormat failed, hr=%lx\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatChunktIME), "unexpected format %s\n", wine_dbgstr_guid(&format));
+
+    hr = IWICMetadataReader_GetCount(reader, &count);
+    ok(hr == S_OK, "GetCount failed, hr=%lx\n", hr);
+    ok(count == ARRAY_SIZE(td), "unexpected count %i\n", count);
+
+    compare_metadata(reader, td, count);
+
+    IWICMetadataReader_Release(reader);
+}
+
 static inline USHORT ushort_bswap(USHORT s)
 {
     return (s >> 8) | (s << 8);
@@ -661,118 +875,6 @@ static void byte_swap_ifd_data(char *data)
         entry->count = ulong_bswap(entry->count);
         data += sizeof(*entry);
     }
-}
-
-struct test_data
-{
-    ULONG type, id;
-    int count; /* if VT_VECTOR */
-    LONGLONG value[13];
-    const char *string;
-    const WCHAR id_string[32];
-};
-
-static void compare_metadata(IWICMetadataReader *reader, const struct test_data *td, ULONG count)
-{
-    HRESULT hr;
-    IWICEnumMetadataItem *enumerator;
-    PROPVARIANT schema, id, value;
-    ULONG items_returned, i;
-
-    hr = IWICMetadataReader_GetEnumerator(reader, NULL);
-    ok(hr == E_INVALIDARG, "GetEnumerator error %#lx\n", hr);
-
-    hr = IWICMetadataReader_GetEnumerator(reader, &enumerator);
-    ok(hr == S_OK, "GetEnumerator error %#lx\n", hr);
-
-    PropVariantInit(&schema);
-    PropVariantInit(&id);
-    PropVariantInit(&value);
-
-    for (i = 0; i < count; i++)
-    {
-        hr = IWICEnumMetadataItem_Next(enumerator, 1, &schema, &id, &value, &items_returned);
-        ok(hr == S_OK, "Next error %#lx\n", hr);
-        ok(items_returned == 1, "unexpected item count %lu\n", items_returned);
-
-        ok(schema.vt == VT_EMPTY, "%lu: unexpected vt: %u\n", i, schema.vt);
-        ok(id.vt == VT_UI2 || id.vt == VT_LPWSTR || id.vt == VT_EMPTY, "%lu: unexpected vt: %u\n", i, id.vt);
-        if (id.vt == VT_UI2)
-            ok(id.uiVal == td[i].id, "%lu: expected id %#lx, got %#x\n", i, td[i].id, id.uiVal);
-        else if (id.vt == VT_LPWSTR)
-            ok(!lstrcmpW(td[i].id_string, id.pwszVal),
-               "%lu: expected %s, got %s\n", i, wine_dbgstr_w(td[i].id_string), wine_dbgstr_w(id.pwszVal));
-
-        ok(value.vt == td[i].type, "%lu: expected vt %#lx, got %#x\n", i, td[i].type, value.vt);
-        if (value.vt & VT_VECTOR)
-        {
-            ULONG j;
-            switch (value.vt & ~VT_VECTOR)
-            {
-            case VT_I1:
-            case VT_UI1:
-                ok(td[i].count == value.caub.cElems, "%lu: expected cElems %d, got %ld\n", i, td[i].count, value.caub.cElems);
-                for (j = 0; j < value.caub.cElems; j++)
-                    ok(td[i].value[j] == value.caub.pElems[j], "%lu: expected value[%ld] %#I64x, got %#x\n", i, j, td[i].value[j], value.caub.pElems[j]);
-                break;
-            case VT_I2:
-            case VT_UI2:
-                ok(td[i].count == value.caui.cElems, "%lu: expected cElems %d, got %ld\n", i, td[i].count, value.caui.cElems);
-                for (j = 0; j < value.caui.cElems; j++)
-                    ok(td[i].value[j] == value.caui.pElems[j], "%lu: expected value[%ld] %#I64x, got %#x\n", i, j, td[i].value[j], value.caui.pElems[j]);
-                break;
-            case VT_I4:
-            case VT_UI4:
-            case VT_R4:
-                ok(td[i].count == value.caul.cElems, "%lu: expected cElems %d, got %ld\n", i, td[i].count, value.caul.cElems);
-                for (j = 0; j < value.caul.cElems; j++)
-                    ok(td[i].value[j] == value.caul.pElems[j], "%lu: expected value[%ld] %#I64x, got %#lx\n", i, j, td[i].value[j], value.caul.pElems[j]);
-                break;
-            case VT_I8:
-            case VT_UI8:
-            case VT_R8:
-                ok(td[i].count == value.cauh.cElems, "%lu: expected cElems %d, got %ld\n", i, td[i].count, value.cauh.cElems);
-                for (j = 0; j < value.cauh.cElems; j++)
-                    ok(td[i].value[j] == value.cauh.pElems[j].QuadPart, "%lu: expected value[%ld] %I64x, got %08lx/%08lx\n", i, j, td[i].value[j], value.cauh.pElems[j].u.LowPart, value.cauh.pElems[j].u.HighPart);
-                break;
-            case VT_LPSTR:
-                ok(td[i].count == value.calpstr.cElems, "%lu: expected cElems %d, got %ld\n", i, td[i].count, value.caub.cElems);
-                for (j = 0; j < value.calpstr.cElems; j++)
-                    trace("%lu: %s\n", j, value.calpstr.pElems[j]);
-                /* fall through to not handled message */
-            default:
-                ok(0, "%lu: array of type %d is not handled\n", i, value.vt & ~VT_VECTOR);
-                break;
-            }
-        }
-        else if (value.vt == VT_LPSTR)
-        {
-            ok(td[i].count == strlen(value.pszVal) ||
-               broken(td[i].count == strlen(value.pszVal) + 1), /* before Win7 */
-               "%lu: expected count %d, got %d\n", i, td[i].count, lstrlenA(value.pszVal));
-            if (td[i].count == strlen(value.pszVal))
-                ok(!strcmp(td[i].string, value.pszVal),
-                   "%lu: expected %s, got %s\n", i, td[i].string, value.pszVal);
-        }
-        else if (value.vt == VT_BLOB)
-        {
-            ok(td[i].count == value.blob.cbSize, "%lu: expected count %d, got %ld\n", i, td[i].count, value.blob.cbSize);
-            ok(!memcmp(td[i].string, value.blob.pBlobData, td[i].count), "%lu: expected %s, got %s\n", i, td[i].string, value.blob.pBlobData);
-        }
-        else
-            ok(value.uhVal.QuadPart == td[i].value[0], "%lu: expected value %#I64x got %#lx/%#lx\n",
-               i, td[i].value[0], value.uhVal.u.LowPart, value.uhVal.u.HighPart);
-
-        PropVariantClear(&schema);
-        PropVariantClear(&id);
-        PropVariantClear(&value);
-    }
-
-    hr = IWICEnumMetadataItem_Next(enumerator, 1, &schema, &id, &value, &items_returned);
-    ok(hr == S_FALSE, "Next should fail\n");
-    ok(items_returned == 0, "unexpected item count %lu\n", items_returned);
-
-    IWICEnumMetadataItem_Release(enumerator);
 }
 
 static void test_metadata_IFD(void)
@@ -1050,12 +1152,12 @@ static void test_metadata_png(void)
 {
     static const struct test_data td[6] =
     {
-        { VT_UI2, 0, 0, { 2005 }, NULL, { 'Y','e','a','r',0 } },
-        { VT_UI1, 0, 0, { 6 }, NULL, { 'M','o','n','t','h',0 } },
-        { VT_UI1, 0, 0, { 3 }, NULL, { 'D','a','y',0 } },
-        { VT_UI1, 0, 0, { 15 }, NULL, { 'H','o','u','r',0 } },
-        { VT_UI1, 0, 0, { 7 }, NULL, { 'M','i','n','u','t','e',0 } },
-        { VT_UI1, 0, 0, { 45 }, NULL, { 'S','e','c','o','n','d',0 } }
+        { VT_UI2, 0, 0, { 2005 }, NULL, L"Year" },
+        { VT_UI1, 0, 0, { 6 }, NULL, L"Month" },
+        { VT_UI1, 0, 0, { 3 }, NULL, L"Day" },
+        { VT_UI1, 0, 0, { 15 }, NULL, L"Hour" },
+        { VT_UI1, 0, 0, { 7 }, NULL, L"Minute" },
+        { VT_UI1, 0, 0, { 45 }, NULL, L"Second" }
     };
     IStream *stream;
     IWICBitmapDecoder *decoder;
@@ -1118,13 +1220,13 @@ static void test_metadata_png(void)
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &containerformat);
             ok(hr == S_OK, "GetMetadataFormat failed, hr=%#lx\n", hr);
-            todo_wine ok(IsEqualGUID(&containerformat, &GUID_MetadataFormatChunktIME) ||
+            ok(IsEqualGUID(&containerformat, &GUID_MetadataFormatChunktIME) ||
                broken(IsEqualGUID(&containerformat, &GUID_MetadataFormatUnknown)) /* Windows XP */,
                "unexpected container format\n");
 
             hr = IWICMetadataReader_GetCount(reader, &count);
             ok(hr == S_OK, "GetCount error %#lx\n", hr);
-            todo_wine ok(count == 6 || broken(count == 1) /* XP */, "expected 6, got %u\n", count);
+            ok(count == 6 || broken(count == 1) /* XP */, "expected 6, got %u\n", count);
             if (count == 6)
                 compare_metadata(reader, td, count);
 
@@ -3213,6 +3315,8 @@ START_TEST(metadata)
     test_metadata_tEXt();
     test_metadata_gAMA();
     test_metadata_cHRM();
+    test_metadata_hIST();
+    test_metadata_tIME();
     test_metadata_IFD();
     test_metadata_Exif();
     test_create_reader();

@@ -922,13 +922,16 @@ static HRESULT parse_wave_form(IDirectMusicSegment8Impl *This, IStream *stream, 
      while ((hr = stream_next_chunk(stream, &chunk)) == S_OK) {
         switch (chunk.id) {
             case mmioFOURCC('f','m','t',' '): {
-                if (FAILED(hr = stream_chunk_get_data(stream, &chunk, &This->wave_format, chunk.size)))
+                if (FAILED(hr = stream_chunk_get_data(stream, &chunk, &This->wave_format,
+                                                      sizeof(This->wave_format))) )
                     return hr;
                 TRACE("Wave Format tag %d\n", This->wave_format.wf.wFormatTag);
                 break;
             }
             case mmioFOURCC('d','a','t','a'): {
                 TRACE("Wave Data size %lu\n", chunk.size);
+                if (This->wave_data)
+                    ERR("Multiple data streams detected\n");
                 This->wave_data = malloc(chunk.size);
                 This->data_size = chunk.size;
                 if (!This->wave_data)
@@ -952,7 +955,7 @@ static HRESULT parse_wave_form(IDirectMusicSegment8Impl *This, IStream *stream, 
         }
     }
 
-    return S_OK;
+    return SUCCEEDED(hr) ? S_OK : hr;
 }
 
 static HRESULT WINAPI seg_IPersistStream_Load(IPersistStream *iface, IStream *stream)
@@ -984,8 +987,12 @@ static HRESULT WINAPI seg_IPersistStream_Load(IPersistStream *iface, IStream *st
 
     if (riff.type == DMUS_FOURCC_SEGMENT_FORM)
         hr = parse_segment_form(This, stream, &riff);
-    else
+    else if(riff.type == mmioFOURCC('W','A','V','E'))
         hr = parse_wave_form(This, stream, &riff);
+    else {
+        FIXME("Unknown type %s\n", debugstr_chunk(&riff));
+        hr = S_OK;
+    }
 
     return hr;
 }

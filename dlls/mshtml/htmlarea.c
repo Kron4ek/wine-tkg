@@ -472,34 +472,19 @@ static void HTMLAreaElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTraver
 static void HTMLAreaElement_unlink(HTMLDOMNode *iface)
 {
     HTMLAreaElement *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nsarea) {
-        nsIDOMHTMLAreaElement *nsarea = This->nsarea;
-
-        This->nsarea = NULL;
-        nsIDOMHTMLAreaElement_Release(nsarea);
-    }
+    unlink_ref(&This->nsarea);
 }
 
 static const NodeImplVtbl HTMLAreaElementImplVtbl = {
-    &CLSID_HTMLAreaElement,
-    HTMLAreaElement_QI,
-    HTMLElement_destructor,
-    HTMLElement_cpc,
-    HTMLElement_clone,
-    HTMLAreaElement_handle_event,
-    HTMLElement_get_attr_col,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    HTMLAreaElement_traverse,
-    HTMLAreaElement_unlink
+    .clsid                 = &CLSID_HTMLAreaElement,
+    .qi                    = HTMLAreaElement_QI,
+    .destructor            = HTMLElement_destructor,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLElement_clone,
+    .handle_event          = HTMLAreaElement_handle_event,
+    .get_attr_col          = HTMLElement_get_attr_col,
+    .traverse              = HTMLAreaElement_traverse,
+    .unlink                = HTMLAreaElement_unlink
 };
 
 static const tid_t HTMLAreaElement_iface_tids[] = {
@@ -508,8 +493,8 @@ static const tid_t HTMLAreaElement_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLAreaElement_dispex = {
-    L"HTMLAreaElement",
-    NULL,
+    "HTMLAreaElement",
+    &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLAreaElement_tid,
     HTMLAreaElement_iface_tids,
     HTMLElement_init_dispex_info

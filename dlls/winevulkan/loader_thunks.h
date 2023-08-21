@@ -49,6 +49,7 @@ enum unix_call
     unix_vkCmdBindDescriptorBuffersEXT,
     unix_vkCmdBindDescriptorSets,
     unix_vkCmdBindIndexBuffer,
+    unix_vkCmdBindIndexBuffer2KHR,
     unix_vkCmdBindInvocationMaskHUAWEI,
     unix_vkCmdBindPipeline,
     unix_vkCmdBindPipelineShaderGroupNV,
@@ -256,6 +257,7 @@ enum unix_call
     unix_vkCmdTraceRaysKHR,
     unix_vkCmdTraceRaysNV,
     unix_vkCmdUpdateBuffer,
+    unix_vkCmdUpdatePipelineIndirectBufferNV,
     unix_vkCmdWaitEvents,
     unix_vkCmdWaitEvents2,
     unix_vkCmdWaitEvents2KHR,
@@ -416,6 +418,7 @@ enum unix_call
     unix_vkGetDeviceImageMemoryRequirementsKHR,
     unix_vkGetDeviceImageSparseMemoryRequirements,
     unix_vkGetDeviceImageSparseMemoryRequirementsKHR,
+    unix_vkGetDeviceImageSubresourceLayoutKHR,
     unix_vkGetDeviceMemoryCommitment,
     unix_vkGetDeviceMemoryOpaqueCaptureAddress,
     unix_vkGetDeviceMemoryOpaqueCaptureAddressKHR,
@@ -437,6 +440,7 @@ enum unix_call
     unix_vkGetImageSparseMemoryRequirements2KHR,
     unix_vkGetImageSubresourceLayout,
     unix_vkGetImageSubresourceLayout2EXT,
+    unix_vkGetImageSubresourceLayout2KHR,
     unix_vkGetImageViewAddressNVX,
     unix_vkGetImageViewHandleNVX,
     unix_vkGetImageViewOpaqueCaptureDescriptorDataEXT,
@@ -492,6 +496,8 @@ enum unix_call
     unix_vkGetPipelineExecutableInternalRepresentationsKHR,
     unix_vkGetPipelineExecutablePropertiesKHR,
     unix_vkGetPipelineExecutableStatisticsKHR,
+    unix_vkGetPipelineIndirectDeviceAddressNV,
+    unix_vkGetPipelineIndirectMemoryRequirementsNV,
     unix_vkGetPipelinePropertiesEXT,
     unix_vkGetPrivateData,
     unix_vkGetPrivateDataEXT,
@@ -503,6 +509,7 @@ enum unix_call
     unix_vkGetRayTracingShaderGroupHandlesNV,
     unix_vkGetRayTracingShaderGroupStackSizeKHR,
     unix_vkGetRenderAreaGranularity,
+    unix_vkGetRenderingAreaGranularityKHR,
     unix_vkGetSamplerOpaqueCaptureDescriptorDataEXT,
     unix_vkGetSemaphoreCounterValue,
     unix_vkGetSemaphoreCounterValueKHR,
@@ -822,6 +829,15 @@ struct vkCmdBindIndexBuffer_params
     VkCommandBuffer commandBuffer;
     VkBuffer DECLSPEC_ALIGN(8) buffer;
     VkDeviceSize DECLSPEC_ALIGN(8) offset;
+    VkIndexType indexType;
+};
+
+struct vkCmdBindIndexBuffer2KHR_params
+{
+    VkCommandBuffer commandBuffer;
+    VkBuffer DECLSPEC_ALIGN(8) buffer;
+    VkDeviceSize DECLSPEC_ALIGN(8) offset;
+    VkDeviceSize DECLSPEC_ALIGN(8) size;
     VkIndexType indexType;
 };
 
@@ -2374,6 +2390,13 @@ struct vkCmdUpdateBuffer_params
     const void *pData;
 };
 
+struct vkCmdUpdatePipelineIndirectBufferNV_params
+{
+    VkCommandBuffer commandBuffer;
+    VkPipelineBindPoint pipelineBindPoint;
+    VkPipeline DECLSPEC_ALIGN(8) pipeline;
+};
+
 struct vkCmdWaitEvents_params
 {
     VkCommandBuffer commandBuffer;
@@ -3661,6 +3684,13 @@ struct vkGetDeviceImageSparseMemoryRequirementsKHR_params
     VkSparseImageMemoryRequirements2 *pSparseMemoryRequirements;
 };
 
+struct vkGetDeviceImageSubresourceLayoutKHR_params
+{
+    VkDevice device;
+    const VkDeviceImageSubresourceInfoKHR *pInfo;
+    VkSubresourceLayout2KHR *pLayout;
+};
+
 struct vkGetDeviceMemoryCommitment_params
 {
     VkDevice device;
@@ -3815,8 +3845,16 @@ struct vkGetImageSubresourceLayout2EXT_params
 {
     VkDevice device;
     VkImage DECLSPEC_ALIGN(8) image;
-    const VkImageSubresource2EXT *pSubresource;
-    VkSubresourceLayout2EXT *pLayout;
+    const VkImageSubresource2KHR *pSubresource;
+    VkSubresourceLayout2KHR *pLayout;
+};
+
+struct vkGetImageSubresourceLayout2KHR_params
+{
+    VkDevice device;
+    VkImage DECLSPEC_ALIGN(8) image;
+    const VkImageSubresource2KHR *pSubresource;
+    VkSubresourceLayout2KHR *pLayout;
 };
 
 struct vkGetImageViewAddressNVX_params
@@ -4244,6 +4282,20 @@ struct vkGetPipelineExecutableStatisticsKHR_params
     VkResult result;
 };
 
+struct vkGetPipelineIndirectDeviceAddressNV_params
+{
+    VkDevice device;
+    const VkPipelineIndirectDeviceAddressInfoNV *pInfo;
+    VkDeviceAddress result;
+};
+
+struct vkGetPipelineIndirectMemoryRequirementsNV_params
+{
+    VkDevice device;
+    const VkComputePipelineCreateInfo *pCreateInfo;
+    VkMemoryRequirements2 *pMemoryRequirements;
+};
+
 struct vkGetPipelinePropertiesEXT_params
 {
     VkDevice device;
@@ -4343,6 +4395,13 @@ struct vkGetRenderAreaGranularity_params
 {
     VkDevice device;
     VkRenderPass DECLSPEC_ALIGN(8) renderPass;
+    VkExtent2D *pGranularity;
+};
+
+struct vkGetRenderingAreaGranularityKHR_params
+{
+    VkDevice device;
+    const VkRenderingAreaInfoKHR *pRenderingAreaInfo;
     VkExtent2D *pGranularity;
 };
 

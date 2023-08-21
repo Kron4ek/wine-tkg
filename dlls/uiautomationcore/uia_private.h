@@ -95,6 +95,12 @@ static inline struct uia_provider *impl_from_IWineUiaProvider(IWineUiaProvider *
     return CONTAINING_RECORD(iface, struct uia_provider, IWineUiaProvider_iface);
 }
 
+struct uia_event_args
+{
+    struct UiaEventArgs simple_args;
+    LONG ref;
+};
+
 enum uia_event_type {
     EVENT_TYPE_CLIENTSIDE,
     EVENT_TYPE_SERVERSIDE,
@@ -124,7 +130,8 @@ struct uia_event
     {
         struct {
             struct UiaCacheRequest cache_req;
-            UiaEventCallback *cback;
+            HRESULT (*event_callback)(struct uia_event *, struct uia_event_args *, SAFEARRAY *, BSTR);
+            void *callback_data;
 
             DWORD git_cookie;
         } clientside;
@@ -136,6 +143,8 @@ struct uia_event
         } serverside;
      } u;
 };
+
+typedef HRESULT UiaWineEventCallback(struct uia_event *, struct uia_event_args *, SAFEARRAY *, BSTR);
 
 static inline void variant_init_bool(VARIANT *v, BOOL val)
 {
@@ -209,6 +218,9 @@ HRESULT create_serverside_uia_event(struct uia_event **out_event, LONG process_i
 HRESULT uia_event_add_provider_event_adviser(IRawElementProviderAdviseEvents *advise_events,
         struct uia_event *event) DECLSPEC_HIDDEN;
 HRESULT uia_event_add_serverside_event_adviser(IWineUiaEvent *serverside_event, struct uia_event *event) DECLSPEC_HIDDEN;
+HRESULT uia_add_clientside_event(HUIANODE huianode, EVENTID event_id, enum TreeScope scope, PROPERTYID *prop_ids,
+        int prop_ids_count, struct UiaCacheRequest *cache_req, SAFEARRAY *rt_id, UiaWineEventCallback *cback,
+        void *cback_data, HUIAEVENT *huiaevent) DECLSPEC_HIDDEN;
 
 /* uia_ids.c */
 const struct uia_prop_info *uia_prop_info_from_id(PROPERTYID prop_id) DECLSPEC_HIDDEN;

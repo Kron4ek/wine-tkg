@@ -208,6 +208,7 @@ struct sm6_value
 {
     const struct sm6_type *type;
     enum sm6_value_type value_type;
+    bool is_undefined;
     union
     {
         struct sm6_function_data function;
@@ -1726,8 +1727,16 @@ static enum vkd3d_result sm6_parser_constants_init(struct sm6_parser *sm6, const
                 WARN("Unhandled constant array.\n");
                 break;
 
+            case CST_CODE_UNDEF:
+                dxil_record_validate_operand_max_count(record, 0, sm6);
+                dst->u.reg.type = VKD3DSPR_UNDEF;
+                /* Mark as explicitly undefined, not the result of a missing constant code or instruction. */
+                dst->is_undefined = true;
+                break;
+
             default:
                 FIXME("Unhandled constant code %u.\n", record->code);
+                dst->u.reg.type = VKD3DSPR_UNDEF;
                 break;
         }
 
@@ -1735,6 +1744,27 @@ static enum vkd3d_result sm6_parser_constants_init(struct sm6_parser *sm6, const
     }
 
     return VKD3D_OK;
+}
+
+static struct vkd3d_shader_instruction *sm6_parser_require_space(struct sm6_parser *sm6, size_t extra)
+{
+    if (!shader_instruction_array_reserve(&sm6->p.instructions, sm6->p.instructions.count + extra))
+    {
+        ERR("Failed to allocate instruction.\n");
+        return NULL;
+    }
+    return &sm6->p.instructions.elements[sm6->p.instructions.count];
+}
+
+/* Space should be reserved before calling this. It is intended to require no checking of the returned pointer. */
+static struct vkd3d_shader_instruction *sm6_parser_add_instruction(struct sm6_parser *sm6,
+        enum vkd3d_shader_opcode handler_idx)
+{
+    struct vkd3d_shader_instruction *ins = sm6_parser_require_space(sm6, 1);
+    assert(ins);
+    shader_instruction_init(ins, handler_idx);
+    ++sm6->p.instructions.count;
+    return ins;
 }
 
 static enum vkd3d_result sm6_parser_globals_init(struct sm6_parser *sm6)
@@ -1767,7 +1797,8 @@ static enum vkd3d_result sm6_parser_globals_init(struct sm6_parser *sm6)
                 break;
 
             case MODULE_CODE_VERSION:
-                dxil_record_validate_operand_count(record, 1, 1, sm6);
+                if (!dxil_record_validate_operand_count(record, 1, 1, sm6))
+                    return VKD3D_ERROR_INVALID_SHADER;
                 if ((version = record->operands[0]) != 1)
                 {
                     FIXME("Unsupported format version %#"PRIx64".\n", version);
@@ -1931,6 +1962,21 @@ static enum vkd3d_result sm6_parser_function_init(struct sm6_parser *sm6, const 
     return VKD3D_OK;
 }
 
+static bool sm6_block_emit_instructions(struct sm6_block *block, struct sm6_parser *sm6)
+{
+    struct vkd3d_shader_instruction *ins = sm6_parser_require_space(sm6, block->instruction_count + 1);
+
+    if (!ins)
+        return false;
+
+    memcpy(ins, block->instructions, block->instruction_count * sizeof(*block->instructions));
+    sm6->p.instructions.count += block->instruction_count;
+
+    sm6_parser_add_instruction(sm6, VKD3DSIH_RET);
+
+    return true;
+}
+
 static enum vkd3d_result sm6_parser_module_init(struct sm6_parser *sm6, const struct dxil_block *block,
         unsigned int level)
 {
@@ -2065,6 +2111,7 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t 
     struct vkd3d_shader_version version;
     struct dxil_block *block;
     enum vkd3d_result ret;
+    unsigned int i;
 
     count = byte_code_size / sizeof(*byte_code);
     if (count < 6)
@@ -2252,6 +2299,16 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t 
         else
             vkd3d_unreachable();
         return ret;
+    }
+
+    for (i = 0; i < sm6->function_count; ++i)
+    {
+        if (!sm6_block_emit_instructions(sm6->functions[i].blocks[0], sm6))
+        {
+            vkd3d_shader_error(message_context, &location, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                    "Out of memory emitting shader instructions.");
+            return VKD3D_ERROR_OUT_OF_MEMORY;
+        }
     }
 
     dxil_block_destroy(&sm6->root_block);

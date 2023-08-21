@@ -451,6 +451,20 @@ static void test_arc(void)
     GpPath* path;
 
     GdipCreatePath(FillModeAlternate, &path);
+
+    status = GdipAddPathArc(path, 100.0, 100.0, 1.0, 0.0, 0.0, 90.0);
+    expect(InvalidParameter, status);
+
+    status = GdipAddPathArc(path, 100.0, 100.0, 0.0, 1.0, 0.0, 90.0);
+    expect(InvalidParameter, status);
+
+    status = GdipAddPathArc(path, 100.0, 100.0, -40, 1.0, 0.0, 90.0);
+    expect(InvalidParameter, status);
+
+    status = GdipAddPathArc(path, 100.0, 100.0, 1.0, -50.0, 0.0, 90.0);
+    expect(InvalidParameter, status);
+
+    GdipResetPath(path);
     /* Exactly 90 degrees */
     status = GdipAddPathArc(path, 100.0, 100.0, 500.0, 700.0, 0.0, 90.0);
     expect(Ok, status);
@@ -1248,6 +1262,22 @@ static void test_flatten(void)
     status = GdipFlattenPath(path, NULL, 1.0);
     expect(Ok, status);
     ok_path(path, flattenquater_path, ARRAY_SIZE(flattenquater_path), FALSE);
+
+    status = GdipResetPath(path);
+    expect(Ok, status);
+    status = GdipStartPathFigure(path);
+    expect(Ok, status);
+
+    /* path seen in the wild that caused a stack overflow */
+    /* same path but redo with the manual points that caused a crash */
+    status = GdipAddPathBezier(path, 154.950806, 33.391144, 221.586075, 15.536285, 291.747314, 15.536285, 358.382568, 33.391144);
+    expect(Ok, status);
+    status = GdipAddPathBezier(path, 256.666809, 412.999512, 256.666718, 412.999481, 256.666656, 412.999481, 256.666565, 412.999512);
+    expect(Ok, status);
+    status = GdipClosePathFigure(path);
+    expect(Ok, status);
+    status = GdipFlattenPath(path, NULL, 1.0);
+    expect(Ok, status);
 
     GdipDeleteMatrix(m);
     GdipDeletePath(path);

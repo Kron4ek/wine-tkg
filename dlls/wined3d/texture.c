@@ -867,7 +867,8 @@ BOOL wined3d_texture_load_location(struct wined3d_texture *texture,
         {
             wined3d_texture_get_bo_address(texture, sub_resource_idx,
                     &source, (current & wined3d_texture_sysmem_locations));
-            wined3d_context_copy_bo_address(context, &destination, &source, 1, &range);
+            wined3d_context_copy_bo_address(context, &destination, &source, 1, &range,
+                    WINED3D_MAP_WRITE | WINED3D_MAP_DISCARD);
         }
         ret = TRUE;
     }
@@ -4328,7 +4329,7 @@ HRESULT wined3d_texture_gl_init(struct wined3d_texture_gl *texture_gl, struct wi
         const struct wined3d_resource_desc *desc, unsigned int layer_count, unsigned int level_count,
         uint32_t flags, void *parent, const struct wined3d_parent_ops *parent_ops)
 {
-    const struct wined3d_gl_info *gl_info = &device->adapter->gl_info;
+    const struct wined3d_gl_info *gl_info = &wined3d_adapter_gl(device->adapter)->gl_info;
     HRESULT hr;
 
     TRACE("texture_gl %p, device %p, desc %p, layer_count %u, "
@@ -4673,8 +4674,9 @@ static void wined3d_texture_set_bo(struct wined3d_texture *texture,
 
         LIST_FOR_EACH_ENTRY(bo_user, &prev_bo->users, struct wined3d_bo_user, entry)
             bo_user->valid = false;
+        list_init(&prev_bo->users);
+
         assert(list_empty(&bo->users));
-        list_move_head(&bo->users, &prev_bo->users);
 
         wined3d_context_destroy_bo(context, prev_bo);
         heap_free(prev_bo);

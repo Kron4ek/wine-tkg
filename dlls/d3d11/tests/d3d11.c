@@ -27,6 +27,7 @@
 #include "d3d11_4.h"
 #include "winternl.h"
 #include "wine/heap.h"
+#include "wine/wined3d.h"
 #include "wine/test.h"
 
 #define BITS_NNAN 0xffc00000
@@ -38,6 +39,7 @@
 
 #define SWAPCHAIN_FLAG_SHADER_INPUT             0x1
 
+static bool damavand;
 static unsigned int use_adapter_idx;
 static BOOL enable_debug_layer;
 static BOOL use_warp_adapter;
@@ -259,6 +261,13 @@ static HRESULT check_interface_(unsigned int line, void *iface, REFIID riid, BOO
     return hr;
 }
 
+static BOOL compare_uint(unsigned int x, unsigned int y, unsigned int max_diff)
+{
+    unsigned int diff = x > y ? x - y : y - x;
+
+    return diff <= max_diff;
+}
+
 static BOOL compare_float(float f, float g, unsigned int ulps)
 {
     int x = *(int *)&f;
@@ -269,10 +278,7 @@ static BOOL compare_float(float f, float g, unsigned int ulps)
     if (y < 0)
         y = INT_MIN - y;
 
-    if (abs(x - y) > ulps)
-        return FALSE;
-
-    return TRUE;
+    return compare_uint(x, y, ulps);
 }
 
 static BOOL compare_vec4(const struct vec4 *v1, const struct vec4 *v2, unsigned int ulps)
@@ -281,13 +287,6 @@ static BOOL compare_vec4(const struct vec4 *v1, const struct vec4 *v2, unsigned 
             && compare_float(v1->y, v2->y, ulps)
             && compare_float(v1->z, v2->z, ulps)
             && compare_float(v1->w, v2->w, ulps);
-}
-
-static BOOL compare_uint(unsigned int x, unsigned int y, unsigned int max_diff)
-{
-    unsigned int diff = x > y ? x - y : y - x;
-
-    return diff <= max_diff;
 }
 
 static BOOL compare_uvec4(const struct uvec4* v1, const struct uvec4 *v2)
@@ -326,49 +325,49 @@ static void get_srv_desc(D3D11_SHADER_RESOURCE_VIEW_DESC *d3d11_desc, const stru
     d3d11_desc->ViewDimension = desc->dimension;
     if (desc->dimension == D3D11_SRV_DIMENSION_TEXTURE1D)
     {
-        U(*d3d11_desc).Texture1D.MostDetailedMip = desc->miplevel_idx;
-        U(*d3d11_desc).Texture1D.MipLevels = desc->miplevel_count;
+        d3d11_desc->Texture1D.MostDetailedMip = desc->miplevel_idx;
+        d3d11_desc->Texture1D.MipLevels = desc->miplevel_count;
     }
     else if (desc->dimension == D3D11_SRV_DIMENSION_TEXTURE1DARRAY)
     {
-        U(*d3d11_desc).Texture1DArray.MostDetailedMip = desc->miplevel_idx;
-        U(*d3d11_desc).Texture1DArray.MipLevels = desc->miplevel_count;
-        U(*d3d11_desc).Texture1DArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture1DArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture1DArray.MostDetailedMip = desc->miplevel_idx;
+        d3d11_desc->Texture1DArray.MipLevels = desc->miplevel_count;
+        d3d11_desc->Texture1DArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture1DArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension == D3D11_SRV_DIMENSION_TEXTURE2D)
     {
-        U(*d3d11_desc).Texture2D.MostDetailedMip = desc->miplevel_idx;
-        U(*d3d11_desc).Texture2D.MipLevels = desc->miplevel_count;
+        d3d11_desc->Texture2D.MostDetailedMip = desc->miplevel_idx;
+        d3d11_desc->Texture2D.MipLevels = desc->miplevel_count;
     }
     else if (desc->dimension == D3D11_SRV_DIMENSION_TEXTURE2DARRAY)
     {
-        U(*d3d11_desc).Texture2DArray.MostDetailedMip = desc->miplevel_idx;
-        U(*d3d11_desc).Texture2DArray.MipLevels = desc->miplevel_count;
-        U(*d3d11_desc).Texture2DArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture2DArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture2DArray.MostDetailedMip = desc->miplevel_idx;
+        d3d11_desc->Texture2DArray.MipLevels = desc->miplevel_count;
+        d3d11_desc->Texture2DArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture2DArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension == D3D11_SRV_DIMENSION_TEXTURE2DMSARRAY)
     {
-        U(*d3d11_desc).Texture2DMSArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture2DMSArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture2DMSArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture2DMSArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension == D3D11_SRV_DIMENSION_TEXTURE3D)
     {
-        U(*d3d11_desc).Texture3D.MostDetailedMip = desc->miplevel_idx;
-        U(*d3d11_desc).Texture3D.MipLevels = desc->miplevel_count;
+        d3d11_desc->Texture3D.MostDetailedMip = desc->miplevel_idx;
+        d3d11_desc->Texture3D.MipLevels = desc->miplevel_count;
     }
     else if (desc->dimension == D3D11_SRV_DIMENSION_TEXTURECUBE)
     {
-        U(*d3d11_desc).TextureCube.MostDetailedMip = desc->miplevel_idx;
-        U(*d3d11_desc).TextureCube.MipLevels = desc->miplevel_count;
+        d3d11_desc->TextureCube.MostDetailedMip = desc->miplevel_idx;
+        d3d11_desc->TextureCube.MipLevels = desc->miplevel_count;
     }
     else if (desc->dimension == D3D11_SRV_DIMENSION_TEXTURECUBEARRAY)
     {
-        U(*d3d11_desc).TextureCubeArray.MostDetailedMip = desc->miplevel_idx;
-        U(*d3d11_desc).TextureCubeArray.MipLevels = desc->miplevel_count;
-        U(*d3d11_desc).TextureCubeArray.First2DArrayFace = desc->layer_idx;
-        U(*d3d11_desc).TextureCubeArray.NumCubes = desc->layer_count;
+        d3d11_desc->TextureCubeArray.MostDetailedMip = desc->miplevel_idx;
+        d3d11_desc->TextureCubeArray.MipLevels = desc->miplevel_count;
+        d3d11_desc->TextureCubeArray.First2DArrayFace = desc->layer_idx;
+        d3d11_desc->TextureCubeArray.NumCubes = desc->layer_count;
     }
     else if (desc->dimension != D3D11_SRV_DIMENSION_UNKNOWN
             && desc->dimension != D3D11_SRV_DIMENSION_TEXTURE2DMS)
@@ -391,69 +390,69 @@ static void check_srv_desc_(unsigned int line, const D3D11_SHADER_RESOURCE_VIEW_
 
     if (desc->ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2D)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2D.MostDetailedMip == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture2D.MostDetailedMip == expected_desc->miplevel_idx,
                 "Got MostDetailedMip %u, expected %u.\n",
-                U(*desc).Texture2D.MostDetailedMip, expected_desc->miplevel_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2D.MipLevels == expected_desc->miplevel_count,
+                desc->Texture2D.MostDetailedMip, expected_desc->miplevel_idx);
+        ok_(__FILE__, line)(desc->Texture2D.MipLevels == expected_desc->miplevel_count,
                 "Got MipLevels %u, expected %u.\n",
-                U(*desc).Texture2D.MipLevels, expected_desc->miplevel_count);
+                desc->Texture2D.MipLevels, expected_desc->miplevel_count);
     }
     else if (desc->ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2DARRAY)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.MostDetailedMip == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture2DArray.MostDetailedMip == expected_desc->miplevel_idx,
                 "Got MostDetailedMip %u, expected %u.\n",
-                U(*desc).Texture2DArray.MostDetailedMip, expected_desc->miplevel_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.MipLevels == expected_desc->miplevel_count,
+                desc->Texture2DArray.MostDetailedMip, expected_desc->miplevel_idx);
+        ok_(__FILE__, line)(desc->Texture2DArray.MipLevels == expected_desc->miplevel_count,
                 "Got MipLevels %u, expected %u.\n",
-                U(*desc).Texture2DArray.MipLevels, expected_desc->miplevel_count);
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.FirstArraySlice == expected_desc->layer_idx,
+                desc->Texture2DArray.MipLevels, expected_desc->miplevel_count);
+        ok_(__FILE__, line)(desc->Texture2DArray.FirstArraySlice == expected_desc->layer_idx,
                 "Got FirstArraySlice %u, expected %u.\n",
-                U(*desc).Texture2DArray.FirstArraySlice, expected_desc->layer_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.ArraySize == expected_desc->layer_count,
+                desc->Texture2DArray.FirstArraySlice, expected_desc->layer_idx);
+        ok_(__FILE__, line)(desc->Texture2DArray.ArraySize == expected_desc->layer_count,
                 "Got ArraySize %u, expected %u.\n",
-                U(*desc).Texture2DArray.ArraySize, expected_desc->layer_count);
+                desc->Texture2DArray.ArraySize, expected_desc->layer_count);
     }
     else if (desc->ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2DMSARRAY)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2DMSArray.FirstArraySlice == expected_desc->layer_idx,
+        ok_(__FILE__, line)(desc->Texture2DMSArray.FirstArraySlice == expected_desc->layer_idx,
                 "Got FirstArraySlice %u, expected %u.\n",
-                U(*desc).Texture2DMSArray.FirstArraySlice, expected_desc->layer_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DMSArray.ArraySize == expected_desc->layer_count,
+                desc->Texture2DMSArray.FirstArraySlice, expected_desc->layer_idx);
+        ok_(__FILE__, line)(desc->Texture2DMSArray.ArraySize == expected_desc->layer_count,
                 "Got ArraySize %u, expected %u.\n",
-                U(*desc).Texture2DMSArray.ArraySize, expected_desc->layer_count);
+                desc->Texture2DMSArray.ArraySize, expected_desc->layer_count);
     }
     else if (desc->ViewDimension == D3D11_SRV_DIMENSION_TEXTURE3D)
     {
-        ok_(__FILE__, line)(U(*desc).Texture3D.MostDetailedMip == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture3D.MostDetailedMip == expected_desc->miplevel_idx,
                 "Got MostDetailedMip %u, expected %u.\n",
-                U(*desc).Texture3D.MostDetailedMip, expected_desc->miplevel_idx);
-        ok_(__FILE__, line)(U(*desc).Texture3D.MipLevels == expected_desc->miplevel_count,
+                desc->Texture3D.MostDetailedMip, expected_desc->miplevel_idx);
+        ok_(__FILE__, line)(desc->Texture3D.MipLevels == expected_desc->miplevel_count,
                 "Got MipLevels %u, expected %u.\n",
-                U(*desc).Texture3D.MipLevels, expected_desc->miplevel_count);
+                desc->Texture3D.MipLevels, expected_desc->miplevel_count);
     }
     else if (desc->ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE)
     {
-        ok_(__FILE__, line)(U(*desc).TextureCube.MostDetailedMip == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->TextureCube.MostDetailedMip == expected_desc->miplevel_idx,
                 "Got MostDetailedMip %u, expected %u.\n",
-                U(*desc).TextureCube.MostDetailedMip, expected_desc->miplevel_idx);
-        ok_(__FILE__, line)(U(*desc).TextureCube.MipLevels == expected_desc->miplevel_count,
+                desc->TextureCube.MostDetailedMip, expected_desc->miplevel_idx);
+        ok_(__FILE__, line)(desc->TextureCube.MipLevels == expected_desc->miplevel_count,
                 "Got MipLevels %u, expected %u.\n",
-                U(*desc).TextureCube.MipLevels, expected_desc->miplevel_count);
+                desc->TextureCube.MipLevels, expected_desc->miplevel_count);
     }
     else if (desc->ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBEARRAY)
     {
-        ok_(__FILE__, line)(U(*desc).TextureCubeArray.MostDetailedMip == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->TextureCubeArray.MostDetailedMip == expected_desc->miplevel_idx,
                 "Got MostDetailedMip %u, expected %u.\n",
-                U(*desc).TextureCubeArray.MostDetailedMip, expected_desc->miplevel_idx);
-        ok_(__FILE__, line)(U(*desc).TextureCubeArray.MipLevels == expected_desc->miplevel_count,
+                desc->TextureCubeArray.MostDetailedMip, expected_desc->miplevel_idx);
+        ok_(__FILE__, line)(desc->TextureCubeArray.MipLevels == expected_desc->miplevel_count,
                 "Got MipLevels %u, expected %u.\n",
-                U(*desc).TextureCubeArray.MipLevels, expected_desc->miplevel_count);
-        ok_(__FILE__, line)(U(*desc).TextureCubeArray.First2DArrayFace == expected_desc->layer_idx,
+                desc->TextureCubeArray.MipLevels, expected_desc->miplevel_count);
+        ok_(__FILE__, line)(desc->TextureCubeArray.First2DArrayFace == expected_desc->layer_idx,
                 "Got First2DArrayFace %u, expected %u.\n",
-                U(*desc).TextureCubeArray.First2DArrayFace, expected_desc->layer_idx);
-        ok_(__FILE__, line)(U(*desc).TextureCubeArray.NumCubes == expected_desc->layer_count,
+                desc->TextureCubeArray.First2DArrayFace, expected_desc->layer_idx);
+        ok_(__FILE__, line)(desc->TextureCubeArray.NumCubes == expected_desc->layer_count,
                 "Got NumCubes %u, expected %u.\n",
-                U(*desc).TextureCubeArray.NumCubes, expected_desc->layer_count);
+                desc->TextureCubeArray.NumCubes, expected_desc->layer_count);
     }
     else if (desc->ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2DMS)
     {
@@ -476,34 +475,34 @@ static void get_rtv_desc(D3D11_RENDER_TARGET_VIEW_DESC *d3d11_desc, const struct
     d3d11_desc->ViewDimension = desc->dimension;
     if (desc->dimension == D3D11_RTV_DIMENSION_TEXTURE1D)
     {
-        U(*d3d11_desc).Texture1D.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture1D.MipSlice = desc->miplevel_idx;
     }
     else if (desc->dimension == D3D11_RTV_DIMENSION_TEXTURE1DARRAY)
     {
-        U(*d3d11_desc).Texture1DArray.MipSlice = desc->miplevel_idx;
-        U(*d3d11_desc).Texture1DArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture1DArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture1DArray.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture1DArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture1DArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension == D3D11_RTV_DIMENSION_TEXTURE2D)
     {
-        U(*d3d11_desc).Texture2D.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture2D.MipSlice = desc->miplevel_idx;
     }
     else if (desc->dimension == D3D11_RTV_DIMENSION_TEXTURE2DARRAY)
     {
-        U(*d3d11_desc).Texture2DArray.MipSlice = desc->miplevel_idx;
-        U(*d3d11_desc).Texture2DArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture2DArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture2DArray.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture2DArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture2DArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension == D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY)
     {
-        U(*d3d11_desc).Texture2DMSArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture2DMSArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture2DMSArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture2DMSArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension == D3D11_RTV_DIMENSION_TEXTURE3D)
     {
-        U(*d3d11_desc).Texture3D.MipSlice = desc->miplevel_idx;
-        U(*d3d11_desc).Texture3D.FirstWSlice = desc->layer_idx;
-        U(*d3d11_desc).Texture3D.WSize = desc->layer_count;
+        d3d11_desc->Texture3D.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture3D.FirstWSlice = desc->layer_idx;
+        d3d11_desc->Texture3D.WSize = desc->layer_count;
     }
     else if (desc->dimension != D3D11_RTV_DIMENSION_UNKNOWN
             && desc->dimension != D3D11_RTV_DIMENSION_TEXTURE2DMS)
@@ -526,42 +525,42 @@ static void check_rtv_desc_(unsigned int line, const D3D11_RENDER_TARGET_VIEW_DE
 
     if (desc->ViewDimension == D3D11_RTV_DIMENSION_TEXTURE2D)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2D.MipSlice == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture2D.MipSlice == expected_desc->miplevel_idx,
                 "Got MipSlice %u, expected %u.\n",
-                U(*desc).Texture2D.MipSlice, expected_desc->miplevel_idx);
+                desc->Texture2D.MipSlice, expected_desc->miplevel_idx);
     }
     else if (desc->ViewDimension == D3D11_RTV_DIMENSION_TEXTURE2DARRAY)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.MipSlice == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture2DArray.MipSlice == expected_desc->miplevel_idx,
                 "Got MipSlice %u, expected %u.\n",
-                U(*desc).Texture2DArray.MipSlice, expected_desc->miplevel_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.FirstArraySlice == expected_desc->layer_idx,
+                desc->Texture2DArray.MipSlice, expected_desc->miplevel_idx);
+        ok_(__FILE__, line)(desc->Texture2DArray.FirstArraySlice == expected_desc->layer_idx,
                 "Got FirstArraySlice %u, expected %u.\n",
-                U(*desc).Texture2DArray.FirstArraySlice, expected_desc->layer_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.ArraySize == expected_desc->layer_count,
+                desc->Texture2DArray.FirstArraySlice, expected_desc->layer_idx);
+        ok_(__FILE__, line)(desc->Texture2DArray.ArraySize == expected_desc->layer_count,
                 "Got ArraySize %u, expected %u.\n",
-                U(*desc).Texture2DArray.ArraySize, expected_desc->layer_count);
+                desc->Texture2DArray.ArraySize, expected_desc->layer_count);
     }
     else if (desc->ViewDimension == D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2DMSArray.FirstArraySlice == expected_desc->layer_idx,
+        ok_(__FILE__, line)(desc->Texture2DMSArray.FirstArraySlice == expected_desc->layer_idx,
                 "Got FirstArraySlice %u, expected %u.\n",
-                U(*desc).Texture2DMSArray.FirstArraySlice, expected_desc->layer_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DMSArray.ArraySize == expected_desc->layer_count,
+                desc->Texture2DMSArray.FirstArraySlice, expected_desc->layer_idx);
+        ok_(__FILE__, line)(desc->Texture2DMSArray.ArraySize == expected_desc->layer_count,
                 "Got ArraySize %u, expected %u.\n",
-                U(*desc).Texture2DMSArray.ArraySize, expected_desc->layer_count);
+                desc->Texture2DMSArray.ArraySize, expected_desc->layer_count);
     }
     else if (desc->ViewDimension == D3D11_RTV_DIMENSION_TEXTURE3D)
     {
-        ok_(__FILE__, line)(U(*desc).Texture3D.MipSlice == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture3D.MipSlice == expected_desc->miplevel_idx,
                 "Got MipSlice %u, expected %u.\n",
-                U(*desc).Texture3D.MipSlice, expected_desc->miplevel_idx);
-        ok_(__FILE__, line)(U(*desc).Texture3D.FirstWSlice == expected_desc->layer_idx,
+                desc->Texture3D.MipSlice, expected_desc->miplevel_idx);
+        ok_(__FILE__, line)(desc->Texture3D.FirstWSlice == expected_desc->layer_idx,
                 "Got FirstWSlice %u, expected %u.\n",
-                U(*desc).Texture3D.FirstWSlice, expected_desc->layer_idx);
-        ok_(__FILE__, line)(U(*desc).Texture3D.WSize == expected_desc->layer_count,
+                desc->Texture3D.FirstWSlice, expected_desc->layer_idx);
+        ok_(__FILE__, line)(desc->Texture3D.WSize == expected_desc->layer_count,
                 "Got WSize %u, expected %u.\n",
-                U(*desc).Texture3D.WSize, expected_desc->layer_count);
+                desc->Texture3D.WSize, expected_desc->layer_count);
     }
     else if (desc->ViewDimension != D3D11_RTV_DIMENSION_TEXTURE2DMS)
     {
@@ -585,28 +584,28 @@ static void get_dsv_desc(D3D11_DEPTH_STENCIL_VIEW_DESC *d3d11_desc, const struct
     d3d11_desc->Flags = 0;
     if (desc->dimension == D3D11_DSV_DIMENSION_TEXTURE1D)
     {
-        U(*d3d11_desc).Texture1D.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture1D.MipSlice = desc->miplevel_idx;
     }
     else if (desc->dimension == D3D11_DSV_DIMENSION_TEXTURE1DARRAY)
     {
-        U(*d3d11_desc).Texture1DArray.MipSlice = desc->miplevel_idx;
-        U(*d3d11_desc).Texture1DArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture1DArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture1DArray.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture1DArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture1DArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension == D3D11_DSV_DIMENSION_TEXTURE2D)
     {
-        U(*d3d11_desc).Texture2D.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture2D.MipSlice = desc->miplevel_idx;
     }
     else if (desc->dimension == D3D11_DSV_DIMENSION_TEXTURE2DARRAY)
     {
-        U(*d3d11_desc).Texture2DArray.MipSlice = desc->miplevel_idx;
-        U(*d3d11_desc).Texture2DArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture2DArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture2DArray.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture2DArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture2DArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension == D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY)
     {
-        U(*d3d11_desc).Texture2DMSArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture2DMSArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture2DMSArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture2DMSArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension != D3D11_DSV_DIMENSION_UNKNOWN
             && desc->dimension != D3D11_DSV_DIMENSION_TEXTURE2DMS)
@@ -629,30 +628,30 @@ static void check_dsv_desc_(unsigned int line, const D3D11_DEPTH_STENCIL_VIEW_DE
 
     if (desc->ViewDimension == D3D11_DSV_DIMENSION_TEXTURE2D)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2D.MipSlice == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture2D.MipSlice == expected_desc->miplevel_idx,
                 "Got MipSlice %u, expected %u.\n",
-                U(*desc).Texture2D.MipSlice, expected_desc->miplevel_idx);
+                desc->Texture2D.MipSlice, expected_desc->miplevel_idx);
     }
     else if (desc->ViewDimension == D3D11_DSV_DIMENSION_TEXTURE2DARRAY)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.MipSlice == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture2DArray.MipSlice == expected_desc->miplevel_idx,
                 "Got MipSlice %u, expected %u.\n",
-                U(*desc).Texture2DArray.MipSlice, expected_desc->miplevel_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.FirstArraySlice == expected_desc->layer_idx,
+                desc->Texture2DArray.MipSlice, expected_desc->miplevel_idx);
+        ok_(__FILE__, line)(desc->Texture2DArray.FirstArraySlice == expected_desc->layer_idx,
                 "Got FirstArraySlice %u, expected %u.\n",
-                U(*desc).Texture2DArray.FirstArraySlice, expected_desc->layer_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.ArraySize == expected_desc->layer_count,
+                desc->Texture2DArray.FirstArraySlice, expected_desc->layer_idx);
+        ok_(__FILE__, line)(desc->Texture2DArray.ArraySize == expected_desc->layer_count,
                 "Got ArraySize %u, expected %u.\n",
-                U(*desc).Texture2DArray.ArraySize, expected_desc->layer_count);
+                desc->Texture2DArray.ArraySize, expected_desc->layer_count);
     }
     else if (desc->ViewDimension == D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2DMSArray.FirstArraySlice == expected_desc->layer_idx,
+        ok_(__FILE__, line)(desc->Texture2DMSArray.FirstArraySlice == expected_desc->layer_idx,
                 "Got FirstArraySlice %u, expected %u.\n",
-                U(*desc).Texture2DMSArray.FirstArraySlice, expected_desc->layer_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DMSArray.ArraySize == expected_desc->layer_count,
+                desc->Texture2DMSArray.FirstArraySlice, expected_desc->layer_idx);
+        ok_(__FILE__, line)(desc->Texture2DMSArray.ArraySize == expected_desc->layer_count,
                 "Got ArraySize %u, expected %u.\n",
-                U(*desc).Texture2DMSArray.ArraySize, expected_desc->layer_count);
+                desc->Texture2DMSArray.ArraySize, expected_desc->layer_count);
     }
     else if (desc->ViewDimension != D3D11_DSV_DIMENSION_TEXTURE2DMS)
     {
@@ -675,29 +674,29 @@ static void get_uav_desc(D3D11_UNORDERED_ACCESS_VIEW_DESC *d3d11_desc, const str
     d3d11_desc->ViewDimension = desc->dimension;
     if (desc->dimension == D3D11_UAV_DIMENSION_TEXTURE1D)
     {
-        U(*d3d11_desc).Texture1D.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture1D.MipSlice = desc->miplevel_idx;
     }
     else if (desc->dimension == D3D11_UAV_DIMENSION_TEXTURE1DARRAY)
     {
-        U(*d3d11_desc).Texture1DArray.MipSlice = desc->miplevel_idx;
-        U(*d3d11_desc).Texture1DArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture1DArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture1DArray.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture1DArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture1DArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension == D3D11_UAV_DIMENSION_TEXTURE2D)
     {
-        U(*d3d11_desc).Texture2D.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture2D.MipSlice = desc->miplevel_idx;
     }
     else if (desc->dimension == D3D11_UAV_DIMENSION_TEXTURE2DARRAY)
     {
-        U(*d3d11_desc).Texture2DArray.MipSlice = desc->miplevel_idx;
-        U(*d3d11_desc).Texture2DArray.FirstArraySlice = desc->layer_idx;
-        U(*d3d11_desc).Texture2DArray.ArraySize = desc->layer_count;
+        d3d11_desc->Texture2DArray.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture2DArray.FirstArraySlice = desc->layer_idx;
+        d3d11_desc->Texture2DArray.ArraySize = desc->layer_count;
     }
     else if (desc->dimension == D3D11_UAV_DIMENSION_TEXTURE3D)
     {
-        U(*d3d11_desc).Texture3D.MipSlice = desc->miplevel_idx;
-        U(*d3d11_desc).Texture3D.FirstWSlice = desc->layer_idx;
-        U(*d3d11_desc).Texture3D.WSize = desc->layer_count;
+        d3d11_desc->Texture3D.MipSlice = desc->miplevel_idx;
+        d3d11_desc->Texture3D.FirstWSlice = desc->layer_idx;
+        d3d11_desc->Texture3D.WSize = desc->layer_count;
     }
     else if (desc->dimension != D3D11_UAV_DIMENSION_UNKNOWN)
     {
@@ -719,33 +718,33 @@ static void check_uav_desc_(unsigned int line, const D3D11_UNORDERED_ACCESS_VIEW
 
     if (desc->ViewDimension == D3D11_UAV_DIMENSION_TEXTURE2D)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2D.MipSlice == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture2D.MipSlice == expected_desc->miplevel_idx,
                 "Got MipSlice %u, expected %u.\n",
-                U(*desc).Texture2D.MipSlice, expected_desc->miplevel_idx);
+                desc->Texture2D.MipSlice, expected_desc->miplevel_idx);
     }
     else if (desc->ViewDimension == D3D11_UAV_DIMENSION_TEXTURE2DARRAY)
     {
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.MipSlice == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture2DArray.MipSlice == expected_desc->miplevel_idx,
                 "Got MipSlice %u, expected %u.\n",
-                U(*desc).Texture2DArray.MipSlice, expected_desc->miplevel_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.FirstArraySlice == expected_desc->layer_idx,
+                desc->Texture2DArray.MipSlice, expected_desc->miplevel_idx);
+        ok_(__FILE__, line)(desc->Texture2DArray.FirstArraySlice == expected_desc->layer_idx,
                 "Got FirstArraySlice %u, expected %u.\n",
-                U(*desc).Texture2DArray.FirstArraySlice, expected_desc->layer_idx);
-        ok_(__FILE__, line)(U(*desc).Texture2DArray.ArraySize == expected_desc->layer_count,
+                desc->Texture2DArray.FirstArraySlice, expected_desc->layer_idx);
+        ok_(__FILE__, line)(desc->Texture2DArray.ArraySize == expected_desc->layer_count,
                 "Got ArraySize %u, expected %u.\n",
-                U(*desc).Texture2DArray.ArraySize, expected_desc->layer_count);
+                desc->Texture2DArray.ArraySize, expected_desc->layer_count);
     }
     else if (desc->ViewDimension == D3D11_UAV_DIMENSION_TEXTURE3D)
     {
-        ok_(__FILE__, line)(U(*desc).Texture3D.MipSlice == expected_desc->miplevel_idx,
+        ok_(__FILE__, line)(desc->Texture3D.MipSlice == expected_desc->miplevel_idx,
                 "Got MipSlice %u, expected %u.\n",
-                U(*desc).Texture3D.MipSlice, expected_desc->miplevel_idx);
-        ok_(__FILE__, line)(U(*desc).Texture3D.FirstWSlice == expected_desc->layer_idx,
+                desc->Texture3D.MipSlice, expected_desc->miplevel_idx);
+        ok_(__FILE__, line)(desc->Texture3D.FirstWSlice == expected_desc->layer_idx,
                 "Got FirstWSlice %u, expected %u.\n",
-                U(*desc).Texture3D.FirstWSlice, expected_desc->layer_idx);
-        ok_(__FILE__, line)(U(*desc).Texture3D.WSize == expected_desc->layer_count,
+                desc->Texture3D.FirstWSlice, expected_desc->layer_idx);
+        ok_(__FILE__, line)(desc->Texture3D.WSize == expected_desc->layer_count,
                 "Got WSize %u, expected %u.\n",
-                U(*desc).Texture3D.WSize, expected_desc->layer_count);
+                desc->Texture3D.WSize, expected_desc->layer_count);
     }
     else
     {
@@ -2828,7 +2827,7 @@ static void test_create_texture2d(void)
     unsigned int i;
     HRESULT hr;
 
-    static const struct
+    const struct
     {
         DXGI_FORMAT format;
         UINT array_size;
@@ -2924,7 +2923,7 @@ static void test_create_texture2d(void)
         {DXGI_FORMAT_D32_FLOAT,               1, D3D11_BIND_RENDER_TARGET,    0, FALSE, FALSE},
         {DXGI_FORMAT_D32_FLOAT,               1, D3D11_BIND_DEPTH_STENCIL,    0, TRUE,  FALSE},
         {DXGI_FORMAT_R9G9B9E5_SHAREDEXP,      1, D3D11_BIND_SHADER_RESOURCE,  0, TRUE,  FALSE},
-        {DXGI_FORMAT_R9G9B9E5_SHAREDEXP,      1, D3D11_BIND_RENDER_TARGET,    0, FALSE, FALSE},
+        {DXGI_FORMAT_R9G9B9E5_SHAREDEXP,      1, D3D11_BIND_RENDER_TARGET,    0, FALSE, damavand},
         {DXGI_FORMAT_R9G9B9E5_SHAREDEXP,      1, D3D11_BIND_DEPTH_STENCIL,    0, FALSE, FALSE},
     };
 
@@ -3230,7 +3229,7 @@ static void test_create_texture3d(void)
     unsigned int i;
     HRESULT hr;
 
-    static const struct
+    const struct
     {
         DXGI_FORMAT format;
         D3D11_BIND_FLAG bind_flags;
@@ -3249,7 +3248,7 @@ static void test_create_texture3d(void)
         {DXGI_FORMAT_D24_UNORM_S8_UINT,     D3D11_BIND_RENDER_TARGET,   FALSE, FALSE},
         {DXGI_FORMAT_D32_FLOAT,             D3D11_BIND_RENDER_TARGET,   FALSE, FALSE},
         {DXGI_FORMAT_R9G9B9E5_SHAREDEXP,    D3D11_BIND_SHADER_RESOURCE, TRUE,  FALSE},
-        {DXGI_FORMAT_R9G9B9E5_SHAREDEXP,    D3D11_BIND_RENDER_TARGET,   FALSE, FALSE},
+        {DXGI_FORMAT_R9G9B9E5_SHAREDEXP,    D3D11_BIND_RENDER_TARGET,   FALSE, damavand},
         {DXGI_FORMAT_R9G9B9E5_SHAREDEXP,    D3D11_BIND_DEPTH_STENCIL,   FALSE, FALSE},
     };
 
@@ -3920,7 +3919,7 @@ static void test_create_depthstencil_view(void)
     ok(dsv_desc.ViewDimension == D3D11_DSV_DIMENSION_TEXTURE2D,
             "Got unexpected view dimension %#x.\n", dsv_desc.ViewDimension);
     ok(!dsv_desc.Flags, "Got unexpected flags %#x.\n", dsv_desc.Flags);
-    ok(!U(dsv_desc).Texture2D.MipSlice, "Got unexpected mip slice %u.\n", U(dsv_desc).Texture2D.MipSlice);
+    ok(!dsv_desc.Texture2D.MipSlice, "Got unexpected mip slice %u.\n", dsv_desc.Texture2D.MipSlice);
 
     ID3D11DepthStencilView_Release(dsview);
     ID3D11Texture2D_Release(texture);
@@ -4021,7 +4020,7 @@ static void test_depthstencil_view_interfaces(void)
     dsv_desc.Format = texture_desc.Format;
     dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
     dsv_desc.Flags = 0;
-    U(dsv_desc).Texture2D.MipSlice = 0;
+    dsv_desc.Texture2D.MipSlice = 0;
 
     hr = ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource *)texture, &dsv_desc, &dsview);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
@@ -4041,8 +4040,8 @@ static void test_depthstencil_view_interfaces(void)
     ok(d3d10_dsv_desc.Format == dsv_desc.Format, "Got unexpected format %#x.\n", d3d10_dsv_desc.Format);
     ok(d3d10_dsv_desc.ViewDimension == (D3D10_DSV_DIMENSION)dsv_desc.ViewDimension,
             "Got unexpected view dimension %u.\n", d3d10_dsv_desc.ViewDimension);
-    ok(U(d3d10_dsv_desc).Texture2D.MipSlice == U(dsv_desc).Texture2D.MipSlice,
-            "Got unexpected mip slice %u.\n", U(d3d10_dsv_desc).Texture2D.MipSlice);
+    ok(d3d10_dsv_desc.Texture2D.MipSlice == dsv_desc.Texture2D.MipSlice,
+            "Got unexpected mip slice %u.\n", d3d10_dsv_desc.Texture2D.MipSlice);
 
     ID3D10DepthStencilView_Release(d3d10_dsview);
 
@@ -4231,8 +4230,8 @@ static void test_create_rendertarget_view(void)
 
     rtv_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_BUFFER;
-    U1(U(rtv_desc).Buffer).ElementOffset = 0;
-    U2(U(rtv_desc).Buffer).ElementWidth = 64;
+    rtv_desc.Buffer.ElementOffset = 0;
+    rtv_desc.Buffer.ElementWidth = 64;
 
     if (!enable_debug_layer)
     {
@@ -4564,8 +4563,8 @@ static void test_create_shader_resource_view(void)
 
     srv_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-    U1(U(srv_desc).Buffer).ElementOffset = 0;
-    U2(U(srv_desc).Buffer).ElementWidth = 64;
+    srv_desc.Buffer.ElementOffset = 0;
+    srv_desc.Buffer.ElementWidth = 64;
 
     srview = (void *)0xdeadbeef;
     hr = ID3D11Device_CreateShaderResourceView(device, NULL, &srv_desc, &srview);
@@ -4623,10 +4622,10 @@ static void test_create_shader_resource_view(void)
         ok(srv_desc.Format == DXGI_FORMAT_UNKNOWN, "Got unexpected format %#x.\n", srv_desc.Format);
         ok(srv_desc.ViewDimension == D3D11_SRV_DIMENSION_BUFFER, "Got unexpected view dimension %#x.\n",
                 srv_desc.ViewDimension);
-        ok(!U1(U(srv_desc).Buffer).FirstElement, "Got unexpected first element %u.\n",
-                U1(U(srv_desc).Buffer).FirstElement);
-        ok(U2(U(srv_desc).Buffer).NumElements == 256, "Got unexpected num elements %u.\n",
-                U2(U(srv_desc).Buffer).NumElements);
+        ok(!srv_desc.Buffer.FirstElement, "Got unexpected first element %u.\n",
+                srv_desc.Buffer.FirstElement);
+        ok(srv_desc.Buffer.NumElements == 256, "Got unexpected num elements %u.\n",
+                srv_desc.Buffer.NumElements);
 
         ID3D11ShaderResourceView_Release(srview);
         ID3D11Buffer_Release(buffer);
@@ -6201,12 +6200,13 @@ static void test_pipeline_statistics_query(void)
         ok(data.IAVertices == 4, "Got unexpected IAVertices count: %u.\n", (unsigned int)data.IAVertices);
         ok(data.IAPrimitives == 2, "Got unexpected IAPrimitives count: %u.\n", (unsigned int)data.IAPrimitives);
         ok(data.VSInvocations == 4, "Got unexpected VSInvocations count: %u.\n", (unsigned int)data.VSInvocations);
-        ok(!data.GSInvocations, "Got unexpected GSInvocations count: %u.\n", (unsigned int)data.GSInvocations);
+        todo_wine_if (damavand)
+            ok(!data.GSInvocations, "Got unexpected GSInvocations count: %u.\n", (unsigned int)data.GSInvocations);
         ok(!data.GSPrimitives, "Got unexpected GSPrimitives count: %u.\n", (unsigned int)data.GSPrimitives);
         ok(data.CInvocations == 2, "Got unexpected CInvocations count: %u.\n", (unsigned int)data.CInvocations);
         ok(data.CPrimitives == 2, "Got unexpected CPrimitives count: %u.\n", (unsigned int)data.CPrimitives);
-        todo_wine
-        ok(!data.PSInvocations, "Got unexpected PSInvocations count: %u.\n", (unsigned int)data.PSInvocations);
+        todo_wine_if (!damavand)
+            ok(!data.PSInvocations, "Got unexpected PSInvocations count: %u.\n", (unsigned int)data.PSInvocations);
         ok(!data.HSInvocations, "Got unexpected HSInvocations count: %u.\n", (unsigned int)data.HSInvocations);
         ok(!data.DSInvocations, "Got unexpected DSInvocations count: %u.\n", (unsigned int)data.DSInvocations);
         ok(!data.CSInvocations, "Got unexpected CSInvocations count: %u.\n", (unsigned int)data.CSInvocations);
@@ -6223,7 +6223,8 @@ static void test_pipeline_statistics_query(void)
     ok(data.IAVertices == 4, "Got unexpected IAVertices count: %u.\n", (unsigned int)data.IAVertices);
     ok(data.IAPrimitives == 2, "Got unexpected IAPrimitives count: %u.\n", (unsigned int)data.IAPrimitives);
     ok(data.VSInvocations == 4, "Got unexpected VSInvocations count: %u.\n", (unsigned int)data.VSInvocations);
-    ok(!data.GSInvocations, "Got unexpected GSInvocations count: %u.\n", (unsigned int)data.GSInvocations);
+    todo_wine_if (damavand)
+        ok(!data.GSInvocations, "Got unexpected GSInvocations count: %u.\n", (unsigned int)data.GSInvocations);
     ok(!data.GSPrimitives, "Got unexpected GSPrimitives count: %u.\n", (unsigned int)data.GSPrimitives);
     ok(data.CInvocations == 2, "Got unexpected CInvocations count: %u.\n", (unsigned int)data.CInvocations);
     ok(data.CPrimitives == 2, "Got unexpected CPrimitives count: %u.\n", (unsigned int)data.CPrimitives);
@@ -6536,7 +6537,7 @@ static void test_so_statistics_query(void)
         get_query_data(context, query, &data, sizeof(data));
         ok(!data.NumPrimitivesWritten, "Got unexpected NumPrimitivesWritten: %u.\n",
                 (unsigned int)data.NumPrimitivesWritten);
-        todo_wine
+        todo_wine_if (!damavand)
         ok(!data.PrimitivesStorageNeeded, "Got unexpected PrimitivesStorageNeeded: %u.\n",
                 (unsigned int)data.PrimitivesStorageNeeded);
 
@@ -6546,7 +6547,7 @@ static void test_so_statistics_query(void)
         get_query_data(context, query, &data, sizeof(data));
         ok(!data.NumPrimitivesWritten, "Got unexpected NumPrimitivesWritten: %u.\n",
                 (unsigned int)data.NumPrimitivesWritten);
-        todo_wine
+        todo_wine_if (!damavand)
         ok(!data.PrimitivesStorageNeeded, "Got unexpected PrimitivesStorageNeeded: %u.\n",
                 (unsigned int)data.PrimitivesStorageNeeded);
 
@@ -7337,17 +7338,17 @@ static void test_device_context_state(void)
 
     srv_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-    U(srv_desc).Buffer.ElementOffset = 0;
-    U(srv_desc).Buffer.ElementWidth = 64;
+    srv_desc.Buffer.ElementOffset = 0;
+    srv_desc.Buffer.ElementWidth = 64;
     hr = ID3D11Device1_CreateShaderResourceView(device, (ID3D11Resource *)srvb, &srv_desc, &srv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ID3D11Buffer_Release(srvb);
 
     uav_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 4;
-    U(uav_desc).Buffer.Flags = 0;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 4;
+    uav_desc.Buffer.Flags = 0;
     hr = ID3D11Device1_CreateUnorderedAccessView(device, (ID3D11Resource *)uavb, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ID3D11Buffer_Release(uavb);
@@ -10707,14 +10708,14 @@ static void test_depth_stencil_sampling(void)
         dsv_desc.Format = tests[i].dsv_format;
         dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
         dsv_desc.Flags = 0;
-        U(dsv_desc).Texture2D.MipSlice = 0;
+        dsv_desc.Texture2D.MipSlice = 0;
         hr = ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource *)texture, &dsv_desc, &dsv);
         ok(hr == S_OK, "Test %u: Got unexpected hr %#lx.\n", i, hr);
 
         srv_desc.Format = tests[i].depth_view_format;
         srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-        U(srv_desc).Texture2D.MostDetailedMip = 0;
-        U(srv_desc).Texture2D.MipLevels = 1;
+        srv_desc.Texture2D.MostDetailedMip = 0;
+        srv_desc.Texture2D.MipLevels = 1;
         hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, &srv_desc, &depth_srv);
         ok(hr == S_OK, "Test %u: Got unexpected hr %#lx.\n", i, hr);
 
@@ -11040,16 +11041,16 @@ static void test_sample_c_lz(void)
         dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
         dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
         dsv_desc.Flags = 0;
-        U(dsv_desc).Texture2DArray.MipSlice = 0;
-        U(dsv_desc).Texture2DArray.FirstArraySlice = i;
-        U(dsv_desc).Texture2DArray.ArraySize = 1;
+        dsv_desc.Texture2DArray.MipSlice = 0;
+        dsv_desc.Texture2DArray.FirstArraySlice = i;
+        dsv_desc.Texture2DArray.ArraySize = 1;
 
         hr = ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource *)texture, &dsv_desc, &dsv);
         ok(hr == S_OK, "Slice %u: Got unexpected hr %#lx.\n", i, hr);
         ID3D11DeviceContext_ClearDepthStencilView(context, dsv, D3D11_CLEAR_DEPTH, depth_values[i], 0);
         ID3D11DepthStencilView_Release(dsv);
 
-        U(dsv_desc).Texture2DArray.MipSlice = 1;
+        dsv_desc.Texture2DArray.MipSlice = 1;
         hr = ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource *)texture, &dsv_desc, &dsv);
         ok(hr == S_OK, "Slice %u: Got unexpected hr %#lx.\n", i, hr);
         ID3D11DeviceContext_ClearDepthStencilView(context, dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
@@ -11058,10 +11059,10 @@ static void test_sample_c_lz(void)
 
     srv_desc.Format = DXGI_FORMAT_R32_FLOAT;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
-    U(srv_desc).Texture2DArray.MostDetailedMip = 0;
-    U(srv_desc).Texture2DArray.MipLevels = ~0u;
-    U(srv_desc).Texture2DArray.FirstArraySlice = 0;
-    U(srv_desc).Texture2DArray.ArraySize = ~0u;
+    srv_desc.Texture2DArray.MostDetailedMip = 0;
+    srv_desc.Texture2DArray.MipLevels = ~0u;
+    srv_desc.Texture2DArray.FirstArraySlice = 0;
+    srv_desc.Texture2DArray.ArraySize = ~0u;
     hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, &srv_desc, &srv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -11098,16 +11099,16 @@ static void test_sample_c_lz(void)
         dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
         dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
         dsv_desc.Flags = 0;
-        U(dsv_desc).Texture2DArray.MipSlice = 0;
-        U(dsv_desc).Texture2DArray.FirstArraySlice = i;
-        U(dsv_desc).Texture2DArray.ArraySize = 1;
+        dsv_desc.Texture2DArray.MipSlice = 0;
+        dsv_desc.Texture2DArray.FirstArraySlice = i;
+        dsv_desc.Texture2DArray.ArraySize = 1;
 
         hr = ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource *)texture, &dsv_desc, &dsv);
         ok(hr == S_OK, "Slice %u: Got unexpected hr %#lx.\n", i, hr);
         ID3D11DeviceContext_ClearDepthStencilView(context, dsv, D3D11_CLEAR_DEPTH, depth_values[i], 0);
         ID3D11DepthStencilView_Release(dsv);
 
-        U(dsv_desc).Texture2DArray.MipSlice = 1;
+        dsv_desc.Texture2DArray.MipSlice = 1;
         hr = ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource *)texture, &dsv_desc, &dsv);
         ok(hr == S_OK, "Slice %u: Got unexpected hr %#lx.\n", i, hr);
         ID3D11DeviceContext_ClearDepthStencilView(context, dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
@@ -11116,8 +11117,8 @@ static void test_sample_c_lz(void)
 
     srv_desc.Format = DXGI_FORMAT_R32_FLOAT;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
-    U(srv_desc).TextureCube.MostDetailedMip = 0;
-    U(srv_desc).TextureCube.MipLevels = ~0u;
+    srv_desc.TextureCube.MostDetailedMip = 0;
+    srv_desc.TextureCube.MipLevels = ~0u;
     hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, &srv_desc, &srv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -11801,9 +11802,9 @@ static void test_layered_rendering(void)
 
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
     rtv_desc.Format = texture_desc.Format;
-    U(rtv_desc).Texture2DArray.MipSlice = 0;
-    U(rtv_desc).Texture2DArray.FirstArraySlice = 3;
-    U(rtv_desc).Texture2DArray.ArraySize = 1;
+    rtv_desc.Texture2DArray.MipSlice = 0;
+    rtv_desc.Texture2DArray.FirstArraySlice = 3;
+    rtv_desc.Texture2DArray.ArraySize = 1;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, &rtv_desc, &rtv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ID3D11DeviceContext_OMSetRenderTargets(context, 1, &rtv, NULL);
@@ -11814,9 +11815,9 @@ static void test_layered_rendering(void)
     ID3D11RenderTargetView_Release(rtv);
 
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
-    U(rtv_desc).Texture2DArray.MipSlice = 1;
-    U(rtv_desc).Texture2DArray.FirstArraySlice = 0;
-    U(rtv_desc).Texture2DArray.ArraySize = ~0u;
+    rtv_desc.Texture2DArray.MipSlice = 1;
+    rtv_desc.Texture2DArray.FirstArraySlice = 0;
+    rtv_desc.Texture2DArray.ArraySize = ~0u;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, &rtv_desc, &rtv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ID3D11DeviceContext_OMSetRenderTargets(context, 1, &rtv, NULL);
@@ -11831,11 +11832,11 @@ static void test_layered_rendering(void)
     ID3D11RenderTargetView_Release(rtv);
 
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
-    U(rtv_desc).Texture2DArray.MipSlice = 2;
-    U(rtv_desc).Texture2DArray.ArraySize = 1;
+    rtv_desc.Texture2DArray.MipSlice = 2;
+    rtv_desc.Texture2DArray.ArraySize = 1;
     for (i = 0; i < texture_desc.ArraySize; ++i)
     {
-        U(rtv_desc).Texture2DArray.FirstArraySlice = texture_desc.ArraySize - 1 - i;
+        rtv_desc.Texture2DArray.FirstArraySlice = texture_desc.ArraySize - 1 - i;
         hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, &rtv_desc, &rtv);
         ok(hr == S_OK, "Slice %u: Got unexpected hr %#lx.\n", i, hr);
         ID3D11DeviceContext_OMSetRenderTargets(context, 1, &rtv, NULL);
@@ -11872,9 +11873,9 @@ static void test_layered_rendering(void)
     constant.draw_id = 42;
     ID3D11DeviceContext_UpdateSubresource(context, (ID3D11Resource *)cb, 0, NULL, &constant, 0, 0);
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
-    U(rtv_desc).Texture2DArray.MipSlice = 0;
-    U(rtv_desc).Texture2DArray.FirstArraySlice = 0;
-    U(rtv_desc).Texture2DArray.ArraySize = ~0u;
+    rtv_desc.Texture2DArray.MipSlice = 0;
+    rtv_desc.Texture2DArray.FirstArraySlice = 0;
+    rtv_desc.Texture2DArray.ArraySize = ~0u;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, &rtv_desc, &rtv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ID3D11DeviceContext_OMSetRenderTargets(context, 1, &rtv, NULL);
@@ -12454,8 +12455,8 @@ static void test_clear_state(void)
 
     srv_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-    U(srv_desc).Buffer.ElementOffset = 0;
-    U(srv_desc).Buffer.ElementWidth = 64;
+    srv_desc.Buffer.ElementOffset = 0;
+    srv_desc.Buffer.ElementWidth = 64;
 
     for (i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; ++i)
     {
@@ -12466,9 +12467,9 @@ static void test_clear_state(void)
 
     uav_desc.Format = DXGI_FORMAT_R32_UINT;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 8;
-    U(uav_desc).Buffer.Flags = 0;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 8;
+    uav_desc.Buffer.Flags = 0;
 
     for (i = 0; i < D3D11_PS_CS_UAV_REGISTER_COUNT; ++i)
     {
@@ -15795,7 +15796,7 @@ static void test_swapchain_views(void)
 
     rtv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-    U(rtv_desc).Texture2D.MipSlice = 0;
+    rtv_desc.Texture2D.MipSlice = 0;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)test_context.backbuffer, &rtv_desc, &rtv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ID3D11DeviceContext_OMSetRenderTargets(context, 1, &rtv, NULL);
@@ -15808,8 +15809,8 @@ static void test_swapchain_views(void)
 
     srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    U(srv_desc).Texture2D.MostDetailedMip = 0;
-    U(srv_desc).Texture2D.MipLevels = 1;
+    srv_desc.Texture2D.MostDetailedMip = 0;
+    srv_desc.Texture2D.MipLevels = 1;
     hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)test_context.backbuffer, &srv_desc, &srv);
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
     if (SUCCEEDED(hr))
@@ -16175,13 +16176,13 @@ static void test_clear_render_target_view_2d(void)
 
     rtv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-    U(rtv_desc).Texture2D.MipSlice = 0;
+    rtv_desc.Texture2D.MipSlice = 0;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, &rtv_desc, &srgb_rtv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
     rtv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-    U(rtv_desc).Texture2D.MipSlice = 0;
+    rtv_desc.Texture2D.MipSlice = 0;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, &rtv_desc, &rtv[0]);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -16214,19 +16215,19 @@ static void test_clear_render_target_view_2d(void)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
-    U(rtv_desc).Texture2DArray.MipSlice = 0;
-    U(rtv_desc).Texture2DArray.FirstArraySlice = 0;
-    U(rtv_desc).Texture2DArray.ArraySize = 5;
+    rtv_desc.Texture2DArray.MipSlice = 0;
+    rtv_desc.Texture2DArray.FirstArraySlice = 0;
+    rtv_desc.Texture2DArray.ArraySize = 5;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, &rtv_desc, &rtv[0]);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
-    U(rtv_desc).Texture2DArray.FirstArraySlice = 1;
-    U(rtv_desc).Texture2DArray.ArraySize = 3;
+    rtv_desc.Texture2DArray.FirstArraySlice = 1;
+    rtv_desc.Texture2DArray.ArraySize = 3;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, &rtv_desc, &rtv[1]);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
-    U(rtv_desc).Texture2DArray.FirstArraySlice = 2;
-    U(rtv_desc).Texture2DArray.ArraySize = 1;
+    rtv_desc.Texture2DArray.FirstArraySlice = 2;
+    rtv_desc.Texture2DArray.ArraySize = 1;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, &rtv_desc, &rtv[2]);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -16315,9 +16316,9 @@ static void test_clear_render_target_view_3d(void)
 
     rtv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE3D;
-    U(rtv_desc).Texture3D.MipSlice = 0;
-    U(rtv_desc).Texture3D.FirstWSlice = 0;
-    U(rtv_desc).Texture3D.WSize = ~0u;
+    rtv_desc.Texture3D.MipSlice = 0;
+    rtv_desc.Texture3D.FirstWSlice = 0;
+    rtv_desc.Texture3D.WSize = ~0u;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, &rtv_desc, &rtv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -16402,7 +16403,7 @@ static void test_clear_depth_stencil_view(void)
     todo_wine check_texture_color(depth_texture, 0x00ffffff, 0);
 
     ID3D11DeviceContext_ClearDepthStencilView(context, dsv, D3D11_CLEAR_STENCIL, 0.0f, 0xff);
-    check_texture_color(depth_texture, 0xffffffff, 0);
+    todo_wine_if (damavand) check_texture_color(depth_texture, 0xffffffff, 0);
 
     ID3D11Texture2D_Release(depth_texture);
     ID3D11DepthStencilView_Release(dsv);
@@ -16559,9 +16560,9 @@ static void test_clear_buffer_unordered_access_view(void)
 
     uav_desc.Format = DXGI_FORMAT_UNKNOWN;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 4;
-    U(uav_desc).Buffer.Flags = 0;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 4;
+    uav_desc.Buffer.Flags = 0;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav2);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -16576,7 +16577,7 @@ static void test_clear_buffer_unordered_access_view(void)
 
         clear_uav(context, uav2, &fe_uvec4);
         get_buffer_readback(buffer, &rb);
-        SetRect(&rect, 0, 0, U(uav_desc).Buffer.NumElements * buffer_desc.StructureByteStride / sizeof(uvec4.x), 1);
+        SetRect(&rect, 0, 0, uav_desc.Buffer.NumElements * buffer_desc.StructureByteStride / sizeof(uvec4.x), 1);
         check_readback_data_color(&rb, &rect, fe_uvec4.x, 0);
         rect.left = rect.right;
         rect.right = buffer_desc.ByteWidth / sizeof(uvec4.x);
@@ -16595,13 +16596,13 @@ static void test_clear_buffer_unordered_access_view(void)
 
     uav_desc.Format = DXGI_FORMAT_R32_TYPELESS;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 16;
-    U(uav_desc).Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 16;
+    uav_desc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    U(uav_desc).Buffer.FirstElement = 8;
-    U(uav_desc).Buffer.NumElements = 8;
+    uav_desc.Buffer.FirstElement = 8;
+    uav_desc.Buffer.NumElements = 8;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav2);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -16616,9 +16617,9 @@ static void test_clear_buffer_unordered_access_view(void)
 
         clear_uav(context, uav2, &fe_uvec4);
         get_buffer_readback(buffer, &rb);
-        SetRect(&rect, 0, 0, U(uav_desc).Buffer.FirstElement, 1);
+        SetRect(&rect, 0, 0, uav_desc.Buffer.FirstElement, 1);
         check_readback_data_color(&rb, &rect, uvec4.x, 0);
-        SetRect(&rect, U(uav_desc).Buffer.FirstElement, 0, buffer_desc.ByteWidth / sizeof(uvec4.x), 1);
+        SetRect(&rect, uav_desc.Buffer.FirstElement, 0, buffer_desc.ByteWidth / sizeof(uvec4.x), 1);
         check_readback_data_color(&rb, &rect, fe_uvec4.x, 0);
         release_resource_readback(&rb);
     }
@@ -16634,13 +16635,13 @@ static void test_clear_buffer_unordered_access_view(void)
 
     uav_desc.Format = DXGI_FORMAT_R32_SINT;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 16;
-    U(uav_desc).Buffer.Flags = 0;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 16;
+    uav_desc.Buffer.Flags = 0;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    U(uav_desc).Buffer.FirstElement = 8;
-    U(uav_desc).Buffer.NumElements = 8;
+    uav_desc.Buffer.FirstElement = 8;
+    uav_desc.Buffer.NumElements = 8;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav2);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -16655,9 +16656,9 @@ static void test_clear_buffer_unordered_access_view(void)
 
         clear_uav(context, uav2, &fe_uvec4);
         get_buffer_readback(buffer, &rb);
-        SetRect(&rect, 0, 0, U(uav_desc).Buffer.FirstElement, 1);
+        SetRect(&rect, 0, 0, uav_desc.Buffer.FirstElement, 1);
         check_readback_data_color(&rb, &rect, uvec4.x, 0);
-        SetRect(&rect, U(uav_desc).Buffer.FirstElement, 0, buffer_desc.ByteWidth / sizeof(uvec4.x), 1);
+        SetRect(&rect, uav_desc.Buffer.FirstElement, 0, buffer_desc.ByteWidth / sizeof(uvec4.x), 1);
         check_readback_data_color(&rb, &rect, fe_uvec4.x, 0);
         release_resource_readback(&rb);
     }
@@ -16667,13 +16668,13 @@ static void test_clear_buffer_unordered_access_view(void)
 
     uav_desc.Format = DXGI_FORMAT_R32G32B32A32_SINT;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 4;
-    U(uav_desc).Buffer.Flags = 0;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 4;
+    uav_desc.Buffer.Flags = 0;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    U(uav_desc).Buffer.FirstElement = 2;
-    U(uav_desc).Buffer.NumElements = 2;
+    uav_desc.Buffer.FirstElement = 2;
+    uav_desc.Buffer.NumElements = 2;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav2);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -16705,7 +16706,7 @@ static void test_clear_buffer_unordered_access_view(void)
         {
             struct uvec4 broken_result;
             data = get_readback_uvec4(&rb, x, 0);
-            uvec4 = U(uav_desc).Buffer.FirstElement <= x ? fe_uvec4 : uvec4_data[i];
+            uvec4 = uav_desc.Buffer.FirstElement <= x ? fe_uvec4 : uvec4_data[i];
             broken_result.x = broken_result.y = broken_result.z = broken_result.w = uvec4.x;
             if (!(compare_uvec4(data, &uvec4) || broken(compare_uvec4(data, &broken_result))))
             {
@@ -16725,13 +16726,13 @@ static void test_clear_buffer_unordered_access_view(void)
 
     uav_desc.Format = DXGI_FORMAT_R8G8B8A8_SINT;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 16;
-    U(uav_desc).Buffer.Flags = 0;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 16;
+    uav_desc.Buffer.Flags = 0;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    U(uav_desc).Buffer.FirstElement = 8;
-    U(uav_desc).Buffer.NumElements = 8;
+    uav_desc.Buffer.FirstElement = 8;
+    uav_desc.Buffer.NumElements = 8;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav2);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -16740,16 +16741,22 @@ static void test_clear_buffer_unordered_access_view(void)
         uvec4 = uvec4_data[i];
         clear_uav(context, uav, &uvec4);
         get_buffer_readback(buffer, &rb);
-        todo_wine check_rgba_sint8(get_readback_color(&rb, 0, 0, 0), &uvec4);
-        todo_wine check_rgba_sint8(get_readback_color(&rb, 7, 0, 0), &uvec4);
-        todo_wine check_rgba_sint8(get_readback_color(&rb, 15, 0, 0), &uvec4);
+        todo_wine_if (!damavand)
+        {
+            check_rgba_sint8(get_readback_color(&rb, 0, 0, 0), &uvec4);
+            check_rgba_sint8(get_readback_color(&rb, 7, 0, 0), &uvec4);
+            check_rgba_sint8(get_readback_color(&rb, 15, 0, 0), &uvec4);
+        }
         release_resource_readback(&rb);
 
         clear_uav(context, uav2, &fe_uvec4);
         get_buffer_readback(buffer, &rb);
-        todo_wine check_rgba_sint8(get_readback_color(&rb, 0, 0, 0), &uvec4);
-        todo_wine check_rgba_sint8(get_readback_color(&rb, U(uav_desc).Buffer.FirstElement - 1, 0, 0), &uvec4);
-        todo_wine check_rgba_sint8(get_readback_color(&rb, U(uav_desc).Buffer.FirstElement, 0, 0), &fe_uvec4);
+        todo_wine_if (!damavand)
+        {
+            check_rgba_sint8(get_readback_color(&rb, 0, 0, 0), &uvec4);
+            check_rgba_sint8(get_readback_color(&rb, uav_desc.Buffer.FirstElement - 1, 0, 0), &uvec4);
+            check_rgba_sint8(get_readback_color(&rb, uav_desc.Buffer.FirstElement, 0, 0), &fe_uvec4);
+        }
         release_resource_readback(&rb);
     }
 
@@ -19873,9 +19880,9 @@ static void test_create_unordered_access_view(void)
 
     uav_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 64;
-    U(uav_desc).Buffer.Flags = 0;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 64;
+    uav_desc.Buffer.Flags = 0;
 
     uav = (void *)0xdeadbeef;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, NULL, &uav);
@@ -19913,9 +19920,9 @@ static void test_create_unordered_access_view(void)
     ok(uav_desc.Format == DXGI_FORMAT_UNKNOWN, "Got unexpected format %#x.\n", uav_desc.Format);
     ok(uav_desc.ViewDimension == D3D11_UAV_DIMENSION_BUFFER, "Got unexpected view dimension %#x.\n",
             uav_desc.ViewDimension);
-    ok(!U(uav_desc).Buffer.FirstElement, "Got unexpected first element %u.\n", U(uav_desc).Buffer.FirstElement);
-    ok(U(uav_desc).Buffer.NumElements == 256, "Got unexpected num elements %u.\n", U(uav_desc).Buffer.NumElements);
-    ok(!U(uav_desc).Buffer.Flags, "Got unexpected flags %u.\n", U(uav_desc).Buffer.Flags);
+    ok(!uav_desc.Buffer.FirstElement, "Got unexpected first element %u.\n", uav_desc.Buffer.FirstElement);
+    ok(uav_desc.Buffer.NumElements == 256, "Got unexpected num elements %u.\n", uav_desc.Buffer.NumElements);
+    ok(!uav_desc.Buffer.Flags, "Got unexpected flags %u.\n", uav_desc.Buffer.Flags);
 
     ID3D11UnorderedAccessView_Release(uav);
     ID3D11Buffer_Release(buffer);
@@ -19925,9 +19932,9 @@ static void test_create_unordered_access_view(void)
 
     uav_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 64;
-    U(uav_desc).Buffer.Flags = 0;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 64;
+    uav_desc.Buffer.Flags = 0;
 
     uav = (void *)0xdeadbeef;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
@@ -20830,7 +20837,7 @@ static void test_index_buffer_offset(void)
     for (i = 0; i < ARRAY_SIZE(expected_data); ++i)
     {
         data = get_readback_vec4(&rb, i, 0);
-        todo_wine_if(i >= 8 && i != 20 && i != 21)
+        todo_wine_if (!damavand && i >= 8 && i != 20 && i != 21)
         ok(compare_vec4(data, &expected_data[i], 0)
                 || broken(is_nvidia_device(device) && !(i % 2) && compare_vec4(data, &broken_result, 0)),
                 "Got unexpected result {%.8e, %.8e, %.8e, %.8e} at %u.\n",
@@ -21385,7 +21392,7 @@ static void test_fl9_draw(const D3D_FEATURE_LEVEL feature_level)
     ID3D11PixelShader_Release(ps);
 
     draw_color_quad(&test_context, &color);
-    todo_wine check_texture_color(test_context.backbuffer, 0xff004c33, 1);
+    todo_wine_if (!damavand) check_texture_color(test_context.backbuffer, 0xff004c33, 1);
 
     hr = ID3D11Device_CreatePixelShader(device, ps_texture_code, sizeof(ps_texture_code), NULL, &ps);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -21855,7 +21862,7 @@ static void test_unbind_shader_resource_view(void)
     ID3D11DeviceContext_PSSetShaderResources(context, 1, 1, &srv2);
     ID3D11DeviceContext_ClearRenderTargetView(context, test_context.backbuffer_rtv, white);
     draw_quad(&test_context);
-    todo_wine check_texture_color(test_context.backbuffer, 0x00000000, 1);
+    todo_wine_if (!damavand) check_texture_color(test_context.backbuffer, 0x00000000, 1);
 
     ID3D11PixelShader_Release(ps);
     ID3D11ShaderResourceView_Release(srv);
@@ -22217,7 +22224,7 @@ static void test_uav_load(void)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-    U(rtv_desc).Texture2D.MipSlice = 0;
+    rtv_desc.Texture2D.MipSlice = 0;
 
     rtv_desc.Format = DXGI_FORMAT_R32_FLOAT;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)rt_texture, &rtv_desc, &rtv_float);
@@ -22528,7 +22535,7 @@ static void test_cs_uav_store(void)
 
     uav_desc.Format = texture_desc.Format;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-    U(uav_desc).Texture2D.MipSlice = 0;
+    uav_desc.Texture2D.MipSlice = 0;
 
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)texture, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
@@ -22743,9 +22750,9 @@ static void test_uav_store_immediate_constant(void)
 
     uav_desc.Format = DXGI_FORMAT_R32_SINT;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 1;
-    U(uav_desc).Buffer.Flags = 0;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 1;
+    uav_desc.Buffer.Flags = 0;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     hr = ID3D11Device_CreateComputeShader(device, cs_store_int_code, sizeof(cs_store_int_code), NULL, &cs);
@@ -22946,7 +22953,7 @@ static void test_ps_cs_uav_binding(void)
 
     uav_desc.Format = texture_desc.Format;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-    U(uav_desc).Texture2D.MipSlice = 0;
+    uav_desc.Texture2D.MipSlice = 0;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)cs_texture, &uav_desc, &cs_uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)ps_texture, &uav_desc, &ps_uav);
@@ -23166,9 +23173,9 @@ static void test_atomic_instructions(void)
 
     uav_desc.Format = DXGI_FORMAT_R32_TYPELESS;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = buffer_desc.ByteWidth / sizeof(*tests->input);
-    U(uav_desc).Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = buffer_desc.ByteWidth / sizeof(*tests->input);
+    uav_desc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)in_buffer, &uav_desc, &in_uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)out_buffer, &uav_desc, &out_uav);
@@ -23204,7 +23211,7 @@ static void test_atomic_instructions(void)
             unsigned int value = get_readback_color(&rb, j, 0, 0);
             unsigned int expected = test->expected_result[j];
 
-            todo_wine_if(expected != test->input[j]
+            todo_wine_if (!damavand && expected != test->input[j]
                     && (!strcmp(instructions[j], "atomic_imax")
                     || !strcmp(instructions[j], "atomic_imin")))
             ok(value == expected, "Test %u: Got %#x (%d), expected %#x (%d) for '%s' "
@@ -23232,7 +23239,7 @@ static void test_atomic_instructions(void)
             unsigned int value = get_readback_color(&rb, j, 0, 0);
             unsigned int expected = test->expected_result[j];
 
-            todo_wine_if(expected != test->input[j] && todo_instruction)
+            todo_wine_if (!damavand && expected != test->input[j] && todo_instruction)
             ok(value == expected, "Test %u: Got %#x (%d), expected %#x (%d) for '%s' "
                     "with inputs (%u, %u), (%d), %#x (%d).\n",
                     i, value, value, expected, expected, imm_instructions[j],
@@ -24131,11 +24138,11 @@ static void test_sm5_bufinfo_instruction(void)
         {
             uav_desc.Format = test->view_format;
             uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-            U(uav_desc).Buffer.FirstElement = test->view_element_idx;
-            U(uav_desc).Buffer.NumElements = test->view_element_count;
-            U(uav_desc).Buffer.Flags = 0;
+            uav_desc.Buffer.FirstElement = test->view_element_idx;
+            uav_desc.Buffer.NumElements = test->view_element_count;
+            uav_desc.Buffer.Flags = 0;
             if (buffer_desc.MiscFlags & D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS)
-                U(uav_desc).Buffer.Flags |= D3D11_BUFFER_UAV_FLAG_RAW;
+                uav_desc.Buffer.Flags |= D3D11_BUFFER_UAV_FLAG_RAW;
             hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
             ok(hr == S_OK, "Test %u: Got unexpected hr %#lx.\n", i, hr);
             srv = NULL;
@@ -24147,11 +24154,11 @@ static void test_sm5_bufinfo_instruction(void)
         {
             srv_desc.Format = test->view_format;
             srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
-            U(srv_desc).BufferEx.FirstElement = test->view_element_idx;
-            U(srv_desc).BufferEx.NumElements = test->view_element_count;
-            U(srv_desc).BufferEx.Flags = 0;
+            srv_desc.BufferEx.FirstElement = test->view_element_idx;
+            srv_desc.BufferEx.NumElements = test->view_element_count;
+            srv_desc.BufferEx.Flags = 0;
             if (buffer_desc.MiscFlags & D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS)
-                U(srv_desc).BufferEx.Flags |= D3D11_BUFFEREX_SRV_FLAG_RAW;
+                srv_desc.BufferEx.Flags |= D3D11_BUFFEREX_SRV_FLAG_RAW;
             hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)buffer, &srv_desc, &srv);
             ok(hr == S_OK, "Test %u: Got unexpected hr %#lx.\n", i, hr);
             uav = NULL;
@@ -24623,8 +24630,8 @@ static void test_buffer_srv(void)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     srv_desc.Format = DXGI_FORMAT_R8_UNORM;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-    U(srv_desc).Buffer.FirstElement = 0;
-    U(srv_desc).Buffer.NumElements = 0;
+    srv_desc.Buffer.FirstElement = 0;
+    srv_desc.Buffer.NumElements = 0;
     hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)buffer, &srv_desc, &srv);
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
     ID3D11Buffer_Release(buffer);
@@ -24710,8 +24717,8 @@ static void test_buffer_srv(void)
         {
             srv_desc.Format = test->srv_format;
             srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-            U(srv_desc).Buffer.FirstElement = test->srv_first_element;
-            U(srv_desc).Buffer.NumElements = test->srv_element_count;
+            srv_desc.Buffer.FirstElement = test->srv_first_element;
+            srv_desc.Buffer.NumElements = test->srv_element_count;
             hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)buffer, &srv_desc, &srv);
             ok(hr == S_OK, "Test %u: Got unexpected hr %#lx.\n", i, hr);
         }
@@ -24876,9 +24883,9 @@ static void test_unaligned_raw_buffer_access(const D3D_FEATURE_LEVEL feature_lev
 
     srv_desc.Format = DXGI_FORMAT_R32_TYPELESS;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
-    U(srv_desc).BufferEx.FirstElement = 0;
-    U(srv_desc).BufferEx.NumElements = buffer_desc.ByteWidth / sizeof(unsigned int);
-    U(srv_desc).BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
+    srv_desc.BufferEx.FirstElement = 0;
+    srv_desc.BufferEx.NumElements = buffer_desc.ByteWidth / sizeof(unsigned int);
+    srv_desc.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
     hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)raw_buffer, &srv_desc, &srv);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
@@ -24937,9 +24944,9 @@ static void test_unaligned_raw_buffer_access(const D3D_FEATURE_LEVEL feature_lev
 
     uav_desc.Format = DXGI_FORMAT_R32_TYPELESS;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = buffer_desc.ByteWidth / sizeof(unsigned int);
-    U(uav_desc).Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = buffer_desc.ByteWidth / sizeof(unsigned int);
+    uav_desc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)raw_buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
@@ -25145,9 +25152,9 @@ static void test_uav_counters(void)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     uav_desc.Format = DXGI_FORMAT_UNKNOWN;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = buffer_desc.ByteWidth / sizeof(unsigned int);
-    U(uav_desc).Buffer.Flags = D3D11_BUFFER_UAV_FLAG_COUNTER;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = buffer_desc.ByteWidth / sizeof(unsigned int);
+    uav_desc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_COUNTER;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     hr = ID3D11Device_CreateBuffer(device, &buffer_desc, NULL, &buffer2);
@@ -25370,9 +25377,9 @@ static void test_dispatch_indirect(void)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     uav_desc.Format = DXGI_FORMAT_UNKNOWN;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 5;
-    U(uav_desc).Buffer.Flags = D3D11_BUFFER_UAV_FLAG_APPEND;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 5;
+    uav_desc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_APPEND;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)append_buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -25760,9 +25767,9 @@ static void test_tgsm(void)
 
     uav_desc.Format = DXGI_FORMAT_R32_TYPELESS;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = buffer_desc.ByteWidth / sizeof(unsigned int);
-    U(uav_desc).Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = buffer_desc.ByteWidth / sizeof(unsigned int);
+    uav_desc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -25825,7 +25832,7 @@ static void test_tgsm(void)
     ID3D11UnorderedAccessView_Release(uav2);
 
     buffer_desc.MiscFlags = 0;
-    U(uav_desc).Buffer.Flags = 0;
+    uav_desc.Buffer.Flags = 0;
     hr = ID3D11Device_CreateBuffer(device, &buffer_desc, NULL, &buffer);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     uav_desc.Format = DXGI_FORMAT_R32_FLOAT;
@@ -27618,9 +27625,10 @@ static void test_stream_output_components(void)
         for (j = 0; j < tests[i].expected_data_size; ++j)
         {
             float expected_value = tests[i].expected_data[j];
-            ok(compare_float(result[j], expected_value, 2),
-                    "Test %u: Got %.8e, expected %.8e at %u.\n",
-                    i, result[j], expected_value, j);
+            todo_wine_if (damavand && !compare_float(result[j], expected_value, 2))
+                ok(compare_float(result[j], expected_value, 2),
+                        "Test %u: Got %.8e, expected %.8e at %u.\n",
+                        i, result[j], expected_value, j);
         }
         release_resource_readback(&rb);
     }
@@ -27802,6 +27810,7 @@ static void test_stream_output_vs(void)
         for (j = 0; j < tests[i].expected_data_size; ++j)
         {
             float expected_value = tests[i].expected_data[j];
+            todo_wine_if (damavand && !i && (j % 9) < 2 && j >= 9)
             ok(compare_float(result[j], expected_value, 2),
                     "Test %u: Got %.8e, expected %.8e at %u.\n",
                     i, result[j], expected_value, j);
@@ -28296,8 +28305,8 @@ static void test_gather_c(void)
 
     srv_desc.Format = DXGI_FORMAT_R32_FLOAT;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    U(srv_desc).Texture2D.MostDetailedMip = 0;
-    U(srv_desc).Texture2D.MipLevels = 1;
+    srv_desc.Texture2D.MostDetailedMip = 0;
+    srv_desc.Texture2D.MipLevels = 1;
     hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, &srv_desc, &srv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ID3D11DeviceContext_PSSetShaderResources(context, 0, 1, &srv);
@@ -28456,6 +28465,8 @@ static void test_depth_bias(void)
 
     for (format_idx = 0; format_idx < ARRAY_SIZE(formats); ++format_idx)
     {
+        winetest_push_context("Format %#x", formats[format_idx]);
+
         format = formats[format_idx];
 
         ID3D11Texture2D_GetDesc(test_context.backbuffer, &texture_desc);
@@ -28504,6 +28515,8 @@ static void test_depth_bias(void)
 
                 for (k = 0; k < ARRAY_SIZE(bias_clamp_tests); ++k)
                 {
+                    winetest_push_context("z %f, bias %d, clamp %f", quads[i].z, bias_tests[j], bias_clamp_tests[k]);
+
                     rasterizer_desc.DepthBiasClamp = bias_clamp_tests[k];
                     hr = ID3D11Device_CreateRasterizerState(device, &rasterizer_desc, &rs);
                     ok(hr == S_OK, "Format %#x, quad %u, bias %u, clamp %u: Got unexpected hr %#lx.\n",
@@ -28526,7 +28539,8 @@ static void test_depth_bias(void)
                             depth = min(max(0.0f, quads[i].z + bias), 1.0f);
 
                             get_texture_readback(texture, 0, &rb);
-                            check_readback_data_u24(&rb, NULL, shift, depth * 16777215.0f + 0.5f, 1);
+                            todo_wine_if (damavand)
+                                check_readback_data_u24(&rb, NULL, shift, depth * 16777215.0f + 0.5f, 1);
                             release_resource_readback(&rb);
                             break;
                         case DXGI_FORMAT_D16_UNORM:
@@ -28542,6 +28556,8 @@ static void test_depth_bias(void)
                             break;
                     }
                     ID3D11RasterizerState_Release(rs);
+
+                    winetest_pop_context();
                 }
             }
         }
@@ -28550,6 +28566,8 @@ static void test_depth_bias(void)
         rasterizer_desc.DepthBias = 0;
         for (i = 0; i < ARRAY_SIZE(quad_slopes); ++i)
         {
+            winetest_push_context("slope %f", quad_slopes[i]);
+
             for (j = 0; j < ARRAY_SIZE(vertices); ++j)
                 vertices[j].z = j == 1 || j == 3 ? 0.0f : quad_slopes[i];
             ID3D11DeviceContext_UpdateSubresource(context, (ID3D11Resource *)test_context.vb,
@@ -28588,6 +28606,9 @@ static void test_depth_bias(void)
                 for (k = 0; k < ARRAY_SIZE(bias_clamp_tests); ++k)
                 {
                     BOOL all_match = TRUE;
+
+                    winetest_push_context("scale %f, clamp %f", slope_scaled_bias_tests[j], bias_clamp_tests[k]);
+
                     rasterizer_desc.DepthBiasClamp = bias_clamp_tests[k];
                     hr = ID3D11Device_CreateRasterizerState(device, &rasterizer_desc, &rs);
                     ok(hr == S_OK, "Format %#x, slope %u, bias %u, clamp %u: Got unexpected hr %#lx.\n",
@@ -28615,10 +28636,10 @@ static void test_depth_bias(void)
                                 u32_value = *u32 >> shift;
                                 expected_value = depth * 16777215.0f + 0.5f;
                                 all_match = compare_uint(u32_value, expected_value, 3);
-                                ok(all_match,
-                                        "Got value %#x (%.8e), expected %#x (%.8e).\n",
-                                        u32_value, u32_value / 16777215.0f,
-                                        expected_value, expected_value / 16777215.0f);
+                                todo_wine_if (damavand && expected_value != 0.0f)
+                                    ok(all_match, "Got value %#x (%.8e), expected %#x (%.8e).\n",
+                                            u32_value, u32_value / 16777215.0f,
+                                            expected_value, expected_value / 16777215.0f);
                                 break;
                             case DXGI_FORMAT_D16_UNORM:
                                 u16 = get_readback_data(&rb, 0, y, 0, sizeof(*u16));
@@ -28634,12 +28655,18 @@ static void test_depth_bias(void)
                     }
                     release_resource_readback(&rb);
                     ID3D11RasterizerState_Release(rs);
+
+                    winetest_pop_context();
                 }
             }
+
+            winetest_pop_context();
         }
 
         ID3D11Texture2D_Release(texture);
         ID3D11DepthStencilView_Release(dsv);
+
+        winetest_pop_context();
     }
 
     heap_free(depth_values);
@@ -30607,8 +30634,9 @@ static void test_generate_mips(void)
 
     get_resource_readback(resource, 1, &rb);
     color = get_readback_color(&rb, 8, 8, 0);
-    ok(compare_color(color, 0x7fbcbcbc, 1) || broken(compare_color(color, 0x7f7f7f7f, 1)), /* AMD */
-            "Got unexpected colour %08lx.\n", color);
+    todo_wine_if (damavand)
+        ok(compare_color(color, 0x7fbcbcbc, 1) || broken(compare_color(color, 0x7f7f7f7f, 1)), /* AMD */
+                "Got unexpected colour %08lx.\n", color);
     release_resource_readback(&rb);
 
     ID3D11ShaderResourceView_Release(srv);
@@ -30757,10 +30785,10 @@ static void test_alpha_to_coverage(void)
         SetRect(&rect, 0, 0, 200, 200);
         check_readback_data_color(&rb, &rect, expected_color, 1);
         SetRect(&rect, 200, 0, 640, 200);
-        todo_wine
+        todo_wine_if (!damavand)
         check_readback_data_color(&rb, &rect, 0xffffffff, 1);
         SetRect(&rect, 0, 200, 640, 480);
-        todo_wine
+        todo_wine_if (!damavand)
         check_readback_data_color(&rb, &rect, 0xffffffff, 1);
         release_resource_readback(&rb);
 
@@ -30784,11 +30812,11 @@ static void test_alpha_to_coverage(void)
     SetRect(&rect, 0, 0, 200, 200);
     check_readback_data_color(&rb, &rect, 0xffff0000, 1);
     SetRect(&rect, 200, 0, 640, 200);
-    todo_wine
-    check_readback_data_color(&rb, &rect, 0xffffffff, 1);
+    todo_wine_if (!damavand)
+        check_readback_data_color(&rb, &rect, 0xffffffff, 1);
     SetRect(&rect, 0, 200, 640, 480);
-    todo_wine
-    check_readback_data_color(&rb, &rect, 0xffffffff, 1);
+    todo_wine_if (!damavand)
+        check_readback_data_color(&rb, &rect, 0xffffffff, 1);
     release_resource_readback(&rb);
 
     ID3D11Texture2D_Release(render_targets[0]);
@@ -31390,7 +31418,7 @@ static void test_multisample_resolve(void)
 
         /* Found broken on AMD Radeon HD 6310 */
         if (!broken(is_amd_device(device) && tests[i].format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB))
-            todo_wine_if(tests[i].todo) check_texture_color(texture, tests[i].expected_color, 2);
+            todo_wine_if(tests[i].todo && !damavand) check_texture_color(texture, tests[i].expected_color, 2);
 
         ID3D11RenderTargetView_Release(rtv);
         ID3D11Texture2D_Release(ms_texture);
@@ -31693,7 +31721,7 @@ static void test_sample_shading(void)
         0x001020f2, 0x00000000, 0x00100e46, 0x00000000, 0x00107e46, 0x00000000, 0x0020800a, 0x00000000,
         0x00000000, 0x0100003e,
     };
-    static const struct
+    const struct
     {
         const struct shader *ps;
         BOOL sample_shading;
@@ -31706,7 +31734,7 @@ static void test_sample_shading(void)
         {&ps_sample_index, TRUE},
         {&ps_samplepos, FALSE},
         {&ps_samplepos_rasterizer, FALSE},
-        {&ps_samplepos_indexed, TRUE, TRUE},
+        {&ps_samplepos_indexed, !damavand, TRUE},
         {&ps_sampleinfo, FALSE},
         {&ps_sampleinfo_rasterizer, FALSE},
         {&ps_sample, TRUE, TRUE, TRUE /* broken on Intel */},
@@ -31746,9 +31774,9 @@ static void test_sample_shading(void)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     uav_desc.Format = DXGI_FORMAT_R32_TYPELESS;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 256;
-    U(uav_desc).Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 256;
+    uav_desc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -32219,9 +32247,9 @@ static void test_standard_pattern(void)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     uav_desc.Format = DXGI_FORMAT_R32_TYPELESS;
     uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-    U(uav_desc).Buffer.FirstElement = 0;
-    U(uav_desc).Buffer.NumElements = 256;
-    U(uav_desc).Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 256;
+    uav_desc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
     hr = ID3D11Device_CreateUnorderedAccessView(device, (ID3D11Resource *)buffer, &uav_desc, &uav);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -32240,8 +32268,10 @@ static void test_standard_pattern(void)
     for (i = 0; i < ARRAY_SIZE(standard_pos4); ++i)
     {
         float data = get_readback_float(&rb, i, 0);
-        /* Wine does not support GetSamplePosition. */
-        todo_wine ok(data == standard_pos4[i], "Got sample position %.8e, expected %.8e.\n", data, standard_pos4[i]);
+
+        /* The GL renderer does not support GetSamplePosition. */
+        todo_wine_if (!damavand)
+            ok(data == standard_pos4[i], "Got sample position %.8e, expected %.8e.\n", data, standard_pos4[i]);
     }
     release_resource_readback(&rb);
 
@@ -32483,11 +32513,11 @@ static void test_sample_attached_rtv(void)
     memset(&rtv_desc, 0, sizeof(rtv_desc));
     rtv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-    U(rtv_desc).Texture2D.MipSlice = 0;
+    rtv_desc.Texture2D.MipSlice = 0;
 
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture2, &rtv_desc, &rtv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    U(rtv_desc).Texture2D.MipSlice = 1;
+    rtv_desc.Texture2D.MipSlice = 1;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture2, &rtv_desc, &rtv2);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -32499,7 +32529,7 @@ static void test_sample_attached_rtv(void)
     memset(&srv_desc, 0, sizeof(srv_desc));
     srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    U(srv_desc).Texture2D.MipLevels = 1;
+    srv_desc.Texture2D.MipLevels = 1;
 
     hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, &srv_desc, &srv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
@@ -32541,8 +32571,8 @@ static void test_sample_attached_rtv(void)
     hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture2, &srv_desc, &srv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
-    U(srv_desc).Texture2D.MostDetailedMip = 1;
-    U(srv_desc).Texture2D.MipLevels = 1;
+    srv_desc.Texture2D.MostDetailedMip = 1;
+    srv_desc.Texture2D.MipLevels = 1;
     hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture2, &srv_desc, &srv2);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
@@ -32645,7 +32675,7 @@ static void test_sample_attached_rtv(void)
 
     memset(&srvds_desc, 0, sizeof(srvds_desc));
     srvds_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    U(srvds_desc).Texture2D.MipLevels = 1;
+    srvds_desc.Texture2D.MipLevels = 1;
 
     for (i = 0; i < ARRAY_SIZE(ds_tests); ++i)
     {
@@ -34681,8 +34711,9 @@ static void test_rtv_depth_slice(void)
         unsigned int x = 320, y = 60 + i * 480 / 4;
 
         colour = get_readback_color(&rb, x, y, 0);
-        todo_wine ok(colour == colours[i].output, "Got unexpected colour 0x%08x at (%u, %u), expected 0x%08x.\n",
-                colour, x, y, colours[i].output);
+        todo_wine_if (!damavand)
+            ok(colour == colours[i].output, "Got unexpected colour 0x%08x at (%u, %u), expected 0x%08x.\n",
+                    colour, x, y, colours[i].output);
     }
     release_resource_readback(&rb);
 
@@ -34870,7 +34901,8 @@ static void test_vertex_formats(void)
         ID3D11DeviceContext_PSSetShader(context, test_context.ps, NULL, 0);
         ID3D11DeviceContext_Draw(context, 4, 0);
 
-        check_texture_vec4(rt, &tests[i].expect, 1);
+        todo_wine_if (damavand && tests[i].format == DXGI_FORMAT_B8G8R8X8_UNORM)
+            check_texture_vec4(rt, &tests[i].expect, 1);
 
         ID3D11InputLayout_Release(input_layout);
 
@@ -34902,6 +34934,7 @@ static void test_shared_resource(D3D_FEATURE_LEVEL feature_level)
     };
     static const unsigned int sharing_type_flags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
     struct device_desc device_desc = { 0 };
+    IDXGIKeyedMutex *keyed_mutex;
     ID3D11Texture2D *tex, *tex2;
     D3D11_TEXTURE2D_DESC desc;
     ID3D11Device1 *device1;
@@ -34948,6 +34981,7 @@ static void test_shared_resource(D3D_FEATURE_LEVEL feature_level)
         tex = NULL;
         res = NULL;
         res1 = NULL;
+        keyed_mutex = NULL;
 
         desc.MiscFlags = tests[test];
         nthandle = desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
@@ -34972,6 +35006,13 @@ static void test_shared_resource(D3D_FEATURE_LEVEL feature_level)
             todo_wine ok(hr == E_INVALIDARG, "got %#lx.\n", hr);
         if (FAILED(hr))
             goto test_done;
+
+        keyed_mutex = NULL;
+        hr = ID3D11Texture2D_QueryInterface(tex, &IID_IDXGIKeyedMutex, (void **)&keyed_mutex);
+        if (desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX)
+            todo_wine ok(hr == S_OK, "got %#lx.\n", hr);
+        else
+            ok(hr == E_NOINTERFACE, "got %#lx.\n", hr);
 
         hr = ID3D11Texture2D_QueryInterface(tex, &IID_IDXGIResource, (void **)&res);
         ok(hr == S_OK, "got %#lx.\n", hr);
@@ -35050,9 +35091,11 @@ static void test_shared_resource(D3D_FEATURE_LEVEL feature_level)
             ok(!bret && GetLastError() == ERROR_INVALID_HANDLE, "got bret %d, err %lu.\n", bret, GetLastError());
 
 test_done:
-        if (tex)
-            IDXGIResource_Release(res);
+        if (keyed_mutex)
+            IDXGIKeyedMutex_Release(keyed_mutex);
         if (res)
+            IDXGIResource_Release(res);
+        if (tex)
             ID3D11Texture2D_Release(tex);
         if (res1)
             IDXGIResource1_Release(res1);
@@ -35065,10 +35108,178 @@ test_done:
     ok(!ref, "got %ld.\n", ref);
 }
 
+static void test_keyed_mutex(void)
+{
+    IDXGIKeyedMutex *keyed_mutex, *keyed_mutex2;
+    ID3D11Device *device, *device2;
+    ID3D11Texture2D *tex, *tex2;
+    D3D11_TEXTURE2D_DESC desc;
+    IDXGIObject *obj1, *obj2;
+    IDXGIResource *res;
+    HANDLE handle;
+    HRESULT hr;
+    ULONG ref;
+
+    if (!(device = create_device(NULL)))
+    {
+        skip("Failed to create device.\n");
+        return;
+    }
+
+    memset(&desc, 0, sizeof(desc));
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.Width = 256;
+    desc.Height = 256;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.SampleDesc.Count = 1;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+    hr = ID3D11Device_CreateTexture2D(device, &desc, NULL, &tex);
+    ok(hr == S_OK || broken(hr == E_OUTOFMEMORY) /* software device before Win8 */, "got %#lx.\n", hr);
+    if (FAILED(hr))
+    {
+        skip("Shared resources are not supported.\n");
+        ID3D11Device_Release(device);
+        return;
+    }
+
+    hr = ID3D11Texture2D_QueryInterface(tex, &IID_IDXGIKeyedMutex, (void **)&keyed_mutex);
+    todo_wine ok(hr == S_OK, "got %#lx.\n", hr);
+    if (FAILED(hr))
+    {
+        ID3D11Texture2D_Release(tex);
+        ID3D11Device_Release(device);
+        return;
+    }
+    hr = IDXGIKeyedMutex_QueryInterface(keyed_mutex, &IID_IDXGIObject, (void **)&obj1);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = ID3D11Texture2D_QueryInterface(tex, &IID_IDXGIResource, (void **)&res);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IDXGIResource_QueryInterface(res, &IID_IDXGIObject, (void **)&obj2);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    ok(obj1 == obj2, "got %p, %p.\n", obj1, obj2);
+
+    IDXGIObject_Release(obj1);
+    IDXGIObject_Release(obj2);
+    IDXGIResource_Release(res);
+
+    /* Releasing not aquired mutex. */
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex, 0);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex, 1);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "got %#lx.\n", hr);
+
+    /* Initial key which mutex can be acquired with is 0. */
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 1, 0);
+    ok(hr == WAIT_TIMEOUT, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 0, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    /* Attempt to acquire a mutex once again on the same device fails. */
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 0, 0);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 1, 0);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "got %#lx.\n", hr);
+
+    /* May release to any value. */
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 0, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex, 1);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    /* Acquire with the last release value succeeds. */
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 0, 0);
+    ok(hr == WAIT_TIMEOUT, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 2, 0);
+    ok(hr == WAIT_TIMEOUT, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 1, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 0, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    device2 = create_device(NULL);
+    ok(!!device2, "got NULL.\n");
+
+    hr = ID3D11Texture2D_QueryInterface(tex, &IID_IDXGIResource, (void **)&res);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IDXGIResource_GetSharedHandle(res, &handle);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    IDXGIResource_Release(res);
+
+    hr = ID3D11Device_OpenSharedResource(device2, handle, &IID_ID3D11Texture2D, (void **)&tex2);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = ID3D11Texture2D_QueryInterface(tex2, &IID_IDXGIKeyedMutex, (void **)&keyed_mutex2);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 0, 0);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "got %#lx.\n", hr);
+    /* Trying to acquire locked mutex on the other device. */
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex2, 0, 0);
+    ok(hr == WAIT_TIMEOUT, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex2, 1, 0);
+    ok(hr == WAIT_TIMEOUT, "got %#lx.\n", hr);
+
+    /* Trying to release locked on the other device. */
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex2, 0);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex2, 1);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "got %#lx.\n", hr);
+
+    /* Almost supposed usage (but using the same key to release and acquire). */
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex2, 0, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex2, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex, 0, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    IDXGIKeyedMutex_Release(keyed_mutex);
+    ID3D11Texture2D_Release(tex);
+    ref = ID3D11Device_Release(device);
+    ok(!ref, "got %ld.\n", ref);
+
+    /* Device closed while holding mutex. Now keyed mutex is broken and acquire will only return
+     * WAIT_ABANDONED, as the docs suggest, the only way out is recreating the shared resource. */
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex2, 0, 0);
+    ok(hr == WAIT_ABANDONED, "got %#lx.\n", hr);
+    /* Try twice, just in case. */
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex2, 0, 0);
+    ok(hr == WAIT_ABANDONED, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex2, 0);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_ReleaseSync(keyed_mutex2, 1);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "got %#lx.\n", hr);
+    hr = IDXGIKeyedMutex_AcquireSync(keyed_mutex2, 0, 0);
+    ok(hr == WAIT_ABANDONED, "got %#lx.\n", hr);
+
+    IDXGIKeyedMutex_Release(keyed_mutex2);
+    ID3D11Texture2D_Release(tex2);
+    ref = ID3D11Device_Release(device2);
+    ok(!ref, "got %ld.\n", ref);
+}
+
 START_TEST(d3d11)
 {
     unsigned int argc, i;
+    HMODULE wined3d;
     char **argv;
+
+    if ((wined3d = GetModuleHandleA("wined3d.dll")))
+    {
+        enum wined3d_renderer (CDECL *p_wined3d_get_renderer)(void);
+
+        if ((p_wined3d_get_renderer = (void *)GetProcAddress(wined3d, "wined3d_get_renderer"))
+                && p_wined3d_get_renderer() == WINED3D_RENDERER_VULKAN)
+            damavand = true;
+    }
 
     use_mt = !getenv("WINETEST_NO_MT_D3D");
     /* Some host drivers (MacOS, Mesa radeonsi) never unmap memory even when
@@ -35250,6 +35461,7 @@ START_TEST(d3d11)
     queue_test(test_vertex_formats);
     queue_test(test_dxgi_resources);
     queue_for_each_feature_level(test_shared_resource);
+    queue_test(test_keyed_mutex);
 
     run_queued_tests();
 

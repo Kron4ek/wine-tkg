@@ -969,34 +969,22 @@ static void HTMLFormElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTraver
 static void HTMLFormElement_unlink(HTMLDOMNode *iface)
 {
     HTMLFormElement *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nsform) {
-        nsIDOMHTMLFormElement *nsform = This->nsform;
-
-        This->nsform = NULL;
-        nsIDOMHTMLFormElement_Release(nsform);
-    }
+    unlink_ref(&This->nsform);
 }
 
 static const NodeImplVtbl HTMLFormElementImplVtbl = {
-    &CLSID_HTMLFormElement,
-    HTMLFormElement_QI,
-    HTMLElement_destructor,
-    HTMLElement_cpc,
-    HTMLElement_clone,
-    HTMLFormElement_handle_event,
-    HTMLElement_get_attr_col,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    HTMLFormElement_get_dispid,
-    HTMLFormElement_dispex_get_name,
-    HTMLFormElement_invoke,
-    NULL,
-    HTMLFormElement_traverse,
-    HTMLFormElement_unlink
+    .clsid                 = &CLSID_HTMLFormElement,
+    .qi                    = HTMLFormElement_QI,
+    .destructor            = HTMLElement_destructor,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLElement_clone,
+    .handle_event          = HTMLFormElement_handle_event,
+    .get_attr_col          = HTMLElement_get_attr_col,
+    .get_dispid            = HTMLFormElement_get_dispid,
+    .get_name              = HTMLFormElement_dispex_get_name,
+    .invoke                = HTMLFormElement_invoke,
+    .traverse              = HTMLFormElement_traverse,
+    .unlink                = HTMLFormElement_unlink
 };
 
 static const tid_t HTMLFormElement_iface_tids[] = {
@@ -1006,8 +994,8 @@ static const tid_t HTMLFormElement_iface_tids[] = {
 };
 
 static dispex_static_data_t HTMLFormElement_dispex = {
-    L"HTMLFormElement",
-    NULL,
+    "HTMLFormElement",
+    &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLFormElement_tid,
     HTMLFormElement_iface_tids,
     HTMLElement_init_dispex_info

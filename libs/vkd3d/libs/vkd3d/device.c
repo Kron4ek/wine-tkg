@@ -2657,8 +2657,8 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_CreateCommandList(ID3D12Device *if
             initial_pipeline_state, &object)))
         return hr;
 
-    return return_interface(&object->ID3D12GraphicsCommandList2_iface,
-            &IID_ID3D12GraphicsCommandList2, riid, command_list);
+    return return_interface(&object->ID3D12GraphicsCommandList3_iface,
+            &IID_ID3D12GraphicsCommandList3, riid, command_list);
 }
 
 /* Direct3D feature levels restrict which formats can be optionally supported. */
@@ -3414,6 +3414,7 @@ static void STDMETHODCALLTYPE d3d12_device_CopyDescriptors(ID3D12Device *iface,
     struct d3d12_device *device = impl_from_ID3D12Device(iface);
     unsigned int dst_range_idx, dst_idx, src_range_idx, src_idx;
     unsigned int dst_range_size, src_range_size;
+    struct d3d12_descriptor_heap *dst_heap;
     const struct d3d12_desc *src;
     struct d3d12_desc *dst;
 
@@ -3443,13 +3444,14 @@ static void STDMETHODCALLTYPE d3d12_device_CopyDescriptors(ID3D12Device *iface,
         src_range_size = src_descriptor_range_sizes ? src_descriptor_range_sizes[src_range_idx] : 1;
 
         dst = d3d12_desc_from_cpu_handle(dst_descriptor_range_offsets[dst_range_idx]);
+        dst_heap = d3d12_desc_get_descriptor_heap(dst);
         src = d3d12_desc_from_cpu_handle(src_descriptor_range_offsets[src_range_idx]);
 
         for (; dst_idx < dst_range_size && src_idx < src_range_size; ++dst_idx, ++src_idx)
         {
             if (dst[dst_idx].s.u.object == src[src_idx].s.u.object)
                 continue;
-            d3d12_desc_copy(&dst[dst_idx], &src[src_idx], device);
+            d3d12_desc_copy(&dst[dst_idx], &src[src_idx], dst_heap, device);
         }
 
         if (dst_idx >= dst_range_size)
@@ -3747,7 +3749,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_CreateFence(ID3D12Device *iface,
     if (FAILED(hr = d3d12_fence_create(device, initial_value, flags, &object)))
         return hr;
 
-    return return_interface(&object->ID3D12Fence_iface, &IID_ID3D12Fence, riid, fence);
+    return return_interface(&object->ID3D12Fence1_iface, &IID_ID3D12Fence1, riid, fence);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d12_device_GetDeviceRemovedReason(ID3D12Device *iface)
@@ -3891,12 +3893,18 @@ static void STDMETHODCALLTYPE d3d12_device_GetResourceTiling(ID3D12Device *iface
         UINT *sub_resource_tiling_count, UINT first_sub_resource_tiling,
         D3D12_SUBRESOURCE_TILING *sub_resource_tilings)
 {
-    FIXME("iface %p, resource %p, total_tile_count %p, packed_mip_info %p, "
+    const struct d3d12_resource *resource_impl = impl_from_ID3D12Resource(resource);
+    struct d3d12_device *device = impl_from_ID3D12Device(iface);
+
+    TRACE("iface %p, resource %p, total_tile_count %p, packed_mip_info %p, "
             "standard_title_shape %p, sub_resource_tiling_count %p, "
-            "first_sub_resource_tiling %u, sub_resource_tilings %p stub!\n",
+            "first_sub_resource_tiling %u, sub_resource_tilings %p.\n",
             iface, resource, total_tile_count, packed_mip_info, standard_tile_shape,
             sub_resource_tiling_count, first_sub_resource_tiling,
             sub_resource_tilings);
+
+    d3d12_resource_get_tiling(device, resource_impl, total_tile_count, packed_mip_info, standard_tile_shape,
+            sub_resource_tiling_count, first_sub_resource_tiling, sub_resource_tilings);
 }
 
 static LUID * STDMETHODCALLTYPE d3d12_device_GetAdapterLuid(ID3D12Device *iface, LUID *luid)

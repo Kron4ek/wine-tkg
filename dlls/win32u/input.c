@@ -2325,7 +2325,8 @@ BOOL set_caret_pos( int x, int y )
         r.left = x;
         r.top = y;
         display_caret( hwnd, &r );
-        user_driver->pUpdateCandidatePos( hwnd, &r );
+        if (user_driver->pUpdateCandidatePos)
+            user_driver->pUpdateCandidatePos( hwnd, &r );
         NtUserSetSystemTimer( hwnd, SYSTEM_TIMER_CARET, caret.timeout );
     }
     return ret;
@@ -2363,7 +2364,8 @@ BOOL WINAPI NtUserShowCaret( HWND hwnd )
     if (ret && hidden == 1)  /* hidden was 1 so it's now 0 */
     {
         display_caret( hwnd, &r );
-        user_driver->pUpdateCandidatePos( hwnd, &r );
+        if (user_driver->pUpdateCandidatePos)
+            user_driver->pUpdateCandidatePos( hwnd, &r );
         NtUserSetSystemTimer( hwnd, SYSTEM_TIMER_CARET, caret.timeout );
     }
     return ret;
@@ -2458,6 +2460,13 @@ BOOL WINAPI NtUserIsMouseInPointerEnabled(void)
     return FALSE;
 }
 
+static BOOL is_captured_by_system(void)
+{
+    GUITHREADINFO info;
+    info.cbSize = sizeof(info);
+    return NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ) && info.hwndCapture && (info.flags & (GUI_INMOVESIZE | GUI_INMENUMODE));
+}
+
 /***********************************************************************
  *      clip_fullscreen_window
  *
@@ -2483,7 +2492,7 @@ BOOL clip_fullscreen_window( HWND hwnd, BOOL reset )
 
     if (!NtUserGetWindowRect( hwnd, &rect )) return FALSE;
     if (!NtUserIsWindowRectFullScreen( &rect )) return FALSE;
-    if (get_capture()) return FALSE;
+    if (is_captured_by_system()) return FALSE;
     if (NtGetTickCount() - thread_info->clipping_reset < 1000) return FALSE;
     if (!reset && clipping_cursor && thread_info->clipping_cursor) return FALSE;  /* already clipping */
 

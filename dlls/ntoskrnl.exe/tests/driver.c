@@ -2401,12 +2401,12 @@ static void test_default_security(void)
     ok(acl != NULL, "acl is NULL\n");
     ok(acl->AceCount == 2, "got %d\n", acl->AceCount);
 
-    sid1 = RtlAllocateHeap(GetProcessHeap(), HEAP_ZERO_MEMORY, RtlLengthRequiredSid(2));
+    sid1 = ExAllocatePool(NonPagedPool, RtlLengthRequiredSid(2));
     RtlInitializeSid(sid1, &auth, 2);
     *RtlSubAuthoritySid(sid1, 0)  = SECURITY_BUILTIN_DOMAIN_RID;
     *RtlSubAuthoritySid(sid1, 1) = DOMAIN_GROUP_RID_ADMINS;
 
-    sid2 = RtlAllocateHeap(GetProcessHeap(), HEAP_ZERO_MEMORY, RtlLengthRequiredSid(1));
+    sid2 = ExAllocatePool(NonPagedPool, RtlLengthRequiredSid(1));
     RtlInitializeSid(sid2, &auth, 1);
     *RtlSubAuthoritySid(sid2, 0)  = SECURITY_LOCAL_SYSTEM_RID;
 
@@ -2430,8 +2430,8 @@ static void test_default_security(void)
 
     ok(RtlEqualSid(sid2, (PSID)&ace->SidStart), "SID not equal\n");
 
-    RtlFreeHeap(GetProcessHeap(), 0, sid1);
-    RtlFreeHeap(GetProcessHeap(), 0, sid2);
+    ExFreePool(sid1);
+    ExFreePool(sid2);
 
     FltFreeSecurityDescriptor(sd);
 }

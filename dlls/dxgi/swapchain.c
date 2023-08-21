@@ -873,6 +873,7 @@ static HRESULT d3d11_swapchain_create_d3d11_textures(struct d3d11_swapchain *swa
 HRESULT d3d11_swapchain_init(struct d3d11_swapchain *swapchain, struct dxgi_device *device,
         struct wined3d_swapchain_desc *desc)
 {
+    struct wined3d_swapchain_state *state;
     BOOL fullscreen;
     HRESULT hr;
 
@@ -907,6 +908,9 @@ HRESULT d3d11_swapchain_init(struct d3d11_swapchain *swapchain, struct dxgi_devi
         goto cleanup;
     }
 
+    state = wined3d_swapchain_get_state(swapchain->wined3d_swapchain);
+    wined3d_swapchain_state_get_size(state, &desc->backbuffer_width, &desc->backbuffer_height);
+
     if (FAILED(hr = d3d11_swapchain_create_d3d11_textures(swapchain, &device->IWineDXGIDevice_iface, desc)))
     {
         ERR("Failed to create d3d11 textures, hr %#lx.\n", hr);
@@ -916,10 +920,7 @@ HRESULT d3d11_swapchain_init(struct d3d11_swapchain *swapchain, struct dxgi_devi
     swapchain->target = NULL;
     if (fullscreen)
     {
-        struct wined3d_swapchain_state *state;
-
         desc->windowed = FALSE;
-        state = wined3d_swapchain_get_state(swapchain->wined3d_swapchain);
 
         if (FAILED(hr = IDXGISwapChain1_GetContainingOutput(&swapchain->IDXGISwapChain1_iface,
                 &swapchain->target)))
@@ -2180,7 +2181,7 @@ static HRESULT d3d12_swapchain_op_present_execute(struct d3d12_swapchain *swapch
     if (swapchain->frame_latency_fence)
     {
         /* Use the same bias as d3d12_swapchain_present(). Add one to
-         * account for the "++swapchain->frame_numer" there. */
+         * account for the "++swapchain->frame_number" there. */
         uint64_t number = op->present.frame_number + DXGI_MAX_SWAP_CHAIN_BUFFERS + 1;
 
         if (FAILED(hr = ID3D12CommandQueue_Signal(swapchain->command_queue,
@@ -3129,6 +3130,8 @@ static HRESULT d3d12_swapchain_init(struct d3d12_swapchain *swapchain, IWineDXGI
         IDXGIOutput_Release(output);
         return hr;
     }
+
+    wined3d_swapchain_state_get_size(swapchain->state, &swapchain->desc.Width, &swapchain->desc.Height);
 
     if (fullscreen)
     {

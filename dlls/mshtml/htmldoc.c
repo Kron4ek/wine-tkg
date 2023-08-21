@@ -308,13 +308,6 @@ static HRESULT DocumentType_QI(HTMLDOMNode *iface, REFIID riid, void **ppv)
     return S_OK;
 }
 
-static void DocumentType_destructor(HTMLDOMNode *iface)
-{
-    DocumentType *This = DocumentType_from_HTMLDOMNode(iface);
-
-    HTMLDOMNode_destructor(&This->node);
-}
-
 static HRESULT DocumentType_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTMLDOMNode **ret)
 {
     DocumentType *This = DocumentType_from_HTMLDOMNode(iface);
@@ -325,11 +318,9 @@ static HRESULT DocumentType_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTMLDO
 static const cpc_entry_t DocumentType_cpc[] = {{NULL}};
 
 static const NodeImplVtbl DocumentTypeImplVtbl = {
-    NULL,
-    DocumentType_QI,
-    DocumentType_destructor,
-    DocumentType_cpc,
-    DocumentType_clone
+    .qi                    = DocumentType_QI,
+    .cpc_entries           = DocumentType_cpc,
+    .clone                 = DocumentType_clone
 };
 
 static nsISupports *DocumentType_get_gecko_target(DispatchEx *dispex)
@@ -365,16 +356,15 @@ static IHTMLEventObj *DocumentType_set_current_event(DispatchEx *dispex, IHTMLEv
     return default_set_current_event(This->node.doc->window, event);
 }
 
-static event_target_vtbl_t DocumentType_event_target_vtbl = {
+static const event_target_vtbl_t DocumentType_event_target_vtbl = {
     {
-        NULL,
+        .destructor          = HTMLDOMNode_destructor,
+        .traverse            = HTMLDOMNode_traverse,
+        .unlink              = HTMLDOMNode_unlink
     },
-    DocumentType_get_gecko_target,
-    NULL,
-    DocumentType_get_parent_event_target,
-    NULL,
-    NULL,
-    DocumentType_set_current_event
+    .get_gecko_target        = DocumentType_get_gecko_target,
+    .get_parent_event_target = DocumentType_get_parent_event_target,
+    .set_current_event       = DocumentType_set_current_event
 };
 
 static const tid_t DocumentType_iface_tids[] = {
@@ -386,7 +376,7 @@ static const tid_t DocumentType_iface_tids[] = {
 };
 
 static dispex_static_data_t DocumentType_dispex = {
-    L"DocumentType",
+    "DocumentType",
     &DocumentType_event_target_vtbl.dispex_vtbl,
     DispDOMDocumentType_tid,
     DocumentType_iface_tids
@@ -5810,17 +5800,11 @@ void detach_document_node(HTMLDocumentNode *doc)
     while(!list_empty(&doc->plugin_hosts))
         detach_plugin_host(LIST_ENTRY(list_head(&doc->plugin_hosts), PluginHost, entry));
 
-    if(doc->dom_implementation) {
+    if(doc->dom_implementation)
         detach_dom_implementation(doc->dom_implementation);
-        IHTMLDOMImplementation_Release(doc->dom_implementation);
-        doc->dom_implementation = NULL;
-    }
 
-    if(doc->namespaces) {
-        IHTMLNamespaceCollection_Release(doc->namespaces);
-        doc->namespaces = NULL;
-    }
-
+    unlink_ref(&doc->dom_implementation);
+    unlink_ref(&doc->namespaces);
     detach_events(doc);
     detach_selection(doc);
     detach_ranges(doc);
@@ -5831,11 +5815,7 @@ void detach_document_node(HTMLDocumentNode *doc)
     doc->elem_vars_cnt = doc->elem_vars_size = 0;
     doc->elem_vars = NULL;
 
-    if(doc->catmgr) {
-        ICatInformation_Release(doc->catmgr);
-        doc->catmgr = NULL;
-    }
-
+    unlink_ref(&doc->catmgr);
     if(doc->browser) {
         list_remove(&doc->browser_entry);
         doc->browser = NULL;
@@ -5873,24 +5853,12 @@ static void HTMLDocumentNode_unlink(HTMLDOMNode *iface)
 }
 
 static const NodeImplVtbl HTMLDocumentNodeImplVtbl = {
-    &CLSID_HTMLDocument,
-    HTMLDocumentNode_QI,
-    HTMLDocumentNode_destructor,
-    HTMLDocumentNode_cpc,
-    HTMLDocumentNode_clone,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    HTMLDocumentNode_unlink
+    .clsid                 = &CLSID_HTMLDocument,
+    .qi                    = HTMLDocumentNode_QI,
+    .destructor            = HTMLDocumentNode_destructor,
+    .cpc_entries           = HTMLDocumentNode_cpc,
+    .clone                 = HTMLDocumentNode_clone,
+    .unlink                = HTMLDocumentNode_unlink
 };
 
 static HRESULT HTMLDocumentFragment_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTMLDOMNode **ret)
@@ -6096,42 +6064,28 @@ static HRESULT HTMLDocumentNode_location_hook(DispatchEx *dispex, WORD flags, DI
 
 static const event_target_vtbl_t HTMLDocumentNode_event_target_vtbl = {
     {
-        NULL,
-        NULL,
-        HTMLDocumentNode_get_name,
-        HTMLDocumentNode_invoke,
-        NULL,
-        HTMLDocumentNode_next_dispid,
-        HTMLDocumentNode_get_compat_mode,
-        NULL
+        .destructor          = HTMLDOMNode_destructor,
+        .traverse            = HTMLDOMNode_traverse,
+        .unlink              = HTMLDOMNode_unlink,
+        .get_name            = HTMLDocumentNode_get_name,
+        .invoke              = HTMLDocumentNode_invoke,
+        .next_dispid         = HTMLDocumentNode_next_dispid,
+        .get_compat_mode     = HTMLDocumentNode_get_compat_mode,
     },
-    HTMLDocumentNode_get_gecko_target,
-    HTMLDocumentNode_bind_event,
-    HTMLDocumentNode_get_parent_event_target,
-    NULL,
-    HTMLDocumentNode_get_cp_container,
-    HTMLDocumentNode_set_current_event
+    .get_gecko_target        = HTMLDocumentNode_get_gecko_target,
+    .bind_event              = HTMLDocumentNode_bind_event,
+    .get_parent_event_target = HTMLDocumentNode_get_parent_event_target,
+    .get_cp_container        = HTMLDocumentNode_get_cp_container,
+    .set_current_event       = HTMLDocumentNode_set_current_event
 };
 
 static const NodeImplVtbl HTMLDocumentFragmentImplVtbl = {
-    &CLSID_HTMLDocument,
-    HTMLDocumentNode_QI,
-    HTMLDocumentNode_destructor,
-    HTMLDocumentNode_cpc,
-    HTMLDocumentFragment_clone,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    HTMLDocumentFragment_unlink
+    .clsid                 = &CLSID_HTMLDocument,
+    .qi                    = HTMLDocumentNode_QI,
+    .destructor            = HTMLDocumentNode_destructor,
+    .cpc_entries           = HTMLDocumentNode_cpc,
+    .clone                 = HTMLDocumentFragment_clone,
+    .unlink                = HTMLDocumentFragment_unlink
 };
 
 static const tid_t HTMLDocumentNode_iface_tids[] = {
@@ -6188,7 +6142,7 @@ static void HTMLDocumentNode_init_dispex_info(dispex_data_t *info, compat_mode_t
 }
 
 static dispex_static_data_t HTMLDocumentNode_dispex = {
-    L"HTMLDocument",
+    "HTMLDocument",
     &HTMLDocumentNode_event_target_vtbl.dispex_vtbl,
     DispHTMLDocument_tid,
     HTMLDocumentNode_iface_tids,

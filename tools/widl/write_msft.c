@@ -36,8 +36,6 @@
 #include <ctype.h>
 #include <time.h>
 
-#define NONAMELESSUNION
-
 #include "widl.h"
 #include "typelib.h"
 #include "typelib_struct.h"
@@ -1418,6 +1416,7 @@ static int add_func_desc(msft_typeinfo_t* typeinfo, var_t *func, int index)
             break;
         case ATTR_OUT:
             break;
+        case ATTR_DEFAULT_OVERLOAD:
         case ATTR_OVERLOAD:
             break;
         case ATTR_PROPGET:

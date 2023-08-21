@@ -864,34 +864,19 @@ static void HTMLAnchorElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTrav
 static void HTMLAnchorElement_unlink(HTMLDOMNode *iface)
 {
     HTMLAnchorElement *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nsanchor) {
-        nsIDOMHTMLAnchorElement *nsanchor = This->nsanchor;
-
-        This->nsanchor = NULL;
-        nsIDOMHTMLAnchorElement_Release(nsanchor);
-    }
+    unlink_ref(&This->nsanchor);
 }
 
 static const NodeImplVtbl HTMLAnchorElementImplVtbl = {
-    &CLSID_HTMLAnchorElement,
-    HTMLAnchorElement_QI,
-    HTMLElement_destructor,
-    HTMLElement_cpc,
-    HTMLElement_clone,
-    HTMLAnchorElement_handle_event,
-    HTMLElement_get_attr_col,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    HTMLAnchorElement_traverse,
-    HTMLAnchorElement_unlink
+    .clsid                 = &CLSID_HTMLAnchorElement,
+    .qi                    = HTMLAnchorElement_QI,
+    .destructor            = HTMLElement_destructor,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLElement_clone,
+    .handle_event          = HTMLAnchorElement_handle_event,
+    .get_attr_col          = HTMLElement_get_attr_col,
+    .traverse              = HTMLAnchorElement_traverse,
+    .unlink                = HTMLAnchorElement_unlink
 };
 
 static const tid_t HTMLAnchorElement_iface_tids[] = {
@@ -901,8 +886,8 @@ static const tid_t HTMLAnchorElement_iface_tids[] = {
 };
 
 static dispex_static_data_t HTMLAnchorElement_dispex = {
-    L"HTMLAnchorElement",
-    NULL,
+    "HTMLAnchorElement",
+    &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLAnchorElement_tid,
     HTMLAnchorElement_iface_tids,
     HTMLElement_init_dispex_info

@@ -85,6 +85,72 @@ static void shader_instruction_eliminate_phase_instance_id(struct vkd3d_shader_i
         shader_register_eliminate_phase_addressing((struct vkd3d_shader_register *)&ins->dst[i].reg, instance_id);
 }
 
+static const struct vkd3d_shader_varying_map *find_varying_map(
+        const struct vkd3d_shader_next_stage_info *next_stage, unsigned int signature_idx)
+{
+    unsigned int i;
+
+    for (i = 0; i < next_stage->varying_count; ++i)
+    {
+        if (next_stage->varying_map[i].output_signature_index == signature_idx)
+            return &next_stage->varying_map[i];
+    }
+
+    return NULL;
+}
+
+static enum vkd3d_result remap_output_signature(struct vkd3d_shader_parser *parser,
+        const struct vkd3d_shader_compile_info *compile_info)
+{
+    struct shader_signature *signature = &parser->shader_desc.output_signature;
+    const struct vkd3d_shader_next_stage_info *next_stage;
+    unsigned int i;
+
+    if (!(next_stage = vkd3d_find_struct(compile_info->next, NEXT_STAGE_INFO)))
+        return VKD3D_OK;
+
+    for (i = 0; i < signature->element_count; ++i)
+    {
+        const struct vkd3d_shader_varying_map *map = find_varying_map(next_stage, i);
+        struct signature_element *e = &signature->elements[i];
+
+        if (map)
+        {
+            unsigned int input_mask = map->input_mask;
+
+            e->target_location = map->input_register_index;
+
+            /* It is illegal in Vulkan if the next shader uses the same varying
+             * location with a different mask. */
+            if (input_mask && input_mask != e->mask)
+            {
+                vkd3d_shader_parser_error(parser, VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED,
+                        "Aborting due to not yet implemented feature: "
+                        "Output mask %#x does not match input mask %#x.",
+                        e->mask, input_mask);
+                return VKD3D_ERROR_NOT_IMPLEMENTED;
+            }
+        }
+        else
+        {
+            e->target_location = SIGNATURE_TARGET_LOCATION_UNUSED;
+        }
+    }
+
+    for (i = 0; i < next_stage->varying_count; ++i)
+    {
+        if (next_stage->varying_map[i].output_signature_index >= signature->element_count)
+        {
+            vkd3d_shader_parser_error(parser, VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED,
+                    "Aborting due to not yet implemented feature: "
+                    "The next stage consumes varyings not written by this stage.");
+            return VKD3D_ERROR_NOT_IMPLEMENTED;
+        }
+    }
+
+    return VKD3D_OK;
+}
+
 struct hull_flattener
 {
     struct vkd3d_shader_instruction_array instructions;
@@ -247,13 +313,13 @@ static void shader_register_init(struct vkd3d_shader_register *reg, enum vkd3d_s
     reg->immconst_type = VKD3D_IMMCONST_SCALAR;
 }
 
-static void shader_instruction_init(struct vkd3d_shader_instruction *ins, enum vkd3d_shader_opcode handler_idx)
+void shader_instruction_init(struct vkd3d_shader_instruction *ins, enum vkd3d_shader_opcode handler_idx)
 {
     memset(ins, 0, sizeof(*ins));
     ins->handler_idx = handler_idx;
 }
 
-enum vkd3d_result instruction_array_flatten_hull_shader_phases(struct vkd3d_shader_instruction_array *src_instructions)
+static enum vkd3d_result instruction_array_flatten_hull_shader_phases(struct vkd3d_shader_instruction_array *src_instructions)
 {
     struct hull_flattener flattener = {*src_instructions};
     struct vkd3d_shader_instruction_array *instructions;
@@ -388,7 +454,7 @@ static enum vkd3d_result control_point_normaliser_emit_hs_input(struct control_p
     return VKD3D_OK;
 }
 
-enum vkd3d_result instruction_array_normalise_hull_shader_control_point_io(
+static enum vkd3d_result instruction_array_normalise_hull_shader_control_point_io(
         struct vkd3d_shader_instruction_array *src_instructions, const struct shader_signature *input_signature)
 {
     struct vkd3d_shader_instruction_array *instructions;
@@ -999,7 +1065,7 @@ static void shader_instruction_normalise_io_params(struct vkd3d_shader_instructi
         shader_instruction_init(ins, VKD3DSIH_NOP);
 }
 
-enum vkd3d_result instruction_array_normalise_io_registers(struct vkd3d_shader_instruction_array *instructions,
+static enum vkd3d_result instruction_array_normalise_io_registers(struct vkd3d_shader_instruction_array *instructions,
         enum vkd3d_shader_type shader_type, struct shader_signature *input_signature,
         struct shader_signature *output_signature, struct shader_signature *patch_constant_signature)
 {
@@ -1069,4 +1135,160 @@ enum vkd3d_result instruction_array_normalise_io_registers(struct vkd3d_shader_i
 
     *instructions = normaliser.instructions;
     return VKD3D_OK;
+}
+
+struct flat_constant_def
+{
+    enum vkd3d_shader_d3dbc_constant_register set;
+    uint32_t index;
+    uint32_t value[4];
+};
+
+struct flat_constants_normaliser
+{
+    struct vkd3d_shader_parser *parser;
+    struct flat_constant_def *defs;
+    size_t def_count, defs_capacity;
+};
+
+static bool get_flat_constant_register_type(const struct vkd3d_shader_register *reg,
+        enum vkd3d_shader_d3dbc_constant_register *set, uint32_t *index)
+{
+    static const struct
+    {
+        enum vkd3d_shader_register_type type;
+        enum vkd3d_shader_d3dbc_constant_register set;
+        uint32_t offset;
+    }
+    regs[] =
+    {
+        {VKD3DSPR_CONST, VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER, 0},
+        {VKD3DSPR_CONST2, VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER, 2048},
+        {VKD3DSPR_CONST3, VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER, 4096},
+        {VKD3DSPR_CONST4, VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER, 6144},
+        {VKD3DSPR_CONSTINT, VKD3D_SHADER_D3DBC_INT_CONSTANT_REGISTER, 0},
+        {VKD3DSPR_CONSTBOOL, VKD3D_SHADER_D3DBC_BOOL_CONSTANT_REGISTER, 0},
+    };
+
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(regs); ++i)
+    {
+        if (reg->type == regs[i].type)
+        {
+            if (reg->idx[0].rel_addr)
+            {
+                FIXME("Unhandled relative address.\n");
+                return false;
+            }
+
+            *set = regs[i].set;
+            *index = regs[i].offset + reg->idx[0].offset;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void shader_register_normalise_flat_constants(struct vkd3d_shader_src_param *param,
+        const struct flat_constants_normaliser *normaliser)
+{
+    enum vkd3d_shader_d3dbc_constant_register set;
+    uint32_t index;
+    size_t i, j;
+
+    if (!get_flat_constant_register_type(&param->reg, &set, &index))
+        return;
+
+    for (i = 0; i < normaliser->def_count; ++i)
+    {
+        if (normaliser->defs[i].set == set && normaliser->defs[i].index == index)
+        {
+            param->reg.type = VKD3DSPR_IMMCONST;
+            param->reg.idx_count = 0;
+            param->reg.immconst_type = VKD3D_IMMCONST_VEC4;
+            for (j = 0; j < 4; ++j)
+                param->reg.u.immconst_uint[j] = normaliser->defs[i].value[j];
+            return;
+        }
+    }
+
+    param->reg.type = VKD3DSPR_CONSTBUFFER;
+    param->reg.idx[0].offset = set; /* register ID */
+    param->reg.idx[1].offset = set; /* register index */
+    param->reg.idx[2].offset = index; /* buffer index */
+    param->reg.idx_count = 3;
+}
+
+static enum vkd3d_result instruction_array_normalise_flat_constants(struct vkd3d_shader_parser *parser)
+{
+    struct flat_constants_normaliser normaliser = {.parser = parser};
+    unsigned int i, j;
+
+    for (i = 0; i < parser->instructions.count; ++i)
+    {
+        struct vkd3d_shader_instruction *ins = &parser->instructions.elements[i];
+
+        if (ins->handler_idx == VKD3DSIH_DEF || ins->handler_idx == VKD3DSIH_DEFI || ins->handler_idx == VKD3DSIH_DEFB)
+        {
+            struct flat_constant_def *def;
+
+            if (!vkd3d_array_reserve((void **)&normaliser.defs, &normaliser.defs_capacity,
+                    normaliser.def_count + 1, sizeof(*normaliser.defs)))
+            {
+                vkd3d_free(normaliser.defs);
+                return VKD3D_ERROR_OUT_OF_MEMORY;
+            }
+
+            def = &normaliser.defs[normaliser.def_count++];
+
+            get_flat_constant_register_type((struct vkd3d_shader_register *)&ins->dst[0].reg, &def->set, &def->index);
+            for (j = 0; j < 4; ++j)
+                def->value[j] = ins->src[0].reg.u.immconst_uint[j];
+
+            vkd3d_shader_instruction_make_nop(ins);
+        }
+        else
+        {
+            for (j = 0; j < ins->src_count; ++j)
+                shader_register_normalise_flat_constants((struct vkd3d_shader_src_param *)&ins->src[j], &normaliser);
+        }
+    }
+
+    vkd3d_free(normaliser.defs);
+    return VKD3D_OK;
+}
+
+enum vkd3d_result vkd3d_shader_normalise(struct vkd3d_shader_parser *parser,
+        const struct vkd3d_shader_compile_info *compile_info)
+{
+    struct vkd3d_shader_instruction_array *instructions = &parser->instructions;
+    enum vkd3d_result result = VKD3D_OK;
+
+    if (parser->shader_desc.is_dxil)
+        return result;
+
+    if (parser->shader_version.type != VKD3D_SHADER_TYPE_PIXEL
+            && (result = remap_output_signature(parser, compile_info)) < 0)
+        return result;
+
+    if (parser->shader_version.type == VKD3D_SHADER_TYPE_HULL
+            && (result = instruction_array_flatten_hull_shader_phases(instructions)) >= 0)
+    {
+        result = instruction_array_normalise_hull_shader_control_point_io(instructions,
+                &parser->shader_desc.input_signature);
+    }
+    if (result >= 0)
+        result = instruction_array_normalise_io_registers(instructions, parser->shader_version.type,
+                &parser->shader_desc.input_signature, &parser->shader_desc.output_signature,
+                &parser->shader_desc.patch_constant_signature);
+
+    if (result >= 0)
+        result = instruction_array_normalise_flat_constants(parser);
+
+    if (result >= 0 && TRACE_ON())
+        vkd3d_shader_trace(instructions, &parser->shader_version);
+
+    return result;
 }

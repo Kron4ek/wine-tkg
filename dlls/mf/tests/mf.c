@@ -2939,7 +2939,7 @@ static HRESULT WINAPI test_grabber_callback_OnProcessSample(IMFSampleGrabberSink
 
     SetEvent(grabber->ready_event);
     res = WaitForSingleObject(grabber->done_event, 1000);
-    ok(!res, "WaitForSingleObject returned %#lx", res);
+    ok(!res, "WaitForSingleObject returned %#lx\n", res);
 
     return S_OK;
 }
@@ -4951,7 +4951,7 @@ static void test_sample_grabber_orientation(GUID subtype)
     if (!(source = create_media_source(L"test.mp4", L"video/mp4")))
     {
         win_skip("MP4 media source is not supported, skipping tests.\n");
-        return;
+        goto done;
     }
 
     callback = create_test_callback(TRUE);
@@ -5064,10 +5064,11 @@ static void test_sample_grabber_orientation(GUID subtype)
     IMFMediaSession_Release(session);
     IMFMediaSource_Release(source);
 
+    IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
+
+done:
     hr = MFShutdown();
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-
-    IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
 }
 
 static void test_quality_manager(void)
@@ -7050,6 +7051,22 @@ static void test_mpeg4_media_sink(void)
     IMFMediaType_Release(audio_type);
 }
 
+static void test_MFCreateSequencerSegmentOffset(void)
+{
+    PROPVARIANT propvar;
+    HRESULT hr;
+
+    hr = MFCreateSequencerSegmentOffset(0, 0, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    propvar.vt = VT_EMPTY;
+    hr = MFCreateSequencerSegmentOffset(0, 0, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(propvar.vt == VT_UNKNOWN, "Unexpected type %d.\n", propvar.vt);
+    ok(!!propvar.punkVal, "Unexpected pointer.\n");
+    PropVariantClear(&propvar);
+}
+
 START_TEST(mf)
 {
     init_functions();
@@ -7084,4 +7101,5 @@ START_TEST(mf)
     test_MFGetTopoNodeCurrentType();
     test_MFRequireProtectedEnvironment();
     test_mpeg4_media_sink();
+    test_MFCreateSequencerSegmentOffset();
 }

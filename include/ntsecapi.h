@@ -16,8 +16,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_NTSECAPI_H
-#define __WINE_NTSECAPI_H
+#ifndef _NTSECAPI_
+#define _NTSECAPI_
 
 #ifndef GUID_DEFINED
 # include <guiddef.h>
@@ -121,11 +121,19 @@ typedef NTSTATUS *PNTSTATUS;
 
 typedef enum _SECURITY_LOGON_TYPE
 {
+    UndefinedLogonType = 0,
     Interactive = 2,
     Network,
     Batch,
     Service,
-    Proxy
+    Proxy,
+    Unlock,
+    NetworkCleartext,
+    NewCredentials,
+    RemoteInteractive,
+    CachedInteractive,
+    CachedRemoteInteractive,
+    CachedUnlock
 } SECURITY_LOGON_TYPE, *PSECURITY_LOGON_TYPE;
 
 typedef enum _POLICY_AUDIT_EVENT_TYPE
@@ -180,7 +188,21 @@ typedef struct _SecHandle
 
 typedef UNICODE_STRING LSA_UNICODE_STRING, *PLSA_UNICODE_STRING;
 typedef STRING LSA_STRING, *PLSA_STRING;
+
+#ifdef _NTDEF_
 typedef OBJECT_ATTRIBUTES LSA_OBJECT_ATTRIBUTES, *PLSA_OBJECT_ATTRIBUTES;
+#else
+typedef struct _LSA_OBJECT_ATTRIBUTES
+{
+    ULONG Length;
+    HANDLE RootDirectory;
+    PLSA_UNICODE_STRING ObjectName;
+    ULONG Attributes;
+    PVOID SecurityDescriptor;
+    PVOID SecurityQualityOfService;
+} LSA_OBJECT_ATTRIBUTES, *PLSA_OBJECT_ATTRIBUTES;
+#endif
+
 
 typedef PVOID LSA_HANDLE, *PLSA_HANDLE;
 typedef ULONG LSA_ENUMERATION_HANDLE, *PLSA_ENUMERATION_HANDLE;
@@ -249,6 +271,12 @@ typedef struct _POLICY_MODIFICATION_INFO
     LARGE_INTEGER DatabaseCreationTime;
 } POLICY_MODIFICATION_INFO, *PPOLICY_MODIFICATION_INFO;
 
+typedef struct _LSA_LAST_INTER_LOGON_INFO {
+    LARGE_INTEGER LastSuccessfulLogon;
+    LARGE_INTEGER LastFailedLogon;
+    ULONG FailedAttemptCountSinceLastSuccessfulLogon;
+} LSA_LAST_INTER_LOGON_INFO, *PLSA_LAST_INTER_LOGON_INFO;
+
 typedef struct _SECURITY_LOGON_SESSION_DATA {
     ULONG Size;
     LUID LogonId;
@@ -262,6 +290,17 @@ typedef struct _SECURITY_LOGON_SESSION_DATA {
     LSA_UNICODE_STRING LogonServer;
     LSA_UNICODE_STRING DnsDomainName;
     LSA_UNICODE_STRING Upn;
+    ULONG UserFlags;
+    LSA_LAST_INTER_LOGON_INFO LastLogonInfo;
+    LSA_UNICODE_STRING LogonScript;
+    LSA_UNICODE_STRING ProfilePath;
+    LSA_UNICODE_STRING HomeDirectory;
+    LSA_UNICODE_STRING HomeDirectoryDrive;
+    LARGE_INTEGER LogoffTime;
+    LARGE_INTEGER KickOffTime;
+    LARGE_INTEGER PasswordLastSet;
+    LARGE_INTEGER PasswordCanChange;
+    LARGE_INTEGER PasswordMustChange;
 } SECURITY_LOGON_SESSION_DATA, *PSECURITY_LOGON_SESSION_DATA;
 
 typedef struct
@@ -355,6 +394,27 @@ typedef struct _AUDIT_POLICY_INFORMATION
     ULONG   AuditingInformation;
     GUID    AuditCategoryGuid;
 } AUDIT_POLICY_INFORMATION, *PAUDIT_POLICY_INFORMATION;
+
+enum NEGOTIATE_MESSAGES
+{
+    NegEnumPackagePrefixes,
+    NegGetCallerName,
+    NegTransferCredentials,
+    NegMsgReserved1,
+    NegCallPackageMax
+};
+
+typedef struct _NEGOTIATE_CALLER_NAME_REQUEST
+{
+    ULONG MessageType;
+    LUID LogonId;
+} NEGOTIATE_CALLER_NAME_REQUEST, *PNEGOTIATE_CALLER_NAME_REQUEST;
+
+typedef struct _NEGOTIATE_CALLER_NAME_RESPONSE
+{
+    ULONG MessageType;
+    PWSTR CallerName;
+} NEGOTIATE_CALLER_NAME_RESPONSE, *PNEGOTIATE_CALLER_NAME_RESPONSE;
 
 #define MICROSOFT_KERBEROS_NAME_A "Kerberos"
 #if defined(_MSC_VER) || defined(__MINGW32__)
@@ -615,6 +675,8 @@ typedef struct _KERB_PURGE_TKT_CACHE_REQUEST
 #define RtlEncryptMemory                SystemFunction040
 #define RtlDecryptMemory                SystemFunction041
 
+#define LSA_SUCCESS(Error) ((LONG)(Error) >= 0)
+
 WINADVAPI BOOLEAN  WINAPI AuditQuerySystemPolicy(const GUID*,ULONG,AUDIT_POLICY_INFORMATION**);
 WINADVAPI BOOLEAN  WINAPI RtlGenRandom(PVOID,ULONG);
 WINADVAPI NTSTATUS WINAPI RtlEncryptMemory(PVOID,ULONG,ULONG);
@@ -664,4 +726,4 @@ NTSTATUS WINAPI LsaRegisterLogonProcess(PLSA_STRING,PHANDLE,PLSA_OPERATIONAL_MOD
 } /* extern "C" */
 #endif /* defined(__cplusplus) */
 
-#endif /* !defined(__WINE_NTSECAPI_H) */
+#endif /* !defined(_NTSECAPI_) */

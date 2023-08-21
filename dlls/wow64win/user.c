@@ -220,6 +220,16 @@ typedef struct
 
 typedef struct
 {
+    UINT   cbSize;
+    INT    iContextType;
+    INT    iCtrlId;
+    ULONG  hItemHandle;
+    DWORD  dwContextId;
+    POINT  MousePos;
+} HELPINFO32;
+
+typedef struct
+{
     UINT  CtlType;
     UINT  CtlID;
     UINT  itemID;
@@ -240,6 +250,17 @@ typedef struct
     RECT  rcItem;
     ULONG itemData;
 } DRAWITEMSTRUCT32;
+
+typedef struct
+{
+    DWORD cbSize;
+    RECT  rcItem;
+    RECT  rcButton;
+    DWORD stateButton;
+    ULONG hwndCombo;
+    ULONG hwndItem;
+    ULONG hwndList;
+} COMBOBOXINFO32;
 
 typedef struct
 {
@@ -332,7 +353,6 @@ struct win_proc_params32
     ULONG lparam;
     BOOL ansi;
     BOOL ansi_dst;
-    BOOL needs_unpack;
     enum wm_char_mapping mapping;
     ULONG dpi_awareness;
     ULONG procA;
@@ -450,7 +470,6 @@ static void win_proc_params_64to32( const struct win_proc_params *src, struct wi
     params.lparam = src->lparam;
     params.ansi = src->ansi;
     params.ansi_dst = src->ansi_dst;
-    params.needs_unpack = src->needs_unpack;
     params.mapping = src->mapping;
     params.dpi_awareness = HandleToUlong( src->dpi_awareness );
     params.procA = PtrToUlong( src->procA );
@@ -614,10 +633,320 @@ static NTSTATUS WINAPI wow64_NtUserCallWinEventHook( void *arg, ULONG size )
                               FIELD_OFFSET( struct win_event_hook_params32, module ) + size);
 }
 
+static size_t packed_message_64to32( UINT message, WPARAM wparam,
+                                     const void *params64, void *params32, size_t size )
+{
+    if (!size) return 0;
+
+    switch (message)
+    {
+    case WM_NCCREATE:
+    case WM_CREATE:
+        {
+            CREATESTRUCT32 *cs32 = params32;
+            const CREATESTRUCTW *cs64 = params64;
+
+            createstruct_64to32( cs64, cs32 );
+            size -= sizeof(*cs64);
+            if (size) memmove( cs32 + 1, cs64 + 1, size );
+            return sizeof(*cs32) + size;
+        }
+
+    case WM_NCCALCSIZE:
+        if (wparam)
+        {
+            NCCALCSIZE_PARAMS32 ncp32;
+            const NCCALCSIZE_PARAMS *ncp64 = params64;
+
+            ncp32.rgrc[0] = ncp64->rgrc[0];
+            ncp32.rgrc[1] = ncp64->rgrc[1];
+            ncp32.rgrc[2] = ncp64->rgrc[2];
+            winpos_64to32( (const WINDOWPOS *)(ncp64 + 1),
+                           (WINDOWPOS32 *)((const char *)params32 + sizeof(ncp32)) );
+            memcpy( params32, &ncp32, sizeof(ncp32) );
+            return sizeof(ncp32) + sizeof(WINDOWPOS32);
+        }
+        break;
+
+    case WM_DRAWITEM:
+        {
+            DRAWITEMSTRUCT32 dis32;
+            const DRAWITEMSTRUCT *dis64 = params64;
+
+            dis32.CtlType       = dis64->CtlType;
+            dis32.CtlID         = dis64->CtlID;
+            dis32.itemID        = dis64->itemID;
+            dis32.itemAction    = dis64->itemAction;
+            dis32.itemState     = dis64->itemState;
+            dis32.hwndItem      = HandleToLong( dis64->hwndItem );
+            dis32.hDC           = HandleToUlong( dis64->hDC );
+            dis32.itemData      = dis64->itemData;
+            dis32.rcItem.left   = dis64->rcItem.left;
+            dis32.rcItem.top    = dis64->rcItem.top;
+            dis32.rcItem.right  = dis64->rcItem.right;
+            dis32.rcItem.bottom = dis64->rcItem.bottom;
+            memcpy( params32, &dis32, sizeof(dis32) );
+            return sizeof(dis32);
+        }
+
+    case WM_MEASUREITEM:
+        {
+            MEASUREITEMSTRUCT32 mis32;
+            const MEASUREITEMSTRUCT *mis64 = params64;
+
+            mis32.CtlType    = mis64->CtlType;
+            mis32.CtlID      = mis64->CtlID;
+            mis32.itemID     = mis64->itemID;
+            mis32.itemWidth  = mis64->itemWidth;
+            mis32.itemHeight = mis64->itemHeight;
+            mis32.itemData   = mis64->itemData;
+            memcpy( params32, &mis32, sizeof(mis32) );
+            return sizeof(mis32);
+        }
+
+    case WM_DELETEITEM:
+        {
+            DELETEITEMSTRUCT32 dis32;
+            const DELETEITEMSTRUCT *dis64 = params64;
+
+            dis32.CtlType  = dis64->CtlType;
+            dis32.CtlID    = dis64->CtlID;
+            dis32.itemID   = dis64->itemID;
+            dis32.hwndItem = HandleToLong( dis64->hwndItem );
+            dis32.itemData = dis64->itemData;
+            memcpy( params32, &dis32, sizeof(dis32) );
+            return sizeof(dis32);
+        }
+
+    case WM_COMPAREITEM:
+        {
+            COMPAREITEMSTRUCT32 cis32;
+            const COMPAREITEMSTRUCT *cis64 = params64;
+
+            cis32.CtlType    = cis64->CtlType;
+            cis32.CtlID      = cis64->CtlID;
+            cis32.hwndItem   = HandleToLong( cis64->hwndItem );
+            cis32.itemID1    = cis64->itemID1;
+            cis32.itemData1  = cis64->itemData1;
+            cis32.itemID2    = cis64->itemID2;
+            cis32.itemData2  = cis64->itemData2;
+            cis32.dwLocaleId = cis64->dwLocaleId;
+            memcpy( params32, &cis32, sizeof(cis32) );
+            return sizeof(cis32);
+        }
+
+    case WM_WINDOWPOSCHANGING:
+    case WM_WINDOWPOSCHANGED:
+        winpos_64to32( params64, params32 );
+        return sizeof(WINDOWPOS32);
+
+    case WM_COPYDATA:
+        {
+            COPYDATASTRUCT32 cds32;
+            const COPYDATASTRUCT *cds64 = params64;
+
+            cds32.dwData = cds64->dwData;
+            cds32.cbData = cds64->cbData;
+            cds32.lpData = PtrToUlong( cds64->lpData );
+            memcpy( params32, &cds32, sizeof(cds32) );
+            size -= sizeof(cds32);
+            if (size) memmove( (char *)params32 + sizeof(cds32), cds64 + 1, size );
+            return sizeof(cds32) + size;
+        }
+    case WM_HELP:
+        {
+            HELPINFO32 hi32;
+            const HELPINFO *hi64 = params64;
+
+            hi32.cbSize       = sizeof(hi32);
+            hi32.iContextType = hi64->iContextType;
+            hi32.iCtrlId      = hi64->iCtrlId;
+            hi32.hItemHandle  = HandleToLong( hi64->hItemHandle );
+            hi32.dwContextId  = hi64->dwContextId;
+            hi32.MousePos     = hi64->MousePos;
+            memcpy( params32, &hi32, sizeof(hi32) );
+            return sizeof(hi32);
+        }
+
+    case WM_GETDLGCODE:
+        msg_64to32( params64, params32 );
+        return sizeof(MSG32);
+
+    case WM_NEXTMENU:
+        {
+            MDINEXTMENU32 *next32 = params32;
+            const MDINEXTMENU *next64 = params64;
+
+            next32->hmenuIn   = HandleToLong( next64->hmenuIn );
+            next32->hmenuNext = HandleToLong( next64->hmenuNext );
+            next32->hwndNext  = HandleToLong( next64->hwndNext );
+            return sizeof(*next32);
+        }
+
+    case WM_MDICREATE:
+        {
+            MDICREATESTRUCT32 mcs32;
+            const MDICREATESTRUCTW *mcs64 = params64;
+
+            mcs32.szClass = PtrToUlong( mcs64->szClass );
+            mcs32.szTitle = PtrToUlong( mcs64->szTitle );
+            mcs32.hOwner  = HandleToLong( mcs64->hOwner );
+            mcs32.x       = mcs64->x;
+            mcs32.y       = mcs64->y;
+            mcs32.cx      = mcs64->cx;
+            mcs32.cy      = mcs64->cy;
+            mcs32.style   = mcs64->style;
+            mcs32.lParam  = mcs64->lParam;
+            size -= sizeof(*mcs64);
+            if (size) memmove( (char *)params32 + sizeof(mcs32), mcs64 + 1, size );
+            memcpy( params32, &mcs32, sizeof(mcs32) );
+            return sizeof(mcs32) + size;
+        }
+
+    case CB_GETCOMBOBOXINFO:
+        {
+            COMBOBOXINFO32 ci32;
+            const COMBOBOXINFO *ci64 = params64;
+
+            ci32.cbSize      = sizeof(ci32);
+            ci32.rcItem      = ci64->rcItem;
+            ci32.rcButton    = ci64->rcButton;
+            ci32.stateButton = ci64->stateButton;
+            ci32.hwndCombo   = HandleToLong( ci64->hwndCombo );
+            ci32.hwndItem    = HandleToLong( ci64->hwndItem );
+            ci32.hwndList    = HandleToLong( ci64->hwndList );
+            memcpy( params32, &ci32, sizeof(ci32) );
+            return sizeof(ci32);
+        }
+    }
+
+    memmove( params32, params64, size );
+    return size;
+}
+
+static size_t packed_result_32to64( UINT message, WPARAM wparam, const void *params32,
+                                    size_t size, void *params64 )
+{
+    if (!size) return 0;
+
+    switch (message)
+    {
+    case WM_NCCREATE:
+    case WM_CREATE:
+        if (size >= sizeof(CREATESTRUCT32))
+        {
+            const CREATESTRUCT32 *cs32 = params32;
+            CREATESTRUCTW *cs64 = params64;
+
+            cs64->lpCreateParams = UlongToPtr( cs32->lpCreateParams );
+            cs64->hInstance      = UlongToPtr( cs32->hInstance );
+            cs64->hMenu          = LongToHandle( cs32->hMenu );
+            cs64->hwndParent     = LongToHandle( cs32->hwndParent );
+            cs64->cy             = cs32->cy;
+            cs64->cx             = cs32->cx;
+            cs64->y              = cs32->y;
+            cs64->x              = cs32->x;
+            cs64->style          = cs32->style;
+            cs64->dwExStyle      = cs32->dwExStyle;
+            return sizeof(*cs64);
+        }
+
+    case WM_NCCALCSIZE:
+        if (wparam)
+        {
+            const NCCALCSIZE_PARAMS32 *ncp32 = params32;
+            NCCALCSIZE_PARAMS *ncp64 = params64;
+
+            ncp64->rgrc[0] = ncp32->rgrc[0];
+            ncp64->rgrc[1] = ncp32->rgrc[1];
+            ncp64->rgrc[2] = ncp32->rgrc[2];
+            winpos_32to64( (WINDOWPOS *)(ncp64 + 1), (const WINDOWPOS32 *)(ncp32 + 1) );
+            return sizeof(*ncp64) + sizeof(WINDOWPOS);
+        }
+        break;
+
+    case WM_MEASUREITEM:
+        {
+            const MEASUREITEMSTRUCT32 *mis32 = params32;
+            MEASUREITEMSTRUCT *mis64 = params64;
+
+            mis64->CtlType    = mis32->CtlType;
+            mis64->CtlID      = mis32->CtlID;
+            mis64->itemID     = mis32->itemID;
+            mis64->itemWidth  = mis32->itemWidth;
+            mis64->itemHeight = mis32->itemHeight;
+            mis64->itemData   = mis32->itemData;
+            return sizeof(*mis64);
+        }
+
+    case WM_WINDOWPOSCHANGING:
+    case WM_WINDOWPOSCHANGED:
+        winpos_32to64( params64, params32 );
+        return sizeof(WINDOWPOS);
+
+    case WM_NEXTMENU:
+        {
+            const MDINEXTMENU32 *next32 = params32;
+            MDINEXTMENU *next64 = params64;
+
+            next64->hmenuIn   = LongToHandle( next32->hmenuIn );
+            next64->hmenuNext = LongToHandle( next32->hmenuNext );
+            next64->hwndNext  = LongToHandle( next32->hwndNext );
+            return sizeof(*next64);
+        }
+
+    case CB_GETCOMBOBOXINFO:
+        {
+            const COMBOBOXINFO32 *ci32 = params32;
+            COMBOBOXINFO *ci64 = params64;
+
+            ci64->cbSize      = sizeof(*ci32);
+            ci64->rcItem      = ci32->rcItem;
+            ci64->rcButton    = ci32->rcButton;
+            ci64->stateButton = ci32->stateButton;
+            ci64->hwndCombo   = LongToHandle( ci32->hwndCombo );
+            ci64->hwndItem    = LongToHandle( ci32->hwndItem );
+            ci64->hwndList    = LongToHandle( ci32->hwndList );
+            return sizeof(*ci64);
+        }
+
+    case WM_GETTEXT:
+    case WM_ASKCBFORMATNAME:
+    case WM_GETMINMAXINFO:
+    case WM_STYLECHANGING:
+    case SBM_SETSCROLLINFO:
+    case SBM_GETSCROLLINFO:
+    case SBM_GETSCROLLBARINFO:
+    case EM_GETSEL:
+    case SBM_GETRANGE:
+    case CB_GETEDITSEL:
+    case EM_SETRECT:
+    case EM_GETRECT:
+    case EM_SETRECTNP:
+    case LB_GETITEMRECT:
+    case CB_GETDROPPEDCONTROLRECT:
+    case EM_GETLINE:
+    case CB_GETLBTEXT:
+    case LB_GETTEXT:
+    case LB_GETSELITEMS:
+    case WM_SIZING:
+    case WM_MOVING:
+    case WM_MDIGETACTIVE:
+        break;
+
+    default:
+        return 0;
+    }
+
+    if (size) memcpy( params64, params32, size );
+    return size;
+}
+
 static NTSTATUS WINAPI wow64_NtUserCallWinProc( void *arg, ULONG size )
 {
     struct win_proc_params *params = arg;
     struct win_proc_params32 *params32 = arg;
+    size_t lparam_size = 0, offset32 = sizeof(*params32);
     LRESULT result = 0;
     void *ret_ptr;
     ULONG ret_len;
@@ -625,13 +954,29 @@ static NTSTATUS WINAPI wow64_NtUserCallWinProc( void *arg, ULONG size )
 
     win_proc_params_64to32( params, params32 );
     if (size > sizeof(*params))
-        memmove( params32 + 1, params + 1, size - sizeof(*params) );
+    {
+        const size_t offset64 = (sizeof(*params) + 15) & ~15;
+        offset32 = (offset32 + 15) & ~15;
+        lparam_size = packed_message_64to32( params32->msg, params32->wparam,
+                                             (char *)params + offset64,
+                                             (char *)params32 + offset32,
+                                             size - offset64 );
+    }
 
     status = Wow64KiUserCallbackDispatcher( NtUserCallWinProc, params32,
-                                            size - sizeof(*params) + sizeof(*params32),
+                                            offset32 + lparam_size,
                                             &ret_ptr, &ret_len );
 
-    if (ret_len == sizeof(LONG)) result = *(LONG *)ret_ptr;
+    if (ret_len >= sizeof(LONG))
+    {
+        LRESULT *result_ptr = arg;
+        result = *(LONG *)ret_ptr;
+        ret_len = packed_result_32to64( params32->msg, params32->wparam, (LONG *)ret_ptr + 1,
+                                        ret_len - sizeof(LONG), result_ptr + 1 );
+        *result_ptr = result;
+        return NtCallbackReturn( result_ptr, sizeof(*result_ptr) + ret_len, status );
+    }
+
     return NtCallbackReturn( &result, sizeof(result), status );
 }
 
@@ -651,14 +996,7 @@ static UINT hook_lparam_64to32( int id, int code, const void *lp, size_t size, v
         switch (code)
         {
         case HCBT_CREATEWND:
-            {
-                const CREATESTRUCTW *cs64 = lp;
-                CREATESTRUCT32 *cs32 = lp32;
-                createstruct_64to32( cs64, cs32 );
-                size -= sizeof(*cs64);
-                if (size) memmove( cs32 + 1, cs64 + 1, size );
-                return sizeof(*cs32) + size;
-            }
+            return packed_message_64to32( WM_CREATE, 0, lp, lp32, size );
 
         case HCBT_ACTIVATE:
             {
@@ -685,6 +1023,15 @@ static UINT hook_lparam_64to32( int id, int code, const void *lp, size_t size, v
             cwp32.message = cwp->message;
             cwp32.hwnd    = HandleToUlong( cwp->hwnd );
             memcpy( lp32, &cwp32, sizeof(cwp32) );
+            if (size > sizeof(*cwp))
+            {
+                const size_t offset64 = (sizeof(*cwp) + 15) & ~15;
+                const size_t offset32 = (sizeof(cwp32) + 15) & ~15;
+                size = packed_message_64to32( cwp32.message, cwp32.wParam,
+                                              (const char *)lp + offset64,
+                                              (char *)lp32 + offset32, size - offset64 );
+                return offset32 + size;
+            }
             return sizeof(cwp32);
         }
 
@@ -698,6 +1045,15 @@ static UINT hook_lparam_64to32( int id, int code, const void *lp, size_t size, v
             cwpret32.message = cwpret->message;
             cwpret32.hwnd    = HandleToUlong( cwpret->hwnd );
             memcpy( lp32, &cwpret32, sizeof(cwpret32) );
+            if (size > sizeof(*cwpret))
+            {
+                const size_t offset64 = (sizeof(*cwpret) + 15) & ~15;
+                const size_t offset32 = (sizeof(cwpret32) + 15) & ~15;
+                size = packed_message_64to32( cwpret32.message, cwpret32.wParam,
+                                              (const char *)lp + offset64,
+                                              (char *)lp32 + offset32, size - offset64 );
+                return offset32 + size;
+            }
             return sizeof(cwpret32);
         }
 
@@ -2908,6 +3264,7 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
     {
     case WM_NCCREATE:
     case WM_CREATE:
+        if (lparam)
         {
             CREATESTRUCT32 *cs32 = (void *)lparam;
             CREATESTRUCTW cs;
@@ -2926,6 +3283,7 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             cs32->dwExStyle      = cs.dwExStyle;
             return ret;
         }
+        return NtUserMessageCall( hwnd, msg, wparam, lparam, result_info, type, ansi );
 
     case WM_MDICREATE:
         {
@@ -3001,6 +3359,7 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
 
             dis.CtlType  = dis32->CtlType;
             dis.CtlID    = dis32->CtlID;
+            dis.itemID   = dis32->itemID;
             dis.hwndItem = LongToHandle( dis32->hwndItem );
             dis.itemData = dis32->itemData;
             return NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&dis, result_info, type, ansi );
@@ -3018,8 +3377,12 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             mis.itemHeight = mis32->itemHeight;
             mis.itemData   = mis32->itemData;
             ret = NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&mis, result_info, type, ansi );
+            mis32->CtlType    = mis.CtlType;
+            mis32->CtlID      = mis.CtlID;
+            mis32->itemID     = mis.itemID;
             mis32->itemWidth  = mis.itemWidth;
             mis32->itemHeight = mis.itemHeight;
+            mis32->itemData   = mis.itemData;
             return ret;
         }
 
@@ -3054,6 +3417,20 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             return NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&cds, result_info, type, ansi );
         }
 
+    case WM_HELP:
+        {
+            HELPINFO32 *hi32 = (void *)lparam;
+            HELPINFO hi64;
+
+            hi64.cbSize       = sizeof(hi64);
+            hi64.iContextType = hi32->iContextType;
+            hi64.iCtrlId      = hi32->iCtrlId;
+            hi64.hItemHandle  = LongToHandle( hi32->hItemHandle );
+            hi64.dwContextId  = hi32->dwContextId;
+            hi64.MousePos     = hi32->MousePos;
+            return NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&hi64, result_info, type, ansi );
+        }
+
     case WM_GETDLGCODE:
         if (lparam)
         {
@@ -3073,7 +3450,11 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             next.hmenuIn   = LongToHandle( next32->hmenuIn );
             next.hmenuNext = LongToHandle( next32->hmenuNext );
             next.hwndNext  = LongToHandle( next32->hwndNext );
-            return NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&next, result_info, type, ansi );
+            ret = NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&next, result_info, type, ansi );
+            next32->hmenuIn   = HandleToLong( next.hmenuIn );
+            next32->hmenuNext = HandleToLong( next.hmenuNext );
+            next32->hwndNext  = HandleToLong( next.hwndNext );
+            return ret;
         }
 
     case WM_PAINTCLIPBOARD:
@@ -3082,6 +3463,29 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
 
             paintstruct_32to64( &ps, (PAINTSTRUCT32 *)lparam );
             return NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&ps, result_info, type, ansi );
+        }
+
+    case CB_GETCOMBOBOXINFO:
+        {
+            COMBOBOXINFO32 *ci32 = (COMBOBOXINFO32 *)lparam;
+            COMBOBOXINFO ci;
+
+            ci.cbSize      = ci32->cbSize;
+            ci.rcItem      = ci32->rcItem;
+            ci.rcButton    = ci32->rcButton;
+            ci.stateButton = ci32->stateButton;
+            ci.hwndCombo   = LongToHandle( ci32->hwndCombo );
+            ci.hwndItem    = LongToHandle( ci32->hwndItem );
+            ci.hwndList    = LongToHandle( ci32->hwndList );
+            ret = NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&ci, result_info, type, ansi );
+            ci32->cbSize      = ci.cbSize;
+            ci32->rcItem      = ci.rcItem;
+            ci32->rcButton    = ci.rcButton;
+            ci32->stateButton = ci.stateButton;
+            ci32->hwndCombo   = HandleToLong( ci.hwndCombo );
+            ci32->hwndItem    = HandleToLong( ci.hwndItem );
+            ci32->hwndList    = HandleToLong( ci.hwndList );
+            return ret;
         }
 
     default:
@@ -3169,13 +3573,6 @@ NTSTATUS WINAPI wow64_NtUserMessageCall( UINT *args )
     case NtUserSpyGetMsgName:
         /* no argument conversion */
         return NtUserMessageCall( hwnd, msg, wparam, lparam, result_info, type, ansi );
-
-    case NtUserWinProcResult:
-        {
-            LONG result32 = PtrToLong( result_info );
-            return message_call_32to64( hwnd, msg, wparam, lparam,
-                                        LongToPtr( result32 ), type, ansi );
-        }
 
     case NtUserImeDriverCall:
         {

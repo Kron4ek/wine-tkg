@@ -48,8 +48,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(oss);
 
-#define NULL_PTR_ERR MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32, RPC_X_NULL_REF_POINTER)
-
 typedef struct _OSSDevice {
     struct list entry;
     EDataFlow flow;
@@ -61,35 +59,6 @@ static struct list g_devices = LIST_INIT(g_devices);
 
 static WCHAR drv_key_devicesW[256];
 static const WCHAR guidW[] = {'g','u','i','d',0};
-
-static CRITICAL_SECTION g_sessions_lock;
-static CRITICAL_SECTION_DEBUG g_sessions_lock_debug =
-{
-    0, 0, &g_sessions_lock,
-    { &g_sessions_lock_debug.ProcessLocksList, &g_sessions_lock_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": g_sessions_lock") }
-};
-static CRITICAL_SECTION g_sessions_lock = { &g_sessions_lock_debug, -1, 0, 0, 0, 0 };
-
-extern const IAudioClient3Vtbl AudioClient3_Vtbl;
-extern const IAudioRenderClientVtbl AudioRenderClient_Vtbl;
-extern const IAudioCaptureClientVtbl AudioCaptureClient_Vtbl;
-extern const IAudioClockVtbl AudioClock_Vtbl;
-extern const IAudioClock2Vtbl AudioClock2_Vtbl;
-extern const IAudioStreamVolumeVtbl AudioStreamVolume_Vtbl;
-
-extern struct audio_session_wrapper *session_wrapper_create(
-    struct audio_client *client) DECLSPEC_HIDDEN;
-
-void DECLSPEC_HIDDEN sessions_lock(void)
-{
-    EnterCriticalSection(&g_sessions_lock);
-}
-
-void DECLSPEC_HIDDEN sessions_unlock(void)
-{
-    LeaveCriticalSection(&g_sessions_lock);
-}
 
 BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, void *reserved)
 {
@@ -116,8 +85,6 @@ BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, void *reserved)
         if (!reserved)
         {
             OSSDevice *iter, *iter2;
-
-            DeleteCriticalSection(&g_sessions_lock);
 
             LIST_FOR_EACH_ENTRY_SAFE(iter, iter2, &g_devices, OSSDevice, entry){
                 HeapFree(GetProcessHeap(), 0, iter);
@@ -200,7 +167,7 @@ static void get_device_guid(EDataFlow flow, const char *device, GUID *guid)
         RegCloseKey(key);
 }
 
-static BOOL get_device_name_from_guid(GUID *guid, char **name, EDataFlow *flow)
+BOOL WINAPI get_device_name_from_guid(GUID *guid, char **name, EDataFlow *flow)
 {
     OSSDevice *dev_item;
     LIST_FOR_EACH_ENTRY(dev_item, &g_devices, OSSDevice, entry){
@@ -298,82 +265,4 @@ end:
     }
 
     return params.result;
-}
-
-HRESULT WINAPI AUDDRV_GetAudioEndpoint(GUID *guid, IMMDevice *dev,
-        IAudioClient **out)
-{
-    ACImpl *This;
-    char *name;
-    int len;
-    EDataFlow dataflow;
-    HRESULT hr;
-
-    TRACE("%s %p %p\n", debugstr_guid(guid), dev, out);
-
-    if(!get_device_name_from_guid(guid, &name, &dataflow)){
-        WARN("Unknown GUID: %s\n", debugstr_guid(guid));
-        return AUDCLNT_E_DEVICE_INVALIDATED;
-    }
-
-    if(dataflow != eRender && dataflow != eCapture){
-        free(name);
-        return E_UNEXPECTED;
-    }
-
-    len = strlen(name);
-    This = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, offsetof(ACImpl, device_name[len + 1]));
-    if(!This){
-        free(name);
-        return E_OUTOFMEMORY;
-    }
-
-    memcpy(This->device_name, name, len + 1);
-    free(name);
-
-    hr = CoCreateFreeThreadedMarshaler((IUnknown *)&This->IAudioClient3_iface, &This->marshal);
-    if (FAILED(hr)) {
-         HeapFree(GetProcessHeap(), 0, This);
-         return hr;
-    }
-
-    This->dataflow = dataflow;
-
-    This->IAudioClient3_iface.lpVtbl = &AudioClient3_Vtbl;
-    This->IAudioRenderClient_iface.lpVtbl = &AudioRenderClient_Vtbl;
-    This->IAudioCaptureClient_iface.lpVtbl = &AudioCaptureClient_Vtbl;
-    This->IAudioClock_iface.lpVtbl = &AudioClock_Vtbl;
-    This->IAudioClock2_iface.lpVtbl = &AudioClock2_Vtbl;
-    This->IAudioStreamVolume_iface.lpVtbl = &AudioStreamVolume_Vtbl;
-
-    This->parent = dev;
-    IMMDevice_AddRef(This->parent);
-
-    *out = (IAudioClient *)&This->IAudioClient3_iface;
-    IAudioClient3_AddRef(&This->IAudioClient3_iface);
-
-    return S_OK;
-}
-
-/* if channels == 0, then this will return or create a session with
- * matching dataflow and GUID. otherwise, channels must also match */
-extern HRESULT get_audio_session(const GUID *sessionguid,
-        IMMDevice *device, UINT channels, AudioSession **out);
-
-HRESULT WINAPI AUDDRV_GetAudioSessionWrapper(const GUID *guid, IMMDevice *device,
-                                             AudioSessionWrapper **out)
-{
-    AudioSession *session;
-
-    HRESULT hr = get_audio_session(guid, device, 0, &session);
-    if(FAILED(hr))
-        return hr;
-
-    *out = session_wrapper_create(NULL);
-    if(!*out)
-        return E_OUTOFMEMORY;
-
-    (*out)->session = session;
-
-    return S_OK;
 }

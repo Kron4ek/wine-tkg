@@ -10620,6 +10620,79 @@ static void test_UiaFind(void)
     CoUninitialize();
 }
 
+struct marshal_thread_data {
+    IUnknown *iface;
+    const GUID *iface_iid;
+    BOOL expect_proxy;
+    const char *file;
+    int line;
+
+    IStream *marshal_stream;
+};
+
+static DWORD WINAPI interface_marshal_proxy_thread(LPVOID param)
+{
+    struct marshal_thread_data *data = (struct marshal_thread_data *)param;
+    IUnknown *proxy_iface, *unk, *unk2;
+    HRESULT hr;
+
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+
+    proxy_iface = unk = unk2 = NULL;
+    hr = CoGetInterfaceAndReleaseStream(data->marshal_stream, data->iface_iid, (void **)&proxy_iface);
+    ok_(data->file, data->line)(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IUnknown_QueryInterface(data->iface, &IID_IUnknown, (void **)&unk);
+    ok_(data->file, data->line)(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok_(data->file, data->line)(!!unk, "unk == NULL\n");
+
+    hr = IUnknown_QueryInterface(proxy_iface, &IID_IUnknown, (void **)&unk2);
+    ok_(data->file, data->line)(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok_(data->file, data->line)(!!unk2, "unk2 == NULL\n");
+
+    if (data->expect_proxy)
+        ok_(data->file, data->line)(unk != unk2, "unk == unk2\n");
+    else
+        ok_(data->file, data->line)(unk == unk2, "unk != unk2\n");
+
+    IUnknown_Release(proxy_iface);
+    IUnknown_Release(unk);
+    IUnknown_Release(unk2);
+
+    CoUninitialize();
+    return 0;
+}
+
+#define check_interface_marshal_proxy_creation( iface, iid, expect_proxy ) \
+        check_interface_marshal_proxy_creation_( (iface), (iid), (expect_proxy), __FILE__, __LINE__)
+static void check_interface_marshal_proxy_creation_(IUnknown *iface, REFIID iid, BOOL expect_proxy, const char *file,
+        int line)
+{
+    struct marshal_thread_data data = { NULL, iid, expect_proxy, file, line };
+    HANDLE thread;
+    HRESULT hr;
+
+    hr = IUnknown_QueryInterface(iface, data.iface_iid, (void **)&data.iface);
+    ok_(file, line)(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = CoMarshalInterThreadInterfaceInStream(data.iface_iid, data.iface, &data.marshal_stream);
+    ok_(file, line)(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    thread = CreateThread(NULL, 0, interface_marshal_proxy_thread, (void *)&data, 0, NULL);
+    while (MsgWaitForMultipleObjects(1, &thread, FALSE, INFINITE, QS_ALLINPUT) != WAIT_OBJECT_0)
+    {
+        MSG msg;
+        while(PeekMessageW(&msg, 0, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    CloseHandle(thread);
+
+    IUnknown_Release(data.iface);
+}
+
 static HWND create_test_hwnd(const char *class_name)
 {
     WNDCLASSA cls = { 0 };
@@ -10716,6 +10789,12 @@ static void test_ElementFromHandle(IUIAutomation *uia_iface, BOOL is_cui8)
     }
     else
         ok(hr == E_NOINTERFACE, "Unexpected hr %#lx.\n", hr);
+
+    /*
+     * The IUIAutomationElement interface uses the free threaded marshaler, so
+     * no actual proxy interface will be created.
+     */
+    check_interface_marshal_proxy_creation((IUnknown *)element, &IID_IUIAutomationElement, FALSE);
 
     IUIAutomationElement_Release(element);
     ok(Provider.ref == 1, "Unexpected refcnt %ld\n", Provider.ref);
@@ -13037,6 +13116,71 @@ static struct AutomationEventHandler AutomationEventHandler =
     1,
 };
 
+/*
+ * IUIAutomationFocusChangedEventHandler.
+ */
+static struct FocusChangedHandler
+{
+    IUIAutomationFocusChangedEventHandler IUIAutomationFocusChangedEventHandler_iface;
+    LONG ref;
+
+    BOOL event_handler_added;
+} FocusChangedHandler;
+
+static inline struct FocusChangedHandler *impl_from_FocusChangedHandler(IUIAutomationFocusChangedEventHandler *iface)
+{
+    return CONTAINING_RECORD(iface, struct FocusChangedHandler, IUIAutomationFocusChangedEventHandler_iface);
+}
+
+static HRESULT WINAPI FocusChangedHandler_QueryInterface(IUIAutomationFocusChangedEventHandler *iface,
+        REFIID riid, void **ppv)
+{
+    *ppv = NULL;
+    if (IsEqualIID(riid, &IID_IUIAutomationFocusChangedEventHandler) || IsEqualIID(riid, &IID_IUnknown))
+        *ppv = iface;
+    else
+        return E_NOINTERFACE;
+
+    IUIAutomationFocusChangedEventHandler_AddRef(iface);
+    return S_OK;
+}
+
+static ULONG WINAPI FocusChangedHandler_AddRef(IUIAutomationFocusChangedEventHandler* iface)
+{
+    struct FocusChangedHandler *handler = impl_from_FocusChangedHandler(iface);
+    return InterlockedIncrement(&handler->ref);
+}
+
+static ULONG WINAPI FocusChangedHandler_Release(IUIAutomationFocusChangedEventHandler* iface)
+{
+    struct FocusChangedHandler *handler = impl_from_FocusChangedHandler(iface);
+    return InterlockedDecrement(&handler->ref);
+}
+
+static HRESULT WINAPI FocusChangedHandler_HandleFocusChangedEvent(IUIAutomationFocusChangedEventHandler *iface,
+        IUIAutomationElement *sender)
+{
+    struct FocusChangedHandler *handler = impl_from_FocusChangedHandler(iface);
+
+    if (handler->event_handler_added)
+        test_com_event_data(sender);
+
+    return S_OK;
+}
+
+static const IUIAutomationFocusChangedEventHandlerVtbl FocusChangedHandlerVtbl = {
+    FocusChangedHandler_QueryInterface,
+    FocusChangedHandler_AddRef,
+    FocusChangedHandler_Release,
+    FocusChangedHandler_HandleFocusChangedEvent,
+};
+
+static struct FocusChangedHandler FocusChangedHandler =
+{
+    { &FocusChangedHandlerVtbl },
+    1,
+};
+
 static DWORD WINAPI uia_com_event_handler_test_thread(LPVOID param)
 {
     struct node_provider_desc exp_node_desc;
@@ -13053,8 +13197,8 @@ static DWORD WINAPI uia_com_event_handler_test_thread(LPVOID param)
     set_com_event_data(&exp_node_desc);
     hr = UiaRaiseAutomationEvent(&Provider2.IRawElementProviderSimple_iface, UIA_LiveRegionChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine CHECK_CALLED(uia_com_event_callback);
-    todo_wine ok(ComEventData.last_call_tid == GetCurrentThreadId(), "Event handler called on unexpected thread %ld\n",
+    CHECK_CALLED(uia_com_event_callback);
+    ok(ComEventData.last_call_tid == GetCurrentThreadId(), "Event handler called on unexpected thread %ld\n",
             ComEventData.last_call_tid);
     CoUninitialize();
 
@@ -13067,7 +13211,7 @@ static DWORD WINAPI uia_com_event_handler_test_thread(LPVOID param)
     set_com_event_data(&exp_node_desc);
     hr = UiaRaiseAutomationEvent(&Provider2.IRawElementProviderSimple_iface, UIA_LiveRegionChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine CHECK_CALLED(uia_com_event_callback);
+    CHECK_CALLED(uia_com_event_callback);
     ok(ComEventData.last_call_tid != GetCurrentThreadId(), "Event handler called on unexpected thread %ld\n",
             ComEventData.last_call_tid);
     CoUninitialize();
@@ -13154,7 +13298,7 @@ static void test_IUIAutomationEventHandler(IUIAutomation *uia_iface, IUIAutomati
     set_com_event_data(&exp_node_desc);
     hr = UiaRaiseAutomationEvent(&Provider2.IRawElementProviderSimple_iface, UIA_LiveRegionChangedEventId);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine CHECK_CALLED(uia_com_event_callback);
+    CHECK_CALLED(uia_com_event_callback);
 
     /*
      * If no cache request is provided by the user in
@@ -13223,6 +13367,85 @@ static void test_IUIAutomationEventHandler(IUIAutomation *uia_iface, IUIAutomati
     IUIAutomationElement_Release(elem2);
 }
 
+static void test_IUIAutomationFocusChangedEventHandler(IUIAutomation *uia_iface)
+{
+    struct node_provider_desc exp_node_desc;
+    IUIAutomationElement *elem;
+    HRESULT hr;
+
+    SetFocus(ComEventData.event_hwnd);
+
+    /*
+     * FocusChangedEventHandlers are always registered on the desktop node
+     * with a scope of the entire desktop.
+     *
+     * All versions of Windows query the currently focused HWND when adding a
+     * new focus changed event handler, but behavior differs between versions:
+     *
+     * Win7-Win10v1507 queries for the focused provider and raises an event
+     * while also advising of events.
+     *
+     * Win10v1809+ will query the focused HWND, but doesn't advise of events
+     * or raise a focus event. Windows 11 will advise the provider of the
+     * focused HWND of events, but not any clientside providers.
+     */
+    set_uia_hwnd_expects(6, 6, 6, 3, 0);
+    hr = IUIAutomation_AddFocusChangedEventHandler(uia_iface, NULL,
+            &FocusChangedHandler.IUIAutomationFocusChangedEventHandler_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(FocusChangedHandler.ref > 1, "Unexpected refcnt %ld\n", FocusChangedHandler.ref);
+    check_uia_hwnd_expects_at_most(6, 6, 6, 3, 0);
+    FocusChangedHandler.event_handler_added = TRUE;
+
+    /*
+     * Focus changed event handlers are registered on the desktop with a scope
+     * of all elements, so all elements match regardless of runtime ID.
+     */
+    initialize_provider(&Provider2, ProviderOptions_ServerSideProvider, NULL, TRUE);
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), NULL);
+    add_provider_desc(&exp_node_desc, L"Main", L"Provider2", TRUE);
+    set_com_event_data(&exp_node_desc);
+    hr = UiaRaiseAutomationEvent(&Provider2.IRawElementProviderSimple_iface, UIA_AutomationFocusChangedEventId);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    CHECK_CALLED(uia_com_event_callback);
+
+    /*
+     * Removing the focus changed event handler creates a desktop node -
+     * presumably to use to get a runtime ID for removal.
+     */
+    set_uia_hwnd_expects(1, 1, 1, 0, 0);
+    hr = IUIAutomation_RemoveFocusChangedEventHandler(uia_iface,
+            &FocusChangedHandler.IUIAutomationFocusChangedEventHandler_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(FocusChangedHandler.ref == 1, "Unexpected refcnt %ld\n", FocusChangedHandler.ref);
+    FocusChangedHandler.event_handler_added = FALSE;
+    check_uia_hwnd_expects(1, FALSE, 1, FALSE, 1, FALSE, 0, FALSE, 0, FALSE);
+
+    /*
+     * The focus changed event handler can also be removed by called
+     * RemoveAutomationEventHandler, which isn't documented.
+     */
+    set_uia_hwnd_expects(6, 6, 6, 3, 0);
+    hr = IUIAutomation_AddFocusChangedEventHandler(uia_iface, NULL,
+            &FocusChangedHandler.IUIAutomationFocusChangedEventHandler_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(FocusChangedHandler.ref > 1, "Unexpected refcnt %ld\n", FocusChangedHandler.ref);
+    check_uia_hwnd_expects_at_most(6, 6, 6, 3, 0);
+    FocusChangedHandler.event_handler_added = TRUE;
+
+    set_uia_hwnd_expects(1, 1, 1, 0, 0);
+    hr = IUIAutomation_GetRootElement(uia_iface, &elem);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_uia_hwnd_expects(1, FALSE, 1, FALSE, 1, FALSE, 0, FALSE, 0, FALSE);
+
+    hr = IUIAutomation_RemoveAutomationEventHandler(uia_iface, UIA_AutomationFocusChangedEventId, elem,
+            (IUIAutomationEventHandler *)&FocusChangedHandler.IUIAutomationFocusChangedEventHandler_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(FocusChangedHandler.ref == 1, "Unexpected refcnt %ld\n", FocusChangedHandler.ref);
+
+    IUIAutomationElement_Release(elem);
+}
+
 static void test_CUIAutomation_event_handlers(IUIAutomation *uia_iface)
 {
     IUIAutomationElement *elem;
@@ -13255,6 +13478,7 @@ static void test_CUIAutomation_event_handlers(IUIAutomation *uia_iface)
     check_uia_hwnd_expects(1, TRUE, 1, FALSE, 1, FALSE, 1, FALSE, 0, FALSE);
 
     test_IUIAutomationEventHandler(uia_iface, elem);
+    test_IUIAutomationFocusChangedEventHandler(uia_iface);
 
     IUIAutomationElement_Release(elem);
     UiaRegisterProviderCallback(NULL);

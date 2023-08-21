@@ -950,25 +950,21 @@ static int uia_com_event_handler_id_compare(const void *key, const struct rb_ent
 }
 
 struct uia_com_event {
-    IUnknown *handler_iface;
+    DWORD git_cookie;
+    HUIAEVENT event;
+    BOOL from_cui8;
 
     struct list event_handler_map_list_entry;
     struct uia_event_handler_map_entry *handler_map;
 };
 
-static HRESULT uia_event_handlers_add_handler(IUnknown *handler_iface, SAFEARRAY *runtime_id, int event_id)
+static HRESULT uia_event_handlers_add_handler(IUnknown *handler_iface, SAFEARRAY *runtime_id, int event_id,
+        struct uia_com_event *event)
 {
     struct uia_event_handler_identifier event_ident = { handler_iface, runtime_id, event_id };
     struct uia_event_handler_map_entry *event_map;
-    struct uia_com_event *event;
     struct rb_entry *rb_entry;
     HRESULT hr = S_OK;
-
-    if (!(event = heap_alloc_zero(sizeof(*event))))
-        return E_OUTOFMEMORY;
-
-    event->handler_iface = handler_iface;
-    IUnknown_AddRef(handler_iface);
 
     EnterCriticalSection(&com_event_handlers_cs);
 
@@ -993,7 +989,7 @@ static HRESULT uia_event_handlers_add_handler(IUnknown *handler_iface, SAFEARRAY
         }
 
         event_map->event_id = event_id;
-        event_map->handler_iface = event->handler_iface;
+        event_map->handler_iface = handler_iface;
         IUnknown_AddRef(event_map->handler_iface);
 
         list_init(&event_map->handlers_list);
@@ -1006,13 +1002,18 @@ static HRESULT uia_event_handlers_add_handler(IUnknown *handler_iface, SAFEARRAY
 
 exit:
     LeaveCriticalSection(&com_event_handlers_cs);
-    if (FAILED(hr))
-    {
-        IUnknown_Release(event->handler_iface);
-        heap_free(event);
-    }
 
     return hr;
+}
+
+static void uia_event_handler_destroy(struct uia_com_event *event)
+{
+    list_remove(&event->event_handler_map_list_entry);
+    if (event->event)
+        UiaRemoveEvent(event->event);
+    if (event->git_cookie)
+        unregister_interface_in_git(event->git_cookie);
+    heap_free(event);
 }
 
 static void uia_event_handler_map_entry_destroy(struct uia_event_handler_map_entry *entry)
@@ -1021,10 +1022,8 @@ static void uia_event_handler_map_entry_destroy(struct uia_event_handler_map_ent
 
     LIST_FOR_EACH_ENTRY_SAFE(event, event2, &entry->handlers_list, struct uia_com_event, event_handler_map_list_entry)
     {
-        list_remove(&event->event_handler_map_list_entry);
-        IUnknown_Release(event->handler_iface);
+        uia_event_handler_destroy(event);
         com_event_handlers.handler_count--;
-        heap_free(event);
     }
 
     rb_remove(&com_event_handlers.handler_map, &entry->entry);
@@ -1044,6 +1043,60 @@ static void uia_event_handlers_remove_handlers(IUnknown *handler_iface, SAFEARRA
         uia_event_handler_map_entry_destroy(RB_ENTRY_VALUE(rb_entry, struct uia_event_handler_map_entry, entry));
 
     LeaveCriticalSection(&com_event_handlers_cs);
+}
+
+static HRESULT create_uia_element_from_cache_req(IUIAutomationElement **iface, BOOL from_cui8,
+        struct UiaCacheRequest *cache_req, LONG start_idx, SAFEARRAY *req_data, BSTR tree_struct);
+static HRESULT uia_com_event_callback(struct uia_event *event, struct uia_event_args *args,
+        SAFEARRAY *cache_req, BSTR tree_struct)
+{
+    struct uia_com_event *com_event = (struct uia_com_event *)event->u.clientside.callback_data;
+    IUIAutomationElement *elem;
+    BSTR tree_struct2;
+    HRESULT hr;
+
+    /* Nothing matches the cache request view condition, do nothing. */
+    if (!cache_req)
+        return S_OK;
+
+    /* create_uia_element_from_cache_req frees the passed in BSTR. */
+    tree_struct2 = SysAllocString(tree_struct);
+    hr = create_uia_element_from_cache_req(&elem, com_event->from_cui8, &event->u.clientside.cache_req, 0, cache_req,
+            tree_struct2);
+    if (FAILED(hr))
+        return hr;
+
+    switch (event->event_id)
+    {
+    case UIA_AutomationFocusChangedEventId:
+    {
+        IUIAutomationFocusChangedEventHandler *handler;
+
+        hr = get_interface_in_git(&IID_IUIAutomationFocusChangedEventHandler, com_event->git_cookie, (IUnknown **)&handler);
+        if (SUCCEEDED(hr))
+        {
+            hr = IUIAutomationFocusChangedEventHandler_HandleFocusChangedEvent(handler, elem);
+            IUIAutomationFocusChangedEventHandler_Release(handler);
+        }
+        break;
+    }
+
+    default:
+    {
+        IUIAutomationEventHandler *handler;
+
+        hr = get_interface_in_git(&IID_IUIAutomationEventHandler, com_event->git_cookie, (IUnknown **)&handler);
+        if (SUCCEEDED(hr))
+        {
+            hr = IUIAutomationEventHandler_HandleAutomationEvent(handler, elem, event->event_id);
+            IUIAutomationEventHandler_Release(handler);
+        }
+        break;
+    }
+    }
+    IUIAutomationElement_Release(elem);
+
+    return hr;
 }
 
 /*
@@ -1186,6 +1239,8 @@ struct uia_element {
 
     struct uia_cache_property *cached_props;
     int cached_props_count;
+
+    IUnknown *marshal;
 };
 
 static inline struct uia_element *impl_from_IUIAutomationElement9(IUIAutomationElement9 *iface)
@@ -1203,6 +1258,8 @@ static HRESULT WINAPI uia_element_QueryInterface(IUIAutomationElement9 *iface, R
             IsEqualIID(riid, &IID_IUIAutomationElement6) || IsEqualIID(riid, &IID_IUIAutomationElement7) ||
             IsEqualIID(riid, &IID_IUIAutomationElement8) || IsEqualIID(riid, &IID_IUIAutomationElement9))))
         *ppv = iface;
+    else if (IsEqualIID(riid, &IID_IMarshal))
+        return IUnknown_QueryInterface(element->marshal, riid, ppv);
     else
         return E_NOINTERFACE;
 
@@ -1235,6 +1292,7 @@ static ULONG WINAPI uia_element_Release(IUIAutomationElement9 *iface)
                 VariantClear(&element->cached_props[i].prop_val);
         }
 
+        IUnknown_Release(element->marshal);
         heap_free(element->cached_props);
         UiaNodeRelease(element->node);
         heap_free(element);
@@ -1327,8 +1385,6 @@ static HRESULT set_find_params_struct(struct UiaFindParams *params, IUIAutomatio
     return S_OK;
 }
 
-static HRESULT create_uia_element_from_cache_req(IUIAutomationElement **iface, BOOL from_cui8,
-        struct UiaCacheRequest *cache_req, LONG start_idx, SAFEARRAY *req_data, BSTR tree_struct);
 static HRESULT WINAPI uia_element_FindFirstBuildCache(IUIAutomationElement9 *iface, enum TreeScope scope,
         IUIAutomationCondition *condition, IUIAutomationCacheRequest *cache_req, IUIAutomationElement **found)
 {
@@ -2484,6 +2540,7 @@ static const IUIAutomationElement9Vtbl uia_element_vtbl = {
 static HRESULT create_uia_element(IUIAutomationElement **iface, BOOL from_cui8, HUIANODE node)
 {
     struct uia_element *element = heap_alloc_zero(sizeof(*element));
+    HRESULT hr;
 
     *iface = NULL;
     if (!element)
@@ -2493,6 +2550,13 @@ static HRESULT create_uia_element(IUIAutomationElement **iface, BOOL from_cui8, 
     element->ref = 1;
     element->from_cui8 = from_cui8;
     element->node = node;
+
+    hr = CoCreateFreeThreadedMarshaler((IUnknown *)&element->IUIAutomationElement9_iface, &element->marshal);
+    if (FAILED(hr))
+    {
+        heap_free(element);
+        return hr;
+    }
 
     *iface = (IUIAutomationElement *)&element->IUIAutomationElement9_iface;
     return S_OK;
@@ -3196,13 +3260,74 @@ static HRESULT WINAPI uia_iface_CreateNotCondition(IUIAutomation6 *iface, IUIAut
     return create_uia_not_condition_iface(out_condition, cond);
 }
 
+static HRESULT uia_add_com_event_handler(IUIAutomation6 *iface, EVENTID event_id, IUIAutomationElement *elem,
+        enum TreeScope scope, IUIAutomationCacheRequest *cache_req, REFIID handler_riid, IUnknown *handler_unk)
+{
+    struct UiaCacheRequest *cache_req_struct;
+    struct uia_com_event *com_event = NULL;
+    SAFEARRAY *runtime_id = NULL;
+    struct uia_element *element;
+    IUnknown *handler_iface;
+    HRESULT hr;
+
+    element = impl_from_IUIAutomationElement9((IUIAutomationElement9 *)elem);
+    hr = UiaGetRuntimeId(element->node, &runtime_id);
+    if (FAILED(hr))
+        return hr;
+
+    if (!cache_req)
+    {
+        hr = create_uia_cache_request_iface(&cache_req);
+        if (FAILED(hr))
+            goto exit;
+    }
+    else
+        IUIAutomationCacheRequest_AddRef(cache_req);
+
+    hr = get_uia_cache_request_struct_from_iface(cache_req, &cache_req_struct);
+    if (FAILED(hr))
+        goto exit;
+
+    if (!(com_event = heap_alloc_zero(sizeof(*com_event))))
+    {
+        hr = E_OUTOFMEMORY;
+        goto exit;
+    }
+
+    com_event->from_cui8 = element->from_cui8;
+    list_init(&com_event->event_handler_map_list_entry);
+
+    hr = IUnknown_QueryInterface(handler_unk, handler_riid, (void **)&handler_iface);
+    if (FAILED(hr))
+        goto exit;
+
+    hr = register_interface_in_git(handler_iface, handler_riid, &com_event->git_cookie);
+    IUnknown_Release(handler_iface);
+    if (FAILED(hr))
+        goto exit;
+
+    hr = uia_add_clientside_event(element->node, event_id, scope, NULL, 0, cache_req_struct, runtime_id,
+            uia_com_event_callback, (void *)com_event, &com_event->event);
+    if (FAILED(hr))
+        goto exit;
+
+    hr = uia_event_handlers_add_handler(handler_unk, runtime_id, event_id, com_event);
+
+exit:
+    if (FAILED(hr) && com_event)
+        uia_event_handler_destroy(com_event);
+    if (cache_req)
+        IUIAutomationCacheRequest_Release(cache_req);
+    SafeArrayDestroy(runtime_id);
+
+    return hr;
+}
+
 static HRESULT WINAPI uia_iface_AddAutomationEventHandler(IUIAutomation6 *iface, EVENTID event_id,
         IUIAutomationElement *elem, enum TreeScope scope, IUIAutomationCacheRequest *cache_req,
         IUIAutomationEventHandler *handler)
 {
-    struct uia_element *element;
-    IUnknown *handler_iface;
-    SAFEARRAY *runtime_id;
+    IUnknown *handler_unk;
     HRESULT hr;
 
     TRACE("%p, %d, %p, %#x, %p, %p\n", iface, event_id, elem, scope, cache_req, handler);
@@ -3213,30 +3338,37 @@ static HRESULT WINAPI uia_iface_AddAutomationEventHandler(IUIAutomation6 *iface,
     if (event_id == UIA_AutomationFocusChangedEventId)
         return E_INVALIDARG;
 
-    hr = IUIAutomationEventHandler_QueryInterface(handler, &IID_IUnknown, (void **)&handler_iface);
+    hr = IUIAutomationEventHandler_QueryInterface(handler, &IID_IUnknown, (void **)&handler_unk);
     if (FAILED(hr))
         return hr;
 
-    element = impl_from_IUIAutomationElement9((IUIAutomationElement9 *)elem);
-    hr = UiaGetRuntimeId(element->node, &runtime_id);
-    if (FAILED(hr))
-        goto exit;
-
-    hr = uia_event_handlers_add_handler(handler_iface, runtime_id, event_id);
-
-exit:
-    IUnknown_Release(handler_iface);
-    SafeArrayDestroy(runtime_id);
+    hr = uia_add_com_event_handler(iface, event_id, elem, scope, cache_req, &IID_IUIAutomationEventHandler, handler_unk);
+    IUnknown_Release(handler_unk);
 
     return hr;
+}
+
+static HRESULT uia_remove_com_event_handler(EVENTID event_id, IUIAutomationElement *elem, IUnknown *handler_unk)
+{
+    struct uia_element *element;
+    SAFEARRAY *runtime_id;
+    HRESULT hr;
+
+    element = impl_from_IUIAutomationElement9((IUIAutomationElement9 *)elem);
+    hr = UiaGetRuntimeId(element->node, &runtime_id);
+    if (FAILED(hr) || !runtime_id)
+        return hr;
+
+    uia_event_handlers_remove_handlers(handler_unk, runtime_id, event_id);
+    SafeArrayDestroy(runtime_id);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI uia_iface_RemoveAutomationEventHandler(IUIAutomation6 *iface, EVENTID event_id,
         IUIAutomationElement *elem, IUIAutomationEventHandler *handler)
 {
-    struct uia_element *element;
-    IUnknown *handler_iface;
-    SAFEARRAY *runtime_id;
+    IUnknown *handler_unk;
     HRESULT hr;
 
     TRACE("%p, %d, %p, %p\n", iface, event_id, elem, handler);
@@ -3244,23 +3376,14 @@ static HRESULT WINAPI uia_iface_RemoveAutomationEventHandler(IUIAutomation6 *ifa
     if (!elem || !handler)
         return S_OK;
 
-    element = impl_from_IUIAutomationElement9((IUIAutomationElement9 *)elem);
-    hr = UiaGetRuntimeId(element->node, &runtime_id);
-    if (FAILED(hr) || !runtime_id)
-        return hr;
-
-    hr = IUIAutomationEventHandler_QueryInterface(handler, &IID_IUnknown, (void **)&handler_iface);
+    hr = IUIAutomationEventHandler_QueryInterface(handler, &IID_IUnknown, (void **)&handler_unk);
     if (FAILED(hr))
-    {
-        SafeArrayDestroy(runtime_id);
         return hr;
-    }
 
-    uia_event_handlers_remove_handlers(handler_iface, runtime_id, event_id);
-    IUnknown_Release(handler_iface);
-    SafeArrayDestroy(runtime_id);
+    hr = uia_remove_com_event_handler(event_id, elem, handler_unk);
+    IUnknown_Release(handler_unk);
 
-    return S_OK;
+    return hr;
 }
 
 static HRESULT WINAPI uia_iface_AddPropertyChangedEventHandlerNativeArray(IUIAutomation6 *iface,
@@ -3304,15 +3427,59 @@ static HRESULT WINAPI uia_iface_RemoveStructureChangedEventHandler(IUIAutomation
 static HRESULT WINAPI uia_iface_AddFocusChangedEventHandler(IUIAutomation6 *iface,
         IUIAutomationCacheRequest *cache_req, IUIAutomationFocusChangedEventHandler *handler)
 {
-    FIXME("%p, %p, %p: stub\n", iface, cache_req, handler);
-    return E_NOTIMPL;
+    IUIAutomationElement *elem;
+    IUnknown *handler_unk;
+    HRESULT hr;
+
+    TRACE("%p, %p, %p\n", iface, cache_req, handler);
+
+    if (!handler)
+        return E_POINTER;
+
+    hr = IUIAutomationFocusChangedEventHandler_QueryInterface(handler, &IID_IUnknown, (void **)&handler_unk);
+    if (FAILED(hr))
+        return hr;
+
+    hr = IUIAutomation6_GetRootElement(iface, &elem);
+    if (FAILED(hr))
+    {
+        IUnknown_Release(handler_unk);
+        return hr;
+    }
+
+    hr = uia_add_com_event_handler(iface, UIA_AutomationFocusChangedEventId, elem, TreeScope_SubTree, cache_req,
+            &IID_IUIAutomationFocusChangedEventHandler, handler_unk);
+    IUIAutomationElement_Release(elem);
+    IUnknown_Release(handler_unk);
+
+    return hr;
 }
 
 static HRESULT WINAPI uia_iface_RemoveFocusChangedEventHandler(IUIAutomation6 *iface,
         IUIAutomationFocusChangedEventHandler *handler)
 {
-    FIXME("%p, %p: stub\n", iface, handler);
-    return E_NOTIMPL;
+    IUIAutomationElement *elem;
+    IUnknown *handler_unk;
+    HRESULT hr;
+
+    TRACE("%p, %p\n", iface, handler);
+
+    hr = IUIAutomationFocusChangedEventHandler_QueryInterface(handler, &IID_IUnknown, (void **)&handler_unk);
+    if (FAILED(hr))
+        return hr;
+
+    hr = IUIAutomation6_GetRootElement(iface, &elem);
+    if (FAILED(hr))
+    {
+        IUnknown_Release(handler_unk);
+        return hr;
+    }
+
+    hr = uia_remove_com_event_handler(UIA_AutomationFocusChangedEventId, elem, handler_unk);
+    IUIAutomationElement_Release(elem);
+    IUnknown_Release(handler_unk);
+
+    return hr;
 }
 
 static HRESULT WINAPI uia_iface_RemoveAllEventHandlers(IUIAutomation6 *iface)

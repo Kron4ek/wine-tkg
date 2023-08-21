@@ -17,6 +17,7 @@
  */
 
 #include <stdarg.h>
+#include <math.h>
 
 #define COBJMACROS
 
@@ -64,6 +65,11 @@ static void check_interface_(unsigned int line, void *iface_ptr, REFIID iid, BOO
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#lx, expected %#lx.\n", hr, expected_hr);
     if (SUCCEEDED(hr))
         IUnknown_Release(unk);
+}
+
+static BOOL compare_double(double a, double b, double allowed_error)
+{
+    return fabs(a - b) <= allowed_error;
 }
 
 static DWORD compare_rgb32(const BYTE *data, DWORD *length, const RECT *rect, const BYTE *expect)
@@ -1139,7 +1145,7 @@ struct test_transfer_notify
     LONG refcount;
 
     IMFMediaEngineEx *media_engine;
-    HANDLE ready_event;
+    HANDLE ready_event, frame_ready_event;
     HRESULT error;
 };
 
@@ -1175,6 +1181,7 @@ static ULONG WINAPI test_transfer_notify_Release(IMFMediaEngineNotify *iface)
 
     if (!refcount)
     {
+        CloseHandle(notify->frame_ready_event);
         CloseHandle(notify->ready_event);
         free(notify);
     }
@@ -1211,6 +1218,8 @@ static HRESULT WINAPI test_transfer_notify_EventNotify(IMFMediaEngineNotify *ifa
         notify->error = param2;
         /* fallthrough */
     case MF_MEDIA_ENGINE_EVENT_FIRSTFRAMEREADY:
+        SetEvent(notify->frame_ready_event);
+        break;
     case MF_MEDIA_ENGINE_EVENT_TIMEUPDATE:
         SetEvent(notify->ready_event);
         break;
@@ -1236,6 +1245,9 @@ static struct test_transfer_notify *create_transfer_notify(void)
     object->refcount = 1;
     object->ready_event = CreateEventW(NULL, FALSE, FALSE, NULL);
     ok(!!object->ready_event, "Failed to create an event, error %lu.\n", GetLastError());
+
+    object->frame_ready_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    ok(!!object->frame_ready_event, "Failed to create an event, error %lu.\n", GetLastError());
 
     return object;
 }
@@ -1295,7 +1307,7 @@ static void test_TransferVideoFrame(void)
     SysFreeString(url);
     IMFByteStream_Release(stream);
 
-    res = WaitForSingleObject(notify->ready_event, 5000);
+    res = WaitForSingleObject(notify->frame_ready_event, 5000);
     ok(!res, "Unexpected res %#lx.\n", res);
 
     if (FAILED(notify->error))
@@ -1787,7 +1799,6 @@ static void test_effect(void)
     UINT token;
     HRESULT hr;
     DWORD res;
-    ULONG ref;
     BSTR url;
 
     stream = load_resource(L"i420-64x64.avi", L"video/avi");
@@ -1823,11 +1834,27 @@ static void test_effect(void)
     hr = ID3D11Device_CreateTexture2D(device, &desc, NULL, &texture);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
+    hr = IMFMediaEngineEx_RemoveAllEffects(media_engine_ex);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
     hr = passthrough_mft_create(0, &video_effect);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     hr = passthrough_mft_create(1, &video_effect2);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFMediaEngineEx_InsertVideoEffect(media_engine_ex, (IUnknown *)&video_effect->IMFTransform_iface, FALSE);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    EXPECT_REF(&video_effect->IMFTransform_iface, 2);
+
+    hr = IMFMediaEngineEx_InsertVideoEffect(media_engine_ex, (IUnknown *)&video_effect2->IMFTransform_iface, FALSE);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    EXPECT_REF(&video_effect2->IMFTransform_iface, 2);
+
+    hr = IMFMediaEngineEx_RemoveAllEffects(media_engine_ex);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    EXPECT_REF(&video_effect->IMFTransform_iface, 1);
+    EXPECT_REF(&video_effect2->IMFTransform_iface, 1);
 
     hr = IMFMediaEngineEx_InsertVideoEffect(media_engine_ex, (IUnknown *)&video_effect->IMFTransform_iface, FALSE);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -1858,13 +1885,8 @@ static void test_effect(void)
     IMFByteStream_Release(stream);
 
     /* Wait for MediaEngine to be ready. */
-    res = WaitForSingleObject(notify->ready_event, 5000);
+    res = WaitForSingleObject(notify->frame_ready_event, 5000);
     ok(!res, "Unexpected res %#lx.\n", res);
-
-    /* Wait for another update. This makes MediaEngine shutdown more consistent on Windows. */
-    res = WaitForSingleObject(notify->ready_event, 500);
-    /* Timeupdates are missing in Wine. */
-    todo_wine ok(!res, "Unexpected res %#lx.\n", res);
 
     SetRect(&dst_rect, 0, 0, desc.Width, desc.Height);
     hr = IMFMediaEngineEx_TransferVideoFrame(notify->media_engine, (IUnknown *)texture, NULL, &dst_rect, NULL);
@@ -1891,8 +1913,10 @@ done:
     {
         IMFMediaEngineEx_Shutdown(media_engine_ex);
 
-        ref = IMFMediaEngineEx_Release(media_engine_ex);
-        todo_wine ok(!ref, "Unexpected ref %lu.\n", ref);
+        hr = IMFMediaEngineEx_RemoveAllEffects(media_engine_ex);
+        ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+
+        IMFMediaEngineEx_Release(media_engine_ex);
     }
 
     if (texture)
@@ -1901,28 +1925,442 @@ done:
         ID3D11Device_Release(device);
 
     if (audio_effect2)
-    {
-        ref = IMFTransform_Release(&audio_effect2->IMFTransform_iface);
-        todo_wine ok(!ref, "Unexpected ref %lu.\n", ref);
-    }
+        IMFTransform_Release(&audio_effect2->IMFTransform_iface);
     if (audio_effect)
-    {
-        ref = IMFTransform_Release(&audio_effect->IMFTransform_iface);
-        todo_wine ok(!ref, "Unexpected ref %lu.\n", ref);
-    }
+        IMFTransform_Release(&audio_effect->IMFTransform_iface);
 
     if (video_effect2)
-    {
-        ref = IMFTransform_Release(&video_effect2->IMFTransform_iface);
-        todo_wine ok(!ref, "Unexpected ref %lu.\n", ref);
-    }
+        IMFTransform_Release(&video_effect2->IMFTransform_iface);
     if (video_effect)
-    {
-        ref = IMFTransform_Release(&video_effect->IMFTransform_iface);
-        todo_wine ok(!ref, "Unexpected ref %lu.\n", ref);
-    }
+        IMFTransform_Release(&video_effect->IMFTransform_iface);
 
     IMFMediaEngineNotify_Release(&notify->IMFMediaEngineNotify_iface);
+}
+
+static void test_GetDuration(void)
+{
+    static const double allowed_error = 0.000001;
+    struct test_transfer_notify *notify;
+    IMFMediaEngineEx *media_engine;
+    IMFByteStream *stream;
+    double duration;
+    HRESULT hr;
+    DWORD res;
+    BSTR url;
+
+    notify = create_transfer_notify();
+    media_engine = create_media_engine_ex(&notify->IMFMediaEngineNotify_iface, NULL, DXGI_FORMAT_B8G8R8X8_UNORM);
+    notify->media_engine = media_engine;
+    ok(!!media_engine, "create_media_engine_ex failed.\n");
+
+    stream = load_resource(L"i420-64x64.avi", L"video/avi");
+    url = SysAllocString(L"i420-64x64.avi");
+    hr = IMFMediaEngineEx_SetSourceFromByteStream(media_engine, stream, url);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    res = WaitForSingleObject(notify->frame_ready_event, 5000);
+    ok(!res, "Unexpected res %#lx.\n", res);
+
+    duration = IMFMediaEngineEx_GetDuration(media_engine);
+    ok(compare_double(duration, 0.133467, allowed_error), "Got unexpected duration %lf.\n", duration);
+
+    SysFreeString(url);
+    IMFByteStream_Release(stream);
+    IMFMediaEngineEx_Shutdown(media_engine);
+    IMFMediaEngineEx_Release(media_engine);
+    IMFMediaEngineNotify_Release(&notify->IMFMediaEngineNotify_iface);
+}
+
+struct unseekable_stream
+{
+    IMFByteStream IMFByteStream_iface;
+    IMFByteStream *original_stream;
+    LONG refcount;
+};
+
+static struct unseekable_stream *impl_unseekable_stream_from_IMFByteStream(IMFByteStream *iface)
+{
+    return CONTAINING_RECORD(iface, struct unseekable_stream, IMFByteStream_iface);
+}
+
+static HRESULT WINAPI unseekable_stream_QueryInterface(IMFByteStream *iface,
+        REFIID riid, void **out)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IMFByteStream))
+    {
+        IMFByteStream_AddRef(iface);
+        *out = iface;
+        return S_OK;
+    }
+
+    return IMFByteStream_QueryInterface(stream->original_stream, riid, out);
+}
+
+static ULONG WINAPI unseekable_stream_AddRef(IMFByteStream *iface)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return InterlockedIncrement(&stream->refcount);
+}
+
+static ULONG WINAPI unseekable_stream_Release(IMFByteStream *iface)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+    ULONG refcount = InterlockedDecrement(&stream->refcount);
+
+    if (!refcount)
+    {
+        IMFByteStream_Release(stream->original_stream);
+        free(stream);
+    }
+
+    return refcount;
+}
+
+static HRESULT WINAPI unseekable_stream_GetCapabilities(IMFByteStream *iface,
+        DWORD *capabilities)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+    HRESULT hr;
+
+    hr = IMFByteStream_GetCapabilities(stream->original_stream, capabilities);
+    if (SUCCEEDED(hr))
+        *capabilities &= ~(MFBYTESTREAM_IS_SEEKABLE | MFBYTESTREAM_HAS_SLOW_SEEK);
+
+    return hr;
+}
+
+static HRESULT WINAPI unseekable_stream_GetLength(IMFByteStream *iface, QWORD *length)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_GetLength(stream->original_stream, length);
+}
+
+static HRESULT WINAPI unseekable_stream_SetLength(IMFByteStream *iface, QWORD length)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_SetLength(stream->original_stream, length);
+}
+
+static HRESULT WINAPI unseekable_stream_GetCurrentPosition(IMFByteStream *iface,
+        QWORD *position)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_GetCurrentPosition(stream->original_stream, position);
+}
+
+static HRESULT WINAPI unseekable_stream_SetCurrentPosition(IMFByteStream *iface,
+        QWORD position)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_SetCurrentPosition(stream->original_stream, position);
+}
+
+static HRESULT WINAPI unseekable_stream_IsEndOfStream(IMFByteStream *iface, BOOL *eos)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_IsEndOfStream(stream->original_stream, eos);
+}
+
+static HRESULT WINAPI unseekable_stream_Read(IMFByteStream *iface, BYTE *data,
+        ULONG count, ULONG *byte_read)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_Read(stream->original_stream, data, count, byte_read);
+}
+
+static HRESULT WINAPI unseekable_stream_BeginRead(IMFByteStream *iface, BYTE *data,
+        ULONG size, IMFAsyncCallback *callback, IUnknown *state)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_BeginRead(stream->original_stream, data, size, callback, state);
+}
+
+static HRESULT WINAPI unseekable_stream_EndRead(IMFByteStream *iface,
+        IMFAsyncResult *result, ULONG *byte_read)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_EndRead(stream->original_stream, result, byte_read);
+}
+
+static HRESULT WINAPI unseekable_stream_Write(IMFByteStream *iface, const BYTE *data,
+        ULONG count, ULONG *written)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_Write(stream->original_stream, data, count, written);
+}
+
+static HRESULT WINAPI unseekable_stream_BeginWrite(IMFByteStream *iface,
+        const BYTE *data, ULONG size, IMFAsyncCallback *callback, IUnknown *state)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_BeginWrite(stream->original_stream, data, size, callback, state);
+}
+
+static HRESULT WINAPI unseekable_stream_EndWrite(IMFByteStream *iface,
+        IMFAsyncResult *result, ULONG *written)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_EndWrite(stream->original_stream, result, written);
+}
+
+static HRESULT WINAPI unseekable_stream_Seek(IMFByteStream *iface,
+        MFBYTESTREAM_SEEK_ORIGIN seek, LONGLONG offset, DWORD flags, QWORD *current)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_Seek(stream->original_stream, seek, offset, flags, current);
+}
+
+static HRESULT WINAPI unseekable_stream_Flush(IMFByteStream *iface)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_Flush(stream->original_stream);
+}
+
+static HRESULT WINAPI unseekable_stream_Close(IMFByteStream *iface)
+{
+    struct unseekable_stream *stream = impl_unseekable_stream_from_IMFByteStream(iface);
+
+    return IMFByteStream_Close(stream->original_stream);
+}
+
+static const IMFByteStreamVtbl unseekable_stream_vtbl =
+{
+    unseekable_stream_QueryInterface,
+    unseekable_stream_AddRef,
+    unseekable_stream_Release,
+    unseekable_stream_GetCapabilities,
+    unseekable_stream_GetLength,
+    unseekable_stream_SetLength,
+    unseekable_stream_GetCurrentPosition,
+    unseekable_stream_SetCurrentPosition,
+    unseekable_stream_IsEndOfStream,
+    unseekable_stream_Read,
+    unseekable_stream_BeginRead,
+    unseekable_stream_EndRead,
+    unseekable_stream_Write,
+    unseekable_stream_BeginWrite,
+    unseekable_stream_EndWrite,
+    unseekable_stream_Seek,
+    unseekable_stream_Flush,
+    unseekable_stream_Close,
+};
+
+static IMFByteStream *create_unseekable_stream(IMFByteStream *stream)
+{
+    struct unseekable_stream *object;
+
+    object = calloc(1, sizeof(*object));
+    object->IMFByteStream_iface.lpVtbl = &unseekable_stream_vtbl;
+    object->original_stream = stream;
+    IMFByteStream_AddRef(stream);
+    object->refcount = 1;
+
+    return &object->IMFByteStream_iface;
+}
+
+struct test_seek_notify
+{
+    IMFMediaEngineNotify IMFMediaEngineNotify_iface;
+    HANDLE playing_event;
+    HRESULT expected_error;
+    HRESULT error;
+    LONG refcount;
+};
+
+static struct test_seek_notify *impl_from_test_seek_notify(IMFMediaEngineNotify *iface)
+{
+    return CONTAINING_RECORD(iface, struct test_seek_notify, IMFMediaEngineNotify_iface);
+}
+
+static HRESULT WINAPI test_seek_notify_QueryInterface(IMFMediaEngineNotify *iface, REFIID riid,
+        void **obj)
+{
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IMFMediaEngineNotify))
+    {
+        *obj = iface;
+        IMFMediaEngineNotify_AddRef(iface);
+        return S_OK;
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI test_seek_notify_AddRef(IMFMediaEngineNotify *iface)
+{
+    struct test_seek_notify *notify = impl_from_test_seek_notify(iface);
+
+    return InterlockedIncrement(&notify->refcount);
+}
+
+static ULONG WINAPI test_seek_notify_Release(IMFMediaEngineNotify *iface)
+{
+    struct test_seek_notify *notify = impl_from_test_seek_notify(iface);
+    ULONG refcount = InterlockedDecrement(&notify->refcount);
+
+    if (!refcount)
+    {
+        CloseHandle(notify->playing_event);
+        free(notify);
+    }
+
+    return refcount;
+}
+
+static HRESULT WINAPI test_seek_notify_EventNotify(IMFMediaEngineNotify *iface, DWORD event,
+        DWORD_PTR param1, DWORD param2)
+{
+    struct test_seek_notify *notify = impl_from_test_seek_notify(iface);
+
+    switch (event)
+    {
+    case MF_MEDIA_ENGINE_EVENT_PLAYING:
+        SetEvent(notify->playing_event);
+        break;
+    case MF_MEDIA_ENGINE_EVENT_ERROR:
+        ok(param2 == notify->expected_error, "Unexpected error %#lx\n", param2);
+        notify->error = param2;
+        break;
+    }
+
+    return S_OK;
+}
+
+static IMFMediaEngineNotifyVtbl test_seek_notify_vtbl =
+{
+    test_seek_notify_QueryInterface,
+    test_seek_notify_AddRef,
+    test_seek_notify_Release,
+    test_seek_notify_EventNotify,
+};
+
+static struct test_seek_notify *create_seek_notify(void)
+{
+    struct test_seek_notify *object;
+
+    object = calloc(1, sizeof(*object));
+    object->IMFMediaEngineNotify_iface.lpVtbl = &test_seek_notify_vtbl;
+    object->playing_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    ok(!!object->playing_event, "Failed to create an event, error %lu.\n", GetLastError());
+    object->refcount = 1;
+    return object;
+}
+
+static void test_GetSeekable(void)
+{
+    IMFByteStream *stream, *unseekable_stream = NULL;
+    struct test_seek_notify *notify;
+    IMFMediaEngineEx *media_engine;
+    IMFMediaTimeRange *time_range;
+    double start, end, duration;
+    ULONG refcount;
+    DWORD count;
+    HRESULT hr;
+    DWORD res;
+    BSTR url;
+
+    notify = create_seek_notify();
+    media_engine = create_media_engine_ex(&notify->IMFMediaEngineNotify_iface, NULL, DXGI_FORMAT_B8G8R8X8_UNORM);
+    IMFMediaEngineNotify_Release(&notify->IMFMediaEngineNotify_iface);
+
+    stream = load_resource(L"i420-64x64.avi", L"video/avi");
+    url = SysAllocString(L"i420-64x64.avi");
+    hr = IMFMediaEngineEx_SetSourceFromByteStream(media_engine, stream, url);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* Media engine is not ready */
+    hr = IMFMediaEngineEx_GetSeekable(media_engine, &time_range);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    count = IMFMediaTimeRange_GetLength(time_range);
+    ok(!count, "Unexpected count %lu.\n", count);
+    refcount = IMFMediaTimeRange_Release(time_range);
+    ok(!refcount, "Got unexpected refcount %lu.\n", refcount);
+
+    hr = IMFMediaEngineEx_Play(media_engine);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    res = WaitForSingleObject(notify->playing_event, 5000);
+    ok(!res, "Unexpected res %#lx.\n", res);
+    if (FAILED(notify->error))
+    {
+        win_skip("Media engine reported error %#lx, skipping tests.\n", notify->error);
+        goto done;
+    }
+
+    /* Media engine is ready */
+    hr = IMFMediaEngineEx_GetSeekable(media_engine, &time_range);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    count = IMFMediaTimeRange_GetLength(time_range);
+    ok(count == 1, "Unexpected count %lu.\n", count);
+    hr = IMFMediaTimeRange_GetStart(time_range, 0, &start);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(start == 0, "Unexpected start %lf.\n", start);
+    hr = IMFMediaTimeRange_GetEnd(time_range, 0, &end);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    duration = IMFMediaEngineEx_GetDuration(media_engine);
+    ok(end == duration, "Unexpected end %lf.\n", end);
+    refcount = IMFMediaTimeRange_Release(time_range);
+    ok(!refcount, "Got unexpected refcount %lu.\n", refcount);
+
+    /* Media engine is shut down */
+    hr = IMFMediaEngineEx_Shutdown(media_engine);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    time_range = (IMFMediaTimeRange *)0xdeadbeef;
+    hr = IMFMediaEngineEx_GetSeekable(media_engine, &time_range);
+    ok(hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+    ok(time_range == NULL || broken(time_range == (IMFMediaTimeRange *)0xdeadbeef) /* <= Win10 1507 */,
+       "Got unexpected pointer.\n");
+
+    refcount = IMFMediaEngineEx_Release(media_engine);
+    todo_wine
+    ok(!refcount, "Got unexpected refcount %lu.\n", refcount);
+
+    /* Unseekable bytestreams */
+    notify = create_seek_notify();
+    media_engine = create_media_engine_ex(&notify->IMFMediaEngineNotify_iface, NULL, DXGI_FORMAT_B8G8R8X8_UNORM);
+    IMFMediaEngineNotify_Release(&notify->IMFMediaEngineNotify_iface);
+    unseekable_stream = create_unseekable_stream(stream);
+    hr = IMFMediaEngineEx_SetSourceFromByteStream(media_engine, unseekable_stream, url);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (FAILED(hr))
+        goto done;
+
+    hr = IMFMediaEngineEx_Play(media_engine);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    notify->expected_error = MF_E_INVALIDREQUEST;
+    res = WaitForSingleObject(notify->playing_event, 5000);
+    ok(res == S_OK, "Unexpected res %#lx.\n", res);
+
+    hr = IMFMediaEngineEx_GetSeekable(media_engine, &time_range);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    count = IMFMediaTimeRange_GetLength(time_range);
+    ok(!count, "Unexpected count %lu.\n", count);
+    refcount = IMFMediaTimeRange_Release(time_range);
+    ok(!refcount, "Got unexpected refcount %lu.\n", refcount);
+
+done:
+    hr = IMFMediaEngineEx_Shutdown(media_engine);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFMediaEngineEx_Release(media_engine);
+    if (unseekable_stream) IMFByteStream_Release(unseekable_stream);
+    SysFreeString(url);
+    IMFByteStream_Release(stream);
 }
 
 START_TEST(mfmediaengine)
@@ -1957,6 +2395,8 @@ START_TEST(mfmediaengine)
     test_audio_configuration();
     test_TransferVideoFrame();
     test_effect();
+    test_GetDuration();
+    test_GetSeekable();
 
     IMFMediaEngineClassFactory_Release(factory);
 

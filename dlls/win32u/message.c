@@ -57,13 +57,174 @@ struct received_message_info
     struct received_message_info *prev;
 };
 
-#define MSG_CLIENT_MESSAGE 0xff
-
 struct packed_hook_extra_info
 {
     user_handle_t handle;
     DWORD         __pad;
     ULONGLONG     lparam;
+};
+
+/* the various structures that can be sent in messages, in platform-independent layout */
+struct packed_CREATESTRUCTW
+{
+    ULONGLONG     lpCreateParams;
+    ULONGLONG     hInstance;
+    user_handle_t hMenu;
+    DWORD         __pad1;
+    user_handle_t hwndParent;
+    DWORD         __pad2;
+    INT           cy;
+    INT           cx;
+    INT           y;
+    INT           x;
+    LONG          style;
+    ULONGLONG     lpszName;
+    ULONGLONG     lpszClass;
+    DWORD         dwExStyle;
+    DWORD         __pad3;
+};
+
+struct packed_DRAWITEMSTRUCT
+{
+    UINT          CtlType;
+    UINT          CtlID;
+    UINT          itemID;
+    UINT          itemAction;
+    UINT          itemState;
+    user_handle_t hwndItem;
+    DWORD         __pad1;
+    user_handle_t hDC;
+    DWORD         __pad2;
+    RECT          rcItem;
+    ULONGLONG     itemData;
+};
+
+struct packed_MEASUREITEMSTRUCT
+{
+    UINT          CtlType;
+    UINT          CtlID;
+    UINT          itemID;
+    UINT          itemWidth;
+    UINT          itemHeight;
+    ULONGLONG     itemData;
+};
+
+struct packed_DELETEITEMSTRUCT
+{
+    UINT          CtlType;
+    UINT          CtlID;
+    UINT          itemID;
+    user_handle_t hwndItem;
+    DWORD         __pad;
+    ULONGLONG     itemData;
+};
+
+struct packed_COMPAREITEMSTRUCT
+{
+    UINT          CtlType;
+    UINT          CtlID;
+    user_handle_t hwndItem;
+    DWORD         __pad1;
+    UINT          itemID1;
+    ULONGLONG     itemData1;
+    UINT          itemID2;
+    ULONGLONG     itemData2;
+    DWORD         dwLocaleId;
+    DWORD         __pad2;
+};
+
+struct packed_WINDOWPOS
+{
+    UINT          hwnd;
+    DWORD         __pad1;
+    user_handle_t hwndInsertAfter;
+    DWORD         __pad2;
+    INT           x;
+    INT           y;
+    INT           cx;
+    INT           cy;
+    UINT          flags;
+    DWORD         __pad3;
+};
+
+struct packed_COPYDATASTRUCT
+{
+    ULONGLONG     dwData;
+    DWORD         cbData;
+    ULONGLONG     lpData;
+};
+
+struct packed_HELPINFO
+{
+    UINT          cbSize;
+    INT           iContextType;
+    INT           iCtrlId;
+    user_handle_t hItemHandle;
+    DWORD         __pad;
+    ULONGLONG     dwContextId;
+    POINT         MousePos;
+};
+
+struct packed_NCCALCSIZE_PARAMS
+{
+    RECT          rgrc[3];
+    ULONGLONG     __pad1;
+    user_handle_t hwnd;
+    DWORD         __pad2;
+    user_handle_t hwndInsertAfter;
+    DWORD         __pad3;
+    INT           x;
+    INT           y;
+    INT           cx;
+    INT           cy;
+    UINT          flags;
+    DWORD         __pad4;
+};
+
+struct packed_MSG
+{
+    user_handle_t hwnd;
+    DWORD         __pad1;
+    UINT          message;
+    ULONGLONG     wParam;
+    ULONGLONG     lParam;
+    DWORD         time;
+    POINT         pt;
+    DWORD         __pad2;
+};
+
+struct packed_MDINEXTMENU
+{
+    user_handle_t hmenuIn;
+    DWORD         __pad1;
+    user_handle_t hmenuNext;
+    DWORD         __pad2;
+    user_handle_t hwndNext;
+    DWORD         __pad3;
+};
+
+struct packed_MDICREATESTRUCTW
+{
+    ULONGLONG     szClass;
+    ULONGLONG     szTitle;
+    ULONGLONG     hOwner;
+    INT           x;
+    INT           y;
+    INT           cx;
+    INT           cy;
+    DWORD         style;
+    ULONGLONG     lParam;
+};
+
+struct packed_COMBOBOXINFO
+{
+    DWORD cbSize;
+    RECT rcItem;
+    RECT rcButton;
+    DWORD stateButton;
+    ULONGLONG hwndCombo;
+    ULONGLONG hwndItem;
+    ULONGLONG hwndList;
 };
 
 /* the structures are unpacked on top of the packed ones, so make sure they fit */
@@ -216,7 +377,6 @@ static BOOL init_win_proc_params( struct win_proc_params *params, HWND hwnd, UIN
     params->wparam = wparam;
     params->lparam = lparam;
     params->ansi = params->ansi_dst = ansi;
-    params->needs_unpack = FALSE;
     params->mapping = WMCHAR_MAP_CALLWINDOWPROC;
     params->dpi_awareness = get_window_dpi_awareness_context( params->hwnd );
     get_winproc_params( params, TRUE );
@@ -248,14 +408,14 @@ static BOOL init_window_call_params( struct win_proc_params *params, HWND hwnd, 
     params->wparam = wParam;
     params->lparam = lParam;
     params->ansi = ansi;
-    params->needs_unpack = FALSE;
     params->mapping = mapping;
     params->dpi_awareness = get_window_dpi_awareness_context( params->hwnd );
     get_winproc_params( params, !is_dialog );
     return TRUE;
 }
 
-static LRESULT dispatch_win_proc_params( struct win_proc_params *params, size_t size )
+static LRESULT dispatch_win_proc_params( struct win_proc_params *params, size_t size,
+                                         void **client_ret, size_t *client_ret_size )
 {
     struct ntuser_thread_info *thread_info = NtUserGetThreadInfo();
     LRESULT result = 0;
@@ -264,11 +424,19 @@ static LRESULT dispatch_win_proc_params( struct win_proc_params *params, size_t 
 
     if (thread_info->recursion_count > MAX_WINPROC_RECURSION) return 0;
     thread_info->recursion_count++;
-
     KeUserModeCallback( NtUserCallWinProc, params, size, &ret_ptr, &ret_len );
-    if (ret_len == sizeof(result)) result = *(LRESULT *)ret_ptr;
-
     thread_info->recursion_count--;
+
+    if (ret_len >= sizeof(result))
+    {
+        result = *(LRESULT *)ret_ptr;
+        if (client_ret)
+        {
+            *client_ret = (LRESULT *)ret_ptr + 1;
+            *client_ret_size = ret_len - sizeof(result);
+        }
+    }
+
     return result;
 }
 
@@ -297,6 +465,13 @@ static inline void *unpack_ptr( ULONGLONG ptr64 )
 static inline void push_string( struct packed_message *data, LPCWSTR str )
 {
     push_data( data, str, (lstrlenW(str) + 1) * sizeof(WCHAR) );
+}
+
+/* make sure that there is space for 'size' bytes in buffer, growing it if needed */
+static inline void *get_buffer_space( void **buffer, size_t size, size_t prev_size )
+{
+    if (prev_size < size) *buffer = malloc( size );
+    return *buffer;
 }
 
 /* check whether a combobox expects strings or ids in CB_ADDSTRING/CB_INSERTSTRING */
@@ -346,6 +521,322 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
 
     switch(message)
     {
+     case WM_NCCREATE:
+     case WM_CREATE:
+     {
+         CREATESTRUCTW cs;
+         WCHAR *str = (WCHAR *)(&ps->cs + 1);
+         if (size < sizeof(ps->cs)) return FALSE;
+         size -= sizeof(ps->cs);
+         cs.lpCreateParams = unpack_ptr( ps->cs.lpCreateParams );
+         cs.hInstance      = unpack_ptr( ps->cs.hInstance );
+         cs.hMenu          = wine_server_ptr_handle( ps->cs.hMenu );
+         cs.hwndParent     = wine_server_ptr_handle( ps->cs.hwndParent );
+         cs.cy             = ps->cs.cy;
+         cs.cx             = ps->cs.cx;
+         cs.y              = ps->cs.y;
+         cs.x              = ps->cs.x;
+         cs.style          = ps->cs.style;
+         cs.dwExStyle      = ps->cs.dwExStyle;
+         cs.lpszName       = unpack_ptr( ps->cs.lpszName );
+         cs.lpszClass      = unpack_ptr( ps->cs.lpszClass );
+         if (ps->cs.lpszName >> 16)
+         {
+             cs.lpszName = str;
+             size -= (lstrlenW(str) + 1) * sizeof(WCHAR);
+             str += lstrlenW(str) + 1;
+         }
+         if (ps->cs.lpszClass >> 16)
+         {
+             cs.lpszClass = str;
+         }
+         memcpy( *buffer, &cs, sizeof(cs) );
+         break;
+    }
+    case WM_NCCALCSIZE:
+        if (!*wparam) minsize = sizeof(RECT);
+        else
+        {
+            NCCALCSIZE_PARAMS ncp;
+            WINDOWPOS wp;
+            if (size < sizeof(ps->ncp)) return FALSE;
+            ncp.rgrc[0]        = ps->ncp.rgrc[0];
+            ncp.rgrc[1]        = ps->ncp.rgrc[1];
+            ncp.rgrc[2]        = ps->ncp.rgrc[2];
+            wp.hwnd            = wine_server_ptr_handle( ps->ncp.hwnd );
+            wp.hwndInsertAfter = wine_server_ptr_handle( ps->ncp.hwndInsertAfter );
+            wp.x               = ps->ncp.x;
+            wp.y               = ps->ncp.y;
+            wp.cx              = ps->ncp.cx;
+            wp.cy              = ps->ncp.cy;
+            wp.flags           = ps->ncp.flags;
+            ncp.lppos = (WINDOWPOS *)((NCCALCSIZE_PARAMS *)&ps->ncp + 1);
+            memcpy( &ps->ncp, &ncp, sizeof(ncp) );
+            *ncp.lppos = wp;
+        }
+        break;
+    case WM_GETTEXT:
+    case WM_ASKCBFORMATNAME:
+        if (!get_buffer_space( buffer, (*wparam * sizeof(WCHAR)), size )) return FALSE;
+        break;
+    case WM_WININICHANGE:
+        if (!*lparam) return TRUE;
+        /* fall through */
+    case WM_SETTEXT:
+    case WM_DEVMODECHANGE:
+    case CB_DIR:
+    case LB_DIR:
+    case LB_ADDFILE:
+    case EM_REPLACESEL:
+        break;
+    case WM_GETMINMAXINFO:
+        minsize = sizeof(MINMAXINFO);
+        break;
+    case WM_DRAWITEM:
+    {
+        DRAWITEMSTRUCT dis;
+        if (size < sizeof(ps->dis)) return FALSE;
+        dis.CtlType    = ps->dis.CtlType;
+        dis.CtlID      = ps->dis.CtlID;
+        dis.itemID     = ps->dis.itemID;
+        dis.itemAction = ps->dis.itemAction;
+        dis.itemState  = ps->dis.itemState;
+        dis.hwndItem   = wine_server_ptr_handle( ps->dis.hwndItem );
+        dis.hDC        = wine_server_ptr_handle( ps->dis.hDC );
+        dis.rcItem     = ps->dis.rcItem;
+        dis.itemData   = (ULONG_PTR)unpack_ptr( ps->dis.itemData );
+        memcpy( *buffer, &dis, sizeof(dis) );
+        break;
+    }
+    case WM_MEASUREITEM:
+    {
+        MEASUREITEMSTRUCT mis;
+        if (size < sizeof(ps->mis)) return FALSE;
+        mis.CtlType    = ps->mis.CtlType;
+        mis.CtlID      = ps->mis.CtlID;
+        mis.itemID     = ps->mis.itemID;
+        mis.itemWidth  = ps->mis.itemWidth;
+        mis.itemHeight = ps->mis.itemHeight;
+        mis.itemData   = (ULONG_PTR)unpack_ptr( ps->mis.itemData );
+        memcpy( *buffer, &mis, sizeof(mis) );
+        break;
+    }
+    case WM_DELETEITEM:
+    {
+        DELETEITEMSTRUCT dls;
+        if (size < sizeof(ps->dls)) return FALSE;
+        dls.CtlType    = ps->dls.CtlType;
+        dls.CtlID      = ps->dls.CtlID;
+        dls.itemID     = ps->dls.itemID;
+        dls.hwndItem   = wine_server_ptr_handle( ps->dls.hwndItem );
+        dls.itemData   = (ULONG_PTR)unpack_ptr( ps->dls.itemData );
+        memcpy( *buffer, &dls, sizeof(dls) );
+        break;
+    }
+    case WM_COMPAREITEM:
+    {
+        COMPAREITEMSTRUCT cis;
+        if (size < sizeof(ps->cis)) return FALSE;
+        cis.CtlType    = ps->cis.CtlType;
+        cis.CtlID      = ps->cis.CtlID;
+        cis.hwndItem   = wine_server_ptr_handle( ps->cis.hwndItem );
+        cis.itemID1    = ps->cis.itemID1;
+        cis.itemData1  = (ULONG_PTR)unpack_ptr( ps->cis.itemData1 );
+        cis.itemID2    = ps->cis.itemID2;
+        cis.itemData2  = (ULONG_PTR)unpack_ptr( ps->cis.itemData2 );
+        cis.dwLocaleId = ps->cis.dwLocaleId;
+        memcpy( *buffer, &cis, sizeof(cis) );
+        break;
+    }
+    case WM_WINDOWPOSCHANGING:
+    case WM_WINDOWPOSCHANGED:
+    {
+        WINDOWPOS wp;
+        if (size < sizeof(ps->wp)) return FALSE;
+        wp.hwnd            = wine_server_ptr_handle( ps->wp.hwnd );
+        wp.hwndInsertAfter = wine_server_ptr_handle( ps->wp.hwndInsertAfter );
+        wp.x               = ps->wp.x;
+        wp.y               = ps->wp.y;
+        wp.cx              = ps->wp.cx;
+        wp.cy              = ps->wp.cy;
+        wp.flags           = ps->wp.flags;
+        memcpy( *buffer, &wp, sizeof(wp) );
+        break;
+    }
+    case WM_COPYDATA:
+    {
+        COPYDATASTRUCT cds;
+        if (size < sizeof(ps->cds)) return FALSE;
+        cds.dwData = (ULONG_PTR)unpack_ptr( ps->cds.dwData );
+        if (ps->cds.lpData)
+        {
+            cds.cbData = ps->cds.cbData;
+            cds.lpData = &ps->cds + 1;
+            minsize = sizeof(ps->cds) + cds.cbData;
+        }
+        else
+        {
+            cds.cbData = 0;
+            cds.lpData = 0;
+        }
+        memcpy( &ps->cds, &cds, sizeof(cds) );
+        break;
+    }
+    case WM_HELP:
+    {
+        HELPINFO hi;
+        if (size < sizeof(ps->hi)) return FALSE;
+        hi.cbSize       = sizeof(hi);
+        hi.iContextType = ps->hi.iContextType;
+        hi.iCtrlId      = ps->hi.iCtrlId;
+        hi.hItemHandle  = wine_server_ptr_handle( ps->hi.hItemHandle );
+        hi.dwContextId  = (ULONG_PTR)unpack_ptr( ps->hi.dwContextId );
+        hi.MousePos     = ps->hi.MousePos;
+        memcpy( &ps->hi, &hi, sizeof(hi) );
+        break;
+    }
+    case WM_STYLECHANGING:
+    case WM_STYLECHANGED:
+        minsize = sizeof(STYLESTRUCT);
+        break;
+    case WM_GETDLGCODE:
+        if (*lparam)
+        {
+            MSG msg;
+            if (size < sizeof(ps->msg)) return FALSE;
+            msg.hwnd    = wine_server_ptr_handle( ps->msg.hwnd );
+            msg.message = ps->msg.message;
+            msg.wParam  = (ULONG_PTR)unpack_ptr( ps->msg.wParam );
+            msg.lParam  = (ULONG_PTR)unpack_ptr( ps->msg.lParam );
+            msg.time    = ps->msg.time;
+            msg.pt      = ps->msg.pt;
+            memcpy( &ps->msg, &msg, sizeof(msg) );
+            break;
+        }
+        return TRUE;
+    case SBM_SETSCROLLINFO:
+        minsize = sizeof(SCROLLINFO);
+        break;
+    case SBM_GETSCROLLINFO:
+        if (!get_buffer_space( buffer, sizeof(SCROLLINFO), size )) return FALSE;
+        break;
+    case SBM_GETSCROLLBARINFO:
+        if (!get_buffer_space( buffer, sizeof(SCROLLBARINFO), size )) return FALSE;
+        break;
+    case EM_GETSEL:
+    case SBM_GETRANGE:
+    case CB_GETEDITSEL:
+        if (*wparam || *lparam)
+        {
+            if (!get_buffer_space( buffer, 2 * sizeof(DWORD), size )) return FALSE;
+            if (*wparam) *wparam = (WPARAM)*buffer;
+            if (*lparam) *lparam = (LPARAM)((DWORD *)*buffer + 1);
+        }
+        return TRUE;
+    case EM_GETRECT:
+    case LB_GETITEMRECT:
+    case CB_GETDROPPEDCONTROLRECT:
+        if (!get_buffer_space( buffer, sizeof(RECT), size )) return FALSE;
+        break;
+    case EM_SETRECT:
+    case EM_SETRECTNP:
+        minsize = sizeof(RECT);
+        break;
+    case EM_GETLINE:
+    {
+        WORD *len_ptr, len;
+        if (size < sizeof(WORD)) return FALSE;
+        len = *(WORD *)*buffer;
+        if (!get_buffer_space( buffer, (len + 1) * sizeof(WCHAR), size )) return FALSE;
+        len_ptr = *buffer;
+        len_ptr[0] = len_ptr[1] = len;
+        *lparam = (LPARAM)(len_ptr + 1);
+        return TRUE;
+    }
+    case EM_SETTABSTOPS:
+    case LB_SETTABSTOPS:
+        if (!*wparam) return TRUE;
+        minsize = *wparam * sizeof(UINT);
+        break;
+    case CB_ADDSTRING:
+    case CB_INSERTSTRING:
+    case CB_FINDSTRING:
+    case CB_FINDSTRINGEXACT:
+    case CB_SELECTSTRING:
+    case LB_ADDSTRING:
+    case LB_INSERTSTRING:
+    case LB_FINDSTRING:
+    case LB_FINDSTRINGEXACT:
+    case LB_SELECTSTRING:
+        if (!*buffer) return TRUE;
+        break;
+    case CB_GETLBTEXT:
+    {
+        size_t prev_size = size;
+        if (combobox_has_strings( hwnd ))
+            size = (send_message( hwnd, CB_GETLBTEXTLEN, *wparam, 0 ) + 1) * sizeof(WCHAR);
+        else
+            size = sizeof(ULONG_PTR);
+        if (!get_buffer_space( buffer, size, prev_size )) return FALSE;
+        break;
+    }
+    case LB_GETTEXT:
+    {
+        size_t prev_size = size;
+        if (listbox_has_strings( hwnd ))
+            size = (send_message( hwnd, LB_GETTEXTLEN, *wparam, 0 ) + 1) * sizeof(WCHAR);
+        else
+            size = sizeof(ULONG_PTR);
+        if (!get_buffer_space( buffer, size, prev_size )) return FALSE;
+        break;
+    }
+    case LB_GETSELITEMS:
+        if (!get_buffer_space( buffer, *wparam * sizeof(UINT), size )) return FALSE;
+        break;
+    case WM_NEXTMENU:
+    {
+        MDINEXTMENU mnm;
+        if (size < sizeof(ps->mnm)) return FALSE;
+        mnm.hmenuIn   = wine_server_ptr_handle( ps->mnm.hmenuIn );
+        mnm.hmenuNext = wine_server_ptr_handle( ps->mnm.hmenuNext );
+        mnm.hwndNext  = wine_server_ptr_handle( ps->mnm.hwndNext );
+        memcpy( *buffer, &mnm, sizeof(mnm) );
+        break;
+    }
+    case WM_SIZING:
+    case WM_MOVING:
+        minsize = sizeof(RECT);
+        if (!get_buffer_space( buffer, sizeof(RECT), size )) return FALSE;
+        break;
+    case WM_MDICREATE:
+    {
+        MDICREATESTRUCTW mcs;
+        WCHAR *str = (WCHAR *)(&ps->mcs + 1);
+        if (size < sizeof(ps->mcs)) return FALSE;
+        size -= sizeof(ps->mcs);
+
+        mcs.szClass = unpack_ptr( ps->mcs.szClass );
+        mcs.szTitle = unpack_ptr( ps->mcs.szTitle );
+        mcs.hOwner  = unpack_ptr( ps->mcs.hOwner );
+        mcs.x       = ps->mcs.x;
+        mcs.y       = ps->mcs.y;
+        mcs.cx      = ps->mcs.cx;
+        mcs.cy      = ps->mcs.cy;
+        mcs.style   = ps->mcs.style;
+        mcs.lParam  = (LPARAM)unpack_ptr( ps->mcs.lParam );
+        if (ps->mcs.szClass >> 16)
+        {
+            mcs.szClass = str;
+            size -= (lstrlenW(str) + 1) * sizeof(WCHAR);
+            str += lstrlenW(str) + 1;
+        }
+        if (ps->mcs.szTitle >> 16)
+        {
+            mcs.szTitle = str;
+        }
+        memcpy( *buffer, &mcs, sizeof(mcs) );
+        break;
+    }
     case WM_WINE_SETWINDOWPOS:
     {
         WINDOWPOS wp;
@@ -379,6 +870,57 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
         memcpy( ps, &cbi, sizeof(cbi) );
         break;
     }
+    case WM_MDIGETACTIVE:
+        if (!*lparam) return TRUE;
+        if (!get_buffer_space( buffer, sizeof(BOOL), size )) return FALSE;
+        break;
+    case WM_DEVICECHANGE:
+        if (!(*wparam & 0x8000)) return TRUE;
+        minsize = sizeof(DEV_BROADCAST_HDR);
+        break;
+    case WM_NOTIFY:
+        /* WM_NOTIFY cannot be sent across processes (MSDN) */
+        return FALSE;
+    case WM_NCPAINT:
+        if (*wparam <= 1) return TRUE;
+        FIXME( "WM_NCPAINT hdc unpacking not supported\n" );
+        return FALSE;
+    case WM_PAINT:
+        if (!*wparam) return TRUE;
+        /* fall through */
+
+    /* these contain an HFONT */
+    case WM_SETFONT:
+    case WM_GETFONT:
+    /* these contain an HDC */
+    case WM_ERASEBKGND:
+    case WM_ICONERASEBKGND:
+    case WM_CTLCOLORMSGBOX:
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX:
+    case WM_CTLCOLORBTN:
+    case WM_CTLCOLORDLG:
+    case WM_CTLCOLORSCROLLBAR:
+    case WM_CTLCOLORSTATIC:
+    case WM_PRINT:
+    case WM_PRINTCLIENT:
+    /* these contain an HGLOBAL */
+    case WM_PAINTCLIPBOARD:
+    case WM_SIZECLIPBOARD:
+    /* these contain HICON */
+    case WM_GETICON:
+    case WM_SETICON:
+    case WM_QUERYDRAGICON:
+    case WM_QUERYPARKICON:
+    /* these contain pointers */
+    case WM_DROPOBJECT:
+    case WM_QUERYDROPOBJECT:
+    case WM_DRAGLOOP:
+    case WM_DRAGSELECT:
+    case WM_DRAGMOVE:
+        FIXME( "msg %x (%s) not supported yet\n", message, debugstr_msg_name( message, hwnd ));
+        return FALSE;
+
     default:
         return TRUE;  /* message doesn't need any unpacking */
     }
@@ -812,19 +1354,6 @@ static void pack_reply( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
         push_data( data, &data->ps.wp, sizeof(data->ps.wp) );
         break;
     }
-    case WM_GETDLGCODE:
-        if (lparam)
-        {
-            MSG *msg = (MSG *)lparam;
-            data->ps.msg.hwnd    = wine_server_user_handle( msg->hwnd );
-            data->ps.msg.message = msg->message;
-            data->ps.msg.wParam  = msg->wParam;
-            data->ps.msg.lParam  = msg->lParam;
-            data->ps.msg.time    = msg->time;
-            data->ps.msg.pt      = msg->pt;
-            push_data( data, &data->ps.msg, sizeof(data->ps.msg) );
-        }
-        break;
     case SBM_GETSCROLLINFO:
         push_data( data, (SCROLLINFO *)lparam, sizeof(SCROLLINFO) );
         break;
@@ -965,18 +1494,6 @@ static void unpack_reply( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
             wp->flags           = ps->wp.flags;
         }
         break;
-    case WM_GETDLGCODE:
-        if (lparam && size >= sizeof(ps->msg))
-        {
-            MSG *msg = (MSG *)lparam;
-            msg->hwnd    = wine_server_ptr_handle( ps->msg.hwnd );
-            msg->message = ps->msg.message;
-            msg->wParam  = (ULONG_PTR)unpack_ptr( ps->msg.wParam );
-            msg->lParam  = (ULONG_PTR)unpack_ptr( ps->msg.lParam );
-            msg->time    = ps->msg.time;
-            msg->pt      = ps->msg.pt;
-        }
-        break;
     case SBM_GETSCROLLINFO:
         memcpy( (SCROLLINFO *)lparam, buffer, min( sizeof(SCROLLINFO), size ));
         break;
@@ -1076,23 +1593,290 @@ static void unpack_reply( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
     }
 }
 
-/***********************************************************************
- *           copy_reply
- *
- * Copy a message reply received from client.
- */
-static void copy_reply( LRESULT result, HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
-                        WPARAM wparam_src, LPARAM lparam_src )
+static size_t char_size( BOOL ansi )
 {
-    size_t copy_size = 0;
+    return ansi ? sizeof(char) : sizeof(WCHAR);
+}
 
-    switch(message)
+static size_t string_size( const void *str, BOOL ansi )
+{
+    return ansi ? strlen( str ) + 1 : (wcslen( str ) + 1) * sizeof(WCHAR);
+}
+
+static size_t copy_string( void *ptr, const void *str, BOOL ansi )
+{
+    size_t size = string_size( str, ansi );
+    memcpy( ptr, str, size );
+    return size;
+}
+
+/***********************************************************************
+ *           user_message_size
+ *
+ * Calculate size of packed message buffer.
+ */
+size_t user_message_size( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
+                          BOOL other_process, BOOL ansi )
+{
+    const void *lparam_ptr = (const void *)lparam;
+    size_t size = 0;
+
+    switch (message)
     {
     case WM_NCCREATE:
     case WM_CREATE:
+    {
+        const CREATESTRUCTW *cs = lparam_ptr;
+        size = sizeof(*cs);
+        if (!IS_INTRESOURCE(cs->lpszName))  size += string_size( cs->lpszName, ansi );
+        if (!IS_INTRESOURCE(cs->lpszClass)) size += string_size( cs->lpszClass, ansi );
+        break;
+    }
+    case WM_NCCALCSIZE:
+        size = wparam ? sizeof(NCCALCSIZE_PARAMS) + sizeof(WINDOWPOS) : sizeof(RECT);
+        break;
+    case WM_GETTEXT:
+    case WM_ASKCBFORMATNAME:
+        size = wparam * char_size( ansi );
+        break;
+    case WM_WININICHANGE:
+    case WM_SETTEXT:
+    case WM_DEVMODECHANGE:
+    case CB_DIR:
+    case LB_DIR:
+    case LB_ADDFILE:
+    case EM_REPLACESEL:
+    case CB_ADDSTRING:
+    case CB_INSERTSTRING:
+    case CB_FINDSTRING:
+    case CB_FINDSTRINGEXACT:
+    case CB_SELECTSTRING:
+    case LB_ADDSTRING:
+    case LB_INSERTSTRING:
+    case LB_FINDSTRING:
+    case LB_FINDSTRINGEXACT:
+    case LB_SELECTSTRING:
+        if (other_process && lparam) size = string_size( lparam_ptr, ansi );
+        break;
+    case WM_GETMINMAXINFO:
+        size = sizeof(MINMAXINFO);
+        break;
+    case WM_DRAWITEM:
+        size = sizeof(DRAWITEMSTRUCT);
+        break;
+    case WM_MEASUREITEM:
+        size = sizeof(MEASUREITEMSTRUCT);
+        break;
+    case WM_DELETEITEM:
+        size = sizeof(DELETEITEMSTRUCT);
+        break;
+    case WM_COMPAREITEM:
+        size = sizeof(COMPAREITEMSTRUCT);
+        break;
+    case WM_WINDOWPOSCHANGING:
+    case WM_WINDOWPOSCHANGED:
+        size = sizeof(WINDOWPOS);
+        break;
+    case WM_COPYDATA:
+    {
+        const COPYDATASTRUCT *cds = lparam_ptr;
+        size = sizeof(*cds) + cds->cbData;
+        break;
+    }
+    case WM_HELP:
+        size = sizeof(HELPINFO);
+        break;
+    case WM_STYLECHANGING:
+    case WM_STYLECHANGED:
+        size = sizeof(STYLESTRUCT);
+        break;
+    case WM_GETDLGCODE:
+        size = sizeof(MSG);
+        break;
+    case SBM_SETSCROLLINFO:
+    case SBM_GETSCROLLINFO:
+        size = sizeof(SCROLLINFO);
+        break;
+    case SBM_GETSCROLLBARINFO:
+        size = sizeof(SCROLLBARINFO);
+        break;
+    case EM_GETSEL:
+    case SBM_GETRANGE:
+    case CB_GETEDITSEL:
+        size = 2 * sizeof(DWORD);
+        break;
+    case WM_SIZING:
+    case WM_MOVING:
+    case EM_GETRECT:
+    case LB_GETITEMRECT:
+    case CB_GETDROPPEDCONTROLRECT:
+    case EM_SETRECT:
+    case EM_SETRECTNP:
+        size = sizeof(RECT);
+        break;
+    case EM_GETLINE:
+        size = max( *(WORD *)lparam * char_size( ansi ), sizeof(WORD) );
+        break;
+    case EM_SETTABSTOPS:
+    case LB_SETTABSTOPS:
+        size = wparam * sizeof(UINT);
+        break;
+    case CB_GETLBTEXT:
+        size = send_message_timeout( hwnd, CB_GETLBTEXTLEN, wparam, 0, SMTO_NORMAL, 0, ansi );
+        size = (size + 1) * char_size( ansi );
+        break;
+    case LB_GETTEXT:
+        size = send_message_timeout( hwnd, LB_GETTEXTLEN, wparam, 0, SMTO_NORMAL, 0, ansi );
+        size = (size + 1) * char_size( ansi );
+        break;
+    case LB_GETSELITEMS:
+        size = wparam * sizeof(UINT);
+        break;
+    case WM_NEXTMENU:
+        size = sizeof(MDINEXTMENU);
+        break;
+    case WM_MDICREATE:
+    {
+        const MDICREATESTRUCTW *mcs = lparam_ptr;
+        size = sizeof(*mcs);
+        if (!IS_INTRESOURCE(mcs->szClass)) size += string_size( mcs->szClass, ansi );
+        if (!IS_INTRESOURCE(mcs->szTitle)) size += string_size( mcs->szTitle, ansi );
+        break;
+    }
+    case CB_GETCOMBOBOXINFO:
+        size = sizeof(COMBOBOXINFO);
+        break;
+    case WM_MDIGETACTIVE:
+        if (lparam) size = sizeof(BOOL);
+        break;
+    case WM_DEVICECHANGE:
+        if ((wparam & 0x8000) && lparam)
         {
-            CREATESTRUCTW *dst = (CREATESTRUCTW *)lparam;
-            CREATESTRUCTW *src = (CREATESTRUCTW *)lparam_src;
+            const DEV_BROADCAST_HDR *header = lparam_ptr;
+            size = header->dbch_size;
+        }
+        break;
+    }
+
+    return size;
+}
+
+/***********************************************************************
+ *           pack_user_message
+ *
+ * Copy message to a buffer for passing to client.
+ */
+void pack_user_message( void *buffer, size_t size, UINT message,
+                        WPARAM wparam, LPARAM lparam, BOOL ansi )
+{
+    const void *lparam_ptr = (const void *)lparam;
+    void const *inline_ptr = (void *)0xffffffff;
+
+    if (!size) return;
+
+    switch (message)
+    {
+    case WM_NCCREATE:
+    case WM_CREATE:
+    {
+        CREATESTRUCTW *cs = buffer;
+        char *ptr = (char *)(cs + 1);
+
+        memcpy( cs, lparam_ptr, sizeof(*cs) );
+        if (!IS_INTRESOURCE(cs->lpszName))
+        {
+            ptr += copy_string( ptr, cs->lpszName, ansi );
+            cs->lpszName  = inline_ptr;
+        }
+        if (!IS_INTRESOURCE(cs->lpszClass))
+        {
+            copy_string( ptr, cs->lpszClass, ansi );
+            cs->lpszClass = inline_ptr;
+        }
+        return;
+    }
+    case WM_NCCALCSIZE:
+        if (wparam)
+        {
+            const NCCALCSIZE_PARAMS *ncp = lparam_ptr;
+            memcpy( (char *)buffer + sizeof(*ncp), ncp->lppos, sizeof(*ncp->lppos) );
+            size = sizeof(*ncp);
+        }
+        break;
+    case WM_GETTEXT:
+    case WM_ASKCBFORMATNAME:
+        if (wparam) memset( buffer, 0, char_size( ansi ));
+        return;
+    case WM_COPYDATA:
+    {
+        const COPYDATASTRUCT *cds = lparam_ptr;
+        if (cds->lpData && cds->cbData)
+            memcpy( (char *)buffer + sizeof(*cds), cds->lpData, cds->cbData );
+        size = sizeof(*cds);
+        break;
+    }
+    case EM_GETSEL:
+    case SBM_GETRANGE:
+    case CB_GETEDITSEL:
+    case EM_GETRECT:
+    case CB_GETDROPPEDCONTROLRECT:
+        return;
+    case EM_GETLINE:
+        size = sizeof(WORD);
+        break;
+    case WM_MDICREATE:
+    {
+        MDICREATESTRUCTW *mcs = buffer;
+        char *ptr = (char *)(mcs + 1);
+
+        memcpy( buffer, lparam_ptr, sizeof(*mcs) );
+        if (!IS_INTRESOURCE(mcs->szClass))
+        {
+            ptr += copy_string( ptr, mcs->szClass, ansi );
+            mcs->szClass = inline_ptr;
+        }
+        if (!IS_INTRESOURCE(mcs->szTitle))
+        {
+            copy_string( ptr, mcs->szTitle, ansi );
+            mcs->szTitle = inline_ptr;
+        }
+        return;
+    }
+    case CB_GETCOMBOBOXINFO:
+        if (sizeof(void *) == 4)
+        {
+            COMBOBOXINFO *cbi = buffer;
+            memcpy( cbi, lparam_ptr, sizeof(*cbi) );
+            cbi->cbSize = sizeof(*cbi);
+            return;
+        }
+        break;
+    }
+
+    if (size) memcpy( buffer, lparam_ptr, size );
+}
+
+/***********************************************************************
+ *           copy_user_result
+ *
+ * Copy a message result received from client.
+ */
+static void copy_user_result( void *buffer, size_t size, LRESULT result, UINT message,
+                              WPARAM wparam, LPARAM lparam, BOOL ansi )
+{
+    void *lparam_ptr = (void *)lparam;
+    size_t copy_size = 0;
+
+    if (!size) return;
+
+    switch (message)
+    {
+    case WM_NCCREATE:
+    case WM_CREATE:
+        if (size >= sizeof(CREATESTRUCTW))
+        {
+            CREATESTRUCTW *dst = lparam_ptr;
+            const CREATESTRUCTW *src = buffer;
             dst->lpCreateParams = src->lpCreateParams;
             dst->hInstance      = src->hInstance;
             dst->hMenu          = src->hMenu;
@@ -1106,10 +1890,30 @@ static void copy_reply( LRESULT result, HWND hwnd, UINT message, WPARAM wparam, 
             /* don't allow changing name and class pointers */
         }
         return;
+    case WM_NCCALCSIZE:
+        if (wparam)
+        {
+            NCCALCSIZE_PARAMS *dst = lparam_ptr;
+            const NCCALCSIZE_PARAMS *src = buffer;
+            const WINDOWPOS *winpos = (const WINDOWPOS *)(src + 1);
+            dst->rgrc[0] = src->rgrc[0];
+            dst->rgrc[1] = src->rgrc[1];
+            dst->rgrc[2] = src->rgrc[2];
+            *dst->lppos = *winpos;
+            return;
+        }
+        copy_size = sizeof(RECT);
+        break;
     case WM_GETTEXT:
+        if (!result) memset( buffer, 0, char_size( ansi ));
+        copy_size = string_size( buffer, ansi );
+        break;
     case CB_GETLBTEXT:
     case LB_GETTEXT:
-        copy_size = (result + 1) * sizeof(WCHAR);
+        copy_size = size;
+        break;
+    case WM_ASKCBFORMATNAME:
+        copy_size = string_size( buffer, ansi );
         break;
     case WM_GETMINMAXINFO:
         copy_size = sizeof(MINMAXINFO);
@@ -1118,76 +1922,64 @@ static void copy_reply( LRESULT result, HWND hwnd, UINT message, WPARAM wparam, 
         copy_size = sizeof(MEASUREITEMSTRUCT);
         break;
     case WM_WINDOWPOSCHANGING:
-    case WM_WINDOWPOSCHANGED:
         copy_size = sizeof(WINDOWPOS);
-        break;
-    case CB_GETCOMBOBOXINFO:
-        copy_size = sizeof(COMBOBOXINFO);
         break;
     case WM_STYLECHANGING:
         copy_size = sizeof(STYLESTRUCT);
         break;
-    case WM_GETDLGCODE:
-        if (lparam) copy_size = sizeof(MSG);
-        break;
+    case SBM_SETSCROLLINFO:
     case SBM_GETSCROLLINFO:
         copy_size = sizeof(SCROLLINFO);
         break;
     case SBM_GETSCROLLBARINFO:
         copy_size = sizeof(SCROLLBARINFO);
         break;
-    case EM_GETRECT:
-    case LB_GETITEMRECT:
-    case CB_GETDROPPEDCONTROLRECT:
-    case WM_SIZING:
-    case WM_MOVING:
-        copy_size = sizeof(RECT);
-        break;
-    case EM_GETLINE:
-    {
-        WORD *ptr = (WORD *)lparam;
-        copy_size = ptr[-1] * sizeof(WCHAR);
-        break;
-    }
-    case LB_GETSELITEMS:
-        copy_size = wparam * sizeof(UINT);
-        break;
-    case WM_MDIGETACTIVE:
-        if (lparam) copy_size = sizeof(BOOL);
-        break;
-    case WM_NCCALCSIZE:
-        if (wparam)
-        {
-            NCCALCSIZE_PARAMS *dst = (NCCALCSIZE_PARAMS *)lparam;
-            NCCALCSIZE_PARAMS *src = (NCCALCSIZE_PARAMS *)lparam_src;
-            dst->rgrc[0] = src->rgrc[0];
-            dst->rgrc[1] = src->rgrc[1];
-            dst->rgrc[2] = src->rgrc[2];
-            *dst->lppos = *src->lppos;
-            return;
-        }
-        copy_size = sizeof(RECT);
-        break;
     case EM_GETSEL:
     case SBM_GETRANGE:
     case CB_GETEDITSEL:
-        if (wparam) *(DWORD *)wparam = *(DWORD *)wparam_src;
-        if (lparam) copy_size = sizeof(DWORD);
+        {
+            DWORD *ptr = buffer;
+            if (wparam) *(DWORD *)wparam = ptr[0];
+            if (lparam) *(DWORD *)lparam = ptr[1];
+            break;
+        }
+    case WM_SIZING:
+    case WM_MOVING:
+    case EM_GETRECT:
+    case EM_SETRECT:
+    case EM_SETRECTNP:
+    case LB_GETITEMRECT:
+    case CB_GETDROPPEDCONTROLRECT:
+        copy_size = sizeof(RECT);
+        break;
+    case EM_GETLINE:
+        copy_size = string_size( buffer, ansi );
+        break;
+    case LB_GETSELITEMS:
+        copy_size = wparam * sizeof(UINT);
         break;
     case WM_NEXTMENU:
         copy_size = sizeof(MDINEXTMENU);
         break;
-    case WM_MDICREATE:
-        copy_size = sizeof(MDICREATESTRUCTW);
+    case CB_GETCOMBOBOXINFO:
+        if (sizeof(void *) == 4)
+        {
+            COMBOBOXINFO *cbi = lparam_ptr;
+            memcpy( cbi, buffer, size );
+            cbi->cbSize = sizeof(*cbi);
+            return;
+        }
+        copy_size = sizeof(COMBOBOXINFO);
         break;
-    case WM_ASKCBFORMATNAME:
-        copy_size = (lstrlenW((WCHAR *)lparam) + 1) * sizeof(WCHAR);
+    case WM_MDIGETACTIVE:
+        if (lparam) copy_size = sizeof(BOOL);
         break;
     default:
         return;
     }
 
-    if (copy_size) memcpy( (void *)lparam, (void *)lparam_src, copy_size );
+    if (copy_size > size) copy_size = size;
+    if (copy_size) memcpy( lparam_ptr, buffer, copy_size );
 }
 
 /***********************************************************************
@@ -1235,7 +2027,6 @@ BOOL reply_message_result( LRESULT result )
     struct user_thread_info *thread_info = get_user_thread_info();
     struct received_message_info *info = thread_info->receive_info;
 
-    while (info && info->type == MSG_CLIENT_MESSAGE) info = info->prev;
     if (!info) return FALSE;
     reply_message( info, result, NULL );
     return TRUE;
@@ -1253,12 +2044,6 @@ static BOOL reply_winproc_result( LRESULT result, HWND hwnd, UINT message, WPARA
     MSG msg;
 
     if (!info) return FALSE;
-
-    if (info->type == MSG_CLIENT_MESSAGE)
-    {
-        copy_reply( result, hwnd, message, info->msg.wParam, info->msg.lParam, wparam, lparam );
-        return TRUE;
-    }
 
     msg.hwnd = hwnd;
     msg.message = message;
@@ -1369,42 +2154,53 @@ BOOL WINAPI NtUserGetGUIThreadInfo( DWORD id, GUITHREADINFO *info )
  * Call a window procedure and the corresponding hooks.
  */
 static LRESULT call_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
-                                 BOOL unicode, BOOL same_thread, enum wm_char_mapping mapping,
-                                 BOOL needs_unpack, void *buffer, size_t size )
+                                 enum message_type type, BOOL same_thread,
+                                 enum wm_char_mapping mapping, BOOL ansi_dst )
 {
     struct win_proc_params p, *params = &p;
+    BOOL ansi = ansi_dst && type == MSG_ASCII;
+    size_t packed_size = 0, offset = sizeof(*params);
     LRESULT result = 0;
     CWPSTRUCT cwp;
     CWPRETSTRUCT cwpret;
+    void *ret_ptr;
+    size_t ret_len = 0;
 
     if (msg & 0x80000000)
         return handle_internal_message( hwnd, msg, wparam, lparam );
 
-    if (!needs_unpack) size = 0;
     if (!is_current_thread_window( hwnd )) return 0;
+
+    packed_size = user_message_size( hwnd, msg, wparam, lparam, type == MSG_OTHER_PROCESS, ansi );
 
     /* first the WH_CALLWNDPROC hook */
     cwp.lParam  = lparam;
     cwp.wParam  = wparam;
     cwp.message = msg;
     cwp.hwnd    = hwnd = get_full_window_handle( hwnd );
-    call_hooks( WH_CALLWNDPROC, HC_ACTION, same_thread, (LPARAM)&cwp, sizeof(cwp) );
+    call_message_hooks( WH_CALLWNDPROC, HC_ACTION, same_thread, (LPARAM)&cwp, sizeof(cwp),
+                        packed_size, ansi );
 
-    if (size && !(params = malloc( sizeof(*params) + size ))) return 0;
-    if (!init_window_call_params( params, hwnd, msg, wparam, lparam, !unicode, mapping ))
+    if (packed_size)
+    {
+        offset = (offset + 15) & ~15;
+        if (!(params = malloc( offset + packed_size ))) return 0;
+    }
+
+    if (!init_window_call_params( params, hwnd, msg, wparam, lparam, ansi_dst, mapping ))
     {
         if (params != &p) free( params );
         return 0;
     }
 
-    if (needs_unpack)
-    {
-        params->needs_unpack = TRUE;
-        params->ansi = FALSE;
-        if (size) memcpy( params + 1, buffer, size );
-    }
-    result = dispatch_win_proc_params( params, sizeof(*params) + size );
+    if (type == MSG_OTHER_PROCESS) params->ansi = FALSE;
+    if (packed_size)
+        pack_user_message( (char *)params + offset, packed_size, msg, wparam, lparam, ansi );
+
+    result = dispatch_win_proc_params( params, offset + packed_size, &ret_ptr, &ret_len );
     if (params != &p) free( params );
+
+    copy_user_result( ret_ptr, min( ret_len, packed_size ), result, msg, wparam, lparam, ansi );
 
     /* and finally the WH_CALLWNDPROCRET hook */
     cwpret.lResult = result;
@@ -1412,7 +2208,8 @@ static LRESULT call_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
     cwpret.wParam  = wparam;
     cwpret.message = msg;
     cwpret.hwnd    = hwnd;
-    call_hooks( WH_CALLWNDPROCRET, HC_ACTION, same_thread, (LPARAM)&cwpret, sizeof(cwpret) );
+    call_message_hooks( WH_CALLWNDPROCRET, HC_ACTION, same_thread, (LPARAM)&cwpret, sizeof(cwpret),
+                        packed_size, ansi );
     return result;
 }
 
@@ -1844,7 +2641,6 @@ static int peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags,
         NTSTATUS res;
         size_t size = 0;
         const message_data_t *msg_data = buffer;
-        BOOL needs_unpack = FALSE;
 
         thread_info->client_info.msg_source = prev_source;
 
@@ -1910,7 +2706,6 @@ static int peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags,
             if (!unpack_message( info.msg.hwnd, info.msg.message, &info.msg.wParam,
                                  &info.msg.lParam, &buffer, size ))
                 continue;
-            needs_unpack = TRUE;
             break;
         case MSG_CALLBACK:
             info.flags = ISMEX_CALLBACK;
@@ -1993,7 +2788,6 @@ static int peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags,
                 reply_message( &info, 0, &info.msg );
                 continue;
             }
-            needs_unpack = TRUE;
             break;
         case MSG_HARDWARE:
             if (size >= sizeof(msg_data->hardware))
@@ -2074,8 +2868,8 @@ static int peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags,
         thread_info->client_info.msg_source = msg_source_unavailable;
         thread_info->client_info.receive_flags = info.flags;
         result = call_window_proc( info.msg.hwnd, info.msg.message, info.msg.wParam,
-                                   info.msg.lParam, (info.type != MSG_ASCII), FALSE,
-                                   WMCHAR_MAP_RECVMESSAGE, needs_unpack, buffer, size );
+                                   info.msg.lParam, info.type, FALSE, WMCHAR_MAP_RECVMESSAGE,
+                                   info.type == MSG_ASCII );
         if (thread_info->receive_info == &info)
             reply_winproc_result( result, info.msg.hwnd, info.msg.message,
                                   info.msg.wParam, info.msg.lParam );
@@ -2758,7 +3552,7 @@ LRESULT WINAPI NtUserDispatchMessage( const MSG *msg )
         if (!init_win_proc_params( &params, msg->hwnd, msg->message,
                                    msg->wParam, NtGetTickCount(), FALSE ))
             return 0;
-        return dispatch_win_proc_params( &params, sizeof(params) );
+        return dispatch_win_proc_params( &params, sizeof(params), NULL, NULL );
     }
     if (msg->message == WM_SYSTIMER)
     {
@@ -2780,7 +3574,7 @@ LRESULT WINAPI NtUserDispatchMessage( const MSG *msg )
 
     if (init_window_call_params( &params, msg->hwnd, msg->message, msg->wParam, msg->lParam,
                                  FALSE, WMCHAR_MAP_DISPATCHMESSAGE ))
-        retval = dispatch_win_proc_params( &params, sizeof(params) );
+        retval = dispatch_win_proc_params( &params, sizeof(params), NULL, NULL );
     else if (!is_window( msg->hwnd )) RtlSetLastWin32Error( ERROR_INVALID_WINDOW_HANDLE );
     else RtlSetLastWin32Error( ERROR_MESSAGE_SYNC_ONLY );
 
@@ -2855,43 +3649,6 @@ static BOOL broadcast_message( struct send_message_info *info, DWORD_PTR *res_pt
     }
 
     if (res_ptr) *res_ptr = 1;
-    return TRUE;
-}
-
-static BOOL process_packed_message( struct send_message_info *info, LRESULT *res_ptr, BOOL ansi )
-{
-    struct user_thread_info *thread_info = get_user_thread_info();
-    struct received_message_info receive_info;
-    struct packed_message data;
-    size_t buffer_size = 0, i;
-    void *buffer = NULL;
-    char *ptr;
-
-    pack_message( info->hwnd, info->msg, info->wparam, info->lparam, &data );
-    if (data.count == -1) return FALSE;
-
-    for (i = 0; i < data.count; i++) buffer_size += data.size[i];
-    if (!(buffer = malloc( buffer_size ))) return FALSE;
-    for (ptr = buffer, i = 0; i < data.count; i++)
-    {
-        memcpy( ptr, data.data[i], data.size[i] );
-        ptr += data.size[i];
-    }
-
-    receive_info.type = MSG_CLIENT_MESSAGE;
-    receive_info.msg.hwnd = info->hwnd;
-    receive_info.msg.message = info->msg;
-    receive_info.msg.wParam = info->wparam;
-    receive_info.msg.lParam = info->lparam;
-    receive_info.flags = 0;
-    receive_info.prev = thread_info->receive_info;
-    thread_info->receive_info = &receive_info;
-
-    *res_ptr = call_window_proc( info->hwnd, info->msg, info->wparam, info->lparam,
-                                 !ansi, TRUE, info->wm_char, TRUE, buffer, buffer_size );
-    if (thread_info->receive_info == &receive_info)
-        thread_info->receive_info = receive_info.prev;
-    free( buffer );
     return TRUE;
 }
 
@@ -3201,17 +3958,13 @@ static BOOL process_message( struct send_message_info *info, DWORD_PTR *res_ptr,
         else
             ret = send_inter_thread_message( info, &result );
     }
-    else if (info->type != MSG_OTHER_PROCESS)
+    else
     {
         result = call_window_proc( info->hwnd, info->msg, info->wparam, info->lparam,
-                                   !ansi, TRUE, info->wm_char, FALSE, NULL, 0 );
+                                   info->type, TRUE, info->wm_char, ansi );
         if (info->type == MSG_CALLBACK)
             call_sendmsg_callback( info->callback, info->hwnd, info->msg, info->data, result );
         ret = TRUE;
-    }
-    else
-    {
-        ret = process_packed_message( info, &result, ansi );
     }
 
     spy_exit_message( SPY_RESULT_OK, info->hwnd, info->msg, result, info->wparam, info->lparam );
@@ -3538,9 +4291,6 @@ LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
     case NtUserClipboardWindowProc:
         return user_driver->pClipboardWindowProc( hwnd, msg, wparam, lparam );
 
-    case NtUserWinProcResult:
-        return reply_winproc_result( (LRESULT)result_info, hwnd, msg, wparam, lparam );
-
     case NtUserGetDispatchParams:
         if (!hwnd) return FALSE;
         if (init_window_call_params( result_info, hwnd, msg, wparam, lparam,
@@ -3549,10 +4299,6 @@ LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
         if (!is_window( hwnd )) RtlSetLastWin32Error( ERROR_INVALID_WINDOW_HANDLE );
         else RtlSetLastWin32Error( ERROR_MESSAGE_SYNC_ONLY );
         return FALSE;
-
-    case NtUserSendDriverMessage:
-        /* used by driver to send packed messages */
-        return send_message( hwnd, msg, wparam, lparam );
 
     case NtUserSpyEnter:
         spy_enter_message( ansi, hwnd, msg, wparam, lparam );

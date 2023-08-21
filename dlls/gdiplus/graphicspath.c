@@ -103,6 +103,28 @@ static INT path_list_count(path_list_node_t *node)
     return count;
 }
 
+struct flatten_bezier_job
+{
+    path_list_node_t *start;
+    REAL x2;
+    REAL y2;
+    REAL x3;
+    REAL y3;
+    path_list_node_t *end;
+    struct list entry;
+};
+
+static BOOL flatten_bezier_add(struct list *jobs, path_list_node_t *start, REAL x2, REAL y2, REAL x3, REAL y3, path_list_node_t *end)
+{
+    struct flatten_bezier_job *job = malloc(sizeof(struct flatten_bezier_job));
+    struct flatten_bezier_job temp = { start, x2, y2, x3, y3, end };
+    if (!job)
+        return FALSE;
+    *job = temp;
+    list_add_after(jobs, &job->entry);
+    return TRUE;
+}
+
 /* GdipFlattenPath helper */
 /*
  * Used to recursively flatten single Bezier curve
@@ -128,55 +150,84 @@ static BOOL flatten_bezier(path_list_node_t *start, REAL x2, REAL y2, REAL x3, R
     GpPointF pt, pt_st;
     path_list_node_t *node;
     REAL area_triangle, distance_start_end;
+    BOOL ret = TRUE;
+    struct list jobs;
+    struct flatten_bezier_job *current, *next;
 
-    /* middle point between control points */
-    pt.X = (x2 + x3) / 2.0;
-    pt.Y = (y2 + y3) / 2.0;
+    list_init( &jobs );
+    flatten_bezier_add(&jobs, start, x2, y2, x3, y3, end);
+    LIST_FOR_EACH_ENTRY( current, &jobs, struct flatten_bezier_job, entry )
+    {
+        start = current->start;
+        x2 = current->x2;
+        y2 = current->y2;
+        x3 = current->x3;
+        y3 = current->y3;
+        end = current->end;
 
-    /* calculate bezier curve middle points == new control points */
-    mp[0].X = (start->pt.X + x2) / 2.0;
-    mp[0].Y = (start->pt.Y + y2) / 2.0;
-    mp[1].X = (mp[0].X + pt.X) / 2.0;
-    mp[1].Y = (mp[0].Y + pt.Y) / 2.0;
-    mp[4].X = (end->pt.X + x3) / 2.0;
-    mp[4].Y = (end->pt.Y + y3) / 2.0;
-    mp[3].X = (mp[4].X + pt.X) / 2.0;
-    mp[3].Y = (mp[4].Y + pt.Y) / 2.0;
+        /* middle point between control points */
+        pt.X = (x2 + x3) / 2.0;
+        pt.Y = (y2 + y3) / 2.0;
 
-    /* middle point between new control points */
-    mp[2].X = (mp[1].X + mp[3].X) / 2.0;
-    mp[2].Y = (mp[1].Y + mp[3].Y) / 2.0;
+        /* calculate bezier curve middle points == new control points */
+        mp[0].X = (start->pt.X + x2) / 2.0;
+        mp[0].Y = (start->pt.Y + y2) / 2.0;
+        mp[1].X = (mp[0].X + pt.X) / 2.0;
+        mp[1].Y = (mp[0].Y + pt.Y) / 2.0;
+        mp[4].X = (end->pt.X + x3) / 2.0;
+        mp[4].Y = (end->pt.Y + y3) / 2.0;
+        mp[3].X = (mp[4].X + pt.X) / 2.0;
+        mp[3].Y = (mp[4].Y + pt.Y) / 2.0;
 
-    /* Is one pair of the new control points equal to the old control points? */
-    if ((x2 == mp[0].X && y2 == mp[0].Y && x3 == mp[1].X && y3 == mp[1].Y) ||
-        (x2 == mp[3].X && y2 == mp[3].Y && x3 == mp[4].X && y3 == mp[4].Y))
-        return TRUE;
+        /* middle point between new control points */
+        mp[2].X = (mp[1].X + mp[3].X) / 2.0;
+        mp[2].Y = (mp[1].Y + mp[3].Y) / 2.0;
 
-    pt = end->pt;
-    pt_st = start->pt;
+        pt = end->pt;
+        pt_st = start->pt;
 
-    /* check flatness as a half of distance between middle point and a linearized path
-     * formula for distance point from line for point (x0, y0) and line (x1, y1) (x2, y2)
-     * is defined as (area_triangle / distance_start_end):
-     *     | (x2 - x1) * (y1 - y0) - (x1 - x0) * (y2 - y1) / sqrt( (x2 - x1)^2 + (y2 - y1)^2 ) |
-     * Here rearranged to avoid division and simplified:
-     *     x0(y2 - y1) + y0(x1 - x2) + (x2*y1 - x1*y2)
-     */
-    area_triangle = (pt.Y - pt_st.Y)*mp[2].X + (pt_st.X - pt.X)*mp[2].Y + (pt_st.Y*pt.X - pt_st.X*pt.Y);
-    distance_start_end = sqrtf(powf(pt.Y - pt_st.Y, 2.0) + powf(pt_st.X - pt.X, 2.0));
-    if(fabs(area_triangle) <= (0.5 * flatness * distance_start_end)){
-        return TRUE;
+        /* Test for closely spaced points that don't need to be flattened
+         * Also avoids limited-precision errors in flatness check
+         */
+        if((fabs(pt.X - mp[2].X) + fabs(pt.Y - mp[2].Y) +
+            fabs(pt_st.X - mp[2].X) + fabs(pt_st.Y - mp[2].Y) ) <= flatness * 0.5)
+            continue;
+
+        /* check flatness as a half of distance between middle point and a linearized path
+         * formula for distance point from line for point (x0, y0) and line (x1, y1) (x2, y2)
+         * is defined as (area_triangle / distance_start_end):
+         *     | (x2 - x1) * (y1 - y0) - (x1 - x0) * (y2 - y1) / sqrt( (x2 - x1)^2 + (y2 - y1)^2 ) |
+         * Here rearranged to avoid division and simplified:
+         *     x0(y2 - y1) + y0(x1 - x2) + (x2*y1 - x1*y2)
+         */
+        area_triangle = (pt.Y - pt_st.Y)*mp[2].X + (pt_st.X - pt.X)*mp[2].Y + (pt_st.Y*pt.X - pt_st.X*pt.Y);
+        distance_start_end = sqrtf(powf(pt.Y - pt_st.Y, 2.0) + powf(pt_st.X - pt.X, 2.0));
+        if(fabs(area_triangle) <= (0.5 * flatness * distance_start_end)){
+            continue;
+        }
+        else
+            /* add a middle point */
+            if(!(node = add_path_list_node(start, mp[2].X, mp[2].Y, PathPointTypeLine)))
+            {
+                ret = FALSE;
+                break;
+            };
+
+        /* do the same with halves */
+        if (!flatten_bezier_add(&current->entry, node,  mp[3].X, mp[3].Y, mp[4].X, mp[4].Y, end))
+            break;
+        if (!flatten_bezier_add(&current->entry, start, mp[0].X, mp[0].Y, mp[1].X, mp[1].Y, node))
+            break;
     }
-    else
-        /* add a middle point */
-        if(!(node = add_path_list_node(start, mp[2].X, mp[2].Y, PathPointTypeLine)))
-            return FALSE;
 
-    /* do the same with halves */
-    flatten_bezier(start, mp[0].X, mp[0].Y, mp[1].X, mp[1].Y, node, flatness);
-    flatten_bezier(node,  mp[3].X, mp[3].Y, mp[4].X, mp[4].Y, end,  flatness);
+    /* Cleanup */
+    LIST_FOR_EACH_ENTRY_SAFE( current, next, &jobs, struct flatten_bezier_job, entry )
+    {
+        list_remove(&current->entry);
+        free(current);
+    }
 
-    return TRUE;
+    return ret;
 }
 
 /* GdipAddPath* helper
@@ -232,10 +283,10 @@ static GpStatus extend_current_figure(GpPath *path, GDIPCONST PointF *points, IN
  *
  * PARAMS
  *  path       [I/O] Path that the arc is appended to
- *  x1         [I]   X coordinate of the boundary box
- *  y1         [I]   Y coordinate of the boundary box
- *  x2         [I]   Width of the boundary box
- *  y2         [I]   Height of the boundary box
+ *  x          [I]   X coordinate of the boundary rectangle
+ *  y          [I]   Y coordinate of the boundary rectangle
+ *  width      [I]   Width of the boundary rectangle
+ *  height     [I]   Height of the boundary rectangle
  *  startAngle [I]   Starting angle of the arc, clockwise
  *  sweepAngle [I]   Angle of the arc, clockwise
  *
@@ -251,20 +302,20 @@ static GpStatus extend_current_figure(GpPath *path, GDIPCONST PointF *points, IN
  *  In both cases, the value of newfigure of the given path is FALSE
  *  afterwards.
  */
-GpStatus WINGDIPAPI GdipAddPathArc(GpPath *path, REAL x1, REAL y1, REAL x2,
-    REAL y2, REAL startAngle, REAL sweepAngle)
+GpStatus WINGDIPAPI GdipAddPathArc(GpPath *path, REAL x, REAL y, REAL width,
+    REAL height, REAL startAngle, REAL sweepAngle)
 {
     GpPointF *points;
     GpStatus status;
     INT count;
 
     TRACE("(%p, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f)\n",
-          path, x1, y1, x2, y2, startAngle, sweepAngle);
+          path, x, y, width, height, startAngle, sweepAngle);
 
-    if(!path)
+    if(!path || width <= 0.0f || height <= 0.0f)
         return InvalidParameter;
 
-    count = arc2polybezier(NULL, x1, y1, x2, y2, startAngle, sweepAngle);
+    count = arc2polybezier(NULL, x, y, width, height, startAngle, sweepAngle);
     if(count == 0)
         return Ok;
 
@@ -272,7 +323,7 @@ GpStatus WINGDIPAPI GdipAddPathArc(GpPath *path, REAL x1, REAL y1, REAL x2,
     if(!points)
         return OutOfMemory;
 
-    arc2polybezier(points, x1, y1, x2, y2, startAngle, sweepAngle);
+    arc2polybezier(points, x, y, width, height, startAngle, sweepAngle);
 
     status = extend_current_figure(path, points, count, PathPointTypeBezier);
 

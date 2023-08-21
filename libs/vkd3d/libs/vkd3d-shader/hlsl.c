@@ -1544,7 +1544,7 @@ static bool clone_block(struct hlsl_ctx *ctx, struct hlsl_block *dst_block,
             hlsl_block_cleanup(dst_block);
             return false;
         }
-        list_add_tail(&dst_block->instrs, &dst->entry);
+        hlsl_block_add_instr(dst_block, dst);
 
         if (!list_empty(&src->uses))
         {
@@ -2244,11 +2244,11 @@ const char *hlsl_jump_type_to_string(enum hlsl_ir_jump_type type)
 
 static void dump_instr(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer, const struct hlsl_ir_node *instr);
 
-static void dump_instr_list(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer, const struct list *list)
+static void dump_block(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer, const struct hlsl_block *block)
 {
     struct hlsl_ir_node *instr;
 
-    LIST_FOR_EACH_ENTRY(instr, list, struct hlsl_ir_node, entry)
+    LIST_FOR_EACH_ENTRY(instr, &block->instrs, struct hlsl_ir_node, entry)
     {
         dump_instr(ctx, buffer, instr);
         vkd3d_string_buffer_printf(buffer, "\n");
@@ -2490,9 +2490,9 @@ static void dump_ir_if(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer,
     vkd3d_string_buffer_printf(buffer, "if (");
     dump_src(buffer, &if_node->condition);
     vkd3d_string_buffer_printf(buffer, ") {\n");
-    dump_instr_list(ctx, buffer, &if_node->then_block.instrs);
+    dump_block(ctx, buffer, &if_node->then_block);
     vkd3d_string_buffer_printf(buffer, "      %10s   } else {\n", "");
-    dump_instr_list(ctx, buffer, &if_node->else_block.instrs);
+    dump_block(ctx, buffer, &if_node->else_block);
     vkd3d_string_buffer_printf(buffer, "      %10s   }", "");
 }
 
@@ -2525,7 +2525,7 @@ static void dump_ir_jump(struct vkd3d_string_buffer *buffer, const struct hlsl_i
 static void dump_ir_loop(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer, const struct hlsl_ir_loop *loop)
 {
     vkd3d_string_buffer_printf(buffer, "for (;;) {\n");
-    dump_instr_list(ctx, buffer, &loop->body.instrs);
+    dump_block(ctx, buffer, &loop->body);
     vkd3d_string_buffer_printf(buffer, "      %10s   }", "");
 }
 
@@ -2544,6 +2544,8 @@ static void dump_ir_resource_load(struct vkd3d_string_buffer *buffer, const stru
         [HLSL_RESOURCE_GATHER_GREEN] = "gather_green",
         [HLSL_RESOURCE_GATHER_BLUE] = "gather_blue",
         [HLSL_RESOURCE_GATHER_ALPHA] = "gather_alpha",
+        [HLSL_RESOURCE_SAMPLE_INFO] = "sample_info",
+        [HLSL_RESOURCE_RESINFO] = "resinfo",
     };
 
     assert(load->load_type < ARRAY_SIZE(type_names));
@@ -2551,8 +2553,11 @@ static void dump_ir_resource_load(struct vkd3d_string_buffer *buffer, const stru
     dump_deref(buffer, &load->resource);
     vkd3d_string_buffer_printf(buffer, ", sampler = ");
     dump_deref(buffer, &load->sampler);
-    vkd3d_string_buffer_printf(buffer, ", coords = ");
-    dump_src(buffer, &load->coords);
+    if (load->coords.node)
+    {
+        vkd3d_string_buffer_printf(buffer, ", coords = ");
+        dump_src(buffer, &load->coords);
+    }
     if (load->sample_index.node)
     {
         vkd3d_string_buffer_printf(buffer, ", sample index = ");
@@ -2708,7 +2713,7 @@ void hlsl_dump_function(struct hlsl_ctx *ctx, const struct hlsl_ir_function_decl
         vkd3d_string_buffer_printf(&buffer, "\n");
     }
     if (func->has_body)
-        dump_instr_list(ctx, &buffer, &func->body.instrs);
+        dump_block(ctx, &buffer, &func->body);
 
     vkd3d_string_buffer_trace(&buffer);
     vkd3d_string_buffer_cleanup(&buffer);
@@ -2917,7 +2922,7 @@ void hlsl_free_attribute(struct hlsl_attribute *attr)
 
     for (i = 0; i < attr->args_count; ++i)
         hlsl_src_remove(&attr->args[i]);
-    hlsl_free_instr_list(&attr->instrs);
+    hlsl_block_cleanup(&attr->instrs);
     vkd3d_free((void *)attr->name);
     vkd3d_free(attr);
 }
@@ -3296,9 +3301,11 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
     }
 }
 
-static bool hlsl_ctx_init(struct hlsl_ctx *ctx, const char *source_name,
+static bool hlsl_ctx_init(struct hlsl_ctx *ctx, const struct vkd3d_shader_compile_info *compile_info,
         const struct hlsl_profile_info *profile, struct vkd3d_shader_message_context *message_context)
 {
+    unsigned int i;
+
     memset(ctx, 0, sizeof(*ctx));
 
     ctx->profile = profile;
@@ -3307,7 +3314,7 @@ static bool hlsl_ctx_init(struct hlsl_ctx *ctx, const char *source_name,
 
     if (!(ctx->source_files = hlsl_alloc(ctx, sizeof(*ctx->source_files))))
         return false;
-    if (!(ctx->source_files[0] = hlsl_strdup(ctx, source_name ? source_name : "<anonymous>")))
+    if (!(ctx->source_files[0] = hlsl_strdup(ctx, compile_info->source_name ? compile_info->source_name : "<anonymous>")))
     {
         vkd3d_free(ctx->source_files);
         return false;
@@ -3346,6 +3353,19 @@ static bool hlsl_ctx_init(struct hlsl_ctx *ctx, const char *source_name,
         return false;
     ctx->cur_buffer = ctx->globals_buffer;
 
+    for (i = 0; i < compile_info->option_count; ++i)
+    {
+        const struct vkd3d_shader_compile_option *option = &compile_info->options[i];
+
+        if (option->name == VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_ORDER)
+        {
+            if (option->value == VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_ROW_MAJOR)
+                ctx->matrix_majority = HLSL_MODIFIER_ROW_MAJOR;
+            else if (option->value == VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_COLUMN_MAJOR)
+                ctx->matrix_majority = HLSL_MODIFIER_COLUMN_MAJOR;
+        }
+    }
+
     return true;
 }
 
@@ -3356,6 +3376,8 @@ static void hlsl_ctx_cleanup(struct hlsl_ctx *ctx)
     struct hlsl_ir_var *var, *next_var;
     struct hlsl_type *type, *next_type;
     unsigned int i;
+
+    hlsl_block_cleanup(&ctx->static_initializers);
 
     for (i = 0; i < ctx->source_files_count; ++i)
         vkd3d_free((void *)ctx->source_files[i]);
@@ -3380,6 +3402,8 @@ static void hlsl_ctx_cleanup(struct hlsl_ctx *ctx)
         vkd3d_free((void *)buffer->name);
         vkd3d_free(buffer);
     }
+
+    vkd3d_free(ctx->constant_defs.regs);
 }
 
 int hlsl_compile_shader(const struct vkd3d_shader_code *hlsl, const struct vkd3d_shader_compile_info *compile_info,
@@ -3421,7 +3445,7 @@ int hlsl_compile_shader(const struct vkd3d_shader_code *hlsl, const struct vkd3d
         return VKD3D_ERROR_INVALID_ARGUMENT;
     }
 
-    if (!hlsl_ctx_init(&ctx, compile_info->source_name, profile, message_context))
+    if (!hlsl_ctx_init(&ctx, compile_info, profile, message_context))
         return VKD3D_ERROR_OUT_OF_MEMORY;
 
     if ((ret = hlsl_lexer_compile(&ctx, hlsl)) == 2)

@@ -28,6 +28,7 @@
 #include "wine/debug.h"
 
 #include "mshtml_private.h"
+#include "htmlevent.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
@@ -442,35 +443,22 @@ static void HTMLTextAreaElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTr
 static void HTMLTextAreaElement_unlink(HTMLDOMNode *iface)
 {
     HTMLTextAreaElement *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nstextarea) {
-        nsIDOMHTMLTextAreaElement *nstextarea = This->nstextarea;
-
-        This->nstextarea = NULL;
-        nsIDOMHTMLTextAreaElement_Release(nstextarea);
-    }
+    unlink_ref(&This->nstextarea);
 }
 
 static const NodeImplVtbl HTMLTextAreaElementImplVtbl = {
-    &CLSID_HTMLTextAreaElement,
-    HTMLTextAreaElement_QI,
-    HTMLElement_destructor,
-    HTMLElement_cpc,
-    HTMLElement_clone,
-    HTMLElement_handle_event,
-    HTMLElement_get_attr_col,
-    NULL,
-    HTMLTextAreaElementImpl_put_disabled,
-    HTMLTextAreaElementImpl_get_disabled,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    HTMLTextAreaElement_traverse,
-    HTMLTextAreaElement_unlink,
-    HTMLTextAreaElement_is_text_edit
+    .clsid                 = &CLSID_HTMLTextAreaElement,
+    .qi                    = HTMLTextAreaElement_QI,
+    .destructor            = HTMLElement_destructor,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLElement_clone,
+    .handle_event          = HTMLElement_handle_event,
+    .get_attr_col          = HTMLElement_get_attr_col,
+    .put_disabled          = HTMLTextAreaElementImpl_put_disabled,
+    .get_disabled          = HTMLTextAreaElementImpl_get_disabled,
+    .traverse              = HTMLTextAreaElement_traverse,
+    .unlink                = HTMLTextAreaElement_unlink,
+    .is_text_edit          = HTMLTextAreaElement_is_text_edit
 };
 
 static const tid_t HTMLTextAreaElement_iface_tids[] = {
@@ -480,8 +468,8 @@ static const tid_t HTMLTextAreaElement_iface_tids[] = {
 };
 
 static dispex_static_data_t HTMLTextAreaElement_dispex = {
-    L"HTMLTextAreaElement",
-    NULL,
+    "HTMLTextAreaElement",
+    &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLTextAreaElement_tid,
     HTMLTextAreaElement_iface_tids,
     HTMLElement_init_dispex_info

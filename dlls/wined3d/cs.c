@@ -29,7 +29,8 @@ struct wined3d_deferred_upload
 {
     struct wined3d_resource *resource;
     unsigned int sub_resource_idx;
-    uint8_t *sysmem;
+    struct wined3d_bo *bo;
+    uint8_t *sysmem, *map_ptr;
     struct wined3d_box box;
     uint32_t upload_flags;
 };
@@ -416,7 +417,6 @@ struct wined3d_cs_push_constants
     enum wined3d_push_constants type;
     unsigned int start_idx;
     unsigned int count;
-    BYTE constants[1];
 };
 
 struct wined3d_cs_reset_state
@@ -1866,8 +1866,7 @@ static void wined3d_cs_exec_set_transform(struct wined3d_cs *cs, const void *dat
     const struct wined3d_cs_set_transform *op = data;
 
     cs->state.transforms[op->state] = op->matrix;
-    if (op->state < WINED3D_TS_WORLD_MATRIX(max(cs->c.device->adapter->d3d_info.limits.ffp_vertex_blend_matrices,
-            cs->c.device->adapter->d3d_info.limits.ffp_max_vertex_blend_matrix_index + 1)))
+    if (op->state < WINED3D_TS_WORLD_MATRIX(cs->c.device->adapter->d3d_info.limits.ffp_vertex_blend_matrices))
         device_invalidate_state(cs->c.device, STATE_TRANSFORM(op->state));
 }
 
@@ -2108,74 +2107,93 @@ void wined3d_device_context_emit_set_feature_level(struct wined3d_device_context
     wined3d_device_context_submit(context, WINED3D_CS_QUEUE_DEFAULT);
 }
 
-static const struct
+static const struct push_constant_info
 {
-    size_t offset;
     size_t size;
+    unsigned int max_count;
     DWORD mask;
 }
 wined3d_cs_push_constant_info[] =
 {
-    /* WINED3D_PUSH_CONSTANTS_VS_F */
-    {FIELD_OFFSET(struct wined3d_state, vs_consts_f), sizeof(struct wined3d_vec4),  WINED3D_SHADER_CONST_VS_F},
-    /* WINED3D_PUSH_CONSTANTS_PS_F */
-    {FIELD_OFFSET(struct wined3d_state, ps_consts_f), sizeof(struct wined3d_vec4),  WINED3D_SHADER_CONST_PS_F},
-    /* WINED3D_PUSH_CONSTANTS_VS_I */
-    {FIELD_OFFSET(struct wined3d_state, vs_consts_i), sizeof(struct wined3d_ivec4), WINED3D_SHADER_CONST_VS_I},
-    /* WINED3D_PUSH_CONSTANTS_PS_I */
-    {FIELD_OFFSET(struct wined3d_state, ps_consts_i), sizeof(struct wined3d_ivec4), WINED3D_SHADER_CONST_PS_I},
-    /* WINED3D_PUSH_CONSTANTS_VS_B */
-    {FIELD_OFFSET(struct wined3d_state, vs_consts_b), sizeof(BOOL),                 WINED3D_SHADER_CONST_VS_B},
-    /* WINED3D_PUSH_CONSTANTS_PS_B */
-    {FIELD_OFFSET(struct wined3d_state, ps_consts_b), sizeof(BOOL),                 WINED3D_SHADER_CONST_PS_B},
+    [WINED3D_PUSH_CONSTANTS_VS_F] = {sizeof(struct wined3d_vec4),  WINED3D_MAX_VS_CONSTS_F, WINED3D_SHADER_CONST_VS_F},
+    [WINED3D_PUSH_CONSTANTS_PS_F] = {sizeof(struct wined3d_vec4),  WINED3D_MAX_PS_CONSTS_F, WINED3D_SHADER_CONST_PS_F},
+    [WINED3D_PUSH_CONSTANTS_VS_I] = {sizeof(struct wined3d_ivec4), WINED3D_MAX_CONSTS_I,    WINED3D_SHADER_CONST_VS_I},
+    [WINED3D_PUSH_CONSTANTS_PS_I] = {sizeof(struct wined3d_ivec4), WINED3D_MAX_CONSTS_I,    WINED3D_SHADER_CONST_PS_I},
+    [WINED3D_PUSH_CONSTANTS_VS_B] = {sizeof(BOOL),                 WINED3D_MAX_CONSTS_B,    WINED3D_SHADER_CONST_VS_B},
+    [WINED3D_PUSH_CONSTANTS_PS_B] = {sizeof(BOOL),                 WINED3D_MAX_CONSTS_B,    WINED3D_SHADER_CONST_PS_B},
 };
 
-static void wined3d_cs_st_push_constants(struct wined3d_device_context *context, enum wined3d_push_constants p,
-        unsigned int start_idx, unsigned int count, const void *constants)
+static bool prepare_push_constant_buffer(struct wined3d_device *device, enum wined3d_push_constants type)
 {
-    struct wined3d_cs *cs = wined3d_cs_from_context(context);
-    struct wined3d_device *device = cs->c.device;
-    unsigned int context_count;
-    unsigned int i;
-    size_t offset;
+    const struct push_constant_info *info = &wined3d_cs_push_constant_info[type];
+    HRESULT hr;
 
-    if (p == WINED3D_PUSH_CONSTANTS_VS_F)
-        device->shader_backend->shader_update_float_vertex_constants(device, start_idx, count);
-    else if (p == WINED3D_PUSH_CONSTANTS_PS_F)
-        device->shader_backend->shader_update_float_pixel_constants(device, start_idx, count);
-
-    offset = wined3d_cs_push_constant_info[p].offset + start_idx * wined3d_cs_push_constant_info[p].size;
-    memcpy((BYTE *)&cs->state + offset, constants, count * wined3d_cs_push_constant_info[p].size);
-    for (i = 0, context_count = device->context_count; i < context_count; ++i)
+    const struct wined3d_buffer_desc desc =
     {
-        device->contexts[i]->constant_update_mask |= wined3d_cs_push_constant_info[p].mask;
+        .byte_width = info->max_count * info->size,
+        .bind_flags = 0,
+        .access = WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W,
+    };
+
+    if (!device->push_constants[type] && FAILED(hr = wined3d_buffer_create(device,
+            &desc, NULL, NULL, &wined3d_null_parent_ops, &device->push_constants[type])))
+    {
+        ERR("Failed to create push constant buffer, hr %#lx.\n", hr);
+        return false;
     }
+
+    return true;
 }
 
 static void wined3d_cs_exec_push_constants(struct wined3d_cs *cs, const void *data)
 {
     const struct wined3d_cs_push_constants *op = data;
+    struct wined3d_device *device = cs->c.device;
+    unsigned int context_count, i;
 
-    wined3d_cs_st_push_constants(&cs->c, op->type, op->start_idx, op->count, op->constants);
+    /* The constant buffers were already updated; this op is just to mark the
+     * constants as invalid in the device state. */
+
+    if (op->type == WINED3D_PUSH_CONSTANTS_VS_F)
+        device->shader_backend->shader_update_float_vertex_constants(device, op->start_idx, op->count);
+    else if (op->type == WINED3D_PUSH_CONSTANTS_PS_F)
+        device->shader_backend->shader_update_float_pixel_constants(device, op->start_idx, op->count);
+
+    for (i = 0, context_count = device->context_count; i < context_count; ++i)
+        device->contexts[i]->constant_update_mask |= wined3d_cs_push_constant_info[op->type].mask;
 }
 
-static void wined3d_cs_mt_push_constants(struct wined3d_device_context *context, enum wined3d_push_constants p,
-        unsigned int start_idx, unsigned int count, const void *constants)
+static void wined3d_device_context_emit_push_constants(struct wined3d_device_context *context,
+        enum wined3d_push_constants type, unsigned int start_idx, unsigned int count)
 {
     struct wined3d_cs *cs = wined3d_cs_from_context(context);
     struct wined3d_cs_push_constants *op;
-    size_t size;
 
-    size = count * wined3d_cs_push_constant_info[p].size;
-    op = wined3d_device_context_require_space(&cs->c, FIELD_OFFSET(struct wined3d_cs_push_constants, constants[size]),
-            WINED3D_CS_QUEUE_DEFAULT);
+    op = wined3d_device_context_require_space(&cs->c, sizeof(*op), WINED3D_CS_QUEUE_DEFAULT);
     op->opcode = WINED3D_CS_OP_PUSH_CONSTANTS;
-    op->type = p;
+    op->type = type;
     op->start_idx = start_idx;
     op->count = count;
-    memcpy(op->constants, constants, size);
 
     wined3d_device_context_submit(&cs->c, WINED3D_CS_QUEUE_DEFAULT);
+}
+
+void wined3d_device_context_push_constants(struct wined3d_device_context *context,
+        enum wined3d_push_constants type, unsigned int start_idx,
+        unsigned int count, const void *constants)
+{
+    const struct push_constant_info *info = &wined3d_cs_push_constant_info[type];
+    unsigned int byte_offset = start_idx * info->size;
+    unsigned int byte_size = count * info->size;
+    struct wined3d_box box;
+
+    if (!prepare_push_constant_buffer(context->device, type))
+        return;
+
+    wined3d_box_set(&box, byte_offset, 0, byte_offset + byte_size, 1, 0, 1);
+    wined3d_device_context_emit_update_sub_resource(context,
+            &context->device->push_constants[type]->resource, 0, &box, constants, byte_size, byte_size);
+    wined3d_device_context_emit_push_constants(context, type, start_idx, count);
 }
 
 static void wined3d_cs_exec_reset_state(struct wined3d_cs *cs, const void *data)
@@ -3146,7 +3164,6 @@ static const struct wined3d_device_context_ops wined3d_cs_st_ops =
     wined3d_cs_st_require_space,
     wined3d_cs_st_submit,
     wined3d_cs_st_finish,
-    wined3d_cs_st_push_constants,
     wined3d_cs_map_upload_bo,
     wined3d_cs_unmap_upload_bo,
     wined3d_cs_issue_query,
@@ -3273,7 +3290,6 @@ static const struct wined3d_device_context_ops wined3d_cs_mt_ops =
     wined3d_cs_mt_require_space,
     wined3d_cs_mt_submit,
     wined3d_cs_mt_finish,
-    wined3d_cs_mt_push_constants,
     wined3d_cs_map_upload_bo,
     wined3d_cs_unmap_upload_bo,
     wined3d_cs_issue_query,
@@ -4100,12 +4116,6 @@ static void wined3d_deferred_context_finish(struct wined3d_device_context *conte
     ERR("Ignoring finish() on a deferred context.\n");
 }
 
-static void wined3d_deferred_context_push_constants(struct wined3d_device_context *context,
-        enum wined3d_push_constants p, unsigned int start_idx, unsigned int count, const void *constants)
-{
-    FIXME("context %p, p %#x, start_idx %u, count %u, constants %p, stub!\n", context, p, start_idx, count, constants);
-}
-
 static struct wined3d_deferred_upload *deferred_context_get_upload(struct wined3d_deferred_context *deferred,
         struct wined3d_resource *resource, unsigned int sub_resource_idx)
 {
@@ -4128,7 +4138,9 @@ static bool wined3d_deferred_context_map_upload_bo(struct wined3d_device_context
 {
     struct wined3d_deferred_context *deferred = wined3d_deferred_context_from_context(context);
     const struct wined3d_format *format = resource->format;
+    struct wined3d_device *device = context->device;
     struct wined3d_deferred_upload *upload;
+    struct wined3d_bo_address addr;
     uint8_t *sysmem;
     size_t size;
 
@@ -4157,7 +4169,7 @@ static bool wined3d_deferred_context_map_upload_bo(struct wined3d_device_context
             return false;
 
         upload->upload_flags = 0;
-        map_desc->data = (void *)align((size_t)upload->sysmem, RESOURCE_ALIGNMENT);
+        map_desc->data = upload->map_ptr;
         return true;
     }
 
@@ -4165,36 +4177,57 @@ static bool wined3d_deferred_context_map_upload_bo(struct wined3d_device_context
             deferred->upload_count + 1, sizeof(*deferred->uploads)))
         return false;
 
-    if (!deferred->upload_heap)
+    upload = &deferred->uploads[deferred->upload_count++];
+
+    if ((flags & WINED3D_MAP_DISCARD)
+            && device->adapter->adapter_ops->adapter_alloc_bo(device, resource, sub_resource_idx, &addr))
     {
-        if (!(deferred->upload_heap = HeapCreate(0, 0, 0)))
+        upload->bo = addr.buffer_object;
+        upload->sysmem = NULL;
+
+        TRACE("Allocated BO %s.\n", debug_bo_address(&addr));
+
+        wined3d_device_bo_map_lock(device);
+        upload->map_ptr = addr.buffer_object->map_ptr;
+        wined3d_device_bo_map_unlock(device);
+        upload->map_ptr += addr.buffer_object->memory_offset;
+        assert(upload->map_ptr);
+    }
+    else
+    {
+        if (!deferred->upload_heap)
         {
-            ERR("Failed to create upload heap.\n");
-            return false;
+            if (!(deferred->upload_heap = HeapCreate(0, 0, 0)))
+            {
+                ERR("Failed to create upload heap.\n");
+                return false;
+            }
+
+            if (!(deferred->upload_heap_refcount = heap_alloc(sizeof(*deferred->upload_heap_refcount))))
+            {
+                HeapDestroy(deferred->upload_heap);
+                deferred->upload_heap = 0;
+                return false;
+            }
+
+            *deferred->upload_heap_refcount = 1;
         }
 
-        if (!(deferred->upload_heap_refcount = heap_alloc(sizeof(*deferred->upload_heap_refcount))))
-        {
-            HeapDestroy(deferred->upload_heap);
-            deferred->upload_heap = 0;
+        if (!(sysmem = HeapAlloc(deferred->upload_heap, 0, size + RESOURCE_ALIGNMENT - 1)))
             return false;
-        }
 
-        *deferred->upload_heap_refcount = 1;
+        upload->bo = NULL;
+        upload->sysmem = sysmem;
+        upload->map_ptr = (void *)align((size_t)upload->sysmem, RESOURCE_ALIGNMENT);
     }
 
-    if (!(sysmem = HeapAlloc(deferred->upload_heap, 0, size + RESOURCE_ALIGNMENT - 1)))
-        return false;
-
-    upload = &deferred->uploads[deferred->upload_count++];
     upload->upload_flags = UPLOAD_BO_UPLOAD_ON_UNMAP;
     upload->resource = resource;
     wined3d_resource_incref(resource);
     upload->sub_resource_idx = sub_resource_idx;
-    upload->sysmem = sysmem;
     upload->box = *box;
 
-    map_desc->data = (void *)align((size_t)upload->sysmem, RESOURCE_ALIGNMENT);
+    map_desc->data = upload->map_ptr;
     return true;
 }
 
@@ -4202,14 +4235,17 @@ static bool wined3d_deferred_context_unmap_upload_bo(struct wined3d_device_conte
         struct wined3d_resource *resource, unsigned int sub_resource_idx, struct wined3d_box *box, struct upload_bo *bo)
 {
     struct wined3d_deferred_context *deferred = wined3d_deferred_context_from_context(context);
-    const struct wined3d_deferred_upload *upload;
+    struct wined3d_deferred_upload *upload;
 
     if ((upload = deferred_context_get_upload(deferred, resource, sub_resource_idx)))
     {
         *box = upload->box;
-        bo->addr.buffer_object = 0;
-        bo->addr.addr = (uint8_t *)align((size_t)upload->sysmem, RESOURCE_ALIGNMENT);
+        if ((bo->addr.buffer_object = upload->bo))
+            bo->addr.addr = NULL;
+        else
+            bo->addr.addr = upload->map_ptr;
         bo->flags = upload->upload_flags;
+        upload->upload_flags = 0;
         return true;
     }
 
@@ -4277,7 +4313,6 @@ static const struct wined3d_device_context_ops wined3d_deferred_context_ops =
     wined3d_deferred_context_require_space,
     wined3d_deferred_context_submit,
     wined3d_deferred_context_finish,
-    wined3d_deferred_context_push_constants,
     wined3d_deferred_context_map_upload_bo,
     wined3d_deferred_context_unmap_upload_bo,
     wined3d_deferred_context_issue_query,
@@ -4446,12 +4481,32 @@ HRESULT CDECL wined3d_deferred_context_record_command_list(struct wined3d_device
 static void wined3d_command_list_destroy_object(void *object)
 {
     struct wined3d_command_list *list = object;
+    struct wined3d_context *context;
     unsigned int i;
 
     TRACE("list %p.\n", list);
 
+    context = context_acquire(list->device, NULL, 0);
+
     for (i = 0; i < list->upload_count; ++i)
-        HeapFree(list->upload_heap, 0, list->uploads[i].sysmem);
+    {
+        struct wined3d_bo *bo;
+
+        if ((bo = list->uploads[i].bo))
+        {
+            if (!--bo->refcount)
+            {
+                wined3d_context_destroy_bo(context, bo);
+                heap_free(bo);
+            }
+        }
+        else
+        {
+            HeapFree(list->upload_heap, 0, list->uploads[i].sysmem);
+        }
+    }
+
+    context_release(context);
 
     if (list->upload_heap)
     {

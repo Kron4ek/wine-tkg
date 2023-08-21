@@ -1002,7 +1002,7 @@ struct x11drv_thread_data *x11drv_init_thread_data(void)
     if (use_xim) xim_thread_attach( data );
 
     x11drv_xinput_init();
-    if (NtUserGetWindowThread( NtUserGetDesktopWindow(), NULL ) == GetCurrentThreadId())
+    if (NtUserGetWindowThread( UlongToHandle( NtUserGetThreadInfo()->top_window ), NULL ) == GetCurrentThreadId())
         x11drv_xinput_enable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
 
     return data;

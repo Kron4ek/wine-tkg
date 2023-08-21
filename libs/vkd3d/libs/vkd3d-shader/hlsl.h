@@ -257,7 +257,7 @@ struct hlsl_reg
     /* Number of registers to be allocated.
      * Unlike the variable's type's regsize, it is not expressed in register components, but rather
      *  in whole registers, and may depend on which components are used within the shader. */
-    uint32_t bind_count;
+    uint32_t allocation_size;
     /* For numeric registers, a writemask can be provided to indicate the reservation of only some
      *   of the 4 components. */
     unsigned int writemask;
@@ -337,7 +337,7 @@ struct hlsl_src
 struct hlsl_attribute
 {
     const char *name;
-    struct list instrs;
+    struct hlsl_block instrs;
     struct vkd3d_shader_location loc;
     unsigned int args_count;
     struct hlsl_src args[];
@@ -417,6 +417,9 @@ struct hlsl_ir_var
         enum hlsl_sampler_dim sampler_dim;
         struct vkd3d_shader_location first_sampler_dim_loc;
     } *objects_usage[HLSL_REGSET_LAST_OBJECT + 1];
+    /* Minimum number of binds required to include all object components actually used in the shader.
+     * It may be less than the allocation size, e.g. for texture arrays. */
+    unsigned int bind_count[HLSL_REGSET_LAST_OBJECT + 1];
 
     uint32_t is_input_semantic : 1;
     uint32_t is_output_semantic : 1;
@@ -634,6 +637,8 @@ enum hlsl_resource_load_type
     HLSL_RESOURCE_GATHER_GREEN,
     HLSL_RESOURCE_GATHER_BLUE,
     HLSL_RESOURCE_GATHER_ALPHA,
+    HLSL_RESOURCE_SAMPLE_INFO,
+    HLSL_RESOURCE_RESINFO,
 };
 
 struct hlsl_ir_resource_load
@@ -1074,7 +1079,7 @@ struct vkd3d_string_buffer *hlsl_component_to_string(struct hlsl_ctx *ctx, const
 struct vkd3d_string_buffer *hlsl_modifiers_to_string(struct hlsl_ctx *ctx, unsigned int modifiers);
 const char *hlsl_node_type_to_string(enum hlsl_ir_node_type type);
 
-struct hlsl_ir_node *hlsl_add_conditional(struct hlsl_ctx *ctx, struct list *instrs,
+struct hlsl_ir_node *hlsl_add_conditional(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_ir_node *condition, struct hlsl_ir_node *if_true, struct hlsl_ir_node *if_false);
 void hlsl_add_function(struct hlsl_ctx *ctx, char *name, struct hlsl_ir_function_decl *decl);
 bool hlsl_add_var(struct hlsl_ctx *ctx, struct hlsl_ir_var *decl, bool local_var);
@@ -1148,7 +1153,7 @@ struct hlsl_ir_load *hlsl_new_load_parent(struct hlsl_ctx *ctx, const struct hls
         const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_load_component(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_deref *deref, unsigned int comp, const struct vkd3d_shader_location *loc);
-struct hlsl_ir_node *hlsl_add_load_component(struct hlsl_ctx *ctx, struct list *instrs,
+struct hlsl_ir_node *hlsl_add_load_component(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_ir_node *var_instr, unsigned int comp, const struct vkd3d_shader_location *loc);
 
 struct hlsl_ir_node *hlsl_new_simple_store(struct hlsl_ctx *ctx, struct hlsl_ir_var *lhs, struct hlsl_ir_node *rhs);
@@ -1249,7 +1254,7 @@ int hlsl_sm1_write(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_fun
 bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx,
         const struct hlsl_semantic *semantic, bool output, D3D_NAME *usage);
 bool hlsl_sm4_register_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semantic *semantic,
-        bool output, unsigned int *type, enum vkd3d_sm4_swizzle_type *swizzle_type, bool *has_idx);
+        bool output, enum vkd3d_shader_register_type *type, enum vkd3d_sm4_swizzle_type *swizzle_type, bool *has_idx);
 int hlsl_sm4_write(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func, struct vkd3d_shader_code *out);
 
 int hlsl_lexer_compile(struct hlsl_ctx *ctx, const struct vkd3d_shader_code *hlsl);

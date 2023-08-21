@@ -62,6 +62,7 @@ wic_pixel_formats[] =
     { &GUID_WICPixelFormat32bppBGR,           DXGI_FORMAT_B8G8R8X8_UNORM },
     { &GUID_WICPixelFormat32bppBGRA,          DXGI_FORMAT_B8G8R8A8_UNORM },
     { &GUID_WICPixelFormat32bppRGBA,          DXGI_FORMAT_R8G8B8A8_UNORM },
+    { &GUID_WICPixelFormat32bppRGBA,          DXGI_FORMAT_R8G8B8A8_UNORM_SRGB },
     { &GUID_WICPixelFormat32bppRGBA1010102,   DXGI_FORMAT_R10G10B10A2_UNORM },
     { &GUID_WICPixelFormat32bppRGBA1010102XR, DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM },
     { &GUID_WICPixelFormat64bppRGBA,          DXGI_FORMAT_R16G16B16A16_UNORM },
@@ -300,7 +301,6 @@ HRESULT WINAPI D3DX11GetImageInfoFromMemory(const void *src_data, SIZE_T src_dat
     IWICBitmapDecoder *decoder = NULL;
     WICDdsParameters dds_params;
     IWICStream *stream = NULL;
-    unsigned int frame_count;
     GUID container_format;
     HRESULT hr;
 
@@ -335,16 +335,6 @@ HRESULT WINAPI D3DX11GetImageInfoFromMemory(const void *src_data, SIZE_T src_dat
         goto end;
     }
 
-    hr = IWICBitmapDecoder_GetFrameCount(decoder, &frame_count);
-    if (FAILED(hr) || !frame_count)
-        goto end;
-    hr = IWICBitmapDecoder_GetFrame(decoder, 0, &frame);
-    if (FAILED(hr))
-        goto end;
-    hr = IWICBitmapFrameDecode_GetSize(frame, &img_info->Width, &img_info->Height);
-    if (FAILED(hr))
-        goto end;
-
     if (img_info->ImageFileFormat == D3DX11_IFF_DDS)
     {
         hr = IWICBitmapDecoder_QueryInterface(decoder, &IID_IWICDdsDecoder, (void **)&dds_decoder);
@@ -353,6 +343,8 @@ HRESULT WINAPI D3DX11GetImageInfoFromMemory(const void *src_data, SIZE_T src_dat
         hr = IWICDdsDecoder_GetParameters(dds_decoder, &dds_params);
         if (FAILED(hr))
             goto end;
+        img_info->Width = dds_params.Width;
+        img_info->Height = dds_params.Height;
         img_info->ArraySize = dds_params.ArraySize;
         img_info->Depth = dds_params.Depth;
         img_info->MipLevels = dds_params.MipLevels;
@@ -367,6 +359,18 @@ HRESULT WINAPI D3DX11GetImageInfoFromMemory(const void *src_data, SIZE_T src_dat
     }
     else
     {
+        unsigned int frame_count;
+
+        hr = IWICBitmapDecoder_GetFrameCount(decoder, &frame_count);
+        if (FAILED(hr) || !frame_count)
+            goto end;
+        hr = IWICBitmapDecoder_GetFrame(decoder, 0, &frame);
+        if (FAILED(hr))
+            goto end;
+        hr = IWICBitmapFrameDecode_GetSize(frame, &img_info->Width, &img_info->Height);
+        if (FAILED(hr))
+            goto end;
+
         img_info->ArraySize = 1;
         img_info->Depth = 1;
         img_info->MipLevels = 1;
@@ -451,17 +455,28 @@ HRESULT WINAPI D3DX11CreateTextureFromMemory(ID3D11Device *device, const void *s
 
     if (!src_data || !src_data_size || !texture)
         return E_FAIL;
-    if (load_info)
-        FIXME("load_info is ignored.\n");
     if (pump)
         FIXME("Thread pump is not supported yet.\n");
 
-    if (FAILED(D3DX11GetImageInfoFromMemory(src_data, src_data_size, NULL, &img_info, NULL)))
-        return E_FAIL;
-    if (img_info.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE)
+    if (load_info)
     {
-        FIXME("Cube map is not supported.\n");
-        return E_FAIL;
+        img_info.Width = load_info->Width;
+        img_info.Height = load_info->Height;
+        img_info.Depth  = load_info->Depth;
+        img_info.ArraySize = 1;
+        img_info.MipLevels = load_info->MipLevels;
+        img_info.MiscFlags = load_info->MiscFlags;
+        img_info.Format = load_info->Format;
+    }
+    else
+    {
+        if (FAILED(D3DX11GetImageInfoFromMemory(src_data, src_data_size, NULL, &img_info, NULL)))
+            return E_FAIL;
+        if (img_info.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE)
+        {
+            FIXME("Cube map is not supported.\n");
+            return E_FAIL;
+        }
     }
 
     if (FAILED(hr = WICCreateImagingFactory_Proxy(WINCODEC_SDK_VERSION, &factory)))
@@ -599,6 +614,15 @@ HRESULT WINAPI D3DX11SaveTextureToMemory(ID3D11DeviceContext *context, ID3D11Res
 {
     FIXME("context %p, texture %p, format %u, buffer %p, flags %#x stub!\n",
             context, texture, format, buffer, flags);
+
+    return E_NOTIMPL;
+}
+
+HRESULT WINAPI D3DX11LoadTextureFromTexture(ID3D11DeviceContext *context, ID3D11Resource *src_texture,
+        D3DX11_TEXTURE_LOAD_INFO *info, ID3D11Resource *dst_texture)
+{
+    FIXME("context %p, src_texture %p, info %p, dst_texture %p stub!\n",
+            context, src_texture, info, dst_texture);
 
     return E_NOTIMPL;
 }

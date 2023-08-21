@@ -70,7 +70,7 @@ static HRESULT WINAPI HTMLDOMImplementation_QueryInterface(IHTMLDOMImplementatio
         *ppv = &This->IHTMLDOMImplementation_iface;
     }else if(IsEqualGUID(&IID_IHTMLDOMImplementation2, riid)) {
         *ppv = &This->IHTMLDOMImplementation2_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
@@ -99,13 +99,8 @@ static ULONG WINAPI HTMLDOMImplementation_Release(IHTMLDOMImplementation *iface)
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
-        assert(!This->browser);
-        if(This->implementation)
-            nsIDOMDOMImplementation_Release(This->implementation);
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -294,6 +289,29 @@ static const IHTMLDOMImplementation2Vtbl HTMLDOMImplementation2Vtbl = {
     HTMLDOMImplementation2_hasFeature
 };
 
+static inline HTMLDOMImplementation *HTMLDOMImplementation_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDOMImplementation, dispex);
+}
+
+static void HTMLDOMImplementation_unlink(DispatchEx *dispex)
+{
+    HTMLDOMImplementation *This = HTMLDOMImplementation_from_DispatchEx(dispex);
+    unlink_ref(&This->implementation);
+}
+
+static void HTMLDOMImplementation_destructor(DispatchEx *dispex)
+{
+    HTMLDOMImplementation *This = HTMLDOMImplementation_from_DispatchEx(dispex);
+    assert(!This->browser);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t HTMLDOMImplementation_dispex_vtbl = {
+    .destructor       = HTMLDOMImplementation_destructor,
+    .unlink           = HTMLDOMImplementation_unlink
+};
+
 static void HTMLDOMImplementation_init_dispex_info(dispex_data_t *info, compat_mode_t compat_mode)
 {
     if(compat_mode >= COMPAT_MODE_IE9)
@@ -305,8 +323,8 @@ static const tid_t HTMLDOMImplementation_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLDOMImplementation_dispex = {
-    L"DOMImplementation",
-    NULL,
+    "DOMImplementation",
+    &HTMLDOMImplementation_dispex_vtbl,
     DispHTMLDOMImplementation_tid,
     HTMLDOMImplementation_iface_tids,
     HTMLDOMImplementation_init_dispex_info
@@ -371,7 +389,7 @@ static HRESULT WINAPI HTMLScreen_QueryInterface(IHTMLScreen *iface, REFIID riid,
         *ppv = &This->IHTMLScreen_iface;
     }else if(IsEqualGUID(&IID_IHTMLScreen, riid)) {
         *ppv = &This->IHTMLScreen_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         *ppv = NULL;
@@ -400,10 +418,8 @@ static ULONG WINAPI HTMLScreen_Release(IHTMLScreen *iface)
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -553,13 +569,28 @@ static const IHTMLScreenVtbl HTMLSreenVtbl = {
     HTMLScreen_get_fontSmoothingEnabled
 };
 
+static inline HTMLScreen *HTMLScreen_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLScreen, dispex);
+}
+
+static void HTMLScreen_destructor(DispatchEx *dispex)
+{
+    HTMLScreen *This = HTMLScreen_from_DispatchEx(dispex);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t HTMLScreen_dispex_vtbl = {
+    .destructor       = HTMLScreen_destructor,
+};
+
 static const tid_t HTMLScreen_iface_tids[] = {
     IHTMLScreen_tid,
     0
 };
 static dispex_static_data_t HTMLScreen_dispex = {
-    L"Screen",
-    NULL,
+    "Screen",
+    &HTMLScreen_dispex_vtbl,
     DispHTMLScreen_tid,
     HTMLScreen_iface_tids
 };
@@ -596,7 +627,7 @@ static HRESULT WINAPI OmHistory_QueryInterface(IOmHistory *iface, REFIID riid, v
         *ppv = &This->IOmHistory_iface;
     }else if(IsEqualGUID(&IID_IOmHistory, riid)) {
         *ppv = &This->IOmHistory_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
@@ -625,10 +656,8 @@ static ULONG WINAPI OmHistory_Release(IOmHistory *iface)
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -717,13 +746,28 @@ static const IOmHistoryVtbl OmHistoryVtbl = {
     OmHistory_go
 };
 
+static inline OmHistory *OmHistory_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, OmHistory, dispex);
+}
+
+static void OmHistory_destructor(DispatchEx *dispex)
+{
+    OmHistory *This = OmHistory_from_DispatchEx(dispex);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t OmHistory_dispex_vtbl = {
+    .destructor       = OmHistory_destructor,
+};
+
 static const tid_t OmHistory_iface_tids[] = {
     IOmHistory_tid,
     0
 };
 static dispex_static_data_t OmHistory_dispex = {
-    L"History",
-    NULL,
+    "History",
+    &OmHistory_dispex_vtbl,
     DispHTMLHistory_tid,
     OmHistory_iface_tids
 };
@@ -772,7 +816,7 @@ static HRESULT WINAPI HTMLPluginsCollection_QueryInterface(IHTMLPluginsCollectio
         *ppv = &This->IHTMLPluginsCollection_iface;
     }else if(IsEqualGUID(&IID_IHTMLPluginsCollection, riid)) {
         *ppv = &This->IHTMLPluginsCollection_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         *ppv = NULL;
@@ -801,12 +845,8 @@ static ULONG WINAPI HTMLPluginsCollection_Release(IHTMLPluginsCollection *iface)
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
-        if(This->navigator)
-            This->navigator->plugins = NULL;
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -874,13 +914,38 @@ static const IHTMLPluginsCollectionVtbl HTMLPluginsCollectionVtbl = {
     HTMLPluginsCollection_refresh
 };
 
+static inline HTMLPluginsCollection *HTMLPluginsCollection_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLPluginsCollection, dispex);
+}
+
+static void HTMLPluginsCollection_unlink(DispatchEx *dispex)
+{
+    HTMLPluginsCollection *This = HTMLPluginsCollection_from_DispatchEx(dispex);
+    if(This->navigator) {
+        This->navigator->plugins = NULL;
+        This->navigator = NULL;
+    }
+}
+
+static void HTMLPluginsCollection_destructor(DispatchEx *dispex)
+{
+    HTMLPluginsCollection *This = HTMLPluginsCollection_from_DispatchEx(dispex);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t HTMLPluginsCollection_dispex_vtbl = {
+    .destructor       = HTMLPluginsCollection_destructor,
+    .unlink           = HTMLPluginsCollection_unlink
+};
+
 static const tid_t HTMLPluginsCollection_iface_tids[] = {
     IHTMLPluginsCollection_tid,
     0
 };
 static dispex_static_data_t HTMLPluginsCollection_dispex = {
-    L"PluginArray",
-    NULL,
+    "PluginArray",
+    &HTMLPluginsCollection_dispex_vtbl,
     DispCPlugins_tid,
     HTMLPluginsCollection_iface_tids
 };
@@ -928,7 +993,7 @@ static HRESULT WINAPI HTMLMimeTypesCollection_QueryInterface(IHTMLMimeTypesColle
         *ppv = &This->IHTMLMimeTypesCollection_iface;
     }else if(IsEqualGUID(&IID_IHTMLMimeTypesCollection, riid)) {
         *ppv = &This->IHTMLMimeTypesCollection_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
@@ -957,12 +1022,8 @@ static ULONG WINAPI HTMLMimeTypesCollection_Release(IHTMLMimeTypesCollection *if
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
-        if(This->navigator)
-            This->navigator->mime_types = NULL;
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -1019,13 +1080,38 @@ static const IHTMLMimeTypesCollectionVtbl HTMLMimeTypesCollectionVtbl = {
     HTMLMimeTypesCollection_get_length
 };
 
+static inline HTMLMimeTypesCollection *HTMLMimeTypesCollection_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLMimeTypesCollection, dispex);
+}
+
+static void HTMLMimeTypesCollection_unlink(DispatchEx *dispex)
+{
+    HTMLMimeTypesCollection *This = HTMLMimeTypesCollection_from_DispatchEx(dispex);
+    if(This->navigator) {
+        This->navigator->mime_types = NULL;
+        This->navigator = NULL;
+    }
+}
+
+static void HTMLMimeTypesCollection_destructor(DispatchEx *dispex)
+{
+    HTMLMimeTypesCollection *This = HTMLMimeTypesCollection_from_DispatchEx(dispex);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t HTMLMimeTypesCollection_dispex_vtbl = {
+    .destructor       = HTMLMimeTypesCollection_destructor,
+    .unlink           = HTMLMimeTypesCollection_unlink
+};
+
 static const tid_t HTMLMimeTypesCollection_iface_tids[] = {
     IHTMLMimeTypesCollection_tid,
     0
 };
 static dispex_static_data_t HTMLMimeTypesCollection_dispex = {
-    L"MimeTypeArray",
-    NULL,
+    "MimeTypeArray",
+    &HTMLMimeTypesCollection_dispex_vtbl,
     IHTMLMimeTypesCollection_tid,
     HTMLMimeTypesCollection_iface_tids
 };
@@ -1064,7 +1150,7 @@ static HRESULT WINAPI OmNavigator_QueryInterface(IOmNavigator *iface, REFIID rii
         *ppv = &This->IOmNavigator_iface;
     }else if(IsEqualGUID(&IID_IOmNavigator, riid)) {
         *ppv = &This->IOmNavigator_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
@@ -1093,14 +1179,8 @@ static ULONG WINAPI OmNavigator_Release(IOmNavigator *iface)
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
-        if(This->plugins)
-            This->plugins->navigator = NULL;
-        if(This->mime_types)
-            This->mime_types->navigator = NULL;
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -1447,13 +1527,42 @@ static const IOmNavigatorVtbl OmNavigatorVtbl = {
     OmNavigator_get_userProfile
 };
 
+static inline OmNavigator *OmNavigator_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, OmNavigator, dispex);
+}
+
+static void OmNavigator_unlink(DispatchEx *dispex)
+{
+    OmNavigator *This = OmNavigator_from_DispatchEx(dispex);
+    if(This->plugins) {
+        This->plugins->navigator = NULL;
+        This->plugins = NULL;
+    }
+    if(This->mime_types) {
+        This->mime_types->navigator = NULL;
+        This->mime_types = NULL;
+    }
+}
+
+static void OmNavigator_destructor(DispatchEx *dispex)
+{
+    OmNavigator *This = OmNavigator_from_DispatchEx(dispex);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t OmNavigator_dispex_vtbl = {
+    .destructor       = OmNavigator_destructor,
+    .unlink           = OmNavigator_unlink
+};
+
 static const tid_t OmNavigator_iface_tids[] = {
     IOmNavigator_tid,
     0
 };
 static dispex_static_data_t OmNavigator_dispex = {
-    L"Navigator",
-    NULL,
+    "Navigator",
+    &OmNavigator_dispex_vtbl,
     DispHTMLNavigator_tid,
     OmNavigator_iface_tids
 };
@@ -1490,7 +1599,7 @@ static HRESULT WINAPI HTMLPerformanceTiming_QueryInterface(IHTMLPerformanceTimin
         *ppv = &This->IHTMLPerformanceTiming_iface;
     }else if(IsEqualGUID(&IID_IHTMLPerformanceTiming, riid)) {
         *ppv = &This->IHTMLPerformanceTiming_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
@@ -1852,7 +1961,7 @@ static const tid_t HTMLPerformanceTiming_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLPerformanceTiming_dispex = {
-    L"PerformanceTiming",
+    "PerformanceTiming",
     NULL,
     IHTMLPerformanceTiming_tid,
     HTMLPerformanceTiming_iface_tids
@@ -1897,7 +2006,7 @@ static HRESULT WINAPI HTMLPerformanceNavigation_QueryInterface(IHTMLPerformanceN
         *ppv = &This->IHTMLPerformanceNavigation_iface;
     }else if(IsEqualGUID(&IID_IHTMLPerformanceNavigation, riid)) {
         *ppv = &This->IHTMLPerformanceNavigation_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
@@ -1926,11 +2035,8 @@ static ULONG WINAPI HTMLPerformanceNavigation_Release(IHTMLPerformanceNavigation
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
-        IHTMLPerformanceTiming_Release(&This->timing->IHTMLPerformanceTiming_iface);
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -2020,13 +2126,39 @@ static const IHTMLPerformanceNavigationVtbl HTMLPerformanceNavigationVtbl = {
     HTMLPerformanceNavigation_toJSON
 };
 
+static inline HTMLPerformanceNavigation *HTMLPerformanceNavigation_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLPerformanceNavigation, dispex);
+}
+
+static void HTMLPerformanceNavigation_unlink(DispatchEx *dispex)
+{
+    HTMLPerformanceNavigation *This = HTMLPerformanceNavigation_from_DispatchEx(dispex);
+    if(This->timing) {
+        HTMLPerformanceTiming *timing = This->timing;
+        This->timing = NULL;
+        IHTMLPerformanceTiming_Release(&timing->IHTMLPerformanceTiming_iface);
+    }
+}
+
+static void HTMLPerformanceNavigation_destructor(DispatchEx *dispex)
+{
+    HTMLPerformanceNavigation *This = HTMLPerformanceNavigation_from_DispatchEx(dispex);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t HTMLPerformanceNavigation_dispex_vtbl = {
+    .destructor       = HTMLPerformanceNavigation_destructor,
+    .unlink           = HTMLPerformanceNavigation_unlink
+};
+
 static const tid_t HTMLPerformanceNavigation_iface_tids[] = {
     IHTMLPerformanceNavigation_tid,
     0
 };
 static dispex_static_data_t HTMLPerformanceNavigation_dispex = {
-    L"PerformanceNavigation",
-    NULL,
+    "PerformanceNavigation",
+    &HTMLPerformanceNavigation_dispex_vtbl,
     IHTMLPerformanceNavigation_tid,
     HTMLPerformanceNavigation_iface_tids
 };
@@ -2056,7 +2188,7 @@ static HRESULT WINAPI HTMLPerformance_QueryInterface(IHTMLPerformance *iface, RE
         *ppv = &This->IHTMLPerformance_iface;
     }else if(IsEqualGUID(&IID_IHTMLPerformance, riid)) {
         *ppv = &This->IHTMLPerformance_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
@@ -2085,13 +2217,8 @@ static ULONG WINAPI HTMLPerformance_Release(IHTMLPerformance *iface)
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
-        IHTMLPerformanceTiming_Release(&This->timing->IHTMLPerformanceTiming_iface);
-        if(This->navigation)
-            IHTMLPerformanceNavigation_Release(This->navigation);
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -2200,13 +2327,40 @@ static const IHTMLPerformanceVtbl HTMLPerformanceVtbl = {
     HTMLPerformance_toJSON
 };
 
+static inline HTMLPerformance *HTMLPerformance_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLPerformance, dispex);
+}
+
+static void HTMLPerformance_unlink(DispatchEx *dispex)
+{
+    HTMLPerformance *This = HTMLPerformance_from_DispatchEx(dispex);
+    unlink_ref(&This->navigation);
+    if(This->timing) {
+        HTMLPerformanceTiming *timing = This->timing;
+        This->timing = NULL;
+        IHTMLPerformanceTiming_Release(&timing->IHTMLPerformanceTiming_iface);
+    }
+}
+
+static void HTMLPerformance_destructor(DispatchEx *dispex)
+{
+    HTMLPerformance *This = HTMLPerformance_from_DispatchEx(dispex);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t HTMLPerformance_dispex_vtbl = {
+    .destructor       = HTMLPerformance_destructor,
+    .unlink           = HTMLPerformance_unlink
+};
+
 static const tid_t HTMLPerformance_iface_tids[] = {
     IHTMLPerformance_tid,
     0
 };
 static dispex_static_data_t HTMLPerformance_dispex = {
-    L"Performance",
-    NULL,
+    "Performance",
+    &HTMLPerformance_dispex_vtbl,
     IHTMLPerformance_tid,
     HTMLPerformance_iface_tids
 };
@@ -2258,7 +2412,7 @@ static HRESULT WINAPI HTMLNamespaceCollection_QueryInterface(IHTMLNamespaceColle
         *ppv = &This->IHTMLNamespaceCollection_iface;
     }else if(IsEqualGUID(&IID_IHTMLNamespaceCollection, riid)) {
         *ppv = &This->IHTMLNamespaceCollection_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
@@ -2287,10 +2441,8 @@ static ULONG WINAPI HTMLNamespaceCollection_Release(IHTMLNamespaceCollection *if
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if(!ref) {
+    if(!ref)
         release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -2366,13 +2518,28 @@ static const IHTMLNamespaceCollectionVtbl HTMLNamespaceCollectionVtbl = {
     HTMLNamespaceCollection_add
 };
 
+static inline HTMLNamespaceCollection *HTMLNamespaceCollection_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLNamespaceCollection, dispex);
+}
+
+static void HTMLNamespaceCollection_destructor(DispatchEx *dispex)
+{
+    HTMLNamespaceCollection *This = HTMLNamespaceCollection_from_DispatchEx(dispex);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t HTMLNamespaceCollection_dispex_vtbl = {
+    .destructor       = HTMLNamespaceCollection_destructor,
+};
+
 static const tid_t HTMLNamespaceCollection_iface_tids[] = {
     IHTMLNamespaceCollection_tid,
     0
 };
 static dispex_static_data_t HTMLNamespaceCollection_dispex = {
-    L"MSNamespaceInfoCollection",
-    NULL,
+    "MSNamespaceInfoCollection",
+    &HTMLNamespaceCollection_dispex_vtbl,
     DispHTMLNamespaceCollection_tid,
     HTMLNamespaceCollection_iface_tids
 };
@@ -2413,7 +2580,7 @@ static HRESULT WINAPI console_QueryInterface(IWineMSHTMLConsole *iface, REFIID r
         *ppv = &console->IWineMSHTMLConsole_iface;
     }else if(IsEqualGUID(&IID_IWineMSHTMLConsole, riid)) {
         *ppv = &console->IWineMSHTMLConsole_iface;
-    }else if(dispex_query_interface(&console->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&console->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         WARN("(%p)->(%s %p)\n", console, debugstr_mshtml_guid(riid), ppv);
@@ -2442,10 +2609,8 @@ static ULONG WINAPI console_Release(IWineMSHTMLConsole *iface)
 
     TRACE("(%p) ref=%ld\n", console, ref);
 
-    if(!ref) {
+    if(!ref)
         release_dispex(&console->dispex);
-        free(console);
-    }
 
     return ref;
 }
@@ -2622,13 +2787,28 @@ static const IWineMSHTMLConsoleVtbl WineMSHTMLConsoleVtbl = {
     console_warn,
 };
 
+static inline struct console *console_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, struct console, dispex);
+}
+
+static void console_destructor(DispatchEx *dispex)
+{
+    struct console *console = console_from_DispatchEx(dispex);
+    free(console);
+}
+
+static const dispex_static_data_vtbl_t console_dispex_vtbl = {
+    .destructor       = console_destructor,
+};
+
 static const tid_t console_iface_tids[] = {
     IWineMSHTMLConsole_tid,
     0
 };
 static dispex_static_data_t console_dispex = {
-    L"Console",
-    NULL,
+    "Console",
+    &console_dispex_vtbl,
     IWineMSHTMLConsole_tid,
     console_iface_tids
 };
@@ -2685,7 +2865,7 @@ static HRESULT WINAPI media_query_list_QueryInterface(IWineMSHTMLMediaQueryList 
 
     if(IsEqualGUID(&IID_IUnknown, riid) || IsEqualGUID(&IID_IWineMSHTMLMediaQueryList, riid)) {
         *ppv = &media_query_list->IWineMSHTMLMediaQueryList_iface;
-    }else if(dispex_query_interface(&media_query_list->dispex, riid, ppv)) {
+    }else if(dispex_query_interface_no_cc(&media_query_list->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         *ppv = NULL;
@@ -2710,21 +2890,11 @@ static ULONG WINAPI media_query_list_Release(IWineMSHTMLMediaQueryList *iface)
 {
     struct media_query_list *media_query_list = impl_from_IWineMSHTMLMediaQueryList(iface);
     LONG ref = InterlockedDecrement(&media_query_list->ref);
-    struct media_query_list_listener *listener, *listener2;
 
     TRACE("(%p) ref=%ld\n", media_query_list, ref);
 
-    if(!ref) {
-        media_query_list->callback->media_query_list = NULL;
-        LIST_FOR_EACH_ENTRY_SAFE(listener, listener2, &media_query_list->listeners, struct media_query_list_listener, entry) {
-            IDispatch_Release(listener->function);
-            free(listener);
-        }
-        nsIDOMMediaQueryListListener_Release(&media_query_list->callback->nsIDOMMediaQueryListListener_iface);
-        nsIDOMMediaQueryList_Release(media_query_list->nsquerylist);
+    if(!ref)
         release_dispex(&media_query_list->dispex);
-        free(media_query_list);
-    }
 
     return ref;
 }
@@ -2945,13 +3115,44 @@ static const nsIDOMMediaQueryListListenerVtbl media_query_list_callback_vtbl = {
     media_query_list_callback_HandleChange
 };
 
+static inline struct media_query_list *media_query_list_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, struct media_query_list, dispex);
+}
+
+static void media_query_list_unlink(DispatchEx *dispex)
+{
+    struct media_query_list *media_query_list = media_query_list_from_DispatchEx(dispex);
+
+    media_query_list->callback->media_query_list = NULL;
+    while(!list_empty(&media_query_list->listeners)) {
+        struct media_query_list_listener *listener = LIST_ENTRY(list_head(&media_query_list->listeners), struct media_query_list_listener, entry);
+        list_remove(&listener->entry);
+        IDispatch_Release(listener->function);
+        free(listener);
+    }
+    unlink_ref(&media_query_list->nsquerylist);
+}
+
+static void media_query_list_destructor(DispatchEx *dispex)
+{
+    struct media_query_list *media_query_list = media_query_list_from_DispatchEx(dispex);
+    nsIDOMMediaQueryListListener_Release(&media_query_list->callback->nsIDOMMediaQueryListListener_iface);
+    free(media_query_list);
+}
+
+static const dispex_static_data_vtbl_t media_query_list_dispex_vtbl = {
+    .destructor       = media_query_list_destructor,
+    .unlink           = media_query_list_unlink
+};
+
 static const tid_t media_query_list_iface_tids[] = {
     IWineMSHTMLMediaQueryList_tid,
     0
 };
 static dispex_static_data_t media_query_list_dispex = {
-    L"MediaQueryList",
-    NULL,
+    "MediaQueryList",
+    &media_query_list_dispex_vtbl,
     IWineMSHTMLMediaQueryList_tid,
     media_query_list_iface_tids
 };

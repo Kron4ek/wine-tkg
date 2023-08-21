@@ -152,6 +152,51 @@ static bool fold_cast(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
     return true;
 }
 
+static bool fold_log2(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, const struct hlsl_type *dst_type,
+        const struct hlsl_ir_constant *src, const struct vkd3d_shader_location *loc)
+{
+    enum hlsl_base_type type = dst_type->base_type;
+    unsigned int k;
+
+    assert(type == src->node.data_type->base_type);
+
+    for (k = 0; k < dst_type->dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_FLOAT:
+            case HLSL_TYPE_HALF:
+                if (ctx->profile->major_version >= 4 && src->value.u[k].f < 0.0f)
+                {
+                    hlsl_warning(ctx, loc, VKD3D_SHADER_WARNING_HLSL_NON_FINITE_RESULT,
+                            "Indefinite logarithm result.");
+                }
+                dst->u[k].f = log2f(src->value.u[k].f);
+                if (ctx->profile->major_version < 4 && !isfinite(dst->u[k].f))
+                {
+                    hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_NON_FINITE_RESULT,
+                            "Infinities and NaNs are not allowed by the shader model.");
+                }
+                break;
+
+            case HLSL_TYPE_DOUBLE:
+                if (src->value.u[k].d < 0.0)
+                {
+                    hlsl_warning(ctx, loc, VKD3D_SHADER_WARNING_HLSL_NON_FINITE_RESULT,
+                            "Indefinite logarithm result.");
+                }
+                dst->u[k].d = log2(src->value.u[k].d);
+                break;
+
+            default:
+                FIXME("Fold 'log2' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+    }
+
+    return true;
+}
+
 static bool fold_neg(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
         const struct hlsl_type *dst_type, const struct hlsl_ir_constant *src)
 {
@@ -194,7 +239,7 @@ static bool fold_rcp(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, cons
 
     assert(type == src->node.data_type->base_type);
 
-    for (k = 0; k < 4; ++k)
+    for (k = 0; k < dst_type->dimx; ++k)
     {
         switch (type)
         {
@@ -224,6 +269,51 @@ static bool fold_rcp(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, cons
 
             default:
                 FIXME("Fold 'rcp' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+    }
+
+    return true;
+}
+
+static bool fold_sqrt(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, const struct hlsl_type *dst_type,
+        const struct hlsl_ir_constant *src, const struct vkd3d_shader_location *loc)
+{
+    enum hlsl_base_type type = dst_type->base_type;
+    unsigned int k;
+
+    assert(type == src->node.data_type->base_type);
+
+    for (k = 0; k < dst_type->dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_FLOAT:
+            case HLSL_TYPE_HALF:
+                if (ctx->profile->major_version >= 4 && src->value.u[k].f < 0.0f)
+                {
+                    hlsl_warning(ctx, loc, VKD3D_SHADER_WARNING_HLSL_IMAGINARY_NUMERIC_RESULT,
+                            "Imaginary square root result.");
+                }
+                dst->u[k].f = sqrtf(src->value.u[k].f);
+                if (ctx->profile->major_version < 4 && !isfinite(dst->u[k].f))
+                {
+                    hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_NON_FINITE_RESULT,
+                            "Infinities and NaNs are not allowed by the shader model.");
+                }
+                break;
+
+            case HLSL_TYPE_DOUBLE:
+                if (src->value.u[k].d < 0.0)
+                {
+                    hlsl_warning(ctx, loc, VKD3D_SHADER_WARNING_HLSL_IMAGINARY_NUMERIC_RESULT,
+                            "Imaginary square root result.");
+                }
+                dst->u[k].d = sqrt(src->value.u[k].d);
+                break;
+
+            default:
+                FIXME("Fold 'sqrt' for type %s.\n", debug_hlsl_type(ctx, dst_type));
                 return false;
         }
     }
@@ -345,6 +435,64 @@ static bool fold_bit_xor(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, 
                 return false;
         }
     }
+    return true;
+}
+
+static bool fold_dot(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, const struct hlsl_type *dst_type,
+        const struct hlsl_ir_constant *src1, const struct hlsl_ir_constant *src2)
+{
+    enum hlsl_base_type type = dst_type->base_type;
+    unsigned int k;
+
+    assert(type == src1->node.data_type->base_type);
+    assert(type == src2->node.data_type->base_type);
+    assert(src1->node.data_type->dimx == src2->node.data_type->dimx);
+
+    dst->u[0].f = 0.0f;
+    for (k = 0; k < src1->node.data_type->dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_FLOAT:
+            case HLSL_TYPE_HALF:
+                dst->u[0].f += src1->value.u[k].f * src2->value.u[k].f;
+                break;
+            default:
+                FIXME("Fold 'dot' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+    }
+
+    return true;
+}
+
+static bool fold_dp2add(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, const struct hlsl_type *dst_type,
+        const struct hlsl_ir_constant *src1, const struct hlsl_ir_constant *src2, const struct hlsl_ir_constant *src3)
+{
+    enum hlsl_base_type type = dst_type->base_type;
+    unsigned int k;
+
+    assert(type == src1->node.data_type->base_type);
+    assert(type == src2->node.data_type->base_type);
+    assert(type == src3->node.data_type->base_type);
+    assert(src1->node.data_type->dimx == src2->node.data_type->dimx);
+    assert(src3->node.data_type->dimx == 1);
+
+    dst->u[0].f = src3->value.u[0].f;
+    for (k = 0; k < src1->node.data_type->dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_FLOAT:
+            case HLSL_TYPE_HALF:
+                dst->u[0].f += src1->value.u[k].f * src2->value.u[k].f;
+                break;
+            default:
+                FIXME("Fold 'dp2add' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+    }
+
     return true;
 }
 
@@ -723,7 +871,7 @@ static bool fold_nequal(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, c
 
 bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
 {
-    struct hlsl_ir_constant *arg1, *arg2 = NULL;
+    struct hlsl_ir_constant *arg1, *arg2 = NULL, *arg3 = NULL;
     struct hlsl_constant_value res = {0};
     struct hlsl_ir_node *res_node;
     struct hlsl_ir_expr *expr;
@@ -751,6 +899,8 @@ bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
     arg1 = hlsl_ir_constant(expr->operands[0].node);
     if (expr->operands[1].node)
         arg2 = hlsl_ir_constant(expr->operands[1].node);
+    if (expr->operands[2].node)
+        arg3 = hlsl_ir_constant(expr->operands[2].node);
 
     switch (expr->op)
     {
@@ -762,12 +912,20 @@ bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
             success = fold_cast(ctx, &res, instr->data_type, arg1);
             break;
 
+        case HLSL_OP1_LOG2:
+            success = fold_log2(ctx, &res, instr->data_type, arg1, &instr->loc);
+            break;
+
         case HLSL_OP1_NEG:
             success = fold_neg(ctx, &res, instr->data_type, arg1);
             break;
 
         case HLSL_OP1_RCP:
             success = fold_rcp(ctx, &res, instr->data_type, arg1, &instr->loc);
+            break;
+
+        case HLSL_OP1_SQRT:
+            success = fold_sqrt(ctx, &res, instr->data_type, arg1, &instr->loc);
             break;
 
         case HLSL_OP2_ADD:
@@ -786,6 +944,10 @@ bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
 
         case HLSL_OP2_BIT_XOR:
             success = fold_bit_xor(ctx, &res, instr->data_type, arg1, arg2);
+            break;
+
+        case HLSL_OP2_DOT:
+            success = fold_dot(ctx, &res, instr->data_type, arg1, arg2);
             break;
 
         case HLSL_OP2_DIV:
@@ -822,6 +984,10 @@ bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
 
         case HLSL_OP2_NEQUAL:
             success = fold_nequal(ctx, &res, instr->data_type, arg1, arg2);
+            break;
+
+        case HLSL_OP3_DP2ADD:
+            success = fold_dp2add(ctx, &res, instr->data_type, arg1, arg2, arg3);
             break;
 
         default:

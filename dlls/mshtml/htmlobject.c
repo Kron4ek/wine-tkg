@@ -29,6 +29,7 @@
 #include "wine/debug.h"
 
 #include "mshtml_private.h"
+#include "htmlevent.h"
 #include "pluginhost.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
@@ -739,34 +740,23 @@ static void HTMLObjectElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTrav
 static void HTMLObjectElement_unlink(HTMLDOMNode *iface)
 {
     HTMLObjectElement *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nsobject) {
-        nsIDOMHTMLObjectElement *nsobject = This->nsobject;
-
-        This->nsobject = NULL;
-        nsIDOMHTMLObjectElement_Release(nsobject);
-    }
+    unlink_ref(&This->nsobject);
 }
 
 static const NodeImplVtbl HTMLObjectElementImplVtbl = {
-    &CLSID_HTMLObjectElement,
-    HTMLObjectElement_QI,
-    HTMLObjectElement_destructor,
-    HTMLElement_cpc,
-    HTMLElement_clone,
-    HTMLElement_handle_event,
-    HTMLElement_get_attr_col,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    HTMLObjectElement_get_readystate,
-    HTMLObjectElement_get_dispid,
-    HTMLObjectElement_dispex_get_name,
-    HTMLObjectElement_invoke,
-    NULL,
-    HTMLObjectElement_traverse,
-    HTMLObjectElement_unlink
+    .clsid                 = &CLSID_HTMLObjectElement,
+    .qi                    = HTMLObjectElement_QI,
+    .destructor            = HTMLObjectElement_destructor,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLElement_clone,
+    .handle_event          = HTMLElement_handle_event,
+    .get_attr_col          = HTMLElement_get_attr_col,
+    .get_readystate        = HTMLObjectElement_get_readystate,
+    .get_dispid            = HTMLObjectElement_get_dispid,
+    .get_name              = HTMLObjectElement_dispex_get_name,
+    .invoke                = HTMLObjectElement_invoke,
+    .traverse              = HTMLObjectElement_traverse,
+    .unlink                = HTMLObjectElement_unlink
 };
 
 static const tid_t HTMLObjectElement_iface_tids[] = {
@@ -776,8 +766,8 @@ static const tid_t HTMLObjectElement_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLObjectElement_dispex = {
-    L"HTMLObjectElement",
-    NULL,
+    "HTMLObjectElement",
+    &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLObjectElement_tid,
     HTMLObjectElement_iface_tids,
     HTMLElement_init_dispex_info
@@ -1024,13 +1014,13 @@ static void HTMLEmbedElement_destructor(HTMLDOMNode *iface)
 }
 
 static const NodeImplVtbl HTMLEmbedElementImplVtbl = {
-    &CLSID_HTMLEmbed,
-    HTMLEmbedElement_QI,
-    HTMLEmbedElement_destructor,
-    HTMLElement_cpc,
-    HTMLElement_clone,
-    HTMLElement_handle_event,
-    HTMLElement_get_attr_col
+    .clsid                 = &CLSID_HTMLEmbed,
+    .qi                    = HTMLEmbedElement_QI,
+    .destructor            = HTMLEmbedElement_destructor,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLElement_clone,
+    .handle_event          = HTMLElement_handle_event,
+    .get_attr_col          = HTMLElement_get_attr_col
 };
 
 static const tid_t HTMLEmbedElement_iface_tids[] = {
@@ -1039,8 +1029,8 @@ static const tid_t HTMLEmbedElement_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLEmbedElement_dispex = {
-    L"HTMLEmbedElement",
-    NULL,
+    "HTMLEmbedElement",
+    &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLEmbed_tid,
     HTMLEmbedElement_iface_tids,
     HTMLElement_init_dispex_info

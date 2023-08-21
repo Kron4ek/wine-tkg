@@ -182,7 +182,7 @@ struct wg_sample
     UINT32 flags;
     UINT32 max_size;
     UINT32 size;
-    BYTE *data;
+    UINT64 data; /* pointer to user memory */
 };
 
 struct wg_parser_buffer
@@ -212,7 +212,6 @@ struct wg_parser_create_params
 {
     wg_parser_t parser;
     wg_parser_type type;
-    UINT8 unlimited_buffering;
     UINT8 err_on;
     UINT8 warn_on;
 };
