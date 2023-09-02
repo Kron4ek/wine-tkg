@@ -192,7 +192,7 @@
 @ stdcall -syscall NtCreateThread(ptr long ptr long ptr ptr ptr long)
 @ stdcall -syscall NtCreateThreadEx(ptr long ptr long ptr ptr long long long long ptr)
 @ stdcall -syscall NtCreateTimer(ptr long ptr long)
-# @ stub NtCreateToken
+@ stdcall -syscall NtCreateToken(ptr long ptr long ptr ptr ptr ptr ptr ptr ptr ptr ptr)
 @ stdcall -syscall NtCreateTransaction(ptr long ptr ptr long long long long ptr ptr)
 @ stdcall -syscall NtCreateUserProcess(ptr ptr long long ptr ptr long long ptr ptr ptr)
 # @ stub NtCreateWaitablePort
@@ -901,6 +901,7 @@
 @ stdcall RtlOemStringToUnicodeSize(ptr)
 @ stdcall RtlOemStringToUnicodeString(ptr ptr long)
 @ stdcall RtlOemToUnicodeN(ptr long ptr ptr long)
+@ stdcall -arch=win64 RtlOpenCrossProcessEmulatorWorkConnection(long ptr ptr)
 @ stdcall RtlOpenCurrentUser(long ptr)
 @ stdcall RtlPcToFileHeader(ptr ptr)
 @ stdcall RtlPinAtomInAtomTable(ptr long)
@@ -1108,6 +1109,11 @@
 @ stdcall -arch=win64 RtlWow64GetThreadContext(long ptr)
 @ stdcall -arch=win64 RtlWow64GetThreadSelectorEntry(long ptr long ptr)
 @ stdcall RtlWow64IsWowGuestMachineSupported(long ptr)
+@ stdcall -arch=win64 RtlWow64PopAllCrossProcessWorkFromWorkList(ptr ptr)
+@ stdcall -arch=win64 RtlWow64PopCrossProcessWorkFromFreeList(ptr)
+@ stdcall -arch=win64 RtlWow64PushCrossProcessWorkOntoFreeList(ptr ptr)
+@ stdcall -arch=win64 RtlWow64PushCrossProcessWorkOntoWorkList(ptr ptr ptr)
+@ stdcall -arch=win64 RtlWow64RequestCrossProcessHeavyFlush(ptr)
 @ stdcall -arch=win64 RtlWow64SetThreadContext(long ptr)
 @ stub RtlWriteMemoryStream
 @ stdcall RtlWriteRegistryValue(long ptr wstr long ptr long)
@@ -1235,7 +1241,7 @@
 @ stdcall -private -syscall ZwCreateThread(ptr long ptr long ptr ptr ptr long) NtCreateThread
 @ stdcall -private -syscall ZwCreateThreadEx(ptr long ptr long ptr ptr long long long long ptr) NtCreateThreadEx
 @ stdcall -private -syscall ZwCreateTimer(ptr long ptr long) NtCreateTimer
-# @ stub ZwCreateToken
+@ stdcall -private -syscall ZwCreateToken(ptr long ptr long ptr ptr ptr ptr ptr ptr ptr ptr ptr) NtCreateToken
 @ stdcall -private -syscall ZwCreateUserProcess(ptr ptr long long ptr ptr long long ptr ptr ptr) NtCreateUserProcess
 # @ stub ZwCreateWaitablePort
 @ stdcall -private -syscall ZwDebugActiveProcess(long long) NtDebugActiveProcess

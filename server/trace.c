@@ -960,10 +960,11 @@ static void dump_varargs_startup_info( const char *prefix, data_size_t size )
 
     fprintf( stderr,
              "%s{debug_flags=%x,console_flags=%x,console=%04x,hstdin=%04x,hstdout=%04x,hstderr=%04x,"
-             "x=%u,y=%u,xsize=%u,ysize=%u,xchars=%u,ychars=%u,attribute=%02x,flags=%x,show=%u",
+             "x=%u,y=%u,xsize=%u,ysize=%u,xchars=%u,ychars=%u,attribute=%02x,flags=%x,show=%u,"
+             "process_group_id=%u",
              prefix, info.debug_flags, info.console_flags, info.console,
              info.hstdin, info.hstdout, info.hstderr, info.x, info.y, info.xsize, info.ysize,
-             info.xchars, info.ychars, info.attribute, info.flags, info.show );
+             info.xchars, info.ychars, info.attribute, info.flags, info.show, info.process_group_id );
     pos = dump_inline_unicode_string( ",curdir=L\"", pos, info.curdir_len, size );
     pos = dump_inline_unicode_string( "\",dllpath=L\"", pos, info.dllpath_len, size );
     pos = dump_inline_unicode_string( "\",imagepath=L\"", pos, info.imagepath_len, size );
@@ -3865,6 +3866,23 @@ static void dump_remove_clipboard_listener_request( const struct remove_clipboar
     fprintf( stderr, " window=%08x", req->window );
 }
 
+static void dump_create_token_request( const struct create_token_request *req )
+{
+    dump_luid( " token_id=", &req->token_id );
+    fprintf( stderr, ", access=%08x", req->access );
+    fprintf( stderr, ", primary=%d", req->primary );
+    fprintf( stderr, ", impersonation_level=%d", req->impersonation_level );
+    dump_abstime( ", expire=", &req->expire );
+    fprintf( stderr, ", group_count=%d", req->group_count );
+    fprintf( stderr, ", primary_group=%d", req->primary_group );
+    fprintf( stderr, ", priv_count=%d", req->priv_count );
+}
+
+static void dump_create_token_reply( const struct create_token_reply *req )
+{
+    fprintf( stderr, " token=%04x", req->token );
+}
+
 static void dump_open_token_request( const struct open_token_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
@@ -4927,6 +4945,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_set_clipboard_viewer_request,
     (dump_func)dump_add_clipboard_listener_request,
     (dump_func)dump_remove_clipboard_listener_request,
+    (dump_func)dump_create_token_request,
     (dump_func)dump_open_token_request,
     (dump_func)dump_set_global_windows_request,
     (dump_func)dump_adjust_token_privileges_request,
@@ -5224,6 +5243,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_set_clipboard_viewer_reply,
     NULL,
     NULL,
+    (dump_func)dump_create_token_reply,
     (dump_func)dump_open_token_reply,
     (dump_func)dump_set_global_windows_reply,
     (dump_func)dump_adjust_token_privileges_reply,
@@ -5521,6 +5541,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "set_clipboard_viewer",
     "add_clipboard_listener",
     "remove_clipboard_listener",
+    "create_token",
     "open_token",
     "set_global_windows",
     "adjust_token_privileges",

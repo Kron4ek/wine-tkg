@@ -330,10 +330,7 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
       }
 
       /* /L convers all names to lower case */
-      if (lower) {
-          WCHAR *p = fd[i].cFileName;
-          while ( (*p = tolower(*p)) ) ++p;
-      }
+      if (lower) wcslwr( fd[i].cFileName );
 
       /* /Q gets file ownership information */
       if (usernames) {
@@ -567,16 +564,14 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
 /*****************************************************************************
  * WCMD_dir_trailer
  *
- * Print out the trailer for the supplied drive letter
+ * Print out the trailer for the supplied path
  */
-static void WCMD_dir_trailer(WCHAR drive) {
-    ULARGE_INTEGER avail, total, freebytes;
-    DWORD status;
-    WCHAR driveName[] = L"c:\\";
+static void WCMD_dir_trailer(const WCHAR *path) {
+    ULARGE_INTEGER freebytes;
+    BOOL status;
 
-    driveName[0] = drive;
-    status = GetDiskFreeSpaceExW(driveName, &avail, &total, &freebytes);
-    WINE_TRACE("Writing trailer for '%s' gave %ld(%ld)\n", wine_dbgstr_w(driveName),
+    status = GetDiskFreeSpaceExW(path, NULL, NULL, &freebytes);
+    WINE_TRACE("Writing trailer for '%s' gave %d(%ld)\n", wine_dbgstr_w(path),
                status, GetLastError());
 
     if (errorlevel==0 && !bare) {
@@ -619,8 +614,7 @@ void WCMD_directory (WCHAR *args)
 
   /* Prefill quals with (uppercased) DIRCMD env var */
   if (GetEnvironmentVariableW(L"DIRCMD", string, ARRAY_SIZE(string))) {
-    p = string;
-    while ( (*p = toupper(*p)) ) ++p;
+    wcsupr( string );
     lstrcatW(string,quals);
     lstrcpyW(quals, string);
   }
@@ -888,15 +882,15 @@ void WCMD_directory (WCHAR *args)
 
     /* Output disk free (trailer) and volume information (header) if the drive
        letter changes */
-    if (lastDrive != toupper(thisEntry->dirName[0])) {
+    if (lastDrive != towupper(thisEntry->dirName[0])) {
 
       /* Trailer Information */
       if (lastDrive != '?') {
         trailerReqd = FALSE;
-        WCMD_dir_trailer(prevEntry->dirName[0]);
+        WCMD_dir_trailer(prevEntry->dirName);
       }
 
-      lastDrive = toupper(thisEntry->dirName[0]);
+      lastDrive = towupper(thisEntry->dirName[0]);
 
       if (!bare) {
          WCHAR drive[3];
@@ -923,7 +917,7 @@ void WCMD_directory (WCHAR *args)
 
   /* Trailer Information */
   if (trailerReqd) {
-    WCMD_dir_trailer(prevEntry->dirName[0]);
+    WCMD_dir_trailer(prevEntry->dirName);
   }
 
 exit:

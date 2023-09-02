@@ -282,6 +282,8 @@ SOURCES = \
 	dwrite_1.idl \
 	dwrite_2.idl \
 	dwrite_3.idl \
+	dxcore.h \
+	dxcore_interface.h \
 	dxdiag.h \
 	dxerr8.h \
 	dxerr9.h \
@@ -813,6 +815,7 @@ SOURCES = \
 	windef.h \
 	windns.h \
 	windot11.h \
+	windows.applicationmodel.core.idl \
 	windows.applicationmodel.idl \
 	windows.devices.bluetooth.idl \
 	windows.devices.enumeration.idl \
@@ -837,9 +840,13 @@ SOURCES = \
 	windows.graphics.effects.idl \
 	windows.graphics.holographic.idl \
 	windows.h \
+	windows.management.deployment.idl \
+	windows.media.capture.idl \
 	windows.media.closedcaptioning.idl \
 	windows.media.devices.idl \
+	windows.media.effects.idl \
 	windows.media.idl \
+	windows.media.render.idl \
 	windows.media.speechrecognition.idl \
 	windows.media.speechsynthesis.idl \
 	windows.networking.connectivity.idl \
@@ -948,6 +955,7 @@ SOURCES = \
 	winuser.rh \
 	winver.h \
 	wlanapi.h \
+	wldp.h \
 	wmcodecdsp.idl \
 	wmdrmsdk.idl \
 	wmistr.h \

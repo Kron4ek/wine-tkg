@@ -394,16 +394,14 @@ void x11drv_xinput_enable( Display *display, Window window, long event_mask )
     XISetMask( mask_bits, XI_DeviceChanged );
     XISetMask( mask_bits, XI_RawMotion );
 
-    if (NtUserGetWindowThread( NtUserGetDesktopWindow(), NULL ) == GetCurrentThreadId())
+    if (data->xi2_rawinput_only)
     {
         XISetMask( mask_bits, XI_RawButtonPress );
         XISetMask( mask_bits, XI_RawButtonRelease );
-        data->xi2_rawinput_only = TRUE;
     }
     else
     {
         XISetMask( mask_bits, XI_ButtonPress );
-        data->xi2_rawinput_only = FALSE;
     }
 
     pXISelectEvents( display, DefaultRootWindow( display ), &mask, 1 );
@@ -431,6 +429,7 @@ void x11drv_xinput_disable( Display *display, Window window, long event_mask )
     TRACE( "state:%d window:%lx event_mask:%lx\n", xi2_state, window, event_mask );
 
     if (xi2_state == xi_unavailable) return;
+    if (data->xi2_rawinput_only) return;
 
     if (window != DefaultRootWindow( display ))
     {
@@ -557,6 +556,7 @@ void ungrab_clipping_window(void)
     if (clipping_cursor) XUngrabPointer( data->display, CurrentTime );
     clipping_cursor = FALSE;
     data->clipping_cursor = FALSE;
+    x11drv_xinput_disable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
 }
 
 /***********************************************************************

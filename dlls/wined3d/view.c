@@ -19,6 +19,7 @@
 
 #include "wined3d_private.h"
 #include "wined3d_shaders.h"
+#include "wined3d_gl.h"
 #include "wined3d_vk.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
@@ -1265,36 +1266,6 @@ void wined3d_shader_resource_view_gl_bind(struct wined3d_shader_resource_view_gl
     texture_gl = wined3d_texture_gl(wined3d_texture_from_resource(view_gl->v.resource));
     wined3d_texture_gl_bind(texture_gl, context_gl, FALSE);
     wined3d_sampler_gl_bind(sampler_gl, unit, texture_gl, context_gl);
-}
-
-GLuint64 wined3d_shader_resource_view_handle(struct wined3d_shader_resource_view *view,
-        struct wined3d_sampler *sampler, struct wined3d_context_gl *context_gl)
-{
-    struct wined3d_shader_resource_view_gl *view_gl = wined3d_shader_resource_view_gl(view);
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    GLuint name;
-    GLuint64 handle;
-
-    if (view_gl->gl_view.name)
-    {
-        name = view_gl->gl_view.name;
-    }
-    else if (view->resource->type == WINED3D_RTYPE_BUFFER)
-    {
-        FIXME("Buffer shader resources not supported.\n");
-        return 0;
-    }
-    else
-    {
-        struct wined3d_texture_gl *texture_gl = wined3d_texture_gl(wined3d_texture_from_resource(view->resource));
-        name = wined3d_texture_get_name(texture_gl, context_gl, FALSE);
-    }
-
-    handle = GL_EXTCALL(glGetTextureSamplerHandleARB(name, wined3d_sampler_gl(sampler)->name));
-    checkGLcall("glGetTextureSamplerHandleARB");
-    GL_EXTCALL(glMakeTextureHandleResidentARB(handle));
-    checkGLcall("glMakeTextureHandleResidentARB");
-    return handle;
 }
 
 /* Context activation is done by the caller. */

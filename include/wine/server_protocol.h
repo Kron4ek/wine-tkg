@@ -208,6 +208,7 @@ typedef struct
     unsigned int attribute;
     unsigned int flags;
     unsigned int show;
+    process_id_t process_group_id;
     data_size_t  curdir_len;
     data_size_t  dllpath_len;
     data_size_t  imagepath_len;
@@ -4522,6 +4523,33 @@ struct remove_clipboard_listener_reply
 
 
 
+struct create_token_request
+{
+    struct request_header __header;
+    struct luid    token_id;
+    unsigned int   access;
+    int            primary;
+    int            impersonation_level;
+    abstime_t      expire;
+    int            group_count;
+    int            primary_group;
+    int            priv_count;
+
+
+
+
+
+    char __pad_52[4];
+};
+struct create_token_reply
+{
+    struct reply_header __header;
+    obj_handle_t   token;
+    char __pad_12[4];
+};
+
+
+
 struct open_token_request
 {
     struct request_header __header;
@@ -6019,6 +6047,7 @@ enum request
     REQ_set_clipboard_viewer,
     REQ_add_clipboard_listener,
     REQ_remove_clipboard_listener,
+    REQ_create_token,
     REQ_open_token,
     REQ_set_global_windows,
     REQ_adjust_token_privileges,
@@ -6320,6 +6349,7 @@ union generic_request
     struct set_clipboard_viewer_request set_clipboard_viewer_request;
     struct add_clipboard_listener_request add_clipboard_listener_request;
     struct remove_clipboard_listener_request remove_clipboard_listener_request;
+    struct create_token_request create_token_request;
     struct open_token_request open_token_request;
     struct set_global_windows_request set_global_windows_request;
     struct adjust_token_privileges_request adjust_token_privileges_request;
@@ -6619,6 +6649,7 @@ union generic_reply
     struct set_clipboard_viewer_reply set_clipboard_viewer_reply;
     struct add_clipboard_listener_reply add_clipboard_listener_reply;
     struct remove_clipboard_listener_reply remove_clipboard_listener_reply;
+    struct create_token_reply create_token_reply;
     struct open_token_reply open_token_reply;
     struct set_global_windows_reply set_global_windows_reply;
     struct adjust_token_privileges_reply adjust_token_privileges_reply;
@@ -6703,7 +6734,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 782
+#define SERVER_PROTOCOL_VERSION 784
 
 /* ### protocol_version end ### */
 

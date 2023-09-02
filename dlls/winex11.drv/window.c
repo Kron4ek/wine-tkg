@@ -1948,7 +1948,6 @@ static BOOL create_desktop_win_data( Window win, HWND hwnd )
 void X11DRV_SetDesktopWindow( HWND hwnd )
 {
     unsigned int width, height;
-    Display *display;
 
     /* retrieve the real size of the desktop */
     SERVER_START_REQ( get_window_rectangles )
@@ -1987,19 +1986,14 @@ void X11DRV_SetDesktopWindow( HWND hwnd )
         {
             ERR( "Failed to create virtual desktop window data\n" );
             root_window = DefaultRootWindow( gdi_display );
-            return;
         }
-
-        display = x11drv_thread_data()->display;
-        if (is_desktop_fullscreen())
+        else if (is_desktop_fullscreen())
         {
+            Display *display = x11drv_thread_data()->display;
             TRACE("setting desktop to fullscreen\n");
             XChangeProperty( display, root_window, x11drv_atom(_NET_WM_STATE), XA_ATOM, 32, PropModeReplace,
                              (unsigned char*)&x11drv_atom(_NET_WM_STATE_FULLSCREEN), 1 );
         }
-
-        FIXME("Enabling xinput in desktop thread\n");
-        x11drv_xinput_enable( display, DefaultRootWindow( display ), PointerMotionMask );
     }
     else
     {
@@ -2060,6 +2054,10 @@ BOOL X11DRV_CreateWindow( HWND hwnd )
     {
         struct x11drv_thread_data *data = x11drv_init_thread_data();
         XSetWindowAttributes attr;
+
+        /* listen to raw xinput event in the desktop window thread */
+        data->xi2_rawinput_only = TRUE;
+        x11drv_xinput_enable( data->display, DefaultRootWindow( data->display ), PointerMotionMask );
 
         /* create the cursor clipping window */
         attr.override_redirect = TRUE;

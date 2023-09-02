@@ -224,6 +224,7 @@ typedef struct
     unsigned int attribute;
     unsigned int flags;
     unsigned int show;
+    process_id_t process_group_id;
     data_size_t  curdir_len;
     data_size_t  dllpath_len;
     data_size_t  imagepath_len;
@@ -3212,6 +3213,26 @@ enum caret_state
 /* Remove a clipboard listener window */
 @REQ(remove_clipboard_listener)
     user_handle_t  window;         /* clipboard listener window */
+@END
+
+
+/* Create a security token */
+@REQ(create_token)
+    struct luid    token_id;
+    unsigned int   access;         /* access rights to the new token */
+    int            primary;        /* is the new token to be a primary one? */
+    int            impersonation_level; /* impersonation level of the new token */
+    abstime_t      expire;         /* expiration time */
+    int            group_count;
+    int            primary_group;
+    int            priv_count;
+    /* VARARG(objattr,object_attributes);  */
+    /* VARARG(user,sid); */
+    /* VARARG(groups,sid); */
+    /* VARARG(privs,luid_attr); */
+    /* VARARG(dacl,acl); */
+@REPLY
+    obj_handle_t   token;    /* handle to the token */
 @END
 
 

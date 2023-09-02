@@ -493,11 +493,11 @@ static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
                 || !strcmp(attr->name, "fastopt")
                 || !strcmp(attr->name, "allow_uav_condition"))
         {
-            hlsl_fixme(ctx, loc, "Unhandled attribute %s.", attr->name);
+            hlsl_fixme(ctx, loc, "Unhandled attribute '%s'.", attr->name);
         }
         else
         {
-            hlsl_warning(ctx, loc, VKD3D_SHADER_ERROR_HLSL_NOT_IMPLEMENTED, "Unrecognized attribute %s.", attr->name);
+            hlsl_warning(ctx, loc, VKD3D_SHADER_WARNING_HLSL_UNKNOWN_ATTRIBUTE, "Unrecognized attribute '%s'.", attr->name);
         }
     }
 
@@ -2330,6 +2330,92 @@ static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
     return args.decl;
 }
 
+static struct hlsl_ir_node *hlsl_new_void_expr(struct hlsl_ctx *ctx, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = {0};
+
+    return hlsl_new_expr(ctx, HLSL_OP0_VOID, operands, ctx->builtin_types.Void, loc);
+}
+
+static bool add_user_call(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *func,
+        const struct parse_initializer *args, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_node *call;
+    unsigned int i;
+
+    assert(args->args_count == func->parameters.count);
+
+    for (i = 0; i < func->parameters.count; ++i)
+    {
+        struct hlsl_ir_var *param = func->parameters.vars[i];
+        struct hlsl_ir_node *arg = args->args[i];
+
+        if (!hlsl_types_are_equal(arg->data_type, param->data_type))
+        {
+            struct hlsl_ir_node *cast;
+
+            if (!(cast = add_cast(ctx, args->instrs, arg, param->data_type, &arg->loc)))
+                return false;
+            args->args[i] = cast;
+            arg = cast;
+        }
+
+        if (param->storage_modifiers & HLSL_STORAGE_IN)
+        {
+            struct hlsl_ir_node *store;
+
+            if (!(store = hlsl_new_simple_store(ctx, param, arg)))
+                return false;
+            hlsl_block_add_instr(args->instrs, store);
+        }
+    }
+
+    if (!(call = hlsl_new_call(ctx, func, loc)))
+        return false;
+    hlsl_block_add_instr(args->instrs, call);
+
+    for (i = 0; i < func->parameters.count; ++i)
+    {
+        struct hlsl_ir_var *param = func->parameters.vars[i];
+        struct hlsl_ir_node *arg = args->args[i];
+
+        if (param->storage_modifiers & HLSL_STORAGE_OUT)
+        {
+            struct hlsl_ir_load *load;
+
+            if (arg->data_type->modifiers & HLSL_MODIFIER_CONST)
+                hlsl_error(ctx, &arg->loc, VKD3D_SHADER_ERROR_HLSL_MODIFIES_CONST,
+                        "Output argument to \"%s\" is const.", func->func->name);
+
+            if (!(load = hlsl_new_var_load(ctx, param, &arg->loc)))
+                return false;
+            hlsl_block_add_instr(args->instrs, &load->node);
+
+            if (!add_assignment(ctx, args->instrs, arg, ASSIGN_OP_ASSIGN, &load->node))
+                return false;
+        }
+    }
+
+    if (func->return_var)
+    {
+        struct hlsl_ir_load *load;
+
+        if (!(load = hlsl_new_var_load(ctx, func->return_var, loc)))
+            return false;
+        hlsl_block_add_instr(args->instrs, &load->node);
+    }
+    else
+    {
+        struct hlsl_ir_node *expr;
+
+        if (!(expr = hlsl_new_void_expr(ctx, loc)))
+            return false;
+        hlsl_block_add_instr(args->instrs, expr);
+    }
+
+    return true;
+}
+
 static struct hlsl_ir_node *intrinsic_float_convert_arg(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, struct hlsl_ir_node *arg, const struct vkd3d_shader_location *loc)
 {
@@ -2948,14 +3034,17 @@ static struct hlsl_ir_node * add_pow_expr(struct hlsl_ctx *ctx,
 static bool intrinsic_lit(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
-    struct hlsl_ir_node *n_l_neg, *n_h_neg, *specular_or, *specular_pow, *load;
-    struct hlsl_ir_node *n_l, *n_h, *m, *diffuse, *zero, *store, *init;
-    struct hlsl_constant_value init_value;
-    struct hlsl_ir_load *var_load;
-    struct hlsl_deref var_deref;
-    struct hlsl_type *ret_type;
-    struct hlsl_ir_var *var;
-    struct hlsl_block block;
+    struct hlsl_ir_function_decl *func;
+
+    static const char body[] =
+            "float4 lit(float n_l, float n_h, float m)\n"
+            "{\n"
+            "    float4 ret;\n"
+            "    ret.xw = 1.0;\n"
+            "    ret.y = max(n_l, 0);\n"
+            "    ret.z = (n_l < 0 || n_h < 0) ? 0 : pow(n_h, m);\n"
+            "    return ret;\n"
+            "}";
 
     if (params->args[0]->data_type->class != HLSL_CLASS_SCALAR
             || params->args[1]->data_type->class != HLSL_CLASS_SCALAR
@@ -2965,70 +3054,10 @@ static bool intrinsic_lit(struct hlsl_ctx *ctx,
         return false;
     }
 
-    if (!(n_l = intrinsic_float_convert_arg(ctx, params, params->args[0], loc)))
+    if (!(func = hlsl_compile_internal_function(ctx, "lit", body)))
         return false;
 
-    if (!(n_h = intrinsic_float_convert_arg(ctx, params, params->args[1], loc)))
-        return false;
-
-    if (!(m = intrinsic_float_convert_arg(ctx, params, params->args[2], loc)))
-        return false;
-
-    ret_type = hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, 4);
-
-    if (!(var = hlsl_new_synthetic_var(ctx, "lit", ret_type, loc)))
-        return false;
-    hlsl_init_simple_deref_from_var(&var_deref, var);
-
-    init_value.u[0].f = 1.0f;
-    init_value.u[1].f = 0.0f;
-    init_value.u[2].f = 0.0f;
-    init_value.u[3].f = 1.0f;
-    if (!(init = hlsl_new_constant(ctx, ret_type, &init_value, loc)))
-        return false;
-    hlsl_block_add_instr(params->instrs, init);
-
-    if (!(store = hlsl_new_simple_store(ctx, var, init)))
-        return false;
-    hlsl_block_add_instr(params->instrs, store);
-
-    if (!(zero = hlsl_new_float_constant(ctx, 0.0f, loc)))
-        return false;
-    hlsl_block_add_instr(params->instrs, zero);
-
-    /* Diffuse component. */
-    if (!(diffuse = add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_MAX, n_l, zero, loc)))
-        return false;
-
-    if (!hlsl_new_store_component(ctx, &block, &var_deref, 1, diffuse))
-        return false;
-    hlsl_block_add_block(params->instrs, &block);
-
-    /* Specular component. */
-    if (!(n_h_neg = add_binary_comparison_expr(ctx, params->instrs, HLSL_OP2_LESS, n_h, zero, loc)))
-        return false;
-
-    if (!(n_l_neg = add_binary_comparison_expr(ctx, params->instrs, HLSL_OP2_LESS, n_l, zero, loc)))
-        return false;
-
-    if (!(specular_or = add_binary_logical_expr(ctx, params->instrs, HLSL_OP2_LOGIC_OR, n_l_neg, n_h_neg, loc)))
-        return false;
-
-    if (!(specular_pow = add_pow_expr(ctx, params->instrs, n_h, m, loc)))
-        return false;
-
-    if (!(load = hlsl_add_conditional(ctx, params->instrs, specular_or, zero, specular_pow)))
-        return false;
-
-    if (!hlsl_new_store_component(ctx, &block, &var_deref, 2, load))
-        return false;
-    hlsl_block_add_block(params->instrs, &block);
-
-    if (!(var_load = hlsl_new_var_load(ctx, var, loc)))
-        return false;
-    hlsl_block_add_instr(params->instrs, &var_load->node);
-
-    return true;
+    return add_user_call(ctx, func, params, loc);
 }
 
 static bool intrinsic_log(struct hlsl_ctx *ctx,
@@ -3336,58 +3365,29 @@ static bool intrinsic_sin(struct hlsl_ctx *ctx,
 static bool intrinsic_smoothstep(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
-    struct hlsl_ir_node *min_arg, *max_arg, *x_arg, *p, *p_num, *p_denom, *res, *one, *minus_two, *three;
+    struct hlsl_ir_function_decl *func;
+    struct hlsl_type *type;
+    char *body;
 
-    if (!elementwise_intrinsic_float_convert_args(ctx, params, loc))
+    static const char template[] =
+            "%s smoothstep(%s low, %s high, %s x)\n"
+            "{\n"
+            "    %s p = saturate((x - low) / (high - low));\n"
+            "    return (p * p) * (3 - 2 * p);\n"
+            "}";
+
+    if (!(type = elementwise_intrinsic_get_common_type(ctx, params, loc)))
+        return false;
+    type = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_FLOAT, type->dimx, type->dimy);
+
+    if (!(body = hlsl_sprintf_alloc(ctx, template, type->name, type->name, type->name, type->name, type->name)))
+        return false;
+    func = hlsl_compile_internal_function(ctx, "smoothstep", body);
+    vkd3d_free(body);
+    if (!func)
         return false;
 
-    min_arg = params->args[0];
-    max_arg = params->args[1];
-    x_arg = params->args[2];
-
-    if (!(min_arg = add_unary_arithmetic_expr(ctx, params->instrs, HLSL_OP1_NEG, min_arg, loc)))
-        return false;
-
-    if (!(p_num = add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_ADD, x_arg, min_arg, loc)))
-        return false;
-
-    if (!(p_denom = add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_ADD, max_arg, min_arg, loc)))
-        return false;
-
-    if (!(one = hlsl_new_float_constant(ctx, 1.0, loc)))
-        return false;
-    hlsl_block_add_instr(params->instrs, one);
-
-    if (!(p_denom = add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_DIV, one, p_denom, loc)))
-        return false;
-
-    if (!(p = add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_MUL, p_num, p_denom, loc)))
-        return false;
-
-    if (!(p = add_unary_arithmetic_expr(ctx, params->instrs, HLSL_OP1_SAT, p, loc)))
-        return false;
-
-    if (!(minus_two = hlsl_new_float_constant(ctx, -2.0, loc)))
-        return false;
-    hlsl_block_add_instr(params->instrs, minus_two);
-
-    if (!(three = hlsl_new_float_constant(ctx, 3.0, loc)))
-        return false;
-    hlsl_block_add_instr(params->instrs, three);
-
-    if (!(res = add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_MUL, minus_two, p, loc)))
-        return false;
-
-    if (!(res = add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_ADD, three, res, loc)))
-        return false;
-
-    if (!(p = add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_MUL, p, p, loc)))
-        return false;
-
-    if (!(res = add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_MUL, p, res, loc)))
-        return false;
-
-    return true;
+    return add_user_call(ctx, func, params, loc);
 }
 
 static bool intrinsic_sqrt(struct hlsl_ctx *ctx,
@@ -3476,6 +3476,12 @@ static bool intrinsic_tex3D(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
     return intrinsic_tex(ctx, params, loc, "tex3D", HLSL_SAMPLER_DIM_3D);
+}
+
+static bool intrinsic_texCUBE(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return intrinsic_tex(ctx, params, loc, "texCUBE", HLSL_SAMPLER_DIM_CUBE);
 }
 
 static bool intrinsic_transpose(struct hlsl_ctx *ctx,
@@ -3648,6 +3654,7 @@ intrinsic_functions[] =
     {"step",                                2, true,  intrinsic_step},
     {"tex2D",                              -1, false, intrinsic_tex2D},
     {"tex3D",                              -1, false, intrinsic_tex3D},
+    {"texCUBE",                            -1, false, intrinsic_texCUBE},
     {"transpose",                           1, true,  intrinsic_transpose},
     {"trunc",                               1, true,  intrinsic_trunc},
 };
@@ -3659,13 +3666,6 @@ static int intrinsic_function_name_compare(const void *a, const void *b)
     return strcmp(a, func->name);
 }
 
-static struct hlsl_ir_node *hlsl_new_void_expr(struct hlsl_ctx *ctx, const struct vkd3d_shader_location *loc)
-{
-    struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = {0};
-
-    return hlsl_new_expr(ctx, HLSL_OP0_VOID, operands, ctx->builtin_types.Void, loc);
-}
-
 static struct hlsl_block *add_call(struct hlsl_ctx *ctx, const char *name,
         struct parse_initializer *args, const struct vkd3d_shader_location *loc)
 {
@@ -3674,78 +3674,8 @@ static struct hlsl_block *add_call(struct hlsl_ctx *ctx, const char *name,
 
     if ((decl = find_function_call(ctx, name, args, loc)))
     {
-        struct hlsl_ir_node *call;
-        unsigned int i;
-
-        assert(args->args_count == decl->parameters.count);
-
-        for (i = 0; i < decl->parameters.count; ++i)
-        {
-            struct hlsl_ir_var *param = decl->parameters.vars[i];
-            struct hlsl_ir_node *arg = args->args[i];
-
-            if (!hlsl_types_are_equal(arg->data_type, param->data_type))
-            {
-                struct hlsl_ir_node *cast;
-
-                if (!(cast = add_cast(ctx, args->instrs, arg, param->data_type, &arg->loc)))
-                    goto fail;
-                args->args[i] = cast;
-                arg = cast;
-            }
-
-            if (param->storage_modifiers & HLSL_STORAGE_IN)
-            {
-                struct hlsl_ir_node *store;
-
-                if (!(store = hlsl_new_simple_store(ctx, param, arg)))
-                    goto fail;
-                hlsl_block_add_instr(args->instrs, store);
-            }
-        }
-
-        if (!(call = hlsl_new_call(ctx, decl, loc)))
+        if (!add_user_call(ctx, decl, args, loc))
             goto fail;
-        hlsl_block_add_instr(args->instrs, call);
-
-        for (i = 0; i < decl->parameters.count; ++i)
-        {
-            struct hlsl_ir_var *param = decl->parameters.vars[i];
-            struct hlsl_ir_node *arg = args->args[i];
-
-            if (param->storage_modifiers & HLSL_STORAGE_OUT)
-            {
-                struct hlsl_ir_load *load;
-
-                if (arg->data_type->modifiers & HLSL_MODIFIER_CONST)
-                    hlsl_error(ctx, &arg->loc, VKD3D_SHADER_ERROR_HLSL_MODIFIES_CONST,
-                            "Output argument to \"%s\" is const.", decl->func->name);
-
-                if (!(load = hlsl_new_var_load(ctx, param, &arg->loc)))
-                    goto fail;
-                hlsl_block_add_instr(args->instrs, &load->node);
-
-                if (!add_assignment(ctx, args->instrs, arg, ASSIGN_OP_ASSIGN, &load->node))
-                    goto fail;
-            }
-        }
-
-        if (decl->return_var)
-        {
-            struct hlsl_ir_load *load;
-
-            if (!(load = hlsl_new_var_load(ctx, decl->return_var, loc)))
-                goto fail;
-            hlsl_block_add_instr(args->instrs, &load->node);
-        }
-        else
-        {
-            struct hlsl_ir_node *expr;
-
-            if (!(expr = hlsl_new_void_expr(ctx, loc)))
-                goto fail;
-            hlsl_block_add_instr(args->instrs, expr);
-        }
     }
     else if ((intrinsic = bsearch(name, intrinsic_functions, ARRAY_SIZE(intrinsic_functions),
             sizeof(*intrinsic_functions), intrinsic_function_name_compare)))
@@ -5129,6 +5059,9 @@ func_prototype_no_attrs:
             struct hlsl_ir_var *var;
             struct hlsl_type *type;
 
+            /* Functions are unconditionally inlined. */
+            modifiers &= ~HLSL_MODIFIER_INLINE;
+
             if (modifiers & ~HLSL_MODIFIERS_MAJORITY_MASK)
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
                         "Only majority modifiers are allowed on functions.");
@@ -5970,6 +5903,10 @@ var_modifiers:
         {
             $$ = add_modifiers(ctx, $2, HLSL_STORAGE_IN | HLSL_STORAGE_OUT, &@1);
         }
+    | KW_INLINE var_modifiers
+        {
+            $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_INLINE, &@1);
+        }
 
 
 complex_initializer:
@@ -6108,19 +6045,39 @@ jump_statement:
         }
 
 selection_statement:
-      KW_IF '(' expr ')' if_body
+      attribute_list_optional KW_IF '(' expr ')' if_body
         {
-            struct hlsl_ir_node *condition = node_from_block($3);
+            struct hlsl_ir_node *condition = node_from_block($4);
+            const struct parse_attribute_list *attributes = &$1;
             struct hlsl_ir_node *instr;
+            unsigned int i;
 
-            if (!(instr = hlsl_new_if(ctx, condition, $5.then_block, $5.else_block, &@1)))
+            if (attribute_list_has_duplicates(attributes))
+                hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Found duplicate attribute.");
+
+            for (i = 0; i < attributes->count; ++i)
             {
-                destroy_block($5.then_block);
-                destroy_block($5.else_block);
+                const struct hlsl_attribute *attr = attributes->attrs[i];
+
+                if (!strcmp(attr->name, "branch")
+                        || !strcmp(attr->name, "flatten"))
+                {
+                    hlsl_warning(ctx, &@1, VKD3D_SHADER_WARNING_HLSL_IGNORED_ATTRIBUTE, "Unhandled attribute '%s'.", attr->name);
+                }
+                else
+                {
+                    hlsl_warning(ctx, &@1, VKD3D_SHADER_WARNING_HLSL_UNKNOWN_ATTRIBUTE, "Unrecognized attribute '%s'.", attr->name);
+                }
+            }
+
+            if (!(instr = hlsl_new_if(ctx, condition, $6.then_block, $6.else_block, &@2)))
+            {
+                destroy_block($6.then_block);
+                destroy_block($6.else_block);
                 YYABORT;
             }
-            destroy_block($5.then_block);
-            destroy_block($5.else_block);
+            destroy_block($6.then_block);
+            destroy_block($6.else_block);
             if (condition->data_type->dimx > 1 || condition->data_type->dimy > 1)
             {
                 struct vkd3d_string_buffer *string;
@@ -6130,7 +6087,7 @@ selection_statement:
                             "if condition type %s is not scalar.", string->buffer);
                 hlsl_release_string_buffer(ctx, string);
             }
-            $$ = $3;
+            $$ = $4;
             hlsl_block_add_instr($$, instr);
         }
 

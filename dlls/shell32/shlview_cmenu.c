@@ -39,7 +39,6 @@
 #include "aclui.h"
 #include "aclapi.h"
 
-#include "wine/heap.h"
 #include "wine/debug.h"
 
 /* Small hack: We need to remove DECLSPEC_HIDDEN from the aclui export. */
@@ -256,7 +255,7 @@ static ULONG WINAPI ContextMenu_Release(IContextMenu3 *iface)
         SHFree(This->pidl);
         _ILFreeaPidl(This->apidl, This->cidl);
 
-        heap_free(This);
+        free(This);
     }
 
     return ref;
@@ -572,7 +571,7 @@ static BOOL get_program_description(WCHAR *path, WCHAR *buffer, DWORD size)
     versize = GetFileVersionInfoSizeW(path, NULL);
     if (!versize) return FALSE;
 
-    data = heap_alloc(versize);
+    data = malloc(versize);
     if (!data) return FALSE;
 
     if (!GetFileVersionInfoW(path, 0, versize, data))
@@ -596,7 +595,7 @@ static BOOL get_program_description(WCHAR *path, WCHAR *buffer, DWORD size)
     }
 
 out:
-    heap_free(data);
+    free(data);
     return ret;
 }
 
@@ -772,7 +771,7 @@ static UINT CALLBACK file_properties_callback(HWND hwnd, UINT uMsg, LPPROPSHEETP
     struct file_properties_info *props = (struct file_properties_info *)page->lParam;
     if (uMsg == PSPCB_RELEASE)
     {
-        heap_free(props);
+        free(props);
     }
     return 1;
 }
@@ -787,7 +786,7 @@ static void init_file_properties_pages(IDataObject *dataobject, LPFNADDPROPSHEET
     HRESULT hr;
     WCHAR *p;
 
-    props = heap_alloc(sizeof(*props));
+    props = malloc(sizeof(*props));
     if (!props) return;
 
     format.cfFormat = CF_HDROP;
@@ -838,7 +837,7 @@ static void init_file_properties_pages(IDataObject *dataobject, LPFNADDPROPSHEET
     return;
 
 error:
-    heap_free(props);
+    free(props);
 }
 
 static HRESULT WINAPI filesecurity_QueryInterface(ISecurityInformation *iface, REFIID riid, void **ppv)
@@ -1497,7 +1496,7 @@ HRESULT ItemMenu_Constructor(IShellFolder *parent, LPCITEMIDLIST pidl, const LPC
     HRESULT hr;
     UINT i;
 
-    This = heap_alloc(sizeof(*This));
+    This = malloc(sizeof(*This));
     if (!This) return E_OUTOFMEMORY;
 
     This->IContextMenu3_iface.lpVtbl = &ItemContextMenuVtbl;
@@ -1922,7 +1921,7 @@ HRESULT BackgroundMenu_Constructor(IShellFolder *parent, BOOL desktop, REFIID ri
     ContextMenu *This;
     HRESULT hr;
 
-    This = heap_alloc(sizeof(*This));
+    This = malloc(sizeof(*This));
     if (!This) return E_OUTOFMEMORY;
 
     This->IContextMenu3_iface.lpVtbl = &BackgroundContextMenuVtbl;

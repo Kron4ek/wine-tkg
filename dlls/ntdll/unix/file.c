@@ -5207,7 +5207,7 @@ NTSTATUS WINAPI NtCreateNamedPipeFile( HANDLE *handle, ULONG access, OBJECT_ATTR
            (int)inbound_quota, (int)outbound_quota, timeout );
 
     /* assume we only get relative timeout */
-    if (timeout->QuadPart > 0) FIXME( "Wrong time %s\n", wine_dbgstr_longlong(timeout->QuadPart) );
+    if (timeout && timeout->QuadPart > 0) FIXME( "Wrong time %s\n", wine_dbgstr_longlong(timeout->QuadPart) );
 
     if ((status = alloc_object_attributes( attr, &objattr, &len ))) return status;
 
@@ -5224,7 +5224,7 @@ NTSTATUS WINAPI NtCreateNamedPipeFile( HANDLE *handle, ULONG access, OBJECT_ATTR
         req->maxinstances = max_inst;
         req->outsize = outbound_quota;
         req->insize  = inbound_quota;
-        req->timeout = timeout->QuadPart;
+        req->timeout = timeout ? timeout->QuadPart : 0ULL;
         wine_server_add_data( req, objattr, len );
         if (!(status = wine_server_call( req )))
         {

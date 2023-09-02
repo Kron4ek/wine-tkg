@@ -507,7 +507,7 @@ enum vkd3d_sm4_input_primitive_type
 
 enum vkd3d_sm4_swizzle_type
 {
-    VKD3D_SM4_SWIZZLE_NONE            = 0x0,
+    VKD3D_SM4_SWIZZLE_NONE            = 0x0, /* swizzle bitfield contains a mask */
     VKD3D_SM4_SWIZZLE_VEC4            = 0x1,
     VKD3D_SM4_SWIZZLE_SCALAR          = 0x2,
 };
@@ -705,6 +705,19 @@ static void shader_sm4_read_conditional_op(struct vkd3d_shader_instruction *ins,
             (struct vkd3d_shader_src_param *)&ins->src[0]);
     ins->flags = (opcode_token & VKD3D_SM4_CONDITIONAL_NZ) ?
             VKD3D_SHADER_CONDITIONAL_OP_NZ : VKD3D_SHADER_CONDITIONAL_OP_Z;
+}
+
+static void shader_sm4_read_case_condition(struct vkd3d_shader_instruction *ins, uint32_t opcode,
+        uint32_t opcode_token, const uint32_t *tokens, unsigned int token_count, struct vkd3d_shader_sm4_parser *priv)
+{
+    shader_sm4_read_src_param(priv, &tokens, &tokens[token_count], VKD3D_DATA_UINT,
+            (struct vkd3d_shader_src_param *)&ins->src[0]);
+    if (ins->src[0].reg.type != VKD3DSPR_IMMCONST)
+    {
+        FIXME("Switch case value is not a 32-bit constant.\n");
+        vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_CASE_VALUE,
+                "Switch case value is not a 32-bit immediate constant register.");
+    }
 }
 
 static void shader_sm4_read_shader_data(struct vkd3d_shader_instruction *ins, uint32_t opcode, uint32_t opcode_token,
@@ -1215,7 +1228,8 @@ static const struct vkd3d_sm4_opcode_info opcode_table[] =
     {VKD3D_SM4_OP_BREAK,                            VKD3DSIH_BREAK,                            "",     ""},
     {VKD3D_SM4_OP_BREAKC,                           VKD3DSIH_BREAKP,                           "",     "u",
             shader_sm4_read_conditional_op},
-    {VKD3D_SM4_OP_CASE,                             VKD3DSIH_CASE,                             "",     "u"},
+    {VKD3D_SM4_OP_CASE,                             VKD3DSIH_CASE,                             "",     "u",
+            shader_sm4_read_case_condition},
     {VKD3D_SM4_OP_CONTINUE,                         VKD3DSIH_CONTINUE,                         "",     ""},
     {VKD3D_SM4_OP_CONTINUEC,                        VKD3DSIH_CONTINUEP,                        "",     "u",
             shader_sm4_read_conditional_op},
@@ -2012,6 +2026,7 @@ static bool shader_sm4_validate_input_output_register(struct vkd3d_shader_sm4_pa
 static bool shader_sm4_read_src_param(struct vkd3d_shader_sm4_parser *priv, const uint32_t **ptr,
         const uint32_t *end, enum vkd3d_data_type data_type, struct vkd3d_shader_src_param *src_param)
 {
+    unsigned int dimension, mask;
     DWORD token;
 
     if (*ptr >= end)
@@ -2027,37 +2042,63 @@ static bool shader_sm4_read_src_param(struct vkd3d_shader_sm4_parser *priv, cons
         return false;
     }
 
-    if (src_param->reg.type == VKD3DSPR_IMMCONST || src_param->reg.type == VKD3DSPR_IMMCONST64)
+    switch ((dimension = (token & VKD3D_SM4_DIMENSION_MASK) >> VKD3D_SM4_DIMENSION_SHIFT))
     {
-        src_param->swizzle = VKD3D_SHADER_NO_SWIZZLE;
-    }
-    else
-    {
-        enum vkd3d_sm4_swizzle_type swizzle_type =
-                (token & VKD3D_SM4_SWIZZLE_TYPE_MASK) >> VKD3D_SM4_SWIZZLE_TYPE_SHIFT;
+        case VKD3D_SM4_DIMENSION_NONE:
+        case VKD3D_SM4_DIMENSION_SCALAR:
+            src_param->swizzle = VKD3D_SHADER_SWIZZLE(X, X, X, X);
+            break;
 
-        switch (swizzle_type)
+        case VKD3D_SM4_DIMENSION_VEC4:
         {
-            case VKD3D_SM4_SWIZZLE_NONE:
-                if (shader_sm4_is_scalar_register(&src_param->reg))
-                    src_param->swizzle = VKD3D_SHADER_SWIZZLE(X, X, X, X);
-                else
+            enum vkd3d_sm4_swizzle_type swizzle_type =
+                    (token & VKD3D_SM4_SWIZZLE_TYPE_MASK) >> VKD3D_SM4_SWIZZLE_TYPE_SHIFT;
+
+            switch (swizzle_type)
+            {
+                case VKD3D_SM4_SWIZZLE_NONE:
                     src_param->swizzle = VKD3D_SHADER_NO_SWIZZLE;
-                break;
 
-            case VKD3D_SM4_SWIZZLE_SCALAR:
-                src_param->swizzle = (token & VKD3D_SM4_SWIZZLE_MASK) >> VKD3D_SM4_SWIZZLE_SHIFT;
-                src_param->swizzle = (src_param->swizzle & 0x3) * 0x01010101;
-                break;
+                    mask = (token & VKD3D_SM4_WRITEMASK_MASK) >> VKD3D_SM4_WRITEMASK_SHIFT;
+                    /* Mask seems only to be used for vec4 constants and is always zero. */
+                    if (!register_is_constant(&src_param->reg))
+                    {
+                        FIXME("Source mask %#x is not for a constant.\n", mask);
+                        vkd3d_shader_parser_warning(&priv->p, VKD3D_SHADER_WARNING_TPF_UNHANDLED_REGISTER_MASK,
+                                "Unhandled mask %#x for a non-constant source register.", mask);
+                    }
+                    else if (mask)
+                    {
+                        FIXME("Unhandled mask %#x.\n", mask);
+                        vkd3d_shader_parser_warning(&priv->p, VKD3D_SHADER_WARNING_TPF_UNHANDLED_REGISTER_MASK,
+                                "Unhandled source register mask %#x.", mask);
+                    }
 
-            case VKD3D_SM4_SWIZZLE_VEC4:
-                src_param->swizzle = swizzle_from_sm4((token & VKD3D_SM4_SWIZZLE_MASK) >> VKD3D_SM4_SWIZZLE_SHIFT);
-                break;
+                    break;
 
-            default:
-                FIXME("Unhandled swizzle type %#x.\n", swizzle_type);
-                break;
+                case VKD3D_SM4_SWIZZLE_SCALAR:
+                    src_param->swizzle = (token & VKD3D_SM4_SWIZZLE_MASK) >> VKD3D_SM4_SWIZZLE_SHIFT;
+                    src_param->swizzle = (src_param->swizzle & 0x3) * 0x01010101;
+                    break;
+
+                case VKD3D_SM4_SWIZZLE_VEC4:
+                    src_param->swizzle = swizzle_from_sm4((token & VKD3D_SM4_SWIZZLE_MASK) >> VKD3D_SM4_SWIZZLE_SHIFT);
+                    break;
+
+                default:
+                    FIXME("Unhandled swizzle type %#x.\n", swizzle_type);
+                    vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_SWIZZLE,
+                            "Source register swizzle type %#x is invalid.", swizzle_type);
+                    break;
+            }
+            break;
         }
+
+        default:
+            FIXME("Unhandled dimension %#x.\n", dimension);
+            vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_DIMENSION,
+                    "Source register dimension %#x is invalid.", dimension);
+            break;
     }
 
     if (register_is_input_output(&src_param->reg) && !shader_sm4_validate_input_output_register(priv,
@@ -2070,7 +2111,9 @@ static bool shader_sm4_read_src_param(struct vkd3d_shader_sm4_parser *priv, cons
 static bool shader_sm4_read_dst_param(struct vkd3d_shader_sm4_parser *priv, const uint32_t **ptr,
         const uint32_t *end, enum vkd3d_data_type data_type, struct vkd3d_shader_dst_param *dst_param)
 {
+    enum vkd3d_sm4_swizzle_type swizzle_type;
     enum vkd3d_shader_src_modifier modifier;
+    unsigned int dimension, swizzle;
     DWORD token;
 
     if (*ptr >= end)
@@ -2092,10 +2135,53 @@ static bool shader_sm4_read_dst_param(struct vkd3d_shader_sm4_parser *priv, cons
         return false;
     }
 
-    dst_param->write_mask = (token & VKD3D_SM4_WRITEMASK_MASK) >> VKD3D_SM4_WRITEMASK_SHIFT;
+    switch ((dimension = (token & VKD3D_SM4_DIMENSION_MASK) >> VKD3D_SM4_DIMENSION_SHIFT))
+    {
+        case VKD3D_SM4_DIMENSION_NONE:
+            dst_param->write_mask = 0;
+            break;
+
+        case VKD3D_SM4_DIMENSION_SCALAR:
+            dst_param->write_mask = VKD3DSP_WRITEMASK_0;
+            break;
+
+        case VKD3D_SM4_DIMENSION_VEC4:
+            swizzle_type = (token & VKD3D_SM4_SWIZZLE_TYPE_MASK) >> VKD3D_SM4_SWIZZLE_TYPE_SHIFT;
+            switch (swizzle_type)
+            {
+                case VKD3D_SM4_SWIZZLE_NONE:
+                    dst_param->write_mask = (token & VKD3D_SM4_WRITEMASK_MASK) >> VKD3D_SM4_WRITEMASK_SHIFT;
+                    break;
+
+                case VKD3D_SM4_SWIZZLE_VEC4:
+                    swizzle = swizzle_from_sm4((token & VKD3D_SM4_SWIZZLE_MASK) >> VKD3D_SM4_SWIZZLE_SHIFT);
+                    if (swizzle != VKD3D_SHADER_NO_SWIZZLE)
+                    {
+                        FIXME("Unhandled swizzle %#x.\n", swizzle);
+                        vkd3d_shader_parser_warning(&priv->p, VKD3D_SHADER_WARNING_TPF_UNHANDLED_REGISTER_SWIZZLE,
+                                "Unhandled destination register swizzle %#x.", swizzle);
+                    }
+                    dst_param->write_mask = VKD3DSP_WRITEMASK_ALL;
+                    break;
+
+                default:
+                    FIXME("Unhandled swizzle type %#x.\n", swizzle_type);
+                    vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_SWIZZLE,
+                            "Destination register swizzle type %#x is invalid.", swizzle_type);
+                    break;
+            }
+            break;
+
+        default:
+            FIXME("Unhandled dimension %#x.\n", dimension);
+            vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_DIMENSION,
+                    "Destination register dimension %#x is invalid.", dimension);
+            break;
+    }
+
     if (data_type == VKD3D_DATA_DOUBLE)
         dst_param->write_mask = vkd3d_write_mask_64_from_32(dst_param->write_mask);
-    /* Scalar registers are declared with no write mask in shader bytecode. */
+    /* Some scalar registers are declared with no write mask in shader bytecode. */
     if (!dst_param->write_mask && shader_sm4_is_scalar_register(&dst_param->reg))
         dst_param->write_mask = VKD3DSP_WRITEMASK_0;
     dst_param->modifiers = 0;
@@ -3715,8 +3801,10 @@ static void sm4_src_from_constant_value(struct sm4_src_register *src,
         src->reg.dim = VKD3D_SM4_DIMENSION_VEC4;
         for (i = 0; i < 4; ++i)
         {
-            if (map_writemask & (1u << i))
+            if ((map_writemask & (1u << i)) && (j < width))
                 src->reg.immconst_uint[i] = value->u[j++].u;
+            else
+                src->reg.immconst_uint[i] = 0;
         }
     }
 }

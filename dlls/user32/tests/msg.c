@@ -186,7 +186,7 @@ static const struct message WmCreateOverlappedSeq[] = {
     { 0x0094, sent|defwinproc|optional },
     { EVENT_OBJECT_REORDER, winevent_hook|wparam|lparam|optional, 0, 0 }, /* Not sent on win10. */
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { 0 }
 };
 /* SetWindowPos(SWP_SHOWWINDOW|SWP_NOSIZE|SWP_NOMOVE)
@@ -735,7 +735,7 @@ static const struct message WmCreateMaxPopupSeq[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { HCBT_MINMAX, hook|lparam, 0, SW_MAXIMIZE },
@@ -779,7 +779,7 @@ static const struct message WmCreateInvisibleMaxPopupSeq[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { HCBT_MINMAX, hook|lparam, 0, SW_MAXIMIZE },
@@ -863,7 +863,7 @@ static const struct message WmCreatePopupSeq[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_SHOWWINDOW, sent|wparam, 1 },
@@ -1132,7 +1132,7 @@ static const struct message WmShowPopupExtremeLocationSeq[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_SHOWWINDOW, sent|wparam, 1 },
@@ -1251,7 +1251,7 @@ static const struct message WmFirstDrawSetWindowPosSeq1[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_WINDOWPOSCHANGING, sent },
@@ -1282,7 +1282,7 @@ static const struct message WmFirstDrawSetWindowPosSeq2[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_WINDOWPOSCHANGING, sent },
@@ -1311,7 +1311,7 @@ static const struct message WmFirstDrawSetWindowPosSeq3[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     /* These happen only on Wine: */
@@ -1330,7 +1330,7 @@ static const struct message WmFirstDrawSetWindowPosSeq4[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_WINDOWPOSCHANGING, sent },
@@ -1359,7 +1359,7 @@ static const struct message WmFirstDrawSetWindowPosSeq5[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_WINDOWPOSCHANGING, sent },
@@ -1415,7 +1415,7 @@ static const struct message WmCreateMaximizedChildSeq[] = {
     { WM_NCCREATE, sent }, 
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { HCBT_MINMAX, hook|lparam, 0, SW_MAXIMIZE },
@@ -1436,7 +1436,7 @@ static const struct message WmCreateVisibleChildSeq[] = {
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { EVENT_OBJECT_REORDER, winevent_hook|wparam|lparam|optional, 0, 0 }, /* Not sent on Win10. */
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_PARENTNOTIFY, sent|parent|wparam, WM_CREATE },
@@ -2505,6 +2505,10 @@ static void add_message_(int line, const struct recvd_message *msg)
                 }
                 else
                 {
+                    RECT *rect = (RECT*)msg->lParam;
+
+                    sprintf(seq->output, "%s: %p WM_NCCALCSIZE: %s",
+                            msg->descr, msg->hwnd, wine_dbgstr_rect(rect));
                     seq->lParam = 0;
                 }
                 break;
@@ -2627,6 +2631,83 @@ static void flush_sequence(void)
     LeaveCriticalSection( &sequence_cs );
 }
 
+static const char* message_type_name(int flags) {
+    if (flags & hook) return "hook";
+    if (flags & kbd_hook) return "kbd_hook";
+    if (flags & winevent_hook) return "winevent_hook";
+    return "msg";
+}
+
+static BOOL can_skip_message(const struct message *expected)
+{
+    if (expected->flags & optional) return TRUE;
+
+    if ((expected->flags & winevent_hook) && !hEvent_hook) return TRUE;
+    if ((expected->flags & kbd_hook) && !hKBD_hook) return TRUE;
+    if ((expected->flags & hook) && !hCBT_hook) return TRUE;
+
+    if ((expected->flags & winevent_hook_todo) && !strcmp(winetest_platform, "wine")) return TRUE;
+
+    return FALSE;
+}
+
+static BOOL messages_equal(const struct message *expected, const struct recvd_message *actual,
+    BOOL expect_equal, const char* file, int line)
+{
+    int todo = (expected->flags & winevent_hook_todo) != 0;
+    const int message_type_flags = hook|winevent_hook|kbd_hook;
+    static int todo_reported;
+
+    if (!todo && can_skip_message(expected))
+        expect_equal = FALSE;
+
+    if (!expected->message || !actual->message) {
+        if (expect_equal && (!todo || !todo_reported++))
+            todo_wine_if(todo)
+            ok_( file, line) (FALSE, "the msg sequence is not complete: expected %s %04x - actual %s %04x\n",
+                              message_type_name(expected->flags), expected->message, message_type_name(actual->flags), actual->message);
+        return FALSE;
+    }
+
+    if (expected->message != actual->message ||
+        (expected->flags & message_type_flags) != (actual->flags & message_type_flags))
+    {
+        if (expect_equal && (!todo || !todo_reported++))
+            todo_wine_if(todo)
+            ok_( file, line) (FALSE, "the %s 0x%04x was expected, but got %s 0x%04x instead\n",
+                              message_type_name(expected->flags), expected->message, message_type_name(actual->flags), actual->message);
+        return FALSE;
+    }
+
+    if (expected->flags & optional)
+    {
+        /* If a message can be sent in 2 different ways at the same time, we may need to treat
+         * them as unequal so that the optional message can be properly skipped. */
+        if ((expected->flags & defwinproc) != (actual->flags & defwinproc)) {
+            /* don't match messages if their defwinproc status differs */
+            return FALSE;
+        }
+    }
+
+    if (expect_equal)
+        todo_wine_if(todo)
+        ok_( file, line) (TRUE, "got %s 0x%04x as expected\n",
+                          message_type_name(expected->flags), expected->message);
+
+    return TRUE;
+}
+
+static BOOL sequence_contains_message(const struct message *expected, const struct recvd_message *actual)
+{
+    while (expected->message)
+    {
+        if (messages_equal(expected, actual, FALSE, __FILE__, __LINE__))
+            return TRUE;
+        expected++;
+    }
+    return FALSE;
+}
+
 static void dump_sequence(const struct message *expected, const char *context, const char *file, int line)
 {
     const struct recvd_message *actual = sequence;
@@ -2637,57 +2718,29 @@ static void dump_sequence(const struct message *expected, const char *context, c
     {
         if (actual->output[0])
         {
-            if (expected->flags & hook)
-            {
-                trace_(file, line)( "  %u: expected: hook %04x - actual: %s\n",
-                                    count, expected->message, actual->output );
-            }
-            else if (expected->flags & winevent_hook)
-            {
-                trace_(file, line)( "  %u: expected: winevent %04x - actual: %s\n",
-                                    count, expected->message, actual->output );
-            }
-            else if (expected->flags & kbd_hook)
-            {
-                trace_(file, line)( "  %u: expected: kbd %04x - actual: %s\n",
-                                    count, expected->message, actual->output );
-            }
-            else
-            {
-                trace_(file, line)( "  %u: expected: msg %04x - actual: %s\n",
-                                    count, expected->message, actual->output );
-            }
+            trace_(file, line)( "  %u: expected: %s %04x - actual: %s\n",
+                                count, message_type_name(expected->flags), expected->message, actual->output );
         }
 
-	if (expected->message == actual->message)
-	{
-	    if ((expected->flags & defwinproc) != (actual->flags & defwinproc) &&
-                (expected->flags & optional))
-            {
-                /* don't match messages if their defwinproc status differs */
-                expected++;
-            }
-            else
-            {
-                expected++;
-                actual++;
-            }
-	}
-	/* silently drop winevent messages if there is no support for them */
-	else if ((expected->flags & optional) || ((expected->flags & winevent_hook) && !hEvent_hook) ||
-                ((expected->flags & winevent_hook_todo) && !strcmp(winetest_platform, "wine")))
-	    expected++;
-        else
+        if (messages_equal(expected, actual, FALSE, file, line))
         {
             expected++;
             actual++;
+            count++;
         }
-        count++;
+        else if (can_skip_message(expected) || sequence_contains_message(expected, actual))
+	{
+            expected++;
+            count++;
+        }
+        else
+        {
+            actual++;
+        }
     }
 
     /* optional trailing messages */
-    while (expected->message && ((expected->flags & optional) ||
-	    ((expected->flags & winevent_hook) && !hEvent_hook)))
+    while (can_skip_message(expected))
     {
         trace_(file, line)( "  %u: expected: msg %04x - actual: nothing\n", count, expected->message );
 	expected++;
@@ -2726,10 +2779,11 @@ static void ok_sequence_(const struct message *expected_list, const char *contex
 
     actual = sequence;
 
+    winetest_push_context("%s: %u", context, count);
+
     while (expected->message && actual->message)
     {
-	if (expected->message == actual->message &&
-            !((expected->flags ^ actual->flags) & (hook|winevent_hook|kbd_hook)))
+	if (messages_equal(expected, actual, !todo, file, line))
 	{
 	    if (expected->flags & wparam)
 	    {
@@ -2739,16 +2793,16 @@ static void ok_sequence_(const struct message *expected_list, const char *contex
                         failcount ++;
                         dump++;
                         ok_( file, line) (FALSE,
-			    "%s: %u: in msg 0x%04x expecting wParam 0x%Ix got 0x%Ix\n",
-                            context, count, expected->message, expected->wParam, actual->wParam);
+			    "in msg 0x%04x expecting wParam 0x%Ix got 0x%Ix\n",
+                            expected->message, expected->wParam, actual->wParam);
 		    }
                     if (is_wine) goto done;
 		}
 		else
                 {
                     ok_( file, line)( ((expected->wParam ^ actual->wParam) & ~expected->wp_mask) == 0,
-                                     "%s: %u: in msg 0x%04x expecting wParam 0x%Ix got 0x%Ix\n",
-                                     context, count, expected->message, expected->wParam, actual->wParam);
+                                     "in msg 0x%04x expecting wParam 0x%Ix got 0x%Ix\n",
+                                     expected->message, expected->wParam, actual->wParam);
                     if ((expected->wParam ^ actual->wParam) & ~expected->wp_mask) dump++;
                 }
 
@@ -2761,26 +2815,18 @@ static void ok_sequence_(const struct message *expected_list, const char *contex
                         failcount ++;
                         dump++;
                         ok_( file, line) (FALSE,
-			    "%s: %u: in msg 0x%04x expecting lParam 0x%Ix got 0x%Ix\n",
-                            context, count, expected->message, expected->lParam, actual->lParam);
+			    "in msg 0x%04x expecting lParam 0x%Ix got 0x%Ix\n",
+                            expected->message, expected->lParam, actual->lParam);
 		    }
                     if (is_wine) goto done;
 		}
 		else
                 {
                     ok_( file, line)(((expected->lParam ^ actual->lParam) & ~expected->lp_mask) == 0,
-                                     "%s: %u: in msg 0x%04x expecting lParam 0x%Ix got 0x%Ix\n",
-                                     context, count, expected->message, expected->lParam, actual->lParam);
+                                     "in msg 0x%04x expecting lParam 0x%Ix got 0x%Ix\n",
+                                     expected->message, expected->lParam, actual->lParam);
                     if ((expected->lParam ^ actual->lParam) & ~expected->lp_mask) dump++;
                 }
-            }
-	    if ((expected->flags & optional) &&
-                ((expected->flags ^ actual->flags) & (defwinproc|parent)))
-            {
-                /* don't match optional messages if their defwinproc or parent status differs */
-                expected++;
-                count++;
-                continue;
             }
 	    if ((expected->flags & defwinproc) != (actual->flags & defwinproc) && todo)
 	    {
@@ -2788,108 +2834,73 @@ static void ok_sequence_(const struct message *expected_list, const char *contex
                         failcount ++;
                         dump++;
                         ok_( file, line) (FALSE,
-                            "%s: %u: the msg 0x%04x should %shave been sent by DefWindowProc\n",
-                            context, count, expected->message, (expected->flags & defwinproc) ? "" : "NOT ");
+                            "the msg 0x%04x should %shave been sent by DefWindowProc\n",
+                            expected->message, (expected->flags & defwinproc) ? "" : "NOT ");
 		    }
                     if (is_wine) goto done;
 	    }
 	    else
             {
 	        ok_( file, line) ((expected->flags & defwinproc) == (actual->flags & defwinproc),
-		    "%s: %u: the msg 0x%04x should %shave been sent by DefWindowProc\n",
-                    context, count, expected->message, (expected->flags & defwinproc) ? "" : "NOT ");
+		    "the msg 0x%04x should %shave been sent by DefWindowProc\n",
+                    expected->message, (expected->flags & defwinproc) ? "" : "NOT ");
                 if ((expected->flags & defwinproc) != (actual->flags & defwinproc)) dump++;
             }
 
 	    ok_( file, line) ((expected->flags & beginpaint) == (actual->flags & beginpaint),
-		"%s: %u: the msg 0x%04x should %shave been sent by BeginPaint\n",
-                context, count, expected->message, (expected->flags & beginpaint) ? "" : "NOT ");
+		"the msg 0x%04x should %shave been sent by BeginPaint\n",
+                expected->message, (expected->flags & beginpaint) ? "" : "NOT ");
             if ((expected->flags & beginpaint) != (actual->flags & beginpaint)) dump++;
 
 	    ok_( file, line) ((expected->flags & (sent|posted)) == (actual->flags & (sent|posted)),
-		"%s: %u: the msg 0x%04x should have been %s\n",
-                context, count, expected->message, (expected->flags & posted) ? "posted" : "sent");
+		"the msg 0x%04x should have been %s\n",
+                expected->message, (expected->flags & posted) ? "posted" : "sent");
             if ((expected->flags & (sent|posted)) != (actual->flags & (sent|posted))) dump++;
 
 	    ok_( file, line) ((expected->flags & parent) == (actual->flags & parent),
-		"%s: %u: the msg 0x%04x was expected in %s\n",
-                context, count, expected->message, (expected->flags & parent) ? "parent" : "child");
+		"the msg 0x%04x was expected in %s\n",
+                expected->message, (expected->flags & parent) ? "parent" : "child");
             if ((expected->flags & parent) != (actual->flags & parent)) dump++;
 
-	    ok_( file, line) ((expected->flags & hook) == (actual->flags & hook),
-		"%s: %u: the msg 0x%04x should have been sent by a hook\n",
-                context, count, expected->message);
-            if ((expected->flags & hook) != (actual->flags & hook)) dump++;
-
-	    ok_( file, line) ((expected->flags & winevent_hook) == (actual->flags & winevent_hook),
-		"%s: %u: the msg 0x%04x should have been sent by a winevent hook\n",
-                context, count, expected->message);
-            if ((expected->flags & winevent_hook) != (actual->flags & winevent_hook)) dump++;
-
-	    ok_( file, line) ((expected->flags & kbd_hook) == (actual->flags & kbd_hook),
-		"%s: %u: the msg 0x%04x should have been sent by a keyboard hook\n",
-                context, count, expected->message);
-            if ((expected->flags & kbd_hook) != (actual->flags & kbd_hook)) dump++;
-
 	    expected++;
+            count++;
 	    actual++;
 	}
 	/*
-         * silently drop hook messages if there is no support for them, mark
-         * winevent todo's.
+         * silently drop hook messages if there is no support for them
          */
-	else if ((expected->flags & optional) ||
-                 ((expected->flags & hook) && !hCBT_hook) ||
-                 ((expected->flags & winevent_hook) && !hEvent_hook) ||
-                 ((expected->flags & kbd_hook) && !hKBD_hook) ||
-                 ((expected->flags & winevent_hook_todo) && is_wine))
+	else if (can_skip_message(expected))
         {
-            if ((expected->flags & winevent_hook_todo) && hEvent_hook)
-            {
-                static int reported;
-                if (!reported++) todo_wine {
-                    ok_( file, line) (FALSE,
-                        "%s: %u: the msg 0x%04x was expected, but got msg 0x%04x instead\n",
-                        context, count, expected->message, actual->message);
-                }
-            }
 	    expected++;
+            count++;
         }
 	else if (todo)
 	{
+            todo_wine messages_equal(expected, actual, TRUE, file, line);
             failcount++;
-            todo_wine {
-                dump++;
-                ok_( file, line) (FALSE, "%s: %u: the msg 0x%04x was expected, but got msg 0x%04x instead\n",
-                                  context, count, expected->message, actual->message);
-            }
+            dump++;
             goto done;
+        }
+        else if (sequence_contains_message(expected, actual))
+        {
+            dump++;
+            expected++;
+            count++;
         }
         else
         {
-            ok_( file, line) (FALSE, "%s: %u: the msg 0x%04x was expected, but got msg 0x%04x instead\n",
-                              context, count, expected->message, actual->message);
             dump++;
-            expected++;
             actual++;
         }
-        count++;
+
+        winetest_pop_context();
+        winetest_push_context("%s: %u", context, count);
     }
 
-    /* skip all optional trailing messages, check for winevent todo's. */
-    while (expected->message && ((expected->flags & optional) ||
-                                 ((expected->flags & hook) && !hCBT_hook) ||
-                                 ((expected->flags & winevent_hook) && !hEvent_hook) ||
-                                 ((expected->flags & winevent_hook_todo) && is_wine)))
+    /* skip all optional trailing messages */
+    while (can_skip_message(expected))
     {
-        if ((expected->flags & winevent_hook_todo) && hEvent_hook)
-        {
-            todo_wine {
-                ok_( file, line) (FALSE, "%s: %u: the msg sequence is not complete: expected 0x%04x - actual 0x%04x\n",
-                                context, count, expected->message, actual->message);
-            }
-            goto done;
-        }
+        messages_equal(expected, actual, TRUE, file, line); /* check for message todo's */
 	expected++;
     }
 
@@ -2899,8 +2910,7 @@ static void ok_sequence_(const struct message *expected_list, const char *contex
             if (expected->message || actual->message) {
                 failcount++;
                 dump++;
-                ok_( file, line) (FALSE, "%s: %u: the msg sequence is not complete: expected %04x - actual %04x\n",
-                                  context, count, expected->message, actual->message);
+                messages_equal(expected, actual, TRUE, file, line);
             }
         }
         if (is_wine) goto done;
@@ -2910,17 +2920,17 @@ static void ok_sequence_(const struct message *expected_list, const char *contex
         if (expected->message || actual->message)
         {
             dump++;
-            ok_( file, line) (FALSE, "%s: %u: the msg sequence is not complete: expected %04x - actual %04x\n",
-                              context, count, expected->message, actual->message);
+            messages_equal(expected, actual, TRUE, file, line);
         }
     }
     if (todo && !failcount && !strcmp(winetest_platform, "wine")) /* succeeded yet marked todo */
         todo_wine {
             dump++;
-            ok_( file, line)( TRUE, "%s: marked \"todo_wine\" but succeeds\n", context);
+            ok_( file, line)( TRUE, "marked \"todo_wine\" but succeeds\n");
         }
 
 done:
+    winetest_pop_context();
     if (dump && (!is_wine || winetest_debug > 1)) dump_sequence(expected_list, context, file, line);
     flush_sequence();
 }
@@ -2937,7 +2947,7 @@ static const struct message WmCreateMDIframeSeq[] = {
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { EVENT_OBJECT_REORDER, winevent_hook|wparam|lparam|optional, 0, 0 }, /* Not sent on Win8+. */
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_NOTIFYFORMAT, sent|optional },
     { WM_QUERYUISTATE, sent|optional },
     { WM_WINDOWPOSCHANGING, sent|optional },
@@ -2994,7 +3004,7 @@ static const struct message WmCreateMDIclientSeq[] = {
     { EVENT_OBJECT_REORDER, winevent_hook|wparam|lparam|optional, 0, 0 },
     { WM_CREATE, sent },
     { EVENT_OBJECT_REORDER, winevent_hook|wparam|lparam|optional, 0, 0 },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_PARENTNOTIFY, sent|wparam, WM_CREATE }, /* in MDI frame */
@@ -3041,7 +3051,7 @@ static const struct message WmCreateMDIchildVisibleSeq[] = {
     { WM_NCCREATE, sent }, 
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     /* Win2k sends wparam set to
@@ -3109,7 +3119,7 @@ static const struct message WmCreateMDIchildInvisibleParentSeq[] = {
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { EVENT_OBJECT_REORDER, winevent_hook|wparam|lparam|optional, 0, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_PARENTNOTIFY, sent /*|wparam, WM_CREATE*/ }, /* in MDI client */
@@ -3211,7 +3221,7 @@ static const struct message WmCreateMDIchildInvisibleSeq[] = {
     { WM_NCCREATE, sent }, 
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     /* Win2k sends wparam set to
@@ -3488,7 +3498,7 @@ static const struct message WmCreateMDIchildInvisibleMaxSeq4[] = {
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { EVENT_OBJECT_REORDER, winevent_hook|wparam|lparam|optional, 0, 0 }, /* Not sent on Win8+. */
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_WINDOWPOSCHANGING, sent|wparam|optional, SWP_FRAMECHANGED|SWP_NOACTIVATE|SWP_NOSIZE|SWP_NOMOVE, 0, SWP_NOZORDER }, /* MDI frame */
     { WM_NCCALCSIZE, sent|wparam|optional, 1 }, /* MDI frame */
@@ -14067,7 +14077,7 @@ static INT_PTR CALLBACK wm_quit_dlg_proc(HWND hwnd, UINT message, WPARAM wp, LPA
 
 static const struct message WmQuitDialogSeq[] = {
     { HCBT_CREATEWND, hook },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SETFONT, sent },
     { WM_INITDIALOG, sent },
     { WM_CHANGEUISTATE, sent|optional },
@@ -15260,7 +15270,7 @@ static const struct message WmCreateDialogParamSeq_0[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_SETFONT, sent },
@@ -15274,7 +15284,7 @@ static const struct message WmCreateDialogParamSeq_1[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_SETFONT, sent },
@@ -15304,7 +15314,7 @@ static const struct message WmCreateDialogParamSeq_2[] = {
     { WM_NCCREATE, sent },
     { WM_NCCALCSIZE, sent|wparam, 0 },
     { WM_CREATE, sent },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { WM_SIZE, sent|wparam, SIZE_RESTORED },
     { WM_MOVE, sent },
     { WM_CHANGEUISTATE, sent|optional },
@@ -16725,7 +16735,7 @@ static const struct message wm_popup_menu_1[] =
     { WM_MENUSELECT, sent|wparam, MAKEWPARAM(1,MF_HILITE|MF_POPUP) },
     { WM_INITMENUPOPUP, sent|lparam, 0, 1 },
     { HCBT_CREATEWND, hook|optional }, /* Win9x doesn't create a window */
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
     { EVENT_OBJECT_SHOW, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
@@ -16763,7 +16773,7 @@ static const struct message wm_popup_menu_2[] =
     { WM_MENUSELECT, sent|wparam|optional, MAKEWPARAM(0,MF_HILITE|MF_POPUP) }, /* Win9x */
     { WM_INITMENUPOPUP, sent|lparam|optional, 0, 0 }, /* Win9x */
     { HCBT_CREATEWND, hook },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
     { EVENT_OBJECT_SHOW, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
@@ -16776,7 +16786,7 @@ static const struct message wm_popup_menu_2[] =
     { HCBT_KEYSKIPPED, hook|wparam|lparam|optional, VK_RIGHT, 0x10000001 },
     { WM_INITMENUPOPUP, sent|lparam|optional, 0, 0 }, /* Win9x doesn't send it */
     { HCBT_CREATEWND, hook|optional }, /* Win9x doesn't send it */
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
     { EVENT_OBJECT_SHOW, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
@@ -16818,7 +16828,7 @@ static const struct message wm_popup_menu_3[] =
     { WM_MENUSELECT, sent|wparam|optional, MAKEWPARAM(0,MF_HILITE|MF_POPUP) }, /* Win9x */
     { WM_INITMENUPOPUP, sent|lparam|optional, 0, 0 }, /* Win9x */
     { HCBT_CREATEWND, hook },
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
     { EVENT_OBJECT_SHOW, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
@@ -16831,7 +16841,7 @@ static const struct message wm_popup_menu_3[] =
     { HCBT_KEYSKIPPED, hook|wparam|lparam|optional, VK_RIGHT, 0x10000001 },
     { WM_INITMENUPOPUP, sent|lparam|optional, 0, 0 }, /* Win9x doesn't send it */
     { HCBT_CREATEWND, hook|optional }, /* Win9x doesn't send it */
-    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
+    { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
     { EVENT_OBJECT_SHOW, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|winevent_hook_todo, 0, 0 },
@@ -19572,7 +19582,8 @@ static LRESULT CALLBACK insendmessage_wnd_proc( HWND hwnd, UINT msg, WPARAM wp, 
         ret = ReplyMessage( msg );
         ok( ret, "ReplyMessage failed err %lu\n", GetLastError() );
         flags = InSendMessageEx( NULL );
-        ok( flags == (ISMEX_SEND | ISMEX_REPLIED), "wrong flags %lx\n", flags );
+        ok( flags == (ISMEX_SEND | ISMEX_REPLIED) || broken( flags == (ISMEX_NOTIFY | ISMEX_REPLIED) ),
+            "wrong flags %lx\n", flags );
         ok( InSendMessage(), "InSendMessage returned false\n" );
         break;
     case WM_USER + 1:

@@ -4117,12 +4117,57 @@ C_ASSERT( sizeof(WOW64INFO) == 40 );
 #define WOW64_CPUFLAGS_MSFT64   0x01
 #define WOW64_CPUFLAGS_SOFTWARE 0x02
 
+/* undocumented layout of WOW64INFO.CrossProcessWorkList */
+
+typedef struct
+{
+    UINT      next;
+    UINT      id;
+    ULONGLONG addr;
+    ULONGLONG size;
+    UINT      args[4];
+} CROSS_PROCESS_WORK_ENTRY;
+
+typedef union
+{
+    struct
+    {
+        UINT first;
+        UINT counter;
+    };
+    volatile LONGLONG hdr;
+} CROSS_PROCESS_WORK_HDR;
+
+typedef struct
+{
+    CROSS_PROCESS_WORK_HDR   free_list;
+    CROSS_PROCESS_WORK_HDR   work_list;
+    ULONGLONG                unknown[4];
+    CROSS_PROCESS_WORK_ENTRY entries[1];
+} CROSS_PROCESS_WORK_LIST;
+
+typedef enum
+{
+    CrossProcessPreVirtualAlloc    = 0,
+    CrossProcessPostVirtualAlloc   = 1,
+    CrossProcessPreVirtualFree     = 2,
+    CrossProcessPostVirtualFree    = 3,
+    CrossProcessPreVirtualProtect  = 4,
+    CrossProcessPostVirtualProtect = 5,
+    CrossProcessFlushCache         = 6,
+} CROSS_PROCESS_NOTIFICATION;
+
+#define CROSS_PROCESS_LIST_FLUSH 0x80000000
+#define CROSS_PROCESS_LIST_ENTRY(list,pos) \
+    ((CROSS_PROCESS_WORK_ENTRY *)((char *)(list) + ((pos) & ~CROSS_PROCESS_LIST_FLUSH)))
+
 /* wow64.dll functions */
 void *    WINAPI Wow64AllocateTemp(SIZE_T);
 void      WINAPI Wow64ApcRoutine(ULONG_PTR,ULONG_PTR,ULONG_PTR,CONTEXT*);
 NTSTATUS  WINAPI Wow64KiUserCallbackDispatcher(ULONG,void*,ULONG,void**,ULONG*);
 void      WINAPI Wow64PassExceptionToGuest(EXCEPTION_POINTERS*);
 void      WINAPI Wow64PrepareForException(EXCEPTION_RECORD*,CONTEXT*);
+void      WINAPI Wow64ProcessPendingCrossProcessItems(void);
 NTSTATUS  WINAPI Wow64RaiseException(int,EXCEPTION_RECORD*);
 NTSTATUS  WINAPI Wow64SystemServiceEx(UINT,UINT*);
 
@@ -4973,10 +5018,16 @@ NTSYSAPI NTSTATUS  WINAPI vDbgPrintExWithPrefix(LPCSTR,ULONG,ULONG,LPCSTR,__ms_v
 /* 32-bit or 64-bit only functions */
 
 #ifdef _WIN64
+NTSYSAPI void      WINAPI RtlOpenCrossProcessEmulatorWorkConnection(HANDLE,HANDLE*,void**);
 NTSYSAPI NTSTATUS  WINAPI RtlWow64GetCpuAreaInfo(WOW64_CPURESERVED*,ULONG,WOW64_CPU_AREA_INFO*);
 NTSYSAPI NTSTATUS  WINAPI RtlWow64GetCurrentCpuArea(USHORT*,void**,void**);
 NTSYSAPI NTSTATUS  WINAPI RtlWow64GetThreadContext(HANDLE,WOW64_CONTEXT*);
 NTSYSAPI NTSTATUS  WINAPI RtlWow64GetThreadSelectorEntry(HANDLE,THREAD_DESCRIPTOR_INFORMATION*,ULONG,ULONG*);
+NTSYSAPI CROSS_PROCESS_WORK_ENTRY * WINAPI RtlWow64PopAllCrossProcessWorkFromWorkList(CROSS_PROCESS_WORK_HDR*,BOOLEAN*);
+NTSYSAPI CROSS_PROCESS_WORK_ENTRY * WINAPI RtlWow64PopCrossProcessWorkFromFreeList(CROSS_PROCESS_WORK_HDR*);
+NTSYSAPI BOOLEAN   WINAPI RtlWow64PushCrossProcessWorkOntoFreeList(CROSS_PROCESS_WORK_HDR*,CROSS_PROCESS_WORK_ENTRY*);
+NTSYSAPI BOOLEAN   WINAPI RtlWow64PushCrossProcessWorkOntoWorkList(CROSS_PROCESS_WORK_HDR*,CROSS_PROCESS_WORK_ENTRY*,void**);
+NTSYSAPI BOOLEAN   WINAPI RtlWow64RequestCrossProcessHeavyFlush(CROSS_PROCESS_WORK_HDR*);
 NTSYSAPI NTSTATUS  WINAPI RtlWow64SetThreadContext(HANDLE,const WOW64_CONTEXT*);
 #else
 NTSYSAPI NTSTATUS  WINAPI NtWow64AllocateVirtualMemory64(HANDLE,ULONG64*,ULONG64,ULONG64*,ULONG,ULONG);

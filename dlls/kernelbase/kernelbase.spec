@@ -632,7 +632,7 @@
 # @ stub GetPackageInstallTime
 # @ stub GetPackageOSMaxVersionTested
 # @ stub GetPackagePath
-# @ stub GetPackagePathByFullName
+@ stdcall GetPackagePathByFullName(wstr ptr wstr)
 # @ stub GetPackagePathOnVolume
 # @ stub GetPackageProperty
 # @ stub GetPackagePropertyString
@@ -1730,7 +1730,7 @@
 # @ stub WTSIsServerContainer
 @ stdcall WaitCommEvent(long ptr ptr)
 @ stdcall WaitForDebugEvent(ptr long)
-# @ stub WaitForDebugEventEx
+@ stdcall WaitForDebugEventEx(ptr long)
 # @ stub WaitForMachinePolicyForegroundProcessingInternal
 @ stdcall WaitForMultipleObjects(long ptr long long)
 @ stdcall WaitForMultipleObjectsEx(long ptr long long long)

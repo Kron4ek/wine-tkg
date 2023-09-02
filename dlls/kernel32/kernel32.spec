@@ -775,6 +775,7 @@
 @ stdcall GetPackageFamilyName(long ptr ptr) kernelbase.GetPackageFamilyName
 @ stdcall GetPackageFullName(long ptr ptr) kernelbase.GetPackageFullName
 @ stdcall GetPackagesByPackageFamily(wstr ptr ptr ptr ptr) kernelbase.GetPackagesByPackageFamily
+@ stdcall GetPackagePathByFullName(wstr ptr wstr) kernelbase.GetPackagePathByFullName
 @ stdcall -import GetPhysicallyInstalledSystemMemory(ptr)
 @ stdcall -import GetPriorityClass(long)
 @ stdcall GetPrivateProfileIntA(str str long str)
@@ -1604,6 +1605,7 @@
 @ stdcall WTSGetActiveConsoleSessionId()
 @ stdcall -import WaitCommEvent(long ptr ptr)
 @ stdcall -import WaitForDebugEvent(ptr long)
+@ stdcall -import WaitForDebugEventEx(ptr long)
 @ stdcall -import WaitForMultipleObjects(long ptr long long)
 @ stdcall -import WaitForMultipleObjectsEx(long ptr long long long)
 @ stdcall -import WaitForSingleObject(long long)

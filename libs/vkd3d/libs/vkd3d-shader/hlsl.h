@@ -356,6 +356,7 @@ struct hlsl_attribute
 #define HLSL_MODIFIER_COLUMN_MAJOR   0x00000400
 #define HLSL_STORAGE_IN              0x00000800
 #define HLSL_STORAGE_OUT             0x00001000
+#define HLSL_MODIFIER_INLINE         0x00002000
 
 #define HLSL_TYPE_MODIFIERS_MASK     (HLSL_MODIFIER_PRECISE | HLSL_MODIFIER_VOLATILE | \
                                       HLSL_MODIFIER_CONST | HLSL_MODIFIER_ROW_MAJOR | \
@@ -797,6 +798,9 @@ struct hlsl_ctx
     /* Pointer to the current function; changes as the parser reads the code. */
     const struct hlsl_ir_function_decl *cur_function;
 
+    /* Counter for generating unique internal variable names. */
+    unsigned int internal_name_counter;
+
     /* Default matrix majority for matrix types. Can be set by a pragma within the HLSL source. */
     unsigned int matrix_majority;
 
@@ -832,6 +836,12 @@ struct hlsl_ctx
     /* Number of threads to be executed (on the X, Y, and Z dimensions) in a single thread group in
      *   compute shader profiles. It is set using the numthreads() attribute in the entry point. */
     uint32_t thread_count[3];
+
+    /* In some cases we generate opcodes by parsing an HLSL function and then
+     * invoking it. If not NULL, this field is the name of the function that we
+     * are currently parsing, "mangled" with an internal prefix to avoid
+     * polluting the user namespace. */
+    const char *internal_func_name;
 
     /* Whether the parser is inside a state block (effects' metadata) inside a variable declaration. */
     uint32_t in_state_block : 1;
@@ -1068,6 +1078,8 @@ static inline unsigned int hlsl_sampler_dim_count(enum hlsl_sampler_dim dim)
     }
 }
 
+char *hlsl_sprintf_alloc(struct hlsl_ctx *ctx, const char *fmt, ...) VKD3D_PRINTF_FUNC(2, 3);
+
 const char *debug_hlsl_expr_op(enum hlsl_ir_expr_op op);
 const char *debug_hlsl_type(struct hlsl_ctx *ctx, const struct hlsl_type *type);
 const char *debug_hlsl_writemask(unsigned int writemask);
@@ -1256,6 +1268,8 @@ bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx,
 bool hlsl_sm4_register_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semantic *semantic,
         bool output, enum vkd3d_shader_register_type *type, enum vkd3d_sm4_swizzle_type *swizzle_type, bool *has_idx);
 int hlsl_sm4_write(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func, struct vkd3d_shader_code *out);
+
+struct hlsl_ir_function_decl *hlsl_compile_internal_function(struct hlsl_ctx *ctx, const char *name, const char *hlsl);
 
 int hlsl_lexer_compile(struct hlsl_ctx *ctx, const struct vkd3d_shader_code *hlsl);
 

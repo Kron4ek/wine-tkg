@@ -204,7 +204,9 @@ static const struct column col_networkadapter[] =
     { L"MACAddress",          CIM_STRING|COL_FLAG_DYNAMIC },
     { L"Manufacturer",        CIM_STRING },
     { L"Name",                CIM_STRING|COL_FLAG_DYNAMIC },
+    { L"NetConnectionID",     CIM_STRING },
     { L"NetConnectionStatus", CIM_UINT16 },
+    { L"NetEnabled",          CIM_BOOLEAN },
     { L"PhysicalAdapter",     CIM_BOOLEAN },
     { L"PNPDeviceID",         CIM_STRING },
     { L"ServiceName",         CIM_STRING|COL_FLAG_DYNAMIC },
@@ -407,6 +409,7 @@ static const struct column col_softwarelicensingproduct[] =
 };
 static const struct column col_sounddevice[] =
 {
+    { L"Caption",      CIM_STRING },
     { L"DeviceID",     CIM_STRING|COL_FLAG_DYNAMIC },
     { L"Manufacturer", CIM_STRING },
     { L"Name",         CIM_STRING },
@@ -654,7 +657,9 @@ struct record_networkadapter
     const WCHAR *mac_address;
     const WCHAR *manufacturer;
     const WCHAR *name;
+    const WCHAR *netconnection_id;
     UINT16       netconnection_status;
+    int          netenabled;
     int          physicaladapter;
     const WCHAR *pnpdevice_id;
     const WCHAR *servicename;
@@ -857,6 +862,7 @@ struct record_softwarelicensingproduct
 };
 struct record_sounddevice
 {
+    const WCHAR *caption;
     const WCHAR *deviceid;
     const WCHAR *manufacturer;
     const WCHAR *name;
@@ -2851,6 +2857,7 @@ static enum fill_status fill_networkadapter( struct table *table, const struct e
     UINT row = 0, offset = 0, count = 0;
     DWORD size = 0, ret;
     int adaptertypeid, physical;
+    UINT16 connection_status;
     enum fill_status status = FILL_STATUS_UNFILTERED;
 
     ret = GetAdaptersAddresses( AF_UNSPEC, 0, NULL, NULL, &size );
@@ -2875,6 +2882,8 @@ static enum fill_status fill_networkadapter( struct table *table, const struct e
     {
         if (aa->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
 
+        connection_status = get_connection_status( aa->OperStatus );
+
         rec = (struct record_networkadapter *)(table->data + offset);
         swprintf( device_id, ARRAY_SIZE( device_id ), L"%u", aa->IfIndex );
         rec->adaptertype          = get_adaptertype( aa->IfType, &adaptertypeid, &physical );
@@ -2886,8 +2895,10 @@ static enum fill_status fill_networkadapter( struct table *table, const struct e
         rec->interface_index      = aa->IfIndex;
         rec->mac_address          = get_mac_address( aa->PhysicalAddress, aa->PhysicalAddressLength );
         rec->manufacturer         = L"The Wine Project";
+        rec->netconnection_id     = NULL; /* FIXME Windows seems to fill this when it's connected and in use */
         rec->name                 = wcsdup( aa->FriendlyName );
-        rec->netconnection_status = get_connection_status( aa->OperStatus );
+        rec->netenabled           = connection_status ? -1 : 0;
+        rec->netconnection_status = connection_status;
         rec->physicaladapter      = physical;
         rec->pnpdevice_id         = L"PCI\\VEN_8086&DEV_100E&SUBSYS_001E8086&REV_02\\3&267A616A&1&18";
         rec->servicename          = wcsdup( aa->FriendlyName );
@@ -4285,6 +4296,7 @@ static enum fill_status fill_sounddevice( struct table *table, const struct expr
     get_dxgi_adapter_desc( &desc );
 
     rec = (struct record_sounddevice *)table->data;
+    rec->caption = L"Wine Audio Device";
     rec->deviceid = get_sounddevice_pnpdeviceid( &desc );
     rec->manufacturer = L"The Wine Project";
     rec->name = L"Wine Audio Device";

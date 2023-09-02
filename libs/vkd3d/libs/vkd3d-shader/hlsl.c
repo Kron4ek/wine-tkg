@@ -72,6 +72,27 @@ void hlsl_fixme(struct hlsl_ctx *ctx, const struct vkd3d_shader_location *loc, c
         ctx->result = VKD3D_ERROR_NOT_IMPLEMENTED;
 }
 
+char *hlsl_sprintf_alloc(struct hlsl_ctx *ctx, const char *fmt, ...)
+{
+    struct vkd3d_string_buffer *string;
+    va_list args;
+    char *ret;
+
+    if (!(string = hlsl_get_string_buffer(ctx)))
+        return NULL;
+    va_start(args, fmt);
+    if (vkd3d_string_buffer_vprintf(string, fmt, args) < 0)
+    {
+        va_end(args);
+        hlsl_release_string_buffer(ctx, string);
+        return NULL;
+    }
+    va_end(args);
+    ret = hlsl_strdup(ctx, string->buffer);
+    hlsl_release_string_buffer(ctx, string);
+    return ret;
+}
+
 bool hlsl_add_var(struct hlsl_ctx *ctx, struct hlsl_ir_var *decl, bool local_var)
 {
     struct hlsl_scope *scope = ctx->cur_scope;
@@ -1039,11 +1060,10 @@ struct hlsl_ir_var *hlsl_new_synthetic_var(struct hlsl_ctx *ctx, const char *tem
 {
     struct vkd3d_string_buffer *string;
     struct hlsl_ir_var *var;
-    static LONG counter;
 
     if (!(string = hlsl_get_string_buffer(ctx)))
         return NULL;
-    vkd3d_string_buffer_printf(string, "<%s-%u>", template, InterlockedIncrement(&counter));
+    vkd3d_string_buffer_printf(string, "<%s-%u>", template, ctx->internal_name_counter++);
     var = hlsl_new_synthetic_var_named(ctx, string->buffer, type, loc, true);
     hlsl_release_string_buffer(ctx, string);
     return var;
@@ -2968,6 +2988,16 @@ void hlsl_add_function(struct hlsl_ctx *ctx, char *name, struct hlsl_ir_function
     struct hlsl_ir_function *func;
     struct rb_entry *func_entry;
 
+    if (ctx->internal_func_name)
+    {
+        char *internal_name;
+
+        if (!(internal_name = hlsl_strdup(ctx, ctx->internal_func_name)))
+            return;
+        vkd3d_free(name);
+        name = internal_name;
+    }
+
     func_entry = rb_get(&ctx->functions, name);
     if (func_entry)
     {
@@ -3498,4 +3528,45 @@ int hlsl_compile_shader(const struct vkd3d_shader_code *hlsl, const struct vkd3d
 
     hlsl_ctx_cleanup(&ctx);
     return ret;
+}
+
+struct hlsl_ir_function_decl *hlsl_compile_internal_function(struct hlsl_ctx *ctx, const char *name, const char *hlsl)
+{
+    const struct hlsl_ir_function_decl *saved_cur_function = ctx->cur_function;
+    struct vkd3d_shader_code code = {.code = hlsl, .size = strlen(hlsl)};
+    const char *saved_internal_func_name = ctx->internal_func_name;
+    struct vkd3d_string_buffer *internal_name;
+    struct hlsl_ir_function_decl *func;
+    void *saved_scanner = ctx->scanner;
+    int ret;
+
+    TRACE("name %s, hlsl %s.\n", debugstr_a(name), debugstr_a(hlsl));
+
+    /* The actual name of the function is mangled with a unique prefix, both to
+     * allow defining multiple variants of a function with the same name, and to
+     * avoid polluting the user name space. */
+
+    if (!(internal_name = hlsl_get_string_buffer(ctx)))
+        return NULL;
+    vkd3d_string_buffer_printf(internal_name, "<%s-%u>", name, ctx->internal_name_counter++);
+
+    /* Save and restore everything that matters.
+     * Note that saving the scope stack is hard, and shouldn't be necessary. */
+
+    ctx->scanner = NULL;
+    ctx->internal_func_name = internal_name->buffer;
+    ctx->cur_function = NULL;
+    ret = hlsl_lexer_compile(ctx, &code);
+    ctx->scanner = saved_scanner;
+    ctx->internal_func_name = saved_internal_func_name;
+    ctx->cur_function = saved_cur_function;
+    if (ret)
+    {
+        ERR("Failed to compile intrinsic, error %u.\n", ret);
+        hlsl_release_string_buffer(ctx, internal_name);
+        return NULL;
+    }
+    func = hlsl_get_func_decl(ctx, internal_name->buffer);
+    hlsl_release_string_buffer(ctx, internal_name);
+    return func;
 }

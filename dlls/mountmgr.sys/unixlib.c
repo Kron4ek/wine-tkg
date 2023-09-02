@@ -705,3 +705,5 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     enumerate_credentials,
     get_volume_filesystem,
 };
+
+C_ASSERT( ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count );

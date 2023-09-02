@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include "wined3d_private.h"
+#include "wined3d_gl.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d_shader);
 
@@ -2032,12 +2033,6 @@ static BOOL shader_none_has_ffp_proj_control(void *shader_priv)
     return priv->ffp_proj_control;
 }
 
-void shader_none_resource_view_handle(void *shader_priv, struct wined3d_context_gl *context_gl,
-            const struct wined3d_state *state, const struct wined3d_shader *shader)
-{
-    ERR("Not implemented.\n");
-}
-
 static uint64_t shader_none_shader_compile(struct wined3d_context *context, const struct wined3d_shader_desc *shader_desc,
         enum wined3d_shader_type shader_type)
 {
@@ -2063,7 +2058,6 @@ const struct wined3d_shader_backend_ops none_shader_backend =
     shader_none_get_caps,
     shader_none_color_fixup_supported,
     shader_none_has_ffp_proj_control,
-    shader_none_resource_view_handle,
     shader_none_shader_compile,
 };
 
