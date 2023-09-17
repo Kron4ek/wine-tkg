@@ -110,6 +110,9 @@ bool wg_transform_get_status(wg_transform_t transform, bool *accepts_input);
 HRESULT wg_transform_drain(wg_transform_t transform);
 HRESULT wg_transform_flush(wg_transform_t transform);
 
+HRESULT wg_muxer_create(const char *format, wg_muxer_t *muxer);
+void wg_muxer_destroy(wg_muxer_t muxer);
+
 unsigned int wg_format_get_max_size(const struct wg_format *format);
 
 HRESULT avi_splitter_create(IUnknown *outer, IUnknown **out);
@@ -122,7 +125,8 @@ HRESULT wma_decoder_create(IUnknown *outer, IUnknown **out);
 HRESULT wmv_decoder_create(IUnknown *outer, IUnknown **out);
 HRESULT resampler_create(IUnknown *outer, IUnknown **out);
 HRESULT color_convert_create(IUnknown *outer, IUnknown **out);
-HRESULT sink_class_factory_create(IUnknown *outer, IUnknown **out);
+HRESULT mp3_sink_class_factory_create(IUnknown *outer, IUnknown **out);
+HRESULT mpeg4_sink_class_factory_create(IUnknown *outer, IUnknown **out);
 
 bool amt_from_wg_format(AM_MEDIA_TYPE *mt, const struct wg_format *format, bool wm);
 bool amt_to_wg_format(const AM_MEDIA_TYPE *mt, struct wg_format *format);

@@ -23,6 +23,7 @@
 #include "winternl.h"
 #include "wincrypt.h"
 #include "winnls.h"
+#include "schannel.h"
 
 #define LDAP_NEEDS_PROTOTYPES
 #include <lber.h>
@@ -222,20 +223,23 @@ typedef struct ldap
     ULONG ld_options;
 } LDAP, *PLDAP;
 
+typedef BOOLEAN (CDECL QUERYCLIENTCERT)(LDAP *, SecPkgContext_IssuerListInfoEx *, const CERT_CONTEXT **);
 typedef BOOLEAN (CDECL VERIFYSERVERCERT)(LDAP *, const CERT_CONTEXT **);
 
 struct private_data
 {
     LDAP *ctx;
     struct berval **server_ctrls;
-    VERIFYSERVERCERT *cert_callback;
+    QUERYCLIENTCERT *client_cert_callback;
+    VERIFYSERVERCERT *server_cert_callback;
     BOOL connected;
 };
 C_ASSERT(sizeof(struct private_data) < FIELD_OFFSET(struct ld_sb, sb_naddr) - FIELD_OFFSET(struct ld_sb, Reserved1));
 
 #define CTX(ld) (((struct private_data *)ld->ld_sb.Reserved1)->ctx)
 #define SERVER_CTRLS(ld) (((struct private_data *)ld->ld_sb.Reserved1)->server_ctrls)
-#define CERT_CALLBACK(ld) (((struct private_data *)ld->ld_sb.Reserved1)->cert_callback)
+#define CLIENT_CERT_CALLBACK(ld) (((struct private_data *)ld->ld_sb.Reserved1)->client_cert_callback)
+#define SERVER_CERT_CALLBACK(ld) (((struct private_data *)ld->ld_sb.Reserved1)->server_cert_callback)
 #define CONNECTED(ld) (((struct private_data *)ld->ld_sb.Reserved1)->connected)
 
 #define MSG(entry) (entry->Request)

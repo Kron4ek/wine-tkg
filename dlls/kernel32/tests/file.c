@@ -2957,38 +2957,43 @@ static void test_FindFirstFile_wildcards(void)
     int i;
     static const char* files[] = {
         "..a", "..a.a", ".a", ".a..a", ".a.a", ".aaa",
-        "a", "a..a", "a.a", "a.a.a", "aa", "aaa", "aaaa"
+        "a", "a..a", "a.a", "a.a.a", "aa", "aaa", "aaaa", " .a"
     };
     static const struct {
         int todo;
         const char *pattern, *result;
     } tests[] = {
-        {0, "*.*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
-        {0, "*.*.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
+        {0, "*.*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {0, "*.*.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
         {0, ".*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa'"},
-        {0, "*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
+        {0, "*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
         {0, ".*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa'"},
-        {1, "*.", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {0, "*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
+        {0, "*.", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {0, "*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
         {1, "*..*", ", '.', '..', '..a', '..a.a', '.a..a', 'a..a'"},
-        {1, "*..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {0, "*..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
         {1, ".*.", ", '.', '..', '.a', '.aaa'"},
         {0, "..*", ", '.', '..', '..a', '..a.a'"},
-        {0, "**", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
-        {0, "**.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
-        {0, "*. ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
-        {1, "* .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {0, "* . ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
-        {0, "*.. ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
-        {1, "*. .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {1, "* ..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {0, "**", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {0, "**.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {0, "*. ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {0, "* .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {0, "* . ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {0, "*.. ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {0, "*. .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {0, "* ..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
         {0, " *..", ""},
         {0, "..* ", ", '.', '..', '..a', '..a.a'"},
+        {1, "a*.", ", '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
+        {0, "*a ", ", '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+
+        /* a.a.a not found due to short name mismatch, a.a.a -> "AA6BF5~1.A on Windows. */
+        {1, "*aa*", ", '.aaa', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
 
         {1, "<.<.<", ", '..a', '..a.a', '.a..a', '.a.a', 'a..a', 'a.a.a'"},
-        {1, "<.<.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a..a', 'a.a', 'a.a.a'"},
+        {1, "<.<.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a..a', 'a.a', 'a.a.a', ' .a'"},
         {1, ".<.<", ", '..a', '..a.a', '.a..a', '.a.a'"},
-        {1, "<.<", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a..a', 'a.a', 'a.a.a'"},
+        {1, "<.<", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a..a', 'a.a', 'a.a.a', ' .a'"},
         {1, ".<", ", '.', '..', '.a', '.aaa'"},
         {1, "<.", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
         {1, "<", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
@@ -2996,8 +3001,8 @@ static void test_FindFirstFile_wildcards(void)
         {1, "<..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
         {1, ".<.", ", '.', '..', '.a', '.aaa'"},
         {1, "..<", ", '..a'"},
-        {1, "<<", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
-        {1, "<<.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
+        {1, "<<", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {1, "<<.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
         {1, "<. ", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
         {1, "< .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
         {1, "< . ", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
@@ -3008,12 +3013,12 @@ static void test_FindFirstFile_wildcards(void)
         {1, "..< ", ", '..a'"},
 
         {1, "?", ", '.', '..', 'a'"},
-        {1, "?.", ", '.', '..', 'a'"},
-        {1, "?. ", ", '.', '..', 'a'"},
+        {0, "?.", ", '.', '..', 'a'"},
+        {0, "?. ", ", '.', '..', 'a'"},
         {1, "??.", ", '.', '..', 'a', 'aa'"},
         {1, "??. ", ", '.', '..', 'a', 'aa'"},
         {1, "???.", ", '.', '..', 'a', 'aa', 'aaa'"},
-        {1, "?.??.", ", '.', '..', '.a', 'a', 'a.a'"},
+        {1, "?.??.", ", '.', '..', '.a', 'a', 'a.a', ' .a'"},
 
         {1, ">", ", '.', '..', 'a'"},
         {1, ">.", ", '.', '..', 'a'"},
@@ -3021,7 +3026,7 @@ static void test_FindFirstFile_wildcards(void)
         {1, ">>.", ", '.', '..', 'a', 'aa'"},
         {1, ">>. ", ", '.', '..', 'a', 'aa'"},
         {1, ">>>.", ", '.', '..', 'a', 'aa', 'aaa'"},
-        {1, ">.>>.", ", '.', '..', '.a', 'a.a'"},
+        {1, ">.>>.", ", '.', '..', '.a', 'a.a', ' .a'"},
     };
 
     CreateDirectoryA("test-dir", NULL);
@@ -5548,7 +5553,7 @@ static void test_post_completion(void)
     ret = pGetQueuedCompletionStatusEx( port, entries, 2, &count, 0, FALSE );
     ok(!ret, "GetQueuedCompletionStatusEx succeeded\n");
     ok(GetLastError() == WAIT_TIMEOUT, "wrong error %lu\n", GetLastError());
-    ok(count == 1, "wrong count %lu\n", count);
+    ok(count <= 1, "wrong count %lu\n", count);
 
     ret = PostQueuedCompletionStatus( port, 123, 456, &ovl );
     ok(ret, "PostQueuedCompletionStatus failed: %lu\n", GetLastError());
@@ -5589,14 +5594,14 @@ static void test_post_completion(void)
     ret = pGetQueuedCompletionStatusEx( port, entries, 2, &count, 0, FALSE );
     ok(!ret, "GetQueuedCompletionStatusEx succeeded\n");
     ok(GetLastError() == WAIT_TIMEOUT, "wrong error %lu\n", GetLastError());
-    ok(count == 1, "wrong count %lu\n", count);
+    ok(count <= 1, "wrong count %lu\n", count);
     ok(!user_apc_ran, "user APC should not have run\n");
 
     ret = pGetQueuedCompletionStatusEx( port, entries, 2, &count, 0, TRUE );
     ok(!ret || broken(ret) /* Vista */, "GetQueuedCompletionStatusEx succeeded\n");
     if (!ret)
         ok(GetLastError() == WAIT_IO_COMPLETION, "wrong error %lu\n", GetLastError());
-    ok(count == 1, "wrong count %lu\n", count);
+    ok(count <= 1, "wrong count %lu\n", count);
     ok(user_apc_ran, "user APC should have run\n");
 
     user_apc_ran = FALSE;

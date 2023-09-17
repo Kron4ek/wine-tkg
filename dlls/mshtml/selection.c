@@ -51,47 +51,19 @@ static HRESULT WINAPI HTMLSelectionObject_QueryInterface(IHTMLSelectionObject *i
                                                          REFIID riid, void **ppv)
 {
     HTMLSelectionObject *This = impl_from_IHTMLSelectionObject(iface);
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        *ppv = &This->IHTMLSelectionObject_iface;
-    }else if(IsEqualGUID(&IID_IDispatch, riid)) {
-        *ppv = &This->IHTMLSelectionObject_iface;
-    }else if(IsEqualGUID(&IID_IHTMLSelectionObject, riid)) {
-        *ppv = &This->IHTMLSelectionObject_iface;
-    }else if(IsEqualGUID(&IID_IHTMLSelectionObject2, riid)) {
-        *ppv = &This->IHTMLSelectionObject2_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
-        return *ppv ? S_OK : E_NOINTERFACE;
-    }else {
-        *ppv = NULL;
-        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return IDispatchEx_QueryInterface(&This->dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLSelectionObject_AddRef(IHTMLSelectionObject *iface)
 {
     HTMLSelectionObject *This = impl_from_IHTMLSelectionObject(iface);
-    LONG ref = dispex_ref_incr(&This->dispex);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLSelectionObject_Release(IHTMLSelectionObject *iface)
 {
     HTMLSelectionObject *This = impl_from_IHTMLSelectionObject(iface);
-    LONG ref = dispex_ref_decr(&This->dispex);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_Release(&This->dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI HTMLSelectionObject_GetTypeInfoCount(IHTMLSelectionObject *iface, UINT *pctinfo)
@@ -323,6 +295,18 @@ static inline HTMLSelectionObject *impl_from_DispatchEx(DispatchEx *iface)
     return CONTAINING_RECORD(iface, HTMLSelectionObject, dispex);
 }
 
+static void *HTMLSelectionObject_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLSelectionObject *This = impl_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLSelectionObject, riid))
+        return &This->IHTMLSelectionObject_iface;
+    if(IsEqualGUID(&IID_IHTMLSelectionObject2, riid))
+        return &This->IHTMLSelectionObject2_iface;
+
+    return NULL;
+}
+
 static void HTMLSelectionObject_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
 {
     HTMLSelectionObject *This = impl_from_DispatchEx(dispex);
@@ -347,6 +331,7 @@ static void HTMLSelectionObject_destructor(DispatchEx *dispex)
 }
 
 static const dispex_static_data_vtbl_t HTMLSelectionObject_dispex_vtbl = {
+    .query_interface  = HTMLSelectionObject_query_interface,
     .destructor       = HTMLSelectionObject_destructor,
     .traverse         = HTMLSelectionObject_traverse,
     .unlink           = HTMLSelectionObject_unlink
@@ -372,8 +357,7 @@ HRESULT HTMLSelectionObject_Create(HTMLDocumentNode *doc, nsISelection *nsselect
     if(!selection)
         return E_OUTOFMEMORY;
 
-    init_dispatch(&selection->dispex, (IUnknown*)&selection->IHTMLSelectionObject_iface,
-                  &HTMLSelectionObject_dispex, dispex_compat_mode(&doc->node.event_target.dispex));
+    init_dispatch(&selection->dispex, &HTMLSelectionObject_dispex, dispex_compat_mode(&doc->node.event_target.dispex));
 
     selection->IHTMLSelectionObject_iface.lpVtbl = &HTMLSelectionObjectVtbl;
     selection->IHTMLSelectionObject2_iface.lpVtbl = &HTMLSelectionObject2Vtbl;

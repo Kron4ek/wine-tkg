@@ -550,8 +550,15 @@ enum hlsl_ir_expr_op
     HLSL_OP2_NEQUAL,
     HLSL_OP2_RSHIFT,
 
+    /* DP2ADD(a, b, c) computes the scalar product of a.xy and b.xy,
+     * then adds c. */
     HLSL_OP3_DP2ADD,
-    HLSL_OP3_LERP,
+    /* MOVC(a, b, c) returns c if a is bitwise zero and b otherwise.
+     * TERNARY(a, b, c) returns c if a == 0 and b otherwise.
+     * They differ for floating point numbers, because
+     * -0.0 == 0.0, but it is not bitwise zero. */
+    HLSL_OP3_MOVC,
+    HLSL_OP3_TERNARY,
 };
 
 #define HLSL_MAX_OPERANDS 3

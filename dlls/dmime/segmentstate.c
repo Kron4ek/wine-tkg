@@ -63,8 +63,6 @@ static ULONG WINAPI DirectMusicSegmentState8_AddRef(IDirectMusicSegmentState8 *i
 
     TRACE("(%p): %ld\n", This, ref);
 
-    DMIME_LockModule();
-
     return ref;
 }
 
@@ -75,10 +73,7 @@ static ULONG WINAPI DirectMusicSegmentState8_Release(IDirectMusicSegmentState8 *
 
     TRACE("(%p): %ld\n", This, ref);
 
-    if (ref == 0)
-        HeapFree(GetProcessHeap(), 0, This);
-
-    DMIME_UnlockModule();
+    if (!ref) free(This);
 
     return ref;
 }
@@ -150,11 +145,7 @@ HRESULT create_dmsegmentstate(REFIID riid, void **ret_iface)
     HRESULT hr;
 
     *ret_iface = NULL;
-
-    obj = HeapAlloc (GetProcessHeap(), 0, sizeof(IDirectMusicSegmentState8Impl));
-    if (!obj)
-        return E_OUTOFMEMORY;
-
+    if (!(obj = calloc(1, sizeof(*obj)))) return E_OUTOFMEMORY;
     obj->IDirectMusicSegmentState8_iface.lpVtbl = &DirectMusicSegmentState8Vtbl;
     obj->ref = 1;
 

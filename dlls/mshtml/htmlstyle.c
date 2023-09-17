@@ -1115,25 +1115,6 @@ static BOOL is_valid_border_style(BSTR v)
         wcsicmp(v, L"outset") == 0;
 }
 
-static void *HTMLStyle_QI(CSSStyle *css_style, REFIID riid)
-{
-    HTMLStyle *This = CONTAINING_RECORD(css_style, HTMLStyle, css_style);
-
-    if(IsEqualGUID(&IID_IHTMLStyle, riid))
-        return &This->IHTMLStyle_iface;
-    if(IsEqualGUID(&IID_IHTMLStyle2, riid))
-        return &This->IHTMLStyle2_iface;
-    if(IsEqualGUID(&IID_IHTMLStyle3, riid))
-        return &This->IHTMLStyle3_iface;
-    if(IsEqualGUID(&IID_IHTMLStyle4, riid))
-        return &This->IHTMLStyle4_iface;
-    if(IsEqualGUID(&IID_IHTMLStyle5, riid))
-        return &This->IHTMLStyle5_iface;
-    if(IsEqualGUID(&IID_IHTMLStyle6, riid))
-        return &This->IHTMLStyle6_iface;
-    return NULL;
-}
-
 static inline HTMLStyle *impl_from_IHTMLStyle(IHTMLStyle *iface)
 {
     return CONTAINING_RECORD(iface, HTMLStyle, IHTMLStyle_iface);
@@ -4734,45 +4715,19 @@ static HRESULT WINAPI HTMLCSSStyleDeclaration_QueryInterface(IHTMLCSSStyleDeclar
         REFIID riid, void **ppv)
 {
     CSSStyle *This = impl_from_IHTMLCSSStyleDeclaration(iface);
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        *ppv = &This->IHTMLCSSStyleDeclaration_iface;
-    }else if(IsEqualGUID(&IID_IHTMLCSSStyleDeclaration, riid)) {
-        *ppv = &This->IHTMLCSSStyleDeclaration_iface;
-    }else if(IsEqualGUID(&IID_IHTMLCSSStyleDeclaration2, riid)) {
-        *ppv = &This->IHTMLCSSStyleDeclaration2_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
-        return *ppv ? S_OK : E_NOINTERFACE;
-    }else if(!This->qi || !(*ppv = This->qi(This, riid))) {
-        *ppv = NULL;
-        WARN("unsupported iface %s\n", debugstr_mshtml_guid(riid));
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return IDispatchEx_QueryInterface(&This->dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLCSSStyleDeclaration_AddRef(IHTMLCSSStyleDeclaration *iface)
 {
     CSSStyle *This = impl_from_IHTMLCSSStyleDeclaration(iface);
-    LONG ref = dispex_ref_incr(&This->dispex);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLCSSStyleDeclaration_Release(IHTMLCSSStyleDeclaration *iface)
 {
     CSSStyle *This = impl_from_IHTMLCSSStyleDeclaration(iface);
-    LONG ref = dispex_ref_decr(&This->dispex);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_Release(&This->dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI HTMLCSSStyleDeclaration_GetTypeInfoCount(IHTMLCSSStyleDeclaration *iface,
@@ -9962,26 +9917,38 @@ static inline CSSStyle *impl_from_DispatchEx(DispatchEx *dispex)
     return CONTAINING_RECORD(dispex, CSSStyle, dispex);
 }
 
-static void CSSStyle_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+void *CSSStyle_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    CSSStyle *This = impl_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLCSSStyleDeclaration, riid))
+        return &This->IHTMLCSSStyleDeclaration_iface;
+    if(IsEqualGUID(&IID_IHTMLCSSStyleDeclaration2, riid))
+        return &This->IHTMLCSSStyleDeclaration2_iface;
+
+    return NULL;
+}
+
+void CSSStyle_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
 {
     CSSStyle *This = impl_from_DispatchEx(dispex);
     if(This->nsstyle)
         note_cc_edge((nsISupports*)This->nsstyle, "nsstyle", cb);
 }
 
-static void CSSStyle_unlink(DispatchEx *dispex)
+void CSSStyle_unlink(DispatchEx *dispex)
 {
     CSSStyle *This = impl_from_DispatchEx(dispex);
     unlink_ref(&This->nsstyle);
 }
 
-static void CSSStyle_destructor(DispatchEx *dispex)
+void CSSStyle_destructor(DispatchEx *dispex)
 {
     CSSStyle *This = impl_from_DispatchEx(dispex);
     free(This);
 }
 
-static HRESULT CSSStyle_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
+HRESULT CSSStyle_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
 {
     CSSStyle *This = impl_from_DispatchEx(dispex);
     const style_tbl_entry_t *style_entry;
@@ -10000,6 +9967,25 @@ static HRESULT CSSStyle_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, D
     return DISP_E_UNKNOWNNAME;
 }
 
+static void *HTMLStyle_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLStyle *This = CONTAINING_RECORD(dispex, HTMLStyle, css_style.dispex);
+
+    if(IsEqualGUID(&IID_IHTMLStyle, riid))
+        return &This->IHTMLStyle_iface;
+    if(IsEqualGUID(&IID_IHTMLStyle2, riid))
+        return &This->IHTMLStyle2_iface;
+    if(IsEqualGUID(&IID_IHTMLStyle3, riid))
+        return &This->IHTMLStyle3_iface;
+    if(IsEqualGUID(&IID_IHTMLStyle4, riid))
+        return &This->IHTMLStyle4_iface;
+    if(IsEqualGUID(&IID_IHTMLStyle5, riid))
+        return &This->IHTMLStyle5_iface;
+    if(IsEqualGUID(&IID_IHTMLStyle6, riid))
+        return &This->IHTMLStyle6_iface;
+    return CSSStyle_query_interface(&This->css_style.dispex, riid);
+}
+
 void CSSStyle_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 {
     if(mode >= COMPAT_MODE_IE9)
@@ -10008,11 +9994,9 @@ void CSSStyle_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
         dispex_info_add_interface(info, IHTMLCSSStyleDeclaration2_tid, NULL);
 }
 
-const dispex_static_data_vtbl_t CSSStyle_dispex_vtbl = {
-    .destructor        = CSSStyle_destructor,
-    .traverse          = CSSStyle_traverse,
-    .unlink            = CSSStyle_unlink,
-    .get_dispid        = CSSStyle_get_dispid,
+static const dispex_static_data_vtbl_t CSSStyle_dispex_vtbl = {
+    CSSSTYLE_DISPEX_VTBL_ENTRIES,
+    .query_interface   = HTMLStyle_query_interface
 };
 
 static const tid_t HTMLStyle_iface_tids[] = {
@@ -10070,17 +10054,14 @@ static HRESULT get_style_from_elem(HTMLElement *elem, nsIDOMCSSStyleDeclaration 
     return E_NOTIMPL;
 }
 
-void init_css_style(CSSStyle *style, nsIDOMCSSStyleDeclaration *nsstyle, style_qi_t qi,
-                    dispex_static_data_t *dispex_info, compat_mode_t compat_mode)
+void init_css_style(CSSStyle *style, nsIDOMCSSStyleDeclaration *nsstyle, dispex_static_data_t *dispex_info, compat_mode_t compat_mode)
 {
     style->IHTMLCSSStyleDeclaration_iface.lpVtbl = &HTMLCSSStyleDeclarationVtbl;
     style->IHTMLCSSStyleDeclaration2_iface.lpVtbl = &HTMLCSSStyleDeclaration2Vtbl;
-    style->qi = qi;
     style->nsstyle = nsstyle;
     nsIDOMCSSStyleDeclaration_AddRef(nsstyle);
 
-    init_dispatch(&style->dispex, (IUnknown*)&style->IHTMLCSSStyleDeclaration_iface,
-                  dispex_info, compat_mode);
+    init_dispatch(&style->dispex, dispex_info, compat_mode);
 }
 
 HRESULT HTMLStyle_Create(HTMLElement *elem, HTMLStyle **ret)
@@ -10108,20 +10089,24 @@ HRESULT HTMLStyle_Create(HTMLElement *elem, HTMLStyle **ret)
 
     style->elem = elem;
 
-    init_css_style(&style->css_style, nsstyle, HTMLStyle_QI, &HTMLStyle_dispex,
-                   dispex_compat_mode(&elem->node.event_target.dispex));
+    init_css_style(&style->css_style, nsstyle, &HTMLStyle_dispex, dispex_compat_mode(&elem->node.event_target.dispex));
     nsIDOMCSSStyleDeclaration_Release(nsstyle);
 
     *ret = style;
     return S_OK;
 }
 
+static const dispex_static_data_vtbl_t HTMLW3CComputedStyle_dispex_vtbl = {
+    CSSSTYLE_DISPEX_VTBL_ENTRIES,
+    .query_interface   = CSSStyle_query_interface
+};
+
 static const tid_t HTMLW3CComputedStyle_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLW3CComputedStyle_dispex = {
     "CSSStyleDeclaration",
-    &CSSStyle_dispex_vtbl,
+    &HTMLW3CComputedStyle_dispex_vtbl,
     DispHTMLW3CComputedStyle_tid,
     HTMLW3CComputedStyle_iface_tids,
     CSSStyle_init_dispex_info
@@ -10134,7 +10119,7 @@ HRESULT create_computed_style(nsIDOMCSSStyleDeclaration *nsstyle, compat_mode_t 
     if(!(style = calloc(1, sizeof(*style))))
         return E_OUTOFMEMORY;
 
-    init_css_style(style, nsstyle, NULL, &HTMLW3CComputedStyle_dispex, compat_mode);
+    init_css_style(style, nsstyle, &HTMLW3CComputedStyle_dispex, compat_mode);
     *p = &style->IHTMLCSSStyleDeclaration_iface;
     return S_OK;
 }

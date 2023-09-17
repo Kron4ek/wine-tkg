@@ -20,7 +20,6 @@
  */
 
 #include "dmusic_private.h"
-#include "dmobject.h"
 #include "initguid.h"
 #include "dmksctrl.h"
 
@@ -71,7 +70,6 @@ static ULONG WINAPI IDirectMusicBufferImpl_Release(LPDIRECTMUSICBUFFER iface)
     if (!ref) {
         free(This->data);
         free(This);
-        DMUSIC_UnlockModule();
     }
 
     return ref;
@@ -319,7 +317,6 @@ HRESULT DMUSIC_CreateDirectMusicBufferImpl(LPDMUS_BUFFERDESC desc, LPVOID* ret_i
         return E_OUTOFMEMORY;
     }
 
-    DMUSIC_LockModule();
     *ret_iface = &dmbuffer->IDirectMusicBuffer_iface;
 
     return S_OK;

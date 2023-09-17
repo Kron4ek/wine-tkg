@@ -408,6 +408,20 @@ static void test_cross_process_notifications( HANDLE process, void *ptr )
     ok( !entry, "not at end of list\n" );
 
     addr = NULL;
+    size = 0x321;
+    status = NtAllocateVirtualMemory( process, &addr, 0, &size, 0, PAGE_EXECUTE_READ );
+    ok( status == STATUS_INVALID_PARAMETER, "NtAllocateVirtualMemory failed %lx\n", status );
+    entry = pop_from_work_list( &list->work_list );
+    if (current_machine != IMAGE_FILE_MACHINE_ARM64)
+    {
+        entry = expect_cross_work_entry( list, entry, CrossProcessPreVirtualAlloc, addr, 0x321,
+                                         0, PAGE_EXECUTE_READ, 0, 0xcccccccc );
+        entry = expect_cross_work_entry( list, entry, CrossProcessPostVirtualAlloc, addr, 0x321,
+                                         0, PAGE_EXECUTE_READ, status, 0xcccccccc );
+    }
+    ok( !entry, "not at end of list\n" );
+
+    addr = NULL;
     size = 0x4321;
     status = NtAllocateVirtualMemory( process, &addr, 0, &size, MEM_RESERVE, PAGE_EXECUTE_READWRITE );
     ok( !status, "NtAllocateVirtualMemory failed %lx\n", status );
@@ -526,6 +540,7 @@ static void test_cross_process_notifications( HANDLE process, void *ptr )
 
     FlushInstructionCache( process, addr, 0x1234 );
     entry = pop_from_work_list( &list->work_list );
+    todo_wine_if (current_machine == IMAGE_FILE_MACHINE_ARM64)
     entry = expect_cross_work_entry( list, entry, CrossProcessFlushCache, addr, 0x1234,
                                      0xcccccccc, 0xcccccccc, 0xcccccccc, 0xcccccccc );
     ok( !entry, "not at end of list\n" );
@@ -875,6 +890,15 @@ static void test_peb_teb(void)
             peb64->OSBuildNumber, NtCurrentTeb()->Peb->OSBuildNumber );
         ok( peb64->OSPlatformId == NtCurrentTeb()->Peb->OSPlatformId, "wrong OSPlatformId %lx / %lx\n",
             peb64->OSPlatformId, NtCurrentTeb()->Peb->OSPlatformId );
+        ok( peb64->AnsiCodePageData == PtrToUlong( NtCurrentTeb()->Peb->AnsiCodePageData ),
+            "wrong AnsiCodePageData %I64x / %p\n",
+            peb64->AnsiCodePageData, NtCurrentTeb()->Peb->AnsiCodePageData );
+        ok( peb64->OemCodePageData == PtrToUlong( NtCurrentTeb()->Peb->OemCodePageData ),
+            "wrong OemCodePageData %I64x / %p\n",
+            peb64->OemCodePageData, NtCurrentTeb()->Peb->OemCodePageData );
+        ok( peb64->UnicodeCaseTableData == PtrToUlong( NtCurrentTeb()->Peb->UnicodeCaseTableData ),
+            "wrong UnicodeCaseTableData %I64x / %p\n",
+            peb64->UnicodeCaseTableData, NtCurrentTeb()->Peb->UnicodeCaseTableData );
         return;
     }
 #endif
@@ -1061,6 +1085,7 @@ static void test_image_mappings(void)
     }
     else if (current_machine == IMAGE_FILE_MACHINE_ARM64)
     {
+        todo_wine
         ok( status == STATUS_IMAGE_MACHINE_TYPE_MISMATCH, "NtMapViewOfSection returned %08lx\n", status );
         NtUnmapViewOfSection( process, ptr );
     }

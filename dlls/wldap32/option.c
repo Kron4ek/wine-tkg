@@ -105,6 +105,24 @@ ULONG CDECL ldap_get_optionA( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
         return ldap_get_optionW( ld, LDAP_OPT_REFHOPLIMIT, value );
 
+    case WLDAP32_LDAP_OPT_HOST_NAME:
+    {
+        WCHAR *hostW;
+        char *host;
+
+        ret = ldap_get_optionW( ld, option, &hostW );
+        if (!ret)
+        {
+            host = strWtoA( hostW );
+            if (!host)
+                ret = WLDAP32_LDAP_NO_MEMORY;
+            else
+                *(char **)value = host;
+            free( hostW );
+        }
+        return map_error( ret );
+    }
+
     case WLDAP32_LDAP_OPT_CACHE_ENABLE:
     case WLDAP32_LDAP_OPT_CACHE_FN_PTRS:
     case WLDAP32_LDAP_OPT_CACHE_STRATEGY:
@@ -122,7 +140,6 @@ ULONG CDECL ldap_get_optionA( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_ERROR_STRING:
     case WLDAP32_LDAP_OPT_FAST_CONCURRENT_BIND:
     case WLDAP32_LDAP_OPT_GETDSNAME_FLAGS:
-    case WLDAP32_LDAP_OPT_HOST_NAME:
     case WLDAP32_LDAP_OPT_HOST_REACHABLE:
     case WLDAP32_LDAP_OPT_PING_KEEP_ALIVE:
     case WLDAP32_LDAP_OPT_PING_LIMIT:
@@ -238,6 +255,24 @@ ULONG CDECL ldap_get_optionW( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
         return map_error( ldap_get_option( CTX(ld), LDAP_OPT_REFHOPLIMIT, value ) );
 
+    case WLDAP32_LDAP_OPT_HOST_NAME:
+    {
+        WCHAR *hostW;
+        char *host;
+
+        ret = ldap_get_option( CTX(ld), LDAP_OPT_HOST_NAME, &host );
+        if (!ret)
+        {
+            hostW = strUtoW( host );
+            if (!hostW)
+                ret = WLDAP32_LDAP_NO_MEMORY;
+            else
+                *(WCHAR **)value = hostW;
+            free( host );
+        }
+        return map_error( ret );
+    }
+
     case WLDAP32_LDAP_OPT_CACHE_ENABLE:
     case WLDAP32_LDAP_OPT_CACHE_FN_PTRS:
     case WLDAP32_LDAP_OPT_CACHE_STRATEGY:
@@ -255,7 +290,6 @@ ULONG CDECL ldap_get_optionW( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_ERROR_STRING:
     case WLDAP32_LDAP_OPT_FAST_CONCURRENT_BIND:
     case WLDAP32_LDAP_OPT_GETDSNAME_FLAGS:
-    case WLDAP32_LDAP_OPT_HOST_NAME:
     case WLDAP32_LDAP_OPT_HOST_REACHABLE:
     case WLDAP32_LDAP_OPT_PING_KEEP_ALIVE:
     case WLDAP32_LDAP_OPT_PING_LIMIT:
@@ -307,6 +341,7 @@ ULONG CDECL ldap_set_optionA( LDAP *ld, int option, void *value )
         return ret;
     }
     case WLDAP32_LDAP_OPT_AUTO_RECONNECT:
+    case WLDAP32_LDAP_OPT_CLIENT_CERTIFICATE:
     case WLDAP32_LDAP_OPT_DEREF:
     case WLDAP32_LDAP_OPT_DESC:
     case WLDAP32_LDAP_OPT_ENCRYPT:
@@ -321,6 +356,19 @@ ULONG CDECL ldap_set_optionA( LDAP *ld, int option, void *value )
     case WLDAP32_LDAP_OPT_SSL:
     case WLDAP32_LDAP_OPT_TIMELIMIT:
         return ldap_set_optionW( ld, option, value );
+
+    case WLDAP32_LDAP_OPT_HOST_NAME:
+    {
+        char **host = value;
+        WCHAR *hostW;
+
+        hostW = strAtoW( *host );
+        if (!hostW) return WLDAP32_LDAP_NO_MEMORY;
+
+        ret = ldap_set_optionW( ld, option, &hostW );
+        free( hostW );
+        return map_error( ret );
+    }
 
     case WLDAP32_LDAP_OPT_CACHE_ENABLE:
     case WLDAP32_LDAP_OPT_CACHE_FN_PTRS:
@@ -337,12 +385,10 @@ ULONG CDECL ldap_set_optionA( LDAP *ld, int option, void *value )
         return WLDAP32_LDAP_UNWILLING_TO_PERFORM;
 
     case WLDAP32_LDAP_OPT_AREC_EXCLUSIVE:
-    case WLDAP32_LDAP_OPT_CLIENT_CERTIFICATE:
     case WLDAP32_LDAP_OPT_DNSDOMAIN_NAME:
     case WLDAP32_LDAP_OPT_ERROR_STRING:
     case WLDAP32_LDAP_OPT_FAST_CONCURRENT_BIND:
     case WLDAP32_LDAP_OPT_GETDSNAME_FLAGS:
-    case WLDAP32_LDAP_OPT_HOST_NAME:
     case WLDAP32_LDAP_OPT_HOST_REACHABLE:
     case WLDAP32_LDAP_OPT_PING_KEEP_ALIVE:
     case WLDAP32_LDAP_OPT_PING_LIMIT:
@@ -495,11 +541,15 @@ ULONG CDECL ldap_set_optionW( LDAP *ld, int option, void *value )
         return map_error( ldap_set_option( CTX(ld), LDAP_OPT_RESTART, value ) );
     }
 
+    case WLDAP32_LDAP_OPT_CLIENT_CERTIFICATE:
+        CLIENT_CERT_CALLBACK(ld) = value;
+        return WLDAP32_LDAP_SUCCESS;
+
     case WLDAP32_LDAP_OPT_REFERRAL_HOP_LIMIT:
         return map_error( ldap_set_option( CTX(ld), LDAP_OPT_REFHOPLIMIT, value ) );
 
     case WLDAP32_LDAP_OPT_SERVER_CERTIFICATE:
-        CERT_CALLBACK(ld) = value;
+        SERVER_CERT_CALLBACK(ld) = value;
         return WLDAP32_LDAP_SUCCESS;
 
     case WLDAP32_LDAP_OPT_DEREF:
@@ -540,6 +590,19 @@ ULONG CDECL ldap_set_optionW( LDAP *ld, int option, void *value )
         return ret;
     }
 
+    case WLDAP32_LDAP_OPT_HOST_NAME:
+    {
+        WCHAR **hostW = value;
+        char *host;
+
+        host = strWtoU( *hostW );
+        if (!host) return WLDAP32_LDAP_NO_MEMORY;
+
+        ret = ldap_set_option( CTX(ld), LDAP_OPT_HOST_NAME, host );
+        free( host );
+        return map_error( ret );
+    }
+
     case WLDAP32_LDAP_OPT_CACHE_ENABLE:
     case WLDAP32_LDAP_OPT_CACHE_FN_PTRS:
     case WLDAP32_LDAP_OPT_CACHE_STRATEGY:
@@ -561,12 +624,10 @@ ULONG CDECL ldap_set_optionW( LDAP *ld, int option, void *value )
             return WLDAP32_LDAP_SUCCESS;
         /* fall through */
     case WLDAP32_LDAP_OPT_AREC_EXCLUSIVE:
-    case WLDAP32_LDAP_OPT_CLIENT_CERTIFICATE:
     case WLDAP32_LDAP_OPT_DNSDOMAIN_NAME:
     case WLDAP32_LDAP_OPT_ERROR_STRING:
     case WLDAP32_LDAP_OPT_FAST_CONCURRENT_BIND:
     case WLDAP32_LDAP_OPT_GETDSNAME_FLAGS:
-    case WLDAP32_LDAP_OPT_HOST_NAME:
     case WLDAP32_LDAP_OPT_HOST_REACHABLE:
     case WLDAP32_LDAP_OPT_PING_KEEP_ALIVE:
     case WLDAP32_LDAP_OPT_PING_LIMIT:

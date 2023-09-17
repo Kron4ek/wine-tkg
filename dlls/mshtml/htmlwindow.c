@@ -157,102 +157,84 @@ static inline HTMLOuterWindow *HTMLOuterWindow_from_IHTMLWindow2(IHTMLWindow2 *i
     return CONTAINING_RECORD(iface, HTMLOuterWindow, base.IHTMLWindow2_iface);
 }
 
-static HRESULT base_query_interface(HTMLWindow *This, REFIID riid, void **ppv)
+static void *base_query_interface(HTMLWindow *This, REFIID riid)
 {
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        *ppv = &This->IHTMLWindow2_iface;
-    }else if(IsEqualGUID(&IID_IDispatch, riid)) {
-        *ppv = &This->IHTMLWindow2_iface;
-    }else if(IsEqualGUID(&IID_IDispatchEx, riid)) {
-        *ppv = &This->IDispatchEx_iface;
-    }else if(IsEqualGUID(&IID_IHTMLFramesCollection2, riid)) {
-        *ppv = &This->IHTMLWindow2_iface;
-    }else if(IsEqualGUID(&IID_IHTMLWindow2, riid)) {
-        *ppv = &This->IHTMLWindow2_iface;
-    }else if(IsEqualGUID(&IID_IHTMLWindow3, riid)) {
-        *ppv = &This->IHTMLWindow3_iface;
-    }else if(IsEqualGUID(&IID_IHTMLWindow4, riid)) {
-        *ppv = &This->IHTMLWindow4_iface;
-    }else if(IsEqualGUID(&IID_IHTMLWindow5, riid)) {
-        *ppv = &This->IHTMLWindow5_iface;
-    }else if(IsEqualGUID(&IID_IHTMLWindow6, riid)) {
-        *ppv = &This->IHTMLWindow6_iface;
-    }else if(IsEqualGUID(&IID_IHTMLWindow7, riid)) {
-        *ppv = &This->IHTMLWindow7_iface;
-    }else if(IsEqualGUID(&IID_IHTMLPrivateWindow, riid)) {
-        *ppv = &This->IHTMLPrivateWindow_iface;
-    }else if(IsEqualGUID(&IID_IServiceProvider, riid)) {
-        *ppv = &This->IServiceProvider_iface;
-    }else if(IsEqualGUID(&IID_ITravelLogClient, riid)) {
-        *ppv = &This->ITravelLogClient_iface;
-    }else if(IsEqualGUID(&IID_IObjectIdentity, riid)) {
-        *ppv = &This->IObjectIdentity_iface;
-    }else if(IsEqualGUID(&IID_IProvideClassInfo, riid)) {
-        *ppv = &This->IProvideMultipleClassInfo_iface;
-    }else if(IsEqualGUID(&IID_IProvideClassInfo2, riid)) {
-        *ppv = &This->IProvideMultipleClassInfo_iface;
-    }else if(IsEqualGUID(&IID_IProvideMultipleClassInfo, riid)) {
-        *ppv = &This->IProvideMultipleClassInfo_iface;
-    }else if(IsEqualGUID(&IID_IWineHTMLWindowPrivate, riid)) {
-        *ppv = &This->IWineHTMLWindowPrivate_iface;
-    }else if(IsEqualGUID(&IID_IWineHTMLWindowCompatPrivate, riid)) {
-        *ppv = &This->IWineHTMLWindowCompatPrivate_iface;
-    }else if(IsEqualGUID(&IID_IMarshal, riid)) {
-        *ppv = NULL;
-        FIXME("(%p)->(IID_IMarshal %p)\n", This, ppv);
-        return E_NOINTERFACE;
-    }else {
-        return S_FALSE;
+    if(IsEqualGUID(&IID_IUnknown, riid))
+        return &This->IHTMLWindow2_iface;
+    if(IsEqualGUID(&IID_IDispatch, riid))
+        return &This->IHTMLWindow2_iface;
+    if(IsEqualGUID(&IID_IDispatchEx, riid))
+        return &This->IDispatchEx_iface;
+    if(IsEqualGUID(&IID_IHTMLFramesCollection2, riid))
+        return &This->IHTMLWindow2_iface;
+    if(IsEqualGUID(&IID_IHTMLWindow2, riid))
+        return &This->IHTMLWindow2_iface;
+    if(IsEqualGUID(&IID_IHTMLWindow3, riid))
+        return &This->IHTMLWindow3_iface;
+    if(IsEqualGUID(&IID_IHTMLWindow4, riid))
+        return &This->IHTMLWindow4_iface;
+    if(IsEqualGUID(&IID_IHTMLWindow5, riid))
+        return &This->IHTMLWindow5_iface;
+    if(IsEqualGUID(&IID_IHTMLWindow6, riid))
+        return &This->IHTMLWindow6_iface;
+    if(IsEqualGUID(&IID_IHTMLWindow7, riid))
+        return &This->IHTMLWindow7_iface;
+    if(IsEqualGUID(&IID_IHTMLPrivateWindow, riid))
+        return &This->IHTMLPrivateWindow_iface;
+    if(IsEqualGUID(&IID_IServiceProvider, riid))
+        return &This->IServiceProvider_iface;
+    if(IsEqualGUID(&IID_ITravelLogClient, riid))
+        return &This->ITravelLogClient_iface;
+    if(IsEqualGUID(&IID_IObjectIdentity, riid))
+        return &This->IObjectIdentity_iface;
+    if(IsEqualGUID(&IID_IProvideClassInfo, riid))
+        return &This->IProvideMultipleClassInfo_iface;
+    if(IsEqualGUID(&IID_IProvideClassInfo2, riid))
+        return &This->IProvideMultipleClassInfo_iface;
+    if(IsEqualGUID(&IID_IProvideMultipleClassInfo, riid))
+        return &This->IProvideMultipleClassInfo_iface;
+    if(IsEqualGUID(&IID_IWineHTMLWindowPrivate, riid))
+        return &This->IWineHTMLWindowPrivate_iface;
+    if(IsEqualGUID(&IID_IWineHTMLWindowCompatPrivate, riid))
+        return &This->IWineHTMLWindowCompatPrivate_iface;
+    if(IsEqualGUID(&IID_IMarshal, riid)) {
+        FIXME("(%p)->(IID_IMarshal)\n", This);
+        return NULL;
     }
 
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return NULL;
 }
 
 static HRESULT WINAPI HTMLWindow2_QueryInterface(IHTMLWindow2 *iface, REFIID riid, void **ppv)
 {
     HTMLInnerWindow *This = HTMLInnerWindow_from_IHTMLWindow2(iface);
-    HRESULT hres;
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    hres = base_query_interface(&This->base, riid, ppv);
-    if(hres != S_FALSE)
-        return hres;
-
-    return EventTarget_QI(&This->event_target, riid, ppv);
+    return IDispatchEx_QueryInterface(&This->event_target.dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLWindow2_AddRef(IHTMLWindow2 *iface)
 {
     HTMLInnerWindow *This = HTMLInnerWindow_from_IHTMLWindow2(iface);
-    LONG ref = dispex_ref_incr(&This->event_target.dispex);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->event_target.dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLWindow2_Release(IHTMLWindow2 *iface)
 {
     HTMLInnerWindow *This = HTMLInnerWindow_from_IHTMLWindow2(iface);
-    LONG ref = dispex_ref_decr(&This->event_target.dispex);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_Release(&This->event_target.dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI outer_window_QueryInterface(IHTMLWindow2 *iface, REFIID riid, void **ppv)
 {
     HTMLOuterWindow *This = HTMLOuterWindow_from_IHTMLWindow2(iface);
-    HRESULT hres;
+    IUnknown *base_iface;
 
     TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
 
-    hres = base_query_interface(&This->base, riid, ppv);
-    if(hres != S_FALSE)
-        return hres;
+    if((base_iface = base_query_interface(&This->base, riid))) {
+        *ppv = base_iface;
+        IUnknown_AddRef(base_iface);
+        return S_OK;
+    }
 
     if(IsEqualGUID(&IID_nsXPCOMCycleCollectionParticipant, riid)) {
         *ppv = &outer_window_ccp;
@@ -260,9 +242,19 @@ static HRESULT WINAPI outer_window_QueryInterface(IHTMLWindow2 *iface, REFIID ri
     }else if(IsEqualGUID(&IID_nsCycleCollectionISupports, riid)) {
         *ppv = &This->base.IHTMLWindow2_iface;
         return S_OK;
-    }else {
-        return EventTarget_QI(&This->base.inner_window->event_target, riid, ppv);
+    }else if(IsEqualGUID(&IID_IEventTarget, riid)) {
+        if(!This->base.inner_window->doc || This->base.inner_window->doc->document_mode < COMPAT_MODE_IE9) {
+            *ppv = NULL;
+            return E_NOINTERFACE;
+        }
+        *ppv = &This->IEventTarget_iface;
+        IHTMLWindow2_AddRef(&This->base.IHTMLWindow2_iface);
+        return S_OK;
     }
+
+    WARN("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
+    *ppv = NULL;
+    return E_NOINTERFACE;
 }
 
 static ULONG WINAPI outer_window_AddRef(IHTMLWindow2 *iface)
@@ -2614,8 +2606,8 @@ static HRESULT WINAPI HTMLWindow7_get_outerHeight(IHTMLWindow7 *iface, LONG *p)
 HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(abort,            EVENTID_ABORT)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(canplay)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(canplaythrough)
-HTMLWINDOW7_ONEVENT_PROPERTY_STUB(change)
-HTMLWINDOW7_ONEVENT_PROPERTY_STUB(click)
+HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(change,           EVENTID_CHANGE)
+HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(click,            EVENTID_CLICK)
 HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(contextmenu,      EVENTID_CONTEXTMENU)
 HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(dblclick,         EVENTID_DBLCLICK)
 HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(drag,             EVENTID_DRAG)
@@ -2633,10 +2625,10 @@ HTMLWINDOW7_ONEVENT_PROPERTY_STUB(emptied)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(ended)
 HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(keydown,          EVENTID_KEYDOWN)
 HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(keypress,         EVENTID_KEYPRESS)
-HTMLWINDOW7_ONEVENT_PROPERTY_STUB(keyup)
+HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(keyup,            EVENTID_KEYUP)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(loadeddata)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(loadedmetadata)
-HTMLWINDOW7_ONEVENT_PROPERTY_STUB(loadstart)
+HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(loadstart,        EVENTID_LOADSTART)
 HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(mousedown,        EVENTID_MOUSEDOWN)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(mouseenter)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(mouseleave)
@@ -2647,7 +2639,7 @@ HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(mouseup,          EVENTID_MOUSEUP)
 HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(mousewheel,       EVENTID_MOUSEWHEEL)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(offline)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(online)
-HTMLWINDOW7_ONEVENT_PROPERTY_STUB(progress)
+HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(progress,         EVENTID_PROGRESS)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(ratechange)
 HTMLWINDOW7_ONEVENT_PROPERTY_IMPL(readystatechange, EVENTID_READYSTATECHANGE)
 HTMLWINDOW7_ONEVENT_PROPERTY_STUB(reset)
@@ -3771,6 +3763,100 @@ static const IDispatchExVtbl WindowDispExVtbl = {
     WindowDispEx_GetNameSpaceParent
 };
 
+static inline HTMLOuterWindow *impl_from_IEventTarget(IEventTarget *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLOuterWindow, IEventTarget_iface);
+}
+
+static HRESULT WINAPI WindowEventTarget_QueryInterface(IEventTarget *iface, REFIID riid, void **ppv)
+{
+    HTMLOuterWindow *This = impl_from_IEventTarget(iface);
+
+    return IHTMLWindow2_QueryInterface(&This->base.IHTMLWindow2_iface, riid, ppv);
+}
+
+static ULONG WINAPI WindowEventTarget_AddRef(IEventTarget *iface)
+{
+    HTMLOuterWindow *This = impl_from_IEventTarget(iface);
+
+    return IHTMLWindow2_AddRef(&This->base.IHTMLWindow2_iface);
+}
+
+static ULONG WINAPI WindowEventTarget_Release(IEventTarget *iface)
+{
+    HTMLOuterWindow *This = impl_from_IEventTarget(iface);
+
+    return IHTMLWindow2_Release(&This->base.IHTMLWindow2_iface);
+}
+
+static HRESULT WINAPI WindowEventTarget_GetTypeInfoCount(IEventTarget *iface, UINT *pctinfo)
+{
+    HTMLOuterWindow *This = impl_from_IEventTarget(iface);
+
+    return IDispatchEx_GetTypeInfoCount(&This->base.IDispatchEx_iface, pctinfo);
+}
+
+static HRESULT WINAPI WindowEventTarget_GetTypeInfo(IEventTarget *iface, UINT iTInfo,
+                                              LCID lcid, ITypeInfo **ppTInfo)
+{
+    HTMLOuterWindow *This = impl_from_IEventTarget(iface);
+
+    return IDispatchEx_GetTypeInfo(&This->base.IDispatchEx_iface, iTInfo, lcid, ppTInfo);
+}
+
+static HRESULT WINAPI WindowEventTarget_GetIDsOfNames(IEventTarget *iface, REFIID riid, LPOLESTR *rgszNames,
+        UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    HTMLOuterWindow *This = impl_from_IEventTarget(iface);
+
+    return IDispatchEx_GetIDsOfNames(&This->base.IDispatchEx_iface, riid, rgszNames, cNames, lcid, rgDispId);
+}
+
+static HRESULT WINAPI WindowEventTarget_Invoke(IEventTarget *iface, DISPID dispIdMember, REFIID riid, LCID lcid,
+        WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    HTMLOuterWindow *This = impl_from_IEventTarget(iface);
+
+    return IDispatchEx_Invoke(&This->base.IDispatchEx_iface, dispIdMember, riid, lcid, wFlags, pDispParams,
+                              pVarResult, pExcepInfo, puArgErr);
+}
+
+static HRESULT WINAPI WindowEventTarget_addEventListener(IEventTarget *iface, BSTR type, IDispatch *listener,
+        VARIANT_BOOL capture)
+{
+    HTMLOuterWindow *This = impl_from_IEventTarget(iface);
+
+    return IEventTarget_addEventListener(&This->base.inner_window->event_target.IEventTarget_iface, type, listener, capture);
+}
+
+static HRESULT WINAPI WindowEventTarget_removeEventListener(IEventTarget *iface, BSTR type, IDispatch *listener,
+        VARIANT_BOOL capture)
+{
+    HTMLOuterWindow *This = impl_from_IEventTarget(iface);
+
+    return IEventTarget_removeEventListener(&This->base.inner_window->event_target.IEventTarget_iface, type, listener, capture);
+}
+
+static HRESULT WINAPI WindowEventTarget_dispatchEvent(IEventTarget *iface, IDOMEvent *event_iface, VARIANT_BOOL *result)
+{
+    HTMLOuterWindow *This = impl_from_IEventTarget(iface);
+
+    return IEventTarget_dispatchEvent(&This->base.inner_window->event_target.IEventTarget_iface, event_iface, result);
+}
+
+static const IEventTargetVtbl EventTargetVtbl = {
+    WindowEventTarget_QueryInterface,
+    WindowEventTarget_AddRef,
+    WindowEventTarget_Release,
+    WindowEventTarget_GetTypeInfoCount,
+    WindowEventTarget_GetTypeInfo,
+    WindowEventTarget_GetIDsOfNames,
+    WindowEventTarget_Invoke,
+    WindowEventTarget_addEventListener,
+    WindowEventTarget_removeEventListener,
+    WindowEventTarget_dispatchEvent
+};
+
 static inline HTMLWindow *impl_from_IServiceProvider(IServiceProvider *iface)
 {
     return CONTAINING_RECORD(iface, HTMLWindow, IServiceProvider_iface);
@@ -3822,6 +3908,13 @@ static const IServiceProviderVtbl ServiceProviderVtbl = {
 static inline HTMLInnerWindow *impl_from_DispatchEx(DispatchEx *iface)
 {
     return CONTAINING_RECORD(iface, HTMLInnerWindow, event_target.dispex);
+}
+
+static void *HTMLWindow_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLInnerWindow *This = impl_from_DispatchEx(dispex);
+    void *iface = base_query_interface(&This->base, riid);
+    return iface ? iface : EventTarget_query_interface(&This->event_target, riid);
 }
 
 static void HTMLWindow_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
@@ -4075,6 +4168,12 @@ static compat_mode_t HTMLWindow_get_compat_mode(DispatchEx *dispex)
     return lock_document_mode(This->doc);
 }
 
+static IDispatch *HTMLWindow_get_dispatch_this(DispatchEx *dispex)
+{
+    HTMLInnerWindow *This = impl_from_DispatchEx(dispex);
+    return (IDispatch*)&This->base.outer_window->base.IHTMLWindow2_iface;
+}
+
 static nsISupports *HTMLWindow_get_gecko_target(DispatchEx *dispex)
 {
     HTMLInnerWindow *This = impl_from_DispatchEx(dispex);
@@ -4184,6 +4283,7 @@ static IHTMLEventObj *HTMLWindow_set_current_event(DispatchEx *dispex, IHTMLEven
 
 static const event_target_vtbl_t HTMLWindow_event_target_vtbl = {
     {
+        .query_interface     = HTMLWindow_query_interface,
         .destructor          = HTMLWindow_destructor,
         .traverse            = HTMLWindow_traverse,
         .unlink              = HTMLWindow_unlink,
@@ -4193,6 +4293,7 @@ static const event_target_vtbl_t HTMLWindow_event_target_vtbl = {
         .next_dispid         = HTMLWindow_next_dispid,
         .get_compat_mode     = HTMLWindow_get_compat_mode,
     },
+    .get_dispatch_this       = HTMLWindow_get_dispatch_this,
     .get_gecko_target        = HTMLWindow_get_gecko_target,
     .bind_event              = HTMLWindow_bind_event,
     .set_current_event       = HTMLWindow_set_current_event
@@ -4326,8 +4427,7 @@ static HRESULT create_inner_window(HTMLOuterWindow *outer_window, IMoniker *mon,
     window->base.outer_window = outer_window;
     window->base.inner_window = window;
 
-    EventTarget_Init(&window->event_target, (IUnknown*)&window->base.IHTMLWindow2_iface,
-                     &HTMLWindow_dispex, COMPAT_MODE_NONE);
+    EventTarget_Init(&window->event_target, &HTMLWindow_dispex, COMPAT_MODE_NONE);
 
     window->task_magic = get_task_target_magic();
 
@@ -4351,6 +4451,7 @@ HRESULT create_outer_window(GeckoBrowser *browser, mozIDOMWindowProxy *mozwindow
     if(!window)
         return E_OUTOFMEMORY;
     window->base.IHTMLWindow2_iface.lpVtbl = &outer_window_HTMLWindow2Vtbl;
+    window->IEventTarget_iface.lpVtbl = &EventTargetVtbl;
 
     window->base.outer_window = window;
     window->base.inner_window = NULL;

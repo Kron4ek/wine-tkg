@@ -62,47 +62,19 @@ static inline HTMLLocation *impl_from_IHTMLLocation(IHTMLLocation *iface)
 static HRESULT WINAPI HTMLLocation_QueryInterface(IHTMLLocation *iface, REFIID riid, void **ppv)
 {
     HTMLLocation *This = impl_from_IHTMLLocation(iface);
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        *ppv = &This->IHTMLLocation_iface;
-    }else if(IsEqualGUID(&IID_IHTMLLocation, riid)) {
-        *ppv = &This->IHTMLLocation_iface;
-    }else if(IsEqualGUID(&IID_IMarshal, riid)) {
-        *ppv = NULL;
-        FIXME("(%p)->(IID_IMarshal %p)\n", This, ppv);
-        return E_NOINTERFACE;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
-        return *ppv ? S_OK : E_NOINTERFACE;
-    }else {
-        *ppv = NULL;
-        WARN("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return IDispatchEx_QueryInterface(&This->dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLLocation_AddRef(IHTMLLocation *iface)
 {
     HTMLLocation *This = impl_from_IHTMLLocation(iface);
-    LONG ref = dispex_ref_incr(&This->dispex);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLLocation_Release(IHTMLLocation *iface)
 {
     HTMLLocation *This = impl_from_IHTMLLocation(iface);
-    LONG ref = dispex_ref_decr(&This->dispex);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_Release(&This->dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI HTMLLocation_GetTypeInfoCount(IHTMLLocation *iface, UINT *pctinfo)
@@ -615,6 +587,20 @@ static inline HTMLLocation *impl_from_DispatchEx(DispatchEx *iface)
     return CONTAINING_RECORD(iface, HTMLLocation, dispex);
 }
 
+static void *HTMLLocation_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLLocation *This = impl_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLLocation, riid))
+        return &This->IHTMLLocation_iface;
+    if(IsEqualGUID(&IID_IMarshal, riid)) {
+        FIXME("(%p)->(IID_IMarshal)\n", This);
+        return NULL;
+    }
+
+    return NULL;
+}
+
 static void HTMLLocation_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
 {
     HTMLLocation *This = impl_from_DispatchEx(dispex);
@@ -639,6 +625,7 @@ static void HTMLLocation_destructor(DispatchEx *dispex)
 }
 
 static const dispex_static_data_vtbl_t HTMLLocation_dispex_vtbl = {
+    .query_interface  = HTMLLocation_query_interface,
     .destructor       = HTMLLocation_destructor,
     .traverse         = HTMLLocation_traverse,
     .unlink           = HTMLLocation_unlink
@@ -666,8 +653,7 @@ HRESULT create_location(HTMLOuterWindow *window, HTMLLocation **ret)
     location->window = window;
     IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
 
-    init_dispatch(&location->dispex, (IUnknown*)&location->IHTMLLocation_iface, &HTMLLocation_dispex,
-                  COMPAT_MODE_QUIRKS);
+    init_dispatch(&location->dispex, &HTMLLocation_dispex, COMPAT_MODE_QUIRKS);
 
     *ret = location;
     return S_OK;

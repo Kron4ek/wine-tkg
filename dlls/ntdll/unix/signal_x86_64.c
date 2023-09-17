@@ -405,20 +405,16 @@ struct syscall_frame
     ULONG64               r14;           /* 0060 */
     ULONG64               r15;           /* 0068 */
     ULONG64               rip;           /* 0070 */
-    WORD                  cs;            /* 0078 */
-    WORD                  ds;            /* 007a */
-    WORD                  es;            /* 007c */
-    WORD                  fs;            /* 007e */
+    ULONG64               cs;            /* 0078 */
     ULONG64               eflags;        /* 0080 */
     ULONG64               rsp;           /* 0088 */
-    WORD                  ss;            /* 0090 */
-    WORD                  gs;            /* 0092 */
-    DWORD                 restore_flags; /* 0094 */
+    ULONG64               ss;            /* 0090 */
     ULONG64               rbp;           /* 0098 */
     struct syscall_frame *prev_frame;    /* 00a0 */
     SYSTEM_SERVICE_TABLE *syscall_table; /* 00a8 */
     DWORD                 syscall_flags; /* 00b0 */
-    DWORD                 align[3];      /* 00b4 */
+    DWORD                 restore_flags; /* 00b4 */
+    DWORD                 align[2];      /* 00b8 */
     XMM_SAVE_AREA32       xsave;         /* 00c0 */
     DECLSPEC_ALIGN(64) XSTATE xstate;    /* 02c0 */
 };
@@ -804,17 +800,7 @@ static inline void set_sigcontext( const CONTEXT *context, ucontext_t *sigcontex
     RIP_sig(sigcontext) = context->Rip;
     CS_sig(sigcontext)  = context->SegCs;
     FS_sig(sigcontext)  = context->SegFs;
-    GS_sig(sigcontext)  = context->SegGs;
     EFL_sig(sigcontext) = context->EFlags;
-#ifdef DS_sig
-    DS_sig(sigcontext) = context->SegDs;
-#endif
-#ifdef ES_sig
-    ES_sig(sigcontext) = context->SegEs;
-#endif
-#ifdef SS_sig
-    SS_sig(sigcontext) = context->SegSs;
-#endif
 }
 
 
@@ -837,11 +823,21 @@ static inline ucontext_t *init_handler( void *sigcontext )
 /***********************************************************************
  *           leave_handler
  */
-static inline void leave_handler( const ucontext_t *sigcontext )
+static inline void leave_handler( ucontext_t *sigcontext )
 {
 #ifdef __linux__
     if (fs32_sel && !is_inside_signal_stack( (void *)RSP_sig(sigcontext )) && !is_inside_syscall(sigcontext))
         __asm__ volatile( "movw %0,%%fs" :: "r" (fs32_sel) );
+#endif
+#ifdef DS_sig
+    DS_sig(sigcontext) = ds64_sel;
+#else
+    __asm__ volatile( "movw %0,%%ds" :: "r" (ds64_sel) );
+#endif
+#ifdef ES_sig
+    ES_sig(sigcontext) = ds64_sel;
+#else
+    __asm__ volatile( "movw %0,%%es" :: "r" (ds64_sel) );
 #endif
 }
 
@@ -875,23 +871,11 @@ static void save_context( struct xcontext *xcontext, const ucontext_t *sigcontex
     context->Rip    = RIP_sig(sigcontext);
     context->SegCs  = CS_sig(sigcontext);
     context->SegFs  = FS_sig(sigcontext);
-    context->SegGs  = GS_sig(sigcontext);
     context->EFlags = EFL_sig(sigcontext);
-#ifdef DS_sig
-    context->SegDs  = DS_sig(sigcontext);
-#else
-    __asm__("movw %%ds,%0" : "=m" (context->SegDs));
-#endif
-#ifdef ES_sig
-    context->SegEs  = ES_sig(sigcontext);
-#else
-    __asm__("movw %%es,%0" : "=m" (context->SegEs));
-#endif
-#ifdef SS_sig
-    context->SegSs  = SS_sig(sigcontext);
-#else
-    __asm__("movw %%ss,%0" : "=m" (context->SegSs));
-#endif
+    context->SegDs  = ds64_sel;
+    context->SegEs  = ds64_sel;
+    context->SegGs  = ds64_sel;
+    context->SegSs  = ds64_sel;
     context->Dr0    = amd64_thread_data()->dr0;
     context->Dr1    = amd64_thread_data()->dr1;
     context->Dr2    = amd64_thread_data()->dr2;
@@ -1048,15 +1032,6 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
         frame->rbp    = context->Rbp;
         frame->rip    = context->Rip;
         frame->eflags = context->EFlags;
-        frame->cs     = context->SegCs;
-        frame->ss     = context->SegSs;
-    }
-    if (flags & CONTEXT_SEGMENTS)
-    {
-        frame->ds = context->SegDs;
-        frame->es = context->SegEs;
-        frame->fs = context->SegFs;
-        frame->gs = context->SegGs;
     }
     if (flags & CONTEXT_FLOATING_POINT)
     {
@@ -1124,16 +1099,16 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
         context->Rbp    = frame->rbp;
         context->Rip    = frame->rip;
         context->EFlags = frame->eflags;
-        context->SegCs  = frame->cs;
-        context->SegSs  = frame->ss;
+        context->SegCs  = cs64_sel;
+        context->SegSs  = ds64_sel;
         context->ContextFlags |= CONTEXT_CONTROL;
     }
     if (needed_flags & CONTEXT_SEGMENTS)
     {
-        context->SegDs  = frame->ds;
-        context->SegEs  = frame->es;
-        context->SegFs  = frame->fs;
-        context->SegGs  = frame->gs;
+        context->SegDs  = ds64_sel;
+        context->SegEs  = ds64_sel;
+        context->SegFs  = amd64_thread_data()->fs;
+        context->SegGs  = ds64_sel;
         context->ContextFlags |= CONTEXT_SEGMENTS;
     }
     if (needed_flags & CONTEXT_FLOATING_POINT)
@@ -1361,16 +1336,16 @@ NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
         context->Ebp    = wow_frame->Ebp;
         context->Eip    = wow_frame->Eip;
         context->EFlags = wow_frame->EFlags;
-        context->SegCs  = wow_frame->SegCs;
-        context->SegSs  = wow_frame->SegSs;
+        context->SegCs  = cs32_sel;
+        context->SegSs  = ds64_sel;
         context->ContextFlags |= CONTEXT_I386_CONTROL;
     }
     if (needed_flags & CONTEXT_I386_SEGMENTS)
     {
-        context->SegDs = wow_frame->SegDs;
-        context->SegEs = wow_frame->SegEs;
-        context->SegFs = wow_frame->SegFs;
-        context->SegGs = wow_frame->SegGs;
+        context->SegDs = ds64_sel;
+        context->SegEs = ds64_sel;
+        context->SegFs = amd64_thread_data()->fs;
+        context->SegGs = ds64_sel;
         context->ContextFlags |= CONTEXT_I386_SEGMENTS;
     }
     if (needed_flags & CONTEXT_I386_EXTENDED_REGISTERS)
@@ -2748,11 +2723,11 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
         wow_context->Esp = get_wow_teb( teb )->Tib.StackBase - 16;
         wow_context->Eip = pLdrSystemDllInitBlock->pRtlUserThreadStart;
         wow_context->SegCs = cs32_sel;
-        wow_context->SegDs = context.SegDs;
-        wow_context->SegEs = context.SegEs;
-        wow_context->SegFs = context.SegFs;
-        wow_context->SegGs = context.SegGs;
-        wow_context->SegSs = context.SegSs;
+        wow_context->SegDs = ds64_sel;
+        wow_context->SegEs = ds64_sel;
+        wow_context->SegFs = thread_data->fs;
+        wow_context->SegGs = ds64_sel;
+        wow_context->SegSs = ds64_sel;
         wow_context->EFlags = 0x202;
         wow_context->FloatSave.ControlWord = context.FltSave.ControlWord;
         *(XSAVE_FORMAT *)wow_context->ExtendedRegisters = context.FltSave;
@@ -2766,6 +2741,8 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     memset( frame, 0, sizeof(*frame) );
     NtSetContextThread( GetCurrentThread(), ctx );
 
+    frame->cs  = cs64_sel;
+    frame->ss  = ds64_sel;
     frame->rsp = (ULONG64)ctx - 8;
     frame->rip = (ULONG64)pLdrInitializeThunk;
     frame->rcx = (ULONG64)ctx;
@@ -2850,7 +2827,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    __ASM_CFI(".cfi_adjust_cfa_offset 8\n\t")
                    "popq 0x80(%rcx)\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -8\n\t")
-                   "movl $0,0x94(%rcx)\n\t"        /* frame->restore_flags */
+                   "movl $0,0xb4(%rcx)\n\t"        /* frame->restore_flags */
                    ".globl " __ASM_NAME("__wine_syscall_dispatcher_prolog_end") "\n"
                    __ASM_NAME("__wine_syscall_dispatcher_prolog_end") ":\n\t"
                    "movq %rax,0x00(%rcx)\n\t"
@@ -2870,14 +2847,10 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movq %r15,0x68(%rcx)\n\t"
                    __ASM_CFI_REG_IS_AT2(r15, rcx, 0xe8, 0x00)
                    "movw %cs,0x78(%rcx)\n\t"
-                   "movw %ds,0x7a(%rcx)\n\t"
-                   "movw %es,0x7c(%rcx)\n\t"
-                   "movw %fs,0x7e(%rcx)\n\t"
                    "movq %rsp,0x88(%rcx)\n\t"
                    __ASM_CFI_CFA_IS_AT2(rcx, 0x88, 0x01)
                    __ASM_CFI_REG_IS_AT2(rsp, rcx, 0x88, 0x01)
                    "movw %ss,0x90(%rcx)\n\t"
-                   "movw %gs,0x92(%rcx)\n\t"
                    "movq %rbp,0x98(%rcx)\n\t"
                    __ASM_CFI_REG_IS_AT2(rbp, rcx, 0x98, 0x01)
                    /* Legends of Runeterra hooks the first system call return instruction, and
@@ -2969,11 +2942,11 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    /* $rcx is now pointing to "frame" again */
                    __ASM_CFI(".cfi_restore_state\n")
                    __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") ":\n\t"
-                   "movl 0x94(%rcx),%edx\n\t"  /* frame->restore_flags */
+                   "movl 0xb4(%rcx),%edx\n\t"      /* frame->restore_flags */
 #ifdef __linux__
                    "testl $12,%r14d\n\t"           /* SYSCALL_HAVE_PTHREAD_TEB | SYSCALL_HAVE_WRFSGSBASE */
                    "jz 1f\n\t"
-                   "movw 0x7e(%rcx),%fs\n"
+                   "movw %gs:0x338,%fs\n"          /* amd64_thread_data()->fs */
                    "1:\n\t"
 #endif
                    "testl $0x48,%edx\n\t"          /* CONTEXT_FLOATING_POINT | CONTEXT_XSTATE */
@@ -2996,7 +2969,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "xorl %edx,%edx\n\t"
                    "xrstor64 0xc0(%rcx)\n\t"
                    "movq %r11,%rax\n\t"
-                   "movl 0x94(%rcx),%edx\n\t"
+                   "movl 0xb4(%rcx),%edx\n\t"      /* frame->restore_flags */
                    "jmp 4f\n"
                    "3:\tfxrstor64 0xc0(%rcx)\n"
                    "4:\tmovq 0x98(%rcx),%rbp\n\t"
@@ -3090,7 +3063,7 @@ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
                    "popq 0x70(%rcx)\n\t"           /* frame->rip */
                    __ASM_CFI(".cfi_adjust_cfa_offset -8\n\t")
                    __ASM_CFI_REG_IS_AT2(rip, rcx, 0xf0,0x00)
-                   "movl $0,0x94(%rcx)\n\t"        /* frame->restore_flags */
+                   "movl $0,0xb4(%rcx)\n\t"        /* frame->restore_flags */
                    ".globl " __ASM_NAME("__wine_unix_call_dispatcher_prolog_end") "\n"
                    __ASM_NAME("__wine_unix_call_dispatcher_prolog_end") ":\n\t"
                    "movq %rbx,0x08(%rcx)\n\t"
@@ -3126,7 +3099,6 @@ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
 #ifdef __linux__
                    "testl $12,%r14d\n\t"           /* SYSCALL_HAVE_PTHREAD_TEB | SYSCALL_HAVE_WRFSGSBASE */
                    "jz 2f\n\t"
-                   "movw %fs,0x7e(%rcx)\n\t"
                    "movq %gs:0x330,%rsi\n\t"       /* amd64_thread_data()->pthread_teb */
                    "testl $8,%r14d\n\t"            /* SYSCALL_HAVE_WRFSGSBASE */
                    "jz 1f\n\t"
@@ -3153,12 +3125,12 @@ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
                    "movdqa 0x230(%rcx),%xmm13\n\t"
                    "movdqa 0x240(%rcx),%xmm14\n\t"
                    "movdqa 0x250(%rcx),%xmm15\n\t"
-                   "testl $0xffff,0x94(%rcx)\n\t"  /* frame->restore_flags */
+                   "testl $0xffff,0xb4(%rcx)\n\t"  /* frame->restore_flags */
                    "jnz " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") "\n\t"
 #ifdef __linux__
                    "testl $12,%r14d\n\t"           /* SYSCALL_HAVE_PTHREAD_TEB | SYSCALL_HAVE_WRFSGSBASE */
                    "jz 1f\n\t"
-                   "movw 0x7e(%rcx),%fs\n"
+                   "movw %gs:0x338,%fs\n"          /* amd64_thread_data()->fs */
                    "1:\n\t"
 #endif
                    "movq 0x60(%rcx),%r14\n\t"

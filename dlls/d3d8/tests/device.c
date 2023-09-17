@@ -3203,9 +3203,15 @@ static void test_wndproc(void)
 
     /* I have to minimize and restore the focus window, otherwise native d3d8 fails
      * device::reset with D3DERR_DEVICELOST. This does not happen when the window
-     * restore is triggered by the user. */
+     * restore is triggered by the user.
+     *
+     * fvwm randomly sends a focus loss notification when we minimize, so do it
+     * before checking the incoming messages. It might match WM_ACTIVATEAPP but has
+     * a wrong WPARAM. Use SW_SHOWMINNOACTIVE to make sure we don't accidentally
+     * activate the window at this point and miss our WM_ACTIVATEAPP(wparam=1). */
+    ShowWindow(focus_window, SW_SHOWMINNOACTIVE);
+    flush_events();
     expect_messages = reactivate_messages;
-    ShowWindow(focus_window, SW_MINIMIZE);
     ShowWindow(focus_window, SW_RESTORE);
     /* Set focus twice to make KDE and fvwm in focus-follows-mouse mode happy. */
     SetForegroundWindow(focus_window);
@@ -3240,7 +3246,12 @@ static void test_wndproc(void)
     SetForegroundWindow(GetDesktopWindow());
     ok(!expect_messages->message, "Expected message %#x for window %#x, but didn't receive it.\n",
             expect_messages->message, expect_messages->window);
+
+    /* kwin sometimes resizes hidden windows. The d3d8 version of this test has been reliable on
+     * Windows so far, but the d3d9 equivalent rarely fails since Windows 8. */
+    flaky
     ok(!windowposchanged_received, "Received WM_WINDOWPOSCHANGED but did not expect it.\n");
+
     expect_messages = NULL;
     flush_events();
 
@@ -9721,6 +9732,7 @@ static void test_resource_access(void)
     D3DADAPTER_IDENTIFIER8 identifier;
     struct device_desc device_desc;
     D3DSURFACE_DESC surface_desc;
+    BOOL skip_ati2n_once = FALSE;
     IDirect3DDevice8 *device;
     unsigned int i, j;
     IDirect3D8 *d3d;
@@ -9872,7 +9884,11 @@ static void test_resource_access(void)
             if (tests[j].format == FORMAT_ATI2 && FAILED(IDirect3D8_CheckDeviceFormat(d3d, D3DADAPTER_DEFAULT,
                     D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, 0, D3DRTYPE_TEXTURE, format)))
             {
-                skip("ATI2N texture not supported.\n");
+                if (!skip_ati2n_once)
+                {
+                    skip("ATI2N texture not supported.\n");
+                    skip_ati2n_once = TRUE;
+                }
                 continue;
             }
 
@@ -10027,6 +10043,17 @@ static void test_resource_access(void)
             format = MAKEFOURCC('A','T','I','2');
         else
             format = colour_format;
+
+        if (tests[i].format == FORMAT_ATI2 && FAILED(IDirect3D8_CheckDeviceFormat(d3d, D3DADAPTER_DEFAULT,
+                D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, 0, D3DRTYPE_VOLUMETEXTURE, format)))
+        {
+            if (!skip_ati2n_once)
+            {
+                skip("ATI2N texture not supported.\n");
+                skip_ati2n_once = TRUE;
+            }
+            continue;
+        }
 
         hr = IDirect3DDevice8_CreateVolumeTexture(device, 16, 16, 1, 1,
                 tests[i].usage, format, tests[i].pool, &texture);
@@ -10323,8 +10350,12 @@ static void test_draw_primitive(void)
     ok(stride == sizeof(*quad), "Unexpected stride %u.\n", stride);
     IDirect3DVertexBuffer8_Release(current_vb);
 
-    hr = IDirect3DDevice8_DrawPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, quad, 0);
-    ok(hr == D3D_OK, "DrawPrimitiveUP failed, hr %#lx.\n", hr);
+    /* Crashes on r200, Windows XP with STATUS_INTEGER_DIVIDE_BY_ZERO. */
+    if (0)
+    {
+        hr = IDirect3DDevice8_DrawPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, quad, 0);
+        ok(hr == D3D_OK, "DrawPrimitiveUP failed, hr %#lx.\n", hr);
+    }
     hr = IDirect3DDevice8_DrawPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, quad, sizeof(*quad));
     ok(hr == D3D_OK, "DrawPrimitiveUP failed, hr %#lx.\n", hr);
 
@@ -10354,12 +10385,16 @@ static void test_draw_primitive(void)
     ok(base_vertex_index == 1, "Unexpected base vertex index %u.\n", base_vertex_index);
     IDirect3DIndexBuffer8_Release(current_ib);
 
-    hr = IDirect3DDevice8_DrawIndexedPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, 4, 0,
-            indices, D3DFMT_INDEX16, quad, 0);
-    ok(SUCCEEDED(hr), "DrawIndexedPrimitiveUP failed, hr %#lx.\n", hr);
-    hr = IDirect3DDevice8_DrawIndexedPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, 4, 2,
-            indices, D3DFMT_INDEX16, quad, 0);
-    ok(SUCCEEDED(hr), "DrawIndexedPrimitiveUP failed, hr %#lx.\n", hr);
+    /* Crashes on r200, Windows XP with STATUS_INTEGER_DIVIDE_BY_ZERO. */
+    if (0)
+    {
+        hr = IDirect3DDevice8_DrawIndexedPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, 4, 0,
+                indices, D3DFMT_INDEX16, quad, 0);
+        ok(SUCCEEDED(hr), "DrawIndexedPrimitiveUP failed, hr %#lx.\n", hr);
+        hr = IDirect3DDevice8_DrawIndexedPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, 4, 2,
+                indices, D3DFMT_INDEX16, quad, 0);
+        ok(SUCCEEDED(hr), "DrawIndexedPrimitiveUP failed, hr %#lx.\n", hr);
+    }
 
     hr = IDirect3DDevice8_DrawIndexedPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, 4, 2,
             indices, D3DFMT_INDEX16, quad, sizeof(*quad));

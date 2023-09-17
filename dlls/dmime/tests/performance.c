@@ -334,7 +334,7 @@ static void test_createport(void)
     ok(hr == S_OK, "CloseDown failed: %#lx\n", hr);
 
     IDirectMusic_Release(music);
-    IDirectMusicPerformance_Release(perf);
+    IDirectMusicPerformance8_Release(perf);
 }
 
 static void test_pchannel(void)
@@ -627,7 +627,7 @@ static void test_performance_graph(void)
     ok(graph2 == NULL, "unexpected pointer.\n");
 
     hr = IDirectMusicPerformance8_QueryInterface(perf, &IID_IDirectMusicGraph, (void**)&graph);
-    todo_wine ok(hr == S_OK, "Failed: %#lx\n", hr);
+    ok(hr == S_OK, "Failed: %#lx\n", hr);
 
     if (graph)
         IDirectMusicGraph_Release(graph);

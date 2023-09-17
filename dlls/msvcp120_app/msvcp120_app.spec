@@ -1739,10 +1739,10 @@
 @ extern ?_Sync@ios_base@std@@0_NA msvcp120.?_Sync@ios_base@std@@0_NA
 @ cdecl -arch=win32 ?_Syserror_map@std@@YAPBDH@Z(long) msvcp120.?_Syserror_map@std@@YAPBDH@Z
 @ cdecl -arch=win64 ?_Syserror_map@std@@YAPEBDH@Z(long) msvcp120.?_Syserror_map@std@@YAPEBDH@Z
-@ stub ?_Throw_C_error@std@@YAXH@Z
+@ cdecl ?_Throw_C_error@std@@YAXH@Z(long) msvcp120.?_Throw_C_error@std@@YAXH@Z
 @ stub ?_Throw_Cpp_error@std@@YAXH@Z
-@ stub -arch=win32 ?_Throw_future_error@std@@YAXABVerror_code@1@@Z
-@ stub -arch=win64 ?_Throw_future_error@std@@YAXAEBVerror_code@1@@Z
+@ cdecl -arch=win32 ?_Throw_future_error@std@@YAXABVerror_code@1@@Z(ptr) msvcp120.?_Throw_future_error@std@@YAXABVerror_code@1@@Z
+@ cdecl -arch=win64 ?_Throw_future_error@std@@YAXAEBVerror_code@1@@Z(ptr) msvcp120.?_Throw_future_error@std@@YAXAEBVerror_code@1@@Z
 @ stub ?_Throw_lock_error@threads@stdext@@YAXXZ
 @ stub ?_Throw_resource_error@threads@stdext@@YAXXZ
 @ cdecl -arch=arm ?_Tidy@?$_Yarn@D@std@@AAAXXZ(ptr) msvcp120.?_Tidy@?$_Yarn@D@std@@AAAXXZ

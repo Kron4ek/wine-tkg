@@ -84,10 +84,7 @@ static ULONG WINAPI IUnknownImpl_Release(IUnknown *iface)
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if (!ref) {
-        HeapFree(GetProcessHeap(), 0, This);
-        DSWAVE_UnlockModule();
-    }
+    if (!ref) free(This);
 
     return ref;
 }
@@ -180,18 +177,14 @@ HRESULT create_dswave(REFIID lpcGUID, void **ppobj)
     IDirectMusicWaveImpl *obj;
     HRESULT hr;
 
-    obj = HeapAlloc(GetProcessHeap(), 0, sizeof(IDirectMusicWaveImpl));
-    if (!obj) {
-        *ppobj = NULL;
-        return E_OUTOFMEMORY;
-    }
+    *ppobj = NULL;
+    if (!(obj = calloc(1, sizeof(*obj)))) return E_OUTOFMEMORY;
     obj->IUnknown_iface.lpVtbl = &unknown_vtbl;
     obj->ref = 1;
     dmobject_init(&obj->dmobj, &CLSID_DirectSoundWave, &obj->IUnknown_iface);
     obj->dmobj.IDirectMusicObject_iface.lpVtbl = &dmobject_vtbl;
     obj->dmobj.IPersistStream_iface.lpVtbl = &persiststream_vtbl;
 
-    DSWAVE_LockModule();
     hr = IUnknown_QueryInterface(&obj->IUnknown_iface, lpcGUID, ppobj);
     IUnknown_Release(&obj->IUnknown_iface);
     return hr;

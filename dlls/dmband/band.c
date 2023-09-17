@@ -81,10 +81,7 @@ static ULONG WINAPI IDirectMusicBandImpl_Release(IDirectMusicBand *iface)
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
-    if (!ref) {
-        HeapFree(GetProcessHeap(), 0, This);
-        DMBAND_UnlockModule();
-    }
+    if (!ref) free(This);
 
     return ref;
 }
@@ -278,11 +275,7 @@ static HRESULT parse_instrument(IDirectMusicBandImpl *This, DMUS_PRIVATE_CHUNK *
   /*
    * @TODO insert pNewInstrument into This
    */
-  pNewInstrument = HeapAlloc (GetProcessHeap (), HEAP_ZERO_MEMORY, sizeof(DMUS_PRIVATE_INSTRUMENT));
-  if (NULL == pNewInstrument) {
-    ERR(": no more memory\n");
-    return  E_OUTOFMEMORY;
-  }
+  if (!(pNewInstrument = calloc(1, sizeof(*pNewInstrument)))) return E_OUTOFMEMORY;
   memcpy(&pNewInstrument->pInstrument, &inst, sizeof(DMUS_IO_INSTRUMENT));
   pNewInstrument->ppReferenceCollection = NULL;
   if (NULL != pObject) {
@@ -290,8 +283,7 @@ static HRESULT parse_instrument(IDirectMusicBandImpl *This, DMUS_PRIVATE_CHUNK *
     hr = IDirectMusicObject_QueryInterface (pObject, &IID_IDirectMusicCollection, (void**) &pCol);
     if (FAILED(hr)) {
       ERR(": failed to get IDirectMusicCollection Interface from DMObject\n");
-      HeapFree(GetProcessHeap(), 0, pNewInstrument);
-
+      free(pNewInstrument);
       return hr;
     }
     pNewInstrument->ppReferenceCollection = pCol;
@@ -515,11 +507,8 @@ HRESULT create_dmband(REFIID lpcGUID, void **ppobj)
   IDirectMusicBandImpl* obj;
   HRESULT hr;
 
-  obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicBandImpl));
-  if (NULL == obj) {
-    *ppobj = NULL;
-    return E_OUTOFMEMORY;
-  }
+  *ppobj = NULL;
+  if (!(obj = calloc(1, sizeof(*obj)))) return E_OUTOFMEMORY;
   obj->IDirectMusicBand_iface.lpVtbl = &dmband_vtbl;
   obj->ref = 1;
   dmobject_init(&obj->dmobj, &CLSID_DirectMusicBand, (IUnknown *)&obj->IDirectMusicBand_iface);
@@ -527,7 +516,6 @@ HRESULT create_dmband(REFIID lpcGUID, void **ppobj)
   obj->dmobj.IPersistStream_iface.lpVtbl = &persiststream_vtbl;
   list_init (&obj->Instruments);
 
-  DMBAND_LockModule();
   hr = IDirectMusicBand_QueryInterface(&obj->IDirectMusicBand_iface, lpcGUID, ppobj);
   IDirectMusicBand_Release(&obj->IDirectMusicBand_iface);
 

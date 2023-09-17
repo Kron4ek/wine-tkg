@@ -9626,7 +9626,7 @@ static void test_swp_paint_region_on_extend_zerosize(void)
     DeleteObject( hrgn_actual );
 }
 
-static void subtest_hvredraw(HWND hparent, const char *classname, DWORD style)
+static void subtest_hvredraw(HWND hparent, UINT class_style, DWORD style)
 {
     static const struct movesize_test {
         int dx, dy, dw, dh;
@@ -9646,12 +9646,19 @@ static void subtest_hvredraw(HWND hparent, const char *classname, DWORD style)
     const int x0 = 100, y0 = 100, w0 = 200, h0 = 200;
     size_t i;
     HWND hwnd;
-    UINT class_style;
+    WNDCLASSA cls = {
+        .style = class_style,
+        .lpfnWndProc = DefWindowProcA,
+        .hInstance = GetModuleHandleA(0),
+        .hCursor = LoadCursorA(0, (LPCSTR)IDC_ARROW),
+        .hbrBackground = GetStockObject(WHITE_BRUSH),
+        .lpszClassName = "TestHVRedrawClass"
+    };
 
-    hwnd = CreateWindowExA( 0, classname, "Test window", style, x0, y0, w0, h0, hparent, 0, 0, NULL );
+    register_class(&cls);
+
+    hwnd = CreateWindowExA( 0, cls.lpszClassName, "Test window", style, x0, y0, w0, h0, hparent, 0, 0, NULL );
     ok(hwnd != NULL, "Failed to create the window\n");
-
-    class_style = GetClassLongA( hwnd, GCL_STYLE );
 
     ShowWindow( hwnd, SW_SHOW );
     UpdateWindow( hwnd );
@@ -9664,8 +9671,8 @@ static void subtest_hvredraw(HWND hparent, const char *classname, DWORD style)
         RECT rect_old_vis, rect_new_vis;
         BOOL rgn_ok;
 
-        winetest_push_context( "%s %08lx SetWindowPos redraw #%Id (%d, %d, %d, %d)",
-                               classname, style, i, test->dx, test->dy, test->dw, test->dh );
+        winetest_push_context( "%x %08lx SetWindowPos redraw #%Id (%d, %d, %d, %d)",
+                               class_style, style, i, test->dx, test->dy, test->dw, test->dh );
 
         SetWindowPos( hwnd, HWND_TOP, x0, y0, w0, h0, SWP_NOACTIVATE );
 
@@ -9716,6 +9723,7 @@ static void subtest_hvredraw(HWND hparent, const char *classname, DWORD style)
     DeleteObject( hrgn_expect );
     DeleteObject( hrgn_new_vis );
     DeleteObject( hrgn_old_vis );
+    UnregisterClassA( cls.lpszClassName, cls.hInstance );
 }
 
 
@@ -9723,20 +9731,169 @@ static void test_hvredraw(void)
 {
     HWND htoplevel;
 
-    subtest_hvredraw( NULL, "SimpleWindowClassWithHRedraw", WS_OVERLAPPEDWINDOW );
-    subtest_hvredraw( NULL, "SimpleWindowClassWithVRedraw", WS_OVERLAPPEDWINDOW );
-    subtest_hvredraw( NULL, "SimpleWindowClassWithHVRedraw", WS_OVERLAPPEDWINDOW );
+    subtest_hvredraw( NULL, CS_HREDRAW, WS_OVERLAPPEDWINDOW );
+    subtest_hvredraw( NULL, CS_VREDRAW, WS_OVERLAPPEDWINDOW );
+    subtest_hvredraw( NULL, CS_HREDRAW|CS_VREDRAW, WS_OVERLAPPEDWINDOW );
 
     htoplevel = CreateWindowExA( 0, "SimpleWindowClass", "Test toplevel",
                                  WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_VISIBLE,
                                  100, 100, 400, 400, 0, 0, 0, NULL );
     ok( htoplevel != 0, "Failed to create top-level window: %lu\n", GetLastError() );
 
-    subtest_hvredraw( htoplevel, "SimpleWindowClassWithHRedraw", WS_CHILD | WS_BORDER );
-    subtest_hvredraw( htoplevel, "SimpleWindowClassWithVRedraw", WS_CHILD | WS_BORDER );
-    subtest_hvredraw( htoplevel, "SimpleWindowClassWithHVRedraw", WS_CHILD | WS_BORDER );
+    subtest_hvredraw( htoplevel, CS_HREDRAW, WS_CHILD | WS_BORDER );
+    subtest_hvredraw( htoplevel, CS_VREDRAW, WS_CHILD | WS_BORDER );
+    subtest_hvredraw( htoplevel, CS_HREDRAW|CS_VREDRAW, WS_CHILD | WS_BORDER );
 
     DestroyWindow( htoplevel );
+}
+
+struct run_in_temp_desktop_args
+{
+    const char *file;
+    int line;
+    const char *name;
+    void (*test_func)(void);
+};
+
+static DWORD WINAPI run_in_temp_desktop_thread_func(LPVOID param)
+{
+    HDESK prev_thr_desktop, prev_inp_desktop, post_inp_desktop, temp_desktop;
+    char temp_desktop_name[1024], curr_desktop_name[1024];
+    struct run_in_temp_desktop_args *args = param;
+    const char *file = args->file;
+    int line = args->line;
+    LARGE_INTEGER qpc;
+    DWORD length;
+    int result;
+
+    result = QueryPerformanceCounter( &qpc );
+    ok_(file, line)( result, "QueryPerformanceCounter error %lu\n", GetLastError() );
+
+    /*
+     * Temporary desktops from previous runs may leak due to a Windows bug.
+     * Generate a unique name that is unlikely to collide with previous runs.
+     */
+    result = snprintf( temp_desktop_name, ARRAY_SIZE(temp_desktop_name),
+                       "WineTest-%08lX-%08lX-%08lX%08lX-%s",
+                       GetCurrentProcessId(), GetCurrentThreadId(),
+                       qpc.HighPart, qpc.LowPart, args->name );
+    ok_(file, line)( result > 0 && result < ARRAY_SIZE(temp_desktop_name),
+                     "sprintf returned %d (out of memory, or name too long?)\n", result );
+
+    if (winetest_debug > 1)
+        trace_(file, line)( "creating desktop: %s\n", debugstr_a( temp_desktop_name ) );
+
+    temp_desktop = CreateDesktopA( temp_desktop_name, NULL, NULL, 0, GENERIC_ALL, NULL );
+    ok_(file, line)( temp_desktop != NULL, "CreateDesktopA(%s, ..) error %lu\n",
+                     debugstr_a( temp_desktop_name ), GetLastError() );
+
+    prev_inp_desktop = OpenInputDesktop( 0, FALSE, DESKTOP_SWITCHDESKTOP );
+    ok_(file, line)( prev_inp_desktop != NULL, "OpenInputDesktop [prev] error %lu\n", GetLastError() );
+
+    if (winetest_debug > 1)
+        trace_(file, line)( "sanity check: no concurrent WineTest desktop\n" );
+
+    /*
+     * Check if the desktop has not been properly restored.  This is done to
+     * avoid any possible hard-to-debug failures due to unexpected desktop.
+     */
+    result = GetUserObjectInformationA( prev_inp_desktop, UOI_NAME,
+                                        curr_desktop_name, sizeof(curr_desktop_name), &length );
+    ok_(file, line)( result, "GetUserObjectInformationA error %lu [rl = %lu]\n",
+                     GetLastError(), length );
+    ok_(file, line)( _strnicmp( curr_desktop_name, temp_desktop_name, 8 ) != 0,
+                     "unexpected input desktop name %s (concurrent WineTest run?)\n",
+                     debugstr_a( curr_desktop_name ) );
+
+    if (winetest_debug > 1)
+        trace_(file, line)( "switching desktop to: %s (%p)\n", debugstr_a( temp_desktop_name ), temp_desktop );
+
+    result = SwitchDesktop( temp_desktop );
+    ok_(file, line)( result, "SwitchDesktop(temp_desktop=%p) error %lu\n",
+                     temp_desktop, GetLastError() );
+
+    prev_thr_desktop = GetThreadDesktop( GetCurrentThreadId() );
+    ok_(file, line)( prev_thr_desktop != NULL, "GetThreadDesktop error %lu\n", GetLastError() );
+
+    result = SetThreadDesktop( temp_desktop );
+    ok_(file, line)( result, "SetThreadDesktop(temp_desktop=%p) error %lu\n",
+                     temp_desktop, GetLastError() );
+
+    if (winetest_debug > 1)
+        trace_(file, line)( "running test function %s()\n", args->name );
+
+    args->test_func();
+
+    if (winetest_debug > 1)
+        trace_(file, line)( "sanity check: input desktop has not been changed\n" );
+
+    /*
+     * Check if the input desktop has been tampered with.  This is done to
+     * avoid any possible hard-to-debug failures due to unexpected desktop.
+     */
+    post_inp_desktop = OpenInputDesktop( 0, FALSE, DESKTOP_ENUMERATE );
+    ok_(file, line)( post_inp_desktop != NULL, "OpenInputDesktop [post] error %lu\n", GetLastError() );
+
+    result = GetUserObjectInformationA( post_inp_desktop, UOI_NAME,
+                                        curr_desktop_name, sizeof(curr_desktop_name), &length );
+    ok_(file, line)( result, "GetUserObjectInformationA(post_inp_desktop=%p) error %lu [rl = %lu]\n",
+                     post_inp_desktop, GetLastError(), length );
+    todo_wine
+    ok_(file, line)( strcmp( curr_desktop_name, temp_desktop_name ) == 0,
+                     "different desktop name: %s != %s (no switch or concurrent WineTest run?)\n",
+                     debugstr_a( curr_desktop_name ), debugstr_a( temp_desktop_name ) );
+
+    result = CloseDesktop( post_inp_desktop );
+    ok_(file, line)( result, "CloseDesktop(post_inp_desktop=%p) error %lu\n",
+                     post_inp_desktop, GetLastError() );
+
+    if (winetest_debug > 1)
+        trace_(file, line)( "restoring previous desktop\n" );
+
+    result = SetThreadDesktop( prev_thr_desktop );
+    ok_(file, line)( result || broken( GetLastError() == ERROR_BUSY ) /* == W10 */,
+                     "SetThreadDesktop(prev_thr_desktop=%p) error %lu\n",
+                     prev_thr_desktop, GetLastError() );
+
+    result = SwitchDesktop( prev_inp_desktop );
+    ok_(file, line)( result, "SwitchDesktop(prev_inp_desktop=%p) error %lu\n",
+                     prev_inp_desktop, GetLastError() );
+
+    result = CloseDesktop( prev_inp_desktop );
+    ok_(file, line)( result, "CloseDesktop(prev_inp_desktop=%p) error %lu\n",
+                     prev_inp_desktop, GetLastError() );
+
+    if (winetest_debug > 1)
+        trace_(file, line)( "closing desktop: %s (%p)\n", debugstr_a( temp_desktop_name ), temp_desktop );
+
+    result = CloseDesktop( temp_desktop );
+    ok_(file, line)( result || broken( GetLastError() == ERROR_BUSY ) /* == W10 */,
+                     "CloseDesktop(temp_desktop=%p) error %lu\n",
+                     temp_desktop, GetLastError() );
+
+    return 0;
+}
+
+#define run_in_temp_desktop(f) run_in_temp_desktop_(__FILE__, __LINE__, #f, f)
+static void run_in_temp_desktop_(const char *file, int line, const char *name, void (*test_func)(void))
+{
+    struct run_in_temp_desktop_args args;
+    HANDLE thread;
+    DWORD result;
+
+    args.file = file;
+    args.line = line;
+    args.name = name;
+    args.test_func = test_func;
+
+    thread = CreateThread( NULL, 0, run_in_temp_desktop_thread_func, &args, 0, NULL );
+    ok_(file, line)( thread != NULL, "CreateThread error %lu\n", GetLastError() );
+
+    result = WaitForSingleObject( thread, INFINITE );
+    ok_(file, line)( result == WAIT_OBJECT_0, "WaitForSingleObject returned %lu, error %lu\n",
+                     result, GetLastError() );
+
+    CloseHandle( thread );
 }
 
 struct wnd_event
@@ -9745,6 +9902,7 @@ struct wnd_event
     HANDLE grand_child;
     HANDLE start_event;
     HANDLE stop_event;
+    HANDLE getmessage_complete;
 };
 
 static DWORD WINAPI thread_proc(void *param)
@@ -11133,21 +11291,6 @@ static void register_classes(void)
     cls.lpfnWndProc = DefWindowProcA;
     cls.style = CS_PARENTDC;
     cls.lpszClassName = "SimpleWindowClassWithParentDC";
-    register_class(&cls);
-
-    cls.lpfnWndProc = DefWindowProcA;
-    cls.style = CS_HREDRAW;
-    cls.lpszClassName = "SimpleWindowClassWithHRedraw";
-    register_class(&cls);
-
-    cls.lpfnWndProc = DefWindowProcA;
-    cls.style = CS_VREDRAW;
-    cls.lpszClassName = "SimpleWindowClassWithVRedraw";
-    register_class(&cls);
-
-    cls.lpfnWndProc = DefWindowProcA;
-    cls.style = CS_HREDRAW | CS_VREDRAW;
-    cls.lpszClassName = "SimpleWindowClassWithHVRedraw";
     register_class(&cls);
 
     clsW.style = 0;
@@ -13319,7 +13462,7 @@ static void test_PeekMessage(void)
     DWORD tid, qstatus;
     UINT qs_all_input = QS_ALLINPUT;
     UINT qs_input = QS_INPUT;
-    BOOL ret;
+    BOOL ret, broken_flags = FALSE;
     struct peekmsg_info info;
 
     info.hwnd = CreateWindowA("TestWindowClass", NULL, WS_OVERLAPPEDWINDOW,
@@ -13346,6 +13489,13 @@ static void test_PeekMessage(void)
         trace("QS_RAWINPUT not supported on this platform\n");
         qs_all_input &= ~QS_RAWINPUT;
         qs_input &= ~QS_RAWINPUT;
+
+        SetLastError(0xdeadbeef);
+        qstatus = GetQueueStatus(qs_all_input);
+        if (GetLastError() == ERROR_INVALID_FLAGS)
+            broken_flags = TRUE;
+        ok(GetLastError() == 0xdeadbeef || broken(GetLastError() == ERROR_INVALID_FLAGS) /* win7 */,
+            "wrong error %ld\n", GetLastError());
     }
     if (qstatus & QS_POSTMESSAGE)
     {
@@ -13365,10 +13515,14 @@ static void test_PeekMessage(void)
     if (!qstatus)
     {
         ok(GetLastError() == ERROR_INVALID_FLAGS, "wrong error %ld\n", GetLastError());
+        SetLastError(0xdeadbeef);
         qstatus = GetQueueStatus(qs_all_input);
+        ok(GetLastError() == 0xdeadbeef || broken(broken_flags && GetLastError() == ERROR_INVALID_FLAGS),
+            "wrong error %ld\n", GetLastError());
     }
     qstatus &= ~MAKELONG( 0x4000, 0x4000 );  /* sometimes set on Win95 */
-    ok(qstatus == MAKELONG(QS_SENDMESSAGE, QS_SENDMESSAGE),
+    ok(qstatus == MAKELONG(QS_SENDMESSAGE, QS_SENDMESSAGE) ||
+        broken(broken_flags && qstatus == 0),
        "wrong qstatus %08lx\n", qstatus);
 
     msg.message = 0;
@@ -16493,6 +16647,12 @@ static const struct message wm_lb_addstring_sort_ownerdraw[] =
     { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, OBJID_CLIENT, 3 },
     { 0 }
 };
+static const struct message wm_lb_dblclick_0[] =
+{
+    { WM_LBUTTONDBLCLK, sent|wparam|lparam, 0, MAKELPARAM(1,1) },
+    { WM_LBUTTONUP, sent|wparam|lparam, 0, 0 },
+    { 0 }
+};
 
 #define check_lb_state(a1, a2, a3, a4, a5) check_lb_state_dbg(a1, a2, a3, a4, a5, __LINE__)
 
@@ -16637,6 +16797,25 @@ static void test_listbox_messages(void)
     check_lb_state(listbox, 0, -1, 0, 0);
     flush_sequence();
 
+    ret = SendMessageA(listbox, LB_DELETESTRING, 0, 0);
+    ok(ret == LB_ERR, "expected LB_ERR, got %Id\n", ret);
+    check_lb_state(listbox, 0, LB_ERR, 0, 0);
+    flush_sequence();
+
+    ret = SendMessageA(listbox, LB_RESETCONTENT, 0, 0);
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    check_lb_state(listbox, 0, LB_ERR, 0, 0);
+    flush_sequence();
+
+    if (winetest_debug > 1) trace("clicking on item 0\n");
+    ret = SendMessageA(listbox, WM_LBUTTONDBLCLK, 0, MAKELPARAM(1, 1));
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    ret = SendMessageA(listbox, WM_LBUTTONUP, 0, 0);
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    ok_sequence(wm_lb_dblclick_0, "WM_LBUTTONDBLCLK 0", FALSE );
+    check_lb_state(listbox, 0, LB_ERR, 0, 0);
+    flush_sequence();
+
     log_all_parent_messages--;
 
     DestroyWindow(listbox);
@@ -16662,6 +16841,21 @@ static void test_listbox_messages(void)
 
     ok_sequence(wm_lb_addstring_sort_ownerdraw, "LB_ADDSTRING", FALSE);
     check_lb_state(listbox, 3, LB_ERR, 0, 0);
+
+    ret = SendMessageA(listbox, LB_RESETCONTENT, 0, 0);
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    check_lb_state(listbox, 0, LB_ERR, 0, 0);
+    SetFocus(listbox); /* avoid focus messages */
+    flush_sequence();
+
+    if (winetest_debug > 1) trace("clicking on item 0\n");
+    ret = SendMessageA(listbox, WM_LBUTTONDBLCLK, 0, MAKELPARAM(1, 1));
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    ret = SendMessageA(listbox, WM_LBUTTONUP, 0, 0);
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    ok_sequence(wm_lb_dblclick_0, "WM_LBUTTONDBLCLK 0", FALSE );
+    check_lb_state(listbox, 0, LB_ERR, 0, 0);
+    flush_sequence();
 
     log_all_parent_messages--;
 
@@ -16689,6 +16883,21 @@ static void test_listbox_messages(void)
     ok_sequence(wm_lb_addstring, "LB_ADDSTRING", FALSE);
     check_lb_state(listbox, 3, LB_ERR, 0, 0);
 
+    ret = SendMessageA(listbox, LB_RESETCONTENT, 0, 0);
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    check_lb_state(listbox, 0, LB_ERR, 0, 0);
+    SetFocus(listbox); /* avoid focus messages */
+    flush_sequence();
+
+    if (winetest_debug > 1) trace("clicking on item 0\n");
+    ret = SendMessageA(listbox, WM_LBUTTONDBLCLK, 0, MAKELPARAM(1, 1));
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    ret = SendMessageA(listbox, WM_LBUTTONUP, 0, 0);
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    ok_sequence(wm_lb_dblclick_0, "WM_LBUTTONDBLCLK 0", FALSE );
+    check_lb_state(listbox, 0, LB_ERR, 0, 0);
+    flush_sequence();
+
     log_all_parent_messages--;
 
     DestroyWindow(listbox);
@@ -16714,6 +16923,21 @@ static void test_listbox_messages(void)
 
     ok_sequence(wm_lb_addstring, "LB_ADDSTRING", FALSE);
     check_lb_state(listbox, 3, LB_ERR, 0, 0);
+
+    ret = SendMessageA(listbox, LB_RESETCONTENT, 0, 0);
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    check_lb_state(listbox, 0, LB_ERR, 0, 0);
+    SetFocus(listbox); /* avoid focus messages */
+    flush_sequence();
+
+    if (winetest_debug > 1) trace("clicking on item 0\n");
+    ret = SendMessageA(listbox, WM_LBUTTONDBLCLK, 0, MAKELPARAM(1, 1));
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    ret = SendMessageA(listbox, WM_LBUTTONUP, 0, 0);
+    ok(ret == LB_OKAY, "expected LB_OKAY, got %Id\n", ret);
+    ok_sequence(wm_lb_dblclick_0, "WM_LBUTTONDBLCLK 0", FALSE );
+    check_lb_state(listbox, 0, LB_ERR, 0, 0);
+    flush_sequence();
 
     log_all_parent_messages--;
 
@@ -17716,14 +17940,13 @@ static void test_PostMessage(void)
 }
 
 static WPARAM g_broadcast_wparam;
+static UINT g_broadcast_msg;
 static LRESULT WINAPI broadcast_test_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     WNDPROC oldproc = (WNDPROC)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
 
-    if (wParam == 0xbaadbeef)
+    if (message == g_broadcast_msg)
         g_broadcast_wparam = wParam;
-    else
-        g_broadcast_wparam = 0;
 
     return CallWindowProcA(oldproc, hwnd, message, wParam, lParam);
 }
@@ -17733,7 +17956,8 @@ static LRESULT WINAPI broadcast_test_sub_proc(HWND hwnd, UINT message, WPARAM wP
 {
     int sub_index = GetWindowLongPtrA(hwnd, GWLP_USERDATA);
 
-    g_broadcast_sub_wparam[sub_index] = (wParam == 0xbaadbeef) ? wParam : 0;
+    if (message == g_broadcast_msg)
+        g_broadcast_sub_wparam[sub_index] = wParam;
 
     return CallWindowProcA(g_oldproc_sub[sub_index], hwnd, message, wParam, lParam);
 }
@@ -17835,6 +18059,7 @@ static void test_broadcast(void)
         g_broadcast_wparam = 0xdead;
         for (j = 0; j < ARRAY_SIZE(bcast_expect); j++)
             g_broadcast_sub_wparam[j] = 0xdead;
+        g_broadcast_msg = messages[i];
         ret = SendMessageTimeoutA(HWND_BROADCAST, messages[i], 0xbaadbeef, 0, SMTO_NORMAL, 2000, NULL);
         if (!ret && GetLastError() == ERROR_TIMEOUT)
             win_skip("broadcasting test %d, timeout\n", i);
@@ -18573,7 +18798,7 @@ static void test_hotkey(void)
        "unexpected error %ld\n", GetLastError());
 
     /* Search for a Windows Key + letter combination that hasn't been registered */
-    for (hotkey_letter = 0x41; hotkey_letter <= 0x51; hotkey_letter ++)
+    for (hotkey_letter = 'A'; hotkey_letter <= 'Z'; hotkey_letter ++)
     {
         SetLastError(0xdeadbeef);
         ret = RegisterHotKey(test_window, 5, MOD_WIN, hotkey_letter);
@@ -18589,7 +18814,7 @@ static void test_hotkey(void)
         }
     }
 
-    if (hotkey_letter == 0x52)
+    if (hotkey_letter > 'Z')
     {
         ok(0, "Couldn't find any free Windows Key + letter combination\n");
         goto end;
@@ -18789,7 +19014,7 @@ static void test_hotkey(void)
     ok_sequence(WmHotkeyReleaseLWIN, "thread hotkey release LWIN", FALSE);
 
     /* Search for an ALT + letter combination that hasn't been registered */
-    for (hotkey_letter = 0x41; hotkey_letter <= 0x51; hotkey_letter ++)
+    for (hotkey_letter = 'A'; hotkey_letter <= 'Z'; hotkey_letter ++)
     {
         SetLastError(0xdeadbeef);
         ret = RegisterHotKey(test_window, 6, MOD_ALT, hotkey_letter);
@@ -18805,7 +19030,7 @@ static void test_hotkey(void)
         }
     }
 
-    if (hotkey_letter == 0x52)
+    if (hotkey_letter > 'Z')
     {
         ok(0, "Couldn't find any free ALT + letter combination\n");
         goto end;
@@ -19433,6 +19658,7 @@ static const struct message send_message_3[] = {
 static DWORD WINAPI SendMessage_thread_1(void *param)
 {
     struct wnd_event *wnd_event = param;
+    DWORD ret;
 
     if (winetest_debug > 1) trace("thread: starting\n");
     WaitForSingleObject(wnd_event->start_event, INFINITE);
@@ -19446,6 +19672,8 @@ static DWORD WINAPI SendMessage_thread_1(void *param)
     if (winetest_debug > 1) trace("thread: call SendMessage\n");
     SendMessageA(wnd_event->hwnd, WM_USER+2, 0, 0);
     SetEvent(wnd_event->stop_event);
+    ret = WaitForSingleObject(wnd_event->getmessage_complete, 100);
+    ok(ret == WAIT_OBJECT_0, "WaitForSingleObject failed, ret:%lx\n", ret);
 
     if (winetest_debug > 1) trace("thread: call SendMessage\n");
     SendMessageA(wnd_event->hwnd, WM_USER+3, 0, 0);
@@ -19456,6 +19684,7 @@ static DWORD WINAPI SendMessage_thread_1(void *param)
 static DWORD WINAPI SendMessage_thread_2(void *param)
 {
     struct wnd_event *wnd_event = param;
+    DWORD ret;
 
     if (winetest_debug > 1) trace("thread: starting\n");
     WaitForSingleObject(wnd_event->start_event, INFINITE);
@@ -19473,6 +19702,8 @@ static DWORD WINAPI SendMessage_thread_2(void *param)
     if (winetest_debug > 1) trace("thread: call SendMessage\n");
     SendMessageA(wnd_event->hwnd, WM_USER+2, 0, 0);
     SetEvent(wnd_event->stop_event);
+    ret = WaitForSingleObject(wnd_event->getmessage_complete, 100);
+    ok(ret == WAIT_OBJECT_0, "WaitForSingleObject failed, ret:%lx\n", ret);
 
     if (winetest_debug > 1) trace("thread: call SendMessage\n");
     SendMessageA(wnd_event->hwnd, WM_USER+3, 0, 0);
@@ -19488,8 +19719,11 @@ static void test_SendMessage_other_thread(int thread_n)
     DWORD tid, ret;
     MSG msg;
 
+    winetest_push_context("thread_%i", thread_n);
+
     wnd_event.start_event = CreateEventA(NULL, 0, 0, NULL);
     wnd_event.stop_event = CreateEventA(NULL, 0, 0, NULL);
+    wnd_event.getmessage_complete = CreateEventA(NULL, 0, 0, NULL);
 
     wnd_event.hwnd = CreateWindowExA(0, "TestWindowClass", NULL, WS_OVERLAPPEDWINDOW,
                                      100, 100, 200, 200, 0, 0, 0, NULL);
@@ -19524,6 +19758,8 @@ static void test_SendMessage_other_thread(int thread_n)
     DispatchMessageA(&msg);
     ok_sequence(send_message_1, "SendMessage from other thread 1", thread_n == 2);
 
+    SetEvent(wnd_event.getmessage_complete);
+
     ret = WaitForSingleObject(wnd_event.stop_event, 100);
     todo_wine_if (thread_n == 2)
     ok(ret == WAIT_OBJECT_0, "WaitForSingleObject failed, ret:%lx\n", ret);
@@ -19547,13 +19783,10 @@ static void test_SendMessage_other_thread(int thread_n)
     /* intentionally yield */
     MsgWaitForMultipleObjects(0, NULL, FALSE, 100, qs_all_input);
 
-    ret = GetQueueStatus(QS_SENDMESSAGE|QS_POSTMESSAGE);
-    /* FIXME: remove once Wine is fixed */
-    todo_wine_if (thread_n == 2)
-    ok(ret == 0, "wrong status %08lx\n", ret);
-
     if (winetest_debug > 1) trace("main: call PeekMessage\n");
-    ok(!PeekMessageA(&msg, 0, 0, 0, PM_REMOVE), "PeekMessage should fail\n");
+    while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) {
+        ok(ignore_message(msg.message), "got unexpected message %04x from PeekMessageA\n", msg.message);
+    }
     ok_sequence(WmEmptySeq, "SendMessage from other thread 5", thread_n == 2);
 
     ret = GetQueueStatus(QS_SENDMESSAGE|QS_POSTMESSAGE);
@@ -19565,8 +19798,11 @@ static void test_SendMessage_other_thread(int thread_n)
     flush_events();
     flush_sequence();
 
+    winetest_pop_context();
+
     CloseHandle(wnd_event.start_event);
     CloseHandle(wnd_event.stop_event);
+    CloseHandle(wnd_event.getmessage_complete);
 }
 
 static LRESULT CALLBACK insendmessage_wnd_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
@@ -19988,10 +20224,10 @@ START_TEST(msg)
     test_combobox_messages();
     test_wmime_keydown_message();
     test_paint_messages();
-    test_swp_paint_regions();
-    test_swp_paint_region_on_show();
-    test_swp_paint_region_on_extend_zerosize();
-    test_hvredraw();
+    run_in_temp_desktop(test_swp_paint_regions);
+    run_in_temp_desktop(test_swp_paint_region_on_show);
+    run_in_temp_desktop(test_swp_paint_region_on_extend_zerosize);
+    run_in_temp_desktop(test_hvredraw);
     test_interthread_messages();
     test_message_conversion();
     test_accelerators();

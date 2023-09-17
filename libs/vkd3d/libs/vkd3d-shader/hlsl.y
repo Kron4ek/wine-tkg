@@ -2913,6 +2913,7 @@ static bool intrinsic_fmod(struct hlsl_ctx *ctx, const struct parse_initializer 
         const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_node *x, *y, *div, *abs, *frac, *neg_frac, *ge, *select, *zero;
+    struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = { 0 };
     static const struct hlsl_constant_value zero_value;
 
     if (!(x = intrinsic_float_convert_arg(ctx, params, params->args[0], loc)))
@@ -2940,7 +2941,10 @@ static bool intrinsic_fmod(struct hlsl_ctx *ctx, const struct parse_initializer 
     if (!(ge = add_binary_comparison_expr(ctx, params->instrs, HLSL_OP2_GEQUAL, div, zero, loc)))
         return false;
 
-    if (!(select = hlsl_add_conditional(ctx, params->instrs, ge, frac, neg_frac)))
+    operands[0] = ge;
+    operands[1] = frac;
+    operands[2] = neg_frac;
+    if (!(select = add_expr(ctx, params->instrs, HLSL_OP3_TERNARY, operands, x->data_type, loc)))
         return false;
 
     return !!add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_MUL, select, y, loc);
@@ -3453,7 +3457,42 @@ static bool intrinsic_tex(struct hlsl_ctx *ctx, const struct parse_initializer *
 
     if (!(coords = add_implicit_conversion(ctx, params->instrs, params->args[1],
             hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, hlsl_sampler_dim_count(dim)), loc)))
-        coords = params->args[1];
+    {
+        return false;
+    }
+
+    /* tex1D() functions never produce 1D resource declarations. For newer profiles half offset
+       is used for the second coordinate, while older ones appear to replicate first coordinate.*/
+    if (dim == HLSL_SAMPLER_DIM_1D)
+    {
+        struct hlsl_ir_load *load;
+        struct hlsl_ir_node *half;
+        struct hlsl_ir_var *var;
+        unsigned int idx = 0;
+
+        if (!(var = hlsl_new_synthetic_var(ctx, "coords", hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, 2), loc)))
+            return false;
+
+        initialize_var_components(ctx, params->instrs, var, &idx, coords);
+        if (shader_profile_version_ge(ctx, 4, 0))
+        {
+            if (!(half = hlsl_new_float_constant(ctx, 0.5f, loc)))
+                return false;
+            hlsl_block_add_instr(params->instrs, half);
+
+            initialize_var_components(ctx, params->instrs, var, &idx, half);
+        }
+        else
+            initialize_var_components(ctx, params->instrs, var, &idx, coords);
+
+        if (!(load = hlsl_new_var_load(ctx, var, loc)))
+            return false;
+        hlsl_block_add_instr(params->instrs, &load->node);
+
+        coords = &load->node;
+
+        dim = HLSL_SAMPLER_DIM_2D;
+    }
 
     load_params.coords = coords;
     load_params.resource = params->args[0];
@@ -3464,6 +3503,12 @@ static bool intrinsic_tex(struct hlsl_ctx *ctx, const struct parse_initializer *
         return false;
     hlsl_block_add_instr(params->instrs, load);
     return true;
+}
+
+static bool intrinsic_tex1D(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return intrinsic_tex(ctx, params, loc, "tex1D", HLSL_SAMPLER_DIM_1D);
 }
 
 static bool intrinsic_tex2D(struct hlsl_ctx *ctx,
@@ -3652,6 +3697,7 @@ intrinsic_functions[] =
     {"smoothstep",                          3, true,  intrinsic_smoothstep},
     {"sqrt",                                1, true,  intrinsic_sqrt},
     {"step",                                2, true,  intrinsic_step},
+    {"tex1D",                              -1, false, intrinsic_tex1D},
     {"tex2D",                              -1, false, intrinsic_tex2D},
     {"tex3D",                              -1, false, intrinsic_tex3D},
     {"texCUBE",                            -1, false, intrinsic_texCUBE},
@@ -6555,6 +6601,7 @@ conditional_expr:
             struct hlsl_ir_node *cond = node_from_block($1);
             struct hlsl_ir_node *first = node_from_block($3);
             struct hlsl_ir_node *second = node_from_block($5);
+            struct hlsl_ir_node *args[HLSL_MAX_OPERANDS] = { 0 };
             struct hlsl_type *common_type;
 
             hlsl_block_add_block($1, $3);
@@ -6571,7 +6618,10 @@ conditional_expr:
             if (!(second = add_implicit_conversion(ctx, $1, second, common_type, &@5)))
                 YYABORT;
 
-            if (!hlsl_add_conditional(ctx, $1, cond, first, second))
+            args[0] = cond;
+            args[1] = first;
+            args[2] = second;
+            if (!add_expr(ctx, $1, HLSL_OP3_TERNARY, args, common_type, &@1))
                 YYABORT;
             $$ = $1;
         }

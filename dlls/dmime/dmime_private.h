@@ -45,7 +45,6 @@
 /*****************************************************************************
  * Interfaces
  */
-typedef struct IDirectMusicGraphImpl IDirectMusicGraphImpl;
 typedef struct IDirectMusicAudioPathImpl IDirectMusicAudioPathImpl;
 
 /*****************************************************************************
@@ -89,22 +88,9 @@ typedef struct _DMUS_PRIVATE_TEMPO_ITEM {
   DMUS_IO_TEMPO_ITEM item;
 } DMUS_PRIVATE_TEMPO_ITEM, *LPDMUS_PRIVATE_TEMPO_ITEM;
 
-typedef struct _DMUS_PRIVATE_GRAPH_TOOL {
-  struct list entry; /* for listing elements */
-  DWORD dwIndex;
-  IDirectMusicTool* pTool;
-} DMUS_PRIVATE_GRAPH_TOOL, *LPDMUS_PRIVATE_GRAPH_TOOL;
-
 typedef struct _DMUS_PRIVATE_TEMPO_PLAY_STATE {
   DWORD dummy;
 } DMUS_PRIVATE_TEMPO_PLAY_STATE, *LPDMUS_PRIVATE_TEMPO_PLAY_STATE;
-
-/**********************************************************************
- * Dll lifetime tracking declaration for dmime.dll
- */
-extern LONG DMIME_refCount;
-static inline void DMIME_LockModule(void) { InterlockedIncrement( &DMIME_refCount ); }
-static inline void DMIME_UnlockModule(void) { InterlockedDecrement( &DMIME_refCount ); }
 
 /*****************************************************************************
  * Misc.

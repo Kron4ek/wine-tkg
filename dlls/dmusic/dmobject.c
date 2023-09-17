@@ -287,7 +287,7 @@ const char *debugstr_chunk(const struct chunk_entry *chunk)
     return wine_dbg_sprintf("%s chunk, %ssize %lu", debugstr_fourcc(chunk->id), type, chunk->size);
 }
 
-static HRESULT stream_read(IStream *stream, void *data, ULONG size)
+HRESULT stream_read(IStream *stream, void *data, ULONG size)
 {
     ULONG read;
     HRESULT hr;
@@ -338,11 +338,10 @@ HRESULT stream_get_chunk(IStream *stream, struct chunk_entry *chunk)
         }
     }
 
-    if (chunk->id == FOURCC_LIST || chunk->id == FOURCC_RIFF) {
-        hr = stream_read(stream, &chunk->type, sizeof(FOURCC));
-        if (hr != S_OK)
-            return hr != S_FALSE ? hr : E_FAIL;
-    }
+    if (chunk->id != FOURCC_LIST && chunk->id != FOURCC_RIFF)
+        chunk->type = 0;
+    else if ((hr = stream_read(stream, &chunk->type, sizeof(FOURCC))) != S_OK)
+        return hr != S_FALSE ? hr : E_FAIL;
 
     TRACE_(dmfile)("Returning %s\n", debugstr_chunk(chunk));
 
@@ -588,7 +587,14 @@ HRESULT dmobj_parsedescriptor(IStream *stream, const struct chunk_entry *riff,
                             desc->wszFileName, sizeof(desc->wszFileName)) == S_OK)
                     desc->dwValidData |= DMUS_OBJ_FILENAME;
                 break;
+            case FOURCC_DLID:
+                if (!(supported & DMUS_OBJ_GUID_DLID)) break;
+                if ((supported & DMUS_OBJ_OBJECT) && stream_chunk_get_data(stream, &chunk,
+                            &desc->guidObject, sizeof(desc->guidObject)) == S_OK)
+                    desc->dwValidData |= DMUS_OBJ_OBJECT;
+                break;
             case DMUS_FOURCC_GUID_CHUNK:
+                if ((supported & DMUS_OBJ_GUID_DLID)) break;
                 if ((supported & DMUS_OBJ_OBJECT) && stream_chunk_get_data(stream, &chunk,
                             &desc->guidObject, sizeof(desc->guidObject)) == S_OK)
                     desc->dwValidData |= DMUS_OBJ_OBJECT;

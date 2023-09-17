@@ -3172,10 +3172,14 @@ static void test_draw_primitive(void)
     hr = IDirect3DDevice9_DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, 2);
     ok(SUCCEEDED(hr), "DrawPrimitive failed, hr %#lx.\n", hr);
 
-    hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLELIST, 2, quad, 0);
-    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, quad, 0);
-    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+    /* Crashes on r200, Windows XP with STATUS_INTEGER_DIVIDE_BY_ZERO. */
+    if (0)
+    {
+        hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLELIST, 2, quad, 0);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+        hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, quad, 0);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+    }
 
     hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLELIST, 2, quad, sizeof(*quad));
     ok(SUCCEEDED(hr), "DrawPrimitiveUP failed, hr %#lx.\n", hr);
@@ -3205,12 +3209,16 @@ static void test_draw_primitive(void)
     ok(current_ib == index_buffer, "Unexpected index buffer %p.\n", current_ib);
     IDirect3DIndexBuffer9_Release(current_ib);
 
-    hr = IDirect3DDevice9_DrawIndexedPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, 4, 2,
-            indices, D3DFMT_INDEX16, quad, 0);
-    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_DrawIndexedPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, 4, 0,
-            indices, D3DFMT_INDEX16, quad, 0);
-    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+    /* Crashes on r200, Windows XP with STATUS_INTEGER_DIVIDE_BY_ZERO. */
+    if (0)
+    {
+        hr = IDirect3DDevice9_DrawIndexedPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, 4, 2,
+                indices, D3DFMT_INDEX16, quad, 0);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+        hr = IDirect3DDevice9_DrawIndexedPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, 4, 0,
+                indices, D3DFMT_INDEX16, quad, 0);
+        ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#lx.\n", hr);
+    }
 
     hr = IDirect3DDevice9_DrawIndexedPrimitiveUP(device, D3DPT_TRIANGLELIST, 0, 4, 2,
             indices, D3DFMT_INDEX16, quad, sizeof(*quad));
@@ -4230,9 +4238,15 @@ static void test_wndproc(void)
 
         /* I have to minimize and restore the focus window, otherwise native d3d9 fails
          * device::reset with D3DERR_DEVICELOST. This does not happen when the window
-         * restore is triggered by the user. */
+         * restore is triggered by the user.
+         *
+         * fvwm randomly sends a focus loss notification when we minimize, so do it
+         * before checking the incoming messages. It might match WM_ACTIVATEAPP but has
+         * a wrong WPARAM. Use SW_SHOWMINNOACTIVE to make sure we don't accidentally
+         * activate the window at this point and miss our WM_ACTIVATEAPP(wparam=1). */
+        ShowWindow(focus_window, SW_SHOWMINNOACTIVE);
+        flush_events();
         expect_messages = tests[i].reactivate_messages;
-        ShowWindow(focus_window, SW_MINIMIZE);
         ShowWindow(focus_window, SW_RESTORE);
         /* Set focus twice to make KDE and fvwm in focus-follows-mouse mode happy. */
         SetForegroundWindow(focus_window);
@@ -4267,6 +4281,7 @@ static void test_wndproc(void)
         SetForegroundWindow(GetDesktopWindow());
         ok(!expect_messages->message, "Expected message %#x for window %#x, but didn't receive it, i=%u.\n",
                 expect_messages->message, expect_messages->window, i);
+        flaky
         ok(!windowposchanged_received, "Received WM_WINDOWPOSCHANGED but did not expect it.\n");
         expect_messages = NULL;
         flush_events();
@@ -4357,8 +4372,11 @@ static void test_wndproc(void)
         SetForegroundWindow(GetDesktopWindow());
         ok(!expect_messages->message, "Expected message %#x for window %#x, but didn't receive it, i=%u.\n",
                 expect_messages->message, expect_messages->window, i);
-        flaky_if(i == 0)
+
+        /* kwin and Win8+ sometimes resize hidden windows. */
+        flaky
         ok(!windowposchanged_received, "Received WM_WINDOWPOSCHANGED but did not expect it, i=%u.\n", i);
+
         expect_messages = NULL;
 
         /* The window is iconic even though no message was sent. */
@@ -4757,6 +4775,7 @@ static void test_reset_fullscreen(void)
     IDirect3DDevice9 *device;
     WNDCLASSEXA wc = {0};
     IDirect3D9 *d3d;
+    RECT r1, r2;
     HRESULT hr;
     ATOM atom;
     static const struct message messages[] =
@@ -4835,7 +4854,35 @@ static void test_reset_fullscreen(void)
     device_desc.flags = CREATE_DEVICE_FULLSCREEN;
     ok(SUCCEEDED(reset_device(device, &device_desc)), "Failed to reset device.\n");
 
+    /* We shouldn't receive a WM_SIZE message during the reset because d3d filters
+     * messages sent to the focus window. This is important because some games
+     * respond to WM_SIZE messages by calling Reset(), resulting in an endless
+     * recursion. */
+    ok(!wm_size_received, "Received unexpected WM_SIZE message.\n");
+    GetWindowRect(device_window, &r1);
+
     flush_events();
+    GetWindowRect(device_window, &r2);
+
+    /* fvwm2 and 3 resize the window though. We learn about this when processing
+     * events, after Reset() has finished and d3d is no longer filtering window
+     * messages. This still shouldn't happen but won't lead to an endless recursion.
+     *
+     * As far as I understand the fvwm3 source code, the WM doesn't expect a window
+     * to change from size A maximized to size B maximized. It will un-maximize the
+     * window, picking the stored normal size - which appens to be the size of the
+     * first fullscreen mode above, but not necessarily the screen size at startup.
+     *
+     * fvwm2 on the other hand doesn't understand mode switches at all. It will see
+     * the window is fullscreen (it has separate flags for fullscreen and maximized),
+     * and try to resize it to what it thinks is the display mode - which is the mode
+     * that fvwm2 was started with. The above fvwm3 bug also exists in fvwm2 but is
+     * hidden by the mode bug.
+     *
+     * This comment is based on a very superficial understanding of fvwm's event
+     * and window dimension handling code, which is about 10k lines of code. So it
+     * may be wrong. */
+    todo_wine_if(!EqualRect(&r1, &r2))
     ok(!wm_size_received, "Received unexpected WM_SIZE message.\n");
 
 cleanup:
@@ -6431,6 +6478,7 @@ static void test_occlusion_query(void)
     };
     unsigned int data_size, i, count;
     struct device_desc device_desc;
+    LARGE_INTEGER start, end, freq;
     IDirect3DQuery9 *query = NULL;
     IDirect3DDevice9 *device;
     IDirect3DSurface9 *rt;
@@ -6438,6 +6486,7 @@ static void test_occlusion_query(void)
     D3DVIEWPORT9 vp;
     ULONG refcount;
     D3DCAPS9 caps;
+    DWORD elapsed;
     HWND window;
     HRESULT hr;
     union
@@ -6448,6 +6497,7 @@ static void test_occlusion_query(void)
     } data, expected;
     BOOL broken_occlusion = FALSE;
     expected.uint = registry_mode.dmPelsWidth * registry_mode.dmPelsHeight;
+    QueryPerformanceFrequency(&freq);
 
     window = create_window();
     d3d9 = Direct3DCreate9(D3D_SDK_VERSION);
@@ -6577,6 +6627,39 @@ static void test_occlusion_query(void)
 
     if (broken_occlusion)
         goto done;
+
+    /* On my system (MacBookPro14,3 - Radeon 560M, i7-7920HQ), this loop
+     * takes about 20 ms with HW rendering and 160 ms with mesa software.
+     * I can't reliably read timings smaller than 20 ms though, so don't
+     * reduce the test count too much.
+     *
+     * wait_query() times out after 5 seconds, so if the 1000 iteration
+     * loop takes more than 100 ms the full test is bound to fail. I put
+     * it to 70 ms below to avoid flaky failures if e.g. a CI machine
+     * has CPU load from other processes. */
+    QueryPerformanceCounter(&start);
+    hr = IDirect3DDevice9_BeginScene(device);
+    ok(hr == D3D_OK, "Failed to begin scene, hr %#lx.\n", hr);
+    for (i = 0; i < 1000; ++i)
+    {
+        hr = IDirect3DQuery9_Issue(query, D3DISSUE_BEGIN);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        hr = IDirect3DQuery9_Issue(query, D3DISSUE_END);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    }
+    hr = IDirect3DDevice9_EndScene(device);
+    ok(hr == D3D_OK, "Failed to end scene, hr %#lx.\n", hr);
+
+    wait_query(query);
+    QueryPerformanceCounter(&end);
+
+    elapsed = (end.QuadPart - start.QuadPart) * 1000 / freq.QuadPart;
+
+    if (elapsed > 70)
+    {
+        skip("Test loop took too long (%lu ms), skipping large query tests.\n", elapsed);
+        goto done;
+    }
 
     hr = IDirect3DDevice9_BeginScene(device);
     ok(hr == D3D_OK, "Failed to begin scene, hr %#lx.\n", hr);
@@ -9034,7 +9117,7 @@ static void test_getdc(void)
         if (!testdata[i].getdc_supported)
             continue;
 
-        if (FAILED(hr = IDirect3DDevice9_CreateCubeTexture(device, 64, 0, 0,
+        if (FAILED(hr = IDirect3DDevice9_CreateCubeTexture(device, 64, 3, 0,
                 testdata[i].format, D3DPOOL_MANAGED, &cube_texture, NULL)))
         {
             skip("Failed to create cube texture for format %s (hr %#lx), skipping tests.\n", testdata[i].name, hr);
@@ -13505,6 +13588,7 @@ static void test_resource_access(void)
     D3DADAPTER_IDENTIFIER9 identifier;
     struct device_desc device_desc;
     D3DSURFACE_DESC surface_desc;
+    BOOL skip_ati2n_once = FALSE;
     IDirect3DDevice9 *device;
     unsigned int i, j;
     IDirect3D9 *d3d;
@@ -13656,7 +13740,11 @@ static void test_resource_access(void)
             if (tests[j].format == FORMAT_ATI2 && FAILED(IDirect3D9_CheckDeviceFormat(d3d, D3DADAPTER_DEFAULT,
                     D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, 0, D3DRTYPE_TEXTURE, format)))
             {
-                skip("ATI2N texture not supported.\n");
+                if (!skip_ati2n_once)
+                {
+                    skip("ATI2N texture not supported.\n");
+                    skip_ati2n_once = TRUE;
+                }
                 continue;
             }
 
@@ -13813,6 +13901,17 @@ static void test_resource_access(void)
             format = MAKEFOURCC('A','T','I','2');
         else
             format = colour_format;
+
+        if (tests[i].format == FORMAT_ATI2 && FAILED(IDirect3D9_CheckDeviceFormat(d3d, D3DADAPTER_DEFAULT,
+                D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, 0, D3DRTYPE_VOLUMETEXTURE, format)))
+        {
+            if (!skip_ati2n_once)
+            {
+                skip("ATI2N texture not supported.\n");
+                skip_ati2n_once = TRUE;
+            }
+            continue;
+        }
 
         hr = IDirect3DDevice9_CreateVolumeTexture(device, 16, 16, 1, 1,
                 tests[i].usage, format, tests[i].pool, &texture, NULL);

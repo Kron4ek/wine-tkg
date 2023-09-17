@@ -456,6 +456,32 @@ HRESULT wg_transform_flush(wg_transform_t transform)
     return S_OK;
 }
 
+HRESULT wg_muxer_create(const char *format, wg_muxer_t *muxer)
+{
+    struct wg_muxer_create_params params =
+    {
+        .format = format,
+    };
+    NTSTATUS status;
+
+    TRACE("format %p, muxer %p.\n", format, muxer);
+
+    if (SUCCEEDED(status = WINE_UNIX_CALL(unix_wg_muxer_create, &params)))
+    {
+        *muxer = params.muxer;
+        TRACE("Created wg_muxer %#I64x.\n", params.muxer);
+    }
+
+    return status;
+}
+
+void wg_muxer_destroy(wg_muxer_t muxer)
+{
+    TRACE("muxer %#I64x.\n", muxer);
+
+    WINE_UNIX_CALL(unix_wg_muxer_destroy, &muxer);
+}
+
 #define ALIGN(n, alignment) (((n) + (alignment) - 1) & ~((alignment) - 1))
 
 unsigned int wg_format_get_stride(const struct wg_format *format)
@@ -612,7 +638,8 @@ static struct class_factory wma_decoder_cf = {{&class_factory_vtbl}, wma_decoder
 static struct class_factory wmv_decoder_cf = {{&class_factory_vtbl}, wmv_decoder_create};
 static struct class_factory resampler_cf = {{&class_factory_vtbl}, resampler_create};
 static struct class_factory color_convert_cf = {{&class_factory_vtbl}, color_convert_create};
-static struct class_factory sink_class_factory_cf = {{&class_factory_vtbl}, sink_class_factory_create};
+static struct class_factory mp3_sink_class_factory_cf = {{&class_factory_vtbl}, mp3_sink_class_factory_create};
+static struct class_factory mpeg4_sink_class_factory_cf = {{&class_factory_vtbl}, mpeg4_sink_class_factory_create};
 
 HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void **out)
 {
@@ -648,7 +675,9 @@ HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void **out)
     else if (IsEqualGUID(clsid, &CLSID_CColorConvertDMO))
         factory = &color_convert_cf;
     else if (IsEqualGUID(clsid, &CLSID_MFMP3SinkClassFactory))
-        factory = &sink_class_factory_cf;
+        factory = &mp3_sink_class_factory_cf;
+    else if (IsEqualGUID(clsid, &CLSID_MFMPEG4SinkClassFactory))
+        factory = &mpeg4_sink_class_factory_cf;
     else
     {
         FIXME("%s not implemented, returning CLASS_E_CLASSNOTAVAILABLE.\n", debugstr_guid(clsid));

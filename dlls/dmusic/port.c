@@ -21,9 +21,16 @@
 
 #include <assert.h>
 #include "dmusic_private.h"
-#include "dmobject.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmusic);
+
+struct download_entry
+{
+    struct list entry;
+    IDirectMusicDownload *download;
+    HANDLE handle;
+    DWORD id;
+};
 
 struct synth_port {
     IDirectMusicPort IDirectMusicPort_iface;
@@ -40,6 +47,9 @@ struct synth_port {
     DMUS_PORTPARAMS params;
     int nrofgroups;
     DMUSIC_PRIVATE_CHANNEL_GROUP group[1];
+
+    struct list downloads;
+    DWORD next_dlid;
 };
 
 static inline IDirectMusicDownloadedInstrumentImpl* impl_from_IDirectMusicDownloadedInstrument(IDirectMusicDownloadedInstrument *iface)
@@ -105,7 +115,6 @@ static ULONG WINAPI IDirectMusicDownloadedInstrumentImpl_Release(LPDIRECTMUSICDO
     {
         free(This->data);
         free(This);
-        DMUSIC_UnlockModule();
     }
 
     return ref;
@@ -141,7 +150,6 @@ static HRESULT DMUSIC_CreateDirectMusicDownloadedInstrumentImpl(IDirectMusicDown
     object->ref = 1;
 
     *instrument = &object->IDirectMusicDownloadedInstrument_iface;
-    DMUSIC_LockModule();
 
     return S_OK;
 }
@@ -178,8 +186,6 @@ static ULONG WINAPI synth_port_AddRef(IDirectMusicPort *iface)
 
     TRACE("(%p): new ref = %lu\n", This, ref);
 
-    DMUSIC_LockModule();
-
     return ref;
 }
 
@@ -192,6 +198,15 @@ static ULONG WINAPI synth_port_Release(IDirectMusicPort *iface)
 
     if (!ref)
     {
+        struct download_entry *entry, *next;
+
+        LIST_FOR_EACH_ENTRY_SAFE(entry, next, &This->downloads, struct download_entry, entry)
+        {
+            list_remove(&entry->entry);
+            IDirectMusicDownload_Release(entry->download);
+            free(entry);
+        }
+
         dmusic_remove_port(This->parent, iface);
         IDirectMusicSynthSink_Release(This->synth_sink);
         IDirectMusicSynth_Activate(This->synth, FALSE);
@@ -203,8 +218,6 @@ static ULONG WINAPI synth_port_Release(IDirectMusicPort *iface)
            IDirectSound_Release(This->dsound);
         free(This);
     }
-
-    DMUSIC_UnlockModule();
 
     return ref;
 }
@@ -252,7 +265,8 @@ static HRESULT WINAPI synth_port_DownloadInstrument(IDirectMusicPort *iface, IDi
         IDirectMusicDownloadedInstrument **downloaded_instrument, DMUS_NOTERANGE *note_ranges, DWORD num_note_ranges)
 {
     struct synth_port *This = synth_from_IDirectMusicPort(iface);
-    IDirectMusicInstrumentImpl *instrument_object;
+    struct instrument *instrument_object;
+    struct region *instrument_region;
     HRESULT ret;
     BOOL on_heap;
     HANDLE download;
@@ -298,22 +312,24 @@ static HRESULT WINAPI synth_port_DownloadInstrument(IDirectMusicPort *iface, IDi
     instrument_info->ulCopyrightIdx = 0; /* FIXME */
     instrument_info->ulFlags = 0; /* FIXME */
 
-    for (i = 0;  i < nb_regions; i++)
+    i = 0;
+    LIST_FOR_EACH_ENTRY(instrument_region, &instrument_object->regions, struct region, entry)
     {
         DMUS_REGION *region = (DMUS_REGION*)(data + offset);
 
         offset_table->ulOffsetTable[1 + i] = offset;
         offset += sizeof(DMUS_REGION);
-        region->RangeKey = instrument_object->regions[i].header.RangeKey;
-        region->RangeVelocity = instrument_object->regions[i].header.RangeVelocity;
-        region->fusOptions = instrument_object->regions[i].header.fusOptions;
-        region->usKeyGroup = instrument_object->regions[i].header.usKeyGroup;
+        region->RangeKey = instrument_region->header.RangeKey;
+        region->RangeVelocity = instrument_region->header.RangeVelocity;
+        region->fusOptions = instrument_region->header.fusOptions;
+        region->usKeyGroup = instrument_region->header.usKeyGroup;
         region->ulRegionArtIdx = 0; /* FIXME */
         region->ulNextRegionIdx = i != (nb_regions - 1) ? (i + 2) : 0;
         region->ulFirstExtCkIdx = 0; /* FIXME */
-        region->WaveLink = instrument_object->regions[i].wave_link;
-        region->WSMP = instrument_object->regions[i].wave_sample;
-        region->WLOOP[0] = instrument_object->regions[i].wave_loop;
+        region->WaveLink = instrument_region->wave_link;
+        region->WSMP = instrument_region->wave_sample;
+        region->WLOOP[0] = instrument_region->wave_loop;
+        i++;
     }
 
     ret = IDirectMusicSynth8_Download(This->synth, &download, (void*)data, &on_heap);
@@ -578,34 +594,54 @@ static ULONG WINAPI synth_port_download_Release(IDirectMusicPortDownload *iface)
     return IDirectMusicPort_Release(&This->IDirectMusicPort_iface);
 }
 
-static HRESULT WINAPI synth_port_download_GetBuffer(IDirectMusicPortDownload *iface, DWORD DLId,
-        IDirectMusicDownload **IDMDownload)
+static HRESULT WINAPI synth_port_download_GetBuffer(IDirectMusicPortDownload *iface, DWORD id,
+        IDirectMusicDownload **download)
 {
     struct synth_port *This = synth_from_IDirectMusicPortDownload(iface);
+    struct download_entry *entry;
 
-    FIXME("(%p/%p, %lu, %p): stub\n", iface, This, DLId, IDMDownload);
+    TRACE("(%p/%p, %lu, %p)\n", iface, This, id, download);
 
-    if (!IDMDownload)
-        return E_POINTER;
+    if (!download) return E_POINTER;
+    if (id >= This->next_dlid) return DMUS_E_INVALID_DOWNLOADID;
 
-    return DMUSIC_CreateDirectMusicDownloadImpl(&IID_IDirectMusicDownload, (LPVOID*)IDMDownload, NULL);
+    LIST_FOR_EACH_ENTRY(entry, &This->downloads, struct download_entry, entry)
+    {
+        if (entry->id == id)
+        {
+            *download = entry->download;
+            IDirectMusicDownload_AddRef(entry->download);
+            return S_OK;
+        }
+    }
+
+    return DMUS_E_NOT_DOWNLOADED_TO_PORT;
 }
 
 static HRESULT WINAPI synth_port_download_AllocateBuffer(IDirectMusicPortDownload *iface, DWORD size,
-        IDirectMusicDownload **IDMDownload)
+        IDirectMusicDownload **download)
 {
     struct synth_port *This = synth_from_IDirectMusicPortDownload(iface);
 
-    FIXME("(%p/%p, %lu, %p): stub\n", iface, This, size, IDMDownload);
+    TRACE("(%p/%p, %lu, %p)\n", iface, This, size, download);
 
-    return S_OK;
+    if (!download) return E_POINTER;
+    if (!size) return E_INVALIDARG;
+
+    return download_create(size, download);
 }
 
-static HRESULT WINAPI synth_port_download_GetDLId(IDirectMusicPortDownload *iface, DWORD *start_DLId, DWORD count)
+static HRESULT WINAPI synth_port_download_GetDLId(IDirectMusicPortDownload *iface, DWORD *first, DWORD count)
 {
     struct synth_port *This = synth_from_IDirectMusicPortDownload(iface);
 
-    FIXME("(%p/%p, %p, %lu): stub\n", iface, This, start_DLId, count);
+    TRACE("(%p/%p, %p, %lu)\n", iface, This, first, count);
+
+    if (!first) return E_POINTER;
+    if (!count) return E_INVALIDARG;
+
+    *first = This->next_dlid;
+    This->next_dlid += count;
 
     return S_OK;
 }
@@ -619,22 +655,62 @@ static HRESULT WINAPI synth_port_download_GetAppend(IDirectMusicPortDownload *if
     return S_OK;
 }
 
-static HRESULT WINAPI synth_port_download_Download(IDirectMusicPortDownload *iface, IDirectMusicDownload *IDMDownload)
+static HRESULT WINAPI synth_port_download_Download(IDirectMusicPortDownload *iface, IDirectMusicDownload *download)
 {
     struct synth_port *This = synth_from_IDirectMusicPortDownload(iface);
+    struct download_entry *entry;
+    DMUS_DOWNLOADINFO *info;
+    HANDLE handle;
+    BOOL can_free;
+    DWORD size;
+    HRESULT hr;
 
-    FIXME("(%p/%p)->(%p): stub\n", iface, This, IDMDownload);
+    TRACE("(%p/%p)->(%p)\n", iface, This, download);
 
-    return S_OK;
+    if (!download) return E_POINTER;
+
+    LIST_FOR_EACH_ENTRY(entry, &This->downloads, struct download_entry, entry)
+        if (entry->download == download) return DMUS_E_ALREADY_DOWNLOADED;
+
+    if (!(entry = malloc(sizeof(*entry)))) return E_OUTOFMEMORY;
+    if (SUCCEEDED(hr = IDirectMusicDownload_GetBuffer(download, (void **)&info, &size))
+            && SUCCEEDED(hr = IDirectMusicSynth_Download(This->synth, &handle, info, &can_free)))
+    {
+        entry->download = download;
+        IDirectMusicDownload_AddRef(download);
+        entry->id = info->dwDLId;
+        entry->handle = handle;
+        list_add_tail(&This->downloads, &entry->entry);
+    }
+
+    if (FAILED(hr)) free(entry);
+    return hr;
 }
 
-static HRESULT WINAPI synth_port_download_Unload(IDirectMusicPortDownload *iface, IDirectMusicDownload *IDMDownload)
+static HRESULT WINAPI synth_port_download_Unload(IDirectMusicPortDownload *iface, IDirectMusicDownload *download)
 {
     struct synth_port *This = synth_from_IDirectMusicPortDownload(iface);
+    struct download_entry *entry;
+    HANDLE handle = 0;
 
-    FIXME("(%p/%p)->(%p): stub\n", iface, This, IDMDownload);
+    TRACE("(%p/%p)->(%p)\n", iface, This, download);
 
-    return S_OK;
+    if (!download) return E_POINTER;
+
+    LIST_FOR_EACH_ENTRY(entry, &This->downloads, struct download_entry, entry)
+    {
+        if (entry->download == download)
+        {
+            list_remove(&entry->entry);
+            IDirectMusicDownload_Release(entry->download);
+            handle = entry->handle;
+            free(entry);
+            break;
+        }
+    }
+
+    if (!handle) return S_OK;
+    return IDirectMusicSynth_Unload(This->synth, handle, NULL, NULL);
 }
 
 static const IDirectMusicPortDownloadVtbl synth_port_download_vtbl = {
@@ -790,6 +866,7 @@ HRESULT synth_port_create(IDirectMusic8Impl *parent, DMUS_PORTPARAMS *port_param
     obj->parent = parent;
     obj->active = FALSE;
     obj->params = *port_params;
+    list_init(&obj->downloads);
 
     hr = CoCreateInstance(&CLSID_DirectMusicSynth, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectMusicSynth,
             (void **)&obj->synth);

@@ -354,29 +354,18 @@ static inline HTMLScriptElement *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
     return CONTAINING_RECORD(iface, HTMLScriptElement, element.node);
 }
 
-static HRESULT HTMLScriptElement_QI(HTMLDOMNode *iface, REFIID riid, void **ppv)
+static void *HTMLScriptElement_QI(HTMLDOMNode *iface, REFIID riid)
 {
     HTMLScriptElement *This = impl_from_HTMLDOMNode(iface);
 
-    *ppv = NULL;
+    if(IsEqualGUID(&IID_IUnknown, riid))
+        return &This->IHTMLScriptElement_iface;
+    if(IsEqualGUID(&IID_IDispatch, riid))
+        return &This->IHTMLScriptElement_iface;
+    if(IsEqualGUID(&IID_IHTMLScriptElement, riid))
+        return &This->IHTMLScriptElement_iface;
 
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
-        *ppv = &This->IHTMLScriptElement_iface;
-    }else if(IsEqualGUID(&IID_IDispatch, riid)) {
-        TRACE("(%p)->(IID_IDispatch %p)\n", This, ppv);
-        *ppv = &This->IHTMLScriptElement_iface;
-    }else if(IsEqualGUID(&IID_IHTMLScriptElement, riid)) {
-        TRACE("(%p)->(IID_IHTMLScriptElement %p)\n", This, ppv);
-        *ppv = &This->IHTMLScriptElement_iface;
-    }
-
-    if(*ppv) {
-        IUnknown_AddRef((IUnknown*)*ppv);
-        return S_OK;
-    }
-
-    return HTMLElement_QI(&This->element.node, riid, ppv);
+    return HTMLElement_QI(&This->element.node, riid);
 }
 
 static void HTMLScriptElement_destructor(HTMLDOMNode *iface)
@@ -412,17 +401,24 @@ static HRESULT HTMLScriptElement_bind_to_tree(HTMLDOMNode *iface)
     return S_OK;
 }
 
-static void HTMLScriptElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTraversalCallback *cb)
+static inline HTMLScriptElement *impl_from_DispatchEx(DispatchEx *iface)
 {
-    HTMLScriptElement *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nsscript)
-        note_cc_edge((nsISupports*)This->nsscript, "This->nsscript", cb);
+    return CONTAINING_RECORD(iface, HTMLScriptElement, element.node.event_target.dispex);
 }
 
-static void HTMLScriptElement_unlink(HTMLDOMNode *iface)
+static void HTMLScriptElement_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
 {
-    HTMLScriptElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLScriptElement *This = impl_from_DispatchEx(dispex);
+    HTMLDOMNode_traverse(dispex, cb);
+
+    if(This->nsscript)
+        note_cc_edge((nsISupports*)This->nsscript, "nsscript", cb);
+}
+
+static void HTMLScriptElement_unlink(DispatchEx *dispex)
+{
+    HTMLScriptElement *This = impl_from_DispatchEx(dispex);
+    HTMLDOMNode_unlink(dispex);
     unlink_ref(&This->nsscript);
 }
 
@@ -436,8 +432,15 @@ static const NodeImplVtbl HTMLScriptElementImplVtbl = {
     .get_attr_col          = HTMLElement_get_attr_col,
     .get_readystate        = HTMLScriptElement_get_readystate,
     .bind_to_tree          = HTMLScriptElement_bind_to_tree,
-    .traverse              = HTMLScriptElement_traverse,
-    .unlink                = HTMLScriptElement_unlink
+};
+
+static const event_target_vtbl_t HTMLScriptElement_event_target_vtbl = {
+    {
+        HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .traverse       = HTMLScriptElement_traverse,
+        .unlink         = HTMLScriptElement_unlink
+    },
+    HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
 };
 
 HRESULT script_elem_from_nsscript(nsIDOMHTMLScriptElement *nsscript, HTMLScriptElement **ret)
@@ -468,7 +471,7 @@ static const tid_t HTMLScriptElement_iface_tids[] = {
 
 static dispex_static_data_t HTMLScriptElement_dispex = {
     "HTMLScriptElement",
-    &HTMLElement_event_target_vtbl.dispex_vtbl,
+    &HTMLScriptElement_event_target_vtbl.dispex_vtbl,
     DispHTMLScriptElement_tid,
     HTMLScriptElement_iface_tids,
     HTMLElement_init_dispex_info

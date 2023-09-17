@@ -38,48 +38,22 @@ static inline HTMLDOMAttribute *impl_from_IHTMLDOMAttribute(IHTMLDOMAttribute *i
 }
 
 static HRESULT WINAPI HTMLDOMAttribute_QueryInterface(IHTMLDOMAttribute *iface,
-                                                 REFIID riid, void **ppv)
+                                                      REFIID riid, void **ppv)
 {
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        *ppv = &This->IHTMLDOMAttribute_iface;
-    }else if(IsEqualGUID(&IID_IHTMLDOMAttribute, riid)) {
-        *ppv = &This->IHTMLDOMAttribute_iface;
-    }else if(IsEqualGUID(&IID_IHTMLDOMAttribute2, riid)) {
-        *ppv = &This->IHTMLDOMAttribute2_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
-        return *ppv ? S_OK : E_NOINTERFACE;
-    }else {
-        WARN("%s not supported\n", debugstr_mshtml_guid(riid));
-        *ppv =  NULL;
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return IDispatchEx_QueryInterface(&This->dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLDOMAttribute_AddRef(IHTMLDOMAttribute *iface)
 {
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
-    LONG ref = dispex_ref_incr(&This->dispex);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLDOMAttribute_Release(IHTMLDOMAttribute *iface)
 {
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
-    LONG ref = dispex_ref_decr(&This->dispex);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_Release(&This->dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI HTMLDOMAttribute_GetTypeInfoCount(IHTMLDOMAttribute *iface, UINT *pctinfo)
@@ -477,6 +451,18 @@ static inline HTMLDOMAttribute *impl_from_DispatchEx(DispatchEx *iface)
     return CONTAINING_RECORD(iface, HTMLDOMAttribute, dispex);
 }
 
+static void *HTMLDOMAttribute_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLDOMAttribute *This = impl_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLDOMAttribute, riid))
+        return &This->IHTMLDOMAttribute_iface;
+    if(IsEqualGUID(&IID_IHTMLDOMAttribute2, riid))
+        return &This->IHTMLDOMAttribute2_iface;
+
+    return NULL;
+}
+
 static void HTMLDOMAttribute_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
 {
     HTMLDOMAttribute *This = impl_from_DispatchEx(dispex);
@@ -499,6 +485,7 @@ static void HTMLDOMAttribute_destructor(DispatchEx *dispex)
 }
 
 static const dispex_static_data_vtbl_t HTMLDOMAttribute_dispex_vtbl = {
+    .query_interface  = HTMLDOMAttribute_query_interface,
     .destructor       = HTMLDOMAttribute_destructor,
     .traverse         = HTMLDOMAttribute_traverse,
     .unlink           = HTMLDOMAttribute_unlink
@@ -536,8 +523,7 @@ HRESULT HTMLDOMAttribute_Create(const WCHAR *name, HTMLElement *elem, DISPID dis
     ret->dispid = dispid;
     ret->elem = elem;
 
-    init_dispatch(&ret->dispex, (IUnknown*)&ret->IHTMLDOMAttribute_iface,
-                  &HTMLDOMAttribute_dispex, compat_mode);
+    init_dispatch(&ret->dispex, &HTMLDOMAttribute_dispex, compat_mode);
 
     /* For attributes attached to an element, (elem,dispid) pair should be valid used for its operation. */
     if(elem) {

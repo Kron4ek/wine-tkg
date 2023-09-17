@@ -3,5 +3,6 @@ IMPORTLIB = fltmgr
 EXTRADLLFLAGS = -Wl,--subsystem,native
 IMPORTS = ntoskrnl
 
-C_SRCS = \
+SOURCES = \
+	fltmgr.sys.spec \
 	main.c

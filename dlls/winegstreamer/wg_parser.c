@@ -258,7 +258,7 @@ static NTSTATUS wg_parser_stream_enable(void *args)
         gst_util_set_object_arg(G_OBJECT(stream->flip), "method", flip ? "vertical-flip" : "none");
     }
 
-    gst_pad_push_event(stream->my_sink, gst_event_new_reconfigure());
+    push_event(stream->my_sink, gst_event_new_reconfigure());
     return S_OK;
 }
 
@@ -450,7 +450,7 @@ static NTSTATUS wg_parser_stream_seek(void *args)
     if ((stop_flags & AM_SEEKING_PositioningBitsMask) == AM_SEEKING_NoPositioning)
         stop_type = GST_SEEK_TYPE_NONE;
 
-    if (!gst_pad_push_event(get_stream(params->stream)->my_sink, gst_event_new_seek(params->rate, GST_FORMAT_TIME,
+    if (!push_event(get_stream(params->stream)->my_sink, gst_event_new_seek(params->rate, GST_FORMAT_TIME,
             flags, start_type, params->start_pos * 100, stop_type, params->stop_pos * 100)))
         GST_ERROR("Failed to seek.\n");
 
@@ -480,7 +480,7 @@ static NTSTATUS wg_parser_stream_notify_qos(void *args)
     if (!(event = gst_event_new_qos(params->underflow ? GST_QOS_TYPE_UNDERFLOW : GST_QOS_TYPE_OVERFLOW,
             params->proportion, params->diff * 100, stream_time)))
         GST_ERROR("Failed to create QOS event.\n");
-    gst_pad_push_event(stream->my_sink, event);
+    push_event(stream->my_sink, event);
 
     return S_OK;
 }
@@ -1292,7 +1292,7 @@ static void *push_data(void *arg)
 
     gst_buffer_unref(buffer);
 
-    gst_pad_push_event(parser->my_src, gst_event_new_eos());
+    push_event(parser->my_src, gst_event_new_eos());
 
     GST_DEBUG("Stopping push thread.");
 
@@ -1421,7 +1421,7 @@ static gboolean src_perform_seek(struct wg_parser *parser, GstEvent *event)
     {
         flush_event = gst_event_new_flush_start();
         gst_event_set_seqnum(flush_event, seqnum);
-        gst_pad_push_event(parser->my_src, flush_event);
+        push_event(parser->my_src, flush_event);
         if (thread)
             gst_pad_set_active(parser->my_src, 1);
     }
@@ -1433,7 +1433,7 @@ static gboolean src_perform_seek(struct wg_parser *parser, GstEvent *event)
     {
         flush_event = gst_event_new_flush_stop(TRUE);
         gst_event_set_seqnum(flush_event, seqnum);
-        gst_pad_push_event(parser->my_src, flush_event);
+        push_event(parser->my_src, flush_event);
         if (thread)
             gst_pad_set_active(parser->my_src, 1);
     }
@@ -1945,7 +1945,12 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     X(wg_transform_get_status),
     X(wg_transform_drain),
     X(wg_transform_flush),
+
+    X(wg_muxer_create),
+    X(wg_muxer_destroy),
 };
+
+C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == unix_wg_funcs_count);
 
 #ifdef _WIN64
 
@@ -2052,7 +2057,6 @@ static NTSTATUS wow64_wg_parser_stream_copy_buffer(void *args)
     return wg_parser_stream_copy_buffer(&params);
 }
 
-
 static NTSTATUS wow64_wg_parser_stream_get_tag(void *args)
 {
     struct
@@ -2152,6 +2156,24 @@ NTSTATUS wow64_wg_transform_read_data(void *args)
     return ret;
 }
 
+NTSTATUS wow64_wg_muxer_create(void *args)
+{
+    struct
+    {
+        wg_muxer_t muxer;
+        PTR32 format;
+    } *params32 = args;
+    struct wg_muxer_create_params params =
+    {
+        .format = ULongToPtr(params32->format),
+    };
+    NTSTATUS ret;
+
+    ret = wg_muxer_create(&params);
+    params32->muxer = params.muxer;
+    return ret;
+}
+
 const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
 {
 #define X64(name) [unix_ ## name] = wow64_ ## name
@@ -2192,6 +2214,11 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     X(wg_transform_get_status),
     X(wg_transform_drain),
     X(wg_transform_flush),
+
+    X64(wg_muxer_create),
+    X(wg_muxer_destroy),
 };
+
+C_ASSERT(ARRAYSIZE(__wine_unix_call_wow64_funcs) == unix_wg_funcs_count);
 
 #endif  /* _WIN64 */

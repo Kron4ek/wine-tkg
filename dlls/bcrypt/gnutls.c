@@ -3150,8 +3150,10 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     key_asymmetric_destroy,
     key_asymmetric_export,
     key_asymmetric_import,
-    key_secret_agreement,
+    key_secret_agreement
 };
+
+C_ASSERT( ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count );
 
 #ifdef _WIN64
 
@@ -3633,6 +3635,8 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     wow64_key_asymmetric_export,
     wow64_key_asymmetric_import
 };
+
+C_ASSERT( ARRAYSIZE(__wine_unix_call_wow64_funcs) == unix_funcs_count-1 );
 
 #endif  /* _WIN64 */
 

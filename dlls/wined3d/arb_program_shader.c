@@ -269,8 +269,6 @@ struct arb_vshader_private {
 
 struct shader_arb_priv
 {
-    GLuint                  current_vprogram_id;
-    GLuint                  current_fprogram_id;
     const struct arb_ps_compiled_shader *compiled_fprog;
     const struct arb_vs_compiled_shader *compiled_vprog;
     BOOL                    use_arbfp_fixed_func;
@@ -4581,12 +4579,11 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
         TRACE("Using pixel shader %p.\n", ps);
         find_arb_ps_compile_args(state, context_gl, ps, &compile_args);
         compiled = find_arb_pshader(context_gl, ps, &compile_args);
-        priv->current_fprogram_id = compiled->prgId;
         priv->compiled_fprog = compiled;
 
         /* Bind the fragment program */
-        GL_EXTCALL(glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, priv->current_fprogram_id));
-        checkGLcall("glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, priv->current_fprogram_id);");
+        GL_EXTCALL(glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, compiled->prgId));
+        checkGLcall("glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, compiled->prgId);");
 
         if (!priv->use_arbfp_fixed_func)
             priv->fragment_pipe->fp_enable(context, FALSE);
@@ -4595,7 +4592,7 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
         gl_info->gl_ops.gl.p_glEnable(GL_FRAGMENT_PROGRAM_ARB);
         checkGLcall("glEnable(GL_FRAGMENT_PROGRAM_ARB);");
 
-        TRACE("Bound fragment program %u and enabled GL_FRAGMENT_PROGRAM_ARB\n", priv->current_fprogram_id);
+        TRACE("Bound fragment program %u and enabled GL_FRAGMENT_PROGRAM_ARB.\n", compiled->prgId);
 
         /* Pixel Shader 1.x constants are clamped to [-1;1], Pixel Shader 2.0 constants are not. If switching between
          * a 1.x and newer shader, reload the first 8 constants
@@ -4634,7 +4631,6 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
              * function replacement shader. */
             gl_info->gl_ops.gl.p_glDisable(GL_FRAGMENT_PROGRAM_ARB);
             checkGLcall("glDisable(GL_FRAGMENT_PROGRAM_ARB)");
-            priv->current_fprogram_id = 0;
         }
         priv->fragment_pipe->fp_enable(context, TRUE);
     }
@@ -4659,19 +4655,18 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
 
         compiled = find_arb_vshader(vs, gl_info, context->stream_info.use_map,
                 &compile_args, ps_input_sig);
-        priv->current_vprogram_id = compiled->prgId;
         priv->compiled_vprog = compiled;
 
         /* Bind the vertex program */
-        GL_EXTCALL(glBindProgramARB(GL_VERTEX_PROGRAM_ARB, priv->current_vprogram_id));
-        checkGLcall("glBindProgramARB(GL_VERTEX_PROGRAM_ARB, priv->current_vprogram_id);");
+        GL_EXTCALL(glBindProgramARB(GL_VERTEX_PROGRAM_ARB, compiled->prgId));
+        checkGLcall("glBindProgramARB(GL_VERTEX_PROGRAM_ARB, compiled->prgId);");
 
         priv->vertex_pipe->vp_enable(context, FALSE);
 
         /* Enable OpenGL vertex programs */
         gl_info->gl_ops.gl.p_glEnable(GL_VERTEX_PROGRAM_ARB);
         checkGLcall("glEnable(GL_VERTEX_PROGRAM_ARB);");
-        TRACE("Bound vertex program %u and enabled GL_VERTEX_PROGRAM_ARB\n", priv->current_vprogram_id);
+        TRACE("Bound vertex program %u and enabled GL_VERTEX_PROGRAM_ARB\n", compiled->prgId);
         shader_arb_vs_local_constants(compiled, context_gl, state);
 
         if(priv->last_vs_color_unclamp != compiled->need_color_unclamp) {
@@ -4693,7 +4688,6 @@ static void shader_arb_select(void *shader_priv, struct wined3d_context *context
     {
         if (gl_info->supported[ARB_VERTEX_PROGRAM])
         {
-            priv->current_vprogram_id = 0;
             gl_info->gl_ops.gl.p_glDisable(GL_VERTEX_PROGRAM_ARB);
             checkGLcall("glDisable(GL_VERTEX_PROGRAM_ARB)");
         }
@@ -4718,13 +4712,11 @@ static void shader_arb_disable(void *shader_priv, struct wined3d_context *contex
     {
         gl_info->gl_ops.gl.p_glDisable(GL_FRAGMENT_PROGRAM_ARB);
         checkGLcall("glDisable(GL_FRAGMENT_PROGRAM_ARB)");
-        priv->current_fprogram_id = 0;
     }
     priv->fragment_pipe->fp_enable(context, FALSE);
 
     if (gl_info->supported[ARB_VERTEX_PROGRAM])
     {
-        priv->current_vprogram_id = 0;
         gl_info->gl_ops.gl.p_glDisable(GL_VERTEX_PROGRAM_ARB);
         checkGLcall("glDisable(GL_VERTEX_PROGRAM_ARB)");
     }
@@ -6583,28 +6575,6 @@ static void fragment_prog_arbfp(struct wined3d_context *context, const struct wi
 
     TRACE("context %p, state %p, state_id %#lx.\n", context, state, state_id);
 
-    if (isStateDirty(context, STATE_RENDER(WINED3D_RS_FOGENABLE)))
-    {
-        if (!use_pshader && device->shader_backend == &arb_program_shader_backend && context->last_was_pshader)
-        {
-            /* Reload fixed function constants since they collide with the
-             * pixel shader constants. */
-            for (i = 0; i < WINED3D_MAX_TEXTURES; ++i)
-            {
-                set_bumpmat_arbfp(context, state, STATE_TEXTURESTAGE(i, WINED3D_TSS_BUMPENV_MAT00));
-                state_tss_constant_arbfp(context, state, STATE_TEXTURESTAGE(i, WINED3D_TSS_CONSTANT));
-            }
-            state_texfactor_arbfp(context, state, STATE_RENDER(WINED3D_RS_TEXTUREFACTOR));
-            state_arb_specularenable(context, state, STATE_RENDER(WINED3D_RS_SPECULARENABLE));
-            color_key_arbfp(context, state, STATE_COLOR_KEY);
-        }
-        else if (use_pshader)
-        {
-            context->shader_update_mask |= 1u << WINED3D_SHADER_TYPE_PIXEL;
-        }
-        return;
-    }
-
     if (!use_pshader)
     {
         /* Find or create a shader implementing the fixed function pipeline
@@ -6634,7 +6604,6 @@ static void fragment_prog_arbfp(struct wined3d_context *context, const struct wi
          */
         GL_EXTCALL(glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, desc->shader));
         checkGLcall("glBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, desc->shader)");
-        priv->current_fprogram_id = desc->shader;
 
         if (device->shader_backend == &arb_program_shader_backend && context->last_was_pshader)
         {
@@ -7916,6 +7885,12 @@ static DWORD arbfp_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bl
         wined3d_texture_load(src_texture, context, FALSE);
     }
 
+    if (wined3d_texture_is_full_rect(dst_texture, dst_sub_resource_idx % dst_texture->level_count, dst_rect))
+        wined3d_texture_prepare_location(dst_texture, dst_sub_resource_idx, context, dst_location);
+    else
+        wined3d_texture_load_location(dst_texture, dst_sub_resource_idx, context, dst_location);
+
+    context_gl_apply_texture_draw_state(context_gl, dst_texture, dst_sub_resource_idx, dst_location);
     wined3d_context_gl_apply_ffp_blit_state(context_gl, device);
 
     if (dst_location == WINED3D_LOCATION_DRAWABLE)
@@ -7924,8 +7899,6 @@ static DWORD arbfp_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bl
         wined3d_texture_translate_drawable_coords(dst_texture, context_gl->window, &d);
         dst_rect = &d;
     }
-
-    context_gl_apply_texture_draw_state(context_gl, dst_texture, dst_sub_resource_idx, dst_location);
 
     if (op == WINED3D_BLIT_OP_COLOR_BLIT_ALPHATEST)
     {

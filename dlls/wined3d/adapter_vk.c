@@ -244,6 +244,7 @@ struct wined3d_physical_device_info
     VkPhysicalDeviceTransformFeedbackFeaturesEXT xfb_features;
     VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT vertex_divisor_features;
     VkPhysicalDeviceHostQueryResetFeatures host_query_reset_features;
+    VkPhysicalDeviceShaderDrawParametersFeatures draw_parameters_features;
 
     VkPhysicalDeviceFeatures2 features2;
 };
@@ -336,6 +337,7 @@ static const struct wined3d_allocator_ops wined3d_allocator_vk_ops =
 static void get_physical_device_info(const struct wined3d_adapter_vk *adapter_vk, struct wined3d_physical_device_info *info)
 {
     VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT *vertex_divisor_features = &info->vertex_divisor_features;
+    VkPhysicalDeviceShaderDrawParametersFeatures *draw_parameters_features = &info->draw_parameters_features;
     VkPhysicalDeviceHostQueryResetFeatures *host_query_reset_features = &info->host_query_reset_features;
     VkPhysicalDeviceTransformFeedbackFeaturesEXT *xfb_features = &info->xfb_features;
     VkPhysicalDevice physical_device = adapter_vk->physical_device;
@@ -343,6 +345,13 @@ static void get_physical_device_info(const struct wined3d_adapter_vk *adapter_vk
     VkPhysicalDeviceFeatures2 *features2 = &info->features2;
 
     memset(info, 0, sizeof(*info));
+
+    draw_parameters_features->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
+
+    if (vk_info->api_version >= VK_API_VERSION_1_1)
+        xfb_features->pNext = draw_parameters_features;
+    else
+        draw_parameters_features->shaderDrawParameters = vk_info->supported[WINED3D_VK_KHR_SHADER_DRAW_PARAMETERS];
 
     xfb_features->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
 
@@ -2218,6 +2227,7 @@ static bool feature_level_10_supported(const struct wined3d_physical_device_info
             && info->features2.features.pipelineStatisticsQuery
             && info->features2.features.shaderClipDistance
             && info->features2.features.shaderCullDistance
+            && info->draw_parameters_features.shaderDrawParameters
             && info->vertex_divisor_features.vertexAttributeInstanceRateDivisor
             && info->vertex_divisor_features.vertexAttributeInstanceRateZeroDivisor;
 }
@@ -2290,6 +2300,12 @@ static void wined3d_adapter_vk_init_d3d_info(struct wined3d_adapter_vk *adapter_
     struct shader_caps shader_caps;
 
     get_physical_device_info(adapter_vk, &device_info);
+
+    if (!device_info.host_query_reset_features.hostQueryReset)
+        adapter_vk->vk_info.supported[WINED3D_VK_EXT_HOST_QUERY_RESET] = FALSE;
+
+    if (!device_info.xfb_features.transformFeedback)
+        adapter_vk->vk_info.supported[WINED3D_VK_EXT_TRANSFORM_FEEDBACK] = FALSE;
 
     adapter_vk->a.shader_backend->shader_get_caps(&adapter_vk->a, &shader_caps);
     adapter_vk->a.vertex_pipe->vp_get_caps(&adapter_vk->a, &vertex_caps);
@@ -2383,7 +2399,7 @@ static bool wined3d_adapter_vk_init_device_extensions(struct wined3d_adapter_vk 
         {VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME,    ~0u,                true},
         {VK_KHR_MAINTENANCE1_EXTENSION_NAME,                VK_API_VERSION_1_1, true},
         {VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME,VK_API_VERSION_1_2},
-        {VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME,      VK_API_VERSION_1_1, true},
+        {VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME,      VK_API_VERSION_1_1},
         {VK_KHR_SWAPCHAIN_EXTENSION_NAME,                   ~0u,                true},
         {VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME,            VK_API_VERSION_1_2},
     };
@@ -2397,6 +2413,7 @@ static bool wined3d_adapter_vk_init_device_extensions(struct wined3d_adapter_vk 
     {
         {VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,           WINED3D_VK_EXT_TRANSFORM_FEEDBACK},
         {VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME, WINED3D_VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE},
+        {VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME,       WINED3D_VK_KHR_SHADER_DRAW_PARAMETERS},
         {VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME,             WINED3D_VK_EXT_HOST_QUERY_RESET},
     };
 
