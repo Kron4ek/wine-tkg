@@ -2190,8 +2190,7 @@ static NTSTATUS perform_relocations( void *module, IMAGE_NT_HEADERS *nt, SIZE_T 
     if (nt->FileHeader.NumberOfSections > ARRAY_SIZE( protect_old ))
         return STATUS_INVALID_IMAGE_FORMAT;
 
-    sec = (const IMAGE_SECTION_HEADER *)((const char *)&nt->OptionalHeader +
-                                         nt->FileHeader.SizeOfOptionalHeader);
+    sec = IMAGE_FIRST_SECTION( nt );
     for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
     {
         void *addr = get_rva( module, sec[i].VirtualAddress );
@@ -2350,8 +2349,8 @@ static BOOL convert_to_pe64( HMODULE module, const SECTION_IMAGE_INFORMATION *in
     IMAGE_OPTIONAL_HEADER32 hdr32 = { IMAGE_NT_OPTIONAL_HDR32_MAGIC };
     IMAGE_OPTIONAL_HEADER64 hdr64 = { IMAGE_NT_OPTIONAL_HDR64_MAGIC };
     IMAGE_NT_HEADERS *nt = RtlImageNtHeader( module );
+    IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION( nt );
     SIZE_T hdr_size = min( sizeof(hdr32), nt->FileHeader.SizeOfOptionalHeader );
-    IMAGE_SECTION_HEADER *sec = (IMAGE_SECTION_HEADER *)((char *)&nt->OptionalHeader + hdr_size);
     SIZE_T size = min( nt->OptionalHeader.SizeOfHeaders, nt->OptionalHeader.SizeOfImage );
     void *addr = module;
     ULONG i, old_prot;
@@ -3373,15 +3372,6 @@ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
     struct wine_spawnvp_params params = { (char **)argv, wait };
 
     return WINE_UNIX_CALL( unix_wine_spawnvp, &params );
-}
-
-
-/***********************************************************************
- *           __wine_needs_override_large_address_aware
- */
-unsigned int CDECL __wine_needs_override_large_address_aware(void)
-{
-    return WINE_UNIX_CALL( unix_wine_needs_override_large_address_aware, NULL );
 }
 
 
@@ -4524,10 +4514,8 @@ PIMAGE_SECTION_HEADER WINAPI RtlImageRvaToSection( const IMAGE_NT_HEADERS *nt,
                                                    HMODULE module, DWORD rva )
 {
     int i;
-    const IMAGE_SECTION_HEADER *sec;
+    const IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION( nt );
 
-    sec = (const IMAGE_SECTION_HEADER*)((const char*)&nt->OptionalHeader +
-                                        nt->FileHeader.SizeOfOptionalHeader);
     for (i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++)
     {
         if ((sec->VirtualAddress <= rva) && (sec->VirtualAddress + sec->SizeOfRawData > rva))

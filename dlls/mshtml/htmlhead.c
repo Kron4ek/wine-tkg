@@ -141,36 +141,38 @@ static const IHTMLTitleElementVtbl HTMLTitleElementVtbl = {
     HTMLTitleElement_get_text
 };
 
-static inline HTMLTitleElement *HTMLTitleElement_from_HTMLDOMNode(HTMLDOMNode *iface)
+static inline HTMLTitleElement *HTMLTitleElement_from_DispatchEx(DispatchEx *iface)
 {
-    return CONTAINING_RECORD(iface, HTMLTitleElement, element.node);
+    return CONTAINING_RECORD(iface, HTMLTitleElement, element.node.event_target.dispex);
 }
 
-static void *HTMLTitleElement_QI(HTMLDOMNode *iface, REFIID riid)
+static void *HTMLTitleElement_query_interface(DispatchEx *dispex, REFIID riid)
 {
-    HTMLTitleElement *This = HTMLTitleElement_from_HTMLDOMNode(iface);
+    HTMLTitleElement *This = HTMLTitleElement_from_DispatchEx(dispex);
 
     if(IsEqualGUID(&IID_IHTMLTitleElement, riid))
         return &This->IHTMLTitleElement_iface;
 
-    return HTMLElement_QI(&This->element.node, riid);
-}
-
-static void HTMLTitleElement_destructor(HTMLDOMNode *iface)
-{
-    HTMLTitleElement *This = HTMLTitleElement_from_HTMLDOMNode(iface);
-
-    HTMLElement_destructor(&This->element.node);
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
 }
 
 static const NodeImplVtbl HTMLTitleElementImplVtbl = {
     .clsid                 = &CLSID_HTMLTitleElement,
-    .qi                    = HTMLTitleElement_QI,
-    .destructor            = HTMLTitleElement_destructor,
     .cpc_entries           = HTMLElement_cpc,
     .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLElement_handle_event,
     .get_attr_col          = HTMLElement_get_attr_col
+};
+
+static const event_target_vtbl_t HTMLTitleElement_event_target_vtbl = {
+    {
+        HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLTitleElement_query_interface,
+        .destructor     = HTMLElement_destructor,
+        .traverse       = HTMLDOMNode_traverse,
+        .unlink         = HTMLDOMNode_unlink
+    },
+    HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLElement_handle_event
 };
 
 static const tid_t HTMLTitleElement_iface_tids[] = {
@@ -180,7 +182,7 @@ static const tid_t HTMLTitleElement_iface_tids[] = {
 };
 static dispex_static_data_t HTMLTitleElement_dispex = {
     "HTMLTitleElement",
-    &HTMLElement_event_target_vtbl.dispex_vtbl,
+    &HTMLTitleElement_event_target_vtbl.dispex_vtbl,
     DispHTMLTitleElement_tid,
     HTMLTitleElement_iface_tids,
     HTMLElement_init_dispex_info
@@ -298,26 +300,9 @@ static const IHTMLHtmlElementVtbl HTMLHtmlElementVtbl = {
     HTMLHtmlElement_get_version
 };
 
-static inline HTMLHtmlElement *HTMLHtmlElement_from_HTMLDOMNode(HTMLDOMNode *iface)
+static inline HTMLHtmlElement *HTMLHtmlElement_from_DispatchEx(DispatchEx *iface)
 {
-    return CONTAINING_RECORD(iface, HTMLHtmlElement, element.node);
-}
-
-static void *HTMLHtmlElement_QI(HTMLDOMNode *iface, REFIID riid)
-{
-    HTMLHtmlElement *This = HTMLHtmlElement_from_HTMLDOMNode(iface);
-
-    if(IsEqualGUID(&IID_IHTMLHtmlElement, riid))
-        return &This->IHTMLHtmlElement_iface;
-
-    return HTMLElement_QI(&This->element.node, riid);
-}
-
-static void HTMLHtmlElement_destructor(HTMLDOMNode *iface)
-{
-    HTMLHtmlElement *This = HTMLHtmlElement_from_HTMLDOMNode(iface);
-
-    HTMLElement_destructor(&This->element.node);
+    return CONTAINING_RECORD(iface, HTMLHtmlElement, element.node.event_target.dispex);
 }
 
 static BOOL HTMLHtmlElement_is_settable(HTMLDOMNode *iface, DISPID dispid)
@@ -330,15 +315,34 @@ static BOOL HTMLHtmlElement_is_settable(HTMLDOMNode *iface, DISPID dispid)
     }
 }
 
+static void *HTMLHtmlElement_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLHtmlElement *This = HTMLHtmlElement_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLHtmlElement, riid))
+        return &This->IHTMLHtmlElement_iface;
+
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
+}
+
 static const NodeImplVtbl HTMLHtmlElementImplVtbl = {
     .clsid                 = &CLSID_HTMLHtmlElement,
-    .qi                    = HTMLHtmlElement_QI,
-    .destructor            = HTMLHtmlElement_destructor,
     .cpc_entries           = HTMLElement_cpc,
     .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLElement_handle_event,
     .get_attr_col          = HTMLElement_get_attr_col,
     .is_settable           = HTMLHtmlElement_is_settable
+};
+
+static const event_target_vtbl_t HTMLHtmlElement_event_target_vtbl = {
+    {
+        HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLHtmlElement_query_interface,
+        .destructor     = HTMLElement_destructor,
+        .traverse       = HTMLDOMNode_traverse,
+        .unlink         = HTMLDOMNode_unlink
+    },
+    HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLElement_handle_event
 };
 
 static const tid_t HTMLHtmlElement_iface_tids[] = {
@@ -348,7 +352,7 @@ static const tid_t HTMLHtmlElement_iface_tids[] = {
 };
 static dispex_static_data_t HTMLHtmlElement_dispex = {
     "HTMLHtmlElement",
-    &HTMLElement_event_target_vtbl.dispex_vtbl,
+    &HTMLHtmlElement_event_target_vtbl.dispex_vtbl,
     DispHTMLHtmlElement_tid,
     HTMLHtmlElement_iface_tids,
     HTMLElement_init_dispex_info
@@ -534,40 +538,38 @@ static const IHTMLMetaElementVtbl HTMLMetaElementVtbl = {
     HTMLMetaElement_get_charset
 };
 
-static inline HTMLMetaElement *HTMLMetaElement_from_HTMLDOMNode(HTMLDOMNode *iface)
+static inline HTMLMetaElement *HTMLMetaElement_from_DispatchEx(DispatchEx *iface)
 {
-    return CONTAINING_RECORD(iface, HTMLMetaElement, element.node);
+    return CONTAINING_RECORD(iface, HTMLMetaElement, element.node.event_target.dispex);
 }
 
-static void *HTMLMetaElement_QI(HTMLDOMNode *iface, REFIID riid)
+static void *HTMLMetaElement_query_interface(DispatchEx *dispex, REFIID riid)
 {
-    HTMLMetaElement *This = HTMLMetaElement_from_HTMLDOMNode(iface);
+    HTMLMetaElement *This = HTMLMetaElement_from_DispatchEx(dispex);
 
-    if(IsEqualGUID(&IID_IUnknown, riid))
-        return &This->IHTMLMetaElement_iface;
-    if(IsEqualGUID(&IID_IDispatch, riid))
-        return &This->IHTMLMetaElement_iface;
     if(IsEqualGUID(&IID_IHTMLMetaElement, riid))
         return &This->IHTMLMetaElement_iface;
 
-    return HTMLElement_QI(&This->element.node, riid);
-}
-
-static void HTMLMetaElement_destructor(HTMLDOMNode *iface)
-{
-    HTMLMetaElement *This = HTMLMetaElement_from_HTMLDOMNode(iface);
-
-    HTMLElement_destructor(&This->element.node);
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
 }
 
 static const NodeImplVtbl HTMLMetaElementImplVtbl = {
     .clsid                 = &CLSID_HTMLMetaElement,
-    .qi                    = HTMLMetaElement_QI,
-    .destructor            = HTMLMetaElement_destructor,
     .cpc_entries           = HTMLElement_cpc,
     .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLElement_handle_event,
     .get_attr_col          = HTMLElement_get_attr_col
+};
+
+static const event_target_vtbl_t HTMLMetaElement_event_target_vtbl = {
+    {
+        HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLMetaElement_query_interface,
+        .destructor     = HTMLElement_destructor,
+        .traverse       = HTMLDOMNode_traverse,
+        .unlink         = HTMLDOMNode_unlink
+    },
+    HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLElement_handle_event
 };
 
 static const tid_t HTMLMetaElement_iface_tids[] = {
@@ -578,7 +580,7 @@ static const tid_t HTMLMetaElement_iface_tids[] = {
 
 static dispex_static_data_t HTMLMetaElement_dispex = {
     "HTMLMetaElement",
-    &HTMLElement_event_target_vtbl.dispex_vtbl,
+    &HTMLMetaElement_event_target_vtbl.dispex_vtbl,
     DispHTMLMetaElement_tid,
     HTMLMetaElement_iface_tids,
     HTMLElement_init_dispex_info
@@ -696,38 +698,40 @@ static const IHTMLHeadElementVtbl HTMLHeadElementVtbl = {
     HTMLHeadElement_get_profile
 };
 
-static inline HTMLHeadElement *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
+static inline HTMLHeadElement *impl_from_DispatchEx(DispatchEx *iface)
 {
-    return CONTAINING_RECORD(iface, HTMLHeadElement, element.node);
+    return CONTAINING_RECORD(iface, HTMLHeadElement, element.node.event_target.dispex);
 }
 
-static void *HTMLHeadElement_QI(HTMLDOMNode *iface, REFIID riid)
+static void *HTMLHeadElement_query_interface(DispatchEx *dispex, REFIID riid)
 {
-    HTMLHeadElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLHeadElement *This = impl_from_DispatchEx(dispex);
 
     if(IsEqualGUID(&IID_IHTMLHeadElement, riid))
         return &This->IHTMLHeadElement_iface;
     if(IsEqualGUID(&DIID_DispHTMLHeadElement, riid))
         return &This->IHTMLHeadElement_iface;
 
-    return HTMLElement_QI(&This->element.node, riid);
-}
-
-static void HTMLHeadElement_destructor(HTMLDOMNode *iface)
-{
-    HTMLHeadElement *This = impl_from_HTMLDOMNode(iface);
-
-    HTMLElement_destructor(&This->element.node);
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
 }
 
 static const NodeImplVtbl HTMLHeadElementImplVtbl = {
     .clsid                 = &CLSID_HTMLHeadElement,
-    .qi                    = HTMLHeadElement_QI,
-    .destructor            = HTMLHeadElement_destructor,
     .cpc_entries           = HTMLElement_cpc,
     .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLElement_handle_event,
     .get_attr_col          = HTMLElement_get_attr_col
+};
+
+static const event_target_vtbl_t HTMLHeadElement_event_target_vtbl = {
+    {
+        HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLHeadElement_query_interface,
+        .destructor     = HTMLElement_destructor,
+        .traverse       = HTMLDOMNode_traverse,
+        .unlink         = HTMLDOMNode_unlink
+    },
+    HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLElement_handle_event
 };
 
 static const tid_t HTMLHeadElement_iface_tids[] = {
@@ -737,7 +741,7 @@ static const tid_t HTMLHeadElement_iface_tids[] = {
 };
 static dispex_static_data_t HTMLHeadElement_dispex = {
     "HTMLHeadElement",
-    &HTMLElement_event_target_vtbl.dispex_vtbl,
+    &HTMLHeadElement_event_target_vtbl.dispex_vtbl,
     DispHTMLHeadElement_tid,
     HTMLHeadElement_iface_tids,
     HTMLElement_init_dispex_info

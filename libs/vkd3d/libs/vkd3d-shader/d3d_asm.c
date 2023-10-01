@@ -1066,6 +1066,14 @@ static void shader_dump_register(struct vkd3d_d3d_asm_compiler *compiler, const 
             shader_addline(buffer, "oStencilRef");
             break;
 
+        case VKD3DSPR_UNDEF:
+            shader_addline(buffer, "undef");
+            break;
+
+        case VKD3DSPR_SSA:
+            shader_addline(buffer, "sr");
+            break;
+
         default:
             shader_addline(buffer, "<unhandled_rtype(%#x)>", reg->type);
             break;
@@ -1074,9 +1082,9 @@ static void shader_dump_register(struct vkd3d_d3d_asm_compiler *compiler, const 
     if (reg->type == VKD3DSPR_IMMCONST)
     {
         shader_addline(buffer, "%s(", compiler->colours.reset);
-        switch (reg->immconst_type)
+        switch (reg->dimension)
         {
-            case VKD3D_IMMCONST_SCALAR:
+            case VSIR_DIMENSION_SCALAR:
                 switch (reg->data_type)
                 {
                     case VKD3D_DATA_FLOAT:
@@ -1096,7 +1104,7 @@ static void shader_dump_register(struct vkd3d_d3d_asm_compiler *compiler, const 
                 }
                 break;
 
-            case VKD3D_IMMCONST_VEC4:
+            case VSIR_DIMENSION_VEC4:
                 switch (reg->data_type)
                 {
                     case VKD3D_DATA_FLOAT:
@@ -1126,7 +1134,7 @@ static void shader_dump_register(struct vkd3d_d3d_asm_compiler *compiler, const 
                 break;
 
             default:
-                shader_addline(buffer, "<unhandled immconst_type %#x>", reg->immconst_type);
+                shader_addline(buffer, "<unhandled immconst dimension %#x>", reg->dimension);
                 break;
         }
         shader_addline(buffer, ")");
@@ -1134,13 +1142,13 @@ static void shader_dump_register(struct vkd3d_d3d_asm_compiler *compiler, const 
     else if (reg->type == VKD3DSPR_IMMCONST64)
     {
         shader_addline(buffer, "%s(", compiler->colours.reset);
-        /* A double2 vector is treated as a float4 vector in enum vkd3d_immconst_type. */
-        if (reg->immconst_type == VKD3D_IMMCONST_SCALAR || reg->immconst_type == VKD3D_IMMCONST_VEC4)
+        /* A double2 vector is treated as a float4 vector in enum vsir_dimension. */
+        if (reg->dimension == VSIR_DIMENSION_SCALAR || reg->dimension == VSIR_DIMENSION_VEC4)
         {
             if (reg->data_type == VKD3D_DATA_DOUBLE)
             {
                 shader_print_double_literal(compiler, "", reg->u.immconst_double[0], "");
-                if (reg->immconst_type == VKD3D_IMMCONST_VEC4)
+                if (reg->dimension == VSIR_DIMENSION_VEC4)
                     shader_print_double_literal(compiler, ", ", reg->u.immconst_double[1], "");
             }
             else
@@ -1150,13 +1158,14 @@ static void shader_dump_register(struct vkd3d_d3d_asm_compiler *compiler, const 
         }
         else
         {
-            shader_addline(buffer, "<unhandled immconst_type %#x>", reg->immconst_type);
+            shader_addline(buffer, "<unhandled immconst64 dimension %#x>", reg->dimension);
         }
         shader_addline(buffer, ")");
     }
     else if (reg->type != VKD3DSPR_RASTOUT
             && reg->type != VKD3DSPR_MISCTYPE
-            && reg->type != VKD3DSPR_NULL)
+            && reg->type != VKD3DSPR_NULL
+            && reg->type != VKD3DSPR_DEPTHOUT)
     {
         if (offset != ~0u)
         {
@@ -1181,7 +1190,7 @@ static void shader_dump_register(struct vkd3d_d3d_asm_compiler *compiler, const 
             {
                 shader_print_subscript_range(compiler, reg->idx[1].offset, reg->idx[2].offset);
             }
-            else
+            else if (reg->type != VKD3DSPR_SSA)
             {
                 /* For descriptors in sm < 5.1 we move the reg->idx values up one slot
                  * to normalise with 5.1.
@@ -1256,7 +1265,7 @@ static void shader_dump_dst_param(struct vkd3d_d3d_asm_compiler *compiler,
 
     shader_dump_register(compiler, &param->reg, is_declaration);
 
-    if (write_mask)
+    if (write_mask && param->reg.dimension == VSIR_DIMENSION_VEC4)
     {
         static const char write_mask_chars[] = "xyzw";
 
@@ -1322,7 +1331,7 @@ static void shader_dump_src_param(struct vkd3d_d3d_asm_compiler *compiler,
     }
 
     if (param->reg.type != VKD3DSPR_IMMCONST && param->reg.type != VKD3DSPR_IMMCONST64
-            && param->reg.type != VKD3DSPR_SAMPLER)
+            && param->reg.dimension == VSIR_DIMENSION_VEC4)
     {
         unsigned int swizzle_x = vkd3d_swizzle_get_component(swizzle, 0);
         unsigned int swizzle_y = vkd3d_swizzle_get_component(swizzle, 1);
@@ -1374,7 +1383,7 @@ static void shader_dump_ins_modifiers(struct vkd3d_d3d_asm_compiler *compiler,
     if (mmask & VKD3DSPDM_PARTIALPRECISION) shader_addline(buffer, "_pp");
     if (mmask & VKD3DSPDM_MSAMPCENTROID)    shader_addline(buffer, "_centroid");
 
-    mmask &= ~(VKD3DSPDM_SATURATE | VKD3DSPDM_PARTIALPRECISION | VKD3DSPDM_MSAMPCENTROID);
+    mmask &= ~VKD3DSPDM_MASK;
     if (mmask) FIXME("Unrecognised modifier %#x.\n", mmask);
 }
 

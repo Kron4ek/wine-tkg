@@ -261,7 +261,7 @@ static const struct vkd3d_sm1_opcode_info vs_opcode_table[] =
     {VKD3D_SM1_OP_M3x3,         1, 2, VKD3DSIH_M3x3},
     {VKD3D_SM1_OP_M3x2,         1, 2, VKD3DSIH_M3x2},
     /* Declarations */
-    {VKD3D_SM1_OP_DCL,          0, 2, VKD3DSIH_DCL},
+    {VKD3D_SM1_OP_DCL,          0, 0, VKD3DSIH_DCL},
     /* Constant definitions */
     {VKD3D_SM1_OP_DEF,          1, 1, VKD3DSIH_DEF},
     {VKD3D_SM1_OP_DEFB,         1, 1, VKD3DSIH_DEFB},
@@ -328,7 +328,7 @@ static const struct vkd3d_sm1_opcode_info ps_opcode_table[] =
     {VKD3D_SM1_OP_M3x3,         1, 2, VKD3DSIH_M3x3},
     {VKD3D_SM1_OP_M3x2,         1, 2, VKD3DSIH_M3x2},
     /* Declarations */
-    {VKD3D_SM1_OP_DCL,          0, 2, VKD3DSIH_DCL},
+    {VKD3D_SM1_OP_DCL,          0, 0, VKD3DSIH_DCL},
     /* Constant definitions */
     {VKD3D_SM1_OP_DEF,          1, 1, VKD3DSIH_DEF},
     {VKD3D_SM1_OP_DEFB,         1, 1, VKD3DSIH_DEFB},
@@ -457,18 +457,20 @@ static uint32_t swizzle_from_sm1(uint32_t swizzle)
 static void shader_sm1_parse_src_param(uint32_t param, const struct vkd3d_shader_src_param *rel_addr,
         struct vkd3d_shader_src_param *src)
 {
-    src->reg.type = ((param & VKD3D_SM1_REGISTER_TYPE_MASK) >> VKD3D_SM1_REGISTER_TYPE_SHIFT)
+    enum vkd3d_shader_register_type reg_type = ((param & VKD3D_SM1_REGISTER_TYPE_MASK) >> VKD3D_SM1_REGISTER_TYPE_SHIFT)
             | ((param & VKD3D_SM1_REGISTER_TYPE_MASK2) >> VKD3D_SM1_REGISTER_TYPE_SHIFT2);
+
+    vsir_register_init(&src->reg, reg_type, VKD3D_DATA_FLOAT, 1);
     src->reg.precision = VKD3D_SHADER_REGISTER_PRECISION_DEFAULT;
     src->reg.non_uniform = false;
-    src->reg.data_type = VKD3D_DATA_FLOAT;
     src->reg.idx[0].offset = param & VKD3D_SM1_REGISTER_NUMBER_MASK;
     src->reg.idx[0].rel_addr = rel_addr;
-    src->reg.idx[1].offset = ~0u;
-    src->reg.idx[1].rel_addr = NULL;
-    src->reg.idx[2].offset = ~0u;
-    src->reg.idx[2].rel_addr = NULL;
-    src->reg.idx_count = 1;
+    if (src->reg.type == VKD3DSPR_SAMPLER)
+        src->reg.dimension = VSIR_DIMENSION_NONE;
+    else if (src->reg.type == VKD3DSPR_DEPTHOUT)
+        src->reg.dimension = VSIR_DIMENSION_SCALAR;
+    else
+        src->reg.dimension = VSIR_DIMENSION_VEC4;
     src->swizzle = swizzle_from_sm1((param & VKD3D_SM1_SWIZZLE_MASK) >> VKD3D_SM1_SWIZZLE_SHIFT);
     src->modifiers = (param & VKD3D_SM1_SRC_MODIFIER_MASK) >> VKD3D_SM1_SRC_MODIFIER_SHIFT;
 }
@@ -476,18 +478,20 @@ static void shader_sm1_parse_src_param(uint32_t param, const struct vkd3d_shader
 static void shader_sm1_parse_dst_param(uint32_t param, const struct vkd3d_shader_src_param *rel_addr,
         struct vkd3d_shader_dst_param *dst)
 {
-    dst->reg.type = ((param & VKD3D_SM1_REGISTER_TYPE_MASK) >> VKD3D_SM1_REGISTER_TYPE_SHIFT)
+    enum vkd3d_shader_register_type reg_type = ((param & VKD3D_SM1_REGISTER_TYPE_MASK) >> VKD3D_SM1_REGISTER_TYPE_SHIFT)
             | ((param & VKD3D_SM1_REGISTER_TYPE_MASK2) >> VKD3D_SM1_REGISTER_TYPE_SHIFT2);
+
+    vsir_register_init(&dst->reg, reg_type, VKD3D_DATA_FLOAT, 1);
     dst->reg.precision = VKD3D_SHADER_REGISTER_PRECISION_DEFAULT;
     dst->reg.non_uniform = false;
-    dst->reg.data_type = VKD3D_DATA_FLOAT;
     dst->reg.idx[0].offset = param & VKD3D_SM1_REGISTER_NUMBER_MASK;
     dst->reg.idx[0].rel_addr = rel_addr;
-    dst->reg.idx[1].offset = ~0u;
-    dst->reg.idx[1].rel_addr = NULL;
-    dst->reg.idx[2].offset = ~0u;
-    dst->reg.idx[2].rel_addr = NULL;
-    dst->reg.idx_count = 1;
+    if (dst->reg.type == VKD3DSPR_SAMPLER)
+        dst->reg.dimension = VSIR_DIMENSION_NONE;
+    else if (dst->reg.type == VKD3DSPR_DEPTHOUT)
+        dst->reg.dimension = VSIR_DIMENSION_SCALAR;
+    else
+        dst->reg.dimension = VSIR_DIMENSION_VEC4;
     dst->write_mask = (param & VKD3D_SM1_WRITEMASK_MASK) >> VKD3D_SM1_WRITEMASK_SHIFT;
     dst->modifiers = (param & VKD3D_SM1_DST_MODIFIER_MASK) >> VKD3D_SM1_DST_MODIFIER_SHIFT;
     dst->shift = (param & VKD3D_SM1_DSTSHIFT_MASK) >> VKD3D_SM1_DSTSHIFT_SHIFT;
@@ -597,7 +601,7 @@ static bool add_signature_element_from_register(struct vkd3d_shader_sm1_parser *
         case VKD3DSPR_TEMP:
             if (sm1->p.shader_version.type == VKD3D_SHADER_TYPE_PIXEL
                     && sm1->p.shader_version.major == 1 && !register_index)
-                return add_signature_element(sm1, true, "COLOR", 0, VKD3D_SHADER_SV_NONE, 0, is_dcl, mask);
+                return add_signature_element(sm1, true, "COLOR", 0, VKD3D_SHADER_SV_TARGET, 0, is_dcl, mask);
             return true;
 
         case VKD3DSPR_INPUT:
@@ -641,11 +645,11 @@ static bool add_signature_element_from_register(struct vkd3d_shader_sm1_parser *
 
         case VKD3DSPR_COLOROUT:
             return add_signature_element(sm1, true, "COLOR", register_index,
-                    VKD3D_SHADER_SV_NONE, register_index, is_dcl, mask);
+                    VKD3D_SHADER_SV_TARGET, register_index, is_dcl, mask);
 
         case VKD3DSPR_DEPTHOUT:
             return add_signature_element(sm1, true, "DEPTH", 0,
-                    VKD3D_SHADER_SV_NONE, register_index, is_dcl, 0x1);
+                    VKD3D_SHADER_SV_DEPTH, register_index, is_dcl, 0x1);
 
         case VKD3DSPR_RASTOUT:
             switch (register_index)
@@ -853,6 +857,14 @@ static void shader_sm1_skip_opcode(const struct vkd3d_shader_sm1_parser *sm1, co
         return;
     }
 
+    /* DCL instructions do not have sources or destinations, but they
+     * read two tokens to a semantic. See
+     * shader_sm1_read_semantic(). */
+    if (opcode_info->vkd3d_opcode == VKD3DSIH_DCL)
+    {
+        *ptr += 2;
+    }
+
     *ptr += (opcode_info->dst_count + opcode_info->src_count);
 }
 
@@ -951,9 +963,9 @@ static void shader_sm1_read_semantic(struct vkd3d_shader_sm1_parser *sm1,
 }
 
 static void shader_sm1_read_immconst(struct vkd3d_shader_sm1_parser *sm1, const uint32_t **ptr,
-        struct vkd3d_shader_src_param *src_param, enum vkd3d_immconst_type type, enum vkd3d_data_type data_type)
+        struct vkd3d_shader_src_param *src_param, enum vsir_dimension dimension, enum vkd3d_data_type data_type)
 {
-    unsigned int count = type == VKD3D_IMMCONST_VEC4 ? 4 : 1;
+    unsigned int count = dimension == VSIR_DIMENSION_VEC4 ? 4 : 1;
 
     if (*ptr >= sm1->end || sm1->end - *ptr < count)
     {
@@ -975,7 +987,7 @@ static void shader_sm1_read_immconst(struct vkd3d_shader_sm1_parser *sm1, const 
     src_param->reg.idx[2].offset = ~0u;
     src_param->reg.idx[2].rel_addr = NULL;
     src_param->reg.idx_count = 0;
-    src_param->reg.immconst_type = type;
+    src_param->reg.dimension = dimension;
     memcpy(src_param->reg.u.immconst_uint, *ptr, count * sizeof(uint32_t));
     src_param->swizzle = VKD3D_SHADER_NO_SWIZZLE;
     src_param->modifiers = 0;
@@ -1090,7 +1102,7 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
         goto fail;
     }
 
-    ins->handler_idx = opcode_info->vkd3d_opcode;
+    vsir_instruction_init(ins, &sm1->p.location, opcode_info->vkd3d_opcode);
     ins->flags = (opcode_token & VKD3D_SM1_INSTRUCTION_FLAGS_MASK) >> VKD3D_SM1_INSTRUCTION_FLAGS_SHIFT;
     ins->coissue = opcode_token & VKD3D_SM1_COISSUE;
     ins->raw = false;
@@ -1132,19 +1144,19 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
     else if (ins->handler_idx == VKD3DSIH_DEF)
     {
         shader_sm1_read_dst_param(sm1, &p, dst_param);
-        shader_sm1_read_immconst(sm1, &p, &src_params[0], VKD3D_IMMCONST_VEC4, VKD3D_DATA_FLOAT);
+        shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_VEC4, VKD3D_DATA_FLOAT);
         shader_sm1_scan_register(sm1, &dst_param->reg, dst_param->write_mask, true);
     }
     else if (ins->handler_idx == VKD3DSIH_DEFB)
     {
         shader_sm1_read_dst_param(sm1, &p, dst_param);
-        shader_sm1_read_immconst(sm1, &p, &src_params[0], VKD3D_IMMCONST_SCALAR, VKD3D_DATA_UINT);
+        shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_SCALAR, VKD3D_DATA_UINT);
         shader_sm1_scan_register(sm1, &dst_param->reg, dst_param->write_mask, true);
     }
     else if (ins->handler_idx == VKD3DSIH_DEFI)
     {
         shader_sm1_read_dst_param(sm1, &p, dst_param);
-        shader_sm1_read_immconst(sm1, &p, &src_params[0], VKD3D_IMMCONST_VEC4, VKD3D_DATA_INT);
+        shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_VEC4, VKD3D_DATA_INT);
         shader_sm1_scan_register(sm1, &dst_param->reg, dst_param->write_mask, true);
     }
     else
@@ -1333,12 +1345,22 @@ int vkd3d_shader_sm1_parser_create(const struct vkd3d_shader_compile_info *compi
         ++instructions->count;
     }
 
-    *parser = &sm1->p;
-
     for (i = 0; i < ARRAY_SIZE(sm1->p.shader_desc.flat_constant_count); ++i)
         sm1->p.shader_desc.flat_constant_count[i].external = get_external_constant_count(sm1, i);
 
-    return sm1->p.failed ? VKD3D_ERROR_INVALID_SHADER : VKD3D_OK;
+    if (!sm1->p.failed)
+        vsir_validate(&sm1->p);
+
+    if (sm1->p.failed)
+    {
+        WARN("Failed to parse shader.\n");
+        shader_sm1_destroy(&sm1->p);
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    *parser = &sm1->p;
+
+    return VKD3D_OK;
 }
 
 bool hlsl_sm1_register_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semantic *semantic,

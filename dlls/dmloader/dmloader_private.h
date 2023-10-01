@@ -59,28 +59,7 @@ typedef struct IDirectMusicLoaderGenericStream  IDirectMusicLoaderGenericStream;
  */
 extern HRESULT create_dmloader(REFIID riid, void **ret_iface);
 extern HRESULT create_dmcontainer(REFIID riid, void **ret_iface);
-extern HRESULT DMUSIC_CreateDirectMusicLoaderFileStream(void **ppobj);
 extern HRESULT DMUSIC_CreateDirectMusicLoaderResourceStream(void **ppobj);
-extern HRESULT DMUSIC_CreateDirectMusicLoaderGenericStream(void **ppobj);
-
-/*****************************************************************************
- * IDirectMusicLoaderFileStream implementation structure
- */
-struct IDirectMusicLoaderFileStream {
-	/* VTABLEs */
-	const IStreamVtbl *StreamVtbl;
-	const IDirectMusicGetLoaderVtbl *GetLoaderVtbl;
-	/* reference counter */
-	LONG dwRef;
-	/* file */
-	WCHAR wzFileName[MAX_PATH]; /* for clone */
-	HANDLE hFile;
-	/* loader */
-	LPDIRECTMUSICLOADER8 pLoader;
-};
-
-/* Custom: */
-extern HRESULT WINAPI IDirectMusicLoaderFileStream_Attach (LPSTREAM iface, LPCWSTR wzFile, LPDIRECTMUSICLOADER8 pLoader);
 
 /*****************************************************************************
  * IDirectMusicLoaderResourceStream implementation structure
@@ -88,7 +67,6 @@ extern HRESULT WINAPI IDirectMusicLoaderFileStream_Attach (LPSTREAM iface, LPCWS
 struct IDirectMusicLoaderResourceStream {
 	/* IUnknown fields */
 	const IStreamVtbl *StreamVtbl;
-	const IDirectMusicGetLoaderVtbl *GetLoaderVtbl;
 	/* reference counter */
 	LONG dwRef;
 	/* data */
@@ -96,30 +74,14 @@ struct IDirectMusicLoaderResourceStream {
 	LONGLONG llMemLength;
 	/* current position */
 	LONGLONG llPos;	
-	/* loader */
-	LPDIRECTMUSICLOADER8 pLoader;
 };
 
 /* Custom: */
-extern HRESULT WINAPI IDirectMusicLoaderResourceStream_Attach (LPSTREAM iface, LPBYTE pbMemData, LONGLONG llMemLength, LONGLONG llPos, LPDIRECTMUSICLOADER8 pLoader);
+extern HRESULT WINAPI IDirectMusicLoaderResourceStream_Attach(LPSTREAM iface, LPBYTE pbMemData,
+        LONGLONG llMemLength, LONGLONG llPos);
 
-/*****************************************************************************
- * IDirectMusicLoaderGenericStream implementation structure
- */
-struct IDirectMusicLoaderGenericStream {
-	/* IUnknown fields */
-	const IStreamVtbl *StreamVtbl;
-	const IDirectMusicGetLoaderVtbl *GetLoaderVtbl;
-	/* reference counter */
-	LONG dwRef;
-	/* stream */
-	LPSTREAM pStream;
-	/* loader */
-	LPDIRECTMUSICLOADER8 pLoader;
-};
-
-/* Custom: */
-extern HRESULT WINAPI IDirectMusicLoaderGenericStream_Attach (LPSTREAM iface, LPSTREAM pStream, LPDIRECTMUSICLOADER8 pLoader);
+extern HRESULT loader_stream_create(IDirectMusicLoader *loader, IStream *stream, IStream **ret_iface);
+extern HRESULT file_stream_create(const WCHAR *path, IStream **ret_iface);
 
 #include "debug.h"
 

@@ -390,20 +390,6 @@ static inline HTMLTextAreaElement *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
     return CONTAINING_RECORD(iface, HTMLTextAreaElement, element.node);
 }
 
-static void *HTMLTextAreaElement_QI(HTMLDOMNode *iface, REFIID riid)
-{
-    HTMLTextAreaElement *This = impl_from_HTMLDOMNode(iface);
-
-    if(IsEqualGUID(&IID_IUnknown, riid))
-        return &This->IHTMLTextAreaElement_iface;
-    if(IsEqualGUID(&IID_IDispatch, riid))
-        return &This->IHTMLTextAreaElement_iface;
-    if(IsEqualGUID(&IID_IHTMLTextAreaElement, riid))
-        return &This->IHTMLTextAreaElement_iface;
-
-    return HTMLElement_QI(&This->element.node, riid);
-}
-
 static HRESULT HTMLTextAreaElementImpl_put_disabled(HTMLDOMNode *iface, VARIANT_BOOL v)
 {
     HTMLTextAreaElement *This = impl_from_HTMLDOMNode(iface);
@@ -426,6 +412,16 @@ static inline HTMLTextAreaElement *impl_from_DispatchEx(DispatchEx *iface)
     return CONTAINING_RECORD(iface, HTMLTextAreaElement, element.node.event_target.dispex);
 }
 
+static void *HTMLTextAreaElement_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLTextAreaElement *This = impl_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLTextAreaElement, riid))
+        return &This->IHTMLTextAreaElement_iface;
+
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
+}
+
 static void HTMLTextAreaElement_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
 {
     HTMLTextAreaElement *This = impl_from_DispatchEx(dispex);
@@ -444,11 +440,8 @@ static void HTMLTextAreaElement_unlink(DispatchEx *dispex)
 
 static const NodeImplVtbl HTMLTextAreaElementImplVtbl = {
     .clsid                 = &CLSID_HTMLTextAreaElement,
-    .qi                    = HTMLTextAreaElement_QI,
-    .destructor            = HTMLElement_destructor,
     .cpc_entries           = HTMLElement_cpc,
     .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLElement_handle_event,
     .get_attr_col          = HTMLElement_get_attr_col,
     .put_disabled          = HTMLTextAreaElementImpl_put_disabled,
     .get_disabled          = HTMLTextAreaElementImpl_get_disabled,
@@ -458,10 +451,13 @@ static const NodeImplVtbl HTMLTextAreaElementImplVtbl = {
 static const event_target_vtbl_t HTMLTextAreaElement_event_target_vtbl = {
     {
         HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLTextAreaElement_query_interface,
+        .destructor     = HTMLElement_destructor,
         .traverse       = HTMLTextAreaElement_traverse,
         .unlink         = HTMLTextAreaElement_unlink
     },
     HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLElement_handle_event
 };
 
 static const tid_t HTMLTextAreaElement_iface_tids[] = {

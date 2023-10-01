@@ -450,8 +450,14 @@ static BOOL SHELL_TryAppPathW( LPCWSTR szName, LPWSTR lpResult, WCHAR **env)
     BOOL found = FALSE;
 
     if (env) *env = NULL;
-    lstrcpyW(buffer, L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\");
-    lstrcatW(buffer, szName);
+    wcscpy(buffer, L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\");
+    if (wcslen(buffer) + wcslen(szName) + 1 > ARRAY_SIZE(buffer))
+    {
+        WARN("Name is too big.\n");
+        return FALSE;
+    }
+
+    wcscat(buffer, szName);
     res = RegOpenKeyExW(HKEY_LOCAL_MACHINE, buffer, 0, KEY_READ, &hkApp);
     if (res)
         res = RegOpenKeyExW(HKEY_LOCAL_MACHINE, lstrcatW(buffer, L".exe"), 0, KEY_READ, &hkApp);
@@ -984,7 +990,7 @@ static UINT_PTR execute_from_key(LPCWSTR key, LPCWSTR lpFile, WCHAR *env, LPCWST
 			     SHELL_ExecuteW32 execfunc,
                              LPSHELLEXECUTEINFOW psei, LPSHELLEXECUTEINFOW psei_out)
 {
-    WCHAR cmd[256], param[1024], ddeexec[256];
+    WCHAR cmd[256], parambuffer[1024], ddeexec[256], *param = parambuffer;
     LONG cmdlen = sizeof(cmd), ddeexeclen = sizeof(ddeexec);
     UINT_PTR retval = SE_ERR_NOASSOC;
     DWORD resultLen;
@@ -1006,9 +1012,12 @@ static UINT_PTR execute_from_key(LPCWSTR key, LPCWSTR lpFile, WCHAR *env, LPCWST
         if (cmdlen >= ARRAY_SIZE(cmd))
             cmdlen = ARRAY_SIZE(cmd) - 1;
         cmd[cmdlen] = '\0';
-        SHELL_ArgifyW(param, ARRAY_SIZE(param), cmd, lpFile, psei->lpIDList, szCommandline, &resultLen);
-        if (resultLen > ARRAY_SIZE(param))
-            ERR("Argify buffer not large enough, truncating\n");
+        SHELL_ArgifyW(param, ARRAY_SIZE(parambuffer), cmd, lpFile, psei->lpIDList, szCommandline, &resultLen);
+        if (resultLen > ARRAY_SIZE(parambuffer))
+        {
+            if ((param = malloc(resultLen * sizeof(*param))))
+                SHELL_ArgifyW(param, resultLen, cmd, lpFile, psei->lpIDList, szCommandline, &resultLen);
+        }
     }
 
     /* Get the parameters needed by the application
@@ -1031,6 +1040,7 @@ static UINT_PTR execute_from_key(LPCWSTR key, LPCWSTR lpFile, WCHAR *env, LPCWST
     else
         WARN("Nothing appropriate found for %s\n", debugstr_w(key));
 
+    if (param != parambuffer) free(param);
     return retval;
 }
 

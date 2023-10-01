@@ -50,6 +50,47 @@ static SAFEARRAY *uia_get_desktop_rt_id(void)
     return uia_desktop_node_rt_id;
 }
 
+static int win_event_to_uia_event_id(int win_event)
+{
+    switch (win_event)
+    {
+    case EVENT_OBJECT_FOCUS: return UIA_AutomationFocusChangedEventId;
+    case EVENT_SYSTEM_ALERT: return UIA_SystemAlertEventId;
+
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+static BOOL CALLBACK uia_win_event_enum_top_level_hwnds(HWND hwnd, LPARAM lparam)
+{
+    struct rb_tree *hwnd_map = (struct rb_tree *)lparam;
+    HRESULT hr;
+
+    if (!uia_hwnd_is_visible(hwnd))
+        return TRUE;
+
+    hr = uia_hwnd_map_add_hwnd(hwnd_map, hwnd);
+    if (FAILED(hr))
+        WARN("Failed to add hwnd to map, hr %#lx\n", hr);
+
+    return TRUE;
+}
+
+static BOOL uia_clientside_event_start_event_thread(struct uia_event *event);
+HRESULT uia_event_add_win_event_hwnd(struct uia_event *event, HWND hwnd)
+{
+    if (!uia_clientside_event_start_event_thread(event))
+        return E_FAIL;
+
+    if (hwnd == GetDesktopWindow())
+        EnumWindows(uia_win_event_enum_top_level_hwnds, (LPARAM)&event->u.clientside.win_event_hwnd_map);
+
+    return uia_hwnd_map_add_hwnd(&event->u.clientside.win_event_hwnd_map, hwnd);
+}
+
 /*
  * UI Automation event map.
  */
@@ -247,6 +288,7 @@ struct uia_event_thread
     LONG ref;
 
     struct list *event_queue;
+    HWINEVENTHOOK hook;
 };
 
 #define WM_UIA_EVENT_THREAD_STOP (WM_USER + 1)
@@ -264,12 +306,18 @@ static CRITICAL_SECTION event_thread_cs = { &event_thread_cs_debug, -1, 0, 0, 0,
 enum uia_queue_event_type {
     QUEUE_EVENT_TYPE_SERVERSIDE,
     QUEUE_EVENT_TYPE_CLIENTSIDE,
+    QUEUE_EVENT_TYPE_WIN_EVENT,
 };
 
 struct uia_queue_event
 {
     struct list event_queue_entry;
     int queue_event_type;
+};
+
+struct uia_queue_uia_event
+{
+    struct uia_queue_event queue_entry;
 
     struct uia_event_args *args;
     struct uia_event *event;
@@ -285,14 +333,40 @@ struct uia_queue_event
      } u;
 };
 
-static void uia_event_queue_push(struct uia_queue_event *event)
+struct uia_queue_win_event
 {
+    struct uia_queue_event queue_entry;
+
+    HWINEVENTHOOK hook;
+    DWORD event_id;
+    HWND hwnd;
+    LONG obj_id;
+    LONG child_id;
+    DWORD thread_id;
+    DWORD event_time;
+};
+
+static void uia_event_queue_push(struct uia_queue_event *event, int queue_event_type)
+{
+    event->queue_event_type = queue_event_type;
     EnterCriticalSection(&event_thread_cs);
+
+    if (queue_event_type == QUEUE_EVENT_TYPE_WIN_EVENT)
+    {
+        struct uia_queue_win_event *win_event = (struct uia_queue_win_event *)event;
+
+        if (win_event->hook != event_thread.hook)
+        {
+            free(event);
+            goto exit;
+        }
+    }
 
     assert(event_thread.event_queue);
     list_add_tail(event_thread.event_queue, &event->event_queue_entry);
     PostMessageW(event_thread.hwnd, WM_UIA_EVENT_THREAD_PROCESS_QUEUE, 0, 0);
 
+exit:
     LeaveCriticalSection(&event_thread_cs);
 }
 
@@ -322,7 +396,7 @@ static void uia_node_lresult_release(LRESULT lr)
 
 static HRESULT uia_event_invoke(HUIANODE node, HUIANODE nav_start_node, struct uia_event_args *args,
         struct uia_event *event);
-static HRESULT uia_raise_clientside_event(struct uia_queue_event *event)
+static HRESULT uia_raise_clientside_event(struct uia_queue_uia_event *event)
 {
     HUIANODE node, nav_start_node;
     HRESULT hr;
@@ -354,7 +428,7 @@ static HRESULT uia_raise_clientside_event(struct uia_queue_event *event)
     return hr;
 }
 
-static HRESULT uia_raise_serverside_event(struct uia_queue_event *event)
+static HRESULT uia_raise_serverside_event(struct uia_queue_uia_event *event)
 {
     HRESULT hr = S_OK;
     LRESULT lr, lr2;
@@ -397,29 +471,70 @@ static void uia_event_thread_process_queue(struct list *event_queue)
     while (1)
     {
         struct uia_queue_event *event;
-        HRESULT hr;
+        HRESULT hr = S_OK;
 
         if (!(event = uia_event_queue_pop(event_queue)))
             break;
 
-        if (event->queue_event_type == QUEUE_EVENT_TYPE_SERVERSIDE)
-            hr = uia_raise_serverside_event(event);
-        else
-            hr = uia_raise_clientside_event(event);
+        switch (event->queue_event_type)
+        {
+        case QUEUE_EVENT_TYPE_SERVERSIDE:
+        case QUEUE_EVENT_TYPE_CLIENTSIDE:
+        {
+            struct uia_queue_uia_event *uia_event = (struct uia_queue_uia_event *)event;
+
+            if (event->queue_event_type == QUEUE_EVENT_TYPE_SERVERSIDE)
+                hr = uia_raise_serverside_event(uia_event);
+            else
+                hr = uia_raise_clientside_event(uia_event);
+
+            uia_event_args_release(uia_event->args);
+            IWineUiaEvent_Release(&uia_event->event->IWineUiaEvent_iface);
+            break;
+        }
+
+        default:
+            break;
+        }
 
         if (FAILED(hr))
             WARN("Failed to raise event type %d with hr %#lx\n", event->queue_event_type, hr);
 
-        uia_event_args_release(event->args);
-        IWineUiaEvent_Release(&event->event->IWineUiaEvent_iface);
         free(event);
     }
+}
+
+static void CALLBACK uia_event_thread_win_event_proc(HWINEVENTHOOK hook, DWORD event_id, HWND hwnd, LONG obj_id,
+        LONG child_id, DWORD thread_id, DWORD event_time)
+{
+    struct uia_queue_win_event *win_event;
+
+    TRACE("%p, %ld, %p, %ld, %ld, %ld, %ld\n", hook, event_id, hwnd, obj_id, child_id, thread_id, event_time);
+
+    if (!win_event_to_uia_event_id(event_id))
+        return;
+
+    if (!(win_event = calloc(1, sizeof(*win_event))))
+    {
+        ERR("Failed to allocate uia_queue_win_event structure\n");
+        return;
+    }
+
+    win_event->hook = hook;
+    win_event->event_id = event_id;
+    win_event->hwnd = hwnd;
+    win_event->obj_id = obj_id;
+    win_event->child_id = child_id;
+    win_event->thread_id = thread_id;
+    win_event->event_time = event_time;
+    uia_event_queue_push(&win_event->queue_entry, QUEUE_EVENT_TYPE_WIN_EVENT);
 }
 
 static DWORD WINAPI uia_event_thread_proc(void *arg)
 {
     HANDLE initialized_event = arg;
     struct list event_queue;
+    HWINEVENTHOOK hook;
     HWND hwnd;
     MSG msg;
 
@@ -435,6 +550,8 @@ static DWORD WINAPI uia_event_thread_proc(void *arg)
 
     event_thread.hwnd = hwnd;
     event_thread.event_queue = &event_queue;
+    event_thread.hook = hook = SetWinEventHook(EVENT_MIN, EVENT_MAX, 0, uia_event_thread_win_event_proc, 0, 0,
+            WINEVENT_OUTOFCONTEXT);
 
     /* Initialization complete, thread can now process window messages. */
     SetEvent(initialized_event);
@@ -455,6 +572,7 @@ static DWORD WINAPI uia_event_thread_proc(void *arg)
 
     TRACE("Shutting down UI Automation event thread.\n");
 
+    UnhookWinEvent(hook);
     DestroyWindow(hwnd);
     CoUninitialize();
     FreeLibraryAndExitThread(huia_module, 0);
@@ -516,6 +634,14 @@ static void uia_stop_event_thread(void)
     LeaveCriticalSection(&event_thread_cs);
 }
 
+static BOOL uia_clientside_event_start_event_thread(struct uia_event *event)
+{
+    if (!event->u.clientside.event_thread_started)
+        event->u.clientside.event_thread_started = uia_start_event_thread();
+
+    return event->u.clientside.event_thread_started;
+}
+
 /*
  * IWineUiaEvent interface.
  */
@@ -565,8 +691,9 @@ static ULONG WINAPI uia_event_Release(IWineUiaEvent *iface)
         if (event->event_type == EVENT_TYPE_CLIENTSIDE)
         {
             uia_cache_request_destroy(&event->u.clientside.cache_req);
-            if (event->u.clientside.git_cookie)
+            if (event->u.clientside.event_thread_started)
                 uia_stop_event_thread();
+            uia_hwnd_map_destroy(&event->u.clientside.win_event_hwnd_map);
         }
         else
         {
@@ -664,7 +791,7 @@ static HRESULT WINAPI uia_event_set_event_data(IWineUiaEvent *iface, const GUID 
 static HRESULT WINAPI uia_event_raise_event(IWineUiaEvent *iface, VARIANT in_node, VARIANT in_nav_start_node)
 {
     struct uia_event *event = impl_from_IWineUiaEvent(iface);
-    struct uia_queue_event *queue_event;
+    struct uia_queue_uia_event *queue_event;
     struct uia_event_args *args;
 
     TRACE("%p, %s, %s\n", iface, debugstr_variant(&in_node), debugstr_variant(&in_nav_start_node));
@@ -680,7 +807,6 @@ static HRESULT WINAPI uia_event_raise_event(IWineUiaEvent *iface, VARIANT in_nod
         return E_OUTOFMEMORY;
     }
 
-    queue_event->queue_event_type = QUEUE_EVENT_TYPE_CLIENTSIDE;
     queue_event->args = args;
     queue_event->event = event;
     queue_event->u.clientside.node = V_I4(&in_node);
@@ -688,7 +814,7 @@ static HRESULT WINAPI uia_event_raise_event(IWineUiaEvent *iface, VARIANT in_nod
         queue_event->u.clientside.nav_start_node = V_I4(&in_nav_start_node);
 
     IWineUiaEvent_AddRef(&event->IWineUiaEvent_iface);
-    uia_event_queue_push(queue_event);
+    uia_event_queue_push(&queue_event->queue_entry, QUEUE_EVENT_TYPE_CLIENTSIDE);
 
     return S_OK;
 }
@@ -744,6 +870,7 @@ static HRESULT create_clientside_uia_event(struct uia_event **out_event, int eve
     event->scope = scope;
     event->u.clientside.event_callback = cback;
     event->u.clientside.callback_data = cback_data;
+    uia_hwnd_map_init(&event->u.clientside.win_event_hwnd_map);
 
     *out_event = event;
     return S_OK;
@@ -1045,16 +1172,13 @@ HRESULT uia_event_add_serverside_event_adviser(IWineUiaEvent *serverside_event, 
      */
     if (!event->u.clientside.git_cookie)
     {
-        if (!uia_start_event_thread())
+        if (!uia_clientside_event_start_event_thread(event))
             return E_FAIL;
 
         hr = register_interface_in_git((IUnknown *)&event->IWineUiaEvent_iface, &IID_IWineUiaEvent,
                 &event->u.clientside.git_cookie);
         if (FAILED(hr))
-        {
-            uia_stop_event_thread();
             return hr;
-        }
     }
 
     if (!(adv_events = calloc(1, sizeof(*adv_events))))
@@ -1277,7 +1401,7 @@ static HRESULT uia_event_invoke(HUIANODE node, HUIANODE nav_start_node, struct u
     }
     else
     {
-        struct uia_queue_event *queue_event;
+        struct uia_queue_uia_event *queue_event;
         HUIANODE node2, nav_start_node2;
 
         if (!(queue_event = calloc(1, sizeof(*queue_event))))
@@ -1302,7 +1426,6 @@ static HRESULT uia_event_invoke(HUIANODE node, HUIANODE nav_start_node, struct u
             }
         }
 
-        queue_event->queue_event_type = QUEUE_EVENT_TYPE_SERVERSIDE;
         queue_event->args = args;
         queue_event->event = event;
         queue_event->u.serverside.node = node2;
@@ -1310,7 +1433,7 @@ static HRESULT uia_event_invoke(HUIANODE node, HUIANODE nav_start_node, struct u
 
         InterlockedIncrement(&args->ref);
         IWineUiaEvent_AddRef(&event->IWineUiaEvent_iface);
-        uia_event_queue_push(queue_event);
+        uia_event_queue_push(&queue_event->queue_entry, QUEUE_EVENT_TYPE_SERVERSIDE);
     }
 
     return hr;

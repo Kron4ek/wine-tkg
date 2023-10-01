@@ -121,6 +121,7 @@ struct vkd3d_vulkan_info
     bool KHR_draw_indirect_count;
     bool KHR_get_memory_requirements2;
     bool KHR_image_format_list;
+    bool KHR_maintenance2;
     bool KHR_maintenance3;
     bool KHR_push_descriptor;
     bool KHR_sampler_mirror_clamp_to_edge;
@@ -835,6 +836,7 @@ struct vkd3d_texture_view_desc
     VkImageAspectFlags vk_image_aspect;
     VkComponentMapping components;
     bool allowed_swizzle;
+    VkImageUsageFlags usage;
 };
 
 struct vkd3d_desc_header
@@ -1709,7 +1711,7 @@ struct vkd3d_desc_object_cache
 /* ID3D12Device */
 struct d3d12_device
 {
-    ID3D12Device1 ID3D12Device1_iface;
+    ID3D12Device5 ID3D12Device5_iface;
     LONG refcount;
 
     VkDevice vk_device;
@@ -1775,27 +1777,27 @@ struct vkd3d_queue *d3d12_device_get_vkd3d_queue(struct d3d12_device *device, D3
 bool d3d12_device_is_uma(struct d3d12_device *device, bool *coherent);
 void d3d12_device_mark_as_removed(struct d3d12_device *device, HRESULT reason,
         const char *message, ...) VKD3D_PRINTF_FUNC(3, 4);
-struct d3d12_device *unsafe_impl_from_ID3D12Device1(ID3D12Device1 *iface);
+struct d3d12_device *unsafe_impl_from_ID3D12Device5(ID3D12Device5 *iface);
 
 static inline HRESULT d3d12_device_query_interface(struct d3d12_device *device, REFIID iid, void **object)
 {
-    return ID3D12Device1_QueryInterface(&device->ID3D12Device1_iface, iid, object);
+    return ID3D12Device5_QueryInterface(&device->ID3D12Device5_iface, iid, object);
 }
 
 static inline ULONG d3d12_device_add_ref(struct d3d12_device *device)
 {
-    return ID3D12Device1_AddRef(&device->ID3D12Device1_iface);
+    return ID3D12Device5_AddRef(&device->ID3D12Device5_iface);
 }
 
 static inline ULONG d3d12_device_release(struct d3d12_device *device)
 {
-    return ID3D12Device1_Release(&device->ID3D12Device1_iface);
+    return ID3D12Device5_Release(&device->ID3D12Device5_iface);
 }
 
 static inline unsigned int d3d12_device_get_descriptor_handle_increment_size(struct d3d12_device *device,
         D3D12_DESCRIPTOR_HEAP_TYPE descriptor_type)
 {
-    return ID3D12Device1_GetDescriptorHandleIncrementSize(&device->ID3D12Device1_iface, descriptor_type);
+    return ID3D12Device5_GetDescriptorHandleIncrementSize(&device->ID3D12Device5_iface, descriptor_type);
 }
 
 /* utils */

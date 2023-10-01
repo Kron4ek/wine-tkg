@@ -47,36 +47,6 @@
 extern HRESULT create_dmband(REFIID riid, void **ret_iface);
 extern HRESULT create_dmbandtrack(REFIID riid, void **ret_iface);
 
-
-/*****************************************************************************
- * Auxiliary definitions
- */
-/* i don't like M$'s idea about two different band item headers, so behold: universal one */
-typedef struct _DMUS_PRIVATE_BAND_ITEM_HEADER {
-	DWORD dwVersion; /* 1 or 2 */
-	/* v.1 */
-	MUSIC_TIME lBandTime;
-	/* v.2 */
-	MUSIC_TIME lBandTimeLogical;
-	MUSIC_TIME lBandTimePhysical;
-} DMUS_PRIVATE_BAND_ITEM_HEADER;
-
-typedef struct _DMUS_PRIVATE_INSTRUMENT {
-	struct list entry; /* for listing elements */
-	DMUS_IO_INSTRUMENT pInstrument;
-	IDirectMusicCollection* ppReferenceCollection;
-} DMUS_PRIVATE_INSTRUMENT, *LPDMUS_PRIVATE_INSTRUMENT;
-
-typedef struct _DMUS_PRIVATE_BAND {
-	struct list entry; /* for listing elements */
-	DMUS_PRIVATE_BAND_ITEM_HEADER BandHeader;
-	IDirectMusicBand *band;
-} DMUS_PRIVATE_BAND, *LPDMUS_PRIVATE_BAND;
-
-/*****************************************************************************
- * Misc.
- */
-
-#include "dmutils.h"
+extern HRESULT band_connect_to_collection(IDirectMusicBand *iface, IDirectMusicCollection *collection);
 
 #endif	/* __WINE_DMBAND_PRIVATE_H */

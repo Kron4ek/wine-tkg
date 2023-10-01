@@ -53,7 +53,14 @@ extern struct wayland process_wayland DECLSPEC_HIDDEN;
 
 enum wayland_window_message
 {
-    WM_WAYLAND_INIT_DISPLAY_DEVICES = 0x80001000
+    WM_WAYLAND_INIT_DISPLAY_DEVICES = 0x80001000,
+    WM_WAYLAND_CONFIGURE = 0x80001001
+};
+
+enum wayland_surface_config_state
+{
+    WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED = (1 << 0),
+    WAYLAND_SURFACE_CONFIG_STATE_RESIZING = (1 << 1)
 };
 
 struct wayland_cursor
@@ -68,7 +75,15 @@ struct wayland_pointer
     struct wl_pointer *wl_pointer;
     HWND focused_hwnd;
     uint32_t enter_serial;
+    uint32_t button_serial;
     struct wayland_cursor cursor;
+    pthread_mutex_t mutex;
+};
+
+struct wayland_seat
+{
+    struct wl_seat *wl_seat;
+    uint32_t global_id;
     pthread_mutex_t mutex;
 };
 
@@ -82,7 +97,7 @@ struct wayland
     struct wl_compositor *wl_compositor;
     struct xdg_wm_base *xdg_wm_base;
     struct wl_shm *wl_shm;
-    struct wl_seat *wl_seat;
+    struct wayland_seat seat;
     struct wayland_pointer pointer;
     struct wl_list output_list;
     /* Protects the output_list and the wayland_output.current states. */
@@ -117,6 +132,14 @@ struct wayland_output
     struct wayland_output_state current;
 };
 
+struct wayland_surface_config
+{
+    int32_t width, height;
+    enum wayland_surface_config_state state;
+    uint32_t serial;
+    BOOL processed;
+};
+
 struct wayland_surface
 {
     HWND hwnd;
@@ -124,8 +147,9 @@ struct wayland_surface
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
     pthread_mutex_t mutex;
-    uint32_t current_serial;
+    struct wayland_surface_config pending, requested, processing, current;
     struct wayland_shm_buffer *latest_window_buffer;
+    BOOL resizing;
 };
 
 struct wayland_shm_buffer
@@ -166,6 +190,8 @@ void wayland_surface_clear_role(struct wayland_surface *surface) DECLSPEC_HIDDEN
 void wayland_surface_attach_shm(struct wayland_surface *surface,
                                 struct wayland_shm_buffer *shm_buffer,
                                 HRGN surface_damage_region) DECLSPEC_HIDDEN;
+struct wayland_surface *wayland_surface_lock_hwnd(HWND hwnd) DECLSPEC_HIDDEN;
+BOOL wayland_surface_reconfigure(struct wayland_surface *surface) DECLSPEC_HIDDEN;
 
 /**********************************************************************
  *          Wayland SHM buffer
@@ -205,6 +231,11 @@ static inline BOOL intersect_rect(RECT *dst, const RECT *src1, const RECT *src2)
     return !IsRectEmpty(dst);
 }
 
+static inline LRESULT send_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    return NtUserMessageCall(hwnd, msg, wparam, lparam, NULL, NtUserSendMessage, FALSE);
+}
+
 RGNDATA *get_region_data(HRGN region) DECLSPEC_HIDDEN;
 
 /**********************************************************************
@@ -214,6 +245,7 @@ RGNDATA *get_region_data(HRGN region) DECLSPEC_HIDDEN;
 LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) DECLSPEC_HIDDEN;
 void WAYLAND_DestroyWindow(HWND hwnd) DECLSPEC_HIDDEN;
 void WAYLAND_SetCursor(HWND hwnd, HCURSOR hcursor) DECLSPEC_HIDDEN;
+LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam) DECLSPEC_HIDDEN;
 BOOL WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager,
                                   BOOL force, void *param) DECLSPEC_HIDDEN;
 LRESULT WAYLAND_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) DECLSPEC_HIDDEN;

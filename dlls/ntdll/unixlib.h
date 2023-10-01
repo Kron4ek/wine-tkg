@@ -71,7 +71,6 @@ enum ntdll_unix_funcs
     unix_load_so_dll,
     unix_unwind_builtin_dll,
     unix_wine_dbg_write,
-    unix_wine_needs_override_large_address_aware,
     unix_wine_server_call,
     unix_wine_server_fd_to_handle,
     unix_wine_server_handle_to_fd,

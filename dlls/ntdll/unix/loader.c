@@ -1169,7 +1169,7 @@ static void relocate_ntdll( void *module )
 
     if (!(rel = get_module_data_dir( module, IMAGE_DIRECTORY_ENTRY_BASERELOC, &size ))) return;
 
-    sec = (IMAGE_SECTION_HEADER *)((char *)&nt->OptionalHeader + nt->FileHeader.SizeOfOptionalHeader);
+    sec = IMAGE_FIRST_SECTION( nt );
     for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
     {
         void *addr = get_rva( module, sec[i].VirtualAddress );
@@ -1348,7 +1348,6 @@ static const unixlib_entry_t unix_call_funcs[] =
     load_so_dll,
     unwind_builtin_dll,
     unixcall_wine_dbg_write,
-    unixcall_wine_needs_override_large_address_aware,
     unixcall_wine_server_call,
     unixcall_wine_server_fd_to_handle,
     unixcall_wine_server_handle_to_fd,
@@ -2064,7 +2063,7 @@ static void load_apiset_dll(void)
     if (!status)
     {
         nt = get_rva( ptr, ((IMAGE_DOS_HEADER *)ptr)->e_lfanew );
-        sec = (IMAGE_SECTION_HEADER *)((char *)&nt->OptionalHeader + nt->FileHeader.SizeOfOptionalHeader);
+        sec = IMAGE_FIRST_SECTION( nt );
 
         for (i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++)
         {

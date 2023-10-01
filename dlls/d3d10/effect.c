@@ -207,6 +207,15 @@ struct preshader_instr
 
 typedef void (*pres_op_func)(float **args, unsigned int n, const struct preshader_instr *instr);
 
+static void pres_mov(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    float *retval = args[1];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+        retval[i] = args[0][i];
+}
+
 static void pres_neg(float **args, unsigned int n, const struct preshader_instr *instr)
 {
     float *retval = args[1];
@@ -402,6 +411,62 @@ static void pres_iadd(float **args, unsigned int n, const struct preshader_instr
     }
 }
 
+static void pres_bilt(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    int *arg1 = (int *)args[0];
+    int *arg2 = (int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        unsigned int v = arg1[instr->scalar ? 0 : i] < arg2[i] ? ~0u : 0;
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_bige(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    int *arg1 = (int *)args[0];
+    int *arg2 = (int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        unsigned int v = arg1[instr->scalar ? 0 : i] >= arg2[i] ? ~0u : 0;
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_bieq(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    int *arg1 = (int *)args[0];
+    int *arg2 = (int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        unsigned int v = arg1[instr->scalar ? 0 : i] == arg2[i] ? ~0u : 0;
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_bine(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    int *arg1 = (int *)args[0];
+    int *arg2 = (int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        unsigned int v = arg1[instr->scalar ? 0 : i] != arg2[i] ? ~0u : 0;
+        retval[i] = *(float *)&v;
+    }
+}
+
 static void pres_udiv(float **args, unsigned int n, const struct preshader_instr *instr)
 {
     unsigned int *arg1 = (unsigned int *)args[0];
@@ -468,6 +533,34 @@ static void pres_umax(float **args, unsigned int n, const struct preshader_instr
     }
 }
 
+static void pres_and(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    unsigned int *arg1 = (unsigned int *)args[0];
+    unsigned int *arg2 = (unsigned int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        unsigned int v = arg1[instr->scalar ? 0 : i] & arg2[i];
+        retval[i] = *(float *)&v;
+    }
+}
+
+static void pres_xor(float **args, unsigned int n, const struct preshader_instr *instr)
+{
+    unsigned int *arg1 = (unsigned int *)args[0];
+    unsigned int *arg2 = (unsigned int *)args[1];
+    float *retval = args[2];
+    unsigned int i;
+
+    for (i = 0; i < instr->comp_count; ++i)
+    {
+        unsigned int v = arg1[instr->scalar ? 0 : i] ^ arg2[i];
+        retval[i] = *(float *)&v;
+    }
+}
+
 static void pres_movc(float **args, unsigned int n, const struct preshader_instr *instr)
 {
     float *arg1 = args[0], *arg2 = args[1], *arg3 = args[2];
@@ -487,6 +580,7 @@ struct preshader_op_info
 
 static const struct preshader_op_info preshader_ops[] =
 {
+    { 0x100, "mov",  pres_mov  },
     { 0x101, "neg",  pres_neg  },
     { 0x103, "rcp",  pres_rcp  },
     { 0x104, "frc",  pres_frc  },
@@ -506,12 +600,18 @@ static const struct preshader_op_info preshader_ops[] =
     { 0x205, "mul",  pres_mul  },
     { 0x206, "atan2",pres_atan2},
     { 0x208, "div",  pres_div  },
+    { 0x210, "bilt", pres_bilt },
+    { 0x211, "bige", pres_bige },
+    { 0x212, "bieq", pres_bieq },
+    { 0x213, "bine", pres_bine },
     { 0x216, "iadd", pres_iadd },
     { 0x21a, "udiv", pres_udiv },
     { 0x21d, "imin", pres_imin },
     { 0x21e, "imax", pres_imax },
     { 0x21f, "umin", pres_umin },
     { 0x220, "umax", pres_umax },
+    { 0x230, "and",  pres_and  },
+    { 0x233, "xor",  pres_xor  },
     { 0x301, "movc", pres_movc },
 };
 

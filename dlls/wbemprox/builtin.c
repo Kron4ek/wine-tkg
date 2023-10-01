@@ -232,7 +232,7 @@ static const struct column col_operatingsystem[] =
 {
     { L"BootDevice",              CIM_STRING },
     { L"BuildNumber",             CIM_STRING|COL_FLAG_DYNAMIC },
-    { L"BuildType",               CIM_STRING },
+    { L"BuildType",               CIM_STRING|COL_FLAG_DYNAMIC },
     { L"Caption",                 CIM_STRING|COL_FLAG_DYNAMIC },
     { L"CodeSet",                 CIM_STRING|COL_FLAG_DYNAMIC },
     { L"CountryCode",             CIM_STRING|COL_FLAG_DYNAMIC },
@@ -241,7 +241,7 @@ static const struct column col_operatingsystem[] =
     { L"CurrentTimeZone",         CIM_SINT16 },
     { L"FreePhysicalMemory",      CIM_UINT64 },
     { L"FreeVirtualMemory",       CIM_UINT64 },
-    { L"InstallDate",             CIM_DATETIME },
+    { L"InstallDate",             CIM_DATETIME|COL_FLAG_DYNAMIC },
     { L"LastBootUpTime",          CIM_DATETIME|COL_FLAG_DYNAMIC },
     { L"LocalDateTime",           CIM_DATETIME|COL_FLAG_DYNAMIC },
     { L"Locale",                  CIM_STRING|COL_FLAG_DYNAMIC },
@@ -1613,6 +1613,15 @@ static UINT64 get_available_physical_memory(void)
     status.dwLength = sizeof(status);
     if (!GlobalMemoryStatusEx( &status )) return 1024 * 1024 * 1024;
     return status.ullAvailPhys;
+}
+
+static UINT64 get_total_virtual_memory(void)
+{
+    MEMORYSTATUSEX status;
+
+    status.dwLength = sizeof(status);
+    if (!GlobalMemoryStatusEx( &status )) return 1024 * 1024 * 1024;
+    return status.ullTotalVirtual;
 }
 
 static UINT64 get_available_virtual_memory(void)
@@ -3643,6 +3652,11 @@ static WCHAR *get_osbuildnumber( OSVERSIONINFOEXW *ver )
     return ret;
 }
 
+static WCHAR *get_osbuildtype(void)
+{
+    return get_reg_str( HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows NT\\CurrentVersion", L"CurrentType" );
+}
+
 static WCHAR *get_oscaption( OSVERSIONINFOEXW *ver )
 {
     static const WCHAR windowsW[] = L"Microsoft Windows ";
@@ -3735,6 +3749,29 @@ static WCHAR *get_windowsdirectory(void)
     return wcsdup( dir );
 }
 
+static WCHAR *get_osinstalldate(void)
+{
+    HANDLE handle = CreateFileW( L"c:\\", GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+                                 FILE_FLAG_BACKUP_SEMANTICS, NULL );
+    if (handle != INVALID_HANDLE_VALUE)
+    {
+        FILETIME ft = { 0 };
+        WCHAR *ret;
+
+        GetFileTime( handle, &ft, NULL, NULL );
+        CloseHandle( handle );
+        if ((ret = malloc( 26 * sizeof(WCHAR) )))
+        {
+            SYSTEMTIME st = { 0 };
+            FileTimeToSystemTime( &ft, &st );
+            swprintf( ret, 26, L"%04u%02u%02u%02u%02u%02u.%06u+000", st.wYear, st.wMonth, st.wDay, st.wHour,
+                      st.wMinute, st.wSecond, st.wMilliseconds * 1000 );
+            return ret;
+        }
+    }
+    return wcsdup( L"20230101000000.000000+000" );
+}
+
 static enum fill_status fill_operatingsystem( struct table *table, const struct expr *cond )
 {
     struct record_operatingsystem *rec;
@@ -3750,7 +3787,7 @@ static enum fill_status fill_operatingsystem( struct table *table, const struct 
     rec = (struct record_operatingsystem *)table->data;
     rec->bootdevice             = L"\\Device\\HarddiskVolume1";
     rec->buildnumber            = get_osbuildnumber( &ver );
-    rec->buildtype              = L"Wine build";
+    rec->buildtype              = get_osbuildtype();
     rec->caption                = get_oscaption( &ver );
     rec->codeset                = get_codeset();
     rec->countrycode            = get_countrycode();
@@ -3759,7 +3796,7 @@ static enum fill_status fill_operatingsystem( struct table *table, const struct 
     rec->currenttimezone        = get_currenttimezone();
     rec->freephysicalmemory     = get_available_physical_memory() / 1024;
     rec->freevirtualmemory      = get_available_virtual_memory() / 1024;
-    rec->installdate            = L"20140101000000.000000+000";
+    rec->installdate            = get_osinstalldate();
     rec->lastbootuptime         = get_lastbootuptime();
     rec->localdatetime          = get_localdatetime();
     rec->locale                 = get_locale();
@@ -3781,8 +3818,8 @@ static enum fill_status fill_operatingsystem( struct table *table, const struct 
     rec->suitemask              = 272;     /* Single User + Terminal */
     rec->systemdirectory        = get_systemdirectory();
     rec->systemdrive            = get_systemdrive();
-    rec->totalvirtualmemorysize = get_total_physical_memory() / 1024;
-    rec->totalvisiblememorysize = rec->totalvirtualmemorysize;
+    rec->totalvirtualmemorysize = get_total_virtual_memory() / 1024;
+    rec->totalvisiblememorysize = get_total_physical_memory() / 1024;
     rec->version                = get_osversion( &ver );
     rec->windowsdirectory       = get_windowsdirectory();
     if (!match_row( table, row, cond, &status )) free_row_values( table, row );

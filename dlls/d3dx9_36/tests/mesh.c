@@ -2068,6 +2068,14 @@ static void D3DXLoadMeshTest(void)
             "}"
             "Mesh { 3; 0.0; 0.0; 0.0;, 0.0; 1.0; 0.0;, 3.0; 1.0; 0.0;; 1; 3; 0, 1, 2;; }"
         "}";
+    static const char framed_xfile2[] =
+        "xof 0303txt 0032"
+        "Frame Box01 {"
+            "Mesh { 0;; 0;;"
+                "MeshNormals { 0;; 0;; }"
+            "}"
+        "}";
+
     static const WORD framed_index_buffer[] = { 0, 1, 2 };
     static const D3DXVECTOR3 framed_vertex_buffers[3][3] = {
         {{0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {1.0, 1.0, 0.0}},
@@ -2513,6 +2521,19 @@ static void D3DXLoadMeshTest(void)
         frame_hier = NULL;
     }
 
+    hr = D3DXLoadMeshHierarchyFromXInMemory(framed_xfile2, sizeof(framed_xfile2) - 1,
+            D3DXMESH_MANAGED, device, &alloc_hier, NULL, &frame_hier, NULL);
+    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
+    if (SUCCEEDED(hr)) {
+        D3DXMESHCONTAINER *container = frame_hier->pMeshContainer;
+
+        ok(!strcmp(frame_hier->Name, "Box01"), "Expected '', got '%s'\n", frame_hier->Name);
+        ok(container == NULL, "Expected NULL, got %p\n", container);
+
+        hr = D3DXFrameDestroy(frame_hier, &alloc_hier);
+        ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
+        frame_hier = NULL;
+    }
 
     hr = D3DXLoadMeshFromXInMemory(NULL, 0, D3DXMESH_MANAGED,
                                    device, NULL, NULL, NULL, NULL, &mesh);
@@ -5293,18 +5314,18 @@ static void test_update_skinned_mesh(void)
     }
 
     hr = D3DXCreateSkinInfoFVF(4, D3DFVF_XYZ | D3DFVF_NORMAL, 2, &skin_info);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#x\n", hr);
+    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
 
     skin_info->lpVtbl->SetBoneInfluence(skin_info, 0, 2, bone0_vertices, bone0_weights);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#x\n", hr);
+    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
     skin_info->lpVtbl->SetBoneOffsetMatrix(skin_info, 0, &matrix);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#x\n", hr);
+    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
     skin_info->lpVtbl->SetBoneInfluence(skin_info, 1, 2, bone1_vertices, bone1_weights);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#x\n", hr);
+    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
     skin_info->lpVtbl->SetBoneOffsetMatrix(skin_info, 1, &matrix);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#x\n", hr);
+    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
     skin_info->lpVtbl->UpdateSkinnedMesh(skin_info, bones_matrix, NULL, vertices_src, vertices_dest);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#x\n", hr);
+    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
     for (i = 0; i < 4; i++)
     {
         ok(compare(vertices_dest[i*2].x, vertices_ref[i*2].x), "Vertex[%d].position.x: got %g, expected %g\n",
@@ -11426,6 +11447,9 @@ static void test_load_skin_mesh_from_xof(void)
             "1;"
             "3; 0, 1, 2;;"
         "}";
+    static const char simple_xfile_empty[] =
+        "xof 0303txt 0032"
+        "Mesh { 0;; 0;; }";
     static const D3DVERTEXELEMENT9 expected_declaration[] =
     {
         {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
@@ -11537,6 +11561,28 @@ static void test_load_skin_mesh_from_xof(void)
     mesh->lpVtbl->Release(mesh);
     adjacency->lpVtbl->Release(adjacency);
     file_data->lpVtbl->Release(file_data);
+
+    /* Empty Mesh Test */
+    file_data = get_mesh_data(simple_xfile_empty, sizeof(simple_xfile_empty) - 1);
+    ok(!!file_data, "Failed to load mesh data.\n");
+
+    adjacency = materials = effects = (void *)0xdeadbeef;
+    count = ~0u;
+    skin_info = (void *)0xdeadbeef;
+    mesh = (void *)0xdeadbeef;
+
+    hr = D3DXLoadSkinMeshFromXof(file_data, 0, device, &adjacency, &materials, &effects, &count,
+            &skin_info, &mesh);
+    todo_wine ok(hr == D3DXERR_LOADEDMESHASNODATA, "Got unexpected hr %#lx.\n", hr);
+    ok(!adjacency, "Got unexpected value %p.\n", adjacency);
+    ok(!materials, "Got unexpected value %p.\n", materials);
+    ok(!effects, "Got unexpected value %p.\n", effects);
+    ok(count == ~0u, "Got unexpected value %lu.\n", count);
+    ok(skin_info == (void *)0xdeadbeef, "Got unexpected value %p.\n", skin_info);
+    ok(!mesh, "Got unexpected value %p.\n", mesh);
+
+    file_data->lpVtbl->Release(file_data);
+
     refcount = IDirect3DDevice9_Release(device);
     ok(!refcount, "Device has %lu references left.\n", refcount);
     DestroyWindow(hwnd);

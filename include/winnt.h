@@ -33,7 +33,7 @@
 #endif
 
 
-#if defined(_MSC_VER) && (defined(__arm__) || defined(__aarch64__))
+#if defined(_MSC_VER) && (defined(__arm__) || defined(__aarch64__) || defined(__arm64ec__))
 #include <intrin.h>
 #endif
 
@@ -1917,6 +1917,10 @@ NTSYSAPI void WINAPI RtlCaptureContext(CONTEXT*);
 #define WOW64_SIZE_OF_80387_REGISTERS 80
 #define WOW64_MAXIMUM_SUPPORTED_EXTENSION 512
 
+#ifdef __x86_64__
+NTSYSAPI BOOLEAN NTAPI RtlIsEcCode(const void*);
+#endif
+
 /* Exception definitions */
 
 #define EXCEPTION_READ_FAULT    0
@@ -2067,6 +2071,9 @@ typedef void (CALLBACK *PTERMINATION_HANDLER)(BOOLEAN,DWORD64);
 #define UNW_FLAG_UHANDLER  2
 
 #endif /* __aarch64__ */
+
+NTSYSAPI void    NTAPI RtlRaiseException(struct _EXCEPTION_RECORD*);
+NTSYSAPI void    NTAPI RtlUnwind(void*,void*,struct _EXCEPTION_RECORD*,void*);
 
 #if defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)
 
@@ -2404,6 +2411,17 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
   __asm mov teb, eax;
   return teb;
 }
+#elif (defined(__aarch64__) || defined(__arm64ec__)) && defined(__GNUC__)
+register struct _TEB *__wine_current_teb __asm__("x18");
+static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
+{
+    return __wine_current_teb;
+}
+#elif (defined(__aarch64__) || defined(__arm64ec__)) && defined(_MSC_VER)
+static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
+{
+    return (struct _TEB *)__getReg(18);
+}
 #elif defined(__x86_64__) && defined(__GNUC__)
 static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 {
@@ -2430,19 +2448,6 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 {
     return (struct _TEB *)(ULONG_PTR)_MoveFromCoprocessor(15, 0, 13, 0, 2);
-}
-#elif defined(__aarch64__) && defined(__GNUC__)
-register struct _TEB *__wine_current_teb __asm__("x18");
-static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
-{
-    return __wine_current_teb;
-}
-#elif defined(__aarch64__) && defined(_MSC_VER)
-unsigned __int64 __getReg(int);
-#pragma intrinsic(__getReg)
-static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
-{
-    return (struct _TEB *)__getReg(18);
 }
 #elif !defined(RC_INVOKED)
 # error You must define NtCurrentTeb() for your architecture
@@ -2927,8 +2932,7 @@ typedef struct _IMAGE_SECTION_HEADER {
 #define	IMAGE_SIZEOF_SECTION_HEADER 40
 
 #define IMAGE_FIRST_SECTION(ntheader) \
-  ((PIMAGE_SECTION_HEADER)(ULONG_PTR)((const BYTE *)&((const IMAGE_NT_HEADERS *)(ntheader))->OptionalHeader + \
-                           ((const IMAGE_NT_HEADERS *)(ntheader))->FileHeader.SizeOfOptionalHeader))
+    ((PIMAGE_SECTION_HEADER)((ULONG_PTR)&(ntheader)->OptionalHeader + (ntheader)->FileHeader.SizeOfOptionalHeader))
 
 /* These defines are for the Characteristics bitfield. */
 /* #define IMAGE_SCN_TYPE_REG			0x00000000 - Reserved */
@@ -6717,6 +6721,7 @@ typedef VOID (CALLBACK *PTP_WAIT_CALLBACK)(PTP_CALLBACK_INSTANCE,PVOID,PTP_WAIT,
 
 
 NTSYSAPI BOOLEAN NTAPI RtlGetProductInfo(DWORD,DWORD,DWORD,DWORD,PDWORD);
+NTSYSAPI void*   NTAPI RtlPcToFileHeader(void*,void**);
 
 typedef enum _RTL_UMS_THREAD_INFO_CLASS
 {
@@ -6904,6 +6909,13 @@ static FORCEINLINE void MemoryBarrier(void)
     InterlockedOr(&dummy, 0);
 }
 
+#elif defined(__aarch64__) || defined(__arm64ec__)
+
+static FORCEINLINE void MemoryBarrier(void)
+{
+    __dmb(_ARM64_BARRIER_SY);
+}
+
 #elif defined(__x86_64__)
 
 #pragma intrinsic(__faststorefence)
@@ -6919,13 +6931,6 @@ static FORCEINLINE void MemoryBarrier(void)
 static FORCEINLINE void MemoryBarrier(void)
 {
     __dmb(_ARM_BARRIER_SY);
-}
-
-#elif defined(__aarch64__)
-
-static FORCEINLINE void MemoryBarrier(void)
-{
-    __dmb(_ARM64_BARRIER_SY);
 }
 
 #endif /* __i386__ */
@@ -7193,7 +7198,7 @@ unsigned char _InterlockedCompareExchange128(volatile __int64 *, __int64, __int6
 
 static FORCEINLINE unsigned char InterlockedCompareExchange128( volatile __int64 *dest, __int64 xchg_high, __int64 xchg_low, __int64 *compare )
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) && !defined(__arm64ec__)
     unsigned char ret;
     __asm__ __volatile__( "lock cmpxchg16b %0; setz %b2"
                           : "=m" (dest[0]), "=m" (dest[1]), "=r" (ret),

@@ -11254,7 +11254,7 @@ static void register_classes(void)
 
     cls.lpfnWndProc = recursive_activation_wndprocA;
     cls.lpszClassName = "RecursiveActivationClass";
-    if(!RegisterClassA(&cls)) return FALSE;
+    register_class(&cls);
 
     cls.lpfnWndProc = PopupMsgCheckProcA;
     cls.lpszClassName = "TestPopupClass";
@@ -14070,82 +14070,90 @@ done:
 
 static void test_PeekMessage3(void)
 {
-    HWND hwnd;
+    HWND parent_hwnd, hwnd;
     BOOL ret;
     MSG msg;
 
-    hwnd = CreateWindowA("TestWindowClass", "PeekMessage3", WS_OVERLAPPEDWINDOW,
+    parent_hwnd = CreateWindowA("SimpleWindowClass", "PeekMessage3", WS_OVERLAPPEDWINDOW,
                          10, 10, 800, 800, NULL, NULL, NULL, NULL);
+    ok(parent_hwnd != NULL, "expected parent_hwnd != NULL\n");
+
+    hwnd = CreateWindowA("TestWindowClass", "PeekMessage3", WS_CHILD, 0, 0, 1, 1,
+        parent_hwnd, NULL, NULL, NULL);
     ok(hwnd != NULL, "expected hwnd != NULL\n");
+
     flush_events();
 
     /* GetMessage() and PeekMessage(..., PM_REMOVE) should prefer messages which
      * were already seen. */
 
     SetTimer(hwnd, 1, 100, NULL);
-    while (!PeekMessageA(&msg, NULL, 0, 0, PM_NOREMOVE));
+    while (!PeekMessageA(&msg, hwnd, 0, 0, PM_NOREMOVE));
     ok(msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
     PostMessageA(hwnd, WM_USER, 0, 0);
-    ret = PeekMessageA(&msg, NULL, 0, 0, PM_NOREMOVE);
+    ret = PeekMessageA(&msg, hwnd, 0, 0, PM_NOREMOVE);
     ok(ret && msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_USER, "msg.message = %u instead of WM_USER\n", msg.message);
-    ret = PeekMessageA(&msg, NULL, 0, 0, 0);
+    ret = PeekMessageA(&msg, hwnd, 0, 0, 0);
     ok(!ret, "expected PeekMessage to return FALSE, got %u\n", ret);
 
     SetTimer(hwnd, 1, 100, NULL);
-    while (!PeekMessageA(&msg, NULL, 0, 0, PM_NOREMOVE));
+    while (!PeekMessageA(&msg, hwnd, 0, 0, PM_NOREMOVE));
     ok(msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
     PostMessageA(hwnd, WM_USER, 0, 0);
-    ret = PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE);
+    ret = PeekMessageA(&msg, hwnd, 0, 0, PM_REMOVE);
     ok(ret && msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
-    ret = PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE);
+    ret = PeekMessageA(&msg, hwnd, 0, 0, PM_REMOVE);
     ok(ret && msg.message == WM_USER, "msg.message = %u instead of WM_USER\n", msg.message);
-    ret = PeekMessageA(&msg, NULL, 0, 0, 0);
+    ret = PeekMessageA(&msg, hwnd, 0, 0, 0);
     ok(!ret, "expected PeekMessage to return FALSE, got %u\n", ret);
 
     /* It doesn't matter if a message range is specified or not. */
 
     SetTimer(hwnd, 1, 100, NULL);
-    while (!PeekMessageA(&msg, NULL, WM_TIMER, WM_TIMER, PM_NOREMOVE));
+    while (!PeekMessageA(&msg, hwnd, WM_TIMER, WM_TIMER, PM_NOREMOVE));
     ok(msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
     PostMessageA(hwnd, WM_USER, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
+    ok(ret && msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ret = GetMessageA(&msg, NULL, 0, 0);
     ok(ret && msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
     ret = GetMessageA(&msg, NULL, 0, 0);
     ok(ret && msg.message == WM_USER, "msg.message = %u instead of WM_USER\n", msg.message);
-    ret = PeekMessageA(&msg, NULL, 0, 0, 0);
+    ret = PeekMessageA(&msg, hwnd, 0, 0, 0);
     ok(!ret, "expected PeekMessage to return FALSE, got %u\n", ret);
 
     /* But not if the post messages were added before the PeekMessage() call. */
 
     PostMessageA(hwnd, WM_USER, 0, 0);
     SetTimer(hwnd, 1, 100, NULL);
-    while (!PeekMessageA(&msg, NULL, WM_TIMER, WM_TIMER, PM_NOREMOVE));
+    while (!PeekMessageA(&msg, hwnd, WM_TIMER, WM_TIMER, PM_NOREMOVE));
     ok(msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_USER, "msg.message = %u instead of WM_USER\n", msg.message);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
-    ret = PeekMessageA(&msg, NULL, 0, 0, 0);
+    ret = PeekMessageA(&msg, hwnd, 0, 0, 0);
     ok(!ret, "expected PeekMessage to return FALSE, got %u\n", ret);
 
     /* More complicated test with multiple messages. */
 
     PostMessageA(hwnd, WM_USER, 0, 0);
     SetTimer(hwnd, 1, 100, NULL);
-    while (!PeekMessageA(&msg, NULL, WM_TIMER, WM_TIMER, PM_NOREMOVE));
+    while (!PeekMessageA(&msg, hwnd, WM_TIMER, WM_TIMER, PM_NOREMOVE));
     ok(msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
     PostMessageA(hwnd, WM_USER + 1, 0, 0);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_USER, "msg.message = %u instead of WM_USER\n", msg.message);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_USER + 1, "msg.message = %u instead of WM_USER + 1\n", msg.message);
-    ret = PeekMessageA(&msg, NULL, 0, 0, 0);
+    ret = PeekMessageA(&msg, hwnd, 0, 0, 0);
     ok(!ret, "expected PeekMessage to return FALSE, got %u\n", ret);
 
     /* Newer messages are still returned when specifying a message range. */
@@ -14172,28 +14180,28 @@ static void test_PeekMessage3(void)
      * because both messages are in the same queue. */
 
     PostMessageA(hwnd, WM_TIMER, 0, 0);
-    while (!PeekMessageA(&msg, NULL, WM_TIMER, WM_TIMER, PM_NOREMOVE));
+    while (!PeekMessageA(&msg, hwnd, WM_TIMER, WM_TIMER, PM_NOREMOVE));
     ok(msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
     PostMessageA(hwnd, WM_USER, 0, 0);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_USER, "msg.message = %u instead of WM_USER\n", msg.message);
-    ret = PeekMessageA(&msg, NULL, 0, 0, 0);
+    ret = PeekMessageA(&msg, hwnd, 0, 0, 0);
     ok(!ret, "expected PeekMessage to return FALSE, got %u\n", ret);
 
     PostMessageA(hwnd, WM_USER, 0, 0);
     PostMessageA(hwnd, WM_TIMER, 0, 0);
-    while (!PeekMessageA(&msg, NULL, WM_TIMER, WM_TIMER, PM_NOREMOVE));
+    while (!PeekMessageA(&msg, hwnd, WM_TIMER, WM_TIMER, PM_NOREMOVE));
     ok(msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_USER, "msg.message = %u instead of WM_USER\n", msg.message);
-    ret = GetMessageA(&msg, NULL, 0, 0);
+    ret = GetMessageA(&msg, hwnd, 0, 0);
     ok(ret && msg.message == WM_TIMER, "msg.message = %u instead of WM_TIMER\n", msg.message);
-    ret = PeekMessageA(&msg, NULL, 0, 0, 0);
+    ret = PeekMessageA(&msg, hwnd, 0, 0, 0);
     ok(!ret, "expected PeekMessage to return FALSE, got %u\n", ret);
 
-    DestroyWindow(hwnd);
+    DestroyWindow(parent_hwnd);
     flush_events();
 }
 
@@ -17711,11 +17719,41 @@ out_unregister:
     UnregisterClassA("TestDesktopClass", instance);
 }
 
+#define open_clipboard(hwnd) open_clipboard_(__LINE__, hwnd)
+static BOOL open_clipboard_(int line, HWND hwnd)
+{
+    DWORD start = GetTickCount();
+    while (1)
+    {
+        BOOL ret = OpenClipboard(hwnd);
+        if (ret || GetLastError() != ERROR_ACCESS_DENIED)
+            return ret;
+        if (GetTickCount() - start > 100)
+        {
+            char classname[256];
+            DWORD le = GetLastError();
+            HWND clipwnd = GetOpenClipboardWindow();
+            /* Provide a hint as to the source of interference:
+             * - The class name would typically be CLIPBRDWNDCLASS if the
+             *   clipboard was opened by a Windows application using the
+             *   ole32 API.
+             * - And it would be __wine_clipboard_manager if it was opened in
+             *   response to a native application.
+             */
+            GetClassNameA(clipwnd, classname, ARRAY_SIZE(classname));
+            trace_(__FILE__, line)("%p (%s) opened the clipboard\n", clipwnd, classname);
+            SetLastError(le);
+            return ret;
+        }
+        Sleep(15);
+    }
+}
+
 #define clear_clipboard(hwnd)  clear_clipboard_(__LINE__, (hwnd))
 static void clear_clipboard_(int line, HWND hWnd)
 {
     BOOL succ;
-    succ = OpenClipboard(hWnd);
+    succ = open_clipboard_(line, hWnd);
     ok_(__FILE__, line)(succ, "OpenClipboard failed, err=%lu\n", GetLastError());
     succ = EmptyClipboard();
     ok_(__FILE__, line)(succ, "EmptyClipboard failed, err=%lu\n", GetLastError());
@@ -19654,6 +19692,13 @@ static const struct message send_message_3[] = {
     { WM_USER+1, sent|wparam|lparam, 0, 0 },
     { 0 }
 };
+static const struct message send_message_5[] = {
+    { WM_WINDOWPOSCHANGING, sent|wparam|optional, SWP_NOACTIVATE|SWP_NOZORDER }, /* win7+ dual monitor */
+    { WM_GETMINMAXINFO, sent|defwinproc|optional }, /* win7+ dual monitor */
+    { WM_WINDOWPOSCHANGING, sent|wparam|optional, SWP_NOACTIVATE|SWP_NOZORDER }, /* win7+ dual monitor */
+    { WM_GETMINMAXINFO, sent|defwinproc|optional }, /* win7+ dual monitor */
+    { 0 }
+};
 
 static DWORD WINAPI SendMessage_thread_1(void *param)
 {
@@ -19787,7 +19832,7 @@ static void test_SendMessage_other_thread(int thread_n)
     while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) {
         ok(ignore_message(msg.message), "got unexpected message %04x from PeekMessageA\n", msg.message);
     }
-    ok_sequence(WmEmptySeq, "SendMessage from other thread 5", thread_n == 2);
+    ok_sequence(send_message_5, "SendMessage from other thread 5", thread_n == 2);
 
     ret = GetQueueStatus(QS_SENDMESSAGE|QS_POSTMESSAGE);
     ok(ret == 0, "wrong status %08lx\n", ret);

@@ -324,18 +324,6 @@ static inline HTMLDOMTextNode *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
     return CONTAINING_RECORD(iface, HTMLDOMTextNode, node);
 }
 
-static void *HTMLDOMTextNode_QI(HTMLDOMNode *iface, REFIID riid)
-{
-    HTMLDOMTextNode *This = impl_from_HTMLDOMNode(iface);
-
-    if(IsEqualGUID(&IID_IHTMLDOMTextNode, riid))
-        return &This->IHTMLDOMTextNode_iface;
-    if(IsEqualGUID(&IID_IHTMLDOMTextNode2, riid))
-        return &This->IHTMLDOMTextNode2_iface;
-
-    return HTMLDOMNode_QI(&This->node, riid);
-}
-
 static HRESULT HTMLDOMTextNode_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTMLDOMNode **ret)
 {
     HTMLDOMTextNode *This = impl_from_HTMLDOMNode(iface);
@@ -343,16 +331,32 @@ static HRESULT HTMLDOMTextNode_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTM
     return HTMLDOMTextNode_Create(This->node.doc, nsnode, ret);
 }
 
+static inline HTMLDOMTextNode *impl_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDOMTextNode, node.event_target.dispex);
+}
+
+static void *HTMLDOMTextNode_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLDOMTextNode *This = impl_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLDOMTextNode, riid))
+        return &This->IHTMLDOMTextNode_iface;
+    if(IsEqualGUID(&IID_IHTMLDOMTextNode2, riid))
+        return &This->IHTMLDOMTextNode2_iface;
+
+    return HTMLDOMNode_query_interface(&This->node.event_target.dispex, riid);
+}
+
 static const cpc_entry_t HTMLDOMTextNode_cpc[] = {{NULL}};
 
 static const NodeImplVtbl HTMLDOMTextNodeImplVtbl = {
-    .qi                    = HTMLDOMTextNode_QI,
     .cpc_entries           = HTMLDOMTextNode_cpc,
     .clone                 = HTMLDOMTextNode_clone
 };
 
 static const dispex_static_data_vtbl_t HTMLDOMTextNode_dispex_vtbl = {
-    .query_interface = HTMLDOMNode_query_interface,
+    .query_interface = HTMLDOMTextNode_query_interface,
     .destructor      = HTMLDOMNode_destructor,
     .traverse        = HTMLDOMNode_traverse,
     .unlink          = HTMLDOMNode_unlink

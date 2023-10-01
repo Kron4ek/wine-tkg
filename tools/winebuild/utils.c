@@ -629,7 +629,7 @@ DLLSPEC *alloc_dll_spec(void)
     spec->subsystem_major    = 4;
     spec->subsystem_minor    = 0;
     spec->syscall_table      = 0;
-    spec->dll_characteristics = IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+    spec->dll_characteristics = IMAGE_DLLCHARACTERISTICS_NX_COMPAT | IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
     return spec;
 }
 
@@ -931,6 +931,19 @@ void output_cfi( const char *format, ... )
     va_list valist;
 
     if (!unwind_tables) return;
+    va_start( valist, format );
+    fputc( '\t', output_file );
+    vfprintf( output_file, format, valist );
+    fputc( '\n', output_file );
+    va_end( valist );
+}
+
+/* output a .seh directive */
+void output_seh( const char *format, ... )
+{
+    va_list valist;
+
+    if (!is_pe()) return;
     va_start( valist, format );
     fputc( '\t', output_file );
     vfprintf( output_file, format, valist );

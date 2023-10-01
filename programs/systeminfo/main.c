@@ -1,7 +1,6 @@
 /*
  * Copyright 2014 Austin English
- * Copyright 2012 Hans Leidekker for CodeWeavers
- * Copyright 2020 Louis Lenders
+ * Copyright 2023 Hans Leidekker for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -20,232 +19,371 @@
 
 #define COBJMACROS
 
-#include <stdio.h>
-#include "windows.h"
-#include "ocidl.h"
 #include "initguid.h"
 #include "objidl.h"
 #include "wbemcli.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
-
-#define new_line  (i == (ARRAY_SIZE(pq) - 1) || wcslen( pq[i+1].row_name ) )
 
 WINE_DEFAULT_DEBUG_CHANNEL(systeminfo);
 
-typedef struct {
-    const WCHAR *row_name;
-    const WCHAR *prepend;
-    const WCHAR *class;
-    const WCHAR *prop;
-    const WCHAR *append;
-} print_query_prop;
-
-static const print_query_prop pq[] = {
-    /*row_name                      prepend prop                                                                   append prop          */
-    /*(if any)                      with string (if any)                                                           with string (if any) */
-    { L"OS Name",                   L"",                  L"Win32_OperatingSystem",      L"Caption",               L""   },
-    { L"OS Version",                L"",                  L"Win32_OperatingSystem",      L"Version",               L""   },
-    { L"",                          L"",                  L"Win32_OperatingSystem",      L"CSDVersion",            L""   },
-    { L"",                          L"Build ",            L"Win32_OperatingSystem",      L"BuildNumber",           L""   },
-    { L"Total Physical Memory",     L"",                  L"Win32_ComputerSystem",       L"TotalPhysicalMemory",   L""   },
-    { L"BIOS Version",              L"",                  L"Win32_BIOS",                 L"Manufacturer",          L""   },
-    { L"",                          L", ",                L"Win32_BIOS",                 L"ReleaseDate",           L""   },
-    { L"Processor(s)",              L"",                  L"Win32_Processor",            L"Caption",               L""   },
-    { L"",                          L"",                  L"Win32_Processor",            L"Manufacturer",          L""   },
-    { L"",                          L"~",                 L"Win32_Processor",            L"MaxClockSpeed",         L"Mhz"}
+enum format_flags
+{
+    FORMAT_STRING,
+    FORMAT_DATE,
+    FORMAT_LOCALE,
+    FORMAT_SIZE,
 };
 
-static int sysinfo_vprintfW(const WCHAR *msg, va_list va_args)
+struct sysinfo
 {
-    int wlen;
-    DWORD count, ret;
-    WCHAR msg_buffer[8192];
+    const WCHAR *item;
+    const WCHAR *class;
+    const WCHAR *property; /* hardcoded value if class is NULL */
+    void (*callback)( IWbemServices *services, enum format_flags flags, UINT32 ); /* called if class and property are NULL */
+    enum format_flags flags;
+};
 
-    wlen = vswprintf(msg_buffer, ARRAY_SIZE(msg_buffer), msg, va_args);
-
-    ret = WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), msg_buffer, wlen, &count, NULL);
-    if (!ret)
-    {
-        DWORD len;
-        char *msgA;
-
-        /* On Windows WriteConsoleW() fails if the output is redirected. So fall
-         * back to WriteFile(), assuming the console encoding is still the right
-         * one in that case.
-         */
-        len = WideCharToMultiByte(GetConsoleOutputCP(), 0, msg_buffer, wlen,
-            NULL, 0, NULL, NULL);
-        msgA = heap_alloc(len);
-        if (!msgA)
-            return 0;
-
-        WideCharToMultiByte(GetConsoleOutputCP(), 0, msg_buffer, wlen, msgA, len,
-            NULL, NULL);
-        WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), msgA, len, &count, FALSE);
-        heap_free(msgA);
-    }
-
-    return count;
-}
-
-static int WINAPIV sysinfo_printfW(const WCHAR *msg, ...)
+static void output_processors( IWbemServices *services, enum format_flags flags, UINT32 width )
 {
-    va_list va_args;
-    int len;
-
-    va_start(va_args, msg);
-    len = sysinfo_vprintfW(msg, va_args);
-    va_end(va_args);
-
-    return len;
-}
-
-static WCHAR *find_prop( IWbemClassObject *class, const WCHAR *prop )
-{
-    SAFEARRAY *sa;
-    WCHAR *ret = NULL;
-    LONG i, last_index = 0;
-    BSTR str;
-
-    if (IWbemClassObject_GetNames( class, NULL, WBEM_FLAG_ALWAYS, NULL, &sa ) != S_OK) return NULL;
-
-    SafeArrayGetUBound( sa, 1, &last_index );
-    for (i = 0; i <= last_index; i++)
-    {
-        SafeArrayGetElement( sa, &i, &str );
-        if (!wcsicmp( str, prop ))
-        {
-            ret = _wcsdup( str );
-            break;
-        }
-    }
-    SafeArrayDestroy( sa );
-    return ret;
-}
-
-static int query_prop(  const WCHAR *class, const WCHAR *propname )
-{
-    static const WCHAR select_allW[] = {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ',0};
-    static const WCHAR cimv2W[] = {'R','O','O','T','\\','C','I','M','V','2',0};
-    static const WCHAR wqlW[] = {'W','Q','L',0};
-    HRESULT hr;
-    IWbemLocator *locator = NULL;
-    IWbemServices *services = NULL;
-    IEnumWbemClassObject *result = NULL;
-    LONG flags = WBEM_FLAG_RETURN_IMMEDIATELY | WBEM_FLAG_FORWARD_ONLY;
-    BSTR path = NULL, wql = NULL, query = NULL;
-    WCHAR *prop = NULL;
-    int len, ret = -1;
+    IEnumWbemClassObject *iter;
     IWbemClassObject *obj;
-    ULONG count = 0;
-    VARIANT v;
+    DWORD i, num_cpus = 0, count;
+    VARIANT value;
+    BSTR str;
+    HRESULT hr;
 
-    WINE_TRACE("%s, %s\n", debugstr_w(class), debugstr_w(propname));
+    str = SysAllocString( L"Win32_Processor" );
+    hr = IWbemServices_CreateInstanceEnum( services, str, 0, NULL, &iter );
+    SysFreeString( str );
+    if (FAILED( hr )) return;
 
-    CoInitialize( NULL );
-    CoInitializeSecurity( NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT,
-                          RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE, NULL );
+    while (IEnumWbemClassObject_Skip( iter, WBEM_INFINITE, 1 ) == S_OK) num_cpus++;
 
-    hr = CoCreateInstance( &CLSID_WbemLocator, NULL, CLSCTX_INPROC_SERVER, &IID_IWbemLocator,
-                           (void **)&locator );
-    if (hr != S_OK) goto done;
+    fwprintf( stdout, L"Processor(s):%*s %u Processor(s) Installed.\n", width - wcslen(L"Processor(s)"), " ", num_cpus );
+    IEnumWbemClassObject_Reset( iter );
 
-    if (!(path = SysAllocString( cimv2W ))) goto done;
-    hr = IWbemLocator_ConnectServer( locator, path, NULL, NULL, NULL, 0, NULL, NULL, &services );
-    if (hr != S_OK) goto done;
-
-    len = lstrlenW( class ) + ARRAY_SIZE(select_allW);
-    if (!(query = SysAllocStringLen( NULL, len ))) goto done;
-    lstrcpyW( query, select_allW );
-    lstrcatW( query, class );
-
-    if (!(wql = SysAllocString( wqlW ))) goto done;
-    hr = IWbemServices_ExecQuery( services, wql, query, flags, NULL, &result );
-    if (hr != S_OK) goto done;
-
-    for (;;)
+    for (i = 0; i < num_cpus; i++)
     {
-        IEnumWbemClassObject_Next( result, WBEM_INFINITE, 1, &obj, &count );
-        if (!count) break;
+        hr = IEnumWbemClassObject_Next( iter, WBEM_INFINITE, 1, &obj, &count );
+        if (FAILED( hr )) goto done;
 
-        if (!prop && !(prop = find_prop( obj, propname )))
+        hr = IWbemClassObject_Get( obj, L"Caption", 0, &value, NULL, NULL );
+        if (FAILED( hr ))
         {
-            ERR("Error: Invalid query\n");
+            IWbemClassObject_Release( obj );
             goto done;
         }
+        fwprintf( stdout, L"%*s[%02u]: %s", width + 2, " ", i + 1, V_BSTR(&value) );
+        VariantClear( &value );
 
-        if (IWbemClassObject_Get( obj, prop, 0, &v, NULL, NULL ) == WBEM_S_NO_ERROR)
+        hr = IWbemClassObject_Get( obj, L"Manufacturer", 0, &value, NULL, NULL );
+        if (FAILED( hr ))
         {
-            VariantChangeType( &v, &v, 0, VT_BSTR );
-            sysinfo_printfW( V_BSTR( &v ) );
-            VariantClear( &v );
+            IWbemClassObject_Release( obj );
+            goto done;
         }
+        fwprintf( stdout, L" %s", V_BSTR(&value) );
+        VariantClear( &value );
+
+        hr = IWbemClassObject_Get( obj, L"MaxClockSpeed", 0, &value, NULL, NULL );
+        if (FAILED( hr ))
+        {
+            IWbemClassObject_Release( obj );
+            goto done;
+        }
+        fwprintf( stdout, L" ~%u Mhz\n", V_I4(&value) );
+
         IWbemClassObject_Release( obj );
     }
-    ret = 0;
 
 done:
-    if (result) IEnumWbemClassObject_Release( result );
-    if (services) IWbemServices_Release( services );
-    if (locator) IWbemLocator_Release( locator );
-    SysFreeString( path );
-    SysFreeString( query );
-    SysFreeString( wql );
-    HeapFree( GetProcessHeap(), 0, prop );
-    CoUninitialize();
-    return ret;
+    IEnumWbemClassObject_Release( iter );
 }
 
-int __cdecl wmain(int argc, WCHAR *argv[])
+static void output_hotfixes( IWbemServices *services, enum format_flags flags, UINT32 width )
 {
-    int i;
-    BOOL csv = FALSE;
+    IEnumWbemClassObject *iter;
+    IWbemClassObject *obj;
+    DWORD i, num_hotfixes = 0, count;
+    VARIANT value;
+    BSTR str;
+    HRESULT hr;
 
-    for (i = 1; i < argc; i++)
+    str = SysAllocString( L"Win32_QuickFixEngineering" );
+    hr = IWbemServices_CreateInstanceEnum( services, str, 0, NULL, &iter );
+    SysFreeString( str );
+    if (FAILED( hr )) return;
+
+    while (IEnumWbemClassObject_Skip( iter, WBEM_INFINITE, 1 ) == S_OK) num_hotfixes++;
+
+    fwprintf( stdout, L"Hotfix(es):%*s %u Hotfix(es) Installed.\n", width - wcslen(L"Hotfix(es)"), " ", num_hotfixes );
+    IEnumWbemClassObject_Reset( iter );
+
+    for (i = 0; i < num_hotfixes; i++)
     {
-        if ( !wcsicmp( argv[i], L"/fo" ) && !wcsicmp( argv[i+1], L"csv" ) )
-            csv = TRUE;
+        hr = IEnumWbemClassObject_Next( iter, WBEM_INFINITE, 1, &obj, &count );
+        if (FAILED( hr )) goto done;
+
+        hr = IWbemClassObject_Get( obj, L"Caption", 0, &value, NULL, NULL );
+        if (FAILED( hr ))
+        {
+            IWbemClassObject_Release( obj );
+            goto done;
+        }
+        fwprintf( stdout, L"%*s[%02u]: %s\n", width + 2, " ", i + 1, V_BSTR(&value) );
+        VariantClear( &value );
+
+        IWbemClassObject_Release( obj );
+    }
+
+done:
+    IEnumWbemClassObject_Release( iter );
+}
+
+static void output_nics( IWbemServices *services, enum format_flags flags, UINT32 width )
+{
+    IEnumWbemClassObject *iter;
+    IWbemClassObject *obj;
+    DWORD i, num_nics = 0, count;
+    VARIANT value;
+    SAFEARRAY *sa;
+    LONG bound = -1, j;
+    BSTR str;
+    HRESULT hr;
+
+    str = SysAllocString( L"Win32_NetworkAdapterConfiguration" );
+    hr = IWbemServices_CreateInstanceEnum( services, str, 0, NULL, &iter );
+    SysFreeString( str );
+    if (FAILED( hr )) return;
+
+    while (IEnumWbemClassObject_Skip( iter, WBEM_INFINITE, 1 ) == S_OK) num_nics++;
+
+    fwprintf( stdout, L"Network Card(s):%*s %u NICs(s) Installed.\n", width - wcslen(L"Network Card(s)"), " ", num_nics );
+    IEnumWbemClassObject_Reset( iter );
+
+    for (i = 0; i < num_nics; i++)
+    {
+        hr = IEnumWbemClassObject_Next( iter, WBEM_INFINITE, 1, &obj, &count );
+        if (FAILED( hr )) goto done;
+
+        hr = IWbemClassObject_Get( obj, L"Description", 0, &value, NULL, NULL );
+        if (FAILED( hr ))
+        {
+            IWbemClassObject_Release( obj );
+            goto done;
+        }
+        fwprintf( stdout, L"%*s[%02u]: %s\n", width + 2, " ", i + 1, V_BSTR(&value) );
+        VariantClear( &value );
+
+        /* FIXME: Connection Name, DHCP Server */
+
+        hr = IWbemClassObject_Get( obj, L"DHCPEnabled", 0, &value, NULL, NULL );
+        if (FAILED( hr ))
+        {
+            IWbemClassObject_Release( obj );
+            goto done;
+        }
+        fwprintf( stdout, L"%*s      DHCP Enabled: %s\n", width + 2, " ", V_BOOL(&value) ? L"Yes" : L"No" );
+
+        hr = IWbemClassObject_Get( obj, L"IPAddress", 0, &value, NULL, NULL );
+        if (FAILED( hr ))
+        {
+            IWbemClassObject_Release( obj );
+            goto done;
+        }
+        if (V_VT( &value ) == (VT_BSTR | VT_ARRAY))
+        {
+            sa = V_ARRAY( &value );
+            SafeArrayGetUBound( sa, 1, &bound );
+            if (bound >= 0)
+            {
+                fwprintf( stdout, L"%*s      IP Addresse(es)\n", width + 2, " " );
+                for (j = 0; j <= bound; j++)
+                {
+                    SafeArrayGetElement( sa, &j, &str );
+                    fwprintf( stdout, L"%*s      [%02u]: %s\n", width + 2, " ", j + 1, str );
+                    SysFreeString( str );
+                }
+            }
+        }
+        VariantClear( &value );
+        IWbemClassObject_Release( obj );
+    }
+
+done:
+    IEnumWbemClassObject_Release( iter );
+}
+
+static void output_timezone( IWbemServices *services, enum format_flags flags, UINT32 width )
+{
+    WCHAR name[64], timezone[256] = {};
+    DWORD count = sizeof(name);
+    HKEY key_current = 0, key_timezones = 0, key_name = 0;
+
+    if (RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Control\\TimeZoneInformation", 0,
+                       KEY_READ, &key_current )) goto done;
+    if (RegQueryValueExW( key_current, L"TimeZoneKeyName", NULL, NULL, (BYTE *)name, &count )) goto done;
+    if (RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones", 0,
+                       KEY_READ, &key_timezones )) goto done;
+    if (RegOpenKeyExW( key_timezones, name, 0, KEY_READ, &key_name )) goto done;
+    count = sizeof(timezone);
+    RegQueryValueExW( key_name, L"Display", NULL, NULL, (BYTE *)timezone, &count );
+
+done:
+    fwprintf( stdout, L"Time Zone:%*s %s\n", width - wcslen(L"Time Zone"), " ", timezone );
+    RegCloseKey( key_name );
+    RegCloseKey( key_timezones );
+    RegCloseKey( key_current );
+}
+
+static const struct sysinfo sysinfo_map[] =
+{
+    { L"Host Name", L"Win32_ComputerSystem", L"Name" },
+    { L"OS Name", L"Win32_OperatingSystem", L"Caption" },
+    { L"OS Version", L"Win32_OperatingSystem", L"Version" }, /* FIXME build number */
+    { L"OS Manufacturer", L"Win32_OperatingSystem", L"Manufacturer" },
+    { L"OS Configuration", NULL, L"Standalone Workstation" },
+    { L"OS Build Type", L"Win32_OperatingSystem", L"BuildType" },
+    { L"Registered Owner", L"Win32_OperatingSystem", L"RegisteredUser" },
+    { L"Registered Organization", L"Win32_OperatingSystem", L"Organization" },
+    { L"Product ID", L"Win32_OperatingSystem", L"SerialNumber" },
+    { L"Original Install Date", L"Win32_OperatingSystem", L"InstallDate", NULL, FORMAT_DATE },
+    { L"System Boot Time", L"Win32_OperatingSystem", L"LastBootUpTime", NULL, FORMAT_DATE },
+    { L"System Manufacturer", L"Win32_ComputerSystem", L"Manufacturer" },
+    { L"System Model", L"Win32_ComputerSystem", L"Model" },
+    { L"System Type", L"Win32_ComputerSystem", L"SystemType" },
+    { L"Processor(s)", NULL, NULL, output_processors },
+    { L"BIOS Version", L"Win32_BIOS", L"SMBIOSBIOSVersion" },
+    { L"Windows Directory", L"Win32_OperatingSystem", L"WindowsDirectory" },
+    { L"System Directory", L"Win32_OperatingSystem", L"SystemDirectory" },
+    { L"Boot Device", L"Win32_OperatingSystem", L"BootDevice" },
+    { L"System Locale", L"Win32_OperatingSystem", L"Locale", NULL, FORMAT_LOCALE },
+    { L"Input Locale", L"Win32_OperatingSystem", L"Locale", NULL, FORMAT_LOCALE }, /* FIXME */
+    { L"Time Zone", NULL, NULL, output_timezone },
+    { L"Total Physical Memory", L"Win32_OperatingSystem", L"TotalVisibleMemorySize", NULL, FORMAT_SIZE },
+    { L"Available Physical Memory", L"Win32_OperatingSystem", L"FreePhysicalMemory", NULL, FORMAT_SIZE },
+    { L"Virtual Memory: Max Size", L"Win32_OperatingSystem", L"TotalVirtualMemorySize", NULL, FORMAT_SIZE },
+    { L"Virtual Memory: Available", L"Win32_OperatingSystem", L"FreeVirtualMemory", NULL, FORMAT_SIZE },
+    /* FIXME Virtual Memory: In Use */
+    { L"Page File Location(s)", L"Win32_PageFileUsage", L"Name" },
+    { L"Domain", L"Win32_ComputerSystem", L"Domain" },
+    /* FIXME Logon Server */
+    { L"Hotfix(s)", NULL, NULL, output_hotfixes },
+    { L"Network Card(s)", NULL, NULL, output_nics },
+    /* FIXME Hyper-V Requirements */
+};
+
+static void output_item( IWbemServices *services, const struct sysinfo *info, UINT32 width )
+{
+    HRESULT hr;
+    IWbemClassObject *obj = NULL;
+    BSTR str;
+    VARIANT value;
+
+    if (!info->class)
+    {
+        if (info->property)
+            fwprintf( stdout, L"%s:%*s %s\n", info->item, width - wcslen(info->item), " ", info->property );
         else
-            WINE_FIXME( "command line switch %s not supported\n", debugstr_w(argv[i]) );
+            info->callback( services, info->flags, width );
+        return;
     }
 
-    if( !csv )
-    {
-        for ( i = 0; i < ARRAYSIZE(pq); i++ )
-        {
-            if( wcslen(pq[i].row_name) )
-                sysinfo_printfW( L"%-*s", 44, pq[i].row_name );
-            if ( wcslen(pq[i].prepend) )
-                sysinfo_printfW( L"%s", pq[i].prepend );
-            query_prop( pq[i].class, pq[i].prop );
-            if ( wcslen(pq[i].append) )
-                sysinfo_printfW( L"%s", pq[i].append );
-            sysinfo_printfW( new_line ? L"\r\n" : L" " );
-        }
-    }
-    else /* only option "systeminfo /fo csv" supported for now */
-    {
-        for (i = 0; i < ARRAYSIZE(pq); i++)
-        {
-            if( wcslen(pq[i].row_name) )
-                sysinfo_printfW( i ? L",\"%s\"" : L"\"%s\"", pq[i].row_name );
-        }
-        sysinfo_printfW( L"\r\n" );
+    if (!(str = SysAllocString( info->class ))) return;
+    hr = IWbemServices_GetObject( services, str, 0, NULL, &obj, NULL );
+    SysFreeString( str );
+    if (FAILED( hr )) return;
 
-        for (i = 0; i < ARRAYSIZE(pq); i++)
-        {
-            if ( wcslen(pq[i].row_name) )
-                sysinfo_printfW( i ? L",\"" : L"\"" );
-            if ( wcslen(pq[i].prepend) )
-                sysinfo_printfW( L"%s",pq[i].prepend );
-            query_prop( pq[i].class, pq[i].prop );
-            if ( wcslen(pq[i].append) )
-                sysinfo_printfW( L"%s", pq[i].append );
-            sysinfo_printfW( new_line ? L"\"" : L" " );
-        }
-        sysinfo_printfW( L"\r\n" );
+    hr = IWbemClassObject_Get( obj, info->property, 0, &value, NULL, NULL );
+    if (FAILED( hr ))
+    {
+        IWbemClassObject_Release( obj );
+        return;
     }
+
+    switch (info->flags)
+    {
+    case FORMAT_DATE:
+    {
+        SYSTEMTIME st;
+        WCHAR date[32] = {}, time[32] = {};
+
+        /* assume UTC */
+        memset( &st, 0, sizeof(st) );
+        swscanf( V_BSTR(&value), L"%04u%02u%02u%02u%02u%02u",
+                 &st.wYear, &st.wMonth, &st.wDay, &st.wHour, &st.wMinute, &st.wSecond );
+        GetDateFormatW( LOCALE_SYSTEM_DEFAULT, 0, &st, NULL, date, ARRAY_SIZE(date) );
+        GetTimeFormatW( LOCALE_SYSTEM_DEFAULT, 0, &st, NULL, time, ARRAY_SIZE(time) );
+        fwprintf( stdout, L"%s:%*s %s, %s\n", info->item, width - wcslen(info->item), " ", date, time );
+        break;
+    }
+    case FORMAT_LOCALE:
+    {
+        UINT32 lcid;
+        WCHAR name[32] = {}, displayname[LOCALE_NAME_MAX_LENGTH] = {};
+
+        swscanf( V_BSTR(&value), L"%x", &lcid );
+        LCIDToLocaleName( lcid, name, ARRAY_SIZE(name), 0 );
+        GetLocaleInfoW( lcid, LOCALE_SENGLISHDISPLAYNAME, displayname, ARRAY_SIZE(displayname) );
+        fwprintf( stdout, L"%s:%*s %s;%s\n", info->item, width - wcslen(info->item), " ", name, displayname );
+        break;
+    }
+    case FORMAT_SIZE:
+    {
+        UINT64 size = 0;
+        swscanf( V_BSTR(&value), L"%I64u", &size );
+        fwprintf( stdout, L"%s:%*s %I64u MB\n", info->item, width - wcslen(info->item), " ", size / 1024 );
+        break;
+    }
+    default:
+        fwprintf( stdout, L"%s:%*s %s\n", info->item, width - wcslen(info->item), " ", V_BSTR(&value) );
+        break;
+    }
+    VariantClear( &value );
+}
+
+static void output_sysinfo( void )
+{
+    IWbemLocator *locator;
+    IWbemServices *services = NULL;
+    UINT32 i, len, width = 0;
+    HRESULT hr;
+    BSTR path;
+
+    CoInitialize( NULL );
+    CoInitializeSecurity( NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, 0, NULL );
+
+    hr = CoCreateInstance( &CLSID_WbemLocator, NULL, CLSCTX_INPROC_SERVER, &IID_IWbemLocator, (void **)&locator );
+    if (hr != S_OK) return;
+
+    if (!(path = SysAllocString( L"ROOT\\CIMV2" ))) goto done;
+    hr = IWbemLocator_ConnectServer( locator, path, NULL, NULL, NULL, 0, NULL, NULL, &services );
+    SysFreeString( path );
+    if (hr != S_OK) goto done;
+
+    for (i = 0; i < ARRAY_SIZE(sysinfo_map); i++) if ((len = wcslen( sysinfo_map[i].item )) > width) width = len;
+    width++;
+
+    for (i = 0; i < ARRAY_SIZE(sysinfo_map); i++) output_item( services, &sysinfo_map[i], width );
+
+done:
+    if (services) IWbemServices_Release( services );
+    IWbemLocator_Release( locator );
+    CoUninitialize();
+}
+
+int __cdecl wmain( int argc, WCHAR *argv[] )
+{
+    if (argc > 1)
+    {
+        int i;
+        FIXME( "stub:" );
+        for (i = 0; i < argc; i++) FIXME( " %s", wine_dbgstr_w(argv[i]) );
+        FIXME( "\n" );
+        return 0;
+    }
+
+    output_sysinfo();
     return 0;
 }

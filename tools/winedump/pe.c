@@ -275,14 +275,14 @@ static inline void print_datadirectory(DWORD n, const IMAGE_DATA_DIRECTORY *dire
     }
 }
 
-static void dump_optional_header32(const IMAGE_OPTIONAL_HEADER32 *image_oh, UINT header_size)
+static void dump_optional_header32(const IMAGE_OPTIONAL_HEADER32 *image_oh)
 {
     IMAGE_OPTIONAL_HEADER32 oh;
     const IMAGE_OPTIONAL_HEADER32 *optionalHeader;
 
     /* in case optional header is missing or partial */
     memset(&oh, 0, sizeof(oh));
-    memcpy(&oh, image_oh, min(header_size, sizeof(oh)));
+    memcpy(&oh, image_oh, min(dump_total_len - ((char *)image_oh - (char *)dump_base), sizeof(oh)));
     optionalHeader = &oh;
 
     print_word("Magic", optionalHeader->Magic);
@@ -320,14 +320,14 @@ static void dump_optional_header32(const IMAGE_OPTIONAL_HEADER32 *image_oh, UINT
     printf("\n");
 }
 
-static void dump_optional_header64(const IMAGE_OPTIONAL_HEADER64 *image_oh, UINT header_size)
+static void dump_optional_header64(const IMAGE_OPTIONAL_HEADER64 *image_oh)
 {
     IMAGE_OPTIONAL_HEADER64 oh;
     const IMAGE_OPTIONAL_HEADER64 *optionalHeader;
 
     /* in case optional header is missing or partial */
     memset(&oh, 0, sizeof(oh));
-    memcpy(&oh, image_oh, min(header_size, sizeof(oh)));
+    memcpy(&oh, image_oh, min(dump_total_len - ((char *)image_oh - (char *)dump_base), sizeof(oh)));
     optionalHeader = &oh;
 
     print_word("Magic", optionalHeader->Magic);
@@ -364,16 +364,16 @@ static void dump_optional_header64(const IMAGE_OPTIONAL_HEADER64 *image_oh, UINT
     printf("\n");
 }
 
-void dump_optional_header(const IMAGE_OPTIONAL_HEADER32 *optionalHeader, UINT header_size)
+void dump_optional_header(const IMAGE_OPTIONAL_HEADER32 *optionalHeader)
 {
     printf("Optional Header (%s)\n", get_magic_type(optionalHeader->Magic));
 
     switch(optionalHeader->Magic) {
         case IMAGE_NT_OPTIONAL_HDR32_MAGIC:
-            dump_optional_header32(optionalHeader, header_size);
+            dump_optional_header32(optionalHeader);
             break;
         case IMAGE_NT_OPTIONAL_HDR64_MAGIC:
-            dump_optional_header64((const IMAGE_OPTIONAL_HEADER64 *)optionalHeader, header_size);
+            dump_optional_header64((const IMAGE_OPTIONAL_HEADER64 *)optionalHeader);
             break;
         default:
             printf("  Unknown optional header magic: 0x%-4X\n", optionalHeader->Magic);
@@ -428,8 +428,7 @@ void dump_file_header(const IMAGE_FILE_HEADER *fileHeader, BOOL is_hybrid)
 static	void	dump_pe_header(void)
 {
     dump_file_header(&PE_nt_headers->FileHeader, get_hybrid_metadata() != NULL);
-    dump_optional_header((const IMAGE_OPTIONAL_HEADER32*)&PE_nt_headers->OptionalHeader,
-                         PE_nt_headers->FileHeader.SizeOfOptionalHeader);
+    dump_optional_header((const IMAGE_OPTIONAL_HEADER32*)&PE_nt_headers->OptionalHeader);
 }
 
 void dump_section_characteristics(DWORD characteristics, const char* sep)
@@ -2170,17 +2169,58 @@ static	void	dump_dir_debug_dir(const IMAGE_DEBUG_DIRECTORY* idd, int idx)
 	dump_frame_pointer_omission(idd->PointerToRawData, idd->SizeOfData);
 	break;
     case IMAGE_DEBUG_TYPE_MISC:
-    {
-	const IMAGE_DEBUG_MISC* misc = PRD(idd->PointerToRawData, idd->SizeOfData);
-	if (!misc) {printf("Can't get misc debug information\n"); break;}
-	printf("    DataType:          %u (%s)\n",
-	       (UINT)misc->DataType, (misc->DataType == IMAGE_DEBUG_MISC_EXENAME) ? "Exe name" : "Unknown");
-	printf("    Length:            %u\n", (UINT)misc->Length);
-	printf("    Unicode:           %s\n", misc->Unicode ? "Yes" : "No");
-	printf("    Data:              %s\n", misc->Data);
-    }
-    break;
-    default: break;
+        {
+            const IMAGE_DEBUG_MISC* misc = PRD(idd->PointerToRawData, idd->SizeOfData);
+            if (!misc || idd->SizeOfData < sizeof(*misc)) {printf("Can't get MISC debug information\n"); break;}
+            printf("    DataType:          %u (%s)\n",
+                   (UINT)misc->DataType, (misc->DataType == IMAGE_DEBUG_MISC_EXENAME) ? "Exe name" : "Unknown");
+            printf("    Length:            %u\n", (UINT)misc->Length);
+            printf("    Unicode:           %s\n", misc->Unicode ? "Yes" : "No");
+            printf("    Data:              %s\n", misc->Data);
+        }
+        break;
+    case IMAGE_DEBUG_TYPE_POGO:
+        {
+            const unsigned* data = PRD(idd->PointerToRawData, idd->SizeOfData);
+            const unsigned* end = (const unsigned*)((const unsigned char*)data + idd->SizeOfData);
+            unsigned idx = 0;
+
+            if (!data || idd->SizeOfData < sizeof(unsigned)) {printf("Can't get PODO debug information\n"); break;}
+            printf("    Header:            %08x\n", *(const unsigned*)data);
+            data++;
+            printf("      Index            Name            Offset   Size\n");
+            while (data + 2 < end)
+            {
+                const char* ptr;
+                ptrdiff_t s;
+
+                if (!(ptr = memchr(&data[2], '\0', (const char*)end - (const char*)&data[2]))) break;
+                printf("      %-5u            %-16s %08x %08x\n", idx, (const char*)&data[2], data[0], data[1]);
+                s = ptr - (const char*)&data[2] + 1;
+                data += 2 + ((s + sizeof(unsigned) - 1) / sizeof(unsigned));
+                idx++;
+            }
+        }
+        break;
+    case IMAGE_DEBUG_TYPE_REPRO:
+        {
+            const IMAGE_DEBUG_REPRO* repro = PRD(idd->PointerToRawData, idd->SizeOfData);
+            if (!repro || idd->SizeOfData < sizeof(*repro)) {printf("Can't get REPRO debug information\n"); break;}
+            printf("    Flags:             %08X\n", repro->flags);
+            printf("    Guid:              %s\n", get_guid_str(&repro->guid));
+            printf("    _unk0:             %08X %u\n", repro->unk[0], repro->unk[0]);
+            printf("    _unk1:             %08X %u\n", repro->unk[1], repro->unk[1]);
+            printf("    _unk2:             %08X %u\n", repro->unk[2], repro->unk[2]);
+            printf("    Timestamp:         %08X\n", repro->debug_timestamp);
+        }
+        break;
+    default:
+        {
+            const unsigned char* data = PRD(idd->PointerToRawData, idd->SizeOfData);
+            if (!data) {printf("Can't get debug information for %s\n", str); break;}
+            dump_data(data, idd->SizeOfData, "    ");
+        }
+        break;
     }
     printf("\n");
 }

@@ -321,7 +321,6 @@ extern void add_completion( HANDLE handle, ULONG_PTR value, NTSTATUS status, ULO
 extern void set_async_direct_result( HANDLE *async_handle, NTSTATUS status, ULONG_PTR information, BOOL mark_pending ) DECLSPEC_HIDDEN;
 
 extern NTSTATUS unixcall_wine_dbg_write( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args ) DECLSPEC_HIDDEN;
 extern NTSTATUS unixcall_wine_server_call( void *args ) DECLSPEC_HIDDEN;
 extern NTSTATUS unixcall_wine_server_fd_to_handle( void *args ) DECLSPEC_HIDDEN;
 extern NTSTATUS unixcall_wine_server_handle_to_fd( void *args ) DECLSPEC_HIDDEN;
@@ -528,7 +527,5 @@ static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, UL
     return NtMapViewOfSection( mapping, NtCurrentProcess(), ptr, user_space_wow_limit,
                                0, NULL, size, ViewShare, 0, protect );
 }
-
-BOOL CDECL __wine_needs_override_large_address_aware(void);
 
 #endif /* __NTDLL_UNIX_PRIVATE_H */

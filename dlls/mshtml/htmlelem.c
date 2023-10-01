@@ -6780,14 +6780,51 @@ static inline HTMLElement *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
     return CONTAINING_RECORD(iface, HTMLElement, node);
 }
 
-void *HTMLElement_QI(HTMLDOMNode *iface, REFIID riid)
+HRESULT HTMLElement_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTMLDOMNode **ret)
 {
     HTMLElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLElement *new_elem;
+    HRESULT hres;
 
-    if(IsEqualGUID(&IID_IUnknown, riid))
-        return &This->IHTMLElement_iface;
-    if(IsEqualGUID(&IID_IDispatch, riid))
-        return &This->IHTMLElement_iface;
+    hres = HTMLElement_Create(This->node.doc, nsnode, FALSE, &new_elem);
+    if(FAILED(hres))
+        return hres;
+
+    if(This->filter) {
+        new_elem->filter = wcsdup(This->filter);
+        if(!new_elem->filter) {
+            IHTMLElement_Release(&This->IHTMLElement_iface);
+            return E_OUTOFMEMORY;
+        }
+    }
+
+    *ret = &new_elem->node;
+    return S_OK;
+}
+
+cp_static_data_t HTMLElementEvents2_data = { HTMLElementEvents2_tid, NULL /* FIXME */, TRUE };
+
+const cpc_entry_t HTMLElement_cpc[] = {
+    HTMLELEMENT_CPC,
+    {NULL}
+};
+
+static const NodeImplVtbl HTMLElementImplVtbl = {
+    .clsid                 = &CLSID_HTMLUnknownElement,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLElement_clone,
+    .get_attr_col          = HTMLElement_get_attr_col
+};
+
+static inline HTMLElement *impl_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLElement, node.event_target.dispex);
+}
+
+void *HTMLElement_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLElement *This = impl_from_DispatchEx(dispex);
+
     if(IsEqualGUID(&IID_IHTMLElement, riid))
         return &This->IHTMLElement_iface;
     if(IsEqualGUID(&IID_IHTMLElement2, riid))
@@ -6817,12 +6854,12 @@ void *HTMLElement_QI(HTMLDOMNode *iface, REFIID riid)
     if(IsEqualGUID(&IID_IWineHTMLElementPrivate, riid))
         return &This->IWineHTMLElementPrivate_iface;
 
-    return HTMLDOMNode_QI(&This->node, riid);
+    return HTMLDOMNode_query_interface(&This->node.event_target.dispex, riid);
 }
 
-void HTMLElement_destructor(HTMLDOMNode *iface)
+void HTMLElement_destructor(DispatchEx *dispex)
 {
-    HTMLElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLElement *This = impl_from_DispatchEx(dispex);
 
     ConnectionPointContainer_Destroy(&This->cp_container);
 
@@ -6845,121 +6882,7 @@ void HTMLElement_destructor(HTMLDOMNode *iface)
     }
 
     free(This->filter);
-}
-
-HRESULT HTMLElement_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTMLDOMNode **ret)
-{
-    HTMLElement *This = impl_from_HTMLDOMNode(iface);
-    HTMLElement *new_elem;
-    HRESULT hres;
-
-    hres = HTMLElement_Create(This->node.doc, nsnode, FALSE, &new_elem);
-    if(FAILED(hres))
-        return hres;
-
-    if(This->filter) {
-        new_elem->filter = wcsdup(This->filter);
-        if(!new_elem->filter) {
-            IHTMLElement_Release(&This->IHTMLElement_iface);
-            return E_OUTOFMEMORY;
-        }
-    }
-
-    *ret = &new_elem->node;
-    return S_OK;
-}
-
-HRESULT HTMLElement_handle_event(HTMLDOMNode *iface, DWORD eid, nsIDOMEvent *event, BOOL *prevent_default)
-{
-    HTMLElement *This = impl_from_HTMLDOMNode(iface);
-
-    switch(eid) {
-    case EVENTID_KEYDOWN: {
-        nsIDOMKeyEvent *key_event;
-        nsresult nsres;
-
-        nsres = nsIDOMEvent_QueryInterface(event, &IID_nsIDOMKeyEvent, (void**)&key_event);
-        if(NS_SUCCEEDED(nsres)) {
-            UINT32 code = 0;
-
-            nsIDOMKeyEvent_GetKeyCode(key_event, &code);
-
-            if(code == VK_F1 /* DOM_VK_F1 */) {
-                DOMEvent *help_event;
-                HRESULT hres;
-
-                TRACE("F1 pressed\n");
-
-                hres = create_document_event(This->node.doc, EVENTID_HELP, &help_event);
-                if(SUCCEEDED(hres)) {
-                    dispatch_event(&This->node.event_target, help_event);
-                    IDOMEvent_Release(&help_event->IDOMEvent_iface);
-                }
-                *prevent_default = TRUE;
-            }
-
-            nsIDOMKeyEvent_Release(key_event);
-        }
-    }
-    }
-
-    return S_OK;
-}
-
-cp_static_data_t HTMLElementEvents2_data = { HTMLElementEvents2_tid, NULL /* FIXME */, TRUE };
-
-const cpc_entry_t HTMLElement_cpc[] = {
-    HTMLELEMENT_CPC,
-    {NULL}
-};
-
-static const NodeImplVtbl HTMLElementImplVtbl = {
-    .clsid                 = &CLSID_HTMLUnknownElement,
-    .qi                    = HTMLElement_QI,
-    .destructor            = HTMLElement_destructor,
-    .cpc_entries           = HTMLElement_cpc,
-    .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLElement_handle_event,
-    .get_attr_col          = HTMLElement_get_attr_col
-};
-
-static inline HTMLElement *impl_from_DispatchEx(DispatchEx *iface)
-{
-    return CONTAINING_RECORD(iface, HTMLElement, node.event_target.dispex);
-}
-
-HRESULT HTMLElement_get_dispid(DispatchEx *dispex, BSTR name, DWORD grfdex, DISPID *pid)
-{
-    HTMLElement *This = impl_from_DispatchEx(dispex);
-
-    if(This->node.vtbl->get_dispid)
-        return This->node.vtbl->get_dispid(&This->node, name, grfdex, pid);
-
-    return DISP_E_UNKNOWNNAME;
-}
-
-HRESULT HTMLElement_get_name(DispatchEx *dispex, DISPID id, BSTR *name)
-{
-    HTMLElement *This = impl_from_DispatchEx(dispex);
-
-    if(This->node.vtbl->get_name)
-        return This->node.vtbl->get_name(&This->node, id, name);
-
-    ERR("(%p): element has no get_name method\n", This);
-    return DISP_E_MEMBERNOTFOUND;
-}
-
-HRESULT HTMLElement_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params, VARIANT *res,
-        EXCEPINFO *ei, IServiceProvider *caller)
-{
-    HTMLElement *This = impl_from_DispatchEx(dispex);
-
-    if(This->node.vtbl->invoke)
-        return This->node.vtbl->invoke(&This->node, id, lcid, flags,
-                params, res, ei, caller);
-
-    ERR("(%p): element has no invoke method\n", This);
-    return E_NOTIMPL;
+    HTMLDOMNode_destructor(&This->node.event_target.dispex);
 }
 
 HRESULT HTMLElement_populate_props(DispatchEx *dispex)
@@ -7059,13 +6982,44 @@ void HTMLElement_bind_event(DispatchEx *dispex, eventid_t eid)
     ensure_doc_nsevent_handler(This->node.doc, This->node.nsnode, eid);
 }
 
-HRESULT HTMLElement_handle_event_default(DispatchEx *dispex, eventid_t eid, nsIDOMEvent *nsevent, BOOL *prevent_default)
+HRESULT HTMLElement_handle_event(DispatchEx *dispex, eventid_t eid, nsIDOMEvent *event, BOOL *prevent_default)
 {
     HTMLElement *This = impl_from_DispatchEx(dispex);
 
-    if(!This->node.vtbl->handle_event)
-        return S_OK;
-    return This->node.vtbl->handle_event(&This->node, eid, nsevent, prevent_default);
+    switch(eid) {
+    case EVENTID_KEYDOWN: {
+        nsIDOMKeyEvent *key_event;
+        nsresult nsres;
+
+        nsres = nsIDOMEvent_QueryInterface(event, &IID_nsIDOMKeyEvent, (void**)&key_event);
+        if(NS_SUCCEEDED(nsres)) {
+            UINT32 code = 0;
+
+            nsIDOMKeyEvent_GetKeyCode(key_event, &code);
+
+            if(code == VK_F1 /* DOM_VK_F1 */) {
+                DOMEvent *help_event;
+                HRESULT hres;
+
+                TRACE("F1 pressed\n");
+
+                hres = create_document_event(This->node.doc, EVENTID_HELP, &help_event);
+                if(SUCCEEDED(hres)) {
+                    dispatch_event(&This->node.event_target, help_event);
+                    IDOMEvent_Release(&help_event->IDOMEvent_iface);
+                }
+                *prevent_default = TRUE;
+            }
+
+            nsIDOMKeyEvent_Release(key_event);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    return S_OK;
 }
 
 EventTarget *HTMLElement_get_parent_event_target(DispatchEx *dispex)
@@ -7314,18 +7268,21 @@ void HTMLElement_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
     }
 }
 
-static const tid_t HTMLElement_iface_tids[] = {
+const tid_t HTMLElement_iface_tids[] = {
     HTMLELEMENT_TIDS,
     0
 };
 
-const event_target_vtbl_t HTMLElement_event_target_vtbl = {
+static const event_target_vtbl_t HTMLElement_event_target_vtbl = {
     {
         HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface     = HTMLElement_query_interface,
+        .destructor          = HTMLElement_destructor,
         .traverse            = HTMLDOMNode_traverse,
         .unlink              = HTMLDOMNode_unlink,
     },
     HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event            = HTMLElement_handle_event
 };
 
 struct token_list {
@@ -7933,7 +7890,7 @@ void HTMLElement_Init(HTMLElement *This, HTMLDocumentNode *doc, nsIDOMElement *n
         nsIDOMHTMLElement *html_element;
         nsresult nsres;
 
-        HTMLDOMNode_Init(doc, &This->node, (nsIDOMNode*)nselem, dispex_data ? dispex_data : &HTMLUnknownElement_dispex);
+        HTMLDOMNode_Init(doc, &This->node, (nsIDOMNode*)nselem, dispex_data);
 
         /* No AddRef, share reference with HTMLDOMNode */
         assert((nsIDOMNode*)nselem == This->node.nsnode);

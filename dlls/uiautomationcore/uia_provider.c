@@ -27,33 +27,48 @@ WINE_DEFAULT_DEBUG_CHANNEL(uiautomation);
 
 DEFINE_GUID(SID_AccFromDAWrapper, 0x33f139ee, 0xe509, 0x47f7, 0xbf,0x39, 0x83,0x76,0x44,0xf7,0x45,0x76);
 
-static BOOL msaa_check_acc_state(IAccessible *acc, VARIANT cid, ULONG flag)
+/* Returns S_OK if flag is set, S_FALSE if it is not. */
+static HRESULT msaa_check_acc_state_hres(IAccessible *acc, VARIANT cid, ULONG flag)
 {
     HRESULT hr;
     VARIANT v;
 
     VariantInit(&v);
     hr = IAccessible_get_accState(acc, cid, &v);
-    if (SUCCEEDED(hr) && V_VT(&v) == VT_I4 && (V_I4(&v) & flag))
-        return TRUE;
+    if (SUCCEEDED(hr))
+        hr = ((V_VT(&v) == VT_I4) && (V_I4(&v) & flag)) ? S_OK : S_FALSE;
 
-    return FALSE;
+    return hr;
+}
+
+static BOOL msaa_check_acc_state(IAccessible *acc, VARIANT cid, ULONG flag)
+{
+    return msaa_check_acc_state_hres(acc, cid, flag) == S_OK;
+}
+
+static HRESULT msaa_acc_get_service(IAccessible *acc, REFGUID sid, REFIID riid, void **service)
+{
+    IServiceProvider *sp;
+    HRESULT hr;
+
+    *service = NULL;
+    hr = IAccessible_QueryInterface(acc, &IID_IServiceProvider, (void **)&sp);
+    if (FAILED(hr))
+        return hr;
+
+    hr = IServiceProvider_QueryService(sp, sid, riid, (void **)service);
+    IServiceProvider_Release(sp);
+    return hr;
 }
 
 static IAccessible2 *msaa_acc_get_ia2(IAccessible *acc)
 {
-    IServiceProvider *serv_prov;
     IAccessible2 *ia2 = NULL;
     HRESULT hr;
 
-    hr = IAccessible_QueryInterface(acc, &IID_IServiceProvider, (void **)&serv_prov);
-    if (SUCCEEDED(hr))
-    {
-        hr = IServiceProvider_QueryService(serv_prov, &IID_IAccessible2, &IID_IAccessible2, (void **)&ia2);
-        IServiceProvider_Release(serv_prov);
-        if (SUCCEEDED(hr) && ia2)
-            return ia2;
-    }
+    hr = msaa_acc_get_service(acc, &IID_IAccessible2, &IID_IAccessible2, (void **)&ia2);
+    if (SUCCEEDED(hr) && ia2)
+        return ia2;
 
     hr = IAccessible_QueryInterface(acc, &IID_IAccessible2, (void **)&ia2);
     if (SUCCEEDED(hr) && ia2)
@@ -64,22 +79,30 @@ static IAccessible2 *msaa_acc_get_ia2(IAccessible *acc)
 
 static IAccessible *msaa_acc_da_unwrap(IAccessible *acc)
 {
-    IServiceProvider *sp;
     IAccessible *acc2;
     HRESULT hr;
 
-    hr = IAccessible_QueryInterface(acc, &IID_IServiceProvider, (void**)&sp);
-    if (SUCCEEDED(hr))
-    {
-        hr = IServiceProvider_QueryService(sp, &SID_AccFromDAWrapper, &IID_IAccessible, (void**)&acc2);
-        IServiceProvider_Release(sp);
-    }
-
+    hr = msaa_acc_get_service(acc, &SID_AccFromDAWrapper, &IID_IAccessible, (void **)&acc2);
     if (SUCCEEDED(hr) && acc2)
         return acc2;
 
     IAccessible_AddRef(acc);
     return acc;
+}
+
+static BOOL msaa_acc_is_oleacc_proxy(IAccessible *acc)
+{
+    IUnknown *unk;
+    HRESULT hr;
+
+    hr = msaa_acc_get_service(acc, &IIS_IsOleaccProxy, &IID_IUnknown, (void **)&unk);
+    if (SUCCEEDED(hr) && unk)
+    {
+        IUnknown_Release(unk);
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 /*
@@ -153,6 +176,25 @@ static HRESULT msaa_acc_prop_match(IAccessible *acc, IAccessible *acc2)
         return S_OK;
 
     return S_FALSE;
+}
+
+static BOOL msaa_acc_iface_cmp(IAccessible *acc, IAccessible *acc2)
+{
+    IUnknown *unk, *unk2;
+    BOOL matched;
+
+    acc = msaa_acc_da_unwrap(acc);
+    acc2 = msaa_acc_da_unwrap(acc2);
+    IAccessible_QueryInterface(acc, &IID_IUnknown, (void**)&unk);
+    IAccessible_QueryInterface(acc2, &IID_IUnknown, (void**)&unk2);
+    matched = (unk == unk2);
+
+    IAccessible_Release(acc);
+    IUnknown_Release(unk);
+    IAccessible_Release(acc2);
+    IUnknown_Release(unk2);
+
+    return matched;
 }
 
 static BOOL msaa_acc_compare(IAccessible *acc, IAccessible *acc2)
@@ -486,7 +528,9 @@ static LONG msaa_role_to_uia_control_type(LONG role)
 struct msaa_provider {
     IRawElementProviderSimple IRawElementProviderSimple_iface;
     IRawElementProviderFragment IRawElementProviderFragment_iface;
+    IRawElementProviderFragmentRoot IRawElementProviderFragmentRoot_iface;
     ILegacyIAccessibleProvider ILegacyIAccessibleProvider_iface;
+    IProxyProviderWinEventHandler IProxyProviderWinEventHandler_iface;
     LONG refcount;
 
     IAccessible *acc;
@@ -539,8 +583,12 @@ HRESULT WINAPI msaa_provider_QueryInterface(IRawElementProviderSimple *iface, RE
         *ppv = iface;
     else if (IsEqualIID(riid, &IID_IRawElementProviderFragment))
         *ppv = &msaa_prov->IRawElementProviderFragment_iface;
+    else if (IsEqualIID(riid, &IID_IRawElementProviderFragmentRoot))
+        *ppv = &msaa_prov->IRawElementProviderFragmentRoot_iface;
     else if (IsEqualIID(riid, &IID_ILegacyIAccessibleProvider))
         *ppv = &msaa_prov->ILegacyIAccessibleProvider_iface;
+    else if (IsEqualIID(riid, &IID_IProxyProviderWinEventHandler))
+        *ppv = &msaa_prov->IProxyProviderWinEventHandler_iface;
     else
         return E_NOINTERFACE;
 
@@ -637,23 +685,35 @@ HRESULT WINAPI msaa_provider_GetPropertyValue(IRawElementProviderSimple *iface,
         break;
 
     case UIA_HasKeyboardFocusPropertyId:
-        variant_init_bool(ret_val, msaa_check_acc_state(msaa_prov->acc, msaa_prov->cid,
-                    STATE_SYSTEM_FOCUSED));
+        hr = msaa_check_acc_state_hres(msaa_prov->acc, msaa_prov->cid, STATE_SYSTEM_FOCUSED);
+        if (FAILED(hr))
+            return hr;
+
+        variant_init_bool(ret_val, hr == S_OK);
         break;
 
     case UIA_IsKeyboardFocusablePropertyId:
-        variant_init_bool(ret_val, msaa_check_acc_state(msaa_prov->acc, msaa_prov->cid,
-                    STATE_SYSTEM_FOCUSABLE));
+        hr = msaa_check_acc_state_hres(msaa_prov->acc, msaa_prov->cid, STATE_SYSTEM_FOCUSABLE);
+        if (FAILED(hr))
+            return hr;
+
+        variant_init_bool(ret_val, hr == S_OK);
         break;
 
     case UIA_IsEnabledPropertyId:
-        variant_init_bool(ret_val, !msaa_check_acc_state(msaa_prov->acc, msaa_prov->cid,
-                    STATE_SYSTEM_UNAVAILABLE));
+        hr = msaa_check_acc_state_hres(msaa_prov->acc, msaa_prov->cid, STATE_SYSTEM_UNAVAILABLE);
+        if (FAILED(hr))
+            return hr;
+
+        variant_init_bool(ret_val, hr == S_FALSE);
         break;
 
     case UIA_IsPasswordPropertyId:
-        variant_init_bool(ret_val, msaa_check_acc_state(msaa_prov->acc, msaa_prov->cid,
-                    STATE_SYSTEM_PROTECTED));
+        hr = msaa_check_acc_state_hres(msaa_prov->acc, msaa_prov->cid, STATE_SYSTEM_PROTECTED);
+        if (FAILED(hr))
+            return hr;
+
+        variant_init_bool(ret_val, hr == S_OK);
         break;
 
     case UIA_NamePropertyId:
@@ -959,9 +1019,27 @@ static HRESULT WINAPI msaa_fragment_SetFocus(IRawElementProviderFragment *iface)
 static HRESULT WINAPI msaa_fragment_get_FragmentRoot(IRawElementProviderFragment *iface,
         IRawElementProviderFragmentRoot **ret_val)
 {
-    FIXME("%p, %p: stub!\n", iface, ret_val);
+    struct msaa_provider *msaa_prov = impl_from_msaa_fragment(iface);
+    IRawElementProviderSimple *elprov;
+    IAccessible *acc;
+    HRESULT hr;
+
+    TRACE("%p, %p\n", iface, ret_val);
+
     *ret_val = NULL;
-    return E_NOTIMPL;
+    hr = AccessibleObjectFromWindow(msaa_prov->hwnd, OBJID_CLIENT, &IID_IAccessible, (void **)&acc);
+    if (FAILED(hr) || !acc)
+        return hr;
+
+    hr = create_msaa_provider(acc, CHILDID_SELF, msaa_prov->hwnd, TRUE, &elprov);
+    IAccessible_Release(acc);
+    if (FAILED(hr))
+        return hr;
+
+    hr = IRawElementProviderSimple_QueryInterface(elprov, &IID_IRawElementProviderFragmentRoot, (void **)ret_val);
+    IRawElementProviderSimple_Release(elprov);
+
+    return hr;
 }
 
 static const IRawElementProviderFragmentVtbl msaa_fragment_vtbl = {
@@ -974,6 +1052,166 @@ static const IRawElementProviderFragmentVtbl msaa_fragment_vtbl = {
     msaa_fragment_GetEmbeddedFragmentRoots,
     msaa_fragment_SetFocus,
     msaa_fragment_get_FragmentRoot,
+};
+
+/*
+ * IRawElementProviderFragmentRoot interface for UiaProviderFromIAccessible
+ * providers.
+ */
+static inline struct msaa_provider *impl_from_msaa_fragment_root(IRawElementProviderFragmentRoot *iface)
+{
+    return CONTAINING_RECORD(iface, struct msaa_provider, IRawElementProviderFragmentRoot_iface);
+}
+
+static HRESULT WINAPI msaa_fragment_root_QueryInterface(IRawElementProviderFragmentRoot *iface, REFIID riid,
+        void **ppv)
+{
+    struct msaa_provider *msaa_prov = impl_from_msaa_fragment_root(iface);
+    return IRawElementProviderSimple_QueryInterface(&msaa_prov->IRawElementProviderSimple_iface, riid, ppv);
+}
+
+static ULONG WINAPI msaa_fragment_root_AddRef(IRawElementProviderFragmentRoot *iface)
+{
+    struct msaa_provider *msaa_prov = impl_from_msaa_fragment_root(iface);
+    return IRawElementProviderSimple_AddRef(&msaa_prov->IRawElementProviderSimple_iface);
+}
+
+static ULONG WINAPI msaa_fragment_root_Release(IRawElementProviderFragmentRoot *iface)
+{
+    struct msaa_provider *msaa_prov = impl_from_msaa_fragment_root(iface);
+    return IRawElementProviderSimple_Release(&msaa_prov->IRawElementProviderSimple_iface);
+}
+
+static HRESULT WINAPI msaa_fragment_root_ElementProviderFromPoint(IRawElementProviderFragmentRoot *iface,
+        double x, double y, IRawElementProviderFragment **ret_val)
+{
+    FIXME("%p, %f, %f, %p: stub!\n", iface, x, y, ret_val);
+    *ret_val = NULL;
+    return E_NOTIMPL;
+}
+
+static HRESULT msaa_acc_get_focus(struct msaa_provider *prov, struct msaa_provider **out_prov)
+{
+    IRawElementProviderSimple *elprov;
+    IAccessible *focus_acc = NULL;
+    INT focus_cid = CHILDID_SELF;
+    HWND hwnd = NULL;
+    HRESULT hr;
+    VARIANT v;
+
+    *out_prov = NULL;
+
+    if (V_I4(&prov->cid) != CHILDID_SELF)
+        return S_OK;
+
+    VariantInit(&v);
+    hr = IAccessible_get_accFocus(prov->acc, &v);
+    if (FAILED(hr) || (V_VT(&v) != VT_I4 && V_VT(&v) != VT_DISPATCH))
+    {
+        VariantClear(&v);
+        return hr;
+    }
+
+    if (V_VT(&v) == VT_I4)
+    {
+        IDispatch *disp = NULL;
+
+        if (V_I4(&v) == CHILDID_SELF)
+            return S_OK;
+
+        hr = IAccessible_get_accChild(prov->acc, v, &disp);
+        if (FAILED(hr))
+            return hr;
+
+        if (hr == S_FALSE)
+        {
+            hwnd = prov->hwnd;
+            focus_acc = prov->acc;
+            IAccessible_AddRef(focus_acc);
+            focus_cid = V_I4(&v);
+        }
+        else if (disp)
+        {
+            V_VT(&v) = VT_DISPATCH;
+            V_DISPATCH(&v) = disp;
+        }
+        else
+            return E_FAIL;
+    }
+
+    if (V_VT(&v) == VT_DISPATCH)
+    {
+        hr = IDispatch_QueryInterface(V_DISPATCH(&v), &IID_IAccessible, (void **)&focus_acc);
+        VariantClear(&v);
+        if (FAILED(hr))
+            return hr;
+
+        hr = WindowFromAccessibleObject(focus_acc, &hwnd);
+        if (FAILED(hr) || !hwnd)
+        {
+            IAccessible_Release(focus_acc);
+            return hr;
+        }
+    }
+
+    hr = create_msaa_provider(focus_acc, focus_cid, hwnd, FALSE, &elprov);
+    IAccessible_Release(focus_acc);
+    if (SUCCEEDED(hr))
+        *out_prov = impl_from_msaa_provider(elprov);
+
+    return hr;
+}
+
+static HRESULT WINAPI msaa_fragment_root_GetFocus(IRawElementProviderFragmentRoot *iface,
+        IRawElementProviderFragment **ret_val)
+{
+    struct msaa_provider *msaa_prov = impl_from_msaa_fragment_root(iface);
+    struct msaa_provider *prov, *prov2;
+    IRawElementProviderSimple *elprov;
+    HRESULT hr;
+
+    TRACE("%p, %p\n", iface, ret_val);
+
+    *ret_val = NULL;
+    if (V_I4(&msaa_prov->cid) != CHILDID_SELF)
+        return S_OK;
+
+    hr = create_msaa_provider(msaa_prov->acc, CHILDID_SELF, msaa_prov->hwnd, FALSE, &elprov);
+    if (FAILED(hr))
+        return hr;
+
+    prov = impl_from_msaa_provider(elprov);
+    while (SUCCEEDED(msaa_acc_get_focus(prov, &prov2)))
+    {
+        if (!prov2 || (msaa_check_acc_state_hres(prov2->acc, prov2->cid, STATE_SYSTEM_INVISIBLE) != S_FALSE) ||
+                ((V_I4(&prov2->cid) == CHILDID_SELF) && msaa_acc_iface_cmp(prov->acc, prov2->acc)))
+        {
+            if (prov2)
+                IRawElementProviderSimple_Release(&prov2->IRawElementProviderSimple_iface);
+
+            if (msaa_acc_iface_cmp(prov->acc, msaa_prov->acc) && V_I4(&prov->cid) == CHILDID_SELF)
+            {
+                IRawElementProviderSimple_Release(&prov->IRawElementProviderSimple_iface);
+                return S_OK;
+            }
+            break;
+        }
+
+        IRawElementProviderSimple_Release(&prov->IRawElementProviderSimple_iface);
+        prov = prov2;
+    }
+
+    hr = IRawElementProviderSimple_QueryInterface(&prov->IRawElementProviderSimple_iface, &IID_IRawElementProviderFragment, (void **)ret_val);
+    IRawElementProviderSimple_Release(&prov->IRawElementProviderSimple_iface);
+    return hr;
+}
+
+static const IRawElementProviderFragmentRootVtbl msaa_fragment_root_vtbl = {
+    msaa_fragment_root_QueryInterface,
+    msaa_fragment_root_AddRef,
+    msaa_fragment_root_Release,
+    msaa_fragment_root_ElementProviderFromPoint,
+    msaa_fragment_root_GetFocus,
 };
 
 /*
@@ -1028,10 +1266,11 @@ static HRESULT WINAPI msaa_acc_provider_GetIAccessible(ILegacyIAccessibleProvide
 
     TRACE("%p, %p\n", iface, out_acc);
 
-    IAccessible_AddRef(msaa_prov->acc);
-    *out_acc = msaa_prov->acc;
+    *out_acc = NULL;
+    if (msaa_acc_is_oleacc_proxy(msaa_prov->acc))
+        return S_OK;
 
-    return S_OK;
+    return IAccessible_QueryInterface(msaa_prov->acc, &IID_IAccessible, (void **)out_acc);
 }
 
 static HRESULT WINAPI msaa_acc_provider_get_ChildId(ILegacyIAccessibleProvider *iface, int *out_cid)
@@ -1133,6 +1372,74 @@ static const ILegacyIAccessibleProviderVtbl msaa_acc_provider_vtbl = {
     msaa_acc_provider_get_DefaultAction,
 };
 
+/*
+ * IProxyProviderWinEventHandler interface for UiaProviderFromIAccessible
+ * providers.
+ */
+static inline struct msaa_provider *impl_from_msaa_winevent_handler(IProxyProviderWinEventHandler *iface)
+{
+    return CONTAINING_RECORD(iface, struct msaa_provider, IProxyProviderWinEventHandler_iface);
+}
+
+static HRESULT WINAPI msaa_winevent_handler_QueryInterface(IProxyProviderWinEventHandler *iface, REFIID riid,
+        void **ppv)
+{
+    struct msaa_provider *msaa_prov = impl_from_msaa_winevent_handler(iface);
+    return IRawElementProviderSimple_QueryInterface(&msaa_prov->IRawElementProviderSimple_iface, riid, ppv);
+}
+
+static ULONG WINAPI msaa_winevent_handler_AddRef(IProxyProviderWinEventHandler *iface)
+{
+    struct msaa_provider *msaa_prov = impl_from_msaa_winevent_handler(iface);
+    return IRawElementProviderSimple_AddRef(&msaa_prov->IRawElementProviderSimple_iface);
+}
+
+static ULONG WINAPI msaa_winevent_handler_Release(IProxyProviderWinEventHandler *iface)
+{
+    struct msaa_provider *msaa_prov = impl_from_msaa_winevent_handler(iface);
+    return IRawElementProviderSimple_Release(&msaa_prov->IRawElementProviderSimple_iface);
+}
+
+static HRESULT WINAPI msaa_winevent_handler_RespondToWinEvent(IProxyProviderWinEventHandler *iface, DWORD event_id,
+        HWND hwnd, LONG objid, LONG cid, IProxyProviderWinEventSink *event_sink)
+{
+    struct msaa_provider *msaa_prov = impl_from_msaa_winevent_handler(iface);
+    HRESULT hr;
+
+    TRACE("%p, %ld, %p, %ld, %ld, %p\n", iface, event_id, hwnd, objid, cid, event_sink);
+
+    switch (event_id)
+    {
+    case EVENT_SYSTEM_ALERT:
+        hr = IProxyProviderWinEventSink_AddAutomationEvent(event_sink, &msaa_prov->IRawElementProviderSimple_iface,
+                UIA_SystemAlertEventId);
+        if (FAILED(hr))
+            WARN("AddAutomationEvent failed with hr %#lx\n", hr);
+        break;
+
+    case EVENT_OBJECT_REORDER:
+    case EVENT_OBJECT_SELECTION:
+    case EVENT_OBJECT_NAMECHANGE:
+    case EVENT_OBJECT_VALUECHANGE:
+    case EVENT_OBJECT_HELPCHANGE:
+    case EVENT_OBJECT_INVOKED:
+        FIXME("WinEvent %ld currently unimplemented\n", event_id);
+        return E_NOTIMPL;
+
+    default:
+        break;
+    }
+
+    return S_OK;
+}
+
+static const IProxyProviderWinEventHandlerVtbl msaa_winevent_handler_vtbl = {
+    msaa_winevent_handler_QueryInterface,
+    msaa_winevent_handler_AddRef,
+    msaa_winevent_handler_Release,
+    msaa_winevent_handler_RespondToWinEvent,
+};
+
 HRESULT create_msaa_provider(IAccessible *acc, LONG child_id, HWND hwnd, BOOL known_root_acc,
         IRawElementProviderSimple **elprov)
 {
@@ -1143,7 +1450,9 @@ HRESULT create_msaa_provider(IAccessible *acc, LONG child_id, HWND hwnd, BOOL kn
 
     msaa_prov->IRawElementProviderSimple_iface.lpVtbl = &msaa_provider_vtbl;
     msaa_prov->IRawElementProviderFragment_iface.lpVtbl = &msaa_fragment_vtbl;
+    msaa_prov->IRawElementProviderFragmentRoot_iface.lpVtbl = &msaa_fragment_root_vtbl;
     msaa_prov->ILegacyIAccessibleProvider_iface.lpVtbl = &msaa_acc_provider_vtbl;
+    msaa_prov->IProxyProviderWinEventHandler_iface.lpVtbl = &msaa_winevent_handler_vtbl;
     msaa_prov->refcount = 1;
     variant_init_i4(&msaa_prov->cid, child_id);
     msaa_prov->acc = acc;
@@ -1175,7 +1484,6 @@ HRESULT create_msaa_provider(IAccessible *acc, LONG child_id, HWND hwnd, BOOL kn
 HRESULT WINAPI UiaProviderFromIAccessible(IAccessible *acc, LONG child_id, DWORD flags,
         IRawElementProviderSimple **elprov)
 {
-    IServiceProvider *serv_prov;
     HWND hwnd = NULL;
     HRESULT hr;
 
@@ -1195,21 +1503,10 @@ HRESULT WINAPI UiaProviderFromIAccessible(IAccessible *acc, LONG child_id, DWORD
         return E_NOTIMPL;
     }
 
-    hr = IAccessible_QueryInterface(acc, &IID_IServiceProvider, (void **)&serv_prov);
-    if (SUCCEEDED(hr))
+    if (msaa_acc_is_oleacc_proxy(acc))
     {
-        IUnknown *unk;
-
-        hr = IServiceProvider_QueryService(serv_prov, &IIS_IsOleaccProxy, &IID_IUnknown, (void **)&unk);
-        if (SUCCEEDED(hr))
-        {
-            WARN("Cannot wrap an oleacc proxy IAccessible!\n");
-            IUnknown_Release(unk);
-            IServiceProvider_Release(serv_prov);
-            return E_INVALIDARG;
-        }
-
-        IServiceProvider_Release(serv_prov);
+        WARN("Cannot wrap an oleacc proxy IAccessible!\n");
+        return E_INVALIDARG;
     }
 
     hr = WindowFromAccessibleObject(acc, &hwnd);

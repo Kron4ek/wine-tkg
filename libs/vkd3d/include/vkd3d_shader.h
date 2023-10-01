@@ -50,6 +50,7 @@ enum vkd3d_shader_api_version
     VKD3D_SHADER_API_VERSION_1_6,
     VKD3D_SHADER_API_VERSION_1_7,
     VKD3D_SHADER_API_VERSION_1_8,
+    VKD3D_SHADER_API_VERSION_1_9,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_API_VERSION),
 };
@@ -91,10 +92,10 @@ enum vkd3d_shader_structure_type
      */
     VKD3D_SHADER_STRUCTURE_TYPE_SCAN_SIGNATURE_INFO,
     /**
-     * The structure is a vkd3d_shader_next_stage_info structure.
+     * The structure is a vkd3d_shader_varying_map_info structure.
      * \since 1.9
      */
-    VKD3D_SHADER_STRUCTURE_TYPE_NEXT_STAGE_INFO,
+    VKD3D_SHADER_STRUCTURE_TYPE_VARYING_MAP_INFO,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_STRUCTURE_TYPE),
 };
@@ -144,6 +145,7 @@ enum vkd3d_shader_compile_option_formatting_flags
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_FORMATTING_FLAGS),
 };
 
+/** Determines how matrices are stored. \since 1.9 */
 enum vkd3d_shader_compile_option_pack_matrix_order
 {
     VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_ROW_MAJOR    = 0x00000001,
@@ -183,7 +185,7 @@ enum vkd3d_shader_compile_option_name
      */
     VKD3D_SHADER_COMPILE_OPTION_WRITE_TESS_GEOM_POINT_SIZE = 0x00000006,
     /**
-     * This option specifies default matrix packing order. It's only supported for HLSL source type.
+     * This option specifies default matrix packing order for HLSL sources.
      * Explicit variable modifiers or pragmas will take precedence.
      *
      * \a value is a member of enum vkd3d_shader_compile_option_pack_matrix_order.
@@ -1463,8 +1465,24 @@ enum vkd3d_shader_sysval_semantic
     VKD3D_SHADER_SV_TESS_FACTOR_TRIINT        = 0x0e,
     VKD3D_SHADER_SV_TESS_FACTOR_LINEDET       = 0x0f,
     VKD3D_SHADER_SV_TESS_FACTOR_LINEDEN       = 0x10,
-    /** Render target; SV_Target in Direct3D shader model 6 shaders. */
+    /** Render target; SV_Target in Direct3D. \since 1.9 */
     VKD3D_SHADER_SV_TARGET                    = 0x40,
+    /** Depth; SV_Depth in Direct3D. \since 1.9 */
+    VKD3D_SHADER_SV_DEPTH                     = 0x41,
+    /** Sample mask; SV_Coverage in Direct3D. \since 1.9 */
+    VKD3D_SHADER_SV_COVERAGE                  = 0x42,
+    /**
+     * Depth, which is guaranteed to be greater than or equal to the current
+     * depth; SV_DepthGreaterEqual in Direct3D. \since 1.9
+     */
+    VKD3D_SHADER_SV_DEPTH_GREATER_EQUAL       = 0x43,
+    /**
+     * Depth, which is guaranteed to be less than or equal to the current
+     * depth; SV_DepthLessEqual in Direct3D. \since 1.9
+     */
+    VKD3D_SHADER_SV_DEPTH_LESS_EQUAL          = 0x44,
+    /** Stencil reference; SV_StencilRef in Direct3D. \since 1.9 */
+    VKD3D_SHADER_SV_STENCIL_REF               = 0x45,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_SYSVAL_SEMANTIC),
 };
@@ -1689,7 +1707,7 @@ struct vkd3d_shader_scan_signature_info
  * Describes the mapping of a output varying register in a shader stage,
  * to an input varying register in the following shader stage.
  *
- * This structure is used in struct vkd3d_shader_next_stage_info.
+ * This structure is used in struct vkd3d_shader_varying_map_info.
  */
 struct vkd3d_shader_varying_map
 {
@@ -1707,15 +1725,21 @@ struct vkd3d_shader_varying_map
 };
 
 /**
- * A chained structure which describes the next shader in the pipeline.
+ * A chained structure which describes how output varyings in this shader stage
+ * should be mapped to input varyings in the next stage.
  *
- * This structure is optional, and should only be provided if there is in fact
- * another shader in the pipeline.
+ * This structure is optional. It should not be provided if there is no shader
+ * stage.
  * However, depending on the input and output formats, this structure may be
  * necessary in order to generate shaders which correctly match each other.
- * If the structure or its individual fields are not provided, vkd3d-shader
- * will generate shaders which may be correct in isolation, but are not
- * guaranteed to correctly match each other.
+ *
+ * If this structure is absent, vkd3d-shader will map varyings from one stage
+ * to another based on their register index.
+ * For Direct3D shader model 3.0, such a default mapping will be incorrect
+ * unless the registers are allocated in the same order, and hence this
+ * field is necessary to correctly match inter-stage varyings.
+ * This mapping may also be necessary under other circumstances where the
+ * varying interface does not match exactly.
  *
  * This structure is passed to vkd3d_shader_compile() and extends
  * vkd3d_shader_compile_info.
@@ -1724,9 +1748,9 @@ struct vkd3d_shader_varying_map
  *
  * \since 1.9
  */
-struct vkd3d_shader_next_stage_info
+struct vkd3d_shader_varying_map_info
 {
-    /** Must be set to VKD3D_SHADER_STRUCTURE_TYPE_NEXT_STAGE_INFO. */
+    /** Must be set to VKD3D_SHADER_STRUCTURE_TYPE_VARYING_MAP_INFO. */
     enum vkd3d_shader_structure_type type;
     /** Optional pointer to a structure containing further parameters. */
     const void *next;
@@ -1739,14 +1763,6 @@ struct vkd3d_shader_next_stage_info
      * consumed by the next shader stage.
      * If this shader stage outputs a varying that is not consumed by the next
      * shader stage, that varying should be absent from this array.
-     *
-     * If this field is absent, vkd3d-shader will map varyings from one stage
-     * to another based on their register index.
-     * For Direct3D shader model 3.0, such a default mapping will be incorrect
-     * unless the registers are allocated in the same order, and hence this
-     * field is necessary to correctly match inter-stage varyings.
-     * This mapping may also be necessary under other circumstances where the
-     * varying interface does not match exactly.
      *
      * This mapping may be constructed by vkd3d_shader_build_varying_map().
      */
@@ -1829,7 +1845,7 @@ VKD3D_SHADER_API const enum vkd3d_shader_target_type *vkd3d_shader_get_supported
  * following chained structures:
  * - vkd3d_shader_hlsl_source_info
  * - vkd3d_shader_interface_info
- * - vkd3d_shader_next_stage_info
+ * - vkd3d_shader_varying_map_info
  * - vkd3d_shader_scan_descriptor_info
  * - vkd3d_shader_scan_signature_info
  * - vkd3d_shader_spirv_domain_shader_target_info
@@ -2272,7 +2288,7 @@ VKD3D_SHADER_API void vkd3d_shader_free_scan_signature_info(struct vkd3d_shader_
  * Build a mapping of output varyings in a shader stage to input varyings in
  * the following shader stage.
  *
- * This mapping should be used in struct vkd3d_shader_next_stage_info to
+ * This mapping should be used in struct vkd3d_shader_varying_map_info to
  * compile the first shader.
  *
  * \param output_signature The output signature of the first shader.
@@ -2362,6 +2378,10 @@ typedef int (*PFN_vkd3d_shader_parse_dxbc)(const struct vkd3d_shader_code *dxbc,
 typedef int (*PFN_vkd3d_shader_serialize_dxbc)(size_t section_count,
         const struct vkd3d_shader_dxbc_section_desc *sections, struct vkd3d_shader_code *dxbc, char **messages);
 
+/** Type of vkd3d_shader_build_varying_map(). \since 1.9 */
+typedef void (*PFN_vkd3d_shader_build_varying_map)(const struct vkd3d_shader_signature *output_signature,
+        const struct vkd3d_shader_signature *input_signature,
+        unsigned int *count, struct vkd3d_shader_varying_map *varyings);
 /** Type of vkd3d_shader_free_scan_signature_info(). \since 1.9 */
 typedef void (*PFN_vkd3d_shader_free_scan_signature_info)(struct vkd3d_shader_scan_signature_info *info);
 

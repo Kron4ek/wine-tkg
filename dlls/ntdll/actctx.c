@@ -29,6 +29,7 @@
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "winternl.h"
+#include "ddk/ntddk.h"
 #include "ddk/wdm.h"
 #include "ntdll_misc.h"
 #include "wine/exception.h"
@@ -2564,6 +2565,15 @@ static void parse_application_elem( xmlbuf_t *xmlbuf, struct assembly *assembly,
                                     struct actctx_loader *acl, const struct xml_elem *parent )
 {
     struct xml_elem elem;
+    struct xml_attr attr;
+    BOOL end = FALSE;
+
+    while (next_xml_attr(xmlbuf, &attr, &end))
+    {
+        if (!is_xmlns_attr( &attr )) WARN( "unknown attr %s\n", debugstr_xml_attr(&attr) );
+    }
+
+    if (end) return;
 
     while (next_xml_elem( xmlbuf, &elem, parent ))
     {

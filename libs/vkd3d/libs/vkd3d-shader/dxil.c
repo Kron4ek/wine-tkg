@@ -141,6 +141,7 @@ enum bitcode_value_symtab_code
 
 enum dx_intrinsic_opcode
 {
+    DX_LOAD_INPUT                   =   4,
     DX_STORE_OUTPUT                 =   5,
 };
 
@@ -296,6 +297,7 @@ struct sm6_parser
     size_t global_symbol_count;
 
     struct vkd3d_shader_dst_param *output_params;
+    struct vkd3d_shader_dst_param *input_params;
 
     struct sm6_function *functions;
     size_t function_count;
@@ -304,6 +306,7 @@ struct sm6_parser
     size_t value_count;
     size_t value_capacity;
     size_t cur_max_value;
+    unsigned int ssa_next_id;
 
     struct vkd3d_shader_parser p;
 };
@@ -1495,7 +1498,7 @@ static unsigned int register_get_uint_value(const struct vkd3d_shader_register *
     if (!register_is_constant(reg) || !data_type_is_integer(reg->data_type))
         return UINT_MAX;
 
-    if (reg->immconst_type == VKD3D_IMMCONST_VEC4)
+    if (reg->dimension == VSIR_DIMENSION_VEC4)
         WARN("Returning vec4.x.\n");
 
     if (reg->type == VKD3DSPR_IMMCONST64)
@@ -1547,6 +1550,11 @@ static inline unsigned int sm6_value_get_constant_uint(const struct sm6_value *v
     return register_get_uint_value(&value->u.reg);
 }
 
+static unsigned int sm6_parser_alloc_ssa_id(struct sm6_parser *sm6)
+{
+    return sm6->ssa_next_id++;
+}
+
 static struct vkd3d_shader_src_param *instruction_src_params_alloc(struct vkd3d_shader_instruction *ins,
         unsigned int count, struct sm6_parser *sm6)
 {
@@ -1577,6 +1585,13 @@ static struct vkd3d_shader_dst_param *instruction_dst_params_alloc(struct vkd3d_
     ins->dst = params;
     ins->dst_count = count;
     return params;
+}
+
+static void register_init_with_id(struct vkd3d_shader_register *reg,
+        enum vkd3d_shader_register_type reg_type, enum vkd3d_data_type data_type, unsigned int id)
+{
+    vsir_register_init(reg, reg_type, data_type, 1);
+    reg->idx[0].offset = id;
 }
 
 static enum vkd3d_data_type vkd3d_data_type_from_sm6_type(const struct sm6_type *type)
@@ -1612,6 +1627,24 @@ static enum vkd3d_data_type vkd3d_data_type_from_sm6_type(const struct sm6_type 
     return VKD3D_DATA_UINT;
 }
 
+static void register_init_ssa_scalar(struct vkd3d_shader_register *reg, const struct sm6_type *type,
+        struct sm6_parser *sm6)
+{
+    enum vkd3d_data_type data_type;
+    unsigned int id;
+
+    id = sm6_parser_alloc_ssa_id(sm6);
+    data_type = vkd3d_data_type_from_sm6_type(sm6_type_get_scalar_type(type, 0));
+    register_init_with_id(reg, VKD3DSPR_SSA, data_type, id);
+}
+
+static void dst_param_init(struct vkd3d_shader_dst_param *param)
+{
+    param->write_mask = VKD3DSP_WRITEMASK_0;
+    param->modifiers = 0;
+    param->shift = 0;
+}
+
 static inline void dst_param_init_scalar(struct vkd3d_shader_dst_param *param, unsigned int component_idx)
 {
     param->write_mask = 1u << component_idx;
@@ -1619,9 +1652,22 @@ static inline void dst_param_init_scalar(struct vkd3d_shader_dst_param *param, u
     param->shift = 0;
 }
 
+static void dst_param_init_ssa_scalar(struct vkd3d_shader_dst_param *param, const struct sm6_type *type,
+        struct sm6_parser *sm6)
+{
+    dst_param_init(param);
+    register_init_ssa_scalar(&param->reg, type, sm6);
+}
+
 static inline void src_param_init(struct vkd3d_shader_src_param *param)
 {
     param->swizzle = VKD3D_SHADER_SWIZZLE(X, X, X, X);
+    param->modifiers = VKD3DSPSM_NONE;
+}
+
+static void src_param_init_scalar(struct vkd3d_shader_src_param *param, unsigned int component_idx)
+{
+    param->swizzle = vkd3d_shader_create_swizzle(component_idx, component_idx, component_idx, component_idx);
     param->modifiers = VKD3DSPSM_NONE;
 }
 
@@ -1651,6 +1697,16 @@ static void register_address_init(struct vkd3d_shader_register *reg, const struc
         reg->idx[idx].offset = 0;
         reg->idx[idx].rel_addr = rel_addr;
     }
+}
+
+static void instruction_dst_param_init_ssa_scalar(struct vkd3d_shader_instruction *ins, struct sm6_parser *sm6)
+{
+    struct vkd3d_shader_dst_param *param = instruction_dst_params_alloc(ins, 1, sm6);
+    struct sm6_value *dst = sm6_parser_get_current_value(sm6);
+
+    dst_param_init_ssa_scalar(param, dst->type, sm6);
+    param->write_mask = VKD3DSP_WRITEMASK_0;
+    dst->u.reg = param->reg;
 }
 
 /* Recurse through the block tree while maintaining a current value count. The current
@@ -1912,7 +1968,7 @@ static enum vkd3d_result sm6_parser_constants_init(struct sm6_parser *sm6, const
         dst->type = type;
         dst->value_type = VALUE_TYPE_REG;
         dst->u.reg.type = reg_type;
-        dst->u.reg.immconst_type = VKD3D_IMMCONST_SCALAR;
+        dst->u.reg.dimension = VSIR_DIMENSION_SCALAR;
         dst->u.reg.data_type = reg_data_type;
 
         switch (record->code)
@@ -1999,7 +2055,7 @@ static struct vkd3d_shader_instruction *sm6_parser_add_instruction(struct sm6_pa
 {
     struct vkd3d_shader_instruction *ins = sm6_parser_require_space(sm6, 1);
     assert(ins);
-    shader_instruction_init(ins, handler_idx);
+    vsir_instruction_init(ins, &sm6->p.location, handler_idx);
     ++sm6->p.instructions.count;
     return ins;
 }
@@ -2063,7 +2119,7 @@ static void dst_param_io_init(struct vkd3d_shader_dst_param *param,
     param->shift = 0;
     /* DXIL types do not have signedness. Load signed elements as unsigned. */
     component_type = e->component_type == VKD3D_SHADER_COMPONENT_INT ? VKD3D_SHADER_COMPONENT_UINT : e->component_type;
-    shader_register_init(&param->reg, reg_type, vkd3d_data_type_from_component_type(component_type), 0);
+    vsir_register_init(&param->reg, reg_type, vkd3d_data_type_from_component_type(component_type), 0);
 }
 
 static void sm6_parser_init_signature(struct sm6_parser *sm6, const struct shader_signature *s,
@@ -2112,6 +2168,8 @@ static void sm6_parser_emit_signature(struct sm6_parser *sm6, const struct shade
             param = &ins->declaration.dst;
         }
 
+        /* TODO: set the interpolation mode when signatures are loaded from DXIL metadata. */
+        ins->flags = (handler_idx == VKD3DSIH_DCL_INPUT_PS) ? VKD3DSIM_LINEAR_NOPERSPECTIVE : 0;
         *param = params[i];
     }
 }
@@ -2123,9 +2181,22 @@ static void sm6_parser_init_output_signature(struct sm6_parser *sm6, const struc
             sm6->output_params);
 }
 
+static void sm6_parser_init_input_signature(struct sm6_parser *sm6, const struct shader_signature *input_signature)
+{
+    sm6_parser_init_signature(sm6, input_signature, VKD3DSPR_INPUT, sm6->input_params);
+}
+
 static void sm6_parser_emit_output_signature(struct sm6_parser *sm6, const struct shader_signature *output_signature)
 {
     sm6_parser_emit_signature(sm6, output_signature, VKD3DSIH_DCL_OUTPUT, VKD3DSIH_DCL_OUTPUT_SIV, sm6->output_params);
+}
+
+static void sm6_parser_emit_input_signature(struct sm6_parser *sm6, const struct shader_signature *input_signature)
+{
+    sm6_parser_emit_signature(sm6, input_signature,
+            (sm6->p.shader_version.type == VKD3D_SHADER_TYPE_PIXEL) ? VKD3DSIH_DCL_INPUT_PS : VKD3DSIH_DCL_INPUT,
+            (sm6->p.shader_version.type == VKD3D_SHADER_TYPE_PIXEL) ? VKD3DSIH_DCL_INPUT_PS_SIV : VKD3DSIH_DCL_INPUT_SIV,
+            sm6->input_params);
 }
 
 static const struct sm6_value *sm6_parser_next_function_definition(struct sm6_parser *sm6)
@@ -2148,6 +2219,38 @@ static struct sm6_block *sm6_block_create()
 {
     struct sm6_block *block = vkd3d_calloc(1, sizeof(*block));
     return block;
+}
+
+static void sm6_parser_emit_dx_load_input(struct sm6_parser *sm6, struct sm6_block *code_block,
+        enum dx_intrinsic_opcode op, const struct sm6_value **operands, struct vkd3d_shader_instruction *ins)
+{
+    struct vkd3d_shader_src_param *src_param;
+    const struct shader_signature *signature;
+    unsigned int row_index, column_index;
+    const struct signature_element *e;
+
+    row_index = sm6_value_get_constant_uint(operands[0]);
+    column_index = sm6_value_get_constant_uint(operands[2]);
+
+    vsir_instruction_init(ins, &sm6->p.location, VKD3DSIH_MOV);
+
+    signature = &sm6->p.shader_desc.input_signature;
+    if (row_index >= signature->element_count)
+    {
+        WARN("Invalid row index %u.\n", row_index);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_OPERAND,
+                "Invalid input row index %u.", row_index);
+        return;
+    }
+    e = &signature->elements[row_index];
+
+    src_param = instruction_src_params_alloc(ins, 1, sm6);
+    src_param->reg = sm6->input_params[row_index].reg;
+    src_param_init_scalar(src_param, column_index);
+    if (e->register_count > 1)
+        register_address_init(&src_param->reg, operands[1], 0, sm6);
+
+    instruction_dst_param_init_ssa_scalar(ins, sm6);
 }
 
 static void sm6_parser_emit_dx_store_output(struct sm6_parser *sm6, struct sm6_block *code_block,
@@ -2190,7 +2293,7 @@ static void sm6_parser_emit_dx_store_output(struct sm6_parser *sm6, struct sm6_b
         return;
     }
 
-    shader_instruction_init(ins, VKD3DSIH_MOV);
+    vsir_instruction_init(ins, &sm6->p.location, VKD3DSIH_MOV);
 
     if (!(dst_param = instruction_dst_params_alloc(ins, 1, sm6)))
         return;
@@ -2219,6 +2322,7 @@ struct sm6_dx_opcode_info
  */
 static const struct sm6_dx_opcode_info sm6_dx_op_table[] =
 {
+    [DX_LOAD_INPUT                    ] = {'o', "ii8i", sm6_parser_emit_dx_load_input},
     [DX_STORE_OUTPUT                  ] = {'v', "ii8o", sm6_parser_emit_dx_store_output},
 };
 
@@ -2292,7 +2396,7 @@ static void sm6_parser_emit_unhandled(struct sm6_parser *sm6, struct vkd3d_shade
         return;
 
     type = sm6_type_get_scalar_type(dst->type, 0);
-    shader_register_init(&dst->u.reg, VKD3DSPR_UNDEF, vkd3d_data_type_from_sm6_type(type), 0);
+    vsir_register_init(&dst->u.reg, VKD3DSPR_UNDEF, vkd3d_data_type_from_sm6_type(type), 0);
     /* dst->is_undefined is not set here because it flags only explicitly undefined values. */
 }
 
@@ -2303,7 +2407,7 @@ static void sm6_parser_decode_dx_op(struct sm6_parser *sm6, struct sm6_block *co
     if (op >= ARRAY_SIZE(sm6_dx_op_table) || !sm6_dx_op_table[op].operand_info)
     {
         FIXME("Unhandled dx intrinsic function id %u, '%s'.\n", op, name);
-        vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_UNHANDLED_INTRINSIC,
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_UNHANDLED_INTRINSIC,
                 "Call to intrinsic function %s is unhandled.", name);
         sm6_parser_emit_unhandled(sm6, ins, dst);
         return;
@@ -2418,11 +2522,11 @@ static enum vkd3d_result sm6_parser_function_init(struct sm6_parser *sm6, const 
         struct sm6_function *function)
 {
     struct vkd3d_shader_instruction *ins;
+    size_t i, block_idx, block_count;
     const struct dxil_record *record;
     bool ret_found, is_terminator;
     struct sm6_block *code_block;
     struct sm6_value *dst;
-    size_t i, block_idx;
 
     if (sm6->function_count)
     {
@@ -2448,12 +2552,12 @@ static enum vkd3d_result sm6_parser_function_init(struct sm6_parser *sm6, const 
         return VKD3D_ERROR_INVALID_SHADER;
     }
 
-    if (!(function->block_count = block->records[0]->operands[0]))
+    if (!(block_count = block->records[0]->operands[0]))
     {
         WARN("Function contains no blocks.\n");
         return VKD3D_ERROR_INVALID_SHADER;
     }
-    if (function->block_count > 1)
+    if (block_count > 1)
     {
         FIXME("Branched shaders are not supported yet.\n");
         return VKD3D_ERROR_INVALID_SHADER;
@@ -2464,6 +2568,7 @@ static enum vkd3d_result sm6_parser_function_init(struct sm6_parser *sm6, const 
         ERR("Failed to allocate code block.\n");
         return VKD3D_ERROR_OUT_OF_MEMORY;
     }
+    function->block_count = block_count;
     code_block = function->blocks[0];
 
     sm6->cur_max_value = function->value_count;
@@ -2683,6 +2788,7 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t 
         const char *source_name, struct vkd3d_shader_message_context *message_context)
 {
     const struct shader_signature *output_signature = &sm6->p.shader_desc.output_signature;
+    const struct shader_signature *input_signature = &sm6->p.shader_desc.input_signature;
     const struct vkd3d_shader_location location = {.source_name = source_name};
     uint32_t version_token, dxil_version, token_count, magic;
     unsigned int chunk_offset, chunk_size;
@@ -2838,11 +2944,12 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t 
         return ret;
     }
 
-    if (!(sm6->output_params = shader_parser_get_dst_params(&sm6->p, output_signature->element_count)))
+    if (!(sm6->output_params = shader_parser_get_dst_params(&sm6->p, output_signature->element_count))
+            || !(sm6->input_params = shader_parser_get_dst_params(&sm6->p, input_signature->element_count)))
     {
-        ERR("Failed to allocate output parameters.\n");
+        ERR("Failed to allocate input/output parameters.\n");
         vkd3d_shader_error(message_context, &location, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
-                "Out of memory allocating output parameters.");
+                "Out of memory allocating input/output parameters.");
         return VKD3D_ERROR_OUT_OF_MEMORY;
     }
 
@@ -2869,6 +2976,7 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t 
                 "Out of memory allocating DXIL value array.");
         return VKD3D_ERROR_OUT_OF_MEMORY;
     }
+    sm6->ssa_next_id = 1;
 
     if ((ret = sm6_parser_globals_init(sm6)) < 0)
     {
@@ -2877,6 +2985,7 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t 
     }
 
     sm6_parser_init_output_signature(sm6, output_signature);
+    sm6_parser_init_input_signature(sm6, input_signature);
 
     if ((ret = sm6_parser_module_init(sm6, &sm6->root_block, 0)) < 0)
     {
@@ -2889,13 +2998,16 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t 
         return ret;
     }
 
-    if (!sm6_parser_require_space(sm6, output_signature->element_count))
+    if (!sm6_parser_require_space(sm6, output_signature->element_count + input_signature->element_count))
     {
         vkd3d_shader_error(message_context, &location, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
                 "Out of memory emitting shader signature declarations.");
         return VKD3D_ERROR_OUT_OF_MEMORY;
     }
     sm6_parser_emit_output_signature(sm6, output_signature);
+    sm6_parser_emit_input_signature(sm6, input_signature);
+
+    sm6->p.shader_desc.ssa_count = sm6->ssa_next_id;
 
     for (i = 0; i < sm6->function_count; ++i)
     {
@@ -2919,6 +3031,8 @@ int vkd3d_shader_sm6_parser_create(const struct vkd3d_shader_compile_info *compi
     uint32_t *byte_code = NULL;
     struct sm6_parser *sm6;
     int ret;
+
+    ERR("Creating a DXIL parser. This is unsupported; you get to keep all the pieces if it breaks.\n");
 
     if (!(sm6 = vkd3d_calloc(1, sizeof(*sm6))))
     {
@@ -2952,6 +3066,12 @@ int vkd3d_shader_sm6_parser_create(const struct vkd3d_shader_compile_info *compi
     ret = sm6_parser_init(sm6, byte_code ? byte_code : shader_desc->byte_code, shader_desc->byte_code_size,
             compile_info->source_name, message_context);
     vkd3d_free(byte_code);
+
+    if (!sm6->p.failed && ret >= 0)
+        vsir_validate(&sm6->p);
+
+    if (sm6->p.failed && ret >= 0)
+        ret = VKD3D_ERROR_INVALID_SHADER;
 
     if (ret < 0)
     {

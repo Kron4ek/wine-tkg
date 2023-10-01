@@ -2651,7 +2651,7 @@ static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filena
     int i;
     off_t pos;
     struct stat st;
-    char *header_end, *header_start;
+    char *header_end;
     char *ptr = view->base;
     SIZE_T header_size, total_size = view->size;
 
@@ -2669,12 +2669,12 @@ static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filena
     header_end = ptr + ROUND_SIZE( 0, header_size );
     memset( ptr + header_size, 0, header_end - (ptr + header_size) );
     if ((char *)(nt + 1) > header_end) return status;
-    header_start = (char*)&nt->OptionalHeader+nt->FileHeader.SizeOfOptionalHeader;
     if (nt->FileHeader.NumberOfSections > ARRAY_SIZE( sections )) return status;
-    if (header_start + sizeof(*sections) * nt->FileHeader.NumberOfSections > header_end) return status;
+    sec = IMAGE_FIRST_SECTION( nt );
+    if ((char *)(sec + nt->FileHeader.NumberOfSections) > header_end) return status;
     /* Some applications (e.g. the Steam version of Borderlands) map over the top of the section headers,
      * copying the headers into local memory is necessary to properly load such applications. */
-    memcpy(sections, header_start, sizeof(*sections) * nt->FileHeader.NumberOfSections);
+    memcpy(sections, sec, sizeof(*sections) * nt->FileHeader.NumberOfSections);
     sec = sections;
 
     imports = nt->OptionalHeader.DataDirectory + IMAGE_DIRECTORY_ENTRY_IMPORT;
@@ -3342,7 +3342,7 @@ NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_nam
         /* The PE header is always read-only, no write, no execute. */
         set_page_vprot( base, page_size, VPROT_COMMITTED | VPROT_READ );
 
-        sec = (IMAGE_SECTION_HEADER *)((char *)&nt->OptionalHeader + nt->FileHeader.SizeOfOptionalHeader);
+        sec = IMAGE_FIRST_SECTION( nt );
         for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
         {
             BYTE flags = VPROT_COMMITTED;
@@ -3434,19 +3434,6 @@ static TEB *init_teb( void *ptr, BOOL is_wow )
     return teb;
 }
 
-BOOL CDECL __wine_needs_override_large_address_aware(void)
-{
-    static int needs_override = -1;
-
-    if (needs_override == -1)
-    {
-        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
-
-        needs_override = !str || atoi(str) == 1;
-    }
-    return needs_override;
-}
-
 
 /***********************************************************************
  *           virtual_alloc_first_teb
@@ -3531,11 +3518,6 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb )
         server_leave_uninterrupted_section( &virtual_mutex, &sigset );
     }
     return status;
-}
-
-NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args )
-{
-    return __wine_needs_override_large_address_aware();
 }
 
 
@@ -4197,12 +4179,6 @@ void virtual_set_force_exec( BOOL enable )
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 }
 
-struct free_range
-{
-    char *base;
-    char *limit;
-};
-
 /* free reserved areas within a given range */
 static void free_reserved_memory( char *base, char *limit )
 {
@@ -4229,6 +4205,8 @@ static void free_reserved_memory( char *base, char *limit )
     }
 }
 
+#ifndef _WIN64
+
 /***********************************************************************
  *           virtual_release_address_space
  *
@@ -4236,32 +4214,13 @@ static void free_reserved_memory( char *base, char *limit )
  */
 static void virtual_release_address_space(void)
 {
-    char *base = (char *)0x82000000;
-    char *limit = get_wow_user_space_limit();
-
-#if defined(__APPLE__) && !defined(__i386__)
-    /* On 64-bit macOS, don't release any address space.
-     * It needs to be reserved for use by Wow64
-     */
-    return;
+#ifndef __APPLE__  /* On macOS, we still want to free some of low memory, for OpenGL resources */
+    if (user_space_limit > (void *)limit_2g) return;
 #endif
-
-    if (limit > (char *)0xfffff000) return;  /* 64-bit limit, nothing to do */
-
-    if (limit > base)
-    {
-        free_reserved_memory( base, limit );
-#ifdef __APPLE__
-        /* On macOS, we still want to free some of low memory, for OpenGL resources */
-        base = (char *)0x40000000;
-#else
-        return;
-#endif
-    }
-    else base = (char *)0x20000000;
-
-    free_reserved_memory( base, (char *)0x7f000000 );
+    free_reserved_memory( (char *)0x20000000, (char *)0x7f000000 );
 }
+
+#endif  /* _WIN64 */
 
 
 /***********************************************************************
@@ -4271,9 +4230,20 @@ static void virtual_release_address_space(void)
  */
 void virtual_set_large_address_space(void)
 {
-    /* no large address space on win9x */
-    if (peb->OSPlatformId != VER_PLATFORM_WIN32_NT) return;
-
+    if (is_win64)
+    {
+        if (is_wow64())
+            user_space_wow_limit = ((main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) ? limit_4g : limit_2g) - 1;
+#ifndef __APPLE__  /* don't free the zerofill section on macOS */
+        else
+            free_reserved_memory( 0, (char *)0x7ffe0000 );
+#endif
+    }
+    else
+    {
+        if (!(main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) return;
+        free_reserved_memory( (char *)0x80000000, address_space_limit );
+    }
     user_space_limit = working_set_limit = address_space_limit;
 }
 
@@ -4646,9 +4616,12 @@ NTSTATUS WINAPI NtFreeVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T *si
     /* avoid freeing the DOS area when a broken app passes a NULL pointer */
     if (!base)
     {
+#ifndef _WIN64
         /* address 1 is magic to mean release reserved space */
         if (addr == (void *)1 && !size && type == MEM_RELEASE) virtual_release_address_space();
-        else status = STATUS_INVALID_PARAMETER;
+        else
+#endif
+        status = STATUS_INVALID_PARAMETER;
     }
     else if (!(view = find_view( base, 0 ))) status = STATUS_MEMORY_NOT_ALLOCATED;
     else if (!is_view_valloc( view )) status = STATUS_INVALID_PARAMETER;

@@ -408,24 +408,40 @@ static const IHTMLAreaElementVtbl HTMLAreaElementVtbl = {
     HTMLAreaElement_blur
 };
 
-static inline HTMLAreaElement *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
+static inline HTMLAreaElement *impl_from_DispatchEx(DispatchEx *iface)
 {
-    return CONTAINING_RECORD(iface, HTMLAreaElement, element.node);
+    return CONTAINING_RECORD(iface, HTMLAreaElement, element.node.event_target.dispex);
 }
 
-static void *HTMLAreaElement_QI(HTMLDOMNode *iface, REFIID riid)
+static void *HTMLAreaElement_query_interface(DispatchEx *dispex, REFIID riid)
 {
-    HTMLAreaElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLAreaElement *This = impl_from_DispatchEx(dispex);
 
     if(IsEqualGUID(&IID_IHTMLAreaElement, riid))
         return &This->IHTMLAreaElement_iface;
 
-    return HTMLElement_QI(&This->element.node, riid);
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
 }
 
-static HRESULT HTMLAreaElement_handle_event(HTMLDOMNode *iface, DWORD eid, nsIDOMEvent *event, BOOL *prevent_default)
+static void HTMLAreaElement_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
 {
-    HTMLAreaElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLAreaElement *This = impl_from_DispatchEx(dispex);
+    HTMLDOMNode_traverse(dispex, cb);
+
+    if(This->nsarea)
+        note_cc_edge((nsISupports*)This->nsarea, "nsarea", cb);
+}
+
+static void HTMLAreaElement_unlink(DispatchEx *dispex)
+{
+    HTMLAreaElement *This = impl_from_DispatchEx(dispex);
+    HTMLDOMNode_unlink(dispex);
+    unlink_ref(&This->nsarea);
+}
+
+static HRESULT HTMLAreaElement_handle_event(DispatchEx *dispex, eventid_t eid, nsIDOMEvent *event, BOOL *prevent_default)
+{
+    HTMLAreaElement *This = impl_from_DispatchEx(dispex);
     nsAString href_str, target_str;
     nsresult nsres;
 
@@ -451,47 +467,26 @@ fallback:
         nsAString_Finish(&target_str);
     }
 
-    return HTMLElement_handle_event(&This->element.node, eid, event, prevent_default);
-}
-
-static inline HTMLAreaElement *impl_from_DispatchEx(DispatchEx *iface)
-{
-    return CONTAINING_RECORD(iface, HTMLAreaElement, element.node.event_target.dispex);
-}
-
-static void HTMLAreaElement_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
-{
-    HTMLAreaElement *This = impl_from_DispatchEx(dispex);
-    HTMLDOMNode_traverse(dispex, cb);
-
-    if(This->nsarea)
-        note_cc_edge((nsISupports*)This->nsarea, "nsarea", cb);
-}
-
-static void HTMLAreaElement_unlink(DispatchEx *dispex)
-{
-    HTMLAreaElement *This = impl_from_DispatchEx(dispex);
-    HTMLDOMNode_unlink(dispex);
-    unlink_ref(&This->nsarea);
+    return HTMLElement_handle_event(&This->element.node.event_target.dispex, eid, event, prevent_default);
 }
 
 static const NodeImplVtbl HTMLAreaElementImplVtbl = {
     .clsid                 = &CLSID_HTMLAreaElement,
-    .qi                    = HTMLAreaElement_QI,
-    .destructor            = HTMLElement_destructor,
     .cpc_entries           = HTMLElement_cpc,
     .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLAreaElement_handle_event,
     .get_attr_col          = HTMLElement_get_attr_col,
 };
 
 static const event_target_vtbl_t HTMLAreaElement_event_target_vtbl = {
     {
         HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLAreaElement_query_interface,
+        .destructor     = HTMLElement_destructor,
         .traverse       = HTMLAreaElement_traverse,
         .unlink         = HTMLAreaElement_unlink
     },
     HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLAreaElement_handle_event
 };
 
 static const tid_t HTMLAreaElement_iface_tids[] = {

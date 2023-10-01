@@ -701,8 +701,8 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
         } opt;
     } nt;
     off_t pos;
-    int size, opt_size;
-    size_t mz_size, clr_va, clr_size;
+    int size;
+    size_t mz_size, clr_va = 0, clr_size = 0;
     unsigned int i;
 
     /* load the headers */
@@ -716,9 +716,6 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
 
     size = pread( unix_fd, &nt, sizeof(nt), pos );
     if (size < sizeof(nt.Signature) + sizeof(nt.FileHeader)) return STATUS_INVALID_IMAGE_PROTECT;
-    /* zero out Optional header in the case it's not present or partial */
-    opt_size = max( nt.FileHeader.SizeOfOptionalHeader, offsetof( IMAGE_OPTIONAL_HEADER32, CheckSum ));
-    size = min( size, sizeof(nt.Signature) + sizeof(nt.FileHeader) + opt_size );
     if (size < sizeof(nt)) memset( (char *)&nt + size, 0, sizeof(nt) - size );
     if (nt.Signature != IMAGE_NT_SIGNATURE)
     {
@@ -735,9 +732,20 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
         if (!is_machine_32bit( nt.FileHeader.Machine )) return STATUS_INVALID_IMAGE_FORMAT;
         if (!is_machine_supported( nt.FileHeader.Machine )) return STATUS_INVALID_IMAGE_FORMAT;
 
-        clr_va = nt.opt.hdr32.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress;
-        clr_size = nt.opt.hdr32.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].Size;
-
+        if (nt.FileHeader.Machine != IMAGE_FILE_MACHINE_I386)  /* non-x86 platforms are more strict */
+        {
+            if (nt.opt.hdr32.SectionAlignment & page_mask)
+                return STATUS_INVALID_IMAGE_FORMAT;
+            if (!(nt.opt.hdr32.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_NX_COMPAT))
+                return STATUS_INVALID_IMAGE_FORMAT;
+            if (!(nt.opt.hdr32.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE))
+                return STATUS_INVALID_IMAGE_FORMAT;
+        }
+        if (nt.opt.hdr32.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR)
+        {
+            clr_va = nt.opt.hdr32.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress;
+            clr_size = nt.opt.hdr32.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].Size;
+        }
         mapping->image.base            = nt.opt.hdr32.ImageBase;
         mapping->image.entry_point     = nt.opt.hdr32.AddressOfEntryPoint;
         mapping->image.map_size        = ROUND_SIZE( nt.opt.hdr32.SizeOfImage );
@@ -757,7 +765,7 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
         mapping->image.image_flags     = 0;
         if (nt.opt.hdr32.SectionAlignment & page_mask)
             mapping->image.image_flags |= IMAGE_FLAGS_ImageMappedFlat;
-        if ((nt.opt.hdr32.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) &&
+        else if ((nt.opt.hdr32.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) &&
             mapping->image.contains_code && !(clr_va && clr_size))
             mapping->image.image_flags |= IMAGE_FLAGS_ImageDynamicallyRelocated;
         break;
@@ -767,9 +775,20 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
         if (!is_machine_64bit( nt.FileHeader.Machine )) return STATUS_INVALID_IMAGE_FORMAT;
         if (!is_machine_supported( nt.FileHeader.Machine )) return STATUS_INVALID_IMAGE_FORMAT;
 
-        clr_va = nt.opt.hdr64.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress;
-        clr_size = nt.opt.hdr64.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].Size;
-
+        if (nt.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64)  /* non-x86 platforms are more strict */
+        {
+            if (nt.opt.hdr64.SectionAlignment & page_mask)
+                return STATUS_INVALID_IMAGE_FORMAT;
+            if (!(nt.opt.hdr64.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_NX_COMPAT))
+                return STATUS_INVALID_IMAGE_FORMAT;
+            if (!(nt.opt.hdr64.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE))
+                return STATUS_INVALID_IMAGE_FORMAT;
+        }
+        if (nt.opt.hdr64.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR)
+        {
+            clr_va = nt.opt.hdr64.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress;
+            clr_size = nt.opt.hdr64.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].Size;
+        }
         mapping->image.base            = nt.opt.hdr64.ImageBase;
         mapping->image.entry_point     = nt.opt.hdr64.AddressOfEntryPoint;
         mapping->image.map_size        = ROUND_SIZE( nt.opt.hdr64.SizeOfImage );
@@ -789,7 +808,7 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
         mapping->image.image_flags     = 0;
         if (nt.opt.hdr64.SectionAlignment & page_mask)
             mapping->image.image_flags |= IMAGE_FLAGS_ImageMappedFlat;
-        if ((nt.opt.hdr64.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) &&
+        else if ((nt.opt.hdr64.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) &&
             mapping->image.contains_code && !(clr_va && clr_size))
             mapping->image.image_flags |= IMAGE_FLAGS_ImageDynamicallyRelocated;
         break;

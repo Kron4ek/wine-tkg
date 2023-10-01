@@ -454,6 +454,25 @@ static void init_scan_signature_info(const struct vkd3d_shader_compile_info *inf
     }
 }
 
+static const struct vkd3d_debug_option vkd3d_shader_config_options[] =
+{
+    {"force_validation", VKD3D_SHADER_CONFIG_FLAG_FORCE_VALIDATION}, /* force validation of internal shader representations */
+};
+
+static uint64_t vkd3d_shader_init_config_flags(void)
+{
+    uint64_t config_flags;
+    const char *config;
+
+    config = getenv("VKD3D_SHADER_CONFIG");
+    config_flags = vkd3d_parse_debug_options(config, vkd3d_shader_config_options, ARRAY_SIZE(vkd3d_shader_config_options));
+
+    if (config_flags)
+        TRACE("VKD3D_SHADER_CONFIG='%s'.\n", config);
+
+    return config_flags;
+}
+
 bool vkd3d_shader_parser_init(struct vkd3d_shader_parser *parser,
         struct vkd3d_shader_message_context *message_context, const char *source_name,
         const struct vkd3d_shader_version *version, const struct vkd3d_shader_parser_ops *ops,
@@ -465,6 +484,7 @@ bool vkd3d_shader_parser_init(struct vkd3d_shader_parser *parser,
     parser->location.column = 0;
     parser->shader_version = *version;
     parser->ops = ops;
+    parser->config_flags = vkd3d_shader_init_config_flags();
     return shader_instruction_array_init(&parser->instructions, instruction_reserve);
 }
 
@@ -1647,7 +1667,9 @@ const enum vkd3d_shader_source_type *vkd3d_shader_get_supported_source_types(uns
         VKD3D_SHADER_SOURCE_DXBC_TPF,
         VKD3D_SHADER_SOURCE_HLSL,
         VKD3D_SHADER_SOURCE_D3D_BYTECODE,
+#ifdef VKD3D_SHADER_UNSUPPORTED_DXIL
         VKD3D_SHADER_SOURCE_DXBC_DXIL,
+#endif
     };
 
     TRACE("count %p.\n", count);
@@ -1686,7 +1708,9 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
 
     switch (source_type)
     {
+#ifdef VKD3D_SHADER_UNSUPPORTED_DXIL
         case VKD3D_SHADER_SOURCE_DXBC_DXIL:
+#endif
         case VKD3D_SHADER_SOURCE_DXBC_TPF:
             *count = ARRAY_SIZE(dxbc_tpf_types);
             return dxbc_tpf_types;
@@ -1749,7 +1773,7 @@ static struct vkd3d_shader_param_node *shader_param_allocator_node_create(
 static void shader_param_allocator_init(struct vkd3d_shader_param_allocator *allocator,
         unsigned int count, unsigned int stride)
 {
-    allocator->count = max(count, 4);
+    allocator->count = max(count, MAX_REG_OUTPUT);
     allocator->stride = stride;
     allocator->head = NULL;
     allocator->current = NULL;

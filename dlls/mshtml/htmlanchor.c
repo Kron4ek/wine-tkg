@@ -792,28 +792,40 @@ static const IHTMLAnchorElementVtbl HTMLAnchorElementVtbl = {
     HTMLAnchorElement_blur
 };
 
-static inline HTMLAnchorElement *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
+static inline HTMLAnchorElement *impl_from_DispatchEx(DispatchEx *iface)
 {
-    return CONTAINING_RECORD(iface, HTMLAnchorElement, element.node);
+    return CONTAINING_RECORD(iface, HTMLAnchorElement, element.node.event_target.dispex);
 }
 
-static void *HTMLAnchorElement_QI(HTMLDOMNode *iface, REFIID riid)
+static void *HTMLAnchorElement_query_interface(DispatchEx *dispex, REFIID riid)
 {
-    HTMLAnchorElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLAnchorElement *This = impl_from_DispatchEx(dispex);
 
-    if(IsEqualGUID(&IID_IUnknown, riid))
-        return &This->IHTMLAnchorElement_iface;
-    if(IsEqualGUID(&IID_IDispatch, riid))
-        return &This->IHTMLAnchorElement_iface;
     if(IsEqualGUID(&IID_IHTMLAnchorElement, riid))
         return &This->IHTMLAnchorElement_iface;
 
-    return HTMLElement_QI(&This->element.node, riid);
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
 }
 
-static HRESULT HTMLAnchorElement_handle_event(HTMLDOMNode *iface, DWORD eid, nsIDOMEvent *event, BOOL *prevent_default)
+static void HTMLAnchorElement_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
 {
-    HTMLAnchorElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLAnchorElement *This = impl_from_DispatchEx(dispex);
+    HTMLDOMNode_traverse(dispex, cb);
+
+    if(This->nsanchor)
+        note_cc_edge((nsISupports*)This->nsanchor, "nsanchor", cb);
+}
+
+static void HTMLAnchorElement_unlink(DispatchEx *dispex)
+{
+    HTMLAnchorElement *This = impl_from_DispatchEx(dispex);
+    HTMLDOMNode_unlink(dispex);
+    unlink_ref(&This->nsanchor);
+}
+
+static HRESULT HTMLAnchorElement_handle_event(DispatchEx *dispex, eventid_t eid, nsIDOMEvent *event, BOOL *prevent_default)
+{
+    HTMLAnchorElement *This = impl_from_DispatchEx(dispex);
     nsAString href_str, target_str;
     nsresult nsres;
 
@@ -839,47 +851,26 @@ fallback:
         nsAString_Finish(&target_str);
     }
 
-    return HTMLElement_handle_event(&This->element.node, eid, event, prevent_default);
-}
-
-static inline HTMLAnchorElement *impl_from_DispatchEx(DispatchEx *iface)
-{
-    return CONTAINING_RECORD(iface, HTMLAnchorElement, element.node.event_target.dispex);
-}
-
-static void HTMLAnchorElement_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
-{
-    HTMLAnchorElement *This = impl_from_DispatchEx(dispex);
-    HTMLDOMNode_traverse(dispex, cb);
-
-    if(This->nsanchor)
-        note_cc_edge((nsISupports*)This->nsanchor, "nsanchor", cb);
-}
-
-static void HTMLAnchorElement_unlink(DispatchEx *dispex)
-{
-    HTMLAnchorElement *This = impl_from_DispatchEx(dispex);
-    HTMLDOMNode_unlink(dispex);
-    unlink_ref(&This->nsanchor);
+    return HTMLElement_handle_event(&This->element.node.event_target.dispex, eid, event, prevent_default);
 }
 
 static const NodeImplVtbl HTMLAnchorElementImplVtbl = {
     .clsid                 = &CLSID_HTMLAnchorElement,
-    .qi                    = HTMLAnchorElement_QI,
-    .destructor            = HTMLElement_destructor,
     .cpc_entries           = HTMLElement_cpc,
     .clone                 = HTMLElement_clone,
-    .handle_event          = HTMLAnchorElement_handle_event,
     .get_attr_col          = HTMLElement_get_attr_col,
 };
 
 static const event_target_vtbl_t HTMLAnchorElement_event_target_vtbl = {
     {
         HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLAnchorElement_query_interface,
+        .destructor     = HTMLElement_destructor,
         .traverse       = HTMLAnchorElement_traverse,
         .unlink         = HTMLAnchorElement_unlink
     },
     HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLAnchorElement_handle_event
 };
 
 static const tid_t HTMLAnchorElement_iface_tids[] = {

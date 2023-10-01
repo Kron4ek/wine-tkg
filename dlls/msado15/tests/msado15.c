@@ -59,7 +59,7 @@ static void test_Recordset(void)
     CursorTypeEnum cursor;
     BSTR name;
     HRESULT hr;
-    VARIANT bookmark, filter;
+    VARIANT bookmark, filter, active;
     EditModeEnum editmode;
 
     hr = CoCreateInstance( &CLSID_Recordset, NULL, CLSCTX_INPROC_SERVER, &IID__Recordset, (void **)&recordset );
@@ -222,6 +222,18 @@ static void test_Recordset(void)
     ok( is_eof( recordset ), "not eof\n" );
     ok( is_bof( recordset ), "not bof\n" );
 
+if (0)
+{   /* Causes a crash */
+    hr = _Recordset_get_ActiveConnection( recordset, NULL );
+}
+
+    VariantInit(&active);
+    hr = _Recordset_get_ActiveConnection( recordset, &active );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( V_VT(&active) == VT_DISPATCH, "got %d\n", V_VT(&active) );
+    ok( V_DISPATCH(&active) == NULL, "got %p\n", V_DISPATCH(&active) );
+    VariantClear(&active);
+
     editmode = -1;
     hr = _Recordset_get_EditMode( recordset, &editmode );
     ok( hr == MAKE_ADO_HRESULT( adErrNoCurrentRecord ), "got %08lx\n", hr );
@@ -255,7 +267,7 @@ static void test_Recordset(void)
     editmode = -1;
     hr = _Recordset_get_EditMode( recordset, &editmode );
     ok( hr == S_OK, "got %08lx\n", hr );
-    todo_wine ok( editmode == adEditAdd, "got %d\n", editmode );
+    ok( editmode == adEditAdd, "got %d\n", editmode );
 
     rec_count = -1;
     hr = _Recordset_get_RecordCount( recordset, &rec_count );
@@ -304,6 +316,23 @@ static void test_Recordset(void)
     ok( hr == S_OK, "got %08lx\n", hr );
     ok( V_VT( &val ) == VT_I4, "got %u\n", V_VT( &val ) );
     ok( V_I4( &val ) == -1, "got %ld\n", V_I4( &val ) );
+
+    /* Update/Cancel doesn't update EditMode when no active connection. */
+    hr = _Recordset_Update( recordset, missing, missing );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    editmode = -1;
+    hr = _Recordset_get_EditMode( recordset, &editmode );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( editmode == adEditAdd, "got %d\n", editmode );
+
+    hr = _Recordset_Cancel( recordset );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    editmode = -1;
+    hr = _Recordset_get_EditMode( recordset, &editmode );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( editmode == adEditAdd, "got %d\n", editmode );
 
     hr = _Recordset_AddNew( recordset, missing, missing );
     ok( hr == S_OK, "got %08lx\n", hr );
