@@ -966,6 +966,9 @@ static void test_intconversions(void)
     hr = PropVariantToUInt32(&propvar, &ulval);
     ok(hr == HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW), "hr=%lx\n", hr);
 
+    ulval = PropVariantToUInt32WithDefault(&propvar, 77);
+    ok(ulval == 77, "ulval=%lu\n", ulval);
+
     hr = PropVariantToInt16(&propvar, &sval);
     ok(hr == HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW), "hr=%lx\n", hr);
 
@@ -991,6 +994,9 @@ static void test_intconversions(void)
     ok(hr == S_OK, "hr=%lx\n", hr);
     ok(ulval == 5, "got wrong value %ld\n", ulval);
 
+    ulval = PropVariantToUInt32WithDefault(&propvar, 77);
+    ok(ulval == 5, "got wrong value %lu\n", ulval);
+
     hr = PropVariantToInt16(&propvar, &sval);
     ok(hr == S_OK, "hr=%lx\n", hr);
     ok(sval == 5, "got wrong value %d\n", sval);
@@ -1015,6 +1021,9 @@ static void test_intconversions(void)
 
     hr = PropVariantToUInt32(&propvar, &ulval);
     ok(hr == HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW), "hr=%lx\n", hr);
+
+    ulval = PropVariantToUInt32WithDefault(&propvar, 77);
+    ok(ulval == 77, "ulval=%lu\n", ulval);
 
     hr = PropVariantToInt16(&propvar, &sval);
     ok(hr == S_OK, "hr=%lx\n", hr);
@@ -2277,6 +2286,42 @@ static void test_VariantToStringWithDefault(void)
     SysFreeString(b);
 }
 
+static void test_VariantToString(void)
+{
+    HRESULT hr;
+    VARIANT v;
+    WCHAR buff[64];
+
+    buff[0] = 1;
+    V_VT(&v) = VT_EMPTY;
+    hr = VariantToString(&v, buff, 64);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!buff[0], "Unexpected buffer.\n");
+
+    buff[0] = 0;
+    V_VT(&v) = VT_I4;
+    V_I4(&v) = 567;
+    hr = VariantToString(&v, buff, 64);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buff, L"567"), "Unexpected buffer %s.\n", wine_dbgstr_w(buff));
+
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = SysAllocString(L"test1");
+
+    buff[0] = 1;
+    hr = VariantToString(&v, buff, 0);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(!buff[0], "Unexpected buffer.\n");
+
+    hr = VariantToString(&v, buff, 5);
+    ok(hr == STRSAFE_E_INSUFFICIENT_BUFFER, "Unexpected hr %#lx.\n", hr);
+    hr = VariantToString(&v, buff, 6);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buff, L"test1"), "Unexpected string.\n");
+    VariantClear(&v);
+}
+
 START_TEST(propsys)
 {
     test_InitPropVariantFromGUIDAsString();
@@ -2304,4 +2349,5 @@ START_TEST(propsys)
     test_propertystore();
     test_PSCreatePropertyStoreFromObject();
     test_VariantToStringWithDefault();
+    test_VariantToString();
 }

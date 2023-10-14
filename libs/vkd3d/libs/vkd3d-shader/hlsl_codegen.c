@@ -97,7 +97,7 @@ static struct hlsl_ir_node *new_offset_from_path_index(struct hlsl_ctx *ctx, str
 static struct hlsl_ir_node *new_offset_instr_from_deref(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_deref *deref, const struct vkd3d_shader_location *loc)
 {
-    enum hlsl_regset regset = hlsl_type_get_regset(deref->data_type);
+    enum hlsl_regset regset = hlsl_deref_get_regset(ctx, deref);
     struct hlsl_ir_node *offset = NULL;
     struct hlsl_type *type;
     unsigned int i;
@@ -377,6 +377,8 @@ static void prepend_input_copy_recurse(struct hlsl_ctx *ctx, struct hlsl_block *
 
         for (i = 0; i < hlsl_type_element_count(type); ++i)
         {
+            unsigned int element_modifiers = modifiers;
+
             if (type->class == HLSL_CLASS_ARRAY)
             {
                 elem_semantic_index = semantic_index
@@ -391,6 +393,17 @@ static void prepend_input_copy_recurse(struct hlsl_ctx *ctx, struct hlsl_block *
                 semantic = &field->semantic;
                 elem_semantic_index = semantic->index;
                 loc = &field->loc;
+                element_modifiers |= field->storage_modifiers;
+
+                /* TODO: 'sample' modifier is not supported yet */
+
+                /* 'nointerpolation' always takes precedence, next the same is done for 'sample',
+                   remaining modifiers are combined. */
+                if (element_modifiers & HLSL_STORAGE_NOINTERPOLATION)
+                {
+                    element_modifiers &= ~HLSL_INTERPOLATION_MODIFIERS_MASK;
+                    element_modifiers |= HLSL_STORAGE_NOINTERPOLATION;
+                }
             }
 
             if (!(c = hlsl_new_uint_constant(ctx, i, &var->loc)))
@@ -402,7 +415,7 @@ static void prepend_input_copy_recurse(struct hlsl_ctx *ctx, struct hlsl_block *
                 return;
             list_add_after(&c->entry, &element_load->node.entry);
 
-            prepend_input_copy_recurse(ctx, block, element_load, modifiers, semantic, elem_semantic_index);
+            prepend_input_copy_recurse(ctx, block, element_load, element_modifiers, semantic, elem_semantic_index);
         }
     }
     else
@@ -2062,6 +2075,25 @@ static bool remove_trivial_swizzles(struct hlsl_ctx *ctx, struct hlsl_ir_node *i
     return true;
 }
 
+static bool remove_trivial_conditional_branches(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
+{
+    struct hlsl_ir_constant *condition;
+    struct hlsl_ir_if *iff;
+
+    if (instr->type != HLSL_IR_IF)
+        return false;
+    iff = hlsl_ir_if(instr);
+    if (iff->condition.node->type != HLSL_IR_CONSTANT)
+        return false;
+    condition = hlsl_ir_constant(iff->condition.node);
+
+    list_move_before(&instr->entry, condition->value.u[0].u ? &iff->then_block.instrs : &iff->else_block.instrs);
+    list_remove(&instr->entry);
+    hlsl_free_instr(instr);
+
+    return true;
+}
+
 static bool lower_nonconstant_vector_derefs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct hlsl_block *block)
 {
     struct hlsl_ir_node *idx;
@@ -2177,7 +2209,7 @@ static bool lower_combined_samples(struct hlsl_ctx *ctx, struct hlsl_ir_node *in
         return false;
     }
 
-    assert(hlsl_type_get_regset(load->resource.var->data_type) == HLSL_REGSET_SAMPLERS);
+    assert(hlsl_deref_get_regset(ctx, &load->resource) == HLSL_REGSET_SAMPLERS);
 
     if (!(name = hlsl_get_string_buffer(ctx)))
         return false;
@@ -2968,31 +3000,39 @@ static void allocate_register_reservations(struct hlsl_ctx *ctx)
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
-        enum hlsl_regset regset;
+        unsigned int r;
 
         if (!hlsl_type_is_resource(var->data_type))
             continue;
-        regset = hlsl_type_get_regset(var->data_type);
 
-        if (var->reg_reservation.reg_type && var->regs[regset].allocation_size)
+        if (var->reg_reservation.reg_type)
         {
-            if (var->reg_reservation.reg_type != get_regset_name(regset))
+            for (r = 0; r <= HLSL_REGSET_LAST_OBJECT; ++r)
             {
-                struct vkd3d_string_buffer *type_string;
+                if (var->regs[r].allocation_size > 0)
+                {
+                    if (var->reg_reservation.reg_type != get_regset_name(r))
+                    {
+                        struct vkd3d_string_buffer *type_string;
 
-                type_string = hlsl_type_to_string(ctx, var->data_type);
-                hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
-                        "Object of type '%s' must be bound to register type '%c'.",
-                        type_string->buffer, get_regset_name(regset));
-                hlsl_release_string_buffer(ctx, type_string);
-            }
-            else
-            {
-                var->regs[regset].allocated = true;
-                var->regs[regset].id = var->reg_reservation.reg_index;
-                TRACE("Allocated reserved %s to %c%u-%c%u.\n", var->name, var->reg_reservation.reg_type,
-                        var->reg_reservation.reg_index, var->reg_reservation.reg_type,
-                        var->reg_reservation.reg_index + var->regs[regset].allocation_size);
+                        /* We can throw this error because resources can only span across a single
+                         * regset, but we have to check for multiple regsets if we support register
+                         * reservations for structs for SM5. */
+                        type_string = hlsl_type_to_string(ctx, var->data_type);
+                        hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                                "Object of type '%s' must be bound to register type '%c'.",
+                                type_string->buffer, get_regset_name(r));
+                        hlsl_release_string_buffer(ctx, type_string);
+                    }
+                    else
+                    {
+                        var->regs[r].allocated = true;
+                        var->regs[r].id = var->reg_reservation.reg_index;
+                        TRACE("Allocated reserved %s to %c%u-%c%u.\n", var->name, var->reg_reservation.reg_type,
+                                var->reg_reservation.reg_index, var->reg_reservation.reg_type,
+                                var->reg_reservation.reg_index + var->regs[r].allocation_size);
+                    }
+                }
             }
         }
     }
@@ -3331,7 +3371,7 @@ static bool track_object_components_sampler_dim(struct hlsl_ctx *ctx, struct hls
     load = hlsl_ir_resource_load(instr);
     var = load->resource.var;
 
-    regset = hlsl_type_get_regset(hlsl_deref_get_type(ctx, &load->resource));
+    regset = hlsl_deref_get_regset(ctx, &load->resource);
     if (!hlsl_regset_index_from_deref(ctx, &load->resource, regset, &index))
         return false;
 
@@ -3376,7 +3416,8 @@ static bool track_object_components_usage(struct hlsl_ctx *ctx, struct hlsl_ir_n
     load = hlsl_ir_resource_load(instr);
     var = load->resource.var;
 
-    regset = hlsl_type_get_regset(hlsl_deref_get_type(ctx, &load->resource));
+    regset = hlsl_deref_get_regset(ctx, &load->resource);
+
     if (!hlsl_regset_index_from_deref(ctx, &load->resource, regset, &index))
         return false;
 
@@ -3703,7 +3744,7 @@ static void allocate_semantic_register(struct hlsl_ctx *ctx, struct hlsl_ir_var 
                     "Invalid semantic '%s'.", var->semantic.name);
             return;
         }
-        if ((builtin = hlsl_sm4_register_from_semantic(ctx, &var->semantic, output, &type, NULL, &has_idx)))
+        if ((builtin = hlsl_sm4_register_from_semantic(ctx, &var->semantic, output, &type, &has_idx)))
             reg = has_idx ? var->semantic.index : 0;
     }
 
@@ -4183,7 +4224,7 @@ bool hlsl_offset_from_deref(struct hlsl_ctx *ctx, const struct hlsl_deref *deref
         return false;
 
     *offset = hlsl_ir_constant(offset_node)->value.u[0].u;
-    regset = hlsl_type_get_regset(deref->data_type);
+    regset = hlsl_deref_get_regset(ctx, deref);
 
     size = deref->var->data_type->reg_size[regset];
     if (*offset >= size)
@@ -4408,6 +4449,7 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
         progress |= hlsl_copy_propagation_execute(ctx, body);
         progress |= hlsl_transform_ir(ctx, fold_swizzle_chains, body, NULL);
         progress |= hlsl_transform_ir(ctx, remove_trivial_swizzles, body, NULL);
+        progress |= hlsl_transform_ir(ctx, remove_trivial_conditional_branches, body, NULL);
     }
     while (progress);
 

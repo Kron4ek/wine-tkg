@@ -855,7 +855,7 @@ static HRESULT WINAPI msaa_fragment_Navigate(IRawElementProviderFragment *iface,
         else
             acc = msaa_prov->acc;
 
-        hr = create_msaa_provider(acc, CHILDID_SELF, NULL, FALSE, &elprov);
+        hr = create_msaa_provider(acc, CHILDID_SELF, NULL, FALSE, FALSE, &elprov);
         if (SUCCEEDED(hr))
         {
             struct msaa_provider *prov = impl_from_msaa_provider(elprov);
@@ -886,7 +886,7 @@ static HRESULT WINAPI msaa_fragment_Navigate(IRawElementProviderFragment *iface,
         if (FAILED(hr) || !acc)
             break;
 
-        hr = create_msaa_provider(acc, child_id, NULL, FALSE, &elprov);
+        hr = create_msaa_provider(acc, child_id, NULL, FALSE, FALSE, &elprov);
         if (SUCCEEDED(hr))
         {
             struct msaa_provider *prov = impl_from_msaa_provider(elprov);
@@ -936,7 +936,7 @@ static HRESULT WINAPI msaa_fragment_Navigate(IRawElementProviderFragment *iface,
         if (FAILED(hr) || !acc)
             break;
 
-        hr = create_msaa_provider(acc, child_id, NULL, FALSE, &elprov);
+        hr = create_msaa_provider(acc, child_id, NULL, FALSE, FALSE, &elprov);
         if (SUCCEEDED(hr))
         {
             struct msaa_provider *prov = impl_from_msaa_provider(elprov);
@@ -1031,7 +1031,7 @@ static HRESULT WINAPI msaa_fragment_get_FragmentRoot(IRawElementProviderFragment
     if (FAILED(hr) || !acc)
         return hr;
 
-    hr = create_msaa_provider(acc, CHILDID_SELF, msaa_prov->hwnd, TRUE, &elprov);
+    hr = create_msaa_provider(acc, CHILDID_SELF, msaa_prov->hwnd, TRUE, TRUE, &elprov);
     IAccessible_Release(acc);
     if (FAILED(hr))
         return hr;
@@ -1154,7 +1154,7 @@ static HRESULT msaa_acc_get_focus(struct msaa_provider *prov, struct msaa_provid
         }
     }
 
-    hr = create_msaa_provider(focus_acc, focus_cid, hwnd, FALSE, &elprov);
+    hr = create_msaa_provider(focus_acc, focus_cid, hwnd, FALSE, FALSE, &elprov);
     IAccessible_Release(focus_acc);
     if (SUCCEEDED(hr))
         *out_prov = impl_from_msaa_provider(elprov);
@@ -1176,7 +1176,7 @@ static HRESULT WINAPI msaa_fragment_root_GetFocus(IRawElementProviderFragmentRoo
     if (V_I4(&msaa_prov->cid) != CHILDID_SELF)
         return S_OK;
 
-    hr = create_msaa_provider(msaa_prov->acc, CHILDID_SELF, msaa_prov->hwnd, FALSE, &elprov);
+    hr = create_msaa_provider(msaa_prov->acc, CHILDID_SELF, msaa_prov->hwnd, FALSE, FALSE, &elprov);
     if (FAILED(hr))
         return hr;
 
@@ -1440,8 +1440,8 @@ static const IProxyProviderWinEventHandlerVtbl msaa_winevent_handler_vtbl = {
     msaa_winevent_handler_RespondToWinEvent,
 };
 
-HRESULT create_msaa_provider(IAccessible *acc, LONG child_id, HWND hwnd, BOOL known_root_acc,
-        IRawElementProviderSimple **elprov)
+HRESULT create_msaa_provider(IAccessible *acc, LONG child_id, HWND hwnd, BOOL root_acc_known,
+        BOOL is_root_acc, IRawElementProviderSimple **elprov)
 {
     struct msaa_provider *msaa_prov = calloc(1, sizeof(*msaa_prov));
 
@@ -1470,8 +1470,11 @@ HRESULT create_msaa_provider(IAccessible *acc, LONG child_id, HWND hwnd, BOOL kn
     else
         msaa_prov->hwnd = hwnd;
 
-    if (known_root_acc)
-        msaa_prov->root_acc_check_ran = msaa_prov->is_root_acc = TRUE;
+    if (root_acc_known)
+    {
+        msaa_prov->root_acc_check_ran = TRUE;
+        msaa_prov->is_root_acc = is_root_acc;
+    }
 
     *elprov = &msaa_prov->IRawElementProviderSimple_iface;
 
@@ -1515,7 +1518,7 @@ HRESULT WINAPI UiaProviderFromIAccessible(IAccessible *acc, LONG child_id, DWORD
     if (!hwnd)
         return E_FAIL;
 
-    return create_msaa_provider(acc, child_id, hwnd, FALSE, elprov);
+    return create_msaa_provider(acc, child_id, hwnd, FALSE, FALSE, elprov);
 }
 
 static HRESULT uia_get_hr_for_last_error(void)
@@ -1545,11 +1548,6 @@ static HRESULT uia_send_message_timeout(HWND hwnd, UINT msg, WPARAM wparam, LPAR
     return S_OK;
 }
 
-static BOOL is_top_level_hwnd(HWND hwnd)
-{
-    return GetAncestor(hwnd, GA_PARENT) == GetDesktopWindow();
-}
-
 static HRESULT get_uia_control_type_for_hwnd(HWND hwnd, int *control_type)
 {
     LONG_PTR style, ex_style;
@@ -1576,7 +1574,7 @@ static HRESULT get_uia_control_type_for_hwnd(HWND hwnd, int *control_type)
     }
 
     /* Non top-level HWNDs are considered panes as well. */
-    if (!is_top_level_hwnd(hwnd))
+    if (!uia_is_top_level_hwnd(hwnd))
         *control_type = UIA_PaneControlTypeId;
     else
         *control_type = UIA_WindowControlTypeId;
@@ -1816,7 +1814,7 @@ static HRESULT WINAPI base_hwnd_fragment_Navigate(IRawElementProviderFragment *i
          * Top level owned windows have their owner window as a parent instead
          * of the desktop window.
          */
-        if (is_top_level_hwnd(base_hwnd_prov->hwnd) && (owner = GetWindow(base_hwnd_prov->hwnd, GW_OWNER)))
+        if (uia_is_top_level_hwnd(base_hwnd_prov->hwnd) && (owner = GetWindow(base_hwnd_prov->hwnd, GW_OWNER)))
             parent = owner;
         else
             parent = GetAncestor(base_hwnd_prov->hwnd, GA_PARENT);
@@ -1866,7 +1864,7 @@ static HRESULT WINAPI base_hwnd_fragment_get_BoundingRectangle(IRawElementProvid
     memset(ret_val, 0, sizeof(*ret_val));
 
     /* Top level minimized window - Return empty rect. */
-    if (is_top_level_hwnd(base_hwnd_prov->hwnd) && IsIconic(base_hwnd_prov->hwnd))
+    if (uia_is_top_level_hwnd(base_hwnd_prov->hwnd) && IsIconic(base_hwnd_prov->hwnd))
         return S_OK;
 
     if (!GetWindowRect(base_hwnd_prov->hwnd, &rect))
@@ -2280,7 +2278,7 @@ LRESULT WINAPI UiaReturnRawElementProvider(HWND hwnd, WPARAM wparam,
         return 0;
     }
 
-    hr = create_uia_node_from_elprov(elprov, &node, FALSE);
+    hr = create_uia_node_from_elprov(elprov, &node, FALSE, 0);
     if (FAILED(hr))
     {
         WARN("Failed to create HUIANODE with hr %#lx\n", hr);
@@ -2301,7 +2299,7 @@ HRESULT WINAPI UiaDisconnectProvider(IRawElementProviderSimple *elprov)
 
     TRACE("(%p)\n", elprov);
 
-    hr = create_uia_node_from_elprov(elprov, &node, FALSE);
+    hr = create_uia_node_from_elprov(elprov, &node, FALSE, 0);
     if (FAILED(hr))
         return hr;
 

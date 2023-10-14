@@ -2252,7 +2252,7 @@ HRESULT wined3d_context_gl_init(struct wined3d_context_gl *context_gl, struct wi
         /* Set up the previous texture input for all shader units. This applies to bump mapping, and in d3d
          * the previous texture where to source the offset from is always unit - 1.
          */
-        for (i = 1; i < gl_info->limits.textures; ++i)
+        for (i = 1; i < gl_info->limits.ffp_textures; ++i)
         {
             wined3d_context_gl_active_texture(context_gl, gl_info, i);
             gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_SHADER_NV,
@@ -2283,7 +2283,7 @@ HRESULT wined3d_context_gl_init(struct wined3d_context_gl *context_gl, struct wi
 
     if (gl_info->supported[ARB_POINT_SPRITE])
     {
-        for (i = 0; i < gl_info->limits.textures; ++i)
+        for (i = 0; i < gl_info->limits.ffp_textures; ++i)
         {
             wined3d_context_gl_active_texture(context_gl, gl_info, i);
             gl_info->gl_ops.gl.p_glTexEnvi(GL_POINT_SPRITE_ARB, GL_COORD_REPLACE_ARB, GL_TRUE);
@@ -2396,7 +2396,7 @@ const unsigned int *wined3d_context_gl_get_tex_unit_mapping(const struct wined3d
     if (!shader_version)
     {
         *base = 0;
-        *count = WINED3D_MAX_TEXTURES;
+        *count = WINED3D_MAX_FFP_TEXTURES;
         return context_gl->tex_unit_map;
     }
 
@@ -3271,7 +3271,7 @@ void wined3d_context_gl_apply_blit_state(struct wined3d_context_gl *context_gl, 
     sampler = context_gl->rev_tex_unit_map[0];
     if (sampler != WINED3D_UNMAPPED_STAGE)
     {
-        if (sampler < WINED3D_MAX_TEXTURES)
+        if (sampler < WINED3D_MAX_FFP_TEXTURES)
         {
             context_invalidate_state(context, STATE_TRANSFORM(WINED3D_TS_TEXTURE0 + sampler));
             context_invalidate_state(context, STATE_TEXTURESTAGE(sampler, WINED3D_TSS_COLOR_OP));
@@ -3373,7 +3373,7 @@ void wined3d_context_gl_apply_ffp_blit_state(struct wined3d_context_gl *context_
 
     /* Disable all textures. The caller can then bind a texture it wants to blit
      * from. */
-    for (i = gl_info->limits.textures - 1; i > 0 ; --i)
+    for (i = gl_info->limits.ffp_textures - 1; i > 0 ; --i)
     {
         wined3d_context_gl_active_texture(context_gl, gl_info, i);
 
@@ -3389,7 +3389,7 @@ void wined3d_context_gl_apply_ffp_blit_state(struct wined3d_context_gl *context_
         sampler = context_gl->rev_tex_unit_map[i];
         if (sampler != WINED3D_UNMAPPED_STAGE)
         {
-            if (sampler < WINED3D_MAX_TEXTURES)
+            if (sampler < WINED3D_MAX_FFP_TEXTURES)
                 context_invalidate_state(context, STATE_TEXTURESTAGE(sampler, WINED3D_TSS_COLOR_OP));
             context_invalidate_state(context, STATE_SAMPLER(sampler));
         }
@@ -3741,7 +3741,7 @@ static void context_update_fixed_function_usage_map(struct wined3d_context *cont
     UINT i, start, end;
 
     context->fixed_function_usage_map = 0;
-    for (i = 0; i < WINED3D_MAX_TEXTURES; ++i)
+    for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
     {
         enum wined3d_texture_op color_op = state->texture_states[i][WINED3D_TSS_COLOR_OP];
         enum wined3d_texture_op alpha_op = state->texture_states[i][WINED3D_TSS_ALPHA_OP];
@@ -3767,7 +3767,7 @@ static void context_update_fixed_function_usage_map(struct wined3d_context *cont
             context->fixed_function_usage_map |= (1u << i);
 
         if ((color_op == WINED3D_TOP_BUMPENVMAP || color_op == WINED3D_TOP_BUMPENVMAP_LUMINANCE)
-                && i < WINED3D_MAX_TEXTURES - 1)
+                && i < WINED3D_MAX_FFP_TEXTURES - 1)
             context->fixed_function_usage_map |= (1u << (i + 1));
     }
 
@@ -3798,8 +3798,8 @@ static void wined3d_context_gl_map_fixed_function_samplers(struct wined3d_contex
 
     ffu_map = context_gl->c.fixed_function_usage_map;
 
-    if (d3d_info->limits.ffp_textures == d3d_info->limits.ffp_blend_stages
-            || context_gl->c.lowest_disabled_stage <= d3d_info->limits.ffp_textures)
+    if (d3d_info->ffp_fragment_caps.max_textures == d3d_info->ffp_fragment_caps.max_blend_stages
+            || context_gl->c.lowest_disabled_stage <= d3d_info->ffp_fragment_caps.max_textures)
     {
         while (ffu_map)
         {
@@ -3843,7 +3843,7 @@ static void wined3d_context_gl_map_psamplers(struct wined3d_context_gl *context_
         {
             wined3d_context_gl_map_stage(context_gl, i, i);
             context_invalidate_state(&context_gl->c, STATE_SAMPLER(i));
-            if (i < d3d_info->limits.ffp_blend_stages)
+            if (i < d3d_info->ffp_fragment_caps.max_blend_stages)
                 context_invalidate_texture_stage(&context_gl->c, i);
         }
     }
@@ -3865,7 +3865,7 @@ static BOOL wined3d_context_gl_unit_free_for_vs(const struct wined3d_context_gl 
         if (!ps_resource_info)
         {
             /* No pixel shader, check fixed function */
-            return current_mapping >= WINED3D_MAX_TEXTURES
+            return current_mapping >= WINED3D_MAX_FFP_TEXTURES
                     || !(context_gl->c.fixed_function_usage_map & (1u << current_mapping));
         }
 
@@ -4897,7 +4897,7 @@ static void draw_primitive_immediate_mode(struct wined3d_context_gl *context_gl,
         GL_EXTCALL(glSecondaryColor3fEXT)(0.0f, 0.0f, 0.0f);
     }
 
-    texture_stages = d3d_info->limits.ffp_blend_stages;
+    texture_stages = d3d_info->ffp_fragment_caps.max_blend_stages;
     for (texture_idx = 0; texture_idx < texture_stages; ++texture_idx)
     {
         if (!gl_info->supported[ARB_MULTITEXTURE] && texture_idx > 0)
@@ -5363,7 +5363,7 @@ void wined3d_context_gl_load_tex_coords(const struct wined3d_context_gl *context
     unsigned int texture_idx;
     GLuint bo;
 
-    for (texture_idx = 0; texture_idx < context_gl->c.d3d_info->limits.ffp_blend_stages; ++texture_idx)
+    for (texture_idx = 0; texture_idx < context_gl->c.d3d_info->ffp_fragment_caps.max_blend_stages; ++texture_idx)
     {
         unsigned int coord_idx = state->texture_states[texture_idx][WINED3D_TSS_TEXCOORD_INDEX];
 
@@ -5376,7 +5376,7 @@ void wined3d_context_gl_load_tex_coords(const struct wined3d_context_gl *context
             continue;
         }
 
-        if (coord_idx < WINED3D_MAX_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))))
+        if (coord_idx < WINED3D_MAX_FFP_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))))
         {
             const struct wined3d_stream_info_element *e = &si->elements[WINED3D_FFP_TEXCOORD0 + coord_idx];
 
@@ -5409,7 +5409,7 @@ void wined3d_context_gl_load_tex_coords(const struct wined3d_context_gl *context
     if (gl_info->supported[NV_REGISTER_COMBINERS])
     {
         /* The number of the mapped stages increases monotonically, so it's fine to use the last used one. */
-        for (texture_idx = mapped_stage + 1; texture_idx < gl_info->limits.textures; ++texture_idx)
+        for (texture_idx = mapped_stage + 1; texture_idx < gl_info->limits.ffp_textures; ++texture_idx)
         {
             GL_EXTCALL(glMultiTexCoord4fARB(GL_TEXTURE0_ARB + texture_idx, 0, 0, 0, 1));
         }

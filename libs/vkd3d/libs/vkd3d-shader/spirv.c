@@ -3003,8 +3003,10 @@ static bool spirv_compiler_get_register_name(char *buffer, unsigned int buffer_s
             snprintf(buffer, buffer_size, "vicp%u", idx);
             break;
         case VKD3DSPR_OUTPUT:
-        case VKD3DSPR_COLOROUT:
             snprintf(buffer, buffer_size, "o%u", idx);
+            break;
+        case VKD3DSPR_COLOROUT:
+            snprintf(buffer, buffer_size, "oC%u", idx);
             break;
         case VKD3DSPR_DEPTHOUT:
         case VKD3DSPR_DEPTHOUTGE:
@@ -5061,6 +5063,9 @@ static void spirv_compiler_emit_output(struct spirv_compiler *compiler,
 
         if (is_patch_constant)
             location += shader_signature_next_location(&compiler->output_signature);
+        else if (compiler->shader_type == VKD3D_SHADER_TYPE_PIXEL
+                && signature_element->sysval_semantic == VKD3D_SHADER_SV_TARGET)
+            location = signature_element->semantic_index;
 
         id = spirv_compiler_emit_array_variable(compiler, &builder->global_stream,
                 storage_class, component_type, output_component_count, array_sizes, 2);
@@ -5513,13 +5518,14 @@ static void spirv_compiler_emit_push_constant_buffers(struct spirv_compiler *com
 
     struct_id = vkd3d_spirv_build_op_type_struct(builder, member_ids, count);
     vkd3d_spirv_build_op_decorate(builder, struct_id, SpvDecorationBlock, NULL, 0);
-    vkd3d_spirv_build_op_name(builder, struct_id, "push_cb");
+    vkd3d_spirv_build_op_name(builder, struct_id, "push_cb_struct");
     vkd3d_free(member_ids);
 
     pointer_type_id = vkd3d_spirv_get_op_type_pointer(builder, storage_class, struct_id);
     var_id = vkd3d_spirv_build_op_variable(builder, &builder->global_stream,
             pointer_type_id, storage_class, 0);
     compiler->push_constants_var_id = var_id;
+    vkd3d_spirv_build_op_name(builder, var_id, "push_cb");
 
     for (i = 0, j = 0; i < compiler->shader_interface.push_constant_buffer_count; ++i)
     {
@@ -5627,8 +5633,10 @@ static void spirv_compiler_emit_cbv_declaration(struct spirv_compiler *compiler,
     struct vkd3d_symbol reg_symbol;
     unsigned int size;
 
-    vsir_register_init(&reg, VKD3DSPR_CONSTBUFFER, VKD3D_DATA_FLOAT, 1);
+    vsir_register_init(&reg, VKD3DSPR_CONSTBUFFER, VKD3D_DATA_FLOAT, 3);
     reg.idx[0].offset = register_id;
+    reg.idx[1].offset = range->first;
+    reg.idx[2].offset = range->last;
 
     size = size_in_bytes / (VKD3D_VEC4_SIZE * sizeof(uint32_t));
 

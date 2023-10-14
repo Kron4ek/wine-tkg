@@ -25,9 +25,6 @@
 #include "d3dcommon.h"
 #include "d3dx9shader.h"
 
-enum vkd3d_sm4_register_type;
-enum vkd3d_sm4_swizzle_type;
-
 /* The general IR structure is inspired by Mesa GLSL hir, even though the code
  * ends up being quite different in practice. Anyway, here comes the relevant
  * licensing information.
@@ -357,10 +354,15 @@ struct hlsl_attribute
 #define HLSL_STORAGE_IN              0x00000800
 #define HLSL_STORAGE_OUT             0x00001000
 #define HLSL_MODIFIER_INLINE         0x00002000
+#define HLSL_STORAGE_CENTROID        0x00004000
+#define HLSL_STORAGE_NOPERSPECTIVE   0x00008000
 
 #define HLSL_TYPE_MODIFIERS_MASK     (HLSL_MODIFIER_PRECISE | HLSL_MODIFIER_VOLATILE | \
                                       HLSL_MODIFIER_CONST | HLSL_MODIFIER_ROW_MAJOR | \
                                       HLSL_MODIFIER_COLUMN_MAJOR)
+
+#define HLSL_INTERPOLATION_MODIFIERS_MASK (HLSL_STORAGE_NOINTERPOLATION | HLSL_STORAGE_CENTROID | \
+                                           HLSL_STORAGE_NOPERSPECTIVE)
 
 #define HLSL_MODIFIERS_MAJORITY_MASK (HLSL_MODIFIER_ROW_MAJOR | HLSL_MODIFIER_COLUMN_MAJOR)
 
@@ -577,6 +579,10 @@ enum hlsl_ir_jump_type
     HLSL_IR_JUMP_DISCARD_NEG,
     HLSL_IR_JUMP_DISCARD_NZ,
     HLSL_IR_JUMP_RETURN,
+    /* UNRESOLVED_CONTINUE type is used by the parser when 'continue' statement is found,
+       it never reaches code generation, and is resolved to CONTINUE type once iteration
+       and loop exit logic was properly applied. */
+    HLSL_IR_JUMP_UNRESOLVED_CONTINUE,
 };
 
 struct hlsl_ir_jump
@@ -702,6 +708,8 @@ struct hlsl_scope
     struct rb_tree types;
     /* Scope containing this scope. This value is NULL for the global scope. */
     struct hlsl_scope *upper;
+    /* The scope was created for the loop statement. */
+    bool loop;
 };
 
 struct hlsl_profile_info
@@ -1232,13 +1240,12 @@ unsigned int hlsl_type_get_array_element_reg_size(const struct hlsl_type *type, 
 struct hlsl_type *hlsl_type_get_component_type(struct hlsl_ctx *ctx, struct hlsl_type *type,
         unsigned int index);
 unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_type *type,
-        enum hlsl_regset regset, unsigned int index);
+        unsigned int index, enum hlsl_regset *regset);
 bool hlsl_type_is_row_major(const struct hlsl_type *type);
 unsigned int hlsl_type_minor_size(const struct hlsl_type *type);
 unsigned int hlsl_type_major_size(const struct hlsl_type *type);
 unsigned int hlsl_type_element_count(const struct hlsl_type *type);
 bool hlsl_type_is_resource(const struct hlsl_type *type);
-enum hlsl_regset hlsl_type_get_regset(const struct hlsl_type *type);
 unsigned int hlsl_type_get_sm4_offset(const struct hlsl_type *type, unsigned int offset);
 bool hlsl_types_are_equal(const struct hlsl_type *t1, const struct hlsl_type *t2);
 
@@ -1251,6 +1258,7 @@ unsigned int hlsl_map_swizzle(unsigned int swizzle, unsigned int writemask);
 unsigned int hlsl_swizzle_from_writemask(unsigned int writemask);
 
 struct hlsl_type *hlsl_deref_get_type(struct hlsl_ctx *ctx, const struct hlsl_deref *deref);
+enum hlsl_regset hlsl_deref_get_regset(struct hlsl_ctx *ctx, const struct hlsl_deref *deref);
 bool hlsl_component_index_range_from_deref(struct hlsl_ctx *ctx, const struct hlsl_deref *deref,
         unsigned int *start, unsigned int *count);
 bool hlsl_regset_index_from_deref(struct hlsl_ctx *ctx, const struct hlsl_deref *deref,
@@ -1273,7 +1281,7 @@ int hlsl_sm1_write(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_fun
 bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx,
         const struct hlsl_semantic *semantic, bool output, D3D_NAME *usage);
 bool hlsl_sm4_register_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semantic *semantic,
-        bool output, enum vkd3d_shader_register_type *type, enum vkd3d_sm4_swizzle_type *swizzle_type, bool *has_idx);
+        bool output, enum vkd3d_shader_register_type *type, bool *has_idx);
 int hlsl_sm4_write(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func, struct vkd3d_shader_code *out);
 
 struct hlsl_ir_function_decl *hlsl_compile_internal_function(struct hlsl_ctx *ctx, const char *name, const char *hlsl);

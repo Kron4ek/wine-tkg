@@ -827,6 +827,7 @@ typedef union
 typedef struct
 {
     client_ptr_t   base;
+    client_ptr_t   map_addr;
     mem_size_t     stack_size;
     mem_size_t     stack_commit;
     unsigned int   entry_point;
@@ -1994,6 +1995,19 @@ struct get_mapping_info_reply
     /* VARARG(image,pe_image_info); */
     /* VARARG(name,unicode_str); */
     char __pad_28[4];
+};
+
+
+
+struct get_image_map_address_request
+{
+    struct request_header __header;
+    obj_handle_t handle;
+};
+struct get_image_map_address_reply
+{
+    struct reply_header __header;
+    client_ptr_t addr;
 };
 
 
@@ -5348,7 +5362,7 @@ struct set_fd_name_info_request
     obj_handle_t rootdir;
     data_size_t  namelen;
     int          link;
-    int          replace;
+    unsigned int flags;
     /* VARARG(name,unicode_str,namelen); */
     /* VARARG(filename,string); */
 };
@@ -5898,6 +5912,7 @@ enum request
     REQ_create_mapping,
     REQ_open_mapping,
     REQ_get_mapping_info,
+    REQ_get_image_map_address,
     REQ_map_view,
     REQ_map_image_view,
     REQ_map_builtin_view,
@@ -6200,6 +6215,7 @@ union generic_request
     struct create_mapping_request create_mapping_request;
     struct open_mapping_request open_mapping_request;
     struct get_mapping_info_request get_mapping_info_request;
+    struct get_image_map_address_request get_image_map_address_request;
     struct map_view_request map_view_request;
     struct map_image_view_request map_image_view_request;
     struct map_builtin_view_request map_builtin_view_request;
@@ -6500,6 +6516,7 @@ union generic_reply
     struct create_mapping_reply create_mapping_reply;
     struct open_mapping_reply open_mapping_reply;
     struct get_mapping_info_reply get_mapping_info_reply;
+    struct get_image_map_address_reply get_image_map_address_reply;
     struct map_view_reply map_view_reply;
     struct map_image_view_reply map_image_view_reply;
     struct map_builtin_view_reply map_builtin_view_reply;
@@ -6734,7 +6751,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 784
+#define SERVER_PROTOCOL_VERSION 786
 
 /* ### protocol_version end ### */
 

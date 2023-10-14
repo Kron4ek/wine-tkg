@@ -3193,8 +3193,7 @@ static BOOL init_format_texture_info(struct wined3d_adapter *adapter, struct win
 
     adapter->fragment_pipe->get_caps(adapter, &fragment_caps);
     adapter->shader_backend->shader_get_caps(adapter, &shader_caps);
-    srgb_write = (fragment_caps.wined3d_caps & WINED3D_FRAGMENT_CAP_SRGB_WRITE)
-            && (shader_caps.wined3d_caps & WINED3D_SHADER_CAP_SRGB_WRITE);
+    srgb_write = fragment_caps.srgb_write && (shader_caps.wined3d_caps & WINED3D_SHADER_CAP_SRGB_WRITE);
 
     for (i = 0; i < ARRAY_SIZE(format_texture_info); ++i)
     {
@@ -5854,7 +5853,7 @@ void get_texture_matrix(const struct wined3d_context *context, const struct wine
     BOOL generated = (state->texture_states[tex][WINED3D_TSS_TEXCOORD_INDEX] & 0xffff0000)
             != WINED3DTSS_TCI_PASSTHRU;
     unsigned int coord_idx = min(state->texture_states[tex][WINED3D_TSS_TEXCOORD_INDEX & 0x0000ffff],
-            WINED3D_MAX_TEXTURES - 1);
+            WINED3D_MAX_FFP_TEXTURES - 1);
 
     compute_texture_matrix(&state->transforms[WINED3D_TS_TEXTURE0 + tex],
             state->texture_states[tex][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS],
@@ -6412,7 +6411,7 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_context *context, const st
 
     settings->padding = 0;
 
-    for (i = 0; i < d3d_info->limits.ffp_blend_stages; ++i)
+    for (i = 0; i < d3d_info->ffp_fragment_caps.max_blend_stages; ++i)
     {
         struct wined3d_texture *texture;
 
@@ -6573,9 +6572,8 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_context *context, const st
     }
 
     /* Clear unsupported stages */
-    for(; i < WINED3D_MAX_TEXTURES; i++) {
+    for (; i < WINED3D_MAX_FFP_TEXTURES; ++i)
         memset(&settings->op[i], 0xff, sizeof(settings->op[i]));
-    }
 
     if (!state->render_states[WINED3D_RS_FOGENABLE])
     {
@@ -6649,7 +6647,7 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_context *context, const st
     if (d3d_info->limits.varying_count && !d3d_info->full_ffp_varyings)
     {
         settings->texcoords_initialized = 0;
-        for (i = 0; i < WINED3D_MAX_TEXTURES; ++i)
+        for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
         {
             if (use_vs(state))
             {
@@ -6662,14 +6660,14 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_context *context, const st
                 unsigned int coord_idx = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
                 if ((state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX] >> WINED3D_FFP_TCI_SHIFT)
                         & WINED3D_FFP_TCI_MASK
-                        || (coord_idx < WINED3D_MAX_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx)))))
+                        || (coord_idx < WINED3D_MAX_FFP_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx)))))
                     settings->texcoords_initialized |= 1u << i;
             }
         }
     }
     else
     {
-        settings->texcoords_initialized = wined3d_mask_from_size(WINED3D_MAX_TEXTURES);
+        settings->texcoords_initialized = wined3d_mask_from_size(WINED3D_MAX_FFP_TEXTURES);
     }
 
     settings->pointsprite = state->render_states[WINED3D_RS_POINTSPRITEENABLE]
@@ -6806,7 +6804,7 @@ void sampler_texdim(struct wined3d_context *context, const struct wined3d_state 
      * tex_colorop handler takes care. Also no action is needed with pixel
      * shaders, or if tex_colorop will take care of this business. */
     mapped_stage = context_gl->tex_unit_map[sampler];
-    if (mapped_stage == WINED3D_UNMAPPED_STAGE || mapped_stage >= context_gl->gl_info->limits.textures)
+    if (mapped_stage == WINED3D_UNMAPPED_STAGE || mapped_stage >= context_gl->gl_info->limits.ffp_textures)
         return;
     if (sampler >= context->lowest_disabled_stage)
         return;
@@ -6846,15 +6844,15 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
         else
             settings->fog_mode = WINED3D_FFP_VS_FOG_FOGCOORD;
 
-        for (i = 0; i < WINED3D_MAX_TEXTURES; ++i)
+        for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
         {
             coord_idx = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
-            if (coord_idx < WINED3D_MAX_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))))
+            if (coord_idx < WINED3D_MAX_FFP_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))))
                 settings->texcoords |= 1u << i;
             settings->texgen[i] = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
         }
         if (d3d_info->full_ffp_varyings)
-            settings->texcoords = wined3d_mask_from_size(WINED3D_MAX_TEXTURES);
+            settings->texcoords = wined3d_mask_from_size(WINED3D_MAX_FFP_TEXTURES);
 
         if (d3d_info->emulated_flatshading)
             settings->flatshading = state->render_states[WINED3D_RS_SHADEMODE] == WINED3D_SHADE_FLAT;
@@ -6895,15 +6893,15 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
     settings->ambient_source = ambient_source;
     settings->specular_source = specular_source;
 
-    for (i = 0; i < WINED3D_MAX_TEXTURES; ++i)
+    for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
     {
         coord_idx = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
-        if (coord_idx < WINED3D_MAX_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))))
+        if (coord_idx < WINED3D_MAX_FFP_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))))
             settings->texcoords |= 1u << i;
         settings->texgen[i] = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
     }
     if (d3d_info->full_ffp_varyings)
-        settings->texcoords = wined3d_mask_from_size(WINED3D_MAX_TEXTURES);
+        settings->texcoords = wined3d_mask_from_size(WINED3D_MAX_FFP_TEXTURES);
 
     for (i = 0; i < WINED3D_MAX_ACTIVE_LIGHTS; ++i)
     {

@@ -3889,7 +3889,7 @@ static HRESULT dispatch_event_object(EventTarget *event_target, DOMEvent *event,
             vtbl = dispex_get_vtbl(&target_chain[i]->dispex);
             if(!vtbl->handle_event)
                 continue;
-            hres = vtbl->handle_event(&event_target->dispex, event->event_id, event->nsevent, &prevent_default);
+            hres = vtbl->handle_event(&target_chain[i]->dispex, event->event_id, event->nsevent, &prevent_default);
             if(FAILED(hres) || event->stop_propagation)
                 break;
             if(prevent_default)
@@ -4585,6 +4585,17 @@ void EventTarget_Init(EventTarget *event_target, dispex_static_data_t *dispex_da
     init_dispatch(&event_target->dispex, dispex_data, compat_mode);
     event_target->IEventTarget_iface.lpVtbl = &EventTargetVtbl;
     wine_rb_init(&event_target->handler_map, event_id_cmp);
+}
+
+void traverse_event_target(EventTarget *event_target, nsCycleCollectionTraversalCallback *cb)
+{
+    listener_container_t *iter;
+    event_listener_t *listener;
+
+    RB_FOR_EACH_ENTRY(iter, &event_target->handler_map, listener_container_t, entry)
+        LIST_FOR_EACH_ENTRY(listener, &iter->listeners, event_listener_t, entry)
+            if(listener->function)
+                note_cc_edge((nsISupports*)listener->function, "EventTarget.listener", cb);
 }
 
 void release_event_target(EventTarget *event_target)

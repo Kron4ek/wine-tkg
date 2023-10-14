@@ -2516,6 +2516,11 @@ static void test_domnode( void )
         ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
         ok( node == NULL, "node %p\n", node );
 
+        node = (void*)0xdeadbeef;
+        hr = IXMLDOMElement_selectSingleNode( element, _bstr_("In Valid"), &node );
+        ok(hr == E_FAIL, "Unexpected hr %#lx.\n", hr);
+        ok( node == NULL, "node %p\n", node );
+
         str = SysAllocString(L"bs");
         hr = IXMLDOMElement_selectSingleNode( element, str, &node );
         SysFreeString(str);
@@ -13656,11 +13661,10 @@ static const namespace_as_attribute_t namespace_as_attribute_test_data[] = {
     { &CLSID_DOMDocument2,  "CLSID_DOMDocument2",  "" },
     { &CLSID_DOMDocument26, "CLSID_DOMDocument26", "" },
     { &CLSID_DOMDocument30, "CLSID_DOMDocument30", "" },
-    { &CLSID_DOMDocument40, "CLSID_DOMDocument40", "" },
-    { &CLSID_DOMDocument60, "CLSID_DOMDocument60", "http://www.w3.org/2000/xmlns/" },
     { 0 }
 };
 
+/* see dlls/msxml[46]/tests/domdoc.c */
 static void test_namespaces_as_attributes(void)
 {
     const namespace_as_attribute_t *entry = namespace_as_attribute_test_data;

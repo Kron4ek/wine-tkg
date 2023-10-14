@@ -242,6 +242,8 @@ struct sock
     struct poll_req    *main_poll;   /* main poll */
     union win_sockaddr  addr;        /* socket name */
     int                 addr_len;    /* socket name length */
+    union win_sockaddr  peer_addr;   /* peer name */
+    int                 peer_addr_len; /* peer name length */
     unsigned int        rcvbuf;      /* advisory recv buffer size */
     unsigned int        sndbuf;      /* advisory send buffer size */
     unsigned int        rcvtimeo;    /* receive timeout in ms */
@@ -1340,6 +1342,8 @@ static void sock_poll_event( struct fd *fd, int event )
     int error = 0;
 
     assert( sock->obj.ops == &sock_ops );
+    grab_object( sock );
+
     if (debug_level)
         fprintf(stderr, "socket %p select event: %x\n", sock, event);
 
@@ -1428,6 +1432,7 @@ static void sock_poll_event( struct fd *fd, int event )
     complete_async_polls( sock, event, error );
 
     sock_reselect( sock );
+    release_object( sock );
 }
 
 static void sock_dump( struct object *obj, int verbose )
@@ -1727,6 +1732,8 @@ static struct sock *create_socket(void)
     sock->main_poll = NULL;
     memset( &sock->addr, 0, sizeof(sock->addr) );
     sock->addr_len = 0;
+    memset( &sock->peer_addr, 0, sizeof(sock->peer_addr) );
+    sock->peer_addr_len = 0;
     sock->rd_shutdown = 0;
     sock->wr_shutdown = 0;
     sock->wr_shutdown_pending = 0;
@@ -2036,8 +2043,15 @@ static struct sock *accept_socket( struct sock *sock )
         }
         unix_len = sizeof(unix_addr);
         if (!getsockname( acceptfd, &unix_addr.addr, &unix_len ))
+        {
             acceptsock->addr_len = sockaddr_from_unix( &unix_addr, &acceptsock->addr.addr, sizeof(acceptsock->addr) );
+            if (!getpeername( acceptfd, &unix_addr.addr, &unix_len ))
+                acceptsock->peer_addr_len = sockaddr_from_unix( &unix_addr,
+                                                                &acceptsock->peer_addr.addr,
+                                                                sizeof(acceptsock->peer_addr) );
+        }
     }
+
     clear_error();
     sock->pending_events &= ~AFD_POLL_ACCEPT;
     sock->reported_events &= ~AFD_POLL_ACCEPT;
@@ -2092,7 +2106,13 @@ static int accept_into_socket( struct sock *sock, struct sock *acceptsock )
 
     unix_len = sizeof(unix_addr);
     if (!getsockname( get_unix_fd( newfd ), &unix_addr.addr, &unix_len ))
+    {
         acceptsock->addr_len = sockaddr_from_unix( &unix_addr, &acceptsock->addr.addr, sizeof(acceptsock->addr) );
+        if (!getpeername( get_unix_fd( newfd ), &unix_addr.addr, &unix_len ))
+            acceptsock->peer_addr_len = sockaddr_from_unix( &unix_addr,
+                                                            &acceptsock->peer_addr.addr,
+                                                            sizeof(acceptsock->peer_addr) );
+    }
 
     clear_error();
     sock->pending_events &= ~AFD_POLL_ACCEPT;
@@ -2567,7 +2587,7 @@ static void sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
     {
         const struct afd_connect_params *params = get_req_data();
         const struct WS_sockaddr *addr;
-        union unix_sockaddr unix_addr;
+        union unix_sockaddr unix_addr, peer_addr;
         struct connect_req *req;
         socklen_t unix_len;
         int send_len, ret;
@@ -2629,6 +2649,7 @@ static void sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         if (unix_addr.addr.sa_family == AF_INET && !memcmp( &unix_addr.in.sin_addr, magic_loopback_addr, 4 ))
             unix_addr.in.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
 
+        memcpy( &peer_addr, &unix_addr, sizeof(unix_addr) );
         ret = connect( unix_fd, &unix_addr.addr, unix_len );
         if (ret < 0 && errno == ECONNABORTED)
         {
@@ -2651,8 +2672,10 @@ static void sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         allow_fd_caching( sock->fd );
 
         unix_len = sizeof(unix_addr);
-        if (!getsockname( unix_fd, &unix_addr.addr, &unix_len ))
-            sock->addr_len = sockaddr_from_unix( &unix_addr, &sock->addr.addr, sizeof(sock->addr) );
+        getsockname( unix_fd, &unix_addr.addr, &unix_len );
+        sock->addr_len = sockaddr_from_unix( &unix_addr, &sock->addr.addr, sizeof(sock->addr) );
+        sock->peer_addr_len = sockaddr_from_unix( &peer_addr, &sock->peer_addr.addr, sizeof(sock->peer_addr));
+
         sock->bound = 1;
 
         if (!ret)
@@ -2985,6 +3008,41 @@ static void sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         }
 
         set_reply_data( &sock->addr, sock->addr_len );
+        return;
+
+    case IOCTL_AFD_WINE_GETPEERNAME:
+        if (sock->state != SOCK_CONNECTED &&
+            sock->state != SOCK_CONNECTING &&
+            sock->state != SOCK_CONNECTIONLESS)
+        {
+            set_error( STATUS_INVALID_CONNECTION );
+            return;
+        }
+
+        /* If ConnectEx() hasn't finished connecting (or failing to connect) the provided
+         * socket, getpeername() can't be called on it. This seems to be undocumented
+         * and is *not* the case for connect(), but we do test for it in ws2_32.
+         * connect_req is non-NULL iff ConnectEx() was used and has not finished,
+         * so we can use it as a check for ConnectEx() usage here. */
+        if (sock->connect_req)
+        {
+            set_error( STATUS_INVALID_CONNECTION );
+            return;
+        }
+
+        if (!sock->peer_addr_len && sock->type == WS_SOCK_DGRAM)
+        {
+            set_error( STATUS_INVALID_CONNECTION );
+            return;
+        }
+
+        if (get_reply_max_size() < sock->peer_addr_len)
+        {
+            set_error( STATUS_BUFFER_TOO_SMALL );
+            return;
+        }
+
+        set_reply_data( &sock->peer_addr, sock->peer_addr_len );
         return;
 
     case IOCTL_AFD_WINE_DEFER:

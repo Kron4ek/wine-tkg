@@ -24,7 +24,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(d3d12core);
 
 HRESULT WINAPI D3D12GetInterface(REFCLSID rclsid, REFIID riid, void **out)
 {
-    FIXME("%d, %s, %p\n", debugstr_guid(rclsid), debugstr_guid(riid), out);
+    FIXME("%s, %s, %p\n", debugstr_guid(rclsid), debugstr_guid(riid), out);
 
     return E_NOINTERFACE;
 }

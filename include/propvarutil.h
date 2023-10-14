@@ -89,12 +89,14 @@ HRESULT WINAPI PropVariantToInt32(REFPROPVARIANT propvarIn, LONG *ret);
 HRESULT WINAPI PropVariantToInt64(REFPROPVARIANT propvarIn, LONGLONG *ret);
 HRESULT WINAPI PropVariantToUInt16(REFPROPVARIANT propvarIn, USHORT *ret);
 HRESULT WINAPI PropVariantToUInt32(REFPROPVARIANT propvarIn, ULONG *ret);
+ULONG WINAPI PropVariantToUInt32WithDefault(REFPROPVARIANT propvarIn, ULONG uLDefault);
 HRESULT WINAPI PropVariantToUInt64(REFPROPVARIANT propvarIn, ULONGLONG *ret);
 HRESULT WINAPI PropVariantToBoolean(REFPROPVARIANT propvarIn, BOOL *ret);
 HRESULT WINAPI PropVariantToBuffer(REFPROPVARIANT propvarIn, void *ret, UINT cb);
 HRESULT WINAPI PropVariantToString(REFPROPVARIANT propvarIn, PWSTR ret, UINT cch);
 PCWSTR WINAPI PropVariantToStringWithDefault(REFPROPVARIANT propvarIn, LPCWSTR pszDefault);
 PCWSTR WINAPI VariantToStringWithDefault(const VARIANT *pvar, LPCWSTR pszDefault);
+HRESULT WINAPI VariantToString(REFVARIANT var, PWSTR ret, UINT cch);
 
 HRESULT WINAPI PropVariantToStringAlloc(REFPROPVARIANT propvarIn, WCHAR **ret);
 

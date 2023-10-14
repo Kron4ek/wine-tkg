@@ -1,0 +1,10 @@
+MODULE  = windows.security.credentials.ui.userconsentverifier.dll
+IMPORTS = combase
+
+C_SRCS = \
+	async.c \
+	main.c
+
+IDL_SRCS = \
+	classes.idl \
+	provider.idl

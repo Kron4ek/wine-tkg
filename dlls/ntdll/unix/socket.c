@@ -169,7 +169,7 @@ static NTSTATUS sock_errno_to_status( int err )
         case EWOULDBLOCK:       return STATUS_DEVICE_NOT_READY;
         case EALREADY:          return STATUS_NETWORK_BUSY;
         case ENOTSOCK:          return STATUS_OBJECT_TYPE_MISMATCH;
-        case EDESTADDRREQ:      return STATUS_INVALID_PARAMETER;
+        case EDESTADDRREQ:      return STATUS_INVALID_CONNECTION;
         case EMSGSIZE:          return STATUS_BUFFER_OVERFLOW;
         case EPROTONOSUPPORT:
         case ESOCKTNOSUPPORT:
@@ -1939,30 +1939,10 @@ NTSTATUS sock_ioctl( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, void *apc
         }
 
         case IOCTL_AFD_WINE_GETPEERNAME:
-        {
-            union unix_sockaddr unix_addr;
-            socklen_t unix_len = sizeof(unix_addr);
-            int len;
+            if (in_size) FIXME( "unexpected input size %u\n", in_size );
 
-            if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
-                return status;
-
-            if (getpeername( fd, &unix_addr.addr, &unix_len ) < 0)
-            {
-                status = sock_errno_to_status( errno );
-                break;
-            }
-
-            len = sockaddr_from_unix( &unix_addr, out_buffer, out_size );
-            if (out_size < len)
-            {
-                status = STATUS_BUFFER_TOO_SMALL;
-                break;
-            }
-            io->Information = len;
-            status = STATUS_SUCCESS;
+            status = STATUS_BAD_DEVICE_TYPE;
             break;
-        }
 
         case IOCTL_AFD_WINE_GET_SO_BROADCAST:
             return do_getsockopt( handle, io, SOL_SOCKET, SO_BROADCAST, out_buffer, out_size );

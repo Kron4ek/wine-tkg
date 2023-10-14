@@ -244,6 +244,7 @@ int main( int argc, char *argv[] )
     set_current_time();
     init_scheduler();
     init_signals();
+    init_memory();
     init_directories( load_intl_file() );
     init_registry();
     main_loop();

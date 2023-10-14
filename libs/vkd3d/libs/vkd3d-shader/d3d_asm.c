@@ -637,7 +637,7 @@ static void shader_dump_decl_usage(struct vkd3d_d3d_asm_compiler *compiler,
 {
     struct vkd3d_string_buffer *buffer = &compiler->buffer;
 
-    if (semantic->resource.reg.reg.type == VKD3DSPR_SAMPLER)
+    if (semantic->resource.reg.reg.type == VKD3DSPR_COMBINED_SAMPLER)
     {
         switch (semantic->resource_type)
         {
@@ -880,9 +880,7 @@ static void shader_dump_register(struct vkd3d_d3d_asm_compiler *compiler, const 
             break;
 
         case VKD3DSPR_COLOROUT:
-            shader_addline(buffer, "o");
-            if (!shader_ver_ge(&compiler->shader_version, 4, 0))
-                shader_addline(buffer, "C");
+            shader_addline(buffer, "oC");
             break;
 
         case VKD3DSPR_DEPTHOUT:
@@ -926,6 +924,7 @@ static void shader_dump_register(struct vkd3d_d3d_asm_compiler *compiler, const 
             shader_addline(buffer, "aL");
             break;
 
+        case VKD3DSPR_COMBINED_SAMPLER:
         case VKD3DSPR_SAMPLER:
             shader_addline(buffer, "s");
             is_descriptor = true;

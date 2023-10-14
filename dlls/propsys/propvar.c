@@ -229,6 +229,20 @@ HRESULT WINAPI PropVariantToUInt32(REFPROPVARIANT propvarIn, ULONG *ret)
     return hr;
 }
 
+ULONG WINAPI PropVariantToUInt32WithDefault(REFPROPVARIANT propvarIn, ULONG ulDefault)
+{
+    LONGLONG res;
+    HRESULT hr;
+
+    TRACE("%p,%lu\n", propvarIn, ulDefault);
+
+    hr = PROPVAR_ConvertNumber(propvarIn, 32, FALSE, &res);
+    if (SUCCEEDED(hr))
+        return (ULONG)res;
+
+    return ulDefault;
+}
+
 HRESULT WINAPI PropVariantToUInt64(REFPROPVARIANT propvarIn, ULONGLONG *ret)
 {
     LONGLONG res;
@@ -429,6 +443,40 @@ PCWSTR WINAPI VariantToStringWithDefault(const VARIANT *pvar, const WCHAR *defau
     }
 
     return default_value;
+}
+
+/******************************************************************
+ *  VariantToString   (PROPSYS.@)
+ */
+HRESULT WINAPI VariantToString(REFVARIANT var, PWSTR ret, UINT cch)
+{
+    WCHAR buffer[64], *str = buffer;
+
+    TRACE("%p, %p, %u.\n", var, ret, cch);
+
+    *ret = 0;
+
+    if (!cch)
+        return E_INVALIDARG;
+
+    switch (V_VT(var))
+    {
+        case VT_BSTR:
+            str = V_BSTR(var);
+            break;
+        case VT_I4:
+            swprintf(buffer, ARRAY_SIZE(buffer), L"%d", V_I4(var));
+            break;
+        default:
+            FIXME("Unsupported type %d.\n", V_VT(var));
+            return E_NOTIMPL;
+    }
+
+    if (wcslen(str) > cch - 1)
+        return STRSAFE_E_INSUFFICIENT_BUFFER;
+    wcscpy(ret, str);
+
+    return S_OK;
 }
 
 /******************************************************************

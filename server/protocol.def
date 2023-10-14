@@ -843,6 +843,7 @@ typedef union
 typedef struct
 {
     client_ptr_t   base;
+    client_ptr_t   map_addr;
     mem_size_t     stack_size;
     mem_size_t     stack_commit;
     unsigned int   entry_point;
@@ -1610,6 +1611,14 @@ enum server_fd_type
     data_size_t  total;         /* total required buffer size in bytes */
     VARARG(image,pe_image_info);/* image info for SEC_IMAGE mappings */
     VARARG(name,unicode_str);   /* filename for SEC_IMAGE mappings */
+@END
+
+
+/* Get the address to use to map an image mapping */
+@REQ(get_image_map_address)
+    obj_handle_t handle;        /* handle to the mapping */
+@REPLY
+    client_ptr_t addr;          /* map address */
 @END
 
 
@@ -3721,7 +3730,7 @@ struct handle_info
     obj_handle_t rootdir;         /* root directory */
     data_size_t  namelen;         /* length of NT name in bytes */
     int          link;            /* link instead of renaming */
-    int          replace;         /* replace an existing file? */
+    unsigned int flags;           /* FILE_RENAME_* flags */
     VARARG(name,unicode_str,namelen); /* NT name */
     VARARG(filename,string);      /* new file name */
 @END

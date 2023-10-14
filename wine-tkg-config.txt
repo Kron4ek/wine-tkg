@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sun Oct  1 02:51:26 PM UTC 2023 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Oct 14 09:45:11 PM UTC 2023 :
 
 Local cfg files used
 
-Wine (plain) version: 8.17.r0.g3db7506221e
-Using wine-staging patchset (version 8.17.r0.g2e55aa06)
+Wine (plain) version: 8.18.r0.g9d78031de62
+Using wine-staging patchset (version 8.18.r0.ga5625909)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -19,6 +19,7 @@ fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
 fsync_futex_waitv.patch -- ( Applied patches for fsync to support futex_waitv )
 
 childwindow-proton.patch -- ( Applied child window for vk patch )
+LAA-unix-staging.patch -- ( Applied large address aware override support (legacy) )
 
 proton-win10-default.patch -- ( Enforce win10 as default wine version )
 proton_battleye.patch -- ( Add support for Proton's Battleye runtime )

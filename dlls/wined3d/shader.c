@@ -1990,7 +1990,7 @@ static HRESULT shader_none_alloc(struct wined3d_device *device, const struct win
     priv->vertex_pipe = vertex_pipe;
     priv->fragment_pipe = fragment_pipe;
     fragment_pipe->get_caps(device->adapter, &fragment_caps);
-    priv->ffp_proj_control = fragment_caps.wined3d_caps & WINED3D_FRAGMENT_CAP_PROJ_CONTROL;
+    priv->ffp_proj_control = fragment_caps.proj_control;
 
     device->vertex_priv = vertex_priv;
     device->fragment_priv = fragment_priv;
@@ -2999,7 +2999,7 @@ void find_ps_compile_args(const struct wined3d_state *state, const struct wined3
         const struct wined3d_shader *vs = state->shader[WINED3D_SHADER_TYPE_VERTEX];
 
         args->texcoords_initialized = 0;
-        for (i = 0; i < WINED3D_MAX_TEXTURES; ++i)
+        for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
         {
             if (vs)
             {
@@ -3013,14 +3013,14 @@ void find_ps_compile_args(const struct wined3d_state *state, const struct wined3
 
                 if ((state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX] >> WINED3D_FFP_TCI_SHIFT)
                         & WINED3D_FFP_TCI_MASK
-                        || (coord_idx < WINED3D_MAX_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx)))))
+                        || (coord_idx < WINED3D_MAX_FFP_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx)))))
                     args->texcoords_initialized |= 1u << i;
             }
         }
     }
     else
     {
-        args->texcoords_initialized = wined3d_mask_from_size(WINED3D_MAX_TEXTURES);
+        args->texcoords_initialized = wined3d_mask_from_size(WINED3D_MAX_FFP_TEXTURES);
     }
 
     args->pointsprite = state->render_states[WINED3D_RS_POINTSPRITEENABLE]

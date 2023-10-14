@@ -55,6 +55,49 @@ static void check_interface_( unsigned int line, void *obj, const IID *iid )
         IUnknown_Release( unk );
 }
 
+static void test_ApplicationDataStatics(void)
+{
+    static const WCHAR *application_data_statics_name = L"Windows.Storage.ApplicationData";
+    IApplicationDataStatics *application_data_statics;
+    IApplicationData *application_data;
+    IActivationFactory *factory;
+    HSTRING str;
+    HRESULT hr;
+    LONG ref;
+
+    hr = WindowsCreateString( application_data_statics_name, wcslen( application_data_statics_name ), &str );
+    ok( hr == S_OK, "got hr %#lx.\n", hr );
+
+    hr = RoGetActivationFactory( str, &IID_IActivationFactory, (void **)&factory );
+    WindowsDeleteString( str );
+    ok( hr == S_OK || broken( hr == REGDB_E_CLASSNOTREG ), "got hr %#lx.\n", hr );
+    if (hr == REGDB_E_CLASSNOTREG)
+    {
+        win_skip( "%s runtimeclass not registered, skipping tests.\n", wine_dbgstr_w( application_data_statics_name ) );
+        return;
+    }
+
+    check_interface( factory, &IID_IUnknown );
+    check_interface( factory, &IID_IInspectable );
+    check_interface( factory, &IID_IAgileObject );
+
+    hr = IActivationFactory_QueryInterface( factory, &IID_IApplicationDataStatics, (void **)&application_data_statics );
+    ok( hr == S_OK, "got hr %#lx.\n", hr );
+
+    hr = IApplicationDataStatics_get_Current( application_data_statics, NULL );
+    ok( hr == E_INVALIDARG, "got hr %#lx.\n", hr );
+    hr = IApplicationDataStatics_get_Current( application_data_statics, &application_data );
+    ok( hr == S_OK, "got hr %#lx.\n", hr );
+    ok( application_data != NULL, "got NULL application_data %p.\n", application_data );
+
+    ref = IApplicationData_Release( application_data );
+    ok( ref == 1, "got ref %ld.\n", ref );
+    ref = IApplicationDataStatics_Release( application_data_statics );
+    ok( ref == 2, "got ref %ld.\n", ref );
+    ref = IActivationFactory_Release( factory );
+    ok( ref == 1, "got ref %ld.\n", ref );
+}
+
 static void test_PackageStatics(void)
 {
     static const WCHAR *package_statics_name = L"Windows.ApplicationModel.Package";
@@ -143,6 +186,7 @@ int main( int argc, char const *argv[] )
     hr = RoInitialize( RO_INIT_MULTITHREADED );
     ok( hr == S_OK, "RoInitialize failed, hr %#lx\n", hr );
 
+    test_ApplicationDataStatics();
     test_PackageStatics();
 
     RoUninitialize();

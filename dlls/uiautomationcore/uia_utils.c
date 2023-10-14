@@ -404,6 +404,11 @@ BOOL uia_hwnd_is_visible(HWND hwnd)
     return TRUE;
 }
 
+BOOL uia_is_top_level_hwnd(HWND hwnd)
+{
+    return GetAncestor(hwnd, GA_PARENT) == GetDesktopWindow();
+}
+
 /*
  * rbtree to efficiently store a collection of HWNDs.
  */
@@ -429,7 +434,7 @@ static void uia_hwnd_map_free(struct rb_entry *entry, void *context)
     free(hwnd_entry);
 }
 
-static BOOL uia_hwnd_map_check_hwnd(struct rb_tree *hwnd_map, HWND hwnd)
+BOOL uia_hwnd_map_check_hwnd(struct rb_tree *hwnd_map, HWND hwnd)
 {
     return !!rb_get(hwnd_map, hwnd);
 }
@@ -452,6 +457,23 @@ HRESULT uia_hwnd_map_add_hwnd(struct rb_tree *hwnd_map, HWND hwnd)
     rb_put(hwnd_map, hwnd, &entry->entry);
 
     return S_OK;
+}
+
+void uia_hwnd_map_remove_hwnd(struct rb_tree *hwnd_map, HWND hwnd)
+{
+    struct rb_entry *rb_entry = rb_get(hwnd_map, hwnd);
+    struct uia_hwnd_map_entry *entry;
+
+    if (!rb_entry)
+    {
+        TRACE("hwnd %p not in map %p, nothing to remove.\n", hwnd, hwnd_map);
+        return;
+    }
+
+    TRACE("Removing hwnd %p from map %p\n", hwnd, hwnd_map);
+    entry = RB_ENTRY_VALUE(rb_entry, struct uia_hwnd_map_entry, entry);
+    rb_remove(hwnd_map, &entry->entry);
+    free(entry);
 }
 
 void uia_hwnd_map_init(struct rb_tree *hwnd_map)

@@ -772,7 +772,15 @@ case $host_os in
         LDDLLFLAGS="-fPIC" ;;
     esac
 
-    WINE_TRY_CFLAGS([-Wl,-z,defs],[UNIXLDFLAGS="$UNIXLDFLAGS -Wl,-z,defs"])
+    AC_CACHE_CHECK([whether -Wl,-z,defs works correctly], ac_cv_wl_z_defs,
+                   [ac_save_CFLAGS="$CFLAGS"
+                    CFLAGS="$CFLAGS $UNIXDLLFLAGS $UNIXLDFLAGS -Wl,-z,defs"
+                    dnl On FreeBSD, shared libraries using environ fail to link with -Wl,-z,defs
+                    AC_LINK_IFELSE([AC_LANG_SOURCE([[extern char **environ; char **envp; void myfunc(void) { envp = environ; }]])],
+                                                   [ac_cv_wl_z_defs=yes],[ac_cv_wl_z_defs=no])
+                    CFLAGS=$ac_save_CFLAGS])
+    test $ac_cv_wl_z_defs != yes || AS_VAR_APPEND([UNIXLDFLAGS],[" -Wl,-z,defs"])
+
     WINE_TRY_CFLAGS([-Wl,--export-dynamic],[WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
     WINEPRELOADER_LDFLAGS="-nostartfiles -nodefaultlibs"
 
@@ -1035,6 +1043,15 @@ then
         WINE_NOTICE([FAudio ${notice_platform}MinGW development files not found (or too old); using bundled version.])
     fi
 
+    WINE_MINGW_PACKAGE_FLAGS(FLUIDSYNTH,[fluidsynth],[-lfluidsynth],
+        [WINE_CHECK_MINGW_HEADER(fluidsynth.h,
+            [WINE_CHECK_MINGW_LIB(fluidsynth,new_fluid_synth,[:],[FLUIDSYNTH_PE_CFLAGS=""; FLUIDSYNTH_PE_LIBS=""],[$FLUIDSYNTH_PE_LIBS])],
+            [FLUIDSYNTH_PE_CFLAGS=""; FLUIDSYNTH_PE_LIBS=""])])
+    if test "x$FLUIDSYNTH_PE_LIBS" = "x"
+    then
+        WINE_NOTICE([Fluidsynth ${notice_platform}MinGW development files not found (or too old); using bundled version.])
+    fi
+
     WINE_MINGW_PACKAGE_FLAGS(JPEG,[libjpeg],,
         [WINE_CHECK_MINGW_HEADER(jpeglib.h,
             [WINE_CHECK_MINGW_LIB(jpeg,jpeg_start_decompress,[:],[JPEG_PE_CFLAGS=""; JPEG_PE_LIBS=""],[$JPEG_PE_LIBS])],
@@ -1145,6 +1162,7 @@ then
 fi
 
 WINE_EXTLIB_FLAGS(FAUDIO, faudio, "faudio mfplat mfreadwrite mfuuid propsys", "-I\$(top_srcdir)/libs/faudio/include")
+WINE_EXTLIB_FLAGS(FLUIDSYNTH, fluidsynth, "fluidsynth", "-I\$(top_srcdir)/libs/fluidsynth/include")
 WINE_EXTLIB_FLAGS(GSM, gsm, gsm, "-I\$(top_srcdir)/libs/gsm/inc")
 WINE_EXTLIB_FLAGS(JPEG, jpeg, jpeg, "-I\$(top_srcdir)/libs/jpeg")
 WINE_EXTLIB_FLAGS(JXR, jxr, jxr, "-I\$(top_srcdir)/libs/jxr/jxrgluelib -I\$(top_srcdir)/libs/jxr/image/sys")
@@ -2911,7 +2929,9 @@ WINE_CONFIG_MAKEFILE(dlls/msxml2)
 WINE_CONFIG_MAKEFILE(dlls/msxml3)
 WINE_CONFIG_MAKEFILE(dlls/msxml3/tests)
 WINE_CONFIG_MAKEFILE(dlls/msxml4)
+WINE_CONFIG_MAKEFILE(dlls/msxml4/tests)
 WINE_CONFIG_MAKEFILE(dlls/msxml6)
+WINE_CONFIG_MAKEFILE(dlls/msxml6/tests)
 WINE_CONFIG_MAKEFILE(dlls/mtxdm)
 WINE_CONFIG_MAKEFILE(dlls/ncrypt)
 WINE_CONFIG_MAKEFILE(dlls/ncrypt/tests)
@@ -3205,6 +3225,8 @@ WINE_CONFIG_MAKEFILE(dlls/windows.globalization)
 WINE_CONFIG_MAKEFILE(dlls/windows.globalization/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.devices)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.devices/tests)
+WINE_CONFIG_MAKEFILE(dlls/windows.media.mediacontrol)
+WINE_CONFIG_MAKEFILE(dlls/windows.media.mediacontrol/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.speech)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.speech/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.media)
@@ -3215,6 +3237,10 @@ WINE_CONFIG_MAKEFILE(dlls/windows.networking.hostname/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.networking)
 WINE_CONFIG_MAKEFILE(dlls/windows.perception.stub)
 WINE_CONFIG_MAKEFILE(dlls/windows.perception.stub/tests)
+WINE_CONFIG_MAKEFILE(dlls/windows.security.credentials.ui.userconsentverifier)
+WINE_CONFIG_MAKEFILE(dlls/windows.security.credentials.ui.userconsentverifier/tests)
+WINE_CONFIG_MAKEFILE(dlls/windows.storage.applicationdata)
+WINE_CONFIG_MAKEFILE(dlls/windows.storage.applicationdata/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.system.profile.systemmanufacturers)
 WINE_CONFIG_MAKEFILE(dlls/windows.system.profile.systemmanufacturers/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.ui)
@@ -3363,6 +3389,7 @@ WINE_CONFIG_MAKEFILE(libs/dxerr8)
 WINE_CONFIG_MAKEFILE(libs/dxerr9)
 WINE_CONFIG_MAKEFILE(libs/dxguid)
 WINE_CONFIG_MAKEFILE(libs/faudio)
+WINE_CONFIG_MAKEFILE(libs/fluidsynth)
 WINE_CONFIG_MAKEFILE(libs/gsm)
 WINE_CONFIG_MAKEFILE(libs/jpeg)
 WINE_CONFIG_MAKEFILE(libs/jxr)
@@ -3675,7 +3702,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-8.17.r0.g2e55aa06\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-8.18.r0.ga5625909\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

@@ -30,15 +30,22 @@ WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
 
 #define IS_VM86_MODE(ctx) (ctx->EFlags & V86_FLAG)
 
+static const unsigned first_ldt_entry = 32;
+
 static ADDRESS_MODE get_selector_type(HANDLE hThread, const WOW64_CONTEXT *ctx, WORD sel)
 {
     LDT_ENTRY	le;
 
     if (IS_VM86_MODE(ctx)) return AddrModeReal;
     /* null or system selector */
-    if (!(sel & 4) || ((sel >> 3) < 17)) return AddrModeFlat;
+    if (!(sel & 4) || ((sel >> 3) < first_ldt_entry)) return AddrModeFlat;
     if (dbg_curr_process->process_io->get_selector(hThread, sel, &le))
-        return le.HighWord.Bits.Default_Big ? AddrMode1632 : AddrMode1616;
+    {
+        ULONG base = (le.HighWord.Bits.BaseHi << 24) + (le.HighWord.Bits.BaseMid << 16) + le.BaseLow;
+        if (le.HighWord.Bits.Default_Big)
+            return base == 0 ? AddrModeFlat : AddrMode1632;
+        return AddrMode1616;
+    }
     /* selector doesn't exist */
     return -1;
 }
@@ -52,7 +59,7 @@ static void* be_i386_linearize(HANDLE hThread, const ADDRESS64* addr)
     case AddrModeReal:
         return (void*)((DWORD_PTR)(LOWORD(addr->Segment) << 4) + (DWORD_PTR)addr->Offset);
     case AddrMode1632:
-        if (!(addr->Segment & 4) || ((addr->Segment >> 3) < 17))
+        if (!(addr->Segment & 4) || ((addr->Segment >> 3) < first_ldt_entry))
             return (void*)(DWORD_PTR)addr->Offset;
         /* fall through */
     case AddrMode1616:

@@ -584,12 +584,12 @@ static void mmap_init( const struct preload_info *preload_info )
 /***********************************************************************
  *           get_wow_user_space_limit
  */
-static void *get_wow_user_space_limit(void)
+static ULONG_PTR get_wow_user_space_limit(void)
 {
 #ifdef _WIN64
-    return (void *)(user_space_wow_limit & ~granularity_mask);
+    return user_space_wow_limit & ~granularity_mask;
 #endif
-    return user_space_limit;
+    return (ULONG_PTR)user_space_limit;
 }
 
 
@@ -1390,7 +1390,7 @@ static void *map_free_area( void *base, void *end, size_t size, int top_down, in
         start = try_map_free_area( base, end, step, start, size, unix_prot );
 
     if (!start)
-        ERR( "couldn't map free area in range %p-%p, size %p", base, end, (void *)size );
+        ERR( "couldn't map free area in range %p-%p, size %p\n", base, end, (void *)size );
 
     return start;
 }
@@ -2074,7 +2074,7 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
             goto done;
         }
 
-        if (limit_low || limit_high)
+        if (start > address_space_start || end < address_space_limit || top_down)
         {
             if (!(ptr = map_free_area( start, end, size, top_down, get_unix_prot(vprot), align_mask )))
                 return STATUS_NO_MEMORY;
@@ -2633,12 +2633,96 @@ static void update_arm64x_mapping( struct file_view *view, IMAGE_NT_HEADERS *nt,
 #endif  /* __aarch64__ */
 
 /***********************************************************************
+ *           get_data_dir
+ */
+static IMAGE_DATA_DIRECTORY *get_data_dir( IMAGE_NT_HEADERS *nt, SIZE_T total_size, ULONG dir )
+{
+    IMAGE_DATA_DIRECTORY *data;
+
+    switch (nt->OptionalHeader.Magic)
+    {
+    case IMAGE_NT_OPTIONAL_HDR64_MAGIC:
+        if (dir >= ((IMAGE_NT_HEADERS64 *)nt)->OptionalHeader.NumberOfRvaAndSizes) return NULL;
+        data = &((IMAGE_NT_HEADERS64 *)nt)->OptionalHeader.DataDirectory[dir];
+        break;
+    case IMAGE_NT_OPTIONAL_HDR32_MAGIC:
+        if (dir >= ((IMAGE_NT_HEADERS32 *)nt)->OptionalHeader.NumberOfRvaAndSizes) return NULL;
+        data = &((IMAGE_NT_HEADERS32 *)nt)->OptionalHeader.DataDirectory[dir];
+        break;
+    default:
+        return NULL;
+    }
+    if (!data->Size) return NULL;
+    if (!data->VirtualAddress) return NULL;
+    if (data->VirtualAddress >= total_size) return NULL;
+    if (data->Size >= total_size - data->VirtualAddress) return NULL;
+    return data;
+}
+
+
+/***********************************************************************
+ *           process_relocation_block
+ *
+ * Reimplementation of LdrProcessRelocationBlock.
+ */
+static IMAGE_BASE_RELOCATION *process_relocation_block( char *page, IMAGE_BASE_RELOCATION *rel,
+                                                        INT_PTR delta )
+{
+    USHORT *reloc = (USHORT *)(rel + 1);
+    unsigned int count;
+
+    for (count = (rel->SizeOfBlock - sizeof(*rel)) / sizeof(USHORT); count; count--, reloc++)
+    {
+        USHORT offset = *reloc & 0xfff;
+        switch (*reloc >> 12)
+        {
+        case IMAGE_REL_BASED_ABSOLUTE:
+            break;
+        case IMAGE_REL_BASED_HIGH:
+            *(short *)(page + offset) += HIWORD(delta);
+            break;
+        case IMAGE_REL_BASED_LOW:
+            *(short *)(page + offset) += LOWORD(delta);
+            break;
+        case IMAGE_REL_BASED_HIGHLOW:
+            *(int *)(page + offset) += delta;
+            break;
+        case IMAGE_REL_BASED_DIR64:
+            *(INT64 *)(page + offset) += delta;
+            break;
+        case IMAGE_REL_BASED_THUMB_MOV32:
+        {
+            DWORD *inst = (DWORD *)(page + offset);
+            WORD lo = ((inst[0] << 1) & 0x0800) + ((inst[0] << 12) & 0xf000) +
+                      ((inst[0] >> 20) & 0x0700) + ((inst[0] >> 16) & 0x00ff);
+            WORD hi = ((inst[1] << 1) & 0x0800) + ((inst[1] << 12) & 0xf000) +
+                      ((inst[1] >> 20) & 0x0700) + ((inst[1] >> 16) & 0x00ff);
+            DWORD imm = MAKELONG( lo, hi ) + delta;
+
+            lo = LOWORD( imm );
+            hi = HIWORD( imm );
+            inst[0] = (inst[0] & 0x8f00fbf0) + ((lo >> 1) & 0x0400) + ((lo >> 12) & 0x000f) +
+                                               ((lo << 20) & 0x70000000) + ((lo << 16) & 0xff0000);
+            inst[1] = (inst[1] & 0x8f00fbf0) + ((hi >> 1) & 0x0400) + ((hi >> 12) & 0x000f) +
+                                               ((hi << 20) & 0x70000000) + ((hi << 16) & 0xff0000);
+            break;
+        }
+        default:
+            FIXME( "Unknown/unsupported relocation %x\n", *reloc );
+            return NULL;
+        }
+    }
+    return (IMAGE_BASE_RELOCATION *)reloc;  /* return address of next block */
+}
+
+
+/***********************************************************************
  *           map_image_into_view
  *
  * Map an executable (PE format) image into an existing view.
  * virtual_mutex must be held by caller.
  */
-static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filename, int fd, void *orig_base,
+static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filename, int fd,
                                      pe_image_info_t *image_info, USHORT machine,
                                      int shared_fd, BOOL removable )
 {
@@ -2646,7 +2730,7 @@ static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filena
     IMAGE_NT_HEADERS *nt;
     IMAGE_SECTION_HEADER sections[96];
     IMAGE_SECTION_HEADER *sec;
-    IMAGE_DATA_DIRECTORY *imports;
+    IMAGE_DATA_DIRECTORY *imports, *relocs;
     NTSTATUS status = STATUS_CONFLICTING_ADDRESSES;
     int i;
     off_t pos;
@@ -2654,6 +2738,7 @@ static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filena
     char *header_end;
     char *ptr = view->base;
     SIZE_T header_size, total_size = view->size;
+    INT_PTR delta;
 
     TRACE_(module)( "mapping PE file %s at %p-%p\n", debugstr_w(filename), ptr, ptr + total_size );
 
@@ -2676,9 +2761,7 @@ static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filena
      * copying the headers into local memory is necessary to properly load such applications. */
     memcpy(sections, sec, sizeof(*sections) * nt->FileHeader.NumberOfSections);
     sec = sections;
-
-    imports = nt->OptionalHeader.DataDirectory + IMAGE_DIRECTORY_ENTRY_IMPORT;
-    if (!imports->Size || !imports->VirtualAddress) imports = NULL;
+    imports = get_data_dir( nt, total_size, IMAGE_DIRECTORY_ENTRY_IMPORT );
 
     /* check for non page-aligned binary */
 
@@ -2811,6 +2894,28 @@ static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filena
 #endif
     if (machine && machine != nt->FileHeader.Machine) return STATUS_NOT_SUPPORTED;
 
+    /* relocate to dynamic base */
+
+    if (image_info->map_addr && (delta = image_info->map_addr - image_info->base))
+    {
+        TRACE_(module)( "relocating %s dynamic base %lx -> %lx mapped at %p\n", debugstr_w(filename),
+                        (ULONG_PTR)image_info->base, (ULONG_PTR)image_info->map_addr, ptr );
+
+        if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+            ((IMAGE_NT_HEADERS64 *)nt)->OptionalHeader.ImageBase = image_info->map_addr;
+        else
+            ((IMAGE_NT_HEADERS32 *)nt)->OptionalHeader.ImageBase = image_info->map_addr;
+
+        if ((relocs = get_data_dir( nt, total_size, IMAGE_DIRECTORY_ENTRY_BASERELOC )))
+        {
+            IMAGE_BASE_RELOCATION *rel = (IMAGE_BASE_RELOCATION *)(ptr + relocs->VirtualAddress);
+            IMAGE_BASE_RELOCATION *end = (IMAGE_BASE_RELOCATION *)((char *)rel + relocs->Size);
+
+            while (rel && rel < end - 1 && rel->SizeOfBlock && rel->VirtualAddress < total_size)
+                rel = process_relocation_block( ptr + rel->VirtualAddress, rel, delta );
+        }
+    }
+
     /* set the image protections */
 
     set_vprot( view, ptr, ROUND_SIZE( 0, header_size ), VPROT_COMMITTED | VPROT_READ );
@@ -2836,7 +2941,7 @@ static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filena
     }
 
 #ifdef VALGRIND_LOAD_PDB_DEBUGINFO
-    VALGRIND_LOAD_PDB_DEBUGINFO(fd, ptr, total_size, ptr - (char *)orig_base);
+    VALGRIND_LOAD_PDB_DEBUGINFO(fd, ptr, total_size, ptr - (char *)wine_server_get_ptr( image_info->base ));
 #endif
     return STATUS_SUCCESS;
 }
@@ -2891,6 +2996,66 @@ static unsigned int get_mapping_info( HANDLE handle, ACCESS_MASK access, unsigne
 
 
 /***********************************************************************
+ *             map_image_view
+ *
+ * Map a view for a PE image at an appropriate address.
+ */
+static NTSTATUS map_image_view( struct file_view **view_ret, pe_image_info_t *image_info, SIZE_T size,
+                                ULONG_PTR limit_low, ULONG_PTR limit_high, ULONG alloc_type )
+{
+    unsigned int vprot = SEC_IMAGE | SEC_FILE | VPROT_COMMITTED | VPROT_READ | VPROT_EXEC | VPROT_WRITECOPY;
+    void *base;
+    NTSTATUS status;
+    ULONG_PTR start, end;
+    BOOL top_down = (image_info->image_charact & IMAGE_FILE_DLL) &&
+                    (image_info->image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated);
+
+    limit_low = max( limit_low, (ULONG_PTR)address_space_start );  /* make sure the DOS area remains free */
+    if (!limit_high) limit_high = (ULONG_PTR)user_space_limit;
+
+    /* first try the specified base */
+
+    if (image_info->map_addr)
+    {
+        base = wine_server_get_ptr( image_info->map_addr );
+        if ((ULONG_PTR)base != image_info->map_addr) base = NULL;
+    }
+    else
+    {
+        base = wine_server_get_ptr( image_info->base );
+        if ((ULONG_PTR)base != image_info->base) base = NULL;
+    }
+    if (base)
+    {
+        status = map_view( view_ret, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
+        if (!status) return status;
+    }
+
+    /* then some appropriate address range */
+
+    if (image_info->base >= limit_4g)
+    {
+        start = max( limit_low, limit_4g );
+        end = limit_high;
+    }
+    else
+    {
+        start = limit_low;
+        end = min( limit_high, get_wow_user_space_limit() );
+    }
+    if (start < end && (start != limit_low || end != limit_high))
+    {
+        status = map_view( view_ret, NULL, size, top_down ? MEM_TOP_DOWN : 0, vprot, start, end, 0 );
+        if (!status) return status;
+    }
+
+    /* then any suitable address */
+
+    return map_view( view_ret, NULL, size, top_down ? MEM_TOP_DOWN : 0, vprot, limit_low, limit_high, 0 );
+}
+
+
+/***********************************************************************
  *             virtual_map_image
  *
  * Map a PE image section into memory.
@@ -2900,14 +3065,12 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
                                    USHORT machine, pe_image_info_t *image_info,
                                    WCHAR *filename, BOOL is_builtin )
 {
-    unsigned int vprot = SEC_IMAGE | SEC_FILE | VPROT_COMMITTED | VPROT_READ | VPROT_EXEC | VPROT_WRITECOPY;
     int unix_fd = -1, needs_close;
     int shared_fd = -1, shared_needs_close = 0;
     SIZE_T size = image_info->map_size;
     struct file_view *view;
     unsigned int status;
     sigset_t sigset;
-    void *base;
 
     if ((status = server_get_unix_fd( mapping, 0, &unix_fd, &needs_close, NULL, NULL )))
         return status;
@@ -2919,26 +3082,24 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
         return status;
     }
 
-    status = STATUS_INVALID_PARAMETER;
+    if (!image_info->map_addr &&
+        (image_info->image_charact & IMAGE_FILE_DLL) &&
+        (image_info->image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated))
+    {
+        SERVER_START_REQ( get_image_map_address )
+        {
+            req->handle = wine_server_obj_handle( mapping );
+            if (!wine_server_call( req )) image_info->map_addr = reply->addr;
+        }
+        SERVER_END_REQ;
+    }
+
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 
-    base = wine_server_get_ptr( image_info->base );
-    if ((ULONG_PTR)base != image_info->base) base = NULL;
-
-    limit_low = max( limit_low, (ULONG_PTR)address_space_start );  /* make sure the DOS area remains free */
-    status = map_view( &view, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
-    if (status && limit_low < limit_4g)
-    {
-        if ((ULONG_PTR)base >= limit_4g) status = map_view( &view, NULL, size, alloc_type, vprot,
-                                                            limit_4g, limit_high, 0 );
-        else if (limit_high > limit_2g) status = map_view( &view, NULL, size, alloc_type, vprot,
-                                                           limit_low, limit_2g - 1, 0 );
-    }
-    if (status) status = map_view( &view, NULL, size, alloc_type, vprot, limit_low, limit_high, 0 );
+    status = map_image_view( &view, image_info, size, limit_low, limit_high, alloc_type );
     if (status) goto done;
 
-    status = map_image_into_view( view, filename, unix_fd, base, image_info,
-                                  machine, shared_fd, needs_close );
+    status = map_image_into_view( view, filename, unix_fd, image_info, machine, shared_fd, needs_close );
     if (status == STATUS_SUCCESS)
     {
         SERVER_START_REQ( map_image_view )
@@ -3279,6 +3440,19 @@ NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size
     return status;
 }
 
+BOOL CDECL __wine_needs_override_large_address_aware(void)
+{
+    static int needs_override = -1;
+
+    if (needs_override == -1)
+    {
+        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
+
+        needs_override = !str || atoi(str) == 1;
+    }
+    return needs_override;
+}
+
 
 /***********************************************************************
  *           virtual_map_module
@@ -3313,6 +3487,11 @@ NTSTATUS virtual_map_module( HANDLE mapping, void **module, SIZE_T *size, SECTIO
     if (shared_file) NtClose( shared_file );
     free( image_info );
     return status;
+}
+
+NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args )
+{
+    return __wine_needs_override_large_address_aware();
 }
 
 
@@ -3372,6 +3551,65 @@ NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_nam
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 
     return status;
+}
+
+
+/***********************************************************************
+ *           virtual_relocate_module
+ */
+NTSTATUS virtual_relocate_module( void *module )
+{
+    char *ptr = module;
+    IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(ptr + ((IMAGE_DOS_HEADER *)module)->e_lfanew);
+    IMAGE_DATA_DIRECTORY *relocs;
+    IMAGE_BASE_RELOCATION *rel, *end;
+    IMAGE_SECTION_HEADER *sec;
+    ULONG total_size = ROUND_SIZE( 0, nt->OptionalHeader.SizeOfImage );
+    ULONG protect_old[96], i;
+    ULONG_PTR image_base;
+    INT_PTR delta;
+
+    if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+        image_base = ((const IMAGE_NT_HEADERS64 *)nt)->OptionalHeader.ImageBase;
+    else
+        image_base = ((const IMAGE_NT_HEADERS32 *)nt)->OptionalHeader.ImageBase;
+
+
+    if (!(delta = (ULONG_PTR)module - image_base)) return STATUS_SUCCESS;
+
+    if (nt->FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED)
+    {
+        ERR( "Need to relocate module from %p to %p, but relocation records are stripped\n",
+             (void *)image_base, module );
+        return STATUS_CONFLICTING_ADDRESSES;
+    }
+
+    TRACE( "%p -> %p\n", (void *)image_base, module );
+
+    if (!(relocs = get_data_dir( nt, total_size, IMAGE_DIRECTORY_ENTRY_BASERELOC ))) return STATUS_SUCCESS;
+
+    sec = IMAGE_FIRST_SECTION( nt );
+    for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
+    {
+        void *addr = (char *)module + sec[i].VirtualAddress;
+        SIZE_T size = sec[i].SizeOfRawData;
+        NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, PAGE_READWRITE, &protect_old[i] );
+    }
+
+
+    rel = (IMAGE_BASE_RELOCATION *)((char *)module + relocs->VirtualAddress);
+    end = (IMAGE_BASE_RELOCATION *)((char *)rel + relocs->Size);
+
+    while (rel && rel < end - 1 && rel->SizeOfBlock && rel->VirtualAddress < total_size)
+        rel = process_relocation_block( (char *)module + rel->VirtualAddress, rel, delta );
+
+    for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
+    {
+        void *addr = (char *)module + sec[i].VirtualAddress;
+        SIZE_T size = sec[i].SizeOfRawData;
+        NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, protect_old[i], &protect_old[i] );
+    }
+    return STATUS_SUCCESS;
 }
 
 
@@ -4451,7 +4689,7 @@ static NTSTATUS get_extended_params( const MEM_EXTENDED_PARAMETER *parameters, U
             MEM_ADDRESS_REQUIREMENTS *r = parameters[i].Pointer;
             ULONG_PTR limit;
 
-            if (is_wow64()) limit = (ULONG_PTR)get_wow_user_space_limit();
+            if (is_wow64()) limit = get_wow_user_space_limit();
             else limit = (ULONG_PTR)user_space_limit;
 
             if (r->Alignment)
@@ -5950,10 +6188,11 @@ NTSTATUS WINAPI NtFlushInstructionCache( HANDLE handle, const void *addr, SIZE_T
 /**********************************************************************
  *           NtFlushProcessWriteBuffers  (NTDLL.@)
  */
-void WINAPI NtFlushProcessWriteBuffers(void)
+NTSTATUS WINAPI NtFlushProcessWriteBuffers(void)
 {
     static int once = 0;
     if (!once++) FIXME( "stub\n" );
+    return STATUS_SUCCESS;
 }
 
 

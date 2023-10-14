@@ -464,6 +464,50 @@ static bool attribute_list_has_duplicates(const struct parse_attribute_list *att
     return false;
 }
 
+static void resolve_loop_continue(struct hlsl_ctx *ctx, struct hlsl_block *block, enum loop_type type,
+        struct hlsl_block *cond, struct hlsl_block *iter)
+{
+    struct hlsl_ir_node *instr, *next;
+
+    LIST_FOR_EACH_ENTRY_SAFE(instr, next, &block->instrs, struct hlsl_ir_node, entry)
+    {
+        if (instr->type == HLSL_IR_IF)
+        {
+            struct hlsl_ir_if *iff = hlsl_ir_if(instr);
+
+            resolve_loop_continue(ctx, &iff->then_block, type, cond, iter);
+            resolve_loop_continue(ctx, &iff->else_block, type, cond, iter);
+        }
+        else if (instr->type == HLSL_IR_JUMP)
+        {
+            struct hlsl_ir_jump *jump = hlsl_ir_jump(instr);
+            struct hlsl_block block;
+
+            if (jump->type != HLSL_IR_JUMP_UNRESOLVED_CONTINUE)
+                continue;
+
+            if (type == LOOP_DO_WHILE)
+            {
+                if (!hlsl_clone_block(ctx, &block, cond))
+                    return;
+                if (!append_conditional_break(ctx, &block))
+                {
+                    hlsl_block_cleanup(&block);
+                    return;
+                }
+                list_move_before(&instr->entry, &block.instrs);
+            }
+            else if (type == LOOP_FOR)
+            {
+                if (!hlsl_clone_block(ctx, &block, iter))
+                    return;
+                list_move_before(&instr->entry, &block.instrs);
+            }
+            jump->type = HLSL_IR_JUMP_CONTINUE;
+        }
+    }
+}
+
 static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
         const struct parse_attribute_list *attributes, struct hlsl_block *init, struct hlsl_block *cond,
         struct hlsl_block *iter, struct hlsl_block *body, const struct vkd3d_shader_location *loc)
@@ -500,6 +544,8 @@ static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
             hlsl_warning(ctx, loc, VKD3D_SHADER_WARNING_HLSL_UNKNOWN_ATTRIBUTE, "Unrecognized attribute '%s'.", attr->name);
         }
     }
+
+    resolve_loop_continue(ctx, body, type, cond, iter);
 
     if (!init && !(init = make_empty_block(ctx)))
         goto oom;
@@ -2961,6 +3007,33 @@ static bool intrinsic_frac(struct hlsl_ctx *ctx,
     return !!add_unary_arithmetic_expr(ctx, params->instrs, HLSL_OP1_FRACT, arg, loc);
 }
 
+static bool intrinsic_fwidth(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_function_decl *func;
+    struct hlsl_type *type;
+    char *body;
+
+    static const char template[] =
+            "%s fwidth(%s x)\n"
+            "{\n"
+            "    return abs(ddx(x)) + abs(ddy(x));\n"
+            "}";
+
+    if (!elementwise_intrinsic_float_convert_args(ctx, params, loc))
+        return false;
+    type = params->args[0]->data_type;
+
+    if (!(body = hlsl_sprintf_alloc(ctx, template, type->name, type->name)))
+        return false;
+    func = hlsl_compile_internal_function(ctx, "fwidth", body);
+    vkd3d_free(body);
+    if (!func)
+        return false;
+
+    return add_user_call(ctx, func, params, loc);
+}
+
 static bool intrinsic_ldexp(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
@@ -3690,6 +3763,7 @@ intrinsic_functions[] =
     {"floor",                               1, true,  intrinsic_floor},
     {"fmod",                                2, true,  intrinsic_fmod},
     {"frac",                                1, true,  intrinsic_frac},
+    {"fwidth",                              1, true,  intrinsic_fwidth},
     {"ldexp",                               2, true,  intrinsic_ldexp},
     {"length",                              1, true,  intrinsic_length},
     {"lerp",                                3, true,  intrinsic_lerp},
@@ -4559,6 +4633,14 @@ static void validate_texture_format_type(struct hlsl_ctx *ctx, struct hlsl_type 
     }
 }
 
+static struct hlsl_scope *get_loop_scope(struct hlsl_scope *scope)
+{
+    if (scope->loop)
+        return scope;
+
+    return scope->upper ? get_loop_scope(scope->upper) : NULL;
+}
+
 }
 
 %locations
@@ -4603,6 +4685,7 @@ static void validate_texture_format_type(struct hlsl_ctx *ctx, struct hlsl_type 
 %token KW_BREAK
 %token KW_BUFFER
 %token KW_CBUFFER
+%token KW_CENTROID
 %token KW_COLUMN_MAJOR
 %token KW_COMPILE
 %token KW_CONST
@@ -4625,6 +4708,7 @@ static void validate_texture_format_type(struct hlsl_ctx *ctx, struct hlsl_type 
 %token KW_MATRIX
 %token KW_NAMESPACE
 %token KW_NOINTERPOLATION
+%token KW_NOPERSPECTIVE
 %token KW_OUT
 %token KW_PACKOFFSET
 %token KW_PASS
@@ -4967,7 +5051,7 @@ field:
 
             if (!(type = apply_type_modifiers(ctx, $2, &modifiers, true, &@1)))
                 YYABORT;
-            if (modifiers & ~HLSL_STORAGE_NOINTERPOLATION)
+            if (modifiers & ~HLSL_INTERPOLATION_MODIFIERS_MASK)
             {
                 struct vkd3d_string_buffer *string;
 
@@ -5262,6 +5346,13 @@ scope_start:
       %empty
         {
             hlsl_push_scope(ctx);
+        }
+
+loop_scope_start:
+      %empty
+        {
+            hlsl_push_scope(ctx);
+            ctx->cur_scope->loop = true;
         }
 
 var_identifier:
@@ -5916,6 +6007,14 @@ var_modifiers:
         {
             $$ = add_modifiers(ctx, $2, HLSL_STORAGE_NOINTERPOLATION, &@1);
         }
+    | KW_CENTROID var_modifiers
+        {
+            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_CENTROID, &@1);
+        }
+    | KW_NOPERSPECTIVE var_modifiers
+        {
+            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_NOPERSPECTIVE, &@1);
+        }
     | KW_PRECISE var_modifiers
         {
             $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_PRECISE, &@1);
@@ -6076,7 +6175,43 @@ statement:
     | loop_statement
 
 jump_statement:
-      KW_RETURN expr ';'
+      KW_BREAK ';'
+        {
+            struct hlsl_ir_node *jump;
+
+            /* TODO: allow 'break' in the 'switch' statements. */
+
+            if (!get_loop_scope(ctx->cur_scope))
+            {
+                hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                        "The 'break' statement must be used inside of a loop.");
+            }
+
+            if (!($$ = make_empty_block(ctx)))
+                YYABORT;
+            if (!(jump = hlsl_new_jump(ctx, HLSL_IR_JUMP_BREAK, NULL, &@1)))
+                YYABORT;
+            hlsl_block_add_instr($$, jump);
+        }
+    | KW_CONTINUE ';'
+        {
+            struct hlsl_ir_node *jump;
+            struct hlsl_scope *scope;
+
+            if (!(scope = get_loop_scope(ctx->cur_scope)))
+            {
+                hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                        "The 'continue' statement must be used inside of a loop.");
+            }
+
+            if (!($$ = make_empty_block(ctx)))
+                YYABORT;
+
+            if (!(jump = hlsl_new_jump(ctx, HLSL_IR_JUMP_UNRESOLVED_CONTINUE, NULL, &@1)))
+                YYABORT;
+            hlsl_block_add_instr($$, jump);
+        }
+    | KW_RETURN expr ';'
         {
             $$ = $2;
             if (!add_return(ctx, $$, node_from_block($$), &@1))
@@ -6165,22 +6300,24 @@ if_body:
         }
 
 loop_statement:
-      attribute_list_optional KW_WHILE '(' expr ')' statement
+      attribute_list_optional loop_scope_start KW_WHILE '(' expr ')' statement
         {
-            $$ = create_loop(ctx, LOOP_WHILE, &$1, NULL, $4, NULL, $6, &@2);
-        }
-    | attribute_list_optional KW_DO statement KW_WHILE '(' expr ')' ';'
-        {
-            $$ = create_loop(ctx, LOOP_DO_WHILE, &$1, NULL, $6, NULL, $3, &@2);
-        }
-    | attribute_list_optional KW_FOR '(' scope_start expr_statement expr_statement expr_optional ')' statement
-        {
-            $$ = create_loop(ctx, LOOP_FOR, &$1, $5, $6, $7, $9, &@2);
+            $$ = create_loop(ctx, LOOP_WHILE, &$1, NULL, $5, NULL, $7, &@3);
             hlsl_pop_scope(ctx);
         }
-    | attribute_list_optional KW_FOR '(' scope_start declaration expr_statement expr_optional ')' statement
+    | attribute_list_optional loop_scope_start KW_DO statement KW_WHILE '(' expr ')' ';'
         {
-            $$ = create_loop(ctx, LOOP_FOR, &$1, $5, $6, $7, $9, &@2);
+            $$ = create_loop(ctx, LOOP_DO_WHILE, &$1, NULL, $7, NULL, $4, &@3);
+            hlsl_pop_scope(ctx);
+        }
+    | attribute_list_optional loop_scope_start KW_FOR '(' expr_statement expr_statement expr_optional ')' statement
+        {
+            $$ = create_loop(ctx, LOOP_FOR, &$1, $5, $6, $7, $9, &@3);
+            hlsl_pop_scope(ctx);
+        }
+    | attribute_list_optional loop_scope_start KW_FOR '(' declaration expr_statement expr_optional ')' statement
+        {
+            $$ = create_loop(ctx, LOOP_FOR, &$1, $5, $6, $7, $9, &@3);
             hlsl_pop_scope(ctx);
         }
 

@@ -561,6 +561,7 @@ SOURCES = \
 	ndrtypes.h \
 	netcfgx.idl \
 	netcon.idl \
+	netevent.h \
 	netfw.idl \
 	netioapi.h \
 	netiodef.h \
@@ -735,6 +736,7 @@ SOURCES = \
 	structuredquerycondition.idl \
 	svrapi.h \
 	synchapi.h \
+	systemmediatransportcontrolsinterop.idl \
 	t2embapi.h \
 	tapi.h \
 	taskschd.idl \
@@ -855,6 +857,7 @@ SOURCES = \
 	windows.perception.spatial.idl \
 	windows.perception.spatial.surfaces.idl \
 	windows.security.credentials.idl \
+	windows.security.credentials.ui.idl \
 	windows.security.cryptography.idl \
 	windows.security.isolation.idl \
 	windows.storage.fileproperties.idl \
@@ -935,6 +938,7 @@ SOURCES = \
 	winnt.h \
 	winnt.rh \
 	winperf.h \
+	winppi.h \
 	winreg.h \
 	winresrc.h \
 	winsafer.h \

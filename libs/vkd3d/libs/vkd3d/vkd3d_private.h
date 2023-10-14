@@ -22,6 +22,7 @@
 #define COBJMACROS
 #define NONAMELESSUNION
 #define VK_NO_PROTOTYPES
+#define CONST_VTABLE
 
 #ifdef _WIN32
 # define _WIN32_WINNT 0x0600  /* for condition variables */
@@ -681,7 +682,7 @@ struct d3d12_heap
 };
 
 HRESULT d3d12_heap_create(struct d3d12_device *device, const D3D12_HEAP_DESC *desc,
-        const struct d3d12_resource *resource, struct d3d12_heap **heap);
+        const struct d3d12_resource *resource, ID3D12ProtectedResourceSession *protected_session, struct d3d12_heap **heap);
 struct d3d12_heap *unsafe_impl_from_ID3D12Heap(ID3D12Heap *iface);
 
 #define VKD3D_RESOURCE_PUBLIC_FLAGS \
@@ -1428,7 +1429,7 @@ enum vkd3d_pipeline_bind_point
 /* ID3D12CommandList */
 struct d3d12_command_list
 {
-    ID3D12GraphicsCommandList3 ID3D12GraphicsCommandList3_iface;
+    ID3D12GraphicsCommandList5 ID3D12GraphicsCommandList5_iface;
     LONG refcount;
 
     D3D12_COMMAND_LIST_TYPE type;

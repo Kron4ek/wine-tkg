@@ -143,6 +143,8 @@ struct fd
     struct closed_fd    *closed;      /* structure to store the unix fd at destroy time */
     struct object       *user;        /* object using this file descriptor */
     struct list          locks;       /* list of locks on this fd */
+    client_ptr_t         map_addr;    /* default mapping address for PE files */
+    mem_size_t           map_size;    /* mapping size for PE files */
     unsigned int         access;      /* file access (FILE_READ_DATA etc.) */
     unsigned int         options;     /* file options (FILE_DELETE_ON_CLOSE, FILE_SYNCHRONOUS...) */
     unsigned int         sharing;     /* file sharing mode */
@@ -1644,6 +1646,7 @@ static void fd_destroy( struct object *obj )
     free_async_queue( &fd->write_q );
     free_async_queue( &fd->wait_q );
 
+    if (fd->map_addr) free_map_addr( fd->map_addr, fd->map_size );
     if (fd->completion) release_object( fd->completion );
     remove_fd_locks( fd );
     list_remove( &fd->inode_entry );
@@ -1765,6 +1768,8 @@ static struct fd *alloc_fd_object(void)
     fd->user       = NULL;
     fd->inode      = NULL;
     fd->closed     = NULL;
+    fd->map_addr   = 0;
+    fd->map_size   = 0;
     fd->access     = 0;
     fd->options    = 0;
     fd->sharing    = 0;
@@ -1811,6 +1816,8 @@ struct fd *alloc_pseudo_fd( const struct fd_ops *fd_user_ops, struct object *use
     fd->user       = user;
     fd->inode      = NULL;
     fd->closed     = NULL;
+    fd->map_addr   = 0;
+    fd->map_size   = 0;
     fd->access     = 0;
     fd->options    = options;
     fd->sharing    = 0;
@@ -2286,6 +2293,20 @@ int get_unix_fd( struct fd *fd )
     return fd->unix_fd;
 }
 
+/* retrieve the suggested mapping address for the fd */
+client_ptr_t get_fd_map_address( struct fd *fd )
+{
+    return fd->map_addr;
+}
+
+/* set the suggested mapping address for the fd */
+void set_fd_map_address( struct fd *fd, client_ptr_t addr, mem_size_t size )
+{
+    assert( !fd->map_addr );
+    fd->map_addr = addr;
+    fd->map_size = size;
+}
+
 /* check if two file descriptors point to the same file */
 int is_same_file_fd( struct fd *fd1, struct fd *fd2 )
 {
@@ -2733,11 +2754,12 @@ static void set_fd_disposition( struct fd *fd, unsigned int flags )
 
 /* set new name for the fd */
 static void set_fd_name( struct fd *fd, struct fd *root, const char *nameptr, data_size_t len,
-                         struct unicode_str nt_name, int create_link, int replace )
+                         struct unicode_str nt_name, int create_link, unsigned int flags )
 {
     struct inode *inode;
     struct stat st, st2;
     char *name;
+    const unsigned int replace = flags & FILE_RENAME_REPLACE_IF_EXISTS;
 
     if (!fd->inode || !fd->unix_name)
     {
@@ -2795,6 +2817,14 @@ static void set_fd_name( struct fd *fd, struct fd *root, const char *nameptr, da
 
         /* can't replace directories or special files */
         if (!S_ISREG( st.st_mode ) && !S_ISLNK( st.st_mode ))
+        {
+            set_error( STATUS_ACCESS_DENIED );
+            goto failed;
+        }
+
+        /* read-only files cannot be replaced */
+        if (!(st.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) &&
+            !(flags & FILE_RENAME_IGNORE_READONLY_ATTRIBUTE))
         {
             set_error( STATUS_ACCESS_DENIED );
             goto failed;
@@ -3191,7 +3221,7 @@ DECL_HANDLER(set_fd_name_info)
     if ((fd = get_handle_fd_obj( current->process, req->handle, 0 )))
     {
         set_fd_name( fd, root_fd, (const char *)get_req_data() + req->namelen,
-                     get_req_data_size() - req->namelen, nt_name, req->link, req->replace );
+                     get_req_data_size() - req->namelen, nt_name, req->link, req->flags );
         release_object( fd );
     }
     if (root_fd) release_object( root_fd );

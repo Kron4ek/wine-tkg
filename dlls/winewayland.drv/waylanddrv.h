@@ -60,7 +60,9 @@ enum wayland_window_message
 enum wayland_surface_config_state
 {
     WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED = (1 << 0),
-    WAYLAND_SURFACE_CONFIG_STATE_RESIZING = (1 << 1)
+    WAYLAND_SURFACE_CONFIG_STATE_RESIZING = (1 << 1),
+    WAYLAND_SURFACE_CONFIG_STATE_TILED = (1 << 2),
+    WAYLAND_SURFACE_CONFIG_STATE_FULLSCREEN = (1 << 3)
 };
 
 struct wayland_cursor
@@ -140,6 +142,12 @@ struct wayland_surface_config
     BOOL processed;
 };
 
+struct wayland_window_config
+{
+    RECT rect;
+    enum wayland_surface_config_state state;
+};
+
 struct wayland_surface
 {
     HWND hwnd;
@@ -150,6 +158,7 @@ struct wayland_surface
     struct wayland_surface_config pending, requested, processing, current;
     struct wayland_shm_buffer *latest_window_buffer;
     BOOL resizing;
+    struct wayland_window_config window;
 };
 
 struct wayland_shm_buffer
@@ -192,6 +201,9 @@ void wayland_surface_attach_shm(struct wayland_surface *surface,
                                 HRGN surface_damage_region) DECLSPEC_HIDDEN;
 struct wayland_surface *wayland_surface_lock_hwnd(HWND hwnd) DECLSPEC_HIDDEN;
 BOOL wayland_surface_reconfigure(struct wayland_surface *surface) DECLSPEC_HIDDEN;
+BOOL wayland_surface_config_is_compatible(struct wayland_surface_config *conf,
+                                          int width, int height,
+                                          enum wayland_surface_config_state state) DECLSPEC_HIDDEN;
 
 /**********************************************************************
  *          Wayland SHM buffer

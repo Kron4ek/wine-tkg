@@ -3506,11 +3506,14 @@ HRESULT WINAPI D3DXLoadSkinMeshFromXof(struct ID3DXFileData *filedata, DWORD opt
     hr = parse_mesh(filedata, &mesh_data, provide_flags);
     if (FAILED(hr)) goto cleanup;
 
-    if (mesh_data.num_vertices == 0)
+    if (!mesh_data.num_vertices)
     {
-        if (adjacency_out) *adjacency_out = NULL;
-        if (materials_out) *materials_out = NULL;
-        if (effects_out) *effects_out = NULL;
+        if (adjacency_out)
+            *adjacency_out = NULL;
+        if (materials_out)
+            *materials_out = NULL;
+        if (effects_out)
+            *effects_out = NULL;
         *mesh_out = NULL;
         hr = D3D_OK;
         goto cleanup;
@@ -3826,12 +3829,14 @@ static HRESULT load_mesh_container(struct ID3DXFileData *filedata, DWORD options
     if (FAILED(hr)) goto cleanup;
 
     if (mesh_data.pMesh)
+    {
         hr = alloc_hier->lpVtbl->CreateMeshContainer(alloc_hier, name, &mesh_data,
-            materials ? ID3DXBuffer_GetBufferPointer(materials) : NULL,
-            effects ? ID3DXBuffer_GetBufferPointer(effects) : NULL,
-            num_materials,
-            adjacency ? ID3DXBuffer_GetBufferPointer(adjacency) : NULL,
-            skin_info, mesh_container);
+                materials ? ID3DXBuffer_GetBufferPointer(materials) : NULL,
+                effects ? ID3DXBuffer_GetBufferPointer(effects) : NULL,
+                num_materials,
+                adjacency ? ID3DXBuffer_GetBufferPointer(adjacency) : NULL,
+                skin_info, mesh_container);
+    }
 
 cleanup:
     if (materials) ID3DXBuffer_Release(materials);

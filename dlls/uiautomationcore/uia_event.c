@@ -20,7 +20,6 @@
 
 #include "wine/debug.h"
 #include "wine/rbtree.h"
-#include "assert.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(uiautomation);
 
@@ -56,6 +55,8 @@ static int win_event_to_uia_event_id(int win_event)
     {
     case EVENT_OBJECT_FOCUS: return UIA_AutomationFocusChangedEventId;
     case EVENT_SYSTEM_ALERT: return UIA_SystemAlertEventId;
+    case EVENT_OBJECT_SHOW:  return UIA_StructureChangedEventId;
+    case EVENT_OBJECT_DESTROY: return UIA_StructureChangedEventId;
 
     default:
         break;
@@ -79,7 +80,6 @@ static BOOL CALLBACK uia_win_event_enum_top_level_hwnds(HWND hwnd, LPARAM lparam
     return TRUE;
 }
 
-static BOOL uia_clientside_event_start_event_thread(struct uia_event *event);
 HRESULT uia_event_add_win_event_hwnd(struct uia_event *event, HWND hwnd)
 {
     if (!uia_clientside_event_start_event_thread(event))
@@ -252,6 +252,51 @@ static void uia_event_map_entry_release(struct uia_event_map_entry *entry)
     }
 }
 
+typedef HRESULT UiaWineEventForEachCallback(struct uia_event *, void *);
+static HRESULT uia_event_for_each(int event_id, UiaWineEventForEachCallback *callback, void *user_data,
+        BOOL clientside_only)
+{
+    struct uia_event_map_entry *event_entry;
+    HRESULT hr = S_OK;
+    int i;
+
+    EnterCriticalSection(&event_map_cs);
+    if ((event_entry = uia_get_event_map_entry_for_event(event_id)))
+        InterlockedIncrement(&event_entry->refs);
+    LeaveCriticalSection(&event_map_cs);
+
+    if (!event_entry)
+        return S_OK;
+
+    for (i = 0; i < 2; i++)
+    {
+        struct list *events = !i ? &event_entry->events_list : &event_entry->serverside_events_list;
+        struct list *cursor, *cursor2;
+
+        if (i && clientside_only)
+            break;
+
+        LIST_FOR_EACH_SAFE(cursor, cursor2, events)
+        {
+            struct uia_event *event = LIST_ENTRY(cursor, struct uia_event, event_list_entry);
+
+            /* Event is no longer valid. */
+            if (InterlockedCompareExchange(&event->event_defunct, 0, 0) != 0)
+                continue;
+
+            hr = callback(event, user_data);
+            if (FAILED(hr))
+                goto exit;
+        }
+    }
+
+exit:
+    if (FAILED(hr))
+        WARN("Event callback failed with hr %#lx\n", hr);
+    uia_event_map_entry_release(event_entry);
+    return hr;
+}
+
 /*
  * Functions for struct uia_event_args, a reference counted structure
  * used to store event arguments. This is necessary for serverside events
@@ -276,6 +321,163 @@ static void uia_event_args_release(struct uia_event_args *args)
 {
     if (!InterlockedDecrement(&args->ref))
         free(args);
+}
+
+struct event_sink_event
+{
+    struct list event_sink_list_entry;
+
+    IRawElementProviderSimple *elprov;
+    struct uia_event_args *args;
+};
+
+static HRESULT uia_event_sink_list_add_event(struct list *sink_events, IRawElementProviderSimple *elprov,
+        struct uia_event_args *args)
+{
+    struct event_sink_event *sink_event = calloc(1, sizeof(*sink_event));
+
+    if (!sink_event)
+        return E_OUTOFMEMORY;
+
+    IRawElementProviderSimple_AddRef(elprov);
+    InterlockedIncrement(&args->ref);
+
+    sink_event->elprov = elprov;
+    sink_event->args = args;
+    list_add_tail(sink_events, &sink_event->event_sink_list_entry);
+
+    return S_OK;
+}
+
+/*
+ * IProxyProviderWinEventSink interface implementation.
+ */
+struct uia_proxy_win_event_sink {
+    IProxyProviderWinEventSink IProxyProviderWinEventSink_iface;
+    LONG ref;
+
+    int event_id;
+    IUnknown *marshal;
+    LONG sink_defunct;
+    struct list sink_events;
+};
+
+static inline struct uia_proxy_win_event_sink *impl_from_IProxyProviderWinEventSink(IProxyProviderWinEventSink *iface)
+{
+    return CONTAINING_RECORD(iface, struct uia_proxy_win_event_sink, IProxyProviderWinEventSink_iface);
+}
+
+static HRESULT WINAPI uia_proxy_win_event_sink_QueryInterface(IProxyProviderWinEventSink *iface, REFIID riid, void **obj)
+{
+    struct uia_proxy_win_event_sink *sink = impl_from_IProxyProviderWinEventSink(iface);
+
+    *obj = NULL;
+    if (IsEqualIID(riid, &IID_IProxyProviderWinEventSink) || IsEqualIID(riid, &IID_IUnknown))
+        *obj = iface;
+    else if (IsEqualIID(riid, &IID_IMarshal))
+        return IUnknown_QueryInterface(sink->marshal, riid, obj);
+    else
+        return E_NOINTERFACE;
+
+    IProxyProviderWinEventSink_AddRef(iface);
+    return S_OK;
+}
+
+static ULONG WINAPI uia_proxy_win_event_sink_AddRef(IProxyProviderWinEventSink *iface)
+{
+    struct uia_proxy_win_event_sink *sink = impl_from_IProxyProviderWinEventSink(iface);
+    ULONG ref = InterlockedIncrement(&sink->ref);
+
+    TRACE("%p, refcount %ld\n", sink, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI uia_proxy_win_event_sink_Release(IProxyProviderWinEventSink *iface)
+{
+    struct uia_proxy_win_event_sink *sink = impl_from_IProxyProviderWinEventSink(iface);
+    ULONG ref = InterlockedDecrement(&sink->ref);
+
+    TRACE("%p, refcount %ld\n", sink, ref);
+
+    if (!ref)
+    {
+        assert(list_empty(&sink->sink_events));
+        IUnknown_Release(sink->marshal);
+        free(sink);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI uia_proxy_win_event_sink_AddAutomationPropertyChangedEvent(IProxyProviderWinEventSink *iface,
+        IRawElementProviderSimple *elprov, PROPERTYID prop_id, VARIANT new_value)
+{
+    FIXME("%p, %p, %d, %s: stub\n", iface, elprov, prop_id, debugstr_variant(&new_value));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uia_proxy_win_event_sink_AddAutomationEvent(IProxyProviderWinEventSink *iface,
+        IRawElementProviderSimple *elprov, EVENTID event_id)
+{
+    struct uia_proxy_win_event_sink *sink = impl_from_IProxyProviderWinEventSink(iface);
+    struct uia_event_args *args;
+    HRESULT hr = S_OK;
+
+    TRACE("%p, %p, %d\n", iface, elprov, event_id);
+
+    if (event_id != sink->event_id)
+        return S_OK;
+
+    args = create_uia_event_args(uia_event_info_from_id(event_id));
+    if (!args)
+        return E_OUTOFMEMORY;
+
+    if (InterlockedCompareExchange(&sink->sink_defunct, 0, 0) == 0)
+        hr = uia_event_sink_list_add_event(&sink->sink_events, elprov, args);
+    uia_event_args_release(args);
+    return hr;
+}
+
+static HRESULT WINAPI uia_proxy_win_event_sink_AddStructureChangedEvent(IProxyProviderWinEventSink *iface,
+        IRawElementProviderSimple *elprov, enum StructureChangeType structure_change_type, SAFEARRAY *runtime_id)
+{
+    FIXME("%p, %p, %d, %p: stub\n", iface, elprov, structure_change_type, runtime_id);
+    return E_NOTIMPL;
+}
+
+static const IProxyProviderWinEventSinkVtbl uia_proxy_event_sink_vtbl = {
+    uia_proxy_win_event_sink_QueryInterface,
+    uia_proxy_win_event_sink_AddRef,
+    uia_proxy_win_event_sink_Release,
+    uia_proxy_win_event_sink_AddAutomationPropertyChangedEvent,
+    uia_proxy_win_event_sink_AddAutomationEvent,
+    uia_proxy_win_event_sink_AddStructureChangedEvent,
+};
+
+static HRESULT create_proxy_win_event_sink(struct uia_proxy_win_event_sink **out_sink, int event_id)
+{
+    struct uia_proxy_win_event_sink *sink = calloc(1, sizeof(*sink));
+    HRESULT hr;
+
+    *out_sink = NULL;
+    if (!sink)
+        return E_OUTOFMEMORY;
+
+    sink->IProxyProviderWinEventSink_iface.lpVtbl = &uia_proxy_event_sink_vtbl;
+    sink->ref = 1;
+    sink->event_id = event_id;
+    list_init(&sink->sink_events);
+
+    hr = CoCreateFreeThreadedMarshaler((IUnknown *)&sink->IProxyProviderWinEventSink_iface, &sink->marshal);
+    if (FAILED(hr))
+    {
+        free(sink);
+        return hr;
+    }
+
+    *out_sink = sink;
+    return S_OK;
 }
 
 /*
@@ -466,6 +668,152 @@ static HRESULT uia_raise_serverside_event(struct uia_queue_uia_event *event)
     return hr;
 }
 
+/* Check the parent chain of HWNDs, excluding the desktop. */
+static BOOL uia_win_event_hwnd_map_contains_ancestors(struct rb_tree *hwnd_map, HWND hwnd)
+{
+    HWND parent = GetAncestor(hwnd, GA_PARENT);
+    const HWND desktop = GetDesktopWindow();
+
+    while (parent && (parent != desktop))
+    {
+        if (uia_hwnd_map_check_hwnd(hwnd_map, parent))
+            return TRUE;
+
+        parent = GetAncestor(parent, GA_PARENT);
+    }
+
+    return FALSE;
+}
+
+static HRESULT create_msaa_provider_from_hwnd(HWND hwnd, int in_child_id, IRawElementProviderSimple **ret_elprov)
+{
+    IRawElementProviderSimple *elprov;
+    IAccessible *acc;
+    int child_id;
+    HRESULT hr;
+
+    *ret_elprov = NULL;
+    hr = AccessibleObjectFromWindow(hwnd, OBJID_CLIENT, &IID_IAccessible, (void **)&acc);
+    if (FAILED(hr))
+        return hr;
+
+    child_id = in_child_id;
+    if (in_child_id != CHILDID_SELF)
+    {
+        IDispatch *disp;
+        VARIANT cid;
+
+        disp = NULL;
+        variant_init_i4(&cid, in_child_id);
+        hr = IAccessible_get_accChild(acc, cid, &disp);
+        if (FAILED(hr))
+            TRACE("get_accChild failed with %#lx!\n", hr);
+
+        if (SUCCEEDED(hr) && disp)
+        {
+            IAccessible_Release(acc);
+            hr = IDispatch_QueryInterface(disp, &IID_IAccessible, (void **)&acc);
+            IDispatch_Release(disp);
+            if (FAILED(hr))
+                return hr;
+
+            child_id = CHILDID_SELF;
+        }
+    }
+
+    hr = create_msaa_provider(acc, child_id, hwnd, TRUE, in_child_id == CHILDID_SELF, &elprov);
+    IAccessible_Release(acc);
+    if (FAILED(hr))
+        return hr;
+
+    *ret_elprov = elprov;
+    return S_OK;
+}
+
+struct uia_elprov_event_data
+{
+    IRawElementProviderSimple *elprov;
+    struct uia_event_args *args;
+    BOOL clientside_only;
+
+    SAFEARRAY *rt_id;
+    HUIANODE node;
+};
+
+static HRESULT uia_raise_elprov_event_callback(struct uia_event *event, void *data);
+static HRESULT uia_win_event_for_each_callback(struct uia_event *event, void *data)
+{
+    struct uia_queue_win_event *win_event = (struct uia_queue_win_event *)data;
+    struct event_sink_event *sink_event, *sink_event2;
+    struct uia_proxy_win_event_sink *sink;
+    IRawElementProviderSimple *elprov;
+    struct uia_node *node_data;
+    HUIANODE node;
+    HRESULT hr;
+    int i;
+
+    /*
+     * Check if this HWND, or any of it's ancestors (excluding the desktop)
+     * are in our scope.
+     */
+    if (!uia_hwnd_map_check_hwnd(&event->u.clientside.win_event_hwnd_map, win_event->hwnd) &&
+            !uia_win_event_hwnd_map_contains_ancestors(&event->u.clientside.win_event_hwnd_map, win_event->hwnd))
+        return S_OK;
+
+    /* Has a native serverside provider, no need to do WinEvent translation. */
+    if (UiaHasServerSideProvider(win_event->hwnd))
+        return S_OK;
+
+    /*
+     * Regardless of the object ID of the WinEvent, OBJID_CLIENT is queried
+     * for the HWND with the same child ID as the WinEvent.
+     */
+    hr = create_msaa_provider_from_hwnd(win_event->hwnd, win_event->child_id, &elprov);
+    if (FAILED(hr))
+        return hr;
+
+    hr = create_uia_node_from_elprov(elprov, &node, TRUE, NODE_FLAG_IGNORE_COM_THREADING);
+    IRawElementProviderSimple_Release(elprov);
+    if (FAILED(hr))
+        return hr;
+
+    hr = create_proxy_win_event_sink(&sink, event->event_id);
+    if (SUCCEEDED(hr))
+    {
+        node_data = impl_from_IWineUiaNode((IWineUiaNode *)node);
+        for (i = 0; i < node_data->prov_count; i++)
+        {
+            hr = respond_to_win_event_on_node_provider((IWineUiaNode *)node, i, win_event->event_id, win_event->hwnd, win_event->obj_id,
+                    win_event->child_id, &sink->IProxyProviderWinEventSink_iface);
+            if (FAILED(hr) || !list_empty(&sink->sink_events))
+                break;
+        }
+
+        InterlockedIncrement(&sink->sink_defunct);
+        LIST_FOR_EACH_ENTRY_SAFE(sink_event, sink_event2, &sink->sink_events, struct event_sink_event, event_sink_list_entry)
+        {
+            struct uia_elprov_event_data event_data = { sink_event->elprov, sink_event->args, TRUE };
+            list_remove(&sink_event->event_sink_list_entry);
+
+            hr = uia_raise_elprov_event_callback(event, (void *)&event_data);
+            if (FAILED(hr))
+                WARN("uia_raise_elprov_event_callback failed with hr %#lx\n", hr);
+
+            UiaNodeRelease(event_data.node);
+            SafeArrayDestroy(event_data.rt_id);
+
+            IRawElementProviderSimple_Release(sink_event->elprov);
+            uia_event_args_release(sink_event->args);
+            free(sink_event);
+        }
+
+        IProxyProviderWinEventSink_Release(&sink->IProxyProviderWinEventSink_iface);
+    }
+
+    UiaNodeRelease(node);
+    return hr;
+}
+
 static void uia_event_thread_process_queue(struct list *event_queue)
 {
     while (1)
@@ -490,6 +838,20 @@ static void uia_event_thread_process_queue(struct list *event_queue)
 
             uia_event_args_release(uia_event->args);
             IWineUiaEvent_Release(&uia_event->event->IWineUiaEvent_iface);
+            break;
+        }
+
+        case QUEUE_EVENT_TYPE_WIN_EVENT:
+        {
+            struct uia_queue_win_event *win_event = (struct uia_queue_win_event *)event;
+
+            hr = uia_com_win_event_callback(win_event->event_id, win_event->hwnd, win_event->obj_id, win_event->child_id,
+                    win_event->thread_id, win_event->event_time);
+            if (FAILED(hr))
+                WARN("uia_com_win_event_callback failed with hr %#lx\n", hr);
+
+            hr = uia_event_for_each(win_event_to_uia_event_id(win_event->event_id), uia_win_event_for_each_callback,
+                    (void *)win_event, TRUE);
             break;
         }
 
@@ -634,7 +996,7 @@ static void uia_stop_event_thread(void)
     LeaveCriticalSection(&event_thread_cs);
 }
 
-static BOOL uia_clientside_event_start_event_thread(struct uia_event *event)
+BOOL uia_clientside_event_start_event_thread(struct uia_event *event)
 {
     if (!event->u.clientside.event_thread_started)
         event->u.clientside.event_thread_started = uia_start_event_thread();
@@ -1219,13 +1581,27 @@ static HRESULT uia_event_advise(struct uia_event *event, BOOL advise_added, LONG
     return hr;
 }
 
+HRESULT uia_event_advise_node(struct uia_event *event, HUIANODE node)
+{
+    int old_event_advisers_count = event->event_advisers_count;
+    HRESULT hr;
+
+    hr = attach_event_to_uia_node(node, event);
+    if (FAILED(hr))
+        return hr;
+
+    if (event->event_advisers_count != old_event_advisers_count)
+        hr = uia_event_advise(event, TRUE, old_event_advisers_count);
+
+    return hr;
+}
+
 /***********************************************************************
  *          UiaEventAddWindow (uiautomationcore.@)
  */
 HRESULT WINAPI UiaEventAddWindow(HUIAEVENT huiaevent, HWND hwnd)
 {
     struct uia_event *event = unsafe_impl_from_IWineUiaEvent((IWineUiaEvent *)huiaevent);
-    int old_event_advisers_count;
     HUIANODE node;
     HRESULT hr;
 
@@ -1240,15 +1616,7 @@ HRESULT WINAPI UiaEventAddWindow(HUIAEVENT huiaevent, HWND hwnd)
     if (FAILED(hr))
         return hr;
 
-    old_event_advisers_count = event->event_advisers_count;
-    hr = attach_event_to_uia_node(node, event);
-    if (FAILED(hr))
-        goto exit;
-
-    if (event->event_advisers_count != old_event_advisers_count)
-        hr = uia_event_advise(event, TRUE, old_event_advisers_count);
-
-exit:
+    hr = uia_event_advise_node(event, node);
     UiaNodeRelease(node);
 
     return hr;
@@ -1374,8 +1742,6 @@ HRESULT WINAPI UiaRemoveEvent(HUIAEVENT huiaevent)
     return S_OK;
 }
 
-static HRESULT uia_event_check_match(HUIANODE node, HUIANODE nav_start_node, SAFEARRAY *rt_id,
-        struct uia_event_args *args, struct uia_event *event);
 static HRESULT uia_event_invoke(HUIANODE node, HUIANODE nav_start_node, struct uia_event_args *args, struct uia_event *event)
 {
     HRESULT hr = S_OK;
@@ -1385,8 +1751,8 @@ static HRESULT uia_event_invoke(HUIANODE node, HUIANODE nav_start_node, struct u
         SAFEARRAY *out_req;
         BSTR tree_struct;
 
-        if (nav_start_node)
-            return uia_event_check_match(node, nav_start_node, NULL, args, event);
+        if (nav_start_node && (hr = uia_event_check_node_within_event_scope(event, nav_start_node, NULL, NULL)) != S_OK)
+            return hr;
 
         hr = UiaGetUpdatedCache(node, &event->u.clientside.cache_req, NormalizeState_View, NULL, &out_req,
                 &tree_struct);
@@ -1447,35 +1813,41 @@ static void set_refuse_hwnd_providers(struct uia_node *node, BOOL refuse_hwnd_pr
 }
 
 /*
- * Check if the provider that raised the event matches this particular event.
+ * Check if a node is within the scope of a registered event.
+ * If it is, return S_OK.
+ * If it isn't, return S_FALSE.
+ * Upon failure, return a failure HR.
  */
-static HRESULT uia_event_check_match(HUIANODE node, HUIANODE nav_start_node, SAFEARRAY *rt_id,
-        struct uia_event_args *args, struct uia_event *event)
+HRESULT uia_event_check_node_within_event_scope(struct uia_event *event, HUIANODE node, SAFEARRAY *rt_id,
+        HUIANODE *clientside_nav_node_out)
 {
     struct UiaPropertyCondition prop_cond = { ConditionType_Property, UIA_RuntimeIdPropertyId };
-    struct uia_node *node_data = impl_from_IWineUiaNode((IWineUiaNode *)nav_start_node);
-    HRESULT hr = S_OK;
+    struct uia_node *node_data = impl_from_IWineUiaNode((IWineUiaNode *)node);
+    BOOL in_scope = FALSE;
+    HRESULT hr = S_FALSE;
+
+    if (clientside_nav_node_out)
+        *clientside_nav_node_out = NULL;
+
+    if (event->event_type == EVENT_TYPE_SERVERSIDE)
+        assert(clientside_nav_node_out);
 
     /* Event is no longer valid. */
     if (InterlockedCompareExchange(&event->event_defunct, 0, 0) != 0)
-        return S_OK;
+        return S_FALSE;
 
     /* Can't match an event that doesn't have a runtime ID, early out. */
     if (!event->runtime_id)
-        return S_OK;
+        return S_FALSE;
 
     if (event->desktop_subtree_event)
-        return uia_event_invoke(node, NULL, args, event);
+        return S_OK;
 
     if (rt_id && !uia_compare_safearrays(rt_id, event->runtime_id, UIAutomationType_IntArray))
-    {
-        if (event->scope & TreeScope_Element)
-            hr = uia_event_invoke(node, NULL, args, event);
-        return hr;
-    }
+        return (event->scope & TreeScope_Element) ? S_OK : S_FALSE;
 
     if (!(event->scope & (TreeScope_Descendants | TreeScope_Children)))
-        return S_OK;
+        return S_FALSE;
 
     V_VT(&prop_cond.Value) = VT_I4 | VT_ARRAY;
     V_ARRAY(&prop_cond.Value) = event->runtime_id;
@@ -1495,16 +1867,19 @@ static HRESULT uia_event_check_match(HUIANODE node, HUIANODE nav_start_node, SAF
         {
             if (node_data->hwnd)
             {
-                hr = uia_event_invoke(node, (HUIANODE)&node_data->IWineUiaNode_iface, args, event);
+                *clientside_nav_node_out = (HUIANODE)&node_data->IWineUiaNode_iface;
+                IWineUiaNode_AddRef(&node_data->IWineUiaNode_iface);
+                in_scope = TRUE;
                 break;
             }
             set_refuse_hwnd_providers(node_data, TRUE);
         }
 
         hr = navigate_uia_node(node_data, NavigateDirection_Parent, &node2);
-        IWineUiaNode_Release(&node_data->IWineUiaNode_iface);
         if (FAILED(hr) || !node2)
-            return hr;
+            break;
+
+        IWineUiaNode_Release(&node_data->IWineUiaNode_iface);
 
         node_data = impl_from_IWineUiaNode((IWineUiaNode *)node2);
         hr = uia_condition_check(node2, (struct UiaCondition *)&prop_cond);
@@ -1513,7 +1888,7 @@ static HRESULT uia_event_check_match(HUIANODE node, HUIANODE nav_start_node, SAF
 
         if (uia_condition_matched(hr))
         {
-            hr = uia_event_invoke(node, NULL, args, event);
+            in_scope = TRUE;
             break;
         }
 
@@ -1522,76 +1897,59 @@ static HRESULT uia_event_check_match(HUIANODE node, HUIANODE nav_start_node, SAF
     }
     IWineUiaNode_Release(&node_data->IWineUiaNode_iface);
 
+    if (FAILED(hr))
+        return hr;
+
+    return in_scope ? S_OK : S_FALSE;
+}
+
+static HRESULT uia_raise_elprov_event_callback(struct uia_event *event, void *data)
+{
+    struct uia_elprov_event_data *event_data = (struct uia_elprov_event_data *)data;
+    HUIANODE nav_node = NULL;
+    HRESULT hr = S_OK;
+
+    if (!event_data->node)
+    {
+        /*
+         * For events raised on server-side providers, we don't want to add any
+         * clientside HWND providers.
+         */
+        hr = create_uia_node_from_elprov(event_data->elprov, &event_data->node, event_data->clientside_only, 0);
+        if (FAILED(hr))
+            return hr;
+
+        hr = UiaGetRuntimeId(event_data->node, &event_data->rt_id);
+        if (FAILED(hr))
+            return hr;
+    }
+
+    hr = uia_event_check_node_within_event_scope(event, event_data->node, event_data->rt_id, &nav_node);
+    if (hr == S_OK)
+        hr = uia_event_invoke(event_data->node, nav_node, event_data->args, event);
+
+    UiaNodeRelease(nav_node);
     return hr;
 }
 
-static HRESULT uia_raise_event(IRawElementProviderSimple *elprov, struct uia_event_args *args)
+static HRESULT uia_raise_elprov_event(IRawElementProviderSimple *elprov, struct uia_event_args *args)
 {
-    struct uia_event_map_entry *event_entry;
+    struct uia_elprov_event_data event_data = { elprov, args };
     enum ProviderOptions prov_opts = 0;
-    struct list *cursor, *cursor2;
-    HUIANODE node;
-    SAFEARRAY *sa;
     HRESULT hr;
 
     hr = IRawElementProviderSimple_get_ProviderOptions(elprov, &prov_opts);
     if (FAILED(hr))
         return hr;
 
-    EnterCriticalSection(&event_map_cs);
-    if ((event_entry = uia_get_event_map_entry_for_event(args->simple_args.EventId)))
-        InterlockedIncrement(&event_entry->refs);
-    LeaveCriticalSection(&event_map_cs);
-
-    if (!event_entry)
-        return S_OK;
-
-    /*
-     * For events raised on server-side providers, we don't want to add any
-     * clientside HWND providers.
-     */
-    if (prov_opts & ProviderOptions_ServerSideProvider)
-        hr = create_uia_node_from_elprov(elprov, &node, FALSE);
-    else
-        hr = create_uia_node_from_elprov(elprov, &node, TRUE);
+    event_data.clientside_only = !(prov_opts & ProviderOptions_ServerSideProvider);
+    hr = uia_event_for_each(args->simple_args.EventId, uia_raise_elprov_event_callback, (void *)&event_data,
+            event_data.clientside_only);
     if (FAILED(hr))
-    {
-        uia_event_map_entry_release(event_entry);
-        return hr;
-    }
+        WARN("uia_event_for_each failed with hr %#lx\n", hr);
 
-    hr = UiaGetRuntimeId(node, &sa);
-    if (FAILED(hr))
-    {
-        uia_event_map_entry_release(event_entry);
-        UiaNodeRelease(node);
-        return hr;
-    }
-
-    LIST_FOR_EACH_SAFE(cursor, cursor2, &event_entry->events_list)
-    {
-        struct uia_event *event = LIST_ENTRY(cursor, struct uia_event, event_list_entry);
-
-        hr = uia_event_check_match(node, node, sa, args, event);
-        if (FAILED(hr))
-            break;
-    }
-
-    if (prov_opts & ProviderOptions_ServerSideProvider)
-    {
-        LIST_FOR_EACH_SAFE(cursor, cursor2, &event_entry->serverside_events_list)
-        {
-            struct uia_event *event = LIST_ENTRY(cursor, struct uia_event, event_list_entry);
-
-            hr = uia_event_check_match(node, node, sa, args, event);
-            if (FAILED(hr))
-                break;
-        }
-    }
-
-    uia_event_map_entry_release(event_entry);
-    SafeArrayDestroy(sa);
-    UiaNodeRelease(node);
+    UiaNodeRelease(event_data.node);
+    SafeArrayDestroy(event_data.rt_id);
 
     return hr;
 }
@@ -1624,7 +1982,7 @@ HRESULT WINAPI UiaRaiseAutomationEvent(IRawElementProviderSimple *elprov, EVENTI
     if (!args)
         return E_OUTOFMEMORY;
 
-    hr = uia_raise_event(elprov, args);
+    hr = uia_raise_elprov_event(elprov, args);
     uia_event_args_release(args);
     if (FAILED(hr))
         return hr;

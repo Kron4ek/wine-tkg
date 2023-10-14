@@ -2199,6 +2199,16 @@ static void dump_get_mapping_info_reply( const struct get_mapping_info_reply *re
     dump_varargs_unicode_str( ", name=", cur_size );
 }
 
+static void dump_get_image_map_address_request( const struct get_image_map_address_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_get_image_map_address_reply( const struct get_image_map_address_reply *req )
+{
+    dump_uint64( " addr=", &req->addr );
+}
+
 static void dump_map_view_request( const struct map_view_request *req )
 {
     fprintf( stderr, " mapping=%04x", req->mapping );
@@ -4436,7 +4446,7 @@ static void dump_set_fd_name_info_request( const struct set_fd_name_info_request
     fprintf( stderr, ", rootdir=%04x", req->rootdir );
     fprintf( stderr, ", namelen=%u", req->namelen );
     fprintf( stderr, ", link=%d", req->link );
-    fprintf( stderr, ", replace=%d", req->replace );
+    fprintf( stderr, ", flags=%08x", req->flags );
     dump_varargs_unicode_str( ", name=", min(cur_size,req->namelen) );
     dump_varargs_string( ", filename=", cur_size );
 }
@@ -4796,6 +4806,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_create_mapping_request,
     (dump_func)dump_open_mapping_request,
     (dump_func)dump_get_mapping_info_request,
+    (dump_func)dump_get_image_map_address_request,
     (dump_func)dump_map_view_request,
     (dump_func)dump_map_image_view_request,
     (dump_func)dump_map_builtin_view_request,
@@ -5094,6 +5105,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_create_mapping_reply,
     (dump_func)dump_open_mapping_reply,
     (dump_func)dump_get_mapping_info_reply,
+    (dump_func)dump_get_image_map_address_reply,
     NULL,
     NULL,
     NULL,
@@ -5392,6 +5404,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "create_mapping",
     "open_mapping",
     "get_mapping_info",
+    "get_image_map_address",
     "map_view",
     "map_image_view",
     "map_builtin_view",

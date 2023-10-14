@@ -1,4 +1,4 @@
-FONT_SRCS = \
+SOURCES = \
 	arial.sfd \
 	cour.sfd \
 	courier.sfd \

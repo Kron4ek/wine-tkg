@@ -116,7 +116,6 @@ typedef struct
     DWORD enterrprised_id;
     DWORD max_connections;
 
-    ULONGLONG request_body_size;
 } httprequest;
 
 typedef struct
@@ -737,40 +736,27 @@ static HRESULT BindStatusCallback_create(httprequest* This, BindStatusCallback *
         {
         case VT_BSTR:
         {
-            int len = This->request_body_size ? This->request_body_size : SysStringLen(V_BSTR(body));
+            int len = SysStringLen(V_BSTR(body));
+            const WCHAR *str = V_BSTR(body);
+            UINT i, cp = CP_ACP;
 
-            if(!This->request_body_size)
+            for (i = 0; i < len; i++)
             {
-                const WCHAR *str = V_BSTR(body);
-                UINT i, cp = CP_ACP;
+                if (str[i] > 127)
+                {
+                    cp = CP_UTF8;
+                    break;
+                }
+            }
 
-                for (i = 0; i < len; i++)
-                {
-                    if (str[i] > 127)
-                    {
-                        cp = CP_UTF8;
-                        break;
-                    }
-                }
-                size = WideCharToMultiByte(cp, 0, str, len, NULL, 0, NULL, NULL);
-                if (!(ptr = heap_alloc(size)))
-                {
-                    heap_free(bsc);
-                    return E_OUTOFMEMORY;
-                }
-                WideCharToMultiByte(cp, 0, str, len, ptr, size, NULL, NULL);
-                if (cp == CP_UTF8) This->use_utf8_content = TRUE;
-            }
-            else
+            size = WideCharToMultiByte(cp, 0, str, len, NULL, 0, NULL, NULL);
+            if (!(ptr = heap_alloc(size)))
             {
-                size = This->request_body_size;
-                if (!(ptr = heap_alloc(size)))
-                {
-                    heap_free(bsc);
-                    return E_OUTOFMEMORY;
-                }
-                memcpy(ptr, V_BSTR(body), size);
+                heap_free(bsc);
+                return E_OUTOFMEMORY;
             }
+            WideCharToMultiByte(cp, 0, str, len, ptr, size, NULL, NULL);
+            if (cp == CP_UTF8) This->use_utf8_content = TRUE;
             break;
         }
         case VT_ARRAY|VT_UI1:
@@ -2425,6 +2411,8 @@ static HRESULT WINAPI xml_http_request_2_IRtwqAsyncCallback_Invoke(IRtwqAsyncCal
         IRtwqAsyncResult *result)
 {
     struct xml_http_request_2 *This = xml_http_request_2_from_IRtwqAsyncCallback(iface);
+    IStream *stream = NULL;
+    SAFEARRAY *sa = NULL;
     VARIANT body_v;
     HRESULT hr;
     ULONG read;
@@ -2435,26 +2423,64 @@ static HRESULT WINAPI xml_http_request_2_IRtwqAsyncCallback_Invoke(IRtwqAsyncCal
 
     if (This->request_body)
     {
-        V_VT(&body_v) = VT_BSTR;
-        V_BSTR(&body_v) = CoTaskMemAlloc(This->request_body_size);
+        SAFEARRAYBOUND bound;
+        ULONGLONG body_size;
+        STATSTG stream_stat;
+        LARGE_INTEGER li;
+        void *ptr;
 
-        if (FAILED(hr = ISequentialStream_Read(This->request_body, V_BSTR(&body_v), This->request_body_size, &read)) ||
-            read < This->request_body_size)
+        if (SUCCEEDED(ISequentialStream_QueryInterface(This->request_body, &IID_IStream, (void **)&stream))
+                && SUCCEEDED(IStream_Stat(stream, &stream_stat, 0)))
         {
-            ERR("Failed to allocate request body memory, hr %#lx\n", hr);
-            CoTaskMemFree(V_BSTR(&body_v));
+            body_size = stream_stat.cbSize.QuadPart;
+            li.QuadPart = 0;
+            IStream_Seek(stream, li, STREAM_SEEK_SET, NULL);
+        }
+        else
+        {
+            body_size = This->request_body_size;
+        }
+
+        TRACE("body_size %I64u.\n", body_size);
+
+        bound.lLbound = 0;
+        bound.cElements = body_size;
+        if (!(sa = SafeArrayCreate(VT_UI1, 1, &bound)))
+        {
+            ERR("No memory.\n");
+            hr = E_OUTOFMEMORY;
             goto done;
+        }
+        V_ARRAY(&body_v) = sa;
+        V_VT(&body_v) = VT_ARRAY | VT_UI1;
+        SafeArrayAccessData(sa, &ptr);
+
+        if (stream)
+            hr = IStream_Read(stream, ptr, body_size, &read);
+        else
+            hr = ISequentialStream_Read(This->request_body, ptr, body_size, &read);
+        SafeArrayUnaccessData(sa);
+        if (FAILED(hr) || read < body_size)
+        {
+            /* Windows doesn't send the body in this case but still sends request with Content-Length
+             * set to requested body size. */
+            ERR("Failed to read from stream, hr %#lx, read %lu\n", hr, read);
+            SafeArrayDestroy(sa);
+            sa = NULL;
+            V_VT(&body_v) = VT_NULL;
         }
 
         ISequentialStream_Release(This->request_body);
         This->request_body = NULL;
-
-        This->req.request_body_size = This->request_body_size;
     }
 
     hr = httprequest_send(&This->req, body_v);
 
 done:
+    if (sa)
+        SafeArrayDestroy(sa);
+    if (stream)
+        IStream_Release(stream);
     return IRtwqAsyncResult_SetStatus(result, hr);
 }
 
@@ -2638,8 +2664,6 @@ static void init_httprequest(httprequest *req)
     req->threshold = 0x100;
     req->enterrprised_id = 0;
     req->max_connections = 10;
-
-    req->request_body_size = 0;
 }
 
 HRESULT XMLHTTPRequest_create(void **obj)

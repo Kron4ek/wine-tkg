@@ -216,13 +216,15 @@ bool hlsl_type_is_resource(const struct hlsl_type *type)
     return false;
 }
 
-enum hlsl_regset hlsl_type_get_regset(const struct hlsl_type *type)
+/* Only intended to be used for derefs (after copies have been lowered to components or vectors) or
+ * resources, since for both their data types span across a single regset. */
+static enum hlsl_regset type_get_regset(const struct hlsl_type *type)
 {
     if (type->class <= HLSL_CLASS_LAST_NUMERIC)
         return HLSL_REGSET_NUMERIC;
 
     if (type->class == HLSL_CLASS_ARRAY)
-        return hlsl_type_get_regset(type->e.array.type);
+        return type_get_regset(type->e.array.type);
 
     if (type->class == HLSL_CLASS_OBJECT)
     {
@@ -243,6 +245,18 @@ enum hlsl_regset hlsl_type_get_regset(const struct hlsl_type *type)
     }
 
     vkd3d_unreachable();
+}
+
+enum hlsl_regset hlsl_deref_get_regset(struct hlsl_ctx *ctx, const struct hlsl_deref *deref)
+{
+    struct hlsl_type *type;
+
+    if (deref->data_type)
+        type = deref->data_type;
+    else
+        type = hlsl_deref_get_type(ctx, deref);
+
+    return type_get_regset(type);
 }
 
 unsigned int hlsl_type_get_sm4_offset(const struct hlsl_type *type, unsigned int offset)
@@ -324,7 +338,7 @@ static void hlsl_type_calculate_reg_size(struct hlsl_ctx *ctx, struct hlsl_type 
         {
             if (hlsl_type_is_resource(type))
             {
-                enum hlsl_regset regset = hlsl_type_get_regset(type);
+                enum hlsl_regset regset = type_get_regset(type);
 
                 type->reg_size[regset] = 1;
             }
@@ -452,11 +466,11 @@ struct hlsl_type *hlsl_type_get_component_type(struct hlsl_ctx *ctx, struct hlsl
 }
 
 unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_type *type,
-        enum hlsl_regset regset, unsigned int index)
+        unsigned int index, enum hlsl_regset *regset)
 {
+    unsigned int offset[HLSL_REGSET_LAST + 1] = {0};
     struct hlsl_type *next_type;
-    unsigned int offset = 0;
-    unsigned int idx;
+    unsigned int idx, r;
 
     while (!type_is_single_component(type))
     {
@@ -468,19 +482,22 @@ unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_ty
             case HLSL_CLASS_SCALAR:
             case HLSL_CLASS_VECTOR:
             case HLSL_CLASS_MATRIX:
-                if (regset == HLSL_REGSET_NUMERIC)
-                    offset += idx;
+                offset[HLSL_REGSET_NUMERIC] += idx;
                 break;
 
             case HLSL_CLASS_STRUCT:
-                offset += type->e.record.fields[idx].reg_offset[regset];
+                for (r = 0; r <= HLSL_REGSET_LAST; ++r)
+                    offset[r] += type->e.record.fields[idx].reg_offset[r];
                 break;
 
             case HLSL_CLASS_ARRAY:
-                if (regset == HLSL_REGSET_NUMERIC)
-                    offset += idx * align(type->e.array.type->reg_size[regset], 4);
-                else
-                    offset += idx * type->e.array.type->reg_size[regset];
+                for (r = 0; r <= HLSL_REGSET_LAST; ++r)
+                {
+                    if (r == HLSL_REGSET_NUMERIC)
+                        offset[r] += idx * align(type->e.array.type->reg_size[r], 4);
+                    else
+                        offset[r] += idx * type->e.array.type->reg_size[r];
+                }
                 break;
 
             case HLSL_CLASS_OBJECT:
@@ -493,7 +510,8 @@ unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_ty
         type = next_type;
     }
 
-    return offset;
+    *regset = type_get_regset(type);
+    return offset[*regset];
 }
 
 static bool init_deref(struct hlsl_ctx *ctx, struct hlsl_deref *deref, struct hlsl_ir_var *var,
@@ -2193,6 +2211,10 @@ struct vkd3d_string_buffer *hlsl_modifiers_to_string(struct hlsl_ctx *ctx, unsig
         vkd3d_string_buffer_printf(string, "extern ");
     if (modifiers & HLSL_STORAGE_NOINTERPOLATION)
         vkd3d_string_buffer_printf(string, "nointerpolation ");
+    if (modifiers & HLSL_STORAGE_CENTROID)
+        vkd3d_string_buffer_printf(string, "centroid ");
+    if (modifiers & HLSL_STORAGE_NOPERSPECTIVE)
+        vkd3d_string_buffer_printf(string, "noperspective ");
     if (modifiers & HLSL_MODIFIER_PRECISE)
         vkd3d_string_buffer_printf(string, "precise ");
     if (modifiers & HLSL_STORAGE_SHARED)
@@ -2539,6 +2561,10 @@ static void dump_ir_jump(struct vkd3d_string_buffer *buffer, const struct hlsl_i
 
         case HLSL_IR_JUMP_RETURN:
             vkd3d_string_buffer_printf(buffer, "return");
+            break;
+
+        case HLSL_IR_JUMP_UNRESOLVED_CONTINUE:
+            vkd3d_string_buffer_printf(buffer, "unresolved_continue");
             break;
     }
 }

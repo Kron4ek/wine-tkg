@@ -1056,6 +1056,11 @@ static void reference_graphics_pipeline_resources(struct wined3d_device_context 
         if (state->fb.render_targets[i])
             wined3d_device_context_reference_resource(context, state->fb.render_targets[i]->resource);
     }
+    for (i = 0; i < WINED3D_PUSH_CONSTANTS_COUNT; ++i)
+    {
+        if (context->device->push_constants[i])
+            wined3d_device_context_reference_resource(context, &context->device->push_constants[i]->resource);
+    }
     if (state->fb.depth_stencil)
         wined3d_device_context_reference_resource(context, state->fb.depth_stencil->resource);
     reference_shader_resources(context, ~(1u << WINED3D_SHADER_TYPE_COMPUTE));
@@ -1485,7 +1490,7 @@ static void wined3d_cs_exec_set_texture(struct wined3d_cs *cs, const void *data)
                 || (new_fmt_caps & WINED3D_FORMAT_CAP_SHADOW) != (old_fmt_caps & WINED3D_FORMAT_CAP_SHADOW))
             device_invalidate_state(cs->c.device, STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL));
 
-        if (!prev && op->stage < d3d_info->limits.ffp_blend_stages)
+        if (!prev && op->stage < d3d_info->ffp_fragment_caps.max_blend_stages)
         {
             /* The source arguments for color and alpha ops have different
              * meanings when a NULL texture is bound, so the COLOR_OP and
@@ -1518,7 +1523,7 @@ static void wined3d_cs_exec_set_texture(struct wined3d_cs *cs, const void *data)
             }
         }
 
-        if (!op->texture && op->stage < d3d_info->limits.ffp_blend_stages)
+        if (!op->texture && op->stage < d3d_info->ffp_fragment_caps.max_blend_stages)
         {
             device_invalidate_state(cs->c.device, STATE_TEXTURESTAGE(op->stage, WINED3D_TSS_COLOR_OP));
             device_invalidate_state(cs->c.device, STATE_TEXTURESTAGE(op->stage, WINED3D_TSS_ALPHA_OP));

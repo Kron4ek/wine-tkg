@@ -1406,7 +1406,7 @@ static ULONG WINAPI spaudio_AddRef(ISpAudio *iface)
     struct speech_audio *audio = impl_from_ISpAudio(iface);
     ULONG ref = InterlockedIncrement(&audio->ref);
 
-    TRACE("(%p): ref=%u.\n", audio, ref);
+    TRACE("(%p): ref=%lu.\n", audio, ref);
 
     return ref;
 }
@@ -1416,7 +1416,7 @@ static ULONG WINAPI spaudio_Release(ISpAudio *iface)
     struct speech_audio *audio = impl_from_ISpAudio(iface);
     ULONG ref = InterlockedDecrement(&audio->ref);
 
-    TRACE("(%p): ref=%u.\n", audio, ref);
+    TRACE("(%p): ref=%lu.\n", audio, ref);
 
     if (!ref)
     {
@@ -1430,7 +1430,7 @@ static HRESULT WINAPI spaudio_Read(ISpAudio *iface,void *pv, ULONG cb, ULONG *pc
 {
     struct speech_audio *audio = impl_from_ISpAudio(iface);
 
-    FIXME("%p, %p, %d %p\n", audio, pv, cb, pcbRead);
+    FIXME("%p, %p, %ld %p\n", audio, pv, cb, pcbRead);
 
     return E_NOTIMPL;
 }
@@ -1439,7 +1439,7 @@ static HRESULT WINAPI spaudio_Write(ISpAudio *iface, const void *pv, ULONG cb, U
 {
     struct speech_audio *audio = impl_from_ISpAudio(iface);
 
-    FIXME("%p, %p, %d %p\n", audio, pv, cb, pcbWritten);
+    FIXME("%p, %p, %ld %p\n", audio, pv, cb, pcbWritten);
 
     return E_NOTIMPL;
 }
@@ -1447,7 +1447,7 @@ static HRESULT WINAPI spaudio_Write(ISpAudio *iface, const void *pv, ULONG cb, U
 static HRESULT WINAPI spaudio_Seek(ISpAudio *iface, LARGE_INTEGER dlibMove, DWORD dwOrigin, ULARGE_INTEGER *plibNewPosition)
 {
     struct speech_audio *audio = impl_from_ISpAudio(iface);
-    FIXME("%p, %s, %d, %p\n", audio, wine_dbgstr_longlong(dlibMove.QuadPart), dwOrigin, plibNewPosition);
+    FIXME("%p, %s, %ld, %p\n", audio, wine_dbgstr_longlong(dlibMove.QuadPart), dwOrigin, plibNewPosition);
     return E_NOTIMPL;
 }
 
@@ -1458,7 +1458,7 @@ static HRESULT WINAPI spaudio_SetSize(ISpAudio *iface, ULARGE_INTEGER libNewSize
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI spaudio_CopyTo(ISpAudio *iface,IStream *pstm, ULARGE_INTEGER cb,
+static HRESULT WINAPI spaudio_CopyTo(ISpAudio *iface, IStream *pstm, ULARGE_INTEGER cb,
         ULARGE_INTEGER *pcbRead, ULARGE_INTEGER *pcbWritten)
 {
     struct speech_audio *audio = impl_from_ISpAudio(iface);
@@ -1466,10 +1466,10 @@ static HRESULT WINAPI spaudio_CopyTo(ISpAudio *iface,IStream *pstm, ULARGE_INTEG
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI spaudio_Commit(ISpAudio *iface,DWORD grfCommitFlags)
+static HRESULT WINAPI spaudio_Commit(ISpAudio *iface, DWORD grfCommitFlags)
 {
     struct speech_audio *audio = impl_from_ISpAudio(iface);
-    FIXME("(%p, %#x)\n", audio, grfCommitFlags);
+    FIXME("(%p, %#lx)\n", audio, grfCommitFlags);
     return E_NOTIMPL;
 }
 
@@ -1483,7 +1483,7 @@ static HRESULT WINAPI spaudio_Revert(ISpAudio *iface)
 static HRESULT WINAPI spaudio_LockRegion(ISpAudio *iface, ULARGE_INTEGER offset, ULARGE_INTEGER cb, DWORD dwLockType)
 {
     struct speech_audio *audio = impl_from_ISpAudio(iface);
-    FIXME("(%p, %s, %s, %d)\n", audio, wine_dbgstr_longlong(offset.QuadPart),
+    FIXME("(%p, %s, %s, %ld)\n", audio, wine_dbgstr_longlong(offset.QuadPart),
         wine_dbgstr_longlong(cb.QuadPart), dwLockType);
     return E_NOTIMPL;
 }
@@ -1491,7 +1491,7 @@ static HRESULT WINAPI spaudio_LockRegion(ISpAudio *iface, ULARGE_INTEGER offset,
 static HRESULT WINAPI spaudio_UnlockRegion(ISpAudio *iface,ULARGE_INTEGER offset, ULARGE_INTEGER cb, DWORD dwLockType)
 {
     struct speech_audio *audio = impl_from_ISpAudio(iface);
-    FIXME("(%p, %s, %s, %d)\n", audio, wine_dbgstr_longlong(offset.QuadPart),
+    FIXME("(%p, %s, %s, %ld)\n", audio, wine_dbgstr_longlong(offset.QuadPart),
         wine_dbgstr_longlong(cb.QuadPart), dwLockType);
     return E_NOTIMPL;
 }
@@ -1499,7 +1499,7 @@ static HRESULT WINAPI spaudio_UnlockRegion(ISpAudio *iface,ULARGE_INTEGER offset
 static HRESULT WINAPI spaudio_Stat(ISpAudio *iface, STATSTG *stg, DWORD flag)
 {
     struct speech_audio *audio = impl_from_ISpAudio(iface);
-    FIXME("%p, %p, %d\n", audio, stg, flag);
+    FIXME("%p, %p, %lx\n", audio, stg, flag);
     return E_NOTIMPL;
 }
 
@@ -1576,7 +1576,7 @@ static HRESULT WINAPI spaudio_GetVolumeLevel(ISpAudio *iface, ULONG *level)
 static HRESULT WINAPI spaudio_SetVolumeLevel(ISpAudio *iface, ULONG level)
 {
     struct speech_audio *audio = impl_from_ISpAudio(iface);
-    FIXME("%p, %d\n", audio, level);
+    FIXME("%p, %lu\n", audio, level);
     return E_NOTIMPL;
 }
 
@@ -1590,7 +1590,7 @@ static HRESULT WINAPI spaudio_GetBufferNotifySize(ISpAudio *iface, ULONG *size)
 static HRESULT WINAPI spaudio_SetBufferNotifySize(ISpAudio *iface, ULONG size)
 {
     struct speech_audio *audio = impl_from_ISpAudio(iface);
-    FIXME("%p, %d\n", audio, size);
+    FIXME("%p, %lu\n", audio, size);
     return E_NOTIMPL;
 }
 

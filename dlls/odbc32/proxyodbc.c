@@ -763,7 +763,7 @@ SQLRETURN WINAPI SQLExecDirect(SQLHSTMT StatementHandle, SQLCHAR *StatementText,
     SQLRETURN ret = SQL_ERROR;
 
     TRACE("(StatementHandle %p, StatementText %s, TextLength %d)\n", StatementHandle,
-          TextLength > 0 ? debugstr_wn(StatementText, TextLength) : debugstr_w(StatementText),
+          TextLength > 0 ? debugstr_an((char*)StatementText, TextLength) : debugstr_a((char*)StatementText),
           TextLength);
 
     if (statement->type != SQL_HANDLE_STMT)
@@ -1068,9 +1068,41 @@ SQLRETURN WINAPI SQLGetDiagRec(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSMAL
 {
     SQLRETURN ret = SQL_ERROR;
 
-    FIXME("(HandleType %d, Handle %p, RecNumber %d, Sqlstate %p, NativeError %p, MessageText %p, BufferLength %d,"
+    TRACE("(HandleType %d, Handle %p, RecNumber %d, Sqlstate %p, NativeError %p, MessageText %p, BufferLength %d,"
           " TextLength %p)\n", HandleType, Handle, RecNumber, Sqlstate, NativeError, MessageText, BufferLength,
           TextLength);
+
+    if (HandleType == SQL_HANDLE_ENV)
+    {
+        FIXME("Unhandled SQL_HANDLE_ENV records\n");
+    }
+    else if (HandleType == SQL_HANDLE_DBC)
+    {
+        struct SQLHDBC_data *hdbc = Handle;
+
+        if (hdbc->pSQLGetDiagRec)
+            ret = hdbc->pSQLGetDiagRec(HandleType, hdbc->driver_hdbc, RecNumber, Sqlstate,
+                                NativeError, MessageText, BufferLength, TextLength);
+        else if (hdbc->pSQLGetDiagRecA)
+            ret = hdbc->pSQLGetDiagRecA(HandleType, hdbc->driver_hdbc, RecNumber, Sqlstate,
+                                NativeError, MessageText, BufferLength, TextLength);
+    }
+    else if (HandleType == SQL_HANDLE_STMT)
+    {
+        struct SQLHSTMT_data *statement = Handle;
+
+        if (statement->connection->pSQLGetDiagRec)
+            ret = statement->connection->pSQLGetDiagRec(HandleType, statement->driver_stmt, RecNumber,
+                                Sqlstate, NativeError, MessageText, BufferLength, TextLength);
+        else if (statement->connection->pSQLGetDiagRecA)
+            ret = statement->connection->pSQLGetDiagRecA(HandleType, statement->driver_stmt, RecNumber,
+                                Sqlstate, NativeError, MessageText, BufferLength, TextLength);
+    }
+
+    if (ret != SQL_ERROR)
+    {
+        TRACE("%d: %s %s\n", RecNumber, Sqlstate, MessageText);
+    }
 
     return ret;
 }
@@ -2759,12 +2791,29 @@ SQLRETURN WINAPI SQLStatisticsW(SQLHSTMT StatementHandle, SQLWCHAR *CatalogName,
                                 SQLWCHAR *SchemaName, SQLSMALLINT NameLength2, SQLWCHAR *TableName,
                                 SQLSMALLINT NameLength3, SQLUSMALLINT Unique, SQLUSMALLINT Reserved)
 {
+    struct SQLHSTMT_data *statement = StatementHandle;
     SQLRETURN ret = SQL_ERROR;
 
-    FIXME("(StatementHandle %p, CatalogName %s, NameLength1 %d SchemaName %s, NameLength2 %d, TableName %s"
+    TRACE("(StatementHandle %p, CatalogName %s, NameLength1 %d SchemaName %s, NameLength2 %d, TableName %s"
           " NameLength3 %d, Unique %d, Reserved %d)\n", StatementHandle,
           debugstr_wn(CatalogName, NameLength1), NameLength1, debugstr_wn(SchemaName, NameLength2), NameLength2,
           debugstr_wn(TableName, NameLength3), NameLength3, Unique, Reserved);
+
+    if (statement->type != SQL_HANDLE_STMT)
+    {
+        WARN("Wrong handle type %d\n", statement->type);
+        return SQL_ERROR;
+    }
+
+    if (statement->connection->pSQLStatisticsW)
+    {
+        ret = statement->connection->pSQLStatisticsW(statement->driver_stmt, CatalogName,
+                                NameLength1, SchemaName, NameLength2, TableName, NameLength3,
+                                Unique, Reserved);
+    }
+
+    TRACE("ret %d\n", ret);
+    return ret;
 
     return ret;
 }
@@ -2895,14 +2944,28 @@ SQLRETURN WINAPI SQLPrimaryKeysW(SQLHSTMT hstmt, SQLWCHAR *szCatalogName, SQLSMA
                                  SQLWCHAR *szSchemaName, SQLSMALLINT cbSchemaName, SQLWCHAR *szTableName,
                                  SQLSMALLINT cbTableName)
 {
+    struct SQLHSTMT_data *statement = hstmt;
     SQLRETURN ret = SQL_ERROR;
 
-    FIXME("(hstmt %p, szCatalogName %s, cbCatalogName %d, szSchemaName %s, cbSchemaName %d, szTableName %s,"
+    TRACE("(hstmt %p, szCatalogName %s, cbCatalogName %d, szSchemaName %s, cbSchemaName %d, szTableName %s,"
           " cbTableName %d)\n", hstmt,
           debugstr_wn(szCatalogName, cbCatalogName), cbCatalogName,
           debugstr_wn(szSchemaName, cbSchemaName), cbSchemaName,
           debugstr_wn(szTableName, cbTableName), cbTableName);
 
+    if (statement->type != SQL_HANDLE_STMT)
+    {
+        WARN("Wrong handle type %d\n", statement->type);
+        return SQL_ERROR;
+    }
+
+    if (statement->connection->pSQLPrimaryKeysW)
+    {
+        ret = statement->connection->pSQLPrimaryKeysW(statement->driver_stmt, szCatalogName,
+                    cbCatalogName, szSchemaName, cbSchemaName, szTableName, cbTableName);
+    }
+
+    TRACE("ret %d\n", ret);
     return ret;
 }
 
@@ -3030,9 +3093,35 @@ SQLRETURN WINAPI SQLGetDiagRecA(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSMA
 {
     SQLRETURN ret = SQL_ERROR;
 
-    FIXME("(HandleType %d, Handle %p, RecNumber %d, Sqlstate %p, NativeError %p, MessageText %p, BufferLength %d,"
+    TRACE("(HandleType %d, Handle %p, RecNumber %d, Sqlstate %p, NativeError %p, MessageText %p, BufferLength %d,"
           " TextLength %p)\n", HandleType, Handle, RecNumber, Sqlstate, NativeError, MessageText, BufferLength,
           TextLength);
+
+    if (HandleType == SQL_HANDLE_ENV)
+    {
+        FIXME("Unhandled SQL_HANDLE_ENV records\n");
+    }
+    else if (HandleType == SQL_HANDLE_DBC)
+    {
+        struct SQLHDBC_data *hdbc = Handle;
+
+        if (hdbc->pSQLGetDiagRecA)
+            ret = hdbc->pSQLGetDiagRecA(HandleType, hdbc->driver_hdbc, RecNumber, Sqlstate,
+                                NativeError, MessageText, BufferLength, TextLength);
+    }
+    else if (HandleType == SQL_HANDLE_STMT)
+    {
+        struct SQLHSTMT_data *statement = Handle;
+
+        if (statement->connection->pSQLGetDiagRecA)
+            ret = statement->connection->pSQLGetDiagRecA(HandleType, statement->driver_stmt, RecNumber,
+                                Sqlstate, NativeError, MessageText, BufferLength, TextLength);
+    }
+
+    if (ret != SQL_ERROR)
+    {
+        TRACE("%d: %s %s\n", RecNumber, Sqlstate, MessageText);
+    }
 
     return ret;
 }

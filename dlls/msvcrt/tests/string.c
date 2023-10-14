@@ -642,10 +642,20 @@ static void test_mbsspnp( void)
 
 static void test_strdup(void)
 {
-   char *str;
-   str = _strdup( 0 );
-   ok( str == 0, "strdup returns %s should be 0\n", str);
-   free( str );
+    char *str;
+    errno = 0xdeadbeef;
+    str = strdup(0);
+    ok(str == 0, "strdup returned %s, expected NULL\n", wine_dbgstr_a(str));
+    ok(errno == 0xdeadbeef, "errno is %d, expected 0xdeadbeef\n", errno);
+}
+
+static void test_wcsdup(void)
+{
+    WCHAR *str;
+    errno = 0xdeadbeef;
+    str = wcsdup(0);
+    ok(str == 0, "wcsdup returned %s, expected NULL\n", wine_dbgstr_w(str));
+    ok(errno == 0xdeadbeef, "errno is %d, expected 0xdeadbeef\n", errno);
 }
 
 static void test_strcmp(void)
@@ -4704,6 +4714,7 @@ START_TEST(string)
     test_mbsspn();
     test_mbsspnp();
     test_strdup();
+    test_wcsdup();
     test_strcmp();
     test_strcpy_s();
     test_memcpy_s();

@@ -104,10 +104,13 @@ static ULONG WINAPI band_track_Release(IDirectMusicTrack8 *iface)
     return ref;
 }
 
-static HRESULT WINAPI band_track_Init(IDirectMusicTrack8 *iface, IDirectMusicSegment *pSegment)
+static HRESULT WINAPI band_track_Init(IDirectMusicTrack8 *iface, IDirectMusicSegment *segment)
 {
     struct band_track *This = impl_from_IDirectMusicTrack8(iface);
-    FIXME("(%p, %p): stub\n", This, pSegment);
+
+    FIXME("(%p, %p): stub\n", This, segment);
+
+    if (!segment) return E_POINTER;
     return S_OK;
 }
 
@@ -116,36 +119,78 @@ static HRESULT WINAPI band_track_InitPlay(IDirectMusicTrack8 *iface,
         void **state_data, DWORD virtual_track8id, DWORD flags)
 {
     struct band_track *This = impl_from_IDirectMusicTrack8(iface);
+    struct band_entry *entry;
+    HRESULT hr;
 
-    FIXME("(%p, %p, %p, %p, %ld, %lx): stub\n", This, segment_state, performance, state_data, virtual_track8id, flags);
+    FIXME("(%p, %p, %p, %p, %ld, %lx): semi-stub\n", This, segment_state, performance, state_data, virtual_track8id, flags);
+
+    if (!performance) return E_POINTER;
+
+    if (This->header.bAutoDownload)
+    {
+        LIST_FOR_EACH_ENTRY(entry, &This->bands, struct band_entry, entry)
+        {
+            if (FAILED(hr = IDirectMusicBand_Download(entry->band, performance)))
+                return hr;
+        }
+    }
 
     return S_OK;
 }
 
-static HRESULT WINAPI band_track_EndPlay(IDirectMusicTrack8 *iface, void *pStateData)
+static HRESULT WINAPI band_track_EndPlay(IDirectMusicTrack8 *iface, void *state_data)
 {
     struct band_track *This = impl_from_IDirectMusicTrack8(iface);
-    FIXME("(%p, %p): stub\n", This, pStateData);
+    struct band_entry *entry;
+    HRESULT hr;
+
+    FIXME("(%p, %p): semi-stub\n", This, state_data);
+
+    if (This->header.bAutoDownload)
+    {
+        LIST_FOR_EACH_ENTRY(entry, &This->bands, struct band_entry, entry)
+        {
+            if (FAILED(hr = IDirectMusicBand_Unload(entry->band, NULL)))
+                return hr;
+        }
+    }
+
     return S_OK;
 }
 
 static HRESULT WINAPI band_track_Play(IDirectMusicTrack8 *iface, void *state_data,
-        MUSIC_TIME mtStart, MUSIC_TIME mtEnd, MUSIC_TIME mtOffset, DWORD flags,
-        IDirectMusicPerformance *performance, IDirectMusicSegmentState *segment_state,
-        DWORD virtual_id)
+        MUSIC_TIME start_time, MUSIC_TIME end_time, MUSIC_TIME time_offset, DWORD segment_flags,
+        IDirectMusicPerformance *performance, IDirectMusicSegmentState *segment_state, DWORD track_id)
 {
     struct band_track *This = impl_from_IDirectMusicTrack8(iface);
+    IDirectMusicGraph *graph;
+    struct band_entry *entry;
+    HRESULT hr;
 
-    FIXME("(%p, %p, %ld, %ld, %ld, %lx, %p, %p, %ld): semi-stub\n", This, state_data, mtStart, mtEnd, mtOffset, flags, performance, segment_state, virtual_id);
+    TRACE("(%p, %p, %ld, %ld, %ld, %#lx, %p, %p, %ld)\n", This, state_data, start_time, end_time,
+            time_offset, segment_flags, performance, segment_state, track_id);
 
-    /* Sends following pMSG:
-       - DMUS_PATCH_PMSG
-       - DMUS_TRANSPOSE_PMSG
-       - DMUS_CHANNEL_PRIORITY_PMSG
-       - DMUS_MIDI_PMSG
-    */
+    if (!performance) return DMUS_S_END;
 
-    return S_OK;
+    if (start_time != 0) FIXME("start_time %ld not implemented\n", start_time);
+    if (end_time != -1) FIXME("end_time %ld not implemented\n", end_time);
+    if (time_offset != 0) FIXME("time_offset %ld not implemented\n", time_offset);
+    if (segment_flags) FIXME("segment_flags %#lx not implemented\n", segment_flags);
+    if (segment_state) FIXME("segment_state %p not implemented\n", segment_state);
+
+    if (FAILED(hr = IDirectMusicPerformance_QueryInterface(performance,
+            &IID_IDirectMusicGraph, (void **)&graph)))
+        return hr;
+
+    LIST_FOR_EACH_ENTRY(entry, &This->bands, struct band_entry, entry)
+    {
+        if (FAILED(hr = band_send_messages(entry->band, performance, graph,
+                entry->head.lBandTimeLogical, track_id)))
+            break;
+    }
+
+    IDirectMusicGraph_Release(graph);
+    return hr;
 }
 
 static HRESULT WINAPI band_track_GetParam(IDirectMusicTrack8 *iface, REFGUID type, MUSIC_TIME time,
