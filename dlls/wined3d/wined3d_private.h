@@ -3833,8 +3833,11 @@ struct wined3d_buffer
     struct wined3d_bo *buffer_object;
     struct wined3d_bo_user bo_user;
 
-    struct wined3d_range *maps;
-    SIZE_T maps_size, modified_areas;
+    /* For buffers which are GPU accessible but for which BUFFER is not
+     * currently a valid location, this is a list of areas that need to be
+     * uploaded to BUFFER. */
+    struct wined3d_range *dirty_ranges;
+    SIZE_T dirty_range_count, dirty_ranges_capacity;
 
     /* conversion stuff */
     UINT decl_change_count, full_conversion_count;
@@ -4380,6 +4383,17 @@ static inline BOOL shader_constant_is_local(const struct wined3d_shader *shader,
     }
 
     return FALSE;
+}
+
+static inline BOOL shader_sampler_is_shadow(const struct wined3d_shader *shader,
+        const struct ps_compile_args *ps_args, unsigned int resource_idx, unsigned int sampler_idx)
+{
+    const struct wined3d_shader_version *version = &shader->reg_maps.shader_version;
+
+    if (version->major >= 4)
+        return shader->reg_maps.sampler_comparison_mode & (1u << sampler_idx);
+    else
+        return version->type == WINED3D_SHADER_TYPE_PIXEL && (ps_args->shadow & (1u << resource_idx));
 }
 
 void get_identity_matrix(struct wined3d_matrix *mat) DECLSPEC_HIDDEN;

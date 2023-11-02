@@ -45,6 +45,8 @@
 
 #include "initguid.h"
 
+#include "codecapi.h"
+
 #include "d3d11_4.h"
 
 DEFINE_GUID(DMOVideoFormat_RGB24,D3DFMT_R8G8B8,0x524f,0x11ce,0x9f,0x53,0x00,0x20,0xaf,0x0b,0xa7,0x70);
@@ -1450,7 +1452,7 @@ static void check_dmo_get_output_size_info_video_(int line, IMediaObject *dmo,
 {
     DWORD size, alignment, expected_size;
     DMO_MEDIA_TYPE *type;
-    char buffer[1024];
+    char buffer[2048];
     HRESULT hr;
 
     type = (void *)buffer;
@@ -3933,6 +3935,7 @@ static void test_h264_decoder(void)
         ATTR_UINT32(MF_SA_D3D11_AWARE, 1),
         ATTR_UINT32(MFT_DECODER_EXPOSE_OUTPUT_TYPES_IN_NATIVE_ORDER, 0, .todo = TRUE),
         /* more H264 decoder specific attributes from CODECAPI */
+        ATTR_UINT32(AVDecVideoAcceleration_H264, 1),
         {0},
     };
     static const DWORD input_width = 120, input_height = 248;
@@ -6071,7 +6074,7 @@ static void test_wmv_decoder_dmo_input_type(void)
     };
 
     DMO_MEDIA_TYPE *good_input_type, *bad_input_type, type;
-    char buffer_good_input[1024], buffer_bad_input[1024];
+    char buffer_good_input[2048], buffer_bad_input[2048];
     const GUID *input_subtype = input_subtypes[0];
     LONG width = 16, height = 16;
     VIDEOINFOHEADER *header;
@@ -6326,7 +6329,7 @@ static void test_wmv_decoder_dmo_input_type(void)
 
 static void test_wmv_decoder_dmo_output_type(void)
 {
-    char buffer_good_output[1024], buffer_bad_output[1024], buffer_input[1024];
+    char buffer_good_output[2048], buffer_bad_output[2048], buffer_input[2048];
     DMO_MEDIA_TYPE *good_output_type, *bad_output_type, *input_type, type;
     const GUID* input_subtype = &MEDIASUBTYPE_WMV1;
     LONG width = 16, height = 16;
@@ -6572,7 +6575,7 @@ static void test_wmv_decoder_media_object(void)
     IMediaObject *media_object;
     DMO_MEDIA_TYPE *type;
     const BYTE *wmv_data;
-    char buffer[1024];
+    char buffer[2048];
     HRESULT hr;
     ULONG ret;
 

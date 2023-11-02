@@ -164,5 +164,5 @@ done:
 
 void WINAPI FltFreeSecurityDescriptor(PSECURITY_DESCRIPTOR descriptor)
 {
-    RtlFreeHeap(GetProcessHeap(), 0, descriptor);
+    ExFreePool(descriptor);
 }

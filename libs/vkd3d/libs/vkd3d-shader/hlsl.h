@@ -862,13 +862,8 @@ struct hlsl_ctx
     uint32_t in_state_block : 1;
     /* Whether the numthreads() attribute has been provided in the entry-point function. */
     uint32_t found_numthreads : 1;
-};
 
-enum hlsl_error_level
-{
-    HLSL_LEVEL_ERROR = 0,
-    HLSL_LEVEL_WARNING,
-    HLSL_LEVEL_NOTE,
+    bool semantic_compat_mapping;
 };
 
 struct hlsl_resource_load_params

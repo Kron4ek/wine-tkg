@@ -2464,9 +2464,6 @@ static struct spirv_compiler *spirv_compiler_create(const struct vkd3d_shader_ve
                 compiler->formatting = option->value;
                 break;
 
-            default:
-                WARN("Ignoring unrecognised option %#x with value %#x.\n", option->name, option->value);
-
             case VKD3D_SHADER_COMPILE_OPTION_API_VERSION:
                 break;
 
@@ -2481,6 +2478,10 @@ static struct spirv_compiler *spirv_compiler_create(const struct vkd3d_shader_ve
 
             case VKD3D_SHADER_COMPILE_OPTION_WRITE_TESS_GEOM_POINT_SIZE:
                 compiler->write_tess_geom_point_size = option->value;
+                break;
+
+            default:
+                WARN("Ignoring unrecognised option %#x with value %#x.\n", option->name, option->value);
                 break;
         }
     }
@@ -5377,7 +5378,7 @@ static size_t spirv_compiler_get_current_function_location(struct spirv_compiler
 static void spirv_compiler_emit_dcl_global_flags(struct spirv_compiler *compiler,
         const struct vkd3d_shader_instruction *instruction)
 {
-    unsigned int flags = instruction->flags;
+    enum vkd3d_shader_global_flags flags = instruction->declaration.global_flags;
 
     if (flags & VKD3DSGF_FORCE_EARLY_DEPTH_STENCIL)
     {
@@ -5392,9 +5393,9 @@ static void spirv_compiler_emit_dcl_global_flags(struct spirv_compiler *compiler
     }
 
     if (flags & ~(VKD3DSGF_REFACTORING_ALLOWED | VKD3DSGF_ENABLE_RAW_AND_STRUCTURED_BUFFERS))
-        FIXME("Unhandled global flags %#x.\n", flags);
+        FIXME("Unhandled global flags %#"PRIx64".\n", flags);
     else
-        WARN("Unhandled global flags %#x.\n", flags);
+        WARN("Unhandled global flags %#"PRIx64".\n", flags);
 }
 
 static void spirv_compiler_emit_temps(struct spirv_compiler *compiler, uint32_t count)
@@ -5638,7 +5639,8 @@ static void spirv_compiler_emit_cbv_declaration(struct spirv_compiler *compiler,
     reg.idx[1].offset = range->first;
     reg.idx[2].offset = range->last;
 
-    size = size_in_bytes / (VKD3D_VEC4_SIZE * sizeof(uint32_t));
+    size = align(size_in_bytes, VKD3D_VEC4_SIZE * sizeof(uint32_t));
+    size /= VKD3D_VEC4_SIZE * sizeof(uint32_t);
 
     if ((push_cb = spirv_compiler_find_push_constant_buffer(compiler, range)))
     {
@@ -5686,15 +5688,18 @@ static void spirv_compiler_emit_dcl_immediate_constant_buffer(struct spirv_compi
     struct vkd3d_symbol reg_symbol;
     unsigned int i;
 
-    if (!(elements = vkd3d_calloc(icb->vec4_count, sizeof(*elements))))
+    assert(icb->data_type == VKD3D_DATA_FLOAT);
+    assert(icb->component_count == VKD3D_VEC4_SIZE);
+
+    if (!(elements = vkd3d_calloc(icb->element_count, sizeof(*elements))))
         return;
-    for (i = 0; i < icb->vec4_count; ++i)
+    for (i = 0; i < icb->element_count; ++i)
         elements[i] = spirv_compiler_get_constant(compiler,
                 VKD3D_SHADER_COMPONENT_FLOAT, VKD3D_VEC4_SIZE, &icb->data[4 * i]);
     type_id = vkd3d_spirv_get_type_id(builder, VKD3D_SHADER_COMPONENT_FLOAT, VKD3D_VEC4_SIZE);
-    length_id = spirv_compiler_get_constant_uint(compiler, icb->vec4_count);
+    length_id = spirv_compiler_get_constant_uint(compiler, icb->element_count);
     type_id = vkd3d_spirv_get_op_type_array(builder, type_id, length_id);
-    const_id = vkd3d_spirv_build_op_constant_composite(builder, type_id, elements, icb->vec4_count);
+    const_id = vkd3d_spirv_build_op_constant_composite(builder, type_id, elements, icb->element_count);
     ptr_type_id = vkd3d_spirv_get_op_type_pointer(builder, SpvStorageClassPrivate, type_id);
     icb_id = vkd3d_spirv_build_op_variable(builder, &builder->global_stream,
             ptr_type_id, SpvStorageClassPrivate, const_id);
@@ -5900,6 +5905,7 @@ static void spirv_compiler_emit_combined_sampler_declarations(struct spirv_compi
                 current->sampler_index == VKD3D_SHADER_DUMMY_SAMPLER_INDEX ? 0 : current->sampler_space,
                 current->sampler_index);
         symbol.id = var_id;
+        symbol.descriptor_array = NULL;
         symbol.info.resource.range = *resource_range;
         symbol.info.resource.sampled_type = sampled_type;
         symbol.info.resource.type_id = image_type_id;

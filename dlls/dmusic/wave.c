@@ -32,6 +32,7 @@ C_ASSERT(sizeof(struct sample) == offsetof(struct sample, loops[0]));
 struct wave
 {
     IUnknown IUnknown_iface;
+    struct dmobject dmobj;
     LONG ref;
 
     struct sample *sample;
@@ -55,6 +56,20 @@ static HRESULT WINAPI wave_QueryInterface(IUnknown *iface, REFIID riid, void **r
     {
         *ret_iface = &This->IUnknown_iface;
         IUnknown_AddRef(&This->IUnknown_iface);
+        return S_OK;
+    }
+
+    if (IsEqualIID(riid, &IID_IDirectMusicObject))
+    {
+        *ret_iface = &This->dmobj.IDirectMusicObject_iface;
+        IDirectMusicObject_AddRef(&This->dmobj.IDirectMusicObject_iface);
+        return S_OK;
+    }
+
+    if (IsEqualIID(riid, &IID_IPersistStream))
+    {
+        *ret_iface = &This->dmobj.IPersistStream_iface;
+        IDirectMusicObject_AddRef(&This->dmobj.IPersistStream_iface);
         return S_OK;
     }
 
@@ -95,18 +110,6 @@ static const IUnknownVtbl unknown_vtbl =
     wave_AddRef,
     wave_Release,
 };
-
-static HRESULT wave_create(IUnknown **ret_iface)
-{
-    struct wave *obj;
-
-    if (!(obj = calloc(1, sizeof(*obj)))) return E_OUTOFMEMORY;
-    obj->IUnknown_iface.lpVtbl = &unknown_vtbl;
-    obj->ref = 1;
-
-    *ret_iface = &obj->IUnknown_iface;
-    return S_OK;
-}
 
 static HRESULT parse_wsmp_chunk(struct wave *This, IStream *stream, struct chunk_entry *chunk)
 {
@@ -156,6 +159,11 @@ static HRESULT parse_wave_chunk(struct wave *This, IStream *stream, struct chunk
             hr = parse_wsmp_chunk(This, stream, &chunk);
             break;
 
+        case mmioFOURCC('w','a','v','u'):
+        case mmioFOURCC('s','m','p','l'):
+        case MAKE_IDTYPE(FOURCC_LIST, DMUS_FOURCC_INFO_LIST):
+            break;
+
         default:
             FIXME("Ignoring chunk %s %s\n", debugstr_fourcc(chunk.id), debugstr_fourcc(chunk.type));
             break;
@@ -164,23 +172,133 @@ static HRESULT parse_wave_chunk(struct wave *This, IStream *stream, struct chunk
         if (FAILED(hr)) break;
     }
 
+    if (This->format && This->data) return S_OK;
     return hr;
 }
 
-HRESULT wave_create_from_chunk(IStream *stream, struct chunk_entry *parent, IUnknown **ret_iface)
+static inline struct wave *impl_from_IDirectMusicObject(IDirectMusicObject *iface)
+{
+    return CONTAINING_RECORD(iface, struct wave, dmobj.IDirectMusicObject_iface);
+}
+
+static HRESULT WINAPI wave_object_ParseDescriptor(IDirectMusicObject *iface,
+        IStream *stream, DMUS_OBJECTDESC *desc)
+{
+    struct chunk_entry chunk = {0};
+    HRESULT hr;
+
+    TRACE("(%p, %p, %p)\n", iface, stream, desc);
+
+    if (!stream || !desc) return E_POINTER;
+
+    if ((hr = stream_next_chunk(stream, &chunk)) == S_OK)
+    {
+        switch (MAKE_IDTYPE(chunk.id, chunk.type))
+        {
+        case MAKE_IDTYPE(FOURCC_RIFF, mmioFOURCC('W','A','V','E')):
+            hr = dmobj_parsedescriptor(stream, &chunk, desc,
+                    DMUS_OBJ_NAME_INFO | DMUS_OBJ_OBJECT | DMUS_OBJ_VERSION);
+            break;
+
+        default:
+            WARN("Invalid wave chunk %s %s\n", debugstr_fourcc(chunk.id), debugstr_fourcc(chunk.type));
+            hr = DMUS_E_CHUNKNOTFOUND;
+            break;
+        }
+    }
+
+    if (FAILED(hr)) return hr;
+
+    TRACE("returning descriptor:\n");
+    dump_DMUS_OBJECTDESC(desc);
+    return S_OK;
+}
+
+static const IDirectMusicObjectVtbl wave_object_vtbl =
+{
+    dmobj_IDirectMusicObject_QueryInterface,
+    dmobj_IDirectMusicObject_AddRef,
+    dmobj_IDirectMusicObject_Release,
+    dmobj_IDirectMusicObject_GetDescriptor,
+    dmobj_IDirectMusicObject_SetDescriptor,
+    wave_object_ParseDescriptor,
+};
+
+static inline struct wave *impl_from_IPersistStream(IPersistStream *iface)
+{
+    return CONTAINING_RECORD(iface, struct wave, dmobj.IPersistStream_iface);
+}
+
+static HRESULT WINAPI wave_persist_stream_Load(IPersistStream *iface, IStream *stream)
+{
+    struct wave *This = impl_from_IPersistStream(iface);
+    struct chunk_entry chunk = {0};
+    HRESULT hr;
+
+    TRACE("(%p, %p)\n", This, stream);
+
+    if (!stream) return E_POINTER;
+
+    if ((hr = stream_next_chunk(stream, &chunk)) == S_OK)
+    {
+        switch (MAKE_IDTYPE(chunk.id, chunk.type))
+        {
+        case MAKE_IDTYPE(FOURCC_RIFF, mmioFOURCC('W','A','V','E')):
+            hr = parse_wave_chunk(This, stream, &chunk);
+            break;
+
+        default:
+            WARN("Invalid wave chunk %s %s\n", debugstr_fourcc(chunk.id), debugstr_fourcc(chunk.type));
+            hr = DMUS_E_UNSUPPORTED_STREAM;
+            break;
+        }
+    }
+
+    stream_skip_chunk(stream, &chunk);
+    return hr;
+}
+
+static const IPersistStreamVtbl wave_persist_stream_vtbl =
+{
+    dmobj_IPersistStream_QueryInterface,
+    dmobj_IPersistStream_AddRef,
+    dmobj_IPersistStream_Release,
+    dmobj_IPersistStream_GetClassID,
+    unimpl_IPersistStream_IsDirty,
+    wave_persist_stream_Load,
+    unimpl_IPersistStream_Save,
+    unimpl_IPersistStream_GetSizeMax,
+};
+
+HRESULT wave_create(IDirectMusicObject **ret_iface)
+{
+    struct wave *obj;
+
+    if (!(obj = calloc(1, sizeof(*obj)))) return E_OUTOFMEMORY;
+    obj->IUnknown_iface.lpVtbl = &unknown_vtbl;
+    obj->ref = 1;
+    dmobject_init(&obj->dmobj, &CLSID_DirectSoundWave, &obj->IUnknown_iface);
+    obj->dmobj.IDirectMusicObject_iface.lpVtbl = &wave_object_vtbl;
+    obj->dmobj.IPersistStream_iface.lpVtbl = &wave_persist_stream_vtbl;
+
+    *ret_iface = &obj->dmobj.IDirectMusicObject_iface;
+    return S_OK;
+}
+
+HRESULT wave_create_from_chunk(IStream *stream, struct chunk_entry *parent, IDirectMusicObject **ret_iface)
 {
     struct wave *This;
-    IUnknown *iface;
+    IDirectMusicObject *iface;
     HRESULT hr;
 
     TRACE("(%p, %p, %p)\n", stream, parent, ret_iface);
 
     if (FAILED(hr = wave_create(&iface))) return hr;
-    This = impl_from_IUnknown(iface);
+    This = impl_from_IDirectMusicObject(iface);
 
     if (FAILED(hr = parse_wave_chunk(This, stream, parent)))
     {
-        IUnknown_Release(iface);
+        IDirectMusicObject_Release(iface);
         return DMUS_E_UNSUPPORTED_STREAM;
     }
 
@@ -217,7 +335,7 @@ HRESULT wave_create_from_chunk(IStream *stream, struct chunk_entry *parent, IUnk
     return S_OK;
 }
 
-HRESULT wave_create_from_soundfont(struct soundfont *soundfont, UINT index, IUnknown **ret_iface)
+HRESULT wave_create_from_soundfont(struct soundfont *soundfont, UINT index, IDirectMusicObject **ret_iface)
 {
     struct sf_sample *sf_sample = soundfont->shdr + index;
     struct sample *sample = NULL;
@@ -226,7 +344,7 @@ HRESULT wave_create_from_soundfont(struct soundfont *soundfont, UINT index, IUnk
     UINT data_size, offset;
     struct wave *This;
     void *data = NULL;
-    IUnknown *iface;
+    IDirectMusicObject *iface;
 
     TRACE("(%p, %u, %p)\n", soundfont, index, ret_iface);
 
@@ -253,7 +371,7 @@ HRESULT wave_create_from_soundfont(struct soundfont *soundfont, UINT index, IUnk
 
     if (FAILED(hr = wave_create(&iface))) goto failed;
 
-    This = impl_from_IUnknown(iface);
+    This = impl_from_IDirectMusicObject(iface);
     This->format = format;
     This->sample = sample;
     This->data_size = data_size;
@@ -296,7 +414,7 @@ failed:
     return hr;
 }
 
-HRESULT wave_download_to_port(IUnknown *iface, IDirectMusicPortDownload *port, DWORD *id)
+HRESULT wave_download_to_port(IDirectMusicObject *iface, IDirectMusicPortDownload *port, DWORD *id)
 {
     struct download_buffer
     {
@@ -306,7 +424,7 @@ HRESULT wave_download_to_port(IUnknown *iface, IDirectMusicPortDownload *port, D
         DMUS_WAVEDATA data;
     } *buffer;
 
-    struct wave *This = impl_from_IUnknown(iface);
+    struct wave *This = impl_from_IDirectMusicObject(iface);
     DWORD size = offsetof(struct download_buffer, data.byData[This->data_size]);
     IDirectMusicDownload *download;
     HRESULT hr;
@@ -339,9 +457,9 @@ HRESULT wave_download_to_port(IUnknown *iface, IDirectMusicPortDownload *port, D
     return hr;
 }
 
-HRESULT wave_download_to_dsound(IUnknown *iface, IDirectSound *dsound, IDirectSoundBuffer **ret_iface)
+HRESULT wave_download_to_dsound(IDirectMusicObject *iface, IDirectSound *dsound, IDirectSoundBuffer **ret_iface)
 {
-    struct wave *This = impl_from_IUnknown(iface);
+    struct wave *This = impl_from_IDirectMusicObject(iface);
     DSBUFFERDESC desc =
     {
         .dwSize = sizeof(desc),
@@ -378,9 +496,9 @@ HRESULT wave_download_to_dsound(IUnknown *iface, IDirectSound *dsound, IDirectSo
     return S_OK;
 }
 
-HRESULT wave_get_duration(IUnknown *iface, REFERENCE_TIME *duration)
+HRESULT wave_get_duration(IDirectMusicObject *iface, REFERENCE_TIME *duration)
 {
-    struct wave *This = impl_from_IUnknown(iface);
+    struct wave *This = impl_from_IDirectMusicObject(iface);
     *duration = (REFERENCE_TIME)This->data_size * 10000000 / This->format->nAvgBytesPerSec;
     return S_OK;
 }

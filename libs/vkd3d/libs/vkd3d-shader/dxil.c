@@ -20,9 +20,14 @@
 
 #define VKD3D_SM6_VERSION_MAJOR(version) (((version) >> 4) & 0xf)
 #define VKD3D_SM6_VERSION_MINOR(version) (((version) >> 0) & 0xf)
+/* Two seems to be the maximum but leave some extra room. */
+#define VKD3D_SM6_MAX_METADATA_TABLES 4
 
 #define BITCODE_MAGIC VKD3D_MAKE_TAG('B', 'C', 0xc0, 0xde)
 #define DXIL_OP_MAX_OPERANDS 17
+static const unsigned int SHADER_DESCRIPTOR_TYPE_COUNT = 4;
+
+static const unsigned int dx_max_thread_group_size[3] = {1024, 1024, 64};
 
 enum bitcode_block_id
 {
@@ -114,6 +119,19 @@ enum bitcode_function_code
     FUNC_CODE_INST_CMPXCHG     = 46,
 };
 
+enum bitcode_metadata_code
+{
+    METADATA_STRING             =  1,
+    METADATA_VALUE              =  2,
+    METADATA_NODE               =  3,
+    METADATA_NAME               =  4,
+    METADATA_DISTINCT_NODE      =  5,
+    METADATA_KIND               =  6,
+    METADATA_LOCATION           =  7,
+    METADATA_NAMED_NODE         = 10,
+    METADATA_ATTACHMENT         = 11,
+};
+
 enum bitcode_type_code
 {
     TYPE_CODE_NUMENTRY     =  1,
@@ -137,6 +155,91 @@ enum bitcode_value_symtab_code
 {
     VST_CODE_ENTRY   = 1,
     VST_CODE_BBENTRY = 2,
+};
+
+enum dxil_component_type
+{
+    COMPONENT_TYPE_INVALID     =  0,
+    COMPONENT_TYPE_I1          =  1,
+    COMPONENT_TYPE_I16         =  2,
+    COMPONENT_TYPE_U16         =  3,
+    COMPONENT_TYPE_I32         =  4,
+    COMPONENT_TYPE_U32         =  5,
+    COMPONENT_TYPE_I64         =  6,
+    COMPONENT_TYPE_U64         =  7,
+    COMPONENT_TYPE_F16         =  8,
+    COMPONENT_TYPE_F32         =  9,
+    COMPONENT_TYPE_F64         = 10,
+    COMPONENT_TYPE_SNORMF16    = 11,
+    COMPONENT_TYPE_UNORMF16    = 12,
+    COMPONENT_TYPE_SNORMF32    = 13,
+    COMPONENT_TYPE_UNORMF32    = 14,
+    COMPONENT_TYPE_SNORMF64    = 15,
+    COMPONENT_TYPE_UNORMF64    = 16,
+    COMPONENT_TYPE_PACKEDS8X32 = 17,
+    COMPONENT_TYPE_PACKEDU8X32 = 18,
+};
+
+enum dxil_semantic_kind
+{
+    SEMANTIC_KIND_ARBITRARY            =  0,
+    SEMANTIC_KIND_VERTEXID             =  1,
+    SEMANTIC_KIND_INSTANCEID           =  2,
+    SEMANTIC_KIND_POSITION             =  3,
+    SEMANTIC_KIND_RTARRAYINDEX         =  4,
+    SEMANTIC_KIND_VIEWPORTARRAYINDEX   =  5,
+    SEMANTIC_KIND_CLIPDISTANCE         =  6,
+    SEMANTIC_KIND_CULLDISTANCE         =  7,
+    SEMANTIC_KIND_OUTPUTCONTROLPOINTID =  8,
+    SEMANTIC_KIND_DOMAINLOCATION       =  9,
+    SEMANTIC_KIND_PRIMITIVEID          = 10,
+    SEMANTIC_KIND_GSINSTANCEID         = 11,
+    SEMANTIC_KIND_SAMPLEINDEX          = 12,
+    SEMANTIC_KIND_ISFRONTFACE          = 13,
+    SEMANTIC_KIND_COVERAGE             = 14,
+    SEMANTIC_KIND_INNERCOVERAGE        = 15,
+    SEMANTIC_KIND_TARGET               = 16,
+    SEMANTIC_KIND_DEPTH                = 17,
+    SEMANTIC_KIND_DEPTHLESSEQUAL       = 18,
+    SEMANTIC_KIND_DEPTHGREATEREQUAL    = 19,
+    SEMANTIC_KIND_STENCILREF           = 20,
+    SEMANTIC_KIND_DISPATCHTHREADID     = 21,
+    SEMANTIC_KIND_GROUPID              = 22,
+    SEMANTIC_KIND_GROUPINDEX           = 23,
+    SEMANTIC_KIND_GROUPTHREADID        = 24,
+    SEMANTIC_KIND_TESSFACTOR           = 25,
+    SEMANTIC_KIND_INSIDETESSFACTOR     = 26,
+    SEMANTIC_KIND_VIEWID               = 27,
+    SEMANTIC_KIND_BARYCENTRICS         = 28,
+    SEMANTIC_KIND_SHADINGRATE          = 29,
+    SEMANTIC_KIND_CULLPRIMITIVE        = 30,
+    SEMANTIC_KIND_COUNT                = 31,
+    SEMANTIC_KIND_INVALID              = SEMANTIC_KIND_COUNT,
+};
+
+enum dxil_element_additional_tag
+{
+    ADDITIONAL_TAG_STREAM_INDEX  = 0,
+    ADDITIONAL_TAG_GLOBAL_SYMBOL = 1, /* not used */
+    ADDITIONAL_TAG_RELADDR_MASK  = 2,
+    ADDITIONAL_TAG_USED_MASK     = 3,
+};
+
+enum dxil_shader_properties_tag
+{
+    SHADER_PROPERTIES_FLAGS              =  0,
+    SHADER_PROPERTIES_GEOMETRY           =  1,
+    SHADER_PROPERTIES_DOMAIN             =  2,
+    SHADER_PROPERTIES_HULL               =  3,
+    SHADER_PROPERTIES_COMPUTE            =  4,
+    SHADER_PROPERTIES_AUTO_BINDING_SPACE =  5,
+    SHADER_PROPERTIES_RAY_PAYLOAD_SIZE   =  6,
+    SHADER_PROPERTIES_RAY_ATTRIB_SIZE    =  7,
+    SHADER_PROPERTIES_SHADER_KIND        =  8,
+    SHADER_PROPERTIES_MESH               =  9,
+    SHADER_PROPERTIES_AMPLIFICATION      = 10,
+    SHADER_PROPERTIES_WAVE_SIZE          = 11,
+    SHADER_PROPERTIES_ENTRY_ROOT_SIG     = 12,
 };
 
 enum dx_intrinsic_opcode
@@ -278,6 +381,52 @@ struct dxil_block
     size_t record_count;
 };
 
+enum sm6_metadata_type
+{
+    VKD3D_METADATA_KIND,
+    VKD3D_METADATA_NODE,
+    VKD3D_METADATA_STRING,
+    VKD3D_METADATA_VALUE,
+};
+
+struct sm6_metadata_node
+{
+    bool is_distinct;
+    unsigned int operand_count;
+    struct sm6_metadata_value *operands[];
+};
+
+struct sm6_metadata_kind
+{
+    uint64_t id;
+    char *name;
+};
+
+struct sm6_metadata_value
+{
+    enum sm6_metadata_type type;
+    const struct sm6_type *value_type;
+    union
+    {
+        char *string_value;
+        const struct sm6_value *value;
+        struct sm6_metadata_node *node;
+        struct sm6_metadata_kind kind;
+    } u;
+};
+
+struct sm6_metadata_table
+{
+    struct sm6_metadata_value *values;
+    unsigned int count;
+};
+
+struct sm6_named_metadata
+{
+    char *name;
+    struct sm6_metadata_value value;
+};
+
 struct sm6_parser
 {
     const uint32_t *ptr, *start, *end;
@@ -292,15 +441,22 @@ struct sm6_parser
 
     struct sm6_type *types;
     size_t type_count;
+    struct sm6_type *metadata_type;
 
     struct sm6_symbol *global_symbols;
     size_t global_symbol_count;
+
+    const char *entry_point;
 
     struct vkd3d_shader_dst_param *output_params;
     struct vkd3d_shader_dst_param *input_params;
 
     struct sm6_function *functions;
     size_t function_count;
+
+    struct sm6_metadata_table metadata_tables[VKD3D_SM6_MAX_METADATA_TABLES];
+    struct sm6_named_metadata *named_metadata;
+    unsigned int named_metadata_count;
 
     struct sm6_value *values;
     size_t value_count;
@@ -973,14 +1129,18 @@ static const struct dxil_block *sm6_parser_get_level_one_block(const struct sm6_
     return found;
 }
 
-static char *dxil_record_to_string(const struct dxil_record *record, unsigned int offset)
+static char *dxil_record_to_string(const struct dxil_record *record, unsigned int offset, struct sm6_parser *sm6)
 {
     unsigned int i;
     char *str;
 
     assert(offset <= record->operand_count);
     if (!(str = vkd3d_calloc(record->operand_count - offset + 1, 1)))
+    {
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                "Out of memory allocating a string of length %u.", record->operand_count - offset);
         return NULL;
+    }
 
     for (i = offset; i < record->operand_count; ++i)
         str[i - offset] = record->operands[i];
@@ -1169,6 +1329,7 @@ static enum vkd3d_result sm6_parser_type_table_init(struct sm6_parser *sm6)
 
             case TYPE_CODE_METADATA:
                 type->class = TYPE_CLASS_METADATA;
+                sm6->metadata_type = type;
                 break;
 
             case TYPE_CODE_NUMENTRY:
@@ -1235,7 +1396,7 @@ static enum vkd3d_result sm6_parser_type_table_init(struct sm6_parser *sm6)
                 break;
 
             case TYPE_CODE_STRUCT_NAME:
-                if (!(struct_name = dxil_record_to_string(record, 0)))
+                if (!(struct_name = dxil_record_to_string(record, 0, sm6)))
                 {
                     ERR("Failed to allocate struct name.\n");
                     return VKD3D_ERROR_OUT_OF_MEMORY;
@@ -1322,6 +1483,11 @@ static bool sm6_type_is_numeric_aggregate(const struct sm6_type *type)
         default:
             return false;
     }
+}
+
+static bool sm6_type_is_array(const struct sm6_type *type)
+{
+    return type->class == TYPE_CLASS_ARRAY;
 }
 
 static inline bool sm6_type_is_struct(const struct sm6_type *type)
@@ -1454,7 +1620,7 @@ static enum vkd3d_result sm6_parser_symtab_init(struct sm6_parser *sm6)
 
         symbol = &sm6->global_symbols[sm6->global_symbol_count];
         symbol->id = record->operands[0];
-        if (!(symbol->name = dxil_record_to_string(record, 1)))
+        if (!(symbol->name = dxil_record_to_string(record, 1, sm6)))
         {
             ERR("Failed to allocate symbol name.\n");
             return VKD3D_ERROR_OUT_OF_MEMORY;
@@ -1511,6 +1677,17 @@ static unsigned int register_get_uint_value(const struct vkd3d_shader_register *
     return reg->u.immconst_uint[0];
 }
 
+static uint64_t register_get_uint64_value(const struct vkd3d_shader_register *reg)
+{
+    if (!register_is_constant(reg) || !data_type_is_integer(reg->data_type))
+        return UINT64_MAX;
+
+    if (reg->dimension == VSIR_DIMENSION_VEC4)
+        WARN("Returning vec4.x.\n");
+
+    return (reg->type == VKD3DSPR_IMMCONST64) ? reg->u.immconst_uint64[0] : reg->u.immconst_uint[0];
+}
+
 static inline bool sm6_value_is_function_dcl(const struct sm6_value *value)
 {
     return value->value_type == VALUE_TYPE_FUNCTION;
@@ -1541,6 +1718,11 @@ static inline bool sm6_value_is_constant(const struct sm6_value *value)
 static inline bool sm6_value_is_undef(const struct sm6_value *value)
 {
     return sm6_value_is_register(value) && value->u.reg.type == VKD3DSPR_UNDEF;
+}
+
+static bool sm6_value_is_icb(const struct sm6_value *value)
+{
+    return sm6_value_is_register(value) && value->u.reg.type == VKD3DSPR_IMMCONSTBUFFER;
 }
 
 static inline unsigned int sm6_value_get_constant_uint(const struct sm6_value *value)
@@ -1604,6 +1786,8 @@ static enum vkd3d_data_type vkd3d_data_type_from_sm6_type(const struct sm6_type 
                 return VKD3D_DATA_UINT8;
             case 32:
                 return VKD3D_DATA_UINT;
+            case 64:
+                return VKD3D_DATA_UINT64;
             default:
                 FIXME("Unhandled width %u.\n", type->u.width);
                 return VKD3D_DATA_UINT;
@@ -1773,6 +1957,17 @@ static size_t sm6_parser_get_value_index(struct sm6_parser *sm6, uint64_t idx)
     return i;
 }
 
+static const struct sm6_value *sm6_parser_get_value_safe(struct sm6_parser *sm6, unsigned int idx)
+{
+    if (idx < sm6->value_count)
+        return &sm6->values[idx];
+
+    WARN("Invalid value index %u.\n", idx);
+    vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_OPERAND,
+            "Invalid value index %u.", idx);
+    return NULL;
+}
+
 static size_t sm6_parser_get_value_idx_by_ref(struct sm6_parser *sm6, const struct dxil_record *record,
         const struct sm6_type *fwd_type, unsigned int *rec_idx)
 {
@@ -1916,12 +2111,80 @@ static inline double bitcast_uint64_to_double(uint64_t value)
     return u.double_value;
 }
 
+static enum vkd3d_result register_allocate_constant_array(struct vkd3d_shader_register *reg, const struct sm6_type *type,
+        const uint64_t *operands, struct sm6_parser *sm6)
+{
+    struct vkd3d_shader_immediate_constant_buffer *icb;
+    const struct sm6_type *elem_type;
+    unsigned int i, size, count;
+
+    elem_type = type->u.array.elem_type;
+    /* Multidimensional arrays are emitted in flattened form. */
+    if (elem_type->class != TYPE_CLASS_INTEGER && elem_type->class != TYPE_CLASS_FLOAT)
+    {
+        FIXME("Unhandled element type %u for data array.\n", elem_type->class);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_OPERAND,
+                "The element data type for an immediate constant buffer is not scalar integer or floating point.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    /* Arrays of bool are not used in DXIL. dxc will emit an array of int32 instead if necessary. */
+    if (!(size = elem_type->u.width / CHAR_BIT))
+    {
+        WARN("Invalid data type width %u.\n", elem_type->u.width);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_OPERAND,
+                "An immediate constant buffer is declared with boolean elements.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+    size = max(size, sizeof(icb->data[0]));
+    count = type->u.array.count * size / sizeof(icb->data[0]);
+
+    if (!(icb = vkd3d_malloc(offsetof(struct vkd3d_shader_immediate_constant_buffer, data[count]))))
+    {
+        ERR("Failed to allocate buffer, count %u.\n", count);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                "Out of memory allocating an immediate constant buffer of count %u.", count);
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    }
+    if ((reg->idx[0].offset = shader_instruction_array_add_icb(&sm6->p.instructions, icb)) == UINT_MAX)
+    {
+        ERR("Failed to store icb object.\n");
+        vkd3d_free(icb);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                "Out of memory storing an immediate constant buffer object.");
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    }
+
+    reg->type = VKD3DSPR_IMMCONSTBUFFER;
+    reg->idx_count = 1;
+
+    icb->data_type = vkd3d_data_type_from_sm6_type(elem_type);
+    icb->element_count = type->u.array.count;
+    icb->component_count = 1;
+
+    count = type->u.array.count;
+    if (size > sizeof(icb->data[0]))
+    {
+        uint64_t *data = (uint64_t *)icb->data;
+        for (i = 0; i < count; ++i)
+            data[i] = operands[i];
+    }
+    else
+    {
+        for (i = 0; i < count; ++i)
+            icb->data[i] = operands[i];
+    }
+
+    return VKD3D_OK;
+}
+
 static enum vkd3d_result sm6_parser_constants_init(struct sm6_parser *sm6, const struct dxil_block *block)
 {
     enum vkd3d_shader_register_type reg_type = VKD3DSPR_INVALID;
     const struct sm6_type *type, *elem_type;
     enum vkd3d_data_type reg_data_type;
     const struct dxil_record *record;
+    enum vkd3d_result ret;
     struct sm6_value *dst;
     size_t i, value_idx;
     uint64_t value;
@@ -1974,7 +2237,14 @@ static enum vkd3d_result sm6_parser_constants_init(struct sm6_parser *sm6, const
         switch (record->code)
         {
             case CST_CODE_NULL:
-                /* Register constant data is already zero-filled. */
+                if (sm6_type_is_array(type))
+                {
+                    FIXME("Constant null arrays are not supported.\n");
+                    vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_OPERAND,
+                            "Constant null arrays are not supported.");
+                    return VKD3D_ERROR_INVALID_SHADER;
+                }
+                /* For non-aggregates, register constant data is already zero-filled. */
                 break;
 
             case CST_CODE_INTEGER:
@@ -2017,7 +2287,19 @@ static enum vkd3d_result sm6_parser_constants_init(struct sm6_parser *sm6, const
                 break;
 
             case CST_CODE_DATA:
-                WARN("Unhandled constant array.\n");
+                if (!sm6_type_is_array(type))
+                {
+                    WARN("Invalid type %u for data constant idx %zu.\n", type->class, value_idx);
+                    vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_OPERAND,
+                            "The type of a constant array is not an array type.");
+                    return VKD3D_ERROR_INVALID_SHADER;
+                }
+                if (!dxil_record_validate_operand_count(record, type->u.array.count, type->u.array.count, sm6))
+                    return VKD3D_ERROR_INVALID_SHADER;
+
+                if ((ret = register_allocate_constant_array(&dst->u.reg, type, record->operands, sm6)) < 0)
+                    return ret;
+
                 break;
 
             case CST_CODE_UNDEF:
@@ -2064,6 +2346,7 @@ static enum vkd3d_result sm6_parser_globals_init(struct sm6_parser *sm6)
 {
     const struct dxil_block *block = &sm6->root_block;
     const struct dxil_record *record;
+    enum vkd3d_result ret;
     uint64_t version;
     size_t i;
 
@@ -2106,6 +2389,13 @@ static enum vkd3d_result sm6_parser_globals_init(struct sm6_parser *sm6)
         }
     }
 
+    for (i = 0; i < block->child_block_count; ++i)
+    {
+        if (block->child_blocks[i]->id == CONSTANTS_BLOCK
+                && (ret = sm6_parser_constants_init(sm6, block->child_blocks[i])) < 0)
+            return ret;
+    }
+
     return VKD3D_OK;
 }
 
@@ -2127,7 +2417,7 @@ static void sm6_parser_init_signature(struct sm6_parser *sm6, const struct shade
 {
     struct vkd3d_shader_dst_param *param;
     const struct signature_element *e;
-    unsigned int i;
+    unsigned int i, count;
 
     for (i = 0; i < s->element_count; ++i)
     {
@@ -2135,8 +2425,11 @@ static void sm6_parser_init_signature(struct sm6_parser *sm6, const struct shade
 
         param = &params[i];
         dst_param_io_init(param, e, reg_type);
-        param->reg.idx[0].offset = i;
-        param->reg.idx_count = 1;
+        count = 0;
+        if (e->register_count > 1)
+            param->reg.idx[count++].offset = 0;
+        param->reg.idx[count++].offset = i;
+        param->reg.idx_count = count;
     }
 }
 
@@ -2168,9 +2461,14 @@ static void sm6_parser_emit_signature(struct sm6_parser *sm6, const struct shade
             param = &ins->declaration.dst;
         }
 
-        /* TODO: set the interpolation mode when signatures are loaded from DXIL metadata. */
-        ins->flags = (handler_idx == VKD3DSIH_DCL_INPUT_PS) ? VKD3DSIM_LINEAR_NOPERSPECTIVE : 0;
+        ins->flags = e->interpolation_mode;
         *param = params[i];
+
+        if (e->register_count > 1)
+        {
+            param->reg.idx[0].rel_addr = NULL;
+            param->reg.idx[0].offset = e->register_count;
+        }
     }
 }
 
@@ -2518,6 +2816,59 @@ static void sm6_parser_emit_ret(struct sm6_parser *sm6, const struct dxil_record
     ins->handler_idx = VKD3DSIH_NOP;
 }
 
+static bool sm6_metadata_value_is_node(const struct sm6_metadata_value *m)
+{
+    return m && m->type == VKD3D_METADATA_NODE;
+}
+
+static bool sm6_metadata_value_is_value(const struct sm6_metadata_value *m)
+{
+    return m && m->type == VKD3D_METADATA_VALUE;
+}
+
+static bool sm6_metadata_value_is_string(const struct sm6_metadata_value *m)
+{
+    return m && m->type == VKD3D_METADATA_STRING;
+}
+
+static bool sm6_metadata_get_uint_value(const struct sm6_parser *sm6,
+        const struct sm6_metadata_value *m, unsigned int *u)
+{
+    const struct sm6_value *value;
+
+    if (!m || m->type != VKD3D_METADATA_VALUE)
+        return false;
+
+    value = m->u.value;
+    if (!sm6_value_is_constant(value))
+        return false;
+    if (!sm6_type_is_integer(value->type))
+        return false;
+
+    *u = register_get_uint_value(&value->u.reg);
+
+    return true;
+}
+
+static bool sm6_metadata_get_uint64_value(const struct sm6_parser *sm6,
+        const struct sm6_metadata_value *m, uint64_t *u)
+{
+    const struct sm6_value *value;
+
+    if (!m || m->type != VKD3D_METADATA_VALUE)
+        return false;
+
+    value = m->u.value;
+    if (!sm6_value_is_constant(value))
+        return false;
+    if (!sm6_type_is_integer(value->type))
+        return false;
+
+    *u = register_get_uint64_value(&value->u.reg);
+
+    return true;
+}
+
 static enum vkd3d_result sm6_parser_function_init(struct sm6_parser *sm6, const struct dxil_block *block,
         struct sm6_function *function)
 {
@@ -2678,6 +3029,9 @@ static enum vkd3d_result sm6_parser_module_init(struct sm6_parser *sm6, const st
     switch (block->id)
     {
         case CONSTANTS_BLOCK:
+            /* Level 1 (global) constants are already done in sm6_parser_globals_init(). */
+            if (level < 2)
+                break;
             function = &sm6->functions[sm6->function_count];
             sm6->cur_max_value = function->value_count;
             return sm6_parser_constants_init(sm6, block);
@@ -2709,6 +3063,1009 @@ static enum vkd3d_result sm6_parser_module_init(struct sm6_parser *sm6, const st
     }
 
     return VKD3D_OK;
+}
+
+static bool sm6_parser_allocate_named_metadata(struct sm6_parser *sm6)
+{
+    struct dxil_block *block;
+    unsigned int i, j, count;
+
+    for (i = 0, count = 0; i < sm6->root_block.child_block_count; ++i)
+    {
+        block = sm6->root_block.child_blocks[i];
+        if (block->id != METADATA_BLOCK)
+            continue;
+        for (j = 0; j < block->record_count; ++j)
+            count += block->records[j]->code == METADATA_NAMED_NODE;
+    }
+
+    if (!count)
+        return true;
+
+    return !!(sm6->named_metadata = vkd3d_calloc(count, sizeof(*sm6->named_metadata)));
+}
+
+static enum vkd3d_result metadata_value_create_node(struct sm6_metadata_value *m, struct sm6_metadata_table *table,
+        unsigned int dst_idx, unsigned int end_count, const struct dxil_record *record, struct sm6_parser *sm6)
+{
+    struct sm6_metadata_node *node;
+    unsigned int i, offset;
+
+    m->type = VKD3D_METADATA_NODE;
+    if (!(m->value_type = sm6->metadata_type))
+    {
+        WARN("Metadata type not found.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_METADATA,
+                "The type for metadata values was not found.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+    if (!(node = vkd3d_malloc(offsetof(struct sm6_metadata_node, operands[record->operand_count]))))
+    {
+        ERR("Failed to allocate metadata node with %u operands.\n", record->operand_count);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                "Out of memory allocating a metadata node with %u operands.", record->operand_count);
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    }
+    m->u.node = node;
+
+    node->is_distinct = record->code == METADATA_DISTINCT_NODE;
+
+    offset = record->code != METADATA_NAMED_NODE;
+
+    for (i = 0; i < record->operand_count; ++i)
+    {
+        uint64_t ref;
+
+        ref = record->operands[i] - offset;
+        if (record->operands[i] >= offset && ref >= end_count)
+        {
+            WARN("Invalid metadata index %"PRIu64".\n", ref);
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_METADATA,
+                    "Metadata index %"PRIu64" is invalid.", ref);
+            vkd3d_free(node);
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        if (!node->is_distinct && ref == dst_idx)
+        {
+            WARN("Metadata self-reference at index %u.\n", dst_idx);
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_METADATA,
+                    "Metadata index %u is self-referencing.", dst_idx);
+            vkd3d_free(node);
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        node->operands[i] = (record->operands[i] >= offset) ? &table->values[ref] : NULL;
+        if (record->code == METADATA_NAMED_NODE && !sm6_metadata_value_is_node(node->operands[i]))
+        {
+            WARN("Named node operand is not a node.\n");
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_METADATA,
+                    "The operand of a metadata named node is not a node.");
+            vkd3d_free(node);
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+    }
+
+    node->operand_count = record->operand_count;
+
+    return VKD3D_OK;
+}
+
+static enum vkd3d_result sm6_parser_metadata_init(struct sm6_parser *sm6, const struct dxil_block *block,
+        struct sm6_metadata_table *table)
+{
+    unsigned int i, count, table_idx, value_idx;
+    struct sm6_metadata_value *values, *m;
+    const struct dxil_record *record;
+    const struct sm6_value *value;
+    enum vkd3d_result ret;
+    char *name;
+
+    for (i = 0, count = 0; i < block->record_count; ++i)
+        count += block->records[i]->code != METADATA_NAME;
+
+    if (!(values = vkd3d_calloc(count, sizeof(*values))))
+    {
+        ERR("Failed to allocate metadata tables.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                "Out of memory allocating metadata tables.");
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    }
+    table->values = values;
+
+    for (i = 0, name = NULL; i < block->record_count; ++i)
+    {
+        record = block->records[i];
+
+        table_idx = table->count;
+        m = &values[table_idx];
+
+        switch (record->code)
+        {
+            case METADATA_NAMED_NODE:
+                if (!name)
+                {
+                    WARN("Named node has no name.\n");
+                    vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_METADATA,
+                            "A metadata named node has no name.");
+                    return VKD3D_ERROR_INVALID_SHADER;
+                }
+
+                /* When DXC emits metadata value array reference indices it assumes named nodes
+                 * are not included in the array. Store named nodes separately. */
+                m = &sm6->named_metadata[sm6->named_metadata_count].value;
+                sm6->named_metadata[sm6->named_metadata_count].name = name;
+                name = NULL;
+
+                if ((ret = metadata_value_create_node(m, table, UINT_MAX, count, record, sm6)) < 0)
+                    return ret;
+                ++sm6->named_metadata_count;
+                /* Skip incrementing the table count. */
+                continue;
+
+            case METADATA_DISTINCT_NODE:
+            case METADATA_NODE:
+                if ((ret = metadata_value_create_node(m, table, table_idx, count, record, sm6)) < 0)
+                    return ret;
+                break;
+
+            case METADATA_KIND:
+                if (!dxil_record_validate_operand_min_count(record, 2, sm6))
+                    return VKD3D_ERROR_INVALID_SHADER;
+
+                m->type = VKD3D_METADATA_KIND;
+                m->u.kind.id = record->operands[0];
+                if (!(m->u.kind.name = dxil_record_to_string(record, 1, sm6)))
+                {
+                    ERR("Failed to allocate name of a kind.\n");
+                    return VKD3D_ERROR_OUT_OF_MEMORY;
+                }
+                break;
+
+            case METADATA_NAME:
+                /* Check the next record to avoid freeing 'name' in all exit paths. */
+                if (i + 1 == block->record_count || block->records[i + 1]->code != METADATA_NAMED_NODE)
+                {
+                    WARN("Name is not followed by a named node.\n");
+                    vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_METADATA,
+                            "A metadata node name is not followed by a named node.");
+                    return VKD3D_ERROR_INVALID_SHADER;
+                }
+                /* LLVM allows an empty string here. */
+                if (!(name = dxil_record_to_string(record, 0, sm6)))
+                {
+                    ERR("Failed to allocate name.\n");
+                    return VKD3D_ERROR_OUT_OF_MEMORY;
+                }
+                continue;
+
+            case METADATA_STRING:
+                /* LLVM allows an empty string here. */
+                m->type = VKD3D_METADATA_STRING;
+                if (!(m->u.string_value = dxil_record_to_string(record, 0, sm6)))
+                {
+                    ERR("Failed to allocate string.\n");
+                    return VKD3D_ERROR_OUT_OF_MEMORY;
+                }
+                break;
+
+            case METADATA_VALUE:
+                if (!dxil_record_validate_operand_count(record, 2, 2, sm6))
+                    return VKD3D_ERROR_INVALID_SHADER;
+
+                m->type = VKD3D_METADATA_VALUE;
+                if (!(m->value_type = sm6_parser_get_type(sm6, record->operands[0])))
+                    return VKD3D_ERROR_INVALID_SHADER;
+
+                if (record->operands[1] > UINT_MAX)
+                    WARN("Truncating value index %"PRIu64".\n", record->operands[1]);
+                value_idx = record->operands[1];
+                if (!(value = sm6_parser_get_value_safe(sm6, value_idx)))
+                    return VKD3D_ERROR_INVALID_SHADER;
+
+                if (!sm6_value_is_constant(value) && !sm6_value_is_undef(value) && !sm6_value_is_icb(value)
+                        && !sm6_value_is_function_dcl(value))
+                {
+                    WARN("Value at index %u is not a constant or a function declaration.\n", value_idx);
+                    vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_METADATA,
+                            "Metadata value at index %u is not a constant or a function declaration.", value_idx);
+                    return VKD3D_ERROR_INVALID_SHADER;
+                }
+                m->u.value = value;
+
+                if (value->type != m->value_type)
+                {
+                    WARN("Type mismatch.\n");
+                    vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_TYPE_MISMATCH,
+                            "The type of a metadata value does not match its referenced value at index %u.", value_idx);
+                }
+
+                break;
+
+            default:
+                FIXME("Unhandled metadata type %u.\n", record->code);
+                vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_METADATA,
+                        "Metadata type %u is unhandled.", record->code);
+                return VKD3D_ERROR_INVALID_SHADER;
+        }
+        ++table->count;
+    }
+
+    return VKD3D_OK;
+}
+
+static enum vkd3d_shader_component_type vkd3d_component_type_from_dxil_component_type(enum dxil_component_type type)
+{
+    switch (type)
+    {
+        case COMPONENT_TYPE_I1:
+            return VKD3D_SHADER_COMPONENT_BOOL;
+        case COMPONENT_TYPE_I16:
+        case COMPONENT_TYPE_I32:
+            return VKD3D_SHADER_COMPONENT_INT;
+        case COMPONENT_TYPE_U16:
+        case COMPONENT_TYPE_U32:
+            return VKD3D_SHADER_COMPONENT_UINT;
+        case COMPONENT_TYPE_F16:
+        case COMPONENT_TYPE_F32:
+        case COMPONENT_TYPE_SNORMF32:
+        case COMPONENT_TYPE_UNORMF32:
+            return VKD3D_SHADER_COMPONENT_FLOAT;
+        case COMPONENT_TYPE_F64:
+        case COMPONENT_TYPE_SNORMF64:
+        case COMPONENT_TYPE_UNORMF64:
+            return VKD3D_SHADER_COMPONENT_DOUBLE;
+        default:
+            FIXME("Unhandled component type %u.\n", type);
+            return VKD3D_SHADER_COMPONENT_UINT;
+    }
+}
+
+static enum vkd3d_shader_minimum_precision minimum_precision_from_dxil_component_type(enum dxil_component_type type)
+{
+    switch (type)
+    {
+        case COMPONENT_TYPE_F16:
+            return VKD3D_SHADER_MINIMUM_PRECISION_FLOAT_16;
+        case COMPONENT_TYPE_I16:
+            return VKD3D_SHADER_MINIMUM_PRECISION_INT_16;
+        case COMPONENT_TYPE_U16:
+            return VKD3D_SHADER_MINIMUM_PRECISION_UINT_16;
+        default:
+            return VKD3D_SHADER_MINIMUM_PRECISION_NONE;
+    }
+}
+
+static const enum vkd3d_shader_sysval_semantic sysval_semantic_table[] =
+{
+    [SEMANTIC_KIND_ARBITRARY]            = VKD3D_SHADER_SV_NONE,
+    [SEMANTIC_KIND_POSITION]             = VKD3D_SHADER_SV_POSITION,
+    [SEMANTIC_KIND_TARGET]               = VKD3D_SHADER_SV_NONE,
+};
+
+static enum vkd3d_shader_sysval_semantic sysval_semantic_from_dxil_semantic_kind(enum dxil_semantic_kind kind)
+{
+    if (kind < ARRAY_SIZE(sysval_semantic_table))
+    {
+        return sysval_semantic_table[kind];
+    }
+    else
+    {
+        return VKD3D_SHADER_SV_NONE;
+    }
+}
+
+static const struct sm6_metadata_value *sm6_parser_find_named_metadata(struct sm6_parser *sm6, const char *name)
+{
+    const struct sm6_metadata_node *node;
+    unsigned int i;
+
+    for (i = 0; i < sm6->named_metadata_count; ++i)
+    {
+        if (strcmp(sm6->named_metadata[i].name, name))
+            continue;
+
+        node = sm6->named_metadata[i].value.u.node;
+        if (!node->operand_count)
+            return NULL;
+        if (node->operand_count > 1)
+        {
+            FIXME("Ignoring %u extra operands for %s.\n", node->operand_count - 1, name);
+            vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_IGNORING_OPERANDS,
+                    "Ignoring %u extra operands for metadata node %s.", node->operand_count - 1, name);
+        }
+        return node->operands[0];
+    }
+
+    return NULL;
+}
+
+static bool sm6_parser_resources_load_register_range(struct sm6_parser *sm6,
+        const struct sm6_metadata_node *node, struct vkd3d_shader_register_range *range)
+{
+    unsigned int size;
+
+    if (!sm6_metadata_value_is_value(node->operands[1]))
+    {
+        WARN("Resource data type is not a value.\n");
+        return false;
+    }
+    if (!sm6_type_is_pointer(node->operands[1]->value_type))
+    {
+        WARN("Resource type is not a pointer.\n");
+        vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_TYPE_MISMATCH,
+                "Resource metadata value type is not a pointer.");
+    }
+
+    if (!sm6_metadata_get_uint_value(sm6, node->operands[3], &range->space))
+    {
+        WARN("Failed to load register space.\n");
+        return false;
+    }
+    if (!sm6_metadata_get_uint_value(sm6, node->operands[4], &range->first))
+    {
+        WARN("Failed to load register first.\n");
+        return false;
+    }
+    if (!sm6_metadata_get_uint_value(sm6, node->operands[5], &size))
+    {
+        WARN("Failed to load register range size.\n");
+        return false;
+    }
+    if (!size || (size != UINT_MAX && !vkd3d_bound_range(range->first, size, UINT_MAX)))
+    {
+        WARN("Invalid register range, first %u, size %u.\n", range->first, size);
+        return false;
+    }
+    range->last = (size == UINT_MAX) ? UINT_MAX : range->first + size - 1;
+
+    return true;
+}
+
+static enum vkd3d_result sm6_parser_resources_load_cbv(struct sm6_parser *sm6,
+        const struct sm6_metadata_node *node, const struct vkd3d_shader_register_range *range,
+        unsigned int register_id, struct vkd3d_shader_instruction *ins)
+{
+    struct vkd3d_shader_register *reg;
+    unsigned int buffer_size;
+
+    if (node->operand_count < 7)
+    {
+        WARN("Invalid operand count %u.\n", node->operand_count);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_OPERAND_COUNT,
+                "Invalid operand count %u for a CBV descriptor.", node->operand_count);
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+    if (node->operand_count > 7 && node->operands[7])
+    {
+        WARN("Ignoring %u extra operands.\n", node->operand_count - 7);
+        vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_IGNORING_OPERANDS,
+                "Ignoring %u extra operands for a CBV descriptor.", node->operand_count - 7);
+    }
+
+    if (!sm6_metadata_get_uint_value(sm6, node->operands[6], &buffer_size))
+    {
+        WARN("Failed to load buffer size.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_RESOURCES,
+                "Constant buffer size metadata value is not an integer.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    vsir_instruction_init(ins, &sm6->p.location, VKD3DSIH_DCL_CONSTANT_BUFFER);
+    ins->resource_type = VKD3D_SHADER_RESOURCE_BUFFER;
+    ins->declaration.cb.size = buffer_size;
+    ins->declaration.cb.src.swizzle = VKD3D_SHADER_NO_SWIZZLE;
+    ins->declaration.cb.src.modifiers = VKD3DSPSM_NONE;
+
+    reg = &ins->declaration.cb.src.reg;
+    vsir_register_init(reg, VKD3DSPR_CONSTBUFFER, VKD3D_DATA_FLOAT, 3);
+    reg->idx[0].offset = register_id;
+    reg->idx[1].offset = range->first;
+    reg->idx[2].offset = range->last;
+
+    ins->declaration.cb.range = *range;
+
+    return VKD3D_OK;
+}
+
+static enum vkd3d_result sm6_parser_descriptor_type_init(struct sm6_parser *sm6,
+        enum vkd3d_shader_descriptor_type type, const struct sm6_metadata_node *descriptor_node)
+{
+    struct vkd3d_shader_register_range range;
+    struct vkd3d_shader_instruction *ins;
+    const struct sm6_metadata_node *node;
+    const struct sm6_metadata_value *m;
+    unsigned int i, register_id;
+    enum vkd3d_result ret;
+
+    for (i = 0; i < descriptor_node->operand_count; ++i)
+    {
+        m = descriptor_node->operands[i];
+        if (!sm6_metadata_value_is_node(m))
+        {
+            WARN("Resource descriptor is not a node.\n");
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_RESOURCES,
+                    "Resource descriptor is not a metadata node.");
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        node = m->u.node;
+        if (node->operand_count < 6)
+        {
+            WARN("Invalid operand count %u.\n", node->operand_count);
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_OPERAND_COUNT,
+                    "Invalid operand count %u for a descriptor.", node->operand_count);
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        if (!sm6_metadata_get_uint_value(sm6, node->operands[0], &register_id))
+        {
+            WARN("Failed to load resource id.\n");
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_RESOURCES,
+                    "Resource id metadata value is not an integer.");
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        if (!sm6_parser_resources_load_register_range(sm6, node, &range))
+        {
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_RESOURCES,
+                    "Resource register range is invalid.");
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        if (!(ins = sm6_parser_require_space(sm6, 1)))
+        {
+            ERR("Failed to allocate instruction.\n");
+            return VKD3D_ERROR_OUT_OF_MEMORY;
+        }
+
+        switch (type)
+        {
+            case VKD3D_SHADER_DESCRIPTOR_TYPE_CBV:
+                if ((ret = sm6_parser_resources_load_cbv(sm6, node, &range, register_id, ins)) < 0)
+                    return ret;
+                break;
+            default:
+                FIXME("Unsupported descriptor type %u.\n", type);
+                vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_RESOURCES,
+                        "Resource descriptor type %u is unsupported.", type);
+                return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        ++sm6->p.instructions.count;
+    }
+
+    return VKD3D_OK;
+}
+
+static enum vkd3d_result sm6_parser_resources_init(struct sm6_parser *sm6)
+{
+    const struct sm6_metadata_value *m = sm6_parser_find_named_metadata(sm6, "dx.resources");
+    enum vkd3d_shader_descriptor_type type;
+    const struct sm6_metadata_node *node;
+    enum vkd3d_result ret;
+
+    if (!m)
+        return VKD3D_OK;
+
+    node = m->u.node;
+    if (node->operand_count != SHADER_DESCRIPTOR_TYPE_COUNT)
+    {
+        WARN("Unexpected descriptor type count %u.\n", node->operand_count);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_RESOURCES,
+                "Descriptor type count %u is invalid.", node->operand_count);
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    for (type = 0; type < SHADER_DESCRIPTOR_TYPE_COUNT; ++type)
+    {
+        if (!(m = node->operands[type]))
+            continue;
+
+        if (!sm6_metadata_value_is_node(m))
+        {
+            WARN("Resource list is not a node.\n");
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_RESOURCES,
+                    "Resource list is not a metadata node.");
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        if ((ret = sm6_parser_descriptor_type_init(sm6, type, m->u.node)) < 0)
+            return ret;
+    }
+
+    return VKD3D_OK;
+}
+
+static void signature_element_read_additional_element_values(struct signature_element *e,
+        const struct sm6_metadata_node *node, struct sm6_parser *sm6)
+{
+    unsigned int i, operand_count, value;
+    enum dxil_element_additional_tag tag;
+
+    if (node->operand_count < 11 || !node->operands[10])
+        return;
+
+    if (!sm6_metadata_value_is_node(node->operands[10]))
+    {
+        WARN("Additional values list is not a node.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                "Signature element additional values list is not a metadata node.");
+        return;
+    }
+
+    node = node->operands[10]->u.node;
+    if (node->operand_count & 1)
+    {
+        WARN("Operand count is not even.\n");
+        vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_IGNORING_OPERANDS,
+                "Operand count for signature element additional tag/value pairs is not even.");
+    }
+    operand_count = node->operand_count & ~1u;
+
+    for (i = 0; i < operand_count; i += 2)
+    {
+        if (!sm6_metadata_get_uint_value(sm6, node->operands[i], &tag)
+                || !sm6_metadata_get_uint_value(sm6, node->operands[i + 1], &value))
+        {
+            WARN("Failed to extract tag/value pair.\n");
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                    "Signature element tag/value pair at index %u is not an integer pair.", i);
+            continue;
+        }
+
+        switch (tag)
+        {
+            case ADDITIONAL_TAG_STREAM_INDEX:
+                e->stream_index = value;
+                break;
+            case ADDITIONAL_TAG_RELADDR_MASK:
+                /* A mask of components accessed via relative addressing. Seems to replace TPF 'dcl_index_range'. */
+                if (value > VKD3DSP_WRITEMASK_ALL)
+                {
+                    WARN("Invalid relative addressed mask %#x.\n", value);
+                    vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_INVALID_MASK,
+                            "Mask %#x of relative-addressed components is invalid.", value);
+                }
+                break;
+            case ADDITIONAL_TAG_USED_MASK:
+                if (value > VKD3DSP_WRITEMASK_ALL)
+                {
+                    WARN("Invalid used mask %#x.\n", value);
+                    vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_INVALID_MASK,
+                            "Mask %#x of used components is invalid.", value);
+                    value &= VKD3DSP_WRITEMASK_ALL;
+                }
+                e->used_mask = value;
+                break;
+            default:
+                FIXME("Unhandled tag %u, value %u.\n", tag, value);
+                vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_IGNORING_OPERANDS,
+                        "Tag %#x for signature element additional value %#x is unhandled.", tag, value);
+                break;
+        }
+    }
+}
+
+static enum vkd3d_result sm6_parser_read_signature(struct sm6_parser *sm6, const struct sm6_metadata_value *m,
+        struct shader_signature *s)
+{
+    unsigned int i, j, column_count, operand_count, index;
+    const struct sm6_metadata_node *node, *element_node;
+    struct signature_element *elements, *e;
+    unsigned int values[10];
+
+    if (!m)
+        return VKD3D_OK;
+
+    if (!sm6_metadata_value_is_node(m))
+    {
+        WARN("Signature element list is not a node.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                "Signature element list is not a metadata node.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    node = m->u.node;
+    operand_count = node->operand_count;
+
+    if (!(elements = vkd3d_calloc(operand_count, sizeof(*elements))))
+    {
+        ERR("Failed to allocate %u signature elements.\n", operand_count);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                "Out of memory allocating %u signature elements.", operand_count);
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    }
+
+    for (i = 0; i < operand_count; ++i)
+    {
+        m = node->operands[i];
+
+        if (!sm6_metadata_value_is_node(m))
+        {
+            WARN("Signature element is not a node.\n");
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                    "Signature element is not a metadata node.");
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        element_node = m->u.node;
+        if (element_node->operand_count < 10)
+        {
+            WARN("Invalid operand count %u.\n", element_node->operand_count);
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                    "Invalid signature element operand count %u.", element_node->operand_count);
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+        if (element_node->operand_count > 11)
+        {
+            WARN("Ignoring %u extra operands.\n", element_node->operand_count - 11);
+            vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_IGNORING_OPERANDS,
+                    "Ignoring %u extra operands for a signature element.", element_node->operand_count - 11);
+        }
+
+        for (j = 0; j < 10; ++j)
+        {
+            /* 1 is the semantic name, 4 is semantic index metadata. */
+            if (j == 1 || j == 4)
+                continue;
+            if (!sm6_metadata_get_uint_value(sm6, element_node->operands[j], &values[j]))
+            {
+                WARN("Failed to load uint value at index %u.\n", j);
+                vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                        "Signature element value at index %u is not an integer.", j);
+                return VKD3D_ERROR_INVALID_SHADER;
+            }
+        }
+
+        e = &elements[i];
+
+        if (values[0] != i)
+        {
+            FIXME("Unsupported element id %u not equal to its index %u.\n", values[0], i);
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                    "A non-sequential and non-zero-based element id is not supported.");
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        if (!sm6_metadata_value_is_string(element_node->operands[1]))
+        {
+            WARN("Element name is not a string.\n");
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                    "Signature element name is not a metadata string.");
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+        e->semantic_name = element_node->operands[1]->u.string_value;
+
+        e->component_type = vkd3d_component_type_from_dxil_component_type(values[2]);
+        e->min_precision = minimum_precision_from_dxil_component_type(values[2]);
+
+        j = values[3];
+        e->sysval_semantic = sysval_semantic_from_dxil_semantic_kind(j);
+        if (j != SEMANTIC_KIND_ARBITRARY && j != SEMANTIC_KIND_TARGET && e->sysval_semantic == VKD3D_SHADER_SV_NONE)
+        {
+            WARN("Unhandled semantic kind %u.\n", j);
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                    "DXIL semantic kind %u is unhandled.", j);
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        if ((e->interpolation_mode = values[5]) >= VKD3DSIM_COUNT)
+        {
+            WARN("Unhandled interpolation mode %u.\n", e->interpolation_mode);
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                    "Interpolation mode %u is unhandled.", e->interpolation_mode);
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        e->register_count = values[6];
+        column_count = values[7];
+        e->register_index = values[8];
+        e->target_location = e->register_index;
+        if (e->register_index > MAX_REG_OUTPUT || e->register_count > MAX_REG_OUTPUT - e->register_index)
+        {
+            WARN("Invalid row start %u with row count %u.\n", e->register_index, e->register_count);
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                    "A signature element starting row of %u with count %u is invalid.",
+                    e->register_index, e->register_count);
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+        index = values[9];
+        if (index >= VKD3D_VEC4_SIZE || column_count > VKD3D_VEC4_SIZE - index)
+        {
+            WARN("Invalid column start %u with count %u.\n", index, column_count);
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                    "A signature element starting column %u with count %u is invalid.", index, column_count);
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        e->mask = vkd3d_write_mask_from_component_count(column_count) << index;
+        e->used_mask = e->mask;
+
+        signature_element_read_additional_element_values(e, element_node, sm6);
+
+        m = element_node->operands[4];
+        if (!sm6_metadata_value_is_node(m))
+        {
+            WARN("Semantic index list is not a node.\n");
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                    "Signature element semantic index list is not a metadata node.");
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        element_node = m->u.node;
+        for (j = 0; j < element_node->operand_count; ++j)
+        {
+            if (!sm6_metadata_get_uint_value(sm6, element_node->operands[j], &index))
+            {
+                WARN("Failed to get semantic index for row %u.\n", j);
+                vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                        "Signature element semantic index for row %u is not an integer.", j);
+            }
+            else if (!j)
+            {
+                e->semantic_index = index;
+            }
+            else if (index != e->semantic_index + j)
+            {
+                WARN("Semantic index %u for row %u is not of an incrementing sequence.\n", index, j);
+                vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                        "Signature element semantic index %u for row %u is not of an incrementing sequence.", index, j);
+            }
+        }
+    }
+
+    vkd3d_free(s->elements);
+    s->elements = elements;
+    s->element_count = operand_count;
+
+    return VKD3D_OK;
+}
+
+static enum vkd3d_result sm6_parser_signatures_init(struct sm6_parser *sm6, const struct sm6_metadata_value *m)
+{
+    enum vkd3d_result ret;
+
+    if (!sm6_metadata_value_is_node(m))
+    {
+        WARN("Signature table is not a node.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                "Signature table is not a metadata node.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    if (m->u.node->operand_count && (ret = sm6_parser_read_signature(sm6, m->u.node->operands[0],
+            &sm6->p.shader_desc.input_signature)) < 0)
+    {
+        return ret;
+    }
+    if (m->u.node->operand_count > 1 && (ret = sm6_parser_read_signature(sm6, m->u.node->operands[1],
+            &sm6->p.shader_desc.output_signature)) < 0)
+    {
+        return ret;
+    }
+    /* TODO: patch constant signature in operand 2. */
+
+    sm6_parser_init_input_signature(sm6, &sm6->p.shader_desc.input_signature);
+    sm6_parser_init_output_signature(sm6, &sm6->p.shader_desc.output_signature);
+
+    return VKD3D_OK;
+}
+
+static void sm6_parser_emit_global_flags(struct sm6_parser *sm6, const struct sm6_metadata_value *m)
+{
+    enum vkd3d_shader_global_flags global_flags, mask, rotated_flags;
+    struct vkd3d_shader_instruction *ins;
+
+    if (!sm6_metadata_get_uint64_value(sm6, m, &global_flags))
+    {
+        WARN("Failed to load global flags.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES,
+                "Global flags metadata value is not an integer.");
+        return;
+    }
+    /* Rotate SKIP_OPTIMIZATION from bit 0 to bit 4 to match vkd3d_shader_global_flags. */
+    mask = (VKD3DSGF_SKIP_OPTIMIZATION << 1) - 1;
+    rotated_flags = global_flags & mask;
+    rotated_flags = (rotated_flags >> 1) | ((rotated_flags & 1) << 4);
+    global_flags = (global_flags & ~mask) | rotated_flags;
+
+    ins = sm6_parser_add_instruction(sm6, VKD3DSIH_DCL_GLOBAL_FLAGS);
+    ins->declaration.global_flags = global_flags;
+}
+
+static enum vkd3d_result sm6_parser_emit_thread_group(struct sm6_parser *sm6, const struct sm6_metadata_value *m)
+{
+    const struct sm6_metadata_node *node;
+    struct vkd3d_shader_instruction *ins;
+    unsigned int group_sizes[3];
+    unsigned int i;
+
+    if (sm6->p.shader_version.type != VKD3D_SHADER_TYPE_COMPUTE)
+    {
+        WARN("Shader of type %#x has thread group dimensions.\n", sm6->p.shader_version.type);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES,
+                "Shader has thread group dimensions but is not a compute shader.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    if (!m || !sm6_metadata_value_is_node(m))
+    {
+        WARN("Thread group dimension value is not a node.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES,
+                "Thread group dimension metadata value is not a node.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    node = m->u.node;
+    if (node->operand_count != 3)
+    {
+        WARN("Invalid operand count %u.\n", node->operand_count);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_OPERAND_COUNT,
+                "Thread group dimension operand count %u is invalid.", node->operand_count);
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    for (i = 0; i < 3; ++i)
+    {
+        if (!sm6_metadata_get_uint_value(sm6, node->operands[i], &group_sizes[i]))
+        {
+            WARN("Thread group dimension is not an integer value.\n");
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES,
+                    "Thread group dimension metadata value is not an integer.");
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+        if (!group_sizes[i] || group_sizes[i] > dx_max_thread_group_size[i])
+        {
+            char dim = "XYZ"[i];
+            WARN("Invalid thread group %c dimension %u.\n", dim, group_sizes[i]);
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES,
+                    "Thread group %c dimension %u is invalid.", dim, group_sizes[i]);
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+    }
+
+    ins = sm6_parser_add_instruction(sm6, VKD3DSIH_DCL_THREAD_GROUP);
+    ins->declaration.thread_group_size.x = group_sizes[0];
+    ins->declaration.thread_group_size.y = group_sizes[1];
+    ins->declaration.thread_group_size.z = group_sizes[2];
+
+    return VKD3D_OK;
+}
+
+static enum vkd3d_result sm6_parser_entry_point_init(struct sm6_parser *sm6)
+{
+    const struct sm6_metadata_value *m = sm6_parser_find_named_metadata(sm6, "dx.entryPoints");
+    const struct sm6_metadata_node *node, *entry_node = m ? m->u.node : NULL;
+    enum dxil_shader_properties_tag tag;
+    unsigned int i, operand_count;
+    const struct sm6_value *value;
+    enum vkd3d_result ret;
+
+    if (!entry_node || entry_node->operand_count < 2 || !(m = entry_node->operands[0]))
+    {
+        WARN("No entry point definition found.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_ENTRY_POINT,
+                "No entry point definition found in the metadata.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    if (m->type != VKD3D_METADATA_VALUE)
+    {
+        WARN("Entry point definition is not a value.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_ENTRY_POINT,
+                "Entry point definition is not a metadata value.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    value = m->u.value;
+    if (!sm6_value_is_function_dcl(value))
+    {
+        WARN("Entry point value is not a function definition.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_ENTRY_POINT,
+                "Entry point metadata value does not contain a function definition.");
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    sm6->entry_point = value->u.function.name;
+    if (!sm6_metadata_value_is_string(entry_node->operands[1])
+            || ascii_strcasecmp(sm6->entry_point, entry_node->operands[1]->u.string_value))
+    {
+        WARN("Entry point function name %s mismatch.\n", sm6->entry_point);
+        vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_ENTRY_POINT_MISMATCH,
+                "Entry point function name %s does not match the name in metadata.", sm6->entry_point);
+    }
+
+    if (entry_node->operand_count >= 3 && (m = entry_node->operands[2])
+            && (ret = sm6_parser_signatures_init(sm6, m)) < 0)
+    {
+        return ret;
+    }
+
+    if (entry_node->operand_count >= 5 && (m = entry_node->operands[4]))
+    {
+        if (!sm6_metadata_value_is_node(m))
+        {
+            WARN("Shader properties list is not a node.\n");
+            vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES,
+                    "Shader properties tag/value list is not a metadata node.");
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        node = m->u.node;
+        if (node->operand_count & 1)
+        {
+            WARN("Operand count is not even.\n");
+            vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_IGNORING_OPERANDS,
+                    "Operand count for shader properties tag/value pairs is not even.");
+        }
+        operand_count = node->operand_count & ~1u;
+
+        for (i = 0; i < operand_count; i += 2)
+        {
+            if (!sm6_metadata_get_uint_value(sm6, node->operands[i], &tag))
+            {
+                WARN("Tag is not an integer value.\n");
+                vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES,
+                        "Shader properties tag at index %u is not an integer.", i);
+                return VKD3D_ERROR_INVALID_SHADER;
+            }
+
+            switch (tag)
+            {
+                case SHADER_PROPERTIES_FLAGS:
+                    sm6_parser_emit_global_flags(sm6, node->operands[i + 1]);
+                    break;
+               case SHADER_PROPERTIES_COMPUTE:
+                    if ((ret = sm6_parser_emit_thread_group(sm6, node->operands[i + 1])) < 0)
+                        return ret;
+                    break;
+                default:
+                    FIXME("Unhandled tag %#x.\n", tag);
+                    vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES,
+                            "Shader properties tag %#x is unhandled.", tag);
+                    break;
+            }
+        }
+    }
+
+    return VKD3D_OK;
+}
+
+static void sm6_metadata_value_destroy(struct sm6_metadata_value *m)
+{
+    switch (m->type)
+    {
+        case VKD3D_METADATA_NODE:
+            vkd3d_free(m->u.node);
+            break;
+        case VKD3D_METADATA_KIND:
+            vkd3d_free(m->u.kind.name);
+            break;
+        case VKD3D_METADATA_STRING:
+            vkd3d_free(m->u.string_value);
+            break;
+        default:
+            break;
+    }
+}
+
+static void sm6_parser_metadata_cleanup(struct sm6_parser *sm6)
+{
+    unsigned int i, j;
+
+    for (i = 0; i < ARRAY_SIZE(sm6->metadata_tables); ++i)
+    {
+        for (j = 0; j < sm6->metadata_tables[i].count; ++j)
+            sm6_metadata_value_destroy(&sm6->metadata_tables[i].values[j]);
+        vkd3d_free(sm6->metadata_tables[i].values);
+    }
+    for (i = 0; i < sm6->named_metadata_count; ++i)
+    {
+        sm6_metadata_value_destroy(&sm6->named_metadata[i].value);
+        vkd3d_free(sm6->named_metadata[i].name);
+    }
+    vkd3d_free(sm6->named_metadata);
 }
 
 static void sm6_type_table_cleanup(struct sm6_type *types, size_t count)
@@ -2774,6 +4131,7 @@ static void sm6_parser_destroy(struct vkd3d_shader_parser *parser)
     sm6_type_table_cleanup(sm6->types, sm6->type_count);
     sm6_symtab_cleanup(sm6->global_symbols, sm6->global_symbol_count);
     sm6_functions_cleanup(sm6->functions, sm6->function_count);
+    sm6_parser_metadata_cleanup(sm6);
     vkd3d_free(sm6->values);
     free_shader_desc(&parser->shader_desc);
     vkd3d_free(sm6);
@@ -2783,6 +4141,15 @@ static const struct vkd3d_shader_parser_ops sm6_parser_ops =
 {
     .parser_destroy = sm6_parser_destroy,
 };
+
+static struct sm6_function *sm6_parser_get_function(const struct sm6_parser *sm6, const char *name)
+{
+    size_t i;
+    for (i = 0; i < sm6->function_count; ++i)
+        if (!ascii_strcasecmp(sm6->functions[i].declaration->u.function.name, name))
+            return &sm6->functions[i];
+    return NULL;
+}
 
 static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t *byte_code, size_t byte_code_size,
         const char *source_name, struct vkd3d_shader_message_context *message_context)
@@ -2796,8 +4163,9 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t 
     enum bitcode_block_abbreviation abbr;
     struct vkd3d_shader_version version;
     struct dxil_block *block;
+    struct sm6_function *fn;
     enum vkd3d_result ret;
-    unsigned int i;
+    unsigned int i, j;
 
     count = byte_code_size / sizeof(*byte_code);
     if (count < 6)
@@ -2984,8 +4352,35 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t 
         return ret;
     }
 
-    sm6_parser_init_output_signature(sm6, output_signature);
-    sm6_parser_init_input_signature(sm6, input_signature);
+    if (!sm6_parser_allocate_named_metadata(sm6))
+    {
+        ERR("Failed to allocate named metadata array.\n");
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    }
+
+    for (i = 0, j = 0; i < sm6->root_block.child_block_count; ++i)
+    {
+        block = sm6->root_block.child_blocks[i];
+        if (block->id != METADATA_BLOCK)
+            continue;
+
+        if (j == ARRAY_SIZE(sm6->metadata_tables))
+        {
+            FIXME("Too many metadata tables.\n");
+            vkd3d_shader_error(message_context, &location, VKD3D_SHADER_ERROR_DXIL_INVALID_METADATA,
+                    "A metadata table count greater than %zu is unsupported.", ARRAY_SIZE(sm6->metadata_tables));
+            return VKD3D_ERROR_INVALID_SHADER;
+        }
+
+        if ((ret = sm6_parser_metadata_init(sm6, block, &sm6->metadata_tables[j++])) < 0)
+            return ret;
+    }
+
+    if ((ret = sm6_parser_entry_point_init(sm6)) < 0)
+        return ret;
+
+    if ((ret = sm6_parser_resources_init(sm6)) < 0)
+        return ret;
 
     if ((ret = sm6_parser_module_init(sm6, &sm6->root_block, 0)) < 0)
     {
@@ -3009,14 +4404,20 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, const uint32_t 
 
     sm6->p.shader_desc.ssa_count = sm6->ssa_next_id;
 
-    for (i = 0; i < sm6->function_count; ++i)
+    if (!(fn = sm6_parser_get_function(sm6, sm6->entry_point)))
     {
-        if (!sm6_block_emit_instructions(sm6->functions[i].blocks[0], sm6))
-        {
-            vkd3d_shader_error(message_context, &location, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
-                    "Out of memory emitting shader instructions.");
-            return VKD3D_ERROR_OUT_OF_MEMORY;
-        }
+        WARN("Failed to find entry point %s.\n", sm6->entry_point);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_ENTRY_POINT,
+                "The definition of the entry point function '%s' was not found.", sm6->entry_point);
+        return VKD3D_ERROR_INVALID_SHADER;
+    }
+
+    assert(sm6->function_count == 1);
+    if (!sm6_block_emit_instructions(fn->blocks[0], sm6))
+    {
+        vkd3d_shader_error(message_context, &location, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                "Out of memory emitting shader instructions.");
+        return VKD3D_ERROR_OUT_OF_MEMORY;
     }
 
     dxil_block_destroy(&sm6->root_block);

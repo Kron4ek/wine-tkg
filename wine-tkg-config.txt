@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Oct 14 09:45:11 PM UTC 2023 :
+# Last wine-tkg-staging-fsync-git configuration - Thu Nov  2 09:30:58 PM UTC 2023 :
 
 Local cfg files used
 
-Wine (plain) version: 8.18.r0.g9d78031de62
-Using wine-staging patchset (version 8.18.r0.ga5625909)
+Wine (plain) version: 8.19.r0.g8b5a60d2d73
+Using wine-staging patchset (version 8.19.r0.gc6e61e26)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -13,7 +13,7 @@ Done applying reverting hotfixes (if any) - list available in prepare.log
 
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any:
+Staging overrides, if any: 
 
 fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
 fsync_futex_waitv.patch -- ( Applied patches for fsync to support futex_waitv )

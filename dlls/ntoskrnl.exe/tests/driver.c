@@ -2403,10 +2403,17 @@ static void test_default_security(void)
     PACL acl = NULL;
     PACCESS_ALLOWED_ACE ace;
     SID_IDENTIFIER_AUTHORITY auth = { SECURITY_NULL_SID_AUTHORITY };
-    PSID sid1, sid2;
+    SID_IDENTIFIER_AUTHORITY authwine7 = { SECURITY_NT_AUTHORITY };
+    PSID sid1, sid2, sidwin7;
+    BOOL ret;
 
     status = FltBuildDefaultSecurityDescriptor(&sd, STANDARD_RIGHTS_ALL);
     ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    if (status != STATUS_SUCCESS)
+    {
+        win_skip("Skipping FltBuildDefaultSecurityDescriptor tests\n");
+        return;
+    }
     ok(sd != NULL, "Failed to return descriptor\n");
 
     status = RtlGetGroupSecurityDescriptor(sd, &group, &isdefault);
@@ -2423,9 +2430,16 @@ static void test_default_security(void)
     ok(acl->AceCount == 2, "got %d\n", acl->AceCount);
 
     sid1 = ExAllocatePool(NonPagedPool, RtlLengthRequiredSid(2));
-    RtlInitializeSid(sid1, &auth, 2);
+    status = RtlInitializeSid(sid1, &auth, 2);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     *RtlSubAuthoritySid(sid1, 0)  = SECURITY_BUILTIN_DOMAIN_RID;
     *RtlSubAuthoritySid(sid1, 1) = DOMAIN_GROUP_RID_ADMINS;
+
+    sidwin7 = ExAllocatePool(NonPagedPool, RtlLengthRequiredSid(2));
+    status = RtlInitializeSid(sidwin7, &authwine7, 2);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    *RtlSubAuthoritySid(sidwin7, 0)  = SECURITY_BUILTIN_DOMAIN_RID;
+    *RtlSubAuthoritySid(sidwin7, 1) = DOMAIN_ALIAS_RID_ADMINS;
 
     sid2 = ExAllocatePool(NonPagedPool, RtlLengthRequiredSid(1));
     RtlInitializeSid(sid2, &auth, 1);
@@ -2439,7 +2453,8 @@ static void test_default_security(void)
     ok(ace->Header.AceFlags == 0, "got %#x\n", ace->Header.AceFlags);
     ok(ace->Mask == STANDARD_RIGHTS_ALL, "got %#lx\n", ace->Mask);
 
-    ok(RtlEqualSid(sid1, (PSID)&ace->SidStart), "SID not equal\n");
+    ret = RtlEqualSid(sid1, (PSID)&ace->SidStart) || RtlEqualSid(sidwin7, (PSID)&ace->SidStart);
+    ok(ret, "SID not equal\n");
 
     /* SECURITY_LOCAL_SYSTEM_RID */
     status = RtlGetAce(acl, 1, (void**)&ace);
@@ -2449,7 +2464,8 @@ static void test_default_security(void)
     ok(ace->Header.AceFlags == 0, "got %#x\n", ace->Header.AceFlags);
     ok(ace->Mask == STANDARD_RIGHTS_ALL, "got %#lx\n", ace->Mask);
 
-    ok(RtlEqualSid(sid2, (PSID)&ace->SidStart), "SID not equal\n");
+    ret = RtlEqualSid(sid2, (PSID)&ace->SidStart) || RtlEqualSid(sidwin7, (PSID)&ace->SidStart);
+    ok(ret, "SID not equal\n");
 
     ExFreePool(sid1);
     ExFreePool(sid2);

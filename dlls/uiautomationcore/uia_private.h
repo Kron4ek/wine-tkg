@@ -158,6 +158,7 @@ struct uia_event
 };
 
 typedef HRESULT UiaWineEventCallback(struct uia_event *, struct uia_event_args *, SAFEARRAY *, BSTR);
+typedef HRESULT UiaWineEventForEachCallback(struct uia_event *, void *);
 
 static inline void variant_init_bool(VARIANT *v, BOOL val)
 {
@@ -209,16 +210,23 @@ static inline BOOL uia_array_reserve(void **elements, SIZE_T *capacity, SIZE_T c
     return TRUE;
 }
 
+enum provider_method_flags {
+    PROV_METHOD_FLAG_RETURN_NODE_LRES = 0x0001,
+};
+
 /* uia_client.c */
 int get_node_provider_type_at_idx(struct uia_node *node, int idx) DECLSPEC_HIDDEN;
+HRESULT get_focus_from_node_provider(IWineUiaNode *node, int idx, LONG flags, VARIANT *ret_val) DECLSPEC_HIDDEN;
 HRESULT respond_to_win_event_on_node_provider(IWineUiaNode *node, int idx, DWORD win_event, HWND hwnd, LONG obj_id,
         LONG child_id, IProxyProviderWinEventSink *sink) DECLSPEC_HIDDEN;
+HRESULT create_node_from_node_provider(IWineUiaNode *node, int idx, LONG flags, VARIANT *ret_val) DECLSPEC_HIDDEN;
 HRESULT attach_event_to_uia_node(HUIANODE node, struct uia_event *event) DECLSPEC_HIDDEN;
 HRESULT clone_uia_node(HUIANODE in_node, HUIANODE *out_node) DECLSPEC_HIDDEN;
 HRESULT navigate_uia_node(struct uia_node *node, int nav_dir, HUIANODE *out_node) DECLSPEC_HIDDEN;
 HRESULT create_uia_node_from_elprov(IRawElementProviderSimple *elprov, HUIANODE *out_node,
         BOOL get_hwnd_providers, int node_flags) DECLSPEC_HIDDEN;
-HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode) DECLSPEC_HIDDEN;
+HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode, int node_flags) DECLSPEC_HIDDEN;
+void uia_node_lresult_release(LRESULT lr) DECLSPEC_HIDDEN;
 HRESULT create_uia_node_from_hwnd(HWND hwnd, HUIANODE *out_node, int node_flags) DECLSPEC_HIDDEN;
 HRESULT uia_condition_check(HUIANODE node, struct UiaCondition *condition) DECLSPEC_HIDDEN;
 BOOL uia_condition_matched(HRESULT hr) DECLSPEC_HIDDEN;
@@ -230,7 +238,10 @@ HRESULT create_uia_iface(IUnknown **iface, BOOL is_cui8) DECLSPEC_HIDDEN;
 
 /* uia_event.c */
 HRESULT uia_event_add_win_event_hwnd(struct uia_event *event, HWND hwnd) DECLSPEC_HIDDEN;
+HRESULT uia_event_for_each(int event_id, UiaWineEventForEachCallback *callback, void *user_data,
+        BOOL clientside_only) DECLSPEC_HIDDEN;
 BOOL uia_clientside_event_start_event_thread(struct uia_event *event) DECLSPEC_HIDDEN;
+HRESULT create_msaa_provider_from_hwnd(HWND hwnd, int in_child_id, IRawElementProviderSimple **ret_elprov) DECLSPEC_HIDDEN;
 HRESULT create_serverside_uia_event(struct uia_event **out_event, LONG process_id, LONG event_cookie) DECLSPEC_HIDDEN;
 HRESULT uia_event_add_provider_event_adviser(IRawElementProviderAdviseEvents *advise_events,
         struct uia_event *event) DECLSPEC_HIDDEN;
@@ -239,6 +250,8 @@ HRESULT uia_event_advise_node(struct uia_event *event, HUIANODE node) DECLSPEC_H
 HRESULT uia_add_clientside_event(HUIANODE huianode, EVENTID event_id, enum TreeScope scope, PROPERTYID *prop_ids,
         int prop_ids_count, struct UiaCacheRequest *cache_req, SAFEARRAY *rt_id, UiaWineEventCallback *cback,
         void *cback_data, HUIAEVENT *huiaevent) DECLSPEC_HIDDEN;
+HRESULT uia_event_invoke(HUIANODE node, HUIANODE nav_start_node, struct uia_event_args *args,
+        struct uia_event *event) DECLSPEC_HIDDEN;
 HRESULT uia_event_check_node_within_event_scope(struct uia_event *event, HUIANODE node, SAFEARRAY *rt_id,
         HUIANODE *clientside_nav_node_out) DECLSPEC_HIDDEN;
 

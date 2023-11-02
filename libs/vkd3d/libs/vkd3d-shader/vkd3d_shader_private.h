@@ -176,12 +176,20 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_DXIL_INVALID_MODULE              = 8011,
     VKD3D_SHADER_ERROR_DXIL_INVALID_OPERAND             = 8012,
     VKD3D_SHADER_ERROR_DXIL_UNHANDLED_INTRINSIC         = 8013,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_METADATA            = 8014,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_ENTRY_POINT         = 8015,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE           = 8016,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES          = 8017,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_RESOURCES           = 8018,
 
     VKD3D_SHADER_WARNING_DXIL_UNKNOWN_MAGIC_NUMBER      = 8300,
     VKD3D_SHADER_WARNING_DXIL_UNKNOWN_SHADER_TYPE       = 8301,
     VKD3D_SHADER_WARNING_DXIL_INVALID_BLOCK_LENGTH      = 8302,
     VKD3D_SHADER_WARNING_DXIL_INVALID_MODULE_LENGTH     = 8303,
     VKD3D_SHADER_WARNING_DXIL_IGNORING_OPERANDS         = 8304,
+    VKD3D_SHADER_WARNING_DXIL_TYPE_MISMATCH             = 8305,
+    VKD3D_SHADER_WARNING_DXIL_ENTRY_POINT_MISMATCH      = 8306,
+    VKD3D_SHADER_WARNING_DXIL_INVALID_MASK              = 8307,
 
     VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED             = 9000,
     VKD3D_SHADER_ERROR_VSIR_INVALID_HANDLER             = 9001,
@@ -565,11 +573,13 @@ enum vkd3d_data_type
     VKD3D_DATA_CONTINUED,
     VKD3D_DATA_UNUSED,
     VKD3D_DATA_UINT8,
+    VKD3D_DATA_UINT64,
 };
 
 static inline bool data_type_is_integer(enum vkd3d_data_type data_type)
 {
-    return data_type == VKD3D_DATA_INT || data_type == VKD3D_DATA_UINT8 || data_type == VKD3D_DATA_UINT;
+    return data_type == VKD3D_DATA_INT || data_type == VKD3D_DATA_UINT8 || data_type == VKD3D_DATA_UINT
+            || data_type == VKD3D_DATA_UINT64;
 }
 
 enum vsir_dimension
@@ -623,6 +633,8 @@ enum vkd3d_shader_interpolation_mode
     VKD3DSIM_LINEAR_NOPERSPECTIVE_CENTROID = 5,
     VKD3DSIM_LINEAR_SAMPLE = 6,
     VKD3DSIM_LINEAR_NOPERSPECTIVE_SAMPLE = 7,
+
+    VKD3DSIM_COUNT = 8,
 };
 
 enum vkd3d_shader_global_flags
@@ -634,6 +646,32 @@ enum vkd3d_shader_global_flags
     VKD3DSGF_SKIP_OPTIMIZATION                 = 0x10,
     VKD3DSGF_ENABLE_MINIMUM_PRECISION          = 0x20,
     VKD3DSGF_ENABLE_11_1_DOUBLE_EXTENSIONS     = 0x40,
+    VKD3DSGF_ENABLE_SHADER_EXTENSIONS          = 0x80, /* never emitted? */
+    VKD3DSGF_BIND_FOR_DURATION                 =     0x100,
+    VKD3DSGF_ENABLE_VP_AND_RT_ARRAY_INDEX      =     0x200,
+    VKD3DSGF_ENABLE_INNER_COVERAGE             =     0x400,
+    VKD3DSGF_ENABLE_STENCIL_REF                =     0x800,
+    VKD3DSGF_ENABLE_TILED_RESOURCE_INTRINSICS  =    0x1000,
+    VKD3DSGF_ENABLE_RELAXED_TYPED_UAV_FORMATS  =    0x2000,
+    VKD3DSGF_ENABLE_LVL_9_COMPARISON_FILTERING =    0x4000,
+    VKD3DSGF_ENABLE_UP_TO_64_UAVS              =    0x8000,
+    VKD3DSGF_ENABLE_UAVS_AT_EVERY_STAGE        =   0x10000,
+    VKD3DSGF_ENABLE_CS4_RAW_STRUCTURED_BUFFERS =   0x20000,
+    VKD3DSGF_ENABLE_RASTERIZER_ORDERED_VIEWS   =   0x40000,
+    VKD3DSGF_ENABLE_WAVE_INTRINSICS            =   0x80000,
+    VKD3DSGF_ENABLE_INT64                      =  0x100000,
+    VKD3DSGF_ENABLE_VIEWID                     =  0x200000,
+    VKD3DSGF_ENABLE_BARYCENTRICS               =  0x400000,
+    VKD3DSGF_FORCE_NATIVE_LOW_PRECISION        =  0x800000,
+    VKD3DSGF_ENABLE_SHADINGRATE                = 0x1000000,
+    VKD3DSGF_ENABLE_RAYTRACING_TIER_1_1        = 0x2000000,
+    VKD3DSGF_ENABLE_SAMPLER_FEEDBACK           = 0x4000000,
+    VKD3DSGF_ENABLE_ATOMIC_INT64_ON_TYPED_RESOURCE                =   0x8000000,
+    VKD3DSGF_ENABLE_ATOMIC_INT64_ON_GROUP_SHARED                  =  0x10000000,
+    VKD3DSGF_ENABLE_DERIVATIVES_IN_MESH_AND_AMPLIFICATION_SHADERS =  0x20000000,
+    VKD3DSGF_ENABLE_RESOURCE_DESCRIPTOR_HEAP_INDEXING             =  0x40000000,
+    VKD3DSGF_ENABLE_SAMPLER_DESCRIPTOR_HEAP_INDEXING              =  0x80000000,
+    VKD3DSGF_ENABLE_ATOMIC_INT64_ON_DESCRIPTOR_HEAP_RESOURCE      = 0x100000000ull,
 };
 
 enum vkd3d_shader_sync_flags
@@ -645,7 +683,8 @@ enum vkd3d_shader_sync_flags
 
 enum vkd3d_shader_uav_flags
 {
-    VKD3DSUF_GLOBALLY_COHERENT = 0x2,
+    VKD3DSUF_GLOBALLY_COHERENT        = 0x002,
+    VKD3DSUF_RASTERISER_ORDERED_VIEW  = 0x004,
     VKD3DSUF_ORDER_PRESERVING_COUNTER = 0x100,
 };
 
@@ -716,7 +755,10 @@ struct vkd3d_shader_version
 
 struct vkd3d_shader_immediate_constant_buffer
 {
-    unsigned int vec4_count;
+    enum vkd3d_data_type data_type;
+    /* total count is element_count * component_count */
+    unsigned int element_count;
+    unsigned int component_count;
     uint32_t data[];
 };
 
@@ -860,6 +902,7 @@ struct signature_element
     unsigned int mask;
     unsigned int used_mask;
     enum vkd3d_shader_minimum_precision min_precision;
+    enum vkd3d_shader_interpolation_mode interpolation_mode;
     /* Register index / location in the target shader.
      * If SIGNATURE_TARGET_LOCATION_UNUSED, this element should not be written. */
     unsigned int target_location;
@@ -1004,6 +1047,7 @@ struct vkd3d_shader_instruction
     const struct vkd3d_shader_src_param *predicate;
     union
     {
+        enum vkd3d_shader_global_flags global_flags;
         struct vkd3d_shader_semantic semantic;
         struct vkd3d_shader_register_semantic register_semantic;
         struct vkd3d_shader_primitive_type primitive_type;
@@ -1102,7 +1146,7 @@ struct vkd3d_shader_instruction_array
 
 bool shader_instruction_array_init(struct vkd3d_shader_instruction_array *instructions, unsigned int reserve);
 bool shader_instruction_array_reserve(struct vkd3d_shader_instruction_array *instructions, unsigned int reserve);
-bool shader_instruction_array_add_icb(struct vkd3d_shader_instruction_array *instructions,
+unsigned int shader_instruction_array_add_icb(struct vkd3d_shader_instruction_array *instructions,
         struct vkd3d_shader_immediate_constant_buffer *icb);
 bool shader_instruction_array_clone_instruction(struct vkd3d_shader_instruction_array *instructions,
         unsigned int dst, unsigned int src);
@@ -1481,23 +1525,6 @@ static inline void *vkd3d_find_struct_(const struct vkd3d_struct *chain,
 
 #define VKD3D_DXBC_HEADER_SIZE (8 * sizeof(uint32_t))
 #define VKD3D_DXBC_CHUNK_ALIGNMENT sizeof(uint32_t)
-
-#define TAG_AON9 VKD3D_MAKE_TAG('A', 'o', 'n', '9')
-#define TAG_DXBC VKD3D_MAKE_TAG('D', 'X', 'B', 'C')
-#define TAG_DXIL VKD3D_MAKE_TAG('D', 'X', 'I', 'L')
-#define TAG_ISG1 VKD3D_MAKE_TAG('I', 'S', 'G', '1')
-#define TAG_ISGN VKD3D_MAKE_TAG('I', 'S', 'G', 'N')
-#define TAG_OSG1 VKD3D_MAKE_TAG('O', 'S', 'G', '1')
-#define TAG_OSG5 VKD3D_MAKE_TAG('O', 'S', 'G', '5')
-#define TAG_OSGN VKD3D_MAKE_TAG('O', 'S', 'G', 'N')
-#define TAG_PCSG VKD3D_MAKE_TAG('P', 'C', 'S', 'G')
-#define TAG_PSG1 VKD3D_MAKE_TAG('P', 'S', 'G', '1')
-#define TAG_RD11 VKD3D_MAKE_TAG('R', 'D', '1', '1')
-#define TAG_RDEF VKD3D_MAKE_TAG('R', 'D', 'E', 'F')
-#define TAG_RTS0 VKD3D_MAKE_TAG('R', 'T', 'S', '0')
-#define TAG_SHDR VKD3D_MAKE_TAG('S', 'H', 'D', 'R')
-#define TAG_SHEX VKD3D_MAKE_TAG('S', 'H', 'E', 'X')
-#define TAG_TEXT VKD3D_MAKE_TAG('T', 'E', 'X', 'T')
 
 #define DXBC_MAX_SECTION_COUNT 5
 

@@ -1,6 +1,5 @@
-/* DirectMusic Wave Private Include
- *
- * Copyright (C) 2003-2004 Rok Mandeljc
+/*
+ * Copyright 2023 Rémi Bernon for CodeWeavers
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,26 +16,25 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_DSWAVE_PRIVATE_H
-#define __WINE_DSWAVE_PRIVATE_H
-
-#include <stdarg.h>
-
-#define COBJMACROS
+#include "stdarg.h"
+#include "stddef.h"
 
 #include "windef.h"
 #include "winbase.h"
-#include "winnt.h"
-#include "wingdi.h"
-#include "winuser.h"
 
-#include "wine/debug.h"
-#include "wine/list.h"
-#include "winreg.h"
-#include "objbase.h"
+enum midi_message
+{
+    MIDI_NOTE_OFF = 0x80,
+    MIDI_NOTE_ON = 0x90,
+    MIDI_KEY_PRESSURE = 0xa0,
+    MIDI_CONTROL_CHANGE = 0xb0,
+    MIDI_PROGRAM_CHANGE = 0xc0,
+    MIDI_CHANNEL_PRESSURE = 0xd0,
+    MIDI_PITCH_BEND_CHANGE = 0xe0,
+};
 
-#include "dmusici.h"
-#include "dmusicf.h"
-#include "dmusics.h"
-
-#endif	/* __WINE_DSWAVE_PRIVATE_H */
+enum midi_control
+{
+    MIDI_CC_BANK_MSB = 0x00,
+    MIDI_CC_BANK_LSB = 0x20,
+};

@@ -33,6 +33,7 @@
 #import "cocoa_event.h"
 #import "cocoa_opengl.h"
 
+#pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
 
 #if !defined(MAC_OS_X_VERSION_10_12) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_12
 /* Additional Mac virtual keycode, to complement those in Carbon's <HIToolbox/Events.h>. */
@@ -158,6 +159,21 @@ static inline NSUInteger adjusted_modifiers_for_settings(NSUInteger modifiers)
 
     fix_generic_modifiers_by_device(&new_modifiers);
     return new_modifiers;
+}
+
+static inline BOOL stage_manager_enabled(void)
+{
+    /* There is no documented way to determine if Stage Manager is enabled,
+     * but this seems like the best option.
+     */
+    if (floor(NSAppKitVersionNumber) >= 2299 /* NSAppKitVersionNumber13_0 */)
+    {
+        NSUserDefaults *defs = [[NSUserDefaults alloc] initWithSuiteName:@"com.apple.WindowManager.plist"];
+        BOOL enabled = [defs boolForKey:@"GloballyEnabled"];
+        [defs release];
+        return enabled;
+    }
+    return FALSE;
 }
 
 
@@ -2575,6 +2591,16 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 
     - (void) miniaturize:(id)sender
     {
+        /* When Stage Manager is enabled, miniaturize: just moves the app/window to
+         * the background rather than minimizing the window.
+         * Don't start minimizing the window on the Win32 side.
+         */
+        if (stage_manager_enabled())
+        {
+            [super miniaturize:sender];
+            return;
+        }
+
         macdrv_event* event = macdrv_create_event(WINDOW_MINIMIZE_REQUESTED, self);
         [queue postEvent:event];
         macdrv_release_event(event);

@@ -784,7 +784,9 @@ static void shader_sm4_read_shader_data(struct vkd3d_shader_instruction *ins, ui
         ins->handler_idx = VKD3DSIH_INVALID;
         return;
     }
-    icb->vec4_count = icb_size / 4;
+    icb->data_type = VKD3D_DATA_FLOAT;
+    icb->component_count = VKD3D_VEC4_SIZE;
+    icb->element_count = icb_size / VKD3D_VEC4_SIZE;
     memcpy(icb->data, tokens, sizeof(*tokens) * icb_size);
     shader_instruction_array_add_icb(&priv->p.instructions, icb);
     ins->declaration.icb = icb;
@@ -882,6 +884,8 @@ static void shader_sm4_read_dcl_constant_buffer(struct vkd3d_shader_instruction 
         ins->declaration.cb.size = *tokens++;
         shader_sm4_read_register_space(priv, &tokens, end, &ins->declaration.cb.range.space);
     }
+
+    ins->declaration.cb.size *= VKD3D_VEC4_SIZE * sizeof(float);
 }
 
 static void shader_sm4_read_dcl_sampler(struct vkd3d_shader_instruction *ins, uint32_t opcode, uint32_t opcode_token,
@@ -1090,7 +1094,7 @@ static void shader_sm4_read_dcl_indexable_temp(struct vkd3d_shader_instruction *
 static void shader_sm4_read_dcl_global_flags(struct vkd3d_shader_instruction *ins, uint32_t opcode,
         uint32_t opcode_token, const uint32_t *tokens, unsigned int token_count, struct vkd3d_shader_sm4_parser *priv)
 {
-    ins->flags = (opcode_token & VKD3D_SM4_GLOBAL_FLAGS_MASK) >> VKD3D_SM4_GLOBAL_FLAGS_SHIFT;
+    ins->declaration.global_flags = (opcode_token & VKD3D_SM4_GLOBAL_FLAGS_MASK) >> VKD3D_SM4_GLOBAL_FLAGS_SHIFT;
 }
 
 static void shader_sm5_read_fcall(struct vkd3d_shader_instruction *ins, uint32_t opcode, uint32_t opcode_token,
@@ -1803,10 +1807,11 @@ static bool shader_sm4_read_param(struct vkd3d_shader_sm4_parser *priv, const ui
                     *modifier = VKD3DSPSM_ABSNEG;
                     break;
 
+                case VKD3D_SM4_REGISTER_MODIFIER_NONE:
+                    break;
+
                 default:
                     FIXME("Unhandled register modifier %#x.\n", m);
-                    /* fall-through */
-                case VKD3D_SM4_REGISTER_MODIFIER_NONE:
                     break;
             }
 
@@ -2728,7 +2733,7 @@ bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semant
         const char *name;
         bool output;
         enum vkd3d_shader_type shader_type;
-        D3DDECLUSAGE usage;
+        D3D_NAME usage;
     }
     semantics[] =
     {
@@ -2759,20 +2764,21 @@ bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semant
         {"position",                    true,  VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_POSITION},
         {"sv_position",                 true,  VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_POSITION},
     };
+    bool needs_compat_mapping = ascii_strncasecmp(semantic->name, "sv_", 3);
 
     for (i = 0; i < ARRAY_SIZE(semantics); ++i)
     {
         if (!ascii_strcasecmp(semantic->name, semantics[i].name)
                 && output == semantics[i].output
-                && ctx->profile->type == semantics[i].shader_type
-                && !ascii_strncasecmp(semantic->name, "sv_", 3))
+                && (ctx->semantic_compat_mapping == needs_compat_mapping || !needs_compat_mapping)
+                && ctx->profile->type == semantics[i].shader_type)
         {
             *usage = semantics[i].usage;
             return true;
         }
     }
 
-    if (!ascii_strncasecmp(semantic->name, "sv_", 3))
+    if (!needs_compat_mapping)
         return false;
 
     *usage = D3D_NAME_UNDEFINED;

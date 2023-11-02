@@ -1965,16 +1965,17 @@ static BOOL write_freedesktop_mime_type_entry(const WCHAR *packages_dir, const W
     return ret;
 }
 
-static BOOL is_type_banned(const WCHAR *win_type)
+static BOOL is_type_banned(LPCWSTR extension)
 {
     /* These are managed through external tools like wine.desktop, to evade malware created file type associations */
-    if (!wcsicmp(win_type, L".com") ||
-        !wcsicmp(win_type, L".exe") ||
-        !wcsicmp(win_type, L".msi"))
+    if (!wcsicmp(extension, L".bat") ||
+        !wcsicmp(extension, L".com") ||
+        !wcsicmp(extension, L".exe") ||
+        !wcsicmp(extension, L".msi"))
         return TRUE;
     /* Associating a program with the file URI scheme is like associating it with all file types, which is not allowed
      * for the same reasons */
-    if (!wcsicmp(win_type, L"file"))
+    if (!wcsicmp(extension, L"file"))
         return TRUE;
     return FALSE;
 }

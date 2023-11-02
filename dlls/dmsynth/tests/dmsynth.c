@@ -1036,19 +1036,19 @@ static void test_IDirectMusicSynth(void)
 
     /* SetMasterClock does nothing */
     hr = IDirectMusicSynth_SetMasterClock(synth, NULL);
-    todo_wine ok(hr == E_POINTER, "got %#lx\n", hr);
+    ok(hr == E_POINTER, "got %#lx\n", hr);
     hr = IDirectMusicSynth_SetMasterClock(synth, clock);
     ok(hr == S_OK, "got %#lx\n", hr);
     ref = get_refcount(clock);
     todo_wine ok(ref == 1, "got %lu\n", ref);
     hr = IDirectMusicSynth_Activate(synth, TRUE);
-    todo_wine ok(hr == DMUS_E_SYNTHNOTCONFIGURED, "got %#lx\n", hr);
+    ok(hr == DMUS_E_SYNTHNOTCONFIGURED, "got %#lx\n", hr);
 
     /* SetMasterClock needs to be called on the sink */
     hr = IDirectMusicSynthSink_SetMasterClock(sink, clock);
     ok(hr == S_OK, "got %#lx\n", hr);
     hr = IDirectMusicSynth_Activate(synth, TRUE);
-    todo_wine ok(hr == S_OK, "got %#lx\n", hr);
+    ok(hr == S_OK, "got %#lx\n", hr);
     hr = IDirectMusicSynth_Activate(synth, TRUE);
     ok(hr == S_FALSE, "got %#lx\n", hr);
 
@@ -1294,7 +1294,7 @@ static void test_IDirectMusicSynthSink(void)
     hr = IDirectMusicSynthSink_Activate(sink, TRUE);
     ok(hr == DMUS_E_SYNTHACTIVE, "got %#lx\n", hr);
     ref = get_refcount(synth);
-    ok(ref == 1, "got %#lx\n", ref);
+    todo_wine ok(ref == 1, "got %#lx\n", ref);
 
     hr = IDirectMusicSynthSink_GetDesiredBufferSize(sink, &size);
     ok(hr == S_OK, "got %#lx\n", hr);
@@ -1317,7 +1317,7 @@ static void test_IDirectMusicSynthSink(void)
     tmp_time = time;
     hr = IReferenceClock_GetTime(latency_clock, &tmp_time);
     ok(hr == S_OK, "got %#lx\n", hr);
-    todo_wine ok(tmp_time > time, "got %I64d\n", tmp_time - time);
+    ok(tmp_time > time, "got %I64d\n", tmp_time - time);
     ok(tmp_time - time <= 2000000, "got %I64d\n", tmp_time - time);
 
     /* setting the clock while active is fine */
@@ -1328,7 +1328,7 @@ static void test_IDirectMusicSynthSink(void)
     hr = IDirectMusicSynthSink_Init(sink, NULL);
     ok(hr == S_OK, "got %#lx\n", hr);
     ref = get_refcount(synth);
-    ok(ref == 1, "got %#lx\n", ref);
+    todo_wine ok(ref == 1, "got %#lx\n", ref);
     hr = IDirectMusicSynthSink_Activate(sink, TRUE);
     ok(hr == DMUS_E_SYNTHNOTCONFIGURED, "got %#lx\n", hr);
 

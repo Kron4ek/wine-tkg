@@ -36,6 +36,7 @@
 #include "winnt.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
+WINE_DECLARE_DEBUG_CHANNEL(relay);
 WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
 typedef struct _SCOPE_TABLE
@@ -1524,12 +1525,28 @@ USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, PVOID *buffer, 
     return 0;
 }
 
+/***********************************************************************
+ *           RtlUserThreadStart (NTDLL.@)
+ */
+__ASM_GLOBAL_FUNC( RtlUserThreadStart,
+                   "stp x29, x30, [sp, #-16]!\n\t"
+                   __ASM_SEH(".seh_save_fplr_x 16\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   "adr x8, " __ASM_NAME("pBaseThreadInitThunk") "\n\t"
+                   "ldr x8, [x8]\n\t"
+                   "mov x2, x1\n\t"
+                   "mov x1, x0\n\t"
+                   "mov x0, #0\n\t"
+                   "blr x8\n\t"
+                   __ASM_SEH(".seh_handler " __ASM_NAME("call_unhandled_exception_handler") ", @except") )
+
 /******************************************************************
  *		LdrInitializeThunk (NTDLL.@)
  */
 void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unk2, ULONG_PTR unk3, ULONG_PTR unk4 )
 {
     loader_init( context, (void **)&context->X0 );
+    TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", (void *)context->X0, (void *)context->X1 );
     NtContinue( context, TRUE );
 }
 

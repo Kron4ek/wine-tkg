@@ -154,6 +154,25 @@ enum vkd3d_shader_compile_option_pack_matrix_order
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_ORDER),
 };
 
+/** Individual options to enable various backward compatibility features. \since 1.10 */
+enum vkd3d_shader_compile_option_backward_compatibility
+{
+    /**
+     *  Causes compiler to convert SM1-3 semantics to corresponding System Value semantics,
+     *  when compiling HLSL sources for SM4+ targets.
+     *
+     *  This option does the following conversions:
+     *
+     *  - POSITION to SV_Position for vertex shader outputs, pixel shader inputs,
+     *    and geometry shader inputs and outputs;
+     *  - COLORN to SV_TargetN for pixel shader outputs;
+     *  - DEPTH to SV_Depth for pixel shader outputs.
+     */
+    VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_MAP_SEMANTIC_NAMES = 0x00000001,
+
+    VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_BACKWARD_COMPATIBILITY),
+};
+
 enum vkd3d_shader_compile_option_name
 {
     /**
@@ -193,6 +212,14 @@ enum vkd3d_shader_compile_option_name
      * \since 1.9
      */
     VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_ORDER = 0x00000007,
+    /**
+     * This option is used to enable various backward compatibility features.
+     *
+     * \a value is a mask of values from enum vkd3d_shader_compile_option_backward_compatibility.
+     *
+     * \since 1.10
+     */
+    VKD3D_SHADER_COMPILE_OPTION_BACKWARD_COMPATIBILITY = 0x00000008,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_NAME),
 };
@@ -1387,7 +1414,10 @@ struct vkd3d_shader_descriptor_info
  * as follows:
  *
  * - Each constant register set used by the shader is scanned as a single
- *   constant buffer descriptor, as follows:
+ *   constant buffer descriptor.
+ *   There may therefore be up to three such descriptors, one for each register
+ *   set used by the shader: float, integer, and boolean.
+ *   The fields are set as follows:
  *   * The \ref vkd3d_shader_descriptor_info.type field is set to
  *     VKD3D_SHADER_DESCRIPTOR_TYPE_CBV.
  *   * The \ref vkd3d_shader_descriptor_info.register_space field is set to zero.
@@ -1407,9 +1437,6 @@ struct vkd3d_shader_descriptor_info
  *   * The \ref vkd3d_shader_descriptor_info.register_index field is set to the
  *     binding index of the original sampler, for both descriptors.
  *   * The \ref vkd3d_shader_descriptor_info.count field is set to one.
- *
- * In summary, there may be up to three such descriptors, one for each register
- * set used by the shader: float, integer, and boolean.
  */
 struct vkd3d_shader_scan_descriptor_info
 {

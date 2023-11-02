@@ -817,7 +817,7 @@ static void vkd3d_shader_scan_constant_buffer_declaration(struct vkd3d_shader_sc
     if (!(d = vkd3d_shader_scan_add_descriptor(context, VKD3D_SHADER_DESCRIPTOR_TYPE_CBV,
             &cb->src.reg, &cb->range, VKD3D_SHADER_RESOURCE_BUFFER, VKD3D_SHADER_RESOURCE_DATA_UINT)))
         return;
-    d->buffer_size = cb->size * 16;
+    d->buffer_size = cb->size;
 }
 
 static void vkd3d_shader_scan_sampler_declaration(struct vkd3d_shader_scan_context *context,
@@ -1852,14 +1852,14 @@ bool shader_instruction_array_reserve(struct vkd3d_shader_instruction_array *ins
     return true;
 }
 
-bool shader_instruction_array_add_icb(struct vkd3d_shader_instruction_array *instructions,
+unsigned int shader_instruction_array_add_icb(struct vkd3d_shader_instruction_array *instructions,
         struct vkd3d_shader_immediate_constant_buffer *icb)
 {
     if (!vkd3d_array_reserve((void **)&instructions->icbs, &instructions->icb_capacity, instructions->icb_count + 1,
             sizeof(*instructions->icbs)))
-        return false;
-    instructions->icbs[instructions->icb_count++] = icb;
-    return true;
+        return UINT_MAX;
+    instructions->icbs[instructions->icb_count] = icb;
+    return instructions->icb_count++;
 }
 
 static struct vkd3d_shader_src_param *shader_instruction_array_clone_src_params(

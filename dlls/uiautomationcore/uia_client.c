@@ -347,7 +347,7 @@ static HRESULT get_navigate_from_node_provider(IWineUiaNode *node, int idx, int 
     return hr;
 }
 
-static HRESULT get_focus_from_node_provider(IWineUiaNode *node, int idx, VARIANT *ret_val)
+HRESULT get_focus_from_node_provider(IWineUiaNode *node, int idx, LONG flags, VARIANT *ret_val)
 {
     IWineUiaProvider *prov;
     HRESULT hr;
@@ -357,7 +357,7 @@ static HRESULT get_focus_from_node_provider(IWineUiaNode *node, int idx, VARIANT
     if (FAILED(hr))
         return hr;
 
-    hr = IWineUiaProvider_get_focus(prov, ret_val);
+    hr = IWineUiaProvider_get_focus(prov, flags, ret_val);
     IWineUiaProvider_Release(prov);
 
     return hr;
@@ -389,6 +389,22 @@ HRESULT respond_to_win_event_on_node_provider(IWineUiaNode *node, int idx, DWORD
         return hr;
 
     hr = IWineUiaProvider_respond_to_win_event(prov, win_event, HandleToUlong(hwnd), obj_id, child_id, sink);
+    IWineUiaProvider_Release(prov);
+
+    return hr;
+}
+
+HRESULT create_node_from_node_provider(IWineUiaNode *node, int idx, LONG flags, VARIANT *ret_val)
+{
+    IWineUiaProvider *prov;
+    HRESULT hr;
+
+    VariantInit(ret_val);
+    hr = IWineUiaNode_get_provider(node, idx, &prov);
+    if (FAILED(hr))
+        return hr;
+
+    hr = IWineUiaProvider_create_node_from_prov(prov, flags, ret_val);
     IWineUiaProvider_Release(prov);
 
     return hr;
@@ -1820,7 +1836,7 @@ static HRESULT WINAPI uia_provider_navigate(IWineUiaProvider *iface, int nav_dir
     return S_OK;
 }
 
-static HRESULT WINAPI uia_provider_get_focus(IWineUiaProvider *iface, VARIANT *out_val)
+static HRESULT WINAPI uia_provider_get_focus(IWineUiaProvider *iface, LONG flags, VARIANT *out_val)
 {
     struct uia_provider *prov = impl_from_IWineUiaProvider(iface);
     IRawElementProviderFragmentRoot *elroot;
@@ -1828,7 +1844,10 @@ static HRESULT WINAPI uia_provider_get_focus(IWineUiaProvider *iface, VARIANT *o
     IRawElementProviderSimple *elprov;
     HRESULT hr;
 
-    TRACE("%p, %p\n", iface, out_val);
+    TRACE("%p, %#lx, %p\n", iface, flags, out_val);
+
+    if (flags & PROV_METHOD_FLAG_RETURN_NODE_LRES)
+        FIXME("PROV_METHOD_FLAG_RETURN_NODE_LRES ignored for normal providers.\n");
 
     VariantInit(out_val);
     hr = IRawElementProviderSimple_QueryInterface(prov->elprov, &IID_IRawElementProviderFragmentRoot, (void **)&elroot);
@@ -1890,7 +1909,6 @@ static HRESULT WINAPI uia_provider_attach_event(IWineUiaProvider *iface, LONG_PT
         if (!prov->return_nested_node && SUCCEEDED(IRawElementProviderFragmentRoot_QueryInterface(elroot,
                         &IID_IProxyProviderWinEventHandler, (void **)&winevent_handler)))
         {
-            FIXME("MSAA to UIA event bridge currently unimplemented\n");
             hr = uia_event_add_win_event_hwnd(event, prov->hwnd);
             if (FAILED(hr))
                 WARN("Failed to add hwnd for win_event, hr %#lx\n", hr);
@@ -1972,6 +1990,26 @@ static HRESULT WINAPI uia_provider_respond_to_win_event(IWineUiaProvider *iface,
     return hr;
 }
 
+static HRESULT WINAPI uia_provider_create_node_from_prov(IWineUiaProvider *iface, LONG flags, VARIANT *ret_val)
+{
+    struct uia_provider *prov = impl_from_IWineUiaProvider(iface);
+    IRawElementProviderSimple *elprov;
+    HRESULT hr;
+
+    TRACE("%p, %#lx, %p\n", iface, flags, ret_val);
+
+    if (flags & PROV_METHOD_FLAG_RETURN_NODE_LRES)
+        FIXME("PROV_METHOD_FLAG_RETURN_NODE_LRES ignored for normal providers.\n");
+
+    VariantInit(ret_val);
+    hr = IRawElementProviderSimple_QueryInterface(prov->elprov, &IID_IRawElementProviderSimple, (void **)&elprov);
+    if (FAILED(hr))
+        return hr;
+
+    /* get_variant_for_elprov_node will release our provider upon failure. */
+    return get_variant_for_elprov_node(elprov, prov->return_nested_node, prov->refuse_hwnd_node_providers, ret_val);
+}
+
 static const IWineUiaProviderVtbl uia_provider_vtbl = {
     uia_provider_QueryInterface,
     uia_provider_AddRef,
@@ -1983,6 +2021,7 @@ static const IWineUiaProviderVtbl uia_provider_vtbl = {
     uia_provider_get_focus,
     uia_provider_attach_event,
     uia_provider_respond_to_win_event,
+    uia_provider_create_node_from_prov,
 };
 
 static HRESULT create_wine_uia_provider(struct uia_node *node, IRawElementProviderSimple *elprov,
@@ -2320,7 +2359,7 @@ static HRESULT WINAPI uia_nested_node_provider_get_prop_val(IWineUiaProvider *if
     {
         HUIANODE node;
 
-        hr = uia_node_from_lresult((LRESULT)V_I4(&v), &node);
+        hr = uia_node_from_lresult((LRESULT)V_I4(&v), &node, 0);
         if (FAILED(hr))
             return hr;
 
@@ -2369,7 +2408,7 @@ static HRESULT WINAPI uia_nested_node_provider_navigate(IWineUiaProvider *iface,
     if (FAILED(hr) || V_VT(&v) == VT_EMPTY)
         return hr;
 
-    hr = uia_node_from_lresult((LRESULT)V_I4(&v), &node);
+    hr = uia_node_from_lresult((LRESULT)V_I4(&v), &node, 0);
     if (FAILED(hr))
         return hr;
 
@@ -2379,21 +2418,27 @@ static HRESULT WINAPI uia_nested_node_provider_navigate(IWineUiaProvider *iface,
     return S_OK;
 }
 
-static HRESULT WINAPI uia_nested_node_provider_get_focus(IWineUiaProvider *iface, VARIANT *out_val)
+static HRESULT WINAPI uia_nested_node_provider_get_focus(IWineUiaProvider *iface, LONG flags, VARIANT *out_val)
 {
     struct uia_nested_node_provider *prov = impl_from_nested_node_IWineUiaProvider(iface);
     HUIANODE node;
     HRESULT hr;
     VARIANT v;
 
-    TRACE("%p, %p\n", iface, out_val);
+    TRACE("%p, %#lx, %p\n", iface, flags, out_val);
 
     VariantInit(out_val);
-    hr = get_focus_from_node_provider(prov->nested_node, 0, &v);
+    hr = get_focus_from_node_provider(prov->nested_node, 0, 0, &v);
     if (FAILED(hr) || V_VT(&v) == VT_EMPTY)
         return hr;
 
-    hr = uia_node_from_lresult((LRESULT)V_I4(&v), &node);
+    if (flags & PROV_METHOD_FLAG_RETURN_NODE_LRES)
+    {
+        *out_val = v;
+        return S_OK;
+    }
+
+    hr = uia_node_from_lresult((LRESULT)V_I4(&v), &node, 0);
     if (FAILED(hr))
         return hr;
 
@@ -2431,6 +2476,36 @@ static HRESULT WINAPI uia_nested_node_provider_respond_to_win_event(IWineUiaProv
     return E_FAIL;
 }
 
+static HRESULT WINAPI uia_nested_node_provider_create_node_from_prov(IWineUiaProvider *iface, LONG flags, VARIANT *ret_val)
+{
+    struct uia_nested_node_provider *prov = impl_from_nested_node_IWineUiaProvider(iface);
+    HUIANODE node;
+    HRESULT hr;
+    VARIANT v;
+
+    TRACE("%p, %#lx, %p\n", iface, flags, ret_val);
+
+    VariantInit(ret_val);
+    hr = create_node_from_node_provider(prov->nested_node, 0, 0, &v);
+    if (FAILED(hr) || V_VT(&v) == VT_EMPTY)
+        return hr;
+
+    if (flags & PROV_METHOD_FLAG_RETURN_NODE_LRES)
+    {
+        *ret_val = v;
+        return S_OK;
+    }
+
+    hr = uia_node_from_lresult((LRESULT)V_I4(&v), &node, 0);
+    if (FAILED(hr))
+        return hr;
+
+    get_variant_for_node(node, ret_val);
+    VariantClear(&v);
+
+    return S_OK;
+}
+
 static const IWineUiaProviderVtbl uia_nested_node_provider_vtbl = {
     uia_nested_node_provider_QueryInterface,
     uia_nested_node_provider_AddRef,
@@ -2442,6 +2517,7 @@ static const IWineUiaProviderVtbl uia_nested_node_provider_vtbl = {
     uia_nested_node_provider_get_focus,
     uia_nested_node_provider_attach_event,
     uia_nested_node_provider_respond_to_win_event,
+    uia_nested_node_provider_create_node_from_prov,
 };
 
 static BOOL is_nested_node_provider(IWineUiaProvider *iface)
@@ -2563,16 +2639,19 @@ static HRESULT create_wine_uia_nested_node_provider(struct uia_node *node, LRESU
     return S_OK;
 }
 
-HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode)
+HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode, int node_flags)
 {
     struct uia_node *node;
     HRESULT hr;
 
     *huianode = NULL;
 
-    hr = create_uia_node(&node, 0);
+    hr = create_uia_node(&node, node_flags);
     if (FAILED(hr))
+    {
+        uia_node_lresult_release(lr);
         return hr;
+    }
 
     uia_start_client_thread();
     hr = create_wine_uia_nested_node_provider(node, lr, FALSE);
@@ -2599,6 +2678,14 @@ HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode)
     *huianode = (void *)&node->IWineUiaNode_iface;
 
     return hr;
+}
+
+void uia_node_lresult_release(LRESULT lr)
+{
+    IWineUiaNode *node;
+
+    if (lr && SUCCEEDED(ObjectFromLresult(lr, &IID_IWineUiaNode, 0, (void **)&node)))
+        IWineUiaNode_Release(node);
 }
 
 /*
@@ -2725,7 +2812,7 @@ static HRESULT get_focused_uia_node(HUIANODE in_node, HUIANODE *out_node)
                     (get_node_provider_type_at_idx(node, i) == PROV_TYPE_HWND)))
             continue;
 
-        hr = get_focus_from_node_provider(&node->IWineUiaNode_iface, i, &v);
+        hr = get_focus_from_node_provider(&node->IWineUiaNode_iface, i, 0, &v);
         if (FAILED(hr))
             break;
 
@@ -3044,6 +3131,7 @@ HRESULT WINAPI UiaHUiaNodeFromVariant(VARIANT *in_val, HUIANODE *huianode)
 static SAFEARRAY WINAPI *default_uia_provider_callback(HWND hwnd, enum ProviderType prov_type)
 {
     IRawElementProviderSimple *elprov = NULL;
+    static BOOL fixme_once;
     SAFEARRAY *sa = NULL;
     HRESULT hr;
 
@@ -3066,7 +3154,8 @@ static SAFEARRAY WINAPI *default_uia_provider_callback(HWND hwnd, enum ProviderT
     }
 
     case ProviderType_NonClientArea:
-        FIXME("Default ProviderType_NonClientArea provider unimplemented.\n");
+        if (!fixme_once++)
+            FIXME("Default ProviderType_NonClientArea provider unimplemented.\n");
         break;
 
     case ProviderType_BaseHwnd:
@@ -3151,6 +3240,7 @@ exit:
 
 static HRESULT uia_get_providers_for_hwnd(struct uia_node *node)
 {
+    static BOOL fixme_once;
     HRESULT hr;
 
     hr = uia_get_provider_from_hwnd(node);
@@ -3164,7 +3254,7 @@ static HRESULT uia_get_providers_for_hwnd(struct uia_node *node)
             return hr;
     }
 
-    if (!node->prov[PROV_TYPE_OVERRIDE])
+    if (!node->prov[PROV_TYPE_OVERRIDE] && !fixme_once++)
         FIXME("Override provider callback currently unimplemented.\n");
 
     if (!node->prov[PROV_TYPE_NONCLIENT])

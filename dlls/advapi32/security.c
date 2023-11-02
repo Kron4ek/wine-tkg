@@ -185,7 +185,7 @@ static inline DWORD get_security_file( LPCWSTR full_file_name, DWORD access, HAN
 }
 
 /* helper function for SE_SERVICE objects in [Get|Set]NamedSecurityInfo */
-static inline DWORD get_security_service( LPWSTR full_service_name, DWORD access, HANDLE *service )
+static DWORD get_security_service( const WCHAR *full_service_name, DWORD access, HANDLE *service )
 {
     SC_HANDLE manager = OpenSCManagerW( NULL, NULL, access );
     if (manager)
@@ -199,9 +199,9 @@ static inline DWORD get_security_service( LPWSTR full_service_name, DWORD access
 }
 
 /* helper function for SE_REGISTRY_KEY objects in [Get|Set]NamedSecurityInfo */
-static inline DWORD get_security_regkey( LPWSTR full_key_name, DWORD access, HANDLE *key )
+static DWORD get_security_regkey( const WCHAR *full_key_name, DWORD access, HANDLE *key )
 {
-    LPWSTR p = wcschr(full_key_name, '\\');
+    const WCHAR *p = wcschr(full_key_name, '\\');
     int len = p-full_key_name;
     HKEY hParent;
 
@@ -1497,6 +1497,10 @@ DWORD WINAPI GetSecurityInfo( HANDLE handle, SE_OBJECT_TYPE type, SECURITY_INFOR
     NTSTATUS status;
     ULONG size;
     BOOL present, defaulted;
+    HKEY key = NULL;
+
+    if (!handle)
+        return ERROR_INVALID_HANDLE;
 
     /* A NULL descriptor is allowed if any one of the other pointers is not NULL */
     if (!(ppsidOwner||ppsidGroup||ppDacl||ppSacl||ppSecurityDescriptor)) return ERROR_INVALID_PARAMETER;
@@ -1509,8 +1513,9 @@ DWORD WINAPI GetSecurityInfo( HANDLE handle, SE_OBJECT_TYPE type, SECURITY_INFOR
     ||  ((SecurityInfo & SACL_SECURITY_INFORMATION)  && !ppSacl)  ))
         return ERROR_INVALID_PARAMETER;
 
-    if (type == SE_SERVICE)
+    switch (type)
     {
+    case SE_SERVICE:
         if (!QueryServiceObjectSecurity( handle, SecurityInfo, NULL, 0, &size )
             && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
             return GetLastError();
@@ -1522,11 +1527,27 @@ DWORD WINAPI GetSecurityInfo( HANDLE handle, SE_OBJECT_TYPE type, SECURITY_INFOR
             LocalFree(sd);
             return GetLastError();
         }
-    }
-    else
-    {
-        HKEY key = NULL;
+        break;
 
+    case SE_WINDOW_OBJECT:
+        if (!GetUserObjectSecurity( handle, &SecurityInfo, NULL, 0, &size )
+                && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+            return GetLastError();
+
+        if (!(sd = LocalAlloc( 0, size )))
+            return ERROR_NOT_ENOUGH_MEMORY;
+
+        if (!GetUserObjectSecurity( handle, &SecurityInfo, sd, size, &size ))
+        {
+            LocalFree( sd );
+            return GetLastError();
+        }
+        break;
+
+    case SE_KERNEL_OBJECT:
+    case SE_FILE_OBJECT:
+    case SE_WMIGUID_OBJECT:
+    case SE_REGISTRY_KEY:
         if (type == SE_REGISTRY_KEY && (HandleToUlong(handle) >= HandleToUlong(HKEY_SPECIAL_ROOT_FIRST))
                 && (HandleToUlong(handle) <= HandleToUlong(HKEY_SPECIAL_ROOT_LAST)))
         {
@@ -1562,6 +1583,11 @@ DWORD WINAPI GetSecurityInfo( HANDLE handle, SE_OBJECT_TYPE type, SECURITY_INFOR
             return RtlNtStatusToDosError( status );
         }
         RegCloseKey( key );
+        break;
+
+    default:
+        FIXME("unimplemented type %u\n", type);
+        return ERROR_CALL_NOT_IMPLEMENTED;
     }
 
     if (ppsidOwner)
@@ -2676,7 +2702,7 @@ BOOL WINAPI CreateProcessWithTokenW(HANDLE token, DWORD logon_flags, LPCWSTR app
 /******************************************************************************
  * GetNamedSecurityInfoA [ADVAPI32.@]
  */
-DWORD WINAPI GetNamedSecurityInfoA(LPSTR pObjectName,
+DWORD WINAPI GetNamedSecurityInfoA(const char *pObjectName,
         SE_OBJECT_TYPE ObjectType, SECURITY_INFORMATION SecurityInfo,
         PSID* ppsidOwner, PSID* ppsidGroup, PACL* ppDacl, PACL* ppSacl,
         PSECURITY_DESCRIPTOR* ppSecurityDescriptor)
@@ -2684,7 +2710,7 @@ DWORD WINAPI GetNamedSecurityInfoA(LPSTR pObjectName,
     LPWSTR wstr;
     DWORD r;
 
-    TRACE("%s %d %ld %p %p %p %p %p\n", pObjectName, ObjectType, SecurityInfo,
+    TRACE("%s %d %ld %p %p %p %p %p\n", debugstr_a(pObjectName), ObjectType, SecurityInfo,
         ppsidOwner, ppsidGroup, ppDacl, ppSacl, ppSecurityDescriptor);
 
     wstr = strdupAW(pObjectName);
@@ -2699,7 +2725,7 @@ DWORD WINAPI GetNamedSecurityInfoA(LPSTR pObjectName,
 /******************************************************************************
  * GetNamedSecurityInfoW [ADVAPI32.@]
  */
-DWORD WINAPI GetNamedSecurityInfoW( LPWSTR name, SE_OBJECT_TYPE type,
+DWORD WINAPI GetNamedSecurityInfoW( const WCHAR *name, SE_OBJECT_TYPE type,
     SECURITY_INFORMATION info, PSID* owner, PSID* group, PACL* dacl,
     PACL* sacl, PSECURITY_DESCRIPTOR* descriptor )
 {
@@ -2914,6 +2940,9 @@ DWORD WINAPI SetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE ObjectType,
     PACL dacl = pDacl;
     NTSTATUS status;
 
+    if (!handle)
+        return ERROR_INVALID_HANDLE;
+
     if (!InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION))
         return ERROR_INVALID_SECURITY_DESCR;
 
@@ -2969,10 +2998,11 @@ DWORD WINAPI SetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE ObjectType,
                     return RtlNtStatusToDosError(status);
                 }
 
-                for (name_info->Name.Length-=2; name_info->Name.Length>0; name_info->Name.Length-=2)
-                    if (name_info->Name.Buffer[name_info->Name.Length/2-1]=='\\' ||
-                            name_info->Name.Buffer[name_info->Name.Length/2-1]=='/')
-                        break;
+                if (name_info->Name.Length && name_info->Name.Buffer[(name_info->Name.Length / 2) - 1] == '\\')
+                    name_info->Name.Length -= 2;
+                while (name_info->Name.Length && name_info->Name.Buffer[(name_info->Name.Length / 2) - 1] != '\\')
+                    name_info->Name.Length -= 2;
+
                 if (name_info->Name.Length)
                 {
                     OBJECT_ATTRIBUTES attr;
@@ -3020,13 +3050,18 @@ DWORD WINAPI SetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE ObjectType,
 
     switch (ObjectType)
     {
-    case SE_SERVICE:
-        FIXME("stub: Service objects are not supported at this time.\n");
-        status = STATUS_SUCCESS; /* Implement SetServiceObjectSecurity */
-        break;
-    default:
+    case SE_FILE_OBJECT:
+    case SE_KERNEL_OBJECT:
+    case SE_WMIGUID_OBJECT:
+    case SE_REGISTRY_KEY:
         status = NtSetSecurityObject(handle, SecurityInfo, &sd);
         break;
+
+    default:
+        FIXME("unimplemented type %u, returning success\n", ObjectType);
+        status = STATUS_SUCCESS;
+        break;
+
     }
     if (dacl != pDacl)
         free(dacl);

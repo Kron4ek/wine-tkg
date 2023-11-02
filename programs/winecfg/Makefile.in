@@ -3,7 +3,7 @@ IMPORTS   = uuid comdlg32 comctl32 shell32 ole32 winmm shlwapi uxtheme user32 gd
 
 EXTRADLLFLAGS = -mwindows -municode
 
-C_SRCS = \
+SOURCES = \
 	about.c \
 	appdefaults.c \
 	audio.c \
@@ -11,16 +11,12 @@ C_SRCS = \
 	driveui.c \
 	input.c \
 	libraries.c \
+	logo.svg \
 	main.c \
 	staging.c \
 	theme.c \
 	winecfg.c \
+	winecfg.man.in \
+	winecfg.rc \
+	winecfg.svg \
 	x11drvdlg.c
-
-RC_SRCS = winecfg.rc
-
-MANPAGES = winecfg.man.in
-
-SVG_SRCS = \
-	logo.svg \
-	winecfg.svg

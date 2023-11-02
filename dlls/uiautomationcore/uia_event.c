@@ -252,8 +252,7 @@ static void uia_event_map_entry_release(struct uia_event_map_entry *entry)
     }
 }
 
-typedef HRESULT UiaWineEventForEachCallback(struct uia_event *, void *);
-static HRESULT uia_event_for_each(int event_id, UiaWineEventForEachCallback *callback, void *user_data,
+HRESULT uia_event_for_each(int event_id, UiaWineEventForEachCallback *callback, void *user_data,
         BOOL clientside_only)
 {
     struct uia_event_map_entry *event_entry;
@@ -588,23 +587,13 @@ static struct uia_queue_event *uia_event_queue_pop(struct list *event_queue)
     return queue_event;
 }
 
-static void uia_node_lresult_release(LRESULT lr)
-{
-    IWineUiaNode *node;
-
-    if (lr && SUCCEEDED(ObjectFromLresult(lr, &IID_IWineUiaNode, 0, (void **)&node)))
-        IWineUiaNode_Release(node);
-}
-
-static HRESULT uia_event_invoke(HUIANODE node, HUIANODE nav_start_node, struct uia_event_args *args,
-        struct uia_event *event);
 static HRESULT uia_raise_clientside_event(struct uia_queue_uia_event *event)
 {
     HUIANODE node, nav_start_node;
     HRESULT hr;
 
     node = nav_start_node = NULL;
-    hr = uia_node_from_lresult(event->u.clientside.node, &node);
+    hr = uia_node_from_lresult(event->u.clientside.node, &node, 0);
     if (FAILED(hr))
     {
         WARN("Failed to create node from lresult, hr %#lx\n", hr);
@@ -614,7 +603,7 @@ static HRESULT uia_raise_clientside_event(struct uia_queue_uia_event *event)
 
     if (event->u.clientside.nav_start_node)
     {
-        hr = uia_node_from_lresult(event->u.clientside.nav_start_node, &nav_start_node);
+        hr = uia_node_from_lresult(event->u.clientside.nav_start_node, &nav_start_node, 0);
         if (FAILED(hr))
         {
             WARN("Failed to create nav_start_node from lresult, hr %#lx\n", hr);
@@ -685,7 +674,7 @@ static BOOL uia_win_event_hwnd_map_contains_ancestors(struct rb_tree *hwnd_map, 
     return FALSE;
 }
 
-static HRESULT create_msaa_provider_from_hwnd(HWND hwnd, int in_child_id, IRawElementProviderSimple **ret_elprov)
+HRESULT create_msaa_provider_from_hwnd(HWND hwnd, int in_child_id, IRawElementProviderSimple **ret_elprov)
 {
     IRawElementProviderSimple *elprov;
     IAccessible *acc;
@@ -1742,7 +1731,7 @@ HRESULT WINAPI UiaRemoveEvent(HUIAEVENT huiaevent)
     return S_OK;
 }
 
-static HRESULT uia_event_invoke(HUIANODE node, HUIANODE nav_start_node, struct uia_event_args *args, struct uia_event *event)
+HRESULT uia_event_invoke(HUIANODE node, HUIANODE nav_start_node, struct uia_event_args *args, struct uia_event *event)
 {
     HRESULT hr = S_OK;
 

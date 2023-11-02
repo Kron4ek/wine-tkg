@@ -134,7 +134,7 @@ WCHAR *get_wine_loader_name(struct process *pcs)
     unsigned len;
 
     name = process_getenv(pcs, L"WINELOADER");
-    if (!name) name = pcs->is_system_64bit ? L"wine64" : L"wine";
+    if (!name) name = pcs->is_host_64bit ? L"wine64" : L"wine";
     len = lstrlenW(name);
 
     /* WINELOADER isn't properly updated in Wow64 process calling inside Windows env block
@@ -145,14 +145,14 @@ WCHAR *get_wine_loader_name(struct process *pcs)
     if (altname)
     {
         memcpy(altname, name, len * sizeof(WCHAR));
-        if (pcs->is_system_64bit && len >= 2 && memcmp(name + len - 2, L"64", 2 * sizeof(WCHAR)) != 0)
+        if (pcs->is_host_64bit && len >= 2 && memcmp(name + len - 2, L"64", 2 * sizeof(WCHAR)) != 0)
         {
             lstrcpyW(altname + len, L"64");
             /* in multi-arch wow configuration, wine64 doesn't exist */
             if (GetFileAttributesW(altname) == INVALID_FILE_ATTRIBUTES)
                 altname[len] = L'\0';
         }
-        else if (!pcs->is_system_64bit && len >= 2 && !memcmp(name + len - 2, L"64", 2 * sizeof(WCHAR)))
+        else if (!pcs->is_host_64bit && len >= 2 && !memcmp(name + len - 2, L"64", 2 * sizeof(WCHAR)))
             altname[len - 2] = '\0';
         else
             altname[len] = '\0';
@@ -262,7 +262,7 @@ struct module* module_new(struct process* pcs, const WCHAR* name,
 BOOL module_init_pair(struct module_pair* pair, HANDLE hProcess, DWORD64 addr)
 {
     if (!(pair->pcs = process_find_by_handle(hProcess))) return FALSE;
-    pair->requested = module_find_by_addr(pair->pcs, addr, DMT_UNKNOWN);
+    pair->requested = module_find_by_addr(pair->pcs, addr);
     return module_get_debug(pair);
 }
 
@@ -413,29 +413,25 @@ BOOL module_get_debug(struct module_pair* pair)
 /***********************************************************************
  *	module_find_by_addr
  *
- * either the addr where module is loaded, or any address inside the 
+ * either the addr where module is loaded, or any address inside the
  * module
  */
-struct module* module_find_by_addr(const struct process* pcs, DWORD64 addr,
-                                   enum module_type type)
+struct module* module_find_by_addr(const struct process* pcs, DWORD64 addr)
 {
-    struct module*      module;
-    
-    if (type == DMT_UNKNOWN)
+    struct module* module;
+
+    for (module = pcs->lmodules; module; module = module->next)
     {
-        if ((module = module_find_by_addr(pcs, addr, DMT_PE)) ||
-            (module = module_find_by_addr(pcs, addr, DMT_ELF)) ||
-            (module = module_find_by_addr(pcs, addr, DMT_MACHO)))
+        if (module->type == DMT_PE && addr >= module->module.BaseOfImage &&
+            addr < module->module.BaseOfImage + module->module.ImageSize)
             return module;
     }
-    else
+    for (module = pcs->lmodules; module; module = module->next)
     {
-        for (module = pcs->lmodules; module; module = module->next)
-        {
-            if (type == module->type && addr >= module->module.BaseOfImage &&
-                addr < module->module.BaseOfImage + module->module.ImageSize) 
-                return module;
-        }
+        if ((module->type == DMT_ELF || module->type == DMT_MACHO) &&
+            addr >= module->module.BaseOfImage &&
+            addr < module->module.BaseOfImage + module->module.ImageSize)
+            return module;
     }
     SetLastError(ERROR_MOD_NOT_FOUND);
     return module;
@@ -501,7 +497,7 @@ static BOOL image_check_debug_link_crc(const WCHAR* file, struct image_file_map*
 
     SetFilePointer(handle, 0, 0, FILE_BEGIN);
     if (ReadFile(handle, &magic, sizeof(magic), &read_bytes, NULL) && magic == IMAGE_DOS_SIGNATURE)
-        ret = pe_map_file(handle, fmap, DMT_PE);
+        ret = pe_map_file(handle, fmap);
     else
         ret = elf_map_handle(handle, fmap);
     CloseHandle(handle);
@@ -525,7 +521,7 @@ static BOOL image_check_debug_link_gnu_id(const WCHAR* file, struct image_file_m
     TRACE("Located debug information file at %s\n", debugstr_w(file));
 
     if (ReadFile(handle, &magic, sizeof(magic), &read_bytes, NULL) && magic == IMAGE_DOS_SIGNATURE)
-        ret = pe_map_file(handle, fmap, DMT_PE);
+        ret = pe_map_file(handle, fmap);
     else
         ret = elf_map_handle(handle, fmap);
     CloseHandle(handle);
@@ -1094,7 +1090,7 @@ BOOL WINAPI SymUnloadModule64(HANDLE hProcess, DWORD64 BaseOfDll)
 
     pcs = process_find_by_handle(hProcess);
     if (!pcs) return FALSE;
-    module = module_find_by_addr(pcs, BaseOfDll, DMT_UNKNOWN);
+    module = module_find_by_addr(pcs, BaseOfDll);
     if (!module) return FALSE;
     module_remove(pcs, module);
     return TRUE;
@@ -1498,7 +1494,7 @@ BOOL  WINAPI SymGetModuleInfoW64(HANDLE hProcess, DWORD64 dwAddr,
 
     if (!pcs) return FALSE;
     if (ModuleInfo->SizeOfStruct > sizeof(*ModuleInfo)) return FALSE;
-    module = module_find_by_addr(pcs, dwAddr, DMT_UNKNOWN);
+    module = module_find_by_addr(pcs, dwAddr);
     if (!module) return FALSE;
 
     miw64 = module->module;
@@ -1537,7 +1533,7 @@ DWORD64 WINAPI SymGetModuleBase64(HANDLE hProcess, DWORD64 dwAddr)
     struct module*      module;
 
     if (!pcs) return 0;
-    module = module_find_by_addr(pcs, dwAddr, DMT_UNKNOWN);
+    module = module_find_by_addr(pcs, dwAddr);
     if (!module) return 0;
     return module->module.BaseOfImage;
 }
@@ -1595,7 +1591,7 @@ PVOID WINAPI SymFunctionTableAccess64(HANDLE hProcess, DWORD64 AddrBase)
     struct module*      module;
 
     if (!pcs) return NULL;
-    module = module_find_by_addr(pcs, AddrBase, DMT_UNKNOWN);
+    module = module_find_by_addr(pcs, AddrBase);
     if (!module || !module->cpu->find_runtime_function) return NULL;
 
     return module->cpu->find_runtime_function(module, AddrBase);

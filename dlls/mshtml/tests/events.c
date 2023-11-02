@@ -5999,6 +5999,170 @@ static void test_empty_document(void)
     IHTMLDocument2_Release(doc);
 }
 
+static void test_document_close(void)
+{
+    IHTMLPrivateWindow *priv_window;
+    IHTMLDocument2 *doc, *doc_node;
+    IHTMLLocation *location;
+    IHTMLDocument3 *doc3;
+    IHTMLElement *elem;
+    DWORD cookie;
+    BSTR bstr, bstr2;
+    HRESULT hres;
+    VARIANT v;
+    LONG ref;
+    MSG msg;
+
+    doc = create_document_with_origin(input_doc_str);
+    if(!doc)
+        return;
+
+    hres = IHTMLDocument2_get_parentWindow(doc, &window);
+    ok(hres == S_OK, "get_parentWindow failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_document(window, &doc_node);
+    ok(hres == S_OK, "get_document failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_QueryInterface(window, &IID_IHTMLPrivateWindow, (void**)&priv_window);
+    ok(hres == S_OK, "Could not get IHTMLPrivateWindow) interface: %08lx\n", hres);
+    hres = IHTMLPrivateWindow_GetAddressBarUrl(priv_window, &bstr);
+    ok(hres == S_OK, "GetAddressBarUrl failed: %08lx\n", hres);
+    ok(!wcscmp(bstr, L"http://winetest.example.org/"), "unexpected address bar: %s\n", wine_dbgstr_w(bstr));
+    IHTMLPrivateWindow_Release(priv_window);
+    SysFreeString(bstr);
+
+    elem = get_elem_id(doc_node, L"inputid");
+    IHTMLElement_Release(elem);
+
+    set_client_site(doc, FALSE);
+    IHTMLDocument2_Release(doc);
+
+    hres = IHTMLWindow2_get_document(window, &doc);
+    ok(hres == S_OK, "get_document failed: %08lx\n", hres);
+    ok(doc != doc_node, "doc == doc_node\n");
+
+    hres = IHTMLDocument2_get_readyState(doc_node, &bstr);
+    ok(hres == S_OK, "get_readyState failed: %08lx\n", hres);
+    ok(!wcscmp(bstr, L"uninitialized"), "readyState = %s\n", wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+
+    hres = IHTMLDocument2_get_readyState(doc, &bstr);
+    ok(hres == S_OK, "get_readyState failed: %08lx\n", hres);
+    ok(!wcscmp(bstr, L"uninitialized"), "readyState = %s\n", wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+
+    hres = IHTMLWindow2_QueryInterface(window, &IID_IHTMLPrivateWindow, (void**)&priv_window);
+    ok(hres == S_OK, "Could not get IHTMLPrivateWindow) interface: %08lx\n", hres);
+    hres = IHTMLPrivateWindow_GetAddressBarUrl(priv_window, &bstr);
+    ok(hres == S_OK, "GetAddressBarUrl failed: %08lx\n", hres);
+    ok(!wcscmp(bstr, L"about:blank"), "unexpected address bar: %s\n", wine_dbgstr_w(bstr));
+    IHTMLPrivateWindow_Release(priv_window);
+    SysFreeString(bstr);
+
+    bstr = SysAllocString(L"inputid");
+    doc3 = get_doc3_iface((IUnknown*)doc);
+    hres = IHTMLDocument3_getElementById(doc3, bstr, &elem);
+    ok(hres == S_OK, "getElementById returned: %08lx\n", hres);
+    ok(elem == NULL, "elem != NULL\n");
+    IHTMLDocument3_Release(doc3);
+    SysFreeString(bstr);
+
+    IHTMLDocument2_Release(doc_node);
+    IHTMLDocument2_Release(doc);
+    IHTMLWindow2_Release(window);
+    window = NULL;
+
+    doc = create_document();
+    if(!doc)
+        return;
+    set_client_site(doc, TRUE);
+
+    hres = IHTMLDocument2_get_parentWindow(doc, &window);
+    ok(hres == S_OK, "get_parentWindow failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_document(window, &doc_node);
+    ok(hres == S_OK, "get_document failed: %08lx\n", hres);
+
+    set_client_site(doc, FALSE);
+    IHTMLDocument2_Release(doc);
+
+    hres = IHTMLWindow2_get_document(window, &doc);
+    ok(hres == S_OK, "get_document failed: %08lx\n", hres);
+    ok(doc != doc_node, "doc == doc_node\n");
+
+    IHTMLDocument2_Release(doc_node);
+    IHTMLDocument2_Release(doc);
+
+    bstr = SysAllocString(L"about:blank");
+    hres = IHTMLWindow2_get_location(window, &location);
+    ok(hres == S_OK, "get_location failed: %08lx\n", hres);
+    hres = IHTMLLocation_put_href(location, bstr);
+    ok(hres == E_UNEXPECTED || broken(hres == E_ABORT), "put_href returned: %08lx\n", hres);
+    IHTMLLocation_Release(location);
+
+    V_VT(&v) = VT_EMPTY;
+    bstr2 = SysAllocString(L"");
+    hres = IHTMLWindow2_QueryInterface(window, &IID_IHTMLPrivateWindow, (void**)&priv_window);
+    ok(hres == S_OK, "Could not get IHTMLPrivateWindow) interface: %08lx\n", hres);
+    hres = IHTMLPrivateWindow_SuperNavigate(priv_window, bstr, bstr2, NULL, NULL, &v, &v, 0);
+    ok(hres == E_FAIL, "SuperNavigate returned: %08lx\n", hres);
+    IHTMLPrivateWindow_Release(priv_window);
+    SysFreeString(bstr2);
+    SysFreeString(bstr);
+
+    IHTMLWindow2_Release(window);
+    window = NULL;
+
+    doc = create_document();
+    if(!doc)
+        return;
+    set_client_site(doc, TRUE);
+
+    hres = IHTMLDocument2_get_parentWindow(doc, &window);
+    ok(hres == S_OK, "get_parentWindow failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_document(window, &doc_node);
+    ok(hres == S_OK, "get_document failed: %08lx\n", hres);
+
+    doc_load_string(doc, empty_doc_ie9_str);
+    cookie = register_cp((IUnknown*)doc, &IID_IPropertyNotifySink, (IUnknown*)&PropertyNotifySink);
+    while(!doc_complete && GetMessageA(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+    unregister_cp((IUnknown*)doc, &IID_IPropertyNotifySink, cookie);
+    document_mode = 9;
+
+    V_VT(&v) = VT_DISPATCH;
+    V_DISPATCH(&v) = (IDispatch*)&onunload_obj;
+    hres = IHTMLWindow2_put_onunload(window, v);
+    ok(hres == S_OK, "put_onunload failed: %08lx\n", hres);
+
+    V_VT(&v) = VT_DISPATCH;
+    V_DISPATCH(&v) = (IDispatch*)&onbeforeunload_obj;
+    hres = IHTMLWindow2_put_onbeforeunload(window, v);
+    ok(hres == S_OK, "put_onbeforeunload failed: %08lx\n", hres);
+
+    IOleDocumentView_Release(view);
+    view = NULL;
+
+    ref = IHTMLDocument2_Release(doc);
+    ok(ref == 0, "ref = %ld\n", ref);
+
+    hres = IHTMLWindow2_get_document(window, &doc);
+    ok(hres == S_OK, "get_document failed: %08lx\n", hres);
+    ok(doc != doc_node, "doc == doc_node\n");
+
+    IHTMLDocument2_Release(doc_node);
+    IHTMLDocument2_Release(doc);
+
+    V_VT(&v) = VT_EMPTY;
+    IHTMLWindow2_put_onunload(window, v);
+    IHTMLWindow2_put_onbeforeunload(window, v);
+    IHTMLWindow2_Release(window);
+    window = NULL;
+}
+
 static void test_storage_events(const char *doc_str)
 {
     static struct  {
@@ -6371,6 +6535,9 @@ START_TEST(events)
             test_storage_events(empty_doc_ie9_str);
             test_sync_xhr_events(empty_doc_ie9_str);
         }
+
+        /* Test this last since it doesn't close the view properly. */
+        test_document_close();
 
         DestroyWindow(container_hwnd);
     }else {

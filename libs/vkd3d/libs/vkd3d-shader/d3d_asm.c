@@ -391,13 +391,14 @@ static unsigned int shader_get_float_offset(enum vkd3d_shader_register_type regi
     }
 }
 
-static void shader_dump_global_flags(struct vkd3d_d3d_asm_compiler *compiler, uint32_t global_flags)
+static void shader_dump_global_flags(struct vkd3d_d3d_asm_compiler *compiler,
+        enum vkd3d_shader_global_flags global_flags)
 {
     unsigned int i;
 
     static const struct
     {
-        unsigned int flag;
+        enum vkd3d_shader_global_flags flag;
         const char *name;
     }
     global_flag_info[] =
@@ -423,7 +424,7 @@ static void shader_dump_global_flags(struct vkd3d_d3d_asm_compiler *compiler, ui
     }
 
     if (global_flags)
-        vkd3d_string_buffer_printf(&compiler->buffer, "unknown_flags(%#x)", global_flags);
+        vkd3d_string_buffer_printf(&compiler->buffer, "unknown_flags(%#"PRIx64")", global_flags);
 }
 
 static void shader_dump_sync_flags(struct vkd3d_d3d_asm_compiler *compiler, uint32_t sync_flags)
@@ -476,6 +477,11 @@ static void shader_dump_uav_flags(struct vkd3d_d3d_asm_compiler *compiler, uint3
     {
         vkd3d_string_buffer_printf(&compiler->buffer, "_opc");
         uav_flags &= ~VKD3DSUF_ORDER_PRESERVING_COUNTER;
+    }
+    if (uav_flags & VKD3DSUF_RASTERISER_ORDERED_VIEW)
+    {
+        vkd3d_string_buffer_printf(&compiler->buffer, "_rov");
+        uav_flags &= ~VKD3DSUF_RASTERISER_ORDERED_VIEW;
     }
 
     if (uav_flags)
@@ -1620,8 +1626,10 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
         case VKD3DSIH_DCL_CONSTANT_BUFFER:
             vkd3d_string_buffer_printf(buffer, " ");
             shader_dump_register(compiler, &ins->declaration.cb.src.reg, true);
-            if (shader_ver_ge(&compiler->shader_version, 5, 1))
+            if (shader_ver_ge(&compiler->shader_version, 6, 0))
                 shader_print_subscript(compiler, ins->declaration.cb.size, NULL);
+            else if (shader_ver_ge(&compiler->shader_version, 5, 1))
+                shader_print_subscript(compiler, ins->declaration.cb.size / VKD3D_VEC4_SIZE / sizeof(float), NULL);
             shader_addline(buffer, ", %s",
                     ins->flags & VKD3DSI_INDEXED_DYNAMIC ? "dynamicIndexed" : "immediateIndexed");
             shader_dump_register_space(compiler, ins->declaration.cb.range.space);
@@ -1637,7 +1645,7 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
 
         case VKD3DSIH_DCL_GLOBAL_FLAGS:
             vkd3d_string_buffer_printf(buffer, " ");
-            shader_dump_global_flags(compiler, ins->flags);
+            shader_dump_global_flags(compiler, ins->declaration.global_flags);
             break;
 
         case VKD3DSIH_DCL_HS_MAX_TESSFACTOR:
@@ -1646,7 +1654,8 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
 
         case VKD3DSIH_DCL_IMMEDIATE_CONSTANT_BUFFER:
             vkd3d_string_buffer_printf(buffer, " {\n");
-            for (i = 0; i < ins->declaration.icb->vec4_count; ++i)
+            assert(ins->declaration.icb->component_count == VKD3D_VEC4_SIZE);
+            for (i = 0; i < ins->declaration.icb->element_count; ++i)
             {
                 shader_print_hex_literal(compiler, "    {", ins->declaration.icb->data[4 * i + 0], "");
                 shader_print_hex_literal(compiler, ", ", ins->declaration.icb->data[4 * i + 1], "");

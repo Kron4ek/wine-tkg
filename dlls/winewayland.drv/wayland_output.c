@@ -165,10 +165,15 @@ static void wayland_output_done(struct wayland_output *output)
         output->current.logical_h = output->pending.logical_h;
     }
 
-    if (wl_list_empty(&output->link))
-        wl_list_insert(process_wayland.output_list.prev, &output->link);
-
     output->pending_flags = 0;
+
+    /* Ensure the logical dimensions have sane values. */
+    if ((!output->current.logical_w || !output->current.logical_h) &&
+        output->current.current_mode)
+    {
+        output->current.logical_w = output->current.current_mode->width;
+        output->current.logical_h = output->current.current_mode->height;
+    }
 
     pthread_mutex_unlock(&process_wayland.output_mutex);
 
@@ -333,6 +338,10 @@ BOOL wayland_output_create(uint32_t id, uint32_t version)
 
     if (process_wayland.zxdg_output_manager_v1)
         wayland_output_use_xdg_extension(output);
+
+    pthread_mutex_lock(&process_wayland.output_mutex);
+    wl_list_insert(process_wayland.output_list.prev, &output->link);
+    pthread_mutex_unlock(&process_wayland.output_mutex);
 
     return TRUE;
 

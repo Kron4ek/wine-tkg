@@ -582,6 +582,18 @@ static struct Accessible
         (acc)->expect_ ## method = (acc)->called_ ## method = 0; \
     }while(0)
 
+#define CHECK_ACC_METHOD_CALLED_AT_LEAST(acc, method, num) \
+    do { \
+        ok((acc)->called_ ## method >= num, "expected %s_" #method " at least %d time(s) (got %d)\n", (acc)->interface_name, num, (acc)->called_ ## method); \
+        (acc)->expect_ ## method = (acc)->called_ ## method = 0; \
+    }while(0)
+
+#define CHECK_ACC_METHOD_CALLED_AT_MOST(acc, method, num) \
+    do { \
+        ok((acc)->called_ ## method <= num, "expected %s_" #method " at most %d time(s) (got %d)\n", (acc)->interface_name, num, (acc)->called_ ## method); \
+        (acc)->expect_ ## method = (acc)->called_ ## method = 0; \
+    }while(0)
+
 static inline struct Accessible* impl_from_Accessible(IAccessible *iface)
 {
     return CONTAINING_RECORD(iface, struct Accessible, IAccessible_iface);
@@ -13298,13 +13310,19 @@ static const struct prov_method_sequence get_cached_prop_val_seq3[] = {
 
 static void test_Element_cache_methods(IUIAutomation *uia_iface)
 {
+    static const int cache_test_props[] = { UIA_IsKeyboardFocusablePropertyId, UIA_NamePropertyId, UIA_ControlTypePropertyId,
+                                            UIA_BoundingRectanglePropertyId, UIA_HasKeyboardFocusPropertyId, };
     HWND hwnd = create_test_hwnd("test_Element_cache_methods class");
     IUIAutomationElement *element, *element2, *element3;
+    struct Provider_prop_override prop_override;
     IUIAutomationCacheRequest *cache_req;
     IUIAutomationElementArray *elem_arr;
-    int tmp_rt_id[2], i, len;
+    int tmp_rt_id[2], i, len, tmp_int;
     IUnknown *unk_ns;
+    BSTR tmp_bstr;
+    BOOL tmp_bool;
     HRESULT hr;
+    RECT rect;
     VARIANT v;
 
     element = create_test_element_from_hwnd(uia_iface, hwnd, TRUE);
@@ -13522,6 +13540,172 @@ static void test_Element_cache_methods(IUIAutomation *uia_iface)
     ok(Provider.ref == 1, "Unexpected refcnt %ld\n", Provider.ref);
     IUnknown_Release(unk_ns);
 
+    /*
+     * Windows 7 will call get_FragmentRoot in an endless loop until the fragment root returns an HWND.
+     * It's the only version with this behavior.
+     */
+    if (!UiaLookupId(AutomationIdentifierType_Property, &OptimizeForVisualContent_Property_GUID))
+    {
+        win_skip("Skipping cached UIA_BoundingRectanglePropertyId tests for Win7\n");
+        goto exit;
+    }
+
+    /*
+     * Cached property value helper function tests.
+     */
+    element = create_test_element_from_hwnd(uia_iface, hwnd, TRUE);
+    method_sequences_enabled = FALSE;
+
+    /*
+     * element has no cached values, element2 has cached values but they're
+     * all the equivalent of VT_EMPTY, element3 has valid cached values.
+     */
+    cache_req = NULL;
+    hr = IUIAutomation_CreateCacheRequest(uia_iface, &cache_req);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!cache_req, "cache_req == NULL\n");
+
+    for (i = 0; i < ARRAY_SIZE(cache_test_props); i++)
+    {
+        hr = IUIAutomationCacheRequest_AddProperty(cache_req, cache_test_props[i]);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    }
+
+    /* element2, invalid values for all cached properties. */
+    element2 = NULL;
+    Provider.ret_invalid_prop_type = TRUE;
+    set_uia_rect(&Provider.bounds_rect, 0, 0, 0, 0);
+    hr = IUIAutomationElement_BuildUpdatedCache(element, cache_req, &element2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element2, "element2 == NULL\n");
+    Provider.ret_invalid_prop_type = FALSE;
+
+    /* element3, valid values for all cached properties. */
+    V_VT(&v) = VT_I4;
+    V_I4(&v) = UIA_HyperlinkControlTypeId;
+    set_property_override(&prop_override, UIA_ControlTypePropertyId, &v);
+    set_provider_prop_override(&Provider, &prop_override, 1);
+    set_uia_rect(&Provider.bounds_rect, 0, 0, 50, 50);
+
+    element3 = NULL;
+    hr = IUIAutomationElement_BuildUpdatedCache(element, cache_req, &element3);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!element3, "element3 == NULL\n");
+    set_provider_prop_override(&Provider, NULL, 0);
+
+    IUIAutomationCacheRequest_Release(cache_req);
+
+    /* Cached UIA_HasKeyboardFocusPropertyId helper. */
+    hr = IUIAutomationElement_get_CachedHasKeyboardFocus(element, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    tmp_bool = 0xdeadbeef;
+    hr = IUIAutomationElement_get_CachedHasKeyboardFocus(element, &tmp_bool);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_bool == 0xdeadbeef, "Unexpected tmp_bool %d\n", tmp_bool);
+
+    tmp_bool = 0xdeadbeef;
+    hr = IUIAutomationElement_get_CachedHasKeyboardFocus(element2, &tmp_bool);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!tmp_bool, "tmp_bool != FALSE\n");
+
+    tmp_bool = FALSE;
+    hr = IUIAutomationElement_get_CachedHasKeyboardFocus(element3, &tmp_bool);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!tmp_bool, "tmp_bool == FALSE\n");
+
+    /* Cached UIA_IsKeyboardFocusablePropertyId helper. */
+    hr = IUIAutomationElement_get_CachedIsKeyboardFocusable(element, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    tmp_bool = 0xdeadbeef;
+    hr = IUIAutomationElement_get_CachedIsKeyboardFocusable(element, &tmp_bool);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_bool == 0xdeadbeef, "Unexpected tmp_bool %d\n", tmp_bool);
+
+    tmp_bool = 0xdeadbeef;
+    hr = IUIAutomationElement_get_CachedIsKeyboardFocusable(element2, &tmp_bool);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!tmp_bool, "tmp_bool != FALSE\n");
+
+    tmp_bool = FALSE;
+    hr = IUIAutomationElement_get_CachedIsKeyboardFocusable(element3, &tmp_bool);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!tmp_bool, "tmp_bool == FALSE\n");
+
+    /* Cached UIA_NamePropertyId helper. */
+    hr = IUIAutomationElement_get_CachedName(element, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    tmp_bstr = (void *)0xdeadbeef;
+    hr = IUIAutomationElement_get_CachedName(element, &tmp_bstr);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_bstr == (void *)0xdeadbeef, "Unexpected BSTR ptr %p\n", tmp_bstr);
+
+    tmp_bstr = NULL;
+    hr = IUIAutomationElement_get_CachedName(element2, &tmp_bstr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!lstrcmpW(tmp_bstr, L""), "Unexpected BSTR %s\n", wine_dbgstr_w(tmp_bstr));
+    SysFreeString(tmp_bstr);
+
+    tmp_bstr = NULL;
+    hr = IUIAutomationElement_get_CachedName(element3, &tmp_bstr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!lstrcmpW(tmp_bstr, uia_bstr_prop_str), "Unexpected BSTR %s\n", wine_dbgstr_w(tmp_bstr));
+    SysFreeString(tmp_bstr);
+
+    /* Cached UIA_ControlTypePropertyId. */
+    hr = IUIAutomationElement_get_CachedControlType(element, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    tmp_int = 0xdeadbeef;
+    hr = IUIAutomationElement_get_CachedControlType(element, &tmp_int);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_int == 0xdeadbeef, "Unexpected control type %#x\n", tmp_int);
+
+    tmp_int = 0;
+    hr = IUIAutomationElement_get_CachedControlType(element2, &tmp_int);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_int == UIA_CustomControlTypeId, "Unexpected control type %#x\n", tmp_int);
+
+    tmp_int = 0;
+    hr = IUIAutomationElement_get_CachedControlType(element3, &tmp_int);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(tmp_int == UIA_HyperlinkControlTypeId, "Unexpected control type %#x\n", tmp_int);
+
+    /* Cached UIA_BoundingRectanglePropertyId helper. */
+    hr = IUIAutomationElement_get_CachedBoundingRectangle(element, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    rect.left = rect.top = rect.bottom = rect.right = 1;
+    hr = IUIAutomationElement_get_CachedBoundingRectangle(element, &rect);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(rect.left == 1, "Unexpected rect left %ld\n", rect.left);
+    ok(rect.top == 1, "Unexpected rect top %ld\n", rect.top);
+    ok(rect.right == 1, "Unexpected rect right %ld\n", rect.right);
+    ok(rect.bottom == 1, "Unexpected rect bottom %ld\n", rect.bottom);
+
+    rect.left = rect.top = rect.bottom = rect.right = 1;
+    hr = IUIAutomationElement_get_CachedBoundingRectangle(element2, &rect);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!rect.left, "Unexpected rect left %ld\n", rect.left);
+    ok(!rect.top, "Unexpected rect top %ld\n", rect.top);
+    ok(!rect.right, "Unexpected rect right %ld\n", rect.right);
+    ok(!rect.bottom, "Unexpected rect bottom %ld\n", rect.bottom);
+
+    memset(&rect, 0, sizeof(rect));
+    hr = IUIAutomationElement_get_CachedBoundingRectangle(element3, &rect);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_uia_rect_rect_val(&rect, &Provider.bounds_rect);
+
+    IUIAutomationElement_Release(element3);
+    IUIAutomationElement_Release(element2);
+    IUIAutomationElement_Release(element);
+
+    set_uia_rect(&Provider.bounds_rect, 0, 0, 0, 0);
+    method_sequences_enabled = TRUE;
+
+exit:
     DestroyWindow(hwnd);
     UnregisterClassA("test_Element_cache_methods class", NULL);
 }
@@ -14619,41 +14803,79 @@ static void check_uia_hwnd_expects_at_least(int proxy_cback_count, BOOL proxy_cb
     todo_wine_if(win_get_client_obj_todo) CHECK_CALLED_AT_LEAST(winproc_GETOBJECT_CLIENT, win_get_client_obj_count);
 }
 
-static struct ComEventData {
-    struct node_provider_desc exp_node_desc;
-    struct node_provider_desc exp_nested_node_desc;
+#define MAX_EVENT_QUEUE_COUNT 4
+struct ExpectedEventQueue {
+    struct node_provider_desc exp_node_desc[MAX_EVENT_QUEUE_COUNT];
+    struct node_provider_desc exp_nested_node_desc[MAX_EVENT_QUEUE_COUNT];
+    int exp_event_count;
+    int exp_event_pos;
+};
 
-    HWND event_hwnd;
-    DWORD last_call_tid;
-} ComEventData;
-
-static void set_com_event_data(struct node_provider_desc *exp_node_desc)
+static void push_event_queue_event(struct ExpectedEventQueue *queue, struct node_provider_desc *exp_node_desc)
 {
+    const int idx = queue->exp_event_count;
+
+    assert(idx < MAX_EVENT_QUEUE_COUNT);
+
     if (exp_node_desc)
     {
         int i;
 
-        ComEventData.exp_node_desc = *exp_node_desc;
+        queue->exp_node_desc[idx] = *exp_node_desc;
         for (i = 0; i < exp_node_desc->prov_count; i++)
         {
             if (exp_node_desc->nested_desc[i])
             {
-                ComEventData.exp_nested_node_desc = *exp_node_desc->nested_desc[i];
-                ComEventData.exp_node_desc.nested_desc[i] = &ComEventData.exp_nested_node_desc;
+                queue->exp_nested_node_desc[idx] = *exp_node_desc->nested_desc[i];
+                queue->exp_node_desc[idx].nested_desc[i] = &queue->exp_nested_node_desc[idx];
                 break;
             }
         }
     }
     else
-        memset(&ComEventData.exp_node_desc, 0, sizeof(ComEventData.exp_node_desc));
+        memset(&queue->exp_node_desc[idx], 0, sizeof(queue->exp_node_desc[idx]));
+    queue->exp_event_count++;
+}
+
+static struct node_provider_desc *pop_event_queue_event(struct ExpectedEventQueue *queue)
+{
+    if (!queue->exp_event_count || queue->exp_event_pos >= queue->exp_event_count)
+    {
+        ok(0, "Failed to pop expected event from queue\n");
+        return NULL;
+    }
+
+    return &queue->exp_node_desc[queue->exp_event_pos++];
+}
+
+static struct ComEventData {
+    struct ExpectedEventQueue exp_events;
+
+    HWND event_hwnd;
+    DWORD last_call_tid;
+    HANDLE event_handle;
+} ComEventData;
+
+static void set_com_event_data(struct node_provider_desc *exp_node_desc)
+{
+    memset(&ComEventData.exp_events, 0, sizeof(ComEventData.exp_events));
+    push_event_queue_event(&ComEventData.exp_events, exp_node_desc);
+
     ComEventData.last_call_tid = 0;
     SET_EXPECT(uia_com_event_callback);
+}
+
+static void push_expected_com_event(struct node_provider_desc *exp_node_desc)
+{
+    push_event_queue_event(&ComEventData.exp_events, exp_node_desc);
+    SET_EXPECT_MULTI(uia_com_event_callback, ComEventData.exp_events.exp_event_count);
 }
 
 #define test_com_event_data( sender ) \
         test_com_event_data_( (sender), __FILE__, __LINE__)
 static void test_com_event_data_(IUIAutomationElement *sender, const char *file, int line)
 {
+    struct node_provider_desc *exp_desc = pop_event_queue_event(&ComEventData.exp_events);
     HRESULT hr;
     VARIANT v;
 
@@ -14662,10 +14884,12 @@ static void test_com_event_data_(IUIAutomationElement *sender, const char *file,
     VariantInit(&v);
     hr = IUIAutomationElement_GetCurrentPropertyValueEx(sender, UIA_ProviderDescriptionPropertyId, TRUE, &v);
     ok_(file, line)(hr == S_OK, "Unexpected hr %#lx\n", hr);
-    test_node_provider_desc_(&ComEventData.exp_node_desc, V_BSTR(&v), file, line);
+    test_node_provider_desc_(exp_desc, V_BSTR(&v), file, line);
     VariantClear(&v);
 
     ComEventData.last_call_tid = GetCurrentThreadId();
+    if (ComEventData.event_handle && (ComEventData.exp_events.exp_event_count == ComEventData.exp_events.exp_event_pos))
+        SetEvent(ComEventData.event_handle);
 }
 
 /*
@@ -15489,13 +15713,18 @@ static void test_uia_com_event_handler_event_advisement(IUIAutomation *uia_iface
     set_uia_hwnd_expects(0, 1, 1, 2, 0); /* Only Win11 sends WM_GETOBJECT 2 times. */
 
     NotifyWinEvent(EVENT_OBJECT_FOCUS, test_child_hwnd, OBJID_CLIENT, CHILDID_SELF);
-    ok(msg_wait_for_all_events(method_event, 1, 2000) != WAIT_TIMEOUT, "Wait for method_event(s) timed out.\n");
+    wait_res = msg_wait_for_all_events(method_event, 1, 2000);
+    ok(wait_res != WAIT_TIMEOUT || broken(wait_res == WAIT_TIMEOUT), /* Win10v1709 */
+            "Wait for method_event(s) timed out.\n");
     if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
 
     set_provider_method_event_data(&Provider2, NULL, -1);
     check_uia_hwnd_expects_at_most(0, 1, 1, 2, 0);
     CHECK_CALLED_AT_MOST(child_winproc_GETOBJECT_UiaRoot, 3);
-    test_provider_event_advise_added(&Provider2, UIA_AutomationFocusChangedEventId, FALSE);
+    if (!winetest_platform_is_wine && (wait_res == WAIT_TIMEOUT))  /* Win10v1709 */
+        test_provider_event_advise_added(&Provider2, 0, FALSE);
+    else
+        test_provider_event_advise_added(&Provider2, UIA_AutomationFocusChangedEventId, FALSE);
     test_provider_event_advise_added(&Provider_hwnd3, 0, FALSE);
     test_provider_event_advise_added(&Provider_nc3, 0, FALSE);
 
@@ -15506,8 +15735,403 @@ static void test_uia_com_event_handler_event_advisement(IUIAutomation *uia_iface
     check_uia_hwnd_expects(0, FALSE, 1, FALSE, 1, FALSE, 0, FALSE, 0, FALSE);
 
 exit:
+    Provider_hwnd3.parent = &Provider_hwnd2.IRawElementProviderFragment_iface;
     for (i = 0; i < ARRAY_SIZE(method_event); i++)
         CloseHandle(method_event[i]);
+}
+
+static struct MultiEventData {
+    struct ExpectedEventQueue exp_events;
+
+    HANDLE event_handle;
+    BOOL ignore_callback;
+} MultiEventData;
+
+static void set_multi_event_data(struct node_provider_desc *exp_node_desc)
+{
+    memset(&MultiEventData.exp_events, 0, sizeof(MultiEventData.exp_events));
+    push_event_queue_event(&MultiEventData.exp_events, exp_node_desc);
+
+    SET_EXPECT(uia_event_callback);
+}
+
+static void push_expected_event(struct node_provider_desc *exp_node_desc)
+{
+    push_event_queue_event(&MultiEventData.exp_events, exp_node_desc);
+    SET_EXPECT_MULTI(uia_event_callback, MultiEventData.exp_events.exp_event_count);
+}
+
+static void WINAPI multi_uia_event_callback(struct UiaEventArgs *args, SAFEARRAY *req_data, BSTR tree_struct)
+{
+    struct node_provider_desc *exp_desc;
+    LONG exp_lbound[2], exp_elems[2];
+
+    if (MultiEventData.ignore_callback)
+        return;
+
+    CHECK_EXPECT(uia_event_callback);
+
+    exp_lbound[0] = exp_lbound[1] = 0;
+    exp_elems[0] = exp_elems[1] = 1;
+    exp_desc = pop_event_queue_event(&MultiEventData.exp_events);
+    test_cache_req_sa(req_data, exp_lbound, exp_elems, exp_desc);
+
+    ok(!wcscmp(tree_struct, L"P)"), "tree structure %s\n", debugstr_w(tree_struct));
+    if (MultiEventData.event_handle && (MultiEventData.exp_events.exp_event_count == MultiEventData.exp_events.exp_event_pos))
+        SetEvent(MultiEventData.event_handle);
+}
+
+static void test_uia_com_focus_change_event_handler_win_event_handling(IUIAutomation *uia_iface, HWND test_hwnd,
+        HWND test_child_hwnd)
+{
+    struct UiaCacheRequest cache_req = { (struct UiaCondition *)&UiaTrueCondition, TreeScope_Element, NULL, 0, NULL, 0,
+                                         AutomationElementMode_Full };
+    struct node_provider_desc exp_node_desc, exp_nested_node_desc;
+    struct Provider_prop_override prop_override;
+    HANDLE event_handles[2];
+    HUIAEVENT event;
+    HUIANODE node;
+    HRESULT hr;
+    VARIANT v;
+    int i;
+
+    for (i = 0; i < ARRAY_SIZE(event_handles); i++)
+        event_handles[i] = CreateEventW(NULL, FALSE, FALSE, NULL);
+
+    set_uia_hwnd_expects(0, 1, 1, 0, 0);
+    hr = UiaGetRootNode(&node);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Node == NULL.\n");
+    check_uia_hwnd_expects(0, FALSE, 1, FALSE, 1, FALSE, 0, FALSE, 0, FALSE);
+
+    set_uia_hwnd_expects(0, 6, 6, 5, 0);
+    SET_EXPECT(child_winproc_GETOBJECT_UiaRoot); /* Only sent on Win11. */
+    hr = UiaAddEvent(node, UIA_AutomationFocusChangedEventId, multi_uia_event_callback, TreeScope_Subtree, NULL, 0, &cache_req,
+            &event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!event, "event == NULL.\n");
+    check_uia_hwnd_expects_at_most(0, 6, 6, 5, 0);
+    CHECK_CALLED_AT_MOST(child_winproc_GETOBJECT_UiaRoot, 1);
+
+    UiaNodeRelease(node);
+
+    MultiEventData.event_handle = event_handles[0];
+    ComEventData.event_handle = event_handles[1];
+
+    /*
+     * No IUIAutomationFocusChangedEventHandler is installed, and no
+     * IProxyProviderWinEventHandler interfaces were returned from our
+     * clientside desktop providers. This WinEvent will be ignored.
+     */
+    NotifyWinEvent(EVENT_OBJECT_FOCUS, test_hwnd, OBJID_CLIENT, CHILDID_SELF);
+    ok(msg_wait_for_all_events(event_handles, 1, 750) == WAIT_TIMEOUT, "Wait for event_handle(s) didn't time out.\n");
+
+    /* Add our IUIAutomationFocusChangedEventHandler. */
+    set_uia_hwnd_expects(0, 6, 6, 5, 0);
+    SET_EXPECT(child_winproc_GETOBJECT_UiaRoot); /* Only sent on Win11. */
+    MultiEventData.ignore_callback = TRUE;
+    FocusChangedHandler.event_handler_added = FALSE;
+    hr = IUIAutomation_AddFocusChangedEventHandler(uia_iface, NULL,
+            &FocusChangedHandler.IUIAutomationFocusChangedEventHandler_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(FocusChangedHandler.ref > 1, "Unexpected refcnt %ld\n", FocusChangedHandler.ref);
+    check_uia_hwnd_expects_at_most(0, 6, 6, 5, 0);
+    CHECK_CALLED_AT_MOST(child_winproc_GETOBJECT_UiaRoot, 1);
+
+    /*
+     * Now that we have an IUIAutomationFocusChangedEventHandler installed,
+     * EVENT_OBJECT_FOCUS events will be translated into native UIA events on
+     * our serverside provider. This is done for both HUIAEVENTs and COM
+     * events, unlike event advisement which only applies to COM event
+     * handlers.
+     */
+    MultiEventData.ignore_callback = FALSE;
+    FocusChangedHandler.event_handler_added = TRUE;
+    init_node_provider_desc(&exp_nested_node_desc, GetCurrentProcessId(), test_hwnd);
+    add_provider_desc(&exp_nested_node_desc, L"Main", L"Provider", TRUE);
+
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), test_hwnd);
+    add_provider_desc(&exp_node_desc, L"Hwnd", L"Provider_hwnd2", FALSE);
+    add_provider_desc(&exp_node_desc, L"Nonclient", L"Provider_nc2", FALSE);
+    add_nested_provider_desc(&exp_node_desc, L"Main", NULL, TRUE, &exp_nested_node_desc);
+
+    set_multi_event_data(&exp_node_desc);
+    set_com_event_data(&exp_node_desc);
+
+    set_uia_hwnd_expects(0, 2, 2, 4, 0); /* Win11 sends 4 WM_GETOBJECT messages, normally only 3. */
+    NotifyWinEvent(EVENT_OBJECT_FOCUS, test_hwnd, OBJID_CLIENT, CHILDID_SELF);
+    ok(msg_wait_for_all_events(event_handles, 2, 5000) != WAIT_TIMEOUT, "Wait for event_handle(s) timed out.\n");
+    if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
+    check_uia_hwnd_expects_at_least(0, FALSE, 2, FALSE, 2, FALSE, 3, FALSE, 0, FALSE);
+    CHECK_CALLED(uia_com_event_callback);
+    CHECK_CALLED(uia_event_callback);
+
+    /*
+     * Child ID is ignored when translating EVENT_OBJECT_FOCUS events into
+     * native UIA events on our serverside provider.
+     */
+    set_multi_event_data(&exp_node_desc);
+    set_com_event_data(&exp_node_desc);
+    set_uia_hwnd_expects(0, 2, 2, 4, 0); /* Win11 sends 4 WM_GETOBJECT messages, normally only 3. */
+
+    NotifyWinEvent(EVENT_OBJECT_FOCUS, test_hwnd, OBJID_CLIENT, -1);
+    ok(msg_wait_for_all_events(event_handles, 2, 5000) != WAIT_TIMEOUT, "Wait for event_handle(s) timed out.\n");
+    if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
+    check_uia_hwnd_expects_at_least(0, FALSE, 2, FALSE, 2, FALSE, 3, FALSE, 0, FALSE);
+    CHECK_CALLED(uia_com_event_callback);
+    CHECK_CALLED(uia_event_callback);
+
+    /*
+     * UIA queries the serverside provider for UIA_HasKeyboardFocusPropertyId.
+     * If this is anything other than TRUE, it won't raise an event for our
+     * serverside provider.
+     */
+    variant_init_bool(&v, FALSE);
+    set_property_override(&prop_override, UIA_HasKeyboardFocusPropertyId, &v);
+    set_provider_prop_override(&Provider, &prop_override, 1);
+
+    SET_EXPECT_MULTI(winproc_GETOBJECT_UiaRoot, 2); /* Only done twice on Win11. */
+    NotifyWinEvent(EVENT_OBJECT_FOCUS, test_hwnd, OBJID_CLIENT, CHILDID_SELF);
+    ok(msg_wait_for_all_events(event_handles, 2, 750) == WAIT_TIMEOUT, "Wait for event_handle(s) didn't time out.\n");
+    if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
+    CHECK_CALLED(winproc_GETOBJECT_UiaRoot);
+    set_provider_prop_override(&Provider, NULL, 0);
+
+    /*
+     * The first time EVENT_OBJECT_FOCUS is raised for an HWND with a
+     * serverside provider UIA will query for the currently focused provider
+     * and raise a focus change event for it, alongside advising the root
+     * provider of focus change events being listened for. All subsequent
+     * EVENT_OBJECT_FOCUS events on the same HWND only query the root
+     * provider.
+     */
+    initialize_provider(&Provider_child2, ProviderOptions_ServerSideProvider, NULL, TRUE);
+    Provider_child2.parent = &Provider2.IRawElementProviderFragment_iface;
+    Provider_child2.frag_root = &Provider2.IRawElementProviderFragmentRoot_iface;
+    Provider2.focus_prov = &Provider_child2.IRawElementProviderFragment_iface;
+    set_provider_runtime_id(&Provider_child2, UiaAppendRuntimeId, 2);
+    initialize_provider_advise_events_ids(&Provider2);
+
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), NULL);
+    add_provider_desc(&exp_node_desc, L"Main", L"Provider_child2", TRUE);
+
+    set_multi_event_data(&exp_node_desc);
+    set_com_event_data(&exp_node_desc);
+
+    /* Second event. */
+    init_node_provider_desc(&exp_nested_node_desc, GetCurrentProcessId(), test_child_hwnd);
+    add_provider_desc(&exp_nested_node_desc, L"Main", L"Provider2", TRUE);
+
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), test_child_hwnd);
+    add_provider_desc(&exp_node_desc, L"Hwnd", L"Provider_hwnd3", TRUE);
+    add_provider_desc(&exp_node_desc, L"Nonclient", L"Provider_nc3", FALSE);
+    add_nested_provider_desc(&exp_node_desc, L"Main", NULL, FALSE, &exp_nested_node_desc);
+
+    push_expected_event(&exp_node_desc);
+    push_expected_com_event(&exp_node_desc);
+    set_uia_hwnd_expects(0, 2, 2, 3, 0); /* Win11 sends 3 WM_GETOBJECT messages, normally only 2. */
+    SET_EXPECT_MULTI(child_winproc_GETOBJECT_UiaRoot, 4); /* Win11 sends 4 WM_GETOBJECT messages, normally only 3. */
+    NotifyWinEvent(EVENT_OBJECT_FOCUS, test_child_hwnd, OBJID_CLIENT, CHILDID_SELF);
+    ok(msg_wait_for_all_events(event_handles, 2, 5000) != WAIT_TIMEOUT, "Wait for event_handle(s) timed out.\n");
+    if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
+    check_uia_hwnd_expects_at_least(0, FALSE, 2, FALSE, 2, FALSE, 2, TRUE, 0, FALSE);
+    CHECK_CALLED_AT_LEAST(child_winproc_GETOBJECT_UiaRoot, 3);
+    CHECK_CALLED_MULTI(uia_com_event_callback, 2);
+    CHECK_CALLED_MULTI(uia_event_callback, 2);
+
+    /*
+     * Second time EVENT_OBJECT_FOCUS is raised for this HWND, only the root
+     * provider will have an event raised.
+     */
+    init_node_provider_desc(&exp_nested_node_desc, GetCurrentProcessId(), test_child_hwnd);
+    add_provider_desc(&exp_nested_node_desc, L"Main", L"Provider2", TRUE);
+
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), test_child_hwnd);
+    add_provider_desc(&exp_node_desc, L"Hwnd", L"Provider_hwnd3", TRUE);
+    add_provider_desc(&exp_node_desc, L"Nonclient", L"Provider_nc3", FALSE);
+    add_nested_provider_desc(&exp_node_desc, L"Main", NULL, FALSE, &exp_nested_node_desc);
+
+    set_multi_event_data(&exp_node_desc);
+    set_com_event_data(&exp_node_desc);
+    set_uia_hwnd_expects(0, 2, 2, 3, 0); /* Win11 sends 3 WM_GETOBJECT messages, normally only 2. */
+    SET_EXPECT_MULTI(child_winproc_GETOBJECT_UiaRoot, 4); /* Win11 sends 4 WM_GETOBJECT messages, normally only 3. */
+    NotifyWinEvent(EVENT_OBJECT_FOCUS, test_child_hwnd, OBJID_CLIENT, CHILDID_SELF);
+    ok(msg_wait_for_all_events(event_handles, 2, 5000) != WAIT_TIMEOUT, "Wait for event_handle(s) timed out.\n");
+    if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
+    check_uia_hwnd_expects_at_least(0, FALSE, 2, FALSE, 2, FALSE, 2, TRUE, 0, FALSE);
+    CHECK_CALLED_AT_LEAST(child_winproc_GETOBJECT_UiaRoot, 3);
+    CHECK_CALLED(uia_com_event_callback);
+    CHECK_CALLED(uia_event_callback);
+
+    /*
+     * Windows 7 has quirky behavior around MSAA proxy creation, skip tests.
+     */
+    if (!UiaLookupId(AutomationIdentifierType_Property, &OptimizeForVisualContent_Property_GUID))
+    {
+        win_skip("Skipping focus MSAA proxy tests for Win7\n");
+        goto exit;
+    }
+
+    /*
+     * Creates an MSAA proxy, raises event on that.
+     */
+    prov_root = NULL;
+    set_accessible_props(&Accessible, ROLE_SYSTEM_CLIENT, STATE_SYSTEM_FOCUSED, 0, L"acc_name", 0, 0, 0, 0);
+    Accessible.ow_hwnd = test_hwnd;
+    Accessible.focus_child_id = CHILDID_SELF;
+    acc_client = &Accessible.IAccessible_iface;
+
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), test_hwnd);
+    add_provider_desc(&exp_node_desc, L"Hwnd", L"Provider_hwnd2", FALSE);
+    add_provider_desc(&exp_node_desc, L"Nonclient", L"Provider_nc2", FALSE);
+    add_provider_desc(&exp_node_desc, L"Main", NULL, TRUE); /* MSAA Proxy provider. */
+
+    set_multi_event_data(&exp_node_desc);
+    set_com_event_data(&exp_node_desc);
+
+    set_uia_hwnd_expects(0, 1, 1, 4, 4); /* Win11 sends 4 WM_GETOBJECT messages, normally only 2. */
+    SET_ACC_METHOD_EXPECT_MULTI(&Accessible, QI_IAccIdentity, 3);
+    SET_ACC_METHOD_EXPECT_MULTI(&Accessible, get_accParent, 3);
+    SET_ACC_METHOD_EXPECT(&Accessible, get_accFocus);
+    SET_ACC_METHOD_EXPECT(&Accessible, get_accState);
+    NotifyWinEvent(EVENT_OBJECT_FOCUS, test_hwnd, OBJID_CLIENT, CHILDID_SELF);
+    ok(msg_wait_for_all_events(event_handles, 2, 5000) != WAIT_TIMEOUT, "Wait for event_handle(s) timed out.\n");
+    if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
+    check_uia_hwnd_expects_at_least(0, FALSE, 1, FALSE, 1, FALSE, 1, FALSE, 1, FALSE);
+    todo_wine CHECK_ACC_METHOD_CALLED(&Accessible, QI_IAccIdentity);
+    todo_wine CHECK_ACC_METHOD_CALLED(&Accessible, get_accParent);
+    CHECK_ACC_METHOD_CALLED(&Accessible, get_accFocus);
+    CHECK_ACC_METHOD_CALLED(&Accessible, get_accState);
+    CHECK_CALLED(uia_com_event_callback);
+    CHECK_CALLED(uia_event_callback);
+
+    /*
+     * Return Accessible_child2 from get_accFocus.
+     */
+    set_accessible_props(&Accessible, ROLE_SYSTEM_CLIENT, STATE_SYSTEM_FOCUSED, 0, L"acc_name", 0, 0, 0, 0);
+    Accessible.focus_child_id = 4; /* 4 gets us Accessible_child2. */
+    set_accessible_props(&Accessible_child2, ROLE_SYSTEM_DOCUMENT, STATE_SYSTEM_FOCUSED, 0, L"acc_child2", 0, 0, 0, 0);
+
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), NULL);
+    add_provider_desc(&exp_node_desc, L"Main", NULL, TRUE); /* MSAA Proxy provider. */
+
+    set_multi_event_data(&exp_node_desc);
+    set_com_event_data(&exp_node_desc);
+    set_uia_hwnd_expects(0, 0, 0, 2, 3); /* Win11 sends 2/3 WM_GETOBJECT messages, normally only 1/2. */
+    SET_ACC_METHOD_EXPECT_MULTI(&Accessible, QI_IAccIdentity, 4); /* Only done 4 times on Win11, normally 3. */
+    SET_ACC_METHOD_EXPECT_MULTI(&Accessible, get_accParent, 3); /* Only done 3 times on Win11, normally 2. */
+    SET_ACC_METHOD_EXPECT(&Accessible, get_accFocus);
+    SET_ACC_METHOD_EXPECT(&Accessible, get_accChild);
+    SET_ACC_METHOD_EXPECT(&Accessible, get_accRole);
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, QI_IAccIdentity);
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, get_accFocus);
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, get_accRole);
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, accNavigate); /* Wine only, Windows doesn't pass this through the DA wrapper. */
+    SET_ACC_METHOD_EXPECT_MULTI(&Accessible_child2, get_accParent, 2);
+    SET_ACC_METHOD_EXPECT_MULTI(&Accessible_child2, get_accState, 2);
+    NotifyWinEvent(EVENT_OBJECT_FOCUS, test_hwnd, OBJID_CLIENT, CHILDID_SELF);
+    ok(msg_wait_for_all_events(event_handles, 2, 5000) != WAIT_TIMEOUT, "Wait for event_handle(s) timed out.\n");
+    if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
+    check_uia_hwnd_expects_at_least(0, FALSE, 0, FALSE, 0, FALSE, 1, FALSE, 2, FALSE);
+    todo_wine CHECK_ACC_METHOD_CALLED_AT_LEAST(&Accessible, QI_IAccIdentity, 3);
+    todo_wine CHECK_ACC_METHOD_CALLED_AT_LEAST(&Accessible, get_accParent, 2);
+    CHECK_ACC_METHOD_CALLED(&Accessible, get_accFocus);
+    CHECK_ACC_METHOD_CALLED(&Accessible, get_accChild);
+    CHECK_ACC_METHOD_CALLED(&Accessible, get_accRole);
+    todo_wine CHECK_ACC_METHOD_CALLED(&Accessible_child2, QI_IAccIdentity);
+    CHECK_ACC_METHOD_CALLED(&Accessible_child2, get_accFocus);
+    CHECK_ACC_METHOD_CALLED(&Accessible_child2, get_accRole);
+    CHECK_ACC_METHOD_CALLED_MULTI(&Accessible_child2, get_accParent, 2);
+    CHECK_ACC_METHOD_CALLED_MULTI(&Accessible_child2, get_accState, 2);
+    CHECK_ACC_METHOD_CALLED_AT_MOST(&Accessible_child2, accNavigate, 1);
+    CHECK_CALLED(uia_com_event_callback);
+    CHECK_CALLED(uia_event_callback);
+
+    /*
+     * accFocus returns Accessible_child2, however it has
+     * STATE_SYSTEM_INVISIBLE set. Falls back to Accessible.
+     */
+    set_accessible_props(&Accessible_child2, ROLE_SYSTEM_DOCUMENT, STATE_SYSTEM_INVISIBLE | STATE_SYSTEM_FOCUSED, 0, L"acc_child2", 0, 0, 0, 0);
+    set_accessible_props(&Accessible, ROLE_SYSTEM_CLIENT, STATE_SYSTEM_FOCUSED, 0, L"acc_name", 0, 0, 0, 0);
+
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), test_hwnd);
+    add_provider_desc(&exp_node_desc, L"Hwnd", L"Provider_hwnd2", FALSE);
+    add_provider_desc(&exp_node_desc, L"Nonclient", L"Provider_nc2", FALSE);
+    add_provider_desc(&exp_node_desc, L"Main", NULL, TRUE); /* MSAA Proxy provider. */
+
+    set_multi_event_data(&exp_node_desc);
+    set_com_event_data(&exp_node_desc);
+    set_uia_hwnd_expects(0, 1, 1, 4, 4); /* Win11 sends 4 WM_GETOBJECT messages, normally only 2. */
+    SET_ACC_METHOD_EXPECT_MULTI(&Accessible, QI_IAccIdentity, 4); /* Only done 4 times on Win11, normally 2. */
+    SET_ACC_METHOD_EXPECT_MULTI(&Accessible, get_accParent, 3); /* Only done 3 times on Win11, normally 1. */
+    SET_ACC_METHOD_EXPECT(&Accessible, get_accFocus);
+    SET_ACC_METHOD_EXPECT(&Accessible, get_accChild);
+    SET_ACC_METHOD_EXPECT(&Accessible, get_accState);
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, accNavigate); /* Wine only, Windows doesn't pass this through the DA wrapper. */
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, QI_IAccIdentity);
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, get_accParent);
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, get_accState);
+    NotifyWinEvent(EVENT_OBJECT_FOCUS, test_hwnd, OBJID_CLIENT, CHILDID_SELF);
+    ok(msg_wait_for_all_events(event_handles, 2, 5000) != WAIT_TIMEOUT, "Wait for event_handle(s) timed out.\n");
+    if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
+    check_uia_hwnd_expects_at_least(0, FALSE, 1, FALSE, 1, FALSE, 1, FALSE, 1, FALSE);
+    todo_wine CHECK_ACC_METHOD_CALLED_AT_LEAST(&Accessible, QI_IAccIdentity, 2);
+    todo_wine CHECK_ACC_METHOD_CALLED(&Accessible, get_accParent);
+    CHECK_ACC_METHOD_CALLED(&Accessible, get_accFocus);
+    CHECK_ACC_METHOD_CALLED(&Accessible, get_accChild);
+    CHECK_ACC_METHOD_CALLED(&Accessible, get_accState);
+    todo_wine CHECK_ACC_METHOD_CALLED(&Accessible_child2, QI_IAccIdentity);
+    CHECK_ACC_METHOD_CALLED(&Accessible_child2, get_accParent);
+    CHECK_ACC_METHOD_CALLED(&Accessible_child2, get_accState);
+    CHECK_ACC_METHOD_CALLED_AT_MOST(&Accessible_child2, accNavigate, 1);
+    CHECK_CALLED(uia_com_event_callback);
+    CHECK_CALLED(uia_event_callback);
+
+    /*
+     * Get Accessible_child2 by raising an event with its child ID directly.
+     * It will have its get_accFocus method called.
+     */
+    init_node_provider_desc(&exp_node_desc, GetCurrentProcessId(), NULL);
+    add_provider_desc(&exp_node_desc, L"Main", NULL, TRUE); /* MSAA Proxy provider. */
+
+    set_multi_event_data(&exp_node_desc);
+    set_com_event_data(&exp_node_desc);
+    set_uia_hwnd_expects(0, 0, 0, 2, 2); /* Win11 sends 2/2 WM_GETOBJECT messages, normally only 1/1. */
+    SET_ACC_METHOD_EXPECT_MULTI(&Accessible, QI_IAccIdentity, 2); /* Only done 2 times on Win11, normally 1. */
+    SET_ACC_METHOD_EXPECT(&Accessible, get_accParent); /* Only done on Win11. */
+    SET_ACC_METHOD_EXPECT(&Accessible, get_accChild);
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, QI_IAccIdentity);
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, get_accFocus);
+    SET_ACC_METHOD_EXPECT(&Accessible_child2, get_accState);
+    SET_ACC_METHOD_EXPECT_MULTI(&Accessible_child2, get_accParent, 2);
+    NotifyWinEvent(EVENT_OBJECT_FOCUS, test_hwnd, OBJID_CLIENT, 4);
+    ok(msg_wait_for_all_events(event_handles, 2, 5000) != WAIT_TIMEOUT, "Wait for event_handle(s) timed out.\n");
+    if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
+    check_uia_hwnd_expects_at_least(0, FALSE, 0, FALSE, 0, FALSE, 1, FALSE, 1, FALSE);
+    CHECK_ACC_METHOD_CALLED_AT_MOST(&Accessible, get_accParent, 1); /* Only done on Win11. */
+    todo_wine CHECK_ACC_METHOD_CALLED(&Accessible, QI_IAccIdentity);
+    CHECK_ACC_METHOD_CALLED(&Accessible, get_accChild);
+    todo_wine CHECK_ACC_METHOD_CALLED(&Accessible_child2, QI_IAccIdentity);
+    CHECK_ACC_METHOD_CALLED(&Accessible_child2, get_accFocus);
+    CHECK_ACC_METHOD_CALLED(&Accessible_child2, get_accState);
+    CHECK_ACC_METHOD_CALLED_AT_MOST(&Accessible_child2, get_accParent, 2);
+    CHECK_CALLED(uia_com_event_callback);
+    CHECK_CALLED(uia_event_callback);
+    acc_client = NULL;
+
+exit:
+    set_uia_hwnd_expects(0, 1, 1, 0, 0);
+    hr = IUIAutomation_RemoveFocusChangedEventHandler(uia_iface,
+            &FocusChangedHandler.IUIAutomationFocusChangedEventHandler_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_uia_hwnd_expects(0, FALSE, 1, FALSE, 1, FALSE, 0, FALSE, 0, FALSE);
+
+    hr = UiaRemoveEvent(event);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    ComEventData.event_handle = MultiEventData.event_handle = NULL;
+    for (i = 0; i < ARRAY_SIZE(event_handles); i++)
+        CloseHandle(event_handles[i]);
 }
 
 static DWORD WINAPI uia_com_event_handler_win_event_test_thread(LPVOID param)
@@ -15519,7 +16143,9 @@ static DWORD WINAPI uia_com_event_handler_win_event_test_thread(LPVOID param)
     UiaRegisterProviderCallback(uia_com_win_event_clientside_provider_callback);
 
     test_uia_com_event_handler_event_advisement(uia_iface, test_data->test_hwnd, test_data->test_child_hwnd);
+    test_uia_com_focus_change_event_handler_win_event_handling(uia_iface, test_data->test_hwnd, test_data->test_child_hwnd);
 
+    if (wait_for_clientside_callbacks(2000)) trace("Kept getting callbacks up until timeout\n");
     UiaRegisterProviderCallback(NULL);
     CoUninitialize();
 

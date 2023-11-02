@@ -35,6 +35,7 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
+WINE_DECLARE_DEBUG_CHANNEL(relay);
 WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
 struct x86_thread_data
@@ -535,6 +536,43 @@ USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, PVOID *buffer, 
 
 
 /***********************************************************************
+ *           RtlUserThreadStart (NTDLL.@)
+ */
+__ASM_STDCALL_FUNC( RtlUserThreadStart, 8,
+                   "movl %ebx,8(%esp)\n\t"  /* arg */
+                   "movl %eax,4(%esp)\n\t"  /* entry */
+                   "jmp " __ASM_NAME("call_thread_func") )
+
+/* wrapper to call BaseThreadInitThunk */
+extern void DECLSPEC_NORETURN call_thread_func_wrapper( void *thunk, PRTL_THREAD_START_ROUTINE entry, void *arg );
+__ASM_GLOBAL_FUNC( call_thread_func_wrapper,
+                  "pushl %ebp\n\t"
+                  __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+                  __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+                  "movl %esp,%ebp\n\t"
+                  __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+                   "subl $4,%esp\n\t"
+                   "andl $~0xf,%esp\n\t"
+                   "xorl %ecx,%ecx\n\t"
+                   "movl 12(%ebp),%edx\n\t"
+                   "movl 16(%ebp),%eax\n\t"
+                   "movl %eax,(%esp)\n\t"
+                   "call *8(%ebp)" )
+
+void DECLSPEC_HIDDEN call_thread_func( PRTL_THREAD_START_ROUTINE entry, void *arg )
+{
+    __TRY
+    {
+        call_thread_func_wrapper( pBaseThreadInitThunk, entry, arg );
+    }
+    __EXCEPT(call_unhandled_exception_filter)
+    {
+        NtTerminateProcess( GetCurrentProcess(), GetExceptionCode() );
+    }
+    __ENDTRY
+}
+
+/***********************************************************************
  *           signal_start_thread
  */
 extern void CDECL DECLSPEC_NORETURN signal_start_thread( CONTEXT *ctx ) DECLSPEC_HIDDEN;
@@ -561,6 +599,7 @@ __ASM_GLOBAL_FUNC( signal_start_thread,
 void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unk2, ULONG_PTR unk3, ULONG_PTR unk4 )
 {
     loader_init( context, (void **)&context->Eax );
+    TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", (void *)context->Eax, (void *)context->Ebx );
     signal_start_thread( context );
 }
 

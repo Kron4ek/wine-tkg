@@ -1247,12 +1247,10 @@ BOOL WINAPI DECLSPEC_HOTPATCH GlobalMemoryStatusEx( MEMORYSTATUSEX *status )
     if (status->ullTotalPhys)
         status->dwMemoryLoad = (status->ullTotalPhys - status->ullAvailPhys) / (status->ullTotalPhys / 100);
 
-    TRACE_(virtual)( "MemoryLoad %ld, TotalPhys %s, AvailPhys %s, TotalPageFile %s,"
-                     "AvailPageFile %s, TotalVirtual %s, AvailVirtual %s\n",
-                    status->dwMemoryLoad, wine_dbgstr_longlong(status->ullTotalPhys),
-                    wine_dbgstr_longlong(status->ullAvailPhys), wine_dbgstr_longlong(status->ullTotalPageFile),
-                    wine_dbgstr_longlong(status->ullAvailPageFile), wine_dbgstr_longlong(status->ullTotalVirtual),
-                    wine_dbgstr_longlong(status->ullAvailVirtual) );
+    TRACE_(virtual)( "MemoryLoad %lu, TotalPhys %I64u, AvailPhys %I64u, TotalPageFile %I64u, "
+                     "AvailPageFile %I64u, TotalVirtual %I64u, AvailVirtual %I64u\n",
+                     status->dwMemoryLoad, status->ullTotalPhys, status->ullAvailPhys, status->ullTotalPageFile,
+                     status->ullAvailPageFile, status->ullTotalVirtual, status->ullAvailVirtual );
 
     cached_status = *status;
     return TRUE;
@@ -1453,17 +1451,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH QueryVirtualMemoryInformation( HANDLE process, con
  ***********************************************************************/
 
 
-#if defined(__i386__) || defined(__x86_64__)
-/***********************************************************************
- *             GetEnabledXStateFeatures   (kernelbase.@)
- */
-DWORD64 WINAPI GetEnabledXStateFeatures(void)
-{
-    TRACE( "\n" );
-    return RtlGetEnabledExtendedFeatures( ~(ULONG64)0 );
-}
-
-
 /***********************************************************************
  *             InitializeContext2         (kernelbase.@)
  */
@@ -1519,10 +1506,19 @@ BOOL WINAPI CopyContext( CONTEXT *dst, DWORD context_flags, CONTEXT *src )
 {
     return set_ntstatus( RtlCopyContext( dst, context_flags, src ));
 }
-#endif
 
 
 #if defined(__x86_64__)
+
+/***********************************************************************
+ *             GetEnabledXStateFeatures   (kernelbase.@)
+ */
+DWORD64 WINAPI GetEnabledXStateFeatures(void)
+{
+    TRACE( "\n" );
+    return RtlGetEnabledExtendedFeatures( ~(ULONG64)0 );
+}
+
 /***********************************************************************
  *           LocateXStateFeature   (kernelbase.@)
  */
@@ -1583,7 +1579,18 @@ BOOL WINAPI GetXStateFeaturesMask( CONTEXT *context, DWORD64 *feature_mask )
 
     return TRUE;
 }
+
 #elif defined(__i386__)
+
+/***********************************************************************
+ *             GetEnabledXStateFeatures   (kernelbase.@)
+ */
+DWORD64 WINAPI GetEnabledXStateFeatures(void)
+{
+    TRACE( "\n" );
+    return RtlGetEnabledExtendedFeatures( ~(ULONG64)0 );
+}
+
 /***********************************************************************
  *           LocateXStateFeature   (kernelbase.@)
  */

@@ -431,6 +431,13 @@ sync_test("array_map", function() {
     [1,2].map(function() {
         ok(this.valueOf() === 137, "this.valueOf() = " + this.valueOf());
     }, 137);
+
+    r = [1,,2,].map(function(x) { return "" + x; });
+    ok(r.length === 3, "[1,,2,].map length = " + r.length);
+    ok(r[0] === "1", "[1,,2,].map[0] = " + r[0]);
+    ok(r[2] === "2", "[1,,2,].map[2] = " + r[2]);
+    ok(!("1" in r), "[1,,2,].map[1] exists");
+    ok(!("3" in r), "[1,,2,].map[3] exists");
 });
 
 sync_test("array_sort", function() {
@@ -1328,6 +1335,9 @@ sync_test("reduce", function() {
 
     r = [1,2,3].reduce(function(a, value) { return a + value; }, "str");
     ok(r === "str123", "reduce() returned " + r);
+
+    r = [1,2,].reduce(function(a, value) { return a + value; }, "str");
+    ok(r === "str12", "reduce() returned " + r);
 
     array = [1,2,3];
     r = array.reduce(function(a, value, index, src) {

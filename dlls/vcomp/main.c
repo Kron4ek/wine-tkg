@@ -1046,11 +1046,11 @@ double CDECL omp_get_wtick (void)
     FILETIME kernelTime;
     FILETIME userTime;
     ULARGE_INTEGER li;
-    
+
     GetProcessTimes(GetCurrentProcess(), &createTime, &exitTime, &kernelTime, &userTime);
     li.LowPart = userTime.dwLowDateTime;
     li.HighPart = userTime.dwHighDateTime;
-    
+
     return (double)li.QuadPart / 10000000.0;
 }
 

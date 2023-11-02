@@ -979,7 +979,41 @@ struct uia_com_event {
     struct uia_event_handler_map_entry *handler_map;
 };
 
-static void uia_com_focus_handler_advise_node(struct uia_com_event *event, HUIANODE node, HWND hwnd)
+static HRESULT uia_com_focus_win_event_callback(struct uia_event *event, void *user_data)
+{
+    struct uia_node *node = impl_from_IWineUiaNode((IWineUiaNode *)user_data);
+    VARIANT v, v2;
+    HRESULT hr;
+
+    /* Only match desktop events. */
+    if (!event->desktop_subtree_event)
+        return S_OK;
+
+    VariantInit(&v);
+    VariantInit(&v2);
+
+    hr = create_node_from_node_provider(&node->IWineUiaNode_iface, 0, PROV_METHOD_FLAG_RETURN_NODE_LRES, &v);
+    if (FAILED(hr))
+    {
+        WARN("Failed to create new node lres with hr %#lx\n", hr);
+        return hr;
+    }
+
+    if (V_VT(&v) == VT_I4)
+    {
+        hr = IWineUiaEvent_raise_event(&event->IWineUiaEvent_iface, v, v2);
+        if (FAILED(hr))
+        {
+            WARN("raise_event failed with hr %#lx\n", hr);
+            uia_node_lresult_release(V_I4(&v));
+        }
+    }
+    VariantClear(&v);
+
+    return hr;
+}
+
+static BOOL uia_com_focus_handler_advise_node(struct uia_com_event *event, HUIANODE node, HWND hwnd)
 {
     HRESULT hr;
 
@@ -987,17 +1021,22 @@ static void uia_com_focus_handler_advise_node(struct uia_com_event *event, HUIAN
     if (FAILED(hr))
     {
         WARN("uia_event_advise_node failed with hr %#lx\n", hr);
-        return;
+        goto exit;
     }
 
     hr = uia_hwnd_map_add_hwnd(&event->focus_hwnd_map, hwnd);
     if (FAILED(hr))
         WARN("Failed to add hwnd for focus winevent, hr %#lx\n", hr);
+
+exit:
+    return SUCCEEDED(hr);
 }
 
 static void uia_com_focus_win_event_handler(HUIANODE node, HWND hwnd, struct uia_event_handler_event_id_map_entry *event_id_map)
 {
     struct uia_event_handler_map_entry *entry;
+    HRESULT hr;
+    VARIANT v;
 
     LIST_FOR_EACH_ENTRY(entry, &event_id_map->handlers_list, struct uia_event_handler_map_entry, handler_event_id_map_list_entry)
     {
@@ -1005,10 +1044,111 @@ static void uia_com_focus_win_event_handler(HUIANODE node, HWND hwnd, struct uia
 
         LIST_FOR_EACH_ENTRY(event, &entry->handlers_list, struct uia_com_event, event_handler_map_list_entry)
         {
-            if (!uia_hwnd_map_check_hwnd(&event->focus_hwnd_map, hwnd))
-                uia_com_focus_handler_advise_node(event, node, hwnd);
+            if (uia_hwnd_map_check_hwnd(&event->focus_hwnd_map, hwnd) ||
+                    !uia_com_focus_handler_advise_node(event, node, hwnd))
+                continue;
+
+            hr = get_focus_from_node_provider((IWineUiaNode *)node, 0, PROV_METHOD_FLAG_RETURN_NODE_LRES, &v);
+            if (V_VT(&v) == VT_I4)
+            {
+                HUIANODE focus_node = NULL;
+
+                hr = uia_node_from_lresult(V_I4(&v), &focus_node, NODE_FLAG_IGNORE_CLIENTSIDE_HWND_PROVS);
+                if (SUCCEEDED(hr))
+                {
+                    hr = uia_event_for_each(UIA_AutomationFocusChangedEventId, uia_com_focus_win_event_callback,
+                            (void *)focus_node, TRUE);
+                    if (FAILED(hr))
+                        WARN("uia_event_for_each on focus_node failed with hr %#lx\n", hr);
+                }
+                UiaNodeRelease(focus_node);
+            }
+            VariantClear(&v);
         }
     }
+
+    VariantInit(&v);
+    hr = UiaGetPropertyValue(node, UIA_HasKeyboardFocusPropertyId, &v);
+    if (SUCCEEDED(hr) && (V_VT(&v) == VT_BOOL && V_BOOL(&v) == VARIANT_TRUE))
+    {
+        hr = uia_event_for_each(UIA_AutomationFocusChangedEventId, uia_com_focus_win_event_callback, (void *)node, TRUE);
+        if (FAILED(hr))
+            WARN("uia_event_for_each failed with hr %#lx\n", hr);
+    }
+
+    VariantClear(&v);
+}
+
+static HRESULT uia_com_focus_win_event_msaa_callback(struct uia_event *event, void *user_data)
+{
+    struct uia_event_args args = { { EventArgsType_Simple, UIA_AutomationFocusChangedEventId }, 0 };
+    HUIANODE node = (HUIANODE)user_data;
+
+    /* Only match desktop events. */
+    if (!event->desktop_subtree_event)
+        return S_OK;
+
+    return uia_event_invoke(node, NULL, &args, event);
+}
+
+static void uia_com_focus_win_event_msaa_handler(HWND hwnd, LONG child_id)
+{
+    IRawElementProviderFragmentRoot *elroot;
+    IRawElementProviderFragment *elfrag;
+    IRawElementProviderSimple *elprov;
+    HRESULT hr;
+    VARIANT v;
+
+    hr = create_msaa_provider_from_hwnd(hwnd, child_id, &elprov);
+    if (FAILED(hr))
+    {
+        WARN("create_msaa_provider_from_hwnd failed with hr %#lx\n", hr);
+        return;
+    }
+
+    hr = IRawElementProviderSimple_QueryInterface(elprov, &IID_IRawElementProviderFragmentRoot, (void **)&elroot);
+    if (FAILED(hr))
+        goto exit;
+
+    hr = IRawElementProviderFragmentRoot_GetFocus(elroot, &elfrag);
+    IRawElementProviderFragmentRoot_Release(elroot);
+    if (FAILED(hr))
+        goto exit;
+
+    if (elfrag)
+    {
+        IRawElementProviderSimple *elprov2;
+
+        hr = IRawElementProviderFragment_QueryInterface(elfrag, &IID_IRawElementProviderSimple, (void **)&elprov2);
+        IRawElementProviderFragment_Release(elfrag);
+        if (FAILED(hr))
+            goto exit;
+
+        IRawElementProviderSimple_Release(elprov);
+        elprov = elprov2;
+    }
+
+    VariantInit(&v);
+    hr = IRawElementProviderSimple_GetPropertyValue(elprov, UIA_HasKeyboardFocusPropertyId, &v);
+    if (FAILED(hr))
+        goto exit;
+
+    if (V_VT(&v) == VT_BOOL && V_BOOL(&v) == VARIANT_TRUE)
+    {
+        HUIANODE node;
+
+        hr = create_uia_node_from_elprov(elprov, &node, TRUE, 0);
+        if (SUCCEEDED(hr))
+        {
+            hr = uia_event_for_each(UIA_AutomationFocusChangedEventId, uia_com_focus_win_event_msaa_callback, (void *)node, TRUE);
+            if (FAILED(hr))
+                WARN("uia_event_for_each failed with hr %#lx\n", hr);
+            UiaNodeRelease(node);
+        }
+    }
+
+exit:
+    IRawElementProviderSimple_Release(elprov);
 }
 
 HRESULT uia_com_win_event_callback(DWORD event_id, HWND hwnd, LONG obj_id, LONG child_id, DWORD thread_id, DWORD event_time)
@@ -1100,6 +1240,8 @@ HRESULT uia_com_win_event_callback(DWORD event_id, HWND hwnd, LONG obj_id, LONG 
             hr = create_uia_node_from_hwnd(hwnd, &node, NODE_FLAG_IGNORE_CLIENTSIDE_HWND_PROVS);
             if (SUCCEEDED(hr))
                 uia_com_focus_win_event_handler(node, hwnd, event_id_map);
+            else
+                uia_com_focus_win_event_msaa_handler(hwnd, child_id);
 
             UiaNodeRelease(node);
         }
@@ -2001,27 +2143,33 @@ static HRESULT WINAPI uia_element_get_CurrentProcessId(IUIAutomationElement9 *if
     return E_NOTIMPL;
 }
 
+static void uia_elem_get_control_type(VARIANT *v, CONTROLTYPEID *ret_val)
+{
+    const struct uia_control_type_info *info = NULL;
+
+    *ret_val = UIA_CustomControlTypeId;
+    if (V_VT(v) != VT_I4)
+        return;
+
+    if ((info = uia_control_type_info_from_id(V_I4(v))))
+        *ret_val = info->control_type_id;
+    else
+        WARN("Provider returned invalid control type ID %ld\n", V_I4(v));
+}
+
 static HRESULT WINAPI uia_element_get_CurrentControlType(IUIAutomationElement9 *iface, CONTROLTYPEID *ret_val)
 {
     struct uia_element *element = impl_from_IUIAutomationElement9(iface);
-    const struct uia_control_type_info *control_type_info = NULL;
     HRESULT hr;
     VARIANT v;
 
     TRACE("%p, %p\n", iface, ret_val);
 
     VariantInit(&v);
-    *ret_val = UIA_CustomControlTypeId;
     hr = UiaGetPropertyValue(element->node, UIA_ControlTypePropertyId, &v);
-    if (SUCCEEDED(hr) && V_VT(&v) == VT_I4)
-    {
-        if ((control_type_info = uia_control_type_info_from_id(V_I4(&v))))
-            *ret_val = control_type_info->control_type_id;
-        else
-            WARN("Provider returned invalid control type ID %ld\n", V_I4(&v));
-    }
-
+    uia_elem_get_control_type(&v, ret_val);
     VariantClear(&v);
+
     return hr;
 }
 
@@ -2164,6 +2312,32 @@ static HRESULT WINAPI uia_element_get_CurrentItemStatus(IUIAutomationElement9 *i
     return E_NOTIMPL;
 }
 
+static void uia_variant_rect_to_rect(VARIANT *v, RECT *ret_val)
+{
+    double *vals;
+    HRESULT hr;
+
+    memset(ret_val, 0, sizeof(*ret_val));
+    if (V_VT(v) != (VT_R8 | VT_ARRAY))
+        return;
+
+    hr = SafeArrayAccessData(V_ARRAY(v), (void **)&vals);
+    if (FAILED(hr))
+    {
+        WARN("SafeArrayAccessData failed with hr %#lx\n", hr);
+        return;
+    }
+
+    ret_val->left = vals[0];
+    ret_val->top = vals[1];
+    ret_val->right = ret_val->left + vals[2];
+    ret_val->bottom = ret_val->top + vals[3];
+
+    hr = SafeArrayUnaccessData(V_ARRAY(v));
+    if (FAILED(hr))
+        WARN("SafeArrayUnaccessData failed with hr %#lx\n", hr);
+}
+
 static HRESULT WINAPI uia_element_get_CurrentBoundingRectangle(IUIAutomationElement9 *iface, RECT *ret_val)
 {
     struct uia_element *element = impl_from_IUIAutomationElement9(iface);
@@ -2172,22 +2346,9 @@ static HRESULT WINAPI uia_element_get_CurrentBoundingRectangle(IUIAutomationElem
 
     TRACE("%p, %p\n", element, ret_val);
 
-    memset(ret_val, 0, sizeof(*ret_val));
     VariantInit(&v);
     hr = UiaGetPropertyValue(element->node, UIA_BoundingRectanglePropertyId, &v);
-    if (SUCCEEDED(hr) && V_VT(&v) == (VT_R8 | VT_ARRAY))
-    {
-        double vals[4];
-        LONG idx;
-
-        for (idx = 0; idx < ARRAY_SIZE(vals); idx++)
-            SafeArrayGetElement(V_ARRAY(&v), &idx, &vals[idx]);
-
-        ret_val->left = vals[0];
-        ret_val->top = vals[1];
-        ret_val->right = ret_val->left + vals[2];
-        ret_val->bottom = ret_val->top + vals[3];
-    }
+    uia_variant_rect_to_rect(&v, ret_val);
 
     VariantClear(&v);
     return hr;
@@ -2251,8 +2412,21 @@ static HRESULT WINAPI uia_element_get_CachedProcessId(IUIAutomationElement9 *ifa
 
 static HRESULT WINAPI uia_element_get_CachedControlType(IUIAutomationElement9 *iface, CONTROLTYPEID *ret_val)
 {
-    FIXME("%p: stub\n", iface);
-    return E_NOTIMPL;
+    struct uia_element *element = impl_from_IUIAutomationElement9(iface);
+    const int prop_id = UIA_ControlTypePropertyId;
+    struct uia_cache_property *cache_prop = NULL;
+
+    TRACE("%p, %p\n", iface, ret_val);
+
+    if (!ret_val)
+        return E_POINTER;
+
+    if (!(cache_prop = bsearch(&prop_id, element->cached_props, element->cached_props_count, sizeof(*cache_prop),
+            uia_cached_property_id_compare)))
+        return E_INVALIDARG;
+
+    uia_elem_get_control_type(&cache_prop->prop_val, ret_val);
+    return S_OK;
 }
 
 static HRESULT WINAPI uia_element_get_CachedLocalizedControlType(IUIAutomationElement9 *iface, BSTR *ret_val)
@@ -2263,8 +2437,25 @@ static HRESULT WINAPI uia_element_get_CachedLocalizedControlType(IUIAutomationEl
 
 static HRESULT WINAPI uia_element_get_CachedName(IUIAutomationElement9 *iface, BSTR *ret_val)
 {
-    FIXME("%p: stub\n", iface);
-    return E_NOTIMPL;
+    struct uia_element *element = impl_from_IUIAutomationElement9(iface);
+    struct uia_cache_property *cache_prop = NULL;
+    const int prop_id = UIA_NamePropertyId;
+
+    TRACE("%p, %p\n", iface, ret_val);
+
+    if (!ret_val)
+        return E_POINTER;
+
+    if (!(cache_prop = bsearch(&prop_id, element->cached_props, element->cached_props_count, sizeof(*cache_prop),
+            uia_cached_property_id_compare)))
+        return E_INVALIDARG;
+
+    if ((V_VT(&cache_prop->prop_val) == VT_BSTR) && V_BSTR(&cache_prop->prop_val))
+        *ret_val = SysAllocString(V_BSTR(&cache_prop->prop_val));
+    else
+        *ret_val = SysAllocString(L"");
+
+    return S_OK;
 }
 
 static HRESULT WINAPI uia_element_get_CachedAcceleratorKey(IUIAutomationElement9 *iface, BSTR *ret_val)
@@ -2281,14 +2472,40 @@ static HRESULT WINAPI uia_element_get_CachedAccessKey(IUIAutomationElement9 *ifa
 
 static HRESULT WINAPI uia_element_get_CachedHasKeyboardFocus(IUIAutomationElement9 *iface, BOOL *ret_val)
 {
-    FIXME("%p: stub\n", iface);
-    return E_NOTIMPL;
+    struct uia_element *element = impl_from_IUIAutomationElement9(iface);
+    const int prop_id = UIA_HasKeyboardFocusPropertyId;
+    struct uia_cache_property *cache_prop = NULL;
+
+    TRACE("%p, %p\n", iface, ret_val);
+
+    if (!ret_val)
+        return E_POINTER;
+
+    if (!(cache_prop = bsearch(&prop_id, element->cached_props, element->cached_props_count, sizeof(*cache_prop),
+            uia_cached_property_id_compare)))
+        return E_INVALIDARG;
+
+    *ret_val = ((V_VT(&cache_prop->prop_val) == VT_BOOL) && (V_BOOL(&cache_prop->prop_val) == VARIANT_TRUE));
+    return S_OK;
 }
 
 static HRESULT WINAPI uia_element_get_CachedIsKeyboardFocusable(IUIAutomationElement9 *iface, BOOL *ret_val)
 {
-    FIXME("%p: stub\n", iface);
-    return E_NOTIMPL;
+    struct uia_element *element = impl_from_IUIAutomationElement9(iface);
+    const int prop_id = UIA_IsKeyboardFocusablePropertyId;
+    struct uia_cache_property *cache_prop = NULL;
+
+    TRACE("%p, %p\n", iface, ret_val);
+
+    if (!ret_val)
+        return E_POINTER;
+
+    if (!(cache_prop = bsearch(&prop_id, element->cached_props, element->cached_props_count, sizeof(*cache_prop),
+            uia_cached_property_id_compare)))
+        return E_INVALIDARG;
+
+    *ret_val = ((V_VT(&cache_prop->prop_val) == VT_BOOL) && (V_BOOL(&cache_prop->prop_val) == VARIANT_TRUE));
+    return S_OK;
 }
 
 static HRESULT WINAPI uia_element_get_CachedIsEnabled(IUIAutomationElement9 *iface, BOOL *ret_val)
@@ -2384,8 +2601,21 @@ static HRESULT WINAPI uia_element_get_CachedItemStatus(IUIAutomationElement9 *if
 
 static HRESULT WINAPI uia_element_get_CachedBoundingRectangle(IUIAutomationElement9 *iface, RECT *ret_val)
 {
-    FIXME("%p: stub\n", iface);
-    return E_NOTIMPL;
+    struct uia_element *element = impl_from_IUIAutomationElement9(iface);
+    const int prop_id = UIA_BoundingRectanglePropertyId;
+    struct uia_cache_property *cache_prop = NULL;
+
+    TRACE("%p, %p\n", iface, ret_val);
+
+    if (!ret_val)
+        return E_POINTER;
+
+    if (!(cache_prop = bsearch(&prop_id, element->cached_props, element->cached_props_count, sizeof(*cache_prop),
+            uia_cached_property_id_compare)))
+        return E_INVALIDARG;
+
+    uia_variant_rect_to_rect(&cache_prop->prop_val, ret_val);
+    return S_OK;
 }
 
 static HRESULT WINAPI uia_element_get_CachedLabeledBy(IUIAutomationElement9 *iface, IUIAutomationElement **ret_val)

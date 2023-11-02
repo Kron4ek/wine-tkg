@@ -517,6 +517,13 @@ static void shader_arb_load_np2fixup_constants(const struct arb_ps_np2fixup_info
     }
 }
 
+static void *shader_arb_get_push_constants_sysmem(struct wined3d_buffer *buffer, struct wined3d_context *context)
+{
+    if (!buffer)
+        return NULL;
+    return wined3d_buffer_load_sysmem(buffer, context);
+}
+
 /* Context activation is done by the caller. */
 static void shader_arb_ps_local_constants(const struct arb_ps_compiled_shader *gl_shader,
         struct wined3d_context_gl *context_gl, const struct wined3d_state *state, unsigned int rt_height)
@@ -526,7 +533,8 @@ static void shader_arb_ps_local_constants(const struct arb_ps_compiled_shader *g
     const struct wined3d_ivec4 *int_consts;
     unsigned char i;
 
-    int_consts = wined3d_buffer_load_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_PS_I], &context_gl->c);
+    int_consts = shader_arb_get_push_constants_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_PS_I],
+            &context_gl->c);
 
     for(i = 0; i < gl_shader->numbumpenvmatconsts; i++)
     {
@@ -601,7 +609,8 @@ static void shader_arb_vs_local_constants(const struct arb_vs_compiled_shader *g
 
     if (!gl_shader->num_int_consts) return;
 
-    int_consts = wined3d_buffer_load_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_VS_I], &context_gl->c);
+    int_consts = shader_arb_get_push_constants_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_VS_I],
+            &context_gl->c);
 
     for (i = 0; i < WINED3D_MAX_CONSTS_I; ++i)
     {
@@ -676,12 +685,16 @@ static void shader_arb_load_constants_internal(struct shader_arb_priv *priv, str
     {
         const struct wined3d_shader *vshader = state->shader[WINED3D_SHADER_TYPE_VERTEX];
         const struct arb_vs_compiled_shader *gl_shader = priv->compiled_vprog;
+        void *constants;
 
         /* Load DirectX 9 float constants for vertex shader */
-        priv->highest_dirty_vs_const = shader_arb_load_constants_f(vshader,
-                gl_info, GL_VERTEX_PROGRAM_ARB, priv->highest_dirty_vs_const,
-                wined3d_buffer_load_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_VS_F], &context_gl->c),
-                priv->vshader_const_dirty);
+        if ((constants = shader_arb_get_push_constants_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_VS_F],
+                &context_gl->c)))
+        {
+            priv->highest_dirty_vs_const = shader_arb_load_constants_f(vshader,
+                    gl_info, GL_VERTEX_PROGRAM_ARB, priv->highest_dirty_vs_const,
+                    constants, priv->vshader_const_dirty);
+        }
         shader_arb_vs_local_constants(gl_shader, context_gl, state);
     }
 
@@ -690,12 +703,16 @@ static void shader_arb_load_constants_internal(struct shader_arb_priv *priv, str
         const struct wined3d_shader *pshader = state->shader[WINED3D_SHADER_TYPE_PIXEL];
         const struct arb_ps_compiled_shader *gl_shader = priv->compiled_fprog;
         UINT rt_height = state->fb.render_targets[0]->height;
+        void *constants;
 
         /* Load DirectX 9 float constants for pixel shader */
-        priv->highest_dirty_ps_const = shader_arb_load_constants_f(pshader,
-                gl_info, GL_FRAGMENT_PROGRAM_ARB, priv->highest_dirty_ps_const,
-                wined3d_buffer_load_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_PS_F], &context_gl->c),
-                priv->pshader_const_dirty);
+        if ((constants = shader_arb_get_push_constants_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_PS_F],
+                &context_gl->c)))
+        {
+            priv->highest_dirty_ps_const = shader_arb_load_constants_f(pshader,
+                    gl_info, GL_FRAGMENT_PROGRAM_ARB, priv->highest_dirty_ps_const,
+                    constants, priv->pshader_const_dirty);
+        }
         shader_arb_ps_local_constants(gl_shader, context_gl, state, rt_height);
 
         if (context_gl->c.constant_update_mask & WINED3D_SHADER_CONST_PS_NP2_FIXUP)
@@ -1409,6 +1426,7 @@ static void shader_hw_sample(const struct wined3d_shader_instruction *ins, unsig
     enum wined3d_shader_resource_type resource_type;
     struct color_fixup_masks masks;
     const char *tex_dst = dst_str;
+    bool shadow_sampler, tex_rect;
     BOOL np2_fixup = FALSE;
     const char *tex_type;
     const char *mod;
@@ -1426,18 +1444,35 @@ static void shader_hw_sample(const struct wined3d_shader_instruction *ins, unsig
         sampler_idx += WINED3D_MAX_FRAGMENT_SAMPLERS;
     }
 
+    shadow_sampler = priv->gl_info->supported[ARB_FRAGMENT_PROGRAM_SHADOW]
+            && shader_sampler_is_shadow(ins->ctx->shader, &priv->cur_ps_args->super, sampler_idx, sampler_idx);
+
     switch (resource_type)
     {
         case WINED3D_SHADER_RESOURCE_TEXTURE_1D:
-            tex_type = "1D";
+            if (shadow_sampler)
+                tex_type = "SHADOW1D";
+            else
+                tex_type = "1D";
             break;
 
         case WINED3D_SHADER_RESOURCE_TEXTURE_2D:
-            if (pshader && priv->cur_ps_args->super.np2_fixup & (1u << sampler_idx)
-                    && priv->gl_info->supported[ARB_TEXTURE_RECTANGLE])
-                tex_type = "RECT";
+            tex_rect = pshader && priv->cur_ps_args->super.np2_fixup & (1u << sampler_idx)
+                    && priv->gl_info->supported[ARB_TEXTURE_RECTANGLE];
+            if (shadow_sampler)
+            {
+                if (tex_rect)
+                    tex_type = "SHADOWRECT";
+                else
+                    tex_type = "SHADOW2D";
+            }
             else
-                tex_type = "2D";
+            {
+                if (tex_rect)
+                    tex_type = "RECT";
+                else
+                    tex_type = "2D";
+            }
 
             if (pshader)
             {
@@ -1450,10 +1485,14 @@ static void shader_hw_sample(const struct wined3d_shader_instruction *ins, unsig
             break;
 
         case WINED3D_SHADER_RESOURCE_TEXTURE_3D:
+            if (shadow_sampler)
+                FIXME("Unsupported 3D shadow sampler.\n");
             tex_type = "3D";
             break;
 
         case WINED3D_SHADER_RESOURCE_TEXTURE_CUBE:
+            if (shadow_sampler)
+                FIXME("Unsupported cube shadow sampler.\n");
             tex_type = "CUBE";
             break;
 
@@ -3639,6 +3678,8 @@ static GLuint shader_arb_generate_pshader(const struct wined3d_shader *shader,
                 break;
         }
     }
+    if (gl_info->supported[ARB_FRAGMENT_PROGRAM_SHADOW])
+        shader_addline(buffer, "OPTION ARB_fragment_program_shadow;\n");
 
     /* For now always declare the temps. At least the Nvidia assembler optimizes completely
      * unused temps away(but occupies them for the whole shader if they're used once). Always
@@ -4430,21 +4471,25 @@ static void find_arb_ps_compile_args(const struct wined3d_state *state,
     struct wined3d_device *device = context_gl->c.device;
     const struct wined3d_ivec4 *int_consts;
     const BOOL *bool_consts;
-    int i;
+    unsigned int bool_used;
     WORD int_skip;
+    int i;
 
-    bool_consts = wined3d_buffer_load_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_PS_B], &context_gl->c);
-    int_consts = wined3d_buffer_load_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_PS_I], &context_gl->c);
+    bool_consts = shader_arb_get_push_constants_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_PS_B],
+            &context_gl->c);
+    int_consts = shader_arb_get_push_constants_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_PS_I],
+            &context_gl->c);
 
     find_ps_compile_args(state, shader, context_gl->c.stream_info.position_transformed, &args->super, &context_gl->c);
 
     /* This forces all local boolean constants to 1 to make them stateblock independent */
     args->bools = shader->reg_maps.local_bool_consts;
-
-    for (i = 0; i < WINED3D_MAX_CONSTS_B; ++i)
+    bool_used = shader->reg_maps.boolean_constants & ~shader->reg_maps.local_bool_consts;
+    while (bool_used)
     {
+        i = wined3d_bit_scan(&bool_used);
         if (bool_consts[i])
-            args->bools |= ( 1u << i);
+            args->bools |= 1u << i;
     }
 
     /* Only enable the clip plane emulation KIL if at least one clipplane is enabled. The KIL instruction
@@ -4493,11 +4538,14 @@ static void find_arb_vs_compile_args(const struct wined3d_state *state,
     const struct wined3d_adapter *adapter = device->adapter;
     const struct wined3d_ivec4 *int_consts;
     const BOOL *bool_consts;
-    int i;
+    unsigned int bool_used;
     WORD int_skip;
+    int i;
 
-    bool_consts = wined3d_buffer_load_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_VS_B], &context_gl->c);
-    int_consts = wined3d_buffer_load_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_VS_I], &context_gl->c);
+    bool_consts = shader_arb_get_push_constants_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_VS_B],
+            &context_gl->c);
+    int_consts = shader_arb_get_push_constants_sysmem(device->push_constants[WINED3D_PUSH_CONSTANTS_VS_I],
+            &context_gl->c);
 
     find_vs_compile_args(state, shader, &args->super, &context_gl->c);
 
@@ -4532,8 +4580,10 @@ static void find_arb_vs_compile_args(const struct wined3d_state *state,
 
     /* This forces all local boolean constants to 1 to make them stateblock independent */
     args->clip.boolclip.bools = shader->reg_maps.local_bool_consts;
-    for (i = 0; i < WINED3D_MAX_CONSTS_B; ++i)
+    bool_used = shader->reg_maps.boolean_constants & ~shader->reg_maps.local_bool_consts;
+    while (bool_used)
     {
+        i = wined3d_bit_scan(&bool_used);
         if (bool_consts[i])
             args->clip.boolclip.bools |= (1u << i);
     }
@@ -6877,7 +6927,7 @@ const struct wined3d_fragment_pipe_ops arbfp_fragment_pipeline =
 struct arbfp_blit_type
 {
     enum complex_fixup fixup : 4;
-    enum wined3d_gl_resource_type res_type : 3;
+    unsigned int res_type : 3;
     DWORD use_color_key : 1;
     DWORD padding : 24;
 };

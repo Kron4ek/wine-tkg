@@ -174,7 +174,6 @@ static HRESULT WINAPI band_track_Play(IDirectMusicTrack8 *iface, void *state_dat
 
     if (start_time != 0) FIXME("start_time %ld not implemented\n", start_time);
     if (end_time != -1) FIXME("end_time %ld not implemented\n", end_time);
-    if (time_offset != 0) FIXME("time_offset %ld not implemented\n", time_offset);
     if (segment_flags) FIXME("segment_flags %#lx not implemented\n", segment_flags);
     if (segment_state) FIXME("segment_state %p not implemented\n", segment_state);
 
@@ -184,8 +183,9 @@ static HRESULT WINAPI band_track_Play(IDirectMusicTrack8 *iface, void *state_dat
 
     LIST_FOR_EACH_ENTRY(entry, &This->bands, struct band_entry, entry)
     {
-        if (FAILED(hr = band_send_messages(entry->band, performance, graph,
-                entry->head.lBandTimeLogical, track_id)))
+        MUSIC_TIME music_time = entry->head.lBandTimeLogical;
+        if (music_time != -1) music_time += time_offset;
+        if (FAILED(hr = band_send_messages(entry->band, performance, graph, music_time, track_id)))
             break;
     }
 
@@ -234,7 +234,7 @@ static HRESULT WINAPI band_track_SetParam(IDirectMusicTrack8 *iface, REFGUID typ
             band_connect_to_collection(entry->band, param);
     }
     else if (IsEqualGUID(type, &GUID_Disable_Auto_Download))
-        FIXME("GUID_Disable_Auto_Download not handled yet\n");
+        This->header.bAutoDownload = FALSE;
     else if (IsEqualGUID(type, &GUID_Download))
         FIXME("GUID_Download not handled yet\n");
     else if (IsEqualGUID(type, &GUID_DownloadToAudioPath))
@@ -265,7 +265,7 @@ static HRESULT WINAPI band_track_SetParam(IDirectMusicTrack8 *iface, REFGUID typ
         IDirectMusicPerformance_Release(performance);
     }
     else if (IsEqualGUID(type, &GUID_Enable_Auto_Download))
-        FIXME("GUID_Enable_Auto_Download not handled yet\n");
+        This->header.bAutoDownload = TRUE;
     else if (IsEqualGUID(type, &GUID_IDirectMusicBand))
         FIXME("GUID_IDirectMusicBand not handled yet\n");
     else if (IsEqualGUID(type, &GUID_StandardMIDIFile))
@@ -568,6 +568,7 @@ static HRESULT WINAPI band_track_persist_stream_Load(IPersistStream *iface, IStr
         }
     }
 
+    stream_skip_chunk(stream, &chunk);
     if (FAILED(hr)) return hr;
 
     if (TRACE_ON(dmband))
@@ -590,7 +591,6 @@ static HRESULT WINAPI band_track_persist_stream_Load(IPersistStream *iface, IStr
         }
     }
 
-    stream_skip_chunk(stream, &chunk);
     return S_OK;
 }
 
