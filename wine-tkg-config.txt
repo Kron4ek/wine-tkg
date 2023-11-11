@@ -1,4 +1,4 @@
-# Last wine-tkg-staging-fsync-git configuration - Сб 11 ноя 2023 15:14:01 MSK :
+# Last wine-tkg-staging-fsync-git configuration - Sat Nov 11 12:14:01 PM UTC 2023 :
 
 Local cfg files used
 
@@ -13,7 +13,7 @@ Done applying reverting hotfixes (if any) - list available in prepare.log
 
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: 
+Staging overrides, if any:
 
 fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
 fsync_futex_waitv.patch -- ( Applied patches for fsync to support futex_waitv )
@@ -36,16 +36,3 @@ Applied hotfix staging_d3d12core.mypatch
 Applied hotfix staging_windows.networking.connectivity.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )
-
-
-With predefined optimizations:
-CFLAGS = -O2 -ftree-vectorize
-LDFLAGS = -Wl,-O1,--sort-common,--as-needed
-CROSSCFLAGS = -O2 -ftree-vectorize
-CROSSLDFLAGS = -Wl,-O1,--sort-common,--as-needed
-
-configure arguments: --disable-tests --with-faudio --without-vkd3d
-
-CC = ccache gcc
-CXX = ccache g++
-CROSSCC64 = ccache x86_64-w64-mingw32-gcc
