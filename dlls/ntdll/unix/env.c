@@ -95,7 +95,7 @@ static char *get_nls_file_path( UINT type, UINT id )
     {
     case NLS_SECTION_SORTKEYS: name = "sortdefault"; break;
     case NLS_SECTION_CASEMAP:  name = "l_intl"; break;
-    case NLS_SECTION_CODEPAGE: name = tmp; sprintf( tmp, "c_%03u", id ); break;
+    case NLS_SECTION_CODEPAGE: name = tmp; snprintf( tmp, sizeof(tmp), "c_%03u", id ); break;
     case NLS_SECTION_NORMALIZE:
         switch (id)
         {
@@ -108,8 +108,7 @@ static char *get_nls_file_path( UINT type, UINT id )
         break;
     }
     if (!name) return NULL;
-    if (!(path = malloc( strlen(dir) + strlen(name) + 10 ))) return NULL;
-    sprintf( path, "%s/nls/%s.nls", dir, name );
+    if (asprintf( &path, "%s/nls/%s.nls", dir, name ) == -1) return NULL;
     return path;
 }
 
@@ -121,8 +120,7 @@ static void *read_nls_file( const char *name )
     void *data, *ret = NULL;
     int fd;
 
-    if (!(path = malloc( strlen(dir) + strlen(name) + 10 ))) return NULL;
-    sprintf( path, "%s/nls/%s", dir, name );
+    if (asprintf( &path, "%s/nls/%s", dir, name ) == -1) return NULL;
 
     if ((fd = open( path, O_RDONLY )) != -1)
     {
@@ -184,10 +182,10 @@ static NTSTATUS get_nls_section_name( UINT type, UINT id, WCHAR name[32] )
         strcpy( buffer, "\\NLS\\NlsSectionLANG_INTL" );
         break;
     case NLS_SECTION_CODEPAGE:
-        sprintf( buffer, "\\NLS\\NlsSectionCP%03u", id);
+        snprintf( buffer, sizeof(buffer), "\\NLS\\NlsSectionCP%03u", id);
         break;
     case NLS_SECTION_NORMALIZE:
-        sprintf( buffer, "\\NLS\\NlsSectionNORM%08x", id);
+        snprintf( buffer, sizeof(buffer), "\\NLS\\NlsSectionNORM%08x", id);
         break;
     default:
         return STATUS_INVALID_PARAMETER_1;
@@ -305,7 +303,7 @@ static void init_unix_codepage(void)
                 char buffer[16];
                 void *data;
 
-                sprintf( buffer, "c_%03u.nls", charset_names[pos].cp );
+                snprintf( buffer, sizeof(buffer), "c_%03u.nls", charset_names[pos].cp );
                 if ((data = read_nls_file( buffer ))) init_codepage_table( data, &unix_cp );
             }
             return;
@@ -1079,10 +1077,10 @@ static void add_dynamic_environment( WCHAR **env, SIZE_T *pos, SIZE_T *size )
     add_path_var( env, pos, size, "WINECONFIGDIR", config_dir );
     for (i = 0; dll_paths[i]; i++)
     {
-        sprintf( str, "WINEDLLDIR%u", i );
+        snprintf( str, sizeof(str), "WINEDLLDIR%u", i );
         add_path_var( env, pos, size, str, dll_paths[i] );
     }
-    sprintf( str, "WINEDLLDIR%u", i );
+    snprintf( str, sizeof(str), "WINEDLLDIR%u", i );
     append_envW( env, pos, size, str, NULL );
     add_system_dll_path_var( env, pos, size );
     append_envA( env, pos, size, "WINELOADER", wineloader );
@@ -1090,7 +1088,7 @@ static void add_dynamic_environment( WCHAR **env, SIZE_T *pos, SIZE_T *size )
     append_envA( env, pos, size, "WINEDLLOVERRIDES", overrides );
     if (unix_cp.CodePage != CP_UTF8)
     {
-        sprintf( str, "%u", unix_cp.CodePage );
+        snprintf( str, sizeof(str), "%u", unix_cp.CodePage );
         append_envA( env, pos, size, "WINEUNIXCP", str );
     }
     else append_envW( env, pos, size, "WINEUNIXCP", NULL );
@@ -1851,7 +1849,7 @@ static void init_peb( RTL_USER_PROCESS_PARAMETERS *params, void *module )
     peb->ProcessParameters          = params;
     peb->OSMajorVersion             = 10;
     peb->OSMinorVersion             = 0;
-    peb->OSBuildNumber              = 18362;
+    peb->OSBuildNumber              = 19043;
     peb->OSPlatformId               = VER_PLATFORM_WIN32_NT;
     peb->ImageSubSystem             = main_image_info.SubSystemType;
     peb->ImageSubSystemMajorVersion = main_image_info.MajorSubsystemVersion;
@@ -2218,9 +2216,7 @@ NTSTATUS WINAPI NtInitializeNlsFiles( void **ptr, LCID *lcid, LARGE_INTEGER *siz
     SIZE_T mapsize;
     NTSTATUS status;
 
-    if (!(path = malloc( strlen(dir) + sizeof("/nls/locale.nls") ))) return STATUS_NO_MEMORY;
-    strcpy( path, dir );
-    strcat( path, "/nls/locale.nls" );
+    if (asprintf( &path, "%s/nls/locale.nls", dir ) == -1) return STATUS_NO_MEMORY;
     status = open_nls_data_file( path, system_dir, &file );
     free( path );
     if (!status)

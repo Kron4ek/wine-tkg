@@ -3234,6 +3234,100 @@ static void test_iframe_connections(IHTMLDocument2 *doc)
     IHTMLDocument2_Release(iframes_doc);
 }
 
+static void test_window_refs(IHTMLDocument2 *doc)
+{
+    IHTMLOptionElementFactory *option_factory;
+    IHTMLXMLHttpRequestFactory *xhr_factory;
+    IHTMLImageElementFactory *image_factory;
+    IHTMLWindow2 *self, *parent, *child;
+    IHTMLOptionElement *option_elem;
+    IHTMLImgElement *img_elem;
+    IHTMLXMLHttpRequest *xhr;
+    IHTMLFrameBase2 *iframe;
+    IHTMLWindow5 *window5;
+    IHTMLDocument6 *doc6;
+    IHTMLElement2 *elem;
+    IOmHistory *history;
+    VARIANT vempty, var;
+    HRESULT hres;
+    short length;
+    BSTR bstr;
+
+    V_VT(&vempty) = VT_EMPTY;
+
+    hres = IHTMLDocument2_QueryInterface(doc, &IID_IHTMLDocument6, (void**)&doc6);
+    ok(hres == S_OK, "Could not get IHTMLDocument6 iface: %08lx\n", hres);
+    bstr = SysAllocString(L"ifr");
+    hres = IHTMLDocument6_getElementById(doc6, bstr, &elem);
+    ok(hres == S_OK, "getElementById failed: %08lx\n", hres);
+    IHTMLDocument6_Release(doc6);
+    SysFreeString(bstr);
+
+    hres = IHTMLElement2_QueryInterface(elem, &IID_IHTMLFrameBase2, (void**)&iframe);
+    ok(hres == S_OK, "Could not get IHTMLFrameBase2 iface: %08lx\n", hres);
+    IHTMLElement2_Release(elem);
+    hres = IHTMLFrameBase2_get_contentWindow(iframe, &child);
+    ok(hres == S_OK, "get_contentWindow failed: %08lx\n", hres);
+    IHTMLFrameBase2_Release(iframe);
+
+    hres = IHTMLWindow2_QueryInterface(window, &IID_IHTMLWindow5, (void**)&window5);
+    ok(hres == S_OK, "Could not get IHTMLWindow5: %08lx\n", hres);
+    hres = IHTMLWindow5_get_XMLHttpRequest(window5, &var);
+    ok(hres == S_OK, "get_XMLHttpRequest failed: %08lx\n", hres);
+    ok(V_VT(&var) == VT_DISPATCH, "V_VT(XMLHttpRequest) = %d\n", V_VT(&var));
+    hres = IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IHTMLXMLHttpRequestFactory, (void**)&xhr_factory);
+    ok(hres == S_OK, "Could not get IHTMLXMLHttpRequestFactory: %08lx\n", hres);
+    IHTMLWindow5_Release(window5);
+    VariantClear(&var);
+
+    hres = IHTMLWindow2_get_Image(window, &image_factory);
+    ok(hres == S_OK, "get_Image failed: %08lx\n", hres);
+    hres = IHTMLWindow2_get_Option(window, &option_factory);
+    ok(hres == S_OK, "get_Option failed: %08lx\n", hres);
+    hres = IHTMLWindow2_get_history(window, &history);
+    ok(hres == S_OK, "get_history failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_get_self(window, &self);
+    ok(hres == S_OK, "get_self failed: %08lx\n", hres);
+    hres = IHTMLWindow2_get_parent(child, &parent);
+    ok(hres == S_OK, "get_parent failed: %08lx\n", hres);
+    ok(parent == self, "parent != self\n");
+    IHTMLWindow2_Release(parent);
+    IHTMLWindow2_Release(self);
+
+    navigate(doc, L"blank.html");
+
+    hres = IHTMLWindow2_get_parent(child, &parent);
+    ok(hres == S_OK, "get_parent failed: %08lx\n", hres);
+    ok(parent == child, "parent != child\n");
+    IHTMLWindow2_Release(parent);
+    IHTMLWindow2_Release(child);
+
+    hres = IHTMLXMLHttpRequestFactory_create(xhr_factory, &xhr);
+    todo_wine
+    ok(hres == S_OK, "create failed: %08lx\n", hres);
+    IHTMLXMLHttpRequestFactory_Release(xhr_factory);
+    if(hres == S_OK) IHTMLXMLHttpRequest_Release(xhr);
+
+    hres = IHTMLImageElementFactory_create(image_factory, vempty, vempty, &img_elem);
+    ok(hres == S_OK, "create failed: %08lx\n", hres);
+    ok(img_elem != NULL, "img_elem == NULL\n");
+    IHTMLImageElementFactory_Release(image_factory);
+    IHTMLImgElement_Release(img_elem);
+
+    hres = IHTMLOptionElementFactory_create(option_factory, vempty, vempty, vempty, vempty, &option_elem);
+    ok(hres == S_OK, "create failed: %08lx\n", hres);
+    ok(option_elem != NULL, "option_elem == NULL\n");
+    IHTMLOptionElementFactory_Release(option_factory);
+    IHTMLOptionElement_Release(option_elem);
+
+    hres = IOmHistory_get_length(history, &length);
+    ok(hres == S_OK, "get_length failed: %08lx\n", hres);
+    todo_wine
+    ok(length == 42, "length = %d\n", length);
+    IOmHistory_Release(history);
+}
+
 static void test_doc_obj(IHTMLDocument2 *doc)
 {
     static DISPID propput_dispid = DISPID_PROPERTYPUT;
@@ -3249,6 +3343,7 @@ static void test_doc_obj(IHTMLDocument2 *doc)
     IHTMLPerformance *perf, *perf2;
     IOmHistory *history, *history2;
     IHTMLScreen *screen, *screen2;
+    IHTMLWindow2 *self, *window2;
     IEventTarget *event_target;
     DISPPARAMS dp = { 0 };
     IHTMLWindow7 *window7;
@@ -3410,6 +3505,11 @@ static void test_doc_obj(IHTMLDocument2 *doc)
     IHTMLWindow7_Release(window7);
     VariantClear(&res);
 
+    /* Test "proxy" windows as well, they're actually outer window proxies, but not the same */
+    hres = IHTMLWindow2_get_self(window, &self);
+    ok(hres == S_OK, "get_self failed: %08lx\n", hres);
+    ok(self != NULL, "self == NULL\n");
+
     /* Add props to location, since it gets lost on navigation, despite being same object */
     bstr = SysAllocString(L"wineTestProp");
     hres = IHTMLLocation_QueryInterface(location, &IID_IDispatchEx, (void**)&dispex);
@@ -3564,6 +3664,12 @@ static void test_doc_obj(IHTMLDocument2 *doc)
     IHTMLPerformance_Release(perf);
     IHTMLWindow7_Release(window7);
     VariantClear(&res);
+
+    hres = IHTMLWindow2_get_self(window, &window2);
+    ok(hres == S_OK, "get_self failed: %08lx\n", hres);
+    ok(self == window2, "self != window2\n");
+    IHTMLWindow2_Release(window2);
+    IHTMLWindow2_Release(self);
 }
 
 static void test_create_event(IHTMLDocument2 *doc)
@@ -4312,7 +4418,7 @@ static HRESULT WINAPI TravelLog_Clone(ITravelLog *iface, ITravelLog **pptl)
 
 static DWORD WINAPI TravelLog_CountEntries(ITravelLog *iface, IUnknown *punk)
 {
-    return 0;
+    return 42;
 }
 
 static HRESULT WINAPI TravelLog_Revert(ITravelLog *iface)
@@ -6523,6 +6629,7 @@ START_TEST(events)
             run_test_from_res(L"doc_with_prop_ie9.html", test_visibilitychange);
             run_test_from_res(L"blank_ie10.html", test_visibilitychange);
             run_test_from_res(L"iframe.html", test_unload_event);
+            run_test_from_res(L"iframe.html", test_window_refs);
             run_test(empty_doc_ie9_str, test_create_event);
             run_test(img_doc_ie9_str, test_imgload);
             run_test(input_image_doc_ie9_str, test_inputload);

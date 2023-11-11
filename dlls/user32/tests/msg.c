@@ -2418,13 +2418,13 @@ static void add_message_(int line, const struct recvd_message *msg)
     EnterCriticalSection( &sequence_cs );
     if (!sequence)
     {
-	sequence_size = 10;
-	sequence = HeapAlloc( GetProcessHeap(), 0, sequence_size * sizeof(*sequence) );
+        sequence_size = 10;
+        sequence = malloc( sequence_size * sizeof(*sequence) );
     }
     if (sequence_cnt == sequence_size) 
     {
-	sequence_size *= 2;
-	sequence = HeapReAlloc( GetProcessHeap(), 0, sequence, sequence_size * sizeof(*sequence) );
+        sequence_size *= 2;
+        sequence = realloc( sequence, sequence_size * sizeof(*sequence) );
     }
 
     seq = &sequence[sequence_cnt++];
@@ -2625,7 +2625,7 @@ static void flush_events(void)
 static void flush_sequence(void)
 {
     EnterCriticalSection( &sequence_cs );
-    HeapFree(GetProcessHeap(), 0, sequence);
+    free( sequence );
     sequence = 0;
     sequence_cnt = sequence_size = 0;
     LeaveCriticalSection( &sequence_cs );
@@ -8229,13 +8229,13 @@ void dump_region(HRGN hrgn)
         return;
     }
     if (!(size = GetRegionData( hrgn, 0, NULL ))) return;
-    if (!(data = HeapAlloc( GetProcessHeap(), 0, size ))) return;
+    if (!(data = malloc( size ))) return;
     GetRegionData( hrgn, size, data );
     printf("%ld rects:", data->rdh.nCount );
     for (i = 0, rect = (RECT *)data->Buffer; i < data->rdh.nCount; i++, rect++)
         printf( " %s", wine_dbgstr_rect( rect ));
     printf("\n");
-    HeapFree( GetProcessHeap(), 0, data );
+    free( data );
 }
 
 #define check_update_rgn( hwnd, hrgn ) check_update_rgn_( __LINE__, hwnd, hrgn )
@@ -11628,20 +11628,67 @@ static VOID CALLBACK tfunc(HWND hwnd, UINT uMsg, UINT_PTR id, DWORD dwTime)
 {
 }
 
-#define TIMER_ID               0x19
-#define TIMER_COUNT_EXPECTED   100
-#define TIMER_COUNT_TOLERANCE  10
+#define TIMER_ID                 0x19
+#define TIMER_COUNT              500 /* 499 samples */
+#define TIMER_DURATION_EXPECTED  10000 /* 10 ms */
+#define TIMER_DURATION_ALT       15600 /* 15.6 ms */
+#define TIMER_DURATION_TOLERANCE 1000 /* 1 ms */
 
 static int count = 0;
+static ULONGLONG timer_ticks[TIMER_COUNT];
+static int timer_duration = 0;
+
+static int compare_ulonglong(const void *a, const void *b)
+{
+    ULONGLONG la, lb;
+    la = *(ULONGLONG*)a;
+    lb = *(ULONGLONG*)b;
+    return (la > lb) - (la < lb);
+}
+
+static void timer_fired(void)
+{
+    if (count < TIMER_COUNT)
+    {
+        LARGE_INTEGER performance_counter;
+        BOOL ret;
+
+        ret = QueryPerformanceCounter(&performance_counter);
+        ok(ret, "QueryPerformanceCounter failed\n");
+
+        timer_ticks[count] = performance_counter.QuadPart;
+    }
+
+    count++;
+
+    if (count == TIMER_COUNT)
+    {
+        LARGE_INTEGER performance_frequency;
+        BOOL ret;
+
+        /* calculate durations */
+        for (int i=0; i < TIMER_COUNT-1; i++)
+            timer_ticks[i] = timer_ticks[i+1] - timer_ticks[i];
+
+        qsort(timer_ticks, TIMER_COUNT - 1, sizeof(timer_ticks[0]), compare_ulonglong);
+
+        ret = QueryPerformanceFrequency(&performance_frequency);
+        ok(ret, "QueryPerformanceFrequency failed\n");
+
+        /* median duration, converted to microseconds */
+        timer_duration = (int)(timer_ticks[(TIMER_COUNT - 1) / 2] * 1000000 / performance_frequency.QuadPart);
+    }
+}
+
 static void CALLBACK callback_count(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
 {
-    count++;
+    timer_fired();
 }
 
 static DWORD exception;
 static void CALLBACK callback_exception(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime)
 {
-    count++;
+    timer_fired();
     RaiseException(exception, 0, 0, NULL);
 }
 
@@ -11663,7 +11710,6 @@ static DWORD WINAPI timer_thread_proc(LPVOID x)
 static void test_timers(void)
 {
     struct timer_info info;
-    DWORD start;
     DWORD id;
     MSG msg;
 
@@ -11689,45 +11735,37 @@ static void test_timers(void)
 
     /* Check the minimum allowed timeout for a timer.  MSDN indicates that it should be 10.0 ms,
      * which occurs sometimes, but most testing on the VMs indicates a minimum timeout closer to
-     * 15.6 ms.  Since there is some measurement error between test runs we are allowing for
-     * ±9 counts (~4 ms) around the expected value.
+     * 15.6 ms.
      */
     count = 0;
     id = SetTimer(info.hWnd, TIMER_ID, 0, callback_count);
     ok(id != 0, "did not get id from SetTimer.\n");
     ok(id==TIMER_ID, "SetTimer timer ID different\n");
-    start = GetTickCount();
-    while (GetTickCount()-start < 1001 && GetMessageA(&msg, info.hWnd, 0, 0))
+    while (count < TIMER_COUNT && GetMessageA(&msg, info.hWnd, 0, 0))
         DispatchMessageA(&msg);
-todo_wine
-    ok(abs(count-TIMER_COUNT_EXPECTED) < TIMER_COUNT_TOLERANCE /* xp */
-       || broken(abs(count-64) <= TIMER_COUNT_TOLERANCE) /* most common */
-       || broken(abs(count-43) <= TIMER_COUNT_TOLERANCE) /* w2k3, win8 */,
-       "did not get expected count for minimum timeout (%d != ~%d).\n",
-       count, TIMER_COUNT_EXPECTED);
+    ok(abs(timer_duration-TIMER_DURATION_EXPECTED) < TIMER_DURATION_TOLERANCE /* xp, win7 */
+       || broken(abs(timer_duration - TIMER_DURATION_ALT) < TIMER_DURATION_TOLERANCE) /* most common */,
+       "did not get expected median timeout (%d != ~%d).\n",
+       timer_duration, TIMER_DURATION_EXPECTED);
     ok(KillTimer(info.hWnd, id), "KillTimer failed\n");
     /* Perform the same check on SetSystemTimer (only available on w2k3 and older) */
     if (pSetSystemTimer)
     {
-        int syscount = 0;
-
         count = 0;
         id = pSetSystemTimer(info.hWnd, TIMER_ID, 0, callback_count);
         ok(id != 0, "did not get id from SetSystemTimer.\n");
         ok(id==TIMER_ID, "SetTimer timer ID different\n");
-        start = GetTickCount();
-        while (GetTickCount()-start < 1001 && GetMessageA(&msg, info.hWnd, 0, 0))
+        while (count < TIMER_COUNT && GetMessageA(&msg, info.hWnd, 0, 0))
         {
             if (msg.message == WM_SYSTIMER)
-                syscount++;
+                timer_fired();
+            ok(msg.message != WM_TIMER, "unexpected WM_TIMER\n");
             DispatchMessageA(&msg);
         }
-        ok(abs(syscount-TIMER_COUNT_EXPECTED) < TIMER_COUNT_TOLERANCE
-           || broken(abs(syscount-64) < TIMER_COUNT_TOLERANCE) /* most common */
-           || broken(syscount > 4000 && syscount < 12000) /* win2k3sp0 */,
-           "did not get expected count for minimum timeout (%d != ~%d).\n",
-           syscount, TIMER_COUNT_EXPECTED);
-        ok(count == 0, "did not get expected count for callback timeout (%d != 0).\n", count);
+        ok(abs(timer_duration-TIMER_DURATION_EXPECTED) < TIMER_DURATION_TOLERANCE
+           || broken(abs(timer_duration - TIMER_DURATION_ALT) < TIMER_DURATION_TOLERANCE) /* most common */,
+           "did not get expected median timeout (%d != ~%d).\n",
+           timer_duration, TIMER_DURATION_EXPECTED);
         ok(pKillSystemTimer(info.hWnd, id), "KillSystemTimer failed\n");
     }
 
@@ -11760,21 +11798,17 @@ static void test_timers_no_wnd(void)
 
     /* Check the minimum allowed timeout for a timer.  MSDN indicates that it should be 10.0 ms,
      * which occurs sometimes, but most testing on the VMs indicates a minimum timeout closer to
-     * 15.6 ms.  Since there is some measurement error between test runs we are allowing for
-     * ±9 counts (~4 ms) around the expected value.
+     * 15.6 ms.
      */
     count = 0;
     id = SetTimer(NULL, 0, 0, callback_count);
     ok(id != 0, "did not get id from SetTimer.\n");
-    start = GetTickCount();
-    while (GetTickCount()-start < 1001 && GetMessageA(&msg, NULL, 0, 0))
+    while (count < TIMER_COUNT && GetMessageA(&msg, NULL, 0, 0))
         DispatchMessageA(&msg);
-todo_wine
-    ok(abs(count-TIMER_COUNT_EXPECTED) < TIMER_COUNT_TOLERANCE /* xp */
-       || broken(abs(count-64) <= TIMER_COUNT_TOLERANCE) /* most common */
-       || broken(abs(count-43) <= TIMER_COUNT_TOLERANCE) /* w1064v1809 */,
-       "did not get expected count for minimum timeout (%d != ~%d).\n",
-       count, TIMER_COUNT_EXPECTED);
+    ok(abs(timer_duration-TIMER_DURATION_EXPECTED) < TIMER_DURATION_TOLERANCE /* xp */
+       || broken(abs(timer_duration - TIMER_DURATION_ALT) < TIMER_DURATION_TOLERANCE) /* most common */,
+       "did not get expected median timeout (%d != ~%d).\n",
+       timer_duration, TIMER_DURATION_EXPECTED);
     KillTimer(NULL, id);
     /* Note: SetSystemTimer doesn't support a NULL window, see test_timers */
 
@@ -12305,37 +12339,113 @@ skip_mouse_ll_hook_test:
     ok(DestroyWindow(hwnd), "failed to destroy window\n");
 }
 
+static char *get_test_dll_path(void)
+{
+    static const char *dll_name = "testdll.dll";
+    static char path[MAX_PATH];
+    DWORD written;
+    HANDLE file;
+    HRSRC res;
+    void *ptr;
+
+    GetTempPathA(ARRAY_SIZE(path), path);
+    strcat(path, dll_name);
+
+    file = CreateFileA(path, GENERIC_READ|GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, 0);
+    ok(file != INVALID_HANDLE_VALUE, "Failed to create file %s: %lu.\n", debugstr_a(path), GetLastError());
+
+    res = FindResourceA(NULL, dll_name, "TESTDLL");
+    ok(!!res, "Failed to load resource: %lu\n", GetLastError());
+    ptr = LockResource(LoadResource(GetModuleHandleA(NULL), res));
+    WriteFile(file, ptr, SizeofResource(GetModuleHandleA(NULL), res), &written, NULL);
+    ok(written == SizeofResource(GetModuleHandleA(NULL), res), "Failed to write resource\n");
+    CloseHandle(file);
+
+    return path;
+}
+
 static void test_set_hook(void)
 {
+    LRESULT (CALLBACK *p_dummy_hook_proc)(int code, WPARAM wp, LPARAM lp);
+    HMODULE test_dll_module;
+    char *test_dll_path;
+    DWORD error;
     BOOL ret;
     HHOOK hhook;
     HWINEVENTHOOK hwinevent_hook;
+    int i;
 
     hhook = SetWindowsHookExA(WH_CBT, cbt_hook_proc, GetModuleHandleA(0), GetCurrentThreadId());
     ok(hhook != 0, "local hook does not require hModule set to 0\n");
     UnhookWindowsHookEx(hhook);
 
-    if (0)
-    {
-    /* this test doesn't pass under Win9x: BUG! */
     SetLastError(0xdeadbeef);
     hhook = SetWindowsHookExA(WH_CBT, cbt_hook_proc, 0, 0);
     ok(!hhook, "global hook requires hModule != 0\n");
     ok(GetLastError() == ERROR_HOOK_NEEDS_HMOD, "unexpected error %ld\n", GetLastError());
-    }
+
+    SetLastError(0xdeadbeef);
+    hhook = SetWindowsHookExA(WH_JOURNALRECORD, cbt_hook_proc, 0, 0);
+    ok(!hhook, "global hook requires hModule != 0\n");
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "unexpected error %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     hhook = SetWindowsHookExA(WH_CBT, 0, GetModuleHandleA(0), GetCurrentThreadId());
     ok(!hhook, "SetWinEventHook with invalid proc should fail\n");
-    ok(GetLastError() == ERROR_INVALID_FILTER_PROC || /* Win2k */
-       GetLastError() == 0xdeadbeef, /* Win9x */
-       "unexpected error %ld\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_FILTER_PROC, "unexpected error %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ok(!UnhookWindowsHookEx((HHOOK)0xdeadbeef), "UnhookWindowsHookEx succeeded\n");
-    ok(GetLastError() == ERROR_INVALID_HOOK_HANDLE || /* Win2k */
-       GetLastError() == 0xdeadbeef, /* Win9x */
-       "unexpected error %ld\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HOOK_HANDLE, "unexpected error %ld\n", GetLastError());
+
+    test_dll_path = get_test_dll_path();
+    test_dll_module = LoadLibraryA(test_dll_path);
+    p_dummy_hook_proc = (void *)GetProcAddress(test_dll_module, "dummy_hook_proc");
+    for (i = WH_MIN; i <= WH_MAX; i++)
+    {
+        winetest_push_context("ID %d", i);
+
+        /* Test that setting hooks should succeed for hook procs in a library. But for WH_JOURNALRECORD
+         * and WH_JOURNALPLAYBACK, ERROR_ACCESS_DENIED is returned, even with administrator rights */
+        SetLastError(0xdeadbeef);
+        hhook = SetWindowsHookExA(i, p_dummy_hook_proc, test_dll_module, 0);
+        error = GetLastError();
+        if (i == WH_JOURNALRECORD || i == WH_JOURNALPLAYBACK)
+        {
+            ok(!hhook, "SetWinEventHook succeeded.\n");
+            ok(error == ERROR_ACCESS_DENIED, "Got unexpected error %ld.\n", GetLastError());
+        }
+        else
+        {
+            ok(!!hhook, "SetWinEventHook failed.\n");
+            ok(error == NO_ERROR, "Got unexpected error %ld.\n", GetLastError());
+        }
+        if (hhook)
+            UnhookWindowsHookEx(hhook);
+
+        /* Test settings global hooks with a thread ID */
+        SetLastError(0xdeadbeef);
+        hhook = SetWindowsHookExA(i, p_dummy_hook_proc, test_dll_module, GetCurrentThreadId());
+        error = GetLastError();
+        if (i == WH_JOURNALRECORD || i == WH_JOURNALPLAYBACK || i == WH_SYSMSGFILTER
+            || i == WH_KEYBOARD_LL || i == WH_MOUSE_LL)
+        {
+            ok(!hhook, "SetWinEventHook succeeded.\n");
+            ok(error == ERROR_GLOBAL_ONLY_HOOK, "Got unexpected error %ld.\n", GetLastError());
+        }
+        else
+        {
+            ok(!!hhook, "SetWinEventHook failed.\n");
+            ok(error == NO_ERROR, "Got unexpected error %ld.\n", GetLastError());
+        }
+        if (hhook)
+            UnhookWindowsHookEx(hhook);
+
+        winetest_pop_context();
+    }
+    FreeLibrary(test_dll_module);
+    ret = DeleteFileA(test_dll_path);
+    ok(ret, "Failed to remove the test dll, error %ld.\n", GetLastError());
 
     if (!pSetWinEventHook || !pUnhookWinEvent) return;
 
@@ -12344,22 +12454,15 @@ static void test_set_hook(void)
     hwinevent_hook = pSetWinEventHook(EVENT_MIN, EVENT_MAX, 0, win_event_proc,
         GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
     ok(!hwinevent_hook, "WINEVENT_INCONTEXT requires hModule != 0\n");
-    ok(GetLastError() == ERROR_HOOK_NEEDS_HMOD || /* Win2k */
-       GetLastError() == 0xdeadbeef, /* Win9x */
-       "unexpected error %ld\n", GetLastError());
+    ok(GetLastError() == ERROR_HOOK_NEEDS_HMOD, "unexpected error %ld\n", GetLastError());
 
     /* even thread local incontext hooks require hmodule */
     SetLastError(0xdeadbeef);
     hwinevent_hook = pSetWinEventHook(EVENT_MIN, EVENT_MAX, 0, win_event_proc,
         GetCurrentProcessId(), GetCurrentThreadId(), WINEVENT_INCONTEXT);
     ok(!hwinevent_hook, "WINEVENT_INCONTEXT requires hModule != 0\n");
-    ok(GetLastError() == ERROR_HOOK_NEEDS_HMOD || /* Win2k */
-       GetLastError() == 0xdeadbeef, /* Win9x */
-       "unexpected error %ld\n", GetLastError());
+    ok(GetLastError() == ERROR_HOOK_NEEDS_HMOD, "unexpected error %ld\n", GetLastError());
 
-    if (0)
-    {
-    /* these 3 tests don't pass under Win9x */
     SetLastError(0xdeadbeef);
     hwinevent_hook = pSetWinEventHook(1, 0, 0, win_event_proc,
         GetCurrentProcessId(), 0, WINEVENT_OUTOFCONTEXT);
@@ -12376,8 +12479,8 @@ static void test_set_hook(void)
     hwinevent_hook = pSetWinEventHook(EVENT_MIN, EVENT_MAX, 0, win_event_proc,
         0, 0xdeadbeef, WINEVENT_OUTOFCONTEXT);
     ok(!hwinevent_hook, "SetWinEventHook with invalid tid should fail\n");
+    todo_wine
     ok(GetLastError() == ERROR_INVALID_THREAD_ID, "unexpected error %ld\n", GetLastError());
-    }
 
     SetLastError(0xdeadbeef);
     hwinevent_hook = pSetWinEventHook(0, 0, 0, win_event_proc,
@@ -12401,9 +12504,7 @@ todo_wine {
 
     SetLastError(0xdeadbeef);
     ok(!pUnhookWinEvent((HWINEVENTHOOK)0xdeadbeef), "UnhookWinEvent succeeded\n");
-    ok(GetLastError() == ERROR_INVALID_HANDLE || /* Win2k */
-	GetLastError() == 0xdeadbeef, /* Win9x */
-	"unexpected error %ld\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "unexpected error %ld\n", GetLastError());
 }
 
 static HWND hook_hwnd;
@@ -18036,9 +18137,9 @@ static void test_broadcast(void)
     HWND hwnd;
     HWND *hwnd_sub;
 
-    hwnd_sub = HeapAlloc( GetProcessHeap(), 0, ARRAY_SIZE(bcast_expect) * sizeof(*hwnd_sub) );
-    g_oldproc_sub = HeapAlloc( GetProcessHeap(), 0, ARRAY_SIZE(bcast_expect) * sizeof(*g_oldproc_sub) );
-    g_broadcast_sub_wparam = HeapAlloc( GetProcessHeap(), 0, ARRAY_SIZE(bcast_expect) * sizeof(*g_broadcast_sub_wparam) );
+    hwnd_sub = malloc(ARRAY_SIZE(bcast_expect) * sizeof(*hwnd_sub));
+    g_oldproc_sub = malloc(ARRAY_SIZE(bcast_expect) * sizeof(*g_oldproc_sub));
+    g_broadcast_sub_wparam = malloc(ARRAY_SIZE(bcast_expect) * sizeof(*g_broadcast_sub_wparam));
 
     hwnd = CreateWindowExA(0, "static", NULL, WS_POPUP, 0, 0, 0, 0, 0, 0, 0, NULL);
     ok(hwnd != NULL, "got %p\n", hwnd);
@@ -18140,9 +18241,9 @@ static void test_broadcast(void)
     for (j = 0; j < ARRAY_SIZE(bcast_expect); j++)
         DestroyWindow(hwnd_sub[j]);
 
-    HeapFree(GetProcessHeap(), 0, g_broadcast_sub_wparam);
-    HeapFree(GetProcessHeap(), 0, g_oldproc_sub);
-    HeapFree(GetProcessHeap(), 0, hwnd_sub);
+    free(g_broadcast_sub_wparam);
+    free(g_oldproc_sub);
+    free(hwnd_sub);
 
     DestroyWindow(hwnd);
 }

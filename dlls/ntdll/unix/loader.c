@@ -391,7 +391,6 @@ const char **dll_paths = NULL;
 const char **system_dll_paths = NULL;
 const char *user_name = NULL;
 SECTION_IMAGE_INFORMATION main_image_info = { NULL };
-static const IMAGE_EXPORT_DIRECTORY *ntdll_exports;
 
 /* adjust an array of pointers to make them into RVAs */
 static inline void fixup_rva_ptrs( void *array, BYTE *base, unsigned int count )
@@ -708,9 +707,7 @@ static void init_paths( char *argv[] )
     }
     else wineloader = build_path( build_path( build_dir, "loader" ), basename );
 
-    env = malloc( sizeof("WINELOADER=") + strlen(wineloader) );
-    strcpy( env, "WINELOADER=" );
-    strcat( env, wineloader );
+    asprintf( &env, "WINELOADER=%s", wineloader );
     putenv( env );
 
     set_dll_path();
@@ -804,8 +801,8 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_i
 
     signal( SIGPIPE, SIG_DFL );
 
-    sprintf( socket_env, "WINESERVERSOCKET=%u", socketfd );
-    sprintf( preloader_reserve, "WINEPRELOADRESERVE=%x%08x-%x%08x",
+    snprintf( socket_env, sizeof(socket_env), "WINESERVERSOCKET=%u", socketfd );
+    snprintf( preloader_reserve, sizeof(preloader_reserve), "WINEPRELOADRESERVE=%x%08x-%x%08x",
              (UINT)(res_start >> 32), (UINT)res_start, (UINT)(res_end >> 32), (UINT)res_end );
 
     putenv( preloader_reserve );
@@ -1642,8 +1639,6 @@ static const WCHAR *get_machine_wow64_dir( WORD machine )
     static const WCHAR system32[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','t','e','m','3','2','\\',0};
     static const WCHAR syswow64[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','w','o','w','6','4','\\',0};
     static const WCHAR sysarm32[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','a','r','m','3','2','\\',0};
-    static const WCHAR sysx8664[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','x','8','6','6','4','\\',0};
-    static const WCHAR sysarm64[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','a','r','m','6','4','\\',0};
 
     if (machine == native_machine) machine = IMAGE_FILE_MACHINE_TARGET_HOST;
 
@@ -1652,8 +1647,6 @@ static const WCHAR *get_machine_wow64_dir( WORD machine )
     case IMAGE_FILE_MACHINE_TARGET_HOST: return system32;
     case IMAGE_FILE_MACHINE_I386:        return syswow64;
     case IMAGE_FILE_MACHINE_ARMNT:       return sysarm32;
-    case IMAGE_FILE_MACHINE_AMD64:       return sysx8664;
-    case IMAGE_FILE_MACHINE_ARM64:       return sysarm64;
     default: return NULL;
     }
 }
@@ -1676,6 +1669,7 @@ BOOL is_builtin_path( const UNICODE_STRING *path, WORD *machine )
     for (i = 0; i < supported_machines_count; i++)
     {
         sysdir = get_machine_wow64_dir( supported_machines[i] );
+        if (!sysdir) continue;
         dirlen = wcslen( sysdir );
         if (len <= dirlen) continue;
         if (wcsnicmp( p, sysdir, dirlen )) continue;
@@ -1832,12 +1826,13 @@ static void load_ntdll_functions( HMODULE module )
 {
     void **p__wine_unix_call_dispatcher;
     unixlib_handle_t *p__wine_unixlib_handle;
+    const IMAGE_EXPORT_DIRECTORY *exports;
 
-    ntdll_exports = get_module_data_dir( module, IMAGE_FILE_EXPORT_DIRECTORY, NULL );
-    assert( ntdll_exports );
+    exports = get_module_data_dir( module, IMAGE_DIRECTORY_ENTRY_EXPORT, NULL );
+    assert( exports );
 
 #define GET_FUNC(name) \
-    if (!(p##name = (void *)find_named_export( module, ntdll_exports, #name ))) \
+    if (!(p##name = (void *)find_named_export( module, exports, #name ))) \
         ERR( "%s not found\n", #name )
 
     GET_FUNC( DbgUiRemoteBreakin );
@@ -1911,18 +1906,18 @@ static void load_ntdll(void)
     UNICODE_STRING str;
     void *module;
     SIZE_T size = 0;
-    char *name;
+    char *name = NULL;
 
     init_unicode_string( &str, path );
     InitializeObjectAttributes( &attr, &str, 0, 0, NULL );
 
-    name = malloc( strlen( ntdll_dir ) + strlen( pe_dir ) + sizeof("/ntdll.dll.so") );
-    if (build_dir) sprintf( name, "%s%s/ntdll.dll", ntdll_dir, pe_dir );
-    else sprintf( name, "%s%s/ntdll.dll", dll_dir, pe_dir );
+    if (build_dir) asprintf( &name, "%s%s/ntdll.dll", ntdll_dir, pe_dir );
+    else asprintf( &name, "%s%s/ntdll.dll", dll_dir, pe_dir );
     status = open_builtin_pe_file( name, &attr, &module, &size, &info, 0, 0, current_machine, FALSE );
     if (status == STATUS_DLL_NOT_FOUND)
     {
-        sprintf( name, "%s/ntdll.dll.so", ntdll_dir );
+        free( name );
+        asprintf( &name, "%s/ntdll.dll.so", ntdll_dir );
         status = open_builtin_so_file( name, &attr, &module, &info, FALSE );
     }
     if (status == STATUS_IMAGE_NOT_AT_BASE) status = virtual_relocate_module( module );
@@ -1949,16 +1944,15 @@ static void load_apiset_dll(void)
     unsigned int status;
     HANDLE handle, mapping;
     SIZE_T size;
-    char *name;
+    char *name = NULL;
     void *ptr;
     UINT i;
 
     init_unicode_string( &str, path );
     InitializeObjectAttributes( &attr, &str, 0, 0, NULL );
 
-    name = malloc( strlen( ntdll_dir ) + strlen( pe_dir ) + sizeof("/apisetschema/apisetschema.dll") );
-    if (build_dir) sprintf( name, "%s/dlls/apisetschema%s/apisetschema.dll", build_dir, pe_dir );
-    else sprintf( name, "%s%s/apisetschema.dll", dll_dir, pe_dir );
+    if (build_dir) asprintf( &name, "%s/dlls/apisetschema%s/apisetschema.dll", build_dir, pe_dir );
+    else asprintf( &name, "%s%s/apisetschema.dll", dll_dir, pe_dir );
     status = open_unix_file( &handle, name, GENERIC_READ | SYNCHRONIZE, &attr, 0,
                              FILE_SHARE_READ | FILE_SHARE_DELETE, FILE_OPEN,
                              FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, NULL, 0 );
@@ -2014,9 +2008,14 @@ static void load_wow64_ntdll( USHORT machine )
     void *module;
     unsigned int status;
     SIZE_T size;
-    WCHAR *path = malloc( sizeof("\\??\\C:\\windows\\system32\\ntdll.dll") * sizeof(WCHAR) );
+    const WCHAR *wow64_dir;
+    WCHAR *path;
 
-    wcscpy( path, get_machine_wow64_dir( machine ));
+    if (machine == current_machine) return;
+    if (!(wow64_dir = get_machine_wow64_dir( machine ))) return;
+
+    path = malloc( sizeof("\\??\\C:\\windows\\system32\\ntdll.dll") * sizeof(WCHAR) );
+    wcscpy( path, wow64_dir );
     wcscat( path, ntdllW );
     init_unicode_string( &nt_name, path );
     status = find_builtin_dll( &nt_name, &module, &size, &info, 0, 0, machine, 0, FALSE );
@@ -2080,7 +2079,7 @@ static void start_main_thread(void)
     init_thread_stack( teb, 0, 0, 0 );
     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
     load_ntdll();
-    if (main_image_info.Machine != current_machine) load_wow64_ntdll( main_image_info.Machine );
+    load_wow64_ntdll( main_image_info.Machine );
     load_apiset_dll();
     ntdll_init_syscalls( &syscall_table, p__wine_syscall_dispatcher );
     server_init_process_done();
@@ -2382,7 +2381,7 @@ static void check_command_line( int argc, char *argv[] )
  *
  * Main entry point called by the wine loader.
  */
-void __wine_main( int argc, char *argv[], char *envp[] )
+DECLSPEC_EXPORT void __wine_main( int argc, char *argv[], char *envp[] )
 {
     init_paths( argv );
 

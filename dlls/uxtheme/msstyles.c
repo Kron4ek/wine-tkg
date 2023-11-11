@@ -1022,6 +1022,23 @@ static void MSSTYLES_ParseThemeIni(PTHEME_FILE tf, BOOL setMetrics)
     }
 }
 
+static void parse_app_class_name(LPCWSTR name, LPWSTR app_name, LPWSTR class_name)
+{
+    LPCWSTR p;
+
+    app_name[0] = class_name[0] = 0;
+
+    p = wcsstr(name, L"::");
+    if (p)
+    {
+        lstrcpynW(app_name, name, min(p - name + 1, MAX_THEME_APP_NAME));
+        p += 2;
+        lstrcpynW(class_name, p, min(wcslen(p) + 1, MAX_THEME_CLASS_NAME));
+    }
+    else
+        lstrcpynW(class_name, name, MAX_THEME_CLASS_NAME);
+}
+
 /***********************************************************************
  *      MSSTYLES_OpenThemeClass
  *
@@ -1036,6 +1053,8 @@ static void MSSTYLES_ParseThemeIni(PTHEME_FILE tf, BOOL setMetrics)
 PTHEME_CLASS MSSTYLES_OpenThemeClass(LPCWSTR pszAppName, LPCWSTR pszClassList, UINT dpi)
 {
     PTHEME_CLASS cls = NULL;
+    WCHAR buf[MAX_THEME_APP_NAME + MAX_THEME_CLASS_NAME];
+    WCHAR szAppName[MAX_THEME_APP_NAME];
     WCHAR szClassName[MAX_THEME_CLASS_NAME];
     LPCWSTR start;
     LPCWSTR end;
@@ -1052,14 +1071,31 @@ PTHEME_CLASS MSSTYLES_OpenThemeClass(LPCWSTR pszAppName, LPCWSTR pszClassList, U
     start = pszClassList;
     while((end = wcschr(start, ';'))) {
         len = end-start;
-        lstrcpynW(szClassName, start, min(len+1, ARRAY_SIZE(szClassName)));
+        lstrcpynW(buf, start, min(len+1, ARRAY_SIZE(buf)));
         start = end+1;
-        cls = MSSTYLES_FindClass(tfActiveTheme, pszAppName, szClassName);
+
+        parse_app_class_name(buf, szAppName, szClassName);
+
+        /* If the window application name is set then fail */
+        if (szAppName[0] && pszAppName)
+            return NULL;
+
+        cls = MSSTYLES_FindClass(tfActiveTheme, szAppName[0] ? szAppName : pszAppName, szClassName);
+        /* Fall back to default class if the specified subclass is not found */
+        if (!cls) cls = MSSTYLES_FindClass(tfActiveTheme, NULL, szClassName);
+
         if(cls) break;
     }
     if(!cls && *start) {
-        lstrcpynW(szClassName, start, ARRAY_SIZE(szClassName));
-        cls = MSSTYLES_FindClass(tfActiveTheme, pszAppName, szClassName);
+        parse_app_class_name(start, szAppName, szClassName);
+
+        /* If the window application name is set then fail */
+        if (szAppName[0] && pszAppName)
+            return NULL;
+
+        cls = MSSTYLES_FindClass(tfActiveTheme, szAppName[0] ? szAppName : pszAppName, szClassName);
+        /* Fall back to default class if the specified subclass is not found */
+        if (!cls) cls = MSSTYLES_FindClass(tfActiveTheme, NULL, szClassName);
     }
     if(cls) {
         TRACE("Opened app %s, class %s from list %s\n", debugstr_w(cls->szAppName), debugstr_w(cls->szClassName), debugstr_w(pszClassList));

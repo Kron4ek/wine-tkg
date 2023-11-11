@@ -2685,7 +2685,7 @@ static HRESULT WINAPI HTMLDocument3_getElementsByName(IHTMLDocument3 *iface, BST
         IHTMLElementCollection **ppelColl)
 {
     HTMLDocumentNode *This = impl_from_IHTMLDocument3(iface);
-    nsIDOMNodeList *node_list;
+    nsIDOMNodeList *node_list = NULL;
     nsAString selector_str;
     WCHAR *selector;
     nsresult nsres;
@@ -2715,6 +2715,8 @@ static HRESULT WINAPI HTMLDocument3_getElementsByName(IHTMLDocument3 *iface, BST
     free(selector);
     if(NS_FAILED(nsres)) {
         ERR("QuerySelectorAll failed: %08lx\n", nsres);
+        if(node_list)
+            nsIDOMNodeList_Release(node_list);
         return E_FAIL;
     }
 
@@ -2781,12 +2783,15 @@ static HRESULT WINAPI HTMLDocument3_getElementsByTagName(IHTMLDocument3 *iface, 
             return E_UNEXPECTED;
         }
 
+        nslist = NULL;
         nsAString_InitDepend(&nsstr, v);
         nsres = nsIDOMDocumentFragment_QuerySelectorAll(docfrag, &nsstr, &nslist);
         nsAString_Finish(&nsstr);
         nsIDOMDocumentFragment_Release(docfrag);
         if(NS_FAILED(nsres)) {
             ERR("QuerySelectorAll failed: %08lx\n", nsres);
+            if(nslist)
+                nsIDOMNodeList_Release(nslist);
             return E_FAIL;
         }
     }
@@ -4751,7 +4756,7 @@ static HRESULT WINAPI DocumentSelector_querySelector(IDocumentSelector *iface, B
 static HRESULT WINAPI DocumentSelector_querySelectorAll(IDocumentSelector *iface, BSTR v, IHTMLDOMChildrenCollection **pel)
 {
     HTMLDocumentNode *This = impl_from_IDocumentSelector(iface);
-    nsIDOMNodeList *node_list;
+    nsIDOMNodeList *node_list = NULL;
     nsAString nsstr;
     nsresult nsres;
     HRESULT hres;
@@ -4773,6 +4778,8 @@ static HRESULT WINAPI DocumentSelector_querySelectorAll(IDocumentSelector *iface
 
     if(NS_FAILED(nsres)) {
         WARN("QuerySelectorAll failed: %08lx\n", nsres);
+        if(node_list)
+            nsIDOMNodeList_Release(node_list);
         return map_nsresult(nsres);
     }
 
@@ -5700,6 +5707,12 @@ void detach_document_node(HTMLDocumentNode *doc)
 {
     unsigned i;
 
+    if(doc->window) {
+        HTMLInnerWindow *window = doc->window;
+        doc->window = NULL;
+        IHTMLWindow2_Release(&window->base.IHTMLWindow2_iface);
+    }
+
     while(!list_empty(&doc->plugin_hosts))
         detach_plugin_host(LIST_ENTRY(list_head(&doc->plugin_hosts), PluginHost, entry));
 
@@ -5855,6 +5868,19 @@ static void *HTMLDocumentNode_query_interface(DispatchEx *dispex, REFIID riid)
     return HTMLDOMNode_query_interface(&This->node.event_target.dispex, riid);
 }
 
+static void HTMLDocumentNode_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
+    HTMLDOMNode_traverse(dispex, cb);
+
+    if(This->window)
+        note_cc_edge((nsISupports*)&This->window->base.IHTMLWindow2_iface, "window", cb);
+    if(This->dom_implementation)
+        note_cc_edge((nsISupports*)This->dom_implementation, "dom_implementation", cb);
+    if(This->namespaces)
+        note_cc_edge((nsISupports*)This->namespaces, "namespaces", cb);
+}
+
 static void HTMLDocumentNode_unlink(DispatchEx *dispex)
 {
     HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
@@ -5865,13 +5891,8 @@ static void HTMLDocumentNode_unlink(DispatchEx *dispex)
         detach_document_node(This);
         This->dom_document = NULL;
         This->html_document = NULL;
-        This->window = NULL;
     }else if(This->window) {
         detach_document_node(This);
-
-        /* document fragments own reference to inner window */
-        IHTMLWindow2_Release(&This->window->base.IHTMLWindow2_iface);
-        This->window = NULL;
     }
 }
 
@@ -5932,7 +5953,7 @@ static HRESULT HTMLDocumentNode_next_dispid(DispatchEx *dispex, DISPID id, DISPI
 {
     DWORD idx = (id == DISPID_STARTENUM) ? 0 : id - MSHTML_DISPID_CUSTOM_MIN + 1;
     HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
-    nsIDOMNodeList *node_list;
+    nsIDOMNodeList *node_list = NULL;
     const PRUnichar *name;
     nsIDOMElement *nselem;
     nsIDOMNode *nsnode;
@@ -5959,8 +5980,11 @@ static HRESULT HTMLDocumentNode_next_dispid(DispatchEx *dispex, DISPID id, DISPI
     nsAString_InitDepend(&nsstr, L":-moz-any(applet,embed,form,iframe,img,object)[name]");
     nsres = nsIDOMHTMLDocument_QuerySelectorAll(This->html_document, &nsstr, &node_list);
     nsAString_Finish(&nsstr);
-    if(NS_FAILED(nsres))
+    if(NS_FAILED(nsres)) {
+        if(node_list)
+            nsIDOMNodeList_Release(node_list);
         return map_nsresult(nsres);
+    }
 
     for(i = 0, hres = S_OK; SUCCEEDED(hres); i++) {
         nsres = nsIDOMNodeList_Item(node_list, i, &nsnode);
@@ -6057,7 +6081,7 @@ static const event_target_vtbl_t HTMLDocumentNode_event_target_vtbl = {
     {
         .query_interface     = HTMLDocumentNode_query_interface,
         .destructor          = HTMLDocumentNode_destructor,
-        .traverse            = HTMLDOMNode_traverse,
+        .traverse            = HTMLDocumentNode_traverse,
         .unlink              = HTMLDocumentNode_unlink,
         .get_name            = HTMLDocumentNode_get_name,
         .invoke              = HTMLDocumentNode_invoke,
@@ -6166,6 +6190,9 @@ static HTMLDocumentNode *alloc_doc_node(HTMLDocumentObj *doc_obj, HTMLInnerWindo
     doc->outer_window = window ? window->base.outer_window : NULL;
     doc->window = window;
 
+    if(window)
+        IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
+
     ConnectionPointContainer_Init(&doc->cp_container, (IUnknown*)&doc->IHTMLDocument2_iface, HTMLDocumentNode_cpc);
     HTMLDocumentNode_Persist_Init(doc);
     HTMLDocumentNode_Service_Init(doc);
@@ -6240,8 +6267,6 @@ static HRESULT create_document_fragment(nsIDOMNode *nsnode, HTMLDocumentNode *do
     doc_frag = alloc_doc_node(doc_node->doc_obj, doc_node->window);
     if(!doc_frag)
         return E_OUTOFMEMORY;
-
-    IHTMLWindow2_AddRef(&doc_frag->window->base.IHTMLWindow2_iface);
 
     HTMLDOMNode_Init(doc_node, &doc_frag->node, nsnode, &HTMLDocumentNode_dispex);
     doc_frag->node.vtbl = &HTMLDocumentFragmentImplVtbl;

@@ -1459,7 +1459,7 @@ static HRESULT init_stream(struct wm_reader *reader, QWORD file_size)
     HRESULT hr;
     WORD i;
 
-    if (!(wg_parser = wg_parser_create(WG_PARSER_DECODEBIN)))
+    if (!(wg_parser = wg_parser_create(WG_PARSER_DECODEBIN, FALSE)))
         return E_OUTOFMEMORY;
 
     reader->wg_parser = wg_parser;
@@ -1589,6 +1589,8 @@ static const char *get_major_type_string(enum wg_major_type type)
             return "wmv";
         case WG_MAJOR_TYPE_VIDEO_INDEO:
             return "indeo";
+        case WG_MAJOR_TYPE_VIDEO_MPEG1:
+            return "mpeg1-video";
         case WG_MAJOR_TYPE_UNKNOWN:
             return "unknown";
     }
@@ -1948,6 +1950,7 @@ static HRESULT WINAPI reader_GetOutputFormat(IWMSyncReader2 *iface,
         case WG_MAJOR_TYPE_VIDEO_H264:
         case WG_MAJOR_TYPE_VIDEO_WMV:
         case WG_MAJOR_TYPE_VIDEO_INDEO:
+        case WG_MAJOR_TYPE_VIDEO_MPEG1:
             FIXME("Format %u not implemented!\n", format.major_type);
             break;
         case WG_MAJOR_TYPE_UNKNOWN:
@@ -1990,6 +1993,7 @@ static HRESULT WINAPI reader_GetOutputFormatCount(IWMSyncReader2 *iface, DWORD o
         case WG_MAJOR_TYPE_VIDEO_H264:
         case WG_MAJOR_TYPE_VIDEO_WMV:
         case WG_MAJOR_TYPE_VIDEO_INDEO:
+        case WG_MAJOR_TYPE_VIDEO_MPEG1:
             FIXME("Format %u not implemented!\n", format.major_type);
             /* fallthrough */
         case WG_MAJOR_TYPE_AUDIO:

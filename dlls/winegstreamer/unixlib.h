@@ -42,6 +42,7 @@ enum wg_major_type
     WG_MAJOR_TYPE_VIDEO_H264,
     WG_MAJOR_TYPE_VIDEO_WMV,
     WG_MAJOR_TYPE_VIDEO_INDEO,
+    WG_MAJOR_TYPE_VIDEO_MPEG1,
 };
 
 typedef UINT32 wg_audio_format;
@@ -163,6 +164,11 @@ struct wg_format
             uint32_t fps_n, fps_d;
             uint32_t version;
         } video_indeo;
+        struct
+        {
+            int32_t width, height;
+            uint32_t fps_n, fps_d;
+        } video_mpeg1;
     } u;
 };
 
@@ -202,7 +208,6 @@ enum wg_parser_type
 {
     WG_PARSER_DECODEBIN,
     WG_PARSER_AVIDEMUX,
-    WG_PARSER_MPEGAUDIOPARSE,
     WG_PARSER_WAVPARSE,
 };
 
@@ -215,6 +220,7 @@ struct wg_parser_create_params
 {
     wg_parser_t parser;
     wg_parser_type type;
+    UINT8 output_compressed;
     UINT8 err_on;
     UINT8 warn_on;
 };
@@ -372,6 +378,20 @@ struct wg_muxer_create_params
     const char *format;
 };
 
+struct wg_muxer_add_stream_params
+{
+    wg_muxer_t muxer;
+    UINT32 stream_id;
+    const struct wg_format *format;
+};
+
+struct wg_muxer_push_sample_params
+{
+    wg_muxer_t muxer;
+    struct wg_sample *sample;
+    UINT32 stream_id;
+};
+
 enum unix_funcs
 {
     unix_wg_init_gstreamer,
@@ -414,6 +434,9 @@ enum unix_funcs
 
     unix_wg_muxer_create,
     unix_wg_muxer_destroy,
+    unix_wg_muxer_add_stream,
+    unix_wg_muxer_start,
+    unix_wg_muxer_push_sample,
 
     unix_wg_funcs_count,
 };

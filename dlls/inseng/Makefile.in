@@ -3,9 +3,8 @@ IMPORTS   = uuid ole32 advapi32 urlmon shlwapi
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = \
+SOURCES = \
 	icif.c \
 	inf.c \
+	inseng_classes.idl \
 	inseng_main.c
-
-IDL_SRCS = inseng_classes.idl

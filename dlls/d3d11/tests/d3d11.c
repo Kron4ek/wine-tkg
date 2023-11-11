@@ -26,7 +26,6 @@
 #include "initguid.h"
 #include "d3d11_4.h"
 #include "winternl.h"
-#include "wine/heap.h"
 #include "wine/wined3d.h"
 #include "wine/test.h"
 
@@ -135,7 +134,7 @@ static void queue_test_entry(const struct test_entry *t)
     if (mt_test_count >= mt_tests_size)
     {
         mt_tests_size = max(16, mt_tests_size * 2);
-        mt_tests = heap_realloc(mt_tests, mt_tests_size * sizeof(*t));
+        mt_tests = realloc(mt_tests, mt_tests_size * sizeof(*t));
     }
     mt_tests[mt_test_count++] = *t;
 }
@@ -205,7 +204,7 @@ static void run_queued_tests(void)
 
     GetSystemInfo(&si);
     thread_count = si.dwNumberOfProcessors;
-    threads = heap_calloc(thread_count, sizeof(*threads));
+    threads = calloc(thread_count, sizeof(*threads));
     for (i = 0, test_idx = 0; i < thread_count; ++i)
     {
         threads[i] = CreateThread(NULL, 0, thread_func, &test_idx, 0, NULL);
@@ -216,7 +215,7 @@ static void run_queued_tests(void)
     {
         CloseHandle(threads[i]);
     }
-    heap_free(threads);
+    free(threads);
 }
 
 static void set_box(D3D11_BOX *box, UINT left, UINT top, UINT front, UINT right, UINT bottom, UINT back)
@@ -6200,8 +6199,7 @@ static void test_pipeline_statistics_query(void)
         ok(data.IAVertices == 4, "Got unexpected IAVertices count: %u.\n", (unsigned int)data.IAVertices);
         ok(data.IAPrimitives == 2, "Got unexpected IAPrimitives count: %u.\n", (unsigned int)data.IAPrimitives);
         ok(data.VSInvocations == 4, "Got unexpected VSInvocations count: %u.\n", (unsigned int)data.VSInvocations);
-        todo_wine_if (damavand)
-            ok(!data.GSInvocations, "Got unexpected GSInvocations count: %u.\n", (unsigned int)data.GSInvocations);
+        /* AMD has nonzero GSInvocations on Windows. */
         ok(!data.GSPrimitives, "Got unexpected GSPrimitives count: %u.\n", (unsigned int)data.GSPrimitives);
         ok(data.CInvocations == 2, "Got unexpected CInvocations count: %u.\n", (unsigned int)data.CInvocations);
         ok(data.CPrimitives == 2, "Got unexpected CPrimitives count: %u.\n", (unsigned int)data.CPrimitives);
@@ -6223,8 +6221,7 @@ static void test_pipeline_statistics_query(void)
     ok(data.IAVertices == 4, "Got unexpected IAVertices count: %u.\n", (unsigned int)data.IAVertices);
     ok(data.IAPrimitives == 2, "Got unexpected IAPrimitives count: %u.\n", (unsigned int)data.IAPrimitives);
     ok(data.VSInvocations == 4, "Got unexpected VSInvocations count: %u.\n", (unsigned int)data.VSInvocations);
-    todo_wine_if (damavand)
-        ok(!data.GSInvocations, "Got unexpected GSInvocations count: %u.\n", (unsigned int)data.GSInvocations);
+    /* AMD has nonzero GSInvocations on Windows. */
     ok(!data.GSPrimitives, "Got unexpected GSPrimitives count: %u.\n", (unsigned int)data.GSPrimitives);
     ok(data.CInvocations == 2, "Got unexpected CInvocations count: %u.\n", (unsigned int)data.CInvocations);
     ok(data.CPrimitives == 2, "Got unexpected CPrimitives count: %u.\n", (unsigned int)data.CPrimitives);
@@ -10961,7 +10958,7 @@ static void test_sample_c_lz(void)
         0x00000000, 0x0020800a, 0x00000000, 0x00000000, 0x05000036, 0x001020f2, 0x00000000, 0x00100006,
         0x00000000, 0x0100003e,
     };
-    static const float depth_values[] = {1.0f, 0.0f, 0.5f, 0.6f, 0.4f, 0.1f};
+    static const float depth_values[] = {0.0f, 1.0f, 0.5f, 0.6f, 0.4f, 0.1f};
     static const struct
     {
         unsigned int layer;
@@ -10970,8 +10967,8 @@ static void test_sample_c_lz(void)
     }
     tests[] =
     {
-        {0, 0.5f, 0.0f},
-        {1, 0.5f, 1.0f},
+        {0, 0.5f, 1.0f},
+        {1, 0.5f, 0.0f},
         {2, 0.5f, 0.0f},
         {3, 0.5f, 0.0f},
         {4, 0.5f, 1.0f},
@@ -10984,8 +10981,8 @@ static void test_sample_c_lz(void)
         {4, 0.0f, 0.0f},
         {5, 0.0f, 0.0f},
 
-        {0, 1.0f, 0.0f},
-        {1, 1.0f, 1.0f},
+        {0, 1.0f, 1.0f},
+        {1, 1.0f, 0.0f},
         {2, 1.0f, 1.0f},
         {3, 1.0f, 1.0f},
         {4, 1.0f, 1.0f},
@@ -11473,7 +11470,7 @@ static void test_render_target_views(void)
     texture_desc.CPUAccessFlags = 0;
     texture_desc.MiscFlags = 0;
 
-    data = heap_alloc_zero(texture_desc.Width * texture_desc.Height * 4);
+    data = calloc(texture_desc.Width * texture_desc.Height, 4);
     ok(!!data, "Failed to allocate memory.\n");
 
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
@@ -11557,7 +11554,7 @@ static void test_render_target_views(void)
         ID3D11Resource_Release(resource);
     }
 
-    heap_free(data);
+    free(data);
     release_test_context(&test_context);
 }
 
@@ -13480,9 +13477,9 @@ static void test_instanced_draw(void)
         {"color",    0, DXGI_FORMAT_R8_UNORM,           1, D3D11_APPEND_ALIGNED_ELEMENT,
                 D3D11_INPUT_PER_INSTANCE_DATA, 1},
         {"color",    1, DXGI_FORMAT_R8_UNORM,           2, D3D11_APPEND_ALIGNED_ELEMENT,
-                D3D10_INPUT_PER_INSTANCE_DATA, 0},
+                D3D11_INPUT_PER_INSTANCE_DATA, 0},
         {"color",    2, DXGI_FORMAT_R8_UNORM,           3, D3D11_APPEND_ALIGNED_ELEMENT,
-                D3D10_INPUT_PER_INSTANCE_DATA, 2},
+                D3D11_INPUT_PER_INSTANCE_DATA, 2},
         {"v_offset", 0, DXGI_FORMAT_R32_FLOAT,          1, D3D11_APPEND_ALIGNED_ELEMENT,
                 D3D11_INPUT_PER_INSTANCE_DATA, 1},
     };
@@ -15403,7 +15400,7 @@ static void test_resource_access(const D3D_FEATURE_LEVEL feature_level)
 
     data.SysMemPitch = 0;
     data.SysMemSlicePitch = 0;
-    data.pSysMem = heap_alloc(10240);
+    data.pSysMem = malloc(10240);
     ok(!!data.pSysMem, "Failed to allocate memory.\n");
 
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
@@ -15588,7 +15585,7 @@ static void test_resource_access(const D3D_FEATURE_LEVEL feature_level)
         }
     }
 
-    heap_free((void *)data.pSysMem);
+    free((void *)data.pSysMem);
 
     ID3D11DeviceContext_Release(context);
     refcount = ID3D11Device_Release(device);
@@ -24691,7 +24688,7 @@ static void test_buffer_srv(void)
                 resource_data.SysMemSlicePitch = 0;
                 if (current_buffer->data_offset)
                 {
-                    data = heap_alloc_zero(current_buffer->byte_count);
+                    data = calloc(1, current_buffer->byte_count);
                     ok(!!data, "Failed to allocate memory.\n");
                     memcpy(data + current_buffer->data_offset, current_buffer->data,
                             current_buffer->byte_count - current_buffer->data_offset);
@@ -24703,7 +24700,7 @@ static void test_buffer_srv(void)
                 }
                 hr = ID3D11Device_CreateBuffer(device, &buffer_desc, &resource_data, &buffer);
                 ok(hr == S_OK, "Test %u: Got unexpected hr %#lx.\n", i, hr);
-                heap_free(data);
+                free(data);
             }
             else
             {
@@ -28460,7 +28457,7 @@ static void test_depth_bias(void)
     rasterizer_desc.SlopeScaledDepthBias = 0.0f;
     rasterizer_desc.DepthClipEnable = TRUE;
 
-    depth_values = heap_calloc(swapchain_desc.height, sizeof(*depth_values));
+    depth_values = calloc(swapchain_desc.height, sizeof(*depth_values));
     ok(!!depth_values, "Failed to allocate memory.\n");
 
     for (format_idx = 0; format_idx < ARRAY_SIZE(formats); ++format_idx)
@@ -28669,7 +28666,7 @@ static void test_depth_bias(void)
         winetest_pop_context();
     }
 
-    heap_free(depth_values);
+    free(depth_values);
     release_test_context(&test_context);
 }
 
@@ -30430,7 +30427,7 @@ static void test_generate_mips(void)
     device = test_context.device;
     context = test_context.immediate_context;
 
-    data = heap_alloc(sizeof(*data) * 32 * 32 * 32);
+    data = malloc(sizeof(*data) * 32 * 32 * 32);
 
     for (z = 0; z < 32; ++z)
     {
@@ -30457,7 +30454,7 @@ static void test_generate_mips(void)
         }
     }
 
-    zero_data = heap_alloc_zero(sizeof(*zero_data) * 16 * 16 * 16);
+    zero_data = calloc(16 * 16 * 16, sizeof(*zero_data));
 
     for (i = 0; i < ARRAY_SIZE(resource_types); ++i)
     {
@@ -30659,8 +30656,8 @@ static void test_generate_mips(void)
 
     ID3D11Resource_Release(resource);
 
-    heap_free(zero_data);
-    heap_free(data);
+    free(zero_data);
+    free(data);
 
     release_test_context(&test_context);
 }
@@ -33987,7 +33984,7 @@ static void test_texture_compressed_3d(void)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
     /* Simply test all combinations of r0 and r1. */
-    texture_data = heap_alloc(256 * 256 * sizeof(UINT64));
+    texture_data = malloc(256 * 256 * sizeof(UINT64));
     for (r1 = 0; r1 < 256; ++r1)
     {
         for (r0 = 0; r0 < 256; ++r0)
@@ -34012,7 +34009,7 @@ static void test_texture_compressed_3d(void)
     texture_desc.MiscFlags = 0;
     hr = ID3D11Device_CreateTexture3D(device, &texture_desc, &resource_data, &texture);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-    heap_free(texture_data);
+    free(texture_data);
 
     hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, NULL, &srv);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
@@ -34832,7 +34829,7 @@ static void test_vertex_formats(void)
         {DXGI_FORMAT_R8_SNORM,              { 2.59842515e-01,  0.0,             0.0,             1.0}},
 
         {DXGI_FORMAT_B8G8R8A8_UNORM,        { 3.96078438e-01,  2.62745112e-01,  1.29411772e-01,  5.29411793e-01}},
-        {DXGI_FORMAT_B8G8R8X8_UNORM,        { 3.96078438e-01,  2.62745112e-01,  1.29411772e-01,  1.0}},
+        {DXGI_FORMAT_B8G8R8X8_UNORM,        { 3.96078438e-01,  2.62745112e-01,  1.29411772e-01}},
     };
 
     if (!init_test_context(&test_context, NULL))
@@ -34876,9 +34873,12 @@ static void test_vertex_formats(void)
         };
 
         static const unsigned int stride = sizeof(*quad);
+        const struct vec4 *expect = &tests[i].expect;
         static const unsigned int offset = 0;
         ID3D11InputLayout *input_layout;
+        struct resource_readback rb;
         unsigned int format_support;
+        struct vec4 value;
 
         hr = ID3D11Device_CheckFormatSupport(device, tests[i].format, &format_support);
         ok(hr == S_OK || hr == E_FAIL, "Got hr %#lx.\n", hr);
@@ -34901,8 +34901,15 @@ static void test_vertex_formats(void)
         ID3D11DeviceContext_PSSetShader(context, test_context.ps, NULL, 0);
         ID3D11DeviceContext_Draw(context, 4, 0);
 
-        todo_wine_if (damavand && tests[i].format == DXGI_FORMAT_B8G8R8X8_UNORM)
-            check_texture_vec4(rt, &tests[i].expect, 1);
+        get_texture_readback(rt, 0, &rb);
+        value = *get_readback_vec4(&rb, 0, 0);
+        /* AMD supports B8G8R8X8_UNORM but puts garbage in the w component. */
+        if (tests[i].format == DXGI_FORMAT_B8G8R8X8_UNORM)
+            value.w = 0.0f;
+        ok(compare_vec4(&value, expect, 1),
+                    "Got {%.8e, %.8e, %.8e, %.8e}, expected {%.8e, %.8e, %.8e, %.8e}.\n",
+                    value.x, value.y, value.z, value.w, expect->x, expect->y, expect->z, expect->w);
+        release_resource_readback(&rb);
 
         ID3D11InputLayout_Release(input_layout);
 

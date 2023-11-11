@@ -2930,7 +2930,14 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_CheckFeatureSupport(ID3D12Device5 
             if (image_features & VK_FORMAT_FEATURE_BLIT_SRC_BIT)
                 data->Support1 |= D3D12_FORMAT_SUPPORT1_MULTISAMPLE_RESOLVE;
             if (image_features & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
+            {
                 data->Support1 |= D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW;
+                if (device->vk_info.uav_read_without_format)
+                    data->Support2 |= D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD;
+                /* We effectively require shaderStorageImageWriteWithoutFormat,
+                 * so we can just report UAV_TYPED_STORE unconditionally. */
+                data->Support2 |= D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE;
+            }
 
             if (image_features & VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT)
                 data->Support2 |= D3D12_FORMAT_SUPPORT2_UAV_ATOMIC_ADD
@@ -3632,7 +3639,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_CreateCommittedResource(ID3D12Devi
         return hr;
     }
 
-    return return_interface(&object->ID3D12Resource_iface, &IID_ID3D12Resource, iid, resource);
+    return return_interface(&object->ID3D12Resource1_iface, &IID_ID3D12Resource1, iid, resource);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d12_device_CreateHeap(ID3D12Device5 *iface,
@@ -3675,7 +3682,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_CreatePlacedResource(ID3D12Device5
             desc, initial_state, optimized_clear_value, &object)))
         return hr;
 
-    return return_interface(&object->ID3D12Resource_iface, &IID_ID3D12Resource, iid, resource);
+    return return_interface(&object->ID3D12Resource1_iface, &IID_ID3D12Resource1, iid, resource);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d12_device_CreateReservedResource(ID3D12Device5 *iface,
@@ -3693,7 +3700,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_CreateReservedResource(ID3D12Devic
             desc, initial_state, optimized_clear_value, &object)))
         return hr;
 
-    return return_interface(&object->ID3D12Resource_iface, &IID_ID3D12Resource, iid, resource);
+    return return_interface(&object->ID3D12Resource1_iface, &IID_ID3D12Resource1, iid, resource);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d12_device_CreateSharedHandle(ID3D12Device5 *iface,
@@ -4028,7 +4035,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_CreateCommittedResource1(ID3D12Dev
         return hr;
     }
 
-    return return_interface(&object->ID3D12Resource_iface, &IID_ID3D12Resource, iid, resource);
+    return return_interface(&object->ID3D12Resource1_iface, &IID_ID3D12Resource1, iid, resource);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d12_device_CreateHeap1(ID3D12Device5 *iface,

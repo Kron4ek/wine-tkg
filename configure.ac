@@ -52,8 +52,7 @@ AC_ARG_WITH(oss,       AS_HELP_STRING([--without-oss],[do not use the OSS sound 
 AC_ARG_WITH(pcap,      AS_HELP_STRING([--without-pcap],[do not use the Packet Capture library]),
             [if test "x$withval" = "xno"; then ac_cv_header_pcap_pcap_h=no; fi])
 AC_ARG_WITH(pcsclite,  AS_HELP_STRING([--without-pcsclite],[do not use PCSC lite]))
-AC_ARG_WITH(pthread,   AS_HELP_STRING([--without-pthread],[do not use the pthread library]),
-            [if test "x$withval" = "xno"; then ac_cv_header_pthread_h=no; fi])
+AC_ARG_WITH(pthread,   AS_HELP_STRING([--without-pthread],[do not use the pthread library]))
 AC_ARG_WITH(pulse,     AS_HELP_STRING([--without-pulse],[do not use PulseAudio sound support]))
 AC_ARG_WITH(sane,      AS_HELP_STRING([--without-sane],[do not use SANE (scanner support)]))
 AC_ARG_WITH(sdl,       AS_HELP_STRING([--without-sdl],[do not use SDL]))
@@ -442,7 +441,6 @@ AC_CHECK_HEADERS(\
 	netinet/tcp_fsm.h \
 	pcap/pcap.h \
 	port.h \
-	pthread.h \
 	pwd.h \
 	sched.h \
 	scsi/scsi.h \
@@ -604,10 +602,7 @@ AC_CHECK_HEADERS([sys/thr.h],,,
 #include <sys/ucontext.h>
 #endif])
 
-AC_CHECK_HEADERS([pthread_np.h],,,
-[#ifdef HAVE_PTHREAD_H
-#include <pthread.h>
-#endif])
+AC_CHECK_HEADERS([pthread_np.h],,,[#include <pthread.h>])
 
 AC_CHECK_HEADERS([linux/videodev2.h],,,
 [#include <sys/time.h>
@@ -656,10 +651,9 @@ case $host_os in
     DLLEXT=""
     EXTRACFLAGS="-D__WINE_PE_BUILD"
     dnl Disable stdcall fixups to catch prototype mismatches
-    case $host_cpu in
-      *i[[3456]]86*) WINE_TRY_CFLAGS([-Wl,--disable-stdcall-fixup],
-                                     [LDDLLFLAGS="-Wl,--disable-stdcall-fixup"]) ;;
-    esac
+    AS_VAR_IF([HOST_ARCH],[i386],
+        [WINE_TRY_CFLAGS([-Wl,--disable-stdcall-fixup],
+                         [LDDLLFLAGS="-Wl,--disable-stdcall-fixup"])])
     dnl Disable modules that can't be used on Windows
     enable_loader=${enable_loader:-no}
     enable_server=${enable_server:-no}
@@ -687,9 +681,9 @@ case $host_os in
 
     WINELOADER_LDFLAGS="-Wl,-pie,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
 
-    case $host_cpu in
-      *i[[3456]]86*|*x86_64*) wine_can_build_preloader=yes ;;
-      *)                      wine_can_build_preloader=no ;;
+    case $HOST_ARCH in
+      i386|x86_64) wine_can_build_preloader=yes ;;
+      *)           wine_can_build_preloader=no ;;
     esac
 
     if test "$wine_can_build_preloader" = "yes"
@@ -697,11 +691,11 @@ case $host_os in
         WINEPRELOADER_LDFLAGS="-nostartfiles -nodefaultlibs -e _start -ldylib1.o -mmacosx-version-min=10.7 -Wl,-no_new_main,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
         WINE_TRY_CFLAGS([-Wl,-no_pie],
                         [WINEPRELOADER_LDFLAGS="-Wl,-no_pie $WINEPRELOADER_LDFLAGS"])
-        case $host_cpu in
-          *i[[3456]]86*)
+        case $HOST_ARCH in
+          i386)
             WINEPRELOADER_LDFLAGS="-Wl,-image_base,0x7d400000 $WINEPRELOADER_LDFLAGS"
             ;;
-          *x86_64*)
+          x86_64)
             WINEPRELOADER_LDFLAGS="-Wl,-image_base,0x200000000,-segalign,0x1000,-segaddr,WINE_RESERVE,0x1000 $WINEPRELOADER_LDFLAGS"
             ;;
         esac
@@ -750,11 +744,11 @@ case $host_os in
 
     if test "x$exec_prefix" = xNONE
     then
-      case $host_cpu in
-        *i[[3456]]86*) exec_prefix='${prefix}/x86' ;;
-        *x86_64*)      exec_prefix='${prefix}/x86_64' ;;
-        *arm*)         exec_prefix='${prefix}/armeabi-v7a' ;;
-        *aarch64*)     exec_prefix='${prefix}/arm64-v8a' ;;
+      case $HOST_ARCH in
+        i386)    exec_prefix='${prefix}/x86' ;;
+        x86_64)  exec_prefix='${prefix}/x86_64' ;;
+        arm)     exec_prefix='${prefix}/armeabi-v7a' ;;
+        aarch64) exec_prefix='${prefix}/arm64-v8a' ;;
       esac
     fi
     ;;
@@ -762,16 +756,15 @@ case $host_os in
   *)
     AC_DEFINE(_GNU_SOURCE,1,[Define to 1 to enable GNU extensions on Linux])
     test "$ac_cv_sys_file_offset_bits" = 64 && AC_DEFINE(_TIME_BITS,64,[Define to 64 to enable 64-bit time_t on Linux])
-    case $host_cpu in
-      *i[[3456789]]86*)
+    if test $HOST_ARCH = i386
+    then
         DLLFLAGS="$DLLFLAGS -fno-PIC"
         LDDLLFLAGS="-fno-PIC"
         WINE_TRY_CFLAGS([-fno-PIC -Wl,-z,notext],[LDDLLFLAGS="$LDDLLFLAGS -Wl,-z,notext"])
-        ;;
-      *)
+    else
         DLLFLAGS="$DLLFLAGS -fPIC"
-        LDDLLFLAGS="-fPIC" ;;
-    esac
+        LDDLLFLAGS="-fPIC"
+    fi
 
     AC_CACHE_CHECK([whether -Wl,-z,defs works correctly], ac_cv_wl_z_defs,
                    [ac_save_CFLAGS="$CFLAGS"
@@ -967,6 +960,7 @@ This is an error since --enable-archs=$wine_arch was requested.])])
     WINE_TRY_PE_CFLAGS([-Winit-self])
     WINE_TRY_PE_CFLAGS([-Wpacked-not-aligned],[AS_VAR_APPEND(${wine_arch}_EXTRACFLAGS,[" -Wno-packed-not-aligned"])])
     WINE_TRY_PE_CFLAGS([-Wpragma-pack],[AS_VAR_APPEND(${wine_arch}_EXTRACFLAGS,[" -Wno-pragma-pack"])])
+    WINE_TRY_PE_CFLAGS([-Wmicrosoft-enum-forward-reference],[AS_VAR_APPEND(${wine_arch}_EXTRACFLAGS,[" -Wno-microsoft-enum-forward-reference"])])
     WINE_TRY_PE_CFLAGS([-Wshift-overflow=2])
     WINE_TRY_PE_CFLAGS([-Wstrict-prototypes])
     WINE_TRY_PE_CFLAGS([-Wtype-limits])
@@ -1181,10 +1175,8 @@ WINE_EXTLIB_FLAGS(ZYDIS, zydis, zydis, "-I\$(top_srcdir)/libs/zydis/include")
 
 dnl **** Check for pthread ****
 
-if test "$ac_cv_header_pthread_h" = "yes"
-then
-    AC_CHECK_FUNC(pthread_create,,[AC_CHECK_LIB(pthread,pthread_create,[AC_SUBST(PTHREAD_LIBS,"-lpthread")])])
-fi
+AS_VAR_IF([with_pthread],[no],[],
+          [AC_CHECK_FUNC(pthread_create,,[AC_CHECK_LIB(pthread,pthread_create,[AC_SUBST(PTHREAD_LIBS,"-lpthread")])])])
 WINE_ERROR_WITH(pthread,[test "x$ac_cv_func_pthread_create" != xyes -a "x$PTHREAD_LIBS" = x],
 [pthread ${notice_platform}development files not found.
 Wine cannot support threads without libpthread.])
@@ -1876,6 +1868,7 @@ then
   WINE_TRY_CFLAGS([-Werror=unused-command-line-argument],[CFLAGS="$CFLAGS -Werror=unused-command-line-argument"])
   WINE_TRY_CFLAGS([-Werror=ignored-optimization-argument],[CFLAGS="$CFLAGS -Werror=ignored-optimization-argument"])
   WINE_TRY_CFLAGS([-fcf-protection=none])
+  WINE_TRY_CFLAGS([-fvisibility=hidden])
   WINE_TRY_CFLAGS([-fno-stack-protector])
   WINE_TRY_CFLAGS([-fno-strict-aliasing])
   WINE_TRY_CFLAGS([-Wdeclaration-after-statement])
@@ -1916,10 +1909,10 @@ char*f(const char *h,char n) {return strchr(h,n);}]])],[ac_cv_c_logicalop_noisy=
 #error no
 #endif]])],
           [wine_cv_64bit_compare_swap="none needed"],
-          [case $host_cpu in
-            *i[[3456]]86*) wine_cv_64bit_compare_swap="-march=i586" ;;
-            *arm*)         wine_cv_64bit_compare_swap="-march=armv7-a" ;;
-            *)             wine_cv_64bit_compare_swap="unknown" ;;
+          [case $HOST_ARCH in
+            i386) wine_cv_64bit_compare_swap="-march=i586" ;;
+            arm)  wine_cv_64bit_compare_swap="-march=armv7-a" ;;
+            *)    wine_cv_64bit_compare_swap="unknown" ;;
            esac
            if test "x$wine_cv_64bit_compare_swap" != xunknown
            then
@@ -1957,14 +1950,13 @@ char*f(const char *h,char n) {return strchr(h,n);}]])],[ac_cv_c_logicalop_noisy=
     *) MSVCRTFLAGS="-D_WIN32"
        WINE_TRY_CFLAGS([-fno-builtin],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-builtin"])
        WINE_TRY_CFLAGS([-fshort-wchar],[MSVCRTFLAGS="$MSVCRTFLAGS -fshort-wchar"])
-       WINE_TRY_CFLAGS([-fvisibility=hidden],[MSVCRTFLAGS="$MSVCRTFLAGS -fvisibility=hidden"])
        WINE_TRY_CFLAGS([-Wno-format],[MSVCRTFLAGS="$MSVCRTFLAGS -Wno-format"]) ;;
   esac
 
-  case $host_cpu in
+  case $HOST_ARCH in
     dnl gcc-4.6+ omits frame pointers by default, breaking some copy protections
-    *i[[3456789]]86*) WINE_TRY_CFLAGS([-fno-omit-frame-pointer],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-omit-frame-pointer"]) ;;
-    *x86_64*)
+    i386) WINE_TRY_CFLAGS([-fno-omit-frame-pointer],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-omit-frame-pointer"]) ;;
+    x86_64)
       case $host_os in
         dnl Mingw uses Windows 64-bit types, not Unix ones
         cygwin*|mingw32*) WINE_TRY_CFLAGS([-Wno-format]) ;;
@@ -1981,7 +1973,7 @@ int a(int b, ...) { __builtin_ms_va_list list; __builtin_ms_va_start(list,b); }]
            fi
            MSVCRTFLAGS="$MSVCRTFLAGS -mabi=ms" ;;
       esac ;;
-    arm*)
+    arm)
       WINE_TRY_CFLAGS([-Wincompatible-function-pointer-types],[EXTRACFLAGS="$EXTRACFLAGS -Wno-error=incompatible-function-pointer-types"]) ;;
   esac
 
@@ -2038,12 +2030,11 @@ AC_SUBST(WINELOADER_PROGRAMS,"$wine_binary")
 
 case $host_os in
   linux*)
-    case $host_cpu in
-      *i[[3456789]]86*|x86_64*|*aarch64*|arm*)
+    if test $HOST_ARCH != unknown
+    then
         test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine-preloader)
         WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS $wine_binary-preloader"
-        ;;
-    esac
+    fi
     ;;
   darwin*|macosx*)
     if test "$wine_can_build_preloader" = "yes"
@@ -2871,6 +2862,7 @@ WINE_CONFIG_MAKEFILE(dlls/mssign32)
 WINE_CONFIG_MAKEFILE(dlls/mssip32)
 WINE_CONFIG_MAKEFILE(dlls/mstask)
 WINE_CONFIG_MAKEFILE(dlls/mstask/tests)
+WINE_CONFIG_MAKEFILE(dlls/msttsengine)
 WINE_CONFIG_MAKEFILE(dlls/msv1_0)
 WINE_CONFIG_MAKEFILE(dlls/msvcirt)
 WINE_CONFIG_MAKEFILE(dlls/msvcirt/tests)
@@ -3703,7 +3695,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(GIT_DIR=${wine_srcdir}.git git describe HEAD 2>/dev/null || echo \"wine-\$(PACKAGE_VERSION)\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1 (Staging)\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-8.20.r0.gf32f8c62\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

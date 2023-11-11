@@ -66,11 +66,12 @@ bool array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
     return TRUE;
 }
 
-wg_parser_t wg_parser_create(enum wg_parser_type type)
+wg_parser_t wg_parser_create(enum wg_parser_type type, bool output_compressed)
 {
     struct wg_parser_create_params params =
     {
         .type = type,
+        .output_compressed = output_compressed,
         .err_on = ERR_ON(quartz),
         .warn_on = WARN_ON(quartz),
     };
@@ -466,13 +467,17 @@ HRESULT wg_muxer_create(const char *format, wg_muxer_t *muxer)
 
     TRACE("format %p, muxer %p.\n", format, muxer);
 
-    if (SUCCEEDED(status = WINE_UNIX_CALL(unix_wg_muxer_create, &params)))
+    if (!(status = WINE_UNIX_CALL(unix_wg_muxer_create, &params)))
     {
         *muxer = params.muxer;
         TRACE("Created wg_muxer %#I64x.\n", params.muxer);
     }
+    else
+    {
+        WARN("Failed to create muxer, status %#lx.\n", status);
+    }
 
-    return status;
+    return HRESULT_FROM_NT(status);
 }
 
 void wg_muxer_destroy(wg_muxer_t muxer)
@@ -480,6 +485,63 @@ void wg_muxer_destroy(wg_muxer_t muxer)
     TRACE("muxer %#I64x.\n", muxer);
 
     WINE_UNIX_CALL(unix_wg_muxer_destroy, &muxer);
+}
+
+HRESULT wg_muxer_add_stream(wg_muxer_t muxer, UINT32 stream_id, const struct wg_format *format)
+{
+    struct wg_muxer_add_stream_params params =
+    {
+        .muxer = muxer,
+        .stream_id = stream_id,
+        .format = format,
+    };
+    NTSTATUS status;
+
+    TRACE("muxer %#I64x, stream_id %u, format %p.\n", muxer, stream_id, format);
+
+    if ((status = WINE_UNIX_CALL(unix_wg_muxer_add_stream, &params)))
+    {
+        WARN("Failed to add stream, status %#lx.\n", status);
+        return HRESULT_FROM_NT(status);
+    }
+
+    return S_OK;
+}
+
+HRESULT wg_muxer_start(wg_muxer_t muxer)
+{
+    NTSTATUS status;
+
+    TRACE("muxer %#I64x.\n",  muxer);
+
+    if ((status = WINE_UNIX_CALL(unix_wg_muxer_start, &muxer)))
+    {
+        WARN("Failed to start muxer, status %#lx.\n", status);
+        return HRESULT_FROM_NT(status);
+    }
+
+    return S_OK;
+}
+
+HRESULT wg_muxer_push_sample(wg_muxer_t muxer, struct wg_sample *sample, UINT32 steam_id)
+{
+    struct wg_muxer_push_sample_params params =
+    {
+        .muxer = muxer,
+        .sample = sample,
+        .stream_id = steam_id,
+    };
+    NTSTATUS status;
+
+    TRACE("muxer %#I64x, sample %p.\n", muxer, sample);
+
+    if ((status = WINE_UNIX_CALL(unix_wg_muxer_push_sample, &params)))
+    {
+        WARN("Failed to push sample, status %#lx.\n", status);
+        return HRESULT_FROM_NT(status);
+    }
+
+    return S_OK;
 }
 
 #define ALIGN(n, alignment) (((n) + (alignment) - 1) & ~((alignment) - 1))
@@ -631,6 +693,7 @@ static const IClassFactoryVtbl class_factory_vtbl =
 static struct class_factory avi_splitter_cf = {{&class_factory_vtbl}, avi_splitter_create};
 static struct class_factory decodebin_parser_cf = {{&class_factory_vtbl}, decodebin_parser_create};
 static struct class_factory mpeg_audio_codec_cf = {{&class_factory_vtbl}, mpeg_audio_codec_create};
+static struct class_factory mpeg_video_codec_cf = {{&class_factory_vtbl}, mpeg_video_codec_create};
 static struct class_factory mpeg_layer3_decoder_cf = {{&class_factory_vtbl}, mpeg_layer3_decoder_create};
 static struct class_factory mpeg_splitter_cf = {{&class_factory_vtbl}, mpeg_splitter_create};
 static struct class_factory wave_parser_cf = {{&class_factory_vtbl}, wave_parser_create};
@@ -660,6 +723,8 @@ HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void **out)
         factory = &decodebin_parser_cf;
     else if (IsEqualGUID(clsid, &CLSID_CMpegAudioCodec))
         factory = &mpeg_audio_codec_cf;
+    else if (IsEqualGUID(clsid, &CLSID_CMpegVideoCodec))
+        factory = &mpeg_video_codec_cf;
     else if (IsEqualGUID(clsid, &CLSID_mpeg_layer3_decoder))
         factory = &mpeg_layer3_decoder_cf;
     else if (IsEqualGUID(clsid, &CLSID_MPEG1Splitter))
@@ -771,6 +836,38 @@ static const REGFILTER2 reg_mpeg_audio_codec =
     .dwMerit = 0x03680001,
     .u.s2.cPins2 = 2,
     .u.s2.rgPins2 = reg_mpeg_audio_codec_pins,
+};
+
+static const REGPINTYPES reg_mpeg_video_codec_sink_mts[2] =
+{
+    {&MEDIATYPE_Video, &MEDIASUBTYPE_MPEG1Packet},
+    {&MEDIATYPE_Video, &MEDIASUBTYPE_MPEG1Payload},
+};
+
+static const REGPINTYPES reg_mpeg_video_codec_source_mts[1] =
+{
+    {&MEDIATYPE_Video, &GUID_NULL},
+};
+
+static const REGFILTERPINS2 reg_mpeg_video_codec_pins[2] =
+{
+    {
+        .nMediaTypes = 2,
+        .lpMediaType = reg_mpeg_video_codec_sink_mts,
+    },
+    {
+        .dwFlags = REG_PINFLAG_B_OUTPUT,
+        .nMediaTypes = 1,
+        .lpMediaType = reg_mpeg_video_codec_source_mts,
+    },
+};
+
+static const REGFILTER2 reg_mpeg_video_codec =
+{
+    .dwVersion = 2,
+    .dwMerit = 0x40000001,
+    .u.s2.cPins2 = 2,
+    .u.s2.rgPins2 = reg_mpeg_video_codec_pins,
 };
 
 static const REGPINTYPES reg_mpeg_layer3_decoder_sink_mts[1] =
@@ -1008,6 +1105,8 @@ HRESULT WINAPI DllRegisterServer(void)
             L"GStreamer splitter filter", NULL, NULL, NULL, &reg_decodebin_parser);
     IFilterMapper2_RegisterFilter(mapper, &CLSID_CMpegAudioCodec,
             L"MPEG Audio Decoder", NULL, NULL, NULL, &reg_mpeg_audio_codec);
+    IFilterMapper2_RegisterFilter(mapper, &CLSID_CMpegVideoCodec,
+            L"MPEG Video Decoder", NULL, NULL, NULL, &reg_mpeg_video_codec);
     IFilterMapper2_RegisterFilter(mapper, &CLSID_mpeg_layer3_decoder,
             L"MPEG Layer-3 Decoder", NULL, NULL, NULL, &reg_mpeg_layer3_decoder);
     IFilterMapper2_RegisterFilter(mapper, &CLSID_MPEG1Splitter,
@@ -1049,6 +1148,7 @@ HRESULT WINAPI DllUnregisterServer(void)
     IFilterMapper2_UnregisterFilter(mapper, NULL, NULL, &CLSID_AviSplitter);
     IFilterMapper2_UnregisterFilter(mapper, NULL, NULL, &CLSID_decodebin_parser);
     IFilterMapper2_UnregisterFilter(mapper, NULL, NULL, &CLSID_CMpegAudioCodec);
+    IFilterMapper2_UnregisterFilter(mapper, NULL, NULL, &CLSID_CMpegVideoCodec);
     IFilterMapper2_UnregisterFilter(mapper, NULL, NULL, &CLSID_mpeg_layer3_decoder);
     IFilterMapper2_UnregisterFilter(mapper, NULL, NULL, &CLSID_MPEG1Splitter);
     IFilterMapper2_UnregisterFilter(mapper, NULL, NULL, &CLSID_WAVEParser);

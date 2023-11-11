@@ -392,16 +392,16 @@ static void test_empty(void)
     stat = GdipRecordMetafile(NULL, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
     expect(InvalidParameter, stat);
 
-    stat = GdipRecordMetafile(hdc, MetafileTypeInvalid, &frame, MetafileFrameUnitPixel, description, &metafile);
+    stat = GdipRecordMetafile(hdc, (EmfType)MetafileTypeInvalid, &frame, MetafileFrameUnitPixel, description, &metafile);
     expect(InvalidParameter, stat);
 
-    stat = GdipRecordMetafile(hdc, MetafileTypeWmf, &frame, MetafileFrameUnitPixel, description, &metafile);
+    stat = GdipRecordMetafile(hdc, (EmfType)MetafileTypeWmf, &frame, MetafileFrameUnitPixel, description, &metafile);
     expect(InvalidParameter, stat);
 
-    stat = GdipRecordMetafile(hdc, MetafileTypeWmfPlaceable, &frame, MetafileFrameUnitPixel, description, &metafile);
+    stat = GdipRecordMetafile(hdc, (EmfType)MetafileTypeWmfPlaceable, &frame, MetafileFrameUnitPixel, description, &metafile);
     expect(InvalidParameter, stat);
 
-    stat = GdipRecordMetafile(hdc, MetafileTypeEmfPlusDual+1, &frame, MetafileFrameUnitPixel, description, &metafile);
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusDual+1, &frame, MetafileFrameUnitPixel, description, &metafile);
     expect(InvalidParameter, stat);
 
     stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, NULL);
@@ -1937,7 +1937,7 @@ static void test_converttoemfplus(void)
 
     hdc = CreateCompatibleDC(0);
 
-    stat = GdipRecordMetafile(hdc, MetafileTypeEmf, &frame, MetafileFrameUnitPixel, description, &metafile);
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
     expect(Ok, stat);
 
     stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, &emhmeta);
@@ -1961,10 +1961,10 @@ static void test_converttoemfplus(void)
     stat = pGdipConvertToEmfPlus(graphics, metafile, &succ, EmfTypeEmfPlusOnly, description, NULL);
     expect(InvalidParameter, stat);
 
-    stat = pGdipConvertToEmfPlus(graphics, metafile, NULL, MetafileTypeInvalid, NULL, &metafile2);
+    stat = pGdipConvertToEmfPlus(graphics, metafile, NULL, 0, NULL, &metafile2);
     expect(InvalidParameter, stat);
 
-    stat = pGdipConvertToEmfPlus(graphics, metafile, NULL, MetafileTypeEmfPlusDual+1, NULL, &metafile2);
+    stat = pGdipConvertToEmfPlus(graphics, metafile, NULL, EmfTypeEmfPlusDual+1, NULL, &metafile2);
     expect(InvalidParameter, stat);
 
     /* If we are already an Enhanced Metafile then the conversion fails. */
@@ -3502,19 +3502,19 @@ static HDC create_printer_dc(void)
     if (!pOpenPrinterA(buffer, &hprn, NULL)) goto done;
 
     pGetPrinterA(hprn, 2, NULL, 0, &len);
-    pbuf = HeapAlloc(GetProcessHeap(), 0, len);
+    pbuf = malloc(len);
     if (!pGetPrinterA(hprn, 2, (LPBYTE)pbuf, len, &len)) goto done;
 
     pGetPrinterDriverA(hprn, NULL, 3, NULL, 0, &len);
-    dbuf = HeapAlloc(GetProcessHeap(), 0, len);
+    dbuf = malloc(len);
     if (!pGetPrinterDriverA(hprn, NULL, 3, (LPBYTE)dbuf, len, &len)) goto done;
 
     hdc = CreateDCA(dbuf->pDriverPath, pbuf->pPrinterName, pbuf->pPortName, pbuf->pDevMode);
     trace("hdc %p for driver '%s' printer '%s' port '%s'\n", hdc,
           dbuf->pDriverPath, pbuf->pPrinterName, pbuf->pPortName);
 done:
-    HeapFree(GetProcessHeap(), 0, dbuf);
-    HeapFree(GetProcessHeap(), 0, pbuf);
+    free(dbuf);
+    free(pbuf);
     if (hprn) pClosePrinter(hprn);
     if (winspool) FreeLibrary(winspool);
     return hdc;

@@ -2398,6 +2398,7 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
 11,mui,
 11,gecko\plugin,npmshtml.dll
 11,Speech\Common,sapi.dll
+11,Speech\Engines\TTS,msttsengine.dll
 11,wbem,mofcomp.exe
 11,wbem,wbemdisp.dll
 11,wbem,wbemprox.dll
@@ -2484,6 +2485,7 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
 11,,shdocvw.dll
 11,gecko\plugin,npmshtml.dll
 11,Speech\Common,sapi.dll
+11,Speech\Engines\TTS,msttsengine.dll
 11,wbem,mofcomp.exe
 11,wbem,wbemdisp.dll
 11,wbem,wbemprox.dll
@@ -2753,7 +2755,7 @@ HKLM,"System\CurrentControlSet\Services\Winsock\Parameters",,16
 HKLM,"System\CurrentControlSet\Services\Winsock2\Parameters\Protocol_Catalog9\Catalog_Entries",,16
 
 [VersionInfo]
-HKLM,%CurrentVersionNT%,"CurrentVersion",2,"10.0"
+HKLM,%CurrentVersionNT%,"CurrentVersion",2,"6.3"
 HKLM,%CurrentVersionNT%,"CurrentMajorVersionNumber",0x10003,10
 HKLM,%CurrentVersionNT%,"CurrentMinorVersionNumber",0x10003,0
 HKLM,%CurrentVersionNT%,"CurrentBuild",2,"19043"

@@ -65,12 +65,9 @@ AC_DEFUN([WINE_PATH_PKG_CONFIG],
 [WINE_CHECK_HOST_TOOL(PKG_CONFIG,[pkg-config])])
 
 AC_DEFUN([WINE_PATH_MINGW_PKG_CONFIG],
-[case "$host_cpu" in
-  i[[3456789]]86*)
-    ac_prefix_list="m4_foreach([ac_wine_cpu],[i686,i586,i486,i386],[ac_wine_cpu-w64-mingw32-pkg-config ])" ;;
-  *)
-    ac_prefix_list="$host_cpu-w64-mingw32-pkg-config" ;;
-esac
+[AS_VAR_IF([HOST_ARCH],[i386],
+           [ac_prefix_list="m4_foreach([ac_wine_cpu],[i686,i586,i486,i386],[ac_wine_cpu-w64-mingw32-pkg-config ])"],
+           [ac_prefix_list="$host_cpu-w64-mingw32-pkg-config"])
 AC_CHECK_PROGS(MINGW_PKG_CONFIG,[$ac_prefix_list],false)])
 
 dnl **** Extract the soname of a library ****
@@ -259,20 +256,6 @@ CC=$ac_wine_check_headers_saved_cc
 ac_exeext=$ac_wine_check_headers_saved_exeext
 LIBS=$ac_wine_check_headers_saved_libs])
 AS_VAR_IF([ac_var],[yes],[$3],[$4])dnl
-AS_VAR_POPDEF([ac_var])])
-
-dnl **** Check if we can link an empty shared lib (no main) with special CFLAGS ****
-dnl
-dnl Usage: WINE_TRY_SHLIB_FLAGS(flags,[action-if-yes,[action-if-no]])
-dnl
-AC_DEFUN([WINE_TRY_SHLIB_FLAGS],
-[AS_VAR_PUSHDEF([ac_var], ac_cv_cflags_[[$1]])dnl
-ac_wine_try_cflags_saved=$CFLAGS
-CFLAGS="$CFLAGS $1"
-AC_LINK_IFELSE([AC_LANG_SOURCE([[void myfunc() {}]])],
-               [AS_VAR_SET(ac_var,yes)], [AS_VAR_SET(ac_var,no)])
-CFLAGS=$ac_wine_try_cflags_saved
-AS_VAR_IF([ac_var],[yes], [$2], [$3])dnl
 AS_VAR_POPDEF([ac_var])])
 
 dnl **** Check whether we need to define a symbol on the compiler command line ****

@@ -307,7 +307,7 @@ static void STDMETHODCALLTYPE surface_wined3d_object_destroyed(void *parent)
 {
     struct d3d8_surface *surface = parent;
     d3d8_resource_cleanup(&surface->resource);
-    heap_free(surface);
+    free(surface);
 }
 
 static const struct wined3d_parent_ops d3d8_surface_wined3d_parent_ops =
@@ -321,7 +321,7 @@ struct d3d8_surface *d3d8_surface_create(struct wined3d_texture *wined3d_texture
     IDirect3DBaseTexture8 *texture;
     struct d3d8_surface *surface;
 
-    if (!(surface = heap_alloc_zero(sizeof(*surface))))
+    if (!(surface = calloc(1, sizeof(*surface))))
         return NULL;
 
     surface->IDirect3DSurface8_iface.lpVtbl = &d3d8_surface_vtbl;
@@ -372,7 +372,7 @@ static const struct wined3d_parent_ops d3d8_view_wined3d_parent_ops =
 struct d3d8_device *d3d8_surface_get_device(const struct d3d8_surface *surface)
 {
     IDirect3DDevice8 *device;
-    device = surface->texture ? surface->texture->parent_device : surface->parent_device;
+    device = surface->texture ? &surface->texture->parent_device->IDirect3DDevice8_iface : surface->parent_device;
     return impl_from_IDirect3DDevice8(device);
 }
 

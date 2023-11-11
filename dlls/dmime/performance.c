@@ -21,6 +21,7 @@
 #include "dmime_private.h"
 #include "dmusic_midi.h"
 #include "wine/rbtree.h"
+#include <math.h>
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmime);
 
@@ -28,15 +29,20 @@ enum dmus_internal_message_type
 {
     DMUS_PMSGT_INTERNAL_FIRST = 0x10,
     DMUS_PMSGT_INTERNAL_SEGMENT_END = DMUS_PMSGT_INTERNAL_FIRST,
+    DMUS_PMSGT_INTERNAL_SEGMENT_TICK,
 };
 
-struct pchannel_block {
+struct channel
+{
+    DWORD midi_group;
+    DWORD midi_channel;
+    IDirectMusicPort *port;
+};
+
+struct channel_block
+{
     DWORD block_num;   /* Block 0 is PChannels 0-15, Block 1 is PChannels 16-31, etc */
-    struct {
-       DWORD channel;  /* MIDI channel */
-       DWORD group;    /* MIDI group */
-       IDirectMusicPort *port;
-    } pchannel[16];
+    struct channel channels[16];
     struct wine_rb_entry entry;
 };
 
@@ -54,7 +60,7 @@ struct performance
     float fMasterTempo;
     long lMasterVolume;
     /* performance channels */
-    struct wine_rb_tree pchannels;
+    struct wine_rb_tree channel_blocks;
 
     BOOL audio_paths_enabled;
     IDirectMusicAudioPath *pDefaultPath;
@@ -75,6 +81,9 @@ struct performance
     HANDLE notification_event;
     BOOL notification_performance;
     BOOL notification_segment;
+
+    IDirectMusicSegment *primary_segment;
+    IDirectMusicSegment *control_segment;
 };
 
 struct message
@@ -86,6 +95,19 @@ struct message
 static inline struct message *message_from_DMUS_PMSG(DMUS_PMSG *msg)
 {
     return msg ? CONTAINING_RECORD(msg, struct message, msg) : NULL;
+}
+
+static void performance_queue_message(struct performance *This, struct message *message, struct list *hint)
+{
+    struct message *prev;
+
+    LIST_FOR_EACH_ENTRY_REV(prev, hint ? hint : &This->messages, struct message, entry)
+    {
+        if (&prev->entry == &This->messages) break;
+        if (prev->msg.rtTime <= message->msg.rtTime) break;
+    }
+
+    list_add_after(&prev->entry, &message->entry);
 }
 
 static HRESULT performance_process_message(struct performance *This, DMUS_PMSG *msg, DWORD *timeout)
@@ -133,8 +155,8 @@ static HRESULT performance_process_message(struct performance *This, DMUS_PMSG *
 static DWORD WINAPI message_thread_proc(void *args)
 {
     struct performance *This = args;
-    struct message *message, *next;
-    HRESULT hr;
+    HRESULT hr = DMUS_S_REQUEUE;
+    struct list *ptr;
 
     TRACE("performance %p message thread\n", This);
     SetThreadDescription(GetCurrentThread(), L"wine_dmime_message");
@@ -145,13 +167,15 @@ static DWORD WINAPI message_thread_proc(void *args)
     {
         DWORD timeout = INFINITE;
 
-        LIST_FOR_EACH_ENTRY_SAFE(message, next, &This->messages, struct message, entry)
+        while ((ptr = list_head(&This->messages)))
         {
+            struct message *message = LIST_ENTRY(ptr, struct message, entry);
+            struct list *next = ptr->next;
             list_remove(&message->entry);
             list_init(&message->entry);
 
             hr = performance_process_message(This, &message->msg, &timeout);
-            if (hr == DMUS_S_REQUEUE) list_add_before(&next->entry, &message->entry);
+            if (hr == DMUS_S_REQUEUE) performance_queue_message(This, message, next);
             if (hr != S_OK) break;
         }
 
@@ -199,7 +223,7 @@ static HRESULT performance_send_notification_pmsg(struct performance *This, MUSI
         return hr;
 
     msg->mtTime = music_time;
-    msg->dwFlags = DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_QUEUE;
+    msg->dwFlags = DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_IMMEDIATE;
     msg->dwType = DMUS_PMSGT_NOTIFICATION;
     if ((msg->punkUser = object)) IUnknown_AddRef(object);
     msg->guidNotificationType = type;
@@ -213,51 +237,102 @@ static HRESULT performance_send_notification_pmsg(struct performance *This, MUSI
     return hr;
 }
 
-static int pchannel_block_compare(const void *key, const struct wine_rb_entry *entry)
+static int channel_block_compare(const void *key, const struct wine_rb_entry *entry)
 {
-    const struct pchannel_block *b = WINE_RB_ENTRY_VALUE(entry, const struct pchannel_block, entry);
-
+    const struct channel_block *b = WINE_RB_ENTRY_VALUE(entry, const struct channel_block, entry);
     return *(DWORD *)key - b->block_num;
 }
 
-static void pchannel_block_free(struct wine_rb_entry *entry, void *context)
+static void channel_block_free(struct wine_rb_entry *entry, void *context)
 {
-    struct pchannel_block *b = WINE_RB_ENTRY_VALUE(entry, struct pchannel_block, entry);
+    struct channel_block *block = WINE_RB_ENTRY_VALUE(entry, struct channel_block, entry);
+    UINT i;
 
-    free(b);
+    for (i = 0; i < ARRAY_SIZE(block->channels); i++)
+    {
+        struct channel *channel = block->channels + i;
+        if (channel->port) IDirectMusicPort_Release(channel->port);
+    }
+
+    free(block);
 }
 
-static struct pchannel_block *pchannel_block_set(struct wine_rb_tree *tree, DWORD block_num,
-        IDirectMusicPort *port, DWORD group, BOOL only_set_new)
+static struct channel *performance_get_channel(struct performance *This, DWORD channel_num)
 {
-    struct pchannel_block *block;
+    DWORD block_num = channel_num / 16;
     struct wine_rb_entry *entry;
-    unsigned int i;
+    if (!(entry = wine_rb_get(&This->channel_blocks, &block_num))) return NULL;
+    return WINE_RB_ENTRY_VALUE(entry, struct channel_block, entry)->channels + channel_num % 16;
+}
 
-    entry = wine_rb_get(tree, &block_num);
-    if (entry) {
-        block = WINE_RB_ENTRY_VALUE(entry, struct pchannel_block, entry);
-        if (only_set_new)
-            return block;
-    } else {
-        if (!(block = malloc(sizeof(*block)))) return NULL;
+static HRESULT channel_block_init(struct performance *This, DWORD block_num,
+        IDirectMusicPort *port, DWORD midi_group)
+{
+    struct channel_block *block;
+    struct wine_rb_entry *entry;
+    UINT i;
+
+    if ((entry = wine_rb_get(&This->channel_blocks, &block_num)))
+        block = WINE_RB_ENTRY_VALUE(entry, struct channel_block, entry);
+    else
+    {
+        if (!(block = calloc(1, sizeof(*block)))) return E_OUTOFMEMORY;
         block->block_num = block_num;
+        wine_rb_put(&This->channel_blocks, &block_num, &block->entry);
     }
 
-    for (i = 0; i < 16; ++i) {
-        block->pchannel[i].port = port;
-        block->pchannel[i].group = group;
-        block->pchannel[i].channel = i;
+    for (i = 0; i < ARRAY_SIZE(block->channels); ++i)
+    {
+        struct channel *channel = block->channels + i;
+        channel->midi_group = midi_group;
+        channel->midi_channel = i;
+        if (channel->port) IDirectMusicPort_Release(channel->port);
+        if ((channel->port = port)) IDirectMusicPort_AddRef(channel->port);
     }
-    if (!entry)
-        wine_rb_put(tree, &block->block_num, &block->entry);
 
-    return block;
+    return S_OK;
 }
 
 static inline struct performance *impl_from_IDirectMusicPerformance8(IDirectMusicPerformance8 *iface)
 {
     return CONTAINING_RECORD(iface, struct performance, IDirectMusicPerformance8_iface);
+}
+
+HRESULT performance_send_segment_start(IDirectMusicPerformance8 *iface, MUSIC_TIME music_time,
+        IDirectMusicSegmentState *state)
+{
+    struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    HRESULT hr;
+
+    if (FAILED(hr = performance_send_notification_pmsg(This, music_time, This->notification_performance,
+            GUID_NOTIFICATION_PERFORMANCE, DMUS_NOTIFICATION_MUSICSTARTED, NULL)))
+        return hr;
+    if (FAILED(hr = performance_send_notification_pmsg(This, music_time, This->notification_segment,
+            GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGSTART, (IUnknown *)state)))
+        return hr;
+    if (FAILED(hr = performance_send_pmsg(This, music_time, DMUS_PMSGF_TOOL_IMMEDIATE,
+            DMUS_PMSGT_DIRTY, NULL)))
+        return hr;
+
+    return S_OK;
+}
+
+HRESULT performance_send_segment_tick(IDirectMusicPerformance8 *iface, MUSIC_TIME music_time,
+        IDirectMusicSegmentState *state)
+{
+    struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    REFERENCE_TIME time;
+    HRESULT hr;
+
+    if (FAILED(hr = IDirectMusicPerformance8_MusicToReferenceTime(iface, music_time, &time)))
+        return hr;
+    if (FAILED(hr = IDirectMusicPerformance8_ReferenceToMusicTime(iface, time + 2000000, &music_time)))
+        return hr;
+    if (FAILED(hr = performance_send_pmsg(This, music_time, DMUS_PMSGF_TOOL_QUEUE,
+            DMUS_PMSGT_INTERNAL_SEGMENT_TICK, (IUnknown *)state)))
+        return hr;
+
+    return S_OK;
 }
 
 HRESULT performance_send_segment_end(IDirectMusicPerformance8 *iface, MUSIC_TIME music_time,
@@ -266,11 +341,35 @@ HRESULT performance_send_segment_end(IDirectMusicPerformance8 *iface, MUSIC_TIME
     struct performance *This = impl_from_IDirectMusicPerformance8(iface);
     HRESULT hr;
 
+    if (FAILED(hr = performance_send_notification_pmsg(This, music_time - 1450, This->notification_segment,
+            GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGALMOSTEND, (IUnknown *)state)))
+        return hr;
+    if (FAILED(hr = performance_send_notification_pmsg(This, music_time, This->notification_segment,
+            GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGEND, (IUnknown *)state)))
+        return hr;
+    if (FAILED(hr = performance_send_pmsg(This, music_time, DMUS_PMSGF_TOOL_IMMEDIATE,
+            DMUS_PMSGT_DIRTY, NULL)))
+        return hr;
+    if (FAILED(hr = performance_send_notification_pmsg(This, music_time, This->notification_performance,
+            GUID_NOTIFICATION_PERFORMANCE, DMUS_NOTIFICATION_MUSICSTOPPED, NULL)))
+        return hr;
     if (FAILED(hr = performance_send_pmsg(This, music_time, DMUS_PMSGF_TOOL_ATTIME,
             DMUS_PMSGT_INTERNAL_SEGMENT_END, (IUnknown *)state)))
         return hr;
 
     return S_OK;
+}
+
+static void performance_set_primary_segment(struct performance *This, IDirectMusicSegment *segment)
+{
+    if (This->primary_segment) IDirectMusicSegment_Release(This->primary_segment);
+    if ((This->primary_segment = segment)) IDirectMusicSegment_AddRef(This->primary_segment);
+}
+
+static void performance_set_control_segment(struct performance *This, IDirectMusicSegment *segment)
+{
+    if (This->control_segment) IDirectMusicSegment_Release(This->control_segment);
+    if ((This->control_segment = segment)) IDirectMusicSegment_AddRef(This->control_segment);
 }
 
 /* IDirectMusicPerformance8 IUnknown part: */
@@ -327,7 +426,7 @@ static ULONG WINAPI performance_Release(IDirectMusicPerformance8 *iface)
   TRACE("(%p): ref=%ld\n", This, ref);
   
   if (ref == 0) {
-    wine_rb_destroy(&This->pchannels, pchannel_block_free, NULL);
+    wine_rb_destroy(&This->channel_blocks, channel_block_free, NULL);
     This->safe.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection(&This->safe);
     free(This);
@@ -422,6 +521,42 @@ static HRESULT WINAPI performance_PlaySegment(IDirectMusicPerformance8 *iface, I
             segment_flags, start_time, ret_state, NULL, NULL);
 }
 
+struct state_entry
+{
+    struct list entry;
+    IDirectMusicSegmentState *state;
+};
+
+static void state_entry_destroy(struct state_entry *entry)
+{
+    list_remove(&entry->entry);
+    IDirectMusicSegmentState_Release(entry->state);
+    free(entry);
+}
+
+static void enum_segment_states(struct performance *This, IDirectMusicSegment *segment, struct list *list)
+{
+    struct state_entry *entry;
+    struct message *message;
+
+    LIST_FOR_EACH_ENTRY(message, &This->messages, struct message, entry)
+    {
+        IDirectMusicSegmentState *message_state;
+
+        if (message->msg.dwType != DMUS_PMSGT_INTERNAL_SEGMENT_TICK
+                && message->msg.dwType != DMUS_PMSGT_INTERNAL_SEGMENT_END)
+            continue;
+
+        message_state = (IDirectMusicSegmentState *)message->msg.punkUser;
+        if (segment && !segment_state_has_segment(message_state, segment)) continue;
+
+        if (!(entry = malloc(sizeof(*entry)))) return;
+        entry->state = message_state;
+        IDirectMusicSegmentState_AddRef(entry->state);
+        list_add_tail(list, &entry->entry);
+    }
+}
+
 static HRESULT WINAPI performance_Stop(IDirectMusicPerformance8 *iface, IDirectMusicSegment *pSegment,
         IDirectMusicSegmentState *pSegmentState, MUSIC_TIME mtTime, DWORD dwFlags)
 {
@@ -432,12 +567,36 @@ static HRESULT WINAPI performance_Stop(IDirectMusicPerformance8 *iface, IDirectM
 }
 
 static HRESULT WINAPI performance_GetSegmentState(IDirectMusicPerformance8 *iface,
-        IDirectMusicSegmentState **ppSegmentState, MUSIC_TIME mtTime)
+        IDirectMusicSegmentState **state, MUSIC_TIME time)
 {
-        struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    struct list *ptr, states = LIST_INIT(states);
+    struct state_entry *entry, *next;
+    HRESULT hr = S_OK;
 
-	FIXME("(%p,%p, %ld): stub\n", This, ppSegmentState, mtTime);
-	return S_OK;
+    TRACE("(%p, %p, %ld)\n", This, state, time);
+
+    if (!state) return E_POINTER;
+
+    EnterCriticalSection(&This->safe);
+
+    enum_segment_states(This, This->primary_segment, &states);
+
+    if (!(ptr = list_head(&states))) hr = DMUS_E_NOT_FOUND;
+    else
+    {
+        entry = LIST_ENTRY(ptr, struct state_entry, entry);
+
+        *state = entry->state;
+        IDirectMusicSegmentState_AddRef(entry->state);
+
+        LIST_FOR_EACH_ENTRY_SAFE(entry, next, &states, struct state_entry, entry)
+            state_entry_destroy(entry);
+    }
+
+    LeaveCriticalSection(&This->safe);
+
+    return hr;
 }
 
 static HRESULT WINAPI performance_SetPrepareTime(IDirectMusicPerformance8 *iface, DWORD dwMilliSeconds)
@@ -486,7 +645,7 @@ static HRESULT WINAPI performance_SendPMsg(IDirectMusicPerformance8 *iface, DMUS
 {
     const DWORD delivery_flags = DMUS_PMSGF_TOOL_IMMEDIATE | DMUS_PMSGF_TOOL_QUEUE | DMUS_PMSGF_TOOL_ATTIME;
     struct performance *This = impl_from_IDirectMusicPerformance8(iface);
-    struct message *message, *next;
+    struct message *message;
     HRESULT hr;
 
     TRACE("(%p, %p)\n", This, msg);
@@ -523,10 +682,7 @@ static HRESULT WINAPI performance_SendPMsg(IDirectMusicPerformance8 *iface, DMUS
             if (hr != DMUS_S_REQUEUE) goto done;
         }
 
-        LIST_FOR_EACH_ENTRY(next, &This->messages, struct message, entry)
-            if (next->msg.rtTime > message->msg.rtTime) break;
-        list_add_before(&next->entry, &message->entry);
-
+        performance_queue_message(This, message, NULL);
         hr = S_OK;
     }
 
@@ -540,20 +696,39 @@ done:
 static HRESULT WINAPI performance_MusicToReferenceTime(IDirectMusicPerformance8 *iface,
         MUSIC_TIME music_time, REFERENCE_TIME *time)
 {
-    static int once;
     struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    MUSIC_TIME tempo_time, next = 0;
+    DMUS_TEMPO_PARAM param;
+    double tempo, duration;
+    HRESULT hr;
 
-    if (!once++) FIXME("(%p, %ld, %p): semi-stub\n", This, music_time, time);
-    else TRACE("(%p, %ld, %p)\n", This, music_time, time);
+    TRACE("(%p, %ld, %p)\n", This, music_time, time);
 
     if (!time) return E_POINTER;
     *time = 0;
 
     if (!This->master_clock) return DMUS_E_NO_MASTER_CLOCK;
 
-    /* FIXME: This should be (music_time * 60) / (DMUS_PPQ * tempo)
-     * but it gives innacurate results */
-    *time = This->init_time + (music_time * 6510);
+    EnterCriticalSection(&This->safe);
+
+    for (tempo = 120.0, duration = tempo_time = 0; music_time > 0; tempo_time += next)
+    {
+        if (FAILED(hr = IDirectMusicPerformance_GetParam(iface, &GUID_TempoParam, -1, DMUS_SEG_ALLTRACKS,
+                tempo_time, &next, &param)))
+            break;
+
+        if (!next) next = music_time;
+        else next = min(next, music_time);
+
+        if (param.mtTime <= 0) tempo = param.dblTempo;
+        duration += (600000000.0 * next) / (tempo * DMUS_PPQ);
+        music_time -= next;
+    }
+
+    duration += (600000000.0 * music_time) / (tempo * DMUS_PPQ);
+    *time = This->init_time + duration;
+
+    LeaveCriticalSection(&This->safe);
 
     return S_OK;
 }
@@ -561,20 +736,38 @@ static HRESULT WINAPI performance_MusicToReferenceTime(IDirectMusicPerformance8 
 static HRESULT WINAPI performance_ReferenceToMusicTime(IDirectMusicPerformance8 *iface,
         REFERENCE_TIME time, MUSIC_TIME *music_time)
 {
-    static int once;
     struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    MUSIC_TIME tempo_time, next = 0;
+    double tempo, duration, step;
+    DMUS_TEMPO_PARAM param;
+    HRESULT hr;
 
-    if (!once++) FIXME("(%p, %I64d, %p): semi-stub\n", This, time, music_time);
-    else TRACE("(%p, %I64d, %p)\n", This, time, music_time);
+    TRACE("(%p, %I64d, %p)\n", This, time, music_time);
 
     if (!music_time) return E_POINTER;
     *music_time = 0;
 
     if (!This->master_clock) return DMUS_E_NO_MASTER_CLOCK;
 
-    /* FIXME: This should be (time * DMUS_PPQ * tempo) / 60
-     * but it gives innacurate results */
-    *music_time = (time - This->init_time) / 6510;
+    EnterCriticalSection(&This->safe);
+
+    duration = time - This->init_time;
+
+    for (tempo = 120.0, tempo_time = 0; duration > 0; tempo_time += next, duration -= step)
+    {
+        if (FAILED(hr = IDirectMusicPerformance_GetParam(iface, &GUID_TempoParam, -1, DMUS_SEG_ALLTRACKS,
+                tempo_time, &next, &param)))
+            break;
+
+        if (param.mtTime <= 0) tempo = param.dblTempo;
+        step = (600000000.0 * next) / (tempo * DMUS_PPQ);
+        if (!next || duration < step) break;
+        *music_time = *music_time + next;
+    }
+
+    *music_time = *music_time + round((duration * tempo * DMUS_PPQ) / 600000000.0);
+
+    LeaveCriticalSection(&This->safe);
 
     return S_OK;
 }
@@ -808,10 +1001,16 @@ static HRESULT perf_dmport_create(struct performance *perf, DMUS_PORTPARAMS *par
         return hr;
     }
 
+    wine_rb_destroy(&perf->channel_blocks, channel_block_free, NULL);
+
     for (i = 0; i < params->dwChannelGroups; i++)
-        pchannel_block_set(&perf->pchannels, i, port, i + 1, FALSE);
+    {
+        if (FAILED(hr = channel_block_init(perf, i, port, i + 1)))
+            ERR("Failed to init channel block, hr %#lx\n", hr);
+    }
 
     performance_update_latency_time(perf, port, NULL);
+    IDirectMusicPort_Release(port);
     return S_OK;
 }
 
@@ -856,65 +1055,64 @@ static HRESULT WINAPI performance_RemovePort(IDirectMusicPerformance8 *iface, ID
 }
 
 static HRESULT WINAPI performance_AssignPChannelBlock(IDirectMusicPerformance8 *iface,
-        DWORD block_num, IDirectMusicPort *port, DWORD group)
+        DWORD block_num, IDirectMusicPort *port, DWORD midi_group)
 {
     struct performance *This = impl_from_IDirectMusicPerformance8(iface);
 
-    FIXME("(%p, %ld, %p, %ld): semi-stub\n", This, block_num, port, group);
+    FIXME("(%p, %ld, %p, %ld): semi-stub\n", This, block_num, port, midi_group);
 
     if (!port) return E_POINTER;
     if (block_num > MAXDWORD / 16) return E_INVALIDARG;
     if (This->audio_paths_enabled) return DMUS_E_AUDIOPATHS_IN_USE;
 
-    pchannel_block_set(&This->pchannels, block_num, port, group, FALSE);
-
-    return S_OK;
+    return channel_block_init(This, block_num, port, midi_group);
 }
 
-static HRESULT WINAPI performance_AssignPChannel(IDirectMusicPerformance8 *iface, DWORD pchannel,
-        IDirectMusicPort *port, DWORD group, DWORD channel)
+static HRESULT WINAPI performance_AssignPChannel(IDirectMusicPerformance8 *iface, DWORD channel_num,
+        IDirectMusicPort *port, DWORD midi_group, DWORD midi_channel)
 {
     struct performance *This = impl_from_IDirectMusicPerformance8(iface);
-    struct pchannel_block *block;
+    struct channel *channel;
+    HRESULT hr;
 
-    FIXME("(%p)->(%ld, %p, %ld, %ld) semi-stub\n", This, pchannel, port, group, channel);
+    FIXME("(%p)->(%ld, %p, %ld, %ld) semi-stub\n", This, channel_num, port, midi_group, midi_channel);
 
     if (!port) return E_POINTER;
     if (This->audio_paths_enabled) return DMUS_E_AUDIOPATHS_IN_USE;
 
-    block = pchannel_block_set(&This->pchannels, pchannel / 16, port, 0, TRUE);
-    if (block) {
-        block->pchannel[pchannel % 16].group = group;
-        block->pchannel[pchannel % 16].channel = channel;
+    if (!(channel = performance_get_channel(This, channel_num)))
+    {
+        if (FAILED(hr = IDirectMusicPerformance8_AssignPChannelBlock(iface,
+                channel_num / 16, port, 0)))
+            return hr;
+        if (!(channel = performance_get_channel(This, channel_num)))
+            return DMUS_E_NOT_FOUND;
     }
+
+    channel->midi_group = midi_group;
+    channel->midi_channel = midi_channel;
+    if (channel->port) IDirectMusicPort_Release(channel->port);
+    if ((channel->port = port)) IDirectMusicPort_AddRef(channel->port);
 
     return S_OK;
 }
 
-static HRESULT WINAPI performance_PChannelInfo(IDirectMusicPerformance8 *iface, DWORD pchannel,
-        IDirectMusicPort **port, DWORD *group, DWORD *channel)
+static HRESULT WINAPI performance_PChannelInfo(IDirectMusicPerformance8 *iface, DWORD channel_num,
+        IDirectMusicPort **port, DWORD *midi_group, DWORD *midi_channel)
 {
     struct performance *This = impl_from_IDirectMusicPerformance8(iface);
-    struct pchannel_block *block;
-    struct wine_rb_entry *entry;
-    DWORD block_num = pchannel / 16;
-    unsigned int index = pchannel % 16;
+    struct channel *channel;
 
-    TRACE("(%p)->(%ld, %p, %p, %p)\n", This, pchannel, port, group, channel);
+    TRACE("(%p)->(%ld, %p, %p, %p)\n", This, channel_num, port, midi_group, midi_channel);
 
-    entry = wine_rb_get(&This->pchannels, &block_num);
-    if (!entry)
-        return E_INVALIDARG;
-    block = WINE_RB_ENTRY_VALUE(entry, struct pchannel_block, entry);
-
-    if (port) {
-        *port = block->pchannel[index].port;
+    if (!(channel = performance_get_channel(This, channel_num))) return E_INVALIDARG;
+    if (port)
+    {
+        *port = channel->port;
         IDirectMusicPort_AddRef(*port);
     }
-    if (group)
-        *group = block->pchannel[index].group;
-    if (channel)
-        *channel = block->pchannel[index].channel;
+    if (midi_group) *midi_group = channel->midi_group;
+    if (midi_channel) *midi_channel = channel->midi_channel;
 
     return S_OK;
 }
@@ -948,13 +1146,26 @@ static HRESULT WINAPI performance_Invalidate(IDirectMusicPerformance8 *iface, MU
 	return S_OK;
 }
 
-static HRESULT WINAPI performance_GetParam(IDirectMusicPerformance8 *iface, REFGUID rguidType,
-        DWORD dwGroupBits, DWORD dwIndex, MUSIC_TIME mtTime, MUSIC_TIME *pmtNext, void *pParam)
+static HRESULT WINAPI performance_GetParam(IDirectMusicPerformance8 *iface, REFGUID type,
+        DWORD group, DWORD index, MUSIC_TIME music_time, MUSIC_TIME *next_time, void *param)
 {
-        struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    HRESULT hr;
 
-	FIXME("(%p, %s, %ld, %ld, %ld, %p, %p): stub\n", This, debugstr_dmguid(rguidType), dwGroupBits, dwIndex, mtTime, pmtNext, pParam);
-	return S_OK;
+    TRACE("(%p, %s, %ld, %ld, %ld, %p, %p)\n", This, debugstr_dmguid(type), group, index, music_time, next_time, param);
+
+    if (next_time) *next_time = 0;
+
+    if (!This->control_segment) hr = DMUS_E_NOT_FOUND;
+    else hr = IDirectMusicSegment_GetParam(This->control_segment, type, group, index, music_time, next_time, param);
+
+    if (FAILED(hr))
+    {
+        if (!This->primary_segment) hr = DMUS_E_NOT_FOUND;
+        else hr = IDirectMusicSegment_GetParam(This->primary_segment, type, group, index, music_time, next_time, param);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI performance_SetParam(IDirectMusicPerformance8 *iface, REFGUID rguidType,
@@ -1090,6 +1301,9 @@ static HRESULT WINAPI performance_CloseDown(IDirectMusicPerformance8 *iface)
             WARN("Failed to free message %p, hr %#lx\n", message, hr);
     }
 
+    performance_set_primary_segment(This, NULL);
+    performance_set_control_segment(This, NULL);
+
     if (This->master_clock)
     {
         IReferenceClock_Release(This->master_clock);
@@ -1201,10 +1415,11 @@ static HRESULT WINAPI performance_PlaySegmentEx(IDirectMusicPerformance8 *iface,
         WCHAR *segment_name, IUnknown *transition, DWORD segment_flags, INT64 start_time,
         IDirectMusicSegmentState **segment_state, IUnknown *from, IUnknown *audio_path)
 {
+    BOOL primary = !(segment_flags & DMUS_SEGF_SECONDARY), control = (segment_flags & DMUS_SEGF_CONTROL);
     struct performance *This = impl_from_IDirectMusicPerformance8(iface);
     IDirectMusicSegmentState *state;
     IDirectMusicSegment *segment;
-    MUSIC_TIME length;
+    MUSIC_TIME music_time;
     HRESULT hr;
 
     FIXME("(%p, %p, %s, %p, %#lx, %I64d, %p, %p, %p): stub\n", This, source, debugstr_w(segment_name),
@@ -1216,42 +1431,36 @@ static HRESULT WINAPI performance_PlaySegmentEx(IDirectMusicPerformance8 *iface,
 
     if (FAILED(hr = IUnknown_QueryInterface(source, &IID_IDirectMusicSegment, (void **)&segment)))
         return hr;
-    if (FAILED(hr = segment_state_create(segment, start_time, iface, &state)))
+
+    EnterCriticalSection(&This->safe);
+
+    if (primary) performance_set_primary_segment(This, segment);
+    if (control) performance_set_control_segment(This, segment);
+
+    if ((!(music_time = start_time) && FAILED(hr = IDirectMusicPerformance8_GetTime(iface, NULL, &music_time)))
+            || FAILED(hr = segment_state_create(segment, music_time, iface, &state)))
     {
+        if (primary) performance_set_primary_segment(This, NULL);
+        if (control) performance_set_control_segment(This, NULL);
+        LeaveCriticalSection(&This->safe);
+
         IDirectMusicSegment_Release(segment);
         return hr;
     }
 
-    hr = IDirectMusicSegment_GetLength(segment, &length);
-    if (SUCCEEDED(hr))
-        hr = performance_send_notification_pmsg(This, start_time, This->notification_performance,
-                GUID_NOTIFICATION_PERFORMANCE, DMUS_NOTIFICATION_MUSICSTARTED, NULL);
-    if (SUCCEEDED(hr))
-        hr = performance_send_notification_pmsg(This, start_time, This->notification_segment,
-                GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGSTART, (IUnknown *)state);
-    if (SUCCEEDED(hr))
-        hr = performance_send_pmsg(This, start_time, DMUS_PMSGF_TOOL_QUEUE, DMUS_PMSGT_DIRTY, NULL);
-
-    if (SUCCEEDED(hr))
-        hr = segment_state_play(state, iface);
-
-    if (SUCCEEDED(hr))
-        hr = performance_send_notification_pmsg(This, start_time + length, This->notification_segment,
-                GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGEND, (IUnknown *)state);
-    if (SUCCEEDED(hr))
-        hr = performance_send_notification_pmsg(This, start_time + length, This->notification_segment,
-                GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGALMOSTEND, (IUnknown *)state);
-    if (SUCCEEDED(hr))
-        hr = performance_send_pmsg(This, start_time + length, DMUS_PMSGF_TOOL_QUEUE, DMUS_PMSGT_DIRTY, NULL);
-    if (SUCCEEDED(hr))
-        hr = performance_send_notification_pmsg(This, start_time + length, This->notification_performance,
-                GUID_NOTIFICATION_PERFORMANCE, DMUS_NOTIFICATION_MUSICSTOPPED, NULL);
-
-    if (SUCCEEDED(hr) && segment_state)
+    if (FAILED(hr = segment_state_play(state, iface)))
+    {
+        ERR("Failed to play segment state, hr %#lx\n", hr);
+        if (primary) performance_set_primary_segment(This, NULL);
+        if (control) performance_set_control_segment(This, NULL);
+    }
+    else if (segment_state)
     {
         *segment_state = state;
         IDirectMusicSegmentState_AddRef(state);
     }
+
+    LeaveCriticalSection(&This->safe);
 
     IDirectMusicSegmentState_Release(state);
     IDirectMusicSegment_Release(segment);
@@ -1790,6 +1999,21 @@ static HRESULT WINAPI performance_tool_ProcessPMsg(IDirectMusicTool *iface,
             enabled = This->notification_segment;
         if (!enabled) return DMUS_S_FREE;
 
+        if (msg->dwFlags & DMUS_PMSGF_TOOL_IMMEDIATE)
+        {
+            /* re-send the message for queueing at the expected time */
+            msg->dwFlags &= ~DMUS_PMSGF_TOOL_IMMEDIATE;
+            msg->dwFlags |= DMUS_PMSGF_TOOL_ATTIME;
+
+            if (FAILED(hr = IDirectMusicPerformance8_SendPMsg(performance, (DMUS_PMSG *)msg)))
+            {
+                ERR("Failed to send notification message, hr %#lx\n", hr);
+                return DMUS_S_FREE;
+            }
+
+            return S_OK;
+        }
+
         list_add_tail(&This->notifications, &message->entry);
 
         /* discard old notification messages */
@@ -1810,6 +2034,21 @@ static HRESULT WINAPI performance_tool_ProcessPMsg(IDirectMusicTool *iface,
         if (FAILED(hr = IDirectSoundBuffer_Play((IDirectSoundBuffer *)msg->punkUser, 0, 0, 0)))
             WARN("Failed to play wave buffer, hr %#lx\n", hr);
         break;
+
+    case DMUS_PMSGT_INTERNAL_SEGMENT_TICK:
+        msg->rtTime += 10000000;
+        msg->dwFlags &= ~DMUS_PMSGF_MUSICTIME;
+
+        /* re-send the tick message until segment_state_tick returns S_FALSE */
+        if (FAILED(hr = segment_state_tick((IDirectMusicSegmentState *)msg->punkUser,
+                (IDirectMusicPerformance8 *)performance)))
+            ERR("Failed to tick segment state %p, hr %#lx\n", msg->punkUser, hr);
+        else if (hr == S_FALSE)
+            return DMUS_S_FREE; /* done ticking */
+        else if (FAILED(hr = IDirectMusicPerformance_SendPMsg(performance, msg)))
+            ERR("Failed to queue tick for segment state %p, hr %#lx\n", msg->punkUser, hr);
+
+        return S_OK;
 
     case DMUS_PMSGT_INTERNAL_SEGMENT_END:
         if (FAILED(hr = segment_state_end_play((IDirectMusicSegmentState *)msg->punkUser,
@@ -1864,7 +2103,7 @@ HRESULT create_dmperformance(REFIID iid, void **ret_iface)
     obj->pDefaultPath = NULL;
     InitializeCriticalSection(&obj->safe);
     obj->safe.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": performance->safe");
-    wine_rb_init(&obj->pchannels, pchannel_block_compare);
+    wine_rb_init(&obj->channel_blocks, channel_block_compare);
 
     list_init(&obj->messages);
     list_init(&obj->notifications);

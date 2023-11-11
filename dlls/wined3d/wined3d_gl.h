@@ -184,6 +184,7 @@ enum wined3d_gl_extension
     EXT_POINT_PARAMETERS,
     EXT_PROVOKING_VERTEX,
     EXT_SECONDARY_COLOR,
+    EXT_SHADER_INTEGER_MIX,
     EXT_STENCIL_TWO_SIDE,
     EXT_STENCIL_WRAP,
     EXT_TEXTURE3D,
@@ -944,7 +945,6 @@ static inline void wined3d_context_gl_reference_buffer(struct wined3d_context_gl
 struct gl_texture
 {
     struct wined3d_sampler_desc sampler_desc;
-    unsigned int base_level;
     GLuint name;
 };
 

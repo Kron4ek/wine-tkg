@@ -374,11 +374,11 @@ static HRESULT WINAPI ActiveScriptSite_GetItemInfo(IActiveScriptSite *iface, LPC
     if(wcscmp(pstrName, L"window"))
         return DISP_E_MEMBERNOTFOUND;
 
-    if(!This->window)
+    if(!This->window || !This->window->base.outer_window)
         return E_FAIL;
 
     /* FIXME: Return proxy object */
-    *ppiunkItem = (IUnknown*)&This->window->base.IHTMLWindow2_iface;
+    *ppiunkItem = (IUnknown*)&This->window->base.outer_window->base.IHTMLWindow2_iface;
     IUnknown_AddRef(*ppiunkItem);
 
     return S_OK;
@@ -1605,9 +1605,9 @@ void bind_event_scripts(HTMLDocumentNode *doc)
 {
     HTMLPluginContainer *plugin_container;
     nsIDOMHTMLScriptElement *nsscript;
+    nsIDOMNodeList *node_list = NULL;
     HTMLScriptElement *script_elem;
     EventTarget *event_target;
-    nsIDOMNodeList *node_list;
     nsIDOMNode *script_node;
     nsAString selector_str;
     IDispatch *event_disp;
@@ -1626,6 +1626,8 @@ void bind_event_scripts(HTMLDocumentNode *doc)
     nsAString_Finish(&selector_str);
     if(NS_FAILED(nsres)) {
         ERR("QuerySelectorAll failed: %08lx\n", nsres);
+        if(node_list)
+            nsIDOMNodeList_Release(node_list);
         return;
     }
 

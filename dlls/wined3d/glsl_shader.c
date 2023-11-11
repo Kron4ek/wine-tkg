@@ -4426,12 +4426,40 @@ static void shader_glsl_cast(const struct wined3d_shader_instruction *ins,
 
 static void shader_glsl_to_int(const struct wined3d_shader_instruction *ins)
 {
-    shader_glsl_cast(ins, "ivec", "int");
+    struct wined3d_string_buffer *buffer = ins->ctx->buffer;
+    struct glsl_src_param src_param;
+    unsigned int mask_size;
+    DWORD write_mask;
+
+    write_mask = shader_glsl_append_dst(buffer, ins);
+    mask_size = shader_glsl_get_write_mask_size(write_mask);
+    shader_glsl_add_src_param(ins, &ins->src[0], write_mask, &src_param);
+
+    if (mask_size > 1)
+        shader_addline(buffer, "mix(mix(ivec%u(max(%s, vec%u(-2147483648.0))), ivec%u(0x7fffffff), greaterThanEqual(%s, vec%u(2147483648.0))), ivec%u(0), isnan(%s)));\n",
+                mask_size, src_param.param_str, mask_size, mask_size, src_param.param_str, mask_size, mask_size, src_param.param_str);
+    else
+        shader_addline(buffer, "mix(mix(int(max(%s, -2147483648.0)), 0x7fffffff, %s >= 2147483648.0), 0, isnan(%s)));\n",
+                src_param.param_str, src_param.param_str, src_param.param_str);
 }
 
 static void shader_glsl_to_uint(const struct wined3d_shader_instruction *ins)
 {
-    shader_glsl_cast(ins, "uvec", "uint");
+    struct wined3d_string_buffer *buffer = ins->ctx->buffer;
+    struct glsl_src_param src_param;
+    unsigned int mask_size;
+    DWORD write_mask;
+
+    write_mask = shader_glsl_append_dst(buffer, ins);
+    mask_size = shader_glsl_get_write_mask_size(write_mask);
+    shader_glsl_add_src_param(ins, &ins->src[0], write_mask, &src_param);
+
+    if (mask_size > 1)
+        shader_addline(buffer, "mix(uvec%u(max(%s, vec%u(0.0))), uvec%u(0xffffffffu), greaterThanEqual(%s, vec%u(4294967296.0))));\n",
+                mask_size, src_param.param_str, mask_size, mask_size, src_param.param_str, mask_size);
+    else
+        shader_addline(buffer, "mix(uint(max(%s, 0.0)), 0xffffffffu, %s >= 4294967296.0));\n",
+                src_param.param_str, src_param.param_str);
 }
 
 static void shader_glsl_to_float(const struct wined3d_shader_instruction *ins)
@@ -7640,6 +7668,8 @@ static void shader_glsl_enable_extensions(struct wined3d_string_buffer *buffer,
         shader_addline(buffer, "#extension GL_ARB_viewport_array : enable\n");
     if (gl_info->supported[EXT_GPU_SHADER4])
         shader_addline(buffer, "#extension GL_EXT_gpu_shader4 : enable\n");
+    if (gl_info->supported[EXT_SHADER_INTEGER_MIX])
+        shader_addline(buffer, "#extension GL_EXT_shader_integer_mix : enable\n");
     if (gl_info->supported[EXT_TEXTURE_ARRAY])
         shader_addline(buffer, "#extension GL_EXT_texture_array : enable\n");
     if (gl_info->supported[EXT_TEXTURE_SHADOW_LOD])
@@ -11244,7 +11274,8 @@ static unsigned int shader_glsl_get_shader_model(const struct wined3d_gl_info *g
 {
     BOOL shader_model_4 = gl_info->glsl_version >= MAKEDWORD_VERSION(1, 50)
             && gl_info->supported[ARB_SHADER_BIT_ENCODING]
-            && gl_info->supported[ARB_TEXTURE_SWIZZLE];
+            && gl_info->supported[ARB_TEXTURE_SWIZZLE]
+            && gl_info->supported[EXT_SHADER_INTEGER_MIX];
 
     if (shader_model_4
             && gl_info->supported[ARB_COMPUTE_SHADER]

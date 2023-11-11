@@ -75,7 +75,7 @@ typedef struct
     int todo;
 } path_test_t;
 
-#define ok_path(a,b,c,d) _ok_path_fudge(a,b,c,d,2.0,__LINE__)
+#define ok_path(a,b,c,d) _ok_path_fudge(a,b,c,d,1.0,__LINE__)
 #define ok_path_fudge(a,b,c,d,e) _ok_path_fudge(a,b,c,d,e,__LINE__)
 static void _ok_path_fudge(GpPath* path, const path_test_t *expected, INT expected_size,
         BOOL todo_size, REAL fudge, int line)
@@ -94,8 +94,8 @@ static void _ok_path_fudge(GpPath* path, const path_test_t *expected, INT expect
         ok_(__FILE__,line)(size == expected_size, "Path size %d does not match expected size %d\n",
             size, expected_size);
 
-    points = HeapAlloc(GetProcessHeap(), 0, size * sizeof(GpPointF));
-    types = HeapAlloc(GetProcessHeap(), 0, size);
+    points = malloc(size * sizeof(GpPointF));
+    types = malloc(size);
 
     if(GdipGetPathPoints(path, points, size) != Ok || GdipGetPathTypes(path, types, size) != Ok){
         skip("Cannot perform path comparisons due to failure to retrieve path.\n");
@@ -125,8 +125,8 @@ static void _ok_path_fudge(GpPath* path, const path_test_t *expected, INT expect
     }
 
 end:
-    HeapFree(GetProcessHeap(), 0, types);
-    HeapFree(GetProcessHeap(), 0, points);
+    free(types);
+    free(points);
 }
 
 static void test_constructor_destructor(void)
@@ -919,6 +919,18 @@ static path_test_t addcurve_path[] = {
     {23.3, 13.3, PathPointTypeBezier, 0, 0}, /*8*/
     {30.0, 10.0, PathPointTypeBezier, 0, 0}  /*9*/
     };
+static path_test_t addcurve_path_default_tension[] = {
+    {0.0, 0.0,   PathPointTypeStart,  0, 0}, /*0*/
+    {1.66, 1.66, PathPointTypeBezier, 0, 0}, /*1*/
+    {8.33, 6.66, PathPointTypeBezier, 0, 0}, /*2*/
+    {10.0, 10.0, PathPointTypeBezier, 0, 0}, /*3*/
+    {11.6, 13.3, PathPointTypeBezier, 0, 0}, /*4*/
+    {6.66, 20.0, PathPointTypeBezier, 0, 0}, /*5*/
+    {10.0, 20.0, PathPointTypeBezier, 0, 0}, /*6*/
+    {13.3, 20.0, PathPointTypeBezier, 0, 0}, /*7*/
+    {26.6, 11.6, PathPointTypeBezier, 0, 0}, /*8*/
+    {30.0, 10.0, PathPointTypeBezier, 0, 0}  /*9*/
+    };
 static path_test_t addcurve_path2[] = {
     {100.0,120.0,PathPointTypeStart,  0, 0}, /*0*/
     {123.0,10.0, PathPointTypeLine,   0, 0}, /*1*/
@@ -935,13 +947,26 @@ static path_test_t addcurve_path2[] = {
     };
 static path_test_t addcurve_path3[] = {
     {10.0, 10.0, PathPointTypeStart,  0, 0}, /*0*/
-    {13.3, 16.7, PathPointTypeBezier, 0, 1}, /*1*/
+    {13.3, 16.7, PathPointTypeBezier, 0, 0}, /*1*/
     {3.3,  20.0, PathPointTypeBezier, 0, 0}, /*2*/
     {10.0, 20.0, PathPointTypeBezier, 0, 0}, /*3*/
     {16.7, 20.0, PathPointTypeBezier, 0, 0}, /*4*/
     {23.3, 13.3, PathPointTypeBezier, 0, 0}, /*5*/
     {30.0, 10.0, PathPointTypeBezier, 0, 0}  /*6*/
     };
+static path_test_t addcurve_path4[] = {
+    {0.0,  0.0,  PathPointTypeStart,  0, 0}, /*0*/
+    {3.33, 3.33, PathPointTypeBezier, 0, 0}, /*1*/
+    {6.66, 3.33, PathPointTypeBezier, 0, 0}, /*2*/
+    {10.0, 10.0, PathPointTypeBezier, 0, 0}, /*3*/
+    };
+static path_test_t addcurve_path5[] = {
+    {10.0, 10.0, PathPointTypeStart,  0, 0}, /*0*/
+    {13.3, 16.6, PathPointTypeBezier, 0, 0}, /*1*/
+    {3.33, 20.0, PathPointTypeBezier, 0, 0}, /*2*/
+    {10.0, 20.0, PathPointTypeBezier, 0, 0}  /*3*/
+    };
+
 static void test_addcurve(void)
 {
     GpStatus status;
@@ -973,6 +998,13 @@ static void test_addcurve(void)
     status = GdipAddPathCurve2(path, points, 4, 1.0);
     expect(Ok, status);
     ok_path(path, addcurve_path, ARRAY_SIZE(addcurve_path), FALSE);
+    GdipDeletePath(path);
+
+    /* add to empty path with default tension */
+    GdipCreatePath(FillModeAlternate, &path);
+    status = GdipAddPathCurve(path, points, 4);
+    expect(Ok, status);
+    ok_path(path, addcurve_path_default_tension, ARRAY_SIZE(addcurve_path_default_tension), FALSE);
     GdipDeletePath(path);
 
     /* add to notempty path and opened figure */
@@ -1008,9 +1040,23 @@ static void test_addcurve(void)
     ok_path(path, addcurve_path, ARRAY_SIZE(addcurve_path), FALSE);
     GdipResetPath(path);
 
+    /* Skip first point */
     status = GdipAddPathCurve3(path, points, 4, 1, 2, 1.0);
     expect(Ok, status);
     ok_path(path, addcurve_path3, ARRAY_SIZE(addcurve_path3), FALSE);
+    GdipResetPath(path);
+
+    /* Skip two last points */
+    status = GdipAddPathCurve3(path, points, 4, 0, 1, 1.0);
+    expect(Ok, status);
+    ok_path(path, addcurve_path4, ARRAY_SIZE(addcurve_path4), FALSE);
+    GdipResetPath(path);
+
+    /* Skip first and last points */
+    status = GdipAddPathCurve3(path, points, 4, 1, 1, 1.0);
+    expect(Ok, status);
+    ok_path(path, addcurve_path5, ARRAY_SIZE(addcurve_path5), FALSE);
+    GdipResetPath(path);
 
     GdipDeletePath(path);
 }
@@ -1028,6 +1074,21 @@ static path_test_t addclosedcurve_path[] = {
     {30.0, 10.0, PathPointTypeBezier, 0, 0}, /*9*/
     {26.7, 3.3,  PathPointTypeBezier, 0, 0}, /*10*/
     {6.7,  0.0,  PathPointTypeBezier, 0, 0}, /*11*/
+    {0.0,  0.0,  PathPointTypeBezier | PathPointTypeCloseSubpath, 0, 0}  /*12*/
+    };
+static path_test_t addclosedcurve_path_default_tension[] = {
+    {0.0, 0.0,   PathPointTypeStart,  0, 0}, /*0*/
+    {-3.33, 0.0, PathPointTypeBezier, 0, 0}, /*1*/
+    {8.33, 6.66, PathPointTypeBezier, 0, 0}, /*2*/
+    {10.0, 10.0, PathPointTypeBezier, 0, 0}, /*3*/
+    {11.6, 13.3, PathPointTypeBezier, 0, 0}, /*4*/
+    {6.66, 20.0, PathPointTypeBezier, 0, 0}, /*5*/
+    {10.0, 20.0, PathPointTypeBezier, 0, 0}, /*6*/
+    {13.3, 20.0, PathPointTypeBezier, 0, 0}, /*7*/
+    {31.6, 13.3, PathPointTypeBezier, 0, 0}, /*8*/
+    {30.0, 10.0, PathPointTypeBezier, 0, 0}, /*9*/
+    {28.3, 6.66, PathPointTypeBezier, 0, 0}, /*10*/
+    {3.33, 0.0,  PathPointTypeBezier, 0, 0}, /*11*/
     {0.0,  0.0,  PathPointTypeBezier | PathPointTypeCloseSubpath, 0, 0}  /*12*/
     };
 static void test_addclosedcurve(void)
@@ -1061,6 +1122,13 @@ static void test_addclosedcurve(void)
     status = GdipAddPathClosedCurve2(path, points, 4, 1.0);
     expect(Ok, status);
     ok_path(path, addclosedcurve_path, ARRAY_SIZE(addclosedcurve_path), FALSE);
+    GdipDeletePath(path);
+
+     /* add to empty path with default tension */
+    GdipCreatePath(FillModeAlternate, &path);
+    status = GdipAddPathClosedCurve(path, points, 4);
+    expect(Ok, status);
+    ok_path(path, addclosedcurve_path_default_tension, ARRAY_SIZE(addclosedcurve_path_default_tension), FALSE);
     GdipDeletePath(path);
 }
 

@@ -70,7 +70,7 @@ HRESULT wg_sample_queue_create(struct wg_sample_queue **out);
 void wg_sample_queue_destroy(struct wg_sample_queue *queue);
 void wg_sample_queue_flush(struct wg_sample_queue *queue, bool all);
 
-wg_parser_t wg_parser_create(enum wg_parser_type type);
+wg_parser_t wg_parser_create(enum wg_parser_type type, bool output_compressed);
 void wg_parser_destroy(wg_parser_t parser);
 
 HRESULT wg_parser_connect(wg_parser_t parser, uint64_t file_size);
@@ -112,12 +112,17 @@ HRESULT wg_transform_flush(wg_transform_t transform);
 
 HRESULT wg_muxer_create(const char *format, wg_muxer_t *muxer);
 void wg_muxer_destroy(wg_muxer_t muxer);
+HRESULT wg_muxer_add_stream(wg_muxer_t muxer, UINT32 stream_id, const struct wg_format *format);
+HRESULT wg_muxer_start(wg_muxer_t muxer);
+HRESULT wg_muxer_push_sample(wg_muxer_t muxer, struct wg_sample *sample, UINT32 stream_id);
 
+unsigned int wg_format_get_bytes_for_uncompressed(wg_video_format format, unsigned int width, unsigned int height);
 unsigned int wg_format_get_max_size(const struct wg_format *format);
 
 HRESULT avi_splitter_create(IUnknown *outer, IUnknown **out);
 HRESULT decodebin_parser_create(IUnknown *outer, IUnknown **out);
 HRESULT mpeg_audio_codec_create(IUnknown *outer, IUnknown **out);
+HRESULT mpeg_video_codec_create(IUnknown *outer, IUnknown **out);
 HRESULT mpeg_layer3_decoder_create(IUnknown *outer, IUnknown **out);
 HRESULT mpeg_splitter_create(IUnknown *outer, IUnknown **out);
 HRESULT wave_parser_create(IUnknown *outer, IUnknown **out);

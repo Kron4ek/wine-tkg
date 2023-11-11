@@ -998,9 +998,7 @@ HRESULT create_history(HTMLInnerWindow*,OmHistory**);
 HRESULT create_namespace_collection(compat_mode_t,IHTMLNamespaceCollection**);
 HRESULT create_dom_implementation(HTMLDocumentNode*,IHTMLDOMImplementation**);
 void detach_dom_implementation(IHTMLDOMImplementation*);
-
 HRESULT create_html_storage(HTMLInnerWindow*,BOOL,IHTMLStorage**);
-void detach_html_storage(IHTMLStorage*);
 
 void HTMLDocument_View_Init(HTMLDocumentObj*);
 void HTMLDocumentObj_Persist_Init(HTMLDocumentObj*);
@@ -1206,6 +1204,8 @@ void HTMLDOMNode_init_dispex_info(dispex_data_t*,compat_mode_t);
 
 void *HTMLElement_query_interface(DispatchEx*,REFIID);
 void HTMLElement_destructor(DispatchEx*);
+void HTMLElement_traverse(DispatchEx*,nsCycleCollectionTraversalCallback*);
+void HTMLElement_unlink(DispatchEx*);
 HRESULT HTMLElement_populate_props(DispatchEx*);
 HRESULT HTMLElement_clone(HTMLDOMNode*,nsIDOMNode*,HTMLDOMNode**);
 HRESULT HTMLElement_get_attr_col(HTMLDOMNode*,HTMLAttributeCollection**);

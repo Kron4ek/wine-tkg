@@ -1088,6 +1088,37 @@ static void wined3d_texture_gl_allocate_immutable_storage(struct wined3d_texture
     checkGLcall("allocate immutable storage");
 }
 
+static void wined3d_texture_dirty_region_add(struct wined3d_texture *texture,
+        unsigned int layer, const struct wined3d_box *box)
+{
+    struct wined3d_dirty_regions *regions;
+    unsigned int count;
+
+    if (!texture->dirty_regions)
+        return;
+
+    regions = &texture->dirty_regions[layer];
+    count = regions->box_count + 1;
+    if (count >= WINED3D_MAX_DIRTY_REGION_COUNT || !box
+            || (!box->left && !box->top && !box->front
+            && box->right == texture->resource.width
+            && box->bottom == texture->resource.height
+            && box->back == texture->resource.depth))
+    {
+        regions->box_count = WINED3D_MAX_DIRTY_REGION_COUNT;
+        return;
+    }
+
+    if (!wined3d_array_reserve((void **)&regions->boxes, &regions->boxes_size, count, sizeof(*regions->boxes)))
+    {
+        ERR("Failed to grow boxes array, marking entire texture dirty.\n");
+        regions->box_count = WINED3D_MAX_DIRTY_REGION_COUNT;
+        return;
+    }
+
+    regions->boxes[regions->box_count++] = *box;
+}
+
 void wined3d_texture_sub_resources_destroyed(struct wined3d_texture *texture)
 {
     unsigned int sub_count = texture->level_count * texture->layer_count;
@@ -1150,6 +1181,10 @@ static void wined3d_texture_create_dc(void *object)
         context = context_acquire(device, NULL, 0);
         wined3d_texture_load_location(texture, sub_resource_idx, context, texture->resource.map_binding);
     }
+
+    if (texture->dirty_regions)
+        wined3d_texture_dirty_region_add(texture, sub_resource_idx / texture->level_count, NULL);
+
     wined3d_texture_invalidate_location(texture, sub_resource_idx, ~texture->resource.map_binding);
     wined3d_texture_get_pitch(texture, level, &row_pitch, &slice_pitch);
     wined3d_texture_get_bo_address(texture, sub_resource_idx, &data, texture->resource.map_binding);
@@ -1319,7 +1354,7 @@ void wined3d_texture_gl_bind(struct wined3d_texture_gl *texture_gl,
         gl_tex->sampler_desc.srgb_decode = TRUE;
     else
         gl_tex->sampler_desc.srgb_decode = srgb;
-    gl_tex->base_level = 0;
+    gl_tex->sampler_desc.mip_base_level = 0;
     wined3d_texture_set_dirty(&texture_gl->t);
 
     wined3d_context_gl_bind_texture(context_gl, target, gl_tex->name);
@@ -1730,43 +1765,6 @@ void CDECL wined3d_texture_get_pitch(const struct wined3d_texture *texture,
             width, height, row_pitch, slice_pitch);
 }
 
-unsigned int CDECL wined3d_texture_set_lod(struct wined3d_texture *texture, unsigned int lod)
-{
-    struct wined3d_resource *resource;
-    unsigned int old = texture->lod;
-
-    TRACE("texture %p, lod %u.\n", texture, lod);
-
-    /* The d3d9:texture test shows that SetLOD is ignored on non-managed
-     * textures. The call always returns 0, and GetLOD always returns 0. */
-    resource = &texture->resource;
-    if (!(resource->usage & WINED3DUSAGE_MANAGED))
-    {
-        TRACE("Ignoring LOD on texture with resource access %s.\n",
-                wined3d_debug_resource_access(resource->access));
-        return 0;
-    }
-
-    if (lod >= texture->level_count)
-        lod = texture->level_count - 1;
-
-    if (texture->lod != lod)
-    {
-        struct wined3d_device *device = resource->device;
-
-        wined3d_resource_wait_idle(resource);
-        texture->lod = lod;
-
-        wined3d_texture_gl(texture)->texture_rgb.base_level = ~0u;
-        wined3d_texture_gl(texture)->texture_srgb.base_level = ~0u;
-        if (resource->bind_count)
-            wined3d_device_context_emit_set_sampler_state(&device->cs->c, texture->sampler, WINED3D_SAMP_MAX_MIP_LEVEL,
-                    device->cs->c.state->sampler_states[texture->sampler][WINED3D_SAMP_MAX_MIP_LEVEL]);
-    }
-
-    return old;
-}
-
 unsigned int CDECL wined3d_texture_get_lod(const struct wined3d_texture *texture)
 {
     TRACE("texture %p, returning %u.\n", texture, texture->lod);
@@ -2158,37 +2156,6 @@ static struct wined3d_texture_sub_resource *wined3d_texture_get_sub_resource(str
     if (!wined3d_texture_validate_sub_resource_idx(texture, sub_resource_idx))
         return NULL;
     return &texture->sub_resources[sub_resource_idx];
-}
-
-static void wined3d_texture_dirty_region_add(struct wined3d_texture *texture,
-        unsigned int layer, const struct wined3d_box *box)
-{
-    struct wined3d_dirty_regions *regions;
-    unsigned int count;
-
-    if (!texture->dirty_regions)
-        return;
-
-    regions = &texture->dirty_regions[layer];
-    count = regions->box_count + 1;
-    if (count >= WINED3D_MAX_DIRTY_REGION_COUNT || !box
-            || (!box->left && !box->top && !box->front
-            && box->right == texture->resource.width
-            && box->bottom == texture->resource.height
-            && box->back == texture->resource.depth))
-    {
-        regions->box_count = WINED3D_MAX_DIRTY_REGION_COUNT;
-        return;
-    }
-
-    if (!wined3d_array_reserve((void **)&regions->boxes, &regions->boxes_size, count, sizeof(*regions->boxes)))
-    {
-        WARN("Failed to grow boxes array, marking entire texture dirty.\n");
-        regions->box_count = WINED3D_MAX_DIRTY_REGION_COUNT;
-        return;
-    }
-
-    regions->boxes[regions->box_count++] = *box;
 }
 
 HRESULT CDECL wined3d_texture_add_dirty_region(struct wined3d_texture *texture,
@@ -3561,6 +3528,7 @@ static void texture_resource_unload(struct wined3d_resource *resource)
 {
     struct wined3d_texture *texture = texture_from_resource(resource);
     struct wined3d_device *device = resource->device;
+    const struct wined3d_state *state = &device->cs->state;
     unsigned int location = resource->map_binding;
     struct wined3d_context *context;
     unsigned int sub_count, i;
@@ -3605,8 +3573,13 @@ static void texture_resource_unload(struct wined3d_resource *resource)
     context_release(context);
 
     wined3d_texture_force_reload(texture);
-    if (texture->resource.bind_count)
-        device_invalidate_state(device, STATE_SAMPLER(texture->sampler));
+
+    for (i = 0; i < ARRAY_SIZE(state->textures); ++i)
+    {
+        if (state->textures[i] == texture)
+            device_invalidate_state(device, STATE_SAMPLER(i));
+    }
+
     wined3d_texture_set_dirty(texture);
 
     resource_unload(&texture->resource);

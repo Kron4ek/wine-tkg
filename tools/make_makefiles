@@ -338,27 +338,20 @@ sub assign_sources_to_makefiles(@)
         my $make = $makefiles{"$dir/Makefile.in"};
         my $name = substr( $file, length($dir) + 1 );
 
-        if ($name =~ /\.(in|l|m|mc|po|sfd|svg|y)$/)
+        if ($name =~ /\.(c|in|l|m|mc|po|rc|sfd|svg|y)$/)
         {
             push @{${$make}{"=SOURCES"}}, $name;
             next;
-        }
-        elsif ($name =~ /\.c$/)
-        {
-            push @{${$make}{"=C_SRCS"}}, $name;
         }
         elsif ($name =~ /\.h$/ || $name =~ /\.rh$/ || $name =~ /\.inl$/ || $name =~ /\.x$/)
         {
             next if $dir ne "include";
         }
-        elsif ($name =~ /\.rc$/)
-        {
-            push @{${$make}{"=RC_SRCS"}}, $name;
-        }
         elsif ($name =~ /\.idl$/)
         {
             die "no makedep flags specified in $file" unless $dir eq "include" || get_makedep_flags($file);
-            push @{${$make}{"=IDL_SRCS"}}, $name;
+            push @{${$make}{"=SOURCES"}}, $name;
+            next;
         }
         elsif ($name =~ /\.spec$/)
         {
@@ -390,9 +383,6 @@ sub assign_sources_to_makefiles(@)
         my $parent = get_parent_makefile( $file );
         next unless $parent;
         preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "SOURCES" );
-        preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "C_SRCS" );
-        preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "RC_SRCS" );
-        preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "IDL_SRCS" );
     }
 }
 

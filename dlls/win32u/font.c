@@ -6243,7 +6243,6 @@ BOOL WINAPI NtGdiGetCharABCWidthsW( HDC hdc, UINT first, UINT last, WCHAR *chars
     PHYSDEV dev;
     unsigned int i, count = last;
     BOOL ret;
-    TEXTMETRICW tm;
 
     if (!dc) return FALSE;
 
@@ -6260,17 +6259,6 @@ BOOL WINAPI NtGdiGetCharABCWidthsW( HDC hdc, UINT first, UINT last, WCHAR *chars
     }
     else
     {
-        if (flags & NTGDI_GETCHARABCWIDTHS_INT)
-        {
-            /* unlike float variant, this one is supposed to fail on non-scalable fonts */
-            dev = GET_DC_PHYSDEV( dc, pGetTextMetrics );
-            if (!dev->funcs->pGetTextMetrics( dev, &tm ) || !(tm.tmPitchAndFamily & TMPF_VECTOR))
-            {
-                release_dc_ptr( dc );
-                return FALSE;
-            }
-        }
-
         if (!chars) count = last - first + 1;
         dev = GET_DC_PHYSDEV( dc, pGetCharABCWidths );
         ret = dev->funcs->pGetCharABCWidths( dev, first, count, chars, buffer );
@@ -7085,7 +7073,7 @@ BOOL WINAPI NtGdiGetCharWidthInfo( HDC hdc, struct char_width_info *info )
 /***********************************************************************
  *           DrawTextW    (win32u.so)
  */
-INT WINAPI DECLSPEC_HIDDEN DrawTextW( HDC hdc, const WCHAR *str, INT count, RECT *rect, UINT flags )
+INT WINAPI DrawTextW( HDC hdc, const WCHAR *str, INT count, RECT *rect, UINT flags )
 {
     struct draw_text_params *params;
     ULONG ret_len, size;

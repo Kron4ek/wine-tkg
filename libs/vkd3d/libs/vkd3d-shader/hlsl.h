@@ -281,6 +281,7 @@ enum hlsl_ir_node_type
     HLSL_IR_RESOURCE_STORE,
     HLSL_IR_STORE,
     HLSL_IR_SWIZZLE,
+    HLSL_IR_SWITCH,
 };
 
 /* Common data for every type of IR instruction node. */
@@ -424,6 +425,9 @@ struct hlsl_ir_var
      * It may be less than the allocation size, e.g. for texture arrays. */
     unsigned int bind_count[HLSL_REGSET_LAST_OBJECT + 1];
 
+    /* Whether the shader performs dereferences with non-constant offsets in the variable. */
+    bool indexable;
+
     uint32_t is_input_semantic : 1;
     uint32_t is_output_semantic : 1;
     uint32_t is_uniform : 1;
@@ -446,7 +450,7 @@ struct hlsl_ir_function
     const char *name;
     /* Tree containing function definitions, stored as hlsl_ir_function_decl structures, which would
      *   be more than one in case of function overloading. */
-    struct rb_tree overloads;
+    struct list overloads;
 };
 
 struct hlsl_ir_function_decl
@@ -456,8 +460,8 @@ struct hlsl_ir_function_decl
     struct hlsl_ir_var *return_var;
 
     struct vkd3d_shader_location loc;
-    /* Item entry in hlsl_ir_function.overloads. The parameters' types are used as key. */
-    struct rb_entry entry;
+    /* Item entry in hlsl_ir_function.overloads. */
+    struct list entry;
 
     /* Function to which this declaration corresponds. */
     struct hlsl_ir_function *func;
@@ -499,6 +503,22 @@ struct hlsl_ir_loop
     unsigned int next_index; /* liveness index of the end of the loop */
 };
 
+struct hlsl_ir_switch_case
+{
+    unsigned int value;
+    bool is_default;
+    struct hlsl_block body;
+    struct list entry;
+    struct vkd3d_shader_location loc;
+};
+
+struct hlsl_ir_switch
+{
+    struct hlsl_ir_node node;
+    struct hlsl_src selector;
+    struct list cases;
+};
+
 enum hlsl_ir_expr_op
 {
     HLSL_OP0_VOID,
@@ -506,6 +526,7 @@ enum hlsl_ir_expr_op
     HLSL_OP1_ABS,
     HLSL_OP1_BIT_NOT,
     HLSL_OP1_CAST,
+    HLSL_OP1_CEIL,
     HLSL_OP1_COS,
     HLSL_OP1_COS_REDUCED,    /* Reduced range [-pi, pi] */
     HLSL_OP1_DSX,
@@ -558,7 +579,10 @@ enum hlsl_ir_expr_op
     /* MOVC(a, b, c) returns c if a is bitwise zero and b otherwise.
      * TERNARY(a, b, c) returns c if a == 0 and b otherwise.
      * They differ for floating point numbers, because
-     * -0.0 == 0.0, but it is not bitwise zero. */
+     * -0.0 == 0.0, but it is not bitwise zero. CMP(a, b, c) returns b
+       if a >= 0, and c otherwise. It's used only for SM1-SM3 targets, while
+       SM4+ is using MOVC in such cases. */
+    HLSL_OP3_CMP,
     HLSL_OP3_MOVC,
     HLSL_OP3_TERNARY,
 };
@@ -621,16 +645,24 @@ struct hlsl_deref
     unsigned int path_len;
     struct hlsl_src *path;
 
-    /* Single instruction node of data type uint used to represent the register offset (in register
-     *   components, within the pertaining regset), from the start of the variable, of the part
-     *   referenced.
-     * The path is lowered to this single offset -- whose value may vary between SM1 and SM4 --
-     *   before writing the bytecode.
+    /* Before writing the bytecode, deref paths are lowered into an offset (within the pertaining
+     *   regset) from the start of the variable, to the part of the variable that is referenced.
+     * This offset is stored using two fields, one for a variable part and other for a constant
+     *   part, which are added together:
+     *   - rel_offset: An offset given by an instruction node, in whole registers.
+     *   - const_offset: A constant number of register components.
      * Since the type information cannot longer be retrieved from the offset alone, the type is
-     *   stored in the data_type field. */
-    struct hlsl_src offset;
+     *   stored in the data_type field, which remains NULL if the deref hasn't been lowered yet. */
+    struct hlsl_src rel_offset;
+    unsigned int const_offset;
     struct hlsl_type *data_type;
 };
+
+/* Whether the path has been lowered to an offset or not. */
+static inline bool hlsl_deref_is_lowered(const struct hlsl_deref *deref)
+{
+    return !!deref->data_type;
+}
 
 struct hlsl_ir_load
 {
@@ -647,6 +679,7 @@ enum hlsl_resource_load_type
     HLSL_RESOURCE_SAMPLE_LOD,
     HLSL_RESOURCE_SAMPLE_LOD_BIAS,
     HLSL_RESOURCE_SAMPLE_GRAD,
+    HLSL_RESOURCE_SAMPLE_PROJ,
     HLSL_RESOURCE_GATHER_RED,
     HLSL_RESOURCE_GATHER_GREEN,
     HLSL_RESOURCE_GATHER_BLUE,
@@ -710,6 +743,8 @@ struct hlsl_scope
     struct hlsl_scope *upper;
     /* The scope was created for the loop statement. */
     bool loop;
+    /* The scope was created for the switch statement. */
+    bool _switch;
 };
 
 struct hlsl_profile_info
@@ -947,6 +982,12 @@ static inline struct hlsl_ir_index *hlsl_ir_index(const struct hlsl_ir_node *nod
     return CONTAINING_RECORD(node, struct hlsl_ir_index, node);
 }
 
+static inline struct hlsl_ir_switch *hlsl_ir_switch(const struct hlsl_ir_node *node)
+{
+    assert(node->type == HLSL_IR_SWITCH);
+    return CONTAINING_RECORD(node, struct hlsl_ir_switch, node);
+}
+
 static inline void hlsl_block_init(struct hlsl_block *block)
 {
     list_init(&block->instrs);
@@ -1120,6 +1161,9 @@ bool hlsl_copy_deref(struct hlsl_ctx *ctx, struct hlsl_deref *deref, const struc
 void hlsl_cleanup_deref(struct hlsl_deref *deref);
 void hlsl_cleanup_semantic(struct hlsl_semantic *semantic);
 
+void hlsl_cleanup_ir_switch_cases(struct list *cases);
+void hlsl_free_ir_switch_case(struct hlsl_ir_switch_case *c);
+
 void hlsl_replace_node(struct hlsl_ir_node *old, struct hlsl_ir_node *new);
 
 void hlsl_free_attribute(struct hlsl_attribute *attr);
@@ -1129,7 +1173,10 @@ void hlsl_free_type(struct hlsl_type *type);
 void hlsl_free_var(struct hlsl_ir_var *decl);
 
 struct hlsl_ir_function *hlsl_get_function(struct hlsl_ctx *ctx, const char *name);
-struct hlsl_ir_function_decl *hlsl_get_func_decl(struct hlsl_ctx *ctx, const char *name);
+struct hlsl_ir_function_decl *hlsl_get_first_func_decl(struct hlsl_ctx *ctx, const char *name);
+struct hlsl_ir_function_decl *hlsl_get_func_decl(struct hlsl_ctx *ctx, const char *name,
+        const struct hlsl_func_parameters *parameters);
+const struct hlsl_profile_info *hlsl_get_target_info(const char *target);
 struct hlsl_type *hlsl_get_type(struct hlsl_scope *scope, const char *name, bool recursive, bool case_insensitive);
 struct hlsl_ir_var *hlsl_get_var(struct hlsl_scope *scope, const char *name);
 
@@ -1213,6 +1260,10 @@ struct hlsl_ir_node *hlsl_new_unary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr
 struct hlsl_ir_var *hlsl_new_var(struct hlsl_ctx *ctx, const char *name, struct hlsl_type *type,
         const struct vkd3d_shader_location *loc, const struct hlsl_semantic *semantic, unsigned int modifiers,
         const struct hlsl_reg_reservation *reg_reservation);
+struct hlsl_ir_switch_case *hlsl_new_switch_case(struct hlsl_ctx *ctx, unsigned int value, bool is_default,
+        struct hlsl_block *body, const struct vkd3d_shader_location *loc);
+struct hlsl_ir_node *hlsl_new_switch(struct hlsl_ctx *ctx, struct hlsl_ir_node *selector,
+        struct list *cases, const struct vkd3d_shader_location *loc);
 
 void hlsl_error(struct hlsl_ctx *ctx, const struct vkd3d_shader_location *loc,
         enum vkd3d_shader_error error, const char *fmt, ...) VKD3D_PRINTF_FUNC(4, 5);

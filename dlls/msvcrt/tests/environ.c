@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <process.h>
+#include <winnls.h>
 
 static const char *a_very_long_env_string =
  "LIBRARY_PATH="
@@ -46,6 +47,8 @@ static const char *a_very_long_env_string =
 
 static char ***(__cdecl *p__p__environ)(void);
 static WCHAR ***(__cdecl *p__p__wenviron)(void);
+static char ***(__cdecl *p__p___initenv)(void);
+static wchar_t ***(__cdecl *p__p___winitenv)(void);
 static void (__cdecl *p_get_environ)(char ***);
 static void (__cdecl *p_get_wenviron)(WCHAR ***);
 static errno_t (__cdecl *p_putenv_s)(const char*, const char*);
@@ -61,6 +64,8 @@ static void init(void)
 
     p__p__environ = (void *)GetProcAddress(hmod, "__p__environ");
     p__p__wenviron = (void *)GetProcAddress(hmod, "__p__wenviron");
+    p__p___initenv = (void *)GetProcAddress(hmod, "__p___initenv");
+    p__p___winitenv = (void *)GetProcAddress(hmod, "__p___winitenv");
     p_environ = (void *)GetProcAddress(hmod, "_environ");
     p_wenviron = (void *)GetProcAddress(hmod, "_wenviron");
     p_get_environ = (void *)GetProcAddress(hmod, "_get_environ");
@@ -79,21 +84,41 @@ static void test_system(void)
     ok(ret == 0, "Expected system to return 0, got %d\n", ret);
 }
 
+static unsigned env_get_entry_countA( char **env )
+{
+    unsigned count;
+
+    if (!env) return 0;
+    for (count = 0; env[count] != NULL; count++) {}
+    return count;
+}
+
+static wchar_t *env_get_valueW( wchar_t **envp, const wchar_t *var )
+{
+    unsigned i;
+    size_t len = wcslen( var );
+
+    if (!envp) return NULL;
+    for (i = 0; envp[i] != NULL; i++)
+    {
+        wchar_t *ptr;
+
+        if (!(ptr = wcschr( envp[i], L'=' ))) continue;
+
+        if (ptr - envp[i] == len && !memcmp( envp[i], var, len * sizeof(wchar_t) ))
+            return ptr + 1;
+    }
+    return NULL;
+}
+
 static void test__environ(void)
 {
     int argc;
-    char **argv, **envp = NULL;
-    int i, mode = 0;
+    char **argv, **envp = NULL, **initenv = NULL;
+    int mode = 0;
 
     ok( p_environ != NULL, "Expected the pointer to _environ to be non-NULL\n" );
-    if (p_environ)
-        ok( *p_environ != NULL, "Expected _environ to be initialized on startup\n" );
-
-    if (!p_environ || !*p_environ)
-    {
-        skip( "_environ pointers are not valid\n" );
-        return;
-    }
+    ok( *p_environ != NULL, "Expected _environ to be initialized on startup\n" );
 
     if (sizeof(void*) != sizeof(int))
         ok( !p__p__environ, "__p__environ() should be 32-bit only\n");
@@ -110,32 +135,37 @@ static void test__environ(void)
     else
         win_skip( "_get_environ() is not available\n" );
 
+    if (p__p___initenv)
+    {
+        initenv = *p__p___initenv();
+
+        todo_wine
+        ok( initenv == *p_environ,
+            "Expected _environ to be equal to initial env\n" );
+    }
+    else
+        skip( "__p___initenv() is not available\n" );
+
     /* Note that msvcrt from Windows versions older than Vista
      * expects the mode pointer parameter to be valid.*/
     __getmainargs(&argc, &argv, &envp, 0, &mode);
 
-    ok( envp != NULL, "Expected initial environment block pointer to be non-NULL\n" );
-    if (!envp)
-    {
-        skip( "Initial environment block pointer is not valid\n" );
-        return;
-    }
+    ok( envp != NULL,
+        "Expected initial environment block pointer to be non-NULL\n" );
+    ok( envp == *p_environ,
+        "Expected initial environment to be equal to _environ\n" );
 
-    for (i = 0; ; i++)
+    ok( _putenv("cat=dog") == 0, "failed setting cat=dog\n" );
+    if (p__p___initenv)
     {
-        if ((*p_environ)[i])
-        {
-            ok( envp[i] != NULL, "Expected environment block pointer element to be non-NULL\n" );
-            ok( !strcmp((*p_environ)[i], envp[i]),
-                "Expected _environ and environment block pointer strings (%s vs. %s) to match\n",
-                (*p_environ)[i], envp[i] );
-        }
-        else
-        {
-            ok( !envp[i], "Expected environment block pointer element to be NULL, got %p\n", envp[i] );
-            break;
-        }
+        char **retptr = *p__p___initenv();
+
+        ok( retptr != *p_environ,
+            "Expected _environ[] not to be equal to initial env\n" );
+        ok( retptr == initenv,
+            "Unexpected modification of initial env\n" );
     }
+    ok( _putenv("cat=") == 0, "failed setting cat=\n" );
 }
 
 static void test__wenviron(void)
@@ -143,36 +173,38 @@ static void test__wenviron(void)
     int argc;
     char **argv, **envp = NULL;
     WCHAR **wargv, **wenvp = NULL;
-    int i, mode = 0;
+    int mode = 0;
 
     ok( p_wenviron != NULL, "Expected the pointer to _wenviron to be non-NULL\n" );
-    if (p_wenviron)
-        ok( *p_wenviron == NULL, "Expected _wenviron to be NULL, got %p\n", *p_wenviron );
-    else
-    {
-        win_skip( "Pointer to _wenviron is not valid\n" );
-        return;
-    }
+    ok( !*p_wenviron, "Expected _wenviron[] to be NULL, got %p\n", *p_wenviron );
 
     if (sizeof(void*) != sizeof(int))
         ok( !p__p__wenviron, "__p__wenviron() should be 32-bit only\n");
     else
-        ok( *p__p__wenviron() == NULL, "Expected _wenviron pointers to be NULL\n" );
+        ok( !*p__p__wenviron(), "Expected _wenviron to be NULL, got %p\n", *p_wenviron );
 
     if (p_get_wenviron)
     {
         WCHAR **retptr;
         p_get_wenviron(&retptr);
-        ok( retptr == NULL,
-            "Expected _wenviron pointers to be NULL\n" );
+        ok( retptr == *p_wenviron, "Expected _wenviron pointers to be NULL\n" );
     }
     else
         win_skip( "_get_wenviron() is not available\n" );
 
+    if (p__p___winitenv)
+    {
+        wchar_t ***retptr = p__p___winitenv();
+        todo_wine
+        ok( !*retptr, "Expected initial env to be NULL\n" );
+    }
+    else
+        skip( "__p___winitenv() is not available\n" );
+
     /* __getmainargs doesn't initialize _wenviron. */
     __getmainargs(&argc, &argv, &envp, 0, &mode);
 
-    ok( *p_wenviron == NULL, "Expected _wenviron to be NULL, got %p\n", *p_wenviron);
+    ok( !*p_wenviron, "Expected _wenviron to be NULL\n");
     ok( envp != NULL, "Expected initial environment block pointer to be non-NULL\n" );
     if (!envp)
     {
@@ -182,24 +214,32 @@ static void test__wenviron(void)
 
     /* Neither does calling the non-Unicode environment manipulation functions. */
     ok( _putenv("cat=dog") == 0, "failed setting cat=dog\n" );
-    ok( *p_wenviron == NULL, "Expected _wenviron to be NULL, got %p\n", *p_wenviron);
-    ok( _putenv("cat=") == 0, "failed deleting cat\n" );
+    ok( !*p_wenviron, "Expected _wenviron to be NULL\n" );
 
     /* _wenviron isn't initialized until __wgetmainargs is called or
      * one of the Unicode environment manipulation functions is called. */
-    ok( _wputenv(L"cat=dog") == 0, "failed setting cat=dog\n" );
+    ok( _wputenv(L"cat=dog2") == 0, "failed setting cat=dog2\n" );
     ok( *p_wenviron != NULL, "Expected _wenviron to be non-NULL\n" );
-    ok( _wputenv(L"cat=") == 0, "failed deleting cat\n" );
 
     __wgetmainargs(&argc, &wargv, &wenvp, 0, &mode);
-
-    ok( *p_wenviron != NULL, "Expected _wenviron to be non-NULL\n" );
     ok( wenvp != NULL, "Expected initial environment block pointer to be non-NULL\n" );
-    if (!wenvp)
+    ok( wenvp == *p_wenviron, "Expected initial environment to be _wenviron[]\n" );
+
+    if (p__p___winitenv)
     {
-        skip( "Initial environment block pointer is not valid\n" );
-        return;
+        wchar_t ***retptr = p__p___winitenv();
+        wchar_t *value;
+
+        ok( *retptr != NULL, "Expected *__p___winitenv() to be NULL\n" );
+        ok( *retptr != *p_wenviron,
+            "Expected _wenviron to be different from __p___winitenv() %p %p\n", *retptr, *p_wenviron );
+        /* test that w-initial env is derived from current _environ[] and not from ansi initial env */
+        value = env_get_valueW( *retptr, L"cat" );
+        todo_wine
+        ok( value && !wcscmp( value, L"dog" ),
+                "Expecting initial env to be derived from current env (got %ls)\n", value );
     }
+    _putenv("cat=");
 
     /* Examine the returned pointer from __p__wenviron(),
      * if available, after _wenviron is initialized. */
@@ -216,22 +256,6 @@ static void test__wenviron(void)
         ok( retptr == *p_wenviron,
             "Expected _wenviron pointers to be identical\n" );
     }
-
-    for (i = 0; ; i++)
-    {
-        if ((*p_wenviron)[i])
-        {
-            ok( wenvp[i] != NULL, "Expected environment block pointer element to be non-NULL\n" );
-            ok( !wcscmp((*p_wenviron)[i], wenvp[i]),
-                "Expected _wenviron and environment block pointer strings (%s vs. %s) to match\n",
-                wine_dbgstr_w((*p_wenviron)[i]), wine_dbgstr_w(wenvp[i]) );
-        }
-        else
-        {
-            ok( !wenvp[i], "Expected environment block pointer element to be NULL, got %p\n", wenvp[i] );
-            break;
-        }
-    }
 }
 
 static void test_environment_manipulation(void)
@@ -239,6 +263,9 @@ static void test_environment_manipulation(void)
     char buf[256];
     errno_t ret;
     size_t len;
+    unsigned count;
+    char* first;
+    char* second;
 
     ok( _putenv("cat=") == 0, "_putenv failed on deletion of nonexistent environment variable\n" );
     ok( _putenv("cat=dog") == 0, "failed setting cat=dog\n" );
@@ -306,14 +333,70 @@ static void test_environment_manipulation(void)
         ok( !buf[0], "buf = %s\n", buf);
         ok( errno == 0xdeadbeef, "errno = %d\n", errno);
     }
+
+    /* test stability of _environ[] pointers */
+    ok( _putenv( "__winetest_cat=" ) == 0, "Couldn't reset env var\n" );
+    ok( _putenv( "__winetest_dog=" ) == 0, "Couldn't reset env var\n" );
+    count = env_get_entry_countA( *p_environ );
+    ok( _putenv( "__winetest_cat=mew") == 0, "Couldn't set env var\n" );
+    ok( !strcmp( (*p_environ)[count], "__winetest_cat=mew"), "Unexpected env var value\n" );
+    first = (*p_environ)[count];
+    ok( getenv("__winetest_cat") == strchr( (*p_environ)[count], '=') + 1, "Expected getenv() to return pointer inside _environ[] entry\n" );
+    ok( _putenv( "__winetest_dog=bark" ) == 0, "Couldn't set env var\n" );
+    ok( !strcmp( (*p_environ)[count + 1], "__winetest_dog=bark" ), "Unexpected env var value\n" );
+    ok( getenv( "__winetest_dog" ) == strchr( (*p_environ)[count + 1], '=' ) + 1, "Expected getenv() to return pointer inside _environ[] entry\n" );
+    todo_wine
+    ok( first == (*p_environ)[count], "Expected stability of _environ[count] pointer\n" );
+    second = (*p_environ)[count + 1];
+    ok( count + 2 == env_get_entry_countA( *p_environ ), "Unexpected count\n" );
+
+    ok( _putenv( "__winetest_cat=purr" ) == 0, "Couldn't set env var\n" );
+    ok( !strcmp( (*p_environ)[count], "__winetest_cat=purr" ), "Unexpected env var value\n" );
+    ok( getenv( "__winetest_cat" ) == strchr( (*p_environ)[count], '=' ) + 1, "Expected getenv() to return pointer inside _environ[] entry\n" );
+    todo_wine
+    ok( second == (*p_environ)[count + 1], "Expected stability of _environ[count] pointer\n" );
+    ok( !strcmp( (*p_environ)[count + 1], "__winetest_dog=bark" ), "Couldn't get env var value\n" );
+    ok( getenv( "__winetest_dog" ) == strchr( (*p_environ)[count + 1], '=' ) + 1, "Expected getenv() to return pointer inside _environ[] entry\n" );
+    ok( count + 2 == env_get_entry_countA( *p_environ ), "Unexpected count\n" );
+    ok( _putenv( "__winetest_cat=" ) == 0, "Couldn't reset env vat\n" );
+    todo_wine
+    ok( second == (*p_environ)[count], "Expected _environ[count] to be second\n" );
+    ok( !strcmp( (*p_environ)[count], "__winetest_dog=bark" ), "Unexpected env var value\n" );
+    ok( count + 1 == env_get_entry_countA( *p_environ ), "Unexpected count\n" );
+    ok( _putenv( "__winetest_dog=" ) == 0, "Couldn't reset env var\n" );
+    ok( count == env_get_entry_countA( *p_environ ), "Unexpected count\n" );
+
+    /* in putenv, only changed variable is updated (no other reload of kernel info is done) */
+    ret = SetEnvironmentVariableA( "__winetest_cat", "meow" );
+    ok( ret, "SetEnvironmentVariableA failed: %lu\n", GetLastError() );
+    ok( _putenv( "__winetest_dog=bark" ) == 0, "Couldn't set env var\n" );
+    todo_wine
+    ok( getenv( "__winetest_cat" ) == NULL, "msvcrt env cache shouldn't have been updated\n" );
+    ok( _putenv( "__winetest_cat=" ) == 0, "Couldn't reset env var\n" );
+    ok( _putenv( "__winetest_dog=" ) == 0, "Couldn't reset env var\n" );
+
+    /* test setting unicode bits */
+    count = env_get_entry_countA( *p_environ );
+    ret = WideCharToMultiByte( CP_ACP, 0, L"\u263a", -1, buf, ARRAY_SIZE(buf), 0, 0 );
+    ok( ret, "WideCharToMultiByte failed: %lu\n", GetLastError() );
+    ok( _wputenv( L"__winetest_cat=\u263a" ) == 0, "Couldn't set env var\n" );
+    ok( _wgetenv( L"__winetest_cat" ) && !wcscmp( _wgetenv( L"__winetest_cat" ), L"\u263a" ), "Couldn't retrieve env var\n" );
+    ok( getenv( "__winetest_cat" ) && !strcmp( getenv( "__winetest_cat" ), buf ), "Couldn't retrieve env var\n" );
+    ok( _wputenv( L"__winetest_cat=" ) == 0, "Couldn't reset env var\n" );
+
+    ret = WideCharToMultiByte( CP_ACP, 0, L"__winetest_\u263a", -1, buf, ARRAY_SIZE(buf), 0, 0 );
+    ok( ret, "WideCharToMultiByte failed: %lu\n", GetLastError() );
+    ok( _wputenv( L"__winetest_\u263a=bark" ) == 0, "Couldn't set env var\n" );
+    ok( _wgetenv( L"__winetest_\u263a" ) && !wcscmp( _wgetenv( L"__winetest_\u263a" ), L"bark"), "Couldn't retrieve env var\n" );
+    ok( getenv( buf ) && !strcmp( getenv( buf ), "bark"), "Couldn't retrieve env var %s\n", wine_dbgstr_a(buf) );
+    ok( _wputenv( L"__winetest_\u263a=" ) == 0, "Couldn't reset env var\n" );
+    ok( count == env_get_entry_countA( *p_environ ), "Unexpected modification of _environ[]\n" );
 }
 
 START_TEST(environ)
 {
     init();
 
-    /* The environ tests should always be run first, as they assume
-     * that the process has not manipulated the environment. */
     test__environ();
     test__wenviron();
     test_environment_manipulation();

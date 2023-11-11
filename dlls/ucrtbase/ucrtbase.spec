@@ -99,8 +99,8 @@
 @ cdecl __isascii(long)
 @ cdecl __iscsym(long)
 @ cdecl __iscsymf(long)
-@ stub __iswcsym
-@ stub __iswcsymf
+@ cdecl __iswcsym(long)
+@ cdecl __iswcsymf(long)
 @ stdcall -arch=arm __jump_unwind(ptr ptr) ntdll.__jump_unwind
 @ cdecl -arch=i386 -norelay __libm_sse2_acos()
 @ cdecl -arch=i386 -norelay __libm_sse2_acosf()
@@ -609,9 +609,9 @@
 @ cdecl _mbctombb_l(long ptr)
 @ cdecl _mbctoupper(long)
 @ cdecl _mbctoupper_l(long ptr)
-@ stub _mblen_l
+@ cdecl _mblen_l(str long ptr)
 @ cdecl _mbsbtype(str long)
-@ stub _mbsbtype_l
+@ cdecl _mbsbtype_l(str long ptr)
 @ cdecl _mbscat_s(ptr long str)
 @ cdecl _mbscat_s_l(ptr long str ptr)
 @ cdecl _mbschr(str long)
@@ -625,7 +625,7 @@
 @ cdecl _mbscspn(str str)
 @ cdecl _mbscspn_l(str str ptr)
 @ cdecl _mbsdec(ptr ptr)
-@ stub _mbsdec_l
+@ cdecl _mbsdec_l(ptr ptr ptr)
 @ cdecl _mbsdup(str) _strdup
 @ cdecl _mbsicmp(str str)
 @ cdecl _mbsicmp_l(str str ptr)
@@ -636,49 +636,49 @@
 @ cdecl _mbslen(str)
 @ cdecl _mbslen_l(str ptr)
 @ cdecl _mbslwr(str)
-@ stub _mbslwr_l
+@ cdecl _mbslwr_l(str ptr)
 @ cdecl _mbslwr_s(str long)
 @ cdecl _mbslwr_s_l(str long ptr)
 @ cdecl _mbsnbcat(str str long)
-@ stub _mbsnbcat_l
+@ cdecl _mbsnbcat_l(str str long ptr)
 @ cdecl _mbsnbcat_s(str long ptr long)
-@ stub _mbsnbcat_s_l
+@ cdecl _mbsnbcat_s_l(str long ptr long ptr)
 @ cdecl _mbsnbcmp(str str long)
-@ stub _mbsnbcmp_l
+@ cdecl _mbsnbcmp_l(str str long ptr)
 @ cdecl _mbsnbcnt(ptr long)
-@ stub _mbsnbcnt_l
+@ cdecl _mbsnbcnt_l(ptr long ptr)
 @ cdecl _mbsnbcoll(str str long)
 @ cdecl _mbsnbcoll_l(str str long ptr)
 @ cdecl _mbsnbcpy(ptr str long)
-@ stub _mbsnbcpy_l
+@ cdecl _mbsnbcpy_l(ptr str long ptr)
 @ cdecl _mbsnbcpy_s(ptr long str long)
 @ cdecl _mbsnbcpy_s_l(ptr long str long ptr)
 @ cdecl _mbsnbicmp(str str long)
-@ stub _mbsnbicmp_l
+@ cdecl _mbsnbicmp_l(str str long ptr)
 @ cdecl _mbsnbicoll(str str long)
 @ cdecl _mbsnbicoll_l(str str long ptr)
 @ cdecl _mbsnbset(ptr long long)
-@ stub _mbsnbset_l
+@ cdecl _mbsnbset_l(str long long ptr)
 @ stub _mbsnbset_s
 @ stub _mbsnbset_s_l
 @ cdecl _mbsncat(str str long)
-@ stub _mbsncat_l
+@ cdecl _mbsncat_l(str str long ptr)
 @ stub _mbsncat_s
 @ stub _mbsncat_s_l
 @ cdecl _mbsnccnt(str long)
-@ stub _mbsnccnt_l
+@ cdecl _mbsnccnt_l(str long ptr)
 @ cdecl _mbsncmp(str str long)
-@ stub _mbsncmp_l
+@ cdecl _mbsncmp_l(str str long ptr)
 @ stub _mbsncoll(str str long)
 @ stub _mbsncoll_l
 @ cdecl _mbsncpy(ptr str long)
-@ stub _mbsncpy_l
+@ cdecl _mbsncpy_l(ptr str long ptr)
 @ stub _mbsncpy_s
 @ stub _mbsncpy_s_l
 @ cdecl _mbsnextc(str)
 @ cdecl _mbsnextc_l(str ptr)
 @ cdecl _mbsnicmp(str str long)
-@ stub _mbsnicmp_l
+@ cdecl _mbsnicmp_l(str str long ptr)
 @ stub _mbsnicoll(str str long)
 @ stub _mbsnicoll_l
 @ cdecl _mbsninc(str long)
@@ -686,17 +686,17 @@
 @ cdecl _mbsnlen(str long)
 @ cdecl _mbsnlen_l(str long ptr)
 @ cdecl _mbsnset(ptr long long)
-@ stub _mbsnset_l
+@ cdecl _mbsnset_l(ptr long long ptr)
 @ stub _mbsnset_s
 @ stub _mbsnset_s_l
 @ cdecl _mbspbrk(str str)
-@ stub _mbspbrk_l
+@ cdecl _mbspbrk_l(str str ptr)
 @ cdecl _mbsrchr(str long)
-@ stub _mbsrchr_l
+@ cdecl _mbsrchr_l(str long ptr)
 @ cdecl _mbsrev(str)
-@ stub _mbsrev_l
+@ cdecl _mbsrev_l(str ptr)
 @ cdecl _mbsset(ptr long)
-@ stub _mbsset_l
+@ cdecl _mbsset_l(ptr long ptr)
 @ stub _mbsset_s
 @ stub _mbsset_s_l
 @ cdecl _mbsspn(str str)
@@ -716,7 +716,7 @@
 @ stub _mbstrnlen
 @ stub _mbstrnlen_l
 @ cdecl _mbsupr(str)
-@ stub _mbsupr_l
+@ cdecl _mbsupr_l(str ptr)
 @ cdecl _mbsupr_s(str long)
 @ cdecl _mbsupr_s_l(str long ptr)
 @ cdecl _mbtowc_l(ptr str long ptr)
@@ -1179,9 +1179,9 @@
 @ cdecl _o__mbctombb_l(long ptr) _mbctombb_l
 @ cdecl _o__mbctoupper(long) _mbctoupper
 @ cdecl _o__mbctoupper_l(long ptr) _mbctoupper_l
-@ stub _o__mblen_l
+@ cdecl _o__mblen_l(str long ptr) _mblen_l
 @ cdecl _o__mbsbtype(str long) _mbsbtype
-@ stub _o__mbsbtype_l
+@ cdecl _o__mbsbtype_l(str long ptr) _mbsbtype_l
 @ cdecl _o__mbscat_s(ptr long str) _mbscat_s
 @ cdecl _o__mbscat_s_l(ptr long str ptr) _mbscat_s_l
 @ cdecl _o__mbschr(str long) _mbschr
@@ -1195,7 +1195,7 @@
 @ cdecl _o__mbscspn(str str) _mbscspn
 @ cdecl _o__mbscspn_l(str str ptr) _mbscspn_l
 @ cdecl _o__mbsdec(ptr ptr) _mbsdec
-@ stub _o__mbsdec_l
+@ cdecl _o__mbsdec_l(ptr ptr ptr) _mbsdec_l
 @ cdecl _o__mbsicmp(str str) _mbsicmp
 @ cdecl _o__mbsicmp_l(str str ptr) _mbsicmp_l
 @ cdecl _o__mbsicoll(str str) _mbsicoll
@@ -1205,49 +1205,49 @@
 @ cdecl _o__mbslen(str) _mbslen
 @ cdecl _o__mbslen_l(str ptr) _mbslen_l
 @ cdecl _o__mbslwr(str) _mbslwr
-@ stub _o__mbslwr_l
+@ cdecl _o__mbslwr_l(str ptr) _mbslwr_l
 @ cdecl _o__mbslwr_s(str long) _mbslwr_s
 @ cdecl _o__mbslwr_s_l(str long ptr) _mbslwr_s_l
 @ cdecl _o__mbsnbcat(str str long) _mbsnbcat
-@ stub _o__mbsnbcat_l
+@ cdecl _o__mbsnbcat_l(str str long ptr) _mbsnbcat_l
 @ cdecl _o__mbsnbcat_s(str long ptr long) _mbsnbcat_s
-@ stub _o__mbsnbcat_s_l
+@ cdecl _o__mbsnbcat_s_l(str long ptr long ptr) _mbsnbcat_s_l
 @ cdecl _o__mbsnbcmp(str str long) _mbsnbcmp
-@ stub _o__mbsnbcmp_l
+@ cdecl _o_mbsnbcmp_l(str str long ptr) _mbsnbcmp_l
 @ cdecl _o__mbsnbcnt(ptr long) _mbsnbcnt
-@ stub _o__mbsnbcnt_l
+@ cdecl _o__mbsnbcnt_l(ptr long ptr) _mbsnbcnt_l
 @ cdecl _o__mbsnbcoll(str str long) _mbsnbcoll
 @ cdecl _o__mbsnbcoll_l(str str long ptr) _mbsnbcoll_l
 @ cdecl _o__mbsnbcpy(ptr str long) _mbsnbcpy
-@ stub _o__mbsnbcpy_l
+@ cdecl _o__mbsnbcpy_l(ptr str long ptr) _mbsnbcpy_l
 @ cdecl _o__mbsnbcpy_s(ptr long str long) _mbsnbcpy_s
 @ cdecl _o__mbsnbcpy_s_l(ptr long str long ptr) _mbsnbcpy_s_l
 @ cdecl _o__mbsnbicmp(str str long) _mbsnbicmp
-@ stub _o__mbsnbicmp_l
+@ cdecl _o__mbsnbicmp_l(str str long ptr) _mbsnbicmp_l
 @ cdecl _o__mbsnbicoll(str str long) _mbsnbicoll
 @ cdecl _o__mbsnbicoll_l(str str long ptr) _mbsnbicoll_l
 @ cdecl _o__mbsnbset(ptr long long) _mbsnbset
-@ stub _o__mbsnbset_l
+@ cdecl _o__mbsnbset_l(str long long ptr) _mbsnbset_l
 @ stub _o__mbsnbset_s
 @ stub _o__mbsnbset_s_l
 @ cdecl _o__mbsncat(str str long) _mbsncat
-@ stub _o__mbsncat_l
+@ cdecl _o__mbsncat_l(str str long ptr) _mbsncat_l
 @ stub _o__mbsncat_s
 @ stub _o__mbsncat_s_l
 @ cdecl _o__mbsnccnt(str long) _mbsnccnt
-@ stub _o__mbsnccnt_l
+@ cdecl _o__mbsnccnt_l(str long ptr) _mbsnccnt_l
 @ cdecl _o__mbsncmp(str str long) _mbsncmp
-@ stub _o__mbsncmp_l
+@ cdecl _o__mbsncmp_l(str str long ptr) _mbsncmp_l
 @ stub _o__mbsncoll
 @ stub _o__mbsncoll_l
 @ cdecl _o__mbsncpy(ptr str long) _mbsncpy
-@ stub _o__mbsncpy_l
+@ cdecl _o__mbsncpy_l(ptr str long ptr) _mbsncpy_l
 @ stub _o__mbsncpy_s
 @ stub _o__mbsncpy_s_l
 @ cdecl _o__mbsnextc(str) _mbsnextc
 @ cdecl _o__mbsnextc_l(str ptr) _mbsnextc_l
 @ cdecl _o__mbsnicmp(str str long) _mbsnicmp
-@ stub _o__mbsnicmp_l
+@ cdecl _o__mbsnicmp_l(str str long ptr) _mbsnicmp_l
 @ stub _o__mbsnicoll
 @ stub _o__mbsnicoll_l
 @ cdecl _o__mbsninc(str long) _mbsninc
@@ -1255,17 +1255,17 @@
 @ cdecl _o__mbsnlen(str long) _mbsnlen
 @ cdecl _o__mbsnlen_l(str long ptr) _mbsnlen_l
 @ cdecl _o__mbsnset(ptr long long) _mbsnset
-@ stub _o__mbsnset_l
+@ cdecl _o__mbsnset_l(ptr long long ptr) _mbsnset_l
 @ stub _o__mbsnset_s
 @ stub _o__mbsnset_s_l
 @ cdecl _o__mbspbrk(str str) _mbspbrk
-@ stub _o__mbspbrk_l
+@ cdecl _o__mbspbrk_l(str str ptr) _mbspbrk_l
 @ cdecl _o__mbsrchr(str long) _mbsrchr
-@ stub _o__mbsrchr_l
+@ cdecl _o__mbsrchr_l(str long ptr) _mbsrchr_l
 @ cdecl _o__mbsrev(str) _mbsrev
-@ stub _o__mbsrev_l
+@ cdecl _o__mbsrev_l(str ptr) _mbsrev_l
 @ cdecl _o__mbsset(ptr long) _mbsset
-@ stub _o__mbsset_l
+@ cdecl _o__mbsset_l(ptr long ptr) _mbsset_l
 @ stub _o__mbsset_s
 @ stub _o__mbsset_s_l
 @ cdecl _o__mbsspn(str str) _mbsspn
@@ -1285,7 +1285,7 @@
 @ stub _o__mbstrnlen
 @ stub _o__mbstrnlen_l
 @ cdecl _o__mbsupr(str) _mbsupr
-@ stub _o__mbsupr_l
+@ cdecl _o__mbsupr_l(str ptr) _mbsupr_l
 @ cdecl _o__mbsupr_s(str long) _mbsupr_s
 @ cdecl _o__mbsupr_s_l(str long ptr) _mbsupr_s_l
 @ cdecl _o__mbtowc_l(ptr str long ptr) _mbtowc_l
@@ -2470,7 +2470,8 @@
 @ cdecl remquof(float float ptr)
 @ cdecl remquol(double double ptr) remquo
 @ cdecl rename(str str)
-@ cdecl rewind(ptr)
+@ cdecl -arch=i386 rewind(ptr) rewind_preserve_stack
+@ cdecl -arch=!i386 rewind(ptr)
 @ cdecl rint(double) MSVCRT_rint
 @ cdecl rintf(float)
 @ cdecl rintl(double) MSVCRT_rint

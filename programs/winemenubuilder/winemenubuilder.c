@@ -1965,17 +1965,18 @@ static BOOL write_freedesktop_mime_type_entry(const WCHAR *packages_dir, const W
     return ret;
 }
 
-static BOOL is_type_banned(LPCWSTR extension)
+static BOOL is_type_banned(const WCHAR *win_type)
 {
     /* These are managed through external tools like wine.desktop, to evade malware created file type associations */
-    if (!wcsicmp(extension, L".bat") ||
-        !wcsicmp(extension, L".com") ||
-        !wcsicmp(extension, L".exe") ||
-        !wcsicmp(extension, L".msi"))
+    if (!wcsicmp(win_type, L".bat") ||
+        !wcsicmp(win_type, L".com") ||
+        !wcsicmp(win_type, L".exe") ||
+        !wcsicmp(win_type, L".msi") ||
+        !wcsicmp(win_type, L".url"))
         return TRUE;
     /* Associating a program with the file URI scheme is like associating it with all file types, which is not allowed
      * for the same reasons */
-    if (!wcsicmp(extension, L"file"))
+    if (!wcsicmp(win_type, L"file"))
         return TRUE;
     return FALSE;
 }
@@ -2158,8 +2159,9 @@ static BOOL generate_associations(const WCHAR *packages_dir, const WCHAR *applic
                             index = wcstol(comma + 1, NULL, 10);
                         }
                         extract_icon(iconW, index, flattened_mime, FALSE);
-                        heap_free(flattened_mime);
+                        free(flattened_mime);
                     }
+
                     write_freedesktop_mime_type_entry(packages_dir, winTypeW, mimeType, friendlyDocNameW);
                     hasChanged = TRUE;
                 }

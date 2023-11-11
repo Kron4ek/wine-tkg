@@ -73,6 +73,12 @@ static CRITICAL_SECTION_DEBUG DSOUND_renderers_lock_debug =
 };
 CRITICAL_SECTION DSOUND_renderers_lock = { &DSOUND_renderers_lock_debug, -1, 0, 0, 0, 0 };
 
+/* Some applications expect the GUID pointers emitted from DirectSoundCaptureEnumerate to remain
+ * valid at least until the next time DirectSoundCaptureEnumerate is called, so we store them in
+ * these dynamically allocated arrays. */
+GUID *DSOUND_renderer_guids;
+GUID *DSOUND_capture_guids;
+
 const WCHAR wine_vxd_drv[] = L"winemm.vxd";
 
 /* All default settings, you most likely don't want to touch these, see wiki on UsefulRegistryKeys */
@@ -398,13 +404,13 @@ HRESULT get_mmdevice(EDataFlow flow, const GUID *tgt, IMMDevice **device)
     return DSERR_INVALIDPARAM;
 }
 
-static BOOL send_device(IMMDevice *device, LPDSENUMCALLBACKW cb, void *user)
+static BOOL send_device(IMMDevice *device, GUID *guid,
+        LPDSENUMCALLBACKW cb, void *user)
 {
     IPropertyStore *ps;
     PROPVARIANT pv;
     BOOL keep_going;
     HRESULT hr;
-    GUID guid;
 
     PropVariantInit(&pv);
 
@@ -414,7 +420,7 @@ static BOOL send_device(IMMDevice *device, LPDSENUMCALLBACKW cb, void *user)
         return TRUE;
     }
 
-    hr = get_mmdevice_guid(device, ps, &guid);
+    hr = get_mmdevice_guid(device, ps, guid);
     if(FAILED(hr)){
         IPropertyStore_Release(ps);
         return TRUE;
@@ -428,10 +434,10 @@ static BOOL send_device(IMMDevice *device, LPDSENUMCALLBACKW cb, void *user)
         return TRUE;
     }
 
-    TRACE("Calling back with %s (%s)\n", wine_dbgstr_guid(&guid),
+    TRACE("Calling back with %s (%s)\n", wine_dbgstr_guid(guid),
             wine_dbgstr_w(pv.pwszVal));
 
-    keep_going = cb(&guid, pv.pwszVal, wine_vxd_drv, user);
+    keep_going = cb(guid, pv.pwszVal, wine_vxd_drv, user);
 
     PropVariantClear(&pv);
     IPropertyStore_Release(ps);
@@ -441,12 +447,13 @@ static BOOL send_device(IMMDevice *device, LPDSENUMCALLBACKW cb, void *user)
 
 /* S_FALSE means the callback returned FALSE at some point
  * S_OK means the callback always returned TRUE */
-HRESULT enumerate_mmdevices(EDataFlow flow, LPDSENUMCALLBACKW cb, void *user)
+HRESULT enumerate_mmdevices(EDataFlow flow, GUID *guids,
+        LPDSENUMCALLBACKW cb, void *user)
 {
     IMMDeviceEnumerator *devenum;
     IMMDeviceCollection *coll;
     IMMDevice *defdev = NULL;
-    UINT count, i;
+    UINT count, i, n;
     BOOL keep_going;
     HRESULT hr, init_hr;
 
@@ -470,10 +477,18 @@ HRESULT enumerate_mmdevices(EDataFlow flow, LPDSENUMCALLBACKW cb, void *user)
         return DS_OK;
     }
 
+    free(guids);
     if(count == 0){
         IMMDeviceCollection_Release(coll);
         release_mmdevenum(devenum, init_hr);
+        guids = NULL;
         return DS_OK;
+    }
+    guids = malloc((count + 1) * sizeof(GUID));
+    if(!guids){
+        IMMDeviceCollection_Release(coll);
+        release_mmdevenum(devenum, init_hr);
+        return E_OUTOFMEMORY;
     }
 
     TRACE("Calling back with NULL (Primary Sound Driver)\n");
@@ -485,8 +500,10 @@ HRESULT enumerate_mmdevices(EDataFlow flow, LPDSENUMCALLBACKW cb, void *user)
                 eMultimedia, &defdev);
         if(FAILED(hr)){
             defdev = NULL;
+            n = 0;
         }else{
-            keep_going = send_device(defdev, cb, user);
+            keep_going = send_device(defdev, &guids[0], cb, user);
+            n = 1;
         }
     }
 
@@ -500,7 +517,8 @@ HRESULT enumerate_mmdevices(EDataFlow flow, LPDSENUMCALLBACKW cb, void *user)
         }
 
         if(device != defdev){
-            keep_going = send_device(device, cb, user);
+            keep_going = send_device(device, &guids[n], cb, user);
+            ++n;
         }
 
         IMMDevice_Release(device);
@@ -543,7 +561,8 @@ HRESULT WINAPI DirectSoundEnumerateW(
 
     setup_dsound_options();
 
-    hr = enumerate_mmdevices(eRender, lpDSEnumCallback, lpContext);
+    hr = enumerate_mmdevices(eRender, DSOUND_renderer_guids,
+            lpDSEnumCallback, lpContext);
     return SUCCEEDED(hr) ? DS_OK : hr;
 }
 
@@ -606,7 +625,8 @@ DirectSoundCaptureEnumerateW(
 
     setup_dsound_options();
 
-    hr = enumerate_mmdevices(eCapture, lpDSEnumCallback, lpContext);
+    hr = enumerate_mmdevices(eCapture, DSOUND_capture_guids,
+            lpDSEnumCallback, lpContext);
     return SUCCEEDED(hr) ? DS_OK : hr;
 }
 

@@ -350,7 +350,7 @@ static ULONG WINAPI d3d_device_inner_Release(IUnknown *iface)
         }
 
         if (This->pick_record_size > 0)
-            heap_free(This->pick_records);
+            free(This->pick_records);
 
         TRACE("Releasing render target %p.\n", This->rt_iface);
         rt_iface = This->rt_iface;
@@ -365,7 +365,7 @@ static ULONG WINAPI d3d_device_inner_Release(IUnknown *iface)
             This->ddraw->d3ddevice = NULL;
 
         /* Now free the structure */
-        heap_free(This);
+        free(This);
         wined3d_mutex_unlock();
     }
 
@@ -706,7 +706,7 @@ static HRESULT WINAPI d3d_device1_CreateExecuteBuffer(IDirect3DDevice *iface,
         return CLASS_E_NOAGGREGATION;
 
     /* Allocate the new Execute Buffer */
-    if (!(object = heap_alloc_zero(sizeof(*object))))
+    if (!(object = calloc(1, sizeof(*object))))
     {
         ERR("Failed to allocate execute buffer memory.\n");
         return DDERR_OUTOFMEMORY;
@@ -716,7 +716,7 @@ static HRESULT WINAPI d3d_device1_CreateExecuteBuffer(IDirect3DDevice *iface,
     if (FAILED(hr))
     {
         WARN("Failed to initialize execute buffer, hr %#lx.\n", hr);
-        heap_free(object);
+        free(object);
         return hr;
     }
 
@@ -1382,7 +1382,7 @@ static HRESULT WINAPI d3d_device1_CreateMatrix(IDirect3DDevice *iface, D3DMATRIX
     if(!D3DMatHandle)
         return DDERR_INVALIDPARAMS;
 
-    if (!(matrix = heap_alloc_zero(sizeof(*matrix))))
+    if (!(matrix = calloc(1, sizeof(*matrix))))
     {
         ERR("Out of memory when allocating a D3DMATRIX\n");
         return DDERR_OUTOFMEMORY;
@@ -1394,7 +1394,7 @@ static HRESULT WINAPI d3d_device1_CreateMatrix(IDirect3DDevice *iface, D3DMATRIX
     if (h == DDRAW_INVALID_HANDLE)
     {
         ERR("Failed to allocate a matrix handle.\n");
-        heap_free(matrix);
+        free(matrix);
         wined3d_mutex_unlock();
         return DDERR_OUTOFMEMORY;
     }
@@ -1546,7 +1546,7 @@ static HRESULT WINAPI d3d_device1_DeleteMatrix(IDirect3DDevice *iface, D3DMATRIX
 
     wined3d_mutex_unlock();
 
-    heap_free(m);
+    free(m);
 
     return D3D_OK;
 }
@@ -2313,11 +2313,11 @@ static HRESULT WINAPI d3d_device3_Vertex(IDirect3DDevice3 *iface, void *vertex)
 
         device->buffer_size = device->buffer_size ? device->buffer_size * 2 : device->vertex_size * 3;
         old_buffer = device->sysmem_vertex_buffer;
-        device->sysmem_vertex_buffer = heap_alloc(device->buffer_size);
+        device->sysmem_vertex_buffer = malloc(device->buffer_size);
         if (old_buffer)
         {
             memcpy(device->sysmem_vertex_buffer, old_buffer, device->nb_vertices * device->vertex_size);
-            heap_free(old_buffer);
+            free(old_buffer);
         }
     }
 
@@ -4776,31 +4776,31 @@ static const struct tss_lookup
 }
 tss_lookup[] =
 {
-    {FALSE, {WINED3D_TSS_INVALID}},                   /*  0, unused */
-    {FALSE, {WINED3D_TSS_COLOR_OP}},                  /*  1, D3DTSS_COLOROP */
-    {FALSE, {WINED3D_TSS_COLOR_ARG1}},                /*  2, D3DTSS_COLORARG1 */
-    {FALSE, {WINED3D_TSS_COLOR_ARG2}},                /*  3, D3DTSS_COLORARG2 */
-    {FALSE, {WINED3D_TSS_ALPHA_OP}},                  /*  4, D3DTSS_ALPHAOP */
-    {FALSE, {WINED3D_TSS_ALPHA_ARG1}},                /*  5, D3DTSS_ALPHAARG1 */
-    {FALSE, {WINED3D_TSS_ALPHA_ARG2}},                /*  6, D3DTSS_ALPHAARG2 */
-    {FALSE, {WINED3D_TSS_BUMPENV_MAT00}},             /*  7, D3DTSS_BUMPENVMAT00 */
-    {FALSE, {WINED3D_TSS_BUMPENV_MAT01}},             /*  8, D3DTSS_BUMPENVMAT01 */
-    {FALSE, {WINED3D_TSS_BUMPENV_MAT10}},             /*  9, D3DTSS_BUMPENVMAT10 */
-    {FALSE, {WINED3D_TSS_BUMPENV_MAT11}},             /* 10, D3DTSS_BUMPENVMAT11 */
-    {FALSE, {WINED3D_TSS_TEXCOORD_INDEX}},            /* 11, D3DTSS_TEXCOORDINDEX */
-    {TRUE,  {WINED3D_SAMP_ADDRESS_U}},                /* 12, D3DTSS_ADDRESS */
-    {TRUE,  {WINED3D_SAMP_ADDRESS_U}},                /* 13, D3DTSS_ADDRESSU */
-    {TRUE,  {WINED3D_SAMP_ADDRESS_V}},                /* 14, D3DTSS_ADDRESSV */
-    {TRUE,  {WINED3D_SAMP_BORDER_COLOR}},             /* 15, D3DTSS_BORDERCOLOR */
-    {TRUE,  {WINED3D_SAMP_MAG_FILTER}},               /* 16, D3DTSS_MAGFILTER */
-    {TRUE,  {WINED3D_SAMP_MIN_FILTER}},               /* 17, D3DTSS_MINFILTER */
-    {TRUE,  {WINED3D_SAMP_MIP_FILTER}},               /* 18, D3DTSS_MIPFILTER */
-    {TRUE,  {WINED3D_SAMP_MIPMAP_LOD_BIAS}},          /* 19, D3DTSS_MIPMAPLODBIAS */
-    {TRUE,  {WINED3D_SAMP_MAX_MIP_LEVEL}},            /* 20, D3DTSS_MAXMIPLEVEL */
-    {TRUE,  {WINED3D_SAMP_MAX_ANISOTROPY}},           /* 21, D3DTSS_MAXANISOTROPY */
-    {FALSE, {WINED3D_TSS_BUMPENV_LSCALE}},            /* 22, D3DTSS_BUMPENVLSCALE */
-    {FALSE, {WINED3D_TSS_BUMPENV_LOFFSET}},           /* 23, D3DTSS_BUMPENVLOFFSET */
-    {FALSE, {WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS}},   /* 24, D3DTSS_TEXTURETRANSFORMFLAGS */
+    {FALSE, .u.texture_state = WINED3D_TSS_INVALID},                   /*  0, unused */
+    {FALSE, .u.texture_state = WINED3D_TSS_COLOR_OP},                  /*  1, D3DTSS_COLOROP */
+    {FALSE, .u.texture_state = WINED3D_TSS_COLOR_ARG1},                /*  2, D3DTSS_COLORARG1 */
+    {FALSE, .u.texture_state = WINED3D_TSS_COLOR_ARG2},                /*  3, D3DTSS_COLORARG2 */
+    {FALSE, .u.texture_state = WINED3D_TSS_ALPHA_OP},                  /*  4, D3DTSS_ALPHAOP */
+    {FALSE, .u.texture_state = WINED3D_TSS_ALPHA_ARG1},                /*  5, D3DTSS_ALPHAARG1 */
+    {FALSE, .u.texture_state = WINED3D_TSS_ALPHA_ARG2},                /*  6, D3DTSS_ALPHAARG2 */
+    {FALSE, .u.texture_state = WINED3D_TSS_BUMPENV_MAT00},             /*  7, D3DTSS_BUMPENVMAT00 */
+    {FALSE, .u.texture_state = WINED3D_TSS_BUMPENV_MAT01},             /*  8, D3DTSS_BUMPENVMAT01 */
+    {FALSE, .u.texture_state = WINED3D_TSS_BUMPENV_MAT10},             /*  9, D3DTSS_BUMPENVMAT10 */
+    {FALSE, .u.texture_state = WINED3D_TSS_BUMPENV_MAT11},             /* 10, D3DTSS_BUMPENVMAT11 */
+    {FALSE, .u.texture_state = WINED3D_TSS_TEXCOORD_INDEX},            /* 11, D3DTSS_TEXCOORDINDEX */
+    {TRUE,  .u.sampler_state = WINED3D_SAMP_ADDRESS_U},                /* 12, D3DTSS_ADDRESS */
+    {TRUE,  .u.sampler_state = WINED3D_SAMP_ADDRESS_U},                /* 13, D3DTSS_ADDRESSU */
+    {TRUE,  .u.sampler_state = WINED3D_SAMP_ADDRESS_V},                /* 14, D3DTSS_ADDRESSV */
+    {TRUE,  .u.sampler_state = WINED3D_SAMP_BORDER_COLOR},             /* 15, D3DTSS_BORDERCOLOR */
+    {TRUE,  .u.sampler_state = WINED3D_SAMP_MAG_FILTER},               /* 16, D3DTSS_MAGFILTER */
+    {TRUE,  .u.sampler_state = WINED3D_SAMP_MIN_FILTER},               /* 17, D3DTSS_MINFILTER */
+    {TRUE,  .u.sampler_state = WINED3D_SAMP_MIP_FILTER},               /* 18, D3DTSS_MIPFILTER */
+    {TRUE,  .u.sampler_state = WINED3D_SAMP_MIPMAP_LOD_BIAS},          /* 19, D3DTSS_MIPMAPLODBIAS */
+    {TRUE,  .u.sampler_state = WINED3D_SAMP_MAX_MIP_LEVEL},            /* 20, D3DTSS_MAXMIPLEVEL */
+    {TRUE,  .u.sampler_state = WINED3D_SAMP_MAX_ANISOTROPY},           /* 21, D3DTSS_MAXANISOTROPY */
+    {FALSE, .u.texture_state = WINED3D_TSS_BUMPENV_LSCALE},            /* 22, D3DTSS_BUMPENVLSCALE */
+    {FALSE, .u.texture_state = WINED3D_TSS_BUMPENV_LOFFSET},           /* 23, D3DTSS_BUMPENVLOFFSET */
+    {FALSE, .u.texture_state = WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS},   /* 24, D3DTSS_TEXTURETRANSFORMFLAGS */
 };
 
 /*****************************************************************************
@@ -6997,7 +6997,7 @@ HRESULT d3d_device_create(struct ddraw *ddraw, const GUID *guid, struct ddraw_su
         return DDERR_INVALIDPARAMS;
     }
 
-    if (!(object = heap_alloc_zero(sizeof(*object))))
+    if (!(object = calloc(1, sizeof(*object))))
     {
         ERR("Failed to allocate device memory.\n");
         return DDERR_OUTOFMEMORY;
@@ -7006,7 +7006,7 @@ HRESULT d3d_device_create(struct ddraw *ddraw, const GUID *guid, struct ddraw_su
     if (FAILED(hr = d3d_device_init(object, ddraw, guid, target, rt_iface, version, outer_unknown)))
     {
         WARN("Failed to initialize device, hr %#lx.\n", hr);
-        heap_free(object);
+        free(object);
         return hr;
     }
 

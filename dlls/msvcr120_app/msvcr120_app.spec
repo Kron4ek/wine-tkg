@@ -914,8 +914,8 @@
 @ cdecl __isascii(long) msvcr120.__isascii
 @ cdecl __iscsym(long) msvcr120.__iscsym
 @ cdecl __iscsymf(long) msvcr120.__iscsymf
-@ stub __iswcsym
-@ stub __iswcsymf
+@ cdecl __iswcsym(long) msvcr120.__iswcsym
+@ cdecl __iswcsymf(long) msvcr120.__iswcsymf
 @ stdcall -arch=arm __jump_unwind(ptr ptr) msvcr120.__jump_unwind
 # extern __lconv
 @ cdecl __lconv_init() msvcr120.__lconv_init
@@ -1302,7 +1302,7 @@
 @ cdecl _malloc_crt(long) msvcr120._malloc_crt
 # extern _mbcasemap
 @ extern _mbctype msvcr120._mbctype
-@ stub _mblen_l
+@ cdecl _mblen_l(str long ptr) msvcr120._mblen_l
 @ cdecl _mbstowcs_l(ptr str long ptr) msvcr120._mbstowcs_l
 @ cdecl _mbstowcs_s_l(ptr ptr long str long ptr) msvcr120._mbstowcs_s_l
 @ cdecl _mbstrlen(str) msvcr120._mbstrlen

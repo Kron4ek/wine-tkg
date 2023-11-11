@@ -402,16 +402,6 @@ static uint32_t read_u32(const uint32_t **ptr)
     return *(*ptr)++;
 }
 
-static bool shader_ver_ge(const struct vkd3d_shader_version *v, unsigned int major, unsigned int minor)
-{
-    return v->major > major || (v->major == major && v->minor >= minor);
-}
-
-static bool shader_ver_le(const struct vkd3d_shader_version *v, unsigned int major, unsigned int minor)
-{
-    return v->major < major || (v->major == major && v->minor <= minor);
-}
-
 static bool has_relative_address(uint32_t param)
 {
     enum vkd3d_sm1_address_mode_type address_mode;
@@ -434,8 +424,8 @@ static const struct vkd3d_sm1_opcode_info *shader_sm1_get_opcode_info(
             return NULL;
 
         if (opcode == info->sm1_opcode
-                && shader_ver_ge(&sm1->p.shader_version, info->min_version.major, info->min_version.minor)
-                && (shader_ver_le(&sm1->p.shader_version, info->max_version.major, info->max_version.minor)
+                && vkd3d_shader_ver_ge(&sm1->p.shader_version, info->min_version.major, info->min_version.minor)
+                && (vkd3d_shader_ver_le(&sm1->p.shader_version, info->max_version.major, info->max_version.minor)
                         || !info->max_version.major))
             return info;
     }
@@ -555,9 +545,9 @@ static bool add_signature_element(struct vkd3d_shader_sm1_parser *sm1, bool outp
         return false;
     element = &signature->elements[signature->element_count++];
 
+    memset(element, 0, sizeof(*element));
     element->semantic_name = name;
     element->semantic_index = index;
-    element->stream_index = 0;
     element->sysval_semantic = sysval;
     element->component_type = VKD3D_SHADER_COMPONENT_FLOAT;
     element->register_index = register_index;
@@ -565,7 +555,8 @@ static bool add_signature_element(struct vkd3d_shader_sm1_parser *sm1, bool outp
     element->register_count = 1;
     element->mask = mask;
     element->used_mask = is_dcl ? 0 : mask;
-    element->min_precision = VKD3D_SHADER_MINIMUM_PRECISION_NONE;
+    if (sm1->p.shader_version.type == VKD3D_SHADER_TYPE_PIXEL && !output)
+        element->interpolation_mode = VKD3DSIM_LINEAR;
 
     return true;
 }
@@ -1262,7 +1253,7 @@ static enum vkd3d_result shader_sm1_init(struct vkd3d_shader_sm1_parser *sm1,
             return VKD3D_ERROR_INVALID_SHADER;
     }
 
-    if (!shader_ver_le(&version, 3, 0))
+    if (!vkd3d_shader_ver_le(&version, 3, 0))
     {
         vkd3d_shader_error(message_context, &location, VKD3D_SHADER_ERROR_D3DBC_INVALID_VERSION_TOKEN,
                 "Invalid shader version %u.%u (token 0x%08x).", version.major, version.minor, code[0]);
@@ -1833,6 +1824,37 @@ static void write_sm1_dp2add(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer 
     write_sm1_instruction(ctx, buffer, &instr);
 }
 
+static void write_sm1_ternary_op(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer,
+        D3DSHADER_INSTRUCTION_OPCODE_TYPE opcode, const struct hlsl_reg *dst, const struct hlsl_reg *src1,
+        const struct hlsl_reg *src2, const struct hlsl_reg *src3)
+{
+    struct sm1_instruction instr =
+    {
+        .opcode = opcode,
+
+        .dst.type = D3DSPR_TEMP,
+        .dst.writemask = dst->writemask,
+        .dst.reg = dst->id,
+        .has_dst = 1,
+
+        .srcs[0].type = D3DSPR_TEMP,
+        .srcs[0].swizzle = hlsl_swizzle_from_writemask(src1->writemask),
+        .srcs[0].reg = src1->id,
+        .srcs[1].type = D3DSPR_TEMP,
+        .srcs[1].swizzle = hlsl_swizzle_from_writemask(src2->writemask),
+        .srcs[1].reg = src2->id,
+        .srcs[2].type = D3DSPR_TEMP,
+        .srcs[2].swizzle = hlsl_swizzle_from_writemask(src3->writemask),
+        .srcs[2].reg = src3->id,
+        .src_count = 3,
+    };
+
+    sm1_map_src_swizzle(&instr.srcs[0], instr.dst.writemask);
+    sm1_map_src_swizzle(&instr.srcs[1], instr.dst.writemask);
+    sm1_map_src_swizzle(&instr.srcs[2], instr.dst.writemask);
+    write_sm1_instruction(ctx, buffer, &instr);
+}
+
 static void write_sm1_binary_op(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer,
         D3DSHADER_INSTRUCTION_OPCODE_TYPE opcode, const struct hlsl_reg *dst,
         const struct hlsl_reg *src1, const struct hlsl_reg *src2)
@@ -2199,6 +2221,10 @@ static void write_sm1_expr(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
             }
             break;
 
+        case HLSL_OP3_CMP:
+            write_sm1_ternary_op(ctx, buffer, D3DSIO_CMP, &instr->reg, &arg1->reg, &arg2->reg, &arg3->reg);
+            break;
+
         case HLSL_OP3_DP2ADD:
             write_sm1_dp2add(ctx, buffer, &instr->reg, &arg1->reg, &arg2->reg, &arg3->reg);
             break;
@@ -2311,6 +2337,8 @@ static void write_sm1_resource_load(struct hlsl_ctx *ctx, struct vkd3d_bytecode_
 
         .src_count = 2,
     };
+    if (load->load_type == HLSL_RESOURCE_SAMPLE_PROJ)
+        sm1_instr.opcode |= VKD3DSI_TEXLD_PROJECT << VKD3D_SM1_INSTRUCTION_FLAGS_SHIFT;
 
     assert(instr->reg.allocated);
 

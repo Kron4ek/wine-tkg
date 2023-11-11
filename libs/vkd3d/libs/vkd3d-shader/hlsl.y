@@ -162,6 +162,12 @@ static void destroy_block(struct hlsl_block *block)
     vkd3d_free(block);
 }
 
+static void destroy_switch_cases(struct list *cases)
+{
+    hlsl_cleanup_ir_switch_cases(cases);
+    vkd3d_free(cases);
+}
+
 static bool hlsl_types_are_componentwise_compatible(struct hlsl_ctx *ctx, struct hlsl_type *src,
         struct hlsl_type *dst)
 {
@@ -508,6 +514,28 @@ static void resolve_loop_continue(struct hlsl_ctx *ctx, struct hlsl_block *block
     }
 }
 
+static void check_loop_attributes(struct hlsl_ctx *ctx, const struct parse_attribute_list *attributes,
+        const struct vkd3d_shader_location *loc)
+{
+    bool has_unroll = false, has_loop = false, has_fastopt = false;
+    unsigned int i;
+
+    for (i = 0; i < attributes->count; ++i)
+    {
+        const char *name = attributes->attrs[i]->name;
+
+        has_loop |= !strcmp(name, "loop");
+        has_unroll |= !strcmp(name, "unroll");
+        has_fastopt |= !strcmp(name, "fastopt");
+    }
+
+    if (has_unroll && has_loop)
+        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Unroll attribute can't be used with 'loop' attribute.");
+
+    if (has_unroll && has_fastopt)
+        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Unroll attribute can't be used with 'fastopt' attribute.");
+}
+
 static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
         const struct parse_attribute_list *attributes, struct hlsl_block *init, struct hlsl_block *cond,
         struct hlsl_block *iter, struct hlsl_block *body, const struct vkd3d_shader_location *loc)
@@ -517,6 +545,8 @@ static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
 
     if (attribute_list_has_duplicates(attributes))
         hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Found duplicate attribute.");
+
+    check_loop_attributes(ctx, attributes, loc);
 
     /* Ignore unroll(0) attribute, and any invalid attribute. */
     for (i = 0; i < attributes->count; ++i)
@@ -533,8 +563,11 @@ static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
                 hlsl_warning(ctx, loc, VKD3D_SHADER_ERROR_HLSL_NOT_IMPLEMENTED, "Loop unrolling is not implemented.");
             }
         }
-        else if (!strcmp(attr->name, "loop")
-                || !strcmp(attr->name, "fastopt")
+        else if (!strcmp(attr->name, "loop"))
+        {
+            /* TODO: this attribute will be used to disable unrolling, once it's implememented. */
+        }
+        else if (!strcmp(attr->name, "fastopt")
                 || !strcmp(attr->name, "allow_uav_condition"))
         {
             hlsl_fixme(ctx, loc, "Unhandled attribute '%s'.", attr->name);
@@ -1125,22 +1158,6 @@ static struct hlsl_reg_reservation parse_packoffset(struct hlsl_ctx *ctx, const 
     return reservation;
 }
 
-static struct hlsl_ir_function_decl *get_func_decl(struct rb_tree *funcs,
-        const char *name, const struct hlsl_func_parameters *parameters)
-{
-    struct hlsl_ir_function *func;
-    struct rb_entry *entry;
-
-    if ((entry = rb_get(funcs, name)))
-    {
-        func = RB_ENTRY_VALUE(entry, struct hlsl_ir_function, entry);
-
-        if ((entry = rb_get(&func->overloads, parameters)))
-            return RB_ENTRY_VALUE(entry, struct hlsl_ir_function_decl, entry);
-    }
-    return NULL;
-}
-
 static struct hlsl_block *make_block(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr)
 {
     struct hlsl_block *block;
@@ -1180,6 +1197,7 @@ static unsigned int evaluate_static_expression_as_uint(struct hlsl_ctx *ctx, str
             case HLSL_IR_RESOURCE_LOAD:
             case HLSL_IR_RESOURCE_STORE:
             case HLSL_IR_STORE:
+            case HLSL_IR_SWITCH:
                 hlsl_error(ctx, &node->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
                         "Expected literal expression.");
         }
@@ -2152,7 +2170,7 @@ static void declare_var(struct hlsl_ctx *ctx, struct parse_variable_def *v)
                     "Target profile doesn't support objects as struct members in uniform variables.");
         }
 
-        if ((func = hlsl_get_func_decl(ctx, var->name)))
+        if ((func = hlsl_get_first_func_decl(ctx, var->name)))
         {
             hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_REDEFINED,
                     "'%s' is already defined as a function.", var->name);
@@ -2307,56 +2325,27 @@ static struct hlsl_block *initialize_vars(struct hlsl_ctx *ctx, struct list *var
     return initializers;
 }
 
-struct find_function_call_args
+static bool func_is_compatible_match(struct hlsl_ctx *ctx,
+        const struct hlsl_ir_function_decl *decl, const struct parse_initializer *args)
 {
-    struct hlsl_ctx *ctx;
-    const struct parse_initializer *params;
-    struct hlsl_ir_function_decl *decl;
-    unsigned int compatible_overloads_count;
-};
-
-static void find_function_call_exact(struct rb_entry *entry, void *context)
-{
-    struct hlsl_ir_function_decl *decl = RB_ENTRY_VALUE(entry, struct hlsl_ir_function_decl, entry);
-    struct find_function_call_args *args = context;
     unsigned int i;
 
-    if (decl->parameters.count != args->params->args_count)
-        return;
+    if (decl->parameters.count != args->args_count)
+        return false;
 
     for (i = 0; i < decl->parameters.count; ++i)
     {
-        if (!hlsl_types_are_equal(decl->parameters.vars[i]->data_type, args->params->args[i]->data_type))
-            return;
+        if (!implicit_compatible_data_types(ctx, args->args[i]->data_type, decl->parameters.vars[i]->data_type))
+            return false;
     }
-    args->decl = decl;
-}
-
-static void find_function_call_compatible(struct rb_entry *entry, void *context)
-{
-    struct hlsl_ir_function_decl *decl = RB_ENTRY_VALUE(entry, struct hlsl_ir_function_decl, entry);
-    struct find_function_call_args *args = context;
-    unsigned int i;
-
-    if (decl->parameters.count != args->params->args_count)
-        return;
-
-    for (i = 0; i < decl->parameters.count; ++i)
-    {
-        if (!implicit_compatible_data_types(args->ctx, args->params->args[i]->data_type,
-                decl->parameters.vars[i]->data_type))
-            return;
-    }
-
-    args->compatible_overloads_count++;
-    args->decl = decl;
+    return true;
 }
 
 static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
-        const char *name, const struct parse_initializer *params,
+        const char *name, const struct parse_initializer *args,
         const struct vkd3d_shader_location *loc)
 {
-    struct find_function_call_args args = {.ctx = ctx, .params = params};
+    struct hlsl_ir_function_decl *decl, *compatible_match = NULL;
     struct hlsl_ir_function *func;
     struct rb_entry *entry;
 
@@ -2364,16 +2353,20 @@ static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
         return NULL;
     func = RB_ENTRY_VALUE(entry, struct hlsl_ir_function, entry);
 
-    rb_for_each_entry(&func->overloads, find_function_call_exact, &args);
-    if (!args.decl)
+    LIST_FOR_EACH_ENTRY(decl, &func->overloads, struct hlsl_ir_function_decl, entry)
     {
-        rb_for_each_entry(&func->overloads, find_function_call_compatible, &args);
-        if (args.compatible_overloads_count > 1)
+        if (func_is_compatible_match(ctx, decl, args))
         {
-            hlsl_fixme(ctx, loc, "Prioritize between multiple compatible function overloads.");
+            if (compatible_match)
+            {
+                hlsl_fixme(ctx, loc, "Prioritize between multiple compatible function overloads.");
+                break;
+            }
+            compatible_match = decl;
         }
     }
-    return args.decl;
+
+    return compatible_match;
 }
 
 static struct hlsl_ir_node *hlsl_new_void_expr(struct hlsl_ctx *ctx, const struct vkd3d_shader_location *loc)
@@ -2713,6 +2706,17 @@ static bool intrinsic_asuint(struct hlsl_ctx *ctx,
 
     operands[0] = params->args[0];
     return add_expr(ctx, params->instrs, HLSL_OP1_REINTERPRET, operands, data_type, loc);
+}
+
+static bool intrinsic_ceil(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_node *arg;
+
+    if (!(arg = intrinsic_float_convert_arg(ctx, params, params->args[0], loc)))
+        return false;
+
+    return !!add_unary_arithmetic_expr(ctx, params->instrs, HLSL_OP1_CEIL, arg, loc);
 }
 
 static bool intrinsic_clamp(struct hlsl_ctx *ctx,
@@ -3513,7 +3517,7 @@ static bool intrinsic_tan(struct hlsl_ctx *ctx,
 static bool intrinsic_tex(struct hlsl_ctx *ctx, const struct parse_initializer *params,
         const struct vkd3d_shader_location *loc, const char *name, enum hlsl_sampler_dim dim)
 {
-    struct hlsl_resource_load_params load_params = {.type = HLSL_RESOURCE_SAMPLE};
+    struct hlsl_resource_load_params load_params = { 0 };
     const struct hlsl_type *sampler_type;
     struct hlsl_ir_node *coords, *load;
 
@@ -3542,10 +3546,74 @@ static bool intrinsic_tex(struct hlsl_ctx *ctx, const struct parse_initializer *
         hlsl_release_string_buffer(ctx, string);
     }
 
-    if (!(coords = add_implicit_conversion(ctx, params->instrs, params->args[1],
-            hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, hlsl_sampler_dim_count(dim)), loc)))
+    if (!strcmp(name, "tex2Dlod"))
     {
-        return false;
+        struct hlsl_ir_node *lod, *c;
+
+        load_params.type = HLSL_RESOURCE_SAMPLE_LOD;
+
+        if (!(c = hlsl_new_swizzle(ctx, HLSL_SWIZZLE(X, Y, Z, W), hlsl_sampler_dim_count(dim), params->args[1], loc)))
+            return false;
+        hlsl_block_add_instr(params->instrs, c);
+
+        if (!(coords = add_implicit_conversion(ctx, params->instrs, c, hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT,
+                hlsl_sampler_dim_count(dim)), loc)))
+        {
+            return false;
+        }
+
+        if (!(lod = hlsl_new_swizzle(ctx, HLSL_SWIZZLE(W, W, W, W), 1, params->args[1], loc)))
+            return false;
+        hlsl_block_add_instr(params->instrs, lod);
+
+        if (!(load_params.lod = add_implicit_conversion(ctx, params->instrs, lod,
+                hlsl_get_scalar_type(ctx, HLSL_TYPE_FLOAT), loc)))
+        {
+            return false;
+        }
+    }
+    else if (!strcmp(name, "tex2Dproj")
+            || !strcmp(name, "tex3Dproj")
+            || !strcmp(name, "texCUBEproj"))
+    {
+        if (!(coords = add_implicit_conversion(ctx, params->instrs, params->args[1],
+                hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, 4), loc)))
+        {
+            return false;
+        }
+
+        if (shader_profile_version_ge(ctx, 4, 0))
+        {
+            unsigned int count = hlsl_sampler_dim_count(dim);
+            struct hlsl_ir_node *divisor;
+
+            if (!(divisor = hlsl_new_swizzle(ctx, HLSL_SWIZZLE(W, W, W, W), count, coords, loc)))
+                return false;
+            hlsl_block_add_instr(params->instrs, divisor);
+
+            if (!(coords = hlsl_new_swizzle(ctx, HLSL_SWIZZLE(X, Y, Z, W), count, coords, loc)))
+                return false;
+            hlsl_block_add_instr(params->instrs, coords);
+
+            if (!(coords = add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_DIV, coords, divisor, loc)))
+                return false;
+
+            load_params.type = HLSL_RESOURCE_SAMPLE;
+        }
+        else
+        {
+            load_params.type = HLSL_RESOURCE_SAMPLE_PROJ;
+        }
+    }
+    else
+    {
+        load_params.type = HLSL_RESOURCE_SAMPLE;
+
+        if (!(coords = add_implicit_conversion(ctx, params->instrs, params->args[1],
+                hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, hlsl_sampler_dim_count(dim)), loc)))
+        {
+            return false;
+        }
     }
 
     /* tex1D() functions never produce 1D resource declarations. For newer profiles half offset
@@ -3604,16 +3672,40 @@ static bool intrinsic_tex2D(struct hlsl_ctx *ctx,
     return intrinsic_tex(ctx, params, loc, "tex2D", HLSL_SAMPLER_DIM_2D);
 }
 
+static bool intrinsic_tex2Dlod(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return intrinsic_tex(ctx, params, loc, "tex2Dlod", HLSL_SAMPLER_DIM_2D);
+}
+
+static bool intrinsic_tex2Dproj(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return intrinsic_tex(ctx, params, loc, "tex2Dproj", HLSL_SAMPLER_DIM_2D);
+}
+
 static bool intrinsic_tex3D(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
     return intrinsic_tex(ctx, params, loc, "tex3D", HLSL_SAMPLER_DIM_3D);
 }
 
+static bool intrinsic_tex3Dproj(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return intrinsic_tex(ctx, params, loc, "tex3Dproj", HLSL_SAMPLER_DIM_3D);
+}
+
 static bool intrinsic_texCUBE(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
     return intrinsic_tex(ctx, params, loc, "texCUBE", HLSL_SAMPLER_DIM_CUBE);
+}
+
+static bool intrinsic_texCUBEproj(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return intrinsic_tex(ctx, params, loc, "texCUBEproj", HLSL_SAMPLER_DIM_CUBE);
 }
 
 static bool intrinsic_transpose(struct hlsl_ctx *ctx,
@@ -3746,6 +3838,7 @@ intrinsic_functions[] =
     {"any",                                 1, true,  intrinsic_any},
     {"asfloat",                             1, true,  intrinsic_asfloat},
     {"asuint",                             -1, true,  intrinsic_asuint},
+    {"ceil",                                1, true,  intrinsic_ceil},
     {"clamp",                               3, true,  intrinsic_clamp},
     {"clip",                                1, true,  intrinsic_clip},
     {"cos",                                 1, true,  intrinsic_cos},
@@ -3788,8 +3881,12 @@ intrinsic_functions[] =
     {"tan",                                 1, true,  intrinsic_tan},
     {"tex1D",                              -1, false, intrinsic_tex1D},
     {"tex2D",                              -1, false, intrinsic_tex2D},
+    {"tex2Dlod",                            2, false, intrinsic_tex2Dlod},
+    {"tex2Dproj",                           2, false, intrinsic_tex2Dproj},
     {"tex3D",                              -1, false, intrinsic_tex3D},
+    {"tex3Dproj",                           2, false, intrinsic_tex3Dproj},
     {"texCUBE",                            -1, false, intrinsic_texCUBE},
+    {"texCUBEproj",                         2, false, intrinsic_texCUBEproj},
     {"transpose",                           1, true,  intrinsic_transpose},
     {"trunc",                               1, true,  intrinsic_trunc},
 };
@@ -4633,12 +4730,64 @@ static void validate_texture_format_type(struct hlsl_ctx *ctx, struct hlsl_type 
     }
 }
 
-static struct hlsl_scope *get_loop_scope(struct hlsl_scope *scope)
+static bool check_continue(struct hlsl_ctx *ctx, const struct hlsl_scope *scope, const struct vkd3d_shader_location *loc)
 {
-    if (scope->loop)
-        return scope;
+    if (scope->_switch)
+    {
+        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                "The 'continue' statement is not allowed in 'switch' statements.");
+        return false;
+    }
 
-    return scope->upper ? get_loop_scope(scope->upper) : NULL;
+    if (scope->loop)
+        return true;
+
+    if (scope->upper)
+        return check_continue(ctx, scope->upper, loc);
+
+    hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "The 'continue' statement is only allowed in loops.");
+    return false;
+}
+
+static bool is_break_allowed(const struct hlsl_scope *scope)
+{
+    if (scope->loop || scope->_switch)
+        return true;
+
+    return scope->upper ? is_break_allowed(scope->upper) : false;
+}
+
+static void check_duplicated_switch_cases(struct hlsl_ctx *ctx, const struct hlsl_ir_switch_case *check, struct list *cases)
+{
+    struct hlsl_ir_switch_case *c;
+    bool found_duplicate = false;
+
+    LIST_FOR_EACH_ENTRY(c, cases, struct hlsl_ir_switch_case, entry)
+    {
+        if (check->is_default)
+        {
+            if ((found_duplicate = c->is_default))
+            {
+                hlsl_error(ctx, &check->loc, VKD3D_SHADER_ERROR_HLSL_DUPLICATE_SWITCH_CASE,
+                        "Found multiple 'default' statements.");
+                hlsl_note(ctx, &c->loc, VKD3D_SHADER_LOG_ERROR, "The 'default' statement was previously found here.");
+            }
+        }
+        else
+        {
+            if (c->is_default) continue;
+            if ((found_duplicate = (c->value == check->value)))
+            {
+                hlsl_error(ctx, &check->loc, VKD3D_SHADER_ERROR_HLSL_DUPLICATE_SWITCH_CASE,
+                        "Found duplicate 'case' statement.");
+                hlsl_note(ctx, &c->loc, VKD3D_SHADER_LOG_ERROR, "The same 'case %d' statement was previously found here.",
+                        c->value);
+            }
+        }
+
+        if (found_duplicate)
+            break;
+    }
 }
 
 }
@@ -4679,17 +4828,20 @@ static struct hlsl_scope *get_loop_scope(struct hlsl_scope *scope)
     enum hlsl_sampler_dim sampler_dim;
     struct hlsl_attribute *attr;
     struct parse_attribute_list attr_list;
+    struct hlsl_ir_switch_case *switch_case;
 }
 
 %token KW_BLENDSTATE
 %token KW_BREAK
 %token KW_BUFFER
+%token KW_CASE
 %token KW_CBUFFER
 %token KW_CENTROID
 %token KW_COLUMN_MAJOR
 %token KW_COMPILE
 %token KW_CONST
 %token KW_CONTINUE
+%token KW_DEFAULT
 %token KW_DEPTHSTENCILSTATE
 %token KW_DEPTHSTENCILVIEW
 %token KW_DISCARD
@@ -4743,6 +4895,7 @@ static struct hlsl_scope *get_loop_scope(struct hlsl_scope *scope)
 %token KW_TBUFFER
 %token KW_TECHNIQUE
 %token KW_TECHNIQUE10
+%token KW_TECHNIQUE11
 %token KW_TEXTURE
 %token KW_TEXTURE1D
 %token KW_TEXTURE1DARRAY
@@ -4771,7 +4924,6 @@ static struct hlsl_scope *get_loop_scope(struct hlsl_scope *scope)
 %token OP_LEFTSHIFTASSIGN
 %token OP_RIGHTSHIFT
 %token OP_RIGHTSHIFTASSIGN
-%token OP_ELLIPSIS
 %token OP_LE
 %token OP_GE
 %token OP_NE
@@ -4783,10 +4935,6 @@ static struct hlsl_scope *get_loop_scope(struct hlsl_scope *scope)
 %token OP_ANDASSIGN
 %token OP_ORASSIGN
 %token OP_XORASSIGN
-%token OP_UNKNOWN1
-%token OP_UNKNOWN2
-%token OP_UNKNOWN3
-%token OP_UNKNOWN4
 
 %token <floatval> C_FLOAT
 
@@ -4796,6 +4944,7 @@ static struct hlsl_scope *get_loop_scope(struct hlsl_scope *scope)
 %type <list> type_specs
 %type <list> variables_def
 %type <list> variables_def_typed
+%type <list> switch_cases
 
 %token <name> VAR_IDENTIFIER
 %token <name> NEW_IDENTIFIER
@@ -4838,6 +4987,7 @@ static struct hlsl_scope *get_loop_scope(struct hlsl_scope *scope)
 %type <block> statement
 %type <block> statement_list
 %type <block> struct_declaration_without_vars
+%type <block> switch_statement
 %type <block> unary_expr
 
 %type <boolval> boolean
@@ -4863,6 +5013,7 @@ static struct hlsl_scope *get_loop_scope(struct hlsl_scope *scope)
 
 %type <name> any_identifier
 %type <name> var_identifier
+%type <name> technique_name
 
 %type <parameter> parameter
 
@@ -4875,6 +5026,8 @@ static struct hlsl_scope *get_loop_scope(struct hlsl_scope *scope)
 %type <sampler_dim> texture_type texture_ms_type uav_type
 
 %type <semantic> semantic
+
+%type <switch_case> switch_case
 
 %type <type> field_type
 %type <type> named_struct_spec
@@ -4902,7 +5055,49 @@ hlsl_prog:
             destroy_block($2);
         }
     | hlsl_prog preproc_directive
+    | hlsl_prog technique
     | hlsl_prog ';'
+
+technique_name:
+      %empty
+        {
+            $$ = NULL;
+        }
+    | any_identifier
+
+pass_list:
+      %empty
+
+technique9:
+      KW_TECHNIQUE technique_name '{' pass_list '}'
+        {
+            hlsl_fixme(ctx, &@$, "Unsupported \'technique\' declaration.");
+        }
+
+technique10:
+      KW_TECHNIQUE10 technique_name '{' pass_list '}'
+        {
+            if (ctx->profile->type == VKD3D_SHADER_TYPE_EFFECT && ctx->profile->major_version == 2)
+                hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                        "The 'technique10' keyword is invalid for this profile.");
+
+            hlsl_fixme(ctx, &@$, "Unsupported \'technique10\' declaration.");
+        }
+
+technique11:
+      KW_TECHNIQUE11 technique_name '{' pass_list '}'
+        {
+            if (ctx->profile->type == VKD3D_SHADER_TYPE_EFFECT && ctx->profile->major_version == 2)
+                hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                        "The 'technique11' keyword is invalid for this profile.");
+
+            hlsl_fixme(ctx, &@$, "Unsupported \'technique11\' declaration.");
+        }
+
+technique:
+      technique9
+    | technique10
+    | technique11
 
 buffer_declaration:
       buffer_type any_identifier colon_attribute
@@ -5233,7 +5428,7 @@ func_prototype_no_attrs:
                 hlsl_error(ctx, &@5, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
                         "packoffset() is not allowed on functions.");
 
-            if (($$.decl = get_func_decl(&ctx->functions, $3, &$5)))
+            if (($$.decl = hlsl_get_func_decl(ctx, $3, &$5)))
             {
                 const struct hlsl_func_parameters *params = &$$.decl->parameters;
                 size_t i;
@@ -5355,6 +5550,13 @@ loop_scope_start:
         {
             hlsl_push_scope(ctx);
             ctx->cur_scope->loop = true;
+        }
+
+switch_scope_start:
+      %empty
+        {
+            hlsl_push_scope(ctx);
+            ctx->cur_scope->_switch = true;
         }
 
 var_identifier:
@@ -6185,18 +6387,17 @@ statement:
     | jump_statement
     | selection_statement
     | loop_statement
+    | switch_statement
 
 jump_statement:
       KW_BREAK ';'
         {
             struct hlsl_ir_node *jump;
 
-            /* TODO: allow 'break' in the 'switch' statements. */
-
-            if (!get_loop_scope(ctx->cur_scope))
+            if (!is_break_allowed(ctx->cur_scope))
             {
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
-                        "The 'break' statement must be used inside of a loop.");
+                        "The 'break' statement must be used inside of a loop or a switch.");
             }
 
             if (!($$ = make_empty_block(ctx)))
@@ -6208,13 +6409,8 @@ jump_statement:
     | KW_CONTINUE ';'
         {
             struct hlsl_ir_node *jump;
-            struct hlsl_scope *scope;
 
-            if (!(scope = get_loop_scope(ctx->cur_scope)))
-            {
-                hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
-                        "The 'continue' statement must be used inside of a loop.");
-            }
+            check_continue(ctx, ctx->cur_scope, &@1);
 
             if (!($$ = make_empty_block(ctx)))
                 YYABORT;
@@ -6331,6 +6527,106 @@ loop_statement:
         {
             $$ = create_loop(ctx, LOOP_FOR, &$1, $5, $6, $7, $9, &@3);
             hlsl_pop_scope(ctx);
+        }
+
+switch_statement:
+      attribute_list_optional switch_scope_start KW_SWITCH '(' expr ')' '{' switch_cases '}'
+        {
+            struct hlsl_ir_node *selector = node_from_block($5);
+            struct hlsl_ir_node *s;
+
+            if (!(selector = add_implicit_conversion(ctx, $5, selector, hlsl_get_scalar_type(ctx, HLSL_TYPE_UINT), &@5)))
+            {
+                destroy_switch_cases($8);
+                destroy_block($5);
+                YYABORT;
+            }
+
+            s = hlsl_new_switch(ctx, selector, $8, &@3);
+
+            destroy_switch_cases($8);
+
+            if (!s)
+            {
+                destroy_block($5);
+                YYABORT;
+            }
+
+            $$ = $5;
+            hlsl_block_add_instr($$, s);
+
+            hlsl_pop_scope(ctx);
+        }
+
+switch_case:
+      KW_CASE expr ':' statement_list
+        {
+            struct hlsl_ir_switch_case *c;
+            unsigned int value;
+
+            value = evaluate_static_expression_as_uint(ctx, $2, &@2);
+
+            c = hlsl_new_switch_case(ctx, value, false, $4, &@2);
+
+            destroy_block($2);
+            destroy_block($4);
+
+            if (!c)
+                YYABORT;
+            $$ = c;
+        }
+    | KW_CASE expr ':'
+        {
+            struct hlsl_ir_switch_case *c;
+            unsigned int value;
+
+            value = evaluate_static_expression_as_uint(ctx, $2, &@2);
+
+            c = hlsl_new_switch_case(ctx, value, false, NULL, &@2);
+
+            destroy_block($2);
+
+            if (!c)
+                YYABORT;
+            $$ = c;
+        }
+    | KW_DEFAULT ':' statement_list
+        {
+            struct hlsl_ir_switch_case *c;
+
+            c = hlsl_new_switch_case(ctx, 0, true, $3, &@1);
+
+            destroy_block($3);
+
+            if (!c)
+                YYABORT;
+            $$ = c;
+        }
+    | KW_DEFAULT ':'
+        {
+            struct hlsl_ir_switch_case *c;
+
+            if (!(c = hlsl_new_switch_case(ctx, 0, true, NULL, &@1)))
+                YYABORT;
+            $$ = c;
+        }
+
+switch_cases:
+      switch_case
+        {
+            struct hlsl_ir_switch_case *c = LIST_ENTRY($1, struct hlsl_ir_switch_case, entry);
+            if (!($$ = make_empty_list(ctx)))
+            {
+                hlsl_free_ir_switch_case(c);
+                YYABORT;
+            }
+            list_add_head($$, &$1->entry);
+        }
+    | switch_cases switch_case
+        {
+            $$ = $1;
+            check_duplicated_switch_cases(ctx, $2, $$);
+            list_add_tail($$, &$2->entry);
         }
 
 expr_optional:

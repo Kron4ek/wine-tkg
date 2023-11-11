@@ -194,6 +194,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_EXT_polygon_offset_clamp",         ARB_POLYGON_OFFSET_CLAMP      },
     {"GL_EXT_provoking_vertex",             EXT_PROVOKING_VERTEX          },
     {"GL_EXT_secondary_color",              EXT_SECONDARY_COLOR           },
+    {"GL_EXT_shader_integer_mix",           EXT_SHADER_INTEGER_MIX        },
     {"GL_EXT_stencil_two_side",             EXT_STENCIL_TWO_SIDE          },
     {"GL_EXT_stencil_wrap",                 EXT_STENCIL_WRAP              },
     {"GL_EXT_texture3D",                    EXT_TEXTURE3D                 },
@@ -1328,6 +1329,7 @@ cards_nvidia_binary[] =
     /* Direct 3D 11 */
     {"Tesla T4",                    CARD_NVIDIA_TESLA_T4},
     {"Ampere A10",                  CARD_NVIDIA_AMPERE_A10},
+    {"RTX 3070",                    CARD_NVIDIA_GEFORCE_RTX3070},   /* GeForce 3000 - highend */
     {"RTX 2080 Ti",                 CARD_NVIDIA_GEFORCE_RTX2080TI}, /* GeForce 2000 - highend */
     {"RTX 2080",                    CARD_NVIDIA_GEFORCE_RTX2080},   /* GeForce 2000 - highend */
     {"RTX 2070",                    CARD_NVIDIA_GEFORCE_RTX2070},   /* GeForce 2000 - highend */
@@ -3403,6 +3405,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
         {ARB_DERIVATIVE_CONTROL,           MAKEDWORD_VERSION(4, 5)},
         {ARB_SHADER_TEXTURE_IMAGE_SAMPLES, MAKEDWORD_VERSION(4, 5)},
         {ARB_TEXTURE_BARRIER,              MAKEDWORD_VERSION(4, 5)},
+        {EXT_SHADER_INTEGER_MIX,           MAKEDWORD_VERSION(4, 5)},
 
         {ARB_PIPELINE_STATISTICS_QUERY,    MAKEDWORD_VERSION(4, 6)},
         {ARB_POLYGON_OFFSET_CLAMP,         MAKEDWORD_VERSION(4, 6)},

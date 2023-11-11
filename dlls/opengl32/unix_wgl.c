@@ -77,7 +77,7 @@ struct opengl_context
 struct wgl_handle
 {
     UINT handle;
-    struct opengl_funcs *funcs;
+    const struct opengl_funcs *funcs;
     union
     {
         struct opengl_context *context; /* for HANDLE_CONTEXT */
@@ -117,7 +117,7 @@ static struct wgl_handle *get_handle_ptr( HANDLE handle, enum wgl_handle_type ty
     return NULL;
 }
 
-static HANDLE alloc_handle( enum wgl_handle_type type, struct opengl_funcs *funcs, void *user_ptr )
+static HANDLE alloc_handle( enum wgl_handle_type type, const struct opengl_funcs *funcs, void *user_ptr )
 {
     HANDLE handle = 0;
     struct wgl_handle *ptr = NULL;
@@ -647,7 +647,7 @@ static HGLRC wrap_wglCreateContext( HDC hdc )
     HGLRC ret = 0;
     struct wgl_context *drv_ctx;
     struct opengl_context *context;
-    struct opengl_funcs *funcs = get_dc_funcs( hdc );
+    const struct opengl_funcs *funcs = get_dc_funcs( hdc );
 
     if (!funcs) return 0;
     if (!(drv_ctx = funcs->wgl.p_wglCreateContext( hdc ))) return 0;
@@ -679,7 +679,7 @@ static BOOL wrap_wglMakeCurrent( TEB *teb, HDC hdc, HGLRC hglrc )
                 teb->glReserved1[0] = hdc;
                 teb->glReserved1[1] = hdc;
                 teb->glCurrentRC = hglrc;
-                teb->glTable = ptr->funcs;
+                teb->glTable = (void *)ptr->funcs;
             }
         }
         else
@@ -751,7 +751,7 @@ static HGLRC wrap_wglCreateContextAttribsARB( HDC hdc, HGLRC share, const int *a
     struct wgl_context *drv_ctx;
     struct wgl_handle *share_ptr = NULL;
     struct opengl_context *context;
-    struct opengl_funcs *funcs = get_dc_funcs( hdc );
+    const struct opengl_funcs *funcs = get_dc_funcs( hdc );
 
     if (!funcs)
     {
@@ -796,7 +796,7 @@ static HPBUFFERARB wrap_wglCreatePbufferARB( HDC hdc, int format, int width, int
 {
     HPBUFFERARB ret;
     struct wgl_pbuffer *pbuffer;
-    struct opengl_funcs *funcs = get_dc_funcs( hdc );
+    const struct opengl_funcs *funcs = get_dc_funcs( hdc );
 
     if (!funcs || !funcs->ext.p_wglCreatePbufferARB) return 0;
     if (!(pbuffer = funcs->ext.p_wglCreatePbufferARB( hdc, format, width, height, attribs ))) return 0;
@@ -842,7 +842,7 @@ static BOOL wrap_wglMakeContextCurrentARB( TEB *teb, HDC draw_hdc, HDC read_hdc,
                 teb->glReserved1[0] = draw_hdc;
                 teb->glReserved1[1] = read_hdc;
                 teb->glCurrentRC = hglrc;
-                teb->glTable = ptr->funcs;
+                teb->glTable = (void *)ptr->funcs;
             }
         }
         else
@@ -1155,34 +1155,34 @@ NTSTATUS process_detach( void *args )
 
 typedef ULONG PTR32;
 
-extern NTSTATUS ext_glClientWaitSync( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glDeleteSync( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glFenceSync( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glGetBufferPointerv( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glGetBufferPointervARB( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glGetNamedBufferPointerv( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glGetNamedBufferPointervEXT( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glGetSynciv( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glIsSync( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapBuffer( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS ext_glClientWaitSync( void *args );
+extern NTSTATUS ext_glDeleteSync( void *args );
+extern NTSTATUS ext_glFenceSync( void *args );
+extern NTSTATUS ext_glGetBufferPointerv( void *args );
+extern NTSTATUS ext_glGetBufferPointervARB( void *args );
+extern NTSTATUS ext_glGetNamedBufferPointerv( void *args );
+extern NTSTATUS ext_glGetNamedBufferPointervEXT( void *args );
+extern NTSTATUS ext_glGetSynciv( void *args );
+extern NTSTATUS ext_glIsSync( void *args );
+extern NTSTATUS ext_glMapBuffer( void *args );
 
-extern NTSTATUS ext_glUnmapBuffer( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glUnmapBufferARB( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glUnmapNamedBuffer( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glUnmapNamedBufferEXT( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS ext_glUnmapBuffer( void *args );
+extern NTSTATUS ext_glUnmapBufferARB( void *args );
+extern NTSTATUS ext_glUnmapNamedBuffer( void *args );
+extern NTSTATUS ext_glUnmapNamedBufferEXT( void *args );
 
-extern NTSTATUS ext_glMapBufferARB( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapBufferRange( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapNamedBuffer( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapNamedBufferEXT( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapNamedBufferRange( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glMapNamedBufferRangeEXT( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glPathGlyphIndexRangeNV( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_glWaitSync( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_wglGetExtensionsStringARB( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_wglGetExtensionsStringEXT( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_wglQueryCurrentRendererStringWINE( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS ext_wglQueryRendererStringWINE( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS ext_glMapBufferARB( void *args );
+extern NTSTATUS ext_glMapBufferRange( void *args );
+extern NTSTATUS ext_glMapNamedBuffer( void *args );
+extern NTSTATUS ext_glMapNamedBufferEXT( void *args );
+extern NTSTATUS ext_glMapNamedBufferRange( void *args );
+extern NTSTATUS ext_glMapNamedBufferRangeEXT( void *args );
+extern NTSTATUS ext_glPathGlyphIndexRangeNV( void *args );
+extern NTSTATUS ext_glWaitSync( void *args );
+extern NTSTATUS ext_wglGetExtensionsStringARB( void *args );
+extern NTSTATUS ext_wglGetExtensionsStringEXT( void *args );
+extern NTSTATUS ext_wglQueryCurrentRendererStringWINE( void *args );
+extern NTSTATUS ext_wglQueryRendererStringWINE( void *args );
 
 struct wow64_string_entry
 {

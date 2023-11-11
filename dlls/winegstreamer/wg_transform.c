@@ -196,7 +196,6 @@ static gboolean transform_sink_query_cb(GstPad *pad, GstObject *parent, GstQuery
         case GST_QUERY_CAPS:
         {
             GstCaps *caps, *filter, *temp;
-            gchar *str;
 
             gst_query_parse_caps(query, &filter);
             if (!(caps = wg_format_to_caps(&transform->output_format)))
@@ -209,9 +208,7 @@ static gboolean transform_sink_query_cb(GstPad *pad, GstObject *parent, GstQuery
                 caps = temp;
             }
 
-            str = gst_caps_to_string(caps);
-            GST_INFO("Returning caps %s", str);
-            g_free(str);
+            GST_INFO("Returning caps %" GST_PTR_FORMAT, caps);
 
             gst_query_set_caps_result(query, caps);
             gst_caps_unref(caps);
@@ -361,6 +358,7 @@ NTSTATUS wg_transform_create(void *args)
         case WG_MAJOR_TYPE_VIDEO_CINEPAK:
         case WG_MAJOR_TYPE_VIDEO_INDEO:
         case WG_MAJOR_TYPE_VIDEO_WMV:
+        case WG_MAJOR_TYPE_VIDEO_MPEG1:
             if (!(element = find_element(GST_ELEMENT_FACTORY_TYPE_DECODER, src_caps, raw_caps))
                     || !append_element(transform->container, element, &first, &last))
             {
@@ -425,6 +423,7 @@ NTSTATUS wg_transform_create(void *args)
         case WG_MAJOR_TYPE_VIDEO_H264:
         case WG_MAJOR_TYPE_VIDEO_INDEO:
         case WG_MAJOR_TYPE_VIDEO_WMV:
+        case WG_MAJOR_TYPE_VIDEO_MPEG1:
             GST_FIXME("Format %u not implemented!", output_format.major_type);
             goto out;
     }
@@ -498,7 +497,6 @@ NTSTATUS wg_transform_set_output_format(void *args)
     const struct wg_format *format = params->format;
     GstSample *sample;
     GstCaps *caps;
-    gchar *str;
 
     if (!(caps = wg_format_to_caps(format)))
     {
@@ -537,9 +535,7 @@ NTSTATUS wg_transform_set_output_format(void *args)
         return STATUS_UNSUCCESSFUL;
     }
 
-    str = gst_caps_to_string(caps);
-    GST_INFO("Configured new caps %s.", str);
-    g_free(str);
+    GST_INFO("Configured new caps %" GST_PTR_FORMAT ".", caps);
 
     /* Ideally and to be fully compatible with native transform, the queued
      * output buffers will need to be converted to the new output format and
