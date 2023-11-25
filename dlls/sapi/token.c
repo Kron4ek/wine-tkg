@@ -1420,7 +1420,7 @@ static ULONG WINAPI spaudio_Release(ISpAudio *iface)
 
     if (!ref)
     {
-        heap_free(audio);
+        free(audio);
     }
 
     return ref;
@@ -1626,7 +1626,7 @@ const struct ISpAudioVtbl spaudio_vtbl =
 
 static HRESULT speech_audio_create(void **obj)
 {
-    struct speech_audio *This = heap_alloc(sizeof(*This));
+    struct speech_audio *This = malloc(sizeof(*This));
 
     if (!This)
         return E_OUTOFMEMORY;

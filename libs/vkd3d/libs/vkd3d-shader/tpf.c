@@ -1113,6 +1113,8 @@ static void shader_sm4_read_dcl_indexable_temp(struct vkd3d_shader_instruction *
 {
     ins->declaration.indexable_temp.register_idx = *tokens++;
     ins->declaration.indexable_temp.register_size = *tokens++;
+    ins->declaration.indexable_temp.alignment = 0;
+    ins->declaration.indexable_temp.data_type = VKD3D_DATA_FLOAT;
     ins->declaration.indexable_temp.component_count = *tokens;
 }
 
@@ -1751,21 +1753,6 @@ static bool shader_sm4_read_reg_idx(struct vkd3d_shader_sm4_parser *priv, const 
     return true;
 }
 
-static bool sm4_register_is_descriptor(enum vkd3d_sm4_register_type register_type)
-{
-    switch (register_type)
-    {
-        case VKD3D_SM4_RT_SAMPLER:
-        case VKD3D_SM4_RT_RESOURCE:
-        case VKD3D_SM4_RT_CONSTBUFFER:
-        case VKD3D_SM5_RT_UAV:
-            return true;
-
-        default:
-            return false;
-    }
-}
-
 static bool shader_sm4_read_param(struct vkd3d_shader_sm4_parser *priv, const uint32_t **ptr, const uint32_t *end,
         enum vkd3d_data_type data_type, struct vkd3d_shader_register *param, enum vkd3d_shader_src_modifier *modifier)
 {
@@ -1943,7 +1930,7 @@ static bool shader_sm4_read_param(struct vkd3d_shader_sm4_parser *priv, const ui
                 break;
         }
     }
-    else if (!shader_is_sm_5_1(priv) && sm4_register_is_descriptor(register_type))
+    else if (!shader_is_sm_5_1(priv) && vsir_register_is_descriptor(param))
     {
         /* SM5.1 places a symbol identifier in idx[0] and moves
          * other values up one slot. Normalize to SM5.1. */
@@ -5426,7 +5413,7 @@ static void write_sm4_load(const struct tpf_writer *tpf, const struct hlsl_ir_lo
     sm4_dst_from_node(&instr.dsts[0], &load->node);
     instr.dst_count = 1;
 
-    assert(type->class <= HLSL_CLASS_LAST_NUMERIC);
+    assert(hlsl_is_numeric_type(type));
     if (type->base_type == HLSL_TYPE_BOOL && var_is_user_input(tpf->ctx, load->src.var))
     {
         struct hlsl_constant_value value;

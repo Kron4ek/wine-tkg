@@ -1215,9 +1215,9 @@ static HRESULT WINAPI column_rs_GetAvailableColumns(IColumnsRowset *iface, DBORD
         return E_OUTOFMEMORY;
 
     *count = extra_columns;
-    *columns[0] = DBCOLUMN_BASETABLENAME;
-    *columns[1] = DBCOLUMN_BASECOLUMNNAME;
-    *columns[2] = DBCOLUMN_KEYCOLUMN;
+    (*columns)[0] = DBCOLUMN_BASETABLENAME;
+    (*columns)[1] = DBCOLUMN_BASECOLUMNNAME;
+    (*columns)[2] = DBCOLUMN_KEYCOLUMN;
 
     return S_OK;
 }
@@ -1263,7 +1263,8 @@ static HRESULT WINAPI command_Execute(ICommandText *iface, IUnknown *outer, REFI
         return E_FAIL;
     }
 
-    *rowset = NULL;
+    if (rowset)
+        *rowset = NULL;
     if (!wcsnicmp( command->query, L"select ", 7 ))
     {
         msrowset = malloc(sizeof(*msrowset));

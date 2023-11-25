@@ -1522,7 +1522,7 @@ static void shader_glsl_load_color_key_constant(const struct glsl_ps_program *ps
         const struct wined3d_gl_info *gl_info, const struct wined3d_state *state)
 {
     struct wined3d_color float_key[2];
-    const struct wined3d_texture *texture = state->textures[0];
+    const struct wined3d_texture *texture = wined3d_state_get_ffp_texture(state, 0);
 
     wined3d_format_get_float_color_key(texture->resource.format, &texture->async.src_blt_color_key, float_key);
     GL_EXTCALL(glUniform4fv(ps->color_key_location, 2, &float_key[0].r));
@@ -11930,7 +11930,7 @@ static void glsl_vertex_pipe_texmatrix_np2(struct wined3d_context *context,
         const struct wined3d_state *state, DWORD state_id)
 {
     DWORD sampler = state_id - STATE_SAMPLER(0);
-    const struct wined3d_texture *texture = state->textures[sampler];
+    const struct wined3d_texture *texture = wined3d_state_get_ffp_texture(state, sampler);
     BOOL np2;
 
     if (!texture)

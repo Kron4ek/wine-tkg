@@ -3374,6 +3374,15 @@ void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 )
         ULONG64 total = (ULONG64)sinfo.totalram * sinfo.mem_unit;
         info->MmHighestPhysicalPage = max(1, total / page_size);
     }
+#elif defined(__APPLE__)
+    /* sysconf(_SC_PHYS_PAGES) is buggy on macOS: in a 32-bit process, it
+     * returns an error on Macs with >4GB of RAM.
+     */
+    INT64 memsize;
+    size_t len = sizeof(memsize);
+
+    if (!sysctlbyname( "hw.memsize", &memsize, &len, NULL, 0 ))
+        info->MmHighestPhysicalPage = max(1, memsize / page_size);
 #elif defined(_SC_PHYS_PAGES)
     LONG64 phys_pages = sysconf( _SC_PHYS_PAGES );
 
@@ -3393,6 +3402,19 @@ void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 )
     info->NumberOfProcessors      = peb->NumberOfProcessors;
     if (wow64) info->HighestUserAddress = (char *)get_wow_user_space_limit() - 1;
     else info->HighestUserAddress = (char *)user_space_limit - 1;
+}
+
+BOOL CDECL __wine_needs_override_large_address_aware(void)
+{
+    static int needs_override = -1;
+
+    if (needs_override == -1)
+    {
+        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
+
+        needs_override = !str || atoi(str) == 1;
+    }
+    return needs_override;
 }
 
 
@@ -3440,19 +3462,6 @@ NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size
     if (shared_file) NtClose( shared_file );
     free( image_info );
     return status;
-}
-
-BOOL CDECL __wine_needs_override_large_address_aware(void)
-{
-    static int needs_override = -1;
-
-    if (needs_override == -1)
-    {
-        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
-
-        needs_override = !str || atoi(str) == 1;
-    }
-    return needs_override;
 }
 
 

@@ -116,9 +116,34 @@ void info_help(void)
     while (infotext[i]) dbg_printf("%s\n", infotext[i++]);
 }
 
-static const char* get_symtype_str(const IMAGEHLP_MODULE64* mi)
+struct info_module
 {
-    switch (mi->SymType)
+    IMAGEHLP_MODULEW64                  mi;
+    struct dhext_module_information     ext_module_info;
+    char                                name[64];
+};
+
+struct info_modules
+{
+    struct info_module *modules;
+    unsigned            num_alloc;
+    unsigned            num_used;
+};
+
+static const char* get_module_type(const struct info_module* im, BOOL is_embedded)
+{
+    switch (im->ext_module_info.type)
+    {
+    case DMT_ELF:       return "ELF";
+    case DMT_MACHO:     return "Mach-O";
+    case DMT_PE:        return !is_embedded && im->ext_module_info.is_wine_builtin ? "PE-Wine" : "PE";
+    default:            return "----";
+    }
+}
+
+static const char* get_symtype_str(const struct info_module* im)
+{
+    switch (im->mi.SymType)
     {
     default:
     case SymNone:       return "--none--";
@@ -129,42 +154,25 @@ static const char* get_symtype_str(const IMAGEHLP_MODULE64* mi)
     case SymDeferred:   return "Deferred";
     case SymSym:        return "Sym";
     case SymDia:
-        switch (mi->CVSig)
+        if (im->ext_module_info.debug_format_bitmask)
         {
-        case 'S' | ('T' << 8) | ('A' << 16) | ('B' << 24):
-            return "Stabs";
-        case 'D' | ('W' << 8) | ('A' << 16) | ('R' << 24):
-            /* previous versions of dbghelp used to report this... */
-            return "Dwarf";
-        default:
-            if ((mi->CVSig & 0x00FFFFFF) == ('D' | ('W' << 8) | ('F' << 16)))
+            static char tmp[64];
+            tmp[0] = '\0';
+            if (im->ext_module_info.debug_format_bitmask & DHEXT_FORMAT_STABS) strcpy(tmp, "stabs");
+            if (im->ext_module_info.debug_format_bitmask & (DHEXT_FORMAT_DWARF2 | DHEXT_FORMAT_DWARF3 | DHEXT_FORMAT_DWARF4 | DHEXT_FORMAT_DWARF5))
             {
-                static char tmp[64];
-                DWORD versbit = mi->CVSig >> 24;
-                strcpy(tmp, "Dwarf");
-                if (versbit & 1) strcat(tmp, "-2");
-                if (versbit & 2) strcat(tmp, "-3");
-                if (versbit & 4) strcat(tmp, "-4");
-                if (versbit & 8) strcat(tmp, "-5");
-                return tmp;
+                if (tmp[0]) strcat(tmp, ", ");
+                strcat(tmp, "Dwarf");
+                if (im->ext_module_info.debug_format_bitmask & DHEXT_FORMAT_DWARF2) strcat(tmp, "-2");
+                if (im->ext_module_info.debug_format_bitmask & DHEXT_FORMAT_DWARF3) strcat(tmp, "-3");
+                if (im->ext_module_info.debug_format_bitmask & DHEXT_FORMAT_DWARF4) strcat(tmp, "-4");
+                if (im->ext_module_info.debug_format_bitmask & DHEXT_FORMAT_DWARF5) strcat(tmp, "-5");
             }
-            return "DIA";
+            return tmp;
         }
+        return "DIA";
     }
 }
-
-struct info_module
-{
-    IMAGEHLP_MODULE64 mi;
-    char              name[64];
-};
-
-struct info_modules
-{
-    struct info_module *modules;
-    unsigned            num_alloc;
-    unsigned            num_used;
-};
 
 static const char* get_machine_str(DWORD machine)
 {
@@ -182,17 +190,25 @@ static const char* get_machine_str(DWORD machine)
 
 static void module_print_info(const struct info_module *module, BOOL is_embedded, BOOL multi_machine)
 {
+    char buffer[9];
+    snprintf(buffer, sizeof(buffer), "%s%s%s",
+             is_embedded ? "  \\-" : "",
+             get_module_type(module, is_embedded),
+             module->ext_module_info.has_file_image ? "" : "^");
+
     if (multi_machine)
-        dbg_printf("%16I64x-%16I64x\t%s\t%-16s%s\n",
+        dbg_printf("%-8s%16I64x-%16I64x       %-16s%-16s%s\n",
+                   buffer,
                    module->mi.BaseOfImage,
                    module->mi.BaseOfImage + module->mi.ImageSize,
                    get_machine_str(module->mi.MachineType),
-                   is_embedded ? "\\" : get_symtype_str(&module->mi), module->name);
+                   is_embedded ? "\\" : get_symtype_str(module), module->name);
     else
-        dbg_printf("%*.*I64x-%*.*I64x\t%-16s%s\n",
-                   ADDRWIDTH, ADDRWIDTH, module->mi.BaseOfImage,
-                   ADDRWIDTH, ADDRWIDTH, module->mi.BaseOfImage + module->mi.ImageSize,
-                   is_embedded ? "\\" : get_symtype_str(&module->mi), module->name);
+        dbg_printf("%-8s%*I64x-%*I64x       %-16s%s\n",
+                   buffer,
+                   ADDRWIDTH, module->mi.BaseOfImage,
+                   ADDRWIDTH, module->mi.BaseOfImage + module->mi.ImageSize,
+                   is_embedded ? "\\" : get_symtype_str(module), module->name);
 }
 
 static int __cdecl module_compare(const void* p1, const void* p2)
@@ -209,7 +225,9 @@ static int __cdecl module_compare(const void* p1, const void* p2)
 static inline BOOL module_is_container(const struct info_module *wmod_cntnr,
         const struct info_module *wmod_child)
 {
-    return wmod_cntnr->mi.BaseOfImage <= wmod_child->mi.BaseOfImage &&
+    return (wmod_cntnr->ext_module_info.type == DMT_ELF || wmod_cntnr->ext_module_info.type == DMT_MACHO) &&
+        (wmod_child->ext_module_info.type == DMT_PE) &&
+        wmod_cntnr->mi.BaseOfImage <= wmod_child->mi.BaseOfImage &&
         wmod_cntnr->mi.BaseOfImage + wmod_cntnr->mi.ImageSize >=
         wmod_child->mi.BaseOfImage + wmod_child->mi.ImageSize;
 }
@@ -226,7 +244,9 @@ static BOOL CALLBACK info_mod_cb(PCSTR mod_name, DWORD64 base, PVOID ctx)
         im->modules = new;
     }
     im->modules[im->num_used].mi.SizeOfStruct = sizeof(im->modules[im->num_used].mi);
-    if (SymGetModuleInfo64(dbg_curr_process->handle, base, &im->modules[im->num_used].mi))
+    if (SymGetModuleInfoW64(dbg_curr_process->handle, base, &im->modules[im->num_used].mi) &&
+        wine_get_module_information(dbg_curr_process->handle, base, &im->modules[im->num_used].ext_module_info,
+                                    sizeof(im->modules[im->num_used].ext_module_info)))
     {
         const int dst_len = sizeof(im->modules[im->num_used].name);
         lstrcpynA(im->modules[im->num_used].name, mod_name, dst_len - 1);
@@ -247,6 +267,7 @@ void info_win32_module(DWORD64 base, BOOL multi_machine)
     UINT                i, j, num_printed = 0;
     BOOL                opt;
     DWORD               machine;
+    BOOL                has_missing_filename = FALSE;
 
     if (!dbg_curr_process)
     {
@@ -270,14 +291,14 @@ void info_win32_module(DWORD64 base, BOOL multi_machine)
     machine = im.modules[0].mi.MachineType;
 
     if (multi_machine)
-        dbg_printf("Module\tAddress\t\t\t\t\tMachine\tDebug info\tName (%d modules)\n", im.num_used);
+        dbg_printf("%-8s%-40s%-16s%-16sName (%d modules)\n", "Module", "Address", "Machine", "Debug info", im.num_used);
     else
     {
         unsigned same_machine = 0;
         for (i = 0; i < im.num_used; i++)
             if (machine == im.modules[i].mi.MachineType) same_machine++;
-        dbg_printf("Module\tAddress\t\t\t%sDebug info\tName (%d modules",
-                   ADDRWIDTH == 16 ? "\t\t" : "", same_machine);
+        dbg_printf("%-8s%-*s%-16sName (%d modules",
+                   "Module", ADDRWIDTH == 16 ? 40 : 24, "Address", "Debug info", same_machine);
         if (same_machine != im.num_used)
             dbg_printf(", %u for wow64 not listed", im.num_used - same_machine);
         dbg_printf(")\n");
@@ -289,33 +310,26 @@ void info_win32_module(DWORD64 base, BOOL multi_machine)
             (base < im.modules[i].mi.BaseOfImage || base >= im.modules[i].mi.BaseOfImage + im.modules[i].mi.ImageSize))
             continue;
         if (!multi_machine && machine != im.modules[i].mi.MachineType) continue;
-        if (strstr(im.modules[i].name, "<elf>"))
+        if (!im.modules[i].ext_module_info.has_file_image) has_missing_filename = TRUE;
+        if (im.modules[i].ext_module_info.type == DMT_ELF || im.modules[i].ext_module_info.type == DMT_MACHO)
         {
-            dbg_printf("ELF\t");
             module_print_info(&im.modules[i], FALSE, multi_machine);
             /* print all modules embedded in this one */
             for (j = 0; j < im.num_used; j++)
             {
-                if (!strstr(im.modules[j].name, "<elf>") && module_is_container(&im.modules[i], &im.modules[j]))
-                {
-                    dbg_printf("  \\-PE\t");
+                if (module_is_container(&im.modules[i], &im.modules[j]))
                     module_print_info(&im.modules[j], TRUE, multi_machine);
-                }
             }
         }
         else
         {
             /* check module is not embedded in another module */
-            for (j = 0; j < im.num_used; j++) 
+            for (j = 0; j < im.num_used; j++)
             {
-                if (strstr(im.modules[j].name, "<elf>") && module_is_container(&im.modules[j], &im.modules[i]))
+                if (module_is_container(&im.modules[j], &im.modules[i]))
                     break;
             }
             if (j < im.num_used) continue;
-            if (strstr(im.modules[i].name, ".so") || strchr(im.modules[i].name, '<'))
-                dbg_printf("ELF\t");
-            else
-                dbg_printf("PE\t");
             module_print_info(&im.modules[i], FALSE, multi_machine);
         }
         num_printed++;
@@ -324,6 +338,8 @@ void info_win32_module(DWORD64 base, BOOL multi_machine)
 
     if (base && !num_printed)
         dbg_printf("'0x%0*I64x' is not a valid module address\n", ADDRWIDTH, base);
+    if (has_missing_filename)
+        dbg_printf("^ denotes modules for which image file couldn't be found\n");
 }
 
 struct class_walker

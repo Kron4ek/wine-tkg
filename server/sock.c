@@ -802,7 +802,11 @@ static void post_sock_messages( struct sock *sock )
             enum afd_poll_bit event = event_bitorder[i];
             if (events & (1 << event))
             {
-                lparam_t lparam = afd_poll_flag_to_win32(1 << event) | (sock_get_error( sock->errors[event] ) << 16);
+                lparam_t lparam;
+                if (event == AFD_POLL_BIT_RESET)
+                    lparam = FD_CLOSE | (WSAECONNABORTED << 16);
+                else
+                    lparam = afd_poll_flag_to_win32(1 << event) | (sock_get_error( sock->errors[event] ) << 16);
                 post_message( sock->window, sock->message, sock->wparam, lparam );
             }
         }
@@ -3836,7 +3840,10 @@ DECL_HANDLER(recv_socket)
     if (!req->force_async && !sock->nonblocking && is_fd_overlapped( fd ))
         timeout = (timeout_t)sock->rcvtimeo * -10000;
 
-    if (sock->rd_shutdown) status = STATUS_PIPE_DISCONNECTED;
+    if (sock->rd_shutdown)
+        status = STATUS_PIPE_DISCONNECTED;
+    else if (sock->reset)
+        status = STATUS_CONNECTION_RESET;
     else if (!async_queued( &sock->read_q ))
     {
         /* If read_q is not empty, we cannot really tell if the already queued

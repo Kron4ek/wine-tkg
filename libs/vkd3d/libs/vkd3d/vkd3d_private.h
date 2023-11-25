@@ -22,7 +22,9 @@
 #define COBJMACROS
 #define NONAMELESSUNION
 #define VK_NO_PROTOTYPES
+#ifndef CONST_VTABLE
 #define CONST_VTABLE
+#endif
 
 #ifdef _WIN32
 # define _WIN32_WINNT 0x0600  /* for condition variables */
@@ -1099,7 +1101,7 @@ HRESULT d3d12_query_heap_create(struct d3d12_device *device,
 struct d3d12_query_heap *unsafe_impl_from_ID3D12QueryHeap(ID3D12QueryHeap *iface);
 
 /* A Vulkan query has to be issued at least one time before the result is
- * available. In D3D12 it is legal to get query reults for not issued queries.
+ * available. In D3D12 it is legal to get query results for not issued queries.
  */
 static inline bool d3d12_query_heap_is_result_available(const struct d3d12_query_heap *heap,
         unsigned int query_index)
@@ -1317,10 +1319,38 @@ static inline bool d3d12_pipeline_state_has_unknown_dsv_format(struct d3d12_pipe
     return false;
 }
 
+struct d3d12_pipeline_state_desc
+{
+    ID3D12RootSignature *root_signature;
+    D3D12_SHADER_BYTECODE vs;
+    D3D12_SHADER_BYTECODE ps;
+    D3D12_SHADER_BYTECODE ds;
+    D3D12_SHADER_BYTECODE hs;
+    D3D12_SHADER_BYTECODE gs;
+    D3D12_SHADER_BYTECODE cs;
+    D3D12_STREAM_OUTPUT_DESC stream_output;
+    D3D12_BLEND_DESC blend_state;
+    unsigned int sample_mask;
+    D3D12_RASTERIZER_DESC rasterizer_state;
+    D3D12_DEPTH_STENCIL_DESC1 depth_stencil_state;
+    D3D12_INPUT_LAYOUT_DESC input_layout;
+    D3D12_INDEX_BUFFER_STRIP_CUT_VALUE strip_cut_value;
+    D3D12_PRIMITIVE_TOPOLOGY_TYPE primitive_topology_type;
+    struct D3D12_RT_FORMAT_ARRAY rtv_formats;
+    DXGI_FORMAT dsv_format;
+    DXGI_SAMPLE_DESC sample_desc;
+    D3D12_VIEW_INSTANCING_DESC view_instancing_desc;
+    unsigned int node_mask;
+    D3D12_CACHED_PIPELINE_STATE cached_pso;
+    D3D12_PIPELINE_STATE_FLAGS flags;
+};
+
 HRESULT d3d12_pipeline_state_create_compute(struct d3d12_device *device,
         const D3D12_COMPUTE_PIPELINE_STATE_DESC *desc, struct d3d12_pipeline_state **state);
 HRESULT d3d12_pipeline_state_create_graphics(struct d3d12_device *device,
         const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc, struct d3d12_pipeline_state **state);
+HRESULT d3d12_pipeline_state_create(struct d3d12_device *device,
+        const D3D12_PIPELINE_STATE_STREAM_DESC *desc, struct d3d12_pipeline_state **state);
 VkPipeline d3d12_pipeline_state_get_or_create_pipeline(struct d3d12_pipeline_state *state,
         D3D12_PRIMITIVE_TOPOLOGY topology, const uint32_t *strides, VkFormat dsv_format, VkRenderPass *vk_render_pass);
 struct d3d12_pipeline_state *unsafe_impl_from_ID3D12PipelineState(ID3D12PipelineState *iface);

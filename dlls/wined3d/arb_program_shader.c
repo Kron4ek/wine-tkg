@@ -6048,9 +6048,9 @@ static void alpha_test_arbfp(struct wined3d_context *context, const struct wined
 
 static void color_key_arbfp(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
+    const struct wined3d_texture *texture = wined3d_state_get_ffp_texture(state, 0);
     struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    const struct wined3d_texture *texture = state->textures[0];
     struct wined3d_device *device = context->device;
     struct wined3d_color float_key[2];
 

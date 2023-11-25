@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Nov 11 12:14:01 PM UTC 2023 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Nov 25 07:51:17 AM UTC 2023 :
 
 Local cfg files used
 
-Wine (plain) version: 8.20.r0.g3a8d71041c1
-Using wine-staging patchset (version 8.20.r0.gf32f8c62)
+Wine (plain) version: 8.21.r0.g13c43cf3d06
+Using wine-staging patchset (version 8.21.r0.ge546e2f1)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -32,7 +32,5 @@ Applied hotfix 0003-bcrypt-Add-support-for-OAEP-padded-asymmetric-key-de3.mypatc
 Applied hotfix a608ef1.mypatch
 Applied hotfix opencl-fixup.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
-Applied hotfix staging_d3d12core.mypatch
-Applied hotfix staging_windows.networking.connectivity.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )

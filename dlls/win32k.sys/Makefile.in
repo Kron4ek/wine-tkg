@@ -2,3 +2,8 @@ MODULE    = win32k.sys
 IMPORTS   = ntoskrnl
 EXTRADLLFLAGS = -mno-cygwin -Wb,--subsystem,native
 
+C_SRCS = \
+	main.c
+
+SOURCES = \
+	main.c

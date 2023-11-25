@@ -4422,6 +4422,7 @@ static void test_select(void)
     ret = getsockopt(fdWrite, SOL_SOCKET, SO_ERROR, (char*)&id, &len);
     ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
     ok(id == 0, "expected 0, got %ld\n", id);
+    set_blocking(fdRead, FALSE);
 
     /* When data is received the receiver gets the read descriptor */
     ret = send(fdWrite, "1234", 4, 0);
@@ -4481,6 +4482,14 @@ static void test_select(void)
     ret = recv(fdRead, tmp_buf, sizeof(tmp_buf), 0);
     ok(ret == 1, "expected 1, got %d\n", ret);
     ok(tmp_buf[0] == 'A', "expected 'A', got 0x%02X\n", tmp_buf[0]);
+
+    /* Linux has some odd behaviour (probably a bug) where receiving OOB,
+     * setting SO_OOBINLINE, and then calling recv() again will cause the same
+     * data to be received twice. Avoid that messing with further tests by
+     * calling recv() here. */
+    ret = recv(fdRead, tmp_buf, sizeof(tmp_buf), 0);
+    todo_wine ok(ret == -1, "got %d\n", ret);
+    todo_wine ok(GetLastError() == WSAEWOULDBLOCK, "got error %u\n", WSAGetLastError());
 
     /* When the connection is closed the socket is set in the read descriptor */
     ret = closesocket(fdRead);
@@ -6281,7 +6290,7 @@ static void check_events_(int line, struct event_test_ctx *ctx,
         for (i = 0; i < ARRAY_SIZE(events.iErrorCode); ++i)
         {
             if ((1u << i) == LOWORD(flag1) && (events.lNetworkEvents & LOWORD(flag1)))
-                todo_wine_if (HIWORD(flag1)) ok_(__FILE__, line)(events.iErrorCode[i] == HIWORD(flag1),
+                ok_(__FILE__, line)(events.iErrorCode[i] == HIWORD(flag1),
                         "got error code %d for event %#x\n", events.iErrorCode[i], 1u << i);
             if ((1u << i) == LOWORD(flag2) && (events.lNetworkEvents & LOWORD(flag2)))
                 ok_(__FILE__, line)(events.iErrorCode[i] == HIWORD(flag2),
@@ -7125,7 +7134,7 @@ static void test_close_events(struct event_test_ctx *ctx)
 
     close_with_rst(client);
 
-    check_events_todo_msg(ctx, MAKELONG(FD_CLOSE, WSAECONNABORTED), 0, 200);
+    check_events(ctx, MAKELONG(FD_CLOSE, WSAECONNABORTED), 0, 200);
     check_events(ctx, 0, 0, 0);
     select_events(ctx, server, FD_ACCEPT | FD_CLOSE | FD_CONNECT | FD_OOB | FD_READ);
     if (ctx->is_message)
@@ -9416,6 +9425,26 @@ static void test_shutdown(void)
     closesocket(client);
     closesocket(server);
 
+    /* Send data to a peer which is closed. */
+
+    tcp_socketpair(&client, &server);
+
+    WSASetLastError(0xdeadbeef);
+    ret = shutdown(client, SD_SEND);
+    ok(!ret, "expected success\n");
+    ok(!WSAGetLastError() || WSAGetLastError() == 0xdeadbeef /* < 7 */, "got error %u\n", WSAGetLastError());
+    closesocket(client);
+
+    ret = send(server, "test", 5, 0);
+    ok(ret == 5, "got %d\n", ret);
+
+    WSASetLastError(0xdeadbeef);
+    ret = recv(server, buffer, sizeof(buffer), 0);
+    ok(ret == -1, "got %d\n", ret);
+    todo_wine ok(WSAGetLastError() == WSAECONNABORTED, "got error %u\n", WSAGetLastError());
+
+    closesocket(server);
+
     /* Test shutting down with async I/O pending. */
 
     client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -10565,9 +10594,9 @@ static void test_completion_port(void)
 
     /* Somehow a hard shutdown doesn't work on my Linux box. It seems SO_LINGER is ignored. */
     iret = WSARecv(dest, &bufs, 1, &num_bytes, &flags, &ov, NULL);
-    todo_wine ok(iret == SOCKET_ERROR, "WSARecv failed - %d\n", iret);
-    todo_wine ok(GetLastError() == WSAECONNRESET, "Last error was %ld\n", GetLastError());
-    todo_wine ok(num_bytes == 0xdeadbeef, "Managed to read %ld\n", num_bytes);
+    ok(iret == SOCKET_ERROR, "WSARecv failed - %d\n", iret);
+    ok(GetLastError() == WSAECONNRESET, "Last error was %ld\n", GetLastError());
+    ok(num_bytes == 0xdeadbeef, "Managed to read %ld\n", num_bytes);
 
     SetLastError(0xdeadbeef);
     key = 0xdeadbeef;
@@ -10575,11 +10604,11 @@ static void test_completion_port(void)
     olp = (WSAOVERLAPPED *)0xdeadbeef;
 
     bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
-    todo_wine ok(bret == FALSE, "GetQueuedCompletionStatus returned %u\n", bret );
-    todo_wine ok(GetLastError() == WAIT_TIMEOUT, "Last error was %ld\n", GetLastError());
-    todo_wine ok(key == 0xdeadbeef, "Key is %Iu\n", key);
-    todo_wine ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %lu\n", num_bytes);
-    todo_wine ok(!olp, "Overlapped structure is at %p\n", olp);
+    ok(bret == FALSE, "GetQueuedCompletionStatus returned %u\n", bret );
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %ld\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %Iu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %lu\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
 
     closesocket(dest);
 
@@ -13637,8 +13666,13 @@ static void test_tcp_reset(void)
     WSASetLastError(0xdeadbeef);
     size = 0xdeadbeef;
     ret = WSARecv(client, &wsabuf, 1, &size, &flags, &overlapped, NULL);
-    todo_wine ok(ret == -1, "got %d\n", ret);
-    todo_wine ok(WSAGetLastError() == WSAECONNRESET, "got error %u\n", WSAGetLastError());
+    ok(ret == -1, "got %d\n", ret);
+    ok(WSAGetLastError() == WSAECONNRESET, "got error %u\n", WSAGetLastError());
+
+    WSASetLastError(0xdeadbeef);
+    ret = send(client, "data", 5, 0);
+    ok(ret == -1, "got %d\n", ret);
+    ok(WSAGetLastError() == WSAECONNRESET, "got error %u\n", WSAGetLastError());
 
     check_poll(client, POLLERR | POLLHUP | POLLWRNORM);
 

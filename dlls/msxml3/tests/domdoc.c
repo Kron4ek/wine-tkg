@@ -13327,6 +13327,7 @@ static struct attrtest_t attrtests[] = {
     { 0 }
 };
 
+/* see dlls/msxml[46]/tests/domdoc.c */
 static void test_create_attribute(void)
 {
     struct attrtest_t *ptr = attrtests;
@@ -13653,14 +13654,13 @@ todo_wine {
 typedef struct _namespace_as_attribute_t {
     const GUID *guid;
     const char *clsid;
-    const char *xmlns_uri;
 } namespace_as_attribute_t;
 
 static const namespace_as_attribute_t namespace_as_attribute_test_data[] = {
-    { &CLSID_DOMDocument,   "CLSID_DOMDocument",   "" },
-    { &CLSID_DOMDocument2,  "CLSID_DOMDocument2",  "" },
-    { &CLSID_DOMDocument26, "CLSID_DOMDocument26", "" },
-    { &CLSID_DOMDocument30, "CLSID_DOMDocument30", "" },
+    { &CLSID_DOMDocument,   "CLSID_DOMDocument"   },
+    { &CLSID_DOMDocument2,  "CLSID_DOMDocument2"  },
+    { &CLSID_DOMDocument26, "CLSID_DOMDocument26" },
+    { &CLSID_DOMDocument30, "CLSID_DOMDocument30" },
     { 0 }
 };
 
@@ -13676,6 +13676,8 @@ static void test_namespaces_as_attributes(void)
         const char *basenames[3];
         const char *uris[3];
         const char *texts[3];
+        const char *xmls[3];
+        BOOL todo;
     };
     static const struct test tests[] = {
         {
@@ -13685,6 +13687,7 @@ static void test_namespaces_as_attributes(void)
             { "b",      "d",      "ns" },       /* baseName */
             { "nshref", NULL,     "" },         /* namespaceURI */
             { "b attr", "d attr", "nshref" },   /* text */
+            { "ns:b=\"b attr\"", "d=\"d attr\"", "xmlns:ns=\"nshref\"" }, /* xml */
         },
         /* property only */
         {
@@ -13694,6 +13697,7 @@ static void test_namespaces_as_attributes(void)
             { "d" },        /* baseName */
             { NULL },       /* namespaceURI */
             { "d attr" },   /* text */
+            { "d=\"d attr\"" }, /* xml */
         },
         /* namespace only */
         {
@@ -13703,6 +13707,18 @@ static void test_namespaces_as_attributes(void)
             { "ns" },       /* baseName */
             { "" },         /* namespaceURI */
             { "nshref" },   /* text */
+            { "xmlns:ns=\"nshref\"" }, /* xml */
+        },
+        /* default namespace */
+        {
+            "<a xmlns=\"nshref\" />", 1,
+            { "xmlns" },            /* nodeName */
+            { "xmlns" },            /* prefix */
+            { "" },                 /* baseName */
+            { "" },                 /* namespaceURI */
+            { "nshref" },           /* text */
+            { "xmlns=\"nshref\"" }, /* xml */
+            TRUE,                   /* todo */
         },
         /* no properties or namespaces */
         {
@@ -13731,37 +13747,39 @@ static void test_namespaces_as_attributes(void)
         test = tests;
         while (test->xml) {
             hr = CoCreateInstance(entry->guid, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument2, (void **)&doc);
-            ok(SUCCEEDED(hr), "Failed to create document %s, hr %#lx.\n", wine_dbgstr_guid(entry->guid), hr);
+            ok(hr == S_OK, "Unexpected hr %#lx for %s.\n", hr, wine_dbgstr_guid(entry->guid));
 
             hr = IXMLDOMDocument_loadXML(doc, _bstr_(test->xml), &b);
-            ok(hr == S_OK, "Failed to load xml, hr %#lx.\n", hr);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
             node = NULL;
             hr = IXMLDOMDocument_selectSingleNode(doc, _bstr_("a"), &node);
-            ok(SUCCEEDED(hr), "Failed to select a node, hr %#lx.\n", hr);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
             hr = IXMLDOMNode_get_attributes(node, &map);
-            ok(SUCCEEDED(hr), "Failed to get attributes, hr %#lx.\n", hr);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
             len = -1;
             hr = IXMLDOMNamedNodeMap_get_length(map, &len);
-            ok(SUCCEEDED(hr), "Failed to get map length, hr %#lx.\n", hr);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
             ok(len == test->explen, "got %ld\n", len);
 
             item = NULL;
             hr = IXMLDOMNamedNodeMap_get_item(map, test->explen+1, &item);
-            ok(hr == S_FALSE, "Failed to get item, hr %#lx.\n", hr);
+            ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
             ok(!item, "Item should be NULL\n");
 
             for (i = 0; i < len; i++)
             {
                 item = NULL;
                 hr = IXMLDOMNamedNodeMap_get_item(map, i, &item);
-                ok(SUCCEEDED(hr), "Failed to get item, hr %#lx.\n", hr);
+                todo_wine_if(test->todo)
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+                if (hr != S_OK) continue;
 
                 str = NULL;
                 hr = IXMLDOMNode_get_nodeName(item, &str);
-                ok(SUCCEEDED(hr), "Failed to get node name, hr %#lx.\n", hr);
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
                 ok(!lstrcmpW(str, _bstr_(test->names[i])), "got %s\n", wine_dbgstr_w(str));
                 SysFreeString(str);
 
@@ -13769,7 +13787,7 @@ static void test_namespaces_as_attributes(void)
                 hr = IXMLDOMNode_get_prefix(item, &str);
                 if (test->prefixes[i])
                 {
-                    ok(hr == S_OK, "Failed to get prefix, hr %#lx.\n", hr);
+                    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
                     ok(!lstrcmpW(str, _bstr_(test->prefixes[i])), "got %s\n", wine_dbgstr_w(str));
                     SysFreeString(str);
                 }
@@ -13778,7 +13796,7 @@ static void test_namespaces_as_attributes(void)
 
                 str = NULL;
                 hr = IXMLDOMNode_get_baseName(item, &str);
-                ok(SUCCEEDED(hr), "Failed to get base name, hr %#lx.\n", hr);
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
                 ok(!lstrcmpW(str, _bstr_(test->basenames[i])), "got %s\n", wine_dbgstr_w(str));
                 SysFreeString(str);
 
@@ -13786,9 +13804,9 @@ static void test_namespaces_as_attributes(void)
                 hr = IXMLDOMNode_get_namespaceURI(item, &str);
                 if (test->uris[i])
                 {
-                    ok(hr == S_OK, "Failed to get namespace URI, hr %#lx.\n", hr);
+                    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
                     if (test->prefixes[i] && !strcmp(test->prefixes[i], "xmlns"))
-                        ok(!lstrcmpW(str, _bstr_(entry->xmlns_uri)), "got %s\n", wine_dbgstr_w(str));
+                        ok(!SysStringLen(str), "got %s\n", wine_dbgstr_w(str));
                     else
                         ok(!lstrcmpW(str, _bstr_(test->uris[i])), "got %s\n", wine_dbgstr_w(str));
                     SysFreeString(str);
@@ -13798,8 +13816,14 @@ static void test_namespaces_as_attributes(void)
 
                 str = NULL;
                 hr = IXMLDOMNode_get_text(item, &str);
-                ok(SUCCEEDED(hr), "Failed to get node text, hr %#lx.\n", hr);
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
                 ok(!lstrcmpW(str, _bstr_(test->texts[i])), "got %s\n", wine_dbgstr_w(str));
+                SysFreeString(str);
+
+                str = NULL;
+                hr = IXMLDOMNode_get_xml(item, &str);
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+                ok(!lstrcmpW(str, _bstr_(test->xmls[i])), "got %s\n", wine_dbgstr_w(str));
                 SysFreeString(str);
 
                 IXMLDOMNode_Release(item);

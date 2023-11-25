@@ -159,6 +159,15 @@ struct wayland_surface *wayland_surface_create(HWND hwnd)
     }
     wl_surface_set_user_data(surface->wl_surface, hwnd);
 
+    if (process_wayland.wp_viewporter)
+    {
+        surface->wp_viewport =
+            wp_viewporter_get_viewport(process_wayland.wp_viewporter,
+                                       surface->wl_surface);
+    }
+
+    surface->window.scale = 1.0;
+
     return surface;
 
 err:
@@ -181,7 +190,18 @@ void wayland_surface_destroy(struct wayland_surface *surface)
     }
     pthread_mutex_unlock(&process_wayland.pointer.mutex);
 
+    pthread_mutex_lock(&process_wayland.keyboard.mutex);
+    if (process_wayland.keyboard.focused_hwnd == surface->hwnd)
+        process_wayland.keyboard.focused_hwnd = NULL;
+    pthread_mutex_unlock(&process_wayland.keyboard.mutex);
+
     pthread_mutex_lock(&surface->mutex);
+
+    if (surface->wp_viewport)
+    {
+        wp_viewport_destroy(surface->wp_viewport);
+        surface->wp_viewport = NULL;
+    }
 
     if (surface->xdg_toplevel)
     {
@@ -380,13 +400,10 @@ static void wayland_surface_get_rect_in_monitor(struct wayland_surface *surface,
  *
  * Sets the xdg_surface geometry
  */
-static void wayland_surface_reconfigure_geometry(struct wayland_surface *surface)
+static void wayland_surface_reconfigure_geometry(struct wayland_surface *surface,
+                                                 int width, int height)
 {
-    int width, height;
     RECT rect;
-
-    width = surface->window.rect.right - surface->window.rect.left;
-    height = surface->window.rect.bottom - surface->window.rect.top;
 
     /* If the window size is bigger than the current state accepts, use the
      * largest visible (from Windows' perspective) subregion of the window. */
@@ -395,6 +412,11 @@ static void wayland_surface_reconfigure_geometry(struct wayland_surface *surface
         (width > surface->current.width || height > surface->current.height))
     {
         wayland_surface_get_rect_in_monitor(surface, &rect);
+
+        wayland_surface_coords_from_window(surface, rect.left, rect.top,
+                                           (int *)&rect.left, (int *)&rect.top);
+        wayland_surface_coords_from_window(surface, rect.right, rect.bottom,
+                                           (int *)&rect.right, (int *)&rect.bottom);
 
         /* If the window rect in the monitor is smaller than required,
          * fall back to an appropriately sized rect at the top-left. */
@@ -428,6 +450,70 @@ static void wayland_surface_reconfigure_geometry(struct wayland_surface *surface
 }
 
 /**********************************************************************
+ *          wayland_surface_reconfigure_size
+ *
+ * Sets the surface size with viewporter
+ */
+static void wayland_surface_reconfigure_size(struct wayland_surface *surface,
+                                             int width, int height)
+{
+    TRACE("hwnd=%p size=%dx%d\n", surface->hwnd, width, height);
+
+    if (surface->wp_viewport)
+    {
+        if (width != 0 && height != 0)
+            wp_viewport_set_destination(surface->wp_viewport, width, height);
+        else
+            wp_viewport_set_destination(surface->wp_viewport, -1, -1);
+    }
+}
+
+/**********************************************************************
+ *          wayland_surface_reconfigure_client
+ *
+ * Reconfigures the subsurface covering the client area.
+ */
+static void wayland_surface_reconfigure_client(struct wayland_surface *surface)
+{
+    struct wayland_window_config *window = &surface->window;
+    int client_x, client_y, x, y;
+    int client_width, client_height, width, height;
+
+    if (!surface->client) return;
+
+    /* The offset of the client area origin relatively to the window origin. */
+    client_x = window->client_rect.left - window->rect.left;
+    client_y = window->client_rect.top - window->rect.top;
+
+    client_width = window->client_rect.right - window->client_rect.left;
+    client_height = window->client_rect.bottom - window->client_rect.top;
+
+    wayland_surface_coords_from_window(surface, client_x, client_y, &x, &y);
+    wayland_surface_coords_from_window(surface, client_width, client_height,
+                                       &width, &height);
+
+    TRACE("hwnd=%p subsurface=%d,%d+%dx%d\n", surface->hwnd, x, y, width, height);
+
+    wl_subsurface_set_position(surface->client->wl_subsurface, x, y);
+
+    if (surface->client->wp_viewport)
+    {
+        if (width != 0 && height != 0)
+        {
+            wp_viewport_set_destination(surface->client->wp_viewport,
+                                        width, height);
+        }
+        else
+        {
+            /* We can't have a 0x0 destination, use 1x1 instead. */
+            wp_viewport_set_destination(surface->client->wp_viewport, 1, 1);
+        }
+    }
+
+    wl_surface_commit(surface->client->wl_surface);
+}
+
+/**********************************************************************
  *          wayland_surface_reconfigure
  *
  * Reconfigures the wayland surface as needed to match the latest requested
@@ -436,15 +522,18 @@ static void wayland_surface_reconfigure_geometry(struct wayland_surface *surface
 BOOL wayland_surface_reconfigure(struct wayland_surface *surface)
 {
     struct wayland_window_config *window = &surface->window;
-    int width, height;
+    int win_width, win_height, width, height;
 
     if (!surface->xdg_toplevel) return TRUE;
 
-    width = surface->window.rect.right - surface->window.rect.left;
-    height = surface->window.rect.bottom - surface->window.rect.top;
+    win_width = surface->window.rect.right - surface->window.rect.left;
+    win_height = surface->window.rect.bottom - surface->window.rect.top;
+
+    wayland_surface_coords_from_window(surface, win_width, win_height,
+                                       &width, &height);
 
     TRACE("hwnd=%p window=%dx%d,%#x processing=%dx%d,%#x current=%dx%d,%#x\n",
-          surface->hwnd, width, height, window->state,
+          surface->hwnd, win_width, win_height, window->state,
           surface->processing.width, surface->processing.height,
           surface->processing.state, surface->current.width,
           surface->current.height, surface->current.state);
@@ -479,7 +568,9 @@ BOOL wayland_surface_reconfigure(struct wayland_surface *surface)
         return FALSE;
     }
 
-    wayland_surface_reconfigure_geometry(surface);
+    wayland_surface_reconfigure_geometry(surface, width, height);
+    wayland_surface_reconfigure_size(surface, width, height);
+    wayland_surface_reconfigure_client(surface);
 
     return TRUE;
 }
@@ -614,5 +705,121 @@ err:
     if (fd >= 0) close(fd);
     if (handle) NtClose(handle);
     if (shm_buffer) wayland_shm_buffer_unref(shm_buffer);
+    return NULL;
+}
+
+/**********************************************************************
+ *          wayland_surface_coords_from_window
+ *
+ * Converts the window (logical) coordinates to wayland surface-local coordinates.
+ */
+void wayland_surface_coords_from_window(struct wayland_surface *surface,
+                                        int window_x, int window_y,
+                                        int *surface_x, int *surface_y)
+{
+    *surface_x = round(window_x / surface->window.scale);
+    *surface_y = round(window_y / surface->window.scale);
+}
+
+/**********************************************************************
+ *          wayland_surface_coords_to_window
+ *
+ * Converts the surface-local coordinates to window (logical) coordinates.
+ */
+void wayland_surface_coords_to_window(struct wayland_surface *surface,
+                                      double surface_x, double surface_y,
+                                      int *window_x, int *window_y)
+{
+    *window_x = round(surface_x * surface->window.scale);
+    *window_y = round(surface_y * surface->window.scale);
+}
+
+/**********************************************************************
+ *          wayland_client_surface_release
+ */
+BOOL wayland_client_surface_release(struct wayland_client_surface *client)
+{
+    if (InterlockedDecrement(&client->ref)) return FALSE;
+
+    if (client->wp_viewport)
+        wp_viewport_destroy(client->wp_viewport);
+    if (client->wl_subsurface)
+        wl_subsurface_destroy(client->wl_subsurface);
+    if (client->wl_surface)
+        wl_surface_destroy(client->wl_surface);
+
+    free(client);
+
+    return TRUE;
+}
+
+/**********************************************************************
+ *          wayland_surface_get_client
+ */
+struct wayland_client_surface *wayland_surface_get_client(struct wayland_surface *surface)
+{
+    struct wl_region *empty_region;
+
+    if (surface->client)
+    {
+        InterlockedIncrement(&surface->client->ref);
+        return surface->client;
+    }
+
+    surface->client = calloc(1, sizeof(*surface->client));
+    if (!surface->client)
+    {
+        ERR("Failed to allocate space for client surface\n");
+        goto err;
+    }
+
+    surface->client->ref = 1;
+
+    surface->client->wl_surface =
+        wl_compositor_create_surface(process_wayland.wl_compositor);
+    if (!surface->client->wl_surface)
+    {
+        ERR("Failed to create client wl_surface\n");
+        goto err;
+    }
+    wl_surface_set_user_data(surface->client->wl_surface, surface->hwnd);
+
+    /* Let parent handle all pointer events. */
+    empty_region = wl_compositor_create_region(process_wayland.wl_compositor);
+    if (!empty_region)
+    {
+        ERR("Failed to create wl_region\n");
+        goto err;
+    }
+    wl_surface_set_input_region(surface->client->wl_surface, empty_region);
+    wl_region_destroy(empty_region);
+
+    surface->client->wl_subsurface =
+        wl_subcompositor_get_subsurface(process_wayland.wl_subcompositor,
+                                        surface->client->wl_surface,
+                                        surface->wl_surface);
+    if (!surface->client->wl_subsurface)
+    {
+        ERR("Failed to create client wl_subsurface\n");
+        goto err;
+    }
+
+    if (process_wayland.wp_viewporter)
+    {
+        surface->client->wp_viewport =
+            wp_viewporter_get_viewport(process_wayland.wp_viewporter,
+                                        surface->client->wl_surface);
+    }
+
+    wayland_surface_reconfigure_client(surface);
+
+    return surface->client;
+
+err:
+    if (surface->client)
+    {
+        wayland_client_surface_release(surface->client);
+        surface->client = NULL;
+    }
     return NULL;
 }

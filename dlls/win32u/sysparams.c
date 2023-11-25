@@ -2327,11 +2327,16 @@ static BOOL is_window_rect_full_screen( const RECT *rect )
 
     LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
     {
+        RECT monrect;
+
         if (!(monitor->dev.state_flags & DISPLAY_DEVICE_ACTIVE))
             continue;
 
-        if (rect->left <= monitor->rc_monitor.left && rect->right >= monitor->rc_monitor.right &&
-            rect->top <= monitor->rc_monitor.top && rect->bottom >= monitor->rc_monitor.bottom)
+        monrect = map_dpi_rect( monitor->rc_monitor, get_monitor_dpi( monitor->handle ),
+                                get_thread_dpi() );
+
+        if (rect->left <= monrect.left && rect->right >= monrect.right &&
+            rect->top <= monrect.top && rect->bottom >= monrect.bottom)
         {
             ret = TRUE;
             break;
@@ -4242,12 +4247,14 @@ static BOOL get_font_entry( union sysparam_all_entry *entry, UINT int_param, voi
         switch (load_entry( &entry->hdr, &font, sizeof(font) ))
         {
         case sizeof(font):
+            font.lfCharSet = DEFAULT_CHARSET;
             if (font.lfHeight > 0) /* positive height value means points ( inch/72 ) */
                 font.lfHeight = -muldiv( font.lfHeight, USER_DEFAULT_SCREEN_DPI, 72 );
             entry->font.val = font;
             break;
         case sizeof(LOGFONT16): /* win9x-winME format */
             logfont16to32( (LOGFONT16 *)&font, &entry->font.val );
+            entry->font.val.lfCharSet = DEFAULT_CHARSET;
             if (entry->font.val.lfHeight > 0)
                 entry->font.val.lfHeight = -muldiv( entry->font.val.lfHeight, USER_DEFAULT_SCREEN_DPI, 72 );
             break;
@@ -4258,6 +4265,7 @@ static BOOL get_font_entry( union sysparam_all_entry *entry, UINT int_param, voi
             /* fall through */
         case 0: /* use the default GUI font */
             NtGdiExtGetObjectW( GetStockObject( DEFAULT_GUI_FONT ), sizeof(font), &font );
+            font.lfCharSet = DEFAULT_CHARSET;
             font.lfHeight = map_from_system_dpi( font.lfHeight );
             font.lfWeight = entry->font.weight;
             entry->font.val = font;
@@ -4297,6 +4305,7 @@ static BOOL set_font_entry( union sysparam_all_entry *entry, UINT int_param, voi
 static BOOL init_font_entry( union sysparam_all_entry *entry )
 {
     NtGdiExtGetObjectW( GetStockObject( DEFAULT_GUI_FONT ), sizeof(entry->font.val), &entry->font.val );
+    entry->font.val.lfCharSet = DEFAULT_CHARSET;
     entry->font.val.lfHeight = map_from_system_dpi( entry->font.val.lfHeight );
     entry->font.val.lfWeight = entry->font.weight;
     get_real_fontname( &entry->font.val, entry->font.fullname );
@@ -6314,6 +6323,9 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
     case NtUserCallOneParam_SetProcessDefaultLayout:
         process_layout = arg;
         return TRUE;
+
+    case NtUserCallOneParam_SetKeyboardAutoRepeat:
+        return set_keyboard_auto_repeat( arg );
 
     /* temporary exports */
     case NtUserGetDeskPattern:

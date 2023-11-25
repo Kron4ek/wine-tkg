@@ -2930,8 +2930,7 @@ void find_ps_compile_args(const struct wined3d_state *state, const struct wined3
             if (!shader->reg_maps.resource_info[i].type)
                 continue;
 
-            texture = state->textures[i];
-            if (!texture)
+            if (!(texture = state->textures[i]))
             {
                 args->color_fixup[i] = COLOR_FIXUP_IDENTITY;
                 continue;

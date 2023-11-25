@@ -372,7 +372,7 @@ struct hlsl_attribute
 /* Reservation of a register and/or an offset for objects inside constant buffers, to be used as a
  *   starting point of their allocation. They are available through the register(·) and the
  *   packoffset(·) syntaxes, respectivelly.
- * The costant buffer offset is measured register components. */
+ * The constant buffer offset is measured register components. */
 struct hlsl_reg_reservation
 {
     char reg_type;
@@ -1103,6 +1103,11 @@ static inline struct hlsl_type *hlsl_get_numeric_type(const struct hlsl_ctx *ctx
         return hlsl_get_vector_type(ctx, base_type, dimx);
     else
         return hlsl_get_matrix_type(ctx, base_type, dimx, dimy);
+}
+
+static inline bool hlsl_is_numeric_type(const struct hlsl_type *type)
+{
+    return type->class <= HLSL_CLASS_LAST_NUMERIC;
 }
 
 static inline unsigned int hlsl_sampler_dim_count(enum hlsl_sampler_dim dim)

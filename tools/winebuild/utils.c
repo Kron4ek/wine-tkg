@@ -628,7 +628,6 @@ DLLSPEC *alloc_dll_spec(void)
     spec->subsystem          = IMAGE_SUBSYSTEM_WINDOWS_CUI;
     spec->subsystem_major    = 4;
     spec->subsystem_minor    = 0;
-    spec->syscall_table      = 0;
     spec->dll_characteristics = IMAGE_DLLCHARACTERISTICS_NX_COMPAT | IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
     return spec;
 }
@@ -828,10 +827,24 @@ const char *asm_name( const char *sym )
     }
 }
 
+/* return the assembly name for an ARM64/ARM64EC function */
+const char *arm64_name( const char *sym )
+{
+    switch (target.platform)
+    {
+    case PLATFORM_MINGW:
+    case PLATFORM_WINDOWS:
+        if (target.cpu == CPU_ARM64EC) return strmake( "\"#%s\"", sym );
+        /* fall through */
+    default:
+        return asm_name( sym );
+    }
+}
+
 /* return an assembly function declaration for a C function name */
 void output_function_header( const char *func, int global )
 {
-    const char *name = asm_name( func );
+    const char *name = arm64_name( func );
 
     output( "\t.text\n" );
 
@@ -842,6 +855,7 @@ void output_function_header( const char *func, int global )
         break;
     case PLATFORM_MINGW:
     case PLATFORM_WINDOWS:
+        if (target.cpu == CPU_ARM64EC) output( ".section .text,\"xr\",discard,%s\n\t", name );
         output( "\t.def %s\n\t.scl 2\n\t.type 32\n\t.endef\n", name );
         if (global) output( "\t.globl %s\n", name );
         if (thumb_mode) output( "\t.thumb_func\n" );

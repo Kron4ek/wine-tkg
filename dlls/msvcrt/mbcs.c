@@ -1118,7 +1118,7 @@ int CDECL _mbsnbicoll_l(const unsigned char *str1, const unsigned char *str2, si
  */
 int CDECL _mbsicoll_l(const unsigned char *str1, const unsigned char *str2, _locale_t locale)
 {
-    return _mbsnbicoll_l(str1, str2, -1, locale);
+    return _mbsnbicoll_l(str1, str2, INT_MAX, locale);
 }
 
 /*********************************************************************
@@ -1138,7 +1138,7 @@ int CDECL _mbsicoll(const unsigned char* str, const unsigned char* cmp)
     return CompareStringA(get_mbcinfo()->mblcid, NORM_IGNORECASE,
             (const char*)str, -1, (const char*)cmp, -1)-CSTR_EQUAL;
 #else
-    return _mbsnbicoll_l(str, cmp, -1, NULL);
+    return _mbsnbicoll_l(str, cmp, INT_MAX, NULL);
 #endif
 }
 
@@ -1164,7 +1164,7 @@ int CDECL _mbsnbcoll_l(const unsigned char *str1, const unsigned char *str2, siz
  */
 int CDECL _mbscoll_l(const unsigned char *str1, const unsigned char *str2, _locale_t locale)
 {
-    return _mbsnbcoll_l(str1, str2, -1, locale);
+    return _mbsnbcoll_l(str1, str2, INT_MAX, locale);
 }
 
 /*********************************************************************
@@ -1184,7 +1184,7 @@ int CDECL _mbscoll(const unsigned char* str, const unsigned char* cmp)
     return CompareStringA(get_mbcinfo()->mblcid, 0,
             (const char*)str, -1, (const char*)cmp, -1)-CSTR_EQUAL;
 #else
-    return _mbsnbcoll_l(str, cmp, -1, NULL);
+    return _mbsnbcoll_l(str, cmp, INT_MAX, NULL);
 #endif
 }
 
@@ -2791,6 +2791,9 @@ size_t CDECL _mbsspn_l(const unsigned char* string,
 {
     const unsigned char *p, *q;
 
+    if (!MSVCRT_CHECK_PMT(string && set))
+        return 0;
+
     for (p = string; *p; p++)
     {
         for (q = set; *q; q++)
@@ -2826,12 +2829,23 @@ size_t CDECL _mbsspn(const unsigned char* string, const unsigned char* set)
 }
 
 /*********************************************************************
+ *              _mbsspnp_l (MSVCRT.@)
+ */
+unsigned char* CDECL _mbsspnp_l(const unsigned char* string, const unsigned char* set, _locale_t locale)
+{
+    if (!MSVCRT_CHECK_PMT(string && set))
+        return 0;
+
+    string += _mbsspn_l(string, set, locale);
+    return *string ? (unsigned char*)string : NULL;
+}
+
+/*********************************************************************
  *              _mbsspnp (MSVCRT.@)
  */
 unsigned char* CDECL _mbsspnp(const unsigned char* string, const unsigned char* set)
 {
-    string += _mbsspn( string, set );
-    return *string ? (unsigned char*)string : NULL;
+    return _mbsspnp_l(string, set, NULL);
 }
 
 /*********************************************************************
@@ -2875,9 +2889,8 @@ size_t CDECL _mbscspn(const unsigned char* str, const unsigned char* cmp)
  */
 unsigned char* CDECL _mbsrev_l(unsigned char* str, _locale_t locale)
 {
-    int i, len;
-    unsigned char *p, *temp;
     pthreadmbcinfo mbcinfo;
+    unsigned char *p, tmp;
 
     if (!MSVCRT_CHECK_PMT(str))
         return NULL;
@@ -2890,44 +2903,25 @@ unsigned char* CDECL _mbsrev_l(unsigned char* str, _locale_t locale)
     if (!mbcinfo->ismbcodepage)
         return u__strrev(str);
 
-    len = _mbslen_l(str, locale);
-    temp = malloc(len * 2);
-    if (!temp)
-        return str;
-
-    /* unpack multibyte string to temp buffer */
-    p = str;
-    for (i = 0; i < len; i++)
+    for (p = str; *p; p++)
     {
         if (_ismbblead_l(*p, locale))
         {
-            temp[i * 2] = *p++;
-            temp[i * 2 + 1] = *p++;
-        }
-        else
-        {
-            temp[i * 2] = *p++;
-            temp[i * 2 + 1] = 0;
-        }
-    }
-
-    /* repack it in the reverse order */
-    p = str;
-    for (i = len - 1; i >= 0; i--)
-    {
-        if (_ismbblead_l(temp[i * 2], locale))
-        {
-            *p++ = temp[i * 2];
-            *p++ = temp[i * 2 + 1];
-        }
-        else
-        {
-            *p++ = temp[i * 2];
+            if (p[1])
+            {
+                tmp = p[0];
+                p[0] = p[1];
+                p[1] = tmp;
+                p++;
+            }
+            else
+            {
+                /* drop trailing lead char */
+                p[0] = 0;
+            }
         }
     }
-
-    free(temp);
-    return str;
+    return u__strrev(str);
 }
 
 /*********************************************************************

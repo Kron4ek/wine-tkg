@@ -3396,21 +3396,6 @@ static bool spirv_compiler_get_register_info(const struct spirv_compiler *compil
     return true;
 }
 
-static bool register_is_descriptor(const struct vkd3d_shader_register *reg)
-{
-    switch (reg->type)
-    {
-        case VKD3DSPR_SAMPLER:
-        case VKD3DSPR_RESOURCE:
-        case VKD3DSPR_CONSTBUFFER:
-        case VKD3DSPR_UAV:
-            return true;
-
-        default:
-            return false;
-    }
-}
-
 static bool spirv_compiler_enable_descriptor_indexing(struct spirv_compiler *compiler,
         enum vkd3d_shader_register_type reg_type, enum vkd3d_shader_resource_type resource_type)
 {
@@ -3536,9 +3521,12 @@ static void spirv_compiler_emit_dereference_register(struct spirv_compiler *comp
             FIXME("Relative addressing not implemented.\n");
 
         /* Handle arrayed registers, e.g. v[3][0]. */
-        if (reg->idx_count > 1 && !register_is_descriptor(reg))
+        if (reg->idx_count > 1 && !vsir_register_is_descriptor(reg))
             indexes[index_count++] = spirv_compiler_emit_register_addressing(compiler, &reg->idx[0]);
     }
+
+    if (reg->alignment)
+        WARN("Ignoring alignment %u.\n", reg->alignment);
 
     if (index_count)
     {
@@ -5510,6 +5498,15 @@ static void spirv_compiler_emit_dcl_indexable_temp(struct spirv_compiler *compil
     vsir_register_init(&reg, VKD3DSPR_IDXTEMP, VKD3D_DATA_FLOAT, 1);
     reg.idx[0].offset = temp->register_idx;
 
+    if (temp->alignment)
+        WARN("Ignoring alignment %u.\n", temp->alignment);
+    if (temp->initialiser)
+    {
+        FIXME("Initialisers are not supported.\n");
+        spirv_compiler_error(compiler, VKD3D_SHADER_ERROR_SPV_NOT_IMPLEMENTED,
+                "Initialisers for indexable temps are not supported.");
+    }
+
     function_location = spirv_compiler_get_current_function_location(compiler);
     vkd3d_spirv_begin_function_stream_insertion(builder, function_location);
 
@@ -6657,7 +6654,7 @@ static void spirv_compiler_emit_bool_cast(struct spirv_compiler *compiler,
     spirv_compiler_emit_store_dst(compiler, dst, val_id);
 }
 
-static void spirv_compiler_emit_alu_instruction(struct spirv_compiler *compiler,
+static enum vkd3d_result spirv_compiler_emit_alu_instruction(struct spirv_compiler *compiler,
         const struct vkd3d_shader_instruction *instruction)
 {
     struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
@@ -6681,7 +6678,7 @@ static void spirv_compiler_emit_alu_instruction(struct spirv_compiler *compiler,
             /* VSIR supports cast from bool to signed/unsigned integer types and floating point types,
              * where bool is treated as a 1-bit integer and a signed 'true' value converts to -1. */
             spirv_compiler_emit_bool_cast(compiler, instruction);
-            return;
+            return VKD3D_OK;
         }
     }
     else
@@ -6694,7 +6691,7 @@ static void spirv_compiler_emit_alu_instruction(struct spirv_compiler *compiler,
         ERR("Unexpected instruction %#x.\n", instruction->handler_idx);
         spirv_compiler_error(compiler, VKD3D_SHADER_ERROR_SPV_INVALID_HANDLER,
                 "Encountered invalid/unhandled instruction handler %#x.", instruction->handler_idx);
-        return;
+        return VKD3D_ERROR_INVALID_SHADER;
     }
 
     assert(instruction->dst_count == 1);
@@ -6726,6 +6723,7 @@ static void spirv_compiler_emit_alu_instruction(struct spirv_compiler *compiler,
         vkd3d_spirv_build_op_decorate(builder, val_id, SpvDecorationNoContraction, NULL, 0);
 
     spirv_compiler_emit_store_dst(compiler, dst, val_id);
+    return VKD3D_OK;
 }
 
 static enum GLSLstd450 spirv_compiler_map_ext_glsl_instruction(
@@ -6892,8 +6890,9 @@ static void spirv_compiler_emit_movc(struct spirv_compiler *compiler,
     component_count = vkd3d_write_mask_component_count(dst->write_mask);
     type_id = spirv_compiler_get_type_id_for_dst(compiler, dst);
 
-    condition_id = spirv_compiler_emit_int_to_bool(compiler,
-            VKD3D_SHADER_CONDITIONAL_OP_NZ, component_count, condition_id);
+    if (src[0].reg.data_type != VKD3D_DATA_BOOL)
+        condition_id = spirv_compiler_emit_int_to_bool(compiler,
+                VKD3D_SHADER_CONDITIONAL_OP_NZ, component_count, condition_id);
     val_id = vkd3d_spirv_build_op_select(builder, type_id, condition_id, src1_id, src2_id);
 
     spirv_compiler_emit_store_dst(compiler, dst, val_id);
@@ -9506,7 +9505,7 @@ static int spirv_compiler_handle_instruction(struct spirv_compiler *compiler,
         case VKD3DSIH_UTOF:
         case VKD3DSIH_UTOU:
         case VKD3DSIH_XOR:
-            spirv_compiler_emit_alu_instruction(compiler, instruction);
+            ret = spirv_compiler_emit_alu_instruction(compiler, instruction);
             break;
         case VKD3DSIH_DFMA:
         case VKD3DSIH_DMAX:
@@ -9727,6 +9726,9 @@ static int spirv_compiler_handle_instruction(struct spirv_compiler *compiler,
             break;
         default:
             FIXME("Unhandled instruction %#x.\n", instruction->handler_idx);
+            spirv_compiler_error(compiler, VKD3D_SHADER_ERROR_SPV_INVALID_HANDLER,
+                    "Encountered invalid/unhandled instruction handler %#x.", instruction->handler_idx);
+            break;
     }
 
     return ret;

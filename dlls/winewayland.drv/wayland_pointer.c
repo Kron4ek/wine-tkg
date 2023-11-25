@@ -50,33 +50,47 @@ static void pointer_handle_motion(void *data, struct wl_pointer *wl_pointer,
                                   uint32_t time, wl_fixed_t sx, wl_fixed_t sy)
 {
     INPUT input = {0};
-    RECT window_rect;
+    RECT *window_rect;
     HWND hwnd;
-    int screen_x, screen_y;
+    POINT screen;
+    struct wayland_surface *surface;
 
     if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
-    if (!NtUserGetWindowRect(hwnd, &window_rect)) return;
+    if (!(surface = wayland_surface_lock_hwnd(hwnd))) return;
 
-    screen_x = round(wl_fixed_to_double(sx)) + window_rect.left;
-    screen_y = round(wl_fixed_to_double(sy)) + window_rect.top;
+    window_rect = &surface->window.rect;
+
+    wayland_surface_coords_to_window(surface,
+                                     wl_fixed_to_double(sx),
+                                     wl_fixed_to_double(sy),
+                                     (int *)&screen.x, (int *)&screen.y);
+    screen.x += window_rect->left;
+    screen.y += window_rect->top;
     /* Sometimes, due to rounding, we may end up with pointer coordinates
      * slightly outside the target window, so bring them within bounds. */
-    if (screen_x >= window_rect.right) screen_x = window_rect.right - 1;
-    else if (screen_x < window_rect.left) screen_x = window_rect.left;
-    if (screen_y >= window_rect.bottom) screen_y = window_rect.bottom - 1;
-    else if (screen_y < window_rect.top) screen_y = window_rect.top;
+    if (screen.x >= window_rect->right) screen.x = window_rect->right - 1;
+    else if (screen.x < window_rect->left) screen.x = window_rect->left;
+    if (screen.y >= window_rect->bottom) screen.y = window_rect->bottom - 1;
+    else if (screen.y < window_rect->top) screen.y = window_rect->top;
+
+    pthread_mutex_unlock(&surface->mutex);
+
+    /* Hardware input events are in physical coordinates. */
+    if (!NtUserLogicalToPerMonitorDPIPhysicalPoint(hwnd, &screen)) return;
 
     input.type = INPUT_MOUSE;
-    input.mi.dx = screen_x;
-    input.mi.dy = screen_y;
+    input.mi.dx = screen.x;
+    input.mi.dy = screen.y;
     input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
 
     TRACE("hwnd=%p wayland_xy=%.2f,%.2f screen_xy=%d,%d\n",
           hwnd, wl_fixed_to_double(sx), wl_fixed_to_double(sy),
-          screen_x, screen_y);
+          (int)screen.x, (int)screen.y);
 
     __wine_send_input(hwnd, &input, NULL);
 }
+
+static void wayland_set_cursor(HWND hwnd, HCURSOR hcursor, BOOL use_hcursor);
 
 static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
                                  uint32_t serial, struct wl_surface *wl_surface,
@@ -95,14 +109,11 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
     pthread_mutex_lock(&pointer->mutex);
     pointer->focused_hwnd = hwnd;
     pointer->enter_serial = serial;
+    pthread_mutex_unlock(&pointer->mutex);
+
     /* The cursor is undefined at every enter, so we set it again with
      * the latest information we have. */
-    wl_pointer_set_cursor(pointer->wl_pointer,
-                          pointer->enter_serial,
-                          pointer->cursor.wl_surface,
-                          pointer->cursor.hotspot_x,
-                          pointer->cursor.hotspot_y);
-    pthread_mutex_unlock(&pointer->mutex);
+    wayland_set_cursor(hwnd, NULL, FALSE);
 
     /* Handle the enter as a motion, to account for cases where the
      * window first appears beneath the pointer and won't get a separate
@@ -406,7 +417,7 @@ static BOOL get_icon_info(HICON handle, ICONINFOEXW *ret)
     return TRUE;
 }
 
-static void wayland_pointer_update_cursor(HCURSOR hcursor)
+static void wayland_pointer_update_cursor_buffer(HCURSOR hcursor, double scale)
 {
     struct wayland_cursor *cursor = &process_wayland.pointer.cursor;
     ICONINFOEXW info = {0};
@@ -458,6 +469,25 @@ static void wayland_pointer_update_cursor(HCURSOR hcursor)
         cursor->hotspot_y = cursor->shm_buffer->height / 2;
     }
 
+    cursor->hotspot_x = round(cursor->hotspot_x / scale);
+    cursor->hotspot_y = round(cursor->hotspot_y / scale);
+
+    return;
+
+clear_cursor:
+    if (cursor->shm_buffer)
+    {
+        wayland_shm_buffer_unref(cursor->shm_buffer);
+        cursor->shm_buffer = NULL;
+    }
+}
+
+static void wayland_pointer_update_cursor_surface(double scale)
+{
+    struct wayland_cursor *cursor = &process_wayland.pointer.cursor;
+
+    if (!cursor->shm_buffer) goto clear_cursor;
+
     if (!cursor->wl_surface)
     {
         cursor->wl_surface =
@@ -469,12 +499,32 @@ static void wayland_pointer_update_cursor(HCURSOR hcursor)
         }
     }
 
+    if (!cursor->wp_viewport && process_wayland.wp_viewporter)
+    {
+        cursor->wp_viewport =
+            wp_viewporter_get_viewport(process_wayland.wp_viewporter,
+                                       cursor->wl_surface);
+        if (!cursor->wp_viewport)
+            WARN("Failed to create wp_viewport for cursor\n");
+    }
+
     /* Commit the cursor buffer to the cursor surface. */
     wl_surface_attach(cursor->wl_surface,
                       cursor->shm_buffer->wl_buffer, 0, 0);
     wl_surface_damage_buffer(cursor->wl_surface, 0, 0,
                              cursor->shm_buffer->width,
                              cursor->shm_buffer->height);
+    /* Setting only the viewport is enough, but some compositors don't
+     * support wp_viewport for cursor surfaces, so also set the buffer
+     * scale. Note that setting the viewport destination overrides
+     * the buffer scale, so it's fine to set both. */
+    wl_surface_set_buffer_scale(cursor->wl_surface, round(scale));
+    if (cursor->wp_viewport)
+    {
+        wp_viewport_set_destination(cursor->wp_viewport,
+                                    round(cursor->shm_buffer->width / scale),
+                                    round(cursor->shm_buffer->height / scale));
+    }
     wl_surface_commit(cursor->wl_surface);
 
     return;
@@ -485,6 +535,11 @@ clear_cursor:
         wayland_shm_buffer_unref(cursor->shm_buffer);
         cursor->shm_buffer = NULL;
     }
+    if (cursor->wp_viewport)
+    {
+        wp_viewport_destroy(cursor->wp_viewport);
+        cursor->wp_viewport = NULL;
+    }
     if (cursor->wl_surface)
     {
         wl_surface_destroy(cursor->wl_surface);
@@ -492,19 +547,27 @@ clear_cursor:
     }
 }
 
-/***********************************************************************
- *           WAYLAND_SetCursor
- */
-void WAYLAND_SetCursor(HWND hwnd, HCURSOR hcursor)
+static void wayland_set_cursor(HWND hwnd, HCURSOR hcursor, BOOL use_hcursor)
 {
     struct wayland_pointer *pointer = &process_wayland.pointer;
+    struct wayland_surface *surface;
+    double scale;
 
-    TRACE("hwnd=%p hcursor=%p\n", hwnd, hcursor);
+    if ((surface = wayland_surface_lock_hwnd(hwnd)))
+    {
+        scale = surface->window.scale;
+        pthread_mutex_unlock(&surface->mutex);
+    }
+    else
+    {
+        scale = 1.0;
+    }
 
     pthread_mutex_lock(&pointer->mutex);
     if (pointer->focused_hwnd == hwnd)
     {
-        wayland_pointer_update_cursor(hcursor);
+        if (use_hcursor) wayland_pointer_update_cursor_buffer(hcursor, scale);
+        wayland_pointer_update_cursor_surface(scale);
         wl_pointer_set_cursor(pointer->wl_pointer,
                               pointer->enter_serial,
                               pointer->cursor.wl_surface,
@@ -513,4 +576,14 @@ void WAYLAND_SetCursor(HWND hwnd, HCURSOR hcursor)
         wl_display_flush(process_wayland.wl_display);
     }
     pthread_mutex_unlock(&pointer->mutex);
+}
+
+/***********************************************************************
+ *           WAYLAND_SetCursor
+ */
+void WAYLAND_SetCursor(HWND hwnd, HCURSOR hcursor)
+{
+    TRACE("hwnd=%p hcursor=%p\n", hwnd, hcursor);
+
+    wayland_set_cursor(hwnd, hcursor, TRUE);
 }

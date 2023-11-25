@@ -207,10 +207,15 @@ static void flattener_eliminate_phase_related_dcls(struct hull_flattener *normal
     {
         /* Leave only the first temp declaration and set it to the max count later. */
         if (!normaliser->max_temp_count)
+        {
+            normaliser->max_temp_count = ins->declaration.count;
             normaliser->temp_dcl_idx = index;
+        }
         else
+        {
+            normaliser->max_temp_count = max(normaliser->max_temp_count, ins->declaration.count);
             vkd3d_shader_instruction_make_nop(ins);
-        normaliser->max_temp_count = max(normaliser->max_temp_count, ins->declaration.count);
+        }
         return;
     }
 
@@ -295,12 +300,16 @@ void vsir_register_init(struct vkd3d_shader_register *reg, enum vkd3d_shader_reg
     reg->data_type = data_type;
     reg->idx[0].offset = ~0u;
     reg->idx[0].rel_addr = NULL;
+    reg->idx[0].is_in_bounds = false;
     reg->idx[1].offset = ~0u;
     reg->idx[1].rel_addr = NULL;
+    reg->idx[1].is_in_bounds = false;
     reg->idx[2].offset = ~0u;
     reg->idx[2].rel_addr = NULL;
+    reg->idx[2].is_in_bounds = false;
     reg->idx_count = idx_count;
     reg->dimension = VSIR_DIMENSION_SCALAR;
+    reg->alignment = 0;
 }
 
 void vsir_instruction_init(struct vkd3d_shader_instruction *ins, const struct vkd3d_shader_location *location,
@@ -1696,6 +1705,14 @@ static void vsir_validate_instruction(struct validation_context *ctx)
             ctx->blocks[ctx->depth++] = instruction->handler_idx;
             break;
 
+        case VKD3DSIH_IFC:
+            vsir_validate_dst_count(ctx, instruction, 0);
+            vsir_validate_src_count(ctx, instruction, 2);
+            if (!vkd3d_array_reserve((void **)&ctx->blocks, &ctx->blocks_capacity, ctx->depth + 1, sizeof(*ctx->blocks)))
+                return;
+            ctx->blocks[ctx->depth++] = VKD3DSIH_IF;
+            break;
+
         case VKD3DSIH_ELSE:
             vsir_validate_dst_count(ctx, instruction, 0);
             vsir_validate_src_count(ctx, instruction, 0);
@@ -1716,7 +1733,7 @@ static void vsir_validate_instruction(struct validation_context *ctx)
 
         case VKD3DSIH_LOOP:
             vsir_validate_dst_count(ctx, instruction, 0);
-            vsir_validate_src_count(ctx, instruction, 0);
+            vsir_validate_src_count(ctx, instruction, ctx->parser->shader_version.major <= 3 ? 2 : 0);
             if (!vkd3d_array_reserve((void **)&ctx->blocks, &ctx->blocks_capacity, ctx->depth + 1, sizeof(*ctx->blocks)))
                 return;
             ctx->blocks[ctx->depth++] = instruction->handler_idx;

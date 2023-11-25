@@ -56,9 +56,9 @@
 @ cdecl _vcomp_enter_critsect(ptr) vcomp._vcomp_enter_critsect
 @ cdecl _vcomp_flush() vcomp._vcomp_flush
 @ cdecl _vcomp_for_dynamic_init(long long long long long) vcomp._vcomp_for_dynamic_init
-@ stub _vcomp_for_dynamic_init_i8
+@ cdecl -arch=win64 _vcomp_for_dynamic_init_i8(int64 int64 int64 int64 int64) vcomp._vcomp_for_dynamic_init_i8
 @ cdecl _vcomp_for_dynamic_next(ptr ptr) vcomp._vcomp_for_dynamic_next
-@ stub _vcomp_for_dynamic_next_i8
+@ cdecl -arch=win64 _vcomp_for_dynamic_next_i8(ptr ptr) vcomp._vcomp_for_dynamic_next_i8
 @ cdecl _vcomp_for_static_end() vcomp._vcomp_for_static_end
 @ cdecl _vcomp_for_static_init(long long long long ptr ptr ptr ptr ptr) vcomp._vcomp_for_static_init
 @ cdecl _vcomp_for_static_init_i8(int64 int64 int64 int64 ptr ptr ptr ptr ptr) vcomp._vcomp_for_static_init_i8
@@ -96,7 +96,7 @@
 @ cdecl omp_get_num_procs() vcomp.omp_get_num_procs
 @ cdecl omp_get_num_threads() vcomp.omp_get_num_threads
 @ cdecl omp_get_thread_num() vcomp.omp_get_thread_num
-@ stub omp_get_wtick
+@ cdecl omp_get_wtick() vcomp.omp_get_wtick
 @ cdecl omp_get_wtime() vcomp.omp_get_wtime
 @ cdecl omp_in_parallel() vcomp.omp_in_parallel
 @ cdecl omp_init_lock(ptr) vcomp.omp_init_lock

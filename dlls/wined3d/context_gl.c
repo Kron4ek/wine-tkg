@@ -4290,12 +4290,6 @@ static BOOL context_apply_draw_state(struct wined3d_context *context,
         context->shader_update_mask &= 1u << WINED3D_SHADER_TYPE_COMPUTE;
     }
 
-    if (context->constant_update_mask)
-    {
-        device->shader_backend->shader_load_constants(device->shader_priv, context, state);
-        context->constant_update_mask = 0;
-    }
-
     if (context->update_shader_resource_bindings)
     {
         for (i = 0; i < WINED3D_SHADER_TYPE_GRAPHICS_COUNT; ++i)
@@ -4316,6 +4310,12 @@ static BOOL context_apply_draw_state(struct wined3d_context *context,
 
     if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
         wined3d_context_gl_check_fbo_status(context_gl, GL_FRAMEBUFFER);
+
+    if (context->constant_update_mask)
+    {
+        device->shader_backend->shader_load_constants(device->shader_priv, context, state);
+        context->constant_update_mask = 0;
+    }
 
     context->last_was_blit = FALSE;
     context->last_was_ffp_blit = FALSE;
@@ -4906,7 +4906,7 @@ static void draw_primitive_immediate_mode(struct wined3d_context_gl *context_gl,
             continue;
         }
 
-        if (!ps && !state->textures[texture_idx])
+        if (!ps && !wined3d_state_get_ffp_texture(state, texture_idx))
             continue;
 
         texture_unit = context_gl->tex_unit_map[texture_idx];

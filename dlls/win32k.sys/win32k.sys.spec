@@ -194,22 +194,22 @@
 @ stub PATHOBJ_vGetBounds
 @ stdcall RtlAnsiCharToUnicodeChar(ptr) ntoskrnl.exe.RtlAnsiCharToUnicodeChar
 @ stdcall -norelay RtlCaptureContext(ptr) ntoskrnl.exe.RtlCaptureContext
-@ stdcall -arch=x86_64 RtlCopyMemory(ptr ptr long) ntoskrnl.exe.RtlCopyMemory
-@ stub RtlCopyMemoryNonTemporal
+@ stdcall -arch=!i386 RtlCopyMemory(ptr ptr long) ntoskrnl.exe.RtlCopyMemory
+@ stdcall -arch=x86_64 RtlCopyMemoryNonTemporal(ptr ptr long) ntoskrnl.exe.RtlCopyMemoryNonTemporal
 @ stdcall RtlFillMemory(ptr long long) ntoskrnl.exe.RtlFillMemory
-@ stub RtlLookupFunctionEntry
+@ stdcall -arch=!i386 RtlLookupFunctionEntry(long ptr ptr) ntoskrnl.exe.RtlLookupFunctionEntry
 @ stdcall RtlMoveMemory(ptr ptr long) ntoskrnl.exe.RtlMoveMemory
 @ stdcall RtlMultiByteToUnicodeN(ptr long ptr ptr long) ntoskrnl.exe.RtlMultiByteToUnicodeN
-@ stub RtlPcToFileHeader
+@ stdcall RtlPcToFileHeader(ptr ptr) ntoskrnl.exe.RtlPcToFileHeader
 @ stdcall -norelay RtlRaiseException(ptr) ntoskrnl.exe.RtlRaiseException
-@ stub RtlRestoreContext
+@ cdecl -arch=!i386 RtlRestoreContext(ptr ptr) ntoskrnl.exe.RtlRestoreContext
 @ stdcall RtlUnicodeToMultiByteN(ptr long ptr ptr long) ntoskrnl.exe.RtlUnicodeToMultiByteN
 @ stdcall RtlUnicodeToMultiByteSize(ptr ptr long) ntoskrnl.exe.RtlUnicodeToMultiByteSize
 @ stdcall -norelay RtlUnwind(ptr ptr ptr ptr) ntoskrnl.exe.RtlUnwind
-@ stdcall -arch=x86_64 RtlUnwindEx(ptr ptr ptr ptr ptr ptr) ntoskrnl.exe.RtlUnwindEx
+@ stdcall -arch=!i386 RtlUnwindEx(ptr ptr ptr ptr ptr ptr) ntoskrnl.exe.RtlUnwindEx
 @ stdcall RtlUpcaseUnicodeChar(long) ntoskrnl.exe.RtlUpcaseUnicodeChar
 @ stdcall RtlUpcaseUnicodeToMultiByteN(ptr long ptr ptr long) ntoskrnl.exe.RtlUpcaseUnicodeToMultiByteN
-@ stub RtlVirtualUnwind
+@ stdcall -arch=!i386 RtlVirtualUnwind(long long long ptr ptr ptr ptr ptr) ntoskrnl.exe.RtlVirtualUnwind
 @ stdcall RtlZeroMemory(ptr long) ntoskrnl.exe.RtlZeroMemory
 @ stub STROBJ_bEnum
 @ stub STROBJ_bEnumPositionsOnly
@@ -232,15 +232,15 @@
 @ stub XLATEOBJ_hGetColorTransform
 @ stub XLATEOBJ_iXlate
 @ stub XLATEOBJ_piVector
-@ stub __C_specific_handler
-@ stub __chkstk
+@ stdcall -arch=!i386 __C_specific_handler(ptr long ptr ptr) ntoskrnl.exe.__C_specific_handler
+@ cdecl -arch=!i386 -norelay __chkstk() ntoskrnl.exe.__chkstk
 @ cdecl -private _itoa(long ptr long) ntoskrnl.exe._itoa
 @ cdecl -private _itow(long ptr long) ntoskrnl.exe._itow
-@ cdecl -private -arch=x86_64 _local_unwind(ptr ptr) ntoskrnl.exe._local_unwind
-@ stub _setjmp
-@ stub _setjmpex
-@ stub longjmp
-@ stub memcmp
+@ cdecl -private -arch=win64 _local_unwind(ptr ptr) ntoskrnl.exe._local_unwind
+@ cdecl -norelay _setjmp(ptr) ntoskrnl.exe._setjmp
+@ cdecl -arch=!i386 -norelay _setjmpex(ptr ptr) ntoskrnl.exe._setjmpex
+@ cdecl longjmp(ptr long) ntoskrnl.exe.longjmp
+@ cdecl memcmp(ptr ptr long) ntoskrnl.exe.memcmp
 @ cdecl -private memcpy(ptr ptr long) ntoskrnl.exe.memcpy
 @ cdecl -private memmove(ptr ptr long) ntoskrnl.exe.memmove
 @ cdecl -private memset(ptr long long) ntoskrnl.exe.memset

@@ -126,7 +126,7 @@ enum install_rules { INSTALL_LIB, INSTALL_DEV, INSTALL_TEST, NB_INSTALL_RULES };
 static const char *install_targets[NB_INSTALL_RULES] = { "install-lib", "install-dev", "install-test" };
 static const char *install_variables[NB_INSTALL_RULES] = { "INSTALL_LIB", "INSTALL_DEV", "INSTALL_TEST" };
 
-#define MAX_ARCHS 5
+#define MAX_ARCHS 6
 
 /* variables common to all makefiles */
 static struct strarray archs;
@@ -2680,20 +2680,17 @@ static void output_po_files( struct makefile *make )
  */
 static void output_source_y( struct makefile *make, struct incl_file *source, const char *obj )
 {
-    /* add source file dependency for parallel makes */
     char *header = strmake( "%s.tab.h", obj );
 
     if (find_include_file( make, header ))
     {
         output( "%s: %s\n", obj_dir_path( make, header ), source->filename );
-        output( "\t%s%s -o %s.tab.c -d %s\n",
-                cmd_prefix( "BISON" ), bison, obj_dir_path( make, obj ), source->filename );
-        output( "%s.tab.c: %s %s\n", obj_dir_path( make, obj ),
-                source->filename, obj_dir_path( make, header ));
+        output( "\t%s%s -o %s.tab.$$$$.c --defines=$@ %s && rm -f %s.tab.$$$$.c\n",
+                cmd_prefix( "BISON" ), bison, obj_dir_path( make, obj ),
+                source->filename, obj_dir_path( make, obj ));
         strarray_add( &make->clean_files, header );
     }
-    else output( "%s.tab.c: %s\n", obj_dir_path( make, obj ), source->filename );
-
+    output( "%s.tab.c: %s\n", obj_dir_path( make, obj ), source->filename );
     output( "\t%s%s -o $@ %s\n", cmd_prefix( "BISON" ), bison, source->filename );
 }
 
@@ -4198,26 +4195,6 @@ static void output_dependencies( struct makefile *make )
  */
 static void load_sources( struct makefile *make )
 {
-    static const char *source_vars[] =
-    {
-        "SOURCES",
-        "C_SRCS",
-        "OBJC_SRCS",
-        "RC_SRCS",
-        "MC_SRCS",
-        "IDL_SRCS",
-        "BISON_SRCS",
-        "LEX_SRCS",
-        "HEADER_SRCS",
-        "XTEMPLATE_SRCS",
-        "SVG_SRCS",
-        "FONT_SRCS",
-        "IN_SRCS",
-        "PO_SRCS",
-        "MANPAGES",
-        NULL
-    };
-    const char **var;
     unsigned int i, arch;
     struct strarray value;
     struct incl_file *file;
@@ -4305,11 +4282,8 @@ static void load_sources( struct makefile *make )
     list_init( &make->sources );
     list_init( &make->includes );
 
-    for (var = source_vars; *var; var++)
-    {
-        value = get_expanded_make_var_array( make, *var );
-        for (i = 0; i < value.count; i++) add_src_file( make, value.str[i] );
-    }
+    value = get_expanded_make_var_array( make, "SOURCES" );
+    for (i = 0; i < value.count; i++) add_src_file( make, value.str[i] );
 
     add_generated_sources( make );
 

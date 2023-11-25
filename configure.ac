@@ -190,7 +190,7 @@ enable_win64=${enable_win64:-no}
 enable_wow64=${enable_wow64:-aarch64,x86_64}
 enable_wow64win=${enable_wow64win:-aarch64,x86_64}
 enable_wow64cpu=${enable_wow64cpu:-x86_64}
-enable_vcruntime140_1=${enable_vcruntime140_1:-x86_64}
+enable_vcruntime140_1=${enable_vcruntime140_1:-x86_64,arm64ec}
 
 dnl Disable winetest too if tests are disabled
 enable_winetest=${enable_winetest:-$enable_tests}
@@ -214,7 +214,7 @@ case "$host_cpu" in
   i[[3456789]]86*) HOST_ARCH=i386 ;;
   x86_64)          HOST_ARCH=x86_64 ;;
 esac
-m4_set_add_all([_AC_SUBST_VARS],[HOST_ARCH]m4_foreach([cpu],[aarch64,arm,i386,x86_64],
+m4_set_add_all([_AC_SUBST_VARS],[HOST_ARCH]m4_foreach([cpu],[aarch64,arm,arm64ec,i386,x86_64],
                                 [m4_foreach([var],[CC,CFLAGS,EXTRACFLAGS,LDFLAGS,DEBUG,TARGET,DELAYLOADFLAG,DISABLED_SUBDIRS],[,cpu[_]var])]))
 
 AC_CACHE_CHECK([for the directory containing the Wine tools], wine_cv_toolsdir,
@@ -825,7 +825,7 @@ AS_VAR_SET_IF([enable_archs],
      for arch
      do
          case $arch in
-           i386|x86_64|arm|aarch64) cross_archs="$cross_archs $arch" ;;
+           i386|x86_64|arm|aarch64|arm64ec) cross_archs="$cross_archs $arch" ;;
            *) AC_MSG_ERROR([Unknown cross-compilation architecture '$arch']) ;;
          esac
      done],
@@ -843,6 +843,9 @@ do
         [case $wine_arch in
           aarch64)
             AC_CHECK_PROGS(aarch64_CC,[aarch64-w64-mingw32-clang aarch64-w64-mingw32-gcc clang],[false])
+            ;;
+          arm64ec)
+            AC_CHECK_PROGS(arm64ec_CC,[arm64ec-w64-mingw32-clang arm64ec-w64-mingw32-gcc clang],[false])
             ;;
           arm)
             AC_CHECK_PROGS(arm_CC,[armv7-w64-mingw32-clang armv7-w64-mingw32-gcc clang],[false])
@@ -1383,8 +1386,11 @@ then
               [AC_PATH_PROG(WAYLAND_SCANNER,wayland-scanner,
                             [`test -n "$PKG_CONFIG" && $PKG_CONFIG --variable=wayland_scanner wayland-scanner 2>/dev/null`])],
               [WAYLAND_CLIENT_LIBS=""],[$WAYLAND_CLIENT_LIBS])])])
+    WINE_PACKAGE_FLAGS(XKBCOMMON,[xkbcommon],,,,
+        [AC_CHECK_HEADERS([xkbcommon/xkbcommon.h])
+         AC_CHECK_LIB(xkbcommon,xkb_context_new,[:],[XKBCOMMON_LIBS=""],[$XKBCOMMON_LIBS])])
 fi
-WINE_NOTICE_WITH(wayland, [test -z "$WAYLAND_CLIENT_LIBS" -o -z "$WAYLAND_SCANNER" -o "$ac_cv_header_linux_input_h" = "no"],
+WINE_NOTICE_WITH(wayland, [test -z "$WAYLAND_CLIENT_LIBS" -o -z "$WAYLAND_SCANNER" -o -z "$XKBCOMMON_LIBS" -o "$ac_cv_header_linux_input_h" = "no"],
                  [Wayland ${notice_platform}development files not found, the Wayland driver won't be supported.],
                  [enable_winewayland_drv])
 
@@ -3124,6 +3130,7 @@ WINE_CONFIG_MAKEFILE(dlls/twain.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/twain_32)
 WINE_CONFIG_MAKEFILE(dlls/twain_32/tests)
 WINE_CONFIG_MAKEFILE(dlls/twinapi.appcore)
+WINE_CONFIG_MAKEFILE(dlls/twinapi.appcore/tests)
 WINE_CONFIG_MAKEFILE(dlls/typelib.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/tzres)
 WINE_CONFIG_MAKEFILE(dlls/ucrtbase)
@@ -3292,6 +3299,7 @@ WINE_CONFIG_MAKEFILE(dlls/wlanui)
 WINE_CONFIG_MAKEFILE(dlls/wldap32)
 WINE_CONFIG_MAKEFILE(dlls/wldap32/tests)
 WINE_CONFIG_MAKEFILE(dlls/wldp)
+WINE_CONFIG_MAKEFILE(dlls/wldp/tests)
 WINE_CONFIG_MAKEFILE(dlls/wmasf)
 WINE_CONFIG_MAKEFILE(dlls/wmi)
 WINE_CONFIG_MAKEFILE(dlls/wmiutils)
@@ -3695,7 +3703,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-8.20.r0.gf32f8c62\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-8.21.r0.ge546e2f1\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

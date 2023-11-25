@@ -90,6 +90,7 @@
 #include "esync.h"
 #include "fsync.h"
 #include "wine/list.h"
+#include "ntsyscalls.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(module);
@@ -116,256 +117,32 @@ void *pRtlUserThreadStart = NULL;
 void *p__wine_ctrl_routine = NULL;
 SYSTEM_DLL_INIT_BLOCK *pLdrSystemDllInitBlock = NULL;
 
-static void *p__wine_syscall_dispatcher;
-
 static void * const syscalls[] =
 {
-    NtAcceptConnectPort,
-    NtAccessCheck,
-    NtAccessCheckAndAuditAlarm,
-    NtAddAtom,
-    NtAdjustGroupsToken,
-    NtAdjustPrivilegesToken,
-    NtAlertResumeThread,
-    NtAlertThread,
-    NtAlertThreadByThreadId,
-    NtAllocateLocallyUniqueId,
-    NtAllocateUuids,
-    NtAllocateVirtualMemory,
-    NtAllocateVirtualMemoryEx,
-    NtAreMappedFilesTheSame,
-    NtAssignProcessToJobObject,
-    NtCallbackReturn,
-    NtCancelIoFile,
-    NtCancelIoFileEx,
-    NtCancelSynchronousIoFile,
-    NtCancelTimer,
-    NtClearEvent,
-    NtClose,
-    NtCommitTransaction,
-    NtCompareObjects,
-    NtCompleteConnectPort,
-    NtConnectPort,
-    NtContinue,
-    NtCreateDebugObject,
-    NtCreateDirectoryObject,
-    NtCreateEvent,
-    NtCreateFile,
-    NtCreateIoCompletion,
-    NtCreateJobObject,
-    NtCreateKey,
-    NtCreateKeyTransacted,
-    NtCreateKeyedEvent,
-    NtCreateLowBoxToken,
-    NtCreateMailslotFile,
-    NtCreateMutant,
-    NtCreateNamedPipeFile,
-    NtCreatePagingFile,
-    NtCreatePort,
-    NtCreateSection,
-    NtCreateSemaphore,
-    NtCreateSymbolicLinkObject,
-    NtCreateThread,
-    NtCreateThreadEx,
-    NtCreateTimer,
-    NtCreateToken,
-    NtCreateTransaction,
-    NtCreateUserProcess,
-    NtDebugActiveProcess,
-    NtDebugContinue,
-    NtDelayExecution,
-    NtDeleteAtom,
-    NtDeleteFile,
-    NtDeleteKey,
-    NtDeleteValueKey,
-    NtDeviceIoControlFile,
-    NtDisplayString,
-    NtDuplicateObject,
-    NtDuplicateToken,
-    NtEnumerateKey,
-    NtEnumerateValueKey,
-    NtFilterToken,
-    NtFindAtom,
-    NtFlushBuffersFile,
-    NtFlushInstructionCache,
-    NtFlushKey,
-    NtFlushProcessWriteBuffers,
-    NtFlushVirtualMemory,
-    NtFreeVirtualMemory,
-    NtFsControlFile,
-    NtGetContextThread,
-    NtGetCurrentProcessorNumber,
-    NtGetNextThread,
-    NtGetNlsSectionPtr,
-    NtGetWriteWatch,
-    NtImpersonateAnonymousToken,
-    NtInitializeNlsFiles,
-    NtInitiatePowerAction,
-    NtIsProcessInJob,
-    NtListenPort,
-    NtLoadDriver,
-    NtLoadKey,
-    NtLoadKey2,
-    NtLoadKeyEx,
-    NtLockFile,
-    NtLockVirtualMemory,
-    NtMakeTemporaryObject,
-    NtMapViewOfSection,
-    NtMapViewOfSectionEx,
-    NtNotifyChangeDirectoryFile,
-    NtNotifyChangeKey,
-    NtNotifyChangeMultipleKeys,
-    NtOpenDirectoryObject,
-    NtOpenEvent,
-    NtOpenFile,
-    NtOpenIoCompletion,
-    NtOpenJobObject,
-    NtOpenKey,
-    NtOpenKeyEx,
-    NtOpenKeyTransacted,
-    NtOpenKeyTransactedEx,
-    NtOpenKeyedEvent,
-    NtOpenMutant,
-    NtOpenProcess,
-    NtOpenProcessToken,
-    NtOpenProcessTokenEx,
-    NtOpenSection,
-    NtOpenSemaphore,
-    NtOpenSymbolicLinkObject ,
-    NtOpenThread,
-    NtOpenThreadToken,
-    NtOpenThreadTokenEx,
-    NtOpenTimer,
-    NtPowerInformation,
-    NtPrivilegeCheck,
-    NtProtectVirtualMemory,
-    NtPulseEvent,
-    NtQueryAttributesFile,
-    NtQueryDefaultLocale,
-    NtQueryDefaultUILanguage,
-    NtQueryDirectoryFile,
-    NtQueryDirectoryObject,
-    NtQueryEaFile,
-    NtQueryEvent,
-    NtQueryFullAttributesFile,
-    NtQueryInformationAtom,
-    NtQueryInformationFile,
-    NtQueryInformationJobObject,
-    NtQueryInformationProcess,
-    NtQueryInformationThread,
-    NtQueryInformationToken,
-    NtQueryInstallUILanguage,
-    NtQueryIoCompletion,
-    NtQueryKey,
-    NtQueryLicenseValue,
-    NtQueryMultipleValueKey,
-    NtQueryMutant,
-    NtQueryObject,
-    NtQueryPerformanceCounter,
-    NtQuerySection,
-    NtQuerySecurityObject,
-    NtQuerySemaphore ,
-    NtQuerySymbolicLinkObject,
-    NtQuerySystemEnvironmentValue,
-    NtQuerySystemEnvironmentValueEx,
-    NtQuerySystemInformation,
-    NtQuerySystemInformationEx,
-    NtQuerySystemTime,
-    NtQueryTimer,
-    NtQueryTimerResolution,
-    NtQueryValueKey,
-    NtQueryVirtualMemory,
-    NtQueryVolumeInformationFile,
-    NtQueueApcThread,
-    NtRaiseException,
-    NtRaiseHardError,
-    NtReadFile,
-    NtReadFileScatter,
-    NtReadVirtualMemory,
-    NtRegisterThreadTerminatePort,
-    NtReleaseKeyedEvent,
-    NtReleaseMutant,
-    NtReleaseSemaphore,
-    NtRemoveIoCompletion,
-    NtRemoveIoCompletionEx,
-    NtRemoveProcessDebug,
-    NtRenameKey,
-    NtReplaceKey,
-    NtReplyWaitReceivePort,
-    NtRequestWaitReplyPort,
-    NtResetEvent,
-    NtResetWriteWatch,
-    NtRestoreKey,
-    NtResumeProcess,
-    NtResumeThread,
-    NtRollbackTransaction,
-    NtSaveKey,
-    NtSecureConnectPort,
-    NtSetContextThread,
-    NtSetDebugFilterState,
-    NtSetDefaultLocale,
-    NtSetDefaultUILanguage,
-    NtSetEaFile,
-    NtSetEvent,
-    NtSetInformationDebugObject,
-    NtSetInformationFile,
-    NtSetInformationJobObject,
-    NtSetInformationKey,
-    NtSetInformationObject,
-    NtSetInformationProcess,
-    NtSetInformationThread,
-    NtSetInformationToken,
-    NtSetInformationVirtualMemory,
-    NtSetIntervalProfile,
-    NtSetIoCompletion,
-    NtSetLdtEntries,
-    NtSetSecurityObject,
-    NtSetSystemInformation,
-    NtSetSystemTime,
-    NtSetThreadExecutionState,
-    NtSetTimer,
-    NtSetTimerResolution,
-    NtSetValueKey,
-    NtSetVolumeInformationFile,
-    NtShutdownSystem,
-    NtSignalAndWaitForSingleObject,
-    NtSuspendProcess,
-    NtSuspendThread,
-    NtSystemDebugControl,
-    NtTerminateJobObject,
-    NtTerminateProcess,
-    NtTerminateThread,
-    NtTestAlert,
-    NtTraceControl,
-    NtUnloadDriver,
-    NtUnloadKey,
-    NtUnlockFile,
-    NtUnlockVirtualMemory,
-    NtUnmapViewOfSection,
-    NtUnmapViewOfSectionEx,
-    NtWaitForAlertByThreadId,
-    NtWaitForDebugEvent,
-    NtWaitForKeyedEvent,
-    NtWaitForMultipleObjects,
-    NtWaitForSingleObject,
-#ifndef _WIN64
-    NtWow64AllocateVirtualMemory64,
-    NtWow64GetNativeSystemInformation,
-    NtWow64IsProcessorFeaturePresent,
-    NtWow64ReadVirtualMemory64,
-    NtWow64WriteVirtualMemory64,
+#define SYSCALL_ENTRY(id,name,args) name,
+#ifdef _WIN64
+    ALL_SYSCALLS64
+#else
+    ALL_SYSCALLS32
 #endif
-    NtWriteFile,
-    NtWriteFileGather,
-    NtWriteVirtualMemory,
-    NtYieldExecution,
-    wine_nt_to_unix_file_name,
-    wine_unix_to_nt_file_name,
+#undef SYSCALL_ENTRY
 };
 
-static BYTE syscall_args[ARRAY_SIZE(syscalls)];
+static BYTE syscall_args[ARRAY_SIZE(syscalls)] =
+{
+#define SYSCALL_ENTRY(id,name,args) args,
+#ifdef _WIN64
+    ALL_SYSCALLS64
+#else
+    ALL_SYSCALLS32
+#endif
+#undef SYSCALL_ENTRY
+};
 
-SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4];
+SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4] =
+{
+    { (ULONG_PTR *)syscalls, NULL, ARRAY_SIZE(syscalls), syscall_args }
+};
 
 #ifdef __GNUC__
 static void fatal_error( const char *err, ... ) __attribute__((noreturn, format(printf,1,2)));
@@ -1187,38 +964,6 @@ static NTSTATUS dlopen_dll( const char *so_name, UNICODE_STRING *nt_name, void *
 
 
 /***********************************************************************
- *           ntdll_init_syscalls
- */
-NTSTATUS ntdll_init_syscalls( SYSTEM_SERVICE_TABLE *table, void **dispatcher )
-{
-    struct syscall_info
-    {
-        void  *dispatcher;
-        UINT   version;
-        USHORT id;
-        USHORT limit;
-     /* USHORT names[limit]; */
-     /* BYTE   args[limit]; */
-    } *info = (struct syscall_info *)dispatcher;
-
-    if (info->version != 0xca110001)
-    {
-        ERR( "invalid syscall table version %x\n", info->version );
-        NtTerminateProcess( GetCurrentProcess(), STATUS_INVALID_PARAMETER );
-    }
-    if (info->limit != table->ServiceLimit)
-    {
-        ERR( "syscall count mismatch %u / %lu\n", info->limit, table->ServiceLimit );
-        NtTerminateProcess( GetCurrentProcess(), STATUS_INVALID_PARAMETER );
-    }
-    info->dispatcher = __wine_syscall_dispatcher;
-    memcpy( table->ArgumentTable, (USHORT *)(info + 1) + info->limit, table->ServiceLimit );
-    KeServiceDescriptorTable[info->id] = *table;
-    return STATUS_SUCCESS;
-}
-
-
-/***********************************************************************
  *           load_so_dll
  */
 static NTSTATUS load_so_dll( void *args )
@@ -1824,6 +1569,7 @@ NTSTATUS load_start_exe( WCHAR **image, void **module )
  */
 static void load_ntdll_functions( HMODULE module )
 {
+    void **p__wine_syscall_dispatcher;
     void **p__wine_unix_call_dispatcher;
     unixlib_handle_t *p__wine_unixlib_handle;
     const IMAGE_EXPORT_DIRECTORY *exports;
@@ -1847,6 +1593,7 @@ static void load_ntdll_functions( HMODULE module )
     GET_FUNC( __wine_syscall_dispatcher );
     GET_FUNC( __wine_unix_call_dispatcher );
     GET_FUNC( __wine_unixlib_handle );
+    *p__wine_syscall_dispatcher = __wine_syscall_dispatcher;
     *p__wine_unix_call_dispatcher = __wine_unix_call_dispatcher;
     *p__wine_unixlib_handle = (UINT_PTR)unix_call_funcs;
 #undef GET_FUNC
@@ -1893,6 +1640,55 @@ static void load_ntdll_wow64_functions( HMODULE module )
 
 
 /***********************************************************************
+ *           redirect_arm64ec_ptr
+ *
+ * Redirect a function pointer through the arm64ec redirection table.
+ */
+static void *redirect_arm64ec_ptr( void *module, void *ptr,
+                                   const IMAGE_ARM64EC_REDIRECTION_ENTRY *map, ULONG map_count )
+{
+    int min = 0, max = map_count - 1;
+    ULONG_PTR rva = (char *)ptr - (char *)module;
+
+    while (min <= max)
+    {
+        int pos = (min + max) / 2;
+        if (map[pos].Source == rva) return get_rva( module, map[pos].Destination );
+        if (map[pos].Source < rva) min = pos + 1;
+        else max = pos - 1;
+    }
+    return ptr;
+}
+
+
+/***********************************************************************
+ *           redirect_ntdll_functions
+ *
+ * Redirect ntdll functions on arm64ec.
+ */
+static void redirect_ntdll_functions( HMODULE module )
+{
+    const IMAGE_LOAD_CONFIG_DIRECTORY *loadcfg;
+    const IMAGE_ARM64EC_METADATA *metadata;
+    const IMAGE_ARM64EC_REDIRECTION_ENTRY *map;
+
+    if (!(loadcfg = get_module_data_dir( module, IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG, NULL ))) return;
+    if (!(metadata = (void *)loadcfg->CHPEMetadataPointer)) return;
+    if (!(map = get_rva( module, metadata->RedirectionMetadata ))) return;
+#define REDIRECT(name) \
+        p##name = redirect_arm64ec_ptr( module, p##name, map, metadata->RedirectionMetadataCount )
+    REDIRECT( DbgUiRemoteBreakin );
+    REDIRECT( KiRaiseUserExceptionDispatcher );
+    REDIRECT( KiUserExceptionDispatcher );
+    REDIRECT( KiUserApcDispatcher );
+    REDIRECT( KiUserCallbackDispatcher );
+    REDIRECT( LdrInitializeThunk );
+    REDIRECT( RtlUserThreadStart );
+#undef REDIRECT
+}
+
+
+/***********************************************************************
  *           load_ntdll
  */
 static void load_ntdll(void)
@@ -1924,6 +1720,7 @@ static void load_ntdll(void)
     if (status) fatal_error( "failed to load %s error %x\n", name, status );
     free( name );
     load_ntdll_functions( module );
+    if (is_arm64ec()) redirect_ntdll_functions( module );
 }
 
 
@@ -2060,7 +1857,6 @@ static ULONG_PTR get_image_address(void)
  */
 static void start_main_thread(void)
 {
-    SYSTEM_SERVICE_TABLE syscall_table = { (ULONG_PTR *)syscalls, NULL, ARRAY_SIZE(syscalls), syscall_args };
     TEB *teb = virtual_alloc_first_teb();
 
     signal_init_threading();
@@ -2081,7 +1877,6 @@ static void start_main_thread(void)
     load_ntdll();
     load_wow64_ntdll( main_image_info.Machine );
     load_apiset_dll();
-    ntdll_init_syscalls( &syscall_table, p__wine_syscall_dispatcher );
     server_init_process_done();
 }
 

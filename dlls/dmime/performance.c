@@ -97,66 +97,84 @@ static inline struct message *message_from_DMUS_PMSG(DMUS_PMSG *msg)
     return msg ? CONTAINING_RECORD(msg, struct message, msg) : NULL;
 }
 
-static void performance_queue_message(struct performance *This, struct message *message, struct list *hint)
-{
-    struct message *prev;
-
-    LIST_FOR_EACH_ENTRY_REV(prev, hint ? hint : &This->messages, struct message, entry)
-    {
-        if (&prev->entry == &This->messages) break;
-        if (prev->msg.rtTime <= message->msg.rtTime) break;
-    }
-
-    list_add_after(&prev->entry, &message->entry);
-}
-
-static HRESULT performance_process_message(struct performance *This, DMUS_PMSG *msg, DWORD *timeout)
+static struct message *performance_get_message(struct performance *This, DWORD *timeout)
 {
     static const DWORD delivery_flags = DMUS_PMSGF_TOOL_IMMEDIATE | DMUS_PMSGF_TOOL_QUEUE | DMUS_PMSGF_TOOL_ATTIME;
     IDirectMusicPerformance *performance = (IDirectMusicPerformance *)&This->IDirectMusicPerformance8_iface;
+    REFERENCE_TIME latency, offset = 0;
+    struct message *message;
+    struct list *ptr;
+
+    if (!(ptr = list_head(&This->messages)))
+        return NULL;
+    message = LIST_ENTRY(ptr, struct message, entry);
+
+    if (FAILED(IDirectMusicPerformance_GetLatencyTime(performance, &latency)))
+        return NULL;
+
+    switch (message->msg.dwFlags & delivery_flags)
+    {
+    default:
+        WARN("No delivery flag found for message %p\n", &message->msg);
+        break;
+    case DMUS_PMSGF_TOOL_QUEUE:
+        offset = This->dwBumperLength * 10000;
+        /* fallthrough */
+    case DMUS_PMSGF_TOOL_ATTIME:
+        if (message->msg.rtTime >= offset && message->msg.rtTime - offset >= latency)
+        {
+            *timeout = (message->msg.rtTime - offset - latency) / 10000;
+            return NULL;
+        }
+        break;
+    }
+
+    return message;
+}
+
+static HRESULT performance_process_message(struct performance *This, DMUS_PMSG *msg)
+{
+    IDirectMusicPerformance *performance = (IDirectMusicPerformance *)&This->IDirectMusicPerformance8_iface;
+    IDirectMusicTool *tool;
     HRESULT hr;
 
-    do
-    {
-        REFERENCE_TIME latency, offset = 0;
-        IDirectMusicTool *tool;
+    if (!(tool = msg->pTool)) tool = &This->IDirectMusicTool_iface;
 
-        if (FAILED(hr = IDirectMusicPerformance_GetLatencyTime(performance, &latency))) return hr;
-        if (!(tool = msg->pTool)) tool = &This->IDirectMusicTool_iface;
-
-        switch (msg->dwFlags & delivery_flags)
-        {
-        default:
-            WARN("No delivery flag found for message %p\n", msg);
-            /* fallthrough */
-        case DMUS_PMSGF_TOOL_IMMEDIATE:
-            hr = IDirectMusicTool_ProcessPMsg(tool, performance, msg);
-            break;
-        case DMUS_PMSGF_TOOL_QUEUE:
-            offset = This->dwBumperLength * 10000;
-            /* fallthrough */
-        case DMUS_PMSGF_TOOL_ATTIME:
-            if (msg->rtTime >= offset && msg->rtTime - offset >= latency)
-            {
-                if (timeout) *timeout = (msg->rtTime - offset - latency) / 10000;
-                return DMUS_S_REQUEUE;
-            }
-
-            hr = IDirectMusicTool_ProcessPMsg(tool, performance, msg);
-            break;
-        }
-    } while (hr == DMUS_S_REQUEUE);
+    hr = IDirectMusicTool_ProcessPMsg(tool, performance, msg);
 
     if (hr == DMUS_S_FREE) hr = IDirectMusicPerformance_FreePMsg(performance, msg);
     if (FAILED(hr)) WARN("Failed to process message, hr %#lx\n", hr);
     return hr;
 }
 
+static HRESULT performance_queue_message(struct performance *This, struct message *message)
+{
+    static const DWORD delivery_flags = DMUS_PMSGF_TOOL_IMMEDIATE | DMUS_PMSGF_TOOL_QUEUE | DMUS_PMSGF_TOOL_ATTIME;
+    struct message *prev;
+    HRESULT hr;
+
+    while ((message->msg.dwFlags & delivery_flags) == DMUS_PMSGF_TOOL_IMMEDIATE)
+    {
+        hr = performance_process_message(This, &message->msg);
+        if (hr != DMUS_S_REQUEUE)
+            return hr;
+    }
+
+    LIST_FOR_EACH_ENTRY_REV(prev, &This->messages, struct message, entry)
+    {
+        if (&prev->entry == &This->messages) break;
+        if (prev->msg.rtTime <= message->msg.rtTime) break;
+    }
+
+    list_add_after(&prev->entry, &message->entry);
+
+    return S_OK;
+}
+
 static DWORD WINAPI message_thread_proc(void *args)
 {
     struct performance *This = args;
-    HRESULT hr = DMUS_S_REQUEUE;
-    struct list *ptr;
+    HRESULT hr;
 
     TRACE("performance %p message thread\n", This);
     SetThreadDescription(GetCurrentThread(), L"wine_dmime_message");
@@ -166,20 +184,19 @@ static DWORD WINAPI message_thread_proc(void *args)
     while (This->message_thread)
     {
         DWORD timeout = INFINITE;
+        struct message *message;
 
-        while ((ptr = list_head(&This->messages)))
+        if (!(message = performance_get_message(This, &timeout)))
         {
-            struct message *message = LIST_ENTRY(ptr, struct message, entry);
-            struct list *next = ptr->next;
-            list_remove(&message->entry);
-            list_init(&message->entry);
-
-            hr = performance_process_message(This, &message->msg, &timeout);
-            if (hr == DMUS_S_REQUEUE) performance_queue_message(This, message, next);
-            if (hr != S_OK) break;
+            SleepConditionVariableCS(&This->cond, &This->safe, timeout);
+            continue;
         }
 
-        SleepConditionVariableCS(&This->cond, &This->safe, timeout);
+        list_remove(&message->entry);
+        list_init(&message->entry);
+
+        hr = performance_process_message(This, &message->msg);
+        if (hr == DMUS_S_REQUEUE) performance_queue_message(This, message);
     }
 
     LeaveCriticalSection(&This->safe);
@@ -336,24 +353,28 @@ HRESULT performance_send_segment_tick(IDirectMusicPerformance8 *iface, MUSIC_TIM
 }
 
 HRESULT performance_send_segment_end(IDirectMusicPerformance8 *iface, MUSIC_TIME music_time,
-        IDirectMusicSegmentState *state)
+        IDirectMusicSegmentState *state, BOOL abort)
 {
     struct performance *This = impl_from_IDirectMusicPerformance8(iface);
     HRESULT hr;
 
-    if (FAILED(hr = performance_send_notification_pmsg(This, music_time - 1450, This->notification_segment,
-            GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGALMOSTEND, (IUnknown *)state)))
-        return hr;
-    if (FAILED(hr = performance_send_notification_pmsg(This, music_time, This->notification_segment,
-            GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGEND, (IUnknown *)state)))
-        return hr;
+    if (!abort)
+    {
+        if (FAILED(hr = performance_send_notification_pmsg(This, music_time - 1450, This->notification_segment,
+                GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGALMOSTEND, (IUnknown *)state)))
+            return hr;
+        if (FAILED(hr = performance_send_notification_pmsg(This, music_time, This->notification_segment,
+                GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGEND, (IUnknown *)state)))
+            return hr;
+    }
+
     if (FAILED(hr = performance_send_pmsg(This, music_time, DMUS_PMSGF_TOOL_IMMEDIATE,
             DMUS_PMSGT_DIRTY, NULL)))
         return hr;
     if (FAILED(hr = performance_send_notification_pmsg(This, music_time, This->notification_performance,
             GUID_NOTIFICATION_PERFORMANCE, DMUS_NOTIFICATION_MUSICSTOPPED, NULL)))
         return hr;
-    if (FAILED(hr = performance_send_pmsg(This, music_time, DMUS_PMSGF_TOOL_ATTIME,
+    if (FAILED(hr = performance_send_pmsg(This, music_time, abort ? DMUS_PMSGF_TOOL_IMMEDIATE : DMUS_PMSGF_TOOL_ATTIME,
             DMUS_PMSGT_INTERNAL_SEGMENT_END, (IUnknown *)state)))
         return hr;
 
@@ -468,6 +489,35 @@ static HRESULT performance_init_dmusic(struct performance *This, IDirectSound *d
     return hr;
 }
 
+static HRESULT performance_send_midi_pmsg(struct performance *This, DMUS_PMSG *msg, UINT flags,
+        BYTE status, BYTE byte1, BYTE byte2)
+{
+    IDirectMusicPerformance8 *performance = &This->IDirectMusicPerformance8_iface;
+    DMUS_MIDI_PMSG *midi;
+    HRESULT hr;
+
+    if (FAILED(hr = IDirectMusicPerformance8_AllocPMsg(performance, sizeof(*midi),
+            (DMUS_PMSG **)&midi)))
+        return hr;
+
+    if (flags & DMUS_PMSGF_REFTIME) midi->rtTime = msg->rtTime;
+    if (flags & DMUS_PMSGF_MUSICTIME) midi->mtTime = msg->mtTime;
+    midi->dwFlags = flags;
+    midi->dwPChannel = msg->dwPChannel;
+    midi->dwVirtualTrackID = msg->dwVirtualTrackID;
+    midi->dwVoiceID = msg->dwVoiceID;
+    midi->dwGroupID = msg->dwGroupID;
+    midi->dwType = DMUS_PMSGT_MIDI;
+    midi->bStatus = status;
+    midi->bByte1 = byte1;
+    midi->bByte2 = byte2;
+
+    if (FAILED(hr = IDirectMusicPerformance8_SendPMsg(performance, (DMUS_PMSG *)midi)))
+        IDirectMusicPerformance8_FreePMsg(performance, (DMUS_PMSG *)midi);
+
+    return hr;
+}
+
 static HRESULT WINAPI performance_Init(IDirectMusicPerformance8 *iface, IDirectMusic **dmusic,
         IDirectSound *dsound, HWND hwnd)
 {
@@ -557,13 +607,126 @@ static void enum_segment_states(struct performance *This, IDirectMusicSegment *s
     }
 }
 
-static HRESULT WINAPI performance_Stop(IDirectMusicPerformance8 *iface, IDirectMusicSegment *pSegment,
-        IDirectMusicSegmentState *pSegmentState, MUSIC_TIME mtTime, DWORD dwFlags)
+static BOOL message_needs_flushing(struct message *message, IDirectMusicSegmentState *state)
 {
-        struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    if (!state) return TRUE;
 
-	FIXME("(%p, %p, %p, %ld, %ld): stub\n", This, pSegment, pSegmentState, mtTime, dwFlags);
-	return S_OK;
+    switch (message->msg.dwType)
+    {
+    case DMUS_PMSGT_MIDI:
+    case DMUS_PMSGT_NOTE:
+    case DMUS_PMSGT_CURVE:
+    case DMUS_PMSGT_PATCH:
+    case DMUS_PMSGT_WAVE:
+        if (!segment_state_has_track(state, message->msg.dwVirtualTrackID)) return FALSE;
+        break;
+
+    case DMUS_PMSGT_NOTIFICATION:
+    {
+        DMUS_NOTIFICATION_PMSG *notif = (DMUS_NOTIFICATION_PMSG *)&message->msg;
+        if (!IsEqualGUID(&notif->guidNotificationType, &GUID_NOTIFICATION_SEGMENT)) return FALSE;
+        if ((IDirectMusicSegmentState *)message->msg.punkUser != state) return FALSE;
+        break;
+    }
+
+    case DMUS_PMSGT_INTERNAL_SEGMENT_TICK:
+    case DMUS_PMSGT_INTERNAL_SEGMENT_END:
+        if ((IDirectMusicSegmentState *)message->msg.punkUser != state) return FALSE;
+        break;
+
+    default:
+        FIXME("Unhandled message type %#lx\n", message->msg.dwType);
+        break;
+    }
+
+    return TRUE;
+}
+
+static void performance_flush_messages(struct performance *This, IDirectMusicSegmentState *state)
+{
+    IDirectMusicPerformance *iface = (IDirectMusicPerformance *)&This->IDirectMusicPerformance8_iface;
+    struct message *message, *next;
+    HRESULT hr;
+
+    LIST_FOR_EACH_ENTRY_SAFE(message, next, &This->messages, struct message, entry)
+    {
+        if (!message_needs_flushing(message, state)) continue;
+
+        list_remove(&message->entry);
+        list_init(&message->entry);
+
+        if (FAILED(hr = IDirectMusicPerformance8_FreePMsg(iface, &message->msg)))
+            ERR("Failed to free message %p, hr %#lx\n", message, hr);
+    }
+
+    LIST_FOR_EACH_ENTRY_SAFE(message, next, &This->notifications, struct message, entry)
+    {
+        if (!message_needs_flushing(message, state)) continue;
+
+        list_remove(&message->entry);
+        list_init(&message->entry);
+
+        if (FAILED(hr = IDirectMusicPerformance8_FreePMsg(iface, &message->msg)))
+            ERR("Failed to free message %p, hr %#lx\n", message, hr);
+    }
+}
+
+static HRESULT WINAPI performance_Stop(IDirectMusicPerformance8 *iface, IDirectMusicSegment *segment,
+        IDirectMusicSegmentState *state, MUSIC_TIME music_time, DWORD flags)
+{
+    struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    struct list states = LIST_INIT(states);
+    struct state_entry *entry, *next;
+    DMUS_PMSG msg = {.mtTime = -1};
+    HRESULT hr;
+
+    FIXME("(%p, %p, %p, %ld, %ld): semi-stub\n", This, segment, state, music_time, flags);
+
+    if (music_time) FIXME("time parameter %lu not implemented\n", music_time);
+    if (flags != DMUS_SEGF_DEFAULT) FIXME("flags parameter %#lx not implemented\n", flags);
+
+    if (!music_time && FAILED(hr = IDirectMusicPerformance8_GetTime(iface, NULL, &music_time)))
+        return hr;
+
+    EnterCriticalSection(&This->safe);
+
+    if (!state)
+        enum_segment_states(This, segment, &states);
+    else if ((entry = malloc(sizeof(*entry))))
+    {
+        entry->state = state;
+        IDirectMusicSegmentState_AddRef(entry->state);
+        list_add_tail(&states, &entry->entry);
+    }
+
+    if (!segment && !state)
+        performance_flush_messages(This, NULL);
+    else LIST_FOR_EACH_ENTRY(entry, &states, struct state_entry, entry)
+        performance_flush_messages(This, entry->state);
+
+    LIST_FOR_EACH_ENTRY_SAFE(entry, next, &states, struct state_entry, entry)
+    {
+        if (FAILED(hr = performance_send_notification_pmsg(This, music_time, This->notification_segment,
+                GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGABORT, (IUnknown *)entry->state)))
+            ERR("Failed to send DMUS_NOTIFICATION_SEGABORT, hr %#lx\n", hr);
+        if (FAILED(hr = segment_state_stop(entry->state, iface)))
+            ERR("Failed to stop segment state, hr %#lx\n", hr);
+
+        IDirectMusicSegmentState_Release(entry->state);
+        list_remove(&entry->entry);
+        free(entry);
+    }
+
+    if (!state && !segment)
+    {
+        if (FAILED(hr = performance_send_midi_pmsg(This, &msg, DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_IMMEDIATE,
+                MIDI_SYSTEM_RESET, 0, 0)))
+            ERR("Failed to send MIDI_SYSTEM_RESET message, hr %#lx\n", hr);
+    }
+
+    LeaveCriticalSection(&This->safe);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI performance_GetSegmentState(IDirectMusicPerformance8 *iface,
@@ -676,14 +839,7 @@ static HRESULT WINAPI performance_SendPMsg(IDirectMusicPerformance8 *iface, DMUS
             msg->dwFlags |= DMUS_PMSGF_REFTIME;
         }
 
-        if (msg->dwFlags & DMUS_PMSGF_TOOL_IMMEDIATE)
-        {
-            hr = performance_process_message(This, &message->msg, NULL);
-            if (hr != DMUS_S_REQUEUE) goto done;
-        }
-
-        performance_queue_message(This, message, NULL);
-        hr = S_OK;
+        hr = performance_queue_message(This, message);
     }
 
 done:
@@ -1257,7 +1413,9 @@ static HRESULT WINAPI performance_AdjustTime(IDirectMusicPerformance8 *iface, RE
 static HRESULT WINAPI performance_CloseDown(IDirectMusicPerformance8 *iface)
 {
     struct performance *This = impl_from_IDirectMusicPerformance8(iface);
-    struct message *message, *next;
+    struct list states = LIST_INIT(states);
+    struct state_entry *entry, *next;
+    DMUS_PMSG msg = {.mtTime = -1};
     HANDLE message_thread;
     HRESULT hr;
 
@@ -1277,29 +1435,22 @@ static HRESULT WINAPI performance_CloseDown(IDirectMusicPerformance8 *iface)
     This->notification_performance = FALSE;
     This->notification_segment = FALSE;
 
-    LIST_FOR_EACH_ENTRY_SAFE(message, next, &This->messages, struct message, entry)
+    enum_segment_states(This, NULL, &states);
+    performance_flush_messages(This, NULL);
+
+    LIST_FOR_EACH_ENTRY_SAFE(entry, next, &states, struct state_entry, entry)
     {
-        list_remove(&message->entry);
-        list_init(&message->entry);
+        if (FAILED(hr = segment_state_end_play(entry->state, iface)))
+            ERR("Failed to stop segment state, hr %#lx\n", hr);
 
-        if (message->msg.dwType == DMUS_PMSGT_INTERNAL_SEGMENT_END)
-            hr = IDirectMusicTool_ProcessPMsg(&This->IDirectMusicTool_iface,
-                    (IDirectMusicPerformance *)iface, &message->msg);
-        else
-            hr = DMUS_S_FREE;
-
-        if (hr == DMUS_S_FREE && FAILED(hr = IDirectMusicPerformance8_FreePMsg(iface, &message->msg)))
-            WARN("Failed to free message %p, hr %#lx\n", message, hr);
+        IDirectMusicSegmentState_Release(entry->state);
+        list_remove(&entry->entry);
+        free(entry);
     }
 
-    LIST_FOR_EACH_ENTRY_SAFE(message, next, &This->notifications, struct message, entry)
-    {
-        list_remove(&message->entry);
-        list_init(&message->entry);
-
-        if (FAILED(hr = IDirectMusicPerformance8_FreePMsg(iface, &message->msg)))
-            WARN("Failed to free message %p, hr %#lx\n", message, hr);
-    }
+    if (FAILED(hr = performance_send_midi_pmsg(This, &msg, DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_IMMEDIATE,
+            MIDI_SYSTEM_RESET, 0, 0)))
+        ERR("Failed to send MIDI_SYSTEM_RESET message, hr %#lx\n", hr);
 
     performance_set_primary_segment(This, NULL);
     performance_set_control_segment(This, NULL);
@@ -1404,7 +1555,7 @@ static HRESULT WINAPI performance_InitAudio(IDirectMusicPerformance8 *iface, IDi
         IDirectSound_AddRef(*dsound);
     }
     if (dmusic && !*dmusic) {
-        *dmusic = (IDirectMusic *)This->dmusic;
+        *dmusic = This->dmusic;
         IDirectMusic_AddRef(*dmusic);
     }
 
@@ -1854,35 +2005,6 @@ static HRESULT WINAPI performance_tool_GetMediaTypes(IDirectMusicTool *iface, DW
     return E_NOTIMPL;
 }
 
-static HRESULT performance_send_midi_pmsg(struct performance *This, DMUS_PMSG *msg, UINT flags,
-        BYTE status, BYTE byte1, BYTE byte2)
-{
-    IDirectMusicPerformance8 *performance = &This->IDirectMusicPerformance8_iface;
-    DMUS_MIDI_PMSG *midi;
-    HRESULT hr;
-
-    if (FAILED(hr = IDirectMusicPerformance8_AllocPMsg(performance, sizeof(*midi),
-            (DMUS_PMSG **)&midi)))
-        return hr;
-
-    if (flags & DMUS_PMSGF_REFTIME) midi->rtTime = msg->rtTime;
-    if (flags & DMUS_PMSGF_MUSICTIME) midi->mtTime = msg->mtTime;
-    midi->dwFlags = flags;
-    midi->dwPChannel = msg->dwPChannel;
-    midi->dwVirtualTrackID = msg->dwVirtualTrackID;
-    midi->dwVoiceID = msg->dwVoiceID;
-    midi->dwGroupID = msg->dwGroupID;
-    midi->dwType = DMUS_PMSGT_MIDI;
-    midi->bStatus = status;
-    midi->bByte1 = byte1;
-    midi->bByte2 = byte2;
-
-    if (FAILED(hr = IDirectMusicPerformance8_SendPMsg(performance, (DMUS_PMSG *)midi)))
-        IDirectMusicPerformance8_FreePMsg(performance, (DMUS_PMSG *)midi);
-
-    return hr;
-}
-
 static HRESULT WINAPI performance_tool_ProcessPMsg(IDirectMusicTool *iface,
         IDirectMusicPerformance *performance, DMUS_PMSG *msg)
 {
@@ -1935,12 +2057,25 @@ static HRESULT WINAPI performance_tool_ProcessPMsg(IDirectMusicTool *iface,
         DMUS_NOTE_PMSG *note = (DMUS_NOTE_PMSG *)msg;
 
         msg->mtTime += note->nOffset;
-        if (FAILED(hr = performance_send_midi_pmsg(This, msg, DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_IMMEDIATE,
-                MIDI_NOTE_ON, note->bMidiValue, note->bVelocity)))
-            WARN("Failed to translate message to MIDI, hr %#lx\n", hr);
 
-        msg->mtTime += note->mtDuration;
-        if (FAILED(hr = performance_send_midi_pmsg(This, msg, DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_QUEUE,
+        if (note->bFlags & DMUS_NOTEF_NOTEON)
+        {
+            if (FAILED(hr = performance_send_midi_pmsg(This, msg, DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_IMMEDIATE,
+                    MIDI_NOTE_ON, note->bMidiValue, note->bVelocity)))
+                WARN("Failed to translate message to MIDI, hr %#lx\n", hr);
+
+            if (note->mtDuration)
+            {
+                msg->mtTime -= note->nOffset;
+                msg->mtTime += max(1, note->mtDuration - 1);
+                if (FAILED(hr = IDirectMusicPerformance8_MusicToReferenceTime(performance, msg->mtTime, &msg->rtTime)))
+                    return hr;
+                note->bFlags &= ~DMUS_NOTEF_NOTEON;
+                return DMUS_S_REQUEUE;
+            }
+        }
+
+        if (FAILED(hr = performance_send_midi_pmsg(This, msg, DMUS_PMSGF_MUSICTIME | DMUS_PMSGF_TOOL_IMMEDIATE,
                 MIDI_NOTE_OFF, note->bMidiValue, 0)))
             WARN("Failed to translate message to MIDI, hr %#lx\n", hr);
 
@@ -2005,7 +2140,7 @@ static HRESULT WINAPI performance_tool_ProcessPMsg(IDirectMusicTool *iface,
             msg->dwFlags &= ~DMUS_PMSGF_TOOL_IMMEDIATE;
             msg->dwFlags |= DMUS_PMSGF_TOOL_ATTIME;
 
-            if (FAILED(hr = IDirectMusicPerformance8_SendPMsg(performance, (DMUS_PMSG *)msg)))
+            if (FAILED(hr = IDirectMusicPerformance8_SendPMsg(performance, msg)))
             {
                 ERR("Failed to send notification message, hr %#lx\n", hr);
                 return DMUS_S_FREE;

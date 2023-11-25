@@ -5,3 +5,5 @@ SOURCES = \
 	rsrc.rc \
 	xact3.c
 
+RC_SRCS = \
+	rsrc.rc

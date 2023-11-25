@@ -576,7 +576,6 @@ static void check_undefined_exports( DLLSPEC *spec )
         ORDDEF *odp = &spec->entry_points[i];
         if (odp->type == TYPE_STUB || odp->type == TYPE_ABS || odp->type == TYPE_VARIABLE) continue;
         if (odp->flags & FLAG_FORWARD) continue;
-        if (odp->flags & FLAG_SYSCALL) continue;
         if (find_name( odp->link_name, undef_symbols ))
         {
             switch(odp->type)
@@ -594,7 +593,6 @@ static void check_undefined_exports( DLLSPEC *spec )
                             spec->src_name, odp->lineno, odp->link_name );
                 break;
             default:
-                if (!strcmp( odp->link_name, "__wine_syscall_dispatcher" )) break;
                 error( "%s:%d: external symbol '%s' is not a function\n",
                        spec->src_name, odp->lineno, odp->link_name );
                 break;
@@ -618,7 +616,6 @@ static char *create_undef_symbols_file( DLLSPEC *spec )
         ORDDEF *odp = &spec->entry_points[i];
         if (odp->type == TYPE_STUB || odp->type == TYPE_ABS || odp->type == TYPE_VARIABLE) continue;
         if (odp->flags & FLAG_FORWARD) continue;
-        if (odp->flags & FLAG_SYSCALL) continue;
         output( "\t%s %s\n", get_asm_ptr_keyword(), asm_name( get_link_name( odp )));
     }
     for (j = 0; j < extra_ld_symbols.count; j++)
@@ -801,6 +798,9 @@ static void output_import_thunk( const char *name, const char *table, int pos )
         if (pos & ~0x7fff) output( "\tadd x16, x16, #%u\n", pos & ~0x7fff );
         output( "\tldr x16, [x16, #%u]\n", pos & 0x7fff );
         output( "\tbr x16\n" );
+        break;
+    case CPU_ARM64EC:
+        assert( 0 );
         break;
     }
     output_function_size( name );
@@ -1121,6 +1121,9 @@ static void output_delayed_import_thunks( const DLLSPEC *spec )
             output( "\tldp x29, x30, [sp],#80\n" );
             output( "\tbr x16\n" );
             break;
+        case CPU_ARM64EC:
+            assert( 0 );
+            break;
         }
         output_cfi( ".cfi_endproc" );
         output_function_size( module_func );
@@ -1169,6 +1172,9 @@ static void output_delayed_import_thunks( const DLLSPEC *spec )
                 output( "\tadd x16, x16, #%s\n", arm64_pageoff(".L__wine_delay_IAT") );
                 if (iat_pos) output( "\tadd x16, x16, #%u\n", iat_pos );
                 output( "\tb %s\n", asm_name(module_func) );
+                break;
+            case CPU_ARM64EC:
+                assert( 0 );
                 break;
             }
             iat_pos += get_ptr_size();
@@ -1337,7 +1343,8 @@ void output_stubs( DLLSPEC *spec )
             }
             break;
         case CPU_ARM64:
-            output_seh( ".seh_proc %s", asm_name(name) );
+        case CPU_ARM64EC:
+            output_seh( ".seh_proc %s", arm64_name(name) );
             output_seh( ".seh_endprologue" );
             output( "\tadrp x0, %s\n", arm64_page(".L__wine_spec_file_name") );
             output( "\tadd x0, x0, #%s\n", arm64_pageoff(".L__wine_spec_file_name") );
@@ -1350,11 +1357,9 @@ void output_stubs( DLLSPEC *spec )
             }
             else
                 output( "\tmov x1, %u\n", odp->ordinal );
-            output( "\tb %s\n", asm_name("__wine_spec_unimplemented_stub") );
+            output( "\tb %s\n", arm64_name("__wine_spec_unimplemented_stub") );
             output_seh( ".seh_endproc" );
             break;
-        default:
-            assert(0);
         }
         output_function_size( name );
     }
@@ -1375,154 +1380,6 @@ void output_stubs( DLLSPEC *spec )
         }
     }
 }
-
-static int cmp_link_name( const void *e1, const void *e2 )
-{
-    const ORDDEF *odp1 = *(const ORDDEF * const *)e1;
-    const ORDDEF *odp2 = *(const ORDDEF * const *)e2;
-
-    return strcmp( odp1->link_name, odp2->link_name );
-}
-
-
-/* output the functions for system calls */
-void output_syscalls( DLLSPEC *spec )
-{
-    int i, count;
-    ORDDEF **syscalls = NULL;
-
-    for (i = count = 0; i < spec->nb_entry_points; i++)
-    {
-        ORDDEF *odp = &spec->entry_points[i];
-        if (!(odp->flags & FLAG_SYSCALL)) continue;
-        if (strcmp( odp->name, odp->link_name )) continue;  /* ignore syscall aliases */
-        if (!syscalls) syscalls = xmalloc( (spec->nb_entry_points - i) * sizeof(*syscalls) );
-        syscalls[count++] = odp;
-    }
-    if (!count) return;
-    count = sort_func_list( syscalls, count, cmp_link_name );
-
-    output( "\n/* system calls */\n\n" );
-
-    for (i = 0; i < count; i++)
-    {
-        ORDDEF *odp = syscalls[i];
-        const char *name = get_link_name(odp);
-        unsigned int id = (spec->syscall_table << 12) + i;
-
-        output_function_header( name, 1 );
-        switch (target.cpu)
-        {
-        case CPU_i386:
-            if (UsePIC)
-            {
-                output( "\tcall %s\n", asm_name("__wine_spec_get_pc_thunk_eax") );
-                output( "1:\tmovl %s-1b(%%eax),%%edx\n", asm_name("__wine_syscall_dispatcher") );
-                output( "\tmovl $%u,%%eax\n", id );
-                needs_get_pc_thunk = 1;
-            }
-            else
-            {
-                output( "\tmovl $%u,%%eax\n", id );
-                output( "\tmovl $%s,%%edx\n", asm_name("__wine_syscall") );
-            }
-            output( "\tcall *%%edx\n" );
-            output( "\tret $%u\n", get_args_size( odp ));
-            break;
-        case CPU_x86_64:
-            output_seh( ".seh_proc %s", asm_name(name) );
-            output_seh( ".seh_endprologue" );
-            /* Chromium depends on syscall thunks having the same form as on
-             * Windows. For 64-bit systems the only viable form we can emulate is
-             * having an int $0x2e fallback. Since actually using an interrupt is
-             * expensive, and since for some reason Chromium doesn't actually
-             * validate that instruction, we can just put a jmp there instead. */
-            output( "\t.byte 0x4c,0x8b,0xd1\n" ); /* movq %rcx,%r10 */
-            output( "\t.byte 0xb8\n" );           /* movl $i,%eax */
-            output( "\t.long %u\n", id );
-            output( "\t.byte 0xf6,0x04,0x25,0x08,0x03,0xfe,0x7f,0x01\n" ); /* testb $1,0x7ffe0308 */
-            output( "\t.byte 0x75,0x03\n" );      /* jne 1f */
-            output( "\t.byte 0x0f,0x05\n" );      /* syscall */
-            output( "\t.byte 0xc3\n" );           /* ret */
-            output( "\tjmp 1f\n" );
-            output( "\t.byte 0xc3\n" );           /* ret */
-            if (is_pe())
-            {
-                output( "1:\t.byte 0xff,0x14,0x25\n" ); /* 1: callq *(0x7ffe1000) */
-                output( "\t.long 0x7ffe1000\n" );
-            }
-            else
-            {
-                output( "\tnop\n" );
-                output( "1:\tcallq *%s(%%rip)\n", asm_name("__wine_syscall_dispatcher") );
-            }
-            output( "\tret\n" );
-            output_seh( ".seh_endproc" );
-            break;
-        case CPU_ARM:
-            output( "\tpush {r0-r3}\n" );
-            output( "\tmovw ip, #%u\n", id );
-            output( "\tmov r3, lr\n" );
-            output( "\tbl %s\n", asm_name("__wine_syscall") );
-            output( "\tbx lr\n" );
-            break;
-        case CPU_ARM64:
-            output_seh( ".seh_proc %s", asm_name(name) );
-            output_seh( ".seh_endprologue" );
-            output( "\tmov x8, #%u\n", id );
-            output( "\tmov x9, x30\n" );
-            output( "\tldr x16, 1f\n" );
-            output( "\tldr x16, [x16]\n" );
-            output( "\tblr x16\n" );
-            output( "\tret\n" );
-            output( "1:\t.quad %s\n", asm_name("__wine_syscall_dispatcher") );
-            output_seh( ".seh_endproc" );
-            break;
-        default:
-            assert(0);
-        }
-        output_function_size( name );
-    }
-
-    switch (target.cpu)
-    {
-    case CPU_i386:
-        if (UsePIC) break;
-        output_function_header( "__wine_syscall", 0 );
-        output( "\tjmp *(%s)\n", asm_name("__wine_syscall_dispatcher") );
-        output_function_size( "__wine_syscall" );
-        break;
-    case CPU_ARM:
-        output_function_header( "__wine_syscall", 0 );
-        if (UsePIC)
-        {
-            output( "\tldr r0, 2f\n");
-            output( "1:\tadd r0, pc\n" );
-        }
-        else
-        {
-            output( "\tmovw r0, :lower16:%s\n", asm_name("__wine_syscall_dispatcher") );
-            output( "\tmovt r0, :upper16:%s\n", asm_name("__wine_syscall_dispatcher") );
-        }
-        output( "\tldr r0, [r0]\n");
-        output( "\tbx r0\n");
-        if (UsePIC) output( "2:\t.long %s-1b-%u\n", asm_name("__wine_syscall_dispatcher"), thumb_mode ? 4 : 8 );
-        output_function_size( "__wine_syscall" );
-        break;
-    default:
-        break;
-    }
-    output( "\t.data\n" );
-    output( "\t.balign %u\n", get_ptr_size() );
-    output( "%s\n", asm_globl("__wine_syscall_dispatcher") );
-    output( "\t%s 0\n", get_asm_ptr_keyword() );    /* dispatcher */
-    output( "\t.long 0xca110001\n" );               /* version */
-    output( "\t.short %u\n", spec->syscall_table ); /* id */
-    output( "\t.short %u\n", count );               /* limit */
-    for (i = 0; i < count; i++) output( "\t.short %u\n", syscalls[i]->hint );
-    for (i = 0; i < count; i++) output( "\t.byte %u\n", get_args_size( syscalls[i] ));
-}
-
 
 /* output the import and delayed import tables of a Win32 module */
 void output_imports( DLLSPEC *spec )
@@ -1561,6 +1418,20 @@ static void assemble_files( const char *prefix )
     }
 }
 
+static const char *get_target_machine(void)
+{
+    static const char *machine_names[] =
+    {
+        [CPU_i386]    = "x86",
+        [CPU_x86_64]  = "x64",
+        [CPU_ARM]     = "arm",
+        [CPU_ARM64]   = "arm64",
+        [CPU_ARM64EC] = "arm64ec",
+    };
+
+    return machine_names[target.cpu];
+}
+
 /* build a library from the current asm files and any additional object files in argv */
 void output_static_lib( const char *output_name, struct strarray files, int create )
 {
@@ -1576,6 +1447,7 @@ void output_static_lib( const char *output_name, struct strarray files, int crea
     {
         args = find_link_tool();
         strarray_add( &args, "/lib" );
+        strarray_add( &args, strmake( "-machine:%s", get_target_machine() ));
         strarray_add( &args, strmake( "-out:%s", output_name ));
     }
     strarray_addall( &args, as_files );
@@ -1627,6 +1499,10 @@ static void build_dlltool_import_lib( const char *lib_name, DLLSPEC *spec, struc
         case CPU_ARM64:
             strarray_add( &args, "-m" );
             strarray_add( &args, "arm64" );
+            break;
+        case CPU_ARM64EC:
+            strarray_add( &args, "-m" );
+            strarray_add( &args, "arm64ec" );
             break;
         default:
             break;
@@ -1734,6 +1610,9 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struc
             output( "\tldp x29, x30, [sp], #80\n" );
             output( "\tbr x16\n" );
             output_seh( ".seh_endproc" );
+            break;
+        case CPU_ARM64EC:
+            assert( 0 );
             break;
         }
         output_function_size( delay_load );
@@ -1877,6 +1756,9 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struc
                     output( "\tadd x16, x16, #%s\n", arm64_pageoff( asm_name( imp_name ) ) );
                     output( "\tb %s\n", asm_name( delay_load ) );
                 }
+                break;
+            case CPU_ARM64EC:
+                assert( 0 );
                 break;
             }
 

@@ -455,7 +455,7 @@ struct syscall_frame
     UINT                  edi;            /* 02c */
     UINT                  esi;            /* 030 */
     UINT                  ebp;            /* 034 */
-    SYSTEM_SERVICE_TABLE *syscall_table;  /* 038 */
+    void                 *syscall_cfa;    /* 038 */
     struct syscall_frame *prev_frame;     /* 03c */
     union                                 /* 040 */
     {
@@ -480,13 +480,13 @@ struct x86_thread_data
     UINT               dr3;           /* 1e8 */
     UINT               dr6;           /* 1ec */
     UINT               dr7;           /* 1f0 */
-    void              *exit_frame;    /* 1f4 exit frame pointer */
+    SYSTEM_SERVICE_TABLE *syscall_table; /* 1f4 syscall table */
     struct syscall_frame *syscall_frame; /* 1f8 frame pointer on syscall entry */
 };
 
 C_ASSERT( sizeof(struct x86_thread_data) <= sizeof(((struct ntdll_thread_data *)0)->cpu_data) );
 C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct x86_thread_data, gs ) == 0x1d8 );
-C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct x86_thread_data, exit_frame ) == 0x1f4 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct x86_thread_data, syscall_table ) == 0x1f4 );
 C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct x86_thread_data, syscall_frame ) == 0x1f8 );
 
 /* flags to control the behavior of the syscall dispatcher */
@@ -566,7 +566,7 @@ struct xcontext
     ULONG64 host_compaction_mask;
 };
 
-extern BOOL xstate_compaction_enabled DECLSPEC_HIDDEN;
+extern BOOL xstate_compaction_enabled;
 
 static inline XSTATE *xstate_from_context( const CONTEXT *context )
 {
@@ -652,7 +652,7 @@ static int solaris_sigaction( int sig, const struct sigaction *new, struct sigac
 
 #endif
 
-extern void clear_alignment_flag(void) DECLSPEC_HIDDEN;
+extern void clear_alignment_flag(void);
 __ASM_GLOBAL_FUNC( clear_alignment_flag,
                    "pushfl\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
@@ -1575,7 +1575,7 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
  *           call_user_mode_callback
  */
 extern NTSTATUS call_user_mode_callback( ULONG id, void *args, ULONG len, void **ret_ptr,
-                                         ULONG *ret_len, void *func, TEB *teb ) DECLSPEC_HIDDEN;
+                                         ULONG *ret_len, void *func, TEB *teb );
 __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "pushl %ebp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
@@ -1590,18 +1590,18 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    __ASM_CFI(".cfi_rel_offset %edi,-12\n\t")
                    "movl 0x20(%ebp),%edx\n\t"  /* teb */
                    "pushl 0(%edx)\n\t"         /* teb->Tib.ExceptionList */
-                   "subl $0x384,%esp\n\t"      /* sizeof(struct syscall_frame) + ebp */
+                   "subl $0x380,%esp\n\t"      /* sizeof(struct syscall_frame) */
                    "andl $~63,%esp\n\t"
-                   "movl %ebp,0x380(%esp)\n\t"
+                   "leal 8(%ebp),%eax\n\t"
+                   "movl %eax,0x38(%esp)\n\t"  /* frame->syscall_cfa */
                    "movl 0x1f8(%edx),%ecx\n\t" /* x86_thread_data()->syscall_frame */
                    "movl (%ecx),%eax\n\t"      /* frame->syscall_flags */
                    "movl %eax,(%esp)\n\t"
-                   "movl 0x38(%ecx),%eax\n\t"  /* frame->syscall_table */
-                   "movl %eax,0x38(%esp)\n\t"
                    "movl %ecx,0x3c(%esp)\n\t"  /* frame->prev_frame */
                    "movl %esp,0x1f8(%edx)\n\t" /* x86_thread_data()->syscall_frame */
                    "movl 0x1c(%ebp),%ecx\n\t"  /* func */
                    "movl 0x0c(%ebp),%edx\n\t"  /* args */
+                   /* switch to user stack */
                    "leal -4(%edx),%esp\n\t"
                    "pushl 0x10(%ebp)\n\t"      /* len */
                    "pushl %edx\n\t"            /* args */
@@ -1615,13 +1615,14 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
  *           user_mode_callback_return
  */
 extern void DECLSPEC_NORETURN user_mode_callback_return( void *ret_ptr, ULONG ret_len,
-                                                         NTSTATUS status, TEB *teb ) DECLSPEC_HIDDEN;
+                                                         NTSTATUS status, TEB *teb );
 __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    "movl 16(%esp),%edx\n"      /* teb */
                    "movl 0x1f8(%edx),%eax\n\t" /* x86_thread_data()->syscall_frame */
                    "movl 0x3c(%eax),%ecx\n\t"  /* frame->prev_frame */
                    "movl %ecx,0x1f8(%edx)\n\t" /* x86_thread_data()->syscall_frame */
-                   "movl 0x380(%eax),%ebp\n\t" /* call_user_mode_callback ebp */
+                   "movl 0x38(%eax),%ebp\n\t"  /* frame->syscall_cfa */
+                   "subl $8,%ebp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
                    __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
                    __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
@@ -1647,6 +1648,27 @@ __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
                    __ASM_CFI(".cfi_same_value %ebp\n\t")
                    "ret" )
+
+
+/***********************************************************************
+ *           user_mode_abort_thread
+ */
+extern void DECLSPEC_NORETURN user_mode_abort_thread( NTSTATUS status, struct syscall_frame *frame );
+__ASM_GLOBAL_FUNC( user_mode_abort_thread,
+                   "movl 8(%esp),%eax\n\t"     /* frame */
+                   "movl 0x38(%eax),%ebp\n\t"  /* frame->syscall_cfa */
+                   "movl 4(%esp),%eax\n\t "    /* status */
+                   "subl $8,%ebp\n\t"
+                   /* switch to kernel stack */
+                   "leal -16(%ebp),%esp\n\t"
+                   __ASM_CFI(".cfi_def_cfa %ebp,8\n\t")
+                   __ASM_CFI(".cfi_offset %eip,-4\n\t")
+                   __ASM_CFI(".cfi_offset %ebp,-8\n\t")
+                   __ASM_CFI(".cfi_offset %ebx,-12\n\t")
+                   __ASM_CFI(".cfi_offset %esi,-16\n\t")
+                   __ASM_CFI(".cfi_offset %edi,-20\n\t")
+                   "movl %eax,(%esp)\n\t"      /* status */
+                   "call " __ASM_NAME("abort_thread") )
 
 
 /***********************************************************************
@@ -1814,13 +1836,13 @@ static BOOL handle_syscall_trap( ucontext_t *sigcontext )
 
     if ((void *)EIP_sig( sigcontext ) == __wine_syscall_dispatcher)
     {
-        extern void __wine_syscall_dispatcher_prolog_end(void) DECLSPEC_HIDDEN;
+        extern void __wine_syscall_dispatcher_prolog_end(void);
 
         EIP_sig( sigcontext ) = (ULONG)__wine_syscall_dispatcher_prolog_end;
     }
     else if ((void *)EIP_sig( sigcontext ) == __wine_unix_call_dispatcher)
     {
-        extern void __wine_unix_call_dispatcher_prolog_end(void) DECLSPEC_HIDDEN;
+        extern void __wine_unix_call_dispatcher_prolog_end(void);
 
         EIP_sig( sigcontext ) = (ULONG)__wine_unix_call_dispatcher_prolog_end;
     }
@@ -2082,7 +2104,8 @@ static void abrt_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 static void quit_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     init_handler( sigcontext );
-    abort_thread(0);
+    if (!is_inside_syscall( sigcontext )) user_mode_abort_thread( 0, x86_thread_data()->syscall_frame );
+    abort_thread( 0 );
 }
 
 
@@ -2464,15 +2487,16 @@ error:
 /***********************************************************************
  *           call_init_thunk
  */
-void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB *teb )
+void call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB *teb,
+                      struct syscall_frame *frame, void *syscall_cfa )
 {
     struct x86_thread_data *thread_data = (struct x86_thread_data *)&teb->GdiTebBatch;
-    struct syscall_frame *frame = thread_data->syscall_frame;
     CONTEXT *ctx, context = { CONTEXT_ALL };
     DWORD *stack;
 
     ldt_set_fs( thread_data->fs, teb );
     thread_data->gs = get_gs();
+    thread_data->syscall_table = KeServiceDescriptorTable;
 
     context.SegCs  = get_cs();
     context.SegDs  = get_ds();
@@ -2508,7 +2532,7 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     frame->eip = (DWORD)pLdrInitializeThunk;
     frame->prev_frame    = NULL;
     frame->syscall_flags = syscall_flags;
-    frame->syscall_table = KeServiceDescriptorTable;
+    frame->syscall_cfa   = syscall_cfa;
     frame->restore_flags |= LOWORD(CONTEXT_INTEGER);
 
     pthread_sigmask( SIG_UNBLOCK, &server_block_set, NULL );
@@ -2531,47 +2555,24 @@ __ASM_GLOBAL_FUNC( signal_start_thread,
                    __ASM_CFI(".cfi_rel_offset %esi,-8\n\t")
                    "pushl %edi\n\t"
                    __ASM_CFI(".cfi_rel_offset %edi,-12\n\t")
-                   /* store exit frame */
-                   "movl 20(%ebp),%ecx\n\t"     /* teb */
-                   "movl %ebp,0x1f4(%ecx)\n\t"  /* x86_thread_data()->exit_frame */
+                   "leal 8(%ebp),%edx\n\t"      /* syscall_cfa */
                    /* set syscall frame */
+                   "movl 20(%ebp),%ecx\n\t"     /* teb */
                    "movl 0x1f8(%ecx),%eax\n\t"  /* x86_thread_data()->syscall_frame */
                    "orl %eax,%eax\n\t"
                    "jnz 1f\n\t"
                    "leal -0x380(%esp),%eax\n\t" /* sizeof(struct syscall_frame) */
                    "andl $~63,%eax\n\t"
                    "movl %eax,0x1f8(%ecx)\n"    /* x86_thread_data()->syscall_frame */
-                   "1:\tmovl %eax,%esp\n\t"
+                   /* switch to kernel stack */
+                   "1:\tleal -8(%eax),%esp\n\t"
+                   "pushl %edx\n\t"             /* syscall_cfa */
+                   "pushl %eax\n\t"             /* syscall_frame */
                    "pushl %ecx\n\t"             /* teb */
                    "pushl 16(%ebp)\n\t"         /* suspend */
                    "pushl 12(%ebp)\n\t"         /* arg */
                    "pushl 8(%ebp)\n\t"          /* entry */
                    "call " __ASM_NAME("call_init_thunk") )
-
-
-/***********************************************************************
- *           signal_exit_thread
- */
-__ASM_GLOBAL_FUNC( signal_exit_thread,
-                   "movl 8(%esp),%ecx\n\t"
-                   "movl 12(%esp),%esi\n\t"
-                   "xorl %edx,%edx\n\t"
-                   /* fetch exit frame */
-                   "xchgl %edx,0x1f4(%esi)\n\t"    /* x86_thread_data()->exit_frame */
-                   "testl %edx,%edx\n\t"
-                   "jnz 1f\n\t"
-                   "jmp *%ecx\n\t"
-                   /* switch to exit frame stack */
-                   "1:\tmovl 4(%esp),%eax\n\t"
-                   "movl %edx,%ebp\n\t"
-                   __ASM_CFI(".cfi_def_cfa %ebp,4\n\t")
-                   __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
-                   __ASM_CFI(".cfi_rel_offset %ebx,-4\n\t")
-                   __ASM_CFI(".cfi_rel_offset %esi,-8\n\t")
-                   __ASM_CFI(".cfi_rel_offset %edi,-12\n\t")
-                   "leal -20(%ebp),%esp\n\t"
-                   "pushl %eax\n\t"
-                   "call *%ecx" )
 
 
 /***********************************************************************
@@ -2591,7 +2592,6 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    __ASM_NAME("__wine_syscall_dispatcher_prolog_end") ":\n\t"
                    "movl %esp,0x0c(%ecx)\n\t"      /* frame->esp */
                    __ASM_CFI_CFA_IS_AT1(ecx, 0x0c)
-                   __ASM_CFI_REG_IS_AT1(esp, ecx, 0x0c)
                    "movw %cs,0x10(%ecx)\n\t"
                    "movw %ss,0x12(%ecx)\n\t"
                    "movw %ds,0x14(%ecx)\n\t"
@@ -2609,7 +2609,6 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    __ASM_CFI_REG_IS_AT1(ebp, ecx, 0x34)
                    "leal 0x34(%ecx),%ebp\n\t"
                    __ASM_CFI_CFA_IS_AT1(ebp, 0x58)
-                   __ASM_CFI_REG_IS_AT1(esp, ebp, 0x58)
                    __ASM_CFI_REG_IS_AT1(eip, ebp, 0x54)
                    __ASM_CFI_REG_IS_AT1(ebx, ebp, 0x6c)
                    __ASM_CFI_REG_IS_AT1(edi, ebp, 0x78)
@@ -2619,7 +2618,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movl %eax,%ebx\n\t"
                    "shrl $8,%ebx\n\t"
                    "andl $0x30,%ebx\n\t"           /* syscall table number */
-                   "addl 0x38(%ecx),%ebx\n\t"      /* frame->syscall_table */
+                   "addl %fs:0x1f4,%ebx\n\t"       /* x86_thread_data()->syscall_table */
                    "testl $3,(%ecx)\n\t"           /* frame->syscall_flags & (SYSCALL_HAVE_XSAVE | SYSCALL_HAVE_XSAVEC) */
                    "jz 2f\n\t"
                    "movl $7,%eax\n\t"
@@ -2654,7 +2653,15 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "jmp 4f\n"
                    "3:\tfnsave 0x40(%ecx)\n\t"
                    "fwait\n"
+                   /* switch to kernel stack */
                    "4:\tmovl %ecx,%esp\n\t"
+                   /* we're now on the kernel stack, stitch unwind info with previous frame */
+                   __ASM_CFI_CFA_IS_AT1(ebp, 0x04) /* frame->syscall_cfa */
+                   __ASM_CFI(".cfi_offset %eip,-4\n\t")
+                   __ASM_CFI(".cfi_offset %ebp,-8\n\t")
+                   __ASM_CFI(".cfi_offset %ebx,-12\n\t")
+                   __ASM_CFI(".cfi_offset %esi,-16\n\t")
+                   __ASM_CFI(".cfi_offset %edi,-20\n\t")
                    "movl 0x1c(%esp),%edx\n\t"      /* frame->eax */
                    "andl $0xfff,%edx\n\t"          /* syscall number */
                    "cmpl 8(%ebx),%edx\n\t"         /* table->ServiceLimit */
@@ -2672,13 +2679,6 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "leal -0x34(%ebp),%esp\n"
 
                    __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") ":\t"
-                   __ASM_CFI_CFA_IS_AT1(esp, 0x0c)
-                   __ASM_CFI_REG_IS_AT1(esp, esp, 0x0c)
-                   __ASM_CFI_REG_IS_AT1(eip, esp, 0x08)
-                   __ASM_CFI_REG_IS_AT1(ebx, esp, 0x20)
-                   __ASM_CFI_REG_IS_AT1(edi, esp, 0x2c)
-                   __ASM_CFI_REG_IS_AT1(esi, esp, 0x30)
-                   __ASM_CFI_REG_IS_AT1(ebp, esp, 0x34)
                    "movl 0(%esp),%ecx\n\t"         /* frame->syscall_flags + (frame->restore_flags << 16) */
                    "testl $0x68 << 16,%ecx\n\t"    /* CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS | CONTEXT_XSAVE */
                    "jz 3f\n\t"
@@ -2697,38 +2697,46 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "2:\tfrstor 0x40(%esp)\n\t"
                    "fwait\n"
                    "3:\tmovl 0x2c(%esp),%edi\n\t"
-                   __ASM_CFI(".cfi_remember_state\n\t")
-                   __ASM_CFI(".cfi_same_value %edi\n\t")
                    "movl 0x30(%esp),%esi\n\t"
-                   __ASM_CFI(".cfi_same_value %esi\n\t")
                    "movl 0x34(%esp),%ebp\n\t"
-                   __ASM_CFI(".cfi_same_value %ebp\n\t")
+                   /* push ebp-based kernel stack cfi */
+                   __ASM_CFI("\t.cfi_remember_state\n")
+                   __ASM_CFI_CFA_IS_AT2(esp, 0xb8, 0x00) /* frame->syscall_cfa */
                    "testl $0x7 << 16,%ecx\n\t"     /* CONTEXT_CONTROL | CONTEXT_SEGMENTS | CONTEXT_INTEGER */
                    "jnz 1f\n\t"
                    "movl 0x20(%esp),%ebx\n\t"
-                   __ASM_CFI(".cfi_remember_state\n\t")
-                   __ASM_CFI(".cfi_same_value %ebx\n\t")
                    "movl 0x08(%esp),%ecx\n\t"      /* frame->eip */
-                   __ASM_CFI(".cfi_register %eip, %ecx\n\t")
+                   /* push esp-based kernel stack cfi */
+                   __ASM_CFI("\t.cfi_remember_state\n")
+                   /* switch to user stack */
                    "movl 0x0c(%esp),%esp\n\t"      /* frame->esp */
-                   __ASM_CFI(".cfi_same_value %esp\n\t")
+                   __ASM_CFI(".cfi_def_cfa %esp,0\n\t")
+                   __ASM_CFI(".cfi_register %eip, %ecx\n\t")
+                   __ASM_CFI(".cfi_same_value %ebp\n\t")
+                   __ASM_CFI(".cfi_same_value %ebx\n\t")
+                   __ASM_CFI(".cfi_same_value %esi\n\t")
+                   __ASM_CFI(".cfi_same_value %edi\n\t")
                    "pushl %ecx\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
                    "ret\n"
+                   /* pop esp-based kernel stack cfi */
                    __ASM_CFI("\t.cfi_restore_state\n")
+
                    "1:\ttestl $0x2 << 16,%ecx\n\t" /* CONTEXT_INTEGER */
                    "jz 1f\n\t"
                    "movl 0x1c(%esp),%eax\n\t"
                    "movl 0x24(%esp),%ecx\n\t"
                    "movl 0x28(%esp),%edx\n"
                    "1:\tmovl 0x0c(%esp),%ebx\n\t"  /* frame->esp */
-                   __ASM_CFI(".cfi_register %esp, %ebx\n\t")
                    "movw 0x12(%esp),%ss\n\t"
+                   /* switch to user stack */
                    "xchgl %ebx,%esp\n\t"
-                   __ASM_CFI(".cfi_def_cfa %esp, 0\n\t")
-                   __ASM_CFI(".cfi_same_value %esp\n\t")
-                   __ASM_CFI_REG_IS_AT1(eip, ebx, 0x08)
-                   __ASM_CFI_REG_IS_AT1(ebx, ebx, 0x20)
+                   __ASM_CFI(".cfi_def_cfa %esp,0\n\t")
+                   __ASM_CFI(".cfi_register %eip, %ecx\n\t")
+                   __ASM_CFI(".cfi_same_value %ebp\n\t")
+                   __ASM_CFI(".cfi_same_value %ebx\n\t")
+                   __ASM_CFI(".cfi_same_value %esi\n\t")
+                   __ASM_CFI(".cfi_same_value %edi\n\t")
                    "pushl 0x04(%ebx)\n\t"          /* frame->eflags */
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
                    "pushl 0x10(%ebx)\n\t"          /* frame->cs */
@@ -2746,23 +2754,16 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "popl %ds\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")
                    "iret\n"
+                   /* pop ebp-based kernel stack cfi */
                    __ASM_CFI("\t.cfi_restore_state\n")
+
                    "6:\tmovl $0xc000000d,%eax\n\t" /* STATUS_INVALID_PARAMETER */
                    "jmp " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") "\n\t"
 
                    ".globl " __ASM_NAME("__wine_syscall_dispatcher_return") "\n"
                    __ASM_NAME("__wine_syscall_dispatcher_return") ":\n\t"
-                   __ASM_CFI(".cfi_remember_state\n\t")
-                   __ASM_CFI(".cfi_def_cfa %esp, 4\n\t")
-                   __ASM_CFI(".cfi_restore %esp\n\t")
-                   __ASM_CFI(".cfi_restore %eip\n\t")
-                   __ASM_CFI(".cfi_restore %ebx\n\t")
-                   __ASM_CFI(".cfi_restore %edi\n\t")
-                   __ASM_CFI(".cfi_restore %esi\n\t")
-                   __ASM_CFI(".cfi_restore %ebp\n\t")
                    "movl 8(%esp),%eax\n\t"
                    "movl 4(%esp),%esp\n\t"
-                   __ASM_CFI(".cfi_restore_state\n\t")
                    "jmp " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") )
 
 
@@ -2780,7 +2781,6 @@ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
                    "leal 0x10(%esp),%edx\n\t"
                    "movl %edx,0x0c(%ecx)\n\t"  /* frame->esp */
                    __ASM_CFI_CFA_IS_AT1(ecx, 0x0c)
-                   __ASM_CFI_REG_IS_AT1(esp, ecx, 0x0c)
                    "movw %cs,0x10(%ecx)\n\t"
                    "movw %ss,0x12(%ecx)\n\t"
                    "movw %ds,0x14(%ecx)\n\t"
@@ -2799,22 +2799,28 @@ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
                    "movl %edx,-16(%ecx)\n\t"
                    "movl (%esp),%eax\n\t"      /* handle */
                    "movl 8(%esp),%edx\n\t"     /* code */
+                   /* switch to kernel stack */
                    "leal -16(%ecx),%esp\n\t"
+                   /* we're now on the kernel stack, stitch unwind info with previous frame */
+                   __ASM_CFI_CFA_IS_AT2(esp, 0xc8, 0x00) /* frame->syscall_cfa */
+                   __ASM_CFI(".cfi_offset %eip,-4\n\t")
+                   __ASM_CFI(".cfi_offset %ebp,-8\n\t")
+                   __ASM_CFI(".cfi_offset %ebx,-12\n\t")
+                   __ASM_CFI(".cfi_offset %esi,-16\n\t")
+                   __ASM_CFI(".cfi_offset %edi,-20\n\t")
                    "call *(%eax,%edx,4)\n\t"
                    "leal 16(%esp),%esp\n\t"
-                   __ASM_CFI_CFA_IS_AT1(esp, 0x0c)
-                   __ASM_CFI_REG_IS_AT1(esp, esp, 0x0c)
-                   __ASM_CFI_REG_IS_AT1(eip, esp, 0x08)
-                   __ASM_CFI_REG_IS_AT1(ebx, esp, 0x20)
-                   __ASM_CFI_REG_IS_AT1(edi, esp, 0x2c)
-                   __ASM_CFI_REG_IS_AT1(esi, esp, 0x30)
-                   __ASM_CFI_REG_IS_AT1(ebp, esp, 0x34)
                    "testw $0xffff,2(%esp)\n\t" /* frame->restore_flags */
                    "jnz " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") "\n\t"
                    "movl 0x08(%esp),%ecx\n\t"  /* frame->eip */
-                   __ASM_CFI(".cfi_register %eip, %ecx\n\t")
+                   /* switch to user stack */
                    "movl 0x0c(%esp),%esp\n\t"  /* frame->esp */
-                   __ASM_CFI(".cfi_same_value %esp\n\t")
+                   __ASM_CFI(".cfi_def_cfa %esp,0\n\t")
+                   __ASM_CFI(".cfi_register %eip, %ecx\n\t")
+                   __ASM_CFI(".cfi_undefined %ebp\n\t")
+                   __ASM_CFI(".cfi_undefined %ebx\n\t")
+                   __ASM_CFI(".cfi_undefined %esi\n\t")
+                   __ASM_CFI(".cfi_undefined %edi\n\t")
                    "pushl %ecx\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
                    "ret" )

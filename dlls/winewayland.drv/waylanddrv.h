@@ -27,6 +27,8 @@
 
 #include <pthread.h>
 #include <wayland-client.h>
+#include <xkbcommon/xkbcommon.h>
+#include "viewporter-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
@@ -65,10 +67,19 @@ enum wayland_surface_config_state
     WAYLAND_SURFACE_CONFIG_STATE_FULLSCREEN = (1 << 3)
 };
 
+struct wayland_keyboard
+{
+    struct wl_keyboard *wl_keyboard;
+    struct xkb_context *xkb_context;
+    HWND focused_hwnd;
+    pthread_mutex_t mutex;
+};
+
 struct wayland_cursor
 {
     struct wayland_shm_buffer *shm_buffer;
     struct wl_surface *wl_surface;
+    struct wp_viewport *wp_viewport;
     int hotspot_x, hotspot_y;
 };
 
@@ -99,7 +110,10 @@ struct wayland
     struct wl_compositor *wl_compositor;
     struct xdg_wm_base *xdg_wm_base;
     struct wl_shm *wl_shm;
+    struct wp_viewporter *wp_viewporter;
+    struct wl_subcompositor *wl_subcompositor;
     struct wayland_seat seat;
+    struct wayland_keyboard keyboard;
     struct wayland_pointer pointer;
     struct wl_list output_list;
     /* Protects the output_list and the wayland_output.current states. */
@@ -145,7 +159,18 @@ struct wayland_surface_config
 struct wayland_window_config
 {
     RECT rect;
+    RECT client_rect;
     enum wayland_surface_config_state state;
+    /* The scale (i.e., normalized dpi) the window is rendering at. */
+    double scale;
+};
+
+struct wayland_client_surface
+{
+    LONG ref;
+    struct wl_surface *wl_surface;
+    struct wl_subsurface *wl_subsurface;
+    struct wp_viewport *wp_viewport;
 };
 
 struct wayland_surface
@@ -154,11 +179,13 @@ struct wayland_surface
     struct wl_surface *wl_surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
+    struct wp_viewport *wp_viewport;
     pthread_mutex_t mutex;
     struct wayland_surface_config pending, requested, processing, current;
     struct wayland_shm_buffer *latest_window_buffer;
     BOOL resizing;
     struct wayland_window_config window;
+    struct wayland_client_surface *client;
 };
 
 struct wayland_shm_buffer
@@ -204,6 +231,14 @@ BOOL wayland_surface_reconfigure(struct wayland_surface *surface) DECLSPEC_HIDDE
 BOOL wayland_surface_config_is_compatible(struct wayland_surface_config *conf,
                                           int width, int height,
                                           enum wayland_surface_config_state state) DECLSPEC_HIDDEN;
+void wayland_surface_coords_from_window(struct wayland_surface *surface,
+                                        int window_x, int window_y,
+                                        int *surface_x, int *surface_y) DECLSPEC_HIDDEN;
+void wayland_surface_coords_to_window(struct wayland_surface *surface,
+                                      double surface_x, double surface_y,
+                                      int *window_x, int *window_y) DECLSPEC_HIDDEN;
+struct wayland_client_surface *wayland_surface_get_client(struct wayland_surface *surface) DECLSPEC_HIDDEN;
+BOOL wayland_client_surface_release(struct wayland_client_surface *client) DECLSPEC_HIDDEN;
 
 /**********************************************************************
  *          Wayland SHM buffer
@@ -222,6 +257,13 @@ struct window_surface *wayland_window_surface_create(HWND hwnd, const RECT *rect
 void wayland_window_surface_update_wayland_surface(struct window_surface *surface,
                                                    struct wayland_surface *wayland_surface) DECLSPEC_HIDDEN;
 void wayland_window_flush(HWND hwnd) DECLSPEC_HIDDEN;
+
+/**********************************************************************
+ *          Wayland Keyboard
+ */
+
+void wayland_keyboard_init(struct wl_keyboard *wl_keyboard) DECLSPEC_HIDDEN;
+void wayland_keyboard_deinit(void) DECLSPEC_HIDDEN;
 
 /**********************************************************************
  *          Wayland pointer
@@ -268,5 +310,6 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags,
 BOOL WAYLAND_WindowPosChanging(HWND hwnd, HWND insert_after, UINT swp_flags,
                                const RECT *window_rect, const RECT *client_rect,
                                RECT *visible_rect, struct window_surface **surface) DECLSPEC_HIDDEN;
+const struct vulkan_funcs *WAYLAND_wine_get_vulkan_driver(UINT version) DECLSPEC_HIDDEN;
 
 #endif /* __WINE_WAYLANDDRV_H */

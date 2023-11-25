@@ -95,6 +95,7 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_SPV_OUT_OF_MEMORY                = 2005,
     VKD3D_SHADER_ERROR_SPV_INVALID_TYPE                 = 2006,
     VKD3D_SHADER_ERROR_SPV_INVALID_HANDLER              = 2007,
+    VKD3D_SHADER_ERROR_SPV_NOT_IMPLEMENTED              = 2008,
 
     VKD3D_SHADER_WARNING_SPV_INVALID_SWIZZLE            = 2300,
 
@@ -213,6 +214,8 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_VSIR_INVALID_DCL_TEMPS           = 9014,
     VKD3D_SHADER_ERROR_VSIR_INVALID_INDEX               = 9015,
     VKD3D_SHADER_ERROR_VSIR_INVALID_INSTRUCTION_NESTING = 9016,
+
+    VKD3D_SHADER_WARNING_VSIR_DYNAMIC_DESCRIPTOR_ARRAY  = 9300,
 };
 
 enum vkd3d_shader_opcode
@@ -799,16 +802,20 @@ struct vkd3d_shader_immediate_constant_buffer
 
 struct vkd3d_shader_indexable_temp
 {
-    struct list entry;
     unsigned int register_idx;
     unsigned int register_size;
+    unsigned int alignment;
+    enum vkd3d_data_type data_type;
     unsigned int component_count;
+    const struct vkd3d_shader_immediate_constant_buffer *initialiser;
 };
 
 struct vkd3d_shader_register_index
 {
     const struct vkd3d_shader_src_param *rel_addr;
     unsigned int offset;
+    /* address is known to fall within the object (for optimisation) */
+    bool is_in_bounds;
 };
 
 struct vkd3d_shader_register
@@ -820,6 +827,8 @@ struct vkd3d_shader_register
     struct vkd3d_shader_register_index idx[3];
     unsigned int idx_count;
     enum vsir_dimension dimension;
+    /* known address alignment for optimisation, or zero */
+    unsigned int alignment;
     union
     {
         DWORD immconst_uint[VKD3D_VEC4_SIZE];
@@ -832,6 +841,21 @@ struct vkd3d_shader_register
 
 void vsir_register_init(struct vkd3d_shader_register *reg, enum vkd3d_shader_register_type reg_type,
         enum vkd3d_data_type data_type, unsigned int idx_count);
+
+static inline bool vsir_register_is_descriptor(const struct vkd3d_shader_register *reg)
+{
+    switch (reg->type)
+    {
+        case VKD3DSPR_SAMPLER:
+        case VKD3DSPR_RESOURCE:
+        case VKD3DSPR_CONSTBUFFER:
+        case VKD3DSPR_UAV:
+            return true;
+
+        default:
+            return false;
+    }
+}
 
 struct vkd3d_shader_dst_param
 {
@@ -1188,7 +1212,7 @@ struct vkd3d_shader_instruction_array
 
 bool shader_instruction_array_init(struct vkd3d_shader_instruction_array *instructions, unsigned int reserve);
 bool shader_instruction_array_reserve(struct vkd3d_shader_instruction_array *instructions, unsigned int reserve);
-unsigned int shader_instruction_array_add_icb(struct vkd3d_shader_instruction_array *instructions,
+bool shader_instruction_array_add_icb(struct vkd3d_shader_instruction_array *instructions,
         struct vkd3d_shader_immediate_constant_buffer *icb);
 bool shader_instruction_array_clone_instruction(struct vkd3d_shader_instruction_array *instructions,
         unsigned int dst, unsigned int src);

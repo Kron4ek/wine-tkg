@@ -35,7 +35,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(dbghelp);
 
 #define NOTE_GNU_BUILD_ID  3
 
-const WCHAR S_ElfW[] = L"<elf>";
 const WCHAR S_WineLoaderW[] = L"<wine-loader>";
 static const WCHAR * const ext[] = {L".acm", L".dll", L".drv", L".exe", L".ocx", L".vxd", NULL};
 
@@ -52,6 +51,20 @@ static int match_ext(const WCHAR* ptr, size_t len)
         return l;
     }
     return 0;
+}
+
+/* FIXME: implemented from checking on modulename (ie foo.dll.so)
+ * and Wine loader, but fails to identify unixlib.
+ * Would require a stronger tagging of ELF modules.
+ */
+BOOL module_is_wine_host(const WCHAR* module_name, const WCHAR* ext)
+{
+    size_t len, extlen;
+    if (!wcscmp(module_name, S_WineLoaderW)) return TRUE;
+    len = wcslen(module_name);
+    extlen = wcslen(ext);
+    return len > extlen && !wcsicmp(&module_name[len - extlen], ext) &&
+        match_ext(module_name, len - extlen);
 }
 
 static const WCHAR* get_filename(const WCHAR* name, const WCHAR* endptr)
@@ -101,7 +114,7 @@ static BOOL is_wine_loader(const WCHAR *module)
 static void module_fill_module(const WCHAR* in, WCHAR* out, size_t size)
 {
     const WCHAR *ptr, *endptr;
-    size_t      len, l;
+    size_t      len;
 
     endptr = in + lstrlenW(in);
     endptr -= match_ext(in, endptr - in);
@@ -111,12 +124,6 @@ static void module_fill_module(const WCHAR* in, WCHAR* out, size_t size)
     out[len] = '\0';
     if (is_wine_loader(out))
         lstrcpynW(out, S_WineLoaderW, size);
-    else
-    {
-        if (len > 3 && !wcsicmp(&out[len - 3], L".so") &&
-            (l = match_ext(out, len - 3)))
-            lstrcpyW(&out[len - l - 3], L"<elf>");
-    }
     while ((*out = towlower(*out))) out++;
 }
 
@@ -162,13 +169,13 @@ WCHAR *get_wine_loader_name(struct process *pcs)
     return altname;
 }
 
-static const char*      get_module_type(enum module_type type, BOOL virtual)
+static const char*      get_module_type(struct module* module)
 {
-    switch (type)
+    switch (module->type)
     {
-    case DMT_ELF: return virtual ? "Virtual ELF" : "ELF";
-    case DMT_PE: return virtual ? "Virtual PE" : "PE";
-    case DMT_MACHO: return virtual ? "Virtual Mach-O" : "Mach-O";
+    case DMT_ELF: return "ELF";
+    case DMT_MACHO: return "Mach-O";
+    case DMT_PE: return module->is_wine_builtin ? "PE (builtin)" : "PE";
     default: return "---";
     }
 }
@@ -177,7 +184,7 @@ static const char*      get_module_type(enum module_type type, BOOL virtual)
  * Creates and links a new module to a process
  */
 struct module* module_new(struct process* pcs, const WCHAR* name,
-                          enum module_type type, BOOL virtual,
+                          enum dhext_module_type type, BOOL builtin, BOOL virtual,
                           DWORD64 mod_addr, DWORD64 size,
                           ULONG_PTR stamp, ULONG_PTR checksum, WORD machine)
 {
@@ -193,8 +200,8 @@ struct module* module_new(struct process* pcs, const WCHAR* name,
     module->next = NULL;
     *pmodule = module;
 
-    TRACE("=> %s %I64x-%I64x %s\n",
-          get_module_type(type, virtual), mod_addr, mod_addr + size, debugstr_w(name));
+    TRACE("=> %s%s%s %I64x-%I64x %s\n", virtual ? "virtual " : "", builtin ? "built-in " : "",
+          get_module_type(module), mod_addr, mod_addr + size, debugstr_w(name));
 
     pool_init(&module->pool, 65536);
 
@@ -228,7 +235,10 @@ struct module* module_new(struct process* pcs, const WCHAR* name,
 
     module->reloc_delta       = 0;
     module->type              = type;
-    module->is_virtual        = virtual;
+    module->is_virtual        = !!virtual;
+    module->is_wine_builtin   = !!builtin;
+    module->has_file_image    = TRUE;
+
     for (i = 0; i < DFI_LAST; i++) module->format_info[i] = NULL;
     module->sortlist_valid    = FALSE;
     module->sorttab_size      = 0;
@@ -238,6 +248,7 @@ struct module* module_new(struct process* pcs, const WCHAR* name,
     module->cpu               = cpu_find(machine);
     if (!module->cpu)
         module->cpu = dbghelp_current_cpu;
+    module->debug_format_bitmask = 0;
 
     vector_init(&module->vsymt, sizeof(struct symt*), 128);
     vector_init(&module->vcustom_symt, sizeof(struct symt*), 16);
@@ -940,7 +951,7 @@ DWORD64 WINAPI  SymLoadModuleExW(HANDLE hProcess, HANDLE hFile, PCWSTR wImageNam
     if (Flags & SLMFLAG_VIRTUAL)
     {
         if (!wImageName) return 0;
-        module = module_new(pcs, wImageName, DMT_PE, TRUE, BaseOfDll, SizeOfDll, 0, 0, IMAGE_FILE_MACHINE_UNKNOWN);
+        module = module_new(pcs, wImageName, DMT_PE, FALSE, TRUE, BaseOfDll, SizeOfDll, 0, 0, IMAGE_FILE_MACHINE_UNKNOWN);
         if (!module) return 0;
         module->module.SymType = SymVirtual;
     }
@@ -1653,3 +1664,38 @@ const struct loader_ops empty_loader_ops =
     empty_enum_modules,
     native_fetch_file_info,
 };
+
+BOOL WINAPI wine_get_module_information(HANDLE proc, DWORD64 base, struct dhext_module_information* wmi, unsigned len)
+{
+    struct process*     pcs;
+    struct module*      module;
+    struct dhext_module_information dhmi;
+
+    /* could be interpreted as a WinDbg extension */
+    if (!dbghelp_opt_extension_api)
+    {
+        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+        return FALSE;
+    }
+
+    TRACE("(%p %I64x %p %u\n", proc, base, wmi, len);
+
+    if (!(pcs = process_find_by_handle(proc))) return FALSE;
+    if (len > sizeof(*wmi)) return FALSE;
+
+    module = module_find_by_addr(pcs, base);
+    if (!module) return FALSE;
+
+    dhmi.type = module->type;
+    dhmi.is_virtual = module->is_virtual;
+    dhmi.is_wine_builtin = module->is_wine_builtin;
+    dhmi.has_file_image = module->has_file_image;
+    dhmi.debug_format_bitmask = module->debug_format_bitmask;
+    if ((module = module_get_container(pcs, module)))
+    {
+        dhmi.debug_format_bitmask |= module->debug_format_bitmask;
+    }
+    memcpy(wmi, &dhmi, len);
+
+    return TRUE;
+}

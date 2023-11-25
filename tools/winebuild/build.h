@@ -151,7 +151,6 @@ typedef struct
     int              subsystem;          /* subsystem id */
     int              subsystem_major;    /* subsystem version major number */
     int              subsystem_minor;    /* subsystem version minor number */
-    int              syscall_table;      /* syscall table id */
     int              unicode_app;        /* default to unicode entry point */
     ORDDEF          *entry_points;       /* dll entry points */
     ORDDEF         **names;              /* array of entry point names (points into entry_points) */
@@ -192,7 +191,7 @@ static inline int is_pe(void)
 
 #define FLAG_CPU(cpu)  (0x10000 << (cpu))
 #define FLAG_CPU_MASK  (FLAG_CPU_WIN32 | FLAG_CPU_WIN64)
-#define FLAG_CPU_WIN64 (FLAG_CPU(CPU_x86_64) | FLAG_CPU(CPU_ARM64))
+#define FLAG_CPU_WIN64 (FLAG_CPU(CPU_x86_64) | FLAG_CPU(CPU_ARM64) | FLAG_CPU(CPU_ARM64EC))
 #define FLAG_CPU_WIN32 (FLAG_CPU(CPU_i386) | FLAG_CPU(CPU_ARM))
 
 #define MAX_ORDINALS  65535
@@ -287,6 +286,7 @@ extern int sort_func_list( ORDDEF **list, int count, int (*compare)(const void *
 extern unsigned int get_page_size(void);
 extern unsigned int get_args_size( const ORDDEF *odp );
 extern const char *asm_name( const char *func );
+extern const char *arm64_name( const char *func );
 extern const char *asm_globl( const char *func );
 extern const char *get_asm_ptr_keyword(void);
 extern const char *get_asm_string_keyword(void);
@@ -312,7 +312,6 @@ extern int has_delay_imports(void);
 extern void output_get_pc_thunk(void);
 extern void output_module( DLLSPEC *spec );
 extern void output_stubs( DLLSPEC *spec );
-extern void output_syscalls( DLLSPEC *spec );
 extern void output_imports( DLLSPEC *spec );
 extern void output_import_lib( DLLSPEC *spec, struct strarray files );
 extern void output_static_lib( const char *output_name, struct strarray files, int create );

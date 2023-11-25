@@ -3333,17 +3333,23 @@ static HRESULT WINAPI fnIMLangFontLink2_GetStrCodePages( IMLangFontLink2* iface,
 
     for (i = 0; i < src_len; i++)
     {
-        DWORD cp;
+        DWORD cp, next_cp = 0;
         HRESULT ret;
 
         ret = IMLangFontLink2_GetCharCodePages(iface, src[i], &cp);
+        if (i + 1 < src_len)
+            ret = IMLangFontLink2_GetCharCodePages(iface, src[i + 1], &next_cp);
         if (ret != S_OK) return E_FAIL;
 
         if (!cps) cps = cp;
-        else cps &= cp;
+        else if ((cps & cp) != 0) cps &= cp;
+        else
+        {
+            i--;
+            break;
+        }
 
-        /* FIXME: not tested */
-        if (priority_cp & cps) break;
+        if ((priority_cp & cps) && !(priority_cp & next_cp)) break;
     }
 
     if (codepages) *codepages = cps;
