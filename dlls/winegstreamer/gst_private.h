@@ -109,6 +109,8 @@ bool wg_transform_set_output_format(wg_transform_t transform, struct wg_format *
 bool wg_transform_get_status(wg_transform_t transform, bool *accepts_input);
 HRESULT wg_transform_drain(wg_transform_t transform);
 HRESULT wg_transform_flush(wg_transform_t transform);
+void wg_transform_notify_qos(wg_transform_t transform,
+        bool underflow, double proportion, int64_t diff, uint64_t timestamp);
 
 HRESULT wg_muxer_create(const char *format, wg_muxer_t *muxer);
 void wg_muxer_destroy(wg_muxer_t muxer);
@@ -116,6 +118,7 @@ HRESULT wg_muxer_add_stream(wg_muxer_t muxer, UINT32 stream_id, const struct wg_
 HRESULT wg_muxer_start(wg_muxer_t muxer);
 HRESULT wg_muxer_push_sample(wg_muxer_t muxer, struct wg_sample *sample, UINT32 stream_id);
 HRESULT wg_muxer_read_data(wg_muxer_t muxer, void *buffer, UINT32 *size, UINT64 *offset);
+HRESULT wg_muxer_finalize(wg_muxer_t muxer);
 
 unsigned int wg_format_get_bytes_for_uncompressed(wg_video_format format, unsigned int width, unsigned int height);
 unsigned int wg_format_get_max_size(const struct wg_format *format);

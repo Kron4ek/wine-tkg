@@ -400,6 +400,10 @@ unsigned int wg_format_get_max_size(const struct wg_format *format)
             return wg_format_get_max_size_video_raw(WG_VIDEO_FORMAT_YV12,
                     format->u.video_mpeg1.width, format->u.video_mpeg1.height);
 
+        case WG_MAJOR_TYPE_VIDEO_WMV:
+            return wg_format_get_max_size_video_raw(WG_VIDEO_FORMAT_YV12,
+                    format->u.video_wmv.width, format->u.video_wmv.height);
+
         case WG_MAJOR_TYPE_AUDIO:
         {
             unsigned int rate = format->u.audio.rate, channels = format->u.audio.channels;
@@ -454,7 +458,6 @@ unsigned int wg_format_get_max_size(const struct wg_format *format)
 
         case WG_MAJOR_TYPE_AUDIO_MPEG4:
         case WG_MAJOR_TYPE_VIDEO_H264:
-        case WG_MAJOR_TYPE_VIDEO_WMV:
         case WG_MAJOR_TYPE_VIDEO_INDEO:
             FIXME("Format %u not implemented!\n", format->major_type);
             return 0;
@@ -591,7 +594,7 @@ static bool amt_from_wg_format_video(AM_MEDIA_TYPE *mt, const struct wg_format *
 
 static bool amt_from_wg_format_video_cinepak(AM_MEDIA_TYPE *mt, const struct wg_format *format)
 {
-    VIDEOINFO *video_format;
+    VIDEOINFOHEADER *video_format;
     uint32_t frame_time;
 
     if (!(video_format = CoTaskMemAlloc(sizeof(*video_format))))
@@ -602,7 +605,7 @@ static bool amt_from_wg_format_video_cinepak(AM_MEDIA_TYPE *mt, const struct wg_
     mt->bTemporalCompression = TRUE;
     mt->lSampleSize = 1;
     mt->formattype = FORMAT_VideoInfo;
-    mt->cbFormat = sizeof(VIDEOINFOHEADER);
+    mt->cbFormat = sizeof(*video_format);
     mt->pbFormat = (BYTE *)video_format;
 
     memset(video_format, 0, sizeof(*video_format));
@@ -621,12 +624,9 @@ static bool amt_from_wg_format_video_cinepak(AM_MEDIA_TYPE *mt, const struct wg_
 
 static bool amt_from_wg_format_video_wmv(AM_MEDIA_TYPE *mt, const struct wg_format *format)
 {
-    VIDEOINFO *video_format;
+    VIDEOINFOHEADER *video_format;
     uint32_t frame_time;
     const GUID *subtype;
-
-    if (!(video_format = CoTaskMemAlloc(sizeof(*video_format))))
-        return false;
 
     switch (format->u.video_wmv.format)
     {
@@ -650,13 +650,16 @@ static bool amt_from_wg_format_video_wmv(AM_MEDIA_TYPE *mt, const struct wg_form
             return false;
     }
 
+    if (!(video_format = CoTaskMemAlloc(sizeof(*video_format) + format->u.video_wmv.codec_data_len)))
+        return false;
+
     mt->majortype = MEDIATYPE_Video;
     mt->subtype = *subtype;
     mt->bFixedSizeSamples = FALSE;
     mt->bTemporalCompression = TRUE;
     mt->lSampleSize = 0;
     mt->formattype = FORMAT_VideoInfo;
-    mt->cbFormat = sizeof(VIDEOINFOHEADER);
+    mt->cbFormat = sizeof(*video_format) + format->u.video_wmv.codec_data_len;
     mt->pbFormat = (BYTE *)video_format;
 
     memset(video_format, 0, sizeof(*video_format));
@@ -664,11 +667,14 @@ static bool amt_from_wg_format_video_wmv(AM_MEDIA_TYPE *mt, const struct wg_form
     video_format->rcTarget = video_format->rcSource;
     if ((frame_time = MulDiv(10000000, format->u.video_wmv.fps_d, format->u.video_wmv.fps_n)) != -1)
         video_format->AvgTimePerFrame = frame_time;
-    video_format->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    video_format->bmiHeader.biSize = sizeof(BITMAPINFOHEADER) + format->u.video_wmv.codec_data_len;
     video_format->bmiHeader.biWidth = format->u.video_wmv.width;
     video_format->bmiHeader.biHeight = format->u.video_wmv.height;
     video_format->bmiHeader.biPlanes = 1;
     video_format->bmiHeader.biCompression = mt->subtype.Data1;
+    video_format->bmiHeader.biBitCount = 24;
+    video_format->dwBitRate = 0;
+    memcpy(video_format+1, format->u.video_wmv.codec_data, format->u.video_wmv.codec_data_len);
 
     return true;
 }
@@ -997,6 +1003,13 @@ static bool amt_to_wg_format_video_wmv(const AM_MEDIA_TYPE *mt, struct wg_format
     else
         format->u.video_wmv.format = WG_WMV_VIDEO_FORMAT_UNKNOWN;
 
+    format->u.video_wmv.codec_data_len = mt->cbFormat - sizeof(VIDEOINFOHEADER);
+    if (format->u.video_wmv.codec_data_len > sizeof(format->u.video_wmv.codec_data))
+    {
+        ERR("Too big codec_data value (%u).\n", format->u.video_wmv.codec_data_len);
+        format->u.video_wmv.codec_data_len = 0;
+    }
+    memcpy(format->u.video_wmv.codec_data, video_format+1, format->u.video_wmv.codec_data_len);
     return true;
 }
 
@@ -1895,7 +1908,7 @@ static HRESULT WINAPI GST_Seeking_SetPositions(IMediaSeeking *iface,
     EnterCriticalSection(&filter->streaming_cs);
     filter->flushing = false;
     LeaveCriticalSection(&filter->streaming_cs);
-    WakeConditionVariable(&filter->flushing_cv);
+    WakeAllConditionVariable(&filter->flushing_cv);
 
     return S_OK;
 }

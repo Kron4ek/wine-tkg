@@ -463,6 +463,7 @@ static enum vkd3d_result instruction_array_normalise_hull_shader_control_point_i
     struct vkd3d_shader_instruction_array *instructions;
     struct control_point_normaliser normaliser;
     unsigned int input_control_point_count;
+    struct vkd3d_shader_location location;
     struct vkd3d_shader_instruction *ins;
     enum vkd3d_result ret;
     unsigned int i, j;
@@ -513,8 +514,10 @@ static enum vkd3d_result instruction_array_normalise_hull_shader_control_point_i
                 return VKD3D_OK;
             case VKD3DSIH_HS_FORK_PHASE:
             case VKD3DSIH_HS_JOIN_PHASE:
+                /* ins may be relocated if the instruction array expands. */
+                location = ins->location;
                 ret = control_point_normaliser_emit_hs_input(&normaliser, input_signature,
-                        input_control_point_count, i, &ins->location);
+                        input_control_point_count, i, &location);
                 *src_instructions = normaliser.instructions;
                 return ret;
             default:
@@ -777,8 +780,9 @@ static bool shader_signature_merge(struct shader_signature *s, uint8_t range_map
             f = &elements[j];
 
             /* Merge different components of the same register unless sysvals are different,
-             * or it will be relative-addressed. */
+             * interpolation modes are different, or it will be relative-addressed. */
             if (f->register_index != e->register_index || f->sysval_semantic != e->sysval_semantic
+                    || f->interpolation_mode != e->interpolation_mode
                     || range_map_get_register_count(range_map, f->register_index, f->mask) > 1)
                 break;
 

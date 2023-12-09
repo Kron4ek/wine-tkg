@@ -31,8 +31,11 @@
 
 static const struct user_driver_funcs waylanddrv_funcs =
 {
+    .pClipCursor = WAYLAND_ClipCursor,
     .pDesktopWindowProc = WAYLAND_DesktopWindowProc,
     .pDestroyWindow = WAYLAND_DestroyWindow,
+    .pKbdLayerDescriptor = WAYLAND_KbdLayerDescriptor,
+    .pReleaseKbdTables = WAYLAND_ReleaseKbdTables,
     .pSetCursor = WAYLAND_SetCursor,
     .pSysCommand = WAYLAND_SysCommand,
     .pUpdateDisplayDevices = WAYLAND_UpdateDisplayDevices,

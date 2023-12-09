@@ -51,6 +51,7 @@ enum vkd3d_shader_api_version
     VKD3D_SHADER_API_VERSION_1_7,
     VKD3D_SHADER_API_VERSION_1_8,
     VKD3D_SHADER_API_VERSION_1_9,
+    VKD3D_SHADER_API_VERSION_1_10,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_API_VERSION),
 };
@@ -191,6 +192,8 @@ enum vkd3d_shader_compile_option_fragment_coordinate_origin
     /** Fragment coordinates originate from the lower-left. This matches the
      * traditional behaviour of OpenGL environments. */
     VKD3D_SHADER_COMPILE_OPTION_FRAGMENT_COORDINATE_ORIGIN_LOWER_LEFT = 0x00000001,
+
+    VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_FRAGMENT_COORDINATE_ORIGIN),
 };
 
 enum vkd3d_shader_compile_option_name
@@ -2146,12 +2149,14 @@ VKD3D_SHADER_API int vkd3d_shader_convert_root_signature(struct vkd3d_shader_ver
  *
  * Currently this function supports the following code types:
  * - VKD3D_SHADER_SOURCE_DXBC_TPF
+ * - VKD3D_SHADER_SOURCE_D3D_BYTECODE
  *
  * \param compile_info A chained structure containing scan parameters.
  * \n
- * The DXBC_TPF scanner supports the following chained structures:
+ * The scanner supports the following chained structures:
  * - vkd3d_shader_scan_descriptor_info
  * - vkd3d_shader_scan_signature_info
+ * - vkd3d_shader_scan_combined_resource_sampler_info
  * \n
  * Although the \a compile_info parameter is read-only, chained structures
  * passed to this function need not be, and may serve as output parameters,

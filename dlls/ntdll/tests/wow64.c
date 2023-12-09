@@ -35,6 +35,7 @@ static NTSTATUS (WINAPI *pRtlWow64GetThreadContext)(HANDLE,WOW64_CONTEXT*);
 static NTSTATUS (WINAPI *pRtlWow64IsWowGuestMachineSupported)(USHORT,BOOLEAN*);
 static NTSTATUS (WINAPI *pNtMapViewOfSectionEx)(HANDLE,HANDLE,PVOID*,const LARGE_INTEGER*,SIZE_T*,ULONG,ULONG,MEM_EXTENDED_PARAMETER*,ULONG);
 #ifdef _WIN64
+static NTSTATUS (WINAPI *pKiUserExceptionDispatcher)(EXCEPTION_RECORD*,CONTEXT*);
 static NTSTATUS (WINAPI *pRtlWow64GetCpuAreaInfo)(WOW64_CPURESERVED*,ULONG,WOW64_CPU_AREA_INFO*);
 static NTSTATUS (WINAPI *pRtlWow64GetThreadSelectorEntry)(HANDLE,THREAD_DESCRIPTOR_INFORMATION*,ULONG,ULONG*);
 static CROSS_PROCESS_WORK_ENTRY * (WINAPI *pRtlWow64PopAllCrossProcessWorkFromWorkList)(CROSS_PROCESS_WORK_HDR*,BOOLEAN*);
@@ -100,6 +101,7 @@ static void init(void)
     GET_PROC( RtlWow64GetThreadContext );
     GET_PROC( RtlWow64IsWowGuestMachineSupported );
 #ifdef _WIN64
+    GET_PROC( KiUserExceptionDispatcher );
     GET_PROC( RtlWow64GetCpuAreaInfo );
     GET_PROC( RtlWow64GetThreadSelectorEntry );
     GET_PROC( RtlWow64PopAllCrossProcessWorkFromWorkList );
@@ -139,40 +141,37 @@ static void init(void)
 
 static void test_process_architecture( HANDLE process, USHORT expect_machine, USHORT expect_native )
 {
+    SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION machines[8];
     NTSTATUS status;
-    ULONG i, len, buffer[8];
+    ULONG i, len;
 
     len = 0xdead;
     status = pNtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
-                                          &buffer, sizeof(buffer), &len );
+                                          machines, sizeof(machines), &len );
     ok( !status, "failed %lx\n", status );
     ok( !(len & 3), "wrong len %lx\n", len );
-    len /= sizeof(DWORD);
+    len /= sizeof(machines[0]);
     for (i = 0; i < len - 1; i++)
     {
-        USHORT flags = HIWORD(buffer[i]);
-        USHORT machine = LOWORD(buffer[i]);
-
-        if (flags & 8)
-            ok( machine == expect_machine, "wrong current machine %lx\n", buffer[i]);
+        if (machines[i].Process)
+            ok( machines[i].Machine == expect_machine, "wrong process machine %x\n", machines[i].Machine);
         else
-            ok( machine != expect_machine, "wrong machine %lx\n", buffer[i]);
+            ok( machines[i].Machine != expect_machine, "wrong machine %x\n", machines[i].Machine);
 
-        /* FIXME: not quite sure what the other flags mean,
-         * observed on amd64 Windows: (flags & 7) == 7 for MACHINE_AMD64 and 2 for MACHINE_I386
-         */
-        if (flags & 4)
-            ok( machine == expect_native, "wrong native machine %lx\n", buffer[i]);
+        if (machines[i].Native)
+            ok( machines[i].Machine == expect_native, "wrong native machine %x\n", machines[i].Machine);
         else
-            ok( machine != expect_native, "wrong machine %lx\n", buffer[i]);
+            ok( machines[i].Machine != expect_native, "wrong machine %x\n", machines[i].Machine);
+
+        /* FIXME: test other fields */
     }
-    ok( !buffer[i], "missing terminating null\n" );
+    ok( !*(DWORD *)&machines[i], "missing terminating null\n" );
 
-    len = i * sizeof(DWORD);
+    len = i * sizeof(machines[0]);
     status = pNtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
-                                          &buffer, len, &len );
+                                          machines, len, &len );
     ok( status == STATUS_BUFFER_TOO_SMALL, "failed %lx\n", status );
-    ok( len == (i + 1) * sizeof(DWORD), "wrong len %lu\n", len );
+    ok( len == (i + 1) * sizeof(machines[0]), "wrong len %lu\n", len );
 
     if (pRtlWow64GetProcessMachines)
     {
@@ -189,17 +188,18 @@ static void test_process_architecture( HANDLE process, USHORT expect_machine, US
 
 static void test_query_architectures(void)
 {
+    SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION machines[8];
     PROCESS_INFORMATION pi;
     STARTUPINFOA si = { sizeof(si) };
     NTSTATUS status;
     HANDLE process;
-    ULONG len, buffer[8];
+    ULONG len;
 
     if (!pNtQuerySystemInformationEx) return;
 
     process = GetCurrentProcess();
     status = pNtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
-                                          &buffer, sizeof(buffer), &len );
+                                          machines, sizeof(machines), &len );
     if (status == STATUS_INVALID_INFO_CLASS)
     {
         win_skip( "SystemSupportedProcessorArchitectures not supported\n" );
@@ -209,20 +209,20 @@ static void test_query_architectures(void)
 
     process = (HANDLE)0xdeadbeef;
     status = pNtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
-                                          &buffer, sizeof(buffer), &len );
+                                          machines, sizeof(machines), &len );
     ok( status == STATUS_INVALID_HANDLE, "failed %lx\n", status );
     process = (HANDLE)0xdeadbeef;
     status = pNtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, 3,
-                                          &buffer, sizeof(buffer), &len );
+                                          machines, sizeof(machines), &len );
     ok( status == STATUS_INVALID_PARAMETER || broken(status == STATUS_INVALID_HANDLE),
         "failed %lx\n", status );
     process = GetCurrentProcess();
     status = pNtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, 3,
-                                          &buffer, sizeof(buffer), &len );
+                                          machines, sizeof(machines), &len );
     ok( status == STATUS_INVALID_PARAMETER || broken( status == STATUS_SUCCESS),
         "failed %lx\n", status );
     status = pNtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, NULL, 0,
-                                          &buffer, sizeof(buffer), &len );
+                                          machines, sizeof(machines), &len );
     ok( status == STATUS_INVALID_PARAMETER, "failed %lx\n", status );
 
     test_process_architecture( GetCurrentProcess(), current_machine, native_machine );
@@ -909,6 +909,7 @@ static void test_peb_teb(void)
 
 static void test_selectors(void)
 {
+#ifndef __arm__
     THREAD_DESCRIPTOR_INFORMATION info;
     NTSTATUS status;
     ULONG base, limit, sel, retlen;
@@ -1043,6 +1044,7 @@ static void test_selectors(void)
         }
     }
 #undef GET_ENTRY
+#endif /* __arm__ */
 }
 
 static void test_image_mappings(void)
@@ -1382,6 +1384,20 @@ static void test_cpu_area(void)
 #undef ALIGN
     }
     else win_skip( "RtlWow64GetCpuAreaInfo not supported\n" );
+}
+
+static void test_exception_dispatcher(void)
+{
+#ifdef __x86_64__
+    BYTE *code = (BYTE *)pKiUserExceptionDispatcher;
+    void **hook;
+
+    /* cld; mov xxx(%rip),%rax */
+    ok( code[0] == 0xfc && code[1] == 0x48 && code[2] == 0x8b && code[3] == 0x05,
+        "wrong opcodes %02x %02x %02x %02x\n", code[0], code[1], code[2], code[3] );
+    hook = (void **)(code + 8 + *(int *)(code + 4));
+    ok( !*hook, "hook %p set to %p\n", hook, *hook );
+#endif
 }
 
 #else  /* _WIN64 */
@@ -2122,6 +2138,40 @@ static void test_cpu_area(void)
 
 }
 
+static void test_exception_dispatcher(void)
+{
+    ULONG64 ptr, hook_ptr, hook, expect, res;
+    NTSTATUS status;
+    BYTE code[8];
+
+    if (!is_wow64) return;
+    if (!code_mem) return;
+    if (!ntdll_module) return;
+
+    ptr = get_proc_address64( ntdll_module, "KiUserExceptionDispatcher" );
+    ok( ptr, "KiUserExceptionDispatcher not found\n" );
+
+    if (pNtWow64ReadVirtualMemory64)
+    {
+        HANDLE process = OpenProcess( PROCESS_ALL_ACCESS, FALSE, GetCurrentProcessId() );
+
+        ok( process != 0, "failed to open current process %lu\n", GetLastError() );
+        status = pNtWow64ReadVirtualMemory64( process, ptr, &code, sizeof(code), &res );
+        ok( !status, "NtWow64ReadVirtualMemory64 failed %lx\n", status );
+
+        /* cld; mov xxx(%rip),%rax */
+        ok( code[0] == 0xfc && code[1] == 0x48 && code[2] == 0x8b && code[3] == 0x05,
+            "wrong opcodes %02x %02x %02x %02x\n", code[0], code[1], code[2], code[3] );
+        hook_ptr = ptr + 8 + *(int *)(code + 4);
+        status = pNtWow64ReadVirtualMemory64( process, hook_ptr, &hook, sizeof(hook), &res );
+        ok( !status, "NtWow64ReadVirtualMemory64 failed %lx\n", status );
+
+        expect = get_proc_address64( wow64_module, "Wow64PrepareForException" );
+        ok( hook == expect, "hook %I64x set to %I64x / %I64x\n", hook_ptr, hook, expect );
+        NtClose( process );
+    }
+}
+
 #endif  /* _WIN64 */
 
 
@@ -2142,4 +2192,5 @@ START_TEST(wow64)
     test_syscalls();
 #endif
     test_cpu_area();
+    test_exception_dispatcher();
 }

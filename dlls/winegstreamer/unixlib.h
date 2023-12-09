@@ -157,6 +157,8 @@ struct wg_format
             wg_wmv_video_format format;
             int32_t width, height;
             uint32_t fps_n, fps_d;
+            uint32_t codec_data_len;
+            unsigned char codec_data[64];
         } video_wmv;
         struct
         {
@@ -372,6 +374,15 @@ struct wg_transform_get_status_params
     UINT32 accepts_input;
 };
 
+struct wg_transform_notify_qos_params
+{
+    wg_transform_t transform;
+    UINT8 underflow;
+    DOUBLE proportion;
+    INT64 diff;
+    UINT64 timestamp;
+};
+
 struct wg_muxer_create_params
 {
     wg_muxer_t muxer;
@@ -439,6 +450,7 @@ enum unix_funcs
     unix_wg_transform_get_status,
     unix_wg_transform_drain,
     unix_wg_transform_flush,
+    unix_wg_transform_notify_qos,
 
     unix_wg_muxer_create,
     unix_wg_muxer_destroy,
@@ -446,6 +458,7 @@ enum unix_funcs
     unix_wg_muxer_start,
     unix_wg_muxer_push_sample,
     unix_wg_muxer_read_data,
+    unix_wg_muxer_finalize,
 
     unix_wg_funcs_count,
 };

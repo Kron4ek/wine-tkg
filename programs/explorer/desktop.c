@@ -841,7 +841,7 @@ static BOOL get_default_enable_shell( const WCHAR *name )
     return result;
 }
 
-static HMODULE load_graphics_driver( const WCHAR *driver, GUID *guid )
+static void load_graphics_driver( const WCHAR *driver, GUID *guid )
 {
     static const WCHAR device_keyW[] = L"System\\CurrentControlSet\\Control\\Video\\{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\\0000";
     static const WCHAR video_keyW[]  = L"System\\CurrentControlSet\\Control\\Video\\0000";
@@ -919,8 +919,6 @@ static HMODULE load_graphics_driver( const WCHAR *driver, GUID *guid )
             RegSetValueExA( hkey, "DriverError", 0, REG_SZ, (BYTE *)error, strlen(error) + 1 );
         RegCloseKey( hkey );
     }
-
-    return module;
 }
 
 static const char *debugstr_devmodew( const DEVMODEW *devmode )
@@ -1023,7 +1021,6 @@ void manage_desktop( WCHAR *arg )
     GUID guid;
     MSG msg;
     HWND hwnd;
-    HMODULE graphics_driver;
     unsigned int width, height;
     WCHAR *cmdline = NULL, *driver = NULL;
     WCHAR *p = arg;
@@ -1067,7 +1064,7 @@ void manage_desktop( WCHAR *arg )
 
     UuidCreate( &guid );
     TRACE( "display guid %s\n", debugstr_guid(&guid) );
-    graphics_driver = load_graphics_driver( driver, &guid );
+    load_graphics_driver( driver, &guid );
 
     if (name && width && height)
     {
@@ -1109,7 +1106,7 @@ void manage_desktop( WCHAR *arg )
 
         if (using_root) enable_shell = FALSE;
 
-        initialize_systray( graphics_driver, using_root, enable_shell );
+        initialize_systray( using_root, enable_shell );
         if (!using_root) initialize_launchers( hwnd );
 
         if ((shell32 = LoadLibraryW( L"shell32.dll" )) &&

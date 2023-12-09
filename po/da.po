@@ -104,7 +104,7 @@ msgstr "Support information"
 #: dlls/shlwapi/shlwapi.rc:44 dlls/twain_32/twain.rc:32
 #: dlls/user32/user32.rc:94 dlls/user32/user32.rc:109 dlls/user32/user32.rc:73
 #: dlls/wininet/wininet.rc:62 dlls/wininet/wininet.rc:82
-#: dlls/winspool.drv/winspool.rc:42 programs/net/net.rc:47
+#: dlls/winspool.drv/winspool.rc:42 programs/net/net.rc:48
 #: programs/notepad/notepad.rc:124 programs/oleview/oleview.rc:161
 #: programs/oleview/oleview.rc:174 programs/progman/progman.rc:106
 #: programs/progman/progman.rc:124 programs/progman/progman.rc:142
@@ -10076,7 +10076,7 @@ msgctxt "unit: bits"
 msgid "b"
 msgstr "b"
 
-#: dlls/sane.ds/sane.rc:34 dlls/wineps.drv/wineps.rc:49
+#: dlls/sane.ds/sane.rc:34 dlls/wineps.drv/wineps.rc:52
 #: programs/winecfg/winecfg.rc:188
 msgctxt "unit: dots/inch"
 msgid "dpi"
@@ -13791,6 +13791,12 @@ msgstr "&Papirstørrelse:"
 msgid "Duplex:"
 msgstr "Retninger:"
 
+#: dlls/wineps.drv/wineps.rc:45
+#, fuzzy
+#| msgid "&Tray:"
+msgid "Paper &Tray:"
+msgstr "&Bakke:"
+
 #: dlls/wininet/wininet.rc:53 dlls/wininet/wininet.rc:73
 msgid "Realm"
 msgstr "Realm"
@@ -15940,6 +15946,19 @@ msgstr "Start op"
 msgid "&Run..."
 msgstr "Kø&r..."
 
+#: programs/explorer/explorer.rc:36
+#, fuzzy
+#| msgid "E&xit Windows"
+msgid "E&xit desktop"
+msgstr "A&fslut Windows"
+
+#: programs/explorer/explorer.rc:37
+#, fuzzy
+#| msgid "Are you sure you want to delete these values?"
+msgid ""
+"Are you sure you want to close all programs and exit the virtual desktop?"
+msgstr "Er du sikker på du vil slette disse værdier?"
+
 #: programs/findstr/findstr.rc:28
 #, fuzzy
 #| msgid "LAN Connection"
@@ -16217,11 +16236,11 @@ msgstr "Tjenesten «%1» stoppede vellykket.\n"
 msgid "The %1 service failed to stop.\n"
 msgstr "Kunne ikke stoppe tjenesten «%1».\n"
 
-#: programs/net/net.rc:44
+#: programs/net/net.rc:45
 msgid "There are no entries in the list.\n"
 msgstr "Det er ingen elementer i listen.\n"
 
-#: programs/net/net.rc:45
+#: programs/net/net.rc:46
 msgid ""
 "\n"
 "Status  Local   Remote\n"
@@ -16231,33 +16250,37 @@ msgstr ""
 "Status    Lokal   Fjern\n"
 "---------------------------------------------------------------\n"
 
-#: programs/net/net.rc:46
+#: programs/net/net.rc:47
 msgid "%1      %2      %3      Open resources: %4!u!\n"
 msgstr "%1      %2      %3      Åbne resourser: %4!u!\n"
 
-#: programs/net/net.rc:48
+#: programs/net/net.rc:49
 msgid "Paused"
 msgstr "&Pauset"
 
-#: programs/net/net.rc:49
+#: programs/net/net.rc:50
 msgid "Disconnected"
 msgstr "Forbindelse mistet"
 
-#: programs/net/net.rc:50
+#: programs/net/net.rc:51
 msgid "A network error occurred"
 msgstr "Der opstod en netværks fejl"
 
-#: programs/net/net.rc:51
+#: programs/net/net.rc:52
 msgid "Connection is being made"
 msgstr "Forbindelse etableres"
 
-#: programs/net/net.rc:52
+#: programs/net/net.rc:53
 msgid "Reconnecting"
 msgstr "Genskaber forbindelse"
 
 #: programs/net/net.rc:43
 msgid "The following services are running:\n"
 msgstr "Følgende tjenester kører:\n"
+
+#: programs/net/net.rc:44
+msgid "A command was used with conflicting switches.\n"
+msgstr ""
 
 #: programs/netstat/netstat.rc:30
 #, fuzzy

@@ -22,9 +22,7 @@
 #define COBJMACROS
 #define NONAMELESSUNION
 #define VK_NO_PROTOTYPES
-#ifndef CONST_VTABLE
 #define CONST_VTABLE
-#endif
 
 #ifdef _WIN32
 # define _WIN32_WINNT 0x0600  /* for condition variables */
@@ -34,8 +32,8 @@
 #include "vkd3d_blob.h"
 #include "vkd3d_memory.h"
 #include "vkd3d_utf8.h"
-#include "list.h"
-#include "rbtree.h"
+#include "wine/list.h"
+#include "wine/rbtree.h"
 
 #include "vkd3d.h"
 #include "vkd3d_shader.h"

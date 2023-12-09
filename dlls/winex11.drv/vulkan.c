@@ -63,7 +63,7 @@ struct wine_vk_surface
     LONG ref;
     struct list entry;
     Window window;
-    VkSurfaceKHR surface; /* native surface */
+    VkSurfaceKHR host_surface;
     VkPresentModeKHR present_mode;
     BOOL known_child; /* hwnd is or has a child */
     BOOL offscreen; /* drawable is offscreen */
@@ -480,7 +480,7 @@ static VkResult X11DRV_vkCreateSwapchainKHR(VkDevice device,
         return VK_ERROR_SURFACE_LOST_KHR;
 
     create_info_host = *create_info;
-    create_info_host.surface = x11_surface->surface;
+    create_info_host.surface = x11_surface->host_surface;
 
     /* unless we use XPresentPixmap, force fifo when running offscreen so the acquire fence is more likely to be vsynced */
     if (x11_surface->offscreen && create_info->presentMode == VK_PRESENT_MODE_MAILBOX_KHR &&
@@ -566,7 +566,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
     create_info_host.dpy = gdi_display;
     create_info_host.window = x11_surface->window;
 
-    res = pvkCreateXlibSurfaceKHR(instance, &create_info_host, NULL /* allocator */, &x11_surface->surface);
+    res = pvkCreateXlibSurfaceKHR( instance, &create_info_host, NULL /* allocator */, &x11_surface->host_surface );
     if (res != VK_SUCCESS)
     {
         ERR("Failed to create Xlib surface, res=%d\n", res);
@@ -611,7 +611,7 @@ static void X11DRV_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface
     /* vkDestroySurfaceKHR must handle VK_NULL_HANDLE (0) for surface. */
     if (x11_surface)
     {
-        pvkDestroySurfaceKHR(instance, x11_surface->surface, NULL /* allocator */);
+        pvkDestroySurfaceKHR( instance, x11_surface->host_surface, NULL /* allocator */ );
 
         wine_vk_surface_release(x11_surface);
         update_client_window(hwnd);
@@ -688,10 +688,10 @@ static VkResult X11DRV_vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device,
 
     TRACE("%p, 0x%s, %p\n", device, wine_dbgstr_longlong(surface), flags);
 
-    return pvkGetDeviceGroupSurfacePresentModesKHR(device, x11_surface->surface, flags);
+    return pvkGetDeviceGroupSurfacePresentModesKHR( device, x11_surface->host_surface, flags );
 }
 
-static const char *wine_vk_native_fn_name(const char *name)
+static const char *wine_vk_host_fn_name( const char *name )
 {
     if (!strcmp(name, "vkCreateWin32SurfaceKHR"))
         return "vkCreateXlibSurfaceKHR";
@@ -707,8 +707,7 @@ static void *X11DRV_vkGetDeviceProcAddr(VkDevice device, const char *name)
 
     TRACE("%p, %s\n", device, debugstr_a(name));
 
-    if (!pvkGetDeviceProcAddr(device, wine_vk_native_fn_name(name)))
-        return NULL;
+    if (!pvkGetDeviceProcAddr( device, wine_vk_host_fn_name( name ) )) return NULL;
 
     if ((proc_addr = X11DRV_get_vk_device_proc_addr(name)))
         return proc_addr;
@@ -722,8 +721,7 @@ static void *X11DRV_vkGetInstanceProcAddr(VkInstance instance, const char *name)
 
     TRACE("%p, %s\n", instance, debugstr_a(name));
 
-    if (!pvkGetInstanceProcAddr(instance, wine_vk_native_fn_name(name)))
-        return NULL;
+    if (!pvkGetInstanceProcAddr( instance, wine_vk_host_fn_name( name ) )) return NULL;
 
     if ((proc_addr = X11DRV_get_vk_instance_proc_addr(instance, name)))
         return proc_addr;
@@ -747,7 +745,7 @@ static VkResult X11DRV_vkGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice 
         return VK_SUCCESS;
     }
 
-    return pvkGetPhysicalDevicePresentRectanglesKHR(phys_dev, x11_surface->surface, count, rects);
+    return pvkGetPhysicalDevicePresentRectanglesKHR( phys_dev, x11_surface->host_surface, count, rects );
 }
 
 static VkResult X11DRV_vkGetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysicalDevice phys_dev,
@@ -757,7 +755,7 @@ static VkResult X11DRV_vkGetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysicalDevi
     TRACE("%p, %p, %p\n", phys_dev, surface_info, capabilities);
 
     surface_info_host = *surface_info;
-    surface_info_host.surface = surface_from_handle(surface_info->surface)->surface;
+    surface_info_host.surface = surface_from_handle( surface_info->surface )->host_surface;
 
     if (pvkGetPhysicalDeviceSurfaceCapabilities2KHR)
         return pvkGetPhysicalDeviceSurfaceCapabilities2KHR(phys_dev, &surface_info_host, capabilities);
@@ -779,7 +777,7 @@ static VkResult X11DRV_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevic
     if (!x11_surface->hwnd)
         return VK_ERROR_SURFACE_LOST_KHR;
 
-    return pvkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_dev, x11_surface->surface, capabilities);
+    return pvkGetPhysicalDeviceSurfaceCapabilitiesKHR( phys_dev, x11_surface->host_surface, capabilities );
 }
 
 static VkResult X11DRV_vkGetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice phys_dev,
@@ -792,7 +790,7 @@ static VkResult X11DRV_vkGetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice ph
     TRACE("%p, %p, %p, %p\n", phys_dev, surface_info, count, formats);
 
     surface_info_host = *surface_info;
-    surface_info_host.surface = surface_from_handle(surface_info->surface)->surface;
+    surface_info_host.surface = surface_from_handle( surface_info->surface )->host_surface;
 
     if (pvkGetPhysicalDeviceSurfaceFormats2KHR)
         return pvkGetPhysicalDeviceSurfaceFormats2KHR(phys_dev, &surface_info_host, count, formats);
@@ -824,7 +822,7 @@ static VkResult X11DRV_vkGetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice phy
 
     TRACE("%p, 0x%s, %p, %p\n", phys_dev, wine_dbgstr_longlong(surface), count, formats);
 
-    return pvkGetPhysicalDeviceSurfaceFormatsKHR(phys_dev, x11_surface->surface, count, formats);
+    return pvkGetPhysicalDeviceSurfaceFormatsKHR( phys_dev, x11_surface->host_surface, count, formats );
 }
 
 static VkResult X11DRV_vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice phys_dev,
@@ -834,7 +832,7 @@ static VkResult X11DRV_vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevic
 
     TRACE("%p, 0x%s, %p, %p\n", phys_dev, wine_dbgstr_longlong(surface), count, modes);
 
-    return pvkGetPhysicalDeviceSurfacePresentModesKHR(phys_dev, x11_surface->surface, count, modes);
+    return pvkGetPhysicalDeviceSurfacePresentModesKHR( phys_dev, x11_surface->host_surface, count, modes );
 }
 
 static VkResult X11DRV_vkGetPhysicalDeviceSurfaceSupportKHR(VkPhysicalDevice phys_dev,
@@ -844,7 +842,7 @@ static VkResult X11DRV_vkGetPhysicalDeviceSurfaceSupportKHR(VkPhysicalDevice phy
 
     TRACE("%p, %u, 0x%s, %p\n", phys_dev, index, wine_dbgstr_longlong(surface), supported);
 
-    return pvkGetPhysicalDeviceSurfaceSupportKHR(phys_dev, index, x11_surface->surface, supported);
+    return pvkGetPhysicalDeviceSurfaceSupportKHR( phys_dev, index, x11_surface->host_surface, supported );
 }
 
 static VkBool32 X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice phys_dev,
@@ -895,13 +893,13 @@ static VkResult X11DRV_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *
     return res;
 }
 
-static VkSurfaceKHR X11DRV_wine_get_native_surface(VkSurfaceKHR surface)
+static VkSurfaceKHR X11DRV_wine_get_host_surface( VkSurfaceKHR surface )
 {
     struct wine_vk_surface *x11_surface = surface_from_handle(surface);
 
     TRACE("0x%s\n", wine_dbgstr_longlong(surface));
 
-    return x11_surface->surface;
+    return x11_surface->host_surface;
 }
 
 static const struct vulkan_funcs vulkan_funcs =
@@ -929,7 +927,7 @@ static const struct vulkan_funcs vulkan_funcs =
     X11DRV_vkGetSwapchainImagesKHR,
     X11DRV_vkQueuePresentKHR,
 
-    X11DRV_wine_get_native_surface,
+    X11DRV_wine_get_host_surface,
 };
 
 static void *X11DRV_get_vk_device_proc_addr(const char *name)

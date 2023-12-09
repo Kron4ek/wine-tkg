@@ -457,6 +457,24 @@ HRESULT wg_transform_flush(wg_transform_t transform)
     return S_OK;
 }
 
+void wg_transform_notify_qos(wg_transform_t transform,
+        bool underflow, double proportion, int64_t diff, uint64_t timestamp)
+{
+    struct wg_transform_notify_qos_params params =
+    {
+        .transform = transform,
+        .underflow = underflow,
+        .proportion = proportion,
+        .diff = diff,
+        .timestamp = timestamp,
+    };
+
+    TRACE("transform %#I64x, underflow %d, proportion %.16e, diff %I64d, timestamp %I64u.\n",
+            transform, underflow, proportion, diff, timestamp);
+
+    WINE_UNIX_CALL(unix_wg_transform_notify_qos, &params);
+}
+
 HRESULT wg_muxer_create(const char *format, wg_muxer_t *muxer)
 {
     struct wg_muxer_create_params params =
@@ -565,6 +583,21 @@ HRESULT wg_muxer_read_data(wg_muxer_t muxer, void *buffer, UINT32 *size, UINT64 
     }
 
     return HRESULT_FROM_NT(status);
+}
+
+HRESULT wg_muxer_finalize(wg_muxer_t muxer)
+{
+    NTSTATUS status;
+
+    TRACE("muxer %#I64x.\n", muxer);
+
+    if ((status = WINE_UNIX_CALL(unix_wg_muxer_finalize, &muxer)))
+    {
+        WARN("Failed to finalize, status %#lx.\n", status);
+        return HRESULT_FROM_NT(status);
+    }
+
+    return S_OK;
 }
 
 #define ALIGN(n, alignment) (((n) + (alignment) - 1) & ~((alignment) - 1))

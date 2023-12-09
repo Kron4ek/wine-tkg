@@ -27,6 +27,7 @@
 #include "winbase.h"
 #include "winnt.h"
 #include "winreg.h"
+#include "winuser.h"
 #include "winternl.h"
 #include "ddk/wdm.h"
 #include "excpt.h"
@@ -34,6 +35,7 @@
 #include "intrin.h"
 
 static void *code_mem;
+static HMODULE hntdll;
 
 static NTSTATUS  (WINAPI *pNtGetContextThread)(HANDLE,CONTEXT*);
 static NTSTATUS  (WINAPI *pNtSetContextThread)(HANDLE,CONTEXT*);
@@ -60,6 +62,7 @@ static void *    (WINAPI *pRtlLocateExtendedFeature)(CONTEXT_EX *context_ex, ULO
 static void *    (WINAPI *pRtlLocateLegacyContext)(CONTEXT_EX *context_ex, ULONG *length);
 static void      (WINAPI *pRtlSetExtendedFeaturesMask)(CONTEXT_EX *context_ex, ULONG64 feature_mask);
 static ULONG64   (WINAPI *pRtlGetExtendedFeaturesMask)(CONTEXT_EX *context_ex);
+static void *    (WINAPI *pRtlPcToFileHeader)(PVOID pc, PVOID *address);
 static NTSTATUS  (WINAPI *pNtRaiseException)(EXCEPTION_RECORD *rec, CONTEXT *context, BOOL first_chance);
 static NTSTATUS  (WINAPI *pNtReadVirtualMemory)(HANDLE, const void*, void*, SIZE_T, SIZE_T*);
 static NTSTATUS  (WINAPI *pNtTerminateProcess)(HANDLE handle, LONG exit_code);
@@ -77,6 +80,10 @@ static void *    (WINAPI *pLocateXStateFeature)(CONTEXT *context, DWORD feature_
 static BOOL      (WINAPI *pSetXStateFeaturesMask)(CONTEXT *context, DWORD64 feature_mask);
 static BOOL      (WINAPI *pGetXStateFeaturesMask)(CONTEXT *context, DWORD64 *feature_mask);
 static BOOL      (WINAPI *pWaitForDebugEventEx)(DEBUG_EVENT *, DWORD);
+
+static void *pKiUserApcDispatcher;
+static void *pKiUserCallbackDispatcher;
+static void *pKiUserExceptionDispatcher;
 
 #define RTL_UNLOAD_EVENT_TRACE_NUMBER 64
 
@@ -473,8 +480,6 @@ static LONG CALLBACK rtlraiseexception_vectored_handler(EXCEPTION_POINTERS *Exce
 {
     PCONTEXT context = ExceptionInfo->ContextRecord;
     PEXCEPTION_RECORD rec = ExceptionInfo->ExceptionRecord;
-    trace("vect. handler %08lx addr:%p context.Eip:%lx\n", rec->ExceptionCode,
-          rec->ExceptionAddress, context->Eip);
 
     ok(rec->ExceptionAddress == (char *)code_mem + 0xb
             || broken(rec->ExceptionAddress == code_mem || !rec->ExceptionAddress) /* 2008 */,
@@ -1833,7 +1838,6 @@ static void test_thread_context(void)
 }
 
 static BYTE saved_KiUserExceptionDispatcher_bytes[7];
-static void *pKiUserExceptionDispatcher;
 static BOOL hook_called;
 static void *hook_KiUserExceptionDispatcher_eip;
 static void *dbg_except_continue_handler_eip;
@@ -1891,7 +1895,7 @@ static LONG WINAPI dbg_except_continue_vectored_handler(struct _EXCEPTION_POINTE
         /* XP and Vista+ have ExceptionAddress == Eip + 1, Eip is adjusted even
          * for software raised breakpoint exception.
          * Win2003 has Eip not adjusted and matching ExceptionAddress.
-         * Win2008 has Eip not adjuated and ExceptionAddress not filled for
+         * Win2008 has Eip not adjusted and ExceptionAddress not filled for
          * software raised exception. */
         context->Eip = (ULONG_PTR)rec->ExceptionAddress;
     }
@@ -1900,27 +1904,34 @@ static LONG WINAPI dbg_except_continue_vectored_handler(struct _EXCEPTION_POINTE
 }
 
 /* Use CDECL to leave arguments on stack. */
-static void CDECL hook_KiUserExceptionDispatcher(EXCEPTION_RECORD *rec, CONTEXT *context)
+static void * CDECL hook_KiUserExceptionDispatcher(EXCEPTION_RECORD *rec, CONTEXT *context)
 {
-    trace("rec %p, context %p.\n", rec, context);
-    trace("context->Eip %#lx, context->Esp %#lx, ContextFlags %#lx.\n",
-            context->Eip, context->Esp, context->ContextFlags);
+    CONTEXT_EX *xctx = (CONTEXT_EX *)(context + 1);
+
+    trace( "rec %p context %p context->Eip %#lx, context->Esp %#lx (%x), ContextFlags %#lx.\n",
+           rec, context, context->Eip, context->Esp,
+           (char *)context->Esp - (char *)&rec, context->ContextFlags);
+    trace( "xstate %lx = %p (%x) %lx\n", xctx->XState.Offset, (char *)xctx + xctx->XState.Offset,
+           (char *)xctx + xctx->XState.Offset - (char *)&rec, xctx->XState.Length );
+
+    ok( (char *)rec->ExceptionInformation <= (char *)context &&
+        (char *)(rec + 1) >= (char *)context, "wrong ptrs %p / %p\n", rec, context );
+    ok( xctx->All.Offset == -sizeof(CONTEXT), "wrong All.Offset %lx\n", xctx->All.Offset );
+    ok( xctx->All.Length >= sizeof(CONTEXT) + sizeof(CONTEXT_EX), "wrong All.Length %lx\n", xctx->All.Length );
+    ok( xctx->Legacy.Offset == -sizeof(CONTEXT), "wrong Legacy.Offset %lx\n", xctx->All.Offset );
+    ok( xctx->Legacy.Length == sizeof(CONTEXT), "wrong Legacy.Length %lx\n", xctx->All.Length );
 
     hook_called = TRUE;
-    /* Broken on Win2008, probably rec offset in stack is different. */
-    ok(rec->ExceptionCode == 0x80000003 || broken(!rec->ExceptionCode),
-            "Got unexpected ExceptionCode %#lx.\n", rec->ExceptionCode);
-
     hook_KiUserExceptionDispatcher_eip = (void *)context->Eip;
     hook_exception_address = rec->ExceptionAddress;
     memcpy(pKiUserExceptionDispatcher, saved_KiUserExceptionDispatcher_bytes,
             sizeof(saved_KiUserExceptionDispatcher_bytes));
+    return pKiUserExceptionDispatcher;
 }
 
-static void test_kiuserexceptiondispatcher(void)
+static void test_KiUserExceptionDispatcher(void)
 {
     PVOID vectored_handler;
-    HMODULE hntdll = GetModuleHandleA("ntdll.dll");
     static BYTE except_code[] =
     {
         0xb9, /* mov imm32, %ecx */
@@ -1959,27 +1970,16 @@ static void test_kiuserexceptiondispatcher(void)
     {
         0xff, 0x15,
         /* offset: 2 bytes */
-        0x00, 0x00, 0x00, 0x00,     /* callq *addr */ /* call hook implementation. */
-
-        0xff, 0x25,
-        /* offset: 8 bytes */
-        0x00, 0x00, 0x00, 0x00,     /* jmpq *addr */ /* jump to original function. */
+        0x00, 0x00, 0x00, 0x00,     /* call *addr */ /* call hook implementation. */
+        0xff, 0xe0,                 /* jmp *%eax */
     };
     void *phook_KiUserExceptionDispatcher = hook_KiUserExceptionDispatcher;
     BYTE patched_KiUserExceptionDispatcher_bytes[7];
-    void *phook_trampoline = hook_trampoline;
     DWORD old_protect1, old_protect2;
     EXCEPTION_RECORD record;
     void *bpt_address;
     BYTE *ptr;
     BOOL ret;
-
-    pKiUserExceptionDispatcher = (void *)GetProcAddress(hntdll, "KiUserExceptionDispatcher");
-    if (!pKiUserExceptionDispatcher)
-    {
-        win_skip("KiUserExceptionDispatcher is not available.\n");
-        return;
-    }
 
     if (!pRtlUnwind)
     {
@@ -1991,7 +1991,6 @@ static void test_kiuserexceptiondispatcher(void)
     *(DWORD *)(except_code + 0x1d) = (DWORD)&test_kiuserexceptiondispatcher_regs.new_eax;
 
     *(unsigned int *)(hook_trampoline + 2) = (ULONG_PTR)&phook_KiUserExceptionDispatcher;
-    *(unsigned int *)(hook_trampoline + 8) = (ULONG_PTR)&pKiUserExceptionDispatcher;
 
     ret = VirtualProtect(hook_trampoline, ARRAY_SIZE(hook_trampoline), PAGE_EXECUTE_READWRITE, &old_protect1);
     ok(ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError());
@@ -2004,9 +2003,9 @@ static void test_kiuserexceptiondispatcher(void)
             sizeof(saved_KiUserExceptionDispatcher_bytes));
 
     ptr = patched_KiUserExceptionDispatcher_bytes;
-    /* mov hook_trampoline, %eax */
-    *ptr++ = 0xa1;
-    *(void **)ptr = &phook_trampoline;
+    /* mov $hook_trampoline, %eax */
+    *ptr++ = 0xb8;
+    *(void **)ptr = hook_trampoline;
     ptr += sizeof(void *);
     /* jmp *eax */
     *ptr++ = 0xff;
@@ -2067,6 +2066,166 @@ static void test_kiuserexceptiondispatcher(void)
     ok(ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError());
     ret = VirtualProtect(hook_trampoline, ARRAY_SIZE(hook_trampoline), old_protect1, &old_protect1);
     ok(ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError());
+}
+
+static BYTE saved_KiUserApcDispatcher[7];
+static UINT apc_count;
+
+static void CALLBACK apc_func( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3 )
+{
+    ok( arg1 == 0x1234 + apc_count, "wrong arg1 %Ix\n", arg1 );
+    ok( arg2 == 0x5678, "wrong arg2 %Ix\n", arg2 );
+    ok( arg3 == 0xdeadbeef, "wrong arg3 %Ix\n", arg3 );
+    apc_count++;
+}
+
+static void * CDECL hook_KiUserApcDispatcher( void *func, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3 )
+{
+    CONTEXT *context = (CONTEXT *)((ULONG_PTR)&arg3 + sizeof(ULONG));
+
+    ok( func == apc_func, "wrong function %p / %p\n", func, apc_func );
+    ok( arg1 == 0x1234 + apc_count, "wrong arg1 %Ix\n", arg1 );
+    ok( arg2 == 0x5678, "wrong arg2 %Ix\n", arg2 );
+    ok( arg3 == 0xdeadbeef, "wrong arg3 %Ix\n", arg3 );
+
+    if (context->ContextFlags != 1)
+    {
+        trace( "context %p eip %lx ebp %lx esp %lx (%x)\n",
+               context, context->Eip, context->Ebp, context->Esp, (char *)context->Esp - (char *)&func );
+    }
+    else  /* new style with alertable arg and CONTEXT_EX */
+    {
+        CONTEXT_EX *xctx;
+        ULONG *alertable = (ULONG *)context;
+
+        context = (CONTEXT *)(alertable + 1);
+        xctx = (CONTEXT_EX *)(context + 1);
+
+        trace( "alertable %lx context %p eip %lx ebp %lx esp %lx (%x)\n", *alertable,
+               context, context->Eip, context->Ebp, context->Esp, (char *)context->Esp - (char *)&func );
+        if ((void *)(xctx + 1) < (void *)context->Esp)
+        {
+            ok( xctx->All.Offset == -sizeof(CONTEXT), "wrong All.Offset %lx\n", xctx->All.Offset );
+            ok( xctx->All.Length >= sizeof(CONTEXT) + sizeof(CONTEXT_EX), "wrong All.Length %lx\n", xctx->All.Length );
+            ok( xctx->Legacy.Offset == -sizeof(CONTEXT), "wrong Legacy.Offset %lx\n", xctx->All.Offset );
+            ok( xctx->Legacy.Length == sizeof(CONTEXT), "wrong Legacy.Length %lx\n", xctx->All.Length );
+        }
+
+        if (apc_count) *alertable = 0;
+        pNtQueueApcThread( GetCurrentThread(), apc_func, 0x1234 + apc_count + 1, 0x5678, 0xdeadbeef );
+    }
+
+    hook_called = TRUE;
+    memcpy( pKiUserApcDispatcher, saved_KiUserApcDispatcher, sizeof(saved_KiUserApcDispatcher));
+    return pKiUserApcDispatcher;
+}
+
+static void test_KiUserApcDispatcher(void)
+{
+    BYTE hook_trampoline[] =
+    {
+        0xff, 0x15,
+        /* offset: 2 bytes */
+        0x00, 0x00, 0x00, 0x00,     /* call *addr */ /* call hook implementation. */
+        0xff, 0xe0,                 /* jmp *%eax */
+    };
+
+    BYTE patched_KiUserApcDispatcher[7];
+    void *phook_KiUserApcDispatcher = hook_KiUserApcDispatcher;
+    DWORD old_protect;
+    BYTE *ptr;
+    BOOL ret;
+
+    *(ULONG_PTR *)(hook_trampoline + 2) = (ULONG_PTR)&phook_KiUserApcDispatcher;
+    memcpy(code_mem, hook_trampoline, sizeof(hook_trampoline));
+
+    ret = VirtualProtect( pKiUserApcDispatcher, sizeof(saved_KiUserApcDispatcher),
+                          PAGE_EXECUTE_READWRITE, &old_protect );
+    ok( ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError() );
+
+    memcpy( saved_KiUserApcDispatcher, pKiUserApcDispatcher, sizeof(saved_KiUserApcDispatcher) );
+    ptr = patched_KiUserApcDispatcher;
+    /* mov $hook_trampoline, %eax */
+    *ptr++ = 0xb8;
+    *(void **)ptr = code_mem;
+    ptr += sizeof(void *);
+    /* jmp *eax */
+    *ptr++ = 0xff;
+    *ptr++ = 0xe0;
+    memcpy( pKiUserApcDispatcher, patched_KiUserApcDispatcher, sizeof(patched_KiUserApcDispatcher) );
+
+    apc_count = 0;
+    hook_called = FALSE;
+    pNtQueueApcThread( GetCurrentThread(), apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    SleepEx( 0, TRUE );
+    ok( apc_count == 1 || apc_count == 2, "APC count %u\n", apc_count );
+    ok( hook_called, "hook was not called\n" );
+
+    if (apc_count == 2)
+    {
+        memcpy( pKiUserApcDispatcher, patched_KiUserApcDispatcher, sizeof(patched_KiUserApcDispatcher) );
+        pNtQueueApcThread( GetCurrentThread(), apc_func, 0x1234 + apc_count, 0x5678, 0xdeadbeef );
+        SleepEx( 0, TRUE );
+        ok( apc_count == 3, "APC count %u\n", apc_count );
+        SleepEx( 0, TRUE );
+        ok( apc_count == 4, "APC count %u\n", apc_count );
+    }
+    VirtualProtect( pKiUserApcDispatcher, sizeof(saved_KiUserApcDispatcher), old_protect, &old_protect );
+}
+
+static void CDECL hook_KiUserCallbackDispatcher( void *eip, ULONG id, ULONG *args, ULONG len,
+                                                 ULONG unk1, ULONG unk2, ULONG arg0, ULONG arg1 )
+{
+    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
+
+    trace( "eip %p id %lx args %p (%x) len %lx unk1 %lx unk2 %lx args %lx,%lx\n",
+           eip, id, args, (char *)args - (char *)&eip, len, unk1, unk2, arg0, arg1 );
+
+    if (args[0] != arg0)  /* new style with extra esp */
+    {
+        void *esp = (void *)arg0;
+
+        ok( args[0] == arg1, "wrong arg1 %lx / %lx\n", args[0], arg1 );
+        ok( (char *)esp - ((char *)args + len) < 0x10, "wrong esp offset %p / %p\n", esp, args );
+    }
+
+    if (eip && pRtlPcToFileHeader)
+    {
+        void *mod, *win32u = GetModuleHandleA("win32u.dll");
+
+        pRtlPcToFileHeader( eip, &mod );
+        if (win32u) ok( mod == win32u, "ret address %p not in win32u %p\n", eip, win32u );
+        else trace( "ret address %p in %p\n", eip, mod );
+    }
+    NtCallbackReturn( NULL, 0, func( args, len ));
+}
+
+static void test_KiUserCallbackDispatcher(void)
+{
+    BYTE saved_code[7], patched_code[7];
+    DWORD old_protect;
+    BYTE *ptr;
+    BOOL ret;
+
+    ret = VirtualProtect( pKiUserCallbackDispatcher, sizeof(saved_code),
+                          PAGE_EXECUTE_READWRITE, &old_protect );
+    ok( ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError() );
+
+    memcpy( saved_code, pKiUserCallbackDispatcher, sizeof(saved_code) );
+    ptr = patched_code;
+    /* mov $hook_trampoline, %eax */
+    *ptr++ = 0xb8;
+    *(void **)ptr = hook_KiUserCallbackDispatcher;
+    ptr += sizeof(void *);
+    /* call *eax */
+    *ptr++ = 0xff;
+    *ptr++ = 0xd0;
+    memcpy( pKiUserCallbackDispatcher, patched_code, sizeof(patched_code) );
+
+    DestroyWindow( CreateWindowA( "Static", "test", 0, 0, 0, 0, 0, 0, 0, 0, 0 ));
+
+    memcpy( pKiUserCallbackDispatcher, saved_code, sizeof(saved_code));
+    VirtualProtect( pKiUserCallbackDispatcher, sizeof(saved_code), old_protect, &old_protect );
 }
 
 #elif defined(__x86_64__)
@@ -3087,38 +3246,35 @@ static DWORD WINAPI handler( EXCEPTION_RECORD *rec, ULONG64 frame,
     USHORT ds, es, fs, gs, ss;
 
     got_exception++;
-    trace( "exception %u: %lx flags:%lx addr:%p\n",
-           entry, rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
+    winetest_push_context( "%u: %lx", entry, rec->ExceptionCode );
 
     ok( rec->ExceptionCode == except->status ||
         (except->alt_status != 0 && rec->ExceptionCode == except->alt_status),
-        "%u: Wrong exception code %lx/%lx\n", entry, rec->ExceptionCode, except->status );
+        "Wrong exception code %lx/%lx\n", rec->ExceptionCode, except->status );
     ok( context->Rip == (DWORD_PTR)code_mem + except->offset,
-        "%u: Unexpected eip %#Ix/%#Ix\n", entry,
-        context->Rip, (DWORD_PTR)code_mem + except->offset );
+        "Unexpected eip %#Ix/%#Ix\n", context->Rip, (DWORD_PTR)code_mem + except->offset );
     ok( rec->ExceptionAddress == (char*)context->Rip ||
         (rec->ExceptionCode == STATUS_BREAKPOINT && rec->ExceptionAddress == (char*)context->Rip + 1),
-        "%u: Unexpected exception address %p/%p\n", entry,
-        rec->ExceptionAddress, (char*)context->Rip );
+        "Unexpected exception address %p/%p\n", rec->ExceptionAddress, (char*)context->Rip );
 
     __asm__ volatile( "movw %%ds,%0" : "=g" (ds) );
     __asm__ volatile( "movw %%es,%0" : "=g" (es) );
     __asm__ volatile( "movw %%fs,%0" : "=g" (fs) );
     __asm__ volatile( "movw %%gs,%0" : "=g" (gs) );
     __asm__ volatile( "movw %%ss,%0" : "=g" (ss) );
-    ok( context->SegDs == ds || !ds, "%u: ds %#x does not match %#x\n", entry, context->SegDs, ds );
-    ok( context->SegEs == es || !es, "%u: es %#x does not match %#x\n", entry, context->SegEs, es );
-    ok( context->SegFs == fs || !fs, "%u: fs %#x does not match %#x\n", entry, context->SegFs, fs );
-    ok( context->SegGs == gs || !gs, "%u: gs %#x does not match %#x\n", entry, context->SegGs, gs );
-    ok( context->SegSs == ss, "%u: ss %#x does not match %#x\n", entry, context->SegSs, ss );
+    ok( context->SegDs == ds || !ds, "ds %#x does not match %#x\n", context->SegDs, ds );
+    ok( context->SegEs == es || !es, "es %#x does not match %#x\n", context->SegEs, es );
+    ok( context->SegFs == fs || !fs, "fs %#x does not match %#x\n", context->SegFs, fs );
+    ok( context->SegGs == gs || !gs, "gs %#x does not match %#x\n", context->SegGs, gs );
+    ok( context->SegSs == ss, "ss %#x does not match %#x\n", context->SegSs, ss );
     ok( context->SegDs == context->SegSs,
-        "%u: ds %#x does not match ss %#x\n", entry, context->SegDs, context->SegSs );
+        "ds %#x does not match ss %#x\n", context->SegDs, context->SegSs );
     ok( context->SegEs == context->SegSs,
-        "%u: es %#x does not match ss %#x\n", entry, context->SegEs, context->SegSs );
+        "es %#x does not match ss %#x\n", context->SegEs, context->SegSs );
     ok( context->SegGs == context->SegSs,
-        "%u: gs %#x does not match ss %#x\n", entry, context->SegGs, context->SegSs );
+        "gs %#x does not match ss %#x\n", context->SegGs, context->SegSs );
     todo_wine ok( context->SegFs && context->SegFs != context->SegSs,
-        "%u: got fs %#x\n", entry, context->SegFs );
+        "got fs %#x\n", context->SegFs );
 
     if (except->status == STATUS_BREAKPOINT && is_wow64)
         parameter_count = 1;
@@ -3128,7 +3284,7 @@ static DWORD WINAPI handler( EXCEPTION_RECORD *rec, ULONG64 frame,
         parameter_count = except->alt_nb_params;
 
     ok( rec->NumberParameters == parameter_count,
-        "%u: Unexpected parameter count %lu/%u\n", entry, rec->NumberParameters, parameter_count );
+        "Unexpected parameter count %lu/%u\n", rec->NumberParameters, parameter_count );
 
     /* Most CPUs (except Intel Core apparently) report a segment limit violation */
     /* instead of page faults for accesses beyond 0xffffffffffffffff */
@@ -3150,18 +3306,20 @@ static DWORD WINAPI handler( EXCEPTION_RECORD *rec, ULONG64 frame,
     {
         for (i = 0; i < rec->NumberParameters; i++)
             ok( rec->ExceptionInformation[i] == except->params[i],
-                "%u: Wrong parameter %d: %Ix/%Ix\n",
-                entry, i, rec->ExceptionInformation[i], except->params[i] );
+                "Wrong parameter %d: %Ix/%Ix\n",
+                i, rec->ExceptionInformation[i], except->params[i] );
     }
     else
     {
         for (i = 0; i < rec->NumberParameters; i++)
             ok( rec->ExceptionInformation[i] == except->alt_params[i],
-                "%u: Wrong parameter %d: %Ix/%Ix\n",
-                entry, i, rec->ExceptionInformation[i], except->alt_params[i] );
+                "Wrong parameter %d: %Ix/%Ix\n",
+                i, rec->ExceptionInformation[i], except->alt_params[i] );
     }
 
 skip_params:
+    winetest_pop_context();
+
     /* don't handle exception if it's not the address we expected */
     if (context->Rip != (DWORD_PTR)code_mem + except->offset) return ExceptionContinueSearch;
 
@@ -3600,8 +3758,6 @@ static LONG CALLBACK dpe_handler(EXCEPTION_POINTERS *info)
     EXCEPTION_RECORD *rec = info->ExceptionRecord;
     DWORD old_prot;
 
-    trace("vect. handler %08lx addr:%p\n", rec->ExceptionCode, rec->ExceptionAddress);
-
     got_exception++;
 
     ok(rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION,
@@ -3746,8 +3902,6 @@ static LONG CALLBACK rtlraiseexception_vectored_handler(EXCEPTION_POINTERS *Exce
 {
     PCONTEXT context = ExceptionInfo->ContextRecord;
     PEXCEPTION_RECORD rec = ExceptionInfo->ExceptionRecord;
-
-    trace( "vect. handler %08lx addr:%p Rip:%p\n", rec->ExceptionCode, rec->ExceptionAddress, (void *)context->Rip );
 
     ok( rec->ExceptionAddress == (char *)code_mem + 0x10
         || broken(rec->ExceptionAddress == code_mem || !rec->ExceptionAddress ) /* 2008 */,
@@ -4181,24 +4335,6 @@ static void test_thread_context(void)
     memset( &context, 0xcc, sizeof(context) );
     memset( &expect, 0xcc, sizeof(expect) );
     func_ptr( &context, 0, &expect, pRtlCaptureContext );
-    trace( "expect: rax=%p rbx=%p rcx=%p rdx=%p rsi=%p rdi=%p "
-           "r8=%p r9=%p r10=%p r11=%p r12=%p r13=%p r14=%p r15=%p "
-           "rbp=%p rsp=%p rip=%p cs=%04x ds=%04x es=%04x fs=%04x gs=%04x ss=%04x flags=%08I64x prev=%p\n",
-           (void *)expect.Rax, (void *)expect.Rbx, (void *)expect.Rcx, (void *)expect.Rdx,
-           (void *)expect.Rsi, (void *)expect.Rdi, (void *)expect.R8, (void *)expect.R9,
-           (void *)expect.R10, (void *)expect.R11, (void *)expect.R12, (void *)expect.R13,
-           (void *)expect.R14, (void *)expect.R15, (void *)expect.Rbp, (void *)expect.Rsp,
-           (void *)expect.Rip, expect.SegCs, expect.SegDs, expect.SegEs,
-           expect.SegFs, expect.SegGs, expect.SegSs, expect.EFlags, (void*)expect.prev_frame );
-    trace( "actual: rax=%p rbx=%p rcx=%p rdx=%p rsi=%p rdi=%p "
-           "r8=%p r9=%p r10=%p r11=%p r12=%p r13=%p r14=%p r15=%p "
-           "rbp=%p rsp=%p rip=%p cs=%04x ds=%04x es=%04x fs=%04x gs=%04x ss=%04x flags=%08lx\n",
-           (void *)context.Rax, (void *)context.Rbx, (void *)context.Rcx, (void *)context.Rdx,
-           (void *)context.Rsi, (void *)context.Rdi, (void *)context.R8, (void *)context.R9,
-           (void *)context.R10, (void *)context.R11, (void *)context.R12, (void *)context.R13,
-           (void *)context.R14, (void *)context.R15, (void *)context.Rbp, (void *)context.Rsp,
-           (void *)context.Rip, context.SegCs, context.SegDs, context.SegEs,
-           context.SegFs, context.SegGs, context.SegSs, context.EFlags );
 
     ok( context.ContextFlags == (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS | CONTEXT_FLOATING_POINT),
         "wrong flags %08lx\n", context.ContextFlags );
@@ -4241,24 +4377,6 @@ static void test_thread_context(void)
 
     status = func_ptr( GetCurrentThread(), &context, &expect, pNtGetContextThread );
     ok( status == STATUS_SUCCESS, "NtGetContextThread failed %08lx\n", status );
-    trace( "expect: rax=%p rbx=%p rcx=%p rdx=%p rsi=%p rdi=%p "
-           "r8=%p r9=%p r10=%p r11=%p r12=%p r13=%p r14=%p r15=%p "
-           "rbp=%p rsp=%p rip=%p cs=%04x ds=%04x es=%04x fs=%04x gs=%04x ss=%04x flags=%08I64x prev=%p\n",
-           (void *)expect.Rax, (void *)expect.Rbx, (void *)expect.Rcx, (void *)expect.Rdx,
-           (void *)expect.Rsi, (void *)expect.Rdi, (void *)expect.R8, (void *)expect.R9,
-           (void *)expect.R10, (void *)expect.R11, (void *)expect.R12, (void *)expect.R13,
-           (void *)expect.R14, (void *)expect.R15, (void *)expect.Rbp, (void *)expect.Rsp,
-           (void *)expect.Rip, expect.SegCs, expect.SegDs, expect.SegEs,
-           expect.SegFs, expect.SegGs, expect.SegSs, expect.EFlags, (void*)expect.prev_frame );
-    trace( "actual: rax=%p rbx=%p rcx=%p rdx=%p rsi=%p rdi=%p "
-           "r8=%p r9=%p r10=%p r11=%p r12=%p r13=%p r14=%p r15=%p "
-           "rbp=%p rsp=%p rip=%p cs=%04x ds=%04x es=%04x fs=%04x gs=%04x ss=%04x flags=%08lx\n",
-           (void *)context.Rax, (void *)context.Rbx, (void *)context.Rcx, (void *)context.Rdx,
-           (void *)context.Rsi, (void *)context.Rdi, (void *)context.R8, (void *)context.R9,
-           (void *)context.R10, (void *)context.R11, (void *)context.R12, (void *)context.R13,
-           (void *)context.R14, (void *)context.R15, (void *)context.Rbp, (void *)context.Rsp,
-           (void *)context.Rip, context.SegCs, context.SegDs, context.SegEs,
-           context.SegFs, context.SegGs, context.SegSs, context.EFlags );
     /* other registers are not preserved */
     COMPARE( Rbx );
     COMPARE( Rsi );
@@ -4631,7 +4749,6 @@ done:
 }
 
 static BYTE saved_KiUserExceptionDispatcher_bytes[12];
-static void *pKiUserExceptionDispatcher;
 static BOOL hook_called;
 static void *hook_KiUserExceptionDispatcher_rip;
 static void *dbg_except_continue_handler_rip;
@@ -4654,6 +4771,15 @@ static struct
 test_kiuserexceptiondispatcher_regs;
 
 static ULONG64 test_kiuserexceptiondispatcher_saved_r12;
+
+struct machine_frame
+{
+    ULONG64 rip;
+    ULONG64 cs;
+    ULONG64 eflags;
+    ULONG64 rsp;
+    ULONG64 ss;
+};
 
 static DWORD dbg_except_continue_handler(EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
         CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher)
@@ -4698,27 +4824,38 @@ static LONG WINAPI dbg_except_continue_vectored_handler(struct _EXCEPTION_POINTE
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
-static void WINAPI hook_KiUserExceptionDispatcher(EXCEPTION_RECORD *rec, CONTEXT *context)
+static void * WINAPI hook_KiUserExceptionDispatcher(EXCEPTION_RECORD *rec, CONTEXT *context)
 {
-    trace("rec %p, context %p.\n", rec, context);
-    trace("context->Rip %#Ix, context->Rsp %#Ix, ContextFlags %#lx.\n",
-            context->Rip, context->Rsp, context->ContextFlags);
+    struct machine_frame *frame = (struct machine_frame *)(((ULONG_PTR)(rec + 1) + 0x0f) & ~0x0f);
+    CONTEXT_EX *xctx = (CONTEXT_EX *)(context + 1);
+
+    trace("rec %p context %p context->Rip %#Ix, context->Rsp %#Ix, ContextFlags %#lx.\n",
+          rec, context, context->Rip, context->Rsp, context->ContextFlags);
 
     hook_called = TRUE;
     /* Broken on Win2008, probably rec offset in stack is different. */
     ok(rec->ExceptionCode == 0x80000003 || rec->ExceptionCode == 0xceadbeef || broken(!rec->ExceptionCode),
             "Got unexpected ExceptionCode %#lx.\n", rec->ExceptionCode);
 
+    ok( !((ULONG_PTR)context & 15), "unaligned context %p\n", context );
+    ok( xctx->All.Offset == -sizeof(CONTEXT), "wrong All.Offset %lx\n", xctx->All.Offset );
+    ok( xctx->All.Length >= sizeof(CONTEXT) + offsetof(CONTEXT_EX, align), "wrong All.Length %lx\n", xctx->All.Length );
+    ok( xctx->Legacy.Offset == -sizeof(CONTEXT), "wrong Legacy.Offset %lx\n", xctx->All.Offset );
+    ok( xctx->Legacy.Length == sizeof(CONTEXT), "wrong Legacy.Length %lx\n", xctx->All.Length );
+    ok( (void *)(xctx + 1) == (void *)rec, "wrong ptrs %p / %p\n", xctx, rec );
+    ok( frame->rip == context->Rip, "wrong rip %Ix / %Ix\n", frame->rip, context->Rip );
+    ok( frame->rsp == context->Rsp, "wrong rsp %Ix / %Ix\n", frame->rsp, context->Rsp );
+
     hook_KiUserExceptionDispatcher_rip = (void *)context->Rip;
     hook_exception_address = rec->ExceptionAddress;
     memcpy(pKiUserExceptionDispatcher, saved_KiUserExceptionDispatcher_bytes,
             sizeof(saved_KiUserExceptionDispatcher_bytes));
+    return pKiUserExceptionDispatcher;
 }
 
-static void test_kiuserexceptiondispatcher(void)
+static void test_KiUserExceptionDispatcher(void)
 {
     LPVOID vectored_handler;
-    HMODULE hntdll = GetModuleHandleA("ntdll.dll");
     static BYTE except_code[] =
     {
         0x48, 0xb9, /* mov imm64, %rcx */
@@ -4762,8 +4899,6 @@ static void test_kiuserexceptiondispatcher(void)
         0xff, 0xd0,                 /* callq *rax */
         0x48, 0x31, 0xc9,           /* xor %rcx, %rcx */
         0x48, 0x31, 0xd2,           /* xor %rdx, %rdx */
-        0x48, 0xb8,                 /* movabs pKiUserExceptionDispatcher,%rax */
-        0,0,0,0,0,0,0,0,            /* offset 34 */
         0xff, 0xe0,                 /* jmpq *rax */
     };
 
@@ -4776,18 +4911,10 @@ static void test_kiuserexceptiondispatcher(void)
     BYTE *ptr;
     BOOL ret;
 
-    pKiUserExceptionDispatcher = (void *)GetProcAddress(hntdll, "KiUserExceptionDispatcher");
-    if (!pKiUserExceptionDispatcher)
-    {
-        win_skip("KiUserExceptionDispatcher is not available.\n");
-        return;
-    }
-
     *(ULONG64 *)(except_code + 2) = (ULONG64)&test_kiuserexceptiondispatcher_regs;
     *(ULONG64 *)(except_code + 0x2a) = (ULONG64)&test_kiuserexceptiondispatcher_regs.new_rax;
 
     *(ULONG_PTR *)(hook_trampoline + 16) = (ULONG_PTR)hook_KiUserExceptionDispatcher;
-    *(ULONG_PTR *)(hook_trampoline + 34) = (ULONG_PTR)pKiUserExceptionDispatcher;
     trampoline_ptr = (char *)code_mem + 1024;
     memcpy(trampoline_ptr, hook_trampoline, sizeof(hook_trampoline));
 
@@ -4926,6 +5053,165 @@ static void test_kiuserexceptiondispatcher(void)
     ret = VirtualProtect(pKiUserExceptionDispatcher, sizeof(saved_KiUserExceptionDispatcher_bytes),
             old_protect, &old_protect);
     ok(ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError());
+}
+
+
+static BYTE saved_KiUserApcDispatcher[12];
+static BOOL apc_called;
+
+static void CALLBACK apc_func( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3 )
+{
+    ok( arg1 == 0x1234, "wrong arg1 %Ix\n", arg1 );
+    ok( arg2 == 0x5678, "wrong arg2 %Ix\n", arg2 );
+    ok( arg3 == 0xdeadbeef, "wrong arg3 %Ix\n", arg3 );
+    apc_called = TRUE;
+}
+
+static void * WINAPI hook_KiUserApcDispatcher(CONTEXT *context)
+{
+    struct machine_frame *frame = (struct machine_frame *)(context + 1);
+    UINT i;
+
+    trace( "context %p, context->Rip %#Ix, context->Rsp %#Ix (%#Ix), ContextFlags %#lx.\n",
+           context, context->Rip, context->Rsp,
+           (char *)context->Rsp - (char *)context, context->ContextFlags );
+
+    ok( context->P1Home == 0x1234, "wrong p1 %#Ix\n", context->P1Home );
+    ok( context->P2Home == 0x5678, "wrong p2 %#Ix\n", context->P2Home );
+    ok( context->P3Home == 0xdeadbeef, "wrong p3 %#Ix\n", context->P3Home );
+    ok( context->P4Home == (ULONG_PTR)apc_func, "wrong p4 %#Ix / %p\n", context->P4Home, apc_func );
+
+    /* machine frame offset varies between Windows versions */
+    for (i = 0; i < 16; i++)
+    {
+        if (frame->rip == context->Rip) break;
+        frame = (struct machine_frame *)((ULONG64 *)frame + 2);
+    }
+    ok( frame->rip == context->Rip, "wrong rip %#Ix / %#Ix\n", frame->rip, context->Rip );
+    ok( frame->rsp == context->Rsp, "wrong rsp %#Ix / %#Ix\n", frame->rsp, context->Rsp );
+
+    hook_called = TRUE;
+    memcpy( pKiUserApcDispatcher, saved_KiUserApcDispatcher, sizeof(saved_KiUserApcDispatcher));
+    return pKiUserApcDispatcher;
+}
+
+static void test_KiUserApcDispatcher(void)
+{
+    BYTE hook_trampoline[] =
+    {
+        0x48, 0x89, 0xe1,           /* mov %rsp,%rcx */
+        0x48, 0xb8,                 /* movabs hook_KiUserApcDispatcher,%rax */
+        0,0,0,0,0,0,0,0,            /* offset 5 */
+        0xff, 0xd0,                 /* callq *rax */
+        0xff, 0xe0,                 /* jmpq *rax */
+    };
+
+    BYTE patched_KiUserApcDispatcher[12];
+    DWORD old_protect;
+    BYTE *ptr;
+    BOOL ret;
+
+    *(ULONG_PTR *)(hook_trampoline + 5) = (ULONG_PTR)hook_KiUserApcDispatcher;
+    memcpy(code_mem, hook_trampoline, sizeof(hook_trampoline));
+
+    ret = VirtualProtect( pKiUserApcDispatcher, sizeof(saved_KiUserApcDispatcher),
+                          PAGE_EXECUTE_READWRITE, &old_protect );
+    ok( ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError() );
+
+    memcpy( saved_KiUserApcDispatcher, pKiUserApcDispatcher, sizeof(saved_KiUserApcDispatcher) );
+    ptr = patched_KiUserApcDispatcher;
+    /* mov $code_mem, %rax */
+    *ptr++ = 0x48;
+    *ptr++ = 0xb8;
+    *(void **)ptr = code_mem;
+    ptr += sizeof(ULONG64);
+    /* jmp *rax */
+    *ptr++ = 0xff;
+    *ptr++ = 0xe0;
+    memcpy( pKiUserApcDispatcher, patched_KiUserApcDispatcher, sizeof(patched_KiUserApcDispatcher) );
+
+    hook_called = FALSE;
+    apc_called = FALSE;
+    pNtQueueApcThread( GetCurrentThread(), apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    SleepEx( 0, TRUE );
+    ok( apc_called, "APC was not called\n" );
+    ok( hook_called, "hook was not called\n" );
+
+    VirtualProtect( pKiUserApcDispatcher, sizeof(saved_KiUserApcDispatcher), old_protect, &old_protect );
+}
+
+static void WINAPI hook_KiUserCallbackDispatcher(void *rsp)
+{
+    struct
+    {
+        ULONG64              padding[4];
+        void                *args;
+        ULONG                len;
+        ULONG                id;
+        struct machine_frame frame;
+        BYTE                 args_data[0];
+    } *stack = rsp;
+
+    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[stack->id];
+
+    trace( "rsp %p args %p (%#Ix) len %lu id %lu\n", stack, stack->args,
+           (char *)stack->args - (char *)stack, stack->len, stack->id );
+
+    ok( !((ULONG_PTR)stack & 15), "unaligned stack %p\n", stack );
+    ok( stack->args == stack->args_data, "wrong args %p / %p\n", stack->args, stack->args_data );
+    ok( (BYTE *)stack->frame.rsp - &stack->args_data[stack->len] <= 16, "wrong rsp %p / %p\n",
+        (void *)stack->frame.rsp, &stack->args_data[stack->len] );
+
+    if (stack->frame.rip && pRtlPcToFileHeader)
+    {
+        void *mod, *win32u = GetModuleHandleA("win32u.dll");
+
+        pRtlPcToFileHeader( (void *)stack->frame.rip, &mod );
+        if (win32u) ok( mod == win32u, "ret address %Ix not in win32u %p\n", stack->frame.rip, win32u );
+        else trace( "ret address %Ix in %p\n", stack->frame.rip, mod );
+    }
+    NtCallbackReturn( NULL, 0, func( stack->args, stack->len ));
+}
+
+static void test_KiUserCallbackDispatcher(void)
+{
+    BYTE hook_trampoline[] =
+    {
+        0x48, 0x89, 0xe1,           /* mov %rsp,%rcx */
+        0x48, 0xb8,                 /* movabs hook_KiUserCallbackDispatcher,%rax */
+        0,0,0,0,0,0,0,0,            /* offset 5 */
+        0xff, 0xd0,                 /* callq *rax */
+    };
+
+    BYTE saved_KiUserCallbackDispatcher[12];
+    BYTE patched_KiUserCallbackDispatcher[12];
+    DWORD old_protect;
+    BYTE *ptr;
+    BOOL ret;
+
+    *(ULONG_PTR *)(hook_trampoline + 5) = (ULONG_PTR)hook_KiUserCallbackDispatcher;
+    memcpy(code_mem, hook_trampoline, sizeof(hook_trampoline));
+
+    ret = VirtualProtect( pKiUserCallbackDispatcher, sizeof(saved_KiUserCallbackDispatcher),
+                          PAGE_EXECUTE_READWRITE, &old_protect );
+    ok( ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError() );
+
+    memcpy( saved_KiUserCallbackDispatcher, pKiUserCallbackDispatcher, sizeof(saved_KiUserCallbackDispatcher) );
+    ptr = patched_KiUserCallbackDispatcher;
+    /* mov $code_mem, %rax */
+    *ptr++ = 0x48;
+    *ptr++ = 0xb8;
+    *(void **)ptr = code_mem;
+    ptr += sizeof(ULONG64);
+    /* jmp *rax */
+    *ptr++ = 0xff;
+    *ptr++ = 0xe0;
+    memcpy( pKiUserCallbackDispatcher, patched_KiUserCallbackDispatcher, sizeof(patched_KiUserCallbackDispatcher) );
+
+    DestroyWindow( CreateWindowA( "Static", "test", 0, 0, 0, 0, 0, 0, 0, 0, 0 ));
+
+    memcpy( pKiUserCallbackDispatcher, saved_KiUserCallbackDispatcher, sizeof(saved_KiUserCallbackDispatcher));
+    VirtualProtect( pKiUserCallbackDispatcher, sizeof(saved_KiUserCallbackDispatcher), old_protect, &old_protect );
 }
 
 static BOOL got_nested_exception, got_prev_frame_exception;
@@ -5144,7 +5430,6 @@ static void test_syscall_clobbered_regs(void)
 
     NTSTATUS (WINAPI *func)(void *arg1, void *arg2, struct regs *, void *call_addr);
     NTSTATUS (WINAPI *pNtCancelTimer)(HANDLE, BOOLEAN *);
-    HMODULE hntdll = GetModuleHandleA("ntdll.dll");
     struct regs regs;
     CONTEXT context;
     NTSTATUS status;
@@ -5315,9 +5600,11 @@ static void test_raiseexception_regs(void)
 #define UWOP_SAVE_D0_RANGE(first,last) UWOP_TWOBYTES((0xF5 << 8) | (first << 4) | (last))
 #define UWOP_SAVE_D16_RANGE(first,last)UWOP_TWOBYTES((0xF6 << 8) | ((first - 16) << 4) | (last - 16))
 #define UWOP_ALLOC_LARGE(size)         UWOP_THREEBYTES((0xF7 << 16) | (size/4))
-#define UWOP_ALLOC_HUGE(size)          UWOP_FOURBYTES((0xF8 << 24) | (size/4))
+#define UWOP_ALLOC_HUGE(size)          UWOP_FOURBYTES((0xF8u << 24) | (size/4))
 #define UWOP_ALLOC_LARGEW(size)        UWOP_THREEBYTES((0xF9 << 16) | (size/4))
-#define UWOP_ALLOC_HUGEW(size)         UWOP_FOURBYTES((0xFA << 24) | (size/4))
+#define UWOP_ALLOC_HUGEW(size)         UWOP_FOURBYTES((0xFAu << 24) | (size/4))
+#define UWOP_MSFT_OP_MACHINE_FRAME     0xEE,0x01
+#define UWOP_MSFT_OP_CONTEXT           0xEE,0x02
 #define UWOP_NOP16                     0xFB
 #define UWOP_NOP32                     0xFC
 #define UWOP_END_NOP16                 0xFD
@@ -5378,7 +5665,7 @@ static void call_virtual_unwind( int testnum, const struct unwind_test *test )
     KNONVOLATILE_CONTEXT_POINTERS ctx_ptr;
     UINT i, j, k;
     ULONG fake_stack[256];
-    ULONG_PTR frame, orig_pc, orig_fp, unset_reg, sp_offset = 0;
+    ULONG_PTR frame, orig_pc, orig_fp, unset_reg;
     ULONGLONG unset_reg64;
     static const UINT nb_regs = ARRAY_SIZE(test->results[i].regs);
 
@@ -5405,7 +5692,7 @@ static void call_virtual_unwind( int testnum, const struct unwind_test *test )
         context.Lr = (ULONG_PTR)ORIG_LR;
         context.R11 = (ULONG_PTR)fake_stack + test->results[i].fp_offset;
         orig_fp = context.R11;
-        orig_pc = (ULONG64)code_mem + code_offset + test->results[i].pc_offset;
+        orig_pc = (ULONG_PTR)code_mem + code_offset + test->results[i].pc_offset;
 
         trace( "%u/%u: pc=%p (%02x) fp=%p sp=%p\n", testnum, i,
                (void *)orig_pc, *(UINT *)orig_pc, (void *)orig_fp, (void *)context.Sp );
@@ -5434,25 +5721,8 @@ static void call_virtual_unwind( int testnum, const struct unwind_test *test )
         ok( frame == (test->results[i].frame_offset ? (ULONG)fake_stack : 0) + test->results[i].frame, "%u/%u: wrong frame %x/%x\n",
             testnum, i, (int)((char *)frame - (char *)(test->results[i].frame_offset ? fake_stack : NULL)), test->results[i].frame );
 
-        sp_offset = 0;
-        for (k = 0; k < nb_regs; k++)
-        {
-            if (test->results[i].regs[k][0] == -1)
-                break;
-            if (test->results[i].regs[k][0] == sp) {
-                /* If sp is part of the registers list, treat it as an offset
-                 * between the returned frame pointer and the sp register. */
-                sp_offset = test->results[i].regs[k][1];
-                break;
-            }
-        }
-        ok( frame - sp_offset == context.Sp, "%u/%u: wrong sp %p/%p\n",
-            testnum, i, (void *)(frame - sp_offset), (void *)context.Sp);
-
         for (j = 0; j < 47; j++)
         {
-            if (j == sp) continue; /* Handling sp separately above */
-
             for (k = 0; k < nb_regs; k++)
             {
                 if (test->results[i].regs[k][0] == -1)
@@ -5480,6 +5750,16 @@ static void call_virtual_unwind( int testnum, const struct unwind_test *test )
                     ok( context.Lr == test->results[i].regs[k][1],
                         "%u/%u: register %s wrong %p/%x\n",
                         testnum, i, reg_names[j], (void *)context.Lr, (int)test->results[i].regs[k][1] );
+            }
+            else if (j == sp)
+            {
+                if (k < nb_regs)
+                    ok( context.Sp == test->results[i].regs[k][1],
+                        "%u/%u: register %s wrong %p/%x\n",
+                        testnum, i, reg_names[j], (void *)context.Sp, (int)test->results[i].regs[k][1] );
+                else
+                    ok( context.Sp == frame, "%u/%u: wrong sp %p/%p\n",
+                        testnum, i, (void *)context.Sp, (void *)frame);
             }
             else if (j >= d8 && j <= d15 && (&ctx_ptr.D8)[j - d8])
             {
@@ -6259,7 +6539,7 @@ static void test_virtual_unwind(void)
         (1 << 19) | /* R (0 integer registers, 1 float registers, R=1, Reg=7 no registers */
         (1 << 20) | /* L, push LR */
         (0 << 21) | /* C - hook up r11 */
-        (0x3fc << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
+        (0x3fcu << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
 
     static const BYTE unwind_info_18[] = { DW(unwind_info_18_packed) };
 
@@ -6290,7 +6570,7 @@ static void test_virtual_unwind(void)
         (0 << 19) | /* R (0 integer registers, 1 float registers, R=1, Reg=7 no registers */
         (0 << 20) | /* L, push LR */
         (0 << 21) | /* C - hook up r11 */
-        (0x3ff << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
+        (0x3ffu << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
 
     static const BYTE unwind_info_19[] = { DW(unwind_info_19_packed) };
 
@@ -6325,7 +6605,7 @@ static void test_virtual_unwind(void)
         (0 << 19) | /* R (0 integer registers, 1 float registers, R=1, Reg=7 no registers */
         (0 << 20) | /* L, push LR */
         (0 << 21) | /* C - hook up r11 */
-        (0x3f7 << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
+        (0x3f7u << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
 
     static const BYTE unwind_info_20[] = { DW(unwind_info_20_packed) };
 
@@ -6361,7 +6641,7 @@ static void test_virtual_unwind(void)
         (0 << 19) | /* R (0 integer registers, 1 float registers, R=1, Reg=7 no registers */
         (0 << 20) | /* L, push LR */
         (0 << 21) | /* C - hook up r11 */
-        (0x3fb << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
+        (0x3fbu << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
 
     static const BYTE unwind_info_21[] = { DW(unwind_info_21_packed) };
 
@@ -6459,7 +6739,7 @@ static void test_virtual_unwind(void)
         (0 << 19) | /* R (0 integer registers, 1 float registers, R=1, Reg=7 no registers */
         (1 << 20) | /* L, push LR */
         (1 << 21) | /* C - hook up r11 */
-        (0x3f5 << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
+        (0x3f5u << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
 
     static const BYTE unwind_info_24[] = { DW(unwind_info_24_packed) };
 
@@ -6491,7 +6771,7 @@ static void test_virtual_unwind(void)
         (0 << 19) | /* R (0 integer registers, 1 float registers, R=1, Reg=7 no registers */
         (1 << 20) | /* L, push LR */
         (1 << 21) | /* C - hook up r11 */
-        (0x3f9 << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
+        (0x3f9u << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
 
     static const BYTE unwind_info_25[] = { DW(unwind_info_25_packed) };
 
@@ -6559,7 +6839,7 @@ static void test_virtual_unwind(void)
         (1 << 19) | /* R (0 integer registers, 1 float registers, R=1, Reg=7 no registers */
         (0 << 20) | /* L, push LR */
         (0 << 21) | /* C - hook up r11 */
-        (0x3f6 << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
+        (0x3f6u << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
 
     static const BYTE unwind_info_27[] = { DW(unwind_info_27_packed) };
 
@@ -6589,7 +6869,7 @@ static void test_virtual_unwind(void)
         (1 << 19) | /* R (0 integer registers, 1 float registers, R=1, Reg=7 no registers */
         (0 << 20) | /* L, push LR */
         (0 << 21) | /* C - hook up r11 */
-        (0x3fa << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
+        (0x3fau << 22);  /* StackAdjust, stack/4. 0x3F4 special, + (0-3) stack adjustment, 4 PF (prologue folding), 8 EF (epilogue folding) */
 
     static const BYTE unwind_info_28[] = { DW(unwind_info_28_packed) };
 
@@ -6600,6 +6880,70 @@ static void test_virtual_unwind(void)
         { 0x02,  0x10,  0,     ORIG_LR, 0x00c, TRUE, { {-1,-1} }},
         { 0x04,  0x10,  0,     ORIG_LR, 0x00c, TRUE, { {-1,-1} }},
         { 0x06,  0x10,  0,     ORIG_LR, 0x000, TRUE, { {-1,-1} }},
+    };
+
+    static const BYTE function_29[] =
+    {
+        0x00, 0xbf,               /* 00: nop */
+        0x00, 0xbf,               /* 02: nop */
+    };
+
+    static const DWORD unwind_info_29_header =
+        (sizeof(function_29)/2) | /* function length */
+        (0  << 20) | /* X */
+        (0  << 21) | /* E */
+        (0  << 22) | /* F */
+        (0  << 23) | /* epilog */
+        (1  << 28);  /* codes, (sizeof(unwind_info_29)-headers+3)/4 */
+
+    static const BYTE unwind_info_29[] =
+    {
+        DW(unwind_info_29_header),
+        UWOP_MSFT_OP_CONTEXT,
+        UWOP_END,
+    };
+
+    static const struct results results_29[] =
+    {
+      /* offset  fp    handler  pc      frame offset  registers */
+        { 0x00,  0x10,  0,     0x40,    0x38, FALSE, { {r0,0x04}, {r1,0x08}, {r2,0x0c}, {r3,0x10}, {r4,0x14}, {r5,0x18}, {r6,0x1c}, {r7,0x20}, {r8,0x24}, {r9,0x28}, {r10,0x2c}, {r11,0x30}, {r12,0x34}, {sp,0x38}, {lr,0x3c},
+                                                       {d0,0x5400000050}, {d1,0x5c00000058}, {d2,0x6400000060}, {d3,0x6c00000068}, {d4,0x7400000070}, {d5,0x7c00000078}, {d6,0x8400000080}, {d7,0x8c00000088},
+                                                       {d8,0x9400000090}, {d9,0x9c00000098}, {d10,0xa4000000a0}, {d11,0xac000000a8}, {d12,0xb4000000b0}, {d13,0xbc000000b8}, {d14,0xc4000000c0}, {d15,0xcc000000c8},
+                                                       {d16,0xd4000000d0}, {d17,0xdc000000d8}, {d18,0xe4000000e0}, {d19,0xec000000e8}, {d20,0xf4000000f0}, {d21,0xfc000000f8}, {d22,0x10400000100}, {d23,0x10c00000108},
+                                                       {d24,0x11400000110}, {d25,0x11c00000118}, {d26,0x12400000120}, {d27,0x12c00000128}, {d28,0x13400000130}, {d29,0x13c00000138}, {d30,0x14400000140}, {d31,0x14c00000148} }},
+    };
+
+    static const BYTE function_30[] =
+    {
+        0x00, 0xbf,               /* 00: nop */
+        0x00, 0xbf,               /* 02: nop */
+        0x00, 0xbf,               /* 04: nop */
+        0x00, 0xbf,               /* 06: nop */
+    };
+
+    static const DWORD unwind_info_30_header =
+        (sizeof(function_30)/2) | /* function length */
+        (0  << 20) | /* X */
+        (0  << 21) | /* E */
+        (0  << 22) | /* F */
+        (0  << 23) | /* epilog */
+        (2  << 28);  /* codes, (sizeof(unwind_info_30)-headers+3)/4 */
+
+    static const BYTE unwind_info_30[] =
+    {
+        DW(unwind_info_30_header),
+        UWOP_ALLOC_SMALL(12),         /* sub    sp, sp, #12 */
+        UWOP_SAVE_REGS((1<<lr)),      /* push   {lr} */
+        UWOP_MSFT_OP_MACHINE_FRAME,
+        UWOP_END,
+    };
+
+    static const struct results results_30[] =
+    {
+      /* offset  fp    handler  pc      frame offset  registers */
+        { 0x00,  0x10,  0,     0x04,    0x00, FALSE, { {sp,0x00}, {-1,-1} }},
+        { 0x02,  0x10,  0,     0x08,    0x04, FALSE, { {lr,0x00}, {sp,0x04}, {-1,-1} }},
+        { 0x04,  0x10,  0,     0x14,    0x10, FALSE, { {lr,0x0c}, {sp,0x10}, {-1,-1} }},
     };
 
     static const struct unwind_test tests[] =
@@ -6635,6 +6979,8 @@ static void test_virtual_unwind(void)
         TEST(function_26, unwind_info_26, 1, results_26),
         TEST(function_27, unwind_info_27, 1, results_27),
         TEST(function_28, unwind_info_28, 1, results_28),
+        TEST(function_29, unwind_info_29, 0, results_29),
+        TEST(function_30, unwind_info_30, 0, results_30),
 #undef TEST
     };
     unsigned int i;
@@ -6995,6 +7341,254 @@ static void test_debugger(DWORD cont_status, BOOL with_WaitForDebugEventEx)
 static void test_debug_service(DWORD numexc)
 {
     /* not supported */
+}
+
+
+static BOOL hook_called;
+static BOOL got_exception;
+static void *code_ptr;
+
+static WORD patched_code[] =
+{
+    0x4668,         /* mov r0, sp */
+    0xf8df, 0xc004, /* ldr.w ip, [pc, #0x4] */
+    0x4760,         /* bx ip */
+    0, 0,           /* 1: hook_trampoline */
+};
+static WORD saved_code[ARRAY_SIZE(patched_code)];
+
+static LONG WINAPI dbg_except_continue_vectored_handler(struct _EXCEPTION_POINTERS *ptrs)
+{
+    EXCEPTION_RECORD *rec = ptrs->ExceptionRecord;
+    CONTEXT *context = ptrs->ContextRecord;
+
+    trace("dbg_except_continue_vectored_handler, code %#lx, pc %#lx.\n", rec->ExceptionCode, context->Pc);
+    got_exception = TRUE;
+
+    ok(rec->ExceptionCode == 0x80000003, "Got unexpected exception code %#lx.\n", rec->ExceptionCode);
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static void * WINAPI hook_KiUserExceptionDispatcher(void *stack)
+{
+    CONTEXT *context = stack;
+    EXCEPTION_RECORD *rec = (EXCEPTION_RECORD *)(context + 1);
+
+    trace( "rec %p context %p pc %#lx sp %#lx flags %#lx\n",
+           rec, context, context->Pc, context->Sp, context->ContextFlags );
+
+    ok( !((ULONG_PTR)stack & 7), "unaligned stack %p\n", stack );
+    ok( rec->ExceptionCode == 0x80000003, "Got unexpected ExceptionCode %#lx.\n", rec->ExceptionCode );
+
+    hook_called = TRUE;
+    memcpy(code_ptr, saved_code, sizeof(saved_code));
+    FlushInstructionCache( GetCurrentProcess(), code_ptr, sizeof(saved_code));
+    return pKiUserExceptionDispatcher;
+}
+
+static void test_KiUserExceptionDispatcher(void)
+{
+    WORD hook_trampoline[] =
+    {
+        0x4668,         /* mov r0, sp */
+        0xf8df, 0xc006, /* ldr.w r12, [pc, #0x6] */
+        0x47e0,         /* blx r12 */
+        0x4700,         /* bx r0 */
+        0, 0,           /* 1: hook_KiUserExceptionDispatcher */
+    };
+
+    EXCEPTION_RECORD record = { EXCEPTION_BREAKPOINT };
+    void *trampoline_ptr, *vectored_handler;
+    DWORD old_protect;
+    BOOL ret;
+
+    code_ptr = (void *)(((ULONG_PTR)pKiUserExceptionDispatcher) & ~1); /* mask thumb bit */
+    *(void **)&hook_trampoline[5] = hook_KiUserExceptionDispatcher;
+    trampoline_ptr = (char *)code_mem + 1024;
+    memcpy( trampoline_ptr, hook_trampoline, sizeof(hook_trampoline));
+
+    ret = VirtualProtect( code_ptr, sizeof(saved_code),
+                          PAGE_EXECUTE_READWRITE, &old_protect );
+    ok( ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError() );
+
+    memcpy( saved_code, code_ptr, sizeof(saved_code) );
+    *(void **)&patched_code[4] = (char *)trampoline_ptr + 1;  /* thumb */
+
+    vectored_handler = AddVectoredExceptionHandler(TRUE, dbg_except_continue_vectored_handler);
+
+    memcpy( code_ptr, patched_code, sizeof(patched_code) );
+    FlushInstructionCache( GetCurrentProcess(), code_ptr, sizeof(patched_code));
+
+    got_exception = FALSE;
+    hook_called = FALSE;
+
+    pRtlRaiseException(&record);
+
+    ok(got_exception, "Handler was not called.\n");
+    ok(!hook_called, "Hook was called.\n");
+
+    memcpy( code_ptr, patched_code, sizeof(patched_code) );
+    FlushInstructionCache( GetCurrentProcess(), code_ptr, sizeof(patched_code));
+
+    got_exception = 0;
+    hook_called = FALSE;
+    NtCurrentTeb()->Peb->BeingDebugged = 1;
+
+    pRtlRaiseException(&record);
+
+    ok(got_exception, "Handler was not called.\n");
+    ok(hook_called, "Hook was not called.\n");
+    NtCurrentTeb()->Peb->BeingDebugged = 0;
+
+    RemoveVectoredExceptionHandler(vectored_handler);
+    VirtualProtect(code_ptr, sizeof(saved_code), old_protect, &old_protect);
+}
+
+static UINT apc_count;
+static UINT alertable_supported;
+
+static void CALLBACK apc_func( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3 )
+{
+    ok( arg1 == 0x1234 + apc_count, "wrong arg1 %Ix\n", arg1 );
+    ok( arg2 == 0x5678, "wrong arg2 %Ix\n", arg2 );
+    ok( arg3 == 0xdeadbeef, "wrong arg3 %Ix\n", arg3 );
+    apc_count++;
+}
+
+static void * WINAPI hook_KiUserApcDispatcher(void *stack)
+{
+    struct
+    {
+        void *func;
+        ULONG args[3];
+        ULONG alertable;
+        ULONG align;
+        CONTEXT context;
+    } *args = stack;
+    CONTEXT *context = &args->context;
+
+    if (args->alertable == 1) alertable_supported = TRUE;
+    else context = (CONTEXT *)&args->alertable;
+
+    trace( "stack=%p func=%p args=%lx,%lx,%lx alertable=%lx context=%p pc=%lx sp=%lx (%lx)\n",
+           args, args->func, args->args[0], args->args[1], args->args[2],
+           args->alertable, context, context->Pc, context->Sp,
+           context->Sp - (ULONG_PTR)stack );
+
+    ok( args->func == apc_func, "wrong func %p / %p\n", args->func, apc_func );
+    ok( args->args[0] == 0x1234 + apc_count, "wrong arg1 %lx\n", args->args[0] );
+    ok( args->args[1] == 0x5678, "wrong arg2 %lx\n", args->args[1] );
+    ok( args->args[2] == 0xdeadbeef, "wrong arg3 %lx\n", args->args[2] );
+
+    if (apc_count && alertable_supported) args->alertable = FALSE;
+    pNtQueueApcThread( GetCurrentThread(), apc_func, 0x1234 + apc_count + 1, 0x5678, 0xdeadbeef );
+
+    hook_called = TRUE;
+    memcpy( code_ptr, saved_code, sizeof(saved_code));
+    FlushInstructionCache( GetCurrentProcess(), code_ptr, sizeof(saved_code));
+    return pKiUserApcDispatcher;
+}
+
+static void test_KiUserApcDispatcher(void)
+{
+    WORD hook_trampoline[] =
+    {
+        0x4668,         /* mov r0, sp */
+        0xf8df, 0xc006, /* ldr.w r12, [pc, #0x6] */
+        0x47e0,         /* blx r12 */
+        0x4700,         /* bx r0 */
+        0, 0,           /* 1: hook_KiUserApcDispatcher */
+    };
+    DWORD old_protect;
+    BOOL ret;
+
+    code_ptr = (void *)(((ULONG_PTR)pKiUserApcDispatcher) & ~1); /* mask thumb bit */
+    *(void **)&hook_trampoline[5] = hook_KiUserApcDispatcher;
+    memcpy(code_mem, hook_trampoline, sizeof(hook_trampoline));
+
+    ret = VirtualProtect( code_ptr, sizeof(saved_code),
+                          PAGE_EXECUTE_READWRITE, &old_protect );
+    ok( ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError() );
+
+    memcpy( saved_code, code_ptr, sizeof(saved_code) );
+    *(void **)&patched_code[4] = (char *)code_mem + 1; /* thumb */
+    memcpy( code_ptr, patched_code, sizeof(patched_code) );
+    FlushInstructionCache( GetCurrentProcess(), code_ptr, sizeof(patched_code));
+
+    hook_called = FALSE;
+    apc_count = 0;
+    pNtQueueApcThread( GetCurrentThread(), apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    SleepEx( 0, TRUE );
+    ok( apc_count == 2, "APC count %u\n", apc_count );
+    ok( hook_called, "hook was not called\n" );
+
+    memcpy( code_ptr, patched_code, sizeof(patched_code) );
+    FlushInstructionCache( GetCurrentProcess(), code_ptr, sizeof(patched_code));
+    pNtQueueApcThread( GetCurrentThread(), apc_func, 0x1234 + apc_count, 0x5678, 0xdeadbeef );
+    SleepEx( 0, TRUE );
+    if (alertable_supported)
+    {
+        ok( apc_count == 3, "APC count %u\n", apc_count );
+        SleepEx( 0, TRUE );
+    }
+    ok( apc_count == 4, "APC count %u\n", apc_count );
+
+    VirtualProtect( code_ptr, sizeof(saved_code), old_protect, &old_protect );
+}
+
+static void WINAPI hook_KiUserCallbackDispatcher(void *sp)
+{
+    struct
+    {
+        void *args;
+        ULONG len;
+        ULONG id;
+        ULONG lr;
+        ULONG sp;
+        ULONG pc;
+        BYTE args_data[0];
+    } *stack = sp;
+    ULONG_PTR redzone = (BYTE *)stack->sp - &stack->args_data[stack->len];
+    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[stack->id];
+
+    trace( "stack=%p len=%lx id=%lx lr=%lx sp=%lx pc=%lx\n",
+           stack, stack->len, stack->id, stack->lr, stack->sp, stack->pc );
+    NtCallbackReturn( NULL, 0, 0 );
+
+    ok( stack->args == stack->args_data, "wrong args %p / %p\n", stack->args, stack->args_data );
+    ok( redzone >= 8 && redzone <= 16, "wrong sp %p / %p (%Iu)\n",
+        (void *)stack->sp, stack->args_data, redzone );
+
+    if (pRtlPcToFileHeader)
+    {
+        void *mod, *win32u = GetModuleHandleA("win32u.dll");
+
+        pRtlPcToFileHeader( (void *)stack->pc, &mod );
+        ok( mod == win32u, "pc %lx not in win32u %p\n", stack->pc, win32u );
+    }
+    NtCallbackReturn( NULL, 0, func( stack->args, stack->len ));
+}
+
+void test_KiUserCallbackDispatcher(void)
+{
+    DWORD old_protect;
+    BOOL ret;
+
+    code_ptr = (void *)(((ULONG_PTR)pKiUserCallbackDispatcher) & ~1); /* mask thumb bit */
+    ret = VirtualProtect( code_ptr, sizeof(saved_code),
+                          PAGE_EXECUTE_READWRITE, &old_protect );
+    ok( ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError() );
+
+    memcpy( saved_code, code_ptr, sizeof(saved_code));
+    *(void **)&patched_code[4] = hook_KiUserCallbackDispatcher;
+    memcpy( code_ptr, patched_code, sizeof(patched_code));
+    FlushInstructionCache(GetCurrentProcess(), code_ptr, sizeof(patched_code));
+
+    DestroyWindow( CreateWindowA( "Static", "test", 0, 0, 0, 0, 0, 0, 0, 0, 0 ));
+
+    memcpy( code_ptr, saved_code, sizeof(saved_code));
+    FlushInstructionCache(GetCurrentProcess(), code_ptr, sizeof(saved_code));
+    VirtualProtect( code_ptr, sizeof(saved_code), old_protect, &old_protect );
 }
 
 #elif defined(__aarch64__)
@@ -8397,6 +8991,243 @@ static void test_continue(void)
     }
 #undef COMPARE
 }
+
+static BOOL hook_called;
+static BOOL got_exception;
+
+static ULONG patched_code[] =
+{
+    0x910003e0, /* mov x0, sp */
+    0x5800004f, /* ldr x15, 1f */
+    0xd61f01e0, /* br x15 */
+    0, 0,       /* 1: hook_trampoline */
+};
+static ULONG saved_code[ARRAY_SIZE(patched_code)];
+
+static LONG WINAPI dbg_except_continue_vectored_handler(struct _EXCEPTION_POINTERS *ptrs)
+{
+    EXCEPTION_RECORD *rec = ptrs->ExceptionRecord;
+    CONTEXT *context = ptrs->ContextRecord;
+
+    trace("dbg_except_continue_vectored_handler, code %#lx, pc %#Ix.\n", rec->ExceptionCode, context->Pc);
+    got_exception = TRUE;
+
+    ok(rec->ExceptionCode == 0x80000003, "Got unexpected exception code %#lx.\n", rec->ExceptionCode);
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static void * WINAPI hook_KiUserExceptionDispatcher(void *stack)
+{
+    CONTEXT *context = stack;
+    EXCEPTION_RECORD *rec = (EXCEPTION_RECORD *)(context + 1);
+
+    trace( "rec %p context %p pc %#Ix sp %#Ix flags %#lx\n",
+           rec, context, context->Pc, context->Sp, context->ContextFlags );
+
+    ok( !((ULONG_PTR)stack & 15), "unaligned stack %p\n", stack );
+    ok( rec->ExceptionCode == 0x80000003, "Got unexpected ExceptionCode %#lx.\n", rec->ExceptionCode );
+
+    hook_called = TRUE;
+    memcpy(pKiUserExceptionDispatcher, saved_code, sizeof(saved_code));
+    FlushInstructionCache( GetCurrentProcess(), pKiUserExceptionDispatcher, sizeof(saved_code));
+    return pKiUserExceptionDispatcher;
+}
+
+static void test_KiUserExceptionDispatcher(void)
+{
+    ULONG hook_trampoline[] =
+    {
+        0x910003e0, /* mov x0, sp */
+        0x5800006f, /* ldr x15, 1f */
+        0xd63f01e0, /* blr x15 */
+        0xd61f0000, /* br x0 */
+        0, 0,       /* 1: hook_KiUserExceptionDispatcher */
+    };
+
+    EXCEPTION_RECORD record = { EXCEPTION_BREAKPOINT };
+    void *trampoline_ptr, *vectored_handler;
+    DWORD old_protect;
+    BOOL ret;
+
+    *(void **)&hook_trampoline[4] = hook_KiUserExceptionDispatcher;
+    trampoline_ptr = (char *)code_mem + 1024;
+    memcpy( trampoline_ptr, hook_trampoline, sizeof(hook_trampoline));
+
+    ret = VirtualProtect( pKiUserExceptionDispatcher, sizeof(saved_code),
+                          PAGE_EXECUTE_READWRITE, &old_protect );
+    ok( ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError() );
+
+    memcpy( saved_code, pKiUserExceptionDispatcher, sizeof(saved_code) );
+    *(void **)&patched_code[3] = trampoline_ptr;
+
+    vectored_handler = AddVectoredExceptionHandler(TRUE, dbg_except_continue_vectored_handler);
+
+    memcpy( pKiUserExceptionDispatcher, patched_code, sizeof(patched_code) );
+    FlushInstructionCache( GetCurrentProcess(), pKiUserExceptionDispatcher, sizeof(patched_code));
+
+    got_exception = FALSE;
+    hook_called = FALSE;
+
+    pRtlRaiseException(&record);
+
+    ok(got_exception, "Handler was not called.\n");
+    ok(!hook_called, "Hook was called.\n");
+
+    memcpy( pKiUserExceptionDispatcher, patched_code, sizeof(patched_code) );
+    FlushInstructionCache( GetCurrentProcess(), pKiUserExceptionDispatcher, sizeof(patched_code));
+
+    got_exception = 0;
+    hook_called = FALSE;
+    NtCurrentTeb()->Peb->BeingDebugged = 1;
+
+    pRtlRaiseException(&record);
+
+    ok(got_exception, "Handler was not called.\n");
+    ok(hook_called, "Hook was not called.\n");
+    NtCurrentTeb()->Peb->BeingDebugged = 0;
+
+    RemoveVectoredExceptionHandler(vectored_handler);
+    VirtualProtect(pKiUserExceptionDispatcher, sizeof(saved_code), old_protect, &old_protect);
+}
+
+
+static UINT apc_count;
+
+static void CALLBACK apc_func( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3 )
+{
+    ok( arg1 == 0x1234 + apc_count, "wrong arg1 %Ix\n", arg1 );
+    ok( arg2 == 0x5678, "wrong arg2 %Ix\n", arg2 );
+    ok( arg3 == 0xdeadbeef, "wrong arg3 %Ix\n", arg3 );
+    apc_count++;
+}
+
+static void * WINAPI hook_KiUserApcDispatcher(void *stack)
+{
+    struct
+    {
+        void *func;
+        ULONG64 args[3];
+        ULONG64 alertable;
+        ULONG64 align;
+        CONTEXT context;
+    } *args = stack;
+
+    trace( "stack=%p func=%p args=%Ix,%Ix,%Ix alertable=%Ix context=%p pc=%Ix sp=%Ix (%Ix)\n",
+           args, args->func, args->args[0], args->args[1], args->args[2],
+           args->alertable, &args->context, args->context.Pc, args->context.Sp,
+           args->context.Sp - (ULONG_PTR)stack );
+
+    ok( args->func == apc_func, "wrong func %p / %p\n", args->func, apc_func );
+    ok( args->args[0] == 0x1234 + apc_count, "wrong arg1 %Ix\n", args->args[0] );
+    ok( args->args[1] == 0x5678, "wrong arg2 %Ix\n", args->args[1] );
+    ok( args->args[2] == 0xdeadbeef, "wrong arg3 %Ix\n", args->args[2] );
+
+    if (apc_count) args->alertable = FALSE;
+    pNtQueueApcThread( GetCurrentThread(), apc_func, 0x1234 + apc_count + 1, 0x5678, 0xdeadbeef );
+
+    hook_called = TRUE;
+    memcpy( pKiUserApcDispatcher, saved_code, sizeof(saved_code));
+    FlushInstructionCache( GetCurrentProcess(), pKiUserApcDispatcher, sizeof(saved_code));
+    return pKiUserApcDispatcher;
+}
+
+static void test_KiUserApcDispatcher(void)
+{
+    ULONG hook_trampoline[] =
+    {
+        0x910003e0, /* mov x0, sp */
+        0x5800006f, /* ldr x15, 1f */
+        0xd63f01e0, /* blr x15 */
+        0xd61f0000, /* br x0 */
+        0, 0,       /* 1: hook_KiUserApcDispatcher */
+    };
+    DWORD old_protect;
+    BOOL ret;
+
+    *(void **)&hook_trampoline[4] = hook_KiUserApcDispatcher;
+    memcpy(code_mem, hook_trampoline, sizeof(hook_trampoline));
+
+    ret = VirtualProtect( pKiUserApcDispatcher, sizeof(saved_code),
+                          PAGE_EXECUTE_READWRITE, &old_protect );
+    ok( ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError() );
+
+    memcpy( saved_code, pKiUserApcDispatcher, sizeof(saved_code) );
+    *(void **)&patched_code[3] = code_mem;
+    memcpy( pKiUserApcDispatcher, patched_code, sizeof(patched_code) );
+    FlushInstructionCache( GetCurrentProcess(), pKiUserApcDispatcher, sizeof(patched_code));
+
+    hook_called = FALSE;
+    apc_count = 0;
+    pNtQueueApcThread( GetCurrentThread(), apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    SleepEx( 0, TRUE );
+    ok( apc_count == 2, "APC count %u\n", apc_count );
+    ok( hook_called, "hook was not called\n" );
+
+    memcpy( pKiUserApcDispatcher, patched_code, sizeof(patched_code) );
+    FlushInstructionCache( GetCurrentProcess(), pKiUserApcDispatcher, sizeof(patched_code));
+    pNtQueueApcThread( GetCurrentThread(), apc_func, 0x1234 + apc_count, 0x5678, 0xdeadbeef );
+    SleepEx( 0, TRUE );
+    ok( apc_count == 3, "APC count %u\n", apc_count );
+    SleepEx( 0, TRUE );
+    ok( apc_count == 4, "APC count %u\n", apc_count );
+
+    VirtualProtect( pKiUserApcDispatcher, sizeof(saved_code), old_protect, &old_protect );
+}
+
+static void WINAPI hook_KiUserCallbackDispatcher(void *sp)
+{
+    struct
+    {
+        void *args;
+        ULONG len;
+        ULONG id;
+        ULONG64 unknown;
+        ULONG64 lr;
+        ULONG64 sp;
+        ULONG64 pc;
+        BYTE args_data[0];
+    } *stack = sp;
+    ULONG_PTR redzone = (BYTE *)stack->sp - &stack->args_data[stack->len];
+    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[stack->id];
+
+    trace( "stack=%p len=%lx id=%lx unk=%Ix lr=%Ix sp=%Ix pc=%Ix\n",
+           stack, stack->len, stack->id, stack->unknown, stack->lr, stack->sp, stack->pc );
+
+    ok( stack->args == stack->args_data, "wrong args %p / %p\n", stack->args, stack->args_data );
+    ok( redzone >= 16 && redzone <= 32, "wrong sp %p / %p (%Iu)\n",
+        (void *)stack->sp, stack->args_data, redzone );
+
+    if (pRtlPcToFileHeader)
+    {
+        void *mod, *win32u = GetModuleHandleA("win32u.dll");
+
+        pRtlPcToFileHeader( (void *)stack->pc, &mod );
+        ok( mod == win32u, "pc %Ix not in win32u %p\n", stack->pc, win32u );
+    }
+    NtCallbackReturn( NULL, 0, func( stack->args, stack->len ));
+}
+
+ void test_KiUserCallbackDispatcher(void)
+{
+    DWORD old_protect;
+    BOOL ret;
+
+    ret = VirtualProtect( pKiUserCallbackDispatcher, sizeof(saved_code),
+                          PAGE_EXECUTE_READWRITE, &old_protect );
+    ok( ret, "Got unexpected ret %#x, GetLastError() %lu.\n", ret, GetLastError() );
+
+    memcpy( saved_code, pKiUserCallbackDispatcher, sizeof(saved_code));
+    *(void **)&patched_code[3] = hook_KiUserCallbackDispatcher;
+    memcpy( pKiUserCallbackDispatcher, patched_code, sizeof(patched_code));
+    FlushInstructionCache(GetCurrentProcess(), pKiUserCallbackDispatcher, sizeof(patched_code));
+
+    DestroyWindow( CreateWindowA( "Static", "test", 0, 0, 0, 0, 0, 0, 0, 0, 0 ));
+
+    memcpy( pKiUserCallbackDispatcher, saved_code, sizeof(saved_code));
+    FlushInstructionCache(GetCurrentProcess(), pKiUserCallbackDispatcher, sizeof(saved_code));
+    VirtualProtect( pKiUserCallbackDispatcher, sizeof(saved_code), old_protect, &old_protect );
+}
+
 #endif  /* __aarch64__ */
 
 #if defined(__i386__) || defined(__x86_64__)
@@ -8603,7 +9434,6 @@ static DWORD debug_service_exceptions;
 static LONG CALLBACK debug_service_handler(EXCEPTION_POINTERS *ExceptionInfo)
 {
     EXCEPTION_RECORD *rec = ExceptionInfo->ExceptionRecord;
-    trace("vect. handler %08lx addr:%p\n", rec->ExceptionCode, rec->ExceptionAddress);
 
     ok(rec->ExceptionCode == EXCEPTION_BREAKPOINT, "ExceptionCode is %08lx instead of %08lx\n",
        rec->ExceptionCode, EXCEPTION_BREAKPOINT);
@@ -8780,7 +9610,6 @@ static DWORD outputdebugstring_exceptions_unicode;
 static LONG CALLBACK outputdebugstring_vectored_handler(EXCEPTION_POINTERS *ExceptionInfo)
 {
     PEXCEPTION_RECORD rec = ExceptionInfo->ExceptionRecord;
-    trace("vect. handler %08lx addr:%p\n", rec->ExceptionCode, rec->ExceptionAddress);
 
     switch (rec->ExceptionCode)
     {
@@ -8849,7 +9678,6 @@ static DWORD outputdebugstring_newmodel_return;
 static LONG CALLBACK outputdebugstring_new_model_vectored_handler(EXCEPTION_POINTERS *ExceptionInfo)
 {
     PEXCEPTION_RECORD rec = ExceptionInfo->ExceptionRecord;
-    trace("vect. handler %08lx addr:%p\n", rec->ExceptionCode, rec->ExceptionAddress);
 
     switch (rec->ExceptionCode)
     {
@@ -8933,7 +9761,6 @@ static DWORD ripevent_exceptions;
 static LONG CALLBACK ripevent_vectored_handler(EXCEPTION_POINTERS *ExceptionInfo)
 {
     PEXCEPTION_RECORD rec = ExceptionInfo->ExceptionRecord;
-    trace("vect. handler %08lx addr:%p\n", rec->ExceptionCode, rec->ExceptionAddress);
 
     ok(rec->ExceptionCode == DBG_RIPEXCEPTION, "ExceptionCode is %08lx instead of %08lx\n",
        rec->ExceptionCode, DBG_RIPEXCEPTION);
@@ -9066,7 +9893,6 @@ static DWORD breakpoint_exceptions;
 static LONG CALLBACK breakpoint_handler(EXCEPTION_POINTERS *ExceptionInfo)
 {
     EXCEPTION_RECORD *rec = ExceptionInfo->ExceptionRecord;
-    trace("vect. handler %08lx addr:%p\n", rec->ExceptionCode, rec->ExceptionAddress);
 
     ok(rec->ExceptionCode == EXCEPTION_BREAKPOINT, "ExceptionCode is %08lx instead of %08lx\n",
        rec->ExceptionCode, EXCEPTION_BREAKPOINT);
@@ -9228,7 +10054,6 @@ static DWORD invalid_handle_exceptions;
 static LONG CALLBACK invalid_handle_vectored_handler(EXCEPTION_POINTERS *ExceptionInfo)
 {
     PEXCEPTION_RECORD rec = ExceptionInfo->ExceptionRecord;
-    trace("vect. handler %08lx addr:%p\n", rec->ExceptionCode, rec->ExceptionAddress);
 
     ok(rec->ExceptionCode == EXCEPTION_INVALID_HANDLE, "ExceptionCode is %08lx instead of %08lx\n",
        rec->ExceptionCode, EXCEPTION_INVALID_HANDLE);
@@ -11421,11 +12246,11 @@ static void test_set_live_context(void)
 
 START_TEST(exception)
 {
-    HMODULE hntdll = GetModuleHandleA("ntdll.dll");
     HMODULE hkernel32 = GetModuleHandleA("kernel32.dll");
 #if defined(__x86_64__)
     HMODULE hmsvcrt = LoadLibraryA("msvcrt.dll");
 #endif
+    hntdll = GetModuleHandleA("ntdll.dll");
 
     my_argc = winetest_get_mainargs( &my_argv );
 
@@ -11473,8 +12298,12 @@ START_TEST(exception)
     X(RtlLocateLegacyContext);
     X(RtlSetExtendedFeaturesMask);
     X(RtlGetExtendedFeaturesMask);
+    X(RtlPcToFileHeader);
     X(RtlCopyContext);
     X(RtlCopyExtendedContext);
+    X(KiUserApcDispatcher);
+    X(KiUserCallbackDispatcher);
+    X(KiUserExceptionDispatcher);
 #undef X
 
 #define X(f) p##f = (void*)GetProcAddress(hkernel32, #f)
@@ -11597,7 +12426,6 @@ START_TEST(exception)
     test_fpu_exceptions();
     test_dpe_exceptions();
     test_prot_fault();
-    test_kiuserexceptiondispatcher();
     test_extended_context();
     test_copy_context();
     test_set_live_context();
@@ -11634,7 +12462,6 @@ START_TEST(exception)
     test_prot_fault();
     test_dpe_exceptions();
     test_wow64_context();
-    test_kiuserexceptiondispatcher();
     test_nested_exception();
     test_collided_unwind();
 
@@ -11660,6 +12487,9 @@ START_TEST(exception)
 
 #endif
 
+    test_KiUserExceptionDispatcher();
+    test_KiUserApcDispatcher();
+    test_KiUserCallbackDispatcher();
     test_debugger(DBG_EXCEPTION_HANDLED, FALSE);
     test_debugger(DBG_CONTINUE, FALSE);
     test_debugger(DBG_EXCEPTION_HANDLED, TRUE);

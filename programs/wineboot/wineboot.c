@@ -242,16 +242,124 @@ static void initialize_xstate_features(struct _KUSER_SHARED_DATA *data)
     TRACE("XSAVE feature 2 %#x, %#x, %#x, %#x.\n", regs[0], regs[1], regs[2], regs[3]);
 }
 
+static BOOL is_tsc_trusted_by_the_kernel(void)
+{
+    char buf[4] = {0};
+    DWORD num_read;
+    HANDLE handle;
+    BOOL ret = TRUE;
+
+    /* Darwin for x86-64 uses the TSC internally for timekeeping, so it can always
+     * be trusted.
+     * For BSDs there seems to be no unified interface to query TSC quality.
+     * If there is a sysfs entry with clocksource information, use it to check though. */
+    handle = CreateFileW( L"\\??\\unix\\sys\\bus\\clocksource\\devices\\clocksource0\\current_clocksource",
+                          GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0 );
+    if (handle == INVALID_HANDLE_VALUE) return TRUE;
+
+    if (ReadFile( handle, buf, sizeof(buf) - 1, &num_read, NULL ) && strcmp( "tsc", buf ))
+        ret = FALSE;
+
+    CloseHandle( handle );
+    return ret;
+}
+
+static UINT64 read_tsc_frequency(void)
+{
+    UINT64 freq = 0;
+    LONGLONG time0, time1, tsc0, tsc1, tsc2, tsc3, freq0, freq1, error;
+    BOOL has_rdtscp = FALSE;
+    unsigned int aux;
+    UINT retries = 50;
+    int regs[4];
+
+    if (!is_tsc_trusted_by_the_kernel())
+    {
+        WARN( "Failed to compute TSC frequency, not trusted by the kernel.\n" );
+        return 0;
+    }
+
+    __cpuid(regs, 1);
+    if (!(regs[3] & (1 << 4)))
+    {
+        WARN( "Failed to compute TSC frequency, RDTSC instruction not supported.\n" );
+        return 0;
+    }
+
+    __cpuid( regs, 0x80000000 );
+    if (regs[0] < 0x80000007)
+    {
+        WARN( "Failed to compute TSC frequency, unable to check invariant TSC.\n" );
+        return 0;
+    }
+
+    /* check for invariant tsc bit */
+    __cpuid( regs, 0x80000007 );
+    if (!(regs[3] & (1 << 8)))
+    {
+        WARN( "Failed to compute TSC frequency, no invariant TSC.\n" );
+        return 0;
+    }
+
+    /* check for rdtscp support bit */
+    __cpuid( regs, 0x80000001 );
+    if ((regs[3] & (1 << 27))) has_rdtscp = TRUE;
+
+    do
+    {
+        if (has_rdtscp)
+        {
+            tsc0 = __rdtscp( &aux );
+            time0 = RtlGetSystemTimePrecise();
+            tsc1 = __rdtscp( &aux );
+            Sleep( 1 );
+            tsc2 = __rdtscp( &aux );
+            time1 = RtlGetSystemTimePrecise();
+            tsc3 = __rdtscp( &aux );
+        }
+        else
+        {
+            tsc0 = __rdtsc(); __cpuid( regs, 0 );
+            time0 = RtlGetSystemTimePrecise();
+            tsc1 = __rdtsc(); __cpuid( regs, 0 );
+            Sleep( 1 );
+            tsc2 = __rdtsc(); __cpuid( regs, 0 );
+            time1 = RtlGetSystemTimePrecise();
+            tsc3 = __rdtsc(); __cpuid( regs, 0 );
+        }
+
+        freq0 = (tsc2 - tsc0) * 10000000 / (time1 - time0);
+        freq1 = (tsc3 - tsc1) * 10000000 / (time1 - time0);
+        error = llabs( (freq1 - freq0) * 1000000 / min( freq1, freq0 ) );
+    }
+    while (error > 500 && --retries);
+
+    if (!retries) WARN( "TSC frequency calibration failed, unstable TSC?\n" );
+    else
+    {
+        freq = (freq0 + freq1) / 2;
+        TRACE( "TSC frequency calibration complete, found %I64u Hz\n", freq );
+    }
+
+    return freq;
+}
+
 #else
 
 static void initialize_xstate_features(struct _KUSER_SHARED_DATA *data)
 {
 }
 
+static UINT64 read_tsc_frequency(void)
+{
+    return 0;
+}
+
 #endif
 
 static void create_user_shared_data(void)
 {
+    SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION machines[8];
     struct _KUSER_SHARED_DATA *data;
     RTL_OSVERSIONINFOEXW version;
     SYSTEM_CPU_INFORMATION sci;
@@ -261,7 +369,7 @@ static void create_user_shared_data(void)
     UNICODE_STRING name = RTL_CONSTANT_STRING( L"\\KernelObjects\\__wine_user_shared_data" );
     NTSTATUS status;
     HANDLE handle;
-    ULONG i, machines[8];
+    ULONG i;
     HANDLE process = 0;
 
     InitializeObjectAttributes( &attr, &name, OBJ_OPENIF, NULL, NULL );
@@ -341,9 +449,9 @@ static void create_user_shared_data(void)
         if (!NtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
                                          machines, sizeof(machines), NULL ))
         {
-            for (i = 0; machines[i]; i++)
+            for (i = 0; machines[i].Machine; i++)
             {
-                switch (LOWORD(machines[i]))
+                switch (machines[i].Machine)
                 {
                 case IMAGE_FILE_MACHINE_ARMNT:
                     features[PF_ARM_VFP_32_REGISTERS_AVAILABLE]  = TRUE;
@@ -668,6 +776,7 @@ static void create_hardware_registry_keys(void)
     SYSTEM_CPU_INFORMATION sci;
     PROCESSOR_POWER_INFORMATION* power_info;
     ULONG sizeof_power_info = sizeof(PROCESSOR_POWER_INFORMATION) * NtCurrentTeb()->Peb->NumberOfProcessors;
+    UINT64 tsc_frequency = read_tsc_frequency();
     ULONG name_buffer[16];
     WCHAR id[60], vendorid[13];
 
@@ -738,13 +847,16 @@ static void create_hardware_registry_keys(void)
         if (!RegCreateKeyExW( cpu_key, numW, 0, NULL, REG_OPTION_VOLATILE,
                               KEY_ALL_ACCESS, NULL, &hkey, NULL ))
         {
+            DWORD tsc_freq_mhz = (DWORD)(tsc_frequency / 1000000ull); /* Hz -> Mhz */
+            if (!tsc_freq_mhz) tsc_freq_mhz = power_info[i].MaxMhz;
+
             RegSetValueExW( hkey, L"FeatureSet", 0, REG_DWORD, (BYTE *)&sci.ProcessorFeatureBits, sizeof(DWORD) );
             set_reg_value( hkey, L"Identifier", id );
             /* TODO: report ARM properly */
             RegSetValueExA( hkey, "ProcessorNameString", 0, REG_SZ, (const BYTE *)name_buffer,
                             strlen( (char *)name_buffer ) + 1 );
             set_reg_value( hkey, L"VendorIdentifier", vendorid );
-            RegSetValueExW( hkey, L"~MHz", 0, REG_DWORD, (BYTE *)&power_info[i].MaxMhz, sizeof(DWORD) );
+            RegSetValueExW( hkey, L"~MHz", 0, REG_DWORD, (BYTE *)&tsc_freq_mhz, sizeof(DWORD) );
             RegCloseKey( hkey );
         }
         if (sci.ProcessorArchitecture != PROCESSOR_ARCHITECTURE_ARM &&
@@ -1631,12 +1743,12 @@ static void update_wineprefix( BOOL force )
 
     if (update_timestamp( config_dir, st.st_mtime ) || force)
     {
-        ULONG machines[8];
+        SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION machines[8];
         HANDLE process = 0;
         DWORD count = 0;
 
         if (NtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
-                                        machines, sizeof(machines), NULL )) machines[0] = 0;
+                                        machines, sizeof(machines), NULL )) machines[0].Machine = 0;
 
         if ((process = start_rundll32( inf_path, L"PreInstall", IMAGE_FILE_MACHINE_TARGET_HOST )))
         {
@@ -1654,11 +1766,11 @@ static void update_wineprefix( BOOL force )
                     }
                     CloseHandle( process );
                 }
-                if (!machines[count]) break;
-                if (HIWORD(machines[count]) & 4 /* native machine */)
+                if (!machines[count].Machine) break;
+                if (machines[count].Native)
                     process = start_rundll32( inf_path, L"DefaultInstall", IMAGE_FILE_MACHINE_TARGET_HOST );
                 else
-                    process = start_rundll32( inf_path, L"Wow64Install", LOWORD(machines[count]) );
+                    process = start_rundll32( inf_path, L"Wow64Install", machines[count].Machine );
                 count++;
             }
             DestroyWindow( hwnd );

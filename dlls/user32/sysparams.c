@@ -747,6 +747,15 @@ DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT
 }
 
 /**********************************************************************
+ *              GetThreadDpiHostingBehavior   (USER32.@)
+ */
+DPI_HOSTING_BEHAVIOR WINAPI GetThreadDpiHostingBehavior( void )
+{
+    FIXME("(): stub\n");
+    return DPI_HOSTING_BEHAVIOR_DEFAULT;
+}
+
+/**********************************************************************
  *              SetThreadDpiHostingBehavior   (USER32.@)
  */
 DPI_HOSTING_BEHAVIOR WINAPI SetThreadDpiHostingBehavior( DPI_HOSTING_BEHAVIOR value )
@@ -911,12 +920,21 @@ BOOL WINAPI GetAutoRotationState( AR_STATE *state )
 }
 
 /**********************************************************************
- *              GetDisplayAutoRotationPreferences [USER32.@]
+ *              GetDisplayAutoRotationPreferences (USER32.@)
  */
 BOOL WINAPI GetDisplayAutoRotationPreferences( ORIENTATION_PREFERENCE *orientation )
 {
     FIXME("(%p): stub\n", orientation);
     *orientation = ORIENTATION_PREFERENCE_NONE;
+    return TRUE;
+}
+
+/**********************************************************************
+ *              SetDisplayAutoRotationPreferences (USER32.@)
+ */
+BOOL WINAPI SetDisplayAutoRotationPreferences( ORIENTATION_PREFERENCE orientation )
+{
+    FIXME("(%d): stub\n", orientation);
     return TRUE;
 }
 

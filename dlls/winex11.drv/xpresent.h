@@ -26,7 +26,7 @@
 
 #ifdef SONAME_LIBXPRESENT
 #include <X11/extensions/Xpresent.h>
-#define MAKE_FUNCPTR(f) extern typeof(f) * p##f DECLSPEC_HIDDEN;
+#define MAKE_FUNCPTR(f) extern typeof(f) * p##f;
 MAKE_FUNCPTR(XPresentQueryExtension)
 MAKE_FUNCPTR(XPresentQueryVersion)
 MAKE_FUNCPTR(XPresentPixmap)

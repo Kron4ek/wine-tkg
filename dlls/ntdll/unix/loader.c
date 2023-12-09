@@ -30,6 +30,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <signal.h>
+#include <spawn.h>
 #include <string.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -69,7 +70,6 @@
 # include <mach/mach_error.h>
 # include <mach-o/getsect.h>
 # include <crt_externs.h>
-# include <spawn.h>
 # ifndef _POSIX_SPAWN_DISABLE_ASLR
 #  define _POSIX_SPAWN_DISABLE_ASLR 0x0100
 # endif
@@ -77,6 +77,7 @@
 #ifdef __ANDROID__
 # include <jni.h>
 #endif
+extern char **environ;
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -299,10 +300,25 @@ static char *build_path( const char *dir, const char *name )
     size_t len = strlen( dir );
     char *ret = malloc( len + strlen( name ) + 2 );
 
-    memcpy( ret, dir, len );
-    if (len && ret[len - 1] != '/') ret[len++] = '/';
-    if (name[0] == '/') name++;
+    if (len)
+    {
+        memcpy( ret, dir, len );
+        if (ret[len - 1] != '/') ret[len++] = '/';
+        if (name[0] == '/') name++;
+    }
     strcpy( ret + len, name );
+    return ret;
+}
+
+
+/* build a path to a binary and exec it */
+static int build_path_and_exec( pid_t *pid, const char *dir, const char *name, char **argv )
+{
+    int ret;
+
+    argv[0] = build_path( dir, name );
+    ret = posix_spawn( pid, argv[0], NULL, NULL, argv, environ );
+    free( argv[0] );
     return ret;
 }
 
@@ -482,7 +498,12 @@ static void init_paths( char *argv[] )
         data_dir = build_path( bin_dir, BIN_TO_DATADIR );
         wineloader = build_path( bin_dir, basename );
     }
-    else wineloader = build_path( build_path( build_dir, "loader" ), basename );
+    else
+    {
+        char *dirname = build_path( build_dir, "loader" );
+        wineloader = build_path( dirname, basename );
+        free(dirname);
+    }
 
     asprintf( &env, "WINELOADER=%s", wineloader );
     putenv( env );
@@ -594,7 +615,7 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_i
  *
  * Exec a new wine server.
  */
-static void exec_wineserver( char **argv )
+static int exec_wineserver( pid_t *pid, char **argv )
 {
     char *path;
 
@@ -603,34 +624,20 @@ static void exec_wineserver( char **argv )
         if (!is_win64)  /* look for 64-bit server */
         {
             char *loader = realpath_dirname( build_path( build_dir, "loader/wine64" ));
-            if (loader)
-            {
-                argv[0] = build_path( loader, "../server/wineserver" );
-                execv( argv[0], argv );
-            }
+            if (loader && !build_path_and_exec( pid, loader, "../server/wineserver", argv )) return 0;
         }
-        argv[0] = build_path( build_dir, "server/wineserver" );
-        execv( argv[0], argv );
-        return;
+        return build_path_and_exec( pid, build_dir, "server/wineserver", argv );
     }
 
-    argv[0] = build_path( bin_dir, "wineserver" );
-    execv( argv[0], argv );
-
-    argv[0] = getenv( "WINESERVER" );
-    if (argv[0]) execv( argv[0], argv );
+    if (!build_path_and_exec( pid, bin_dir, "wineserver", argv )) return 0;
+    if ((path = getenv( "WINESERVER" )) && !build_path_and_exec( pid, "", path, argv )) return 0;
 
     if ((path = getenv( "PATH" )))
     {
         for (path = strtok( strdup( path ), ":" ); path; path = strtok( NULL, ":" ))
-        {
-            argv[0] = build_path( path, "wineserver" );
-            execvp( argv[0], argv );
-        }
+            if (!build_path_and_exec( pid, path, "wineserver", argv )) return 0;
     }
-
-    argv[0] = build_path( BINDIR, "wineserver" );
-    execv( argv[0], argv );
+    return build_path_and_exec( pid, BINDIR, "wineserver", argv );
 }
 
 
@@ -648,21 +655,32 @@ void start_server( BOOL debug )
     if (!started)
     {
         int status;
-        int pid = fork();
-        if (pid == -1) fatal_error( "fork: %s", strerror(errno) );
-        if (!pid)
-        {
-            argv[1] = debug ? debug_flag : NULL;
-            argv[2] = NULL;
-            exec_wineserver( argv );
-            fatal_error( "could not exec wineserver\n" );
-        }
+        pid_t pid;
+
+        argv[1] = debug ? debug_flag : NULL;
+        argv[2] = NULL;
+        if (exec_wineserver( &pid, argv )) fatal_error( "could not exec wineserver\n" );
         waitpid( pid, &status, 0 );
         status = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
         if (status == 2) return;  /* server lock held by someone else, will retry later */
         if (status) exit(status);  /* server failed */
         started = TRUE;
     }
+}
+
+
+/***********************************************************************
+ *           KeAddSystemServiceTable
+ */
+BOOLEAN KeAddSystemServiceTable( ULONG_PTR *funcs, ULONG_PTR *counters, ULONG limit,
+                                 BYTE *arguments, ULONG index )
+{
+    if (index >= ARRAY_SIZE(KeServiceDescriptorTable)) return FALSE;
+    KeServiceDescriptorTable[index].ServiceTable  = funcs;
+    KeServiceDescriptorTable[index].CounterTable  = counters;
+    KeServiceDescriptorTable[index].ServiceLimit  = limit;
+    KeServiceDescriptorTable[index].ArgumentTable = arguments;
+    return TRUE;
 }
 
 
@@ -1961,9 +1979,13 @@ static jstring wine_init_jni( JNIEnv *env, jobject obj, jobjectArray cmdline, jo
 
     java_object = (*env)->NewGlobalRef( env, obj );
 
+    main_argc = argc;
+    main_argv = argv;
+    main_envp = environ;
+
     init_paths( argv );
     virtual_init();
-    init_environment( argc, argv, environ );
+    init_environment();
 
 #ifdef __i386__
     {
@@ -2178,6 +2200,10 @@ static void check_command_line( int argc, char *argv[] )
  */
 DECLSPEC_EXPORT void __wine_main( int argc, char *argv[], char *envp[] )
 {
+    main_argc = argc;
+    main_argv = argv;
+    main_envp = envp;
+
     init_paths( argv );
 
     if (!getenv( "WINELOADERNOEXEC" ))  /* first time around */
@@ -2205,7 +2231,7 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[], char *envp[] )
     virtual_init();
     signal_init_early();
 
-    init_environment( argc, argv, envp );
+    init_environment();
 
 #ifdef __APPLE__
     apple_main_thread();

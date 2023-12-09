@@ -127,6 +127,45 @@ static DWORD64 get_fault_esr( ucontext_t *sigcontext )
 
 #endif /* linux */
 
+/* stack layout when calling KiUserExceptionDispatcher */
+struct exc_stack_layout
+{
+    CONTEXT              context;        /* 000 */
+    EXCEPTION_RECORD     rec;            /* 390 */
+    ULONG64              align;          /* 428 */
+    ULONG64              redzone[2];     /* 430 */
+};
+C_ASSERT( offsetof(struct exc_stack_layout, rec) == 0x390 );
+C_ASSERT( sizeof(struct exc_stack_layout) == 0x440 );
+
+/* stack layout when calling KiUserApcDispatcher */
+struct apc_stack_layout
+{
+    void                *func;           /* 000 APC to call*/
+    ULONG64              args[3];        /* 008 function arguments */
+    ULONG64              alertable;      /* 020 */
+    ULONG64              align;          /* 028 */
+    CONTEXT              context;        /* 030 */
+    ULONG64              redzone[2];     /* 3c0 */
+};
+C_ASSERT( offsetof(struct apc_stack_layout, context) == 0x30 );
+C_ASSERT( sizeof(struct apc_stack_layout) == 0x3d0 );
+
+/* stack layout when calling KiUserCallbackDispatcher */
+struct callback_stack_layout
+{
+    void                *args;           /* 000 arguments */
+    ULONG                len;            /* 008 arguments len */
+    ULONG                id;             /* 00c function id */
+    ULONG64              unknown;        /* 010 */
+    ULONG64              lr;             /* 018 */
+    ULONG64              sp;             /* 020 sp+pc (machine frame) */
+    ULONG64              pc;             /* 028 */
+    BYTE                 args_data[0];   /* 030 copied argument data*/
+};
+C_ASSERT( offsetof(struct callback_stack_layout, sp) == 0x20 );
+C_ASSERT( sizeof(struct callback_stack_layout) == 0x30 );
+
 struct syscall_frame
 {
     ULONG64               x[29];          /* 000 */
@@ -149,10 +188,12 @@ C_ASSERT( sizeof( struct syscall_frame ) == 0x330 );
 struct arm64_thread_data
 {
     struct syscall_frame *syscall_frame; /* 02f0 frame pointer on syscall entry */
+    SYSTEM_SERVICE_TABLE *syscall_table; /* 02f8 syscall table */
 };
 
 C_ASSERT( sizeof(struct arm64_thread_data) <= sizeof(((struct ntdll_thread_data *)0)->cpu_data) );
 C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct arm64_thread_data, syscall_frame ) == 0x2f0 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct arm64_thread_data, syscall_table ) == 0x2f8 );
 
 static inline struct arm64_thread_data *arm64_thread_data(void)
 {
@@ -164,8 +205,6 @@ static BOOL is_inside_syscall( ucontext_t *sigcontext )
     return ((char *)SP_sig(sigcontext) >= (char *)ntdll_get_thread_data()->kernel_stack &&
             (char *)SP_sig(sigcontext) <= (char *)arm64_thread_data()->syscall_frame);
 }
-
-extern void raise_func_trampoline( EXCEPTION_RECORD *rec, CONTEXT *context, void *dispatcher );
 
 /***********************************************************************
  *           dwarf_virtual_unwind
@@ -183,7 +222,6 @@ static NTSTATUS dwarf_virtual_unwind( ULONG64 ip, ULONG64 *frame, CONTEXT *conte
     struct frame_state state_stack[MAX_SAVED_STATES];
     int aug_z_format = 0;
     unsigned char lsda_encoding = DW_EH_PE_omit;
-    DWORD64 prev_x28 = context->X28;
 
     memset( &info, 0, sizeof(info) );
     info.state_stack = state_stack;
@@ -272,17 +310,6 @@ static NTSTATUS dwarf_virtual_unwind( ULONG64 ip, ULONG64 *frame, CONTEXT *conte
     /* Set Pc based on Lr; libunwind also does this as part of unw_step. */
     context->Pc = context->Lr;
 
-    if (bases->func == (void *)raise_func_trampoline) {
-        /* raise_func_trampoline has a pointer to a full CONTEXT stored in x28;
-         * restore the original Lr value from there. The function we unwind to
-         * might be a leaf function that hasn't backed up its own original Lr
-         * value on the stack.
-         * We could also just restore the full context here without doing
-         * unw_step at all. */
-        const CONTEXT *next_ctx = (const CONTEXT *)prev_x28;
-        context->Lr = next_ctx->Lr;
-    }
-
     TRACE( "next function pc=%016lx\n", context->Pc );
     TRACE("  x0=%016lx  x1=%016lx  x2=%016lx  x3=%016lx\n",
           context->X0, context->X1, context->X2, context->X3 );
@@ -313,7 +340,6 @@ static NTSTATUS libunwind_virtual_unwind( ULONG_PTR ip, ULONG_PTR *frame, CONTEX
     unw_cursor_t cursor;
     unw_proc_info_t info;
     int rc;
-    DWORD64 prev_x28 = context->X28;
 
 #ifdef __APPLE__
     rc = unw_getcontext( &unw_context );
@@ -418,17 +444,6 @@ static NTSTATUS libunwind_virtual_unwind( ULONG_PTR ip, ULONG_PTR *frame, CONTEX
 #endif
     unw_get_reg( &cursor, UNW_REG_IP,      (unw_word_t *)&context->Pc );
     context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
-
-    if (info.start_ip == (unw_word_t)raise_func_trampoline) {
-        /* raise_func_trampoline has a pointer to a full CONTEXT stored in x28;
-         * restore the original Lr value from there. The function we unwind to
-         * might be a leaf function that hasn't backed up its own original Lr
-         * value on the stack.
-         * We could also just restore the full context here without doing
-         * unw_step at all. */
-        const CONTEXT *next_ctx = (const CONTEXT *)prev_x28;
-        context->Lr = next_ctx->Lr;
-    }
 
     TRACE( "next function pc=%016lx%s\n", context->Pc, rc ? "" : " (last frame)" );
     TRACE("  x0=%016lx  x1=%016lx  x2=%016lx  x3=%016lx\n",
@@ -949,45 +964,6 @@ NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
 }
 
 
-/* Note, unwind_builtin_dll above has hardcoded assumptions on how this
- * function stores a CONTEXT pointer in x28; if modified, modify that one in
- * sync as well. */
-__ASM_GLOBAL_FUNC( raise_func_trampoline,
-                   "stp x29, x30, [sp, #-0x20]!\n\t"
-                   "str x28, [sp, #0x10]\n\t"
-                   __ASM_CFI(".cfi_def_cfa_offset 32\n\t")
-                   __ASM_CFI(".cfi_offset 29, -32\n\t")
-                   __ASM_CFI(".cfi_offset 30, -24\n\t")
-                   __ASM_CFI(".cfi_offset 28, -16\n\t")
-                   "mov x29, sp\n\t"
-                   __ASM_CFI(".cfi_def_cfa_register 29\n\t")
-                   __ASM_CFI(".cfi_remember_state\n\t")
-                   "mov x28, x1\n\t"
-                   __ASM_CFI_REG_IS_AT2(x19, x28, 0xa0, 0x01)
-                   __ASM_CFI_REG_IS_AT2(x20, x28, 0xa8, 0x01)
-                   __ASM_CFI_REG_IS_AT2(x21, x28, 0xb0, 0x01)
-                   __ASM_CFI_REG_IS_AT2(x22, x28, 0xb8, 0x01)
-                   __ASM_CFI_REG_IS_AT2(x23, x28, 0xc0, 0x01)
-                   __ASM_CFI_REG_IS_AT2(x24, x28, 0xc8, 0x01)
-                   __ASM_CFI_REG_IS_AT2(x25, x28, 0xd0, 0x01)
-                   __ASM_CFI_REG_IS_AT2(x26, x28, 0xd8, 0x01)
-                   __ASM_CFI_REG_IS_AT2(x27, x28, 0xe0, 0x01)
-                   __ASM_CFI_REG_IS_AT2(x28, x28, 0xe8, 0x01)
-                   __ASM_CFI_REG_IS_AT2(x29, x28, 0xf0, 0x01)
-                   __ASM_CFI_CFA_IS_AT2(x28, 0x80, 0x02)
-                   __ASM_CFI_REG_IS_AT2(x30, x28, 0x88, 0x02)
-                   __ASM_CFI_REG_IS_AT2(v8, x28, 0x90, 0x03)
-                   __ASM_CFI_REG_IS_AT2(v9, x28, 0x98, 0x03)
-                   __ASM_CFI_REG_IS_AT2(v10, x28, 0xa0, 0x03)
-                   __ASM_CFI_REG_IS_AT2(v11, x28, 0xa8, 0x03)
-                   __ASM_CFI_REG_IS_AT2(v12, x28, 0xb0, 0x03)
-                   __ASM_CFI_REG_IS_AT2(v13, x28, 0xb8, 0x03)
-                   __ASM_CFI_REG_IS_AT2(v14, x28, 0xc8, 0x03)
-                   __ASM_CFI_REG_IS_AT2(v15, x28, 0xc8, 0x03)
-                   "blr x2\n\t"
-                   __ASM_CFI(".cfi_restore_state\n\t")
-                   "brk #1")
-
 /***********************************************************************
  *           setup_exception
  *
@@ -995,13 +971,7 @@ __ASM_GLOBAL_FUNC( raise_func_trampoline,
  */
 static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 {
-    struct
-    {
-        CONTEXT           context;
-        EXCEPTION_RECORD  rec;
-        void             *redzone[3];
-    } *stack;
-
+    struct exc_stack_layout *stack;
     void *stack_ptr = (void *)(SP_sig(sigcontext) & ~15);
     CONTEXT context;
     NTSTATUS status;
@@ -1019,16 +989,12 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
     /* fix up instruction pointer in context for EXCEPTION_BREAKPOINT */
     if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context.Pc -= 4;
 
-    stack = virtual_setup_exception( stack_ptr, (sizeof(*stack) + 15) & ~15, rec );
+    stack = virtual_setup_exception( stack_ptr, sizeof(*stack), rec );
     stack->rec = *rec;
     stack->context = context;
 
     SP_sig(sigcontext) = (ULONG_PTR)stack;
-    LR_sig(sigcontext) = PC_sig(sigcontext);
-    PC_sig(sigcontext) = (ULONG_PTR)raise_func_trampoline;
-    REGn_sig(0, sigcontext) = (ULONG_PTR)&stack->rec;  /* first arg for KiUserExceptionDispatcher */
-    REGn_sig(1, sigcontext) = (ULONG_PTR)&stack->context; /* second arg for KiUserExceptionDispatcher */
-    REGn_sig(2, sigcontext) = (ULONG_PTR)pKiUserExceptionDispatcher; /* dispatcher arg for raise_func_trampoline */
+    PC_sig(sigcontext) = (ULONG_PTR)pKiUserExceptionDispatcher;
     REGn_sig(18, sigcontext) = (ULONG_PTR)NtCurrentTeb();
 }
 
@@ -1041,7 +1007,7 @@ NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR a
 {
     struct syscall_frame *frame = arm64_thread_data()->syscall_frame;
     ULONG64 sp = context ? context->Sp : frame->sp;
-    struct apc_stack_layout { CONTEXT context; } *stack;
+    struct apc_stack_layout *stack;
 
     sp &= ~15;
     stack = (struct apc_stack_layout *)sp - 1;
@@ -1056,14 +1022,14 @@ NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR a
         NtGetContextThread( GetCurrentThread(), &stack->context );
         stack->context.X0 = status;
     }
-    frame->sp   = (ULONG64)stack;
-    frame->pc   = (ULONG64)pKiUserApcDispatcher;
-    frame->x[0] = (ULONG64)&stack->context;
-    frame->x[1] = arg1;
-    frame->x[2] = arg2;
-    frame->x[3] = arg3;
-    frame->x[4] = (ULONG64)func;
-    frame->restore_flags |= CONTEXT_CONTROL | CONTEXT_INTEGER;
+    stack->func    = func;
+    stack->args[0] = arg1;
+    stack->args[1] = arg2;
+    stack->args[2] = arg3;
+
+    frame->sp = (ULONG64)stack;
+    frame->pc = (ULONG64)pKiUserApcDispatcher;
+    frame->restore_flags |= CONTEXT_CONTROL;
     syscall_frame_fixup_for_fastpath( frame );
     return status;
 }
@@ -1084,19 +1050,16 @@ void call_raise_user_exception_dispatcher(void)
 NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context )
 {
     struct syscall_frame *frame = arm64_thread_data()->syscall_frame;
-    ULONG64 fp = frame->fp;
-    ULONG64 lr = frame->lr;
-    ULONG64 sp = frame->sp;
+    struct exc_stack_layout *stack;
     NTSTATUS status = NtSetContextThread( GetCurrentThread(), context );
 
     if (status) return status;
-    frame->x[0] = (ULONG64)rec;
-    frame->x[1] = (ULONG64)context;
-    frame->pc   = (ULONG64)pKiUserExceptionDispatcher;
-    frame->fp   = fp;
-    frame->lr   = lr;
-    frame->sp   = sp;
-    frame->restore_flags |= CONTEXT_INTEGER | CONTEXT_CONTROL;
+    stack = (struct exc_stack_layout *)(context->Sp & ~15) - 1;
+    memmove( &stack->context, context, sizeof(*context) );
+    memmove( &stack->rec, rec, sizeof(*rec) );
+    frame->pc = (ULONG64)pKiUserExceptionDispatcher;
+    frame->sp = (ULONG64)stack;
+    frame->restore_flags |= CONTEXT_CONTROL;
     syscall_frame_fixup_for_fastpath( frame );
     return status;
 }
@@ -1105,8 +1068,8 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
 /***********************************************************************
  *           call_user_mode_callback
  */
-extern NTSTATUS call_user_mode_callback( ULONG id, void *args, ULONG len, void **ret_ptr,
-                                         ULONG *ret_len, void *func, TEB *teb );
+extern NTSTATUS call_user_mode_callback( ULONG64 user_sp, void **ret_ptr, ULONG *ret_len,
+                                         void *func, TEB *teb );
 __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "stp x29, x30, [sp,#-0xc0]!\n\t"
                    __ASM_CFI(".cfi_def_cfa_offset 0xc0\n\t")
@@ -1133,22 +1096,22 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "stp d10, d11, [x29, #0x70]\n\t"
                    "stp d12, d13, [x29, #0x80]\n\t"
                    "stp d14, d15, [x29, #0x90]\n\t"
-                   "stp x3, x4, [x29, #0xa0]\n\t" /* ret_ptr, ret_len */
-                   "mov x18, x6\n\t"              /* teb */
-                   "mrs x3, fpcr\n\t"
-                   "mrs x4, fpsr\n\t"
-                   "bfi x3, x4, #0, #32\n\t"
-                   "ldr x4, [x18]\n\t"            /* teb->Tib.ExceptionList */
-                   "stp x3, x4, [x29, #0xb0]\n\t"
+                   "stp x1, x2, [x29, #0xa0]\n\t" /* ret_ptr, ret_len */
+                   "mov x18, x4\n\t"              /* teb */
+                   "mrs x1, fpcr\n\t"
+                   "mrs x2, fpsr\n\t"
+                   "bfi x1, x2, #0, #32\n\t"
+                   "ldr x2, [x18]\n\t"            /* teb->Tib.ExceptionList */
+                   "stp x1, x2, [x29, #0xb0]\n\t"
 
                    "ldr x7, [x18, #0x2f0]\n\t"    /* arm64_thread_data()->syscall_frame */
-                   "sub x3, sp, #0x330\n\t"       /* sizeof(struct syscall_frame) */
-                   "str x3, [x18, #0x2f0]\n\t"    /* arm64_thread_data()->syscall_frame */
+                   "sub x1, sp, #0x330\n\t"       /* sizeof(struct syscall_frame) */
+                   "str x1, [x18, #0x2f0]\n\t"    /* arm64_thread_data()->syscall_frame */
                    "add x8, x29, #0xc0\n\t"
-                   "stp x7, x8, [x3, #0x110]\n\t" /* frame->prev_frame,syscall_cfa */
+                   "stp x7, x8, [x1, #0x110]\n\t" /* frame->prev_frame,syscall_cfa */
                    /* switch to user stack */
-                   "mov sp, x1\n\t"               /* stack */
-                   "br x5" )
+                   "mov sp, x0\n\t"               /* user_sp */
+                   "br x3" )
 
 
 /***********************************************************************
@@ -1238,14 +1201,20 @@ __ASM_GLOBAL_FUNC( user_mode_abort_thread,
 NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
 {
     struct syscall_frame *frame = arm64_thread_data()->syscall_frame;
-    void *args_data = (void *)((frame->sp - len) & ~15);
+    ULONG64 sp = (frame->sp - offsetof( struct callback_stack_layout, args_data[len] ) - 16) & ~15;
+    struct callback_stack_layout *stack = (struct callback_stack_layout *)sp;
 
     if ((char *)ntdll_get_thread_data()->kernel_stack + min_kernel_stack > (char *)&frame)
         return STATUS_STACK_OVERFLOW;
 
-    memcpy( args_data, args, len );
-    return call_user_mode_callback( id, args_data, len, ret_ptr, ret_len,
-                                    pKiUserCallbackDispatcher, NtCurrentTeb() );
+    stack->args = stack->args_data;
+    stack->len  = len;
+    stack->id   = id;
+    stack->lr   = frame->lr;
+    stack->sp   = frame->sp;
+    stack->pc   = frame->pc;
+    memcpy( stack->args_data, args, len );
+    return call_user_mode_callback( sp, ret_ptr, ret_len, pKiUserCallbackDispatcher, NtCurrentTeb() );
 }
 
 
@@ -1675,9 +1644,12 @@ void syscall_dispatcher_return_slowpath(void)
 void call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB *teb,
                       struct syscall_frame *frame, void *syscall_cfa )
 {
+    struct arm64_thread_data *thread_data = (struct arm64_thread_data *)&teb->GdiTebBatch;
     CONTEXT *ctx, context = { CONTEXT_ALL };
     I386_CONTEXT *i386_context;
     ARM_CONTEXT *arm_context;
+
+    thread_data->syscall_table = KeServiceDescriptorTable;
 
     context.X0  = (DWORD64)entry;
     context.X1  = (DWORD64)arg;
@@ -1825,7 +1797,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    __ASM_CFI(".cfi_offset 28, -0x68\n\t")
                    "and x20, x8, #0xfff\n\t"    /* syscall number */
                    "ubfx x21, x8, #12, #2\n\t"  /* syscall table number */
-                   "adr x16, " __ASM_NAME("KeServiceDescriptorTable") "\n\t"
+                   "ldr x16, [x18, #0x2f8]\n\t" /* arm64_thread_data()->syscall_table */
                    "add x21, x16, x21, lsl #5\n\t"
                    "ldr x16, [x21, #16]\n\t"    /* table->ServiceLimit */
                    "cmp x20, x16\n\t"

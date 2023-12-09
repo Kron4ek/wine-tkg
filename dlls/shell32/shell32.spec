@@ -349,6 +349,7 @@
 @ stdcall SHCreateItemFromParsingName(wstr ptr ptr ptr)
 @ stdcall SHCreateItemInKnownFolder(ptr long wstr ptr ptr)
 @ stdcall SHCreateItemFromRelativeName(ptr wstr ptr ptr ptr)
+@ stdcall SHCreateItemWithParent(ptr ptr ptr ptr ptr)
 @ stub SHCreateProcessAsUserW
 @ stdcall SHCreateQueryCancelAutoPlayMoniker(ptr)
 @ stdcall SHCreateShellItem(ptr ptr ptr ptr)
@@ -424,6 +425,7 @@
 @ stdcall SHQueryUserNotificationState(ptr)
 @ stdcall SHRemoveLocalizedName(wstr)
 @ stdcall SHSetLocalizedName(wstr wstr long)
+@ stdcall SHSetTemporaryPropertyForItem(ptr ptr ptr)
 @ stdcall SHSetUnreadMailCountW(wstr long wstr)
 @ stdcall SHUpdateRecycleBinIcon()
 @ stdcall SheChangeDirA(str)

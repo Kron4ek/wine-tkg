@@ -301,7 +301,7 @@ static void clip_visrect(HDC hdc, RECT *dst, const RECT *src)
     DeleteObject(hrgn);
 }
 
-static void get_vis_rectangles(HDC hdc, struct ps_bitblt_coords *dst,
+static BOOL get_vis_rectangles(HDC hdc, struct ps_bitblt_coords *dst,
         const XFORM *xform, DWORD width, DWORD height, struct ps_bitblt_coords *src)
 {
     RECT rect;
@@ -323,7 +323,8 @@ static void get_vis_rectangles(HDC hdc, struct ps_bitblt_coords *dst,
     get_bounding_rect(&rect, dst->x, dst->y, dst->width, dst->height);
     clip_visrect(hdc, &dst->visrect, &rect);
 
-    if (!src) return;
+    if (IsRectEmpty(&dst->visrect)) return FALSE;
+    if (!src) return TRUE;
 
     rect.left   = src->log_x;
     rect.top    = src->log_y;
@@ -341,7 +342,7 @@ static void get_vis_rectangles(HDC hdc, struct ps_bitblt_coords *dst,
     if (rect.bottom > height) rect.bottom = height;
     src->visrect = rect;
 
-    intersect_vis_rectangles(dst, src);
+    return intersect_vis_rectangles(dst, src);
 }
 
 static int stretch_blt(print_ctx *ctx, const EMRSTRETCHBLT *blt,
@@ -363,7 +364,8 @@ static int stretch_blt(print_ctx *ctx, const EMRSTRETCHBLT *blt,
 
     if (!blt->cbBmiSrc)
     {
-        get_vis_rectangles(ctx->hdc, &dst, NULL, 0, 0, NULL);
+        if (!get_vis_rectangles(ctx->hdc, &dst, NULL, 0, 0, NULL))
+            return TRUE;
         return PSDRV_PatBlt(ctx, &dst, blt->dwRop);
     }
 
@@ -373,8 +375,9 @@ static int stretch_blt(print_ctx *ctx, const EMRSTRETCHBLT *blt,
     src.log_height = blt->cySrc;
     src.layout = 0;
 
-    get_vis_rectangles(ctx->hdc, &dst, &blt->xformSrc,
-            bi->bmiHeader.biWidth, abs(bi->bmiHeader.biHeight), &src);
+    if (!get_vis_rectangles(ctx->hdc, &dst, &blt->xformSrc,
+                bi->bmiHeader.biWidth, abs(bi->bmiHeader.biHeight), &src))
+        return TRUE;
 
     memcpy(dst_info, bi, blt->cbBmiSrc);
     memset(&bits, 0, sizeof(bits));
@@ -387,7 +390,7 @@ static int stretch_blt(print_ctx *ctx, const EMRSTRETCHBLT *blt,
 
         bits.is_copy = TRUE;
         bitmap = CreateDIBSection(hdc, dst_info, DIB_RGB_COLORS, &bits.ptr, NULL, 0);
-        SetDIBits(hdc, bitmap, 0, bi->bmiHeader.biHeight, src_bits, bi, blt->iUsageSrc);
+        SetDIBits(hdc, bitmap, 0, abs(bi->bmiHeader.biHeight), src_bits, bi, blt->iUsageSrc);
 
         err = PSDRV_PutImage(ctx, 0, dst_info, &bits, &src, &dst, blt->dwRop);
         DeleteObject(bitmap);
@@ -2247,7 +2250,7 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
     }
     case EMR_SAVEDC:
     {
-        int ret = PlayEnhMetaFileRecord(hdc, htable, rec, handle_count);
+        int ret = PlayEnhMetaFileRecord(data->ctx->hdc, htable, rec, handle_count);
 
         if (!data->saved_dc_size)
         {
@@ -2773,15 +2776,9 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
     }
     case EMR_EXTESCAPE:
     {
-        const struct EMREXTESCAPE
-        {
-            EMR emr;
-            DWORD escape;
-            DWORD size;
-            BYTE data[1];
-        } *p = (const struct EMREXTESCAPE *)rec;
+        const EMREXTESCAPE *p = (const EMREXTESCAPE *)rec;
 
-        PSDRV_ExtEscape(data->ctx, p->escape, p->size, p->data, 0, NULL);
+        PSDRV_ExtEscape(data->ctx, p->iEscape, p->cbEscData, p->EscData, 0, NULL);
         return 1;
     }
     case EMR_GRADIENTFILL:

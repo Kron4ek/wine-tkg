@@ -166,7 +166,6 @@ static void test_namespaces_as_attributes(void)
         const WCHAR *uris[3];
         const WCHAR *texts[3];
         const WCHAR *xmls[3];
-        BOOL todo;
     };
     static const struct test tests[] =
     {
@@ -208,7 +207,6 @@ static void test_namespaces_as_attributes(void)
             { L"" },                    /* namespaceURI */
             { L"nshref" },              /* text */
             { L"xmlns=\"nshref\"" },    /* xml */
-            TRUE,                       /* todo */
         },
         /* no properties or namespaces */
         {
@@ -256,9 +254,7 @@ static void test_namespaces_as_attributes(void)
         {
             item = NULL;
             hr = IXMLDOMNamedNodeMap_get_item(map, i, &item);
-            todo_wine_if(test->todo)
             ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-            if (hr != S_OK) continue;
 
             str = NULL;
             hr = IXMLDOMNode_get_nodeName(item, &str);

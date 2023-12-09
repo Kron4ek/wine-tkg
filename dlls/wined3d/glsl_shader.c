@@ -137,7 +137,6 @@ struct shader_glsl_priv
     const struct wined3d_fragment_pipe_ops *fragment_pipe;
     struct wine_rb_tree ffp_vertex_shaders;
     struct wine_rb_tree ffp_fragment_shaders;
-    BOOL ffp_proj_control;
     BOOL legacy_lighting;
 };
 
@@ -1299,15 +1298,10 @@ static void shader_glsl_load_np2fixup_constants(const struct glsl_ps_program *ps
 
     for (i = 0; fixup; fixup >>= 1, ++i)
     {
-        const struct wined3d_texture *tex = state->textures[i];
         unsigned char idx = ps->np2_fixup_info->idx[i];
+        const struct wined3d_texture *tex;
 
-        if (!tex)
-        {
-            ERR("Nonexistent texture is flagged for NP2 texcoord fixup.\n");
-            continue;
-        }
-
+        tex = texture_from_resource(state->shader_resource_view[WINED3D_SHADER_TYPE_PIXEL][i]->resource);
         np2fixup_constants[idx].sx = tex->pow2_matrix[0];
         np2fixup_constants[idx].sy = tex->pow2_matrix[5];
     }
@@ -11153,7 +11147,6 @@ static HRESULT shader_glsl_alloc(struct wined3d_device *device, const struct win
         const struct wined3d_fragment_pipe_ops *fragment_pipe)
 {
     SIZE_T stack_size = wined3d_log2i(max(WINED3D_MAX_VS_CONSTS_F, WINED3D_MAX_PS_CONSTS_F)) + 1;
-    struct fragment_caps fragment_caps;
     void *vertex_priv, *fragment_priv;
     struct shader_glsl_priv *priv;
 
@@ -11206,8 +11199,6 @@ static HRESULT shader_glsl_alloc(struct wined3d_device *device, const struct win
     priv->next_constant_version = 1;
     priv->vertex_pipe = vertex_pipe;
     priv->fragment_pipe = fragment_pipe;
-    fragment_pipe->get_caps(device->adapter, &fragment_caps);
-    priv->ffp_proj_control = fragment_caps.proj_control;
     priv->legacy_lighting = device->wined3d->flags & WINED3D_LEGACY_FFP_LIGHTING;
 
     device->vertex_priv = vertex_priv;
@@ -11617,13 +11608,6 @@ static void shader_glsl_handle_instruction(const struct wined3d_shader_instructi
     shader_glsl_add_instruction_modifiers(ins);
 }
 
-static BOOL shader_glsl_has_ffp_proj_control(void *shader_priv)
-{
-    struct shader_glsl_priv *priv = shader_priv;
-
-    return priv->ffp_proj_control;
-}
-
 static uint64_t shader_glsl_shader_compile(struct wined3d_context *context, const struct wined3d_shader_desc *shader_desc,
         enum wined3d_shader_type shader_type)
 {
@@ -11649,7 +11633,6 @@ const struct wined3d_shader_backend_ops glsl_shader_backend =
     shader_glsl_init_context_state,
     shader_glsl_get_caps,
     shader_glsl_color_fixup_supported,
-    shader_glsl_has_ffp_proj_control,
     shader_glsl_shader_compile,
 };
 

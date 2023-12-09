@@ -70,7 +70,7 @@ char *WtoA(LPCWSTR wstr)
 
     length = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, NULL, 0, NULL, NULL);
 
-    result = HeapAlloc(GetProcessHeap(), 0, length);
+    result = malloc(length);
 
     if (result)
         WideCharToMultiByte(CP_UTF8, 0, wstr, -1, result, length, NULL, NULL);
@@ -150,7 +150,7 @@ static ULONG WINAPI mscorecf_Release(IClassFactory *iface )
 
     if (ref == 0)
     {
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
     }
 
     return ref;
@@ -231,7 +231,7 @@ void CDECL mono_print_handler_fn(const char *string, INT is_stdout)
 
     if (!tls)
     {
-        tls = HeapAlloc(GetProcessHeap(), 0, sizeof(*tls));
+        tls = malloc(sizeof(*tls));
         tls->length = 0;
         TlsSetValue(print_tls_index, tls);
     }
@@ -282,7 +282,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         break;
     case DLL_THREAD_DETACH:
         if (print_tls_index != TLS_OUT_OF_INDEXES)
-            HeapFree(GetProcessHeap(), 0, TlsGetValue(print_tls_index));
+            free(TlsGetValue(print_tls_index));
         break;
     case DLL_PROCESS_DETACH:
         expect_no_runtimes();
@@ -290,7 +290,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         runtimehost_uninit();
         if (print_tls_index != TLS_OUT_OF_INDEXES)
         {
-            HeapFree(GetProcessHeap(), 0, TlsGetValue(print_tls_index));
+            free(TlsGetValue(print_tls_index));
             TlsFree(print_tls_index);
         }
         break;
@@ -772,7 +772,7 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* ppv)
     if(!ppv)
         return E_INVALIDARG;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(mscorecf));
+    This = malloc(sizeof(mscorecf));
 
     This->IClassFactory_iface.lpVtbl = &mscorecf_vtbl;
     This->pfnCreateInstance = create_monodata;
@@ -835,7 +835,7 @@ static BOOL invoke_appwiz(void)
     len = GetSystemDirectoryW(app, MAX_PATH - ARRAY_SIZE(controlW));
     memcpy(app+len, controlW, sizeof(controlW));
 
-    args = HeapAlloc(GetProcessHeap(), 0, (len*sizeof(WCHAR) + sizeof(controlW) + sizeof(argsW)));
+    args = malloc(len * sizeof(WCHAR) + sizeof(controlW) + sizeof(argsW));
     if(!args)
         return FALSE;
 
@@ -847,7 +847,7 @@ static BOOL invoke_appwiz(void)
     memset(&si, 0, sizeof(si));
     si.cb = sizeof(si);
     ret = CreateProcessW(app, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
-    HeapFree(GetProcessHeap(), 0, args);
+    free(args);
     if (ret) {
         CloseHandle(pi.hThread);
         WaitForSingleObject(pi.hProcess, INFINITE);

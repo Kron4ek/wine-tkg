@@ -1,5 +1,7 @@
 /*
- * Copyright (c) 2023 Alistair Leslie-Hughes
+ * msiexec.exe internal definitions
+ *
+ * Copyright 2023 Eric Pouech for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,15 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <stdarg.h>
+#include <corecrt.h>
 
-#include "wine/debug.h"
-
-WINE_DEFAULT_DEBUG_CHANNEL(d3d12core);
-
-HRESULT WINAPI D3D12GetInterface(REFCLSID rclsid, REFIID riid, void **out)
-{
-    FIXME("%s, %s, %p\n", debugstr_guid(rclsid), debugstr_guid(riid), out);
-
-    return E_NOINTERFACE;
-}
+#ifdef __WINE_CRT_PRINTF_ATTR
+extern void report_error(const char* msg, ...) __WINE_CRT_PRINTF_ATTR(1, 2);
+#else
+extern void report_error(const char* msg, ...);
+#endif

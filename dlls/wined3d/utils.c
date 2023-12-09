@@ -4918,6 +4918,7 @@ const char *wined3d_debug_view_desc(const struct wined3d_view_desc *d, const str
     VIEW_FLAG_TO_STR(WINED3D_VIEW_TEXTURE_ARRAY);
     VIEW_FLAG_TO_STR(WINED3D_VIEW_READ_ONLY_DEPTH);
     VIEW_FLAG_TO_STR(WINED3D_VIEW_READ_ONLY_STENCIL);
+    VIEW_FLAG_TO_STR(WINED3D_VIEW_FORWARD_REFERENCE);
 #undef VIEW_FLAG_TO_STR
     if (flags)
         FIXME("Unrecognised view flag(s) %#x.\n", flags);
@@ -5643,7 +5644,7 @@ void get_identity_matrix(struct wined3d_matrix *mat)
 void get_modelview_matrix(const struct wined3d_context *context, const struct wined3d_state *state,
         unsigned int index, struct wined3d_matrix *mat)
 {
-    if (context->last_was_rhw)
+    if (context->stream_info.position_transformed)
         get_identity_matrix(mat);
     else
         multiply_matrix(mat, &state->transforms[WINED3D_TS_VIEW], &state->transforms[WINED3D_TS_WORLD_MATRIX(index)]);
@@ -5686,7 +5687,7 @@ void get_projection_matrix(const struct wined3d_context *context, const struct w
     else
         center_offset = 0.0f;
 
-    if (context->last_was_rhw)
+    if (context->stream_info.position_transformed)
     {
         /* Transform D3D RHW coordinates to OpenGL clip coordinates. */
         float x = state->viewports[0].x;
@@ -5849,22 +5850,21 @@ static void compute_texture_matrix(const struct wined3d_matrix *matrix, uint32_t
 void get_texture_matrix(const struct wined3d_context *context, const struct wined3d_state *state,
         const unsigned int tex, struct wined3d_matrix *mat)
 {
-    const struct wined3d_device *device = context->device;
     BOOL generated = (state->texture_states[tex][WINED3D_TSS_TEXCOORD_INDEX] & 0xffff0000)
             != WINED3DTSS_TCI_PASSTHRU;
-    unsigned int coord_idx = min(state->texture_states[tex][WINED3D_TSS_TEXCOORD_INDEX & 0x0000ffff],
+    unsigned int coord_idx = min(state->texture_states[tex][WINED3D_TSS_TEXCOORD_INDEX] & 0x0000ffff,
             WINED3D_MAX_FFP_TEXTURES - 1);
     struct wined3d_texture *texture = wined3d_state_get_ffp_texture(state, tex);
 
     compute_texture_matrix(&state->transforms[WINED3D_TS_TEXTURE0 + tex],
             state->texture_states[tex][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS],
-            generated, context->last_was_rhw,
+            generated, context->stream_info.position_transformed,
             context->stream_info.use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))
             ? context->stream_info.elements[WINED3D_FFP_TEXCOORD0 + coord_idx].format->id
             : WINED3DFMT_UNKNOWN,
-            device->shader_backend->shader_has_ffp_proj_control(device->shader_priv), mat);
+            context->d3d_info->ffp_fragment_caps.proj_control, mat);
 
-    if ((context->lastWasPow2Texture & (1u << tex)) && texture)
+    if (texture && !(texture->flags & WINED3D_TEXTURE_POW2_MAT_IDENT))
     {
         if (generated)
             FIXME("Non-power-of-two texture being used with generated texture coords.\n");

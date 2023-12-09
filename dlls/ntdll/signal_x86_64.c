@@ -369,7 +369,7 @@ DWORD __cdecl nested_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTR
 /***********************************************************************
  *		exception_handler_call_wrapper
  */
-#ifdef __ASM_SEH_SUPPORTED
+#ifdef __WINE_PE_BUILD
 DWORD WINAPI exception_handler_call_wrapper( EXCEPTION_RECORD *rec, void *frame,
                                       CONTEXT *context, DISPATCHER_CONTEXT *dispatch );
 
@@ -546,8 +546,6 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
     NTSTATUS status;
     DWORD c;
 
-    if (pWow64PrepareForException) pWow64PrepareForException( rec, context );
-
     TRACE_(seh)( "code=%lx flags=%lx addr=%p ip=%Ix\n",
                  rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress, context->Rip );
     for (c = 0; c < min( EXCEPTION_MAXIMUM_PARAMETERS, rec->NumberParameters ); c++)
@@ -610,93 +608,90 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
 }
 
 
-NTSTATUS WINAPI dispatch_wow_exception( EXCEPTION_RECORD *rec_ptr, CONTEXT *context_ptr )
-{
-    char buffer[sizeof(CONTEXT) + sizeof(CONTEXT_EX) + sizeof(XSTATE) + 128];
-    CONTEXT *context;
-    CONTEXT_EX *context_ex;
-    EXCEPTION_RECORD rec = *rec_ptr;
-
-    RtlInitializeExtendedContext( buffer, context_ptr->ContextFlags, &context_ex );
-    context = RtlLocateLegacyContext( context_ex, NULL );
-    RtlCopyContext( context, context_ptr->ContextFlags, context_ptr );
-    return dispatch_exception( &rec, context );
-}
-
-
 /*******************************************************************
  *		KiUserExceptionDispatcher (NTDLL.@)
  */
 __ASM_GLOBAL_FUNC( KiUserExceptionDispatcher,
-                  "mov 0x98(%rsp),%rcx\n\t" /* context->Rsp */
-                  "movw %cs,%ax\n\t"
-                  "cmpw %ax,0x38(%rsp)\n\t" /* context->SegCs */
-                  "je 1f\n\t"
-                  "mov %rsp,%rdx\n\t" /* context */
-                  "lea 0x4f0(%rsp),%rcx\n\t" /* rec */
-                  "movq %r14,%rsp\n\t"  /* switch to 64-bit stack */
-                  "call " __ASM_NAME("dispatch_wow_exception") "\n\t"
-                  "int3\n"
-                  "1:\tmov 0xf8(%rsp),%rdx\n\t" /* context->Rip */
-                  "mov %rdx,-0x8(%rcx)\n\t"
-                  "mov %rbp,-0x10(%rcx)\n\t"
-                  "mov %rdi,-0x18(%rcx)\n\t"
-                  "mov %rsi,-0x20(%rcx)\n\t"
-                  "lea -0x20(%rcx),%rbp\n\t"
-                  "mov %rsp,%rdx\n\t" /* context */
-                  "lea 0x4f0(%rsp),%rcx\n\t" /* rec */
-                  __ASM_SEH(".seh_pushreg %rbp\n\t")
-                  __ASM_SEH(".seh_pushreg %rdi\n\t")
-                  __ASM_SEH(".seh_pushreg %rsi\n\t")
-                  __ASM_SEH(".seh_setframe %rbp,0\n\t")
-                  __ASM_SEH(".seh_endprologue\n\t")
-
-                  __ASM_CFI(".cfi_signal_frame\n\t")
-                  __ASM_CFI(".cfi_adjust_cfa_offset 0x20\n\t")
-                  __ASM_CFI(".cfi_def_cfa %rbp,0x20\n\t")
-                  __ASM_CFI(".cfi_rel_offset %rip,0x18\n\t")
-                  __ASM_CFI(".cfi_rel_offset %rbp,0x10\n\t")
-                  __ASM_CFI(".cfi_rel_offset %rdi,0x8\n\t")
-                  __ASM_CFI(".cfi_rel_offset %rsi,0\n\t")
+                   __ASM_SEH(".seh_pushframe\n\t")
+                   __ASM_SEH(".seh_stackalloc 0x590\n\t")
+                   __ASM_SEH(".seh_savereg %rbx,0x90\n\t")
+                   __ASM_SEH(".seh_savereg %rbp,0xa0\n\t")
+                   __ASM_SEH(".seh_savereg %rsi,0xa8\n\t")
+                   __ASM_SEH(".seh_savereg %rdi,0xb0\n\t")
+                   __ASM_SEH(".seh_savereg %r12,0xd8\n\t")
+                   __ASM_SEH(".seh_savereg %r13,0xe0\n\t")
+                   __ASM_SEH(".seh_savereg %r14,0xe8\n\t")
+                   __ASM_SEH(".seh_savereg %r15,0xf0\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   __ASM_CFI(".cfi_signal_frame\n\t")
+                   __ASM_CFI(".cfi_def_cfa_offset 0\n\t")
+                   __ASM_CFI(".cfi_offset %rbx,0x90\n\t")
+                   __ASM_CFI(".cfi_offset %rbp,0xa0\n\t")
+                   __ASM_CFI(".cfi_offset %rsi,0xa8\n\t")
+                   __ASM_CFI(".cfi_offset %rdi,0xb0\n\t")
+                   __ASM_CFI(".cfi_offset %r12,0xd8\n\t")
+                   __ASM_CFI(".cfi_offset %r13,0xe0\n\t")
+                   __ASM_CFI(".cfi_offset %r14,0xe8\n\t")
+                   __ASM_CFI(".cfi_offset %r15,0xf0\n\t")
+                   __ASM_CFI(".cfi_offset %rip,0x590\n\t")
+                   __ASM_CFI(".cfi_offset %rsp,0x5a8\n\t")
+                   "cld\n\t"
+                   /* some anticheats need this exact instruction here */
+                   "mov " __ASM_NAME("pWow64PrepareForException") "(%rip),%rax\n\t"
+                   "test %rax,%rax\n\t"
+                   "jz 1f\n\t"
+                   "mov %rsp,%rdx\n\t"           /* context */
+                   "lea 0x4f0(%rsp),%rcx\n\t"    /* rec */
+                   "call *%rax\n"
+                   "1:\tmov %rsp,%rdx\n\t" /* context */
+                   "lea 0x4f0(%rsp),%rcx\n\t" /* rec */
                    "call " __ASM_NAME("dispatch_exception") "\n\t"
-                  "int3")
+                   "int3" )
 
 
 /*******************************************************************
  *		KiUserApcDispatcher (NTDLL.@)
  */
-void WINAPI dispatch_apc( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3,
-                          void (CALLBACK *func)(ULONG_PTR,ULONG_PTR,ULONG_PTR,CONTEXT*) )
-{
-    func( arg1, arg2, arg3, context );
-    NtContinue( context, TRUE );
-}
-
 __ASM_GLOBAL_FUNC( KiUserApcDispatcher,
-                  "addq $0x8,%rsp\n\t"
-                  "mov 0x98(%rcx),%r10\n\t" /* context->Rsp */
-                  "mov 0xf8(%rcx),%r11\n\t" /* context->Rip */
-                  "mov %r11,-0x8(%r10)\n\t"
-                  "mov %rbp,-0x10(%r10)\n\t"
-                  "lea -0x10(%r10),%rbp\n\t"
-                  __ASM_SEH(".seh_pushreg %rbp\n\t")
-                  __ASM_SEH(".seh_setframe %rbp,0\n\t")
-                  __ASM_SEH(".seh_endprologue\n\t")
-                  __ASM_CFI(".cfi_signal_frame\n\t")
-                  __ASM_CFI(".cfi_adjust_cfa_offset 0x10\n\t")
-                  __ASM_CFI(".cfi_def_cfa %rbp,0x10\n\t")
-                  __ASM_CFI(".cfi_rel_offset %rip,0x8\n\t")
-                  __ASM_CFI(".cfi_rel_offset %rbp,0\n\t")
-                   "call " __ASM_NAME("dispatch_apc") "\n\t"
-                   "int3")
+                   __ASM_SEH(".seh_pushframe\n\t")
+                   __ASM_SEH(".seh_stackalloc 0x4d0\n\t")  /* sizeof(CONTEXT) */
+                   __ASM_SEH(".seh_savereg %rbx,0x90\n\t")
+                   __ASM_SEH(".seh_savereg %rbp,0xa0\n\t")
+                   __ASM_SEH(".seh_savereg %rsi,0xa8\n\t")
+                   __ASM_SEH(".seh_savereg %rdi,0xb0\n\t")
+                   __ASM_SEH(".seh_savereg %r12,0xd8\n\t")
+                   __ASM_SEH(".seh_savereg %r13,0xe0\n\t")
+                   __ASM_SEH(".seh_savereg %r14,0xe8\n\t")
+                   __ASM_SEH(".seh_savereg %r15,0xf0\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   __ASM_CFI(".cfi_signal_frame\n\t")
+                   __ASM_CFI(".cfi_def_cfa_offset 0\n\t")
+                   __ASM_CFI(".cfi_offset %rbx,0x90\n\t")
+                   __ASM_CFI(".cfi_offset %rbp,0xa0\n\t")
+                   __ASM_CFI(".cfi_offset %rsi,0xa8\n\t")
+                   __ASM_CFI(".cfi_offset %rdi,0xb0\n\t")
+                   __ASM_CFI(".cfi_offset %r12,0xd8\n\t")
+                   __ASM_CFI(".cfi_offset %r13,0xe0\n\t")
+                   __ASM_CFI(".cfi_offset %r14,0xe8\n\t")
+                   __ASM_CFI(".cfi_offset %r15,0xf0\n\t")
+                   __ASM_CFI(".cfi_offset %rip,0x4d0\n\t")
+                   __ASM_CFI(".cfi_offset %rsp,0x4e8\n\t")
+                   "movq 0x00(%rsp),%rcx\n\t"  /* context->P1Home = arg1 */
+                   "movq 0x08(%rsp),%rdx\n\t"  /* context->P2Home = arg2 */
+                   "movq 0x10(%rsp),%r8\n\t"   /* context->P3Home = arg3 */
+                   "movq 0x18(%rsp),%rax\n\t"  /* context->P4Home = func */
+                   "movq %rsp,%r9\n\t"         /* context */
+                   "callq *%rax\n\t"
+                   "movq %rsp,%rcx\n\t"        /* context */
+                   "movl $1,%edx\n\t"          /* alertable */
+                   "call " __ASM_NAME("NtContinue") "\n\t"
+                   "int3" )
 
 
 /*******************************************************************
  *		KiUserCallbackDispatcher (NTDLL.@)
- *
- * FIXME: not binary compatible
  */
-void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
+void WINAPI dispatch_callback( void *args, ULONG len, ULONG id )
 {
     NTSTATUS status;
 
@@ -714,6 +709,18 @@ void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
 
     RtlRaiseStatus( status );
 }
+__ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
+                   __ASM_SEH(".seh_pushframe\n\t")
+                   __ASM_SEH(".seh_stackalloc 0x30\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   __ASM_CFI(".cfi_signal_frame\n\t")
+                   __ASM_CFI(".cfi_def_cfa_offset 0\n\t")
+                   __ASM_CFI(".cfi_offset %rip,0x30\n\t")
+                   __ASM_CFI(".cfi_offset %rsp,0x48\n\t")
+                   "movq 0x20(%rsp),%rcx\n\t"  /* args */
+                   "movl 0x28(%rsp),%edx\n\t"  /* len */
+                   "movl 0x2c(%rsp),%r8d\n\t"  /* id */
+                   "call " __ASM_NAME("dispatch_callback") )
 
 
 /**************************************************************************
@@ -1070,7 +1077,7 @@ DWORD __cdecl unwind_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTR
 /***********************************************************************
  *		unwind_handler_call_wrapper
  */
-#ifdef __ASM_SEH_SUPPORTED
+#ifdef __WINE_PE_BUILD
 DWORD WINAPI unwind_handler_call_wrapper( EXCEPTION_RECORD *rec, void *frame,
                                    CONTEXT *context, DISPATCHER_CONTEXT *dispatch );
 
@@ -1659,7 +1666,7 @@ USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, PVOID *buffer, 
 /***********************************************************************
  *           RtlUserThreadStart (NTDLL.@)
  */
-#ifdef __ASM_SEH_SUPPORTED
+#ifdef __WINE_PE_BUILD
 __ASM_GLOBAL_FUNC( RtlUserThreadStart,
                    "subq $0x28,%rsp\n\t"
                    ".seh_stackalloc 0x28\n\t"

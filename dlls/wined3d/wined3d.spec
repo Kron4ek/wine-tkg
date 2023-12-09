@@ -103,6 +103,7 @@
 @ cdecl wined3d_device_context_draw_indirect(ptr ptr long long)
 @ cdecl wined3d_device_context_execute_command_list(ptr ptr long)
 @ cdecl wined3d_device_context_flush(ptr)
+@ cdecl wined3d_device_context_flush_mapped_buffer(ptr ptr)
 @ cdecl wined3d_device_context_generate_mipmaps(ptr ptr)
 @ cdecl wined3d_device_context_get_blend_state(ptr ptr ptr)
 @ cdecl wined3d_device_context_get_constant_buffer(ptr long long ptr)
@@ -298,6 +299,7 @@
 @ cdecl wined3d_swapchain_state_resize_target(ptr ptr)
 @ cdecl wined3d_swapchain_state_set_fullscreen(ptr ptr ptr)
 
+@ cdecl wined3d_texture_acquire_identity_srv(ptr)
 @ cdecl wined3d_texture_add_dirty_region(ptr long ptr)
 @ cdecl wined3d_texture_create(ptr ptr long long long ptr ptr ptr ptr)
 @ cdecl wined3d_texture_decref(ptr)

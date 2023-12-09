@@ -21,7 +21,7 @@
 #define __VKD3D_SHADER_HLSL_H
 
 #include "vkd3d_shader_private.h"
-#include "rbtree.h"
+#include "wine/rbtree.h"
 #include "d3dcommon.h"
 #include "d3dx9shader.h"
 
@@ -357,13 +357,14 @@ struct hlsl_attribute
 #define HLSL_MODIFIER_INLINE         0x00002000
 #define HLSL_STORAGE_CENTROID        0x00004000
 #define HLSL_STORAGE_NOPERSPECTIVE   0x00008000
+#define HLSL_STORAGE_LINEAR          0x00010000
 
 #define HLSL_TYPE_MODIFIERS_MASK     (HLSL_MODIFIER_PRECISE | HLSL_MODIFIER_VOLATILE | \
                                       HLSL_MODIFIER_CONST | HLSL_MODIFIER_ROW_MAJOR | \
                                       HLSL_MODIFIER_COLUMN_MAJOR)
 
 #define HLSL_INTERPOLATION_MODIFIERS_MASK (HLSL_STORAGE_NOINTERPOLATION | HLSL_STORAGE_CENTROID | \
-                                           HLSL_STORAGE_NOPERSPECTIVE)
+                                           HLSL_STORAGE_NOPERSPECTIVE | HLSL_STORAGE_LINEAR)
 
 #define HLSL_MODIFIERS_MAJORITY_MASK (HLSL_MODIFIER_ROW_MAJOR | HLSL_MODIFIER_COLUMN_MAJOR)
 

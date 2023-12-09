@@ -491,15 +491,10 @@ static NTSTATUS call_function_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_con
 }
 
 
-/*******************************************************************
- *		KiUserExceptionDispatcher (NTDLL.@)
- */
-NTSTATUS WINAPI KiUserExceptionDispatcher( EXCEPTION_RECORD *rec, CONTEXT *context )
+NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
 {
     NTSTATUS status;
     DWORD c;
-
-    if (pWow64PrepareForException) pWow64PrepareForException( rec, context );
 
     TRACE( "code=%lx flags=%lx addr=%p pc=%016I64x\n",
            rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress, context->Pc );
@@ -572,21 +567,45 @@ NTSTATUS WINAPI KiUserExceptionDispatcher( EXCEPTION_RECORD *rec, CONTEXT *conte
 
 
 /*******************************************************************
+ *		KiUserExceptionDispatcher (NTDLL.@)
+ */
+__ASM_GLOBAL_FUNC( KiUserExceptionDispatcher,
+                   __ASM_SEH(".seh_context\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   "adr x16, " __ASM_NAME("pWow64PrepareForException") "\n\t"
+                   "ldr x16, [x16]\n\t"
+                   "cbz x16, 1f\n\t"
+                   "add x0, sp, #0x390\n\t"     /* rec (context + 1) */
+                   "mov x1, sp\n\t"             /* context */
+                   "blr x16\n"
+                   "1:\tadd x0, sp, #0x390\n\t" /* rec (context + 1) */
+                   "mov x1, sp\n\t"             /* context */
+                   "bl " __ASM_NAME("dispatch_exception") "\n\t"
+                   "brk #1" )
+
+
+/*******************************************************************
  *		KiUserApcDispatcher (NTDLL.@)
  */
-void WINAPI KiUserApcDispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3,
-                                 PNTAPCFUNC apc )
-{
-    void (CALLBACK *func)(ULONG_PTR,ULONG_PTR,ULONG_PTR,CONTEXT*) = (void *)apc;
-    func( arg1, arg2, arg3, context );
-    NtContinue( context, TRUE );
-}
+__ASM_GLOBAL_FUNC( KiUserApcDispatcher,
+                   __ASM_SEH(".seh_context\n\t")
+                   "nop\n\t"
+                   __ASM_SEH(".seh_stackalloc 0x30\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   "ldp x16, x0, [sp]\n\t"        /* func, arg1 */
+                   "ldp x1, x2, [sp, #0x10]\n\t"  /* arg2, arg3 */
+                   "add x3, sp, #0x30\n\t"        /* context (FIXME) */
+                   "blr x16\n\t"
+                   "add x0, sp, #0x30\n\t"        /* context */
+                   "ldr w1, [sp, #0x20]\n\t"      /* alertable */
+                   "bl " __ASM_NAME("NtContinue") "\n\t"
+                   "brk #1" )
 
 
 /*******************************************************************
  *		KiUserCallbackDispatcher (NTDLL.@)
  */
-void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
+void WINAPI dispatch_callback( void *args, ULONG len, ULONG id )
 {
     NTSTATUS status;
 
@@ -604,6 +623,17 @@ void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
 
     RtlRaiseStatus( status );
 }
+__ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
+                   __ASM_SEH(".seh_pushframe\n\t")
+                   "nop\n\t"
+                   __ASM_SEH(".seh_stackalloc 0x20\n\t")
+                   "nop\n\t"
+                   __ASM_SEH(".seh_save_reg lr, 0x18\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   "ldr x0, [sp]\n\t"             /* args */
+                   "ldp w1, w2, [sp, #0x08]\n\t"  /* len, id */
+                   "bl " __ASM_NAME("dispatch_callback") "\n\t"
+                   "brk #1" )
 
 
 /***********************************************************************
@@ -1520,7 +1550,11 @@ __ASM_GLOBAL_FUNC( RtlRaiseException,
                    "stp x4, x5, [x1, #0xf0]\n\t" /* context->Fp, Lr */
                    "str  x5, [x1, #0x108]\n\t"   /* context->Pc */
                    "str  x5, [x0, #0x10]\n\t"    /* rec->ExceptionAddress */
-                   "mov  x2, #1\n\t"
+                   "ldr x3, [x18, #0x60]\n\t"    /* peb */
+                   "ldrb w2, [x3, #2]\n\t"       /* peb->BeingDebugged */
+                   "cbnz w2, 1f\n\t"
+                   "bl " __ASM_NAME("dispatch_exception") "\n"
+                   "1:\tmov  x2, #1\n\t"
                    "bl " __ASM_NAME("NtRaiseException") "\n\t"
                    "bl " __ASM_NAME("RtlRaiseStatus") /* does not return */ );
 

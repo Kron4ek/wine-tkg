@@ -463,7 +463,7 @@ static NTSTATUS call_function_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_con
 /*******************************************************************
  *		KiUserExceptionDispatcher (NTDLL.@)
  */
-NTSTATUS WINAPI KiUserExceptionDispatcher( EXCEPTION_RECORD *rec, CONTEXT *context )
+NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
 {
     NTSTATUS status;
     DWORD c;
@@ -526,23 +526,56 @@ NTSTATUS WINAPI KiUserExceptionDispatcher( EXCEPTION_RECORD *rec, CONTEXT *conte
     if (status != STATUS_UNHANDLED_EXCEPTION) RtlRaiseStatus( status );
     return NtRaiseException( rec, context, FALSE );
 }
+__ASM_GLOBAL_FUNC( KiUserExceptionDispatcher,
+                   __ASM_SEH(".seh_custom 0xee,0x02\n\t")  /* MSFT_OP_CONTEXT */
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   __ASM_EHABI(".save {sp}\n\t") /* Restore Sp last */
+                   __ASM_EHABI(".pad #-(0x80 + 0x0c + 0x0c)\n\t") /* Move back across D0-D15, Cpsr, Fpscr, Padding, Pc, Lr and Sp */
+                   __ASM_EHABI(".vsave {d8-d15}\n\t")
+                   __ASM_EHABI(".pad #0x40\n\t") /* Skip past D0-D7 */
+                   __ASM_EHABI(".pad #0x0c\n\t") /* Skip past Cpsr, Fpscr and Padding */
+                   __ASM_EHABI(".save {lr, pc}\n\t")
+                   __ASM_EHABI(".pad #0x08\n\t") /* Skip past R12 and Sp - Sp is restored last */
+                   __ASM_EHABI(".save {r4-r11}\n\t")
+                   __ASM_EHABI(".pad #0x14\n\t") /* Skip past ContextFlags and R0-R3 */
+                   "add r0, sp, #0x1a0\n\t"     /* rec (context + 1) */
+                   "mov r1, sp\n\t"             /* context */
+                   "bl " __ASM_NAME("dispatch_exception") "\n\t"
+                   "udf #1" )
 
 
 /*******************************************************************
  *		KiUserApcDispatcher (NTDLL.@)
  */
-void WINAPI KiUserApcDispatcher( CONTEXT *context, ULONG_PTR ctx, ULONG_PTR arg1, ULONG_PTR arg2,
-                                 PNTAPCFUNC func )
-{
-    func( ctx, arg1, arg2 );
-    NtContinue( context, TRUE );
-}
+__ASM_GLOBAL_FUNC( KiUserApcDispatcher,
+                   __ASM_SEH(".seh_custom 0xee,0x02\n\t")  /* MSFT_OP_CONTEXT */
+                   "nop\n\t"
+                   __ASM_SEH(".seh_stackalloc 0x18\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   __ASM_EHABI(".save {sp}\n\t") /* Restore Sp last */
+                   __ASM_EHABI(".pad #-(0x80 + 0x0c + 0x0c)\n\t") /* Move back across D0-D15, Cpsr, Fpscr, Padding, Pc, Lr and Sp */
+                   __ASM_EHABI(".vsave {d8-d15}\n\t")
+                   __ASM_EHABI(".pad #0x40\n\t") /* Skip past D0-D7 */
+                   __ASM_EHABI(".pad #0x0c\n\t") /* Skip past Cpsr, Fpscr and Padding */
+                   __ASM_EHABI(".save {lr, pc}\n\t")
+                   __ASM_EHABI(".pad #0x08\n\t") /* Skip past R12 and Sp - Sp is restored last */
+                   __ASM_EHABI(".save {r4-r11}\n\t")
+                   __ASM_EHABI(".pad #0x2c\n\t") /* Skip past args, ContextFlags and R0-R3 */
+                   "ldr r0, [sp, #0x04]\n\t"      /* arg1 */
+                   "ldr r1, [sp, #0x08]\n\t"      /* arg2 */
+                   "ldr r2, [sp, #0x0c]\n\t"      /* arg3 */
+                   "ldr ip, [sp]\n\t"             /* func */
+                   "blx ip\n\t"
+                   "add r0, sp, #0x18\n\t"        /* context */
+                   "ldr r1, [sp, #0x10]\n\t"      /* alertable */
+                   "bl " __ASM_NAME("NtContinue") "\n\t"
+                   "udf #1" )
 
 
 /*******************************************************************
  *		KiUserCallbackDispatcher (NTDLL.@)
  */
-void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
+void WINAPI dispatch_callback( void *args, ULONG len, ULONG id )
 {
     NTSTATUS status;
 
@@ -560,6 +593,21 @@ void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
 
     RtlRaiseStatus( status );
 }
+__ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
+                   __ASM_SEH(".seh_custom 0xee,0x01\n\t")  /* MSFT_OP_MACHINE_FRAME */
+                   "nop\n\t"
+                   __ASM_SEH(".seh_save_regs {lr}\n\t")
+                   "nop\n\t"
+                   __ASM_SEH(".seh_stackalloc 0xc\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   __ASM_EHABI(".save {sp, pc}\n\t")
+                   __ASM_EHABI(".save {lr}\n\t")
+                   __ASM_EHABI(".pad #0x0c\n\t")
+                   "ldr r0, [sp]\n\t"             /* args */
+                   "ldr r1, [sp, #0x04]\n\t"      /* len */
+                   "ldr r2, [sp, #0x08]\n\t"      /* id */
+                   "bl " __ASM_NAME("dispatch_callback") "\n\t"
+                   "udf #1" )
 
 
 /***********************************************************************
@@ -613,7 +661,7 @@ static const BYTE unwind_instr_len[256] =
 /* 80 */ 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
 /* a0 */ 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
 /* c0 */ 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,
-/* e0 */ 4,4,4,4,4,4,4,4,4,4,4,4,2,2,2,4,0,0,0,0,0,4,4,2,2,4,4,2,4,2,4,0
+/* e0 */ 4,4,4,4,4,4,4,4,4,4,4,4,2,2,0,4,0,0,0,0,0,4,4,2,2,4,4,2,4,2,4,0
 };
 
 /***********************************************************************
@@ -700,6 +748,37 @@ static void pop_fpregs_range( int first, int last, CONTEXT *context,
 
 
 /***********************************************************************
+ *           ms_opcode
+ */
+static void ms_opcode( BYTE opcode, CONTEXT *context,
+                       KNONVOLATILE_CONTEXT_POINTERS *ptrs )
+{
+    switch (opcode)
+    {
+    case 1:  /* MSFT_OP_MACHINE_FRAME */
+        context->Pc = ((DWORD *)context->Sp)[1];
+        context->Sp = ((DWORD *)context->Sp)[0];
+        break;
+    case 2:  /* MSFT_OP_CONTEXT */
+    {
+        int i;
+        CONTEXT *src = (CONTEXT *)context->Sp;
+
+        *context = *src;
+        if (!ptrs) break;
+        for (i = 0; i < 8; i++) (&ptrs->R4)[i] = &src->R4 + i;
+        ptrs->Lr = &src->Lr;
+        for (i = 0; i < 8; i++) (&ptrs->D8)[i] = &src->D[i + 8];
+        break;
+    }
+    default:
+        WARN( "unsupported code %02x\n", opcode );
+        break;
+    }
+}
+
+
+/***********************************************************************
  *           process_unwind_codes
  */
 static void process_unwind_codes( BYTE *ptr, BYTE *end, CONTEXT *context,
@@ -757,11 +836,9 @@ static void process_unwind_codes( BYTE *ptr, BYTE *end, CONTEXT *context,
                 pop_lr( 4, context, ptrs );
         }
         else if (*ptr <= 0xee) /* Microsoft-specific 0x00-0x0f, Available 0x10-0xff */
-            WARN( "unsupported code %02x\n", *ptr );
+            ms_opcode( val & 0xff, context, ptrs );
         else if (*ptr <= 0xef && ((val & 0xff) <= 0x0f)) /* ldr lr, [sp], #x */
             pop_lr( 4 * (val & 0x0f), context, ptrs );
-        else if (*ptr == 0xf4) /* Custom private (unallocated) opcode, saved a full CONTEXT on the stack */
-            memcpy( context, (DWORD *)context->Sp, sizeof(CONTEXT) );
         else if (*ptr <= 0xf4) /* Available */
             WARN( "unsupported code %02x\n", *ptr );
         else if (*ptr <= 0xf5) /* vpop {dS-dE} */
@@ -1116,7 +1193,7 @@ __ASM_GLOBAL_FUNC( call_consolidate_callback,
                    "mov r2, #0x1a0\n\t"
                    __ASM_SEH(".seh_nop_w\n\t")
                    "bl " __ASM_NAME("memcpy") "\n\t"
-                   __ASM_SEH(".seh_custom 0xf4\n\t") /* A custom (unallocated) SEH opcode for CONTEXT on stack */
+                   __ASM_SEH(".seh_custom 0xee,0x02\n\t")  /* MSFT_OP_CONTEXT */
                    __ASM_SEH(".seh_endprologue\n\t")
                    __ASM_CFI(".cfi_def_cfa 13, 0\n\t")
                    __ASM_CFI(".cfi_escape 0x0f,0x04,0x7d,0xb8,0x00,0x06\n\t") /* DW_CFA_def_cfa_expression: DW_OP_breg13 + 56, DW_OP_deref */
@@ -1484,7 +1561,12 @@ __ASM_GLOBAL_FUNC( RtlRaiseException,
                     "add r1, sp, #0x1a8\n\t"
                     "str r1, [sp, #0x38]\n\t"  /* context->Sp */
                     "mov r1, sp\n\t"
-                    "mov r2, #1\n\t"
+                    "mrc p15, 0, r3, c13, c0, 2\n\t" /* NtCurrentTeb() */
+                    "ldr r3, [r3, #0x30]\n\t"  /* peb */
+                    "ldrb r2, [r3, #2]\n\t"    /* peb->BeingDebugged */
+                    "cbnz r2, 1f\n\t"
+                    "bl " __ASM_NAME("dispatch_exception") "\n"
+                    "1:\tmov r2, #1\n\t"
                     "bl " __ASM_NAME("NtRaiseException") "\n\t"
                     "bl " __ASM_NAME("RtlRaiseStatus") )
 
@@ -1500,6 +1582,18 @@ USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, PVOID *buffer, 
 /***********************************************************************
  *           RtlUserThreadStart (NTDLL.@)
  */
+#ifdef __WINE_PE_BUILD
+__ASM_GLOBAL_FUNC( RtlUserThreadStart,
+                   ".seh_endprologue\n\t"
+                   "mov r2, r1\n\t"
+                   "mov r1, r0\n\t"
+                   "mov r0, #0\n\t"
+                   "ldr ip, 1f\n\t"
+                   "ldr ip, [ip]\n\t"
+                   "blx ip\n"
+                   "1:\t.long " __ASM_NAME("pBaseThreadInitThunk") "\n\t"
+                   ".seh_handler " __ASM_NAME("call_unhandled_exception_handler") ", %except" )
+#else
 void WINAPI RtlUserThreadStart( PRTL_THREAD_START_ROUTINE entry, void *arg )
 {
     __TRY
@@ -1512,6 +1606,7 @@ void WINAPI RtlUserThreadStart( PRTL_THREAD_START_ROUTINE entry, void *arg )
     }
     __ENDTRY
 }
+#endif
 
 /******************************************************************
  *		LdrInitializeThunk (NTDLL.@)

@@ -36,6 +36,15 @@ build-linux:
       - usr/local/
   script:
     - git rebase $CI_MERGE_REQUEST_DIFF_BASE_SHA --exec ./tools/gitlab/build-linux
+    - git diff --name-only $CI_MERGE_REQUEST_DIFF_BASE_SHA | sed -re '/\/tests\//!d; s@/tests/.*@/tests/Makefile.in@' |
+      (xargs -r ls 2>/dev/null || true) | xargs -r sed '/TESTDLL/!d; s@.dll@@; s@.*= *@@' >usr/local/share/wine/winetest.args
+
+build-clang:
+  extends: .wine-build
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+  script:
+    - ./tools/gitlab/build-clang
 
 build-mac:
   extends: .wine-build
@@ -52,6 +61,26 @@ build-mac:
     - export PATH="/usr/local/opt/ccache/libexec:$PATH"
     - git rebase $CI_MERGE_REQUEST_DIFF_BASE_SHA --exec ./tools/gitlab/build-mac
 
+build-winetest:
+  stage: build
+  image: $CI_REGISTRY/wine/wine:debian-bookworm
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+  needs:
+    - job: build-linux
+  variables:
+    GIT_STRATEGY: none
+  artifacts:
+    name: winetest
+    paths:
+      - winetest.args
+      - winetest.exe
+      - winetest64.exe
+  script:
+    - mv usr/local/share/wine/winetest.args winetest.args
+    - mv usr/local/lib/wine/i386-windows/winetest.exe winetest.exe
+    - mv usr/local/lib/wine/x86_64-windows/winetest.exe winetest64.exe
+
 build-daily-linux:
   extends: .wine-build
   rules:
@@ -63,7 +92,7 @@ build-daily-linux:
   script:
     - ./tools/gitlab/build-linux
 
-build-winetest:
+build-daily-winetest:
   stage: build
   image: $CI_REGISTRY/wine/wine:debian-bookworm
   rules:

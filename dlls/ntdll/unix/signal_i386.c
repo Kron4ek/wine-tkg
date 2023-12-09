@@ -435,6 +435,49 @@ enum i386_trap_code
 #endif
 };
 
+/* stack layout when calling KiUserExceptionDispatcher */
+struct exc_stack_layout
+{
+    EXCEPTION_RECORD *rec_ptr;       /* 000 first arg for KiUserExceptionDispatcher */
+    CONTEXT          *context_ptr;   /* 004 second arg for KiUserExceptionDispatcher */
+    EXCEPTION_RECORD  rec;           /* 008 */
+    CONTEXT           context;       /* 058 */
+    CONTEXT_EX        context_ex;    /* 324 */
+    BYTE xstate[sizeof(XSTATE)+64];  /* 33c extra space to allow for 64-byte alignment */
+    DWORD             align;         /* 4bc */
+};
+C_ASSERT( offsetof(struct exc_stack_layout, context) == 0x58 );
+C_ASSERT( offsetof(struct exc_stack_layout, xstate) == 0x33c );
+C_ASSERT( sizeof(struct exc_stack_layout) == 0x4c0 );
+
+/* stack layout when calling KiUserApcDispatcher */
+struct apc_stack_layout
+{
+    PNTAPCFUNC        func;          /* 000 */
+    UINT              arg1;          /* 004 */
+    UINT              arg2;          /* 008 */
+    UINT              arg3;          /* 00c */
+    UINT              alertable;     /* 010 */
+    CONTEXT           context;       /* 014 */
+    CONTEXT_EX        xctx;          /* 2e0 */
+    UINT              unk2[4];       /* 2f8 */
+};
+C_ASSERT( offsetof(struct apc_stack_layout, context) == 0x14 );
+C_ASSERT( sizeof(struct apc_stack_layout) == 0x308 );
+
+/* stack layout when calling KiUserCallbackDispatcher */
+struct callback_stack_layout
+{
+    ULONG             eip;           /* 000 */
+    ULONG             id;            /* 004 */
+    void             *args;          /* 008 */
+    ULONG             len;           /* 00c */
+    ULONG             unk[2];        /* 010 */
+    ULONG             esp;           /* 018 */
+    BYTE              args_data[0];  /* 01c */
+};
+C_ASSERT( sizeof(struct callback_stack_layout) == 0x1c );
+
 struct syscall_frame
 {
     WORD                  syscall_flags;  /* 000 */
@@ -1417,23 +1460,8 @@ static void setup_raise_exception( ucontext_t *sigcontext, void *stack_ptr,
                                    EXCEPTION_RECORD *rec, struct xcontext *xcontext )
 {
     CONTEXT *context = &xcontext->c;
-    size_t stack_size;
     XSTATE *src_xs;
-
-    struct stack_layout
-    {
-        EXCEPTION_RECORD *rec_ptr;       /* first arg for KiUserExceptionDispatcher */
-        CONTEXT          *context_ptr;   /* second arg for KiUserExceptionDispatcher */
-        CONTEXT           context;
-        CONTEXT_EX        context_ex;
-        EXCEPTION_RECORD  rec;
-        DWORD             ebp;
-        DWORD             eip;
-        char              xstate[0];
-    } *stack;
-
-C_ASSERT( (offsetof(struct stack_layout, xstate) == sizeof(struct stack_layout)) );
-
+    struct exc_stack_layout *stack;
     NTSTATUS status = send_debug_event( rec, context, TRUE );
 
     if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
@@ -1445,23 +1473,17 @@ C_ASSERT( (offsetof(struct stack_layout, xstate) == sizeof(struct stack_layout))
     /* fix up instruction pointer in context for EXCEPTION_BREAKPOINT */
     if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context->Eip--;
 
-    stack_size = sizeof(*stack);
-    if ((src_xs = xstate_from_context( context )))
-    {
-        stack_size += (ULONG_PTR)stack_ptr - (((ULONG_PTR)stack_ptr
-                - sizeof(XSTATE)) & ~(ULONG_PTR)63);
-    }
-
-    stack = virtual_setup_exception( stack_ptr, stack_size, rec );
+    stack = virtual_setup_exception( stack_ptr, sizeof(*stack), rec );
+    stack->rec_ptr      = &stack->rec;
+    stack->context_ptr  = &stack->context;
     stack->rec          = *rec;
     stack->context      = *context;
 
-    if (src_xs)
+    if ((src_xs = xstate_from_context( context )))
     {
-        XSTATE *dst_xs = (XSTATE *)stack->xstate;
+        XSTATE *dst_xs = (XSTATE *)(((ULONG_PTR)stack->xstate + 63) & ~63);
 
-        assert(!((ULONG_PTR)dst_xs & 63));
-        context_init_xstate( &stack->context, stack->xstate );
+        context_init_xstate( &stack->context, dst_xs );
         memset( dst_xs, 0, offsetof(XSTATE, YmmContext) );
         dst_xs->CompactionMask = xstate_compaction_enabled ? 0x8000000000000004 : 0;
         if (src_xs->Mask & 4)
@@ -1475,8 +1497,6 @@ C_ASSERT( (offsetof(struct stack_layout, xstate) == sizeof(struct stack_layout))
         context_init_xstate( &stack->context, NULL );
     }
 
-    stack->rec_ptr      = &stack->rec;
-    stack->context_ptr  = &stack->context;
     ESP_sig(sigcontext) = (DWORD)stack;
     EIP_sig(sigcontext) = (DWORD)pKiUserExceptionDispatcher;
     /* clear single-step, direction, and align check flag */
@@ -1503,17 +1523,6 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
     setup_raise_exception( sigcontext, stack, rec, &xcontext );
 }
 
-/* stack layout when calling an user apc function.
- * FIXME: match Windows ABI. */
-struct apc_stack_layout
-{
-    CONTEXT      *context_ptr;
-    ULONG_PTR     arg1;
-    ULONG_PTR     arg2;
-    ULONG_PTR     arg3;
-    PNTAPCFUNC    func;
-    CONTEXT       context;
-};
 
 /***********************************************************************
  *           call_user_apc_dispatcher
@@ -1533,13 +1542,14 @@ NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR a
     }
     else memmove( &stack->context, context, sizeof(stack->context) );
 
-    stack->context_ptr = &stack->context;
-    stack->arg1 = arg1;
-    stack->arg2 = arg2;
-    stack->arg3 = arg3;
-    stack->func = func;
+    context_init_xstate( &stack->context, NULL );
+    stack->func      = func;
+    stack->arg1      = arg1;
+    stack->arg2      = arg2;
+    stack->arg3      = arg3;
+    stack->alertable = TRUE;
     frame->ebp = stack->context.Ebp;
-    frame->esp = (ULONG)stack - 4;
+    frame->esp = (ULONG)stack;
     frame->eip = (ULONG)pKiUserApcDispatcher;
     return status;
 }
@@ -1560,11 +1570,35 @@ void call_raise_user_exception_dispatcher(void)
 NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context )
 {
     struct syscall_frame *frame = x86_thread_data()->syscall_frame;
-    void **stack = (void **)frame->esp;
+    ULONG esp = (frame->esp - sizeof(struct exc_stack_layout)) & ~3;
+    struct exc_stack_layout *stack = (struct exc_stack_layout *)esp;
+    XSTATE *src_xs;
 
     if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context->Eip--;
-    *(--stack) = context;
-    *(--stack) = rec;
+
+    stack->rec_ptr      = &stack->rec;
+    stack->context_ptr  = &stack->context;
+    stack->rec          = *rec;
+    stack->context      = *context;
+
+    if ((src_xs = xstate_from_context( context )))
+    {
+        XSTATE *dst_xs = (XSTATE *)(((ULONG_PTR)stack->xstate + 63) & ~63);
+
+        context_init_xstate( &stack->context, dst_xs );
+        memset( dst_xs, 0, offsetof(XSTATE, YmmContext) );
+        dst_xs->CompactionMask = xstate_compaction_enabled ? 0x8000000000000004 : 0;
+        if (src_xs->Mask & 4)
+        {
+            dst_xs->Mask = 4;
+            memcpy( &dst_xs->YmmContext, &src_xs->YmmContext, sizeof(dst_xs->YmmContext) );
+        }
+    }
+    else
+    {
+        context_init_xstate( &stack->context, NULL );
+    }
+
     frame->esp = (ULONG)stack;
     frame->eip = (ULONG)pKiUserExceptionDispatcher;
     return STATUS_SUCCESS;
@@ -1574,8 +1608,8 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
 /***********************************************************************
  *           call_user_mode_callback
  */
-extern NTSTATUS call_user_mode_callback( ULONG id, void *args, ULONG len, void **ret_ptr,
-                                         ULONG *ret_len, void *func, TEB *teb );
+extern NTSTATUS call_user_mode_callback( ULONG user_esp, void **ret_ptr, ULONG *ret_len,
+                                         void *func, TEB *teb );
 __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "pushl %ebp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
@@ -1588,7 +1622,7 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    __ASM_CFI(".cfi_rel_offset %esi,-8\n\t")
                    "pushl %edi\n\t"
                    __ASM_CFI(".cfi_rel_offset %edi,-12\n\t")
-                   "movl 0x20(%ebp),%edx\n\t"  /* teb */
+                   "movl 0x18(%ebp),%edx\n\t"  /* teb */
                    "pushl 0(%edx)\n\t"         /* teb->Tib.ExceptionList */
                    "subl $0x380,%esp\n\t"      /* sizeof(struct syscall_frame) */
                    "andl $~63,%esp\n\t"
@@ -1599,14 +1633,9 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "movl %eax,(%esp)\n\t"
                    "movl %ecx,0x3c(%esp)\n\t"  /* frame->prev_frame */
                    "movl %esp,0x1f8(%edx)\n\t" /* x86_thread_data()->syscall_frame */
-                   "movl 0x1c(%ebp),%ecx\n\t"  /* func */
-                   "movl 0x0c(%ebp),%edx\n\t"  /* args */
+                   "movl 0x14(%ebp),%ecx\n\t"  /* func */
                    /* switch to user stack */
-                   "leal -4(%edx),%esp\n\t"
-                   "pushl 0x10(%ebp)\n\t"      /* len */
-                   "pushl %edx\n\t"            /* args */
-                   "pushl 0x08(%ebp)\n\t"      /* id */
-                   "pushl $0\n\t"
+                   "movl 8(%ebp),%esp\n\t"
                    "xorl %ebp,%ebp\n\t"
                    "jmpl *%ecx" )
 
@@ -1633,9 +1662,9 @@ __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    "movl 8(%esp),%edi\n\t"     /* ret_len */
                    "movl 12(%esp),%eax\n\t"    /* status */
                    "leal -16(%ebp),%esp\n\t"
-                   "movl 0x14(%ebp),%ecx\n\t"  /* ret_ptr */
+                   "movl 0x0c(%ebp),%ecx\n\t"  /* ret_ptr */
                    "movl %esi,(%ecx)\n\t"
-                   "movl 0x18(%ebp),%ecx\n\t"  /* ret_len */
+                   "movl 0x10(%ebp),%ecx\n\t"  /* ret_len */
                    "movl %edi,(%ecx)\n\t"
                    "popl 0(%edx)\n\t"          /* teb->Tib.ExceptionList */
                    "popl %edi\n\t"
@@ -1677,14 +1706,19 @@ __ASM_GLOBAL_FUNC( user_mode_abort_thread,
 NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
 {
     struct syscall_frame *frame = x86_thread_data()->syscall_frame;
-    void *args_data = (void *)((frame->esp - len) & ~15);
+    ULONG esp = (frame->esp - offsetof(struct callback_stack_layout, args_data[len])) & ~3;
+    struct callback_stack_layout *stack = (struct callback_stack_layout *)esp;
 
     if ((char *)ntdll_get_thread_data()->kernel_stack + min_kernel_stack > (char *)&frame)
         return STATUS_STACK_OVERFLOW;
 
-    memcpy( args_data, args, len );
-    return call_user_mode_callback( id, args_data, len, ret_ptr, ret_len,
-                                    pKiUserCallbackDispatcher, NtCurrentTeb() );
+    stack->eip  = frame->eip;
+    stack->id   = id;
+    stack->args = stack->args_data;
+    stack->len  = len;
+    stack->esp  = frame->esp;
+    memcpy( stack->args_data, args, len );
+    return call_user_mode_callback( esp, ret_ptr, ret_len, pKiUserCallbackDispatcher, NtCurrentTeb() );
 }
 
 

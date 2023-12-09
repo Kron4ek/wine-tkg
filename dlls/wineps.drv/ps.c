@@ -985,25 +985,51 @@ BOOL PSDRV_WriteDIBPatternDict(print_ctx *ctx, const BITMAPINFO *bmi, BYTE *bits
 	return FALSE;
     }
 
-    w = bmi->bmiHeader.biWidth & ~0x7;
-    h = abs_height & ~0x7;
+    w = bmi->bmiHeader.biWidth;
+    h = abs_height;
 
     buf = HeapAlloc( GetProcessHeap(), 0, max(sizeof(do_pattern) + 100, 2 * w/8 * h + 1) );
     ptr = buf;
-    for(y = h-1; y >= 0; y--) {
-        for(x = 0; x < w/8; x++) {
-	    sprintf(ptr, "%02x", *(bits + x/8 + y *
+    for(y = 0; y < h; y++) {
+        for(x = 0; x < (w + 7) / 8; x++) {
+	    sprintf(ptr, "%02x", *(bits + x + y *
 				   ((bmi->bmiHeader.biWidth + 31) / 32) * 4));
 	    ptr += 2;
 	}
     }
     PSDRV_WriteSpool(ctx, mypat, sizeof(mypat) - 1);
-    PSDRV_WriteImageDict(ctx, 1, FALSE, 8, 8, buf, bmi->bmiHeader.biHeight < 0);
+    PSDRV_WriteImageDict(ctx, 1, FALSE, w, h, buf, bmi->bmiHeader.biHeight < 0);
     PSDRV_WriteSpool(ctx, "def\n", 4);
 
     PSDRV_WriteIndexColorSpaceBegin(ctx, 1);
-    map[0] = GetTextColor( ctx->hdc );
-    map[1] = GetBkColor( ctx->hdc );
+    if (usage == DIB_RGB_COLORS)
+    {
+        map[0] = RGB( bmi->bmiColors[0].rgbRed, bmi->bmiColors[0].rgbGreen,
+                bmi->bmiColors[0].rgbBlue );
+        map[1] = RGB( bmi->bmiColors[1].rgbRed, bmi->bmiColors[1].rgbGreen,
+                bmi->bmiColors[1].rgbBlue );
+    }
+    else if (usage == DIB_PAL_COLORS)
+    {
+        HPALETTE hpal = GetCurrentObject( ctx->hdc, OBJ_PAL );
+        PALETTEENTRY pal[2];
+
+        memset(pal, 0, sizeof(pal));
+        if (hpal) GetPaletteEntries(hpal, 0, 2, pal);
+
+        map[0] = RGB(pal[0].peRed, pal[0].peGreen, pal[0].peBlue);
+        map[1] = RGB(pal[1].peRed, pal[1].peGreen, pal[1].peBlue);
+    }
+    else if (usage == 2 /* DIB_PAL_INDICES */)
+    {
+        map[0] = GetTextColor( ctx->hdc );
+        map[1] = GetBkColor( ctx->hdc );
+    }
+    else
+    {
+        FIXME("wrong usage: %d\n", usage);
+        return FALSE;
+    }
     PSDRV_WriteRGB(ctx, map, 2);
     PSDRV_WriteIndexColorSpaceEnd(ctx);
 

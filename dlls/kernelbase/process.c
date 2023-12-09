@@ -1187,6 +1187,57 @@ BOOL WINAPI DECLSPEC_HOTPATCH IsWow64Process( HANDLE process, PBOOL wow64 )
     return set_ntstatus( status );
 }
 
+/*********************************************************************
+ *           GetProcessInformation   (kernelbase.@)
+ */
+BOOL WINAPI GetProcessInformation( HANDLE process, PROCESS_INFORMATION_CLASS info_class, void *data, DWORD size )
+{
+    switch (info_class)
+    {
+        case ProcessMachineTypeInfo:
+        {
+            PROCESS_MACHINE_INFORMATION *mi = data;
+            SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION machines[8];
+            NTSTATUS status;
+            ULONG i;
+
+            if (size != sizeof(*mi))
+            {
+                SetLastError(ERROR_BAD_LENGTH);
+                return FALSE;
+            }
+
+            status = NtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
+                    machines, sizeof(machines), NULL );
+            if (status) return set_ntstatus( status );
+
+            for (i = 0; machines[i].Machine; i++)
+            {
+                if (machines[i].Process)
+                {
+                    mi->ProcessMachine = machines[i].Machine;
+                    mi->Res0 = 0;
+                    mi->MachineAttributes = 0;
+                    if (machines[i].KernelMode)
+                        mi->MachineAttributes |= KernelEnabled;
+                    if (machines[i].UserMode)
+                        mi->MachineAttributes |= UserEnabled;
+                    if (machines[i].WoW64Container)
+                        mi->MachineAttributes |= Wow64Container;
+
+                    return TRUE;
+                }
+            }
+
+            break;
+        }
+        default:
+            FIXME("Unsupported information class %d.\n", info_class);
+    }
+
+    return FALSE;
+}
+
 
 /*********************************************************************
  *           OpenProcess   (kernelbase.@)
@@ -1403,7 +1454,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH TerminateProcess( HANDLE handle, DWORD exit_code )
  ***********************************************************************/
 
 
-static STARTUPINFOW startup_infoW;
 static char *command_lineA;
 static WCHAR *command_lineW;
 
@@ -1413,25 +1463,6 @@ static WCHAR *command_lineW;
 void init_startup_info( RTL_USER_PROCESS_PARAMETERS *params )
 {
     ANSI_STRING ansi;
-
-    startup_infoW.cb              = sizeof(startup_infoW);
-    startup_infoW.lpReserved      = NULL;
-    startup_infoW.lpDesktop       = params->Desktop.Buffer;
-    startup_infoW.lpTitle         = params->WindowTitle.Buffer;
-    startup_infoW.dwX             = params->dwX;
-    startup_infoW.dwY             = params->dwY;
-    startup_infoW.dwXSize         = params->dwXSize;
-    startup_infoW.dwYSize         = params->dwYSize;
-    startup_infoW.dwXCountChars   = params->dwXCountChars;
-    startup_infoW.dwYCountChars   = params->dwYCountChars;
-    startup_infoW.dwFillAttribute = params->dwFillAttribute;
-    startup_infoW.dwFlags         = params->dwFlags;
-    startup_infoW.wShowWindow     = params->wShowWindow;
-    startup_infoW.cbReserved2     = params->RuntimeInfo.MaximumLength;
-    startup_infoW.lpReserved2     = params->RuntimeInfo.MaximumLength ? (void *)params->RuntimeInfo.Buffer : NULL;
-    startup_infoW.hStdInput       = params->hStdInput ? params->hStdInput : INVALID_HANDLE_VALUE;
-    startup_infoW.hStdOutput      = params->hStdOutput ? params->hStdOutput : INVALID_HANDLE_VALUE;
-    startup_infoW.hStdError       = params->hStdError ? params->hStdError : INVALID_HANDLE_VALUE;
 
     command_lineW = params->CommandLine.Buffer;
     if (!RtlUnicodeStringToAnsiString( &ansi, &params->CommandLine, TRUE )) command_lineA = ansi.Buffer;
@@ -1472,7 +1503,34 @@ LPWSTR WINAPI GetCommandLineW(void)
  */
 void WINAPI DECLSPEC_HOTPATCH GetStartupInfoW( STARTUPINFOW *info )
 {
-    *info = startup_infoW;
+    RTL_USER_PROCESS_PARAMETERS *params;
+
+    RtlAcquirePebLock();
+
+    params = RtlGetCurrentPeb()->ProcessParameters;
+
+    info->cb              = sizeof(*info);
+    info->lpReserved      = NULL;
+    info->lpDesktop       = params->Desktop.Buffer;
+    info->lpTitle         = params->WindowTitle.Buffer;
+    info->dwX             = params->dwX;
+    info->dwY             = params->dwY;
+    info->dwXSize         = params->dwXSize;
+    info->dwYSize         = params->dwYSize;
+    info->dwXCountChars   = params->dwXCountChars;
+    info->dwYCountChars   = params->dwYCountChars;
+    info->dwFillAttribute = params->dwFillAttribute;
+    info->dwFlags         = params->dwFlags;
+    info->wShowWindow     = params->wShowWindow;
+    info->cbReserved2     = params->RuntimeInfo.MaximumLength;
+    info->lpReserved2     = params->RuntimeInfo.MaximumLength ? (void *)params->RuntimeInfo.Buffer : NULL;
+    if (params->dwFlags & STARTF_USESTDHANDLES)
+    {
+        info->hStdInput   = params->hStdInput;
+        info->hStdOutput  = params->hStdOutput;
+        info->hStdError   = params->hStdError;
+    }
+    RtlReleasePebLock();
 }
 
 

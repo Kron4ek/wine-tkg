@@ -218,7 +218,7 @@ int __cdecl mainCRTStartup(void) { return 0; }]])],
                [AS_VAR_SET(ac_var,yes)], [AS_VAR_SET(ac_var,no)])
 CFLAGS=$ac_wine_try_cflags_saved
 ac_exeext=$ac_wine_try_cflags_saved_exeext])
-AS_VAR_IF([ac_var],[yes],[m4_default([$2], [AS_VAR_APPEND([${wine_arch}_EXTRACFLAGS],[" $1"])], [$3])])dnl
+AS_VAR_IF([ac_var],[yes],[m4_default([$2], [AS_VAR_APPEND([${wine_arch}_EXTRACFLAGS],[" $1"])])], [$3])dnl
 AS_VAR_POPDEF([ac_var]) }])
 
 dnl **** Check whether the given MinGW header is available ****
@@ -301,6 +301,7 @@ wine_fn_config_makefile ()
     AS_VAR_COPY([enable],[$[2]])
     case "$enable" in
       no) AS_VAR_APPEND([DISABLED_SUBDIRS],[" $[1]"]) ;;
+      yes) ;;
       *aarch64*|*arm*|*i386*|*x86_64*)
         if test -n "$PE_ARCHS"
         then
@@ -310,7 +311,11 @@ wine_fn_config_makefile ()
             done
         else
             test $(expr ",$enable," : ".*,$HOST_ARCH,") -gt 0 || AS_VAR_APPEND([DISABLED_SUBDIRS],[" $[1]"])
-        fi;;
+        fi ;;
+      "")
+        case "$[1], $PE_ARCHS " in
+          programs/*,*\ arm64ec\ *) AS_VAR_APPEND([arm64ec_DISABLED_SUBDIRS],[" $[1]"]) ;;
+        esac ;;
     esac
 }
 

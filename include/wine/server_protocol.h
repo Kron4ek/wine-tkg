@@ -844,6 +844,7 @@ typedef struct
     unsigned char  contains_code : 1;
     unsigned char  wine_builtin : 1;
     unsigned char  wine_fakedll : 1;
+    unsigned char  padding : 5;
     unsigned char  image_flags;
     unsigned int   loader_flags;
     unsigned int   header_size;
@@ -1162,10 +1163,12 @@ struct get_thread_info_reply
     int          priority;
     int          last;
     int          suspend_count;
-    int          dbg_hidden;
+    unsigned int flags;
     data_size_t  desc_len;
     /* VARARG(desc,unicode_str); */
 };
+#define GET_THREAD_INFO_FLAG_DBG_HIDDEN 0x01
+#define GET_THREAD_INFO_FLAG_TERMINATED 0x02
 
 
 
@@ -6751,7 +6754,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 786
+#define SERVER_PROTOCOL_VERSION 788
 
 /* ### protocol_version end ### */
 

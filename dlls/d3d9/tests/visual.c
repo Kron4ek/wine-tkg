@@ -26720,7 +26720,6 @@ static void test_draw_mapped_buffer(void)
     unsigned int color, i;
     IDirect3D9 *d3d;
     ULONG refcount;
-    BOOL test_pass;
     HWND window;
     HRESULT hr;
     void *data;
@@ -26741,11 +26740,10 @@ static void test_draw_mapped_buffer(void)
     {
         D3DPOOL pool;
         DWORD usage;
-        BOOL ignore_wine_result;
     }
     tests[] =
     {
-        {D3DPOOL_DEFAULT, D3DUSAGE_DYNAMIC, TRUE},
+        {D3DPOOL_DEFAULT, D3DUSAGE_DYNAMIC},
         {D3DPOOL_MANAGED, 0},
         {D3DPOOL_SYSTEMMEM, 0},
     };
@@ -26825,11 +26823,7 @@ static void test_draw_mapped_buffer(void)
         ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
         color = getPixelColor(device, 160, 120);
-
-        test_pass = color_match(color, 0x00ff0000, 1);
-        todo_wine_if(tests[i].ignore_wine_result && !test_pass)
-        ok(test_pass, "Got unexpected color 0x%08x, test %u.\n", color, i);
-
+        ok(color_match(color, 0x00ff0000, 1), "Got unexpected color 0x%08x, test %u.\n", color, i);
         color = getPixelColor(device, 480, 360);
         ok(color_match(color, 0x000000ff, 1), "Got unexpected color 0x%08x, test %u.\n", color, i);
 
@@ -27360,14 +27354,9 @@ static void test_dynamic_map_synchronization(void)
     }
 
     hr = IDirect3DDevice9_CreateVertexBuffer(device, 200 * 4 * sizeof(struct dynamic_vb_vertex),
-            D3DUSAGE_DYNAMIC, D3DFVF_XYZ, D3DPOOL_DEFAULT, &buffer, NULL);
+            D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, D3DFVF_XYZ, D3DPOOL_DEFAULT, &buffer, NULL);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
-    hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff0000, 0.0f, 0);
-    ok(hr == D3D_OK, "Failed to clear, hr %#lx.\n", hr);
-
-    hr = IDirect3DDevice9_BeginScene(device);
-    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     hr = IDirect3DDevice9_SetStreamSource(device, 0, buffer, 0, sizeof(struct dynamic_vb_vertex));
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     hr = IDirect3DDevice9_SetRenderState(device, D3DRS_LIGHTING, FALSE);
@@ -27375,6 +27364,12 @@ static void test_dynamic_map_synchronization(void)
     hr = IDirect3DDevice9_SetRenderState(device, D3DRS_ZENABLE, FALSE);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     hr = IDirect3DDevice9_SetFVF(device, D3DFVF_XYZ | D3DFVF_DIFFUSE);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff0000, 0.0f, 0);
+    ok(hr == D3D_OK, "Failed to clear, hr %#lx.\n", hr);
+
+    hr = IDirect3DDevice9_BeginScene(device);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     for (y = 0; y < 200; ++y)
@@ -27413,6 +27408,52 @@ static void test_dynamic_map_synchronization(void)
 
     hr = IDirect3DDevice9_EndScene(device);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+    IDirect3DVertexBuffer9_Release(buffer);
+
+    /* Castlevania: Lords of Shadow 2 locks a vertex and index buffer and keeps
+     * both mapped for all of the draws in a frame. Test this by doing the same
+     * draws, but with the buffer mapped the whole time. */
+
+    hr = IDirect3DDevice9_CreateVertexBuffer(device, 200 * 4 * sizeof(struct dynamic_vb_vertex),
+            D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, D3DFVF_XYZ, D3DPOOL_DEFAULT, &buffer, NULL);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = IDirect3DDevice9_SetStreamSource(device, 0, buffer, 0, sizeof(struct dynamic_vb_vertex));
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff0000, 0.0f, 0);
+    ok(hr == D3D_OK, "Failed to clear, hr %#lx.\n", hr);
+
+    hr = IDirect3DDevice9_BeginScene(device);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+    for (y = 0; y < 200; ++y)
+    {
+        hr = IDirect3DVertexBuffer9_Lock(buffer, 0, 0, &data, D3DLOCK_DISCARD);
+        ok(hr == D3D_OK, "Failed to map buffer, hr %#lx.\n", hr);
+
+        fill_dynamic_vb_quad(data, 0, y);
+        hr = IDirect3DDevice9_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, 0, 2);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+        for (x = 1; x < 200; ++x)
+        {
+            fill_dynamic_vb_quad((struct dynamic_vb_vertex *)data + 4 * x, x, y);
+            hr = IDirect3DDevice9_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, 4 * x, 2);
+            ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        }
+
+        hr = IDirect3DVertexBuffer9_Unlock(buffer);
+        ok(hr == D3D_OK, "Failed to map buffer, hr %#lx.\n", hr);
+    }
+
+    hr = IDirect3DDevice9_EndScene(device);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = IDirect3DDevice9_GetRenderTarget(device, 0, &rt);
+    ok(hr == S_OK, "Failed to get render target, hr %#lx.\n", hr);
+    check_rt_color(rt, 0x0000ff00);
+    IDirect3DSurface9_Release(rt);
 
     IDirect3DVertexBuffer9_Release(buffer);
     refcount = IDirect3DDevice9_Release(device);

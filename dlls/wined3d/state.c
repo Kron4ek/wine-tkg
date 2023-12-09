@@ -1230,7 +1230,7 @@ static void depth(struct wined3d_context *context, const struct wined3d_state *s
         }
     }
 
-    if (context->last_was_rhw && !isStateDirty(context, STATE_TRANSFORM(WINED3D_TS_PROJECTION)))
+    if (context->stream_info.position_transformed && !isStateDirty(context, STATE_TRANSFORM(WINED3D_TS_PROJECTION)))
         context_apply_state(context, state, STATE_TRANSFORM(WINED3D_TS_PROJECTION));
 }
 
@@ -1303,7 +1303,7 @@ static void state_fog_vertexpart(struct wined3d_context *context, const struct w
     /* Otherwise use per-vertex fog in any case */
     gl_info->gl_ops.gl.p_glHint(GL_FOG_HINT, GL_FASTEST);
 
-    if (state->render_states[WINED3D_RS_FOGVERTEXMODE] == WINED3D_FOG_NONE || context->last_was_rhw)
+    if (state->render_states[WINED3D_RS_FOGVERTEXMODE] == WINED3D_FOG_NONE || context->stream_info.position_transformed)
     {
         /* No fog at all, or transformed vertices: Use fog coord */
         if (!context->fog_coord)
@@ -1436,7 +1436,7 @@ void state_fog_fragpart(struct wined3d_context *context, const struct wined3d_st
             {
                 /* If processed vertices are used, fall through to the NONE case */
                 case WINED3D_FOG_EXP:
-                    if (!context->last_was_rhw)
+                    if (!context->stream_info.position_transformed)
                     {
                         gl_info->gl_ops.gl.p_glFogi(GL_FOG_MODE, GL_EXP);
                         checkGLcall("glFogi(GL_FOG_MODE, GL_EXP)");
@@ -1446,7 +1446,7 @@ void state_fog_fragpart(struct wined3d_context *context, const struct wined3d_st
                     /* drop through */
 
                 case WINED3D_FOG_EXP2:
-                    if (!context->last_was_rhw)
+                    if (!context->stream_info.position_transformed)
                     {
                         gl_info->gl_ops.gl.p_glFogi(GL_FOG_MODE, GL_EXP2);
                         checkGLcall("glFogi(GL_FOG_MODE, GL_EXP2)");
@@ -1456,7 +1456,7 @@ void state_fog_fragpart(struct wined3d_context *context, const struct wined3d_st
                     /* drop through */
 
                 case WINED3D_FOG_LINEAR:
-                    if (!context->last_was_rhw)
+                    if (!context->stream_info.position_transformed)
                     {
                         gl_info->gl_ops.gl.p_glFogi(GL_FOG_MODE, GL_LINEAR);
                         checkGLcall("glFogi(GL_FOG_MODE, GL_LINEAR)");
@@ -3453,59 +3453,8 @@ static void sampler_texmatrix(struct wined3d_context *context, const struct wine
     }
 }
 
-/* Enabling and disabling texture dimensions is done by texture stage state /
- * pixel shader setup, this function only has to bind textures and set the per
- * texture states. */
 static void sampler(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
-    unsigned int sampler_idx = state_id - STATE_SAMPLER(0);
-    unsigned int mapped_stage = context_gl->tex_unit_map[sampler_idx];
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-
-    TRACE("Sampler %u.\n", sampler_idx);
-
-    if (mapped_stage == WINED3D_UNMAPPED_STAGE)
-    {
-        TRACE("No sampler mapped to stage %u. Returning.\n", sampler_idx);
-        return;
-    }
-
-    if (mapped_stage >= gl_info->limits.graphics_samplers)
-        return;
-    wined3d_context_gl_active_texture(context_gl, gl_info, mapped_stage);
-
-    if (state->textures[sampler_idx])
-    {
-        struct wined3d_texture_gl *texture_gl = wined3d_texture_gl(state->textures[sampler_idx]);
-        enum wined3d_shader_type shader_type = WINED3D_SHADER_TYPE_PIXEL;
-        unsigned int bind_idx = sampler_idx;
-        struct wined3d_sampler *sampler;
-
-        if (sampler_idx >= WINED3D_VERTEX_SAMPLER_OFFSET)
-        {
-            bind_idx -= WINED3D_VERTEX_SAMPLER_OFFSET;
-            shader_type = WINED3D_SHADER_TYPE_VERTEX;
-        }
-
-        sampler = state->sampler[shader_type][bind_idx];
-
-        wined3d_texture_gl_bind(texture_gl, context_gl, sampler->desc.srgb_decode);
-        wined3d_sampler_gl_bind(wined3d_sampler_gl(sampler), mapped_stage, texture_gl, context_gl);
-
-        /* Trigger shader constant reloading (for NP2 texcoord fixup) */
-        if (!(texture_gl->t.flags & WINED3D_TEXTURE_POW2_MAT_IDENT))
-            context->constant_update_mask |= WINED3D_SHADER_CONST_PS_NP2_FIXUP;
-    }
-    else
-    {
-        wined3d_context_gl_bind_texture(context_gl, GL_NONE, 0);
-        if (gl_info->supported[ARB_SAMPLER_OBJECTS])
-        {
-            GL_EXTCALL(glBindSampler(mapped_stage, 0));
-            checkGLcall("glBindSampler");
-        }
-    }
 }
 
 void apply_pixelshader(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
@@ -3519,11 +3468,7 @@ void apply_pixelshader(struct wined3d_context *context, const struct wined3d_sta
             /* Former draw without a pixel shader, some samplers may be
              * disabled because of WINED3D_TSS_COLOR_OP = WINED3DTOP_DISABLE
              * make sure to enable them. */
-            for (i = 0; i < WINED3D_MAX_FRAGMENT_SAMPLERS; ++i)
-            {
-                if (!isStateDirty(context, STATE_SAMPLER(i)))
-                    sampler(context, state, STATE_SAMPLER(i));
-            }
+            context->update_shader_resource_bindings = 1;
             context->last_was_pshader = TRUE;
         }
         else
@@ -3675,7 +3620,7 @@ static void transform_view(struct wined3d_context *context, const struct wined3d
             clipplane(context, state, STATE_CLIPPLANE(k));
     }
 
-    if (context->last_was_rhw)
+    if (context->stream_info.position_transformed)
     {
         gl_info->gl_ops.gl.p_glLoadIdentity();
         checkGLcall("glLoadIdentity()");
@@ -4434,10 +4379,6 @@ const struct wined3d_state_entry_template misc_state_template_gl[] =
     { STATE_POINTSPRITECOORDORIGIN,                       { STATE_POINTSPRITECOORDORIGIN,                       state_nop           }, ARB_CLIP_CONTROL                },
     { STATE_POINTSPRITECOORDORIGIN,                       { STATE_POINTSPRITECOORDORIGIN,                       psorigin            }, WINED3D_GL_VERSION_2_0          },
     { STATE_POINTSPRITECOORDORIGIN,                       { STATE_POINTSPRITECOORDORIGIN,                       psorigin_w          }, WINED3D_GL_EXT_NONE             },
-
-    /* TODO: Move shader constant loading to vertex and fragment pipeline respectively, as soon as the pshader and
-     * vshader loadings are untied from each other
-     */
     { STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),   { STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),   shader_bumpenv      }, WINED3D_GL_EXT_NONE             },
     { STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT01),   { STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),   NULL                }, WINED3D_GL_EXT_NONE             },
     { STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT10),   { STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),   NULL                }, WINED3D_GL_EXT_NONE             },

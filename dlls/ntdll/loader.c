@@ -1102,6 +1102,7 @@ void * WINAPI RtlFindExportedRoutineByName( HMODULE module, const char *name )
     const DWORD *functions;
     DWORD exp_size;
     int ordinal;
+    void *proc;
 
     exports = RtlImageDirectoryEntryToData( module, TRUE, IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size );
     if (!exports || exp_size < sizeof(*exports)) return NULL;
@@ -1110,7 +1111,12 @@ void * WINAPI RtlFindExportedRoutineByName( HMODULE module, const char *name )
     if (ordinal >= exports->NumberOfFunctions) return NULL;
     functions = get_rva( module, exports->AddressOfFunctions );
     if (!functions[ordinal]) return NULL;
-    return get_rva( module, functions[ordinal] );
+    proc = get_rva( module, functions[ordinal] );
+    /* if the address falls into the export dir, it's a forward */
+    if (((const char *)proc >= (const char *)exports) &&
+        ((const char *)proc < (const char *)exports + exp_size))
+        return NULL;
+    return proc;
 }
 
 
@@ -2131,13 +2137,14 @@ NTSTATUS WINAPI LdrGetProcedureAddress(HMODULE module, const ANSI_STRING *name,
                                        ULONG ord, PVOID *address)
 {
     IMAGE_EXPORT_DIRECTORY *exports;
+    WINE_MODREF *wm;
     DWORD exp_size;
     NTSTATUS ret = STATUS_PROCEDURE_NOT_FOUND;
 
     RtlEnterCriticalSection( &loader_section );
 
     /* check if the module itself is invalid to return the proper error */
-    if (!get_modref( module )) ret = STATUS_DLL_NOT_FOUND;
+    if (!(wm = get_modref( module ))) ret = STATUS_DLL_NOT_FOUND;
     else if ((exports = RtlImageDirectoryEntryToData( module, TRUE,
                                                       IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size )))
     {
@@ -2147,6 +2154,11 @@ NTSTATUS WINAPI LdrGetProcedureAddress(HMODULE module, const ANSI_STRING *name,
         {
             *address = proc;
             ret = STATUS_SUCCESS;
+        }
+        else
+        {
+            WARN( "%s (ordinal %lu) not found in %s\n", debugstr_a(name ? name->Buffer : NULL),
+                  ord, debugstr_us(&wm->ldr.FullDllName) );
         }
     }
 
@@ -4416,6 +4428,7 @@ void loader_init( CONTEXT *context, void **entry )
     if (!imports_fixup_done)
     {
         MEMORY_BASIC_INFORMATION meminfo;
+        ANSI_STRING ctrl_routine = RTL_CONSTANT_STRING( "CtrlRoutine" );
         WINE_MODREF *kernel32;
         PEB *peb = NtCurrentTeb()->Peb;
         unsigned int i;
@@ -4457,7 +4470,7 @@ void loader_init( CONTEXT *context, void **entry )
         }
         node_kernel32 = kernel32->ldr.DdagNode;
         pBaseThreadInitThunk = RtlFindExportedRoutineByName( kernel32->ldr.DllBase, "BaseThreadInitThunk" );
-        pCtrlRoutine = RtlFindExportedRoutineByName( kernel32->ldr.DllBase, "CtrlRoutine" );
+        LdrGetProcedureAddress( kernel32->ldr.DllBase, &ctrl_routine, 0, (void **)&pCtrlRoutine );
 
         actctx_init();
         locale_init();

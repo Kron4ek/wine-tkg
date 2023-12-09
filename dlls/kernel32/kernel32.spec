@@ -798,6 +798,7 @@
 @ stdcall -import GetProcessHeaps(long ptr) RtlGetProcessHeaps
 @ stdcall -import GetProcessId(long)
 @ stdcall -import GetProcessIdOfThread(long)
+@ stdcall GetProcessInformation(long long ptr long)
 @ stdcall GetProcessIoCounters(long ptr)
 @ stdcall -import GetProcessMitigationPolicy(long long ptr long)
 @ stdcall -import GetProcessPreferredUILanguages(long ptr ptr ptr)
@@ -1326,6 +1327,7 @@
 @ stdcall RtlUnwind(ptr ptr ptr long) NTDLL.RtlUnwind
 @ stdcall -arch=!i386 RtlUnwindEx(long long ptr long ptr) NTDLL.RtlUnwindEx
 @ stdcall -arch=!i386 RtlVirtualUnwind(long long long ptr ptr ptr ptr ptr) NTDLL.RtlVirtualUnwind
+@ stdcall -arch=x86_64 -norelay RtlIsEcCode(ptr) NTDLL.RtlIsEcCode
 @ stdcall RtlZeroMemory(ptr long) NTDLL.RtlZeroMemory
 @ stdcall -i386 -private -norelay SMapLS() krnl386.exe16.SMapLS
 @ stdcall -i386 -private -norelay SMapLS_IP_EBP_12() krnl386.exe16.SMapLS_IP_EBP_12

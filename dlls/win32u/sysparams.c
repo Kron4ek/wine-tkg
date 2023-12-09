@@ -565,8 +565,7 @@ static BOOL adapter_get_registry_settings( const struct adapter *adapter, DEVMOD
 
     mutex = get_display_device_init_mutex();
 
-    if (!config_key && !(config_key = reg_open_key( NULL, config_keyW, sizeof(config_keyW) ))) ret = FALSE;
-    else if (!(hkey = reg_open_key( config_key, adapter->config_key, lstrlenW( adapter->config_key ) * sizeof(WCHAR) ))) ret = FALSE;
+    if (!(hkey = reg_open_key( config_key, adapter->config_key, lstrlenW( adapter->config_key ) * sizeof(WCHAR) ))) ret = FALSE;
     else
     {
         ret = read_adapter_mode( hkey, ENUM_REGISTRY_SETTINGS, mode );
@@ -585,7 +584,6 @@ static BOOL adapter_set_registry_settings( const struct adapter *adapter, const 
 
     mutex = get_display_device_init_mutex();
 
-    if (!config_key && !(config_key = reg_open_key( NULL, config_keyW, sizeof(config_keyW) ))) ret = FALSE;
     if (!(hkey = reg_open_key( config_key, adapter->config_key, lstrlenW( adapter->config_key ) * sizeof(WCHAR) ))) ret = FALSE;
     else
     {
@@ -614,8 +612,7 @@ static BOOL adapter_get_current_settings( const struct adapter *adapter, DEVMODE
 
     mutex = get_display_device_init_mutex();
 
-    if (!config_key && !(config_key = reg_open_key( NULL, config_keyW, sizeof(config_keyW) ))) ret = FALSE;
-    else if (!(hkey = reg_open_key( config_key, adapter->config_key, lstrlenW( adapter->config_key ) * sizeof(WCHAR) ))) ret = FALSE;
+    if (!(hkey = reg_open_key( config_key, adapter->config_key, lstrlenW( adapter->config_key ) * sizeof(WCHAR) ))) ret = FALSE;
     else
     {
         ret = read_adapter_mode( hkey, ENUM_CURRENT_SETTINGS, mode );
@@ -634,7 +631,6 @@ static BOOL adapter_set_current_settings( const struct adapter *adapter, const D
 
     mutex = get_display_device_init_mutex();
 
-    if (!config_key && !(config_key = reg_open_key( NULL, config_keyW, sizeof(config_keyW) ))) ret = FALSE;
     if (!(hkey = reg_open_key( config_key, adapter->config_key, lstrlenW( adapter->config_key ) * sizeof(WCHAR) ))) ret = FALSE;
     else
     {
@@ -1210,6 +1206,8 @@ static void add_gpu( const struct gdi_gpu *gpu, void *param )
     unsigned int gpu_index, size;
     HKEY hkey, subkey;
     LARGE_INTEGER ft;
+    ULONG memory_size;
+    ULONGLONG qw_memory_size;
 
     static const BOOL present = TRUE;
     static const WCHAR wine_adapterW[] = {'W','i','n','e',' ','A','d','a','p','t','e','r',0};
@@ -1225,6 +1223,12 @@ static void add_gpu( const struct gdi_gpu *gpu, void *param )
     static const WCHAR chip_typeW[] =
         {'H','a','r','d','w','a','r','e','I','n','f','o','r','m','a','t','i','o','n','.',
          'C','h','i','p','T','y','p','e',0};
+    static const WCHAR qw_memory_sizeW[] =
+        {'H','a','r','d','w','a','r','e','I','n','f','o','r','m','a','t','i','o','n','.',
+         'q','w','M','e','m','o','r','y','S','i','z','e',0};
+    static const WCHAR memory_sizeW[] =
+        {'H','a','r','d','w','a','r','e','I','n','f','o','r','m','a','t','i','o','n','.',
+         'M','e','m','o','r','y','S','i','z','e',0};
     static const WCHAR dac_typeW[] =
         {'H','a','r','d','w','a','r','e','I','n','f','o','r','m','a','t','i','o','n','.',
          'D','a','c','T','y','p','e',0};
@@ -1376,6 +1380,13 @@ static void add_gpu( const struct gdi_gpu *gpu, void *param )
     set_reg_value( hkey, bios_stringW, REG_BINARY, desc, size );
     set_reg_value( hkey, chip_typeW, REG_BINARY, desc, size );
     set_reg_value( hkey, dac_typeW, REG_BINARY, ramdacW, sizeof(ramdacW) );
+
+    /* If we failed to retrieve the gpu memory size set a default of 1Gb */
+    qw_memory_size = gpu->memory_size ? gpu->memory_size : 1073741824;
+
+    set_reg_value( hkey, qw_memory_sizeW, REG_QWORD, &qw_memory_size, sizeof(qw_memory_size) );
+    memory_size = (ULONG)min( gpu->memory_size, (ULONGLONG)ULONG_MAX );
+    set_reg_value( hkey, memory_sizeW, REG_DWORD, &memory_size, sizeof(memory_size) );
 
     if (gpu->vendor_id && gpu->device_id)
     {

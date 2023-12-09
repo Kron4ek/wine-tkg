@@ -176,6 +176,7 @@ static const void *get_hybrid_metadata(void)
         if (!cfg) return 0;
         size = min( size, cfg->Size );
         if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, CHPEMetadataPointer )) return 0;
+        if (!cfg->CHPEMetadataPointer) return 0;
         return RVA( cfg->CHPEMetadataPointer - ((const IMAGE_OPTIONAL_HEADER64 *)&PE_nt_headers->OptionalHeader)->ImageBase, 1 );
     }
     else
@@ -184,6 +185,7 @@ static const void *get_hybrid_metadata(void)
         if (!cfg) return 0;
         size = min( size, cfg->Size );
         if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, CHPEMetadataPointer )) return 0;
+        if (!cfg->CHPEMetadataPointer) return 0;
         return RVA( cfg->CHPEMetadataPointer - PE_nt_headers->OptionalHeader.ImageBase, 1 );
     }
 }
@@ -833,6 +835,7 @@ struct unwind_info_epilogue_armnt
 #define UWOP_SET_FPREG       3
 #define UWOP_SAVE_NONVOL     4
 #define UWOP_SAVE_NONVOL_FAR 5
+#define UWOP_EPILOG          6
 #define UWOP_SAVE_XMM128     8
 #define UWOP_SAVE_XMM128_FAR 9
 #define UWOP_PUSH_MACHFRAME  10
@@ -861,7 +864,7 @@ static void dump_x86_64_unwind_info( const struct runtime_function_x86_64 *funct
     info = RVA( function->UnwindData, sizeof(*info) );
 
     printf( "  unwind info at %08x\n", function->UnwindData );
-    if (info->version != 1)
+    if (info->version > 2)
     {
         printf( "    *** unknown version %u\n", info->version );
         return;
@@ -878,6 +881,11 @@ static void dump_x86_64_unwind_info( const struct runtime_function_x86_64 *funct
 
     for (i = 0; i < info->count; i++)
     {
+        if (info->opcodes[i].code == UWOP_EPILOG)
+        {
+            i++;
+            continue;
+        }
         printf( "      0x%02x: ", info->opcodes[i].offset );
         switch (info->opcodes[i].code)
         {
@@ -931,6 +939,21 @@ static void dump_x86_64_unwind_info( const struct runtime_function_x86_64 *funct
         default:
             printf( "*** unknown code %u\n", info->opcodes[i].code );
             break;
+        }
+    }
+
+    if (info->version == 2 && info->opcodes[0].code == UWOP_EPILOG)  /* print the epilogs */
+    {
+        unsigned int end = function->EndAddress;
+        unsigned int size = info->opcodes[0].offset;
+
+        printf( "    epilog 0x%x bytes\n", size );
+        if (info->opcodes[0].info) printf( "      at %08x-%08x\n", end - size, end );
+        for (i = 1; i < info->count && info->opcodes[i].code == UWOP_EPILOG; i++)
+        {
+            unsigned int offset = (info->opcodes[i].info << 8) + info->opcodes[i].offset;
+            if (!offset) break;
+            printf( "      at %08x-%08x\n", end - offset, end - offset + size );
         }
     }
 
@@ -1253,7 +1276,15 @@ static void dump_armnt_unwind_info( const struct runtime_function_armnt *fnc )
                 printf( "}\n" );
             }
             else if (code == 0xee)
-                printf( "unknown 16\n" );
+            {
+                BYTE excodes = bytes[++b];
+                if (excodes == 0x01)
+                    printf( "MSFT_OP_MACHINE_FRAME\n");
+                else if (excodes == 0x02)
+                    printf( "MSFT_OP_CONTEXT\n");
+                else
+                    printf( "MSFT opcode %u\n", excodes );
+            }
             else if (code == 0xef)
             {
                 WORD excode;
@@ -1529,9 +1560,17 @@ static void dump_arm64_codes( const BYTE *ptr, unsigned int count )
         {
             printf( "MSFT_OP_CONTEXT\n" );
         }
+        else if (ptr[i] == 0xeb)  /* MSFT_OP_EC_CONTEXT */
+        {
+            printf( "MSFT_OP_EC_CONTEXT\n" );
+        }
         else if (ptr[i] == 0xec)  /* MSFT_OP_CLEAR_UNWOUND_TO_CALL */
         {
             printf( "MSFT_OP_CLEAR_UNWOUND_TO_CALL\n" );
+        }
+        else if (ptr[i] == 0xfc)  /* pac_sign_lr */
+        {
+            printf( "pac_sign_lr\n" );
         }
         else printf( "??\n");
     }
@@ -1687,14 +1726,13 @@ static void dump_arm64_unwind_info( const struct runtime_function_arm64 *func )
 
 static void dump_dir_exceptions(void)
 {
+    static const void *arm64_funcs;
     unsigned int i, size;
     const void *funcs;
-    const IMAGE_FILE_HEADER *file_header;
+    const IMAGE_FILE_HEADER *file_header = &PE_nt_headers->FileHeader;
+    const IMAGE_ARM64EC_METADATA *metadata;
 
     funcs = get_dir_and_size(IMAGE_FILE_EXCEPTION_DIRECTORY, &size);
-    if (!funcs) return;
-
-    file_header = &PE_nt_headers->FileHeader;
 
     switch (file_header->Machine)
     {
@@ -1702,16 +1740,22 @@ static void dump_dir_exceptions(void)
         size /= sizeof(struct runtime_function_x86_64);
         printf( "%s exception info (%u functions):\n", get_machine_str( file_header->Machine ), size );
         for (i = 0; i < size; i++) dump_x86_64_unwind_info( (struct runtime_function_x86_64*)funcs + i );
+        if (!(metadata = get_hybrid_metadata())) break;
+        if (!(size = metadata->ExtraRFETableSize)) break;
+        if (!(funcs = RVA( metadata->ExtraRFETable, size ))) break;
+        if (funcs == arm64_funcs) break; /* already dumped */
+        printf( "\n" );
+        /* fall through */
+    case IMAGE_FILE_MACHINE_ARM64:
+        arm64_funcs = funcs;
+        size /= sizeof(struct runtime_function_arm64);
+        printf( "%s exception info (%u functions):\n", get_machine_str( file_header->Machine ), size );
+        for (i = 0; i < size; i++) dump_arm64_unwind_info( (struct runtime_function_arm64*)funcs + i );
         break;
     case IMAGE_FILE_MACHINE_ARMNT:
         size /= sizeof(struct runtime_function_armnt);
         printf( "%s exception info (%u functions):\n", get_machine_str( file_header->Machine ), size );
         for (i = 0; i < size; i++) dump_armnt_unwind_info( (struct runtime_function_armnt*)funcs + i );
-        break;
-    case IMAGE_FILE_MACHINE_ARM64:
-        size /= sizeof(struct runtime_function_arm64);
-        printf( "%s exception info (%u functions):\n", get_machine_str( file_header->Machine ), size );
-        for (i = 0; i < size; i++) dump_arm64_unwind_info( (struct runtime_function_arm64*)funcs + i );
         break;
     default:
         printf( "Exception information not supported for %s binaries\n",

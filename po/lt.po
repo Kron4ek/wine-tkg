@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: Wine\n"
 "Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
-"PO-Revision-Date: 2023-11-07 09:32+0200\n"
+"PO-Revision-Date: 2023-12-08 00:07+0200\n"
 "Last-Translator: Aurimas Fišeras <aurimas@members.fsf.org>\n"
 "Language-Team: Lithuanian <komp_lt@konf.lt>\n"
 "Language: lt\n"
@@ -100,7 +100,7 @@ msgstr "Priežiūros informacija"
 #: dlls/shlwapi/shlwapi.rc:44 dlls/twain_32/twain.rc:32
 #: dlls/user32/user32.rc:94 dlls/user32/user32.rc:109 dlls/user32/user32.rc:73
 #: dlls/wininet/wininet.rc:62 dlls/wininet/wininet.rc:82
-#: dlls/winspool.drv/winspool.rc:42 programs/net/net.rc:47
+#: dlls/winspool.drv/winspool.rc:42 programs/net/net.rc:48
 #: programs/notepad/notepad.rc:124 programs/oleview/oleview.rc:161
 #: programs/oleview/oleview.rc:174 programs/progman/progman.rc:106
 #: programs/progman/progman.rc:124 programs/progman/progman.rc:142
@@ -9505,7 +9505,7 @@ msgctxt "unit: bits"
 msgid "b"
 msgstr "b"
 
-#: dlls/sane.ds/sane.rc:34 dlls/wineps.drv/wineps.rc:49
+#: dlls/sane.ds/sane.rc:34 dlls/wineps.drv/wineps.rc:52
 #: programs/winecfg/winecfg.rc:188
 msgctxt "unit: dots/inch"
 msgid "dpi"
@@ -12625,6 +12625,10 @@ msgstr "Popieriaus &dydis:"
 msgid "Duplex:"
 msgstr "Dvigubas:"
 
+#: dlls/wineps.drv/wineps.rc:45
+msgid "Paper &Tray:"
+msgstr "Popieriaus dėk&las:"
+
 #: dlls/wininet/wininet.rc:53 dlls/wininet/wininet.rc:73
 msgid "Realm"
 msgstr "Sritis"
@@ -14720,6 +14724,19 @@ msgstr "Pradžia"
 msgid "&Run..."
 msgstr "&Vykdyti..."
 
+#: programs/explorer/explorer.rc:36
+#, fuzzy
+#| msgid "E&xit Windows"
+msgid "E&xit desktop"
+msgstr "Iš&eiti"
+
+#: programs/explorer/explorer.rc:37
+#, fuzzy
+#| msgid "Are you sure you want to delete these values?"
+msgid ""
+"Are you sure you want to close all programs and exit the virtual desktop?"
+msgstr "Ar tikrai norite pašalinti šias reikšmes?"
+
 #: programs/findstr/findstr.rc:28
 msgid "Usage: findstr /options string\n"
 msgstr "Naudojimas: findstr /parinktys eilutė\n"
@@ -14982,11 +14999,11 @@ msgstr "Tarnyba %1 sėkmingai sustabdyta.\n"
 msgid "The %1 service failed to stop.\n"
 msgstr "Tarnyba %1 nesustojo.\n"
 
-#: programs/net/net.rc:44
+#: programs/net/net.rc:45
 msgid "There are no entries in the list.\n"
 msgstr "Sąraše nėra elementų.\n"
 
-#: programs/net/net.rc:45
+#: programs/net/net.rc:46
 msgid ""
 "\n"
 "Status  Local   Remote\n"
@@ -14996,33 +15013,37 @@ msgstr ""
 "Būsena  Vietinė   Nutolusi\n"
 "---------------------------------------------------------------\n"
 
-#: programs/net/net.rc:46
+#: programs/net/net.rc:47
 msgid "%1      %2      %3      Open resources: %4!u!\n"
 msgstr "%1      %2      %3      Atverti ištekliai: %4!u!\n"
 
-#: programs/net/net.rc:48
+#: programs/net/net.rc:49
 msgid "Paused"
 msgstr "Pristabdyta"
 
-#: programs/net/net.rc:49
+#: programs/net/net.rc:50
 msgid "Disconnected"
 msgstr "Atjungta"
 
-#: programs/net/net.rc:50
+#: programs/net/net.rc:51
 msgid "A network error occurred"
 msgstr "Įvyko tinklo klaida"
 
-#: programs/net/net.rc:51
+#: programs/net/net.rc:52
 msgid "Connection is being made"
 msgstr "Jungiamasi"
 
-#: programs/net/net.rc:52
+#: programs/net/net.rc:53
 msgid "Reconnecting"
 msgstr "Jungiamasi iš naujo"
 
 #: programs/net/net.rc:43
 msgid "The following services are running:\n"
 msgstr "Šios tarnybos vykdomos:\n"
+
+#: programs/net/net.rc:44
+msgid "A command was used with conflicting switches.\n"
+msgstr "Panaudota komanda su nederančiais parametrais.\n"
 
 #: programs/netstat/netstat.rc:30
 msgid "Active Connections"

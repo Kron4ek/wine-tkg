@@ -8650,19 +8650,6 @@ HRESULT WINAPI StgCreateStorageEx(const WCHAR* pwcsName, DWORD grfMode, DWORD st
 }
 
 /******************************************************************************
- *              StgCreatePropSetStg       [OLE32.@]
- */
-HRESULT WINAPI StgCreatePropSetStg(IStorage *pstg, DWORD reserved,
- IPropertySetStorage **propset)
-{
-    TRACE("%p, %#lx, %p.\n", pstg, reserved, propset);
-    if (reserved)
-        return STG_E_INVALIDPARAMETER;
-
-    return IStorage_QueryInterface(pstg, &IID_IPropertySetStorage, (void**)propset);
-}
-
-/******************************************************************************
  *              StgOpenStorageEx      [OLE32.@]
  */
 HRESULT WINAPI StgOpenStorageEx(const WCHAR* pwcsName, DWORD grfMode, DWORD stgfmt, DWORD grfAttrs, STGOPTIONS* pStgOptions, void* reserved, REFIID riid, void** ppObjectOpen)
@@ -9004,79 +8991,6 @@ HRESULT WINAPI StgSetTimes(OLECHAR const *str, FILETIME const *pctime,
   return r;
 }
 
-/******************************************************************************
- *              StgIsStorageILockBytes        [OLE32.@]
- *
- * Determines if the ILockBytes contains a storage object.
- */
-HRESULT WINAPI StgIsStorageILockBytes(ILockBytes *plkbyt)
-{
-  BYTE sig[sizeof(STORAGE_magic)];
-  ULARGE_INTEGER offset;
-  ULONG read = 0;
-
-  offset.HighPart = 0;
-  offset.LowPart  = 0;
-
-  ILockBytes_ReadAt(plkbyt, offset, sig, sizeof(sig), &read);
-
-  if (read == sizeof(sig) && memcmp(sig, STORAGE_magic, sizeof(sig)) == 0)
-    return S_OK;
-
-  return S_FALSE;
-}
-
-/******************************************************************************
- *              WriteClassStg        [OLE32.@]
- *
- * This method will store the specified CLSID in the specified storage object
- */
-HRESULT WINAPI WriteClassStg(IStorage* pStg, REFCLSID rclsid)
-{
-  if(!pStg)
-    return E_INVALIDARG;
-
-  if(!rclsid)
-    return STG_E_INVALIDPOINTER;
-
-  return IStorage_SetClass(pStg, rclsid);
-}
-
-/***********************************************************************
- *    ReadClassStg (OLE32.@)
- *
- * This method reads the CLSID previously written to a storage object with
- * the WriteClassStg.
- *
- * PARAMS
- *  pstg    [I] IStorage pointer
- *  pclsid  [O] Pointer to where the CLSID is written
- *
- * RETURNS
- *  Success: S_OK.
- *  Failure: HRESULT code.
- */
-HRESULT WINAPI ReadClassStg(IStorage *pstg,CLSID *pclsid){
-
-    STATSTG pstatstg;
-    HRESULT hRes;
-
-    TRACE("(%p, %p)\n", pstg, pclsid);
-
-    if(!pstg || !pclsid)
-        return E_INVALIDARG;
-
-   /*
-    * read a STATSTG structure (contains the clsid) from the storage
-    */
-    hRes=IStorage_Stat(pstg,&pstatstg,STATFLAG_NONAME);
-
-    if(SUCCEEDED(hRes))
-        *pclsid=pstatstg.clsid;
-
-    return hRes;
-}
-
 /***********************************************************************
  *    OleLoadFromStream (OLE32.@)
  *
@@ -9411,116 +9325,6 @@ end:
 
     return r;
 }
-
-/******************************************************************************
- * StgIsStorageFile [OLE32.@]
- * Verify if the file contains a storage object
- *
- * PARAMS
- *  fn      [ I] Filename
- *
- * RETURNS
- *  S_OK    if file has magic bytes as a storage object
- *  S_FALSE if file is not storage
- */
-HRESULT WINAPI
-StgIsStorageFile(LPCOLESTR fn)
-{
-	HANDLE		hf;
-	BYTE		magic[8];
-	DWORD		bytes_read;
-
-	TRACE("%s\n", debugstr_w(fn));
-	hf = CreateFileW(fn, GENERIC_READ,
-	                 FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
-	                 NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-
-	if (hf == INVALID_HANDLE_VALUE)
-		return STG_E_FILENOTFOUND;
-
-	if (!ReadFile(hf, magic, 8, &bytes_read, NULL))
-	{
-		WARN(" unable to read file\n");
-		CloseHandle(hf);
-		return S_FALSE;
-	}
-
-	CloseHandle(hf);
-
-	if (bytes_read != 8) {
-		TRACE(" too short\n");
-		return S_FALSE;
-	}
-
-	if (!memcmp(magic,STORAGE_magic,8)) {
-		TRACE(" -> YES\n");
-		return S_OK;
-	}
-
-	TRACE(" -> Invalid header.\n");
-	return S_FALSE;
-}
-
-/***********************************************************************
- *		WriteClassStm (OLE32.@)
- *
- * Writes a CLSID to a stream.
- *
- * PARAMS
- *  pStm   [I] Stream to write to.
- *  rclsid [I] CLSID to write.
- *
- * RETURNS
- *  Success: S_OK.
- *  Failure: HRESULT code.
- */
-HRESULT WINAPI WriteClassStm(IStream *pStm,REFCLSID rclsid)
-{
-    TRACE("(%p,%p)\n",pStm,rclsid);
-
-    if (!pStm || !rclsid)
-        return E_INVALIDARG;
-
-    return IStream_Write(pStm,rclsid,sizeof(CLSID),NULL);
-}
-
-/***********************************************************************
- *		ReadClassStm (OLE32.@)
- *
- * Reads a CLSID from a stream.
- *
- * PARAMS
- *  pStm   [I] Stream to read from.
- *  rclsid [O] CLSID to read.
- *
- * RETURNS
- *  Success: S_OK.
- *  Failure: HRESULT code.
- */
-HRESULT WINAPI ReadClassStm(IStream *pStm,CLSID *pclsid)
-{
-    ULONG nbByte;
-    HRESULT res;
-
-    TRACE("(%p,%p)\n",pStm,pclsid);
-
-    if (!pStm || !pclsid)
-        return E_INVALIDARG;
-
-    /* clear the output args */
-    *pclsid = CLSID_NULL;
-
-    res = IStream_Read(pStm, pclsid, sizeof(CLSID), &nbByte);
-
-    if (FAILED(res))
-        return res;
-
-    if (nbByte != sizeof(CLSID))
-        return STG_E_READFAULT;
-    else
-        return S_OK;
-}
-
 
 /************************************************************************
  * OleConvert Functions
@@ -10563,36 +10367,6 @@ HRESULT WINAPI OleConvertIStorageToOLESTREAMEx ( LPSTORAGE stg, CLIPFORMAT cf, L
     FIXME("%p, %x, %ld, %ld, %ld, %p, %p: stub\n", stg, cf, width, height, size, medium, olestream);
 
     return E_NOTIMPL;
-}
-
-/***********************************************************************
- *		GetConvertStg (OLE32.@)
- */
-HRESULT WINAPI GetConvertStg(IStorage *stg)
-{
-    static const DWORD version_magic = 0x02000001;
-    DWORD header[2];
-    IStream *stream;
-    HRESULT hr;
-
-    TRACE("%p\n", stg);
-
-    if (!stg) return E_INVALIDARG;
-
-    hr = IStorage_OpenStream(stg, L"\1Ole", NULL, STGM_READ | STGM_SHARE_EXCLUSIVE, 0, &stream);
-    if (FAILED(hr)) return hr;
-
-    hr = IStream_Read(stream, header, sizeof(header), NULL);
-    IStream_Release(stream);
-    if (FAILED(hr)) return hr;
-
-    if (header[0] != version_magic)
-    {
-        ERR("got wrong version magic for 1Ole stream, %#lx.\n", header[0]);
-        return E_FAIL;
-    }
-
-    return header[1] & OleStream_Convert ? S_OK : S_FALSE;
 }
 
 /***********************************************************************

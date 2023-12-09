@@ -5410,6 +5410,7 @@ HRESULT WINAPI VarMod(LPVARIANT left, LPVARIANT right, LPVARIANT result)
     VariantInit(&tempRight);
     VariantInit(&lv);
     VariantInit(&rv);
+    V_VT(result) = VT_EMPTY;
 
     TRACE("(%s,%s,%p)\n", debugstr_variant(left), debugstr_variant(right), result);
 
@@ -5499,6 +5500,7 @@ HRESULT WINAPI VarMod(LPVARIANT left, LPVARIANT right, LPVARIANT result)
       if(V_VT(left) == VT_EMPTY)
       {
 	V_VT(result) = VT_I4;
+        V_I4(result) = 0;
         rc = S_OK;
         goto end;
       }

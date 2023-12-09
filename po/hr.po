@@ -104,7 +104,7 @@ msgstr "Informacije o podršci"
 #: dlls/shlwapi/shlwapi.rc:44 dlls/twain_32/twain.rc:32
 #: dlls/user32/user32.rc:94 dlls/user32/user32.rc:109 dlls/user32/user32.rc:73
 #: dlls/wininet/wininet.rc:62 dlls/wininet/wininet.rc:82
-#: dlls/winspool.drv/winspool.rc:42 programs/net/net.rc:47
+#: dlls/winspool.drv/winspool.rc:42 programs/net/net.rc:48
 #: programs/notepad/notepad.rc:124 programs/oleview/oleview.rc:161
 #: programs/oleview/oleview.rc:174 programs/progman/progman.rc:106
 #: programs/progman/progman.rc:124 programs/progman/progman.rc:142
@@ -10002,7 +10002,7 @@ msgctxt "unit: bits"
 msgid "b"
 msgstr "b"
 
-#: dlls/sane.ds/sane.rc:34 dlls/wineps.drv/wineps.rc:49
+#: dlls/sane.ds/sane.rc:34 dlls/wineps.drv/wineps.rc:52
 #: programs/winecfg/winecfg.rc:188
 msgctxt "unit: dots/inch"
 msgid "dpi"
@@ -13702,6 +13702,12 @@ msgstr "Veličina papira:"
 msgid "Duplex:"
 msgstr "Duplex:"
 
+#: dlls/wineps.drv/wineps.rc:45
+#, fuzzy
+#| msgid "&Tray:"
+msgid "Paper &Tray:"
+msgstr "La&dica:"
+
 #: dlls/wininet/wininet.rc:53 dlls/wininet/wininet.rc:73
 msgid "Realm"
 msgstr "Domena"
@@ -15496,6 +15502,19 @@ msgstr "'Start' izbornik"
 msgid "&Run..."
 msgstr "Pok&reni..."
 
+#: programs/explorer/explorer.rc:36
+#, fuzzy
+#| msgid "E&xit Windows"
+msgid "E&xit desktop"
+msgstr "Izađi iz &prozora"
+
+#: programs/explorer/explorer.rc:37
+#, fuzzy
+#| msgid "Are you sure you want to delete these %1 items?"
+msgid ""
+"Are you sure you want to close all programs and exit the virtual desktop?"
+msgstr "Sigurno želite izbrisati ovih %1 stavki?"
+
 #: programs/findstr/findstr.rc:28
 #, fuzzy
 #| msgid "Reconnecting"
@@ -15767,11 +15786,11 @@ msgstr "Servis %1 je uspješno zaustavljen.\n"
 msgid "The %1 service failed to stop.\n"
 msgstr "Servis %1 nije uspješno zaustavljen.\n"
 
-#: programs/net/net.rc:44
+#: programs/net/net.rc:45
 msgid "There are no entries in the list.\n"
 msgstr "Nema unosa u listi.\n"
 
-#: programs/net/net.rc:45
+#: programs/net/net.rc:46
 msgid ""
 "\n"
 "Status  Local   Remote\n"
@@ -15781,33 +15800,37 @@ msgstr ""
 "Status  Lokalno   Udaljeno\n"
 "---------------------------------------------------------------\n"
 
-#: programs/net/net.rc:46
+#: programs/net/net.rc:47
 msgid "%1      %2      %3      Open resources: %4!u!\n"
 msgstr "%1      %2      %3      Otvoreni resursi: %4!u!\n"
 
-#: programs/net/net.rc:48
+#: programs/net/net.rc:49
 msgid "Paused"
 msgstr "Pauzirano"
 
-#: programs/net/net.rc:49
+#: programs/net/net.rc:50
 msgid "Disconnected"
 msgstr "Odspojeno"
 
-#: programs/net/net.rc:50
+#: programs/net/net.rc:51
 msgid "A network error occurred"
 msgstr "Dogodila se mrežna pogreška"
 
-#: programs/net/net.rc:51
+#: programs/net/net.rc:52
 msgid "Connection is being made"
 msgstr "Veza se stvara"
 
-#: programs/net/net.rc:52
+#: programs/net/net.rc:53
 msgid "Reconnecting"
 msgstr "Ponovno povezivanje"
 
 #: programs/net/net.rc:43
 msgid "The following services are running:\n"
 msgstr "Sljedeći servisi se izvode:\n"
+
+#: programs/net/net.rc:44
+msgid "A command was used with conflicting switches.\n"
+msgstr ""
 
 #: programs/netstat/netstat.rc:30
 msgid "Active Connections"

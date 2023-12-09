@@ -59,21 +59,21 @@ struct inf_value;
 struct inf_section;
 struct inf_file;
 
-HRESULT inf_load(const char *path, struct inf_file **inf_file) DECLSPEC_HIDDEN;
-void inf_free(struct inf_file *inf) DECLSPEC_HIDDEN;
+HRESULT inf_load(const char *path, struct inf_file **inf_file);
+void inf_free(struct inf_file *inf);
 
-BOOL inf_next_section(struct inf_file *inf, struct inf_section **sec) DECLSPEC_HIDDEN;
-struct inf_section *inf_get_section(struct inf_file *inf, const char *name) DECLSPEC_HIDDEN;
-char *inf_section_get_name(struct inf_section *section) DECLSPEC_HIDDEN;
-BOOL inf_section_next_value(struct inf_section *sec, struct inf_value **value) DECLSPEC_HIDDEN;
+BOOL inf_next_section(struct inf_file *inf, struct inf_section **sec);
+struct inf_section *inf_get_section(struct inf_file *inf, const char *name);
+char *inf_section_get_name(struct inf_section *section);
+BOOL inf_section_next_value(struct inf_section *sec, struct inf_value **value);
 
-struct inf_value *inf_get_value(struct inf_section *sec, const char *key) DECLSPEC_HIDDEN;
-char *inf_value_get_key(struct inf_value *value) DECLSPEC_HIDDEN;
-char *inf_value_get_value(struct inf_value *value) DECLSPEC_HIDDEN;
+struct inf_value *inf_get_value(struct inf_section *sec, const char *key);
+char *inf_value_get_key(struct inf_value *value);
+char *inf_value_get_value(struct inf_value *value);
 
-char *trim(char *str, char **last_chr, BOOL strip_quotes) DECLSPEC_HIDDEN;
+char *trim(char *str, char **last_chr, BOOL strip_quotes);
 
-void component_set_actual_download_size(ICifComponent *iface, DWORD size) DECLSPEC_HIDDEN;
-void component_set_downloaded(ICifComponent *iface, BOOL value) DECLSPEC_HIDDEN;
-void component_set_installed(ICifComponent *iface, BOOL value) DECLSPEC_HIDDEN;
- char *component_get_id(ICifComponent *iface) DECLSPEC_HIDDEN;
+void component_set_actual_download_size(ICifComponent *iface, DWORD size);
+void component_set_downloaded(ICifComponent *iface, BOOL value);
+void component_set_installed(ICifComponent *iface, BOOL value);
+char *component_get_id(ICifComponent *iface);
