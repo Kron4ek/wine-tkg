@@ -999,7 +999,7 @@ static struct mapping *create_mapping( struct object *root, const struct unicode
         }
         else if (st.st_size < mapping->size)
         {
-            if (!(file_access & FILE_WRITE_DATA))
+            if (!(file_access & FILE_WRITE_DATA) || mapping->size >> 54 /* ntfs limit */)
             {
                 set_error( STATUS_SECTION_TOO_BIG );
                 goto error;
@@ -1170,6 +1170,8 @@ static client_ptr_t assign_map_address( struct mapping *mapping )
     if (!(mapping->image.image_charact & IMAGE_FILE_DLL)) return 0;
 
     if ((ret = get_fd_map_address( mapping->fd ))) return ret;
+
+    size += granularity_mask + 1;  /* leave some free space between mappings */
 
     for (i = 0; i < range->count; i++)
     {

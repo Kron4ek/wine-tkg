@@ -1005,6 +1005,7 @@ This is an error since --enable-archs=$wine_arch was requested.])])
     WINE_TRY_PE_CFLAGS([-Wpointer-arith])
     WINE_TRY_PE_CFLAGS([-Wlogical-op])
     WINE_TRY_PE_CFLAGS([-Wabsolute-value])
+    WINE_TRY_PE_CFLAGS([-Wenum-conversion])
 
     case $wine_arch in
       i386) WINE_TRY_PE_CFLAGS([-fno-omit-frame-pointer])
@@ -3740,7 +3741,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-9.0rc1.r0.g2c4143bc\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-9.0rc3.r0.g75f626ec\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

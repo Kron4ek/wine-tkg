@@ -920,10 +920,11 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
         uint32_t opcode_token, const uint32_t *tokens, unsigned int token_count, struct vkd3d_shader_sm4_parser *priv)
 {
     struct vkd3d_shader_index_range *index_range = &ins->declaration.index_range;
-    unsigned int i, register_idx, register_count, write_mask;
+    unsigned int i, register_idx, register_count;
     enum vkd3d_shader_register_type type;
     struct sm4_index_range_array *ranges;
     unsigned int *io_masks;
+    uint32_t write_mask;
 
     shader_sm4_read_dst_param(priv, &tokens, &tokens[token_count], VKD3D_DATA_OPAQUE,
             &index_range->dst);
@@ -933,7 +934,7 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
     register_count = index_range->register_count;
     write_mask = index_range->dst.write_mask;
 
-    if (vkd3d_write_mask_component_count(write_mask) != 1)
+    if (vsir_write_mask_component_count(write_mask) != 1)
     {
         WARN("Unhandled write mask %#x.\n", write_mask);
         vkd3d_shader_parser_warning(&priv->p, VKD3D_SHADER_WARNING_TPF_UNHANDLED_INDEX_RANGE_MASK,
@@ -1981,10 +1982,10 @@ static uint32_t swizzle_from_sm4(uint32_t s)
 static uint32_t swizzle_to_sm4(uint32_t s)
 {
     uint32_t ret = 0;
-    ret |= ((vkd3d_swizzle_get_component(s, 0)) & 0x3);
-    ret |= ((vkd3d_swizzle_get_component(s, 1)) & 0x3) << 2;
-    ret |= ((vkd3d_swizzle_get_component(s, 2)) & 0x3) << 4;
-    ret |= ((vkd3d_swizzle_get_component(s, 3)) & 0x3) << 6;
+    ret |= ((vsir_swizzle_get_component(s, 0)) & 0x3);
+    ret |= ((vsir_swizzle_get_component(s, 1)) & 0x3) << 2;
+    ret |= ((vsir_swizzle_get_component(s, 2)) & 0x3) << 4;
+    ret |= ((vsir_swizzle_get_component(s, 3)) & 0x3) << 6;
     return ret;
 }
 
@@ -2013,12 +2014,12 @@ static bool register_is_control_point_input(const struct vkd3d_shader_register *
             || priv->p.shader_version.type == VKD3D_SHADER_TYPE_GEOMETRY));
 }
 
-static unsigned int mask_from_swizzle(unsigned int swizzle)
+static uint32_t mask_from_swizzle(uint32_t swizzle)
 {
-    return (1u << vkd3d_swizzle_get_component(swizzle, 0))
-            | (1u << vkd3d_swizzle_get_component(swizzle, 1))
-            | (1u << vkd3d_swizzle_get_component(swizzle, 2))
-            | (1u << vkd3d_swizzle_get_component(swizzle, 3));
+    return (1u << vsir_swizzle_get_component(swizzle, 0))
+            | (1u << vsir_swizzle_get_component(swizzle, 1))
+            | (1u << vsir_swizzle_get_component(swizzle, 2))
+            | (1u << vsir_swizzle_get_component(swizzle, 3));
 }
 
 static bool shader_sm4_validate_input_output_register(struct vkd3d_shader_sm4_parser *priv,
@@ -2230,7 +2231,7 @@ static bool shader_sm4_read_dst_param(struct vkd3d_shader_sm4_parser *priv, cons
     }
 
     if (data_type == VKD3D_DATA_DOUBLE)
-        dst_param->write_mask = vkd3d_write_mask_64_from_32(dst_param->write_mask);
+        dst_param->write_mask = vsir_write_mask_64_from_32(dst_param->write_mask);
     /* Some scalar registers are declared with no write mask in shader bytecode. */
     if (!dst_param->write_mask && shader_sm4_is_scalar_register(&dst_param->reg))
         dst_param->write_mask = VKD3DSP_WRITEMASK_0;
@@ -2544,6 +2545,16 @@ static bool shader_sm4_init(struct vkd3d_shader_sm4_parser *sm4, const uint32_t 
     return true;
 }
 
+static void uninvert_used_masks(struct shader_signature *signature)
+{
+    for (unsigned int i = 0; i < signature->element_count; ++i)
+    {
+        struct signature_element *e = &signature->elements[i];
+
+        e->used_mask = e->mask & ~e->used_mask;
+    }
+}
+
 static bool shader_sm4_parser_validate_signature(struct vkd3d_shader_sm4_parser *sm4,
         const struct shader_signature *signature, unsigned int *masks, const char *name)
 {
@@ -2638,6 +2649,12 @@ int vkd3d_shader_sm4_parser_create(const struct vkd3d_shader_compile_info *compi
         vkd3d_free(sm4);
         return VKD3D_ERROR_INVALID_ARGUMENT;
     }
+
+    /* DXBC stores used masks inverted for output signatures, for some reason.
+     * We return them un-inverted. */
+    uninvert_used_masks(&shader_desc->output_signature);
+    if (sm4->p.shader_version.type == VKD3D_SHADER_TYPE_HULL)
+        uninvert_used_masks(&shader_desc->patch_constant_signature);
 
     if (!shader_sm4_parser_validate_signature(sm4, &shader_desc->input_signature,
             sm4->input_register_masks, "Input")

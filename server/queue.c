@@ -453,32 +453,39 @@ static void queue_cursor_message( struct desktop *desktop, user_handle_t win, un
     queue_hardware_message( desktop, msg, 1 );
 }
 
+static struct thread_input *get_desktop_cursor_thread_input( struct desktop *desktop )
+{
+    struct thread_input *input = NULL;
+    struct thread *thread;
+
+    if ((thread = get_window_thread( desktop->cursor.win )))
+    {
+        if (thread->queue) input = thread->queue->input;
+        release_object( thread );
+    }
+
+    return input;
+}
+
 static int update_desktop_cursor_window( struct desktop *desktop, user_handle_t win )
 {
     int updated = win != desktop->cursor.win;
-    user_handle_t handle = desktop->cursor.handle;
+    struct thread_input *input;
     desktop->cursor.win = win;
-    if (updated)
+
+    if (updated && (input = get_desktop_cursor_thread_input( desktop )))
     {
-        struct thread *thread;
-
-        if ((thread = get_window_thread( win )))
-        {
-            struct thread_input *input = thread->queue->input;
-            if (input) handle = input->cursor_count < 0 ? 0 : input->cursor;
-            release_object( thread );
-        }
-
+        user_handle_t handle = input->cursor_count < 0 ? 0 : input->cursor;
         /* when clipping send the message to the foreground window as well, as some driver have an artificial overlay window */
         if (is_cursor_clipped( desktop )) queue_cursor_message( desktop, 0, WM_WINE_SETCURSOR, win, handle );
         queue_cursor_message( desktop, win, WM_WINE_SETCURSOR, win, handle );
     }
+
     return updated;
 }
 
 static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win, int x, int y )
 {
-    struct thread_input *input;
     int updated;
 
     x = max( min( x, desktop->cursor.clip.right - 1 ), desktop->cursor.clip.left );
@@ -488,7 +495,6 @@ static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win
     desktop->cursor.y = y;
     desktop->cursor.last_change = get_tick_count();
 
-    if (!win && (input = desktop->foreground_input)) win = input->capture;
     if (!win || !is_window_visible( win ) || is_window_transparent( win ))
         win = shallow_window_from_point( desktop, x, y );
     if (update_desktop_cursor_window( desktop, win )) updated = 1;
@@ -496,13 +502,11 @@ static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win
     return updated;
 }
 
-static void update_desktop_cursor_handle( struct desktop *desktop, user_handle_t handle )
+static void update_desktop_cursor_handle( struct desktop *desktop, struct thread_input *input )
 {
-    int updated = desktop->cursor.handle != handle;
-    user_handle_t win = desktop->cursor.win;
-    desktop->cursor.handle = handle;
-    if (updated)
+    if (input == get_desktop_cursor_thread_input( desktop ))
     {
+        user_handle_t handle = input->cursor_count < 0 ? 0 : input->cursor, win = desktop->cursor.win;
         /* when clipping send the message to the foreground window as well, as some driver have an artificial overlay window */
         if (is_cursor_clipped( desktop )) queue_cursor_message( desktop, 0, WM_WINE_SETCURSOR, win, handle );
         queue_cursor_message( desktop, win, WM_WINE_SETCURSOR, win, handle );
@@ -1741,9 +1745,9 @@ static void queue_hardware_message( struct desktop *desktop, struct message *msg
         break;
     case QS_MOUSEMOVE:
         prepend_cursor_history( msg->x, msg->y, msg->time, msg_data->info );
-        if (update_desktop_cursor_pos( desktop, msg->win, msg->x, msg->y )) always_queue = 1;
         /* fallthrough */
     case QS_MOUSEBUTTON:
+        if (update_desktop_cursor_pos( desktop, msg->win, msg->x, msg->y )) always_queue = 1;
         if (desktop->keystate[VK_LBUTTON] & 0x80)  msg->wparam |= MK_LBUTTON;
         if (desktop->keystate[VK_MBUTTON] & 0x80)  msg->wparam |= MK_MBUTTON;
         if (desktop->keystate[VK_RBUTTON] & 0x80)  msg->wparam |= MK_RBUTTON;
@@ -1772,6 +1776,7 @@ static void queue_hardware_message( struct desktop *desktop, struct message *msg
     }
     input = thread->queue->input;
 
+    if (win != msg->win) always_queue = 1;
     if (!always_queue || merge_message( input, msg )) free_message( msg );
     else
     {
@@ -2259,6 +2264,11 @@ static int check_hw_message_filter( user_handle_t win, unsigned int msg_code,
     }
 }
 
+/* is this message an internal driver notification message */
+static inline BOOL is_internal_hardware_message( unsigned int message )
+{
+    return (message >= WM_WINE_FIRST_DRIVER_MSG && message <= WM_WINE_LAST_DRIVER_MSG);
+}
 
 /* find a hardware message for the given queue */
 static int get_hardware_message( struct thread *thread, unsigned int hw_id, user_handle_t filter_win,
@@ -2353,7 +2363,8 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
 
         data->hw_id = msg->unique_id;
         set_reply_data( msg->data, msg->data_size );
-        if (get_hardware_msg_bit( msg->msg ) == QS_RAWINPUT && (flags & PM_REMOVE))
+        if ((get_hardware_msg_bit( msg->msg ) == QS_RAWINPUT && (flags & PM_REMOVE)) ||
+            is_internal_hardware_message( msg->msg ))
             release_hardware_message( current->queue, data->hw_id );
         return 1;
     }
@@ -2839,6 +2850,11 @@ DECL_HANDLER(get_message)
         filter_contains_hw_range( req->get_first, req->get_last ) &&
         get_hardware_message( current, req->hw_id, get_win, req->get_first, req->get_last, req->flags, reply ))
         goto found_msg;
+
+    /* check for any internal driver message */
+    if (get_hardware_message( current, req->hw_id, get_win, WM_WINE_FIRST_DRIVER_MSG,
+                              WM_WINE_LAST_DRIVER_MSG, req->flags, reply ))
+        return;
 
     /* now check for WM_PAINT */
     if ((filter & QS_PAINT) &&
@@ -3501,10 +3517,7 @@ DECL_HANDLER(set_cursor)
     if (req->flags & SET_CURSOR_NOCLIP) set_clip_rectangle( desktop, NULL, SET_CURSOR_NOCLIP, 0 );
 
     if (req->flags & (SET_CURSOR_HANDLE | SET_CURSOR_COUNT))
-    {
-        if (input->cursor_count < 0) update_desktop_cursor_handle( desktop, 0 );
-        else update_desktop_cursor_handle( desktop, input->cursor );
-    }
+        update_desktop_cursor_handle( desktop, input );
 
     reply->new_x       = desktop->cursor.x;
     reply->new_y       = desktop->cursor.y;

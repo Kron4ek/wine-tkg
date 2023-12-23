@@ -73,6 +73,8 @@
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
 WINE_DECLARE_DEBUG_CHANNEL(typelib);
 
+static const BOOL is_win64 = sizeof(void *) > sizeof(int);
+
 typedef struct
 {
     WORD     offset;
@@ -392,13 +394,11 @@ static HRESULT query_typelib_path( REFGUID guid, WORD wMaj, WORD wMin,
 HRESULT WINAPI QueryPathOfRegTypeLib( REFGUID guid, WORD wMaj, WORD wMin, LCID lcid, LPBSTR path )
 {
     BOOL redir = TRUE;
-#ifdef _WIN64
-    HRESULT hres = query_typelib_path( guid, wMaj, wMin, SYS_WIN64, lcid, path, TRUE );
+    HRESULT hres = query_typelib_path( guid, wMaj, wMin, is_win64 ? SYS_WIN64 : SYS_WIN32, lcid, path, TRUE );
     if(SUCCEEDED(hres))
         return hres;
     redir = FALSE;
-#endif
-    return query_typelib_path( guid, wMaj, wMin, SYS_WIN32, lcid, path, redir );
+    return query_typelib_path( guid, wMaj, wMin, is_win64 ? SYS_WIN32 : SYS_WIN64, lcid, path, redir );
 }
 
 /******************************************************************************
@@ -1988,10 +1988,8 @@ static HRESULT TLB_size_instance(ITypeInfoImpl *info, SYSKIND sys,
         break;
     case VT_VARIANT:
         *size = sizeof(VARIANT);
-#ifdef _WIN64
-        if(sys == SYS_WIN32)
-            *size -= 8; /* 32-bit VARIANT is 8 bytes smaller than 64-bit VARIANT */
-#endif
+        if(get_ptr_size(sys) != sizeof(void*))
+            *size += is_win64 ? -8 : 8; /* 32-bit VARIANT is 8 bytes smaller than 64-bit VARIANT */
         break;
     case VT_DECIMAL:
         *size = sizeof(DECIMAL);
@@ -2443,7 +2441,7 @@ MSFT_DoFuncs(TLBContext*     pcx,
         if (ptfd->funcdesc.funckind == FUNC_DISPATCH)
             ptfd->funcdesc.oVft   =   0;
         else
-            ptfd->funcdesc.oVft   =   (pFuncRec->VtableOffset & ~1) * sizeof(void *) / pTI->pTypeLib->ptr_size;
+            ptfd->funcdesc.oVft   =   (unsigned short)(pFuncRec->VtableOffset & ~1) * sizeof(void *) / pTI->pTypeLib->ptr_size;
         ptfd->funcdesc.wFuncFlags =   LOWORD(pFuncRec->Flags) ;
 
         /* nameoffset is sometimes -1 on the second half of a propget/propput
@@ -2621,10 +2619,9 @@ static void MSFT_DoImplTypes(TLBContext *pcx, ITypeInfoImpl *pTI, int count,
     }
 }
 
-#ifdef _WIN64
-/* when a 32-bit typelib is loaded in 64-bit mode, we need to resize pointers
+/* when a typelib is loaded in a different 32/64-bit mode, we need to resize pointers
  * and some structures, and fix the alignment */
-static void TLB_fix_32on64_typeinfo(ITypeInfoImpl *info)
+static void TLB_fix_typeinfo_ptr_size(ITypeInfoImpl *info)
 {
     if(info->typeattr.typekind == TKIND_ALIAS){
         switch(info->tdescAlias->vt){
@@ -2640,11 +2637,13 @@ static void TLB_fix_32on64_typeinfo(ITypeInfoImpl *info)
             break;
         case VT_CARRAY:
         case VT_USERDEFINED:
-            TLB_size_instance(info, SYS_WIN64, info->tdescAlias, &info->typeattr.cbSizeInstance, &info->typeattr.cbAlignment);
+            TLB_size_instance(info, is_win64 ? SYS_WIN64 : SYS_WIN32, info->tdescAlias,
+                              &info->typeattr.cbSizeInstance, &info->typeattr.cbAlignment);
             break;
         case VT_VARIANT:
             info->typeattr.cbSizeInstance = sizeof(VARIANT);
-            info->typeattr.cbAlignment = 8;
+            info->typeattr.cbAlignment = sizeof(void *);
+            break;
         default:
             if(info->typeattr.cbSizeInstance < sizeof(void*))
                 info->typeattr.cbAlignment = info->typeattr.cbSizeInstance;
@@ -2659,7 +2658,6 @@ static void TLB_fix_32on64_typeinfo(ITypeInfoImpl *info)
         info->typeattr.cbAlignment = sizeof(void*);
     }
 }
-#endif
 
 /*
  * process a typeinfo record
@@ -3646,12 +3644,11 @@ static ITypeLib2* ITypeLib2_Constructor_MSFT(LPVOID pLib, DWORD dwTLBLength)
         }
     }
 
-#ifdef _WIN64
-    if(pTypeLibImpl->syskind == SYS_WIN32){
+    if (pTypeLibImpl->ptr_size != sizeof(void *))
+    {
         for(i = 0; i < pTypeLibImpl->TypeInfoCount; ++i)
-            TLB_fix_32on64_typeinfo(pTypeLibImpl->typeinfos[i]);
+            TLB_fix_typeinfo_ptr_size(pTypeLibImpl->typeinfos[i]);
     }
-#endif
 
     TRACE("(%p)\n", pTypeLibImpl);
     return &pTypeLibImpl->ITypeLib2_iface;
@@ -4249,7 +4246,7 @@ static void SLTG_DoFuncs(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI,
 	if (pFuncDesc->funcdesc.funckind == FUNC_DISPATCH)
 	    pFuncDesc->funcdesc.oVft = 0;
         else
-	    pFuncDesc->funcdesc.oVft = (pFunc->vtblpos & ~1) * sizeof(void *) / pTI->pTypeLib->ptr_size;
+	    pFuncDesc->funcdesc.oVft = (unsigned short)(pFunc->vtblpos & ~1) * sizeof(void *) / pTI->pTypeLib->ptr_size;
 
 	if (pFunc->helpstring != 0xffff)
 		pFuncDesc->HelpString = decode_string(hlp_strings, pBlk + pFunc->helpstring, pNameTable - pBlk, pTI->pTypeLib);
@@ -8054,8 +8051,7 @@ static HRESULT WINAPI ITypeInfo_fnGetRefTypeInfo(
                         && IsEqualIID(&entry->guid->guid, TLB_get_guid_null(ref_type->pImpTLInfo->guid))
                         && entry->ver_major == ref_type->pImpTLInfo->wVersionMajor
                         && entry->ver_minor == ref_type->pImpTLInfo->wVersionMinor
-                        && entry->set_lcid == ref_type->pImpTLInfo->lcid
-                        && entry->syskind == This->pTypeLib->syskind)
+                        && entry->set_lcid == ref_type->pImpTLInfo->lcid)
                     {
                         TRACE("got cached %p\n", entry);
                         pTLib = (ITypeLib*)&entry->ITypeLib2_iface;
@@ -10788,11 +10784,9 @@ static HRESULT WINAPI ICreateTypeInfo2_fnAddFuncDesc(ICreateTypeInfo2 *iface,
             !funcDesc->cParams)
         return TYPE_E_INCONSISTENTPROPFUNCS;
 
-#ifdef _WIN64
     if(This->pTypeLib->syskind == SYS_WIN64 &&
             funcDesc->oVft % 8 != 0)
         return E_INVALIDARG;
-#endif
 
     memset(&tmp_func_desc, 0, sizeof(tmp_func_desc));
     TLBFuncDesc_Constructor(&tmp_func_desc);

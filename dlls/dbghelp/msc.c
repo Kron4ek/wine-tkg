@@ -3159,11 +3159,7 @@ static BOOL pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const cha
     /* bitfield: first dword is len (in dword), then data */
     ok_bits = pdw;
     pdw += *ok_bits++ + 1;
-    if (*pdw++ != 0)
-    {
-        FIXME("unexpected value\n");
-        return FALSE;
-    }
+    pdw += *pdw + 1; /* skip deleted vector */
 
     for (i = j = 0; i < count; i++)
     {
@@ -3809,6 +3805,7 @@ static BOOL pdb_process_internal(const struct process* pcs,
             /* no fpo ext stream in this case */
             break;
         case sizeof(PDB_STREAM_INDEXES):
+        case sizeof(PDB_STREAM_INDEXES) + 2:
             psi = (PDB_STREAM_INDEXES*)((const char*)symbols_image + sizeof(PDB_SYMBOLS) +
                                         symbols.module_size + symbols.sectcontrib_size +
                                         symbols.segmap_size + symbols.srcmodule_size +

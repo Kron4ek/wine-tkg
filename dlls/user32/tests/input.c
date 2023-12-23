@@ -3372,6 +3372,16 @@ static void test_keyboard_layout_name(void)
     ok(GetLastError() == ERROR_NOACCESS, "got %ld\n", GetLastError());
 
     layout = GetKeyboardLayout(0);
+    if (broken( layout == (HKL)0x040a0c0a ))
+    {
+        /* The testbot w7u_es has a broken layout configuration, its active layout is 040a:0c0a,
+         * with 0c0a its user locale and 040a its layout langid. Its layout preload list contains
+         * a 00000c0a layout but the system layouts OTOH only contains the standard 0000040a layout.
+         * Later, after activating 0409:0409 layout, GetKeyboardLayoutNameW returns 00000c0a.
+         */
+        win_skip( "broken keyboard layout, skipping tests\n" );
+        return;
+    }
 
     len = GetKeyboardLayoutList(0, NULL);
     ok(len > 0, "GetKeyboardLayoutList returned %d\n", len);
@@ -3382,7 +3392,7 @@ static void test_keyboard_layout_name(void)
     len = GetKeyboardLayoutList(len, layouts);
     ok(len > 0, "GetKeyboardLayoutList returned %d\n", len);
 
-    layouts_preload = calloc(len, sizeof(HKL));
+    layouts_preload = calloc(1, sizeof(HKL));
     ok(layouts_preload != NULL, "Could not allocate memory\n");
 
     if (!RegOpenKeyW( HKEY_CURRENT_USER, L"Keyboard Layout\\Preload", &hkey ))
@@ -3391,24 +3401,26 @@ static void test_keyboard_layout_name(void)
         type = REG_SZ;
         klid_size = sizeof(klid);
         value_size = ARRAY_SIZE(value);
-        while (i < len && !RegEnumValueW( hkey, i++, value, &value_size, NULL, &type, (void *)&klid, &klid_size ))
+        while (!RegEnumValueW( hkey, i++, value, &value_size, NULL, &type, (void *)&klid, &klid_size ))
         {
             klid_size = sizeof(klid);
             value_size = ARRAY_SIZE(value);
+            layouts_preload = realloc( layouts_preload, (i + 1) * sizeof(*layouts_preload) );
+            ok(layouts_preload != NULL, "Could not allocate memory\n");
             layouts_preload[i - 1] = UlongToHandle( wcstoul( klid, NULL, 16 ) );
+            layouts_preload[i] = 0;
 
             id = (DWORD_PTR)layouts_preload[i - 1];
             if (id & 0x80000000) todo_wine_if(HIWORD(id) == 0xe001) ok((id & 0xf0000000) == 0xd0000000, "Unexpected preloaded keyboard layout high bits %#lx\n", id);
             else ok(!(id & 0xf0000000), "Unexpected preloaded keyboard layout high bits %#lx\n", id);
         }
 
-        ok(i <= len, "Unexpected keyboard count %d in preload list\n", i);
         RegCloseKey( hkey );
     }
 
     if (!RegOpenKeyW( HKEY_CURRENT_USER, L"Keyboard Layout\\Substitutes", &hkey ))
     {
-        for (i = 0; i < len && layouts_preload[i]; ++i)
+        for (i = 0; layouts_preload[i]; ++i)
         {
             type = REG_SZ;
             klid_size = sizeof(klid);
@@ -3450,7 +3462,7 @@ static void test_keyboard_layout_name(void)
 
         GetKeyboardLayoutNameW(klid);
 
-        for (j = 0; j < len; ++j)
+        for (j = 0; layouts_preload[j]; ++j)
         {
             swprintf( tmpklid, KL_NAMELENGTH, L"%08X", layouts_preload[j] );
             if (!wcscmp( tmpklid, klid )) break;
@@ -3550,6 +3562,13 @@ static void test_ActivateKeyboardLayout( char **argv )
     DWORD ret;
 
     layout = GetKeyboardLayout( 0 );
+    if (broken( layout == (HKL)0x040a0c0a ))
+    {
+        /* The testbot w7u_es has a broken layout configuration, see test_keyboard_layout_name above. */
+        win_skip( "broken keyboard layout, skipping tests\n" );
+        return;
+    }
+
     count = GetKeyboardLayoutList( 0, NULL );
     ok( count > 0, "GetKeyboardLayoutList returned %d\n", count );
     layouts = malloc( count * sizeof(HKL) );

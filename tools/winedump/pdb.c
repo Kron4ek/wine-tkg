@@ -200,11 +200,7 @@ static unsigned get_stream_by_name(struct pdb_reader* reader, const char* name)
     /* bitfield: first dword is len (in dword), then data */
     ok_bits = pdw;
     pdw += *ok_bits++ + 1;
-    if (*pdw++ != 0)
-    {
-        printf("unexpected value\n");
-        return -1;
-    }
+    pdw += *pdw + 1; /* skip deleted vector */
 
     for (i = 0; i < count; i++)
     {
@@ -762,6 +758,7 @@ static void pdb_dump_symbols(struct pdb_reader* reader)
                    sidx.sections_stream);
             break;
         case sizeof(PDB_STREAM_INDEXES):
+        case sizeof(PDB_STREAM_INDEXES) + 2:
             memcpy(&sidx,
                    (const char*)symbols + sizeof(PDB_SYMBOLS) + symbols->module_size +
                    symbols->sectcontrib_size + symbols->segmap_size + symbols->srcmodule_size +
@@ -1194,11 +1191,7 @@ static void pdb_jg_dump_header_root(struct pdb_reader* reader)
     /* bitfield: first dword is len (in dword), then data */
     ok_bits = pdw;
     pdw += *ok_bits++ + 1;
-    if (*pdw++ != 0)
-    {
-        printf("unexpected value\n");
-        return;
-    }
+    pdw += *pdw + 1; /* skip deleted vector */
 
     for (i = 0; i < count; i++)
     {
@@ -1345,11 +1338,7 @@ static void pdb_ds_dump_header_root(struct pdb_reader* reader)
     /* bitfield: first dword is len (in dword), then data */
     ok_bits = pdw;
     pdw += *ok_bits++ + 1;
-    if (*pdw++ != 0)
-    {
-        printf("unexpected value\n");
-        return;
-    }
+    pdw += *pdw + 1; /* skip deleted vector */
 
     for (i = 0; i < count; i++)
     {

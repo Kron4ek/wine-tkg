@@ -62,7 +62,12 @@ static void check_interface_(unsigned int line, void *iface_ptr, REFIID iid, BOO
 
 static double scale_music_time(MUSIC_TIME time, double tempo)
 {
-    return (600000000.0 * time) / (tempo * 768.0);
+    return (600000000.0 * time) / (tempo * DMUS_PPQ);
+}
+
+static MUSIC_TIME music_time_from_reference(REFERENCE_TIME time, double tempo)
+{
+    return (time * tempo * DMUS_PPQ) / 600000000;
 }
 
 #define check_dmus_note_pmsg(a, b, c, d, e, f, g) check_dmus_note_pmsg_(__LINE__, a, b, c, d, e, f, g)
@@ -2812,10 +2817,11 @@ static void test_performance_graph(void)
     IDirectMusicTool_Release(tool);
 }
 
-#define check_music_time(a, b) check_music_time_(__LINE__, a, b)
-static void check_music_time_(int line, MUSIC_TIME time, MUSIC_TIME expect)
+#define check_reference_time(a, b) check_reference_time_(__LINE__, a, b)
+static void check_reference_time_(int line, REFERENCE_TIME time, double expect)
 {
-    ok_(__FILE__, line)(abs(time - expect) <= 1, "got %ld, expected %ld\n", time, expect);
+    ok_(__FILE__, line)(llabs(time - (REFERENCE_TIME)expect) <= scale_music_time(1, 120) / 2.0,
+                        "got %I64u, expected %f\n", time, expect);
 }
 
 static void test_performance_time(void)
@@ -2867,15 +2873,15 @@ static void test_performance_time(void)
     time = 0xdeadbeef;
     hr = IDirectMusicPerformance_MusicToReferenceTime(performance, 1, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_music_time(time - init_time, scale_music_time(1, 120));
+    check_reference_time(time - init_time, scale_music_time(1, 120));
     time = 0xdeadbeef;
     hr = IDirectMusicPerformance_MusicToReferenceTime(performance, 1000, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_music_time(time - init_time, scale_music_time(1000, 120));
+    check_reference_time(time - init_time, scale_music_time(1000, 120));
     time = 0xdeadbeef;
     hr = IDirectMusicPerformance_MusicToReferenceTime(performance, 2000, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_music_time(time - init_time, scale_music_time(2000, 120));
+    check_reference_time(time - init_time, scale_music_time(2000, 120));
 
     music_time = 0xdeadbeef;
     hr = IDirectMusicPerformance_ReferenceToMusicTime(performance, init_time, &music_time);
@@ -2895,7 +2901,7 @@ static void test_performance_time(void)
     hr = IDirectMusicPerformance_GetTime(performance, &time, &music_time);
     ok(hr == S_OK, "got %#lx\n", hr);
     ok(time - init_time <= 200 * 10000, "got %I64d\n", time - init_time);
-    ok(music_time == (time - init_time) / 6510, "got %ld\n", music_time);
+    ok(abs(music_time - music_time_from_reference(time - init_time, 120)) <= 1, "got %ld\n", music_time);
 
 
     hr = IDirectMusicPerformance_CloseDown(performance);
@@ -3290,8 +3296,6 @@ static void test_notification_pmsg(void)
     hr = IDirectMusicPerformance_FreePMsg(performance, msg);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 50, &msg);
-    ok(ret == WAIT_TIMEOUT, "got %#lx\n", ret);
     ret = test_tool_wait_message(tool, 500, &msg);
     ok(!ret, "got %#lx\n", ret);
     check_dmus_dirty_pmsg(msg, music_time + length);
@@ -3459,6 +3463,29 @@ static void test_notification_pmsg(void)
 
     ret = test_tool_wait_message(tool, 50, (DMUS_PMSG **)&notif);
     ok(!ret, "got %#lx\n", ret);
+    if (notif->dwNotificationOption == DMUS_NOTIFICATION_SEGALMOSTEND)
+    {
+        check_dmus_notification_pmsg(notif, music_time + length - 1450, DMUS_PMSGF_TOOL_IMMEDIATE,
+                &GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGALMOSTEND, state);
+        hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
+        ok(hr == S_OK, "got %#lx\n", hr);
+
+        ret = test_tool_wait_message(tool, 50, (DMUS_PMSG **)&notif);
+        ok(!ret, "got %#lx\n", ret);
+        check_dmus_notification_pmsg(notif, music_time + length, DMUS_PMSGF_TOOL_IMMEDIATE,
+                &GUID_NOTIFICATION_SEGMENT, DMUS_NOTIFICATION_SEGEND, state);
+        hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
+        ok(hr == S_OK, "got %#lx\n", hr);
+
+        ret = test_tool_wait_message(tool, 50, &msg);
+        ok(!ret, "got %#lx\n", ret);
+        check_dmus_dirty_pmsg(msg, music_time + length);
+        hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+        ok(hr == S_OK, "got %#lx\n", hr);
+
+        ret = test_tool_wait_message(tool, 50, (DMUS_PMSG **)&notif);
+        ok(!ret, "got %#lx\n", ret);
+    }
     check_dmus_notification_pmsg(notif, music_time, DMUS_PMSGF_TOOL_IMMEDIATE, &GUID_NOTIFICATION_SEGMENT,
             DMUS_NOTIFICATION_SEGABORT, state);
     hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)notif);
@@ -3504,9 +3531,6 @@ static void test_notification_pmsg(void)
     check_dmus_dirty_pmsg(msg, music_time);
     hr = IDirectMusicPerformance_FreePMsg(performance, msg);
     ok(hr == S_OK, "got %#lx\n", hr);
-
-    ret = test_tool_wait_message(tool, 500, &msg);
-    ok(ret == WAIT_TIMEOUT, "got %#lx\n", ret);
 
     IDirectMusicSegmentState_Release(state);
     IDirectMusicSegment_Release(segment);
@@ -4250,23 +4274,23 @@ static void test_tempo_track_play(void)
     time = 0xdeadbeef;
     hr = IDirectMusicPerformance_MusicToReferenceTime(performance, 1, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_music_time(time - init_time, scale_music_time(1, 120));
+    check_reference_time(time - init_time, scale_music_time(1, 120));
     time = 0xdeadbeef;
     hr = IDirectMusicPerformance_MusicToReferenceTime(performance, 100, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_music_time(time - init_time, scale_music_time(100, 120));
+    check_reference_time(time - init_time, scale_music_time(100, 120));
     time = 0xdeadbeef;
     hr = IDirectMusicPerformance_MusicToReferenceTime(performance, 150, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_music_time(time - init_time, scale_music_time(100, 120) + scale_music_time(50, 80));
+    check_reference_time(time - init_time, scale_music_time(100, 120) + scale_music_time(50, 80));
     time = 0xdeadbeef;
     hr = IDirectMusicPerformance_MusicToReferenceTime(performance, 200, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_music_time(time - init_time, scale_music_time(100, 120) + scale_music_time(100, 80));
+    check_reference_time(time - init_time, scale_music_time(100, 120) + scale_music_time(100, 80));
     time = 0xdeadbeef;
     hr = IDirectMusicPerformance_MusicToReferenceTime(performance, 400, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
-    check_music_time(time - init_time, scale_music_time(100, 120) + scale_music_time(200, 80) + scale_music_time(100, 20));
+    check_reference_time(time - init_time, scale_music_time(100, 120) + scale_music_time(200, 80) + scale_music_time(100, 20));
 
     music_time = 0xdeadbeef;
     hr = IDirectMusicPerformance_ReferenceToMusicTime(performance, init_time, &music_time);
@@ -4497,17 +4521,20 @@ static void test_segment_state(void)
 
     tmp_state = (void *)0xdeadbeef;
     hr = IDirectMusicPerformance_GetSegmentState(performance, &tmp_state, 0);
-    ok(hr == S_OK, "got %#lx\n", hr);
-    ok(state == tmp_state, "got %p\n", state);
-    IDirectMusicSegmentState_Release(tmp_state);
+    ok(hr == S_OK || broken(hr == DMUS_E_NOT_FOUND) /* sometimes on Windows */, "got %#lx\n", hr);
+    if (hr == S_OK)
+    {
+        ok(state == tmp_state, "got %p\n", tmp_state);
+        IDirectMusicSegmentState_Release(tmp_state);
+    }
 
     tmp_state = (void *)0xdeadbeef;
     hr = IDirectMusicPerformance_GetSegmentState(performance, &tmp_state, 69);
     ok(hr == S_OK, "got %#lx\n", hr);
-    ok(state == tmp_state, "got %p\n", state);
+    ok(state == tmp_state, "got %p\n", tmp_state);
     IDirectMusicSegmentState_Release(tmp_state);
 
-    hr = IDirectMusicPerformance_GetSegmentState(performance, &tmp_state, 70);
+    hr = IDirectMusicPerformance_GetSegmentState(performance, &tmp_state, 71);
     todo_wine ok(hr == DMUS_E_NOT_FOUND, "got %#lx\n", hr);
 
 

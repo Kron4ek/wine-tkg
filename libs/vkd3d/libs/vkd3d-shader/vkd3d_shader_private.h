@@ -91,11 +91,12 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_SPV_INVALID_REGISTER_TYPE        = 2001,
     VKD3D_SHADER_ERROR_SPV_INVALID_DESCRIPTOR_BINDING   = 2002,
     VKD3D_SHADER_ERROR_SPV_DESCRIPTOR_IDX_UNSUPPORTED   = 2003,
-    VKD3D_SHADER_ERROR_SPV_STENCIL_EXPORT_UNSUPPORTED   = 2004,
+    VKD3D_SHADER_ERROR_SPV_UNSUPPORTED_FEATURE          = 2004,
     VKD3D_SHADER_ERROR_SPV_OUT_OF_MEMORY                = 2005,
     VKD3D_SHADER_ERROR_SPV_INVALID_TYPE                 = 2006,
     VKD3D_SHADER_ERROR_SPV_INVALID_HANDLER              = 2007,
     VKD3D_SHADER_ERROR_SPV_NOT_IMPLEMENTED              = 2008,
+    VKD3D_SHADER_ERROR_SPV_INVALID_SHADER               = 2009,
 
     VKD3D_SHADER_WARNING_SPV_INVALID_SWIZZLE            = 2300,
 
@@ -741,6 +742,7 @@ enum vkd3d_tessellator_domain
 #define VKD3DSI_RESINFO_UINT            0x2
 #define VKD3DSI_SAMPLE_INFO_UINT        0x1
 #define VKD3DSI_SAMPLER_COMPARISON_MODE 0x1
+#define VKD3DSI_SHIFT_UNMASKED          0x1
 
 #define VKD3DSI_PRECISE_X         0x100
 #define VKD3DSI_PRECISE_Y         0x200
@@ -1314,9 +1316,15 @@ struct vkd3d_string_buffer_cache
     size_t count, max_count, capacity;
 };
 
+enum vsir_asm_dialect
+{
+    VSIR_ASM_VSIR,
+    VSIR_ASM_D3D,
+};
+
 enum vkd3d_result vkd3d_dxbc_binary_to_text(const struct vkd3d_shader_instruction_array *instructions,
         const struct vkd3d_shader_version *shader_version, const struct vkd3d_shader_compile_info *compile_info,
-        struct vkd3d_shader_code *out);
+        struct vkd3d_shader_code *out, enum vsir_asm_dialect dialect);
 void vkd3d_string_buffer_cleanup(struct vkd3d_string_buffer *buffer);
 struct vkd3d_string_buffer *vkd3d_string_buffer_get(struct vkd3d_string_buffer_cache *list);
 void vkd3d_string_buffer_init(struct vkd3d_string_buffer *buffer);
@@ -1508,7 +1516,7 @@ static inline enum vkd3d_shader_input_sysval_semantic vkd3d_siv_from_sysval(enum
     return vkd3d_siv_from_sysval_indexed(sysval, 0);
 }
 
-static inline unsigned int vkd3d_write_mask_get_component_idx(DWORD write_mask)
+static inline unsigned int vsir_write_mask_get_component_idx(uint32_t write_mask)
 {
     unsigned int i;
 
@@ -1523,7 +1531,7 @@ static inline unsigned int vkd3d_write_mask_get_component_idx(DWORD write_mask)
     return 0;
 }
 
-static inline unsigned int vkd3d_write_mask_component_count(DWORD write_mask)
+static inline unsigned int vsir_write_mask_component_count(uint32_t write_mask)
 {
     unsigned int count = vkd3d_popcount(write_mask & VKD3DSP_WRITEMASK_ALL);
     assert(1 <= count && count <= VKD3D_VEC4_SIZE);
@@ -1536,32 +1544,30 @@ static inline unsigned int vkd3d_write_mask_from_component_count(unsigned int co
     return (VKD3DSP_WRITEMASK_0 << component_count) - 1;
 }
 
-static inline unsigned int vkd3d_write_mask_64_from_32(DWORD write_mask32)
+static inline uint32_t vsir_write_mask_64_from_32(uint32_t write_mask32)
 {
-    unsigned int write_mask64 = write_mask32 | (write_mask32 >> 1);
+    uint32_t write_mask64 = write_mask32 | (write_mask32 >> 1);
     return (write_mask64 & VKD3DSP_WRITEMASK_0) | ((write_mask64 & VKD3DSP_WRITEMASK_2) >> 1);
 }
 
-static inline unsigned int vkd3d_write_mask_32_from_64(unsigned int write_mask64)
+static inline uint32_t vsir_write_mask_32_from_64(uint32_t write_mask64)
 {
-    unsigned int write_mask32 = (write_mask64 | (write_mask64 << 1))
+    uint32_t write_mask32 = (write_mask64 | (write_mask64 << 1))
             & (VKD3DSP_WRITEMASK_0 | VKD3DSP_WRITEMASK_2);
     return write_mask32 | (write_mask32 << 1);
 }
 
-static inline unsigned int vkd3d_swizzle_get_component(DWORD swizzle,
-        unsigned int idx)
+static inline unsigned int vsir_swizzle_get_component(uint32_t swizzle, unsigned int idx)
 {
     return (swizzle >> VKD3D_SHADER_SWIZZLE_SHIFT(idx)) & VKD3D_SHADER_SWIZZLE_MASK;
 }
 
-static inline unsigned int vkd3d_swizzle_get_component64(DWORD swizzle,
-        unsigned int idx)
+static inline unsigned int vsir_swizzle_get_component64(uint32_t swizzle, unsigned int idx)
 {
     return ((swizzle >> VKD3D_SHADER_SWIZZLE_SHIFT(idx * 2)) & VKD3D_SHADER_SWIZZLE_MASK) / 2u;
 }
 
-static inline unsigned int vkd3d_compact_swizzle(unsigned int swizzle, unsigned int write_mask)
+static inline unsigned int vkd3d_compact_swizzle(uint32_t swizzle, uint32_t write_mask)
 {
     unsigned int i, compacted_swizzle = 0;
 
@@ -1570,7 +1576,7 @@ static inline unsigned int vkd3d_compact_swizzle(unsigned int swizzle, unsigned 
         if (write_mask & (VKD3DSP_WRITEMASK_0 << i))
         {
             compacted_swizzle <<= VKD3D_SHADER_SWIZZLE_SHIFT(1);
-            compacted_swizzle |= vkd3d_swizzle_get_component(swizzle, i);
+            compacted_swizzle |= vsir_swizzle_get_component(swizzle, i);
         }
     }
 
