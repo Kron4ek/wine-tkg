@@ -3868,7 +3868,7 @@ static void test_CreateDirectoryA(void)
     strcpy(tmpfile, tmpdir);
     lstrcatA(tmpfile, "/tmpdir");
     bret = CreateDirectoryA(tmpfile, NULL);
-    ok(bret == TRUE, "CreateDirectoryA failed with error %u\n", GetLastError());
+    ok(bret == TRUE, "CreateDirectoryA failed with error %lx\n", GetLastError());
 
     error = pGetNamedSecurityInfoA(tmpfile, SE_FILE_OBJECT,
                                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
@@ -3879,7 +3879,7 @@ static void test_CreateDirectoryA(void)
                         0x1f01ff, TRUE, TRUE, TRUE, __LINE__);
     LocalFree(pSD);
     bret = RemoveDirectoryA(tmpfile);
-    ok(bret == TRUE, "RemoveDirectoryA failed with error %u\n", GetLastError());
+    ok(bret == TRUE, "RemoveDirectoryA failed with error %lx\n", GetLastError());
 
     /* Test inheritance of ACLs in CreateDirectory with security descriptor */
     pSD = &sd;
@@ -3897,7 +3897,7 @@ static void test_CreateDirectoryA(void)
     sa.lpSecurityDescriptor = pSD;
     sa.bInheritHandle = TRUE;
     bret = CreateDirectoryA(tmpfile, &sa);
-    ok(bret == TRUE, "CreateDirectoryA failed with error %u\n", GetLastError());
+    ok(bret == TRUE, "CreateDirectoryA failed with error %lx\n", GetLastError());
     HeapFree(GetProcessHeap(), 0, pDacl);
 
     error = pGetNamedSecurityInfoA(tmpfile, SE_FILE_OBJECT,
@@ -3906,7 +3906,7 @@ static void test_CreateDirectoryA(void)
     ok(error == ERROR_SUCCESS, "GetNamedSecurityInfo failed with error %d\n", error);
     bret = GetAclInformation(pDacl, &acl_size, sizeof(acl_size), AclSizeInformation);
     ok(bret, "GetAclInformation failed\n");
-    ok(acl_size.AceCount == 0, "GetAclInformation returned unexpected entry count (%d != 0).\n",
+    ok(acl_size.AceCount == 0, "GetAclInformation returned unexpected entry count (%ld != 0).\n",
                                acl_size.AceCount);
     LocalFree(pSD);
 
@@ -3914,7 +3914,7 @@ static void test_CreateDirectoryA(void)
     bret = RemoveDirectoryA(tmpfile);
     error = GetLastError();
     ok(bret == FALSE, "RemoveDirectoryA unexpected succeeded\n");
-    ok(error == ERROR_ACCESS_DENIED, "expected ERROR_ACCESS_DENIED, got %u\n", error);
+    ok(error == ERROR_ACCESS_DENIED, "expected ERROR_ACCESS_DENIED, got %ld\n", error);
 
     pSD = &sd;
     InitializeSecurityDescriptor(pSD, SECURITY_DESCRIPTOR_REVISION);
@@ -3927,11 +3927,11 @@ static void test_CreateDirectoryA(void)
     ok(bret, "Failed to add ACL to security desciptor.\n");
     error = pSetNamedSecurityInfoA(tmpfile, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, NULL,
                                    NULL, pDacl, NULL);
-    ok(error == ERROR_SUCCESS, "SetNamedSecurityInfoA failed with error %u\n", error);
+    ok(error == ERROR_SUCCESS, "SetNamedSecurityInfoA failed with error %ld\n", error);
     HeapFree(GetProcessHeap(), 0, pDacl);
 
     bret = RemoveDirectoryA(tmpfile);
-    ok(bret == TRUE, "RemoveDirectoryA failed with error %u\n", GetLastError());
+    ok(bret == TRUE, "RemoveDirectoryA failed with error %lx\n", GetLastError());
 
     /* Test inheritance of ACLs in NtCreateFile(..., FILE_DIRECTORY_FILE, ...) without security descriptor */
     strcpy(tmpfile, tmpdir);
@@ -3947,7 +3947,7 @@ static void test_CreateDirectoryA(void)
 
     status = pNtCreateFile(&hTemp, GENERIC_READ | DELETE, &attr, &io, NULL, FILE_ATTRIBUTE_NORMAL,
                            FILE_SHARE_READ, FILE_CREATE, FILE_DIRECTORY_FILE | FILE_DELETE_ON_CLOSE, NULL, 0);
-    ok(!status, "NtCreateFile failed with %08x\n", status);
+    ok(!status, "NtCreateFile failed with %08lx\n", status);
     RtlFreeUnicodeString(&tmpfileW);
 
     error = pGetNamedSecurityInfoA(tmpfile, SE_FILE_OBJECT,
@@ -3982,7 +3982,7 @@ static void test_CreateDirectoryA(void)
 
     status = pNtCreateFile(&hTemp, GENERIC_READ | DELETE, &attr, &io, NULL, FILE_ATTRIBUTE_NORMAL,
                            FILE_SHARE_READ, FILE_CREATE, FILE_DIRECTORY_FILE | FILE_DELETE_ON_CLOSE, NULL, 0);
-    ok(!status, "NtCreateFile failed with %08x\n", status);
+    ok(!status, "NtCreateFile failed with %08lx\n", status);
     RtlFreeUnicodeString(&tmpfileW);
     HeapFree(GetProcessHeap(), 0, pDacl);
 
@@ -3993,18 +3993,18 @@ static void test_CreateDirectoryA(void)
     bret = GetAclInformation(pDacl, &acl_size, sizeof(acl_size), AclSizeInformation);
     ok(bret, "GetAclInformation failed\n");
     todo_wine
-    ok(acl_size.AceCount == 0, "GetAclInformation returned unexpected entry count (%d != 0).\n",
+    ok(acl_size.AceCount == 0, "GetAclInformation returned unexpected entry count (%ld != 0).\n",
                                acl_size.AceCount);
     LocalFree(pSD);
 
     error = pGetNamedSecurityInfoA(tmpfile, SE_FILE_OBJECT,
                                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
                                    (PSID *)&owner, NULL, &pDacl, NULL, &pSD);
-    ok(error == ERROR_SUCCESS, "GetNamedSecurityInfo failed with error %d\n", error);
+    ok(error == ERROR_SUCCESS, "GetNamedSecurityInfo failed with error %ld\n", error);
     bret = GetAclInformation(pDacl, &acl_size, sizeof(acl_size), AclSizeInformation);
     ok(bret, "GetAclInformation failed\n");
     todo_wine
-    ok(acl_size.AceCount == 0, "GetAclInformation returned unexpected entry count (%d != 0).\n",
+    ok(acl_size.AceCount == 0, "GetAclInformation returned unexpected entry count (%ld != 0).\n",
                                acl_size.AceCount);
     LocalFree(pSD);
     CloseHandle(hTemp);

@@ -4671,7 +4671,6 @@ static bool adapter_gl_alloc_bo(struct wined3d_device *device, struct wined3d_re
 
     if (!(wined3d_device_gl_create_bo(device_gl, NULL, size, binding, usage, coherent, flags, bo_gl)))
     {
-        WARN("Failed to create OpenGL buffer.\n");
         heap_free(bo_gl);
         return false;
     }
@@ -4901,7 +4900,7 @@ static void wined3d_view_gl_destroy_object(void *object)
         checkGLcall("delete resources");
         context_release(context);
     }
-    if (ctx->bo_user)
+    if (ctx->bo_user && ctx->bo_user->valid)
         list_remove(&ctx->bo_user->entry);
 
     heap_free(ctx->object);

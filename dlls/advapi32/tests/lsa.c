@@ -58,7 +58,7 @@ static void test_lsa(void)
 
     status = LsaOpenPolicy( &machine, &object_attributes, POLICY_LOOKUP_NAMES, &handle);
     ok(status == RPC_NT_SERVER_UNAVAILABLE,
-       "LsaOpenPolicy(POLICY_LOOKUP_NAMES) for invalid machine returned 0x%08x\n", status);
+       "LsaOpenPolicy(POLICY_LOOKUP_NAMES) for invalid machine returned 0x%08lx\n", status);
 
     status = LsaOpenPolicy( NULL, &object_attributes, POLICY_ALL_ACCESS, &handle);
     ok(status == STATUS_SUCCESS || status == STATUS_ACCESS_DENIED,

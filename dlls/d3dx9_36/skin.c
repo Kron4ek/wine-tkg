@@ -408,7 +408,7 @@ static HRESULT WINAPI d3dx9_skin_info_UpdateSkinnedMesh(ID3DXSkinInfo *iface, co
         FIXME("Skinning vertices with two position elements not supported\n");
 
     if ((skin->fvf & D3DFVF_POSITION_MASK) != D3DFVF_XYZ) {
-        FIXME("Vertex type %#x not supported\n", skin->fvf & D3DFVF_POSITION_MASK);
+        FIXME("Vertex type %#lx not supported\n", skin->fvf & D3DFVF_POSITION_MASK);
         return E_FAIL;
     }
 

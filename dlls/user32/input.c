@@ -493,7 +493,7 @@ HKL WINAPI LoadKeyboardLayoutA(LPCSTR pwszKLID, UINT Flags)
  */
 HKL WINAPI LoadKeyboardLayoutEx(DWORD unknown, const WCHAR *locale, UINT flags)
 {
-    FIXME("(%d, %s, %x) semi-stub!\n", unknown, debugstr_w(locale), flags);
+    FIXME("(%ld, %s, %x) semi-stub!\n", unknown, debugstr_w(locale), flags);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return LoadKeyboardLayoutW(locale, flags);
 }

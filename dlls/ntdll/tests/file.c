@@ -336,7 +336,7 @@ static void create_file_test(void)
     GetWindowsDirectoryW( path, MAX_PATH );
     path[2] = 0;
     ok( QueryDosDeviceW( path, temp, MAX_PATH ),
-        "QueryDosDeviceW failed with error %u\n", GetLastError() );
+        "QueryDosDeviceW failed with error %lx\n", GetLastError() );
     lstrcatW( temp, sepW );
     lstrcatW( temp, path+3 );
     lstrcatW( temp, sepW );
@@ -345,12 +345,12 @@ static void create_file_test(void)
     pRtlInitUnicodeString( &nameW, temp );
     status = pNtQueryFullAttributesFile( &attr, &info );
     ok( status == STATUS_SUCCESS,
-        "query %s failed %x\n", wine_dbgstr_w(nameW.Buffer), status );
+        "query %s failed %lx\n", wine_dbgstr_w(nameW.Buffer), status );
 
     pRtlInitUnicodeString( &nameW, systemrootExplorerW );
     status = pNtQueryFullAttributesFile( &attr, &info );
     ok( status == STATUS_SUCCESS,
-        "query %s failed %x\n", wine_dbgstr_w(nameW.Buffer), status );
+        "query %s failed %lx\n", wine_dbgstr_w(nameW.Buffer), status );
 }
 
 static void open_file_test(void)
@@ -4783,52 +4783,52 @@ static void test_readonly(void)
 
     status = pNtCreateFile(&handle, GENERIC_READ, &attr, &io, NULL, FILE_ATTRIBUTE_READONLY,
                            FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_CREATE, 0, NULL, 0);
-    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     CloseHandle(handle);
 
     status = pNtOpenFile(&handle, GENERIC_WRITE,  &attr, &io,
                          FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT);
-    ok(status == STATUS_ACCESS_DENIED, "got %#x\n", status);
+    ok(status == STATUS_ACCESS_DENIED, "got %#lx\n", status);
     CloseHandle(handle);
 
     status = pNtOpenFile(&handle, GENERIC_READ,  &attr, &io,
                          FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT);
-    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     CloseHandle(handle);
 
     status = pNtOpenFile(&handle, FILE_READ_ATTRIBUTES,  &attr, &io,
                          FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT);
-    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     CloseHandle(handle);
 
     status = pNtOpenFile(&handle, FILE_WRITE_ATTRIBUTES,  &attr, &io,
                          FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT);
-    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     CloseHandle(handle);
 
     status = pNtOpenFile(&handle, DELETE,  &attr, &io,
                          FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT);
-    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     CloseHandle(handle);
 
     status = pNtOpenFile(&handle, READ_CONTROL,  &attr, &io,
                          FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT);
-    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     CloseHandle(handle);
 
     status = pNtOpenFile(&handle, WRITE_DAC,  &attr, &io,
                          FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT);
-    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     CloseHandle(handle);
 
     status = pNtOpenFile(&handle, WRITE_OWNER,  &attr, &io,
                          FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT);
-    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     CloseHandle(handle);
 
     status = pNtOpenFile(&handle, SYNCHRONIZE,  &attr, &io,
                          FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT);
-    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
     CloseHandle( handle );
 
     pRtlFreeUnicodeString(&nameW);

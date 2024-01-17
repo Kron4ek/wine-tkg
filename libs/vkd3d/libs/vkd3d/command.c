@@ -3270,7 +3270,8 @@ static void d3d12_command_list_bind_descriptor_heap(struct d3d12_command_list *l
     {
         VkDescriptorSet vk_descriptor_set = heap->vk_descriptor_sets[set].vk_set;
 
-        if (!vk_descriptor_set)
+        /* Null vk_set_layout means set 0 uses mutable descriptors, and this set is unused. */
+        if (!vk_descriptor_set || !list->device->vk_descriptor_heap_layouts[set].vk_set_layout)
             continue;
 
         VK_CALL(vkCmdBindDescriptorSets(list->vk_command_buffer, bindings->vk_bind_point, rs->vk_pipeline_layout,
@@ -6512,7 +6513,7 @@ static void STDMETHODCALLTYPE d3d12_command_queue_CopyTileMappings(ID3D12Command
     if (!(op = d3d12_command_queue_op_array_require_space(&command_queue->op_queue)))
     {
         ERR("Failed to add op.\n");
-        return;
+        goto unlock_mutex;
     }
     op->opcode = VKD3D_CS_OP_COPY_MAPPINGS;
     op->u.copy_mappings.dst_resource = dst_resource_impl;
@@ -6524,6 +6525,7 @@ static void STDMETHODCALLTYPE d3d12_command_queue_CopyTileMappings(ID3D12Command
 
     d3d12_command_queue_submit_locked(command_queue);
 
+unlock_mutex:
     vkd3d_mutex_unlock(&command_queue->op_mutex);
 }
 

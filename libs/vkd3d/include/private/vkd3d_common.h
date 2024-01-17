@@ -52,6 +52,7 @@
 #define TAG_AON9 VKD3D_MAKE_TAG('A', 'o', 'n', '9')
 #define TAG_DXBC VKD3D_MAKE_TAG('D', 'X', 'B', 'C')
 #define TAG_DXIL VKD3D_MAKE_TAG('D', 'X', 'I', 'L')
+#define TAG_FX10 VKD3D_MAKE_TAG('F', 'X', '1', '0')
 #define TAG_ISG1 VKD3D_MAKE_TAG('I', 'S', 'G', '1')
 #define TAG_ISGN VKD3D_MAKE_TAG('I', 'S', 'G', 'N')
 #define TAG_OSG1 VKD3D_MAKE_TAG('O', 'S', 'G', '1')
@@ -275,10 +276,6 @@ static inline LONG InterlockedIncrement(LONG volatile *x)
 static inline LONG64 InterlockedIncrement64(LONG64 volatile *x)
 {
     return __sync_add_and_fetch(x, 1);
-}
-static inline LONG InterlockedAdd(LONG volatile *x, LONG val)
-{
-    return __sync_add_and_fetch(x, val);
 }
 # else
 #  error "InterlockedIncrement() not implemented for this platform"

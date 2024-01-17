@@ -4113,7 +4113,7 @@ static void test_Input_mouse(void)
 
     static_win = CreateWindowA("static", "Title", WS_VISIBLE | WS_CHILD,
                           10, 10, 20, 20, hwnd, NULL, NULL, NULL);
-    ok(static_win != NULL, "CreateWindowA failed %u\n", GetLastError());
+    ok(static_win != NULL, "CreateWindowA failed %lx\n", GetLastError());
 
     SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
     SetWindowLongA(hwnd, GWL_EXSTYLE, GetWindowLongA(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED);

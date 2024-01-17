@@ -1313,7 +1313,7 @@ static void test_reg_create_key(void)
     /* System\CurrentControlSet\Control\Video should be non-volatile */
     ret = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "System\\CurrentControlSet\\Control\\Video\\Wine",
                           0, NULL, 0, KEY_NOTIFY, NULL, &hkey1, NULL);
-    ok(ret == ERROR_SUCCESS, "RegCreateKeyExA failed with error %d\n", ret);
+    ok(ret == ERROR_SUCCESS, "RegCreateKeyExA failed with error %lx\n", ret);
     RegDeleteKeyA(hkey1, "");
     RegCloseKey(hkey1);
 

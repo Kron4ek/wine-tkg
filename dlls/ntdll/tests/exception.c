@@ -228,7 +228,7 @@ static enum debugger_stages test_stage;
 #if defined(__i386__) || defined(__x86_64__)
 static void test_debugger_xstate(HANDLE thread, CONTEXT *ctx, enum debugger_stages stage)
 {
-    char context_buffer[sizeof(CONTEXT) + sizeof(CONTEXT_EX) + sizeof(XSTATE) + 1024];
+    char context_buffer[sizeof(CONTEXT) + sizeof(CONTEXT_EX) + sizeof(XSTATE) + 3072];
     CONTEXT_EX *c_ex;
     NTSTATUS status;
     YMMCONTEXT *ymm;
@@ -10884,10 +10884,10 @@ static void test_extended_context(void)
     const struct context_parameters *context_arch;
 
     const ULONG64 supported_features = 7, supported_compaction_mask = supported_features | ((ULONG64)1 << 63);
-    ULONG expected_length, expected_length_xstate, context_flags, expected_offset;
+    ULONG expected_length, expected_length_xstate, context_flags, expected_offset, max_xstate_length;
     ULONG64 enabled_features, expected_compaction;
-    DECLSPEC_ALIGN(64) BYTE context_buffer2[2048];
-    DECLSPEC_ALIGN(64) BYTE context_buffer[2048];
+    DECLSPEC_ALIGN(64) BYTE context_buffer2[4096];
+    DECLSPEC_ALIGN(64) BYTE context_buffer[4096];
     unsigned int i, j, address_offset, test;
     ULONG ret, ret2, length, length2, align;
     ULONG flags, flags_fpx, expected_flags;
@@ -11511,6 +11511,9 @@ static void test_extended_context(void)
     context_ex = (CONTEXT_EX *)(context + 1);
     xs = (XSTATE *)((BYTE *)context_ex + context_ex->XState.Offset);
 
+    max_xstate_length = context_ex->XState.Length;
+    ok(max_xstate_length >= sizeof(XSTATE), "XSTATE size: %#lx; min: %#Ix.\n", max_xstate_length, sizeof(XSTATE));
+
     *(void **)(call_func_code_set_ymm0 + call_func_offsets.func_addr) = RtlCaptureContext;
     *(void **)(call_func_code_set_ymm0 + call_func_offsets.func_param1) = context;
     *(void **)(call_func_code_set_ymm0 + call_func_offsets.func_param2) = (void *)0xdeadbeef;
@@ -11571,7 +11574,7 @@ static void test_extended_context(void)
 
     xs->CompactionMask = 4;
     xs->Mask = compaction_enabled ? 0 : 4;
-    context_ex->XState.Length = sizeof(XSTATE) + 64;
+    context_ex->XState.Length = max_xstate_length + 64;
     bret = func();
     ok(!bret && GetLastError() == ERROR_INVALID_PARAMETER,
             "Got unexpected bret %#x, GetLastError() %lu.\n", bret, GetLastError());
@@ -11848,7 +11851,7 @@ static void test_copy_context(void)
     static struct modified_range ranges_x86[] =
     {
         {0x0, ~0}, {0x4, 0x10}, {0x1c, 0x8}, {0x8c, 0x4}, {0x9c, 0x2}, {0xb4, 0x1}, {0xcc, 0x20}, {0x1ec, 0x80000020},
-        {0x2cc, ~0}, {0x294, 0}, {0x1000, 0},
+        {0x2cc, ~0}, {0x440, 0}, {0x1000, 0},
     };
     static const struct modified_range single_range[] =
     {
@@ -11952,7 +11955,7 @@ static void test_copy_context(void)
         *(DWORD *)((BYTE *)dst + flags_offset) = 0;
         *(DWORD *)((BYTE *)src + flags_offset) = 0;
 
-        context_length = (BYTE *)dst_ex - (BYTE *)dst + dst_ex->All.Length;
+        context_length = dst_ex->All.Length;
 
         if (flags & 0x40)
         {
@@ -11963,7 +11966,7 @@ static void test_copy_context(void)
             if (flags & CONTEXT_AMD64)
                 ranges_amd64[ARRAY_SIZE(ranges_amd64) - 2].start = 0x640 + src_ex->XState.Length - sizeof(XSTATE);
             else
-                ranges_x86[ARRAY_SIZE(ranges_x86) - 2].start = 0x294 + src_ex->XState.Length - sizeof(XSTATE);
+                ranges_x86[ARRAY_SIZE(ranges_x86) - 2].start = 0x440 + src_ex->XState.Length - sizeof(XSTATE);
         }
 
         status = pRtlCopyExtendedContext(dst_ex, flags, src_ex);
