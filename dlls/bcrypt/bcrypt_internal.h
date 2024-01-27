@@ -175,8 +175,7 @@ struct key_symmetric
 };
 
 #define KEY_FLAG_LEGACY_DSA_V2  0x00000001
-#define KEY_FLAG_DH_PARAMS_SET  0x00000002
-#define KEY_FLAG_FINALIZED      0x00000004
+#define KEY_FLAG_FINALIZED      0x00000002
 
 struct key_asymmetric
 {
@@ -185,11 +184,12 @@ struct key_asymmetric
     DSSSEED           dss_seed;
 };
 
+#define PRIVATE_DATA_SIZE 3
 struct key
 {
     struct object hdr;
     enum alg_id   alg_id;
-    UINT64        private[2];  /* private data for backend */
+    UINT64        private[PRIVATE_DATA_SIZE];  /* private data for backend */
     union
     {
         struct key_symmetric s;
@@ -200,8 +200,8 @@ struct key
 struct secret
 {
     struct object hdr;
-    UCHAR *data;
-    ULONG  data_len;
+    struct key *privkey;
+    struct key *pubkey;
 };
 
 struct key_symmetric_set_auth_data_params
@@ -254,14 +254,12 @@ struct key_asymmetric_encrypt_params
     UCHAR       *output;
     ULONG       output_len;
     ULONG       *ret_len;
-    void        *padding;
-    ULONG        flags;
 };
 
 struct key_asymmetric_duplicate_params
 {
-    struct key  *key_orig;
-    struct key  *key_copy;
+    struct key *key_orig;
+    struct key *key_copy;
 };
 
 struct key_asymmetric_sign_params
@@ -287,10 +285,9 @@ struct key_asymmetric_verify_params
     unsigned    flags;
 };
 
-#define KEY_EXPORT_FLAG_PUBLIC   0x00000001
-#define KEY_EXPORT_FLAG_RSA_FULL 0x00000002
-#define KEY_EXPORT_FLAG_DH_FULL  0x00000004
-#define KEY_EXPORT_FLAG_DH_PARAMETERS 0x00000008
+#define KEY_EXPORT_FLAG_PUBLIC        0x00000001
+#define KEY_EXPORT_FLAG_RSA_FULL      0x00000002
+#define KEY_EXPORT_FLAG_DH_PARAMETERS 0x00000004
 
 struct key_asymmetric_export_params
 {
@@ -301,9 +298,9 @@ struct key_asymmetric_export_params
     ULONG       *ret_len;
 };
 
-#define KEY_IMPORT_FLAG_PUBLIC   0x00000001
-#define KEY_IMPORT_FLAG_DH_FULL  0x00000004
-#define KEY_IMPORT_FLAG_DH_PARAMETERS 0x00000008
+#define KEY_IMPORT_FLAG_PUBLIC        0x00000001
+#define KEY_IMPORT_FLAG_DH_PARAMETERS 0x00000002
+
 struct key_asymmetric_import_params
 {
     struct key  *key;
@@ -312,11 +309,13 @@ struct key_asymmetric_import_params
     ULONG        len;
 };
 
-struct key_secret_agreement_params
+struct key_asymmetric_derive_key_params
 {
     struct key *privkey;
     struct key *pubkey;
-    struct secret *secret;
+    UCHAR      *output;
+    ULONG       output_len;
+    ULONG      *ret_len;
 };
 
 enum key_funcs
@@ -338,7 +337,7 @@ enum key_funcs
     unix_key_asymmetric_destroy,
     unix_key_asymmetric_export,
     unix_key_asymmetric_import,
-    unix_key_secret_agreement,
+    unix_key_asymmetric_derive_key,
     unix_funcs_count,
 };
 

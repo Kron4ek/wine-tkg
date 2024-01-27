@@ -530,29 +530,6 @@ static const struct raw_device_vtbl hidraw_device_vtbl =
 
 #ifdef HAS_PROPER_INPUT_HEADER
 
-static const char *get_device_syspath(struct udev_device *dev)
-{
-    struct udev_device *parent;
-
-    if ((parent = udev_device_get_parent_with_subsystem_devtype(dev, "hid", NULL)))
-        return udev_device_get_syspath(parent);
-
-    if ((parent = udev_device_get_parent_with_subsystem_devtype(dev, "usb", "usb_device")))
-        return udev_device_get_syspath(parent);
-
-    return "";
-}
-
-static struct base_device *find_device_from_syspath(const char *path)
-{
-    struct base_device *impl;
-
-    LIST_FOR_EACH_ENTRY(impl, &device_list, struct base_device, unix_device.entry)
-        if (!strcmp(get_device_syspath(impl->udev_device), path)) return impl;
-
-    return NULL;
-}
-
 #define test_bit(arr,bit) (((BYTE*)(arr))[(bit)>>3]&(1<<((bit)&7)))
 
 static const USAGE_AND_PAGE *what_am_I(struct udev_device *dev, int fd)
@@ -952,6 +929,24 @@ static NTSTATUS lnxev_device_physical_effect_run(struct lnxev_device *impl, BYTE
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS lnxev_device_physical_device_set_autocenter(struct unix_device *iface, BYTE percent)
+{
+    struct lnxev_device *impl = lnxev_impl_from_unix_device(iface);
+    struct input_event ie =
+    {
+        .type = EV_FF,
+        .code = FF_AUTOCENTER,
+        .value = 0xffff * percent / 100,
+    };
+
+    TRACE("iface %p, percent %#x.\n", iface, percent);
+
+    if (write(impl->base.device_fd, &ie, sizeof(ie)) == -1)
+        WARN("write failed %d %s\n", errno, strerror(errno));
+
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS lnxev_device_physical_device_control(struct unix_device *iface, USAGE control)
 {
     struct lnxev_device *impl = lnxev_impl_from_unix_device(iface);
@@ -995,6 +990,7 @@ static NTSTATUS lnxev_device_physical_device_control(struct unix_device *iface, 
             if (impl->effect_ids[i] < 0) continue;
             lnxev_device_physical_effect_run(impl, i, 0);
         }
+        lnxev_device_physical_device_set_autocenter(iface, 0);
         return STATUS_SUCCESS;
     case PID_USAGE_DC_DEVICE_RESET:
         for (i = 0; i < ARRAY_SIZE(impl->effect_ids); ++i)
@@ -1004,6 +1000,7 @@ static NTSTATUS lnxev_device_physical_device_control(struct unix_device *iface, 
                 WARN("couldn't free effect, EVIOCRMFF ioctl failed: %d %s\n", errno, strerror(errno));
             impl->effect_ids[i] = -1;
         }
+        lnxev_device_physical_device_set_autocenter(iface, 100);
         return STATUS_SUCCESS;
     case PID_USAGE_DC_DEVICE_PAUSE:
         WARN("device pause not supported\n");
@@ -1312,15 +1309,6 @@ static void udev_add_device(struct udev_device *dev, int fd)
 
     TRACE("udev %s syspath %s\n", debugstr_a(devnode), udev_device_get_syspath(dev));
 
-#ifdef HAS_PROPER_INPUT_HEADER
-    if ((impl = find_device_from_syspath(get_device_syspath(dev))))
-    {
-        TRACE("duplicate device found, not adding the new one\n");
-        close(fd);
-        return;
-    }
-#endif
-
     get_device_subsystem_info(dev, "hid", &desc, &bus);
     get_device_subsystem_info(dev, "input", &desc, &bus);
     get_device_subsystem_info(dev, "usb", &desc, &bus);
@@ -1334,6 +1322,7 @@ static void udev_add_device(struct udev_device *dev, int fd)
 #endif
 
         if (!desc.manufacturer[0]) memcpy(desc.manufacturer, hidraw, sizeof(hidraw));
+        desc.is_hidraw = TRUE;
 
 #ifdef HAVE_LINUX_HIDRAW_H
         if (!desc.product[0] && ioctl(fd, HIDIOCGRAWNAME(sizeof(product) - 1), product) >= 0)

@@ -50,13 +50,20 @@ extern UINT_PTR page_size;
 
 /* exceptions */
 extern LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context );
+extern NTSTATUS WINAPI dispatch_user_callback( void *args, ULONG len, ULONG id );
+extern EXCEPTION_DISPOSITION WINAPI user_callback_handler( EXCEPTION_RECORD *record, void *frame,
+                                                           CONTEXT *context, void *dispatch );
+extern EXCEPTION_DISPOSITION WINAPI nested_exception_handler( EXCEPTION_RECORD *rec, void *frame,
+                                                              CONTEXT *context, void *dispatch );
 extern void DECLSPEC_NORETURN raise_status( NTSTATUS status, EXCEPTION_RECORD *rec );
 extern LONG WINAPI call_unhandled_exception_filter( PEXCEPTION_POINTERS eptr );
+extern void WINAPI process_breakpoint(void);
 
 extern void WINAPI LdrInitializeThunk(CONTEXT*,ULONG_PTR,ULONG_PTR,ULONG_PTR);
 extern NTSTATUS WINAPI KiUserExceptionDispatcher(EXCEPTION_RECORD*,CONTEXT*);
 extern void WINAPI KiUserApcDispatcher(CONTEXT*,ULONG_PTR,ULONG_PTR,ULONG_PTR,PNTAPCFUNC);
 extern void WINAPI KiUserCallbackDispatcher(ULONG,void*,ULONG);
+extern void WINAPI KiUserCallbackDispatcherReturn(void);
 extern void (WINAPI *pWow64PrepareForException)( EXCEPTION_RECORD *rec, CONTEXT *context );
 
 #if defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)

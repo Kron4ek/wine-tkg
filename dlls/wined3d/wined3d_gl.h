@@ -51,6 +51,7 @@ enum wined3d_gl_extension
     APPLE_YCBCR_422,
     /* ARB */
     ARB_BASE_INSTANCE,
+    ARB_BINDLESS_TEXTURE,
     ARB_BLEND_FUNC_EXTENDED,
     ARB_BUFFER_STORAGE,
     ARB_CLEAR_BUFFER_OBJECT,
@@ -110,6 +111,7 @@ enum wined3d_gl_extension
     ARB_SHADER_BIT_ENCODING,
     ARB_SHADER_IMAGE_LOAD_STORE,
     ARB_SHADER_IMAGE_SIZE,
+    ARB_SHADER_STENCIL_EXPORT,
     ARB_SHADER_STORAGE_BUFFER_OBJECT,
     ARB_SHADER_TEXTURE_IMAGE_SAMPLES,
     ARB_SHADER_TEXTURE_LOD,
@@ -861,12 +863,30 @@ struct wined3d_dummy_textures
     GLuint tex_2d_ms_array;
 };
 
+struct wined3d_dummy_sampler_handles
+{
+    GLuint64 tex_1d;
+    GLuint64 tex_2d;
+    GLuint64 tex_rect;
+    GLuint64 tex_3d;
+    GLuint64 tex_cube;
+    GLuint64 tex_cube_array;
+    GLuint64 tex_1d_array;
+    GLuint64 tex_2d_array;
+    GLuint64 tex_buffer;
+    GLuint64 tex_2d_ms;
+    GLuint64 tex_2d_ms_array;
+};
+
 struct wined3d_device_gl
 {
     struct wined3d_device d;
 
     /* Textures for when no other textures are bound. */
     struct wined3d_dummy_textures dummy_textures;
+
+    /* Texture sampler handles for when no texture is mapped */
+    struct wined3d_dummy_sampler_handles dummy_sampler_handles;
 
     CRITICAL_SECTION allocator_cs;
     struct wined3d_allocator allocator;
@@ -1037,6 +1057,8 @@ void wined3d_texture_gl_apply_sampler_desc(struct wined3d_texture_gl *texture_gl
 void wined3d_texture_gl_bind(struct wined3d_texture_gl *texture_gl, struct wined3d_context_gl *context_gl, BOOL srgb);
 void wined3d_texture_gl_bind_and_dirtify(struct wined3d_texture_gl *texture_gl,
         struct wined3d_context_gl *context_gl, BOOL srgb);
+GLuint wined3d_texture_gl_get_bindless_name(struct wined3d_texture_gl *texture_gl,
+        struct wined3d_context_gl *context_gl, BOOL srgb);
 HRESULT wined3d_texture_gl_init(struct wined3d_texture_gl *texture_gl, struct wined3d_device *device,
         const struct wined3d_resource_desc *desc, unsigned int layer_count, unsigned int level_count,
         uint32_t flags, void *parent, const struct wined3d_parent_ops *parent_ops);
@@ -1114,6 +1136,8 @@ void wined3d_shader_resource_view_gl_bind(struct wined3d_shader_resource_view_gl
         struct wined3d_sampler_gl *sampler_gl, struct wined3d_context_gl *context_gl);
 void wined3d_shader_resource_view_gl_generate_mipmap(struct wined3d_shader_resource_view_gl *srv_gl,
         struct wined3d_context_gl *context_gl);
+GLuint64 wined3d_shader_resource_view_gl_handle(struct wined3d_shader_resource_view_gl *view_gl,
+        struct wined3d_sampler *sampler, struct wined3d_context_gl *context_gl);
 HRESULT wined3d_shader_resource_view_gl_init(struct wined3d_shader_resource_view_gl *view_gl,
         const struct wined3d_view_desc *desc, struct wined3d_resource *resource,
         void *parent, const struct wined3d_parent_ops *parent_ops);

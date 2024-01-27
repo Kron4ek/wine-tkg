@@ -80,6 +80,11 @@ static void *    (WINAPI *pLocateXStateFeature)(CONTEXT *context, DWORD feature_
 static BOOL      (WINAPI *pSetXStateFeaturesMask)(CONTEXT *context, DWORD64 feature_mask);
 static BOOL      (WINAPI *pGetXStateFeaturesMask)(CONTEXT *context, DWORD64 *feature_mask);
 static BOOL      (WINAPI *pWaitForDebugEventEx)(DEBUG_EVENT *, DWORD);
+#ifndef __i386__
+static VOID      (WINAPI *pRtlUnwindEx)(VOID*, VOID*, EXCEPTION_RECORD*, VOID*, CONTEXT*, UNWIND_HISTORY_TABLE*);
+static BOOLEAN   (CDECL  *pRtlAddFunctionTable)(RUNTIME_FUNCTION*, DWORD, DWORD64);
+static BOOLEAN   (CDECL  *pRtlDeleteFunctionTable)(RUNTIME_FUNCTION*);
+#endif
 
 static void *pKiUserApcDispatcher;
 static void *pKiUserCallbackDispatcher;
@@ -180,8 +185,6 @@ typedef struct _UNWIND_INFO
  */
 } UNWIND_INFO;
 
-static BOOLEAN   (CDECL *pRtlAddFunctionTable)(RUNTIME_FUNCTION*, DWORD, DWORD64);
-static BOOLEAN   (CDECL *pRtlDeleteFunctionTable)(RUNTIME_FUNCTION*);
 static BOOLEAN   (CDECL *pRtlInstallFunctionTableCallback)(DWORD64, DWORD64, DWORD, PGET_RUNTIME_FUNCTION_CALLBACK, PVOID, PCWSTR);
 static PRUNTIME_FUNCTION (WINAPI *pRtlLookupFunctionEntry)(ULONG64, ULONG64*, UNWIND_HISTORY_TABLE*);
 static DWORD     (WINAPI *pRtlAddGrowableFunctionTable)(void**, RUNTIME_FUNCTION*, DWORD, DWORD, ULONG_PTR, ULONG_PTR);
@@ -193,7 +196,6 @@ static VOID      (CDECL *pRtlRestoreContext)(CONTEXT*, EXCEPTION_RECORD*);
 static NTSTATUS  (WINAPI *pRtlWow64GetThreadContext)(HANDLE, WOW64_CONTEXT *);
 static NTSTATUS  (WINAPI *pRtlWow64SetThreadContext)(HANDLE, const WOW64_CONTEXT *);
 static NTSTATUS  (WINAPI *pRtlWow64GetCpuAreaInfo)(WOW64_CPURESERVED*,ULONG,WOW64_CPU_AREA_INFO*);
-static VOID      (WINAPI *pRtlUnwindEx)(VOID*, VOID*, EXCEPTION_RECORD*, VOID*, CONTEXT*, UNWIND_HISTORY_TABLE*);
 static int       (CDECL *p_setjmp)(_JUMP_BUFFER*);
 #endif
 
@@ -1270,7 +1272,7 @@ static void test_debugger(DWORD cont_status, BOOL with_WaitForDebugEventEx)
                     __asm__( "movw %%ss,%0" : "=r" (ss) );
                     ok( ctx.SegSs == ss, "wrong ss %04lx / %04x\n", ctx.SegSs, ss );
                     ok( ctx.SegFs != ctx.SegSs, "wrong fs %04lx / %04lx\n", ctx.SegFs, ctx.SegSs );
-                    if (is_wow64) todo_wine
+                    if (is_wow64) todo_wine_if( !ctx.SegDs ) /* old wow64 */
                     {
                         ok( ctx.SegDs == ctx.SegSs, "wrong ds %04lx / %04lx\n", ctx.SegDs, ctx.SegSs );
                         ok( ctx.SegEs == ctx.SegSs, "wrong es %04lx / %04lx\n", ctx.SegEs, ctx.SegSs );
@@ -2014,7 +2016,7 @@ static void test_KiUserExceptionDispatcher(void)
     memcpy(pKiUserExceptionDispatcher, patched_KiUserExceptionDispatcher_bytes,
             sizeof(patched_KiUserExceptionDispatcher_bytes));
     got_exception = 0;
-    run_exception_test(dbg_except_continue_handler, NULL, except_code, ARRAY_SIZE(except_code),
+    run_exception_test(dbg_except_continue_handler, NULL, except_code, sizeof(except_code),
             PAGE_EXECUTE_READ);
 
     ok(got_exception, "Handler was not called.\n");
@@ -2176,7 +2178,7 @@ static void test_KiUserApcDispatcher(void)
 static void CDECL hook_KiUserCallbackDispatcher( void *eip, ULONG id, ULONG *args, ULONG len,
                                                  ULONG unk1, ULONG unk2, ULONG arg0, ULONG arg1 )
 {
-    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
+    KERNEL_CALLBACK_PROC func = NtCurrentTeb()->Peb->KernelCallbackTable[id];
 
     trace( "eip %p id %lx args %p (%x) len %lx unk1 %lx unk2 %lx args %lx,%lx\n",
            eip, id, args, (char *)args - (char *)&eip, len, unk1, unk2, arg0, arg1 );
@@ -2797,6 +2799,12 @@ static void test_dynamic_unwind(void)
     NTSTATUS status;
     DWORD count;
 
+    if (!pRtlInstallFunctionTableCallback || !pRtlLookupFunctionEntry)
+    {
+        win_skip( "Dynamic unwind functions not found\n" );
+        return;
+    }
+
     /* Test RtlAddFunctionTable with aligned RUNTIME_FUNCTION pointer */
     runtime_func = (RUNTIME_FUNCTION *)buf;
     runtime_func->BeginAddress = code_offset;
@@ -3185,6 +3193,13 @@ static const struct exception
       1, 1, STATUS_SINGLE_STEP, 0 },
     { { 0xcd, 0x2c, 0xc3 },
       0, 2, STATUS_ASSERTION_FAILURE, 0 },
+    { { 0xb8, 0xb8, 0xb8, 0xb8, 0xb8,          /* mov $0xb8b8b8b8, %eax */
+        0xcd, 0x2d, 0xfa, 0xc3 },              /* int $0x2d; cli; ret */
+      7, 1, STATUS_BREAKPOINT, 1, { 0xb8b8b8b8 } },
+/* 40 */
+    { { 0xb8, 0x01, 0x00, 0x00, 0x00,          /* mov $0x01, %eax */
+        0xcd, 0x2d, 0xfa, 0xc3 },              /* int $0x2d; cli; ret */
+      8, 0, STATUS_SUCCESS, 0 },
 };
 
 static int got_exception;
@@ -3193,7 +3208,7 @@ static void run_exception_test_flags(void *handler, const void* context,
                                const void *code, unsigned int code_size,
                                DWORD access, DWORD handler_flags)
 {
-    unsigned char buf[8 + 6 + 8 + 8];
+    unsigned char buf[2 + 8 + 2 + 8 + 8];
     RUNTIME_FUNCTION runtime_func;
     UNWIND_INFO *unwind = (UNWIND_INFO *)buf;
     void (*func)(void) = code_mem;
@@ -3212,11 +3227,13 @@ static void run_exception_test_flags(void *handler, const void* context,
     *(ULONG *)&buf[4] = 0x1010;
     *(const void **)&buf[8] = context;
 
-    /* jmp near */
-    buf[16] = 0xff;
-    buf[17] = 0x25;
-    *(ULONG *)&buf[18] = 0;
-    *(void **)&buf[22] = handler;
+    /* movabs $<handler>, %rax */
+    buf[16] = 0x48;
+    buf[17] = 0xb8;
+    *(void **)&buf[18] = handler;
+    /* jmp *%rax */
+    buf[26] = 0xff;
+    buf[27] = 0xe0;
 
     memcpy((unsigned char *)code_mem + 0x1000, buf, sizeof(buf));
     memcpy(code_mem, code, code_size);
@@ -3437,8 +3454,13 @@ static DWORD WINAPI align_check_handler( EXCEPTION_RECORD *rec, ULONG64 frame,
 #ifdef __GNUC__
     __asm__ volatile( "pushfq; andl $~0x40000,(%rsp); popfq" );
 #endif
-    ok (!(context->EFlags & 0x40000), "eflags has AC bit set\n");
+    ok (context->EFlags & 0x40000, "eflags has AC bit unset\n");
     got_exception++;
+    if (got_exception != 1)
+    {
+        ok(broken(1) /* win7 */, "exception should occur only once");
+        context->EFlags &= ~0x40000;
+    }
     return ExceptionContinueExecution;
 }
 
@@ -3579,12 +3601,10 @@ static void test_exceptions(void)
     ok(got_exception == 3, "expected 3 single step exceptions, got %d\n", got_exception);
 
     /* test alignment exceptions */
-    if (0)  /* broken on Windows */
-    {
     got_exception = 0;
     run_exception_test(align_check_handler, NULL, align_check_code, sizeof(align_check_code), 0);
-    ok(got_exception == 0, "got %d alignment faults, expected 0\n", got_exception);
-    }
+    todo_wine
+    ok(got_exception == 1 || broken(got_exception == 2) /* win7 */, "got %d alignment faults, expected 1\n", got_exception);
 
     /* test direction flag */
     got_exception = 0;
@@ -4413,6 +4433,169 @@ static void test_thread_context(void)
 #undef COMPARE
 }
 
+static void test_continue(void)
+{
+    struct context_pair {
+        CONTEXT before;
+        CONTEXT after;
+    } contexts;
+    NTSTATUS (*func_ptr)( struct context_pair *, BOOL alertable, void *continue_func, void *capture_func ) = code_mem;
+    int i;
+
+    static const BYTE call_func[] =
+    {
+        /* ret at 8*13(rsp) */
+
+        /* need to preserve these */
+        0x53,             /* push %rbx; 8*12(rsp) */
+        0x55,             /* push %rbp; 8*11(rsp) */
+        0x56,             /* push %rsi; 8*10(rsp) */
+        0x57,             /* push %rdi; 8*9(rsp) */
+        0x41, 0x54,       /* push %r12; 8*8(rsp) */
+        0x41, 0x55,       /* push %r13; 8*7(rsp) */
+        0x41, 0x56,       /* push %r14; 8*6(rsp) */
+        0x41, 0x57,       /* push %r15; 8*5(rsp) */
+
+        0x48, 0x83, 0xec, 0x28, /* sub $0x28, %rsp; reserve space for rsp and outgoing reg params */
+        0x48, 0x89, 0x64, 0x24, 0x20, /* mov %rsp, 8*4(%rsp); for stack validation */
+
+        /* save args */
+        0x48, 0x89, 0x4c, 0x24, 0x70,                   /* mov %rcx, 8*14(%rsp) */
+        0x48, 0x89, 0x54, 0x24, 0x78,                   /* mov %rdx, 8*15(%rsp) */
+        0x4c, 0x89, 0x84, 0x24, 0x80, 0x00, 0x00, 0x00, /* mov %r8,  8*16(%rsp) */
+        0x4c, 0x89, 0x8c, 0x24, 0x88, 0x00, 0x00, 0x00, /* mov %r9,  8*17(%rsp) */
+
+        /* invoke capture context */
+        0x41, 0xff, 0xd1,       /* call *%r9 */
+
+        /* overwrite general registers */
+        0x48, 0xb8, 0xef, 0xbe, 0xad, 0xde, 0xef, 0xbe, 0xad, 0xde,  /* movabs $0xdeadbeefdeadbeef, %rax */
+        0x48, 0x89, 0xc1, /* mov %rax, %rcx */
+        0x48, 0x89, 0xc2, /* mov %rax, %rdx */
+        0x48, 0x89, 0xc3, /* mov %rax, %rbx */
+        0x48, 0x89, 0xc5, /* mov %rax, %rbp */
+        0x48, 0x89, 0xc6, /* mov %rax, %rsi */
+        0x48, 0x89, 0xc7, /* mov %rax, %rdi */
+        0x49, 0x89, 0xc0, /* mov %rax, %r8 */
+        0x49, 0x89, 0xc1, /* mov %rax, %r9 */
+        0x49, 0x89, 0xc2, /* mov %rax, %r10 */
+        0x49, 0x89, 0xc3, /* mov %rax, %r11 */
+        0x49, 0x89, 0xc4, /* mov %rax, %r12 */
+        0x49, 0x89, 0xc5, /* mov %rax, %r13 */
+        0x49, 0x89, 0xc6, /* mov %rax, %r14 */
+        0x49, 0x89, 0xc7, /* mov %rax, %r15 */
+
+        /* overwrite SSE registers */
+        0x66, 0x48, 0x0f, 0x6e, 0xc0, /* movq %rax, %xmm0 */
+        0x66, 0x0f, 0x6c, 0xc0,       /* punpcklqdq %xmm0, %xmm0; extend to high quadword */
+        0x0f, 0x28, 0xc8,             /* movaps %xmm0, %xmm1 */
+        0x0f, 0x28, 0xd0,             /* movaps %xmm0, %xmm2 */
+        0x0f, 0x28, 0xd8,             /* movaps %xmm0, %xmm3 */
+        0x0f, 0x28, 0xe0,             /* movaps %xmm0, %xmm4 */
+        0x0f, 0x28, 0xe8,             /* movaps %xmm0, %xmm5 */
+        0x0f, 0x28, 0xf0,             /* movaps %xmm0, %xmm6 */
+        0x0f, 0x28, 0xf8,             /* movaps %xmm0, %xmm7 */
+        0x44, 0x0f, 0x28, 0xc0,       /* movaps %xmm0, %xmm8 */
+        0x44, 0x0f, 0x28, 0xc8,       /* movaps %xmm0, %xmm9 */
+        0x44, 0x0f, 0x28, 0xd0,       /* movaps %xmm0, %xmm10 */
+        0x44, 0x0f, 0x28, 0xd8,       /* movaps %xmm0, %xmm11 */
+        0x44, 0x0f, 0x28, 0xe0,       /* movaps %xmm0, %xmm12 */
+        0x44, 0x0f, 0x28, 0xe8,       /* movaps %xmm0, %xmm13 */
+        0x44, 0x0f, 0x28, 0xf0,       /* movaps %xmm0, %xmm14 */
+        0x44, 0x0f, 0x28, 0xf8,       /* movaps %xmm0, %xmm15 */
+
+        /* FIXME: overwrite debug, x87 FPU and AVX registers to test those */
+
+        /* load args */
+        0x48, 0x8b, 0x4c, 0x24, 0x70, /* mov 8*14(%rsp), %rcx; context   */
+        0x48, 0x8b, 0x54, 0x24, 0x78, /* mov 8*15(%rsp), %rdx; alertable */
+        0x48, 0x83, 0xec, 0x70,       /* sub $0x70, %rsp; change stack   */
+
+        /* setup context to return to label 1 */
+        0x48, 0x8d, 0x05, 0x18, 0x00, 0x00, 0x00, /* lea 1f(%rip), %rax */
+        0x48, 0x89, 0x81, 0xf8, 0x00, 0x00, 0x00, /* mov %rax, 0xf8(%rcx); context.Rip */
+
+        /* flip some EFLAGS */
+        0x9c,                                           /* pushf */
+        /*
+           0x0001 Carry flag
+           0x0004 Parity flag
+           0x0010 Auxiliary Carry flag
+           0x0040 Zero flag
+           0x0080 Sign flag
+           FIXME: 0x0400 Direction flag - not changing as it breaks Wine
+           0x0800 Overflow flag
+           ~0x4000~ Nested task flag - not changing - breaks Wine
+           = 0x8d5
+        */
+        0x48, 0x81, 0x34, 0x24, 0xd5, 0x08, 0x00, 0x00, /* xorq $0x8d5, (%rsp) */
+        0x9d,                                           /* popf */
+
+        /* invoke NtContinue... */
+        0xff, 0x94, 0x24, 0xf0, 0x00, 0x00, 0x00, /* call *8*16+0x70(%rsp) */
+
+        /* validate stack pointer */
+        0x48, 0x3b, 0x64, 0x24, 0x20, /* 1: cmp 0x20(%rsp), %rsp */
+        0x74, 0x02,                   /* je 2f; jump over ud2 */
+        0x0f, 0x0b,                   /* ud2; stack pointer invalid, let's crash */
+
+        /* invoke capture context */
+        0x48, 0x8b, 0x4c, 0x24, 0x70,             /* 2: mov 8*14(%rsp), %rcx; context */
+        0x48, 0x81, 0xc1, 0xd0, 0x04, 0x00, 0x00, /* add $0x4d0, %rcx; +sizeof(CONTEXT) to get context->after */
+        0xff, 0x94, 0x24, 0x88, 0x00, 0x00, 0x00, /* call *8*17(%rsp) */
+
+        /* free stack */
+        0x48, 0x83, 0xc4, 0x28, /* add $0x28, %rsp */
+
+        /* restore back */
+        0x41, 0x5f,       /* pop %r15 */
+        0x41, 0x5e,       /* pop %r14 */
+        0x41, 0x5d,       /* pop %r13 */
+        0x41, 0x5c,       /* pop %r12 */
+        0x5f,             /* pop %rdi */
+        0x5e,             /* pop %rsi */
+        0x5d,             /* pop %rbp */
+        0x5b,             /* pop %rbx */
+        0xc3              /* ret      */
+    };
+
+    if (!pRtlCaptureContext)
+    {
+        win_skip("RtlCaptureContext is not available.\n");
+        return;
+    }
+
+    memcpy( func_ptr, call_func, sizeof(call_func) );
+    FlushInstructionCache( GetCurrentProcess(), func_ptr, sizeof(call_func) );
+
+    func_ptr( &contexts, FALSE, NtContinue, pRtlCaptureContext );
+
+#define COMPARE(reg) \
+    ok( contexts.before.reg == contexts.after.reg, "wrong " #reg " %p/%p\n", (void *)(ULONG64)contexts.before.reg, (void *)(ULONG64)contexts.after.reg )
+
+    COMPARE( Rax );
+    COMPARE( Rdx );
+    COMPARE( Rbx );
+    COMPARE( Rbp );
+    COMPARE( Rsi );
+    COMPARE( Rdi );
+    COMPARE( R8 );
+    COMPARE( R9 );
+    COMPARE( R10 );
+    COMPARE( R11 );
+    COMPARE( R12 );
+    COMPARE( R13 );
+    COMPARE( R14 );
+    COMPARE( R15 );
+
+    for (i = 0; i < 16; i++)
+        ok( !memcmp( &contexts.before.Xmm0 + i, &contexts.after.Xmm0 + i, sizeof(contexts.before.Xmm0) ),
+            "wrong xmm%u %08I64x%08I64x/%08I64x%08I64x\n", i, *(&contexts.before.Xmm0.High + i*2), *(&contexts.before.Xmm0.Low + i*2),
+            *(&contexts.after.Xmm0.High + i*2), *(&contexts.after.Xmm0.Low + i*2) );
+
+#undef COMPARE
+}
+
 static void test_wow64_context(void)
 {
     const char appname[] = "C:\\windows\\syswow64\\cmd.exe";
@@ -4535,10 +4718,6 @@ static void test_wow64_context(void)
     ret = pNtGetContextThread( pi.hThread, &context );
     ok(ret == STATUS_SUCCESS, "got %#lx\n", ret);
     ok( context.ContextFlags == CONTEXT_ALL, "got context flags %#lx\n", context.ContextFlags );
-    todo_wine
-    ok( !context.Rax, "rax is not zero %Ix\n", context.Rax );
-    todo_wine
-    ok( !context.Rbx, "rbx is not zero %Ix\n", context.Rbx );
     ok( !context.Rsi, "rsi is not zero %Ix\n", context.Rsi );
     ok( !context.Rdi, "rdi is not zero %Ix\n", context.Rdi );
     ok( !context.Rbp, "rbp is not zero %Ix\n", context.Rbp );
@@ -4550,15 +4729,8 @@ static void test_wow64_context(void)
     ok( !context.R13, "r13 is not zero %Ix\n", context.R13 );
     ok( !context.R14, "r14 is not zero %Ix\n", context.R14 );
     ok( !context.R15, "r15 is not zero %Ix\n", context.R15 );
-    todo_wine
-    ok( ((ULONG_PTR)context.Rsp & ~0xfff) == ((ULONG_PTR)teb.Tib.StackBase & ~0xfff),
-        "rsp is not at top of stack %p / %p\n", (void *)context.Rsp, teb.Tib.StackBase );
-    todo_wine
-    ok( context.EFlags == 0x200, "wrong flags %08lx\n", context.EFlags );
     ok( context.MxCsr == 0x1f80, "wrong mxcsr %08lx\n", context.MxCsr );
     ok( context.FltSave.ControlWord == 0x27f, "wrong control %08x\n", context.FltSave.ControlWord );
-    todo_wine
-    ok( context.SegCs != ctx.SegCs, "wrong cs %04x\n", context.SegCs );
     ok( context.SegDs == ctx.SegDs, "wrong ds %04x / %04lx\n", context.SegDs, ctx.SegDs  );
     ok( context.SegEs == ctx.SegEs, "wrong es %04x / %04lx\n", context.SegEs, ctx.SegEs  );
     ok( context.SegFs == ctx.SegFs, "wrong fs %04x / %04lx\n", context.SegFs, ctx.SegFs  );
@@ -4572,6 +4744,12 @@ static void test_wow64_context(void)
         todo_wine win_skip( "no wow64 support\n" );
         goto done;
     }
+
+    ok( !context.Rax, "rax is not zero %Ix\n", context.Rax );
+    ok( !context.Rbx, "rbx is not zero %Ix\n", context.Rbx );
+    ok( ((ULONG_PTR)context.Rsp & ~0xfff) == ((ULONG_PTR)teb.Tib.StackBase & ~0xfff),
+        "rsp is not at top of stack %p / %p\n", (void *)context.Rsp, teb.Tib.StackBase );
+    ok( context.EFlags == 0x200, "wrong flags %08lx\n", context.EFlags );
 
     for (i = 0, got32 = got64 = FALSE; i < 10000 && !(got32 && got64); i++)
     {
@@ -4649,21 +4827,23 @@ static void test_wow64_context(void)
                 memset( &ctx, 0x55, sizeof(ctx) );
                 ctx.ContextFlags = WOW64_CONTEXT_ALL;
                 pRtlWow64GetThreadContext( pi.hThread, &ctx );
-                ok( ctx.Ecx == 0x87654321, "cs64: ecx set to %08lx\n", ctx.Ecx );
+                todo_wine
+                ok( ctx.Ecx == 0x87654321, "cs32: ecx set to %08lx\n", ctx.Ecx );
                 ReadProcessMemory( pi.hProcess, teb.TlsSlots[WOW64_TLS_CPURESERVED], cpu, cpu_size, &res );
-                ok( ctx_ptr->Ecx == ecx, "cs64: ecx set to %08lx\n", ctx_ptr->Ecx );
+                ok( ctx_ptr->Ecx == ecx, "cs32: ecx set to %08lx\n", ctx_ptr->Ecx );
                 ctx.Ecx = 0x33334444;
                 pRtlWow64SetThreadContext( pi.hThread, &ctx );
                 memset( &ctx, 0x55, sizeof(ctx) );
                 ctx.ContextFlags = WOW64_CONTEXT_ALL;
                 pRtlWow64GetThreadContext( pi.hThread, &ctx );
-                ok( ctx.Ecx == 0x33334444, "cs64: ecx set to %08lx\n", ctx.Ecx );
+                ok( ctx.Ecx == 0x33334444, "cs32: ecx set to %08lx\n", ctx.Ecx );
                 ReadProcessMemory( pi.hProcess, teb.TlsSlots[WOW64_TLS_CPURESERVED], cpu, cpu_size, &res );
-                ok( ctx_ptr->Ecx == ecx, "cs64: ecx set to %08lx\n", ctx_ptr->Ecx );
+                ok( ctx_ptr->Ecx == ecx, "cs32: ecx set to %08lx\n", ctx_ptr->Ecx );
                 memset( &context, 0x55, sizeof(context) );
                 context.ContextFlags = CONTEXT_ALL;
                 pNtGetContextThread( pi.hThread, &context );
-                ok( context.Rcx == 0x33334444, "cs64: rcx set to %p\n", (void *)context.Rcx );
+                todo_wine
+                ok( context.Rcx == 0x33334444, "cs32: rcx set to %p\n", (void *)context.Rcx );
                 /* restore everything */
                 context.Rcx = rcx;
                 pNtSetContextThread( pi.hThread, &context );
@@ -4726,6 +4906,7 @@ static void test_wow64_context(void)
                 pRtlWow64GetThreadContext( pi.hThread, &ctx );
                 ok( ctx.Ecx == 0x22223333, "cs64: ecx set to %08lx\n", ctx.Ecx );
                 ReadProcessMemory( pi.hProcess, teb.TlsSlots[WOW64_TLS_CPURESERVED], cpu, cpu_size, &res );
+                todo_wine
                 ok( ctx_ptr->Ecx == 0x22223333, "cs64: ecx set to %08lx\n", ctx_ptr->Ecx );
                 memset( &context, 0x55, sizeof(context) );
                 context.ContextFlags = CONTEXT_ALL;
@@ -4937,7 +5118,7 @@ static void test_KiUserExceptionDispatcher(void)
     memcpy(pKiUserExceptionDispatcher, patched_KiUserExceptionDispatcher_bytes,
             sizeof(patched_KiUserExceptionDispatcher_bytes));
     got_exception = 0;
-    run_exception_test(dbg_except_continue_handler, NULL, except_code, ARRAY_SIZE(except_code), PAGE_EXECUTE_READ);
+    run_exception_test(dbg_except_continue_handler, NULL, except_code, sizeof(except_code), PAGE_EXECUTE_READ);
     ok(got_exception, "Handler was not called.\n");
     ok(hook_called, "Hook was not called.\n");
 
@@ -5001,7 +5182,7 @@ static void test_KiUserExceptionDispatcher(void)
     got_exception = 0;
     hook_called = FALSE;
 
-    run_exception_test(dbg_except_continue_handler, NULL, except_code, ARRAY_SIZE(except_code), PAGE_EXECUTE_READ);
+    run_exception_test(dbg_except_continue_handler, NULL, except_code, sizeof(except_code), PAGE_EXECUTE_READ);
 
     ok(got_exception, "Handler was not called.\n");
     ok(hook_called, "Hook was not called.\n");
@@ -5152,7 +5333,7 @@ static void WINAPI hook_KiUserCallbackDispatcher(void *rsp)
         BYTE                 args_data[0];
     } *stack = rsp;
 
-    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[stack->id];
+    KERNEL_CALLBACK_PROC func = NtCurrentTeb()->Peb->KernelCallbackTable[stack->id];
 
     trace( "rsp %p args %p (%#Ix) len %lu id %lu\n", stack, stack->args,
            (char *)stack->args - (char *)stack, stack->len, stack->id );
@@ -5269,7 +5450,7 @@ static const BYTE nested_except_code[] =
 static void test_nested_exception(void)
 {
     got_nested_exception = got_prev_frame_exception = FALSE;
-    run_exception_test(nested_exception_handler, NULL, nested_except_code, ARRAY_SIZE(nested_except_code), PAGE_EXECUTE_READ);
+    run_exception_test(nested_exception_handler, NULL, nested_except_code, sizeof(nested_except_code), PAGE_EXECUTE_READ);
     ok(got_nested_exception, "Did not get nested exception.\n");
     ok(got_prev_frame_exception, "Did not get nested exception in the previous frame.\n");
 }
@@ -5337,7 +5518,7 @@ static void test_collided_unwind(void)
 {
     got_nested_exception = got_prev_frame_exception = FALSE;
     collided_unwind_exception_count = 0;
-    run_exception_test_flags(collided_exception_handler, NULL, nested_except_code, ARRAY_SIZE(nested_except_code),
+    run_exception_test_flags(collided_exception_handler, NULL, nested_except_code, sizeof(nested_except_code),
             PAGE_EXECUTE_READ, UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER);
     ok(collided_unwind_exception_count == 6, "got %u.\n", collided_unwind_exception_count);
 }
@@ -7549,7 +7730,7 @@ static void WINAPI hook_KiUserCallbackDispatcher(void *sp)
         BYTE args_data[0];
     } *stack = sp;
     ULONG_PTR redzone = (BYTE *)stack->sp - &stack->args_data[stack->len];
-    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[stack->id];
+    KERNEL_CALLBACK_PROC func = NtCurrentTeb()->Peb->KernelCallbackTable[stack->id];
 
     trace( "stack=%p len=%lx id=%lx lr=%lx sp=%lx pc=%lx\n",
            stack, stack->len, stack->id, stack->lr, stack->sp, stack->pc );
@@ -7569,7 +7750,7 @@ static void WINAPI hook_KiUserCallbackDispatcher(void *sp)
     NtCallbackReturn( NULL, 0, func( stack->args, stack->len ));
 }
 
-void test_KiUserCallbackDispatcher(void)
+static void test_KiUserCallbackDispatcher(void)
 {
     DWORD old_protect;
     BOOL ret;
@@ -7589,6 +7770,193 @@ void test_KiUserCallbackDispatcher(void)
     memcpy( code_ptr, saved_code, sizeof(saved_code));
     FlushInstructionCache(GetCurrentProcess(), code_ptr, sizeof(saved_code));
     VirtualProtect( code_ptr, sizeof(saved_code), old_protect, &old_protect );
+}
+
+struct unwind_info
+{
+    DWORD function_length : 18;
+    DWORD version : 2;
+    DWORD x : 1;
+    DWORD e : 1;
+    DWORD f : 1;
+    DWORD epilog : 5;
+    DWORD codes : 4;
+};
+
+static void run_exception_test(void *handler, const void* context,
+                               const void *code, unsigned int code_size,
+                               unsigned int func2_offset, DWORD access, DWORD handler_flags)
+{
+    DWORD buf[11];
+    RUNTIME_FUNCTION runtime_func[2];
+    struct unwind_info unwind;
+    void (*func)(void) = (void *)((char *)code_mem + 1); /* thumb */
+    DWORD oldaccess, oldaccess2;
+
+    runtime_func[0].BeginAddress = 0;
+    runtime_func[0].UnwindData = 0x1000;
+    runtime_func[1].BeginAddress = func2_offset;
+    runtime_func[1].UnwindData = 0x1010;
+
+    unwind.function_length = func2_offset / 2;
+    unwind.version = 0;
+    unwind.x = 1;
+    unwind.e = 1;
+    unwind.f = 0;
+    unwind.epilog = 1;
+    unwind.codes = 1;
+    buf[0] = *(DWORD *)&unwind;
+    buf[1] = 0xfbfbffd4; /* push {r4, lr}; end; nop; nop */
+    buf[2] = 0x1021;
+    *(const void **)&buf[3] = context;
+    unwind.function_length = (code_size - func2_offset) / 2;
+    buf[4] = *(DWORD *)&unwind;
+    buf[5] = 0xfbfbffd4; /* push {r4, lr}; end; nop; nop */
+    buf[6] = 0x1021;
+    *(const void **)&buf[7] = context;
+    buf[8] = 0xc004f8df; /* ldr ip, 1f */
+    buf[9] = 0xbf004760; /* bx ip; nop */
+    *(const void **)&buf[10] = handler;
+
+    memcpy((unsigned char *)code_mem + 0x1000, buf, sizeof(buf));
+    memcpy(code_mem, code, code_size);
+    if (access) VirtualProtect(code_mem, code_size, access, &oldaccess);
+    FlushInstructionCache( GetCurrentProcess(), code_mem, 0x2000 );
+
+    RtlAddFunctionTable(runtime_func, ARRAY_SIZE(runtime_func), (ULONG_PTR)code_mem);
+    func();
+    pRtlDeleteFunctionTable(runtime_func);
+
+    if (access) VirtualProtect(code_mem, code_size, oldaccess, &oldaccess2);
+}
+
+static BOOL got_nested_exception, got_prev_frame_exception;
+static void *nested_exception_initial_frame;
+
+static DWORD nested_exception_handler(EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
+                                      CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher)
+{
+    trace("nested_exception_handler pc %p, sp %p, code %#lx, flags %#lx, ExceptionAddress %p.\n",
+          (void *)context->Pc, (void *)context->Sp, rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress);
+
+    if (rec->ExceptionCode == 0x80000003 && !(rec->ExceptionFlags & EH_NESTED_CALL))
+    {
+        ok(rec->NumberParameters == 1, "Got unexpected rec->NumberParameters %lu.\n", rec->NumberParameters);
+        ok((char *)context->Sp == (char *)frame - 8, "Got unexpected frame %p / %p.\n", frame, (void *)context->Sp);
+        ok((char *)context->Lr == (char *)code_mem + 0x07, "Got unexpected lr %p.\n", (void *)context->Lr);
+        ok((char *)context->Pc == (char *)code_mem + 0x0b, "Got unexpected pc %p.\n", (void *)context->Pc);
+
+        nested_exception_initial_frame = frame;
+        RaiseException(0xdeadbeef, 0, 0, 0);
+        context->Pc += 2;
+        return ExceptionContinueExecution;
+    }
+
+    if (rec->ExceptionCode == 0xdeadbeef &&
+        (rec->ExceptionFlags == EH_NESTED_CALL ||
+         rec->ExceptionFlags == (EH_NESTED_CALL | EXCEPTION_SOFTWARE_ORIGINATE)))
+    {
+        ok(!rec->NumberParameters, "Got unexpected rec->NumberParameters %lu.\n", rec->NumberParameters);
+        got_nested_exception = TRUE;
+        ok(frame == nested_exception_initial_frame, "Got unexpected frame %p / %p.\n",
+           frame, nested_exception_initial_frame);
+        return ExceptionContinueSearch;
+    }
+
+    ok(rec->ExceptionCode == 0xdeadbeef && (!rec->ExceptionFlags || rec->ExceptionFlags == EXCEPTION_SOFTWARE_ORIGINATE),
+       "Got unexpected exception code %#lx, flags %#lx.\n", rec->ExceptionCode, rec->ExceptionFlags);
+    ok(!rec->NumberParameters, "Got unexpected rec->NumberParameters %lu.\n", rec->NumberParameters);
+    ok((char *)frame == (char *)nested_exception_initial_frame + 8, "Got unexpected frame %p / %p.\n",
+        frame, nested_exception_initial_frame);
+    got_prev_frame_exception = TRUE;
+    return ExceptionContinueExecution;
+}
+
+static const WORD nested_except_code[] =
+{
+    0xb510,         /* 00: push {r4, lr} */
+    0xf000, 0xf801, /* 02: bl 1f */
+    0xbd10,         /* 06: pop {r4, pc} */
+    0xb510,         /* 08: 1: push {r4, lr} */
+    0xdefe,         /* 0a: trap */
+    0xbf00,         /* 0c: nop */
+    0xbd10,         /* 0e: pop {r4, pc} */
+};
+
+static void test_nested_exception(void)
+{
+    got_nested_exception = got_prev_frame_exception = FALSE;
+    run_exception_test(nested_exception_handler, NULL, nested_except_code, sizeof(nested_except_code),
+                       4 * sizeof(WORD), PAGE_EXECUTE_READ, UNW_FLAG_EHANDLER);
+    ok(got_nested_exception, "Did not get nested exception.\n");
+    ok(got_prev_frame_exception, "Did not get nested exception in the previous frame.\n");
+}
+
+static unsigned int collided_unwind_exception_count;
+
+static DWORD collided_exception_handler(EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
+        CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher)
+{
+    CONTEXT ctx;
+
+    trace("collided_exception_handler pc %p, sp %p, code %#lx, flags %#lx, ExceptionAddress %p, frame %p.\n",
+          (void *)context->Pc, (void *)context->Sp, rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress, frame);
+
+    switch(collided_unwind_exception_count++)
+    {
+        case 0:
+            /* Initial exception from nested_except_code. */
+            ok(rec->ExceptionCode == STATUS_BREAKPOINT, "got %#lx.\n", rec->ExceptionCode);
+            nested_exception_initial_frame = frame;
+            /* Start unwind. */
+            pRtlUnwindEx((char *)frame + 8, (char *)code_mem + 0x07, NULL, NULL, &ctx, NULL);
+            ok(0, "shouldn't be reached\n");
+            break;
+        case 1:
+            ok(rec->ExceptionCode == STATUS_UNWIND, "got %#lx.\n", rec->ExceptionCode);
+            ok(rec->ExceptionFlags == EH_UNWINDING, "got %#lx.\n", rec->ExceptionFlags);
+            ok((char *)context->Pc == (char *)code_mem + 0x0b, "got %p.\n", (void *)context->Pc);
+            /* generate exception in unwind handler. */
+            RaiseException(0xdeadbeef, 0, 0, 0);
+            ok(0, "shouldn't be reached\n");
+            break;
+        case 2:
+            /* Inner call frame, continue search. */
+            ok(rec->ExceptionCode == 0xdeadbeef, "got %#lx.\n", rec->ExceptionCode);
+            ok(!rec->ExceptionFlags || rec->ExceptionFlags == EXCEPTION_SOFTWARE_ORIGINATE, "got %#lx.\n", rec->ExceptionFlags);
+            ok(frame == nested_exception_initial_frame, "got %p, expected %p.\n", frame, nested_exception_initial_frame);
+            break;
+        case 3:
+            /* Top level call frame, handle exception by unwinding. */
+            ok(rec->ExceptionCode == 0xdeadbeef, "got %#lx.\n", rec->ExceptionCode);
+            ok(!rec->ExceptionFlags || rec->ExceptionFlags == EXCEPTION_SOFTWARE_ORIGINATE, "got %#lx.\n", rec->ExceptionFlags);
+            ok((char *)frame == (char *)nested_exception_initial_frame + 8, "got %p, expected %p.\n", frame, nested_exception_initial_frame);
+            pRtlUnwindEx((char *)nested_exception_initial_frame + 8, (char *)code_mem + 0x07, NULL, NULL, &ctx, NULL);
+            ok(0, "shouldn't be reached\n");
+            break;
+        case 4:
+            /* Collided unwind. */
+            ok(rec->ExceptionCode == STATUS_UNWIND, "got %#lx.\n", rec->ExceptionCode);
+            ok(rec->ExceptionFlags == (EH_UNWINDING | EH_COLLIDED_UNWIND), "got %#lx.\n", rec->ExceptionFlags);
+            ok(frame == nested_exception_initial_frame, "got %p, expected %p.\n", frame, nested_exception_initial_frame);
+            break;
+        case 5:
+            /* EH_COLLIDED_UNWIND cleared for the following frames. */
+            ok(rec->ExceptionCode == STATUS_UNWIND, "got %#lx.\n", rec->ExceptionCode);
+            ok(rec->ExceptionFlags == (EH_UNWINDING | EH_TARGET_UNWIND), "got %#lx.\n", rec->ExceptionFlags);
+            ok((char *)frame == (char *)nested_exception_initial_frame + 8, "got %p, expected %p.\n", frame, nested_exception_initial_frame);
+            break;
+    }
+    return ExceptionContinueSearch;
+}
+
+static void test_collided_unwind(void)
+{
+    got_nested_exception = got_prev_frame_exception = FALSE;
+    collided_unwind_exception_count = 0;
+    run_exception_test(collided_exception_handler, NULL, nested_except_code, sizeof(nested_except_code),
+                       4 * sizeof(WORD), PAGE_EXECUTE_READ, UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER);
+    ok(collided_unwind_exception_count == 6, "got %u.\n", collided_unwind_exception_count);
 }
 
 #elif defined(__aarch64__)
@@ -7667,6 +8035,8 @@ static const char * const reg_names[48] =
 };
 
 #define ORIG_LR 0xCCCCCCCC
+
+static int got_exception;
 
 static void call_virtual_unwind( int testnum, const struct unwind_test *test )
 {
@@ -9188,7 +9558,7 @@ static void WINAPI hook_KiUserCallbackDispatcher(void *sp)
         BYTE args_data[0];
     } *stack = sp;
     ULONG_PTR redzone = (BYTE *)stack->sp - &stack->args_data[stack->len];
-    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[stack->id];
+    KERNEL_CALLBACK_PROC func = NtCurrentTeb()->Peb->KernelCallbackTable[stack->id];
 
     trace( "stack=%p len=%lx id=%lx unk=%Ix lr=%Ix sp=%Ix pc=%Ix\n",
            stack, stack->len, stack->id, stack->unknown, stack->lr, stack->sp, stack->pc );
@@ -9207,7 +9577,7 @@ static void WINAPI hook_KiUserCallbackDispatcher(void *sp)
     NtCallbackReturn( NULL, 0, func( stack->args, stack->len ));
 }
 
- void test_KiUserCallbackDispatcher(void)
+static void test_KiUserCallbackDispatcher(void)
 {
     DWORD old_protect;
     BOOL ret;
@@ -9226,6 +9596,199 @@ static void WINAPI hook_KiUserCallbackDispatcher(void *sp)
     memcpy( pKiUserCallbackDispatcher, saved_code, sizeof(saved_code));
     FlushInstructionCache(GetCurrentProcess(), pKiUserCallbackDispatcher, sizeof(saved_code));
     VirtualProtect( pKiUserCallbackDispatcher, sizeof(saved_code), old_protect, &old_protect );
+}
+
+struct unwind_info
+{
+    DWORD function_length : 18;
+    DWORD version : 2;
+    DWORD x : 1;
+    DWORD e : 1;
+    DWORD epilog : 5;
+    DWORD codes : 5;
+};
+
+static void run_exception_test(void *handler, const void* context,
+                               const void *code, unsigned int code_size,
+                               unsigned int func2_offset, DWORD access, DWORD handler_flags)
+{
+    DWORD buf[14];
+    RUNTIME_FUNCTION runtime_func[2];
+    struct unwind_info unwind;
+    void (*func)(void) = code_mem;
+    DWORD oldaccess, oldaccess2;
+
+    runtime_func[0].BeginAddress = 0;
+    runtime_func[0].UnwindData = 0x1000;
+    runtime_func[1].BeginAddress = func2_offset;
+    runtime_func[1].UnwindData = 0x1014;
+
+    unwind.function_length = func2_offset / 4;
+    unwind.version = 0;
+    unwind.x = 1;
+    unwind.e = 1;
+    unwind.epilog = 1;
+    unwind.codes = 1;
+    buf[0] = *(DWORD *)&unwind;
+    buf[1] = 0xe3e481e1; /* mov x29,sp; stp r29,lr,[sp,-#0x10]!; end; nop */
+    buf[2] = 0x1028;
+    *(const void **)&buf[3] = context;
+
+    unwind.function_length = (code_size - func2_offset) / 4;
+    buf[5] = *(DWORD *)&unwind;
+    buf[6] = 0xe3e481e1; /* mov x29,sp; stp r29,lr,[sp,-#0x10]!; end; nop */
+    buf[7] = 0x1028;
+    *(const void **)&buf[8] = context;
+
+    buf[10] = 0x5800004f; /* ldr x15, 1f */
+    buf[11] = 0xd61f01e0; /* br x15 */
+    *(const void **)&buf[12] = handler;
+
+    memcpy((unsigned char *)code_mem + 0x1000, buf, sizeof(buf));
+    memcpy(code_mem, code, code_size);
+    if (access) VirtualProtect(code_mem, code_size, access, &oldaccess);
+    FlushInstructionCache( GetCurrentProcess(), code_mem, 0x2000 );
+
+    RtlAddFunctionTable(runtime_func, ARRAY_SIZE(runtime_func), (ULONG_PTR)code_mem);
+    func();
+    pRtlDeleteFunctionTable(runtime_func);
+
+    if (access) VirtualProtect(code_mem, code_size, oldaccess, &oldaccess2);
+}
+
+static BOOL got_nested_exception, got_prev_frame_exception;
+static void *nested_exception_initial_frame;
+
+static DWORD nested_exception_handler(EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
+                                      CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher)
+{
+    trace("nested_exception_handler pc %p, sp %p, code %#lx, flags %#lx, ExceptionAddress %p.\n",
+          (void *)context->Pc, (void *)context->Sp, rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress);
+
+    if (rec->ExceptionCode == 0x80000003 && !(rec->ExceptionFlags & EH_NESTED_CALL))
+    {
+        ok(rec->NumberParameters == 1, "Got unexpected rec->NumberParameters %lu.\n", rec->NumberParameters);
+        ok((char *)context->Sp == (char *)frame - 0x10, "Got unexpected frame %p / %p.\n", frame, (void *)context->Sp);
+        ok((char *)context->Fp == (char *)frame - 0x10, "Got unexpected frame %p / %p.\n", frame, (void *)context->Fp);
+        ok((char *)context->Lr == (char *)code_mem + 0x0c, "Got unexpected lr %p.\n", (void *)context->Lr);
+        ok((char *)context->Pc == (char *)code_mem + 0x1c, "Got unexpected pc %p.\n", (void *)context->Pc);
+
+        nested_exception_initial_frame = frame;
+        RaiseException(0xdeadbeef, 0, 0, 0);
+        context->Pc += 4;
+        return ExceptionContinueExecution;
+    }
+
+    if (rec->ExceptionCode == 0xdeadbeef &&
+        (rec->ExceptionFlags == EH_NESTED_CALL ||
+         rec->ExceptionFlags == (EH_NESTED_CALL | EXCEPTION_SOFTWARE_ORIGINATE)))
+    {
+        ok(!rec->NumberParameters, "Got unexpected rec->NumberParameters %lu.\n", rec->NumberParameters);
+        got_nested_exception = TRUE;
+        ok(frame == nested_exception_initial_frame, "Got unexpected frame %p / %p.\n",
+           frame, nested_exception_initial_frame);
+        return ExceptionContinueSearch;
+    }
+
+    ok(rec->ExceptionCode == 0xdeadbeef && (!rec->ExceptionFlags || rec->ExceptionFlags == EXCEPTION_SOFTWARE_ORIGINATE),
+       "Got unexpected exception code %#lx, flags %#lx.\n", rec->ExceptionCode, rec->ExceptionFlags);
+    ok(!rec->NumberParameters, "Got unexpected rec->NumberParameters %lu.\n", rec->NumberParameters);
+    ok((char *)frame == (char *)nested_exception_initial_frame + 0x10, "Got unexpected frame %p / %p.\n",
+        frame, nested_exception_initial_frame);
+    got_prev_frame_exception = TRUE;
+    return ExceptionContinueExecution;
+}
+
+static const DWORD nested_except_code[] =
+{
+    0xa9bf7bfd, /* 00: stp x29, x30, [sp, #-16]! */
+    0x910003fd, /* 04: mov x29, sp */
+    0x94000003, /* 08: bl 1f */
+    0xa8c17bfd, /* 0c: ldp x29, x30, [sp], #16 */
+    0xd65f03c0, /* 10: ret */
+
+    0xa9bf7bfd, /* 14: stp x29, x30, [sp, #-16]! */
+    0x910003fd, /* 18: mov x29, sp */
+    0xd43e0000, /* 1c: brk #0xf000 */
+    0xd503201f, /* 20: nop */
+    0xa8c17bfd, /* 24: ldp x29, x30, [sp], #16 */
+    0xd65f03c0, /* 28: ret */
+};
+
+static void test_nested_exception(void)
+{
+    got_nested_exception = got_prev_frame_exception = FALSE;
+    run_exception_test(nested_exception_handler, NULL, nested_except_code, sizeof(nested_except_code),
+                       5 * sizeof(DWORD), PAGE_EXECUTE_READ, UNW_FLAG_EHANDLER);
+    ok(got_nested_exception, "Did not get nested exception.\n");
+    ok(got_prev_frame_exception, "Did not get nested exception in the previous frame.\n");
+}
+
+static unsigned int collided_unwind_exception_count;
+
+static DWORD collided_exception_handler(EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
+        CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher)
+{
+    CONTEXT ctx;
+
+    trace("collided_exception_handler pc %p, sp %p, code %#lx, flags %#lx, ExceptionAddress %p, frame %p.\n",
+          (void *)context->Pc, (void *)context->Sp, rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress, frame);
+
+    switch(collided_unwind_exception_count++)
+    {
+        case 0:
+            /* Initial exception from nested_except_code. */
+            ok(rec->ExceptionCode == STATUS_BREAKPOINT, "got %#lx.\n", rec->ExceptionCode);
+            nested_exception_initial_frame = frame;
+            /* Start unwind. */
+            pRtlUnwindEx((char *)frame + 0x10, (char *)code_mem + 0x0c, NULL, NULL, &ctx, NULL);
+            ok(0, "shouldn't be reached\n");
+            break;
+        case 1:
+            ok(rec->ExceptionCode == STATUS_UNWIND, "got %#lx.\n", rec->ExceptionCode);
+            ok(rec->ExceptionFlags == EH_UNWINDING, "got %#lx.\n", rec->ExceptionFlags);
+            ok((char *)context->Pc == (char *)code_mem + 0x1c, "got %p.\n", (void *)context->Pc);
+            /* generate exception in unwind handler. */
+            RaiseException(0xdeadbeef, 0, 0, 0);
+            ok(0, "shouldn't be reached\n");
+            break;
+        case 2:
+            /* Inner call frame, continue search. */
+            ok(rec->ExceptionCode == 0xdeadbeef, "got %#lx.\n", rec->ExceptionCode);
+            ok(!rec->ExceptionFlags || rec->ExceptionFlags == EXCEPTION_SOFTWARE_ORIGINATE, "got %#lx.\n", rec->ExceptionFlags);
+            ok(frame == nested_exception_initial_frame, "got %p, expected %p.\n", frame, nested_exception_initial_frame);
+            break;
+        case 3:
+            /* Top level call frame, handle exception by unwinding. */
+            ok(rec->ExceptionCode == 0xdeadbeef, "got %#lx.\n", rec->ExceptionCode);
+            ok(!rec->ExceptionFlags || rec->ExceptionFlags == EXCEPTION_SOFTWARE_ORIGINATE, "got %#lx.\n", rec->ExceptionFlags);
+            ok((char *)frame == (char *)nested_exception_initial_frame + 0x10, "got %p, expected %p.\n", frame, nested_exception_initial_frame);
+            pRtlUnwindEx((char *)nested_exception_initial_frame + 0x10, (char *)code_mem + 0x0c, NULL, NULL, &ctx, NULL);
+            ok(0, "shouldn't be reached\n");
+            break;
+        case 4:
+            /* Collided unwind. */
+            ok(rec->ExceptionCode == STATUS_UNWIND, "got %#lx.\n", rec->ExceptionCode);
+            ok(rec->ExceptionFlags == (EH_UNWINDING | EH_COLLIDED_UNWIND), "got %#lx.\n", rec->ExceptionFlags);
+            ok(frame == nested_exception_initial_frame, "got %p, expected %p.\n", frame, nested_exception_initial_frame);
+            break;
+        case 5:
+            /* EH_COLLIDED_UNWIND cleared for the following frames. */
+            ok(rec->ExceptionCode == STATUS_UNWIND, "got %#lx.\n", rec->ExceptionCode);
+            ok(rec->ExceptionFlags == (EH_UNWINDING | EH_TARGET_UNWIND), "got %#lx.\n", rec->ExceptionFlags);
+            ok((char *)frame == (char *)nested_exception_initial_frame + 0x10, "got %p, expected %p.\n", frame, nested_exception_initial_frame);
+            break;
+    }
+    return ExceptionContinueSearch;
+}
+
+static void test_collided_unwind(void)
+{
+    got_nested_exception = got_prev_frame_exception = FALSE;
+    collided_unwind_exception_count = 0;
+    run_exception_test(collided_exception_handler, NULL, nested_except_code, sizeof(nested_except_code),
+                       5 * sizeof(DWORD), PAGE_EXECUTE_READ, UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER);
+    ok(collided_unwind_exception_count == 6, "got %u.\n", collided_unwind_exception_count);
 }
 
 #endif  /* __aarch64__ */
@@ -12307,6 +12870,11 @@ START_TEST(exception)
     X(KiUserApcDispatcher);
     X(KiUserCallbackDispatcher);
     X(KiUserExceptionDispatcher);
+#ifndef __i386__
+    X(RtlUnwindEx);
+    X(RtlAddFunctionTable);
+    X(RtlDeleteFunctionTable);
+#endif
 #undef X
 
 #define X(f) p##f = (void*)GetProcAddress(hkernel32, #f)
@@ -12436,8 +13004,6 @@ START_TEST(exception)
 #elif defined(__x86_64__)
 
 #define X(f) p##f = (void*)GetProcAddress(hntdll, #f)
-    X(RtlAddFunctionTable);
-    X(RtlDeleteFunctionTable);
     X(RtlInstallFunctionTableCallback);
     X(RtlLookupFunctionEntry);
     X(RtlAddGrowableFunctionTable);
@@ -12446,7 +13012,6 @@ START_TEST(exception)
     X(__C_specific_handler);
     X(RtlCaptureContext);
     X(RtlRestoreContext);
-    X(RtlUnwindEx);
     X(RtlWow64GetThreadContext);
     X(RtlWow64SetThreadContext);
     X(RtlWow64GetCpuAreaInfo);
@@ -12459,6 +13024,7 @@ START_TEST(exception)
     test_debug_registers_wow64();
     test_debug_service(1);
     test_simd_exceptions();
+    test_continue();
     test_virtual_unwind();
     test___C_specific_handler();
     test_restore_context();
@@ -12467,11 +13033,7 @@ START_TEST(exception)
     test_wow64_context();
     test_nested_exception();
     test_collided_unwind();
-
-    if (pRtlAddFunctionTable && pRtlDeleteFunctionTable && pRtlInstallFunctionTableCallback && pRtlLookupFunctionEntry)
-      test_dynamic_unwind();
-    else
-      win_skip( "Dynamic unwind functions not found\n" );
+    test_dynamic_unwind();
     test_extended_context();
     test_copy_context();
     test_set_live_context();
@@ -12483,10 +13045,14 @@ START_TEST(exception)
 
     test_continue();
     test_virtual_unwind();
+    test_nested_exception();
+    test_collided_unwind();
 
 #elif defined(__arm__)
 
     test_virtual_unwind();
+    test_nested_exception();
+    test_collided_unwind();
 
 #endif
 

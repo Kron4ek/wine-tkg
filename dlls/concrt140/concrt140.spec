@@ -33,9 +33,9 @@
 @ cdecl -arch=arm ??0_NonReentrantPPLLock@details@Concurrency@@QAA@XZ(ptr) _NonReentrantPPLLock_ctor
 @ thiscall -arch=i386 ??0_NonReentrantPPLLock@details@Concurrency@@QAE@XZ(ptr) _NonReentrantPPLLock_ctor
 @ cdecl -arch=win64 ??0_NonReentrantPPLLock@details@Concurrency@@QEAA@XZ(ptr) _NonReentrantPPLLock_ctor
-@ stub -arch=arm ??0_ReaderWriterLock@details@Concurrency@@QAA@XZ
-@ stub -arch=i386 ??0_ReaderWriterLock@details@Concurrency@@QAE@XZ
-@ stub -arch=win64 ??0_ReaderWriterLock@details@Concurrency@@QEAA@XZ
+@ cdecl -arch=arm ??0_ReaderWriterLock@details@Concurrency@@QAA@XZ(ptr) _ReaderWriterLock_ctor
+@ thiscall -arch=i386 ??0_ReaderWriterLock@details@Concurrency@@QAE@XZ(ptr) _ReaderWriterLock_ctor
+@ cdecl -arch=win64 ??0_ReaderWriterLock@details@Concurrency@@QEAA@XZ(ptr) _ReaderWriterLock_ctor
 @ cdecl -arch=arm ??0_ReentrantBlockingLock@details@Concurrency@@QAA@XZ(ptr) _ReentrantBlockingLock_ctor
 @ thiscall -arch=i386 ??0_ReentrantBlockingLock@details@Concurrency@@QAE@XZ(ptr) _ReentrantBlockingLock_ctor
 @ cdecl -arch=win64 ??0_ReentrantBlockingLock@details@Concurrency@@QEAA@XZ(ptr) _ReentrantBlockingLock_ctor
@@ -450,9 +450,9 @@
 @ stub -arch=win64 ?_ConcRT_CoreAssert@details@Concurrency@@YAXPEBD0H@Z
 @ stub -arch=win32 ?_ConcRT_Trace@details@Concurrency@@YAXHPB_WZZ
 @ stub -arch=win64 ?_ConcRT_Trace@details@Concurrency@@YAXHPEB_WZZ
-@ stub -arch=arm ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QAA_NXZ
-@ stub -arch=i386 ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QAE_NXZ
-@ stub -arch=win64 ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QEAA_NXZ
+@ cdecl -arch=arm ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QAA_NXZ(ptr) _Cancellation_beacon__Confirm_cancel
+@ thiscall -arch=i386 ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QAE_NXZ(ptr) _Cancellation_beacon__Confirm_cancel
+@ cdecl -arch=win64 ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QEAA_NXZ(ptr) _Cancellation_beacon__Confirm_cancel
 @ cdecl ?_CurrentContext@_Context@details@Concurrency@@SA?AV123@XZ() _Context__CurrentContext
 @ stub ?_Current_node@location@Concurrency@@SA?AV12@XZ
 @ stub -arch=arm ?_Destroy@_AsyncTaskCollection@details@Concurrency@@EAAXXZ

@@ -45,8 +45,8 @@ struct wm_char_mapping_data
 
 extern HMODULE user32_module;
 
-extern BOOL post_dde_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWORD dest_tid,
-                              DWORD type );
+extern NTSTATUS post_dde_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWORD dest_tid,
+                                  DWORD type );
 extern BOOL unpack_dde_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lparam,
                                 const void *buffer, size_t size );
 extern void free_cached_data( UINT format, HANDLE handle );
@@ -81,12 +81,12 @@ extern ATOM get_class_info( HINSTANCE instance, const WCHAR *name, WNDCLASSEXW *
 
 /* kernel callbacks */
 
-BOOL WINAPI User32CallEnumDisplayMonitor( struct enum_display_monitor_params *params, ULONG size );
-BOOL WINAPI User32CallSendAsyncCallback( const struct send_async_params *params, ULONG size );
-BOOL WINAPI User32CallWinEventHook( const struct win_event_hook_params *params, ULONG size );
-BOOL WINAPI User32CallWindowProc( struct win_proc_params *params, ULONG size );
-BOOL WINAPI User32CallWindowsHook( struct win_hook_params *params, ULONG size );
-BOOL WINAPI User32InitBuiltinClasses( const struct win_hook_params *params, ULONG size );
+NTSTATUS WINAPI User32CallEnumDisplayMonitor( void *args, ULONG size );
+NTSTATUS WINAPI User32CallSendAsyncCallback( void *args, ULONG size );
+NTSTATUS WINAPI User32CallWinEventHook( void *args, ULONG size );
+NTSTATUS WINAPI User32CallWindowProc( void *args, ULONG size );
+NTSTATUS WINAPI User32CallWindowsHook( void *args, ULONG size );
+NTSTATUS WINAPI User32InitBuiltinClasses( void *args, ULONG size );
 
 /* message spy definitions */
 

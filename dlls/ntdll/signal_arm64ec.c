@@ -376,6 +376,11 @@ NTSTATUS SYSCALL_API NtCompareObjects( HANDLE first, HANDLE second )
     __ASM_SYSCALL_FUNC( __id_NtCompareObjects );
 }
 
+NTSTATUS SYSCALL_API NtCompareTokens( HANDLE first, HANDLE second, BOOLEAN *equal )
+{
+    __ASM_SYSCALL_FUNC( __id_NtCompareTokens );
+}
+
 NTSTATUS SYSCALL_API NtCompleteConnectPort( HANDLE handle )
 {
     __ASM_SYSCALL_FUNC( __id_NtCompleteConnectPort );
@@ -1711,34 +1716,27 @@ __ASM_GLOBAL_FUNC( "#KiUserApcDispatcher",
 /*******************************************************************
  *		KiUserCallbackDispatcher (NTDLL.@)
  */
-void WINAPI dispatch_callback( void *args, ULONG len, ULONG id )
-{
-    NTSTATUS status;
-
-    __TRY
-    {
-        NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-        status = NtCallbackReturn( NULL, 0, func( args, len ));
-    }
-    __EXCEPT_ALL
-    {
-        ERR_(seh)( "ignoring exception\n" );
-        status = NtCallbackReturn( 0, 0, 0 );
-    }
-    __ENDTRY
-
-    RtlRaiseStatus( status );
-}
 __ASM_GLOBAL_FUNC( "#KiUserCallbackDispatcher",
-                   __ASM_SEH(".seh_pushframe\n\t")
+                   ".seh_pushframe\n\t"
                    "nop\n\t"
-                   __ASM_SEH(".seh_stackalloc 0x20\n\t")
+                   ".seh_stackalloc 0x20\n\t"
                    "nop\n\t"
-                   __ASM_SEH(".seh_save_reg lr, 0x18\n\t")
-                   __ASM_SEH(".seh_endprologue\n\t")
+                   ".seh_save_reg lr, 0x18\n\t"
+                   ".seh_endprologue\n\t"
+                   ".seh_handler " __ASM_NAME("user_callback_handler") ", @except\n\t"
                    "ldr x0, [sp]\n\t"             /* args */
                    "ldp w1, w2, [sp, #0x08]\n\t"  /* len, id */
-                   "bl " __ASM_NAME("dispatch_callback") "\n\t"
+                   "ldr x3, [x18, 0x60]\n\t"      /* peb */
+                   "ldr x3, [x3, 0x58]\n\t"       /* peb->KernelCallbackTable */
+                   "ldr x15, [x3, x2, lsl #3]\n\t"
+                   "blr x15\n\t"
+                   ".globl \"#KiUserCallbackDispatcherReturn\"\n"
+                   "\"#KiUserCallbackDispatcherReturn\":\n\t"
+                   "mov x2, x0\n\t"               /* status */
+                   "mov x1, #0\n\t"               /* ret_len */
+                   "mov x0, x1\n\t"               /* ret_ptr */
+                   "bl " __ASM_NAME("NtCallbackReturn") "\n\t"
+                   "bl " __ASM_NAME("RtlRaiseStatus") "\n\t"
                    "brk #1" )
 
 
@@ -2002,6 +2000,21 @@ void WINAPI LdrInitializeThunk( CONTEXT *arm_context, ULONG_PTR unk2, ULONG_PTR 
     NtContinue( &context, TRUE );
 }
 
+
+/***********************************************************************
+ *           process_breakpoint
+ */
+__ASM_GLOBAL_FUNC( "#process_breakpoint",
+                   ".seh_endprologue\n\t"
+                   ".seh_handler process_breakpoint_handler, @except\n\t"
+                   "brk #0xf000\n\t"
+                   "ret\n"
+                   "process_breakpoint_handler:\n\t"
+                   "ldr x4, [x2, #0x108]\n\t" /* context->Pc */
+                   "add x4, x4, #4\n\t"
+                   "str x4, [x2, #0x108]\n\t"
+                   "mov w0, #0\n\t"           /* ExceptionContinueExecution */
+                   "ret" )
 
 /**********************************************************************
  *              DbgBreakPoint   (NTDLL.@)

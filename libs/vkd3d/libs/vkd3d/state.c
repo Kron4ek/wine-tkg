@@ -2154,6 +2154,8 @@ static unsigned int feature_flags_compile_option(const struct d3d12_device *devi
 
     if (device->feature_options1.Int64ShaderOps)
         flags |= VKD3D_SHADER_COMPILE_OPTION_FEATURE_INT64;
+    if (device->feature_options.DoublePrecisionFloatShaderOps)
+        flags |= VKD3D_SHADER_COMPILE_OPTION_FEATURE_FLOAT64;
 
     return flags;
 }
@@ -2270,7 +2272,7 @@ static HRESULT vkd3d_create_compute_pipeline(struct d3d12_device *device,
     VK_CALL(vkDestroyShaderModule(device->vk_device, pipeline_info.stage.module, NULL));
     if (vr < 0)
     {
-        WARN("Failed to create Vulkan compute pipeline, hr %#x.\n", hr);
+        WARN("Failed to create Vulkan compute pipeline, hr %s.\n", debugstr_hresult(hr));
         return hresult_from_vk_result(vr);
     }
 
@@ -2398,7 +2400,7 @@ static HRESULT d3d12_pipeline_state_find_and_init_uav_counters(struct d3d12_pipe
     }
 
     if (FAILED(hr = d3d12_pipeline_state_init_uav_counters(state, device, root_signature, &shader_info, stage_flags)))
-        WARN("Failed to create descriptor set layout for UAV counters, hr %#x.\n", hr);
+        WARN("Failed to create descriptor set layout for UAV counters, hr %s.\n", debugstr_hresult(hr));
 
     vkd3d_shader_free_scan_descriptor_info(&shader_info);
 
@@ -2472,7 +2474,7 @@ static HRESULT d3d12_pipeline_state_init_compute(struct d3d12_pipeline_state *st
     if (FAILED(hr = vkd3d_create_compute_pipeline(device, &desc->cs, &shader_interface,
             vk_pipeline_layout, &state->u.compute.vk_pipeline)))
     {
-        WARN("Failed to create Vulkan compute pipeline, hr %#x.\n", hr);
+        WARN("Failed to create Vulkan compute pipeline, hr %s.\n", debugstr_hresult(hr));
         d3d12_pipeline_uav_counter_state_cleanup(&state->uav_counters, device);
         return hr;
     }
@@ -4026,14 +4028,14 @@ HRESULT vkd3d_uav_clear_state_init(struct vkd3d_uav_clear_state *state, struct d
         if (FAILED(hr = vkd3d_create_descriptor_set_layout(device, 0,
                 1, false, &set_binding, set_layouts[i].set_layout)))
         {
-            ERR("Failed to create descriptor set layout %u, hr %#x.\n", i, hr);
+            ERR("Failed to create descriptor set layout %u, hr %s.\n", i, debugstr_hresult(hr));
             goto fail;
         }
 
         if (FAILED(hr = vkd3d_create_pipeline_layout(device, 1, set_layouts[i].set_layout,
                 1, &push_constant_range, set_layouts[i].pipeline_layout)))
         {
-            ERR("Failed to create pipeline layout %u, hr %#x.\n", i, hr);
+            ERR("Failed to create pipeline layout %u, hr %s.\n", i, debugstr_hresult(hr));
             goto fail;
         }
     }
@@ -4071,7 +4073,7 @@ HRESULT vkd3d_uav_clear_state_init(struct vkd3d_uav_clear_state *state, struct d
         vkd3d_shader_free_shader_code(&dxbc);
         if (FAILED(hr))
         {
-            ERR("Failed to create compute pipeline %u, hr %#x.\n", i, hr);
+            ERR("Failed to create compute pipeline %u, hr %s.\n", i, debugstr_hresult(hr));
             goto fail;
         }
     }

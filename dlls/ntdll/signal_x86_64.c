@@ -357,15 +357,6 @@ __ASM_GLOBAL_FUNC( RtlCaptureContext,
                    "fxsave 0x100(%rcx)\n\t"         /* context->FltSave */
                    "ret" );
 
-DWORD __cdecl nested_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
-                                        CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher )
-{
-    if (!(rec->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)))
-        return ExceptionNestedException;
-
-    return ExceptionContinueSearch;
-}
-
 /***********************************************************************
  *		exception_handler_call_wrapper
  */
@@ -391,7 +382,7 @@ static DWORD exception_handler_call_wrapper( EXCEPTION_RECORD *rec, void *frame,
     EXCEPTION_REGISTRATION_RECORD wrapper_frame;
     DWORD res;
 
-    wrapper_frame.Handler = nested_exception_handler;
+    wrapper_frame.Handler = (PEXCEPTION_HANDLER)nested_exception_handler;
     __wine_push_frame( &wrapper_frame );
     res = dispatch->LanguageHandler( rec, (void *)dispatch->EstablisherFrame, context, dispatch );
     __wine_pop_frame( &wrapper_frame );
@@ -691,24 +682,6 @@ __ASM_GLOBAL_FUNC( KiUserApcDispatcher,
 /*******************************************************************
  *		KiUserCallbackDispatcher (NTDLL.@)
  */
-void WINAPI dispatch_callback( void *args, ULONG len, ULONG id )
-{
-    NTSTATUS status;
-
-    __TRY
-    {
-        NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-        status = NtCallbackReturn( NULL, 0, func( args, len ));
-    }
-    __EXCEPT_ALL
-    {
-        ERR_(seh)( "ignoring exception\n" );
-        status = NtCallbackReturn( 0, 0, 0 );
-    }
-    __ENDTRY
-
-    RtlRaiseStatus( status );
-}
 __ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
                    __ASM_SEH(".seh_pushframe\n\t")
                    __ASM_SEH(".seh_stackalloc 0x30\n\t")
@@ -720,7 +693,24 @@ __ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
                    "movq 0x20(%rsp),%rcx\n\t"  /* args */
                    "movl 0x28(%rsp),%edx\n\t"  /* len */
                    "movl 0x2c(%rsp),%r8d\n\t"  /* id */
-                   "call " __ASM_NAME("dispatch_callback") )
+#ifdef __WINE_PE_BUILD
+                   "movq %gs:0x30,%rax\n\t"     /* NtCurrentTeb() */
+                   "movq 0x60(%rax),%rax\n\t"   /* peb */
+                   "movq 0x58(%rax),%rax\n\t"   /* peb->KernelCallbackTable */
+                   "call *(%rax,%r8,8)\n\t"     /* KernelCallbackTable[id] */
+                   ".seh_handler " __ASM_NAME("user_callback_handler") ", @except\n\t"
+                   ".globl " __ASM_NAME("KiUserCallbackDispatcherReturn") "\n"
+                   __ASM_NAME("KiUserCallbackDispatcherReturn") ":\n\t"
+#else
+                   "call " __ASM_NAME("dispatch_user_callback") "\n\t"
+#endif
+                   "xorq %rcx,%rcx\n\t"         /* ret_ptr */
+                   "xorl %edx,%edx\n\t"         /* ret_len */
+                   "movl %eax,%r8d\n\t"         /* status */
+                   "call " __ASM_NAME("NtCallbackReturn") "\n\t"
+                   "movl %eax,%ecx\n\t"         /* status */
+                   "call " __ASM_NAME("RtlRaiseStatus") "\n\t"
+                   "int3" )
 
 
 /**************************************************************************
@@ -1724,6 +1714,35 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unk2, ULONG_PTR unk3
     TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", (void *)context->Rcx, (void *)context->Rdx );
     signal_start_thread( context );
 }
+
+
+/***********************************************************************
+ *           process_breakpoint
+ */
+#ifdef __WINE_PE_BUILD
+__ASM_GLOBAL_FUNC( process_breakpoint,
+                   ".seh_endprologue\n\t"
+                   ".seh_handler process_breakpoint_handler, @except\n\t"
+                   "int $3\n\t"
+                   "ret\n"
+                   "process_breakpoint_handler:\n\t"
+                   "incq 0xf8(%r8)\n\t"  /* context->Rip */
+                   "xorl %eax,%eax\n\t"  /* ExceptionContinueExecution */
+                   "ret" )
+#else
+void WINAPI process_breakpoint(void)
+{
+    __TRY
+    {
+        DbgBreakPoint();
+    }
+    __EXCEPT_ALL
+    {
+        /* do nothing */
+    }
+    __ENDTRY
+}
+#endif
 
 
 /**********************************************************************

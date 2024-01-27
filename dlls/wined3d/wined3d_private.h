@@ -221,6 +221,7 @@ struct wined3d_d3d_info
     uint32_t shader_output_interpolation : 1;
     uint32_t frag_coord_correction : 1;
     uint32_t viewport_array_index_any_shader : 1;
+    uint32_t stencil_export : 1;
     uint32_t texture_npot : 1;
     uint32_t texture_npot_conditional : 1;
     uint32_t normalized_texrect : 1;
@@ -236,6 +237,7 @@ struct wined3d_d3d_info
     uint32_t subpixel_viewport : 1;
     uint32_t fences : 1;
     uint32_t persistent_map : 1;
+    uint32_t gpu_push_constants : 1;
     enum wined3d_feature_level feature_level;
 
     DWORD multisample_draw_location;
@@ -582,6 +584,7 @@ enum wined3d_shader_register_type
     WINED3DSPR_DEPTHOUTGE,
     WINED3DSPR_DEPTHOUTLE,
     WINED3DSPR_RASTERIZER,
+    WINED3DSPR_STENCILREF,
 };
 
 enum wined3d_data_type
@@ -1156,7 +1159,7 @@ struct wined3d_shader_reg_maps
     DWORD input_rel_addressing : 1;
     DWORD viewport_array : 1;
     DWORD sample_mask    : 1;
-    DWORD padding        : 14;
+    DWORD stencil_ref    : 1;
 
     DWORD rt_mask; /* Used render targets, 32 max. */
 
@@ -1558,6 +1561,8 @@ struct wined3d_shader_backend_ops
     void (*shader_init_context_state)(struct wined3d_context *context);
     void (*shader_get_caps)(const struct wined3d_adapter *adapter, struct shader_caps *caps);
     BOOL (*shader_color_fixup_supported)(struct color_fixup_desc fixup);
+    void (*shader_load_sampler_handles)(void *shader_priv, struct wined3d_context *context,
+            const struct wined3d_state *state, const struct wined3d_shader *shader);
     uint64_t (*shader_compile)(struct wined3d_context *context, const struct wined3d_shader_desc *shader_desc,
         enum wined3d_shader_type shader_type);
 };
@@ -4251,6 +4256,7 @@ struct wined3d_shader
     void *byte_code;
     unsigned int byte_code_size;
     BOOL load_local_constsF;
+    enum vkd3d_shader_source_type source_type;
     const struct wined3d_shader_frontend *frontend;
     void *frontend_data;
     void *backend_data;
@@ -4335,6 +4341,7 @@ static inline BOOL shader_is_scalar(const struct wined3d_shader_register *reg)
         case WINED3DSPR_PRIMID:     /* primID */
         case WINED3DSPR_COVERAGE: /* vCoverage */
         case WINED3DSPR_SAMPLEMASK: /* oMask */
+        case WINED3DSPR_STENCILREF: /* oStencilRef */
             return TRUE;
 
         case WINED3DSPR_MISCTYPE:

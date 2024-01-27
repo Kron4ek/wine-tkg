@@ -294,21 +294,9 @@ __ASM_STDCALL_FUNC( KiUserApcDispatcher, 20,
  */
 void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
 {
-    NTSTATUS status;
-
-    __TRY
-    {
-        NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-        status = NtCallbackReturn( NULL, 0, func( args, len ));
-    }
-    __EXCEPT_ALL
-    {
-        ERR_(seh)( "ignoring exception\n" );
-        status = NtCallbackReturn( 0, 0, 0 );
-    }
-    __ENDTRY
-
-    RtlRaiseStatus( status );
+    NTSTATUS status = dispatch_user_callback( args, len, id );
+    status = NtCallbackReturn( NULL, 0, status );
+    for (;;) RtlRaiseStatus( status );
 }
 
 
@@ -638,6 +626,23 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unk2, ULONG_PTR unk3
     loader_init( context, (void **)&context->Eax );
     TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", (void *)context->Eax, (void *)context->Ebx );
     signal_start_thread( context );
+}
+
+
+/***********************************************************************
+ *           process_breakpoint
+ */
+void WINAPI process_breakpoint(void)
+{
+    __TRY
+    {
+        DbgBreakPoint();
+    }
+    __EXCEPT_ALL
+    {
+        /* do nothing */
+    }
+    __ENDTRY
 }
 
 

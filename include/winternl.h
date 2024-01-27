@@ -307,6 +307,8 @@ typedef struct _CHPE_V2_CPU_AREA_INFO
 #define TEB_ACTIVE_FRAME_CONTEXT_FLAG_EXTENDED 0x00000001
 #define TEB_ACTIVE_FRAME_FLAG_EXTENDED         0x00000001
 
+typedef NTSTATUS (WINAPI *KERNEL_CALLBACK_PROC)(void *, ULONG); /* FIXME: not the correct name */
+
 /***********************************************************************
  * PEB data structure
  */
@@ -341,7 +343,7 @@ typedef struct _PEB
     ULONG                        ProcessCurrentlyThrottled : 1;
     ULONG                        ProcessImagesHotPatched : 1;
     ULONG                        ReservedBits0 : 24;
-    PVOID                        KernelCallbackTable;               /* 02c/058 */
+    KERNEL_CALLBACK_PROC        *KernelCallbackTable;               /* 02c/058 */
     ULONG                        Reserved;                          /* 030/060 */
     ULONG                        AtlThunkSListPtr32;                /* 034/064 */
     PVOID                        ApiSetMap;                         /* 038/068 */
@@ -2577,11 +2579,23 @@ typedef struct _PROCESS_STACK_ALLOCATION_INFORMATION_EX
     PROCESS_STACK_ALLOCATION_INFORMATION AllocInfo;
 } PROCESS_STACK_ALLOCATION_INFORMATION_EX, *PPROCESS_STACK_ALLOCATION_INFORMATION_EX;
 
-typedef struct _RTL_HEAP_DEFINITION {
-    ULONG Length; /* = sizeof(RTL_HEAP_DEFINITION) */
+typedef NTSTATUS (NTAPI RTL_HEAP_COMMIT_ROUTINE)(PVOID base, PVOID *address, PSIZE_T size);
+typedef RTL_HEAP_COMMIT_ROUTINE *PRTL_HEAP_COMMIT_ROUTINE;
 
-    ULONG Unknown[11];
-} RTL_HEAP_DEFINITION, *PRTL_HEAP_DEFINITION;
+typedef struct _RTL_HEAP_PARAMETERS
+{
+    ULONG Length;
+    SIZE_T SegmentReserve;
+    SIZE_T SegmentCommit;
+    SIZE_T DeCommitFreeblockThreshold;
+    SIZE_T DeCommitTotalFreeThreshold;
+    SIZE_T MaximumAllocationSize;
+    SIZE_T VirtualMemoryThreshold;
+    SIZE_T InitialCommit;
+    SIZE_T InitialReserve;
+    PRTL_HEAP_COMMIT_ROUTINE CommitRoutine;
+    SIZE_T Reserved[2];
+} RTL_HEAP_PARAMETERS, *PRTL_HEAP_PARAMETERS;
 
 typedef struct _RTL_RWLOCK {
     RTL_CRITICAL_SECTION rtlCS;
@@ -3026,11 +3040,11 @@ typedef struct _DEBUG_BUFFER {
   PVOID  RemoteSectionBase;
   ULONG  SectionBaseDelta;
   HANDLE EventPairHandle;
-  ULONG  Unknown[2];
+  SIZE_T Unknown[2];
   HANDLE RemoteThreadHandle;
   ULONG  InfoClassMask;
-  ULONG  SizeOfInfo;
-  ULONG  AllocatedSize;
+  SIZE_T SizeOfInfo;
+  SIZE_T AllocatedSize;
   ULONG  SectionSize;
   PVOID  ModuleInformation;
   PVOID  BackTraceInformation;
@@ -3589,7 +3603,27 @@ typedef enum _SYSDBG_COMMAND {
   SysDbgReadMsr,
   SysDbgWriteMsr,
   SysDbgReadBusData,
-  SysDbgWriteBusData
+  SysDbgWriteBusData,
+  SysDbgCheckLowMemory,
+  SysDbgEnableKernelDebugger,
+  SysDbgDisableKernelDebugger,
+  SysDbgGetAutoKdEnable,
+  SysDbgSetAutoKdEnable,
+  SysDbgGetPrintBufferSize,
+  SysDbgSetPrintBufferSize,
+  SysDbgGetKdUmExceptionEnable,
+  SysDbgSetKdUmExceptionEnable,
+  SysDbgGetTriageDump,
+  SysDbgGetKdBlockEnable,
+  SysDbgSetKdBlockEnable,
+  SysDbgRegisterForUmBreakInfo,
+  SysDbgGetUmBreakPid,
+  SysDbgClearUmBreakPid,
+  SysDbgGetUmAttachPid,
+  SysDbgClearUmAttachPid,
+  SysDbgGetLiveKernelDump,
+  SysDbgKdPullRemoteFile,
+  SysDbgMaxInfoClass
 } SYSDBG_COMMAND, *PSYSDBG_COMMAND;
 
 typedef struct _CPTABLEINFO
@@ -4355,6 +4389,7 @@ NTSYSAPI NTSTATUS  WINAPI NtClose(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtCloseObjectAuditAlarm(PUNICODE_STRING,HANDLE,BOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI NtCommitTransaction(HANDLE,BOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI NtCompareObjects(HANDLE,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtCompareTokens(HANDLE,HANDLE,BOOLEAN*);
 NTSYSAPI NTSTATUS  WINAPI NtCompleteConnectPort(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtConnectPort(PHANDLE,PUNICODE_STRING,PSECURITY_QUALITY_OF_SERVICE,PLPC_SECTION_WRITE,PLPC_SECTION_READ,PULONG,PVOID,PULONG);
 NTSYSAPI NTSTATUS  WINAPI NtContinue(PCONTEXT,BOOLEAN);
@@ -4665,7 +4700,7 @@ NTSYSAPI NTSTATUS  WINAPI RtlCreateAcl(PACL,DWORD,DWORD);
 NTSYSAPI NTSTATUS  WINAPI RtlCreateActivationContext(HANDLE*,const void*);
 NTSYSAPI NTSTATUS  WINAPI RtlCreateAtomTable(ULONG,RTL_ATOM_TABLE*);
 NTSYSAPI NTSTATUS  WINAPI RtlCreateEnvironment(BOOLEAN, PWSTR*);
-NTSYSAPI HANDLE    WINAPI RtlCreateHeap(ULONG,PVOID,SIZE_T,SIZE_T,PVOID,PRTL_HEAP_DEFINITION);
+NTSYSAPI HANDLE    WINAPI RtlCreateHeap(ULONG,PVOID,SIZE_T,SIZE_T,PVOID,PRTL_HEAP_PARAMETERS);
 NTSYSAPI NTSTATUS  WINAPI RtlCreateProcessParameters(RTL_USER_PROCESS_PARAMETERS**,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,PWSTR,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*);
 NTSYSAPI NTSTATUS  WINAPI RtlCreateProcessParametersEx(RTL_USER_PROCESS_PARAMETERS**,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,PWSTR,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,const UNICODE_STRING*,ULONG);
 NTSYSAPI PDEBUG_BUFFER WINAPI RtlCreateQueryDebugBuffer(ULONG,BOOLEAN);

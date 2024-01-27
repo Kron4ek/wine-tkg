@@ -292,6 +292,21 @@ static bool implicit_compatible_data_types(struct hlsl_ctx *ctx, struct hlsl_typ
     return hlsl_types_are_componentwise_equal(ctx, src, dst);
 }
 
+static void check_condition_type(struct hlsl_ctx *ctx, const struct hlsl_ir_node *cond)
+{
+    const struct hlsl_type *type = cond->data_type;
+
+    if (type->class > HLSL_CLASS_LAST_NUMERIC || type->dimx > 1 || type->dimy > 1)
+    {
+        struct vkd3d_string_buffer *string;
+
+        if ((string = hlsl_type_to_string(ctx, type)))
+            hlsl_error(ctx, &cond->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                    "Condition type '%s' is not a scalar numeric type.", string->buffer);
+        hlsl_release_string_buffer(ctx, string);
+    }
+}
+
 static struct hlsl_ir_node *add_cast(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_ir_node *node, struct hlsl_type *dst_type, const struct vkd3d_shader_location *loc)
 {
@@ -431,6 +446,9 @@ static bool append_conditional_break(struct hlsl_ctx *ctx, struct hlsl_block *co
         return true;
 
     condition = node_from_block(cond_block);
+
+    check_condition_type(ctx, condition);
+
     if (!(not = hlsl_new_unary_expr(ctx, HLSL_OP1_LOGIC_NOT, condition, &condition->loc)))
         return false;
     hlsl_block_add_instr(cond_block, not);
@@ -1096,8 +1114,33 @@ static bool add_func_parameter(struct hlsl_ctx *ctx, struct hlsl_func_parameters
     return true;
 }
 
+static bool add_pass(struct hlsl_ctx *ctx, const char *name, struct hlsl_scope *annotations,
+        const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_var *var;
+    struct hlsl_type *type;
+
+    type = hlsl_get_type(ctx->globals, "pass", false, false);
+    if (!(var = hlsl_new_var(ctx, name, type, loc, NULL, 0, NULL)))
+        return false;
+    var->annotations = annotations;
+
+    if (!hlsl_add_var(ctx, var, false))
+    {
+        struct hlsl_ir_var *old = hlsl_get_var(ctx->cur_scope, var->name);
+
+        hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_REDEFINED,
+                "Identifier \"%s\" was already declared in this scope.", var->name);
+        hlsl_note(ctx, &old->loc, VKD3D_SHADER_LOG_ERROR, "\"%s\" was previously declared here.", old->name);
+        hlsl_free_var(var);
+        return false;
+    }
+
+    return true;
+}
+
 static bool add_technique(struct hlsl_ctx *ctx, const char *name, struct hlsl_scope *scope,
-        const char *typename, const struct vkd3d_shader_location *loc)
+        struct hlsl_scope *annotations, const char *typename, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_var *var;
     struct hlsl_type *type;
@@ -1106,6 +1149,7 @@ static bool add_technique(struct hlsl_ctx *ctx, const char *name, struct hlsl_sc
     if (!(var = hlsl_new_var(ctx, name, type, loc, NULL, 0, NULL)))
         return false;
     var->scope = scope;
+    var->annotations = annotations;
 
     if (!hlsl_add_var(ctx, var, false))
     {
@@ -1122,7 +1166,7 @@ static bool add_technique(struct hlsl_ctx *ctx, const char *name, struct hlsl_sc
 }
 
 static bool add_effect_group(struct hlsl_ctx *ctx, const char *name, struct hlsl_scope *scope,
-        const struct vkd3d_shader_location *loc)
+        struct hlsl_scope *annotations, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_var *var;
     struct hlsl_type *type;
@@ -1131,6 +1175,7 @@ static bool add_effect_group(struct hlsl_ctx *ctx, const char *name, struct hlsl
     if (!(var = hlsl_new_var(ctx, name, type, loc, NULL, 0, NULL)))
         return false;
     var->scope = scope;
+    var->annotations = annotations;
 
     if (!hlsl_add_var(ctx, var, false))
     {
@@ -4085,6 +4130,89 @@ static struct hlsl_block *add_constructor(struct hlsl_ctx *ctx, struct hlsl_type
     return params->instrs;
 }
 
+static bool add_ternary(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct hlsl_ir_node *cond, struct hlsl_ir_node *first, struct hlsl_ir_node *second)
+{
+    struct hlsl_ir_node *args[HLSL_MAX_OPERANDS] = {0};
+    struct hlsl_type *cond_type = cond->data_type;
+    struct hlsl_type *common_type;
+
+    if (cond_type->class > HLSL_CLASS_LAST_NUMERIC)
+    {
+        struct vkd3d_string_buffer *string;
+
+        if ((string = hlsl_type_to_string(ctx, cond_type)))
+            hlsl_error(ctx, &cond->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                    "Ternary condition type '%s' is not numeric.", string->buffer);
+        hlsl_release_string_buffer(ctx, string);
+    }
+
+    if (first->data_type->class <= HLSL_CLASS_LAST_NUMERIC
+            && second->data_type->class <= HLSL_CLASS_LAST_NUMERIC)
+    {
+        if (!(common_type = get_common_numeric_type(ctx, first, second, &first->loc)))
+            return false;
+
+        if (cond_type->dimx == 1 && cond_type->dimy == 1)
+        {
+            cond_type = hlsl_get_numeric_type(ctx, common_type->class,
+                    HLSL_TYPE_BOOL, common_type->dimx, common_type->dimy);
+            if (!(cond = add_implicit_conversion(ctx, block, cond, cond_type, &cond->loc)))
+                return false;
+        }
+        else if (common_type->dimx == 1 && common_type->dimy == 1)
+        {
+            common_type = hlsl_get_numeric_type(ctx, cond_type->class,
+                    common_type->base_type, cond_type->dimx, cond_type->dimy);
+        }
+        else if (cond_type->dimx != common_type->dimx || cond_type->dimy != common_type->dimy)
+        {
+            /* This condition looks wrong but is correct.
+             * floatN is compatible with float1xN, but not with floatNx1. */
+
+            struct vkd3d_string_buffer *cond_string, *value_string;
+
+            cond_string = hlsl_type_to_string(ctx, cond_type);
+            value_string = hlsl_type_to_string(ctx, common_type);
+            if (cond_string && value_string)
+                hlsl_error(ctx, &first->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                        "Ternary condition type '%s' is not compatible with value type '%s'.",
+                        cond_string->buffer, value_string->buffer);
+            hlsl_release_string_buffer(ctx, cond_string);
+            hlsl_release_string_buffer(ctx, value_string);
+        }
+
+        if (!(first = add_implicit_conversion(ctx, block, first, common_type, &first->loc)))
+            return false;
+
+        if (!(second = add_implicit_conversion(ctx, block, second, common_type, &second->loc)))
+            return false;
+    }
+    else
+    {
+        struct vkd3d_string_buffer *first_string, *second_string;
+
+        if (!hlsl_types_are_equal(first->data_type, second->data_type))
+        {
+            first_string = hlsl_type_to_string(ctx, first->data_type);
+            second_string = hlsl_type_to_string(ctx, second->data_type);
+            if (first_string && second_string)
+                hlsl_error(ctx, &first->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                        "Ternary argument types '%s' and '%s' do not match.",
+                        first_string->buffer, second_string->buffer);
+            hlsl_release_string_buffer(ctx, first_string);
+            hlsl_release_string_buffer(ctx, second_string);
+        }
+
+        common_type = first->data_type;
+    }
+
+    args[0] = cond;
+    args[1] = first;
+    args[2] = second;
+    return add_expr(ctx, block, HLSL_OP3_TERNARY, args, common_type, &first->loc);
+}
+
 static unsigned int hlsl_offset_dim_count(enum hlsl_sampler_dim dim)
 {
     switch (dim)
@@ -4916,6 +5044,7 @@ static void check_duplicated_switch_cases(struct hlsl_ctx *ctx, const struct hls
     struct hlsl_attribute *attr;
     struct parse_attribute_list attr_list;
     struct hlsl_ir_switch_case *switch_case;
+    struct hlsl_scope *scope;
 }
 
 %token KW_BLENDSTATE
@@ -5041,6 +5170,8 @@ static void check_duplicated_switch_cases(struct hlsl_ctx *ctx, const struct hls
 %token <name> STRING
 %token <name> TYPE_IDENTIFIER
 
+%type <scope> annotations_opt
+
 %type <arrays> arrays
 
 %type <assign_op> assign_op
@@ -5157,7 +5288,33 @@ name_opt:
     | any_identifier
 
 pass:
-      KW_PASS name_opt '{' '}'
+      KW_PASS name_opt annotations_opt '{' '}'
+        {
+            if (!add_pass(ctx, $2, $3, &@1))
+                YYABORT;
+        }
+
+annotations_list:
+      variables_def_typed ';'
+    | annotations_list variables_def_typed ';'
+
+annotations_opt:
+      %empty
+        {
+            $$ = NULL;
+        }
+    | '<' scope_start '>'
+        {
+            hlsl_pop_scope(ctx);
+            $$ = NULL;
+        }
+    | '<' scope_start annotations_list '>'
+        {
+            struct hlsl_scope *scope = ctx->cur_scope;
+
+            hlsl_pop_scope(ctx);
+            $$ = scope;
+        }
 
 pass_list:
       pass
@@ -5168,17 +5325,17 @@ passes:
     | scope_start pass_list
 
 technique9:
-      KW_TECHNIQUE name_opt '{' passes '}'
+      KW_TECHNIQUE name_opt annotations_opt '{' passes '}'
         {
             struct hlsl_scope *scope = ctx->cur_scope;
             hlsl_pop_scope(ctx);
 
-            if (!add_technique(ctx, $2, scope, "technique", &@1))
+            if (!add_technique(ctx, $2, scope, $3, "technique", &@1))
                 YYABORT;
         }
 
 technique10:
-      KW_TECHNIQUE10 name_opt '{' passes '}'
+      KW_TECHNIQUE10 name_opt annotations_opt '{' passes '}'
         {
             struct hlsl_scope *scope = ctx->cur_scope;
             hlsl_pop_scope(ctx);
@@ -5187,12 +5344,12 @@ technique10:
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
                         "The 'technique10' keyword is invalid for this profile.");
 
-            if (!add_technique(ctx, $2, scope, "technique10", &@1))
+            if (!add_technique(ctx, $2, scope, $3, "technique10", &@1))
                 YYABORT;
         }
 
 technique11:
-      KW_TECHNIQUE11 name_opt '{' passes '}'
+      KW_TECHNIQUE11 name_opt annotations_opt '{' passes '}'
         {
             struct hlsl_scope *scope = ctx->cur_scope;
             hlsl_pop_scope(ctx);
@@ -5201,7 +5358,7 @@ technique11:
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
                         "The 'technique11' keyword is invalid for this profile.");
 
-            if (!add_technique(ctx, $2, scope, "technique11", &@1))
+            if (!add_technique(ctx, $2, scope, $3, "technique11", &@1))
                 YYABORT;
         }
 
@@ -5219,11 +5376,11 @@ group_techniques:
     | group_techniques group_technique
 
 effect_group:
-      KW_FXGROUP any_identifier '{' scope_start group_techniques '}'
+      KW_FXGROUP any_identifier annotations_opt '{' scope_start group_techniques '}'
         {
             struct hlsl_scope *scope = ctx->cur_scope;
             hlsl_pop_scope(ctx);
-            if (!(add_effect_group(ctx, $2, scope, &@2)))
+            if (!(add_effect_group(ctx, $2, scope, $3, &@2)))
                 YYABORT;
         }
 
@@ -6606,6 +6763,15 @@ selection_statement:
                 }
             }
 
+            check_condition_type(ctx, condition);
+
+            if (!(condition = add_cast(ctx, $4, condition, hlsl_get_scalar_type(ctx, HLSL_TYPE_BOOL), &@4)))
+            {
+                destroy_block($6.then_block);
+                destroy_block($6.else_block);
+                YYABORT;
+            }
+
             if (!(instr = hlsl_new_if(ctx, condition, $6.then_block, $6.else_block, &@2)))
             {
                 destroy_block($6.then_block);
@@ -6614,15 +6780,7 @@ selection_statement:
             }
             destroy_block($6.then_block);
             destroy_block($6.else_block);
-            if (condition->data_type->dimx > 1 || condition->data_type->dimy > 1)
-            {
-                struct vkd3d_string_buffer *string;
 
-                if ((string = hlsl_type_to_string(ctx, condition->data_type)))
-                    hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                            "if condition type %s is not scalar.", string->buffer);
-                hlsl_release_string_buffer(ctx, string);
-            }
             $$ = $4;
             hlsl_block_add_instr($$, instr);
         }
@@ -7202,27 +7360,13 @@ conditional_expr:
             struct hlsl_ir_node *cond = node_from_block($1);
             struct hlsl_ir_node *first = node_from_block($3);
             struct hlsl_ir_node *second = node_from_block($5);
-            struct hlsl_ir_node *args[HLSL_MAX_OPERANDS] = { 0 };
-            struct hlsl_type *common_type;
 
             hlsl_block_add_block($1, $3);
             hlsl_block_add_block($1, $5);
             destroy_block($3);
             destroy_block($5);
 
-            if (!(common_type = get_common_numeric_type(ctx, first, second, &@3)))
-                YYABORT;
-
-            if (!(first = add_implicit_conversion(ctx, $1, first, common_type, &@3)))
-                YYABORT;
-
-            if (!(second = add_implicit_conversion(ctx, $1, second, common_type, &@5)))
-                YYABORT;
-
-            args[0] = cond;
-            args[1] = first;
-            args[2] = second;
-            if (!add_expr(ctx, $1, HLSL_OP3_TERNARY, args, common_type, &@1))
+            if (!add_ternary(ctx, $1, cond, first, second))
                 YYABORT;
             $$ = $1;
         }

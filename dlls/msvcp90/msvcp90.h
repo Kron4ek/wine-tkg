@@ -586,9 +586,9 @@ istreambuf_iterator_char *__thiscall num_get_char_get_ldouble(const num_get*, is
 istreambuf_iterator_char *__thiscall num_get_char_get_void(const num_get*, istreambuf_iterator_char*,
         istreambuf_iterator_char, istreambuf_iterator_char, ios_base*, int*, void**);
 istreambuf_iterator_char *__thiscall num_get_char_get_int64(const num_get*, istreambuf_iterator_char*,
-        istreambuf_iterator_char, istreambuf_iterator_char, ios_base*, int*, LONGLONG*);
+        istreambuf_iterator_char, istreambuf_iterator_char, ios_base*, int*, __int64*);
 istreambuf_iterator_char *__thiscall num_get_char_get_uint64(const num_get*, istreambuf_iterator_char*,
-        istreambuf_iterator_char, istreambuf_iterator_char, ios_base*, int*, ULONGLONG*);
+        istreambuf_iterator_char, istreambuf_iterator_char, ios_base*, int*, unsigned __int64*);
 istreambuf_iterator_char *__thiscall num_get_char_get_bool(const num_get*, istreambuf_iterator_char*,
         istreambuf_iterator_char, istreambuf_iterator_char, ios_base*, int*, bool*);
 
@@ -611,9 +611,9 @@ istreambuf_iterator_wchar *__thiscall num_get_wchar_get_ldouble(const num_get*, 
 istreambuf_iterator_wchar *__thiscall num_get_wchar_get_void(const num_get*, istreambuf_iterator_wchar*,
         istreambuf_iterator_wchar, istreambuf_iterator_wchar, ios_base*, int*, void**);
 istreambuf_iterator_wchar *__thiscall num_get_wchar_get_int64(const num_get*, istreambuf_iterator_wchar*,
-        istreambuf_iterator_wchar, istreambuf_iterator_wchar, ios_base*, int*, LONGLONG*);
+        istreambuf_iterator_wchar, istreambuf_iterator_wchar, ios_base*, int*, __int64*);
 istreambuf_iterator_wchar *__thiscall num_get_wchar_get_uint64(const num_get*, istreambuf_iterator_wchar*,
-        istreambuf_iterator_wchar, istreambuf_iterator_wchar, ios_base*, int*, ULONGLONG*);
+        istreambuf_iterator_wchar, istreambuf_iterator_wchar, ios_base*, int*, unsigned __int64*);
 istreambuf_iterator_wchar *__thiscall num_get_wchar_get_bool(const num_get*, istreambuf_iterator_wchar*,
         istreambuf_iterator_wchar, istreambuf_iterator_wchar, ios_base*, int*, bool*);
 
@@ -694,12 +694,15 @@ typedef struct {
 
 const error_category* __cdecl std_iostream_category(void);
 const error_category* __cdecl std_generic_category(void);
+const error_category* __cdecl std_system_category(void);
 
 typedef struct
 {
     int code;
     const error_category *category;
 } error_code;
+
+const char *_Winerror_map_str(int err);
 #endif
 
 #if _MSVCP_VER < 80

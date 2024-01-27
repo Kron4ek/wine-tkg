@@ -34,6 +34,8 @@
 
 #include "dinput_test.h"
 
+#include "wine/hid.h"
+
 #include "initguid.h"
 
 DEFINE_GUID(GUID_keyboard_action_mapping,0x00000001,0x0002,0x0003,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b);
@@ -63,6 +65,41 @@ static void flush_events(void)
             DispatchMessageA( &msg );
         }
         diff = time - GetTickCount();
+    }
+}
+
+HWND create_foreground_window_( const char *file, int line, BOOL fullscreen, UINT retries )
+{
+    for (;;)
+    {
+        HWND hwnd;
+        BOOL ret;
+
+        hwnd = CreateWindowW( L"static", NULL, WS_POPUP | (fullscreen ? 0 : WS_VISIBLE),
+                              100, 100, 200, 200, NULL, NULL, NULL, NULL );
+        ok_(file, line)( hwnd != NULL, "CreateWindowW failed, error %lu\n", GetLastError() );
+
+        if (fullscreen)
+        {
+            HMONITOR hmonitor = MonitorFromWindow( hwnd, MONITOR_DEFAULTTOPRIMARY );
+            MONITORINFO mi = {.cbSize = sizeof(MONITORINFO)};
+
+            ok_(file, line)( hmonitor != NULL, "MonitorFromWindow failed, error %lu\n", GetLastError() );
+            ret = GetMonitorInfoW( hmonitor, &mi );
+            ok_(file, line)( ret, "GetMonitorInfoW failed, error %lu\n", GetLastError() );
+            ret = SetWindowPos( hwnd, 0, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+                                mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW );
+            ok_(file, line)( ret, "SetWindowPos failed, error %lu\n", GetLastError() );
+        }
+        flush_events();
+
+        if (GetForegroundWindow() == hwnd) return hwnd;
+        ok_(file, line)( retries > 0, "failed to create foreground window\n" );
+        if (!retries--) return hwnd;
+
+        ret = DestroyWindow( hwnd );
+        ok_(file, line)( ret, "DestroyWindow failed, error %lu\n", GetLastError() );
+        flush_events();
     }
 }
 
@@ -294,8 +331,7 @@ void test_overlapped_format( DWORD version )
 
     event = CreateEventW( NULL, FALSE, FALSE, NULL );
     ok( !!event, "CreateEventW failed, error %lu\n", GetLastError() );
-    hwnd = CreateWindowW( L"static", L"Title", WS_POPUP | WS_VISIBLE, 10, 10, 200, 200, NULL, NULL, NULL, NULL );
-    ok( !!hwnd, "CreateWindowW failed, error %lu\n", GetLastError() );
+    hwnd = create_foreground_window( FALSE );
 
     hr = IDirectInput_CreateDevice( dinput, &GUID_SysKeyboard, &keyboard, NULL );
     ok( hr == DI_OK, "CreateDevice returned %#lx\n", hr );
@@ -556,10 +592,6 @@ static void test_mouse_keyboard(void)
     UINT raw_devices_count;
     RAWINPUTDEVICE raw_devices[3];
 
-    hwnd = CreateWindowExA(WS_EX_TOPMOST, "static", "dinput", WS_POPUP | WS_VISIBLE, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
-    ok(hwnd != NULL, "CreateWindowExA failed\n");
-    flush_events();
-
     hr = CoCreateInstance(&CLSID_DirectInput8, 0, CLSCTX_INPROC_SERVER, &IID_IDirectInput8A, (LPVOID*)&di);
     if (hr == DIERR_OLDDIRECTINPUTVERSION ||
         hr == DIERR_BETADIRECTINPUTVERSION ||
@@ -577,6 +609,8 @@ static void test_mouse_keyboard(void)
         return;
     }
     ok(SUCCEEDED(hr), "IDirectInput8_Initialize failed: %#lx\n", hr);
+
+    hwnd = create_foreground_window( TRUE );
 
     hr = IDirectInput8_CreateDevice(di, &GUID_SysMouse, &di_mouse, NULL);
     ok(SUCCEEDED(hr), "IDirectInput8_CreateDevice failed: %#lx\n", hr);
@@ -771,8 +805,7 @@ static void test_keyboard_events(void)
     }
     ok(SUCCEEDED(hr), "IDirectInput8_Initialize failed: %#lx\n", hr);
 
-    hwnd = CreateWindowExA(WS_EX_TOPMOST, "static", "dinput", WS_POPUP | WS_VISIBLE, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
-    ok(hwnd != NULL, "CreateWindowExA failed\n");
+    hwnd = create_foreground_window( FALSE );
 
     hr = IDirectInput8_CreateDevice(di, &GUID_SysKeyboard, &di_keyboard, NULL);
     ok(SUCCEEDED(hr), "IDirectInput8_CreateDevice failed: %#lx\n", hr);
@@ -872,9 +905,7 @@ static void test_appdata_property(void)
     ok(SUCCEEDED(hr), "DirectInput8 Initialize failed: hr=%#lx\n", hr);
     if (FAILED(hr)) return;
 
-    hwnd = CreateWindowExA(WS_EX_TOPMOST, "static", "dinput",
-            WS_POPUP | WS_VISIBLE, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
-    ok(hwnd != NULL, "failed to create window\n");
+    hwnd = create_foreground_window( TRUE );
 
     hr = IDirectInput8_CreateDevice(pDI, &GUID_SysKeyboard, &di_keyboard, NULL);
     ok(SUCCEEDED(hr), "IDirectInput8_CreateDevice failed: %#lx\n", hr);
@@ -1412,11 +1443,7 @@ static void test_sys_mouse( DWORD version )
     check_member( objinst, expect_objects[3], "%u", wReportId );
 
 
-    SetCursorPos( 60, 60 );
-
-    hwnd = CreateWindowW( L"static", L"static", WS_POPUP | WS_VISIBLE,
-                          50, 50, 200, 200, NULL, NULL, NULL, NULL );
-    ok( !!hwnd, "CreateWindowW failed, error %lu\n", GetLastError() );
+    hwnd = create_foreground_window( TRUE );
 
     hr = IDirectInputDevice8_SetCooperativeLevel( device, NULL, DISCL_FOREGROUND );
     ok( hr == DIERR_INVALIDPARAM, "SetCooperativeLevel returned %#lx\n", hr );
@@ -1571,9 +1598,7 @@ static void test_sys_mouse( DWORD version )
         ok( hr == DI_OK, "Unacquire returned %#lx\n", hr );
     }
 
-    tmp_hwnd = CreateWindowW( L"static", L"static", WS_POPUP | WS_VISIBLE,
-                              50, 250, 200, 200, NULL, NULL, NULL, NULL );
-    ok( !!tmp_hwnd, "CreateWindowW failed, error %lu\n", GetLastError() );
+    tmp_hwnd = create_foreground_window( FALSE );
 
     hr = IDirectInputDevice8_GetDeviceState( device, sizeof(state), &state );
     ok( hr == DIERR_NOTACQUIRED, "GetDeviceState  returned %#lx\n", hr );
@@ -1593,6 +1618,416 @@ cleanup:
 
     winetest_pop_context();
     localized = old_localized;
+}
+
+static UINT mouse_move_count;
+
+static LRESULT CALLBACK mouse_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+{
+    if (msg == WM_MOUSEMOVE)
+    {
+        ok( wparam == 0, "got wparam %#Ix\n", wparam );
+        ok( LOWORD(lparam) - 107 <= 2, "got LOWORD(lparam) %u\n", LOWORD(lparam) );
+        ok( HIWORD(lparam) - 107 <= 2, "got HIWORD(lparam) %u\n", HIWORD(lparam) );
+        mouse_move_count++;
+    }
+    return DefWindowProcA( hwnd, msg, wparam, lparam );
+}
+
+static void test_hid_mouse(void)
+{
+#include "psh_hid_macros.h"
+    const unsigned char report_desc[] =
+    {
+        USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
+        USAGE(1, HID_USAGE_GENERIC_MOUSE),
+        COLLECTION(1, Application),
+            USAGE(1, HID_USAGE_GENERIC_POINTER),
+            COLLECTION(1, Physical),
+                REPORT_ID(1, 1),
+
+                USAGE_PAGE(1, HID_USAGE_PAGE_BUTTON),
+                USAGE_MINIMUM(1, 1),
+                USAGE_MAXIMUM(1, 2),
+                LOGICAL_MINIMUM(1, 0),
+                LOGICAL_MAXIMUM(1, 1),
+                REPORT_SIZE(1, 1),
+                REPORT_COUNT(1, 8),
+                INPUT(1, Data|Var|Abs),
+
+                USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
+                USAGE(1, HID_USAGE_GENERIC_X),
+                USAGE(1, HID_USAGE_GENERIC_Y),
+                REPORT_SIZE(1, 16),
+                REPORT_COUNT(1, 2),
+                LOGICAL_MINIMUM(2, -10),
+                LOGICAL_MAXIMUM(2, +10),
+                INPUT(1, Data|Var|Rel),
+            END_COLLECTION,
+        END_COLLECTION,
+    };
+    C_ASSERT(sizeof(report_desc) < MAX_HID_DESCRIPTOR_LEN);
+#include "pop_hid_macros.h"
+
+    const HID_DEVICE_ATTRIBUTES attributes =
+    {
+        .Size = sizeof(HID_DEVICE_ATTRIBUTES),
+        .VendorID = LOWORD(EXPECT_VIDPID),
+        .ProductID = 0x0002,
+        .VersionNumber = 0x0100,
+    };
+    struct hid_device_desc desc =
+    {
+        .caps = { .InputReportByteLength = 6 },
+        .attributes = attributes,
+        .use_report_id = 1,
+    };
+    struct hid_expect single_move[] =
+    {
+        {
+            .code = IOCTL_HID_READ_REPORT,
+            .report_buf = {1,0x00,0x08,0x00,0x08,0x00},
+        },
+    };
+
+    WCHAR device_path[MAX_PATH];
+    HANDLE file;
+    POINT pos;
+    DWORD res;
+    HWND hwnd;
+    BOOL ret;
+
+    winetest_push_context( "mouse ");
+
+    desc.report_descriptor_len = sizeof(report_desc);
+    memcpy( desc.report_descriptor_buf, report_desc, sizeof(report_desc) );
+    fill_context( desc.context, ARRAY_SIZE(desc.context) );
+
+    if (!hid_device_start_( &desc, 1, 5000 /* needs a long timeout on Win7 */ )) goto done;
+
+    swprintf( device_path, MAX_PATH, L"\\\\?\\hid#vid_%04x&pid_%04x", desc.attributes.VendorID,
+              desc.attributes.ProductID );
+    ret = find_hid_device_path( device_path );
+    ok( ret, "Failed to find HID device matching %s\n", debugstr_w( device_path ) );
+
+
+    /* windows doesn't let us open HID mouse devices */
+
+    file = CreateFileW( device_path, FILE_READ_ACCESS | FILE_WRITE_ACCESS,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL );
+    todo_wine
+    ok( file == INVALID_HANDLE_VALUE, "CreateFileW succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_ACCESS_DENIED, "got error %lu\n", GetLastError() );
+    CloseHandle( file );
+
+    file = CreateFileW( L"\\\\?\\root#winetest#0#{deadbeef-29ef-4538-a5fd-b69573a362c0}", 0, 0,
+                        NULL, OPEN_EXISTING, 0, NULL );
+    ok( file != INVALID_HANDLE_VALUE, "CreateFile failed, error %lu\n", GetLastError() );
+
+
+    /* check basic mouse input injection to window message */
+
+    SetCursorPos( 100, 100 );
+    hwnd = create_foreground_window( TRUE );
+    SetWindowLongPtrW( hwnd, GWLP_WNDPROC, (LONG_PTR)mouse_wndproc );
+
+    GetCursorPos( &pos );
+    ok( pos.x == 100, "got x %lu\n", pos.x );
+    ok( pos.y == 100, "got y %lu\n", pos.y );
+
+    mouse_move_count = 0;
+    bus_send_hid_input( file, &desc, single_move, sizeof(single_move) );
+
+    res = MsgWaitForMultipleObjects( 0, NULL, FALSE, 500, QS_MOUSEMOVE );
+    todo_wine
+    ok( !res, "MsgWaitForMultipleObjects returned %#lx\n", res );
+    msg_wait_for_events( 0, NULL, 5 ); /* process pending messages */
+    todo_wine
+    ok( mouse_move_count >= 1, "got mouse_move_count %u\n", mouse_move_count );
+
+    GetCursorPos( &pos );
+    todo_wine
+    ok( (ULONG)pos.x - 107 <= 2, "got x %lu\n", pos.x );
+    todo_wine
+    ok( (ULONG)pos.y - 107 <= 2, "got y %lu\n", pos.y );
+
+    DestroyWindow( hwnd );
+
+
+    CloseHandle( file );
+
+done:
+    hid_device_stop( &desc, 1 );
+
+    winetest_pop_context();
+}
+
+static UINT pointer_enter_count;
+static UINT pointer_down_count;
+static UINT pointer_up_count;
+static UINT pointer_leave_count;
+
+static LRESULT CALLBACK touch_screen_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+{
+    if (msg == WM_POINTERENTER) pointer_enter_count++;
+    if (msg == WM_POINTERDOWN) pointer_down_count++;
+    if (msg == WM_POINTERUP) pointer_up_count++;
+    if (msg == WM_POINTERLEAVE) pointer_leave_count++;
+    return DefWindowProcA( hwnd, msg, wparam, lparam );
+}
+
+static void test_hid_touch_screen(void)
+{
+#include "psh_hid_macros.h"
+    const unsigned char report_desc[] =
+    {
+        USAGE_PAGE(1, HID_USAGE_PAGE_DIGITIZER),
+        USAGE(1, HID_USAGE_DIGITIZER_TOUCH_SCREEN),
+        COLLECTION(1, Application),
+            REPORT_ID(1, 1),
+
+            USAGE(1, HID_USAGE_DIGITIZER_CONTACT_COUNT),
+            LOGICAL_MINIMUM(1, 0),
+            LOGICAL_MAXIMUM(1, 0x7f),
+            REPORT_COUNT(1, 1),
+            REPORT_SIZE(1, 8),
+            INPUT(1, Data|Var|Abs),
+
+            USAGE_PAGE(1, HID_USAGE_PAGE_DIGITIZER),
+            USAGE(1, HID_USAGE_DIGITIZER_FINGER),
+            COLLECTION(1, Logical),
+                USAGE(1, HID_USAGE_DIGITIZER_TIP_SWITCH),
+                LOGICAL_MINIMUM(1, 0),
+                LOGICAL_MAXIMUM(1, 1),
+                REPORT_SIZE(1, 1),
+                REPORT_COUNT(1, 8),
+                INPUT(1, Data|Var|Abs),
+
+                USAGE(1, HID_USAGE_DIGITIZER_CONTACT_ID),
+                LOGICAL_MINIMUM(1, 0),
+                LOGICAL_MAXIMUM(1, 0x7f),
+                REPORT_SIZE(1, 8),
+                REPORT_COUNT(1, 1),
+                INPUT(1, Data|Var|Abs),
+
+                USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
+                USAGE(1, HID_USAGE_GENERIC_X),
+                LOGICAL_MINIMUM(1, 0),
+                LOGICAL_MAXIMUM(1, 0x7f),
+                REPORT_SIZE(1, 8),
+                REPORT_COUNT(1, 1),
+                INPUT(1, Data|Var|Abs),
+
+                USAGE(1, HID_USAGE_GENERIC_Y),
+                LOGICAL_MINIMUM(1, 0),
+                LOGICAL_MAXIMUM(1, 0x7f),
+                REPORT_SIZE(1, 8),
+                REPORT_COUNT(1, 1),
+                INPUT(1, Data|Var|Abs),
+            END_COLLECTION,
+
+            USAGE_PAGE(1, HID_USAGE_PAGE_DIGITIZER),
+            USAGE(1, HID_USAGE_DIGITIZER_FINGER),
+            COLLECTION(1, Logical),
+                USAGE(1, HID_USAGE_DIGITIZER_TIP_SWITCH),
+                LOGICAL_MINIMUM(1, 0),
+                LOGICAL_MAXIMUM(1, 1),
+                REPORT_SIZE(1, 1),
+                REPORT_COUNT(1, 8),
+                INPUT(1, Data|Var|Abs),
+
+                USAGE(1, HID_USAGE_DIGITIZER_CONTACT_ID),
+                LOGICAL_MINIMUM(1, 0),
+                LOGICAL_MAXIMUM(1, 0x7f),
+                REPORT_SIZE(1, 8),
+                REPORT_COUNT(1, 1),
+                INPUT(1, Data|Var|Abs),
+
+                USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
+                USAGE(1, HID_USAGE_GENERIC_X),
+                LOGICAL_MINIMUM(1, 0),
+                LOGICAL_MAXIMUM(1, 0x7f),
+                REPORT_SIZE(1, 8),
+                REPORT_COUNT(1, 1),
+                INPUT(1, Data|Var|Abs),
+
+                USAGE(1, HID_USAGE_GENERIC_Y),
+                LOGICAL_MINIMUM(1, 0),
+                LOGICAL_MAXIMUM(1, 0x7f),
+                REPORT_SIZE(1, 8),
+                REPORT_COUNT(1, 1),
+                INPUT(1, Data|Var|Abs),
+            END_COLLECTION,
+
+            USAGE_PAGE(1, HID_USAGE_PAGE_DIGITIZER),
+            USAGE(1, HID_USAGE_DIGITIZER_CONTACT_COUNT_MAX),
+            LOGICAL_MINIMUM(1, 0),
+            LOGICAL_MAXIMUM(1, 2),
+            REPORT_COUNT(1, 1),
+            REPORT_SIZE(1, 8),
+            FEATURE(1, Data|Var|Abs),
+        END_COLLECTION
+    };
+    C_ASSERT(sizeof(report_desc) < MAX_HID_DESCRIPTOR_LEN);
+#include "pop_hid_macros.h"
+
+    const HID_DEVICE_ATTRIBUTES attributes =
+    {
+        .Size = sizeof(HID_DEVICE_ATTRIBUTES),
+        .VendorID = LOWORD(EXPECT_VIDPID),
+        .ProductID = 0x0004,
+        .VersionNumber = 0x0100,
+    };
+    struct hid_device_desc desc =
+    {
+        .caps = { .InputReportByteLength = 10, .FeatureReportByteLength = 2 },
+        .attributes = attributes,
+        .use_report_id = 1,
+    };
+    struct hid_expect touch_single =
+    {
+        .code = IOCTL_HID_READ_REPORT,
+        .report_buf = {1, 1, 0x01,0x02,0x08,0x10},
+    };
+    struct hid_expect touch_multiple =
+    {
+        .code = IOCTL_HID_READ_REPORT,
+        .report_buf = {1, 2, 0x01,0x02,0x08,0x10, 0x01,0x03,0x18,0x20},
+    };
+    struct hid_expect touch_release =
+    {
+        .code = IOCTL_HID_READ_REPORT,
+        .report_buf = {1, 0},
+    };
+    struct hid_expect expect_max_count =
+    {
+        .code = IOCTL_HID_GET_FEATURE,
+        .report_id = 1,
+        .report_len = 2,
+        .report_buf = {1,0x02},
+        .todo = TRUE,
+    };
+
+    WCHAR device_path[MAX_PATH];
+    HANDLE file;
+    DWORD res;
+    HWND hwnd;
+    BOOL ret;
+
+    desc.report_descriptor_len = sizeof(report_desc);
+    memcpy( desc.report_descriptor_buf, report_desc, sizeof(report_desc) );
+    desc.expect_size = sizeof(expect_max_count);
+    memcpy( desc.expect, &expect_max_count, sizeof(expect_max_count) );
+    fill_context( desc.context, ARRAY_SIZE(desc.context) );
+
+    if (!hid_device_start( &desc, 1 )) goto done;
+
+    swprintf( device_path, MAX_PATH, L"\\\\?\\hid#vid_%04x&pid_%04x", desc.attributes.VendorID,
+              desc.attributes.ProductID );
+    ret = find_hid_device_path( device_path );
+    ok( ret, "Failed to find HID device matching %s\n", debugstr_w( device_path ) );
+
+
+    /* windows doesn't let us open HID touch_screen devices */
+
+    file = CreateFileW( device_path, FILE_READ_ACCESS | FILE_WRITE_ACCESS,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL );
+    /* except on Win7 which doesn't seem to support HID touch screen */
+    if (broken(sizeof(void *) == 4 && file != INVALID_HANDLE_VALUE))
+    {
+        win_skip( "HID touchscreen unsupported, skipping tests\n" );
+        CloseHandle( file );
+        goto done;
+    }
+
+    todo_wine
+    ok( file == INVALID_HANDLE_VALUE, "CreateFileW succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_SHARING_VIOLATION, "got error %lu\n", GetLastError() );
+    CloseHandle( file );
+
+
+    file = CreateFileW( L"\\\\?\\root#winetest#0#{deadbeef-29ef-4538-a5fd-b69573a362c0}", 0, 0,
+                        NULL, OPEN_EXISTING, 0, NULL );
+    ok( file != INVALID_HANDLE_VALUE, "CreateFile failed, error %lu\n", GetLastError() );
+
+
+    /* check basic touch_screen input injection to window message */
+
+    SetCursorPos( 0, 0 );
+
+    hwnd = create_foreground_window( TRUE );
+    SetWindowLongPtrW( hwnd, GWLP_WNDPROC, (LONG_PTR)touch_screen_wndproc );
+
+
+    pointer_enter_count = pointer_down_count = pointer_up_count = pointer_leave_count = 0;
+    bus_send_hid_input( file, &desc, &touch_single, sizeof(touch_single) );
+
+    res = MsgWaitForMultipleObjects( 0, NULL, FALSE, 500, QS_POINTER );
+    todo_wine
+    ok( !res, "MsgWaitForMultipleObjects returned %#lx\n", res );
+    msg_wait_for_events( 0, NULL, 5 ); /* process pending messages */
+    todo_wine
+    ok( pointer_enter_count == 1, "got pointer_enter_count %u\n", pointer_enter_count );
+    todo_wine
+    ok( pointer_down_count == 1, "got pointer_down_count %u\n", pointer_down_count );
+    ok( pointer_up_count == 0, "got pointer_up_count %u\n", pointer_up_count );
+    ok( pointer_leave_count == 0, "got pointer_leave_count %u\n", pointer_leave_count );
+
+
+    pointer_enter_count = pointer_down_count = pointer_up_count = pointer_leave_count = 0;
+    bus_send_hid_input( file, &desc, &touch_release, sizeof(touch_release) );
+
+    res = MsgWaitForMultipleObjects( 0, NULL, FALSE, 500, QS_POINTER );
+    todo_wine
+    ok( !res, "MsgWaitForMultipleObjects returned %#lx\n", res );
+    msg_wait_for_events( 0, NULL, 5 ); /* process pending messages */
+    ok( pointer_enter_count == 0, "got pointer_enter_count %u\n", pointer_enter_count );
+    ok( pointer_down_count == 0, "got pointer_down_count %u\n", pointer_down_count );
+    todo_wine
+    ok( pointer_up_count == 1, "got pointer_up_count %u\n", pointer_up_count );
+    todo_wine
+    ok( pointer_leave_count == 1, "got pointer_leave_count %u\n", pointer_leave_count );
+
+
+
+    pointer_enter_count = pointer_down_count = pointer_up_count = pointer_leave_count = 0;
+    bus_send_hid_input( file, &desc, &touch_multiple, sizeof(touch_multiple) );
+
+    res = MsgWaitForMultipleObjects( 0, NULL, FALSE, 500, QS_POINTER );
+    todo_wine
+    ok( !res, "MsgWaitForMultipleObjects returned %#lx\n", res );
+    msg_wait_for_events( 0, NULL, 5 ); /* process pending messages */
+    todo_wine
+    ok( pointer_enter_count == 2, "got pointer_enter_count %u\n", pointer_enter_count );
+    todo_wine
+    ok( pointer_down_count == 2, "got pointer_down_count %u\n", pointer_down_count );
+    ok( pointer_up_count == 0, "got pointer_up_count %u\n", pointer_up_count );
+    ok( pointer_leave_count == 0, "got pointer_leave_count %u\n", pointer_leave_count );
+
+
+    pointer_enter_count = pointer_down_count = pointer_up_count = pointer_leave_count = 0;
+    bus_send_hid_input( file, &desc, &touch_release, sizeof(touch_release) );
+
+    res = MsgWaitForMultipleObjects( 0, NULL, FALSE, 500, QS_POINTER );
+    todo_wine
+    ok( !res, "MsgWaitForMultipleObjects returned %#lx\n", res );
+    msg_wait_for_events( 0, NULL, 5 ); /* process pending messages */
+    ok( pointer_enter_count == 0, "got pointer_enter_count %u\n", pointer_enter_count );
+    ok( pointer_down_count == 0, "got pointer_down_count %u\n", pointer_down_count );
+    todo_wine
+    ok( pointer_up_count == 2, "got pointer_up_count %u\n", pointer_up_count );
+    todo_wine
+    ok( pointer_leave_count == 2, "got pointer_leave_count %u\n", pointer_leave_count );
+
+
+    DestroyWindow( hwnd );
+
+    CloseHandle( file );
+
+done:
+    hid_device_stop( &desc, 1 );
 }
 
 static void test_dik_codes( IDirectInputDevice8W *device, HANDLE event, HWND hwnd, DWORD version )
@@ -2126,9 +2561,7 @@ static void test_sys_keyboard( DWORD version )
     check_member( objinst, expect_objects[2], "%u", wReportId );
 
 
-    hwnd = CreateWindowW( L"static", L"static", WS_POPUP | WS_VISIBLE,
-                          50, 50, 200, 200, NULL, NULL, NULL, NULL );
-    ok( !!hwnd, "CreateWindowW failed, error %lu\n", GetLastError() );
+    hwnd = create_foreground_window( FALSE );
 
     hr = IDirectInputDevice8_SetCooperativeLevel( device, NULL, DISCL_FOREGROUND );
     ok( hr == DIERR_INVALIDPARAM, "SetCooperativeLevel returned %#lx\n", hr );
@@ -2234,6 +2667,7 @@ static void test_sys_keyboard( DWORD version )
     memset( key_state, 0xcd, sizeof(key_state) );
     hr = IDirectInputDevice8_GetDeviceState( device, sizeof(key_state), key_state );
     ok( hr == DI_OK, "GetDeviceState returned %#lx\n", hr );
+    flaky_wine_if( version < 0x800 && key_state[0] == 0 )
     ok( key_state[0] == (version < 0x800 ? 0x80 : 0), "got key_state[0] %lu\n", key_state[0] );
 
     /* unacquiring should reset the device state */
@@ -2323,6 +2757,153 @@ static void test_sys_keyboard_action_format(void)
     ok( ref == 0, "Release returned %ld\n", ref );
 }
 
+static UINT key_down_count;
+static UINT key_up_count;
+
+static LRESULT CALLBACK keyboard_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+{
+    BOOL us_kbd = (GetKeyboardLayout(0) == (HKL)(ULONG_PTR)0x04090409);
+
+    if (msg == WM_KEYDOWN)
+    {
+        key_down_count++;
+        if (us_kbd) ok( wparam == 'A', "got wparam %#Ix\n", wparam );
+        ok( lparam == 0x1e0001, "got lparam %#Ix\n", lparam );
+    }
+    if (msg == WM_KEYUP)
+    {
+        key_up_count++;
+        if (us_kbd) ok( wparam == 'A', "got wparam %#Ix\n", wparam );
+        ok( lparam == 0xc01e0001, "got lparam %#Ix\n", lparam );
+    }
+    return DefWindowProcA( hwnd, msg, wparam, lparam );
+}
+
+static void test_hid_keyboard(void)
+{
+#include "psh_hid_macros.h"
+    const unsigned char report_desc[] =
+    {
+        USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
+        USAGE(1, HID_USAGE_GENERIC_KEYBOARD),
+        COLLECTION(1, Application),
+            USAGE(1, HID_USAGE_GENERIC_KEYBOARD),
+            COLLECTION(1, Physical),
+                REPORT_ID(1, 1),
+
+                USAGE_PAGE(1, HID_USAGE_PAGE_KEYBOARD),
+                USAGE_MINIMUM(1, HID_USAGE_KEYBOARD_aA),
+                USAGE_MAXIMUM(1, HID_USAGE_KEYBOARD_zZ),
+                LOGICAL_MINIMUM(1, 0),
+                LOGICAL_MAXIMUM(1, 1),
+                REPORT_SIZE(1, 1),
+                REPORT_COUNT(1, 32),
+                INPUT(1, Data|Var|Abs),
+            END_COLLECTION,
+        END_COLLECTION,
+    };
+    C_ASSERT(sizeof(report_desc) < MAX_HID_DESCRIPTOR_LEN);
+#include "pop_hid_macros.h"
+
+    const HID_DEVICE_ATTRIBUTES attributes =
+    {
+        .Size = sizeof(HID_DEVICE_ATTRIBUTES),
+        .VendorID = LOWORD(EXPECT_VIDPID),
+        .ProductID = 0x0003,
+        .VersionNumber = 0x0100,
+    };
+    struct hid_device_desc desc =
+    {
+        .caps = { .InputReportByteLength = 5 },
+        .attributes = attributes,
+        .use_report_id = 1,
+    };
+    struct hid_expect key_press_release[] =
+    {
+        {
+            .code = IOCTL_HID_READ_REPORT,
+            .report_buf = {1,0x01,0x00,0x00,0x00},
+        },
+        {
+            .code = IOCTL_HID_READ_REPORT,
+            .report_buf = {1,0x00,0x00,0x00,0x00},
+        },
+    };
+
+    WCHAR device_path[MAX_PATH];
+    HANDLE file;
+    DWORD res;
+    HWND hwnd;
+    BOOL ret;
+
+    winetest_push_context( "keyboard" );
+
+    desc.report_descriptor_len = sizeof(report_desc);
+    memcpy( desc.report_descriptor_buf, report_desc, sizeof(report_desc) );
+    fill_context( desc.context, ARRAY_SIZE(desc.context) );
+
+    if (!hid_device_start_( &desc, 1, 5000 /* needs a long timeout on Win7 */ )) goto done;
+
+    swprintf( device_path, MAX_PATH, L"\\\\?\\hid#vid_%04x&pid_%04x", desc.attributes.VendorID,
+              desc.attributes.ProductID );
+    ret = find_hid_device_path( device_path );
+    ok( ret, "Failed to find HID device matching %s\n", debugstr_w( device_path ) );
+
+
+    /* windows doesn't let us open HID keyboard devices */
+
+    file = CreateFileW( device_path, FILE_READ_ACCESS | FILE_WRITE_ACCESS,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL );
+    todo_wine
+    ok( file == INVALID_HANDLE_VALUE, "CreateFileW succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_ACCESS_DENIED, "got error %lu\n", GetLastError() );
+    CloseHandle( file );
+
+    file = CreateFileW( L"\\\\?\\root#winetest#0#{deadbeef-29ef-4538-a5fd-b69573a362c0}", 0, 0,
+                        NULL, OPEN_EXISTING, 0, NULL );
+    ok( file != INVALID_HANDLE_VALUE, "CreateFile failed, error %lu\n", GetLastError() );
+
+
+    /* check basic keyboard input injection to window message */
+
+    hwnd = create_foreground_window( FALSE );
+    SetWindowLongPtrW( hwnd, GWLP_WNDPROC, (LONG_PTR)keyboard_wndproc );
+
+    key_down_count = 0;
+    key_up_count = 0;
+    bus_send_hid_input( file, &desc, &key_press_release[0], sizeof(key_press_release[0]) );
+
+    res = MsgWaitForMultipleObjects( 0, NULL, FALSE, 500, QS_KEY );
+    todo_wine
+    ok( !res, "MsgWaitForMultipleObjects returned %#lx\n", res );
+    msg_wait_for_events( 0, NULL, 5 ); /* process pending messages */
+    todo_wine
+    ok( key_down_count == 1, "got key_down_count %u\n", key_down_count );
+    ok( key_up_count == 0, "got key_up_count %u\n", key_up_count );
+
+    bus_send_hid_input( file, &desc, &key_press_release[1], sizeof(key_press_release[1]) );
+
+    res = MsgWaitForMultipleObjects( 0, NULL, FALSE, 500, QS_KEY );
+    todo_wine
+    ok( !res, "MsgWaitForMultipleObjects returned %#lx\n", res );
+    msg_wait_for_events( 0, NULL, 5 ); /* process pending messages */
+    todo_wine
+    ok( key_down_count == 1, "got key_down_count %u\n", key_down_count );
+    todo_wine
+    ok( key_up_count == 1, "got key_up_count %u\n", key_up_count );
+
+    DestroyWindow( hwnd );
+
+
+    CloseHandle( file );
+
+done:
+    hid_device_stop( &desc, 1 );
+
+    winetest_pop_context();
+}
+
 START_TEST(device8)
 {
     dinput_test_init();
@@ -2349,5 +2930,13 @@ START_TEST(device8)
     test_keyboard_events();
     test_appdata_property();
 
+    if (!bus_device_start()) goto done;
+
+    test_hid_mouse();
+    test_hid_keyboard();
+    test_hid_touch_screen();
+
+done:
+    bus_device_stop();
     dinput_test_exit();
 }

@@ -185,6 +185,62 @@ LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context )
 }
 
 
+#if defined(__WINE_PE_BUILD) && !defined(__i386__)
+
+/*******************************************************************
+ *		user_callback_handler
+ *
+ * Exception handler for KiUserCallbackDispatcher.
+ */
+EXCEPTION_DISPOSITION WINAPI user_callback_handler( EXCEPTION_RECORD *record, void *frame,
+                                                    CONTEXT *context, void *dispatch )
+{
+    if (!(record->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)))
+    {
+        ERR( "ignoring exception %lx\n", record->ExceptionCode );
+        RtlUnwind( frame, KiUserCallbackDispatcherReturn, record, ULongToPtr(record->ExceptionCode) );
+    }
+    return ExceptionContinueSearch;
+}
+
+#else
+
+/*******************************************************************
+ *		dispatch_user_callback
+ *
+ * Implementation of KiUserCallbackDispatcher.
+ */
+NTSTATUS WINAPI dispatch_user_callback( void *args, ULONG len, ULONG id )
+{
+    NTSTATUS status;
+
+    __TRY
+    {
+        KERNEL_CALLBACK_PROC func = NtCurrentTeb()->Peb->KernelCallbackTable[id];
+        status = func( args, len );
+    }
+    __EXCEPT_ALL
+    {
+        status = GetExceptionCode();
+        ERR( "ignoring exception %lx\n", status );
+    }
+    __ENDTRY
+    return status;
+}
+
+#endif
+
+/*******************************************************************
+ *         nested_exception_handler
+ */
+EXCEPTION_DISPOSITION WINAPI nested_exception_handler( EXCEPTION_RECORD *rec, void *frame,
+                                                       CONTEXT *context, void *dispatch )
+{
+    if (rec->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)) return ExceptionContinueSearch;
+    return ExceptionNestedException;
+}
+
+
 /*******************************************************************
  *		raise_status
  *

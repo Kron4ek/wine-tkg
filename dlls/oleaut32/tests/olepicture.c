@@ -1028,7 +1028,7 @@ static void test_OleLoadPicturePath(void)
     V_VT(&var) = VT_BSTR;
     V_BSTR(&var) = SysAllocString(temp_fileW + 8);
     hres = OleLoadPictureFile(var, (IDispatch **)&pic);
-    ok(hres == S_OK, "OleLoadPictureFile error %#x\n", hres);
+    ok(hres == S_OK, "OleLoadPictureFile error %#lx\n", hres);
     IPicture_Release(pic);
     VariantClear(&var);
 
@@ -1044,7 +1044,7 @@ static void test_OleLoadPicturePath(void)
     V_VT(&var) = VT_BSTR;
     V_BSTR(&var) = SysAllocString(temp_fileW);
     hres = OleLoadPictureFile(var, (IDispatch **)&pic);
-    ok(hres == CTL_E_PATHFILEACCESSERROR, "wrong error %#x\n", hres);
+    ok(hres == CTL_E_PATHFILEACCESSERROR, "wrong error %#lx\n", hres);
     VariantClear(&var);
 
     DeleteFileA(temp_file);
@@ -1060,7 +1060,7 @@ static void test_OleLoadPicturePath(void)
     V_VT(&var) = VT_BSTR;
     V_BSTR(&var) = SysAllocString(temp_fileW + 8);
     hres = OleLoadPictureFile(var, (IDispatch **)&pic);
-    ok(hres == CTL_E_FILENOTFOUND, "wrong error %#x\n", hres);
+    ok(hres == CTL_E_FILENOTFOUND, "wrong error %#lx\n", hres);
     VariantClear(&var);
 
     hres = OleLoadPicturePath(temp_fileW, NULL, 0, 0, &IID_IPicture, (void **)&pic);
@@ -1073,7 +1073,7 @@ static void test_OleLoadPicturePath(void)
     V_VT(&var) = VT_BSTR;
     V_BSTR(&var) = SysAllocString(temp_fileW);
     hres = OleLoadPictureFile(var, (IDispatch **)&pic);
-    ok(hres == CTL_E_PATHFILEACCESSERROR, "wrong error %#x\n", hres);
+    ok(hres == CTL_E_PATHFILEACCESSERROR, "wrong error %#lx\n", hres);
     VariantClear(&var);
 
     file = CreateFileA(temp_file, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
@@ -1101,7 +1101,7 @@ static void test_OleLoadPicturePath(void)
     V_VT(&var) = VT_BSTR;
     V_BSTR(&var) = SysAllocString(temp_fileW);
     hres = OleLoadPictureFile(var, (IDispatch **)&pic);
-    ok(hres == CTL_E_PATHFILEACCESSERROR, "wrong error %#x\n", hres);
+    ok(hres == CTL_E_PATHFILEACCESSERROR, "wrong error %#lx\n", hres);
     VariantClear(&var);
 
     DeleteFileA(temp_file);
@@ -1126,7 +1126,7 @@ static void test_OleLoadPicturePath(void)
     hres = OleLoadPictureFile(var, (IDispatch **)&pic);
     ok(hres == CTL_E_FILENOTFOUND, "wrong error %#lx\n", hres);
 
-if (0) /* crashes under Windows */
+    if (0) /* crashes under Windows */
     hres = OleLoadPictureFile(var, NULL);
 }
 

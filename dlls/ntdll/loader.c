@@ -4222,30 +4222,6 @@ PIMAGE_NT_HEADERS WINAPI RtlImageNtHeader(HMODULE hModule)
 }
 
 /***********************************************************************
- *           process_breakpoint
- *
- * Trigger a debug breakpoint if the process is being debugged.
- */
-static void process_breakpoint(void)
-{
-    DWORD_PTR port = 0;
-
-    NtQueryInformationProcess( GetCurrentProcess(), ProcessDebugPort, &port, sizeof(port), NULL );
-    if (!port) return;
-
-    __TRY
-    {
-        DbgBreakPoint();
-    }
-    __EXCEPT_ALL
-    {
-        /* do nothing */
-    }
-    __ENDTRY
-}
-
-
-/***********************************************************************
  *           load_global_options
  */
 static void load_global_options(void)
@@ -4300,15 +4276,15 @@ void (WINAPI *pWow64PrepareForException)( EXCEPTION_RECORD *rec, CONTEXT *contex
 
 static void init_wow64( CONTEXT *context )
 {
-    build_wow64_main_module();
-    build_ntdll_module();
-
     if (!imports_fixup_done)
     {
         HMODULE wow64;
         WINE_MODREF *wm;
         NTSTATUS status;
         static const WCHAR wow64_path[] = L"C:\\windows\\system32\\wow64.dll";
+
+        build_wow64_main_module();
+        build_ntdll_module();
 
         if ((status = load_dll( NULL, wow64_path, 0, &wm, FALSE )))
         {
@@ -4418,7 +4394,7 @@ void loader_init( CONTEXT *context, void **entry )
     HANDLE staging_event;
     static int attach_done;
     NTSTATUS status;
-    ULONG_PTR cookie;
+    ULONG_PTR cookie, port = 0;
     WINE_MODREF *wm;
 
     if (process_detaching) NtTerminateThread( GetCurrentThread(), 0 );
@@ -4427,14 +4403,10 @@ void loader_init( CONTEXT *context, void **entry )
 
     if (!imports_fixup_done)
     {
-        MEMORY_BASIC_INFORMATION meminfo;
         ANSI_STRING ctrl_routine = RTL_CONSTANT_STRING( "CtrlRoutine" );
         WINE_MODREF *kernel32;
         PEB *peb = NtCurrentTeb()->Peb;
         unsigned int i;
-
-        NtQueryVirtualMemory( GetCurrentProcess(), LdrInitializeThunk, MemoryBasicInformation,
-                              &meminfo, sizeof(meminfo), NULL );
 
         peb->LdrData            = &ldr;
         peb->FastPebLock        = &peb_lock;
@@ -4543,7 +4515,9 @@ void loader_init( CONTEXT *context, void **entry )
         release_address_space();
         if (wm->ldr.TlsIndex == -1) call_tls_callbacks( wm->ldr.DllBase, DLL_PROCESS_ATTACH );
         if (wm->ldr.ActivationContext) RtlDeactivateActivationContext( 0, cookie );
-        process_breakpoint();
+
+        NtQueryInformationProcess( GetCurrentProcess(), ProcessDebugPort, &port, sizeof(port), NULL );
+        if (port) process_breakpoint();
     }
     else
     {

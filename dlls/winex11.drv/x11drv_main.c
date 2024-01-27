@@ -930,6 +930,7 @@ void X11DRV_ThreadDetach(void)
         vulkan_thread_detach();
         if (data->xim) XCloseIM( data->xim );
         if (data->font_set) XFreeFontSet( data->display, data->font_set );
+        XSync( gdi_display, False ); /* make sure XReparentWindow requests have completed before closing the thread display */
         XCloseDisplay( data->display );
         free( data );
         /* clear data in case we get re-entered from user32 before the thread is truly dead */
@@ -1513,13 +1514,6 @@ NTSTATUS x11drv_client_func( enum x11drv_client_funcs id, const void *params, UL
     void *ret_ptr;
     ULONG ret_len;
     return KeUserModeCallback( id, params, size, &ret_ptr, &ret_len );
-}
-
-
-NTSTATUS x11drv_client_call( enum client_callback func, UINT arg )
-{
-    struct client_callback_params params = { .id = func, .arg = arg };
-    return x11drv_client_func( client_func_callback, &params, sizeof(params) );
 }
 
 

@@ -580,6 +580,59 @@ void wined3d_device_destroy_default_samplers(struct wined3d_device *device)
     device->null_sampler = NULL;
 }
 
+static GLuint64 create_dummy_sampler_handle(struct wined3d_device *device, struct wined3d_context_gl *context_gl,
+        GLuint texture)
+{
+    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
+    GLuint64 handle;
+
+    handle = GL_EXTCALL(glGetTextureSamplerHandleARB(texture, wined3d_sampler_gl(device->default_sampler)->name));
+    GL_EXTCALL(glMakeTextureHandleResidentARB(handle));
+    checkGLcall("glMakeTextureHandleResidentARB");
+    return handle;
+}
+
+/* Context activation is done by the caller. */
+static void create_dummy_sampler_handles(struct wined3d_device *device, struct wined3d_context_gl *context_gl)
+{
+    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
+    const struct wined3d_dummy_textures *textures = &wined3d_device_gl(device)->dummy_textures;
+    struct wined3d_dummy_sampler_handles *handles = &wined3d_device_gl(device)->dummy_sampler_handles;
+
+    if (!gl_info->supported[ARB_BINDLESS_TEXTURE])
+        return;
+
+    if (gl_info->supported[ARB_TEXTURE_MULTISAMPLE])
+    {
+        handles->tex_2d_ms = create_dummy_sampler_handle(device, context_gl, textures->tex_2d_ms);
+        handles->tex_2d_ms_array = create_dummy_sampler_handle(device, context_gl, textures->tex_2d_ms_array);
+    }
+
+    if (gl_info->supported[ARB_TEXTURE_BUFFER_OBJECT])
+        handles->tex_buffer = create_dummy_sampler_handle(device, context_gl, textures->tex_buffer);
+
+    if (gl_info->supported[EXT_TEXTURE_ARRAY])
+    {
+        handles->tex_2d_array = create_dummy_sampler_handle(device, context_gl, textures->tex_2d_array);
+        handles->tex_1d_array = create_dummy_sampler_handle(device, context_gl, textures->tex_1d_array);
+    }
+
+    if (gl_info->supported[ARB_TEXTURE_CUBE_MAP_ARRAY])
+        handles->tex_cube_array = create_dummy_sampler_handle(device, context_gl, textures->tex_cube_array);
+
+    if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
+        handles->tex_cube = create_dummy_sampler_handle(device, context_gl, textures->tex_cube);
+
+    if (gl_info->supported[EXT_TEXTURE3D])
+        handles->tex_3d = create_dummy_sampler_handle(device, context_gl, textures->tex_3d);
+
+    if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
+        handles->tex_rect = create_dummy_sampler_handle(device, context_gl, textures->tex_rect);
+
+    handles->tex_2d = create_dummy_sampler_handle(device, context_gl, textures->tex_2d);
+    handles->tex_1d = create_dummy_sampler_handle(device, context_gl, textures->tex_1d);
+}
+
 static bool wined3d_null_image_vk_init(struct wined3d_image_vk *image, struct wined3d_context_vk *context_vk,
         VkCommandBuffer vk_command_buffer, VkImageType type, unsigned int layer_count, unsigned int sample_count)
 {
@@ -722,6 +775,7 @@ bool wined3d_device_vk_create_null_views(struct wined3d_device_vk *device_vk, st
     struct wined3d_null_resources_vk *r = &device_vk->null_resources_vk;
     struct wined3d_null_views_vk *v = &device_vk->null_views_vk;
     VkBufferViewCreateInfo buffer_create_info;
+    VkImageViewUsageCreateInfoKHR usage_desc;
     const struct wined3d_vk_info *vk_info;
     VkImageViewCreateInfo view_desc;
     VkResult vr;
@@ -768,6 +822,16 @@ bool wined3d_device_vk_create_null_views(struct wined3d_device_vk *device_vk, st
     view_desc.subresourceRange.levelCount = 1;
     view_desc.subresourceRange.baseArrayLayer = 0;
     view_desc.subresourceRange.layerCount = 1;
+
+    if (vk_info->supported[WINED3D_VK_KHR_MAINTENANCE2] || vk_info->api_version >= VK_API_VERSION_1_1)
+    {
+        usage_desc.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO_KHR;
+        usage_desc.pNext = NULL;
+        usage_desc.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+
+        view_desc.pNext = &usage_desc;
+    }
+
     if ((vr = VK_CALL(vkCreateImageView(device_vk->vk_device, &view_desc, NULL, &v->vk_info_1d.imageView))) < 0)
     {
         ERR("Failed to create 1D image view, vr %s.\n", wined3d_debug_vkresult(vr));
@@ -1312,6 +1376,7 @@ void wined3d_device_gl_create_primary_opengl_context_cs(void *object)
 
     wined3d_device_gl_create_dummy_textures(device_gl, context_gl);
     wined3d_device_create_default_samplers(device, context);
+    create_dummy_sampler_handles(device, context_gl);
     context_release(context);
 }
 

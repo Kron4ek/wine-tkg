@@ -188,6 +188,10 @@ static BOOL is_matching_key(const struct dictionary *dict, const struct keyitem_
     {
         return hash == pair->hash && numeric_key_eq(key, &pair->key);
     }
+    else if (V_VT(&pair->key) == VT_EMPTY || V_VT(&pair->key) == VT_NULL)
+    {
+        return V_VT(&pair->key) == V_VT(key);
+    }
     else
     {
         WARN("Unexpected key type %#x.\n", V_VT(key));
@@ -909,6 +913,10 @@ static HRESULT WINAPI dictionary_get_HashVal(IDictionary *iface, VARIANT *key, V
     case VT_R8|VT_BYREF:
     case VT_R8:
         return get_flt_hash(V_VT(key) & VT_BYREF ? *V_R8REF(key) : V_R8(key), &V_I4(hash));
+    case VT_EMPTY:
+    case VT_NULL:
+        V_I4(hash) = 0;
+        return S_OK;
     case VT_INT:
     case VT_UINT:
     case VT_I1:

@@ -745,6 +745,22 @@ if (0) { /* crashes on native */
     ok(V_VT(&hash) == VT_I4, "got %d\n", V_VT(&hash));
     ok(V_I4(&hash) == expected, "got hash %#lx, expected %#lx\n", V_I4(&hash), expected);
 
+    V_VT(&key) = VT_EMPTY;
+    V_I4(&key) = 1234;
+    V_I4(&hash) = 5678;
+    hr = IDictionary_get_HashVal(dict, &key, &hash);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&hash) == VT_I4, "Unexpected hash type %d.\n", V_VT(&hash));
+    ok(V_I4(&hash) == 0, "Unexpected hash value %ld.\n", V_I4(&hash));
+
+    V_VT(&key) = VT_NULL;
+    V_I4(&key) = 1234;
+    V_I4(&hash) = 5678;
+    hr = IDictionary_get_HashVal(dict, &key, &hash);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&hash) == VT_I4, "Unexpected hash type %d.\n", V_VT(&hash));
+    ok(V_I4(&hash) == 0, "Unexpected hash value %ld.\n", V_I4(&hash));
+
     IDictionary_Release(dict);
 }
 
@@ -990,6 +1006,45 @@ static void test_Add(void)
 
     hr = IDictionary_Add(dict, &key1, &item);
     ok(hr == CTL_E_KEY_ALREADY_EXISTS, "Unexpected hr %#lx.\n", hr);
+
+    VariantClear(&item);
+
+    /* Empty and null keys. */
+    hr = IDictionary_RemoveAll(dict);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    V_VT(&key1) = VT_EMPTY;
+    V_I4(&key1) = 1;
+
+    V_VT(&item) = VT_BSTR;
+    V_BSTR(&item) = SysAllocString(L"empty");
+
+    hr = IDictionary_Add(dict, &key1, &item);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    V_VT(&key2) = VT_EMPTY;
+    V_I4(&key2) = 2;
+
+    hr = IDictionary_Add(dict, &key2, &item);
+    ok(hr == CTL_E_KEY_ALREADY_EXISTS, "Unexpected hr %#lx.\n", hr);
+
+    V_VT(&key2) = VT_NULL;
+    V_I4(&key2) = 2;
+
+    hr = IDictionary_Add(dict, &key2, &item);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IDictionary_RemoveAll(dict);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IDictionary_Add(dict, &key2, &item);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IDictionary_Add(dict, &key2, &item);
+    ok(hr == CTL_E_KEY_ALREADY_EXISTS, "Unexpected hr %#lx.\n", hr);
+
+    hr = IDictionary_Add(dict, &key1, &item);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     VariantClear(&item);
 

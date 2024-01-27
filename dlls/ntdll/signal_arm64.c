@@ -179,17 +179,10 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
     dispatch->ScopeIndex       = 0;
     dispatch->EstablisherFrame = 0;
     dispatch->ControlPc        = context->Pc;
-    /*
-     * TODO: CONTEXT_UNWOUND_TO_CALL should be cleared if unwound past a
-     * signal frame.
-     */
     dispatch->ControlPcIsUnwound = (context->ContextFlags & CONTEXT_UNWOUND_TO_CALL) != 0;
     pc = context->Pc - (dispatch->ControlPcIsUnwound ? 4 : 0);
 
-    /* first look for PE exception information */
-
-    if ((dispatch->FunctionEntry = lookup_function_info(pc,
-             &dispatch->ImageBase, &module )))
+    if ((dispatch->FunctionEntry = lookup_function_info( pc, &dispatch->ImageBase, &module )))
     {
         dispatch->LanguageHandler = RtlVirtualUnwind( type, dispatch->ImageBase, pc,
                                                       dispatch->FunctionEntry, context,
@@ -198,45 +191,18 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
         return STATUS_SUCCESS;
     }
 
-    /* then look for host system exception information */
-
-    if (!module || (module->Flags & LDR_WINE_INTERNAL))
-    {
-        struct unwind_builtin_dll_params params = { type, dispatch, context };
-
-        status = WINE_UNIX_CALL( unix_unwind_builtin_dll, &params );
-        if (status != STATUS_SUCCESS) return status;
-
-        if (dispatch->EstablisherFrame)
-        {
-            dispatch->FunctionEntry = NULL;
-            if (dispatch->LanguageHandler && !module)
-            {
-                FIXME( "calling personality routine in system library not supported yet\n" );
-                dispatch->LanguageHandler = NULL;
-            }
-            return STATUS_SUCCESS;
-        }
-    }
+    status = context->Pc != context->Lr ? STATUS_SUCCESS : STATUS_INVALID_DISPOSITION;
+    if (module)
+        WARN( "exception data not found in %s for pc %p, lr %p\n",
+              debugstr_w(module->BaseDllName.Buffer), (void *)context->Pc, (void *)context->Lr );
     else
-    {
-        status = context->Pc != context->Lr ?
-                 STATUS_SUCCESS : STATUS_INVALID_DISPOSITION;
-        WARN( "exception data not found in %s for %p, LR %p, status %lx\n",
-               debugstr_w(module->BaseDllName.Buffer), (void*) context->Pc,
-               (void*) context->Lr, status );
-        dispatch->EstablisherFrame = context->Sp;
-        dispatch->LanguageHandler = NULL;
-        context->Pc = context->Lr;
-        context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
-        return status;
-    }
-
-    dispatch->EstablisherFrame = context->Fp;
+        WARN( "no module found for pc %p, lr %p\n",
+              (void *)context->Pc, (void *)context->Lr );
+    dispatch->EstablisherFrame = context->Sp;
     dispatch->LanguageHandler = NULL;
     context->Pc = context->Lr;
     context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
-    return STATUS_SUCCESS;
+    return status;
 }
 
 
@@ -335,37 +301,41 @@ static DWORD call_teb_unwind_handler( EXCEPTION_RECORD *rec, DISPATCHER_CONTEXT 
 }
 
 
-static DWORD __cdecl nested_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
-                                               CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher )
-{
-    if (!(rec->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)))
-        rec->ExceptionFlags |= EH_NESTED_CALL;
-
-    return ExceptionContinueSearch;
-}
+/***********************************************************************
+ *		call_handler_wrapper
+ */
+extern DWORD WINAPI call_handler_wrapper( EXCEPTION_RECORD *rec, CONTEXT *context, DISPATCHER_CONTEXT *dispatch );
+__ASM_GLOBAL_FUNC( call_handler_wrapper,
+                   "stp x29, x30, [sp, #-16]!\n\t"
+                   ".seh_save_fplr_x 16\n\t"
+                   "mov x29, sp\n\t"
+                   ".seh_set_fp\n\t"
+                   ".seh_endprologue\n\t"
+                   ".seh_handler " __ASM_NAME("nested_exception_handler") ", @except\n\t"
+                   "mov x3, x2\n\t"           /* dispatch */
+                   "mov x2, x1\n\t"           /* context */
+                   "ldr x1, [x3, #0x18]\n\t"  /* dispatch->EstablisherFrame */
+                   "ldr x15, [x3, #0x30]\n\t" /* dispatch->LanguageHandler */
+                   "blr x15\n\t"
+                   "ldp x29, x30, [sp], #16\n\t"
+                   "ret" )
 
 
 /**********************************************************************
  *           call_handler
  *
  * Call a single exception handler.
- * FIXME: Handle nested exceptions.
  */
 static DWORD call_handler( EXCEPTION_RECORD *rec, CONTEXT *context, DISPATCHER_CONTEXT *dispatch )
 {
-    EXCEPTION_REGISTRATION_RECORD frame;
     DWORD res;
-
-    frame.Handler = nested_exception_handler;
-    __wine_push_frame( &frame );
 
     TRACE( "calling handler %p (rec=%p, frame=%I64x context=%p, dispatch=%p)\n",
            dispatch->LanguageHandler, rec, dispatch->EstablisherFrame, dispatch->ContextRecord, dispatch );
-    res = dispatch->LanguageHandler( rec, (void *)dispatch->EstablisherFrame, context, dispatch );
+    res = call_handler_wrapper( rec, context, dispatch );
     TRACE( "handler at %p returned %lu\n", dispatch->LanguageHandler, res );
 
     rec->ExceptionFlags &= EH_NONCONTINUABLE;
-    __wine_pop_frame( &frame );
     return res;
 }
 
@@ -435,7 +405,8 @@ static NTSTATUS call_function_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_con
             case ExceptionContinueSearch:
                 break;
             case ExceptionNestedException:
-                FIXME( "nested exception\n" );
+                rec->ExceptionFlags |= EH_NESTED_CALL;
+                TRACE_(seh)( "nested exception\n" );
                 break;
             case ExceptionCollidedUnwind: {
                 ULONG64 frame;
@@ -465,7 +436,8 @@ static NTSTATUS call_function_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_con
             case ExceptionContinueSearch:
                 break;
             case ExceptionNestedException:
-                FIXME( "nested exception\n" );
+                rec->ExceptionFlags |= EH_NESTED_CALL;
+                TRACE_(seh)( "nested exception\n" );
                 break;
             case ExceptionCollidedUnwind: {
                 ULONG64 frame;
@@ -605,34 +577,27 @@ __ASM_GLOBAL_FUNC( KiUserApcDispatcher,
 /*******************************************************************
  *		KiUserCallbackDispatcher (NTDLL.@)
  */
-void WINAPI dispatch_callback( void *args, ULONG len, ULONG id )
-{
-    NTSTATUS status;
-
-    __TRY
-    {
-        NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-        status = NtCallbackReturn( NULL, 0, func( args, len ));
-    }
-    __EXCEPT_ALL
-    {
-        ERR_(seh)( "ignoring exception\n" );
-        status = NtCallbackReturn( 0, 0, 0 );
-    }
-    __ENDTRY
-
-    RtlRaiseStatus( status );
-}
 __ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
-                   __ASM_SEH(".seh_pushframe\n\t")
+                   ".seh_pushframe\n\t"
                    "nop\n\t"
-                   __ASM_SEH(".seh_stackalloc 0x20\n\t")
+                   ".seh_stackalloc 0x20\n\t"
                    "nop\n\t"
-                   __ASM_SEH(".seh_save_reg lr, 0x18\n\t")
-                   __ASM_SEH(".seh_endprologue\n\t")
+                   ".seh_save_reg lr, 0x18\n\t"
+                   ".seh_endprologue\n\t"
+                   ".seh_handler " __ASM_NAME("user_callback_handler") ", @except\n\t"
                    "ldr x0, [sp]\n\t"             /* args */
                    "ldp w1, w2, [sp, #0x08]\n\t"  /* len, id */
-                   "bl " __ASM_NAME("dispatch_callback") "\n\t"
+                   "ldr x3, [x18, 0x60]\n\t"      /* peb */
+                   "ldr x3, [x3, 0x58]\n\t"       /* peb->KernelCallbackTable */
+                   "ldr x15, [x3, x2, lsl #3]\n\t"
+                   "blr x15\n\t"
+                   ".globl " __ASM_NAME("KiUserCallbackDispatcherReturn") "\n"
+                   __ASM_NAME("KiUserCallbackDispatcherReturn") ":\n\t"
+                   "mov x2, x0\n\t"               /* status */
+                   "mov x1, #0\n\t"               /* ret_len */
+                   "mov x0, x1\n\t"               /* ret_ptr */
+                   "bl " __ASM_NAME("NtCallbackReturn") "\n\t"
+                   "bl " __ASM_NAME("RtlRaiseStatus") "\n\t"
                    "brk #1" )
 
 
@@ -817,6 +782,7 @@ static void process_unwind_codes( BYTE *ptr, BYTE *end, CONTEXT *context,
         {
             context->Pc = ((DWORD64 *)context->Sp)[1];
             context->Sp = ((DWORD64 *)context->Sp)[0];
+            context->ContextFlags &= ~CONTEXT_UNWOUND_TO_CALL;
         }
         else if (*ptr == 0xea)  /* MSFT_OP_CONTEXT */
         {
@@ -1099,10 +1065,12 @@ PVOID WINAPI RtlVirtualUnwind( ULONG type, ULONG_PTR base, ULONG_PTR pc,
     else
         handler = unwind_full_data( base, pc, func, context, handler_data, ctx_ptr );
 
-    TRACE( "ret: lr=%I64x sp=%I64x handler=%p\n", context->Lr, context->Sp, handler );
+    TRACE( "ret: pc=%I64x lr=%I64x sp=%I64x handler=%p\n", context->Pc, context->Lr, context->Sp, handler );
     if (!context->Pc)
+    {
         context->Pc = context->Lr;
-    context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
+        context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
+    }
     *frame_ret = context->Sp;
     return handler;
 }
@@ -1591,6 +1559,22 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unk2, ULONG_PTR unk3
     TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", (void *)context->X0, (void *)context->X1 );
     NtContinue( context, TRUE );
 }
+
+
+/***********************************************************************
+ *           process_breakpoint
+ */
+__ASM_GLOBAL_FUNC( process_breakpoint,
+                   ".seh_endprologue\n\t"
+                   ".seh_handler process_breakpoint_handler, @except\n\t"
+                   "brk #0xf000\n\t"
+                   "ret\n"
+                   "process_breakpoint_handler:\n\t"
+                   "ldr x4, [x2, #0x108]\n\t" /* context->Pc */
+                   "add x4, x4, #4\n\t"
+                   "str x4, [x2, #0x108]\n\t"
+                   "mov w0, #0\n\t"           /* ExceptionContinueExecution */
+                   "ret" )
 
 /**********************************************************************
  *              DbgBreakPoint   (NTDLL.@)

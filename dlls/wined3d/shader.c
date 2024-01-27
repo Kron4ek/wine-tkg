@@ -26,7 +26,6 @@
 #include <string.h>
 
 #include "wined3d_private.h"
-#include "wined3d_gl.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d_shader);
 
@@ -756,6 +755,10 @@ static BOOL shader_record_register_usage(struct wined3d_shader *shader, struct w
 
         case WINED3DSPR_SAMPLEMASK:
             reg_maps->sample_mask = 1;
+            break;
+
+        case WINED3DSPR_STENCILREF:
+            reg_maps->stencil_ref = 1;
             break;
 
         default:
@@ -2023,6 +2026,12 @@ static BOOL shader_none_color_fixup_supported(struct color_fixup_desc fixup)
     return TRUE;
 }
 
+void shader_none_resource_view_handle(void *shader_priv, struct wined3d_context *context,
+            const struct wined3d_state *state, const struct wined3d_shader *shader)
+{
+    ERR("Not implemented.\n");
+}
+
 static uint64_t shader_none_shader_compile(struct wined3d_context *context, const struct wined3d_shader_desc *shader_desc,
         enum wined3d_shader_type shader_type)
 {
@@ -2047,6 +2056,7 @@ const struct wined3d_shader_backend_ops none_shader_backend =
     shader_none_init_context_state,
     shader_none_get_caps,
     shader_none_color_fixup_supported,
+    shader_none_resource_view_handle,
     shader_none_shader_compile,
 };
 
@@ -2395,7 +2405,6 @@ static void shader_trace(const void *code, size_t size, enum vkd3d_shader_source
 static HRESULT shader_init(struct wined3d_shader *shader, struct wined3d_device *device,
         const struct wined3d_shader_desc *desc, void *parent, const struct wined3d_parent_ops *parent_ops)
 {
-    enum vkd3d_shader_source_type source_type;
     HRESULT hr;
 
     TRACE("byte_code %p, byte_code_size %#lx.\n", desc->byte_code, (long)desc->byte_code_size);
@@ -2424,8 +2433,8 @@ static HRESULT shader_init(struct wined3d_shader *shader, struct wined3d_device 
         const DWORD *ptr;
         void *fe_data;
 
-        source_type = VKD3D_SHADER_SOURCE_D3D_BYTECODE;
-        if (!(shader->frontend = shader_select_frontend(source_type)))
+        shader->source_type = VKD3D_SHADER_SOURCE_D3D_BYTECODE;
+        if (!(shader->frontend = shader_select_frontend(shader->source_type)))
         {
             FIXME("Unable to find frontend for shader.\n");
             hr = WINED3DERR_INVALIDCALL;
@@ -2471,10 +2480,10 @@ static HRESULT shader_init(struct wined3d_shader *shader, struct wined3d_device 
         shader->byte_code_size = desc->byte_code_size;
 
         max_version = shader_max_version_from_feature_level(device->cs->c.state->feature_level);
-        if (FAILED(hr = wined3d_shader_extract_from_dxbc(shader, max_version, &source_type)))
+        if (FAILED(hr = wined3d_shader_extract_from_dxbc(shader, max_version, &shader->source_type)))
             goto fail;
 
-        if (!(shader->frontend = shader_select_frontend(source_type)))
+        if (!(shader->frontend = shader_select_frontend(shader->source_type)))
         {
             FIXME("Unable to find frontend for shader.\n");
             hr = WINED3DERR_INVALIDCALL;
@@ -2484,10 +2493,10 @@ static HRESULT shader_init(struct wined3d_shader *shader, struct wined3d_device 
 
     if (TRACE_ON(d3d_shader))
     {
-        if (source_type == VKD3D_SHADER_SOURCE_D3D_BYTECODE)
-            shader_trace(shader->function, shader->functionLength, source_type);
+        if (shader->source_type == VKD3D_SHADER_SOURCE_D3D_BYTECODE)
+            shader_trace(shader->function, shader->functionLength, shader->source_type);
         else
-            shader_trace(shader->byte_code, shader->byte_code_size, source_type);
+            shader_trace(shader->byte_code, shader->byte_code_size, shader->source_type);
     }
 
 
@@ -2842,6 +2851,8 @@ void find_ps_compile_args(const struct wined3d_state *state, const struct wined3
     {
         for (i = 0; i < shader->limits->sampler; ++i)
         {
+            enum wined3d_shader_tex_types type = WINED3D_SHADER_TEX_2D;
+
             if (!shader->reg_maps.resource_info[i].type)
                 continue;
 
@@ -2852,20 +2863,24 @@ void find_ps_compile_args(const struct wined3d_state *state, const struct wined3
                 continue;
             texture = texture_from_resource(view->resource);
 
-            switch (wined3d_texture_gl(texture)->target)
+            switch (texture->resource.type)
             {
-                /* RECT textures are distinguished from 2D textures via np2_fixup */
-                default:
+                case WINED3D_RTYPE_NONE:
+                case WINED3D_RTYPE_BUFFER:
+                case WINED3D_RTYPE_TEXTURE_1D:
+                    assert(0);
+
+                case WINED3D_RTYPE_TEXTURE_2D:
+                    if (texture->resource.usage & WINED3DUSAGE_LEGACY_CUBEMAP)
+                        type = WINED3D_SHADER_TEX_CUBE;
                     break;
 
-                case GL_TEXTURE_3D:
-                    args->tex_types |= WINED3D_SHADER_TEX_3D << i * WINED3D_PSARGS_TEXTYPE_SHIFT;
-                    break;
-
-                case GL_TEXTURE_CUBE_MAP_ARB:
-                    args->tex_types |= WINED3D_SHADER_TEX_CUBE << i * WINED3D_PSARGS_TEXTYPE_SHIFT;
+                case WINED3D_RTYPE_TEXTURE_3D:
+                    type = WINED3D_SHADER_TEX_3D;
                     break;
             }
+
+            args->tex_types |= (type << (i * WINED3D_PSARGS_TEXTYPE_SHIFT));
         }
     }
     else if (shader->reg_maps.shader_version.major <= 3)

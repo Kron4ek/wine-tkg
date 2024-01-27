@@ -587,7 +587,7 @@ static BOOL handle_debug_event(struct gdb_context* gdbctx, BOOL stop_on_dll_load
         return TRUE;
 
     case UNLOAD_DLL_DEBUG_EVENT:
-        fprintf(stderr, "%08lx:%08lx: unload DLL @%p\n",
+        fprintf(stderr, "%04lx:%04lx: unload DLL @%p\n",
                 de->dwProcessId, de->dwThreadId, de->u.UnloadDll.lpBaseOfDll);
         SymUnloadModule(gdbctx->process->handle,
                         (DWORD_PTR)de->u.UnloadDll.lpBaseOfDll);
@@ -596,16 +596,16 @@ static BOOL handle_debug_event(struct gdb_context* gdbctx, BOOL stop_on_dll_load
         return TRUE;
 
     case EXCEPTION_DEBUG_EVENT:
-        TRACE("%08lx:%08lx: exception code=0x%08lx\n", de->dwProcessId,
-            de->dwThreadId, de->u.Exception.ExceptionRecord.ExceptionCode);
+        TRACE("%04lx:%04lx: exception code=0x%08lx\n", de->dwProcessId,
+              de->dwThreadId, de->u.Exception.ExceptionRecord.ExceptionCode);
 
         if (handle_exception(gdbctx, &de->u.Exception))
             return TRUE;
         break;
 
     case CREATE_THREAD_DEBUG_EVENT:
-        fprintf(stderr, "%08lx:%08lx: create thread D @%p\n", de->dwProcessId,
-            de->dwThreadId, de->u.CreateThread.lpStartAddress);
+        fprintf(stderr, "%04lx:%04lx: create thread D @%p\n", de->dwProcessId,
+                de->dwThreadId, de->u.CreateThread.lpStartAddress);
 
         dbg_add_thread(gdbctx->process,
                        de->dwThreadId,
@@ -614,14 +614,14 @@ static BOOL handle_debug_event(struct gdb_context* gdbctx, BOOL stop_on_dll_load
         return TRUE;
 
     case EXIT_THREAD_DEBUG_EVENT:
-        fprintf(stderr, "%08lx:%08lx: exit thread (%lu)\n",
+        fprintf(stderr, "%04lx:%04lx: exit thread (%lu)\n",
                 de->dwProcessId, de->dwThreadId, de->u.ExitThread.dwExitCode);
         if ((thread = dbg_get_thread(gdbctx->process, de->dwThreadId)))
             dbg_del_thread(thread);
         return TRUE;
 
     case EXIT_PROCESS_DEBUG_EVENT:
-        fprintf(stderr, "%08lx:%08lx: exit process (%lu)\n",
+        fprintf(stderr, "%04lx:%04lx: exit process (%lu)\n",
                 de->dwProcessId, de->dwThreadId, de->u.ExitProcess.dwExitCode);
 
         dbg_del_process(gdbctx->process);
@@ -632,18 +632,18 @@ static BOOL handle_debug_event(struct gdb_context* gdbctx, BOOL stop_on_dll_load
         memory_get_string(gdbctx->process,
                           de->u.DebugString.lpDebugStringData, TRUE,
                           de->u.DebugString.fUnicode, u.bufferA, sizeof(u.bufferA));
-        fprintf(stderr, "%08lx:%08lx: output debug string (%s)\n",
-            de->dwProcessId, de->dwThreadId, debugstr_a(u.bufferA));
+        fprintf(stderr, "%04lx:%04lx: output debug string (%s)\n",
+                de->dwProcessId, de->dwThreadId, debugstr_a(u.bufferA));
         return TRUE;
 
     case RIP_EVENT:
-        fprintf(stderr, "%08lx:%08lx: rip error=%lu type=%lu\n", de->dwProcessId,
-            de->dwThreadId, de->u.RipInfo.dwError, de->u.RipInfo.dwType);
+        fprintf(stderr, "%04lx:%04lx: rip error=%lu type=%lu\n", de->dwProcessId,
+                de->dwThreadId, de->u.RipInfo.dwError, de->u.RipInfo.dwType);
         return TRUE;
 
     default:
-        FIXME("%08lx:%08lx: unknown event (%lu)\n",
-            de->dwProcessId, de->dwThreadId, de->dwDebugEventCode);
+        FIXME("%04lx:%04lx: unknown event (%lu)\n",
+              de->dwProcessId, de->dwThreadId, de->dwDebugEventCode);
     }
 
     LIST_FOR_EACH_ENTRY(thread, &gdbctx->process->threads, struct dbg_thread, entry)
@@ -1639,7 +1639,7 @@ static void packet_query_monitor_mem(struct gdb_context* gdbctx, int len, const 
     packet_reply(gdbctx, "OK");
 }
 
-struct query_detail
+static const struct query_detail
 {
     int         with_arg;
     const char* name;
@@ -1659,7 +1659,7 @@ static enum packet_return packet_query_remote_command(struct gdb_context* gdbctx
                                                       const char* hxcmd, size_t len)
 {
     char                        buffer[128];
-    struct query_detail*        qd;
+    const struct query_detail*  qd;
 
     assert((len & 1) == 0 && len < 2 * sizeof(buffer));
     len /= 2;
@@ -1986,7 +1986,7 @@ static enum packet_return packet_query_exec_file(struct gdb_context* gdbctx)
     return packet_send_buffer;
 }
 
-struct qxfer
+static const struct qxfer
 {
     const char*        name;
     enum packet_return (*handler)(struct gdb_context* gdbctx);
@@ -2260,7 +2260,7 @@ struct packet_entry
     enum packet_return  (*handler)(struct gdb_context* gdbctx);
 };
 
-static struct packet_entry packet_entries[] =
+static const struct packet_entry packet_entries[] =
 {
         {'?', packet_last_signal},
         {'c', packet_continue},

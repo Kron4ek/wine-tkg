@@ -70,6 +70,7 @@
 @ stdcall -norelay KiRaiseUserExceptionDispatcher()
 @ stdcall -norelay KiUserApcDispatcher(ptr long long long ptr)
 @ stdcall -norelay KiUserCallbackDispatcher(long ptr long)
+@ stdcall -norelay -arch=arm,arm64,arm64ec KiUserCallbackDispatcherReturn()
 @ stdcall -norelay KiUserExceptionDispatcher(ptr ptr)
 # @ stub LdrAccessOutOfProcessResource
 @ stdcall LdrAccessResource(long ptr ptr ptr)
@@ -161,7 +162,7 @@
 @ stdcall -syscall NtCommitTransaction(long long)
 # @ stub NtCompactKeys
 @ stdcall -syscall NtCompareObjects(ptr ptr)
-# @ stub NtCompareTokens
+@ stdcall -syscall NtCompareTokens(ptr ptr ptr)
 @ stdcall -syscall NtCompleteConnectPort(ptr)
 # @ stub NtCompressKey
 @ stdcall -syscall NtConnectPort(ptr ptr ptr ptr ptr ptr ptr ptr)
@@ -1211,7 +1212,7 @@
 # @ stub ZwCloseObjectAuditAlarm
 # @ stub ZwCompactKeys
 @ stdcall -private -syscall ZwCompareObjects(ptr ptr) NtCompareObjects
-# @ stub ZwCompareTokens
+@ stdcall -private -syscall ZwCompareTokens(ptr ptr ptr) NtCompareTokens
 @ stdcall -private -syscall ZwCompleteConnectPort(ptr) NtCompleteConnectPort
 # @ stub ZwCompressKey
 @ stdcall -private -syscall ZwConnectPort(ptr ptr ptr ptr ptr ptr ptr ptr) NtConnectPort

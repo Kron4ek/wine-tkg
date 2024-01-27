@@ -5691,6 +5691,12 @@ static void shader_arb_handle_instruction(const struct wined3d_shader_instructio
     shader_arb_add_instruction_modifiers(ins);
 }
 
+void shader_arb_resource_view_handle(void *shader_priv, struct wined3d_context *context,
+            const struct wined3d_state *state, const struct wined3d_shader *shader)
+{
+    ERR("Not implemented.\n");
+}
+
 static void shader_arb_precompile(void *shader_priv, struct wined3d_shader *shader) {}
 
 static uint64_t shader_arb_shader_compile(struct wined3d_context *context, const struct wined3d_shader_desc *shader_desc,
@@ -5718,6 +5724,7 @@ const struct wined3d_shader_backend_ops arb_program_shader_backend =
     shader_arb_init_context_state,
     shader_arb_get_caps,
     shader_arb_color_fixup_supported,
+    shader_arb_resource_view_handle,
     shader_arb_shader_compile,
 };
 

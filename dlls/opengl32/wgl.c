@@ -438,8 +438,8 @@ PROC WINAPI wglGetDefaultProcAddress( LPCSTR name )
 /***********************************************************************
  *		wglSwapLayerBuffers (OPENGL32.@)
  */
-BOOL WINAPI wglSwapLayerBuffers(HDC hdc,
-				UINT fuPlanes) {
+BOOL WINAPI DECLSPEC_HOTPATCH wglSwapLayerBuffers(HDC hdc, UINT fuPlanes)
+{
   TRACE("(%p, %08x)\n", hdc, fuPlanes);
 
   if (fuPlanes & WGL_SWAP_MAIN_PLANE) {
@@ -1285,11 +1285,12 @@ GLboolean WINAPI glUnmapNamedBufferEXT( GLuint buffer )
     return gl_unmap_named_buffer( unix_glUnmapNamedBufferEXT, buffer );
 }
 
-static BOOL WINAPI call_opengl_debug_message_callback( struct wine_gl_debug_message_params *params, ULONG size )
+static NTSTATUS WINAPI call_opengl_debug_message_callback( void *args, ULONG size )
 {
+    struct wine_gl_debug_message_params *params = args;
     params->user_callback( params->source, params->type, params->id, params->severity,
                            params->length, params->message, params->user_data );
-    return TRUE;
+    return STATUS_SUCCESS;
 }
 
 /***********************************************************************
@@ -1297,7 +1298,7 @@ static BOOL WINAPI call_opengl_debug_message_callback( struct wine_gl_debug_mess
  */
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
 {
-    void **kernel_callback_table;
+    KERNEL_CALLBACK_PROC *kernel_callback_table;
     NTSTATUS status;
 
     switch(reason)

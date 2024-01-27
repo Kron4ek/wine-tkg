@@ -399,7 +399,6 @@ struct draw_text_params32
 
 struct unpack_dde_message_params32
 {
-    ULONG result;
     ULONG hwnd;
     UINT message;
     LONG wparam;
@@ -851,6 +850,7 @@ static size_t packed_result_32to64( UINT message, WPARAM wparam, const void *par
             cs64->dwExStyle      = cs32->dwExStyle;
             return sizeof(*cs64);
         }
+        break;
 
     case WM_NCCALCSIZE:
         if (wparam)
@@ -1113,8 +1113,9 @@ static NTSTATUS WINAPI wow64_NtUserCallWindowsHook( void *arg, ULONG size )
     struct win_hook_params32 params32;
     UINT module_len, size32, offset;
     void *ret_ptr;
-    ULONG ret_len;
-    NTSTATUS ret;
+    LRESULT *result_ptr = arg;
+    ULONG ret_len, ret_size = 0;
+    NTSTATUS status;
 
     module_len = wcslen( params->module );
     size32 = FIELD_OFFSET( struct win_hook_params32, module[module_len + 1] );
@@ -1142,27 +1143,31 @@ static NTSTATUS WINAPI wow64_NtUserCallWindowsHook( void *arg, ULONG size )
                                       size - offset, (char *)arg + size32 );
     }
 
-    ret = Wow64KiUserCallbackDispatcher( NtUserCallWindowsHook, arg, size32, &ret_ptr, &ret_len );
+    status = Wow64KiUserCallbackDispatcher( NtUserCallWindowsHook, arg, size32, &ret_ptr, &ret_len );
+    if (status || ret_len < sizeof(LONG)) return status;
 
     switch (params32.id)
     {
     case WH_SYSMSGFILTER:
     case WH_MSGFILTER:
     case WH_GETMESSAGE:
-        if (ret_len == sizeof(MSG32))
+        if (ret_len == sizeof(MSG32) + sizeof(LONG))
         {
-            MSG msg;
-            msg_32to64( &msg, ret_ptr );
-            return NtCallbackReturn( &msg, sizeof(msg), ret );
+            msg_32to64( (MSG *)(result_ptr + 1), (MSG32 *)((LONG *)ret_ptr + 1) );
+            ret_size = sizeof(MSG);
         }
+        break;
     }
-
-    return ret;
+    *result_ptr = *(LONG *)ret_ptr;
+    return NtCallbackReturn( result_ptr, sizeof(*result_ptr) + ret_size, status );
 }
 
 static NTSTATUS WINAPI wow64_NtUserCopyImage( void *arg, ULONG size )
 {
     struct copy_image_params *params = arg;
+    void *ret_ptr;
+    ULONG ret_len;
+    NTSTATUS status;
     struct
     {
         ULONG hwnd;
@@ -1177,7 +1182,14 @@ static NTSTATUS WINAPI wow64_NtUserCopyImage( void *arg, ULONG size )
     params32.dx = params->dx;
     params32.dy = params->dy;
     params32.flags = params->flags;
-    return dispatch_callback( NtUserCopyImage, &params32, sizeof(params32) );
+    status = Wow64KiUserCallbackDispatcher( NtUserCopyImage, &params32, sizeof(params32),
+                                            &ret_ptr, &ret_len );
+    if (!status && ret_len == sizeof(ULONG))
+    {
+        HANDLE handle = ULongToHandle( *(ULONG *)ret_ptr );
+        return NtCallbackReturn( &handle, sizeof(handle), status );
+    }
+    return status;
 }
 
 static NTSTATUS WINAPI wow64_NtUserDrawNonClientButton( void *arg, ULONG size )
@@ -1256,18 +1268,13 @@ static NTSTATUS WINAPI wow64_NtUserDrawText( void *arg, ULONG size )
     struct draw_text_params *params = arg;
     struct draw_text_params32 *params32;
     ULONG offset = offsetof( struct draw_text_params, str ) - offsetof( struct draw_text_params32, str );
-    ULONG ret_len;
-    void *ret_ptr;
-    NTSTATUS ret;
 
     params32 = (struct draw_text_params32 *)((char *)params + offset);
     params32->flags = params->flags;
     params32->rect = params->rect;
     params32->count = params->count;
     params32->hdc = HandleToUlong( params->hdc );
-
-    ret = Wow64KiUserCallbackDispatcher( NtUserDrawText, params32, size - offset, &ret_ptr, &ret_len );
-    return NtCallbackReturn( ret_ptr, ret_len, ret );
+    return dispatch_callback( NtUserDrawText, params32, size - offset );
 }
 
 static NTSTATUS WINAPI wow64_NtUserFreeCachedClipboardData( void *arg, ULONG size )
@@ -1333,6 +1340,9 @@ static NTSTATUS WINAPI wow64_NtUserLoadDriver( void *arg, ULONG size )
 static NTSTATUS WINAPI wow64_NtUserLoadImage( void *arg, ULONG size )
 {
     struct load_image_params *params = arg;
+    void *ret_ptr;
+    ULONG ret_len;
+    NTSTATUS status;
     struct
     {
         ULONG hinst;
@@ -1349,12 +1359,29 @@ static NTSTATUS WINAPI wow64_NtUserLoadImage( void *arg, ULONG size )
     params32.dx = params->dx;
     params32.dy = params->dy;
     params32.flags = params->flags;
-    return dispatch_callback( NtUserLoadImage, &params32, sizeof(params32) );
+    status = Wow64KiUserCallbackDispatcher( NtUserLoadImage, &params32, sizeof(params32),
+                                            &ret_ptr, &ret_len );
+    if (!status && ret_len == sizeof(ULONG))
+    {
+        HANDLE handle = ULongToHandle( *(ULONG *)ret_ptr );
+        return NtCallbackReturn( &handle, sizeof(handle), status );
+    }
+    return status;
 }
 
 static NTSTATUS WINAPI wow64_NtUserLoadSysMenu( void *arg, ULONG size )
 {
-    return dispatch_callback( NtUserLoadSysMenu, arg, size );
+    void *ret_ptr;
+    ULONG ret_len;
+    NTSTATUS status;
+
+    status = Wow64KiUserCallbackDispatcher( NtUserLoadSysMenu, arg, size, &ret_ptr, &ret_len );
+    if (!status && ret_len == sizeof(ULONG))
+    {
+        HMENU menu = ULongToHandle( *(ULONG *)ret_ptr );
+        return NtCallbackReturn( &menu, sizeof(menu), status );
+    }
+    return status;
 }
 
 static NTSTATUS WINAPI wow64_NtUserPostDDEMessage( void *arg, ULONG size )
@@ -1394,14 +1421,13 @@ static NTSTATUS WINAPI wow64_NtUserUnpackDDEMessage( void *arg, ULONG size )
         LONG wparam;
         LONG lparam;
     } *result32;
-    void *ret_ptr;
     ULONG ret_len;
+    NTSTATUS status;
 
     size -= FIELD_OFFSET( struct unpack_dde_message_params, data );
     if (!(params32 = Wow64AllocateTemp( FIELD_OFFSET( struct unpack_dde_message_params32, data[size] ))))
-        return 0;
+        return STATUS_NO_MEMORY;
 
-    params32->result = 0;
     params32->hwnd = HandleToUlong( params->hwnd );
     params32->message = params->message;
     params32->wparam = params->wparam;
@@ -1409,18 +1435,14 @@ static NTSTATUS WINAPI wow64_NtUserUnpackDDEMessage( void *arg, ULONG size )
     if (size) memcpy( params32->data, params->data, size );
     size = FIELD_OFFSET( struct unpack_dde_message_params32, data[size] );
 
-    if (!Wow64KiUserCallbackDispatcher( NtUserUnpackDDEMessage, params32, size, &ret_ptr, &ret_len ))
-        return FALSE;
-    if (ret_len == sizeof(*result32))
+    status = Wow64KiUserCallbackDispatcher( NtUserUnpackDDEMessage, params32, size, (void **)&result32, &ret_len );
+    if (!status && ret_len == sizeof(*result32))
     {
-        result32 = ret_ptr;
         result.wparam = result32->wparam;
         result.lparam = result32->lparam;
+        return NtCallbackReturn( &result, sizeof(result), status );
     }
-
-    if (!params->result) NtCallbackReturn( &result, sizeof(result), TRUE );
-    *params->result = result;
-    return TRUE;
+    return status;
 }
 
 static NTSTATUS WINAPI wow64_NtUserCallFreeIcon( void *arg, ULONG size )
@@ -3596,6 +3618,7 @@ NTSTATUS WINAPI wow64_NtUserMessageCall( UINT *args )
                 ULONG compstr;
             } *params32 = result_info;
             struct ime_driver_call_params params;
+            if (msg == WINE_IME_POST_UPDATE) ERR( "Unexpected WINE_IME_POST_UPDATE message\n" );
             params.himc = UlongToPtr( params32->himc );
             params.state = UlongToPtr( params32->state );
             params.compstr = UlongToPtr( params32->compstr );

@@ -200,6 +200,11 @@ struct draw_text_params
     UINT flags;
     WCHAR str[1];
 };
+struct draw_text_result
+{
+    int height;
+    RECT rect;
+};
 
 /* NtUserFreeCachedClipboardData params */
 struct free_cached_data_params
@@ -262,20 +267,18 @@ struct render_synthesized_format_params
 };
 
 /* NtUserUnpackDDEMessage params */
-struct unpack_dde_message_result
-{
-    WPARAM wparam;
-    LPARAM lparam;
-};
-
 struct unpack_dde_message_params
 {
-    struct unpack_dde_message_result *result;  /* FIXME: Use NtCallbackReturn instead */
     HWND hwnd;
     UINT message;
     WPARAM wparam;
     LPARAM lparam;
     char data[1];
+};
+struct unpack_dde_message_result
+{
+    WPARAM wparam;
+    LPARAM lparam;
 };
 
 /* process DPI awareness contexts */
@@ -511,6 +514,7 @@ enum wine_ime_call
 {
     WINE_IME_PROCESS_KEY,
     WINE_IME_TO_ASCII_EX,
+    WINE_IME_POST_UPDATE,  /* for the user drivers */
 };
 
 /* NtUserImeDriverCall params */

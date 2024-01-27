@@ -64,6 +64,17 @@ static DWORD (WINAPI *pEnumDynamicTimeZoneInformation)(const DWORD,
 static BOOL limited_user;
 static const BOOL is_64bit = sizeof(void *) > sizeof(int);
 
+static BOOL has_wow64(void)
+{
+    if (!is_64bit)
+    {
+        BOOL is_wow64;
+        if (!pIsWow64Process || !pIsWow64Process( GetCurrentProcess(), &is_wow64 ) || !is_wow64)
+            return FALSE;
+    }
+    return TRUE;
+}
+
 static const char *dbgstr_SYSTEMTIME(const SYSTEMTIME *st)
 {
     return wine_dbg_sprintf("%02d-%02d-%04d %02d:%02d:%02d.%03d",
@@ -1334,9 +1345,9 @@ static void test_reg_create_key(void)
      * the registry access check is performed correctly. Redirection isn't
      * being tested, so the tests don't care about whether the process is
      * running under WOW64. */
-    if (!pIsWow64Process)
+    if (!has_wow64())
     {
-        win_skip("WOW64 flags are not recognized\n");
+        skip("WOW64 flags are not recognized\n");
         return;
     }
 
@@ -1593,6 +1604,14 @@ static void test_reg_unload_key(void)
 
     ret = RegUnLoadKeyA(HKEY_LOCAL_MACHINE, "Test");
     ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
+
+    pRtlInitUnicodeString(&key_name, L"\\REGISTRY\\User\\.Default");
+    InitializeObjectAttributes(&attr, &key_name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    status = pNtUnloadKey(&attr);
+    ok(status == STATUS_ACCESS_DENIED, "expected STATUS_ACCESS_DENIED, got %08lx\n", status);
+
+    ret = RegUnLoadKeyA(HKEY_USERS, ".Default");
+    ok(ret == ERROR_ACCESS_DENIED, "expected ERROR_ACCESS_DENIED, got %ld\n", ret);
 
     set_privileges(SE_RESTORE_NAME, FALSE);
 
@@ -2582,14 +2601,10 @@ static void test_redirection(void)
     HKEY key, key32, key64, root, root32, root64;
     DWORD subkeys, subkeys32, subkeys64;
 
-    if (ptr_size != 64)
+    if (!has_wow64())
     {
-        BOOL is_wow64;
-        if (!pIsWow64Process || !pIsWow64Process( GetCurrentProcess(), &is_wow64 ) || !is_wow64)
-        {
-            skip( "Not on Wow64, no redirection\n" );
-            return;
-        }
+        skip( "Not on Wow64, no redirection\n" );
+        return;
     }
 
     if (limited_user)

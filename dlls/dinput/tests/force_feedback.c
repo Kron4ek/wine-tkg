@@ -1912,10 +1912,9 @@ static BOOL test_force_feedback_joystick( DWORD version )
                 USAGE(1, PID_USAGE_DEVICE_CONTROL),
                 COLLECTION(1, Logical),
                     USAGE(1, PID_USAGE_DC_DEVICE_RESET),
+                    USAGE(1, PID_USAGE_DC_STOP_ALL_EFFECTS),
                     LOGICAL_MINIMUM(1, 1),
                     LOGICAL_MAXIMUM(1, 2),
-                    PHYSICAL_MINIMUM(1, 1),
-                    PHYSICAL_MAXIMUM(1, 2),
                     REPORT_SIZE(1, 8),
                     REPORT_COUNT(1, 1),
                     OUTPUT(1, Data|Ary|Abs),
@@ -2194,7 +2193,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
         .dwHardwareRevision = 1,
         .dwFFDriverVersion = 1,
     };
-    struct hid_expect expect_acquire[] =
+    struct hid_expect expect_acquire_autocenter_on[] =
     {
         {
             .code = IOCTL_HID_WRITE_REPORT,
@@ -2207,6 +2206,29 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .report_id = 8,
             .report_len = 2,
             .report_buf = {8, 0x19},
+        },
+    };
+    struct hid_expect expect_acquire_autocenter_off[] =
+    {
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 1,
+            .report_len = 2,
+            .report_buf = {1, 0x01},
+        },
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 1,
+            .report_len = 2,
+            .report_buf = {1, 0x02},
+            .broken_id = 8, /* Win8 sends them in the reverse order */
+        },
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 8,
+            .report_len = 2,
+            .report_buf = {8, 0x19},
+            .broken_id = 1, /* Win8 sends them in the reverse order */
         },
     };
     struct hid_expect expect_reset[] =
@@ -2232,7 +2254,15 @@ static BOOL test_force_feedback_joystick( DWORD version )
         .report_len = 2,
         .report_buf = {8, 0x33},
     };
-
+    struct hid_expect expect_stop_all[] =
+    {
+        {
+            .code = IOCTL_HID_WRITE_REPORT,
+            .report_id = 1,
+            .report_len = 2,
+            .report_buf = {1, 0x02},
+        },
+    };
     const DIDEVICEINSTANCEW expect_devinst =
     {
         .dwSize = sizeof(DIDEVICEINSTANCEW),
@@ -2384,8 +2414,20 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x10 : 0,
+            .dwOfs = version >= 0x800 ? 0x71 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(13)|DIDFT_OUTPUT,
+            .dwFlags = 0x80008000,
+            .tszName = L"DC Stop All Effects",
+            .wCollectionNumber = 4,
+            .wUsagePage = HID_USAGE_PAGE_PID,
+            .wUsage = PID_USAGE_DC_STOP_ALL_EFFECTS,
+            .wReportId = 1,
+        },
+        {
+            .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
+            .guidType = GUID_Unknown,
+            .dwOfs = version >= 0x800 ? 0x10 : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(14)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Effect Block Index",
             .wCollectionNumber = 5,
@@ -2396,8 +2438,8 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x71 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(14)|DIDFT_OUTPUT,
+            .dwOfs = version >= 0x800 ? 0x72 : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(15)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Op Effect Start",
             .wCollectionNumber = 6,
@@ -2408,8 +2450,8 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x72 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(15)|DIDFT_OUTPUT,
+            .dwOfs = version >= 0x800 ? 0x73 : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(16)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Op Effect Start Solo",
             .wCollectionNumber = 6,
@@ -2420,8 +2462,8 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x73 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(16)|DIDFT_OUTPUT,
+            .dwOfs = version >= 0x800 ? 0x74 : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(17)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Op Effect Stop",
             .wCollectionNumber = 6,
@@ -2433,7 +2475,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x14 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(17)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(18)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Loop Count",
             .wCollectionNumber = 5,
@@ -2445,7 +2487,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x18 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(18)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(19)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Effect Block Index",
             .wCollectionNumber = 7,
@@ -2456,8 +2498,8 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x74 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(19)|DIDFT_OUTPUT,
+            .dwOfs = version >= 0x800 ? 0x75 : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(20)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"ET Square",
             .wCollectionNumber = 8,
@@ -2468,8 +2510,8 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x75 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(20)|DIDFT_OUTPUT,
+            .dwOfs = version >= 0x800 ? 0x76 : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(21)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"ET Sine",
             .wCollectionNumber = 8,
@@ -2480,8 +2522,8 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x76 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(21)|DIDFT_OUTPUT,
+            .dwOfs = version >= 0x800 ? 0x77 : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(22)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"ET Spring",
             .wCollectionNumber = 8,
@@ -2492,8 +2534,8 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x77 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(22)|DIDFT_OUTPUT,
+            .dwOfs = version >= 0x800 ? 0x78 : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(23)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Z Axis",
             .wCollectionNumber = 9,
@@ -2504,8 +2546,8 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x78 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(23)|DIDFT_OUTPUT,
+            .dwOfs = version >= 0x800 ? 0x79 : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(24)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Y Axis",
             .wCollectionNumber = 9,
@@ -2516,8 +2558,8 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x79 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(24)|DIDFT_OUTPUT,
+            .dwOfs = version >= 0x800 ? 0x7a : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(25)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"X Axis",
             .wCollectionNumber = 9,
@@ -2528,8 +2570,8 @@ static BOOL test_force_feedback_joystick( DWORD version )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = version >= 0x800 ? 0x7a : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(25)|DIDFT_OUTPUT,
+            .dwOfs = version >= 0x800 ? 0x7b : 0,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(26)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Direction Enable",
             .wCollectionNumber = 7,
@@ -2541,7 +2583,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x1c : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(26)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(27)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Start Delay",
             .wCollectionNumber = 7,
@@ -2555,7 +2597,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x20 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(27)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(28)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Duration",
             .wCollectionNumber = 7,
@@ -2569,7 +2611,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x24 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(28)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(29)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Trigger Button",
             .wCollectionNumber = 7,
@@ -2581,9 +2623,9 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x28 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(29)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(30)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
-            .tszName = L"Unknown 29",
+            .tszName = L"Unknown 30",
             .wCollectionNumber = 10,
             .wUsagePage = HID_USAGE_PAGE_ORDINAL,
             .wUsage = 2,
@@ -2594,9 +2636,9 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x2c : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(30)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(31)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
-            .tszName = L"Unknown 30",
+            .tszName = L"Unknown 31",
             .wCollectionNumber = 10,
             .wUsagePage = HID_USAGE_PAGE_ORDINAL,
             .wUsage = 1,
@@ -2607,7 +2649,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x30 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(31)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(32)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Magnitude",
             .wCollectionNumber = 11,
@@ -2619,7 +2661,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x34 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(32)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(33)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Fade Level",
             .wCollectionNumber = 12,
@@ -2631,7 +2673,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x38 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(33)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(34)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Attack Level",
             .wCollectionNumber = 12,
@@ -2643,7 +2685,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x3c : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(34)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(35)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Fade Time",
             .wCollectionNumber = 12,
@@ -2657,7 +2699,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x40 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(35)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(36)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Attack Time",
             .wCollectionNumber = 12,
@@ -2671,9 +2713,9 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x44 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(36)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(37)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
-            .tszName = L"Unknown 36",
+            .tszName = L"Unknown 37",
             .wCollectionNumber = 14,
             .wUsagePage = HID_USAGE_PAGE_ORDINAL,
             .wUsage = 2,
@@ -2683,9 +2725,9 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x48 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(37)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(38)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
-            .tszName = L"Unknown 37",
+            .tszName = L"Unknown 38",
             .wCollectionNumber = 14,
             .wUsagePage = HID_USAGE_PAGE_ORDINAL,
             .wUsage = 1,
@@ -2695,7 +2737,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x4c : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(38)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(39)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"CP Offset",
             .wCollectionNumber = 13,
@@ -2707,7 +2749,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x50 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(39)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(40)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Negative Coefficient",
             .wCollectionNumber = 13,
@@ -2719,7 +2761,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x54 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(40)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(41)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Positive Coefficient",
             .wCollectionNumber = 13,
@@ -2731,7 +2773,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x58 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(41)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(42)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Negative Saturation",
             .wCollectionNumber = 13,
@@ -2743,7 +2785,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x5c : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(42)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(43)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Positive Saturation",
             .wCollectionNumber = 13,
@@ -2755,7 +2797,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x60 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(43)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(44)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Dead Band",
             .wCollectionNumber = 13,
@@ -2767,7 +2809,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
             .dwOfs = version >= 0x800 ? 0x64 : 0,
-            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(44)|DIDFT_OUTPUT,
+            .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(45)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Device Gain",
             .wCollectionNumber = 15,
@@ -3079,8 +3121,7 @@ static BOOL test_force_feedback_joystick( DWORD version )
                         FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING, NULL );
     ok( file != INVALID_HANDLE_VALUE, "got error %lu\n", GetLastError() );
 
-    hwnd = CreateWindowW( L"static", L"dinput", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 10, 10, 200, 200,
-                          NULL, NULL, NULL, NULL );
+    hwnd = create_foreground_window( FALSE );
 
     hr = IDirectInputDevice8_SetCooperativeLevel( device, hwnd, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE );
     ok( hr == DI_OK, "SetCooperativeLevel returned: %#lx\n", hr );
@@ -3129,11 +3170,23 @@ static BOOL test_force_feedback_joystick( DWORD version )
     ok( hr == DI_OK, "Unacquire returned: %#lx\n", hr );
     hr = IDirectInputDevice8_SetCooperativeLevel( device, hwnd, DISCL_BACKGROUND | DISCL_EXCLUSIVE );
     ok( hr == DI_OK, "SetCooperativeLevel returned: %#lx\n", hr );
+    prop_dword.dwData = DIPROPAUTOCENTER_OFF;
+    hr = IDirectInputDevice8_SetProperty( device, DIPROP_AUTOCENTER, &prop_dword.diph );
+    ok( hr == DI_OK, "SetProperty DIPROP_AUTOCENTER returned %#lx\n", hr );
+
+    set_hid_expect( file, expect_acquire_autocenter_off, sizeof(expect_acquire_autocenter_off) );
+    hr = IDirectInputDevice8_Acquire( device );
+    ok( hr == DI_OK, "Acquire returned: %#lx\n", hr );
+    wait_hid_expect( file, 100 ); /* device gain reports are written asynchronously */
+
+    set_hid_expect( file, expect_reset, sizeof(expect_reset) );
+    hr = IDirectInputDevice8_Unacquire( device );
+    ok( hr == DI_OK, "Unacquire returned: %#lx\n", hr );
     prop_dword.dwData = DIPROPAUTOCENTER_ON;
     hr = IDirectInputDevice8_SetProperty( device, DIPROP_AUTOCENTER, &prop_dword.diph );
     ok( hr == DI_OK, "SetProperty DIPROP_AUTOCENTER returned %#lx\n", hr );
 
-    set_hid_expect( file, expect_acquire, sizeof(expect_acquire) );
+    set_hid_expect( file, expect_acquire_autocenter_on, sizeof(expect_acquire_autocenter_on) );
     hr = IDirectInputDevice8_Acquire( device );
     ok( hr == DI_OK, "Acquire returned: %#lx\n", hr );
     wait_hid_expect( file, 100 ); /* device gain reports are written asynchronously */
@@ -3166,13 +3219,14 @@ static BOOL test_force_feedback_joystick( DWORD version )
     hr = IDirectInputDevice8_SendForceFeedbackCommand( device, 0xdeadbeef );
     ok( hr == DIERR_INVALIDPARAM, "SendForceFeedbackCommand returned %#lx\n", hr );
 
-    set_hid_expect( file, expect_acquire, sizeof(expect_acquire) );
+    set_hid_expect( file, expect_acquire_autocenter_on, sizeof(expect_acquire_autocenter_on) );
     hr = IDirectInputDevice8_SendForceFeedbackCommand( device, DISFFC_RESET );
     ok( hr == DI_OK, "SendForceFeedbackCommand returned %#lx\n", hr );
     wait_hid_expect( file, 100 ); /* device gain reports are written asynchronously */
 
+    set_hid_expect( file, expect_stop_all, sizeof(expect_stop_all) );
     hr = IDirectInputDevice8_SendForceFeedbackCommand( device, DISFFC_STOPALL );
-    ok( hr == HIDP_STATUS_USAGE_NOT_FOUND, "SendForceFeedbackCommand returned %#lx\n", hr );
+    ok( hr == DI_OK, "SendForceFeedbackCommand returned %#lx\n", hr );
     hr = IDirectInputDevice8_SendForceFeedbackCommand( device, DISFFC_PAUSE );
     ok( hr == HIDP_STATUS_USAGE_NOT_FOUND, "SendForceFeedbackCommand returned %#lx\n", hr );
     hr = IDirectInputDevice8_SendForceFeedbackCommand( device, DISFFC_CONTINUE );
@@ -4131,8 +4185,7 @@ static void test_device_managed_effect(void)
                         FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING, NULL );
     ok( file != INVALID_HANDLE_VALUE, "got error %lu\n", GetLastError() );
 
-    hwnd = CreateWindowW( L"static", L"dinput", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 10, 10, 200, 200,
-                          NULL, NULL, NULL, NULL );
+    hwnd = create_foreground_window( FALSE );
 
     event = CreateEventW( NULL, FALSE, FALSE, NULL );
     ok( event != NULL, "CreateEventW failed, last error %lu\n", GetLastError() );

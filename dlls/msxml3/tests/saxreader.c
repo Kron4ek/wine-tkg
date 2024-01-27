@@ -4564,6 +4564,7 @@ static void test_mxwriter_domdoc(void)
     todo_wine
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
+    if (!node) return;
     hr = IXMLDOMNode_get_nodeName(node, &str);
 todo_wine {
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);

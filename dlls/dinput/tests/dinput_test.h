@@ -51,11 +51,13 @@ extern const WCHAR expect_path_end[];
 extern HINSTANCE instance;
 extern BOOL localized; /* object names get translated */
 
-BOOL hid_device_start( struct hid_device_desc *desc, UINT count );
+#define hid_device_start( a, b ) hid_device_start_( a, b, 1000 )
+BOOL hid_device_start_( struct hid_device_desc *desc, UINT count, DWORD timeout );
 void hid_device_stop( struct hid_device_desc *desc, UINT count );
 BOOL bus_device_start(void);
 void bus_device_stop(void);
 
+BOOL find_hid_device_path( WCHAR *device_path );
 void cleanup_registry_keys(void);
 
 #define dinput_test_init() dinput_test_init_( __FILE__, __LINE__ )
@@ -108,5 +110,8 @@ void send_hid_input_( const char *file, int line, HANDLE device, struct hid_devi
 
 #define msg_wait_for_events( a, b, c ) msg_wait_for_events_( __FILE__, __LINE__, a, b, c )
 DWORD msg_wait_for_events_( const char *file, int line, DWORD count, HANDLE *events, DWORD timeout );
+
+#define create_foreground_window( a ) create_foreground_window_( __FILE__, __LINE__, a, 5 )
+HWND create_foreground_window_( const char *file, int line, BOOL fullscreen, UINT retries );
 
 #endif /* __WINE_DINPUT_TEST_H */

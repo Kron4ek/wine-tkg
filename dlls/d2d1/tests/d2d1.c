@@ -53,9 +53,21 @@ L"<?xml version='1.0'?>                                                       \
             <Property name='DisplayName' type='string' value='Int32 prop'/>   \
             <Property name='Default' type='int32' value='10'/>                \
         </Property>                                                           \
+        <Property name='Int32PropHex' type='int32' value='0xffff0001'>        \
+            <Property name='DisplayName' type='string' value='Int32 prop hex'/> \
+        </Property>                                                           \
+        <Property name='Int32PropOct' type='int32' value='012'>               \
+            <Property name='DisplayName' type='string' value='Int32 prop oct'/> \
+        </Property>                                                           \
         <Property name='UInt32Prop' type='uint32' value='-3'>                 \
             <Property name='DisplayName' type='string' value='UInt32 prop'/>  \
             <Property name='Default' type='uint32' value='10'/>               \
+        </Property>                                                           \
+        <Property name='UInt32PropHex' type='uint32' value='0xfff'>           \
+            <Property name='DisplayName' type='string' value='UInt32 prop hex'/> \
+        </Property>                                                           \
+        <Property name='UInt32PropOct' type='uint32' value='013'>           \
+            <Property name='DisplayName' type='string' value='UInt32 prop oct'/> \
         </Property>                                                           \
         <Property name='Bool' type='bool'>                                     \
             <Property name='DisplayName' type='string' value='Bool property'/> \
@@ -217,6 +229,21 @@ L"<?xml version='1.0'?>                                                       \
         <Property name='Category'    type='string'/>                          \
         <Property name='Description'/>                                        \
         <Inputs/>                                                             \
+    </Effect>                                                                 \
+";
+
+static const WCHAR *effect_variable_input_count =
+L"<?xml version='1.0'?>                                                       \
+    <Effect>                                                                  \
+        <Property name='DisplayName' type='string' value='VariableInputs'/>   \
+        <Property name='Author'      type='string' value='The Wine Project'/> \
+        <Property name='Category'    type='string' value='Test'/>             \
+        <Property name='Description' type='string' value='Test effect.'/>     \
+        <Inputs minimum='2' maximum='5' >                                     \
+            <Input name='Source1'/>                                           \
+            <Input name='Source2'/>                                           \
+            <Input name='Source3'/>                                           \
+        </Inputs>                                                             \
     </Effect>                                                                 \
 ";
 
@@ -10805,8 +10832,8 @@ static void test_mt_factory(BOOL d3d11)
     release_test_context(&ctx);
 }
 
-#define check_system_properties(effect, is_builtin) check_system_properties_(__LINE__, effect, is_builtin)
-static void check_system_properties_(unsigned int line, ID2D1Effect *effect, BOOL is_builtin)
+#define check_system_properties(effect) check_system_properties_(__LINE__, effect)
+static void check_system_properties_(unsigned int line, ID2D1Effect *effect)
 {
     UINT i, value_size, str_size;
     WCHAR name[32], buffer[256];
@@ -10848,7 +10875,6 @@ static void check_system_properties_(unsigned int line, ID2D1Effect *effect, BOO
 
         name[0] = 0;
         hr = ID2D1Effect_GetPropertyName(effect, test->index, name, sizeof(name));
-        todo_wine_if((is_builtin && (test->type == D2D1_PROPERTY_TYPE_ARRAY || test->type == D2D1_PROPERTY_TYPE_STRING)))
         ok_(__FILE__, line)(hr == S_OK, "Failed to get property name, hr %#lx\n", hr);
         if (hr == D2DERR_INVALID_PROPERTY)
         {
@@ -10859,7 +10885,6 @@ static void check_system_properties_(unsigned int line, ID2D1Effect *effect, BOO
                 debugstr_w(name), debugstr_w(test->name));
 
         type = ID2D1Effect_GetType(effect, test->index);
-        todo_wine_if((is_builtin && (test->type == D2D1_PROPERTY_TYPE_ARRAY || test->type == D2D1_PROPERTY_TYPE_STRING)))
         ok_(__FILE__, line)(type == test->type, "Got unexpected property type %#x, expected %#x.\n",
                 type, test->type);
 
@@ -10867,17 +10892,15 @@ static void check_system_properties_(unsigned int line, ID2D1Effect *effect, BOO
         value_size = ID2D1Effect_GetValueSize(effect, test->index);
         if (test->value_size != 0)
         {
-            todo_wine_if(is_builtin && test->type == D2D1_PROPERTY_TYPE_ARRAY)
             ok_(__FILE__, line)(value_size == test->value_size, "Got unexpected value size %u, expected %u.\n",
                     value_size, test->value_size);
         }
         else if (test->type == D2D1_PROPERTY_TYPE_STRING)
         {
             hr = ID2D1Effect_GetValue(effect, test->index, D2D1_PROPERTY_TYPE_STRING, (BYTE *)buffer, sizeof(buffer));
-            todo_wine_if(is_builtin)
             ok_(__FILE__, line)(hr == S_OK, "Failed to get value, hr %#lx.\n", hr);
             str_size = (wcslen((WCHAR *)buffer) + 1) * sizeof(WCHAR);
-            todo_wine_if(is_builtin || buffer[0] == 0)
+            todo_wine_if(buffer[0] == 0)
             ok_(__FILE__, line)(value_size == str_size, "Got unexpected value size %u, expected %u.\n",
                     value_size, str_size);
         }
@@ -10967,12 +10990,12 @@ static void test_builtin_effect(BOOL d3d11)
         ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
         hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_DISPLAYNAME, D2D1_PROPERTY_TYPE_STRING, buffer, sizeof(buffer));
-        todo_wine ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
         str_size = (wcslen((WCHAR *)buffer) + 1) * sizeof(WCHAR);
         hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_DISPLAYNAME, D2D1_PROPERTY_TYPE_STRING, buffer, str_size);
-        todo_wine ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
         hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_DISPLAYNAME, D2D1_PROPERTY_TYPE_STRING, buffer, str_size - 1);
-        todo_wine ok(hr == D2DERR_INSUFFICIENT_BUFFER, "Got unexpected hr %#lx.\n", hr);
+        ok(hr == D2DERR_INSUFFICIENT_BUFFER, "Got unexpected hr %#lx.\n", hr);
 
         hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_CLSID, 0xdeadbeef, (BYTE *)&clsid, sizeof(clsid));
         ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
@@ -11143,7 +11166,12 @@ static HRESULT STDMETHODCALLTYPE effect_impl_PrepareForRender(ID2D1EffectImpl *i
 
 static HRESULT STDMETHODCALLTYPE effect_impl_SetGraph(ID2D1EffectImpl *iface, ID2D1TransformGraph *graph)
 {
-    return E_NOTIMPL;
+    struct effect_impl *effect_impl = impl_from_ID2D1EffectImpl(iface);
+
+    ID2D1TransformGraph_Release(effect_impl->transform_graph);
+    ID2D1TransformGraph_AddRef(effect_impl->transform_graph = graph);
+
+    return S_OK;
 }
 
 static const ID2D1EffectImplVtbl effect_impl_vtbl =
@@ -11451,6 +11479,40 @@ static void test_effect_register(BOOL d3d11)
     hr = ID2D1Factory1_UnregisterEffect(factory, &CLSID_D2D1Composite);
     ok(hr == D2DERR_EFFECT_IS_NOT_REGISTERED, "Got unexpected hr %#lx.\n", hr);
 
+    /* Variable input count. */
+    hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_TestEffect,
+            effect_variable_input_count, NULL, 0, effect_impl_create);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1DeviceContext_CreateEffect(device_context, &CLSID_TestEffect, &effect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    integer = ID2D1Effect_GetInputCount(effect);
+    ok(integer == 3, "Unexpected input count %u.\n", integer);
+
+    integer = 0;
+    hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_MIN_INPUTS, D2D1_PROPERTY_TYPE_UINT32,
+            (BYTE *)&integer, sizeof(integer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(integer == 2, "Unexpected value %u.\n", integer);
+    hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_MAX_INPUTS, D2D1_PROPERTY_TYPE_UINT32,
+            (BYTE *)&integer, sizeof(integer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(integer == 5, "Unexpected value %u.\n", integer);
+    hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_INPUTS, D2D1_PROPERTY_TYPE_ARRAY,
+            (BYTE *)&integer, sizeof(integer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(integer == 3, "Unexpected data %u.\n", integer);
+    hr = ID2D1Effect_SetInputCount(effect, 4);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_INPUTS, D2D1_PROPERTY_TYPE_ARRAY,
+            (BYTE *)&integer, sizeof(integer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(integer == 3, "Unexpected data %u.\n", integer);
+
+    ID2D1Effect_Release(effect);
+
+    hr = ID2D1Factory1_UnregisterEffect(factory, &CLSID_TestEffect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
     release_test_context(&ctx);
 }
 
@@ -11700,6 +11762,28 @@ static void test_effect_properties(BOOL d3d11)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ok(val == -2, "Unexpected value %d.\n", val);
 
+    /* Int32 property, hex literal. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"Int32PropHex");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"Int32PropHex"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_INT32, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_INT32, (BYTE *)&val, sizeof(val));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(val == -65535, "Unexpected value %d.\n", val);
+
+    /* Int32 property, octal literal. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"Int32PropOct");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"Int32PropOct"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_INT32, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_INT32, (BYTE *)&val, sizeof(val));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(val == 10, "Unexpected value %d.\n", val);
+
     /* UInt32 property. */
     index = ID2D1Effect_GetPropertyIndex(effect, L"UInt32Prop");
     hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
@@ -11710,6 +11794,17 @@ static void test_effect_properties(BOOL d3d11)
     hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer));
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     ok(integer == -3, "Unexpected value %u.\n", integer);
+
+    /* UInt32 property, hex literal. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"UInt32PropHex");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"UInt32PropHex"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_UINT32, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(integer == 0xfff, "Unexpected value %x.\n", integer);
 
     /* Vector2 property. */
     index = ID2D1Effect_GetPropertyIndex(effect, L"Vec2Prop");
@@ -11814,7 +11909,7 @@ static void test_effect_properties(BOOL d3d11)
         hr = ID2D1DeviceContext_CreateEffect(ctx.context, &CLSID_TestEffect, &effect);
         ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
-        check_system_properties(effect, FALSE);
+        check_system_properties(effect);
 
         hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_CLSID,
                 D2D1_PROPERTY_TYPE_CLSID, (BYTE *)&clsid, sizeof(clsid));
@@ -11859,14 +11954,12 @@ static void test_effect_properties(BOOL d3d11)
         hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_MIN_INPUTS,
                 D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&min_inputs, sizeof(min_inputs));
         ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-        todo_wine_if(test->min_inputs == 0)
         ok(min_inputs == test->min_inputs, "Got unexpected min inputs %u, expected %u.\n",
                 min_inputs, test->min_inputs);
 
         hr = ID2D1Effect_GetValue(effect, D2D1_PROPERTY_MAX_INPUTS,
                 D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&max_inputs, sizeof(max_inputs));
         ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
-        todo_wine_if(test->max_inputs == 0)
         ok(max_inputs == test->max_inputs, "Got unexpected max inputs %u, expected %u.\n",
                 max_inputs, test->max_inputs);
 
@@ -12186,7 +12279,7 @@ static void test_effect_2d_affine(BOOL d3d11)
     hr = ID2D1DeviceContext_CreateEffect(context, &CLSID_D2D12DAffineTransform, &effect);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
-    check_system_properties(effect, TRUE);
+    check_system_properties(effect);
 
     count = ID2D1Effect_GetPropertyCount(effect);
     todo_wine ok(count == 4, "Got unexpected property count %u.\n", count);
@@ -12329,7 +12422,7 @@ static void test_effect_crop(BOOL d3d11)
     hr = ID2D1DeviceContext_CreateEffect(context, &CLSID_D2D1Crop, &effect);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
-    check_system_properties(effect, TRUE);
+    check_system_properties(effect);
 
     count = ID2D1Effect_GetPropertyCount(effect);
     todo_wine ok(count == 2, "Got unexpected property count %u.\n", count);
@@ -12413,7 +12506,7 @@ static void test_effect_grayscale(BOOL d3d11)
     hr = ID2D1DeviceContext_CreateEffect(context, &CLSID_D2D1Grayscale, &effect);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
-    check_system_properties(effect, TRUE);
+    check_system_properties(effect);
 
     count = ID2D1Effect_GetPropertyCount(effect);
     ok(!count, "Got unexpected property count %u.\n", count);

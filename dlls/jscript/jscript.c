@@ -51,8 +51,8 @@ typedef struct {
     LONG ref;
 
     DWORD safeopt;
+    struct thread_data *thread_data;
     script_ctx_t *ctx;
-    LONG thread_id;
     LCID lcid;
     DWORD version;
     BOOL html_mode;
@@ -88,6 +88,7 @@ void script_release(script_ctx_t *ctx)
     ctx->jscaller->ctx = NULL;
     IServiceProvider_Release(&ctx->jscaller->IServiceProvider_iface);
 
+    release_thread_data(ctx->thread_data);
     free(ctx);
 }
 
@@ -524,8 +525,10 @@ static void decrease_state(JScript *This, SCRIPTSTATE state)
         FIXME("NULL ctx\n");
     }
 
-    if(state == SCRIPTSTATE_UNINITIALIZED || state == SCRIPTSTATE_CLOSED)
-        This->thread_id = 0;
+    if((state == SCRIPTSTATE_UNINITIALIZED || state == SCRIPTSTATE_CLOSED) && This->thread_data) {
+        release_thread_data(This->thread_data);
+        This->thread_data = NULL;
+    }
 
     if(This->site) {
         IActiveScriptSite_Release(This->site);
@@ -708,6 +711,8 @@ static ULONG WINAPI JScript_Release(IActiveScript *iface)
             This->ctx->active_script = NULL;
             script_release(This->ctx);
         }
+        if(This->thread_data)
+            release_thread_data(This->thread_data);
         free(This);
         unlock_module();
     }
@@ -715,17 +720,11 @@ static ULONG WINAPI JScript_Release(IActiveScript *iface)
     return ref;
 }
 
-static int weak_refs_compare(const void *key, const struct rb_entry *entry)
-{
-    const struct weak_refs_entry *weak_refs_entry = RB_ENTRY_VALUE(entry, const struct weak_refs_entry, entry);
-    ULONG_PTR a = (ULONG_PTR)key, b = (ULONG_PTR)LIST_ENTRY(weak_refs_entry->list.next, struct weakmap_entry, weak_refs_entry)->key;
-    return (a > b) - (a < b);
-}
-
 static HRESULT WINAPI JScript_SetScriptSite(IActiveScript *iface,
                                             IActiveScriptSite *pass)
 {
     JScript *This = impl_from_IActiveScript(iface);
+    struct thread_data *thread_data;
     named_item_t *item;
     LCID lcid;
     HRESULT hres;
@@ -738,8 +737,13 @@ static HRESULT WINAPI JScript_SetScriptSite(IActiveScript *iface,
     if(This->site)
         return E_UNEXPECTED;
 
-    if(InterlockedCompareExchange(&This->thread_id, GetCurrentThreadId(), 0))
+    if(!(thread_data = get_thread_data()))
+        return E_OUTOFMEMORY;
+
+    if(InterlockedCompareExchangePointer((void**)&This->thread_data, thread_data, NULL)) {
+        release_thread_data(thread_data);
         return E_UNEXPECTED;
+    }
 
     if(!This->ctx) {
         script_ctx_t *ctx = calloc(1, sizeof(script_ctx_t));
@@ -754,8 +758,6 @@ static HRESULT WINAPI JScript_SetScriptSite(IActiveScript *iface,
         ctx->html_mode = This->html_mode;
         ctx->acc = jsval_undefined();
         list_init(&ctx->named_items);
-        list_init(&ctx->objects);
-        rb_init(&ctx->weak_refs, weak_refs_compare);
         heap_pool_init(&ctx->tmp_heap);
 
         hres = create_jscaller(ctx);
@@ -764,13 +766,11 @@ static HRESULT WINAPI JScript_SetScriptSite(IActiveScript *iface,
             return hres;
         }
 
+        thread_data->ref++;
+        ctx->thread_data = thread_data;
         ctx->last_match = jsstr_empty();
 
-        ctx = InterlockedCompareExchangePointer((void**)&This->ctx, ctx, NULL);
-        if(ctx) {
-            script_release(ctx);
-            return E_UNEXPECTED;
-        }
+        This->ctx = ctx;
     }
 
     /* Retrieve new dispatches for persistent named items */
@@ -821,7 +821,7 @@ static HRESULT WINAPI JScript_SetScriptState(IActiveScript *iface, SCRIPTSTATE s
 
     TRACE("(%p)->(%d)\n", This, ss);
 
-    if(This->thread_id && GetCurrentThreadId() != This->thread_id)
+    if(This->thread_data && This->thread_data->thread_id != GetCurrentThreadId())
         return E_UNEXPECTED;
 
     if(ss == SCRIPTSTATE_UNINITIALIZED) {
@@ -865,7 +865,7 @@ static HRESULT WINAPI JScript_GetScriptState(IActiveScript *iface, SCRIPTSTATE *
     if(!pssState)
         return E_POINTER;
 
-    if(This->thread_id && This->thread_id != GetCurrentThreadId())
+    if(This->thread_data && This->thread_data->thread_id != GetCurrentThreadId())
         return E_UNEXPECTED;
 
     *pssState = This->ctx ? This->ctx->state : SCRIPTSTATE_UNINITIALIZED;
@@ -878,7 +878,7 @@ static HRESULT WINAPI JScript_Close(IActiveScript *iface)
 
     TRACE("(%p)->()\n", This);
 
-    if(This->thread_id && This->thread_id != GetCurrentThreadId())
+    if(This->thread_data && This->thread_data->thread_id != GetCurrentThreadId())
         return E_UNEXPECTED;
 
     decrease_state(This, SCRIPTSTATE_CLOSED);
@@ -897,7 +897,7 @@ static HRESULT WINAPI JScript_AddNamedItem(IActiveScript *iface,
 
     TRACE("(%p)->(%s %lx)\n", This, debugstr_w(pstrName), dwFlags);
 
-    if(This->thread_id != GetCurrentThreadId() || !This->ctx || This->ctx->state == SCRIPTSTATE_CLOSED)
+    if(!This->thread_data || This->thread_data->thread_id != GetCurrentThreadId() || !This->ctx || This->ctx->state == SCRIPTSTATE_CLOSED)
         return E_UNEXPECTED;
 
     if(dwFlags & SCRIPTITEM_GLOBALMEMBERS) {
@@ -959,7 +959,7 @@ static HRESULT WINAPI JScript_GetScriptDispatch(IActiveScript *iface, LPCOLESTR 
     if(!ppdisp)
         return E_POINTER;
 
-    if(This->thread_id != GetCurrentThreadId() || !This->ctx->global) {
+    if(!This->thread_data || This->thread_data->thread_id != GetCurrentThreadId() || !This->ctx->global) {
         *ppdisp = NULL;
         return E_UNEXPECTED;
     }
@@ -1101,7 +1101,7 @@ static HRESULT WINAPI JScriptParse_ParseScriptText(IActiveScriptParse *iface,
           debugstr_w(pstrItemName), punkContext, debugstr_w(pstrDelimiter),
           wine_dbgstr_longlong(dwSourceContextCookie), ulStartingLine, dwFlags, pvarResult, pexcepinfo);
 
-    if(This->thread_id != GetCurrentThreadId() || This->ctx->state == SCRIPTSTATE_CLOSED)
+    if(!This->thread_data || This->thread_data->thread_id != GetCurrentThreadId() || This->ctx->state == SCRIPTSTATE_CLOSED)
         return E_UNEXPECTED;
 
     if(pstrItemName) {
@@ -1204,7 +1204,7 @@ static HRESULT WINAPI JScriptParseProcedure_ParseProcedureText(IActiveScriptPars
           debugstr_w(pstrProcedureName), debugstr_w(pstrItemName), punkContext, debugstr_w(pstrDelimiter),
           wine_dbgstr_longlong(dwSourceContextCookie), ulStartingLineNumber, dwFlags, ppdisp);
 
-    if(This->thread_id != GetCurrentThreadId() || This->ctx->state == SCRIPTSTATE_CLOSED)
+    if(!This->thread_data || This->thread_data->thread_id != GetCurrentThreadId() || This->ctx->state == SCRIPTSTATE_CLOSED)
         return E_UNEXPECTED;
 
     if(pstrItemName) {

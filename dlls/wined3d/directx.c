@@ -289,7 +289,7 @@ static const struct driver_version_information driver_version_table[] =
     {DRIVER_AMD_R600,           DRIVER_MODEL_NT5X,  "ati2dvag.dll",    10, 1280},
     {DRIVER_AMD_R300,           DRIVER_MODEL_NT6X,  "atiumdag.dll",    10, 741 },
     {DRIVER_AMD_R600,           DRIVER_MODEL_NT6X,  "atiumdag.dll",    10, 1280},
-    {DRIVER_AMD_RX,             DRIVER_MODEL_NT6X,  "aticfx32.dll", 21023, 2010}, /* Adrenalin 23.7.2 */
+    {DRIVER_AMD_RX,             DRIVER_MODEL_NT6X,  "aticfx32.dll", 23013, 1023}, /* Adrenalin 23.12.1 */
 
     /* Intel
      * The drivers are unified but not all versions support all GPUs. At some point the 2k/xp
@@ -2708,6 +2708,7 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d_adapter *adapter,
 
     caps->shader_double_precision = d3d_info->shader_double_precision;
     caps->viewport_array_index_any_shader = d3d_info->viewport_array_index_any_shader;
+    caps->stencil_export = d3d_info->stencil_export;
 
     caps->max_feature_level = d3d_info->feature_level;
 

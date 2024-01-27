@@ -294,6 +294,7 @@ HKCR,exefile,,2,"Application"
 HKCR,exefile\DefaultIcon,,2,"%1"
 HKCR,exefile\shell\open\command,,2,"""%1"" %*"
 HKCR,exefile\shell\runas\command,,2,"""%1"" %*"
+HKCR,folder\shell\explore\command,,2,"explorer ""%1"""
 HKCR,folder\shell\open\ddeexec,,2,"[ViewFolder("%l", %I, %S)]"
 HKCR,folder\shell\open\ddeexec,"NoActivateHandler",2,""
 HKCR,folder\shell\open\ddeexec\application,,2,"Folders"
@@ -2449,6 +2450,7 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
 10,help,
 10,logs,
 10,performance\winsat\datastore,
+10,security,
 10,tasks,
 10,temp,
 11,catroot,

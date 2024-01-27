@@ -55,7 +55,7 @@
 
 #define VKD3D_MAX_COMPATIBLE_FORMAT_COUNT 6u
 #define VKD3D_MAX_QUEUE_FAMILY_COUNT      3u
-#define VKD3D_MAX_SHADER_EXTENSIONS       3u
+#define VKD3D_MAX_SHADER_EXTENSIONS       4u
 #define VKD3D_MAX_SHADER_STAGES           5u
 #define VKD3D_MAX_VK_SYNC_OBJECTS         4u
 #define VKD3D_MAX_DEVICE_BLOCKED_QUEUES  16u
@@ -67,7 +67,7 @@
  * this number to prevent excessive pool memory use. */
 #define VKD3D_MAX_VIRTUAL_HEAP_DESCRIPTORS_PER_TYPE (16 * 1024u)
 
-extern LONG64 object_global_serial_id;
+extern uint64_t object_global_serial_id;
 
 struct d3d12_command_list;
 struct d3d12_device;
@@ -137,6 +137,7 @@ struct vkd3d_vulkan_info
     bool EXT_robustness2;
     bool EXT_shader_demote_to_helper_invocation;
     bool EXT_shader_stencil_export;
+    bool EXT_shader_viewport_index_layer;
     bool EXT_texel_buffer_alignment;
     bool EXT_transform_feedback;
     bool EXT_vertex_attribute_divisor;
@@ -620,8 +621,8 @@ struct vkd3d_signaled_semaphore
 struct d3d12_fence
 {
     ID3D12Fence1 ID3D12Fence1_iface;
-    LONG internal_refcount;
-    LONG refcount;
+    unsigned int internal_refcount;
+    unsigned int refcount;
 
     D3D12_FENCE_FLAGS flags;
 
@@ -1364,7 +1365,7 @@ struct vkd3d_buffer
 struct d3d12_command_allocator
 {
     ID3D12CommandAllocator ID3D12CommandAllocator_iface;
-    LONG refcount;
+    unsigned int refcount;
 
     D3D12_COMMAND_LIST_TYPE type;
     VkQueueFlags vk_queue_flags;
@@ -1465,7 +1466,7 @@ enum vkd3d_pipeline_bind_point
 struct d3d12_command_list
 {
     ID3D12GraphicsCommandList5 ID3D12GraphicsCommandList5_iface;
-    LONG refcount;
+    unsigned int refcount;
 
     D3D12_COMMAND_LIST_TYPE type;
     VkQueueFlags vk_queue_flags;
@@ -1621,7 +1622,7 @@ struct d3d12_command_queue_op_array
 struct d3d12_command_queue
 {
     ID3D12CommandQueue ID3D12CommandQueue_iface;
-    LONG refcount;
+    unsigned int refcount;
 
     D3D12_COMMAND_QUEUE_DESC desc;
 
@@ -1656,7 +1657,7 @@ HRESULT d3d12_command_queue_create(struct d3d12_device *device,
 struct d3d12_command_signature
 {
     ID3D12CommandSignature ID3D12CommandSignature_iface;
-    LONG refcount;
+    unsigned int refcount;
     unsigned int internal_refcount;
 
     D3D12_COMMAND_SIGNATURE_DESC desc;

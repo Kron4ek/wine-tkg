@@ -553,7 +553,7 @@ void bus_device_stop(void)
     ok( ret || GetLastError() == ERROR_FILE_NOT_FOUND, "Failed to delete file, error %lu\n", GetLastError() );
 }
 
-static BOOL find_hid_device_path( WCHAR *device_path )
+BOOL find_hid_device_path( WCHAR *device_path )
 {
     char buffer[FIELD_OFFSET( SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath[MAX_PATH] )] = {0};
     SP_DEVICE_INTERFACE_DATA iface = {sizeof(SP_DEVICE_INTERFACE_DATA)};
@@ -735,7 +735,7 @@ void hid_device_stop( struct hid_device_desc *desc, UINT count )
     }
 }
 
-BOOL hid_device_start( struct hid_device_desc *desc, UINT count )
+BOOL hid_device_start_( struct hid_device_desc *desc, UINT count, DWORD timeout )
 {
     HANDLE control;
     DWORD ret, i;
@@ -754,7 +754,7 @@ BOOL hid_device_start( struct hid_device_desc *desc, UINT count )
 
     for (i = 0; i < count; ++i)
     {
-        ret = WaitForSingleObject( device_added, 1000 );
+        ret = WaitForSingleObject( device_added, timeout );
         todo_wine_if(i > 0)
         ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
     }
@@ -1048,7 +1048,7 @@ static void test_hidp_get_input( HANDLE file, int report_id, ULONG report_len, P
         struct hid_expect broken_expect =
         {
             .code = IOCTL_HID_GET_INPUT_REPORT,
-            .broken = TRUE,
+            .broken_id = -1,
             .report_len = report_len - 1,
             .report_buf =
             {
@@ -1142,7 +1142,7 @@ static void test_hidp_get_feature( HANDLE file, int report_id, ULONG report_len,
         struct hid_expect broken_expect =
         {
             .code = IOCTL_HID_GET_FEATURE,
-            .broken = TRUE,
+            .broken_id = -1,
             .report_len = report_len - 1,
             .report_buf =
             {
@@ -1240,7 +1240,7 @@ static void test_hidp_set_feature( HANDLE file, int report_id, ULONG report_len,
         struct hid_expect broken_expect =
         {
             .code = IOCTL_HID_SET_FEATURE,
-            .broken = TRUE,
+            .broken_id = -1,
             .report_len = report_len - 1,
             .report_buf =
             {
@@ -1341,7 +1341,7 @@ static void test_hidp_set_output( HANDLE file, int report_id, ULONG report_len, 
         struct hid_expect broken_expect =
         {
             .code = IOCTL_HID_SET_OUTPUT_REPORT,
-            .broken = TRUE,
+            .broken_id = -1,
             .report_len = report_len - 1,
             .report_buf = {0x5a,0x5a},
             .ret_length = 3,

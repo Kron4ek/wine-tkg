@@ -908,12 +908,10 @@ static void test_COM_audiopath(void)
 
     /* IDirectMusicObject and IPersistStream are not supported */
     hr = IDirectMusicAudioPath_QueryInterface(dmap, &IID_IDirectMusicObject, (void**)&unk);
-    todo_wine ok(FAILED(hr) && !unk, "Unexpected IDirectMusicObject interface: hr=%#lx, iface=%p\n",
-            hr, unk);
+    ok(FAILED(hr) && !unk, "Unexpected IDirectMusicObject interface: hr=%#lx, iface=%p\n", hr, unk);
     if (unk) IUnknown_Release(unk);
     hr = IDirectMusicAudioPath_QueryInterface(dmap, &IID_IPersistStream, (void**)&unk);
-    todo_wine ok(FAILED(hr) && !unk, "Unexpected IPersistStream interface: hr=%#lx, iface=%p\n",
-            hr, unk);
+    ok(FAILED(hr) && !unk, "Unexpected IPersistStream interface: hr=%#lx, iface=%p\n", hr, unk);
     if (unk) IUnknown_Release(unk);
 
     /* Same refcount for all DirectMusicAudioPath interfaces */
@@ -988,7 +986,7 @@ static void test_COM_audiopathconfig(void)
     /* IDirectMusicAudioPath not supported */
     hr = CoCreateInstance(&CLSID_DirectMusicAudioPathConfig, NULL, CLSCTX_INPROC_SERVER,
             &IID_IDirectMusicAudioPath, (void**)&dmap);
-    todo_wine ok(FAILED(hr) && !dmap,
+    ok(FAILED(hr) && !dmap,
             "Unexpected IDirectMusicAudioPath interface: hr=%#lx, iface=%p\n", hr, dmap);
 
     /* IDirectMusicObject and IPersistStream supported */
@@ -1018,8 +1016,8 @@ static void test_COM_audiopathconfig(void)
 
     /* IDirectMusicAudioPath still not supported */
     hr = IDirectMusicObject_QueryInterface(dmo, &IID_IDirectMusicAudioPath, (void**)&dmap);
-    todo_wine ok(FAILED(hr) && !dmap,
-            "Unexpected IDirectMusicAudioPath interface: hr=%#lx, iface=%p\n", hr, dmap);
+    ok(FAILED(hr) && !dmap,
+        "Unexpected IDirectMusicAudioPath interface: hr=%#lx, iface=%p\n", hr, dmap);
 
     while (IDirectMusicObject_Release(dmo));
 }
@@ -1258,6 +1256,7 @@ static void test_COM_performance(void)
     IDirectMusicPerformance *dmp = (IDirectMusicPerformance*)0xdeadbeef;
     IDirectMusicPerformance *dmp2;
     IDirectMusicPerformance8 *dmp8;
+    IDirectMusicAudioPath *dmap = NULL;
     ULONG refcount;
     HRESULT hr;
 
@@ -1286,6 +1285,9 @@ static void test_COM_performance(void)
     ok (refcount == 3, "refcount == %lu, expected 3\n", refcount);
     hr = IDirectMusicPerformance_QueryInterface(dmp, &IID_IDirectMusicPerformance8, (void**)&dmp8);
     ok(hr == S_OK, "QueryInterface for IID_IDirectMusicPerformance8 failed: %#lx\n", hr);
+    hr = IDirectMusicPerformance8_CreateAudioPath(dmp8, NULL, TRUE, &dmap);
+    ok(hr == E_POINTER, "Unexpected result from CreateAudioPath: %#lx\n", hr);
+    ok(dmap == NULL, "Unexpected dmap pointer\n");
     refcount = IDirectMusicPerformance_Release(dmp);
     ok (refcount == 3, "refcount == %lu, expected 3\n", refcount);
     refcount = IDirectMusicPerformance8_Release(dmp8);

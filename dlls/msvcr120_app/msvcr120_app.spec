@@ -33,9 +33,9 @@
 @ cdecl -arch=arm ??0_NonReentrantPPLLock@details@Concurrency@@QAA@XZ(ptr) msvcr120.??0_NonReentrantPPLLock@details@Concurrency@@QAA@XZ
 @ thiscall -arch=i386 ??0_NonReentrantPPLLock@details@Concurrency@@QAE@XZ(ptr) msvcr120.??0_NonReentrantPPLLock@details@Concurrency@@QAE@XZ
 @ cdecl -arch=win64 ??0_NonReentrantPPLLock@details@Concurrency@@QEAA@XZ(ptr) msvcr120.??0_NonReentrantPPLLock@details@Concurrency@@QEAA@XZ
-@ stub -arch=arm ??0_ReaderWriterLock@details@Concurrency@@QAA@XZ
-@ stub -arch=i386 ??0_ReaderWriterLock@details@Concurrency@@QAE@XZ
-@ stub -arch=win64 ??0_ReaderWriterLock@details@Concurrency@@QEAA@XZ
+@ cdecl -arch=arm ??0_ReaderWriterLock@details@Concurrency@@QAA@XZ(ptr) msvcr120.??0_ReaderWriterLock@details@Concurrency@@QAA@XZ
+@ thiscall -arch=i386 ??0_ReaderWriterLock@details@Concurrency@@QAE@XZ(ptr) msvcr120.??0_ReaderWriterLock@details@Concurrency@@QAE@XZ
+@ cdecl -arch=win64 ??0_ReaderWriterLock@details@Concurrency@@QEAA@XZ(ptr) msvcr120.??0_ReaderWriterLock@details@Concurrency@@QEAA@XZ
 @ cdecl -arch=arm ??0_ReentrantBlockingLock@details@Concurrency@@QAA@XZ(ptr) msvcr120.??0_ReentrantBlockingLock@details@Concurrency@@QAA@XZ
 @ thiscall -arch=i386 ??0_ReentrantBlockingLock@details@Concurrency@@QAE@XZ(ptr) msvcr120.??0_ReentrantBlockingLock@details@Concurrency@@QAE@XZ
 @ cdecl -arch=win64 ??0_ReentrantBlockingLock@details@Concurrency@@QEAA@XZ(ptr) msvcr120.??0_ReentrantBlockingLock@details@Concurrency@@QEAA@XZ
@@ -501,9 +501,9 @@
 @ stub -arch=win64 ?_ConcRT_DumpMessage@details@Concurrency@@YAXPEB_WZZ
 @ stub -arch=win32 ?_ConcRT_Trace@details@Concurrency@@YAXHPB_WZZ
 @ stub -arch=win64 ?_ConcRT_Trace@details@Concurrency@@YAXHPEB_WZZ
-@ stub -arch=arm ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QAA_NXZ
-@ stub -arch=i386 ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QAE_NXZ
-@ stub -arch=win64 ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QEAA_NXZ
+@ cdecl -arch=arm ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QAA_NXZ(ptr) msvcr120.?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QAA_NXZ
+@ thiscall -arch=i386 ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QAE_NXZ(ptr) msvcr120.?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QAE_NXZ
+@ cdecl -arch=win64 ?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QEAA_NXZ(ptr) msvcr120.?_Confirm_cancel@_Cancellation_beacon@details@Concurrency@@QEAA_NXZ
 @ stub -arch=arm ?_Copy_str@exception@std@@AAAXPBD@Z
 @ stub -arch=i386 ?_Copy_str@exception@std@@AAEXPBD@Z
 @ stub -arch=win64 ?_Copy_str@exception@std@@AEAAXPEBD@Z

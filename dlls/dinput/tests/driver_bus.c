@@ -131,7 +131,7 @@ static void expect_queue_reset( struct expect_queue *queue, void *buffer, unsign
     while (tmp != missing_end)
     {
         winetest_push_context( "%s expect[%Id]", context, tmp - missing );
-        if (tmp->broken)
+        if (tmp->broken_id)
         {
             todo_wine_if( tmp->todo )
             win_skip( "broken (code %#lx id %u len %u)\n", tmp->code, tmp->report_id, tmp->report_len );
@@ -251,8 +251,9 @@ static void expect_queue_next( struct expect_queue *queue, ULONG code, HID_XFER_
     tmp = queue->pos;
     while (tmp < queue->end)
     {
+        BOOL is_missing = tmp->broken_id == (BYTE)-1;
         if (winetest_platform_is_wine && !tmp->todo) break;
-        if (!winetest_platform_is_wine && !tmp->broken && !tmp->wine_only) break;
+        if (!winetest_platform_is_wine && !is_missing && !tmp->wine_only) break;
         if (tmp->code == code && tmp->report_id == id && tmp->report_len == len &&
             (!compare_buf || RtlCompareMemory( tmp->report_buf, buf, len ) == len))
             break;
@@ -303,7 +304,7 @@ static void expect_queue_next( struct expect_queue *queue, ULONG code, HID_XFER_
     while (tmp != missing_end)
     {
         winetest_push_context( "%s expect[%Id]", context, tmp - missing );
-        if (tmp->broken)
+        if (tmp->broken_id)
         {
             todo_wine_if( tmp->todo )
             win_skip( "broken (code %#lx id %u len %u)\n", tmp->code, tmp->report_id, tmp->report_len );
@@ -348,13 +349,13 @@ static void irp_queue_push( struct irp_queue *queue, IRP *irp )
     KeReleaseSpinLock( &queue->lock, irql );
 }
 
-static void irp_queue_clear( struct irp_queue *queue )
+static void irp_queue_complete( struct irp_queue *queue, BOOL delete )
 {
     IRP *irp;
 
     while ((irp = irp_queue_pop( queue )))
     {
-        irp->IoStatus.Status = STATUS_DELETE_PENDING;
+        if (delete) irp->IoStatus.Status = STATUS_DELETE_PENDING;
         IoCompleteRequest( irp, IO_NO_INCREMENT );
     }
 }
@@ -373,6 +374,7 @@ struct input_queue
     struct hid_expect *end;
     struct hid_expect *buffer;
     struct irp_queue pending;
+    struct irp_queue completed;
 };
 
 static void input_queue_init( struct input_queue *queue, BOOL is_polled )
@@ -384,6 +386,7 @@ static void input_queue_init( struct input_queue *queue, BOOL is_polled )
     queue->pos = queue->buffer;
     queue->end = queue->buffer;
     irp_queue_init( &queue->pending );
+    irp_queue_init( &queue->completed );
 }
 
 static void input_queue_cleanup( struct input_queue *queue )
@@ -416,7 +419,11 @@ static NTSTATUS input_queue_read( struct input_queue *queue, IRP *irp )
     KIRQL irql;
 
     KeAcquireSpinLock( &queue->lock, &irql );
-    if (input_queue_read_locked( queue, irp )) status = STATUS_SUCCESS;
+    if (input_queue_read_locked( queue, irp ))
+    {
+        irp_queue_push( &queue->completed, irp );
+        status = STATUS_SUCCESS;
+    }
     else
     {
         IoMarkIrpPending( irp );
@@ -430,12 +437,9 @@ static NTSTATUS input_queue_read( struct input_queue *queue, IRP *irp )
 
 static void input_queue_reset( struct input_queue *queue, void *in_buf, ULONG in_size )
 {
-    struct irp_queue completed;
     ULONG remaining;
     KIRQL irql;
     IRP *irp;
-
-    irp_queue_init( &completed );
 
     KeAcquireSpinLock( &queue->lock, &irql );
     remaining = queue->end - queue->pos;
@@ -447,13 +451,13 @@ static void input_queue_reset( struct input_queue *queue, void *in_buf, ULONG in
     while (!queue->is_polled && queue->pos < queue->end && (irp = irp_queue_pop( &queue->pending )))
     {
         input_queue_read_locked( queue, irp );
-        irp_queue_push( &completed, irp );
+        irp_queue_push( &queue->completed, irp );
     }
     KeReleaseSpinLock( &queue->lock, irql );
 
     if (!queue->is_polled) ok( !remaining, "unread input\n" );
 
-    while ((irp = irp_queue_pop( &completed ))) IoCompleteRequest( irp, IO_NO_INCREMENT );
+    irp_queue_complete( &queue->completed, FALSE );
 }
 
 struct device
@@ -721,7 +725,8 @@ static NTSTATUS pdo_pnp( DEVICE_OBJECT *device, IRP *irp )
         state = (code == IRP_MN_START_DEVICE || code == IRP_MN_CANCEL_REMOVE_DEVICE) ? 0 : PNP_DEVICE_REMOVED;
         KeAcquireSpinLock( &impl->base.lock, &irql );
         impl->base.state = state;
-        irp_queue_clear( &impl->input_queue.pending );
+        irp_queue_complete( &impl->input_queue.pending, TRUE );
+        irp_queue_complete( &impl->input_queue.completed, TRUE );
         KeReleaseSpinLock( &impl->base.lock, irql );
         if (code != IRP_MN_REMOVE_DEVICE) status = STATUS_SUCCESS;
         else
@@ -1087,7 +1092,10 @@ static NTSTATUS pdo_internal_ioctl( DEVICE_OBJECT *device, IRP *irp )
         ok( !in_size, "got input size %lu\n", in_size );
         ok( out_size == expected_size, "got output size %lu\n", out_size );
         status = input_queue_read( &impl->input_queue, irp );
-        break;
+        irp_queue_complete( &impl->input_queue.completed, FALSE );
+
+        winetest_pop_context();
+        return status;
     }
 
     case IOCTL_HID_WRITE_REPORT:
@@ -1101,9 +1109,10 @@ static NTSTATUS pdo_internal_ioctl( DEVICE_OBJECT *device, IRP *irp )
         expect_queue_next( &impl->expect_queue, code, packet, &index, &expect, TRUE, context, sizeof(context) );
         winetest_push_context( "%s expect[%ld]", context, index );
         ok( code == expect.code, "got %#lx, expected %#lx\n", code, expect.code );
-        ok( packet->reportId == expect.report_id, "got id %u\n", packet->reportId );
+        ok( packet->reportId == expect.report_id || broken( packet->reportId == expect.broken_id ),
+            "got id %u\n", packet->reportId );
         ok( packet->reportBufferLen == expect.report_len, "got len %lu\n", packet->reportBufferLen );
-        check_buffer( packet, &expect );
+        if (!broken( packet->reportId == expect.broken_id )) check_buffer( packet, &expect );
         winetest_pop_context();
 
         irp->IoStatus.Information = expect.ret_length ? expect.ret_length : expect.report_len;
@@ -1277,7 +1286,8 @@ static NTSTATUS pdo_handle_ioctl( struct phys_device *impl, IRP *irp, ULONG code
     case IOCTL_WINETEST_REMOVE_DEVICE:
         KeAcquireSpinLock( &impl->base.lock, &irql );
         impl->base.state = PNP_DEVICE_REMOVED;
-        irp_queue_clear( &impl->input_queue.pending );
+        irp_queue_complete( &impl->input_queue.pending, TRUE );
+        irp_queue_complete( &impl->input_queue.completed, TRUE );
         KeReleaseSpinLock( &impl->base.lock, irql );
         impl->pending_remove = irp;
         IoMarkIrpPending( irp );

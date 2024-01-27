@@ -931,11 +931,7 @@ static NTSTATUS create_logical_proc_info(void)
             unsigned int phys_core = 0;
             ULONG_PTR thread_mask = 0;
 
-            if (i > 8 * sizeof(ULONG_PTR))
-            {
-                FIXME("skipping logical processor %d\n", i);
-                continue;
-            }
+            if (i > 8 * sizeof(ULONG_PTR)) break;
 
             snprintf(name, sizeof(name), core_info, i, "physical_package_id");
             f = fopen(name, "r");
@@ -3461,7 +3457,8 @@ NTSTATUS WINAPI NtSystemDebugControl( SYSDBG_COMMAND command, void *in_buff, ULO
 {
     FIXME( "(%d, %p, %d, %p, %d, %p), stub\n",
            command, in_buff, (int)in_len, out_buff, (int)out_len, retlen );
-    return STATUS_NOT_IMPLEMENTED;
+
+    return STATUS_DEBUGGER_INACTIVE;
 }
 
 

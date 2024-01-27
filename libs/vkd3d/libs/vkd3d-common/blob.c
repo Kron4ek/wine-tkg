@@ -23,11 +23,12 @@
 #include "vkd3d_blob.h"
 #include "vkd3d_debug.h"
 #include "vkd3d_memory.h"
+#include "d3d12shader.h"
 
 struct vkd3d_blob
 {
     ID3D10Blob ID3DBlob_iface;
-    LONG refcount;
+    unsigned int refcount;
 
     void *buffer;
     SIZE_T size;
@@ -59,7 +60,7 @@ static HRESULT STDMETHODCALLTYPE vkd3d_blob_QueryInterface(ID3DBlob *iface, REFI
 static ULONG STDMETHODCALLTYPE vkd3d_blob_AddRef(ID3DBlob *iface)
 {
     struct vkd3d_blob *blob = impl_from_ID3DBlob(iface);
-    ULONG refcount = InterlockedIncrement(&blob->refcount);
+    unsigned int refcount = vkd3d_atomic_increment_u32(&blob->refcount);
 
     TRACE("%p increasing refcount to %u.\n", blob, refcount);
 
@@ -69,7 +70,7 @@ static ULONG STDMETHODCALLTYPE vkd3d_blob_AddRef(ID3DBlob *iface)
 static ULONG STDMETHODCALLTYPE vkd3d_blob_Release(ID3DBlob *iface)
 {
     struct vkd3d_blob *blob = impl_from_ID3DBlob(iface);
-    ULONG refcount = InterlockedDecrement(&blob->refcount);
+    unsigned int refcount = vkd3d_atomic_decrement_u32(&blob->refcount);
 
     TRACE("%p decreasing refcount to %u.\n", blob, refcount);
 

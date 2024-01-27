@@ -267,29 +267,53 @@ static inline int ascii_strcasecmp(const char *a, const char *b)
     return c_a - c_b;
 }
 
+static inline uint64_t vkd3d_atomic_add_fetch_u64(uint64_t volatile *x, uint64_t val)
+{
+#if HAVE_SYNC_ADD_AND_FETCH
+    return __sync_add_and_fetch(x, val);
+#elif defined(_WIN32)
+    return InterlockedAdd64((LONG64 *)x, val);
+#else
+# error "vkd3d_atomic_add_fetch_u64() not implemented for this platform"
+#endif
+}
+
+static inline uint32_t vkd3d_atomic_add_fetch_u32(uint32_t volatile *x, uint32_t val)
+{
+#if HAVE_SYNC_ADD_AND_FETCH
+    return __sync_add_and_fetch(x, val);
+#elif defined(_WIN32)
+    return InterlockedAdd((LONG *)x, val);
+#else
+# error "vkd3d_atomic_add_fetch_u32() not implemented for this platform"
+#endif
+}
+
+static inline uint64_t vkd3d_atomic_increment_u64(uint64_t volatile *x)
+{
+    return vkd3d_atomic_add_fetch_u64(x, 1);
+}
+
+static inline uint32_t vkd3d_atomic_decrement_u32(uint32_t volatile *x)
+{
+    return vkd3d_atomic_add_fetch_u32(x, ~0u);
+}
+
+static inline uint32_t vkd3d_atomic_increment_u32(uint32_t volatile *x)
+{
+    return vkd3d_atomic_add_fetch_u32(x, 1);
+}
+
 #ifndef _WIN32
-# if HAVE_SYNC_ADD_AND_FETCH
 static inline LONG InterlockedIncrement(LONG volatile *x)
 {
-    return __sync_add_and_fetch(x, 1);
+    return vkd3d_atomic_increment_u32((uint32_t *)x);
 }
-static inline LONG64 InterlockedIncrement64(LONG64 volatile *x)
-{
-    return __sync_add_and_fetch(x, 1);
-}
-# else
-#  error "InterlockedIncrement() not implemented for this platform"
-# endif  /* HAVE_SYNC_ADD_AND_FETCH */
 
-# if HAVE_SYNC_SUB_AND_FETCH
 static inline LONG InterlockedDecrement(LONG volatile *x)
 {
-    return __sync_sub_and_fetch(x, 1);
+    return vkd3d_atomic_decrement_u32((uint32_t *)x);
 }
-# else
-#  error "InterlockedDecrement() not implemented for this platform"
-# endif
-
 #endif  /* _WIN32 */
 
 static inline void vkd3d_parse_version(const char *version, int *major, int *minor)

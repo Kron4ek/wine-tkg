@@ -375,6 +375,7 @@ SOURCES = \
 	inaddr.h \
 	indexsrv.idl \
 	initguid.h \
+	inputpaneinterop.idl \
 	inputscope.idl \
 	inseng.idl \
 	inspectable.idl \
@@ -440,6 +441,7 @@ SOURCES = \
 	mfplay.idl \
 	mfreadwrite.idl \
 	mftransform.idl \
+	mgmtapi.h \
 	midles.h \
 	mimeinfo.idl \
 	mimeole.idl \

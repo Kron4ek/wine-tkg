@@ -6437,30 +6437,9 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_context *context, const st
             else
                 settings->op[i].color_fixup = texture->resource.format->color_fixup;
             if (ignore_textype)
-            {
                 settings->op[i].tex_type = WINED3D_GL_RES_TYPE_TEX_1D;
-            }
             else
-            {
-                switch (wined3d_texture_gl(texture)->target)
-                {
-                    case GL_TEXTURE_1D:
-                        settings->op[i].tex_type = WINED3D_GL_RES_TYPE_TEX_1D;
-                        break;
-                    case GL_TEXTURE_2D:
-                        settings->op[i].tex_type = WINED3D_GL_RES_TYPE_TEX_2D;
-                        break;
-                    case GL_TEXTURE_3D:
-                        settings->op[i].tex_type = WINED3D_GL_RES_TYPE_TEX_3D;
-                        break;
-                    case GL_TEXTURE_CUBE_MAP_ARB:
-                        settings->op[i].tex_type = WINED3D_GL_RES_TYPE_TEX_CUBE;
-                        break;
-                    case GL_TEXTURE_RECTANGLE_ARB:
-                        settings->op[i].tex_type = WINED3D_GL_RES_TYPE_TEX_RECT;
-                        break;
-                }
-            }
+                settings->op[i].tex_type = texture->resource.gl_type;
         } else {
             settings->op[i].color_fixup = COLOR_FIXUP_IDENTITY;
             settings->op[i].tex_type = WINED3D_GL_RES_TYPE_TEX_1D;
@@ -6498,39 +6477,37 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_context *context, const st
             aarg0 = (args[aop] & ARG0) ? state->texture_states[i][WINED3D_TSS_ALPHA_ARG0] : ARG_UNUSED;
         }
 
-        if (!i && texture && state->render_states[WINED3D_RS_COLORKEYENABLE])
+        if (!i && state->render_states[WINED3D_RS_COLORKEYENABLE]
+                && texture && !(texture->resource.usage & WINED3DUSAGE_LEGACY_CUBEMAP)
+                && (texture->async.color_key_flags & WINED3D_CKEY_SRC_BLT) && !texture->resource.format->alpha_size)
         {
-            GLenum texture_dimensions;
-
-            texture_dimensions = wined3d_texture_gl(texture)->target;
-
-            if (texture_dimensions == GL_TEXTURE_2D || texture_dimensions == GL_TEXTURE_RECTANGLE_ARB)
+            if (aop == WINED3D_TOP_DISABLE)
             {
-                if (texture->async.color_key_flags & WINED3D_CKEY_SRC_BLT && !texture->resource.format->alpha_size)
+               aarg1 = WINED3DTA_TEXTURE;
+               aop = WINED3D_TOP_SELECT_ARG1;
+            }
+            else if (aop == WINED3D_TOP_SELECT_ARG1 && aarg1 != WINED3DTA_TEXTURE)
+            {
+                if (state->blend_state && state->blend_state->desc.rt[0].enable)
                 {
-                    if (aop == WINED3D_TOP_DISABLE)
-                    {
-                       aarg1 = WINED3DTA_TEXTURE;
-                       aop = WINED3D_TOP_SELECT_ARG1;
-                    }
-                    else if (aop == WINED3D_TOP_SELECT_ARG1 && aarg1 != WINED3DTA_TEXTURE)
-                    {
-                        if (state->blend_state && state->blend_state->desc.rt[0].enable)
-                        {
-                            aarg2 = WINED3DTA_TEXTURE;
-                            aop = WINED3D_TOP_MODULATE;
-                        }
-                        else aarg1 = WINED3DTA_TEXTURE;
-                    }
-                    else if (aop == WINED3D_TOP_SELECT_ARG2 && aarg2 != WINED3DTA_TEXTURE)
-                    {
-                        if (state->blend_state && state->blend_state->desc.rt[0].enable)
-                        {
-                            aarg1 = WINED3DTA_TEXTURE;
-                            aop = WINED3D_TOP_MODULATE;
-                        }
-                        else aarg2 = WINED3DTA_TEXTURE;
-                    }
+                    aarg2 = WINED3DTA_TEXTURE;
+                    aop = WINED3D_TOP_MODULATE;
+                }
+                else
+                {
+                    aarg1 = WINED3DTA_TEXTURE;
+                }
+            }
+            else if (aop == WINED3D_TOP_SELECT_ARG2 && aarg2 != WINED3DTA_TEXTURE)
+            {
+                if (state->blend_state && state->blend_state->desc.rt[0].enable)
+                {
+                    aarg1 = WINED3DTA_TEXTURE;
+                    aop = WINED3D_TOP_MODULATE;
+                }
+                else
+                {
+                    aarg2 = WINED3DTA_TEXTURE;
                 }
             }
         }

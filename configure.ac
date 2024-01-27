@@ -32,7 +32,6 @@ AC_ARG_WITH(dbus,      AS_HELP_STRING([--without-dbus],[do not use DBus (dynamic
 AC_ARG_WITH(float-abi, AS_HELP_STRING([--with-float-abi=abi],[specify the ABI (soft|softfp|hard) for ARM platforms]))
 AC_ARG_WITH(fontconfig,AS_HELP_STRING([--without-fontconfig],[do not use fontconfig]))
 AC_ARG_WITH(freetype,  AS_HELP_STRING([--without-freetype],[do not use the FreeType library]))
-AC_ARG_WITH(gcrypt,    AS_HELP_STRING([--without-gcrypt],[do not use libgcrypt]))
 AC_ARG_WITH(gettext,   AS_HELP_STRING([--without-gettext],[do not use gettext]))
 AC_ARG_WITH(gettextpo, AS_HELP_STRING([--with-gettextpo],[use the GetTextPO library to rebuild po files]),
             [if test "x$withval" = "xno"; then ac_cv_header_gettext_po_h=no; fi])
@@ -134,7 +133,6 @@ case $host in
       TARGETFLAGS="$TARGETFLAGS -m32"
       PKG_CONFIG_LIBDIR=${PKG_CONFIG_LIBDIR:-/usr/lib/i386-linux-gnu/pkgconfig:/usr/lib32/pkgconfig:/usr/lib/pkgconfig}
       export PKG_CONFIG_LIBDIR
-      with_unwind=${with_unwind:-no}
     else
       CC="$CC -m64"
       CXX="$CXX -m64"
@@ -179,9 +177,6 @@ case $host in
     esac
     CFLAGS="$CFLAGS -mfloat-abi=$float_abi"
     TARGETFLAGS="$TARGETFLAGS -mfloat-abi=$float_abi"
-    ;;
-  i[[3456789]]86*)
-    with_unwind=${with_unwind:-no}
     ;;
 esac
 
@@ -1168,7 +1163,7 @@ then
         if test "$ac_cv_mingw_header_vkd3d_h" = "yes" -a "$ac_cv_mingw_header_vkd3d_shader_h" = "yes"
         then
             WINE_CHECK_MINGW_LIB(vkd3d,vkd3d_set_log_callback,[:],[:],[$VKD3D_PE_LIBS])
-            WINE_CHECK_MINGW_LIB(vkd3d-shader,vkd3d_shader_serialize_dxbc,[:],[:],[$VKD3D_PE_LIBS])
+            WINE_CHECK_MINGW_LIB(vkd3d-shader,vkd3d_shader_build_varying_map,[:],[:],[$VKD3D_PE_LIBS])
             if test "$ac_cv_mingw_lib_vkd3d" = "no" -o "$ac_cv_mingw_lib_vkd3d_shader" = "no"
             then
                 VKD3D_PE_CFLAGS=""
@@ -1500,14 +1495,6 @@ fi
 WINE_WARNING_WITH(gnutls,[test "x$ac_cv_lib_soname_gnutls" = "x"],
                  [libgnutls ${notice_platform}development files not found, no schannel support.])
 
-dnl **** Check for libgmp ****
-if test "x$with_gnutls" != "xno"
-then
-    WINE_PACKAGE_FLAGS(GMP,[gmp],[-lgmp],,,
-        [AC_CHECK_HEADERS([gmp.h],
-            [WINE_CHECK_SONAME(gmp,__gmpz_init,,[GMP_CFLAGS=""],[$GMP_LIBS],[[libgmp-*]])])])
-fi
-
 dnl **** Check for SANE ****
 if test "x$with_sane" != "xno"
 then
@@ -1724,8 +1711,10 @@ WINE_NOTICE_WITH(udev,[test "x$UDEV_LIBS" = "x"],
                  [libudev ${notice_platform}development files not found, plug and play won't be supported.])
 
 dnl **** Check for libunwind ****
-if test "x$with_unwind" != xno
+if test $HOST_ARCH = x86_64
 then
+  if test "x$with_unwind" != xno
+  then
     WINE_PACKAGE_FLAGS(UNWIND,[libunwind],[-lunwind],,,
        [AC_CACHE_CHECK([for unw_step],wine_cv_have_unw_step,
            [AC_LINK_IFELSE([AC_LANG_PROGRAM([[#define UNW_LOCAL_ONLY
@@ -1751,12 +1740,13 @@ then
         then
             AC_DEFINE(HAVE_LIBUNWIND,1,[Define to 1 if you have the `unwind' library (-lunwind).])
         fi])
-fi
-case $host in
-  aarch64*|*-darwin*)
+  fi
+  case $host in
+  *-darwin*)
     WINE_NOTICE_WITH(unwind,[test "x$wine_cv_have_unw_step$wine_cv_have_libunwind_unw_step" = xnono],
                      [libunwind ${notice_platform}development files not found, stack unwinding won't work.]) ;;
-esac
+  esac
+fi
 
 dnl **** Check for libSDL2 ****
 if test "x$with_sdl" != "xno"
@@ -1884,19 +1874,6 @@ then
 fi
 WINE_NOTICE_WITH(vulkan,[test "x$ac_cv_lib_soname_vulkan" = "x" -a "x$ac_cv_lib_soname_MoltenVK" = "x"],
                  [libvulkan and libMoltenVK ${notice_platform}development files not found, Vulkan won't be supported.])
-
-dnl **** Check for gcrypt ****
-if test "x$with_gcrypt" != "xno"
-then
-    WINE_PACKAGE_FLAGS(GCRYPT,[libgcrypt],,,,
-        [AC_CHECK_HEADERS([gcrypt.h])
-        if test "$ac_cv_header_gcrypt_h" = "yes"
-        then
-            WINE_CHECK_SONAME(gcrypt,gcry_sexp_build,,,[$GCRYPT_LIBS])
-        fi])
-fi
-WINE_NOTICE_WITH(gcrypt,[test "x$ac_cv_lib_soname_gcrypt" = "x"],
-                 [libgcrypt ${notice_platform}development files not found, GCRYPT won't be supported.])
 
 dnl **** Check for gcc specific options ****
 
@@ -2924,6 +2901,7 @@ WINE_CONFIG_MAKEFILE(dlls/msvcp140/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcp140_1)
 WINE_CONFIG_MAKEFILE(dlls/msvcp140_1/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcp140_2)
+WINE_CONFIG_MAKEFILE(dlls/msvcp140_2/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcp140_atomic_wait)
 WINE_CONFIG_MAKEFILE(dlls/msvcp140_atomic_wait/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcp140_codecvt_ids)
@@ -3308,6 +3286,7 @@ WINE_CONFIG_MAKEFILE(dlls/winex11.drv)
 WINE_CONFIG_MAKEFILE(dlls/winexinput.sys)
 WINE_CONFIG_MAKEFILE(dlls/wing.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/wing32)
+WINE_CONFIG_MAKEFILE(dlls/wing32/tests)
 WINE_CONFIG_MAKEFILE(dlls/winhttp)
 WINE_CONFIG_MAKEFILE(dlls/winhttp/tests)
 WINE_CONFIG_MAKEFILE(dlls/wininet)
@@ -3741,7 +3720,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-9.0.r0.gcab93f47\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-9.1.r0.g53c687fd\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

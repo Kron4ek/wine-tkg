@@ -57,6 +57,7 @@ extern HRESULT create_dmsegment(REFIID riid, void **ret_iface);
 extern HRESULT create_dmsegmentstate(REFIID riid, void **ret_iface);
 extern HRESULT create_dmgraph(REFIID riid, void **ret_iface);
 extern HRESULT create_dmaudiopath(REFIID riid, void **ret_iface);
+extern HRESULT create_dmaudiopath_config(REFIID riid, void **ret_iface);
 
 extern HRESULT create_dmlyricstrack(REFIID riid, void **ret_iface);
 extern HRESULT create_dmmarkertrack(REFIID riid, void **ret_iface);
@@ -91,6 +92,8 @@ extern HRESULT performance_send_segment_tick(IDirectMusicPerformance8 *iface, MU
         IDirectMusicSegmentState *state);
 extern HRESULT performance_send_segment_end(IDirectMusicPerformance8 *iface, MUSIC_TIME music_time,
         IDirectMusicSegmentState *state, BOOL abort);
+
+HRESULT path_config_get_audio_path_params(IUnknown *iface, WAVEFORMATEX *format, DSBUFFERDESC *desc, DMUS_PORTPARAMS *params);
 
 /*****************************************************************************
  * Auxiliary definitions

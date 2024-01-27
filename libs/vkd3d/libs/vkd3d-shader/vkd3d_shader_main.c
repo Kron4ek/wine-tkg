@@ -539,10 +539,9 @@ bool vkd3d_shader_parser_init(struct vkd3d_shader_parser *parser,
     parser->location.source_name = source_name;
     parser->location.line = 1;
     parser->location.column = 0;
-    parser->shader_version = *version;
     parser->ops = ops;
     parser->config_flags = vkd3d_shader_init_config_flags();
-    return shader_instruction_array_init(&parser->instructions, instruction_reserve);
+    return vsir_program_init(&parser->program, version, instruction_reserve);
 }
 
 void VKD3D_PRINTF_FUNC(3, 4) vkd3d_shader_parser_error(struct vkd3d_shader_parser *parser,
@@ -1017,7 +1016,7 @@ static void vkd3d_shader_scan_combined_sampler_usage(struct vkd3d_shader_scan_co
 static void vkd3d_shader_scan_resource_declaration(struct vkd3d_shader_scan_context *context,
         const struct vkd3d_shader_resource *resource, enum vkd3d_shader_resource_type resource_type,
         enum vkd3d_shader_resource_data_type resource_data_type,
-        unsigned int sample_count, unsigned int structure_stride, bool raw)
+        unsigned int sample_count, unsigned int structure_stride, bool raw, uint32_t flags)
 {
     struct vkd3d_shader_descriptor_info1 *d;
     enum vkd3d_shader_descriptor_type type;
@@ -1033,6 +1032,8 @@ static void vkd3d_shader_scan_resource_declaration(struct vkd3d_shader_scan_cont
     d->structure_stride = structure_stride;
     if (raw)
         d->flags |= VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_RAW_BUFFER;
+    if (type == VKD3D_SHADER_DESCRIPTOR_TYPE_UAV)
+        d->uav_flags = flags;
 }
 
 static void vkd3d_shader_scan_typed_resource_declaration(struct vkd3d_shader_scan_context *context,
@@ -1091,7 +1092,7 @@ static void vkd3d_shader_scan_typed_resource_declaration(struct vkd3d_shader_sca
     }
 
     vkd3d_shader_scan_resource_declaration(context, &semantic->resource,
-            semantic->resource_type, resource_data_type, semantic->sample_count, 0, false);
+            semantic->resource_type, resource_data_type, semantic->sample_count, 0, false, instruction->flags);
 }
 
 static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *context,
@@ -1127,15 +1128,16 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
         case VKD3DSIH_DCL_RESOURCE_RAW:
         case VKD3DSIH_DCL_UAV_RAW:
             vkd3d_shader_scan_resource_declaration(context, &instruction->declaration.raw_resource.resource,
-                    VKD3D_SHADER_RESOURCE_BUFFER, VKD3D_SHADER_RESOURCE_DATA_UINT, 0, 0, true);
+                    VKD3D_SHADER_RESOURCE_BUFFER, VKD3D_SHADER_RESOURCE_DATA_UINT, 0, 0, true, instruction->flags);
             break;
         case VKD3DSIH_DCL_RESOURCE_STRUCTURED:
         case VKD3DSIH_DCL_UAV_STRUCTURED:
             vkd3d_shader_scan_resource_declaration(context, &instruction->declaration.structured_resource.resource,
                     VKD3D_SHADER_RESOURCE_BUFFER, VKD3D_SHADER_RESOURCE_DATA_UINT, 0,
-                    instruction->declaration.structured_resource.byte_stride, false);
+                    instruction->declaration.structured_resource.byte_stride, false, instruction->flags);
             break;
         case VKD3DSIH_IF:
+        case VKD3DSIH_IFC:
             cf_info = vkd3d_shader_scan_push_cf_info(context);
             cf_info->type = VKD3D_SHADER_BLOCK_IF;
             cf_info->inside_block = true;
@@ -1402,17 +1404,15 @@ static int scan_with_parser(const struct vkd3d_shader_compile_info *compile_info
             descriptor_info1 = &local_descriptor_info1;
     }
 
-    vkd3d_shader_scan_context_init(&context, &parser->shader_version, compile_info,
+    vkd3d_shader_scan_context_init(&context, &parser->program.shader_version, compile_info,
             descriptor_info1, combined_sampler_info, message_context);
 
     if (TRACE_ON())
-    {
-        vkd3d_shader_trace(&parser->instructions, &parser->shader_version);
-    }
+        vkd3d_shader_trace(&parser->program);
 
-    for (i = 0; i < parser->instructions.count; ++i)
+    for (i = 0; i < parser->program.instructions.count; ++i)
     {
-        instruction = &parser->instructions.elements[i];
+        instruction = &parser->program.instructions.elements[i];
         if ((ret = vkd3d_shader_scan_instruction(&context, instruction)) < 0)
             break;
     }
@@ -1585,13 +1585,13 @@ static int vkd3d_shader_parser_compile(struct vkd3d_shader_parser *parser,
     switch (compile_info->target_type)
     {
         case VKD3D_SHADER_TARGET_D3D_ASM:
-            ret = vkd3d_dxbc_binary_to_text(&parser->instructions, &parser->shader_version, compile_info, out, VSIR_ASM_D3D);
+            ret = vkd3d_dxbc_binary_to_text(&parser->program, compile_info, out, VSIR_ASM_D3D);
             break;
 
         case VKD3D_SHADER_TARGET_GLSL:
             if ((ret = scan_with_parser(&scan_info, message_context, &scan_descriptor_info, parser)) < 0)
                 return ret;
-            if (!(glsl_generator = vkd3d_glsl_generator_create(&parser->shader_version,
+            if (!(glsl_generator = vkd3d_glsl_generator_create(&parser->program.shader_version,
                     message_context, &parser->location)))
             {
                 ERR("Failed to create GLSL generator.\n");
@@ -1599,7 +1599,7 @@ static int vkd3d_shader_parser_compile(struct vkd3d_shader_parser *parser,
                 return VKD3D_ERROR;
             }
 
-            ret = vkd3d_glsl_generator_generate(glsl_generator, parser, out);
+            ret = vkd3d_glsl_generator_generate(glsl_generator, &parser->program, out);
             vkd3d_glsl_generator_destroy(glsl_generator);
             vkd3d_shader_free_scan_descriptor_info1(&scan_descriptor_info);
             break;
@@ -2084,6 +2084,23 @@ bool shader_instruction_array_reserve(struct vkd3d_shader_instruction_array *ins
         ERR("Failed to allocate instructions.\n");
         return false;
     }
+    return true;
+}
+
+bool shader_instruction_array_insert_at(struct vkd3d_shader_instruction_array *instructions,
+        unsigned int idx, unsigned int count)
+{
+    assert(idx <= instructions->count);
+
+    if (!shader_instruction_array_reserve(instructions, instructions->count + count))
+        return false;
+
+    memmove(&instructions->elements[idx + count], &instructions->elements[idx],
+            (instructions->count - idx) * sizeof(*instructions->elements));
+    memset(&instructions->elements[idx], 0, count * sizeof(*instructions->elements));
+
+    instructions->count += count;
+
     return true;
 }
 

@@ -711,7 +711,7 @@ static struct vkd3d_shader_sm4_parser *vkd3d_shader_sm4_parser(struct vkd3d_shad
 
 static bool shader_is_sm_5_1(const struct vkd3d_shader_sm4_parser *sm4)
 {
-    const struct vkd3d_shader_version *version = &sm4->p.shader_version;
+    const struct vkd3d_shader_version *version = &sm4->p.program.shader_version;
 
     return version->major >= 5 && version->minor >= 1;
 }
@@ -796,7 +796,7 @@ static void shader_sm4_read_shader_data(struct vkd3d_shader_instruction *ins, ui
     icb->element_count = icb_size / VKD3D_VEC4_SIZE;
     icb->is_null = false;
     memcpy(icb->data, tokens, sizeof(*tokens) * icb_size);
-    shader_instruction_array_add_icb(&priv->p.instructions, icb);
+    shader_instruction_array_add_icb(&priv->p.program.instructions, icb);
     ins->declaration.icb = icb;
 }
 
@@ -919,6 +919,7 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
 {
     struct vkd3d_shader_index_range *index_range = &ins->declaration.index_range;
     unsigned int i, register_idx, register_count;
+    const struct shader_signature *signature;
     enum vkd3d_shader_register_type type;
     struct sm4_index_range_array *ranges;
     unsigned int *io_masks;
@@ -932,40 +933,38 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
     register_count = index_range->register_count;
     write_mask = index_range->dst.write_mask;
 
-    if (vsir_write_mask_component_count(write_mask) != 1)
-    {
-        WARN("Unhandled write mask %#x.\n", write_mask);
-        vkd3d_shader_parser_warning(&priv->p, VKD3D_SHADER_WARNING_TPF_UNHANDLED_INDEX_RANGE_MASK,
-                "Index range mask %#x is not scalar.", write_mask);
-    }
-
     switch ((type = index_range->dst.reg.type))
     {
         case VKD3DSPR_INPUT:
         case VKD3DSPR_INCONTROLPOINT:
             io_masks = priv->input_register_masks;
             ranges = &priv->input_index_ranges;
+            signature = &priv->p.shader_desc.input_signature;
             break;
         case VKD3DSPR_OUTPUT:
             if (sm4_parser_is_in_fork_or_join_phase(priv))
             {
                 io_masks = priv->patch_constant_register_masks;
                 ranges = &priv->patch_constant_index_ranges;
+                signature = &priv->p.shader_desc.patch_constant_signature;
             }
             else
             {
                 io_masks = priv->output_register_masks;
                 ranges = &priv->output_index_ranges;
+                signature = &priv->p.shader_desc.output_signature;
             }
             break;
         case VKD3DSPR_COLOROUT:
         case VKD3DSPR_OUTCONTROLPOINT:
             io_masks = priv->output_register_masks;
             ranges = &priv->output_index_ranges;
+            signature = &priv->p.shader_desc.output_signature;
             break;
         case VKD3DSPR_PATCHCONST:
             io_masks = priv->patch_constant_register_masks;
             ranges = &priv->patch_constant_index_ranges;
+            signature = &priv->p.shader_desc.patch_constant_signature;
             break;
 
         default:
@@ -1003,6 +1002,18 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
 
     for (i = 0; i < register_count; ++i)
     {
+        const struct signature_element *e = vsir_signature_find_element_for_reg(signature, register_idx + i, write_mask);
+        /* Index ranges should not contain non-arrayed sysvals. FXC tries to forbid this but it is buggy,
+         * and can emit a range containing a sysval if the sysval is not actually accessed. */
+        if (e && e->sysval_semantic && register_count > 1 && !vsir_sysval_semantic_is_tess_factor(e->sysval_semantic)
+                && !vsir_sysval_semantic_is_clip_cull(e->sysval_semantic))
+        {
+            WARN("Sysval %u included in an index range declaration.\n", e->sysval_semantic);
+            vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_INDEX_RANGE_DCL,
+                    "Index range base %u, count %u, mask %#x contains sysval %u.",
+                    register_idx, register_count, write_mask, e->sysval_semantic);
+            return;
+        }
         if ((io_masks[register_idx + i] & write_mask) != write_mask)
         {
             WARN("No matching declaration for index range base %u, count %u, mask %#x.\n",
@@ -1040,7 +1051,7 @@ static void shader_sm4_read_dcl_input_primitive(struct vkd3d_shader_instruction 
     {
         ins->declaration.primitive_type.type = VKD3D_PT_PATCH;
         ins->declaration.primitive_type.patch_vertex_count = primitive_type - VKD3D_SM5_INPUT_PT_PATCH1 + 1;
-        priv->p.shader_desc.input_control_point_count = ins->declaration.primitive_type.patch_vertex_count;
+        priv->p.program.input_control_point_count = ins->declaration.primitive_type.patch_vertex_count;
     }
     else if (primitive_type >= ARRAY_SIZE(input_primitive_type_table))
     {
@@ -1049,7 +1060,7 @@ static void shader_sm4_read_dcl_input_primitive(struct vkd3d_shader_instruction 
     else
     {
         ins->declaration.primitive_type.type = input_primitive_type_table[primitive_type].vkd3d_type;
-        priv->p.shader_desc.input_control_point_count = input_primitive_type_table[primitive_type].control_point_count;
+        priv->p.program.input_control_point_count = input_primitive_type_table[primitive_type].control_point_count;
     }
 
     if (ins->declaration.primitive_type.type == VKD3D_PT_UNDEFINED)
@@ -1061,7 +1072,7 @@ static void shader_sm4_read_declaration_count(struct vkd3d_shader_instruction *i
 {
     ins->declaration.count = *tokens;
     if (opcode == VKD3D_SM4_OP_DCL_TEMPS)
-        priv->p.shader_desc.temp_count = max(priv->p.shader_desc.temp_count, *tokens);
+        priv->p.program.temp_count = max(priv->p.program.temp_count, *tokens);
 }
 
 static void shader_sm4_read_declaration_dst(struct vkd3d_shader_instruction *ins, uint32_t opcode,
@@ -1117,6 +1128,7 @@ static void shader_sm4_read_dcl_indexable_temp(struct vkd3d_shader_instruction *
     ins->declaration.indexable_temp.alignment = 0;
     ins->declaration.indexable_temp.data_type = VKD3D_DATA_FLOAT;
     ins->declaration.indexable_temp.component_count = *tokens;
+    ins->declaration.indexable_temp.has_function_scope = false;
 }
 
 static void shader_sm4_read_dcl_global_flags(struct vkd3d_shader_instruction *ins, uint32_t opcode,
@@ -1162,9 +1174,9 @@ static void shader_sm5_read_control_point_count(struct vkd3d_shader_instruction 
             >> VKD3D_SM5_CONTROL_POINT_COUNT_SHIFT;
 
     if (opcode == VKD3D_SM5_OP_DCL_INPUT_CONTROL_POINT_COUNT)
-        priv->p.shader_desc.input_control_point_count = ins->declaration.count;
+        priv->p.program.input_control_point_count = ins->declaration.count;
     else
-        priv->p.shader_desc.output_control_point_count = ins->declaration.count;
+        priv->p.program.output_control_point_count = ins->declaration.count;
 }
 
 static void shader_sm5_read_dcl_tessellator_domain(struct vkd3d_shader_instruction *ins, uint32_t opcode,
@@ -1720,7 +1732,7 @@ static void shader_sm4_destroy(struct vkd3d_shader_parser *parser)
 {
     struct vkd3d_shader_sm4_parser *sm4 = vkd3d_shader_sm4_parser(parser);
 
-    shader_instruction_array_destroy(&parser->instructions);
+    vsir_program_cleanup(&parser->program);
     free_shader_desc(&parser->shader_desc);
     vkd3d_free(sm4);
 }
@@ -2008,7 +2020,7 @@ static bool register_is_control_point_input(const struct vkd3d_shader_register *
 {
     return reg->type == VKD3DSPR_INCONTROLPOINT || reg->type == VKD3DSPR_OUTCONTROLPOINT
             || (reg->type == VKD3DSPR_INPUT && (priv->phase == VKD3DSIH_HS_CONTROL_POINT_PHASE
-            || priv->p.shader_version.type == VKD3D_SHADER_TYPE_GEOMETRY));
+            || priv->p.program.shader_version.type == VKD3D_SHADER_TYPE_GEOMETRY));
 }
 
 static uint32_t mask_from_swizzle(uint32_t swizzle)
@@ -2650,7 +2662,7 @@ int vkd3d_shader_sm4_parser_create(const struct vkd3d_shader_compile_info *compi
     /* DXBC stores used masks inverted for output signatures, for some reason.
      * We return them un-inverted. */
     uninvert_used_masks(&shader_desc->output_signature);
-    if (sm4->p.shader_version.type == VKD3D_SHADER_TYPE_HULL)
+    if (sm4->p.program.shader_version.type == VKD3D_SHADER_TYPE_HULL)
         uninvert_used_masks(&shader_desc->patch_constant_signature);
 
     if (!shader_sm4_parser_validate_signature(sm4, &shader_desc->input_signature,
@@ -2664,7 +2676,7 @@ int vkd3d_shader_sm4_parser_create(const struct vkd3d_shader_compile_info *compi
         return VKD3D_ERROR_INVALID_SHADER;
     }
 
-    instructions = &sm4->p.instructions;
+    instructions = &sm4->p.program.instructions;
     while (sm4->ptr != sm4->end)
     {
         if (!shader_instruction_array_reserve(instructions, instructions->count + 1))
@@ -2685,7 +2697,8 @@ int vkd3d_shader_sm4_parser_create(const struct vkd3d_shader_compile_info *compi
         }
         ++instructions->count;
     }
-    if (sm4->p.shader_version.type == VKD3D_SHADER_TYPE_HULL && !sm4->has_control_point_phase && !sm4->p.failed)
+    if (sm4->p.program.shader_version.type == VKD3D_SHADER_TYPE_HULL
+            && !sm4->has_control_point_phase && !sm4->p.failed)
         shader_sm4_validate_default_phase_index_ranges(sm4);
 
     if (!sm4->p.failed)
@@ -2794,6 +2807,8 @@ bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semant
         {"position",                    false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_POSITION},
         {"sv_position",                 false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_POSITION},
         {"sv_isfrontface",              false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_IS_FRONT_FACE},
+        {"sv_rendertargetarrayindex",   false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_RENDER_TARGET_ARRAY_INDEX},
+        {"sv_viewportarrayindex",       false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_VIEWPORT_ARRAY_INDEX},
 
         {"color",                       true,  VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_TARGET},
         {"depth",                       true,  VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_DEPTH},
@@ -2802,9 +2817,12 @@ bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semant
 
         {"sv_position",                 false, VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_UNDEFINED},
         {"sv_vertexid",                 false, VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_VERTEX_ID},
+        {"sv_instanceid",               false, VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_INSTANCE_ID},
 
         {"position",                    true,  VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_POSITION},
         {"sv_position",                 true,  VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_POSITION},
+        {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_RENDER_TARGET_ARRAY_INDEX},
+        {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_VIEWPORT_ARRAY_INDEX},
     };
     bool needs_compat_mapping = ascii_strncasecmp(semantic->name, "sv_", 3);
 

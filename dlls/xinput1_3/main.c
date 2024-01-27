@@ -1086,25 +1086,14 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetKeystroke(DWORD index, DWORD reserved, P
 
 DWORD WINAPI DECLSPEC_HOTPATCH XInputGetCapabilities(DWORD index, DWORD flags, XINPUT_CAPABILITIES *capabilities)
 {
-    TRACE("index %lu, flags %#lx, capabilities %p.\n", index, flags, capabilities);
+    XINPUT_CAPABILITIES_EX caps_ex;
+    DWORD ret;
 
-    start_update_thread();
+    ret = XInputGetCapabilitiesEx(1, index, flags, &caps_ex);
 
-    if (index >= XUSER_MAX_COUNT) return ERROR_BAD_ARGUMENTS;
+    if (!ret) *capabilities = caps_ex.Capabilities;
 
-    if (!controller_lock(&controllers[index])) return ERROR_DEVICE_NOT_CONNECTED;
-
-    if (flags & XINPUT_FLAG_GAMEPAD && controllers[index].caps.SubType != XINPUT_DEVSUBTYPE_GAMEPAD)
-    {
-        controller_unlock(&controllers[index]);
-        return ERROR_DEVICE_NOT_CONNECTED;
-    }
-
-    memcpy(capabilities, &controllers[index].caps, sizeof(*capabilities));
-
-    controller_unlock(&controllers[index]);
-
-    return ERROR_SUCCESS;
+    return ret;
 }
 
 DWORD WINAPI DECLSPEC_HOTPATCH XInputGetDSoundAudioDeviceGuids(DWORD index, GUID *render_guid, GUID *capture_guid)
@@ -1128,4 +1117,34 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetBatteryInformation(DWORD index, BYTE typ
     if (!controllers[index].device) return ERROR_DEVICE_NOT_CONNECTED;
 
     return ERROR_NOT_SUPPORTED;
+}
+
+DWORD WINAPI DECLSPEC_HOTPATCH XInputGetCapabilitiesEx(DWORD unk, DWORD index, DWORD flags, XINPUT_CAPABILITIES_EX *caps)
+{
+    HIDD_ATTRIBUTES attr;
+    DWORD ret = ERROR_SUCCESS;
+
+    TRACE("unk %lu, index %lu, flags %#lx, capabilities %p.\n", unk, index, flags, caps);
+
+    start_update_thread();
+
+    if (index >= XUSER_MAX_COUNT) return ERROR_BAD_ARGUMENTS;
+
+    if (!controller_lock(&controllers[index])) return ERROR_DEVICE_NOT_CONNECTED;
+
+    if (flags & XINPUT_FLAG_GAMEPAD && controllers[index].caps.SubType != XINPUT_DEVSUBTYPE_GAMEPAD)
+        ret = ERROR_DEVICE_NOT_CONNECTED;
+    else if (!HidD_GetAttributes(controllers[index].device, &attr))
+        ret = ERROR_DEVICE_NOT_CONNECTED;
+    else
+    {
+        caps->Capabilities = controllers[index].caps;
+        caps->VendorId = attr.VendorID;
+        caps->ProductId = attr.ProductID;
+        caps->VersionNumber = attr.VersionNumber;
+    }
+
+    controller_unlock(&controllers[index]);
+
+    return ret;
 }
