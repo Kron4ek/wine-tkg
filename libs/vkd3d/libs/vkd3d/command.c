@@ -1921,12 +1921,12 @@ HRESULT d3d12_command_allocator_create(struct d3d12_device *device,
 
 static void d3d12_command_signature_incref(struct d3d12_command_signature *signature)
 {
-    vkd3d_atomic_increment(&signature->internal_refcount);
+    vkd3d_atomic_increment_u32(&signature->internal_refcount);
 }
 
 static void d3d12_command_signature_decref(struct d3d12_command_signature *signature)
 {
-    unsigned int refcount = vkd3d_atomic_decrement(&signature->internal_refcount);
+    unsigned int refcount = vkd3d_atomic_decrement_u32(&signature->internal_refcount);
 
     if (!refcount)
     {
@@ -4499,8 +4499,8 @@ static void STDMETHODCALLTYPE d3d12_command_list_SetComputeRootDescriptorTable(I
 {
     struct d3d12_command_list *list = impl_from_ID3D12GraphicsCommandList5(iface);
 
-    TRACE("iface %p, root_parameter_index %u, base_descriptor %#"PRIx64".\n",
-            iface, root_parameter_index, base_descriptor.ptr);
+    TRACE("iface %p, root_parameter_index %u, base_descriptor %s.\n",
+            iface, root_parameter_index, debug_gpu_handle(base_descriptor));
 
     d3d12_command_list_set_descriptor_table(list, VKD3D_PIPELINE_BIND_POINT_COMPUTE,
             root_parameter_index, base_descriptor);
@@ -4511,8 +4511,8 @@ static void STDMETHODCALLTYPE d3d12_command_list_SetGraphicsRootDescriptorTable(
 {
     struct d3d12_command_list *list = impl_from_ID3D12GraphicsCommandList5(iface);
 
-    TRACE("iface %p, root_parameter_index %u, base_descriptor %#"PRIx64".\n",
-            iface, root_parameter_index, base_descriptor.ptr);
+    TRACE("iface %p, root_parameter_index %u, base_descriptor %s.\n",
+            iface, root_parameter_index, debug_gpu_handle(base_descriptor));
 
     d3d12_command_list_set_descriptor_table(list, VKD3D_PIPELINE_BIND_POINT_GRAPHICS,
             root_parameter_index, base_descriptor);
@@ -5132,8 +5132,8 @@ static void STDMETHODCALLTYPE d3d12_command_list_ClearDepthStencilView(ID3D12Gra
     struct VkAttachmentDescription attachment_desc;
     struct VkAttachmentReference ds_reference;
 
-    TRACE("iface %p, dsv %#lx, flags %#x, depth %.8e, stencil 0x%02x, rect_count %u, rects %p.\n",
-            iface, dsv.ptr, flags, depth, stencil, rect_count, rects);
+    TRACE("iface %p, dsv %s, flags %#x, depth %.8e, stencil 0x%02x, rect_count %u, rects %p.\n",
+            iface, debug_cpu_handle(dsv), flags, depth, stencil, rect_count, rects);
 
     d3d12_command_list_track_resource_usage(list, dsv_desc->resource);
 
@@ -5180,8 +5180,8 @@ static void STDMETHODCALLTYPE d3d12_command_list_ClearRenderTargetView(ID3D12Gra
     struct VkAttachmentReference color_reference;
     VkClearValue clear_value;
 
-    TRACE("iface %p, rtv %#lx, color %p, rect_count %u, rects %p.\n",
-            iface, rtv.ptr, color, rect_count, rects);
+    TRACE("iface %p, rtv %s, color %p, rect_count %u, rects %p.\n",
+            iface, debug_cpu_handle(rtv), color, rect_count, rects);
 
     d3d12_command_list_track_resource_usage(list, rtv_desc->resource);
 
@@ -5432,8 +5432,8 @@ static void STDMETHODCALLTYPE d3d12_command_list_ClearUnorderedAccessViewUint(ID
     struct d3d12_resource *resource_impl;
     VkClearColorValue colour;
 
-    TRACE("iface %p, gpu_handle %#"PRIx64", cpu_handle %lx, resource %p, values %p, rect_count %u, rects %p.\n",
-            iface, gpu_handle.ptr, cpu_handle.ptr, resource, values, rect_count, rects);
+    TRACE("iface %p, gpu_handle %s, cpu_handle %s, resource %p, values %p, rect_count %u, rects %p.\n",
+            iface, debug_gpu_handle(gpu_handle), debug_cpu_handle(cpu_handle), resource, values, rect_count, rects);
 
     resource_impl = unsafe_impl_from_ID3D12Resource(resource);
     if (!(descriptor = d3d12_desc_from_cpu_handle(cpu_handle)->s.u.view))
@@ -5496,8 +5496,8 @@ static void STDMETHODCALLTYPE d3d12_command_list_ClearUnorderedAccessViewFloat(I
     VkClearColorValue colour;
     struct vkd3d_view *view;
 
-    TRACE("iface %p, gpu_handle %#"PRIx64", cpu_handle %lx, resource %p, values %p, rect_count %u, rects %p.\n",
-            iface, gpu_handle.ptr, cpu_handle.ptr, resource, values, rect_count, rects);
+    TRACE("iface %p, gpu_handle %s, cpu_handle %s, resource %p, values %p, rect_count %u, rects %p.\n",
+            iface, debug_gpu_handle(gpu_handle), debug_cpu_handle(cpu_handle), resource, values, rect_count, rects);
 
     resource_impl = unsafe_impl_from_ID3D12Resource(resource);
     if (!(view = d3d12_desc_from_cpu_handle(cpu_handle)->s.u.view))
@@ -5963,15 +5963,15 @@ static void STDMETHODCALLTYPE d3d12_command_list_EndRenderPass(ID3D12GraphicsCom
 static void STDMETHODCALLTYPE d3d12_command_list_InitializeMetaCommand(ID3D12GraphicsCommandList5 *iface,
         ID3D12MetaCommand *meta_command, const void *parameters_data, SIZE_T data_size_in_bytes)
 {
-    FIXME("iface %p, meta_command %p, parameters_data %p, data_size_in_bytes %lu stub!\n", iface,
-            meta_command, parameters_data, data_size_in_bytes);
+    FIXME("iface %p, meta_command %p, parameters_data %p, data_size_in_bytes %"PRIuPTR" stub!\n", iface,
+            meta_command, parameters_data, (uintptr_t)data_size_in_bytes);
 }
 
 static void STDMETHODCALLTYPE d3d12_command_list_ExecuteMetaCommand(ID3D12GraphicsCommandList5 *iface,
         ID3D12MetaCommand *meta_command, const void *parameters_data, SIZE_T data_size_in_bytes)
 {
-    FIXME("iface %p, meta_command %p, parameters_data %p, data_size_in_bytes %lu stub!\n", iface,
-            meta_command, parameters_data, data_size_in_bytes);
+    FIXME("iface %p, meta_command %p, parameters_data %p, data_size_in_bytes %"PRIuPTR" stub!\n", iface,
+            meta_command, parameters_data, (uintptr_t)data_size_in_bytes);
 }
 
 static void STDMETHODCALLTYPE d3d12_command_list_BuildRaytracingAccelerationStructure(ID3D12GraphicsCommandList5 *iface,

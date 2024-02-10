@@ -7865,6 +7865,7 @@ static const struct message SetFocusComboBoxSeq[] =
     { WM_CTLCOLORBTN, sent|parent },
     { WM_SETFOCUS, sent },
     { WM_KILLFOCUS, sent|defwinproc },
+    { EM_GETPASSWORDCHAR, sent|optional }, /* Sent on some Win10 machines */
     { WM_SETFOCUS, sent },
     { WM_COMMAND, sent|defwinproc|wparam, MAKEWPARAM(1001, EN_SETFOCUS) },
     { EM_SETSEL, sent|defwinproc|wparam|lparam, 0, INT_MAX },
@@ -12724,7 +12725,7 @@ static LRESULT WINAPI recursive_messages_proc(HWND hwnd, UINT message, WPARAM wp
     static int msg_depth;
     MSG msg;
 
-    if (message == WM_SETCURSOR && max_msg_depth < 25)
+    if (message == WM_SETCURSOR && max_msg_depth < 15)
     {
         msg_depth++;
         max_msg_depth = max(max_msg_depth, msg_depth);
@@ -12757,7 +12758,7 @@ static void test_recursive_messages(void)
     flush_events();
 
     /* Expect recursive_messages_proc() gets called recursively for WM_SETCURSOR */
-    ok(max_msg_depth == 25, "Got expected %d.\n", max_msg_depth);
+    ok(max_msg_depth == 15, "Got expected %d.\n", max_msg_depth);
 
     DestroyWindow(hwnd);
     UnregisterClassA(cls.lpszClassName, cls.hInstance);
@@ -13209,6 +13210,7 @@ static const struct message sl_edit_setfocus[] =
     { HCBT_SETFOCUS, hook },
     { WM_IME_SETCONTEXT, sent|wparam|optional, 1 },
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 2 },
+    { EM_GETPASSWORDCHAR, sent|optional }, /* Sent on some Win10 machines */
     { EVENT_OBJECT_FOCUS, winevent_hook|wparam|lparam|winevent_hook_todo, OBJID_CLIENT, 0 },
     { WM_SETFOCUS, sent|wparam, 0 },
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 10 },
@@ -13227,6 +13229,7 @@ static const struct message sl_edit_invisible[] =
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 2 },
     { EVENT_OBJECT_FOCUS, winevent_hook|wparam|lparam|optional, OBJID_CLIENT, 0 }, /* Sent for IME. */
     { WM_KILLFOCUS, sent|parent },
+    { EM_GETPASSWORDCHAR, sent|optional }, /* Sent on some Win10 machines */
     { EVENT_OBJECT_FOCUS, winevent_hook|wparam|lparam, OBJID_CLIENT, 0 },
     { WM_SETFOCUS, sent },
     { EVENT_OBJECT_CREATE, winevent_hook|wparam|lparam|winevent_hook_todo, OBJID_CARET, 0 },
@@ -13239,6 +13242,7 @@ static const struct message ml_edit_setfocus[] =
     { HCBT_SETFOCUS, hook },
     { WM_IME_SETCONTEXT, sent|wparam|optional, 1 },
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 2 },
+    { EM_GETPASSWORDCHAR, sent|optional }, /* Sent on some Win10 machines */
     { EVENT_OBJECT_FOCUS, winevent_hook|wparam|lparam|winevent_hook_todo, OBJID_CLIENT, 0 },
     { WM_SETFOCUS, sent|wparam, 0 },
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 10 },
@@ -13273,6 +13277,7 @@ static const struct message sl_edit_lbutton_down[] =
     { HCBT_SETFOCUS, hook },
     { WM_IME_SETCONTEXT, sent|wparam|defwinproc|optional, 1 },
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 2 },
+    { EM_GETPASSWORDCHAR, sent|defwinproc|optional }, /* Sent on some Win10 machines */
     { EVENT_OBJECT_FOCUS, winevent_hook|wparam|lparam|winevent_hook_todo, OBJID_CLIENT, 0 },
     { WM_SETFOCUS, sent|wparam|defwinproc, 0 },
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 10 },
@@ -13297,6 +13302,7 @@ static const struct message ml_edit_lbutton_down[] =
     { HCBT_SETFOCUS, hook },
     { WM_IME_SETCONTEXT, sent|wparam|defwinproc|optional, 1 },
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 2 },
+    { EM_GETPASSWORDCHAR, sent|defwinproc|optional }, /* Sent on some Win10 machines */
     { EVENT_OBJECT_FOCUS, winevent_hook|wparam|lparam|winevent_hook_todo, OBJID_CLIENT, 0 },
     { WM_SETFOCUS, sent|wparam|defwinproc, 0 },
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 10 },
@@ -15713,6 +15719,7 @@ static const struct message WmDefDlgSetFocus_1[] = {
     { HCBT_SETFOCUS, hook },
     { WM_IME_SETCONTEXT, sent|wparam|optional, 1 },
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 2 },
+    { EM_GETPASSWORDCHAR, sent|optional }, /* Sent on some Win10 machines */
     { EVENT_OBJECT_FOCUS, winevent_hook|wparam|lparam|winevent_hook_todo, OBJID_CLIENT, 0 },
     { WM_SETFOCUS, sent|wparam, 0 },
     { WM_IME_NOTIFY, sent|wparam|defwinproc|optional, 10 },
@@ -15816,6 +15823,7 @@ static const struct message WmCreateDialogParamSeq_3[] = {
     { WM_ACTIVATEAPP, sent|parent|wparam, 1 },
     { WM_NCACTIVATE, sent|parent },
     { WM_ACTIVATE, sent|parent|wparam, 1 },
+    { EM_GETPASSWORDCHAR, sent|optional }, /* Sent on some Win10 machines */
     { WM_SETFOCUS, sent },
     { WM_COMMAND, sent|parent|wparam, MAKELONG(200, EN_SETFOCUS) },
     { WM_GETDLGCODE, sent|wparam|lparam, 0, 0 },
@@ -15854,6 +15862,7 @@ static const struct message WmCreateDialogParamSeq_4[] = {
     { EVENT_OBJECT_FOCUS, winevent_hook|wparam|lparam, OBJID_CLIENT, 0 },
     { WM_SETFOCUS, sent|parent },
     { WM_KILLFOCUS, sent|parent },
+    { EM_GETPASSWORDCHAR, sent|optional }, /* Sent on some Win10 machines */
     { WM_SETFOCUS, sent },
     { WM_COMMAND, sent|parent|wparam, MAKELONG(200, EN_SETFOCUS) },
     { WM_GETDLGCODE, sent|wparam|lparam, 0, 0 },

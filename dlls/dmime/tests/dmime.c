@@ -3542,7 +3542,7 @@ static void test_notification_pmsg(void)
     IDirectMusicTool_Release(tool);
 }
 
-static void test_wave_pmsg(void)
+static void test_wave_pmsg(unsigned num_repeats)
 {
     static const DWORD message_types[] =
     {
@@ -3550,17 +3550,25 @@ static void test_wave_pmsg(void)
         DMUS_PMSGT_WAVE,
     };
     IDirectMusicPerformance *performance;
+    IDirectMusicSegmentState *state;
     IDirectMusicSegment *segment;
     IDirectMusicLoader8 *loader;
     IDirectMusicGraph *graph;
     WCHAR test_wav[MAX_PATH];
     IDirectMusicTool *tool;
     DMUS_WAVE_PMSG *wave;
+    DWORD mt_start_ref;
     MUSIC_TIME length;
     DMUS_PMSG *msg;
+    DWORD value;
     HRESULT hr;
+    unsigned i;
     DWORD ret;
 
+    if (num_repeats)
+        winetest_push_context("with %u repeats", num_repeats);
+    else
+        winetest_push_context("without any repeats");
     hr = test_tool_create(message_types, ARRAY_SIZE(message_types), &tool);
     ok(hr == S_OK, "got %#lx\n", hr);
 
@@ -3599,6 +3607,12 @@ static void test_wave_pmsg(void)
     ok(length == 1, "got %lu\n", length);
 
 
+    if (num_repeats)
+    {
+        hr = IDirectMusicSegment_SetRepeats(segment, num_repeats);
+        ok(hr == S_OK, "got %#lx\n", hr);
+    }
+
     /* without Download, no DMUS_PMSGT_WAVE is sent */
 
     hr = IDirectMusicPerformance_PlaySegment(performance, segment, 0, 0, NULL);
@@ -3611,10 +3625,14 @@ static void test_wave_pmsg(void)
     ok(hr == S_OK, "got %#lx\n", hr);
 
     ret = test_tool_wait_message(tool, 500, &msg);
+    todo_wine_if(num_repeats)
     ok(!ret, "got %#lx\n", ret);
-    ok(msg->dwType == DMUS_PMSGT_DIRTY, "got %p\n", msg);
-    hr = IDirectMusicPerformance_FreePMsg(performance, msg);
-    ok(hr == S_OK, "got %#lx\n", hr);
+    if (!ret)
+    {
+        ok(msg->dwType == DMUS_PMSGT_DIRTY, "got %p\n", msg);
+        hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+        ok(hr == S_OK, "got %#lx\n", hr);
+    }
 
     ret = test_tool_wait_message(tool, 100, &msg);
     ok(ret == WAIT_TIMEOUT, "got %#lx\n", ret);
@@ -3626,7 +3644,7 @@ static void test_wave_pmsg(void)
     hr = IDirectMusicSegment8_Download((IDirectMusicSegment8 *)segment, (IUnknown *)performance);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    hr = IDirectMusicPerformance_PlaySegment(performance, segment, 0, 0, NULL);
+    hr = IDirectMusicPerformance_PlaySegment(performance, segment, 0, 0, &state);
     ok(hr == S_OK, "got %#lx\n", hr);
 
     ret = test_tool_wait_message(tool, 500, &msg);
@@ -3635,24 +3653,62 @@ static void test_wave_pmsg(void)
     hr = IDirectMusicPerformance_FreePMsg(performance, msg);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&wave);
-    ok(!ret, "got %#lx\n", ret);
-    ok(wave->dwType == DMUS_PMSGT_WAVE, "got %p\n", wave);
-    ok(!!wave->punkUser, "got %p\n", wave->punkUser);
-    ok(wave->rtStartOffset == 0, "got %I64d\n", wave->rtStartOffset);
-    ok(wave->rtDuration == 1000000, "got %I64d\n", wave->rtDuration);
-    ok(wave->lOffset == 0, "got %lu\n", wave->lOffset);
-    ok(wave->lVolume == 0, "got %lu\n", wave->lVolume);
-    ok(wave->lPitch == 0, "got %lu\n", wave->lPitch);
-    ok(wave->bFlags == 0, "got %#x\n", wave->bFlags);
-    hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)wave);
+    hr = IDirectMusicPerformance_ReferenceToMusicTime(performance, 1000000, &length);
     ok(hr == S_OK, "got %#lx\n", hr);
+    /* assuming not modified tempo */
+    length = round((1000000 * 120.0 * DMUS_PPQ) / 600000000.0);
+
+    for (i = 0; i <= num_repeats; i++)
+    {
+        /* Both native and builtin dmime queue messages for a given amount of time,
+         * then wait for these messages to be processed before queuing additional messages.
+         * However, Wine "wait" time is way smaller than native, and is hit before the 10
+         * reiterations in loop here.
+         * And moreover, Wine uses internal messages for this "wait" operation.
+         * Discard Wine's internal messages to be on par with native.
+         */
+        do
+        {
+            ret = test_tool_wait_message(tool, 2000, (DMUS_PMSG **)&wave);
+            ok(!ret, "got %#lx\n", ret);
+        } while (num_repeats && !ret && (wave->dwType >= 0x10 || wave->dwType == DMUS_PMSGT_DIRTY));
+        if (ret) break;
+
+        ok(wave->dwType == DMUS_PMSGT_WAVE, "got %p %lu\n", wave, wave->dwType);
+        ok(wave->dwSize == sizeof(*wave), "got %lu\n", wave->dwSize);
+        ok(!!wave->punkUser, "got %p\n", wave->punkUser);
+        ok((wave->dwFlags & DMUS_PMSGF_REFTIME) && (wave->dwFlags & DMUS_PMSGF_MUSICTIME),
+           "got %lx\n", wave->dwFlags);
+        if (i == 0)
+            mt_start_ref = wave->mtTime;
+        else
+            ok(wave->mtTime == mt_start_ref + length * i, "got %lu (%lu,%lu)\n", wave->mtTime, mt_start_ref, i * length);
+        ok(wave->rtStartOffset == 0, "got %I64d\n", wave->rtStartOffset);
+        ok(wave->rtDuration == 1000000, "got %I64d\n", wave->rtDuration);
+        ok(wave->lOffset == 0, "got %lu\n", wave->lOffset);
+        ok(wave->lVolume == 0, "got %lu\n", wave->lVolume);
+        ok(wave->lPitch == 0, "got %lu\n", wave->lPitch);
+        ok(wave->bFlags == 0, "got %#x\n", wave->bFlags);
+        hr = IDirectMusicPerformance_FreePMsg(performance, (DMUS_PMSG *)wave);
+        ok(hr == S_OK, "got %#lx\n", hr);
+    }
 
     ret = test_tool_wait_message(tool, 500, &msg);
     ok(!ret, "got %#lx\n", ret);
-    ok(msg->dwType == DMUS_PMSGT_DIRTY, "got %p\n", msg);
-    hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+    if (!ret)
+    {
+        ok(msg->dwType == DMUS_PMSGT_DIRTY, "got %p\n", msg);
+        hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+        ok(hr == S_OK, "got %#lx\n", hr);
+    }
+
+    hr = IDirectMusicSegment_GetRepeats(segment, &value);
     ok(hr == S_OK, "got %#lx\n", hr);
+    ok(value == num_repeats, "got %lu\n", value);
+
+    hr = IDirectMusicSegmentState_GetRepeats(state, &value);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    ok(value == num_repeats, "got %lu\n", value);
 
     hr = IDirectMusicSegment8_Unload((IDirectMusicSegment8 *)segment, (IUnknown *)performance);
     ok(hr == S_OK, "got %#lx\n", hr);
@@ -3670,6 +3726,8 @@ static void test_wave_pmsg(void)
 
     IDirectMusicPerformance_Release(performance);
     IDirectMusicTool_Release(tool);
+
+    winetest_pop_context();
 }
 
 static void test_sequence_track(void)
@@ -4462,6 +4520,10 @@ static void test_segment_state(void)
     ok(hr == S_OK, "got %#lx\n", hr);
     hr = IDirectMusicSegment_SetRepeats(segment, 0);
     ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicSegment_SetLoopPoints(segment, 10, 70);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicSegment_SetLoopPoints(segment, 10, 101);
+    ok(hr == DMUS_E_OUT_OF_RANGE, "got %#lx\n", hr);
     hr = IDirectMusicSegment_SetLoopPoints(segment, 0, 0);
     ok(hr == S_OK, "got %#lx\n", hr);
 
@@ -4483,10 +4545,10 @@ static void test_segment_state(void)
     hr = IDirectMusicSegmentState_GetStartPoint(state, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
     ok(time == 0, "got %#lx\n", time);
-    time = 0xdeadbeef;
+    value = 0xdeadbeef;
     hr = IDirectMusicSegmentState_GetRepeats(state, &value);
     ok(hr == S_OK, "got %#lx\n", hr);
-    ok(time == 0xdeadbeef, "got %#lx\n", time);
+    ok(value == 0, "got %#lx\n", value);
     time = 0xdeadbeef;
     hr = IDirectMusicSegmentState_GetStartTime(state, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
@@ -4520,6 +4582,19 @@ static void test_segment_state(void)
     ok(state != (void *)0xdeadbeef, "got %p\n", state);
     ok(state != tmp_state, "got %p\n", state);
     IDirectMusicSegmentState_Release(tmp_state);
+
+    graph = (void *)0xdeadbeef;
+    hr = IDirectMusicSegmentState_QueryInterface(state, &IID_IDirectMusicGraph, (void **)&graph);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    if (hr == S_OK)
+    {
+        IDirectMusicTool *segment_state_tool;
+
+        hr = IDirectMusicGraph_GetTool(graph, 0, &segment_state_tool);
+        ok(hr == E_NOTIMPL, "got %#lx\n", hr);
+        if (SUCCEEDED(hr)) IDirectMusicTool_Release(segment_state_tool);
+        IDirectMusicGraph_Release(graph);
+    }
 
     tmp_state = (void *)0xdeadbeef;
     hr = IDirectMusicPerformance_GetSegmentState(performance, &tmp_state, 0);
@@ -4566,10 +4641,10 @@ static void test_segment_state(void)
     hr = IDirectMusicSegmentState_GetStartPoint(state, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
     ok(time == 50, "got %lu\n", time);
-    time = 0xdeadbeef;
+    value = 0xdeadbeef;
     hr = IDirectMusicSegmentState_GetRepeats(state, &value);
     ok(hr == S_OK, "got %#lx\n", hr);
-    ok(time == 0xdeadbeef, "got %#lx\n", time);
+    ok(value == 0, "got %#lx\n", value);
     time = 0xdeadbeef;
     hr = IDirectMusicSegmentState_GetStartTime(state, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
@@ -4596,10 +4671,10 @@ static void test_segment_state(void)
     hr = IDirectMusicSegmentState_GetStartPoint(state, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
     ok(time == 50, "got %#lx\n", time);
-    time = 0xdeadbeef;
+    value = 0xdeadbeef;
     hr = IDirectMusicSegmentState_GetRepeats(state, &value);
     ok(hr == S_OK, "got %#lx\n", hr);
-    ok(time == 0xdeadbeef, "got %#lx\n", time);
+    ok(value == 0, "got %#lx\n", value);
     time = 0xdeadbeef;
     hr = IDirectMusicSegmentState_GetStartTime(state, &time);
     ok(hr == S_OK, "got %#lx\n", hr);
@@ -4661,7 +4736,8 @@ START_TEST(dmime)
     test_performance_time();
     test_performance_pmsg();
     test_notification_pmsg();
-    test_wave_pmsg();
+    test_wave_pmsg(0);
+    test_wave_pmsg(10);
     test_sequence_track();
     test_band_track_play();
     test_tempo_track_play();

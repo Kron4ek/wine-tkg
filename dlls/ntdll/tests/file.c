@@ -38,7 +38,7 @@
 #include "winuser.h"
 #include "winioctl.h"
 #include "winnls.h"
-#include "ntifs.h"
+#include "ddk/ntifs.h"
 
 #ifndef IO_COMPLETION_ALL_ACCESS
 #define IO_COMPLETION_ALL_ACCESS 0x001F0003

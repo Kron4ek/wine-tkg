@@ -323,8 +323,9 @@ static void WINAPIV __WINE_PRINTF_ATTR(2,3) childPrintf(HANDLE h, const char* fm
 #define HATTR_NULL      0x08               /* NULL handle value */
 #define HATTR_INVALID   0x04               /* INVALID_HANDLE_VALUE */
 #define HATTR_TYPE      0x0c               /* valid handle, with type set */
-#define HATTR_INHERIT   0x10               /* inheritance flag set */
-#define HATTR_UNTOUCHED 0x20               /* Identify fields untouched by GetStartupInfoW */
+#define HATTR_UNTOUCHED 0x10               /* Identify fields untouched by GetStartupInfoW */
+#define HATTR_INHERIT   0x20               /* inheritance flag set */
+#define HATTR_PROTECT   0x40               /* protect from close flag set */
 
 #define HANDLE_UNTOUCHEDW (HANDLE)(DWORD_PTR)(0x5050505050505050ull)
 
@@ -346,8 +347,13 @@ static unsigned encode_handle_attributes(HANDLE h)
         if (dw == FILE_TYPE_CHAR || dw == FILE_TYPE_DISK || dw == FILE_TYPE_PIPE)
         {
             DWORD info;
-            if (GetHandleInformation(h, &info) && (info & HANDLE_FLAG_INHERIT))
-                result |= HATTR_INHERIT;
+            if (GetHandleInformation(h, &info))
+            {
+                if (info & HANDLE_FLAG_INHERIT)
+                    result |= HATTR_INHERIT;
+                if (info & HANDLE_FLAG_PROTECT_FROM_CLOSE)
+                    result |= HATTR_PROTECT;
+            }
         }
         else
             dw = FILE_TYPE_UNKNOWN;
@@ -2543,6 +2549,47 @@ static void test_DuplicateHandle(void)
     ok(r, "DuplicateHandle error %lu\n", GetLastError());
     ok(f == out || broken(/* Win7 */ (((ULONG_PTR)f & 3) == 3) && (f != out)), "f != out\n");
     CloseHandle(out);
+
+    /* Test DUPLICATE_SAME_ATTRIBUTES */
+    f = CreateFileA("NUL", GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, 0);
+    ok(f != INVALID_HANDLE_VALUE, "Failed to open NUL %lu\n", GetLastError());
+    r = GetHandleInformation(f, &info);
+    ok(r && info == 0, "Unexpected info %lx\n", info);
+
+    r = DuplicateHandle(GetCurrentProcess(), f, GetCurrentProcess(), &out,
+                        0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_SAME_ATTRIBUTES);
+    ok(r, "DuplicateHandle error %lu\n", GetLastError());
+    r = GetHandleInformation(out, &info);
+    ok(r && info == 0, "Unexpected info %lx\n", info);
+    CloseHandle(out);
+
+    r = SetHandleInformation(f, HANDLE_FLAG_INHERIT | HANDLE_FLAG_PROTECT_FROM_CLOSE,
+                             HANDLE_FLAG_INHERIT | HANDLE_FLAG_PROTECT_FROM_CLOSE);
+    ok(r, "SetHandleInformation error %lu\n", GetLastError());
+    info = 0xdeabeef;
+    r = GetHandleInformation(f, &info);
+    ok(r && info == (HANDLE_FLAG_INHERIT | HANDLE_FLAG_PROTECT_FROM_CLOSE), "Unexpected info %lx\n", info);
+    ok(r, "SetHandleInformation error %lu\n", GetLastError());
+    r = DuplicateHandle(GetCurrentProcess(), f, GetCurrentProcess(), &out,
+                        0, FALSE, DUPLICATE_SAME_ACCESS | DUPLICATE_SAME_ATTRIBUTES);
+    ok(r, "DuplicateHandle error %lu\n", GetLastError());
+    info = 0xdeabeef;
+    r = GetHandleInformation(out, &info);
+    ok(r && info == (HANDLE_FLAG_INHERIT | HANDLE_FLAG_PROTECT_FROM_CLOSE), "Unexpected info %lx\n", info);
+    r = SetHandleInformation(out, HANDLE_FLAG_PROTECT_FROM_CLOSE, 0);
+    ok(r, "SetHandleInformation error %lu\n", GetLastError());
+    CloseHandle(out);
+    r = SetHandleInformation(f, HANDLE_FLAG_INHERIT | HANDLE_FLAG_PROTECT_FROM_CLOSE, 0);
+    ok(r, "SetHandleInformation error %lu\n", GetLastError());
+    CloseHandle(f);
+
+    r = DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(), &out,
+                        0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_SAME_ATTRIBUTES);
+    ok(r, "DuplicateHandle error %lu\n", GetLastError());
+    info = 0xdeabeef;
+    r = GetHandleInformation(out, &info);
+    ok(r && info == 0, "Unexpected info %lx\n", info);
+    CloseHandle(out);
 }
 
 #define test_completion(a, b, c, d, e) _test_completion(__LINE__, a, b, c, d, e)
@@ -3241,6 +3288,7 @@ static void copy_change_subsystem(const char* in, const char* out, DWORD subsyst
 #define ARG_STARTUPINFO         0x00000000
 #define ARG_CP_INHERIT          0x40000000
 #define ARG_HANDLE_INHERIT      0x20000000
+#define ARG_HANDLE_PROTECT      0x10000000
 #define ARG_HANDLE_MASK         (~0xff000000)
 
 static  BOOL check_run_child(const char *exec, DWORD flags, BOOL cp_inherit,
@@ -3312,6 +3360,13 @@ static BOOL build_startupinfo( STARTUPINFOA *startup, unsigned args, HANDLE hstd
         ok(0, "Unsupported handle type %x\n", args & ARG_HANDLE_MASK);
         return FALSE;
     }
+    if ((args & ARG_HANDLE_PROTECT) && needs_close)
+    {
+        ret = SetHandleInformation(hstd[0], HANDLE_FLAG_PROTECT_FROM_CLOSE, HANDLE_FLAG_PROTECT_FROM_CLOSE);
+        ok(ret, "Couldn't set inherit flag to hstd[0]\n");
+        ret = SetHandleInformation(hstd[1], HANDLE_FLAG_PROTECT_FROM_CLOSE, HANDLE_FLAG_PROTECT_FROM_CLOSE);
+        ok(ret, "Couldn't set inherit flag to hstd[1]\n");
+    }
 
     if (args & ARG_STD)
     {
@@ -3356,6 +3411,14 @@ static void test_StdHandleInheritance(void)
         /* all others handles type behave as H_DISK */
         {ARG_STARTUPINFO |                  ARG_HANDLE_INHERIT | H_DISK,      HATTR_NULL, .is_broken = HATTR_TYPE | FILE_TYPE_UNKNOWN},
         {ARG_STD         |                  ARG_HANDLE_INHERIT | H_DISK,      HATTR_TYPE | HATTR_INHERIT | FILE_TYPE_DISK},
+
+        /* all others handles type behave as H_DISK */
+        {ARG_STARTUPINFO |                                       H_DISK,      HATTR_NULL, .is_broken = HATTR_TYPE | FILE_TYPE_UNKNOWN},
+/* 5*/  {ARG_STD         |                                       H_DISK,      HATTR_TYPE | FILE_TYPE_DISK},
+
+        /* all others handles type behave as H_DISK */
+        {ARG_STARTUPINFO |                  ARG_HANDLE_PROTECT | H_DISK,      HATTR_NULL, .is_broken = HATTR_TYPE | FILE_TYPE_UNKNOWN},
+        {ARG_STD         |                  ARG_HANDLE_PROTECT | H_DISK,      HATTR_TYPE | HATTR_PROTECT | FILE_TYPE_DISK},
     },
     nothing_gui[] =
     {
@@ -3467,7 +3530,9 @@ static void test_StdHandleInheritance(void)
             DeleteFileA(resfile);
             if (needs_close)
             {
+                SetHandleInformation(hstd[0], HANDLE_FLAG_PROTECT_FROM_CLOSE, 0);
                 CloseHandle(hstd[0]);
+                SetHandleInformation(hstd[1], HANDLE_FLAG_PROTECT_FROM_CLOSE, 0);
                 CloseHandle(hstd[1]);
             }
             winetest_pop_context();

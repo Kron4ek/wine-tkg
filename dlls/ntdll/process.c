@@ -36,11 +36,11 @@
 #include "ntdll_misc.h"
 #include "wine/exception.h"
 
-WINE_DEFAULT_DEBUG_CHANNEL(process);
-
 
 /* we don't want to include winuser.h */
 #define CREATEPROCESS_MANIFEST_RESOURCE_ID ((ULONG_PTR)1)
+
+WINE_DEFAULT_DEBUG_CHANNEL(process);
 
 /******************************************************************************
  *  RtlGetCurrentPeb  [NTDLL.@]
@@ -156,10 +156,11 @@ static HANDLE get_elevated_token(void)
  */
 USHORT WINAPI RtlWow64GetCurrentMachine(void)
 {
-    USHORT current, native;
-
-    RtlWow64GetProcessMachines( GetCurrentProcess(), &current, &native );
-    return current ? current : native;
+    USHORT machine = current_machine;
+#ifdef _WIN64
+    if (NtCurrentTeb()->WowTebOffset) RtlWow64GetCurrentCpuArea( &machine, NULL, NULL );
+#endif
+    return machine;
 }
 
 
@@ -769,16 +770,6 @@ NTSTATUS WINAPI DbgUiConvertStateChangeStructure( DBGUI_WAIT_STATE_CHANGE *state
         return STATUS_UNSUCCESSFUL;
     }
     return STATUS_SUCCESS;
-}
-
-/***********************************************************************
- *      DbgUiRemoteBreakin (NTDLL.@)
- */
-void WINAPI DbgUiRemoteBreakin( void *arg )
-{
-    TRACE( "\n" );
-    if (NtCurrentTeb()->Peb->BeingDebugged) process_breakpoint();
-    RtlExitUserThread( STATUS_SUCCESS );
 }
 
 /***********************************************************************

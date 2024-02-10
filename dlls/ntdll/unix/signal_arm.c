@@ -967,39 +967,48 @@ NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
 
 
 /***********************************************************************
- *           setup_exception
- *
- * Modify the signal context to call the exception raise function.
+ *           setup_raise_exception
  */
-static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
+static void setup_raise_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec, CONTEXT *context )
 {
     struct exc_stack_layout *stack;
     void *stack_ptr = (void *)(SP_sig(sigcontext) & ~7);
-    CONTEXT context;
     NTSTATUS status;
 
-    rec->ExceptionAddress = (void *)PC_sig(sigcontext);
-    save_context( &context, sigcontext );
-
-    status = send_debug_event( rec, &context, TRUE );
+    status = send_debug_event( rec, context, TRUE );
     if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
     {
-        restore_context( &context, sigcontext );
+        restore_context( context, sigcontext );
         return;
     }
 
     /* fix up instruction pointer in context for EXCEPTION_BREAKPOINT */
-    if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context.Pc -= 2;
+    if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context->Pc -= 2;
 
     stack = virtual_setup_exception( stack_ptr, sizeof(*stack), rec );
     stack->rec = *rec;
-    stack->context = context;
+    stack->context = *context;
 
     /* now modify the sigcontext to return to the raise function */
     SP_sig(sigcontext) = (DWORD)stack;
     PC_sig(sigcontext) = (DWORD)pKiUserExceptionDispatcher;
     if (PC_sig(sigcontext) & 1) CPSR_sig(sigcontext) |= 0x20;
     else CPSR_sig(sigcontext) &= ~0x20;
+}
+
+
+/***********************************************************************
+ *           setup_exception
+ *
+ * Modify the signal context to call the exception raise function.
+ */
+static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
+{
+    CONTEXT context;
+
+    rec->ExceptionAddress = (void *)PC_sig(sigcontext);
+    save_context( &context, sigcontext );
+    setup_raise_exception( sigcontext, rec, &context );
 }
 
 
@@ -1043,7 +1052,10 @@ NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR a
  */
 void call_raise_user_exception_dispatcher(void)
 {
-    arm_thread_data()->syscall_frame->pc = (DWORD)pKiRaiseUserExceptionDispatcher;
+    struct syscall_frame *frame = arm_thread_data()->syscall_frame;
+
+    frame->sp += 16;
+    frame->pc = (DWORD)pKiRaiseUserExceptionDispatcher;
 }
 
 
@@ -1220,7 +1232,7 @@ static BOOL handle_syscall_fault( ucontext_t *context, EXCEPTION_RECORD *rec )
         TRACE( "returning to handler\n" );
         REGn_sig(0, context) = (DWORD)ntdll_get_thread_data()->jmp_buf;
         REGn_sig(1, context) = 1;
-        PC_sig(context)      = (DWORD)__wine_longjmp;
+        PC_sig(context)      = (DWORD)longjmp;
         ntdll_get_thread_data()->jmp_buf = NULL;
     }
     else
@@ -1243,6 +1255,10 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     EXCEPTION_RECORD rec = { 0 };
     ucontext_t *context = sigcontext;
+    CONTEXT ctx;
+
+    rec.ExceptionAddress = (void *)PC_sig(context);
+    save_context( &ctx, sigcontext );
 
     switch (get_trap_code(signal, context))
     {
@@ -1251,10 +1267,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         {
         case 0xfb:  /* __fastfail */
         {
-            CONTEXT ctx;
-            save_context( &ctx, sigcontext );
             rec.ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
-            rec.ExceptionAddress = (void *)ctx.Pc;
             rec.ExceptionFlags = EH_NONCONTINUABLE;
             rec.NumberParameters = 1;
             rec.ExceptionInformation[0] = ctx.R0;
@@ -1262,7 +1275,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
             return;
         }
         case 0xfe:  /* breakpoint */
-            PC_sig(context) += 2;  /* skip the instruction */
+            ctx.Pc += 2;  /* skip the breakpoint instruction */
             rec.ExceptionCode = EXCEPTION_BREAKPOINT;
             rec.NumberParameters = 1;
             break;
@@ -1294,7 +1307,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         break;
     }
     if (handle_syscall_fault( context, &rec )) return;
-    setup_exception( context, &rec );
+    setup_raise_exception( context, &rec, &ctx );
 }
 
 
@@ -1306,6 +1319,11 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     EXCEPTION_RECORD rec = { 0 };
+    ucontext_t *context = sigcontext;
+    CONTEXT ctx;
+
+    rec.ExceptionAddress = (void *)PC_sig(context);
+    save_context( &ctx, sigcontext );
 
     switch (siginfo->si_code)
     {
@@ -1314,11 +1332,12 @@ static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         break;
     case TRAP_BRKPT:
     default:
+        ctx.Pc += 2;  /* skip the breakpoint instruction */
         rec.ExceptionCode = EXCEPTION_BREAKPOINT;
         rec.NumberParameters = 1;
         break;
     }
-    setup_exception( sigcontext, &rec );
+    setup_raise_exception( sigcontext, &rec, &ctx );
 }
 
 
@@ -1598,8 +1617,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "ldr r1, [r2, #0x1d8]\n\t"       /* arm_thread_data()->syscall_frame */
                    "add r0, r1, #0x10\n\t"
                    "stm r0, {r4-r12,lr}\n\t"
-                   "add r0, sp, #0x10\n\t"
-                   "str r0, [r1, #0x38]\n\t"
+                   "str sp, [r1, #0x38]\n\t"
                    "str r3, [r1, #0x3c]\n\t"
                    "mrs r0, CPSR\n\t"
                    "bfi r0, lr, #5, #1\n\t"         /* set thumb bit */
@@ -1672,7 +1690,6 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
 
                    "5:\tmovw r0, #0x000d\n\t" /* STATUS_INVALID_PARAMETER */
                    "movt r0, #0xc000\n\t"
-                   "add sp, sp, #0x10\n\t"
                    "b " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") "\n\t"
                    ".globl " __ASM_NAME("__wine_syscall_dispatcher_return") "\n"
                    __ASM_NAME("__wine_syscall_dispatcher_return") ":\n\t"
@@ -1727,41 +1744,5 @@ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
                    "add r8, r8, #0x10\n\t"
                    "ldm r8, {r4-r12,pc}\n\t"
                    "1:\tb " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") )
-
-
-/***********************************************************************
- *           __wine_setjmpex
- */
-__ASM_GLOBAL_FUNC( __wine_setjmpex,
-                   __ASM_EHABI(".cantunwind\n\t")
-                   "stm r0, {r1,r4-r11}\n"         /* jmp_buf->Frame,R4..R11 */
-                   "str sp, [r0, #0x24]\n\t"       /* jmp_buf->Sp */
-                   "str lr, [r0, #0x28]\n\t"       /* jmp_buf->Pc */
-#ifndef __SOFTFP__
-                   "vmrs r2, fpscr\n\t"
-                   "str r2, [r0, #0x2c]\n\t"       /* jmp_buf->Fpscr */
-                   "add r0, r0, #0x30\n\t"
-                   "vstm r0, {d8-d15}\n\t"         /* jmp_buf->D[0..7] */
-#endif
-                   "mov r0, #0\n\t"
-                   "bx lr" )
-
-
-/***********************************************************************
- *           __wine_longjmp
- */
-__ASM_GLOBAL_FUNC( __wine_longjmp,
-                   __ASM_EHABI(".cantunwind\n\t")
-                   "ldm r0, {r3-r11}\n\t"          /* jmp_buf->Frame,R4..R11 */
-                   "ldr sp, [r0, #0x24]\n\t"       /* jmp_buf->Sp */
-                   "ldr r2, [r0, #0x28]\n\t"       /* jmp_buf->Pc */
-#ifndef __SOFTFP__
-                   "ldr r3, [r0, #0x2c]\n\t"       /* jmp_buf->Fpscr */
-                   "vmsr fpscr, r3\n\t"
-                   "add r0, r0, #0x30\n\t"
-                   "vldm r0, {d8-d15}\n\t"         /* jmp_buf->D[0..7] */
-#endif
-                   "mov r0, r1\n\t"                /* retval */
-                   "bx r2" )
 
 #endif  /* __arm__ */

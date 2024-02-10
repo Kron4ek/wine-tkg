@@ -42,6 +42,18 @@
 
 #define NTDLL_TLS_ERRNO 16  /* TLS slot for _errno() */
 
+#ifdef __i386__
+static const USHORT current_machine = IMAGE_FILE_MACHINE_I386;
+#elif defined(__x86_64__)
+static const USHORT current_machine = IMAGE_FILE_MACHINE_AMD64;
+#elif defined(__arm__)
+static const USHORT current_machine = IMAGE_FILE_MACHINE_ARMNT;
+#elif defined(__aarch64__)
+static const USHORT current_machine = IMAGE_FILE_MACHINE_ARM64;
+#else
+static const USHORT current_machine = IMAGE_FILE_MACHINE_UNKNOWN;
+#endif
+
 #if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)
 static const UINT_PTR page_size = 0x1000;
 #else
@@ -58,6 +70,13 @@ extern EXCEPTION_DISPOSITION WINAPI nested_exception_handler( EXCEPTION_RECORD *
 extern void DECLSPEC_NORETURN raise_status( NTSTATUS status, EXCEPTION_RECORD *rec );
 extern LONG WINAPI call_unhandled_exception_filter( PEXCEPTION_POINTERS eptr );
 extern void WINAPI process_breakpoint(void);
+
+static inline BOOL is_valid_frame( ULONG_PTR frame )
+{
+    if (frame & (sizeof(void*) - 1)) return FALSE;
+    return ((void *)frame >= NtCurrentTeb()->Tib.StackLimit &&
+            (void *)frame <= NtCurrentTeb()->Tib.StackBase);
+}
 
 extern void WINAPI LdrInitializeThunk(CONTEXT*,ULONG_PTR,ULONG_PTR,ULONG_PTR);
 extern NTSTATUS WINAPI KiUserExceptionDispatcher(EXCEPTION_RECORD*,CONTEXT*);

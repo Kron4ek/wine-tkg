@@ -263,33 +263,12 @@ struct hw_msg_source
     unsigned int    origin;
 };
 
-union rawinput
+struct rawinput
 {
-    int type;
-    struct
-    {
-        int            type;
-        unsigned int   message;
-        unsigned short vkey;
-        unsigned short scan;
-    } kbd;
-    struct
-    {
-        int            type;
-        int            x;
-        int            y;
-        unsigned int   data;
-    } mouse;
-    struct
-    {
-        int            type;
-        unsigned int   device;
-        unsigned int   param;
-        unsigned short usage_page;
-        unsigned short usage;
-        unsigned int   count;
-        unsigned int   length;
-    } hid;
+    int                  type;
+    unsigned int         device;
+    unsigned int         wparam;
+    unsigned int         usage;
 };
 
 struct hardware_msg_data
@@ -300,7 +279,7 @@ struct hardware_msg_data
     unsigned int         hw_id;
     unsigned int         flags;
     struct hw_msg_source source;
-    union rawinput       rawinput;
+    struct rawinput      rawinput;
 };
 
 struct callback_msg_data
@@ -344,8 +323,15 @@ typedef union
     {
         int            type;
         unsigned int   msg;
+        lparam_t       wparam;
         lparam_t       lparam;
-        union rawinput rawinput;
+        struct
+        {
+            unsigned int device;
+            unsigned int usage;
+            unsigned int count;
+            unsigned int length;
+        } hid;
     } hw;
 } hw_input_t;
 
@@ -844,7 +830,8 @@ typedef struct
     unsigned char  contains_code : 1;
     unsigned char  wine_builtin : 1;
     unsigned char  wine_fakedll : 1;
-    unsigned char  padding : 5;
+    unsigned char  is_hybrid : 1;
+    unsigned char  padding : 4;
     unsigned char  image_flags;
     unsigned int   loader_flags;
     unsigned int   header_size;
@@ -862,8 +849,7 @@ typedef struct
 
 struct rawinput_device
 {
-    unsigned short usage_page;
-    unsigned short usage;
+    unsigned int   usage;
     unsigned int   flags;
     user_handle_t  target;
 };
@@ -974,9 +960,8 @@ struct init_process_done_request
 struct init_process_done_reply
 {
     struct reply_header __header;
-    client_ptr_t entry;
     int          suspend;
-    char __pad_20[4];
+    char __pad_12[4];
 };
 
 
@@ -2906,7 +2891,6 @@ struct send_hardware_message_reply
     char __pad_28[4];
 };
 #define SEND_HWMSG_INJECTED    0x01
-#define SEND_HWMSG_RAWINPUT    0x02
 
 
 
@@ -5494,8 +5478,8 @@ struct get_cursor_history_reply
 struct get_rawinput_buffer_request
 {
     struct request_header __header;
-    data_size_t rawinput_size;
-    data_size_t buffer_size;
+    data_size_t header_size;
+    int         read_data;
     char __pad_20[4];
 };
 struct get_rawinput_buffer_reply
@@ -6754,7 +6738,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 788
+#define SERVER_PROTOCOL_VERSION 795
 
 /* ### protocol_version end ### */
 

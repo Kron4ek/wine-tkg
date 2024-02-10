@@ -42,7 +42,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(rawinput);
 
 #ifdef _WIN64
 typedef RAWINPUTHEADER RAWINPUTHEADER64;
-typedef RAWINPUT RAWINPUT64;
 #else
 typedef struct
 {
@@ -51,149 +50,7 @@ typedef struct
     ULONGLONG hDevice;
     ULONGLONG wParam;
 } RAWINPUTHEADER64;
-
-typedef struct
-{
-    RAWINPUTHEADER64 header;
-    union
-    {
-        RAWMOUSE    mouse;
-        RAWKEYBOARD keyboard;
-        RAWHID      hid;
-    } data;
-} RAWINPUT64;
 #endif
-
-static struct rawinput_thread_data *get_rawinput_thread_data(void)
-{
-    struct user_thread_info *thread_info = get_user_thread_info();
-    struct rawinput_thread_data *data = thread_info->rawinput;
-    if (data) return data;
-    data = thread_info->rawinput = calloc( 1, RAWINPUT_BUFFER_SIZE + sizeof(struct user_thread_info) );
-    return data;
-}
-
-static bool rawinput_from_hardware_message( RAWINPUT *rawinput, const struct hardware_msg_data *msg_data )
-{
-    SIZE_T size;
-
-    rawinput->header.dwType = msg_data->rawinput.type;
-    if (msg_data->rawinput.type == RIM_TYPEMOUSE)
-    {
-        static const unsigned int button_flags[] =
-        {
-            0,                              /* MOUSEEVENTF_MOVE */
-            RI_MOUSE_LEFT_BUTTON_DOWN,      /* MOUSEEVENTF_LEFTDOWN */
-            RI_MOUSE_LEFT_BUTTON_UP,        /* MOUSEEVENTF_LEFTUP */
-            RI_MOUSE_RIGHT_BUTTON_DOWN,     /* MOUSEEVENTF_RIGHTDOWN */
-            RI_MOUSE_RIGHT_BUTTON_UP,       /* MOUSEEVENTF_RIGHTUP */
-            RI_MOUSE_MIDDLE_BUTTON_DOWN,    /* MOUSEEVENTF_MIDDLEDOWN */
-            RI_MOUSE_MIDDLE_BUTTON_UP,      /* MOUSEEVENTF_MIDDLEUP */
-        };
-        unsigned int i;
-
-        rawinput->header.dwSize  = FIELD_OFFSET(RAWINPUT, data) + sizeof(RAWMOUSE);
-        rawinput->header.hDevice = WINE_MOUSE_HANDLE;
-        rawinput->header.wParam  = 0;
-
-        rawinput->data.mouse.usFlags = msg_data->flags & MOUSEEVENTF_ABSOLUTE ? MOUSE_MOVE_ABSOLUTE : MOUSE_MOVE_RELATIVE;
-        if (msg_data->flags & MOUSEEVENTF_VIRTUALDESK) rawinput->data.mouse.usFlags |= MOUSE_VIRTUAL_DESKTOP;
-        rawinput->data.mouse.usButtonFlags = 0;
-        rawinput->data.mouse.usButtonData  = 0;
-        for (i = 1; i < ARRAY_SIZE(button_flags); ++i)
-        {
-            if (msg_data->flags & (1 << i))
-                rawinput->data.mouse.usButtonFlags |= button_flags[i];
-        }
-        if (msg_data->flags & MOUSEEVENTF_WHEEL)
-        {
-            rawinput->data.mouse.usButtonFlags |= RI_MOUSE_WHEEL;
-            rawinput->data.mouse.usButtonData   = msg_data->rawinput.mouse.data;
-        }
-        if (msg_data->flags & MOUSEEVENTF_HWHEEL)
-        {
-            rawinput->data.mouse.usButtonFlags |= RI_MOUSE_HORIZONTAL_WHEEL;
-            rawinput->data.mouse.usButtonData   = msg_data->rawinput.mouse.data;
-        }
-        if (msg_data->flags & MOUSEEVENTF_XDOWN)
-        {
-            if (msg_data->rawinput.mouse.data == XBUTTON1)
-                rawinput->data.mouse.usButtonFlags |= RI_MOUSE_BUTTON_4_DOWN;
-            else if (msg_data->rawinput.mouse.data == XBUTTON2)
-                rawinput->data.mouse.usButtonFlags |= RI_MOUSE_BUTTON_5_DOWN;
-        }
-        if (msg_data->flags & MOUSEEVENTF_XUP)
-        {
-            if (msg_data->rawinput.mouse.data == XBUTTON1)
-                rawinput->data.mouse.usButtonFlags |= RI_MOUSE_BUTTON_4_UP;
-            else if (msg_data->rawinput.mouse.data == XBUTTON2)
-                rawinput->data.mouse.usButtonFlags |= RI_MOUSE_BUTTON_5_UP;
-        }
-
-        rawinput->data.mouse.ulRawButtons       = 0;
-        rawinput->data.mouse.lLastX             = msg_data->rawinput.mouse.x;
-        rawinput->data.mouse.lLastY             = msg_data->rawinput.mouse.y;
-        rawinput->data.mouse.ulExtraInformation = msg_data->info;
-    }
-    else if (msg_data->rawinput.type == RIM_TYPEKEYBOARD)
-    {
-        rawinput->header.dwSize  = FIELD_OFFSET(RAWINPUT, data) + sizeof(RAWKEYBOARD);
-        rawinput->header.hDevice = WINE_KEYBOARD_HANDLE;
-        rawinput->header.wParam  = 0;
-
-        rawinput->data.keyboard.MakeCode = msg_data->rawinput.kbd.scan;
-        rawinput->data.keyboard.Flags    = (msg_data->flags & KEYEVENTF_KEYUP) ? RI_KEY_BREAK : RI_KEY_MAKE;
-        if (msg_data->flags & KEYEVENTF_EXTENDEDKEY)
-            rawinput->data.keyboard.Flags |= RI_KEY_E0;
-        rawinput->data.keyboard.Reserved = 0;
-
-        switch (msg_data->rawinput.kbd.vkey)
-        {
-        case VK_LSHIFT:
-        case VK_RSHIFT:
-            rawinput->data.keyboard.VKey = VK_SHIFT;
-            rawinput->data.keyboard.Flags &= ~RI_KEY_E0;
-            break;
-
-        case VK_LCONTROL:
-        case VK_RCONTROL:
-            rawinput->data.keyboard.VKey = VK_CONTROL;
-            break;
-
-        case VK_LMENU:
-        case VK_RMENU:
-            rawinput->data.keyboard.VKey = VK_MENU;
-            break;
-
-        default:
-            rawinput->data.keyboard.VKey = msg_data->rawinput.kbd.vkey;
-            break;
-        }
-
-        rawinput->data.keyboard.Message          = msg_data->rawinput.kbd.message;
-        rawinput->data.keyboard.ExtraInformation = msg_data->info;
-    }
-    else if (msg_data->rawinput.type == RIM_TYPEHID)
-    {
-        size = msg_data->size - sizeof(*msg_data);
-        if (size > rawinput->header.dwSize - sizeof(*rawinput)) return false;
-
-        rawinput->header.dwSize  = FIELD_OFFSET( RAWINPUT, data.hid.bRawData ) + size;
-        rawinput->header.hDevice = ULongToHandle( msg_data->rawinput.hid.device );
-        rawinput->header.wParam  = 0;
-
-        rawinput->data.hid.dwCount = msg_data->rawinput.hid.count;
-        rawinput->data.hid.dwSizeHid = msg_data->rawinput.hid.length;
-        memcpy( rawinput->data.hid.bRawData, msg_data + 1, size );
-    }
-    else
-    {
-        FIXME( "Unhandled rawinput type %#x.\n", msg_data->rawinput.type );
-        return false;
-    }
-
-    return true;
-}
 
 struct device
 {
@@ -615,173 +472,118 @@ UINT WINAPI NtUserGetRawInputDeviceInfo( HANDLE handle, UINT command, void *data
  */
 UINT WINAPI NtUserGetRawInputBuffer( RAWINPUT *data, UINT *data_size, UINT header_size )
 {
-    unsigned int count = 0, remaining, rawinput_size, next_size, overhead;
-    struct rawinput_thread_data *thread_data;
-    struct hardware_msg_data *msg_data;
-    RAWINPUT *rawinput;
-    int i;
+    UINT count;
 
-    if (NtCurrentTeb()->WowTebOffset)
-        rawinput_size = sizeof(RAWINPUT64);
-    else
-        rawinput_size = sizeof(RAWINPUT);
-    overhead = rawinput_size - sizeof(RAWINPUT);
+    TRACE( "data %p, data_size %p, header_size %u\n", data, data_size, header_size );
 
     if (header_size != sizeof(RAWINPUTHEADER))
     {
-        WARN( "Invalid structure size %u.\n", header_size );
         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
-        return ~0u;
+        return -1;
     }
 
     if (!data_size)
     {
         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
-        return ~0u;
+        return -1;
     }
 
-    if (!data)
-    {
-        TRACE( "data %p, data_size %p (%u), header_size %u\n", data, data_size, *data_size, header_size );
-        SERVER_START_REQ( get_rawinput_buffer )
-        {
-            req->rawinput_size = rawinput_size;
-            req->buffer_size = 0;
-            if (wine_server_call( req )) return ~0u;
-            *data_size = reply->next_size;
-        }
-        SERVER_END_REQ;
-        return 0;
-    }
+    /* with old WOW64 mode we didn't go through the WOW64 thunks, patch the header size here */
+    if (NtCurrentTeb()->WowTebOffset) header_size = sizeof(RAWINPUTHEADER64);
 
-    if (!(thread_data = get_rawinput_thread_data())) return ~0u;
-    rawinput = thread_data->buffer;
-
-    /* first RAWINPUT block in the buffer is used for WM_INPUT message data */
-    msg_data = (struct hardware_msg_data *)NEXTRAWINPUTBLOCK(rawinput);
     SERVER_START_REQ( get_rawinput_buffer )
     {
-        req->rawinput_size = rawinput_size;
-        req->buffer_size = *data_size;
-        wine_server_set_reply( req, msg_data, RAWINPUT_BUFFER_SIZE - rawinput->header.dwSize );
-        if (wine_server_call( req )) return ~0u;
-        next_size = reply->next_size;
-        count = reply->count;
+        req->header_size = header_size;
+        if ((req->read_data = !!data)) wine_server_set_reply( req, data, *data_size );
+        if (!wine_server_call_err( req )) count = reply->count;
+        else count = -1;
+        *data_size = reply->next_size;
     }
     SERVER_END_REQ;
 
-    remaining = *data_size;
-    for (i = 0; i < count; ++i)
-    {
-        data->header.dwSize = remaining;
-        if (!rawinput_from_hardware_message( data, msg_data )) break;
-        if (overhead)
-        {
-            /* Under WoW64, GetRawInputBuffer always gives 64-bit RAWINPUT structs. */
-            RAWINPUT64 *ri64 = (RAWINPUT64 *)data;
-            memmove( (char *)&data->data + overhead, &data->data,
-                     data->header.dwSize - sizeof(RAWINPUTHEADER) );
-            ri64->header.dwSize += overhead;
-
-            /* Need to copy wParam before hDevice so it's not overwritten. */
-            ri64->header.wParam = data->header.wParam;
-#ifdef _WIN64
-            ri64->header.hDevice = data->header.hDevice;
-#else
-            ri64->header.hDevice = HandleToULong(data->header.hDevice);
-#endif
-        }
-        remaining -= data->header.dwSize;
-        data = NEXTRAWINPUTBLOCK(data);
-        msg_data = (struct hardware_msg_data *)((char *)msg_data + msg_data->size);
-    }
-
-    if (!next_size)
-    {
-        if (!count)
-            *data_size = 0;
-        else
-            next_size = rawinput_size;
-    }
-
-    if (next_size && *data_size <= next_size)
-    {
-        RtlSetLastWin32Error( ERROR_INSUFFICIENT_BUFFER );
-        *data_size = next_size;
-        count = ~0u;
-    }
-
-    TRACE( "data %p, data_size %p (%u), header_size %u, count %u\n",
-           data, data_size, *data_size, header_size, count );
     return count;
 }
 
 /**********************************************************************
  *         NtUserGetRawInputData   (win32u.@)
  */
-UINT WINAPI NtUserGetRawInputData( HRAWINPUT rawinput, UINT command, void *data, UINT *data_size, UINT header_size )
+UINT WINAPI NtUserGetRawInputData( HRAWINPUT handle, UINT command, void *data, UINT *data_size, UINT header_size )
 {
-    struct rawinput_thread_data *thread_data;
-    UINT size;
+    struct user_thread_info *thread_info = get_user_thread_info();
+    struct hardware_msg_data *msg_data;
+    RAWINPUT *rawinput = data;
+    UINT size = 0;
 
-    TRACE( "rawinput %p, command %#x, data %p, data_size %p, header_size %u.\n",
-           rawinput, command, data, data_size, header_size );
+    TRACE( "handle %p, command %#x, data %p, data_size %p, header_size %u.\n",
+           handle, command, data, data_size, header_size );
 
-    if (!(thread_data = get_rawinput_thread_data()))
-    {
-        RtlSetLastWin32Error( ERROR_OUTOFMEMORY );
-        return ~0u;
-    }
-
-    if (!rawinput || thread_data->hw_id != (UINT_PTR)rawinput)
+    if (!(msg_data = thread_info->rawinput) || msg_data->hw_id != (UINT_PTR)handle)
     {
         RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
-        return ~0u;
+        return -1;
     }
 
     if (header_size != sizeof(RAWINPUTHEADER))
     {
         WARN( "Invalid structure size %u.\n", header_size );
         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
-        return ~0u;
+        return -1;
     }
-
-    switch (command)
-    {
-    case RID_INPUT:
-        size = thread_data->buffer->header.dwSize;
-        break;
-
-    case RID_HEADER:
-        size = sizeof(RAWINPUTHEADER);
-        break;
-
-    default:
-        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
-        return ~0u;
-    }
+    if (command != RID_HEADER && command != RID_INPUT) goto failed;
+    if (command == RID_INPUT) size = msg_data->size - sizeof(*msg_data);
 
     if (!data)
     {
-        *data_size = size;
+        *data_size = sizeof(RAWINPUTHEADER) + size;
         return 0;
     }
 
-    if (*data_size < size)
+    if (*data_size < sizeof(RAWINPUTHEADER) + size)
     {
         RtlSetLastWin32Error( ERROR_INSUFFICIENT_BUFFER );
-        return ~0u;
+        return -1;
     }
-    memcpy( data, thread_data->buffer, size );
-    return size;
+
+    rawinput->header.dwType  = msg_data->rawinput.type;
+    rawinput->header.dwSize  = sizeof(RAWINPUTHEADER) + msg_data->size - sizeof(*msg_data);
+    rawinput->header.hDevice = UlongToHandle( msg_data->rawinput.device );
+    rawinput->header.wParam  = msg_data->rawinput.wparam;
+    if (command == RID_HEADER) return sizeof(RAWINPUTHEADER);
+
+    if (msg_data->rawinput.type == RIM_TYPEMOUSE)
+    {
+        if (size != sizeof(RAWMOUSE)) goto failed;
+        rawinput->data.mouse = *(RAWMOUSE *)(msg_data + 1);
+    }
+    else if (msg_data->rawinput.type == RIM_TYPEKEYBOARD)
+    {
+        if (size != sizeof(RAWKEYBOARD)) goto failed;
+        rawinput->data.keyboard = *(RAWKEYBOARD *)(msg_data + 1);
+    }
+    else if (msg_data->rawinput.type == RIM_TYPEHID)
+    {
+        RAWHID *hid = (RAWHID *)(msg_data + 1);
+        if (size < offsetof(RAWHID, bRawData[0])) goto failed;
+        if (size != offsetof(RAWHID, bRawData[hid->dwCount * hid->dwSizeHid])) goto failed;
+        memcpy( &rawinput->data.hid, msg_data + 1, size );
+    }
+    else
+    {
+        FIXME( "Unhandled rawinput type %#x.\n", msg_data->rawinput.type );
+        goto failed;
+    }
+
+    return rawinput->header.dwSize;
+
+failed:
+    WARN( "Invalid command %u or data size %u.\n", command, size );
+    RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
+    return -1;
 }
 
 BOOL process_rawinput_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data )
 {
-    struct rawinput_thread_data *thread_data;
-
-    if (!(thread_data = get_rawinput_thread_data()))
-        return FALSE;
+    struct user_thread_info *thread_info = get_user_thread_info();
 
     if (msg->message == WM_INPUT_DEVICE_CHANGE)
     {
@@ -791,9 +593,10 @@ BOOL process_rawinput_message( MSG *msg, UINT hw_id, const struct hardware_msg_d
     }
     else
     {
-        thread_data->buffer->header.dwSize = RAWINPUT_BUFFER_SIZE;
-        if (!rawinput_from_hardware_message( thread_data->buffer, msg_data )) return FALSE;
-        thread_data->hw_id = hw_id;
+        struct hardware_msg_data *tmp;
+        if (!(tmp = realloc( thread_info->rawinput, msg_data->size ))) return FALSE;
+        memcpy( tmp, msg_data, msg_data->size );
+        thread_info->rawinput = tmp;
         msg->lParam = (LPARAM)hw_id;
     }
 
@@ -900,8 +703,7 @@ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT d
 
     for (i = 0; i < device_count; ++i)
     {
-        server_devices[i].usage_page = registered_devices[i].usUsagePage;
-        server_devices[i].usage = registered_devices[i].usUsage;
+        server_devices[i].usage = MAKELONG(registered_devices[i].usUsage, registered_devices[i].usUsagePage);
         server_devices[i].flags = registered_devices[i].dwFlags;
         server_devices[i].target = wine_server_user_handle( registered_devices[i].hwndTarget );
     }

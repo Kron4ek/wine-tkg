@@ -506,6 +506,42 @@ static inline BOOL is_mouse_message( UINT message )
     return (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST);
 }
 
+#define create_foreground_window( a ) create_foreground_window_( __FILE__, __LINE__, a, 5 )
+HWND create_foreground_window_( const char *file, int line, BOOL fullscreen, UINT retries )
+{
+    for (;;)
+    {
+        HWND hwnd;
+        BOOL ret;
+
+        hwnd = CreateWindowW( L"static", NULL, WS_POPUP | (fullscreen ? 0 : WS_VISIBLE),
+                              100, 100, 200, 200, NULL, NULL, NULL, NULL );
+        ok_(file, line)( hwnd != NULL, "CreateWindowW failed, error %lu\n", GetLastError() );
+
+        if (fullscreen)
+        {
+            HMONITOR hmonitor = MonitorFromWindow( hwnd, MONITOR_DEFAULTTOPRIMARY );
+            MONITORINFO mi = {.cbSize = sizeof(MONITORINFO)};
+
+            ok_(file, line)( hmonitor != NULL, "MonitorFromWindow failed, error %lu\n", GetLastError() );
+            ret = GetMonitorInfoW( hmonitor, &mi );
+            ok_(file, line)( ret, "GetMonitorInfoW failed, error %lu\n", GetLastError() );
+            ret = SetWindowPos( hwnd, 0, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+                                mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW );
+            ok_(file, line)( ret, "SetWindowPos failed, error %lu\n", GetLastError() );
+        }
+        wait_messages( 100, FALSE );
+
+        if (GetForegroundWindow() == hwnd) return hwnd;
+        ok_(file, line)( retries > 0, "failed to create foreground window\n" );
+        if (!retries--) return hwnd;
+
+        ret = DestroyWindow( hwnd );
+        ok_(file, line)( ret, "DestroyWindow failed, error %lu\n", GetLastError() );
+        wait_messages( 0, FALSE );
+    }
+}
+
 /* try to make sure pending X events have been processed before continuing */
 static void empty_message_queue(void)
 {
@@ -1727,116 +1763,75 @@ static void test_GetRawInputDeviceList(void)
 
 static void test_GetRawInputData(void)
 {
-    UINT size;
-    UINT ret;
+    UINT size = 0;
 
     /* Null raw input handle */
-    SetLastError(0xdeadbeef);
-    ret = GetRawInputData(NULL, RID_INPUT, NULL, &size, sizeof(RAWINPUTHEADER));
-    ok(ret == ~0U, "Expect ret %u, got %u\n", ~0U, ret);
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "GetRawInputData returned %08lx\n", GetLastError());
+    SetLastError( 0xdeadbeef );
+    ok_ret( (UINT)-1, GetRawInputData( NULL, RID_INPUT, NULL, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_ret( ERROR_INVALID_HANDLE, GetLastError() );
 }
 
 static void test_RegisterRawInputDevices(void)
 {
     HWND hwnd;
-    RAWINPUTDEVICE raw_devices[2];
+    RAWINPUTDEVICE raw_devices[2] = {0};
     UINT count, raw_devices_count;
-    BOOL res;
 
-    memset(raw_devices, 0, sizeof(raw_devices));
-    raw_devices[0].usUsagePage = 0x01;
-    raw_devices[0].usUsage = 0x05;
-    raw_devices[1].usUsagePage = 0x01;
-    raw_devices[1].usUsage = 0x04;
+    raw_devices[0].usUsagePage = HID_USAGE_PAGE_GENERIC;
+    raw_devices[0].usUsage = HID_USAGE_GENERIC_GAMEPAD;
+    raw_devices[1].usUsagePage = HID_USAGE_PAGE_GENERIC;
+    raw_devices[1].usUsage = HID_USAGE_GENERIC_JOYSTICK;
 
-    hwnd = CreateWindowExA(WS_EX_TOPMOST, "static", "dinput", WS_POPUP | WS_VISIBLE, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
-    ok(hwnd != NULL, "CreateWindowExA failed\n");
+    hwnd = create_foreground_window( FALSE );
 
+    SetLastError( 0xdeadbeef );
+    ok_ret( 0, RegisterRawInputDevices( NULL, 0, 0 ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
 
-    res = RegisterRawInputDevices(NULL, 0, 0);
-    ok(res == FALSE, "RegisterRawInputDevices succeeded\n");
+    SetLastError( 0xdeadbeef );
+    ok_ret( 0, RegisterRawInputDevices( raw_devices, ARRAY_SIZE( raw_devices ), 0 ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
 
+    ok_ret( 1, RegisterRawInputDevices( raw_devices, ARRAY_SIZE( raw_devices ), sizeof(RAWINPUTDEVICE) ) );
 
-    SetLastError(0xdeadbeef);
-    res = RegisterRawInputDevices(raw_devices, ARRAY_SIZE(raw_devices), 0);
-    ok(res == FALSE, "RegisterRawInputDevices succeeded\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "RegisterRawInputDevices returned %08lx\n", GetLastError());
+    SetLastError( 0xdeadbeef );
+    ok_ret( (UINT)-1, GetRegisteredRawInputDevices( NULL, NULL, 0 ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
 
-    SetLastError(0xdeadbeef);
-    res = RegisterRawInputDevices(raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE));
-    ok(res == TRUE, "RegisterRawInputDevices failed\n");
-    ok(GetLastError() == 0xdeadbeef, "RegisterRawInputDevices returned %08lx\n", GetLastError());
+    SetLastError( 0xdeadbeef );
+    ok_ret( (UINT)-1, GetRegisteredRawInputDevices( NULL, &raw_devices_count, 0 ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
 
-    SetLastError(0xdeadbeef);
-    count = GetRegisteredRawInputDevices(NULL, NULL, 0);
-    ok(count == ~0U, "GetRegisteredRawInputDevices returned %u\n", count);
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRegisteredRawInputDevices unexpected error %08lx\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
     raw_devices_count = 0;
-    count = GetRegisteredRawInputDevices(NULL, &raw_devices_count, 0);
-    ok(count == ~0U, "GetRegisteredRawInputDevices returned %u\n", count);
-    ok(raw_devices_count == 0, "Unexpected registered devices count: %u\n", raw_devices_count);
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRegisteredRawInputDevices unexpected error %08lx\n", GetLastError());
+    ok_ret( 0, GetRegisteredRawInputDevices( NULL, &raw_devices_count, sizeof(RAWINPUTDEVICE) ) );
+    ok_eq( 2, raw_devices_count, UINT, "%u" );
 
-    SetLastError(0xdeadbeef);
+    SetLastError( 0xdeadbeef );
     raw_devices_count = 0;
-    count = GetRegisteredRawInputDevices(NULL, &raw_devices_count, sizeof(RAWINPUTDEVICE));
-    ok(count == 0, "GetRegisteredRawInputDevices returned %u\n", count);
-    ok(raw_devices_count == 2, "Unexpected registered devices count: %u\n", raw_devices_count);
-    ok(GetLastError() == 0xdeadbeef, "GetRegisteredRawInputDevices unexpected error %08lx\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
-    raw_devices_count = 0;
-    count = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+    count = GetRegisteredRawInputDevices( raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE) );
     if (broken(count == 0) /* depends on windows versions */)
-        win_skip("Ignoring GetRegisteredRawInputDevices success\n");
+        win_skip( "Ignoring GetRegisteredRawInputDevices success\n" );
     else
     {
-        ok(count == ~0U, "GetRegisteredRawInputDevices returned %u\n", count);
-        ok(raw_devices_count == 0, "Unexpected registered devices count: %u\n", raw_devices_count);
-        ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRegisteredRawInputDevices unexpected error %08lx\n", GetLastError());
+        ok_eq( -1, count, int, "%d" );
+        ok_eq( 0, raw_devices_count, UINT, "%u" );
+        ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
     }
 
-    SetLastError(0xdeadbeef);
+    SetLastError( 0xdeadbeef );
     raw_devices_count = 1;
-    count = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
-    ok(count == ~0U, "GetRegisteredRawInputDevices returned %u\n", count);
-    ok(raw_devices_count == 2, "Unexpected registered devices count: %u\n", raw_devices_count);
-    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "GetRegisteredRawInputDevices unexpected error %08lx\n", GetLastError());
+    ok_ret( (UINT)-1, GetRegisteredRawInputDevices( raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE) ) );
+    ok_eq( 2, raw_devices_count, UINT, "%u" );
+    ok_ret( ERROR_INSUFFICIENT_BUFFER, GetLastError() );
 
-    SetLastError(0xdeadbeef);
-    memset(raw_devices, 0, sizeof(raw_devices));
+    memset( raw_devices, 0, sizeof(raw_devices) );
     raw_devices_count = ARRAY_SIZE(raw_devices);
-    count = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
-    ok(count == 2, "GetRegisteredRawInputDevices returned %u\n", count);
-    ok(raw_devices_count == 2, "Unexpected registered devices count: %u\n", raw_devices_count);
-    ok(GetLastError() == 0xdeadbeef, "GetRegisteredRawInputDevices unexpected error %08lx\n", GetLastError());
-    ok(raw_devices[0].usUsagePage == 0x01, "Unexpected usage page: %x\n", raw_devices[0].usUsagePage);
-    ok(raw_devices[0].usUsage == 0x04, "Unexpected usage: %x\n", raw_devices[0].usUsage);
-    ok(raw_devices[1].usUsagePage == 0x01, "Unexpected usage page: %x\n", raw_devices[1].usUsagePage);
-    ok(raw_devices[1].usUsage == 0x05, "Unexpected usage: %x\n", raw_devices[1].usUsage);
-
-    /* RIDEV_REMOVE requires hwndTarget == NULL */
-    raw_devices[0].dwFlags = RIDEV_REMOVE;
-    raw_devices[0].hwndTarget = hwnd;
-    raw_devices[1].dwFlags = RIDEV_REMOVE;
-    raw_devices[1].hwndTarget = hwnd;
-
-    SetLastError(0xdeadbeef);
-    res = RegisterRawInputDevices(raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE));
-    ok(res == FALSE, "RegisterRawInputDevices succeeded\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "RegisterRawInputDevices returned %08lx\n", GetLastError());
-
-    raw_devices[0].hwndTarget = 0;
-    raw_devices[1].hwndTarget = 0;
-
-    SetLastError(0xdeadbeef);
-    res = RegisterRawInputDevices(raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE));
-    ok(res == TRUE, "RegisterRawInputDevices failed\n");
-    ok(GetLastError() == 0xdeadbeef, "RegisterRawInputDevices returned %08lx\n", GetLastError());
-
+    ok_ret( 2, GetRegisteredRawInputDevices( raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE) ) );
+    ok_eq( 2, raw_devices_count, UINT, "%u" );
+    ok_eq( HID_USAGE_PAGE_GENERIC, raw_devices[0].usUsagePage, USHORT, "%#x" );
+    ok_eq( HID_USAGE_GENERIC_JOYSTICK, raw_devices[0].usUsage, USHORT, "%#x" );
+    ok_eq( HID_USAGE_PAGE_GENERIC, raw_devices[1].usUsagePage, USHORT, "%#x" );
+    ok_eq( HID_USAGE_GENERIC_GAMEPAD, raw_devices[1].usUsage, USHORT, "%#x" );
 
     /* RIDEV_INPUTSINK requires hwndTarget != NULL */
     raw_devices[0].dwFlags = RIDEV_INPUTSINK;
@@ -1845,19 +1840,28 @@ static void test_RegisterRawInputDevices(void)
     raw_devices[1].hwndTarget = 0;
 
     SetLastError(0xdeadbeef);
-    res = RegisterRawInputDevices(raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE));
-    ok(res == FALSE, "RegisterRawInputDevices failed\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "RegisterRawInputDevices returned %08lx\n", GetLastError());
+    ok_ret( 0, RegisterRawInputDevices( raw_devices, ARRAY_SIZE( raw_devices ), sizeof(RAWINPUTDEVICE) ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
 
     raw_devices[0].hwndTarget = hwnd;
     raw_devices[1].hwndTarget = hwnd;
+    ok_ret( 1, RegisterRawInputDevices( raw_devices, ARRAY_SIZE( raw_devices ), sizeof(RAWINPUTDEVICE) ) );
+
+    /* RIDEV_REMOVE requires hwndTarget == NULL */
+    raw_devices[0].dwFlags = RIDEV_REMOVE;
+    raw_devices[0].hwndTarget = hwnd;
+    raw_devices[1].dwFlags = RIDEV_REMOVE;
+    raw_devices[1].hwndTarget = hwnd;
 
     SetLastError(0xdeadbeef);
-    res = RegisterRawInputDevices(raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE));
-    ok(res == TRUE, "RegisterRawInputDevices succeeded\n");
-    ok(GetLastError() == 0xdeadbeef, "RegisterRawInputDevices returned %08lx\n", GetLastError());
+    ok_ret( 0, RegisterRawInputDevices( raw_devices, ARRAY_SIZE( raw_devices ), sizeof(RAWINPUTDEVICE) ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
 
-    DestroyWindow(hwnd);
+    raw_devices[0].hwndTarget = 0;
+    raw_devices[1].hwndTarget = 0;
+    ok_ret( 1, RegisterRawInputDevices( raw_devices, ARRAY_SIZE( raw_devices ), sizeof(RAWINPUTDEVICE) ) );
+
+    ok_ret( 1, DestroyWindow( hwnd ) );
 }
 
 static int rawinputbuffer_wndproc_count;
@@ -1893,334 +1897,352 @@ typedef struct
 } RAWINPUT64;
 #endif
 
-static int rawinput_buffer_mouse_x(void *buffer, size_t index)
-{
-    if (is_wow64) return ((RAWINPUT64 *)buffer)[index].data.mouse.lLastX;
-    return ((RAWINPUT *)buffer)[index].data.mouse.lLastX;
-}
-
 static LRESULT CALLBACK rawinputbuffer_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-    UINT i, size, count, rawinput_size, iteration = rawinputbuffer_wndproc_count++;
-    RAWINPUT ri;
-    char buffer[16 * sizeof(RAWINPUT64)];
-    MSG message;
-
-    if (is_wow64) rawinput_size = sizeof(RAWINPUT64);
-    else rawinput_size = sizeof(RAWINPUT);
-
     if (msg == WM_INPUT)
     {
-        SetLastError(0xdeadbeef);
-        count = GetRawInputBuffer(NULL, NULL, sizeof(RAWINPUTHEADER));
-        ok(count == ~0U, "GetRawInputBuffer succeeded\n");
-        ok(GetLastError() == ERROR_INVALID_PARAMETER, "got error %lu\n", GetLastError());
+        UINT i, size, rawinput_size, iteration = rawinputbuffer_wndproc_count++;
+        char buffer[16 * sizeof(RAWINPUT64)];
+        RAWINPUT64 *rawbuffer64 = (RAWINPUT64 *)buffer;
+        RAWINPUT *rawbuffer = (RAWINPUT *)buffer;
+        HRAWINPUT handle = (HRAWINPUT)lparam;
+        RAWINPUT rawinput = {{0}};
+
+        winetest_push_context( "%u", iteration );
+
+        if (is_wow64) rawinput_size = sizeof(RAWINPUTHEADER64) + sizeof(RAWKEYBOARD);
+        else rawinput_size = sizeof(RAWINPUTHEADER) + sizeof(RAWKEYBOARD);
 
         size = sizeof(buffer);
-        count = GetRawInputBuffer(NULL, &size, sizeof(RAWINPUTHEADER));
-        ok(count == 0, "GetRawInputBuffer returned %u\n", count);
-        ok(size == rawinput_size, "GetRawInputBuffer returned unexpected size: %u\n", size);
-
-        size = sizeof(buffer);
-        memset(buffer, 0, sizeof(buffer));
-        count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
-        ok(count == 3, "GetRawInputBuffer returned %u\n", count);
-        ok(size == sizeof(buffer), "GetRawInputBuffer returned unexpected size: %u\n", size);
+        memset( buffer, 0, sizeof(buffer) );
+        ok_ret( 3, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER))  );
+        ok_eq( sizeof(buffer), size, UINT, "%u" );
 
         for (i = 0; i < 3; ++i)
         {
+            winetest_push_context( "%u", i );
             if (is_wow64)
             {
-                const RAWINPUT64 *data = &((RAWINPUT64 *)buffer)[i];
-                ok(data->header.dwType == RIM_TYPEMOUSE, "Unexpected rawinput type: %lu\n", data->header.dwType);
-                ok(data->header.dwSize == sizeof(*data), "Unexpected rawinput size: %lu\n", data->header.dwSize);
-                todo_wine_if (wparam)
-                    ok(data->header.wParam == wparam, "Unexpected wparam: %#I64x\n", data->header.wParam);
+                RAWINPUT64 *rawinput = (RAWINPUT64 *)(buffer + i * rawinput_size);
+                ok_eq( RIM_TYPEKEYBOARD, rawinput->header.dwType, UINT, "%u" );
+                ok_eq( rawinput_size, rawinput->header.dwSize, UINT, "%u" );
+                ok_eq( wparam, rawinput->header.wParam, WPARAM, "%Iu" );
+                ok_eq( i + 2, rawinput->data.keyboard.MakeCode, WPARAM, "%Iu" );
             }
             else
             {
-                const RAWINPUT *data = &((RAWINPUT *)buffer)[i];
-                ok(data->header.dwType == RIM_TYPEMOUSE, "Unexpected rawinput type: %lu\n", data->header.dwType);
-                ok(data->header.dwSize == sizeof(*data), "Unexpected rawinput size: %lu\n", data->header.dwSize);
-                todo_wine_if (wparam)
-                    ok(data->header.wParam == wparam, "Unexpected wparam: %#Ix\n", data->header.wParam);
+                RAWINPUT *rawinput = (RAWINPUT *)(buffer + i * rawinput_size);
+                ok_eq( RIM_TYPEKEYBOARD, rawinput->header.dwType, UINT, "%u" );
+                ok_eq( rawinput_size, rawinput->header.dwSize, UINT, "%u" );
+                ok_eq( wparam, rawinput->header.wParam, WPARAM, "%Iu" );
+                ok_eq( i + 2, rawinput->data.keyboard.MakeCode, WPARAM, "%Iu" );
             }
+            winetest_pop_context();
         }
-
-        ok(rawinput_buffer_mouse_x(buffer, 0) == 2, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 0));
-        ok(rawinput_buffer_mouse_x(buffer, 1) == 3, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 1));
-        ok(rawinput_buffer_mouse_x(buffer, 2) == 4, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 2));
 
         /* the first event should be removed by the next GetRawInputBuffer call
          * and the others should do another round through the message loop but not more */
         if (iteration == 0)
         {
-            mouse_event(MOUSEEVENTF_MOVE, 5, 0, 0, 0);
-            mouse_event(MOUSEEVENTF_MOVE, 6, 0, 0, 0);
-            mouse_event(MOUSEEVENTF_MOVE, 2, 0, 0, 0);
-            mouse_event(MOUSEEVENTF_MOVE, 3, 0, 0, 0);
-            mouse_event(MOUSEEVENTF_MOVE, 4, 0, 0, 0);
+            keybd_event( 'X', 5, 0, 0 );
+            keybd_event( 'X', 6, KEYEVENTF_KEYUP, 0 );
+            keybd_event( 'X', 2, KEYEVENTF_KEYUP, 0 );
+            keybd_event( 'X', 3, 0, 0 );
+            keybd_event( 'X', 4, KEYEVENTF_KEYUP, 0 );
 
             /* even though rawinput_size is the minimum required size,
              * it needs one more byte to return success */
-            size = rawinput_size + 1;
-            memset(buffer, 0, sizeof(buffer));
-            count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
-            ok(count == 1, "GetRawInputBuffer returned %u\n", count);
-            ok(rawinput_buffer_mouse_x(buffer, 0) == 5, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 0));
+            size = sizeof(rawinput) + 1;
+            memset( buffer, 0, sizeof(buffer) );
+            ok_ret( 1, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
+            if (is_wow64) ok_eq( 5, rawbuffer64->data.keyboard.MakeCode, WPARAM, "%Iu" );
+            else ok_eq( 5, rawbuffer->data.keyboard.MakeCode, WPARAM, "%Iu" );
 
             /* peek the messages now, they should still arrive in the correct order */
-            while (PeekMessageA(&message, 0, WM_INPUT, WM_INPUT, PM_REMOVE)) DispatchMessageA(&message);
-        }
+            winetest_pop_context();
+            wait_messages( 0, FALSE );
+            winetest_push_context( "%u", iteration );
 
-        /* reading the message data now should fail on the second iteration, the data
-         * from the first message has been overwritten. */
-        size = sizeof(ri);
-        memset(&ri, 0, sizeof(ri));
-        SetLastError(0xdeadbeef);
-        count = GetRawInputData((HRAWINPUT)lparam, RID_HEADER, &ri, &size, sizeof(RAWINPUTHEADER));
-        if (iteration == 1)
-        {
-            SetLastError(0xdeadbeef);
-            count = GetRawInputData((HRAWINPUT)lparam, RID_INPUT, &ri, &size, 0);
-            ok(count == ~0u, "GetRawInputData returned %d\n", count);
-            ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputData returned %08lx\n", GetLastError());
-
-            SetLastError(0xdeadbeef);
-            count = GetRawInputData((HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER) + 1);
-            ok(count == ~0u, "GetRawInputData returned %d\n", count);
-            ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputData returned %08lx\n", GetLastError());
-
-            SetLastError(0xdeadbeef);
-            size = 0;
-            count = GetRawInputData((HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER));
-            ok(count == ~0U, "GetRawInputData succeeded\n");
-            ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "GetRawInputData returned %08lx\n", GetLastError());
-
-            SetLastError(0xdeadbeef);
-            size = sizeof(ri);
-            count = GetRawInputData((HRAWINPUT)lparam, 0, &ri, &size, sizeof(RAWINPUTHEADER));
-            ok(count == ~0U, "GetRawInputData succeeded\n");
-            ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputData returned %08lx\n", GetLastError());
-
-            SetLastError(0xdeadbeef);
-            size = sizeof(ri);
-            count = GetRawInputData((HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER));
-            ok(count == sizeof(ri), "GetRawInputData failed\n");
-            ok(ri.data.mouse.lLastX == 6, "Unexpected rawinput data: %ld\n", ri.data.mouse.lLastX);
-            ok(GetLastError() == 0xdeadbeef, "GetRawInputData returned %08lx\n", GetLastError());
-
-            SetLastError(0xdeadbeef);
-            size = sizeof(buffer);
-            if (sizeof(void *) == 8)
-            {
-                count = GetRawInputData((HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER32));
-                ok(count == ~0u, "GetRawInputData returned %d\n", count);
-                ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputData returned %08lx\n", GetLastError());
-            }
-            else
-            {
-                count = GetRawInputData((HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER64));
-                if (is_wow64)
-                {
-                    todo_wine ok(count == sizeof(ri), "GetRawInputData returned %d\n", count);
-                    ok(ri.data.mouse.lLastX == 6, "Unexpected rawinput data: %ld\n", ri.data.mouse.lLastX);
-                    todo_wine ok(GetLastError() == 0xdeadbeef, "GetRawInputData returned %08lx\n", GetLastError());
-                }
-                else
-                {
-                    ok(count == ~0u, "GetRawInputData returned %d\n", count);
-                    ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputData returned %08lx\n", GetLastError());
-                }
-            }
+            /* reading the message data now should fail, the data
+             * from the first message has been overwritten. */
+            SetLastError( 0xdeadbeef );
+            size = sizeof(rawinput);
+            ok_ret( (UINT)-1, GetRawInputData( handle, RID_HEADER, &rawinput, &size, sizeof(RAWINPUTHEADER) ) );
+            ok_ret( ERROR_INVALID_HANDLE, GetLastError() );
         }
         else
         {
-            ok(count == ~0U, "GetRawInputData succeeded\n");
-            ok(GetLastError() == ERROR_INVALID_HANDLE, "GetRawInputData returned %08lx\n", GetLastError());
+            SetLastError( 0xdeadbeef );
+            ok_ret( (UINT)-1, GetRawInputData( handle, RID_HEADER, &rawinput, &size, 0) );
+            ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
+
+            SetLastError( 0xdeadbeef );
+            ok_ret( (UINT)-1, GetRawInputData( handle, RID_HEADER, &rawinput, &size, sizeof(RAWINPUTHEADER) + 1 ) );
+            ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
+
+            size = sizeof(RAWINPUTHEADER);
+            rawinput_size = sizeof(RAWINPUTHEADER) + sizeof(RAWKEYBOARD);
+            ok_ret( sizeof(RAWINPUTHEADER), GetRawInputData( handle, RID_HEADER, &rawinput, &size, sizeof(RAWINPUTHEADER) ) );
+            ok_eq( rawinput_size, rawinput.header.dwSize, UINT, "%u" );
+            ok_eq( RIM_TYPEKEYBOARD, rawinput.header.dwType, UINT, "%u" );
+
+
+            SetLastError( 0xdeadbeef );
+            ok_ret( (UINT)-1, GetRawInputData( handle, RID_INPUT, &rawinput, &size, 0) );
+            ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
+
+            SetLastError( 0xdeadbeef );
+            ok_ret( (UINT)-1, GetRawInputData( handle, RID_INPUT, &rawinput, &size, sizeof(RAWINPUTHEADER) + 1 ) );
+            ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
+
+            SetLastError( 0xdeadbeef );
+            size = 0;
+            ok_ret( (UINT)-1, GetRawInputData( handle, RID_INPUT, &rawinput, &size, sizeof(RAWINPUTHEADER) ) );
+            ok_ret( ERROR_INSUFFICIENT_BUFFER, GetLastError() );
+
+            SetLastError( 0xdeadbeef );
+            size = sizeof(rawinput);
+            ok_ret( (UINT)-1, GetRawInputData( handle, 0, &rawinput, &size, sizeof(RAWINPUTHEADER) ) );
+            ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
+
+            SetLastError( 0xdeadbeef );
+            size = sizeof(rawinput);
+            ok_ret( rawinput_size, GetRawInputData( handle, RID_INPUT, &rawinput, &size, sizeof(RAWINPUTHEADER) ) );
+            ok_eq( 6, rawinput.data.keyboard.MakeCode, UINT, "%u" );
+
+            SetLastError( 0xdeadbeef );
+            size = sizeof(buffer);
+            if (sizeof(void *) == 8)
+            {
+                ok_ret( (UINT)-1, GetRawInputData( handle, RID_INPUT, &rawinput, &size, sizeof(RAWINPUTHEADER32) ) );
+                ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputData returned %08lx\n", GetLastError());
+            }
+            else if (is_wow64)
+            {
+                todo_wine
+                ok_ret( rawinput_size, GetRawInputData( handle, RID_INPUT, &rawinput, &size, sizeof(RAWINPUTHEADER64) ) );
+                ok_eq( 6, rawinput.data.keyboard.MakeCode, UINT, "%u" );
+                todo_wine
+                ok_ret( 0xdeadbeef, GetLastError() );
+            }
+            else
+            {
+                ok_ret( (UINT)-1, GetRawInputData( handle, RID_INPUT, &rawinput, &size, sizeof(RAWINPUTHEADER64) ) );
+                ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputData returned %08lx\n", GetLastError());
+            }
         }
 
+        winetest_pop_context();
         return 0;
     }
 
-    return DefWindowProcA(hwnd, msg, wparam, lparam);
+    return DefWindowProcW( hwnd, msg, wparam, lparam );
 }
 
 static void test_GetRawInputBuffer(void)
 {
-    unsigned int size, count, rawinput_size, header_size, scan_code;
+    unsigned int size, rawinput_size, header_size;
     RAWINPUTDEVICE raw_devices[1];
     char buffer[16 * sizeof(RAWINPUT64)];
+    RAWINPUT64 *rawbuffer64 = (RAWINPUT64 *)buffer;
+    RAWINPUT *rawbuffer = (RAWINPUT *)buffer;
     HWND hwnd;
-    BOOL ret;
-    POINT pt;
 
-#define HEADER_FIELD(field) (is_wow64 ? ((RAWINPUT64 *)buffer)->header.field : ((RAWINPUT *)buffer)->header.field)
+    if (is_wow64) rawinput_size = sizeof(RAWINPUTHEADER64) + sizeof(RAWMOUSE);
+    else rawinput_size = sizeof(RAWINPUTHEADER) + sizeof(RAWMOUSE);
 
-    if (is_wow64) rawinput_size = sizeof(RAWINPUT64);
-    else rawinput_size = sizeof(RAWINPUT);
+    hwnd = create_foreground_window( TRUE );
+    SetWindowLongPtrW( hwnd, GWLP_WNDPROC, (LONG_PTR)rawinputbuffer_wndproc );
 
-    SetCursorPos(300, 300);
-    GetCursorPos(&pt);
-    ok(pt.x == 300 && pt.y == 300, "Unexpected cursor position pos %ldx%ld\n", pt.x, pt.y);
-
-    hwnd = CreateWindowA("static", "static", WS_VISIBLE | WS_POPUP,
-                         100, 100, 100, 100, 0, NULL, NULL, NULL);
-    SetWindowLongPtrA(hwnd, GWLP_WNDPROC, (LONG_PTR)rawinputbuffer_wndproc);
-    ok(hwnd != 0, "CreateWindow failed\n");
-    empty_message_queue();
-
-    raw_devices[0].usUsagePage = 0x01;
-    raw_devices[0].usUsage = 0x02;
+    raw_devices[0].usUsagePage = HID_USAGE_PAGE_GENERIC;
+    raw_devices[0].usUsage = HID_USAGE_GENERIC_MOUSE;
     raw_devices[0].dwFlags = RIDEV_INPUTSINK;
     raw_devices[0].hwndTarget = hwnd;
+    ok_ret( 1, RegisterRawInputDevices( raw_devices, ARRAY_SIZE( raw_devices ), sizeof(RAWINPUTDEVICE) ) );
 
-    SetLastError(0xdeadbeef);
-    ret = RegisterRawInputDevices(raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE));
-    ok(ret, "RegisterRawInputDevices failed\n");
-    ok(GetLastError() == 0xdeadbeef, "RegisterRawInputDevices returned %08lx\n", GetLastError());
+    /* check basic error cases */
 
-    SetLastError(0xdeadbeef);
-    count = GetRawInputBuffer(NULL, NULL, sizeof(RAWINPUTHEADER));
-    ok(count == ~0U, "GetRawInputBuffer succeeded\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputBuffer returned %08lx\n", GetLastError());
+    SetLastError( 0xdeadbeef );
+    ok_ret( (UINT)-1, GetRawInputBuffer( NULL, NULL, sizeof(RAWINPUTHEADER) ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
+    SetLastError( 0xdeadbeef );
+    size = sizeof(buffer);
+    ok_ret( (UINT)-1, GetRawInputBuffer( rawbuffer, &size, 0 ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
+
+    /* valid calls, but no input */
 
     size = sizeof(buffer);
-    count = GetRawInputBuffer(NULL, &size, sizeof(RAWINPUTHEADER));
-    ok(count == 0U, "GetRawInputBuffer returned %u\n", count);
-    ok(size == 0U, "GetRawInputBuffer returned unexpected size: %u\n", size);
-
+    ok_ret( 0, GetRawInputBuffer( NULL, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( 0, size, UINT, "%u" );
     size = 0;
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
-    ok(count == 0U, "GetRawInputBuffer returned %u\n", count);
-    ok(size == 0U, "GetRawInputBuffer returned unexpected size: %u\n", size);
-
-    SetLastError(0xdeadbeef);
+    ok_ret( 0, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( 0, size, UINT, "%u" );
     size = sizeof(buffer);
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, 0);
-    ok(count == ~0U, "GetRawInputBuffer succeeded\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputBuffer returned %08lx\n", GetLastError());
+    ok_ret( 0, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( 0, size, UINT, "%u" );
 
-    size = sizeof(buffer);
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
-    ok(count == 0U, "GetRawInputBuffer returned %u\n", count);
-    ok(size == 0U, "GetRawInputBuffer returned unexpected size: %u\n", size);
 
-    mouse_event(MOUSEEVENTF_MOVE, 5, 0, 0, 0);
+    mouse_event( MOUSEEVENTF_MOVE, 5, 0, 0, 0 );
 
-    SetLastError(0xdeadbeef);
+    /* invalid calls with input */
+
+    SetLastError( 0xdeadbeef );
     size = 0;
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
-    ok(count == ~0U, "GetRawInputBuffer succeeded\n");
-    ok(size == rawinput_size, "GetRawInputBuffer returned unexpected size: %u\n", size);
-    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "GetRawInputBuffer returned %08lx\n", GetLastError());
-
-    size = 0;
-    count = GetRawInputBuffer(NULL, &size, sizeof(RAWINPUTHEADER));
-    ok(count == 0, "GetRawInputBuffer returned %u\n", count);
-    ok(size == rawinput_size, "GetRawInputBuffer returned unexpected size: %u\n", size);
-
-    SetLastError(0xdeadbeef);
+    ok_ret( (UINT)-1, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( rawinput_size, size, UINT, "%u" );
+    ok_ret( ERROR_INSUFFICIENT_BUFFER, GetLastError() );
+    SetLastError( 0xdeadbeef );
     size = sizeof(buffer);
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, 0);
-    ok(count == ~0U, "GetRawInputBuffer succeeded\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputBuffer returned %08lx\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
+    ok_ret( (UINT)-1, GetRawInputBuffer( rawbuffer, &size, 0 ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
+    SetLastError( 0xdeadbeef );
     size = sizeof(buffer);
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER) + 1);
-    ok(count == ~0U, "GetRawInputBuffer succeeded\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputBuffer returned %08lx\n", GetLastError());
+    ok_ret( (UINT)-1, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) + 1 ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
 
     /* the function returns 64-bit RAWINPUT structures on WoW64, but still
      * forbids sizeof(RAWINPUTHEADER) from the wrong architecture */
-    SetLastError(0xdeadbeef);
+    SetLastError( 0xdeadbeef );
     size = sizeof(buffer);
     header_size = (sizeof(void *) == 8 ? sizeof(RAWINPUTHEADER32) : sizeof(RAWINPUTHEADER64));
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, header_size);
-    ok(count == ~0U, "GetRawInputBuffer succeeded\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputBuffer returned %08lx\n", GetLastError());
-
-    size = sizeof(buffer);
-    memset(buffer, 0, sizeof(buffer));
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
-    ok(count == 1U, "GetRawInputBuffer returned %u\n", count);
-    ok(size == sizeof(buffer), "GetRawInputBuffer returned unexpected size: %u\n", size);
-    ok(HEADER_FIELD(dwType) == RIM_TYPEMOUSE, "Unexpected rawinput dwType: %ld\n", HEADER_FIELD(dwType));
-    ok(HEADER_FIELD(wParam) == 0 || HEADER_FIELD(wParam) == 1, "Expected wparam 0 or 1, got %Iu\n", (WPARAM)HEADER_FIELD(wParam));
-    ok(rawinput_buffer_mouse_x(buffer, 0) == 5, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 0));
+    ok_ret( (UINT)-1, GetRawInputBuffer( rawbuffer, &size, header_size ) );
+    ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
 
 
     /* NOTE: calling with size == rawinput_size returns an error, */
     /* BUT it fills the buffer nonetheless and empties the internal buffer (!!) */
-    mouse_event(MOUSEEVENTF_MOVE, 5, 0, 0, 0);
 
-    SetLastError(0xdeadbeef);
+    size = 0;
+    ok_ret( 0, GetRawInputBuffer( NULL, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( rawinput_size, size, UINT, "%u" );
+
+    SetLastError( 0xdeadbeef );
     size = rawinput_size;
-    memset(buffer, 0, sizeof(buffer));
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
-    ok(count == ~0U, "GetRawInputBuffer succeeded\n");
-    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "GetRawInputBuffer returned %08lx\n", GetLastError());
-    ok(rawinput_buffer_mouse_x(buffer, 0) == 5, "Unexpected rawinput data: %d\n", rawinput_buffer_mouse_x(buffer, 0));
+    memset( buffer, 0, sizeof(buffer) );
+    ok_ret( (UINT)-1, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_ret( ERROR_INSUFFICIENT_BUFFER, GetLastError() );
+    if (is_wow64) ok_eq( 5, rawbuffer64->data.mouse.lLastX, UINT, "%u" );
+    else ok_eq( 5, rawbuffer->data.mouse.lLastX, UINT, "%u" );
+
+    /* no more data to read */
 
     size = sizeof(buffer);
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
-    ok(count == 0U, "GetRawInputBuffer returned %u\n", count);
+    ok_ret( 0, GetRawInputBuffer( NULL, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( 0, size, UINT, "%u" );
 
 
-    rawinputbuffer_wndproc_count = 0;
-    mouse_event(MOUSEEVENTF_MOVE, 1, 0, 0, 0);
-    mouse_event(MOUSEEVENTF_MOVE, 2, 0, 0, 0);
-    mouse_event(MOUSEEVENTF_MOVE, 3, 0, 0, 0);
-    mouse_event(MOUSEEVENTF_MOVE, 4, 0, 0, 0);
-    empty_message_queue();
-    ok(rawinputbuffer_wndproc_count == 2, "Spurious WM_INPUT messages\n");
+    /* rawinput_size + 1 succeeds */
+
+    mouse_event( MOUSEEVENTF_MOVE, 5, 0, 0, 0 );
+
+    size = rawinput_size + 1;
+    memset( buffer, 0, sizeof(buffer) );
+    ok_ret( 1, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( rawinput_size + 1, size, UINT, "%u" );
+    if (is_wow64)
+    {
+        ok_eq( RIM_TYPEMOUSE, rawbuffer64->header.dwType, UINT, "%#x" );
+        ok_eq( 0, rawbuffer64->header.wParam, WPARAM, "%Iu" );
+        ok_eq( 5, rawbuffer64->data.mouse.lLastX, UINT, "%u" );
+    }
+    else
+    {
+        ok_eq( RIM_TYPEMOUSE, rawbuffer->header.dwType, UINT, "%#x" );
+        ok_eq( 0, rawbuffer->header.wParam, WPARAM, "%Iu" );
+        ok_eq( 5, rawbuffer->data.mouse.lLastX, UINT, "%u" );
+    }
+
+    size = sizeof(buffer);
+    ok_ret( 0, GetRawInputBuffer( NULL, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( 0, size, UINT, "%u" );
 
     raw_devices[0].dwFlags = RIDEV_REMOVE;
     raw_devices[0].hwndTarget = 0;
-
-    SetLastError(0xdeadbeef);
-    ret = RegisterRawInputDevices(raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE));
-    ok(ret, "RegisterRawInputDevices failed\n");
-    ok(GetLastError() == 0xdeadbeef, "RegisterRawInputDevices returned %08lx\n", GetLastError());
+    ok_ret( 1, RegisterRawInputDevices( raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE) ) );
 
 
     /* some keyboard tests to better check fields under wow64 */
-    raw_devices[0].usUsagePage = 0x01;
-    raw_devices[0].usUsage = 0x06;
+    raw_devices[0].usUsagePage = HID_USAGE_PAGE_GENERIC;
+    raw_devices[0].usUsage = HID_USAGE_GENERIC_KEYBOARD;
     raw_devices[0].dwFlags = RIDEV_INPUTSINK;
     raw_devices[0].hwndTarget = hwnd;
+    ok_ret( 1, RegisterRawInputDevices( raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE) ) );
 
-    SetLastError(0xdeadbeef);
-    ret = RegisterRawInputDevices(raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE));
-    ok(ret, "RegisterRawInputDevices failed\n");
-    ok(GetLastError() == 0xdeadbeef, "RegisterRawInputDevices returned %08lx\n", GetLastError());
+    keybd_event( 'X', 0x2d, 0, 0 );
+    keybd_event( 'X', 0x2d, KEYEVENTF_KEYUP, 0 );
 
-    keybd_event('X', 0x2d, 0, 0);
-    keybd_event('X', 0x2d, KEYEVENTF_KEYUP, 0);
+    if (is_wow64) rawinput_size = sizeof(RAWINPUTHEADER64) + sizeof(RAWKEYBOARD);
+    else rawinput_size = sizeof(RAWINPUTHEADER) + sizeof(RAWKEYBOARD);
+
+    size = 0;
+    ok_ret( 0, GetRawInputBuffer( NULL, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( rawinput_size, size, UINT, "%u" );
 
     size = sizeof(buffer);
-    memset(buffer, 0, sizeof(buffer));
-    count = GetRawInputBuffer((RAWINPUT*)buffer, &size, sizeof(RAWINPUTHEADER));
-    ok(count == 2U, "GetRawInputBuffer returned %u\n", count);
-    ok(size == sizeof(buffer), "GetRawInputBuffer returned unexpected size: %u\n", size);
+    memset( buffer, 0, sizeof(buffer) );
+    ok_ret( 2, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( sizeof(buffer), size, UINT, "%u" );
+    if (is_wow64)
+    {
+        ok_eq( RIM_TYPEKEYBOARD, rawbuffer64->header.dwType, UINT, "%u" );
+        ok_eq( 0, rawbuffer64->header.wParam, UINT, "%u" );
+        ok_eq( 0x2d, rawbuffer64->data.keyboard.MakeCode, UINT, "%#x" );
+    }
+    else
+    {
+        ok_eq( RIM_TYPEKEYBOARD, rawbuffer->header.dwType, UINT, "%u" );
+        ok_eq( 0, rawbuffer->header.wParam, UINT, "%u" );
+        ok_eq( 0x2d, rawbuffer->data.keyboard.MakeCode, UINT, "%#x" );
+    }
 
-    ok(HEADER_FIELD(dwType) == RIM_TYPEKEYBOARD, "Unexpected rawinput dwType: %ld\n", HEADER_FIELD(dwType));
-    ok(HEADER_FIELD(wParam) == 0 || HEADER_FIELD(wParam) == 1, "Expected wparam 0 or 1, got %Iu\n", (WPARAM)HEADER_FIELD(wParam));
-    scan_code = is_wow64 ? ((RAWINPUT64 *)buffer)->data.keyboard.MakeCode : ((RAWINPUT *)buffer)->data.keyboard.MakeCode;
-    ok(scan_code == 0x2d, "Unexpected rawinput keyboard scan code: %x\n", scan_code);
+
+    /* test GetRawInputBuffer interaction with WM_INPUT messages */
+
+    rawinputbuffer_wndproc_count = 0;
+    keybd_event( 'X', 1, 0, 0 );
+    keybd_event( 'X', 2, KEYEVENTF_KEYUP, 0 );
+    keybd_event( 'X', 3, 0, 0 );
+    keybd_event( 'X', 4, KEYEVENTF_KEYUP, 0 );
+    wait_messages( 100, FALSE );
+    ok_eq( 2, rawinputbuffer_wndproc_count, UINT, "%u" );
+
+    keybd_event( 'X', 3, 0, 0 );
+    keybd_event( 'X', 4, KEYEVENTF_KEYUP, 0 );
 
     raw_devices[0].dwFlags = RIDEV_REMOVE;
     raw_devices[0].hwndTarget = 0;
+    ok_ret( 1, RegisterRawInputDevices( raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE) ) );
 
-    SetLastError(0xdeadbeef);
-    ret = RegisterRawInputDevices(raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE));
-    ok(ret, "RegisterRawInputDevices failed\n");
-    ok(GetLastError() == 0xdeadbeef, "RegisterRawInputDevices returned %08lx\n", GetLastError());
 
-    DestroyWindow(hwnd);
+    /* rawinput buffer survives registered device changes */
 
-#undef HEADER_FIELD
+    size = rawinput_size + 1;
+    ok_ret( 1, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( rawinput_size + 1, size, UINT, "%u" );
+
+    raw_devices[0].usUsagePage = HID_USAGE_PAGE_GENERIC;
+    raw_devices[0].usUsage = HID_USAGE_GENERIC_MOUSE;
+    raw_devices[0].dwFlags = RIDEV_INPUTSINK;
+    raw_devices[0].hwndTarget = hwnd;
+    ok_ret( 1, RegisterRawInputDevices( raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE) ) );
+
+    if (is_wow64) rawinput_size = sizeof(RAWINPUTHEADER64) + sizeof(RAWMOUSE);
+    else rawinput_size = sizeof(RAWINPUTHEADER) + sizeof(RAWMOUSE);
+
+    size = rawinput_size + 1;
+    ok_ret( 1, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( rawinput_size + 1, size, UINT, "%u" );
+    size = sizeof(buffer);
+    ok_ret( 0, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
+    ok_eq( 0, size, UINT, "%u" );
+
+    raw_devices[0].dwFlags = RIDEV_REMOVE;
+    raw_devices[0].hwndTarget = 0;
+    ok_ret( 1, RegisterRawInputDevices( raw_devices, ARRAY_SIZE(raw_devices), sizeof(RAWINPUTDEVICE) ) );
+
+
+    ok_ret( 1, DestroyWindow( hwnd ) );
 }
 
 static BOOL rawinput_test_received_legacy;
@@ -5562,6 +5584,10 @@ static void test_input_desktop( char **argv )
 
     test_keyboard_ll_hook_blocking();
 
+    test_RegisterRawInputDevices();
+    test_GetRawInputData();
+    test_GetRawInputBuffer();
+
     ok_ret( 1, SetCursorPos( pos.x, pos.y ) );
 }
 
@@ -5628,9 +5654,6 @@ START_TEST(input)
     test_attach_input();
     test_GetKeyState();
     test_OemKeyScan();
-    test_GetRawInputData();
-    test_GetRawInputBuffer();
-    test_RegisterRawInputDevices();
     test_rawinput(argv[0]);
     test_GetKeyboardLayoutList();
     test_DefRawInputProc();

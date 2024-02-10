@@ -71,7 +71,7 @@
 #define TAG_XNAP VKD3D_MAKE_TAG('X', 'N', 'A', 'P')
 #define TAG_XNAS VKD3D_MAKE_TAG('X', 'N', 'A', 'S')
 
-static inline size_t align(size_t addr, size_t alignment)
+static inline uint64_t align(uint64_t addr, size_t alignment)
 {
     return (addr + (alignment - 1)) & ~(alignment - 1);
 }
@@ -303,18 +303,6 @@ static inline uint32_t vkd3d_atomic_increment_u32(uint32_t volatile *x)
 {
     return vkd3d_atomic_add_fetch_u32(x, 1);
 }
-
-#ifndef _WIN32
-static inline LONG InterlockedIncrement(LONG volatile *x)
-{
-    return vkd3d_atomic_increment_u32((uint32_t *)x);
-}
-
-static inline LONG InterlockedDecrement(LONG volatile *x)
-{
-    return vkd3d_atomic_decrement_u32((uint32_t *)x);
-}
-#endif  /* _WIN32 */
 
 static inline void vkd3d_parse_version(const char *version, int *major, int *minor)
 {

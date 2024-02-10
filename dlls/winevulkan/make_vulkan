@@ -64,7 +64,7 @@ from enum import Enum
 LOGGER = logging.Logger("vulkan")
 LOGGER.addHandler(logging.StreamHandler())
 
-VK_XML_VERSION = "1.3.272"
+VK_XML_VERSION = "1.3.277"
 WINE_VK_VERSION = (1, 3)
 
 # Filenames to create.
@@ -95,13 +95,13 @@ UNSUPPORTED_EXTENSIONS = [
 
     # Device extensions
     "VK_AMD_display_native_hdr",
-    "VK_ARM_render_pass_striped", # XML bug, see https://github.com/KhronosGroup/Vulkan-Docs/pull/2279
     "VK_EXT_full_screen_exclusive",
     "VK_GOOGLE_display_timing",
     "VK_KHR_external_fence_win32",
     "VK_KHR_external_semaphore_win32",
     # Relates to external_semaphore and needs type conversions in bitflags.
     "VK_KHR_shared_presentable_image", # Needs WSI work.
+    "VK_KHR_video_encode_queue",
     "VK_KHR_video_queue", # TODO Video extensions use separate headers + xml
     "VK_KHR_win32_keyed_mutex",
     "VK_NV_external_memory_rdma", # Needs shared resources work.
@@ -160,7 +160,7 @@ PERF_CRITICAL_FUNCTIONS = [
 # Functions part of our winevulkan graphics driver interface.
 # DRIVER_VERSION should be bumped on any change to driver interface
 # in FUNCTION_OVERRIDES
-DRIVER_VERSION = 11
+DRIVER_VERSION = 14
 
 # Table of functions for which we have a special implementation.
 # These are regular device / instance functions for which we need
@@ -203,7 +203,6 @@ USER_DRIVER_FUNCS = {
     "vkDestroySurfaceKHR",
     "vkDestroySwapchainKHR",
     "vkEnumerateInstanceExtensionProperties",
-    "vkGetDeviceGroupSurfacePresentModesKHR",
     "vkGetDeviceProcAddr",
     "vkGetInstanceProcAddr",
     "vkGetPhysicalDevicePresentRectanglesKHR",
@@ -211,8 +210,6 @@ USER_DRIVER_FUNCS = {
     "vkGetPhysicalDeviceSurfaceCapabilitiesKHR",
     "vkGetPhysicalDeviceSurfaceFormats2KHR",
     "vkGetPhysicalDeviceSurfaceFormatsKHR",
-    "vkGetPhysicalDeviceSurfacePresentModesKHR",
-    "vkGetPhysicalDeviceSurfaceSupportKHR",
     "vkGetPhysicalDeviceWin32PresentationSupportKHR",
     "vkGetSwapchainImagesKHR",
     "vkQueuePresentKHR",
@@ -249,11 +246,13 @@ MANUAL_UNIX_THUNKS = {
     "vkFreeCommandBuffers",
     "vkFreeMemory",
     "vkGetCalibratedTimestampsEXT",
+    "vkGetCalibratedTimestampsKHR",
     "vkGetDeviceProcAddr",
     "vkGetDeviceQueue",
     "vkGetDeviceQueue2",
     "vkGetInstanceProcAddr",
     "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT",
+    "vkGetPhysicalDeviceCalibrateableTimeDomainsKHR",
     "vkGetPhysicalDeviceExternalBufferProperties",
     "vkGetPhysicalDeviceExternalBufferPropertiesKHR",
     "vkGetPhysicalDeviceExternalFenceProperties",

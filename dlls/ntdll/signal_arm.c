@@ -83,17 +83,6 @@ static void dump_scope_table( ULONG base, const SCOPE_TABLE *table )
 }
 
 /*******************************************************************
- *         is_valid_frame
- */
-static inline BOOL is_valid_frame( ULONG_PTR frame )
-{
-    if (frame & 3) return FALSE;
-    return ((void *)frame >= NtCurrentTeb()->Tib.StackLimit &&
-            (void *)frame <= NtCurrentTeb()->Tib.StackBase);
-}
-
-
-/*******************************************************************
  *         syscalls
  */
 #define SYSCALL_ENTRY(id,name,args) __ASM_SYSCALL_FUNC( id, name, args )
@@ -205,36 +194,66 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
 }
 
 
-struct unwind_exception_frame
-{
-    EXCEPTION_REGISTRATION_RECORD frame;
-    DISPATCHER_CONTEXT *dispatch;
-};
-
 /**********************************************************************
  *           unwind_exception_handler
  *
  * Handler for exceptions happening while calling an unwind handler.
  */
-static DWORD __cdecl unwind_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
-                                               CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher )
+EXCEPTION_DISPOSITION WINAPI unwind_exception_handler( EXCEPTION_RECORD *record, void *frame,
+                                                       CONTEXT *context, DISPATCHER_CONTEXT *dispatch )
 {
-    struct unwind_exception_frame *unwind_frame = (struct unwind_exception_frame *)frame;
-    DISPATCHER_CONTEXT *dispatch = (DISPATCHER_CONTEXT *)dispatcher;
+    DISPATCHER_CONTEXT *orig_dispatch = ((DISPATCHER_CONTEXT **)frame)[-2];
 
     /* copy the original dispatcher into the current one, except for the TargetIp */
-    dispatch->ControlPc        = unwind_frame->dispatch->ControlPc;
-    dispatch->ImageBase        = unwind_frame->dispatch->ImageBase;
-    dispatch->FunctionEntry    = unwind_frame->dispatch->FunctionEntry;
-    dispatch->EstablisherFrame = unwind_frame->dispatch->EstablisherFrame;
-    dispatch->ContextRecord    = unwind_frame->dispatch->ContextRecord;
-    dispatch->LanguageHandler  = unwind_frame->dispatch->LanguageHandler;
-    dispatch->HandlerData      = unwind_frame->dispatch->HandlerData;
-    dispatch->HistoryTable     = unwind_frame->dispatch->HistoryTable;
-    dispatch->ScopeIndex       = unwind_frame->dispatch->ScopeIndex;
+    dispatch->ControlPc        = orig_dispatch->ControlPc;
+    dispatch->ImageBase        = orig_dispatch->ImageBase;
+    dispatch->FunctionEntry    = orig_dispatch->FunctionEntry;
+    dispatch->EstablisherFrame = orig_dispatch->EstablisherFrame;
+    dispatch->ContextRecord    = orig_dispatch->ContextRecord;
+    dispatch->LanguageHandler  = orig_dispatch->LanguageHandler;
+    dispatch->HandlerData      = orig_dispatch->HandlerData;
+    dispatch->HistoryTable     = orig_dispatch->HistoryTable;
+    dispatch->ScopeIndex       = orig_dispatch->ScopeIndex;
     TRACE( "detected collided unwind\n" );
     return ExceptionCollidedUnwind;
 }
+
+/**********************************************************************
+ *           unwind_handler_wrapper
+ */
+#ifdef __WINE_PE_BUILD
+extern DWORD WINAPI unwind_handler_wrapper( EXCEPTION_RECORD *rec, DISPATCHER_CONTEXT *dispatch );
+__ASM_GLOBAL_FUNC( unwind_handler_wrapper,
+                   "push {r1,lr}\n\t"
+                   ".seh_save_regs {r1,lr}\n\t"
+                   ".seh_endprologue\n\t"
+                   ".seh_handler " __ASM_NAME("unwind_exception_handler") ", %except, %unwind\n\t"
+                   "mov r3, r1\n\t"           /* dispatch */
+                   "ldr r1, [r3, #0x0c]\n\t"  /* dispatch->EstablisherFrame */
+                   "ldr r2, [r3, #0x14]\n\t"  /* dispatch->ContextRecord */
+                   "ldr ip, [r3, #0x18]\n\t"  /* dispatch->LanguageHandler */
+                   "blx ip\n\t"
+                   "pop {r1,pc}\n\t" )
+#else
+static DWORD unwind_handler_wrapper( EXCEPTION_RECORD *rec, DISPATCHER_CONTEXT *dispatch )
+{
+    struct
+    {
+        DISPATCHER_CONTEXT *dispatch;
+        ULONG lr;
+        EXCEPTION_REGISTRATION_RECORD frame;
+    } frame;
+    DWORD res;
+
+    frame.frame.Handler = (PEXCEPTION_HANDLER)unwind_exception_handler;
+    frame.dispatch = dispatch;
+    __wine_push_frame( &frame.frame );
+    res = dispatch->LanguageHandler( rec, (void *)dispatch->EstablisherFrame, dispatch->ContextRecord, dispatch );
+    __wine_pop_frame( &frame.frame );
+    return res;
+}
+#endif
+
 
 /**********************************************************************
  *           call_unwind_handler
@@ -243,19 +262,12 @@ static DWORD __cdecl unwind_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_
  */
 static DWORD call_unwind_handler( EXCEPTION_RECORD *rec, DISPATCHER_CONTEXT *dispatch )
 {
-    struct unwind_exception_frame frame;
     DWORD res;
-
-    frame.frame.Handler = unwind_exception_handler;
-    frame.dispatch = dispatch;
-    __wine_push_frame( &frame.frame );
 
     TRACE( "calling handler %p (rec=%p, frame=0x%lx context=%p, dispatch=%p)\n",
          dispatch->LanguageHandler, rec, dispatch->EstablisherFrame, dispatch->ContextRecord, dispatch );
-    res = dispatch->LanguageHandler( rec, (void *)dispatch->EstablisherFrame, dispatch->ContextRecord, dispatch );
+    res = unwind_handler_wrapper( rec, dispatch );
     TRACE( "handler %p returned %lx\n", dispatch->LanguageHandler, res );
-
-    __wine_pop_frame( &frame.frame );
 
     switch (res)
     {
@@ -433,7 +445,7 @@ static NTSTATUS call_function_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_con
             }
         }
         /* hack: call wine handlers registered in the tib list */
-        else while ((DWORD)teb_frame < context.Sp)
+        else while (is_valid_frame( (ULONG_PTR)teb_frame ) && (DWORD)teb_frame < context.Sp)
         {
             TRACE( "found wine frame %p rsp %lx handler %p\n",
                     teb_frame, context.Sp, teb_frame->Handler );
@@ -1282,7 +1294,7 @@ void CDECL RtlRestoreContext( CONTEXT *context, EXCEPTION_RECORD *rec )
     }
 
     /* hack: remove no longer accessible TEB frames */
-    while ((DWORD)teb_frame < context->Sp)
+    while (is_valid_frame( (ULONG_PTR)teb_frame ) && (DWORD)teb_frame < context->Sp)
     {
         TRACE( "removing TEB frame: %p\n", teb_frame );
         teb_frame = __wine_pop_frame( teb_frame );
@@ -1382,7 +1394,9 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
         else  /* hack: call builtin handlers registered in the tib list */
         {
             DWORD backup_frame = dispatch.EstablisherFrame;
-            while ((DWORD)teb_frame < new_context.Sp && (DWORD)teb_frame < (DWORD)end_frame)
+            while (is_valid_frame( (ULONG_PTR)teb_frame ) &&
+                   (DWORD)teb_frame < new_context.Sp &&
+                   (DWORD)teb_frame < (DWORD)end_frame)
             {
                 TRACE( "found builtin frame %p handler %p\n", teb_frame, teb_frame->Handler );
                 dispatch.EstablisherFrame = (DWORD)teb_frame;
@@ -1659,6 +1673,42 @@ void WINAPI process_breakpoint(void)
         /* do nothing */
     }
     __ENDTRY
+}
+#endif
+
+/***********************************************************************
+ *		DbgUiRemoteBreakin   (NTDLL.@)
+ */
+#ifdef __WINE_PE_BUILD
+__ASM_GLOBAL_FUNC( DbgUiRemoteBreakin,
+                   ".seh_endprologue\n\t"
+                   ".seh_handler DbgUiRemoteBreakin_handler, %except\n\t"
+                   "mrc p15, 0, r0, c13, c0, 2\n\t" /* NtCurrentTeb() */
+                   "ldr r0, [r0, #0x30]\n\t"        /* NtCurrentTeb()->Peb */
+                   "ldrb r0, [r0, 0x02]\n\t"        /* peb->BeingDebugged */
+                   "cbz r0, 1f\n\t"
+                   "bl " __ASM_NAME("DbgBreakPoint") "\n"
+                   "1:\tmov r0, #0\n\t"
+                   "bl " __ASM_NAME("RtlExitUserThread") "\n"
+                   "DbgUiRemoteBreakin_handler:\n\t"
+                   "mov sp, r1\n\t"                 /* frame */
+                   "b 1b" )
+#else
+void WINAPI DbgUiRemoteBreakin( void *arg )
+{
+    if (NtCurrentTeb()->Peb->BeingDebugged)
+    {
+        __TRY
+        {
+            DbgBreakPoint();
+        }
+        __EXCEPT_ALL
+        {
+            /* do nothing */
+        }
+        __ENDTRY
+    }
+    RtlExitUserThread( STATUS_SUCCESS );
 }
 #endif
 

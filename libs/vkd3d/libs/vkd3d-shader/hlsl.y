@@ -5572,11 +5572,11 @@ attribute:
             $$->name = $2;
             hlsl_block_init(&$$->instrs);
             hlsl_block_add_block(&$$->instrs, $4.instrs);
-            vkd3d_free($4.instrs);
             $$->loc = @$;
             $$->args_count = $4.args_count;
             for (i = 0; i < $4.args_count; ++i)
                 hlsl_src_from_node(&$$->args[i], $4.args[i]);
+            free_parse_initializer(&$4);
         }
 
 attribute_list:
@@ -5807,7 +5807,11 @@ func_prototype:
             }
             else
             {
-                free($1.attrs);
+                unsigned int i;
+
+                for (i = 0; i < $1.count; ++i)
+                    hlsl_free_attribute((void *)$1.attrs[i]);
+                vkd3d_free($1.attrs);
             }
             $$ = $2;
         }
@@ -6992,8 +6996,10 @@ primary_expr:
             if (!(var = hlsl_get_var(ctx->cur_scope, $1)))
             {
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_NOT_DEFINED, "Variable \"%s\" is not defined.", $1);
+                vkd3d_free($1);
                 YYABORT;
             }
+            vkd3d_free($1);
             if (!(load = hlsl_new_var_load(ctx, var, &@1)))
                 YYABORT;
             if (!($$ = make_block(ctx, &load->node)))
@@ -7067,12 +7073,17 @@ postfix_expr:
                 if (!(field = get_struct_field(type->e.record.fields, type->e.record.field_count, $3)))
                 {
                     hlsl_error(ctx, &@3, VKD3D_SHADER_ERROR_HLSL_NOT_DEFINED, "Field \"%s\" is not defined.", $3);
+                    vkd3d_free($3);
                     YYABORT;
                 }
 
                 field_idx = field - type->e.record.fields;
                 if (!add_record_access(ctx, $1, node, field_idx, &@2))
+                {
+                    vkd3d_free($3);
                     YYABORT;
+                }
+                vkd3d_free($3);
                 $$ = $1;
             }
             else if (hlsl_is_numeric_type(node->data_type))
@@ -7082,14 +7093,17 @@ postfix_expr:
                 if (!(swizzle = get_swizzle(ctx, node, $3, &@3)))
                 {
                     hlsl_error(ctx, &@3, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Invalid swizzle \"%s\".", $3);
+                    vkd3d_free($3);
                     YYABORT;
                 }
                 hlsl_block_add_instr($1, swizzle);
+                vkd3d_free($3);
                 $$ = $1;
             }
             else
             {
                 hlsl_error(ctx, &@3, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Invalid subscript \"%s\".", $3);
+                vkd3d_free($3);
                 YYABORT;
             }
         }

@@ -688,37 +688,46 @@ NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
 
 
 /***********************************************************************
+ *           setup_raise_exception
+ */
+static void setup_raise_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec, CONTEXT *context )
+{
+    struct exc_stack_layout *stack;
+    void *stack_ptr = (void *)(SP_sig(sigcontext) & ~15);
+    NTSTATUS status;
+
+    status = send_debug_event( rec, context, TRUE );
+    if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
+    {
+        restore_context( context, sigcontext );
+        return;
+    }
+
+    /* fix up instruction pointer in context for EXCEPTION_BREAKPOINT */
+    if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context->Pc -= 4;
+
+    stack = virtual_setup_exception( stack_ptr, sizeof(*stack), rec );
+    stack->rec = *rec;
+    stack->context = *context;
+
+    SP_sig(sigcontext) = (ULONG_PTR)stack;
+    PC_sig(sigcontext) = (ULONG_PTR)pKiUserExceptionDispatcher;
+    REGn_sig(18, sigcontext) = (ULONG_PTR)NtCurrentTeb();
+}
+
+
+/***********************************************************************
  *           setup_exception
  *
  * Modify the signal context to call the exception raise function.
  */
 static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 {
-    struct exc_stack_layout *stack;
-    void *stack_ptr = (void *)(SP_sig(sigcontext) & ~15);
     CONTEXT context;
-    NTSTATUS status;
 
     rec->ExceptionAddress = (void *)PC_sig(sigcontext);
     save_context( &context, sigcontext );
-
-    status = send_debug_event( rec, &context, TRUE );
-    if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
-    {
-        restore_context( &context, sigcontext );
-        return;
-    }
-
-    /* fix up instruction pointer in context for EXCEPTION_BREAKPOINT */
-    if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context.Pc -= 4;
-
-    stack = virtual_setup_exception( stack_ptr, sizeof(*stack), rec );
-    stack->rec = *rec;
-    stack->context = context;
-
-    SP_sig(sigcontext) = (ULONG_PTR)stack;
-    PC_sig(sigcontext) = (ULONG_PTR)pKiUserExceptionDispatcher;
-    REGn_sig(18, sigcontext) = (ULONG_PTR)NtCurrentTeb();
+    setup_raise_exception( sigcontext, rec, &context );
 }
 
 
@@ -999,7 +1008,7 @@ static BOOL handle_syscall_fault( ucontext_t *context, EXCEPTION_RECORD *rec )
         TRACE( "returning to handler\n" );
         REGn_sig(0, context) = (ULONG_PTR)ntdll_get_thread_data()->jmp_buf;
         REGn_sig(1, context) = 1;
-        PC_sig(context)      = (ULONG_PTR)__wine_longjmp;
+        PC_sig(context)      = (ULONG_PTR)longjmp;
         ntdll_get_thread_data()->jmp_buf = NULL;
     }
     else
@@ -1069,6 +1078,10 @@ static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     EXCEPTION_RECORD rec = { 0 };
     ucontext_t *context = sigcontext;
+    CONTEXT ctx;
+
+    rec.ExceptionAddress = (void *)PC_sig(context);
+    save_context( &ctx, sigcontext );
 
     switch (siginfo->si_code)
     {
@@ -1082,22 +1095,20 @@ static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
             !(PC_sig( context ) & 3) &&
             *(ULONG *)PC_sig( context ) == 0xd43e0060UL) /* brk #0xf003 -> __fastfail */
         {
-            CONTEXT ctx;
-            save_context( &ctx, sigcontext );
             rec.ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
-            rec.ExceptionAddress = (void *)ctx.Pc;
             rec.ExceptionFlags = EH_NONCONTINUABLE;
             rec.NumberParameters = 1;
             rec.ExceptionInformation[0] = ctx.X[0];
             NtRaiseException( &rec, &ctx, FALSE );
             return;
         }
-        PC_sig( context ) += 4;  /* skip the brk instruction */
+        ctx.Pc += 4;  /* skip the brk instruction */
         rec.ExceptionCode = EXCEPTION_BREAKPOINT;
         rec.NumberParameters = 1;
         break;
     }
-    setup_exception( sigcontext, &rec );
+
+    setup_raise_exception( sigcontext, &rec, &ctx );
 }
 
 
@@ -1648,54 +1659,5 @@ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
                    /* switch to user stack */
                    "mov sp, x16\n\t"
                    "ret x17" )
-
-
-/***********************************************************************
- *           __wine_setjmpex
- */
-__ASM_GLOBAL_FUNC( __wine_setjmpex,
-                   "str x1,       [x0]\n\t"        /* jmp_buf->Frame */
-                   "stp x19, x20, [x0, #0x10]\n\t" /* jmp_buf->X19, X20 */
-                   "stp x21, x22, [x0, #0x20]\n\t" /* jmp_buf->X21, X22 */
-                   "stp x23, x24, [x0, #0x30]\n\t" /* jmp_buf->X23, X24 */
-                   "stp x25, x26, [x0, #0x40]\n\t" /* jmp_buf->X25, X26 */
-                   "stp x27, x28, [x0, #0x50]\n\t" /* jmp_buf->X27, X28 */
-                   "stp x29, x30, [x0, #0x60]\n\t" /* jmp_buf->Fp,  Lr  */
-                   "mov x2,  sp\n\t"
-                   "str x2,       [x0, #0x70]\n\t" /* jmp_buf->Sp */
-                   "mrs x2,  fpcr\n\t"
-                   "str w2,       [x0, #0x78]\n\t" /* jmp_buf->Fpcr */
-                   "mrs x2,  fpsr\n\t"
-                   "str w2,       [x0, #0x7c]\n\t" /* jmp_buf->Fpsr */
-                   "stp d8,  d9,  [x0, #0x80]\n\t" /* jmp_buf->D[0-1] */
-                   "stp d10, d11, [x0, #0x90]\n\t" /* jmp_buf->D[2-3] */
-                   "stp d12, d13, [x0, #0xa0]\n\t" /* jmp_buf->D[4-5] */
-                   "stp d14, d15, [x0, #0xb0]\n\t" /* jmp_buf->D[6-7] */
-                   "mov x0, #0\n\t"
-                   "ret" )
-
-
-/***********************************************************************
- *           __wine_longjmp
- */
-__ASM_GLOBAL_FUNC( __wine_longjmp,
-                   "ldp x19, x20, [x0, #0x10]\n\t" /* jmp_buf->X19, X20 */
-                   "ldp x21, x22, [x0, #0x20]\n\t" /* jmp_buf->X21, X22 */
-                   "ldp x23, x24, [x0, #0x30]\n\t" /* jmp_buf->X23, X24 */
-                   "ldp x25, x26, [x0, #0x40]\n\t" /* jmp_buf->X25, X26 */
-                   "ldp x27, x28, [x0, #0x50]\n\t" /* jmp_buf->X27, X28 */
-                   "ldp x29, x30, [x0, #0x60]\n\t" /* jmp_buf->Fp,  Lr  */
-                   "ldr x2,       [x0, #0x70]\n\t" /* jmp_buf->Sp */
-                   "mov sp,  x2\n\t"
-                   "ldr w2,       [x0, #0x78]\n\t" /* jmp_buf->Fpcr */
-                   "msr fpcr, x2\n\t"
-                   "ldr w2,       [x0, #0x7c]\n\t" /* jmp_buf->Fpsr */
-                   "msr fpsr, x2\n\t"
-                   "ldp d8,  d9,  [x0, #0x80]\n\t" /* jmp_buf->D[0-1] */
-                   "ldp d10, d11, [x0, #0x90]\n\t" /* jmp_buf->D[2-3] */
-                   "ldp d12, d13, [x0, #0xa0]\n\t" /* jmp_buf->D[4-5] */
-                   "ldp d14, d15, [x0, #0xb0]\n\t" /* jmp_buf->D[6-7] */
-                   "mov x0, x1\n\t"                /* retval */
-                   "ret" )
 
 #endif  /* __aarch64__ */

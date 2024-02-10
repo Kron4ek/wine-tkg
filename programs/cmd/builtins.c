@@ -33,7 +33,7 @@
 #include "wine/debug.h"
 #include "winternl.h"
 #include "winioctl.h"
-#include "ntifs.h"
+#include "ddk/ntifs.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(cmd);
 

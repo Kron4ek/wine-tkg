@@ -1796,7 +1796,7 @@ static void test_shell_window(void)
 
     WaitForSingleObject(hthread, INFINITE);
 
-    DeleteObject(hthread);
+    CloseHandle(hthread);
 
     CloseDesktop(hdesk);
 }
@@ -13120,6 +13120,37 @@ static void test_WM_NCCALCSIZE(void)
     DestroyWindow(hwnd);
 }
 
+#define TRAY_MINIMIZE_ALL 419
+#define TRAY_MINIMIZE_ALL_UNDO 416
+
+static void test_shell_tray(void)
+{
+    HWND hwnd, traywnd;
+
+    if (!(traywnd = FindWindowA( "Shell_TrayWnd", NULL )))
+    {
+        skip( "Shell_TrayWnd not found, skipping tests.\n" );
+        return;
+    }
+
+    hwnd = CreateWindowW( L"static", L"parent", WS_OVERLAPPEDWINDOW|WS_VISIBLE,
+                                  100, 100, 200, 200, 0, 0, 0, NULL );
+    ok( !!hwnd, "failed, error %lu.\n", GetLastError() );
+    flush_events( TRUE );
+
+    ok( !IsIconic( hwnd ), "window is minimized.\n" );
+
+    SendMessageA( traywnd, WM_COMMAND, TRAY_MINIMIZE_ALL, 0xdeadbeef );
+    flush_events( TRUE );
+    todo_wine ok( IsIconic( hwnd ), "window is not minimized.\n" );
+
+    SendMessageA( traywnd, WM_COMMAND, TRAY_MINIMIZE_ALL_UNDO, 0xdeadbeef );
+    flush_events( TRUE );
+    ok( !IsIconic( hwnd ), "window is minimized.\n" );
+
+    DestroyWindow(hwnd);
+}
+
 START_TEST(win)
 {
     char **argv;
@@ -13316,4 +13347,5 @@ START_TEST(win)
     test_topmost();
 
     test_shell_window();
+    test_shell_tray();
 }

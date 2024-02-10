@@ -308,7 +308,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_heap_QueryInterface(ID3D12Heap *iface,
 static ULONG STDMETHODCALLTYPE d3d12_heap_AddRef(ID3D12Heap *iface)
 {
     struct d3d12_heap *heap = impl_from_ID3D12Heap(iface);
-    ULONG refcount = InterlockedIncrement(&heap->refcount);
+    unsigned int refcount = vkd3d_atomic_increment_u32(&heap->refcount);
 
     TRACE("%p increasing refcount to %u.\n", heap, refcount);
 
@@ -345,7 +345,7 @@ static void d3d12_heap_destroy(struct d3d12_heap *heap)
 static ULONG STDMETHODCALLTYPE d3d12_heap_Release(ID3D12Heap *iface)
 {
     struct d3d12_heap *heap = impl_from_ID3D12Heap(iface);
-    ULONG refcount = InterlockedDecrement(&heap->refcount);
+    unsigned int refcount = vkd3d_atomic_decrement_u32(&heap->refcount);
 
     TRACE("%p decreasing refcount to %u.\n", heap, refcount);
 
@@ -358,7 +358,7 @@ static ULONG STDMETHODCALLTYPE d3d12_heap_Release(ID3D12Heap *iface)
 
 static void d3d12_heap_resource_destroyed(struct d3d12_heap *heap)
 {
-    if (!InterlockedDecrement(&heap->resource_count) && (!heap->refcount || heap->is_private))
+    if (!vkd3d_atomic_decrement_u32(&heap->resource_count) && (!heap->refcount || heap->is_private))
         d3d12_heap_destroy(heap);
 }
 
@@ -940,7 +940,7 @@ static HRESULT vkd3d_create_image(struct d3d12_device *device,
 }
 
 HRESULT vkd3d_get_image_allocation_info(struct d3d12_device *device,
-        const D3D12_RESOURCE_DESC *desc, D3D12_RESOURCE_ALLOCATION_INFO *allocation_info)
+        const D3D12_RESOURCE_DESC *desc, struct vkd3d_resource_allocation_info *allocation_info)
 {
     static const D3D12_HEAP_PROPERTIES heap_properties = {D3D12_HEAP_TYPE_DEFAULT};
     const struct vkd3d_vk_device_procs *vk_procs = &device->vk_procs;
@@ -968,8 +968,8 @@ HRESULT vkd3d_get_image_allocation_info(struct d3d12_device *device,
         VK_CALL(vkGetImageMemoryRequirements(device->vk_device, vk_image, &requirements));
         VK_CALL(vkDestroyImage(device->vk_device, vk_image, NULL));
 
-        allocation_info->SizeInBytes = requirements.size;
-        allocation_info->Alignment = requirements.alignment;
+        allocation_info->size_in_bytes = requirements.size;
+        allocation_info->alignment = requirements.alignment;
     }
 
     return hr;
@@ -1003,7 +1003,7 @@ static void d3d12_resource_destroy(struct d3d12_resource *resource, struct d3d12
 
 static ULONG d3d12_resource_incref(struct d3d12_resource *resource)
 {
-    ULONG refcount = InterlockedIncrement(&resource->internal_refcount);
+    unsigned int refcount = vkd3d_atomic_increment_u32(&resource->internal_refcount);
 
     TRACE("%p increasing refcount to %u.\n", resource, refcount);
 
@@ -1012,7 +1012,7 @@ static ULONG d3d12_resource_incref(struct d3d12_resource *resource)
 
 static ULONG d3d12_resource_decref(struct d3d12_resource *resource)
 {
-    ULONG refcount = InterlockedDecrement(&resource->internal_refcount);
+    unsigned int refcount = vkd3d_atomic_decrement_u32(&resource->internal_refcount);
 
     TRACE("%p decreasing refcount to %u.\n", resource, refcount);
 
@@ -1284,7 +1284,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_resource_QueryInterface(ID3D12Resource1 *
 static ULONG STDMETHODCALLTYPE d3d12_resource_AddRef(ID3D12Resource1 *iface)
 {
     struct d3d12_resource *resource = impl_from_ID3D12Resource1(iface);
-    ULONG refcount = InterlockedIncrement(&resource->refcount);
+    unsigned int refcount = vkd3d_atomic_increment_u32(&resource->refcount);
 
     TRACE("%p increasing refcount to %u.\n", resource, refcount);
 
@@ -1302,7 +1302,7 @@ static ULONG STDMETHODCALLTYPE d3d12_resource_AddRef(ID3D12Resource1 *iface)
 static ULONG STDMETHODCALLTYPE d3d12_resource_Release(ID3D12Resource1 *iface)
 {
     struct d3d12_resource *resource = impl_from_ID3D12Resource1(iface);
-    ULONG refcount = InterlockedDecrement(&resource->refcount);
+    unsigned int refcount = vkd3d_atomic_decrement_u32(&resource->refcount);
 
     TRACE("%p decreasing refcount to %u.\n", resource, refcount);
 
@@ -2174,7 +2174,7 @@ static HRESULT vkd3d_bind_heap_memory(struct d3d12_device *device,
     {
         resource->heap = heap;
         resource->heap_offset = heap_offset;
-        InterlockedIncrement(&heap->resource_count);
+        vkd3d_atomic_increment_u32(&heap->resource_count);
     }
     else
     {
@@ -2239,7 +2239,7 @@ HRESULT d3d12_reserved_resource_create(struct d3d12_device *device,
 HRESULT vkd3d_create_image_resource(ID3D12Device *device,
         const struct vkd3d_image_resource_create_info *create_info, ID3D12Resource **resource)
 {
-    struct d3d12_device *d3d12_device = unsafe_impl_from_ID3D12Device5((ID3D12Device5 *)device);
+    struct d3d12_device *d3d12_device = unsafe_impl_from_ID3D12Device7((ID3D12Device7 *)device);
     struct d3d12_resource *object;
     HRESULT hr;
 
@@ -2314,14 +2314,14 @@ static void *vkd3d_desc_object_cache_get(struct vkd3d_desc_object_cache *cache)
 
     STATIC_ASSERT(!(ARRAY_SIZE(cache->heads) & HEAD_INDEX_MASK));
 
-    i = (vkd3d_atomic_increment(&cache->next_index)) & HEAD_INDEX_MASK;
+    i = vkd3d_atomic_increment_u32(&cache->next_index) & HEAD_INDEX_MASK;
     for (;;)
     {
         if (vkd3d_atomic_compare_exchange(&cache->heads[i].spinlock, 0, 1))
         {
             if ((u.object = cache->heads[i].head))
             {
-                vkd3d_atomic_decrement(&cache->free_count);
+                vkd3d_atomic_decrement_u32(&cache->free_count);
                 cache->heads[i].head = u.header->next;
                 vkd3d_atomic_exchange(&cache->heads[i].spinlock, 0);
                 return u.object;
@@ -2345,7 +2345,7 @@ static void vkd3d_desc_object_cache_push(struct vkd3d_desc_object_cache *cache, 
 
     /* Using the same index as above may result in a somewhat uneven distribution,
      * but the main objective is to avoid costly spinlock contention. */
-    i = (vkd3d_atomic_increment(&cache->next_index)) & HEAD_INDEX_MASK;
+    i = vkd3d_atomic_increment_u32(&cache->next_index) & HEAD_INDEX_MASK;
     for (;;)
     {
         if (vkd3d_atomic_compare_exchange(&cache->heads[i].spinlock, 0, 1))
@@ -2357,7 +2357,7 @@ static void vkd3d_desc_object_cache_push(struct vkd3d_desc_object_cache *cache, 
     u.header->next = head;
     cache->heads[i].head = u.object;
     vkd3d_atomic_exchange(&cache->heads[i].spinlock, 0);
-    vkd3d_atomic_increment(&cache->free_count);
+    vkd3d_atomic_increment_u32(&cache->free_count);
 }
 
 #undef HEAD_INDEX_MASK
@@ -2429,7 +2429,7 @@ void vkd3d_view_decref(void *view, struct d3d12_device *device)
 {
     union d3d12_desc_object u = {view};
 
-    if (vkd3d_atomic_decrement(&u.header->refcount))
+    if (vkd3d_atomic_decrement_u32(&u.header->refcount))
         return;
 
     if (u.header->magic != VKD3D_DESCRIPTOR_MAGIC_CBV)
@@ -4010,7 +4010,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_descriptor_heap_QueryInterface(ID3D12Desc
 static ULONG STDMETHODCALLTYPE d3d12_descriptor_heap_AddRef(ID3D12DescriptorHeap *iface)
 {
     struct d3d12_descriptor_heap *heap = impl_from_ID3D12DescriptorHeap(iface);
-    ULONG refcount = InterlockedIncrement(&heap->refcount);
+    unsigned int refcount = vkd3d_atomic_increment_u32(&heap->refcount);
 
     TRACE("%p increasing refcount to %u.\n", heap, refcount);
 
@@ -4020,7 +4020,7 @@ static ULONG STDMETHODCALLTYPE d3d12_descriptor_heap_AddRef(ID3D12DescriptorHeap
 static ULONG STDMETHODCALLTYPE d3d12_descriptor_heap_Release(ID3D12DescriptorHeap *iface)
 {
     struct d3d12_descriptor_heap *heap = impl_from_ID3D12DescriptorHeap(iface);
-    ULONG refcount = InterlockedDecrement(&heap->refcount);
+    unsigned int refcount = vkd3d_atomic_decrement_u32(&heap->refcount);
 
     TRACE("%p decreasing refcount to %u.\n", heap, refcount);
 
@@ -4429,7 +4429,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_query_heap_QueryInterface(ID3D12QueryHeap
 static ULONG STDMETHODCALLTYPE d3d12_query_heap_AddRef(ID3D12QueryHeap *iface)
 {
     struct d3d12_query_heap *heap = impl_from_ID3D12QueryHeap(iface);
-    ULONG refcount = InterlockedIncrement(&heap->refcount);
+    unsigned int refcount = vkd3d_atomic_increment_u32(&heap->refcount);
 
     TRACE("%p increasing refcount to %u.\n", heap, refcount);
 
@@ -4439,7 +4439,7 @@ static ULONG STDMETHODCALLTYPE d3d12_query_heap_AddRef(ID3D12QueryHeap *iface)
 static ULONG STDMETHODCALLTYPE d3d12_query_heap_Release(ID3D12QueryHeap *iface)
 {
     struct d3d12_query_heap *heap = impl_from_ID3D12QueryHeap(iface);
-    ULONG refcount = InterlockedDecrement(&heap->refcount);
+    unsigned int refcount = vkd3d_atomic_decrement_u32(&heap->refcount);
 
     TRACE("%p decreasing refcount to %u.\n", heap, refcount);
 

@@ -1,5 +1,5 @@
 /*
- * Direct3D state management
+ * GL fixed-function pipeline
  *
  * Copyright 2002 Lionel Ulmer
  * Copyright 2002-2005 Jason Edmeades
@@ -31,232 +31,6 @@
 #include "wined3d_gl.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
-
-ULONG CDECL wined3d_blend_state_incref(struct wined3d_blend_state *state)
-{
-    unsigned int refcount = InterlockedIncrement(&state->refcount);
-
-    TRACE("%p increasing refcount to %u.\n", state, refcount);
-
-    return refcount;
-}
-
-static void wined3d_blend_state_destroy_object(void *object)
-{
-    TRACE("object %p.\n", object);
-
-    heap_free(object);
-}
-
-ULONG CDECL wined3d_blend_state_decref(struct wined3d_blend_state *state)
-{
-    unsigned int refcount = wined3d_atomic_decrement_mutex_lock(&state->refcount);
-    struct wined3d_device *device = state->device;
-
-    TRACE("%p decreasing refcount to %u.\n", state, refcount);
-
-    if (!refcount)
-    {
-        state->parent_ops->wined3d_object_destroyed(state->parent);
-        wined3d_cs_destroy_object(device->cs, wined3d_blend_state_destroy_object, state);
-        wined3d_mutex_unlock();
-    }
-
-    return refcount;
-}
-
-void * CDECL wined3d_blend_state_get_parent(const struct wined3d_blend_state *state)
-{
-    TRACE("state %p.\n", state);
-
-    return state->parent;
-}
-
-static BOOL is_dual_source(enum wined3d_blend state)
-{
-    return state >= WINED3D_BLEND_SRC1COLOR && state <= WINED3D_BLEND_INVSRC1ALPHA;
-}
-
-HRESULT CDECL wined3d_blend_state_create(struct wined3d_device *device,
-        const struct wined3d_blend_state_desc *desc, void *parent,
-        const struct wined3d_parent_ops *parent_ops, struct wined3d_blend_state **state)
-{
-    struct wined3d_blend_state *object;
-
-    TRACE("device %p, desc %p, parent %p, parent_ops %p, state %p.\n",
-            device, desc, parent, parent_ops, state);
-
-    if (!(object = heap_alloc_zero(sizeof(*object))))
-        return E_OUTOFMEMORY;
-
-    object->refcount = 1;
-    object->desc = *desc;
-    object->parent = parent;
-    object->parent_ops = parent_ops;
-    object->device = device;
-
-    object->dual_source = desc->rt[0].enable
-            && (is_dual_source(desc->rt[0].src)
-            || is_dual_source(desc->rt[0].dst)
-            || is_dual_source(desc->rt[0].src_alpha)
-            || is_dual_source(desc->rt[0].dst_alpha));
-
-    TRACE("Created blend state %p.\n", object);
-    *state = object;
-
-    return WINED3D_OK;
-}
-
-ULONG CDECL wined3d_depth_stencil_state_incref(struct wined3d_depth_stencil_state *state)
-{
-    unsigned int refcount = InterlockedIncrement(&state->refcount);
-
-    TRACE("%p increasing refcount to %u.\n", state, refcount);
-
-    return refcount;
-}
-
-static void wined3d_depth_stencil_state_destroy_object(void *object)
-{
-    TRACE("object %p.\n", object);
-
-    heap_free(object);
-}
-
-ULONG CDECL wined3d_depth_stencil_state_decref(struct wined3d_depth_stencil_state *state)
-{
-    unsigned int refcount = wined3d_atomic_decrement_mutex_lock(&state->refcount);
-    struct wined3d_device *device = state->device;
-
-    TRACE("%p decreasing refcount to %u.\n", state, refcount);
-
-    if (!refcount)
-    {
-        state->parent_ops->wined3d_object_destroyed(state->parent);
-        wined3d_cs_destroy_object(device->cs, wined3d_depth_stencil_state_destroy_object, state);
-        wined3d_mutex_unlock();
-    }
-
-    return refcount;
-}
-
-void * CDECL wined3d_depth_stencil_state_get_parent(const struct wined3d_depth_stencil_state *state)
-{
-    TRACE("state %p.\n", state);
-
-    return state->parent;
-}
-
-static bool stencil_op_writes_ds(const struct wined3d_stencil_op_desc *desc)
-{
-    return desc->fail_op != WINED3D_STENCIL_OP_KEEP
-            || desc->depth_fail_op != WINED3D_STENCIL_OP_KEEP
-            || desc->pass_op != WINED3D_STENCIL_OP_KEEP;
-}
-
-static bool depth_stencil_state_desc_writes_ds(const struct wined3d_depth_stencil_state_desc *desc)
-{
-    if (desc->depth && desc->depth_write)
-        return true;
-
-    if (desc->stencil && desc->stencil_write_mask)
-    {
-        if (stencil_op_writes_ds(&desc->front) || stencil_op_writes_ds(&desc->back))
-            return true;
-    }
-
-    return false;
-}
-
-HRESULT CDECL wined3d_depth_stencil_state_create(struct wined3d_device *device,
-        const struct wined3d_depth_stencil_state_desc *desc, void *parent,
-        const struct wined3d_parent_ops *parent_ops, struct wined3d_depth_stencil_state **state)
-{
-    struct wined3d_depth_stencil_state *object;
-
-    TRACE("device %p, desc %p, parent %p, parent_ops %p, state %p.\n",
-            device, desc, parent, parent_ops, state);
-
-    if (!(object = heap_alloc_zero(sizeof(*object))))
-        return E_OUTOFMEMORY;
-
-    object->refcount = 1;
-    object->desc = *desc;
-    object->parent = parent;
-    object->parent_ops = parent_ops;
-    object->device = device;
-
-    object->writes_ds = depth_stencil_state_desc_writes_ds(desc);
-
-    TRACE("Created depth/stencil state %p.\n", object);
-    *state = object;
-
-    return WINED3D_OK;
-}
-
-ULONG CDECL wined3d_rasterizer_state_incref(struct wined3d_rasterizer_state *state)
-{
-    unsigned int refcount = InterlockedIncrement(&state->refcount);
-
-    TRACE("%p increasing refcount to %u.\n", state, refcount);
-
-    return refcount;
-}
-
-static void wined3d_rasterizer_state_destroy_object(void *object)
-{
-    TRACE("object %p.\n", object);
-
-    heap_free(object);
-}
-
-ULONG CDECL wined3d_rasterizer_state_decref(struct wined3d_rasterizer_state *state)
-{
-    unsigned int refcount = wined3d_atomic_decrement_mutex_lock(&state->refcount);
-    struct wined3d_device *device = state->device;
-
-    TRACE("%p decreasing refcount to %u.\n", state, refcount);
-
-    if (!refcount)
-    {
-        state->parent_ops->wined3d_object_destroyed(state->parent);
-        wined3d_cs_destroy_object(device->cs, wined3d_rasterizer_state_destroy_object, state);
-        wined3d_mutex_unlock();
-    }
-
-    return refcount;
-}
-
-void * CDECL wined3d_rasterizer_state_get_parent(const struct wined3d_rasterizer_state *state)
-{
-    TRACE("rasterizer_state %p.\n", state);
-
-    return state->parent;
-}
-
-HRESULT CDECL wined3d_rasterizer_state_create(struct wined3d_device *device,
-        const struct wined3d_rasterizer_state_desc *desc, void *parent,
-        const struct wined3d_parent_ops *parent_ops, struct wined3d_rasterizer_state **state)
-{
-    struct wined3d_rasterizer_state *object;
-
-    TRACE("device %p, desc %p, parent %p, parent_ops %p, state %p.\n",
-            device, desc, parent, parent_ops, state);
-
-    if (!(object = heap_alloc_zero(sizeof(*object))))
-        return E_OUTOFMEMORY;
-
-    object->refcount = 1;
-    object->desc = *desc;
-    object->parent = parent;
-    object->parent_ops = parent_ops;
-    object->device = device;
-
-    TRACE("Created rasterizer state %p.\n", object);
-    *state = object;
-
-    return WINED3D_OK;
-}
 
 /* Context activation for state handler is done by the caller. */
 
@@ -1538,6 +1312,121 @@ void state_fogdensity(struct wined3d_context *context, const struct wined3d_stat
     tmpvalue.d = state->render_states[WINED3D_RS_FOGDENSITY];
     gl_info->gl_ops.gl.p_glFogfv(GL_FOG_DENSITY, &tmpvalue.f);
     checkGLcall("glFogf(GL_FOG_DENSITY, (float) Value)");
+}
+
+/* Activates the texture dimension according to the bound D3D texture. Does
+ * not care for the colorop or correct gl texture unit (when using nvrc).
+ * Requires the caller to activate the correct unit. */
+/* Context activation is done by the caller (state handler). */
+void texture_activate_dimensions(struct wined3d_texture *texture, const struct wined3d_gl_info *gl_info)
+{
+    if (texture)
+    {
+        switch (wined3d_texture_gl(texture)->target)
+        {
+            case GL_TEXTURE_2D:
+                gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_3D);
+                checkGLcall("glDisable(GL_TEXTURE_3D)");
+                if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
+                {
+                    gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
+                    checkGLcall("glDisable(GL_TEXTURE_CUBE_MAP_ARB)");
+                }
+                if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
+                {
+                    gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_RECTANGLE_ARB);
+                    checkGLcall("glDisable(GL_TEXTURE_RECTANGLE_ARB)");
+                }
+                gl_info->gl_ops.gl.p_glEnable(GL_TEXTURE_2D);
+                checkGLcall("glEnable(GL_TEXTURE_2D)");
+                break;
+
+            case GL_TEXTURE_RECTANGLE_ARB:
+                gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_2D);
+                checkGLcall("glDisable(GL_TEXTURE_2D)");
+                gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_3D);
+                checkGLcall("glDisable(GL_TEXTURE_3D)");
+                if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
+                {
+                    gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
+                    checkGLcall("glDisable(GL_TEXTURE_CUBE_MAP_ARB)");
+                }
+                gl_info->gl_ops.gl.p_glEnable(GL_TEXTURE_RECTANGLE_ARB);
+                checkGLcall("glEnable(GL_TEXTURE_RECTANGLE_ARB)");
+                break;
+
+            case GL_TEXTURE_3D:
+                if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
+                {
+                    gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
+                    checkGLcall("glDisable(GL_TEXTURE_CUBE_MAP_ARB)");
+                }
+                if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
+                {
+                    gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_RECTANGLE_ARB);
+                    checkGLcall("glDisable(GL_TEXTURE_RECTANGLE_ARB)");
+                }
+                gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_2D);
+                checkGLcall("glDisable(GL_TEXTURE_2D)");
+                gl_info->gl_ops.gl.p_glEnable(GL_TEXTURE_3D);
+                checkGLcall("glEnable(GL_TEXTURE_3D)");
+                break;
+
+            case GL_TEXTURE_CUBE_MAP_ARB:
+                gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_2D);
+                checkGLcall("glDisable(GL_TEXTURE_2D)");
+                gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_3D);
+                checkGLcall("glDisable(GL_TEXTURE_3D)");
+                if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
+                {
+                    gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_RECTANGLE_ARB);
+                    checkGLcall("glDisable(GL_TEXTURE_RECTANGLE_ARB)");
+                }
+                gl_info->gl_ops.gl.p_glEnable(GL_TEXTURE_CUBE_MAP_ARB);
+                checkGLcall("glEnable(GL_TEXTURE_CUBE_MAP_ARB)");
+                break;
+        }
+    }
+    else
+    {
+        gl_info->gl_ops.gl.p_glEnable(GL_TEXTURE_2D);
+        checkGLcall("glEnable(GL_TEXTURE_2D)");
+        gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_3D);
+        checkGLcall("glDisable(GL_TEXTURE_3D)");
+        if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
+        {
+            gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
+            checkGLcall("glDisable(GL_TEXTURE_CUBE_MAP_ARB)");
+        }
+        if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
+        {
+            gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_RECTANGLE_ARB);
+            checkGLcall("glDisable(GL_TEXTURE_RECTANGLE_ARB)");
+        }
+        /* Binding textures is done by samplers. A dummy texture will be bound. */
+    }
+}
+
+/* Context activation is done by the caller (state handler). */
+void sampler_texdim(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
+{
+    struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
+    unsigned int sampler = state_id - STATE_SAMPLER(0);
+    unsigned int mapped_stage;
+
+    /* No need to enable / disable anything here for unused samplers. The
+     * tex_colorop handler takes care. Also no action is needed with pixel
+     * shaders, or if tex_colorop will take care of this business. */
+    mapped_stage = context_gl->tex_unit_map[sampler];
+    if (mapped_stage == WINED3D_UNMAPPED_STAGE || mapped_stage >= context_gl->gl_info->limits.ffp_textures)
+        return;
+    if (sampler >= context->lowest_disabled_stage)
+        return;
+    if (isStateDirty(context, STATE_TEXTURESTAGE(sampler, WINED3D_TSS_COLOR_OP)))
+        return;
+
+    wined3d_context_gl_active_texture(context_gl, context_gl->gl_info, sampler);
+    texture_activate_dimensions(wined3d_state_get_ffp_texture(state, sampler), context_gl->gl_info);
 }
 
 static void state_colormat(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)

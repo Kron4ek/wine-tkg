@@ -406,6 +406,7 @@ AC_SUBST(OPENGL_LIBS,"")
 dnl **** Check for header files ****
 
 AC_SYS_LARGEFILE()
+m4_ifdef([AC_SYS_YEAR2038],[AC_SYS_YEAR2038()],[test "$ac_cv_sys_file_offset_bits" = 64 && AC_DEFINE(_TIME_BITS,64,[Define to 64 to enable 64-bit time_t])])
 
 AC_CHECK_HEADERS(\
 	CL/cl.h \
@@ -760,7 +761,6 @@ case $host_os in
 
   *)
     AC_DEFINE(_GNU_SOURCE,1,[Define to 1 to enable GNU extensions on Linux])
-    test "$ac_cv_sys_file_offset_bits" = 64 && AC_DEFINE(_TIME_BITS,64,[Define to 64 to enable 64-bit time_t on Linux])
     if test $HOST_ARCH = i386
     then
         DLLFLAGS="$DLLFLAGS -fno-PIC"
@@ -839,6 +839,10 @@ AS_VAR_SET_IF([enable_archs],
          test $HOST_ARCH = unknown || cross_archs=$HOST_ARCH
      fi])
 
+saved_CC=$CC
+saved_CFLAGS=$CFLAGS
+saved_LDFLAGS=$LDFLAGS
+
 for wine_arch in $cross_archs
 do
     case "x$with_mingw" in
@@ -865,10 +869,6 @@ do
             ;;
         esac])
 
-    saved_CC=$CC
-    saved_CFLAGS=$CFLAGS
-    saved_LDFLAGS=$LDFLAGS
-
     CFLAGS=${CROSSCFLAGS:-"-g -O2"}
     LDFLAGS=$CROSSLDFLAGS
     AS_VAR_COPY([CC],[${wine_arch}_CC])
@@ -888,6 +888,8 @@ do
         while test $# -ge 1
         do
             case "$1" in
+                */*-gcc) target=`expr "$1" : '.*/\(.*\)-gcc'` ;;
+                */*-clang) target=`expr "$1" : '.*/\(.*\)-clang'` ;;
                 *-gcc) target=`expr "$1" : '\(.*\)-gcc'` ;;
                 *-clang) target=`expr "$1" : '\(.*\)-clang'` ;;
             esac
@@ -928,11 +930,8 @@ do
     if test -z "$target"
     then
         AS_VAR_SET_IF([enable_archs],
-            [AC_MSG_ERROR([MinGW $wine_arch compiler not found.
+            [AC_MSG_ERROR([$wine_arch PE cross-compiler not found.
 This is an error since --enable-archs=$wine_arch was requested.])])
-        CC=$saved_CC
-        CFLAGS=$saved_CFLAGS
-        LDFLAGS=$saved_LDFLAGS
         continue
     fi
 
@@ -954,11 +953,8 @@ This is an error since --enable-archs=$wine_arch was requested.])])
     case "x$res" in
       x) AC_MSG_RESULT([none needed]) ;;
       xno) AC_MSG_RESULT([unsupported])
-           CC=$saved_CC
-           CFLAGS=$saved_CFLAGS
-           LDFLAGS=$saved_LDFLAGS
            AS_VAR_SET_IF([enable_archs],
-                [AC_MSG_ERROR([MinGW $wine_arch compiler supporting C99 not found.
+                [AC_MSG_ERROR([$wine_arch PE cross-compiler supporting C99 not found.
 This is an error since --enable-archs=$wine_arch was requested.])])
            continue
            ;;
@@ -975,7 +971,7 @@ This is an error since --enable-archs=$wine_arch was requested.])])
                AS_VAR_POPDEF([wine_cv_seh_support])
                AS_VAR_IF([res],[yes],[],
                          [AS_VAR_SET_IF([enable_archs],
-                             [AC_MSG_ERROR([The $wine_arch cross-compiler doesn't support SEH directives.
+                             [AC_MSG_ERROR([The $wine_arch PE cross-compiler doesn't support SEH directives.
 This is an error since --enable-archs=$wine_arch was requested.])])
                           continue])])
 
@@ -1046,16 +1042,17 @@ This is an error since --enable-archs=$wine_arch was requested.])])
                                          [AS_VAR_APPEND([${wine_arch}_CFLAGS],[" -Wl,--build-id"])
                                           AS_VAR_APPEND([${wine_arch}_LDFLAGS],[" -Wl,--build-id"])])
 
-    CC=$saved_CC
-    CFLAGS=$saved_CFLAGS
-    LDFLAGS=$saved_LDFLAGS
 done
 
-if test $HOST_ARCH = aarch64
-then
-    test "x$PE_ARCHS" != x || AC_MSG_ERROR([PE cross-compilation is required for ARM64, please install clang/llvm-dlltool/lld, or llvm-mingw.])
-    DLLEXT=""
-fi
+CC=$saved_CC
+CFLAGS=$saved_CFLAGS
+LDFLAGS=$saved_LDFLAGS
+
+case $HOST_ARCH in
+  arm|aarch64)
+    test "x$PE_ARCHS" != x || AC_MSG_ERROR([PE cross-compilation is required for $HOST_ARCH, please install clang/llvm-dlltool/lld, or llvm-mingw.])
+    DLLEXT="" ;;
+esac
 
 dnl **** External libraries ****
 
@@ -2709,6 +2706,7 @@ WINE_CONFIG_MAKEFILE(dlls/gdiplus/tests)
 WINE_CONFIG_MAKEFILE(dlls/geolocation)
 WINE_CONFIG_MAKEFILE(dlls/geolocation/tests)
 WINE_CONFIG_MAKEFILE(dlls/glu32)
+WINE_CONFIG_MAKEFILE(dlls/glu32/tests)
 WINE_CONFIG_MAKEFILE(dlls/gphoto2.ds)
 WINE_CONFIG_MAKEFILE(dlls/gpkcsp)
 WINE_CONFIG_MAKEFILE(dlls/graphicscapture)
@@ -3720,7 +3718,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-9.1.r0.g53c687fd\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-9.2.r0.gdc3b4e65\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

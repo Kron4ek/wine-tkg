@@ -105,6 +105,7 @@ static NTSTATUS  (WINAPI *pRtlMakeSelfRelativeSD)(PSECURITY_DESCRIPTOR,PSECURITY
 static NTSTATUS  (WINAPI *pRtlAbsoluteToSelfRelativeSD)(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR,PULONG);
 static NTSTATUS  (WINAPI *pLdrRegisterDllNotification)(ULONG, PLDR_DLL_NOTIFICATION_FUNCTION, void *, void **);
 static NTSTATUS  (WINAPI *pLdrUnregisterDllNotification)(void *);
+static VOID      (WINAPI *pRtlGetDeviceFamilyInfoEnum)(ULONGLONG *,DWORD *,DWORD *);
 
 static HMODULE hkernel32 = 0;
 static BOOL      (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
@@ -151,6 +152,7 @@ static void InitFunctionPtrs(void)
         pRtlAbsoluteToSelfRelativeSD = (void *)GetProcAddress(hntdll, "RtlAbsoluteToSelfRelativeSD");
         pLdrRegisterDllNotification = (void *)GetProcAddress(hntdll, "LdrRegisterDllNotification");
         pLdrUnregisterDllNotification = (void *)GetProcAddress(hntdll, "LdrUnregisterDllNotification");
+        pRtlGetDeviceFamilyInfoEnum = (void *)GetProcAddress(hntdll, "RtlGetDeviceFamilyInfoEnum");
     }
     hkernel32 = LoadLibraryA("kernel32.dll");
     ok(hkernel32 != 0, "LoadLibrary failed\n");
@@ -3833,6 +3835,27 @@ static void test_RtlFindExportedRoutineByName(void)
     ok( proc == NULL, "Shouldn't find forwarded function\n" );
 }
 
+static void test_RtlGetDeviceFamilyInfoEnum(void)
+{
+    ULONGLONG version;
+    DWORD family, form;
+
+    if (!pRtlGetDeviceFamilyInfoEnum)
+    {
+        win_skip( "RtlGetDeviceFamilyInfoEnum is not present\n" );
+        return;
+    }
+
+    version = 0x1234567;
+    family = 1234567;
+    form = 1234567;
+    pRtlGetDeviceFamilyInfoEnum(&version, &family, &form);
+    ok( version != 0x1234567, "got unexpected unchanged value 0x1234567\n" );
+    ok( family <= DEVICEFAMILYINFOENUM_MAX, "got unexpected %lu\n", family );
+    ok( form <= DEVICEFAMILYDEVICEFORM_MAX, "got unexpected %lu\n", form );
+    trace( "UAP version is %#I64x, device family is %lu, form factor is %lu\n", version, family, form );
+}
+
 START_TEST(rtl)
 {
     InitFunctionPtrs();
@@ -3882,4 +3905,5 @@ START_TEST(rtl)
     test_RtlInitializeSid();
     test_RtlValidSecurityDescriptor();
     test_RtlFindExportedRoutineByName();
+    test_RtlGetDeviceFamilyInfoEnum();
 }

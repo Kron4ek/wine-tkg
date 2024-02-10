@@ -126,7 +126,7 @@
 #include "wine/list.h"
 #include "wine/debug.h"
 #include "unix_private.h"
-#include "ntifs.h"
+#include "ddk/ntifs.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(file);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
@@ -3700,14 +3700,14 @@ NTSTATUS create_reparse_target( int dirfd, const char *unix_src, int depth, cons
         }
         else if (find_prefix_end( unix_target, &relative_offset ))
         {
-            char prefix_link[MAX_PATH];
+            char prefix_link[PATH_MAX];
 
             append_prefix = TRUE;
             is_relative = FALSE;
             strcpy( prefix_link, link_path );
             prefix_link[strlen(prefix_link)-1] = 0;
             strcat( prefix_link, prefix_string );
-            symlink( config_dir, prefix_link );
+            symlinkat( config_dir, dirfd, prefix_link );
         }
         for (;is_relative && depth > 0; depth--)
             strcat( target_path, "../" );

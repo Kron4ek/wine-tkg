@@ -24,10 +24,9 @@
 
 #include "config.h"
 
-#include <stdarg.h>
-
 #ifdef HAVE_GNUTLS_CIPHER_INIT
 
+#include <stdarg.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <sys/types.h>

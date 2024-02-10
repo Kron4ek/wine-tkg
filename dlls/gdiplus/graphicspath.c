@@ -95,12 +95,54 @@ static path_list_node_t* add_path_list_node(path_list_node_t *node, REAL x, REAL
 /* returns element count */
 static INT path_list_count(path_list_node_t *node)
 {
-    INT count = 1;
+    INT count = 0;
 
-    while((node = node->next))
+    while(node)
+    {
         ++count;
+        node = node->next;
+    }
 
     return count;
+}
+
+static BOOL path_list_to_path(path_list_node_t *node, GpPath *path)
+{
+    INT i, count = path_list_count(node);
+    GpPointF *Points;
+    BYTE *Types;
+
+    if (count == 0)
+    {
+        path->pathdata.Count = count;
+        return TRUE;
+    }
+
+    Points = calloc(count, sizeof(GpPointF));
+    Types = calloc(1, count);
+
+    if (!Points || !Types)
+    {
+        free(Points);
+        free(Types);
+        return FALSE;
+    }
+
+    for(i = 0; i < count; i++){
+        Points[i] = node->pt;
+        Types[i] = node->type;
+        node = node->next;
+    }
+
+    free(path->pathdata.Points);
+    free(path->pathdata.Types);
+
+    path->pathdata.Points = Points;
+    path->pathdata.Types = Types;
+    path->pathdata.Count = count;
+    path->datalen = count;
+
+    return TRUE;
 }
 
 struct flatten_bezier_job
@@ -1185,23 +1227,14 @@ GpStatus WINGDIPAPI GdipClonePath(GpPath* path, GpPath **clone)
     if(!path || !clone)
         return InvalidParameter;
 
-    *clone = malloc(sizeof(GpPath));
-    if(!*clone) return OutOfMemory;
-
-    **clone = *path;
-
-    (*clone)->pathdata.Points = malloc(path->datalen * sizeof(PointF));
-    (*clone)->pathdata.Types = malloc(path->datalen);
-    if(!(*clone)->pathdata.Points || !(*clone)->pathdata.Types){
-        free((*clone)->pathdata.Points);
-        free((*clone)->pathdata.Types);
-        free(*clone);
-        return OutOfMemory;
+    if (path->pathdata.Count)
+      return GdipCreatePath2(path->pathdata.Points, path->pathdata.Types, path->pathdata.Count,
+                             path->fill, clone);
+    else
+    {
+        *clone = calloc(1, sizeof(GpPath));
+        if(!*clone) return OutOfMemory;
     }
-
-    memcpy((*clone)->pathdata.Points, path->pathdata.Points,
-           path->datalen * sizeof(PointF));
-    memcpy((*clone)->pathdata.Types, path->pathdata.Types, path->datalen);
 
     return Ok;
 }
@@ -1426,19 +1459,7 @@ GpStatus WINGDIPAPI GdipFlattenPath(GpPath *path, GpMatrix* matrix, REAL flatnes
         ++i;
     }/* while */
 
-    /* store path data back */
-    i = path_list_count(list);
-    if(!lengthen_path(path, i))
-        goto memout;
-    path->pathdata.Count = i;
-
-    node = list;
-    for(i = 0; i < path->pathdata.Count; i++){
-        path->pathdata.Points[i] = node->pt;
-        path->pathdata.Types[i]  = node->type;
-        node = node->next;
-    }
-
+    if (!path_list_to_path(list, path)) goto memout;
     free_path_list(list);
     return Ok;
 
@@ -2483,7 +2504,7 @@ GpStatus WINGDIPAPI GdipWidenPath(GpPath *path, GpPen *pen, GpMatrix *matrix,
     GpPath *flat_path=NULL;
     GpStatus status;
     path_list_node_t *points=NULL, *last_point=NULL;
-    int i, subpath_start=0, new_length;
+    int i, subpath_start=0;
 
     TRACE("(%p,%p,%s,%0.2f)\n", path, pen, debugstr_matrix(matrix), flatness);
 
@@ -2566,23 +2587,8 @@ GpStatus WINGDIPAPI GdipWidenPath(GpPath *path, GpPen *pen, GpMatrix *matrix,
             }
         }
 
-        new_length = path_list_count(points)-1;
-
-        if (!lengthen_path(path, new_length))
+        if (!path_list_to_path(points->next, path))
             status = OutOfMemory;
-    }
-
-    if (status == Ok)
-    {
-        path->pathdata.Count = new_length;
-
-        last_point = points->next;
-        for (i = 0; i < new_length; i++)
-        {
-            path->pathdata.Points[i] = last_point->pt;
-            path->pathdata.Types[i] = last_point->type;
-            last_point = last_point->next;
-        }
 
         path->fill = FillModeWinding;
     }

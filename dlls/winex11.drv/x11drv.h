@@ -265,10 +265,7 @@ extern void X11DRV_ThreadDetach(void);
 /* X11 driver internal functions */
 
 extern void X11DRV_Xcursor_Init(void);
-extern void x11drv_xinput_load(void);
-extern void x11drv_xinput_init(void);
-extern void x11drv_xinput_enable( Display *display, Window window, long event_mask );
-extern void x11drv_xinput_disable( Display *display, Window window, long event_mask );
+extern void X11DRV_XInput2_Init(void);
 
 extern DWORD copy_image_bits( BITMAPINFO *info, BOOL is_r8g8b8, XImage *image,
                               const struct gdi_image_bits *src_bits, struct gdi_image_bits *dst_bits,
@@ -384,14 +381,6 @@ struct x11drv_escape_present_drawable
  * X11 USER driver
  */
 
-enum xi2_state
-{
-    xi_unavailable = -1,
-    xi_unknown,
-    xi_disabled,
-    xi_enabled
-};
-
 struct x11drv_thread_data
 {
     Display *display;
@@ -408,11 +397,13 @@ struct x11drv_thread_data
     Window   clip_window;          /* window used for cursor clipping */
     BOOL     clipping_cursor;      /* whether thread is currently clipping the cursor */
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
-    enum xi2_state xi2_state;      /* XInput2 state */
+    enum { xi_unavailable = -1, xi_unknown, xi_disabled, xi_enabled } xi2_state; /* XInput2 state */
+    void    *xi2_devices;          /* list of XInput2 devices (valid when state is enabled) */
+    int      xi2_device_count;
     XIValuatorClassInfo x_valuator;
     XIValuatorClassInfo y_valuator;
     int      xi2_core_pointer;     /* XInput2 core pointer id */
-    int      xi2_rawinput_only;
+    int      xi2_current_slave;    /* Current slave driving the Core pointer */
 #endif /* HAVE_X11_EXTENSIONS_XINPUT2_H */
 };
 
@@ -710,7 +701,6 @@ extern void retry_grab_clipping_window(void);
 extern void ungrab_clipping_window(void);
 extern void move_resize_window( HWND hwnd, int dir );
 extern void X11DRV_InitKeyboard( Display *display );
-extern void X11DRV_InitMouse( Display *display );
 extern BOOL X11DRV_ProcessEvents( DWORD mask );
 extern HWND *build_hwnd_list(void);
 

@@ -503,7 +503,7 @@ static void pdb_write(HANDLE hfile, struct pdb_file* pdb)
     SetEndOfFile(hfile);
 }
 
-static BOOL create_test_pdb_ds(const char* pdb_name, const GUID* guid, DWORD age)
+static BOOL create_test_pdb_ds(const WCHAR* pdb_name, const GUID* guid, DWORD age)
 {
     struct PDB_DS_ROOT root =
     {
@@ -660,14 +660,42 @@ static BOOL create_test_pdb_ds(const char* pdb_name, const GUID* guid, DWORD age
 
     stream = pdb_add_stream(&pdb, &pddt.sections_stream, &ro_section, sizeof(ro_section));
 
-    hfile = CreateFileA(pdb_name, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, 0, 0);
-    ok(hfile != INVALID_HANDLE_VALUE, "failed to create %s err %lu\n", pdb_name, GetLastError());
+    hfile = CreateFileW(pdb_name, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, 0, 0);
+    ok(hfile != INVALID_HANDLE_VALUE, "failed to create %ls err %lu\n", pdb_name, GetLastError());
     if (hfile == INVALID_HANDLE_VALUE) return FALSE;
 
     pdb_write(hfile, &pdb);
 
     CloseHandle(hfile);
 
+    return TRUE;
+}
+
+static BOOL create_test_dbg(const WCHAR* dbg_name, WORD machine, DWORD timestamp, DWORD size)
+{
+    HANDLE hfile;
+
+    /* minimalistic .dbg made of a header and a DEBUG_DIRECTORY without any data */
+    const IMAGE_SEPARATE_DEBUG_HEADER header = {.Signature = 0x4944 /* DI */,
+        .Flags = 0, .Machine = machine, .Characteristics = 0x010E, .TimeDateStamp = timestamp,
+        .CheckSum = 0, .ImageBase = 0x00040000, .SizeOfImage = size, .NumberOfSections = 0,
+        .ExportedNamesSize = 0, .DebugDirectorySize = sizeof(IMAGE_DEBUG_DIRECTORY)};
+    const IMAGE_DEBUG_DIRECTORY debug_dir = {.Characteristics = 0, .TimeDateStamp = timestamp + 1,
+                                             .MajorVersion = 0, .MinorVersion = 0, .Type = IMAGE_DEBUG_TYPE_CODEVIEW,
+                                             .SizeOfData = 0, .AddressOfRawData = 0,
+                                             .PointerToRawData = sizeof(header) + header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER) +
+                                             header.DebugDirectorySize};
+
+    hfile = CreateFileW(dbg_name, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, 0, 0);
+    ok(hfile != INVALID_HANDLE_VALUE, "failed to create %ls err %lu\n", dbg_name, GetLastError());
+    if (hfile == INVALID_HANDLE_VALUE) return FALSE;
+
+    check_write_file(hfile, &header, sizeof(header));
+    /* FIXME: 0 sections... as header.NumberOfSections */
+    check_write_file(hfile, &debug_dir, sizeof(debug_dir));
+    ok(SetFilePointer(hfile, 0, NULL, FILE_CURRENT) == debug_dir.PointerToRawData, "mismatch\n");
+
+    CloseHandle(hfile);
     return TRUE;
 }
 
@@ -803,8 +831,8 @@ static void test_srvgetindexes_pe(void)
 static void test_srvgetindexes_pdb(void)
 {
     unsigned int i;
-    char filename[128];
-    SYMSRV_INDEX_INFO ssii;
+    WCHAR filename[128];
+    SYMSRV_INDEX_INFOW ssii;
     BOOL ret;
 
     static struct
@@ -822,12 +850,12 @@ static void test_srvgetindexes_pdb(void)
         winetest_push_context("pdb#%02u", i);
 
         /* create dll */
-        snprintf(filename, ARRAYSIZE(filename), "winetest%02u.pdb", i);
+        swprintf(filename, ARRAY_SIZE(filename), L"winetest%02u.pdb", i);
         create_test_pdb_ds(filename, indexes[i].guid, 240 + i);
 
         memset(&ssii, 0x45, sizeof(ssii));
         ssii.sizeofstruct = sizeof(ssii);
-        ret = SymSrvGetFileIndexInfo(filename, &ssii, 0);
+        ret = SymSrvGetFileIndexInfoW(filename, &ssii, 0);
         ok(ret, "SymSrvGetFileIndexInfo failed: %lu\n", GetLastError());
 
         ok(ssii.age == 240 + i, "Mismatch in age: %lx\n", ssii.age);
@@ -839,11 +867,61 @@ static void test_srvgetindexes_pdb(void)
         ok(ssii.size == 0, "Mismatch in size: %lx\n", ssii.size);
         ok(!ssii.stripped, "Mismatch in stripped: %x\n", ssii.stripped);
         ok(ssii.timestamp == 0, "Mismatch in timestamp: %lx\n", ssii.timestamp);
-        ok(!strcmp(ssii.file, filename), "Mismatch in file: %s\n", ssii.file);
-        ok(!ssii.pdbfile[0], "Mismatch in pdbfile: %s\n", ssii.pdbfile);
-        ok(!ssii.dbgfile[0], "Mismatch in dbgfile: %s\n", ssii.dbgfile);
+        ok(!wcscmp(ssii.file, filename), "Mismatch in file: %ls\n", ssii.file);
+        ok(!ssii.pdbfile[0], "Mismatch in pdbfile: %ls\n", ssii.pdbfile);
+        ok(!ssii.dbgfile[0], "Mismatch in dbgfile: %ls\n", ssii.dbgfile);
 
-        DeleteFileA(filename);
+        DeleteFileW(filename);
+        winetest_pop_context();
+    }
+}
+
+static void test_srvgetindexes_dbg(void)
+{
+    unsigned int i;
+    WCHAR filename[128];
+    SYMSRV_INDEX_INFOW ssii;
+    BOOL ret;
+
+    static struct
+    {
+        /* input parameters */
+        WORD machine;
+        DWORD timestamp;
+        DWORD imagesize;
+    }
+    indexes[] =
+    {
+        {IMAGE_FILE_MACHINE_I386,  0x1234, 0x00560000},
+        {IMAGE_FILE_MACHINE_AMD64, 0x1235, 0x00570000},
+    };
+    for (i = 0; i < ARRAY_SIZE(indexes); i++)
+    {
+        winetest_push_context("dbg#%02u", i);
+
+        /* create dll */
+        swprintf(filename, ARRAY_SIZE(filename), L"winetest%02u.dbg", i);
+        ret = create_test_dbg(filename, indexes[i].machine, indexes[i].timestamp, indexes[i].imagesize);
+        ok(ret, "Couldn't create dbg file %ls\n", filename);
+
+        memset(&ssii, 0x45, sizeof(ssii));
+        ssii.sizeofstruct = sizeof(ssii);
+        ret = SymSrvGetFileIndexInfoW(filename, &ssii, 0);
+        ok(ret, "SymSrvGetFileIndexInfo failed: %lu\n", GetLastError());
+
+        ok(ssii.age == 0, "Mismatch in age: %lx\n", ssii.age);
+        ok(!memcmp(&ssii.guid, &null_guid, sizeof(GUID)),
+           "Mismatch in guid: guid=%s\n", wine_dbgstr_guid(&ssii.guid));
+
+        ok(ssii.sig == 0, "Mismatch in sig: %lx\n", ssii.sig);
+        ok(ssii.size == indexes[i].imagesize, "Mismatch in size: %lx\n", ssii.size);
+        ok(!ssii.stripped, "Mismatch in stripped: %x\n", ssii.stripped);
+        ok(ssii.timestamp == indexes[i].timestamp, "Mismatch in timestamp: %lx\n", ssii.timestamp);
+        ok(!wcscmp(ssii.file, filename), "Mismatch in file: %ls\n", ssii.file);
+        ok(!ssii.pdbfile[0], "Mismatch in pdbfile: %ls\n", ssii.pdbfile);
+        ok(!ssii.dbgfile[0], "Mismatch in dbgfile: %ls\n", ssii.dbgfile);
+
+        DeleteFileW(filename);
         winetest_pop_context();
     }
 }
@@ -856,4 +934,5 @@ START_TEST(path)
 
     test_srvgetindexes_pe();
     test_srvgetindexes_pdb();
+    test_srvgetindexes_dbg();
 }

@@ -1083,6 +1083,9 @@ static void device_destroy( struct object *obj )
     list_remove( &device->entry );  /* remove it from the hash table */
 }
 
+static int is_reparse_dir( const char *path, int *is_dir );
+static int rmdir_recursive( int dir_fd, const char *pathname );
+
 /****************************************************************/
 /* inode functions */
 
@@ -1090,10 +1093,29 @@ static void unlink_closed_fd( struct inode *inode, struct closed_fd *fd )
 {
     /* make sure it is still the same file */
     struct stat st;
-    if (!stat( fd->unix_name, &st ) && st.st_dev == inode->device->dev && st.st_ino == inode->ino)
+    if (!lstat( fd->unix_name, &st ) && st.st_dev == inode->device->dev && st.st_ino == inode->ino)
     {
+        int is_reparse_point = (is_reparse_dir( fd->unix_name, NULL ) == 0);
         if (S_ISDIR(st.st_mode)) rmdir( fd->unix_name );
         else unlink( fd->unix_name );
+        /* remove reparse point metadata (if applicable) */
+        if (is_reparse_point)
+        {
+            char tmp[PATH_MAX], metadata_path[PATH_MAX], *p;
+
+            strcpy( tmp, fd->unix_name );
+            p = dirname( tmp );
+            if (p != tmp ) strcpy( tmp, p );
+            strcpy( metadata_path, tmp );
+            strcat( metadata_path, "/.REPARSE_POINT/" );
+            strcpy( tmp, fd->unix_name );
+            p = basename( tmp );
+            if (p != tmp) strcpy( tmp, p );
+            strcat( metadata_path, tmp );
+
+            rmdir_recursive( AT_FDCWD, metadata_path );
+            rmdir( dirname( metadata_path ) );
+        }
     }
 }
 
@@ -1201,34 +1223,7 @@ static void inode_destroy( struct object *obj )
         list_remove( ptr );
         if (fd->unix_fd != -1) close( fd->unix_fd );
         if (fd->disp_flags & FILE_DISPOSITION_DELETE)
-        {
-            /* make sure it is still the same file */
-            struct stat st;
-            if (!lstat( fd->unix_name, &st ) && st.st_dev == inode->device->dev && st.st_ino == inode->ino)
-            {
-                int is_reparse_point = (is_reparse_dir( fd->unix_name, NULL ) == 0);
-                if (S_ISDIR(st.st_mode)) rmdir( fd->unix_name );
-                else unlink_closed_fd( inode, fd );
-                /* remove reparse point metadata (if applicable) */
-                if (is_reparse_point)
-                {
-                    char tmp[PATH_MAX], metadata_path[PATH_MAX], *p;
-
-                    strcpy( tmp, fd->unix_name );
-                    p = dirname( tmp );
-                    if (p != tmp ) strcpy( tmp, p );
-                    strcpy( metadata_path, tmp );
-                    strcat( metadata_path, "/.REPARSE_POINT/" );
-                    strcpy( tmp, fd->unix_name );
-                    p = basename( tmp );
-                    if (p != tmp) strcpy( tmp, p );
-                    strcat( metadata_path, tmp );
-
-                    rmdir_recursive( AT_FDCWD, metadata_path );
-                    rmdir( dirname( metadata_path ) );
-                }
-            }
-        }
+            unlink_closed_fd( inode, fd );
         free( fd->unix_name );
         free( fd );
     }

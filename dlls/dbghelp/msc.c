@@ -3615,8 +3615,47 @@ DWORD pdb_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW* info)
 
     if (!memcmp(image, PDB_JG_IDENT, sizeof(PDB_JG_IDENT)))
     {
-        FIXME("Unsupported for PDB files in JG format\n");
-        return ERROR_FILE_CORRUPT;
+        const struct PDB_JG_HEADER* pdb = (const struct PDB_JG_HEADER*)image;
+        struct PDB_JG_TOC*          jg_toc;
+        struct PDB_JG_ROOT*         root;
+        DWORD                       ec = ERROR_SUCCESS;
+
+        jg_toc = pdb_jg_read(pdb, pdb->toc_block, pdb->toc.size);
+        root = pdb_read_jg_stream(pdb, jg_toc, 1);
+        if (!root)
+        {
+            ERR("-Unable to get root from .PDB\n");
+            pdb_free(jg_toc);
+            return ERROR_FILE_CORRUPT;
+        }
+        switch (root->Version)
+        {
+        case 19950623:      /* VC 4.0 */
+        case 19950814:
+        case 19960307:      /* VC 5.0 */
+        case 19970604:      /* VC 6.0 */
+            break;
+        default:
+            ERR("-Unknown root block version %d\n", root->Version);
+            ec = ERROR_FILE_CORRUPT;
+        }
+        if (ec == ERROR_SUCCESS)
+        {
+            info->dbgfile[0] = '\0';
+            memset(&info->guid, 0, sizeof(GUID));
+            info->guid.Data1 = root->TimeDateStamp;
+            info->pdbfile[0] = '\0';
+            info->age = root->Age;
+            info->sig = root->TimeDateStamp;
+            info->size = 0;
+            info->stripped = FALSE;
+            info->timestamp = 0;
+        }
+
+        pdb_free(jg_toc);
+        pdb_free(root);
+
+        return ec;
     }
     if (!memcmp(image, PDB_DS_IDENT, sizeof(PDB_DS_IDENT)))
     {
@@ -4572,4 +4611,37 @@ DWORD msc_get_file_indexinfo(void* image, const IMAGE_DEBUG_DIRECTORY* debug_dir
         }
     }
     return info->stripped && !num_misc_records ? ERROR_BAD_EXE_FORMAT : ERROR_SUCCESS;
+}
+
+DWORD dbg_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW* info)
+{
+    const IMAGE_SEPARATE_DEBUG_HEADER *header;
+    DWORD num_directories;
+
+    if (size < sizeof(*header)) return ERROR_BAD_EXE_FORMAT;
+    header = image;
+    if (header->Signature != 0x4944 /* DI */ ||
+        size < sizeof(*header) + header->NumberOfSections * sizeof(IMAGE_SECTION_HEADER) + header->ExportedNamesSize + header->DebugDirectorySize)
+        return ERROR_BAD_EXE_FORMAT;
+
+    /* header is followed by:
+     * - header->NumberOfSections of IMAGE_SECTION_HEADER
+     * - header->ExportedNameSize
+     * - then num_directories of IMAGE_DEBUG_DIRECTORY
+     */
+    num_directories = header->DebugDirectorySize / sizeof(IMAGE_DEBUG_DIRECTORY);
+
+    if (!num_directories) return ERROR_BAD_EXE_FORMAT;
+
+    info->age = 0;
+    memset(&info->guid, 0, sizeof(info->guid));
+    info->sig = 0;
+    info->dbgfile[0] = L'\0';
+    info->pdbfile[0] = L'\0';
+    info->size = header->SizeOfImage;
+    /* seems to use header's timestamp, not debug_directory one */
+    info->timestamp = header->TimeDateStamp;
+    info->stripped = FALSE; /* FIXME */
+
+    return ERROR_SUCCESS;
 }

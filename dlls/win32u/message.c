@@ -3529,7 +3529,6 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *r
             req->input.mouse.flags = input->mi.dwFlags;
             req->input.mouse.time  = input->mi.time;
             req->input.mouse.info  = input->mi.dwExtraInfo;
-            if (rawinput) req->flags |= SEND_HWMSG_RAWINPUT;
             affects_key_state = !!(input->mi.dwFlags & (MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP |
                                                         MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_RIGHTUP |
                                                         MOUSEEVENTF_MIDDLEDOWN | MOUSEEVENTF_MIDDLEUP |
@@ -3541,7 +3540,6 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *r
             req->input.kbd.flags = input->ki.dwFlags;
             req->input.kbd.time  = input->ki.time;
             req->input.kbd.info  = input->ki.dwExtraInfo;
-            if (rawinput) req->flags |= SEND_HWMSG_RAWINPUT;
             affects_key_state = TRUE;
             break;
         case INPUT_HARDWARE:
@@ -3551,22 +3549,14 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *r
             {
             case WM_INPUT:
             case WM_INPUT_DEVICE_CHANGE:
-                req->input.hw.rawinput.type = rawinput->header.dwType;
                 switch (rawinput->header.dwType)
                 {
-                case RIM_TYPEMOUSE:
-                    req->input.hw.rawinput.mouse.x = rawinput->data.mouse.lLastX;
-                    req->input.hw.rawinput.mouse.y = rawinput->data.mouse.lLastY;
-                    req->input.hw.rawinput.mouse.data = rawinput->data.mouse.ulRawButtons;
-                    req->input.hw.lparam = rawinput->data.mouse.usFlags;
-                    break;
                 case RIM_TYPEHID:
-                    req->input.hw.rawinput.hid.device = HandleToUlong( rawinput->header.hDevice );
-                    req->input.hw.rawinput.hid.param = rawinput->header.wParam;
-                    req->input.hw.rawinput.hid.usage_page = hid_usage_page;
-                    req->input.hw.rawinput.hid.usage = hid_usage;
-                    req->input.hw.rawinput.hid.count = rawinput->data.hid.dwCount;
-                    req->input.hw.rawinput.hid.length = rawinput->data.hid.dwSizeHid;
+                    req->input.hw.wparam = rawinput->header.wParam;
+                    req->input.hw.hid.device = HandleToUlong( rawinput->header.hDevice );
+                    req->input.hw.hid.usage = MAKELONG(hid_usage, hid_usage_page);
+                    req->input.hw.hid.count = rawinput->data.hid.dwCount;
+                    req->input.hw.hid.length = rawinput->data.hid.dwSizeHid;
                     wine_server_add_data( req, rawinput->data.hid.bRawData,
                                           rawinput->data.hid.dwCount * rawinput->data.hid.dwSizeHid );
                     break;

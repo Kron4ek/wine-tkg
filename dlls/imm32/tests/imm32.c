@@ -557,6 +557,7 @@ static void ok_seq_( const char *file, int line, const struct ime_call *expected
 }
 
 static BOOL check_WM_SHOWWINDOW;
+static BOOL ignore_IME_NOTIFY;
 static BOOL ignore_WM_IME_NOTIFY;
 static BOOL ignore_WM_IME_REQUEST;
 
@@ -3581,7 +3582,7 @@ static BOOL WINAPI ime_NotifyIME( HIMC himc, DWORD action, DWORD index, DWORD va
         .func = IME_NOTIFY, .notify = {.action = action, .index = index, .value = value}
     };
     ime_trace( "himc %p, action %#lx, index %lu, value %lu\n", himc, action, index, value );
-    ime_calls[ime_call_count++] = call;
+    if (!ignore_IME_NOTIFY) ime_calls[ime_call_count++] = call;
     return FALSE;
 }
 
@@ -7091,11 +7092,11 @@ static void test_ImmTranslateMessage( BOOL kbd_char_first )
     {
         {
             .hkl = expect_ime, .himc = 0/*himc*/, .func = IME_PROCESS_KEY,
-            .process_key = {.vkey = 'Q', .lparam = MAKELONG(1, 0x10)},
+            .process_key = {.vkey = VK_RETURN, .lparam = MAKELONG(1, 0x1c)},
         },
         {
             .hkl = expect_ime, .himc = 0/*himc*/, .func = IME_TO_ASCII_EX,
-            .to_ascii_ex = {.vkey = kbd_char_first ? MAKELONG('Q', 'q') : 'Q', .vsc = 0x10},
+            .to_ascii_ex = {.vkey = kbd_char_first ? MAKELONG(VK_RETURN, VK_RETURN) : VK_RETURN, .vsc = 0x1c},
         },
         {0},
     };
@@ -7103,11 +7104,11 @@ static void test_ImmTranslateMessage( BOOL kbd_char_first )
     {
         {
             .hkl = expect_ime, .himc = 0/*himc*/, .func = IME_PROCESS_KEY,
-            .process_key = {.vkey = 'Q', .lparam = MAKELONG(1, 0xc010)},
+            .process_key = {.vkey = VK_RETURN, .lparam = MAKELONG(1, 0xc01c)},
         },
         {
             .hkl = expect_ime, .himc = 0/*himc*/, .func = IME_TO_ASCII_EX,
-            .to_ascii_ex = {.vkey = 'Q', .vsc = 0xc010},
+            .to_ascii_ex = {.vkey = VK_RETURN, .vsc = 0xc01c},
         },
         {0},
     };
@@ -7237,18 +7238,20 @@ static void test_ImmTranslateMessage( BOOL kbd_char_first )
 
 
     ignore_WM_IME_NOTIFY = TRUE;
+    ignore_IME_NOTIFY = TRUE;
 
-    keybd_event( 'Q', 0x10, 0, 0 );
+    keybd_event( VK_RETURN, 0x1c, 0, 0 );
     flush_events();
     process_messages_( hwnd );
     ok_seq( key_down_seq );
 
-    keybd_event( 'Q', 0x10, KEYEVENTF_KEYUP, 0 );
+    keybd_event( VK_RETURN, 0x1c, KEYEVENTF_KEYUP, 0 );
     flush_events();
     process_messages_( hwnd );
     ok_seq( key_up_seq );
 
     ignore_WM_IME_NOTIFY = FALSE;
+    ignore_IME_NOTIFY = FALSE;
 
 
     ok_ret( 1, ImmUnlockIMC( himc ) );
@@ -7497,6 +7500,9 @@ static void test_ga_na_da(void)
     ok( !!hwnd, "CreateWindowW failed, error %lu\n", GetLastError() );
     flush_events();
 
+    ignore_WM_IME_NOTIFY = TRUE;
+    ignore_IME_NOTIFY = TRUE;
+
     himc = ImmCreateContext();
     ok_ne( NULL, himc, HIMC, "%p" );
     ctx = ImmLockIMC( himc );
@@ -7504,6 +7510,15 @@ static void test_ga_na_da(void)
     ok_eq( default_himc, ImmAssociateContext( hwnd, himc ), HIMC, "%p" );
     ok_ret( 1, ImmSetOpenStatus( himc, TRUE ) );
     ok_ret( 1, ImmSetConversionStatus( himc, IME_CMODE_FULLSHAPE | IME_CMODE_NATIVE, IME_SMODE_PHRASEPREDICT ) );
+    flush_events();
+
+    keybd_event( 'R', 0x13, 0, 0 );
+    flush_events();
+    keybd_event( 'R', 0x13, KEYEVENTF_KEYUP, 0 );
+
+    keybd_event( VK_RETURN, 0x1c, 0, 0 );
+    flush_events();
+    keybd_event( VK_RETURN, 0x1c, KEYEVENTF_KEYUP, 0 );
     flush_events();
     memset( ime_calls, 0, sizeof(ime_calls) );
     ime_call_count = 0;
@@ -7605,8 +7620,6 @@ static void test_ga_na_da(void)
     todo_wine ok_seq( partial_return_seq );
 
 
-    ignore_WM_IME_NOTIFY = TRUE;
-
     /* cancelling clears the composition string */
 
     keybd_event( 'R', 0x13, 0, 0 );
@@ -7680,6 +7693,7 @@ static void test_ga_na_da(void)
     todo_wine ok_seq( closed_seq );
 
     ignore_WM_IME_NOTIFY = FALSE;
+    ignore_IME_NOTIFY = FALSE;
 
 
 
@@ -7849,6 +7863,7 @@ static void test_nihongo_no(void)
     for (i = 0; i < ARRAY_SIZE(closed_seq); i++) closed_seq[i].himc = himc;
     ignore_WM_IME_REQUEST = TRUE;
     ignore_WM_IME_NOTIFY = TRUE;
+    ignore_IME_NOTIFY = TRUE;
 
 
     keybd_event( 'N', 0x31, 0, 0 );
@@ -7900,6 +7915,7 @@ static void test_nihongo_no(void)
 
     ignore_WM_IME_REQUEST = FALSE;
     ignore_WM_IME_NOTIFY = FALSE;
+    ignore_IME_NOTIFY = FALSE;
 
     /* Japanese IME doesn't take input from ImmProcessKey */
 
@@ -7916,6 +7932,7 @@ static void test_nihongo_no(void)
 
     ignore_WM_IME_REQUEST = TRUE;
     ignore_WM_IME_NOTIFY = TRUE;
+    ignore_IME_NOTIFY = TRUE;
 
 
     /* cancelling clears the composition string */
@@ -7992,6 +8009,7 @@ static void test_nihongo_no(void)
 
     ignore_WM_IME_REQUEST = FALSE;
     ignore_WM_IME_NOTIFY = FALSE;
+    ignore_IME_NOTIFY = FALSE;
 
 
     ok_ret( 1, ImmSetConversionStatus( himc, 0, IME_SMODE_PHRASEPREDICT ) );
@@ -8023,6 +8041,12 @@ START_TEST(imm32)
     test_com_initialization();
 
     test_ImmEnumInputContext();
+
+    /* run these before installing the custom IME, sometimes it takes a moment
+     * to uninstall and the default IME doesn't activate immediately
+     */
+    test_ga_na_da();
+    test_nihongo_no();
 
     test_ImmInstallIME();
     wineime_hkl = ime_install();
@@ -8074,9 +8098,6 @@ START_TEST(imm32)
     test_ImmTranslateMessage( TRUE );
 
     if (wineime_hkl) ime_cleanup( wineime_hkl, TRUE );
-
-    test_ga_na_da();
-    test_nihongo_no();
 
     if (init())
     {

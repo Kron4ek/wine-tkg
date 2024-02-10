@@ -134,6 +134,7 @@ static const struct column col_directory[] =
 };
 static const struct column col_diskdrive[] =
 {
+    { L"Caption",       CIM_STRING },
     { L"DeviceId",      CIM_STRING|COL_FLAG_DYNAMIC|COL_FLAG_KEY },
     { L"Index",         CIM_UINT32 },
     { L"InterfaceType", CIM_STRING },
@@ -300,6 +301,8 @@ static const struct column col_physicalmemory[] =
 };
 static const struct column col_pnpentity[] =
 {
+    { L"Caption",              CIM_STRING },
+    { L"ClassGuid",            CIM_STRING|COL_FLAG_DYNAMIC },
     { L"DeviceId",             CIM_STRING|COL_FLAG_DYNAMIC },
     { L"Manufacturer",         CIM_STRING },
     { L"Name",                 CIM_STRING },
@@ -587,6 +590,7 @@ struct record_directory
 };
 struct record_diskdrive
 {
+    const WCHAR *caption;
     const WCHAR *device_id;
     UINT32       index;
     const WCHAR *interfacetype;
@@ -753,6 +757,8 @@ struct record_physicalmemory
 };
 struct record_pnpentity
 {
+    const WCHAR *caption;
+    const WCHAR *class_guid;
     const WCHAR *device_id;
     const WCHAR *manufacturer;
     const WCHAR *name;
@@ -2340,6 +2346,7 @@ static enum fill_status fill_diskdrive( struct table *table, const struct expr *
             if (!resize_table( table, row + 1, sizeof(*rec) )) return FILL_STATUS_FAILED;
 
             rec = (struct record_diskdrive *)(table->data + offset);
+            rec->caption       = L"Wine Disk Drive";
             swprintf( device_id, ARRAY_SIZE( device_id ), fmtW, index );
             rec->device_id     = wcsdup( device_id );
             rec->index         = index++;
@@ -3174,10 +3181,13 @@ static enum fill_status fill_pnpentity( struct table *table, const struct expr *
     idx = 0;
     while (SetupDiEnumDeviceInfo( device_info_set, idx++, &devinfo ))
     {
-        WCHAR device_id[MAX_PATH];
+        WCHAR device_id[MAX_PATH], guid[GUID_SIZE];
         if (SetupDiGetDeviceInstanceIdW( device_info_set, &devinfo, device_id,
                     ARRAY_SIZE(device_id), NULL ))
         {
+            StringFromGUID2( &devinfo.ClassGuid, guid, ARRAY_SIZE(guid) );
+            rec->caption = L"Wine PnP Device";
+            rec->class_guid = wcsdup( wcslwr(guid) );
             rec->device_id = wcsdup( device_id );
             rec->manufacturer = L"The Wine Project";
             rec->name = L"Wine PnP Device";

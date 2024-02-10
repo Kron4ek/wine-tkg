@@ -37,6 +37,7 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "wingdi.h"
 #include "wine/wgl.h"
 #include "wine/glu.h"
 
@@ -3447,11 +3448,15 @@ GLint WINAPI gluScaleImage( GLenum format, GLint widthin, GLint heightin, GLenum
 	return GLU_INVALID_ENUM;
     }
     if (!isLegalFormatForPackedPixelType(format, typein)) {
-       return GLU_INVALID_OPERATION;
+       return GLU_INVALID_ENUM;
     }
     if (!isLegalFormatForPackedPixelType(format, typeout)) {
-       return GLU_INVALID_OPERATION;
+       return GLU_INVALID_ENUM;
     }
+    if (!wglGetCurrentContext()) {
+       return GL_OUT_OF_MEMORY; /* windows returns this if no gl context (not glu error) */
+    }
+
     beforeImage =
 	HeapAlloc(GetProcessHeap(), 0, image_size(widthin, heightin, format, GL_UNSIGNED_SHORT));
     afterImage =

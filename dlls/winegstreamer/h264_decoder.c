@@ -89,6 +89,7 @@ static HRESULT try_create_wg_transform(struct h264_decoder *decoder)
     {
         .output_plane_align = 15,
         .input_queue_length = 15,
+        .allow_size_change = TRUE,
     };
     struct wg_format input_format;
     struct wg_format output_format;
@@ -105,14 +106,6 @@ static HRESULT try_create_wg_transform(struct h264_decoder *decoder)
     mf_media_type_to_wg_format(decoder->output_type, &output_format);
     if (output_format.major_type == WG_MAJOR_TYPE_UNKNOWN)
         return MF_E_INVALIDMEDIATYPE;
-
-    /* Don't force any specific size, H264 streams already have the metadata for it
-     * and will generate a MF_E_TRANSFORM_STREAM_CHANGE result later.
-     */
-    output_format.u.video.width = 0;
-    output_format.u.video.height = 0;
-    output_format.u.video.fps_d = 0;
-    output_format.u.video.fps_n = 0;
 
     if (SUCCEEDED(IMFAttributes_GetUINT32(decoder->attributes, &MF_LOW_LATENCY, &low_latency)))
         attrs.low_latency = !!low_latency;
@@ -547,14 +540,6 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
         struct wg_format output_format;
         mf_media_type_to_wg_format(decoder->output_type, &output_format);
 
-        /* Don't force any specific size, H264 streams already have the metadata for it
-         * and will generate a MF_E_TRANSFORM_STREAM_CHANGE result later.
-         */
-        output_format.u.video.width = 0;
-        output_format.u.video.height = 0;
-        output_format.u.video.fps_d = 0;
-        output_format.u.video.fps_n = 0;
-
         if (output_format.major_type == WG_MAJOR_TYPE_UNKNOWN
                 || !wg_transform_set_output_format(decoder->wg_transform, &output_format))
         {
@@ -574,8 +559,18 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
 
 static HRESULT WINAPI transform_GetInputCurrentType(IMFTransform *iface, DWORD id, IMFMediaType **type)
 {
-    FIXME("iface %p, id %#lx, type %p stub!\n", iface, id, type);
-    return E_NOTIMPL;
+    struct h264_decoder *decoder = impl_from_IMFTransform(iface);
+    HRESULT hr;
+
+    TRACE("iface %p, id %#lx, type %p\n", iface, id, type);
+
+    if (!decoder->input_type)
+        return MF_E_TRANSFORM_TYPE_NOT_SET;
+
+    if (FAILED(hr = MFCreateMediaType(type)))
+        return hr;
+
+    return IMFMediaType_CopyAllItems(decoder->input_type, (IMFAttributes *)*type);
 }
 
 static HRESULT WINAPI transform_GetOutputCurrentType(IMFTransform *iface, DWORD id, IMFMediaType **type)
@@ -583,7 +578,7 @@ static HRESULT WINAPI transform_GetOutputCurrentType(IMFTransform *iface, DWORD 
     struct h264_decoder *decoder = impl_from_IMFTransform(iface);
     HRESULT hr;
 
-    FIXME("iface %p, id %#lx, type %p stub!\n", iface, id, type);
+    TRACE("iface %p, id %#lx, type %p\n", iface, id, type);
 
     if (!decoder->output_type)
         return MF_E_TRANSFORM_TYPE_NOT_SET;

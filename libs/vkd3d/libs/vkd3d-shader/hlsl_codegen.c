@@ -4123,13 +4123,46 @@ static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_ir_functi
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
-        if (var->is_uniform && var->last_read)
+        unsigned int reg_size = var->data_type->reg_size[HLSL_REGSET_NUMERIC];
+
+        if (!var->is_uniform || !var->last_read || reg_size == 0)
+            continue;
+
+        if (var->reg_reservation.reg_type == 'c')
         {
-            unsigned int reg_size = var->data_type->reg_size[HLSL_REGSET_NUMERIC];
+            unsigned int reg_idx = var->reg_reservation.reg_index;
+            unsigned int i;
 
-            if (reg_size == 0)
-                continue;
+            assert(reg_size % 4 == 0);
+            for (i = 0; i < reg_size / 4; ++i)
+            {
+                if (get_available_writemask(&allocator, 1, UINT_MAX, reg_idx + i) != VKD3DSP_WRITEMASK_ALL)
+                {
+                    hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                            "Overlapping register() reservations on 'c%u'.", reg_idx + i);
+                }
 
+                record_allocation(ctx, &allocator, reg_idx + i, VKD3DSP_WRITEMASK_ALL, 1, UINT_MAX);
+            }
+
+            var->regs[HLSL_REGSET_NUMERIC].id = reg_idx;
+            var->regs[HLSL_REGSET_NUMERIC].allocation_size = reg_size / 4;
+            var->regs[HLSL_REGSET_NUMERIC].writemask = VKD3DSP_WRITEMASK_ALL;
+            var->regs[HLSL_REGSET_NUMERIC].allocated = true;
+            TRACE("Allocated reserved %s to %s.\n", var->name,
+                    debug_register('c', var->regs[HLSL_REGSET_NUMERIC], var->data_type));
+        }
+    }
+
+    LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+    {
+        unsigned int reg_size = var->data_type->reg_size[HLSL_REGSET_NUMERIC];
+
+        if (!var->is_uniform || !var->last_read || reg_size == 0)
+            continue;
+
+        if (!var->regs[HLSL_REGSET_NUMERIC].allocated)
+        {
             var->regs[HLSL_REGSET_NUMERIC] = allocate_numeric_registers_for_type(ctx, &allocator,
                     1, UINT_MAX, var->data_type);
             TRACE("Allocated %s to %s.\n", var->name,
@@ -4269,45 +4302,52 @@ static const struct hlsl_buffer *get_reserved_buffer(struct hlsl_ctx *ctx, uint3
     return NULL;
 }
 
-static void calculate_buffer_offset(struct hlsl_ctx *ctx, struct hlsl_ir_var *var)
+static void calculate_buffer_offset(struct hlsl_ctx *ctx, struct hlsl_ir_var *var, bool register_reservation)
 {
     unsigned int var_reg_size = var->data_type->reg_size[HLSL_REGSET_NUMERIC];
     enum hlsl_type_class var_class = var->data_type->class;
     struct hlsl_buffer *buffer = var->buffer;
 
-    if (var->reg_reservation.offset_type == 'c')
+    if (register_reservation)
     {
-        if (var->reg_reservation.offset_index % 4)
-        {
-            if (var_class == HLSL_CLASS_MATRIX)
-            {
-                hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
-                        "packoffset() reservations with matrix types must be aligned with the beginning of a register.");
-            }
-            else if (var_class == HLSL_CLASS_ARRAY)
-            {
-                hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
-                        "packoffset() reservations with array types must be aligned with the beginning of a register.");
-            }
-            else if (var_class == HLSL_CLASS_STRUCT)
-            {
-                hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
-                        "packoffset() reservations with struct types must be aligned with the beginning of a register.");
-            }
-            else if (var_class == HLSL_CLASS_VECTOR)
-            {
-                unsigned int aligned_offset = hlsl_type_get_sm4_offset(var->data_type, var->reg_reservation.offset_index);
-
-                if (var->reg_reservation.offset_index != aligned_offset)
-                    hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
-                            "packoffset() reservations with vector types cannot span multiple registers.");
-            }
-        }
-        var->buffer_offset = var->reg_reservation.offset_index;
+        var->buffer_offset = 4 * var->reg_reservation.reg_index;
     }
     else
     {
-        var->buffer_offset = hlsl_type_get_sm4_offset(var->data_type, buffer->size);
+        if (var->reg_reservation.offset_type == 'c')
+        {
+            if (var->reg_reservation.offset_index % 4)
+            {
+                if (var_class == HLSL_CLASS_MATRIX)
+                {
+                    hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                            "packoffset() reservations with matrix types must be aligned with the beginning of a register.");
+                }
+                else if (var_class == HLSL_CLASS_ARRAY)
+                {
+                    hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                            "packoffset() reservations with array types must be aligned with the beginning of a register.");
+                }
+                else if (var_class == HLSL_CLASS_STRUCT)
+                {
+                    hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                            "packoffset() reservations with struct types must be aligned with the beginning of a register.");
+                }
+                else if (var_class == HLSL_CLASS_VECTOR)
+                {
+                    unsigned int aligned_offset = hlsl_type_get_sm4_offset(var->data_type, var->reg_reservation.offset_index);
+
+                    if (var->reg_reservation.offset_index != aligned_offset)
+                        hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                                "packoffset() reservations with vector types cannot span multiple registers.");
+                }
+            }
+            var->buffer_offset = var->reg_reservation.offset_index;
+        }
+        else
+        {
+            var->buffer_offset = hlsl_type_get_sm4_offset(var->data_type, buffer->size);
+        }
     }
 
     TRACE("Allocated buffer offset %u to %s.\n", var->buffer_offset, var->name);
@@ -4376,6 +4416,11 @@ static void validate_buffer_offsets(struct hlsl_ctx *ctx)
     }
 }
 
+static bool var_has_buffer_offset_register_reservation(struct hlsl_ctx *ctx, const struct hlsl_ir_var *var)
+{
+    return var->reg_reservation.reg_type == 'c' && var->buffer == ctx->globals_buffer;
+}
+
 static void allocate_buffers(struct hlsl_ctx *ctx)
 {
     struct hlsl_buffer *buffer;
@@ -4384,13 +4429,29 @@ static void allocate_buffers(struct hlsl_ctx *ctx)
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
-        if (var->is_uniform && !hlsl_type_is_resource(var->data_type))
-        {
-            if (var->is_param)
-                var->buffer = ctx->params_buffer;
+        if (!var->is_uniform || hlsl_type_is_resource(var->data_type))
+            continue;
 
-            calculate_buffer_offset(ctx, var);
-        }
+        if (var->is_param)
+            var->buffer = ctx->params_buffer;
+    }
+
+    LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+    {
+        if (!var->is_uniform || hlsl_type_is_resource(var->data_type))
+            continue;
+
+        if (var_has_buffer_offset_register_reservation(ctx, var))
+            calculate_buffer_offset(ctx, var, true);
+    }
+
+    LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+    {
+        if (!var->is_uniform || hlsl_type_is_resource(var->data_type))
+            continue;
+
+        if (!var_has_buffer_offset_register_reservation(ctx, var))
+            calculate_buffer_offset(ctx, var, false);
     }
 
     validate_buffer_offsets(ctx);

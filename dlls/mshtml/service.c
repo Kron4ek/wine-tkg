@@ -29,6 +29,7 @@
 #include "wine/debug.h"
 
 #include "mshtml_private.h"
+#include "htmlscript.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
@@ -360,6 +361,26 @@ static HRESULT WINAPI DocNodeServiceProvider_QueryService(IServiceProvider *ifac
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IServiceProvider(iface);
 
+    if(IsEqualGUID(&IID_IActiveScriptSite, guidService)) {
+        IActiveScriptSite *site;
+
+        TRACE("IID_IActiveScriptSite\n");
+
+        if(!This->window) {
+            FIXME("No window\n");
+            return E_NOTIMPL;
+        }
+
+        if(!(site = get_first_script_site(This->window)))
+            return E_OUTOFMEMORY;
+        return IActiveScriptSite_QueryInterface(site, riid, ppv);
+    }
+
+    if(IsEqualGUID(&SID_SInternetHostSecurityManager, guidService)) {
+        TRACE("SID_SInternetHostSecurityManager\n");
+        return IInternetHostSecurityManager_QueryInterface(&This->IInternetHostSecurityManager_iface, riid, ppv);
+    }
+
     if(IsEqualGUID(&SID_SContainerDispatch, guidService)) {
         TRACE("SID_SContainerDispatch\n");
         return IHTMLDocument2_QueryInterface(&This->IHTMLDocument2_iface, riid, ppv);
@@ -418,6 +439,11 @@ static HRESULT WINAPI DocObjServiceProvider_QueryService(IServiceProvider *iface
             return E_OUTOFMEMORY;
 
         return IOleUndoManager_QueryInterface(This->undomgr, riid, ppv);
+    }
+
+    if(IsEqualGUID(&SID_SInternetHostSecurityManager, guidService)) {
+        TRACE("SID_SInternetHostSecurityManager\n");
+        return IInternetHostSecurityManager_QueryInterface(&This->doc_node->IInternetHostSecurityManager_iface, riid, ppv);
     }
 
     if(IsEqualGUID(&SID_SContainerDispatch, guidService)) {

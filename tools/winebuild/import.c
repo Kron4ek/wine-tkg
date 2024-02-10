@@ -778,19 +778,9 @@ static void output_import_thunk( const char *name, const char *table, int pos )
         output( "\tjmpq *%s+%d(%%rip)\n", table, pos );
         break;
     case CPU_ARM:
-        if (UsePIC)
-        {
-            output( "\tldr ip, 2f\n");
-            output( "1:\tadd ip, pc\n" );
-            output( "\tldr pc, [ip]\n");
-            output( "2:\t.long %s+%u-1b-%u\n", table, pos, thumb_mode ? 4 : 8 );
-        }
-        else
-        {
-            output( "\tldr ip, 1f\n");
-            output( "\tldr pc, [ip]\n");
-            output( "1:\t.long %s+%u\n", table, pos );
-        }
+        output( "\tldr ip, 1f\n");
+        output( "\tldr pc, [ip]\n");
+        output( "1:\t.long %s+%u\n", table, pos );
         break;
     case CPU_ARM64:
         output( "\tadrp x16, %s\n", arm64_page( table ) );
@@ -1088,39 +1078,7 @@ static void output_delayed_import_thunks( const DLLSPEC *spec )
             output( "\tjmp *%%rax\n" );
             break;
         case CPU_ARM:
-            output( "\tpush {r0-r3,FP,LR}\n" );
-            output( "\tmov r1,IP\n" );
-            output( "\tldr r0, 1f\n");
-            if (UsePIC) output( "2:\tadd r0, pc\n" );
-            output( "\tbl %s\n", asm_name("__delayLoadHelper2") );
-            output( "\tmov IP,r0\n");
-            output( "\tpop {r0-r3,FP,LR}\n" );
-            output( "\tbx IP\n");
-            if (UsePIC)
-                output( "1:\t.long .L__wine_spec_delay_imports+%u-2b-%u\n", pos, thumb_mode ? 4 : 8 );
-            else
-                output( "1:\t.long .L__wine_spec_delay_imports+%u\n", pos );
-            break;
         case CPU_ARM64:
-            output( "\tstp x29, x30, [sp,#-80]!\n" );
-            output( "\tmov x29, sp\n" );
-            output( "\tstp x0, x1, [sp,#16]\n" );
-            output( "\tstp x2, x3, [sp,#32]\n" );
-            output( "\tstp x4, x5, [sp,#48]\n" );
-            output( "\tstp x6, x7, [sp,#64]\n" );
-            output( "\tmov x1, x16\n" );
-            output( "\tadrp x0, %s\n", arm64_page(".L__wine_spec_delay_imports") );
-            output( "\tadd x0, x0, #%s\n", arm64_pageoff(".L__wine_spec_delay_imports") );
-            if (pos) output( "\tadd x0, x0, #%u\n", pos );
-            output( "\tbl %s\n", asm_name("__delayLoadHelper2") );
-            output( "\tmov x16, x0\n" );
-            output( "\tldp x0, x1, [sp,#16]\n" );
-            output( "\tldp x2, x3, [sp,#32]\n" );
-            output( "\tldp x4, x5, [sp,#48]\n" );
-            output( "\tldp x6, x7, [sp,#64]\n" );
-            output( "\tldp x29, x30, [sp],#80\n" );
-            output( "\tbr x16\n" );
-            break;
         case CPU_ARM64EC:
             assert( 0 );
             break;
@@ -1134,7 +1092,6 @@ static void output_delayed_import_thunks( const DLLSPEC *spec )
             struct import_func *func = &import->imports[j];
             const char *name = func->name ? func->name : func->export_name;
 
-            if (thumb_mode) output( "\t.thumb_func\n" );
             output( "__wine_delay_imp_%s_%s:\n", import->c_name, name );
             switch (target.cpu)
             {
@@ -1153,26 +1110,7 @@ static void output_delayed_import_thunks( const DLLSPEC *spec )
                 output( "\tjmp %s\n", asm_name(module_func) );
                 break;
             case CPU_ARM:
-                if (UsePIC)
-                {
-                    output( "\tldr ip, 2f\n");
-                    output( "1:\tadd ip, pc\n" );
-                    output( "\tb %s\n", asm_name(module_func) );
-                    output( "2:\t.long .L__wine_delay_IAT+%u-1b-%u\n", iat_pos, thumb_mode ? 4 : 8 );
-                }
-                else
-                {
-                    output( "\tldr ip, 1f\n");
-                    output( "\tb %s\n", asm_name(module_func) );
-                    output( "1:\t.long .L__wine_delay_IAT+%u\n", iat_pos );
-                }
-                break;
             case CPU_ARM64:
-                output( "\tadrp x16, %s\n", arm64_page(".L__wine_delay_IAT") );
-                output( "\tadd x16, x16, #%s\n", arm64_pageoff(".L__wine_delay_IAT") );
-                if (iat_pos) output( "\tadd x16, x16, #%u\n", iat_pos );
-                output( "\tb %s\n", asm_name(module_func) );
-                break;
             case CPU_ARM64EC:
                 assert( 0 );
                 break;
@@ -1318,34 +1256,23 @@ void output_stubs( DLLSPEC *spec )
             output_seh( ".seh_endproc" );
             break;
         case CPU_ARM:
-            if (UsePIC)
+            output( "\t.seh_proc %s\n", asm_name(name) );
+            output( "\t.seh_endprologue\n" );
+            output( "\tmovw r0,:lower16:.L__wine_spec_file_name\n");
+            output( "\tmovt r0,:upper16:.L__wine_spec_file_name\n");
+            if (exp_name)
             {
-                output( "\tldr r0,3f\n");
-                output( "1:\tadd r0,PC\n");
-                output( "\tldr r1,3f+4\n");
-                if (exp_name) output( "2:\tadd r1,PC\n");
-                output( "\tbl %s\n", asm_name("__wine_spec_unimplemented_stub") );
-                output( "3:\t.long .L__wine_spec_file_name-1b-%u\n", thumb_mode ? 4 : 8 );
-                if (exp_name) output( "\t.long .L%s_string-2b-%u\n", name, thumb_mode ? 4 : 8 );
-                else output( "\t.long %u\n", odp->ordinal );
+                output( "\tmovw r1,:lower16:.L%s_string\n", name );
+                output( "\tmovt r1,:upper16:.L%s_string\n", name );
             }
-            else
-            {
-                output( "\tmovw r0,:lower16:.L__wine_spec_file_name\n");
-                output( "\tmovt r0,:upper16:.L__wine_spec_file_name\n");
-                if (exp_name)
-                {
-                    output( "\tmovw r1,:lower16:.L%s_string\n", name );
-                    output( "\tmovt r1,:upper16:.L%s_string\n", name );
-                }
-                else output( "\tmov r1,#%u\n", odp->ordinal );
-                output( "\tbl %s\n", asm_name("__wine_spec_unimplemented_stub") );
-            }
+            else output( "\tmov r1,#%u\n", odp->ordinal );
+            output( "\tb %s\n", asm_name("__wine_spec_unimplemented_stub") );
+            output( "\t.seh_endproc\n" );
             break;
         case CPU_ARM64:
         case CPU_ARM64EC:
-            output_seh( ".seh_proc %s", arm64_name(name) );
-            output_seh( ".seh_endprologue" );
+            output( "\t.seh_proc %s\n", arm64_name(name) );
+            output( "\t.seh_endprologue\n" );
             output( "\tadrp x0, %s\n", arm64_page(".L__wine_spec_file_name") );
             output( "\tadd x0, x0, #%s\n", arm64_pageoff(".L__wine_spec_file_name") );
             if (exp_name)
@@ -1358,7 +1285,7 @@ void output_stubs( DLLSPEC *spec )
             else
                 output( "\tmov x1, %u\n", odp->ordinal );
             output( "\tb %s\n", arm64_name("__wine_spec_unimplemented_stub") );
-            output_seh( ".seh_endproc" );
+            output( "\t.seh_endproc\n" );
             break;
         }
         output_function_size( name );
@@ -1577,7 +1504,10 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struc
             output_seh( ".seh_endproc" );
             break;
         case CPU_ARM:
+            output( "\t.seh_proc %s\n", asm_name( delay_load ) );
             output( "\tpush {r0-r3, FP, LR}\n" );
+            output( "\t.seh_save_regs {r0-r3,fp,lr}\n" );
+            output( "\t.seh_endprologue\n" );
             output( "\tmov r1, IP\n" );
             output( "\tldr r0, 1f\n" );
             output( "\tldr r0, [r0]\n" );
@@ -1586,14 +1516,15 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struc
             output( "\tpop {r0-r3, FP, LR}\n" );
             output( "\tbx IP\n" );
             output( "1:\t.long %s\n", asm_name( import_desc ) );
+            output( "\t.seh_endproc\n" );
             break;
         case CPU_ARM64:
-            output_seh( ".seh_proc %s", asm_name( delay_load ) );
+            output( "\t.seh_proc %s\n", asm_name( delay_load ) );
             output( "\tstp x29, x30, [sp, #-80]!\n" );
-            output_seh( ".seh_save_fplr_x 80" );
+            output( "\t.seh_save_fplr_x 80\n" );
             output( "\tmov x29, sp\n" );
-            output_seh( ".seh_set_fp" );
-            output_seh( ".seh_endprologue" );
+            output( "\t.seh_set_fp\n" );
+            output( "\t.seh_endprologue\n" );
             output( "\tstp x0, x1, [sp, #16]\n" );
             output( "\tstp x2, x3, [sp, #32]\n" );
             output( "\tstp x4, x5, [sp, #48]\n" );
@@ -1609,7 +1540,7 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struc
             output( "\tldp x6, x7, [sp, #64]\n" );
             output( "\tldp x29, x30, [sp], #80\n" );
             output( "\tbr x16\n" );
-            output_seh( ".seh_endproc" );
+            output( "\t.seh_endproc\n" );
             break;
         case CPU_ARM64EC:
             assert( 0 );

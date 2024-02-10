@@ -524,7 +524,8 @@ char *get_alternate_wineloader( WORD machine )
 
     if (machine == current_machine) return NULL;
 
-    if (machine == IMAGE_FILE_MACHINE_AMD64)  /* try the 64-bit loader */
+    /* try the 64-bit loader */
+    if (current_machine == IMAGE_FILE_MACHINE_I386 && machine == IMAGE_FILE_MACHINE_AMD64)
     {
         size_t len = strlen(wineloader);
 
@@ -1350,11 +1351,11 @@ done:
  * Return STATUS_IMAGE_ALREADY_LOADED if we should keep the native one that we have found.
  */
 NTSTATUS load_builtin( const pe_image_info_t *image_info, WCHAR *filename, USHORT machine,
-                       void **module, SIZE_T *size, ULONG_PTR limit_low, ULONG_PTR limit_high )
+                       SECTION_IMAGE_INFORMATION *info, void **module, SIZE_T *size,
+                       ULONG_PTR limit_low, ULONG_PTR limit_high )
 {
     NTSTATUS status;
     UNICODE_STRING nt_name;
-    SECTION_IMAGE_INFORMATION info;
     enum loadorder loadorder;
 
     init_unicode_string( &nt_name, filename );
@@ -1380,10 +1381,10 @@ NTSTATUS load_builtin( const pe_image_info_t *image_info, WCHAR *filename, USHOR
     case LO_NATIVE_BUILTIN:
         return STATUS_IMAGE_ALREADY_LOADED;
     case LO_BUILTIN:
-        return find_builtin_dll( &nt_name, module, size, &info, limit_low, limit_high,
+        return find_builtin_dll( &nt_name, module, size, info, limit_low, limit_high,
                                  image_info->machine, machine, FALSE );
     default:
-        status = find_builtin_dll( &nt_name, module, size, &info, limit_low, limit_high,
+        status = find_builtin_dll( &nt_name, module, size, info, limit_low, limit_high,
                                    image_info->machine, machine, (loadorder == LO_DEFAULT) );
         if (status == STATUS_DLL_NOT_FOUND || status == STATUS_NOT_SUPPORTED)
             return STATUS_IMAGE_ALREADY_LOADED;
@@ -1658,24 +1659,23 @@ static void load_ntdll_wow64_functions( HMODULE module )
 
 
 /***********************************************************************
- *           redirect_arm64ec_ptr
+ *           redirect_arm64ec_rva
  *
- * Redirect a function pointer through the arm64ec redirection table.
+ * Redirect an address through the arm64ec redirection table.
  */
-static void *redirect_arm64ec_ptr( void *module, void *ptr,
-                                   const IMAGE_ARM64EC_REDIRECTION_ENTRY *map, ULONG map_count )
+ULONG_PTR redirect_arm64ec_rva( void *base, ULONG_PTR rva, const IMAGE_ARM64EC_METADATA *metadata )
 {
-    int min = 0, max = map_count - 1;
-    ULONG_PTR rva = (char *)ptr - (char *)module;
+    const IMAGE_ARM64EC_REDIRECTION_ENTRY *map = get_rva( base, metadata->RedirectionMetadata );
+    int min = 0, max = metadata->RedirectionMetadataCount - 1;
 
     while (min <= max)
     {
         int pos = (min + max) / 2;
-        if (map[pos].Source == rva) return get_rva( module, map[pos].Destination );
+        if (map[pos].Source == rva) return map[pos].Destination;
         if (map[pos].Source < rva) min = pos + 1;
         else max = pos - 1;
     }
-    return ptr;
+    return rva;
 }
 
 
@@ -1688,13 +1688,11 @@ static void redirect_ntdll_functions( HMODULE module )
 {
     const IMAGE_LOAD_CONFIG_DIRECTORY *loadcfg;
     const IMAGE_ARM64EC_METADATA *metadata;
-    const IMAGE_ARM64EC_REDIRECTION_ENTRY *map;
 
     if (!(loadcfg = get_module_data_dir( module, IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG, NULL ))) return;
     if (!(metadata = (void *)loadcfg->CHPEMetadataPointer)) return;
-    if (!(map = get_rva( module, metadata->RedirectionMetadata ))) return;
 #define REDIRECT(name) \
-        p##name = redirect_arm64ec_ptr( module, p##name, map, metadata->RedirectionMetadataCount )
+    p##name = get_rva( module, redirect_arm64ec_rva( module, (char *)p##name - (char *)module, metadata ))
     REDIRECT( DbgUiRemoteBreakin );
     REDIRECT( KiRaiseUserExceptionDispatcher );
     REDIRECT( KiUserExceptionDispatcher );
@@ -1714,6 +1712,7 @@ static void load_ntdll(void)
     static WCHAR path[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\',
                            's','y','s','t','e','m','3','2','\\','n','t','d','l','l','.','d','l','l',0};
     const char *pe_dir = get_pe_dir( current_machine );
+    USHORT machine = current_machine;
     unsigned int status;
     SECTION_IMAGE_INFORMATION info;
     OBJECT_ATTRIBUTES attr;
@@ -1727,7 +1726,9 @@ static void load_ntdll(void)
 
     if (build_dir) asprintf( &name, "%s%s/ntdll.dll", ntdll_dir, pe_dir );
     else asprintf( &name, "%s%s/ntdll.dll", dll_dir, pe_dir );
-    status = open_builtin_pe_file( name, &attr, &module, &size, &info, 0, 0, current_machine, FALSE );
+
+    if (is_arm64ec()) machine = main_image_info.Machine;
+    status = open_builtin_pe_file( name, &attr, &module, &size, &info, 0, 0, machine, FALSE );
     if (status == STATUS_DLL_NOT_FOUND)
     {
         free( name );

@@ -19,13 +19,12 @@
 #ifndef _CFGMGR32_H_
 #define _CFGMGR32_H_
 
-/* FIXME: #include <cfg.h> */
+#include <cfg.h>
+#include <devpropdef.h>
 
 #ifndef GUID_DEFINED
 # include <guiddef.h>
 #endif
-
-#include <winreg.h>
 
 /* cfgmgr32 doesn't use the normal convention, it adds an underscore before A/W */
 #ifdef WINE_NO_UNICODE_MACROS
@@ -192,23 +191,6 @@ typedef CHAR *DEVNODEID_A, *DEVINSTID_A;
 typedef WCHAR *DEVNODEID_W, *DEVINSTID_W;
 typedef ULONG REGDISPOSITION;
 
-typedef enum _PNP_VETO_TYPE
-{
-    PNP_VetoTypeUnknown,
-    PNP_VetoLegacyDevice,
-    PNP_VetoPendingClose,
-    PNP_VetoWindowsApp,
-    PNP_VetoWindowsService,
-    PNP_VetoOutstandingOpen,
-    PNP_VetoDevice,
-    PNP_VetoDriver,
-    PNP_VetoIllegalDeviceRequest,
-    PNP_VetoInsufficientPower,
-    PNP_VetoNonDisableable,
-    PNP_VetoLegacyDriver,
-    PNP_VetoInsufficientRights
-} PNP_VETO_TYPE, *PPNP_VETO_TYPE;
-
 typedef enum _CM_NOTIFY_FILTER_TYPE
 {
     CM_NOTIFY_FILTER_TYPE_DEVICEINTERFACE,
@@ -312,6 +294,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_ID_List_ExW(PCWSTR,PWCHAR,ULONG,ULONG,HMACH
 #define     CM_Get_Device_ID_List_Ex WINELIB_NAME_AW(CM_Get_Device_ID_List_Ex)
 CMAPI CONFIGRET WINAPI CM_Get_Device_ID_Size(PULONG,DEVINST,ULONG);
 CMAPI CONFIGRET WINAPI CM_Get_Device_ID_Size_Ex(PULONG,DEVINST,ULONG,HMACHINE);
+CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_PropertyW(LPCWSTR,const DEVPROPKEY*,DEVPROPTYPE*,PBYTE,PULONG,ULONG);
 CMAPI CONFIGRET WINAPI CM_Get_DevNode_Status(PULONG,PULONG,DEVINST,ULONG);
 CMAPI CONFIGRET WINAPI CM_Get_DevNode_Status_Ex(PULONG,PULONG,DEVINST,ULONG,HMACHINE);
 CMAPI CONFIGRET WINAPI CM_Get_Sibling(PDEVINST,DEVINST,ULONG);

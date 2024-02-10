@@ -30,8 +30,11 @@
 static const char * const shader_opcode_names[] =
 {
     [VKD3DSIH_ABS                             ] = "abs",
+    [VKD3DSIH_ACOS                            ] = "acos",
     [VKD3DSIH_ADD                             ] = "add",
     [VKD3DSIH_AND                             ] = "and",
+    [VKD3DSIH_ASIN                            ] = "asin",
+    [VKD3DSIH_ATAN                            ] = "atan",
     [VKD3DSIH_ATOMIC_AND                      ] = "atomic_and",
     [VKD3DSIH_ATOMIC_CMP_STORE                ] = "atomic_cmp_store",
     [VKD3DSIH_ATOMIC_IADD                     ] = "atomic_iadd",
@@ -168,10 +171,13 @@ static const char * const shader_opcode_names[] =
     [VKD3DSIH_GATHER4_S                       ] = "gather4_s",
     [VKD3DSIH_GEO                             ] = "ge",
     [VKD3DSIH_GEU                             ] = "ge_unord",
+    [VKD3DSIH_HCOS                            ] = "hcos",
     [VKD3DSIH_HS_CONTROL_POINT_PHASE          ] = "hs_control_point_phase",
     [VKD3DSIH_HS_DECLS                        ] = "hs_decls",
     [VKD3DSIH_HS_FORK_PHASE                   ] = "hs_fork_phase",
     [VKD3DSIH_HS_JOIN_PHASE                   ] = "hs_join_phase",
+    [VKD3DSIH_HSIN                            ] = "hsin",
+    [VKD3DSIH_HTAN                            ] = "htan",
     [VKD3DSIH_IADD                            ] = "iadd",
     [VKD3DSIH_IBFE                            ] = "ibfe",
     [VKD3DSIH_IDIV                            ] = "idiv",
@@ -1389,7 +1395,7 @@ static void shader_dump_dst_param(struct vkd3d_d3d_asm_compiler *compiler,
     {
         static const char write_mask_chars[] = "xyzw";
 
-        if (param->reg.data_type == VKD3D_DATA_DOUBLE)
+        if (data_type_is_64_bit(param->reg.data_type))
             write_mask = vsir_write_mask_32_from_64(write_mask);
 
         shader_addline(buffer, ".%s", compiler->colours.write_mask);
@@ -1454,12 +1460,17 @@ static void shader_dump_src_param(struct vkd3d_d3d_asm_compiler *compiler,
     if (param->reg.type != VKD3DSPR_IMMCONST && param->reg.type != VKD3DSPR_IMMCONST64
             && param->reg.dimension == VSIR_DIMENSION_VEC4)
     {
-        unsigned int swizzle_x = vsir_swizzle_get_component(swizzle, 0);
-        unsigned int swizzle_y = vsir_swizzle_get_component(swizzle, 1);
-        unsigned int swizzle_z = vsir_swizzle_get_component(swizzle, 2);
-        unsigned int swizzle_w = vsir_swizzle_get_component(swizzle, 3);
-
         static const char swizzle_chars[] = "xyzw";
+
+        unsigned int swizzle_x, swizzle_y, swizzle_z, swizzle_w;
+
+        if (data_type_is_64_bit(param->reg.data_type))
+            swizzle = vsir_swizzle_32_from_64(swizzle);
+
+        swizzle_x = vsir_swizzle_get_component(swizzle, 0);
+        swizzle_y = vsir_swizzle_get_component(swizzle, 1);
+        swizzle_z = vsir_swizzle_get_component(swizzle, 2);
+        swizzle_w = vsir_swizzle_get_component(swizzle, 3);
 
         if (swizzle_x == swizzle_y
                 && swizzle_x == swizzle_z

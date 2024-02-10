@@ -632,6 +632,11 @@ HRESULT return_interface(void *iface, REFIID iface_iid,
     return hr;
 }
 
+const char *debug_cpu_handle(D3D12_CPU_DESCRIPTOR_HANDLE handle)
+{
+    return vkd3d_dbg_sprintf("{%#"PRIxPTR"}", (uintptr_t)handle.ptr);
+}
+
 const char *debug_d3d12_box(const D3D12_BOX *box)
 {
     if (!box)
@@ -671,6 +676,11 @@ const char *debug_d3d12_shader_component_mapping(unsigned int mapping)
             debug_d3d12_shader_component(D3D12_DECODE_SHADER_4_COMPONENT_MAPPING(1, mapping)),
             debug_d3d12_shader_component(D3D12_DECODE_SHADER_4_COMPONENT_MAPPING(2, mapping)),
             debug_d3d12_shader_component(D3D12_DECODE_SHADER_4_COMPONENT_MAPPING(3, mapping)));
+}
+
+const char *debug_gpu_handle(D3D12_GPU_DESCRIPTOR_HANDLE handle)
+{
+    return vkd3d_dbg_sprintf("{%#"PRIx64"}", handle.ptr);
 }
 
 const char *debug_vk_extent_3d(VkExtent3D extent)

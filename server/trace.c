@@ -421,29 +421,6 @@ static void dump_irp_params( const char *prefix, const irp_params_t *data )
     }
 }
 
-static void dump_rawinput( const char *prefix, const union rawinput *rawinput )
-{
-    switch (rawinput->type)
-    {
-    case RIM_TYPEMOUSE:
-        fprintf( stderr, "%s{type=MOUSE,x=%d,y=%d,data=%08x}", prefix, rawinput->mouse.x,
-                 rawinput->mouse.y, rawinput->mouse.data );
-        break;
-    case RIM_TYPEKEYBOARD:
-        fprintf( stderr, "%s{type=KEYBOARD,message=%04x,vkey=%04hx,scan=%04hx}", prefix,
-                 rawinput->kbd.message, rawinput->kbd.vkey, rawinput->kbd.scan );
-        break;
-    case RIM_TYPEHID:
-        fprintf( stderr, "%s{type=HID,device=%04x,param=%04x,page=%04hx,usage=%04hx,count=%u,length=%u}",
-                 prefix, rawinput->hid.device, rawinput->hid.param, rawinput->hid.usage_page,
-                 rawinput->hid.usage, rawinput->hid.count, rawinput->hid.length );
-        break;
-    default:
-        fprintf( stderr, "%s{type=%04x}", prefix, rawinput->type );
-        break;
-    }
-}
-
 static void dump_hw_input( const char *prefix, const hw_input_t *input )
 {
     switch (input->type)
@@ -463,12 +440,19 @@ static void dump_hw_input( const char *prefix, const hw_input_t *input )
         break;
     case INPUT_HARDWARE:
         fprintf( stderr, "%s{type=HARDWARE,msg=%04x", prefix, input->hw.msg );
+        dump_uint64( ",wparam=", &input->hw.wparam );
         dump_uint64( ",lparam=", &input->hw.lparam );
         switch (input->hw.msg)
         {
         case WM_INPUT:
+            fprintf( stderr, "%s{type=HID,device=%04x,usage=%04x:%04x,count=%u,length=%u}",
+                     prefix, input->hw.hid.device, HIWORD(input->hw.hid.usage), LOWORD(input->hw.hid.usage),
+                     input->hw.hid.count, input->hw.hid.length );
+            break;
         case WM_INPUT_DEVICE_CHANGE:
-            dump_rawinput( ",rawinput=", &input->hw.rawinput );
+            fprintf( stderr, "%s{type=HID,device=%04x,usage=%04x:%04x}",
+                     prefix, input->hw.hid.device, HIWORD(input->hw.hid.usage), LOWORD(input->hw.hid.usage) );
+            break;
         }
         fputc( '}', stderr );
         break;
@@ -1357,8 +1341,8 @@ static void dump_varargs_rawinput_devices(const char *prefix, data_size_t size )
     while (size >= sizeof(*device))
     {
         device = cur_data;
-        fprintf( stderr, "{usage_page=%04x,usage=%04x,flags=%08x,target=%08x}",
-                 device->usage_page, device->usage, device->flags, device->target );
+        fprintf( stderr, "{usage=%08x,flags=%08x,target=%08x}",
+                 device->usage, device->flags, device->target );
         size -= sizeof(*device);
         remove_data( sizeof(*device) );
         if (size) fputc( ',', stderr );
@@ -1461,8 +1445,7 @@ static void dump_init_process_done_request( const struct init_process_done_reque
 
 static void dump_init_process_done_reply( const struct init_process_done_reply *req )
 {
-    dump_uint64( " entry=", &req->entry );
-    fprintf( stderr, ", suspend=%d", req->suspend );
+    fprintf( stderr, " suspend=%d", req->suspend );
 }
 
 static void dump_init_first_thread_request( const struct init_first_thread_request *req )
@@ -4524,8 +4507,8 @@ static void dump_get_cursor_history_reply( const struct get_cursor_history_reply
 
 static void dump_get_rawinput_buffer_request( const struct get_rawinput_buffer_request *req )
 {
-    fprintf( stderr, " rawinput_size=%u", req->rawinput_size );
-    fprintf( stderr, ", buffer_size=%u", req->buffer_size );
+    fprintf( stderr, " header_size=%u", req->header_size );
+    fprintf( stderr, ", read_data=%d", req->read_data );
 }
 
 static void dump_get_rawinput_buffer_reply( const struct get_rawinput_buffer_reply *req )
@@ -5665,7 +5648,6 @@ static const struct
     { "DEVICE_NOT_READY",            STATUS_DEVICE_NOT_READY },
     { "DIRECTORY_NOT_EMPTY",         STATUS_DIRECTORY_NOT_EMPTY },
     { "DISK_FULL",                   STATUS_DISK_FULL },
-    { "DLL_NOT_FOUND",               STATUS_DLL_NOT_FOUND },
     { "ERROR_CLASS_ALREADY_EXISTS",  0xc0010000 | ERROR_CLASS_ALREADY_EXISTS },
     { "ERROR_CLASS_DOES_NOT_EXIST",  0xc0010000 | ERROR_CLASS_DOES_NOT_EXIST },
     { "ERROR_CLASS_HAS_WINDOWS",     0xc0010000 | ERROR_CLASS_HAS_WINDOWS },
