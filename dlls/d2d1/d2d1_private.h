@@ -697,7 +697,7 @@ struct d2d_factory
 
 static inline struct d2d_factory *unsafe_impl_from_ID2D1Factory(ID2D1Factory *iface)
 {
-    return CONTAINING_RECORD(iface, struct d2d_factory, ID2D1Factory3_iface);
+    return CONTAINING_RECORD((ID2D1Factory3*)iface, struct d2d_factory, ID2D1Factory3_iface);
 }
 
 void d2d_effects_init_builtins(struct d2d_factory *factory);

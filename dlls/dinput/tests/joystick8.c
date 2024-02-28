@@ -4464,7 +4464,7 @@ done:
     cleanup_registry_keys();
 }
 
-static BOOL test_winmm_joystick(void)
+static void test_winmm_joystick(void)
 {
 #include "psh_hid_macros.h"
     const unsigned char report_desc[] =
@@ -4821,8 +4821,6 @@ static BOOL test_winmm_joystick(void)
 done:
     hid_device_stop( &desc, 1 );
     cleanup_registry_keys();
-
-    return device != NULL;
 }
 
 #define check_interface( a, b, c ) check_interface_( __LINE__, a, b, c )
@@ -5758,23 +5756,23 @@ static DWORD WINAPI test_rawinput_desktop_thread( void *args )
     rawbuffer_size = sizeof(rawbuffer);
     memset( rawbuffer, 0, sizeof(rawbuffer) );
     res = msg_wait_for_events( 1, &rawinput_event, 100 );
-    todo_wine
+    todo_wine_if( params->input )
     ok( res == 0, "WaitForSingleObject returned %#lx\n", res );
-    todo_wine
+    todo_wine_if( params->input )
     ok( rawinput_calls == 1, "got %u WM_INPUT messages\n", rawinput_calls );
 
     rawinput = (RAWINPUT *)rawbuffer;
-    todo_wine
+    todo_wine_if( params->input )
     ok( rawinput->header.dwType == RIM_TYPEHID, "got dwType %lu\n", rawinput->header.dwType );
-    todo_wine
+    todo_wine_if( params->input )
     ok( rawinput->header.dwSize == offsetof(RAWINPUT, data.hid.bRawData[desc.caps.InputReportByteLength * rawinput->data.hid.dwCount]),
         "got header.dwSize %lu\n", rawinput->header.dwSize );
-    todo_wine
+    todo_wine_if( params->input )
     ok( rawinput->header.hDevice != 0, "got hDevice %p\n", rawinput->header.hDevice );
     ok( rawinput->header.wParam == 0, "got wParam %#Ix\n", rawinput->header.wParam );
-    todo_wine
+    todo_wine_if( params->input )
     ok( rawinput->data.hid.dwSizeHid == desc.caps.InputReportByteLength, "got dwSizeHid %lu\n", rawinput->data.hid.dwSizeHid );
-    todo_wine
+    todo_wine_if( params->input )
     ok( rawinput->data.hid.dwCount >= 1, "got dwCount %lu\n", rawinput->data.hid.dwCount );
 
 
@@ -5866,28 +5864,23 @@ static void test_rawinput_desktop( const char *path, BOOL input )
     res = msg_wait_for_events( 1, &rawinput_event, 100 );
     if (input)
     {
-        todo_wine
         ok( res == 0, "WaitForSingleObject returned %#lx\n", res );
-        todo_wine
         ok( rawinput_calls == 1, "got %u WM_INPUT messages\n", rawinput_calls );
 
         rawinput = (RAWINPUT *)rawbuffer;
-        todo_wine
         ok( rawinput->header.dwType == RIM_TYPEHID, "got dwType %lu\n", rawinput->header.dwType );
-        todo_wine
         ok( rawinput->header.dwSize == offsetof(RAWINPUT, data.hid.bRawData[desc.caps.InputReportByteLength * rawinput->data.hid.dwCount]),
             "got header.dwSize %lu\n", rawinput->header.dwSize );
-        todo_wine
         ok( rawinput->header.hDevice != 0, "got hDevice %p\n", rawinput->header.hDevice );
         ok( rawinput->header.wParam == 0, "got wParam %#Ix\n", rawinput->header.wParam );
-        todo_wine
         ok( rawinput->data.hid.dwSizeHid == desc.caps.InputReportByteLength, "got dwSizeHid %lu\n", rawinput->data.hid.dwSizeHid );
-        todo_wine
         ok( rawinput->data.hid.dwCount >= 1, "got dwCount %lu\n", rawinput->data.hid.dwCount );
     }
     else
     {
+        todo_wine
         ok( res == WAIT_TIMEOUT, "WaitForSingleObject returned %#lx\n", res );
+        todo_wine
         ok( rawinput_calls == 0, "got %u WM_INPUT messages\n", rawinput_calls );
     }
 

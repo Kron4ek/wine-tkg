@@ -71,7 +71,7 @@ enum media_stream_flags
     STREAM_FLAG_STOPPED = 0x8,          /* Received MEStreamStopped */
 };
 
-struct stream_transform
+struct transform_entry
 {
     IMFTransform *transform;
     unsigned int min_buffer_size;
@@ -81,7 +81,7 @@ struct media_stream
 {
     IMFMediaStream *stream;
     IMFMediaType *current;
-    struct stream_transform decoder;
+    struct transform_entry decoder;
     IMFVideoSampleAllocatorEx *allocator;
     DWORD id;
     unsigned int index;
@@ -463,6 +463,17 @@ static HRESULT source_reader_queue_response(struct source_reader *reader, struct
     return S_OK;
 }
 
+static HRESULT source_reader_queue_sample(struct source_reader *reader, struct media_stream *stream,
+        IMFSample *sample)
+{
+    LONGLONG timestamp = 0;
+
+    if (FAILED(IMFSample_GetSampleTime(sample, &timestamp)))
+        WARN("Sample time wasn't set.\n");
+
+    return source_reader_queue_response(reader, stream, S_OK, 0, timestamp, sample);
+}
+
 static HRESULT source_reader_request_sample(struct source_reader *reader, struct media_stream *stream)
 {
     HRESULT hr = S_OK;
@@ -644,55 +655,71 @@ static ULONG WINAPI source_reader_stream_events_callback_Release(IMFAsyncCallbac
     return source_reader_release(reader);
 }
 
-static HRESULT source_reader_pull_stream_samples(struct source_reader *reader, struct media_stream *stream)
+static HRESULT source_reader_allocate_stream_sample(MFT_OUTPUT_STREAM_INFO *info, IMFSample **out)
+{
+    IMFMediaBuffer *buffer;
+    IMFSample *sample;
+    HRESULT hr;
+
+    *out = NULL;
+    if (FAILED(hr = MFCreateSample(&sample)))
+        return hr;
+    if (SUCCEEDED(hr = MFCreateAlignedMemoryBuffer(info->cbSize, info->cbAlignment, &buffer)))
+    {
+        if (SUCCEEDED(hr = IMFSample_AddBuffer(sample, buffer)))
+        {
+            *out = sample;
+            IMFSample_AddRef(sample);
+        }
+        IMFMediaBuffer_Release(buffer);
+    }
+
+    IMFSample_Release(sample);
+    return hr;
+}
+
+static HRESULT source_reader_pull_transform_samples(struct source_reader *reader, struct media_stream *stream,
+        struct transform_entry *entry);
+static HRESULT source_reader_push_transform_samples(struct source_reader *reader, struct media_stream *stream,
+        struct transform_entry *entry, IMFSample *sample)
+{
+    HRESULT hr;
+
+    do
+    {
+        if (FAILED(hr = source_reader_pull_transform_samples(reader, stream, entry))
+                && hr != MF_E_TRANSFORM_NEED_MORE_INPUT)
+            return hr;
+        if (SUCCEEDED(hr = IMFTransform_ProcessInput(entry->transform, 0, sample, 0)))
+            return source_reader_pull_transform_samples(reader, stream, entry);
+    }
+    while (hr == MF_E_NOTACCEPTING);
+
+    return hr;
+}
+
+static HRESULT source_reader_pull_transform_samples(struct source_reader *reader, struct media_stream *stream,
+        struct transform_entry *entry)
 {
     MFT_OUTPUT_STREAM_INFO stream_info = { 0 };
-    MFT_OUTPUT_DATA_BUFFER out_buffer;
-    unsigned int buffer_size;
-    IMFMediaBuffer *buffer;
-    LONGLONG timestamp;
     DWORD status;
     HRESULT hr;
 
-    if (FAILED(hr = IMFTransform_GetOutputStreamInfo(stream->decoder.transform, 0, &stream_info)))
-    {
-        WARN("Failed to get output stream info, hr %#lx.\n", hr);
+    if (FAILED(hr = IMFTransform_GetOutputStreamInfo(entry->transform, 0, &stream_info)))
         return hr;
-    }
+    stream_info.cbSize = max(stream_info.cbSize, entry->min_buffer_size);
 
-    for (;;)
+    while (SUCCEEDED(hr))
     {
-        memset(&out_buffer, 0, sizeof(out_buffer));
+        MFT_OUTPUT_DATA_BUFFER out_buffer = {0};
 
-        if (!(stream_info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES)))
-        {
-            if (FAILED(hr = MFCreateSample(&out_buffer.pSample)))
-                break;
-
-            buffer_size = max(stream_info.cbSize, stream->decoder.min_buffer_size);
-
-            if (FAILED(hr = MFCreateAlignedMemoryBuffer(buffer_size, stream_info.cbAlignment, &buffer)))
-            {
-                IMFSample_Release(out_buffer.pSample);
-                break;
-            }
-
-            IMFSample_AddBuffer(out_buffer.pSample, buffer);
-            IMFMediaBuffer_Release(buffer);
-        }
-
-        if (FAILED(hr = IMFTransform_ProcessOutput(stream->decoder.transform, 0, 1, &out_buffer, &status)))
-        {
-            if (out_buffer.pSample)
-                IMFSample_Release(out_buffer.pSample);
+        if (!(stream_info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES))
+                && FAILED(hr = source_reader_allocate_stream_sample(&stream_info, &out_buffer.pSample)))
             break;
-        }
 
-        timestamp = 0;
-        if (FAILED(IMFSample_GetSampleTime(out_buffer.pSample, &timestamp)))
-            WARN("Sample time wasn't set.\n");
+        if (SUCCEEDED(hr = IMFTransform_ProcessOutput(stream->decoder.transform, 0, 1, &out_buffer, &status)))
+            hr = source_reader_queue_sample(reader, stream, out_buffer.pSample);
 
-        source_reader_queue_response(reader, stream, S_OK /* FIXME */, 0, timestamp, out_buffer.pSample);
         if (out_buffer.pSample)
             IMFSample_Release(out_buffer.pSample);
         if (out_buffer.pEvents)
@@ -702,35 +729,43 @@ static HRESULT source_reader_pull_stream_samples(struct source_reader *reader, s
     return hr;
 }
 
+static HRESULT source_reader_drain_transform_samples(struct source_reader *reader, struct media_stream *stream,
+        struct transform_entry *entry)
+{
+    HRESULT hr;
+
+    if (FAILED(hr = IMFTransform_ProcessMessage(entry->transform, MFT_MESSAGE_COMMAND_DRAIN, 0)))
+        WARN("Failed to drain transform %p, hr %#lx\n", entry->transform, hr);
+    if (FAILED(hr = source_reader_pull_transform_samples(reader, stream, entry))
+            && hr != MF_E_TRANSFORM_NEED_MORE_INPUT)
+        WARN("Failed to pull pending samples, hr %#lx.\n", hr);
+
+    return S_OK;
+}
+
+static HRESULT source_reader_flush_transform_samples(struct source_reader *reader, struct media_stream *stream,
+        struct transform_entry *entry)
+{
+    HRESULT hr;
+
+    if (FAILED(hr = IMFTransform_ProcessMessage(entry->transform, MFT_MESSAGE_COMMAND_FLUSH, 0)))
+        WARN("Failed to flush transform %p, hr %#lx\n", entry->transform, hr);
+
+    return S_OK;
+}
+
 static HRESULT source_reader_process_sample(struct source_reader *reader, struct media_stream *stream,
         IMFSample *sample)
 {
-    LONGLONG timestamp;
     HRESULT hr;
 
     if (!stream->decoder.transform)
-    {
-        timestamp = 0;
-        if (FAILED(IMFSample_GetSampleTime(sample, &timestamp)))
-            WARN("Sample time wasn't set.\n");
-
-        return source_reader_queue_response(reader, stream, S_OK, 0, timestamp, sample);
-    }
+        return source_reader_queue_sample(reader, stream, sample);
 
     /* It's assumed that decoder has 1 input and 1 output, both id's are 0. */
-
-    hr = source_reader_pull_stream_samples(reader, stream);
-    if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
-    {
-        if (FAILED(hr = IMFTransform_ProcessInput(stream->decoder.transform, 0, sample, 0)))
-        {
-            WARN("Transform failed to process input, hr %#lx.\n", hr);
-            return hr;
-        }
-
-        if ((hr = source_reader_pull_stream_samples(reader, stream)) == MF_E_TRANSFORM_NEED_MORE_INPUT)
-            return S_OK;
-    }
+    if (SUCCEEDED(hr = source_reader_push_transform_samples(reader, stream, &stream->decoder, sample))
+            || hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
+        hr = stream->requests ? source_reader_request_sample(reader, stream) : S_OK;
     else
         WARN("Transform failed to process output, hr %#lx.\n", hr);
 
@@ -767,12 +802,8 @@ static HRESULT source_reader_media_sample_handler(struct source_reader *reader, 
         if (id == reader->streams[i].id)
         {
             /* FIXME: propagate processing errors? */
-
             reader->streams[i].flags &= ~STREAM_FLAG_SAMPLE_REQUESTED;
             hr = source_reader_process_sample(reader, &reader->streams[i], sample);
-            if (reader->streams[i].requests)
-                source_reader_request_sample(reader, &reader->streams[i]);
-
             break;
         }
     }
@@ -819,11 +850,10 @@ static HRESULT source_reader_media_stream_state_handler(struct source_reader *re
                     stream->state = STREAM_STATE_EOS;
                     stream->flags &= ~STREAM_FLAG_SAMPLE_REQUESTED;
 
-                    if (stream->decoder.transform && SUCCEEDED(IMFTransform_ProcessMessage(stream->decoder.transform,
-                            MFT_MESSAGE_COMMAND_DRAIN, 0)))
+                    if (stream->decoder.transform)
                     {
-                        if ((hr = source_reader_pull_stream_samples(reader, stream)) != MF_E_TRANSFORM_NEED_MORE_INPUT)
-                            WARN("Failed to pull pending samples, hr %#lx.\n", hr);
+                        if (FAILED(hr = source_reader_drain_transform_samples(reader, stream, &stream->decoder)))
+                            WARN("Failed to drain pending samples, hr %#lx.\n", hr);
                     }
 
                     while (stream->requests)
@@ -1182,10 +1212,16 @@ static void source_reader_release_responses(struct source_reader *reader, struct
 static void source_reader_flush_stream(struct source_reader *reader, DWORD stream_index)
 {
     struct media_stream *stream = &reader->streams[stream_index];
+    HRESULT hr;
 
     source_reader_release_responses(reader, stream);
+
     if (stream->decoder.transform)
-        IMFTransform_ProcessMessage(stream->decoder.transform, MFT_MESSAGE_COMMAND_FLUSH, 0);
+    {
+        if (FAILED(hr = source_reader_flush_transform_samples(reader, stream, &stream->decoder)))
+            WARN("Failed to drain pending samples, hr %#lx.\n", hr);
+    }
+
     stream->requests = 0;
 }
 

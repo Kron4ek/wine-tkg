@@ -470,6 +470,7 @@ SOURCES = \
 	msdaguid.h \
 	msdasc.idl \
 	msdasql.h \
+	msdelta.h \
 	mshtmcid.h \
 	mshtmdid.h \
 	mshtmhst.idl \
@@ -844,12 +845,14 @@ SOURCES = \
 	windows.graphics.directx.idl \
 	windows.graphics.effects.idl \
 	windows.graphics.holographic.idl \
+	windows.graphics.imaging.idl \
 	windows.h \
 	windows.management.deployment.idl \
 	windows.media.capture.idl \
 	windows.media.closedcaptioning.idl \
 	windows.media.devices.idl \
 	windows.media.effects.idl \
+	windows.media.faceanalysis.idl \
 	windows.media.idl \
 	windows.media.render.idl \
 	windows.media.speechrecognition.idl \
@@ -858,6 +861,7 @@ SOURCES = \
 	windows.networking.idl \
 	windows.perception.spatial.idl \
 	windows.perception.spatial.surfaces.idl \
+	windows.security.authentication.onlineid.idl \
 	windows.security.credentials.idl \
 	windows.security.credentials.ui.idl \
 	windows.security.cryptography.idl \

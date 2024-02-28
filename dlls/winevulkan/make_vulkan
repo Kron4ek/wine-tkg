@@ -160,7 +160,7 @@ PERF_CRITICAL_FUNCTIONS = [
 # Functions part of our winevulkan graphics driver interface.
 # DRIVER_VERSION should be bumped on any change to driver interface
 # in FUNCTION_OVERRIDES
-DRIVER_VERSION = 14
+DRIVER_VERSION = 19
 
 # Table of functions for which we have a special implementation.
 # These are regular device / instance functions for which we need
@@ -205,11 +205,6 @@ USER_DRIVER_FUNCS = {
     "vkEnumerateInstanceExtensionProperties",
     "vkGetDeviceProcAddr",
     "vkGetInstanceProcAddr",
-    "vkGetPhysicalDevicePresentRectanglesKHR",
-    "vkGetPhysicalDeviceSurfaceCapabilities2KHR",
-    "vkGetPhysicalDeviceSurfaceCapabilitiesKHR",
-    "vkGetPhysicalDeviceSurfaceFormats2KHR",
-    "vkGetPhysicalDeviceSurfaceFormatsKHR",
     "vkGetPhysicalDeviceWin32PresentationSupportKHR",
     "vkGetSwapchainImagesKHR",
     "vkQueuePresentKHR",
@@ -227,6 +222,7 @@ MANUAL_UNIX_THUNKS = {
     "vkCreateDevice",
     "vkCreateImage",
     "vkCreateInstance",
+    "vkCreateSwapchainKHR",
     "vkCreateWin32SurfaceKHR",
     "vkDestroyCommandPool",
     "vkDestroyDebugReportCallbackEXT",
@@ -235,6 +231,7 @@ MANUAL_UNIX_THUNKS = {
     "vkDestroyDevice",
     "vkDestroyInstance",
     "vkDestroySurfaceKHR",
+    "vkDestroySwapchainKHR",
     "vkEnumerateDeviceExtensionProperties",
     "vkEnumerateDeviceLayerProperties",
     "vkEnumerateInstanceExtensionProperties",
@@ -261,8 +258,10 @@ MANUAL_UNIX_THUNKS = {
     "vkGetPhysicalDeviceExternalSemaphorePropertiesKHR",
     "vkGetPhysicalDeviceImageFormatProperties2",
     "vkGetPhysicalDeviceImageFormatProperties2KHR",
+    "vkGetPhysicalDevicePresentRectanglesKHR",
     "vkGetPhysicalDeviceSurfaceCapabilities2KHR",
     "vkGetPhysicalDeviceSurfaceCapabilitiesKHR",
+    "vkGetPhysicalDeviceSurfaceFormats2KHR",
     "vkMapMemory",
     "vkMapMemory2KHR",
     "vkUnmapMemory",
@@ -1187,6 +1186,8 @@ class VkHandle(object):
             return "wine_queue_from_handle({0})->host_queue".format(name)
         if self.name == "VkSurfaceKHR":
             return "wine_surface_from_handle({0})->host_surface".format(name)
+        if self.name == "VkSwapchainKHR":
+            return "wine_swapchain_from_handle({0})->host_swapchain".format(name)
         if self.is_dispatchable():
             LOGGER.error("Unhandled host handle for: {0}".format(self.name))
         return None

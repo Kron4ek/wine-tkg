@@ -52,3 +52,14 @@ HRESULT mmaudio_out_create( IUnknown *outer, REFIID iid, void **obj );
 HRESULT token_category_create( IUnknown *outer, REFIID iid, void **obj );
 HRESULT token_enum_create( IUnknown *outer, REFIID iid, void **obj );
 HRESULT token_create( IUnknown *outer, REFIID iid, void **obj );
+
+enum type_id
+{
+    ISpeechObjectToken_tid,
+    ISpeechObjectTokens_tid,
+    ISpeechVoice_tid,
+    last_tid
+};
+
+HRESULT get_typeinfo( enum type_id tid, ITypeInfo **typeinfo );
+void release_typelib( void );

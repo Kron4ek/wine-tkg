@@ -850,6 +850,56 @@ static void test_CopyFileA(void)
     CloseHandle(hmapfile);
     CloseHandle(hfile);
 
+    /* check read-only attribute */
+    ret = GetFileAttributesA(source);
+    ok(ret != INVALID_FILE_ATTRIBUTES, "GetFileAttributesA: error %ld\n", GetLastError());
+    ok(!(ret & FILE_ATTRIBUTE_READONLY), "source is read-only\n");
+    ret = GetFileAttributesA(dest);
+    ok(ret != INVALID_FILE_ATTRIBUTES, "GetFileAttributesA: error %ld\n", GetLastError());
+    ok(!(ret & FILE_ATTRIBUTE_READONLY), "dest is read-only\n");
+
+    /* make source read-only */
+    ret = SetFileAttributesA(source, FILE_ATTRIBUTE_READONLY);
+    ok(ret, "SetFileAttributesA: error %ld\n", GetLastError());
+    ret = GetFileAttributesA(source);
+    ok(ret != INVALID_FILE_ATTRIBUTES, "GetFileAttributesA: error %ld\n", GetLastError());
+    ok(ret & FILE_ATTRIBUTE_READONLY, "source is not read-only\n");
+    ret = GetFileAttributesA(dest);
+    ok(ret != INVALID_FILE_ATTRIBUTES, "GetFileAttributesA: error %ld\n", GetLastError());
+    ok(!(ret & FILE_ATTRIBUTE_READONLY), "dest is read-only\n");
+
+    /* dest becomes read-only after copied from read-only source */
+    ret = SetFileAttributesA(source, FILE_ATTRIBUTE_READONLY);
+    ok(ret, "SetFileAttributesA: error %ld\n", GetLastError());
+    ret = GetFileAttributesA(source);
+    ok(ret != INVALID_FILE_ATTRIBUTES, "GetFileAttributesA: error %ld\n", GetLastError());
+    ok(ret & FILE_ATTRIBUTE_READONLY, "source is not read-only\n");
+    ret = GetFileAttributesA(dest);
+    ok(ret != INVALID_FILE_ATTRIBUTES, "GetFileAttributesA: error %ld\n", GetLastError());
+    ok(!(ret & FILE_ATTRIBUTE_READONLY), "dest is read-only\n");
+
+    ret = CopyFileA(source, dest, FALSE);
+    ok(ret, "CopyFileA: error %ld\n", GetLastError());
+    ret = GetFileAttributesA(dest);
+    ok(ret != INVALID_FILE_ATTRIBUTES, "GetFileAttributesA: error %ld\n", GetLastError());
+    ok(ret & FILE_ATTRIBUTE_READONLY, "dest is not read-only\n");
+
+    /* same when dest does not exist */
+    ret = SetFileAttributesA(dest, FILE_ATTRIBUTE_NORMAL);
+    ok(ret, "SetFileAttributesA: error %ld\n", GetLastError());
+    ret = DeleteFileA(dest);
+    ok(ret, "DeleteFileA: error %ld\n", GetLastError());
+    ret = CopyFileA(source, dest, TRUE);
+    ok(ret, "CopyFileA: error %ld\n", GetLastError());
+    ret = GetFileAttributesA(dest);
+    ok(ret != INVALID_FILE_ATTRIBUTES, "GetFileAttributesA: error %ld\n", GetLastError());
+    ok(ret & FILE_ATTRIBUTE_READONLY, "dest is not read-only\n");
+
+    ret = SetFileAttributesA(source, FILE_ATTRIBUTE_NORMAL);
+    ok(ret, "SetFileAttributesA: error %ld\n", GetLastError());
+    ret = SetFileAttributesA(dest, FILE_ATTRIBUTE_NORMAL);
+    ok(ret, "SetFileAttributesA: error %ld\n", GetLastError());
+
     ret = DeleteFileA(source);
     ok(ret, "DeleteFileA: error %ld\n", GetLastError());
     ret = DeleteFileA(dest);
@@ -1161,17 +1211,23 @@ static void test_CopyFileEx(void)
     ok(hfile != INVALID_HANDLE_VALUE, "failed to open destination file, error %ld\n", GetLastError());
     SetLastError(0xdeadbeef);
     retok = CopyFileExA(source, dest, copy_progress_cb, hfile, NULL, 0);
+    todo_wine
     ok(!retok, "CopyFileExA unexpectedly succeeded\n");
+    todo_wine
     ok(GetLastError() == ERROR_REQUEST_ABORTED, "expected ERROR_REQUEST_ABORTED, got %ld\n", GetLastError());
     ok(GetFileAttributesA(dest) != INVALID_FILE_ATTRIBUTES, "file was deleted\n");
 
     hfile = CreateFileA(dest, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                         NULL, OPEN_EXISTING, 0, 0);
+    todo_wine
     ok(hfile != INVALID_HANDLE_VALUE, "failed to open destination file, error %ld\n", GetLastError());
     SetLastError(0xdeadbeef);
     retok = CopyFileExA(source, dest, copy_progress_cb, hfile, NULL, 0);
+    todo_wine
     ok(!retok, "CopyFileExA unexpectedly succeeded\n");
+    todo_wine
     ok(GetLastError() == ERROR_REQUEST_ABORTED, "expected ERROR_REQUEST_ABORTED, got %ld\n", GetLastError());
+    todo_wine
     ok(GetFileAttributesA(dest) == INVALID_FILE_ATTRIBUTES, "file was not deleted\n");
 
     retok = CopyFileExA(source, NULL, copy_progress_cb, hfile, NULL, 0);

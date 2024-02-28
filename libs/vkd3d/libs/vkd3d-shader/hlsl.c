@@ -751,14 +751,15 @@ struct hlsl_type *hlsl_new_texture_type(struct hlsl_ctx *ctx, enum hlsl_sampler_
     type->dimx = 4;
     type->dimy = 1;
     type->sampler_dim = dim;
-    type->e.resource_format = format;
+    type->e.resource.format = format;
     type->sample_count = sample_count;
     hlsl_type_calculate_reg_size(ctx, type);
     list_add_tail(&ctx->types, &type->entry);
     return type;
 }
 
-struct hlsl_type *hlsl_new_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim, struct hlsl_type *format)
+struct hlsl_type *hlsl_new_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
+        struct hlsl_type *format, bool rasteriser_ordered)
 {
     struct hlsl_type *type;
 
@@ -769,7 +770,8 @@ struct hlsl_type *hlsl_new_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim 
     type->dimx = format->dimx;
     type->dimy = 1;
     type->sampler_dim = dim;
-    type->e.resource_format = format;
+    type->e.resource.format = format;
+    type->e.resource.rasteriser_ordered = rasteriser_ordered;
     hlsl_type_calculate_reg_size(ctx, type);
     list_add_tail(&ctx->types, &type->entry);
     return type;
@@ -885,8 +887,11 @@ bool hlsl_types_are_equal(const struct hlsl_type *t1, const struct hlsl_type *t2
     {
         if (t1->sampler_dim != t2->sampler_dim)
             return false;
-        if (t1->base_type == HLSL_TYPE_TEXTURE && t1->sampler_dim != HLSL_SAMPLER_DIM_GENERIC
-                && !hlsl_types_are_equal(t1->e.resource_format, t2->e.resource_format))
+        if ((t1->base_type == HLSL_TYPE_TEXTURE || t1->base_type == HLSL_TYPE_UAV)
+                && t1->sampler_dim != HLSL_SAMPLER_DIM_GENERIC
+                && !hlsl_types_are_equal(t1->e.resource.format, t2->e.resource.format))
+            return false;
+        if (t1->base_type == HLSL_TYPE_UAV && t1->e.resource.rasteriser_ordered != t2->e.resource.rasteriser_ordered)
             return false;
     }
     if ((t1->modifiers & HLSL_MODIFIER_ROW_MAJOR)
@@ -1007,7 +1012,10 @@ struct hlsl_type *hlsl_type_clone(struct hlsl_ctx *ctx, struct hlsl_type *old,
             if (type->base_type == HLSL_TYPE_TECHNIQUE)
                 type->e.version = old->e.version;
             if (old->base_type == HLSL_TYPE_TEXTURE || old->base_type == HLSL_TYPE_UAV)
-                type->e.resource_format = old->e.resource_format;
+            {
+                type->e.resource.format = old->e.resource.format;
+                type->e.resource.rasteriser_ordered = old->e.resource.rasteriser_ordered;
+            }
             break;
 
         default:
@@ -1552,6 +1560,15 @@ bool hlsl_index_is_resource_access(struct hlsl_ir_index *index)
     return index->val.node->data_type->class == HLSL_CLASS_OBJECT;
 }
 
+bool hlsl_index_chain_has_resource_access(struct hlsl_ir_index *index)
+{
+    if (hlsl_index_is_resource_access(index))
+        return true;
+    if (index->val.node->type == HLSL_IR_INDEX)
+        return hlsl_index_chain_has_resource_access(hlsl_ir_index(index->val.node));
+    return false;
+}
+
 struct hlsl_ir_node *hlsl_new_index(struct hlsl_ctx *ctx, struct hlsl_ir_node *val,
         struct hlsl_ir_node *idx, const struct vkd3d_shader_location *loc)
 {
@@ -1562,7 +1579,7 @@ struct hlsl_ir_node *hlsl_new_index(struct hlsl_ctx *ctx, struct hlsl_ir_node *v
         return NULL;
 
     if (type->class == HLSL_CLASS_OBJECT)
-        type = type->e.resource_format;
+        type = type->e.resource.format;
     else if (type->class == HLSL_CLASS_MATRIX)
         type = hlsl_get_vector_type(ctx, type->base_type, type->dimx);
     else
@@ -2190,10 +2207,17 @@ struct vkd3d_string_buffer *hlsl_type_to_string(struct hlsl_ctx *ctx, const stru
                         return string;
                     }
 
-                    assert(type->sampler_dim < ARRAY_SIZE(dimensions));
-                    assert(type->e.resource_format->base_type < ARRAY_SIZE(base_types));
-                    vkd3d_string_buffer_printf(string, "Texture%s", dimensions[type->sampler_dim]);
-                    if ((inner_string = hlsl_type_to_string(ctx, type->e.resource_format)))
+                    assert(type->e.resource.format->base_type < ARRAY_SIZE(base_types));
+                    if (type->sampler_dim == HLSL_SAMPLER_DIM_BUFFER)
+                    {
+                        vkd3d_string_buffer_printf(string, "Buffer");
+                    }
+                    else
+                    {
+                        assert(type->sampler_dim < ARRAY_SIZE(dimensions));
+                        vkd3d_string_buffer_printf(string, "Texture%s", dimensions[type->sampler_dim]);
+                    }
+                    if ((inner_string = hlsl_type_to_string(ctx, type->e.resource.format)))
                     {
                         vkd3d_string_buffer_printf(string, "<%s>", inner_string->buffer);
                         hlsl_release_string_buffer(ctx, inner_string);
@@ -2207,7 +2231,7 @@ struct vkd3d_string_buffer *hlsl_type_to_string(struct hlsl_ctx *ctx, const stru
                         vkd3d_string_buffer_printf(string, "RWStructuredBuffer");
                     else
                         vkd3d_string_buffer_printf(string, "RWTexture%s", dimensions[type->sampler_dim]);
-                    if ((inner_string = hlsl_type_to_string(ctx, type->e.resource_format)))
+                    if ((inner_string = hlsl_type_to_string(ctx, type->e.resource.format)))
                     {
                         vkd3d_string_buffer_printf(string, "<%s>", inner_string->buffer);
                         hlsl_release_string_buffer(ctx, inner_string);
@@ -3357,7 +3381,7 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
 
     static const struct
     {
-        char name[13];
+        char name[20];
         enum hlsl_type_class class;
         enum hlsl_base_type base_type;
         unsigned int dimx, dimy;
@@ -3373,11 +3397,13 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
         {"TEXTURE",         HLSL_CLASS_OBJECT, HLSL_TYPE_TEXTURE,       1, 1},
         {"PIXELSHADER",     HLSL_CLASS_OBJECT, HLSL_TYPE_PIXELSHADER,   1, 1},
         {"VERTEXSHADER",    HLSL_CLASS_OBJECT, HLSL_TYPE_VERTEXSHADER,  1, 1},
+        {"RenderTargetView",HLSL_CLASS_OBJECT, HLSL_TYPE_RENDERTARGETVIEW, 1, 1},
+        {"DepthStencilView",HLSL_CLASS_OBJECT, HLSL_TYPE_DEPTHSTENCILVIEW, 1, 1},
     };
 
     static const struct
     {
-        char *name;
+        const char *name;
         unsigned int version;
     }
     technique_types[] =

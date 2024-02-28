@@ -61,7 +61,8 @@ extern UINT_PTR page_size;
 #endif
 
 /* exceptions */
-extern LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context );
+extern NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *context );
+extern NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context );
 extern NTSTATUS WINAPI dispatch_user_callback( void *args, ULONG len, ULONG id );
 extern EXCEPTION_DISPOSITION WINAPI user_callback_handler( EXCEPTION_RECORD *record, void *frame,
                                                            CONTEXT *context, void *dispatch );
@@ -85,13 +86,8 @@ extern void WINAPI KiUserCallbackDispatcher(ULONG,void*,ULONG);
 extern void WINAPI KiUserCallbackDispatcherReturn(void);
 extern void (WINAPI *pWow64PrepareForException)( EXCEPTION_RECORD *rec, CONTEXT *context );
 
-#if defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)
-extern RUNTIME_FUNCTION *lookup_function_info( ULONG_PTR pc, ULONG_PTR *base, LDR_DATA_TABLE_ENTRY **module );
-#endif
-
 /* debug helpers */
 extern LPCSTR debugstr_us( const UNICODE_STRING *str );
-extern const char *debugstr_exception_code( DWORD code );
 extern void set_native_thread_name( DWORD tid, const char *name );
 
 /* init routines */
@@ -195,6 +191,44 @@ static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
 /* FLS data */
 extern TEB_FLS_DATA *fls_alloc_data(void);
 extern void heap_thread_detach(void);
+
+/* register context */
+
+#ifdef __i386__
+# define TRACE_CONTEXT(c) do { \
+    TRACE( "eip=%08lx esp=%08lx ebp=%08lx eflags=%08lx\n", (c)->Eip, (c)->Esp, (c)->Ebp, (c)->EFlags );\
+    TRACE( "eax=%08lx ebx=%08lx ecx=%08lx edx=%08lx\n", (c)->Eax, (c)->Ebx, (c)->Ecx, (c)->Edx ); \
+    TRACE( "esi=%08lx edi=%08lx cs=%04x ds=%04x es=%04x fs=%04x gs=%04x ss=%04x\n", \
+           (c)->Esi, (c)->Edi, LOWORD((c)->SegCs), LOWORD((c)->SegDs), LOWORD((c)->SegEs), \
+           LOWORD((c)->SegFs), LOWORD((c)->SegGs), LOWORD((c)->SegSs) ); \
+    } while(0)
+#elif defined(__x86_64__)
+# define TRACE_CONTEXT(c) do { \
+    TRACE( "rip=%016I64x rsp=%016I64x rbp=%016I64x eflags=%08lx\n", (c)->Rip, (c)->Rsp, (c)->Rbp, (c)->EFlags ); \
+    TRACE( "rax=%016I64x rbx=%016I64x rcx=%016I64x rdx=%016I64x\n", (c)->Rax, (c)->Rbx, (c)->Rcx, (c)->Rdx ); \
+    TRACE( "rsi=%016I64x rdi=%016I64x  r8=%016I64x  r9=%016I64x\n", (c)->Rsi, (c)->Rdi, (c)->R8, (c)->R9 ); \
+    TRACE( "r10=%016I64x r11=%016I64x r12=%016I64x r13=%016I64x\n", (c)->R10, (c)->R11, (c)->R12, (c)->R13 ); \
+    TRACE( "r14=%016I64x r15=%016I64x mxcsr=%08lx\n", (c)->R14, (c)->R15, (c)->MxCsr ); \
+    } while(0)
+#elif defined(__arm__)
+# define TRACE_CONTEXT(c) do { \
+    TRACE( "pc=%08lx sp=%08lx lr=%08lx ip=%08lx cpsr=%08lx\n", (c)->Pc, (c)->Sp, (c)->Lr, (c)->R12, (c)->Cpsr ); \
+    TRACE( "r0=%08lx r1=%08lx r2=%08lx r3=%08lx r4=%08lx r5=%08lx\n", (c)->R0, (c)->R1, (c)->R2, (c)->R3, (c)->R4, (c)->R5 ); \
+    TRACE( "r6=%08lx r7=%08lx r8=%08lx r9=%08lx r10=%08lx r11=%08lx\n", (c)->R6, (c)->R7, (c)->R8, (c)->R9, (c)->R10, (c)->R11 ); \
+    } while(0)
+#elif defined(__aarch64__)
+# define TRACE_CONTEXT(c) do { \
+    TRACE( " pc=%016I64x  sp=%016I64x  lr=%016I64x  fp=%016I64x\n", (c)->Pc, (c)->Sp, (c)->Lr, (c)->Fp ); \
+    TRACE( " x0=%016I64x  x1=%016I64x  x2=%016I64x  x3=%016I64x\n", (c)->X0, (c)->X1, (c)->X2, (c)->X3 ); \
+    TRACE( " x4=%016I64x  x5=%016I64x  x6=%016I64x  x7=%016I64x\n", (c)->X4, (c)->X5, (c)->X6, (c)->X7 ); \
+    TRACE( " x8=%016I64x  x9=%016I64x x10=%016I64x x11=%016I64x\n", (c)->X8, (c)->X9, (c)->X10, (c)->X11 ); \
+    TRACE( "x12=%016I64x x13=%016I64x x14=%016I64x x15=%016I64x\n", (c)->X12, (c)->X13, (c)->X14, (c)->X15 ); \
+    TRACE( "x16=%016I64x x17=%016I64x x18=%016I64x x19=%016I64x\n", (c)->X16, (c)->X17, (c)->X18, (c)->X19 ); \
+    TRACE( "x20=%016I64x x21=%016I64x x22=%016I64x x23=%016I64x\n", (c)->X20, (c)->X21, (c)->X22, (c)->X23 ); \
+    TRACE( "x24=%016I64x x25=%016I64x x26=%016I64x x27=%016I64x\n", (c)->X24, (c)->X25, (c)->X26, (c)->X27 ); \
+    TRACE( "x28=%016I64x cpsr=%08lx fpcr=%08lx fpsr=%08lx\n", (c)->X28, (c)->Cpsr, (c)->Fpcr, (c)->Fpsr ); \
+    } while(0)
+#endif
 
 #ifdef __arm64ec__
 

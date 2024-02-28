@@ -595,10 +595,8 @@ static void test_win32_surface_hwnd(VkInstance vk_instance, VkPhysicalDevice vk_
         ok(surf_caps.maxImageCount > 2, "Got minImageCount %u\n", surf_caps.maxImageCount);
         ok(surf_caps.minImageCount <= surf_caps.maxImageCount, "Got maxImageCount %u\n", surf_caps.maxImageCount);
 
-        todo_wine_if(IsRectEmpty(&client_rect))
         ok(surf_caps.currentExtent.width == client_rect.right - client_rect.left,
                 "Got currentExtent.width %d\n", surf_caps.currentExtent.width);
-        todo_wine_if(IsRectEmpty(&client_rect))
         ok(surf_caps.currentExtent.height == client_rect.bottom - client_rect.top,
                 "Got currentExtent.height %d\n", surf_caps.currentExtent.height);
 
@@ -658,14 +656,10 @@ static void test_win32_surface_hwnd(VkInstance vk_instance, VkPhysicalDevice vk_
     if (IsWindow(hwnd))
         ok(vr == VK_SUCCESS, "Got unexpected vr %d.\n", vr);
     else
-    {
-        todo_wine
         ok(vr == VK_SUCCESS /* Nvidia */ || vr == VK_ERROR_UNKNOWN /* AMD */, "Got unexpected vr %d.\n", vr);
-    }
 
     memset(&rect, 0xcc, sizeof(rect));
     vr = pvkGetPhysicalDevicePresentRectanglesKHR(vk_physical_device, surface, &count, &rect);
-    todo_wine_if(!IsWindow(hwnd))
     ok(vr == VK_SUCCESS /* Nvidia */ || vr == VK_ERROR_UNKNOWN /* AMD */, "Got unexpected vr %d.\n", vr);
     if (vr == VK_SUCCESS)
     {
@@ -678,7 +672,7 @@ static void test_win32_surface_hwnd(VkInstance vk_instance, VkPhysicalDevice vk_
         };
 
         ok(count == 1, "Got unexpected count %u.\n", count);
-        todo_wine_if(IsRectEmpty(&client_rect))
+        todo_wine_if(IsWindow(hwnd) && IsRectEmpty(&client_rect))
         ok(EqualRect(&tmp_rect, &client_rect), "Got unexpected rect %s.\n", wine_dbgstr_rect(&tmp_rect));
     }
 
@@ -860,7 +854,6 @@ static void test_win32_surface(VkInstance instance, VkPhysicalDevice physical_de
 
     swapchain = 0xdeadbeef;
     vr = create_swapchain(physical_device, surface, device, NULL, &swapchain);
-    todo_wine
     ok(vr == VK_ERROR_INITIALIZATION_FAILED /* Nvidia */ || vr == VK_SUCCESS /* AMD */,
             "Got unexpected vr %d.\n", vr);
     if (vr == VK_SUCCESS)
@@ -930,7 +923,6 @@ static void test_win32_surface(VkInstance instance, VkPhysicalDevice physical_de
 
     swapchain = 0xdeadbeef;
     vr = create_swapchain(physical_device, surface, device, hwnd, &swapchain);
-    todo_wine
     ok(vr == VK_ERROR_INITIALIZATION_FAILED /* Nvidia */ || vr == VK_SUCCESS /* AMD */,
             "Got unexpected vr %d.\n", vr);
     if (vr == VK_SUCCESS)

@@ -464,8 +464,8 @@ static struct shader_spirv_compute_program_vk *shader_spirv_find_compute_program
 
 static void shader_spirv_resource_bindings_cleanup(struct shader_spirv_resource_bindings *bindings)
 {
-    heap_free(bindings->vk_bindings);
-    heap_free(bindings->bindings);
+    free(bindings->vk_bindings);
+    free(bindings->bindings);
 }
 
 static bool shader_spirv_resource_bindings_add_vk_binding(struct shader_spirv_resource_bindings *bindings,
@@ -784,7 +784,7 @@ static void shader_spirv_precompile_compute(struct wined3d_shader *shader)
 
     if (!(program_vk = shader->backend_data))
     {
-        if (!(program_vk = heap_alloc_zero(sizeof(*program_vk))))
+        if (!(program_vk = calloc(1, sizeof(*program_vk))))
             ERR("Failed to allocate program.\n");
         shader->backend_data = program_vk;
     }
@@ -806,7 +806,7 @@ static void shader_spirv_precompile(void *shader_priv, struct wined3d_shader *sh
 
     if (!(program_vk = shader->backend_data))
     {
-        if (!(program_vk = heap_alloc_zero(sizeof(*program_vk))))
+        if (!(program_vk = calloc(1, sizeof(*program_vk))))
             ERR("Failed to allocate program.\n");
         shader->backend_data = program_vk;
     }
@@ -814,7 +814,7 @@ static void shader_spirv_precompile(void *shader_priv, struct wined3d_shader *sh
     shader_spirv_scan_shader(shader, &program_vk->descriptor_info, &program_vk->signature_info);
 }
 
-static void shader_spirv_select(void *shader_priv, struct wined3d_context *context,
+static void shader_spirv_apply_draw_state(void *shader_priv, struct wined3d_context *context,
         const struct wined3d_state *state)
 {
     struct wined3d_context_vk *context_vk = wined3d_context_vk(context);
@@ -826,8 +826,8 @@ static void shader_spirv_select(void *shader_priv, struct wined3d_context *conte
     enum wined3d_shader_type shader_type;
     struct wined3d_shader *shader;
 
-    priv->vertex_pipe->vp_enable(context, !use_vs(state));
-    priv->fragment_pipe->fp_enable(context, !use_ps(state));
+    priv->vertex_pipe->vp_apply_draw_state(context, state);
+    priv->fragment_pipe->fp_apply_draw_state(context, state);
 
     bindings = &priv->bindings;
     memcpy(binding_base, bindings->binding_base, sizeof(bindings->binding_base));
@@ -904,8 +904,8 @@ static void shader_spirv_disable(void *shader_priv, struct wined3d_context *cont
     struct wined3d_context_vk *context_vk = wined3d_context_vk(context);
     struct shader_spirv_priv *priv = shader_priv;
 
-    priv->vertex_pipe->vp_enable(context, false);
-    priv->fragment_pipe->fp_enable(context, false);
+    priv->vertex_pipe->vp_disable(context);
+    priv->fragment_pipe->fp_disable(context);
 
     context_vk->compute.vk_pipeline = VK_NULL_HANDLE;
     context->shader_update_mask = (1u << WINED3D_SHADER_TYPE_PIXEL)
@@ -922,12 +922,6 @@ static void shader_spirv_update_float_vertex_constants(struct wined3d_device *de
 }
 
 static void shader_spirv_update_float_pixel_constants(struct wined3d_device *device, UINT start, UINT count)
-{
-    WARN("Not implemented.\n");
-}
-
-static void shader_spirv_load_constants(void *shader_priv, struct wined3d_context *context,
-        const struct wined3d_state *state)
 {
     WARN("Not implemented.\n");
 }
@@ -991,7 +985,7 @@ static void shader_spirv_destroy_compute_vk(struct wined3d_shader *shader)
     VK_CALL(vkDestroyShaderModule(device_vk->vk_device, program->vk_module, NULL));
     vkd3d_shader_free_scan_descriptor_info(&program->descriptor_info);
     shader->backend_data = NULL;
-    heap_free(program);
+    free(program);
 }
 
 static void shader_spirv_destroy(struct wined3d_shader *shader)
@@ -1018,12 +1012,12 @@ static void shader_spirv_destroy(struct wined3d_shader *shader)
         shader_spirv_invalidate_contexts_graphics_program_variant(&device_vk->d, variant_vk);
         VK_CALL(vkDestroyShaderModule(device_vk->vk_device, variant_vk->vk_module, NULL));
     }
-    heap_free(program_vk->variants);
+    free(program_vk->variants);
     vkd3d_shader_free_scan_descriptor_info(&program_vk->descriptor_info);
     vkd3d_shader_free_scan_signature_info(&program_vk->signature_info);
 
     shader->backend_data = NULL;
-    heap_free(program_vk);
+    free(program_vk);
 }
 
 static HRESULT shader_spirv_alloc(struct wined3d_device *device,
@@ -1032,13 +1026,13 @@ static HRESULT shader_spirv_alloc(struct wined3d_device *device,
     void *vertex_priv, *fragment_priv;
     struct shader_spirv_priv *priv;
 
-    if (!(priv = heap_alloc(sizeof(*priv))))
+    if (!(priv = malloc(sizeof(*priv))))
         return E_OUTOFMEMORY;
 
     if (!(vertex_priv = vertex_pipe->vp_alloc(&spirv_shader_backend_vk, priv)))
     {
         ERR("Failed to initialise vertex pipe.\n");
-        heap_free(priv);
+        free(priv);
         return E_FAIL;
     }
 
@@ -1046,7 +1040,7 @@ static HRESULT shader_spirv_alloc(struct wined3d_device *device,
     {
         ERR("Failed to initialise fragment pipe.\n");
         vertex_pipe->vp_free(device, NULL);
-        heap_free(priv);
+        free(priv);
         return E_FAIL;
     }
 
@@ -1068,7 +1062,7 @@ static void shader_spirv_free(struct wined3d_device *device, struct wined3d_cont
     shader_spirv_resource_bindings_cleanup(&priv->bindings);
     priv->fragment_pipe->free_private(device, context);
     priv->vertex_pipe->vp_free(device, context);
-    heap_free(priv);
+    free(priv);
 }
 
 static BOOL shader_spirv_allocate_context_data(struct wined3d_context *context)
@@ -1119,12 +1113,11 @@ static const struct wined3d_shader_backend_ops spirv_shader_backend_vk =
 {
     .shader_handle_instruction = shader_spirv_handle_instruction,
     .shader_precompile = shader_spirv_precompile,
-    .shader_select = shader_spirv_select,
+    .shader_apply_draw_state = shader_spirv_apply_draw_state,
     .shader_select_compute = shader_spirv_select_compute,
     .shader_disable = shader_spirv_disable,
     .shader_update_float_vertex_constants = shader_spirv_update_float_vertex_constants,
     .shader_update_float_pixel_constants = shader_spirv_update_float_pixel_constants,
-    .shader_load_constants = shader_spirv_load_constants,
     .shader_destroy = shader_spirv_destroy,
     .shader_alloc_private = shader_spirv_alloc,
     .shader_free_private = shader_spirv_free,
@@ -1143,7 +1136,12 @@ const struct wined3d_shader_backend_ops *wined3d_spirv_shader_backend_init_vk(vo
     return &spirv_shader_backend_vk;
 }
 
-static void spirv_vertex_pipe_vk_vp_enable(const struct wined3d_context *context, BOOL enable)
+static void spirv_vertex_pipe_vk_vp_apply_draw_state(struct wined3d_context *context, const struct wined3d_state *state)
+{
+    /* Nothing to do. */
+}
+
+static void spirv_vertex_pipe_vk_vp_disable(const struct wined3d_context *context)
 {
     /* Nothing to do. */
 }
@@ -1206,7 +1204,8 @@ static const struct wined3d_state_entry_template spirv_vertex_pipe_vk_vp_states[
 
 static const struct wined3d_vertex_pipe_ops spirv_vertex_pipe_vk =
 {
-    .vp_enable = spirv_vertex_pipe_vk_vp_enable,
+    .vp_apply_draw_state = spirv_vertex_pipe_vk_vp_apply_draw_state,
+    .vp_disable = spirv_vertex_pipe_vk_vp_disable,
     .vp_get_caps = spirv_vertex_pipe_vk_vp_get_caps,
     .vp_get_emul_mask = spirv_vertex_pipe_vk_vp_get_emul_mask,
     .vp_alloc = spirv_vertex_pipe_vk_vp_alloc,
@@ -1219,7 +1218,13 @@ const struct wined3d_vertex_pipe_ops *wined3d_spirv_vertex_pipe_init_vk(void)
     return &spirv_vertex_pipe_vk;
 }
 
-static void spirv_fragment_pipe_vk_fp_enable(const struct wined3d_context *context, BOOL enable)
+static void spirv_fragment_pipe_vk_fp_apply_draw_state(
+        struct wined3d_context *context, const struct wined3d_state *state)
+{
+    /* Nothing to do. */
+}
+
+static void spirv_fragment_pipe_vk_fp_disable(const struct wined3d_context *context)
 {
     /* Nothing to do. */
 }
@@ -1285,7 +1290,8 @@ static const struct wined3d_state_entry_template spirv_fragment_pipe_vk_fp_state
 
 static const struct wined3d_fragment_pipe_ops spirv_fragment_pipe_vk =
 {
-    .fp_enable = spirv_fragment_pipe_vk_fp_enable,
+    .fp_apply_draw_state = spirv_fragment_pipe_vk_fp_apply_draw_state,
+    .fp_disable = spirv_fragment_pipe_vk_fp_disable,
     .get_caps = spirv_fragment_pipe_vk_fp_get_caps,
     .get_emul_mask = spirv_fragment_pipe_vk_fp_get_emul_mask,
     .alloc_private = spirv_fragment_pipe_vk_fp_alloc,

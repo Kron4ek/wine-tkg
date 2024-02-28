@@ -947,7 +947,7 @@ static HRESULT score_attributes( ISpObjectToken *token, const WCHAR *attrs,
     unsigned int i, j;
     HRESULT hr;
 
-    if (!attrs)
+    if (!attrs || !*attrs)
     {
         *score = 1;
         return S_OK;
@@ -1206,8 +1206,41 @@ static ULONG WINAPI enum_var_Release( IEnumVARIANT *iface )
 static HRESULT WINAPI enum_var_Next( IEnumVARIANT *iface, ULONG count,
                                      VARIANT *vars, ULONG *fetched )
 {
-    FIXME( "stub\n" );
-    return E_NOTIMPL;
+    struct enum_var *This = impl_from_IEnumVARIANT( iface );
+    ULONG i, total;
+    HRESULT hr;
+
+    TRACE( "(%p)->(%lu %p %p)\n", This, count, vars, fetched );
+
+    if (fetched) *fetched = 0;
+
+    if (FAILED(hr = ISpObjectTokenEnumBuilder_GetCount( This->token_enum, &total )))
+        return hr;
+
+    for ( i = 0; i < count && This->index < total; i++, This->index++ )
+    {
+        ISpObjectToken *token;
+        IDispatch *disp;
+
+        if (FAILED(hr = ISpObjectTokenEnumBuilder_Item( This->token_enum, This->index, &token )))
+            goto fail;
+
+        hr = ISpObjectToken_QueryInterface( token, &IID_IDispatch, (void **)&disp );
+        ISpObjectToken_Release( token );
+        if (FAILED(hr)) goto fail;
+
+        VariantInit( &vars[i] );
+        V_VT( &vars[i] ) = VT_DISPATCH;
+        V_DISPATCH( &vars[i] ) = disp;
+    }
+
+    if (fetched) *fetched = i;
+    return i == count ? S_OK : S_FALSE;
+
+fail:
+    while (i--)
+        VariantClear( &vars[i] );
+    return hr;
 }
 
 static HRESULT WINAPI enum_var_Skip( IEnumVARIANT *iface, ULONG count )
@@ -1306,15 +1339,28 @@ static HRESULT WINAPI speech_tokens_Invoke( ISpeechObjectTokens *iface,
                                             EXCEPINFO *excepinfo,
                                             UINT *argerr )
 {
-    FIXME( "stub\n" );
-    return E_NOTIMPL;
+    ITypeInfo *ti;
+    HRESULT hr;
+
+    TRACE( "(%p)->(%ld %s %#lx %#x %p %p %p %p)\n", iface, dispid,
+           debugstr_guid( iid ), lcid, flags, params, result, excepinfo, argerr );
+
+    if (FAILED(hr = get_typeinfo( ISpeechObjectTokens_tid, &ti )))
+        return hr;
+    hr = ITypeInfo_Invoke( ti, iface, dispid, flags, params, result, excepinfo, argerr );
+    ITypeInfo_Release( ti );
+
+    return hr;
 }
 
 static HRESULT WINAPI speech_tokens_get_Count( ISpeechObjectTokens *iface,
                                                LONG *count )
 {
-    FIXME( "stub\n" );
-    return E_NOTIMPL;
+    struct token_enum *This = impl_from_ISpeechObjectTokens( iface );
+
+    TRACE( "(%p)->(%p)\n", This, count );
+
+    return ISpObjectTokenEnumBuilder_GetCount( &This->ISpObjectTokenEnumBuilder_iface, (ULONG *)count );
 }
 
 static HRESULT WINAPI speech_tokens_Item( ISpeechObjectTokens *iface,
@@ -2063,8 +2109,18 @@ static HRESULT WINAPI speech_token_GetIDsOfNames( ISpeechObjectToken *iface,
                                                   LCID lcid,
                                                   DISPID *dispids )
 {
-    FIXME( "stub\n" );
-    return E_NOTIMPL;
+    ITypeInfo *ti;
+    HRESULT hr;
+
+    TRACE( "(%p)->(%s %p %u %#lx %p)\n",
+           iface, debugstr_guid( iid ), names, count, lcid, dispids );
+
+    if (FAILED(hr = get_typeinfo( ISpeechObjectToken_tid, &ti )))
+        return hr;
+    hr = ITypeInfo_GetIDsOfNames( ti, names, count, dispids );
+    ITypeInfo_Release( ti );
+
+    return hr;
 }
 
 static HRESULT WINAPI speech_token_Invoke( ISpeechObjectToken *iface,
@@ -2077,8 +2133,18 @@ static HRESULT WINAPI speech_token_Invoke( ISpeechObjectToken *iface,
                                            EXCEPINFO *excepinfo,
                                            UINT *argerr )
 {
-    FIXME( "stub\n" );
-    return E_NOTIMPL;
+    ITypeInfo *ti;
+    HRESULT hr;
+
+    TRACE( "(%p)->(%ld %s %#lx %#x %p %p %p %p)\n", iface, dispid,
+           debugstr_guid( iid ), lcid, flags, params, result, excepinfo, argerr );
+
+    if (FAILED(hr = get_typeinfo( ISpeechObjectToken_tid, &ti )))
+        return hr;
+    hr = ITypeInfo_Invoke( ti, iface, dispid, flags, params, result, excepinfo, argerr );
+    ITypeInfo_Release( ti );
+
+    return hr;
 }
 
 static HRESULT WINAPI speech_token_get_Id( ISpeechObjectToken *iface,
@@ -2105,8 +2171,27 @@ static HRESULT WINAPI speech_token_get_Category( ISpeechObjectToken *iface,
 static HRESULT WINAPI speech_token_GetDescription( ISpeechObjectToken *iface,
                                                    LONG locale, BSTR *desc )
 {
-    FIXME( "stub\n" );
-    return E_NOTIMPL;
+    struct object_token *This = impl_from_ISpeechObjectToken( iface );
+    WCHAR langid[5];
+    WCHAR *desc_wstr = NULL;
+    HRESULT hr;
+
+    TRACE( "(%p)->(%#lx %p)\n", This, locale, desc );
+
+    if (!desc) return E_POINTER;
+
+    swprintf( langid, ARRAY_SIZE( langid ), L"%X", LANGIDFROMLCID( locale ) );
+
+    hr = ISpObjectToken_GetStringValue( &This->ISpObjectToken_iface, langid, &desc_wstr );
+    if (hr == SPERR_NOT_FOUND)
+        hr = ISpObjectToken_GetStringValue( &This->ISpObjectToken_iface, NULL, &desc_wstr );
+    if (FAILED(hr))
+        return hr;
+
+    *desc = SysAllocString( desc_wstr );
+
+    CoTaskMemFree( desc_wstr );
+    return *desc ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT WINAPI speech_token_SetId( ISpeechObjectToken *iface,

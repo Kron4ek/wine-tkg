@@ -36,6 +36,7 @@
 #include "ntdll_misc.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
+WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
 typedef struct
 {
@@ -58,7 +59,7 @@ static RTL_CRITICAL_SECTION vectored_handlers_section = { &critsect_debug, -1, 0
 
 static PRTL_EXCEPTION_FILTER unhandled_exception_filter;
 
-const char *debugstr_exception_code( DWORD code )
+static const char *debugstr_exception_code( DWORD code )
 {
     switch (code)
     {
@@ -143,7 +144,7 @@ static ULONG remove_vectored_handler( struct list *handler_list, VECTORED_HANDLE
  *
  * Call the vectored handlers chain.
  */
-LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context )
+static LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context )
 {
     struct list *ptr;
     LONG ret = EXCEPTION_CONTINUE_SEARCH;
@@ -182,6 +183,77 @@ LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context )
     RtlLeaveCriticalSection( &vectored_handlers_section );
     RtlFreeHeap( GetProcessHeap(), 0, to_free );
     return ret;
+}
+
+
+/*******************************************************************
+ *		dispatch_exception
+ */
+NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
+{
+    NTSTATUS status;
+    DWORD i;
+
+    switch (rec->ExceptionCode)
+    {
+    case EXCEPTION_WINE_STUB:
+        if (rec->ExceptionInformation[1] >> 16)
+            MESSAGE( "wine: Call from %p to unimplemented function %s.%s, aborting\n",
+                     rec->ExceptionAddress,
+                     (char *)rec->ExceptionInformation[0], (char *)rec->ExceptionInformation[1] );
+        else
+            MESSAGE( "wine: Call from %p to unimplemented function %s.%u, aborting\n",
+                     rec->ExceptionAddress,
+                     (char *)rec->ExceptionInformation[0], (USHORT)rec->ExceptionInformation[1] );
+        break;
+
+    case EXCEPTION_WINE_NAME_THREAD:
+        if (rec->ExceptionInformation[0] == 0x1000)
+        {
+            const char *name = (char *)rec->ExceptionInformation[1];
+            DWORD tid = (DWORD)rec->ExceptionInformation[2];
+
+            if (tid == -1 || tid == GetCurrentThreadId())
+                WARN_(threadname)( "Thread renamed to %s\n", debugstr_a(name) );
+            else
+                WARN_(threadname)( "Thread ID %04lx renamed to %s\n", tid, debugstr_a(name) );
+            set_native_thread_name( tid, name );
+        }
+        break;
+
+    case DBG_PRINTEXCEPTION_C:
+        WARN( "%s\n", debugstr_an((char *)rec->ExceptionInformation[1], rec->ExceptionInformation[0] - 1) );
+        break;
+
+    case DBG_PRINTEXCEPTION_WIDE_C:
+        WARN( "%s\n", debugstr_wn((WCHAR *)rec->ExceptionInformation[1], rec->ExceptionInformation[0] - 1) );
+        break;
+
+    case STATUS_ASSERTION_FAILURE:
+        ERR( "assertion failure exception\n" );
+        break;
+
+    default:
+        if (!TRACE_ON(seh)) WARN( "%s exception (code=%lx) raised\n",
+                                  debugstr_exception_code(rec->ExceptionCode), rec->ExceptionCode );
+        break;
+    }
+
+    TRACE( "code=%lx (%s) flags=%lx addr=%p\n",
+           rec->ExceptionCode, debugstr_exception_code(rec->ExceptionCode),
+           rec->ExceptionFlags, rec->ExceptionAddress );
+    for (i = 0; i < min( EXCEPTION_MAXIMUM_PARAMETERS, rec->NumberParameters ); i++)
+        TRACE( " info[%ld]=%p\n", i, (void *)rec->ExceptionInformation[i] );
+    TRACE_CONTEXT( context );
+
+    if (call_vectored_handlers( rec, context ) == EXCEPTION_CONTINUE_EXECUTION)
+        NtContinue( context, FALSE );
+
+    if ((status = call_seh_handlers( rec, context )) == STATUS_SUCCESS)
+        NtContinue( context, FALSE );
+
+    if (status != STATUS_UNHANDLED_EXCEPTION) RtlRaiseStatus( status );
+    return NtRaiseException( rec, context, FALSE );
 }
 
 
@@ -355,345 +427,6 @@ EXCEPTION_DISPOSITION WINAPI call_unhandled_exception_handler( EXCEPTION_RECORD 
     NtTerminateProcess( GetCurrentProcess(), rec->ExceptionCode );
     return ExceptionContinueExecution;
 }
-
-
-#if defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)
-
-struct dynamic_unwind_entry
-{
-    struct list       entry;
-    ULONG_PTR         base;
-    ULONG_PTR         end;
-    RUNTIME_FUNCTION *table;
-    DWORD             count;
-    DWORD             max_count;
-    PGET_RUNTIME_FUNCTION_CALLBACK callback;
-    PVOID             context;
-};
-
-static struct list dynamic_unwind_list = LIST_INIT(dynamic_unwind_list);
-
-static RTL_CRITICAL_SECTION dynamic_unwind_section;
-static RTL_CRITICAL_SECTION_DEBUG dynamic_unwind_debug =
-{
-    0, 0, &dynamic_unwind_section,
-    { &dynamic_unwind_debug.ProcessLocksList, &dynamic_unwind_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": dynamic_unwind_section") }
-};
-static RTL_CRITICAL_SECTION dynamic_unwind_section = { &dynamic_unwind_debug, -1, 0, 0, 0, 0 };
-
-static ULONG_PTR get_runtime_function_end( RUNTIME_FUNCTION *func, ULONG_PTR addr )
-{
-#ifdef __x86_64__
-    return func->EndAddress;
-#elif defined(__arm__)
-    if (func->Flag) return func->BeginAddress + func->FunctionLength * 2;
-    else
-    {
-        struct unwind_info
-        {
-            DWORD function_length : 18;
-            DWORD version : 2;
-            DWORD x : 1;
-            DWORD e : 1;
-            DWORD f : 1;
-            DWORD count : 5;
-            DWORD words : 4;
-        } *info = (struct unwind_info *)(addr + func->UnwindData);
-        return func->BeginAddress + info->function_length * 2;
-    }
-#else  /* __aarch64__ */
-    if (func->Flag) return func->BeginAddress + func->FunctionLength * 4;
-    else
-    {
-        struct unwind_info
-        {
-            DWORD function_length : 18;
-            DWORD version : 2;
-            DWORD x : 1;
-            DWORD e : 1;
-            DWORD epilog : 5;
-            DWORD codes : 5;
-        } *info = (struct unwind_info *)(addr + func->UnwindData);
-        return func->BeginAddress + info->function_length * 4;
-    }
-#endif
-}
-
-/**********************************************************************
- *              RtlAddFunctionTable   (NTDLL.@)
- */
-BOOLEAN CDECL RtlAddFunctionTable( RUNTIME_FUNCTION *table, DWORD count, ULONG_PTR addr )
-{
-    struct dynamic_unwind_entry *entry;
-
-    TRACE( "%p %lu %Ix\n", table, count, addr );
-
-    /* NOTE: Windows doesn't check if table is aligned or a NULL pointer */
-
-    entry = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*entry) );
-    if (!entry)
-        return FALSE;
-
-    entry->base      = addr;
-    entry->end       = addr + (count ? get_runtime_function_end( &table[count - 1], addr ) : 0);
-    entry->table     = table;
-    entry->count     = count;
-    entry->max_count = 0;
-    entry->callback  = NULL;
-    entry->context   = NULL;
-
-    RtlEnterCriticalSection( &dynamic_unwind_section );
-    list_add_tail( &dynamic_unwind_list, &entry->entry );
-    RtlLeaveCriticalSection( &dynamic_unwind_section );
-    return TRUE;
-}
-
-
-/**********************************************************************
- *              RtlInstallFunctionTableCallback   (NTDLL.@)
- */
-BOOLEAN CDECL RtlInstallFunctionTableCallback( ULONG_PTR table, ULONG_PTR base, DWORD length,
-                                               PGET_RUNTIME_FUNCTION_CALLBACK callback, PVOID context,
-                                               PCWSTR dll )
-{
-    struct dynamic_unwind_entry *entry;
-
-    TRACE( "%Ix %Ix %ld %p %p %s\n", table, base, length, callback, context, wine_dbgstr_w(dll) );
-
-    /* NOTE: Windows doesn't check if the provided callback is a NULL pointer */
-
-    /* both low-order bits must be set */
-    if ((table & 0x3) != 0x3)
-        return FALSE;
-
-    entry = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*entry) );
-    if (!entry)
-        return FALSE;
-
-    entry->base      = base;
-    entry->end       = base + length;
-    entry->table     = (RUNTIME_FUNCTION *)table;
-    entry->count     = 0;
-    entry->max_count = 0;
-    entry->callback  = callback;
-    entry->context   = context;
-
-    RtlEnterCriticalSection( &dynamic_unwind_section );
-    list_add_tail( &dynamic_unwind_list, &entry->entry );
-    RtlLeaveCriticalSection( &dynamic_unwind_section );
-
-    return TRUE;
-}
-
-
-/*************************************************************************
- *              RtlAddGrowableFunctionTable   (NTDLL.@)
- */
-DWORD WINAPI RtlAddGrowableFunctionTable( void **table, RUNTIME_FUNCTION *functions, DWORD count,
-                                          DWORD max_count, ULONG_PTR base, ULONG_PTR end )
-{
-    struct dynamic_unwind_entry *entry;
-
-    TRACE( "%p, %p, %lu, %lu, %Ix, %Ix\n", table, functions, count, max_count, base, end );
-
-    entry = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*entry) );
-    if (!entry)
-        return STATUS_NO_MEMORY;
-
-    entry->base      = base;
-    entry->end       = end;
-    entry->table     = functions;
-    entry->count     = count;
-    entry->max_count = max_count;
-    entry->callback  = NULL;
-    entry->context   = NULL;
-
-    RtlEnterCriticalSection( &dynamic_unwind_section );
-    list_add_tail( &dynamic_unwind_list, &entry->entry );
-    RtlLeaveCriticalSection( &dynamic_unwind_section );
-
-    *table = entry;
-
-    return STATUS_SUCCESS;
-}
-
-
-/*************************************************************************
- *              RtlGrowFunctionTable   (NTDLL.@)
- */
-void WINAPI RtlGrowFunctionTable( void *table, DWORD count )
-{
-    struct dynamic_unwind_entry *entry;
-
-    TRACE( "%p, %lu\n", table, count );
-
-    RtlEnterCriticalSection( &dynamic_unwind_section );
-    LIST_FOR_EACH_ENTRY( entry, &dynamic_unwind_list, struct dynamic_unwind_entry, entry )
-    {
-        if (entry == table)
-        {
-            if (count > entry->count && count <= entry->max_count)
-                entry->count = count;
-            break;
-        }
-    }
-    RtlLeaveCriticalSection( &dynamic_unwind_section );
-}
-
-
-/*************************************************************************
- *              RtlDeleteGrowableFunctionTable   (NTDLL.@)
- */
-void WINAPI RtlDeleteGrowableFunctionTable( void *table )
-{
-    struct dynamic_unwind_entry *entry, *to_free = NULL;
-
-    TRACE( "%p\n", table );
-
-    RtlEnterCriticalSection( &dynamic_unwind_section );
-    LIST_FOR_EACH_ENTRY( entry, &dynamic_unwind_list, struct dynamic_unwind_entry, entry )
-    {
-        if (entry == table)
-        {
-            to_free = entry;
-            list_remove( &entry->entry );
-            break;
-        }
-    }
-    RtlLeaveCriticalSection( &dynamic_unwind_section );
-
-    RtlFreeHeap( GetProcessHeap(), 0, to_free );
-}
-
-
-/**********************************************************************
- *              RtlDeleteFunctionTable   (NTDLL.@)
- */
-BOOLEAN CDECL RtlDeleteFunctionTable( RUNTIME_FUNCTION *table )
-{
-    struct dynamic_unwind_entry *entry, *to_free = NULL;
-
-    TRACE( "%p\n", table );
-
-    RtlEnterCriticalSection( &dynamic_unwind_section );
-    LIST_FOR_EACH_ENTRY( entry, &dynamic_unwind_list, struct dynamic_unwind_entry, entry )
-    {
-        if (entry->table == table)
-        {
-            to_free = entry;
-            list_remove( &entry->entry );
-            break;
-        }
-    }
-    RtlLeaveCriticalSection( &dynamic_unwind_section );
-
-    if (!to_free) return FALSE;
-
-    RtlFreeHeap( GetProcessHeap(), 0, to_free );
-    return TRUE;
-}
-
-
-/* helper for lookup_function_info() */
-static RUNTIME_FUNCTION *find_function_info( ULONG_PTR pc, ULONG_PTR base,
-                                             RUNTIME_FUNCTION *func, ULONG size )
-{
-    int min = 0;
-    int max = size - 1;
-
-    while (min <= max)
-    {
-#ifdef __x86_64__
-        int pos = (min + max) / 2;
-        if (pc < base + func[pos].BeginAddress) max = pos - 1;
-        else if (pc >= base + func[pos].EndAddress) min = pos + 1;
-        else
-        {
-            func += pos;
-            while (func->UnwindData & 1)  /* follow chained entry */
-                func = (RUNTIME_FUNCTION *)(base + (func->UnwindData & ~1));
-            return func;
-        }
-#elif defined(__arm__)
-        int pos = (min + max) / 2;
-        if (pc < base + (func[pos].BeginAddress & ~1)) max = pos - 1;
-        else if (pc >= base + get_runtime_function_end( &func[pos], base )) min = pos + 1;
-        else return func + pos;
-#else  /* __aarch64__ */
-        int pos = (min + max) / 2;
-        if (pc < base + func[pos].BeginAddress) max = pos - 1;
-        else if (pc >= base + get_runtime_function_end( &func[pos], base )) min = pos + 1;
-        else return func + pos;
-#endif
-    }
-    return NULL;
-}
-
-/**********************************************************************
- *           lookup_function_info
- */
-RUNTIME_FUNCTION *lookup_function_info( ULONG_PTR pc, ULONG_PTR *base, LDR_DATA_TABLE_ENTRY **module )
-{
-    RUNTIME_FUNCTION *func = NULL;
-    struct dynamic_unwind_entry *entry;
-    ULONG size;
-
-    /* PE module or wine module */
-    if (!LdrFindEntryForAddress( (void *)pc, module ))
-    {
-        *base = (ULONG_PTR)(*module)->DllBase;
-        if ((func = RtlImageDirectoryEntryToData( (*module)->DllBase, TRUE,
-                                                  IMAGE_DIRECTORY_ENTRY_EXCEPTION, &size )))
-        {
-            /* lookup in function table */
-            func = find_function_info( pc, (ULONG_PTR)(*module)->DllBase, func, size/sizeof(*func) );
-        }
-    }
-    else
-    {
-        *module = NULL;
-
-        RtlEnterCriticalSection( &dynamic_unwind_section );
-        LIST_FOR_EACH_ENTRY( entry, &dynamic_unwind_list, struct dynamic_unwind_entry, entry )
-        {
-            if (pc >= entry->base && pc < entry->end)
-            {
-                *base = entry->base;
-                /* use callback or lookup in function table */
-                if (entry->callback)
-                    func = entry->callback( pc, entry->context );
-                else
-                    func = find_function_info( pc, entry->base, entry->table, entry->count );
-                break;
-            }
-        }
-        RtlLeaveCriticalSection( &dynamic_unwind_section );
-    }
-
-    return func;
-}
-
-/**********************************************************************
- *              RtlLookupFunctionEntry   (NTDLL.@)
- */
-PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry( ULONG_PTR pc, ULONG_PTR *base,
-                                                 UNWIND_HISTORY_TABLE *table )
-{
-    LDR_DATA_TABLE_ENTRY *module;
-    RUNTIME_FUNCTION *func;
-
-    /* FIXME: should use the history table to make things faster */
-
-    if (!(func = lookup_function_info( pc, base, &module )))
-    {
-        *base = 0;
-        WARN( "no exception table found for %Ix\n", pc );
-    }
-    return func;
-}
-
-#endif  /* __x86_64__ || __arm__ || __aarch64__ */
 
 
 /*************************************************************

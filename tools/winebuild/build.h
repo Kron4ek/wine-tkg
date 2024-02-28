@@ -129,6 +129,17 @@ struct apiset
 
 static const unsigned int apiset_hash_factor = 31;
 
+struct exports
+{
+    int              nb_entry_points;    /* number of used entry points */
+    ORDDEF         **entry_points;       /* dll entry points */
+    int              nb_names;           /* number of entry points with names */
+    ORDDEF         **names;              /* array of entry point names (points into entry_points) */
+    int              base;               /* ordinal base */
+    int              limit;              /* ordinal limit */
+    ORDDEF         **ordinals;           /* array of dll ordinals (points into entry_points) */
+};
+
 typedef struct
 {
     char            *src_name;           /* file name of the source spec file */
@@ -138,13 +149,10 @@ typedef struct
     char            *init_func;          /* initialization routine */
     char            *main_module;        /* main Win32 module for Win16 specs */
     SPEC_TYPE        type;               /* type of dll (Win16/Win32) */
-    int              base;               /* ordinal base */
-    int              limit;              /* ordinal limit */
     int              stack_size;         /* exe stack size */
     int              heap_size;          /* exe heap size */
     int              nb_entry_points;    /* number of used entry points */
     int              alloc_entry_points; /* number of allocated entry points */
-    int              nb_names;           /* number of entry points with names */
     unsigned int     nb_resources;       /* number of resources */
     int              characteristics;    /* characteristics for the PE header */
     int              dll_characteristics;/* DLL characteristics for the PE header */
@@ -152,9 +160,8 @@ typedef struct
     int              subsystem_major;    /* subsystem version major number */
     int              subsystem_minor;    /* subsystem version minor number */
     int              unicode_app;        /* default to unicode entry point */
-    ORDDEF          *entry_points;       /* dll entry points */
-    ORDDEF         **names;              /* array of entry point names (points into entry_points) */
-    ORDDEF         **ordinals;           /* array of dll ordinals (points into entry_points) */
+    ORDDEF          *entry_points;       /* spec entry points */
+    struct exports   exports;            /* dll exports */
     struct resource *resources;          /* array of dll resources (format differs between Win16/Win32) */
     struct apiset    apiset;             /* list of defined api sets */
 } DLLSPEC;
@@ -385,8 +392,6 @@ extern struct strarray nm_command;
 extern char *cpu_option;
 extern char *fpu_option;
 extern char *arch_option;
-extern const char *float_abi_option;
-extern int thumb_mode;
 extern int needs_get_pc_thunk;
 
 #endif  /* __WINE_BUILD_H */

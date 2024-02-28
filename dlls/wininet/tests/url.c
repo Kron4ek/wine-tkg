@@ -1225,10 +1225,25 @@ static void InternetCreateUrlA_test(void)
     urlComp.dwExtraInfoLength = strlen(urlComp.lpszExtraInfo);
     len = 256;
     szUrl = HeapAlloc(GetProcessHeap(), 0, len);
-    InternetCreateUrlA(&urlComp, ICU_ESCAPE, szUrl, &len);
+    ret = InternetCreateUrlA(&urlComp, ICU_ESCAPE, szUrl, &len);
     ok(ret, "Expected success\n");
     ok(len == strlen(CREATE_URL13), "Got len %lu\n", len);
     ok(!strcmp(szUrl, CREATE_URL13), "Expected \"%s\", got \"%s\"\n", CREATE_URL13, szUrl);
+
+    HeapFree(GetProcessHeap(), 0, szUrl);
+
+    memset(&urlComp, 0, sizeof(urlComp));
+    fill_url_components(&urlComp);
+    urlComp.lpszScheme = NULL;
+    urlComp.dwSchemeLength = 0;
+    urlComp.nScheme = INTERNET_SCHEME_UNKNOWN;
+    len = 256;
+    szUrl = HeapAlloc(GetProcessHeap(), 0, len);
+    SetLastError(0xdeadbeef);
+    ret = InternetCreateUrlA(&urlComp, 0, szUrl, &len);
+    ok(!ret, "Expected failure\n");
+    ok(GetLastError() == ERROR_INVALID_PARAMETER,
+            "Expected ERROR_INVALID_PARAMETER, got %ld\n", GetLastError());
 
     HeapFree(GetProcessHeap(), 0, szUrl);
 }

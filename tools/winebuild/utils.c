@@ -609,13 +609,21 @@ DLLSPEC *alloc_dll_spec(void)
     spec = xmalloc( sizeof(*spec) );
     memset( spec, 0, sizeof(*spec) );
     spec->type               = SPEC_WIN32;
-    spec->base               = MAX_ORDINALS;
     spec->characteristics    = IMAGE_FILE_EXECUTABLE_IMAGE;
     spec->subsystem          = IMAGE_SUBSYSTEM_WINDOWS_CUI;
     spec->subsystem_major    = 4;
     spec->subsystem_minor    = 0;
     spec->dll_characteristics = IMAGE_DLLCHARACTERISTICS_NX_COMPAT | IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
+    spec->exports.base        = MAX_ORDINALS;
     return spec;
+}
+
+
+static void free_exports( struct exports *entries )
+{
+    free( entries->entry_points );
+    free( entries->names );
+    free( entries->ordinals );
 }
 
 
@@ -635,13 +643,12 @@ void free_dll_spec( DLLSPEC *spec )
         free( odp->export_name );
         free( odp->link_name );
     }
+    free_exports( &spec->exports );
     free( spec->file_name );
     free( spec->dll_name );
     free( spec->c_name );
     free( spec->init_func );
     free( spec->entry_points );
-    free( spec->names );
-    free( spec->ordinals );
     free( spec->resources );
     free( spec );
 }

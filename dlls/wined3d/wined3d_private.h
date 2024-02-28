@@ -45,7 +45,6 @@
 #include "winternl.h"
 #include "ddk/d3dkmthk.h"
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 #include "objbase.h"
 #include "wine/wined3d.h"
@@ -1543,15 +1542,13 @@ struct wined3d_shader_backend_ops
 {
     void (*shader_handle_instruction)(const struct wined3d_shader_instruction *);
     void (*shader_precompile)(void *shader_priv, struct wined3d_shader *shader);
-    void (*shader_select)(void *shader_priv, struct wined3d_context *context,
+    void (*shader_apply_draw_state)(void *shader_priv, struct wined3d_context *context,
             const struct wined3d_state *state);
     void (*shader_select_compute)(void *shader_priv, struct wined3d_context *context,
             const struct wined3d_state *state);
     void (*shader_disable)(void *shader_priv, struct wined3d_context *context);
     void (*shader_update_float_vertex_constants)(struct wined3d_device *device, UINT start, UINT count);
     void (*shader_update_float_pixel_constants)(struct wined3d_device *device, UINT start, UINT count);
-    void (*shader_load_constants)(void *shader_priv, struct wined3d_context *context,
-            const struct wined3d_state *state);
     void (*shader_destroy)(struct wined3d_shader *shader);
     HRESULT (*shader_alloc_private)(struct wined3d_device *device, const struct wined3d_vertex_pipe_ops *vertex_pipe,
             const struct wined3d_fragment_pipe_ops *fragment_pipe);
@@ -2006,7 +2003,8 @@ struct wined3d_state_entry_template
 
 struct wined3d_fragment_pipe_ops
 {
-    void (*fp_enable)(const struct wined3d_context *context, BOOL enable);
+    void (*fp_apply_draw_state)(struct wined3d_context *context, const struct wined3d_state *state);
+    void (*fp_disable)(const struct wined3d_context *context);
     void (*get_caps)(const struct wined3d_adapter *adapter, struct fragment_caps *caps);
     unsigned int (*get_emul_mask)(const struct wined3d_adapter *adapter);
     void *(*alloc_private)(const struct wined3d_shader_backend_ops *shader_backend, void *shader_priv);
@@ -2033,7 +2031,8 @@ struct wined3d_vertex_caps
 
 struct wined3d_vertex_pipe_ops
 {
-    void (*vp_enable)(const struct wined3d_context *context, BOOL enable);
+    void (*vp_apply_draw_state)(struct wined3d_context *context, const struct wined3d_state *state);
+    void (*vp_disable)(const struct wined3d_context *context);
     void (*vp_get_caps)(const struct wined3d_adapter *adapter, struct wined3d_vertex_caps *caps);
     unsigned int (*vp_get_emul_mask)(const struct wined3d_adapter *adapter);
     void *(*vp_alloc)(const struct wined3d_shader_backend_ops *shader_backend, void *shader_priv);
@@ -3412,7 +3411,7 @@ static inline void *wined3d_texture_allocate_object_memory(SIZE_T s, SIZE_T leve
     if (level_count > ((~(SIZE_T)0 - s) / sizeof(*t->sub_resources)) / layer_count)
         return NULL;
 
-    return heap_alloc_zero(s + level_count * layer_count * sizeof(*t->sub_resources));
+    return calloc(1, s + level_count * layer_count * sizeof(*t->sub_resources));
 }
 
 static inline struct wined3d_texture *texture_from_resource(struct wined3d_resource *resource)

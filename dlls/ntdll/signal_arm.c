@@ -35,19 +35,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 WINE_DECLARE_DEBUG_CHANNEL(relay);
-WINE_DECLARE_DEBUG_CHANNEL(threadname);
-
-typedef struct _SCOPE_TABLE
-{
-    ULONG Count;
-    struct
-    {
-        ULONG BeginAddress;
-        ULONG EndAddress;
-        ULONG HandlerAddress;
-        ULONG JumpTarget;
-    } ScopeRecord[1];
-} SCOPE_TABLE, *PSCOPE_TABLE;
 
 
 /* layering violation: the setjmp buffer is defined in msvcrt, but used by RtlUnwindEx */
@@ -129,67 +116,23 @@ __ASM_GLOBAL_FUNC( RtlCaptureContext,
  */
 static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEXT *context )
 {
-    LDR_DATA_TABLE_ENTRY *module;
-    NTSTATUS status;
-    DWORD pc;
+    DWORD pc = context->Pc;
 
-    dispatch->ImageBase        = 0;
-    dispatch->ScopeIndex       = 0;
-    dispatch->EstablisherFrame = 0;
-    dispatch->ControlPc        = context->Pc;
+    dispatch->ScopeIndex = 0;
+    dispatch->ControlPc  = pc;
     dispatch->ControlPcIsUnwound = (context->ContextFlags & CONTEXT_UNWOUND_TO_CALL) != 0;
-    pc = context->Pc - (dispatch->ControlPcIsUnwound ? 2 : 0);
+    if (dispatch->ControlPcIsUnwound) pc -= 2;
 
-    /* first look for PE exception information */
-
-    if ((dispatch->FunctionEntry = lookup_function_info(pc,
-             (ULONG_PTR*)&dispatch->ImageBase, &module )))
+    dispatch->FunctionEntry = RtlLookupFunctionEntry( pc, (DWORD_PTR *)&dispatch->ImageBase,
+                                                      dispatch->HistoryTable );
+    dispatch->LanguageHandler = RtlVirtualUnwind( type, dispatch->ImageBase, pc, dispatch->FunctionEntry,
+                                                  context, &dispatch->HandlerData,
+                                                  (ULONG_PTR *)&dispatch->EstablisherFrame, NULL );
+    if (!context->Pc)
     {
-        dispatch->LanguageHandler = RtlVirtualUnwind( type, dispatch->ImageBase, pc,
-                                                      dispatch->FunctionEntry, context,
-                                                      &dispatch->HandlerData, (ULONG_PTR *)&dispatch->EstablisherFrame,
-                                                      NULL );
-        return STATUS_SUCCESS;
+        WARN( "exception data not found for pc %p, lr %p\n", (void *)pc, (void *)context->Lr );
+        return STATUS_INVALID_DISPOSITION;
     }
-
-    /* then look for host system exception information */
-
-    if (!module || (module->Flags & LDR_WINE_INTERNAL))
-    {
-        struct unwind_builtin_dll_params params = { type, dispatch, context };
-
-        status = WINE_UNIX_CALL( unix_unwind_builtin_dll, &params );
-        if (status != STATUS_SUCCESS) return status;
-
-        if (dispatch->EstablisherFrame)
-        {
-            dispatch->FunctionEntry = NULL;
-            if (dispatch->LanguageHandler && !module)
-            {
-                FIXME( "calling personality routine in system library not supported yet\n" );
-                dispatch->LanguageHandler = NULL;
-            }
-            return STATUS_SUCCESS;
-        }
-    }
-    else
-    {
-        status = context->Pc != context->Lr ?
-                 STATUS_SUCCESS : STATUS_INVALID_DISPOSITION;
-        WARN( "exception data not found in %s for %p, LR %p, status %lx\n",
-               debugstr_w(module->BaseDllName.Buffer), (void*) context->Pc,
-               (void*) context->Lr, status );
-        dispatch->EstablisherFrame = context->Sp;
-        dispatch->LanguageHandler = NULL;
-        context->Pc = context->Lr;
-        context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
-        return status;
-    }
-
-    dispatch->EstablisherFrame = context->Sp;
-    dispatch->LanguageHandler = NULL;
-    context->Pc = context->Lr;
-    context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
     return STATUS_SUCCESS;
 }
 
@@ -382,11 +325,11 @@ static DWORD call_teb_handler( EXCEPTION_RECORD *rec, CONTEXT *context, DISPATCH
 
 
 /**********************************************************************
- *           call_function_handlers
+ *           call_seh_handlers
  *
- * Call the per-function handlers.
+ * Call the SEH handlers.
  */
-static NTSTATUS call_function_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_context )
+NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_context )
 {
     EXCEPTION_REGISTRATION_RECORD *teb_frame = NtCurrentTeb()->Tib.ExceptionList;
     UNWIND_HISTORY_TABLE table;
@@ -428,7 +371,7 @@ static NTSTATUS call_function_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_con
                 break;
             case ExceptionNestedException:
                 rec->ExceptionFlags |= EH_NESTED_CALL;
-                TRACE_(seh)( "nested exception\n" );
+                TRACE( "nested exception\n" );
                 break;
             case ExceptionCollidedUnwind: {
                 ULONG_PTR frame;
@@ -459,7 +402,7 @@ static NTSTATUS call_function_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_con
                 break;
             case ExceptionNestedException:
                 rec->ExceptionFlags |= EH_NESTED_CALL;
-                TRACE_(seh)( "nested exception\n" );
+                TRACE( "nested exception\n" );
                 break;
             case ExceptionCollidedUnwind: {
                 ULONG_PTR frame;
@@ -488,69 +431,6 @@ static NTSTATUS call_function_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_con
 /*******************************************************************
  *		KiUserExceptionDispatcher (NTDLL.@)
  */
-NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
-{
-    NTSTATUS status;
-    DWORD c;
-
-    TRACE( "code=%lx flags=%lx addr=%p pc=%08lx\n",
-           rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress, context->Pc );
-    for (c = 0; c < rec->NumberParameters; c++)
-        TRACE( " info[%ld]=%08Ix\n", c, rec->ExceptionInformation[c] );
-
-    if (rec->ExceptionCode == EXCEPTION_WINE_STUB)
-    {
-        if (rec->ExceptionInformation[1] >> 16)
-            MESSAGE( "wine: Call from %p to unimplemented function %s.%s, aborting\n",
-                     rec->ExceptionAddress,
-                     (char*)rec->ExceptionInformation[0], (char*)rec->ExceptionInformation[1] );
-        else
-            MESSAGE( "wine: Call from %p to unimplemented function %s.%Id, aborting\n",
-                     rec->ExceptionAddress,
-                     (char*)rec->ExceptionInformation[0], rec->ExceptionInformation[1] );
-    }
-    else if (rec->ExceptionCode == EXCEPTION_WINE_NAME_THREAD && rec->ExceptionInformation[0] == 0x1000)
-    {
-        if ((DWORD)rec->ExceptionInformation[2] == -1 || (DWORD)rec->ExceptionInformation[2] == GetCurrentThreadId())
-            WARN_(threadname)( "Thread renamed to %s\n", debugstr_a((char *)rec->ExceptionInformation[1]) );
-        else
-            WARN_(threadname)( "Thread ID %04lx renamed to %s\n", (DWORD)rec->ExceptionInformation[2],
-                               debugstr_a((char *)rec->ExceptionInformation[1]) );
-
-        set_native_thread_name((DWORD)rec->ExceptionInformation[2], (char *)rec->ExceptionInformation[1]);
-    }
-    else if (rec->ExceptionCode == DBG_PRINTEXCEPTION_C)
-    {
-        WARN( "%s\n", debugstr_an((char *)rec->ExceptionInformation[1], rec->ExceptionInformation[0] - 1) );
-    }
-    else if (rec->ExceptionCode == DBG_PRINTEXCEPTION_WIDE_C)
-    {
-        WARN( "%s\n", debugstr_wn((WCHAR *)rec->ExceptionInformation[1], rec->ExceptionInformation[0] - 1) );
-    }
-    else
-    {
-        if (rec->ExceptionCode == STATUS_ASSERTION_FAILURE)
-            ERR( "%s exception (code=%lx) raised\n", debugstr_exception_code(rec->ExceptionCode), rec->ExceptionCode );
-        else
-            WARN( "%s exception (code=%lx) raised\n", debugstr_exception_code(rec->ExceptionCode), rec->ExceptionCode );
-
-        TRACE( " r0=%08lx r1=%08lx r2=%08lx r3=%08lx r4=%08lx r5=%08lx\n",
-               context->R0, context->R1, context->R2, context->R3, context->R4, context->R5 );
-        TRACE( " r6=%08lx r7=%08lx r8=%08lx r9=%08lx r10=%08lx r11=%08lx\n",
-               context->R6, context->R7, context->R8, context->R9, context->R10, context->R11 );
-        TRACE( " r12=%08lx sp=%08lx lr=%08lx pc=%08lx cpsr=%08lx\n",
-               context->R12, context->Sp, context->Lr, context->Pc, context->Cpsr );
-    }
-
-    if (call_vectored_handlers( rec, context ) == EXCEPTION_CONTINUE_EXECUTION)
-        NtContinue( context, FALSE );
-
-    if ((status = call_function_handlers( rec, context )) == STATUS_SUCCESS)
-        NtContinue( context, FALSE );
-
-    if (status != STATUS_UNHANDLED_EXCEPTION) RtlRaiseStatus( status );
-    return NtRaiseException( rec, context, FALSE );
-}
 __ASM_GLOBAL_FUNC( KiUserExceptionDispatcher,
                    __ASM_SEH(".seh_custom 0xee,0x02\n\t")  /* MSFT_OP_CONTEXT */
                    __ASM_SEH(".seh_endprologue\n\t")
@@ -632,563 +512,6 @@ __ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
                    "bl " __ASM_NAME("RtlRaiseStatus") "\n\t"
                    "udf #1" )
 
-
-/***********************************************************************
- * Definitions for Win32 unwind tables
- */
-
-struct unwind_info
-{
-    DWORD function_length : 18;
-    DWORD version : 2;
-    DWORD x : 1;
-    DWORD e : 1;
-    DWORD f : 1;
-    DWORD epilog : 5;
-    DWORD codes : 4;
-};
-
-struct unwind_info_ext
-{
-    WORD epilog;
-    BYTE codes;
-    BYTE reserved;
-};
-
-struct unwind_info_epilog
-{
-    DWORD offset : 18;
-    DWORD res : 2;
-    DWORD cond : 4;
-    DWORD index : 8;
-};
-
-static const BYTE unwind_code_len[256] =
-{
-/* 00 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-/* 20 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-/* 40 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-/* 60 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-/* 80 */ 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-/* a0 */ 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-/* c0 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-/* e0 */ 1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,4,3,4,1,1,1,1,1
-};
-
-static const BYTE unwind_instr_len[256] =
-{
-/* 00 */ 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-/* 20 */ 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-/* 40 */ 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-/* 60 */ 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-/* 80 */ 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
-/* a0 */ 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
-/* c0 */ 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,
-/* e0 */ 4,4,4,4,4,4,4,4,4,4,4,4,2,2,0,4,0,0,0,0,0,4,4,2,2,4,4,2,4,2,4,0
-};
-
-/***********************************************************************
- *           get_sequence_len
- */
-static unsigned int get_sequence_len( BYTE *ptr, BYTE *end, int include_end )
-{
-    unsigned int ret = 0;
-
-    while (ptr < end)
-    {
-        if (*ptr >= 0xfd)
-        {
-            if (*ptr <= 0xfe && include_end)
-                ret += unwind_instr_len[*ptr];
-            break;
-        }
-        ret += unwind_instr_len[*ptr];
-        ptr += unwind_code_len[*ptr];
-    }
-    return ret;
-}
-
-
-/***********************************************************************
- *           pop_regs_mask
- */
-static void pop_regs_mask( int mask, CONTEXT *context,
-                           KNONVOLATILE_CONTEXT_POINTERS *ptrs )
-{
-    int i;
-    for (i = 0; i <= 12; i++)
-    {
-        if (!(mask & (1 << i))) continue;
-        if (ptrs && i >= 4 && i <= 11) (&ptrs->R4)[i - 4] = (DWORD *)context->Sp;
-        if (i >= 4) (&context->R0)[i] = *(DWORD *)context->Sp;
-        context->Sp += 4;
-    }
-}
-
-
-/***********************************************************************
- *           pop_regs_range
- */
-static void pop_regs_range( int last, CONTEXT *context,
-                            KNONVOLATILE_CONTEXT_POINTERS *ptrs )
-{
-    int i;
-    for (i = 4; i <= last; i++)
-    {
-        if (ptrs) (&ptrs->R4)[i - 4] = (DWORD *)context->Sp;
-        (&context->R0)[i] = *(DWORD *)context->Sp;
-        context->Sp += 4;
-    }
-}
-
-
-/***********************************************************************
- *           pop_lr
- */
-static void pop_lr( int increment, CONTEXT *context,
-                    KNONVOLATILE_CONTEXT_POINTERS *ptrs )
-{
-    if (ptrs) ptrs->Lr = (DWORD *)context->Sp;
-    context->Lr = *(DWORD *)context->Sp;
-    context->Sp += increment;
-}
-
-
-/***********************************************************************
- *           pop_fpregs_range
- */
-static void pop_fpregs_range( int first, int last, CONTEXT *context,
-                              KNONVOLATILE_CONTEXT_POINTERS *ptrs )
-{
-    int i;
-    for (i = first; i <= last; i++)
-    {
-        if (ptrs && i >= 8 && i <= 15) (&ptrs->D8)[i - 8] = (ULONGLONG *)context->Sp;
-        context->D[i] = *(ULONGLONG *)context->Sp;
-        context->Sp += 8;
-    }
-}
-
-
-/***********************************************************************
- *           ms_opcode
- */
-static void ms_opcode( BYTE opcode, CONTEXT *context,
-                       KNONVOLATILE_CONTEXT_POINTERS *ptrs )
-{
-    switch (opcode)
-    {
-    case 1:  /* MSFT_OP_MACHINE_FRAME */
-        context->Pc = ((DWORD *)context->Sp)[1];
-        context->Sp = ((DWORD *)context->Sp)[0];
-        context->ContextFlags &= ~CONTEXT_UNWOUND_TO_CALL;
-        break;
-    case 2:  /* MSFT_OP_CONTEXT */
-    {
-        int i;
-        CONTEXT *src = (CONTEXT *)context->Sp;
-
-        *context = *src;
-        if (!ptrs) break;
-        for (i = 0; i < 8; i++) (&ptrs->R4)[i] = &src->R4 + i;
-        ptrs->Lr = &src->Lr;
-        for (i = 0; i < 8; i++) (&ptrs->D8)[i] = &src->D[i + 8];
-        break;
-    }
-    default:
-        WARN( "unsupported code %02x\n", opcode );
-        break;
-    }
-}
-
-
-/***********************************************************************
- *           process_unwind_codes
- */
-static void process_unwind_codes( BYTE *ptr, BYTE *end, CONTEXT *context,
-                                  KNONVOLATILE_CONTEXT_POINTERS *ptrs, int skip )
-{
-    unsigned int val, len;
-    unsigned int i;
-
-    /* skip codes */
-    while (ptr < end && skip)
-    {
-        if (*ptr >= 0xfd) break;
-        skip -= unwind_instr_len[*ptr];
-        ptr += unwind_code_len[*ptr];
-    }
-
-    while (ptr < end)
-    {
-        len = unwind_code_len[*ptr];
-        if (ptr + len > end) break;
-        val = 0;
-        for (i = 0; i < len; i++)
-            val = (val << 8) | ptr[i];
-
-        if (*ptr <= 0x7f)      /* add sp, sp, #x */
-            context->Sp += 4 * (val & 0x7f);
-        else if (*ptr <= 0xbf) /* pop {r0-r12,lr} */
-        {
-            pop_regs_mask( val & 0x1fff, context, ptrs );
-            if (val & 0x2000)
-                pop_lr( 4, context, ptrs );
-        }
-        else if (*ptr <= 0xcf) /* mov sp, rX */
-            context->Sp = (&context->R0)[val & 0x0f];
-        else if (*ptr <= 0xd7) /* pop {r4-rX,lr} */
-        {
-            pop_regs_range( (val & 0x03) + 4, context, ptrs );
-            if (val & 0x04)
-                pop_lr( 4, context, ptrs );
-        }
-        else if (*ptr <= 0xdf) /* pop {r4-rX,lr} */
-        {
-            pop_regs_range( (val & 0x03) + 8, context, ptrs );
-            if (val & 0x04)
-                pop_lr( 4, context, ptrs );
-        }
-        else if (*ptr <= 0xe7) /* vpop {d8-dX} */
-            pop_fpregs_range( 8, (val & 0x07) + 8, context, ptrs );
-        else if (*ptr <= 0xeb) /* add sp, sp, #x */
-            context->Sp += 4 * (val & 0x3ff);
-        else if (*ptr <= 0xed) /* pop {r0-r12,lr} */
-        {
-            pop_regs_mask( val & 0xff, context, ptrs );
-            if (val & 0x100)
-                pop_lr( 4, context, ptrs );
-        }
-        else if (*ptr <= 0xee) /* Microsoft-specific 0x00-0x0f, Available 0x10-0xff */
-            ms_opcode( val & 0xff, context, ptrs );
-        else if (*ptr <= 0xef && ((val & 0xff) <= 0x0f)) /* ldr lr, [sp], #x */
-            pop_lr( 4 * (val & 0x0f), context, ptrs );
-        else if (*ptr <= 0xf4) /* Available */
-            WARN( "unsupported code %02x\n", *ptr );
-        else if (*ptr <= 0xf5) /* vpop {dS-dE} */
-            pop_fpregs_range( (val & 0xf0) >> 4, (val & 0x0f), context, ptrs );
-        else if (*ptr <= 0xf6) /* vpop {dS-dE} */
-            pop_fpregs_range( ((val & 0xf0) >> 4) + 16, (val & 0x0f) + 16, context, ptrs );
-        else if (*ptr == 0xf7 || *ptr == 0xf9) /* add sp, sp, #x */
-            context->Sp += 4 * (val & 0xffff);
-        else if (*ptr == 0xf8 || *ptr == 0xfa) /* add sp, sp, #x */
-            context->Sp += 4 * (val & 0xffffff);
-        else if (*ptr <= 0xfc)  /* nop */
-            /* nop */ ;
-        else                    /* end */
-            break;
-
-        ptr += len;
-    }
-}
-
-
-/***********************************************************************
- *           unwind_packed_data
- */
-static void *unwind_packed_data( ULONG_PTR base, ULONG_PTR pc, RUNTIME_FUNCTION *func,
-                                 CONTEXT *context, KNONVOLATILE_CONTEXT_POINTERS *ptrs )
-{
-    int i, pos = 0;
-    int pf = 0, ef = 0, fpoffset = 0, stack = func->StackAdjust;
-    int prologue_regmask = 0;
-    int epilogue_regmask = 0;
-    unsigned int offset, len;
-    BYTE prologue[10], *prologue_end, epilogue[20], *epilogue_end;
-
-    TRACE( "function %lx-%lx: len=%#x flag=%x ret=%u H=%u reg=%u R=%u L=%u C=%u stackadjust=%x\n",
-           base + func->BeginAddress, base + func->BeginAddress + func->FunctionLength * 2,
-           func->FunctionLength, func->Flag, func->Ret,
-           func->H, func->Reg, func->R, func->L, func->C, func->StackAdjust );
-
-    offset = (pc - base) - func->BeginAddress;
-    if (func->StackAdjust >= 0x03f4)
-    {
-        pf = func->StackAdjust & 0x04;
-        ef = func->StackAdjust & 0x08;
-        stack = (func->StackAdjust & 3) + 1;
-    }
-
-    if (!func->R || pf)
-    {
-        int first = 4, last = func->Reg + 4;
-        if (pf)
-        {
-            first = (~func->StackAdjust) & 3;
-            if (func->R)
-                last = 3;
-        }
-        for (i = first; i <= last; i++)
-            prologue_regmask |= 1 << i;
-        fpoffset = last + 1 - first;
-    }
-
-    if (!func->R || ef)
-    {
-        int first = 4, last = func->Reg + 4;
-        if (ef)
-        {
-            first = (~func->StackAdjust) & 3;
-            if (func->R)
-                last = 3;
-        }
-        for (i = first; i <= last; i++)
-            epilogue_regmask |= 1 << i;
-    }
-
-    if (func->C)
-    {
-        prologue_regmask |= 1 << 11;
-        epilogue_regmask |= 1 << 11;
-    }
-
-    if (func->L)
-    {
-        prologue_regmask |= 1 << 14; /* lr */
-        if (func->Ret != 0)
-            epilogue_regmask |= 1 << 14; /* lr */
-        else if (!func->H)
-            epilogue_regmask |= 1 << 15; /* pc */
-    }
-
-    /* Synthesize prologue opcodes */
-    if (stack && !pf)
-    {
-        if (stack <= 0x7f)
-        {
-            prologue[pos++] = stack; /* sub sp, sp, #x */
-        }
-        else
-        {
-            prologue[pos++] = 0xe8 | (stack >> 8); /* sub.w sp, sp, #x */
-            prologue[pos++] = stack & 0xff;
-        }
-    }
-
-    if (func->R && func->Reg != 7)
-        prologue[pos++] = 0xe0 | func->Reg; /* vpush {d8-dX} */
-
-    if (func->C && fpoffset == 0)
-        prologue[pos++] = 0xfb; /* mov r11, sp - handled as nop16 */
-    else if (func->C)
-        prologue[pos++] = 0xfc; /* add r11, sp, #x - handled as nop32 */
-
-    if (prologue_regmask & 0xf00) /* r8-r11 set */
-    {
-        int bitmask = prologue_regmask & 0x1fff;
-        if (prologue_regmask & (1 << 14)) /* lr */
-            bitmask |= 0x2000;
-        prologue[pos++] = 0x80 | (bitmask >> 8); /* push.w {r0-r12,lr} */
-        prologue[pos++] = bitmask & 0xff;
-    }
-    else if (prologue_regmask) /* r0-r7, lr set */
-    {
-        int bitmask = prologue_regmask & 0xff;
-        if (prologue_regmask & (1 << 14)) /* lr */
-            bitmask |= 0x100;
-        prologue[pos++] = 0xec | (bitmask >> 8); /* push {r0-r7,lr} */
-        prologue[pos++] = bitmask & 0xff;
-    }
-
-    if (func->H)
-        prologue[pos++] = 0x04; /* push {r0-r3} - handled as sub sp, sp, #16 */
-
-    prologue[pos++] = 0xff; /* end */
-    prologue_end = &prologue[pos];
-
-    /* Synthesize epilogue opcodes */
-    pos = 0;
-    if (stack && !ef)
-    {
-        if (stack <= 0x7f)
-        {
-            epilogue[pos++] = stack; /* sub sp, sp, #x */
-        }
-        else
-        {
-            epilogue[pos++] = 0xe8 | (stack >> 8); /* sub.w sp, sp, #x */
-            epilogue[pos++] = stack & 0xff;
-        }
-    }
-
-    if (func->R && func->Reg != 7)
-        epilogue[pos++] = 0xe0 | func->Reg; /* vpush {d8-dX} */
-
-    if (epilogue_regmask & 0x7f00) /* r8-r11, lr set */
-    {
-        int bitmask = epilogue_regmask & 0x1fff;
-        if (epilogue_regmask & (3 << 14)) /* lr or pc */
-            bitmask |= 0x2000;
-        epilogue[pos++] = 0x80 | (bitmask >> 8); /* push.w {r0-r12,lr} */
-        epilogue[pos++] = bitmask & 0xff;
-    }
-    else if (epilogue_regmask) /* r0-r7, pc set */
-    {
-        int bitmask = epilogue_regmask & 0xff;
-        if (epilogue_regmask & (1 << 15)) /* pc */
-            bitmask |= 0x100; /* lr */
-        epilogue[pos++] = 0xec | (bitmask >> 8); /* push {r0-r7,lr} */
-        epilogue[pos++] = bitmask & 0xff;
-    }
-
-    if (func->H && !(func->L && func->Ret == 0))
-        epilogue[pos++] = 0x04; /* add sp, sp, #16 */
-    else if (func->H && (func->L && func->Ret == 0))
-    {
-        epilogue[pos++] = 0xef; /* ldr lr, [sp], #20 */
-        epilogue[pos++] = 5;
-    }
-
-    if (func->Ret == 1)
-        epilogue[pos++] = 0xfd; /* bx lr */
-    else if (func->Ret == 2)
-        epilogue[pos++] = 0xfe; /* b address */
-    else
-        epilogue[pos++] = 0xff; /* end */
-    epilogue_end = &epilogue[pos];
-
-    if (func->Flag == 1 && offset < 4 * (prologue_end - prologue)) {
-        /* Check prologue */
-        len = get_sequence_len( prologue, prologue_end, 0 );
-        if (offset < len)
-        {
-            process_unwind_codes( prologue, prologue_end, context, ptrs, len - offset );
-            return NULL;
-        }
-    }
-
-    if (func->Ret != 3 && 2 * func->FunctionLength - offset <= 4 * (epilogue_end - epilogue)) {
-        /* Check epilogue */
-        len = get_sequence_len( epilogue, epilogue_end, 1 );
-        if (offset >= 2 * func->FunctionLength - len)
-        {
-            process_unwind_codes( epilogue, epilogue_end, context, ptrs, offset - (2 * func->FunctionLength - len) );
-            return NULL;
-        }
-    }
-
-    /* Execute full prologue */
-    process_unwind_codes( prologue, prologue_end, context, ptrs, 0 );
-
-    return NULL;
-}
-
-
-/***********************************************************************
- *           unwind_full_data
- */
-static void *unwind_full_data( ULONG_PTR base, ULONG_PTR pc, RUNTIME_FUNCTION *func,
-                               CONTEXT *context, PVOID *handler_data, KNONVOLATILE_CONTEXT_POINTERS *ptrs )
-{
-    struct unwind_info *info;
-    struct unwind_info_epilog *info_epilog;
-    unsigned int i, codes, epilogs, len, offset;
-    void *data;
-    BYTE *end;
-
-    info = (struct unwind_info *)((char *)base + func->UnwindData);
-    data = info + 1;
-    epilogs = info->epilog;
-    codes = info->codes;
-    if (!codes && !epilogs)
-    {
-        struct unwind_info_ext *infoex = data;
-        codes = infoex->codes;
-        epilogs = infoex->epilog;
-        data = infoex + 1;
-    }
-    info_epilog = data;
-    if (!info->e) data = info_epilog + epilogs;
-
-    offset = (pc - base) - func->BeginAddress;
-    end = (BYTE *)data + codes * 4;
-
-    TRACE( "function %lx-%lx: len=%#x ver=%u X=%u E=%u F=%u epilogs=%u codes=%u\n",
-           base + func->BeginAddress, base + func->BeginAddress + info->function_length * 2,
-           info->function_length, info->version, info->x, info->e, info->f, epilogs, codes * 4 );
-
-    /* check for prolog */
-    if (offset < codes * 4 * 4 && !info->f)
-    {
-        len = get_sequence_len( data, end, 0 );
-        if (offset < len)
-        {
-            process_unwind_codes( data, end, context, ptrs, len - offset );
-            return NULL;
-        }
-    }
-
-    /* check for epilog */
-    if (!info->e)
-    {
-        for (i = 0; i < epilogs; i++)
-        {
-            /* TODO: Currently not checking epilogue conditions. */
-            if (offset < 2 * info_epilog[i].offset) break;
-            if (offset - 2 * info_epilog[i].offset < (codes * 4 - info_epilog[i].index) * 4)
-            {
-                BYTE *ptr = (BYTE *)data + info_epilog[i].index;
-                len = get_sequence_len( ptr, end, 1 );
-                if (offset <= 2 * info_epilog[i].offset + len)
-                {
-                    process_unwind_codes( ptr, end, context, ptrs, offset - 2 * info_epilog[i].offset );
-                    return NULL;
-                }
-            }
-        }
-    }
-    else if (2 * info->function_length - offset <= (codes * 4 - epilogs) * 4)
-    {
-        BYTE *ptr = (BYTE *)data + epilogs;
-        len = get_sequence_len( ptr, end, 1 );
-        if (offset >= 2 * info->function_length - len)
-        {
-            process_unwind_codes( ptr, end, context, ptrs, offset - (2 * info->function_length - len) );
-            return NULL;
-        }
-    }
-
-    process_unwind_codes( data, end, context, ptrs, 0 );
-
-    /* get handler since we are inside the main code */
-    if (info->x)
-    {
-        DWORD *handler_rva = (DWORD *)data + codes;
-        *handler_data = handler_rva + 1;
-        return (char *)base + *handler_rva;
-    }
-    return NULL;
-}
-
-/***********************************************************************
- *            RtlVirtualUnwind  (NTDLL.@)
- */
-PVOID WINAPI RtlVirtualUnwind( ULONG type, ULONG_PTR base, ULONG_PTR pc,
-                               RUNTIME_FUNCTION *func, CONTEXT *context,
-                               PVOID *handler_data, ULONG_PTR *frame_ret,
-                               KNONVOLATILE_CONTEXT_POINTERS *ctx_ptr )
-{
-    void *handler;
-
-    TRACE( "type %lx pc %Ix sp %lx func %lx\n", type, pc, context->Sp, base + func->BeginAddress );
-
-    *handler_data = NULL;
-
-    context->Pc = 0;
-    if (func->Flag)
-        handler = unwind_packed_data( base, pc, func, context, ctx_ptr );
-    else
-        handler = unwind_full_data( base, pc, func, context, handler_data, ctx_ptr );
-
-    TRACE( "ret: pc=%lx lr=%lx sp=%lx handler=%p\n", context->Pc, context->Lr, context->Sp, handler );
-    if (!context->Pc)
-    {
-        context->Pc = context->Lr;
-        context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
-    }
-    *frame_ret = context->Sp;
-    return handler;
-}
 
 
 /**********************************************************************
@@ -1334,18 +657,11 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
 
     rec->ExceptionFlags |= EH_UNWINDING | (end_frame ? 0 : EH_EXIT_UNWIND);
 
-    TRACE( "code=%lx flags=%lx end_frame=%p target_ip=%p pc=%08lx\n",
-           rec->ExceptionCode, rec->ExceptionFlags, end_frame, target_ip, context->Pc );
+    TRACE( "code=%lx flags=%lx end_frame=%p target_ip=%p\n",
+           rec->ExceptionCode, rec->ExceptionFlags, end_frame, target_ip );
     for (i = 0; i < min( EXCEPTION_MAXIMUM_PARAMETERS, rec->NumberParameters ); i++)
         TRACE( " info[%ld]=%08Ix\n", i, rec->ExceptionInformation[i] );
-    TRACE("  r0=%08lx  r1=%08lx  r2=%08lx  r3=%08lx\n",
-          context->R0, context->R1, context->R2, context->R3 );
-    TRACE("  r4=%08lx  r5=%08lx  r6=%08lx  r7=%08lx\n",
-          context->R4, context->R5, context->R6, context->R7 );
-    TRACE("  r8=%08lx  r9=%08lx r10=%08lx r11=%08lx\n",
-          context->R8, context->R9, context->R10, context->R11 );
-    TRACE(" r12=%08lx  sp=%08lx  lr=%08lx  pc=%08lx\n",
-          context->R12, context->Sp, context->Lr, context->Pc );
+    TRACE_CONTEXT( context );
 
     dispatch.TargetPc         = (ULONG_PTR)target_ip;
     dispatch.ContextRecord    = context;
@@ -1430,25 +746,6 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
     RtlRestoreContext(context, rec);
 }
 
-
-/***********************************************************************
- *            RtlUnwind  (NTDLL.@)
- */
-void WINAPI RtlUnwind( void *frame, void *target_ip, EXCEPTION_RECORD *rec, void *retval )
-{
-    CONTEXT context;
-    RtlUnwindEx( frame, target_ip, rec, retval, &context, NULL );
-}
-
-
-/*******************************************************************
- *		__jump_unwind (NTDLL.@)
- */
-void WINAPI __jump_unwind( void *frame, void *target_ip )
-{
-    CONTEXT context;
-    RtlUnwindEx( frame, target_ip, NULL, NULL, &context, NULL );
-}
 
 extern LONG __C_ExecuteExceptionFilter(PEXCEPTION_POINTERS ptrs, PVOID frame,
                                        PEXCEPTION_FILTER filter,

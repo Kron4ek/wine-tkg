@@ -5993,7 +5993,7 @@ void init_local_fontfile_loader(void)
     local_fontfile_loader.IDWriteLocalFontFileLoader_iface.lpVtbl = &localfontfileloadervtbl;
     local_fontfile_loader.refcount = 1;
     list_init(&local_fontfile_loader.streams);
-    InitializeCriticalSection(&local_fontfile_loader.cs);
+    InitializeCriticalSectionEx(&local_fontfile_loader.cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO);
     local_fontfile_loader.cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": localfileloader.lock");
 }
 
@@ -8101,7 +8101,7 @@ static struct dwrite_fontset *unsafe_impl_from_IDWriteFontSet(IDWriteFontSet *if
     if (!iface)
         return NULL;
     assert(iface->lpVtbl == (IDWriteFontSetVtbl *)&fontsetvtbl);
-    return CONTAINING_RECORD(iface, struct dwrite_fontset, IDWriteFontSet3_iface);
+    return CONTAINING_RECORD((IDWriteFontSet3*)iface, struct dwrite_fontset, IDWriteFontSet3_iface);
 }
 
 static HRESULT fontset_create_entry(IDWriteFontFile *file, DWRITE_FONT_FACE_TYPE face_type,

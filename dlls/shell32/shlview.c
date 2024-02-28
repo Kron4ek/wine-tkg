@@ -1039,9 +1039,6 @@ static void ShellView_DoContextMenu(IShellViewImpl * This, WORD x, WORD y, BOOL 
 	      /* let the ContextMenu merge its items in */
 	      if (SUCCEEDED(IContextMenu_QueryContextMenu( pContextMenu, hMenu, 0, FCIDM_SHVIEWFIRST, FCIDM_SHVIEWLAST, wFlags )))
 	      {
-	        if (This->FolderSettings.fFlags & FWF_DESKTOP)
-		  SetMenuDefaultItem(hMenu, FCIDM_SHVIEW_OPEN, MF_BYCOMMAND);
-
 		if( bDefault )
 		{
 		  TRACE("-- get menu default command\n");
@@ -1055,24 +1052,11 @@ static void ShellView_DoContextMenu(IShellViewImpl * This, WORD x, WORD y, BOOL 
 
 		if(uCommand > 0)
 		{
-		  TRACE("-- uCommand=%u\n", uCommand);
-		  if (uCommand==FCIDM_SHVIEW_OPEN && IsInCommDlg(This))
-		  {
-		    TRACE("-- dlg: OnDefaultCommand\n");
-		    if (OnDefaultCommand(This) != S_OK)
-		    {
-		      ShellView_OpenSelectedItems(This);
-		    }
-		  }
-		  else
-		  {
-		    TRACE("-- explore -- invoke command\n");
 		    ZeroMemory(&cmi, sizeof(cmi));
 		    cmi.cbSize = sizeof(cmi);
 		    cmi.hwnd = This->hWndParent; /* this window has to answer CWM_GETISHELLBROWSER */
                     cmi.lpVerb = MAKEINTRESOURCEA(uCommand);
 		    IContextMenu_InvokeCommand(pContextMenu, &cmi);
-		  }
 		}
 		DestroyMenu(hMenu);
 	      }

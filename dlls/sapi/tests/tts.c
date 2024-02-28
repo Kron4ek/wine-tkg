@@ -416,8 +416,9 @@ static IClassFactory test_engine_cf = { &ClassFactoryVtbl };
 
 static void test_spvoice(void)
 {
-    static const WCHAR test_token_id[] = L"HKEY_LOCAL_MACHINE\\Software\\Wine\\Winetest\\sapi\\tts\\TestEngine";
+    static const WCHAR test_token_id[] = L"HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Speech\\Voices\\Tokens\\WinetestVoice";
     static const WCHAR test_text[] = L"Hello! This is a test sentence.";
+    static const WCHAR *get_voices = L"GetVoices";
 
     ISpVoice *voice;
     IUnknown *dummy;
@@ -431,12 +432,24 @@ static void test_spvoice(void)
     ULONG stream_num;
     DWORD regid;
     DWORD start, duration;
+    ISpeechVoice *speech_voice;
+    ISpeechObjectTokens *speech_tokens;
+    LONG count;
+    BSTR req = NULL, opt = NULL;
+    UINT info_count;
+    ITypeInfo *typeinfo;
+    TYPEATTR *typeattr;
+    DISPID dispid;
+    DISPPARAMS params;
+    VARIANT args[2], ret;
     HRESULT hr;
 
     if (waveOutGetNumDevs() == 0) {
         skip("no wave out devices.\n");
         return;
     }
+
+    RegDeleteTreeA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Speech\\Voices\\WinetestVoice");
 
     check_apttype();
     ok(test_apt_data.type == APTTYPE_UNITIALIZED, "got apt type %d.\n", test_apt_data.type);
@@ -587,6 +600,7 @@ static void test_spvoice(void)
     hr = ISpObjectToken_CreateKey(token, L"Attributes", &attrs_key);
     ok(hr == S_OK, "got %#lx.\n", hr);
     ISpDataKey_SetStringValue(attrs_key, L"Language", L"409");
+    ISpDataKey_SetStringValue(attrs_key, L"Vendor", L"Winetest");
     ISpDataKey_Release(attrs_key);
 
     hr = ISpVoice_SetVoice(voice, token);
@@ -681,13 +695,86 @@ static void test_spvoice(void)
     ok(hr == S_OK, "got %#lx.\n", hr);
     ok(duration < 300, "took %lu ms.\n", duration);
 
+    hr = ISpVoice_QueryInterface(voice, &IID_ISpeechVoice, (void **)&speech_voice);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    count = -1;
+    hr = ISpeechVoice_GetVoices(speech_voice, NULL, NULL, &speech_tokens);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = ISpeechObjectTokens_get_Count(speech_tokens, &count);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(count > 0, "got %ld.\n", count);
+    ISpeechObjectTokens_Release(speech_tokens);
+
+    req = SysAllocString(L"Vendor=Winetest");
+    opt = SysAllocString(L"Language=409;Gender=Male");
+
+    count = 0xdeadbeef;
+    hr = ISpeechVoice_GetVoices(speech_voice, req, opt, &speech_tokens);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = ISpeechObjectTokens_get_Count(speech_tokens, &count);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(count == 1, "got %ld.\n", count);
+    ISpeechObjectTokens_Release(speech_tokens);
+
+    hr = ISpeechVoice_Speak(speech_voice, NULL, SVSFPurgeBeforeSpeak, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    info_count = 0xdeadbeef;
+    hr = ISpeechVoice_GetTypeInfoCount(speech_voice, &info_count);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(info_count == 1, "got %u.\n", info_count);
+
+    typeinfo = NULL;
+    typeattr = NULL;
+    hr = ISpeechVoice_GetTypeInfo(speech_voice, 0, 0, &typeinfo);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = ITypeInfo_GetTypeAttr(typeinfo, &typeattr);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(typeattr->typekind == TKIND_DISPATCH, "got %u.\n", typeattr->typekind);
+    ok(IsEqualGUID(&typeattr->guid, &IID_ISpeechVoice), "got %s.\n", wine_dbgstr_guid(&typeattr->guid));
+    ITypeInfo_ReleaseTypeAttr(typeinfo, typeattr);
+    ITypeInfo_Release(typeinfo);
+
+    dispid = 0xdeadbeef;
+    hr = ISpeechVoice_GetIDsOfNames(speech_voice, &IID_NULL, (WCHAR **)&get_voices, 1, 0x409, &dispid);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(dispid == DISPID_SVGetVoices, "got %#lx.\n", dispid);
+
+    memset(&params, 0, sizeof(params));
+    params.cArgs = 2;
+    params.cNamedArgs = 0;
+    params.rgvarg = args;
+    VariantInit(&args[0]);
+    VariantInit(&args[1]);
+    V_VT(&args[0]) = VT_BSTR;
+    V_VT(&args[1]) = VT_BSTR;
+    V_BSTR(&args[0]) = opt;
+    V_BSTR(&args[1]) = req;
+    VariantInit(&ret);
+    hr = ISpeechVoice_Invoke(speech_voice, dispid, &IID_NULL, 0, DISPATCH_METHOD, &params, &ret, NULL, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(V_VT(&ret) == VT_DISPATCH, "got %#x.\n", V_VT(&ret));
+    hr = IDispatch_QueryInterface(V_DISPATCH(&ret), &IID_ISpeechObjectTokens, (void **)&speech_tokens);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    count = -1;
+    hr = ISpeechObjectTokens_get_Count(speech_tokens, &count);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(count == 1, "got %ld.\n", count);
+    ISpeechObjectTokens_Release(speech_tokens);
+    VariantClear(&ret);
+
+    ISpeechVoice_Release(speech_voice);
+
 done:
     reset_engine_params(&test_engine);
     ISpVoice_Release(voice);
     ISpObjectToken_Release(token);
     ISpMMSysAudio_Release(audio_out);
+    SysFreeString(req);
+    SysFreeString(opt);
 
-    RegDeleteTreeA( HKEY_LOCAL_MACHINE, "Software\\Wine\\Winetest\\sapi" );
+    RegDeleteTreeA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Speech\\Voices\\WinetestVoice");
 }
 
 START_TEST(tts)

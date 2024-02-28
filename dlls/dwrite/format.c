@@ -708,7 +708,7 @@ static const IDWriteTextFormat3Vtbl dwritetextformatvtbl =
 struct dwrite_textformat *unsafe_impl_from_IDWriteTextFormat(IDWriteTextFormat *iface)
 {
     return (iface->lpVtbl == (IDWriteTextFormatVtbl *)&dwritetextformatvtbl) ?
-        CONTAINING_RECORD(iface, struct dwrite_textformat, IDWriteTextFormat3_iface) : NULL;
+        CONTAINING_RECORD((IDWriteTextFormat3*)iface, struct dwrite_textformat, IDWriteTextFormat3_iface) : NULL;
 }
 
 HRESULT create_text_format(const WCHAR *family_name, IDWriteFontCollection *collection, DWRITE_FONT_WEIGHT weight,

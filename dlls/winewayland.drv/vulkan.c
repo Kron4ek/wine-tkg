@@ -60,11 +60,6 @@ static void (*pvkDestroySwapchainKHR)(VkDevice, VkSwapchainKHR, const VkAllocati
 static VkResult (*pvkEnumerateInstanceExtensionProperties)(const char *, uint32_t *, VkExtensionProperties *);
 static void * (*pvkGetDeviceProcAddr)(VkDevice, const char *);
 static void * (*pvkGetInstanceProcAddr)(VkInstance, const char *);
-static VkResult (*pvkGetPhysicalDevicePresentRectanglesKHR)(VkPhysicalDevice, VkSurfaceKHR, uint32_t *, VkRect2D *);
-static VkResult (*pvkGetPhysicalDeviceSurfaceCapabilities2KHR)(VkPhysicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR *, VkSurfaceCapabilities2KHR *);
-static VkResult (*pvkGetPhysicalDeviceSurfaceCapabilitiesKHR)(VkPhysicalDevice, VkSurfaceKHR, VkSurfaceCapabilitiesKHR *);
-static VkResult (*pvkGetPhysicalDeviceSurfaceFormats2KHR)(VkPhysicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR *, uint32_t *, VkSurfaceFormat2KHR *);
-static VkResult (*pvkGetPhysicalDeviceSurfaceFormatsKHR)(VkPhysicalDevice, VkSurfaceKHR, uint32_t *, VkSurfaceFormatKHR *);
 static VkBool32 (*pvkGetPhysicalDeviceWaylandPresentationSupportKHR)(VkPhysicalDevice, uint32_t, struct wl_display *);
 static VkResult (*pvkGetSwapchainImagesKHR)(VkDevice, VkSwapchainKHR, uint32_t *, VkImage *);
 static VkResult (*pvkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *);
@@ -204,37 +199,6 @@ static const char *wine_vk_host_fn_name(const char *name)
     return name;
 }
 
-/* Update the capabilities to match what the Win32 WSI would provide. */
-static VkResult wine_vk_surface_update_caps(struct wine_vk_surface *wine_vk_surface,
-                                            VkSurfaceCapabilitiesKHR *caps)
-{
-    struct wayland_surface *wayland_surface;
-    int client_width, client_height;
-    HWND hwnd = wine_vk_surface_get_hwnd(wine_vk_surface);
-
-    if (!(wayland_surface = wayland_surface_lock_hwnd(hwnd)))
-        return VK_ERROR_SURFACE_LOST_KHR;
-
-    client_width = wayland_surface->window.client_rect.right -
-                   wayland_surface->window.client_rect.left;
-    client_height = wayland_surface->window.client_rect.bottom -
-                    wayland_surface->window.client_rect.top;
-
-    pthread_mutex_unlock(&wayland_surface->mutex);
-
-    caps->minImageExtent.width = client_width;
-    caps->minImageExtent.height = client_height;
-    caps->maxImageExtent.width = client_width;
-    caps->maxImageExtent.height = client_height;
-    caps->currentExtent.width = client_width;
-    caps->currentExtent.height = client_height;
-
-    TRACE("hwnd=%p extent=%dx%d\n", hwnd,
-          caps->currentExtent.width, caps->currentExtent.height);
-
-    return VK_SUCCESS;
-}
-
 static void vk_result_update_out_of_date(VkResult *res)
 {
     /* If the current result is less severe than out_of_date, which for
@@ -354,16 +318,6 @@ static VkResult wayland_vkCreateSwapchainKHR(VkDevice device,
 
     create_info_host = *create_info;
     create_info_host.surface = wine_vk_surface->host_surface;
-
-    /* Some apps do not properly handle a 0x0 image extent in capabilities,
-     * and erroneously try to create a swapchain with it, so use the minimum
-     * 1x1 to accommodate them. */
-    if (create_info_host.imageExtent.width == 0 ||
-        create_info_host.imageExtent.height == 0)
-    {
-        create_info_host.imageExtent.width = 1;
-        create_info_host.imageExtent.height = 1;
-    }
 
     res = pvkCreateSwapchainKHR(device, &create_info_host, NULL /* allocator */,
                                 swapchain);
@@ -578,136 +532,6 @@ static void *wayland_vkGetInstanceProcAddr(VkInstance instance, const char *name
     return pvkGetInstanceProcAddr(instance, name);
 }
 
-static VkResult wayland_vkGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice phys_dev,
-                                                                VkSurfaceKHR surface,
-                                                                uint32_t *count, VkRect2D *rects)
-{
-    struct wine_vk_surface *wine_vk_surface = wine_vk_surface_from_handle(surface);
-
-    TRACE("%p, 0x%s, %p, %p\n", phys_dev, wine_dbgstr_longlong(surface), count, rects);
-
-    return pvkGetPhysicalDevicePresentRectanglesKHR(phys_dev, wine_vk_surface->host_surface,
-                                                    count, rects);
-}
-
-static VkResult wayland_vkGetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysicalDevice phys_dev,
-                                                                   const VkPhysicalDeviceSurfaceInfo2KHR *surface_info,
-                                                                   VkSurfaceCapabilities2KHR *capabilities)
-{
-    struct wine_vk_surface *wine_vk_surface = wine_vk_surface_from_handle(surface_info->surface);
-    VkPhysicalDeviceSurfaceInfo2KHR surface_info_host;
-    VkResult res;
-
-    TRACE("%p, %p, %p\n", phys_dev, surface_info, capabilities);
-
-    surface_info_host = *surface_info;
-    surface_info_host.surface = wine_vk_surface->host_surface;
-
-    if (pvkGetPhysicalDeviceSurfaceCapabilities2KHR)
-    {
-        res = pvkGetPhysicalDeviceSurfaceCapabilities2KHR(phys_dev, &surface_info_host,
-                                                          capabilities);
-        goto out;
-    }
-
-    /* Until the loader version exporting this function is common, emulate it
-     * using the older non-2 version. */
-    if (surface_info->pNext || capabilities->pNext)
-    {
-        FIXME("Emulating vkGetPhysicalDeviceSurfaceCapabilities2KHR with "
-              "vkGetPhysicalDeviceSurfaceCapabilitiesKHR, pNext is ignored.\n");
-    }
-
-    res = pvkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_dev, surface_info_host.surface,
-                                                     &capabilities->surfaceCapabilities);
-
-out:
-    if (res == VK_SUCCESS)
-        res = wine_vk_surface_update_caps(wine_vk_surface, &capabilities->surfaceCapabilities);
-
-    return res;
-}
-
-static VkResult wayland_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice phys_dev,
-                                                                  VkSurfaceKHR surface,
-                                                                  VkSurfaceCapabilitiesKHR *capabilities)
-{
-    struct wine_vk_surface *wine_vk_surface = wine_vk_surface_from_handle(surface);
-    VkResult res;
-
-    TRACE("%p, 0x%s, %p\n", phys_dev, wine_dbgstr_longlong(surface), capabilities);
-
-    res = pvkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_dev, wine_vk_surface->host_surface,
-                                                     capabilities);
-    if (res == VK_SUCCESS)
-        res = wine_vk_surface_update_caps(wine_vk_surface, capabilities);
-
-    return res;
-}
-
-static VkResult wayland_vkGetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice phys_dev,
-                                                              const VkPhysicalDeviceSurfaceInfo2KHR *surface_info,
-                                                              uint32_t *count,
-                                                              VkSurfaceFormat2KHR *formats)
-{
-    struct wine_vk_surface *wine_vk_surface = wine_vk_surface_from_handle(surface_info->surface);
-    VkPhysicalDeviceSurfaceInfo2KHR surface_info_host;
-    VkSurfaceFormatKHR *formats_host;
-    uint32_t i;
-    VkResult result;
-
-    TRACE("%p, %p, %p, %p\n", phys_dev, surface_info, count, formats);
-
-    surface_info_host = *surface_info;
-    surface_info_host.surface = wine_vk_surface->host_surface;
-
-    if (pvkGetPhysicalDeviceSurfaceFormats2KHR)
-    {
-        return pvkGetPhysicalDeviceSurfaceFormats2KHR(phys_dev, &surface_info_host,
-                                                      count, formats);
-    }
-
-    /* Until the loader version exporting this function is common, emulate it
-     * using the older non-2 version. */
-    if (surface_info->pNext)
-    {
-        FIXME("Emulating vkGetPhysicalDeviceSurfaceFormats2KHR with "
-              "vkGetPhysicalDeviceSurfaceFormatsKHR, pNext is ignored.\n");
-    }
-
-    if (!formats)
-    {
-        return pvkGetPhysicalDeviceSurfaceFormatsKHR(phys_dev, surface_info_host.surface,
-                                                     count, NULL);
-    }
-
-    formats_host = calloc(*count, sizeof(*formats_host));
-    if (!formats_host) return VK_ERROR_OUT_OF_HOST_MEMORY;
-    result = pvkGetPhysicalDeviceSurfaceFormatsKHR(phys_dev, surface_info_host.surface,
-                                                   count, formats_host);
-    if (result == VK_SUCCESS || result == VK_INCOMPLETE)
-    {
-        for (i = 0; i < *count; i++)
-            formats[i].surfaceFormat = formats_host[i];
-    }
-
-    free(formats_host);
-    return result;
-}
-
-static VkResult wayland_vkGetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice phys_dev,
-                                                             VkSurfaceKHR surface,
-                                                             uint32_t *count,
-                                                             VkSurfaceFormatKHR *formats)
-{
-    struct wine_vk_surface *wine_vk_surface = wine_vk_surface_from_handle(surface);
-
-    TRACE("%p, 0x%s, %p, %p\n", phys_dev, wine_dbgstr_longlong(surface), count, formats);
-
-    return pvkGetPhysicalDeviceSurfaceFormatsKHR(phys_dev, wine_vk_surface->host_surface,
-                                                 count, formats);
-}
-
 static VkBool32 wayland_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice phys_dev,
                                                                        uint32_t index)
 {
@@ -760,11 +584,6 @@ static void wine_vk_init(void)
     LOAD_FUNCPTR(vkEnumerateInstanceExtensionProperties);
     LOAD_FUNCPTR(vkGetDeviceProcAddr);
     LOAD_FUNCPTR(vkGetInstanceProcAddr);
-    LOAD_OPTIONAL_FUNCPTR(vkGetPhysicalDevicePresentRectanglesKHR);
-    LOAD_OPTIONAL_FUNCPTR(vkGetPhysicalDeviceSurfaceCapabilities2KHR);
-    LOAD_FUNCPTR(vkGetPhysicalDeviceSurfaceCapabilitiesKHR);
-    LOAD_OPTIONAL_FUNCPTR(vkGetPhysicalDeviceSurfaceFormats2KHR);
-    LOAD_FUNCPTR(vkGetPhysicalDeviceSurfaceFormatsKHR);
     LOAD_FUNCPTR(vkGetPhysicalDeviceWaylandPresentationSupportKHR);
     LOAD_FUNCPTR(vkGetSwapchainImagesKHR);
     LOAD_FUNCPTR(vkQueuePresentKHR);
@@ -789,11 +608,6 @@ static const struct vulkan_funcs vulkan_funcs =
     .p_vkEnumerateInstanceExtensionProperties = wayland_vkEnumerateInstanceExtensionProperties,
     .p_vkGetDeviceProcAddr = wayland_vkGetDeviceProcAddr,
     .p_vkGetInstanceProcAddr = wayland_vkGetInstanceProcAddr,
-    .p_vkGetPhysicalDevicePresentRectanglesKHR = wayland_vkGetPhysicalDevicePresentRectanglesKHR,
-    .p_vkGetPhysicalDeviceSurfaceCapabilities2KHR = wayland_vkGetPhysicalDeviceSurfaceCapabilities2KHR,
-    .p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR = wayland_vkGetPhysicalDeviceSurfaceCapabilitiesKHR,
-    .p_vkGetPhysicalDeviceSurfaceFormats2KHR = wayland_vkGetPhysicalDeviceSurfaceFormats2KHR,
-    .p_vkGetPhysicalDeviceSurfaceFormatsKHR = wayland_vkGetPhysicalDeviceSurfaceFormatsKHR,
     .p_vkGetPhysicalDeviceWin32PresentationSupportKHR = wayland_vkGetPhysicalDeviceWin32PresentationSupportKHR,
     .p_vkGetSwapchainImagesKHR = wayland_vkGetSwapchainImagesKHR,
     .p_vkQueuePresentKHR = wayland_vkQueuePresentKHR,

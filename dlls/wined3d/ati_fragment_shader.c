@@ -1028,7 +1028,7 @@ static void set_tex_op_atifs(struct wined3d_context *context, const struct wined
     {
         struct atifs_ffp_desc *new_desc;
 
-        if (!(new_desc = heap_alloc_zero(sizeof(*new_desc))))
+        if (!(new_desc = calloc(1, sizeof(*new_desc))))
         {
             ERR("Out of memory\n");
             return;
@@ -1251,11 +1251,11 @@ static const struct wined3d_state_entry_template atifs_fragmentstate_template[] 
 };
 
 /* Context activation is done by the caller. */
-static void atifs_enable(const struct wined3d_context *context, BOOL enable)
+static void atifs_apply_draw_state(struct wined3d_context *context, const struct wined3d_state *state)
 {
     const struct wined3d_gl_info *gl_info = wined3d_context_gl_const(context)->gl_info;
 
-    if (enable)
+    if (!use_ps(state))
     {
         gl_info->gl_ops.gl.p_glEnable(GL_FRAGMENT_SHADER_ATI);
         checkGLcall("glEnable(GL_FRAGMENT_SHADER_ATI)");
@@ -1265,6 +1265,14 @@ static void atifs_enable(const struct wined3d_context *context, BOOL enable)
         gl_info->gl_ops.gl.p_glDisable(GL_FRAGMENT_SHADER_ATI);
         checkGLcall("glDisable(GL_FRAGMENT_SHADER_ATI)");
     }
+}
+
+static void atifs_disable(const struct wined3d_context *context)
+{
+    const struct wined3d_gl_info *gl_info = wined3d_context_gl_const(context)->gl_info;
+
+    gl_info->gl_ops.gl.p_glDisable(GL_FRAGMENT_SHADER_ATI);
+    checkGLcall("glDisable(GL_FRAGMENT_SHADER_ATI)");
 }
 
 static void atifs_get_caps(const struct wined3d_adapter *adapter, struct fragment_caps *caps)
@@ -1326,7 +1334,7 @@ static void *atifs_alloc(const struct wined3d_shader_backend_ops *shader_backend
 {
     struct atifs_private_data *priv;
 
-    if (!(priv = heap_alloc_zero(sizeof(*priv))))
+    if (!(priv = calloc(1, sizeof(*priv))))
         return NULL;
 
     wine_rb_init(&priv->fragment_shaders, wined3d_ffp_frag_program_key_compare);
@@ -1343,7 +1351,7 @@ static void atifs_free_ffpshader(struct wine_rb_entry *entry, void *param)
     gl_info = context_gl->gl_info;
     GL_EXTCALL(glDeleteFragmentShaderATI(entry_ati->shader));
     checkGLcall("glDeleteFragmentShaderATI(entry->shader)");
-    heap_free(entry_ati);
+    free(entry_ati);
 }
 
 /* Context activation is done by the caller. */
@@ -1354,7 +1362,7 @@ static void atifs_free(struct wined3d_device *device, struct wined3d_context *co
 
     wine_rb_destroy(&priv->fragment_shaders, atifs_free_ffpshader, context_gl);
 
-    heap_free(priv);
+    free(priv);
     device->fragment_priv = NULL;
 }
 
@@ -1369,7 +1377,7 @@ static BOOL atifs_alloc_context_data(struct wined3d_context *context)
 {
     struct atifs_context_private_data *priv;
 
-    if (!(priv = heap_alloc_zero(sizeof(*priv))))
+    if (!(priv = calloc(1, sizeof(*priv))))
         return FALSE;
     context->fragment_pipe_data = priv;
     return TRUE;
@@ -1377,18 +1385,19 @@ static BOOL atifs_alloc_context_data(struct wined3d_context *context)
 
 static void atifs_free_context_data(struct wined3d_context *context)
 {
-    heap_free(context->fragment_pipe_data);
+    free(context->fragment_pipe_data);
 }
 
 const struct wined3d_fragment_pipe_ops atifs_fragment_pipeline =
 {
-    atifs_enable,
-    atifs_get_caps,
-    atifs_get_emul_mask,
-    atifs_alloc,
-    atifs_free,
-    atifs_alloc_context_data,
-    atifs_free_context_data,
-    atifs_color_fixup_supported,
-    atifs_fragmentstate_template,
+    .fp_apply_draw_state = atifs_apply_draw_state,
+    .fp_disable = atifs_disable,
+    .get_caps = atifs_get_caps,
+    .get_emul_mask = atifs_get_emul_mask,
+    .alloc_private = atifs_alloc,
+    .free_private = atifs_free,
+    .allocate_context_data = atifs_alloc_context_data,
+    .free_context_data = atifs_free_context_data,
+    .color_fixup_supported = atifs_color_fixup_supported,
+    .states = atifs_fragmentstate_template,
 };

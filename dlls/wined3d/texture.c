@@ -932,7 +932,7 @@ static void wined3d_texture_remove_buffer_object(struct wined3d_texture *texture
     wined3d_context_gl_destroy_bo(context_gl, bo_gl);
     wined3d_texture_invalidate_location(texture, sub_resource_idx, WINED3D_LOCATION_BUFFER);
     sub_resource->bo = NULL;
-    heap_free(bo_gl);
+    free(bo_gl);
 }
 
 static void wined3d_texture_unload_location(struct wined3d_texture *texture,
@@ -1169,7 +1169,7 @@ static void wined3d_texture_create_dc(void *object)
     {
         unsigned int sub_count = texture->level_count * texture->layer_count;
 
-        if (!(texture->dc_info = heap_calloc(sub_count, sizeof(*texture->dc_info))))
+        if (!(texture->dc_info = calloc(sub_count, sizeof(*texture->dc_info))))
         {
             ERR("Failed to allocate DC info.\n");
             return;
@@ -1587,7 +1587,7 @@ static void wined3d_texture_destroy_object(void *object)
                 wined3d_texture_destroy_dc(&texture_idx);
             }
         }
-        heap_free(dc_info);
+        free(dc_info);
     }
 
     if (texture->overlay_info)
@@ -1603,16 +1603,16 @@ static void wined3d_texture_destroy_object(void *object)
                 list_remove(&overlay->entry);
             }
         }
-        heap_free(texture->overlay_info);
+        free(texture->overlay_info);
     }
 
     if (texture->dirty_regions)
     {
         for (i = 0; i < texture->layer_count; ++i)
         {
-            heap_free(texture->dirty_regions[i].boxes);
+            free(texture->dirty_regions[i].boxes);
         }
-        heap_free(texture->dirty_regions);
+        free(texture->dirty_regions);
     }
 
     /* Discard the contents of resources with CPU access, to avoid downloading
@@ -1883,7 +1883,7 @@ void wined3d_texture_gl_set_compatible_renderbuffer(struct wined3d_texture_gl *t
         gl_info->fbo_ops.glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
         gl_info->fbo_ops.glRenderbufferStorage(GL_RENDERBUFFER, format_gl->internal, width, height);
 
-        entry = heap_alloc(sizeof(*entry));
+        entry = malloc(sizeof(*entry));
         entry->width = width;
         entry->height = height;
         entry->id = renderbuffer;
@@ -2025,14 +2025,14 @@ static void wined3d_texture_gl_prepare_buffer_object(struct wined3d_texture_gl *
     if (sub_resource->bo)
         return;
 
-    if (!(bo = heap_alloc(sizeof(*bo))))
+    if (!(bo = malloc(sizeof(*bo))))
         return;
 
     if (!wined3d_device_gl_create_bo(wined3d_device_gl(texture_gl->t.resource.device),
             context_gl, sub_resource->size, GL_PIXEL_UNPACK_BUFFER, GL_STREAM_DRAW, true,
             GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT, bo))
     {
-        heap_free(bo);
+        free(bo);
         return;
     }
 
@@ -2515,7 +2515,7 @@ static void wined3d_texture_gl_upload_data(struct wined3d_context *context,
 
         wined3d_format_calculate_pitch(src_format, 1, update_w, update_h, &dst_row_pitch, &dst_slice_pitch);
 
-        if (!(converted_mem = heap_alloc(dst_slice_pitch)))
+        if (!(converted_mem = malloc(dst_slice_pitch)))
         {
             ERR("Failed to allocate upload buffer.\n");
             return;
@@ -2543,7 +2543,7 @@ static void wined3d_texture_gl_upload_data(struct wined3d_context *context,
         }
 
         wined3d_context_gl_unmap_bo_address(context_gl, &bo, 0, NULL);
-        heap_free(converted_mem);
+        free(converted_mem);
     }
     else
     {
@@ -2627,7 +2627,7 @@ static void wined3d_texture_gl_download_data_slow_path(struct wined3d_texture_gl
 
         WARN_(d3d_perf)("Downloading all miplevel layers to get the data for a single sub-resource.\n");
 
-        if (!(temporary_mem = heap_calloc(texture_gl->t.layer_count, sub_resource->size)))
+        if (!(temporary_mem = calloc(texture_gl->t.layer_count, sub_resource->size)))
         {
             ERR("Out of memory.\n");
             return;
@@ -2647,7 +2647,7 @@ static void wined3d_texture_gl_download_data_slow_path(struct wined3d_texture_gl
                 wined3d_texture_get_level_pow2_width(&texture_gl->t, level),
                 wined3d_texture_get_level_pow2_height(&texture_gl->t, level),
                 &src_row_pitch, &src_slice_pitch);
-        if (!(temporary_mem = heap_alloc(src_slice_pitch)))
+        if (!(temporary_mem = malloc(src_slice_pitch)))
         {
             ERR("Out of memory.\n");
             return;
@@ -2677,7 +2677,7 @@ static void wined3d_texture_gl_download_data_slow_path(struct wined3d_texture_gl
                 wined3d_texture_get_level_height(&texture_gl->t, level),
                 &src_row_pitch, &src_slice_pitch);
 
-        if (!(temporary_mem = heap_alloc(src_slice_pitch)))
+        if (!(temporary_mem = malloc(src_slice_pitch)))
         {
             ERR("Failed to allocate memory.\n");
             return;
@@ -2816,7 +2816,7 @@ static void wined3d_texture_gl_download_data_slow_path(struct wined3d_texture_gl
         checkGLcall("glBindBuffer");
     }
 
-    heap_free(temporary_mem);
+    free(temporary_mem);
 }
 
 static void wined3d_texture_gl_download_data(struct wined3d_context *context,
@@ -2835,7 +2835,6 @@ static void wined3d_texture_gl_download_data(struct wined3d_context *context,
     struct wined3d_bo *dst_bo;
     BOOL srgb = FALSE;
     GLenum target;
-    struct wined3d_texture_sub_resource *sub_resource;
 
     TRACE("context %p, src_texture %p, src_sub_resource_idx %u, src_location %s, src_box %s, dst_bo_addr %s, "
             "dst_format %s, dst_x %u, dst_y %u, dst_z %u, dst_row_pitch %u, dst_slice_pitch %u.\n",
@@ -2890,7 +2889,6 @@ static void wined3d_texture_gl_download_data(struct wined3d_context *context,
 
     format_gl = wined3d_format_gl(src_texture->resource.format);
     target = wined3d_texture_gl_get_sub_resource_target(src_texture_gl, src_sub_resource_idx);
-    sub_resource = &src_texture->sub_resources[src_sub_resource_idx];
 
     if ((src_texture->resource.type == WINED3D_RTYPE_TEXTURE_2D
             && (target == GL_TEXTURE_2D_ARRAY || format_gl->f.conv_byte_count
@@ -2928,23 +2926,6 @@ static void wined3d_texture_gl_download_data(struct wined3d_context *context,
 
         GL_EXTCALL(glGetCompressedTexImage(target, src_level, offset));
         checkGLcall("glGetCompressedTexImage");
-    }
-    else if (dst_bo_addr->buffer_object && src_texture->resource.bind_flags & WINED3D_BIND_RENDER_TARGET)
-    {
-        /* PBO texture download is not accelerated on Mesa. Use glReadPixels if possible. */
-        TRACE("Downloading (glReadPixels) texture %p, %u, level %u, format %#x, type %#x, data %p.\n",
-                src_texture, src_sub_resource_idx, src_level, format_gl->format, format_gl->type, dst_bo_addr->addr);
-
-        wined3d_context_gl_apply_fbo_state_explicit(context_gl, GL_READ_FRAMEBUFFER, &src_texture->resource, src_sub_resource_idx, NULL,
-                0, sub_resource->locations & (WINED3D_LOCATION_TEXTURE_RGB | WINED3D_LOCATION_TEXTURE_SRGB));
-        wined3d_context_gl_check_fbo_status(context_gl, GL_READ_FRAMEBUFFER);
-        context_invalidate_state(context, STATE_FRAMEBUFFER);
-        gl_info->gl_ops.gl.p_glReadBuffer(GL_COLOR_ATTACHMENT0);
-        checkGLcall("glReadBuffer()");
-
-        gl_info->gl_ops.gl.p_glReadPixels(0, 0, wined3d_texture_get_level_width(src_texture, src_level),
-                wined3d_texture_get_level_height(src_texture, src_level), format_gl->format, format_gl->type, dst_bo_addr->addr);
-        checkGLcall("glReadPixels");
     }
     else
     {
@@ -3215,7 +3196,7 @@ static BOOL wined3d_texture_gl_load_texture(struct wined3d_texture_gl *texture_g
                 width, height, &dst_row_pitch, &dst_slice_pitch);
 
         src_mem = wined3d_context_gl_map_bo_address(context_gl, &data, src_slice_pitch, WINED3D_MAP_READ);
-        if (!(dst_mem = heap_alloc(dst_slice_pitch)))
+        if (!(dst_mem = malloc(dst_slice_pitch)))
         {
             ERR("Out of memory (%u).\n", dst_slice_pitch);
             return FALSE;
@@ -3233,7 +3214,7 @@ static BOOL wined3d_texture_gl_load_texture(struct wined3d_texture_gl *texture_g
     wined3d_texture_gl_upload_data(&context_gl->c, wined3d_const_bo_address(&data), format, &src_box,
             src_row_pitch, src_slice_pitch, &texture_gl->t, sub_resource_idx, dst_location, 0, 0, 0);
 
-    heap_free(dst_mem);
+    free(dst_mem);
 
     return TRUE;
 }
@@ -3482,7 +3463,7 @@ static void wined3d_texture_gl_unload_location(struct wined3d_texture *texture,
                 context_gl_resource_released(texture_gl->t.resource.device, entry->id, TRUE);
                 context_gl->gl_info->fbo_ops.glDeleteRenderbuffers(1, &entry->id);
                 list_remove(&entry->entry);
-                heap_free(entry);
+                free(entry);
             }
             list_init(&texture_gl->renderbuffers);
             texture_gl->current_renderbuffer = NULL;
@@ -3974,7 +3955,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
 
     if (flags & WINED3D_TEXTURE_CREATE_RECORD_DIRTY_REGIONS)
     {
-        if (!(texture->dirty_regions = heap_calloc(texture->layer_count, sizeof(*texture->dirty_regions))))
+        if (!(texture->dirty_regions = calloc(texture->layer_count, sizeof(*texture->dirty_regions))))
         {
             wined3d_texture_cleanup_sync(texture);
             return E_OUTOFMEMORY;
@@ -4017,7 +3998,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
 
     if (desc->usage & WINED3DUSAGE_OVERLAY)
     {
-        if (!(texture->overlay_info = heap_calloc(sub_count, sizeof(*texture->overlay_info))))
+        if (!(texture->overlay_info = calloc(sub_count, sizeof(*texture->overlay_info))))
         {
             wined3d_texture_cleanup_sync(texture);
             return E_OUTOFMEMORY;
@@ -4652,7 +4633,7 @@ static void wined3d_texture_set_bo(struct wined3d_texture *texture,
         assert(list_empty(&bo->users));
 
         wined3d_context_destroy_bo(context, prev_bo);
-        heap_free(prev_bo);
+        free(prev_bo);
     }
 
     sub_resource->bo = bo;
@@ -5548,14 +5529,14 @@ static BOOL wined3d_texture_vk_prepare_buffer_object(struct wined3d_texture_vk *
     if (sub_resource->bo)
         return TRUE;
 
-    if (!(bo = heap_alloc(sizeof(*bo))))
+    if (!(bo = malloc(sizeof(*bo))))
         return FALSE;
 
     if (!wined3d_context_vk_create_bo(context_vk, sub_resource->size,
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, bo))
     {
-        heap_free(bo);
+        free(bo);
         return FALSE;
     }
 
@@ -5644,7 +5625,7 @@ static void wined3d_texture_vk_unload_location(struct wined3d_texture *texture,
                     struct wined3d_bo_vk *bo_vk = wined3d_bo_vk(sub_resource->bo);
 
                     wined3d_context_vk_destroy_bo(context_vk, bo_vk);
-                    heap_free(bo_vk);
+                    free(bo_vk);
                     sub_resource->bo = NULL;
                 }
             }
@@ -5798,7 +5779,7 @@ static void ffp_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
     if ((next = blitter->next))
         next->ops->blitter_destroy(next, context);
 
-    heap_free(blitter);
+    free(blitter);
 }
 
 static bool ffp_blit_supported(enum wined3d_blit_op blit_op, const struct wined3d_context *context,
@@ -6407,7 +6388,7 @@ void wined3d_ffp_blitter_create(struct wined3d_blitter **next, const struct wine
 {
     struct wined3d_blitter *blitter;
 
-    if (!(blitter = heap_alloc(sizeof(*blitter))))
+    if (!(blitter = malloc(sizeof(*blitter))))
         return;
 
     TRACE("Created blitter %p.\n", blitter);
@@ -6424,7 +6405,7 @@ static void fbo_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
     if ((next = blitter->next))
         next->ops->blitter_destroy(next, context);
 
-    heap_free(blitter);
+    free(blitter);
 }
 
 static void fbo_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
@@ -6520,7 +6501,7 @@ void wined3d_fbo_blitter_create(struct wined3d_blitter **next, const struct wine
     if ((wined3d_settings.offscreen_rendering_mode != ORM_FBO) || !gl_info->fbo_ops.glBlitFramebuffer)
         return;
 
-    if (!(blitter = heap_alloc(sizeof(*blitter))))
+    if (!(blitter = malloc(sizeof(*blitter))))
         return;
 
     TRACE("Created blitter %p.\n", blitter);
@@ -6537,7 +6518,7 @@ static void raw_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
     if ((next = blitter->next))
         next->ops->blitter_destroy(next, context);
 
-    heap_free(blitter);
+    free(blitter);
 }
 
 static void raw_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
@@ -6680,7 +6661,7 @@ void wined3d_raw_blitter_create(struct wined3d_blitter **next, const struct wine
     if (!gl_info->supported[ARB_COPY_IMAGE])
         return;
 
-    if (!(blitter = heap_alloc(sizeof(*blitter))))
+    if (!(blitter = malloc(sizeof(*blitter))))
         return;
 
     TRACE("Created blitter %p.\n", blitter);
@@ -6699,7 +6680,7 @@ static void vk_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_c
     if ((next = blitter->next))
         next->ops->blitter_destroy(next, context);
 
-    heap_free(blitter);
+    free(blitter);
 }
 
 static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk, unsigned int rt_count,
@@ -7466,7 +7447,7 @@ void wined3d_vk_blitter_create(struct wined3d_blitter **next)
 {
     struct wined3d_blitter *blitter;
 
-    if (!(blitter = heap_alloc(sizeof(*blitter))))
+    if (!(blitter = malloc(sizeof(*blitter))))
         return;
 
     TRACE("Created blitter %p.\n", blitter);

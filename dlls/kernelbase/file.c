@@ -488,25 +488,27 @@ BOOL WINAPI DECLSPEC_HOTPATCH AreFileApisANSI(void)
     return !oem_file_apis;
 }
 
-
-/***********************************************************************
- *	CopyFileExW   (kernelbase.@)
+/******************************************************************************
+ *  copy_file
  */
-BOOL WINAPI CopyFileExW( const WCHAR *source, const WCHAR *dest, LPPROGRESS_ROUTINE progress,
-                         void *param, BOOL *cancel_ptr, DWORD flags )
+static BOOL copy_file( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDED_PARAMETERS *params )
 {
+    DWORD flags = params ? params->dwCopyFlags : 0;
+    BOOL *cancel_ptr = params ? params->pfCancel : NULL;
+    PCOPYFILE2_PROGRESS_ROUTINE progress = params ? params->pProgressRoutine : NULL;
+
     static const int buffer_size = 65536;
     HANDLE h1, h2;
-    FILE_NETWORK_OPEN_INFORMATION info;
-    FILE_BASIC_INFORMATION basic_info;
+    FILE_BASIC_INFORMATION info;
     IO_STATUS_BLOCK io;
     DWORD count;
     BOOL ret = FALSE;
     char *buffer;
-    LARGE_INTEGER size;
-    LARGE_INTEGER transferred;
-    DWORD cbret;
-    DWORD source_access = GENERIC_READ;
+
+    if (cancel_ptr)
+        FIXME("pfCancel is not supported\n");
+    if (progress)
+        FIXME("PCOPYFILE2_PROGRESS_ROUTINE is not supported\n");
 
     if (!source || !dest)
     {
@@ -528,10 +530,7 @@ BOOL WINAPI CopyFileExW( const WCHAR *source, const WCHAR *dest, LPPROGRESS_ROUT
     if (flags & COPY_FILE_OPEN_SOURCE_FOR_WRITE)
         FIXME("COPY_FILE_OPEN_SOURCE_FOR_WRITE is not supported\n");
 
-    if (flags & COPY_FILE_OPEN_SOURCE_FOR_WRITE)
-        source_access |= GENERIC_WRITE;
-
-    if ((h1 = CreateFileW( source, source_access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    if ((h1 = CreateFileW( source, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            NULL, OPEN_EXISTING, 0, 0 )) == INVALID_HANDLE_VALUE)
     {
         WARN("Unable to open source %s\n", debugstr_w(source));
@@ -539,7 +538,7 @@ BOOL WINAPI CopyFileExW( const WCHAR *source, const WCHAR *dest, LPPROGRESS_ROUT
         return FALSE;
     }
 
-    if (!set_ntstatus( NtQueryInformationFile( h1, &io, &info, sizeof(info), FileNetworkOpenInformation )))
+    if (!set_ntstatus( NtQueryInformationFile( h1, &io, &info, sizeof(info), FileBasicInformation )))
     {
         WARN("GetFileInformationByHandle returned error for %s\n", debugstr_w(source));
         HeapFree( GetProcessHeap(), 0, buffer );
@@ -565,11 +564,7 @@ BOOL WINAPI CopyFileExW( const WCHAR *source, const WCHAR *dest, LPPROGRESS_ROUT
         }
     }
 
-    if ((h2 = CreateFileW( dest, GENERIC_WRITE | DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                           (flags & COPY_FILE_FAIL_IF_EXISTS) ? CREATE_NEW : CREATE_ALWAYS,
-                           info.FileAttributes, h1 )) == INVALID_HANDLE_VALUE &&
-        /* retry without DELETE if we got a sharing violation */
-        (h2 = CreateFileW( dest, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+    if ((h2 = CreateFileW( dest, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
                            (flags & COPY_FILE_FAIL_IF_EXISTS) ? CREATE_NEW : CREATE_ALWAYS,
                            info.FileAttributes, h1 )) == INVALID_HANDLE_VALUE)
     {
@@ -577,29 +572,6 @@ BOOL WINAPI CopyFileExW( const WCHAR *source, const WCHAR *dest, LPPROGRESS_ROUT
         HeapFree( GetProcessHeap(), 0, buffer );
         CloseHandle( h1 );
         return FALSE;
-    }
-
-    size = info.EndOfFile;
-    transferred.QuadPart = 0;
-
-    if (progress)
-    {
-        cbret = progress( size, transferred, size, transferred, 1,
-                          CALLBACK_STREAM_SWITCH, h1, h2, param );
-        if (cbret == PROGRESS_QUIET)
-            progress = NULL;
-        else if (cbret == PROGRESS_STOP)
-        {
-            SetLastError( ERROR_REQUEST_ABORTED );
-            goto done;
-        }
-        else if (cbret == PROGRESS_CANCEL)
-        {
-            BOOLEAN disp = TRUE;
-            SetFileInformationByHandle( h2, FileDispositionInfo, &disp, sizeof(disp) );
-            SetLastError( ERROR_REQUEST_ABORTED );
-            goto done;
-        }
     }
 
     while (ReadFile( h1, buffer, buffer_size, &count, NULL ) && count)
@@ -611,43 +583,49 @@ BOOL WINAPI CopyFileExW( const WCHAR *source, const WCHAR *dest, LPPROGRESS_ROUT
             if (!WriteFile( h2, p, count, &res, NULL ) || !res) goto done;
             p += res;
             count -= res;
-
-            if (progress)
-            {
-                transferred.QuadPart += res;
-                cbret = progress( size, transferred, size, transferred, 1,
-                                  CALLBACK_CHUNK_FINISHED, h1, h2, param );
-                if (cbret == PROGRESS_QUIET)
-                    progress = NULL;
-                else if (cbret == PROGRESS_STOP)
-                {
-                    SetLastError( ERROR_REQUEST_ABORTED );
-                    goto done;
-                }
-                else if (cbret == PROGRESS_CANCEL)
-                {
-                    BOOLEAN disp = TRUE;
-                    SetFileInformationByHandle( h2, FileDispositionInfo, &disp, sizeof(disp) );
-                    SetLastError( ERROR_REQUEST_ABORTED );
-                    goto done;
-                }
-            }
         }
     }
-    ret =  TRUE;
+    ret = TRUE;
 done:
-    /* Maintain the timestamp of source file to destination file */
-    basic_info.CreationTime = info.CreationTime;
-    basic_info.LastAccessTime = info.LastAccessTime;
-    basic_info.LastWriteTime = info.LastWriteTime;
-    basic_info.ChangeTime = info.ChangeTime;
-    basic_info.FileAttributes = 0;
-    NtSetInformationFile( h2, &io, &basic_info, sizeof(basic_info), FileBasicInformation );
+    /* Maintain the timestamp of source file to destination file and read-only attribute */
+    info.FileAttributes &= FILE_ATTRIBUTE_READONLY;
+    NtSetInformationFile( h2, &io, &info, sizeof(info), FileBasicInformation );
     HeapFree( GetProcessHeap(), 0, buffer );
     CloseHandle( h1 );
     CloseHandle( h2 );
     if (ret) SetLastError( 0 );
     return ret;
+}
+
+/***********************************************************************
+ *	CopyFile2   (kernelbase.@)
+ */
+HRESULT WINAPI CopyFile2( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDED_PARAMETERS *params )
+{
+    return copy_file(source, dest, params) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
+}
+
+
+/***********************************************************************
+ *	CopyFileExW   (kernelbase.@)
+ */
+BOOL WINAPI CopyFileExW( const WCHAR *source, const WCHAR *dest, LPPROGRESS_ROUTINE progress,
+                         void *param, BOOL *cancel_ptr, DWORD flags )
+{
+    COPYFILE2_EXTENDED_PARAMETERS params;
+
+    if (progress)
+        FIXME("LPPROGRESS_ROUTINE is not supported\n");
+    if (cancel_ptr)
+        FIXME("cancel_ptr is not supported\n");
+
+    params.dwSize = sizeof(params);
+    params.dwCopyFlags = flags;
+    params.pProgressRoutine = NULL;
+    params.pvCallbackContext = NULL;
+    params.pfCancel = NULL;
+
+    return copy_file( source, dest, &params );
 }
 
 
@@ -748,7 +726,8 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFile2( LPCWSTR name, DWORD access, DWORD s
     DWORD attributes = params ? params->dwFileAttributes : 0;
     DWORD flags = params ? params->dwFileFlags : 0;
 
-    FIXME( "(%s %lx %lx %lx %p), partial stub\n", debugstr_w(name), access, sharing, creation, params );
+    TRACE( "%s %#lx %#lx %#lx %p", debugstr_w(name), access, sharing, creation, params );
+    if (params) FIXME( "Ignoring extended parameters %p\n", params );
 
     if (attributes & ~attributes_mask) FIXME( "unsupported attributes %#lx\n", attributes );
     if (flags & ~flags_mask) FIXME( "unsupported flags %#lx\n", flags );
@@ -1390,7 +1369,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH FindFirstFileExW( LPCWSTR filename, FINDEX_INFO_
         goto error;
     }
 
-    RtlInitializeCriticalSection( &info->cs );
+    RtlInitializeCriticalSectionEx( &info->cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO );
     info->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": FIND_FIRST_INFO.cs");
     info->path      = nt_name;
     info->magic     = FIND_FIRST_MAGIC;
@@ -3228,27 +3207,26 @@ BOOL WINAPI DECLSPEC_HOTPATCH FlushFileBuffers( HANDLE file )
 BOOL WINAPI DECLSPEC_HOTPATCH GetFileInformationByHandle( HANDLE file, BY_HANDLE_FILE_INFORMATION *info )
 {
     FILE_FS_VOLUME_INFORMATION volume_info;
-    FILE_ALL_INFORMATION all_info;
+    FILE_STAT_INFORMATION stat_info;
     IO_STATUS_BLOCK io;
     NTSTATUS status;
 
-    status = NtQueryInformationFile( file, &io, &all_info, sizeof(all_info), FileAllInformation );
-    if (status == STATUS_BUFFER_OVERFLOW) status = STATUS_SUCCESS;
+    status = NtQueryInformationFile( file, &io, &stat_info, sizeof(stat_info), FileStatInformation );
     if (!set_ntstatus( status )) return FALSE;
 
-    info->dwFileAttributes                = all_info.BasicInformation.FileAttributes;
-    info->ftCreationTime.dwHighDateTime   = all_info.BasicInformation.CreationTime.u.HighPart;
-    info->ftCreationTime.dwLowDateTime    = all_info.BasicInformation.CreationTime.u.LowPart;
-    info->ftLastAccessTime.dwHighDateTime = all_info.BasicInformation.LastAccessTime.u.HighPart;
-    info->ftLastAccessTime.dwLowDateTime  = all_info.BasicInformation.LastAccessTime.u.LowPart;
-    info->ftLastWriteTime.dwHighDateTime  = all_info.BasicInformation.LastWriteTime.u.HighPart;
-    info->ftLastWriteTime.dwLowDateTime   = all_info.BasicInformation.LastWriteTime.u.LowPart;
+    info->dwFileAttributes                = stat_info.FileAttributes;
+    info->ftCreationTime.dwHighDateTime   = stat_info.CreationTime.u.HighPart;
+    info->ftCreationTime.dwLowDateTime    = stat_info.CreationTime.u.LowPart;
+    info->ftLastAccessTime.dwHighDateTime = stat_info.LastAccessTime.u.HighPart;
+    info->ftLastAccessTime.dwLowDateTime  = stat_info.LastAccessTime.u.LowPart;
+    info->ftLastWriteTime.dwHighDateTime  = stat_info.LastWriteTime.u.HighPart;
+    info->ftLastWriteTime.dwLowDateTime   = stat_info.LastWriteTime.u.LowPart;
     info->dwVolumeSerialNumber            = 0;
-    info->nFileSizeHigh                   = all_info.StandardInformation.EndOfFile.u.HighPart;
-    info->nFileSizeLow                    = all_info.StandardInformation.EndOfFile.u.LowPart;
-    info->nNumberOfLinks                  = all_info.StandardInformation.NumberOfLinks;
-    info->nFileIndexHigh                  = all_info.InternalInformation.IndexNumber.u.HighPart;
-    info->nFileIndexLow                   = all_info.InternalInformation.IndexNumber.u.LowPart;
+    info->nFileSizeHigh                   = stat_info.EndOfFile.u.HighPart;
+    info->nFileSizeLow                    = stat_info.EndOfFile.u.LowPart;
+    info->nNumberOfLinks                  = stat_info.NumberOfLinks;
+    info->nFileIndexHigh                  = stat_info.FileId.u.HighPart;
+    info->nFileIndexLow                   = stat_info.FileId.u.LowPart;
 
     status = NtQueryVolumeInformationFile( file, &io, &volume_info, sizeof(volume_info), FileFsVolumeInformation );
     if (status == STATUS_SUCCESS || status == STATUS_BUFFER_OVERFLOW)

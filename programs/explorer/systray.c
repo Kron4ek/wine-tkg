@@ -543,6 +543,15 @@ static LRESULT WINAPI tray_icon_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPA
         break;
     }
 
+    case WM_WINDOWPOSCHANGING:
+        if (icon->display == ICON_DISPLAY_HIDDEN)
+        {
+            /* Changing the icon's parent via SetParent would activate it, stealing the focus. */
+            WINDOWPOS *wp = (WINDOWPOS*)lparam;
+            wp->flags |= SWP_NOACTIVATE;
+        }
+        break;
+
     case WM_WINDOWPOSCHANGED:
         update_systray_balloon_position();
         break;
@@ -566,9 +575,9 @@ static void systray_add_icon( struct icon *icon )
 
     if (icon->display != ICON_DISPLAY_HIDDEN) return;  /* already added */
 
-    icon->display = nb_displayed++;
     SetWindowLongW( icon->window, GWL_STYLE, GetWindowLongW( icon->window, GWL_STYLE ) | WS_CHILD );
     SetParent( icon->window, tray_window );
+    icon->display = nb_displayed++;
     pos = get_icon_pos( icon );
     SetWindowPos( icon->window, 0, pos.x, pos.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW );
 
@@ -610,12 +619,23 @@ static BOOL show_icon(struct icon *icon)
 
     if (icon->display != ICON_DISPLAY_HIDDEN) return TRUE;  /* already displayed */
 
-    if (!enable_taskbar && NtUserMessageCall( icon->window, WINE_SYSTRAY_DOCK_INSERT, icon_cx, icon_cy,
-                                              icon, NtUserSystemTrayCall, FALSE ))
+    if (!enable_taskbar)
     {
-        icon->display = ICON_DISPLAY_DOCKED;
-        icon->layered = TRUE;
-        SendMessageW( icon->window, WM_SIZE, SIZE_RESTORED, MAKELONG( icon_cx, icon_cy ) );
+        DWORD old_exstyle = GetWindowLongW( icon->window, GWL_EXSTYLE );
+
+        /* make sure it is layered before calling into the driver */
+        SetWindowLongW( icon->window, GWL_EXSTYLE, old_exstyle | WS_EX_LAYERED );
+        paint_layered_icon( icon );
+
+        if (!NtUserMessageCall( icon->window, WINE_SYSTRAY_DOCK_INSERT, icon_cx, icon_cy,
+                                icon, NtUserSystemTrayCall, FALSE ))
+            SetWindowLongW( icon->window, GWL_EXSTYLE, old_exstyle );
+        else
+        {
+            icon->display = ICON_DISPLAY_DOCKED;
+            icon->layered = TRUE;
+            SendMessageW( icon->window, WM_SIZE, SIZE_RESTORED, MAKELONG( icon_cx, icon_cy ) );
+        }
     }
     systray_add_icon( icon );
 
@@ -636,6 +656,7 @@ static BOOL hide_icon(struct icon *icon)
     {
         icon->display = ICON_DISPLAY_HIDDEN;
         icon->layered = FALSE;
+        SetWindowLongW( icon->window, GWL_EXSTYLE, GetWindowLongW( icon->window, GWL_EXSTYLE ) & ~WS_EX_LAYERED );
     }
     ShowWindow( icon->window, SW_HIDE );
     systray_remove_icon( icon );
@@ -723,7 +744,7 @@ static BOOL add_icon(NOTIFYICONDATAW *nid)
     icon->owner  = nid->hWnd;
     icon->display = ICON_DISPLAY_HIDDEN;
 
-    CreateWindowExW( WS_EX_LAYERED, tray_icon_class.lpszClassName, NULL, WS_CLIPSIBLINGS | WS_POPUP,
+    CreateWindowExW( 0, tray_icon_class.lpszClassName, NULL, WS_CLIPSIBLINGS | WS_POPUP,
                      0, 0, icon_cx, icon_cy, 0, NULL, NULL, icon );
     if (!icon->window) ERR( "Failed to create systray icon window\n" );
 

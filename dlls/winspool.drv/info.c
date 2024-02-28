@@ -2774,13 +2774,10 @@ BOOL WINAPI ClosePrinter(HANDLE hPrinter)
     if(printer)
     {
         TRACE("closing %s\n", debugstr_w(printer->name));
-
         if (printer->backend_printer) {
-            TRACE("Closing Bankend printer\n");
             backend->fpClosePrinter(printer->backend_printer);
         }
 
-        TRACE("Freeing Printer entry\n");
         free_printer_entry( printer );
         printer_handles[i - 1] = NULL;
         LeaveCriticalSection(&printer_handles_cs);

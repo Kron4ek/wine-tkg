@@ -4840,7 +4840,9 @@ static const struct wined3d_state_entry_template ffp_fragmentstate_template[] = 
 };
 
 /* Context activation is done by the caller. */
-static void ffp_pipe_enable(const struct wined3d_context *context, BOOL enable) {}
+static void ffp_pipe_apply_draw_state(struct wined3d_context *context, const struct wined3d_state *state) {}
+
+static void ffp_pipe_disable(const struct wined3d_context *context) {}
 
 static void *ffp_alloc(const struct wined3d_shader_backend_ops *shader_backend, void *shader_priv)
 {
@@ -4879,12 +4881,13 @@ static unsigned int vp_ffp_get_emul_mask(const struct wined3d_adapter *adapter)
 
 const struct wined3d_vertex_pipe_ops ffp_vertex_pipe =
 {
-    ffp_pipe_enable,
-    vp_ffp_get_caps,
-    vp_ffp_get_emul_mask,
-    ffp_alloc,
-    ffp_free,
-    vp_ffp_states,
+    .vp_apply_draw_state = ffp_pipe_apply_draw_state,
+    .vp_disable = ffp_pipe_disable,
+    .vp_get_caps = vp_ffp_get_caps,
+    .vp_get_emul_mask = vp_ffp_get_emul_mask,
+    .vp_alloc = ffp_alloc,
+    .vp_free = ffp_free,
+    .vp_states = vp_ffp_states,
 };
 
 static void ffp_fragment_get_caps(const struct wined3d_adapter *adapter, struct fragment_caps *caps)
@@ -4952,18 +4955,21 @@ static void ffp_none_context_free(struct wined3d_context *context)
 
 const struct wined3d_fragment_pipe_ops ffp_fragment_pipeline =
 {
-    ffp_pipe_enable,
-    ffp_fragment_get_caps,
-    ffp_fragment_get_emul_mask,
-    ffp_alloc,
-    ffp_free,
-    ffp_none_context_alloc,
-    ffp_none_context_free,
-    ffp_color_fixup_supported,
-    ffp_fragmentstate_template,
+    .fp_apply_draw_state = ffp_pipe_apply_draw_state,
+    .fp_disable = ffp_pipe_disable,
+    .get_caps = ffp_fragment_get_caps,
+    .get_emul_mask = ffp_fragment_get_emul_mask,
+    .alloc_private = ffp_alloc,
+    .free_private = ffp_free,
+    .allocate_context_data = ffp_none_context_alloc,
+    .free_context_data = ffp_none_context_free,
+    .color_fixup_supported = ffp_color_fixup_supported,
+    .states = ffp_fragmentstate_template,
 };
 
-static void none_pipe_enable(const struct wined3d_context *context, BOOL enable) {}
+static void none_pipe_apply_draw_state(struct wined3d_context *context, const struct wined3d_state *state) {}
+
+static void none_pipe_disable(const struct wined3d_context *context) {}
 
 static void *none_alloc(const struct wined3d_shader_backend_ops *shader_backend, void *shader_priv)
 {
@@ -4984,12 +4990,12 @@ static unsigned int vp_none_get_emul_mask(const struct wined3d_adapter *adapter)
 
 const struct wined3d_vertex_pipe_ops none_vertex_pipe =
 {
-    none_pipe_enable,
-    vp_none_get_caps,
-    vp_none_get_emul_mask,
-    none_alloc,
-    none_free,
-    NULL,
+    .vp_apply_draw_state = none_pipe_apply_draw_state,
+    .vp_disable = none_pipe_disable,
+    .vp_get_caps = vp_none_get_caps,
+    .vp_get_emul_mask = vp_none_get_emul_mask,
+    .vp_alloc = none_alloc,
+    .vp_free = none_free,
 };
 
 static void fp_none_get_caps(const struct wined3d_adapter *adapter, struct fragment_caps *caps)
@@ -5009,15 +5015,15 @@ static BOOL fp_none_color_fixup_supported(struct color_fixup_desc fixup)
 
 const struct wined3d_fragment_pipe_ops none_fragment_pipe =
 {
-    none_pipe_enable,
-    fp_none_get_caps,
-    fp_none_get_emul_mask,
-    none_alloc,
-    none_free,
-    ffp_none_context_alloc,
-    ffp_none_context_free,
-    fp_none_color_fixup_supported,
-    NULL,
+    .fp_apply_draw_state = none_pipe_apply_draw_state,
+    .fp_disable = none_pipe_disable,
+    .get_caps = fp_none_get_caps,
+    .get_emul_mask = fp_none_get_emul_mask,
+    .alloc_private = none_alloc,
+    .free_private = none_free,
+    .allocate_context_data = ffp_none_context_alloc,
+    .free_context_data = ffp_none_context_free,
+    .color_fixup_supported = fp_none_color_fixup_supported,
 };
 
 static unsigned int num_handlers(const APPLYSTATEFUNC *funcs)
@@ -5248,7 +5254,7 @@ HRESULT compile_state_table(struct wined3d_state_entry *state_table, APPLYSTATEF
                     break;
                 case 1:
                     state_table[cur[i].state].apply = multistate_apply_2;
-                    if (!(dev_multistate_funcs[cur[i].state] = heap_calloc(2, sizeof(**dev_multistate_funcs))))
+                    if (!(dev_multistate_funcs[cur[i].state] = calloc(2, sizeof(**dev_multistate_funcs))))
                         goto out_of_mem;
 
                     dev_multistate_funcs[cur[i].state][0] = multistate_funcs[cur[i].state][0];
@@ -5256,7 +5262,7 @@ HRESULT compile_state_table(struct wined3d_state_entry *state_table, APPLYSTATEF
                     break;
                 case 2:
                     state_table[cur[i].state].apply = multistate_apply_3;
-                    if (!(funcs_array = heap_realloc(dev_multistate_funcs[cur[i].state],
+                    if (!(funcs_array = realloc(dev_multistate_funcs[cur[i].state],
                             sizeof(**dev_multistate_funcs) * 3)))
                         goto out_of_mem;
 
@@ -5286,7 +5292,7 @@ HRESULT compile_state_table(struct wined3d_state_entry *state_table, APPLYSTATEF
 out_of_mem:
     for (i = 0; i <= STATE_HIGHEST; ++i)
     {
-        heap_free(dev_multistate_funcs[i]);
+        free(dev_multistate_funcs[i]);
     }
 
     memset(dev_multistate_funcs, 0, (STATE_HIGHEST + 1) * sizeof(*dev_multistate_funcs));

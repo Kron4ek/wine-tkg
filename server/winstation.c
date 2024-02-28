@@ -225,14 +225,24 @@ struct desktop *get_desktop_obj( struct process *process, obj_handle_t handle, u
 static struct desktop *create_desktop( const struct unicode_str *name, unsigned int attr,
                                        unsigned int flags, struct winstation *winstation )
 {
-    struct desktop *desktop;
+    struct desktop *desktop, *current_desktop;
 
     if ((desktop = create_named_object( &winstation->obj, &desktop_ops, name, attr, NULL )))
     {
         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
         {
             /* initialize it if it didn't already exist */
+
             desktop->flags = flags;
+
+            /* inherit DF_WINE_*_DESKTOP flags if none of them are specified */
+            if (!(flags & (DF_WINE_ROOT_DESKTOP | DF_WINE_VIRTUAL_DESKTOP))
+                && (current_desktop = get_thread_desktop( current, 0 )))
+            {
+                desktop->flags |= current_desktop->flags & (DF_WINE_VIRTUAL_DESKTOP | DF_WINE_ROOT_DESKTOP);
+                release_object( current_desktop );
+            }
+
             desktop->winstation = (struct winstation *)grab_object( winstation );
             desktop->top_window = NULL;
             desktop->msg_window = NULL;
@@ -247,7 +257,7 @@ static struct desktop *create_desktop( const struct unicode_str *name, unsigned 
         }
         else
         {
-            desktop->flags |= (flags & DF_WINE_CREATE_DESKTOP);
+            desktop->flags |= flags & (DF_WINE_VIRTUAL_DESKTOP | DF_WINE_ROOT_DESKTOP);
             clear_error();
         }
     }
@@ -367,17 +377,36 @@ void set_process_default_desktop( struct process *process, struct desktop *deskt
 }
 
 /* connect a process to its window station */
-void connect_process_winstation( struct process *process, struct thread *parent_thread,
-                                 struct process *parent_process )
+void connect_process_winstation( struct process *process, struct unicode_str *desktop_path,
+                                 struct thread *parent_thread, struct process *parent_process )
 {
+    struct unicode_str desktop_name = *desktop_path, winstation_name = {0};
+    const int attributes = OBJ_CASE_INSENSITIVE | OBJ_OPENIF;
     struct winstation *winstation = NULL;
     struct desktop *desktop = NULL;
+    const WCHAR *wch, *end;
     obj_handle_t handle;
+
+    for (wch = desktop_name.str, end = wch + desktop_name.len / sizeof(WCHAR); wch != end; wch++)
+    {
+        if (*wch == '\\')
+        {
+            winstation_name.str = desktop_name.str;
+            winstation_name.len = (wch - winstation_name.str) * sizeof(WCHAR);
+            desktop_name.str = wch + 1;
+            desktop_name.len = (end - desktop_name.str) * sizeof(WCHAR);
+            break;
+        }
+    }
 
     /* check for an inherited winstation handle (don't ask...) */
     if ((handle = find_inherited_handle( process, &winstation_ops )))
     {
         winstation = (struct winstation *)get_handle_obj( process, handle, 0, &winstation_ops );
+    }
+    else if (winstation_name.len && (winstation = open_named_object( NULL, &winstation_ops, &winstation_name, attributes )))
+    {
+        handle = alloc_handle( process, winstation, STANDARD_RIGHTS_REQUIRED | WINSTA_ALL_ACCESS, 0 );
     }
     else if (parent_process->winstation)
     {
@@ -392,6 +421,10 @@ void connect_process_winstation( struct process *process, struct thread *parent_
     {
         desktop = get_desktop_obj( process, handle, 0 );
         if (!desktop || desktop->winstation != winstation) goto done;
+    }
+    else if (desktop_name.len && (desktop = open_named_object( &winstation->obj, &desktop_ops, &desktop_name, attributes )))
+    {
+        handle = alloc_handle( process, desktop, STANDARD_RIGHTS_REQUIRED | DESKTOP_ALL_ACCESS, 0 );
     }
     else
     {

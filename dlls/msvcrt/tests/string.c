@@ -4154,6 +4154,9 @@ static void test__tcsncoll(void)
         { "English", "ABCe", "ABCf",  3,  0 },
         { "English", "abcd", "ABCD", 10, -1 },
 
+        { "English", "AB D", "AB-D",  4,  1 },
+        { "English", "AB D", "AB'D",  4,  1 },
+
         { "C",       "ABCD", "ABCD",  4,  0 },
         { "C",       "ABCD", "ABCD", 10,  0 },
 
@@ -4165,6 +4168,9 @@ static void test__tcsncoll(void)
 
         { "C",       "ABCe", "ABCf",  3,  0 },
         { "C",       "abcd", "ABCD", 10,  1 },
+
+        { "C",       "AB D", "AB-D",  4,  -1 },
+        { "C",       "AB D", "AB'D",  4,  -1 },
     };
     WCHAR str1W[16];
     WCHAR str2W[16];
@@ -4191,11 +4197,14 @@ static void test__tcsncoll(void)
 
         ret = _strncoll(str1, str2, tests[i].count);
         if (!tests[i].exp)
-            ok(!ret, "expected 0, got %d for %s, %s, %d\n", ret, str1, str2, (int)tests[i].count);
+            ok(!ret, "expected 0, got %d for %s, %s, %d for locale %s\n",
+               ret, str1, str2, (int)tests[i].count, tests[i].locale);
         else if (tests[i].exp < 0)
-            ok(ret < 0, "expected < 0, got %d for %s, %s, %d\n", ret, str1, str2, (int)tests[i].count);
+            ok(ret < 0, "expected < 0, got %d for %s, %s, %d for locale %s\n",
+               ret, str1, str2, (int)tests[i].count, tests[i].locale);
         else
-            ok(ret > 0, "expected > 0, got %d for %s, %s, %d\n", ret, str1, str2, (int)tests[i].count);
+            ok(ret > 0, "expected > 0, got %d for %s, %s, %d for locale %s\n",
+               ret, str1, str2, (int)tests[i].count, tests[i].locale);
 
         memset(str1W, 0xee, sizeof(str1W));
         len = mbstowcs(str1W, str1, ARRAY_SIZE(str1W));
@@ -4207,11 +4216,94 @@ static void test__tcsncoll(void)
 
         ret = _wcsncoll(str1W, str2W, tests[i].count);
         if (!tests[i].exp)
-            ok(!ret, "expected 0, got %d for %s, %s, %d\n", ret, str1, str2, (int)tests[i].count);
+            ok(!ret, "expected 0, got %d for %s, %s, %d for locale %s\n",
+               ret, str1, str2, (int)tests[i].count, tests[i].locale);
         else if (tests[i].exp < 0)
-            ok(ret < 0, "expected < 0, got %d for %s, %s, %d\n", ret, str1, str2, (int)tests[i].count);
+            ok(ret < 0, "expected < 0, got %d for %s, %s, %d for locale %s\n",
+               ret, str1, str2, (int)tests[i].count, tests[i].locale);
         else
-            ok(ret > 0, "expected > 0, got %d for %s, %s, %d\n", ret, str1, str2, (int)tests[i].count);
+            ok(ret > 0, "expected > 0, got %d for %s, %s, %d for locale %s\n",
+               ret, str1, str2, (int)tests[i].count, tests[i].locale);
+    }
+}
+
+static void test__tcscoll(void)
+{
+    struct test {
+        const char *locale;
+        const char *str1;
+        const char *str2;
+        int exp;
+    };
+    static const struct test tests[] = {
+        { "English", "ABCD", "ABCD",  0 },
+        { "English", "ABC",  "ABCD", -1 },
+        { "English", "ABCD",  "ABC",  1 },
+        { "English", "ABCe", "ABCf", -1 },
+        { "English", "abcd", "ABCD", -1 },
+        { "English", "AB D", "AB-D",  1 },
+        { "English", "AB D", "AB'D",  1 },
+
+        { "C",       "ABCD", "ABCD",  0 },
+        { "C",       "ABC",  "ABCD", -1 },
+        { "C",       "ABCD",  "ABC",  1 },
+        { "C",       "ABCe", "ABCf", -1 },
+        { "C",       "abcd", "ABCD",  1 },
+        { "C",       "AB D", "AB-D", -1 },
+        { "C",       "AB D", "AB'D", -1 },
+    };
+    WCHAR str1W[16];
+    WCHAR str2W[16];
+    char str1[16];
+    char str2[16];
+    size_t len;
+    int i, ret;
+
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
+    {
+        if (!setlocale(LC_ALL, tests[i].locale))
+        {
+            win_skip("%s locale _tcsncoll tests\n", tests[i].locale);
+            for (; i+1 < ARRAY_SIZE(tests); i++)
+                if (strcmp(tests[i].locale, tests[i+1].locale)) break;
+            continue;
+        }
+
+        memset(str1, 0xee, sizeof(str1));
+        strcpy(str1, tests[i].str1);
+
+        memset(str2, 0xff, sizeof(str2));
+        strcpy(str2, tests[i].str2);
+
+        ret = strcoll(str1, str2);
+        if (!tests[i].exp)
+            ok(!ret, "expected 0, got %d for %s, %s for locale %s\n",
+               ret, str1, str2, tests[i].locale);
+        else if (tests[i].exp < 0)
+            ok(ret < 0, "expected < 0, got %d for %s, %s for locale %s\n",
+               ret, str1, str2, tests[i].locale);
+        else
+            ok(ret > 0, "expected > 0, got %d for %s, %s for locale %s\n",
+               ret, str1, str2, tests[i].locale);
+
+        memset(str1W, 0xee, sizeof(str1W));
+        len = mbstowcs(str1W, str1, ARRAY_SIZE(str1W));
+        str1W[len] = 0;
+
+        memset(str2W, 0xff, sizeof(str2W));
+        len = mbstowcs(str2W, str2, ARRAY_SIZE(str2W));
+        str2W[len] = 0;
+
+        ret = wcscoll(str1W, str2W);
+        if (!tests[i].exp)
+            ok(!ret, "expected 0, got %d for %s, %s for locale %s\n",
+               ret, str1, str2, tests[i].locale);
+        else if (tests[i].exp < 0)
+            ok(ret < 0, "expected < 0, got %d for %s, %s for locale %s\n",
+               ret, str1, str2, tests[i].locale);
+        else
+            ok(ret > 0, "expected > 0, got %d for %s, %s for locale %s\n",
+               ret, str1, str2, tests[i].locale);
     }
 }
 
@@ -4842,6 +4934,7 @@ START_TEST(string)
     test__memicmp_l();
     test__strupr();
     test__tcsncoll();
+    test__tcscoll();
     test__tcsnicoll();
     test___strncnt();
     test_C_locale();

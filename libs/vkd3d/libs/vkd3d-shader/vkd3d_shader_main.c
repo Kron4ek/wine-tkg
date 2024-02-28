@@ -71,7 +71,7 @@ void vkd3d_string_buffer_cleanup(struct vkd3d_string_buffer *buffer)
     vkd3d_free(buffer->buffer);
 }
 
-static void vkd3d_string_buffer_clear(struct vkd3d_string_buffer *buffer)
+void vkd3d_string_buffer_clear(struct vkd3d_string_buffer *buffer)
 {
     buffer->buffer[0] = '\0';
     buffer->content_size = 0;
@@ -366,9 +366,9 @@ size_t bytecode_align(struct vkd3d_bytecode_buffer *buffer)
     return aligned_size;
 }
 
-size_t bytecode_put_bytes(struct vkd3d_bytecode_buffer *buffer, const void *bytes, size_t size)
+size_t bytecode_put_bytes_unaligned(struct vkd3d_bytecode_buffer *buffer, const void *bytes, size_t size)
 {
-    size_t offset = bytecode_align(buffer);
+    size_t offset = buffer->size;
 
     if (buffer->status)
         return offset;
@@ -381,6 +381,12 @@ size_t bytecode_put_bytes(struct vkd3d_bytecode_buffer *buffer, const void *byte
     memcpy(buffer->data + offset, bytes, size);
     buffer->size = offset + size;
     return offset;
+}
+
+size_t bytecode_put_bytes(struct vkd3d_bytecode_buffer *buffer, const void *bytes, size_t size)
+{
+    bytecode_align(buffer);
+    return bytecode_put_bytes_unaligned(buffer, bytes, size);
 }
 
 size_t bytecode_reserve_bytes(struct vkd3d_bytecode_buffer *buffer, size_t size)
@@ -2048,9 +2054,12 @@ void *shader_param_allocator_get(struct vkd3d_shader_param_allocator *allocator,
 
     if (count > allocator->count - allocator->index)
     {
-        struct vkd3d_shader_param_node *next = shader_param_allocator_node_create(allocator);
+        struct vkd3d_shader_param_node *next;
 
-        if (!next)
+        /* Monolithic switch has no definite parameter count limit. */
+        allocator->count = max(allocator->count, count);
+
+        if (!(next = shader_param_allocator_node_create(allocator)))
             return NULL;
         if (allocator->current)
             allocator->current->next = next;

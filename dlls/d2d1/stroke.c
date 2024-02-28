@@ -196,7 +196,7 @@ struct d2d_stroke_style *unsafe_impl_from_ID2D1StrokeStyle(ID2D1StrokeStyle *ifa
     if (!iface)
         return NULL;
     assert((const struct ID2D1StrokeStyle1Vtbl *)iface->lpVtbl == &d2d_stroke_style_vtbl);
-    return CONTAINING_RECORD(iface, struct d2d_stroke_style, ID2D1StrokeStyle1_iface);
+    return CONTAINING_RECORD((ID2D1StrokeStyle1*)iface, struct d2d_stroke_style, ID2D1StrokeStyle1_iface);
 }
 
 HRESULT d2d_stroke_style_init(struct d2d_stroke_style *style, ID2D1Factory *factory,

@@ -220,6 +220,18 @@ extern int server_pipe( int fd[2] );
 
 extern void fpux_to_fpu( I386_FLOATING_SAVE_AREA *fpu, const XSAVE_FORMAT *fpux );
 extern void fpu_to_fpux( XSAVE_FORMAT *fpux, const I386_FLOATING_SAVE_AREA *fpu );
+
+extern BOOL xstate_compaction_enabled;
+extern UINT64 xstate_supported_features_mask;
+extern UINT64 xstate_features_size;
+extern unsigned int xstate_get_size( UINT64 compaction_mask, UINT64 mask );
+extern void copy_xstate( XSAVE_AREA_HEADER *dst, XSAVE_AREA_HEADER *src, UINT64 mask );
+
+static inline UINT64 xstate_extended_features(void)
+{
+    return xstate_supported_features_mask & ~(UINT64)3;
+}
+
 extern void *get_cpu_area( USHORT machine );
 extern void set_thread_id( TEB *teb, DWORD pid, DWORD tid );
 extern NTSTATUS init_thread_stack( TEB *teb, ULONG_PTR limit, SIZE_T reserve_size, SIZE_T commit_size );

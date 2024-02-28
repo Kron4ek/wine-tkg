@@ -1503,24 +1503,40 @@ VkResult wine_vkCreateWin32SurfaceKHR(VkInstance handle, const VkWin32SurfaceCre
                                       const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface)
 {
     struct wine_instance *instance = wine_instance_from_handle(handle);
+    VkWin32SurfaceCreateInfoKHR create_info_host = *create_info;
     struct wine_surface *object;
+    HWND dummy = NULL;
     VkResult res;
 
     if (allocator) FIXME("Support for allocation callbacks not implemented yet\n");
 
     if (!(object = calloc(1, sizeof(*object)))) return VK_ERROR_OUT_OF_HOST_MEMORY;
-    object->hwnd = create_info->hwnd;
 
-    res = instance->funcs.p_vkCreateWin32SurfaceKHR(instance->host_instance, create_info,
+    /* Windows allows surfaces to be created with no HWND, they return VK_ERROR_SURFACE_LOST_KHR later */
+    if (!(object->hwnd = create_info->hwnd))
+    {
+        static const WCHAR staticW[] = {'s','t','a','t','i','c',0};
+        UNICODE_STRING static_us = RTL_CONSTANT_STRING(staticW);
+        dummy = NtUserCreateWindowEx(0, &static_us, &static_us, &static_us, WS_POPUP,
+                                     0, 0, 0, 0, NULL, NULL, NULL, NULL, 0, NULL, 0, FALSE);
+        WARN("Created dummy window %p for null surface window\n", dummy);
+        create_info_host.hwnd = object->hwnd = dummy;
+    }
+
+    res = instance->funcs.p_vkCreateWin32SurfaceKHR(instance->host_instance, &create_info_host,
                                                     NULL /* allocator */, &object->driver_surface);
     if (res != VK_SUCCESS)
     {
+        if (dummy) NtUserDestroyWindow(dummy);
         free(object);
         return res;
     }
 
     object->host_surface = vk_funcs->p_wine_get_host_surface(object->driver_surface);
     WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(instance, object, object->host_surface, object);
+
+    *surface = wine_surface_to_handle(object);
+    if (dummy) NtUserDestroyWindow(dummy);
 
     *surface = wine_surface_to_handle(object);
 
@@ -1540,6 +1556,64 @@ void wine_vkDestroySurfaceKHR(VkInstance handle, VkSurfaceKHR surface,
     WINE_VK_REMOVE_HANDLE_MAPPING(instance, object);
 
     free(object);
+}
+
+VkResult wine_vkCreateSwapchainKHR(VkDevice device_handle, const VkSwapchainCreateInfoKHR *create_info,
+                                   const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain_handle)
+{
+    struct wine_swapchain *object, *old_swapchain = wine_swapchain_from_handle(create_info->oldSwapchain);
+    struct wine_surface *surface = wine_surface_from_handle(create_info->surface);
+    struct wine_device *device = wine_device_from_handle(device_handle);
+    struct wine_phys_dev *physical_device = device->phys_dev;
+    struct wine_instance *instance = physical_device->instance;
+    VkSwapchainCreateInfoKHR create_info_host = *create_info;
+    VkSurfaceCapabilitiesKHR capabilities;
+    VkResult res;
+
+    if (!NtUserIsWindow(surface->hwnd))
+    {
+        ERR("surface %p, hwnd %p is invalid!\n", surface, surface->hwnd);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+
+    if (surface) create_info_host.surface = surface->driver_surface;
+    if (old_swapchain) create_info_host.oldSwapchain = old_swapchain->host_swapchain;
+
+    /* Windows allows client rect to be empty, but host Vulkan often doesn't, adjust extents back to the host capabilities */
+    res = instance->funcs.p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device->host_physical_device,
+                                                                      surface->host_surface, &capabilities);
+    if (res != VK_SUCCESS) return res;
+
+    create_info_host.imageExtent.width = max(create_info_host.imageExtent.width, capabilities.minImageExtent.width);
+    create_info_host.imageExtent.height = max(create_info_host.imageExtent.height, capabilities.minImageExtent.height);
+
+    if (!(object = calloc(1, sizeof(*object)))) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    res = device->funcs.p_vkCreateSwapchainKHR(device->host_device, &create_info_host, NULL, &object->host_swapchain);
+    if (res != VK_SUCCESS)
+    {
+        free(object);
+        return res;
+    }
+
+    WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, object, object->host_swapchain, object);
+    *swapchain_handle = wine_swapchain_to_handle(object);
+
+    return res;
+}
+
+void wine_vkDestroySwapchainKHR(VkDevice device_handle, VkSwapchainKHR swapchain_handle,
+                                const VkAllocationCallbacks *allocator)
+{
+    struct wine_device *device = wine_device_from_handle(device_handle);
+    struct wine_swapchain *swapchain = wine_swapchain_from_handle(swapchain_handle);
+
+    if (allocator) FIXME("Support for allocation callbacks not implemented yet\n");
+    if (!swapchain) return;
+
+    device->funcs.p_vkDestroySwapchainKHR(device->host_device, swapchain->host_swapchain, NULL);
+    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, swapchain);
+
+    free(swapchain);
 }
 
 VkResult wine_vkAllocateMemory(VkDevice handle, const VkMemoryAllocateInfo *alloc_info,
@@ -1780,8 +1854,11 @@ VkResult wine_vkCreateImage(VkDevice handle, const VkImageCreateInfo *create_inf
     return device->funcs.p_vkCreateImage(device->host_device, &info, NULL, image);
 }
 
-static inline void adjust_max_image_count(struct wine_phys_dev *phys_dev, VkSurfaceCapabilitiesKHR* capabilities)
+static void adjust_surface_capabilities(struct wine_instance *instance, struct wine_surface *surface,
+                                        VkSurfaceCapabilitiesKHR *capabilities)
 {
+    RECT client_rect;
+
     /* Many Windows games, for example Strange Brigade, No Man's Sky, Path of Exile
      * and World War Z, do not expect that maxImageCount can be set to 0.
      * A value of 0 means that there is no limit on the number of images.
@@ -1789,10 +1866,17 @@ static inline void adjust_max_image_count(struct wine_phys_dev *phys_dev, VkSurf
      * https://vulkan.gpuinfo.org/displayreport.php?id=9122#surface
      * https://vulkan.gpuinfo.org/displayreport.php?id=9121#surface
      */
-    if ((phys_dev->instance->quirks & WINEVULKAN_QUIRK_ADJUST_MAX_IMAGE_COUNT) && !capabilities->maxImageCount)
-    {
+    if ((instance->quirks & WINEVULKAN_QUIRK_ADJUST_MAX_IMAGE_COUNT) && !capabilities->maxImageCount)
         capabilities->maxImageCount = max(capabilities->minImageCount, 16);
-    }
+
+    /* Update the image extents to match what the Win32 WSI would provide. */
+    NtUserGetClientRect(surface->hwnd, &client_rect);
+    capabilities->minImageExtent.width = client_rect.right - client_rect.left;
+    capabilities->minImageExtent.height = client_rect.bottom - client_rect.top;
+    capabilities->maxImageExtent.width = client_rect.right - client_rect.left;
+    capabilities->maxImageExtent.height = client_rect.bottom - client_rect.top;
+    capabilities->currentExtent.width = client_rect.right - client_rect.left;
+    capabilities->currentExtent.height = client_rect.bottom - client_rect.top;
 }
 
 VkResult wine_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice device_handle, VkSurfaceKHR surface_handle,
@@ -1805,8 +1889,8 @@ VkResult wine_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice device_
 
     if (!NtUserIsWindow(surface->hwnd)) return VK_ERROR_SURFACE_LOST_KHR;
     res = instance->funcs.p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device->host_physical_device,
-                                                                      surface->driver_surface, capabilities);
-    if (res == VK_SUCCESS) adjust_max_image_count(physical_device, capabilities);
+                                                                      surface->host_surface, capabilities);
+    if (res == VK_SUCCESS) adjust_surface_capabilities(instance, surface, capabilities);
     return res;
 }
 
@@ -1819,13 +1903,90 @@ VkResult wine_vkGetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysicalDevice device
     struct wine_instance *instance = physical_device->instance;
     VkResult res;
 
-    surface_info_host.surface = surface->driver_surface;
+    if (!instance->funcs.p_vkGetPhysicalDeviceSurfaceCapabilities2KHR)
+    {
+        /* Until the loader version exporting this function is common, emulate it using the older non-2 version. */
+        if (surface_info->pNext || capabilities->pNext) FIXME("Emulating vkGetPhysicalDeviceSurfaceCapabilities2KHR, ignoring pNext.\n");
+        return wine_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device_handle, surface_info->surface,
+                                                              &capabilities->surfaceCapabilities);
+    }
+
+    surface_info_host.surface = surface->host_surface;
 
     if (!NtUserIsWindow(surface->hwnd)) return VK_ERROR_SURFACE_LOST_KHR;
     res = instance->funcs.p_vkGetPhysicalDeviceSurfaceCapabilities2KHR(physical_device->host_physical_device,
                                                                        &surface_info_host, capabilities);
-    if (res == VK_SUCCESS) adjust_max_image_count(physical_device, &capabilities->surfaceCapabilities);
+    if (res == VK_SUCCESS) adjust_surface_capabilities(instance, surface, &capabilities->surfaceCapabilities);
     return res;
+}
+
+VkResult wine_vkGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice device_handle, VkSurfaceKHR surface_handle,
+                                                      uint32_t *rect_count, VkRect2D *rects)
+{
+    struct wine_phys_dev *physical_device = wine_phys_dev_from_handle(device_handle);
+    struct wine_surface *surface = wine_surface_from_handle(surface_handle);
+    struct wine_instance *instance = physical_device->instance;
+
+    if (!NtUserIsWindow(surface->hwnd))
+    {
+        if (rects && !*rect_count) return VK_INCOMPLETE;
+        if (rects) memset(rects, 0, sizeof(VkRect2D));
+        *rect_count = 1;
+        return VK_SUCCESS;
+    }
+
+    return instance->funcs.p_vkGetPhysicalDevicePresentRectanglesKHR(physical_device->host_physical_device,
+                                                                     surface->host_surface, rect_count, rects);
+}
+
+VkResult wine_vkGetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice device_handle, VkSurfaceKHR surface_handle,
+                                                   uint32_t *format_count, VkSurfaceFormatKHR *formats)
+{
+    struct wine_phys_dev *physical_device = wine_phys_dev_from_handle(device_handle);
+    struct wine_surface *surface = wine_surface_from_handle(surface_handle);
+    struct wine_instance *instance = physical_device->instance;
+
+    return instance->funcs.p_vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device->host_physical_device, surface->host_surface,
+                                                                  format_count, formats);
+}
+
+VkResult wine_vkGetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice device_handle, const VkPhysicalDeviceSurfaceInfo2KHR *surface_info,
+                                                    uint32_t *format_count, VkSurfaceFormat2KHR *formats)
+{
+    struct wine_phys_dev *physical_device = wine_phys_dev_from_handle(device_handle);
+    struct wine_surface *surface = wine_surface_from_handle(surface_info->surface);
+    VkPhysicalDeviceSurfaceInfo2KHR surface_info_host = *surface_info;
+    struct wine_instance *instance = physical_device->instance;
+    VkResult res;
+
+    if (!physical_device->instance->funcs.p_vkGetPhysicalDeviceSurfaceFormats2KHR)
+    {
+        VkSurfaceFormatKHR *surface_formats;
+        UINT i;
+
+        /* Until the loader version exporting this function is common, emulate it using the older non-2 version. */
+        if (surface_info->pNext) FIXME("Emulating vkGetPhysicalDeviceSurfaceFormats2KHR, ignoring pNext.\n");
+
+        if (!formats) return wine_vkGetPhysicalDeviceSurfaceFormatsKHR(device_handle, surface_info->surface, format_count, NULL);
+
+        surface_formats = calloc(*format_count, sizeof(*surface_formats));
+        if (!surface_formats) return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+        res = wine_vkGetPhysicalDeviceSurfaceFormatsKHR(device_handle, surface_info->surface, format_count, surface_formats);
+        if (res == VK_SUCCESS || res == VK_INCOMPLETE)
+        {
+            for (i = 0; i < *format_count; i++)
+                formats[i].surfaceFormat = surface_formats[i];
+        }
+
+        free(surface_formats);
+        return res;
+    }
+
+    surface_info_host.surface = surface->host_surface;
+
+    return instance->funcs.p_vkGetPhysicalDeviceSurfaceFormats2KHR(physical_device->host_physical_device,
+                                                                   &surface_info_host, format_count, formats);
 }
 
 VkResult wine_vkCreateDebugUtilsMessengerEXT(VkInstance handle,

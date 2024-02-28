@@ -1915,13 +1915,19 @@ static struct hlsl_ir_node *add_assignment(struct hlsl_ctx *ctx, struct hlsl_blo
         }
     }
 
-    if (lhs->type == HLSL_IR_INDEX && hlsl_index_is_resource_access(hlsl_ir_index(lhs)))
+    if (lhs->type == HLSL_IR_INDEX && hlsl_index_chain_has_resource_access(hlsl_ir_index(lhs)))
     {
         struct hlsl_ir_node *coords = hlsl_ir_index(lhs)->idx.node;
         struct hlsl_deref resource_deref;
         struct hlsl_type *resource_type;
         struct hlsl_ir_node *store;
         unsigned int dim_count;
+
+        if (!hlsl_index_is_resource_access(hlsl_ir_index(lhs)))
+        {
+            hlsl_fixme(ctx, &lhs->loc, "Non-direct structured resource store.");
+            return NULL;
+        }
 
         if (!hlsl_init_deref_from_index_chain(ctx, &resource_deref, hlsl_ir_index(lhs)->val.node))
             return NULL;
@@ -1936,7 +1942,7 @@ static struct hlsl_ir_node *add_assignment(struct hlsl_ctx *ctx, struct hlsl_blo
 
         dim_count = hlsl_sampler_dim_count(resource_type->sampler_dim);
 
-        if (writemask != ((1u << resource_type->e.resource_format->dimx) - 1))
+        if (writemask != ((1u << resource_type->e.resource.format->dimx) - 1))
             hlsl_error(ctx, &lhs->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_WRITEMASK,
                     "Resource store expressions must write to all components.");
 
@@ -2660,6 +2666,55 @@ static bool intrinsic_abs(struct hlsl_ctx *ctx,
     return !!add_unary_arithmetic_expr(ctx, params->instrs, HLSL_OP1_ABS, params->args[0], loc);
 }
 
+static bool write_acos_or_asin(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc, bool asin_mode)
+{
+    struct hlsl_ir_function_decl *func;
+    struct hlsl_type *type;
+    char *body;
+
+    static const char template[] =
+            "%s %s(%s x)\n"
+            "{\n"
+            "    %s abs_arg = abs(x);\n"
+            "    %s poly_approx = (((-0.018729\n"
+            "        * abs_arg + 0.074261)\n"
+            "        * abs_arg - 0.212114)\n"
+            "        * abs_arg + 1.570729);\n"
+            "    %s correction = sqrt(1.0 - abs_arg);\n"
+            "    %s zero_flip = (x < 0.0) * (-2.0 * correction * poly_approx + 3.141593);\n"
+            "    %s result = poly_approx * correction + zero_flip;\n"
+            "    return %s;\n"
+            "}";
+    static const char fn_name_acos[] = "acos";
+    static const char fn_name_asin[] = "asin";
+    static const char return_stmt_acos[] = "result";
+    static const char return_stmt_asin[] = "-result + 1.570796";
+
+    const char *fn_name = asin_mode ? fn_name_asin : fn_name_acos;
+
+    type = params->args[0]->data_type;
+    type = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_FLOAT, type->dimx, type->dimy);
+
+    if (!(body = hlsl_sprintf_alloc(ctx, template,
+            type->name, fn_name, type->name,
+            type->name, type->name, type->name, type->name, type->name,
+            (asin_mode ? return_stmt_asin : return_stmt_acos))))
+        return false;
+    func = hlsl_compile_internal_function(ctx, fn_name, body);
+    vkd3d_free(body);
+    if (!func)
+        return false;
+
+    return add_user_call(ctx, func, params, loc);
+}
+
+static bool intrinsic_acos(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return write_acos_or_asin(ctx, params, loc, false);
+}
+
 static bool intrinsic_all(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
@@ -2736,6 +2791,105 @@ static bool intrinsic_any(struct hlsl_ctx *ctx,
     hlsl_fixme(ctx, loc, "any() implementation for non-float, non-bool");
     return false;
 }
+
+static bool intrinsic_asin(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return write_acos_or_asin(ctx, params, loc, true);
+}
+
+static bool write_atan_or_atan2(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params,
+        const struct vkd3d_shader_location *loc, bool atan2_mode)
+{
+    struct hlsl_ir_function_decl *func;
+    struct hlsl_type *type;
+    struct vkd3d_string_buffer *buf;
+    int ret;
+
+    static const char atan2_name[] = "atan2";
+    static const char atan_name[] = "atan";
+
+    static const char atan2_header_template[] =
+            "%s atan2(%s y, %s x)\n"
+            "{\n"
+            "    %s in_y, in_x;\n"
+            "    in_y = y;\n"
+            "    in_x = x;\n";
+    static const char atan_header_template[] =
+            "%s atan(%s y)\n"
+            "{\n"
+            "    %s in_y, in_x;\n"
+            "    in_y = y;\n"
+            "    in_x = 1.0;\n";
+
+    static const char body_template[] =
+            "    %s recip, input, x2, poly_approx, flipped;"
+            "    recip = 1.0 / max(abs(in_y), abs(in_x));\n"
+            "    input = recip * min(abs(in_y), abs(in_x));\n"
+            "    x2 = input * input;\n"
+            "    poly_approx = ((((0.020835\n"
+            "        * x2 - 0.085133)\n"
+            "        * x2 + 0.180141)\n"
+            "        * x2 - 0.330299)\n"
+            "        * x2 + 0.999866)\n"
+            "        * input;\n"
+            "    flipped = poly_approx * -2.0 + 1.570796;\n"
+            "    poly_approx += abs(in_x) < abs(in_y) ? flipped : 0.0;\n"
+            "    poly_approx += in_x < 0.0 ? -3.1415927 : 0.0;\n"
+            "    return (min(in_x, in_y) < 0.0 && max(in_x, in_y) >= 0.0)\n"
+            "        ? -poly_approx\n"
+            "        : poly_approx;\n"
+            "}";
+
+    if (!(type = elementwise_intrinsic_get_common_type(ctx, params, loc)))
+        return false;
+    type = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_FLOAT, type->dimx, type->dimy);
+
+    if (!(buf = hlsl_get_string_buffer(ctx)))
+        return false;
+
+    if (atan2_mode)
+        ret = vkd3d_string_buffer_printf(buf, atan2_header_template,
+                type->name, type->name, type->name, type->name);
+    else
+        ret = vkd3d_string_buffer_printf(buf, atan_header_template,
+                type->name, type->name, type->name);
+    if (ret < 0)
+    {
+        vkd3d_string_buffer_cleanup(buf);
+        return false;
+    }
+
+    ret = vkd3d_string_buffer_printf(buf, body_template, type->name);
+    if (ret < 0)
+    {
+        vkd3d_string_buffer_cleanup(buf);
+        return false;
+    }
+
+    func = hlsl_compile_internal_function(ctx,
+            atan2_mode ? atan2_name : atan_name, buf->buffer);
+    vkd3d_string_buffer_cleanup(buf);
+    if (!func)
+        return false;
+
+    return add_user_call(ctx, func, params, loc);
+}
+
+static bool intrinsic_atan(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return write_atan_or_atan2(ctx, params, loc, false);
+}
+
+
+static bool intrinsic_atan2(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return write_atan_or_atan2(ctx, params, loc, true);
+}
+
 
 /* Find the type corresponding to the given source type, with the same
  * dimensions but a different base type. */
@@ -3964,10 +4118,14 @@ intrinsic_functions[] =
     /* Note: these entries should be kept in alphabetical order. */
     {"D3DCOLORtoUBYTE4",                    1, true,  intrinsic_d3dcolor_to_ubyte4},
     {"abs",                                 1, true,  intrinsic_abs},
+    {"acos",                                1, true,  intrinsic_acos},
     {"all",                                 1, true,  intrinsic_all},
     {"any",                                 1, true,  intrinsic_any},
     {"asfloat",                             1, true,  intrinsic_asfloat},
+    {"asin",                                1, true,  intrinsic_asin},
     {"asuint",                             -1, true,  intrinsic_asuint},
+    {"atan",                                1, true,  intrinsic_atan},
+    {"atan2",                               2, true,  intrinsic_atan2},
     {"ceil",                                1, true,  intrinsic_ceil},
     {"clamp",                               3, true,  intrinsic_clamp},
     {"clip",                                1, true,  intrinsic_clip},
@@ -4229,6 +4387,7 @@ static unsigned int hlsl_offset_dim_count(enum hlsl_sampler_dim dim)
             return 3;
         case HLSL_SAMPLER_DIM_CUBE:
         case HLSL_SAMPLER_DIM_CUBEARRAY:
+        case HLSL_SAMPLER_DIM_BUFFER:
             /* Offset parameters not supported for these types. */
             return 0;
         default:
@@ -4252,28 +4411,31 @@ static bool add_load_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const char *name, const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
     const struct hlsl_type *object_type = object->data_type;
-    const unsigned int sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
-    const unsigned int offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
     struct hlsl_resource_load_params load_params = {.type = HLSL_RESOURCE_LOAD};
+    unsigned int sampler_dim, offset_dim;
     struct hlsl_ir_node *load;
     bool multisampled;
 
-    if (object_type->sampler_dim == HLSL_SAMPLER_DIM_CUBE
-            || object_type->sampler_dim == HLSL_SAMPLER_DIM_CUBEARRAY)
+    if (object_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
     {
-        return raise_invalid_method_object_type(ctx, object_type, name, loc);
+        hlsl_fixme(ctx, loc, "Method '%s' for structured buffers.", name);
+        return false;
     }
+
+    sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
+    offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
 
     multisampled = object_type->sampler_dim == HLSL_SAMPLER_DIM_2DMS
             || object_type->sampler_dim == HLSL_SAMPLER_DIM_2DMSARRAY;
 
-    if (params->args_count < 1 + multisampled || params->args_count > 3 + multisampled)
+    if (params->args_count < 1 + multisampled || params->args_count > 2 + multisampled + !!offset_dim)
     {
         hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_WRONG_PARAMETER_COUNT,
                 "Wrong number of arguments to method 'Load': expected between %u and %u, but got %u.",
-                1 + multisampled, 3 + multisampled, params->args_count);
+                1 + multisampled, 2 + multisampled + !!offset_dim, params->args_count);
         return false;
     }
+
     if (multisampled)
     {
         if (!(load_params.sample_index = add_implicit_conversion(ctx, block, params->args[1],
@@ -4281,14 +4443,14 @@ static bool add_load_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block,
             return false;
     }
 
-    assert(offset_dim);
-    if (params->args_count > 1 + multisampled)
+    if (!!offset_dim && params->args_count > 1 + multisampled)
     {
         if (!(load_params.texel_offset = add_implicit_conversion(ctx, block, params->args[1 + multisampled],
                 hlsl_get_vector_type(ctx, HLSL_TYPE_INT, offset_dim), loc)))
             return false;
     }
-    if (params->args_count > 2 + multisampled)
+
+    if (params->args_count > 1 + multisampled + !!offset_dim)
     {
         hlsl_fixme(ctx, loc, "Tiled resource status argument.");
     }
@@ -4298,7 +4460,7 @@ static bool add_load_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block,
             hlsl_get_vector_type(ctx, HLSL_TYPE_INT, sampler_dim + !multisampled), loc)))
         return false;
 
-    load_params.format = object_type->e.resource_format;
+    load_params.format = object_type->e.resource.format;
     load_params.resource = object;
 
     if (!(load = hlsl_new_resource_load(ctx, &load_params, loc)))
@@ -4311,17 +4473,13 @@ static bool add_sample_method_call(struct hlsl_ctx *ctx, struct hlsl_block *bloc
         const char *name, const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
     const struct hlsl_type *object_type = object->data_type;
-    const unsigned int sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
-    const unsigned int offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
     struct hlsl_resource_load_params load_params = {.type = HLSL_RESOURCE_SAMPLE};
+    unsigned int sampler_dim, offset_dim;
     const struct hlsl_type *sampler_type;
     struct hlsl_ir_node *load;
 
-    if (object_type->sampler_dim == HLSL_SAMPLER_DIM_2DMS
-            || object_type->sampler_dim == HLSL_SAMPLER_DIM_2DMSARRAY)
-    {
-        return raise_invalid_method_object_type(ctx, object_type, name, loc);
-    }
+    sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
+    offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
 
     if (params->args_count < 2 || params->args_count > 4 + !!offset_dim)
     {
@@ -4360,7 +4518,7 @@ static bool add_sample_method_call(struct hlsl_ctx *ctx, struct hlsl_block *bloc
     if (params->args_count > 3 + !!offset_dim)
         hlsl_fixme(ctx, loc, "Tiled resource status argument.");
 
-    load_params.format = object_type->e.resource_format;
+    load_params.format = object_type->e.resource.format;
     load_params.resource = object;
     load_params.sampler = params->args[0];
 
@@ -4375,17 +4533,13 @@ static bool add_sample_cmp_method_call(struct hlsl_ctx *ctx, struct hlsl_block *
         const char *name, const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
     const struct hlsl_type *object_type = object->data_type;
-    const unsigned int sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
-    const unsigned int offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
     struct hlsl_resource_load_params load_params = { 0 };
+    unsigned int sampler_dim, offset_dim;
     const struct hlsl_type *sampler_type;
     struct hlsl_ir_node *load;
 
-    if (object_type->sampler_dim == HLSL_SAMPLER_DIM_2DMS
-            || object_type->sampler_dim == HLSL_SAMPLER_DIM_2DMSARRAY)
-    {
-        return raise_invalid_method_object_type(ctx, object_type, name, loc);
-    }
+    sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
+    offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
 
     if (!strcmp(name, "SampleCmpLevelZero"))
         load_params.type = HLSL_RESOURCE_SAMPLE_CMP_LZ;
@@ -4434,7 +4588,7 @@ static bool add_sample_cmp_method_call(struct hlsl_ctx *ctx, struct hlsl_block *
     if (params->args_count > 4 + !!offset_dim)
         hlsl_fixme(ctx, loc, "Tiled resource status argument.");
 
-    load_params.format = object_type->e.resource_format;
+    load_params.format = object_type->e.resource.format;
     load_params.resource = object;
     load_params.sampler = params->args[0];
 
@@ -4449,20 +4603,14 @@ static bool add_gather_method_call(struct hlsl_ctx *ctx, struct hlsl_block *bloc
         const char *name, const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
     const struct hlsl_type *object_type = object->data_type;
-    const unsigned int sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
-    const unsigned int offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
     struct hlsl_resource_load_params load_params = {0};
+    unsigned int sampler_dim, offset_dim;
     const struct hlsl_type *sampler_type;
     struct hlsl_ir_node *load;
     unsigned int read_channel;
 
-    if (object_type->sampler_dim != HLSL_SAMPLER_DIM_2D
-            && object_type->sampler_dim != HLSL_SAMPLER_DIM_2DARRAY
-            && object_type->sampler_dim != HLSL_SAMPLER_DIM_CUBE
-            && object_type->sampler_dim != HLSL_SAMPLER_DIM_CUBEARRAY)
-    {
-        return raise_invalid_method_object_type(ctx, object_type, name, loc);
-    }
+    sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
+    offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
 
     if (!strcmp(name, "GatherGreen"))
     {
@@ -4530,7 +4678,7 @@ static bool add_gather_method_call(struct hlsl_ctx *ctx, struct hlsl_block *bloc
         return false;
     }
 
-    if (read_channel >= object_type->e.resource_format->dimx)
+    if (read_channel >= object_type->e.resource.format->dimx)
     {
         hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                 "Method %s() requires at least %u channels.", name, read_channel + 1);
@@ -4541,7 +4689,7 @@ static bool add_gather_method_call(struct hlsl_ctx *ctx, struct hlsl_block *bloc
             hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, sampler_dim), loc)))
         return false;
 
-    load_params.format = hlsl_get_vector_type(ctx, object_type->e.resource_format->base_type, 4);
+    load_params.format = hlsl_get_vector_type(ctx, object_type->e.resource.format->base_type, 4);
     load_params.resource = object;
     load_params.sampler = params->args[0];
 
@@ -4613,12 +4761,14 @@ static bool add_getdimensions_method_call(struct hlsl_ctx *ctx, struct hlsl_bloc
         { HLSL_SAMPLER_DIM_CUBEARRAY, 5, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT, ARG_LEVEL_COUNT } },
         { HLSL_SAMPLER_DIM_2DMS, 3, { ARG_WIDTH, ARG_HEIGHT, ARG_SAMPLE_COUNT } },
         { HLSL_SAMPLER_DIM_2DMSARRAY, 4, { ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT, ARG_SAMPLE_COUNT } },
+        { HLSL_SAMPLER_DIM_BUFFER, 1, { ARG_WIDTH} },
     };
     const struct overload *o = NULL;
 
-    if (object_type->sampler_dim > HLSL_SAMPLER_DIM_LAST_TEXTURE)
+    if (object_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
     {
-        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE, "GetDimensions() is not defined for this type.");
+        hlsl_fixme(ctx, loc, "Method '%s' for structured buffers.", name);
+        return false;
     }
 
     uint_type = hlsl_get_scalar_type(ctx, HLSL_TYPE_UINT);
@@ -4732,16 +4882,12 @@ static bool add_sample_lod_method_call(struct hlsl_ctx *ctx, struct hlsl_block *
 {
     const struct hlsl_type *object_type = object->data_type;
     struct hlsl_resource_load_params load_params = { 0 };
-    const unsigned int sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
-    const unsigned int offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
+    unsigned int sampler_dim, offset_dim;
     const struct hlsl_type *sampler_type;
     struct hlsl_ir_node *load;
 
-    if (object_type->sampler_dim == HLSL_SAMPLER_DIM_2DMS
-            || object_type->sampler_dim == HLSL_SAMPLER_DIM_2DMSARRAY)
-    {
-        return raise_invalid_method_object_type(ctx, object_type, name, loc);
-    }
+    sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
+    offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
 
     if (!strcmp(name, "SampleLevel"))
         load_params.type = HLSL_RESOURCE_SAMPLE_LOD;
@@ -4787,7 +4933,7 @@ static bool add_sample_lod_method_call(struct hlsl_ctx *ctx, struct hlsl_block *
     if (params->args_count > 3 + !!offset_dim)
         hlsl_fixme(ctx, loc, "Tiled resource status argument.");
 
-    load_params.format = object_type->e.resource_format;
+    load_params.format = object_type->e.resource.format;
     load_params.resource = object;
     load_params.sampler = params->args[0];
 
@@ -4802,16 +4948,12 @@ static bool add_sample_grad_method_call(struct hlsl_ctx *ctx, struct hlsl_block 
 {
     const struct hlsl_type *object_type = object->data_type;
     struct hlsl_resource_load_params load_params = { 0 };
-    const unsigned int sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
-    const unsigned int offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
+    unsigned int sampler_dim, offset_dim;
     const struct hlsl_type *sampler_type;
     struct hlsl_ir_node *load;
 
-    if (object_type->sampler_dim == HLSL_SAMPLER_DIM_2DMS
-            || object_type->sampler_dim == HLSL_SAMPLER_DIM_2DMSARRAY)
-    {
-        return raise_invalid_method_object_type(ctx, object_type, name, loc);
-    }
+    sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
+    offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
 
     load_params.type = HLSL_RESOURCE_SAMPLE_GRAD;
 
@@ -4858,7 +5000,7 @@ static bool add_sample_grad_method_call(struct hlsl_ctx *ctx, struct hlsl_block 
     if (params->args_count > 4 + !!offset_dim)
         hlsl_fixme(ctx, loc, "Tiled resource status argument.");
 
-    load_params.format = object_type->e.resource_format;
+    load_params.format = object_type->e.resource.format;
     load_params.resource = object;
     load_params.sampler = params->args[0];
 
@@ -4873,25 +5015,27 @@ static const struct method_function
     const char *name;
     bool (*handler)(struct hlsl_ctx *ctx, struct hlsl_block *block, struct hlsl_ir_node *object,
             const char *name, const struct parse_initializer *params, const struct vkd3d_shader_location *loc);
+    bool valid_dims[HLSL_SAMPLER_DIM_MAX + 1];
 }
 object_methods[] =
 {
-    { "Gather",             add_gather_method_call },
-    { "GatherAlpha",        add_gather_method_call },
-    { "GatherBlue",         add_gather_method_call },
-    { "GatherGreen",        add_gather_method_call },
-    { "GatherRed",          add_gather_method_call },
+                                                        /*  g c   1d  2d  3d  cube  1darr  2darr  2dms  2dmsarr  cubearr  buff  sbuff*/
+    { "Gather",             add_gather_method_call,        {0,0,  0,  1,  0,  1,    0,     1,     0,    0,       1,       0,    0}},
+    { "GatherAlpha",        add_gather_method_call,        {0,0,  0,  1,  0,  1,    0,     1,     0,    0,       1,       0,    0}},
+    { "GatherBlue",         add_gather_method_call,        {0,0,  0,  1,  0,  1,    0,     1,     0,    0,       1,       0,    0}},
+    { "GatherGreen",        add_gather_method_call,        {0,0,  0,  1,  0,  1,    0,     1,     0,    0,       1,       0,    0}},
+    { "GatherRed",          add_gather_method_call,        {0,0,  0,  1,  0,  1,    0,     1,     0,    0,       1,       0,    0}},
 
-    { "GetDimensions",      add_getdimensions_method_call },
+    { "GetDimensions",      add_getdimensions_method_call, {0,0,  1,  1,  1,  1,    1,     1,     1,    1,       1,       1,    1}},
 
-    { "Load",               add_load_method_call },
+    { "Load",               add_load_method_call,          {0,0,  1,  1,  1,  0,    1,     1,     1,    1,       0,       1,    1}},
 
-    { "Sample",             add_sample_method_call },
-    { "SampleBias",         add_sample_lod_method_call },
-    { "SampleCmp",          add_sample_cmp_method_call },
-    { "SampleCmpLevelZero", add_sample_cmp_method_call },
-    { "SampleGrad",         add_sample_grad_method_call },
-    { "SampleLevel",        add_sample_lod_method_call },
+    { "Sample",             add_sample_method_call,        {0,0,  1,  1,  1,  1,    1,     1,     0,    0,       1,       0,    0}},
+    { "SampleBias",         add_sample_lod_method_call,    {0,0,  1,  1,  1,  1,    1,     1,     0,    0,       1,       0,    0}},
+    { "SampleCmp",          add_sample_cmp_method_call,    {0,0,  1,  1,  1,  1,    1,     1,     0,    0,       1,       0,    0}},
+    { "SampleCmpLevelZero", add_sample_cmp_method_call,    {0,0,  1,  1,  1,  1,    1,     1,     0,    0,       1,       0,    0}},
+    { "SampleGrad",         add_sample_grad_method_call,   {0,0,  1,  1,  1,  1,    1,     1,     0,    0,       1,       0,    0}},
+    { "SampleLevel",        add_sample_lod_method_call,    {0,0,  1,  1,  1,  1,    1,     1,     0,    0,       1,       0,    0}},
 };
 
 static int object_method_function_name_compare(const void *a, const void *b)
@@ -4919,8 +5063,10 @@ static bool add_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block, stru
         return false;
     }
 
-    if ((method = bsearch(name, object_methods, ARRAY_SIZE(object_methods),
-            sizeof(*method), object_method_function_name_compare)))
+    method = bsearch(name, object_methods, ARRAY_SIZE(object_methods), sizeof(*method),
+            object_method_function_name_compare);
+
+    if (method && method->valid_dims[object_type->sampler_dim])
     {
         return method->handler(ctx, block, object, name, params, loc);
     }
@@ -5005,6 +5151,48 @@ static void check_duplicated_switch_cases(struct hlsl_ctx *ctx, const struct hls
     }
 }
 
+static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
+        struct hlsl_type *format, const struct vkd3d_shader_location* loc)
+{
+    struct vkd3d_string_buffer *string = hlsl_type_to_string(ctx, format);
+
+    if (!type_contains_only_numerics(format))
+    {
+        if (string)
+            hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                    "UAV type %s is not numeric.", string->buffer);
+    }
+
+    switch (dim)
+    {
+        case HLSL_SAMPLER_DIM_BUFFER:
+        case HLSL_SAMPLER_DIM_1D:
+        case HLSL_SAMPLER_DIM_1DARRAY:
+        case HLSL_SAMPLER_DIM_2D:
+        case HLSL_SAMPLER_DIM_2DARRAY:
+        case HLSL_SAMPLER_DIM_3D:
+            if (format->class == HLSL_CLASS_ARRAY)
+            {
+                if (string)
+                    hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                            "This type of UAV does not support array type.");
+            }
+            else if (hlsl_type_component_count(format) > 4)
+            {
+                if (string)
+                    hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                            "UAV data type %s size exceeds maximum size.", string->buffer);
+            }
+            break;
+        case HLSL_SAMPLER_DIM_STRUCTURED_BUFFER:
+            break;
+        default:
+            vkd3d_unreachable();
+    }
+
+    hlsl_release_string_buffer(ctx, string);
+}
+
 }
 
 %locations
@@ -5084,6 +5272,13 @@ static void check_duplicated_switch_cases(struct hlsl_ctx *ctx, const struct hls
 %token KW_PASS
 %token KW_PIXELSHADER
 %token KW_PRECISE
+%token KW_RASTERIZERORDEREDBUFFER
+%token KW_RASTERIZERORDEREDSTRUCTUREDBUFFER
+%token KW_RASTERIZERORDEREDTEXTURE1D
+%token KW_RASTERIZERORDEREDTEXTURE1DARRAY
+%token KW_RASTERIZERORDEREDTEXTURE2D
+%token KW_RASTERIZERORDEREDTEXTURE2DARRAY
+%token KW_RASTERIZERORDEREDTEXTURE3D
 %token KW_RASTERIZERSTATE
 %token KW_RENDERTARGETVIEW
 %token KW_RETURN
@@ -5244,7 +5439,7 @@ static void check_duplicated_switch_cases(struct hlsl_ctx *ctx, const struct hls
 %type <reg_reservation> register_opt
 %type <reg_reservation> packoffset_opt
 
-%type <sampler_dim> texture_type texture_ms_type uav_type
+%type <sampler_dim> texture_type texture_ms_type uav_type rov_type
 
 %type <semantic> semantic
 
@@ -5988,7 +6183,11 @@ parameter:
         }
 
 texture_type:
-      KW_TEXTURE1D
+      KW_BUFFER
+        {
+            $$ = HLSL_SAMPLER_DIM_BUFFER;
+        }
+    | KW_TEXTURE1D
         {
             $$ = HLSL_SAMPLER_DIM_1D;
         }
@@ -6053,6 +6252,36 @@ uav_type:
             $$ = HLSL_SAMPLER_DIM_2DARRAY;
         }
     | KW_RWTEXTURE3D
+        {
+            $$ = HLSL_SAMPLER_DIM_3D;
+        }
+
+rov_type:
+      KW_RASTERIZERORDEREDBUFFER
+        {
+            $$ = HLSL_SAMPLER_DIM_BUFFER;
+        }
+    | KW_RASTERIZERORDEREDSTRUCTUREDBUFFER
+        {
+            $$ = HLSL_SAMPLER_DIM_STRUCTURED_BUFFER;
+        }
+    | KW_RASTERIZERORDEREDTEXTURE1D
+        {
+            $$ = HLSL_SAMPLER_DIM_1D;
+        }
+    | KW_RASTERIZERORDEREDTEXTURE1DARRAY
+        {
+            $$ = HLSL_SAMPLER_DIM_1DARRAY;
+        }
+    | KW_RASTERIZERORDEREDTEXTURE2D
+        {
+            $$ = HLSL_SAMPLER_DIM_2D;
+        }
+    | KW_RASTERIZERORDEREDTEXTURE2DARRAY
+        {
+            $$ = HLSL_SAMPLER_DIM_2DARRAY;
+        }
+    | KW_RASTERIZERORDEREDTEXTURE3D
         {
             $$ = HLSL_SAMPLER_DIM_3D;
         }
@@ -6185,45 +6414,13 @@ type_no_void:
         }
     | uav_type '<' type '>'
         {
-            struct vkd3d_string_buffer *string = hlsl_type_to_string(ctx, $3);
-
-            if (!type_contains_only_numerics($3))
-            {
-                if (string)
-                    hlsl_error(ctx, &@3, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                            "UAV type %s is not numeric.", string->buffer);
-            }
-
-            switch ($1)
-            {
-                case HLSL_SAMPLER_DIM_BUFFER:
-                case HLSL_SAMPLER_DIM_1D:
-                case HLSL_SAMPLER_DIM_1DARRAY:
-                case HLSL_SAMPLER_DIM_2D:
-                case HLSL_SAMPLER_DIM_2DARRAY:
-                case HLSL_SAMPLER_DIM_3D:
-                    if ($3->class == HLSL_CLASS_ARRAY)
-                    {
-                        if (string)
-                            hlsl_error(ctx, &@3, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                                    "This type of UAV does not support array type.");
-                    }
-                    else if (hlsl_type_component_count($3) > 4)
-                    {
-                        if (string)
-                            hlsl_error(ctx, &@3, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                                    "UAV data type %s size exceeds maximum size.", string->buffer);
-                    }
-                    break;
-                case HLSL_SAMPLER_DIM_STRUCTURED_BUFFER:
-                    break;
-                default:
-                    vkd3d_unreachable();
-            }
-
-            hlsl_release_string_buffer(ctx, string);
-
-            $$ = hlsl_new_uav_type(ctx, $1, $3);
+            validate_uav_type(ctx, $1, $3, &@3);
+            $$ = hlsl_new_uav_type(ctx, $1, $3, false);
+        }
+    | rov_type '<' type '>'
+        {
+            validate_uav_type(ctx, $1, $3, &@3);
+            $$ = hlsl_new_uav_type(ctx, $1, $3, true);
         }
     | TYPE_IDENTIFIER
         {
@@ -6248,6 +6445,14 @@ type_no_void:
             if ($$->class != HLSL_CLASS_STRUCT)
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_REDEFINED, "\"%s\" redefined as a structure.", $2);
             vkd3d_free($2);
+        }
+    | KW_RENDERTARGETVIEW
+        {
+            $$ = hlsl_get_type(ctx->cur_scope, "RenderTargetView", true, true);
+        }
+    | KW_DEPTHSTENCILVIEW
+        {
+            $$ = hlsl_get_type(ctx->cur_scope, "DepthStencilView", true, true);
         }
 
 type:
