@@ -704,7 +704,7 @@
 @ cdecl _locking(long long long)
 @ cdecl _logb(double) logb
 @ cdecl -arch=!i386 _logbf(float) logbf
-@ cdecl -arch=i386 _longjmpex(ptr long) MSVCRT_longjmp
+@ cdecl -arch=i386 _longjmpex(ptr long) longjmp
 @ cdecl _lrotl(long long) MSVCRT__lrotl
 @ cdecl _lrotr(long long) MSVCRT__lrotr
 @ cdecl _lsearch(ptr ptr ptr long ptr)
@@ -940,8 +940,8 @@
 @ cdecl _set_purecall_handler(ptr)
 @ cdecl _set_sbh_threshold(long)
 @ cdecl _seterrormode(long)
-@ cdecl -norelay _setjmp(ptr) MSVCRT__setjmp
-@ cdecl -arch=i386 -norelay _setjmp3(ptr long) MSVCRT__setjmp3
+@ cdecl -norelay _setjmp(ptr)
+@ cdecl -arch=i386 -norelay _setjmp3(ptr long)
 @ cdecl _setmaxstdio(long)
 @ cdecl _setmbcp(long)
 @ cdecl _setmode(long long)
@@ -1392,7 +1392,7 @@
 @ cdecl log10(double)
 @ cdecl -arch=!i386 log10f(float)
 @ cdecl -arch=!i386 logf(float)
-@ cdecl longjmp(ptr long) MSVCRT_longjmp
+@ cdecl longjmp(ptr long)
 @ cdecl malloc(long)
 @ cdecl mblen(ptr long)
 @ cdecl mbrlen(ptr long ptr)
@@ -1433,7 +1433,7 @@
 @ varargs scanf(str)
 @ varargs scanf_s(str)
 @ cdecl setbuf(ptr ptr)
-@ cdecl -arch=arm,x86_64 -norelay -private setjmp(ptr) MSVCRT__setjmp
+@ cdecl -arch=arm,x86_64 -norelay -private setjmp(ptr ptr) _setjmp
 @ cdecl setlocale(long str)
 @ cdecl setvbuf(ptr str long long)
 @ cdecl signal(long long)

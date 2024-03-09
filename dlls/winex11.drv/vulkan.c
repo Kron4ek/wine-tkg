@@ -97,8 +97,7 @@ static VkResult (*pvkWaitForFences)(VkDevice device, uint32_t fenceCount, const 
 static VkResult (*pvkCreateFence)(VkDevice device, const VkFenceCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkFence *pFence);
 static void (*pvkDestroyFence)(VkDevice device, VkFence fence, const VkAllocationCallbacks *pAllocator);
 
-static void *X11DRV_get_vk_device_proc_addr(const char *name);
-static void *X11DRV_get_vk_instance_proc_addr(VkInstance instance, const char *name);
+static const struct vulkan_funcs vulkan_funcs;
 
 static inline struct wine_vk_surface *surface_from_handle(VkSurfaceKHR handle)
 {
@@ -574,14 +573,9 @@ static void X11DRV_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface
     if (allocator)
         FIXME("Support for allocation callbacks not implemented yet\n");
 
-    /* vkDestroySurfaceKHR must handle VK_NULL_HANDLE (0) for surface. */
-    if (x11_surface)
-    {
-        pvkDestroySurfaceKHR( instance, x11_surface->host_surface, NULL /* allocator */ );
-
-        wine_vk_surface_release(x11_surface);
-        update_client_window(hwnd);
-    }
+    pvkDestroySurfaceKHR( instance, x11_surface->host_surface, NULL /* allocator */ );
+    wine_vk_surface_release(x11_surface);
+    update_client_window(hwnd);
 }
 
 static void X11DRV_vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
@@ -647,25 +641,13 @@ static VkResult X11DRV_vkEnumerateInstanceExtensionProperties(const char *layer_
     return res;
 }
 
-static const char *wine_vk_host_fn_name( const char *name )
-{
-    if (!strcmp(name, "vkCreateWin32SurfaceKHR"))
-        return "vkCreateXlibSurfaceKHR";
-    if (!strcmp(name, "vkGetPhysicalDeviceWin32PresentationSupportKHR"))
-        return "vkGetPhysicalDeviceXlibPresentationSupportKHR";
-
-    return name;
-}
-
 static void *X11DRV_vkGetDeviceProcAddr(VkDevice device, const char *name)
 {
     void *proc_addr;
 
     TRACE("%p, %s\n", device, debugstr_a(name));
 
-    if (!pvkGetDeviceProcAddr( device, wine_vk_host_fn_name( name ) )) return NULL;
-
-    if ((proc_addr = X11DRV_get_vk_device_proc_addr(name)))
+    if ((proc_addr = get_vulkan_driver_device_proc_addr( &vulkan_funcs, name )))
         return proc_addr;
 
     return pvkGetDeviceProcAddr(device, name);
@@ -677,9 +659,7 @@ static void *X11DRV_vkGetInstanceProcAddr(VkInstance instance, const char *name)
 
     TRACE("%p, %s\n", instance, debugstr_a(name));
 
-    if (!pvkGetInstanceProcAddr( instance, wine_vk_host_fn_name( name ) )) return NULL;
-
-    if ((proc_addr = X11DRV_get_vk_instance_proc_addr(instance, name)))
+    if ((proc_addr = get_vulkan_driver_instance_proc_addr( &vulkan_funcs, instance, name )))
         return proc_addr;
 
     return pvkGetInstanceProcAddr(instance, name);
@@ -761,16 +741,6 @@ static const struct vulkan_funcs vulkan_funcs =
 
     X11DRV_wine_get_host_surface,
 };
-
-static void *X11DRV_get_vk_device_proc_addr(const char *name)
-{
-    return get_vulkan_driver_device_proc_addr(&vulkan_funcs, name);
-}
-
-static void *X11DRV_get_vk_instance_proc_addr(VkInstance instance, const char *name)
-{
-    return get_vulkan_driver_instance_proc_addr(&vulkan_funcs, instance, name);
-}
 
 const struct vulkan_funcs *get_vulkan_driver(UINT version)
 {

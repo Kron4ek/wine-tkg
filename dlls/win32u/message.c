@@ -2319,6 +2319,16 @@ static void handle_keyboard_repeat_message( HWND hwnd )
     NtUserPostMessage( hwnd, msg->message, msg->wParam, msg->lParam );
 }
 
+/***********************************************************************
+ *          process_pointer_message
+ *
+ * returns TRUE if the contents of 'msg' should be passed to the application
+ */
+static BOOL process_pointer_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data )
+{
+    msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
+    return TRUE;
+}
 
 /***********************************************************************
  *          process_keyboard_message
@@ -2669,6 +2679,8 @@ static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardwar
         ret = process_keyboard_message( msg, hw_id, hwnd_filter, first, last, remove );
     else if (is_mouse_message( msg->message ))
         ret = process_mouse_message( msg, hw_id, msg_data->info, hwnd_filter, first, last, remove );
+    else if (msg->message >= WM_POINTERUPDATE && msg->message <= WM_POINTERLEAVE)
+        ret = process_pointer_message( msg, hw_id, msg_data );
     else if (msg->message == WM_WINE_CLIPCURSOR)
         process_wine_clipcursor( msg->hwnd, msg->wParam, msg->lParam );
     else if (msg->message == WM_WINE_SETCURSOR)
@@ -3482,11 +3494,10 @@ LRESULT send_internal_message_timeout( DWORD dest_pid, DWORD dest_tid,
 /***********************************************************************
  *		send_hardware_message
  */
-NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput, UINT flags )
+NTSTATUS send_hardware_message( HWND hwnd, UINT flags, const INPUT *input, LPARAM lparam )
 {
     struct send_message_info info;
     int prev_x, prev_y, new_x, new_y;
-    USAGE hid_usage_page, hid_usage;
     NTSTATUS ret;
     BOOL wait, affects_key_state = FALSE;
 
@@ -3499,21 +3510,6 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *r
 
     if (input->type == INPUT_MOUSE && (input->mi.dwFlags & (MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_RIGHTDOWN)))
         clip_fullscreen_window( hwnd, FALSE );
-
-    if (input->type == INPUT_HARDWARE && rawinput->header.dwType == RIM_TYPEHID)
-    {
-        if (input->hi.uMsg == WM_INPUT_DEVICE_CHANGE)
-        {
-            hid_usage_page = ((USAGE *)rawinput->data.hid.bRawData)[0];
-            hid_usage = ((USAGE *)rawinput->data.hid.bRawData)[1];
-        }
-        if (input->hi.uMsg == WM_INPUT &&
-            !rawinput_device_get_usages( rawinput->header.hDevice, &hid_usage_page, &hid_usage ))
-        {
-            WARN( "unable to get HID usages for device %p\n", rawinput->header.hDevice );
-            return STATUS_INVALID_HANDLE;
-        }
-    }
 
     SERVER_START_REQ( send_hardware_message )
     {
@@ -3544,26 +3540,20 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *r
             break;
         case INPUT_HARDWARE:
             req->input.hw.msg    = input->hi.uMsg;
-            req->input.hw.lparam = MAKELONG( input->hi.wParamL, input->hi.wParamH );
+            req->input.hw.wparam = MAKELONG( input->hi.wParamL, input->hi.wParamH );
             switch (input->hi.uMsg)
             {
             case WM_INPUT:
             case WM_INPUT_DEVICE_CHANGE:
-                switch (rawinput->header.dwType)
-                {
-                case RIM_TYPEHID:
-                    req->input.hw.wparam = rawinput->header.wParam;
-                    req->input.hw.hid.device = HandleToUlong( rawinput->header.hDevice );
-                    req->input.hw.hid.usage = MAKELONG(hid_usage, hid_usage_page);
-                    req->input.hw.hid.count = rawinput->data.hid.dwCount;
-                    req->input.hw.hid.length = rawinput->data.hid.dwSizeHid;
-                    wine_server_add_data( req, rawinput->data.hid.bRawData,
-                                          rawinput->data.hid.dwCount * rawinput->data.hid.dwSizeHid );
-                    break;
-                default:
-                    assert( 0 );
-                    break;
-                }
+            {
+                struct hid_packet *hid = (struct hid_packet *)lparam;
+                req->input.hw.hid = hid->head;
+                wine_server_add_data( req, hid->data, hid->head.count * hid->head.length );
+                break;
+            }
+            default:
+                req->input.hw.lparam = lparam;
+                break;
             }
             break;
         }

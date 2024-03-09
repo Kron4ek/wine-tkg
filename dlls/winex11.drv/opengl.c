@@ -205,7 +205,6 @@ struct wgl_context
     GLXContext ctx;
     struct gl_drawable *drawables[2];
     struct gl_drawable *new_drawables[2];
-    BOOL refresh_drawables;
     struct list entry;
 };
 
@@ -1873,7 +1872,6 @@ static BOOL glxdrv_wglMakeCurrent(HDC hdc, struct wgl_context *ctx)
             ctx->has_been_current = TRUE;
             ctx->hdc = hdc;
             set_context_drawables( ctx, gl, gl );
-            ctx->refresh_drawables = FALSE;
             pthread_mutex_unlock( &context_mutex );
             goto done;
         }
@@ -1918,7 +1916,6 @@ static BOOL X11DRV_wglMakeContextCurrentARB( HDC draw_hdc, HDC read_hdc, struct 
             ctx->has_been_current = TRUE;
             ctx->hdc = draw_hdc;
             set_context_drawables( ctx, draw_gl, read_gl );
-            ctx->refresh_drawables = FALSE;
             NtCurrentTeb()->glContext = ctx;
             pthread_mutex_unlock( &context_mutex );
             goto done;

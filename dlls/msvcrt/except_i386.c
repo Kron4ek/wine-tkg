@@ -27,9 +27,11 @@
 
 #ifdef __i386__
 
-#include <setjmp.h>
 #include <stdarg.h>
 #include <fpieee.h>
+#define longjmp ms_longjmp  /* avoid prototype mismatch */
+#include <setjmp.h>
+#undef longjmp
 
 #include "windef.h"
 #include "winbase.h"
@@ -332,7 +334,7 @@ static DWORD catch_function_nested_handler( EXCEPTION_RECORD *rec, EXCEPTION_REG
 {
     catch_func_nested_frame *nested_frame = (catch_func_nested_frame *)frame;
 
-    if (rec->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND))
+    if (rec->ExceptionFlags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND))
     {
         __CxxUnregisterExceptionObject(&nested_frame->frame_info, FALSE);
         return ExceptionContinueSearch;
@@ -351,7 +353,7 @@ static DWORD catch_function_nested_handler( EXCEPTION_RECORD *rec, EXCEPTION_REG
         {
             /* exception was rethrown */
             *rec = *prev_rec;
-            rec->ExceptionFlags &= ~EH_UNWINDING;
+            rec->ExceptionFlags &= ~EXCEPTION_UNWINDING;
             if(TRACE_ON(seh)) {
                 TRACE("detect rethrow: exception code: %lx\n", rec->ExceptionCode);
                 if(rec->ExceptionCode == CXX_EXCEPTION)
@@ -569,7 +571,7 @@ DWORD CDECL cxx_frame_handler( PEXCEPTION_RECORD rec, cxx_exception_frame* frame
         (rec->ExceptionCode != CXX_EXCEPTION))
         return ExceptionContinueSearch;  /* handle only c++ exceptions */
 
-    if (rec->ExceptionFlags & (EH_UNWINDING|EH_EXIT_UNWIND))
+    if (rec->ExceptionFlags & (EXCEPTION_UNWINDING|EXCEPTION_EXIT_UNWIND))
     {
         if (descr->unwind_count && !nested_frame) cxx_local_unwind( frame, descr, -1 );
         return ExceptionContinueSearch;
@@ -584,7 +586,7 @@ DWORD CDECL cxx_frame_handler( PEXCEPTION_RECORD rec, cxx_exception_frame* frame
             rec->ExceptionInformation[1] == 0 && rec->ExceptionInformation[2] == 0)
     {
         *rec = *msvcrt_get_thread_data()->exc_record;
-        rec->ExceptionFlags &= ~EH_UNWINDING;
+        rec->ExceptionFlags &= ~EXCEPTION_UNWINDING;
         if(TRACE_ON(seh)) {
             TRACE("detect rethrow: exception code: %lx\n", rec->ExceptionCode);
             if(rec->ExceptionCode == CXX_EXCEPTION)
@@ -759,7 +761,7 @@ static DWORD MSVCRT_nested_handler(PEXCEPTION_RECORD rec,
                                    PCONTEXT context,
                                    EXCEPTION_REGISTRATION_RECORD** dispatch)
 {
-  if (!(rec->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)))
+  if (!(rec->ExceptionFlags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND)))
     return ExceptionContinueSearch;
   *dispatch = frame;
   return ExceptionCollidedUnwind;
@@ -874,7 +876,7 @@ int CDECL _except_handler3(PEXCEPTION_RECORD rec,
 
   __asm__ __volatile__ ("cld");
 
-  if (rec->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND))
+  if (rec->ExceptionFlags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND))
   {
     /* Unwinding the current frame */
     msvcrt_local_unwind2(frame, TRYLEVEL_END, &frame->_ebp);
@@ -945,7 +947,7 @@ int CDECL _except_handler4_common( ULONG *cookie, void (*check_cookie)(void),
 
     /* FIXME: no cookie validation yet */
 
-    if (rec->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND))
+    if (rec->ExceptionFlags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND))
     {
         /* Unwinding the current frame */
         msvcrt_local_unwind4( cookie, frame, -2, &frame->_ebp );
@@ -1024,8 +1026,9 @@ typedef void (__stdcall *MSVCRT_unwind_function)(const _JUMP_BUFFER *);
 /*******************************************************************
  *		_setjmp (MSVCRT.@)
  */
-DEFINE_SETJMP_ENTRYPOINT(MSVCRT__setjmp)
-int CDECL __regs_MSVCRT__setjmp(_JUMP_BUFFER *jmp)
+#undef _setjmp
+DEFINE_SETJMP_ENTRYPOINT( _setjmp )
+int CDECL __regs__setjmp(_JUMP_BUFFER *jmp)
 {
     jmp->Registration = (unsigned long)NtCurrentTeb()->Tib.ExceptionList;
     if (jmp->Registration == ~0UL)
@@ -1041,8 +1044,8 @@ int CDECL __regs_MSVCRT__setjmp(_JUMP_BUFFER *jmp)
 /*******************************************************************
  *		_setjmp3 (MSVCRT.@)
  */
-DEFINE_SETJMP_ENTRYPOINT( MSVCRT__setjmp3 )
-int WINAPIV __regs_MSVCRT__setjmp3(_JUMP_BUFFER *jmp, int nb_args, ...)
+DEFINE_SETJMP_ENTRYPOINT( _setjmp3 )
+int WINAPIV __regs__setjmp3(_JUMP_BUFFER *jmp, int nb_args, ...)
 {
     jmp->Cookie = MSVCRT_JMP_MAGIC;
     jmp->UnwindFunc = 0;
@@ -1073,7 +1076,7 @@ int WINAPIV __regs_MSVCRT__setjmp3(_JUMP_BUFFER *jmp, int nb_args, ...)
 /*********************************************************************
  *		longjmp (MSVCRT.@)
  */
-void CDECL MSVCRT_longjmp(_JUMP_BUFFER *jmp, int retval)
+void __cdecl longjmp(_JUMP_BUFFER *jmp, int retval)
 {
     unsigned long cur_frame = 0;
 

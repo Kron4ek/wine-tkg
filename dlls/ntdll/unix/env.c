@@ -1924,7 +1924,6 @@ static void init_peb( RTL_USER_PROCESS_PARAMETERS *params, void *module )
  */
 static RTL_USER_PROCESS_PARAMETERS *build_initial_params( void **module )
 {
-    static const char *args[] = { "start.exe", "/exec" };
     static const WCHAR valueW[] = {'1',0};
     static const WCHAR pathW[] = {'P','A','T','H'};
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
@@ -1953,8 +1952,29 @@ static RTL_USER_PROCESS_PARAMETERS *build_initial_params( void **module )
     add_registry_environment( &env, &env_pos, &env_size );
     env[env_pos++] = 0;
 
-    load_start_exe( &image, module );
-    prepend_argv( args, 2 );
+    status = load_main_exe( NULL, main_argv[1], curdir, 0, &image, module );
+    if (!status)
+    {
+        char *loader;
+
+        if (main_image_info.ImageCharacteristics & IMAGE_FILE_DLL) status = STATUS_INVALID_IMAGE_FORMAT;
+        /* if we have to use a different loader, fall back to start.exe */
+        if ((loader = get_alternate_wineloader( main_image_info.Machine )))
+        {
+            free( loader );
+            status = STATUS_INVALID_IMAGE_FORMAT;
+        }
+    }
+
+    if (status)  /* try launching it through start.exe */
+    {
+        static const char *args[] = { "start.exe", "/exec" };
+        free( image );
+        if (*module) NtUnmapViewOfSection( GetCurrentProcess(), *module );
+        load_start_exe( &image, module );
+        prepend_argv( args, 2 );
+    }
+    else rebuild_argv();
 
     main_wargv = build_wargv( get_dos_path( image ));
     cmdline = build_command_line( main_wargv );

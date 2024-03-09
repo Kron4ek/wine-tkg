@@ -607,7 +607,6 @@ struct xcontext
 {
     CONTEXT c;
     CONTEXT_EX c_ex;
-    ULONG64 host_compaction_mask;
 };
 
 static inline XSAVE_AREA_HEADER *xstate_from_context( const CONTEXT *context )
@@ -831,11 +830,7 @@ static inline void save_context( struct xcontext *xcontext, const ucontext_t *si
         context->ContextFlags |= CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS;
         memcpy( context->ExtendedRegisters, fpux, sizeof(*fpux) );
         if (!fpu) fpux_to_fpu( &context->FloatSave, fpux );
-        if (xstate_extended_features() && (xs = XState_sig(fpux)))
-        {
-            context_init_xstate( context, xs );
-            xcontext->host_compaction_mask = xs->CompactionMask;
-        }
+        if (xstate_extended_features() && (xs = XState_sig(fpux))) context_init_xstate( context, xs );
     }
     if (!fpu && !fpux) save_fpu( context );
 }
@@ -876,15 +871,7 @@ static inline void restore_context( const struct xcontext *xcontext, ucontext_t 
     SS_sig(sigcontext)  = context->SegSs;
 
     if (fpu) *fpu = context->FloatSave;
-    if (fpux)
-    {
-        XSAVE_AREA_HEADER *xs;
-
-        memcpy( fpux, context->ExtendedRegisters, sizeof(*fpux) );
-
-        if (xstate_extended_features() && (xs = XState_sig(fpux)))
-            xs->CompactionMask = xcontext->host_compaction_mask;
-    }
+    if (fpux) memcpy( fpux, context->ExtendedRegisters, sizeof(*fpux) );
     if (!fpu && !fpux) restore_fpu( context );
 }
 
@@ -1766,7 +1753,7 @@ static BOOL handle_interrupt( unsigned int interrupt, ucontext_t *sigcontext, vo
     case 0x29:
         /* __fastfail: process state is corrupted */
         rec->ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
-        rec->ExceptionFlags = EH_NONCONTINUABLE;
+        rec->ExceptionFlags = EXCEPTION_NONCONTINUABLE;
         rec->NumberParameters = 1;
         rec->ExceptionInformation[0] = context->Ecx;
         NtRaiseException( rec, context, FALSE );
@@ -2118,7 +2105,7 @@ static void int_handler( int signal, siginfo_t *siginfo, void *sigcontext )
  */
 static void abrt_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
-    EXCEPTION_RECORD rec = { EXCEPTION_WINE_ASSERTION, EH_NONCONTINUABLE };
+    EXCEPTION_RECORD rec = { EXCEPTION_WINE_ASSERTION, EXCEPTION_NONCONTINUABLE };
 
     setup_exception( sigcontext, &rec );
 }
@@ -2144,24 +2131,46 @@ static void quit_handler( int signal, siginfo_t *siginfo, void *sigcontext )
  */
 static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
-    struct xcontext xcontext;
+    ucontext_t *ucontext = sigcontext;
 
     init_handler( sigcontext );
-    if (is_inside_syscall( sigcontext ))
-    {
-        DECLSPEC_ALIGN(64) XSTATE xs;
-        xcontext.c.ContextFlags = CONTEXT_FULL;
-        context_init_xstate( &xcontext.c, &xs );
 
-        NtGetContextThread( GetCurrentThread(), &xcontext.c );
-        wait_suspend( &xcontext.c );
-        NtSetContextThread( GetCurrentThread(), &xcontext.c );
+    if (is_inside_syscall( ucontext ))
+    {
+        struct syscall_frame *frame = x86_thread_data()->syscall_frame;
+        ULONG64 saved_compaction = 0;
+        struct xcontext *context;
+
+        context = (struct xcontext *)(((ULONG_PTR)ESP_sig(ucontext) - sizeof(*context)) & ~15);
+        if ((char *)context < (char *)ntdll_get_thread_data()->kernel_stack)
+        {
+            ERR_(seh)( "kernel stack overflow.\n" );
+            return;
+        }
+        context->c.ContextFlags = CONTEXT_FULL;
+        NtGetContextThread( GetCurrentThread(), &context->c );
+        if (xstate_extended_features())
+        {
+            context_init_xstate( &context->c, &frame->xstate );
+            saved_compaction = frame->xstate.CompactionMask;
+        }
+        wait_suspend( &context->c );
+        if (xstate_extended_features()) frame->xstate.CompactionMask = saved_compaction;
+        if (context->c.ContextFlags & 0x40)
+        {
+            /* xstate is updated directly in frame's xstate */
+            context->c.ContextFlags &= ~0x40;
+            frame->restore_flags |= 0x40;
+        }
+        NtSetContextThread( GetCurrentThread(), &context->c );
     }
     else
     {
-        save_context( &xcontext, sigcontext );
-        wait_suspend( &xcontext.c );
-        restore_context( &xcontext, sigcontext );
+        struct xcontext context;
+
+        save_context( &context, ucontext );
+        wait_suspend( &context.c );
+        restore_context( &context, ucontext );
     }
 }
 

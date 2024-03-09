@@ -189,16 +189,6 @@ static VkResult wine_vk_instance_convert_create_info(const VkInstanceCreateInfo 
     return VK_SUCCESS;
 }
 
-static const char *wine_vk_host_fn_name(const char *name)
-{
-    if (!strcmp(name, "vkCreateWin32SurfaceKHR"))
-        return "vkCreateWaylandSurfaceKHR";
-    if (!strcmp(name, "vkGetPhysicalDeviceWin32PresentationSupportKHR"))
-        return "vkGetPhysicalDeviceWaylandPresentationSupportKHR";
-
-    return name;
-}
-
 static void vk_result_update_out_of_date(VkResult *res)
 {
     /* If the current result is less severe than out_of_date, which for
@@ -427,9 +417,6 @@ static void wayland_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surfac
     if (allocator)
         FIXME("Support for allocation callbacks not implemented yet\n");
 
-    /* vkDestroySurfaceKHR must handle VK_NULL_HANDLE (0) for surface. */
-    if (!wine_vk_surface) return;
-
     pvkDestroySurfaceKHR(instance, wine_vk_surface->host_surface, NULL /* allocator */);
     wine_vk_surface_destroy(wine_vk_surface);
 }
@@ -504,11 +491,6 @@ static void *wayland_vkGetDeviceProcAddr(VkDevice device, const char *name)
 
     TRACE("%p, %s\n", device, debugstr_a(name));
 
-    /* Do not return the driver function if the corresponding host function
-     * is not available. */
-    if (!pvkGetDeviceProcAddr(device, wine_vk_host_fn_name(name)))
-        return NULL;
-
     if ((proc_addr = get_vulkan_driver_device_proc_addr(&vulkan_funcs, name)))
         return proc_addr;
 
@@ -520,11 +502,6 @@ static void *wayland_vkGetInstanceProcAddr(VkInstance instance, const char *name
     void *proc_addr;
 
     TRACE("%p, %s\n", instance, debugstr_a(name));
-
-    /* Do not return the driver function if the corresponding host function
-     * is not available. */
-    if (!pvkGetInstanceProcAddr(instance, wine_vk_host_fn_name(name)))
-        return NULL;
 
     if ((proc_addr = get_vulkan_driver_instance_proc_addr(&vulkan_funcs, instance, name)))
         return proc_addr;

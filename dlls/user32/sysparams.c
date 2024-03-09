@@ -636,18 +636,26 @@ BOOL WINAPI SetProcessDpiAwarenessInternal( DPI_AWARENESS awareness )
     return SetProcessDpiAwarenessContext( contexts[awareness] );
 }
 
+static ULONG_PTR map_awareness_context( DPI_AWARENESS_CONTEXT ctx )
+{
+    if (ctx == DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 || ctx == (DPI_AWARENESS_CONTEXT)0x22 || ctx == (DPI_AWARENESS_CONTEXT)0x80000022)
+        return 0x22;
+    return GetAwarenessFromDpiAwarenessContext(ctx);
+}
+
 /***********************************************************************
  *              AreDpiAwarenessContextsEqual   (USER32.@)
  */
 BOOL WINAPI AreDpiAwarenessContextsEqual( DPI_AWARENESS_CONTEXT ctx1, DPI_AWARENESS_CONTEXT ctx2 )
 {
-    DPI_AWARENESS aware1 = GetAwarenessFromDpiAwarenessContext( ctx1 );
-    DPI_AWARENESS aware2 = GetAwarenessFromDpiAwarenessContext( ctx2 );
+    DPI_AWARENESS aware1 = map_awareness_context( ctx1 );
+    DPI_AWARENESS aware2 = map_awareness_context( ctx2 );
     return aware1 != DPI_AWARENESS_INVALID && aware1 == aware2;
 }
 
 /***********************************************************************
  *              GetAwarenessFromDpiAwarenessContext   (USER32.@)
+ *              copied into win32u, make sure to keep that in sync
  */
 DPI_AWARENESS WINAPI GetAwarenessFromDpiAwarenessContext( DPI_AWARENESS_CONTEXT context )
 {
@@ -731,6 +739,7 @@ DPI_AWARENESS_CONTEXT WINAPI GetThreadDpiAwarenessContext(void)
 
 /**********************************************************************
  *              SetThreadDpiAwarenessContext   (USER32.@)
+ *              copied into win32u, make sure to keep that in sync
  */
 DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT context )
 {
@@ -747,7 +756,9 @@ DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT
         prev = NtUserGetProcessDpiAwarenessContext( GetCurrentProcess() ) & 3;
         prev |= 0x80000010;  /* restore to process default */
     }
-    if (((ULONG_PTR)context & ~(ULONG_PTR)0x13) == 0x80000000) info->dpi_awareness = 0;
+    if (((ULONG_PTR)context & ~(ULONG_PTR)0x33) == 0x80000000) info->dpi_awareness = 0;
+    else if (context == DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 || context == (DPI_AWARENESS_CONTEXT)0x22)
+        info->dpi_awareness = 0x22;
     else info->dpi_awareness = val | 0x10;
     return ULongToHandle( prev );
 }

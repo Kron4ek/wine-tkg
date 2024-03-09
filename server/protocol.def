@@ -30,6 +30,7 @@
 
 #include <windef.h>
 #include <winbase.h>
+#include <ntuser.h>
 
 typedef unsigned int obj_handle_t;
 typedef unsigned int user_handle_t;
@@ -341,13 +342,7 @@ typedef union
         unsigned int   msg;     /* message code */
         lparam_t       wparam;  /* parameters */
         lparam_t       lparam;  /* parameters */
-        struct
-        {
-            unsigned int device;  /* rawinput device index */
-            unsigned int usage;   /* HID device usage */
-            unsigned int count;   /* HID report count */
-            unsigned int length;  /* HID report length */
-        } hid;
+        struct hid_input hid;   /* defined in ntuser.h */
     } hw;
 } hw_input_t;
 
@@ -1052,9 +1047,11 @@ typedef struct
     int          mask;         /* setting mask (see below) */
     int          priority;     /* priority class */
     affinity_t   affinity;     /* affinity mask */
+    obj_handle_t token;        /* primary token */
 @END
 #define SET_PROCESS_INFO_PRIORITY 0x01
 #define SET_PROCESS_INFO_AFFINITY 0x02
+#define SET_PROCESS_INFO_TOKEN    0x04
 
 
 /* Retrieve information about a thread */
@@ -2152,7 +2149,7 @@ enum message_type
 @REQ(send_hardware_message)
     user_handle_t   win;       /* window handle */
     hw_input_t      input;     /* input data */
-    unsigned int    flags;     /* flags (see below) */
+    unsigned int    flags;     /* flags (see ntuser.h) */
     VARARG(report,bytes);      /* HID report data */
 @REPLY
     int             wait;      /* do we need to wait for a reply? */
@@ -2161,7 +2158,6 @@ enum message_type
     int             new_x;     /* new cursor position */
     int             new_y;
 @END
-#define SEND_HWMSG_INJECTED    0x01
 
 
 /* Get a message from the current queue */
@@ -2793,6 +2789,12 @@ enum coords_relative
     unsigned int access;          /* wanted access rights */
     unsigned int attributes;      /* object attributes */
 @REPLY
+    obj_handle_t handle;          /* handle to the desktop */
+@END
+
+
+/* Changes the current input desktop */
+@REQ(set_input_desktop)
     obj_handle_t handle;          /* handle to the desktop */
 @END
 

@@ -48,6 +48,7 @@ struct winstation
     unsigned int       flags;              /* winstation flags */
     struct list        entry;              /* entry in global winstation list */
     struct list        desktops;           /* list of desktops of this winstation */
+    struct desktop    *input_desktop;      /* desktop receiving user input */
     struct clipboard  *clipboard;          /* clipboard information */
     struct atom_table *atom_table;         /* global atom table */
     struct namespace  *desktop_names;      /* namespace for desktops of this winstation */
@@ -67,11 +68,14 @@ struct desktop
     struct object        obj;              /* object header */
     unsigned int         flags;            /* desktop flags */
     struct winstation   *winstation;       /* winstation this desktop belongs to */
+    timeout_t            input_time;       /* last time this desktop had the input */
     struct list          entry;            /* entry in winstation list of desktops */
+    struct list          threads;          /* list of threads connected to this desktop */
     struct window       *top_window;       /* desktop window for this desktop */
     struct window       *msg_window;       /* HWND_MESSAGE top window */
     struct hook_table   *global_hooks;     /* table of global hooks on this desktop */
     struct list          hotkeys;          /* list of registered hotkeys */
+    struct list          pointers;         /* list of active pointers */
     struct timeout_user *close_timeout;    /* timeout before closing the desktop */
     struct thread_input *foreground_input; /* thread input of foreground thread */
     unsigned int         users;            /* processes and threads using this desktop */
@@ -122,6 +126,8 @@ extern void post_win_event( struct thread *thread, unsigned int event,
                             const WCHAR *module, data_size_t module_size,
                             user_handle_t handle );
 extern void free_hotkeys( struct desktop *desktop, user_handle_t window );
+extern void free_pointers( struct desktop *desktop );
+extern void set_rawinput_process( struct process *process, int enable );
 
 /* region functions */
 
@@ -184,6 +190,9 @@ extern client_ptr_t get_class_client_ptr( struct window_class *class );
 
 /* windows station functions */
 
+extern struct winstation *get_visible_winstation(void);
+extern struct desktop *get_input_desktop( struct winstation *winstation );
+extern int set_input_desktop( struct winstation *winstation, struct desktop *new_desktop );
 extern struct desktop *get_desktop_obj( struct process *process, obj_handle_t handle, unsigned int access );
 extern struct winstation *get_process_winstation( struct process *process, unsigned int access );
 extern struct desktop *get_thread_desktop( struct thread *thread, unsigned int access );

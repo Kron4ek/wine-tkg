@@ -131,8 +131,7 @@ extern void track_mouse_menu_bar( HWND hwnd, INT ht, int x, int y );
 /* message.c */
 extern BOOL kill_system_timer( HWND hwnd, UINT_PTR id );
 extern BOOL reply_message_result( LRESULT result );
-extern NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput,
-                                       UINT flags );
+extern NTSTATUS send_hardware_message( HWND hwnd, UINT flags, const INPUT *input, LPARAM lparam );
 extern LRESULT send_internal_message_timeout( DWORD dest_pid, DWORD dest_tid, UINT msg, WPARAM wparam,
                                               LPARAM lparam, UINT flags, UINT timeout,
                                               PDWORD_PTR res_ptr );
@@ -261,8 +260,11 @@ extern int muldiv( int a, int b, int c );
 
 extern HKEY reg_create_key( HKEY root, const WCHAR *name, ULONG name_len,
                             DWORD options, DWORD *disposition );
+extern HKEY reg_create_ascii_key( HKEY root, const char *name, DWORD options,
+                                  DWORD *disposition );
 extern HKEY reg_open_hkcu_key( const char *name );
 extern HKEY reg_open_key( HKEY root, const WCHAR *name, ULONG name_len );
+extern HKEY reg_open_ascii_key( HKEY root, const char *name );
 extern ULONG query_reg_value( HKEY hkey, const WCHAR *name,
                               KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size );
 extern ULONG query_reg_ascii_value( HKEY hkey, const char *name,

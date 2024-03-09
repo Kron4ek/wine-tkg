@@ -99,6 +99,7 @@ struct wine_instance
     struct wine_phys_dev **phys_devs;
     uint32_t phys_dev_count;
 
+    VkBool32 enable_win32_surface;
     VkBool32 enable_wrapper_list;
     struct list wrappers;
     pthread_rwlock_t wrapper_lock;
@@ -130,6 +131,7 @@ struct wine_phys_dev
     uint32_t extension_count;
 
     uint32_t external_memory_align;
+    uint32_t map_placed_align;
 
     struct wine_vk_mapping mapping;
 };
@@ -175,7 +177,10 @@ static inline struct wine_cmd_pool *wine_cmd_pool_from_handle(VkCommandPool hand
 struct wine_device_memory
 {
     VkDeviceMemory host_memory;
-    void *mapping;
+    VkDeviceSize size;
+    void *vm_map;
+
+    struct wine_vk_mapping mapping;
 };
 
 static inline struct wine_device_memory *wine_device_memory_from_handle(VkDeviceMemory handle)

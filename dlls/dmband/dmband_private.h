@@ -20,21 +20,16 @@
 #ifndef __WINE_DMBAND_PRIVATE_H
 #define __WINE_DMBAND_PRIVATE_H
 
-#include <stdio.h>
 #include <stdarg.h>
-#include <string.h>
 
 #define COBJMACROS
 
 #include "windef.h"
 #include "winbase.h"
 #include "winnt.h"
-#include "wingdi.h"
-#include "winuser.h"
 
 #include "wine/debug.h"
 #include "wine/list.h"
-#include "winreg.h"
 #include "objbase.h"
 
 #include "dmusici.h"
@@ -44,11 +39,6 @@
 /*****************************************************************************
  * ClassFactory
  */
-extern HRESULT create_dmband(REFIID riid, void **ret_iface);
 extern HRESULT create_dmbandtrack(REFIID riid, void **ret_iface);
-
-extern HRESULT band_connect_to_collection(IDirectMusicBand *iface, IDirectMusicCollection *collection);
-extern HRESULT band_send_messages(IDirectMusicBand *iface, IDirectMusicPerformance *performance,
-        IDirectMusicGraph *graph, MUSIC_TIME time, DWORD track_id);
 
 #endif	/* __WINE_DMBAND_PRIVATE_H */

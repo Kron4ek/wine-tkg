@@ -64,6 +64,7 @@
 #define TAG_RDEF VKD3D_MAKE_TAG('R', 'D', 'E', 'F')
 #define TAG_RTS0 VKD3D_MAKE_TAG('R', 'T', 'S', '0')
 #define TAG_SDBG VKD3D_MAKE_TAG('S', 'D', 'B', 'G')
+#define TAG_SFI0 VKD3D_MAKE_TAG('S', 'F', 'I', '0')
 #define TAG_SHDR VKD3D_MAKE_TAG('S', 'H', 'D', 'R')
 #define TAG_SHEX VKD3D_MAKE_TAG('S', 'H', 'E', 'X')
 #define TAG_STAT VKD3D_MAKE_TAG('S', 'T', 'A', 'T')
@@ -108,7 +109,7 @@ static inline unsigned int vkd3d_popcount(unsigned int v)
 {
 #ifdef _MSC_VER
     return __popcnt(v);
-#elif defined(HAVE_BUILTIN_POPCOUNT)
+#elif defined(__MINGW32__)
     return __builtin_popcount(v);
 #else
     v -= (v >> 1) & 0x55555555;

@@ -148,6 +148,7 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_HLSL_INCONSISTENT_SAMPLER        = 5026,
     VKD3D_SHADER_ERROR_HLSL_NON_FINITE_RESULT           = 5027,
     VKD3D_SHADER_ERROR_HLSL_DUPLICATE_SWITCH_CASE       = 5028,
+    VKD3D_SHADER_ERROR_HLSL_MISSING_TECHNIQUE           = 5029,
 
     VKD3D_SHADER_WARNING_HLSL_IMPLICIT_TRUNCATION       = 5300,
     VKD3D_SHADER_WARNING_HLSL_DIVISION_BY_ZERO          = 5301,
@@ -445,6 +446,7 @@ enum vkd3d_shader_opcode
     VKD3DSIH_NOT,
     VKD3DSIH_NRM,
     VKD3DSIH_OR,
+    VKD3DSIH_ORD,
     VKD3DSIH_PHASE,
     VKD3DSIH_PHI,
     VKD3DSIH_POW,
@@ -516,6 +518,7 @@ enum vkd3d_shader_opcode
     VKD3DSIH_UMAX,
     VKD3DSIH_UMIN,
     VKD3DSIH_UMUL,
+    VKD3DSIH_UNO,
     VKD3DSIH_USHR,
     VKD3DSIH_UTOD,
     VKD3DSIH_UTOF,
@@ -1385,15 +1388,15 @@ struct vkd3d_string_buffer_cache
     size_t count, max_count, capacity;
 };
 
-enum vsir_asm_dialect
+enum vsir_asm_flags
 {
-    VSIR_ASM_VSIR,
-    VSIR_ASM_D3D,
+    VSIR_ASM_FLAG_NONE = 0,
+    VSIR_ASM_FLAG_DUMP_TYPES = 0x1,
 };
 
 enum vkd3d_result vkd3d_dxbc_binary_to_text(const struct vsir_program *program,
-        const struct vkd3d_shader_compile_info *compile_info,
-        struct vkd3d_shader_code *out, enum vsir_asm_dialect dialect);
+        const struct vkd3d_shader_desc *shader_desc, const struct vkd3d_shader_compile_info *compile_info,
+        struct vkd3d_shader_code *out, enum vsir_asm_flags flags);
 void vkd3d_string_buffer_cleanup(struct vkd3d_string_buffer *buffer);
 struct vkd3d_string_buffer *vkd3d_string_buffer_get(struct vkd3d_string_buffer_cache *list);
 void vkd3d_string_buffer_init(struct vkd3d_string_buffer *buffer);
@@ -1408,6 +1411,7 @@ void vkd3d_string_buffer_release(struct vkd3d_string_buffer_cache *list, struct 
         vkd3d_string_buffer_trace_(buffer, __FUNCTION__)
 void vkd3d_string_buffer_trace_(const struct vkd3d_string_buffer *buffer, const char *function);
 int vkd3d_string_buffer_vprintf(struct vkd3d_string_buffer *buffer, const char *format, va_list args);
+void vkd3d_shader_code_from_string_buffer(struct vkd3d_shader_code *code, struct vkd3d_string_buffer *buffer);
 
 struct vkd3d_bytecode_buffer
 {

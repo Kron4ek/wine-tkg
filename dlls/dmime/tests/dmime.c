@@ -1600,6 +1600,25 @@ static void _expect_track(IDirectMusicSegment8 *seg, REFCLSID expect, const char
 
 static void test_midi(void)
 {
+    static const DWORD message_types[] =
+    {
+        DMUS_PMSGT_MIDI,
+        DMUS_PMSGT_NOTE,
+        DMUS_PMSGT_SYSEX,
+        DMUS_PMSGT_NOTIFICATION,
+        DMUS_PMSGT_TEMPO,
+        DMUS_PMSGT_CURVE,
+        DMUS_PMSGT_TIMESIG,
+        DMUS_PMSGT_PATCH,
+        DMUS_PMSGT_TRANSPOSE,
+        DMUS_PMSGT_CHANNEL_PRIORITY,
+        DMUS_PMSGT_STOP,
+        DMUS_PMSGT_DIRTY,
+        DMUS_PMSGT_WAVE,
+        DMUS_PMSGT_LYRIC,
+        DMUS_PMSGT_SCRIPTLYRIC,
+        DMUS_PMSGT_USER,
+    };
     static const char midi_meta_set_tempo[] =
     {
         0x04,                   /* delta time = 4 */
@@ -1608,15 +1627,60 @@ static void test_midi(void)
         0x03,                   /* event data lenght, 3 bytes */
         0x03,0x0d,0x40  /* tempo, 200000 us per quarter-note, i.e. 300 bpm */
     };
+    static const char midi_program_change[] =
+    {
+        0x04,                   /* delta time = 4 */
+        0xc1,                   /* event type, program change, channel 1 */
+        0x30,                   /* event data, patch 48 */
+    };
+    static const char midi_control_change[] =
+    {
+        0x04,                   /* delta time = 4 */
+        0xb1,                   /* event type, control change, channel 1 */
+        0x07,                   /* event data, channel volume */
+        0x40,                   /* event data, 64 */
+    };
+    static const char midi_note_on[] =
+    {
+        0x04,                   /* delta time = 4 */
+        0x91,                   /* event type, note on, channel 1 */
+        0x3c,                   /* event data, middle C */
+        0x40,                   /* event data, velocity 64 */
+    };
+    static const char midi_note_off[] =
+    {
+        0x04,                   /* delta time = 4 */
+        0x81,                   /* event type, note off, channel 1 */
+        0x3c,                   /* event data, middle C */
+        0x0,
+    };
+    static const char midi_note_off2[] =
+    {
+        0x60,                   /* delta time = 96 */
+        0x81,                   /* event type, note off, channel 1 */
+        0x3c,                   /* event data, middle C */
+        0x0,
+    };
     IDirectMusicSegment8 *segment = NULL;
     IDirectMusicTrack *track = NULL;
     IDirectMusicLoader8 *loader;
+    IDirectMusicTool *tool;
+    IDirectMusicPerformance *performance;
+    IDirectMusicGraph *graph;
     IPersistStream *persist;
     IStream *stream;
     LARGE_INTEGER zero = { .QuadPart = 0 };
     ULARGE_INTEGER position = { .QuadPart = 0 };
     WCHAR test_mid[MAX_PATH], bogus_mid[MAX_PATH];
     HRESULT hr;
+    ULONG ret;
+    DWORD track_length, trace2_length;
+    MUSIC_TIME next;
+    DMUS_PMSG *msg;
+    DMUS_NOTE_PMSG *note;
+    DMUS_MIDI_PMSG *midi;
+    DMUS_PATCH_PMSG *patch;
+    DMUS_TEMPO_PARAM tempo_param;
 #include <pshpack1.h>
     struct
     {
@@ -1649,11 +1713,11 @@ static void test_midi(void)
             &IID_IDirectMusicSegment, test_mid, (void **)&segment);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    todo_wine expect_track(segment, BandTrack, -1, 0);
-    todo_wine expect_track(segment, ChordTrack, -1, 1);
-    todo_wine expect_track(segment, TempoTrack, -1, 2);
-    todo_wine expect_track(segment, TimeSigTrack, -1, 3);
-    todo_wine expect_track(segment, SeqTrack, -1, 4);
+    expect_track(segment, BandTrack, -1, 0);
+    expect_track(segment, ChordTrack, -1, 1);
+    expect_track(segment, TempoTrack, -1, 2);
+    todo_wine expect_guid_track(segment, TimeSigTrack, -1, 0);
+    expect_guid_track(segment, SeqTrack, -1, 0);
     /* no more tracks */
     hr = IDirectMusicSegment8_GetTrack(segment, &GUID_NULL, -1, 5, &track);
     ok(hr == DMUS_E_NOT_FOUND, "unexpected extra track\n");
@@ -1691,9 +1755,9 @@ static void test_midi(void)
     IPersistStream_Release(persist);
     IStream_Release(stream);
     /* TempoTrack and TimeSigTrack seems to be optional. */
-    todo_wine expect_track(segment, BandTrack, -1, 0);
-    todo_wine expect_track(segment, ChordTrack, -1, 1);
-    todo_wine expect_track(segment, SeqTrack, -1, 2);
+    expect_track(segment, BandTrack, -1, 0);
+    expect_track(segment, ChordTrack, -1, 1);
+    expect_track(segment, SeqTrack, -1, 2);
     IDirectMusicSegment_Release(segment);
 
     /* parse MIDI file with 1 track that has 1 event. */
@@ -1727,10 +1791,22 @@ static void test_midi(void)
             "got %lld\n", position.QuadPart);
     IPersistStream_Release(persist);
     IStream_Release(stream);
-    todo_wine expect_track(segment, BandTrack, -1, 0);
-    todo_wine expect_track(segment, ChordTrack, -1, 1);
-    todo_wine expect_track(segment, TempoTrack, -1, 2);
-    todo_wine expect_track(segment, SeqTrack, -1, 3);
+    expect_track(segment, BandTrack, -1, 0);
+    expect_track(segment, ChordTrack, -1, 1);
+    expect_track(segment, TempoTrack, -1, 2);
+    expect_track(segment, SeqTrack, -1, 3);
+
+    hr = IDirectMusicSegment_GetParam(segment, &GUID_TempoParam, -1, DMUS_SEG_ALLTRACKS, 0, &next, &tempo_param);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    ok(next == 24, "got %ld, expected 24\n", next);
+    ok(tempo_param.mtTime == 24, "got %ld, expected 24\n", tempo_param.mtTime);
+    ok(tempo_param.dblTempo == 300.0, "got %f, expected 300.0\n", tempo_param.dblTempo);
+
+    hr = IDirectMusicSegment_GetParam(segment, &GUID_TempoParam, -1, DMUS_SEG_ALLTRACKS, 26, &next, &tempo_param);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    ok(next == 0, "got %ld, expected 24\n", next);
+    ok(tempo_param.mtTime == -2, "got %ld, expected -6\n", tempo_param.mtTime);
+    ok(tempo_param.dblTempo == 300.0, "got %f, expected 300.0\n", tempo_param.dblTempo);
     IDirectMusicSegment_Release(segment);
 
     /* parse MIDI file with a track with 0 length, but has an event. */
@@ -1763,10 +1839,184 @@ static void test_midi(void)
     ok(position.QuadPart == sizeof(header) + sizeof(track_header) + 4, "got %lld\n", position.QuadPart);
     IPersistStream_Release(persist);
     IStream_Release(stream);
-    todo_wine expect_track(segment, BandTrack, -1, 0);
-    todo_wine expect_track(segment, ChordTrack, -1, 1);
+    expect_track(segment, BandTrack, -1, 0);
+    expect_track(segment, ChordTrack, -1, 1);
     /* there is no tempo track. */
-    todo_wine expect_track(segment, SeqTrack, -1, 2);
+    expect_track(segment, SeqTrack, -1, 2);
+    IDirectMusicSegment_Release(segment);
+
+    /* parse MIDI file with program change event. */
+
+    hr = CoCreateInstance(&CLSID_DirectMusicSegment, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IDirectMusicSegment, (void **)&segment);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    hr = IDirectMusicSegment_QueryInterface(segment, &IID_IPersistStream, (void **)&persist);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = CreateStreamOnHGlobal(0, TRUE, &stream);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    header.format = GET_BE_WORD(123);
+    header.count = GET_BE_WORD(123);
+    header.ppqn = GET_BE_WORD(123);
+    header.length = GET_BE_DWORD(sizeof(header) - 8);
+    hr = IStream_Write(stream, &header, sizeof(header), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    track_length = sizeof(midi_program_change) + sizeof(midi_note_on) * 3 + sizeof(midi_note_off);
+    track_header.length = RtlUlongByteSwap(sizeof(track_header) - 8 + track_length);
+    hr = IStream_Write(stream, &track_header, sizeof(track_header), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IStream_Write(stream, midi_program_change, sizeof(midi_program_change), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    /* Add note on/off events, like this:
+     *     on, on, off, on
+     * So we can test what happens when we have two consecutive note on, and what happens with trailing note on. */
+    hr = IStream_Write(stream, midi_note_on, sizeof(midi_note_on), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IStream_Write(stream, midi_note_on, sizeof(midi_note_on), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IStream_Write(stream, midi_note_off, sizeof(midi_note_off), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IStream_Write(stream, midi_note_on, sizeof(midi_note_on), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    /* Add a second track, to test the duration of the trailing note. */
+    trace2_length = sizeof(midi_note_on) + sizeof(midi_note_off2) + sizeof(midi_control_change);
+    track_header.length = RtlUlongByteSwap(sizeof(track_header) - 8 + trace2_length);
+    hr = IStream_Write(stream, &track_header, sizeof(track_header), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IStream_Write(stream, midi_note_on, sizeof(midi_note_on), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IStream_Write(stream, midi_note_off2, sizeof(midi_note_off2), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IStream_Write(stream, midi_control_change, sizeof(midi_control_change), NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    hr = IStream_Seek(stream, zero, 0, NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IPersistStream_Load(persist, stream);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IStream_Seek(stream, zero, STREAM_SEEK_CUR, &position);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    ok(position.QuadPart == sizeof(header) + sizeof(track_header) * 2 + track_length + trace2_length,
+            "got %lld\n", position.QuadPart);
+    IPersistStream_Release(persist);
+    IStream_Release(stream);
+    expect_track(segment, BandTrack, -1, 0);
+    expect_track(segment, ChordTrack, -1, 1);
+    expect_track(segment, SeqTrack, -1, 2);
+
+    hr = test_tool_create(message_types, ARRAY_SIZE(message_types), &tool);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    hr = CoCreateInstance(&CLSID_DirectMusicPerformance, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IDirectMusicPerformance, (void **)&performance);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    hr = CoCreateInstance(&CLSID_DirectMusicGraph, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IDirectMusicGraph, (void **)&graph);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicGraph_InsertTool(graph, (IDirectMusicTool *)tool, NULL, 0, -1);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicPerformance_SetGraph(performance, graph);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    IDirectMusicGraph_Release(graph);
+
+    /* now play the segment, and check produced messages */
+    hr = IDirectMusicPerformance_Init(performance, NULL, 0, 0);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IDirectMusicPerformance_PlaySegment(performance, (IDirectMusicSegment *)segment, 0x800, 0, NULL);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&msg);
+    ok(!ret, "got %#lx\n", ret);
+    ok(msg->dwType == DMUS_PMSGT_DIRTY, "got %#lx, expected DIRTY\n", msg->dwType);
+    hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&msg);
+    ok(!ret, "got %#lx\n", ret);
+    ok(msg->dwType == DMUS_PMSGT_PATCH, "got msg type %#lx, expected PATCH\n", msg->dwType);
+    ok(msg->dwPChannel == 1, "got pchannel %lu, expected 1\n", msg->dwPChannel);
+    todo_wine ok(msg->mtTime == 23, "got mtTime %lu, expected 23\n", msg->mtTime);
+    patch = (DMUS_PATCH_PMSG *)msg;
+    ok(patch->byInstrument == 0x30, "got instrument %#x, expected 0x30\n", patch->byInstrument);
+    hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&msg);
+    ok(!ret, "got %#lx\n", ret);
+    ok(msg->dwType == DMUS_PMSGT_NOTE, "got msg type %#lx, expected NOTE\n", msg->dwType);
+    ok(msg->mtTime == 24, "got mtTime %lu, expected 24\n", msg->mtTime);
+    note = (DMUS_NOTE_PMSG *)msg;
+    ok(note->bMidiValue == 0x3c, "got note %#x, expected 0x3c\n", note->bMidiValue);
+    ok(note->bVelocity == 0x40, "got velocity %#x, expected 0x40\n", note->bVelocity);
+    ok(note->mtDuration == 600, "got mtDuration %lu, expected 600\n", note->mtDuration);
+    ok(note->dwPChannel == 1, "got pchannel %lu, expected 1\n", note->dwPChannel);
+    hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&msg);
+    ok(!ret, "got %#lx\n", ret);
+    ok(msg->dwType == DMUS_PMSGT_NOTE, "got msg type %#lx, expected NOTE\n", msg->dwType);
+    ok(msg->mtTime == 49, "got mtTime %lu, expected 49\n", msg->mtTime);
+    note = (DMUS_NOTE_PMSG *)msg;
+    ok(note->bMidiValue == 0x3c, "got note %#x, expected 0x3c\n", note->bMidiValue);
+    ok(note->bVelocity == 0x40, "got velocity %#x, expected 0x40\n", note->bVelocity);
+    ok(note->mtDuration == 50, "got mtDuration %lu, expected 50\n", note->mtDuration);
+    ok(note->dwPChannel == 1, "got pchannel %lu, expected 1\n", note->dwPChannel);
+    hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&msg);
+    ok(!ret, "got %#lx\n", ret);
+    ok(msg->dwType == DMUS_PMSGT_NOTE, "got msg type %#lx, expected NOTE\n", msg->dwType);
+    ok(msg->mtTime == 74, "got mtTime %lu, expected 74\n", msg->mtTime);
+    note = (DMUS_NOTE_PMSG *)msg;
+    ok(note->bMidiValue == 0x3c, "got note %#x, expected 0x3c\n", note->bMidiValue);
+    ok(note->bVelocity == 0x40, "got velocity %#x, expected 0x40\n", note->bVelocity);
+    ok(note->mtDuration == 1, "got mtDuration %lu, expected 1\n", note->mtDuration);
+    ok(note->dwPChannel == 1, "got pchannel %lu, expected 1\n", note->dwPChannel);
+    hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&msg);
+    ok(!ret, "got %#lx\n", ret);
+    ok(msg->dwType == DMUS_PMSGT_NOTE, "got msg type %#lx, expected NOTE\n", msg->dwType);
+    ok(msg->mtTime == 124, "got mtTime %lu, expected 124\n", msg->mtTime);
+    note = (DMUS_NOTE_PMSG *)msg;
+    ok(note->bMidiValue == 0x3c, "got note %#x, expected 0x3c\n", note->bMidiValue);
+    ok(note->bVelocity == 0x40, "got velocity %#x, expected 0x40\n", note->bVelocity);
+    ok(note->mtDuration == 1, "got mtDuration %ld, expected 1\n", note->mtDuration);
+    ok(note->dwPChannel == 1, "got pchannel %lu, expected 1\n", note->dwPChannel);
+    hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&msg);
+    ok(!ret, "got %#lx\n", ret);
+    ok(msg->dwType == DMUS_PMSGT_MIDI, "got msg type %#lx, expected MIDI\n", msg->dwType);
+    ok(msg->mtTime == 649, "got mtTime %lu, expected 649\n", msg->mtTime);
+    ok(msg->dwPChannel == 1, "got pchannel %lu, expected 1\n", msg->dwPChannel);
+    midi = (DMUS_MIDI_PMSG *)msg;
+    ok(midi->bStatus == 0xb0, "got status %#x, expected 0xb1\n", midi->bStatus);
+    ok(midi->bByte1 == 0x07, "got byte1 %#x, expected 0x07\n", midi->bByte1);
+    ok(midi->bByte2 == 0x40, "got byte2 %#x, expected 0x40\n", midi->bByte2);
+    hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    /* wine generates an extra DIRTY event. */
+    ret = test_tool_wait_message(tool, 500, (DMUS_PMSG **)&msg);
+    todo_wine ok(ret == WAIT_TIMEOUT, "unexpected message\n");
+    if (!ret)
+    {
+        hr = IDirectMusicPerformance_FreePMsg(performance, msg);
+        ok(hr == S_OK, "got %#lx\n", hr);
+    }
+
+    hr = IDirectMusicPerformance_CloseDown(performance);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    IDirectMusicPerformance_Release(performance);
+    IDirectMusicTool_Release(tool);
     IDirectMusicSegment_Release(segment);
     IDirectMusicLoader8_Release(loader);
 }
@@ -3986,7 +4236,7 @@ static void test_sequence_track(void)
             &IID_IDirectMusicTrack, (void **)&track);
     ok(hr == S_OK, "got %#lx\n", hr);
 
-    hr = IDirectMusicSegment_QueryInterface(track, &IID_IPersistStream, (void **)&persist);
+    hr = IDirectMusicTrack_QueryInterface(track, &IID_IPersistStream, (void **)&persist);
     ok(hr == S_OK, "got %#lx\n", hr);
     hr = CreateStreamOnHGlobal(0, TRUE, &stream);
     ok(hr == S_OK, "got %#lx\n", hr);
@@ -4332,6 +4582,56 @@ static void check_dmus_tempo_pmsg_(int line, DMUS_TEMPO_PMSG *msg, MUSIC_TIME ti
     ok_(__FILE__, line)(msg->dwGroupID == -1, "got dwGroupID %lu\n", msg->dwGroupID);
     ok_(__FILE__, line)(!msg->punkUser, "got punkUser %p\n", msg->punkUser);
     ok_(__FILE__, line)(msg->dblTempo == tempo, "got tempo %f\n", msg->dblTempo);
+}
+
+static void test_tempo_track(void)
+{
+    HRESULT hr;
+    IDirectMusicTrack *track;
+    DMUS_TEMPO_PARAM param;
+    MUSIC_TIME next;
+    hr = CoCreateInstance(&CLSID_DirectMusicTempoTrack, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IDirectMusicTrack, (void **)&track);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    hr = IDirectMusicTrack_GetParam(track, &GUID_TempoParam, 0, &next, &param);
+    ok(hr == DMUS_E_NOT_FOUND, "got %#lx\n", hr);
+
+    param.dblTempo = 150;
+    param.mtTime = 10;
+    hr = IDirectMusicTrack_SetParam(track, &GUID_TempoParam, 10, &param);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    hr = IDirectMusicTrack_GetParam(track, &GUID_TempoParam, 0, &next, &param);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    ok(param.dblTempo == 150, "got %f, expected 150\n", param.dblTempo);
+    ok(param.mtTime == 10, "got %lu, expected 10\n", param.mtTime);
+    ok(next == 10, "got %lu, expected 10\n", next);
+
+    hr = IDirectMusicTrack_GetParam(track, &GUID_TempoParam, 10, &next, &param);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    ok(param.dblTempo == 150, "got %f, expected 150\n", param.dblTempo);
+    ok(param.mtTime == 0, "got %lu, expected 0\n", param.mtTime);
+    ok(next == 0, "got %lu, expected 0\n", next);
+
+    hr = IDirectMusicTrack_GetParam(track, &GUID_TempoParam, 11, &next, &param);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    ok(param.dblTempo == 150, "got %f, expected 150\n", param.dblTempo);
+    ok(param.mtTime == -1, "got %lu, expected 0\n", param.mtTime);
+    ok(next == 0, "got %lu, expected 0\n", next);
+
+    param.dblTempo = 180;
+    param.mtTime = 20;
+    hr = IDirectMusicTrack_SetParam(track, &GUID_TempoParam, 20, &param);
+    ok(hr == S_OK, "got %#lx\n", hr);
+
+    hr = IDirectMusicTrack_GetParam(track, &GUID_TempoParam, 11, &next, &param);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    ok(param.dblTempo == 150, "got %f, expected 150\n", param.dblTempo);
+    ok(param.mtTime == -1, "got %ld, expected -1\n", param.mtTime);
+    ok(next == 9, "got %lu, expected 9\n", next);
+
+    IDirectMusicTrack_Release(track);
 }
 
 static void test_tempo_track_play(void)
@@ -4923,6 +5223,7 @@ START_TEST(dmime)
     test_wave_pmsg(0);
     test_wave_pmsg(10);
     test_sequence_track();
+    test_tempo_track();
     test_band_track_play();
     test_tempo_track_play();
     test_connect_to_collection();

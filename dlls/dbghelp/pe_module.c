@@ -268,12 +268,11 @@ BOOL pe_map_file(HANDLE file, struct image_file_map* fmap)
         memcpy(&fmap->u.pe.opt.header32, &nthdr->OptionalHeader, sizeof(fmap->u.pe.opt.header32));
         break;
     case IMAGE_NT_OPTIONAL_HDR64_MAGIC:
-        if (sizeof(void*) == 4) return FALSE;
         fmap->addr_size = 64;
         memcpy(&fmap->u.pe.opt.header64, &nthdr->OptionalHeader, sizeof(fmap->u.pe.opt.header64));
         break;
     default:
-        return FALSE;
+        goto error;
     }
 
     fmap->u.pe.builtin = !memcmp((const IMAGE_DOS_HEADER*)mapping + 1, builtin_signature, sizeof(builtin_signature));
@@ -543,15 +542,15 @@ static BOOL pe_load_dwarf(struct module* module)
 static BOOL pe_load_dbg_file(const struct process* pcs, struct module* module,
                              const char* dbg_name, DWORD timestamp)
 {
-    WCHAR tmp[MAX_PATH];
     HANDLE                              hFile = INVALID_HANDLE_VALUE, hMap = 0;
     const BYTE*                         dbg_mapping = NULL;
     BOOL                                ret = FALSE;
+    SYMSRV_INDEX_INFOW                  info;
 
     TRACE("Processing DBG file %s\n", debugstr_a(dbg_name));
 
-    if (path_find_symbol_file(pcs, module, dbg_name, FALSE, NULL, timestamp, 0, tmp, &module->module.DbgUnmatched) &&
-        (hFile = CreateFileW(tmp, GENERIC_READ, FILE_SHARE_READ, NULL,
+    if (path_find_symbol_file(pcs, module, dbg_name, FALSE, NULL, timestamp, 0, &info, &module->module.DbgUnmatched) &&
+        (hFile = CreateFileW(info.dbgfile, GENERIC_READ, FILE_SHARE_READ, NULL,
                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)) != INVALID_HANDLE_VALUE &&
         ((hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL)) != 0) &&
         ((dbg_mapping = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0)) != NULL))
@@ -574,7 +573,7 @@ static BOOL pe_load_dbg_file(const struct process* pcs, struct module* module,
                                       hdr->DebugDirectorySize / sizeof(*dbg));
     }
     else
-        ERR("Couldn't find .DBG file %s (%s)\n", debugstr_a(dbg_name), debugstr_w(tmp));
+        ERR("Couldn't find .DBG file %s (%s)\n", debugstr_a(dbg_name), debugstr_w(info.dbgfile));
 
     if (dbg_mapping) UnmapViewOfFile(dbg_mapping);
     if (hMap) CloseHandle(hMap);
@@ -599,7 +598,7 @@ static BOOL pe_load_msc_debug_info(const struct process* pcs, struct module* mod
     if (!(mapping = pe_map_full(fmap, &nth))) return FALSE;
     /* Read in debug directory */
     dbg = RtlImageDirectoryEntryToData( mapping, FALSE, IMAGE_DIRECTORY_ENTRY_DEBUG, &nDbg );
-    if (!dbg || !(nDbg /= sizeof(IMAGE_DEBUG_DIRECTORY))) goto done;
+    nDbg = dbg ? nDbg / sizeof(IMAGE_DEBUG_DIRECTORY) : 0;
 
     /* Parse debug directory */
     if (nth->FileHeader.Characteristics & IMAGE_FILE_DEBUG_STRIPPED)
@@ -625,7 +624,6 @@ static BOOL pe_load_msc_debug_info(const struct process* pcs, struct module* mod
         ret = pe_load_debug_directory(pcs, module, mapping, IMAGE_FIRST_SECTION( nth ),
                                       nth->FileHeader.NumberOfSections, dbg, nDbg);
     }
-done:
     pe_unmap_full(fmap);
     return ret;
 }
@@ -722,9 +720,12 @@ BOOL pe_load_debug_info(const struct process* pcs, struct module* module)
 
     if (!(dbghelp_options & SYMOPT_PUBLICS_ONLY))
     {
-        ret = image_check_alternate(&module->format_info[DFI_PE]->u.pe_info->fmap, module);
-        ret = pe_load_stabs(pcs, module) || ret;
-        ret = pe_load_dwarf(module) || ret;
+        if (!module->dont_load_symbols)
+        {
+            ret = image_check_alternate(&module->format_info[DFI_PE]->u.pe_info->fmap, module);
+            ret = pe_load_stabs(pcs, module) || ret;
+            ret = pe_load_dwarf(module) || ret;
+        }
         ret = pe_load_msc_debug_info(pcs, module) || ret;
         ret = ret || pe_load_coff_symbol_table(module); /* FIXME */
         /* if we still have no debug info (we could only get SymExport at this

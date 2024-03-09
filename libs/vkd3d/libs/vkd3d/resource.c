@@ -1857,6 +1857,7 @@ static bool d3d12_resource_validate_texture_alignment(const D3D12_RESOURCE_DESC1
 
 HRESULT d3d12_resource_validate_desc(const D3D12_RESOURCE_DESC1 *desc, struct d3d12_device *device)
 {
+    const D3D12_MIP_REGION *mip_region = &desc->SamplerFeedbackMipRegion;
     const struct vkd3d_format *format;
 
     switch (desc->Dimension)
@@ -1925,6 +1926,12 @@ HRESULT d3d12_resource_validate_desc(const D3D12_RESOURCE_DESC1 *desc, struct d3
     }
 
     d3d12_validate_resource_flags(desc->Flags);
+
+    if (mip_region->Width && mip_region->Height && mip_region->Depth)
+    {
+        FIXME("Unhandled sampler feedback mip region size (%u, %u, %u).\n", mip_region->Width, mip_region->Height,
+                mip_region->Depth);
+    }
 
     return S_OK;
 }
@@ -2253,7 +2260,7 @@ HRESULT d3d12_reserved_resource_create(struct d3d12_device *device,
 HRESULT vkd3d_create_image_resource(ID3D12Device *device,
         const struct vkd3d_image_resource_create_info *create_info, ID3D12Resource **resource)
 {
-    struct d3d12_device *d3d12_device = unsafe_impl_from_ID3D12Device7((ID3D12Device7 *)device);
+    struct d3d12_device *d3d12_device = unsafe_impl_from_ID3D12Device8((ID3D12Device8 *)device);
     struct d3d12_resource *object;
     HRESULT hr;
 
@@ -2277,8 +2284,8 @@ HRESULT vkd3d_create_image_resource(ID3D12Device *device,
     object->ID3D12Resource2_iface.lpVtbl = &d3d12_resource_vtbl;
     object->refcount = 1;
     object->internal_refcount = 1;
-    object->desc = create_info->desc;
-    object->format = vkd3d_format_from_d3d12_resource_desc(d3d12_device, &create_info->desc, 0);
+    d3d12_resource_desc1_from_desc(&object->desc, &create_info->desc);
+    object->format = vkd3d_format_from_d3d12_resource_desc(d3d12_device, &object->desc, 0);
     object->u.vk_image = create_info->vk_image;
     object->flags = VKD3D_RESOURCE_EXTERNAL;
     object->flags |= create_info->flags & VKD3D_RESOURCE_PUBLIC_FLAGS;

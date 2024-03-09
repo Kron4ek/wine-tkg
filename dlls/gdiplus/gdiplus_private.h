@@ -127,6 +127,10 @@ extern void calc_curve_bezier(const GpPointF *pts, REAL tension, REAL *x1,
 extern void calc_curve_bezier_endp(REAL xend, REAL yend, REAL xadj, REAL yadj,
     REAL tension, REAL *x, REAL *y);
 
+extern void get_font_hfont(GpGraphics *graphics, GDIPCONST GpFont *font,
+                           GDIPCONST GpStringFormat *format, HFONT *hfont,
+                           LOGFONTW *lfw_return, GDIPCONST GpMatrix *matrix);
+
 extern void free_installed_fonts(void);
 
 extern BOOL lengthen_path(GpPath *path, INT len);
@@ -619,14 +623,25 @@ struct gdip_font_link_info {
     struct list sections;
 };
 
+struct gdip_format_string_info {
+    GpGraphics *graphics;
+    HDC hdc;
+    GDIPCONST WCHAR *string;
+    INT index;
+    INT length;
+    struct gdip_font_link_info font_link_info;
+    GDIPCONST RectF *rect;
+    GDIPCONST GpStringFormat *format;
+    INT lineno;
+    const RectF *bounds;
+    INT *underlined_indexes;
+    INT underlined_index_count;
+    void *user_data;
+};
 
-typedef GpStatus (*gdip_format_string_callback)(GpGraphics *graphics,
-    GDIPCONST WCHAR *string, INT index, INT length, struct gdip_font_link_info *sections,
-    GDIPCONST RectF *rect, GDIPCONST GpStringFormat *format,
-    INT lineno, const RectF *bounds, INT *underlined_indexes,
-    INT underlined_index_count, void *user_data);
+typedef GpStatus (*gdip_format_string_callback)(struct gdip_format_string_info *info);
 
-GpStatus gdip_format_string(GpGraphics *graphics,
+GpStatus gdip_format_string(GpGraphics *graphics, HDC hdc,
     GDIPCONST WCHAR *string, INT length, GDIPCONST GpFont *font,
     GDIPCONST RectF *rect, GDIPCONST GpStringFormat *format, int ignore_empty_clip,
     gdip_format_string_callback callback, void *user_data);

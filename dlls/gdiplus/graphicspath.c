@@ -997,33 +997,48 @@ struct format_string_args
     float ascent;
 };
 
-static GpStatus format_string_callback(GpGraphics *graphics,
-    GDIPCONST WCHAR *string, INT index, INT length, struct gdip_font_link_info *font_link_info,
-    GDIPCONST RectF *rect, GDIPCONST GpStringFormat *format,
-    INT lineno, const RectF *bounds, INT *underlined_indexes,
-    INT underlined_index_count, void *priv)
+static GpStatus format_string_callback(struct gdip_format_string_info* info)
 {
     static const MAT2 identity = { {0,1}, {0,0}, {0,0}, {0,1} };
-    struct format_string_args *args = priv;
+    struct format_string_args *args = info->user_data;
+    struct gdip_font_link_section *section = LIST_ENTRY(list_head(&info->font_link_info.sections), struct gdip_font_link_section, entry);
+    HFONT hfont = NULL, oldhfont = NULL;
+    int section_start = -1;
     GpPath *path = args->path;
     GpStatus status = Ok;
-    float x = rect->X + (bounds->X - rect->X) * args->scale;
-    float y = rect->Y + (bounds->Y - rect->Y) * args->scale;
+    float x = info->rect->X + (info->bounds->X - info->rect->X) * args->scale;
+    float y = info->rect->Y + (info->bounds->Y - info->rect->Y) * args->scale;
     int i;
 
-    if (underlined_index_count)
+    if (info->underlined_index_count)
         FIXME("hotkey underlines not drawn yet\n");
 
-    if (y + bounds->Height * args->scale > args->maxY)
-        args->maxY = y + bounds->Height * args->scale;
+    if (y + info->bounds->Height * args->scale > args->maxY)
+        args->maxY = y + info->bounds->Height * args->scale;
 
-    for (i = index; i < length + index; ++i)
+    for (i = info->index; i < info->length + info->index; ++i)
     {
         GLYPHMETRICS gm;
         TTPOLYGONHEADER *ph = NULL, *origph;
         char *start;
         DWORD len, ofs = 0;
-        len = GetGlyphOutlineW(graphics->hdc, string[i], GGO_BEZIER, &gm, 0, NULL, &identity);
+
+        while (i >= section->end)
+            section = LIST_ENTRY(list_next(&info->font_link_info.sections, &section->entry), struct gdip_font_link_section, entry);
+
+        if (section_start != section->start)
+        {
+            if (hfont)
+            {
+                SelectObject(info->hdc, oldhfont);
+                DeleteObject(hfont);
+            }
+            get_font_hfont(info->graphics, section->font, NULL, &hfont, NULL, NULL);
+            oldhfont = SelectObject(info->hdc, hfont);
+            section_start = section->start;
+        }
+
+        len = GetGlyphOutlineW(info->hdc, info->string[i], GGO_BEZIER, &gm, 0, NULL, &identity);
         if (len == GDI_ERROR)
         {
             status = GenericError;
@@ -1037,7 +1052,7 @@ static GpStatus format_string_callback(GpGraphics *graphics,
             status = OutOfMemory;
             break;
         }
-        GetGlyphOutlineW(graphics->hdc, string[i], GGO_BEZIER, &gm, len, start, &identity);
+        GetGlyphOutlineW(info->hdc, info->string[i], GGO_BEZIER, &gm, len, start, &identity);
 
         ofs = 0;
         while (ofs < len)
@@ -1087,6 +1102,12 @@ static GpStatus format_string_callback(GpGraphics *graphics,
         free(origph);
         if (status != Ok)
             break;
+    }
+
+    if (hfont)
+    {
+        SelectObject(info->hdc, oldhfont);
+        DeleteObject(hfont);
     }
 
     return status;
@@ -1145,8 +1166,6 @@ GpStatus WINGDIPAPI GdipAddPathString(GpPath* path, GDIPCONST WCHAR* string, INT
     }
 
     get_log_fontW(font, graphics, &lfw);
-    GdipDeleteFont(font);
-    GdipDeleteGraphics(graphics);
 
     hfont = CreateFontIndirectW(&lfw);
     if (!hfont)
@@ -1154,6 +1173,7 @@ GpStatus WINGDIPAPI GdipAddPathString(GpPath* path, GDIPCONST WCHAR* string, INT
         WARN("Failed to create font\n");
         DeleteDC(dc);
         GdipDeletePath(backup);
+        GdipDeleteFont(font);
         return GenericError;
     }
 
@@ -1165,11 +1185,13 @@ GpStatus WINGDIPAPI GdipAddPathString(GpPath* path, GDIPCONST WCHAR* string, INT
     args.maxY = 0;
     args.scale = emSize / native_height;
     args.ascent = textmetric.tmAscent * args.scale;
-    status = gdip_format_string(graphics, string, length, NULL, &scaled_layout_rect,
+    status = gdip_format_string(graphics, dc, string, length, font, &scaled_layout_rect,
                                 format, TRUE, format_string_callback, &args);
 
     DeleteDC(dc);
     DeleteObject(hfont);
+    GdipDeleteFont(font);
+    GdipDeleteGraphics(graphics);
 
     if (status != Ok) /* free backup */
     {

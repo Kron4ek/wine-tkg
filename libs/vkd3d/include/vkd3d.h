@@ -79,6 +79,7 @@ enum vkd3d_api_version
     VKD3D_API_VERSION_1_8,
     VKD3D_API_VERSION_1_9,
     VKD3D_API_VERSION_1_10,
+    VKD3D_API_VERSION_1_11,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_API_VERSION),
 };
@@ -182,7 +183,7 @@ struct vkd3d_image_resource_create_info
     const void *next;
 
     VkImage vk_image;
-    D3D12_RESOURCE_DESC1 desc;
+    D3D12_RESOURCE_DESC desc;
     unsigned int flags;
     D3D12_RESOURCE_STATES present_state;
 };

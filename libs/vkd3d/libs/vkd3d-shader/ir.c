@@ -2041,12 +2041,19 @@ static enum vkd3d_result cf_flattener_iterate_instruction_array(struct cf_flatte
         flattener->location = instruction->location;
 
         /* Declarations should occur before the first code block, which in hull shaders is marked by the first
-         * phase instruction, and in all other shader types begins with the first label instruction. */
-        if (!after_declarations_section && !vsir_instruction_is_dcl(instruction)
-                && instruction->handler_idx != VKD3DSIH_NOP)
+         * phase instruction, and in all other shader types begins with the first label instruction.
+         * Declaring an indexable temp with function scope is not considered a declaration,
+         * because it needs to live inside a function. */
+        if (!after_declarations_section && instruction->handler_idx != VKD3DSIH_NOP)
         {
-            after_declarations_section = true;
-            cf_flattener_emit_label(flattener, cf_flattener_alloc_block_id(flattener));
+            bool is_function_indexable = instruction->handler_idx == VKD3DSIH_DCL_INDEXABLE_TEMP
+                    && instruction->declaration.indexable_temp.has_function_scope;
+
+            if (!vsir_instruction_is_dcl(instruction) || is_function_indexable)
+            {
+                after_declarations_section = true;
+                cf_flattener_emit_label(flattener, cf_flattener_alloc_block_id(flattener));
+            }
         }
 
         cf_info = flattener->control_flow_depth
@@ -3025,14 +3032,8 @@ static void vsir_block_list_cleanup(struct vsir_block_list *list)
     vkd3d_free(list->blocks);
 }
 
-static enum vkd3d_result vsir_block_list_add(struct vsir_block_list *list, struct vsir_block *block)
+static enum vkd3d_result vsir_block_list_add_checked(struct vsir_block_list *list, struct vsir_block *block)
 {
-    size_t i;
-
-    for (i = 0; i < list->count; ++i)
-        if (block == list->blocks[i])
-            return VKD3D_OK;
-
     if (!vkd3d_array_reserve((void **)&list->blocks, &list->capacity, list->count + 1, sizeof(*list->blocks)))
     {
         ERR("Cannot extend block list.\n");
@@ -3042,6 +3043,24 @@ static enum vkd3d_result vsir_block_list_add(struct vsir_block_list *list, struc
     list->blocks[list->count++] = block;
 
     return VKD3D_OK;
+}
+
+static enum vkd3d_result vsir_block_list_add(struct vsir_block_list *list, struct vsir_block *block)
+{
+    size_t i;
+
+    for (i = 0; i < list->count; ++i)
+        if (block == list->blocks[i])
+            return VKD3D_FALSE;
+
+    return vsir_block_list_add_checked(list, block);
+}
+
+/* It is guaranteed that the relative order is kept. */
+static void vsir_block_list_remove_index(struct vsir_block_list *list, size_t idx)
+{
+    --list->count;
+    memmove(&list->blocks[idx], &list->blocks[idx + 1], (list->count - idx) * sizeof(*list->blocks));
 }
 
 struct vsir_block
@@ -3089,12 +3108,38 @@ static void vsir_block_cleanup(struct vsir_block *block)
     vkd3d_free(block->dominates);
 }
 
+static int block_compare(const void *ptr1, const void *ptr2)
+{
+    const struct vsir_block *block1 = *(const struct vsir_block **)ptr1;
+    const struct vsir_block *block2 = *(const struct vsir_block **)ptr2;
+
+    return vkd3d_u32_compare(block1->label, block2->label);
+}
+
+static void vsir_block_list_sort(struct vsir_block_list *list)
+{
+    qsort(list->blocks, list->count, sizeof(*list->blocks), block_compare);
+}
+
+static bool vsir_block_list_search(struct vsir_block_list *list, struct vsir_block *block)
+{
+    return !!bsearch(&block, list->blocks, list->count, sizeof(*list->blocks), block_compare);
+}
+
 struct vsir_cfg
 {
+    struct vkd3d_shader_message_context *message_context;
     struct vsir_program *program;
     struct vsir_block *blocks;
     struct vsir_block *entry;
     size_t block_count;
+    struct vkd3d_string_buffer debug_buffer;
+
+    struct vsir_block_list *loops;
+    size_t loops_count, loops_capacity;
+    size_t *loops_by_header;
+
+    struct vsir_block_list order;
 };
 
 static void vsir_cfg_cleanup(struct vsir_cfg *cfg)
@@ -3104,7 +3149,22 @@ static void vsir_cfg_cleanup(struct vsir_cfg *cfg)
     for (i = 0; i < cfg->block_count; ++i)
         vsir_block_cleanup(&cfg->blocks[i]);
 
+    for (i = 0; i < cfg->loops_count; ++i)
+        vsir_block_list_cleanup(&cfg->loops[i]);
+
+    vsir_block_list_cleanup(&cfg->order);
+
     vkd3d_free(cfg->blocks);
+    vkd3d_free(cfg->loops);
+    vkd3d_free(cfg->loops_by_header);
+
+    if (TRACE_ON())
+        vkd3d_string_buffer_cleanup(&cfg->debug_buffer);
+}
+
+static bool vsir_block_dominates(struct vsir_block *b1, struct vsir_block *b2)
+{
+    return bitmap_is_set(b1->dominates, b2->label - 1);
 }
 
 static enum vkd3d_result vsir_cfg_add_edge(struct vsir_cfg *cfg, struct vsir_block *block,
@@ -3162,18 +3222,25 @@ static void vsir_cfg_dump_dot(struct vsir_cfg *cfg)
     TRACE("}\n");
 }
 
-static enum vkd3d_result vsir_cfg_init(struct vsir_cfg *cfg, struct vsir_program *program)
+static enum vkd3d_result vsir_cfg_init(struct vsir_cfg *cfg, struct vsir_program *program,
+        struct vkd3d_shader_message_context *message_context)
 {
     struct vsir_block *current_block = NULL;
     enum vkd3d_result ret;
     size_t i;
 
     memset(cfg, 0, sizeof(*cfg));
+    cfg->message_context = message_context;
     cfg->program = program;
     cfg->block_count = program->block_count;
 
+    vsir_block_list_init(&cfg->order);
+
     if (!(cfg->blocks = vkd3d_calloc(cfg->block_count, sizeof(*cfg->blocks))))
         return VKD3D_ERROR_OUT_OF_MEMORY;
+
+    if (TRACE_ON())
+        vkd3d_string_buffer_init(&cfg->debug_buffer);
 
     for (i = 0; i < program->instructions.count; ++i)
     {
@@ -3285,11 +3352,7 @@ static void vsir_cfg_compute_dominators_recurse(struct vsir_block *current, stru
 
 static void vsir_cfg_compute_dominators(struct vsir_cfg *cfg)
 {
-    struct vkd3d_string_buffer buf;
     size_t i, j;
-
-    if (TRACE_ON())
-        vkd3d_string_buffer_init(&buf);
 
     for (i = 0; i < cfg->block_count; ++i)
     {
@@ -3302,7 +3365,7 @@ static void vsir_cfg_compute_dominators(struct vsir_cfg *cfg)
 
         if (TRACE_ON())
         {
-            vkd3d_string_buffer_printf(&buf, "Block %u dominates:", block->label);
+            vkd3d_string_buffer_printf(&cfg->debug_buffer, "Block %u dominates:", block->label);
             for (j = 0; j < cfg->block_count; j++)
             {
                 struct vsir_block *block2 = &cfg->blocks[j];
@@ -3310,16 +3373,337 @@ static void vsir_cfg_compute_dominators(struct vsir_cfg *cfg)
                 if (block2->label == 0)
                     continue;
 
-                if (bitmap_is_set(block->dominates, j))
-                    vkd3d_string_buffer_printf(&buf, " %u", block2->label);
+                if (vsir_block_dominates(block, block2))
+                    vkd3d_string_buffer_printf(&cfg->debug_buffer, " %u", block2->label);
             }
-            TRACE("%s\n", buf.buffer);
-            vkd3d_string_buffer_clear(&buf);
+            TRACE("%s\n", cfg->debug_buffer.buffer);
+            vkd3d_string_buffer_clear(&cfg->debug_buffer);
+        }
+    }
+}
+
+/* A back edge is an edge X -> Y for which block Y dominates block
+ * X. All the other edges are forward edges, and it is required that
+ * the input CFG is reducible, i.e., it is acyclic once you strip away
+ * the back edges.
+ *
+ * Each back edge X -> Y defines a loop: block X is the header block,
+ * block Y is the back edge block, and the loop consists of all the
+ * blocks which are dominated by the header block and have a path to
+ * the back edge block that doesn't pass through the header block
+ * (including the header block itself). It can be proved that all the
+ * blocks in such a path (connecting a loop block to the back edge
+ * block without passing through the header block) belong to the same
+ * loop.
+ *
+ * If the input CFG is reducible, each two loops are either disjoint
+ * or one is a strict subset of the other, provided that each block
+ * has at most one incoming back edge. If this condition does not
+ * hold, a synthetic block can be introduced as the only back edge
+ * block for the given header block, with all the previous back edge
+ * now being forward edges to the synthetic block. This is not
+ * currently implemented (but it is rarely found in practice
+ * anyway). */
+static enum vkd3d_result vsir_cfg_scan_loop(struct vsir_block_list *loop, struct vsir_block *block,
+        struct vsir_block *header)
+{
+    enum vkd3d_result ret;
+    size_t i;
+
+    if ((ret = vsir_block_list_add(loop, block)) < 0)
+        return ret;
+
+    if (ret == VKD3D_FALSE || block == header)
+        return VKD3D_OK;
+
+    for (i = 0; i < block->predecessors.count; ++i)
+    {
+        if ((ret = vsir_cfg_scan_loop(loop, block->predecessors.blocks[i], header)) < 0)
+            return ret;
+    }
+
+    return VKD3D_OK;
+}
+
+static enum vkd3d_result vsir_cfg_compute_loops(struct vsir_cfg *cfg)
+{
+    size_t i, j, k;
+
+    if (!(cfg->loops_by_header = vkd3d_calloc(cfg->block_count, sizeof(*cfg->loops_by_header))))
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    memset(cfg->loops_by_header, 0xff, cfg->block_count * sizeof(*cfg->loops_by_header));
+
+    for (i = 0; i < cfg->block_count; ++i)
+    {
+        struct vsir_block *block = &cfg->blocks[i];
+
+        if (block->label == 0)
+            continue;
+
+        for (j = 0; j < block->successors.count; ++j)
+        {
+            struct vsir_block *header = block->successors.blocks[j];
+            struct vsir_block_list *loop;
+            enum vkd3d_result ret;
+
+            /* Is this a back edge? */
+            if (!vsir_block_dominates(header, block))
+                continue;
+
+            if (!vkd3d_array_reserve((void **)&cfg->loops, &cfg->loops_capacity, cfg->loops_count + 1, sizeof(*cfg->loops)))
+                return VKD3D_ERROR_OUT_OF_MEMORY;
+
+            loop = &cfg->loops[cfg->loops_count];
+            vsir_block_list_init(loop);
+
+            if ((ret = vsir_cfg_scan_loop(loop, block, header)) < 0)
+                return ret;
+
+            vsir_block_list_sort(loop);
+
+            if (TRACE_ON())
+            {
+                vkd3d_string_buffer_printf(&cfg->debug_buffer, "Back edge %u -> %u with loop:", block->label, header->label);
+
+                for (k = 0; k < loop->count; ++k)
+                    vkd3d_string_buffer_printf(&cfg->debug_buffer, " %u", loop->blocks[k]->label);
+
+                TRACE("%s\n", cfg->debug_buffer.buffer);
+                vkd3d_string_buffer_clear(&cfg->debug_buffer);
+            }
+
+            if (cfg->loops_by_header[header->label - 1] != SIZE_MAX)
+            {
+                FIXME("Block %u is header to more than one loop, this is not implemented.\n", header->label);
+                vkd3d_shader_error(cfg->message_context, &header->begin->location, VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED,
+                        "Block %u is header to more than one loop, this is not implemented.", header->label);
+                return VKD3D_ERROR_NOT_IMPLEMENTED;
+            }
+
+            cfg->loops_by_header[header->label - 1] = cfg->loops_count;
+
+            ++cfg->loops_count;
         }
     }
 
+    return VKD3D_OK;
+}
+
+struct vsir_cfg_node_sorter
+{
+    struct vsir_cfg *cfg;
+    struct vsir_cfg_node_sorter_stack_item
+    {
+        struct vsir_block_list *loop;
+        unsigned int seen_count;
+    } *stack;
+    size_t stack_count, stack_capacity;
+    struct vsir_block_list available_blocks;
+};
+
+static enum vkd3d_result vsir_cfg_node_sorter_make_node_available(struct vsir_cfg_node_sorter *sorter, struct vsir_block *block)
+{
+    struct vsir_block_list *loop = NULL;
+    struct vsir_cfg_node_sorter_stack_item *item;
+    enum vkd3d_result ret;
+
+    if (sorter->cfg->loops_by_header[block->label - 1] != SIZE_MAX)
+        loop = &sorter->cfg->loops[sorter->cfg->loops_by_header[block->label - 1]];
+
+    if ((ret = vsir_block_list_add_checked(&sorter->available_blocks, block)) < 0)
+        return ret;
+
+    if (!loop)
+        return VKD3D_OK;
+
+    if (!vkd3d_array_reserve((void **)&sorter->stack, &sorter->stack_capacity, sorter->stack_count + 1, sizeof(*sorter->stack)))
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+
+    item = &sorter->stack[sorter->stack_count++];
+    item->loop = loop;
+    item->seen_count = 0;
+
+    return VKD3D_OK;
+}
+
+/* Topologically sort the blocks according to the forward edges. By
+ * definition if the input CFG is reducible then its forward edges
+ * form a DAG, so a topological sorting exists. In order to compute it
+ * we keep an array with the incoming degree for each block and an
+ * available list of all the blocks whose incoming degree has reached
+ * zero. At each step we pick a block from the available list and
+ * strip it away from the graph, updating the incoming degrees and
+ * available list.
+ *
+ * In principle at each step we can pick whatever node we want from
+ * the available list, and will get a topological sort
+ * anyway. However, we use these two criteria to give to the computed
+ * order additional properties:
+ *
+ *  1. we keep track of which loops we're into, and pick blocks
+ *     belonging to the current innermost loop, so that loops are kept
+ *     contiguous in the order; this can always be done when the input
+ *     CFG is reducible;
+ *
+ *  2. subject to the requirement above, we always pick the most
+ *     recently added block to the available list, because this tends
+ *     to keep related blocks and require fewer control flow
+ *     primitives.
+ */
+static enum vkd3d_result vsir_cfg_sort_nodes(struct vsir_cfg *cfg)
+{
+    struct vsir_cfg_node_sorter sorter = { .cfg = cfg };
+    unsigned int *in_degrees = NULL;
+    enum vkd3d_result ret;
+    size_t i;
+
+    if (!(in_degrees = vkd3d_calloc(cfg->block_count, sizeof(*in_degrees))))
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+
+    for (i = 0; i < cfg->block_count; ++i)
+    {
+        struct vsir_block *block = &cfg->blocks[i];
+
+        if (block->label == 0)
+        {
+            in_degrees[i] = UINT_MAX;
+            continue;
+        }
+
+        in_degrees[i] = block->predecessors.count;
+
+        /* Do not count back edges. */
+        if (cfg->loops_by_header[i] != SIZE_MAX)
+        {
+            assert(in_degrees[i] > 0);
+            in_degrees[i] -= 1;
+        }
+
+        if (in_degrees[i] == 0 && block != cfg->entry)
+        {
+            WARN("Unexpected entry point %u.\n", block->label);
+            vkd3d_shader_error(cfg->message_context, &block->begin->location, VKD3D_SHADER_ERROR_VSIR_INVALID_CONTROL_FLOW,
+                    "Block %u is unreachable from the entry point.", block->label);
+            ret = VKD3D_ERROR_INVALID_SHADER;
+            goto fail;
+        }
+    }
+
+    if (in_degrees[cfg->entry->label - 1] != 0)
+    {
+        WARN("Entry point has %u incoming forward edges.\n", in_degrees[cfg->entry->label - 1]);
+        vkd3d_shader_error(cfg->message_context, &cfg->entry->begin->location, VKD3D_SHADER_ERROR_VSIR_INVALID_CONTROL_FLOW,
+                "The entry point block has %u incoming forward edges.", in_degrees[cfg->entry->label - 1]);
+        ret = VKD3D_ERROR_INVALID_SHADER;
+        goto fail;
+    }
+
+    vsir_block_list_init(&sorter.available_blocks);
+
+    if ((ret = vsir_cfg_node_sorter_make_node_available(&sorter, cfg->entry)) < 0)
+        goto fail;
+
+    while (sorter.available_blocks.count != 0)
+    {
+        struct vsir_cfg_node_sorter_stack_item *inner_stack_item = NULL;
+        struct vsir_block *block;
+        size_t new_seen_count;
+
+        if (sorter.stack_count != 0)
+            inner_stack_item = &sorter.stack[sorter.stack_count - 1];
+
+        for (i = sorter.available_blocks.count - 1; ; --i)
+        {
+            if (i == SIZE_MAX)
+            {
+                ERR("Couldn't find any viable next block, is the input CFG reducible?\n");
+                ret = VKD3D_ERROR_INVALID_SHADER;
+                goto fail;
+            }
+
+            block = sorter.available_blocks.blocks[i];
+
+            if (!inner_stack_item || vsir_block_list_search(inner_stack_item->loop, block))
+                break;
+        }
+
+        vsir_block_list_remove_index(&sorter.available_blocks, i);
+        if ((ret = vsir_block_list_add_checked(&cfg->order, block)) < 0)
+            goto fail;
+
+        /* Close loops: since each loop is a strict subset of any
+         * outer loop, we just need to track how many blocks we've
+         * seen; when I close a loop I mark the same number of seen
+         * blocks for the next outer loop. */
+        new_seen_count = 1;
+        while (sorter.stack_count != 0)
+        {
+            inner_stack_item = &sorter.stack[sorter.stack_count - 1];
+
+            inner_stack_item->seen_count += new_seen_count;
+
+            assert(inner_stack_item->seen_count <= inner_stack_item->loop->count);
+            if (inner_stack_item->seen_count != inner_stack_item->loop->count)
+                break;
+
+            new_seen_count = inner_stack_item->loop->count;
+            --sorter.stack_count;
+        }
+
+        /* Remove (forward) edges and make new nodes available. */
+        for (i = 0; i < block->successors.count; ++i)
+        {
+            struct vsir_block *successor = block->successors.blocks[i];
+
+            if (vsir_block_dominates(successor, block))
+                continue;
+
+            assert(in_degrees[successor->label - 1] > 0);
+            --in_degrees[successor->label - 1];
+
+            if (in_degrees[successor->label - 1] == 0)
+            {
+                if ((ret = vsir_cfg_node_sorter_make_node_available(&sorter, successor)) < 0)
+                    goto fail;
+            }
+        }
+    }
+
+    if (cfg->order.count != cfg->block_count)
+    {
+        /* There is a cycle of forward edges. */
+        WARN("The control flow graph is not reducible.\n");
+        vkd3d_shader_error(cfg->message_context, &cfg->entry->begin->location, VKD3D_SHADER_ERROR_VSIR_INVALID_CONTROL_FLOW,
+                "The control flow graph is not reducible.");
+        ret = VKD3D_ERROR_INVALID_SHADER;
+        goto fail;
+    }
+
+    assert(sorter.stack_count == 0);
+
+    vkd3d_free(in_degrees);
+    vkd3d_free(sorter.stack);
+    vsir_block_list_cleanup(&sorter.available_blocks);
+
     if (TRACE_ON())
-        vkd3d_string_buffer_cleanup(&buf);
+    {
+        vkd3d_string_buffer_printf(&cfg->debug_buffer, "Block order:");
+
+        for (i = 0; i < cfg->order.count; ++i)
+            vkd3d_string_buffer_printf(&cfg->debug_buffer, " %u", cfg->order.blocks[i]->label);
+
+        TRACE("%s\n", cfg->debug_buffer.buffer);
+        vkd3d_string_buffer_clear(&cfg->debug_buffer);
+    }
+
+    return VKD3D_OK;
+
+fail:
+    vkd3d_free(in_degrees);
+    vkd3d_free(sorter.stack);
+    vsir_block_list_cleanup(&sorter.available_blocks);
+
+    return ret;
 }
 
 enum vkd3d_result vkd3d_shader_normalise(struct vkd3d_shader_parser *parser,
@@ -3343,10 +3727,22 @@ enum vkd3d_result vkd3d_shader_normalise(struct vkd3d_shader_parser *parser,
         if ((result = materialize_ssas_to_temps(parser)) < 0)
             return result;
 
-        if ((result = vsir_cfg_init(&cfg, &parser->program)) < 0)
+        if ((result = vsir_cfg_init(&cfg, &parser->program, parser->message_context)) < 0)
             return result;
 
         vsir_cfg_compute_dominators(&cfg);
+
+        if ((result = vsir_cfg_compute_loops(&cfg)) < 0)
+        {
+            vsir_cfg_cleanup(&cfg);
+            return result;
+        }
+
+        if ((result = vsir_cfg_sort_nodes(&cfg)) < 0)
+        {
+            vsir_cfg_cleanup(&cfg);
+            return result;
+        }
 
         if ((result = simple_structurizer_run(parser)) < 0)
         {

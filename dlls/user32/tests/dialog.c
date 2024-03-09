@@ -2069,93 +2069,6 @@ static void test_MessageBoxFontTest(void)
 }
 
 static const char msgbox_title[] = "%5!z9ZXw*ia;57n/FGl.bCH,Su\"mfKN;foCqAU\'j6AmoJgAc_D:Z0A\'E6PF_O/w";
-static WCHAR expectedOK[] =
-{
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'%','5','!','z','9','Z','X','w','*','i','a',';','5','7','n','/','F','G','l','.','b','C','H',',','S','u','"','m','f',
-'K','N',';','f','o','C','q','A','U','\'','j','6','A','m','o','J','g','A','c','_','D',':','Z','0','A','\'','E','6','P',
-'F','_','O','/','w','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'M','e','s','s','a','g','e','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'O','K',' ',' ',' ','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n', 0
-};
-static WCHAR expectedOkCancel[] =
-{
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'%','5','!','z','9','Z','X','w','*','i','a',';','5','7','n','/','F','G','l','.','b','C','H',',','S','u','"','m','f',
-'K','N',';','f','o','C','q','A','U','\'','j','6','A','m','o','J','g','A','c','_','D',':','Z','0','A','\'','E','6','P',
-'F','_','O','/','w','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'M','e','s','s','a','g','e','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'O','K',' ',' ',' ','C','a','n','c','e','l',' ',' ',' ','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n', 0
-};
-static WCHAR expectedAbortRetryIgnore[] =
-{
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'%','5','!','z','9','Z','X','w','*','i','a',';','5','7','n','/','F','G','l','.','b','C','H',',','S','u','"','m','f',
-'K','N',';','f','o','C','q','A','U','\'','j','6','A','m','o','J','g','A','c','_','D',':','Z','0','A','\'','E','6','P',
-'F','_','O','/','w','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'M','e','s','s','a','g','e','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'A','b','o','r','t',' ',' ',' ','R','e','t','r','y',' ',' ',' ','I','g','n','o','r','e',' ',' ',' ','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n', 0
-};
-
-static WCHAR expectedYesNo[] =
-{
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'%','5','!','z','9','Z','X','w','*','i','a',';','5','7','n','/','F','G','l','.','b','C','H',',','S','u','"','m','f',
-'K','N',';','f','o','C','q','A','U','\'','j','6','A','m','o','J','g','A','c','_','D',':','Z','0','A','\'','E','6','P',
-'F','_','O','/','w','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'M','e','s','s','a','g','e','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'Y','e','s',' ',' ',' ','N','o',' ',' ',' ','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n', 0
-};
-static WCHAR expectedYesNoCancel[] =
-{
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'%','5','!','z','9','Z','X','w','*','i','a',';','5','7','n','/','F','G','l','.','b','C','H',',','S','u','"','m','f',
-'K','N',';','f','o','C','q','A','U','\'','j','6','A','m','o','J','g','A','c','_','D',':','Z','0','A','\'','E','6','P',
-'F','_','O','/','w','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'M','e','s','s','a','g','e','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'Y','e','s',' ',' ',' ','N','o',' ',' ',' ','C','a','n','c','e','l',' ',' ',' ','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n', 0
-};
-static WCHAR expectedRetryCancel[] =
-{
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'%','5','!','z','9','Z','X','w','*','i','a',';','5','7','n','/','F','G','l','.','b','C','H',',','S','u','"','m','f',
-'K','N',';','f','o','C','q','A','U','\'','j','6','A','m','o','J','g','A','c','_','D',':','Z','0','A','\'','E','6','P',
-'F','_','O','/','w','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'M','e','s','s','a','g','e','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'R','e','t','r','y',' ',' ',' ','C','a','n','c','e','l',' ',' ',' ','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n', 0
-};
-static WCHAR expectedCancelTryContinue[] =
-{
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'%','5','!','z','9','Z','X','w','*','i','a',';','5','7','n','/','F','G','l','.','b','C','H',',','S','u','"','m','f',
-'K','N',';','f','o','C','q','A','U','\'','j','6','A','m','o','J','g','A','c','_','D',':','Z','0','A','\'','E','6','P',
-'F','_','O','/','w','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'M','e','s','s','a','g','e','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n',
-'C','a','n','c','e','l',' ',' ',' ','T','r','y',' ','A','g','a','i','n',' ',' ',' ','C','o','n','t','i','n','u','e',' ',' ',' ','\r','\n',
-'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','\r','\n', 0
-};
-
-BOOL non_english = FALSE;
 
 DWORD WINAPI WorkerThread(void *param)
 {
@@ -2174,7 +2087,6 @@ DWORD WINAPI WorkerThread(void *param)
         lstrcmpA(msgbox_title, windowTitle) == 0))
     {
         hwndMbox = FindWindowA(NULL, msgbox_title);
-
         if (!IsWindow(hwndMbox))
             goto cleanup;
     }
@@ -2188,16 +2100,11 @@ DWORD WINAPI WorkerThread(void *param)
 
         if (text != NULL)
         {
-            if(non_english)
-                ok(lstrlenW(text) > 0, "Empty string on clipboard\n");
-            else
+            succeeded = lstrcmpW(expected, text) == 0;
+            if(!succeeded)
             {
-                succeeded = lstrcmpW(expected, text) == 0;
-                if(!succeeded)
-                {
-                    ok(0, "%s\n", wine_dbgstr_w(text));
-                    ok(0, "%s\n", wine_dbgstr_w(expected));
-                }
+                ok(0, "%s\n", wine_dbgstr_w(text));
+                ok(0, "%s\n", wine_dbgstr_w(expected));
             }
 
             GlobalUnlock(textHandle);
@@ -2215,38 +2122,115 @@ DWORD WINAPI WorkerThread(void *param)
     PostMessageA(hwndMbox, WM_CLOSE, 0, 0);
 
 cleanup:
-    ok(succeeded || non_english, "Failed to get string.\n");
+    ok(succeeded, "Failed to get string.\n");
 
     return 0;
+}
+
+static WCHAR *shell_get_resource_string(UINT id)
+{
+    const WCHAR *resource;
+    unsigned int size;
+    WCHAR *ret;
+
+    size = LoadStringW(NULL, id, (WCHAR *)&resource, 0);
+    ret = malloc((size + 1) * sizeof(WCHAR));
+    memcpy(ret, resource, size * sizeof(WCHAR));
+    ret[size] = 0;
+    return ret;
+}
+
+static WCHAR *create_msgbox_message(UINT res1, UINT res2, UINT res3)
+{
+    /*
+    ---------------------------
+    Dialog Title
+    ---------------------------
+    Dialog Message
+    ---------------------------
+    Button(s) Text. OK<+3 spaces>
+    ---------------------------
+    */
+    static WCHAR text[512];
+    WCHAR *btn1text = shell_get_resource_string(res1);
+
+    lstrcpyW(text, L"---------------------------\r\n");
+    lstrcatW(text, L"%5!z9ZXw*ia;57n/FGl.bCH,Su\"mfKN;foCqAU\'j6AmoJgAc_D:Z0A\'E6PF_O/w");
+    lstrcatW(text, L"\r\n");
+    lstrcatW(text, L"---------------------------\r\n");
+    lstrcatW(text, L"Message\r\n");
+    lstrcatW(text, L"---------------------------\r\n");
+
+    lstrcatW(text, btn1text);
+    lstrcatW(text, L"   ");
+    free(btn1text);
+
+    if (res2 != 0)
+    {
+        WCHAR *btn2text = shell_get_resource_string(res2);
+        lstrcatW(text, btn2text);
+        lstrcatW(text, L"   ");
+        free(btn2text);
+    }
+    if (res3 != 0)
+    {
+        WCHAR *btn3text = shell_get_resource_string(res3);
+        lstrcatW(text, btn3text);
+        lstrcatW(text, L"   ");
+        free(btn3text);
+    }
+    lstrcatW(text, L"\r\n---------------------------\r\n");
+
+    return text;
 }
 
 static void test_MessageBox_WM_COPY_Test(void)
 {
     DWORD tid = 0;
+    WCHAR *expected;
+    HANDLE hthread;
 
-    non_english = (PRIMARYLANGID(GetUserDefaultLangID()) != LANG_ENGLISH);
-    trace("non_english %d\n", non_english);
-
-    CreateThread(NULL, 0, WorkerThread, &expectedOK, 0, &tid);
+    expected = create_msgbox_message(102 /* OK */, 0, 0);
+    hthread = CreateThread(NULL, 0, WorkerThread, expected, 0, &tid);
     MessageBoxA(NULL, "Message", msgbox_title, MB_OK);
+    ok(WaitForSingleObject(hthread, 2000) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(hthread);
 
-    CreateThread(NULL, 0, WorkerThread, &expectedOkCancel, 0, &tid);
+    expected = create_msgbox_message(102 /* OK */, 105 /* Cancel */, 0);
+    hthread = CreateThread(NULL, 0, WorkerThread, expected, 0, &tid);
     MessageBoxA(NULL, "Message", msgbox_title, MB_OKCANCEL);
+    ok(WaitForSingleObject(hthread, 2000) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(hthread);
 
-    CreateThread(NULL, 0, WorkerThread, &expectedAbortRetryIgnore, 0, &tid);
+    expected = create_msgbox_message(103 /* Abort */, 104 /* Retry */, 106 /* Ignore */);
+    hthread = CreateThread(NULL, 0, WorkerThread, expected, 0, &tid);
     MessageBoxA(NULL, "Message", msgbox_title, MB_ABORTRETRYIGNORE);
+    ok(WaitForSingleObject(hthread, 2000) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(hthread);
 
-    CreateThread(NULL, 0, WorkerThread, &expectedYesNo, 0, &tid);
+    expected = create_msgbox_message(100 /* Yes */, 101 /* No */, 0);
+    hthread = CreateThread(NULL, 0, WorkerThread, expected, 0, &tid);
     MessageBoxA(NULL, "Message", msgbox_title, MB_YESNO);
+    ok(WaitForSingleObject(hthread, 2000) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(hthread);
 
-    CreateThread(NULL, 0, WorkerThread, &expectedYesNoCancel, 0, &tid);
+    expected = create_msgbox_message(100 /* Yes */, 101 /* No */, 105 /* Cancel */);
+    hthread = CreateThread(NULL, 0, WorkerThread, expected, 0, &tid);
     MessageBoxA(NULL, "Message", msgbox_title, MB_YESNOCANCEL);
+    ok(WaitForSingleObject(hthread, 2000) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(hthread);
 
-    CreateThread(NULL, 0, WorkerThread, &expectedRetryCancel, 0, &tid);
+    expected = create_msgbox_message(104 /* Retry */, 105 /* Cancel */, 0);
+    hthread = CreateThread(NULL, 0, WorkerThread, expected, 0, &tid);
     MessageBoxA(NULL, "Message", msgbox_title, MB_RETRYCANCEL);
+    ok(WaitForSingleObject(hthread, 2000) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(hthread);
 
-    CreateThread(NULL, 0, WorkerThread, &expectedCancelTryContinue, 0, &tid);
+    expected = create_msgbox_message(105 /* Cancel */, 107 /* Try again */, 108 /* Continue */);
+    hthread = CreateThread(NULL, 0, WorkerThread, expected, 0, &tid);
     MessageBoxA(NULL, "Message", msgbox_title, MB_CANCELTRYCONTINUE);
+    ok(WaitForSingleObject(hthread, 2000) == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(hthread);
 }
 
 static void test_SaveRestoreFocus(void)
@@ -2621,6 +2605,7 @@ START_TEST(dialog)
 
     if (!RegisterWindowClasses()) assert(0);
 
+    test_MessageBox_WM_COPY_Test();
     test_dialog_custom_data();
     test_GetNextDlgItem();
     test_IsDialogMessage();
@@ -2636,5 +2621,4 @@ START_TEST(dialog)
     test_timer_message();
     test_MessageBox();
     test_capture_release();
-    test_MessageBox_WM_COPY_Test();
 }

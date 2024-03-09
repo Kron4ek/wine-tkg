@@ -5259,22 +5259,126 @@ static void test_SHCreateDefaultContextMenu(void)
     Cleanup();
 }
 
+static void test_enum_format(IDataObject *data_obj)
+{
+    IEnumFORMATETC *enum1, *enum2;
+    FORMATETC formats[4];
+    STGMEDIUM medium;
+    ULONG count, ref;
+    HRESULT hr;
+
+    hr = IDataObject_EnumFormatEtc(data_obj, DATADIR_GET, &enum1);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IEnumFORMATETC_Next(enum1, 1, formats, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Next(enum1, 1, formats, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Next(enum1, 1, formats, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Next(enum1, 1, formats, NULL);
+    todo_wine ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+
+    hr = IEnumFORMATETC_Reset(enum1);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    count = 0xdeadbeef;
+    hr = IEnumFORMATETC_Next(enum1, 1, formats, &count);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(count == 1, "Got count %lu.\n", count);
+    hr = IEnumFORMATETC_Next(enum1, 1, formats, &count);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(count == 1, "Got count %lu.\n", count);
+    hr = IEnumFORMATETC_Next(enum1, 1, formats, &count);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(count == 1, "Got count %lu.\n", count);
+    hr = IEnumFORMATETC_Next(enum1, 1, formats, &count);
+    todo_wine ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    todo_wine ok(!count, "Got count %lu.\n", count);
+
+    hr = IEnumFORMATETC_Reset(enum1);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IEnumFORMATETC_Next(enum1, 2, formats, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Next(enum1, 2, formats, &count);
+    todo_wine ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    todo_wine ok(count == 1, "Got count %lu.\n", count);
+
+    hr = IEnumFORMATETC_Reset(enum1);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IEnumFORMATETC_Next(enum1, 4, formats, &count);
+    todo_wine ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    todo_wine ok(count == 3, "Got count %lu.\n", count);
+
+    hr = IEnumFORMATETC_Clone(enum1, &enum2);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IEnumFORMATETC_Reset(enum1);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Skip(enum1, 4);
+    todo_wine ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Skip(enum1, 1);
+    ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Reset(enum1);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Skip(enum1, 3);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Skip(enum1, 1);
+    todo_wine ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Next(enum1, 1, formats, NULL);
+    todo_wine ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Next(enum2, 1, formats, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    /* Adding another format does not affect existing enum objects. */
+    medium.tymed = TYMED_HGLOBAL;
+    medium.pUnkForRelease = NULL;
+    medium.hGlobal = GlobalAlloc(GMEM_MOVEABLE, 1);
+    formats[0].cfFormat = RegisterClipboardFormatW(L"bogus_format2");
+    formats[0].ptd = NULL;
+    formats[0].dwAspect = DVASPECT_CONTENT;
+    formats[0].lindex = -1;
+    formats[0].tymed = TYMED_HGLOBAL;
+    hr = IDataObject_SetData(data_obj, &formats[0], &medium, TRUE);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IEnumFORMATETC_Reset(enum1);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IEnumFORMATETC_Next(enum1, 4, formats, &count);
+    todo_wine ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    todo_wine ok(count == 3, "Got count %lu.\n", count);
+
+    ref = IEnumFORMATETC_Release(enum1);
+    ok(!ref, "Got outstanding refcount %ld.\n", ref);
+    ref = IEnumFORMATETC_Release(enum2);
+    ok(!ref, "Got outstanding refcount %ld.\n", ref);
+}
+
 static void test_DataObject(void)
 {
+    IEnumFORMATETC *enum_format;
     IShellFolder *desktop;
     IDataObject *data_obj;
-    HRESULT hres;
+    WCHAR format_name[50];
+    HRESULT hr;
     IEnumIDList *peidl;
     LPITEMIDLIST apidl;
     FORMATETC fmt;
     DWORD cf_shellidlist;
     STGMEDIUM medium;
+    HGLOBAL global;
+    int *value;
+    int ret;
+
+    static const DWORD enum_directions[] = {DATADIR_GET, DATADIR_SET};
 
     SHGetDesktopFolder(&desktop);
 
-    hres = IShellFolder_EnumObjects(desktop, NULL,
+    hr = IShellFolder_EnumObjects(desktop, NULL,
             SHCONTF_NONFOLDERS|SHCONTF_FOLDERS|SHCONTF_INCLUDEHIDDEN, &peidl);
-    ok(hres == S_OK, "got %lx\n", hres);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     if(IEnumIDList_Next(peidl, 1, &apidl, NULL) != S_OK) {
         skip("no files on desktop - skipping GetDataObject tests\n");
@@ -5284,9 +5388,9 @@ static void test_DataObject(void)
     }
     IEnumIDList_Release(peidl);
 
-    hres = IShellFolder_GetUIObjectOf(desktop, NULL, 1, (LPCITEMIDLIST*)&apidl,
+    hr = IShellFolder_GetUIObjectOf(desktop, NULL, 1, (LPCITEMIDLIST*)&apidl,
             &IID_IDataObject, NULL, (void**)&data_obj);
-    ok(hres == S_OK, "got %lx\n", hres);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ILFree(apidl);
     IShellFolder_Release(desktop);
 
@@ -5296,22 +5400,122 @@ static void test_DataObject(void)
     fmt.dwAspect = DVASPECT_CONTENT;
     fmt.lindex = -1;
     fmt.tymed = TYMED_HGLOBAL;
-    hres = IDataObject_QueryGetData(data_obj, &fmt);
-    ok(hres == S_OK, "got %lx\n", hres);
+    hr = IDataObject_QueryGetData(data_obj, &fmt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     fmt.tymed = TYMED_HGLOBAL | TYMED_ISTREAM;
-    hres = IDataObject_QueryGetData(data_obj, &fmt);
-    ok(hres == S_OK, "got %lx\n", hres);
+    hr = IDataObject_QueryGetData(data_obj, &fmt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     fmt.tymed = TYMED_ISTREAM;
-    hres = IDataObject_QueryGetData(data_obj, &fmt);
-    todo_wine ok(hres == S_FALSE, "got %lx\n", hres);
+    hr = IDataObject_QueryGetData(data_obj, &fmt);
+    ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    hr = IDataObject_GetData(data_obj, &fmt, &medium);
+    ok(hr == DV_E_FORMATETC, "Got hr %#lx.\n", hr);
 
     fmt.tymed = TYMED_HGLOBAL | TYMED_ISTREAM;
-    hres = IDataObject_GetData(data_obj, &fmt, &medium);
-    ok(hres == S_OK, "got %lx\n", hres);
+    hr = IDataObject_GetData(data_obj, &fmt, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(medium.tymed == TYMED_HGLOBAL, "medium.tymed = %lx\n", medium.tymed);
     ReleaseStgMedium(&medium);
+
+    fmt.cfFormat = RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECTW);
+    hr = IDataObject_GetData(data_obj, &fmt, &medium);
+    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    if (hr == S_OK)
+    {
+        ok(medium.tymed == TYMED_HGLOBAL, "medium.tymed = %lx\n", medium.tymed);
+        value = GlobalLock(medium.hGlobal);
+        ok(*value == DROPEFFECT_LINK, "Got value %#x.\n", *value);
+        GlobalUnlock(medium.hGlobal);
+        ReleaseStgMedium(&medium);
+    }
+
+    fmt.cfFormat = CF_HDROP;
+    hr = IDataObject_GetData(data_obj, &fmt, &medium);
+    todo_wine ok(hr == DV_E_FORMATETC, "Got hr %#lx.\n", hr);
+    fmt.cfFormat = RegisterClipboardFormatA(CFSTR_FILENAMEA);
+    hr = IDataObject_GetData(data_obj, &fmt, &medium);
+    todo_wine ok(hr == DV_E_FORMATETC, "Got hr %#lx.\n", hr);
+    fmt.cfFormat = RegisterClipboardFormatW(CFSTR_FILENAMEW);
+    hr = IDataObject_GetData(data_obj, &fmt, &medium);
+    todo_wine ok(hr == DV_E_FORMATETC, "Got hr %#lx.\n", hr);
+
+    fmt.cfFormat = RegisterClipboardFormatW(L"bogus_format");
+
+    hr = IDataObject_QueryGetData(data_obj, &fmt);
+    ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    hr = IDataObject_GetData(data_obj, &fmt, &medium);
+    ok(hr == DV_E_FORMATETC, "Got hr %#lx.\n", hr);
+
+    global = GlobalAlloc(GMEM_MOVEABLE, sizeof(*value));
+    value = GlobalLock(global);
+    *value = 0xabacab;
+    GlobalUnlock(global);
+    medium.tymed = TYMED_HGLOBAL;
+    medium.pUnkForRelease = NULL;
+    medium.hGlobal = global;
+    fmt.tymed = TYMED_HGLOBAL;
+    hr = IDataObject_SetData(data_obj, &fmt, &medium, FALSE);
+    ok(hr == E_INVALIDARG || hr == E_NOTIMPL /* win 8+ */, "Got hr %#lx.\n", hr);
+    hr = IDataObject_SetData(data_obj, &fmt, &medium, TRUE);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IDataObject_QueryGetData(data_obj, &fmt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    memset(&medium, 0xcc, sizeof(medium));
+    hr = IDataObject_GetData(data_obj, &fmt, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(medium.hGlobal && medium.hGlobal != global, "Got global %p.\n", medium.hGlobal);
+    value = GlobalLock(medium.hGlobal);
+    ok(*value == 0xabacab, "Got value %#x.\n", *value);
+    GlobalUnlock(medium.hGlobal);
+    ReleaseStgMedium(&medium);
+
+    for (unsigned int i = 0; i < ARRAY_SIZE(enum_directions); ++i)
+    {
+        hr = IDataObject_EnumFormatEtc(data_obj, enum_directions[i], &enum_format);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        memset(&fmt, 0xcc, sizeof(fmt));
+        hr = IEnumFORMATETC_Next(enum_format, 1, &fmt, NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ret = GetClipboardFormatNameW(fmt.cfFormat, format_name, ARRAY_SIZE(format_name));
+        ok(ret > 0, "Got %d.\n",ret);
+        ok(!wcscmp(format_name, CFSTR_SHELLIDLISTW), "Got clipboard format %s.\n", debugstr_w(format_name));
+        ok(!fmt.ptd, "Got target device %p.\n", fmt.ptd);
+        ok(fmt.dwAspect == DVASPECT_CONTENT, "Got aspect %#lx.\n", fmt.dwAspect);
+        ok(fmt.lindex == -1, "Got index %ld.\n", fmt.lindex);
+        ok(fmt.tymed == TYMED_HGLOBAL, "Got tymed %#lx.\n", fmt.tymed);
+
+        hr = IEnumFORMATETC_Next(enum_format, 1, &fmt, NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ret = GetClipboardFormatNameW(fmt.cfFormat, format_name, ARRAY_SIZE(format_name));
+        todo_wine ok(ret > 0, "Got %d.\n",ret);
+        if (ret > 0)
+            ok(!wcscmp(format_name, CFSTR_PREFERREDDROPEFFECTW), "Got clipboard format %s.\n", debugstr_w(format_name));
+        ok(!fmt.ptd, "Got target device %p.\n", fmt.ptd);
+        ok(fmt.dwAspect == DVASPECT_CONTENT, "Got aspect %#lx.\n", fmt.dwAspect);
+        ok(fmt.lindex == -1, "Got index %ld.\n", fmt.lindex);
+        ok(fmt.tymed == TYMED_HGLOBAL, "Got tymed %#lx.\n", fmt.tymed);
+
+        hr = IEnumFORMATETC_Next(enum_format, 1, &fmt, NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ret = GetClipboardFormatNameW(fmt.cfFormat, format_name, ARRAY_SIZE(format_name));
+        ok(ret > 0, "Got %d.\n",ret);
+        todo_wine ok(!wcscmp(format_name, L"bogus_format"), "Got clipboard format %s.\n", debugstr_w(format_name));
+        ok(!fmt.ptd, "Got target device %p.\n", fmt.ptd);
+        ok(fmt.dwAspect == DVASPECT_CONTENT, "Got aspect %#lx.\n", fmt.dwAspect);
+        ok(fmt.lindex == -1, "Got index %ld.\n", fmt.lindex);
+        ok(fmt.tymed == TYMED_HGLOBAL, "Got tymed %#lx.\n", fmt.tymed);
+
+        hr = IEnumFORMATETC_Next(enum_format, 1, &fmt, NULL);
+        todo_wine ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+
+        IEnumFORMATETC_Release(enum_format);
+    }
+
+    test_enum_format(data_obj);
 
     IDataObject_Release(data_obj);
 }
@@ -5604,6 +5808,292 @@ static void test_SHBindToFolderIDListParent(void)
     ok(pidl_last == NULL, "got %p\n", pidl_last);
 }
 
+static void test_copy_paste(void)
+{
+    CMINVOKECOMMANDINFO invoke_info = {.cbSize = sizeof(invoke_info)};
+    WCHAR cwd[MAX_PATH], temp_path[MAX_PATH], path[MAX_PATH];
+    ITEMIDLIST *pidl, *src_pidl, *dst_pidl, *pidls[2];
+    IShellFolder *tmp_folder, *dst_folder;
+    IContextMenu *src_menu, *dst_menu;
+    const DROPFILES *dropfiles;
+    const WCHAR *filenameW;
+    IDataObject *data_obj;
+    const CIDA *cida;
+    STGMEDIUM medium;
+    FORMATETC format;
+    DWORD *effect;
+    HRESULT hr;
+    BOOL ret;
+
+    format.dwAspect = DVASPECT_CONTENT;
+    format.ptd = NULL;
+    format.tymed = TYMED_HGLOBAL;
+    format.lindex = -1;
+
+    GetCurrentDirectoryW(ARRAY_SIZE(cwd), cwd);
+    GetTempPathW(ARRAY_SIZE(temp_path), temp_path);
+    SetCurrentDirectoryW(temp_path);
+
+    ret = CreateDirectoryW(L"testcopy_src", NULL);
+    ok(ret, "Got error %lu.\n", GetLastError());
+
+    ret = CreateDirectoryW(L"testcopy_dst", NULL);
+    ok(ret, "Got error %lu.\n", GetLastError());
+
+    hr = SHParseDisplayName(temp_path, NULL, &pidl, 0, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = SHBindToObject(NULL, pidl, NULL, &IID_IShellFolder, (void **)&tmp_folder);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ILFree(pidl);
+
+    hr = IShellFolder_ParseDisplayName(tmp_folder, NULL, NULL, (WCHAR *)L"testcopy_src", NULL, &src_pidl, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IShellFolder_ParseDisplayName(tmp_folder, NULL, NULL, (WCHAR *)L"testcopy_dst", NULL, &dst_pidl, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IShellFolder_BindToObject(tmp_folder, dst_pidl, NULL, &IID_IShellFolder, (void **)&dst_folder);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IShellFolder_GetUIObjectOf(tmp_folder, NULL, 1, (const ITEMIDLIST **)&src_pidl,
+            &IID_IContextMenu, NULL, (void **)&src_menu);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = OleSetClipboard(NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    /* Cut. */
+
+    invoke_info.lpVerb = "cut";
+    hr = IContextMenu_InvokeCommand(src_menu, &invoke_info);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = OleGetClipboard(&data_obj);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    trace("%p ole %p shell %p\n", data_obj->lpVtbl->SetData, GetModuleHandleW(L"ole32"), GetModuleHandleW(L"shell32"));
+
+    format.cfFormat = RegisterClipboardFormatW(CFSTR_SHELLIDLISTW);
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ReleaseStgMedium(&medium);
+    format.cfFormat = CF_HDROP;
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ReleaseStgMedium(&medium);
+    format.cfFormat = RegisterClipboardFormatA(CFSTR_FILENAMEA);
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ReleaseStgMedium(&medium);
+    format.cfFormat = RegisterClipboardFormatW(CFSTR_FILENAMEW);
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ReleaseStgMedium(&medium);
+
+    format.cfFormat = RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECTW);
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    IDataObject_Release(data_obj);
+
+    ret = GetFileAttributesW(L"testcopy_src");
+    ok(ret != INVALID_FILE_ATTRIBUTES, "Got %#x.\n", ret);
+
+    hr = IShellFolder_GetUIObjectOf(tmp_folder, NULL, 1, (const ITEMIDLIST **)&dst_pidl,
+            &IID_IContextMenu, NULL, (void **)&dst_menu);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    invoke_info.lpVerb = "paste";
+    hr = IContextMenu_InvokeCommand(dst_menu, &invoke_info);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ret = MoveFileExW(L"testcopy_dst/testcopy_src", L"testcopy_src", 0);
+    ok(ret, "Got error %lu.\n", GetLastError());
+
+    /* Copy. */
+
+    invoke_info.lpVerb = "copy";
+    hr = IContextMenu_InvokeCommand(src_menu, &invoke_info);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = OleGetClipboard(&data_obj);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    format.cfFormat = RegisterClipboardFormatW(CFSTR_SHELLIDLISTW);
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ReleaseStgMedium(&medium);
+
+    format.cfFormat = RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECTW);
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    IDataObject_Release(data_obj);
+
+    ret = GetFileAttributesW(L"testcopy_src");
+    ok(ret != INVALID_FILE_ATTRIBUTES, "Got %#x.\n", ret);
+
+    hr = IShellFolder_GetUIObjectOf(tmp_folder, NULL, 1, (const ITEMIDLIST **)&dst_pidl,
+            &IID_IContextMenu, NULL, (void **)&dst_menu);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    invoke_info.lpVerb = "paste";
+    hr = IContextMenu_InvokeCommand(dst_menu, &invoke_info);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ret = GetFileAttributesW(L"testcopy_src");
+    ok(ret != INVALID_FILE_ATTRIBUTES, "Got %#x.\n", ret);
+
+    ret = RemoveDirectoryW(L"testcopy_dst/testcopy_src");
+    ok(ret, "Got error %lu.\n", GetLastError());
+
+    /* Manually change the drop effect back to "cut". */
+
+    hr = OleGetClipboard(&data_obj);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    format.cfFormat = RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECTW);
+    medium.tymed = TYMED_HGLOBAL;
+    medium.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+    effect = GlobalLock(medium.hGlobal);
+    *effect = DROPEFFECT_MOVE;
+    GlobalUnlock(medium.hGlobal);
+    hr = IDataObject_SetData(data_obj, &format, &medium, TRUE);
+    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    IDataObject_Release(data_obj);
+
+    invoke_info.lpVerb = "paste";
+    hr = IContextMenu_InvokeCommand(dst_menu, &invoke_info);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ret = MoveFileExW(L"testcopy_dst/testcopy_src", L"testcopy_src", 0);
+    todo_wine ok(ret, "Got error %lu.\n", GetLastError());
+    if (!ret && GetLastError() == ERROR_ALREADY_EXISTS)
+        RemoveDirectoryW(L"testcopy_dst/testcopy_src");
+
+    /* Paste into a background menu. */
+
+    IContextMenu_Release(dst_menu);
+
+    invoke_info.lpVerb = "copy";
+    hr = IContextMenu_InvokeCommand(src_menu, &invoke_info);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IShellFolder_CreateViewObject(dst_folder, NULL, &IID_IContextMenu, (void **)&dst_menu);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    invoke_info.lpVerb = "paste";
+    hr = IContextMenu_InvokeCommand(dst_menu, &invoke_info);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ret = GetFileAttributesW(L"testcopy_src");
+    ok(ret != INVALID_FILE_ATTRIBUTES, "Got %#x.\n", ret);
+
+    ret = RemoveDirectoryW(L"testcopy_dst/testcopy_src");
+    ok(ret, "Got error %lu.\n", GetLastError());
+
+    /* Paste into a selection comprising multiple directories. In this case the
+     * first directory is used, and the second is just ignored.
+     * This same behaviour can of course be observed when using the UI. */
+
+    IContextMenu_Release(dst_menu);
+
+    ret = CreateDirectoryW(L"testcopy_dst2", NULL);
+    ok(ret, "Got error %lu.\n", GetLastError());
+
+    hr = IShellFolder_ParseDisplayName(tmp_folder, NULL, NULL, (WCHAR *)L"testcopy_dst2", NULL, &pidls[0], NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    pidls[1] = dst_pidl;
+
+    hr = IShellFolder_GetUIObjectOf(tmp_folder, NULL, 2, (const ITEMIDLIST **)pidls,
+            &IID_IContextMenu, NULL, (void **)&dst_menu);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    invoke_info.lpVerb = "paste";
+    hr = IContextMenu_InvokeCommand(dst_menu, &invoke_info);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ret = RemoveDirectoryW(L"testcopy_dst2/testcopy_src");
+    ok(ret, "Got error %lu.\n", GetLastError());
+    ret = GetFileAttributesW(L"testcopy_dst/testcopy_src");
+    ok(ret == INVALID_FILE_ATTRIBUTES, "Got %#x.\n", ret);
+
+    /* Cut multiple files, and test the clipboard contents. */
+
+    invoke_info.lpVerb = "cut";
+    hr = IContextMenu_InvokeCommand(dst_menu, &invoke_info);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = OleGetClipboard(&data_obj);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    format.cfFormat = RegisterClipboardFormatW(CFSTR_SHELLIDLISTW);
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    cida = GlobalLock(medium.hGlobal);
+    ok(cida->cidl == 2, "Got count %u.\n", cida->cidl);
+    GlobalUnlock(medium.hGlobal);
+    ReleaseStgMedium(&medium);
+
+    format.cfFormat = CF_HDROP;
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    dropfiles = GlobalLock(medium.hGlobal);
+    ok(dropfiles->pFiles == sizeof(DROPFILES), "Got offset %lu.\n", dropfiles->pFiles);
+    ok(dropfiles->fWide == TRUE, "Got wide %u.\n", dropfiles->fWide);
+    filenameW = (const WCHAR *)((const char *)dropfiles + dropfiles->pFiles);
+    swprintf(path, ARRAY_SIZE(path), L"%stestcopy_dst2", temp_path);
+    ok(!wcscmp(filenameW, path), "Got path %s.\n", debugstr_w(filenameW));
+    filenameW += wcslen(filenameW) + 1;
+    swprintf(path, ARRAY_SIZE(path), L"%stestcopy_dst", temp_path);
+    ok(!wcscmp(filenameW, path), "Got path %s.\n", debugstr_w(filenameW));
+    filenameW += wcslen(filenameW) + 1;
+    ok(!filenameW[0], "Got path %s.\n", debugstr_w(filenameW));
+    GlobalUnlock(medium.hGlobal);
+    ReleaseStgMedium(&medium);
+
+    format.cfFormat = RegisterClipboardFormatA(CFSTR_FILENAMEA);
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ReleaseStgMedium(&medium);
+
+    format.cfFormat = RegisterClipboardFormatW(CFSTR_FILENAMEW);
+    hr = IDataObject_GetData(data_obj, &format, &medium);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    filenameW = GlobalLock(medium.hGlobal);
+    swprintf(path, ARRAY_SIZE(path), L"%stestcopy_dst2", temp_path);
+    ok(!wcscmp(filenameW, path), "Got path %s.\n", debugstr_w(filenameW));
+    GlobalUnlock(medium.hGlobal);
+    ReleaseStgMedium(&medium);
+
+    IDataObject_Release(data_obj);
+
+    ILFree(pidls[0]);
+
+    /* Paste with nothing in the clipboard. */
+
+    hr = OleSetClipboard(NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    invoke_info.lpVerb = "paste";
+    hr = IContextMenu_InvokeCommand(dst_menu, &invoke_info);
+    ok(hr == S_OK || hr == S_FALSE /* win10 < 1809 */, "Got hr %#lx.\n", hr);
+
+    ret = RemoveDirectoryW(L"testcopy_src");
+    ok(ret, "Got error %lu.\n", GetLastError());
+    ret = RemoveDirectoryW(L"testcopy_dst");
+    ok(ret, "Got error %lu.\n", GetLastError());
+    ret = RemoveDirectoryW(L"testcopy_dst2");
+    ok(ret, "Got error %lu.\n", GetLastError());
+
+    IContextMenu_Release(src_menu);
+    IContextMenu_Release(dst_menu);
+    ILFree(src_pidl);
+    ILFree(dst_pidl);
+    IShellFolder_Release(dst_folder);
+    IShellFolder_Release(tmp_folder);
+    SetCurrentDirectoryW(cwd);
+}
+
 START_TEST(shlfolder)
 {
     init_function_pointers();
@@ -5651,6 +6141,7 @@ START_TEST(shlfolder)
     test_SHLimitInputEdit();
     test_SHGetSetFolderCustomSettings();
     test_SHOpenFolderAndSelectItems();
+    test_copy_paste();
 
     OleUninitialize();
 }

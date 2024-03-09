@@ -210,6 +210,7 @@ struct module* module_new(struct process* pcs, const WCHAR* name,
     module->module.BaseOfImage = mod_addr;
     module->module.ImageSize = size;
     module_set_module(module, name);
+    module->alt_modulename = NULL;
     module->module.ImageName[0] = '\0';
     lstrcpynW(module->module.LoadedImageName, name, ARRAY_SIZE(module->module.LoadedImageName));
     module->module.SymType = SymDeferred;
@@ -288,6 +289,7 @@ struct module* module_find_by_nameW(const struct process* pcs, const WCHAR* name
     for (module = pcs->lmodules; module; module = module->next)
     {
         if (!wcsicmp(name, module->modulename)) return module;
+        if (module->alt_modulename && !wcsicmp(name, module->alt_modulename)) return module;
     }
     SetLastError(ERROR_INVALID_NAME);
     return NULL;
@@ -374,8 +376,12 @@ BOOL module_load_debug(struct module* module)
     if (module->module.SymType == SymDeferred)
     {
         BOOL ret;
-        
-        if (module->is_virtual) ret = FALSE;
+
+        if (module->is_virtual)
+        {
+            module->module.SymType = SymVirtual;
+            ret = TRUE;
+        }
         else if (module->type == DMT_PE)
         {
             idslW64.SizeOfStruct = sizeof(idslW64);
@@ -398,8 +404,9 @@ BOOL module_load_debug(struct module* module)
         if (!ret) module->module.SymType = SymNone;
         assert(module->module.SymType != SymDeferred);
         module->module.NumSyms = module->ht_symbols.num_elts;
+        return ret;
     }
-    return module->module.SymType != SymNone;
+    return TRUE;
 }
 
 /******************************************************************
@@ -410,7 +417,6 @@ BOOL module_load_debug(struct module* module)
  *   the module itself)
  * - if the module has no debug info and has an ELF container, then return the ELF
  *   container (and also force the ELF container's debug info loading if deferred)
- * - otherwise return the module itself if it has some debug info
  */
 BOOL module_get_debug(struct module_pair* pair)
 {
@@ -940,7 +946,7 @@ DWORD64 WINAPI  SymLoadModuleExW(HANDLE hProcess, HANDLE hFile, PCWSTR wImageNam
 
     if (!(pcs = process_find_by_handle(hProcess))) return 0;
 
-    if (Flags & ~(SLMFLAG_VIRTUAL))
+    if (Flags & ~(SLMFLAG_VIRTUAL | SLMFLAG_NO_SYMBOLS))
         FIXME("Unsupported Flags %08lx for %s\n", Flags, debugstr_w(wImageName));
 
     /* Trying to load a new module at the same address of an existing one,
@@ -956,45 +962,48 @@ DWORD64 WINAPI  SymLoadModuleExW(HANDLE hProcess, HANDLE hFile, PCWSTR wImageNam
             }
         }
 
-    pcs->loader->synchronize_module_list(pcs);
-
     /* this is a Wine extension to the API just to redo the synchronisation */
-    if (!wImageName && !hFile) return 0;
+    if (!wImageName && !hFile && !Flags)
+    {
+        pcs->loader->synchronize_module_list(pcs);
+        return 0;
+    }
 
     if (Flags & SLMFLAG_VIRTUAL)
     {
-        if (!wImageName) return 0;
+        if (!wImageName) wImageName = L"";
         module = module_new(pcs, wImageName, DMT_PE, FALSE, TRUE, BaseOfDll, SizeOfDll, 0, 0, IMAGE_FILE_MACHINE_UNKNOWN);
         if (!module) return 0;
-        module->module.SymType = SymVirtual;
     }
-    /* check if it's a builtin PE module with a containing ELF module */
-    else if (wImageName && module_is_container_loaded(pcs, wImageName, BaseOfDll))
+    else
     {
-        /* force the loading of DLL as builtin */
-        module = pe_load_builtin_module(pcs, wImageName, BaseOfDll, SizeOfDll);
-    }
-    if (!module)
-    {
-        /* otherwise, try a regular PE module */
-        if (!(module = pe_load_native_module(pcs, wImageName, hFile, BaseOfDll, SizeOfDll)) &&
-            wImageName)
+        /* try PE image */
+        module = pe_load_native_module(pcs, wImageName, hFile, BaseOfDll, SizeOfDll);
+        if (!module && wImageName)
         {
-            /* and finally an ELF or Mach-O module */
-            module = pcs->loader->load_module(pcs, wImageName, BaseOfDll);
+            /* It could be either a dll.so file (for which we need the corresponding
+             * system module) or a system module.
+             * In both cases, ensure system module list is up-to-date.
+             */
+            pcs->loader->synchronize_module_list(pcs);
+            if (module_is_container_loaded(pcs, wImageName, BaseOfDll))
+                module = pe_load_builtin_module(pcs, wImageName, BaseOfDll, SizeOfDll);
+            /* at last, try ELF or Mach-O module */
+            if (!module)
+                module = pcs->loader->load_module(pcs, wImageName, BaseOfDll);
+        }
+        if (!module)
+        {
+            WARN("Couldn't locate %s\n", debugstr_w(wImageName));
+            SetLastError(ERROR_NO_MORE_FILES);
+            return 0;
         }
     }
-    if (!module)
-    {
-        WARN("Couldn't locate %s\n", debugstr_w(wImageName));
-        SetLastError(ERROR_NO_MORE_FILES);
-        return 0;
-    }
-    /* by default module_new fills module.ModuleName from a derivation
-     * of LoadedImageName. Overwrite it, if we have better information
-     */
+    if (Flags & SLMFLAG_NO_SYMBOLS) module->dont_load_symbols = 1;
+
+    /* Store alternate name for module when provided. */
     if (wModuleName)
-        module_set_module(module, wModuleName);
+        module->alt_modulename = pool_wcsdup(&module->pool, wModuleName);
     if (wImageName)
         lstrcpynW(module->module.ImageName, wImageName, ARRAY_SIZE(module->module.ImageName));
 
@@ -1526,6 +1535,11 @@ BOOL  WINAPI SymGetModuleInfoW64(HANDLE hProcess, DWORD64 dwAddr,
 
     if (dbghelp_opt_real_path && module->real_path)
         lstrcpynW(miw64.LoadedImageName, module->real_path, ARRAY_SIZE(miw64.LoadedImageName));
+    else if (miw64.SymType == SymDeferred)
+    {
+        miw64.LoadedImageName[0] = '\0';
+        miw64.TimeDateStamp = 0;
+    }
 
     /* update debug information from container if any */
     if (module->module.SymType == SymNone)

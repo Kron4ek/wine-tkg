@@ -179,7 +179,6 @@ static void fx_write_context_init(struct hlsl_ctx *ctx, const struct fx_write_co
 static int fx_write_context_cleanup(struct fx_write_context *fx)
 {
     struct type_entry *type, *next_type;
-    int status = fx->status;
 
     rb_destroy(&fx->strings, string_storage_destroy, NULL);
 
@@ -189,7 +188,7 @@ static int fx_write_context_cleanup(struct fx_write_context *fx)
         vkd3d_free(type);
     }
 
-    return status;
+    return fx->ctx->result;
 }
 
 static bool technique_matches_version(const struct hlsl_ir_var *var, const struct fx_write_context *fx)
@@ -285,6 +284,7 @@ static uint32_t get_fx_4_numeric_type_description(const struct hlsl_type *type, 
         [HLSL_TYPE_UINT ] = 3,
         [HLSL_TYPE_BOOL ] = 4,
     };
+    struct hlsl_ctx *ctx = fx->ctx;
     uint32_t value = 0;
 
     switch (type->class)
@@ -295,8 +295,7 @@ static uint32_t get_fx_4_numeric_type_description(const struct hlsl_type *type, 
             value |= numeric_type_class[type->class];
             break;
         default:
-            FIXME("Unexpected type class %u.\n", type->class);
-            set_status(fx, VKD3D_ERROR_NOT_IMPLEMENTED);
+            hlsl_fixme(ctx, &ctx->location, "Not implemented for type class %u.\n", type->class);
             return 0;
     }
 
@@ -309,8 +308,7 @@ static uint32_t get_fx_4_numeric_type_description(const struct hlsl_type *type, 
             value |= (numeric_base_type[type->base_type] << NUMERIC_BASE_TYPE_SHIFT);
             break;
         default:
-            FIXME("Unexpected base type %u.\n", type->base_type);
-            set_status(fx, VKD3D_ERROR_NOT_IMPLEMENTED);
+            hlsl_fixme(ctx, &ctx->location, "Not implemented for base type %u.\n", type->base_type);
             return 0;
     }
 
@@ -359,6 +357,7 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
         [HLSL_SAMPLER_DIM_BUFFER]            = "RWBuffer",
         [HLSL_SAMPLER_DIM_STRUCTURED_BUFFER] = "RWStructuredBuffer",
     };
+    struct hlsl_ctx *ctx = fx->ctx;
 
     /* Resolve arrays to element type and number of elements. */
     if (type->class == HLSL_CLASS_ARRAY)
@@ -387,8 +386,7 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
             put_u32_unaligned(buffer, variable_type[type->class]);
             break;
         default:
-            FIXME("Writing type class %u is not implemented.\n", type->class);
-            set_status(fx, VKD3D_ERROR_NOT_IMPLEMENTED);
+            hlsl_fixme(ctx, &ctx->location, "Writing type class %u is not implemented.\n", type->class);
             return 0;
     }
 
@@ -466,8 +464,7 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
                 put_u32_unaligned(buffer, uav_type[type->sampler_dim]);
                 break;
             default:
-                FIXME("Object type %u is not supported.\n", type->base_type);
-                set_status(fx, VKD3D_ERROR_NOT_IMPLEMENTED);
+                hlsl_fixme(ctx, &ctx->location, "Object type %u is not supported.\n", type->base_type);
                 return 0;
         }
     }
@@ -643,14 +640,17 @@ static int hlsl_fx_2_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
     vkd3d_free(fx.unstructured.data);
     vkd3d_free(fx.structured.data);
 
-    if (!fx.status)
+    if (!fx.technique_count)
+        hlsl_error(ctx, &ctx->location, VKD3D_SHADER_ERROR_HLSL_MISSING_TECHNIQUE, "No techniques found.");
+
+    if (fx.status < 0)
+        ctx->result = fx.status;
+
+    if (!ctx->result)
     {
         out->code = buffer.data;
         out->size = buffer.size;
     }
-
-    if (fx.status < 0)
-        ctx->result = fx.status;
 
     return fx_write_context_cleanup(&fx);
 }
@@ -870,14 +870,14 @@ static int hlsl_fx_4_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
 
     set_status(&fx, buffer.status);
 
-    if (!fx.status)
+    if (fx.status < 0)
+        ctx->result = fx.status;
+
+    if (!ctx->result)
     {
         out->code = buffer.data;
         out->size = buffer.size;
     }
-
-    if (fx.status < 0)
-        ctx->result = fx.status;
 
     return fx_write_context_cleanup(&fx);
 }
@@ -933,14 +933,14 @@ static int hlsl_fx_5_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
 
     set_status(&fx, buffer.status);
 
-    if (!fx.status)
+    if (fx.status < 0)
+        ctx->result = fx.status;
+
+    if (!ctx->result)
     {
         out->code = buffer.data;
         out->size = buffer.size;
     }
-
-    if (fx.status < 0)
-        ctx->result = fx.status;
 
     return fx_write_context_cleanup(&fx);
 }

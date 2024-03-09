@@ -250,6 +250,7 @@ static const char * const shader_opcode_names[] =
     [VKD3DSIH_NOT                             ] = "not",
     [VKD3DSIH_NRM                             ] = "nrm",
     [VKD3DSIH_OR                              ] = "or",
+    [VKD3DSIH_ORD                             ] = "ord",
     [VKD3DSIH_PHASE                           ] = "phase",
     [VKD3DSIH_PHI                             ] = "phi",
     [VKD3DSIH_POW                             ] = "pow",
@@ -321,6 +322,7 @@ static const char * const shader_opcode_names[] =
     [VKD3DSIH_UMAX                            ] = "umax",
     [VKD3DSIH_UMIN                            ] = "umin",
     [VKD3DSIH_UMUL                            ] = "umul",
+    [VKD3DSIH_UNO                             ] = "uno",
     [VKD3DSIH_USHR                            ] = "ushr",
     [VKD3DSIH_UTOD                            ] = "utod",
     [VKD3DSIH_UTOF                            ] = "utof",
@@ -370,6 +372,7 @@ struct vkd3d_d3d_asm_colours
     const char *swizzle;
     const char *version;
     const char *write_mask;
+    const char *label;
 };
 
 struct vkd3d_d3d_asm_compiler
@@ -377,7 +380,7 @@ struct vkd3d_d3d_asm_compiler
     struct vkd3d_string_buffer buffer;
     struct vkd3d_shader_version shader_version;
     struct vkd3d_d3d_asm_colours colours;
-    enum vsir_asm_dialect dialect;
+    enum vsir_asm_flags flags;
     const struct vkd3d_shader_instruction *current;
 };
 
@@ -920,7 +923,7 @@ static void shader_dump_register(struct vkd3d_d3d_asm_compiler *compiler, const 
     static const char * const rastout_reg_names[] = {"oPos", "oFog", "oPts"};
     static const char * const misctype_reg_names[] = {"vPos", "vFace"};
 
-    shader_addline(buffer, "%s", compiler->colours.reg);
+    shader_addline(buffer, "%s", reg->type == VKD3DSPR_LABEL ? compiler->colours.label : compiler->colours.reg);
     switch (reg->type)
     {
         case VKD3DSPR_TEMP:
@@ -1370,7 +1373,7 @@ static void shader_dump_reg_type(struct vkd3d_d3d_asm_compiler *compiler,
     struct vkd3d_string_buffer *buffer = &compiler->buffer;
     const char *dimension;
 
-    if (compiler->dialect != VSIR_ASM_VSIR)
+    if (!(compiler->flags & VSIR_ASM_FLAG_DUMP_TYPES))
         return;
 
     if (reg->dimension < ARRAY_SIZE(dimensions))
@@ -1383,31 +1386,45 @@ static void shader_dump_reg_type(struct vkd3d_d3d_asm_compiler *compiler,
     shader_addline(buffer, ">");
 }
 
+static void shader_print_write_mask(struct vkd3d_d3d_asm_compiler *compiler,
+        const char *prefix, uint32_t mask, const char *suffix)
+{
+    unsigned int i = 0;
+    char buffer[5];
+
+    if (mask == 0)
+    {
+        vkd3d_string_buffer_printf(&compiler->buffer, "%s%s", prefix, suffix);
+        return;
+    }
+
+    if (mask & VKD3DSP_WRITEMASK_0)
+        buffer[i++] = 'x';
+    if (mask & VKD3DSP_WRITEMASK_1)
+        buffer[i++] = 'y';
+    if (mask & VKD3DSP_WRITEMASK_2)
+        buffer[i++] = 'z';
+    if (mask & VKD3DSP_WRITEMASK_3)
+        buffer[i++] = 'w';
+    buffer[i++] = '\0';
+
+    vkd3d_string_buffer_printf(&compiler->buffer, "%s.%s%s%s%s", prefix,
+            compiler->colours.write_mask, buffer, compiler->colours.reset, suffix);
+}
+
 static void shader_dump_dst_param(struct vkd3d_d3d_asm_compiler *compiler,
         const struct vkd3d_shader_dst_param *param, bool is_declaration)
 {
-    struct vkd3d_string_buffer *buffer = &compiler->buffer;
     uint32_t write_mask = param->write_mask;
 
     shader_dump_register(compiler, &param->reg, is_declaration);
 
     if (write_mask && param->reg.dimension == VSIR_DIMENSION_VEC4)
     {
-        static const char write_mask_chars[] = "xyzw";
-
         if (data_type_is_64_bit(param->reg.data_type))
             write_mask = vsir_write_mask_32_from_64(write_mask);
 
-        shader_addline(buffer, ".%s", compiler->colours.write_mask);
-        if (write_mask & VKD3DSP_WRITEMASK_0)
-            shader_addline(buffer, "%c", write_mask_chars[0]);
-        if (write_mask & VKD3DSP_WRITEMASK_1)
-            shader_addline(buffer, "%c", write_mask_chars[1]);
-        if (write_mask & VKD3DSP_WRITEMASK_2)
-            shader_addline(buffer, "%c", write_mask_chars[2]);
-        if (write_mask & VKD3DSP_WRITEMASK_3)
-            shader_addline(buffer, "%c", write_mask_chars[3]);
-        shader_addline(buffer, "%s", compiler->colours.reset);
+        shader_print_write_mask(compiler, "", write_mask, "");
     }
 
     shader_print_precision(compiler, &param->reg);
@@ -2037,21 +2054,186 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
     shader_addline(buffer, "\n");
 }
 
+static const char *get_sysval_semantic_name(enum vkd3d_shader_sysval_semantic semantic)
+{
+    switch (semantic)
+    {
+        case VKD3D_SHADER_SV_NONE:                      return "NONE";
+        case VKD3D_SHADER_SV_POSITION:                  return "POS";
+        case VKD3D_SHADER_SV_CLIP_DISTANCE:             return "CLIPDST";
+        case VKD3D_SHADER_SV_CULL_DISTANCE:             return "CULLDST";
+        case VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX: return "RTINDEX";
+        case VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX:      return "VPINDEX";
+        case VKD3D_SHADER_SV_VERTEX_ID:                 return "VERTID";
+        case VKD3D_SHADER_SV_PRIMITIVE_ID:              return "PRIMID";
+        case VKD3D_SHADER_SV_INSTANCE_ID:               return "INSTID";
+        case VKD3D_SHADER_SV_IS_FRONT_FACE:             return "FFACE";
+        case VKD3D_SHADER_SV_SAMPLE_INDEX:              return "SAMPLE";
+        case VKD3D_SHADER_SV_TESS_FACTOR_QUADEDGE:      return "QUADEDGE";
+        case VKD3D_SHADER_SV_TESS_FACTOR_QUADINT:       return "QUADINT";
+        case VKD3D_SHADER_SV_TESS_FACTOR_TRIEDGE:       return "TRIEDGE";
+        case VKD3D_SHADER_SV_TESS_FACTOR_TRIINT:        return "TRIINT";
+        case VKD3D_SHADER_SV_TESS_FACTOR_LINEDET:       return "LINEDET";
+        case VKD3D_SHADER_SV_TESS_FACTOR_LINEDEN:       return "LINEDEN";
+        case VKD3D_SHADER_SV_TARGET:                    return "TARGET";
+        case VKD3D_SHADER_SV_DEPTH:                     return "DEPTH";
+        case VKD3D_SHADER_SV_COVERAGE:                  return "COVERAGE";
+        case VKD3D_SHADER_SV_DEPTH_GREATER_EQUAL:       return "DEPTHGE";
+        case VKD3D_SHADER_SV_DEPTH_LESS_EQUAL:          return "DEPTHLE";
+        case VKD3D_SHADER_SV_STENCIL_REF:               return "STENCILREF";
+        default:                                        return "??";
+    }
+}
+
+static const char *get_component_type_name(enum vkd3d_shader_component_type type)
+{
+    switch (type)
+    {
+        case VKD3D_SHADER_COMPONENT_VOID:   return "void";
+        case VKD3D_SHADER_COMPONENT_UINT:   return "uint";
+        case VKD3D_SHADER_COMPONENT_INT:    return "int";
+        case VKD3D_SHADER_COMPONENT_FLOAT:  return "float";
+        case VKD3D_SHADER_COMPONENT_BOOL:   return "bool";
+        case VKD3D_SHADER_COMPONENT_DOUBLE: return "double";
+        case VKD3D_SHADER_COMPONENT_UINT64: return "uint64";
+        default:                            return "??";
+    }
+}
+
+static const char *get_minimum_precision_name(enum vkd3d_shader_minimum_precision prec)
+{
+    switch (prec)
+    {
+        case VKD3D_SHADER_MINIMUM_PRECISION_NONE:      return "NONE";
+        case VKD3D_SHADER_MINIMUM_PRECISION_FLOAT_16:  return "FLOAT_16";
+        case VKD3D_SHADER_MINIMUM_PRECISION_FIXED_8_2: return "FIXED_8_2";
+        case VKD3D_SHADER_MINIMUM_PRECISION_INT_16:    return "INT_16";
+        case VKD3D_SHADER_MINIMUM_PRECISION_UINT_16:   return "UINT_16";
+        default:                                       return "??";
+    }
+}
+
+static const char *get_semantic_register_name(enum vkd3d_shader_sysval_semantic semantic)
+{
+    switch (semantic)
+    {
+        case VKD3D_SHADER_SV_DEPTH:               return "oDepth";
+        case VKD3D_SHADER_SV_DEPTH_GREATER_EQUAL: return "oDepthGE";
+        case VKD3D_SHADER_SV_DEPTH_LESS_EQUAL:    return "oDepthLE";
+            /* SV_Coverage has name vCoverage when used as an input,
+             * but it doens't appear in the signature in that case. */
+        case VKD3D_SHADER_SV_COVERAGE:            return "oMask";
+        case VKD3D_SHADER_SV_STENCIL_REF:         return "oStencilRef";
+        default:                                  return "??";
+    }
+}
+
+static enum vkd3d_result dump_signature(struct vkd3d_d3d_asm_compiler *compiler,
+        const char *name, const char *register_name, const struct shader_signature *signature)
+{
+    struct vkd3d_string_buffer *buffer = &compiler->buffer;
+    unsigned int i;
+
+    if (signature->element_count == 0)
+        return VKD3D_OK;
+
+    vkd3d_string_buffer_printf(buffer, "%s%s%s\n",
+            compiler->colours.opcode, name, compiler->colours.reset);
+
+    for (i = 0; i < signature->element_count; ++i)
+    {
+        struct signature_element *element = &signature->elements[i];
+
+        vkd3d_string_buffer_printf(buffer, "%s.param%s %s", compiler->colours.opcode,
+                compiler->colours.reset, element->semantic_name);
+
+        if (element->semantic_index != 0)
+            vkd3d_string_buffer_printf(buffer, "%u", element->semantic_index);
+
+        if (element->register_index != -1)
+        {
+            shader_print_write_mask(compiler, "", element->mask, "");
+            vkd3d_string_buffer_printf(buffer, ", %s%s%d%s", compiler->colours.reg,
+                    register_name, element->register_index, compiler->colours.reset);
+            shader_print_write_mask(compiler, "", element->used_mask, "");
+        }
+        else
+        {
+            vkd3d_string_buffer_printf(buffer, ", %s%s%s", compiler->colours.reg,
+                    get_semantic_register_name(element->sysval_semantic), compiler->colours.reset);
+        }
+
+        if (!element->component_type && !element->sysval_semantic
+                && !element->min_precision && !element->stream_index)
+            goto done;
+
+        vkd3d_string_buffer_printf(buffer, ", %s",
+                get_component_type_name(element->component_type));
+
+        if (!element->sysval_semantic && !element->min_precision && !element->stream_index)
+            goto done;
+
+        vkd3d_string_buffer_printf(buffer, ", %s",
+                get_sysval_semantic_name(element->sysval_semantic));
+
+        if (!element->min_precision && !element->stream_index)
+            goto done;
+
+        vkd3d_string_buffer_printf(buffer, ", %s",
+                get_minimum_precision_name(element->min_precision));
+
+        if (!element->stream_index)
+            goto done;
+
+        vkd3d_string_buffer_printf(buffer, ", m%u",
+                element->stream_index);
+
+    done:
+        vkd3d_string_buffer_printf(buffer, "\n");
+    }
+
+    return VKD3D_OK;
+}
+
+static enum vkd3d_result dump_signatures(struct vkd3d_d3d_asm_compiler *compiler,
+        const struct vkd3d_shader_desc *shader_desc, enum vkd3d_shader_type shader_type)
+{
+    enum vkd3d_result ret;
+
+    if ((ret = dump_signature(compiler, ".input",
+            shader_type == VKD3D_SHADER_TYPE_DOMAIN ? "vicp" : "v",
+            &shader_desc->input_signature)) < 0)
+        return ret;
+
+    if ((ret = dump_signature(compiler, ".output", "o",
+            &shader_desc->output_signature)) < 0)
+        return ret;
+
+    if ((ret = dump_signature(compiler, ".patch_constant",
+            shader_type == VKD3D_SHADER_TYPE_DOMAIN ? "vpc" : "o",
+            &shader_desc->patch_constant_signature)) < 0)
+        return ret;
+
+    vkd3d_string_buffer_printf(&compiler->buffer, "%s.text%s\n",
+            compiler->colours.opcode, compiler->colours.reset);
+
+    return VKD3D_OK;
+}
+
 enum vkd3d_result vkd3d_dxbc_binary_to_text(const struct vsir_program *program,
-        const struct vkd3d_shader_compile_info *compile_info,
-        struct vkd3d_shader_code *out, enum vsir_asm_dialect dialect)
+        const struct vkd3d_shader_desc *shader_desc, const struct vkd3d_shader_compile_info *compile_info,
+        struct vkd3d_shader_code *out, enum vsir_asm_flags flags)
 {
     const struct vkd3d_shader_version *shader_version = &program->shader_version;
     enum vkd3d_shader_compile_option_formatting_flags formatting;
     struct vkd3d_d3d_asm_compiler compiler =
     {
-        .dialect = dialect,
+        .flags = flags,
     };
     enum vkd3d_result result = VKD3D_OK;
     struct vkd3d_string_buffer *buffer;
     unsigned int indent, i, j;
     const char *indent_str;
-    void *code;
 
     static const struct vkd3d_d3d_asm_colours no_colours =
     {
@@ -2064,6 +2246,7 @@ enum vkd3d_result vkd3d_dxbc_binary_to_text(const struct vsir_program *program,
         .swizzle = "",
         .version = "",
         .write_mask = "",
+        .label = "",
     };
     static const struct vkd3d_d3d_asm_colours colours =
     {
@@ -2076,6 +2259,7 @@ enum vkd3d_result vkd3d_dxbc_binary_to_text(const struct vsir_program *program,
         .swizzle = "\x1b[93m",
         .version = "\x1b[36m",
         .write_mask = "\x1b[93m",
+        .label = "\x1b[91m",
     };
 
     formatting = VKD3D_SHADER_COMPILE_OPTION_FORMATTING_INDENT
@@ -2108,6 +2292,17 @@ enum vkd3d_result vkd3d_dxbc_binary_to_text(const struct vsir_program *program,
     vkd3d_string_buffer_printf(buffer, "%s%s_%u_%u%s\n", compiler.colours.version,
             shader_get_type_prefix(shader_version->type), shader_version->major,
             shader_version->minor, compiler.colours.reset);
+
+    /* The signatures we emit only make sense for DXBC shaders. D3DBC
+     * doesn't even have an explicit concept of signature. */
+    if (formatting & VKD3D_SHADER_COMPILE_OPTION_FORMATTING_IO_SIGNATURES && shader_version->major >= 4)
+    {
+        if ((result = dump_signatures(&compiler, shader_desc, shader_version->type)) < 0)
+        {
+            vkd3d_string_buffer_cleanup(buffer);
+            return result;
+        }
+    }
 
     indent = 0;
     for (i = 0; i < program->instructions.count; ++i)
@@ -2150,18 +2345,7 @@ enum vkd3d_result vkd3d_dxbc_binary_to_text(const struct vsir_program *program,
         }
     }
 
-    if ((code = vkd3d_malloc(buffer->content_size)))
-    {
-        memcpy(code, buffer->buffer, buffer->content_size);
-        out->size = buffer->content_size;
-        out->code = code;
-    }
-    else
-    {
-        result = VKD3D_ERROR_OUT_OF_MEMORY;
-    }
-
-    vkd3d_string_buffer_cleanup(buffer);
+    vkd3d_shader_code_from_string_buffer(out, buffer);
 
     return result;
 }
@@ -2171,7 +2355,7 @@ void vkd3d_shader_trace(const struct vsir_program *program)
     const char *p, *q, *end;
     struct vkd3d_shader_code code;
 
-    if (vkd3d_dxbc_binary_to_text(program, NULL, &code, VSIR_ASM_VSIR) != VKD3D_OK)
+    if (vkd3d_dxbc_binary_to_text(program, NULL, NULL, &code, VSIR_ASM_FLAG_DUMP_TYPES) != VKD3D_OK)
         return;
 
     end = (const char *)code.code + code.size;

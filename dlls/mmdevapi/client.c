@@ -929,10 +929,17 @@ static HRESULT WINAPI client_GetSharedModeEnginePeriod(IAudioClient3 *iface,
                                                 UINT32 *max_period_frames)
 {
     struct audio_client *This = impl_from_IAudioClient3(iface);
-    FIXME("(%p)->(%p, %p, %p, %p, %p) - stub\n", This, format, default_period_frames,
-                                                 unit_period_frames, min_period_frames,
-                                                 max_period_frames);
-    return E_NOTIMPL;
+    FIXME("(%p)->(%p, %p, %p, %p, %p) - partial stub\n",
+          This, format, default_period_frames,
+          unit_period_frames, min_period_frames,
+          max_period_frames);
+
+    *default_period_frames =
+        *min_period_frames =
+        *max_period_frames =
+        format->nSamplesPerSec / 100; /* ~10ms */
+    *unit_period_frames = 1;
+    return S_OK;
 }
 
 static HRESULT WINAPI client_GetCurrentSharedModeEnginePeriod(IAudioClient3 *iface,
@@ -950,8 +957,14 @@ static HRESULT WINAPI client_InitializeSharedAudioStream(IAudioClient3 *iface, D
                                                   const GUID *session_guid)
 {
     struct audio_client *This = impl_from_IAudioClient3(iface);
-    FIXME("(%p)->(0x%lx, %u, %p, %s) - stub\n", This, flags, period_frames, format, debugstr_guid(session_guid));
-    return E_NOTIMPL;
+    REFERENCE_TIME duration;
+    FIXME("(%p)->(0x%lx, %u, %p, %s) - partial stub\n", This, flags, period_frames, format, debugstr_guid(session_guid));
+
+    if (!format)
+        return E_POINTER;
+
+    duration = period_frames * (REFERENCE_TIME)10000000 / format->nSamplesPerSec;
+    return client_Initialize(iface, AUDCLNT_SHAREMODE_SHARED, flags, duration, 0, format, session_guid);
 }
 
 const IAudioClient3Vtbl AudioClient3_Vtbl =

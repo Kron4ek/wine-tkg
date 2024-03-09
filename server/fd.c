@@ -2025,8 +2025,6 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
     int root_fd = -1;
     int rw_mode;
     char *path;
-    int do_chmod = 0;
-    int created = (flags & O_CREAT);
 
     if (((options & FILE_DELETE_ON_CLOSE) && !(access & DELETE)) ||
         ((options & FILE_DIRECTORY_FILE) && (flags & O_TRUNC)))
@@ -2058,19 +2056,13 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
     /* create the directory if needed */
     if ((options & FILE_DIRECTORY_FILE) && (flags & O_CREAT))
     {
-        if (mkdir( name, *mode | S_IRUSR ) != -1)
-        {
-            /* remove S_IRUSR later, after we have opened the directory */
-            do_chmod = !(*mode & S_IRUSR);
-        }
-        else
+        if (mkdir( name, *mode ) == -1)
         {
             if (errno != EEXIST || (flags & O_EXCL))
             {
                 file_set_error();
                 goto error;
             }
-            created = 0;
         }
         flags &= ~(O_CREAT | O_EXCL | O_TRUNC);
     }
@@ -2099,23 +2091,6 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
             if ((access & FILE_UNIX_WRITE_ACCESS) || (flags & O_CREAT))
                 fd->unix_fd = open( name, O_RDONLY | (flags & ~(O_TRUNC | O_CREAT | O_EXCL)), *mode );
         }
-        else if (errno == EACCES)
-        {
-            /* try to change permissions temporarily to open a file descriptor */
-            if (!(access & ((FILE_UNIX_WRITE_ACCESS | FILE_UNIX_READ_ACCESS | DELETE) & ~FILE_WRITE_ATTRIBUTES)) &&
-                !stat( name, &st ) && st.st_uid == getuid() &&
-                !chmod( name, st.st_mode | S_IRUSR ))
-            {
-                fd->unix_fd = open( name, O_RDONLY | (flags & ~(O_TRUNC | O_CREAT | O_EXCL)), *mode );
-                *mode = st.st_mode;
-                do_chmod = 1;
-            }
-            else
-            {
-                set_error( STATUS_ACCESS_DENIED );
-                goto error;
-            }
-        }
 
         if (fd->unix_fd == -1)
         {
@@ -2124,8 +2099,6 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
                 set_error( STATUS_OBJECT_NAME_INVALID );
             else
                 file_set_error();
-
-            if (do_chmod) chmod( name, *mode );
             goto error;
         }
     }
@@ -2141,7 +2114,6 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
     closed_fd->unix_fd = fd->unix_fd;
     closed_fd->disp_flags = 0;
     closed_fd->unix_name = fd->unix_name;
-    if (do_chmod) chmod( name, *mode );
     fstat( fd->unix_fd, &st );
     *mode = st.st_mode;
 
@@ -2187,7 +2159,7 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
         }
 
         /* can't unlink files if we don't have permission to access */
-        if ((options & FILE_DELETE_ON_CLOSE) && !created &&
+        if ((options & FILE_DELETE_ON_CLOSE) && !(flags & O_CREAT) &&
             !(st.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)))
         {
             set_error( STATUS_CANNOT_DELETE );

@@ -52,6 +52,7 @@ enum vkd3d_shader_api_version
     VKD3D_SHADER_API_VERSION_1_8,
     VKD3D_SHADER_API_VERSION_1_9,
     VKD3D_SHADER_API_VERSION_1_10,
+    VKD3D_SHADER_API_VERSION_1_11,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_API_VERSION),
 };
@@ -147,6 +148,12 @@ enum vkd3d_shader_compile_option_formatting_flags
     VKD3D_SHADER_COMPILE_OPTION_FORMATTING_OFFSETS = 0x00000004,
     VKD3D_SHADER_COMPILE_OPTION_FORMATTING_HEADER  = 0x00000008,
     VKD3D_SHADER_COMPILE_OPTION_FORMATTING_RAW_IDS = 0x00000010,
+    /**
+     * Emit the signatures when disassembling a shader.
+     *
+     * \since 1.12
+     */
+    VKD3D_SHADER_COMPILE_OPTION_FORMATTING_IO_SIGNATURES = 0x00000020,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_FORMATTING_FLAGS),
 };
@@ -199,7 +206,13 @@ enum vkd3d_shader_compile_option_fragment_coordinate_origin
 /** Advertises feature availability. \since 1.11 */
 enum vkd3d_shader_compile_option_feature_flags
 {
+    /** The SPIR-V target environment supports 64-bit integer types. This
+     * corresponds to the "shaderInt64" feature in the Vulkan API, and the
+     * "GL_ARB_gpu_shader_int64" extension in the OpenGL API. */
     VKD3D_SHADER_COMPILE_OPTION_FEATURE_INT64         = 0x00000001,
+    /** The SPIR-V target environment supports 64-bit floating-point types.
+     * This corresponds to the "shaderFloat64" feature in the Vulkan API, and
+     * the "GL_ARB_gpu_shader_fp64" extension in the OpenGL API. */
     VKD3D_SHADER_COMPILE_OPTION_FEATURE_FLOAT64       = 0x00000002,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_FEATURE_FLAGS),
@@ -879,6 +892,8 @@ enum vkd3d_shader_spirv_extension
     VKD3D_SHADER_SPIRV_EXTENSION_EXT_STENCIL_EXPORT,
     /** \since 1.11 */
     VKD3D_SHADER_SPIRV_EXTENSION_EXT_VIEWPORT_INDEX_LAYER,
+    /** \since 1.12 */
+    VKD3D_SHADER_SPIRV_EXTENSION_EXT_FRAGMENT_SHADER_INTERLOCK,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_SPIRV_EXTENSION),
 };
@@ -1984,9 +1999,13 @@ VKD3D_SHADER_API const enum vkd3d_shader_target_type *vkd3d_shader_get_supported
  * - VKD3D_SHADER_SOURCE_DXBC_TPF to VKD3D_SHADER_TARGET_SPIRV_TEXT
  *   (if vkd3d was compiled with SPIRV-Tools)
  * - VKD3D_SHADER_SOURCE_DXBC_TPF to VKD3D_SHADER_TARGET_D3D_ASM
+ * - VKD3D_SHADER_SOURCE_D3D_BYTECODE to VKD3D_SHADER_TARGET_SPIRV_BINARY
+ * - VKD3D_SHADER_SOURCE_D3D_BYTECODE to VKD3D_SHADER_TARGET_SPIRV_TEXT
+ *   (if vkd3d was compiled with SPIRV-Tools)
  * - VKD3D_SHADER_SOURCE_D3D_BYTECODE to VKD3D_SHADER_TARGET_D3D_ASM
  * - VKD3D_SHADER_SOURCE_HLSL to VKD3D_SHADER_TARGET_DXBC_TPF
  * - VKD3D_SHADER_SOURCE_HLSL to VKD3D_SHADER_TARGET_D3D_BYTECODE
+ * - VKD3D_SHADER_SOURCE_HLSL to VKD3D_SHADER_TARGET_FX
  *
  * Supported transformations can also be detected at runtime with the functions
  * vkd3d_shader_get_supported_source_types() and
@@ -1994,14 +2013,17 @@ VKD3D_SHADER_API const enum vkd3d_shader_target_type *vkd3d_shader_get_supported
  *
  * Depending on the source and target types, this function may support the
  * following chained structures:
+ * - vkd3d_shader_descriptor_offset_info
  * - vkd3d_shader_hlsl_source_info
  * - vkd3d_shader_interface_info
- * - vkd3d_shader_varying_map_info
+ * - vkd3d_shader_preprocess_info
+ * - vkd3d_shader_scan_combined_resource_sampler_info
  * - vkd3d_shader_scan_descriptor_info
  * - vkd3d_shader_scan_signature_info
  * - vkd3d_shader_spirv_domain_shader_target_info
  * - vkd3d_shader_spirv_target_info
  * - vkd3d_shader_transform_feedback_info
+ * - vkd3d_shader_varying_map_info
  *
  * \param compile_info A chained structure containing compilation parameters.
  *

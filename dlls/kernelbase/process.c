@@ -29,7 +29,6 @@
 #include "winver.h"
 #include "wincontypes.h"
 #include "winternl.h"
-#include "winuser.h"
 
 #include "kernelbase.h"
 #include "wine/debug.h"
@@ -433,54 +432,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH CloseHandle( HANDLE handle )
 }
 
 
-static BOOL image_needs_elevation( const WCHAR *path )
-{
-    ACTIVATION_CONTEXT_RUN_LEVEL_INFORMATION run_level;
-    BOOL ret = FALSE;
-    HANDLE handle;
-    ACTCTXW ctx;
-
-    ctx.cbSize = sizeof(ctx);
-    ctx.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID;
-    ctx.lpSource = path;
-    ctx.lpResourceName = (const WCHAR *)CREATEPROCESS_MANIFEST_RESOURCE_ID;
-
-    if (RtlCreateActivationContext( &handle, &ctx )) return FALSE;
-
-    if (!RtlQueryInformationActivationContext( 0, handle, NULL, RunlevelInformationInActivationContext,
-                                               &run_level, sizeof(run_level), NULL ))
-    {
-        TRACE( "image requested run level %#x\n", run_level.RunLevel );
-        if (run_level.RunLevel == ACTCTX_RUN_LEVEL_HIGHEST_AVAILABLE
-                || run_level.RunLevel == ACTCTX_RUN_LEVEL_REQUIRE_ADMIN)
-            ret = TRUE;
-    }
-    RtlReleaseActivationContext( handle );
-
-    return ret;
-}
-
-
-static HANDLE get_elevated_token(void)
-{
-    TOKEN_ELEVATION_TYPE type;
-    TOKEN_LINKED_TOKEN linked;
-    NTSTATUS status;
-
-    if ((status = NtQueryInformationToken( GetCurrentThreadEffectiveToken(),
-                                           TokenElevationType, &type, sizeof(type), NULL )))
-        return NULL;
-
-    if (type == TokenElevationTypeFull) return NULL;
-
-    if ((status = NtQueryInformationToken( GetCurrentThreadEffectiveToken(),
-                                           TokenLinkedToken, &linked, sizeof(linked), NULL )))
-        return NULL;
-
-    return linked.LinkedToken;
-}
-
-
 /**********************************************************************
  *           CreateProcessAsUserA   (kernelbase.@)
  */
@@ -654,7 +605,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     WCHAR *p, *tidy_cmdline = cmd_line;
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
     RTL_USER_PROCESS_INFORMATION rtl_info;
-    HANDLE parent = 0, debug = 0, elevated_token = NULL;
+    HANDLE parent = 0, debug = 0;
     ULONG nt_flags = 0;
     USHORT machine = 0;
     NTSTATUS status;
@@ -774,9 +725,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     if (flags & CREATE_BREAKAWAY_FROM_JOB) nt_flags |= PROCESS_CREATE_FLAGS_BREAKAWAY;
     if (flags & CREATE_SUSPENDED) nt_flags |= PROCESS_CREATE_FLAGS_SUSPENDED;
 
-    if (!token && image_needs_elevation( params->ImagePathName.Buffer ))
-        token = elevated_token = get_elevated_token();
-
     status = create_nt_process( token, debug, process_attr, thread_attr,
                                 nt_flags, params, &rtl_info, parent, machine, handle_list, job_list );
     switch (status)
@@ -818,8 +766,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
         TRACE( "started process pid %04lx tid %04lx\n", info->dwProcessId, info->dwThreadId );
     }
 
-done:
-    if (elevated_token) NtClose( elevated_token );
+ done:
     RtlDestroyProcessParameters( params );
     if (tidy_cmdline != cmd_line) HeapFree( GetProcessHeap(), 0, tidy_cmdline );
     return set_ntstatus( status );

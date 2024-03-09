@@ -14,6 +14,7 @@
 
 #include <windef.h>
 #include <winbase.h>
+#include <ntuser.h>
 
 typedef unsigned int obj_handle_t;
 typedef unsigned int user_handle_t;
@@ -325,13 +326,7 @@ typedef union
         unsigned int   msg;
         lparam_t       wparam;
         lparam_t       lparam;
-        struct
-        {
-            unsigned int device;
-            unsigned int usage;
-            unsigned int count;
-            unsigned int length;
-        } hid;
+        struct hid_input hid;
     } hw;
 } hw_input_t;
 
@@ -1119,6 +1114,8 @@ struct set_process_info_request
     int          mask;
     int          priority;
     affinity_t   affinity;
+    obj_handle_t token;
+    char __pad_36[4];
 };
 struct set_process_info_reply
 {
@@ -1126,6 +1123,7 @@ struct set_process_info_reply
 };
 #define SET_PROCESS_INFO_PRIORITY 0x01
 #define SET_PROCESS_INFO_AFFINITY 0x02
+#define SET_PROCESS_INFO_TOKEN    0x04
 
 
 
@@ -2890,7 +2888,6 @@ struct send_hardware_message_reply
     int             new_y;
     char __pad_28[4];
 };
-#define SEND_HWMSG_INJECTED    0x01
 
 
 
@@ -3871,6 +3868,18 @@ struct open_input_desktop_reply
     struct reply_header __header;
     obj_handle_t handle;
     char __pad_12[4];
+};
+
+
+
+struct set_input_desktop_request
+{
+    struct request_header __header;
+    obj_handle_t handle;
+};
+struct set_input_desktop_reply
+{
+    struct reply_header __header;
 };
 
 
@@ -6011,6 +6020,7 @@ enum request
     REQ_create_desktop,
     REQ_open_desktop,
     REQ_open_input_desktop,
+    REQ_set_input_desktop,
     REQ_close_desktop,
     REQ_get_thread_desktop,
     REQ_set_thread_desktop,
@@ -6314,6 +6324,7 @@ union generic_request
     struct create_desktop_request create_desktop_request;
     struct open_desktop_request open_desktop_request;
     struct open_input_desktop_request open_input_desktop_request;
+    struct set_input_desktop_request set_input_desktop_request;
     struct close_desktop_request close_desktop_request;
     struct get_thread_desktop_request get_thread_desktop_request;
     struct set_thread_desktop_request set_thread_desktop_request;
@@ -6615,6 +6626,7 @@ union generic_reply
     struct create_desktop_reply create_desktop_reply;
     struct open_desktop_reply open_desktop_reply;
     struct open_input_desktop_reply open_input_desktop_reply;
+    struct set_input_desktop_reply set_input_desktop_reply;
     struct close_desktop_reply close_desktop_reply;
     struct get_thread_desktop_reply get_thread_desktop_reply;
     struct set_thread_desktop_reply set_thread_desktop_reply;
@@ -6738,7 +6750,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 795
+#define SERVER_PROTOCOL_VERSION 798
 
 /* ### protocol_version end ### */
 

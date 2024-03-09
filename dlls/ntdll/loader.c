@@ -35,6 +35,7 @@
 #include "wine/debug.h"
 #include "wine/list.h"
 #include "ntdll_misc.h"
+#include "ddk/ntddk.h"
 #include "ddk/wdm.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(module);
@@ -147,7 +148,7 @@ typedef struct _wine_modref
 
 static UINT tls_module_count;      /* number of modules with TLS directory */
 static IMAGE_TLS_DIRECTORY *tls_dirs;  /* array of TLS directories */
-LIST_ENTRY tls_links = { &tls_links, &tls_links };
+static LIST_ENTRY tls_links = { &tls_links, &tls_links };
 
 static RTL_CRITICAL_SECTION loader_section;
 static RTL_CRITICAL_SECTION_DEBUG critsect_debug =
@@ -248,17 +249,22 @@ static void module_push_unload_trace( const WINE_MODREF *wm )
 
 #ifdef __arm64ec__
 
+static void update_hybrid_pointer( void *module, const IMAGE_SECTION_HEADER *sec, UINT rva, void *ptr )
+{
+    if (!rva) return;
+
+    if (rva < sec->VirtualAddress || rva >= sec->VirtualAddress + sec->Misc.VirtualSize)
+        ERR( "rva %x outside of section %s (%lx-%lx)\n", rva,
+             sec->Name, sec->VirtualAddress, sec->VirtualAddress + sec->Misc.VirtualSize );
+    else
+        *(void **)get_rva( module, rva ) = ptr;
+}
+
 static void update_hybrid_metadata( void *module, IMAGE_NT_HEADERS *nt,
                                     const IMAGE_ARM64EC_METADATA *metadata )
 {
     DWORD i, protect_old;
     const IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION( nt );
-
-    if (metadata->Version != 1)
-    {
-        ERR( "unknown version %lu\n", metadata->Version );
-        return;
-    }
 
     /* assume that all pointers are in the same section */
 
@@ -272,13 +278,22 @@ static void update_hybrid_metadata( void *module, IMAGE_NT_HEADERS *nt,
 
             NtProtectVirtualMemory( NtCurrentProcess(), &base, &size, PAGE_READWRITE, &protect_old );
 
-#define SET_FUNC(func,val) *(void **)get_rva( module, metadata->func ) = val
+#define SET_FUNC(func,val) update_hybrid_pointer( module, sec, metadata->func, val )
             SET_FUNC( __os_arm64x_dispatch_call, __os_arm64x_check_call );
             SET_FUNC( __os_arm64x_dispatch_call_no_redirect, __os_arm64x_dispatch_call_no_redirect );
             SET_FUNC( __os_arm64x_dispatch_fptr, __os_arm64x_dispatch_fptr );
             SET_FUNC( __os_arm64x_dispatch_icall, __os_arm64x_check_icall );
             SET_FUNC( __os_arm64x_dispatch_icall_cfg, __os_arm64x_check_icall_cfg );
             SET_FUNC( __os_arm64x_dispatch_ret, __os_arm64x_dispatch_ret );
+            SET_FUNC( __os_arm64x_helper0, __os_arm64x_helper0 );
+            SET_FUNC( __os_arm64x_helper1, __os_arm64x_helper1 );
+            SET_FUNC( __os_arm64x_helper2, __os_arm64x_helper2 );
+            SET_FUNC( __os_arm64x_helper3, __os_arm64x_helper3 );
+            SET_FUNC( __os_arm64x_helper4, __os_arm64x_helper4 );
+            SET_FUNC( __os_arm64x_helper5, __os_arm64x_helper5 );
+            SET_FUNC( __os_arm64x_helper6, __os_arm64x_helper6 );
+            SET_FUNC( __os_arm64x_helper7, __os_arm64x_helper7 );
+            SET_FUNC( __os_arm64x_helper8, __os_arm64x_helper8 );
             SET_FUNC( GetX64InformationFunctionPointer, __os_arm64x_get_x64_information );
             SET_FUNC( SetX64InformationFunctionPointer, __os_arm64x_set_x64_information );
 #undef SET_FUNC
@@ -398,7 +413,7 @@ static void WINAPI stub_entry_point( const char *dll, const char *name, void *re
     EXCEPTION_RECORD rec;
 
     rec.ExceptionCode           = EXCEPTION_WINE_STUB;
-    rec.ExceptionFlags          = EH_NONCONTINUABLE;
+    rec.ExceptionFlags          = EXCEPTION_NONCONTINUABLE;
     rec.ExceptionRecord         = NULL;
     rec.ExceptionAddress        = ret_addr;
     rec.NumberParameters        = 2;
@@ -2950,23 +2965,25 @@ failed:
  */
 static NTSTATUS build_dlldata_path( LPCWSTR libname, ACTCTX_SECTION_KEYED_DATA *data, LPWSTR *fullname )
 {
-    struct dllredirect_data *dlldata = data->lpData;
+    ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION *dlldata = data->lpData;
+    ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION_PATH_SEGMENT *path;
     char *base = data->lpSectionBase;
-    SIZE_T total = dlldata->total_len + (wcslen(libname) + 1) * sizeof(WCHAR);
+    SIZE_T total = dlldata->TotalPathLength + (wcslen(libname) + 1) * sizeof(WCHAR);
     WCHAR *p, *buffer;
     NTSTATUS status = STATUS_SUCCESS;
     ULONG i;
 
     if (!(p = buffer = RtlAllocateHeap( GetProcessHeap(), 0, total ))) return STATUS_NO_MEMORY;
-    for (i = 0; i < dlldata->paths_count; i++)
+    path = (ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION_PATH_SEGMENT *)(dlldata + 1);
+    for (i = 0; i < dlldata->PathSegmentCount; i++)
     {
-        memcpy( p, base + dlldata->paths[i].offset, dlldata->paths[i].len );
-        p += dlldata->paths[i].len / sizeof(WCHAR);
+        memcpy( p, base + path[i].Offset, path[i].Length );
+        p += path[i].Length / sizeof(WCHAR);
     }
     if (p == buffer || p[-1] == '\\') wcscpy( p, libname );
     else *p = 0;
 
-    if (dlldata->flags & DLL_REDIRECT_PATH_EXPAND)
+    if (dlldata->Flags & ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION_PATH_EXPAND)
     {
         RtlExpandEnvironmentStrings( NULL, buffer, wcslen(buffer), NULL, 0, &total );
         if ((*fullname = RtlAllocateHeap( GetProcessHeap(), 0, total * sizeof(WCHAR) )))
@@ -2993,7 +3010,7 @@ static NTSTATUS find_actctx_dll( LPCWSTR libname, LPWSTR *fullname )
 
     ACTIVATION_CONTEXT_ASSEMBLY_DETAILED_INFORMATION *info = NULL;
     ACTCTX_SECTION_KEYED_DATA data;
-    struct dllredirect_data *dlldata;
+    ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION *dlldata;
     UNICODE_STRING nameW;
     NTSTATUS status;
     SIZE_T needed, size = 1024;
@@ -3006,13 +3023,13 @@ static NTSTATUS find_actctx_dll( LPCWSTR libname, LPWSTR *fullname )
                                                     &nameW, &data );
     if (status != STATUS_SUCCESS) return status;
 
-    if (data.ulLength < offsetof( struct dllredirect_data, paths[0] ))
+    if (data.ulLength < sizeof(*dlldata))
     {
         status = STATUS_SXS_KEY_NOT_FOUND;
         goto done;
     }
     dlldata = data.lpData;
-    if (!(dlldata->flags & DLL_REDIRECT_PATH_OMITS_ASSEMBLY_ROOT))
+    if (!(dlldata->Flags & ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION_PATH_OMITS_ASSEMBLY_ROOT))
     {
         status = build_dlldata_path( libname, &data, fullname );
         goto done;
@@ -4247,7 +4264,40 @@ static void load_global_options(void)
     }
 }
 
+static BOOL needs_elevation(void)
+{
+    ACTIVATION_CONTEXT_RUN_LEVEL_INFORMATION run_level;
 
+    if (!RtlQueryInformationActivationContext( 0, NULL, NULL, RunlevelInformationInActivationContext,
+                                               &run_level, sizeof(run_level), NULL ))
+    {
+        TRACE( "image requested run level %#x\n", run_level.RunLevel );
+        if (run_level.RunLevel == ACTCTX_RUN_LEVEL_HIGHEST_AVAILABLE
+                || run_level.RunLevel == ACTCTX_RUN_LEVEL_REQUIRE_ADMIN)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static void elevate_token(void)
+{
+    PROCESS_ACCESS_TOKEN token;
+    TOKEN_ELEVATION_TYPE type;
+    TOKEN_LINKED_TOKEN linked;
+
+    NtQueryInformationToken( GetCurrentThreadEffectiveToken(),
+                             TokenElevationType, &type, sizeof(type), NULL );
+
+    if (type == TokenElevationTypeFull) return;
+
+    NtQueryInformationToken( GetCurrentThreadEffectiveToken(),
+                             TokenLinkedToken, &linked, sizeof(linked), NULL );
+
+    token.Thread = NULL;
+    token.Token = linked.LinkedToken;
+    NtSetInformationProcess( GetCurrentProcess(), ProcessAccessToken, &token, sizeof(token) );
+    NtClose( linked.LinkedToken );
+}
 
 #ifdef _WIN64
 
@@ -4441,6 +4491,8 @@ void loader_init( CONTEXT *context, void **entry )
 
         actctx_init();
         locale_init();
+        if (needs_elevation())
+            elevate_token();
         get_env_var( L"WINESYSTEMDLLPATH", 0, &system_dll_path );
         if (wm->ldr.Flags & LDR_COR_ILONLY)
             status = fixup_imports_ilonly( wm, NULL, entry );

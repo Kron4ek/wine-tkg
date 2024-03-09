@@ -296,6 +296,7 @@ DECL_HANDLER(enum_winstation);
 DECL_HANDLER(create_desktop);
 DECL_HANDLER(open_desktop);
 DECL_HANDLER(open_input_desktop);
+DECL_HANDLER(set_input_desktop);
 DECL_HANDLER(close_desktop);
 DECL_HANDLER(get_thread_desktop);
 DECL_HANDLER(set_thread_desktop);
@@ -598,6 +599,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_create_desktop,
     (req_handler)req_open_desktop,
     (req_handler)req_open_input_desktop,
+    (req_handler)req_set_input_desktop,
     (req_handler)req_close_desktop,
     (req_handler)req_get_thread_desktop,
     (req_handler)req_set_thread_desktop,
@@ -870,7 +872,8 @@ C_ASSERT( FIELD_OFFSET(struct set_process_info_request, handle) == 12 );
 C_ASSERT( FIELD_OFFSET(struct set_process_info_request, mask) == 16 );
 C_ASSERT( FIELD_OFFSET(struct set_process_info_request, priority) == 20 );
 C_ASSERT( FIELD_OFFSET(struct set_process_info_request, affinity) == 24 );
-C_ASSERT( sizeof(struct set_process_info_request) == 32 );
+C_ASSERT( FIELD_OFFSET(struct set_process_info_request, token) == 32 );
+C_ASSERT( sizeof(struct set_process_info_request) == 40 );
 C_ASSERT( FIELD_OFFSET(struct get_thread_info_request, handle) == 12 );
 C_ASSERT( FIELD_OFFSET(struct get_thread_info_request, access) == 16 );
 C_ASSERT( sizeof(struct get_thread_info_request) == 24 );
@@ -1774,6 +1777,8 @@ C_ASSERT( FIELD_OFFSET(struct open_input_desktop_request, attributes) == 20 );
 C_ASSERT( sizeof(struct open_input_desktop_request) == 24 );
 C_ASSERT( FIELD_OFFSET(struct open_input_desktop_reply, handle) == 8 );
 C_ASSERT( sizeof(struct open_input_desktop_reply) == 16 );
+C_ASSERT( FIELD_OFFSET(struct set_input_desktop_request, handle) == 12 );
+C_ASSERT( sizeof(struct set_input_desktop_request) == 16 );
 C_ASSERT( FIELD_OFFSET(struct close_desktop_request, handle) == 12 );
 C_ASSERT( sizeof(struct close_desktop_request) == 16 );
 C_ASSERT( FIELD_OFFSET(struct get_thread_desktop_request, tid) == 12 );

@@ -2647,10 +2647,11 @@ static bool sort_synthetic_separated_samplers_first(struct hlsl_ctx *ctx)
     return false;
 }
 
-/* Append a FLOOR before a CAST to int or uint (which is written as a mere MOV). */
+/* Turn CAST to int or uint into FLOOR + REINTERPRET (which is written as a mere MOV). */
 static bool lower_casts_to_int(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct hlsl_block *block)
 {
-    struct hlsl_ir_node *arg, *floor, *cast2;
+    struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = { 0 };
+    struct hlsl_ir_node *arg, *floor, *res;
     struct hlsl_ir_expr *expr;
 
     if (instr->type != HLSL_IR_EXPR)
@@ -2665,17 +2666,15 @@ static bool lower_casts_to_int(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr,
     if (arg->data_type->base_type != HLSL_TYPE_FLOAT && arg->data_type->base_type != HLSL_TYPE_HALF)
         return false;
 
-    /* Check that the argument is not already a FLOOR */
-    if (arg->type == HLSL_IR_EXPR && hlsl_ir_expr(arg)->op == HLSL_OP1_FLOOR)
-        return false;
-
     if (!(floor = hlsl_new_unary_expr(ctx, HLSL_OP1_FLOOR, arg, &instr->loc)))
         return false;
     hlsl_block_add_instr(block, floor);
 
-    if (!(cast2 = hlsl_new_cast(ctx, floor, instr->data_type, &instr->loc)))
+    memset(operands, 0, sizeof(operands));
+    operands[0] = floor;
+    if (!(res = hlsl_new_expr(ctx, HLSL_OP1_REINTERPRET, operands, instr->data_type, &instr->loc)))
         return false;
-    hlsl_block_add_instr(block, cast2);
+    hlsl_block_add_instr(block, res);
 
     return true;
 }
@@ -2903,7 +2902,7 @@ static bool lower_floor(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct
     return true;
 }
 
-/* Use 'movc' for the ternary operator. */
+/* Use movc/cmp/slt for the ternary operator. */
 static bool lower_ternary(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct hlsl_block *block)
 {
     struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = { 0 }, *replacement;
@@ -2949,8 +2948,44 @@ static bool lower_ternary(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, stru
     }
     else if (ctx->profile->major_version < 4 && ctx->profile->type == VKD3D_SHADER_TYPE_VERTEX)
     {
-        hlsl_fixme(ctx, &instr->loc, "Ternary operator is not implemented for %s profile.", ctx->profile->name);
-        return false;
+        struct hlsl_ir_node *neg, *slt, *sum, *mul, *cond2;
+
+        /* Expression used here is "slt(<cond>) * (first - second) + second". */
+
+        if (ctx->profile->major_version == 3)
+        {
+            if (!(cond2 = hlsl_new_unary_expr(ctx, HLSL_OP1_ABS, cond, &instr->loc)))
+                return false;
+        }
+        else
+        {
+            if (!(cond2 = hlsl_new_binary_expr(ctx, HLSL_OP2_MUL, cond, cond)))
+                return false;
+        }
+        hlsl_block_add_instr(block, cond2);
+
+        if (!(neg = hlsl_new_unary_expr(ctx, HLSL_OP1_NEG, cond2, &instr->loc)))
+            return false;
+        hlsl_block_add_instr(block, neg);
+
+        if (!(slt = hlsl_new_binary_expr(ctx, HLSL_OP2_SLT, neg, cond2)))
+            return false;
+        hlsl_block_add_instr(block, slt);
+
+        if (!(neg = hlsl_new_unary_expr(ctx, HLSL_OP1_NEG, second, &instr->loc)))
+            return false;
+        hlsl_block_add_instr(block, neg);
+
+        if (!(sum = hlsl_new_binary_expr(ctx, HLSL_OP2_ADD, first, neg)))
+            return false;
+        hlsl_block_add_instr(block, sum);
+
+        if (!(mul = hlsl_new_binary_expr(ctx, HLSL_OP2_MUL, slt, sum)))
+            return false;
+        hlsl_block_add_instr(block, mul);
+
+        if (!(replacement = hlsl_new_binary_expr(ctx, HLSL_OP2_ADD, mul, second)))
+            return false;
     }
     else
     {
@@ -3306,6 +3341,61 @@ static bool lower_float_modulus(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr
     hlsl_block_add_instr(block, mul3);
 
     return true;
+}
+
+static bool lower_nonfloat_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct hlsl_block *block)
+{
+    struct hlsl_ir_expr *expr;
+
+    if (instr->type != HLSL_IR_EXPR)
+        return false;
+    expr = hlsl_ir_expr(instr);
+    if (expr->op == HLSL_OP1_CAST || instr->data_type->base_type == HLSL_TYPE_FLOAT)
+        return false;
+
+    switch (expr->op)
+    {
+        case HLSL_OP1_ABS:
+        case HLSL_OP1_NEG:
+        case HLSL_OP2_ADD:
+        case HLSL_OP2_DIV:
+        case HLSL_OP2_MAX:
+        case HLSL_OP2_MIN:
+        case HLSL_OP2_MUL:
+        {
+            struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = {0};
+            struct hlsl_ir_node *arg, *arg_cast, *float_expr, *ret;
+            struct hlsl_type *float_type;
+            unsigned int i;
+
+            for (i = 0; i < HLSL_MAX_OPERANDS; ++i)
+            {
+                arg = expr->operands[i].node;
+                if (!arg)
+                    continue;
+
+                float_type = hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, arg->data_type->dimx);
+                if (!(arg_cast = hlsl_new_cast(ctx, arg, float_type, &instr->loc)))
+                    return false;
+                hlsl_block_add_instr(block, arg_cast);
+
+                operands[i] = arg_cast;
+            }
+
+            float_type = hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, instr->data_type->dimx);
+            if (!(float_expr = hlsl_new_expr(ctx, expr->op, operands, float_type, &instr->loc)))
+                return false;
+            hlsl_block_add_instr(block, float_expr);
+
+            if (!(ret = hlsl_new_cast(ctx, float_expr, instr->data_type, &instr->loc)))
+                return false;
+            hlsl_block_add_instr(block, ret);
+
+            return true;
+        }
+        default:
+            return false;
+    }
 }
 
 static bool lower_discard_neg(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
@@ -5086,6 +5176,13 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     while (progress);
     remove_unreachable_code(ctx, body);
     hlsl_transform_ir(ctx, normalize_switch_cases, body, NULL);
+
+    if (profile-> major_version < 4)
+    {
+        lower_ir(ctx, lower_nonfloat_exprs, body);
+        /* Constants casted to float must be folded. */
+        hlsl_transform_ir(ctx, hlsl_fold_constant_exprs, body, NULL);
+    }
 
     lower_ir(ctx, lower_nonconstant_vector_derefs, body);
     lower_ir(ctx, lower_casts_to_bool, body);

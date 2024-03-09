@@ -101,7 +101,6 @@ HRESULT WINAPI RecycleBin_Constructor(IUnknown * pUnkOuter, REFIID riif, LPVOID 
 HRESULT WINAPI QueryAssociations_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppOutput);
 HRESULT WINAPI ExplorerBrowser_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppv);
 HRESULT WINAPI KnownFolderManager_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppv);
-HRESULT WINAPI NewMenu_Constructor(IUnknown *outer, REFIID riid, LPVOID *ppv);
 HRESULT WINAPI IFileOperation_Constructor(IUnknown *outer, REFIID riid, void **out);
 HRESULT WINAPI ActiveDesktop_Constructor(IUnknown *outer, REFIID riid, void **out);
 
@@ -114,6 +113,8 @@ HRESULT WINAPI ApplicationAssociationRegistration_Constructor(IUnknown *outer, R
 
 HRESULT WINAPI ApplicationDestinations_Constructor(IUnknown *outer, REFIID riid, LPVOID *ppv);
 HRESULT WINAPI ApplicationDocumentLists_Constructor(IUnknown *outer, REFIID riid, LPVOID *ppv);
+
+HRESULT WINAPI new_menu_create(IUnknown *outer, REFIID iid, void **out);
 
 HRESULT IShellLink_ConstructFromFile(IUnknown * pUnkOuter, REFIID riid, LPCITEMIDLIST pidl, IUnknown **ppv);
 
@@ -138,12 +139,10 @@ HRESULT WINAPI CustomDestinationList_Constructor(IUnknown *outer, REFIID riid, v
     DROPEFFECT_MOVE))
 
 
-HGLOBAL RenderHDROP(LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderSHELLIDLIST (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderFILENAMEA (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderFILENAMEW (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl);
-HGLOBAL RenderPREFERREDDROPEFFECT (DWORD value);
-HRESULT GetPREFERREDDROPEFFECT (STGMEDIUM *pmedium, DWORD *value);
+HGLOBAL RenderHDROP(const ITEMIDLIST *root_pidl, const ITEMIDLIST **pidls, unsigned int count);
+HGLOBAL RenderSHELLIDLIST(const ITEMIDLIST *root_pidl, const ITEMIDLIST **pidls, unsigned int count);
+HGLOBAL RenderFILENAMEA(const ITEMIDLIST *root_pidl, const ITEMIDLIST **pidls, unsigned int count);
+HGLOBAL RenderFILENAMEW(const ITEMIDLIST *root_pidl, const ITEMIDLIST **pidls, unsigned int count);
 
 /* Change Notification */
 void InitChangeNotifications(void);
@@ -273,5 +272,7 @@ typedef struct
 
 BOOL WINAPI StrRetToStrNA(char *, DWORD, STRRET *, const ITEMIDLIST *);
 BOOL WINAPI StrRetToStrNW(WCHAR *, DWORD, STRRET *, const ITEMIDLIST *);
+
+WCHAR *shell_get_resource_string(UINT id);
 
 #endif

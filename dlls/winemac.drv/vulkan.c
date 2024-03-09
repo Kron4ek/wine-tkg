@@ -89,8 +89,7 @@ static VkResult (*pvkGetPhysicalDeviceSurfaceCapabilities2KHR)(VkPhysicalDevice,
 static VkResult (*pvkGetSwapchainImagesKHR)(VkDevice, VkSwapchainKHR, uint32_t *, VkImage *);
 static VkResult (*pvkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *);
 
-static void *macdrv_get_vk_device_proc_addr(const char *name);
-static void *macdrv_get_vk_instance_proc_addr(VkInstance instance, const char *name);
+static const struct vulkan_funcs vulkan_funcs;
 
 static inline struct wine_vk_surface *surface_from_handle(VkSurfaceKHR handle)
 {
@@ -179,10 +178,6 @@ static VkResult wine_vk_instance_convert_create_info(const VkInstanceCreateInfo 
 
 static void wine_vk_surface_destroy(VkInstance instance, struct wine_vk_surface *surface)
 {
-    /* vkDestroySurfaceKHR must handle VK_NULL_HANDLE (0) for surface. */
-    if (!surface)
-        return;
-
     pvkDestroySurfaceKHR(instance, surface->host_surface, NULL /* allocator */);
 
     if (surface->view)
@@ -408,33 +403,13 @@ static VkResult macdrv_vkEnumerateInstanceExtensionProperties(const char *layer_
     return res;
 }
 
-static const char *wine_vk_host_fn_name(const char *name)
-{
-    const char *create_surface_name =
-        pvkCreateMetalSurfaceEXT ? "vkCreateMetalSurfaceEXT" : "vkCreateMacOSSurfaceMVK";
-
-    if (!strcmp(name, "vkCreateWin32SurfaceKHR"))
-        return create_surface_name;
-    /* We just need something where non-NULL is returned if the correct extension is enabled.
-     * So since there is no host equivalent of this function check for the create
-     * surface function.
-     */
-    if (!strcmp(name, "vkGetPhysicalDeviceWin32PresentationSupportKHR"))
-        return create_surface_name;
-
-    return name;
-}
-
 static void *macdrv_vkGetDeviceProcAddr(VkDevice device, const char *name)
 {
     void *proc_addr;
 
     TRACE("%p, %s\n", device, debugstr_a(name));
 
-    if (!pvkGetDeviceProcAddr(device, wine_vk_host_fn_name(name)))
-        return NULL;
-
-    if ((proc_addr = macdrv_get_vk_device_proc_addr(name)))
+    if ((proc_addr = get_vulkan_driver_device_proc_addr(&vulkan_funcs, name)))
         return proc_addr;
 
     return pvkGetDeviceProcAddr(device, name);
@@ -446,10 +421,7 @@ static void *macdrv_vkGetInstanceProcAddr(VkInstance instance, const char *name)
 
     TRACE("%p, %s\n", instance, debugstr_a(name));
 
-    if (!pvkGetInstanceProcAddr(instance, wine_vk_host_fn_name(name)))
-        return NULL;
-
-    if ((proc_addr = macdrv_get_vk_instance_proc_addr(instance, name)))
+    if ((proc_addr = get_vulkan_driver_instance_proc_addr(&vulkan_funcs, instance, name)))
         return proc_addr;
 
     return pvkGetInstanceProcAddr(instance, name);
@@ -527,16 +499,6 @@ static const struct vulkan_funcs vulkan_funcs =
 
     macdrv_wine_get_host_surface,
 };
-
-static void *macdrv_get_vk_device_proc_addr(const char *name)
-{
-    return get_vulkan_driver_device_proc_addr(&vulkan_funcs, name);
-}
-
-static void *macdrv_get_vk_instance_proc_addr(VkInstance instance, const char *name)
-{
-    return get_vulkan_driver_instance_proc_addr(&vulkan_funcs, instance, name);
-}
 
 static const struct vulkan_funcs *get_vulkan_driver(UINT version)
 {

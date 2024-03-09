@@ -948,68 +948,74 @@ static GLuint gen_ati_shader(const struct texture_stage_op op[WINED3D_MAX_FFP_TE
 
 static void atifs_tfactor(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    struct atifs_context_private_data *ctx_priv = context->fragment_pipe_data;
-    struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
+    context->constant_update_mask |= WINED3D_SHADER_CONST_FFP_PS;
+}
+
+static void atifs_update_ps_constants(struct wined3d_context_gl *context_gl, const struct wined3d_state *state)
+{
+    struct atifs_context_private_data *ctx_priv = context_gl->c.fragment_pipe_data;
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
     struct wined3d_color color;
 
-    if (!ctx_priv->last_shader
-            || ctx_priv->last_shader->constants[ATIFS_CONST_TFACTOR - GL_CON_0_ATI] != ATIFS_CONSTANT_TFACTOR)
-        return;
+    if (ctx_priv->last_shader->constants[ATIFS_CONST_TFACTOR - GL_CON_0_ATI] == ATIFS_CONSTANT_TFACTOR)
+    {
+        wined3d_color_from_d3dcolor(&color, state->render_states[WINED3D_RS_TEXTUREFACTOR]);
+        GL_EXTCALL(glSetFragmentShaderConstantATI(ATIFS_CONST_TFACTOR, &color.r));
+        checkGLcall("glSetFragmentShaderConstantATI(ATIFS_CONST_TFACTOR, &color.r)");
+    }
 
-    wined3d_color_from_d3dcolor(&color, state->render_states[WINED3D_RS_TEXTUREFACTOR]);
-    GL_EXTCALL(glSetFragmentShaderConstantATI(ATIFS_CONST_TFACTOR, &color.r));
-    checkGLcall("glSetFragmentShaderConstantATI(ATIFS_CONST_TFACTOR, &color.r)");
+    for (unsigned int i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
+    {
+        if (ctx_priv->last_shader->constants[i] == ATIFS_CONSTANT_STAGE)
+        {
+            wined3d_color_from_d3dcolor(&color, state->texture_states[i][WINED3D_TSS_CONSTANT]);
+            GL_EXTCALL(glSetFragmentShaderConstantATI(ATIFS_CONST_STAGE(i), &color.r));
+            checkGLcall("glSetFragmentShaderConstantATI(ATIFS_CONST_STAGE(i), &color.r)");
+        }
+    }
 }
 
-static void set_bumpmat(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
+static void atifs_update_bumpenv_constants(const struct wined3d_context_gl *context_gl, const struct wined3d_state *state)
 {
-    DWORD stage = (state_id - STATE_TEXTURESTAGE(0, 0)) / (WINED3D_HIGHEST_TEXTURE_STATE + 1);
-    struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
+    struct atifs_context_private_data *ctx_priv = context_gl->c.fragment_pipe_data;
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
     float mat[2][2];
-    struct atifs_context_private_data *ctx_priv = context->fragment_pipe_data;
 
-    if (!ctx_priv->last_shader
-            || ctx_priv->last_shader->constants[stage] != ATIFS_CONSTANT_BUMP)
-        return;
+    for (unsigned int i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
+    {
+        if (ctx_priv->last_shader->constants[i] != ATIFS_CONSTANT_BUMP)
+            continue;
 
-    mat[0][0] = *((float *)&state->texture_states[stage][WINED3D_TSS_BUMPENV_MAT00]);
-    mat[1][0] = *((float *)&state->texture_states[stage][WINED3D_TSS_BUMPENV_MAT01]);
-    mat[0][1] = *((float *)&state->texture_states[stage][WINED3D_TSS_BUMPENV_MAT10]);
-    mat[1][1] = *((float *)&state->texture_states[stage][WINED3D_TSS_BUMPENV_MAT11]);
-    /* GL_ATI_fragment_shader allows only constants from 0.0 to 1.0, but the bumpmat
-     * constants can be in any range. While they should stay between [-1.0 and 1.0] because
-     * Shader Model 1.x pixel shaders are clamped to that range negative values are used occasionally,
-     * for example by our d3d9 test. So to get negative values scale -1;1 to 0;1 and undo that in the
-     * shader(it is free). This might potentially reduce precision. However, if the hardware does
-     * support proper floats it shouldn't, and if it doesn't we can't get anything better anyway. */
-    mat[0][0] = (mat[0][0] + 1.0f) * 0.5f;
-    mat[1][0] = (mat[1][0] + 1.0f) * 0.5f;
-    mat[0][1] = (mat[0][1] + 1.0f) * 0.5f;
-    mat[1][1] = (mat[1][1] + 1.0f) * 0.5f;
-    GL_EXTCALL(glSetFragmentShaderConstantATI(ATIFS_CONST_BUMPMAT(stage), (float *) mat));
-    checkGLcall("glSetFragmentShaderConstantATI(ATIFS_CONST_BUMPMAT(stage), mat)");
+        mat[0][0] = int_to_float(state->texture_states[i][WINED3D_TSS_BUMPENV_MAT00]);
+        mat[1][0] = int_to_float(state->texture_states[i][WINED3D_TSS_BUMPENV_MAT01]);
+        mat[0][1] = int_to_float(state->texture_states[i][WINED3D_TSS_BUMPENV_MAT10]);
+        mat[1][1] = int_to_float(state->texture_states[i][WINED3D_TSS_BUMPENV_MAT11]);
+        /* GL_ATI_fragment_shader allows only constants from 0.0 to 1.0, but the bumpmat
+         * constants can be in any range. While they should stay between [-1.0 and 1.0] because
+         * Shader Model 1.x pixel shaders are clamped to that range negative values are used occasionally,
+         * for example by our d3d9 test. So to get negative values scale -1;1 to 0;1 and undo that in the
+         * shader(it is free). This might potentially reduce precision. However, if the hardware does
+         * support proper floats it shouldn't, and if it doesn't we can't get anything better anyway. */
+        mat[0][0] = (mat[0][0] + 1.0f) * 0.5f;
+        mat[1][0] = (mat[1][0] + 1.0f) * 0.5f;
+        mat[0][1] = (mat[0][1] + 1.0f) * 0.5f;
+        mat[1][1] = (mat[1][1] + 1.0f) * 0.5f;
+        GL_EXTCALL(glSetFragmentShaderConstantATI(ATIFS_CONST_BUMPMAT(i), &mat[0][0]));
+        checkGLcall("glSetFragmentShaderConstantATI(ATIFS_CONST_BUMPMAT(i), mat)");
+    }
 }
 
 static void atifs_stage_constant(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    DWORD stage = (state_id - STATE_TEXTURESTAGE(0, 0)) / (WINED3D_HIGHEST_TEXTURE_STATE + 1);
-    struct atifs_context_private_data *ctx_priv = context->fragment_pipe_data;
-    struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    struct wined3d_color color;
-
-    if (!ctx_priv->last_shader
-            || ctx_priv->last_shader->constants[stage] != ATIFS_CONSTANT_STAGE)
-        return;
-
-    wined3d_color_from_d3dcolor(&color, state->texture_states[stage][WINED3D_TSS_CONSTANT]);
-    GL_EXTCALL(glSetFragmentShaderConstantATI(ATIFS_CONST_STAGE(stage), &color.r));
-    checkGLcall("glSetFragmentShaderConstantATI(ATIFS_CONST_STAGE(stage), &color.r)");
+    context->constant_update_mask |= WINED3D_SHADER_CONST_FFP_PS;
 }
 
 static void set_tex_op_atifs(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
+{
+    context->shader_update_mask |= (1u << WINED3D_SHADER_TYPE_PIXEL);
+}
+
+static void atifs_update_shader(struct wined3d_context *context, const struct wined3d_state *state)
 {
     struct atifs_context_private_data *ctx_priv = context->fragment_pipe_data;
     const struct atifs_ffp_desc *desc, *last_shader = ctx_priv->last_shader;
@@ -1072,15 +1078,12 @@ static void set_tex_op_atifs(struct wined3d_context *context, const struct wined
         switch (desc->constants[i])
         {
             case ATIFS_CONSTANT_BUMP:
-                set_bumpmat(context, state, STATE_TEXTURESTAGE(i, WINED3D_TSS_BUMPENV_MAT00));
+                context->constant_update_mask |= WINED3D_SHADER_CONST_PS_BUMP_ENV;
                 break;
 
             case ATIFS_CONSTANT_TFACTOR:
-                atifs_tfactor(context, state, STATE_RENDER(WINED3D_RS_TEXTUREFACTOR));
-                break;
-
             case ATIFS_CONSTANT_STAGE:
-                atifs_stage_constant(context, state, STATE_TEXTURESTAGE(i, WINED3D_TSS_CONSTANT));
+                context->constant_update_mask |= WINED3D_SHADER_CONST_FFP_PS;
                 break;
 
             default:
@@ -1127,10 +1130,6 @@ static const struct wined3d_state_entry_template atifs_fragmentstate_template[] 
     {STATE_TEXTURESTAGE(0, WINED3D_TSS_ALPHA_ARG2),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(0, WINED3D_TSS_ALPHA_ARG0),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(0, WINED3D_TSS_RESULT_ARG),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),    { STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),   set_bumpmat             }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT01),    { STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT10),    { STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT11),    { STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(0, WINED3D_TSS_CONSTANT),         { STATE_TEXTURESTAGE(0, WINED3D_TSS_CONSTANT),        atifs_stage_constant    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(1, WINED3D_TSS_COLOR_OP),         { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(1, WINED3D_TSS_COLOR_ARG1),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
@@ -1141,10 +1140,6 @@ static const struct wined3d_state_entry_template atifs_fragmentstate_template[] 
     {STATE_TEXTURESTAGE(1, WINED3D_TSS_ALPHA_ARG2),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(1, WINED3D_TSS_ALPHA_ARG0),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(1, WINED3D_TSS_RESULT_ARG),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(1, WINED3D_TSS_BUMPENV_MAT00),    { STATE_TEXTURESTAGE(1, WINED3D_TSS_BUMPENV_MAT00),   set_bumpmat             }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(1, WINED3D_TSS_BUMPENV_MAT01),    { STATE_TEXTURESTAGE(1, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(1, WINED3D_TSS_BUMPENV_MAT10),    { STATE_TEXTURESTAGE(1, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(1, WINED3D_TSS_BUMPENV_MAT11),    { STATE_TEXTURESTAGE(1, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(1, WINED3D_TSS_CONSTANT),         { STATE_TEXTURESTAGE(1, WINED3D_TSS_CONSTANT),        atifs_stage_constant    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(2, WINED3D_TSS_COLOR_OP),         { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(2, WINED3D_TSS_COLOR_ARG1),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
@@ -1155,10 +1150,6 @@ static const struct wined3d_state_entry_template atifs_fragmentstate_template[] 
     {STATE_TEXTURESTAGE(2, WINED3D_TSS_ALPHA_ARG2),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(2, WINED3D_TSS_ALPHA_ARG0),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(2, WINED3D_TSS_RESULT_ARG),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(2, WINED3D_TSS_BUMPENV_MAT00),    { STATE_TEXTURESTAGE(2, WINED3D_TSS_BUMPENV_MAT00),   set_bumpmat             }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(2, WINED3D_TSS_BUMPENV_MAT01),    { STATE_TEXTURESTAGE(2, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(2, WINED3D_TSS_BUMPENV_MAT10),    { STATE_TEXTURESTAGE(2, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(2, WINED3D_TSS_BUMPENV_MAT11),    { STATE_TEXTURESTAGE(2, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(2, WINED3D_TSS_CONSTANT),         { STATE_TEXTURESTAGE(2, WINED3D_TSS_CONSTANT),        atifs_stage_constant    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(3, WINED3D_TSS_COLOR_OP),         { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(3, WINED3D_TSS_COLOR_ARG1),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
@@ -1169,10 +1160,6 @@ static const struct wined3d_state_entry_template atifs_fragmentstate_template[] 
     {STATE_TEXTURESTAGE(3, WINED3D_TSS_ALPHA_ARG2),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(3, WINED3D_TSS_ALPHA_ARG0),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(3, WINED3D_TSS_RESULT_ARG),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(3, WINED3D_TSS_BUMPENV_MAT00),    { STATE_TEXTURESTAGE(3, WINED3D_TSS_BUMPENV_MAT00),   set_bumpmat             }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(3, WINED3D_TSS_BUMPENV_MAT01),    { STATE_TEXTURESTAGE(3, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(3, WINED3D_TSS_BUMPENV_MAT10),    { STATE_TEXTURESTAGE(3, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(3, WINED3D_TSS_BUMPENV_MAT11),    { STATE_TEXTURESTAGE(3, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(3, WINED3D_TSS_CONSTANT),         { STATE_TEXTURESTAGE(3, WINED3D_TSS_CONSTANT),        atifs_stage_constant    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(4, WINED3D_TSS_COLOR_OP),         { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(4, WINED3D_TSS_COLOR_ARG1),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
@@ -1183,10 +1170,6 @@ static const struct wined3d_state_entry_template atifs_fragmentstate_template[] 
     {STATE_TEXTURESTAGE(4, WINED3D_TSS_ALPHA_ARG2),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(4, WINED3D_TSS_ALPHA_ARG0),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(4, WINED3D_TSS_RESULT_ARG),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(4, WINED3D_TSS_BUMPENV_MAT00),    { STATE_TEXTURESTAGE(4, WINED3D_TSS_BUMPENV_MAT00),   set_bumpmat             }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(4, WINED3D_TSS_BUMPENV_MAT01),    { STATE_TEXTURESTAGE(4, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(4, WINED3D_TSS_BUMPENV_MAT10),    { STATE_TEXTURESTAGE(4, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(4, WINED3D_TSS_BUMPENV_MAT11),    { STATE_TEXTURESTAGE(4, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(4, WINED3D_TSS_CONSTANT),         { STATE_TEXTURESTAGE(4, WINED3D_TSS_CONSTANT),        atifs_stage_constant    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(5, WINED3D_TSS_COLOR_OP),         { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(5, WINED3D_TSS_COLOR_ARG1),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
@@ -1197,10 +1180,6 @@ static const struct wined3d_state_entry_template atifs_fragmentstate_template[] 
     {STATE_TEXTURESTAGE(5, WINED3D_TSS_ALPHA_ARG2),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(5, WINED3D_TSS_ALPHA_ARG0),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(5, WINED3D_TSS_RESULT_ARG),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(5, WINED3D_TSS_BUMPENV_MAT00),    { STATE_TEXTURESTAGE(5, WINED3D_TSS_BUMPENV_MAT00),   set_bumpmat             }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(5, WINED3D_TSS_BUMPENV_MAT01),    { STATE_TEXTURESTAGE(5, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(5, WINED3D_TSS_BUMPENV_MAT10),    { STATE_TEXTURESTAGE(5, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(5, WINED3D_TSS_BUMPENV_MAT11),    { STATE_TEXTURESTAGE(5, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(5, WINED3D_TSS_CONSTANT),         { STATE_TEXTURESTAGE(5, WINED3D_TSS_CONSTANT),        atifs_stage_constant    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(6, WINED3D_TSS_COLOR_OP),         { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(6, WINED3D_TSS_COLOR_ARG1),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
@@ -1211,10 +1190,6 @@ static const struct wined3d_state_entry_template atifs_fragmentstate_template[] 
     {STATE_TEXTURESTAGE(6, WINED3D_TSS_ALPHA_ARG2),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(6, WINED3D_TSS_ALPHA_ARG0),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(6, WINED3D_TSS_RESULT_ARG),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(6, WINED3D_TSS_BUMPENV_MAT00),    { STATE_TEXTURESTAGE(6, WINED3D_TSS_BUMPENV_MAT00),   set_bumpmat             }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(6, WINED3D_TSS_BUMPENV_MAT01),    { STATE_TEXTURESTAGE(6, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(6, WINED3D_TSS_BUMPENV_MAT10),    { STATE_TEXTURESTAGE(6, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(6, WINED3D_TSS_BUMPENV_MAT11),    { STATE_TEXTURESTAGE(6, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(6, WINED3D_TSS_CONSTANT),         { STATE_TEXTURESTAGE(6, WINED3D_TSS_CONSTANT),        atifs_stage_constant    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(7, WINED3D_TSS_COLOR_OP),         { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(7, WINED3D_TSS_COLOR_ARG1),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
@@ -1225,10 +1200,6 @@ static const struct wined3d_state_entry_template atifs_fragmentstate_template[] 
     {STATE_TEXTURESTAGE(7, WINED3D_TSS_ALPHA_ARG2),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(7, WINED3D_TSS_ALPHA_ARG0),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(7, WINED3D_TSS_RESULT_ARG),       { STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),            NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(7, WINED3D_TSS_BUMPENV_MAT00),    { STATE_TEXTURESTAGE(7, WINED3D_TSS_BUMPENV_MAT00),   set_bumpmat             }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(7, WINED3D_TSS_BUMPENV_MAT01),    { STATE_TEXTURESTAGE(7, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(7, WINED3D_TSS_BUMPENV_MAT10),    { STATE_TEXTURESTAGE(7, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
-    {STATE_TEXTURESTAGE(7, WINED3D_TSS_BUMPENV_MAT11),    { STATE_TEXTURESTAGE(7, WINED3D_TSS_BUMPENV_MAT00),   NULL                    }, WINED3D_GL_EXT_NONE             },
     {STATE_TEXTURESTAGE(7, WINED3D_TSS_CONSTANT),         { STATE_TEXTURESTAGE(7, WINED3D_TSS_CONSTANT),        atifs_stage_constant    }, WINED3D_GL_EXT_NONE             },
     { STATE_SAMPLER(0),                                   { STATE_SAMPLER(0),                                   sampler_texdim          }, WINED3D_GL_EXT_NONE             },
     { STATE_SAMPLER(1),                                   { STATE_SAMPLER(1),                                   sampler_texdim          }, WINED3D_GL_EXT_NONE             },
@@ -1253,18 +1224,31 @@ static const struct wined3d_state_entry_template atifs_fragmentstate_template[] 
 /* Context activation is done by the caller. */
 static void atifs_apply_draw_state(struct wined3d_context *context, const struct wined3d_state *state)
 {
-    const struct wined3d_gl_info *gl_info = wined3d_context_gl_const(context)->gl_info;
+    struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
+    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
+    uint32_t constant_update_mask;
 
-    if (!use_ps(state))
-    {
-        gl_info->gl_ops.gl.p_glEnable(GL_FRAGMENT_SHADER_ATI);
-        checkGLcall("glEnable(GL_FRAGMENT_SHADER_ATI)");
-    }
-    else
+    if (use_ps(state))
     {
         gl_info->gl_ops.gl.p_glDisable(GL_FRAGMENT_SHADER_ATI);
         checkGLcall("glDisable(GL_FRAGMENT_SHADER_ATI)");
+        return;
     }
+
+    gl_info->gl_ops.gl.p_glEnable(GL_FRAGMENT_SHADER_ATI);
+    checkGLcall("glEnable(GL_FRAGMENT_SHADER_ATI)");
+
+    if (context->shader_update_mask & (1u << WINED3D_SHADER_TYPE_PIXEL))
+        atifs_update_shader(context, state);
+
+    /* Note that atifs_update_shader() may set the constant update mask. */
+    constant_update_mask = context->constant_update_mask;
+
+    if (constant_update_mask & WINED3D_SHADER_CONST_FFP_PS)
+        atifs_update_ps_constants(context_gl, state);
+
+    if (constant_update_mask & WINED3D_SHADER_CONST_PS_BUMP_ENV)
+        atifs_update_bumpenv_constants(context_gl, state);
 }
 
 static void atifs_disable(const struct wined3d_context *context)

@@ -3714,7 +3714,7 @@ NTSTATUS create_reparse_target( int dirfd, const char *unix_src, int depth, cons
         if (append_prefix)
             strcat( target_path, prefix_string );
         strcat( target_path, &unix_target[relative_offset] );
-        TRACE( "adding reparse point target: %s\n", target_path );
+        TRACE( "adding reparse point target: %s\n", debugstr_a(target_path) );
         symlinkat( target_path, dirfd, link_path );
     }
     free( unix_target );
@@ -3768,7 +3768,7 @@ NTSTATUS create_reparse_point(HANDLE handle, REPARSE_DATA_BUFFER *buffer)
     }
     encoded_len = encode_base64url( (const char *)buffer, buffer_len, encoded );
 
-    TRACE( "Linking %s to %s\n", unix_src, encoded );
+    TRACE( "Linking %s to %s\n", debugstr_a(unix_src), encoded );
     strcpy( filename_buf, unix_src );
     filename = basename( filename_buf );
 

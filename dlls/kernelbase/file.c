@@ -491,23 +491,29 @@ BOOL WINAPI DECLSPEC_HOTPATCH AreFileApisANSI(void)
 /******************************************************************************
  *  copy_file
  */
-static BOOL copy_file( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDED_PARAMETERS *params )
+static BOOL copy_file( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDED_PARAMETERS *params, LPPROGRESS_ROUTINE progress )
 {
     DWORD flags = params ? params->dwCopyFlags : 0;
     BOOL *cancel_ptr = params ? params->pfCancel : NULL;
-    PCOPYFILE2_PROGRESS_ROUTINE progress = params ? params->pProgressRoutine : NULL;
+    void *param = params ? params->pvCallbackContext : NULL;
+    PCOPYFILE2_PROGRESS_ROUTINE progress2 = params ? params->pProgressRoutine : NULL;
 
     static const int buffer_size = 65536;
     HANDLE h1, h2;
-    FILE_BASIC_INFORMATION info;
+    FILE_NETWORK_OPEN_INFORMATION info;
+    FILE_BASIC_INFORMATION basic_info;
     IO_STATUS_BLOCK io;
     DWORD count;
     BOOL ret = FALSE;
     char *buffer;
+    LARGE_INTEGER size;
+    LARGE_INTEGER transferred;
+    DWORD cbret;
+    DWORD source_access = GENERIC_READ;
 
     if (cancel_ptr)
         FIXME("pfCancel is not supported\n");
-    if (progress)
+    if (progress2)
         FIXME("PCOPYFILE2_PROGRESS_ROUTINE is not supported\n");
 
     if (!source || !dest)
@@ -530,7 +536,10 @@ static BOOL copy_file( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDE
     if (flags & COPY_FILE_OPEN_SOURCE_FOR_WRITE)
         FIXME("COPY_FILE_OPEN_SOURCE_FOR_WRITE is not supported\n");
 
-    if ((h1 = CreateFileW( source, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    if (flags & COPY_FILE_OPEN_SOURCE_FOR_WRITE)
+        source_access |= GENERIC_WRITE;
+
+    if ((h1 = CreateFileW( source, source_access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            NULL, OPEN_EXISTING, 0, 0 )) == INVALID_HANDLE_VALUE)
     {
         WARN("Unable to open source %s\n", debugstr_w(source));
@@ -538,7 +547,7 @@ static BOOL copy_file( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDE
         return FALSE;
     }
 
-    if (!set_ntstatus( NtQueryInformationFile( h1, &io, &info, sizeof(info), FileBasicInformation )))
+    if (!set_ntstatus( NtQueryInformationFile( h1, &io, &info, sizeof(info), FileNetworkOpenInformation )))
     {
         WARN("GetFileInformationByHandle returned error for %s\n", debugstr_w(source));
         HeapFree( GetProcessHeap(), 0, buffer );
@@ -564,7 +573,11 @@ static BOOL copy_file( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDE
         }
     }
 
-    if ((h2 = CreateFileW( dest, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+    if ((h2 = CreateFileW( dest, GENERIC_WRITE | DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           (flags & COPY_FILE_FAIL_IF_EXISTS) ? CREATE_NEW : CREATE_ALWAYS,
+                           info.FileAttributes, h1 )) == INVALID_HANDLE_VALUE &&
+        /* retry without DELETE if we got a sharing violation */
+        (h2 = CreateFileW( dest, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
                            (flags & COPY_FILE_FAIL_IF_EXISTS) ? CREATE_NEW : CREATE_ALWAYS,
                            info.FileAttributes, h1 )) == INVALID_HANDLE_VALUE)
     {
@@ -572,6 +585,29 @@ static BOOL copy_file( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDE
         HeapFree( GetProcessHeap(), 0, buffer );
         CloseHandle( h1 );
         return FALSE;
+    }
+
+    size = info.EndOfFile;
+    transferred.QuadPart = 0;
+
+    if (progress)
+    {
+        cbret = progress( size, transferred, size, transferred, 1,
+                          CALLBACK_STREAM_SWITCH, h1, h2, param );
+        if (cbret == PROGRESS_QUIET)
+            progress = NULL;
+        else if (cbret == PROGRESS_STOP)
+        {
+            SetLastError( ERROR_REQUEST_ABORTED );
+            goto done;
+        }
+        else if (cbret == PROGRESS_CANCEL)
+        {
+            BOOLEAN disp = TRUE;
+            SetFileInformationByHandle( h2, FileDispositionInfo, &disp, sizeof(disp) );
+            SetLastError( ERROR_REQUEST_ABORTED );
+            goto done;
+        }
     }
 
     while (ReadFile( h1, buffer, buffer_size, &count, NULL ) && count)
@@ -583,13 +619,38 @@ static BOOL copy_file( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDE
             if (!WriteFile( h2, p, count, &res, NULL ) || !res) goto done;
             p += res;
             count -= res;
+
+            if (progress)
+            {
+                transferred.QuadPart += res;
+                cbret = progress( size, transferred, size, transferred, 1,
+                                  CALLBACK_CHUNK_FINISHED, h1, h2, param );
+                if (cbret == PROGRESS_QUIET)
+                    progress = NULL;
+                else if (cbret == PROGRESS_STOP)
+                {
+                    SetLastError( ERROR_REQUEST_ABORTED );
+                    goto done;
+                }
+                else if (cbret == PROGRESS_CANCEL)
+                {
+                    BOOLEAN disp = TRUE;
+                    SetFileInformationByHandle( h2, FileDispositionInfo, &disp, sizeof(disp) );
+                    SetLastError( ERROR_REQUEST_ABORTED );
+                    goto done;
+                }
+            }
         }
     }
     ret = TRUE;
 done:
     /* Maintain the timestamp of source file to destination file and read-only attribute */
-    info.FileAttributes &= FILE_ATTRIBUTE_READONLY;
-    NtSetInformationFile( h2, &io, &info, sizeof(info), FileBasicInformation );
+    basic_info.CreationTime = info.CreationTime;
+    basic_info.LastAccessTime = info.LastAccessTime;
+    basic_info.LastWriteTime = info.LastWriteTime;
+    basic_info.ChangeTime = info.ChangeTime;
+    basic_info.FileAttributes &= FILE_ATTRIBUTE_READONLY;
+    NtSetInformationFile( h2, &io, &basic_info, sizeof(basic_info), FileBasicInformation );
     HeapFree( GetProcessHeap(), 0, buffer );
     CloseHandle( h1 );
     CloseHandle( h2 );
@@ -602,7 +663,7 @@ done:
  */
 HRESULT WINAPI CopyFile2( const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDED_PARAMETERS *params )
 {
-    return copy_file(source, dest, params) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
+    return copy_file(source, dest, params, NULL) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
 }
 
 
@@ -614,18 +675,16 @@ BOOL WINAPI CopyFileExW( const WCHAR *source, const WCHAR *dest, LPPROGRESS_ROUT
 {
     COPYFILE2_EXTENDED_PARAMETERS params;
 
-    if (progress)
-        FIXME("LPPROGRESS_ROUTINE is not supported\n");
     if (cancel_ptr)
         FIXME("cancel_ptr is not supported\n");
 
     params.dwSize = sizeof(params);
     params.dwCopyFlags = flags;
     params.pProgressRoutine = NULL;
-    params.pvCallbackContext = NULL;
+    params.pvCallbackContext = param;
     params.pfCancel = NULL;
 
-    return copy_file( source, dest, &params );
+    return copy_file( source, dest, &params, progress );
 }
 
 

@@ -1977,14 +1977,11 @@ static void write_sm1_cast(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
             {
                 case HLSL_TYPE_INT:
                 case HLSL_TYPE_UINT:
-                    /* Integers are internally represented as floats, so no change is necessary.*/
+                case HLSL_TYPE_BOOL:
+                    /* Integrals are internally represented as floats, so no change is necessary.*/
                 case HLSL_TYPE_HALF:
                 case HLSL_TYPE_FLOAT:
                     write_sm1_unary_op(ctx, buffer, D3DSIO_MOV, &instr->reg, &arg1->reg, 0, 0);
-                    break;
-
-                case HLSL_TYPE_BOOL:
-                    hlsl_fixme(ctx, &instr->loc, "SM1 cast from bool to float.");
                     break;
 
                 case HLSL_TYPE_DOUBLE:
@@ -2002,7 +1999,10 @@ static void write_sm1_cast(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
             {
                 case HLSL_TYPE_HALF:
                 case HLSL_TYPE_FLOAT:
-                    /* A compilation pass applies a FLOOR operation to casts to int, so no change is necessary. */
+                    /* A compilation pass turns these into FLOOR+REINTERPRET, so we should not
+                     * reach this case unless we are missing something. */
+                    hlsl_fixme(ctx, &instr->loc, "Unlowered SM1 cast from float to integer.");
+                    break;
                 case HLSL_TYPE_INT:
                 case HLSL_TYPE_UINT:
                     write_sm1_unary_op(ctx, buffer, D3DSIO_MOV, &instr->reg, &arg1->reg, 0, 0);
@@ -2242,6 +2242,12 @@ static void write_sm1_expr(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
 
     assert(instr->reg.allocated);
 
+    if (expr->op == HLSL_OP1_REINTERPRET)
+    {
+        write_sm1_unary_op(ctx, buffer, D3DSIO_MOV, &instr->reg, &arg1->reg, 0, 0);
+        return;
+    }
+
     if (expr->op == HLSL_OP1_CAST)
     {
         write_sm1_cast(ctx, buffer, instr);
@@ -2327,6 +2333,10 @@ static void write_sm1_expr(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
                 default:
                     vkd3d_unreachable();
             }
+            break;
+
+        case HLSL_OP2_SLT:
+            write_sm1_binary_op(ctx, buffer, D3DSIO_SLT, &instr->reg, &arg1->reg, &arg2->reg);
             break;
 
         case HLSL_OP3_CMP:

@@ -54,6 +54,8 @@
 #define IDS_VIEW_LIST		27
 #define IDS_VIEW_DETAILS	28
 
+#define IDS_NEW_MENU                29
+
 #define IDS_VERB_EXPLORE            30
 #define IDS_VERB_OPEN               31
 #define IDS_VERB_PRINT              32
@@ -135,6 +137,7 @@
 #define IDS_RECYCLEBIN_OVERWRITEFOLDER   170
 #define IDS_RECYCLEBIN_OVERWRITE_CAPTION 171
 
+#define IDS_NEW_MENU_FOLDER         180
 
 #define IDS_LICENSE                 256
 #define IDS_LICENSE_CAPTION         257
@@ -149,6 +152,41 @@
 #define MENU_RECYCLEBIN             300
 #define IDM_RECYCLEBIN_RESTORE      301
 #define IDM_RECYCLEBIN_ERASE        302
+
+/* Strings for file operations */
+#define IDS_FILEOP_COPYING          333
+#define IDS_FILEOP_MOVING           334
+#define IDS_FILEOP_DELETING         335
+#define IDS_FILEOP_FROM_TO          336
+#define IDS_FILEOP_FROM             337
+#define IDS_FILEOP_PREFLIGHT        338
+
+/* Strings for security dialog - General */
+#define IDS_SECURITY_ALL_ACCESS     340
+#define IDS_SECURITY_MODIFY         341
+#define IDS_SECURITY_READ_EXEC      342
+#define IDS_SECURITY_READ           343
+#define IDS_SECURITY_WRITE          344
+#define IDS_SECURITY_DIR_LIST       345
+
+/* Strings for security dialog - Advanced */
+#define IDS_SECURITY_TRAVERSE       346
+#define IDS_SECURITY_EXECUTE        347
+#define IDS_SECURITY_LIST_FOLDER    348
+#define IDS_SECURITY_READ_DATA      349
+#define IDS_SECURITY_READ_ATTR      350
+#define IDS_SECURITY_READ_EX_ATTR   351
+#define IDS_SECURITY_CREATE_FILES   352
+#define IDS_SECURITY_WRITE_DATA     353
+#define IDS_SEUCRITY_CREATE_FOLDER  354
+#define IDS_SECURITY_APPEND_DATA    355
+#define IDS_SECURITY_WRITE_ATTR     356
+#define IDS_SECURITY_WRITE_EX_ATTR  357
+#define IDS_SECURITY_DELETE_CHILD   358
+#define IDS_SECURITY_DELETE         359
+#define IDS_SECURITY_READ_PERM      360
+#define IDS_SECURITY_CHANGE_PERM    361
+#define IDS_SECURITY_CHANGE_OWNER   362
 
 /* Note: this string is referenced from the registry*/
 #define IDS_RECYCLEBIN_FOLDER_NAME   8964

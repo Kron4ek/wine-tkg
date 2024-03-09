@@ -784,6 +784,7 @@ W32KAPI BOOL    WINAPI NtUserShowWindow( HWND hwnd, INT cmd );
 W32KAPI BOOL    WINAPI NtUserShowWindowAsync( HWND hwnd, INT cmd );
 W32KAPI BOOL    WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT winini );
 W32KAPI BOOL    WINAPI NtUserSystemParametersInfoForDpi( UINT action, UINT val, PVOID ptr, UINT winini, UINT dpi );
+W32KAPI BOOL    WINAPI NtUserSwitchDesktop( HDESK desktop );
 W32KAPI BOOL    WINAPI NtUserThunkedMenuInfo( HMENU menu, const MENUINFO *info );
 W32KAPI UINT    WINAPI NtUserThunkedMenuItemInfo( HMENU menu, UINT pos, UINT flags, UINT method,
                                                   MENUITEMINFOW *info, UNICODE_STRING *str );
@@ -1235,6 +1236,7 @@ enum
     NtUserCallHwndParam_SetMDIClientInfo,
     NtUserCallHwndParam_SetWindowContextHelpId,
     NtUserCallHwndParam_ShowOwnedPopups,
+    NtUserCallHwndParam_SendHardwareInput,
     /* temporary exports */
     NtUserSetWindowStyle,
 };
@@ -1405,7 +1407,37 @@ static inline BOOL NtUserShowOwnedPopups( HWND hwnd, BOOL show )
     return NtUserCallHwndParam( hwnd, show, NtUserCallHwndParam_ShowOwnedPopups );
 }
 
-/* Wine extensions */
-W32KAPI BOOL WINAPI __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput );
+struct hid_input
+{
+    UINT device;
+    UINT usage;
+    UINT count;
+    UINT length;
+};
+
+struct hid_packet
+{
+    struct hid_input head;
+    BYTE data[];
+};
+
+C_ASSERT(sizeof(struct hid_packet) == offsetof(struct hid_packet, data[0]));
+
+#define SEND_HWMSG_INJECTED 1
+#define SEND_HWMSG_NO_RAW   2
+#define SEND_HWMSG_NO_MSG   4
+
+struct send_hardware_input_params
+{
+    UINT flags;
+    const INPUT *input;
+    LPARAM lparam;  /* struct hid_packet pointer for WM_INPUT* messages */
+};
+
+static inline BOOL NtUserSendHardwareInput( HWND hwnd, UINT flags, const INPUT *input, LPARAM lparam )
+{
+    struct send_hardware_input_params params = {.flags = flags, .input = input, .lparam = lparam};
+    return NtUserCallHwndParam( hwnd, (UINT_PTR)&params, NtUserCallHwndParam_SendHardwareInput );
+}
 
 #endif /* _NTUSER_ */

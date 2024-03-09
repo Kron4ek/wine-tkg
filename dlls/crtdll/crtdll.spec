@@ -268,7 +268,7 @@
 @ cdecl _scalb(double long)
 @ cdecl _searchenv(str str ptr)
 @ cdecl _seterrormode(long)
-@ cdecl -norelay _setjmp(ptr) MSVCRT__setjmp
+@ cdecl -norelay _setjmp(ptr)
 @ cdecl _setmode(long long)
 @ stub _setsystime(ptr long)
 @ cdecl _sleep(long)
@@ -434,7 +434,7 @@
 @ cdecl -arch=win64 localtime(ptr) _localtime64
 @ cdecl log(double)
 @ cdecl log10(double)
-@ cdecl longjmp(ptr long) MSVCRT_longjmp
+@ cdecl longjmp(ptr long)
 @ cdecl malloc(long)
 @ cdecl mblen(ptr long)
 @ cdecl mbstowcs(ptr str long)

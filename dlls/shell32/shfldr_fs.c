@@ -1254,7 +1254,7 @@ static WCHAR *build_paths_list(LPCWSTR wszBasePath, int cidl, const LPCITEMIDLIS
  * deletes items in folder
  */
 static HRESULT WINAPI
-ISFHelper_fnDeleteItems (ISFHelper *iface, UINT cidl, LPCITEMIDLIST *apidl, BOOL confirm)
+ISFHelper_fnDeleteItems (ISFHelper * iface, UINT cidl, LPCITEMIDLIST * apidl)
 {
     IGenericSFImpl *This = impl_from_ISFHelper(iface);
     UINT i;
@@ -1279,7 +1279,6 @@ ISFHelper_fnDeleteItems (ISFHelper *iface, UINT cidl, LPCITEMIDLIST *apidl, BOOL
     op.wFunc = FO_DELETE;
     op.pFrom = wszPathsList;
     op.fFlags = FOF_ALLOWUNDO;
-    if (!confirm) op.fFlags |= FOF_NOCONFIRMATION;
     if (SHFileOperationW(&op))
     {
         WARN("SHFileOperation failed\n");
@@ -1315,60 +1314,6 @@ ISFHelper_fnDeleteItems (ISFHelper *iface, UINT cidl, LPCITEMIDLIST *apidl, BOOL
     return ret;
 }
 
-/****************************************************************************
- * ISFHelper_fnCopyItems
- *
- * copies items to this folder
- */
-static HRESULT WINAPI
-ISFHelper_fnCopyItems (ISFHelper * iface, IShellFolder * pSFFrom, UINT cidl,
-                       LPCITEMIDLIST * apidl)
-{
-    HRESULT ret=E_FAIL;
-    IPersistFolder2 *ppf2 = NULL;
-    WCHAR wszSrcPathRoot[MAX_PATH],
-      wszDstPath[MAX_PATH+1];
-    WCHAR *wszSrcPathsList;
-    IGenericSFImpl *This = impl_from_ISFHelper(iface);
-
-    SHFILEOPSTRUCTW fop;
-
-    TRACE ("(%p)->(%p,%u,%p)\n", This, pSFFrom, cidl, apidl);
-
-    IShellFolder_QueryInterface (pSFFrom, &IID_IPersistFolder2,
-     (LPVOID *) & ppf2);
-    if (ppf2) {
-        LPITEMIDLIST pidl;
-
-        if (SUCCEEDED (IPersistFolder2_GetCurFolder (ppf2, &pidl))) {
-            SHGetPathFromIDListW (pidl, wszSrcPathRoot);
-            if (This->sPathTarget)
-                lstrcpynW(wszDstPath, This->sPathTarget, MAX_PATH);
-            else
-                wszDstPath[0] = 0;
-            PathAddBackslashW(wszSrcPathRoot);
-            PathAddBackslashW(wszDstPath);
-            wszSrcPathsList = build_paths_list(wszSrcPathRoot, cidl, apidl);
-            ZeroMemory(&fop, sizeof(fop));
-            fop.hwnd = GetActiveWindow();
-            fop.wFunc = FO_COPY;
-            fop.pFrom = wszSrcPathsList;
-            fop.pTo = wszDstPath;
-            fop.fFlags = FOF_ALLOWUNDO;
-            ret = S_OK;
-            if(SHFileOperationW(&fop))
-            {
-                WARN("Copy failed\n");
-                ret = E_FAIL;
-            }
-            free(wszSrcPathsList);
-        }
-        SHFree(pidl);
-        IPersistFolder2_Release(ppf2);
-    }
-    return ret;
-}
-
 static const ISFHelperVtbl shvt =
 {
     ISFHelper_fnQueryInterface,
@@ -1377,7 +1322,6 @@ static const ISFHelperVtbl shvt =
     ISFHelper_fnGetUniqueName,
     ISFHelper_fnAddFolder,
     ISFHelper_fnDeleteItems,
-    ISFHelper_fnCopyItems
 };
 
 /************************************************************************

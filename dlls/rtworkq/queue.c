@@ -730,16 +730,22 @@ static HRESULT invoke_async_callback(IRtwqAsyncResult *result)
     return hr;
 }
 
-static void queue_release_pending_item(struct work_item *item)
+/* Return TRUE when the item is actually released by this function. The item could have been already
+ * removed from pending items when it got canceled. */
+static BOOL queue_release_pending_item(struct work_item *item)
 {
+    BOOL ret = FALSE;
+
     EnterCriticalSection(&item->queue->cs);
     if (item->key)
     {
         list_remove(&item->entry);
+        ret = TRUE;
         item->key = 0;
         IUnknown_Release(&item->IUnknown_iface);
     }
     LeaveCriticalSection(&item->queue->cs);
+    return ret;
 }
 
 static void CALLBACK waiting_item_callback(TP_CALLBACK_INSTANCE *instance, void *context, TP_WAIT *wait,
@@ -761,9 +767,8 @@ static void CALLBACK waiting_item_cancelable_callback(TP_CALLBACK_INSTANCE *inst
 
     TRACE("result object %p.\n", item->result);
 
-    queue_release_pending_item(item);
-
-    invoke_async_callback(item->result);
+    if (queue_release_pending_item(item))
+        invoke_async_callback(item->result);
 
     IUnknown_Release(&item->IUnknown_iface);
 }
@@ -785,9 +790,8 @@ static void CALLBACK scheduled_item_cancelable_callback(TP_CALLBACK_INSTANCE *in
 
     TRACE("result object %p.\n", item->result);
 
-    queue_release_pending_item(item);
-
-    invoke_async_callback(item->result);
+    if (queue_release_pending_item(item))
+        invoke_async_callback(item->result);
 
     IUnknown_Release(&item->IUnknown_iface);
 }
@@ -892,9 +896,13 @@ static HRESULT queue_cancel_item(struct queue *queue, RTWQWORKITEM_KEY key)
                 IRtwqAsyncResult_SetStatus(item->result, RTWQ_E_OPERATION_CANCELLED);
                 invoke_async_callback(item->result);
                 CloseThreadpoolWait(item->u.wait_object);
+                item->u.wait_object = NULL;
             }
             else if ((key & SCHEDULED_ITEM_KEY_MASK) == SCHEDULED_ITEM_KEY_MASK)
+            {
                 CloseThreadpoolTimer(item->u.timer_object);
+                item->u.timer_object = NULL;
+            }
             else
                 WARN("Unknown item key mask %#I64x.\n", key);
             queue_release_pending_item(item);

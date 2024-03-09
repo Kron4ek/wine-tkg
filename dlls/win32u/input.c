@@ -605,16 +605,6 @@ BOOL WINAPI NtUserAttachThreadInput( DWORD from, DWORD to, BOOL attach )
 }
 
 /***********************************************************************
- *           __wine_send_input  (win32u.@)
- *
- * Internal SendInput function to allow the graphics driver to inject real events.
- */
-BOOL WINAPI __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput )
-{
-    return set_ntstatus( send_hardware_message( hwnd, input, rawinput, 0 ));
-}
-
-/***********************************************************************
  *		update_mouse_coords
  *
  * Helper for NtUserSendInput.
@@ -693,7 +683,7 @@ UINT WINAPI NtUserSendInput( UINT count, INPUT *inputs, int size )
             update_mouse_coords( &input );
             /* fallthrough */
         case INPUT_KEYBOARD:
-            status = send_hardware_message( 0, &input, NULL, SEND_HWMSG_INJECTED );
+            status = send_hardware_message( 0, SEND_HWMSG_INJECTED, &input, 0 );
             break;
         case INPUT_HARDWARE:
             RtlSetLastWin32Error( ERROR_CALL_NOT_IMPLEMENTED );
@@ -1749,10 +1739,13 @@ HWND WINAPI NtUserSetCapture( HWND hwnd )
  */
 BOOL release_capture(void)
 {
-    BOOL ret = set_capture_window( 0, 0, NULL );
+    HWND previous = NULL;
+    BOOL ret;
+
+    ret = set_capture_window( 0, 0, &previous );
 
     /* Somebody may have missed some mouse movements */
-    if (ret)
+    if (ret && previous)
     {
         INPUT input = { .type = INPUT_MOUSE };
         input.mi.dwFlags = MOUSEEVENTF_MOVE;

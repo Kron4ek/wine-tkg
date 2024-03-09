@@ -127,7 +127,7 @@ void __cdecl __wine_spec_unimplemented_stub( const char *module, const char *fun
     EXCEPTION_RECORD record;
 
     record.ExceptionCode    = EXCEPTION_WINE_STUB;
-    record.ExceptionFlags   = EH_NONCONTINUABLE;
+    record.ExceptionFlags   = EXCEPTION_NONCONTINUABLE;
     record.ExceptionRecord  = NULL;
     record.ExceptionAddress = __wine_spec_unimplemented_stub;
     record.NumberParameters = 2;
@@ -940,25 +940,75 @@ NTSTATUS WINAPI Wow64SystemServiceEx( UINT num, UINT *args )
 
 
 /**********************************************************************
- *           simulate_filter
+ *           cpu_simulate
  */
+#ifdef __aarch64__
+extern void DECLSPEC_NORETURN cpu_simulate( void (*func)(void) );
+__ASM_GLOBAL_FUNC( cpu_simulate,
+                   "stp x29, x30, [sp, #-32]!\n\t"
+                   ".seh_save_fplr_x 32\n\t"
+                   ".seh_endprologue\n\t"
+                   ".seh_handler cpu_simulate_handler, @except\n\t"
+                   "str x0, [sp, #16]\n"
+                   ".Lcpu_simulate_loop:\n\t"
+                   "ldr x0, [sp, #16]\n\t"
+                   "blr x0\n\t"
+                   "b .Lcpu_simulate_loop" )
+__ASM_GLOBAL_FUNC( cpu_simulate_handler,
+                   "stp x29, x30, [sp, #-32]!\n\t"
+                   ".seh_save_fplr_x 32\n\t"
+                   ".seh_endprologue\n\t"
+                   "mov x19, x0\n\t"            /* record */
+                   "mov x20, x1\n\t"            /* frame */
+                   "stp x0, x2, [sp, #16]\n\t"  /* record, context */
+                   "add x0, sp, #16\n\t"
+                   "bl Wow64PassExceptionToGuest\n\t"
+                   "mov x20, x0\n\t"            /* frame */
+                   "adr x1, .Lcpu_simulate_loop\n\t" /* target */
+                   "mov x19, x2\n\t"            /* record */
+                   "bl RtlUnwind\n\t"
+                   "brk #1" )
+
+#elif defined __WINE_PE_BUILD
+extern void DECLSPEC_NORETURN cpu_simulate( void (*func)(void) );
+__ASM_GLOBAL_FUNC( cpu_simulate,
+                   "subq $0x28, %rsp\n\t"
+                   ".seh_stackalloc 0x28\n\t"
+                   ".seh_endprologue\n\t"
+                   ".seh_handler cpu_simulate_handler, @except\n\t"
+                   "movq %rcx,0x20(%rsp)\n"
+                   ".Lcpu_simulate_loop:\n\t"
+                   "call *0x20(%rsp)\n\t"
+                   "jmp .Lcpu_simulate_loop" )
+__ASM_GLOBAL_FUNC( cpu_simulate_handler,
+                   "subq $0x38, %rsp\n\t"
+                   ".seh_stackalloc 0x38\n\t"
+                   ".seh_endprologue\n\t"
+                   "movq %rcx,%rsi\n\t"         /* record */
+                   "movq %rcx,0x20(%rsp)\n\t"
+                   "movq %rdx,%rdi\n\t"         /* frame */
+                   "movq %r8,0x28(%rsp)\n\t"    /* context */
+                   "leaq 0x20(%rsp),%rcx\n\t"
+                   "call Wow64PassExceptionToGuest\n\t"
+                   "movq %rdi,%rcx\n\t"         /* frame */
+                   "leaq .Lcpu_simulate_loop(%rip), %rdx\n\t"  /* target */
+                   "movq %rsi,%r8\n\t"          /* record */
+                   "call RtlUnwind\n\t"
+                   "int3" )
+#else
 static LONG CALLBACK simulate_filter( EXCEPTION_POINTERS *ptrs )
 {
     Wow64PassExceptionToGuest( ptrs );
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
-
-/**********************************************************************
- *           cpu_simulate
- */
-static void cpu_simulate(void)
+static void cpu_simulate( void (*func)(void) )
 {
     for (;;)
     {
         __TRY
         {
-            pBTCpuSimulate();
+            func();
         }
         __EXCEPT( simulate_filter )
         {
@@ -967,6 +1017,7 @@ static void cpu_simulate(void)
         __ENDTRY
     }
 }
+#endif
 
 
 /**********************************************************************
@@ -1039,7 +1090,7 @@ void WINAPI Wow64ApcRoutine( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3, CON
             ctx.Eip = pLdrSystemDllInitBlock->pKiUserApcDispatcher;
             frame.wow_context = &stack->context;
             pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
-            cpu_simulate();
+            cpu_simulate( pBTCpuSimulate );
         }
         break;
 
@@ -1065,7 +1116,7 @@ void WINAPI Wow64ApcRoutine( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3, CON
             ctx.R3 = arg3;
             frame.wow_context = &stack->context;
             pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
-            cpu_simulate();
+            cpu_simulate( pBTCpuSimulate );
         }
         break;
     }
@@ -1128,7 +1179,7 @@ NTSTATUS WINAPI Wow64KiUserCallbackDispatcher( ULONG id, void *args, ULONG len,
             pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
 
             if (!__wine_setjmpex( &frame.jmpbuf, NULL ))
-                cpu_simulate();
+                cpu_simulate( pBTCpuSimulate );
             else
                 pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &orig_ctx );
         }
@@ -1153,7 +1204,7 @@ NTSTATUS WINAPI Wow64KiUserCallbackDispatcher( ULONG id, void *args, ULONG len,
             pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx );
 
             if (!__wine_setjmpex( &frame.jmpbuf, NULL ))
-                cpu_simulate();
+                cpu_simulate( pBTCpuSimulate );
             else
                 pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &orig_ctx );
         }
@@ -1177,7 +1228,7 @@ void WINAPI Wow64LdrpInitialize( CONTEXT *context )
 
     RtlRunOnceExecuteOnce( &init_done, process_init, NULL, NULL );
     thread_init();
-    cpu_simulate();
+    cpu_simulate( pBTCpuSimulate );
 }
 
 
@@ -1330,11 +1381,13 @@ NTSTATUS WINAPI Wow64RaiseException( int code, EXCEPTION_RECORD *rec )
             int_rec.ExceptionCode = EXCEPTION_INT_DIVIDE_BY_ZERO;
             break;
         case 0x01:  /* single-step */
+            ctx32.i386.EFlags &= ~0x100;
+            pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx32.i386 );
             int_rec.ExceptionCode = EXCEPTION_SINGLE_STEP;
             break;
         case 0x03:  /* breakpoint */
             int_rec.ExceptionCode = EXCEPTION_BREAKPOINT;
-            int_rec.ExceptionAddress = (void *)(ULONG_PTR)(ctx32.i386.Eip + 1);
+            int_rec.ExceptionAddress = (void *)(ULONG_PTR)(ctx32.i386.Eip - 1);
             int_rec.NumberParameters = 1;
             break;
         case 0x04:  /* overflow */
@@ -1352,15 +1405,18 @@ NTSTATUS WINAPI Wow64RaiseException( int code, EXCEPTION_RECORD *rec )
         case 0x0c:  /* stack fault */
             int_rec.ExceptionCode = EXCEPTION_STACK_OVERFLOW;
             break;
+        case 0x0d:  /* general protection fault */
+            int_rec.ExceptionCode = EXCEPTION_PRIV_INSTRUCTION;
+            break;
         case 0x29:  /* __fastfail */
             int_rec.ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
-            int_rec.ExceptionFlags = EH_NONCONTINUABLE;
+            int_rec.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
             int_rec.NumberParameters = 1;
             int_rec.ExceptionInformation[0] = ctx32.i386.Ecx;
             first_chance = FALSE;
             break;
         case 0x2d:  /* debug service */
-            ctx32.i386.Eip++;
+            ctx32.i386.Eip += 3;
             pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx32.i386 );
             int_rec.ExceptionCode    = EXCEPTION_BREAKPOINT;
             int_rec.ExceptionAddress = (void *)(ULONG_PTR)ctx32.i386.Eip;
@@ -1368,8 +1424,6 @@ NTSTATUS WINAPI Wow64RaiseException( int code, EXCEPTION_RECORD *rec )
             int_rec.ExceptionInformation[0] = ctx32.i386.Eax;
             break;
         default:
-            ctx32.i386.Eip -= 2;
-            pBTCpuSetContext( GetCurrentThread(), GetCurrentProcess(), NULL, &ctx32.i386 );
             int_rec.ExceptionCode = EXCEPTION_ACCESS_VIOLATION;
             int_rec.ExceptionAddress = (void *)(ULONG_PTR)ctx32.i386.Eip;
             int_rec.NumberParameters = 2;

@@ -62,6 +62,9 @@
 #ifdef __APPLE__
 #include <mach/mach.h>
 #endif
+#ifdef __FreeBSD__
+#include <sys/thr.h>
+#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -688,7 +691,7 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
             XSTATE *xs = (XSTATE *)((char *)xctx + xctx->XState.Offset);
 
             xs->Mask &= ~4;
-            if (user_shared_data->XState.CompactionEnabled) xs->CompactionMask = 0x8000000000000004;
+            if (xs->CompactionMask) xs->CompactionMask = 0x8000000000000004;
             for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
             {
                 if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
@@ -762,7 +765,7 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
             XSTATE *xs = (XSTATE *)((char *)xctx + xctx->XState.Offset);
 
             xs->Mask &= ~4;
-            if (user_shared_data->XState.CompactionEnabled) xs->CompactionMask = 0x8000000000000004;
+            if (xs->CompactionMask) xs->CompactionMask = 0x8000000000000004;
             for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
             {
                 if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
@@ -837,7 +840,7 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
             XSTATE *xs = (XSTATE *)((char *)xctx + xctx->XState.Offset);
 
             xs->Mask &= ~4;
-            if (user_shared_data->XState.CompactionEnabled) xs->CompactionMask = 0x8000000000000004;
+            if (xs->CompactionMask) xs->CompactionMask = 0x8000000000000004;
             for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
             {
                 if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
@@ -919,7 +922,7 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
             XSTATE *xs = (XSTATE *)((char *)xctx + xctx->XState.Offset);
 
             xs->Mask &= ~4;
-            if (user_shared_data->XState.CompactionEnabled) xs->CompactionMask = 0x8000000000000004;
+            if (xs->CompactionMask) xs->CompactionMask = 0x8000000000000004;
             for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
             {
                 if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
@@ -1214,6 +1217,24 @@ NTSTATUS init_thread_stack( TEB *teb, ULONG_PTR limit, SIZE_T reserve_size, SIZE
         wow_teb->DeallocationStack = PtrToUlong( stack.DeallocationStack );
 #endif
     }
+
+#ifdef __aarch64__
+    if (is_arm64ec())
+    {
+        CHPE_V2_CPU_AREA_INFO *cpu_area;
+        const SIZE_T chpev2_stack_size = 0x40000;
+
+        /* emulator stack */
+        if ((status = virtual_alloc_thread_stack( &stack, limit_4g, 0, chpev2_stack_size, chpev2_stack_size, FALSE )))
+            return status;
+
+        cpu_area = stack.DeallocationStack;
+        cpu_area->ContextAmd64 = (ARM64EC_NT_CONTEXT *)&cpu_area->EmulatorDataInline;
+        cpu_area->EmulatorStackBase  = (ULONG_PTR)stack.StackBase;
+        cpu_area->EmulatorStackLimit = (ULONG_PTR)stack.StackLimit + page_size;
+        teb->ChpeV2CpuAreaInfo = cpu_area;
+    }
+#endif
 
     /* native stack */
     if ((status = virtual_alloc_thread_stack( &stack, 0, limit, reserve_size, commit_size, TRUE )))
@@ -1542,7 +1563,7 @@ NTSTATUS WINAPI NtRaiseException( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL 
 
     if (first_chance) return call_user_exception_dispatcher( rec, context );
 
-    if (rec->ExceptionFlags & EH_STACK_INVALID)
+    if (rec->ExceptionFlags & EXCEPTION_STACK_INVALID)
         ERR_(seh)("Exception frame is not in stack limits => unable to dispatch exception.\n");
     else if (rec->ExceptionCode == STATUS_NONCONTINUABLE_EXCEPTION)
         ERR_(seh)("Process attempted to continue execution after noncontinuable exception.\n");
@@ -1769,7 +1790,7 @@ NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT ma
         }
         SERVER_END_REQ;
     }
-    if (!ret)
+    if (!ret && count)
     {
         ret = context_from_server( context, &server_contexts[0], machine );
         if (!ret && count > 1) ret = context_from_server( context, &server_contexts[1], machine );
@@ -1935,6 +1956,36 @@ static void set_native_thread_name( HANDLE handle, const UNICODE_STRING *name )
     len = ntdll_wcstoumbs( name->Buffer, name->Length / sizeof(WCHAR), nameA, sizeof(nameA) - 1, FALSE );
     nameA[len] = '\0';
     pthread_setname_np( nameA );
+#elif defined(__FreeBSD__)
+    unsigned int status;
+    char nameA[64];
+    int unix_pid, unix_tid, len;
+
+    SERVER_START_REQ( get_thread_times )
+    {
+        req->handle = wine_server_obj_handle( handle );
+        status = wine_server_call( req );
+        if (status == STATUS_SUCCESS)
+        {
+            unix_pid = reply->unix_pid;
+            unix_tid = reply->unix_tid;
+        }
+    }
+    SERVER_END_REQ;
+
+    if (status != STATUS_SUCCESS || unix_pid == -1 || unix_tid == -1)
+        return;
+
+    if (unix_pid != getpid())
+    {
+        static int once;
+        if (!once++) FIXME("cross-process native thread naming not supported\n");
+        return;
+    }
+
+    len = ntdll_wcstoumbs( name->Buffer, name->Length / sizeof(WCHAR), nameA, sizeof(nameA), FALSE );
+    nameA[len] = '\0';
+    thr_set_name( unix_tid, nameA );
 #else
     static int once;
     if (!once++) FIXME("not implemented on this platform\n");

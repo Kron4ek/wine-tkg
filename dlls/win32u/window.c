@@ -5592,6 +5592,12 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
     case NtUserCallHwndParam_ShowOwnedPopups:
         return show_owned_popups( hwnd, param );
 
+    case NtUserCallHwndParam_SendHardwareInput:
+    {
+        struct send_hardware_input_params *params = (void *)param;
+        return send_hardware_message( hwnd, params->flags, params->input, params->lparam );
+    }
+
     /* temporary exports */
     case NtUserSetWindowStyle:
         {

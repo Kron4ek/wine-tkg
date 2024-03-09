@@ -336,6 +336,14 @@ static HRESULT WINAPI wbem_services_QueryObjectSink(
     return WBEM_E_FAILED;
 }
 
+void free_path( struct path *path )
+{
+    if (!path) return;
+    free( path->class );
+    free( path->filter );
+    free( path );
+}
+
 HRESULT parse_path( const WCHAR *str, struct path **ret )
 {
     struct path *path;
@@ -391,7 +399,7 @@ HRESULT parse_path( const WCHAR *str, struct path **ret )
     }
 
     q = p;
-    while (*p && *p != '.') p++;
+    while (*p && *p != '.' && *p != '=') p++;
 
     len = p - q;
     if (!(path->class = malloc( (len + 1) * sizeof(WCHAR) )))
@@ -411,24 +419,48 @@ HRESULT parse_path( const WCHAR *str, struct path **ret )
         len = q - p;
         if (!(path->filter = malloc( (len + 1) * sizeof(WCHAR) )))
         {
-            free( path->class );
-            free( path );
+            free_path( path );
             return E_OUTOFMEMORY;
         }
         memcpy( path->filter, p, len * sizeof(WCHAR) );
         path->filter[len] = 0;
         path->filter_len = len;
     }
+    else if (p[0] == '=' && p[1])
+    {
+        WCHAR *key;
+        UINT len_key;
+
+        while (*q) q++;
+        len = q - p;
+
+        if (!(key = get_first_key_property( WBEMPROX_NAMESPACE_CIMV2, path->class )))
+        {
+            free_path( path );
+            return WBEM_E_INVALID_OBJECT_PATH;
+        }
+        len_key = wcslen( key );
+
+        if (!(path->filter = malloc( (len + len_key + 1) * sizeof(WCHAR) )))
+        {
+            free( key );
+            free_path( path );
+            return E_OUTOFMEMORY;
+        }
+        wcscpy( path->filter, key );
+        memcpy( path->filter + len_key, p, len * sizeof(WCHAR) );
+        path->filter_len = len + len_key;
+        path->filter[path->filter_len] = 0;
+        free( key );
+    }
+    else if (p[0])
+    {
+        free_path( path );
+        return WBEM_E_INVALID_OBJECT_PATH;
+    }
+
     *ret = path;
     return S_OK;
-}
-
-void free_path( struct path *path )
-{
-    if (!path) return;
-    free( path->class );
-    free( path->filter );
-    free( path );
 }
 
 WCHAR *query_from_path( const struct path *path )
@@ -960,7 +992,7 @@ HRESULT WbemServices_create( const WCHAR *namespace, IWbemContext *context, LPVO
     ws->IWbemServices_iface.lpVtbl = &wbem_services_vtbl;
     ws->refs      = 1;
     ws->ns        = ns;
-    InitializeCriticalSection( &ws->cs );
+    InitializeCriticalSectionEx( &ws->cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO );
     ws->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": wbemprox_services.cs");
     if (context)
         IWbemContext_Clone( context, &ws->context );

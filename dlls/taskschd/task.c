@@ -324,6 +324,252 @@ static HRESULT DailyTrigger_create(ITrigger **trigger)
     return S_OK;
 }
 
+typedef struct {
+    IRegistrationTrigger IRegistrationTrigger_iface;
+    BOOL enabled;
+    LONG ref;
+} RegistrationTrigger;
+
+static inline RegistrationTrigger *impl_from_IRegistrationTrigger(IRegistrationTrigger *iface)
+{
+    return CONTAINING_RECORD(iface, RegistrationTrigger, IRegistrationTrigger_iface);
+}
+
+static HRESULT WINAPI RegistrationTrigger_QueryInterface(IRegistrationTrigger *iface, REFIID riid, void **ppv)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+
+    TRACE("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+
+    if(IsEqualGUID(&IID_IUnknown, riid) ||
+       IsEqualGUID(&IID_IDispatch, riid) ||
+       IsEqualGUID(&IID_ITrigger, riid) ||
+       IsEqualGUID(&IID_IRegistrationTrigger, riid))
+    {
+        *ppv = &This->IRegistrationTrigger_iface;
+    }
+    else
+    {
+        FIXME("unsupported riid %s\n", debugstr_guid(riid));
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI RegistrationTrigger_AddRef(IRegistrationTrigger *iface)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%ld\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI RegistrationTrigger_Release(IRegistrationTrigger *iface)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    LONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p) ref=%ld\n", This, ref);
+
+    if(!ref)
+    {
+        TRACE("destroying %p\n", iface);
+        free(This);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI RegistrationTrigger_GetTypeInfoCount(IRegistrationTrigger *iface, UINT *count)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%p)\n", This, count);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_GetTypeInfo(IRegistrationTrigger *iface, UINT index, LCID lcid, ITypeInfo **info)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%u %lu %p)\n", This, index, lcid, info);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_GetIDsOfNames(IRegistrationTrigger *iface, REFIID riid, LPOLESTR *names,
+                                            UINT count, LCID lcid, DISPID *dispid)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%s %p %u %lu %p)\n", This, debugstr_guid(riid), names, count, lcid, dispid);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_Invoke(IRegistrationTrigger *iface, DISPID dispid, REFIID riid, LCID lcid, WORD flags,
+                                     DISPPARAMS *params, VARIANT *result, EXCEPINFO *excepinfo, UINT *argerr)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%ld %s %lx %x %p %p %p %p)\n", This, dispid, debugstr_guid(riid), lcid, flags,
+          params, result, excepinfo, argerr);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_get_Type(IRegistrationTrigger *iface, TASK_TRIGGER_TYPE2 *type)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%p)\n", This, type);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_get_Id(IRegistrationTrigger *iface, BSTR *id)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%p)\n", This, id);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_put_Id(IRegistrationTrigger *iface, BSTR id)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%s)\n", This, debugstr_w(id));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_get_Repetition(IRegistrationTrigger *iface, IRepetitionPattern **repeat)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%p)\n", This, repeat);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_put_Repetition(IRegistrationTrigger *iface, IRepetitionPattern *repeat)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%p)\n", This, repeat);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_get_ExecutionTimeLimit(IRegistrationTrigger *iface, BSTR *limit)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%p)\n", This, limit);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_put_ExecutionTimeLimit(IRegistrationTrigger *iface, BSTR limit)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%s)\n", This, debugstr_w(limit));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_get_StartBoundary(IRegistrationTrigger *iface, BSTR *start)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%p)\n", This, start);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_put_StartBoundary(IRegistrationTrigger *iface, BSTR start)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%s)\n", This, debugstr_w(start));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_get_EndBoundary(IRegistrationTrigger *iface, BSTR *end)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%p)\n", This, end);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_put_EndBoundary(IRegistrationTrigger *iface, BSTR end)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%s)\n", This, debugstr_w(end));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_get_Enabled(IRegistrationTrigger *iface, VARIANT_BOOL *enabled)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+
+    TRACE("(%p)->(%p)\n", This, enabled);
+
+    if (!enabled) return E_POINTER;
+
+    *enabled = This->enabled ? VARIANT_TRUE : VARIANT_FALSE;
+    return S_OK;
+}
+
+static HRESULT WINAPI RegistrationTrigger_put_Enabled(IRegistrationTrigger *iface, VARIANT_BOOL enabled)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+
+    TRACE("(%p)->(%x)\n", This, enabled);
+
+    This->enabled = !!enabled;
+    return S_OK;
+}
+
+static HRESULT WINAPI RegistrationTrigger_get_Delay(IRegistrationTrigger *iface, BSTR *pDelay)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%p)\n", This, pDelay);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI RegistrationTrigger_put_Delay(IRegistrationTrigger *iface, BSTR delay)
+{
+    RegistrationTrigger *This = impl_from_IRegistrationTrigger(iface);
+    FIXME("(%p)->(%s)\n", This, debugstr_w(delay));
+    return E_NOTIMPL;
+}
+
+static const IRegistrationTriggerVtbl RegistrationTrigger_vtbl = {
+    RegistrationTrigger_QueryInterface,
+    RegistrationTrigger_AddRef,
+    RegistrationTrigger_Release,
+    RegistrationTrigger_GetTypeInfoCount,
+    RegistrationTrigger_GetTypeInfo,
+    RegistrationTrigger_GetIDsOfNames,
+    RegistrationTrigger_Invoke,
+    RegistrationTrigger_get_Type,
+    RegistrationTrigger_get_Id,
+    RegistrationTrigger_put_Id,
+    RegistrationTrigger_get_Repetition,
+    RegistrationTrigger_put_Repetition,
+    RegistrationTrigger_get_ExecutionTimeLimit,
+    RegistrationTrigger_put_ExecutionTimeLimit,
+    RegistrationTrigger_get_StartBoundary,
+    RegistrationTrigger_put_StartBoundary,
+    RegistrationTrigger_get_EndBoundary,
+    RegistrationTrigger_put_EndBoundary,
+    RegistrationTrigger_get_Enabled,
+    RegistrationTrigger_put_Enabled,
+    RegistrationTrigger_get_Delay,
+    RegistrationTrigger_put_Delay
+};
+
+static HRESULT RegistrationTrigger_create(ITrigger **trigger)
+{
+    RegistrationTrigger *registration_trigger;
+
+    registration_trigger = malloc(sizeof(*registration_trigger));
+    if (!registration_trigger)
+        return E_OUTOFMEMORY;
+
+    registration_trigger->IRegistrationTrigger_iface.lpVtbl = &RegistrationTrigger_vtbl;
+    registration_trigger->ref = 1;
+    registration_trigger->enabled = TRUE;
+
+    *trigger = (ITrigger*)&registration_trigger->IRegistrationTrigger_iface;
+    return S_OK;
+}
+
 typedef struct
 {
     ITriggerCollection ITriggerCollection_iface;
@@ -439,6 +685,8 @@ static HRESULT WINAPI TriggerCollection_Create(ITriggerCollection *iface, TASK_T
     switch(type) {
     case TASK_TRIGGER_DAILY:
         return DailyTrigger_create(trigger);
+    case TASK_TRIGGER_REGISTRATION:
+        return RegistrationTrigger_create(trigger);
     default:
         FIXME("Unimplemented type %d\n", type);
         return E_NOTIMPL;
@@ -1620,7 +1868,7 @@ static HRESULT WINAPI Principal_get_RunLevel(IPrincipal *iface, TASK_RUNLEVEL_TY
 static HRESULT WINAPI Principal_put_RunLevel(IPrincipal *iface, TASK_RUNLEVEL_TYPE run_level)
 {
     FIXME("%p,%u: stub\n", iface, run_level);
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static const IPrincipalVtbl Principal_vtbl =
@@ -3687,6 +3935,8 @@ typedef struct
     BOOL connected;
     DWORD version;
     WCHAR comp_name[MAX_COMPUTERNAME_LENGTH + 1];
+    WCHAR user_name[256];
+    WCHAR domain_name[256];
 } TaskService;
 
 static inline TaskService *impl_from_ITaskService(ITaskService *iface)
@@ -3858,6 +4108,8 @@ static HRESULT WINAPI TaskService_Connect(ITaskService *iface, VARIANT server, V
     static WCHAR ncalrpc[] = L"ncalrpc";
     TaskService *task_svc = impl_from_ITaskService(iface);
     WCHAR comp_name[MAX_COMPUTERNAME_LENGTH + 1];
+    WCHAR user_name[256];
+    WCHAR domain_name[256];
     DWORD len;
     HRESULT hr;
     RPC_WSTR binding_str;
@@ -3872,6 +4124,18 @@ static HRESULT WINAPI TaskService_Connect(ITaskService *iface, VARIANT server, V
     len = ARRAY_SIZE(comp_name);
     if (!GetComputerNameW(comp_name, &len))
         return HRESULT_FROM_WIN32(GetLastError());
+
+    len = ARRAY_SIZE(user_name);
+    if (!GetUserNameW(user_name, &len))
+        return HRESULT_FROM_WIN32(GetLastError());
+
+    len = ARRAY_SIZE(domain_name);
+    if(!GetEnvironmentVariableW(L"USERDOMAIN", domain_name, len))
+    {
+        if (!GetComputerNameExW(ComputerNameDnsHostname, domain_name, &len))
+            return HRESULT_FROM_WIN32(GetLastError());
+        wcsupr(domain_name);
+    }
 
     if (!is_variant_null(&server))
     {
@@ -3911,6 +4175,8 @@ static HRESULT WINAPI TaskService_Connect(ITaskService *iface, VARIANT server, V
     TRACE("server version %#lx\n", task_svc->version);
 
     lstrcpyW(task_svc->comp_name, comp_name);
+    lstrcpyW(task_svc->user_name, user_name);
+    lstrcpyW(task_svc->domain_name, domain_name);
     task_svc->connected = TRUE;
 
     return S_OK;
@@ -3948,14 +4214,36 @@ static HRESULT WINAPI TaskService_get_TargetServer(ITaskService *iface, BSTR *se
 
 static HRESULT WINAPI TaskService_get_ConnectedUser(ITaskService *iface, BSTR *user)
 {
-    FIXME("%p,%p: stub\n", iface, user);
-    return E_NOTIMPL;
+    TaskService *task_svc = impl_from_ITaskService(iface);
+
+    TRACE("%p,%p\n", iface, user);
+
+    if (!user) return E_POINTER;
+
+    if (!task_svc->connected)
+        return HRESULT_FROM_WIN32(ERROR_ONLY_IF_CONNECTED);
+
+    *user = SysAllocString(task_svc->user_name);
+    if (!*user) return E_OUTOFMEMORY;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI TaskService_get_ConnectedDomain(ITaskService *iface, BSTR *domain)
 {
-    FIXME("%p,%p: stub\n", iface, domain);
-    return E_NOTIMPL;
+    TaskService *task_svc = impl_from_ITaskService(iface);
+
+    TRACE("%p,%p\n", iface, domain);
+
+    if (!domain) return E_POINTER;
+
+    if (!task_svc->connected)
+        return HRESULT_FROM_WIN32(ERROR_ONLY_IF_CONNECTED);
+
+    *domain = SysAllocString(task_svc->domain_name);
+    if (!*domain) return E_OUTOFMEMORY;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI TaskService_get_HighestVersion(ITaskService *iface, DWORD *version)

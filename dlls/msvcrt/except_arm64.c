@@ -109,29 +109,8 @@ unsigned int CDECL __CxxQueryExceptionSize(void)
 /*******************************************************************
  *		_setjmp (MSVCRT.@)
  */
-__ASM_GLOBAL_FUNC(MSVCRT__setjmp,
-                  "b " __ASM_NAME("__wine_setjmpex"));
+__ASM_GLOBAL_FUNC( _setjmp, "b _setjmpex" );
 
-/*******************************************************************
- *		longjmp (MSVCRT.@)
- */
-void __cdecl MSVCRT_longjmp(_JUMP_BUFFER *jmp, int retval)
-{
-    EXCEPTION_RECORD rec;
-
-    if (!retval) retval = 1;
-    if (jmp->Frame)
-    {
-        rec.ExceptionCode = STATUS_LONGJUMP;
-        rec.ExceptionFlags = 0;
-        rec.ExceptionRecord = NULL;
-        rec.ExceptionAddress = NULL;
-        rec.NumberParameters = 1;
-        rec.ExceptionInformation[0] = (DWORD_PTR)jmp;
-        RtlUnwind((void *)jmp->Frame, (void *)jmp->Lr, &rec, IntToPtr(retval));
-    }
-    __wine_longjmp( (__wine_jmp_buf *)jmp, retval );
-}
 
 /*********************************************************************
  *              _fpieee_flt (MSVCRT.@)

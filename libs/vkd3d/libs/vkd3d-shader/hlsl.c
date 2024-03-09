@@ -784,7 +784,9 @@ static const char * get_case_insensitive_typename(const char *name)
         "dword",
         "float",
         "matrix",
+        "pixelshader",
         "vector",
+        "vertexshader",
     };
     unsigned int i;
 
@@ -2018,7 +2020,7 @@ struct hlsl_ir_function_decl *hlsl_new_func_decl(struct hlsl_ctx *ctx,
 }
 
 struct hlsl_buffer *hlsl_new_buffer(struct hlsl_ctx *ctx, enum hlsl_buffer_type type, const char *name,
-        const struct hlsl_reg_reservation *reservation, const struct vkd3d_shader_location *loc)
+        uint32_t modifiers, const struct hlsl_reg_reservation *reservation, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_buffer *buffer;
 
@@ -2026,6 +2028,7 @@ struct hlsl_buffer *hlsl_new_buffer(struct hlsl_ctx *ctx, enum hlsl_buffer_type 
         return NULL;
     buffer->type = type;
     buffer->name = name;
+    buffer->modifiers = modifiers;
     if (reservation)
         buffer->reservation = *reservation;
     buffer->loc = *loc;
@@ -2611,6 +2614,7 @@ const char *debug_hlsl_expr_op(enum hlsl_ir_expr_op op)
         [HLSL_OP2_MUL]         = "*",
         [HLSL_OP2_NEQUAL]      = "!=",
         [HLSL_OP2_RSHIFT]      = ">>",
+        [HLSL_OP2_SLT]         = "slt",
 
         [HLSL_OP3_CMP]         = "cmp",
         [HLSL_OP3_DP2ADD]      = "dp2add",
@@ -3017,7 +3021,7 @@ static void free_ir_resource_load(struct hlsl_ir_resource_load *load)
 
 static void free_ir_resource_store(struct hlsl_ir_resource_store *store)
 {
-    hlsl_src_remove(&store->resource.rel_offset);
+    hlsl_cleanup_deref(&store->resource);
     hlsl_src_remove(&store->coords);
     hlsl_src_remove(&store->value);
     vkd3d_free(store);
@@ -3395,8 +3399,8 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
         {"pass",            HLSL_CLASS_OBJECT, HLSL_TYPE_PASS,          1, 1},
         {"STRING",          HLSL_CLASS_OBJECT, HLSL_TYPE_STRING,        1, 1},
         {"TEXTURE",         HLSL_CLASS_OBJECT, HLSL_TYPE_TEXTURE,       1, 1},
-        {"PIXELSHADER",     HLSL_CLASS_OBJECT, HLSL_TYPE_PIXELSHADER,   1, 1},
-        {"VERTEXSHADER",    HLSL_CLASS_OBJECT, HLSL_TYPE_VERTEXSHADER,  1, 1},
+        {"pixelshader",     HLSL_CLASS_OBJECT, HLSL_TYPE_PIXELSHADER,   1, 1},
+        {"vertexshader",    HLSL_CLASS_OBJECT, HLSL_TYPE_VERTEXSHADER,  1, 1},
         {"RenderTargetView",HLSL_CLASS_OBJECT, HLSL_TYPE_RENDERTARGETVIEW, 1, 1},
         {"DepthStencilView",HLSL_CLASS_OBJECT, HLSL_TYPE_DEPTHSTENCILVIEW, 1, 1},
     };
@@ -3571,10 +3575,10 @@ static bool hlsl_ctx_init(struct hlsl_ctx *ctx, const struct vkd3d_shader_compil
     list_init(&ctx->buffers);
 
     if (!(ctx->globals_buffer = hlsl_new_buffer(ctx, HLSL_BUFFER_CONSTANT,
-            hlsl_strdup(ctx, "$Globals"), NULL, &ctx->location)))
+            hlsl_strdup(ctx, "$Globals"), 0, NULL, &ctx->location)))
         return false;
     if (!(ctx->params_buffer = hlsl_new_buffer(ctx, HLSL_BUFFER_CONSTANT,
-            hlsl_strdup(ctx, "$Params"), NULL, &ctx->location)))
+            hlsl_strdup(ctx, "$Params"), 0, NULL, &ctx->location)))
         return false;
     ctx->cur_buffer = ctx->globals_buffer;
 

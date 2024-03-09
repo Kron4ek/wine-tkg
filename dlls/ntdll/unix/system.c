@@ -574,8 +574,12 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
             }
             if (!strcmp( line, "Features" ))
             {
-                if (strstr(value, "crc32")) features |= CPU_FEATURE_ARM_V8_CRC32;
-                if (strstr(value, "aes"))   features |= CPU_FEATURE_ARM_V8_CRYPTO;
+                if (strstr(value, "crc32"))   features |= CPU_FEATURE_ARM_V8_CRC32;
+                if (strstr(value, "aes"))     features |= CPU_FEATURE_ARM_V8_CRYPTO;
+                if (strstr(value, "atomics")) features |= CPU_FEATURE_ARM_V81_ATOMIC;
+                if (strstr(value, "asimddp")) features |= CPU_FEATURE_ARM_V82_DP;
+                if (strstr(value, "jscvt"))   features |= CPU_FEATURE_ARM_V83_JSCVT;
+                if (strstr(value, "lrcpc"))   features |= CPU_FEATURE_ARM_V83_LRCPC;
                 continue;
             }
         }
@@ -2939,7 +2943,7 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
         len = peb->NumberOfProcessors * sizeof(SYSTEM_INTERRUPT_INFORMATION);
         if (size >= len)
         {
-            if (!info) ret = STATUS_ACCESS_VIOLATION;
+            if (!info || !virtual_check_buffer_for_write( info, len )) ret = STATUS_ACCESS_VIOLATION;
             else
             {
 #ifdef HAVE_GETRANDOM
