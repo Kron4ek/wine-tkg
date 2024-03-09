@@ -399,7 +399,6 @@ struct x11drv_thread_data
     XIValuatorClassInfo x_valuator;
     XIValuatorClassInfo y_valuator;
     int      xinput2_pointer;      /* XInput2 master pointer device id */
-    int      xinput2_rawinput;     /* XInput2 rawinput-only thread */
 #endif /* HAVE_X11_EXTENSIONS_XINPUT2_H */
 };
 
@@ -699,7 +698,6 @@ extern void retry_grab_clipping_window(void);
 extern void ungrab_clipping_window(void);
 extern void move_resize_window( HWND hwnd, int dir );
 extern void X11DRV_InitKeyboard( Display *display );
-extern void X11DRV_InitMouse( Display *display );
 extern BOOL X11DRV_ProcessEvents( DWORD mask );
 extern HWND *build_hwnd_list(void);
 

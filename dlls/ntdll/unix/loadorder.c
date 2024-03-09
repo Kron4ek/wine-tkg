@@ -59,6 +59,7 @@ static HANDLE std_key;
 static HANDLE app_key;
 static BOOL init_done;
 static BOOL main_exe_loaded;
+static BOOL eac_launcher_process;
 
 
 /***************************************************************************
@@ -362,11 +363,24 @@ static enum loadorder get_load_order_value( HANDLE std_key, HANDLE app_key, WCHA
  */
 void set_load_order_app_name( const WCHAR *app_name )
 {
+    static const WCHAR eac_launcherW[] = {'P','R','O','T','O','N','_','E','A','C','_','L','A','U','N','C','H','E','R','_','P','R','O','C','E','S','S',0};
     const WCHAR *p;
 
     if ((p = wcsrchr( app_name, '\\' ))) app_name = p + 1;
     app_key = open_app_key( app_name );
     main_exe_loaded = TRUE;
+
+    p = NtCurrentTeb()->Peb->ProcessParameters->Environment;
+    while(*p)
+    {
+        if (!wcsncmp( p, eac_launcherW, ARRAY_SIZE(eac_launcherW) - 1 ))
+        {
+            eac_launcher_process = TRUE;
+            break;
+        }
+
+        p += wcslen(p) + 1;
+    }
 }
 
 
@@ -380,6 +394,7 @@ enum loadorder get_load_order( const UNICODE_STRING *nt_name )
 {
     static const WCHAR easyanticheat_x86W[] = {'e','a','s','y','a','n','t','i','c','h','e','a','t','_','x','8','6','.','d','l','l',0};
     static const WCHAR easyanticheat_x64W[] = {'e','a','s','y','a','n','t','i','c','h','e','a','t','_','x','6','4','.','d','l','l',0};
+    static const WCHAR easyanticheatW[] = {'e','a','s','y','a','n','t','i','c','h','e','a','t','.','d','l','l',0};
     static const WCHAR soW[] = {'s','o',0};
 
     static const WCHAR prefixW[] = {'\\','?','?','\\'};
@@ -397,18 +412,27 @@ enum loadorder get_load_order( const UNICODE_STRING *nt_name )
 
     /* HACK: special logic for easyanticheat bridge: only load the bridge (builtin) if there exists a native version of the library next to the windows version */
     basename = get_basename((WCHAR *)path);
-    if (!wcsicmp(basename, easyanticheat_x86W) || !wcsicmp(basename, easyanticheat_x64W))
+    if (!wcsicmp(basename, easyanticheat_x86W) || !wcsicmp(basename, easyanticheat_x64W) || !wcsicmp(basename, easyanticheatW))
     {
         UNICODE_STRING eac_unix_name;
         OBJECT_ATTRIBUTES attr;
         char *unix_path = NULL;
         NTSTATUS status;
 
+        if (eac_launcher_process)
+        {
+            ret = LO_NATIVE;
+            TRACE("got hardcoded %s for %s, as this is the EAC launcher process\n", debugstr_loadorder(ret), debugstr_w(path) );
+            return ret;
+        }
+
         len = wcslen(nt_name->Buffer);
-        eac_unix_name.Buffer = malloc( (len + 1) * sizeof(WCHAR) );
+        eac_unix_name.Buffer = malloc( (len + 5) * sizeof(WCHAR) );
         wcscpy(eac_unix_name.Buffer, nt_name->Buffer);
 
         basename = get_basename(eac_unix_name.Buffer);
+        if (!wcsicmp(basename, easyanticheatW))
+            wcscpy(basename, easyanticheat_x64W);
         wcscpy(&basename[18], soW);
         eac_unix_name.Length = eac_unix_name.MaximumLength = wcslen(eac_unix_name.Buffer) * sizeof(WCHAR);
         InitializeObjectAttributes(&attr, &eac_unix_name, 0, NULL, NULL);
@@ -424,7 +448,7 @@ enum loadorder get_load_order( const UNICODE_STRING *nt_name )
         else
         {
             ret = LO_NATIVE;
-            TRACE( "got hardcoded %s for %s, as the eac unix library (%s) is not present. status %x\n", debugstr_loadorder(ret), debugstr_w(path), debugstr_w(eac_unix_name.Buffer), status );
+            TRACE( "got hardcoded %s for %s, as the eac unix library (%s) is not present. status %x\n", debugstr_loadorder(ret), debugstr_w(path), debugstr_w(eac_unix_name.Buffer), (int)status );
             free(eac_unix_name.Buffer);
             return ret;
         }

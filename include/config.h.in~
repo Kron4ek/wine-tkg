@@ -681,9 +681,6 @@
 /* Define to 1 if you have the <X11/extensions/XInput2.h> header file. */
 #undef HAVE_X11_EXTENSIONS_XINPUT2_H
 
-/* Define to 1 if you have the <X11/extensions/XInput.h> header file. */
-#undef HAVE_X11_EXTENSIONS_XINPUT_H
-
 /* Define to 1 if you have the <X11/extensions/Xrandr.h> header file. */
 #undef HAVE_X11_EXTENSIONS_XRANDR_H
 

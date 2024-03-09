@@ -2888,6 +2888,7 @@ struct send_hardware_message_reply
     int             new_y;
     char __pad_28[4];
 };
+#define SEND_HWMSG_INJECTED    0x01
 
 
 

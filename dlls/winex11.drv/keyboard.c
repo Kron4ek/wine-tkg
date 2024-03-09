@@ -1920,7 +1920,11 @@ BOOL X11DRV_ActivateKeyboardLayout(HKL hkl, UINT flags)
     return TRUE;
 }
 
-static BOOL X11DRV_KeyboardMappingNotify( HWND dummy, XEvent *event )
+
+/***********************************************************************
+ *           X11DRV_MappingNotify
+ */
+BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
 {
     HWND hwnd;
 
@@ -1931,24 +1935,6 @@ static BOOL X11DRV_KeyboardMappingNotify( HWND dummy, XEvent *event )
     if (!hwnd) hwnd = get_active_window();
     NtUserPostMessage( hwnd, WM_INPUTLANGCHANGEREQUEST,
                        0 /*FIXME*/, (LPARAM)NtUserGetKeyboardLayout(0) );
-    return TRUE;
-}
-
-/***********************************************************************
- *           X11DRV_MappingNotify
- */
-BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
-{
-    switch (event->xmapping.request)
-    {
-    case MappingModifier:
-    case MappingKeyboard:
-        return X11DRV_KeyboardMappingNotify( dummy, event );
-    case MappingPointer:
-        X11DRV_InitMouse( event->xmapping.display );
-        break;
-    }
-
     return TRUE;
 }
 

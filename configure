@@ -15350,13 +15350,6 @@ then :
   printf "%s\n" "#define HAVE_X11_EXTENSIONS_SHAPE_H 1" >>confdefs.h
 
 fi
-ac_fn_c_check_header_compile "$LINENO" "X11/extensions/XInput.h" "ac_cv_header_X11_extensions_XInput_h" "$xlib_includes
-"
-if test "x$ac_cv_header_X11_extensions_XInput_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_X11_EXTENSIONS_XINPUT_H 1" >>confdefs.h
-
-fi
 ac_fn_c_check_header_compile "$LINENO" "X11/extensions/XInput2.h" "ac_cv_header_X11_extensions_XInput2_h" "$xlib_includes
 "
 if test "x$ac_cv_header_X11_extensions_XInput2_h" = xyes

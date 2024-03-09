@@ -2149,7 +2149,7 @@ enum message_type
 @REQ(send_hardware_message)
     user_handle_t   win;       /* window handle */
     hw_input_t      input;     /* input data */
-    unsigned int    flags;     /* flags (see ntuser.h) */
+    unsigned int    flags;     /* flags (see below) */
     VARARG(report,bytes);      /* HID report data */
 @REPLY
     int             wait;      /* do we need to wait for a reply? */
@@ -2158,6 +2158,7 @@ enum message_type
     int             new_x;     /* new cursor position */
     int             new_y;
 @END
+#define SEND_HWMSG_INJECTED    0x01
 
 
 /* Get a message from the current queue */

@@ -1065,6 +1065,14 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetConsoleScreenBufferInfoEx( HANDLE handle,
 }
 
 
+BOOL WINAPI DECLSPEC_HOTPATCH GetConsoleSelectionInfo(CONSOLE_SELECTION_INFO *info)
+{
+    FIXME("stub (%p)\n", info);
+    info->dwFlags = CONSOLE_NO_SELECTION;
+    return TRUE;
+}
+
+
 /******************************************************************************
  *	GetConsoleTitleA   (kernelbase.@)
  */
@@ -1081,14 +1089,6 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetConsoleTitleA( LPSTR title, DWORD size )
 
     HeapFree( GetProcessHeap(), 0, ptr );
     return ret;
-}
-
-
-BOOL WINAPI DECLSPEC_HOTPATCH GetConsoleSelectionInfo(CONSOLE_SELECTION_INFO *info)
-{
-    FIXME("stub (%p)\n", info);
-    info->dwFlags = CONSOLE_NO_SELECTION;
-    return TRUE;
 }
 
 
