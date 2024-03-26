@@ -3922,7 +3922,6 @@ enum {
         wined3d_mutex_unlock();
         return hr;
     }
-
     ddraw_d3dcaps1_from_7(&device_desc1, &device_desc7);
     device_desc1.dwSize = desc_size;
 

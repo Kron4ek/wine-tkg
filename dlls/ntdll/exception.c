@@ -510,6 +510,41 @@ __ASM_GLOBAL_IMPORT(IsBadStringPtrA)
 __ASM_GLOBAL_IMPORT(IsBadStringPtrW)
 #endif
 
+
+/*************************************************************************
+ *		RtlCaptureStackBackTrace (NTDLL.@)
+ */
+USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, void **buffer, ULONG *hash_ret )
+{
+    ULONG i, ret, hash;
+
+    TRACE( "(%lu, %lu, %p, %p)\n", skip, count, buffer, hash_ret );
+
+    skip++;  /* skip our own frame */
+    ret = RtlWalkFrameChain( buffer, count + skip, skip << 8 );
+    if (hash_ret)
+    {
+        for (i = hash = 0; i < ret; i++) hash += (ULONG_PTR)buffer[i];
+        *hash_ret = hash;
+    }
+    return ret;
+}
+
+
+/*************************************************************************
+ *		RtlGetCallersAddress (NTDLL.@)
+ */
+void WINAPI RtlGetCallersAddress( void **caller, void **parent )
+{
+    void *buffer[2];
+    ULONG count = ARRAY_SIZE(buffer), skip = 2;  /* skip our frame and the parent */
+
+    count = RtlWalkFrameChain( buffer, count + skip, skip << 8 );
+    *caller = count > 0 ? buffer[0] : NULL;
+    *parent = count > 1 ? buffer[1] : NULL;
+}
+
+
 /**********************************************************************
  *              RtlGetEnabledExtendedFeatures   (NTDLL.@)
  */

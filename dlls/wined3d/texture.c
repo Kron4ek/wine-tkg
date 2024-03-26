@@ -1296,8 +1296,8 @@ void wined3d_gl_texture_swizzle_from_color_fixup(GLint swizzle[4], struct color_
 }
 
 /* Context activation is done by the caller. */
-GLuint wined3d_texture_gl_get_bindless_name(struct wined3d_texture_gl *texture_gl,
-        struct wined3d_context_gl *context_gl, BOOL srgb)
+GLuint wined3d_texture_gl_prepare_gl_texture(struct wined3d_texture_gl *texture_gl,
+         struct wined3d_context_gl *context_gl, BOOL srgb)
 {
     const struct wined3d_format *format = texture_gl->t.resource.format;
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
@@ -1418,13 +1418,6 @@ GLuint wined3d_texture_gl_get_bindless_name(struct wined3d_texture_gl *texture_g
 }
 
 /* Context activation is done by the caller. */
-void wined3d_texture_gl_bind(struct wined3d_texture_gl *texture_gl,
-        struct wined3d_context_gl *context_gl, BOOL srgb)
-{
-    wined3d_context_gl_bind_texture(context_gl, texture_gl->target, wined3d_texture_gl_get_bindless_name(texture_gl, context_gl, srgb));
-}
-
-/* Context activation is done by the caller. */
 void wined3d_texture_gl_bind_and_dirtify(struct wined3d_texture_gl *texture_gl,
         struct wined3d_context_gl *context_gl, BOOL srgb)
 {
@@ -1449,6 +1442,13 @@ void wined3d_texture_gl_bind_and_dirtify(struct wined3d_texture_gl *texture_gl,
     context_invalidate_state(&context_gl->c, STATE_GRAPHICS_SHADER_RESOURCE_BINDING);
 
     wined3d_texture_gl_bind(texture_gl, context_gl, srgb);
+}
+
+void wined3d_texture_gl_bind(struct wined3d_texture_gl *texture_gl,
+        struct wined3d_context_gl *context_gl, BOOL srgb)
+{
+    wined3d_context_gl_bind_texture(context_gl, texture_gl->target,
+            wined3d_texture_gl_prepare_gl_texture(texture_gl, context_gl, srgb));
 }
 
 /* Context activation is done by the caller (state handler). */

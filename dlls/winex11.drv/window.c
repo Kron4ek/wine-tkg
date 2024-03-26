@@ -2096,6 +2096,10 @@ BOOL X11DRV_CreateWindow( HWND hwnd )
         struct x11drv_thread_data *data = x11drv_init_thread_data();
         XSetWindowAttributes attr;
 
+        /* listen to raw xinput event in the desktop window thread */
+        data->xinput2_rawinput = TRUE;
+        x11drv_xinput2_enable( data->display, DefaultRootWindow( data->display ) );
+
         /* create the cursor clipping window */
         attr.override_redirect = TRUE;
         attr.event_mask = StructureNotifyMask | FocusChangeMask;

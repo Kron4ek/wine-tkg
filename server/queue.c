@@ -505,11 +505,11 @@ static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win
     return updated;
 }
 
-static void update_desktop_cursor_handle( struct desktop *desktop, struct thread_input *input )
+static void update_desktop_cursor_handle( struct desktop *desktop, struct thread_input *input, user_handle_t handle )
 {
     if (input == get_desktop_cursor_thread_input( desktop ))
     {
-        user_handle_t handle = input->cursor_count < 0 ? 0 : input->cursor, win = desktop->cursor.win;
+        user_handle_t win = desktop->cursor.win;
         /* when clipping send the message to the foreground window as well, as some driver have an artificial overlay window */
         if (is_cursor_clipped( desktop )) queue_cursor_message( desktop, 0, WM_WINE_SETCURSOR, win, handle );
         queue_cursor_message( desktop, win, WM_WINE_SETCURSOR, win, handle );
@@ -551,6 +551,7 @@ static void get_message_defaults( struct msg_queue *queue, int *x, int *y, unsig
 void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect, unsigned int flags, int reset )
 {
     rectangle_t top_rect;
+    unsigned int old_flags;
     int x, y;
 
     get_top_window_rectangle( desktop, &top_rect );
@@ -566,6 +567,9 @@ void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect, unsig
     }
     else desktop->cursor.clip = top_rect;
 
+    old_flags = desktop->cursor.clip_flags;
+    desktop->cursor.clip_flags = flags;
+
     /* warp the mouse to be inside the clip rect */
     x = max( min( desktop->cursor.x, desktop->cursor.clip.right - 1 ), desktop->cursor.clip.left );
     y = max( min( desktop->cursor.y, desktop->cursor.clip.bottom - 1 ), desktop->cursor.clip.top );
@@ -574,8 +578,9 @@ void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect, unsig
     /* request clip cursor rectangle reset to the desktop thread */
     if (reset) post_desktop_message( desktop, WM_WINE_CLIPCURSOR, flags, FALSE );
 
-    /* notify foreground thread, of reset, or to apply new cursor clipping rect */
-    queue_cursor_message( desktop, 0, WM_WINE_CLIPCURSOR, flags, reset );
+    /* notify foreground thread of reset, clipped, or released cursor rect */
+    if (reset || flags != SET_CURSOR_NOCLIP || old_flags != SET_CURSOR_NOCLIP)
+        queue_cursor_message( desktop, 0, WM_WINE_CLIPCURSOR, flags, reset );
 }
 
 /* change the foreground input and reset the cursor clip rect */
@@ -1873,7 +1878,9 @@ static void rawmouse_init( struct rawinput *header, RAWMOUSE *rawmouse, int x, i
     header->wparam = 0;
     header->usage  = MAKELONG(HID_USAGE_GENERIC_MOUSE, HID_USAGE_PAGE_GENERIC);
 
-    rawmouse->usFlags       = MOUSE_MOVE_RELATIVE;
+    rawmouse->usFlags       = 0;
+    if (flags & MOUSEEVENTF_ABSOLUTE)    rawmouse->usFlags |= MOUSE_MOVE_ABSOLUTE;
+    if (flags & MOUSEEVENTF_VIRTUALDESK) rawmouse->usFlags |= MOUSE_VIRTUAL_DESKTOP;
     rawmouse->usButtonFlags = 0;
     rawmouse->usButtonData  = 0;
     for (i = 1; i < ARRAY_SIZE(button_flags); ++i)
@@ -2043,7 +2050,7 @@ static void dispatch_rawinput_message( struct desktop *desktop, struct rawinput_
 
 /* queue a hardware message for a mouse event */
 static int queue_mouse_message( struct desktop *desktop, user_handle_t win, const hw_input_t *input,
-                                unsigned int origin, struct msg_queue *sender )
+                                unsigned int origin, struct msg_queue *sender, unsigned int send_flags )
 {
     const struct rawinput_device *device;
     struct hardware_msg_data *msg_data;
@@ -2098,7 +2105,7 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
         y = desktop->cursor.y;
     }
 
-    if ((foreground = get_foreground_thread( desktop, win )))
+    if (!(send_flags & SEND_HWMSG_NO_RAW) && (foreground = get_foreground_thread( desktop, win )))
     {
         memset( &raw_msg, 0, sizeof(raw_msg) );
         raw_msg.foreground = foreground;
@@ -2106,7 +2113,7 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
         raw_msg.time       = time;
         raw_msg.message    = WM_INPUT;
         raw_msg.flags      = flags;
-        rawmouse_init( &raw_msg.rawinput, &raw_msg.data.mouse, x - desktop->cursor.x, y - desktop->cursor.y,
+        rawmouse_init( &raw_msg.rawinput, &raw_msg.data.mouse, input->mouse.x, input->mouse.y,
                        raw_msg.flags, input->mouse.data, input->mouse.info );
 
         dispatch_rawinput_message( desktop, &raw_msg );
@@ -2119,6 +2126,8 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
         update_desktop_mouse_state( desktop, flags, input->mouse.data << 16 );
         return 0;
     }
+
+    if (send_flags & SEND_HWMSG_NO_MSG) return 0;
 
     for (i = 0; i < ARRAY_SIZE( messages ); i++)
     {
@@ -2151,7 +2160,7 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
 
 /* queue a hardware message for a keyboard event */
 static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, const hw_input_t *input,
-                                   unsigned int origin, struct msg_queue *sender )
+                                   unsigned int origin, struct msg_queue *sender, unsigned int send_flags )
 {
     struct hw_msg_source source = { IMDT_KEYBOARD, origin };
     const struct rawinput_device *device;
@@ -2228,7 +2237,7 @@ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, c
         break;
     }
 
-    if ((foreground = get_foreground_thread( desktop, win )))
+    if (!(send_flags & SEND_HWMSG_NO_RAW) && (foreground = get_foreground_thread( desktop, win )))
     {
         struct rawinput_message raw_msg = {0};
         raw_msg.foreground = foreground;
@@ -2248,6 +2257,8 @@ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, c
         update_input_key_state( desktop, desktop->keystate, message_code, vkey );
         return 0;
     }
+
+    if (send_flags & SEND_HWMSG_NO_MSG) return 0;
 
     if (!(msg = alloc_hardware_message( input->kbd.info, source, time, 0 ))) return 0;
     msg_data = msg->data;
@@ -3009,10 +3020,10 @@ DECL_HANDLER(send_hardware_message)
     switch (req->input.type)
     {
     case INPUT_MOUSE:
-        wait = queue_mouse_message( desktop, req->win, &req->input, origin, sender );
+        wait = queue_mouse_message( desktop, req->win, &req->input, origin, sender, req->flags );
         break;
     case INPUT_KEYBOARD:
-        wait = queue_keyboard_message( desktop, req->win, &req->input, origin, sender );
+        wait = queue_keyboard_message( desktop, req->win, &req->input, origin, sender, req->flags );
         break;
     case INPUT_HARDWARE:
         queue_custom_hardware_message( desktop, req->win, origin, &req->input );
@@ -3058,6 +3069,18 @@ DECL_HANDLER(get_message)
     }
 
     if (!queue) return;
+
+    /* check for any hardware internal message */
+    if (get_hardware_message( current, req->hw_id, get_win, WM_WINE_FIRST_DRIVER_MSG,
+                              WM_WINE_LAST_DRIVER_MSG, req->flags, reply ))
+        return;
+
+    if (req->internal) /* check for internal messages only, leave queue flags unchanged */
+    {
+        set_error( STATUS_PENDING );
+        return;
+    }
+
     queue->last_get_msg = current_time;
     if (!filter) filter = QS_ALLINPUT;
 
@@ -3097,11 +3120,6 @@ DECL_HANDLER(get_message)
         filter_contains_hw_range( req->get_first, req->get_last ) &&
         get_hardware_message( current, req->hw_id, get_win, req->get_first, req->get_last, req->flags, reply ))
         goto found_msg;
-
-    /* check for any internal driver message */
-    if (get_hardware_message( current, req->hw_id, get_win, WM_WINE_FIRST_DRIVER_MSG,
-                              WM_WINE_LAST_DRIVER_MSG, req->flags, reply ))
-        return;
 
     /* now check for WM_PAINT */
     if ((filter & QS_PAINT) &&
@@ -3733,12 +3751,14 @@ DECL_HANDLER(get_last_input_time)
 DECL_HANDLER(set_cursor)
 {
     struct msg_queue *queue = get_current_queue();
+    user_handle_t prev_cursor, new_cursor;
     struct thread_input *input;
     struct desktop *desktop;
 
     if (!queue) return;
     input = queue->input;
     desktop = input->desktop;
+    prev_cursor = input->cursor_count < 0 ? 0 : input->cursor;
 
     reply->prev_handle = input->cursor;
     reply->prev_count  = input->cursor_count;
@@ -3763,8 +3783,8 @@ DECL_HANDLER(set_cursor)
     if (req->flags & SET_CURSOR_CLIP) set_clip_rectangle( desktop, &req->clip, req->flags, 0 );
     if (req->flags & SET_CURSOR_NOCLIP) set_clip_rectangle( desktop, NULL, SET_CURSOR_NOCLIP, 0 );
 
-    if (req->flags & (SET_CURSOR_HANDLE | SET_CURSOR_COUNT))
-        update_desktop_cursor_handle( desktop, input );
+    new_cursor = input->cursor_count < 0 ? 0 : input->cursor;
+    if (prev_cursor != new_cursor) update_desktop_cursor_handle( desktop, input, new_cursor );
 
     reply->new_x       = desktop->cursor.x;
     reply->new_y       = desktop->cursor.y;

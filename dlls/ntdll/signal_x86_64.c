@@ -46,20 +46,6 @@ ALL_SYSCALLS64
 #undef SYSCALL_ENTRY
 
 
-static void dump_scope_table( ULONG64 base, const SCOPE_TABLE *table )
-{
-    unsigned int i;
-
-    TRACE( "scope table at %p\n", table );
-    for (i = 0; i < table->Count; i++)
-        TRACE( "  %u: %p-%p handler %p target %p\n", i,
-               (char *)base + table->ScopeRecord[i].BeginAddress,
-               (char *)base + table->ScopeRecord[i].EndAddress,
-               (char *)base + table->ScopeRecord[i].HandlerAddress,
-               (char *)base + table->ScopeRecord[i].JumpTarget );
-}
-
-
 /***********************************************************************
  *           virtual_unwind
  */
@@ -847,84 +833,8 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
     }
 
     context->Rax = (ULONG64)retval;
-    context->Rip = (ULONG64)target_ip;
+    if (rec->ExceptionCode != STATUS_UNWIND_CONSOLIDATE) context->Rip = (ULONG64)target_ip;
     RtlRestoreContext(context, rec);
-}
-
-
-/*******************************************************************
- *		__C_specific_handler (NTDLL.@)
- */
-EXCEPTION_DISPOSITION WINAPI __C_specific_handler( EXCEPTION_RECORD *rec,
-                                                   void *frame,
-                                                   CONTEXT *context,
-                                                   struct _DISPATCHER_CONTEXT *dispatch )
-{
-    SCOPE_TABLE *table = dispatch->HandlerData;
-    ULONG i;
-
-    TRACE( "%p %p %p %p\n", rec, frame, context, dispatch );
-    if (TRACE_ON(seh)) dump_scope_table( dispatch->ImageBase, table );
-
-    if (rec->ExceptionFlags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND))
-    {
-        for (i = dispatch->ScopeIndex; i < table->Count; i++)
-        {
-            if (dispatch->ControlPc >= dispatch->ImageBase + table->ScopeRecord[i].BeginAddress &&
-                dispatch->ControlPc < dispatch->ImageBase + table->ScopeRecord[i].EndAddress)
-            {
-                PTERMINATION_HANDLER handler;
-
-                if (table->ScopeRecord[i].JumpTarget) continue;
-
-                if (rec->ExceptionFlags & EXCEPTION_TARGET_UNWIND &&
-                    dispatch->TargetIp >= dispatch->ImageBase + table->ScopeRecord[i].BeginAddress &&
-                    dispatch->TargetIp < dispatch->ImageBase + table->ScopeRecord[i].EndAddress)
-                {
-                    break;
-                }
-
-                handler = (PTERMINATION_HANDLER)(dispatch->ImageBase + table->ScopeRecord[i].HandlerAddress);
-                dispatch->ScopeIndex = i+1;
-
-                TRACE( "calling __finally %p frame %p\n", handler, frame );
-                handler( TRUE, frame );
-            }
-        }
-        return ExceptionContinueSearch;
-    }
-
-    for (i = dispatch->ScopeIndex; i < table->Count; i++)
-    {
-        if (dispatch->ControlPc >= dispatch->ImageBase + table->ScopeRecord[i].BeginAddress &&
-            dispatch->ControlPc < dispatch->ImageBase + table->ScopeRecord[i].EndAddress)
-        {
-            if (!table->ScopeRecord[i].JumpTarget) continue;
-            if (table->ScopeRecord[i].HandlerAddress != EXCEPTION_EXECUTE_HANDLER)
-            {
-                EXCEPTION_POINTERS ptrs;
-                PEXCEPTION_FILTER filter;
-
-                filter = (PEXCEPTION_FILTER)(dispatch->ImageBase + table->ScopeRecord[i].HandlerAddress);
-                ptrs.ExceptionRecord = rec;
-                ptrs.ContextRecord = context;
-                TRACE( "calling filter %p ptrs %p frame %p\n", filter, &ptrs, frame );
-                switch (filter( &ptrs, frame ))
-                {
-                case EXCEPTION_EXECUTE_HANDLER:
-                    break;
-                case EXCEPTION_CONTINUE_SEARCH:
-                    continue;
-                case EXCEPTION_CONTINUE_EXECUTION:
-                    return ExceptionContinueExecution;
-                }
-            }
-            TRACE( "unwinding to target %p\n", (char *)dispatch->ImageBase + table->ScopeRecord[i].JumpTarget );
-            RtlUnwindEx( frame, (char *)dispatch->ImageBase + table->ScopeRecord[i].JumpTarget,
-                         rec, 0, dispatch->ContextRecord, dispatch->HistoryTable );
-        }
-    }
-    return ExceptionContinueSearch;
 }
 
 
@@ -958,66 +868,32 @@ __ASM_GLOBAL_FUNC( RtlRaiseException,
                    "call " __ASM_NAME("RtlRaiseStatus") /* does not return */ );
 
 
-static inline ULONG hash_pointers( void **ptrs, ULONG count )
-{
-    /* Based on MurmurHash2, which is in the public domain */
-    static const ULONG m = 0x5bd1e995;
-    static const ULONG r = 24;
-    ULONG hash = count * sizeof(void*);
-    for (; count > 0; ptrs++, count--)
-    {
-        ULONG_PTR data = (ULONG_PTR)*ptrs;
-        ULONG k1 = (ULONG)(data & 0xffffffff), k2 = (ULONG)(data >> 32);
-        k1 *= m;
-        k1 = (k1 ^ (k1 >> r)) * m;
-        k2 *= m;
-        k2 = (k2 ^ (k2 >> r)) * m;
-        hash = (((hash * m) ^ k1) * m) ^ k2;
-    }
-    hash = (hash ^ (hash >> 13)) * m;
-    return hash ^ (hash >> 15);
-}
-
-
 /*************************************************************************
- *		RtlCaptureStackBackTrace (NTDLL.@)
+ *		RtlWalkFrameChain (NTDLL.@)
  */
-USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, PVOID *buffer, ULONG *hash )
+ULONG WINAPI RtlWalkFrameChain( void **buffer, ULONG count, ULONG flags )
 {
     UNWIND_HISTORY_TABLE table;
-    DISPATCHER_CONTEXT dispatch;
+    RUNTIME_FUNCTION *func;
+    PEXCEPTION_ROUTINE handler;
+    ULONG_PTR frame, base;
     CONTEXT context;
-    NTSTATUS status;
-    ULONG i;
-    USHORT num_entries = 0;
-
-    TRACE( "(%lu, %lu, %p, %p)\n", skip, count, buffer, hash );
+    void *data;
+    ULONG i, skip = flags >> 8, num_entries = 0;
 
     RtlCaptureContext( &context );
-    dispatch.TargetIp      = 0;
-    dispatch.ContextRecord = &context;
-    dispatch.HistoryTable  = &table;
-    if (hash) *hash = 0;
-    for (i = 0; i < skip + count; i++)
+
+    for (i = 0; i < count; i++)
     {
-        status = virtual_unwind( UNW_FLAG_NHANDLER, &dispatch, &context );
-        if (status != STATUS_SUCCESS) return i;
-
-        if (!dispatch.EstablisherFrame) break;
-
-        if (!is_valid_frame( dispatch.EstablisherFrame ))
-        {
-            ERR( "invalid frame %p (%p-%p)\n", (void *)dispatch.EstablisherFrame,
-                 NtCurrentTeb()->Tib.StackLimit, NtCurrentTeb()->Tib.StackBase );
+        func = RtlLookupFunctionEntry( context.Rip, &base, &table );
+        if (RtlVirtualUnwind2( UNW_FLAG_NHANDLER, base, context.Rip, func, &context, NULL,
+                               &data, &frame, NULL, NULL, NULL, &handler, 0 ))
             break;
-        }
-
-        if (context.Rsp == (ULONG64)NtCurrentTeb()->Tib.StackBase) break;
-
+        if (!context.Rip) break;
+        if (!frame || !is_valid_frame( frame )) break;
+        if (context.Rsp == (ULONG_PTR)NtCurrentTeb()->Tib.StackBase) break;
         if (i >= skip) buffer[num_entries++] = (void *)context.Rip;
     }
-    if (hash && num_entries > 0) *hash = hash_pointers( buffer, num_entries );
-    TRACE( "captured %hu frames\n", num_entries );
     return num_entries;
 }
 

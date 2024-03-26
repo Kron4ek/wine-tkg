@@ -144,7 +144,7 @@ DECL_HANDLER(close_handle);
 DECL_HANDLER(set_handle_info);
 DECL_HANDLER(dup_handle);
 DECL_HANDLER(compare_objects);
-DECL_HANDLER(make_temporary);
+DECL_HANDLER(set_object_permanence);
 DECL_HANDLER(open_process);
 DECL_HANDLER(open_thread);
 DECL_HANDLER(select);
@@ -447,7 +447,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_set_handle_info,
     (req_handler)req_dup_handle,
     (req_handler)req_compare_objects,
-    (req_handler)req_make_temporary,
+    (req_handler)req_set_object_permanence,
     (req_handler)req_open_process,
     (req_handler)req_open_thread,
     (req_handler)req_select,
@@ -940,8 +940,9 @@ C_ASSERT( sizeof(struct dup_handle_reply) == 16 );
 C_ASSERT( FIELD_OFFSET(struct compare_objects_request, first) == 12 );
 C_ASSERT( FIELD_OFFSET(struct compare_objects_request, second) == 16 );
 C_ASSERT( sizeof(struct compare_objects_request) == 24 );
-C_ASSERT( FIELD_OFFSET(struct make_temporary_request, handle) == 12 );
-C_ASSERT( sizeof(struct make_temporary_request) == 16 );
+C_ASSERT( FIELD_OFFSET(struct set_object_permanence_request, handle) == 12 );
+C_ASSERT( FIELD_OFFSET(struct set_object_permanence_request, permanent) == 16 );
+C_ASSERT( sizeof(struct set_object_permanence_request) == 24 );
 C_ASSERT( FIELD_OFFSET(struct open_process_request, pid) == 12 );
 C_ASSERT( FIELD_OFFSET(struct open_process_request, access) == 16 );
 C_ASSERT( FIELD_OFFSET(struct open_process_request, attributes) == 20 );
@@ -1443,7 +1444,8 @@ C_ASSERT( FIELD_OFFSET(struct get_message_request, get_last) == 24 );
 C_ASSERT( FIELD_OFFSET(struct get_message_request, hw_id) == 28 );
 C_ASSERT( FIELD_OFFSET(struct get_message_request, wake_mask) == 32 );
 C_ASSERT( FIELD_OFFSET(struct get_message_request, changed_mask) == 36 );
-C_ASSERT( sizeof(struct get_message_request) == 40 );
+C_ASSERT( FIELD_OFFSET(struct get_message_request, internal) == 40 );
+C_ASSERT( sizeof(struct get_message_request) == 48 );
 C_ASSERT( FIELD_OFFSET(struct get_message_reply, win) == 8 );
 C_ASSERT( FIELD_OFFSET(struct get_message_reply, msg) == 12 );
 C_ASSERT( FIELD_OFFSET(struct get_message_reply, wparam) == 16 );

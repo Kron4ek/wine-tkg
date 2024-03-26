@@ -59,7 +59,7 @@ static const char usage[] =
 "   --nostdinc         Do not search the standard include path\n"
 "   --ns_prefix        Prefix namespaces with ABI namespace\n"
 "   --oldnames         Use old naming conventions\n"
-"   --oldtlb           Use old typelib (SLTG) format\n"
+"   --oldtlb           Generate typelib in the old format (SLTG)\n"
 "   -o, --output=NAME  Set the output file name\n"
 "   -Otype             Type of stubs to generate (-Os, -Oi, -Oif)\n"
 "   -p                 Generate proxy\n"
@@ -843,10 +843,8 @@ int main(int argc,char *argv[])
 
   init_types();
   ret = parser_parse();
-
-  if(ret) {
-    exit(1);
-  }
+  close_all_inputs();
+  if (ret) exit(1);
 
   /* Everything has been done successfully, don't delete any files.  */
   set_everything(FALSE);

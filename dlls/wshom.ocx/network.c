@@ -69,8 +69,9 @@ static HRESULT WINAPI WshNetwork2_GetTypeInfoCount(IWshNetwork2 *iface, UINT *pc
 
 static HRESULT WINAPI WshNetwork2_GetTypeInfo(IWshNetwork2 *iface, UINT iTInfo, LCID lcid, ITypeInfo **ppTInfo)
 {
-    FIXME("%p, %u, %lx, %p.\n", iface, iTInfo, lcid, ppTInfo);
-    return E_NOTIMPL;
+    TRACE("%p, %u, %lx, %p.\n", iface, iTInfo, lcid, ppTInfo);
+
+    return get_typeinfo(IWshNetwork2_tid, ppTInfo);
 }
 
 static HRESULT WINAPI WshNetwork2_GetIDsOfNames(IWshNetwork2 *iface, REFIID riid, LPOLESTR *rgszNames,
@@ -113,9 +114,12 @@ static HRESULT WINAPI WshNetwork2_Invoke(IWshNetwork2 *iface, DISPID dispIdMembe
 
 static HRESULT WINAPI WshNetwork2_get_UserDomain(IWshNetwork2 *iface, BSTR *user_domain)
 {
-    FIXME("%p stub\n", user_domain);
+    TRACE("%p, %p.\n", iface, user_domain);
 
-    return E_NOTIMPL;
+    if (!user_domain)
+        return E_POINTER;
+
+    return get_env_var(L"USERDOMAIN", user_domain);
 }
 
 static HRESULT WINAPI WshNetwork2_get_UserName(IWshNetwork2 *iface, BSTR *user_name)
@@ -123,7 +127,10 @@ static HRESULT WINAPI WshNetwork2_get_UserName(IWshNetwork2 *iface, BSTR *user_n
     BOOL ret;
     DWORD len = 0;
 
-    TRACE("%p\n", user_name);
+    TRACE("%p, %p.\n", iface, user_name);
+
+    if (!user_name)
+        return E_POINTER;
 
     GetUserNameW(NULL, &len);
     *user_name = SysAllocStringLen(NULL, len-1);
@@ -150,9 +157,30 @@ static HRESULT WINAPI WshNetwork2_get_UserProfile(IWshNetwork2 *iface, BSTR *use
 
 static HRESULT WINAPI WshNetwork2_get_ComputerName(IWshNetwork2 *iface, BSTR *name)
 {
-    FIXME("%p stub\n", name);
+    HRESULT hr = S_OK;
+    DWORD len = 0;
+    BOOL ret;
 
-    return E_NOTIMPL;
+    TRACE("%p, %p.\n", iface, name);
+
+    if (!name)
+        return E_POINTER;
+
+    GetComputerNameW(NULL, &len);
+    *name = SysAllocStringLen(NULL, len - 1);
+    if (!*name)
+        return E_OUTOFMEMORY;
+
+    ret = GetComputerNameW(*name, &len);
+    if (!ret)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        SysFreeString(*name);
+        *name = NULL;
+        return hr;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI WshNetwork2_get_Organization(IWshNetwork2 *iface, BSTR *name)
@@ -258,7 +286,7 @@ static IWshNetwork2 WshNetwork2 = { &WshNetwork2Vtbl };
 
 HRESULT WINAPI WshNetworkFactory_CreateInstance(IClassFactory *iface, IUnknown *outer, REFIID riid, void **ppv)
 {
-    FIXME("(%p %s %p)\n", outer, debugstr_guid(riid), ppv);
+    TRACE("%p, %s, %p.\n", outer, debugstr_guid(riid), ppv);
 
     return IWshNetwork2_QueryInterface(&WshNetwork2, riid, ppv);
 }

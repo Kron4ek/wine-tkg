@@ -1175,9 +1175,10 @@ typedef struct
 @END
 
 
-/* Make an object temporary */
-@REQ(make_temporary)
+/* Make an object permanent or temporary */
+@REQ(set_object_permanence)
     obj_handle_t handle;       /* handle to the object */
+    int          permanent;    /* 1 to make permanent, 0 to make temporary */
 @END
 
 
@@ -2149,7 +2150,7 @@ enum message_type
 @REQ(send_hardware_message)
     user_handle_t   win;       /* window handle */
     hw_input_t      input;     /* input data */
-    unsigned int    flags;     /* flags (see below) */
+    unsigned int    flags;     /* flags (see ntuser.h) */
     VARARG(report,bytes);      /* HID report data */
 @REPLY
     int             wait;      /* do we need to wait for a reply? */
@@ -2158,7 +2159,6 @@ enum message_type
     int             new_x;     /* new cursor position */
     int             new_y;
 @END
-#define SEND_HWMSG_INJECTED    0x01
 
 
 /* Get a message from the current queue */
@@ -2170,6 +2170,7 @@ enum message_type
     unsigned int    hw_id;     /* id of the previous hardware message (or 0) */
     unsigned int    wake_mask; /* wakeup bits mask */
     unsigned int    changed_mask; /* changed bits mask */
+    unsigned int    internal;  /* get internal messages only */
 @REPLY
     user_handle_t   win;       /* window handle */
     unsigned int    msg;       /* message code */

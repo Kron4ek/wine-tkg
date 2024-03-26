@@ -1438,6 +1438,7 @@ static int move_files(FILE_OPERATION *op, BOOL multidest, const FILE_LIST *flFro
     INT mismatched = 0;
     const FILE_ENTRY *entryToMove;
     const FILE_ENTRY *fileDest;
+    int ret;
 
     if (!flFrom->dwNumFiles)
         return ERROR_SUCCESS;
@@ -1456,12 +1457,9 @@ static int move_files(FILE_OPERATION *op, BOOL multidest, const FILE_LIST *flFro
         return ERROR_CANCELLED;
     }
 
-    if (!PathFileExistsW(flTo->feFiles[0].szDirectory))
-    {
-        int ret = SHCreateDirectoryExW(NULL, flTo->feFiles[0].szDirectory, NULL);
-        if (ret)
-            return ret;
-    }
+    ret = SHCreateDirectoryExW(NULL, flTo->feFiles[0].szDirectory, NULL);
+    if (ret && ret != ERROR_ALREADY_EXISTS)
+        return ret;
 
     if (multidest)
         mismatched = flFrom->dwNumFiles - flTo->dwNumFiles;

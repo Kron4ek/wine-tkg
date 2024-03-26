@@ -2942,7 +2942,8 @@ if (0) { /* crashes on native */
 static void test_PathResolve(void)
 {
     WCHAR testfile[MAX_PATH], testfile_lnk[MAX_PATH], regedit_in_testdir[MAX_PATH], regedit_cmd[MAX_PATH];
-    WCHAR tempdir[MAX_PATH], path[MAX_PATH];
+    WCHAR tempdir[MAX_PATH], path[MAX_PATH], curdir[MAX_PATH];
+    WCHAR argv0_dir[MAX_PATH] = {0}, argv0_base[MAX_PATH] = {0}, *argv0_basep = NULL;
     const WCHAR *dirs[2] = { tempdir, NULL };
     HANDLE file, file2;
     BOOL ret;
@@ -2961,6 +2962,8 @@ static void test_PathResolve(void)
 
         /* PRF_VERIFYEXISTS */
         { L"shellpath", PRF_VERIFYEXISTS, TRUE, testfile_lnk },
+        { L"shellpath.lnk", PRF_VERIFYEXISTS, TRUE, testfile_lnk },
+        { L"shellpath.lnk.", PRF_VERIFYEXISTS, TRUE, testfile_lnk },
         { L"C:\\shellpath", PRF_VERIFYEXISTS, FALSE, L"C:\\shellpath" },
         /* common extensions are tried even if PRF_TRYPROGRAMEXTENSIONS isn't passed */
         /* directories in dirs parameter are always searched first even if PRF_FIRSTDIRDEF isn't passed */
@@ -3013,6 +3016,15 @@ static void test_PathResolve(void)
         return;
     }
 
+    ret = GetModuleFileNameW(NULL, argv0_dir, sizeof(argv0_dir));
+    ok(ret != 0 && ret < sizeof(argv0_dir), "GetModuleFileName failed\n");
+    if (ret != 0 && ret < sizeof(argv0_dir))
+    {
+        argv0_basep = wcsrchr(argv0_dir, '\\');
+        *argv0_basep = 0;
+        argv0_basep++;
+    }
+
     GetTempPathW(MAX_PATH, tempdir);
 
     lstrcpyW(testfile, tempdir);
@@ -3037,6 +3049,46 @@ static void test_PathResolve(void)
     ok(ret, "resolving regedit failed unexpectedly\n");
     ok(!lstrcmpiW(path, L"C:\\windows\\regedit.exe") || !lstrcmpiW(path, L"C:\\windows\\system32\\regedit.exe"),
             "unexpected path %s\n", wine_dbgstr_w(path));
+
+    if (argv0_basep)
+    {
+        WCHAR *ext;
+        const WCHAR *search_path[] = {
+            argv0_dir,
+            NULL
+        };
+        /* show that PathResolve doesn't check current directory */
+        lstrcpyW(argv0_base, argv0_basep);
+        GetCurrentDirectoryW(MAX_PATH, curdir);
+        SetCurrentDirectoryW(argv0_dir);
+        ret = pPathResolve(argv0_base, NULL, PRF_VERIFYEXISTS | PRF_TRYPROGRAMEXTENSIONS);
+        ok(!ret, "resolving argv0 succeeded unexpectedly, result: %s\n", wine_dbgstr_w(argv0_base));
+
+        lstrcpyW(argv0_base, argv0_basep);
+        if ((ext = wcsrchr(argv0_base, '.')))
+        {
+            *ext = 0;
+            ret = pPathResolve(argv0_base, NULL, PRF_VERIFYEXISTS | PRF_TRYPROGRAMEXTENSIONS);
+            ok(!ret, "resolving argv0 without extension succeeded unexpectedly, result: %s\n", wine_dbgstr_w(argv0_base));
+        }
+
+        /* show that PathResolve will check specified search path, even if it's the current directory */
+        lstrcpyW(argv0_base, argv0_basep);
+        ret = pPathResolve(argv0_base, search_path, PRF_VERIFYEXISTS | PRF_TRYPROGRAMEXTENSIONS);
+        ok(ret, "resolving argv0 with search path failed unexpectedly, result: %s\n", wine_dbgstr_w(argv0_base));
+
+        lstrcpyW(argv0_base, argv0_basep);
+        if ((ext = wcsrchr(argv0_base, '.')))
+        {
+            *ext = 0;
+            ret = pPathResolve(argv0_base, search_path, PRF_VERIFYEXISTS | PRF_TRYPROGRAMEXTENSIONS);
+            ok(ret, "resolving argv0 without extension with search path failed unexpectedly, result: %s\n", wine_dbgstr_w(argv0_base));
+        }
+
+        SetCurrentDirectoryW(curdir);
+    }
+    else
+        win_skip("couldn't get module filename\n");
 
     for (i = 0; i < ARRAY_SIZE(tests); i++)
     {

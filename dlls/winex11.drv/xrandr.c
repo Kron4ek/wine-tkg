@@ -631,7 +631,7 @@ static void add_remaining_gpus_via_vulkan( struct gdi_gpu **gpus, int *count )
     {
         VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
     };
-    const struct vulkan_funcs *vulkan_funcs = get_vulkan_driver( WINE_VULKAN_DRIVER_VERSION );
+    const struct vulkan_funcs *vulkan_funcs = __wine_get_vulkan_driver( WINE_VULKAN_DRIVER_VERSION );
     PFN_vkGetPhysicalDeviceProperties2KHR pvkGetPhysicalDeviceProperties2KHR;
     PFN_vkEnumeratePhysicalDevices pvkEnumeratePhysicalDevices;
     uint32_t device_count;
@@ -746,7 +746,7 @@ static BOOL get_gpu_properties_from_vulkan( struct gdi_gpu *gpu, const XRRProvid
         "VK_KHR_display",
         VK_KHR_SURFACE_EXTENSION_NAME,
     };
-    const struct vulkan_funcs *vulkan_funcs = get_vulkan_driver( WINE_VULKAN_DRIVER_VERSION );
+    const struct vulkan_funcs *vulkan_funcs = __wine_get_vulkan_driver( WINE_VULKAN_DRIVER_VERSION );
     VkResult (*pvkGetRandROutputDisplayEXT)( VkPhysicalDevice, Display *, RROutput, VkDisplayKHR * );
     PFN_vkGetPhysicalDeviceProperties2KHR pvkGetPhysicalDeviceProperties2KHR;
     PFN_vkEnumeratePhysicalDevices pvkEnumeratePhysicalDevices;

@@ -1556,7 +1556,7 @@ struct wined3d_shader_backend_ops
     void (*shader_precompile)(void *shader_priv, struct wined3d_shader *shader);
     void (*shader_apply_draw_state)(void *shader_priv, struct wined3d_context *context,
             const struct wined3d_state *state);
-    void (*shader_select_compute)(void *shader_priv, struct wined3d_context *context,
+    void (*shader_apply_compute_state)(void *shader_priv, struct wined3d_context *context,
             const struct wined3d_state *state);
     void (*shader_disable)(void *shader_priv, struct wined3d_context *context);
     void (*shader_update_float_vertex_constants)(struct wined3d_device *device, UINT start, UINT count);
@@ -1570,8 +1570,6 @@ struct wined3d_shader_backend_ops
     void (*shader_init_context_state)(struct wined3d_context *context);
     void (*shader_get_caps)(const struct wined3d_adapter *adapter, struct shader_caps *caps);
     BOOL (*shader_color_fixup_supported)(struct color_fixup_desc fixup);
-    void (*shader_load_sampler_handles)(void *shader_priv, struct wined3d_context *context,
-            const struct wined3d_state *state, const struct wined3d_shader *shader);
     uint64_t (*shader_compile)(struct wined3d_context *context, const struct wined3d_shader_desc *shader_desc,
         enum wined3d_shader_type shader_type);
 };

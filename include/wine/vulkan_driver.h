@@ -1,12 +1,20 @@
-/* Automatically generated from Vulkan vk.xml; DO NOT EDIT!
+/*
+ * Copyright 2017-2018 Roderick Colenbrander
+ * Copyright 2022 Jacek Caban for CodeWeavers
  *
- * This file is generated from Vulkan vk.xml file covered
- * by the following copyright and permission notice:
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
  *
- * Copyright 2015-2024 The Khronos Group Inc.
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
  *
- * SPDX-License-Identifier: Apache-2.0 OR MIT
- *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
 #ifndef __WINE_VULKAN_DRIVER_H
@@ -39,60 +47,5 @@ struct vulkan_funcs
     /* winevulkan specific functions */
     VkSurfaceKHR (*p_wine_get_host_surface)(VkSurfaceKHR);
 };
-
-static inline void *get_vulkan_driver_device_proc_addr(
-        const struct vulkan_funcs *vulkan_funcs, const char *name)
-{
-    if (!name || name[0] != 'v' || name[1] != 'k') return NULL;
-
-    name += 2;
-
-    if (!strcmp(name, "AcquireNextImage2KHR"))
-        return vulkan_funcs->p_vkAcquireNextImage2KHR;
-    if (!strcmp(name, "AcquireNextImageKHR"))
-        return vulkan_funcs->p_vkAcquireNextImageKHR;
-    if (!strcmp(name, "CreateSwapchainKHR"))
-        return vulkan_funcs->p_vkCreateSwapchainKHR;
-    if (!strcmp(name, "DestroySwapchainKHR"))
-        return vulkan_funcs->p_vkDestroySwapchainKHR;
-    if (!strcmp(name, "GetDeviceProcAddr"))
-        return vulkan_funcs->p_vkGetDeviceProcAddr;
-    if (!strcmp(name, "GetSwapchainImagesKHR"))
-        return vulkan_funcs->p_vkGetSwapchainImagesKHR;
-    if (!strcmp(name, "QueuePresentKHR"))
-        return vulkan_funcs->p_vkQueuePresentKHR;
-
-    return NULL;
-}
-
-static inline void *get_vulkan_driver_instance_proc_addr(
-        const struct vulkan_funcs *vulkan_funcs, VkInstance instance, const char *name)
-{
-    if (!name || name[0] != 'v' || name[1] != 'k') return NULL;
-
-    name += 2;
-
-    if (!strcmp(name, "CreateInstance"))
-        return vulkan_funcs->p_vkCreateInstance;
-    if (!strcmp(name, "EnumerateInstanceExtensionProperties"))
-        return vulkan_funcs->p_vkEnumerateInstanceExtensionProperties;
-
-    if (!instance) return NULL;
-
-    if (!strcmp(name, "CreateWin32SurfaceKHR"))
-        return vulkan_funcs->p_vkCreateWin32SurfaceKHR;
-    if (!strcmp(name, "DestroyInstance"))
-        return vulkan_funcs->p_vkDestroyInstance;
-    if (!strcmp(name, "DestroySurfaceKHR"))
-        return vulkan_funcs->p_vkDestroySurfaceKHR;
-    if (!strcmp(name, "GetInstanceProcAddr"))
-        return vulkan_funcs->p_vkGetInstanceProcAddr;
-    if (!strcmp(name, "GetPhysicalDeviceWin32PresentationSupportKHR"))
-        return vulkan_funcs->p_vkGetPhysicalDeviceWin32PresentationSupportKHR;
-
-    name -= 2;
-
-    return get_vulkan_driver_device_proc_addr(vulkan_funcs, name);
-}
 
 #endif /* __WINE_VULKAN_DRIVER_H */

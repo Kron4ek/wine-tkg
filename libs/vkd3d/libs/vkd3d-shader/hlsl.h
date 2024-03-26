@@ -374,6 +374,7 @@ struct hlsl_attribute
 #define HLSL_STORAGE_CENTROID            0x00004000
 #define HLSL_STORAGE_NOPERSPECTIVE       0x00008000
 #define HLSL_STORAGE_LINEAR              0x00010000
+#define HLSL_MODIFIER_SINGLE             0x00020000
 
 #define HLSL_TYPE_MODIFIERS_MASK     (HLSL_MODIFIER_PRECISE | HLSL_MODIFIER_VOLATILE | \
                                       HLSL_MODIFIER_CONST | HLSL_MODIFIER_ROW_MAJOR | \
@@ -593,6 +594,7 @@ enum hlsl_ir_expr_op
     HLSL_OP2_MUL,
     HLSL_OP2_NEQUAL,
     HLSL_OP2_RSHIFT,
+    /* SLT(a, b) retrieves 1.0 if (a < b), else 0.0. Only used for SM1-SM3 target vertex shaders. */
     HLSL_OP2_SLT,
 
     /* DP2ADD(a, b, c) computes the scalar product of a.xy and b.xy,
@@ -922,6 +924,7 @@ struct hlsl_ctx
     uint32_t found_numthreads : 1;
 
     bool semantic_compat_mapping;
+    bool child_effect;
 };
 
 struct hlsl_resource_load_params
@@ -1245,6 +1248,8 @@ struct hlsl_ir_node *hlsl_new_if(struct hlsl_ctx *ctx, struct hlsl_ir_node *cond
 struct hlsl_ir_node *hlsl_new_int_constant(struct hlsl_ctx *ctx, int32_t n, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_jump(struct hlsl_ctx *ctx,
         enum hlsl_ir_jump_type type, struct hlsl_ir_node *condition, const struct vkd3d_shader_location *loc);
+struct hlsl_ir_node *hlsl_new_ternary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
+        struct hlsl_ir_node *arg1, struct hlsl_ir_node *arg2, struct hlsl_ir_node *arg3);
 
 void hlsl_init_simple_deref_from_var(struct hlsl_deref *deref, struct hlsl_ir_var *var);
 
@@ -1358,6 +1363,8 @@ bool hlsl_fold_constant_swizzles(struct hlsl_ctx *ctx, struct hlsl_ir_node *inst
 bool hlsl_transform_ir(struct hlsl_ctx *ctx, bool (*func)(struct hlsl_ctx *ctx, struct hlsl_ir_node *, void *),
         struct hlsl_block *block, void *context);
 
+D3DXPARAMETER_CLASS hlsl_sm1_class(const struct hlsl_type *type);
+D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type);
 bool hlsl_sm1_register_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semantic *semantic,
         bool output, D3DSHADER_PARAM_REGISTER_TYPE *type, unsigned int *reg);
 bool hlsl_sm1_usage_from_semantic(const struct hlsl_semantic *semantic, D3DDECLUSAGE *usage, uint32_t *usage_idx);

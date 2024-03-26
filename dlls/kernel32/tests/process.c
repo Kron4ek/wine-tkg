@@ -2626,67 +2626,51 @@ static void _create_process(int line, const char *command, LPPROCESS_INFORMATION
 }
 
 #define test_assigned_proc(job, ...) _test_assigned_proc(__LINE__, job, __VA_ARGS__)
-static void _test_assigned_proc(int line, HANDLE job, int expected_count, ...)
+static void _test_assigned_proc(int line, HANDLE job, unsigned int count, ...)
 {
     char buf[sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * 20];
-    PJOBOBJECT_BASIC_PROCESS_ID_LIST pid_list = (JOBOBJECT_BASIC_PROCESS_ID_LIST *)buf;
-    DWORD ret_len, pid;
+    JOBOBJECT_BASIC_PROCESS_ID_LIST *list = (JOBOBJECT_BASIC_PROCESS_ID_LIST *)buf;
+    unsigned int i, pid;
     va_list valist;
-    int n;
+    DWORD size;
     BOOL ret;
 
     memset(buf, 0, sizeof(buf));
-    ret = pQueryInformationJobObject(job, JobObjectBasicProcessIdList, pid_list, sizeof(buf), &ret_len);
-    ok_(__FILE__, line)(ret, "QueryInformationJobObject error %lu\n", GetLastError());
-    if (ret)
-    {
-        todo_wine_if(expected_count)
-        ok_(__FILE__, line)(expected_count == pid_list->NumberOfAssignedProcesses,
-                            "Expected NumberOfAssignedProcesses to be %d (expected_count) is %ld\n",
-                            expected_count, pid_list->NumberOfAssignedProcesses);
-        todo_wine_if(expected_count)
-        ok_(__FILE__, line)(expected_count == pid_list->NumberOfProcessIdsInList,
-                            "Expected NumberOfProcessIdsInList to be %d (expected_count) is %ld\n",
-                            expected_count, pid_list->NumberOfProcessIdsInList);
+    ret = pQueryInformationJobObject(job, JobObjectBasicProcessIdList, list, sizeof(buf), &size);
+    ok_(__FILE__, line)(ret, "failed to get process id list, error %lu\n", GetLastError());
 
-        va_start(valist, expected_count);
-        for (n = 0; n < min(expected_count, pid_list->NumberOfProcessIdsInList); ++n)
-        {
-            pid = va_arg(valist, DWORD);
-            ok_(__FILE__, line)(pid == pid_list->ProcessIdList[n],
-                                "Expected pid_list->ProcessIdList[%d] to be %lx is %Ix\n",
-                                n, pid, pid_list->ProcessIdList[n]);
-        }
-        va_end(valist);
+    ok_(__FILE__, line)(list->NumberOfAssignedProcesses == count,
+                        "expected %u assigned processes, got %lu\n", count, list->NumberOfAssignedProcesses);
+    ok_(__FILE__, line)(list->NumberOfProcessIdsInList == count,
+                        "expected %u process IDs, got %lu\n", count, list->NumberOfProcessIdsInList);
+
+    va_start(valist, count);
+    for (i = 0; i < min(count, list->NumberOfProcessIdsInList); ++i)
+    {
+        pid = va_arg(valist, unsigned int);
+        ok_(__FILE__, line)(pid == list->ProcessIdList[i],
+                            "wrong pid %u: expected %#04x, got %#04Ix\n", i, pid, list->ProcessIdList[i]);
     }
+    va_end(valist);
 }
 
-#define test_accounting(job, total_proc, active_proc, terminated_proc) _test_accounting(__LINE__, job, total_proc, active_proc, terminated_proc)
-static void _test_accounting(int line, HANDLE job, int total_proc, int active_proc, int terminated_proc)
+#define test_accounting(a, b, c, d) _test_accounting(__LINE__, a, b, c, d)
+static void _test_accounting(int line, HANDLE job, unsigned int total, unsigned int active, unsigned int terminated)
 {
-    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION basic_accounting;
-    DWORD ret_len;
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info;
+    DWORD size;
     BOOL ret;
 
-    memset(&basic_accounting, 0, sizeof(basic_accounting));
-    ret = pQueryInformationJobObject(job, JobObjectBasicAccountingInformation, &basic_accounting, sizeof(basic_accounting), &ret_len);
-    ok_(__FILE__, line)(ret, "QueryInformationJobObject error %lu\n", GetLastError());
-    if (ret)
-    {
-        /* Not going to check process times or page faults */
+    memset(&info, 0, sizeof(info));
+    ret = pQueryInformationJobObject(job, JobObjectBasicAccountingInformation, &info, sizeof(info), &size);
+    ok_(__FILE__, line)(ret, "failed to get accounting information, error %lu\n", GetLastError());
 
-        todo_wine_if(total_proc)
-        ok_(__FILE__, line)(total_proc == basic_accounting.TotalProcesses,
-                            "Expected basic_accounting.TotalProcesses to be %d (total_proc) is %ld\n",
-                            total_proc, basic_accounting.TotalProcesses);
-        todo_wine_if(active_proc)
-        ok_(__FILE__, line)(active_proc == basic_accounting.ActiveProcesses,
-                            "Expected basic_accounting.ActiveProcesses to be %d (active_proc) is %ld\n",
-                            active_proc, basic_accounting.ActiveProcesses);
-        ok_(__FILE__, line)(terminated_proc == basic_accounting.TotalTerminatedProcesses,
-                            "Expected basic_accounting.TotalTerminatedProcesses to be %d (terminated_proc) is %ld\n",
-                            terminated_proc, basic_accounting.TotalTerminatedProcesses);
-    }
+    ok_(__FILE__, line)(info.TotalProcesses == total,
+                        "expected %u total processes, got %lu\n", total, info.TotalProcesses);
+    ok_(__FILE__, line)(info.ActiveProcesses == active,
+                        "expected %u active processes, got %lu\n", active, info.ActiveProcesses);
+    ok_(__FILE__, line)(info.TotalTerminatedProcesses == terminated,
+                        "expected %u terminated processes, got %lu\n", terminated, info.TotalTerminatedProcesses);
 }
 
 static void test_IsProcessInJob(void)
@@ -3182,8 +3166,6 @@ static void test_BreakawayOk(HANDLE parent_job)
     ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &si, &pi);
     ok(!ret, "CreateProcessA expected failure\n");
     expect_eq_d(ERROR_ACCESS_DENIED, GetLastError());
-    test_assigned_proc(job, 1, GetCurrentProcessId());
-    test_accounting(job, 2, 1, 0);
 
     if (ret)
     {
@@ -3193,6 +3175,9 @@ static void test_BreakawayOk(HANDLE parent_job)
 
     if (nested_jobs)
     {
+        test_assigned_proc(job, 1, GetCurrentProcessId());
+        test_accounting(job, 1, 1, 0);
+
         limit_info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_BREAKAWAY_OK;
         ret = pSetInformationJobObject(job, JobObjectExtendedLimitInformation, &limit_info, sizeof(limit_info));
         ok(ret, "SetInformationJobObject error %lu\n", GetLastError());
@@ -3223,8 +3208,11 @@ static void test_BreakawayOk(HANDLE parent_job)
     ret = pIsProcessInJob(pi.hProcess, job, &out);
     ok(ret, "IsProcessInJob error %lu\n", GetLastError());
     ok(!out, "IsProcessInJob returned out=%u\n", out);
-    test_assigned_proc(job, 1, GetCurrentProcessId());
-    test_accounting(job, 2, 1, 0);
+    if (nested_jobs)
+    {
+        test_assigned_proc(job, 1, GetCurrentProcessId());
+        test_accounting(job, 1, 1, 0);
+    }
 
     ret = pIsProcessInJob(pi.hProcess, parent_job, &out);
     ok(ret, "IsProcessInJob error %lu\n", GetLastError());
@@ -3242,8 +3230,11 @@ static void test_BreakawayOk(HANDLE parent_job)
     ret = pIsProcessInJob(pi.hProcess, job, &out);
     ok(ret, "IsProcessInJob error %lu\n", GetLastError());
     ok(!out, "IsProcessInJob returned out=%u\n", out);
-    test_assigned_proc(job, 1, GetCurrentProcessId());
-    test_accounting(job, 2, 1, 0);
+    if (nested_jobs)
+    {
+        test_assigned_proc(job, 1, GetCurrentProcessId());
+        test_accounting(job, 1, 1, 0);
+    }
 
     wait_and_close_child_process(&pi);
 

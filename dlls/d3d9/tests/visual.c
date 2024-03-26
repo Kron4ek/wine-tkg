@@ -29,6 +29,7 @@
  */
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <limits.h>
 #include <math.h>
 
@@ -105,6 +106,18 @@ static BOOL compare_vec4(const struct vec4 *vec, float x, float y, float z, floa
             && compare_float(vec->y, y, ulps)
             && compare_float(vec->z, z, ulps)
             && compare_float(vec->w, w, ulps);
+}
+
+static uint32_t float_to_int(float f)
+{
+    union
+    {
+        uint32_t u;
+        float f;
+    } u;
+
+    u.f = f;
+    return u.u;
 }
 
 static BOOL adapter_is_warp(const D3DADAPTER_IDENTIFIER9 *identifier)
@@ -1667,16 +1680,17 @@ static void color_fill_test(void)
         {D3DPOOL_MANAGED,    0,                     D3DERR_INVALIDCALL},
         {D3DPOOL_SCRATCH,    0,                     D3DERR_INVALIDCALL},
     };
+    enum format_flags
+    {
+        CHECK_FILL_VALUE = 0x1,
+        BLOCKS           = 0x2,
+        FLOAT_VALUES     = 0x4,
+    };
     static const struct
     {
         D3DFORMAT format;
         const char *name;
-        enum
-        {
-            CHECK_FILL_VALUE = 0x1,
-            BLOCKS           = 0x2,
-            FLOAT_VALUES     = 0x4,
-        } flags;
+        enum format_flags flags;
         unsigned int fill_i[4];
         float fill_f[4];
     }
@@ -3366,7 +3380,7 @@ static void generate_bumpmap_textures(IDirect3DDevice9 *device) {
         for (y = 0; y < 128; ++y)
         {
             if(i)
-            { /* Set up black texture with 2x2 texel white spot in the middle */
+            {
                 DWORD *ptr = (DWORD *)(((BYTE *)locked_rect.pBits) + (y * locked_rect.Pitch));
                 for (x = 0; x < 128; ++x)
                 {
@@ -3510,10 +3524,10 @@ static void texbem_test(void)
 
     generate_bumpmap_textures(device);
 
-    IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT00, *(LPDWORD)&bumpenvmat[0]);
-    IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT01, *(LPDWORD)&bumpenvmat[1]);
-    IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT10, *(LPDWORD)&bumpenvmat[2]);
-    hr = IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT11, *(LPDWORD)&bumpenvmat[3]);
+    IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT00, float_to_int(bumpenvmat[0]));
+    IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT01, float_to_int(bumpenvmat[1]));
+    IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT10, float_to_int(bumpenvmat[2]));
+    hr = IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT11, float_to_int(bumpenvmat[3]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_SetVertexShader(device, NULL);
@@ -3664,24 +3678,24 @@ static void texbem_test(void)
 
     bumpenvmat[0] =-1.0;  bumpenvmat[2] =  2.0;
     bumpenvmat[1] = 0.0;  bumpenvmat[3] =  0.0;
-    hr = IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT00, *(LPDWORD)&bumpenvmat[0]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT00, float_to_int(bumpenvmat[0]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT01, *(LPDWORD)&bumpenvmat[1]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT01, float_to_int(bumpenvmat[1]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT10, *(LPDWORD)&bumpenvmat[2]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT10, float_to_int(bumpenvmat[2]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT11, *(LPDWORD)&bumpenvmat[3]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 1, D3DTSS_BUMPENVMAT11, float_to_int(bumpenvmat[3]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     bumpenvmat[0] = 1.5; bumpenvmat[2] =  0.0;
     bumpenvmat[1] = 0.0; bumpenvmat[3] =  0.5;
-    hr = IDirect3DDevice9_SetTextureStageState(device, 3, D3DTSS_BUMPENVMAT00, *(LPDWORD)&bumpenvmat[0]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 3, D3DTSS_BUMPENVMAT00, float_to_int(bumpenvmat[0]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_SetTextureStageState(device, 3, D3DTSS_BUMPENVMAT01, *(LPDWORD)&bumpenvmat[1]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 3, D3DTSS_BUMPENVMAT01, float_to_int(bumpenvmat[1]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_SetTextureStageState(device, 3, D3DTSS_BUMPENVMAT10, *(LPDWORD)&bumpenvmat[2]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 3, D3DTSS_BUMPENVMAT10, float_to_int(bumpenvmat[2]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_SetTextureStageState(device, 3, D3DTSS_BUMPENVMAT11, *(LPDWORD)&bumpenvmat[3]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 3, D3DTSS_BUMPENVMAT11, float_to_int(bumpenvmat[3]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_SetSamplerState(device, 0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
@@ -11027,13 +11041,13 @@ static void fixed_function_bumpmap_test(void)
     /* Generate the textures */
     generate_bumpmap_textures(device);
 
-    hr = IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_BUMPENVMAT00, *(LPDWORD)&bumpenvmat[0]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_BUMPENVMAT00, float_to_int(bumpenvmat[0]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_BUMPENVMAT01, *(LPDWORD)&bumpenvmat[1]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_BUMPENVMAT01, float_to_int(bumpenvmat[1]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_BUMPENVMAT10, *(LPDWORD)&bumpenvmat[2]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_BUMPENVMAT10, float_to_int(bumpenvmat[2]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_BUMPENVMAT11, *(LPDWORD)&bumpenvmat[3]);
+    hr = IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_BUMPENVMAT11, float_to_int(bumpenvmat[3]));
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_SetTextureStageState(device, 0, D3DTSS_COLOROP, D3DTOP_BUMPENVMAP);
@@ -23249,16 +23263,17 @@ static void test_texture_blending(void)
         DWORD value;
     };
 
+    enum texture_stage_texture
+    {
+        TEXTURE_INVALID,
+        TEXTURE_NONE,
+        TEXTURE_BUMPMAP,
+        TEXTURE_RED,
+    };
+
     struct texture_stage
     {
-        enum
-        {
-            TEXTURE_INVALID,
-            TEXTURE_NONE,
-            TEXTURE_BUMPMAP,
-            TEXTURE_RED,
-        }
-        texture;
+        enum texture_stage_texture texture;
         struct texture_stage_state state[20];
     };
 
@@ -26438,16 +26453,23 @@ static void test_desktop_window(void)
     device = create_device(d3d, GetDesktopWindow(), GetDesktopWindow(), TRUE);
     ok(!!device, "Failed to create a D3D device.\n");
 
-    hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff0000, 1.0f, 0);
-    ok(SUCCEEDED(hr), "Failed to clear, hr %#lx.\n", hr);
-    color = getPixelColor(device, 1, 1);
-    ok(color == 0x00ff0000, "Got unexpected color 0x%08x.\n", color);
+    if (device)
+    {
+        hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff0000, 1.0f, 0);
+        ok(SUCCEEDED(hr), "Failed to clear, hr %#lx.\n", hr);
+        color = getPixelColor(device, 1, 1);
+        ok(color == 0x00ff0000, "Got unexpected color 0x%08x.\n", color);
 
-    hr = IDirect3DDevice9_Present(device, NULL, NULL, NULL, NULL);
-    ok(SUCCEEDED(hr), "Failed to present, hr %#lx.\n", hr);
+        hr = IDirect3DDevice9_Present(device, NULL, NULL, NULL, NULL);
+        ok(SUCCEEDED(hr), "Failed to present, hr %#lx.\n", hr);
 
-    refcount = IDirect3DDevice9_Release(device);
-    ok(!refcount, "Device has %lu references left.\n", refcount);
+        refcount = IDirect3DDevice9_Release(device);
+        ok(!refcount, "Device has %lu references left.\n", refcount);
+    }
+    else
+    {
+        skip("Failed to create a D3D device for the desktop window, skipping tests.\n");
+    }
 
     /* test device with NULL HWND */
     device = create_device(d3d, NULL, NULL, TRUE);

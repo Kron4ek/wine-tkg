@@ -30,6 +30,8 @@
 #include <stdio.h>
 #include <dlfcn.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 
@@ -88,8 +90,6 @@ static void (*pvkDestroyInstance)(VkInstance, const VkAllocationCallbacks *);
 static void (*pvkDestroySurfaceKHR)(VkInstance, VkSurfaceKHR, const VkAllocationCallbacks *);
 static void (*pvkDestroySwapchainKHR)(VkDevice, VkSwapchainKHR, const VkAllocationCallbacks *);
 static VkResult (*pvkEnumerateInstanceExtensionProperties)(const char *, uint32_t *, VkExtensionProperties *);
-static void * (*pvkGetDeviceProcAddr)(VkDevice, const char *);
-static void * (*pvkGetInstanceProcAddr)(VkInstance, const char *);
 static VkBool32 (*pvkGetPhysicalDeviceXlibPresentationSupportKHR)(VkPhysicalDevice, uint32_t, Display *, VisualID);
 static VkResult (*pvkGetSwapchainImagesKHR)(VkDevice, VkSwapchainKHR, uint32_t *, VkImage *);
 static VkResult (*pvkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *);
@@ -102,48 +102,6 @@ static const struct vulkan_funcs vulkan_funcs;
 static inline struct wine_vk_surface *surface_from_handle(VkSurfaceKHR handle)
 {
     return (struct wine_vk_surface *)(uintptr_t)handle;
-}
-
-static void *vulkan_handle;
-
-static void wine_vk_init(void)
-{
-    init_recursive_mutex(&vulkan_mutex);
-
-    if (!(vulkan_handle = dlopen(SONAME_LIBVULKAN, RTLD_NOW)))
-    {
-        ERR("Failed to load %s.\n", SONAME_LIBVULKAN);
-        return;
-    }
-
-#define LOAD_FUNCPTR(f) if (!(p##f = dlsym(vulkan_handle, #f))) goto fail
-#define LOAD_OPTIONAL_FUNCPTR(f) p##f = dlsym(vulkan_handle, #f)
-    LOAD_FUNCPTR(vkAcquireNextImageKHR);
-    LOAD_FUNCPTR(vkCreateInstance);
-    LOAD_FUNCPTR(vkCreateSwapchainKHR);
-    LOAD_FUNCPTR(vkCreateXlibSurfaceKHR);
-    LOAD_FUNCPTR(vkDestroyInstance);
-    LOAD_FUNCPTR(vkDestroySurfaceKHR);
-    LOAD_FUNCPTR(vkDestroySwapchainKHR);
-    LOAD_FUNCPTR(vkEnumerateInstanceExtensionProperties);
-    LOAD_FUNCPTR(vkGetDeviceProcAddr);
-    LOAD_FUNCPTR(vkGetInstanceProcAddr);
-    LOAD_FUNCPTR(vkGetPhysicalDeviceXlibPresentationSupportKHR);
-    LOAD_FUNCPTR(vkGetSwapchainImagesKHR);
-    LOAD_FUNCPTR(vkQueuePresentKHR);
-    LOAD_FUNCPTR(vkWaitForFences);
-    LOAD_FUNCPTR(vkCreateFence);
-    LOAD_FUNCPTR(vkDestroyFence);
-#undef LOAD_FUNCPTR
-#undef LOAD_OPTIONAL_FUNCPTR
-
-    vulkan_swapchain_context = XUniqueContext();
-
-    return;
-
-fail:
-    dlclose(vulkan_handle);
-    vulkan_handle = NULL;
 }
 
 /* Helper function for converting between win32 and X11 compatible VkInstanceCreateInfo.
@@ -641,30 +599,6 @@ static VkResult X11DRV_vkEnumerateInstanceExtensionProperties(const char *layer_
     return res;
 }
 
-static void *X11DRV_vkGetDeviceProcAddr(VkDevice device, const char *name)
-{
-    void *proc_addr;
-
-    TRACE("%p, %s\n", device, debugstr_a(name));
-
-    if ((proc_addr = get_vulkan_driver_device_proc_addr( &vulkan_funcs, name )))
-        return proc_addr;
-
-    return pvkGetDeviceProcAddr(device, name);
-}
-
-static void *X11DRV_vkGetInstanceProcAddr(VkInstance instance, const char *name)
-{
-    void *proc_addr;
-
-    TRACE("%p, %s\n", instance, debugstr_a(name));
-
-    if ((proc_addr = get_vulkan_driver_instance_proc_addr( &vulkan_funcs, instance, name )))
-        return proc_addr;
-
-    return pvkGetInstanceProcAddr(instance, name);
-}
-
 static VkBool32 X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice phys_dev,
         uint32_t index)
 {
@@ -733,8 +667,8 @@ static const struct vulkan_funcs vulkan_funcs =
     X11DRV_vkDestroySurfaceKHR,
     X11DRV_vkDestroySwapchainKHR,
     X11DRV_vkEnumerateInstanceExtensionProperties,
-    X11DRV_vkGetDeviceProcAddr,
-    X11DRV_vkGetInstanceProcAddr,
+    NULL,
+    NULL,
     X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR,
     X11DRV_vkGetSwapchainImagesKHR,
     X11DRV_vkQueuePresentKHR,
@@ -742,29 +676,45 @@ static const struct vulkan_funcs vulkan_funcs =
     X11DRV_wine_get_host_surface,
 };
 
-const struct vulkan_funcs *get_vulkan_driver(UINT version)
+UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *driver_funcs )
 {
-    static pthread_once_t init_once = PTHREAD_ONCE_INIT;
-
     if (version != WINE_VULKAN_DRIVER_VERSION)
     {
-        ERR("version mismatch, vulkan wants %u but driver has %u\n", version, WINE_VULKAN_DRIVER_VERSION);
-        return NULL;
+        ERR( "version mismatch, win32u wants %u but driver has %u\n", version, WINE_VULKAN_DRIVER_VERSION );
+        return STATUS_INVALID_PARAMETER;
     }
 
-    pthread_once(&init_once, wine_vk_init);
-    if (vulkan_handle)
-        return &vulkan_funcs;
+    init_recursive_mutex( &vulkan_mutex );
 
-    return NULL;
+#define LOAD_FUNCPTR( f ) if (!(p##f = dlsym( vulkan_handle, #f ))) return STATUS_PROCEDURE_NOT_FOUND;
+    LOAD_FUNCPTR( vkAcquireNextImageKHR );
+    LOAD_FUNCPTR( vkCreateInstance );
+    LOAD_FUNCPTR( vkCreateSwapchainKHR );
+    LOAD_FUNCPTR( vkCreateXlibSurfaceKHR );
+    LOAD_FUNCPTR( vkDestroyInstance );
+    LOAD_FUNCPTR( vkDestroySurfaceKHR );
+    LOAD_FUNCPTR( vkDestroySwapchainKHR );
+    LOAD_FUNCPTR( vkEnumerateInstanceExtensionProperties );
+    LOAD_FUNCPTR( vkGetPhysicalDeviceXlibPresentationSupportKHR );
+    LOAD_FUNCPTR( vkGetSwapchainImagesKHR );
+    LOAD_FUNCPTR( vkQueuePresentKHR );
+    LOAD_FUNCPTR(vkWaitForFences);
+    LOAD_FUNCPTR(vkCreateFence);
+    LOAD_FUNCPTR(vkDestroyFence);
+#undef LOAD_FUNCPTR
+
+    vulkan_swapchain_context = XUniqueContext();
+
+    *driver_funcs = vulkan_funcs;
+    return STATUS_SUCCESS;
 }
 
 #else /* No vulkan */
 
-const struct vulkan_funcs *get_vulkan_driver(UINT version)
+UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *driver_funcs )
 {
-    ERR("Wine was built without Vulkan support.\n");
-    return NULL;
+    ERR( "Wine was built without Vulkan support.\n" );
+    return STATUS_NOT_IMPLEMENTED;
 }
 
 void wine_vk_surface_destroy(HWND hwnd)

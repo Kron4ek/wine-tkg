@@ -20,28 +20,13 @@
 
 struct vkd3d_glsl_generator
 {
-    struct vkd3d_shader_version version;
+    struct vsir_program *program;
     struct vkd3d_string_buffer buffer;
     struct vkd3d_shader_location location;
     struct vkd3d_shader_message_context *message_context;
+    unsigned int indent;
     bool failed;
 };
-
-struct vkd3d_glsl_generator *vkd3d_glsl_generator_create(const struct vkd3d_shader_version *version,
-        struct vkd3d_shader_message_context *message_context, const struct vkd3d_shader_location *location)
-{
-    struct vkd3d_glsl_generator *generator;
-
-    if (!(generator = vkd3d_malloc(sizeof(*generator))))
-        return NULL;
-
-    memset(generator, 0, sizeof(*generator));
-    generator->version = *version;
-    vkd3d_string_buffer_init(&generator->buffer);
-    generator->location = *location;
-    generator->message_context = message_context;
-    return generator;
-}
 
 static void VKD3D_PRINTF_FUNC(3, 4) vkd3d_glsl_compiler_error(
         struct vkd3d_glsl_generator *generator,
@@ -55,10 +40,23 @@ static void VKD3D_PRINTF_FUNC(3, 4) vkd3d_glsl_compiler_error(
     generator->failed = true;
 }
 
+static void shader_glsl_print_indent(struct vkd3d_string_buffer *buffer, unsigned int indent)
+{
+    vkd3d_string_buffer_printf(buffer, "%*s", 4 * indent, "");
+}
+
+static void shader_glsl_unhandled(struct vkd3d_glsl_generator *gen, const struct vkd3d_shader_instruction *ins)
+{
+    shader_glsl_print_indent(&gen->buffer, gen->indent);
+    vkd3d_string_buffer_printf(&gen->buffer, "/* <unhandled instruction %#x> */\n", ins->handler_idx);
+    vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
+            "Internal compiler error: Unhandled instruction %#x.", ins->handler_idx);
+}
+
 static void shader_glsl_ret(struct vkd3d_glsl_generator *generator,
         const struct vkd3d_shader_instruction *ins)
 {
-    const struct vkd3d_shader_version *version = &generator->version;
+    const struct vkd3d_shader_version *version = &generator->program->shader_version;
 
     /*
     * TODO: Implement in_subroutine
@@ -66,6 +64,7 @@ static void shader_glsl_ret(struct vkd3d_glsl_generator *generator,
     */
     if (version->major >= 4)
     {
+        shader_glsl_print_indent(&generator->buffer, generator->indent);
         vkd3d_string_buffer_printf(&generator->buffer, "return;\n");
     }
 }
@@ -73,6 +72,8 @@ static void shader_glsl_ret(struct vkd3d_glsl_generator *generator,
 static void vkd3d_glsl_handle_instruction(struct vkd3d_glsl_generator *generator,
         const struct vkd3d_shader_instruction *instruction)
 {
+    generator->location = instruction->location;
+
     switch (instruction->handler_idx)
     {
         case VKD3DSIH_DCL_INPUT:
@@ -83,16 +84,14 @@ static void vkd3d_glsl_handle_instruction(struct vkd3d_glsl_generator *generator
             shader_glsl_ret(generator, instruction);
             break;
         default:
-            vkd3d_glsl_compiler_error(generator,
-                    VKD3D_SHADER_ERROR_GLSL_INTERNAL,
-                    "Unhandled instruction %#x", instruction->handler_idx);
+            shader_glsl_unhandled(generator, instruction);
             break;
     }
 }
 
-int vkd3d_glsl_generator_generate(struct vkd3d_glsl_generator *generator,
-        struct vsir_program *program, struct vkd3d_shader_code *out)
+static int vkd3d_glsl_generator_generate(struct vkd3d_glsl_generator *generator, struct vkd3d_shader_code *out)
 {
+    const struct vkd3d_shader_instruction_array *instructions = &generator->program->instructions;
     unsigned int i;
     void *code;
 
@@ -101,17 +100,19 @@ int vkd3d_glsl_generator_generate(struct vkd3d_glsl_generator *generator,
     vkd3d_string_buffer_printf(&generator->buffer, "#version 440\n\n");
     vkd3d_string_buffer_printf(&generator->buffer, "void main()\n{\n");
 
-    generator->location.column = 0;
-    for (i = 0; i < program->instructions.count; ++i)
+    ++generator->indent;
+    for (i = 0; i < instructions->count; ++i)
     {
-        generator->location.line = i + 1;
-        vkd3d_glsl_handle_instruction(generator, &program->instructions.elements[i]);
+        vkd3d_glsl_handle_instruction(generator, &instructions->elements[i]);
     }
+
+    vkd3d_string_buffer_printf(&generator->buffer, "}\n");
+
+    if (TRACE_ON())
+        vkd3d_string_buffer_trace(&generator->buffer);
 
     if (generator->failed)
         return VKD3D_ERROR_INVALID_SHADER;
-
-    vkd3d_string_buffer_printf(&generator->buffer, "}\n");
 
     if ((code = vkd3d_malloc(generator->buffer.buffer_size)))
     {
@@ -124,8 +125,29 @@ int vkd3d_glsl_generator_generate(struct vkd3d_glsl_generator *generator,
     return VKD3D_OK;
 }
 
-void vkd3d_glsl_generator_destroy(struct vkd3d_glsl_generator *generator)
+static void vkd3d_glsl_generator_cleanup(struct vkd3d_glsl_generator *gen)
 {
-    vkd3d_string_buffer_cleanup(&generator->buffer);
-    vkd3d_free(generator);
+    vkd3d_string_buffer_cleanup(&gen->buffer);
+}
+
+static void vkd3d_glsl_generator_init(struct vkd3d_glsl_generator *gen,
+        struct vsir_program *program, struct vkd3d_shader_message_context *message_context)
+{
+    memset(gen, 0, sizeof(*gen));
+    gen->program = program;
+    vkd3d_string_buffer_init(&gen->buffer);
+    gen->message_context = message_context;
+}
+
+int glsl_compile(struct vsir_program *program, struct vkd3d_shader_code *out,
+        struct vkd3d_shader_message_context *message_context)
+{
+    struct vkd3d_glsl_generator generator;
+    int ret;
+
+    vkd3d_glsl_generator_init(&generator, program, message_context);
+    ret = vkd3d_glsl_generator_generate(&generator, out);
+    vkd3d_glsl_generator_cleanup(&generator);
+
+    return ret;
 }

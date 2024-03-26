@@ -158,11 +158,9 @@ extern BOOL X11DRV_Arc( PHYSDEV dev, INT left, INT top, INT right,
                         INT bottom, INT xstart, INT ystart, INT xend, INT yend );
 extern BOOL X11DRV_Chord( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
                           INT xstart, INT ystart, INT xend, INT yend );
-extern NTSTATUS X11DRV_D3DKMTCheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc );
 extern NTSTATUS X11DRV_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc );
 extern NTSTATUS X11DRV_D3DKMTOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc );
 extern NTSTATUS X11DRV_D3DKMTQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc );
-extern NTSTATUS X11DRV_D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc );
 extern BOOL X11DRV_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT bottom );
 extern BOOL X11DRV_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT fillType );
 extern BOOL X11DRV_FillPath( PHYSDEV dev );
@@ -296,7 +294,7 @@ extern BOOL shape_layered_windows;
 extern const struct gdi_dc_funcs *X11DRV_XRender_Init(void);
 
 extern struct opengl_funcs *get_glx_driver(UINT);
-extern const struct vulkan_funcs *get_vulkan_driver(UINT);
+extern UINT X11DRV_VulkanInit( UINT, void *, struct vulkan_funcs * );
 
 extern struct format_entry *import_xdnd_selection( Display *display, Window win, Atom selection,
                                                    Atom *targets, UINT count,
@@ -399,6 +397,7 @@ struct x11drv_thread_data
     XIValuatorClassInfo x_valuator;
     XIValuatorClassInfo y_valuator;
     int      xinput2_pointer;      /* XInput2 master pointer device id */
+    int      xinput2_rawinput;     /* XInput2 rawinput-only thread */
 #endif /* HAVE_X11_EXTENSIONS_XINPUT2_H */
 };
 
@@ -698,6 +697,7 @@ extern void retry_grab_clipping_window(void);
 extern void ungrab_clipping_window(void);
 extern void move_resize_window( HWND hwnd, int dir );
 extern void X11DRV_InitKeyboard( Display *display );
+extern void X11DRV_InitMouse( Display *display );
 extern BOOL X11DRV_ProcessEvents( DWORD mask );
 extern HWND *build_hwnd_list(void);
 

@@ -24,6 +24,7 @@
 
 #include "config.h"
 
+#include <assert.h>
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,6 +69,7 @@ DECL_FUNCPTR(eglInitialize);
 DECL_FUNCPTR(eglMakeCurrent);
 DECL_FUNCPTR(eglQueryString);
 DECL_FUNCPTR(eglSwapBuffers);
+DECL_FUNCPTR(eglSwapInterval);
 DECL_FUNCPTR(glClear);
 #undef DECL_FUNCPTR
 
@@ -84,6 +86,7 @@ struct wayland_gl_drawable
     struct wl_egl_window *wl_egl_window;
     EGLSurface surface;
     LONG resized;
+    int swap_interval;
 };
 
 struct wgl_context
@@ -92,6 +95,9 @@ struct wgl_context
     EGLConfig config;
     EGLContext context;
     struct wayland_gl_drawable *draw, *read, *new_draw, *new_read;
+    EGLint attribs[16];
+    BOOL has_been_current;
+    BOOL sharing;
 };
 
 /* lookup the existing drawable for a window, gl_object_mutex must be held */
@@ -153,6 +159,7 @@ static struct wayland_gl_drawable *wayland_gl_drawable_create(HWND hwnd, int for
 
     gl->ref = 1;
     gl->hwnd = hwnd;
+    gl->swap_interval = 1;
 
     /* Get the client surface for the HWND. If don't have a wayland surface
      * (e.g., HWND_MESSAGE windows) just create a dummy surface to act as the
@@ -223,7 +230,11 @@ static void wayland_update_gl_drawable(HWND hwnd, struct wayland_gl_drawable *ne
 
     if ((old = find_drawable_for_hwnd(hwnd))) list_remove(&old->entry);
     if (new) list_add_head(&gl_drawables, &new->entry);
-    if (old && new) update_context_drawables(new, old);
+    if (old && new)
+    {
+        update_context_drawables(new, old);
+        new->swap_interval = old->swap_interval;
+    }
 
     pthread_mutex_unlock(&gl_object_mutex);
 
@@ -304,6 +315,7 @@ static BOOL wgl_context_make_current(struct wgl_context *ctx, HWND draw_hwnd,
         ctx->draw = draw;
         ctx->read = read;
         ctx->new_draw = ctx->new_read = NULL;
+        ctx->has_been_current = TRUE;
         NtCurrentTeb()->glContext = ctx;
     }
     else
@@ -319,6 +331,68 @@ static BOOL wgl_context_make_current(struct wgl_context *ctx, HWND draw_hwnd,
 
     return ret;
 }
+
+static BOOL wgl_context_populate_attribs(struct wgl_context *ctx, const int *wgl_attribs)
+{
+    EGLint *attribs_end = ctx->attribs;
+
+    if (!wgl_attribs) goto out;
+
+    for (; wgl_attribs[0] != 0; wgl_attribs += 2)
+    {
+        EGLint name;
+
+        TRACE("%#x %#x\n", wgl_attribs[0], wgl_attribs[1]);
+
+        /* Find the EGL attribute names corresponding to the WGL names.
+         * For all of the attributes below, the values match between the two
+         * systems, so we can use them directly. */
+        switch (wgl_attribs[0])
+        {
+        case WGL_CONTEXT_MAJOR_VERSION_ARB:
+            name = EGL_CONTEXT_MAJOR_VERSION_KHR;
+            break;
+        case WGL_CONTEXT_MINOR_VERSION_ARB:
+            name = EGL_CONTEXT_MINOR_VERSION_KHR;
+            break;
+        case WGL_CONTEXT_FLAGS_ARB:
+            name = EGL_CONTEXT_FLAGS_KHR;
+            break;
+        case WGL_CONTEXT_OPENGL_NO_ERROR_ARB:
+            name = EGL_CONTEXT_OPENGL_NO_ERROR_KHR;
+            break;
+        case WGL_CONTEXT_PROFILE_MASK_ARB:
+            if (wgl_attribs[1] & WGL_CONTEXT_ES2_PROFILE_BIT_EXT)
+            {
+                ERR("OpenGL ES contexts are not supported\n");
+                return FALSE;
+            }
+            name = EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR;
+            break;
+        default:
+            name = EGL_NONE;
+            FIXME("Unhandled attributes: %#x %#x\n", wgl_attribs[0], wgl_attribs[1]);
+        }
+
+        if (name != EGL_NONE)
+        {
+            EGLint *dst = ctx->attribs;
+            /* Check if we have already set the same attribute and replace it. */
+            for (; dst != attribs_end && *dst != name; dst += 2) continue;
+            /* Our context attribute array should have enough space for all the
+             * attributes we support (we merge repetitions), plus EGL_NONE. */
+            assert(dst - ctx->attribs <= ARRAY_SIZE(ctx->attribs) - 3);
+            dst[0] = name;
+            dst[1] = wgl_attribs[1];
+            if (dst == attribs_end) attribs_end += 2;
+        }
+    }
+
+out:
+    *attribs_end = EGL_NONE;
+    return TRUE;
+}
+
 
 static void wgl_context_refresh(struct wgl_context *ctx)
 {
@@ -341,7 +415,11 @@ static void wgl_context_refresh(struct wgl_context *ctx)
         ctx->new_read = NULL;
         refresh = TRUE;
     }
-    if (refresh) p_eglMakeCurrent(egl_display, ctx->draw, ctx->read, ctx->context);
+    if (refresh)
+    {
+        p_eglMakeCurrent(egl_display, ctx->draw, ctx->read, ctx->context);
+        if (ctx->draw) p_eglSwapInterval(egl_display, ctx->draw->swap_interval);
+    }
 
     pthread_mutex_unlock(&gl_object_mutex);
 
@@ -381,7 +459,8 @@ static BOOL set_pixel_format(HDC hdc, int format, BOOL internal)
     return TRUE;
 }
 
-static struct wgl_context *create_context(HDC hdc)
+static struct wgl_context *create_context(HDC hdc, struct wgl_context *share,
+                                          const int *attribs)
 {
     struct wayland_gl_drawable *gl;
     struct wgl_context *ctx;
@@ -394,8 +473,23 @@ static struct wgl_context *create_context(HDC hdc)
         goto out;
     }
 
+    if (!wgl_context_populate_attribs(ctx, attribs))
+    {
+        ctx->attribs[0] = EGL_NONE;
+        goto out;
+    }
+
+    /* For now only OpenGL is supported. It's enough to set the API only for
+     * context creation, since:
+     * 1. the default API is EGL_OPENGL_ES_API
+     * 2. the EGL specification says in section 3.7:
+     *    > EGL_OPENGL_API and EGL_OPENGL_ES_API are interchangeable for all
+     *    > purposes except eglCreateContext.
+     */
+    p_eglBindAPI(EGL_OPENGL_API);
     ctx->context = p_eglCreateContext(egl_display, EGL_NO_CONFIG_KHR,
-                                      EGL_NO_CONTEXT, NULL);
+                                      share ? share->context : EGL_NO_CONTEXT,
+                                      ctx->attribs);
 
     pthread_mutex_lock(&gl_object_mutex);
     list_add_head(&gl_contexts, &ctx->entry);
@@ -427,8 +521,15 @@ static BOOL wayland_wglCopyContext(struct wgl_context *src,
 static struct wgl_context *wayland_wglCreateContext(HDC hdc)
 {
     TRACE("hdc=%p\n", hdc);
-    p_eglBindAPI(EGL_OPENGL_API);
-    return create_context(hdc);
+    return create_context(hdc, NULL, NULL);
+}
+
+static struct wgl_context *wayland_wglCreateContextAttribsARB(HDC hdc,
+                                                              struct wgl_context *share,
+                                                              const int *attribs)
+{
+    TRACE("hdc=%p share=%p attribs=%p\n", hdc, share, attribs);
+    return create_context(hdc, share, attribs);
 }
 
 static BOOL wayland_wglDeleteContext(struct wgl_context *ctx)
@@ -518,6 +619,21 @@ static PROC wayland_wglGetProcAddress(LPCSTR name)
     return (PROC)p_eglGetProcAddress(name);
 }
 
+static int wayland_wglGetSwapIntervalEXT(void)
+{
+    struct wgl_context *ctx = NtCurrentTeb()->glContext;
+
+    if (!ctx || !ctx->draw)
+    {
+        WARN("No GL drawable found, returning swap interval 0\n");
+        return 0;
+    }
+
+    /* It's safe to read the value without a lock, since only
+     * the current thread can write to it. */
+    return ctx->draw->swap_interval;
+}
+
 static BOOL wayland_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc,
                                              struct wgl_context *ctx)
 {
@@ -554,6 +670,49 @@ static BOOL wayland_wglSetPixelFormatWINE(HDC hdc, int format)
     return set_pixel_format(hdc, format, TRUE);
 }
 
+static BOOL wayland_wglShareLists(struct wgl_context *orig, struct wgl_context *dest)
+{
+    struct wgl_context *keep, *clobber;
+
+    TRACE("(%p, %p)\n", orig, dest);
+
+    /* Sharing of display lists works differently in EGL and WGL. In case of EGL
+     * it is done at context creation time but in case of WGL it is done using
+     * wglShareLists. We create an EGL context in wglCreateContext /
+     * wglCreateContextAttribsARB and when a program requests sharing we
+     * recreate the destination or source context if it hasn't been made current
+     * and it hasn't shared display lists before. */
+
+    if (!dest->has_been_current && !dest->sharing)
+    {
+        keep = orig;
+        clobber = dest;
+    }
+    else if (!orig->has_been_current && !orig->sharing)
+    {
+        keep = dest;
+        clobber = orig;
+    }
+    else
+    {
+        ERR("Could not share display lists because both of the contexts have "
+            "already been current or shared\n");
+        return FALSE;
+    }
+
+    p_eglDestroyContext(egl_display, clobber->context);
+    clobber->context = p_eglCreateContext(egl_display, EGL_NO_CONFIG_KHR,
+                                          keep->context, clobber->attribs);
+    TRACE("re-created context (%p) for Wine context %p (%p) "
+          "sharing lists with ctx %p (%p)\n",
+          clobber->context, clobber, clobber->config,
+          keep->context, keep->config);
+
+    orig->sharing = TRUE;
+    dest->sharing = TRUE;
+    return TRUE;
+}
+
 static BOOL wayland_wglSwapBuffers(HDC hdc)
 {
     struct wgl_context *ctx = NtCurrentTeb()->glContext;
@@ -570,6 +729,37 @@ static BOOL wayland_wglSwapBuffers(HDC hdc)
     wayland_gl_drawable_release(gl);
 
     return TRUE;
+}
+
+static BOOL wayland_wglSwapIntervalEXT(int interval)
+{
+    struct wgl_context *ctx = NtCurrentTeb()->glContext;
+    BOOL ret;
+
+    TRACE("(%d)\n", interval);
+
+    if (interval < 0)
+    {
+        RtlSetLastWin32Error(ERROR_INVALID_DATA);
+        return FALSE;
+    }
+
+    if (!ctx || !ctx->draw)
+    {
+        RtlSetLastWin32Error(ERROR_DC_NOT_FOUND);
+        return FALSE;
+    }
+
+    /* Lock to protect against concurrent access to drawable swap_interval
+     * from wayland_update_gl_drawable */
+    pthread_mutex_lock(&gl_object_mutex);
+    if ((ret = p_eglSwapInterval(egl_display, interval)))
+        ctx->draw->swap_interval = interval;
+    else
+        RtlSetLastWin32Error(ERROR_DC_NOT_FOUND);
+    pthread_mutex_unlock(&gl_object_mutex);
+
+    return ret;
 }
 
 static BOOL has_extension(const char *list, const char *ext)
@@ -622,6 +812,15 @@ static BOOL init_opengl_funcs(void)
     register_extension("WGL_ARB_make_current_read");
     opengl_funcs.ext.p_wglGetCurrentReadDCARB = (void *)1;  /* never called */
     opengl_funcs.ext.p_wglMakeContextCurrentARB = wayland_wglMakeContextCurrentARB;
+
+    register_extension("WGL_ARB_create_context");
+    register_extension("WGL_ARB_create_context_no_error");
+    register_extension("WGL_ARB_create_context_profile");
+    opengl_funcs.ext.p_wglCreateContextAttribsARB = wayland_wglCreateContextAttribsARB;
+
+    register_extension("WGL_EXT_swap_control");
+    opengl_funcs.ext.p_wglGetSwapIntervalEXT = wayland_wglGetSwapIntervalEXT;
+    opengl_funcs.ext.p_wglSwapIntervalEXT = wayland_wglSwapIntervalEXT;
 
     return TRUE;
 }
@@ -728,6 +927,7 @@ static void init_opengl(void)
     LOAD_FUNCPTR_EGL(eglInitialize);
     LOAD_FUNCPTR_EGL(eglMakeCurrent);
     LOAD_FUNCPTR_EGL(eglSwapBuffers);
+    LOAD_FUNCPTR_EGL(eglSwapInterval);
 #undef LOAD_FUNCPTR_EGL
 
     egl_display = p_eglGetPlatformDisplay(EGL_PLATFORM_WAYLAND_KHR,
@@ -751,6 +951,8 @@ static void init_opengl(void)
         if (!has_extension(egl_exts, #ext)) \
             { ERR("Failed to find required extension %s\n", #ext); goto err; } \
     } while(0)
+    REQUIRE_EXT(EGL_KHR_create_context);
+    REQUIRE_EXT(EGL_KHR_create_context_no_error);
     REQUIRE_EXT(EGL_KHR_no_config_context);
 #undef REQUIRE_EXT
 
@@ -782,6 +984,7 @@ static struct opengl_funcs opengl_funcs =
         .p_wglGetProcAddress = wayland_wglGetProcAddress,
         .p_wglMakeCurrent = wayland_wglMakeCurrent,
         .p_wglSetPixelFormat = wayland_wglSetPixelFormat,
+        .p_wglShareLists = wayland_wglShareLists,
         .p_wglSwapBuffers = wayland_wglSwapBuffers,
     }
 };

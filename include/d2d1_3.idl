@@ -85,6 +85,22 @@ typedef enum D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION
     D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION_FORCE_DWORD = 0xffffffff
 } D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION;
 
+typedef enum D2D1_GAMMA1
+{
+    D2D1_GAMMA1_G22 = D2D1_GAMMA_2_2,
+    D2D1_GAMMA1_G10 = D2D1_GAMMA_1_0,
+    D2D1_GAMMA1_G2084 = 2,
+    D2D1_GAMMA1_FORCE_DWORD = 0xffffffff
+} D2D1_GAMMA1;
+
+typedef enum D2D1_COLOR_CONTEXT_TYPE
+{
+    D2D1_COLOR_CONTEXT_TYPE_ICC = 0x0,
+    D2D1_COLOR_CONTEXT_TYPE_SIMPLE = 0x1,
+    D2D1_COLOR_CONTEXT_TYPE_DXGI = 0x2,
+    D2D1_COLOR_CONTEXT_TYPE_FORCE_DWORD = 0xffffffff
+} D2D1_COLOR_CONTEXT_TYPE;
+
 typedef struct D2D1_INK_POINT
 {
     float x;
@@ -141,6 +157,15 @@ typedef struct D2D1_TRANSFORMED_IMAGE_SOURCE_PROPERTIES
     D2D1_INTERPOLATION_MODE interpolationMode;
     D2D1_TRANSFORMED_IMAGE_SOURCE_OPTIONS options;
 } D2D1_TRANSFORMED_IMAGE_SOURCE_PROPERTIES;
+
+typedef struct D2D1_SIMPLE_COLOR_PROFILE
+{
+    D2D1_POINT_2F redPrimary;
+    D2D1_POINT_2F greenPrimary;
+    D2D1_POINT_2F bluePrimary;
+    D2D1_POINT_2F whitePointXZ;
+    D2D1_GAMMA1 gamma;
+} D2D1_SIMPLE_COLOR_PROFILE;
 
 [
     object,
@@ -505,6 +530,63 @@ interface ID2D1DeviceContext4 : ID2D1DeviceContext3
     );
 }
 
+interface ID2D1SvgDocument;
+
+[
+    object,
+    uuid(1ab42875-c57f-4be9-bd85-9cd78d6f55ee),
+    local,
+]
+interface ID2D1ColorContext1 : ID2D1ColorContext
+{
+    D2D1_COLOR_CONTEXT_TYPE GetColorContextType(void);
+    DXGI_COLOR_SPACE_TYPE GetDXGIColorSpace(void);
+    HRESULT GetSimpleColorProfile(
+        [out] D2D1_SIMPLE_COLOR_PROFILE *simple_profile
+    );
+}
+
+[
+    object,
+    uuid(7836d248-68cc-4df6-b9e8-de991bf62eb7),
+    local,
+]
+interface ID2D1DeviceContext5 : ID2D1DeviceContext4
+{
+    HRESULT CreateSvgDocument(
+        [in] IStream *input_xml_stream,
+        [in] D2D1_SIZE_F viewport_size,
+        [out] ID2D1SvgDocument **svg_document
+    );
+    void DrawSvgDocument(
+        [in] ID2D1SvgDocument *svg_document
+    );
+    HRESULT CreateColorContextFromDxgiColorSpace(
+        [in] DXGI_COLOR_SPACE_TYPE color_space,
+        [out] ID2D1ColorContext1 **color_context
+    );
+    HRESULT CreateColorContextFromSimpleColorProfile(
+        [in] const D2D1_SIMPLE_COLOR_PROFILE *simple_profile,
+        [out] ID2D1ColorContext1 **color_context
+    );
+}
+
+[
+    object,
+    uuid(985f7e37-4ed0-4a19-98a3-15b0edfde306),
+    local,
+]
+interface ID2D1DeviceContext6 : ID2D1DeviceContext5
+{
+    void BlendImage(
+        [in] ID2D1Image *image,
+        [in] D2D1_BLEND_MODE blend_mode,
+        [in] const D2D1_POINT_2F *target_offset,
+        [in] const D2D1_RECT_F *image_rect,
+        [in] D2D1_INTERPOLATION_MODE interpolation_mode
+    );
+}
+
 [
     object,
     uuid(a44472e1-8dfb-4e60-8492-6e2861c9ca8b),
@@ -526,6 +608,62 @@ interface ID2D1Device2 : ID2D1Device1
 
 [
     object,
+    uuid(852f2087-802c-4037-ab60-ff2e7ee6fc01),
+    local,
+]
+interface ID2D1Device3 : ID2D1Device2
+{
+    HRESULT CreateDeviceContext(
+        [in] D2D1_DEVICE_CONTEXT_OPTIONS options,
+        [out] ID2D1DeviceContext3 **context
+    );
+}
+
+[
+    object,
+    uuid(d7bdb159-5683-4a46-bc9c-72dc720b858b),
+    local,
+]
+interface ID2D1Device4 : ID2D1Device3
+{
+    HRESULT CreateDeviceContext(
+        [in] D2D1_DEVICE_CONTEXT_OPTIONS options,
+        [out] ID2D1DeviceContext4 **context
+    );
+    void SetMaximumColorGlyphCacheMemory(
+        UINT64 size
+    );
+    UINT64 GetMaximumColorGlyphCacheMemory(void);
+}
+
+[
+    object,
+    uuid(d55ba0a4-6405-4694-aef5-08ee1a4358b4),
+    local,
+]
+interface ID2D1Device5 : ID2D1Device4
+{
+    HRESULT CreateDeviceContext(
+        [in] D2D1_DEVICE_CONTEXT_OPTIONS options,
+        [out] ID2D1DeviceContext5 **context
+    );
+}
+
+[
+    object,
+    uuid(7bfef914-2d75-4bad-be87-e18ddb077b6d),
+    local,
+]
+interface ID2D1Device6 : ID2D1Device5
+{
+    HRESULT CreateDeviceContext(
+        [in] D2D1_DEVICE_CONTEXT_OPTIONS options,
+        [out] ID2D1DeviceContext6 **context
+    );
+}
+
+[
+    object,
     uuid(0869759f-4f00-413f-b03e-2bda45404d0f),
     local,
 ]
@@ -534,6 +672,58 @@ interface ID2D1Factory3 : ID2D1Factory2
     HRESULT CreateDevice(
         [in] IDXGIDevice *dxgi_device,
         [out] ID2D1Device2 **d2d_device
+    );
+}
+
+[
+    object,
+    uuid(bd4ec2d2-0662-4bee-ba8e-6f29f032e096),
+    local,
+]
+interface ID2D1Factory4 : ID2D1Factory3
+{
+    HRESULT CreateDevice(
+        [in] IDXGIDevice *dxgi_device,
+        [out] ID2D1Device3 **d2d_device
+    );
+}
+
+[
+    object,
+    uuid(c4349994-838e-4b0f-8cab-44997d9eeacc),
+    local,
+]
+interface ID2D1Factory5 : ID2D1Factory4
+{
+    HRESULT CreateDevice(
+        [in] IDXGIDevice *dxgi_device,
+        [out] ID2D1Device4 **d2d_device
+    );
+}
+
+[
+    object,
+    uuid(f9976f46-f642-44c1-97ca-da32ea2a2635),
+    local,
+]
+interface ID2D1Factory6 : ID2D1Factory5
+{
+    HRESULT CreateDevice(
+        [in] IDXGIDevice *dxgi_device,
+        [out] ID2D1Device5 **d2d_device
+    );
+}
+
+[
+    object,
+    uuid(bdc2bdd3-b96c-4de6-bdf7-99d4745454de),
+    local,
+]
+interface ID2D1Factory7 : ID2D1Factory6
+{
+    HRESULT CreateDevice(
+        [in] IDXGIDevice *dxgi_device,
+        [out] ID2D1Device6 **d2d_device
     );
 }
 

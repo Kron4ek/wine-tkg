@@ -432,9 +432,6 @@
 /* Define to 1 if 'ips_total' is a member of 'struct ip_stats'. */
 #undef HAVE_STRUCT_IP_STATS_IPS_TOTAL
 
-/* Define to 1 if 'msg_accrights' is a member of 'struct msghdr'. */
-#undef HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS
-
 /* Define to 1 if 'mt_blkno' is a member of 'struct mtget'. */
 #undef HAVE_STRUCT_MTGET_MT_BLKNO
 
@@ -680,6 +677,9 @@
 
 /* Define to 1 if you have the <X11/extensions/XInput2.h> header file. */
 #undef HAVE_X11_EXTENSIONS_XINPUT2_H
+
+/* Define to 1 if you have the <X11/extensions/XInput.h> header file. */
+#undef HAVE_X11_EXTENSIONS_XINPUT_H
 
 /* Define to 1 if you have the <X11/extensions/Xpresent.h> header file. */
 #undef HAVE_X11_EXTENSIONS_XPRESENT_H

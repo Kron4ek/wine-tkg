@@ -218,6 +218,20 @@ enum vkd3d_shader_compile_option_feature_flags
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_FEATURE_FLAGS),
 };
 
+/**
+ * Flags for vkd3d_shader_parse_dxbc().
+ *
+ * \since 1.12
+ */
+enum vkd3d_shader_parse_dxbc_flags
+{
+    /** Ignore the checksum and continue parsing even if it is
+     * incorrect. */
+    VKD3D_SHADER_PARSE_DXBC_IGNORE_CHECKSUM           = 0x00000001,
+
+    VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_PARSE_DXBC_FLAGS),
+};
+
 enum vkd3d_shader_compile_option_name
 {
     /**
@@ -285,6 +299,15 @@ enum vkd3d_shader_compile_option_name
      * \since 1.11
      */
     VKD3D_SHADER_COMPILE_OPTION_FEATURE = 0x0000000a,
+    /**
+     * If \a value is non-zero compilation will produce a child effect using
+     * shared object descriptions, as instructed by the "shared" modifier.
+     * Child effects are supported with fx_2_0, fx_4_0, and fx_4_1. This option
+     * and "shared" modifiers are ignored for fx_5_0 profile, and non-fx profiles.
+     *
+     * \since 1.12
+     */
+    VKD3D_SHADER_COMPILE_OPTION_CHILD_EFFECT = 0x0000000b,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_NAME),
 };
@@ -2385,9 +2408,8 @@ VKD3D_SHADER_API void vkd3d_shader_free_dxbc(struct vkd3d_shader_dxbc_desc *dxbc
  *
  * \param dxbc A vkd3d_shader_code structure containing the DXBC blob to parse.
  *
- * \param flags A set of flags modifying the behaviour of the function. No
- * flags are defined for this version of vkd3d-shader, and this parameter
- * should be set to 0.
+ * \param flags A combination of zero or more elements of enum
+ * vkd3d_shader_parse_dxbc_flags.
  *
  * \param desc A vkd3d_shader_dxbc_desc structure describing the contents of
  * the DXBC blob. Its vkd3d_shader_dxbc_section_desc structures will contain

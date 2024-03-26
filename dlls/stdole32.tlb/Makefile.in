@@ -1,5 +1,4 @@
 MODULE    = stdole32.tlb
-EXTRAIDLFLAGS = --oldtlb
 
 EXTRADLLFLAGS = -Wb,--data-only
 

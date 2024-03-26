@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Mar  9 01:55:54 PM UTC 2024 :
+# Last wine-tkg-staging-fsync-git configuration - Tue Mar 26 06:13:33 AM UTC 2024 :
 
 Local cfg files used
 
-Wine (plain) version: 9.4.r0.g1719aef8cbc
-Using wine-staging patchset (version 9.4.r0.geb8cc143)
+Wine (plain) version: 9.5.r0.g7c5b9304a62
+Using wine-staging patchset (version 9.5.r0.g722ee5ed)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -13,7 +13,7 @@ Done applying reverting hotfixes (if any) - list available in prepare.log
 
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W user32-rawinput-mouse
+Staging overrides, if any:
 
 fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
 fsync_futex_waitv.patch -- ( Applied patches for fsync to support futex_waitv )

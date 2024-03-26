@@ -338,7 +338,7 @@ NTSTATUS wg_transform_create(void *args)
     struct wg_format output_format = *params->output_format;
     struct wg_format input_format = *params->input_format;
     GstElement *first = NULL, *last = NULL, *element;
-    GstCaps *raw_caps = NULL, *src_caps = NULL;
+    GstCaps *sink_caps = NULL, *src_caps = NULL, *parsed_caps = NULL;
     NTSTATUS status = STATUS_UNSUCCESSFUL;
     GstPadTemplate *template = NULL;
     struct wg_transform *transform;
@@ -390,12 +390,16 @@ NTSTATUS wg_transform_create(void *args)
     gst_pad_set_query_function(transform->my_sink, transform_sink_query_cb);
     gst_pad_set_chain_function(transform->my_sink, transform_sink_chain_cb);
 
+    media_type = gst_structure_get_name(gst_caps_get_structure(src_caps, 0));
+    if (!(parsed_caps = gst_caps_new_empty_simple(media_type)))
+        goto out;
+
     /* Since we append conversion elements, we don't want to filter decoders
      * based on the actual output caps now. Matching decoders with the
      * raw output media type should be enough.
      */
     media_type = gst_structure_get_name(gst_caps_get_structure(transform->output_caps, 0));
-    if (!(raw_caps = gst_caps_new_empty_simple(media_type)))
+    if (!(sink_caps = gst_caps_new_empty_simple(media_type)))
         goto out;
 
     switch (input_format.major_type)
@@ -408,12 +412,18 @@ NTSTATUS wg_transform_create(void *args)
         case WG_MAJOR_TYPE_VIDEO_INDEO:
         case WG_MAJOR_TYPE_VIDEO_WMV:
         case WG_MAJOR_TYPE_VIDEO_MPEG1:
-            if (!(element = find_element(GST_ELEMENT_FACTORY_TYPE_DECODER, src_caps, raw_caps))
-                    || !append_element(transform->container, element, &first, &last))
-            {
-                gst_caps_unref(raw_caps);
+            if ((element = find_element(GST_ELEMENT_FACTORY_TYPE_PARSER, src_caps, parsed_caps))
+                    && !append_element(transform->container, element, &first, &last))
                 goto out;
+            else
+            {
+                gst_caps_unref(parsed_caps);
+                parsed_caps = gst_caps_ref(src_caps);
             }
+
+            if (!(element = find_element(GST_ELEMENT_FACTORY_TYPE_DECODER, parsed_caps, sink_caps))
+                    || !append_element(transform->container, element, &first, &last))
+                goto out;
             break;
 
         case WG_MAJOR_TYPE_AUDIO:
@@ -421,11 +431,8 @@ NTSTATUS wg_transform_create(void *args)
             break;
         case WG_MAJOR_TYPE_UNKNOWN:
             GST_FIXME("Format %u not implemented!", input_format.major_type);
-            gst_caps_unref(raw_caps);
             goto out;
     }
-
-    gst_caps_unref(raw_caps);
 
     switch (output_format.major_type)
     {
@@ -506,7 +513,9 @@ NTSTATUS wg_transform_create(void *args)
             || !push_event(transform->my_src, event))
         goto out;
 
+    gst_caps_unref(parsed_caps);
     gst_caps_unref(src_caps);
+    gst_caps_unref(sink_caps);
 
     GST_INFO("Created winegstreamer transform %p.", transform);
     params->transform = (wg_transform_t)(ULONG_PTR)transform;
@@ -521,6 +530,10 @@ out:
         gst_object_unref(transform->my_src);
     if (src_caps)
         gst_caps_unref(src_caps);
+    if (parsed_caps)
+        gst_caps_unref(parsed_caps);
+    if (sink_caps)
+        gst_caps_unref(sink_caps);
     if (transform->allocator)
         wg_allocator_destroy(transform->allocator);
     if (transform->drain_query)

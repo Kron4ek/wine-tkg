@@ -575,6 +575,18 @@ out:
     if (hbm) DeleteObject(hbm);
 }
 
+static GLuint64 create_dummy_bindless_handle(const struct wined3d_gl_info *gl_info, GLuint texture)
+{
+    GLuint64 handle;
+
+    if (!texture || !gl_info->supported[ARB_BINDLESS_TEXTURE])
+        return 0;
+
+    handle = GL_EXTCALL(glGetTextureHandleARB(texture));
+    GL_EXTCALL(glMakeTextureHandleResidentARB(handle));
+    return handle;
+}
+
 /* Context activation is done by the caller. */
 static void wined3d_device_gl_create_dummy_textures(struct wined3d_device_gl *device_gl,
         struct wined3d_context_gl *context_gl)
@@ -705,6 +717,18 @@ static void wined3d_device_gl_create_dummy_textures(struct wined3d_device_gl *de
         }
     }
 
+    textures->bindless.tex_1d = create_dummy_bindless_handle(gl_info, textures->tex_1d);
+    textures->bindless.tex_2d = create_dummy_bindless_handle(gl_info, textures->tex_2d);
+    textures->bindless.tex_rect = create_dummy_bindless_handle(gl_info, textures->tex_rect);
+    textures->bindless.tex_3d = create_dummy_bindless_handle(gl_info, textures->tex_3d);
+    textures->bindless.tex_cube = create_dummy_bindless_handle(gl_info, textures->tex_cube);
+    textures->bindless.tex_cube_array = create_dummy_bindless_handle(gl_info, textures->tex_cube_array);
+    textures->bindless.tex_1d_array = create_dummy_bindless_handle(gl_info, textures->tex_1d_array);
+    textures->bindless.tex_2d_array = create_dummy_bindless_handle(gl_info, textures->tex_2d_array);
+    textures->bindless.tex_buffer = create_dummy_bindless_handle(gl_info, textures->tex_buffer);
+    textures->bindless.tex_2d_ms = create_dummy_bindless_handle(gl_info, textures->tex_2d_ms);
+    textures->bindless.tex_2d_ms_array = create_dummy_bindless_handle(gl_info, textures->tex_2d_ms_array);
+
     checkGLcall("create dummy textures");
 
     wined3d_context_gl_bind_dummy_textures(context_gl);
@@ -806,59 +830,6 @@ void wined3d_device_destroy_default_samplers(struct wined3d_device *device)
     device->default_sampler = NULL;
     wined3d_sampler_decref(device->null_sampler);
     device->null_sampler = NULL;
-}
-
-static GLuint64 create_dummy_sampler_handle(struct wined3d_device *device, struct wined3d_context_gl *context_gl,
-        GLuint texture)
-{
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    GLuint64 handle;
-
-    handle = GL_EXTCALL(glGetTextureSamplerHandleARB(texture, wined3d_sampler_gl(device->default_sampler)->name));
-    GL_EXTCALL(glMakeTextureHandleResidentARB(handle));
-    checkGLcall("glMakeTextureHandleResidentARB");
-    return handle;
-}
-
-/* Context activation is done by the caller. */
-static void create_dummy_sampler_handles(struct wined3d_device *device, struct wined3d_context_gl *context_gl)
-{
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    const struct wined3d_dummy_textures *textures = &wined3d_device_gl(device)->dummy_textures;
-    struct wined3d_dummy_sampler_handles *handles = &wined3d_device_gl(device)->dummy_sampler_handles;
-
-    if (!gl_info->supported[ARB_BINDLESS_TEXTURE])
-        return;
-
-    if (gl_info->supported[ARB_TEXTURE_MULTISAMPLE])
-    {
-        handles->tex_2d_ms = create_dummy_sampler_handle(device, context_gl, textures->tex_2d_ms);
-        handles->tex_2d_ms_array = create_dummy_sampler_handle(device, context_gl, textures->tex_2d_ms_array);
-    }
-
-    if (gl_info->supported[ARB_TEXTURE_BUFFER_OBJECT])
-        handles->tex_buffer = create_dummy_sampler_handle(device, context_gl, textures->tex_buffer);
-
-    if (gl_info->supported[EXT_TEXTURE_ARRAY])
-    {
-        handles->tex_2d_array = create_dummy_sampler_handle(device, context_gl, textures->tex_2d_array);
-        handles->tex_1d_array = create_dummy_sampler_handle(device, context_gl, textures->tex_1d_array);
-    }
-
-    if (gl_info->supported[ARB_TEXTURE_CUBE_MAP_ARRAY])
-        handles->tex_cube_array = create_dummy_sampler_handle(device, context_gl, textures->tex_cube_array);
-
-    if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
-        handles->tex_cube = create_dummy_sampler_handle(device, context_gl, textures->tex_cube);
-
-    if (gl_info->supported[EXT_TEXTURE3D])
-        handles->tex_3d = create_dummy_sampler_handle(device, context_gl, textures->tex_3d);
-
-    if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
-        handles->tex_rect = create_dummy_sampler_handle(device, context_gl, textures->tex_rect);
-
-    handles->tex_2d = create_dummy_sampler_handle(device, context_gl, textures->tex_2d);
-    handles->tex_1d = create_dummy_sampler_handle(device, context_gl, textures->tex_1d);
 }
 
 static bool wined3d_null_image_vk_init(struct wined3d_image_vk *image, struct wined3d_context_vk *context_vk,
@@ -1604,7 +1575,6 @@ void wined3d_device_gl_create_primary_opengl_context_cs(void *object)
 
     wined3d_device_gl_create_dummy_textures(device_gl, context_gl);
     wined3d_device_create_default_samplers(device, context);
-    create_dummy_sampler_handles(device, context_gl);
     context_release(context);
 }
 

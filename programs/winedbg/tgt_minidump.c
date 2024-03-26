@@ -25,6 +25,7 @@
 
 #include "debugger.h"
 #include "wingdi.h"
+#include "winnt.h"
 #include "winuser.h"
 #include "tlhelp32.h"
 #include "wine/debug.h"
@@ -143,6 +144,70 @@ static BOOL tgt_process_minidump_read(HANDLE hProcess, const void* addr,
             return TRUE;
         }
     }
+    /* The memory isn't present in minidump. Try to fetch read-only area from PE image. */
+    {
+        IMAGEHLP_MODULEW64 im = {.SizeOfStruct = sizeof(im)};
+
+        if (SymGetModuleInfoW64(dbg_curr_process->handle, (DWORD_PTR)addr, &im))
+        {
+            WCHAR *image_name;
+            HANDLE file, map = 0;
+            void *pe_mapping = NULL;
+            BOOL found = FALSE;
+            const IMAGE_NT_HEADERS *nthdr = NULL;
+
+            image_name = im.LoadedImageName[0] ? im.LoadedImageName : im.ImageName;
+            if ((file = CreateFileW(image_name, GENERIC_READ, FILE_SHARE_READ, NULL,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)) != INVALID_HANDLE_VALUE &&
+                ((map = CreateFileMappingW(file, NULL, PAGE_READONLY, 0, 0, NULL)) != 0) &&
+                ((pe_mapping = MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0)) != NULL) &&
+                (nthdr = RtlImageNtHeader(pe_mapping)) != NULL)
+            {
+                DWORD_PTR rva = (DWORD_PTR)addr - im.BaseOfImage;
+                ptrdiff_t size_hdr = (const BYTE*)(IMAGE_FIRST_SECTION(nthdr) + nthdr->FileHeader.NumberOfSections) - (const BYTE*)pe_mapping;
+
+                /* in the PE header ? */
+                if (rva < size_hdr)
+                {
+                    if (rva + len > size_hdr)
+                        len = size_hdr - rva;
+                    memcpy(buffer, (const BYTE*)pe_mapping + rva, len);
+                    if (rlen) *rlen = len;
+                    found = TRUE;
+                }
+                else /* in read only section ? */
+                {
+                    /* Note: RtlImageRvaToSection checks RVA against raw size, so we won't
+                     * get section when rva falls into the (raw size, virtual size( interval.
+                     */
+                    const IMAGE_SECTION_HEADER *section = RtlImageRvaToSection(nthdr, NULL, rva);
+                    if (section && !(section->Characteristics & IMAGE_SCN_MEM_WRITE))
+                    {
+                        DWORD_PTR offset = rva - section->VirtualAddress;
+                        DWORD nw = len;
+
+                        if (offset + nw > section->SizeOfRawData)
+                            nw = section->SizeOfRawData - offset;
+                        memcpy(buffer, (const char*)pe_mapping + section->PointerToRawData + offset, nw);
+                        if (nw < len) /* fill with O? */
+                        {
+                            if (offset + len > section->Misc.VirtualSize)
+                                len = section->Misc.VirtualSize - offset;
+                            memset((char*)buffer + nw, 0, len - nw);
+                            nw = len;
+                        }
+                        if (rlen) *rlen = nw;
+                        found = TRUE;
+                    }
+                }
+            }
+            if (pe_mapping) UnmapViewOfFile(pe_mapping);
+            if (map) CloseHandle(map);
+            if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+            if (found) return TRUE;
+        }
+    }
+
     /* FIXME: this is a dirty hack to let the last frame in a bt to work
      * However, we need to check who's to blame, this code or the current 
      * dbghelp!StackWalk implementation
@@ -238,28 +303,33 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
 
     if (MiniDumpReadDumpStream(data->mapping, SystemInfoStream, &dir, &stream, NULL))
     {
-        MINIDUMP_SYSTEM_INFO*   msi = stream;
-        const char *str;
-        char tmp[128];
+        MINIDUMP_SYSTEM_INFO *msi = stream;
+        USHORT                machine = IMAGE_FILE_MACHINE_UNKNOWN;
+        const char           *str;
+        char                  tmp[128];
 
-        dbg_printf("WineDbg starting on minidump on pid %04lx\n", pid);
+        dbg_printf("WineDbg starting minidump on pid %04lx\n", pid);
         switch (msi->ProcessorArchitecture)
         {
         case PROCESSOR_ARCHITECTURE_UNKNOWN:
             str = "Unknown";
             break;
         case PROCESSOR_ARCHITECTURE_INTEL:
-            strcpy(tmp, "Intel ");
+            machine = IMAGE_FILE_MACHINE_I386;
+            strcpy(tmp, "x86 [");
             switch (msi->ProcessorLevel)
             {
             case  3: str = "80386"; break;
             case  4: str = "80486"; break;
             case  5: str = "Pentium"; break;
-            case  6: str = "Pentium Pro/II or AMD Athlon"; break;
+            case  6: str = "Pentium Pro/II, III, Core, Atom or AMD Athlon"; break;
             case 15: str = "Pentium 4 or AMD Athlon64"; break;
-            default: str = "???"; break;
+            case 23: str = "AMD Zen 1 or 2"; break;
+            case 25: str = "AMD Zen 3 or 4"; break;
+            case 26: str = "AMD Zen 5"; break;
+            default: sprintf(tmp + strlen(tmp), "Proc-level #%x", msi->ProcessorLevel); str = NULL; break;
             }
-            strcat(tmp, str);
+            if (str) strcat(tmp, str);
             if (msi->ProcessorLevel == 3 || msi->ProcessorLevel == 4)
             {
                 if (HIBYTE(msi->ProcessorRevision) == 0xFF)
@@ -274,6 +344,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
             else sprintf(tmp + strlen(tmp), " (%d.%d)",
                          HIBYTE(msi->ProcessorRevision),
                          LOBYTE(msi->ProcessorRevision));
+            strcat(tmp, "]");
             str = tmp;
             break;
         case PROCESSOR_ARCHITECTURE_MIPS:
@@ -286,6 +357,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
             str = "PowerPC";
             break;
         case PROCESSOR_ARCHITECTURE_AMD64:
+            machine = IMAGE_FILE_MACHINE_AMD64;
             str = "X86_64";
             break;
         case PROCESSOR_ARCHITECTURE_ARM:
@@ -393,6 +465,15 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
                            code + wes[1], code + wes[2], code + wes[3]);
             }
         }
+        if (machine == IMAGE_FILE_MACHINE_UNKNOWN
+#ifdef __x86_64__
+                                                  || machine == IMAGE_FILE_MACHINE_I386
+#endif
+            )
+        {
+            dbg_printf("Cannot reload this minidump because of incompatible/unsupported machine %x\n", machine);
+            return FALSE;
+        }
     }
 
     dbg_curr_process = dbg_add_process(&be_process_minidump_io, pid, hProc);
@@ -431,7 +512,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
                                  mm->SizeOfImage);
             else
                 SymLoadModuleExW(hProc, NULL, nameW, NULL, get_addr64(mm->BaseOfImage),
-                                 mm->SizeOfImage, NULL, SLMFLAG_VIRTUAL);
+                                 mm->SizeOfImage, NULL, 0);
         }
     }
     if (MiniDumpReadDumpStream(data->mapping, ModuleListStream, NULL, &stream, NULL))
@@ -453,7 +534,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
                                  mm->SizeOfImage);
             else
                 SymLoadModuleExW(hProc, NULL, nameW, NULL, get_addr64(mm->BaseOfImage),
-                                 mm->SizeOfImage, NULL, SLMFLAG_VIRTUAL);
+                                 mm->SizeOfImage, NULL, 0);
         }
     }
     if (MiniDumpReadDumpStream(data->mapping, ExceptionStream, NULL, &stream, NULL))
@@ -499,23 +580,23 @@ static void cleanup(struct tgt_process_minidump_data* data)
 
 static struct be_process_io be_process_minidump_io;
 
-enum dbg_start minidump_reload(int argc, char* argv[])
+enum dbg_start minidump_reload(const char* filename)
 {
     struct tgt_process_minidump_data*   data;
     enum dbg_start                      ret = start_error_parse;
 
-    /* try the form <myself> minidump-file */
-    if (argc != 1) return start_error_parse;
-    
-    WINE_TRACE("Processing Minidump file %s\n", argv[0]);
-
+    if (dbg_curr_process)
+    {
+        dbg_printf("Already attached to a process. Use 'detach' or 'kill' before loading a minidump file'\n");
+        return start_error_init;
+    }
     data = malloc(sizeof(struct tgt_process_minidump_data));
     if (!data) return start_error_init;
     data->mapping = NULL;
     data->hMap    = NULL;
     data->hFile   = INVALID_HANDLE_VALUE;
 
-    if ((data->hFile = CreateFileA(argv[0], GENERIC_READ, FILE_SHARE_READ, NULL, 
+    if ((data->hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL,
                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)) != INVALID_HANDLE_VALUE &&
         ((data->hMap = CreateFileMappingA(data->hFile, NULL, PAGE_READONLY, 0, 0, NULL)) != 0) &&
         ((data->mapping = MapViewOfFile(data->hMap, FILE_MAP_READ, 0, 0, 0)) != NULL))
@@ -529,13 +610,23 @@ enum dbg_start minidump_reload(int argc, char* argv[])
         }
         __EXCEPT_PAGE_FAULT
         {
-            dbg_printf("Unexpected fault while reading minidump %s\n", argv[0]);
+            dbg_printf("Unexpected fault while reading minidump %s\n", filename);
             dbg_curr_pid = 0;
         }
         __ENDTRY;
     }
     if (ret != start_ok) cleanup(data);
     return ret;
+}
+
+enum dbg_start minidump_start(int argc, char* argv[])
+{
+    /* try the form <myself> minidump-file */
+    if (argc != 1) return start_error_parse;
+
+    WINE_TRACE("Processing Minidump file %s\n", argv[0]);
+
+    return minidump_reload(argv[0]);
 }
 
 static BOOL tgt_process_minidump_close_process(struct dbg_process* pcs, BOOL kill)

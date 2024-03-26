@@ -37,25 +37,8 @@
 WINE_DEFAULT_DEBUG_CHANNEL(driver);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
-struct d3dkmt_adapter
-{
-    D3DKMT_HANDLE handle;               /* Kernel mode graphics adapter handle */
-    struct list entry;                  /* List entry */
-};
-
-struct d3dkmt_device
-{
-    D3DKMT_HANDLE handle;               /* Kernel mode graphics device handle*/
-    struct list entry;                  /* List entry */
-};
-
 static const struct user_driver_funcs lazy_load_driver;
 static struct user_driver_funcs null_user_driver;
-
-static struct list d3dkmt_adapters = LIST_INIT( d3dkmt_adapters );
-static struct list d3dkmt_devices = LIST_INIT( d3dkmt_devices );
-
-static pthread_mutex_t driver_lock = PTHREAD_MUTEX_INITIALIZER;
 static WCHAR driver_load_error[80];
 
 static INT nulldrv_AbortDoc( PHYSDEV dev )
@@ -539,11 +522,6 @@ static BOOL nulldrv_UnrealizePalette( HPALETTE palette )
     return FALSE;
 }
 
-static NTSTATUS nulldrv_D3DKMTCheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc )
-{
-    return STATUS_PROCEDURE_NOT_FOUND;
-}
-
 static NTSTATUS nulldrv_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
 {
     return STATUS_PROCEDURE_NOT_FOUND;
@@ -555,11 +533,6 @@ static NTSTATUS nulldrv_D3DKMTOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *d
 }
 
 static NTSTATUS nulldrv_D3DKMTQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc )
-{
-    return STATUS_PROCEDURE_NOT_FOUND;
-}
-
-static NTSTATUS nulldrv_D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc )
 {
     return STATUS_PROCEDURE_NOT_FOUND;
 }
@@ -655,11 +628,9 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_StrokeAndFillPath,          /* pStrokeAndFillPath */
     nulldrv_StrokePath,                 /* pStrokePath */
     nulldrv_UnrealizePalette,           /* pUnrealizePalette */
-    nulldrv_D3DKMTCheckVidPnExclusiveOwnership, /* pD3DKMTCheckVidPnExclusiveOwnership */
     nulldrv_D3DKMTCloseAdapter,         /* pD3DKMTCloseAdapter */
     nulldrv_D3DKMTOpenAdapterFromLuid,  /* pD3DKMTOpenAdapterFromLuid */
     nulldrv_D3DKMTQueryVideoMemoryInfo, /* pD3DKMTQueryVideoMemoryInfo */
-    nulldrv_D3DKMTSetVidPnSourceOwner,  /* pD3DKMTSetVidPnSourceOwner */
 
     GDI_PRIORITY_NULL_DRV               /* priority */
 };
@@ -948,9 +919,9 @@ static BOOL nulldrv_SystemParametersInfo( UINT action, UINT int_param, void *ptr
     return FALSE;
 }
 
-static const struct vulkan_funcs *nulldrv_wine_get_vulkan_driver( UINT version )
+static UINT nulldrv_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *vulkan_funcs )
 {
-    return NULL;
+    return STATUS_NOT_IMPLEMENTED;
 }
 
 static struct opengl_funcs *nulldrv_wine_get_wgl_driver( UINT version )
@@ -1269,9 +1240,9 @@ static BOOL loaderdrv_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWI
     return load_driver()->pUpdateLayeredWindow( hwnd, info, window_rect );
 }
 
-static const struct vulkan_funcs * loaderdrv_wine_get_vulkan_driver( UINT version )
+static UINT loaderdrv_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *vulkan_funcs )
 {
-    return load_driver()->pwine_get_vulkan_driver( version );
+    return load_driver()->pVulkanInit( version, vulkan_handle, vulkan_funcs );
 }
 
 static const struct user_driver_funcs lazy_load_driver =
@@ -1341,7 +1312,7 @@ static const struct user_driver_funcs lazy_load_driver =
     /* system parameters */
     nulldrv_SystemParametersInfo,
     /* vulkan support */
-    loaderdrv_wine_get_vulkan_driver,
+    loaderdrv_VulkanInit,
     /* opengl support */
     nulldrv_wine_get_wgl_driver,
     nulldrv_UpdateCandidatePos,
@@ -1427,7 +1398,7 @@ void __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version
     SET_USER_FUNC(WindowPosChanging);
     SET_USER_FUNC(WindowPosChanged);
     SET_USER_FUNC(SystemParametersInfo);
-    SET_USER_FUNC(wine_get_vulkan_driver);
+    SET_USER_FUNC(VulkanInit);
     SET_USER_FUNC(wine_get_wgl_driver);
     SET_USER_FUNC(UpdateCandidatePos);
     SET_USER_FUNC(ThreadDetach);
@@ -1460,304 +1431,4 @@ INT WINAPI NtGdiExtEscape( HDC hdc, WCHAR *driver, int driver_id, INT escape, IN
     ret = physdev->funcs->pExtEscape( physdev, escape, input_size, input, output_size, output );
     release_dc_ptr( dc );
     return ret;
-}
-
-
-/******************************************************************************
- *           NtGdiDdDDIOpenAdapterFromHdc    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDIOpenAdapterFromHdc( D3DKMT_OPENADAPTERFROMHDC *desc )
-{
-    FIXME( "(%p): stub\n", desc );
-    return STATUS_NO_MEMORY;
-}
-
-/******************************************************************************
- *           NtGdiDdDDIEscape    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDIEscape( const D3DKMT_ESCAPE *desc )
-{
-    FIXME( "(%p): stub\n", desc );
-    return STATUS_NO_MEMORY;
-}
-
-/******************************************************************************
- *           NtGdiDdDDICloseAdapter    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDICloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
-{
-    NTSTATUS status = STATUS_INVALID_PARAMETER;
-    struct d3dkmt_adapter *adapter;
-
-    TRACE("(%p)\n", desc);
-
-    if (!desc || !desc->hAdapter)
-        return STATUS_INVALID_PARAMETER;
-
-    if (get_display_driver()->pD3DKMTCloseAdapter)
-        get_display_driver()->pD3DKMTCloseAdapter( desc );
-
-    pthread_mutex_lock( &driver_lock );
-    LIST_FOR_EACH_ENTRY( adapter, &d3dkmt_adapters, struct d3dkmt_adapter, entry )
-    {
-        if (adapter->handle == desc->hAdapter)
-        {
-            list_remove( &adapter->entry );
-            free( adapter );
-            status = STATUS_SUCCESS;
-            break;
-        }
-    }
-    pthread_mutex_unlock( &driver_lock );
-
-    return status;
-}
-
-/******************************************************************************
- *           NtGdiDdDDIOpenAdapterFromDeviceName    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDIOpenAdapterFromDeviceName( D3DKMT_OPENADAPTERFROMDEVICENAME *desc )
-{
-    D3DKMT_OPENADAPTERFROMLUID desc_luid;
-    NTSTATUS status;
-
-    FIXME( "desc %p stub.\n", desc );
-
-    if (!desc || !desc->pDeviceName) return STATUS_INVALID_PARAMETER;
-
-    memset( &desc_luid, 0, sizeof( desc_luid ));
-    if ((status = NtGdiDdDDIOpenAdapterFromLuid( &desc_luid ))) return status;
-
-    desc->AdapterLuid = desc_luid.AdapterLuid;
-    desc->hAdapter = desc_luid.hAdapter;
-    return STATUS_SUCCESS;
-}
-
-/******************************************************************************
- *           NtGdiDdDDIOpenAdapterFromLuid    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDIOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc )
-{
-    static D3DKMT_HANDLE handle_start = 0;
-    struct d3dkmt_adapter *adapter;
-
-    if (!(adapter = malloc( sizeof( *adapter ) ))) return STATUS_NO_MEMORY;
-
-    pthread_mutex_lock( &driver_lock );
-    desc->hAdapter = adapter->handle = ++handle_start;
-    list_add_tail( &d3dkmt_adapters, &adapter->entry );
-    pthread_mutex_unlock( &driver_lock );
-
-    if (get_display_driver()->pD3DKMTOpenAdapterFromLuid)
-        get_display_driver()->pD3DKMTOpenAdapterFromLuid( desc );
-
-    return STATUS_SUCCESS;
-}
-
-/******************************************************************************
- *           NtGdiDdDDICreateDevice    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDICreateDevice( D3DKMT_CREATEDEVICE *desc )
-{
-    static D3DKMT_HANDLE handle_start = 0;
-    struct d3dkmt_adapter *adapter;
-    struct d3dkmt_device *device;
-    BOOL found = FALSE;
-
-    TRACE("(%p)\n", desc);
-
-    if (!desc)
-        return STATUS_INVALID_PARAMETER;
-
-    pthread_mutex_lock( &driver_lock );
-    LIST_FOR_EACH_ENTRY( adapter, &d3dkmt_adapters, struct d3dkmt_adapter, entry )
-    {
-        if (adapter->handle == desc->hAdapter)
-        {
-            found = TRUE;
-            break;
-        }
-    }
-    pthread_mutex_unlock( &driver_lock );
-
-    if (!found)
-        return STATUS_INVALID_PARAMETER;
-
-    if (desc->Flags.LegacyMode || desc->Flags.RequestVSync || desc->Flags.DisableGpuTimeout)
-        FIXME("Flags unsupported.\n");
-
-    device = calloc( 1, sizeof( *device ) );
-    if (!device)
-        return STATUS_NO_MEMORY;
-
-    pthread_mutex_lock( &driver_lock );
-    device->handle = ++handle_start;
-    list_add_tail( &d3dkmt_devices, &device->entry );
-    pthread_mutex_unlock( &driver_lock );
-
-    desc->hDevice = device->handle;
-    return STATUS_SUCCESS;
-}
-
-/******************************************************************************
- *           NtGdiDdDDIDestroyDevice    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDIDestroyDevice( const D3DKMT_DESTROYDEVICE *desc )
-{
-    NTSTATUS status = STATUS_INVALID_PARAMETER;
-    D3DKMT_SETVIDPNSOURCEOWNER set_owner_desc;
-    struct d3dkmt_device *device;
-
-    TRACE("(%p)\n", desc);
-
-    if (!desc || !desc->hDevice)
-        return STATUS_INVALID_PARAMETER;
-
-    pthread_mutex_lock( &driver_lock );
-    LIST_FOR_EACH_ENTRY( device, &d3dkmt_devices, struct d3dkmt_device, entry )
-    {
-        if (device->handle == desc->hDevice)
-        {
-            memset( &set_owner_desc, 0, sizeof(set_owner_desc) );
-            set_owner_desc.hDevice = desc->hDevice;
-            NtGdiDdDDISetVidPnSourceOwner( &set_owner_desc );
-            list_remove( &device->entry );
-            free( device );
-            status = STATUS_SUCCESS;
-            break;
-        }
-    }
-    pthread_mutex_unlock( &driver_lock );
-
-    return status;
-}
-
-static BOOL check_hags_enabled( void )
-{
-    const char *winehags = getenv( "WINEHAGS" );
-    return winehags && *winehags != '0';
-}
-
-/******************************************************************************
- *           NtGdiDdDDIQueryAdapterInfo    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDIQueryAdapterInfo( D3DKMT_QUERYADAPTERINFO *desc )
-{
-    D3DKMT_WDDM_2_7_CAPS *d3dkmt_wddm_2_7_caps;
-
-    if (!desc)
-        return STATUS_INVALID_PARAMETER;
-
-    TRACE("desc %p, type %d\n", desc, desc->Type);
-
-    switch (desc->Type)
-    {
-        case KMTQAITYPE_WDDM_2_7_CAPS:
-            if (!desc->pPrivateDriverData || desc->PrivateDriverDataSize != sizeof(D3DKMT_WDDM_2_7_CAPS))
-                return STATUS_INVALID_PARAMETER;
-
-            d3dkmt_wddm_2_7_caps = desc->pPrivateDriverData;
-            d3dkmt_wddm_2_7_caps->HwSchSupported = 1;
-            d3dkmt_wddm_2_7_caps->HwSchEnabled = 0;
-            d3dkmt_wddm_2_7_caps->HwSchEnabledByDefault = 0;
-            d3dkmt_wddm_2_7_caps->IndependentVidPnVSyncControl = 0;
-
-            if (check_hags_enabled())
-            {
-                d3dkmt_wddm_2_7_caps->HwSchEnabled = 1;
-                d3dkmt_wddm_2_7_caps->HwSchEnabledByDefault = 1;
-            }
-            break;
-
-        default:
-            FIXME("type %d not supported\n", desc->Type);
-            return STATUS_NOT_IMPLEMENTED;
-    }
-
-    return STATUS_SUCCESS;
-}
-
-/******************************************************************************
- *           NtGdiDdDDIQueryStatistics    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDIQueryStatistics( D3DKMT_QUERYSTATISTICS *stats )
-{
-    FIXME("(%p): stub\n", stats);
-    return STATUS_SUCCESS;
-}
-
-/******************************************************************************
- *           NtGdiDdDDIQueryVideoMemoryInfo    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDIQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc )
-{
-    OBJECT_BASIC_INFORMATION info;
-    NTSTATUS status;
-
-    TRACE("(%p)\n", desc);
-
-    if (!desc || !desc->hAdapter ||
-        (desc->MemorySegmentGroup != D3DKMT_MEMORY_SEGMENT_GROUP_LOCAL &&
-         desc->MemorySegmentGroup != D3DKMT_MEMORY_SEGMENT_GROUP_NON_LOCAL))
-        return STATUS_INVALID_PARAMETER;
-
-    /* FIXME: Wine currently doesn't support linked adapters */
-    if (desc->PhysicalAdapterIndex > 0)
-        return STATUS_INVALID_PARAMETER;
-
-    status = NtQueryObject(desc->hProcess ? desc->hProcess : GetCurrentProcess(),
-                           ObjectBasicInformation, &info, sizeof(info), NULL);
-    if (status != STATUS_SUCCESS)
-        return status;
-    if (!(info.GrantedAccess & PROCESS_QUERY_INFORMATION))
-        return STATUS_ACCESS_DENIED;
-
-    if (!get_display_driver()->pD3DKMTQueryVideoMemoryInfo)
-        return STATUS_PROCEDURE_NOT_FOUND;
-    return get_display_driver()->pD3DKMTQueryVideoMemoryInfo(desc);
-}
-
-/******************************************************************************
- *           NtGdiDdDDISetQueuedLimit    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDISetQueuedLimit( D3DKMT_SETQUEUEDLIMIT *desc )
-{
-    FIXME( "(%p): stub\n", desc );
-    return STATUS_NOT_IMPLEMENTED;
-}
-
-/******************************************************************************
- *           NtGdiDdDDISetVidPnSourceOwner    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDISetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc )
-{
-    TRACE("(%p)\n", desc);
-
-    if (!get_display_driver()->pD3DKMTSetVidPnSourceOwner)
-        return STATUS_PROCEDURE_NOT_FOUND;
-
-    if (!desc || !desc->hDevice || (desc->VidPnSourceCount && (!desc->pType || !desc->pVidPnSourceId)))
-        return STATUS_INVALID_PARAMETER;
-
-    /* Store the VidPN source ownership info in the graphics driver because
-     * the graphics driver needs to change ownership sometimes. For example,
-     * when a new window is moved to a VidPN source with an exclusive owner,
-     * such an exclusive owner will be released before showing the new window */
-    return get_display_driver()->pD3DKMTSetVidPnSourceOwner( desc );
-}
-
-/******************************************************************************
- *           NtGdiDdDDICheckVidPnExclusiveOwnership    (win32u.@)
- */
-NTSTATUS WINAPI NtGdiDdDDICheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc )
-{
-    TRACE("(%p)\n", desc);
-
-    if (!get_display_driver()->pD3DKMTCheckVidPnExclusiveOwnership)
-        return STATUS_PROCEDURE_NOT_FOUND;
-
-    if (!desc || !desc->hAdapter)
-        return STATUS_INVALID_PARAMETER;
-
-    return get_display_driver()->pD3DKMTCheckVidPnExclusiveOwnership( desc );
 }

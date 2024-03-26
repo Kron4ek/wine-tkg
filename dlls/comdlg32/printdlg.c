@@ -978,10 +978,11 @@ static BOOL PRINTDLG_SetUpPaperComboBoxW(HWND hDlg,
 /***********************************************************************
  *               PRINTDLG_UpdatePrinterInfoTexts               [internal]
  */
-static void PRINTDLG_UpdatePrinterInfoTextsA(HWND hDlg, const PRINTER_INFO_2A *pi)
+static void PRINTDLG_UpdatePrinterInfoTextsA(HWND hDlg, DWORD flags, const PRINTER_INFO_2A *pi)
 {
     char   StatusMsg[256];
     char   ResourceString[256];
+    char   printer_name[256];
     int    i;
 
     /* Status Message */
@@ -1004,6 +1005,17 @@ static void PRINTDLG_UpdatePrinterInfoTextsA(HWND hDlg, const PRINTER_INFO_2A *p
     SetDlgItemTextA(hDlg, stc12, StatusMsg);
 
     /* set all other printer info texts */
+    if (flags & PD_PRINTSETUP)
+    {
+        DWORD dwBufLen = ARRAY_SIZE(printer_name);
+        GetDefaultPrinterA(printer_name, &dwBufLen);
+    }
+    else
+    {
+        /* FIXME: Windows decorates the printer name with text like 'System Printer' or 'on <port>'. */
+        lstrcpynA(printer_name, pi->pPrinterName, ARRAY_SIZE(printer_name));
+    }
+    SetDlgItemTextA(hDlg, stc1, printer_name);
     SetDlgItemTextA(hDlg, stc11, pi->pDriverName);
     
     if (pi->pLocation != NULL && pi->pLocation[0] != '\0')
@@ -1014,11 +1026,12 @@ static void PRINTDLG_UpdatePrinterInfoTextsA(HWND hDlg, const PRINTER_INFO_2A *p
     return;
 }
 
-static void PRINTDLG_UpdatePrinterInfoTextsW(HWND hDlg, const PRINTER_INFO_2W *pi)
+static void PRINTDLG_UpdatePrinterInfoTextsW(HWND hDlg, DWORD flags, const PRINTER_INFO_2W *pi)
 {
     WCHAR   StatusMsg[256];
     WCHAR   ResourceString[256];
-    int    i;
+    WCHAR   printer_name[256];
+    int     i;
 
     /* Status Message */
     StatusMsg[0]='\0';
@@ -1040,6 +1053,17 @@ static void PRINTDLG_UpdatePrinterInfoTextsW(HWND hDlg, const PRINTER_INFO_2W *p
     SetDlgItemTextW(hDlg, stc12, StatusMsg);
 
     /* set all other printer info texts */
+    if (flags & PD_PRINTSETUP)
+    {
+        DWORD dwBufLen = ARRAY_SIZE(printer_name);
+        GetDefaultPrinterW(printer_name, &dwBufLen);
+    }
+    else
+    {
+        /* FIXME: Windows decorates the printer name with text like 'System Printer' or 'on <port>'. */
+        lstrcpynW(printer_name, pi->pPrinterName, ARRAY_SIZE(printer_name));
+    }
+    SetDlgItemTextW(hDlg, stc1, printer_name);
     SetDlgItemTextW(hDlg, stc11, pi->pDriverName);
     if (pi->pLocation != NULL && pi->pLocation[0] != '\0')
         SetDlgItemTextW(hDlg, stc14, pi->pLocation);
@@ -1081,7 +1105,7 @@ static BOOL PRINTDLG_ChangePrinterA(HWND hDlg, char *name, PRINT_PTRA *PrintStru
     }
     ClosePrinter(hprn);
 
-    PRINTDLG_UpdatePrinterInfoTextsA(hDlg, PrintStructures->lpPrinterInfo);
+    PRINTDLG_UpdatePrinterInfoTextsA(hDlg, lppd->Flags, PrintStructures->lpPrinterInfo);
 
     free(PrintStructures->lpDevMode);
     PrintStructures->lpDevMode = NULL;
@@ -1229,7 +1253,7 @@ static BOOL PRINTDLG_ChangePrinterA(HWND hDlg, char *name, PRINT_PTRA *PrintStru
 		    if(IsDefault)
 			SendMessageA(hQuality, CB_SETCURSEL, Index, 0);
 
-		    SendMessageA(hQuality, CB_SETITEMDATA, Index, MAKELONG(dpiX,dpiY));
+                    SendMessageA(hQuality, CB_SETITEMDATA, Index, MAKELONG(Resolutions[i], Resolutions[i+1]));
 		}
 		free(Resolutions);
 	    }
@@ -1288,7 +1312,7 @@ static BOOL PRINTDLG_ChangePrinterW(HWND hDlg, WCHAR *name,
     }
     ClosePrinter(hprn);
 
-    PRINTDLG_UpdatePrinterInfoTextsW(hDlg, PrintStructures->lpPrinterInfo);
+    PRINTDLG_UpdatePrinterInfoTextsW(hDlg, lppd->Flags, PrintStructures->lpPrinterInfo);
 
     free(PrintStructures->lpDevMode);
     PrintStructures->lpDevMode = NULL;
@@ -1386,6 +1410,61 @@ static BOOL PRINTDLG_ChangePrinterW(HWND hDlg, WCHAR *name,
 	if (lppd->Flags & PD_HIDEPRINTTOFILE)
             ShowWindow(GetDlgItem(hDlg, chx1), SW_HIDE);
 
+        /* Fill print quality combo, PrintDlg16 */
+        if (GetDlgItem(hDlg, cmb1))
+        {
+            DWORD num_resolutions = DeviceCapabilitiesW(PrintStructures->lpPrinterInfo->pPrinterName,
+                                                           PrintStructures->lpPrinterInfo->pPortName,
+                                                           DC_ENUMRESOLUTIONS, NULL, lpdm);
+
+            if (num_resolutions != -1)
+            {
+                HWND quality = GetDlgItem(hDlg, cmb1);
+                LONG* resolutions;
+                WCHAR buf[255];
+                DWORD i;
+                int dpiX, dpiY;
+                HDC printer = CreateDCW(PrintStructures->lpPrinterInfo->pDriverName,
+                                           PrintStructures->lpPrinterInfo->pPrinterName,
+                                           0, lpdm);
+
+                resolutions = malloc(num_resolutions * sizeof(LONG) * 2);
+                DeviceCapabilitiesW(PrintStructures->lpPrinterInfo->pPrinterName,
+                                PrintStructures->lpPrinterInfo->pPortName,
+                                DC_ENUMRESOLUTIONS, (LPWSTR)resolutions, lpdm);
+
+                dpiX = GetDeviceCaps(printer, LOGPIXELSX);
+                dpiY = GetDeviceCaps(printer, LOGPIXELSY);
+                DeleteDC(printer);
+
+                SendMessageW(quality, CB_RESETCONTENT, 0, 0);
+                for (i = 0; i < (num_resolutions * 2); i += 2)
+                {
+                    BOOL is_default = FALSE;
+                    LRESULT index;
+
+                    if (resolutions[i] == resolutions[i+1])
+                    {
+                        if (dpiX == resolutions[i])
+                            is_default = TRUE;
+                        swprintf(buf, sizeof(buf), L"%ld dpi", resolutions[i]);
+                    } else
+                    {
+                        if (dpiX == resolutions[i] && dpiY == resolutions[i+1])
+                            is_default = TRUE;
+                        swprintf(buf, sizeof(buf), L"%ld dpi x %ld dpi", resolutions[i], resolutions[i+1]);
+                    }
+
+                    index = SendMessageW(quality, CB_ADDSTRING, 0, (LPARAM)buf);
+
+                    if (is_default)
+                        SendMessageW(quality, CB_SETCURSEL, index, 0);
+
+                    SendMessageW(quality, CB_SETITEMDATA, index, MAKELONG(resolutions[i], resolutions[i+1]));
+                }
+                free(resolutions);
+            }
+        }
     } else { /* PD_PRINTSETUP */
       BOOL bPortrait = (lpdm->dmOrientation == DMORIENT_PORTRAIT);
 
@@ -1761,8 +1840,8 @@ static LRESULT PRINTDLG_WMCommandA(HWND hDlg, WPARAM wParam,
     case cmb4:                         /* Printer combobox */
          if (HIWORD(wParam)==CBN_SELCHANGE) {
 	     char   *PrinterName;
-	     INT index = SendDlgItemMessageW(hDlg, LOWORD(wParam), CB_GETCURSEL, 0, 0);
-	     INT length = SendDlgItemMessageW(hDlg, LOWORD(wParam), CB_GETLBTEXTLEN, index, 0);
+	     INT index = SendDlgItemMessageA(hDlg, LOWORD(wParam), CB_GETCURSEL, 0, 0);
+	     INT length = SendDlgItemMessageA(hDlg, LOWORD(wParam), CB_GETLBTEXTLEN, index, 0);
 	     PrinterName = malloc(length + 1);
 	     SendDlgItemMessageA(hDlg, LOWORD(wParam), CB_GETLBTEXT, index, (LPARAM)PrinterName);
 	     PRINTDLG_ChangePrinterA(hDlg, PrinterName, PrintStructures);
@@ -1909,7 +1988,10 @@ static LRESULT PRINTDLG_WMCommandW(HWND hDlg, WPARAM wParam,
         }
         break;
 
-    case cmb1: /* Printer Combobox in PRINT SETUP */
+    case cmb1: /* Printer Combobox in PRINT SETUP, quality combobox in PRINT16 */
+	 if (PrinterComboID != LOWORD(wParam)) {
+	     break;
+	 }
 	 /* FALLTHROUGH */
     case cmb4:                         /* Printer combobox */
          if (HIWORD(wParam)==CBN_SELCHANGE) {

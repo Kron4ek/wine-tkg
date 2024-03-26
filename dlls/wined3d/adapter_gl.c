@@ -2129,8 +2129,9 @@ static void load_gl_funcs(struct wined3d_gl_info *gl_info)
     USE_GL_FUNC(glDrawArraysInstancedBaseInstance)
     USE_GL_FUNC(glDrawElementsInstancedBaseVertexBaseInstance)
     /* GL_ARB_bindless_texture */
+    USE_GL_FUNC(glGetTextureHandleARB)
     USE_GL_FUNC(glGetTextureSamplerHandleARB)
-    USE_GL_FUNC(glMakeTextureHandleNonResidentARB)
+    USE_GL_FUNC(glIsTextureHandleResidentARB)
     USE_GL_FUNC(glMakeTextureHandleResidentARB)
     USE_GL_FUNC(glUniformHandleui64ARB)
     /* GL_ARB_blend_func_extended */
@@ -3625,6 +3626,14 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
     {
         /* GL_ARB_half_float_vertex is a subset of GL_NV_half_float. */
         gl_info->supported[ARB_HALF_FLOAT_VERTEX] = TRUE;
+    }
+    if (wined3d_creation_flags & WINED3D_SRGB_READ_WRITE_CONTROL)
+    {
+        /* ARB_bindless_texture does not let us use EXT_texture_sRGB_decode.
+         * We could use ARB_texture_view, but the main reason to use bindless
+         * textures is to avoid GL_MAX_TEXTURE_IMAGE_UNITS, so there's not much
+         * point. */
+        gl_info->supported[ARB_BINDLESS_TEXTURE] = FALSE;
     }
     if (gl_info->supported[ARB_FRAMEBUFFER_SRGB] && !gl_info->supported[EXT_TEXTURE_SRGB_DECODE])
     {

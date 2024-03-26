@@ -687,17 +687,23 @@ BOOL WINAPI PathFileExistsDefExtW(LPWSTR,DWORD);
 static BOOL PathResolveA(char *path, const char **dirs, DWORD flags)
 {
     BOOL is_file_spec = PathIsFileSpecA(path);
-    DWORD dwWhich = flags & PRF_DONTFINDLNK ? 0xf : 0xff;
+    DWORD dwWhich = flags & PRF_DONTFINDLNK ? 0xf : 0xbf;
 
     TRACE("(%s,%p,0x%08lx)\n", debugstr_a(path), dirs, flags);
 
-    if (flags & PRF_VERIFYEXISTS && !PathFileExistsA(path))
+    if (flags & PRF_VERIFYEXISTS)
     {
         if (PathFindOnPathExA(path, dirs, dwWhich))
+        {
+            if (!PathIsFileSpecA(path)) GetFullPathNameA(path, MAX_PATH, path, NULL);
             return TRUE;
-        if (PathFileExistsDefExtA(path, dwWhich))
-            return TRUE;
-        if (!is_file_spec) GetFullPathNameA(path, MAX_PATH, path, NULL);
+        }
+        if (!is_file_spec)
+        {
+            GetFullPathNameA(path, MAX_PATH, path, NULL);
+            if (PathFileExistsDefExtA(path, dwWhich))
+                return TRUE;
+        }
         SetLastError(ERROR_FILE_NOT_FOUND);
         return FALSE;
     }
@@ -716,17 +722,23 @@ static BOOL PathResolveA(char *path, const char **dirs, DWORD flags)
 static BOOL PathResolveW(WCHAR *path, const WCHAR **dirs, DWORD flags)
 {
     BOOL is_file_spec = PathIsFileSpecW(path);
-    DWORD dwWhich = flags & PRF_DONTFINDLNK ? 0xf : 0xff;
+    DWORD dwWhich = flags & PRF_DONTFINDLNK ? 0xf : 0xbf;
 
     TRACE("(%s,%p,0x%08lx)\n", debugstr_w(path), dirs, flags);
 
-    if (flags & PRF_VERIFYEXISTS && !PathFileExistsW(path))
+    if (flags & PRF_VERIFYEXISTS)
     {
         if (PathFindOnPathExW(path, dirs, dwWhich))
+        {
+            if (!PathIsFileSpecW(path)) GetFullPathNameW(path, MAX_PATH, path, NULL);
             return TRUE;
-        if (PathFileExistsDefExtW(path, dwWhich))
-            return TRUE;
-        if (!is_file_spec) GetFullPathNameW(path, MAX_PATH, path, NULL);
+        }
+        if (!is_file_spec)
+        {
+            GetFullPathNameW(path, MAX_PATH, path, NULL);
+            if (PathFileExistsDefExtW(path, dwWhich))
+                return TRUE;
+        }
         SetLastError(ERROR_FILE_NOT_FOUND);
         return FALSE;
     }

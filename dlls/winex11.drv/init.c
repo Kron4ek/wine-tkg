@@ -362,14 +362,6 @@ static struct opengl_funcs *X11DRV_wine_get_wgl_driver( UINT version )
     return get_glx_driver( version );
 }
 
-/**********************************************************************
- *           X11DRV_wine_get_vulkan_driver
- */
-static const struct vulkan_funcs *X11DRV_wine_get_vulkan_driver( UINT version )
-{
-    return get_vulkan_driver( version );
-}
-
 
 static const struct user_driver_funcs x11drv_funcs =
 {
@@ -413,11 +405,9 @@ static const struct user_driver_funcs x11drv_funcs =
     .dc_funcs.pStrokeAndFillPath = X11DRV_StrokeAndFillPath,
     .dc_funcs.pStrokePath = X11DRV_StrokePath,
     .dc_funcs.pUnrealizePalette = X11DRV_UnrealizePalette,
-    .dc_funcs.pD3DKMTCheckVidPnExclusiveOwnership = X11DRV_D3DKMTCheckVidPnExclusiveOwnership,
     .dc_funcs.pD3DKMTCloseAdapter = X11DRV_D3DKMTCloseAdapter,
     .dc_funcs.pD3DKMTOpenAdapterFromLuid = X11DRV_D3DKMTOpenAdapterFromLuid,
     .dc_funcs.pD3DKMTQueryVideoMemoryInfo = X11DRV_D3DKMTQueryVideoMemoryInfo,
-    .dc_funcs.pD3DKMTSetVidPnSourceOwner = X11DRV_D3DKMTSetVidPnSourceOwner,
     .dc_funcs.priority = GDI_PRIORITY_GRAPHICS_DRV,
 
     .pActivateKeyboardLayout = X11DRV_ActivateKeyboardLayout,
@@ -468,7 +458,7 @@ static const struct user_driver_funcs x11drv_funcs =
     .pWindowPosChanging = X11DRV_WindowPosChanging,
     .pWindowPosChanged = X11DRV_WindowPosChanged,
     .pSystemParametersInfo = X11DRV_SystemParametersInfo,
-    .pwine_get_vulkan_driver = X11DRV_wine_get_vulkan_driver,
+    .pVulkanInit = X11DRV_VulkanInit,
     .pwine_get_wgl_driver = X11DRV_wine_get_wgl_driver,
     .pUpdateCandidatePos = X11DRV_UpdateCandidatePos,
     .pThreadDetach = X11DRV_ThreadDetach,

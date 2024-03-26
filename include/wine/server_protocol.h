@@ -1314,12 +1314,14 @@ struct compare_objects_reply
 
 
 
-struct make_temporary_request
+struct set_object_permanence_request
 {
     struct request_header __header;
     obj_handle_t handle;
+    int          permanent;
+    char __pad_20[4];
 };
-struct make_temporary_reply
+struct set_object_permanence_reply
 {
     struct reply_header __header;
 };
@@ -2888,7 +2890,6 @@ struct send_hardware_message_reply
     int             new_y;
     char __pad_28[4];
 };
-#define SEND_HWMSG_INJECTED    0x01
 
 
 
@@ -2902,6 +2903,8 @@ struct get_message_request
     unsigned int    hw_id;
     unsigned int    wake_mask;
     unsigned int    changed_mask;
+    unsigned int    internal;
+    char __pad_44[4];
 };
 struct get_message_reply
 {
@@ -5869,7 +5872,7 @@ enum request
     REQ_set_handle_info,
     REQ_dup_handle,
     REQ_compare_objects,
-    REQ_make_temporary,
+    REQ_set_object_permanence,
     REQ_open_process,
     REQ_open_thread,
     REQ_select,
@@ -6173,7 +6176,7 @@ union generic_request
     struct set_handle_info_request set_handle_info_request;
     struct dup_handle_request dup_handle_request;
     struct compare_objects_request compare_objects_request;
-    struct make_temporary_request make_temporary_request;
+    struct set_object_permanence_request set_object_permanence_request;
     struct open_process_request open_process_request;
     struct open_thread_request open_thread_request;
     struct select_request select_request;
@@ -6475,7 +6478,7 @@ union generic_reply
     struct set_handle_info_reply set_handle_info_reply;
     struct dup_handle_reply dup_handle_reply;
     struct compare_objects_reply compare_objects_reply;
-    struct make_temporary_reply make_temporary_reply;
+    struct set_object_permanence_reply set_object_permanence_reply;
     struct open_process_reply open_process_reply;
     struct open_thread_reply open_thread_reply;
     struct select_reply select_reply;
@@ -6751,7 +6754,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 798
+#define SERVER_PROTOCOL_VERSION 800
 
 /* ### protocol_version end ### */
 

@@ -1549,62 +1549,68 @@ static BOOL set_privileges(LPCSTR privilege, BOOL set)
     return TRUE;
 }
 
-static void test_reg_save_key(void)
+static void delete_dir(const char *path)
 {
-    DWORD ret;
+    char file[2 * MAX_PATH], *p;
+    WIN32_FIND_DATAA fd;
+    HANDLE hfind;
+    BOOL r;
 
-    if (!set_privileges(SE_BACKUP_NAME, TRUE) ||
-        !set_privileges(SE_RESTORE_NAME, FALSE))
+    strcpy(file, path);
+    p = file + strlen(file);
+    p[0] = '\\';
+    p[1] = '*';
+    p[2] = 0;
+    hfind = FindFirstFileA(file, &fd);
+    if (hfind != INVALID_HANDLE_VALUE)
     {
-        win_skip("Failed to set SE_BACKUP_NAME privileges, skipping tests\n");
-        return;
+        do
+        {
+            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, ".."))
+                continue;
+
+            strcpy(p + 1, fd.cFileName);
+            r = DeleteFileA(file);
+            ok(r, "DeleteFile failed on %s: %ld\n", debugstr_a(file), GetLastError());
+        } while(FindNextFileA(hfind, &fd));
+        FindClose(hfind);
     }
 
-    ret = RegSaveKeyA(hkey_main, "saved_key", NULL);
-    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
-
-    set_privileges(SE_BACKUP_NAME, FALSE);
+    r = RemoveDirectoryA(path);
+    ok(r, "RemoveDirectory failed: %ld\n", GetLastError());
 }
 
 static void test_reg_load_key(void)
 {
-    DWORD ret;
-    HKEY hkHandle;
-
-    if (!set_privileges(SE_RESTORE_NAME, TRUE) ||
-        !set_privileges(SE_BACKUP_NAME, FALSE))
-    {
-        win_skip("Failed to set SE_RESTORE_NAME privileges, skipping tests\n");
-        return;
-    }
-
-    ret = RegLoadKeyA(HKEY_LOCAL_MACHINE, "Test", "saved_key");
-    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
-
-    set_privileges(SE_RESTORE_NAME, FALSE);
-
-    ret = RegOpenKeyA(HKEY_LOCAL_MACHINE, "Test", &hkHandle);
-    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
-
-    RegCloseKey(hkHandle);
-}
-
-static void test_reg_unload_key(void)
-{
+    char saved_key[2 * MAX_PATH], buf[16], *p;
     UNICODE_STRING key_name;
     OBJECT_ATTRIBUTES attr;
     NTSTATUS status;
-    DWORD ret;
+    DWORD ret, size;
     HKEY key;
 
     if (!set_privileges(SE_RESTORE_NAME, TRUE) ||
-        !set_privileges(SE_BACKUP_NAME, FALSE))
+        !set_privileges(SE_BACKUP_NAME, TRUE))
     {
         win_skip("Failed to set SE_RESTORE_NAME privileges, skipping tests\n");
         return;
     }
 
-    ret = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "Test", 0, KEY_READ, &key);
+    GetTempPathA(MAX_PATH, saved_key);
+    strcat(saved_key, "\\wine_reg_test");
+    CreateDirectoryA(saved_key, NULL);
+    strcat(saved_key, "\\saved_key");
+
+    ret = RegSaveKeyA(hkey_main, saved_key, NULL);
+    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
+
+    ret = RegLoadKeyA(HKEY_LOCAL_MACHINE, "Test", saved_key);
+    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
+
+    ret = RegOpenKeyA(HKEY_LOCAL_MACHINE, "Test", &key);
+    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
+
+    ret = RegSetValueExA(key, "test", 0, REG_SZ, (BYTE *)"value", 6);
     ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
 
     /* try to unload though the key handle is live */
@@ -1612,6 +1618,27 @@ static void test_reg_unload_key(void)
     InitializeObjectAttributes(&attr, &key_name, OBJ_CASE_INSENSITIVE, NULL, NULL);
     status = pNtUnloadKey(&attr);
     ok(status == STATUS_CANNOT_DELETE, "expected STATUS_CANNOT_DELETE, got %08lx\n", status);
+
+    RegCloseKey(key);
+
+    ret = RegUnLoadKeyA(HKEY_LOCAL_MACHINE, "Test");
+    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
+
+    /* check if modifications are saved */
+    ret = RegLoadKeyA(HKEY_LOCAL_MACHINE, "Test", saved_key);
+    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
+
+    ret = RegOpenKeyA(HKEY_LOCAL_MACHINE, "Test", &key);
+    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
+
+    size = sizeof(buf);
+    ret = RegGetValueA(key, NULL, "test", RRF_RT_REG_SZ, NULL, buf, &size);
+    todo_wine ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
+    if (ret == ERROR_SUCCESS)
+    {
+        ok(size == 6, "size = %ld\n", size);
+        ok(!strcmp(buf, "value"), "buf = %s\n", buf);
+    }
 
     RegCloseKey(key);
 
@@ -1627,9 +1654,11 @@ static void test_reg_unload_key(void)
     ok(ret == ERROR_ACCESS_DENIED, "expected ERROR_ACCESS_DENIED, got %ld\n", ret);
 
     set_privileges(SE_RESTORE_NAME, FALSE);
+    set_privileges(SE_BACKUP_NAME, FALSE);
 
-    DeleteFileA("saved_key");
-    DeleteFileA("saved_key.LOG");
+    p = strrchr(saved_key, '\\');
+    *p = 0;
+    delete_dir(saved_key);
 }
 
 /* Helper function to wait for a file blocked by the registry to be available */
@@ -1651,31 +1680,26 @@ static void wait_file_available(char *path)
 static void test_reg_load_app_key(void)
 {
     DWORD ret, size;
-    char temppath[MAX_PATH], hivefilepath[MAX_PATH];
+    char hivefilepath[2 * MAX_PATH], *p;
     const BYTE test_data[] = "Hello World";
     BYTE output[sizeof(test_data)];
     HKEY appkey = NULL;
 
-    GetTempPathA(sizeof(temppath), temppath);
-    GetTempFileNameA(temppath, "key", 0, hivefilepath);
-    DeleteFileA(hivefilepath);
-
-    if (!set_privileges(SE_BACKUP_NAME, TRUE) ||
-        !set_privileges(SE_RESTORE_NAME, FALSE))
+    if (!set_privileges(SE_BACKUP_NAME, TRUE))
     {
         win_skip("Failed to set SE_BACKUP_NAME privileges, skipping tests\n");
         return;
     }
 
+    GetTempPathA(MAX_PATH, hivefilepath);
+    strcat(hivefilepath, "\\wine_reg_test");
+    CreateDirectoryA(hivefilepath, NULL);
+    strcat(hivefilepath, "\\saved_key");
+
     ret = RegSaveKeyA(hkey_main, hivefilepath, NULL);
-    if (ret != ERROR_SUCCESS)
-    {
-        win_skip("Failed to save test key 0x%lx\n", ret);
-        return;
-    }
+    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %ld\n", ret);
 
     set_privileges(SE_BACKUP_NAME, FALSE);
-    set_privileges(SE_RESTORE_NAME, FALSE);
 
     /* Test simple key load */
     /* Check if the changes are saved */
@@ -1704,8 +1728,10 @@ static void test_reg_load_app_key(void)
     RegCloseKey(appkey);
 
     wait_file_available(hivefilepath);
-    ret = DeleteFileA(hivefilepath);
-    ok(ret, "couldn't delete hive file %ld\n", GetLastError());
+
+    p = strrchr(hivefilepath, '\\');
+    *p = 0;
+    delete_dir(hivefilepath);
 }
 
 /* tests that show that RegConnectRegistry and
@@ -4993,9 +5019,7 @@ START_TEST(registry)
     test_classesroot();
     test_classesroot_enum();
     test_classesroot_mask();
-    test_reg_save_key();
     test_reg_load_key();
-    test_reg_unload_key();
     test_reg_load_app_key();
     test_reg_copy_tree();
     test_reg_delete_tree();

@@ -166,18 +166,16 @@ struct gdi_dc_funcs
     BOOL     (*pStrokeAndFillPath)(PHYSDEV);
     BOOL     (*pStrokePath)(PHYSDEV);
     BOOL     (*pUnrealizePalette)(HPALETTE);
-    NTSTATUS (*pD3DKMTCheckVidPnExclusiveOwnership)(const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *);
     NTSTATUS (*pD3DKMTCloseAdapter)(const D3DKMT_CLOSEADAPTER *);
     NTSTATUS (*pD3DKMTOpenAdapterFromLuid)(D3DKMT_OPENADAPTERFROMLUID *);
     NTSTATUS (*pD3DKMTQueryVideoMemoryInfo)(D3DKMT_QUERYVIDEOMEMORYINFO *);
-    NTSTATUS (*pD3DKMTSetVidPnSourceOwner)(const D3DKMT_SETVIDPNSOURCEOWNER *);
 
     /* priority order for the driver on the stack */
     UINT       priority;
 };
 
 /* increment this when you change the DC function table */
-#define WINE_GDI_DRIVER_VERSION 83
+#define WINE_GDI_DRIVER_VERSION 85
 
 #define GDI_PRIORITY_NULL_DRV        0  /* null driver */
 #define GDI_PRIORITY_FONT_DRV      100  /* any font driver */
@@ -351,7 +349,7 @@ struct user_driver_funcs
     /* system parameters */
     BOOL    (*pSystemParametersInfo)(UINT,UINT,void*,UINT);
     /* vulkan support */
-    const struct vulkan_funcs * (*pwine_get_vulkan_driver)(UINT);
+    UINT    (*pVulkanInit)(UINT,void *,struct vulkan_funcs *);
     /* opengl support */
     struct opengl_funcs * (*pwine_get_wgl_driver)(UINT);
     /* IME functions */

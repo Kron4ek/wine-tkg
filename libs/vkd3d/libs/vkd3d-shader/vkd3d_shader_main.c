@@ -73,8 +73,16 @@ void vkd3d_string_buffer_cleanup(struct vkd3d_string_buffer *buffer)
 
 void vkd3d_string_buffer_clear(struct vkd3d_string_buffer *buffer)
 {
-    buffer->buffer[0] = '\0';
-    buffer->content_size = 0;
+    vkd3d_string_buffer_truncate(buffer, 0);
+}
+
+void vkd3d_string_buffer_truncate(struct vkd3d_string_buffer *buffer, size_t size)
+{
+    if (size < buffer->content_size)
+    {
+        buffer->buffer[size] = '\0';
+        buffer->content_size = size;
+    }
 }
 
 static bool vkd3d_string_buffer_resize(struct vkd3d_string_buffer *buffer, int rc)
@@ -1450,11 +1458,11 @@ static int scan_with_parser(const struct vkd3d_shader_compile_info *compile_info
 
     if (!ret && signature_info)
     {
-        if (!vkd3d_shader_signature_from_shader_signature(&signature_info->input, &parser->shader_desc.input_signature)
+        if (!vkd3d_shader_signature_from_shader_signature(&signature_info->input, &parser->program.input_signature)
                 || !vkd3d_shader_signature_from_shader_signature(&signature_info->output,
-                        &parser->shader_desc.output_signature)
+                        &parser->program.output_signature)
                 || !vkd3d_shader_signature_from_shader_signature(&signature_info->patch_constant,
-                        &parser->shader_desc.patch_constant_signature))
+                        &parser->program.patch_constant_signature))
         {
             ret = VKD3D_ERROR_OUT_OF_MEMORY;
         }
@@ -1553,7 +1561,7 @@ static int vkd3d_shader_parser_compile(struct vkd3d_shader_parser *parser,
         struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context)
 {
     struct vkd3d_shader_scan_descriptor_info1 scan_descriptor_info;
-    struct vkd3d_glsl_generator *glsl_generator;
+    struct vsir_program *program = &parser->program;
     struct vkd3d_shader_compile_info scan_info;
     int ret;
 
@@ -1562,23 +1570,13 @@ static int vkd3d_shader_parser_compile(struct vkd3d_shader_parser *parser,
     switch (compile_info->target_type)
     {
         case VKD3D_SHADER_TARGET_D3D_ASM:
-            ret = vkd3d_dxbc_binary_to_text(&parser->program, &parser->shader_desc,
-                    compile_info, out, VSIR_ASM_FLAG_NONE);
+            ret = d3d_asm_compile(program, compile_info, out, VSIR_ASM_FLAG_NONE);
             break;
 
         case VKD3D_SHADER_TARGET_GLSL:
             if ((ret = scan_with_parser(&scan_info, message_context, &scan_descriptor_info, parser)) < 0)
                 return ret;
-            if (!(glsl_generator = vkd3d_glsl_generator_create(&parser->program.shader_version,
-                    message_context, &parser->location)))
-            {
-                ERR("Failed to create GLSL generator.\n");
-                vkd3d_shader_free_scan_descriptor_info1(&scan_descriptor_info);
-                return VKD3D_ERROR;
-            }
-
-            ret = vkd3d_glsl_generator_generate(glsl_generator, &parser->program, out);
-            vkd3d_glsl_generator_destroy(glsl_generator);
+            ret = glsl_compile(program, out, message_context);
             vkd3d_shader_free_scan_descriptor_info1(&scan_descriptor_info);
             break;
 
