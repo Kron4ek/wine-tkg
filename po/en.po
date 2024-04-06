@@ -19355,8 +19355,8 @@ msgid "Help topics: "
 msgstr "Help topics: "
 
 #: programs/wmic/wmic.rc:28
-msgid "Error: Command line not supported\n"
-msgstr "Error: Command line not supported\n"
+msgid "Error: Command not supported\n"
+msgstr "Error: Command not supported\n"
 
 #: programs/wmic/wmic.rc:29
 msgid "Error: Alias not found\n"
@@ -19369,6 +19369,10 @@ msgstr "Error: Invalid query\n"
 #: programs/wmic/wmic.rc:31
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "Error: Invalid syntax for PATH\n"
+
+#: programs/wmic/wmic.rc:32
+msgid "Supply a command\n"
+msgstr "Supply a command\n"
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

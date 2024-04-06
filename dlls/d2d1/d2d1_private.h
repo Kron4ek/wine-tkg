@@ -708,10 +708,49 @@ void d2d_factory_register_effect(struct d2d_factory *factory,
 HRESULT d2d_effect_property_get_uint32_value(const struct d2d_effect_properties *properties,
         const struct d2d_effect_property *prop, UINT32 *value);
 
+struct d2d_transform
+{
+    ID2D1TransformNode ID2D1TransformNode_iface;
+    LONG refcount;
+
+    union
+    {
+        D2D1_POINT_2L offset;
+        D2D1_BLEND_DESCRIPTION blend_desc;
+        struct
+        {
+            D2D1_EXTEND_MODE mode_x;
+            D2D1_EXTEND_MODE mode_y;
+        } border;
+        D2D1_RECT_L bounds;
+    };
+
+    UINT32 input_count;
+};
+
+struct d2d_transform_node
+{
+    struct list entry;
+    ID2D1TransformNode *object;
+};
+
+struct d2d_transform_node_connection
+{
+    struct d2d_transform_node *node;
+    unsigned int index;
+};
+
 struct d2d_transform_graph
 {
     ID2D1TransformGraph ID2D1TransformGraph_iface;
     LONG refcount;
+
+    struct d2d_transform_node_connection *inputs;
+    unsigned int input_count;
+
+    struct d2d_transform_node *output;
+
+    struct list nodes;
 };
 
 struct d2d_effect

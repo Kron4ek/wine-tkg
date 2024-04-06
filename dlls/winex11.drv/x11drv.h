@@ -158,9 +158,6 @@ extern BOOL X11DRV_Arc( PHYSDEV dev, INT left, INT top, INT right,
                         INT bottom, INT xstart, INT ystart, INT xend, INT yend );
 extern BOOL X11DRV_Chord( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
                           INT xstart, INT ystart, INT xend, INT yend );
-extern NTSTATUS X11DRV_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc );
-extern NTSTATUS X11DRV_D3DKMTOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc );
-extern NTSTATUS X11DRV_D3DKMTQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc );
 extern BOOL X11DRV_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT bottom );
 extern BOOL X11DRV_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT fillType );
 extern BOOL X11DRV_FillPath( PHYSDEV dev );
@@ -347,7 +344,7 @@ enum x11drv_escape_codes
     X11DRV_GET_DRAWABLE,     /* get current drawable for a DC */
     X11DRV_START_EXPOSURES,  /* start graphics exposures */
     X11DRV_END_EXPOSURES,    /* end graphics exposures */
-    X11DRV_PRESENT_DRAWABLE, /* present the drawable on screen */
+    X11DRV_FLUSH_GL_DRAWABLE, /* flush changes made to the gl drawable */
     X11DRV_FLUSH_GDI_DISPLAY /* flush the gdi display */
 };
 
@@ -367,10 +364,10 @@ struct x11drv_escape_get_drawable
     int                      pixel_format; /* internal GL pixel format */
 };
 
-struct x11drv_escape_present_drawable
+struct x11drv_escape_flush_gl_drawable
 {
-    enum x11drv_escape_codes code;         /* escape code (X11DRV_PRESENT_DRAWABLE) */
-    Drawable                 drawable;     /* GL / VK drawable */
+    enum x11drv_escape_codes code;         /* escape code (X11DRV_FLUSH_GL_DRAWABLE) */
+    Drawable                 gl_drawable;  /* GL drawable */
     BOOL                     flush;        /* flush X11 before copying */
 };
 
@@ -446,8 +443,6 @@ extern BOOL grab_fullscreen;
 extern int keyboard_layout;
 extern BOOL keyboard_scancode_detect;
 extern BOOL usexcomposite;
-extern BOOL use_xfixes;
-extern BOOL use_xpresent;
 extern BOOL managed_mode;
 extern BOOL decorated_mode;
 extern BOOL private_color_map;
@@ -455,7 +450,6 @@ extern int primary_monitor;
 extern int copy_default_colors;
 extern int alloc_system_colors;
 extern int xrender_error_base;
-extern int xfixes_event_base;
 extern char *process_name;
 extern Display *clipboard_display;
 extern WNDPROC client_foreign_window_proc;
@@ -618,7 +612,6 @@ struct x11drv_win_data
     Display    *display;        /* display connection for the thread owning the window */
     XVisualInfo vis;            /* X visual used by this window */
     Colormap    whole_colormap; /* colormap if non-default visual */
-    Colormap    client_colormap; /* colormap for the client window */
     HWND        hwnd;           /* hwnd that this private data belongs to */
     Window      whole_window;   /* X window for the complete window */
     Window      client_window;  /* X window for the client area */
@@ -656,9 +649,6 @@ extern void sync_gl_drawable( HWND hwnd, BOOL known_child );
 extern void set_gl_drawable_parent( HWND hwnd, HWND parent );
 extern void destroy_gl_drawable( HWND hwnd );
 extern void destroy_vk_surface( HWND hwnd );
-extern void sync_vk_surface( HWND hwnd, BOOL known_child );
-extern void resize_vk_surfaces( HWND hwnd, Window active, int mask, XWindowChanges *changes );
-extern Window wine_vk_active_surface( HWND hwnd );
 extern void vulkan_thread_detach(void);
 
 extern void wait_for_withdrawn_state( HWND hwnd, BOOL set );
@@ -667,8 +657,8 @@ extern void update_user_time( Time time );
 extern void read_net_wm_states( Display *display, struct x11drv_win_data *data );
 extern void update_net_wm_states( struct x11drv_win_data *data );
 extern void make_window_embedded( struct x11drv_win_data *data );
-extern Window create_client_window( HWND hwnd, const XVisualInfo *visual );
-extern void update_client_window( HWND hwnd );
+extern Window create_client_window( HWND hwnd, const XVisualInfo *visual, Colormap colormap );
+extern void destroy_client_window( HWND hwnd, Window client_window );
 extern void set_window_visual( struct x11drv_win_data *data, const XVisualInfo *vis, BOOL use_alpha );
 extern void change_systray_owner( Display *display, Window systray_window );
 extern HWND create_foreign_window( Display *display, Window window );
@@ -785,6 +775,12 @@ void init_user_driver(void);
 
 /* X11 display device handler. Used to initialize display device registry data */
 
+struct x11drv_adapter
+{
+    ULONG_PTR id;
+    DWORD state_flags;
+};
+
 /* Required functions for display device registry initialization */
 struct x11drv_display_device_handler
 {
@@ -803,7 +799,7 @@ struct x11drv_display_device_handler
      * The first adapter has to be primary if GPU is primary.
      *
      * Return FALSE on failure with parameters unchanged */
-    BOOL (*get_adapters)(ULONG_PTR gpu_id, struct gdi_adapter **adapters, int *count);
+    BOOL (*get_adapters)(ULONG_PTR gpu_id, struct x11drv_adapter **adapters, int *count);
 
     /* get_monitors will be called to get a list of monitors in EnumDisplayDevices context under an adapter.
      * The first monitor has to be primary if adapter is primary.
@@ -815,7 +811,7 @@ struct x11drv_display_device_handler
     void (*free_gpus)(struct gdi_gpu *gpus);
 
     /* free_adapters will be called to free an adapter list from get_adapters */
-    void (*free_adapters)(struct gdi_adapter *adapters);
+    void (*free_adapters)(struct x11drv_adapter *adapters);
 
     /* free_monitors will be called to free a monitor list from get_monitors */
     void (*free_monitors)(struct gdi_monitor *monitors, int count);

@@ -137,7 +137,7 @@ static struct key_value *find_value( const struct key *key, const struct unicode
 struct save_branch_info
 {
     struct key  *key;
-    const char  *path;
+    const char  *filename;
 };
 
 #define MAX_SAVE_BRANCH_INFO 3
@@ -1828,7 +1828,7 @@ static int load_init_registry_from_file( const char *filename, struct key *key )
 
     assert( save_branch_count < MAX_SAVE_BRANCH_INFO );
 
-    save_branch_info[save_branch_count].path = filename;
+    save_branch_info[save_branch_count].filename = filename;
     save_branch_info[save_branch_count++].key = (struct key *)grab_object( key );
     make_object_permanent( &key->obj );
     return (f != NULL);
@@ -1836,15 +1836,16 @@ static int load_init_registry_from_file( const char *filename, struct key *key )
 
 static WCHAR *format_user_registry_path( const struct sid *sid, struct unicode_str *path )
 {
-    char buffer[7 + 11 + 11 + 11 * ARRAY_SIZE(sid->sub_auth)], *p = buffer;
+    char buffer[7 + 11 + 11 + 11 * ARRAY_SIZE(sid->sub_auth)];
     unsigned int i;
+    int len;
 
-    p += sprintf( p, "User\\S-%u-%u", sid->revision,
-                  ((unsigned int)sid->id_auth[2] << 24) |
-                  ((unsigned int)sid->id_auth[3] << 16) |
-                  ((unsigned int)sid->id_auth[4] << 8) |
-                  ((unsigned int)sid->id_auth[5]) );
-    for (i = 0; i < sid->sub_count; i++) p += sprintf( p, "-%u", sid->sub_auth[i] );
+    len = snprintf( buffer, sizeof(buffer), "User\\S-%u-%u", sid->revision,
+                    ((unsigned int)sid->id_auth[2] << 24) |
+                    ((unsigned int)sid->id_auth[3] << 16) |
+                    ((unsigned int)sid->id_auth[4] << 8) |
+                    ((unsigned int)sid->id_auth[5]) );
+    for (i = 0; i < sid->sub_count; i++) len += snprintf( buffer + len, sizeof(buffer) - len, "-%u", sid->sub_auth[i] );
     return ascii_to_unicode_str( buffer, path );
 }
 
@@ -2115,10 +2116,10 @@ static data_size_t save_registry( const struct key *key, char *buf )
 }
 
 /* save a registry branch to a file */
-static int save_branch( struct key *key, const char *path )
+static int save_branch( struct key *key, const char *filename )
 {
     struct stat st;
-    char *p, *tmp = NULL;
+    char tmp[32];
     int fd, count = 0, ret = 0;
     FILE *f;
 
@@ -2127,14 +2128,15 @@ static int save_branch( struct key *key, const char *path )
         if (debug_level > 1) dump_operation( key, NULL, "Not saving clean" );
         return 1;
     }
+    tmp[0] = 0;
 
     /* test the file type */
 
-    if ((fd = open( path, O_WRONLY )) != -1)
+    if ((fd = open( filename, O_WRONLY )) != -1)
     {
         /* if file is not a regular file or has multiple links or is accessed
          * via symbolic links, write directly into it; otherwise use a temp file */
-        if (!lstat( path, &st ) && (!S_ISREG(st.st_mode) || st.st_nlink > 1))
+        if (!lstat( filename, &st ) && (!S_ISREG(st.st_mode) || st.st_nlink > 1))
         {
             ftruncate( fd, 0 );
             goto save;
@@ -2142,15 +2144,11 @@ static int save_branch( struct key *key, const char *path )
         close( fd );
     }
 
-    /* create a temp file in the same directory */
+    /* create a temp file */
 
-    if (!(tmp = malloc( strlen(path) + 20 ))) goto done;
-    strcpy( tmp, path );
-    if ((p = strrchr( tmp, '/' ))) p++;
-    else p = tmp;
     for (;;)
     {
-        sprintf( p, "reg%lx%04x.tmp", (long) getpid(), count++ );
+        snprintf( tmp, sizeof(tmp), "reg%lx%04x.tmp", (long) getpid(), count++ );
         if ((fd = open( tmp, O_CREAT | O_EXCL | O_WRONLY, 0666 )) != -1) break;
         if (errno != EEXIST) goto done;
         close( fd );
@@ -2161,29 +2159,28 @@ static int save_branch( struct key *key, const char *path )
  save:
     if (!(f = fdopen( fd, "w" )))
     {
-        if (tmp) unlink( tmp );
+        if (tmp[0]) unlink( tmp );
         close( fd );
         goto done;
     }
 
     if (debug_level > 1)
     {
-        fprintf( stderr, "%s: ", path );
+        fprintf( stderr, "%s: ", filename );
         dump_operation( key, NULL, "saving" );
     }
 
     save_all_subkeys( key, f );
     ret = !fclose(f);
 
-    if (tmp)
+    if (tmp[0])
     {
         /* if successfully written, rename to final name */
-        if (ret) ret = !rename( tmp, path );
+        if (ret) ret = !rename( tmp, filename );
         if (!ret) unlink( tmp );
     }
 
 done:
-    free( tmp );
     if (ret) make_clean( key, key->timestamp_counter );
     return ret;
 }
@@ -2196,10 +2193,10 @@ void flush_registry(void)
     if (fchdir( config_dir_fd ) == -1) return;
     for (i = 0; i < save_branch_count; i++)
     {
-        if (!save_branch( save_branch_info[i].key, save_branch_info[i].path ))
+        if (!save_branch( save_branch_info[i].key, save_branch_info[i].filename ))
         {
             fprintf( stderr, "wineserver: could not save registry branch to %s",
-                     save_branch_info[i].path );
+                     save_branch_info[i].filename );
             perror( " " );
         }
     }
@@ -2326,7 +2323,7 @@ DECL_HANDLER(flush_key)
     {
         if (!(save_branch_info[branches[i]].key->flags & KEY_DIRTY)) continue;
         ++reply->branch_count;
-        path_len = strlen( save_branch_info[branches[i]].path ) + 1;
+        path_len = strlen( save_branch_info[branches[i]].filename ) + 1;
         reply->total += sizeof(int) + sizeof(int) + path_len + save_registry( save_branch_info[branches[i]].key, NULL );
     }
     if (reply->total > get_reply_max_size())
@@ -2342,10 +2339,10 @@ DECL_HANDLER(flush_key)
         if (!(save_branch_info[branches[i]].key->flags & KEY_DIRTY)) continue;
         *(int *)data = branches[i];
         data += sizeof(int);
-        path_len = strlen( save_branch_info[branches[i]].path ) + 1;
+        path_len = strlen( save_branch_info[branches[i]].filename ) + 1;
         *(int *)data = path_len;
         data += sizeof(int);
-        memcpy( data, save_branch_info[branches[i]].path, path_len );
+        memcpy( data, save_branch_info[branches[i]].filename, path_len );
         data += path_len;
         data += save_registry( save_branch_info[branches[i]].key, data );
     }

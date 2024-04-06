@@ -144,6 +144,12 @@ CORE_EXTENSIONS = [
     "VK_KHR_win32_surface",
 ]
 
+# List of surface extensions that can be exposed directly to the PE side
+WIN_SURFACE_EXTENSIONS = [
+    "VK_KHR_win32_surface",
+    "VK_EXT_headless_surface",
+]
+
 # Some experimental extensions are used by shipping applications so their API is extremely unlikely
 # to change in a backwards-incompatible way. Allow translation of those extensions with WineVulkan.
 ALLOWED_X_EXTENSIONS = [
@@ -158,11 +164,6 @@ PERF_CRITICAL_FUNCTIONS = [
     "vkGetDescriptorEXT",
 ]
 
-# Functions part of our winevulkan graphics driver interface.
-# DRIVER_VERSION should be bumped on any change to driver interface
-# in FUNCTION_OVERRIDES
-DRIVER_VERSION = 19
-
 # Table of functions for which we have a special implementation.
 # These are regular device / instance functions for which we need
 # to do more work compared to a regular thunk or because they are
@@ -174,7 +175,6 @@ FUNCTION_OVERRIDES = {
 
     # Instance functions
     "vkCreateDevice" : {"extra_param" : "client_ptr"},
-    "vkDestroyInstance" : {"dispatch" : False},
     "vkGetPhysicalDeviceExternalBufferProperties" : {"dispatch" : False},
     "vkGetPhysicalDeviceExternalFenceProperties" : {"dispatch" : False},
     "vkGetPhysicalDeviceExternalSemaphoreProperties" : {"dispatch" : False},
@@ -195,15 +195,10 @@ FUNCTION_OVERRIDES = {
 
 # functions for which a user driver entry must be generated
 USER_DRIVER_FUNCS = {
-    "vkCreateInstance",
-    "vkAcquireNextImageKHR",
-    "vkAcquireNextImage2KHR",
     "vkCreateSwapchainKHR",
     "vkCreateWin32SurfaceKHR",
-    "vkDestroyInstance",
     "vkDestroySurfaceKHR",
     "vkDestroySwapchainKHR",
-    "vkEnumerateInstanceExtensionProperties",
     "vkGetDeviceProcAddr",
     "vkGetInstanceProcAddr",
     "vkGetPhysicalDeviceWin32PresentationSupportKHR",
@@ -2773,6 +2768,13 @@ class VkGenerator(object):
             f.write("    \"{0}\",\n".format(ext["name"]))
         f.write("};\n\n")
 
+        # Create array of surface extensions.
+        f.write("static const char * const vk_host_surface_extensions[] =\n{\n")
+        for ext in self.registry.surface_extensions:
+            if ext["name"] not in WIN_SURFACE_EXTENSIONS:
+                f.write("    \"{0}\",\n".format(ext["name"]))
+        f.write("};\n\n")
+
         f.write("BOOL wine_vk_device_extension_supported(const char *name)\n")
         f.write("{\n")
         f.write("    unsigned int i;\n")
@@ -2790,6 +2792,17 @@ class VkGenerator(object):
         f.write("    for (i = 0; i < ARRAY_SIZE(vk_instance_extensions); i++)\n")
         f.write("    {\n")
         f.write("        if (strcmp(vk_instance_extensions[i], name) == 0)\n")
+        f.write("            return TRUE;\n")
+        f.write("    }\n")
+        f.write("    return FALSE;\n")
+        f.write("}\n\n")
+
+        f.write("BOOL wine_vk_is_host_surface_extension(const char *name)\n")
+        f.write("{\n")
+        f.write("    unsigned int i;\n")
+        f.write("    for (i = 0; i < ARRAY_SIZE(vk_host_surface_extensions); i++)\n")
+        f.write("    {\n")
+        f.write("        if (strcmp(vk_host_surface_extensions[i], name) == 0)\n")
         f.write("            return TRUE;\n")
         f.write("    }\n")
         f.write("    return FALSE;\n")
@@ -3196,6 +3209,7 @@ class VkRegistry(object):
         # We aggregate all types in here for cross-referencing.
         self.funcs = {}
         self.types = {}
+        self.surface_extensions = []
 
         self.version_regex = re.compile(
             r'^'
@@ -3472,6 +3486,9 @@ class VkRegistry(object):
 
         def process_ext(ext, deferred=False):
             ext_name = ext.attrib["name"]
+
+            if ext_name.endswith('_surface') and ext.attrib.get('depends', None) == 'VK_KHR_surface':
+                self.surface_extensions.append({"name" : ext_name})
 
             # Set extension name on any functions calls part of this extension as we
             # were not aware of the name during initial parsing.

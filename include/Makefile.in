@@ -345,6 +345,7 @@ SOURCES = \
 	highlevelmonitorconfigurationapi.h \
 	hlguids.h \
 	hlink.idl \
+	holographicspaceinterop.idl \
 	hrtfapoapi.idl \
 	hstring.idl \
 	htiface.idl \
@@ -928,6 +929,7 @@ SOURCES = \
 	wine/winbase16.h \
 	wine/windef16.h \
 	wine/wine_common_ver.rc \
+	wine/wined3d-interop.idl \
 	wine/wined3d.h \
 	wine/winedxgi.idl \
 	wine/wingdi16.h \

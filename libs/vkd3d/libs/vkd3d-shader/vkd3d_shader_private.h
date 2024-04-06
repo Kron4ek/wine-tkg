@@ -755,6 +755,12 @@ enum vkd3d_shader_uav_flags
     VKD3DSUF_ORDER_PRESERVING_COUNTER = 0x100,
 };
 
+enum vkd3d_shader_atomic_rmw_flags
+{
+    VKD3DARF_SEQ_CST  = 0x1,
+    VKD3DARF_VOLATILE = 0x2,
+};
+
 enum vkd3d_tessellator_domain
 {
     VKD3D_TESSELLATOR_DOMAIN_LINE      = 1,
@@ -1609,6 +1615,11 @@ static inline enum vkd3d_shader_component_type vkd3d_component_type_from_resourc
         case VKD3D_SHADER_RESOURCE_DATA_MIXED:
             return VKD3D_SHADER_COMPONENT_UINT;
     }
+}
+
+static inline bool component_type_is_64_bit(enum vkd3d_shader_component_type component_type)
+{
+    return component_type == VKD3D_SHADER_COMPONENT_DOUBLE || component_type == VKD3D_SHADER_COMPONENT_UINT64;
 }
 
 enum vkd3d_shader_input_sysval_semantic vkd3d_siv_from_sysval_indexed(enum vkd3d_shader_sysval_semantic sysval,

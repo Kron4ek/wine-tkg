@@ -228,6 +228,21 @@ static unsigned int get_native_context_flags( USHORT native_machine, USHORT wow_
 
 
 /***********************************************************************
+ *           xstate_to_server
+ *
+ * Copy xstate to the server format.
+ */
+static void xstate_to_server( context_t *to, const CONTEXT_EX *xctx )
+{
+    const XSTATE *xs = (const XSTATE *)((const char *)xctx + xctx->XState.Offset);
+
+    if (xs->CompactionMask && !(xs->CompactionMask & 4)) return;
+    to->flags |= SERVER_CTX_YMM_REGISTERS;
+    if (xs->Mask & 4) memcpy( &to->ymm.regs.ymm_high, &xs->YmmContext, sizeof(xs->YmmContext) );
+}
+
+
+/***********************************************************************
  *           context_to_server
  *
  * Convert a register context to the server format.
@@ -303,13 +318,7 @@ static NTSTATUS context_to_server( context_t *to, USHORT to_machine, const void 
             memcpy( to->ext.i386_regs, from->ExtendedRegisters, sizeof(to->ext.i386_regs) );
         }
         if (flags & CONTEXT_I386_XSTATE)
-        {
-            const CONTEXT_EX *xctx = (const CONTEXT_EX *)(from + 1);
-            const XSTATE *xs = (const XSTATE *)((const char *)xctx + xctx->XState.Offset);
-
-            to->flags |= SERVER_CTX_YMM_REGISTERS;
-            if (xs->Mask & 4) memcpy( &to->ymm.regs.ymm_high, &xs->YmmContext, sizeof(xs->YmmContext) );
-        }
+            xstate_to_server( to, (const CONTEXT_EX *)(from + 1) );
         return STATUS_SUCCESS;
     }
 
@@ -367,13 +376,7 @@ static NTSTATUS context_to_server( context_t *to, USHORT to_machine, const void 
             fpu_to_fpux( (XMM_SAVE_AREA32 *)to->fp.x86_64_regs.fpregs, &from->FloatSave );
         }
         if (flags & CONTEXT_I386_XSTATE)
-        {
-            const CONTEXT_EX *xctx = (const CONTEXT_EX *)(from + 1);
-            const XSTATE *xs = (const XSTATE *)((const char *)xctx + xctx->XState.Offset);
-
-            to->flags |= SERVER_CTX_YMM_REGISTERS;
-            if (xs->Mask & 4) memcpy( &to->ymm.regs.ymm_high, &xs->YmmContext, sizeof(xs->YmmContext) );
-        }
+            xstate_to_server( to, (const CONTEXT_EX *)(from + 1) );
         return STATUS_SUCCESS;
     }
 
@@ -434,13 +437,7 @@ static NTSTATUS context_to_server( context_t *to, USHORT to_machine, const void 
             to->debug.x86_64_regs.dr7 = from->Dr7;
         }
         if (flags & CONTEXT_AMD64_XSTATE)
-        {
-            const CONTEXT_EX *xctx = (const CONTEXT_EX *)(from + 1);
-            const XSTATE *xs = (const XSTATE *)((const char *)xctx + xctx->XState.Offset);
-
-            to->flags |= SERVER_CTX_YMM_REGISTERS;
-            if (xs->Mask & 4) memcpy( &to->ymm.regs.ymm_high, &xs->YmmContext, sizeof(xs->YmmContext) );
-        }
+            xstate_to_server( to, (const CONTEXT_EX *)(from + 1) );
         return STATUS_SUCCESS;
     }
 
@@ -505,13 +502,7 @@ static NTSTATUS context_to_server( context_t *to, USHORT to_machine, const void 
             to->debug.i386_regs.dr7 = from->Dr7;
         }
         if (flags & CONTEXT_AMD64_XSTATE)
-        {
-            const CONTEXT_EX *xctx = (const CONTEXT_EX *)(from + 1);
-            const XSTATE *xs = (const XSTATE *)((const char *)xctx + xctx->XState.Offset);
-
-            to->flags |= SERVER_CTX_YMM_REGISTERS;
-            if (xs->Mask & 4) memcpy( &to->ymm.regs.ymm_high, &xs->YmmContext, sizeof(xs->YmmContext) );
-        }
+            xstate_to_server( to, (const CONTEXT_EX *)(from + 1) );
         return STATUS_SUCCESS;
     }
 
@@ -614,6 +605,34 @@ static NTSTATUS context_to_server( context_t *to, USHORT to_machine, const void 
 
 
 /***********************************************************************
+ *           xstate_from_server
+ *
+ * Copy xstate from the server format.
+ */
+static void xstate_from_server( CONTEXT_EX *xctx, const context_t *from )
+{
+    XSTATE *xs = (XSTATE *)((char *)xctx + xctx->XState.Offset);
+    unsigned int i;
+
+    xs->Mask &= ~(ULONG64)4;
+
+    if (xs->CompactionMask)
+    {
+        xs->CompactionMask &= ~(UINT64)3;
+        if (!(xs->CompactionMask & 4)) return;
+    }
+
+    for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
+    {
+        if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
+        memcpy( &xs->YmmContext, &from->ymm.regs, sizeof(xs->YmmContext) );
+        xs->Mask |= 4;
+        break;
+    }
+}
+
+
+/***********************************************************************
  *           context_from_server
  *
  * Convert a register context from the server format.
@@ -686,20 +705,7 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
             memcpy( to->ExtendedRegisters, from->ext.i386_regs, sizeof(to->ExtendedRegisters) );
         }
         if ((from->flags & SERVER_CTX_YMM_REGISTERS) && (to_flags & CONTEXT_I386_XSTATE))
-        {
-            CONTEXT_EX *xctx = (CONTEXT_EX *)(to + 1);
-            XSTATE *xs = (XSTATE *)((char *)xctx + xctx->XState.Offset);
-
-            xs->Mask &= ~4;
-            if (xs->CompactionMask) xs->CompactionMask = 0x8000000000000004;
-            for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
-            {
-                if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
-                memcpy( &xs->YmmContext, &from->ymm.regs, sizeof(xs->YmmContext) );
-                xs->Mask |= 4;
-                break;
-            }
-        }
+            xstate_from_server( (CONTEXT_EX *)(to + 1), from );
         return STATUS_SUCCESS;
     }
 
@@ -760,20 +766,7 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
             to->Dr7 = from->debug.x86_64_regs.dr7;
         }
         if ((from->flags & SERVER_CTX_YMM_REGISTERS) && (to_flags & CONTEXT_I386_XSTATE))
-        {
-            CONTEXT_EX *xctx = (CONTEXT_EX *)(to + 1);
-            XSTATE *xs = (XSTATE *)((char *)xctx + xctx->XState.Offset);
-
-            xs->Mask &= ~4;
-            if (xs->CompactionMask) xs->CompactionMask = 0x8000000000000004;
-            for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
-            {
-                if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
-                memcpy( &xs->YmmContext, &from->ymm.regs, sizeof(xs->YmmContext) );
-                xs->Mask |= 4;
-                break;
-            }
-        }
+            xstate_from_server( (CONTEXT_EX *)(to + 1), from );
         return STATUS_SUCCESS;
     }
 
@@ -835,20 +828,7 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
             to->Dr7 = from->debug.x86_64_regs.dr7;
         }
         if ((from->flags & SERVER_CTX_YMM_REGISTERS) && (to_flags & CONTEXT_AMD64_XSTATE))
-        {
-            CONTEXT_EX *xctx = (CONTEXT_EX *)(to + 1);
-            XSTATE *xs = (XSTATE *)((char *)xctx + xctx->XState.Offset);
-
-            xs->Mask &= ~4;
-            if (xs->CompactionMask) xs->CompactionMask = 0x8000000000000004;
-            for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
-            {
-                if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
-                memcpy( &xs->YmmContext, &from->ymm.regs, sizeof(xs->YmmContext) );
-                xs->Mask |= 4;
-                break;
-            }
-        }
+            xstate_from_server( (CONTEXT_EX *)(to + 1), from );
         return STATUS_SUCCESS;
     }
 
@@ -917,20 +897,7 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
             to->Dr7 = from->debug.i386_regs.dr7;
         }
         if ((from->flags & SERVER_CTX_YMM_REGISTERS) && (to_flags & CONTEXT_AMD64_XSTATE))
-        {
-            CONTEXT_EX *xctx = (CONTEXT_EX *)(to + 1);
-            XSTATE *xs = (XSTATE *)((char *)xctx + xctx->XState.Offset);
-
-            xs->Mask &= ~4;
-            if (xs->CompactionMask) xs->CompactionMask = 0x8000000000000004;
-            for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
-            {
-                if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
-                memcpy( &xs->YmmContext, &from->ymm.regs, sizeof(xs->YmmContext) );
-                xs->Mask |= 4;
-                break;
-            }
-        }
+            xstate_from_server( (CONTEXT_EX *)(to + 1), from );
         return STATUS_SUCCESS;
     }
 

@@ -20275,7 +20275,9 @@ msgid "Help topics: "
 msgstr "Tópicos de ajuda: "
 
 #: programs/wmic/wmic.rc:28
-msgid "Error: Command line not supported\n"
+#, fuzzy
+#| msgid "Error: Command line not supported\n"
+msgid "Error: Command not supported\n"
 msgstr "Erro: Linha de comandos não suportada\n"
 
 #: programs/wmic/wmic.rc:29
@@ -20289,6 +20291,12 @@ msgstr "Erro: Consulta inválida\n"
 #: programs/wmic/wmic.rc:31
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "Erro: Sintaxe para PATH é inválida\n"
+
+#: programs/wmic/wmic.rc:32
+#, fuzzy
+#| msgid "Bad command.\n"
+msgid "Supply a command\n"
+msgstr "Mau comando.\n"
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

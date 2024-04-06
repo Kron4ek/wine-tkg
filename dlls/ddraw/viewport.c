@@ -405,7 +405,8 @@ static HRESULT WINAPI d3d_viewport_SetViewport(IDirect3DViewport3 *iface, D3DVIE
 
     if (device->version > 1)
     {
-        if (!(rtv = wined3d_device_context_get_rendertarget_view(device->immediate_context, 0)))
+        rtv = device->target ? ddraw_surface_get_rendertarget_view(device->target) : NULL;
+        if (!rtv)
         {
             wined3d_mutex_unlock();
             return DDERR_INVALIDCAPS;
@@ -627,7 +628,7 @@ static HRESULT WINAPI d3d_viewport_SetBackground(IDirect3DViewport3 *iface, D3DM
 
     wined3d_mutex_lock();
 
-    if (!(m = ddraw_get_object(&viewport->ddraw->d3ddevice->handle_table, material - 1, DDRAW_HANDLE_MATERIAL)))
+    if (!(m = ddraw_get_object(NULL, material - 1, DDRAW_HANDLE_MATERIAL)))
     {
         WARN("Invalid material handle %#lx.\n", material);
         wined3d_mutex_unlock();
@@ -1034,7 +1035,8 @@ static HRESULT WINAPI d3d_viewport_SetViewport2(IDirect3DViewport3 *iface, D3DVI
 
     if (device->version > 1)
     {
-        if (!(rtv = wined3d_device_context_get_rendertarget_view(device->immediate_context, 0)))
+        rtv = device->target ? ddraw_surface_get_rendertarget_view(device->target) : NULL;
+        if (!rtv)
         {
             wined3d_mutex_unlock();
             return DDERR_INVALIDCAPS;

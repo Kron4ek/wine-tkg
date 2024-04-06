@@ -19899,7 +19899,7 @@ msgstr ""
 #: programs/wmic/wmic.rc:28
 #, fuzzy
 #| msgid "Error: Invalid command line parameters\n"
-msgid "Error: Command line not supported\n"
+msgid "Error: Command not supported\n"
 msgstr ""
 "Грешка: унесени су непознати или неисправни параметри наредбене линије\n"
 
@@ -19917,6 +19917,10 @@ msgstr "Неисправна синтакса.\n"
 #, fuzzy
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "Неисправна синтакса.\n"
+
+#: programs/wmic/wmic.rc:32
+msgid "Supply a command\n"
+msgstr ""
 
 #: programs/wordpad/wordpad.rc:31
 #, fuzzy

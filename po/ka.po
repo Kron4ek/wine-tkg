@@ -18651,7 +18651,9 @@ msgid "Help topics: "
 msgstr "დახმარების თემები: "
 
 #: programs/wmic/wmic.rc:28
-msgid "Error: Command line not supported\n"
+#, fuzzy
+#| msgid "Error: Command line not supported\n"
+msgid "Error: Command not supported\n"
 msgstr "შეცდომა: ბრძანების სტრიქონი მხარდაჭერილიარაა\n"
 
 #: programs/wmic/wmic.rc:29
@@ -18665,6 +18667,12 @@ msgstr "შეცდომა: არასწორი მოთხოვნა
 #: programs/wmic/wmic.rc:31
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "შეცდომა: PATH-ის სინტაქსი არასწორია\n"
+
+#: programs/wmic/wmic.rc:32
+#, fuzzy
+#| msgid "Bad command.\n"
+msgid "Supply a command\n"
+msgstr "არასწორი ბრძანება.\n"
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

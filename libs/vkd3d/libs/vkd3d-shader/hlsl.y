@@ -413,7 +413,7 @@ static struct hlsl_ir_node *add_implicit_conversion(struct hlsl_ctx *ctx, struct
         return NULL;
     }
 
-    if (dst_type->dimx * dst_type->dimy < src_type->dimx * src_type->dimy)
+    if (dst_type->dimx * dst_type->dimy < src_type->dimx * src_type->dimy && ctx->warn_implicit_truncation)
         hlsl_warning(ctx, loc, VKD3D_SHADER_WARNING_HLSL_IMPLICIT_TRUNCATION, "Implicit truncation of %s type.",
                 src_type->class == HLSL_CLASS_VECTOR ? "vector" : "matrix");
 
@@ -438,8 +438,9 @@ static uint32_t add_modifiers(struct hlsl_ctx *ctx, uint32_t modifiers, uint32_t
 
 static bool append_conditional_break(struct hlsl_ctx *ctx, struct hlsl_block *cond_block)
 {
-    struct hlsl_ir_node *condition, *not, *iff, *jump;
+    struct hlsl_ir_node *condition, *cast, *not, *iff, *jump;
     struct hlsl_block then_block;
+    struct hlsl_type *bool_type;
 
     /* E.g. "for (i = 0; ; ++i)". */
     if (list_empty(&cond_block->instrs))
@@ -449,7 +450,12 @@ static bool append_conditional_break(struct hlsl_ctx *ctx, struct hlsl_block *co
 
     check_condition_type(ctx, condition);
 
-    if (!(not = hlsl_new_unary_expr(ctx, HLSL_OP1_LOGIC_NOT, condition, &condition->loc)))
+    bool_type = hlsl_get_scalar_type(ctx, HLSL_TYPE_BOOL);
+    if (!(cast = hlsl_new_cast(ctx, condition, bool_type, &condition->loc)))
+        return false;
+    hlsl_block_add_instr(cond_block, cast);
+
+    if (!(not = hlsl_new_unary_expr(ctx, HLSL_OP1_LOGIC_NOT, cast, &condition->loc)))
         return false;
     hlsl_block_add_instr(cond_block, not);
 
@@ -2085,24 +2091,23 @@ static void initialize_var_components(struct hlsl_ctx *ctx, struct hlsl_block *i
     }
 }
 
-static bool type_has_object_components(struct hlsl_type *type, bool must_be_in_struct)
+static bool type_has_object_components(const struct hlsl_type *type)
 {
-    if (type->class == HLSL_CLASS_OBJECT)
-        return !must_be_in_struct;
     if (type->class == HLSL_CLASS_ARRAY)
-        return type_has_object_components(type->e.array.type, must_be_in_struct);
+        return type_has_object_components(type->e.array.type);
 
     if (type->class == HLSL_CLASS_STRUCT)
     {
-        unsigned int i;
-
-        for (i = 0; i < type->e.record.field_count; ++i)
+        for (unsigned int i = 0; i < type->e.record.field_count; ++i)
         {
-            if (type_has_object_components(type->e.record.fields[i].type, false))
+            if (type_has_object_components(type->e.record.fields[i].type))
                 return true;
         }
+
+        return false;
     }
-    return false;
+
+    return !hlsl_is_numeric_type(type);
 }
 
 static bool type_has_numeric_components(struct hlsl_type *type)
@@ -2138,6 +2143,18 @@ static void check_invalid_in_out_modifiers(struct hlsl_ctx *ctx, unsigned int mo
                     "Modifiers '%s' are not allowed on non-parameter variables.", string->buffer);
         hlsl_release_string_buffer(ctx, string);
     }
+}
+
+static void check_invalid_object_fields(struct hlsl_ctx *ctx, const struct hlsl_ir_var *var)
+{
+    const struct hlsl_type *type = var->data_type;
+
+    while (type->class == HLSL_CLASS_ARRAY)
+        type = type->e.array.type;
+
+    if (type->class == HLSL_CLASS_STRUCT && type_has_object_components(type))
+        hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                "Target profile doesn't support objects as struct members in uniform variables.");
 }
 
 static void declare_var(struct hlsl_ctx *ctx, struct parse_variable_def *v)
@@ -2265,12 +2282,8 @@ static void declare_var(struct hlsl_ctx *ctx, struct parse_variable_def *v)
         if (!(modifiers & HLSL_STORAGE_STATIC))
             var->storage_modifiers |= HLSL_STORAGE_UNIFORM;
 
-        if (ctx->profile->major_version < 5 && (var->storage_modifiers & HLSL_STORAGE_UNIFORM) &&
-                type_has_object_components(var->data_type, true))
-        {
-            hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                    "Target profile doesn't support objects as struct members in uniform variables.");
-        }
+        if (ctx->profile->major_version < 5 && (var->storage_modifiers & HLSL_STORAGE_UNIFORM))
+            check_invalid_object_fields(ctx, var);
 
         if ((func = hlsl_get_first_func_decl(ctx, var->name)))
         {
@@ -2306,7 +2319,7 @@ static void declare_var(struct hlsl_ctx *ctx, struct parse_variable_def *v)
     }
 
     if ((var->storage_modifiers & HLSL_STORAGE_STATIC) && type_has_numeric_components(var->data_type)
-            && type_has_object_components(var->data_type, false))
+            && type_has_object_components(var->data_type))
     {
         hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                 "Static variables cannot have both numeric and resource components.");
@@ -2394,7 +2407,7 @@ static struct hlsl_block *initialize_vars(struct hlsl_ctx *ctx, struct list *var
 
             /* Initialize statics to zero by default. */
 
-            if (type_has_object_components(var->data_type, false))
+            if (type_has_object_components(var->data_type))
             {
                 free_parse_variable_def(v);
                 continue;
@@ -4352,22 +4365,7 @@ static struct hlsl_block *add_constructor(struct hlsl_ctx *ctx, struct hlsl_type
         return NULL;
 
     for (i = 0; i < params->args_count; ++i)
-    {
-        struct hlsl_ir_node *arg = params->args[i];
-
-        if (arg->data_type->class == HLSL_CLASS_OBJECT)
-        {
-            struct vkd3d_string_buffer *string;
-
-            if ((string = hlsl_type_to_string(ctx, arg->data_type)))
-                hlsl_error(ctx, &arg->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                        "Invalid type %s for constructor argument.", string->buffer);
-            hlsl_release_string_buffer(ctx, string);
-            continue;
-        }
-
-        initialize_var_components(ctx, params->instrs, var, &idx, arg);
-    }
+        initialize_var_components(ctx, params->instrs, var, &idx, params->args[i]);
 
     if (!(load = hlsl_new_var_load(ctx, var, loc)))
         return NULL;
@@ -5343,6 +5341,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %token KW_DOMAINSHADER
 %token KW_DOUBLE
 %token KW_ELSE
+%token KW_EXPORT
 %token KW_EXTERN
 %token KW_FALSE
 %token KW_FOR
@@ -5667,12 +5666,12 @@ effect_group:
         }
 
 buffer_declaration:
-      var_modifiers buffer_type any_identifier colon_attribute
+      var_modifiers buffer_type any_identifier colon_attribute annotations_opt
         {
             if ($4.semantic.name)
                 hlsl_error(ctx, &@4, VKD3D_SHADER_ERROR_HLSL_INVALID_SEMANTIC, "Semantics are not allowed on buffers.");
 
-            if (!(ctx->cur_buffer = hlsl_new_buffer(ctx, $2, $3, $1, &$4.reg_reservation, &@3)))
+            if (!(ctx->cur_buffer = hlsl_new_buffer(ctx, $2, $3, $1, &$4.reg_reservation, $5, &@3)))
                 YYABORT;
         }
 
@@ -5971,9 +5970,9 @@ func_prototype_no_attrs:
             /* Functions are unconditionally inlined. */
             modifiers &= ~HLSL_MODIFIER_INLINE;
 
-            if (modifiers & ~HLSL_MODIFIERS_MAJORITY_MASK)
+            if (modifiers & ~(HLSL_MODIFIERS_MAJORITY_MASK | HLSL_MODIFIER_EXPORT))
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
-                        "Only majority modifiers are allowed on functions.");
+                        "Unexpected modifier used on a function.");
             if (!(type = apply_type_modifiers(ctx, $2, &modifiers, true, &@1)))
                 YYABORT;
             if ((var = hlsl_get_var(ctx->globals, $3)))
@@ -6869,6 +6868,10 @@ var_modifiers:
     | KW_INLINE var_modifiers
         {
             $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_INLINE, &@1);
+        }
+    | KW_EXPORT var_modifiers
+        {
+            $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_EXPORT, &@1);
         }
     | var_identifier var_modifiers
         {

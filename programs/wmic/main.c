@@ -28,12 +28,14 @@
 #include "initguid.h"
 #include "objidl.h"
 #include "wbemcli.h"
+#include "shellapi.h"
 #include "wmic.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wmic);
 
+#define MAX_STRING    4096
 static const struct
 {
     const WCHAR *alias;
@@ -105,62 +107,67 @@ static int output_newline( void )
     return output_string( L"\n" );
 }
 
-static WCHAR * strip_spaces(WCHAR *start)
+static WCHAR *strip_spaces( WCHAR *start )
 {
-    WCHAR *str = start, *end;
-
-    while (*str == ' ')
-        str++;
-
-    end = start + lstrlenW(start) - 1;
-    while (end >= start && *end == ' ')
-    {
-        *end = '\0';
-        end--;
-    }
-
+    WCHAR *str = start, *end = start + wcslen( start ) - 1;
+    while (*str == ' ') str++;
+    while (end >= start && *end == ' ') *end-- = 0;
     return str;
 }
 
-static HRESULT process_property_list( IWbemClassObject *obj, const WCHAR *proplist, WCHAR **ret )
+static HRESULT append_property( IWbemClassObject *obj, const WCHAR *prop, WCHAR *proplist )
 {
-    WCHAR *p, *ctx, *ptr, *stripped;
-    HRESULT hr = S_OK;
+    HRESULT hr;
 
-    if (!(p = wcsdup( proplist ))) return E_OUTOFMEMORY;
+    if (FAILED(hr = IWbemClassObject_Get( obj, prop, 0, NULL, NULL, NULL ))) return hr;
+    if (*proplist) wcscat( proplist, L"," );
+    wcscat( proplist, prop );
+    return S_OK;
+}
 
-    if (!(stripped = malloc( (wcslen( proplist ) + 1) * sizeof(**ret) )))
-    {
-        free( p );
-        return E_OUTOFMEMORY;
-    }
+static HRESULT process_property_list( IWbemClassObject *obj, int argc, WCHAR *argv[], WCHAR **ret )
+{
+    WCHAR *str = NULL, *ctx, *ptr, *stripped;
+    UINT i, len = 0;
+    HRESULT hr;
+
+    for (i = 0; i < argc; i++) len += wcslen( argv[i] );
+    if (!(stripped = malloc( (len + 1) * sizeof(*stripped) ))) return E_OUTOFMEMORY;
     *stripped = 0;
 
-    /* Validate that every requested property is supported. */
-    ptr = wcstok_s( p, L",", &ctx );
-    while (ptr)
+    for (i = 0; i < argc; i++)
     {
-        ptr = strip_spaces( ptr );
-
-        if (FAILED(IWbemClassObject_Get( obj, ptr, 0, NULL, NULL, NULL )))
+        if (!(str = wcsdup( argv[i] )))
         {
-            hr = E_FAIL;
-            break;
+            free( stripped );
+            return E_OUTOFMEMORY;
         }
-        if (*stripped) wcscat( stripped, L"," );
-        wcscat( stripped, ptr );
-        ptr = wcstok_s( NULL, L",", &ctx );
-    }
-    free( p );
 
-    if (SUCCEEDED(hr))
-        *ret = stripped;
-    else
-    {
-        free( stripped );
-        *ret = NULL;
+        /* Validate that every requested property is supported. */
+        ptr = wcstok_s( str, L",", &ctx );
+        if (!ptr)
+        {
+            ptr = strip_spaces( str );
+            if (FAILED(hr = append_property( obj, ptr, stripped ))) goto error;
+        }
+        else
+        {
+            while (ptr)
+            {
+                ptr = strip_spaces( ptr );
+                if (FAILED(hr = append_property( obj, ptr, stripped ))) goto error;
+                ptr = wcstok_s( NULL, L",", &ctx );
+            }
+        }
+        free( str );
     }
 
+    *ret = stripped;
+    return S_OK;
+
+error:
+    free( str );
+    free( stripped );
     return hr;
 }
 
@@ -216,7 +223,7 @@ done:
         WINE_FIXME( "Could not convert variant, vt %u.\n", vt );
 }
 
-static int query_prop( const WCHAR *class, const WCHAR *propnames )
+static int query_prop( const WCHAR *class, int argc, WCHAR *argv[] )
 {
     HRESULT hr;
     IWbemLocator *locator = NULL;
@@ -229,8 +236,11 @@ static int query_prop( const WCHAR *class, const WCHAR *propnames )
     IWbemClassObject *obj;
     ULONG count, width = 0;
     VARIANT v;
+    int i;
 
-    WINE_TRACE("%s, %s\n", debugstr_w(class), debugstr_w(propnames));
+    WINE_TRACE( "%s", debugstr_w(class) );
+    for (i = 0; i < argc; i++) WINE_TRACE( " %s", debugstr_w(argv[i]) );
+    WINE_TRACE( "\n" );
 
     CoInitialize( NULL );
     CoInitializeSecurity( NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT,
@@ -254,7 +264,7 @@ static int query_prop( const WCHAR *class, const WCHAR *propnames )
     }
 
     /* Check that this class supports all requested properties. */
-    hr = process_property_list( obj, propnames, &proplist );
+    hr = process_property_list( obj, argc, argv, &proplist );
     IWbemClassObject_Release( obj );
     if (FAILED(hr))
     {
@@ -333,15 +343,13 @@ done:
     return ret;
 }
 
-int __cdecl wmain(int argc, WCHAR *argv[])
+static int process_args( int argc, WCHAR *argv[] )
 {
-    const WCHAR *class, *value;
+    const WCHAR *class;
     int i;
 
-    setlocale( LC_ALL, "" );
-
-    for (i = 1; i < argc && argv[i][0] == '/'; i++)
-        WINE_FIXME( "command line switch %s not supported\n", debugstr_w(argv[i]) );
+    for (i = 0; i < argc && argv[i][0] == '/'; i++)
+        WINE_FIXME( "switch %s not supported\n", debugstr_w(argv[i]) );
 
     if (i >= argc)
         goto not_supported;
@@ -351,7 +359,7 @@ int __cdecl wmain(int argc, WCHAR *argv[])
         return 0;
     }
 
-    if (!wcsicmp( argv[i], L"class") || !wcsicmp( argv[i], L"context" ))
+    if (!wcsicmp( argv[i], L"class" ) || !wcsicmp( argv[i], L"context" ))
     {
         WINE_FIXME( "command %s not supported\n", debugstr_w(argv[i]) );
         goto not_supported;
@@ -383,11 +391,53 @@ int __cdecl wmain(int argc, WCHAR *argv[])
     {
         if (++i >= argc)
             goto not_supported;
-        value = argv[i];
-        return query_prop( class, value );
+        return query_prop( class, argc - i, argv + i );
     }
 
 not_supported:
-    output_error( STRING_CMDLINE_NOT_SUPPORTED );
+    output_error( STRING_COMMAND_NOT_SUPPORTED );
     return 1;
+}
+
+int __cdecl wmain(int argc, WCHAR *argv[])
+{
+    WCHAR cmd[MAX_STRING];
+    int ret = 0;
+
+    setlocale( LC_ALL, "" );
+
+    if (argc == 1)
+    {
+        fputws( L"wmic:root\\cli>", stdout );
+
+        while (fgetws( cmd, sizeof(cmd), stdin ) != NULL)
+        {
+            const WCHAR *stripped;
+
+            cmd[wcslen(cmd) - 1] = 0; /* remove trailing '\n' */
+            stripped = strip_spaces( cmd );
+
+            WINE_TRACE( "command: %s\n", debugstr_w(stripped) );
+            if (!wcsicmp( stripped, L"exit" ) || !wcsicmp( stripped, L"quit" ))
+                return 0;
+
+            if (!stripped[0])
+                output_error( STRING_USAGE );
+            else
+            {
+                int new_argc;
+                WCHAR **new_argv;
+
+                if (!(new_argv = CommandLineToArgvW( stripped, &new_argc ))) return 1;
+                ret = process_args( new_argc, new_argv );
+                LocalFree( new_argv );
+
+                output_newline();
+            }
+            fputws( L"wmic:root\\cli>", stdout );
+        }
+        return ret;
+    }
+
+    return process_args( argc - 1, argv + 1 );
 }

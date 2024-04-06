@@ -19534,8 +19534,10 @@ msgid "Help topics: "
 msgstr "Helpaj tempoj: "
 
 #: programs/wmic/wmic.rc:28
-msgid "Error: Command line not supported\n"
-msgstr ""
+#, fuzzy
+#| msgid "Property set not found.\n"
+msgid "Error: Command not supported\n"
+msgstr "Ecaro ne estis trovita.\n"
 
 #: programs/wmic/wmic.rc:29
 #, fuzzy
@@ -19554,6 +19556,10 @@ msgstr "Nevalida menda sintakso.\n"
 #| msgid "Invalid share name.\n"
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "Nevalida nomo de kunuzata aparato.\n"
+
+#: programs/wmic/wmic.rc:32
+msgid "Supply a command\n"
+msgstr ""
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

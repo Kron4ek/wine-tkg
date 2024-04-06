@@ -1310,7 +1310,7 @@ BOOL WINAPI NtUserGetKeyboardLayoutName( WCHAR *name )
 
     if (info->kbd_layout_id)
     {
-        sprintf( buffer, "%08X", info->kbd_layout_id );
+        snprintf( buffer, sizeof(buffer), "%08X", info->kbd_layout_id );
         asciiz_to_unicode( name, buffer );
         return TRUE;
     }
@@ -1318,7 +1318,7 @@ BOOL WINAPI NtUserGetKeyboardLayoutName( WCHAR *name )
     layout = NtUserGetKeyboardLayout( 0 );
     id = HandleToUlong( layout );
     if (HIWORD( id ) == LOWORD( id )) id = LOWORD( id );
-    sprintf( buffer, "%08X", id );
+    snprintf( buffer, sizeof(buffer), "%08X", id );
     asciiz_to_unicode( name, buffer );
 
     if ((hkey = reg_open_key( NULL, keyboard_layouts_keyW, sizeof(keyboard_layouts_keyW) )))

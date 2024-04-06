@@ -268,6 +268,7 @@
 @ cdecl wined3d_stateblock_set_vs_consts_b(ptr long long ptr)
 @ cdecl wined3d_stateblock_set_vs_consts_f(ptr long long ptr)
 @ cdecl wined3d_stateblock_set_vs_consts_i(ptr long long ptr)
+@ cdecl wined3d_stateblock_texture_changed(ptr ptr)
 
 @ cdecl wined3d_streaming_buffer_map(ptr ptr long long ptr ptr)
 @ cdecl wined3d_streaming_buffer_unmap(ptr)
@@ -317,6 +318,7 @@
 @ cdecl wined3d_texture_incref(ptr)
 @ cdecl wined3d_texture_release_dc(ptr long ptr)
 @ cdecl wined3d_texture_set_color_key(ptr long ptr)
+@ cdecl wined3d_texture_set_lod(ptr long)
 @ cdecl wined3d_texture_set_overlay_position(ptr long long long)
 @ cdecl wined3d_texture_set_sub_resource_parent(ptr long ptr ptr)
 @ cdecl wined3d_texture_update_desc(ptr long ptr long)
@@ -332,6 +334,11 @@
 @ cdecl wined3d_vertex_declaration_decref(ptr)
 @ cdecl wined3d_vertex_declaration_get_parent(ptr)
 @ cdecl wined3d_vertex_declaration_incref(ptr)
+
+@ cdecl wined3d_access_gl_texture(ptr ptr ptr long)
+@ cdecl wined3d_device_run_cs_callback(ptr ptr ptr long)
+@ cdecl wined3d_device_wait_idle(ptr)
+@ cdecl wined3d_get_gl_texture(ptr)
 
 @ cdecl vkd3d_acquire_vk_queue(ptr)
 @ cdecl vkd3d_create_device(ptr ptr ptr)

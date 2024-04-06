@@ -53,13 +53,10 @@ typedef struct VkWaylandSurfaceCreateInfoKHR
     struct wl_surface *surface;
 } VkWaylandSurfaceCreateInfoKHR;
 
-static VkResult (*pvkCreateInstance)(const VkInstanceCreateInfo *, const VkAllocationCallbacks *, VkInstance *);
 static VkResult (*pvkCreateSwapchainKHR)(VkDevice, const VkSwapchainCreateInfoKHR *, const VkAllocationCallbacks *, VkSwapchainKHR *);
 static VkResult (*pvkCreateWaylandSurfaceKHR)(VkInstance, const VkWaylandSurfaceCreateInfoKHR *, const VkAllocationCallbacks *, VkSurfaceKHR *);
-static void (*pvkDestroyInstance)(VkInstance, const VkAllocationCallbacks *);
 static void (*pvkDestroySurfaceKHR)(VkInstance, VkSurfaceKHR, const VkAllocationCallbacks *);
 static void (*pvkDestroySwapchainKHR)(VkDevice, VkSwapchainKHR, const VkAllocationCallbacks *);
-static VkResult (*pvkEnumerateInstanceExtensionProperties)(const char *, uint32_t *, VkExtensionProperties *);
 static VkBool32 (*pvkGetPhysicalDeviceWaylandPresentationSupportKHR)(VkPhysicalDevice, uint32_t, struct wl_display *);
 static VkResult (*pvkGetSwapchainImagesKHR)(VkDevice, VkSwapchainKHR, uint32_t *, VkImage *);
 static VkResult (*pvkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *);
@@ -145,49 +142,6 @@ static struct wine_vk_swapchain *wine_vk_swapchain_from_handle(VkSwapchainKHR ha
     return NULL;
 }
 
-/* Helper function for converting between win32 and Wayland compatible VkInstanceCreateInfo.
- * Caller is responsible for allocation and cleanup of 'dst'. */
-static VkResult wine_vk_instance_convert_create_info(const VkInstanceCreateInfo *src,
-                                                     VkInstanceCreateInfo *dst)
-{
-    unsigned int i;
-    const char **enabled_extensions = NULL;
-
-    dst->sType = src->sType;
-    dst->flags = src->flags;
-    dst->pApplicationInfo = src->pApplicationInfo;
-    dst->pNext = src->pNext;
-    dst->enabledLayerCount = 0;
-    dst->ppEnabledLayerNames = NULL;
-    dst->enabledExtensionCount = 0;
-    dst->ppEnabledExtensionNames = NULL;
-
-    if (src->enabledExtensionCount > 0)
-    {
-        enabled_extensions = calloc(src->enabledExtensionCount,
-                                    sizeof(*src->ppEnabledExtensionNames));
-        if (!enabled_extensions)
-        {
-            ERR("Failed to allocate memory for enabled extensions\n");
-            return VK_ERROR_OUT_OF_HOST_MEMORY;
-        }
-
-        for (i = 0; i < src->enabledExtensionCount; i++)
-        {
-            /* Substitute extension with Wayland ones else copy. Long-term, when we
-             * support more extensions, we should store these in a list. */
-            if (!strcmp(src->ppEnabledExtensionNames[i], "VK_KHR_win32_surface"))
-                enabled_extensions[i] = "VK_KHR_wayland_surface";
-            else
-                enabled_extensions[i] = src->ppEnabledExtensionNames[i];
-        }
-        dst->ppEnabledExtensionNames = enabled_extensions;
-        dst->enabledExtensionCount = src->enabledExtensionCount;
-    }
-
-    return VK_SUCCESS;
-}
-
 static void vk_result_update_out_of_date(VkResult *res)
 {
     /* If the current result is less severe than out_of_date, which for
@@ -248,34 +202,6 @@ static VkResult check_queue_present(const VkPresentInfoKHR *present_info,
         vk_result_update_out_of_date(&res);
     }
 
-    return res;
-}
-
-static VkResult wayland_vkCreateInstance(const VkInstanceCreateInfo *create_info,
-                                         const VkAllocationCallbacks *allocator,
-                                         VkInstance *instance)
-{
-    VkInstanceCreateInfo create_info_host;
-    VkResult res;
-
-    TRACE("create_info %p, allocator %p, instance %p\n", create_info, allocator, instance);
-
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
-
-    /* Perform a second pass on converting VkInstanceCreateInfo. Winevulkan
-     * performed a first pass in which it handles everything except for WSI
-     * functionality such as VK_KHR_win32_surface. Handle this now. */
-    res = wine_vk_instance_convert_create_info(create_info, &create_info_host);
-    if (res != VK_SUCCESS)
-    {
-        ERR("Failed to convert instance create info, res=%d\n", res);
-        return res;
-    }
-
-    res = pvkCreateInstance(&create_info_host, NULL /* allocator */, instance);
-
-    free((void *)create_info_host.ppEnabledExtensionNames);
     return res;
 }
 
@@ -395,17 +321,6 @@ err:
     return res;
 }
 
-static void wayland_vkDestroyInstance(VkInstance instance,
-                                      const VkAllocationCallbacks *allocator)
-{
-    TRACE("%p %p\n", instance, allocator);
-
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
-
-    pvkDestroyInstance(instance, NULL /* allocator */);
-}
-
 static void wayland_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface,
                                         const VkAllocationCallbacks *allocator)
 {
@@ -442,48 +357,6 @@ static void wayland_vkDestroySwapchainKHR(VkDevice device,
     }
 }
 
-static VkResult wayland_vkEnumerateInstanceExtensionProperties(const char *layer_name,
-                                                               uint32_t *count,
-                                                               VkExtensionProperties* properties)
-{
-    unsigned int i;
-    VkResult res;
-
-    TRACE("layer_name %s, count %p, properties %p\n", debugstr_a(layer_name), count, properties);
-
-    /* This shouldn't get called with layer_name set, the ICD loader prevents it. */
-    if (layer_name)
-    {
-        ERR("Layer enumeration not supported from ICD.\n");
-        return VK_ERROR_LAYER_NOT_PRESENT;
-    }
-
-    /* We will return the same number of instance extensions reported by the host back to
-     * winevulkan. Along the way we may replace xlib extensions with their win32 equivalents.
-     * Winevulkan will perform more detailed filtering as it knows whether it has thunks
-     * for a particular extension.
-     */
-    res = pvkEnumerateInstanceExtensionProperties(layer_name, count, properties);
-    if (!properties || res < 0)
-        return res;
-
-    for (i = 0; i < *count; i++)
-    {
-        /* For now the only wayland extension we need to fixup. Long-term we may need an array. */
-        if (!strcmp(properties[i].extensionName, "VK_KHR_wayland_surface"))
-        {
-            TRACE("Substituting VK_KHR_wayland_surface for VK_KHR_win32_surface\n");
-
-            snprintf(properties[i].extensionName, sizeof(properties[i].extensionName),
-                    VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-            properties[i].specVersion = VK_KHR_WIN32_SURFACE_SPEC_VERSION;
-        }
-    }
-
-    TRACE("Returning %u extensions.\n", *count);
-    return res;
-}
-
 static VkBool32 wayland_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice phys_dev,
                                                                        uint32_t index)
 {
@@ -512,6 +385,11 @@ static VkResult wayland_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR 
     return check_queue_present(present_info, res);
 }
 
+static const char *wayland_get_host_surface_extension(void)
+{
+    return "VK_KHR_wayland_surface";
+}
+
 static VkSurfaceKHR wayland_wine_get_host_surface(VkSurfaceKHR surface)
 {
     return wine_vk_surface_from_handle(surface)->host_surface;
@@ -519,16 +397,14 @@ static VkSurfaceKHR wayland_wine_get_host_surface(VkSurfaceKHR surface)
 
 static const struct vulkan_funcs vulkan_funcs =
 {
-    .p_vkCreateInstance = wayland_vkCreateInstance,
     .p_vkCreateSwapchainKHR = wayland_vkCreateSwapchainKHR,
     .p_vkCreateWin32SurfaceKHR = wayland_vkCreateWin32SurfaceKHR,
-    .p_vkDestroyInstance = wayland_vkDestroyInstance,
     .p_vkDestroySurfaceKHR = wayland_vkDestroySurfaceKHR,
     .p_vkDestroySwapchainKHR = wayland_vkDestroySwapchainKHR,
-    .p_vkEnumerateInstanceExtensionProperties = wayland_vkEnumerateInstanceExtensionProperties,
     .p_vkGetPhysicalDeviceWin32PresentationSupportKHR = wayland_vkGetPhysicalDeviceWin32PresentationSupportKHR,
     .p_vkGetSwapchainImagesKHR = wayland_vkGetSwapchainImagesKHR,
     .p_vkQueuePresentKHR = wayland_vkQueuePresentKHR,
+    .p_get_host_surface_extension = wayland_get_host_surface_extension,
     .p_wine_get_host_surface = wayland_wine_get_host_surface,
 };
 
@@ -544,13 +420,10 @@ UINT WAYLAND_VulkanInit(UINT version, void *vulkan_handle, struct vulkan_funcs *
     }
 
 #define LOAD_FUNCPTR(f) if (!(p##f = dlsym(vulkan_handle, #f))) return STATUS_PROCEDURE_NOT_FOUND;
-    LOAD_FUNCPTR(vkCreateInstance);
     LOAD_FUNCPTR(vkCreateSwapchainKHR);
     LOAD_FUNCPTR(vkCreateWaylandSurfaceKHR);
-    LOAD_FUNCPTR(vkDestroyInstance);
     LOAD_FUNCPTR(vkDestroySurfaceKHR);
     LOAD_FUNCPTR(vkDestroySwapchainKHR);
-    LOAD_FUNCPTR(vkEnumerateInstanceExtensionProperties);
     LOAD_FUNCPTR(vkGetPhysicalDeviceWaylandPresentationSupportKHR);
     LOAD_FUNCPTR(vkGetSwapchainImagesKHR);
     LOAD_FUNCPTR(vkQueuePresentKHR);

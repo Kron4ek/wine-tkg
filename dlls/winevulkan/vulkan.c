@@ -32,6 +32,10 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 
+static PFN_vkCreateInstance p_vkCreateInstance;
+static PFN_vkEnumerateInstanceVersion p_vkEnumerateInstanceVersion;
+static PFN_vkEnumerateInstanceExtensionProperties p_vkEnumerateInstanceExtensionProperties;
+
 static int window_surface_compare(const void *key, const struct rb_entry *entry)
 {
     const struct wine_surface *surface = RB_ENTRY_VALUE(entry, struct wine_surface, window_entry);
@@ -545,6 +549,10 @@ NTSTATUS init_vulkan(void *args)
         return STATUS_UNSUCCESSFUL;
     }
 
+    p_vkCreateInstance = vk_funcs->p_vkGetInstanceProcAddr(NULL, "vkCreateInstance");
+    p_vkEnumerateInstanceVersion = vk_funcs->p_vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceVersion");
+    p_vkEnumerateInstanceExtensionProperties = vk_funcs->p_vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceExtensionProperties");
+
     if (is_wow64())
     {
         SYSTEM_BASIC_INFORMATION info;
@@ -565,6 +573,7 @@ static VkResult wine_vk_instance_convert_create_info(struct conversion_context *
 {
     VkDebugUtilsMessengerCreateInfoEXT *debug_utils_messenger;
     VkDebugReportCallbackCreateInfoEXT *debug_report_callback;
+    const char **new_extensions;
     VkBaseInStructure *header;
     unsigned int i;
 
@@ -608,38 +617,45 @@ static VkResult wine_vk_instance_convert_create_info(struct conversion_context *
         return VK_ERROR_LAYER_NOT_PRESENT;
     }
 
-    TRACE("Enabled %u instance extensions.\n", dst->enabledExtensionCount);
-    for (i = 0; i < dst->enabledExtensionCount; i++)
+    for (i = 0; i < src->enabledExtensionCount; i++)
     {
-        const char *extension_name = dst->ppEnabledExtensionNames[i];
+        const char *extension_name = src->ppEnabledExtensionNames[i];
         TRACE("Extension %u: %s.\n", i, debugstr_a(extension_name));
         if (!wine_vk_instance_extension_supported(extension_name))
         {
             WARN("Extension %s is not supported.\n", debugstr_a(extension_name));
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
+    }
+
+    new_extensions = conversion_context_alloc(ctx, (src->enabledExtensionCount + 2) *
+                                              sizeof(*src->ppEnabledExtensionNames));
+    memcpy(new_extensions, src->ppEnabledExtensionNames,
+           dst->enabledExtensionCount * sizeof(*dst->ppEnabledExtensionNames));
+    dst->ppEnabledExtensionNames = new_extensions;
+    dst->enabledExtensionCount = src->enabledExtensionCount;
+
+    for (i = 0; i < dst->enabledExtensionCount; i++)
+    {
+        const char *extension_name = dst->ppEnabledExtensionNames[i];
         if (!strcmp(extension_name, "VK_EXT_debug_utils") || !strcmp(extension_name, "VK_EXT_debug_report"))
         {
             object->enable_wrapper_list = VK_TRUE;
         }
         if (!strcmp(extension_name, "VK_KHR_win32_surface"))
         {
+            new_extensions[i] = vk_funcs->p_get_host_surface_extension();
             object->enable_win32_surface = VK_TRUE;
         }
     }
 
     if (use_external_memory())
     {
-        const char **new_extensions;
-
-        new_extensions = conversion_context_alloc(ctx, (dst->enabledExtensionCount + 2) *
-                                                  sizeof(*dst->ppEnabledExtensionNames));
-        memcpy(new_extensions, src->ppEnabledExtensionNames,
-               dst->enabledExtensionCount * sizeof(*dst->ppEnabledExtensionNames));
         new_extensions[dst->enabledExtensionCount++] = "VK_KHR_get_physical_device_properties2";
         new_extensions[dst->enabledExtensionCount++] = "VK_KHR_external_memory_capabilities";
-        dst->ppEnabledExtensionNames = new_extensions;
     }
+
+    TRACE("Enabled %u instance extensions.\n", dst->enabledExtensionCount);
 
     return VK_SUCCESS;
 }
@@ -866,7 +882,7 @@ VkResult wine_vkCreateInstance(const VkInstanceCreateInfo *create_info,
     init_conversion_context(&ctx);
     res = wine_vk_instance_convert_create_info(&ctx, create_info, &create_info_host, object);
     if (res == VK_SUCCESS)
-        res = vk_funcs->p_vkCreateInstance(&create_info_host, NULL /* allocator */, &object->host_instance);
+        res = p_vkCreateInstance(&create_info_host, NULL /* allocator */, &object->host_instance);
     free_conversion_context(&ctx);
     if (res != VK_SUCCESS)
     {
@@ -896,7 +912,7 @@ VkResult wine_vkCreateInstance(const VkInstanceCreateInfo *create_info,
     if (res != VK_SUCCESS)
     {
         ERR("Failed to load physical devices, res=%d\n", res);
-        vk_funcs->p_vkDestroyInstance(object->host_instance, NULL /* allocator */);
+        object->funcs.p_vkDestroyInstance(object->host_instance, NULL /* allocator */);
         free(object->utils_messengers);
         free(object);
         return res;
@@ -960,7 +976,7 @@ void wine_vkDestroyInstance(VkInstance handle, const VkAllocationCallbacks *allo
     if (!instance)
         return;
 
-    vk_funcs->p_vkDestroyInstance(instance->host_instance, NULL /* allocator */);
+    instance->funcs.p_vkDestroyInstance(instance->host_instance, NULL /* allocator */);
     for (i = 0; i < instance->phys_dev_count; i++)
     {
         remove_handle_mapping(instance, &instance->phys_devs[i].wrapper_entry);
@@ -1003,17 +1019,17 @@ VkResult wine_vkEnumerateInstanceExtensionProperties(const char *name, uint32_t 
 {
     uint32_t num_properties = 0, num_host_properties;
     VkExtensionProperties *host_properties;
-    unsigned int i, j;
+    unsigned int i, j, surface;
     VkResult res;
 
-    res = vk_funcs->p_vkEnumerateInstanceExtensionProperties(NULL, &num_host_properties, NULL);
+    res = p_vkEnumerateInstanceExtensionProperties(NULL, &num_host_properties, NULL);
     if (res != VK_SUCCESS)
         return res;
 
     if (!(host_properties = calloc(num_host_properties, sizeof(*host_properties))))
         return VK_ERROR_OUT_OF_HOST_MEMORY;
 
-    res = vk_funcs->p_vkEnumerateInstanceExtensionProperties(NULL, &num_host_properties, host_properties);
+    res = p_vkEnumerateInstanceExtensionProperties(NULL, &num_host_properties, host_properties);
     if (res != VK_SUCCESS)
     {
         ERR("Failed to retrieve host properties, res=%d.\n", res);
@@ -1025,9 +1041,10 @@ VkResult wine_vkEnumerateInstanceExtensionProperties(const char *name, uint32_t 
      * including extension fixup (e.g. VK_KHR_xlib_surface -> VK_KHR_win32_surface). It is
      * up to us here to filter the list down to extensions for which we have thunks.
      */
-    for (i = 0; i < num_host_properties; i++)
+    for (i = 0, surface = 0; i < num_host_properties; i++)
     {
-        if (wine_vk_instance_extension_supported(host_properties[i].extensionName))
+        if (wine_vk_instance_extension_supported(host_properties[i].extensionName)
+                || (wine_vk_is_host_surface_extension(host_properties[i].extensionName) && !surface++))
             num_properties++;
         else
             TRACE("Instance extension '%s' is not supported.\n", host_properties[i].extensionName);
@@ -1041,12 +1058,18 @@ VkResult wine_vkEnumerateInstanceExtensionProperties(const char *name, uint32_t 
         return VK_SUCCESS;
     }
 
-    for (i = 0, j = 0; i < num_host_properties && j < *count; i++)
+    for (i = 0, j = 0, surface = 0; i < num_host_properties && j < *count; i++)
     {
         if (wine_vk_instance_extension_supported(host_properties[i].extensionName))
         {
             TRACE("Enabling extension '%s'.\n", host_properties[i].extensionName);
             properties[j++] = host_properties[i];
+        }
+        else if (wine_vk_is_host_surface_extension(host_properties[i].extensionName) && !surface++)
+        {
+            VkExtensionProperties win32_surface = {VK_KHR_WIN32_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_SPEC_VERSION};
+            TRACE("Enabling VK_KHR_win32_surface.\n");
+            properties[j++] = win32_surface;
         }
     }
     *count = min(*count, num_properties);
@@ -1065,10 +1088,6 @@ VkResult wine_vkEnumerateDeviceLayerProperties(VkPhysicalDevice phys_dev, uint32
 VkResult wine_vkEnumerateInstanceVersion(uint32_t *version)
 {
     VkResult res;
-
-    static VkResult (*p_vkEnumerateInstanceVersion)(uint32_t *version);
-    if (!p_vkEnumerateInstanceVersion)
-        p_vkEnumerateInstanceVersion = vk_funcs->p_vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceVersion");
 
     if (p_vkEnumerateInstanceVersion)
     {

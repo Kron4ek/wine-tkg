@@ -1,7 +1,8 @@
-MODULE		= windows.networking.connectivity
+MODULE		= windows.networking.connectivity.dll
 IMPORTS 	= combase uuid
 
 EXTRADLLFLAGS = -mno-cygwin
 
 SOURCES = \
+	classes.idl \
 	windows.networking.connectivity_main.c

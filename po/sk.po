@@ -19737,8 +19737,9 @@ msgid "Help topics: "
 msgstr ""
 
 #: programs/wmic/wmic.rc:28
-msgid "Error: Command line not supported\n"
-msgstr ""
+#, fuzzy
+msgid "Error: Command not supported\n"
+msgstr "Súbor nenájdený.\n"
 
 #: programs/wmic/wmic.rc:29
 #, fuzzy
@@ -19754,6 +19755,10 @@ msgstr ""
 #| msgid "Invalid name.\n"
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "Nesprávny názov.\n"
+
+#: programs/wmic/wmic.rc:32
+msgid "Supply a command\n"
+msgstr ""
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

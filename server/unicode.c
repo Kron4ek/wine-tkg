@@ -212,19 +212,19 @@ int dump_strW( const WCHAR *str, data_size_t len, FILE *f, const char escape[2] 
         if (*str > 127)  /* hex escape */
         {
             if (len > 1 && str[1] < 128 && isxdigit((char)str[1]))
-                pos += sprintf( pos, "\\x%04x", *str );
+                pos += snprintf( pos, sizeof(buffer) - (pos - buffer), "\\x%04x", *str );
             else
-                pos += sprintf( pos, "\\x%x", *str );
+                pos += snprintf( pos, sizeof(buffer) - (pos - buffer), "\\x%x", *str );
             continue;
         }
         if (*str < 32)  /* octal or C escape */
         {
             if (escapes[*str] != '.')
-                pos += sprintf( pos, "\\%c", escapes[*str] );
+                pos += snprintf( pos, sizeof(buffer) - (pos - buffer), "\\%c", escapes[*str] );
             else if (len > 1 && str[1] >= '0' && str[1] <= '7')
-                pos += sprintf( pos, "\\%03o", *str );
+                pos += snprintf( pos, sizeof(buffer) - (pos - buffer), "\\%03o", *str );
             else
-                pos += sprintf( pos, "\\%o", *str );
+                pos += snprintf( pos, sizeof(buffer) - (pos - buffer), "\\%o", *str );
             continue;
         }
         if (*str == '\\' || *str == escape[0] || *str == escape[1]) *pos++ = '\\';
@@ -265,11 +265,7 @@ static char *get_nls_dir(void)
     }
     *(++p) = 0;
     if (p > dir + 8 && !strcmp( p - 8, "/server/" )) nlsdir = "../nls";  /* inside build tree */
-    if ((ret = malloc( strlen(dir) + strlen( nlsdir ) + 1 )))
-    {
-        strcpy( ret, dir );
-        strcat( ret, nlsdir );
-    }
+    asprintf( &ret, "%s%s", dir, nlsdir );
     free( dir );
     return ret;
 }
@@ -292,9 +288,7 @@ struct fd *load_intl_file(void)
     for (i = 0; i < ARRAY_SIZE( nls_dirs ); i++)
     {
         if (!nls_dirs[i]) continue;
-        if (!(path = malloc( strlen(nls_dirs[i]) + sizeof("/l_intl.nls" )))) continue;
-        strcpy( path, nls_dirs[i] );
-        strcat( path, "/l_intl.nls" );
+        if (asprintf( &path, "%s/l_intl.nls", nls_dirs[i] ) == -1) continue;
         if ((fd = open_fd( NULL, path, nt_name, O_RDONLY, &mode, FILE_READ_DATA,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT ))) break;

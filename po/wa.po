@@ -18994,8 +18994,9 @@ msgid "Help topics: "
 msgstr ""
 
 #: programs/wmic/wmic.rc:28
-msgid "Error: Command line not supported\n"
-msgstr ""
+#, fuzzy
+msgid "Error: Command not supported\n"
+msgstr "'%s' pout nén esse trové."
 
 #: programs/wmic/wmic.rc:29
 #, fuzzy
@@ -19008,6 +19009,10 @@ msgstr ""
 
 #: programs/wmic/wmic.rc:31
 msgid "Error: Invalid syntax for PATH\n"
+msgstr ""
+
+#: programs/wmic/wmic.rc:32
+msgid "Supply a command\n"
 msgstr ""
 
 #: programs/wordpad/wordpad.rc:31

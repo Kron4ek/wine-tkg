@@ -1004,8 +1004,11 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
     {
         CONTEXT_EX *context_ex = (CONTEXT_EX *)(context + 1);
         XSAVE_AREA_HEADER *xs = (XSAVE_AREA_HEADER *)((char *)context_ex + context_ex->XState.Offset);
+        UINT64 mask = frame->xstate.Mask;
 
+        if (xstate_compaction_enabled) frame->xstate.CompactionMask |= xstate_extended_features();
         copy_xstate( &frame->xstate, xs, xs->Mask );
+        if (xs->CompactionMask) frame->xstate.Mask |= mask & ~xs->CompactionMask;
     }
 
     frame->restore_flags |= flags & ~CONTEXT_INTEGER;
@@ -1126,6 +1129,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
                 context_ex->XState.Length > sizeof(XSAVE_AREA_HEADER) + xstate_features_size)
                 return STATUS_INVALID_PARAMETER;
 
+            if (xstate_compaction_enabled) frame->xstate.CompactionMask |= xstate_extended_features();
             mask = (xstate_compaction_enabled ? xstate->CompactionMask : xstate->Mask) & xstate_extended_features();
             xstate->Mask = frame->xstate.Mask & mask;
             xstate->CompactionMask = xstate_compaction_enabled ? (0x8000000000000000 | mask) : 0;
@@ -1135,6 +1139,8 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
                 if (context_ex->XState.Length < xstate_get_size( xstate->CompactionMask, xstate->Mask ))
                     return STATUS_BUFFER_OVERFLOW;
                 copy_xstate( xstate, &frame->xstate, xstate->Mask );
+                /* copy_xstate may use avx in memcpy, restore xstate not to break the tests. */
+                frame->restore_flags |= CONTEXT_XSTATE;
             }
         }
         /* update the cached version of the debug registers */
@@ -2151,6 +2157,7 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         NtGetContextThread( GetCurrentThread(), &context->c );
         if (xstate_extended_features())
         {
+            if (xstate_compaction_enabled) frame->xstate.CompactionMask |= xstate_extended_features();
             context_init_xstate( &context->c, &frame->xstate );
             saved_compaction = frame->xstate.CompactionMask;
         }
@@ -2667,7 +2674,8 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "testl $3,(%ecx)\n\t"           /* frame->syscall_flags & (SYSCALL_HAVE_XSAVE | SYSCALL_HAVE_XSAVEC) */
                    "jz 2f\n\t"
                    "movl %fs:0x1fc,%eax\n\t"       /* x86_thread_data()->xstate_features_mask */
-                   "movl %fs:0x200,%edx\n\t"       /* x86_thread_data()->xstate_features_mask high dword */
+                   "xorl %edx,%edx\n\t"
+                   "andl $7,%eax\n\t"
                    "xorl %edi,%edi\n\t"
                    "movl %edi,0x240(%ecx)\n\t"
                    "movl %edi,0x244(%ecx)\n\t"

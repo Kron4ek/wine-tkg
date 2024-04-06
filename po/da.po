@@ -20560,7 +20560,7 @@ msgstr "Hjælp emner: "
 #: programs/wmic/wmic.rc:28
 #, fuzzy
 #| msgid "Error: Invalid command line parameters\n"
-msgid "Error: Command line not supported\n"
+msgid "Error: Command not supported\n"
 msgstr "Fejl: Ugyldige kommando linje parametre\n"
 
 #: programs/wmic/wmic.rc:29
@@ -20580,6 +20580,12 @@ msgstr "Fejl: Ugyldigt nøgle navn\n"
 #| msgid "Error: Invalid key name\n"
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "Fejl: Ugyldigt nøgle navn\n"
+
+#: programs/wmic/wmic.rc:32
+#, fuzzy
+#| msgid "Bad command.\n"
+msgid "Supply a command\n"
+msgstr "Forkert kommando.\n"
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

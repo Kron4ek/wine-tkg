@@ -2883,6 +2883,9 @@ ULONG __cdecl wined3d_texture_decref(struct wined3d_texture *texture);
 HRESULT __cdecl wined3d_texture_get_dc(struct wined3d_texture *texture, unsigned int sub_resource_idx, HDC *dc);
 unsigned int __cdecl wined3d_texture_get_level_count(const struct wined3d_texture *texture);
 unsigned int __cdecl wined3d_texture_get_lod(const struct wined3d_texture *texture);
+unsigned int __cdecl wined3d_texture_set_lod(struct wined3d_texture *texture, unsigned int lod);
+void __cdecl wined3d_stateblock_texture_changed(struct wined3d_stateblock *stateblock,
+        const struct wined3d_texture *texture);
 HRESULT __cdecl wined3d_texture_get_overlay_position(const struct wined3d_texture *texture,
         unsigned int sub_resource_idx, LONG *x, LONG *y);
 void * __cdecl wined3d_texture_get_parent(const struct wined3d_texture *texture);
@@ -2937,6 +2940,19 @@ static inline void wined3d_streaming_buffer_cleanup(struct wined3d_streaming_buf
     buffer->buffer = NULL;
     buffer->pos = 0;
 }
+
+typedef void (__cdecl *wined3d_gl_texture_callback)(unsigned int gl_texture, unsigned int gl_depth_texture, const void *data, unsigned int size);
+
+void __cdecl wined3d_access_gl_texture(struct wined3d_texture *texture,
+        wined3d_gl_texture_callback callback, struct wined3d_texture *depth_texture, const void *data, unsigned int size);
+
+unsigned int __cdecl wined3d_get_gl_texture(struct wined3d_texture *texture);
+
+typedef void (__cdecl *wined3d_cs_callback)(const void *data, unsigned int size);
+
+void __cdecl wined3d_device_run_cs_callback(struct wined3d_device *device,
+        wined3d_cs_callback callback, const void *data, unsigned int size);
+void __cdecl wined3d_device_wait_idle(struct wined3d_device *device);
 
 /* Return the integer base-2 logarithm of x. Undefined for x == 0. */
 static inline unsigned int wined3d_log2i(unsigned int x)

@@ -81,6 +81,7 @@ static const struct column col_bios[] =
     { L"SMBIOSBIOSVersion",              CIM_STRING|COL_FLAG_DYNAMIC },
     { L"SMBIOSMajorVersion",             CIM_UINT16 },
     { L"SMBIOSMinorVersion",             CIM_UINT16 },
+    { L"Status",                         CIM_STRING },
     { L"SystemBiosMajorVersion",         CIM_UINT8 },
     { L"SystemBiosMinorVersion",         CIM_UINT8 },
     { L"Version",                        CIM_STRING|COL_FLAG_KEY },
@@ -463,27 +464,62 @@ static const struct column col_sysrestore[] =
 };
 static const struct column col_videocontroller[] =
 {
+    { L"AcceleratorCapabilities",     CIM_UINT16|CIM_FLAG_ARRAY },
     { L"AdapterCompatibility",        CIM_STRING },
     { L"AdapterDACType",              CIM_STRING },
     { L"AdapterRAM",                  CIM_UINT32 },
     { L"Availability",                CIM_UINT16 },
+    { L"CapabilityDescriptions",      CIM_STRING|CIM_FLAG_ARRAY },
     { L"Caption",                     CIM_STRING|COL_FLAG_DYNAMIC },
+    { L"ColorTableEntries",           CIM_UINT32 },
     { L"ConfigManagerErrorCode",      CIM_UINT32 },
+    { L"ConfigManagerUserConfig",     CIM_BOOLEAN },
+    { L"CreationClassName",           CIM_STRING },
     { L"CurrentBitsPerPixel",         CIM_UINT32 },
     { L"CurrentHorizontalResolution", CIM_UINT32 },
+    { L"CurrentNumberOfColors",       CIM_UINT64 },
+    { L"CurrentNumberOfColumns",      CIM_UINT32 },
+    { L"CurrentNumberOfRows",         CIM_UINT32 },
     { L"CurrentRefreshRate",          CIM_UINT32 },
     { L"CurrentScanMode",             CIM_UINT16 },
     { L"CurrentVerticalResolution",   CIM_UINT32 },
     { L"Description",                 CIM_STRING|COL_FLAG_DYNAMIC },
     { L"DeviceId",                    CIM_STRING|COL_FLAG_KEY },
+    { L"DeviceSpecificPens",          CIM_UINT32 },
+    { L"DitherType",                  CIM_UINT32 },
     { L"DriverDate",                  CIM_DATETIME },
     { L"DriverVersion",               CIM_STRING },
+    { L"ErrorCleared",                CIM_BOOLEAN },
+    { L"ErrorDescription",            CIM_STRING },
+    { L"ICMIntent",                   CIM_UINT32 },
+    { L"ICMMethod",                   CIM_UINT32 },
+    { L"InfFilename",                 CIM_STRING },
+    { L"InfSection",                  CIM_STRING },
     { L"InstalledDisplayDrivers",     CIM_STRING },
+    { L"LastErrorCode",               CIM_UINT32 },
+    { L"MaxMemorySupported",          CIM_UINT32 },
+    { L"MaxNumberControlled",         CIM_UINT32 },
+    { L"MaxRefreshRate",              CIM_UINT32 },
+    { L"MinRefreshRate",              CIM_UINT32 },
+    { L"Monochrome",                  CIM_BOOLEAN },
     { L"Name",                        CIM_STRING|COL_FLAG_DYNAMIC },
+    { L"NumberOfColorPlanes",         CIM_UINT16 },
+    { L"NumberOfVideoPages",          CIM_UINT32 },
     { L"PNPDeviceID",                 CIM_STRING|COL_FLAG_DYNAMIC },
+    { L"PowerManagementCapabilities", CIM_UINT16|CIM_FLAG_ARRAY },
+    { L"PowerManagementSupported",    CIM_BOOLEAN },
+    { L"ProtocolSupported",           CIM_UINT16 },
+    { L"ReservedSystemPaletteEntries", CIM_UINT32 },
+    { L"SpecificationVersion",        CIM_UINT32 },
     { L"Status",                      CIM_STRING },
+    { L"StatusInfo",                  CIM_UINT16 },
+    { L"SystemCreationClassName",     CIM_STRING },
+    { L"SystemName",                  CIM_STRING },
+    { L"SystemPaletteEntries",        CIM_UINT32 },
+    { L"TimeOfLastReset",             CIM_DATETIME },
     { L"VideoArchitecture",           CIM_UINT16 },
     { L"VideoMemoryType",             CIM_UINT16 },
+    { L"VideoMode",                   CIM_UINT16 },
     { L"VideoModeDescription",        CIM_STRING|COL_FLAG_DYNAMIC },
     { L"VideoProcessor",              CIM_STRING|COL_FLAG_DYNAMIC },
 };
@@ -537,6 +573,7 @@ struct record_bios
     const WCHAR *smbiosbiosversion;
     UINT16       smbiosmajorversion;
     UINT16       smbiosminorversion;
+    const WCHAR *status;
     UINT8        systembiosmajorversion;
     UINT8        systembiosminorversion;
     const WCHAR *version;
@@ -918,27 +955,62 @@ struct record_systemenclosure
 };
 struct record_videocontroller
 {
+    const struct array *accelerator_caps;
     const WCHAR *adapter_compatibility;
     const WCHAR *adapter_dactype;
     UINT32       adapter_ram;
     UINT16       availability;
+    const struct array *capability_desc;
     const WCHAR *caption;
+    UINT32       color_table_entries;
     UINT32       config_errorcode;
+    int          config_userconfig;
+    const WCHAR *creation_class_name;
     UINT32       current_bitsperpixel;
     UINT32       current_horizontalres;
+    UINT64       current_numcolors;
+    UINT32       current_numcolumns;
+    UINT32       current_numrows;
     UINT32       current_refreshrate;
     UINT16       current_scanmode;
     UINT32       current_verticalres;
     const WCHAR *description;
     const WCHAR *device_id;
+    UINT32       device_pens;
+    UINT32       dither_type;
     const WCHAR *driverdate;
     const WCHAR *driverversion;
+    int          error_cleared;
+    const WCHAR *error_desc;
+    UINT32       icm_intent;
+    UINT32       icm_method;
+    const WCHAR *inf_name;
+    const WCHAR *infsection;
     const WCHAR *installeddriver;
+    UINT32       lasterror;
+    UINT32       max_memory;
+    UINT32       max_number;
+    UINT32       max_refresh;
+    UINT32       min_refresh;
+    int          monochrome;
     const WCHAR *name;
+    UINT16       number_planes;
+    UINT32       number_pages;
     const WCHAR *pnpdevice_id;
+    const struct array *power_caps;
+    int          power_supported;
+    UINT16       protocol_supported;
+    UINT32       reserved_entries;
+    UINT32       spec_version;
     const WCHAR *status;
+    UINT16       status_info;
+    const WCHAR *systemclass_name;
+    const WCHAR *system_name;
+    UINT32       system_entries;
+    const WCHAR *time_reset;
     UINT16       videoarchitecture;
     UINT16       videomemorytype;
+    UINT16       videomode;
     const WCHAR *videomodedescription;
     const WCHAR *videoprocessor;
 };
@@ -1121,7 +1193,7 @@ static BOOL resize_table( struct table *table, UINT row_count, UINT row_size )
 {
     if (!table->num_rows_allocated)
     {
-        if (!(table->data = malloc( row_count * row_size ))) return FALSE;
+        if (!(table->data = calloc( row_count, row_size ))) return FALSE;
         table->num_rows_allocated = row_count;
         return TRUE;
     }
@@ -1130,6 +1202,7 @@ static BOOL resize_table( struct table *table, UINT row_count, UINT row_size )
         BYTE *data;
         UINT count = max( row_count, table->num_rows_allocated * 2 );
         if (!(data = realloc( table->data, count * row_size ))) return FALSE;
+        memset( data + table->num_rows_allocated * row_size, 0, (count - table->num_rows_allocated) * row_size );
         table->data = data;
         table->num_rows_allocated = count;
     }
@@ -1465,11 +1538,9 @@ static enum fill_status fill_bios( struct table *table, const struct expr *cond 
     GetSystemFirmwareTable( RSMB, 0, buf, len );
 
     rec = (struct record_bios *)table->data;
-    rec->currentlanguage        = NULL;
     rec->description            = L"Default System BIOS";
     rec->ecmajorversion         = get_bios_ec_firmware_major_release( buf, len );
     rec->ecminorversion         = get_bios_ec_firmware_minor_release( buf, len );
-    rec->identificationcode     = NULL;
     rec->manufacturer           = get_bios_manufacturer( buf, len );
     rec->name                   = L"Default System BIOS";
     rec->releasedate            = get_bios_releasedate( buf, len );
@@ -1477,6 +1548,7 @@ static enum fill_status fill_bios( struct table *table, const struct expr *cond 
     rec->smbiosbiosversion      = get_bios_smbiosbiosversion( buf, len );
     rec->smbiosmajorversion     = get_bios_smbiosmajorversion( buf, len );
     rec->smbiosminorversion     = get_bios_smbiosminorversion( buf, len );
+    rec->status                 = L"OK";
     rec->systembiosmajorversion = get_bios_system_bios_major_release( buf, len );
     rec->systembiosminorversion = get_bios_system_bios_minor_release( buf, len );
     rec->version                = L"WINE   - 1";
@@ -1684,8 +1756,6 @@ static enum fill_status fill_compsys( struct table *table, const struct expr *co
     rec = (struct record_computersystem *)table->data;
     rec->description            = L"AT/AT COMPATIBLE";
     rec->domain                 = L"WORKGROUP";
-    rec->domainrole             = 0; /* standalone workstation */
-    rec->hypervisorpresent      = 0;
     rec->manufacturer           = get_compsysproduct_vendor( buf, len );
     rec->model                  = get_compsysproduct_name( buf, len );
     rec->name                   = get_computername();
@@ -1754,7 +1824,6 @@ static enum fill_status fill_compsysproduct( struct table *table, const struct e
     rec = (struct record_computersystemproduct *)table->data;
     rec->identifyingnumber = get_compsysproduct_identifyingnumber( buf, len );
     rec->name              = get_compsysproduct_name( buf, len );
-    rec->skunumber         = NULL;
     rec->uuid              = get_compsysproduct_uuid( buf, len );
     rec->vendor            = get_compsysproduct_vendor( buf, len );
     rec->version           = get_compsysproduct_version( buf, len );
@@ -2507,11 +2576,9 @@ static enum fill_status fill_diskpartition( struct table *table, const struct ex
             swprintf( device_id, ARRAY_SIZE( device_id ), L"Disk #%u, Partition #0", index );
             rec->device_id      = wcsdup( device_id );
             rec->diskindex      = index++;
-            rec->index          = 0;
             rec->pnpdevice_id   = wcsdup( device_id );
             get_freespace( root, &size );
             rec->size           = size;
-            rec->startingoffset = 0;
             rec->type           = get_filesystem( root );
             if (!match_row( table, row, cond, &status ))
             {
@@ -2887,7 +2954,6 @@ static enum fill_status fill_networkadapter( struct table *table, const struct e
         rec->interface_index      = aa->IfIndex;
         rec->mac_address          = get_mac_address( aa->PhysicalAddress, aa->PhysicalAddressLength );
         rec->manufacturer         = L"The Wine Project";
-        rec->netconnection_id     = NULL; /* FIXME Windows seems to fill this when it's connected and in use */
         rec->name                 = wcsdup( aa->FriendlyName );
         rec->netenabled           = connection_status ? -1 : 0;
         rec->netconnection_status = connection_status;
@@ -3243,7 +3309,6 @@ static enum fill_status fill_printer( struct table *table, const struct expr *co
         rec->local                = -1;
         rec->location             = wcsdup( info[i].pLocation );
         rec->name                 = wcsdup( info[i].pPrinterName );
-        rec->network              = 0;
         rec->portname             = wcsdup( info[i].pPortName );
         if (!match_row( table, i, cond, &status ))
         {
@@ -3300,7 +3365,6 @@ static enum fill_status fill_process( struct table *table, const struct expr *co
         rec->process_id     = entry.th32ProcessID;
         rec->pprocess_id    = entry.th32ParentProcessID;
         rec->thread_count   = entry.cntThreads;
-        rec->workingsetsize = 0;
         /* methods */
         rec->create         = process_create;
         rec->get_owner      = process_get_owner;
@@ -3495,7 +3559,6 @@ static enum fill_status fill_processor( struct table *table, const struct expr *
         rec->processor_id           = wcsdup( processor_id );
         rec->processortype          = 3; /* central processor */
         rec->revision               = get_processor_revision();
-        rec->unique_id              = NULL;
         rec->version                = wcsdup( version );
         if (!match_row( table, i, cond, &status ))
         {
@@ -4196,11 +4259,9 @@ static enum fill_status fill_videocontroller( struct table *table, const struct 
     rec->adapter_dactype       = L"Integrated RAMDAC";
     rec->adapter_ram           = vidmem;
     rec->availability          = 3; /* Running or Full Power */
-    rec->config_errorcode      = 0; /* no error */
     rec->caption               = wcsdup( name );
     rec->current_bitsperpixel  = get_bitsperpixel( &hres, &vres );
     rec->current_horizontalres = hres;
-    rec->current_refreshrate   = 0; /* default refresh rate */
     rec->current_scanmode      = 2; /* Unknown */
     rec->current_verticalres   = vres;
     rec->description           = wcsdup( name );

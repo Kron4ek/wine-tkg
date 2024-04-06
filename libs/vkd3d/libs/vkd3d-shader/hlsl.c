@@ -785,6 +785,7 @@ static const char * get_case_insensitive_typename(const char *name)
         "float",
         "matrix",
         "pixelshader",
+        "texture",
         "vector",
         "vertexshader",
     };
@@ -2030,7 +2031,8 @@ struct hlsl_ir_function_decl *hlsl_new_func_decl(struct hlsl_ctx *ctx,
 }
 
 struct hlsl_buffer *hlsl_new_buffer(struct hlsl_ctx *ctx, enum hlsl_buffer_type type, const char *name,
-        uint32_t modifiers, const struct hlsl_reg_reservation *reservation, const struct vkd3d_shader_location *loc)
+        uint32_t modifiers, const struct hlsl_reg_reservation *reservation, struct hlsl_scope *annotations,
+        const struct vkd3d_shader_location *loc)
 {
     struct hlsl_buffer *buffer;
 
@@ -2041,6 +2043,7 @@ struct hlsl_buffer *hlsl_new_buffer(struct hlsl_ctx *ctx, enum hlsl_buffer_type 
     buffer->modifiers = modifiers;
     if (reservation)
         buffer->reservation = *reservation;
+    buffer->annotations = annotations;
     buffer->loc = *loc;
     list_add_tail(&ctx->buffers, &buffer->entry);
     return buffer;
@@ -3408,7 +3411,7 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
         {"fxgroup",         HLSL_CLASS_OBJECT, HLSL_TYPE_EFFECT_GROUP,  1, 1},
         {"pass",            HLSL_CLASS_OBJECT, HLSL_TYPE_PASS,          1, 1},
         {"STRING",          HLSL_CLASS_OBJECT, HLSL_TYPE_STRING,        1, 1},
-        {"TEXTURE",         HLSL_CLASS_OBJECT, HLSL_TYPE_TEXTURE,       1, 1},
+        {"texture",         HLSL_CLASS_OBJECT, HLSL_TYPE_TEXTURE,       1, 1},
         {"pixelshader",     HLSL_CLASS_OBJECT, HLSL_TYPE_PIXELSHADER,   1, 1},
         {"vertexshader",    HLSL_CLASS_OBJECT, HLSL_TYPE_VERTEXSHADER,  1, 1},
         {"RenderTargetView",HLSL_CLASS_OBJECT, HLSL_TYPE_RENDERTARGETVIEW, 1, 1},
@@ -3585,31 +3588,46 @@ static bool hlsl_ctx_init(struct hlsl_ctx *ctx, const struct vkd3d_shader_compil
     list_init(&ctx->buffers);
 
     if (!(ctx->globals_buffer = hlsl_new_buffer(ctx, HLSL_BUFFER_CONSTANT,
-            hlsl_strdup(ctx, "$Globals"), 0, NULL, &ctx->location)))
+            hlsl_strdup(ctx, "$Globals"), 0, NULL, NULL, &ctx->location)))
         return false;
     if (!(ctx->params_buffer = hlsl_new_buffer(ctx, HLSL_BUFFER_CONSTANT,
-            hlsl_strdup(ctx, "$Params"), 0, NULL, &ctx->location)))
+            hlsl_strdup(ctx, "$Params"), 0, NULL, NULL, &ctx->location)))
         return false;
     ctx->cur_buffer = ctx->globals_buffer;
+
+    ctx->warn_implicit_truncation = true;
 
     for (i = 0; i < compile_info->option_count; ++i)
     {
         const struct vkd3d_shader_compile_option *option = &compile_info->options[i];
 
-        if (option->name == VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_ORDER)
+        switch (option->name)
         {
-            if (option->value == VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_ROW_MAJOR)
-                ctx->matrix_majority = HLSL_MODIFIER_ROW_MAJOR;
-            else if (option->value == VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_COLUMN_MAJOR)
-                ctx->matrix_majority = HLSL_MODIFIER_COLUMN_MAJOR;
-        }
-        else if (option->name == VKD3D_SHADER_COMPILE_OPTION_BACKWARD_COMPATIBILITY)
-        {
-            ctx->semantic_compat_mapping = option->value & VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_MAP_SEMANTIC_NAMES;
-        }
-        else if (option->name == VKD3D_SHADER_COMPILE_OPTION_CHILD_EFFECT)
-        {
-            ctx->child_effect = !!option->value;
+            case VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_ORDER:
+                if (option->value == VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_ROW_MAJOR)
+                    ctx->matrix_majority = HLSL_MODIFIER_ROW_MAJOR;
+                else if (option->value == VKD3D_SHADER_COMPILE_OPTION_PACK_MATRIX_COLUMN_MAJOR)
+                    ctx->matrix_majority = HLSL_MODIFIER_COLUMN_MAJOR;
+                break;
+
+            case VKD3D_SHADER_COMPILE_OPTION_BACKWARD_COMPATIBILITY:
+                ctx->semantic_compat_mapping = option->value & VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_MAP_SEMANTIC_NAMES;
+                break;
+
+            case VKD3D_SHADER_COMPILE_OPTION_CHILD_EFFECT:
+                ctx->child_effect = option->value;
+                break;
+
+            case VKD3D_SHADER_COMPILE_OPTION_WARN_IMPLICIT_TRUNCATION:
+                ctx->warn_implicit_truncation = option->value;
+                break;
+
+            case VKD3D_SHADER_COMPILE_OPTION_INCLUDE_EMPTY_BUFFERS_IN_EFFECTS:
+                ctx->include_empty_buffers = option->value;
+                break;
+
+            default:
+                break;
         }
     }
 

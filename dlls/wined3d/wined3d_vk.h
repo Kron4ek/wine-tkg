@@ -183,8 +183,12 @@ struct wined3d_device_vk;
     VK_DEVICE_EXT_PFN(vkCmdSetDepthCompareOpEXT) \
     VK_DEVICE_EXT_PFN(vkCmdSetDepthTestEnableEXT) \
     VK_DEVICE_EXT_PFN(vkCmdSetDepthWriteEnableEXT) \
+    VK_DEVICE_EXT_PFN(vkCmdSetPrimitiveTopologyEXT) \
     VK_DEVICE_EXT_PFN(vkCmdSetStencilOpEXT) \
     VK_DEVICE_EXT_PFN(vkCmdSetStencilTestEnableEXT) \
+    /* VK_EXT_extended_dynamic_state2 */ \
+    VK_DEVICE_EXT_PFN(vkCmdSetPatchControlPointsEXT) \
+    VK_DEVICE_EXT_PFN(vkCmdSetPrimitiveRestartEnableEXT) \
     /* VK_EXT_transform_feedback */ \
     VK_DEVICE_EXT_PFN(vkCmdBeginQueryIndexedEXT) \
     VK_DEVICE_EXT_PFN(vkCmdBeginTransformFeedbackEXT) \
@@ -242,7 +246,9 @@ struct wined3d_vk_info
     BOOL supported[WINED3D_VK_EXT_COUNT];
     HMODULE vulkan_lib;
 
-    unsigned int multiple_viewports : 1;
+    bool multiple_viewports;
+    bool dynamic_state2;
+    bool dynamic_patch_vertex_count;
 };
 
 #define VK_CALL(f) (vk_info->vk_ops.f)
@@ -565,7 +571,7 @@ struct wined3d_context_vk
 
     const struct wined3d_vk_info *vk_info;
 
-    VkDynamicState dynamic_states[11];
+    VkDynamicState dynamic_states[14];
 
     uint32_t update_compute_pipeline : 1;
     uint32_t update_stream_output : 1;

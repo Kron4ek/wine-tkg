@@ -19866,7 +19866,9 @@ msgid "Help topics: "
 msgstr "Temas de ayuda: "
 
 #: programs/wmic/wmic.rc:28
-msgid "Error: Command line not supported\n"
+#, fuzzy
+#| msgid "Error: Command line not supported\n"
+msgid "Error: Command not supported\n"
 msgstr "Error: parámetros de línea de comandos no soportados\n"
 
 #: programs/wmic/wmic.rc:29
@@ -19886,6 +19888,12 @@ msgstr "Error: nombre de clave inválido\n"
 #| msgid "Error: Invalid key name\n"
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "Error: nombre de clave inválido\n"
+
+#: programs/wmic/wmic.rc:32
+#, fuzzy
+#| msgid "Bad command.\n"
+msgid "Supply a command\n"
+msgstr "Comando inválido.\n"
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

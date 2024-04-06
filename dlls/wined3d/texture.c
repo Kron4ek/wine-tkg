@@ -1784,6 +1784,30 @@ unsigned int CDECL wined3d_texture_get_lod(const struct wined3d_texture *texture
     return texture->lod;
 }
 
+unsigned int CDECL wined3d_texture_set_lod(struct wined3d_texture *texture, unsigned int lod)
+{
+    struct wined3d_resource *resource;
+    unsigned int old = texture->lod;
+
+    TRACE("texture %p, returning %u.\n", texture, texture->lod);
+
+    /* The d3d9:texture test shows that SetLOD is ignored on non-managed
+     * textures. The call always returns 0, and GetLOD always returns 0. */
+    resource = &texture->resource;
+    if (!(resource->usage & WINED3DUSAGE_MANAGED))
+    {
+        TRACE("Ignoring LOD on texture with resource access %s.\n",
+                wined3d_debug_resource_access(resource->access));
+        return 0;
+    }
+
+    if (lod >= texture->level_count)
+        lod = texture->level_count - 1;
+
+    texture->lod = lod;
+    return old;
+}
+
 UINT CDECL wined3d_texture_get_level_count(const struct wined3d_texture *texture)
 {
     TRACE("texture %p, returning %u.\n", texture, texture->level_count);
@@ -4709,6 +4733,140 @@ struct wined3d_shader_resource_view * CDECL wined3d_texture_acquire_identity_srv
     wined3d_shader_resource_view_decref(texture->identity_srv);
 
     return texture->identity_srv;
+}
+
+void CDECL wined3d_access_gl_texture(struct wined3d_texture *texture,
+        wined3d_gl_texture_callback callback, struct wined3d_texture *depth_texture,
+        const void *data, unsigned int size)
+{
+    struct wined3d_device *device = texture->resource.device;
+
+    TRACE("texture %p, depth_texture %p, callback %p, data %p, size %u.\n", texture, depth_texture, callback, data, size);
+
+    wined3d_cs_emit_gl_texture_callback(device->cs, texture, callback, depth_texture, data, size);
+}
+
+static const struct wined3d_gl_info *wined3d_prepare_vr_gl_context(struct wined3d_device *device)
+{
+    const struct wined3d_adapter *adapter = device->adapter;
+    const struct wined3d_gl_info *gl_info = &wined3d_adapter_gl_const(adapter)->gl_info;
+    struct wined3d_vr_gl_context *ctx = &device->vr_context;
+    PIXELFORMATDESCRIPTOR pfd;
+    int pixel_format;
+    HGLRC share_ctx;
+
+    if (ctx->gl_info)
+        return gl_info;
+
+    TRACE("Creating GL context.\n");
+
+    if (!gl_info->p_wglCreateContextAttribsARB)
+    {
+        ERR("wglCreateContextAttribsARB is not supported.\n");
+        return NULL;
+    }
+
+    if (!gl_info->supported[ARB_SYNC])
+    {
+        FIXME("ARB_sync is not supported.\n");
+        return NULL;
+    }
+
+    ctx->window = CreateWindowA(WINED3D_OPENGL_WINDOW_CLASS_NAME, "WineD3D VR window",
+            WS_OVERLAPPEDWINDOW, 10, 10, 10, 10, NULL, NULL, NULL, NULL);
+    if (!ctx->window)
+    {
+        ERR("Failed to create a window.\n");
+        return NULL;
+    }
+
+    ctx->dc = GetDC(ctx->window);
+    if (!ctx->dc)
+    {
+        ERR("Failed to get a DC.\n");
+        goto fail;
+    }
+
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.nSize = sizeof(pfd);
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_DRAW_TO_WINDOW;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 32;
+    pfd.iLayerType = PFD_MAIN_PLANE;
+
+    if (!(pixel_format = ChoosePixelFormat(ctx->dc, &pfd)))
+    {
+        ERR("Failed to find a suitable pixel format.\n");
+        goto fail;
+    }
+    DescribePixelFormat(ctx->dc, pixel_format, sizeof(pfd), &pfd);
+    SetPixelFormat(ctx->dc, pixel_format, &pfd);
+
+    share_ctx = device->context_count ? wined3d_context_gl(device->contexts[0])->gl_ctx : NULL;
+    if (!(ctx->gl_ctx = context_create_wgl_attribs(gl_info, ctx->dc, share_ctx)))
+    {
+        WARN("Failed to create GL context for VR.\n");
+        goto fail;
+    }
+
+    if (!wglMakeCurrent(ctx->dc, ctx->gl_ctx))
+    {
+        ERR("Failed to make GL context current.\n");
+        goto fail;
+    }
+
+    checkGLcall("create context");
+
+    ctx->gl_info = gl_info;
+    return gl_info;
+
+fail:
+    if (ctx->gl_ctx)
+        wglDeleteContext(ctx->gl_ctx);
+    ctx->gl_ctx = NULL;
+    if (ctx->dc)
+        ReleaseDC(ctx->window, ctx->dc);
+    ctx->dc = NULL;
+    if (ctx->window)
+        DestroyWindow(ctx->window);
+    ctx->window = NULL;
+    return NULL;
+}
+
+void wined3d_destroy_gl_vr_context(struct wined3d_vr_gl_context *ctx)
+{
+    if (!ctx->gl_info)
+        return;
+
+    TRACE("Destroying GL context.\n");
+
+    wglMakeCurrent(NULL, NULL);
+    wglDeleteContext(ctx->gl_ctx);
+    ReleaseDC(ctx->window, ctx->dc);
+    DestroyWindow(ctx->window);
+}
+
+unsigned int CDECL wined3d_get_gl_texture(struct wined3d_texture *texture)
+{
+    struct wined3d_device *device = texture->resource.device;
+    const struct wined3d_gl_info *gl_info;
+    struct wined3d_texture_gl *gl_texture;
+    GLsync fence;
+
+    TRACE("texture %p.\n", texture);
+
+    if (!(gl_info = wined3d_prepare_vr_gl_context(device)))
+        return 0;
+
+    fence = wined3d_cs_synchronize(device->cs, texture);
+    GL_EXTCALL(glWaitSync(fence, 0, GL_TIMEOUT_IGNORED));
+    GL_EXTCALL(glDeleteSync(fence));
+
+    checkGLcall("synchronize CS");
+
+    gl_texture = wined3d_texture_gl(texture);
+    return gl_texture->texture_rgb.name;
 }
 
 static void wined3d_texture_no3d_upload_data(struct wined3d_context *context,

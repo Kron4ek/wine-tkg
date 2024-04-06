@@ -50,8 +50,6 @@ static void *win32u_vkGetDeviceProcAddr( VkDevice device, const char *name )
 {
     TRACE( "device %p, name %s\n", device, debugstr_a(name) );
 
-    if (!strcmp( name, "AcquireNextImage2KHR" )) return vulkan_funcs.p_vkAcquireNextImage2KHR;
-    if (!strcmp( name, "AcquireNextImageKHR" )) return vulkan_funcs.p_vkAcquireNextImageKHR;
     if (!strcmp( name, "vkCreateSwapchainKHR" )) return vulkan_funcs.p_vkCreateSwapchainKHR;
     if (!strcmp( name, "vkDestroySwapchainKHR" )) return vulkan_funcs.p_vkDestroySwapchainKHR;
     if (!strcmp( name, "vkGetDeviceProcAddr" )) return win32u_vkGetDeviceProcAddr;
@@ -65,20 +63,14 @@ static void *win32u_vkGetInstanceProcAddr( VkInstance instance, const char *name
 {
     TRACE( "instance %p, name %s\n", instance, debugstr_a(name) );
 
-    if (!strcmp( name, "vkCreateInstance" )) return vulkan_funcs.p_vkCreateInstance;
-    if (!strcmp( name, "vkEnumerateInstanceExtensionProperties" )) return vulkan_funcs.p_vkEnumerateInstanceExtensionProperties;
-
     if (!instance) return p_vkGetInstanceProcAddr( instance, name );
 
     if (!strcmp( name, "vkCreateWin32SurfaceKHR" )) return vulkan_funcs.p_vkCreateWin32SurfaceKHR;
-    if (!strcmp( name, "vkDestroyInstance" )) return vulkan_funcs.p_vkDestroyInstance;
     if (!strcmp( name, "vkDestroySurfaceKHR" )) return vulkan_funcs.p_vkDestroySurfaceKHR;
     if (!strcmp( name, "vkGetInstanceProcAddr" )) return win32u_vkGetInstanceProcAddr;
     if (!strcmp( name, "vkGetPhysicalDeviceWin32PresentationSupportKHR" )) return vulkan_funcs.p_vkGetPhysicalDeviceWin32PresentationSupportKHR;
 
     /* vkGetInstanceProcAddr also loads any children of instance, so device functions as well. */
-    if (!strcmp( name, "AcquireNextImage2KHR" )) return vulkan_funcs.p_vkAcquireNextImage2KHR;
-    if (!strcmp( name, "AcquireNextImageKHR" )) return vulkan_funcs.p_vkAcquireNextImageKHR;
     if (!strcmp( name, "vkCreateSwapchainKHR" )) return vulkan_funcs.p_vkCreateSwapchainKHR;
     if (!strcmp( name, "vkDestroySwapchainKHR" )) return vulkan_funcs.p_vkDestroySwapchainKHR;
     if (!strcmp( name, "vkGetDeviceProcAddr" )) return win32u_vkGetDeviceProcAddr;

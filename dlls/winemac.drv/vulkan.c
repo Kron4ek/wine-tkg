@@ -77,14 +77,11 @@ typedef struct VkMetalSurfaceCreateInfoEXT
     const void *pLayer; /* CAMetalLayer */
 } VkMetalSurfaceCreateInfoEXT;
 
-static VkResult (*pvkCreateInstance)(const VkInstanceCreateInfo *, const VkAllocationCallbacks *, VkInstance *);
 static VkResult (*pvkCreateSwapchainKHR)(VkDevice, const VkSwapchainCreateInfoKHR *, const VkAllocationCallbacks *, VkSwapchainKHR *);
 static VkResult (*pvkCreateMacOSSurfaceMVK)(VkInstance, const VkMacOSSurfaceCreateInfoMVK*, const VkAllocationCallbacks *, VkSurfaceKHR *);
 static VkResult (*pvkCreateMetalSurfaceEXT)(VkInstance, const VkMetalSurfaceCreateInfoEXT*, const VkAllocationCallbacks *, VkSurfaceKHR *);
-static void (*pvkDestroyInstance)(VkInstance, const VkAllocationCallbacks *);
 static void (*pvkDestroySurfaceKHR)(VkInstance, VkSurfaceKHR, const VkAllocationCallbacks *);
 static void (*pvkDestroySwapchainKHR)(VkDevice, VkSwapchainKHR, const VkAllocationCallbacks *);
-static VkResult (*pvkEnumerateInstanceExtensionProperties)(const char *, uint32_t *, VkExtensionProperties *);
 static VkResult (*pvkGetPhysicalDeviceSurfaceCapabilities2KHR)(VkPhysicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR *, VkSurfaceCapabilities2KHR *);
 static VkResult (*pvkGetSwapchainImagesKHR)(VkDevice, VkSwapchainKHR, uint32_t *, VkImage *);
 static VkResult (*pvkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *);
@@ -94,54 +91,6 @@ static const struct vulkan_funcs vulkan_funcs;
 static inline struct wine_vk_surface *surface_from_handle(VkSurfaceKHR handle)
 {
     return (struct wine_vk_surface *)(uintptr_t)handle;
-}
-
-/* Helper function for converting between win32 and MoltenVK compatible VkInstanceCreateInfo.
- * Caller is responsible for allocation and cleanup of 'dst'.
- */
-static VkResult wine_vk_instance_convert_create_info(const VkInstanceCreateInfo *src,
-        VkInstanceCreateInfo *dst)
-{
-    unsigned int i;
-    const char **enabled_extensions = NULL;
-
-    dst->sType = src->sType;
-    dst->flags = src->flags;
-    dst->pApplicationInfo = src->pApplicationInfo;
-    dst->pNext = src->pNext;
-    dst->enabledLayerCount = 0;
-    dst->ppEnabledLayerNames = NULL;
-    dst->enabledExtensionCount = 0;
-    dst->ppEnabledExtensionNames = NULL;
-
-    if (src->enabledExtensionCount > 0)
-    {
-        enabled_extensions = calloc(src->enabledExtensionCount, sizeof(*src->ppEnabledExtensionNames));
-        if (!enabled_extensions)
-        {
-            ERR("Failed to allocate memory for enabled extensions\n");
-            return VK_ERROR_OUT_OF_HOST_MEMORY;
-        }
-
-        for (i = 0; i < src->enabledExtensionCount; i++)
-        {
-            /* Substitute extension with MoltenVK ones else copy. Long-term, when we
-             * support more extensions, we should store these in a list.
-             */
-            if (!strcmp(src->ppEnabledExtensionNames[i], "VK_KHR_win32_surface"))
-            {
-                enabled_extensions[i] = pvkCreateMetalSurfaceEXT ? "VK_EXT_metal_surface" : "VK_MVK_macos_surface";
-            }
-            else
-            {
-                enabled_extensions[i] = src->ppEnabledExtensionNames[i];
-            }
-        }
-        dst->ppEnabledExtensionNames = enabled_extensions;
-        dst->enabledExtensionCount = src->enabledExtensionCount;
-    }
-
-    return VK_SUCCESS;
 }
 
 static void wine_vk_surface_destroy(VkInstance instance, struct wine_vk_surface *surface)
@@ -155,33 +104,6 @@ static void wine_vk_surface_destroy(VkInstance instance, struct wine_vk_surface 
         macdrv_release_metal_device(surface->device);
 
     free(surface);
-}
-
-static VkResult macdrv_vkCreateInstance(const VkInstanceCreateInfo *create_info,
-        const VkAllocationCallbacks *allocator, VkInstance *instance)
-{
-    VkInstanceCreateInfo create_info_host;
-    VkResult res;
-    TRACE("create_info %p, allocator %p, instance %p\n", create_info, allocator, instance);
-
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
-
-    /* Perform a second pass on converting VkInstanceCreateInfo. Winevulkan
-     * performed a first pass in which it handles everything except for WSI
-     * functionality such as VK_KHR_win32_surface. Handle this now.
-     */
-    res = wine_vk_instance_convert_create_info(create_info, &create_info_host);
-    if (res != VK_SUCCESS)
-    {
-        ERR("Failed to convert instance create info, res=%d\n", res);
-        return res;
-    }
-
-    res = pvkCreateInstance(&create_info_host, NULL /* allocator */, instance);
-
-    free((void *)create_info_host.ppEnabledExtensionNames);
-    return res;
 }
 
 static VkResult macdrv_vkCreateSwapchainKHR(VkDevice device,
@@ -284,16 +206,6 @@ err:
     return res;
 }
 
-static void macdrv_vkDestroyInstance(VkInstance instance, const VkAllocationCallbacks *allocator)
-{
-    TRACE("%p %p\n", instance, allocator);
-
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
-
-    pvkDestroyInstance(instance, NULL /* allocator */);
-}
-
 static void macdrv_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface,
         const VkAllocationCallbacks *allocator)
 {
@@ -316,59 +228,6 @@ static void macdrv_vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapcha
         FIXME("Support for allocation callbacks not implemented yet\n");
 
     pvkDestroySwapchainKHR(device, swapchain, NULL /* allocator */);
-}
-
-static VkResult macdrv_vkEnumerateInstanceExtensionProperties(const char *layer_name,
-        uint32_t *count, VkExtensionProperties* properties)
-{
-    unsigned int i;
-    BOOL seen_surface = FALSE;
-    VkResult res;
-
-    TRACE("layer_name %s, count %p, properties %p\n", debugstr_a(layer_name), count, properties);
-
-    /* This shouldn't get called with layer_name set, the ICD loader prevents it. */
-    if (layer_name)
-    {
-        ERR("Layer enumeration not supported from ICD.\n");
-        return VK_ERROR_LAYER_NOT_PRESENT;
-    }
-
-    /* We will return at most the same number of instance extensions reported by the host back to
-     * winevulkan. Along the way we may replace MoltenVK extensions with their win32 equivalents,
-     * or remove redundant extensions outright.
-     * Winevulkan will perform more detailed filtering as it knows whether it has thunks
-     * for a particular extension.
-     */
-    res = pvkEnumerateInstanceExtensionProperties(layer_name, count, properties);
-    if (!properties || res < 0)
-        return res;
-
-    for (i = 0; i < *count; i++)
-    {
-        /* For now the only MoltenVK extensions we need to fixup. Long-term we may need an array. */
-        if (!strcmp(properties[i].extensionName, "VK_MVK_macos_surface") ||
-            !strcmp(properties[i].extensionName, "VK_EXT_metal_surface"))
-        {
-            if (seen_surface)
-            {
-                /* If we've already seen a surface extension, just hide this one. */
-                memmove(properties + i, properties + i + 1, (*count - i - 1) * sizeof(*properties));
-                --*count;
-                --i;
-                continue;
-            }
-            TRACE("Substituting %s for VK_KHR_win32_surface\n", properties[i].extensionName);
-
-            snprintf(properties[i].extensionName, sizeof(properties[i].extensionName),
-                    VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-            properties[i].specVersion = VK_KHR_WIN32_SURFACE_SPEC_VERSION;
-            seen_surface = TRUE;
-        }
-    }
-
-    TRACE("Returning %u extensions.\n", *count);
-    return res;
 }
 
 static VkBool32 macdrv_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice phys_dev,
@@ -415,6 +274,11 @@ static VkResult macdrv_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *
     return res;
 }
 
+static const char *macdrv_get_host_surface_extension(void)
+{
+    return pvkCreateMetalSurfaceEXT ? "VK_EXT_metal_surface" : "VK_MVK_macos_surface";
+}
+
 static VkSurfaceKHR macdrv_wine_get_host_surface(VkSurfaceKHR surface)
 {
     struct wine_vk_surface *mac_surface = surface_from_handle(surface);
@@ -426,21 +290,17 @@ static VkSurfaceKHR macdrv_wine_get_host_surface(VkSurfaceKHR surface)
 
 static const struct vulkan_funcs vulkan_funcs =
 {
-    NULL,
-    NULL,
-    macdrv_vkCreateInstance,
     macdrv_vkCreateSwapchainKHR,
     macdrv_vkCreateWin32SurfaceKHR,
-    macdrv_vkDestroyInstance,
     macdrv_vkDestroySurfaceKHR,
     macdrv_vkDestroySwapchainKHR,
-    macdrv_vkEnumerateInstanceExtensionProperties,
     NULL,
     NULL,
     macdrv_vkGetPhysicalDeviceWin32PresentationSupportKHR,
     macdrv_vkGetSwapchainImagesKHR,
     macdrv_vkQueuePresentKHR,
 
+    macdrv_get_host_surface_extension,
     macdrv_wine_get_host_surface,
 };
 
@@ -453,14 +313,11 @@ UINT macdrv_VulkanInit(UINT version, void *vulkan_handle, struct vulkan_funcs *d
     }
 
 #define LOAD_FUNCPTR(f) if ((p##f = dlsym(vulkan_handle, #f)) == NULL) return STATUS_PROCEDURE_NOT_FOUND;
-    LOAD_FUNCPTR(vkCreateInstance)
     LOAD_FUNCPTR(vkCreateSwapchainKHR)
     LOAD_FUNCPTR(vkCreateMacOSSurfaceMVK)
     LOAD_FUNCPTR(vkCreateMetalSurfaceEXT)
-    LOAD_FUNCPTR(vkDestroyInstance)
     LOAD_FUNCPTR(vkDestroySurfaceKHR)
     LOAD_FUNCPTR(vkDestroySwapchainKHR)
-    LOAD_FUNCPTR(vkEnumerateInstanceExtensionProperties)
     LOAD_FUNCPTR(vkGetSwapchainImagesKHR)
     LOAD_FUNCPTR(vkQueuePresentKHR)
 #undef LOAD_FUNCPTR

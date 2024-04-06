@@ -50,6 +50,7 @@
 #include "wine/wined3d.h"
 #include "wine/list.h"
 #include "wine/rbtree.h"
+#include "wine/wgl.h"
 
 static inline size_t align(size_t addr, size_t alignment)
 {
@@ -466,8 +467,6 @@ enum wined3d_shader_backend
 {
     WINED3D_SHADER_BACKEND_AUTO,
     WINED3D_SHADER_BACKEND_GLSL,
-    WINED3D_SHADER_BACKEND_ARB,
-    WINED3D_SHADER_BACKEND_NONE,
 };
 
 #define WINED3D_CSMT_ENABLE    0x00000001
@@ -1968,7 +1967,9 @@ struct wined3d_context
     DWORD destroyed : 1;
     DWORD destroy_delayed : 1;
     DWORD namedArraysLoaded : 1;
-    DWORD padding : 5;
+    DWORD update_primitive_type : 1;
+    DWORD update_patch_vertex_count : 1;
+    DWORD padding : 3;
 
     DWORD clip_distance_mask : 8; /* WINED3D_MAX_CLIP_DISTANCES, 8 */
 
@@ -2956,6 +2957,14 @@ struct wined3d_so_desc_entry
     struct wined3d_stream_output_element elements[1];
 };
 
+struct wined3d_vr_gl_context
+{
+    HWND window;
+    HDC dc;
+    HGLRC gl_ctx;
+    const struct wined3d_gl_info *gl_info;
+};
+
 struct wined3d_device
 {
     LONG ref;
@@ -3026,6 +3035,8 @@ struct wined3d_device
     /* Context management */
     struct wined3d_context **contexts;
     UINT context_count;
+
+    struct wined3d_vr_gl_context vr_context;
 
     CRITICAL_SECTION bo_map_lock;
 };
@@ -3682,6 +3693,17 @@ static inline void wined3d_cs_finish(struct wined3d_cs *cs, enum wined3d_cs_queu
 {
     cs->c.ops->finish(&cs->c, queue_id);
 }
+
+void wined3d_cs_emit_gl_texture_callback(struct wined3d_cs *cs, struct wined3d_texture *texture,
+        wined3d_gl_texture_callback callback, struct wined3d_texture *depth_texture,
+        const void *data, unsigned int size);
+void wined3d_cs_emit_user_callback(struct wined3d_cs *cs,
+        wined3d_cs_callback callback, const void *data, unsigned int size);
+
+GLsync wined3d_cs_synchronize(struct wined3d_cs *cs, struct wined3d_texture *texture);
+
+void wined3d_destroy_gl_vr_context(struct wined3d_vr_gl_context *ctx);
+
 
 void wined3d_device_context_emit_blt_sub_resource(struct wined3d_device_context *context,
         struct wined3d_resource *dst_resource, unsigned int dst_sub_resource_idx, const struct wined3d_box *dst_box,

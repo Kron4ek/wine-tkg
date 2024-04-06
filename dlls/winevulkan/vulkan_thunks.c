@@ -7113,7 +7113,7 @@ static uint64_t wine_vk_unwrap_handle(uint32_t type, uint64_t handle)
 }
 
 #ifdef _WIN64
-static inline void convert_VkAcquireNextImageInfoKHR_win64_to_driver(const VkAcquireNextImageInfoKHR *in, VkAcquireNextImageInfoKHR *out)
+static inline void convert_VkAcquireNextImageInfoKHR_win64_to_host(const VkAcquireNextImageInfoKHR *in, VkAcquireNextImageInfoKHR *out)
 {
     if (!in) return;
 
@@ -7127,7 +7127,7 @@ static inline void convert_VkAcquireNextImageInfoKHR_win64_to_driver(const VkAcq
 }
 #endif /* _WIN64 */
 
-static inline void convert_VkAcquireNextImageInfoKHR_win32_to_driver(const VkAcquireNextImageInfoKHR32 *in, VkAcquireNextImageInfoKHR *out)
+static inline void convert_VkAcquireNextImageInfoKHR_win32_to_host(const VkAcquireNextImageInfoKHR32 *in, VkAcquireNextImageInfoKHR *out)
 {
     if (!in) return;
 
@@ -30247,7 +30247,7 @@ static NTSTATUS thunk64_vkAcquireNextImage2KHR(void *args)
 
     TRACE("%p, %p, %p\n", params->device, params->pAcquireInfo, params->pImageIndex);
 
-    convert_VkAcquireNextImageInfoKHR_win64_to_driver(params->pAcquireInfo, &pAcquireInfo_host);
+    convert_VkAcquireNextImageInfoKHR_win64_to_host(params->pAcquireInfo, &pAcquireInfo_host);
     params->result = wine_device_from_handle(params->device)->funcs.p_vkAcquireNextImage2KHR(wine_device_from_handle(params->device)->host_device, &pAcquireInfo_host, params->pImageIndex);
     return STATUS_SUCCESS;
 }
@@ -30266,7 +30266,7 @@ static NTSTATUS thunk32_vkAcquireNextImage2KHR(void *args)
 
     TRACE("%#x, %#x, %#x\n", params->device, params->pAcquireInfo, params->pImageIndex);
 
-    convert_VkAcquireNextImageInfoKHR_win32_to_driver((const VkAcquireNextImageInfoKHR32 *)UlongToPtr(params->pAcquireInfo), &pAcquireInfo_host);
+    convert_VkAcquireNextImageInfoKHR_win32_to_host((const VkAcquireNextImageInfoKHR32 *)UlongToPtr(params->pAcquireInfo), &pAcquireInfo_host);
     params->result = wine_device_from_handle((VkDevice)UlongToPtr(params->device))->funcs.p_vkAcquireNextImage2KHR(wine_device_from_handle((VkDevice)UlongToPtr(params->device))->host_device, &pAcquireInfo_host, (uint32_t *)UlongToPtr(params->pImageIndex));
     return STATUS_SUCCESS;
 }
@@ -46749,6 +46749,23 @@ static const char * const vk_instance_extensions[] =
     "VK_KHR_win32_surface",
 };
 
+static const char * const vk_host_surface_extensions[] =
+{
+    "VK_KHR_xlib_surface",
+    "VK_KHR_xcb_surface",
+    "VK_KHR_wayland_surface",
+    "VK_KHR_mir_surface",
+    "VK_KHR_android_surface",
+    "VK_GGP_stream_descriptor_surface",
+    "VK_NN_vi_surface",
+    "VK_MVK_ios_surface",
+    "VK_MVK_macos_surface",
+    "VK_FUCHSIA_imagepipe_surface",
+    "VK_EXT_metal_surface",
+    "VK_EXT_directfb_surface",
+    "VK_QNX_screen_surface",
+};
+
 BOOL wine_vk_device_extension_supported(const char *name)
 {
     unsigned int i;
@@ -46766,6 +46783,17 @@ BOOL wine_vk_instance_extension_supported(const char *name)
     for (i = 0; i < ARRAY_SIZE(vk_instance_extensions); i++)
     {
         if (strcmp(vk_instance_extensions[i], name) == 0)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+BOOL wine_vk_is_host_surface_extension(const char *name)
+{
+    unsigned int i;
+    for (i = 0; i < ARRAY_SIZE(vk_host_surface_extensions); i++)
+    {
+        if (strcmp(vk_host_surface_extensions[i], name) == 0)
             return TRUE;
     }
     return FALSE;

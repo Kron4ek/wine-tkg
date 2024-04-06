@@ -90,6 +90,7 @@ struct fx_write_context
     int status;
 
     bool child_effect;
+    bool include_empty_buffers;
 
     const struct fx_write_context_ops *ops;
 };
@@ -191,6 +192,7 @@ static void fx_write_context_init(struct hlsl_ctx *ctx, const struct fx_write_co
     list_init(&fx->types);
 
     fx->child_effect = fx->ops->are_child_effects_supported && ctx->child_effect;
+    fx->include_empty_buffers = version == 4 && ctx->include_empty_buffers;
 
     hlsl_block_init(&block);
     hlsl_prepend_global_uniform_copy(fx->ctx, &block);
@@ -611,11 +613,15 @@ static uint32_t write_fx_2_string(const char *string, struct fx_write_context *f
 {
     struct vkd3d_bytecode_buffer *buffer = &fx->unstructured;
     const char *s = string ? string : "";
+    static const char tail[3];
     uint32_t size, offset;
 
     size = strlen(s) + 1;
     offset = put_u32(buffer, size);
     bytecode_put_bytes(buffer, s, size);
+    size %= 4;
+    if (size)
+        bytecode_put_bytes_unaligned(buffer, tail, 4 - size);
     return offset;
 }
 
@@ -639,10 +645,13 @@ static uint32_t write_fx_2_parameter(const struct hlsl_type *type, const char *n
 
     switch (type->base_type)
     {
+        case HLSL_TYPE_HALF:
         case HLSL_TYPE_FLOAT:
         case HLSL_TYPE_BOOL:
         case HLSL_TYPE_INT:
+        case HLSL_TYPE_UINT:
         case HLSL_TYPE_VOID:
+        case HLSL_TYPE_TEXTURE:
             break;
         default:
             hlsl_fixme(ctx, &ctx->location, "Writing parameter type %u is not implemented.",
@@ -766,21 +775,72 @@ static uint32_t write_fx_2_initial_value(const struct hlsl_ir_var *var, struct f
     return offset;
 }
 
+static bool is_type_supported_fx_2(const struct hlsl_type *type)
+{
+    type = hlsl_get_multiarray_element_type(type);
+
+    if (type->class == HLSL_CLASS_STRUCT)
+        return true;
+
+    switch (type->base_type)
+    {
+        case HLSL_TYPE_FLOAT:
+        case HLSL_TYPE_HALF:
+        case HLSL_TYPE_DOUBLE:
+        case HLSL_TYPE_INT:
+        case HLSL_TYPE_UINT:
+        case HLSL_TYPE_BOOL:
+        case HLSL_TYPE_PIXELSHADER:
+        case HLSL_TYPE_VERTEXSHADER:
+        case HLSL_TYPE_STRING:
+            return true;
+        case HLSL_TYPE_TEXTURE:
+        case HLSL_TYPE_SAMPLER:
+            switch (type->sampler_dim)
+            {
+                case HLSL_SAMPLER_DIM_1D:
+                case HLSL_SAMPLER_DIM_2D:
+                case HLSL_SAMPLER_DIM_3D:
+                case HLSL_SAMPLER_DIM_CUBE:
+                case HLSL_SAMPLER_DIM_GENERIC:
+                    return true;
+                default:
+                    ;
+            }
+            break;
+        default:
+            return false;
+    }
+
+    return false;
+}
+
 static void write_fx_2_parameters(struct fx_write_context *fx)
 {
     struct vkd3d_bytecode_buffer *buffer = &fx->structured;
-    uint32_t desc_offset, value_offset;
+    uint32_t desc_offset, value_offset, flags;
     struct hlsl_ctx *ctx = fx->ctx;
     struct hlsl_ir_var *var;
+    enum fx_2_parameter_flags
+    {
+        IS_SHARED = 0x1,
+    };
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
+        if (!is_type_supported_fx_2(var->data_type))
+            continue;
+
         desc_offset = write_fx_2_parameter(var->data_type, var->name, &var->semantic, fx);
         value_offset = write_fx_2_initial_value(var, fx);
 
+        flags = 0;
+        if (var->storage_modifiers & HLSL_STORAGE_SHARED)
+            flags |= IS_SHARED;
+
         put_u32(buffer, desc_offset); /* Parameter description */
         put_u32(buffer, value_offset); /* Value */
-        put_u32(buffer, 0); /* Flags */
+        put_u32(buffer, flags); /* Flags */
 
         put_u32(buffer, 0); /* Annotations count */
         if (has_annotations(var))
@@ -799,12 +859,13 @@ static const struct fx_write_context_ops fx_2_ops =
 
 static int hlsl_fx_2_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
 {
-    uint32_t offset, size, technique_count, parameter_count;
+    uint32_t offset, size, technique_count, parameter_count, object_count;
     struct vkd3d_bytecode_buffer buffer = { 0 };
     struct vkd3d_bytecode_buffer *structured;
     struct fx_write_context fx;
 
     fx_write_context_init(ctx, &fx_2_ops, &fx);
+    fx.object_variable_count = 1;
     structured = &fx.structured;
 
     /* First entry is always zeroed and skipped. */
@@ -816,10 +877,11 @@ static int hlsl_fx_2_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
     parameter_count = put_u32(structured, 0); /* Parameter count */
     technique_count = put_u32(structured, 0);
     put_u32(structured, 0); /* Unknown */
-    put_u32(structured, 0); /* Object count */
+    object_count = put_u32(structured, 0);
 
     write_fx_2_parameters(&fx);
     set_u32(structured, parameter_count, fx.parameter_count);
+    set_u32(structured, object_count, fx.object_variable_count);
 
     write_techniques(ctx->globals, &fx);
     set_u32(structured, technique_count, fx.technique_count);
@@ -978,7 +1040,8 @@ static void write_fx_4_buffer(struct hlsl_buffer *b, struct fx_write_context *fx
     put_u32(buffer, bind_point); /* Bind point */
 
     put_u32(buffer, 0); /* Annotations count */
-    /* FIXME: write annotations */
+    if (b->annotations)
+        hlsl_fixme(ctx, &b->loc, "Writing annotations for buffers is not implemented.");
 
     count = 0;
     size = 0;
@@ -1004,7 +1067,9 @@ static void write_buffers(struct fx_write_context *fx)
 
     LIST_FOR_EACH_ENTRY(buffer, &fx->ctx->buffers, struct hlsl_buffer, entry)
     {
-        if (!buffer->size)
+        if (!buffer->size && !fx->include_empty_buffers)
+            continue;
+        if (!strcmp(buffer->name, "$Params"))
             continue;
 
         write_fx_4_buffer(buffer, fx);

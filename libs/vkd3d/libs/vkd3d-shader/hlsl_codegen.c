@@ -427,7 +427,10 @@ static void prepend_input_copy_recurse(struct hlsl_ctx *ctx, struct hlsl_block *
             {
                 field = &type->e.record.fields[i];
                 if (hlsl_type_is_resource(field->type))
+                {
+                    hlsl_fixme(ctx, &field->loc, "Prepend uniform copies for resource components within structs.");
                     continue;
+                }
                 validate_field_semantic(ctx, field);
                 semantic = &field->semantic;
                 elem_semantic_index = semantic->index;
@@ -2902,6 +2905,55 @@ static bool lower_floor(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct
     return true;
 }
 
+static bool lower_logic_not(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct hlsl_block *block)
+{
+    struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS];
+    struct hlsl_ir_node *arg, *arg_cast, *neg, *one, *sub, *res;
+    struct hlsl_constant_value one_value;
+    struct hlsl_type *float_type;
+    struct hlsl_ir_expr *expr;
+
+    if (instr->type != HLSL_IR_EXPR)
+        return false;
+    expr = hlsl_ir_expr(instr);
+    if (expr->op != HLSL_OP1_LOGIC_NOT)
+        return false;
+
+    arg = expr->operands[0].node;
+    float_type = hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, arg->data_type->dimx);
+
+    /* If this is happens, it means we failed to cast the argument to boolean somewhere. */
+    assert(arg->data_type->base_type == HLSL_TYPE_BOOL);
+
+    if (!(arg_cast = hlsl_new_cast(ctx, arg, float_type, &arg->loc)))
+        return false;
+    hlsl_block_add_instr(block, arg_cast);
+
+    if (!(neg = hlsl_new_unary_expr(ctx, HLSL_OP1_NEG, arg_cast, &instr->loc)))
+        return false;
+    hlsl_block_add_instr(block, neg);
+
+    one_value.u[0].f = 1.0;
+    one_value.u[1].f = 1.0;
+    one_value.u[2].f = 1.0;
+    one_value.u[3].f = 1.0;
+    if (!(one = hlsl_new_constant(ctx, float_type, &one_value, &instr->loc)))
+        return false;
+    hlsl_block_add_instr(block, one);
+
+    if (!(sub = hlsl_new_binary_expr(ctx, HLSL_OP2_ADD, one, neg)))
+        return false;
+    hlsl_block_add_instr(block, sub);
+
+    memset(operands, 0, sizeof(operands));
+    operands[0] = sub;
+    if (!(res = hlsl_new_expr(ctx, HLSL_OP1_REINTERPRET, operands, instr->data_type, &instr->loc)))
+        return false;
+    hlsl_block_add_instr(block, res);
+
+    return true;
+}
+
 /* Use movc/cmp for the ternary operator. */
 static bool lower_ternary(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct hlsl_block *block)
 {
@@ -3573,6 +3625,8 @@ static bool lower_nonfloat_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *inst
         case HLSL_OP1_NEG:
         case HLSL_OP2_ADD:
         case HLSL_OP2_DIV:
+        case HLSL_OP2_LOGIC_AND:
+        case HLSL_OP2_LOGIC_OR:
         case HLSL_OP2_MAX:
         case HLSL_OP2_MIN:
         case HLSL_OP2_MUL:
@@ -3760,9 +3814,6 @@ static void allocate_register_reservations(struct hlsl_ctx *ctx)
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
         unsigned int r;
-
-        if (!hlsl_type_is_resource(var->data_type))
-            continue;
 
         if (var->reg_reservation.reg_type)
         {
@@ -5189,25 +5240,6 @@ static void parse_numthreads_attribute(struct hlsl_ctx *ctx, const struct hlsl_a
     }
 }
 
-static bool type_has_object_components(struct hlsl_type *type)
-{
-    if (type->class == HLSL_CLASS_OBJECT)
-        return true;
-    if (type->class == HLSL_CLASS_ARRAY)
-        return type_has_object_components(type->e.array.type);
-    if (type->class == HLSL_CLASS_STRUCT)
-    {
-        unsigned int i;
-
-        for (i = 0; i < type->e.record.field_count; ++i)
-        {
-            if (type_has_object_components(type->e.record.fields[i].type))
-                return true;
-        }
-    }
-    return false;
-}
-
 static void remove_unreachable_code(struct hlsl_ctx *ctx, struct hlsl_block *body)
 {
     struct hlsl_ir_node *instr, *next;
@@ -5315,9 +5347,6 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
         }
         else
         {
-            if (type_has_object_components(var->data_type))
-                hlsl_fixme(ctx, &var->loc, "Prepend uniform copies for object components within structs.");
-
             if (hlsl_get_multiarray_element_type(var->data_type)->class != HLSL_CLASS_STRUCT
                     && !var->semantic.name)
             {
@@ -5420,6 +5449,7 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
         lower_ir(ctx, lower_ceil, body);
         lower_ir(ctx, lower_floor, body);
         lower_ir(ctx, lower_comparison_operators, body);
+        lower_ir(ctx, lower_logic_not, body);
         if (ctx->profile->type == VKD3D_SHADER_TYPE_PIXEL)
             lower_ir(ctx, lower_slt, body);
         else

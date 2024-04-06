@@ -2000,58 +2000,6 @@ static enum wined3d_pci_device wined3d_guess_card(enum wined3d_feature_level fea
     return wined3d_gpu_from_feature_level(card_vendor, feature_level);
 }
 
-static const struct wined3d_vertex_pipe_ops *select_vertex_implementation(const struct wined3d_gl_info *gl_info,
-        const struct wined3d_shader_backend_ops *shader_backend_ops)
-{
-    if (shader_backend_ops == &glsl_shader_backend && gl_info->supported[ARB_VERTEX_SHADER])
-        return &glsl_vertex_pipe;
-    return &ffp_vertex_pipe;
-}
-
-static const struct wined3d_fragment_pipe_ops *select_fragment_implementation(const struct wined3d_gl_info *gl_info,
-        const struct wined3d_shader_backend_ops *shader_backend_ops)
-{
-    if (shader_backend_ops == &glsl_shader_backend && gl_info->supported[ARB_FRAGMENT_SHADER])
-        return &glsl_fragment_pipe;
-    if (gl_info->supported[ARB_FRAGMENT_PROGRAM])
-        return &arbfp_fragment_pipeline;
-    if (gl_info->supported[ATI_FRAGMENT_SHADER])
-        return &atifs_fragment_pipeline;
-    if (gl_info->supported[NV_REGISTER_COMBINERS] && gl_info->supported[NV_TEXTURE_SHADER2])
-        return &nvts_fragment_pipeline;
-    if (gl_info->supported[NV_REGISTER_COMBINERS])
-        return &nvrc_fragment_pipeline;
-    return &ffp_fragment_pipeline;
-}
-
-static const struct wined3d_shader_backend_ops *select_shader_backend(const struct wined3d_gl_info *gl_info)
-{
-    BOOL glsl = wined3d_settings.shader_backend == WINED3D_SHADER_BACKEND_AUTO
-            || wined3d_settings.shader_backend == WINED3D_SHADER_BACKEND_GLSL;
-    BOOL arb = wined3d_settings.shader_backend == WINED3D_SHADER_BACKEND_AUTO
-            || wined3d_settings.shader_backend == WINED3D_SHADER_BACKEND_ARB;
-
-    if (!gl_info->supported[WINED3D_GL_LEGACY_CONTEXT] && !glsl)
-    {
-        ERR_(winediag)("Ignoring the shader backend registry key. "
-                "GLSL is the only shader backend available on core profile contexts. "
-                "You need to explicitly set GL version to use legacy contexts.\n");
-        glsl = TRUE;
-    }
-
-    glsl = glsl && gl_info->glsl_version >= MAKEDWORD_VERSION(1, 20);
-
-    if (glsl && gl_info->supported[ARB_VERTEX_SHADER] && gl_info->supported[ARB_FRAGMENT_SHADER])
-        return &glsl_shader_backend;
-    if (arb && gl_info->supported[ARB_VERTEX_PROGRAM] && gl_info->supported[ARB_FRAGMENT_PROGRAM])
-        return &arb_program_shader_backend;
-    if (glsl && (gl_info->supported[ARB_VERTEX_SHADER] || gl_info->supported[ARB_FRAGMENT_SHADER]))
-        return &glsl_shader_backend;
-    if (arb && (gl_info->supported[ARB_VERTEX_PROGRAM] || gl_info->supported[ARB_FRAGMENT_PROGRAM]))
-        return &arb_program_shader_backend;
-    return &none_shader_backend;
-}
-
 static void parse_extension_string(struct wined3d_gl_info *gl_info, const char *extensions,
         const struct wined3d_extension_map *map, UINT entry_count)
 {
@@ -3768,9 +3716,9 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
 
     checkGLcall("extension detection");
 
-    adapter->shader_backend = select_shader_backend(gl_info);
-    adapter->vertex_pipe = select_vertex_implementation(gl_info, adapter->shader_backend);
-    adapter->fragment_pipe = select_fragment_implementation(gl_info, adapter->shader_backend);
+    adapter->shader_backend = &glsl_shader_backend;
+    adapter->vertex_pipe = &glsl_vertex_pipe;
+    adapter->fragment_pipe = &glsl_fragment_pipe;
 
     if (gl_info->supported[ARB_FRAMEBUFFER_OBJECT])
     {
@@ -3796,6 +3744,8 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
         gl_info->fbo_ops.glBlitFramebuffer = gl_info->gl_ops.ext.p_glBlitFramebuffer;
         gl_info->fbo_ops.glGenerateMipmap = gl_info->gl_ops.ext.p_glGenerateMipmap;
         gl_info->fbo_ops.glFramebufferTexture = gl_info->gl_ops.ext.p_glFramebufferTexture;
+
+        gl_info->supported[EXT_FRAMEBUFFER_OBJECT] = TRUE;
     }
     else
     {
@@ -5313,6 +5263,19 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
     LUID primary_luid, *luid = NULL;
     unsigned int i;
 
+    static const struct
+    {
+        enum wined3d_gl_extension extension;
+        const char *string;
+    }
+    required_extensions[] =
+    {
+        {ARB_FRAGMENT_SHADER, "ARB_fragment_shader"},
+        {ARB_SHADING_LANGUAGE_100, "ARB_shading_language_100"},
+        {ARB_VERTEX_SHADER, "ARB_vertex_shader"},
+        {EXT_FRAMEBUFFER_OBJECT, "EXT_framebuffer_object"},
+    };
+
     TRACE("adapter_gl %p, ordinal %u, wined3d_creation_flags %#x.\n",
             adapter_gl, ordinal, wined3d_creation_flags);
 
@@ -5371,6 +5334,31 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
         return FALSE;
     }
 
+    for (unsigned int i = 0; i < ARRAY_SIZE(required_extensions); ++i)
+    {
+        if (!gl_info->supported[required_extensions[i].extension])
+        {
+            ERR("Required extension %s is not supported.\n", required_extensions[i].string);
+            wined3d_caps_gl_ctx_destroy(&caps_gl_ctx);
+            return FALSE;
+        }
+    }
+
+    if (!gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO] && !gl_info->supported[WINED3D_GL_NORMALIZED_TEXRECT])
+    {
+        ERR("Required extension ARB_texture_non_power_of_two is not supported.\n");
+        wined3d_caps_gl_ctx_destroy(&caps_gl_ctx);
+        return FALSE;
+    }
+
+    if (gl_info->glsl_version <= MAKEDWORD_VERSION(1, 20))
+    {
+        ERR("GLSL version %s is too low; 1.20 is required.\n",
+                (const char *)gl_info->gl_ops.gl.p_glGetString(GL_SHADING_LANGUAGE_VERSION_ARB));
+        wined3d_caps_gl_ctx_destroy(&caps_gl_ctx);
+        return FALSE;
+    }
+
     gl_info->filling_convention_offset = wined3d_adapter_find_fill_offset(&caps_gl_ctx);
 
     wined3d_adapter_gl_init_d3d_info(adapter_gl, wined3d_creation_flags);
@@ -5391,10 +5379,6 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
     }
     TRACE("Reporting (fake) driver version 0x%08x-0x%08x.\n",
             driver_info->version_high, driver_info->version_low);
-
-    if (wined3d_settings.offscreen_rendering_mode == ORM_BACKBUFFER)
-        ERR_(winediag)("You are using the backbuffer for offscreen rendering. "
-                "This is unsupported, and will be removed in a future version.\n");
 
     wined3d_adapter_init_fb_cfgs(adapter_gl, caps_gl_ctx.dc);
     /* We haven't found any suitable formats. This should only happen in

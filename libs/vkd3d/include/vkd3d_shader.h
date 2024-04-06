@@ -21,6 +21,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <vkd3d_types.h>
 
 #ifdef __cplusplus
@@ -302,12 +303,33 @@ enum vkd3d_shader_compile_option_name
     /**
      * If \a value is non-zero compilation will produce a child effect using
      * shared object descriptions, as instructed by the "shared" modifier.
-     * Child effects are supported with fx_2_0, fx_4_0, and fx_4_1. This option
-     * and "shared" modifiers are ignored for fx_5_0 profile, and non-fx profiles.
+     * Child effects are supported with fx_4_0, and fx_4_1 profiles. This option
+     * and "shared" modifiers are ignored for the fx_5_0 profile and non-fx profiles.
+     * The fx_2_0 profile does not have a separate concept of child effects, variables
+     * marked with "shared" modifier will be marked as such in a binary.
      *
      * \since 1.12
      */
     VKD3D_SHADER_COMPILE_OPTION_CHILD_EFFECT = 0x0000000b,
+    /**
+     * If \a value is nonzero, emit a compile warning warn when vectors or
+     * matrices are truncated in an implicit conversion.
+     * If warnings are disabled, this option has no effect.
+     * This option has no effects for targets other than HLSL.
+     *
+     * The default value is nonzero, i.e. enable implicit truncation warnings.
+     *
+     * \since 1.12
+     */
+    VKD3D_SHADER_COMPILE_OPTION_WARN_IMPLICIT_TRUNCATION = 0x0000000c,
+    /**
+     * If \a value is nonzero, empty constant buffers descriptions are
+     * written out in the output effect binary. This option applies only
+     * to fx_4_0 and fx_4_1 profiles and is otherwise ignored.
+     *
+     * \since 1.12
+     */
+    VKD3D_SHADER_COMPILE_OPTION_INCLUDE_EMPTY_BUFFERS_IN_EFFECTS = 0x0000000d,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_NAME),
 };

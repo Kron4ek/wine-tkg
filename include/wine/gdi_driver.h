@@ -166,9 +166,6 @@ struct gdi_dc_funcs
     BOOL     (*pStrokeAndFillPath)(PHYSDEV);
     BOOL     (*pStrokePath)(PHYSDEV);
     BOOL     (*pUnrealizePalette)(HPALETTE);
-    NTSTATUS (*pD3DKMTCloseAdapter)(const D3DKMT_CLOSEADAPTER *);
-    NTSTATUS (*pD3DKMTOpenAdapterFromLuid)(D3DKMT_OPENADAPTERFROMLUID *);
-    NTSTATUS (*pD3DKMTQueryVideoMemoryInfo)(D3DKMT_QUERYVIDEOMEMORYINFO *);
 
     /* priority order for the driver on the stack */
     UINT       priority;
@@ -252,12 +249,6 @@ struct gdi_gpu
     ULONGLONG memory_size;
 };
 
-struct gdi_adapter
-{
-    ULONG_PTR id;
-    DWORD state_flags;
-};
-
 struct gdi_monitor
 {
     RECT rc_monitor;      /* RcMonitor in MONITORINFO struct */
@@ -269,7 +260,7 @@ struct gdi_monitor
 struct gdi_device_manager
 {
     void (*add_gpu)( const struct gdi_gpu *gpu, void *param );
-    void (*add_adapter)( const struct gdi_adapter *adapter, void *param );
+    void (*add_source)( const char *name, UINT state_flags, void *param );
     void (*add_monitor)( const struct gdi_monitor *monitor, void *param );
     void (*add_mode)( const DEVMODEW *mode, BOOL current, void *param );
 };

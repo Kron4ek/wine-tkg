@@ -242,6 +242,7 @@ static HRESULT wined3d_select_vulkan_queue_family(const struct wined3d_adapter_v
 struct wined3d_physical_device_info
 {
     VkPhysicalDeviceExtendedDynamicStateFeaturesEXT dynamic_state_features;
+    VkPhysicalDeviceExtendedDynamicState2FeaturesEXT dynamic_state2_features;
     VkPhysicalDeviceHostQueryResetFeatures host_query_reset_features;
     VkPhysicalDeviceShaderDrawParametersFeatures draw_parameters_features;
     VkPhysicalDeviceTransformFeedbackFeaturesEXT xfb_features;
@@ -338,6 +339,7 @@ static const struct wined3d_allocator_ops wined3d_allocator_vk_ops =
 static void get_physical_device_info(const struct wined3d_adapter_vk *adapter_vk, struct wined3d_physical_device_info *info)
 {
     VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT *vertex_divisor_features = &info->vertex_divisor_features;
+    VkPhysicalDeviceExtendedDynamicState2FeaturesEXT *dynamic_state2_features = &info->dynamic_state2_features;
     VkPhysicalDeviceShaderDrawParametersFeatures *draw_parameters_features = &info->draw_parameters_features;
     VkPhysicalDeviceExtendedDynamicStateFeaturesEXT *dynamic_state_features = &info->dynamic_state_features;
     VkPhysicalDeviceHostQueryResetFeatures *host_query_reset_features = &info->host_query_reset_features;
@@ -363,8 +365,11 @@ static void get_physical_device_info(const struct wined3d_adapter_vk *adapter_vk
     host_query_reset_features->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES;
     host_query_reset_features->pNext = vertex_divisor_features;
 
+    dynamic_state2_features->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT;
+    dynamic_state2_features->pNext = host_query_reset_features;
+
     dynamic_state_features->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
-    dynamic_state_features->pNext = host_query_reset_features;
+    dynamic_state_features->pNext = dynamic_state2_features;
 
     features2->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features2->pNext = dynamic_state_features;
@@ -2345,6 +2350,8 @@ static void wined3d_adapter_vk_init_d3d_info(struct wined3d_adapter_vk *adapter_
     d3d_info->multisample_draw_location = WINED3D_LOCATION_TEXTURE_RGB;
 
     vk_info->multiple_viewports = device_info.features2.features.multiViewport;
+    vk_info->dynamic_state2 = device_info.dynamic_state2_features.extendedDynamicState2;
+    vk_info->dynamic_patch_vertex_count = device_info.dynamic_state2_features.extendedDynamicState2PatchControlPoints;
 }
 
 static bool wined3d_adapter_vk_init_device_extensions(struct wined3d_adapter_vk *adapter_vk)
@@ -2367,6 +2374,7 @@ static bool wined3d_adapter_vk_init_device_extensions(struct wined3d_adapter_vk 
     info[] =
     {
         {VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,      VK_API_VERSION_1_3},
+        {VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME,    VK_API_VERSION_1_3},
         {VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME,            VK_API_VERSION_1_2},
         {VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME,       ~0u},
         {VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,          ~0u},

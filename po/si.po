@@ -19272,7 +19272,9 @@ msgid "Help topics: "
 msgstr "උදව් මාතෘකා:"
 
 #: programs/wmic/wmic.rc:28
-msgid "Error: Command line not supported\n"
+#, fuzzy
+#| msgid "Error: Command line not supported\n"
+msgid "Error: Command not supported\n"
 msgstr "දෝෂය: විධාන රේඛාව සහාය නොදක්වයි\n"
 
 #: programs/wmic/wmic.rc:29
@@ -19286,6 +19288,12 @@ msgstr "දෝෂය: අවලංගු විමසුම\n"
 #: programs/wmic/wmic.rc:31
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "දෝෂය: PATH එකේ වාග් රීති වලංගු නැහැ\n"
+
+#: programs/wmic/wmic.rc:32
+#, fuzzy
+#| msgid "Bad command.\n"
+msgid "Supply a command\n"
+msgstr "හොඳ නැති විධානය.\n"
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"
