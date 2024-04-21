@@ -650,22 +650,22 @@ static void mf_media_type_to_wg_format_audio_mpeg4(IMFMediaType *type, const GUI
     raw_aac = IsEqualGUID(subtype, &MFAudioFormat_RAW_AAC);
     if (!raw_aac)
         codec_data_size -= min(codec_data_size, sizeof(HEAACWAVEINFO) - sizeof(WAVEFORMATEX));
-    if (codec_data_size > sizeof(format->u.audio_mpeg4.codec_data))
+    if (codec_data_size > sizeof(format->u.audio.codec_data))
     {
         FIXME("Codec data needs %u bytes.\n", codec_data_size);
         return;
     }
     if (raw_aac)
-        memcpy(format->u.audio_mpeg4.codec_data, (BYTE *)(&wfx->wfInfo.wfx + 1), codec_data_size);
+        memcpy(format->u.audio.codec_data, (BYTE *)(&wfx->wfInfo.wfx + 1), codec_data_size);
     else
-        memcpy(format->u.audio_mpeg4.codec_data, wfx->pbAudioSpecificConfig, codec_data_size);
+        memcpy(format->u.audio.codec_data, wfx->pbAudioSpecificConfig, codec_data_size);
 
     format->major_type = WG_MAJOR_TYPE_AUDIO_MPEG4;
 
-    if (FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AAC_PAYLOAD_TYPE, &format->u.audio_mpeg4.payload_type)))
-        format->u.audio_mpeg4.payload_type = 0;
+    if (FAILED(IMFMediaType_GetUINT32(type, &MF_MT_AAC_PAYLOAD_TYPE, &format->u.audio.payload_type)))
+        format->u.audio.payload_type = 0;
 
-    format->u.audio_mpeg4.codec_data_len = codec_data_size;
+    format->u.audio.codec_data_len = codec_data_size;
 }
 
 static enum wg_video_format mf_video_format_to_wg(const GUID *subtype)
@@ -779,14 +779,14 @@ static void mf_media_type_to_wg_format_audio_wma(IMFMediaType *type, const GUID 
     }
 
     format->major_type = WG_MAJOR_TYPE_AUDIO_WMA;
-    format->u.audio_wma.version = version;
-    format->u.audio_wma.bitrate = bytes_per_second * 8;
-    format->u.audio_wma.rate = rate;
-    format->u.audio_wma.depth = depth;
-    format->u.audio_wma.channels = channels;
-    format->u.audio_wma.block_align = block_align;
-    format->u.audio_wma.codec_data_len = codec_data_len;
-    memcpy(format->u.audio_wma.codec_data, codec_data, codec_data_len);
+    format->u.audio.version = version;
+    format->u.audio.bitrate = bytes_per_second * 8;
+    format->u.audio.rate = rate;
+    format->u.audio.depth = depth;
+    format->u.audio.channels = channels;
+    format->u.audio.block_align = block_align;
+    format->u.audio.codec_data_len = codec_data_len;
+    memcpy(format->u.audio.codec_data, codec_data, codec_data_len);
 }
 
 static void mf_media_type_to_wg_format_video_h264(IMFMediaType *type, struct wg_format *format)

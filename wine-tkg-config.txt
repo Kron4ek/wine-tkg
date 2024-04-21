@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Apr  6 08:49:39 PM UTC 2024 :
+# Last wine-tkg-staging-fsync-git configuration - Sun Apr 21 11:55:37 AM UTC 2024 :
 
 Local cfg files used
 
-Wine (plain) version: 9.6.r0.g8a3b0d7bc31
-Using wine-staging patchset (version 9.6.r0.g506d9500)
+Wine (plain) version: 9.7.r0.g166895ae3ad
+Using wine-staging patchset (version 9.7.r0.g127b7faf)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -30,5 +30,6 @@ Applied hotfix a608ef1.mypatch
 Applied hotfix opencl-fixup.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
 Applied your own patch hags-0002.mypatch
+Applied your own patch winex11-luid.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )

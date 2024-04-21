@@ -1565,7 +1565,7 @@ static bool copy_propagation_replace_with_single_instr(struct hlsl_ctx *ctx,
             var->name, start, start + count, debug_hlsl_swizzle(swizzle, instr_component_count),
             new_instr, debug_hlsl_swizzle(ret_swizzle, instr_component_count));
 
-    if (instr->data_type->class != HLSL_CLASS_OBJECT)
+    if (new_instr->data_type->class == HLSL_CLASS_SCALAR || new_instr->data_type->class == HLSL_CLASS_VECTOR)
     {
         struct hlsl_ir_node *swizzle_node;
 
@@ -1742,7 +1742,7 @@ static void copy_propagation_record_store(struct hlsl_ctx *ctx, struct hlsl_ir_s
     {
         unsigned int writemask = store->writemask;
 
-        if (store->rhs.node->data_type->class == HLSL_CLASS_OBJECT)
+        if (!hlsl_is_numeric_type(store->rhs.node->data_type))
             writemask = VKD3DSP_WRITEMASK_0;
         copy_propagation_set_value(ctx, var_def, start, writemask, store->rhs.node, store->node.index);
     }
@@ -2954,12 +2954,11 @@ static bool lower_logic_not(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, st
     return true;
 }
 
-/* Use movc/cmp for the ternary operator. */
+/* Lower TERNARY to CMP for SM1. */
 static bool lower_ternary(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct hlsl_block *block)
 {
     struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = { 0 }, *replacement;
-    struct hlsl_ir_node *zero, *cond, *first, *second;
-    struct hlsl_constant_value zero_value = { 0 };
+    struct hlsl_ir_node *cond, *first, *second, *float_cond, *neg;
     struct hlsl_ir_expr *expr;
     struct hlsl_type *type;
 
@@ -2980,48 +2979,25 @@ static bool lower_ternary(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, stru
         return false;
     }
 
-    if (ctx->profile->major_version < 4)
-    {
-        struct hlsl_ir_node *abs, *neg;
+    assert(cond->data_type->base_type == HLSL_TYPE_BOOL);
 
-        if (!(abs = hlsl_new_unary_expr(ctx, HLSL_OP1_ABS, cond, &instr->loc)))
-            return false;
-        hlsl_block_add_instr(block, abs);
+    type = hlsl_get_numeric_type(ctx, instr->data_type->class, HLSL_TYPE_FLOAT,
+            instr->data_type->dimx, instr->data_type->dimy);
 
-        if (!(neg = hlsl_new_unary_expr(ctx, HLSL_OP1_NEG, abs, &instr->loc)))
-            return false;
-        hlsl_block_add_instr(block, neg);
+    if (!(float_cond = hlsl_new_cast(ctx, cond, type, &instr->loc)))
+        return false;
+    hlsl_block_add_instr(block, float_cond);
 
-        operands[0] = neg;
-        operands[1] = second;
-        operands[2] = first;
-        if (!(replacement = hlsl_new_expr(ctx, HLSL_OP3_CMP, operands, first->data_type, &instr->loc)))
-            return false;
-    }
-    else
-    {
-        if (cond->data_type->base_type == HLSL_TYPE_FLOAT)
-        {
-            if (!(zero = hlsl_new_constant(ctx, cond->data_type, &zero_value, &instr->loc)))
-                return false;
-            hlsl_block_add_instr(block, zero);
+    if (!(neg = hlsl_new_unary_expr(ctx, HLSL_OP1_NEG, float_cond, &instr->loc)))
+        return false;
+    hlsl_block_add_instr(block, neg);
 
-            operands[0] = zero;
-            operands[1] = cond;
-            type = cond->data_type;
-            type = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_BOOL, type->dimx, type->dimy);
-            if (!(cond = hlsl_new_expr(ctx, HLSL_OP2_NEQUAL, operands, type, &instr->loc)))
-                return false;
-            hlsl_block_add_instr(block, cond);
-        }
-
-        memset(operands, 0, sizeof(operands));
-        operands[0] = cond;
-        operands[1] = first;
-        operands[2] = second;
-        if (!(replacement = hlsl_new_expr(ctx, HLSL_OP3_MOVC, operands, first->data_type, &instr->loc)))
-            return false;
-    }
+    memset(operands, 0, sizeof(operands));
+    operands[0] = neg;
+    operands[1] = second;
+    operands[2] = first;
+    if (!(replacement = hlsl_new_expr(ctx, HLSL_OP3_CMP, operands, first->data_type, &instr->loc)))
+        return false;
 
     hlsl_block_add_instr(block, replacement);
     return true;
@@ -3319,10 +3295,20 @@ static bool lower_casts_to_bool(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr
 struct hlsl_ir_node *hlsl_add_conditional(struct hlsl_ctx *ctx, struct hlsl_block *instrs,
         struct hlsl_ir_node *condition, struct hlsl_ir_node *if_true, struct hlsl_ir_node *if_false)
 {
+    struct hlsl_type *cond_type = condition->data_type;
     struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS];
     struct hlsl_ir_node *cond;
 
     assert(hlsl_types_are_equal(if_true->data_type, if_false->data_type));
+
+    if (cond_type->base_type != HLSL_TYPE_BOOL)
+    {
+        cond_type = hlsl_get_numeric_type(ctx, cond_type->class, HLSL_TYPE_BOOL, cond_type->dimx, cond_type->dimy);
+
+        if (!(condition = hlsl_new_cast(ctx, condition, cond_type, &condition->loc)))
+            return NULL;
+        hlsl_block_add_instr(instrs, condition);
+    }
 
     operands[0] = condition;
     operands[1] = if_true;
@@ -3760,6 +3746,9 @@ static bool dce(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
         case HLSL_IR_RESOURCE_STORE:
         case HLSL_IR_SWITCH:
             break;
+        case HLSL_IR_STATEBLOCK_CONSTANT:
+            /* Stateblock constants should not appear in the shader program. */
+            vkd3d_unreachable();
     }
 
     return false;
@@ -3848,6 +3837,22 @@ static void allocate_register_reservations(struct hlsl_ctx *ctx)
     }
 }
 
+static void deref_mark_last_read(struct hlsl_deref *deref, unsigned int last_read)
+{
+    unsigned int i;
+
+    if (hlsl_deref_is_lowered(deref))
+    {
+        if (deref->rel_offset.node)
+            deref->rel_offset.node->last_read = last_read;
+    }
+    else
+    {
+        for (i = 0; i < deref->path_len; ++i)
+            deref->path[i].node->last_read = last_read;
+    }
+}
+
 /* Compute the earliest and latest liveness for each variable. In the case that
  * a variable is accessed inside of a loop, we promote its liveness to extend
  * to at least the range of the entire loop. We also do this for nodes, so that
@@ -3867,6 +3872,9 @@ static void compute_liveness_recurse(struct hlsl_block *block, unsigned int loop
         case HLSL_IR_CALL:
             /* We should have inlined all calls before computing liveness. */
             vkd3d_unreachable();
+        case HLSL_IR_STATEBLOCK_CONSTANT:
+            /* Stateblock constants should not appear in the shader program. */
+            vkd3d_unreachable();
 
         case HLSL_IR_STORE:
         {
@@ -3876,8 +3884,7 @@ static void compute_liveness_recurse(struct hlsl_block *block, unsigned int loop
             if (!var->first_write)
                 var->first_write = loop_first ? min(instr->index, loop_first) : instr->index;
             store->rhs.node->last_read = last_read;
-            if (store->lhs.rel_offset.node)
-                store->lhs.rel_offset.node->last_read = last_read;
+            deref_mark_last_read(&store->lhs, last_read);
             break;
         }
         case HLSL_IR_EXPR:
@@ -3904,8 +3911,7 @@ static void compute_liveness_recurse(struct hlsl_block *block, unsigned int loop
 
             var = load->src.var;
             var->last_read = max(var->last_read, last_read);
-            if (load->src.rel_offset.node)
-                load->src.rel_offset.node->last_read = last_read;
+            deref_mark_last_read(&load->src, last_read);
             break;
         }
         case HLSL_IR_LOOP:
@@ -3922,14 +3928,12 @@ static void compute_liveness_recurse(struct hlsl_block *block, unsigned int loop
 
             var = load->resource.var;
             var->last_read = max(var->last_read, last_read);
-            if (load->resource.rel_offset.node)
-                load->resource.rel_offset.node->last_read = last_read;
+            deref_mark_last_read(&load->resource, last_read);
 
             if ((var = load->sampler.var))
             {
                 var->last_read = max(var->last_read, last_read);
-                if (load->sampler.rel_offset.node)
-                    load->sampler.rel_offset.node->last_read = last_read;
+                deref_mark_last_read(&load->sampler, last_read);
             }
 
             if (load->coords.node)
@@ -3954,8 +3958,7 @@ static void compute_liveness_recurse(struct hlsl_block *block, unsigned int loop
 
             var = store->resource.var;
             var->last_read = max(var->last_read, last_read);
-            if (store->resource.rel_offset.node)
-                store->resource.rel_offset.node->last_read = last_read;
+            deref_mark_last_read(&store->resource, last_read);
             store->coords.node->last_read = last_read;
             store->value.node->last_read = last_read;
             break;
@@ -4790,7 +4793,9 @@ static void validate_buffer_offsets(struct hlsl_ctx *ctx)
             continue;
 
         if (var1->reg_reservation.offset_type
-                || (var1->data_type->class == HLSL_CLASS_OBJECT && var1->reg_reservation.reg_type))
+                || var1->reg_reservation.reg_type == 's'
+                || var1->reg_reservation.reg_type == 't'
+                || var1->reg_reservation.reg_type == 'u')
             buffer->manually_packed_elements = true;
         else
             buffer->automatically_packed_elements = true;
@@ -5400,11 +5405,11 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     hlsl_transform_ir(ctx, split_matrix_copies, body, NULL);
 
     lower_ir(ctx, lower_narrowing_casts, body);
-    lower_ir(ctx, lower_casts_to_bool, body);
     lower_ir(ctx, lower_int_dot, body);
     lower_ir(ctx, lower_int_division, body);
     lower_ir(ctx, lower_int_modulus, body);
     lower_ir(ctx, lower_int_abs, body);
+    lower_ir(ctx, lower_casts_to_bool, body);
     lower_ir(ctx, lower_float_modulus, body);
     hlsl_transform_ir(ctx, fold_redundant_casts, body, NULL);
     do
@@ -5420,13 +5425,6 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     remove_unreachable_code(ctx, body);
     hlsl_transform_ir(ctx, normalize_switch_cases, body, NULL);
 
-    if (profile-> major_version < 4)
-    {
-        lower_ir(ctx, lower_nonfloat_exprs, body);
-        /* Constants casted to float must be folded. */
-        hlsl_transform_ir(ctx, hlsl_fold_constant_exprs, body, NULL);
-    }
-
     lower_ir(ctx, lower_nonconstant_vector_derefs, body);
     lower_ir(ctx, lower_casts_to_bool, body);
     lower_ir(ctx, lower_int_dot, body);
@@ -5438,9 +5436,15 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     hlsl_transform_ir(ctx, track_object_components_usage, body, NULL);
     sort_synthetic_separated_samplers_first(ctx);
 
-    lower_ir(ctx, lower_ternary, body);
     if (profile->major_version < 4)
     {
+        lower_ir(ctx, lower_ternary, body);
+
+        lower_ir(ctx, lower_nonfloat_exprs, body);
+        /* Constants casted to float must be folded, and new casts to bool also need to be lowered. */
+        hlsl_transform_ir(ctx, hlsl_fold_constant_exprs, body, NULL);
+        lower_ir(ctx, lower_casts_to_bool, body);
+
         lower_ir(ctx, lower_casts_to_int, body);
         lower_ir(ctx, lower_division, body);
         lower_ir(ctx, lower_sqrt, body);
@@ -5462,6 +5466,10 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     }
 
     lower_ir(ctx, validate_nonconstant_vector_store_derefs, body);
+
+    do
+        compute_liveness(ctx, entry_func);
+    while (hlsl_transform_ir(ctx, dce, body, NULL));
 
     /* TODO: move forward, remove when no longer needed */
     transform_derefs(ctx, replace_deref_path_with_offset, body);

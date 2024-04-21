@@ -100,6 +100,7 @@ enum vkd3d_shader_error
 
     VKD3D_SHADER_WARNING_SPV_INVALID_SWIZZLE            = 2300,
     VKD3D_SHADER_WARNING_SPV_INVALID_UAV_FLAGS          = 2301,
+    VKD3D_SHADER_WARNING_SPV_IGNORING_FLAG              = 2302,
 
     VKD3D_SHADER_ERROR_RS_OUT_OF_MEMORY                 = 3000,
     VKD3D_SHADER_ERROR_RS_INVALID_VERSION               = 3001,
@@ -220,6 +221,7 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_VSIR_INVALID_INDEX               = 9015,
     VKD3D_SHADER_ERROR_VSIR_INVALID_CONTROL_FLOW        = 9016,
     VKD3D_SHADER_ERROR_VSIR_INVALID_SSA_USAGE           = 9017,
+    VKD3D_SHADER_ERROR_VSIR_INVALID_TESSELLATION        = 9018,
 
     VKD3D_SHADER_WARNING_VSIR_DYNAMIC_DESCRIPTOR_ARRAY  = 9300,
 };
@@ -641,6 +643,11 @@ static inline bool data_type_is_bool(enum vkd3d_data_type data_type)
     return data_type == VKD3D_DATA_BOOL;
 }
 
+static inline bool data_type_is_floating_point(enum vkd3d_data_type data_type)
+{
+    return data_type == VKD3D_DATA_HALF || data_type == VKD3D_DATA_FLOAT || data_type == VKD3D_DATA_DOUBLE;
+}
+
 static inline bool data_type_is_64_bit(enum vkd3d_data_type data_type)
 {
     return data_type == VKD3D_DATA_DOUBLE || data_type == VKD3D_DATA_UINT64;
@@ -763,9 +770,13 @@ enum vkd3d_shader_atomic_rmw_flags
 
 enum vkd3d_tessellator_domain
 {
+    VKD3D_TESSELLATOR_DOMAIN_INVALID   = 0,
+
     VKD3D_TESSELLATOR_DOMAIN_LINE      = 1,
     VKD3D_TESSELLATOR_DOMAIN_TRIANGLE  = 2,
     VKD3D_TESSELLATOR_DOMAIN_QUAD      = 3,
+
+    VKD3D_TESSELLATOR_DOMAIN_COUNT     = 4,
 };
 
 #define VKD3DSI_NONE                    0x0
@@ -1527,7 +1538,8 @@ int shader_extract_from_dxbc(const struct vkd3d_shader_code *dxbc,
 int shader_parse_input_signature(const struct vkd3d_shader_code *dxbc,
         struct vkd3d_shader_message_context *message_context, struct shader_signature *signature);
 
-int glsl_compile(struct vsir_program *program, struct vkd3d_shader_code *out,
+int glsl_compile(struct vsir_program *program, uint64_t config_flags,
+        const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_code *out,
         struct vkd3d_shader_message_context *message_context);
 
 #define SPIRV_MAX_SRC_COUNT 6
@@ -1759,6 +1771,31 @@ static inline unsigned int vkd3d_compact_swizzle(uint32_t swizzle, uint32_t writ
     }
 
     return compacted_swizzle;
+}
+
+static inline uint32_t vsir_swizzle_from_writemask(unsigned int writemask)
+{
+    static const unsigned int swizzles[16] =
+    {
+        0,
+        VKD3D_SHADER_SWIZZLE(X, X, X, X),
+        VKD3D_SHADER_SWIZZLE(Y, Y, Y, Y),
+        VKD3D_SHADER_SWIZZLE(X, Y, X, X),
+        VKD3D_SHADER_SWIZZLE(Z, Z, Z, Z),
+        VKD3D_SHADER_SWIZZLE(X, Z, X, X),
+        VKD3D_SHADER_SWIZZLE(Y, Z, X, X),
+        VKD3D_SHADER_SWIZZLE(X, Y, Z, X),
+        VKD3D_SHADER_SWIZZLE(W, W, W, W),
+        VKD3D_SHADER_SWIZZLE(X, W, X, X),
+        VKD3D_SHADER_SWIZZLE(Y, W, X, X),
+        VKD3D_SHADER_SWIZZLE(X, Y, W, X),
+        VKD3D_SHADER_SWIZZLE(Z, W, X, X),
+        VKD3D_SHADER_SWIZZLE(X, Z, W, X),
+        VKD3D_SHADER_SWIZZLE(Y, Z, W, X),
+        VKD3D_SHADER_SWIZZLE(X, Y, Z, W),
+    };
+
+    return swizzles[writemask & 0xf];
 }
 
 struct vkd3d_struct

@@ -43,17 +43,34 @@ WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 static void *vulkan_handle;
 static struct vulkan_funcs vulkan_funcs;
 
+static VkResult (*p_vkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *);
 static void *(*p_vkGetDeviceProcAddr)(VkDevice, const char *);
 static void *(*p_vkGetInstanceProcAddr)(VkInstance, const char *);
+
+static VkResult win32u_vkQueuePresentKHR( VkQueue queue, const VkPresentInfoKHR *present_info, HWND *surfaces )
+{
+    VkPresentInfoKHR host_present_info = *present_info;
+    VkResult res;
+    UINT i;
+
+    TRACE( "queue %p, present_info %p\n", queue, present_info );
+
+    res = p_vkQueuePresentKHR( queue, &host_present_info );
+
+    for (i = 0; i < present_info->swapchainCount; i++)
+    {
+        VkResult swapchain_res = present_info->pResults ? present_info->pResults[i] : res;
+        vulkan_funcs.p_vulkan_surface_presented( surfaces[i], swapchain_res );
+    }
+
+    return res;
+}
 
 static void *win32u_vkGetDeviceProcAddr( VkDevice device, const char *name )
 {
     TRACE( "device %p, name %s\n", device, debugstr_a(name) );
 
-    if (!strcmp( name, "vkCreateSwapchainKHR" )) return vulkan_funcs.p_vkCreateSwapchainKHR;
-    if (!strcmp( name, "vkDestroySwapchainKHR" )) return vulkan_funcs.p_vkDestroySwapchainKHR;
     if (!strcmp( name, "vkGetDeviceProcAddr" )) return win32u_vkGetDeviceProcAddr;
-    if (!strcmp( name, "vkGetSwapchainImagesKHR" )) return vulkan_funcs.p_vkGetSwapchainImagesKHR;
     if (!strcmp( name, "vkQueuePresentKHR" )) return vulkan_funcs.p_vkQueuePresentKHR;
 
     return p_vkGetDeviceProcAddr( device, name );
@@ -71,10 +88,7 @@ static void *win32u_vkGetInstanceProcAddr( VkInstance instance, const char *name
     if (!strcmp( name, "vkGetPhysicalDeviceWin32PresentationSupportKHR" )) return vulkan_funcs.p_vkGetPhysicalDeviceWin32PresentationSupportKHR;
 
     /* vkGetInstanceProcAddr also loads any children of instance, so device functions as well. */
-    if (!strcmp( name, "vkCreateSwapchainKHR" )) return vulkan_funcs.p_vkCreateSwapchainKHR;
-    if (!strcmp( name, "vkDestroySwapchainKHR" )) return vulkan_funcs.p_vkDestroySwapchainKHR;
     if (!strcmp( name, "vkGetDeviceProcAddr" )) return win32u_vkGetDeviceProcAddr;
-    if (!strcmp( name, "vkGetSwapchainImagesKHR" )) return vulkan_funcs.p_vkGetSwapchainImagesKHR;
     if (!strcmp( name, "vkQueuePresentKHR" )) return vulkan_funcs.p_vkQueuePresentKHR;
 
     return p_vkGetInstanceProcAddr( instance, name );
@@ -110,10 +124,12 @@ static void vulkan_init(void)
 
     LOAD_FUNCPTR( vkGetDeviceProcAddr );
     LOAD_FUNCPTR( vkGetInstanceProcAddr );
+    LOAD_FUNCPTR( vkQueuePresentKHR );
 #undef LOAD_FUNCPTR
 
     vulkan_funcs.p_vkGetDeviceProcAddr = win32u_vkGetDeviceProcAddr;
     vulkan_funcs.p_vkGetInstanceProcAddr = win32u_vkGetInstanceProcAddr;
+    vulkan_funcs.p_vkQueuePresentKHR = win32u_vkQueuePresentKHR;
 }
 
 /***********************************************************************

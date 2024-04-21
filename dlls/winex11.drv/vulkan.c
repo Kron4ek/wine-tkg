@@ -47,7 +47,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 
 #ifdef SONAME_LIBVULKAN
-WINE_DECLARE_DEBUG_CHANNEL(fps);
 
 static pthread_mutex_t vulkan_mutex;
 
@@ -74,13 +73,9 @@ typedef struct VkXlibSurfaceCreateInfoKHR
     Window window;
 } VkXlibSurfaceCreateInfoKHR;
 
-static VkResult (*pvkCreateSwapchainKHR)(VkDevice, const VkSwapchainCreateInfoKHR *, const VkAllocationCallbacks *, VkSwapchainKHR *);
 static VkResult (*pvkCreateXlibSurfaceKHR)(VkInstance, const VkXlibSurfaceCreateInfoKHR *, const VkAllocationCallbacks *, VkSurfaceKHR *);
 static void (*pvkDestroySurfaceKHR)(VkInstance, VkSurfaceKHR, const VkAllocationCallbacks *);
-static void (*pvkDestroySwapchainKHR)(VkDevice, VkSwapchainKHR, const VkAllocationCallbacks *);
 static VkBool32 (*pvkGetPhysicalDeviceXlibPresentationSupportKHR)(VkPhysicalDevice, uint32_t, Display *, VisualID);
-static VkResult (*pvkGetSwapchainImagesKHR)(VkDevice, VkSwapchainKHR, uint32_t *, VkImage *);
-static VkResult (*pvkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *);
 
 static const struct vulkan_funcs vulkan_funcs;
 
@@ -135,26 +130,6 @@ void vulkan_thread_detach(void)
         XSync(gdi_display, False);
     }
     pthread_mutex_unlock(&vulkan_mutex);
-}
-
-static VkResult X11DRV_vkCreateSwapchainKHR(VkDevice device,
-        const VkSwapchainCreateInfoKHR *create_info,
-        const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain)
-{
-    struct wine_vk_surface *x11_surface = surface_from_handle(create_info->surface);
-    VkSwapchainCreateInfoKHR create_info_host;
-    TRACE("%p %p %p %p\n", device, create_info, allocator, swapchain);
-
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
-
-    if (!x11_surface->hwnd)
-        return VK_ERROR_SURFACE_LOST_KHR;
-
-    create_info_host = *create_info;
-    create_info_host.surface = x11_surface->host_surface;
-
-    return pvkCreateSwapchainKHR(device, &create_info_host, NULL /* allocator */, swapchain);
 }
 
 static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
@@ -234,17 +209,6 @@ static void X11DRV_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface
     wine_vk_surface_release(x11_surface);
 }
 
-static void X11DRV_vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
-         const VkAllocationCallbacks *allocator)
-{
-    TRACE("%p, 0x%s %p\n", device, wine_dbgstr_longlong(swapchain), allocator);
-
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
-
-    pvkDestroySwapchainKHR(device, swapchain, NULL /* allocator */);
-}
-
 static VkBool32 X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice phys_dev,
         uint32_t index)
 {
@@ -252,45 +216,6 @@ static VkBool32 X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysical
 
     return pvkGetPhysicalDeviceXlibPresentationSupportKHR(phys_dev, index, gdi_display,
             default_visual.visual->visualid);
-}
-
-static VkResult X11DRV_vkGetSwapchainImagesKHR(VkDevice device,
-        VkSwapchainKHR swapchain, uint32_t *count, VkImage *images)
-{
-    TRACE("%p, 0x%s %p %p\n", device, wine_dbgstr_longlong(swapchain), count, images);
-    return pvkGetSwapchainImagesKHR(device, swapchain, count, images);
-}
-
-static VkResult X11DRV_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *present_info)
-{
-    VkResult res;
-
-    TRACE("%p, %p\n", queue, present_info);
-
-    res = pvkQueuePresentKHR(queue, present_info);
-
-    if (TRACE_ON(fps))
-    {
-        static unsigned long frames, frames_total;
-        static long prev_time, start_time;
-        DWORD time;
-
-        time = NtGetTickCount();
-        frames++;
-        frames_total++;
-        if (time - prev_time > 1500)
-        {
-            TRACE_(fps)("%p @ approx %.2ffps, total %.2ffps\n",
-                    queue, 1000.0 * frames / (time - prev_time),
-                    1000.0 * frames_total / (time - start_time));
-            prev_time = time;
-            frames = 0;
-            if (!start_time)
-                start_time = time;
-        }
-    }
-
-    return res;
 }
 
 static const char *X11DRV_get_host_surface_extension(void)
@@ -307,20 +232,22 @@ static VkSurfaceKHR X11DRV_wine_get_host_surface( VkSurfaceKHR surface )
     return x11_surface->host_surface;
 }
 
+static void X11DRV_vulkan_surface_presented(HWND hwnd, VkResult result)
+{
+}
+
 static const struct vulkan_funcs vulkan_funcs =
 {
-    X11DRV_vkCreateSwapchainKHR,
     X11DRV_vkCreateWin32SurfaceKHR,
     X11DRV_vkDestroySurfaceKHR,
-    X11DRV_vkDestroySwapchainKHR,
     NULL,
     NULL,
     X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR,
-    X11DRV_vkGetSwapchainImagesKHR,
-    X11DRV_vkQueuePresentKHR,
+    NULL,
 
     X11DRV_get_host_surface_extension,
     X11DRV_wine_get_host_surface,
+    X11DRV_vulkan_surface_presented,
 };
 
 UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *driver_funcs )
@@ -334,13 +261,9 @@ UINT X11DRV_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *
     init_recursive_mutex( &vulkan_mutex );
 
 #define LOAD_FUNCPTR( f ) if (!(p##f = dlsym( vulkan_handle, #f ))) return STATUS_PROCEDURE_NOT_FOUND;
-    LOAD_FUNCPTR( vkCreateSwapchainKHR );
     LOAD_FUNCPTR( vkCreateXlibSurfaceKHR );
     LOAD_FUNCPTR( vkDestroySurfaceKHR );
-    LOAD_FUNCPTR( vkDestroySwapchainKHR );
     LOAD_FUNCPTR( vkGetPhysicalDeviceXlibPresentationSupportKHR );
-    LOAD_FUNCPTR( vkGetSwapchainImagesKHR );
-    LOAD_FUNCPTR( vkQueuePresentKHR );
 #undef LOAD_FUNCPTR
 
     *driver_funcs = vulkan_funcs;

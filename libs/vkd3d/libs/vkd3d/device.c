@@ -89,6 +89,7 @@ static const struct vkd3d_optional_extension_info optional_device_extensions[] =
     VK_EXTENSION(KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE, KHR_sampler_mirror_clamp_to_edge),
     VK_EXTENSION(KHR_TIMELINE_SEMAPHORE, KHR_timeline_semaphore),
     /* EXT extensions */
+    VK_EXTENSION(EXT_4444_FORMATS, EXT_4444_formats),
     VK_EXTENSION(EXT_CALIBRATED_TIMESTAMPS, EXT_calibrated_timestamps),
     VK_EXTENSION(EXT_CONDITIONAL_RENDERING, EXT_conditional_rendering),
     VK_EXTENSION(EXT_DEBUG_MARKER, EXT_debug_marker),
@@ -558,12 +559,14 @@ static HRESULT vkd3d_instance_init(struct vkd3d_instance *instance,
     const struct vkd3d_optional_instance_extensions_info *optional_extensions;
     const struct vkd3d_application_info *vkd3d_application_info;
     const struct vkd3d_host_time_domain_info *time_domain_info;
+    PFN_vkEnumerateInstanceVersion vkEnumerateInstanceVersion;
     bool *user_extension_supported = NULL;
     VkApplicationInfo application_info;
     VkInstanceCreateInfo instance_info;
     char application_name[PATH_MAX];
     uint32_t extension_count;
     const char **extensions;
+    uint32_t vk_api_version;
     VkInstance vk_instance;
     VkResult vr;
     HRESULT hr;
@@ -615,6 +618,16 @@ static HRESULT vkd3d_instance_init(struct vkd3d_instance *instance,
     application_info.engineVersion = vkd3d_get_vk_version();
     application_info.apiVersion = VK_API_VERSION_1_0;
     instance->api_version = VKD3D_API_VERSION_1_0;
+
+    /* vkEnumerateInstanceVersion was added in Vulkan 1.1, and its absence indicates only 1.0 is supported. */
+    vkEnumerateInstanceVersion = (void *)vk_global_procs->vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceVersion");
+    if (vkEnumerateInstanceVersion && vkEnumerateInstanceVersion(&vk_api_version) >= 0
+            && vk_api_version >= VK_API_VERSION_1_1)
+    {
+        TRACE("Vulkan API version 1.1 is available; requesting it.\n");
+        application_info.apiVersion = VK_API_VERSION_1_1;
+    }
+    instance->vk_api_version = application_info.apiVersion;
 
     if ((vkd3d_application_info = vkd3d_find_struct(create_info->next, APPLICATION_INFO)))
     {
@@ -798,6 +811,7 @@ struct vkd3d_physical_device_info
     VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT vertex_divisor_features;
     VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline_semaphore_features;
     VkPhysicalDeviceMutableDescriptorTypeFeaturesEXT mutable_features;
+    VkPhysicalDevice4444FormatsFeaturesEXT formats4444_features;
 
     VkPhysicalDeviceFeatures2 features2;
 };
@@ -821,6 +835,7 @@ static void vkd3d_physical_device_info_init(struct vkd3d_physical_device_info *i
     VkPhysicalDeviceMaintenance3Properties *maintenance3_properties;
     VkPhysicalDeviceTransformFeedbackPropertiesEXT *xfb_properties;
     VkPhysicalDevice physical_device = device->vk_physical_device;
+    VkPhysicalDevice4444FormatsFeaturesEXT *formats4444_features;
     VkPhysicalDeviceTransformFeedbackFeaturesEXT *xfb_features;
     struct vkd3d_vulkan_info *vulkan_info = &device->vk_info;
 
@@ -839,6 +854,7 @@ static void vkd3d_physical_device_info_init(struct vkd3d_physical_device_info *i
     vertex_divisor_properties = &info->vertex_divisor_properties;
     timeline_semaphore_features = &info->timeline_semaphore_features;
     mutable_features = &info->mutable_features;
+    formats4444_features = &info->formats4444_features;
     xfb_features = &info->xfb_features;
     xfb_properties = &info->xfb_properties;
 
@@ -866,6 +882,8 @@ static void vkd3d_physical_device_info_init(struct vkd3d_physical_device_info *i
     vk_prepend_struct(&info->features2, timeline_semaphore_features);
     mutable_features->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MUTABLE_DESCRIPTOR_TYPE_FEATURES_EXT;
     vk_prepend_struct(&info->features2, mutable_features);
+    formats4444_features->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_4444_FORMATS_FEATURES_EXT;
+    vk_prepend_struct(&info->features2, formats4444_features);
 
     if (vulkan_info->KHR_get_physical_device_properties2)
         VK_CALL(vkGetPhysicalDeviceFeatures2KHR(physical_device, &info->features2));
@@ -1654,6 +1672,8 @@ static HRESULT vkd3d_init_device_caps(struct d3d12_device *device,
         vulkan_info->EXT_mutable_descriptor_type = false;
     if (!physical_device_info->timeline_semaphore_features.timelineSemaphore)
         vulkan_info->KHR_timeline_semaphore = false;
+
+    physical_device_info->formats4444_features.formatA4B4G4R4 = VK_FALSE;
 
     vulkan_info->texel_buffer_alignment_properties = physical_device_info->texel_buffer_alignment_properties;
 
@@ -2529,10 +2549,16 @@ struct d3d12_cache_session
     ID3D12ShaderCacheSession ID3D12ShaderCacheSession_iface;
     unsigned int refcount;
 
+    struct list cache_list_entry;
+
     struct d3d12_device *device;
     struct vkd3d_private_store private_store;
     D3D12_SHADER_CACHE_SESSION_DESC desc;
+    struct vkd3d_shader_cache *cache;
 };
+
+static struct vkd3d_mutex cache_list_mutex = VKD3D_MUTEX_INITIALIZER;
+static struct list cache_list = LIST_INIT(cache_list);
 
 static inline struct d3d12_cache_session *impl_from_ID3D12ShaderCacheSession(ID3D12ShaderCacheSession *iface)
 {
@@ -2582,6 +2608,11 @@ static void d3d12_cache_session_destroy(struct d3d12_cache_session *session)
 
     TRACE("Destroying cache session %p.\n", session);
 
+    vkd3d_mutex_lock(&cache_list_mutex);
+    list_remove(&session->cache_list_entry);
+    vkd3d_mutex_unlock(&cache_list_mutex);
+
+    vkd3d_shader_cache_decref(session->cache);
     vkd3d_private_store_destroy(&session->private_store);
     vkd3d_free(session);
 
@@ -2707,11 +2738,14 @@ static const struct ID3D12ShaderCacheSessionVtbl d3d12_cache_session_vtbl =
 static HRESULT d3d12_cache_session_init(struct d3d12_cache_session *session,
         struct d3d12_device *device, const D3D12_SHADER_CACHE_SESSION_DESC *desc)
 {
+    struct d3d12_cache_session *i;
+    enum vkd3d_result ret;
     HRESULT hr;
 
     session->ID3D12ShaderCacheSession_iface.lpVtbl = &d3d12_cache_session_vtbl;
     session->refcount = 1;
     session->desc = *desc;
+    session->cache = NULL;
 
     if (!session->desc.MaximumValueFileSizeBytes)
         session->desc.MaximumValueFileSizeBytes = 128 * 1024 * 1024;
@@ -2723,9 +2757,56 @@ static HRESULT d3d12_cache_session_init(struct d3d12_cache_session *session,
     if (FAILED(hr = vkd3d_private_store_init(&session->private_store)))
         return hr;
 
+    vkd3d_mutex_lock(&cache_list_mutex);
+
+    /* We expect the number of open caches to be small. */
+    LIST_FOR_EACH_ENTRY(i, &cache_list, struct d3d12_cache_session, cache_list_entry)
+    {
+        if (!memcmp(&i->desc.Identifier, &desc->Identifier, sizeof(desc->Identifier)))
+        {
+            TRACE("Found an existing cache %p from session %p.\n", i->cache, i);
+            if (desc->Version == i->desc.Version)
+            {
+                session->desc = i->desc;
+                vkd3d_shader_cache_incref(session->cache = i->cache);
+                break;
+            }
+            else
+            {
+                WARN("version mismatch: Existing %"PRIu64" new %"PRIu64".\n",
+                        i->desc.Version, desc->Version);
+                hr = DXGI_ERROR_ALREADY_EXISTS;
+                goto error;
+            }
+        }
+    }
+
+    if (!session->cache)
+    {
+        if (session->desc.Mode == D3D12_SHADER_CACHE_MODE_DISK)
+            FIXME("Disk caches are not yet implemented.\n");
+
+        ret = vkd3d_shader_open_cache(&session->cache);
+        if (ret)
+        {
+            WARN("Failed to open shader cache.\n");
+            hr = hresult_from_vkd3d_result(ret);
+            goto error;
+        }
+    }
+
+    /* Add it to the list even if we reused an existing cache. The other session might be destroyed,
+     * but the cache stays alive and can be opened a third time. */
+    list_add_tail(&cache_list, &session->cache_list_entry);
     d3d12_device_add_ref(session->device = device);
 
+    vkd3d_mutex_unlock(&cache_list_mutex);
     return S_OK;
+
+error:
+    vkd3d_private_store_destroy(&session->private_store);
+    vkd3d_mutex_unlock(&cache_list_mutex);
+    return hr;
 }
 
 /* ID3D12Device */
@@ -4874,6 +4955,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_CreateShaderCacheSession(ID3D12Dev
         WARN("No output pointer, returning S_FALSE.\n");
         return S_FALSE;
     }
+    *session = NULL;
 
     if (!(object = vkd3d_malloc(sizeof(*object))))
         return E_OUTOFMEMORY;
@@ -5055,6 +5137,8 @@ static HRESULT d3d12_device_init(struct d3d12_device *device,
     device->vk_info = instance->vk_info;
     device->signal_event = instance->signal_event;
     device->wchar_size = instance->wchar_size;
+    device->environment = (instance->vk_api_version >= VK_API_VERSION_1_1)
+            ? VKD3D_SHADER_SPIRV_ENVIRONMENT_VULKAN_1_1 : VKD3D_SHADER_SPIRV_ENVIRONMENT_VULKAN_1_0;
 
     device->adapter_luid = create_info->adapter_luid;
     device->removed_reason = S_OK;

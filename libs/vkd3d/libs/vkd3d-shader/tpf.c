@@ -3385,10 +3385,10 @@ static void write_sm4_rdef(struct hlsl_ctx *ctx, struct dxbc_writer *dxbc)
 
     if (profile->major_version >= 5)
     {
-        put_u32(&buffer, TAG_RD11);
+        put_u32(&buffer, hlsl_version_ge(ctx, 5, 1) ? TAG_RD11_REVERSE : TAG_RD11);
         put_u32(&buffer, 15 * sizeof(uint32_t)); /* size of RDEF header including this header */
         put_u32(&buffer, 6 * sizeof(uint32_t)); /* size of buffer desc */
-        put_u32(&buffer, 8 * sizeof(uint32_t)); /* size of binding desc */
+        put_u32(&buffer, (hlsl_version_ge(ctx, 5, 1) ? 10 : 8) * sizeof(uint32_t)); /* size of binding desc */
         put_u32(&buffer, 10 * sizeof(uint32_t)); /* size of variable desc */
         put_u32(&buffer, 9 * sizeof(uint32_t)); /* size of type desc */
         put_u32(&buffer, 3 * sizeof(uint32_t)); /* size of member desc */
@@ -3404,6 +3404,9 @@ static void write_sm4_rdef(struct hlsl_ctx *ctx, struct dxbc_writer *dxbc)
     {
         const struct extern_resource *resource = &extern_resources[i];
         uint32_t flags = 0;
+
+        if (hlsl_version_ge(ctx, 5, 1))
+            hlsl_fixme(ctx, &resource->var->loc, "Shader model 5.1 resource reflection.");
 
         if (resource->is_user_packed)
             flags |= D3D_SIF_USERPACKED;
@@ -3436,6 +3439,9 @@ static void write_sm4_rdef(struct hlsl_ctx *ctx, struct dxbc_writer *dxbc)
 
         if (!cbuffer->reg.allocated)
             continue;
+
+        if (hlsl_version_ge(ctx, 5, 1))
+            hlsl_fixme(ctx, &cbuffer->loc, "Shader model 5.1 resource reflection.");
 
         if (cbuffer->reservation.reg_type)
             flags |= D3D_SIF_USERPACKED;
@@ -5343,7 +5349,7 @@ static void write_sm4_expr(const struct tpf_writer *tpf, const struct hlsl_ir_ex
                     &expr->node, arg1, arg2);
             break;
 
-        case HLSL_OP3_MOVC:
+        case HLSL_OP3_TERNARY:
             write_sm4_ternary_op(tpf, VKD3D_SM4_OP_MOVC, &expr->node, arg1, arg2, arg3);
             break;
 
@@ -5399,7 +5405,8 @@ static void write_sm4_jump(const struct tpf_writer *tpf, const struct hlsl_ir_ju
 
         case HLSL_IR_JUMP_DISCARD_NZ:
         {
-            instr.opcode = VKD3D_SM4_OP_DISCARD | VKD3D_SM4_CONDITIONAL_NZ;
+            instr.opcode = VKD3D_SM4_OP_DISCARD;
+            instr.extra_bits = VKD3D_SM4_CONDITIONAL_NZ;
 
             memset(&instr.srcs[0], 0, sizeof(*instr.srcs));
             instr.src_count = 1;
@@ -5700,18 +5707,12 @@ static void write_sm4_block(const struct tpf_writer *tpf, const struct hlsl_bloc
     {
         if (instr->data_type)
         {
-            if (instr->data_type->class == HLSL_CLASS_MATRIX)
+            if (instr->data_type->class != HLSL_CLASS_SCALAR && instr->data_type->class != HLSL_CLASS_VECTOR)
             {
-                hlsl_fixme(tpf->ctx, &instr->loc, "Matrix operations need to be lowered.");
+                hlsl_fixme(tpf->ctx, &instr->loc, "Class %#x should have been lowered or removed.",
+                        instr->data_type->class);
                 break;
             }
-            else if (instr->data_type->class == HLSL_CLASS_OBJECT)
-            {
-                hlsl_fixme(tpf->ctx, &instr->loc, "Object copy.");
-                break;
-            }
-
-            assert(instr->data_type->class == HLSL_CLASS_SCALAR || instr->data_type->class == HLSL_CLASS_VECTOR);
 
             if (!instr->reg.allocated)
             {
@@ -5808,12 +5809,20 @@ static void write_sm4_shdr(struct hlsl_ctx *ctx,
     LIST_FOR_EACH_ENTRY(cbuffer, &ctx->buffers, struct hlsl_buffer, entry)
     {
         if (cbuffer->reg.allocated)
+        {
+            if (hlsl_version_ge(ctx, 5, 1))
+                hlsl_fixme(ctx, &cbuffer->loc, "Shader model 5.1 resource definition.");
+
             write_sm4_dcl_constant_buffer(&tpf, cbuffer);
+        }
     }
 
     for (i = 0; i < extern_resources_count; ++i)
     {
         const struct extern_resource *resource = &extern_resources[i];
+
+        if (hlsl_version_ge(ctx, 5, 1))
+            hlsl_fixme(ctx, &resource->var->loc, "Shader model 5.1 resource declaration.");
 
         if (resource->regset == HLSL_REGSET_SAMPLERS)
             write_sm4_dcl_samplers(&tpf, resource);

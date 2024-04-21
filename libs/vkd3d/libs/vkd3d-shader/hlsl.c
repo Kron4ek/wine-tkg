@@ -134,14 +134,39 @@ struct hlsl_ir_var *hlsl_get_var(struct hlsl_scope *scope, const char *name)
     return hlsl_get_var(scope->upper, name);
 }
 
-void hlsl_free_var(struct hlsl_ir_var *decl)
+static void free_state_block_entry(struct hlsl_state_block_entry *entry)
+{
+    vkd3d_free(entry->name);
+    vkd3d_free(entry->args);
+    hlsl_block_cleanup(entry->instrs);
+    vkd3d_free(entry->instrs);
+    vkd3d_free(entry);
+}
+
+void hlsl_free_state_block(struct hlsl_state_block *state_block)
 {
     unsigned int k;
+
+    assert(state_block);
+    for (k = 0; k < state_block->count; ++k)
+        free_state_block_entry(state_block->entries[k]);
+    vkd3d_free(state_block->entries);
+    vkd3d_free(state_block);
+}
+
+void hlsl_free_var(struct hlsl_ir_var *decl)
+{
+    unsigned int k, i;
 
     vkd3d_free((void *)decl->name);
     hlsl_cleanup_semantic(&decl->semantic);
     for (k = 0; k <= HLSL_REGSET_LAST_OBJECT; ++k)
         vkd3d_free((void *)decl->objects_usage[k]);
+
+    for (i = 0; i < decl->state_block_count; ++i)
+        hlsl_free_state_block(decl->state_blocks[i]);
+    vkd3d_free(decl->state_blocks);
+
     vkd3d_free(decl);
 }
 
@@ -1561,6 +1586,27 @@ struct hlsl_ir_node *hlsl_new_swizzle(struct hlsl_ctx *ctx, uint32_t s, unsigned
     return &swizzle->node;
 }
 
+struct hlsl_ir_node *hlsl_new_stateblock_constant(struct hlsl_ctx *ctx, const char *name,
+        struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_stateblock_constant *constant;
+    struct hlsl_type *type = hlsl_get_scalar_type(ctx, HLSL_TYPE_INT);
+
+    if (!(constant = hlsl_alloc(ctx, sizeof(*constant))))
+        return NULL;
+
+    init_node(&constant->node, HLSL_IR_STATEBLOCK_CONSTANT, type, loc);
+
+    if (!(constant->name = hlsl_alloc(ctx, strlen(name) + 1)))
+    {
+        vkd3d_free(constant);
+        return NULL;
+    }
+    strcpy(constant->name, name);
+
+    return &constant->node;
+}
+
 bool hlsl_index_is_noncontiguous(struct hlsl_ir_index *index)
 {
     struct hlsl_type *type = index->val.node->data_type;
@@ -1570,7 +1616,10 @@ bool hlsl_index_is_noncontiguous(struct hlsl_ir_index *index)
 
 bool hlsl_index_is_resource_access(struct hlsl_ir_index *index)
 {
-    return index->val.node->data_type->class == HLSL_CLASS_OBJECT;
+    const struct hlsl_type *type = index->val.node->data_type;
+
+    return type->class == HLSL_CLASS_OBJECT
+            && (type->base_type == HLSL_TYPE_TEXTURE || type->base_type == HLSL_TYPE_UAV);
 }
 
 bool hlsl_index_chain_has_resource_access(struct hlsl_ir_index *index)
@@ -1881,6 +1930,12 @@ static struct hlsl_ir_node *clone_index(struct hlsl_ctx *ctx, struct clone_instr
     return dst;
 }
 
+static struct hlsl_ir_node *clone_stateblock_constant(struct hlsl_ctx *ctx,
+        struct clone_instr_map *map, struct hlsl_ir_stateblock_constant *constant)
+{
+    return hlsl_new_stateblock_constant(ctx, constant->name, &constant->node.loc);
+}
+
 void hlsl_free_ir_switch_case(struct hlsl_ir_switch_case *c)
 {
     hlsl_block_cleanup(&c->body);
@@ -1976,6 +2031,9 @@ static struct hlsl_ir_node *clone_instr(struct hlsl_ctx *ctx,
 
         case HLSL_IR_SWIZZLE:
             return clone_swizzle(ctx, map, hlsl_ir_swizzle(instr));
+
+        case HLSL_IR_STATEBLOCK_CONSTANT:
+            return clone_stateblock_constant(ctx, map, hlsl_ir_stateblock_constant(instr));
     }
 
     vkd3d_unreachable();
@@ -2631,7 +2689,6 @@ const char *debug_hlsl_expr_op(enum hlsl_ir_expr_op op)
 
         [HLSL_OP3_CMP]         = "cmp",
         [HLSL_OP3_DP2ADD]      = "dp2add",
-        [HLSL_OP3_MOVC]        = "movc",
         [HLSL_OP3_TERNARY]     = "ternary",
     };
 
@@ -2808,6 +2865,12 @@ static void dump_ir_index(struct vkd3d_string_buffer *buffer, const struct hlsl_
     vkd3d_string_buffer_printf(buffer, "]");
 }
 
+static void dump_ir_stateblock_constant(struct vkd3d_string_buffer *buffer,
+        const struct hlsl_ir_stateblock_constant *constant)
+{
+    vkd3d_string_buffer_printf(buffer, "%s", constant->name);
+}
+
 static void dump_ir_switch(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer, const struct hlsl_ir_switch *s)
 {
     struct hlsl_ir_switch_case *c;
@@ -2895,6 +2958,10 @@ static void dump_instr(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer,
 
         case HLSL_IR_SWIZZLE:
             dump_ir_swizzle(buffer, hlsl_ir_swizzle(instr));
+            break;
+
+        case HLSL_IR_STATEBLOCK_CONSTANT:
+            dump_ir_stateblock_constant(buffer, hlsl_ir_stateblock_constant(instr));
             break;
     }
 }
@@ -3068,6 +3135,12 @@ static void free_ir_index(struct hlsl_ir_index *index)
     vkd3d_free(index);
 }
 
+static void free_ir_stateblock_constant(struct hlsl_ir_stateblock_constant *constant)
+{
+    vkd3d_free(constant->name);
+    vkd3d_free(constant);
+}
+
 void hlsl_free_instr(struct hlsl_ir_node *node)
 {
     assert(list_empty(&node->uses));
@@ -3124,6 +3197,10 @@ void hlsl_free_instr(struct hlsl_ir_node *node)
 
         case HLSL_IR_SWITCH:
             free_ir_switch(hlsl_ir_switch(node));
+            break;
+
+        case HLSL_IR_STATEBLOCK_CONSTANT:
+            free_ir_stateblock_constant(hlsl_ir_stateblock_constant(node));
             break;
     }
 }
@@ -3290,7 +3367,9 @@ const struct hlsl_profile_info *hlsl_get_target_info(const char *target)
         {"cs_4_0",              VKD3D_SHADER_TYPE_COMPUTE,  4, 0, 0, 0, false},
         {"cs_4_1",              VKD3D_SHADER_TYPE_COMPUTE,  4, 1, 0, 0, false},
         {"cs_5_0",              VKD3D_SHADER_TYPE_COMPUTE,  5, 0, 0, 0, false},
+        {"cs_5_1",              VKD3D_SHADER_TYPE_COMPUTE,  5, 1, 0, 0, false},
         {"ds_5_0",              VKD3D_SHADER_TYPE_DOMAIN,   5, 0, 0, 0, false},
+        {"ds_5_1",              VKD3D_SHADER_TYPE_DOMAIN,   5, 1, 0, 0, false},
         {"fx_2_0",              VKD3D_SHADER_TYPE_EFFECT,   2, 0, 0, 0, false},
         {"fx_4_0",              VKD3D_SHADER_TYPE_EFFECT,   4, 0, 0, 0, false},
         {"fx_4_1",              VKD3D_SHADER_TYPE_EFFECT,   4, 1, 0, 0, false},
@@ -3298,7 +3377,9 @@ const struct hlsl_profile_info *hlsl_get_target_info(const char *target)
         {"gs_4_0",              VKD3D_SHADER_TYPE_GEOMETRY, 4, 0, 0, 0, false},
         {"gs_4_1",              VKD3D_SHADER_TYPE_GEOMETRY, 4, 1, 0, 0, false},
         {"gs_5_0",              VKD3D_SHADER_TYPE_GEOMETRY, 5, 0, 0, 0, false},
+        {"gs_5_1",              VKD3D_SHADER_TYPE_GEOMETRY, 5, 1, 0, 0, false},
         {"hs_5_0",              VKD3D_SHADER_TYPE_HULL,     5, 0, 0, 0, false},
+        {"hs_5_1",              VKD3D_SHADER_TYPE_HULL,     5, 1, 0, 0, false},
         {"ps.1.0",              VKD3D_SHADER_TYPE_PIXEL,    1, 0, 0, 0, false},
         {"ps.1.1",              VKD3D_SHADER_TYPE_PIXEL,    1, 1, 0, 0, false},
         {"ps.1.2",              VKD3D_SHADER_TYPE_PIXEL,    1, 2, 0, 0, false},
@@ -3326,6 +3407,7 @@ const struct hlsl_profile_info *hlsl_get_target_info(const char *target)
         {"ps_4_0_level_9_3",    VKD3D_SHADER_TYPE_PIXEL,    4, 0, 9, 3, false},
         {"ps_4_1",              VKD3D_SHADER_TYPE_PIXEL,    4, 1, 0, 0, false},
         {"ps_5_0",              VKD3D_SHADER_TYPE_PIXEL,    5, 0, 0, 0, false},
+        {"ps_5_1",              VKD3D_SHADER_TYPE_PIXEL,    5, 1, 0, 0, false},
         {"tx_1_0",              VKD3D_SHADER_TYPE_TEXTURE,  1, 0, 0, 0, false},
         {"vs.1.0",              VKD3D_SHADER_TYPE_VERTEX,   1, 0, 0, 0, false},
         {"vs.1.1",              VKD3D_SHADER_TYPE_VERTEX,   1, 1, 0, 0, false},
@@ -3347,6 +3429,7 @@ const struct hlsl_profile_info *hlsl_get_target_info(const char *target)
         {"vs_4_0_level_9_3",    VKD3D_SHADER_TYPE_VERTEX,   4, 0, 9, 3, false},
         {"vs_4_1",              VKD3D_SHADER_TYPE_VERTEX,   4, 1, 0, 0, false},
         {"vs_5_0",              VKD3D_SHADER_TYPE_VERTEX,   5, 0, 0, 0, false},
+        {"vs_5_1",              VKD3D_SHADER_TYPE_VERTEX,   5, 1, 0, 0, false},
     };
 
     for (i = 0; i < ARRAY_SIZE(profiles); ++i)
@@ -3650,6 +3733,21 @@ static void hlsl_ctx_cleanup(struct hlsl_ctx *ctx)
     vkd3d_string_buffer_cache_cleanup(&ctx->string_buffers);
 
     rb_destroy(&ctx->functions, free_function_rb, NULL);
+
+    /* State blocks must be free before the variables, because they contain instructions that may
+     * refer to them. */
+    LIST_FOR_EACH_ENTRY_SAFE(scope, next_scope, &ctx->scopes, struct hlsl_scope, entry)
+    {
+        LIST_FOR_EACH_ENTRY_SAFE(var, next_var, &scope->vars, struct hlsl_ir_var, scope_entry)
+        {
+            for (i = 0; i < var->state_block_count; ++i)
+                hlsl_free_state_block(var->state_blocks[i]);
+            vkd3d_free(var->state_blocks);
+            var->state_blocks = NULL;
+            var->state_block_count = 0;
+            var->state_block_capacity = 0;
+        }
+    }
 
     LIST_FOR_EACH_ENTRY_SAFE(scope, next_scope, &ctx->scopes, struct hlsl_scope, entry)
     {

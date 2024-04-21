@@ -649,7 +649,7 @@ done:
     basic_info.LastAccessTime = info.LastAccessTime;
     basic_info.LastWriteTime = info.LastWriteTime;
     basic_info.ChangeTime = info.ChangeTime;
-    basic_info.FileAttributes &= FILE_ATTRIBUTE_READONLY;
+    basic_info.FileAttributes = info.FileAttributes & FILE_ATTRIBUTE_READONLY;
     NtSetInformationFile( h2, &io, &basic_info, sizeof(basic_info), FileBasicInformation );
     HeapFree( GetProcessHeap(), 0, buffer );
     CloseHandle( h1 );

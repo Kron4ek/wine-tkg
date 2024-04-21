@@ -46,8 +46,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 
 #ifdef SONAME_LIBVULKAN
 
-WINE_DECLARE_DEBUG_CHANNEL(fps);
-
 typedef VkFlags VkMacOSSurfaceCreateFlagsMVK;
 #define VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK 1000123000
 
@@ -77,14 +75,10 @@ typedef struct VkMetalSurfaceCreateInfoEXT
     const void *pLayer; /* CAMetalLayer */
 } VkMetalSurfaceCreateInfoEXT;
 
-static VkResult (*pvkCreateSwapchainKHR)(VkDevice, const VkSwapchainCreateInfoKHR *, const VkAllocationCallbacks *, VkSwapchainKHR *);
 static VkResult (*pvkCreateMacOSSurfaceMVK)(VkInstance, const VkMacOSSurfaceCreateInfoMVK*, const VkAllocationCallbacks *, VkSurfaceKHR *);
 static VkResult (*pvkCreateMetalSurfaceEXT)(VkInstance, const VkMetalSurfaceCreateInfoEXT*, const VkAllocationCallbacks *, VkSurfaceKHR *);
 static void (*pvkDestroySurfaceKHR)(VkInstance, VkSurfaceKHR, const VkAllocationCallbacks *);
-static void (*pvkDestroySwapchainKHR)(VkDevice, VkSwapchainKHR, const VkAllocationCallbacks *);
 static VkResult (*pvkGetPhysicalDeviceSurfaceCapabilities2KHR)(VkPhysicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR *, VkSurfaceCapabilities2KHR *);
-static VkResult (*pvkGetSwapchainImagesKHR)(VkDevice, VkSwapchainKHR, uint32_t *, VkImage *);
-static VkResult (*pvkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *);
 
 static const struct vulkan_funcs vulkan_funcs;
 
@@ -104,23 +98,6 @@ static void wine_vk_surface_destroy(VkInstance instance, struct wine_vk_surface 
         macdrv_release_metal_device(surface->device);
 
     free(surface);
-}
-
-static VkResult macdrv_vkCreateSwapchainKHR(VkDevice device,
-        const VkSwapchainCreateInfoKHR *create_info,
-        const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain)
-{
-    VkSwapchainCreateInfoKHR create_info_host;
-    TRACE("%p %p %p %p\n", device, create_info, allocator, swapchain);
-
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
-
-    create_info_host = *create_info;
-    create_info_host.surface = surface_from_handle(create_info->surface)->host_surface;
-
-    return pvkCreateSwapchainKHR(device, &create_info_host, NULL /* allocator */,
-            swapchain);
 }
 
 static VkResult macdrv_vkCreateWin32SurfaceKHR(VkInstance instance,
@@ -219,59 +196,12 @@ static void macdrv_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface
     wine_vk_surface_destroy(instance, mac_surface);
 }
 
-static void macdrv_vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
-         const VkAllocationCallbacks *allocator)
-{
-    TRACE("%p, 0x%s %p\n", device, wine_dbgstr_longlong(swapchain), allocator);
-
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
-
-    pvkDestroySwapchainKHR(device, swapchain, NULL /* allocator */);
-}
-
 static VkBool32 macdrv_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice phys_dev,
         uint32_t index)
 {
     TRACE("%p %u\n", phys_dev, index);
 
     return VK_TRUE;
-}
-
-static VkResult macdrv_vkGetSwapchainImagesKHR(VkDevice device,
-        VkSwapchainKHR swapchain, uint32_t *count, VkImage *images)
-{
-    TRACE("%p, 0x%s %p %p\n", device, wine_dbgstr_longlong(swapchain), count, images);
-    return pvkGetSwapchainImagesKHR(device, swapchain, count, images);
-}
-
-static VkResult macdrv_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *present_info)
-{
-    TRACE("%p, %p\n", queue, present_info);
-    VkResult res = pvkQueuePresentKHR(queue, present_info);
-
-    if (TRACE_ON(fps))
-    {
-        static unsigned long frames, frames_total;
-        static long prev_time, start_time;
-        DWORD time;
-
-        time = NtGetTickCount();
-        frames++;
-        frames_total++;
-        if (time - prev_time > 1500)
-        {
-            TRACE_(fps)("%p @ approx %.2ffps, total %.2ffps\n",
-                    queue, 1000.0 * frames / (time - prev_time),
-                    1000.0 * frames_total / (time - start_time));
-            prev_time = time;
-            frames = 0;
-            if (!start_time)
-                start_time = time;
-        }
-    }
-
-    return res;
 }
 
 static const char *macdrv_get_host_surface_extension(void)
@@ -288,20 +218,22 @@ static VkSurfaceKHR macdrv_wine_get_host_surface(VkSurfaceKHR surface)
     return mac_surface->host_surface;
 }
 
+static void macdrv_vulkan_surface_presented(HWND hwnd, VkResult result)
+{
+}
+
 static const struct vulkan_funcs vulkan_funcs =
 {
-    macdrv_vkCreateSwapchainKHR,
     macdrv_vkCreateWin32SurfaceKHR,
     macdrv_vkDestroySurfaceKHR,
-    macdrv_vkDestroySwapchainKHR,
     NULL,
     NULL,
     macdrv_vkGetPhysicalDeviceWin32PresentationSupportKHR,
-    macdrv_vkGetSwapchainImagesKHR,
-    macdrv_vkQueuePresentKHR,
+    NULL,
 
     macdrv_get_host_surface_extension,
     macdrv_wine_get_host_surface,
+    macdrv_vulkan_surface_presented,
 };
 
 UINT macdrv_VulkanInit(UINT version, void *vulkan_handle, struct vulkan_funcs *driver_funcs)
@@ -313,13 +245,9 @@ UINT macdrv_VulkanInit(UINT version, void *vulkan_handle, struct vulkan_funcs *d
     }
 
 #define LOAD_FUNCPTR(f) if ((p##f = dlsym(vulkan_handle, #f)) == NULL) return STATUS_PROCEDURE_NOT_FOUND;
-    LOAD_FUNCPTR(vkCreateSwapchainKHR)
     LOAD_FUNCPTR(vkCreateMacOSSurfaceMVK)
     LOAD_FUNCPTR(vkCreateMetalSurfaceEXT)
     LOAD_FUNCPTR(vkDestroySurfaceKHR)
-    LOAD_FUNCPTR(vkDestroySwapchainKHR)
-    LOAD_FUNCPTR(vkGetSwapchainImagesKHR)
-    LOAD_FUNCPTR(vkQueuePresentKHR)
 #undef LOAD_FUNCPTR
 
     *driver_funcs = vulkan_funcs;

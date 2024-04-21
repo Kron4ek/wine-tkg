@@ -196,9 +196,9 @@ static void wg_format_from_caps_audio_mpeg1(struct wg_format *format, const GstC
     }
 
     format->major_type = WG_MAJOR_TYPE_AUDIO_MPEG1;
-    format->u.audio_mpeg1.layer = layer;
-    format->u.audio_mpeg1.channels = channels;
-    format->u.audio_mpeg1.rate = rate;
+    format->u.audio.layer = layer;
+    format->u.audio.channels = channels;
+    format->u.audio.rate = rate;
 }
 
 static void wg_format_from_caps_audio_wma(struct wg_format *format, const GstCaps *caps)
@@ -247,18 +247,18 @@ static void wg_format_from_caps_audio_wma(struct wg_format *format, const GstCap
     }
 
     format->major_type = WG_MAJOR_TYPE_AUDIO_WMA;
-    format->u.audio_wma.version = version;
-    format->u.audio_wma.bitrate = bitrate;
-    format->u.audio_wma.rate = rate;
-    format->u.audio_wma.depth = depth;
-    format->u.audio_wma.channels = channels;
-    format->u.audio_wma.block_align = block_align;
+    format->u.audio.version = version;
+    format->u.audio.bitrate = bitrate;
+    format->u.audio.rate = rate;
+    format->u.audio.depth = depth;
+    format->u.audio.channels = channels;
+    format->u.audio.block_align = block_align;
 
     gst_buffer_map(codec_data, &map, GST_MAP_READ);
-    if (map.size <= sizeof(format->u.audio_wma.codec_data))
+    if (map.size <= sizeof(format->u.audio.codec_data))
     {
-        format->u.audio_wma.codec_data_len = map.size;
-        memcpy(format->u.audio_wma.codec_data, map.data, map.size);
+        format->u.audio.codec_data_len = map.size;
+        memcpy(format->u.audio.codec_data, map.data, map.size);
     }
     else
         GST_WARNING("Too big codec_data value (%u) in %" GST_PTR_FORMAT ".", (UINT)map.size, caps);
@@ -506,9 +506,9 @@ static GstCaps *wg_format_to_caps_audio_mpeg1(const struct wg_format *format)
         return NULL;
 
     gst_caps_set_simple(caps, "mpegversion", G_TYPE_INT, 1, NULL);
-    gst_caps_set_simple(caps, "layer", G_TYPE_INT, format->u.audio_mpeg1.layer, NULL);
-    gst_caps_set_simple(caps, "rate", G_TYPE_INT, format->u.audio_mpeg1.rate, NULL);
-    gst_caps_set_simple(caps, "channels", G_TYPE_INT, format->u.audio_mpeg1.channels, NULL);
+    gst_caps_set_simple(caps, "layer", G_TYPE_INT, format->u.audio.layer, NULL);
+    gst_caps_set_simple(caps, "rate", G_TYPE_INT, format->u.audio.rate, NULL);
+    gst_caps_set_simple(caps, "channels", G_TYPE_INT, format->u.audio.channels, NULL);
     gst_caps_set_simple(caps, "parsed", G_TYPE_BOOLEAN, TRUE, NULL);
 
     return caps;
@@ -524,7 +524,7 @@ static GstCaps *wg_format_to_caps_audio_mpeg4(const struct wg_format *format)
 
     gst_caps_set_simple(caps, "mpegversion", G_TYPE_INT, 4, NULL);
 
-    switch (format->u.audio_mpeg4.payload_type)
+    switch (format->u.audio.payload_type)
     {
         case 0: gst_caps_set_simple(caps, "stream-format", G_TYPE_STRING, "raw", NULL); break;
         case 1: gst_caps_set_simple(caps, "stream-format", G_TYPE_STRING, "adts", NULL); break;
@@ -534,10 +534,10 @@ static GstCaps *wg_format_to_caps_audio_mpeg4(const struct wg_format *format)
 
     /* FIXME: Use gst_codec_utils_aac_caps_set_level_and_profile from GStreamer pbutils library */
 
-    if (format->u.audio_mpeg4.codec_data_len)
+    if (format->u.audio.codec_data_len)
     {
-        buffer = gst_buffer_new_and_alloc(format->u.audio_mpeg4.codec_data_len);
-        gst_buffer_fill(buffer, 0, format->u.audio_mpeg4.codec_data, format->u.audio_mpeg4.codec_data_len);
+        buffer = gst_buffer_new_and_alloc(format->u.audio.codec_data_len);
+        gst_buffer_fill(buffer, 0, format->u.audio.codec_data, format->u.audio.codec_data_len);
         gst_caps_set_simple(caps, "codec_data", GST_TYPE_BUFFER, buffer, NULL);
         gst_buffer_unref(buffer);
     }
@@ -639,29 +639,29 @@ static GstCaps *wg_format_to_caps_audio_wma(const struct wg_format *format)
 
     if (!(caps = gst_caps_new_empty_simple("audio/x-wma")))
         return NULL;
-    if (format->u.audio_wma.version)
-        gst_caps_set_simple(caps, "wmaversion", G_TYPE_INT, format->u.audio_wma.version, NULL);
+    if (format->u.audio.version)
+        gst_caps_set_simple(caps, "wmaversion", G_TYPE_INT, format->u.audio.version, NULL);
 
-    if (format->u.audio_wma.bitrate)
-        gst_caps_set_simple(caps, "bitrate", G_TYPE_INT, format->u.audio_wma.bitrate, NULL);
-    if (format->u.audio_wma.rate)
-        gst_caps_set_simple(caps, "rate", G_TYPE_INT, format->u.audio_wma.rate, NULL);
-    if (format->u.audio_wma.depth)
-        gst_caps_set_simple(caps, "depth", G_TYPE_INT, format->u.audio_wma.depth, NULL);
-    if (format->u.audio_wma.channels)
-        gst_caps_set_simple(caps, "channels", G_TYPE_INT, format->u.audio_wma.channels, NULL);
-    if (format->u.audio_wma.block_align)
-        gst_caps_set_simple(caps, "block_align", G_TYPE_INT, format->u.audio_wma.block_align, NULL);
+    if (format->u.audio.bitrate)
+        gst_caps_set_simple(caps, "bitrate", G_TYPE_INT, format->u.audio.bitrate, NULL);
+    if (format->u.audio.rate)
+        gst_caps_set_simple(caps, "rate", G_TYPE_INT, format->u.audio.rate, NULL);
+    if (format->u.audio.depth)
+        gst_caps_set_simple(caps, "depth", G_TYPE_INT, format->u.audio.depth, NULL);
+    if (format->u.audio.channels)
+        gst_caps_set_simple(caps, "channels", G_TYPE_INT, format->u.audio.channels, NULL);
+    if (format->u.audio.block_align)
+        gst_caps_set_simple(caps, "block_align", G_TYPE_INT, format->u.audio.block_align, NULL);
 
-    if (format->u.audio_wma.codec_data_len)
+    if (format->u.audio.codec_data_len)
     {
-        if (!(buffer = gst_buffer_new_and_alloc(format->u.audio_wma.codec_data_len)))
+        if (!(buffer = gst_buffer_new_and_alloc(format->u.audio.codec_data_len)))
         {
             gst_caps_unref(caps);
             return NULL;
         }
 
-        gst_buffer_fill(buffer, 0, format->u.audio_wma.codec_data, format->u.audio_wma.codec_data_len);
+        gst_buffer_fill(buffer, 0, format->u.audio.codec_data, format->u.audio.codec_data_len);
         gst_caps_set_simple(caps, "codec_data", GST_TYPE_BUFFER, buffer, NULL);
         gst_buffer_unref(buffer);
     }

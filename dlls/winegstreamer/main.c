@@ -68,17 +68,16 @@ bool array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
     return TRUE;
 }
 
-wg_parser_t wg_parser_create(enum wg_parser_type type, bool output_compressed)
+wg_parser_t wg_parser_create(bool output_compressed)
 {
     struct wg_parser_create_params params =
     {
-        .type = type,
         .output_compressed = output_compressed,
         .err_on = ERR_ON(quartz),
         .warn_on = WARN_ON(quartz),
     };
 
-    TRACE("type %#x.\n", type);
+    TRACE("output_compressed %d.\n", output_compressed);
 
     if (WINE_UNIX_CALL(unix_wg_parser_create, &params))
         return 0;
@@ -1060,7 +1059,7 @@ static const REGFILTERPINS2 reg_decodebin_parser_pins[3] =
 static const REGFILTER2 reg_decodebin_parser =
 {
     .dwVersion = 2,
-    .dwMerit = MERIT_PREFERRED,
+    .dwMerit = MERIT_NORMAL - 1,
     .u.s2.cPins2 = 3,
     .u.s2.rgPins2 = reg_decodebin_parser_pins,
 };

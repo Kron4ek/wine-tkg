@@ -95,6 +95,13 @@ struct wg_format
 
     union
     {
+        /* Valid members for different audio formats:
+         *
+         * Uncompressed(PCM): channels, channel_mask, rate.
+         * MPEG1: channels, rate, layer.
+         * MPEG4: payload_type, codec_data_len, codec_data.
+         * WMA: channels, rate, bitrate, depth, block_align, version, layer,
+         *         payload_type, codec_data_len, codec_data */
         struct
         {
             wg_audio_format format;
@@ -102,30 +109,15 @@ struct wg_format
             uint32_t channels;
             uint32_t channel_mask; /* In WinMM format. */
             uint32_t rate;
-        } audio;
-        struct
-        {
+            uint32_t bitrate;
+            uint32_t depth;
+            uint32_t block_align;
+            uint32_t version;
             uint32_t layer;
-            uint32_t rate;
-            uint32_t channels;
-        } audio_mpeg1;
-        struct
-        {
             uint32_t payload_type;
             uint32_t codec_data_len;
             unsigned char codec_data[64];
-        } audio_mpeg4;
-        struct
-        {
-            uint32_t version;
-            uint32_t bitrate;
-            uint32_t rate;
-            uint32_t depth;
-            uint32_t channels;
-            uint32_t block_align;
-            uint32_t codec_data_len;
-            unsigned char codec_data[64];
-        } audio_wma;
+        } audio;
 
         struct
         {
@@ -205,14 +197,6 @@ struct wg_parser_buffer
 };
 C_ASSERT(sizeof(struct wg_parser_buffer) == 32);
 
-typedef UINT32 wg_parser_type;
-enum wg_parser_type
-{
-    WG_PARSER_DECODEBIN,
-    WG_PARSER_AVIDEMUX,
-    WG_PARSER_WAVPARSE,
-};
-
 typedef UINT64 wg_parser_t;
 typedef UINT64 wg_parser_stream_t;
 typedef UINT64 wg_transform_t;
@@ -228,7 +212,6 @@ struct wg_init_gstreamer_params
 struct wg_parser_create_params
 {
     wg_parser_t parser;
-    wg_parser_type type;
     UINT8 output_compressed;
     UINT8 err_on;
     UINT8 warn_on;

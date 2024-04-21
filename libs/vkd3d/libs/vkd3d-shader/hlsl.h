@@ -298,6 +298,7 @@ enum hlsl_ir_node_type
     HLSL_IR_STORE,
     HLSL_IR_SWIZZLE,
     HLSL_IR_SWITCH,
+    HLSL_IR_STATEBLOCK_CONSTANT,
 };
 
 /* Common data for every type of IR instruction node. */
@@ -423,6 +424,14 @@ struct hlsl_ir_var
     /* Scope that contains annotations for this variable. */
     struct hlsl_scope *annotations;
 
+    /* A dynamic array containing the state block on the variable's declaration, if any.
+     * An array variable may contain multiple state blocks.
+     * A technique pass will always contain one.
+     * These are only really used for effect profiles. */
+    struct hlsl_state_block **state_blocks;
+    unsigned int state_block_count;
+    size_t state_block_capacity;
+
     /* Indexes of the IR instructions where the variable is first written and last read (liveness
      *   range). The IR instructions are numerated starting from 2, because 0 means unused, and 1
      *   means function entry. */
@@ -456,6 +465,38 @@ struct hlsl_ir_var
     uint32_t is_uniform : 1;
     uint32_t is_param : 1;
     uint32_t is_separated_resource : 1;
+};
+
+/* This struct is used to represent assignments in state block entries:
+ *     name = {args[0], args[1], ...};
+ *       - or -
+ *     name = args[0]
+ *       - or -
+ *     name[lhs_index] = args[0]
+ *       - or -
+ *     name[lhs_index] = {args[0], args[1], ...};
+ */
+struct hlsl_state_block_entry
+{
+    /* For assignments, the name in the lhs. */
+    char *name;
+
+    /* Whether the lhs in the assignment is indexed and, in that case, its index. */
+    bool lhs_has_index;
+    unsigned int lhs_index;
+
+    /* Instructions present in the rhs. */
+    struct hlsl_block *instrs;
+
+    /* For assignments, arguments of the rhs initializer. */
+    struct hlsl_ir_node **args;
+    unsigned int args_count;
+};
+
+struct hlsl_state_block
+{
+    struct hlsl_state_block_entry **entries;
+    size_t count, capacity;
 };
 
 /* Sized array of variables representing a function's parameters. */
@@ -601,14 +642,9 @@ enum hlsl_ir_expr_op
     /* DP2ADD(a, b, c) computes the scalar product of a.xy and b.xy,
      * then adds c. */
     HLSL_OP3_DP2ADD,
-    /* MOVC(a, b, c) returns c if a is bitwise zero and b otherwise.
-     * TERNARY(a, b, c) returns c if a == 0 and b otherwise.
-     * They differ for floating point numbers, because
-     * -0.0 == 0.0, but it is not bitwise zero. CMP(a, b, c) returns b
-       if a >= 0, and c otherwise. It's used only for SM1-SM3 targets, while
-       SM4+ is using MOVC in such cases. */
+    /* TERNARY(a, b, c) returns 'b' if 'a' is true and 'c' otherwise. 'a' must always be boolean.
+     * CMP(a, b, c) returns 'b' if 'a' >= 0, and 'c' otherwise. It's used only for SM1-SM3 targets. */
     HLSL_OP3_CMP,
-    HLSL_OP3_MOVC,
     HLSL_OP3_TERNARY,
 };
 
@@ -752,6 +788,14 @@ struct hlsl_ir_constant
     } value;
     /* Constant register of type 'c' where the constant value is stored for SM1. */
     struct hlsl_reg reg;
+};
+
+/* Stateblock constants are undeclared values found on state blocks or technique passes descriptions,
+ *   that do not concern regular pixel, vertex, or compute shaders, except for parsing. */
+struct hlsl_ir_stateblock_constant
+{
+    struct hlsl_ir_node node;
+    char *name;
 };
 
 struct hlsl_scope
@@ -932,6 +976,16 @@ struct hlsl_ctx
     bool warn_implicit_truncation;
 };
 
+static inline bool hlsl_version_ge(const struct hlsl_ctx *ctx, unsigned int major, unsigned int minor)
+{
+    return ctx->profile->major_version > major || (ctx->profile->major_version == major && ctx->profile->minor_version >= minor);
+}
+
+static inline bool hlsl_version_lt(const struct hlsl_ctx *ctx, unsigned int major, unsigned int minor)
+{
+    return !hlsl_version_ge(ctx, major, minor);
+}
+
 struct hlsl_resource_load_params
 {
     struct hlsl_type *format;
@@ -1017,6 +1071,12 @@ static inline struct hlsl_ir_switch *hlsl_ir_switch(const struct hlsl_ir_node *n
 {
     assert(node->type == HLSL_IR_SWITCH);
     return CONTAINING_RECORD(node, struct hlsl_ir_switch, node);
+}
+
+static inline struct hlsl_ir_stateblock_constant *hlsl_ir_stateblock_constant(const struct hlsl_ir_node *node)
+{
+    assert(node->type == HLSL_IR_STATEBLOCK_CONSTANT);
+    return CONTAINING_RECORD(node, struct hlsl_ir_stateblock_constant, node);
 }
 
 static inline void hlsl_block_init(struct hlsl_block *block)
@@ -1211,6 +1271,7 @@ void hlsl_replace_node(struct hlsl_ir_node *old, struct hlsl_ir_node *new);
 void hlsl_free_attribute(struct hlsl_attribute *attr);
 void hlsl_free_instr(struct hlsl_ir_node *node);
 void hlsl_free_instr_list(struct list *list);
+void hlsl_free_state_block(struct hlsl_state_block *state_block);
 void hlsl_free_type(struct hlsl_type *type);
 void hlsl_free_var(struct hlsl_ir_var *decl);
 
@@ -1292,6 +1353,8 @@ struct hlsl_type *hlsl_new_struct_type(struct hlsl_ctx *ctx, const char *name,
         struct hlsl_struct_field *fields, size_t field_count);
 struct hlsl_ir_node *hlsl_new_swizzle(struct hlsl_ctx *ctx, uint32_t s, unsigned int components,
         struct hlsl_ir_node *val, const struct vkd3d_shader_location *loc);
+struct hlsl_ir_node *hlsl_new_stateblock_constant(struct hlsl_ctx *ctx, const char *name,
+        struct vkd3d_shader_location *loc);
 struct hlsl_ir_var *hlsl_new_synthetic_var(struct hlsl_ctx *ctx, const char *template,
         struct hlsl_type *type, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_var *hlsl_new_synthetic_var_named(struct hlsl_ctx *ctx, const char *name,

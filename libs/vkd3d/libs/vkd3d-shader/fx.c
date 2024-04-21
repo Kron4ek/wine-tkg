@@ -115,6 +115,9 @@ static uint32_t write_string(const char *string, struct fx_write_context *fx)
 
 static void write_pass(struct hlsl_ir_var *var, struct fx_write_context *fx)
 {
+    if (var->state_block_count)
+        hlsl_fixme(fx->ctx, &var->loc, "Write state block assignments.");
+
     fx->ops->write_pass(var, fx);
 }
 
@@ -401,14 +404,6 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
     uint32_t name_offset, offset, size, stride, numeric_desc;
     uint32_t elements_count = 0;
     const char *name;
-    static const uint32_t variable_type[] =
-    {
-        [HLSL_CLASS_SCALAR] = 1,
-        [HLSL_CLASS_VECTOR] = 1,
-        [HLSL_CLASS_MATRIX] = 1,
-        [HLSL_CLASS_OBJECT] = 2,
-        [HLSL_CLASS_STRUCT] = 3,
-    };
     struct hlsl_ctx *ctx = fx->ctx;
 
     /* Resolve arrays to element type and number of elements. */
@@ -428,13 +423,19 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
         case HLSL_CLASS_SCALAR:
         case HLSL_CLASS_VECTOR:
         case HLSL_CLASS_MATRIX:
-        case HLSL_CLASS_OBJECT:
-        case HLSL_CLASS_STRUCT:
-            put_u32_unaligned(buffer, variable_type[type->class]);
+            put_u32_unaligned(buffer, 1);
             break;
-        default:
-            hlsl_fixme(ctx, &ctx->location, "Writing type class %u is not implemented.", type->class);
-            return 0;
+
+        case HLSL_CLASS_OBJECT:
+            put_u32_unaligned(buffer, 2);
+            break;
+
+        case HLSL_CLASS_STRUCT:
+            put_u32_unaligned(buffer, 3);
+            break;
+
+        case HLSL_CLASS_ARRAY:
+            vkd3d_unreachable();
     }
 
     size = stride = type->reg_size[HLSL_REGSET_NUMERIC] * sizeof(float);
@@ -630,7 +631,6 @@ static uint32_t write_fx_2_parameter(const struct hlsl_type *type, const char *n
 {
     struct vkd3d_bytecode_buffer *buffer = &fx->unstructured;
     uint32_t semantic_offset, offset, elements_count = 0, name_offset;
-    struct hlsl_ctx *ctx = fx->ctx;
     size_t i;
 
     /* Resolve arrays to element type and number of elements. */
@@ -642,22 +642,6 @@ static uint32_t write_fx_2_parameter(const struct hlsl_type *type, const char *n
 
     name_offset = write_string(name, fx);
     semantic_offset = write_string(semantic->name, fx);
-
-    switch (type->base_type)
-    {
-        case HLSL_TYPE_HALF:
-        case HLSL_TYPE_FLOAT:
-        case HLSL_TYPE_BOOL:
-        case HLSL_TYPE_INT:
-        case HLSL_TYPE_UINT:
-        case HLSL_TYPE_VOID:
-        case HLSL_TYPE_TEXTURE:
-            break;
-        default:
-            hlsl_fixme(ctx, &ctx->location, "Writing parameter type %u is not implemented.",
-                    type->base_type);
-            return 0;
-    };
 
     offset = put_u32(buffer, hlsl_sm1_base_type(type));
     put_u32(buffer, hlsl_sm1_class(type));
@@ -688,6 +672,9 @@ static uint32_t write_fx_2_parameter(const struct hlsl_type *type, const char *n
         for (i = 0; i < type->e.record.field_count; ++i)
         {
             const struct hlsl_struct_field *field = &type->e.record.fields[i];
+
+            /* Validated in check_invalid_object_fields(). */
+            assert(hlsl_is_numeric_type(field->type));
             write_fx_2_parameter(field->type, field->name, &field->semantic, fx);
         }
     }
@@ -746,7 +733,7 @@ static uint32_t write_fx_2_initial_value(const struct hlsl_ir_var *var, struct f
 {
     struct vkd3d_bytecode_buffer *buffer = &fx->unstructured;
     const struct hlsl_type *type = var->data_type;
-    uint32_t i, offset, size, elements_count = 1;
+    uint32_t offset, size, elements_count = 1;
 
     size = get_fx_2_type_size(type);
 
@@ -756,63 +743,80 @@ static uint32_t write_fx_2_initial_value(const struct hlsl_ir_var *var, struct f
         type = hlsl_get_multiarray_element_type(type);
     }
 
-    if (type->class == HLSL_CLASS_OBJECT)
+    /* Note that struct fields must all be numeric;
+     * this was validated in check_invalid_object_fields(). */
+    switch (type->class)
     {
-        /* Objects are given sequential ids. */
-        offset = put_u32(buffer, fx->object_variable_count++);
-        for (i = 1; i < elements_count; ++i)
-            put_u32(buffer, fx->object_variable_count++);
-    }
-    else
-    {
-        /* FIXME: write actual initial value */
-        offset = put_u32(buffer, 0);
+        case HLSL_CLASS_SCALAR:
+        case HLSL_CLASS_VECTOR:
+        case HLSL_CLASS_MATRIX:
+        case HLSL_CLASS_STRUCT:
+            /* FIXME: write actual initial value */
+            offset = put_u32(buffer, 0);
 
-        for (i = 1; i < size / sizeof(uint32_t); ++i)
-            put_u32(buffer, 0);
+            for (uint32_t i = 1; i < size / sizeof(uint32_t); ++i)
+                put_u32(buffer, 0);
+            break;
+
+        default:
+            /* Objects are given sequential ids. */
+            offset = put_u32(buffer, fx->object_variable_count++);
+            for (uint32_t i = 1; i < elements_count; ++i)
+                put_u32(buffer, fx->object_variable_count++);
+            break;
     }
 
     return offset;
 }
 
-static bool is_type_supported_fx_2(const struct hlsl_type *type)
+static bool is_type_supported_fx_2(struct hlsl_ctx *ctx, const struct hlsl_type *type,
+        const struct vkd3d_shader_location *loc)
 {
-    type = hlsl_get_multiarray_element_type(type);
-
-    if (type->class == HLSL_CLASS_STRUCT)
-        return true;
-
-    switch (type->base_type)
+    switch (type->class)
     {
-        case HLSL_TYPE_FLOAT:
-        case HLSL_TYPE_HALF:
-        case HLSL_TYPE_DOUBLE:
-        case HLSL_TYPE_INT:
-        case HLSL_TYPE_UINT:
-        case HLSL_TYPE_BOOL:
-        case HLSL_TYPE_PIXELSHADER:
-        case HLSL_TYPE_VERTEXSHADER:
-        case HLSL_TYPE_STRING:
+        case HLSL_CLASS_STRUCT:
+            /* Note that the fields must all be numeric; this was validated in
+             * check_invalid_object_fields(). */
             return true;
-        case HLSL_TYPE_TEXTURE:
-        case HLSL_TYPE_SAMPLER:
-            switch (type->sampler_dim)
+
+        case HLSL_CLASS_SCALAR:
+        case HLSL_CLASS_VECTOR:
+        case HLSL_CLASS_MATRIX:
+            return true;
+
+        case HLSL_CLASS_ARRAY:
+            return is_type_supported_fx_2(ctx, type->e.array.type, loc);
+
+        case HLSL_CLASS_OBJECT:
+            switch (type->base_type)
             {
-                case HLSL_SAMPLER_DIM_1D:
-                case HLSL_SAMPLER_DIM_2D:
-                case HLSL_SAMPLER_DIM_3D:
-                case HLSL_SAMPLER_DIM_CUBE:
-                case HLSL_SAMPLER_DIM_GENERIC:
-                    return true;
+                case HLSL_TYPE_TEXTURE:
+                    switch (type->sampler_dim)
+                    {
+                        case HLSL_SAMPLER_DIM_1D:
+                        case HLSL_SAMPLER_DIM_2D:
+                        case HLSL_SAMPLER_DIM_3D:
+                        case HLSL_SAMPLER_DIM_CUBE:
+                        case HLSL_SAMPLER_DIM_GENERIC:
+                            return true;
+                        default:
+                            return false;
+                    }
+                    break;
+
+                case HLSL_TYPE_SAMPLER:
+                case HLSL_TYPE_STRING:
+                case HLSL_TYPE_PIXELSHADER:
+                case HLSL_TYPE_VERTEXSHADER:
+                    hlsl_fixme(ctx, loc, "Write fx 2.0 parameter object type %#x.", type->base_type);
+                    return false;
+
                 default:
-                    ;
+                    return false;
             }
-            break;
-        default:
-            return false;
     }
 
-    return false;
+    vkd3d_unreachable();
 }
 
 static void write_fx_2_parameters(struct fx_write_context *fx)
@@ -828,7 +832,7 @@ static void write_fx_2_parameters(struct fx_write_context *fx)
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
-        if (!is_type_supported_fx_2(var->data_type))
+        if (!is_type_supported_fx_2(ctx, var->data_type, &var->loc))
             continue;
 
         desc_offset = write_fx_2_parameter(var->data_type, var->name, &var->semantic, fx);

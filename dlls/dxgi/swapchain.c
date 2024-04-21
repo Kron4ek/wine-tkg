@@ -180,14 +180,14 @@ static HWND d3d11_swapchain_get_hwnd(struct d3d11_swapchain *swapchain)
     return wined3d_desc.device_window;
 }
 
-static inline struct d3d11_swapchain *d3d11_swapchain_from_IDXGISwapChain1(IDXGISwapChain1 *iface)
+static inline struct d3d11_swapchain *d3d11_swapchain_from_IDXGISwapChain4(IDXGISwapChain4 *iface)
 {
-    return CONTAINING_RECORD(iface, struct d3d11_swapchain, IDXGISwapChain1_iface);
+    return CONTAINING_RECORD(iface, struct d3d11_swapchain, IDXGISwapChain4_iface);
 }
 
 /* IUnknown methods */
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_QueryInterface(IDXGISwapChain1 *iface, REFIID riid, void **object)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_QueryInterface(IDXGISwapChain4 *iface, REFIID riid, void **object)
 {
     TRACE("iface %p, riid %s, object %p\n", iface, debugstr_guid(riid), object);
 
@@ -195,7 +195,10 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_QueryInterface(IDXGISwapChain1 
             || IsEqualGUID(riid, &IID_IDXGIObject)
             || IsEqualGUID(riid, &IID_IDXGIDeviceSubObject)
             || IsEqualGUID(riid, &IID_IDXGISwapChain)
-            || IsEqualGUID(riid, &IID_IDXGISwapChain1))
+            || IsEqualGUID(riid, &IID_IDXGISwapChain1)
+            || IsEqualGUID(riid, &IID_IDXGISwapChain2)
+            || IsEqualGUID(riid, &IID_IDXGISwapChain3)
+            || IsEqualGUID(riid, &IID_IDXGISwapChain4))
     {
         IUnknown_AddRef(iface);
         *object = iface;
@@ -208,9 +211,9 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_QueryInterface(IDXGISwapChain1 
     return E_NOINTERFACE;
 }
 
-static ULONG STDMETHODCALLTYPE d3d11_swapchain_AddRef(IDXGISwapChain1 *iface)
+static ULONG STDMETHODCALLTYPE d3d11_swapchain_AddRef(IDXGISwapChain4 *iface)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     ULONG refcount = InterlockedIncrement(&swapchain->refcount);
 
     TRACE("%p increasing refcount to %lu.\n", swapchain, refcount);
@@ -221,9 +224,9 @@ static ULONG STDMETHODCALLTYPE d3d11_swapchain_AddRef(IDXGISwapChain1 *iface)
     return refcount;
 }
 
-static ULONG STDMETHODCALLTYPE d3d11_swapchain_Release(IDXGISwapChain1 *iface)
+static ULONG STDMETHODCALLTYPE d3d11_swapchain_Release(IDXGISwapChain4 *iface)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     ULONG refcount = InterlockedDecrement(&swapchain->refcount);
 
     TRACE("%p decreasing refcount to %lu.\n", swapchain, refcount);
@@ -246,39 +249,39 @@ static ULONG STDMETHODCALLTYPE d3d11_swapchain_Release(IDXGISwapChain1 *iface)
 
 /* IDXGIObject methods */
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetPrivateData(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetPrivateData(IDXGISwapChain4 *iface,
         REFGUID guid, UINT data_size, const void *data)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
 
     TRACE("iface %p, guid %s, data_size %u, data %p.\n", iface, debugstr_guid(guid), data_size, data);
 
     return dxgi_set_private_data(&swapchain->private_store, guid, data_size, data);
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetPrivateDataInterface(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetPrivateDataInterface(IDXGISwapChain4 *iface,
         REFGUID guid, const IUnknown *object)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
 
     TRACE("iface %p, guid %s, object %p.\n", iface, debugstr_guid(guid), object);
 
     return dxgi_set_private_data_interface(&swapchain->private_store, guid, object);
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetPrivateData(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetPrivateData(IDXGISwapChain4 *iface,
         REFGUID guid, UINT *data_size, void *data)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
 
     TRACE("iface %p, guid %s, data_size %p, data %p.\n", iface, debugstr_guid(guid), data_size, data);
 
     return dxgi_get_private_data(&swapchain->private_store, guid, data_size, data);
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetParent(IDXGISwapChain1 *iface, REFIID riid, void **parent)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetParent(IDXGISwapChain4 *iface, REFIID riid, void **parent)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
 
     TRACE("iface %p, riid %s, parent %p.\n", iface, debugstr_guid(riid), parent);
 
@@ -287,9 +290,9 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetParent(IDXGISwapChain1 *ifac
 
 /* IDXGIDeviceSubObject methods */
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDevice(IDXGISwapChain1 *iface, REFIID riid, void **device)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDevice(IDXGISwapChain4 *iface, REFIID riid, void **device)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
 
     TRACE("iface %p, riid %s, device %p.\n", iface, debugstr_guid(riid), device);
 
@@ -325,19 +328,19 @@ static HRESULT d3d11_swapchain_present(struct d3d11_swapchain *swapchain,
     return hr;
 }
 
-static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_Present(IDXGISwapChain1 *iface, UINT sync_interval, UINT flags)
+static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_Present(IDXGISwapChain4 *iface, UINT sync_interval, UINT flags)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
 
     TRACE("iface %p, sync_interval %u, flags %#x.\n", iface, sync_interval, flags);
 
     return d3d11_swapchain_present(swapchain, sync_interval, flags);
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetBuffer(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetBuffer(IDXGISwapChain4 *iface,
         UINT buffer_idx, REFIID riid, void **surface)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     struct wined3d_texture *texture;
     IUnknown *parent;
     HRESULT hr;
@@ -360,10 +363,10 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetBuffer(IDXGISwapChain1 *ifac
     return hr;
 }
 
-static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_SetFullscreenState(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_SetFullscreenState(IDXGISwapChain4 *iface,
         BOOL fullscreen, IDXGIOutput *target)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     struct wined3d_swapchain_desc swapchain_desc;
     struct wined3d_swapchain_state *state;
     struct dxgi_output *dxgi_output;
@@ -383,7 +386,7 @@ static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_SetFullscreen
     {
         IDXGIOutput_AddRef(target);
     }
-    else if (FAILED(hr = IDXGISwapChain1_GetContainingOutput(iface, &target)))
+    else if (FAILED(hr = IDXGISwapChain4_GetContainingOutput(iface, &target)))
     {
         WARN("Failed to get target output for swapchain, hr %#lx.\n", hr);
         return hr;
@@ -398,7 +401,7 @@ static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH d3d11_swapchain_SetFullscreen
     {
         WARN("Nested invocation of SetFullscreenState.\n");
         IDXGIOutput_Release(target);
-        IDXGISwapChain1_GetFullscreenState(iface, &old_fs, NULL);
+        IDXGISwapChain4_GetFullscreenState(iface, &old_fs, NULL);
         return old_fs == fullscreen ? S_OK : DXGI_STATUS_MODE_CHANGE_IN_PROGRESS;
     }
 
@@ -431,10 +434,10 @@ done:
     return hr;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetFullscreenState(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetFullscreenState(IDXGISwapChain4 *iface,
         BOOL *fullscreen, IDXGIOutput **target)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     struct wined3d_swapchain_desc swapchain_desc;
     HRESULT hr;
 
@@ -454,7 +457,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetFullscreenState(IDXGISwapCha
     {
         if (!swapchain_desc.windowed)
         {
-            if (!swapchain->target && FAILED(hr = IDXGISwapChain1_GetContainingOutput(iface, &swapchain->target)))
+            if (!swapchain->target && FAILED(hr = IDXGISwapChain4_GetContainingOutput(iface, &swapchain->target)))
                 return hr;
 
             *target = swapchain->target;
@@ -469,9 +472,9 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetFullscreenState(IDXGISwapCha
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDesc(IDXGISwapChain1 *iface, DXGI_SWAP_CHAIN_DESC *desc)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDesc(IDXGISwapChain4 *iface, DXGI_SWAP_CHAIN_DESC *desc)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     struct wined3d_swapchain_desc wined3d_desc;
 
     TRACE("iface %p, desc %p.\n", iface, desc);
@@ -510,10 +513,10 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDesc(IDXGISwapChain1 *iface,
 static HRESULT d3d11_swapchain_create_d3d11_textures(struct d3d11_swapchain *swapchain,
         IWineDXGIDevice *device, struct wined3d_swapchain_desc *desc);
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_ResizeBuffers(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_ResizeBuffers(IDXGISwapChain4 *iface,
         UINT buffer_count, UINT width, UINT height, DXGI_FORMAT format, UINT flags)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     struct wined3d_swapchain_desc wined3d_desc;
     struct wined3d_texture *texture;
     IUnknown *parent;
@@ -554,10 +557,10 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_ResizeBuffers(IDXGISwapChain1 *
     return hr;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_ResizeTarget(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_ResizeTarget(IDXGISwapChain4 *iface,
         const DXGI_MODE_DESC *target_mode_desc)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     struct wined3d_swapchain_state *state;
 
     TRACE("iface %p, target_mode_desc %p.\n", iface, target_mode_desc);
@@ -567,9 +570,9 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_ResizeTarget(IDXGISwapChain1 *i
     return dxgi_swapchain_resize_target(state, target_mode_desc);
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetContainingOutput(IDXGISwapChain1 *iface, IDXGIOutput **output)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetContainingOutput(IDXGISwapChain4 *iface, IDXGIOutput **output)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     HWND window;
 
     TRACE("iface %p, output %p.\n", iface, output);
@@ -584,7 +587,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetContainingOutput(IDXGISwapCh
     return dxgi_get_output_from_window(swapchain->factory, window, output);
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetFrameStatistics(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetFrameStatistics(IDXGISwapChain4 *iface,
         DXGI_FRAME_STATISTICS *stats)
 {
     FIXME("iface %p, stats %p stub!\n", iface, stats);
@@ -592,10 +595,10 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetFrameStatistics(IDXGISwapCha
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetLastPresentCount(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetLastPresentCount(IDXGISwapChain4 *iface,
         UINT *last_present_count)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
 
     TRACE("iface %p, last_present_count %p.\n", iface, last_present_count);
 
@@ -606,9 +609,9 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetLastPresentCount(IDXGISwapCh
 
 /* IDXGISwapChain1 methods */
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDesc1(IDXGISwapChain1 *iface, DXGI_SWAP_CHAIN_DESC1 *desc)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDesc1(IDXGISwapChain4 *iface, DXGI_SWAP_CHAIN_DESC1 *desc)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     struct wined3d_swapchain_desc wined3d_desc;
 
     TRACE("iface %p, desc %p.\n", iface, desc);
@@ -641,10 +644,10 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDesc1(IDXGISwapChain1 *iface
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetFullscreenDesc(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetFullscreenDesc(IDXGISwapChain4 *iface,
         DXGI_SWAP_CHAIN_FULLSCREEN_DESC *desc)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
     struct wined3d_swapchain_desc wined3d_desc;
 
     TRACE("iface %p, desc %p.\n", iface, desc);
@@ -670,9 +673,9 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetFullscreenDesc(IDXGISwapChai
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetHwnd(IDXGISwapChain1 *iface, HWND *hwnd)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetHwnd(IDXGISwapChain4 *iface, HWND *hwnd)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
 
     TRACE("iface %p, hwnd %p.\n", iface, hwnd);
 
@@ -686,7 +689,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetHwnd(IDXGISwapChain1 *iface,
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetCoreWindow(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetCoreWindow(IDXGISwapChain4 *iface,
         REFIID iid, void **core_window)
 {
     FIXME("iface %p, iid %s, core_window %p stub!\n", iface, debugstr_guid(iid), core_window);
@@ -697,10 +700,10 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetCoreWindow(IDXGISwapChain1 *
     return DXGI_ERROR_INVALID_CALL;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_Present1(IDXGISwapChain1 *iface,
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_Present1(IDXGISwapChain4 *iface,
         UINT sync_interval, UINT flags, const DXGI_PRESENT_PARAMETERS *present_parameters)
 {
-    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain1(iface);
+    struct d3d11_swapchain *swapchain = d3d11_swapchain_from_IDXGISwapChain4(iface);
 
     TRACE("iface %p, sync_interval %u, flags %#x, present_parameters %p.\n",
             iface, sync_interval, flags, present_parameters);
@@ -711,14 +714,14 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_Present1(IDXGISwapChain1 *iface
     return d3d11_swapchain_present(swapchain, sync_interval, flags);
 }
 
-static BOOL STDMETHODCALLTYPE d3d11_swapchain_IsTemporaryMonoSupported(IDXGISwapChain1 *iface)
+static BOOL STDMETHODCALLTYPE d3d11_swapchain_IsTemporaryMonoSupported(IDXGISwapChain4 *iface)
 {
     FIXME("iface %p stub!\n", iface);
 
     return FALSE;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetRestrictToOutput(IDXGISwapChain1 *iface, IDXGIOutput **output)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetRestrictToOutput(IDXGISwapChain4 *iface, IDXGIOutput **output)
 {
     FIXME("iface %p, output %p stub!\n", iface, output);
 
@@ -732,35 +735,135 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetRestrictToOutput(IDXGISwapCh
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetBackgroundColor(IDXGISwapChain1 *iface, const DXGI_RGBA *color)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetBackgroundColor(IDXGISwapChain4 *iface, const DXGI_RGBA *color)
 {
     FIXME("iface %p, color %p stub!\n", iface, color);
 
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetBackgroundColor(IDXGISwapChain1 *iface, DXGI_RGBA *color)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetBackgroundColor(IDXGISwapChain4 *iface, DXGI_RGBA *color)
 {
     FIXME("iface %p, color %p stub!\n", iface, color);
 
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetRotation(IDXGISwapChain1 *iface, DXGI_MODE_ROTATION rotation)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetRotation(IDXGISwapChain4 *iface, DXGI_MODE_ROTATION rotation)
 {
     FIXME("iface %p, rotation %#x stub!\n", iface, rotation);
 
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetRotation(IDXGISwapChain1 *iface, DXGI_MODE_ROTATION *rotation)
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetRotation(IDXGISwapChain4 *iface, DXGI_MODE_ROTATION *rotation)
 {
     FIXME("iface %p, rotation %p stub!\n", iface, rotation);
 
     return E_NOTIMPL;
 }
 
-static const struct IDXGISwapChain1Vtbl d3d11_swapchain_vtbl =
+/* IDXGISwapChain2 methods */
+
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetSourceSize(IDXGISwapChain4 *iface, UINT width, UINT height)
+{
+    FIXME("iface %p, width %u, height %u stub!\n", iface, width, height);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetSourceSize(IDXGISwapChain4 *iface, UINT *width, UINT *height)
+{
+    FIXME("iface %p, width %p, height %p stub!\n", iface, width, height);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetMaximumFrameLatency(IDXGISwapChain4 *iface, UINT max_latency)
+{
+    FIXME("iface %p, max_latency %u stub!\n", iface, max_latency);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetMaximumFrameLatency(IDXGISwapChain4 *iface, UINT *max_latency)
+{
+    FIXME("iface %p, max_latency %p stub!\n", iface, max_latency);
+
+    return E_NOTIMPL;
+}
+
+static HANDLE STDMETHODCALLTYPE d3d11_swapchain_GetFrameLatencyWaitableObject(IDXGISwapChain4 *iface)
+{
+    FIXME("iface %p stub!\n", iface);
+
+    return NULL;
+}
+
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetMatrixTransform(IDXGISwapChain4 *iface,
+        const DXGI_MATRIX_3X2_F *matrix)
+{
+    FIXME("iface %p, matrix %p stub!\n", iface, matrix);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetMatrixTransform(IDXGISwapChain4 *iface,
+        DXGI_MATRIX_3X2_F *matrix)
+{
+    FIXME("iface %p, matrix %p stub!\n", iface, matrix);
+
+    return E_NOTIMPL;
+}
+
+/* IDXGISwapChain3 methods */
+
+static UINT STDMETHODCALLTYPE d3d11_swapchain_GetCurrentBackBufferIndex(IDXGISwapChain4 *iface)
+{
+    FIXME("iface %p stub!\n", iface);
+
+    return 0;
+}
+
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_CheckColorSpaceSupport(IDXGISwapChain4 *iface,
+        DXGI_COLOR_SPACE_TYPE colour_space, UINT *colour_space_support)
+{
+    FIXME("iface %p, colour_space %#x, colour_space_support %p stub!\n",
+            iface, colour_space, colour_space_support);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetColorSpace1(IDXGISwapChain4 *iface,
+        DXGI_COLOR_SPACE_TYPE colour_space)
+{
+    FIXME("iface %p, colour_space %#x stub!\n", iface, colour_space);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_ResizeBuffers1(IDXGISwapChain4 *iface,
+        UINT buffer_count, UINT width, UINT height, DXGI_FORMAT format, UINT flags,
+        const UINT *node_mask, IUnknown * const *present_queue)
+{
+    FIXME("iface %p, buffer_count %u, width %u, height %u, format %s, flags %#x, "
+            "node_mask %p, present_queue %p stub!\n",
+            iface, buffer_count, width, height, debug_dxgi_format(format), flags, node_mask, present_queue);
+
+    return E_NOTIMPL;
+}
+
+/* IDXGISwapChain4 methods */
+
+static HRESULT STDMETHODCALLTYPE d3d11_swapchain_SetHDRMetaData(IDXGISwapChain4 *iface,
+        DXGI_HDR_METADATA_TYPE type, UINT size, void *metadata)
+{
+    FIXME("iface %p, type %#x, size %#x, metadata %p stub!\n", iface, type, size, metadata);
+
+    return E_NOTIMPL;
+}
+
+static const struct IDXGISwapChain4Vtbl d3d11_swapchain_vtbl =
 {
     /* IUnknown methods */
     d3d11_swapchain_QueryInterface,
@@ -796,6 +899,21 @@ static const struct IDXGISwapChain1Vtbl d3d11_swapchain_vtbl =
     d3d11_swapchain_GetBackgroundColor,
     d3d11_swapchain_SetRotation,
     d3d11_swapchain_GetRotation,
+    /* IDXGISwapChain2 methods */
+    d3d11_swapchain_SetSourceSize,
+    d3d11_swapchain_GetSourceSize,
+    d3d11_swapchain_SetMaximumFrameLatency,
+    d3d11_swapchain_GetMaximumFrameLatency,
+    d3d11_swapchain_GetFrameLatencyWaitableObject,
+    d3d11_swapchain_SetMatrixTransform,
+    d3d11_swapchain_GetMatrixTransform,
+    /* IDXGISwapChain3 methods */
+    d3d11_swapchain_GetCurrentBackBufferIndex,
+    d3d11_swapchain_CheckColorSpaceSupport,
+    d3d11_swapchain_SetColorSpace1,
+    d3d11_swapchain_ResizeBuffers1,
+    /* IDXGISwapChain4 methods */
+    d3d11_swapchain_SetHDRMetaData,
 };
 
 static void STDMETHODCALLTYPE d3d11_swapchain_wined3d_object_released(void *parent)
@@ -888,7 +1006,7 @@ HRESULT d3d11_swapchain_init(struct d3d11_swapchain *swapchain, struct dxgi_devi
     }
     IWineDXGIDevice_AddRef(swapchain->device = &device->IWineDXGIDevice_iface);
 
-    swapchain->IDXGISwapChain1_iface.lpVtbl = &d3d11_swapchain_vtbl;
+    swapchain->IDXGISwapChain4_iface.lpVtbl = &d3d11_swapchain_vtbl;
     swapchain->state_parent.ops = &d3d11_swapchain_state_parent_ops;
     swapchain->refcount = 1;
     wined3d_mutex_lock();
@@ -922,7 +1040,7 @@ HRESULT d3d11_swapchain_init(struct d3d11_swapchain *swapchain, struct dxgi_devi
     {
         desc->windowed = FALSE;
 
-        if (FAILED(hr = IDXGISwapChain1_GetContainingOutput(&swapchain->IDXGISwapChain1_iface,
+        if (FAILED(hr = IDXGISwapChain4_GetContainingOutput(&swapchain->IDXGISwapChain4_iface,
                 &swapchain->target)))
         {
             WARN("Failed to get target output for fullscreen swapchain, hr %#lx.\n", hr);

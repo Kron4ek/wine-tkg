@@ -31,6 +31,7 @@
 #include "ntuser.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
+WINE_DECLARE_DEBUG_CHANNEL(fps);
 
 static PFN_vkCreateInstance p_vkCreateInstance;
 static PFN_vkEnumerateInstanceVersion p_vkEnumerateInstanceVersion;
@@ -1623,6 +1624,59 @@ void wine_vkDestroySurfaceKHR(VkInstance handle, VkSurfaceKHR surface,
     free(object);
 }
 
+static BOOL extents_equals(const VkExtent2D *extents, const RECT *rect)
+{
+    return extents->width == rect->right - rect->left &&
+           extents->height == rect->bottom - rect->top;
+}
+
+VkResult wine_vkAcquireNextImage2KHR(VkDevice device_handle, const VkAcquireNextImageInfoKHR *acquire_info,
+                                     uint32_t *image_index)
+{
+    struct wine_swapchain *swapchain = wine_swapchain_from_handle(acquire_info->swapchain);
+    struct wine_device *device = wine_device_from_handle(device_handle);
+    VkAcquireNextImageInfoKHR acquire_info_host = *acquire_info;
+    struct wine_surface *surface = swapchain->surface;
+    RECT client_rect;
+    VkResult res;
+
+    acquire_info_host.swapchain = swapchain->host_swapchain;
+    res = device->funcs.p_vkAcquireNextImage2KHR(device->host_device, &acquire_info_host, image_index);
+
+    if (res == VK_SUCCESS && NtUserGetClientRect(surface->hwnd, &client_rect) &&
+        !extents_equals(&swapchain->extents, &client_rect))
+    {
+        WARN("Swapchain size %dx%d does not match client rect %s, returning VK_SUBOPTIMAL_KHR\n",
+             swapchain->extents.width, swapchain->extents.height, wine_dbgstr_rect(&client_rect));
+        return VK_SUBOPTIMAL_KHR;
+    }
+
+    return res;
+}
+
+VkResult wine_vkAcquireNextImageKHR(VkDevice device_handle, VkSwapchainKHR swapchain_handle, uint64_t timeout,
+                                    VkSemaphore semaphore, VkFence fence, uint32_t *image_index)
+{
+    struct wine_swapchain *swapchain = wine_swapchain_from_handle(swapchain_handle);
+    struct wine_device *device = wine_device_from_handle(device_handle);
+    struct wine_surface *surface = swapchain->surface;
+    RECT client_rect;
+    VkResult res;
+
+    res = device->funcs.p_vkAcquireNextImageKHR(device->host_device, swapchain->host_swapchain, timeout,
+                                                semaphore, fence, image_index);
+
+    if (res == VK_SUCCESS && NtUserGetClientRect(surface->hwnd, &client_rect) &&
+        !extents_equals(&swapchain->extents, &client_rect))
+    {
+        WARN("Swapchain size %dx%d does not match client rect %s, returning VK_SUBOPTIMAL_KHR\n",
+             swapchain->extents.width, swapchain->extents.height, wine_dbgstr_rect(&client_rect));
+        return VK_SUBOPTIMAL_KHR;
+    }
+
+    return res;
+}
+
 VkResult wine_vkCreateSwapchainKHR(VkDevice device_handle, const VkSwapchainCreateInfoKHR *create_info,
                                    const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain_handle)
 {
@@ -1641,7 +1695,7 @@ VkResult wine_vkCreateSwapchainKHR(VkDevice device_handle, const VkSwapchainCrea
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
-    if (surface) create_info_host.surface = surface->driver_surface;
+    if (surface) create_info_host.surface = surface->host_surface;
     if (old_swapchain) create_info_host.oldSwapchain = old_swapchain->host_swapchain;
 
     /* Windows allows client rect to be empty, but host Vulkan often doesn't, adjust extents back to the host capabilities */
@@ -1659,6 +1713,9 @@ VkResult wine_vkCreateSwapchainKHR(VkDevice device_handle, const VkSwapchainCrea
         free(object);
         return res;
     }
+
+    object->surface = surface;
+    object->extents = create_info->imageExtent;
 
     *swapchain_handle = wine_swapchain_to_handle(object);
     add_handle_mapping(instance, *swapchain_handle, object->host_swapchain, &object->wrapper_entry);
@@ -1678,6 +1735,88 @@ void wine_vkDestroySwapchainKHR(VkDevice device_handle, VkSwapchainKHR swapchain
     remove_handle_mapping(device->phys_dev->instance, &swapchain->wrapper_entry);
 
     free(swapchain);
+}
+
+VkResult wine_vkQueuePresentKHR(VkQueue queue_handle, const VkPresentInfoKHR *present_info)
+{
+    VkSwapchainKHR swapchains_buffer[16], *swapchains = swapchains_buffer;
+    HWND surfaces_buffer[ARRAY_SIZE(swapchains_buffer)], *surfaces = surfaces_buffer;
+    struct wine_queue *queue = wine_queue_from_handle(queue_handle);
+    VkPresentInfoKHR present_info_host = *present_info;
+    VkResult res;
+    UINT i;
+
+    if (present_info->swapchainCount > ARRAY_SIZE(swapchains_buffer) &&
+        (!(swapchains = malloc(present_info->swapchainCount * sizeof(*swapchains))) ||
+         !(surfaces = malloc(present_info->swapchainCount * sizeof(*surfaces)))))
+    {
+        free(swapchains);
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+
+    for (i = 0; i < present_info->swapchainCount; i++)
+    {
+        struct wine_swapchain *swapchain = wine_swapchain_from_handle(present_info->pSwapchains[i]);
+        struct wine_surface *surface = swapchain->surface;
+        swapchains[i] = swapchain->host_swapchain;
+        surfaces[i] = surface->hwnd;
+    }
+
+    present_info_host.pSwapchains = swapchains;
+
+    res = vk_funcs->p_vkQueuePresentKHR(queue->host_queue, &present_info_host, surfaces);
+
+    for (i = 0; i < present_info->swapchainCount; i++)
+    {
+        struct wine_swapchain *swapchain = wine_swapchain_from_handle(present_info->pSwapchains[i]);
+        VkResult swapchain_res = present_info->pResults ? present_info->pResults[i] : res;
+        struct wine_surface *surface = swapchain->surface;
+        RECT client_rect;
+
+        if (swapchain_res < VK_SUCCESS) continue;
+        if (!NtUserGetClientRect(surface->hwnd, &client_rect))
+        {
+            WARN("Swapchain window %p is invalid, returning VK_ERROR_OUT_OF_DATE_KHR\n", surface->hwnd);
+            if (present_info->pResults) present_info->pResults[i] = VK_ERROR_OUT_OF_DATE_KHR;
+            if (res >= VK_SUCCESS) res = VK_ERROR_OUT_OF_DATE_KHR;
+        }
+        else if (swapchain_res != VK_SUCCESS)
+            WARN("Present returned status %d for swapchain %p\n", swapchain_res, swapchain);
+        else if (!extents_equals(&swapchain->extents, &client_rect))
+        {
+            WARN("Swapchain size %dx%d does not match client rect %s, returning VK_SUBOPTIMAL_KHR\n",
+                    swapchain->extents.width, swapchain->extents.height, wine_dbgstr_rect(&client_rect));
+            if (present_info->pResults) present_info->pResults[i] = VK_SUBOPTIMAL_KHR;
+            if (res == VK_SUCCESS) res = VK_SUBOPTIMAL_KHR;
+        }
+    }
+
+    if (swapchains != swapchains_buffer) free(swapchains);
+    if (surfaces != surfaces_buffer) free(surfaces);
+
+    if (TRACE_ON(fps))
+    {
+        static unsigned long frames, frames_total;
+        static long prev_time, start_time;
+        DWORD time;
+
+        time = NtGetTickCount();
+        frames++;
+        frames_total++;
+
+        if (time - prev_time > 1500)
+        {
+            TRACE_(fps)("%p @ approx %.2ffps, total %.2ffps\n", queue,
+                        1000.0 * frames / (time - prev_time),
+                        1000.0 * frames_total / (time - start_time));
+            prev_time = time;
+            frames = 0;
+
+            if (!start_time) start_time = time;
+        }
+    }
+
+    return res;
 }
 
 VkResult wine_vkAllocateMemory(VkDevice handle, const VkMemoryAllocateInfo *alloc_info,
