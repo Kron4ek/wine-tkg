@@ -50,7 +50,6 @@
 #include "wine/wined3d.h"
 #include "wine/list.h"
 #include "wine/rbtree.h"
-#include "wine/wgl.h"
 
 static inline size_t align(size_t addr, size_t alignment)
 {
@@ -467,6 +466,7 @@ enum wined3d_shader_backend
 {
     WINED3D_SHADER_BACKEND_AUTO,
     WINED3D_SHADER_BACKEND_GLSL,
+    WINED3D_SHADER_BACKEND_GLSL_VKD3D,
 };
 
 #define WINED3D_CSMT_ENABLE    0x00000001
@@ -2365,11 +2365,13 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_GTX1060     = 0x1c03,
     CARD_NVIDIA_GEFORCE_GTX1060M    = 0x1c20,
     CARD_NVIDIA_GEFORCE_GTX1070     = 0x1b81,
+    CARD_NVIDIA_GEFORCE_GTX1070M    = 0x1be1,
     CARD_NVIDIA_GEFORCE_GTX1080     = 0x1b80,
     CARD_NVIDIA_GEFORCE_GTX1080M    = 0x1be0,
     CARD_NVIDIA_GEFORCE_GTX1080TI   = 0x1b06,
     CARD_NVIDIA_TITANX_PASCAL       = 0x1b00,
     CARD_NVIDIA_TITANV              = 0x1d81,
+    CARD_NVIDIA_GEFORCE_GTX1650     = 0x1f82,
     CARD_NVIDIA_GEFORCE_GTX1650SUPER= 0x2187,
     CARD_NVIDIA_GEFORCE_GTX1660SUPER= 0x21c4,
     CARD_NVIDIA_GEFORCE_GTX1660TI   = 0x2182,
@@ -2378,6 +2380,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_RTX2080     = 0x1e87,
     CARD_NVIDIA_GEFORCE_RTX2080TI   = 0x1e07,
     CARD_NVIDIA_GEFORCE_RTX3070     = 0x249d,
+    CARD_NVIDIA_GEFORCE_RTX3080     = 0x2206,
     CARD_NVIDIA_TESLA_T4            = 0x1eb8,
     CARD_NVIDIA_AMPERE_A10          = 0x2236,
 
@@ -2958,14 +2961,6 @@ struct wined3d_so_desc_entry
     struct wined3d_stream_output_element elements[1];
 };
 
-struct wined3d_vr_gl_context
-{
-    HWND window;
-    HDC dc;
-    HGLRC gl_ctx;
-    const struct wined3d_gl_info *gl_info;
-};
-
 struct wined3d_device
 {
     LONG ref;
@@ -3036,8 +3031,6 @@ struct wined3d_device
     /* Context management */
     struct wined3d_context **contexts;
     UINT context_count;
-
-    struct wined3d_vr_gl_context vr_context;
 
     CRITICAL_SECTION bo_map_lock;
 };
@@ -3695,17 +3688,6 @@ static inline void wined3d_cs_finish(struct wined3d_cs *cs, enum wined3d_cs_queu
     cs->c.ops->finish(&cs->c, queue_id);
 }
 
-void wined3d_cs_emit_gl_texture_callback(struct wined3d_cs *cs, struct wined3d_texture *texture,
-        wined3d_gl_texture_callback callback, struct wined3d_texture *depth_texture,
-        const void *data, unsigned int size);
-void wined3d_cs_emit_user_callback(struct wined3d_cs *cs,
-        wined3d_cs_callback callback, const void *data, unsigned int size);
-
-GLsync wined3d_cs_synchronize(struct wined3d_cs *cs, struct wined3d_texture *texture);
-
-void wined3d_destroy_gl_vr_context(struct wined3d_vr_gl_context *ctx);
-
-
 void wined3d_device_context_emit_blt_sub_resource(struct wined3d_device_context *context,
         struct wined3d_resource *dst_resource, unsigned int dst_sub_resource_idx, const struct wined3d_box *dst_box,
         struct wined3d_resource *src_resource, unsigned int src_sub_resource_idx, const struct wined3d_box *src_box,
@@ -4352,6 +4334,8 @@ HRESULT shader_generate_code(const struct wined3d_shader *shader, struct wined3d
         const struct wined3d_shader_reg_maps *reg_maps, void *backend_ctx,
         const DWORD *start, const DWORD *end);
 BOOL shader_match_semantic(const char *semantic_name, enum wined3d_decl_usage usage);
+
+enum vkd3d_shader_visibility vkd3d_shader_visibility_from_wined3d(enum wined3d_shader_type shader_type);
 
 static inline BOOL shader_is_scalar(const struct wined3d_shader_register *reg)
 {

@@ -3528,6 +3528,8 @@ static void transform_projection(struct wined3d_context *context, const struct w
     const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
     struct wined3d_matrix projection;
 
+    TRACE("context %p, state %p, state_id %lu.\n", context, state, state_id);
+
     gl_info->gl_ops.gl.p_glMatrixMode(GL_PROJECTION);
     checkGLcall("glMatrixMode(GL_PROJECTION)");
 
@@ -3558,6 +3560,8 @@ static void vertexdeclaration(struct wined3d_context *context, const struct wine
     BOOL wasrhw = context->last_was_rhw;
     unsigned int i;
 
+    TRACE("context %p, state %p, state_id %lu.\n", context, state, state_id);
+
     transformed = context->stream_info.position_transformed;
     if (transformed != context->last_was_rhw && !useVertexShaderFunction)
         updateFog = TRUE;
@@ -3574,25 +3578,12 @@ static void vertexdeclaration(struct wined3d_context *context, const struct wine
      * make sure they're properly set. */
     if (!useVertexShaderFunction)
     {
-        /* TODO: Move this mainly to the viewport state and only apply when
-         * the vp has changed or transformed / untransformed was switched. */
         if (wasrhw != context->last_was_rhw
-                && !isStateDirty(context, STATE_TRANSFORM(WINED3D_TS_PROJECTION))
                 && !isStateDirty(context, STATE_VIEWPORT))
             transform_projection(context, state, STATE_TRANSFORM(WINED3D_TS_PROJECTION));
-        /* World matrix needs reapplication here only if we're switching between rhw and non-rhw
-         * mode.
-         *
-         * If a vertex shader is used, the world matrix changed and then vertex shader unbound
-         * this check will fail and the matrix not applied again. This is OK because a simple
-         * world matrix change reapplies the matrix - These checks here are only to satisfy the
-         * needs of the vertex declaration.
-         *
-         * World and view matrix go into the same gl matrix, so only apply them when neither is
-         * dirty
-         */
-        if (transformed != wasrhw && !isStateDirty(context, STATE_TRANSFORM(WINED3D_TS_WORLD_MATRIX(0)))
-                && !isStateDirty(context, STATE_TRANSFORM(WINED3D_TS_VIEW)))
+        /* World matrix needs reapplication here only if we're switching
+         * between rhw and non-rhw mode. */
+        if (transformed != wasrhw)
             transform_world(context, state, STATE_TRANSFORM(WINED3D_TS_WORLD_MATRIX(0)));
         if (!isStateDirty(context, STATE_RENDER(WINED3D_RS_COLORVERTEX)))
             context_apply_state(context, state, STATE_RENDER(WINED3D_RS_COLORVERTEX));
@@ -3830,8 +3821,9 @@ static void viewport_miscpart_cc(struct wined3d_context *context,
 
 static void viewport_vertexpart(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    if (!isStateDirty(context, STATE_TRANSFORM(WINED3D_TS_PROJECTION)))
-        transform_projection(context, state, STATE_TRANSFORM(WINED3D_TS_PROJECTION));
+    TRACE("context %p, state %p, state_id %lu.\n", context, state, state_id);
+
+    transform_projection(context, state, STATE_TRANSFORM(WINED3D_TS_PROJECTION));
     if (!isStateDirty(context, STATE_RENDER(WINED3D_RS_POINTSCALEENABLE))
             && state->render_states[WINED3D_RS_POINTSCALEENABLE])
         state_pscale(context, state, STATE_RENDER(WINED3D_RS_POINTSCALEENABLE));
@@ -4827,6 +4819,7 @@ static const struct wined3d_state_entry_template ffp_fragmentstate_template[] = 
     { STATE_RENDER(WINED3D_RS_FOGVERTEXMODE),             { STATE_RENDER(WINED3D_RS_FOGENABLE),                 NULL                }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_FOGSTART),                  { STATE_RENDER(WINED3D_RS_FOGSTART),                  state_fogstartend   }, WINED3D_GL_EXT_NONE             },
     { STATE_RENDER(WINED3D_RS_FOGEND),                    { STATE_RENDER(WINED3D_RS_FOGSTART),                  NULL                }, WINED3D_GL_EXT_NONE             },
+    { STATE_RENDER(WINED3D_RS_SRGBWRITEENABLE),           { STATE_RENDER(WINED3D_RS_SRGBWRITEENABLE),           state_srgbwrite     }, ARB_FRAMEBUFFER_SRGB            },
     { STATE_RENDER(WINED3D_RS_SHADEMODE),                 { STATE_RENDER(WINED3D_RS_SHADEMODE),                 state_shademode     }, WINED3D_GL_EXT_NONE             },
     { STATE_SAMPLER(0),                                   { STATE_SAMPLER(0),                                   sampler_texdim      }, WINED3D_GL_EXT_NONE             },
     { STATE_SAMPLER(1),                                   { STATE_SAMPLER(1),                                   sampler_texdim      }, WINED3D_GL_EXT_NONE             },
@@ -4905,6 +4898,7 @@ static void ffp_fragment_get_caps(const struct wined3d_adapter *adapter, struct 
             | WINED3DTEXOPCAPS_SELECTARG1
             | WINED3DTEXOPCAPS_SELECTARG2
             | WINED3DTEXOPCAPS_DISABLE;
+    caps->srgb_write = !!gl_info->supported[ARB_FRAMEBUFFER_SRGB];
 
     if (gl_info->supported[ARB_TEXTURE_ENV_COMBINE]
             || gl_info->supported[EXT_TEXTURE_ENV_COMBINE]

@@ -222,7 +222,7 @@ static bool technique_matches_version(const struct hlsl_ir_var *var, const struc
 {
     const struct hlsl_type *type = var->data_type;
 
-    if (type->base_type != HLSL_TYPE_TECHNIQUE)
+    if (type->class != HLSL_CLASS_TECHNIQUE)
         return false;
 
     return type->e.version >= fx->min_technique_version && type->e.version <= fx->max_technique_version;
@@ -353,8 +353,6 @@ static const char * get_fx_4_type_name(const struct hlsl_type *type)
     {
         [HLSL_TYPE_PIXELSHADER]      = "PixelShader",
         [HLSL_TYPE_VERTEXSHADER]     = "VertexShader",
-        [HLSL_TYPE_RENDERTARGETVIEW] = "RenderTargetView",
-        [HLSL_TYPE_DEPTHSTENCILVIEW] = "DepthStencilView",
     };
     static const char * const texture_type_names[] =
     {
@@ -380,19 +378,30 @@ static const char * get_fx_4_type_name(const struct hlsl_type *type)
         [HLSL_SAMPLER_DIM_STRUCTURED_BUFFER] = "RWStructuredBuffer",
     };
 
-    if (type->base_type == HLSL_TYPE_TEXTURE)
-        return texture_type_names[type->sampler_dim];
-
-    if (type->base_type == HLSL_TYPE_UAV)
-        return uav_type_names[type->sampler_dim];
-
-    switch (type->base_type)
+    switch (type->class)
     {
-        case HLSL_TYPE_PIXELSHADER:
-        case HLSL_TYPE_VERTEXSHADER:
-        case HLSL_TYPE_RENDERTARGETVIEW:
-        case HLSL_TYPE_DEPTHSTENCILVIEW:
-            return object_type_names[type->base_type];
+        case HLSL_CLASS_TEXTURE:
+            return texture_type_names[type->sampler_dim];
+
+        case HLSL_CLASS_UAV:
+            return uav_type_names[type->sampler_dim];
+
+        case HLSL_CLASS_DEPTH_STENCIL_VIEW:
+            return "DepthStencilView";
+
+        case HLSL_CLASS_RENDER_TARGET_VIEW:
+            return "RenderTargetView";
+
+        case HLSL_CLASS_OBJECT:
+            switch (type->base_type)
+            {
+                case HLSL_TYPE_PIXELSHADER:
+                case HLSL_TYPE_VERTEXSHADER:
+                    return object_type_names[type->base_type];
+                default:
+                    return type->name;
+            }
+
         default:
             return type->name;
     }
@@ -426,7 +435,11 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
             put_u32_unaligned(buffer, 1);
             break;
 
+        case HLSL_CLASS_DEPTH_STENCIL_VIEW:
         case HLSL_CLASS_OBJECT:
+        case HLSL_CLASS_RENDER_TARGET_VIEW:
+        case HLSL_CLASS_TEXTURE:
+        case HLSL_CLASS_UAV:
             put_u32_unaligned(buffer, 2);
             break;
 
@@ -435,7 +448,17 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
             break;
 
         case HLSL_CLASS_ARRAY:
+        case HLSL_CLASS_EFFECT_GROUP:
+        case HLSL_CLASS_PASS:
+        case HLSL_CLASS_TECHNIQUE:
             vkd3d_unreachable();
+
+        case HLSL_CLASS_SAMPLER:
+        case HLSL_CLASS_STRING:
+        case HLSL_CLASS_VOID:
+            FIXME("Writing type class %u is not implemented.\n", type->class);
+            set_status(fx, VKD3D_ERROR_NOT_IMPLEMENTED);
+            return 0;
     }
 
     size = stride = type->reg_size[HLSL_REGSET_NUMERIC] * sizeof(float);
@@ -468,15 +491,8 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
             put_u32_unaligned(buffer, field_type_offset);
         }
     }
-    else if (type->class == HLSL_CLASS_OBJECT)
+    else if (type->class == HLSL_CLASS_TEXTURE)
     {
-        static const uint32_t object_type[] =
-        {
-            [HLSL_TYPE_PIXELSHADER]      = 5,
-            [HLSL_TYPE_VERTEXSHADER]     = 6,
-            [HLSL_TYPE_RENDERTARGETVIEW] = 19,
-            [HLSL_TYPE_DEPTHSTENCILVIEW] = 20,
-        };
         static const uint32_t texture_type[] =
         {
             [HLSL_SAMPLER_DIM_GENERIC]   = 9,
@@ -490,6 +506,11 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
             [HLSL_SAMPLER_DIM_CUBE]      = 17,
             [HLSL_SAMPLER_DIM_CUBEARRAY] = 23,
         };
+
+        put_u32_unaligned(buffer, texture_type[type->sampler_dim]);
+    }
+    else if (type->class == HLSL_CLASS_UAV)
+    {
         static const uint32_t uav_type[] =
         {
             [HLSL_SAMPLER_DIM_1D]                = 31,
@@ -501,29 +522,45 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
             [HLSL_SAMPLER_DIM_STRUCTURED_BUFFER] = 40,
         };
 
+        put_u32_unaligned(buffer, uav_type[type->sampler_dim]);
+    }
+    else if (type->class == HLSL_CLASS_DEPTH_STENCIL_VIEW)
+    {
+        put_u32_unaligned(buffer, 20);
+    }
+    else if (type->class == HLSL_CLASS_RENDER_TARGET_VIEW)
+    {
+        put_u32_unaligned(buffer, 19);
+    }
+    else if (type->class == HLSL_CLASS_OBJECT)
+    {
+        static const uint32_t object_type[] =
+        {
+            [HLSL_TYPE_PIXELSHADER]      = 5,
+            [HLSL_TYPE_VERTEXSHADER]     = 6,
+        };
+
         switch (type->base_type)
         {
-            case HLSL_TYPE_DEPTHSTENCILVIEW:
             case HLSL_TYPE_PIXELSHADER:
-            case HLSL_TYPE_RENDERTARGETVIEW:
             case HLSL_TYPE_VERTEXSHADER:
                 put_u32_unaligned(buffer, object_type[type->base_type]);
-                break;
-            case HLSL_TYPE_TEXTURE:
-                put_u32_unaligned(buffer, texture_type[type->sampler_dim]);
-                break;
-            case HLSL_TYPE_UAV:
-                put_u32_unaligned(buffer, uav_type[type->sampler_dim]);
                 break;
             default:
                 hlsl_fixme(ctx, &ctx->location, "Object type %u is not supported.", type->base_type);
                 return 0;
         }
     }
-    else /* Numeric type */
+    else if (hlsl_is_numeric_type(type))
     {
         numeric_desc = get_fx_4_numeric_type_description(type, fx);
         put_u32_unaligned(buffer, numeric_desc);
+    }
+    else
+    {
+        FIXME("Type %u is not supported.\n", type->class);
+        set_status(fx, VKD3D_ERROR_NOT_IMPLEMENTED);
+        return 0;
     }
 
     return offset;
@@ -605,7 +642,7 @@ static void write_groups(struct fx_write_context *fx)
     {
         const struct hlsl_type *type = var->data_type;
 
-        if (type->base_type == HLSL_TYPE_EFFECT_GROUP)
+        if (type->class == HLSL_CLASS_EFFECT_GROUP)
             write_group(var, fx);
     }
 }
@@ -787,25 +824,23 @@ static bool is_type_supported_fx_2(struct hlsl_ctx *ctx, const struct hlsl_type 
         case HLSL_CLASS_ARRAY:
             return is_type_supported_fx_2(ctx, type->e.array.type, loc);
 
+        case HLSL_CLASS_TEXTURE:
+            switch (type->sampler_dim)
+            {
+                case HLSL_SAMPLER_DIM_1D:
+                case HLSL_SAMPLER_DIM_2D:
+                case HLSL_SAMPLER_DIM_3D:
+                case HLSL_SAMPLER_DIM_CUBE:
+                case HLSL_SAMPLER_DIM_GENERIC:
+                    return true;
+                default:
+                    return false;
+            }
+            break;
+
         case HLSL_CLASS_OBJECT:
             switch (type->base_type)
             {
-                case HLSL_TYPE_TEXTURE:
-                    switch (type->sampler_dim)
-                    {
-                        case HLSL_SAMPLER_DIM_1D:
-                        case HLSL_SAMPLER_DIM_2D:
-                        case HLSL_SAMPLER_DIM_3D:
-                        case HLSL_SAMPLER_DIM_CUBE:
-                        case HLSL_SAMPLER_DIM_GENERIC:
-                            return true;
-                        default:
-                            return false;
-                    }
-                    break;
-
-                case HLSL_TYPE_SAMPLER:
-                case HLSL_TYPE_STRING:
                 case HLSL_TYPE_PIXELSHADER:
                 case HLSL_TYPE_VERTEXSHADER:
                     hlsl_fixme(ctx, loc, "Write fx 2.0 parameter object type %#x.", type->base_type);
@@ -814,6 +849,23 @@ static bool is_type_supported_fx_2(struct hlsl_ctx *ctx, const struct hlsl_type 
                 default:
                     return false;
             }
+
+        case HLSL_CLASS_SAMPLER:
+        case HLSL_CLASS_STRING:
+            hlsl_fixme(ctx, loc, "Write fx 2.0 parameter class %#x.", type->class);
+            return false;
+
+        case HLSL_CLASS_DEPTH_STENCIL_VIEW:
+        case HLSL_CLASS_UAV:
+        case HLSL_CLASS_RENDER_TARGET_VIEW:
+        case HLSL_CLASS_VOID:
+            return false;
+
+        case HLSL_CLASS_EFFECT_GROUP:
+        case HLSL_CLASS_PASS:
+        case HLSL_CLASS_TECHNIQUE:
+            /* This cannot appear as an extern variable. */
+            break;
     }
 
     vkd3d_unreachable();
@@ -989,19 +1041,29 @@ static void write_fx_4_object_variable(struct hlsl_ir_var *var, struct fx_write_
     }
 
     /* Initializer */
-    switch (type->base_type)
+    switch (type->class)
     {
-        case HLSL_TYPE_TEXTURE:
-        case HLSL_TYPE_UAV:
-        case HLSL_TYPE_RENDERTARGETVIEW:
+        case HLSL_CLASS_RENDER_TARGET_VIEW:
+        case HLSL_CLASS_TEXTURE:
+        case HLSL_CLASS_UAV:
             break;
-        case HLSL_TYPE_PIXELSHADER:
-        case HLSL_TYPE_VERTEXSHADER:
-            /* FIXME: write shader blobs, once parser support works. */
-            for (i = 0; i < elements_count; ++i)
-                put_u32(buffer, 0);
-            ++fx->shader_variable_count;
+
+        case HLSL_CLASS_OBJECT:
+            switch (type->base_type)
+            {
+                case HLSL_TYPE_PIXELSHADER:
+                case HLSL_TYPE_VERTEXSHADER:
+                    /* FIXME: write shader blobs, once parser support works. */
+                    for (i = 0; i < elements_count; ++i)
+                        put_u32(buffer, 0);
+                    ++fx->shader_variable_count;
+                    break;
+                default:
+                    hlsl_fixme(ctx, &ctx->location, "Writing initializer for object type %u is not implemented.",
+                            type->base_type);
+            }
             break;
+
         default:
             hlsl_fixme(ctx, &ctx->location, "Writing initializer for object type %u is not implemented.",
                     type->base_type);
@@ -1085,18 +1147,24 @@ static bool is_object_variable(const struct hlsl_ir_var *var)
 {
     const struct hlsl_type *type = hlsl_get_multiarray_element_type(var->data_type);
 
-    if (type->class != HLSL_CLASS_OBJECT)
-        return false;
-
-    switch (type->base_type)
+    switch (type->class)
     {
-        case HLSL_TYPE_SAMPLER:
-        case HLSL_TYPE_TEXTURE:
-        case HLSL_TYPE_UAV:
-        case HLSL_TYPE_PIXELSHADER:
-        case HLSL_TYPE_VERTEXSHADER:
-        case HLSL_TYPE_RENDERTARGETVIEW:
+        case HLSL_CLASS_RENDER_TARGET_VIEW:
+        case HLSL_CLASS_SAMPLER:
+        case HLSL_CLASS_TEXTURE:
+        case HLSL_CLASS_UAV:
             return true;
+
+        case HLSL_CLASS_OBJECT:
+            switch (type->base_type)
+            {
+                case HLSL_TYPE_PIXELSHADER:
+                case HLSL_TYPE_VERTEXSHADER:
+                    return true;
+                default:
+                    return false;
+            }
+
         default:
             return false;
     }

@@ -82,17 +82,12 @@ struct SQLHDBC_data
     SQLRETURN (WINAPI *pSQLConnect)(SQLHDBC,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT);
     SQLRETURN (WINAPI *pSQLConnectW)(SQLHDBC,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
     SQLRETURN (WINAPI *pSQLCopyDesc)(SQLHDESC,SQLHDESC);
-    SQLRETURN (WINAPI *pSQLDataSources)(SQLHENV,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
-    SQLRETURN (WINAPI *pSQLDataSourcesA)(SQLHENV,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
-    SQLRETURN (WINAPI *pSQLDataSourcesW)(SQLHENV,SQLUSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
     SQLRETURN (WINAPI *pSQLDescribeCol)(SQLHSTMT,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLSMALLINT*,SQLULEN*,SQLSMALLINT*,SQLSMALLINT*);
     SQLRETURN (WINAPI *pSQLDescribeColW)(SQLHSTMT,SQLUSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLSMALLINT*,SQLULEN*,SQLSMALLINT*,SQLSMALLINT*);
     SQLRETURN (WINAPI *pSQLDescribeParam)(SQLHSTMT,SQLUSMALLINT,SQLSMALLINT*,SQLULEN*,SQLSMALLINT*,SQLSMALLINT*);
     SQLRETURN (WINAPI *pSQLDisconnect)(SQLHDBC);
     SQLRETURN (WINAPI *pSQLDriverConnect)(SQLHDBC,SQLHWND,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLUSMALLINT);
     SQLRETURN (WINAPI *pSQLDriverConnectW)(SQLHDBC,SQLHWND,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLUSMALLINT);
-    SQLRETURN (WINAPI *pSQLDrivers)(SQLHENV,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
-    SQLRETURN (WINAPI *pSQLDriversW)(SQLHENV,SQLUSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
     SQLRETURN (WINAPI *pSQLEndTran)(SQLSMALLINT,SQLHANDLE,SQLSMALLINT);
     SQLRETURN (WINAPI *pSQLError)(SQLHENV,SQLHDBC,SQLHSTMT,SQLCHAR*,SQLINTEGER*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
     SQLRETURN (WINAPI *pSQLErrorW)(SQLHENV,SQLHDBC,SQLHSTMT,SQLWCHAR*,SQLINTEGER*,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
@@ -228,17 +223,12 @@ static void connection_bind_sql_funcs(struct SQLHDBC_data *connection)
     LOAD_FUNCPTR(SQLConnect);
     LOAD_FUNCPTR(SQLConnectW);
     LOAD_FUNCPTR(SQLCopyDesc);
-    LOAD_FUNCPTR(SQLDataSources);
-    LOAD_FUNCPTR(SQLDataSourcesA);
-    LOAD_FUNCPTR(SQLDataSourcesW);
     LOAD_FUNCPTR(SQLDescribeCol);
     LOAD_FUNCPTR(SQLDescribeColW);
     LOAD_FUNCPTR(SQLDescribeParam);
     LOAD_FUNCPTR(SQLDisconnect);
     LOAD_FUNCPTR(SQLDriverConnect);
     LOAD_FUNCPTR(SQLDriverConnectW);
-    LOAD_FUNCPTR(SQLDrivers);
-    LOAD_FUNCPTR(SQLDriversW);
     LOAD_FUNCPTR(SQLEndTran);
     LOAD_FUNCPTR(SQLError);
     LOAD_FUNCPTR(SQLErrorW);
@@ -645,7 +635,7 @@ SQLRETURN WINAPI SQLDataSources(SQLHENV EnvironmentHandle, SQLUSMALLINT Directio
                                 SQLSMALLINT BufferLength1, SQLSMALLINT *NameLength1, SQLCHAR *Description,
                                 SQLSMALLINT BufferLength2, SQLSMALLINT *NameLength2)
 {
-    SQLRETURN ret = SQL_ERROR;
+    SQLRETURN ret = SQL_NO_DATA;
 
     FIXME("(EnvironmentHandle %p, Direction %d, ServerName %p, BufferLength1 %d, NameLength1 %p, Description %p,"
           " BufferLength2 %d, NameLength2 %p)\n", EnvironmentHandle, Direction, ServerName, BufferLength1,
@@ -658,7 +648,7 @@ SQLRETURN WINAPI SQLDataSourcesA(SQLHENV EnvironmentHandle, SQLUSMALLINT Directi
                                  SQLSMALLINT BufferLength1, SQLSMALLINT *NameLength1, SQLCHAR *Description,
                                  SQLSMALLINT BufferLength2, SQLSMALLINT *NameLength2)
 {
-    SQLRETURN ret = SQL_ERROR;
+    SQLRETURN ret = SQL_NO_DATA;
 
     FIXME("(EnvironmentHandle %p, Direction %d, ServerName %p, BufferLength1 %d, NameLength1 %p, Description %p,"
           " BufferLength2 %d, NameLength2 %p)\n", EnvironmentHandle, Direction, ServerName, BufferLength1,
@@ -1988,7 +1978,7 @@ SQLRETURN WINAPI SQLDrivers(SQLHENV EnvironmentHandle, SQLUSMALLINT fDirection, 
                             SQLCHAR *szDriverAttributes, SQLSMALLINT cbDriverAttrMax,
                             SQLSMALLINT *pcbDriverAttr)
 {
-    SQLRETURN ret = SQL_ERROR;
+    SQLRETURN ret = SQL_NO_DATA;
 
     FIXME("(EnvironmentHandle %p, Direction %d, szDriverDesc %p, cbDriverDescMax %d, pcbDriverDesc %p,"
           " DriverAttributes %p, cbDriverAttrMax %d, pcbDriverAttr %p)\n", EnvironmentHandle, fDirection,
@@ -2876,7 +2866,7 @@ SQLRETURN WINAPI SQLDataSourcesW(SQLHENV EnvironmentHandle, SQLUSMALLINT Directi
                                  SQLSMALLINT BufferLength1, SQLSMALLINT *NameLength1, WCHAR *Description,
                                  SQLSMALLINT BufferLength2, SQLSMALLINT *NameLength2)
 {
-    SQLRETURN ret = SQL_ERROR;
+    SQLRETURN ret = SQL_NO_DATA;
 
     FIXME("(EnvironmentHandle %p, Direction %d, ServerName %p, BufferLength1 %d, NameLength1 %p, Description %p,"
           " BufferLength2 %d, NameLength2 %p)\n", EnvironmentHandle, Direction, ServerName, BufferLength1,
@@ -3028,7 +3018,7 @@ SQLRETURN WINAPI SQLDriversW(SQLHENV EnvironmentHandle, SQLUSMALLINT fDirection,
                              SQLWCHAR *szDriverAttributes, SQLSMALLINT cbDriverAttrMax,
                              SQLSMALLINT *pcbDriverAttr)
 {
-    SQLRETURN ret = SQL_ERROR;
+    SQLRETURN ret = SQL_NO_DATA;
 
     FIXME("(EnvironmentHandle %p, Direction %d, szDriverDesc %p, cbDriverDescMax %d, pcbDriverDesc %p,"
           " DriverAttributes %p, cbDriverAttrMax %d, pcbDriverAttr %p)\n", EnvironmentHandle, fDirection,

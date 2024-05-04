@@ -4060,7 +4060,7 @@ UINT_PTR WINAPI NtUserSetTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIMERPROC 
 
     if (proc) winproc = alloc_winproc( (WNDPROC)proc, TRUE );
 
-    timeout = min( max( 5, timeout ), USER_TIMER_MAXIMUM );
+    timeout = min( max( USER_TIMER_MINIMUM, timeout ), USER_TIMER_MAXIMUM );
 
     SERVER_START_REQ( set_win_timer )
     {

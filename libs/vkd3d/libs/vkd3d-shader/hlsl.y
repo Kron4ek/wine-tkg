@@ -656,6 +656,16 @@ static unsigned int initializer_size(const struct parse_initializer *initializer
     return count;
 }
 
+static void cleanup_parse_attribute_list(struct parse_attribute_list *attr_list)
+{
+    unsigned int i = 0;
+
+    assert(attr_list);
+    for (i = 0; i < attr_list->count; ++i)
+        hlsl_free_attribute((struct hlsl_attribute *) attr_list->attrs[i]);
+    vkd3d_free(attr_list->attrs);
+}
+
 static void free_parse_initializer(struct parse_initializer *initializer)
 {
     destroy_block(initializer->instrs);
@@ -833,8 +843,7 @@ static bool add_array_access(struct hlsl_ctx *ctx, struct hlsl_block *block, str
     const struct hlsl_type *expr_type = array->data_type, *index_type = index->data_type;
     struct hlsl_ir_node *return_index, *cast;
 
-    if (expr_type->class == HLSL_CLASS_OBJECT
-            && (expr_type->base_type == HLSL_TYPE_TEXTURE || expr_type->base_type == HLSL_TYPE_UAV)
+    if ((expr_type->class == HLSL_CLASS_TEXTURE || expr_type->class == HLSL_CLASS_UAV)
             && expr_type->sampler_dim != HLSL_SAMPLER_DIM_GENERIC)
     {
         unsigned int dim_count = hlsl_sampler_dim_count(expr_type->sampler_dim);
@@ -1198,17 +1207,18 @@ static bool add_effect_group(struct hlsl_ctx *ctx, const char *name, struct hlsl
     return true;
 }
 
-static struct hlsl_reg_reservation parse_reg_reservation(const char *reg_string)
+static bool parse_reservation_index(const char *string, char *type, uint32_t *index)
 {
-    struct hlsl_reg_reservation reservation = {0};
+    if (!sscanf(string + 1, "%u", index))
+        return false;
 
-    if (!sscanf(reg_string + 1, "%u", &reservation.reg_index))
-    {
-        FIXME("Unsupported register reservation syntax.\n");
-        return reservation;
-    }
-    reservation.reg_type = ascii_tolower(reg_string[0]);
-    return reservation;
+    *type = ascii_tolower(string[0]);
+    return true;
+}
+
+static bool parse_reservation_space(const char *string, uint32_t *space)
+{
+    return !ascii_strncasecmp(string, "space", 5) && sscanf(string + 5, "%u", space);
 }
 
 static struct hlsl_reg_reservation parse_packoffset(struct hlsl_ctx *ctx, const char *reg_string,
@@ -1941,10 +1951,9 @@ static struct hlsl_ir_node *add_assignment(struct hlsl_ctx *ctx, struct hlsl_blo
             return NULL;
 
         resource_type = hlsl_deref_get_type(ctx, &resource_deref);
-        assert(resource_type->class == HLSL_CLASS_OBJECT);
-        assert(resource_type->base_type == HLSL_TYPE_TEXTURE || resource_type->base_type == HLSL_TYPE_UAV);
+        assert(resource_type->class == HLSL_CLASS_TEXTURE || resource_type->class == HLSL_CLASS_UAV);
 
-        if (resource_type->base_type != HLSL_TYPE_UAV)
+        if (resource_type->class != HLSL_CLASS_UAV)
             hlsl_error(ctx, &lhs->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                     "Read-only resources cannot be stored to.");
 
@@ -4044,7 +4053,7 @@ static bool intrinsic_tex(struct hlsl_ctx *ctx, const struct parse_initializer *
     }
 
     sampler_type = params->args[0]->data_type;
-    if (sampler_type->class != HLSL_CLASS_OBJECT || sampler_type->base_type != HLSL_TYPE_SAMPLER
+    if (sampler_type->class != HLSL_CLASS_SAMPLER
             || (sampler_type->sampler_dim != dim && sampler_type->sampler_dim != HLSL_SAMPLER_DIM_GENERIC))
     {
         struct vkd3d_string_buffer *string;
@@ -4721,8 +4730,7 @@ static bool add_sample_method_call(struct hlsl_ctx *ctx, struct hlsl_block *bloc
     }
 
     sampler_type = params->args[0]->data_type;
-    if (sampler_type->class != HLSL_CLASS_OBJECT || sampler_type->base_type != HLSL_TYPE_SAMPLER
-            || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_GENERIC)
+    if (sampler_type->class != HLSL_CLASS_SAMPLER || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_GENERIC)
     {
         struct vkd3d_string_buffer *string;
 
@@ -4786,8 +4794,7 @@ static bool add_sample_cmp_method_call(struct hlsl_ctx *ctx, struct hlsl_block *
     }
 
     sampler_type = params->args[0]->data_type;
-    if (sampler_type->class != HLSL_CLASS_OBJECT || sampler_type->base_type != HLSL_TYPE_SAMPLER
-            || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_COMPARISON)
+    if (sampler_type->class != HLSL_CLASS_SAMPLER || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_COMPARISON)
     {
         struct vkd3d_string_buffer *string;
 
@@ -4897,8 +4904,7 @@ static bool add_gather_method_call(struct hlsl_ctx *ctx, struct hlsl_block *bloc
     }
 
     sampler_type = params->args[0]->data_type;
-    if (sampler_type->class != HLSL_CLASS_OBJECT || sampler_type->base_type != HLSL_TYPE_SAMPLER
-            || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_GENERIC)
+    if (sampler_type->class != HLSL_CLASS_SAMPLER || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_GENERIC)
     {
         struct vkd3d_string_buffer *string;
 
@@ -5134,8 +5140,7 @@ static bool add_sample_lod_method_call(struct hlsl_ctx *ctx, struct hlsl_block *
     }
 
     sampler_type = params->args[0]->data_type;
-    if (sampler_type->class != HLSL_CLASS_OBJECT || sampler_type->base_type != HLSL_TYPE_SAMPLER
-            || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_GENERIC)
+    if (sampler_type->class != HLSL_CLASS_SAMPLER || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_GENERIC)
     {
         struct vkd3d_string_buffer *string;
 
@@ -5197,8 +5202,7 @@ static bool add_sample_grad_method_call(struct hlsl_ctx *ctx, struct hlsl_block 
     }
 
     sampler_type = params->args[0]->data_type;
-    if (sampler_type->class != HLSL_CLASS_OBJECT || sampler_type->base_type != HLSL_TYPE_SAMPLER
-            || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_GENERIC)
+    if (sampler_type->class != HLSL_CLASS_SAMPLER || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_GENERIC)
     {
         struct vkd3d_string_buffer *string;
 
@@ -5282,8 +5286,7 @@ static bool add_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block, stru
     const struct hlsl_type *object_type = object->data_type;
     const struct method_function *method;
 
-    if (object_type->class != HLSL_CLASS_OBJECT || object_type->base_type != HLSL_TYPE_TEXTURE
-            || object_type->sampler_dim == HLSL_SAMPLER_DIM_GENERIC)
+    if (object_type->class != HLSL_CLASS_TEXTURE || object_type->sampler_dim == HLSL_SAMPLER_DIM_GENERIC)
     {
         struct vkd3d_string_buffer *string;
 
@@ -5683,8 +5686,8 @@ static bool state_block_add_entry(struct hlsl_state_block *state_block, struct h
 %type <parameters> param_list
 %type <parameters> parameters
 
-%type <reg_reservation> register_opt
-%type <reg_reservation> packoffset_opt
+%type <reg_reservation> register_reservation
+%type <reg_reservation> packoffset_reservation
 
 %type <sampler_dim> texture_type texture_ms_type uav_type rov_type
 
@@ -6040,11 +6043,7 @@ attribute_list:
             $$ = $1;
             if (!(new_array = vkd3d_realloc($$.attrs, ($$.count + 1) * sizeof(*$$.attrs))))
             {
-                unsigned int i;
-
-                for (i = 0; i < $$.count; ++i)
-                    hlsl_free_attribute((void *)$$.attrs[i]);
-                vkd3d_free($$.attrs);
+                cleanup_parse_attribute_list(&$$);
                 YYABORT;
             }
             $$.attrs = new_array;
@@ -6250,11 +6249,7 @@ func_prototype:
             }
             else
             {
-                unsigned int i;
-
-                for (i = 0; i < $1.count; ++i)
-                    hlsl_free_attribute((void *)$1.attrs[i]);
-                vkd3d_free($1.attrs);
+                cleanup_parse_attribute_list(&$1);
             }
             $$ = $2;
         }
@@ -6308,12 +6303,12 @@ colon_attribute:
             $$.reg_reservation.reg_type = 0;
             $$.reg_reservation.offset_type = 0;
         }
-    | register_opt
+    | register_reservation
         {
             $$.semantic = (struct hlsl_semantic){0};
             $$.reg_reservation = $1;
         }
-    | packoffset_opt
+    | packoffset_reservation
         {
             $$.semantic = (struct hlsl_semantic){0};
             $$.reg_reservation = $1;
@@ -6335,22 +6330,57 @@ semantic:
         }
 
 /* FIXME: Writemasks */
-register_opt:
+register_reservation:
       ':' KW_REGISTER '(' any_identifier ')'
         {
-            $$ = parse_reg_reservation($4);
+            memset(&$$, 0, sizeof($$));
+            if (!parse_reservation_index($4, &$$.reg_type, &$$.reg_index))
+                hlsl_error(ctx, &@4, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                        "Invalid register reservation '%s'.", $4);
+
             vkd3d_free($4);
         }
     | ':' KW_REGISTER '(' any_identifier ',' any_identifier ')'
         {
-            FIXME("Ignoring shader target %s in a register reservation.\n", debugstr_a($4));
-            vkd3d_free($4);
+            memset(&$$, 0, sizeof($$));
+            if (parse_reservation_index($6, &$$.reg_type, &$$.reg_index))
+            {
+                hlsl_fixme(ctx, &@4, "Reservation shader target %s.", $4);
+            }
+            else if (parse_reservation_space($6, &$$.reg_space))
+            {
+                if (!parse_reservation_index($4, &$$.reg_type, &$$.reg_index))
+                    hlsl_error(ctx, &@4, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                            "Invalid register reservation '%s'.", $4);
+            }
+            else
+            {
+                hlsl_error(ctx, &@6, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                        "Invalid register or space reservation '%s'.", $6);
+            }
 
-            $$ = parse_reg_reservation($6);
+            vkd3d_free($4);
             vkd3d_free($6);
         }
+    | ':' KW_REGISTER '(' any_identifier ',' any_identifier ',' any_identifier ')'
+        {
+            hlsl_fixme(ctx, &@4, "Reservation shader target %s.", $4);
 
-packoffset_opt:
+            memset(&$$, 0, sizeof($$));
+            if (!parse_reservation_index($6, &$$.reg_type, &$$.reg_index))
+                hlsl_error(ctx, &@6, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                        "Invalid register reservation '%s'.", $6);
+
+            if (!parse_reservation_space($8, &$$.reg_space))
+                hlsl_error(ctx, &@8, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                        "Invalid register space reservation '%s'.", $8);
+
+            vkd3d_free($4);
+            vkd3d_free($6);
+            vkd3d_free($8);
+        }
+
+packoffset_reservation:
       ':' KW_PACKOFFSET '(' any_identifier ')'
         {
             $$ = parse_packoffset(ctx, $4, NULL, &@$);
@@ -7330,6 +7360,7 @@ selection_statement:
             {
                 destroy_block($6.then_block);
                 destroy_block($6.else_block);
+                cleanup_parse_attribute_list(&$1);
                 YYABORT;
             }
 
@@ -7337,10 +7368,12 @@ selection_statement:
             {
                 destroy_block($6.then_block);
                 destroy_block($6.else_block);
+                cleanup_parse_attribute_list(&$1);
                 YYABORT;
             }
             destroy_block($6.then_block);
             destroy_block($6.else_block);
+            cleanup_parse_attribute_list(&$1);
 
             $$ = $4;
             hlsl_block_add_instr($$, instr);
@@ -7363,21 +7396,25 @@ loop_statement:
         {
             $$ = create_loop(ctx, LOOP_WHILE, &$1, NULL, $5, NULL, $7, &@3);
             hlsl_pop_scope(ctx);
+            cleanup_parse_attribute_list(&$1);
         }
     | attribute_list_optional loop_scope_start KW_DO statement KW_WHILE '(' expr ')' ';'
         {
             $$ = create_loop(ctx, LOOP_DO_WHILE, &$1, NULL, $7, NULL, $4, &@3);
             hlsl_pop_scope(ctx);
+            cleanup_parse_attribute_list(&$1);
         }
     | attribute_list_optional loop_scope_start KW_FOR '(' expr_statement expr_statement expr_optional ')' statement
         {
             $$ = create_loop(ctx, LOOP_FOR, &$1, $5, $6, $7, $9, &@3);
             hlsl_pop_scope(ctx);
+            cleanup_parse_attribute_list(&$1);
         }
     | attribute_list_optional loop_scope_start KW_FOR '(' declaration expr_statement expr_optional ')' statement
         {
             $$ = create_loop(ctx, LOOP_FOR, &$1, $5, $6, $7, $9, &@3);
             hlsl_pop_scope(ctx);
+            cleanup_parse_attribute_list(&$1);
         }
 
 switch_statement:
@@ -7390,6 +7427,7 @@ switch_statement:
             {
                 destroy_switch_cases($8);
                 destroy_block($5);
+                cleanup_parse_attribute_list(&$1);
                 YYABORT;
             }
 
@@ -7400,6 +7438,7 @@ switch_statement:
             if (!s)
             {
                 destroy_block($5);
+                cleanup_parse_attribute_list(&$1);
                 YYABORT;
             }
 
@@ -7407,6 +7446,7 @@ switch_statement:
             hlsl_block_add_instr($$, s);
 
             hlsl_pop_scope(ctx);
+            cleanup_parse_attribute_list(&$1);
         }
 
 switch_case:

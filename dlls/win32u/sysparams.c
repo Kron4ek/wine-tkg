@@ -1313,6 +1313,10 @@ static void add_source( const char *name, UINT state_flags, void *param )
 
     TRACE( "name %s, state_flags %#x\n", name, state_flags );
 
+    /* in virtual desktop mode, report all physical sources as detached */
+    ctx->is_primary = !!(state_flags & DISPLAY_DEVICE_PRIMARY_DEVICE);
+    if (is_virtual_desktop()) state_flags &= ~(DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE);
+
     memset( &ctx->source, 0, sizeof(ctx->source) );
     ctx->source.gpu = &ctx->gpu;
     ctx->source.id = ctx->source_count;
@@ -1448,11 +1452,17 @@ static void add_modes( const DEVMODEW *current, UINT modes_count, const DEVMODEW
 {
     struct device_manager_ctx *ctx = param;
     const DEVMODEW *mode;
-    DEVMODEW dummy;
+    DEVMODEW dummy, detached = *current;
 
     TRACE( "current %s, modes_count %u, modes %p, param %p\n", debugstr_devmodew( current ), modes_count, modes, param );
 
-    if (!read_source_mode( ctx->source_key, ENUM_REGISTRY_SETTINGS, &dummy ))
+    if (ctx->is_primary) ctx->primary = *current;
+
+    detached.dmPelsWidth = 0;
+    detached.dmPelsHeight = 0;
+    if (!(ctx->source.state_flags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)) current = &detached;
+
+    if (current == &detached || !read_source_mode( ctx->source_key, ENUM_REGISTRY_SETTINGS, &dummy ))
         write_source_mode( ctx->source_key, ENUM_REGISTRY_SETTINGS, current );
     write_source_mode( ctx->source_key, ENUM_CURRENT_SETTINGS, current );
 
@@ -1720,7 +1730,7 @@ static BOOL update_display_cache_from_registry(void)
     return ret;
 }
 
-static BOOL default_update_display_devices( const struct gdi_device_manager *manager, BOOL force, struct device_manager_ctx *ctx )
+static BOOL default_update_display_devices( BOOL force, struct device_manager_ctx *ctx )
 {
     /* default implementation: expose an adapter and a monitor with a few standard modes,
      * and read / write current display settings from / to the registry.
@@ -1747,8 +1757,8 @@ static BOOL default_update_display_devices( const struct gdi_device_manager *man
 
     if (!force) return TRUE;
 
-    manager->add_gpu( &gpu, ctx );
-    manager->add_source( "Default", source_flags, ctx );
+    add_gpu( &gpu, ctx );
+    add_source( "Default", source_flags, ctx );
 
     if (!read_source_mode( ctx->source_key, ENUM_CURRENT_SETTINGS, &mode ))
     {
@@ -1760,20 +1770,14 @@ static BOOL default_update_display_devices( const struct gdi_device_manager *man
     monitor.rc_work.right = mode.dmPelsWidth;
     monitor.rc_work.bottom = mode.dmPelsHeight;
 
-    manager->add_monitor( &monitor, ctx );
-    manager->add_modes( &mode, ARRAY_SIZE(modes), modes, ctx );
+    add_monitor( &monitor, ctx );
+    add_modes( &mode, ARRAY_SIZE(modes), modes, ctx );
 
     return TRUE;
 }
 
-static BOOL update_display_devices( const struct gdi_device_manager *manager, BOOL force, struct device_manager_ctx *ctx )
-{
-    if (user_driver->pUpdateDisplayDevices( manager, force, ctx )) return TRUE;
-    return default_update_display_devices( manager, force, ctx );
-}
-
 /* parse the desktop size specification */
-static BOOL parse_size( const WCHAR *size, unsigned int *width, unsigned int *height )
+static BOOL parse_size( const WCHAR *size, DWORD *width, DWORD *height )
 {
     WCHAR *end;
 
@@ -1786,7 +1790,7 @@ static BOOL parse_size( const WCHAR *size, unsigned int *width, unsigned int *he
 }
 
 /* retrieve the default desktop size from the registry */
-static BOOL get_default_desktop_size( unsigned int *width, unsigned int *height )
+static BOOL get_default_desktop_size( DWORD *width, DWORD *height )
 {
     WCHAR buffer[4096];
     KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
@@ -1804,39 +1808,9 @@ static BOOL get_default_desktop_size( unsigned int *width, unsigned int *height 
     return TRUE;
 }
 
-static void desktop_add_gpu( const struct gdi_gpu *gpu, void *param )
+static void add_virtual_modes( struct device_manager_ctx *ctx, const DEVMODEW *current,
+                               const DEVMODEW *initial, const DEVMODEW *maximum )
 {
-}
-
-static void desktop_add_source( const char *name, UINT state_flags, void *param )
-{
-    struct device_manager_ctx *ctx = param;
-    ctx->is_primary = !!(state_flags & DISPLAY_DEVICE_PRIMARY_DEVICE);
-}
-
-static void desktop_add_monitor( const struct gdi_monitor *monitor, void *param )
-{
-}
-
-static void desktop_add_modes( const DEVMODEW *current, UINT modes_count, const DEVMODEW *modes, void *param )
-{
-    struct device_manager_ctx *ctx = param;
-    if (ctx->is_primary) ctx->primary = *current;
-}
-
-static const struct gdi_device_manager desktop_device_manager =
-{
-    desktop_add_gpu,
-    desktop_add_source,
-    desktop_add_monitor,
-    desktop_add_modes,
-};
-
-static BOOL desktop_update_display_devices( BOOL force, struct device_manager_ctx *ctx )
-{
-    static const DWORD source_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_VGA_COMPATIBLE;
-    static const struct gdi_gpu gpu;
-    struct gdi_monitor monitor = {0};
     static struct screen_size
     {
         unsigned int width;
@@ -1874,43 +1848,10 @@ static BOOL desktop_update_display_devices( BOOL force, struct device_manager_ct
         {1920, 1200},
         {2560, 1600}
     };
+    UINT depths[] = {8, 16, initial->dmBitsPerPel}, i, j, modes_count;
+    DEVMODEW *modes;
 
-    struct device_manager_ctx desktop_ctx = {0};
-    UINT screen_width, screen_height, max_width, max_height, modes_count;
-    unsigned int depths[] = {8, 16, 0};
-    DEVMODEW current, *modes;
-    UINT i, j;
-
-    if (!force) return TRUE;
-    /* in virtual desktop mode, read the device list from the user driver but expose virtual devices */
-    if (!update_display_devices( &desktop_device_manager, TRUE, &desktop_ctx )) return FALSE;
-
-    max_width = desktop_ctx.primary.dmPelsWidth;
-    max_height = desktop_ctx.primary.dmPelsHeight;
-    depths[ARRAY_SIZE(depths) - 1] = desktop_ctx.primary.dmBitsPerPel;
-
-    if (!get_default_desktop_size( &screen_width, &screen_height ))
-    {
-        screen_width = max_width;
-        screen_height = max_height;
-    }
-
-    add_gpu( &gpu, ctx );
-    add_source( "Default", source_flags, ctx );
-    if (!read_source_mode( ctx->source_key, ENUM_CURRENT_SETTINGS, &current ))
-    {
-        current = desktop_ctx.primary;
-        current.dmPelsWidth = screen_width;
-        current.dmPelsHeight = screen_height;
-    }
-
-    monitor.rc_monitor.right = current.dmPelsWidth;
-    monitor.rc_monitor.bottom = current.dmPelsHeight;
-    monitor.rc_work.right = current.dmPelsWidth;
-    monitor.rc_work.bottom = current.dmPelsHeight;
-    add_monitor( &monitor, ctx );
-
-    if (!(modes = malloc( ARRAY_SIZE(depths) * (ARRAY_SIZE(screen_sizes) + 2) * sizeof(*modes) ))) return FALSE;
+    if (!(modes = malloc( ARRAY_SIZE(depths) * (ARRAY_SIZE(screen_sizes) + 2) * sizeof(*modes) ))) return;
 
     for (modes_count = i = 0; i < ARRAY_SIZE(depths); ++i)
     {
@@ -1926,28 +1867,86 @@ static BOOL desktop_update_display_devices( BOOL force, struct device_manager_ct
             mode.dmPelsWidth = screen_sizes[j].width;
             mode.dmPelsHeight = screen_sizes[j].height;
 
-            if (mode.dmPelsWidth > max_width || mode.dmPelsHeight > max_height) continue;
-            if (mode.dmPelsWidth == max_width && mode.dmPelsHeight == max_height) continue;
-            if (mode.dmPelsWidth == screen_width && mode.dmPelsHeight == screen_height) continue;
+            if (mode.dmPelsWidth > maximum->dmPelsWidth || mode.dmPelsHeight > maximum->dmPelsWidth) continue;
+            if (mode.dmPelsWidth == maximum->dmPelsWidth && mode.dmPelsHeight == maximum->dmPelsWidth) continue;
+            if (mode.dmPelsWidth == initial->dmPelsWidth && mode.dmPelsHeight == initial->dmPelsHeight) continue;
             modes[modes_count++] = mode;
         }
 
-        mode.dmPelsWidth = screen_width;
-        mode.dmPelsHeight = screen_height;
+        mode.dmPelsWidth = initial->dmPelsWidth;
+        mode.dmPelsHeight = initial->dmPelsHeight;
         modes[modes_count++] = mode;
 
-        if (max_width != screen_width || max_height != screen_height)
+        if (maximum->dmPelsWidth != initial->dmPelsWidth || maximum->dmPelsWidth != initial->dmPelsHeight)
         {
-            mode.dmPelsWidth = max_width;
-            mode.dmPelsHeight = max_height;
+            mode.dmPelsWidth = maximum->dmPelsWidth;
+            mode.dmPelsHeight = maximum->dmPelsHeight;
             modes[modes_count++] = mode;
         }
     }
 
-    add_modes( &current, modes_count, modes, ctx );
+    add_modes( current, modes_count, modes, ctx );
     free( modes );
+}
+
+static BOOL add_virtual_source( struct device_manager_ctx *ctx )
+{
+    DEVMODEW current, initial = ctx->primary, maximum = ctx->primary;
+    struct source virtual_source =
+    {
+        .state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_VGA_COMPATIBLE,
+        .id = ctx->source_count,
+        .gpu = &ctx->gpu,
+    };
+    struct gdi_monitor monitor = {0};
+
+    /* Wine specific config key where source settings will be held, symlinked with the logically indexed config key */
+    snprintf( virtual_source.path, sizeof(virtual_source.path), "%s\\%s\\Video\\%s\\Sources\\%s", config_keyA,
+              control_keyA + strlen( "\\Registry\\Machine" ), virtual_source.gpu->guid, "Virtual" );
+
+    if (!write_source_to_registry( &virtual_source, &ctx->source_key ))
+    {
+        WARN( "Failed to write source to registry\n" );
+        return FALSE;
+    }
+
+    ctx->source = virtual_source;
+    ctx->gpu.source_count++;
+    ctx->source_count++;
+
+    if (!get_default_desktop_size( &initial.dmPelsWidth, &initial.dmPelsHeight ))
+    {
+        initial.dmPelsWidth = maximum.dmPelsWidth;
+        initial.dmPelsHeight = maximum.dmPelsHeight;
+    }
+
+    if (!read_source_mode( ctx->source_key, ENUM_CURRENT_SETTINGS, &current ))
+    {
+        current = ctx->primary;
+        current.dmDisplayFrequency = 60;
+        current.dmPelsWidth = initial.dmPelsWidth;
+        current.dmPelsHeight = initial.dmPelsHeight;
+    }
+
+    monitor.rc_monitor.right = current.dmPelsWidth;
+    monitor.rc_monitor.bottom = current.dmPelsHeight;
+    monitor.rc_work.right = current.dmPelsWidth;
+    monitor.rc_work.bottom = current.dmPelsHeight;
+    add_monitor( &monitor, ctx );
+    add_virtual_modes( ctx, &current, &initial, &maximum );
 
     return TRUE;
+}
+
+static BOOL update_display_devices( BOOL force, struct device_manager_ctx *ctx )
+{
+    if (user_driver->pUpdateDisplayDevices( &device_manager, force, ctx ))
+    {
+        if (ctx->source_count && is_virtual_desktop()) return add_virtual_source( ctx );
+        return TRUE;
+    }
+
+    return default_update_display_devices( force, ctx );
 }
 
 BOOL update_display_cache( BOOL force )
@@ -1956,7 +1955,7 @@ BOOL update_display_cache( BOOL force )
         {'_','_','w','i','n','e','s','e','r','v','i','c','e','_','w','i','n','s','t','a','t','i','o','n',0};
     HWINSTA winstation = NtUserGetProcessWindowStation();
     struct device_manager_ctx ctx = {0};
-    BOOL was_virtual_desktop, ret;
+    BOOL ret;
     WCHAR name[MAX_PATH];
 
     /* services do not have any adapters, only a virtual monitor */
@@ -1970,15 +1969,7 @@ BOOL update_display_cache( BOOL force )
         return TRUE;
     }
 
-    if ((was_virtual_desktop = is_virtual_desktop())) ret = TRUE;
-    else ret = update_display_devices( &device_manager, force, &ctx );
-
-    /* as update_display_devices calls the user driver, it starts explorer and may change the virtual desktop state */
-    if (ret && is_virtual_desktop())
-    {
-        reset_display_manager_ctx( &ctx );
-        ret = desktop_update_display_devices( force || !was_virtual_desktop, &ctx );
-    }
+    ret = update_display_devices( force, &ctx );
 
     release_display_manager_ctx( &ctx );
     if (!ret) WARN( "Failed to update display devices\n" );
@@ -3158,9 +3149,13 @@ static BOOL all_detached_settings( const DEVMODEW *displays )
 static LONG apply_display_settings( struct source *target, const DEVMODEW *devmode,
                                     HWND hwnd, DWORD flags, void *lparam )
 {
+    static const WCHAR restorerW[] = {'_','_','w','i','n','e','_','d','i','s','p','l','a','y','_',
+                                      's','e','t','t','i','n','g','s','_','r','e','s','t','o','r','e','r',0};
+    UNICODE_STRING restoter_str = RTL_CONSTANT_STRING( restorerW );
     WCHAR primary_name[CCHDEVICENAME];
     struct source *primary, *source;
     DEVMODEW *mode, *displays;
+    HWND restorer_window;
     LONG ret;
 
     if (!lock_display_devices()) return DISP_CHANGE_FAILED;
@@ -3208,6 +3203,15 @@ static LONG apply_display_settings( struct source *target, const DEVMODEW *devmo
 
     free( displays );
     if (ret) return ret;
+
+    if ((restorer_window = NtUserFindWindowEx( NULL, NULL, &restoter_str, NULL, 0 )))
+    {
+        if (NtUserGetWindowThread( restorer_window, NULL ) != GetCurrentThreadId())
+        {
+            DWORD fullscreen_process_id = (flags & CDS_FULLSCREEN) ? GetCurrentProcessId() : 0;
+            send_message( restorer_window, WM_USER + 0, 0, fullscreen_process_id );
+        }
+    }
 
     if (!update_display_cache( TRUE ))
         WARN( "Failed to update display cache after mode change.\n" );
@@ -6201,13 +6205,13 @@ static void thread_detach(void)
 {
     struct user_thread_info *thread_info = get_user_thread_info();
 
+    destroy_thread_windows();
     user_driver->pThreadDetach();
 
     free( thread_info->key_state );
     thread_info->key_state = 0;
     free( thread_info->rawinput );
 
-    destroy_thread_windows();
     cleanup_imm_thread();
     NtClose( thread_info->server_queue );
 

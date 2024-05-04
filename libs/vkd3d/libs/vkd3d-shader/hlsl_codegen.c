@@ -1625,6 +1625,9 @@ static bool copy_propagation_transform_load(struct hlsl_ctx *ctx,
     {
         case HLSL_CLASS_SCALAR:
         case HLSL_CLASS_VECTOR:
+        case HLSL_CLASS_SAMPLER:
+        case HLSL_CLASS_TEXTURE:
+        case HLSL_CLASS_UAV:
         case HLSL_CLASS_OBJECT:
             break;
 
@@ -1634,6 +1637,15 @@ static bool copy_propagation_transform_load(struct hlsl_ctx *ctx,
             /* FIXME: Actually we shouldn't even get here, but we don't split
              * matrices yet. */
             return false;
+
+        case HLSL_CLASS_DEPTH_STENCIL_VIEW:
+        case HLSL_CLASS_EFFECT_GROUP:
+        case HLSL_CLASS_PASS:
+        case HLSL_CLASS_RENDER_TARGET_VIEW:
+        case HLSL_CLASS_STRING:
+        case HLSL_CLASS_TECHNIQUE:
+        case HLSL_CLASS_VOID:
+            vkd3d_unreachable();
     }
 
     if (copy_propagation_replace_with_constant_vector(ctx, state, load, HLSL_SWIZZLE(X, Y, Z, W), &load->node))
@@ -2606,8 +2618,8 @@ static bool lower_combined_samples(struct hlsl_ctx *ctx, struct hlsl_ir_node *in
 
     hlsl_copy_deref(ctx, &load->sampler, &load->resource);
     load->resource.var = var;
-    assert(hlsl_deref_get_type(ctx, &load->resource)->base_type == HLSL_TYPE_TEXTURE);
-    assert(hlsl_deref_get_type(ctx, &load->sampler)->base_type == HLSL_TYPE_SAMPLER);
+    assert(hlsl_deref_get_type(ctx, &load->resource)->class == HLSL_CLASS_TEXTURE);
+    assert(hlsl_deref_get_type(ctx, &load->sampler)->class == HLSL_CLASS_SAMPLER);
 
     return true;
 }
@@ -5415,6 +5427,7 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     do
     {
         progress = hlsl_transform_ir(ctx, hlsl_fold_constant_exprs, body, NULL);
+        progress |= hlsl_transform_ir(ctx, hlsl_fold_constant_identities, body, NULL);
         progress |= hlsl_transform_ir(ctx, hlsl_fold_constant_swizzles, body, NULL);
         progress |= hlsl_copy_propagation_execute(ctx, body);
         progress |= hlsl_transform_ir(ctx, fold_swizzle_chains, body, NULL);

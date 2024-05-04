@@ -35,11 +35,17 @@
 
 #include "wine/glu.h"
 #include "wine/debug.h"
+#include "wine/wgl_driver.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(opengl);
 WINE_DECLARE_DEBUG_CHANNEL(fps);
 
 static const MAT2 identity = { {0,1},{0,0},{0,0},{0,1} };
+
+#define WINE_GL_RESERVED_FORMATS_HDC      2
+#define WINE_GL_RESERVED_FORMATS_PTR      3
+#define WINE_GL_RESERVED_FORMATS_NUM      4
+#define WINE_GL_RESERVED_FORMATS_ONSCREEN 5
 
 #ifndef _WIN64
 
@@ -292,6 +298,66 @@ INT WINAPI wglChoosePixelFormat(HDC hdc, const PIXELFORMATDESCRIPTOR* ppfd)
 
     TRACE( "returning %u\n", best_format );
     return best_format;
+}
+
+static struct wgl_pixel_format *get_pixel_formats( HDC hdc, UINT *num_formats,
+                                                   UINT *num_onscreen_formats )
+{
+    struct get_pixel_formats_params args = { .teb = NtCurrentTeb(), .hdc = hdc };
+    PVOID *glReserved = NtCurrentTeb()->glReserved1;
+    NTSTATUS status;
+
+    if (glReserved[WINE_GL_RESERVED_FORMATS_HDC] == hdc)
+    {
+        *num_formats = PtrToUlong( glReserved[WINE_GL_RESERVED_FORMATS_NUM] );
+        *num_onscreen_formats = PtrToUlong( glReserved[WINE_GL_RESERVED_FORMATS_ONSCREEN] );
+        return glReserved[WINE_GL_RESERVED_FORMATS_PTR];
+    }
+
+    if ((status = UNIX_CALL( get_pixel_formats, &args ))) goto error;
+    if (!(args.formats = malloc( sizeof(*args.formats) * args.num_formats ))) goto error;
+    args.max_formats = args.num_formats;
+    if ((status = UNIX_CALL( get_pixel_formats, &args ))) goto error;
+
+    *num_formats = args.num_formats;
+    *num_onscreen_formats = args.num_onscreen_formats;
+
+    free( glReserved[WINE_GL_RESERVED_FORMATS_PTR] );
+    glReserved[WINE_GL_RESERVED_FORMATS_HDC] = hdc;
+    glReserved[WINE_GL_RESERVED_FORMATS_PTR] = args.formats;
+    glReserved[WINE_GL_RESERVED_FORMATS_NUM] = ULongToPtr( args.num_formats );
+    glReserved[WINE_GL_RESERVED_FORMATS_ONSCREEN] = ULongToPtr( args.num_onscreen_formats );
+
+    return args.formats;
+
+error:
+    *num_formats = *num_onscreen_formats = 0;
+    free( args.formats );
+    return NULL;
+}
+
+INT WINAPI wglDescribePixelFormat( HDC hdc, int index, UINT size, PIXELFORMATDESCRIPTOR *ppfd )
+{
+    struct wglDescribePixelFormat_params args = { .teb = NtCurrentTeb(), .hdc = hdc, .ipfd = index, .cjpfd = size, .ppfd = ppfd };
+    NTSTATUS status;
+    struct wgl_pixel_format *formats;
+    UINT num_formats, num_onscreen_formats;
+
+    TRACE( "hdc %p, index %d, size %u, ppfd %p\n", hdc, index, index, ppfd );
+
+    if ((formats = get_pixel_formats( hdc, &num_formats, &num_onscreen_formats )))
+    {
+        if (!ppfd) return num_onscreen_formats;
+        if (size < sizeof(*ppfd)) return 0;
+        if (index <= 0 || index > num_onscreen_formats) return 0;
+
+        *ppfd = formats[index - 1].pfd;
+
+        return num_onscreen_formats;
+    }
+
+    if ((status = UNIX_CALL( wglDescribePixelFormat, &args ))) WARN( "wglDescribePixelFormat returned %#lx\n", status );
+    return args.ret;
 }
 
 /***********************************************************************
@@ -1327,6 +1393,9 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
 #ifndef _WIN64
         cleanup_wow64_strings();
 #endif
+        /* fallthrough */
+    case DLL_THREAD_DETACH:
+        free( NtCurrentTeb()->glReserved1[WINE_GL_RESERVED_FORMATS_PTR] );
         return TRUE;
     }
     return TRUE;

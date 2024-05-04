@@ -556,40 +556,28 @@ static void test_media_types(void)
     expect_mt.lSampleSize = 1;
 
     hr = IEnumMediaTypes_Next(enummt, 1, &pmt, NULL);
-    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     expect_mt.subtype = MEDIASUBTYPE_MPEG1System;
-    if (hr == S_OK)
-    {
-        ok(!memcmp(pmt, &expect_mt, sizeof(AM_MEDIA_TYPE)), "Media types didn't match.\n");
-        CoTaskMemFree(pmt);
-    }
+    ok(!memcmp(pmt, &expect_mt, sizeof(AM_MEDIA_TYPE)), "Media types didn't match.\n");
+    CoTaskMemFree(pmt);
 
     hr = IEnumMediaTypes_Next(enummt, 1, &pmt, NULL);
-    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     expect_mt.subtype = MEDIASUBTYPE_MPEG1VideoCD;
-    if (hr == S_OK)
-    {
-        ok(!memcmp(pmt, &expect_mt, sizeof(AM_MEDIA_TYPE)), "Media types didn't match.\n");
-        CoTaskMemFree(pmt);
-    }
+    ok(!memcmp(pmt, &expect_mt, sizeof(AM_MEDIA_TYPE)), "Media types didn't match.\n");
+    CoTaskMemFree(pmt);
 
     hr = IEnumMediaTypes_Next(enummt, 1, &pmt, NULL);
-    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     expect_mt.subtype = MEDIASUBTYPE_MPEG1Video;
-    if (hr == S_OK)
-    {
-        ok(!memcmp(pmt, &expect_mt, sizeof(AM_MEDIA_TYPE)), "Media types didn't match.\n");
-        CoTaskMemFree(pmt);
-    }
+    ok(!memcmp(pmt, &expect_mt, sizeof(AM_MEDIA_TYPE)), "Media types didn't match.\n");
+    CoTaskMemFree(pmt);
 
     hr = IEnumMediaTypes_Next(enummt, 1, &pmt, NULL);
-    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     expect_mt.subtype = MEDIASUBTYPE_MPEG1Audio;
-    if (hr == S_OK)
-    {
-        ok(!memcmp(pmt, &expect_mt, sizeof(AM_MEDIA_TYPE)), "Media types didn't match.\n");
-        CoTaskMemFree(pmt);
-    }
+    ok(!memcmp(pmt, &expect_mt, sizeof(AM_MEDIA_TYPE)), "Media types didn't match.\n");
+    CoTaskMemFree(pmt);
 
     hr = IEnumMediaTypes_Next(enummt, 1, &pmt, NULL);
     ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
@@ -655,13 +643,10 @@ static void test_media_types(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IEnumMediaTypes_Next(enummt, 1, &pmt, NULL);
-    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     expect_mt.subtype = MEDIASUBTYPE_MPEG1System;
-    if (hr == S_OK)
-    {
-        ok(!memcmp(pmt, &expect_mt, sizeof(AM_MEDIA_TYPE)), "Media types didn't match.\n");
-        CoTaskMemFree(pmt);
-    }
+    ok(!memcmp(pmt, &expect_mt, sizeof(AM_MEDIA_TYPE)), "Media types didn't match.\n");
+    CoTaskMemFree(pmt);
 
     IEnumMediaTypes_Release(enummt);
     IPin_Release(pin);
@@ -866,8 +851,8 @@ static void test_enum_media_types(void)
     for (i = 0; i < 4; ++i)
     {
         hr = IEnumMediaTypes_Next(enum1, 1, mts, NULL);
-        todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
-        if (hr == S_OK) CoTaskMemFree(mts[0]);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        CoTaskMemFree(mts[0]);
     }
 
     hr = IEnumMediaTypes_Next(enum1, 1, mts, NULL);
@@ -879,9 +864,9 @@ static void test_enum_media_types(void)
     for (i = 0; i < 4; ++i)
     {
         hr = IEnumMediaTypes_Next(enum1, 1, mts, &count);
-        todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
-        todo_wine ok(count == 1, "Got count %lu.\n", count);
-        if (hr == S_OK) CoTaskMemFree(mts[0]);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(count == 1, "Got count %lu.\n", count);
+        CoTaskMemFree(mts[0]);
     }
 
     hr = IEnumMediaTypes_Next(enum1, 1, mts, &count);
@@ -892,16 +877,16 @@ static void test_enum_media_types(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IEnumMediaTypes_Next(enum1, 2, mts, &count);
-    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine ok(count == 2, "Got count %lu.\n", count);
-    if (count > 0) CoTaskMemFree(mts[0]);
-    if (count > 1) CoTaskMemFree(mts[1]);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(count == 2, "Got count %lu.\n", count);
+    CoTaskMemFree(mts[0]);
+    CoTaskMemFree(mts[1]);
 
     hr = IEnumMediaTypes_Next(enum1, 3, mts, &count);
     ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
-    todo_wine ok(count == 2, "Got count %lu.\n", count);
-    if (count > 0) CoTaskMemFree(mts[0]);
-    if (count > 1) CoTaskMemFree(mts[1]);
+    ok(count == 2, "Got count %lu.\n", count);
+    CoTaskMemFree(mts[0]);
+    CoTaskMemFree(mts[1]);
 
     hr = IEnumMediaTypes_Next(enum1, 2, mts, &count);
     ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
@@ -923,7 +908,7 @@ static void test_enum_media_types(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IEnumMediaTypes_Skip(enum1, 4);
-    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IEnumMediaTypes_Skip(enum1, 1);
     ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
@@ -932,8 +917,8 @@ static void test_enum_media_types(void)
     ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
 
     hr = IEnumMediaTypes_Next(enum2, 1, mts, NULL);
-    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr == S_OK) CoTaskMemFree(mts[0]);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    CoTaskMemFree(mts[0]);
 
     IEnumMediaTypes_Release(enum1);
     IEnumMediaTypes_Release(enum2);
@@ -2120,6 +2105,49 @@ static void test_video_file(void)
     ok(ret, "Failed to delete file, error %lu.\n", GetLastError());
 }
 
+static void test_no_acceptable_type(void)
+{
+    const WCHAR *filename = load_resource(L"test.wav");
+    IBaseFilter *splitter = create_mpeg_splitter();
+    IFileSourceFilter *filesource;
+    IFilterGraph2 *graph;
+    IBaseFilter *reader;
+    IPin *source, *sink;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_AsyncReader, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IBaseFilter, (void **)&reader);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IBaseFilter_QueryInterface(reader, &IID_IFileSourceFilter, (void **)&filesource);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IFileSourceFilter_Load(filesource, filename, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = CoCreateInstance(&CLSID_FilterGraph, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IFilterGraph2, (void **)&graph);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IFilterGraph2_AddFilter(graph, reader, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IFilterGraph2_AddFilter(graph, splitter, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IBaseFilter_FindPin(splitter, L"Input", &sink);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IBaseFilter_FindPin(reader, L"Output", &source);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IFilterGraph2_ConnectDirect(graph, source, sink, NULL);
+    ok(hr == VFW_E_NO_ACCEPTABLE_TYPES, "Got hr %#lx.\n", hr);
+
+    IPin_Release(source);
+    IPin_Release(sink);
+    IBaseFilter_Release(reader);
+    IBaseFilter_Release(splitter);
+    IFileSourceFilter_Release(filesource);
+    IFilterGraph2_Release(graph);
+    DeleteFileW(filename);
+}
+
 START_TEST(mpegsplit)
 {
     IBaseFilter *filter;
@@ -2147,6 +2175,7 @@ START_TEST(mpegsplit)
     test_streaming();
     test_large_file();
     test_video_file();
+    test_no_acceptable_type();
 
     CoUninitialize();
 }

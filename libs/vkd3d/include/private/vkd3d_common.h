@@ -340,6 +340,13 @@ static inline int vkd3d_u32_compare(uint32_t x, uint32_t y)
     return (x > y) - (x < y);
 }
 
+static inline int vkd3d_u64_compare(uint64_t x, uint64_t y)
+{
+    return (x > y) - (x < y);
+}
+
+#define VKD3D_BITMAP_SIZE(x) (((x) + 0x1f) >> 5)
+
 static inline bool bitmap_clear(uint32_t *map, unsigned int idx)
 {
     return map[idx >> 5] &= ~(1u << (idx & 0x1f));
@@ -429,6 +436,64 @@ static inline uint32_t vkd3d_atomic_increment_u32(uint32_t volatile *x)
     return vkd3d_atomic_add_fetch_u32(x, 1);
 }
 
+static inline bool vkd3d_atomic_compare_exchange_u32(uint32_t volatile *x, uint32_t expected, uint32_t val)
+{
+#if HAVE_SYNC_BOOL_COMPARE_AND_SWAP
+    return __sync_bool_compare_and_swap(x, expected, val);
+#elif defined(_WIN32)
+    return InterlockedCompareExchange((LONG *)x, val, expected) == expected;
+#else
+# error "vkd3d_atomic_compare_exchange_u32() not implemented for this platform"
+#endif
+}
+
+static inline bool vkd3d_atomic_compare_exchange_ptr(void * volatile *x, void *expected, void *val)
+{
+#if HAVE_SYNC_BOOL_COMPARE_AND_SWAP
+    return __sync_bool_compare_and_swap(x, expected, val);
+#elif defined(_WIN32)
+    return InterlockedCompareExchangePointer(x, val, expected) == expected;
+#else
+# error "vkd3d_atomic_compare_exchange_ptr() not implemented for this platform"
+#endif
+}
+
+static inline uint32_t vkd3d_atomic_exchange_u32(uint32_t volatile *x, uint32_t val)
+{
+#if HAVE_ATOMIC_EXCHANGE_N
+    return __atomic_exchange_n(x, val, __ATOMIC_SEQ_CST);
+#elif defined(_WIN32)
+    return InterlockedExchange((LONG *)x, val);
+#else
+    uint32_t expected;
+
+    do
+    {
+        expected = *x;
+    } while (!vkd3d_atomic_compare_exchange_u32(x, expected, val));
+
+    return expected;
+#endif
+}
+
+static inline void *vkd3d_atomic_exchange_ptr(void * volatile *x, void *val)
+{
+#if HAVE_ATOMIC_EXCHANGE_N
+    return __atomic_exchange_n(x, val, __ATOMIC_SEQ_CST);
+#elif defined(_WIN32)
+    return InterlockedExchangePointer(x, val);
+#else
+    void *expected;
+
+    do
+    {
+        expected = *x;
+    } while (!vkd3d_atomic_compare_exchange_ptr(x, expected, val));
+
+    return expected;
+#endif
+}
+
 struct vkd3d_mutex
 {
 #ifdef _WIN32
@@ -489,6 +554,76 @@ static inline void vkd3d_mutex_destroy(struct vkd3d_mutex *lock)
 
     if ((ret = pthread_mutex_destroy(&lock->lock)))
         ERR("Failed to destroy the mutex, ret %d.\n", ret);
+#endif
+}
+
+struct vkd3d_cond
+{
+#ifdef _WIN32
+    CONDITION_VARIABLE cond;
+#else
+    pthread_cond_t cond;
+#endif
+};
+
+static inline void vkd3d_cond_init(struct vkd3d_cond *cond)
+{
+#ifdef _WIN32
+    InitializeConditionVariable(&cond->cond);
+#else
+    int ret;
+
+    if ((ret = pthread_cond_init(&cond->cond, NULL)))
+        ERR("Failed to initialise the condition variable, ret %d.\n", ret);
+#endif
+}
+
+static inline void vkd3d_cond_signal(struct vkd3d_cond *cond)
+{
+#ifdef _WIN32
+    WakeConditionVariable(&cond->cond);
+#else
+    int ret;
+
+    if ((ret = pthread_cond_signal(&cond->cond)))
+        ERR("Failed to signal the condition variable, ret %d.\n", ret);
+#endif
+}
+
+static inline void vkd3d_cond_broadcast(struct vkd3d_cond *cond)
+{
+#ifdef _WIN32
+    WakeAllConditionVariable(&cond->cond);
+#else
+    int ret;
+
+    if ((ret = pthread_cond_broadcast(&cond->cond)))
+        ERR("Failed to broadcast the condition variable, ret %d.\n", ret);
+#endif
+}
+
+static inline void vkd3d_cond_wait(struct vkd3d_cond *cond, struct vkd3d_mutex *lock)
+{
+#ifdef _WIN32
+    if (!SleepConditionVariableCS(&cond->cond, &lock->lock, INFINITE))
+        ERR("Failed to wait on the condition variable, error %lu.\n", GetLastError());
+#else
+    int ret;
+
+    if ((ret = pthread_cond_wait(&cond->cond, &lock->lock)))
+        ERR("Failed to wait on the condition variable, ret %d.\n", ret);
+#endif
+}
+
+static inline void vkd3d_cond_destroy(struct vkd3d_cond *cond)
+{
+#ifdef _WIN32
+    /* Nothing to do. */
+#else
+    int ret;
+
+    if ((ret = pthread_cond_destroy(&cond->cond)))
+        ERR("Failed to destroy the condition variable, ret %d.\n", ret);
 #endif
 }
 

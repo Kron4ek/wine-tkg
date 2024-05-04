@@ -321,6 +321,18 @@ static ULONG WINAPI d3d_device_inner_Release(IUnknown *iface)
             IDirect3DDevice3_DeleteViewport(&This->IDirect3DDevice3_iface, &vp->IDirect3DViewport3_iface);
         }
 
+        wined3d_stateblock_decref(This->state);
+        if (This->recording)
+            wined3d_stateblock_decref(This->recording);
+
+        /* Releasing the render target below may release the last reference to the ddraw object. Detach
+         * the device from it before so it doesn't try to save / restore state on the teared down device. */
+        if (This->ddraw)
+        {
+            list_remove(&This->ddraw_entry);
+            This->ddraw = NULL;
+        }
+
         if (This->pick_record_size > 0)
             free(This->pick_records);
 

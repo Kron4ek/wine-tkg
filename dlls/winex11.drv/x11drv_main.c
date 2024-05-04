@@ -771,6 +771,7 @@ static NTSTATUS x11drv_init( void *arg )
 
     init_user_driver();
     X11DRV_DisplayDevices_Init(FALSE);
+    X11DRV_DisplayDevices_RegisterEventHandlers();
     return STATUS_SUCCESS;
 }
 
@@ -784,7 +785,6 @@ void X11DRV_ThreadDetach(void)
 
     if (data)
     {
-        vulkan_thread_detach();
         if (data->xim) XCloseIM( data->xim );
         if (data->font_set) XFreeFontSet( data->display, data->font_set );
         XSync( gdi_display, False ); /* make sure XReparentWindow requests have completed before closing the thread display */

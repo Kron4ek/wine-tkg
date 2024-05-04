@@ -70,6 +70,7 @@ struct wg_parser
 
     guint64 file_size, start_offset, next_offset, stop_offset;
     guint64 next_pull_offset;
+    gchar *uri;
 
     pthread_t push_thread;
 
@@ -1243,6 +1244,15 @@ static gboolean src_query_cb(GstPad *pad, GstObject *parent, GstQuery *query)
             gst_query_add_scheduling_mode(query, GST_PAD_MODE_PULL);
             return TRUE;
 
+        case GST_QUERY_URI:
+            if (parser->uri)
+            {
+                gst_query_set_uri(query, parser->uri);
+                GST_LOG_OBJECT(pad, "Responding with %" GST_PTR_FORMAT, query);
+                return TRUE;
+            }
+            return FALSE;
+
         default:
             GST_WARNING("Unhandled query type %s.", GST_QUERY_TYPE_NAME(query));
             return FALSE;
@@ -1548,11 +1558,21 @@ static NTSTATUS wg_parser_connect(void *args)
             GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
     const struct wg_parser_connect_params *params = args;
     struct wg_parser *parser = get_parser(params->parser);
+    const WCHAR *uri = params->uri;
     unsigned int i;
     int ret;
 
     parser->file_size = params->file_size;
     parser->sink_connected = true;
+    if (uri)
+    {
+        parser->uri = malloc(wcslen(uri) * 3 + 1);
+        ntdll_wcstoumbs(uri, wcslen(uri) + 1, parser->uri, wcslen(uri) * 3 + 1, FALSE);
+    }
+    else
+    {
+        parser->uri = NULL;
+    }
 
     if (!parser->bus)
     {
@@ -1818,6 +1838,7 @@ static NTSTATUS wg_parser_destroy(void *args)
     pthread_cond_destroy(&parser->read_cond);
     pthread_cond_destroy(&parser->read_done_cond);
 
+    free(parser->uri);
     free(parser);
     return S_OK;
 }
@@ -1878,6 +1899,24 @@ C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == unix_wg_funcs_count);
 #ifdef _WIN64
 
 typedef ULONG PTR32;
+
+static NTSTATUS wow64_wg_parser_connect(void *args)
+{
+    struct
+    {
+        wg_parser_t parser;
+        PTR32 uri;
+        UINT64 file_size;
+    } *params32 = args;
+    struct wg_parser_connect_params params =
+    {
+        .parser = params32->parser,
+        .uri = ULongToPtr(params32->uri),
+        .file_size = params32->file_size,
+    };
+
+    return wg_parser_connect(&params);
+}
 
 static NTSTATUS wow64_wg_parser_push_data(void *args) {
     struct
@@ -2163,7 +2202,7 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     X(wg_parser_create),
     X(wg_parser_destroy),
 
-    X(wg_parser_connect),
+    X64(wg_parser_connect),
     X(wg_parser_disconnect),
 
     X(wg_parser_get_next_read_offset),

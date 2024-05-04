@@ -145,10 +145,10 @@ struct media_sink
     BOOL finalized;
 };
 
-struct sample
+struct event_entry
 {
     struct list entry;
-    IMFSample *sample;
+    IMFMediaEvent *event;
 };
 
 struct transform_stream
@@ -677,39 +677,80 @@ static void session_set_caps(struct media_session *session, DWORD caps)
 
 static HRESULT transform_stream_push_sample(struct transform_stream *stream, IMFSample *sample)
 {
-    struct sample *entry;
+    PROPVARIANT value = {.vt = VT_UNKNOWN, .punkVal = (IUnknown *)sample};
+    struct event_entry *entry;
+    HRESULT hr;
 
     if (!(entry = calloc(1, sizeof(*entry))))
         return E_OUTOFMEMORY;
-
-    entry->sample = sample;
-    IMFSample_AddRef(entry->sample);
+    if (FAILED(hr = MFCreateMediaEvent(MEMediaSample, &GUID_NULL, S_OK, &value, &entry->event)))
+    {
+        free(entry);
+        return hr;
+    }
 
     list_add_tail(&stream->samples, &entry->entry);
     return S_OK;
 }
 
-static HRESULT transform_stream_pop_sample(struct transform_stream *stream, IMFSample **sample)
+static HRESULT transform_stream_push_format_change(struct transform_stream *stream, IMFMediaType *media_type)
 {
-    struct sample *entry;
+    PROPVARIANT value = {.vt = VT_UNKNOWN, .punkVal = (IUnknown *)media_type};
+    struct event_entry *entry;
+    HRESULT hr;
+
+    if (!(entry = calloc(1, sizeof(*entry))))
+        return E_OUTOFMEMORY;
+    if (FAILED(hr = MFCreateMediaEvent(MEStreamFormatChanged, &GUID_NULL, S_OK, &value, &entry->event)))
+    {
+        free(entry);
+        return hr;
+    }
+
+    list_add_tail(&stream->samples, &entry->entry);
+    return S_OK;
+}
+
+static HRESULT transform_stream_push_events(struct transform_stream *stream, IMFCollection *events)
+{
+    struct event_entry *entry;
+    IMFMediaEvent *event;
+
+    while (SUCCEEDED(IMFCollection_RemoveElement(events, 0, (IUnknown **)&event)))
+    {
+        if (!(entry = calloc(1, sizeof(*entry))))
+        {
+            IMFMediaEvent_Release(event);
+            return E_OUTOFMEMORY;
+        }
+        entry->event = event;
+        list_add_tail(&stream->samples, &entry->entry);
+    }
+
+    return S_OK;
+}
+
+static HRESULT transform_stream_pop_event(struct transform_stream *stream, IMFMediaEvent **event)
+{
+    struct event_entry *entry;
     struct list *ptr;
 
     if (!(ptr = list_head(&stream->samples)))
         return MF_E_TRANSFORM_NEED_MORE_INPUT;
 
-    entry = LIST_ENTRY(ptr, struct sample, entry);
+    entry = LIST_ENTRY(ptr, struct event_entry, entry);
     list_remove(&entry->entry);
-    *sample = entry->sample;
+    *event = entry->event;
     free(entry);
     return S_OK;
 }
 
-static void transform_stream_drop_samples(struct transform_stream *stream)
+static void transform_stream_drop_events(struct transform_stream *stream)
 {
-    IMFSample *sample;
+    IMFMediaEvent *event;
 
-    while (SUCCEEDED(transform_stream_pop_sample(stream, &sample)))
-        IMFSample_Release(sample);
+    while (SUCCEEDED(transform_stream_pop_event(stream, &event)))
+        IMFMediaEvent_Release(event);
 }
 
 static void release_topo_node(struct topo_node *node)
@@ -724,9 +765,9 @@ static void release_topo_node(struct topo_node *node)
             break;
         case MF_TOPOLOGY_TRANSFORM_NODE:
             for (i = 0; i < node->u.transform.input_count; ++i)
-                transform_stream_drop_samples(&node->u.transform.inputs[i]);
+                transform_stream_drop_events(&node->u.transform.inputs[i]);
             for (i = 0; i < node->u.transform.output_count; ++i)
-                transform_stream_drop_samples(&node->u.transform.outputs[i]);
+                transform_stream_drop_events(&node->u.transform.outputs[i]);
             free(node->u.transform.inputs);
             free(node->u.transform.outputs);
             free(node->u.transform.input_map);
@@ -856,17 +897,51 @@ static void session_clear_presentation(struct media_session *session)
     }
 }
 
-static struct topo_node *session_get_node_by_id(const struct media_session *session, TOPOID id)
+static struct topo_node *session_get_topo_node(const struct media_session *session, IMFTopologyNode *node)
 {
-    struct topo_node *node;
+    struct topo_node *topo_node;
+    TOPOID id;
 
-    LIST_FOR_EACH_ENTRY(node, &session->presentation.nodes, struct topo_node, entry)
+    if (FAILED(IMFTopologyNode_GetTopoNodeID(node, &id)))
+        return NULL;
+
+    LIST_FOR_EACH_ENTRY(topo_node, &session->presentation.nodes, struct topo_node, entry)
     {
-        if (node->node_id == id)
-            return node;
+        if (topo_node->node_id == id)
+            return topo_node;
     }
 
     return NULL;
+}
+
+static struct topo_node *session_get_topo_node_input(const struct media_session *session,
+        const struct topo_node *down_node, DWORD input, DWORD *output)
+{
+    struct topo_node *up_node = NULL;
+    IMFTopologyNode *node;
+
+    if (SUCCEEDED(IMFTopologyNode_GetInput(down_node->node, input, &node, output)))
+    {
+        up_node = session_get_topo_node(session, node);
+        IMFTopologyNode_Release(node);
+    }
+
+    return up_node;
+}
+
+static struct topo_node *session_get_topo_node_output(const struct media_session *session,
+        const struct topo_node *up_node, DWORD output, DWORD *input)
+{
+    struct topo_node *down_node = NULL;
+    IMFTopologyNode *node;
+
+    if (SUCCEEDED(IMFTopologyNode_GetOutput(up_node->node, output, &node, input)))
+    {
+        down_node = session_get_topo_node(session, node);
+        IMFTopologyNode_Release(node);
+    }
+
+    return down_node;
 }
 
 static void session_command_complete(struct media_session *session)
@@ -1664,7 +1739,7 @@ static ULONG WINAPI node_sample_allocator_cb_Release(IMFVideoSampleAllocatorNoti
     return 1;
 }
 
-static HRESULT session_request_sample_from_node(struct media_session *session, IMFTopologyNode *node, DWORD output);
+static HRESULT session_request_sample_from_node(struct media_session *session, struct topo_node *topo_node, DWORD output);
 
 static HRESULT WINAPI node_sample_allocator_cb_NotifyRelease(IMFVideoSampleAllocatorNotify *iface)
 {
@@ -2604,7 +2679,7 @@ static HRESULT WINAPI session_commands_callback_GetParameters(IMFAsyncCallback *
     return E_NOTIMPL;
 }
 
-static void session_deliver_pending_samples(struct media_session *session, IMFTopologyNode *node);
+static void session_deliver_pending_samples(struct media_session *session, struct topo_node *topo_node);
 
 static HRESULT WINAPI session_commands_callback_Invoke(IMFAsyncCallback *iface, IMFAsyncResult *result)
 {
@@ -2708,20 +2783,18 @@ static HRESULT WINAPI session_sa_ready_callback_GetParameters(IMFAsyncCallback *
 static HRESULT WINAPI session_sa_ready_callback_Invoke(IMFAsyncCallback *iface, IMFAsyncResult *result)
 {
     IMFVideoSampleAllocatorNotify *notify = (IMFVideoSampleAllocatorNotify *)IMFAsyncResult_GetStateNoAddRef(result);
-    struct topo_node *topo_node = impl_node_from_IMFVideoSampleAllocatorNotify(notify);
+    struct topo_node *topo_node = impl_node_from_IMFVideoSampleAllocatorNotify(notify), *up_node;
     struct media_session *session = impl_from_sa_ready_callback_IMFAsyncCallback(iface);
-    IMFTopologyNode *upstream_node;
-    DWORD upstream_output;
+    DWORD output;
 
     EnterCriticalSection(&session->cs);
 
     if (topo_node->u.sink.requests)
     {
-        if (SUCCEEDED(IMFTopologyNode_GetInput(topo_node->node, 0, &upstream_node, &upstream_output)))
-        {
-            session_deliver_pending_samples(session, upstream_node);
-            IMFTopologyNode_Release(upstream_node);
-        }
+        if (!(up_node = session_get_topo_node_input(session, topo_node, 0, &output)))
+            WARN("Failed to node %p/%u input\n", topo_node, 0);
+        else
+            session_deliver_pending_samples(session, up_node);
     }
 
     LeaveCriticalSection(&session->cs);
@@ -3129,26 +3202,19 @@ static void session_set_sink_stream_state(struct media_session *session, IMFStre
 }
 
 static HRESULT transform_get_external_output_sample(const struct media_session *session, struct topo_node *transform,
-        unsigned int output_index, const MFT_OUTPUT_STREAM_INFO *stream_info, IMFSample **sample)
+        DWORD output, const MFT_OUTPUT_STREAM_INFO *stream_info, IMFSample **sample)
 {
-    IMFTopologyNode *downstream_node;
     IMFMediaBuffer *buffer = NULL;
     struct topo_node *topo_node;
     unsigned int buffer_size;
-    DWORD downstream_input;
-    TOPOID node_id;
+    DWORD input;
     HRESULT hr;
 
-    if (FAILED(IMFTopologyNode_GetOutput(transform->node, output_index, &downstream_node, &downstream_input)))
+    if (!(topo_node = session_get_topo_node_output(session, transform, output, &input)))
     {
-        WARN("Failed to get connected node for output %u.\n", output_index);
+        WARN("Failed to node %p/%lu output.\n", transform, output);
         return MF_E_UNEXPECTED;
     }
-
-    IMFTopologyNode_GetTopoNodeID(downstream_node, &node_id);
-    IMFTopologyNode_Release(downstream_node);
-
-    topo_node = session_get_node_by_id(session, node_id);
 
     if (topo_node->type == MF_TOPOLOGY_OUTPUT_NODE && topo_node->u.sink.allocator)
     {
@@ -3156,7 +3222,7 @@ static HRESULT transform_get_external_output_sample(const struct media_session *
     }
     else
     {
-        buffer_size = max(stream_info->cbSize, transform->u.transform.outputs[output_index].min_buffer_size);
+        buffer_size = max(stream_info->cbSize, transform->u.transform.outputs[output].min_buffer_size);
 
         hr = MFCreateAlignedMemoryBuffer(buffer_size, stream_info->cbAlignment, &buffer);
         if (SUCCEEDED(hr))
@@ -3172,58 +3238,206 @@ static HRESULT transform_get_external_output_sample(const struct media_session *
     return hr;
 }
 
-static HRESULT transform_node_pull_samples(const struct media_session *session, struct topo_node *node)
+/* update the transform output type while keeping subtype which matches the old output type */
+static HRESULT transform_stream_update_output_type(struct topo_node *node, struct transform_stream *stream,
+        UINT id, IMFMediaType *old_output_type, IMFMediaType **new_output_type)
 {
-    MFT_OUTPUT_STREAM_INFO stream_info;
-    MFT_OUTPUT_DATA_BUFFER *buffers;
-    HRESULT hr = E_UNEXPECTED;
-    DWORD status = 0;
+    GUID subtype, desired;
+    UINT i = 0;
+    HRESULT hr;
+
+    TRACE("node %p, stream %p, id %u, old_output_type %p, new_output_type %p\n",
+            node, stream, id, old_output_type, new_output_type);
+
+    IMFMediaType_GetGUID(old_output_type, &MF_MT_SUBTYPE, &desired);
+
+    /* find an available output type matching the desired subtype */
+    while (SUCCEEDED(hr = IMFTransform_GetOutputAvailableType(node->object.transform, id,
+            i++, new_output_type)))
+    {
+        IMFMediaType_GetGUID(*new_output_type, &MF_MT_SUBTYPE, &subtype);
+        if (IsEqualGUID(&subtype, &desired))
+        {
+            if (FAILED(hr = IMFTransform_SetOutputType(node->object.transform, id, *new_output_type, 0)))
+            {
+                IMFMediaType_Release(*new_output_type);
+                break;
+            }
+            return S_OK;
+        }
+        IMFMediaType_Release(*new_output_type);
+    }
+
+    *new_output_type = NULL;
+    return hr;
+}
+
+static HRESULT transform_node_format_changed(struct topo_node *node, MFT_OUTPUT_DATA_BUFFER *buffers)
+{
+    HRESULT hr = S_OK;
     unsigned int i;
 
-    if (!(buffers = calloc(node->u.transform.output_count, sizeof(*buffers))))
-        return E_OUTOFMEMORY;
+    TRACE("node %p, buffers %p\n", node, buffers);
 
-    for (i = 0; i < node->u.transform.output_count; ++i)
+    for (i = 0; SUCCEEDED(hr) && i < node->u.transform.output_count; ++i)
     {
-        buffers[i].dwStreamID = transform_node_get_stream_id(node, TRUE, i);
-        buffers[i].pSample = NULL;
-        buffers[i].dwStatus = 0;
-        buffers[i].pEvents = NULL;
+        struct transform_stream *stream = &node->u.transform.outputs[i];
+        IMFMediaType *old_output_type, *new_output_type;
+        UINT id = buffers[i].dwStreamID;
 
-        memset(&stream_info, 0, sizeof(stream_info));
-        if (FAILED(hr = IMFTransform_GetOutputStreamInfo(node->object.transform, buffers[i].dwStreamID, &stream_info)))
-            break;
+        if (!(buffers[i].dwStatus & MFT_OUTPUT_DATA_BUFFER_FORMAT_CHANGE))
+            continue;
 
-        if (!(stream_info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES)))
+        if (SUCCEEDED(hr = IMFTransform_GetOutputCurrentType(node->object.transform, id, &old_output_type)))
         {
-            if (FAILED(hr = transform_get_external_output_sample(session, node, i, &stream_info, &buffers[i].pSample)))
-                break;
+            if (SUCCEEDED(hr = transform_stream_update_output_type(node, stream, id, old_output_type,
+                    &new_output_type)))
+            {
+                if (buffers[i].pEvents || SUCCEEDED(hr = MFCreateCollection(&buffers[i].pEvents)))
+                {
+                    if (FAILED(hr = transform_stream_push_format_change(stream, new_output_type)))
+                        WARN("Failed to queue format change event, hr %#lx\n", hr);
+                }
+                IMFMediaType_Release(new_output_type);
+            }
+            IMFMediaType_Release(old_output_type);
         }
     }
 
-    if (SUCCEEDED(hr))
+    return hr;
+}
+
+static HRESULT transform_stream_update_input_type(struct topo_node *node, UINT input, IMFMediaType *media_type)
+{
+    IMFMediaType **old_output_types;
+    IMFMediaType *new_output_type;
+    IMFMediaTypeHandler *handler;
+    UINT output;
+    HRESULT hr;
+
+    TRACE("node %p, input %u, media_type %p\n", node, input, media_type);
+
+    if (!(old_output_types = calloc(node->u.transform.output_count, sizeof(*old_output_types))))
+        return E_OUTOFMEMORY;
+
+    for (output = 0; output < node->u.transform.output_count; ++output)
+    {
+        UINT id = transform_node_get_stream_id(node, TRUE, output);
+        if (FAILED(hr = IMFTransform_GetOutputCurrentType(node->object.transform, id,
+                &old_output_types[output])))
+            goto done;
+    }
+
+    if (SUCCEEDED(hr = topology_node_get_type_handler(node->node, input, FALSE, &handler)))
+    {
+        if (FAILED(hr = IMFMediaTypeHandler_SetCurrentMediaType(handler, media_type)))
+            WARN("Failed to change note %p input %u media type\n", node->node, input);
+        IMFMediaTypeHandler_Release(handler);
+    }
+
+    for (output = 0; SUCCEEDED(hr) && output < node->u.transform.output_count; ++output)
+    {
+        struct transform_stream *stream = &node->u.transform.outputs[output];
+        UINT id = transform_node_get_stream_id(node, TRUE, output);
+
+        if (SUCCEEDED(hr = transform_stream_update_output_type(node, stream, id,
+                old_output_types[output], &new_output_type)))
+        {
+            if (FAILED(hr = transform_stream_push_format_change(stream, new_output_type)))
+                WARN("Failed to queue format change event, hr %#lx\n", hr);
+            IMFMediaType_Release(new_output_type);
+        }
+    }
+
+done:
+    for (output = 0; output < node->u.transform.output_count; ++output)
+        if (old_output_types[output])
+            IMFMediaType_Release(old_output_types[output]);
+    free(old_output_types);
+    return hr;
+}
+
+static HRESULT allocate_output_samples(const struct media_session *session, struct topo_node *node,
+        MFT_OUTPUT_DATA_BUFFER *buffers)
+{
+    HRESULT hr;
+    UINT i;
+
+    for (i = 0; i < node->u.transform.output_count; ++i)
+    {
+        MFT_OUTPUT_STREAM_INFO stream_info = {0};
+
+        buffers[i].dwStreamID = transform_node_get_stream_id(node, TRUE, i);
+
+        if (FAILED(hr = IMFTransform_GetOutputStreamInfo(node->object.transform, buffers[i].dwStreamID, &stream_info)))
+            return hr;
+        if (!(stream_info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES))
+                && FAILED(hr = transform_get_external_output_sample(session, node, i, &stream_info, &buffers[i].pSample)))
+            return hr;
+    }
+
+    return S_OK;
+}
+
+static void release_output_samples(struct topo_node *node, MFT_OUTPUT_DATA_BUFFER *buffers)
+{
+    UINT i;
+
+    for (i = 0; i < node->u.transform.output_count; ++i)
+    {
+        if (buffers[i].pSample)
+            IMFSample_Release(buffers[i].pSample);
+        if (buffers[i].pEvents)
+            IMFCollection_Release(buffers[i].pEvents);
+    }
+}
+
+static HRESULT transform_node_pull_samples(const struct media_session *session, struct topo_node *node)
+{
+    MFT_OUTPUT_DATA_BUFFER *buffers;
+    DWORD status;
+    HRESULT hr;
+    UINT i;
+
+    if (!(buffers = calloc(node->u.transform.output_count, sizeof(*buffers))))
+        return E_OUTOFMEMORY;
+    if (FAILED(hr = allocate_output_samples(session, node, buffers)))
+        goto done;
+
+    status = 0;
+    hr = IMFTransform_ProcessOutput(node->object.transform, 0, node->u.transform.output_count, buffers, &status);
+    if (hr == MF_E_TRANSFORM_STREAM_CHANGE && SUCCEEDED(hr = transform_node_format_changed(node, buffers)))
+    {
+        release_output_samples(node, buffers);
+
+        memset(buffers, 0, node->u.transform.output_count * sizeof(*buffers));
+        if (FAILED(hr = allocate_output_samples(session, node, buffers)))
+            goto done;
+
         hr = IMFTransform_ProcessOutput(node->object.transform, 0, node->u.transform.output_count, buffers, &status);
+    }
 
     /* Collect returned samples for all streams. */
     for (i = 0; i < node->u.transform.output_count; ++i)
     {
         struct transform_stream *stream = &node->u.transform.outputs[i];
 
-        if (buffers[i].pEvents)
-            IMFCollection_Release(buffers[i].pEvents);
+        if (buffers[i].pEvents && FAILED(hr = transform_stream_push_events(stream, buffers[i].pEvents)))
+            WARN("Failed to push transform events, hr %#lx\n", hr);
+        if (buffers[i].dwStatus & MFT_OUTPUT_DATA_BUFFER_NO_SAMPLE)
+            continue;
 
-        if (SUCCEEDED(hr) && !(buffers[i].dwStatus & MFT_OUTPUT_DATA_BUFFER_NO_SAMPLE))
+        if (SUCCEEDED(hr))
         {
             if (session->quality_manager)
                 IMFQualityManager_NotifyProcessOutput(session->quality_manager, node->node, i, buffers[i].pSample);
             if (FAILED(hr = transform_stream_push_sample(stream, buffers[i].pSample)))
                 WARN("Failed to queue output sample, hr %#lx\n", hr);
         }
-
-        if (buffers[i].pSample)
-            IMFSample_Release(buffers[i].pSample);
     }
 
+done:
+    release_output_samples(node, buffers);
     free(buffers);
 
     return hr;
@@ -3279,15 +3493,111 @@ static HRESULT transform_node_push_sample(const struct media_session *session, s
     return hr;
 }
 
-static void session_deliver_sample_to_node(struct media_session *session, IMFTopologyNode *node, unsigned int input,
+static void session_deliver_sample_to_node(struct media_session *session, struct topo_node *topo_node, unsigned int input,
         IMFSample *sample);
+static void transform_node_deliver_samples(struct media_session *session, struct topo_node *topo_node);
+
+static HRESULT transform_node_handle_format_change(struct media_session *session, struct topo_node *topo_node,
+        UINT input, IMFMediaType *media_type)
+{
+    struct transform_stream *stream = &topo_node->u.transform.inputs[input];
+    UINT id = transform_node_get_stream_id(topo_node, FALSE, input);
+    IMFTransform *transform = topo_node->object.transform;
+    UINT32 support_dynamic_format_change = 0;
+    IMFAttributes *attributes;
+    HRESULT hr;
+
+    TRACE("session %p, topo_node %p, input %u, media_type %p\n", session, topo_node, input, media_type);
+
+    if (SUCCEEDED(IMFTransform_GetAttributes(transform, &attributes)))
+    {
+        if (FAILED(IMFAttributes_GetUINT32(attributes, &MFT_SUPPORT_DYNAMIC_FORMAT_CHANGE, &support_dynamic_format_change)))
+            support_dynamic_format_change = 0;
+        IMFAttributes_Release(attributes);
+    }
+
+    if (!support_dynamic_format_change)
+    {
+        if (SUCCEEDED(hr = IMFTransform_ProcessMessage(transform, MFT_MESSAGE_COMMAND_DRAIN, id)))
+        {
+            while (SUCCEEDED(hr = transform_node_pull_samples(session, topo_node)))
+                transform_node_deliver_samples(session, topo_node);
+        }
+
+        if (hr != MF_E_TRANSFORM_NEED_MORE_INPUT)
+        {
+            /* transform isn't fully drained, put the event in the stream input queue to try again later */
+            if (FAILED(transform_stream_push_format_change(stream, media_type)))
+                WARN("Failed to queue input format change event\n");
+            return hr;
+        }
+    }
+
+    return transform_stream_update_input_type(topo_node, input, media_type);
+}
+
+static HRESULT session_handle_format_change(struct media_session *session, struct topo_node *topo_node,
+        UINT input, IMFMediaType *media_type)
+{
+    HRESULT hr;
+
+    switch (topo_node->type)
+    {
+        case MF_TOPOLOGY_OUTPUT_NODE:
+            if (!topo_node->u.sink.allocator)
+                return S_OK;
+            if (SUCCEEDED(hr = IMFVideoSampleAllocator_UninitializeSampleAllocator(topo_node->u.sink.allocator)))
+                hr = IMFVideoSampleAllocator_InitializeSampleAllocator(topo_node->u.sink.allocator, 4, media_type);
+            return hr;
+
+        case MF_TOPOLOGY_TRANSFORM_NODE:
+            return transform_node_handle_format_change(session, topo_node, input, media_type);
+
+        default:
+            FIXME("Unhandled downstream node type %d.\n", topo_node->type);
+            return E_NOTIMPL;
+    }
+}
+
+static HRESULT transform_stream_handle_event(struct media_session *session, struct transform_stream *stream,
+        struct topo_node *topo_node, unsigned int input, IMFMediaEvent *event)
+{
+    MediaEventType type;
+    PROPVARIANT value;
+    HRESULT hr;
+
+    if (FAILED(hr = IMFMediaEvent_GetType(event, &type)))
+        return hr;
+    PropVariantInit(&value);
+
+    switch (type)
+    {
+        case MEMediaSample:
+            if (SUCCEEDED(hr = IMFMediaEvent_GetValue(event, &value)))
+                session_deliver_sample_to_node(session, topo_node, input, (IMFSample *)value.punkVal);
+            break;
+
+        case MEStreamFormatChanged:
+            if (SUCCEEDED(hr = IMFMediaEvent_GetValue(event, &value)))
+                hr = session_handle_format_change(session, topo_node, input, (IMFMediaType *)value.punkVal);
+            break;
+
+        default:
+            ERR("Unexpected event type %lu\n", type);
+            hr = E_NOTIMPL;
+            break;
+    }
+
+    PropVariantClear(&value);
+    return hr;
+}
 
 static void transform_node_deliver_samples(struct media_session *session, struct topo_node *topo_node)
 {
-    IMFTopologyNode *up_node = topo_node->node, *down_node;
     BOOL drained = transform_node_is_drained(topo_node);
+    struct topo_node *up_node, *down_node;
+    IMFMediaEvent *event;
     DWORD output, input;
-    IMFSample *sample;
     HRESULT hr = S_OK;
 
     /* Push down all available output. */
@@ -3295,26 +3605,30 @@ static void transform_node_deliver_samples(struct media_session *session, struct
     {
         struct transform_stream *stream = &topo_node->u.transform.outputs[output];
 
-        if (FAILED(hr = IMFTopologyNode_GetOutput(up_node, output, &down_node, &input)))
+        if (!(down_node = session_get_topo_node_output(session, topo_node, output, &input)))
         {
-            WARN("Failed to node %p/%lu output, hr %#lx.\n", up_node, output, hr);
+            WARN("Failed to node %p/%lu output\n", topo_node, output);
             continue;
         }
 
         while (stream->requests)
         {
-            if (FAILED(hr = transform_stream_pop_sample(stream, &sample)))
+            MediaEventType type;
+
+            if (FAILED(hr = transform_stream_pop_event(stream, &event)))
             {
                 /* try getting more samples by calling IMFTransform_ProcessOutput */
                 if (FAILED(hr = transform_node_pull_samples(session, topo_node)))
                     break;
-                if (FAILED(hr = transform_stream_pop_sample(stream, &sample)))
+                if (FAILED(hr = transform_stream_pop_event(stream, &event)))
                     break;
             }
 
-            session_deliver_sample_to_node(session, down_node, input, sample);
-            stream->requests--;
-            IMFSample_Release(sample);
+            if (FAILED(hr = transform_stream_handle_event(session, stream, down_node, input, event)))
+                ERR("Failed to handle stream event, hr %#lx\n", hr);
+            else if (SUCCEEDED(IMFMediaEvent_GetType(event, &type)) && type == MEMediaSample)
+                stream->requests--;
+            IMFMediaEvent_Release(event);
         }
 
         while (stream->requests && drained)
@@ -3322,8 +3636,6 @@ static void transform_node_deliver_samples(struct media_session *session, struct
             session_deliver_sample_to_node(session, down_node, input, NULL);
             stream->requests--;
         }
-
-        IMFTopologyNode_Release(down_node);
     }
 
     if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT && transform_node_has_requests(topo_node))
@@ -3333,39 +3645,28 @@ static void transform_node_deliver_samples(struct media_session *session, struct
         input = topo_node->u.transform.next_input++ % topo_node->u.transform.input_count;
         stream = &topo_node->u.transform.inputs[input];
 
-        if (SUCCEEDED(transform_stream_pop_sample(stream, &sample)))
+        if (SUCCEEDED(transform_stream_pop_event(stream, &event)))
         {
-            session_deliver_sample_to_node(session, topo_node->node, input, sample);
-            IMFSample_Release(sample);
+            if (FAILED(hr = transform_stream_handle_event(session, stream, topo_node, input, event)))
+                ERR("Failed to handle stream event, hr %#lx\n", hr);
+            IMFMediaEvent_Release(event);
         }
-        else if (FAILED(hr = IMFTopologyNode_GetInput(topo_node->node, input, &up_node, &output)))
-            WARN("Failed to get node %p/%lu input, hr %#lx\n", topo_node->node, input, hr);
-        else
-        {
-            if (FAILED(hr = session_request_sample_from_node(session, up_node, output)))
-                WARN("Failed to request sample from upstream node %p/%lu, hr %#lx\n", up_node, output, hr);
-            IMFTopologyNode_Release(up_node);
-        }
+        else if (!(up_node = session_get_topo_node_input(session, topo_node, input, &output)))
+            WARN("Failed to node %p/%lu input\n", topo_node, input);
+        else if (FAILED(hr = session_request_sample_from_node(session, up_node, output)))
+            WARN("Failed to request sample from upstream node %p/%lu, hr %#lx\n", up_node, output, hr);
     }
 }
 
-static void session_deliver_sample_to_node(struct media_session *session, IMFTopologyNode *node, unsigned int input,
+static void session_deliver_sample_to_node(struct media_session *session, struct topo_node *topo_node, unsigned int input,
         IMFSample *sample)
 {
-    struct topo_node *topo_node;
-    MF_TOPOLOGY_TYPE node_type;
-    TOPOID node_id;
     HRESULT hr;
 
     if (session->quality_manager)
-        IMFQualityManager_NotifyProcessInput(session->quality_manager, node, input, sample);
+        IMFQualityManager_NotifyProcessInput(session->quality_manager, topo_node->node, input, sample);
 
-    IMFTopologyNode_GetNodeType(node, &node_type);
-    IMFTopologyNode_GetTopoNodeID(node, &node_id);
-
-    topo_node = session_get_node_by_id(session, node_id);
-
-    switch (node_type)
+    switch (topo_node->type)
     {
         case MF_TOPOLOGY_OUTPUT_NODE:
             if (topo_node->u.sink.requests)
@@ -3390,52 +3691,34 @@ static void session_deliver_sample_to_node(struct media_session *session, IMFTop
             transform_node_deliver_samples(session, topo_node);
             break;
         case MF_TOPOLOGY_TEE_NODE:
-            FIXME("Unhandled downstream node type %d.\n", node_type);
+            FIXME("Unhandled downstream node type %d.\n", topo_node->type);
             break;
         default:
             ;
     }
 }
 
-static void session_deliver_pending_samples(struct media_session *session, IMFTopologyNode *node)
+static void session_deliver_pending_samples(struct media_session *session, struct topo_node *topo_node)
 {
-    struct topo_node *topo_node;
-    MF_TOPOLOGY_TYPE node_type;
-    TOPOID node_id;
-
-    IMFTopologyNode_GetNodeType(node, &node_type);
-    IMFTopologyNode_GetTopoNodeID(node, &node_id);
-
-    topo_node = session_get_node_by_id(session, node_id);
-
-    switch (node_type)
+    switch (topo_node->type)
     {
         case MF_TOPOLOGY_TRANSFORM_NODE:
             transform_node_pull_samples(session, topo_node);
             transform_node_deliver_samples(session, topo_node);
             break;
         default:
-            FIXME("Unexpected node type %u.\n", node_type);
+            FIXME("Unexpected node type %u.\n", topo_node->type);
     }
 }
 
 
-static HRESULT session_request_sample_from_node(struct media_session *session, IMFTopologyNode *node, DWORD output)
+static HRESULT session_request_sample_from_node(struct media_session *session, struct topo_node *topo_node, DWORD output)
 {
-    IMFTopologyNode *down_node;
-    struct topo_node *topo_node;
-    MF_TOPOLOGY_TYPE node_type;
+    struct topo_node *down_node;
     HRESULT hr = S_OK;
-    IMFSample *sample;
-    TOPOID node_id;
     DWORD input;
 
-    IMFTopologyNode_GetNodeType(node, &node_type);
-    IMFTopologyNode_GetTopoNodeID(node, &node_id);
-
-    topo_node = session_get_node_by_id(session, node_id);
-
-    switch (node_type)
+    switch (topo_node->type)
     {
         case MF_TOPOLOGY_SOURCESTREAM_NODE:
             if (FAILED(hr = IMFMediaStream_RequestSample(topo_node->object.source_stream, NULL)))
@@ -3444,17 +3727,19 @@ static HRESULT session_request_sample_from_node(struct media_session *session, I
         case MF_TOPOLOGY_TRANSFORM_NODE:
         {
             struct transform_stream *stream = &topo_node->u.transform.outputs[output];
+            IMFMediaEvent *event;
 
-            if (FAILED(hr = IMFTopologyNode_GetOutput(node, output, &down_node, &input)))
+            if (!(down_node = session_get_topo_node_output(session, topo_node, output, &input)))
             {
-                WARN("Failed to node %p/%lu output, hr %#lx.\n", node, output, hr);
+                WARN("Failed to node %p/%lu output\n", topo_node, output);
                 break;
             }
 
-            if (SUCCEEDED(transform_stream_pop_sample(stream, &sample)))
+            if (SUCCEEDED(transform_stream_pop_event(stream, &event)))
             {
-                session_deliver_sample_to_node(session, down_node, input, sample);
-                IMFSample_Release(sample);
+                if (FAILED(hr = transform_stream_handle_event(session, stream, down_node, input, event)))
+                    ERR("Failed to handle stream event, hr %#lx\n", hr);
+                IMFMediaEvent_Release(event);
             }
             else if (transform_node_has_requests(topo_node))
             {
@@ -3466,12 +3751,10 @@ static HRESULT session_request_sample_from_node(struct media_session *session, I
                 stream->requests++;
                 transform_node_deliver_samples(session, topo_node);
             }
-
-            IMFTopologyNode_Release(down_node);
             break;
         }
         case MF_TOPOLOGY_TEE_NODE:
-            FIXME("Unhandled upstream node type %d.\n", node_type);
+            FIXME("Unhandled upstream node type %d.\n", topo_node->type);
         default:
             hr = E_UNEXPECTED;
     }
@@ -3481,10 +3764,8 @@ static HRESULT session_request_sample_from_node(struct media_session *session, I
 
 static void session_request_sample(struct media_session *session, IMFStreamSink *sink_stream)
 {
-    struct topo_node *sink_node = NULL, *node;
-    IMFTopologyNode *upstream_node;
-    DWORD upstream_output;
-    HRESULT hr;
+    struct topo_node *sink_node = NULL, *node, *up_node;
+    DWORD output;
 
     LIST_FOR_EACH_ENTRY(node, &session->presentation.nodes, struct topo_node, entry)
     {
@@ -3498,24 +3779,21 @@ static void session_request_sample(struct media_session *session, IMFStreamSink 
     if (!sink_node)
         return;
 
-    if (FAILED(hr = IMFTopologyNode_GetInput(sink_node->node, 0, &upstream_node, &upstream_output)))
+    if (!(up_node = session_get_topo_node_input(session, sink_node, 0, &output)))
     {
-        WARN("Failed to get upstream node connection, hr %#lx.\n", hr);
+        WARN("Failed to node %p/%u input\n", sink_node, 0);
         return;
     }
 
     sink_node->u.sink.requests++;
-    if (FAILED(session_request_sample_from_node(session, upstream_node, upstream_output)))
+    if (FAILED(session_request_sample_from_node(session, up_node, output)))
         sink_node->u.sink.requests--;
-    IMFTopologyNode_Release(upstream_node);
 }
 
 static void session_deliver_sample(struct media_session *session, IMFMediaStream *stream, const PROPVARIANT *value)
 {
     struct topo_node *source_node = NULL, *node;
-    IMFTopologyNode *downstream_node;
-    DWORD downstream_input;
-    HRESULT hr;
+    DWORD input;
 
     if (value && (value->vt != VT_UNKNOWN || !value->punkVal))
     {
@@ -3538,14 +3816,13 @@ static void session_deliver_sample(struct media_session *session, IMFMediaStream
     if (!value)
         source_node->flags |= TOPO_NODE_END_OF_STREAM;
 
-    if (FAILED(hr = IMFTopologyNode_GetOutput(source_node->node, 0, &downstream_node, &downstream_input)))
+    if (!(node = session_get_topo_node_output(session, source_node, 0, &input)))
     {
-        WARN("Failed to get downstream node connection, hr %#lx.\n", hr);
+        WARN("Failed to node %p/%u output.\n", source_node, 0);
         return;
     }
 
-    session_deliver_sample_to_node(session, downstream_node, downstream_input, value ? (IMFSample *)value->punkVal : NULL);
-    IMFTopologyNode_Release(downstream_node);
+    session_deliver_sample_to_node(session, node, input, value ? (IMFSample *)value->punkVal : NULL);
 }
 
 static void session_sink_invalidated(struct media_session *session, IMFMediaEvent *event, IMFStreamSink *sink)

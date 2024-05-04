@@ -162,6 +162,8 @@ static void test_install_class(void)
      '1','1','d','b','-','b','7','0','4','-',
      '0','0','1','1','9','5','5','c','2','b','d','b','}',0};
     char tmpfile[MAX_PATH];
+    char buf[32];
+    DWORD size;
     BOOL ret;
 
     static const char inf_data[] =
@@ -195,11 +197,27 @@ static void test_install_class(void)
     ok(!ret, "Expected failure.\n");
     ok(GetLastError() == ERROR_FILE_NOT_FOUND, "Got unexpected error %#lx.\n", GetLastError());
 
+    size = 123;
+    SetLastError(0xdeadbeef);
+    ret = SetupDiGetClassDescriptionA(&guid, buf, sizeof(buf), &size);
+    ok(!ret, "Expected failure.\n");
+    ok(size == 123, "Expected 123, got %ld.\n", size);
+    todo_wine
+    ok(GetLastError() == ERROR_NOT_FOUND /* win7 */ || GetLastError() == ERROR_INVALID_CLASS /* win10 */,
+       "Got unexpected error %#lx.\n", GetLastError());
+
     /* The next call will succeed. Information is put into the registry but the
      * location(s) is/are depending on the Windows version.
      */
     ret = SetupDiInstallClassA(NULL, tmpfile, 0, NULL);
     ok(ret, "Failed to install class, error %#lx.\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetupDiGetClassDescriptionA(&guid, buf, sizeof(buf), &size);
+    ok(ret == TRUE, "Failed to get class description.\n");
+    ok(size == sizeof("Wine test devices"), "Expected %Iu, got %lu.\n", sizeof("Wine test devices"), size);
+    ok(!strcmp(buf, "Wine test devices"), "Got unexpected class description %s.\n", debugstr_a(buf));
+    todo_wine ok(!GetLastError(), "Got unexpected error %#lx.\n", GetLastError());
 
     ret = RegDeleteKeyW(HKEY_LOCAL_MACHINE, classKey);
     ok(!ret, "Failed to delete class key, error %lu.\n", GetLastError());
@@ -1876,6 +1894,8 @@ static void test_get_inf_class(void)
     static const char inffile[] = "winetest.inf";
     static const char content[] = "[Version]\r\n\r\n";
     static const char* signatures[] = {"\"$CHICAGO$\"", "\"$Windows NT$\""};
+    static const GUID deadbeef_class_guid = {0xdeadbeef,0xdead,0xbeef,{0xde,0xad,0xbe,0xef,0xde,0xad,0xbe,0xef}};
+    static const char deadbeef_class_name[] = "DeadBeef";
 
     char cn[MAX_PATH];
     char filename[MAX_PATH];
@@ -2013,6 +2033,26 @@ static void test_get_inf_class(void)
         ok(retval, "expected SetupDiGetINFClassA to succeed! error %lu\n", GetLastError());
         todo_wine
         ok(count == 4, "expected count==4, got %lu(%s)\n", count, cn);
+
+        /* Test Strings substitution */
+        WritePrivateProfileStringA("Version", "Class", "%ClassName%", filename);
+        WritePrivateProfileStringA("Version", "ClassGUID", "%ClassGuid%", filename);
+
+        /* Without Strings section the ClassGUID is invalid (has non-substituted strkey token) */
+        retval = SetupDiGetINFClassA(filename, &guid, cn, MAX_PATH, NULL);
+        ok(!retval, "expected SetupDiGetINFClassA to fail\n");
+        ok(GetLastError() == ERROR_INVALID_PARAMETER,
+           "expected error ERROR_INVALID_PARAMETER, got %lu\n", GetLastError());
+
+        /* With Strings section the ClassGUID and Class should be substituted */
+        WritePrivateProfileStringA("Strings", "ClassName", deadbeef_class_name, filename);
+        WritePrivateProfileStringA("Strings", "ClassGuid", "{deadbeef-dead-beef-dead-beefdeadbeef}", filename);
+        count = 0xdeadbeef;
+        retval = SetupDiGetINFClassA(filename, &guid, cn, MAX_PATH, &count);
+        ok(retval, "expected SetupDiGetINFClassA to succeed! error %lu\n", GetLastError());
+        ok(count == lstrlenA(deadbeef_class_name) + 1, "expected count=%d, got %lu\n", lstrlenA(deadbeef_class_name) + 1, count);
+        ok(!lstrcmpA(deadbeef_class_name, cn), "expected class_name='%s', got '%s'\n", deadbeef_class_name, cn);
+        ok(IsEqualGUID(&deadbeef_class_guid, &guid), "expected ClassGUID to be deadbeef-dead-beef-dead-beefdeadbeef\n");
 
         DeleteFileA(filename);
     }

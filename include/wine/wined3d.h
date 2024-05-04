@@ -930,7 +930,7 @@ enum wined3d_memory_segment_group
 #define WINED3DUSAGE_MASK                                       0x10007bf0
 
 #define WINED3DUSAGE_SCRATCH                                    0x00400000
-#define WINED3DUSAGE_PRIVATE                                    0x00800000
+#define WINED3DUSAGE_CS                                         0x00800000
 #define WINED3DUSAGE_LEGACY_CUBEMAP                             0x01000000
 #define WINED3DUSAGE_OWNDC                                      0x02000000
 #define WINED3DUSAGE_STATICDECL                                 0x04000000
@@ -2940,19 +2940,6 @@ static inline void wined3d_streaming_buffer_cleanup(struct wined3d_streaming_buf
     buffer->buffer = NULL;
     buffer->pos = 0;
 }
-
-typedef void (__cdecl *wined3d_gl_texture_callback)(unsigned int gl_texture, unsigned int gl_depth_texture, const void *data, unsigned int size);
-
-void __cdecl wined3d_access_gl_texture(struct wined3d_texture *texture,
-        wined3d_gl_texture_callback callback, struct wined3d_texture *depth_texture, const void *data, unsigned int size);
-
-unsigned int __cdecl wined3d_get_gl_texture(struct wined3d_texture *texture);
-
-typedef void (__cdecl *wined3d_cs_callback)(const void *data, unsigned int size);
-
-void __cdecl wined3d_device_run_cs_callback(struct wined3d_device *device,
-        wined3d_cs_callback callback, const void *data, unsigned int size);
-void __cdecl wined3d_device_wait_idle(struct wined3d_device *device);
 
 /* Return the integer base-2 logarithm of x. Undefined for x == 0. */
 static inline unsigned int wined3d_log2i(unsigned int x)

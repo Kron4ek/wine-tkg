@@ -202,6 +202,7 @@ enum vkd3d_shader_error
     VKD3D_SHADER_WARNING_DXIL_INVALID_MASK              = 8307,
     VKD3D_SHADER_WARNING_DXIL_INVALID_OPERATION         = 8308,
     VKD3D_SHADER_WARNING_DXIL_IGNORING_ATTACHMENT       = 8309,
+    VKD3D_SHADER_WARNING_DXIL_UNDEFINED_OPERAND         = 8310,
 
     VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED             = 9000,
     VKD3D_SHADER_ERROR_VSIR_INVALID_HANDLER             = 9001,
@@ -526,6 +527,9 @@ enum vkd3d_shader_opcode
     VKD3DSIH_UTOD,
     VKD3DSIH_UTOF,
     VKD3DSIH_UTOU,
+    VKD3DSIH_WAVE_ACTIVE_ALL_EQUAL,
+    VKD3DSIH_WAVE_ALL_TRUE,
+    VKD3DSIH_WAVE_ANY_TRUE,
     VKD3DSIH_XOR,
 
     VKD3DSIH_INVALID,
@@ -589,6 +593,8 @@ enum vkd3d_shader_register_type
     VKD3DSPR_OUTSTENCILREF,
     VKD3DSPR_UNDEF,
     VKD3DSPR_SSA,
+    VKD3DSPR_WAVELANECOUNT,
+    VKD3DSPR_WAVELANEINDEX,
 
     VKD3DSPR_COUNT,
 
@@ -1060,14 +1066,6 @@ struct dxbc_shader_desc
     struct shader_signature patch_constant_signature;
 };
 
-struct vkd3d_shader_desc
-{
-    struct
-    {
-        uint32_t used, external;
-    } flat_constant_count[3];
-};
-
 struct vkd3d_shader_register_semantic
 {
     struct vkd3d_shader_dst_param reg;
@@ -1248,6 +1246,12 @@ static inline bool register_is_scalar_constant_zero(const struct vkd3d_shader_re
             && (data_type_is_64_bit(reg->data_type) ? !reg->u.immconst_u64[0] : !reg->u.immconst_u32[0]);
 }
 
+static inline bool register_is_numeric_array(const struct vkd3d_shader_register *reg)
+{
+    return (reg->type == VKD3DSPR_IMMCONSTBUFFER || reg->type == VKD3DSPR_IDXTEMP
+            || reg->type == VKD3DSPR_GROUPSHAREDMEM);
+}
+
 static inline bool vsir_register_is_label(const struct vkd3d_shader_register *reg)
 {
     return reg->type == VKD3DSPR_LABEL;
@@ -1300,6 +1304,8 @@ struct vkd3d_shader_instruction_array
     struct vkd3d_shader_immediate_constant_buffer **icbs;
     size_t icb_capacity;
     size_t icb_count;
+
+    struct vkd3d_shader_src_param *outpointid_param;
 };
 
 bool shader_instruction_array_init(struct vkd3d_shader_instruction_array *instructions, unsigned int reserve);
@@ -1310,6 +1316,8 @@ bool shader_instruction_array_add_icb(struct vkd3d_shader_instruction_array *ins
         struct vkd3d_shader_immediate_constant_buffer *icb);
 bool shader_instruction_array_clone_instruction(struct vkd3d_shader_instruction_array *instructions,
         unsigned int dst, unsigned int src);
+struct vkd3d_shader_src_param *instruction_array_create_outpointid_param(
+        struct vkd3d_shader_instruction_array *instructions);
 void shader_instruction_array_destroy(struct vkd3d_shader_instruction_array *instructions);
 
 enum vkd3d_shader_config_flags
@@ -1327,6 +1335,7 @@ struct vsir_program
     struct shader_signature patch_constant_signature;
 
     unsigned int input_control_point_count, output_control_point_count;
+    unsigned int flat_constant_count[3];
     unsigned int block_count;
     unsigned int temp_count;
     unsigned int ssa_count;
@@ -1336,8 +1345,11 @@ struct vsir_program
     size_t block_name_count;
 };
 
-bool vsir_program_init(struct vsir_program *program, const struct vkd3d_shader_version *version, unsigned int reserve);
 void vsir_program_cleanup(struct vsir_program *program);
+int vsir_program_compile(struct vsir_program *program, uint64_t config_flags,
+        const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_code *out,
+        struct vkd3d_shader_message_context *message_context);
+bool vsir_program_init(struct vsir_program *program, const struct vkd3d_shader_version *version, unsigned int reserve);
 enum vkd3d_result vsir_program_normalise(struct vsir_program *program, uint64_t config_flags,
         const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_message_context *message_context);
 enum vkd3d_result vsir_program_validate(struct vsir_program *program, uint64_t config_flags,
@@ -1361,7 +1373,6 @@ struct vkd3d_shader_parser
     struct vkd3d_shader_location location;
     bool failed;
 
-    struct vkd3d_shader_desc shader_desc;
     const struct vkd3d_shader_parser_ops *ops;
     struct vsir_program program;
 
@@ -1544,7 +1555,7 @@ int glsl_compile(struct vsir_program *program, uint64_t config_flags,
 
 #define SPIRV_MAX_SRC_COUNT 6
 
-int spirv_compile(struct vkd3d_shader_parser *parser,
+int spirv_compile(struct vsir_program *program, uint64_t config_flags,
         const struct vkd3d_shader_scan_descriptor_info1 *scan_descriptor_info,
         const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context);

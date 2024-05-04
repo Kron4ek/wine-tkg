@@ -1153,6 +1153,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
             x86_thread_data()->dr6 = context->Dr6;
             x86_thread_data()->dr7 = context->Dr7;
         }
+        set_context_exception_reporting_flags( &context->ContextFlags, CONTEXT_SERVICE_ACTIVE );
     }
 
     if (context->ContextFlags & (CONTEXT_INTEGER & ~CONTEXT_i386))
@@ -1449,7 +1450,7 @@ static void setup_raise_exception( ucontext_t *sigcontext, void *stack_ptr,
     struct exc_stack_layout *stack;
     size_t stack_size;
     unsigned int xstate_size;
-    NTSTATUS status = send_debug_event( rec, context, TRUE );
+    NTSTATUS status = send_debug_event( rec, context, TRUE, TRUE );
 
     if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
     {
@@ -2153,7 +2154,7 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
             ERR_(seh)( "kernel stack overflow.\n" );
             return;
         }
-        context->c.ContextFlags = CONTEXT_FULL;
+        context->c.ContextFlags = CONTEXT_FULL | CONTEXT_EXCEPTION_REQUEST;
         NtGetContextThread( GetCurrentThread(), &context->c );
         if (xstate_extended_features())
         {
@@ -2176,6 +2177,7 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         struct xcontext context;
 
         save_context( &context, ucontext );
+        context.c.ContextFlags |= CONTEXT_EXCEPTION_REPORTING;
         wait_suspend( &context.c );
         restore_context( &context, ucontext );
     }
@@ -2563,7 +2565,11 @@ void call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB
     ((XSAVE_FORMAT *)context.ExtendedRegisters)->MxCsr = 0x1f80;
     if ((ctx = get_cpu_area( IMAGE_FILE_MACHINE_I386 ))) *ctx = context;
 
-    if (suspend) wait_suspend( &context );
+    if (suspend)
+    {
+        context.ContextFlags |= CONTEXT_EXCEPTION_REPORTING | CONTEXT_EXCEPTION_ACTIVE;
+        wait_suspend( &context );
+    }
 
     ctx = (CONTEXT *)((ULONG_PTR)context.Esp & ~3) - 1;
     *ctx = context;

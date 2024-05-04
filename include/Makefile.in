@@ -28,6 +28,7 @@ SOURCES = \
 	asysta.idl \
 	atlbase.h \
 	atlcom.h \
+	atldef.h \
 	atliface.idl \
 	atlthunk.h \
 	atlwin.h \
@@ -930,7 +931,6 @@ SOURCES = \
 	wine/winbase16.h \
 	wine/windef16.h \
 	wine/wine_common_ver.rc \
-	wine/wined3d-interop.idl \
 	wine/wined3d.h \
 	wine/winedxgi.idl \
 	wine/wingdi16.h \

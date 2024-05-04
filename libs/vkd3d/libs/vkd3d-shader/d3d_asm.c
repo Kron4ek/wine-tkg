@@ -327,6 +327,9 @@ static const char * const shader_opcode_names[] =
     [VKD3DSIH_UTOD                            ] = "utod",
     [VKD3DSIH_UTOF                            ] = "utof",
     [VKD3DSIH_UTOU                            ] = "utou",
+    [VKD3DSIH_WAVE_ACTIVE_ALL_EQUAL           ] = "wave_active_all_equal",
+    [VKD3DSIH_WAVE_ALL_TRUE                   ] = "wave_all_true",
+    [VKD3DSIH_WAVE_ANY_TRUE                   ] = "wave_any_true",
     [VKD3DSIH_XOR                             ] = "xor",
 };
 
@@ -1159,6 +1162,14 @@ static void shader_print_register(struct vkd3d_d3d_asm_compiler *compiler, const
 
         case VKD3DSPR_SSA:
             vkd3d_string_buffer_printf(buffer, "sr");
+            break;
+
+        case VKD3DSPR_WAVELANECOUNT:
+            vkd3d_string_buffer_printf(buffer, "vWaveLaneCount");
+            break;
+
+        case VKD3DSPR_WAVELANEINDEX:
+            vkd3d_string_buffer_printf(buffer, "vWaveLaneIndex");
             break;
 
         default:

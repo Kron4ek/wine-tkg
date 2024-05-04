@@ -898,11 +898,14 @@ NTSTATUS WINAPI RtlWaitOnAddress( const void *addr, const void *cmp, SIZE_T size
 
     ret = NtWaitForAlertByThreadId( NULL, timeout );
 
-    spin_lock( &queue->lock );
-    /* We may have already been removed by a call to RtlWakeAddressSingle(). */
+    /* We may have already been removed by a call to RtlWakeAddressSingle() or RtlWakeAddressAll(). */
     if (entry.addr)
-        list_remove( &entry.entry );
-    spin_unlock( &queue->lock );
+    {
+        spin_lock( &queue->lock );
+        if (entry.addr)
+            list_remove( &entry.entry );
+        spin_unlock( &queue->lock );
+    }
 
     TRACE("returning %#lx\n", ret);
 
@@ -916,8 +919,8 @@ NTSTATUS WINAPI RtlWaitOnAddress( const void *addr, const void *cmp, SIZE_T size
 void WINAPI RtlWakeAddressAll( const void *addr )
 {
     struct futex_queue *queue = get_futex_queue( addr );
+    struct futex_entry *entry, *next;
     unsigned int count = 0, i;
-    struct futex_entry *entry;
     DWORD tids[256];
 
     TRACE("%p\n", addr);
@@ -929,10 +932,12 @@ void WINAPI RtlWakeAddressAll( const void *addr )
     if (!queue->queue.next)
         list_init(&queue->queue);
 
-    LIST_FOR_EACH_ENTRY( entry, &queue->queue, struct futex_entry, entry )
+    LIST_FOR_EACH_ENTRY_SAFE( entry, next, &queue->queue, struct futex_entry, entry )
     {
         if (entry->addr == addr)
         {
+            entry->addr = NULL;
+            list_remove( &entry->entry );
             /* Try to buffer wakes, so that we don't make a system call while
              * holding a spinlock. */
             if (count < ARRAY_SIZE(tids))

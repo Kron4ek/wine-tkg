@@ -215,8 +215,12 @@ struct vkd3d_shader_sm1_parser
 
     struct vkd3d_shader_parser p;
 
+    struct
+    {
 #define MAX_CONSTANT_COUNT 8192
-    uint32_t constant_def_mask[3][MAX_CONSTANT_COUNT / 32];
+        uint32_t def_mask[VKD3D_BITMAP_SIZE(MAX_CONSTANT_COUNT)];
+        uint32_t count;
+    } constants[3];
 };
 
 /* This table is not order or position dependent. */
@@ -750,15 +754,13 @@ static bool add_signature_element_from_semantic(struct vkd3d_shader_sm1_parser *
 static void record_constant_register(struct vkd3d_shader_sm1_parser *sm1,
         enum vkd3d_shader_d3dbc_constant_register set, uint32_t index, bool from_def)
 {
-    struct vkd3d_shader_desc *desc = &sm1->p.shader_desc;
-
-    desc->flat_constant_count[set].used = max(desc->flat_constant_count[set].used, index + 1);
+    sm1->constants[set].count = max(sm1->constants[set].count, index + 1);
     if (from_def)
     {
         /* d3d shaders have a maximum of 8192 constants; we should not overrun
          * this array. */
-        assert((index / 32) <= ARRAY_SIZE(sm1->constant_def_mask[set]));
-        bitmap_set(sm1->constant_def_mask[set], index);
+        assert((index / 32) <= ARRAY_SIZE(sm1->constants[set].def_mask));
+        bitmap_set(sm1->constants[set].def_mask, index);
     }
 }
 
@@ -1301,9 +1303,9 @@ static uint32_t get_external_constant_count(struct vkd3d_shader_sm1_parser *sm1,
     /* Find the highest constant index which is not written by a DEF
      * instruction. We can't (easily) use an FFZ function for this since it
      * needs to be limited by the highest used register index. */
-    for (j = sm1->p.shader_desc.flat_constant_count[set].used; j > 0; --j)
+    for (j = sm1->constants[set].count; j > 0; --j)
     {
-        if (!bitmap_is_set(sm1->constant_def_mask[set], j - 1))
+        if (!bitmap_is_set(sm1->constants[set].def_mask, j - 1))
             return j;
     }
 
@@ -1354,8 +1356,8 @@ int vkd3d_shader_sm1_parser_create(const struct vkd3d_shader_compile_info *compi
         ++instructions->count;
     }
 
-    for (i = 0; i < ARRAY_SIZE(sm1->p.shader_desc.flat_constant_count); ++i)
-        sm1->p.shader_desc.flat_constant_count[i].external = get_external_constant_count(sm1, i);
+    for (i = 0; i < ARRAY_SIZE(sm1->p.program.flat_constant_count); ++i)
+        sm1->p.program.flat_constant_count[i] = get_external_constant_count(sm1, i);
 
     if (!sm1->p.failed)
         ret = vkd3d_shader_parser_validate(&sm1->p);
@@ -1506,18 +1508,28 @@ D3DXPARAMETER_CLASS hlsl_sm1_class(const struct hlsl_type *type)
                 return D3DXPC_MATRIX_COLUMNS;
             else
                 return D3DXPC_MATRIX_ROWS;
-        case HLSL_CLASS_OBJECT:
-            return D3DXPC_OBJECT;
         case HLSL_CLASS_SCALAR:
             return D3DXPC_SCALAR;
         case HLSL_CLASS_STRUCT:
             return D3DXPC_STRUCT;
         case HLSL_CLASS_VECTOR:
             return D3DXPC_VECTOR;
-        default:
-            ERR("Invalid class %#x.\n", type->class);
-            vkd3d_unreachable();
+        case HLSL_CLASS_OBJECT:
+        case HLSL_CLASS_SAMPLER:
+        case HLSL_CLASS_STRING:
+        case HLSL_CLASS_TEXTURE:
+            return D3DXPC_OBJECT;
+        case HLSL_CLASS_DEPTH_STENCIL_VIEW:
+        case HLSL_CLASS_EFFECT_GROUP:
+        case HLSL_CLASS_PASS:
+        case HLSL_CLASS_RENDER_TARGET_VIEW:
+        case HLSL_CLASS_TECHNIQUE:
+        case HLSL_CLASS_UAV:
+        case HLSL_CLASS_VOID:
+            break;
     }
+
+    vkd3d_unreachable();
 }
 
 D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
@@ -1550,53 +1562,51 @@ D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
                     vkd3d_unreachable();
             }
 
+        case HLSL_CLASS_SAMPLER:
+            switch (type->sampler_dim)
+            {
+                case HLSL_SAMPLER_DIM_1D:
+                    return D3DXPT_SAMPLER1D;
+                case HLSL_SAMPLER_DIM_2D:
+                    return D3DXPT_SAMPLER2D;
+                case HLSL_SAMPLER_DIM_3D:
+                    return D3DXPT_SAMPLER3D;
+                case HLSL_SAMPLER_DIM_CUBE:
+                    return D3DXPT_SAMPLERCUBE;
+                case HLSL_SAMPLER_DIM_GENERIC:
+                    return D3DXPT_SAMPLER;
+                default:
+                    ERR("Invalid dimension %#x.\n", type->sampler_dim);
+                    vkd3d_unreachable();
+            }
+            break;
+
+        case HLSL_CLASS_TEXTURE:
+            switch (type->sampler_dim)
+            {
+                case HLSL_SAMPLER_DIM_1D:
+                    return D3DXPT_TEXTURE1D;
+                case HLSL_SAMPLER_DIM_2D:
+                    return D3DXPT_TEXTURE2D;
+                case HLSL_SAMPLER_DIM_3D:
+                    return D3DXPT_TEXTURE3D;
+                case HLSL_SAMPLER_DIM_CUBE:
+                    return D3DXPT_TEXTURECUBE;
+                case HLSL_SAMPLER_DIM_GENERIC:
+                    return D3DXPT_TEXTURE;
+                default:
+                    ERR("Invalid dimension %#x.\n", type->sampler_dim);
+                    vkd3d_unreachable();
+            }
+            break;
+
         case HLSL_CLASS_OBJECT:
             switch (type->base_type)
             {
                 case HLSL_TYPE_PIXELSHADER:
                     return D3DXPT_PIXELSHADER;
-                case HLSL_TYPE_SAMPLER:
-                    switch (type->sampler_dim)
-                    {
-                        case HLSL_SAMPLER_DIM_1D:
-                            return D3DXPT_SAMPLER1D;
-                        case HLSL_SAMPLER_DIM_2D:
-                            return D3DXPT_SAMPLER2D;
-                        case HLSL_SAMPLER_DIM_3D:
-                            return D3DXPT_SAMPLER3D;
-                        case HLSL_SAMPLER_DIM_CUBE:
-                            return D3DXPT_SAMPLERCUBE;
-                        case HLSL_SAMPLER_DIM_GENERIC:
-                            return D3DXPT_SAMPLER;
-                        default:
-                            ERR("Invalid dimension %#x.\n", type->sampler_dim);
-                            vkd3d_unreachable();
-                    }
-                    break;
-                case HLSL_TYPE_STRING:
-                    return D3DXPT_STRING;
-                case HLSL_TYPE_TEXTURE:
-                    switch (type->sampler_dim)
-                    {
-                        case HLSL_SAMPLER_DIM_1D:
-                            return D3DXPT_TEXTURE1D;
-                        case HLSL_SAMPLER_DIM_2D:
-                            return D3DXPT_TEXTURE2D;
-                        case HLSL_SAMPLER_DIM_3D:
-                            return D3DXPT_TEXTURE3D;
-                        case HLSL_SAMPLER_DIM_CUBE:
-                            return D3DXPT_TEXTURECUBE;
-                        case HLSL_SAMPLER_DIM_GENERIC:
-                            return D3DXPT_TEXTURE;
-                        default:
-                            ERR("Invalid dimension %#x.\n", type->sampler_dim);
-                            vkd3d_unreachable();
-                    }
-                    break;
                 case HLSL_TYPE_VERTEXSHADER:
                     return D3DXPT_VERTEXSHADER;
-                case HLSL_TYPE_VOID:
-                    return D3DXPT_VOID;
                 default:
                     vkd3d_unreachable();
             }
@@ -1607,6 +1617,18 @@ D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
 
         case HLSL_CLASS_STRUCT:
             return D3DXPT_VOID;
+
+        case HLSL_CLASS_STRING:
+            return D3DXPT_STRING;
+
+        case HLSL_CLASS_DEPTH_STENCIL_VIEW:
+        case HLSL_CLASS_EFFECT_GROUP:
+        case HLSL_CLASS_PASS:
+        case HLSL_CLASS_RENDER_TARGET_VIEW:
+        case HLSL_CLASS_TECHNIQUE:
+        case HLSL_CLASS_UAV:
+        case HLSL_CLASS_VOID:
+            break;
     }
 
     vkd3d_unreachable();
@@ -1793,6 +1815,7 @@ static uint32_t sm1_encode_register_type(D3DSHADER_PARAM_REGISTER_TYPE type)
 struct sm1_instruction
 {
     D3DSHADER_INSTRUCTION_OPCODE_TYPE opcode;
+    unsigned int flags;
 
     struct sm1_dst_register
     {
@@ -1831,6 +1854,8 @@ static void write_sm1_instruction(struct hlsl_ctx *ctx, struct vkd3d_bytecode_bu
 {
     uint32_t token = instr->opcode;
     unsigned int i;
+
+    token |= VKD3D_SM1_INSTRUCTION_FLAGS_MASK & (instr->flags << VKD3D_SM1_INSTRUCTION_FLAGS_SHIFT);
 
     if (ctx->profile->major_version > 1)
         token |= (instr->has_dst + instr->src_count) << D3DSI_INSTLENGTH_SHIFT;
@@ -2394,6 +2419,49 @@ static void write_sm1_expr(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
     }
 }
 
+static void write_sm1_block(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer,
+        const struct hlsl_block *block);
+
+static void write_sm1_if(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer, const struct hlsl_ir_node *instr)
+{
+    const struct hlsl_ir_if *iff = hlsl_ir_if(instr);
+    const struct hlsl_ir_node *condition;
+    struct sm1_instruction sm1_ifc, sm1_else, sm1_endif;
+
+    condition = iff->condition.node;
+    assert(condition->data_type->dimx == 1 && condition->data_type->dimy == 1);
+
+    sm1_ifc = (struct sm1_instruction)
+    {
+        .opcode = D3DSIO_IFC,
+        .flags = VKD3D_SHADER_REL_OP_NE, /* Make it a "if_ne" instruction. */
+
+        .srcs[0].type = D3DSPR_TEMP,
+        .srcs[0].swizzle = hlsl_swizzle_from_writemask(condition->reg.writemask),
+        .srcs[0].reg = condition->reg.id,
+        .srcs[0].mod = 0,
+
+        .srcs[1].type = D3DSPR_TEMP,
+        .srcs[1].swizzle = hlsl_swizzle_from_writemask(condition->reg.writemask),
+        .srcs[1].reg = condition->reg.id,
+        .srcs[1].mod = D3DSPSM_NEG,
+
+        .src_count = 2,
+    };
+    write_sm1_instruction(ctx, buffer, &sm1_ifc);
+    write_sm1_block(ctx, buffer, &iff->then_block);
+
+    if (!list_empty(&iff->else_block.instrs))
+    {
+        sm1_else = (struct sm1_instruction){.opcode = D3DSIO_ELSE};
+        write_sm1_instruction(ctx, buffer, &sm1_else);
+        write_sm1_block(ctx, buffer, &iff->else_block);
+    }
+
+    sm1_endif = (struct sm1_instruction){.opcode = D3DSIO_ENDIF};
+    write_sm1_instruction(ctx, buffer, &sm1_endif);
+}
+
 static void write_sm1_jump(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer, const struct hlsl_ir_node *instr)
 {
     const struct hlsl_ir_jump *jump = hlsl_ir_jump(instr);
@@ -2594,12 +2662,12 @@ static void write_sm1_swizzle(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer
     write_sm1_instruction(ctx, buffer, &sm1_instr);
 }
 
-static void write_sm1_instructions(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer,
-        const struct hlsl_ir_function_decl *entry_func)
+static void write_sm1_block(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer,
+        const struct hlsl_block *block)
 {
     const struct hlsl_ir_node *instr;
 
-    LIST_FOR_EACH_ENTRY(instr, &entry_func->body.instrs, struct hlsl_ir_node, entry)
+    LIST_FOR_EACH_ENTRY(instr, &block->instrs, struct hlsl_ir_node, entry)
     {
         if (instr->data_type)
         {
@@ -2621,6 +2689,13 @@ static void write_sm1_instructions(struct hlsl_ctx *ctx, struct vkd3d_bytecode_b
 
             case HLSL_IR_EXPR:
                 write_sm1_expr(ctx, buffer, instr);
+                break;
+
+            case HLSL_IR_IF:
+                if (hlsl_version_ge(ctx, 2, 1))
+                    write_sm1_if(ctx, buffer, instr);
+                else
+                    hlsl_fixme(ctx, &instr->loc, "Flatten \"if\" conditionals branches.");
                 break;
 
             case HLSL_IR_JUMP:
@@ -2660,7 +2735,7 @@ int hlsl_sm1_write(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_fun
     write_sm1_constant_defs(ctx, &buffer);
     write_sm1_semantic_dcls(ctx, &buffer);
     write_sm1_sampler_dcls(ctx, &buffer);
-    write_sm1_instructions(ctx, &buffer, entry_func);
+    write_sm1_block(ctx, &buffer, &entry_func->body);
 
     put_u32(&buffer, D3DSIO_END);
 

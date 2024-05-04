@@ -367,6 +367,7 @@ AC_CHECK_HEADERS(\
 	EGL/egl.h \
 	arpa/inet.h \
 	arpa/nameser.h \
+	asm/termbits.h \
 	asm/types.h \
 	asm/user.h \
 	elf.h \
@@ -797,7 +798,16 @@ saved_CC=$CC
 saved_CFLAGS=$CFLAGS
 saved_LDFLAGS=$LDFLAGS
 
-for wine_arch in $cross_archs
+AS_UNSET(extra_arch)
+for arch in $cross_archs
+do
+  case $arch in
+    arm64ec) test ${extra_arch+y} || extra_arch=x86_64 ;;
+    x86_64) extra_arch="" ;;
+  esac
+done
+
+for wine_arch in $cross_archs $extra_arch
 do
     case "x$with_mingw" in
       xclang|x*/clang) AS_VAR_SET(${wine_arch}_CC,$with_mingw) ;;
@@ -929,7 +939,8 @@ This is an error since --enable-archs=$wine_arch was requested.])])
 This is an error since --enable-archs=$wine_arch was requested.])])
                           continue])])
 
-    AS_VAR_APPEND([PE_ARCHS],[" $wine_arch"])
+    AS_VAR_IF([wine_arch],[$extra_arch],[],[AS_VAR_APPEND([PE_ARCHS],[" $wine_arch"])])
+
     WINE_TRY_PE_CFLAGS([-fno-strict-aliasing])
     dnl clang needs to be told to fail on unknown options
     WINE_TRY_PE_CFLAGS([-Werror=unknown-warning-option],[CFLAGS="$CFLAGS -Werror=unknown-warning-option"])
@@ -3716,7 +3727,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-9.7.r0.g127b7faf\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-9.8.r0.g6a6e7da9\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

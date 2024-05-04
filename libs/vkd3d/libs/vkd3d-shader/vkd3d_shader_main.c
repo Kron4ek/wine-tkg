@@ -1395,9 +1395,9 @@ static void vkd3d_shader_free_scan_descriptor_info1(struct vkd3d_shader_scan_des
     vkd3d_free(scan_descriptor_info->descriptors);
 }
 
-static int scan_with_parser(const struct vkd3d_shader_compile_info *compile_info,
+static int vsir_program_scan(struct vsir_program *program, const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_message_context *message_context,
-        struct vkd3d_shader_scan_descriptor_info1 *descriptor_info1, struct vkd3d_shader_parser *parser)
+        struct vkd3d_shader_scan_descriptor_info1 *descriptor_info1)
 {
     struct vkd3d_shader_scan_combined_resource_sampler_info *combined_sampler_info;
     struct vkd3d_shader_scan_descriptor_info1 local_descriptor_info1 = {0};
@@ -1428,27 +1428,27 @@ static int scan_with_parser(const struct vkd3d_shader_compile_info *compile_info
             descriptor_info1 = &local_descriptor_info1;
     }
 
-    vkd3d_shader_scan_context_init(&context, &parser->program.shader_version, compile_info,
+    vkd3d_shader_scan_context_init(&context, &program->shader_version, compile_info,
             descriptor_info1, combined_sampler_info, message_context);
 
     if (TRACE_ON())
-        vkd3d_shader_trace(&parser->program);
+        vkd3d_shader_trace(program);
 
-    for (i = 0; i < parser->program.instructions.count; ++i)
+    for (i = 0; i < program->instructions.count; ++i)
     {
-        instruction = &parser->program.instructions.elements[i];
+        instruction = &program->instructions.elements[i];
         if ((ret = vkd3d_shader_scan_instruction(&context, instruction)) < 0)
             break;
     }
 
-    for (i = 0; i < ARRAY_SIZE(parser->shader_desc.flat_constant_count); ++i)
+    for (i = 0; i < ARRAY_SIZE(program->flat_constant_count); ++i)
     {
-        unsigned int size = parser->shader_desc.flat_constant_count[i].external;
         struct vkd3d_shader_register_range range = {.space = 0, .first = i, .last = i};
         struct vkd3d_shader_register reg = {.idx[0].offset = i, .idx_count = 1};
+        unsigned int size = program->flat_constant_count[i];
         struct vkd3d_shader_descriptor_info1 *d;
 
-        if (parser->shader_desc.flat_constant_count[i].external)
+        if (size)
         {
             if ((d = vkd3d_shader_scan_add_descriptor(&context, VKD3D_SHADER_DESCRIPTOR_TYPE_CBV, &reg,
                     &range, VKD3D_SHADER_RESOURCE_BUFFER, VKD3D_SHADER_RESOURCE_DATA_UINT)))
@@ -1458,11 +1458,11 @@ static int scan_with_parser(const struct vkd3d_shader_compile_info *compile_info
 
     if (!ret && signature_info)
     {
-        if (!vkd3d_shader_signature_from_shader_signature(&signature_info->input, &parser->program.input_signature)
+        if (!vkd3d_shader_signature_from_shader_signature(&signature_info->input, &program->input_signature)
                 || !vkd3d_shader_signature_from_shader_signature(&signature_info->output,
-                        &parser->program.output_signature)
+                        &program->output_signature)
                 || !vkd3d_shader_signature_from_shader_signature(&signature_info->patch_constant,
-                        &parser->program.patch_constant_signature))
+                        &program->patch_constant_signature))
         {
             ret = VKD3D_ERROR_OUT_OF_MEMORY;
         }
@@ -1544,7 +1544,7 @@ int vkd3d_shader_scan(const struct vkd3d_shader_compile_info *compile_info, char
         }
         else
         {
-            ret = scan_with_parser(compile_info, &message_context, NULL, parser);
+            ret = vsir_program_scan(&parser->program, compile_info, &message_context, NULL);
             vkd3d_shader_parser_destroy(parser);
         }
     }
@@ -1556,12 +1556,11 @@ int vkd3d_shader_scan(const struct vkd3d_shader_compile_info *compile_info, char
     return ret;
 }
 
-static int vkd3d_shader_parser_compile(struct vkd3d_shader_parser *parser,
-        const struct vkd3d_shader_compile_info *compile_info,
-        struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context)
+int vsir_program_compile(struct vsir_program *program, uint64_t config_flags,
+        const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_code *out,
+        struct vkd3d_shader_message_context *message_context)
 {
     struct vkd3d_shader_scan_descriptor_info1 scan_descriptor_info;
-    struct vsir_program *program = &parser->program;
     struct vkd3d_shader_compile_info scan_info;
     int ret;
 
@@ -1574,17 +1573,18 @@ static int vkd3d_shader_parser_compile(struct vkd3d_shader_parser *parser,
             break;
 
         case VKD3D_SHADER_TARGET_GLSL:
-            if ((ret = scan_with_parser(&scan_info, message_context, &scan_descriptor_info, parser)) < 0)
+            if ((ret = vsir_program_scan(program, &scan_info, message_context, &scan_descriptor_info)) < 0)
                 return ret;
-            ret = glsl_compile(program, parser->config_flags, compile_info, out, message_context);
+            ret = glsl_compile(program, config_flags, compile_info, out, message_context);
             vkd3d_shader_free_scan_descriptor_info1(&scan_descriptor_info);
             break;
 
         case VKD3D_SHADER_TARGET_SPIRV_BINARY:
         case VKD3D_SHADER_TARGET_SPIRV_TEXT:
-            if ((ret = scan_with_parser(&scan_info, message_context, &scan_descriptor_info, parser)) < 0)
+            if ((ret = vsir_program_scan(program, &scan_info, message_context, &scan_descriptor_info)) < 0)
                 return ret;
-            ret = spirv_compile(parser, &scan_descriptor_info, compile_info, out, message_context);
+            ret = spirv_compile(program, config_flags, &scan_descriptor_info,
+                    compile_info, out, message_context);
             vkd3d_shader_free_scan_descriptor_info1(&scan_descriptor_info);
             break;
 
@@ -1665,7 +1665,7 @@ int vkd3d_shader_compile(const struct vkd3d_shader_compile_info *compile_info,
         }
         else
         {
-            ret = vkd3d_shader_parser_compile(parser, compile_info, out, &message_context);
+            ret = vsir_program_compile(&parser->program, parser->config_flags, compile_info, out, &message_context);
             vkd3d_shader_parser_destroy(parser);
         }
     }
@@ -1879,6 +1879,11 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
 
     static const enum vkd3d_shader_target_type hlsl_types[] =
     {
+        VKD3D_SHADER_TARGET_SPIRV_BINARY,
+#ifdef HAVE_SPIRV_TOOLS
+        VKD3D_SHADER_TARGET_SPIRV_TEXT,
+#endif
+        VKD3D_SHADER_TARGET_D3D_ASM,
         VKD3D_SHADER_TARGET_D3D_BYTECODE,
         VKD3D_SHADER_TARGET_DXBC_TPF,
         VKD3D_SHADER_TARGET_FX,

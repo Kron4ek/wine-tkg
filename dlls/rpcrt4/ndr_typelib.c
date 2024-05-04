@@ -43,6 +43,7 @@ static size_t write_type_tfs(ITypeInfo *typeinfo, unsigned char *str,
     do { if ((str)) *((short *)((str) + (len))) = (val); (len) += 2; } while (0)
 #define WRITE_INT(str, len, val) \
     do { if ((str)) *((int *)((str) + (len))) = (val); (len) += 4; } while (0)
+#define ROUND_SIZE(size, alignment) (((size) + ((alignment) - 1)) & ~((alignment) - 1))
 
 extern const ExtendedProxyFileInfo ndr_types_ProxyFileInfo;
 
@@ -145,17 +146,21 @@ static unsigned char get_basetype(ITypeInfo *typeinfo, TYPEDESC *desc)
     }
 }
 
-static unsigned int type_memsize(ITypeInfo *typeinfo, TYPEDESC *desc)
+static unsigned int type_memsize(ITypeInfo *typeinfo, TYPEDESC *desc, unsigned int *align_ret)
 {
+    unsigned int size, align;
+
     switch (desc->vt)
     {
     case VT_I1:
     case VT_UI1:
-        return 1;
+        size = align = 1;
+        break;
     case VT_I2:
     case VT_UI2:
     case VT_BOOL:
-        return 2;
+        size = align = 2;
+        break;
     case VT_I4:
     case VT_UI4:
     case VT_R4:
@@ -163,45 +168,52 @@ static unsigned int type_memsize(ITypeInfo *typeinfo, TYPEDESC *desc)
     case VT_UINT:
     case VT_ERROR:
     case VT_HRESULT:
-        return 4;
+        size = align = 4;
+        break;
     case VT_I8:
     case VT_UI8:
     case VT_R8:
     case VT_DATE:
-        return 8;
+        size = align = 8;
+        break;
     case VT_BSTR:
     case VT_SAFEARRAY:
     case VT_PTR:
     case VT_UNKNOWN:
     case VT_DISPATCH:
-        return sizeof(void *);
+        size = align = sizeof(void *);
+        break;
     case VT_VARIANT:
-        return sizeof(VARIANT);
+        align = 8;
+        size = sizeof(VARIANT);
+        break;
     case VT_CARRAY:
     {
-        unsigned int size = type_memsize(typeinfo, &desc->lpadesc->tdescElem);
         unsigned int i;
+        size = type_memsize(typeinfo, &desc->lpadesc->tdescElem, &align);
         for (i = 0; i < desc->lpadesc->cDims; i++)
             size *= desc->lpadesc->rgbounds[i].cElements;
-        return size;
+        break;
     }
     case VT_USERDEFINED:
     {
-        unsigned int size = 0;
         ITypeInfo *refinfo;
         TYPEATTR *attr;
 
         ITypeInfo_GetRefTypeInfo(typeinfo, desc->hreftype, &refinfo);
         ITypeInfo_GetTypeAttr(refinfo, &attr);
         size = attr->cbSizeInstance;
+        align = attr->cbAlignment;
         ITypeInfo_ReleaseTypeAttr(refinfo, attr);
         ITypeInfo_Release(refinfo);
-        return size;
+        break;
     }
     default:
         FIXME("unhandled type %u\n", desc->vt);
         return 0;
     }
+    if (align_ret) *align_ret = align;
+    return size;
 }
 
 static BOOL type_pointer_is_iface(ITypeInfo *typeinfo, TYPEDESC *tdesc)
@@ -400,16 +412,9 @@ static void write_struct_members(ITypeInfo *typeinfo, unsigned char *str,
         ITypeInfo_GetVarDesc(typeinfo, i, &desc);
         tdesc = &desc->elemdescVar.tdesc;
 
-        /* This may not match the intended alignment, but we don't have enough
-         * information to determine that. This should always give the correct
-         * layout. */
-        if ((struct_offset & 7) && !(desc->oInst & 7))
-            WRITE_CHAR(str, *len, FC_ALIGNM8);
-        else if ((struct_offset & 3) && !(desc->oInst & 3))
-            WRITE_CHAR(str, *len, FC_ALIGNM4);
-        else if ((struct_offset & 1) && !(desc->oInst & 1))
-            WRITE_CHAR(str, *len, FC_ALIGNM2);
-        struct_offset = desc->oInst + type_memsize(typeinfo, tdesc);
+        if (struct_offset != desc->oInst)
+            WRITE_CHAR(str, *len, FC_STRUCTPAD1 + desc->oInst - struct_offset - 1);
+        struct_offset = desc->oInst + type_memsize(typeinfo, tdesc, NULL);
 
         if ((basetype = get_basetype(typeinfo, tdesc)))
             WRITE_CHAR(str, *len, basetype);
@@ -570,7 +575,7 @@ static void write_complex_struct_tfs(ITypeInfo *typeinfo, unsigned char *str,
 
         if (struct_offset != desc->oInst)
             member_layout++; /* alignment directive */
-        struct_offset = desc->oInst + type_memsize(typeinfo, tdesc);
+        struct_offset = desc->oInst + type_memsize(typeinfo, tdesc, NULL);
 
         if (get_basetype(typeinfo, tdesc))
             member_layout++;
@@ -646,7 +651,7 @@ static size_t write_array_tfs(ITypeInfo *typeinfo, unsigned char *str,
     }
     else
     {
-        size *= type_memsize(typeinfo, &desc->tdescElem);
+        size *= type_memsize(typeinfo, &desc->tdescElem, NULL);
         WRITE_INT(str, *len, size);
     }
 
@@ -846,15 +851,52 @@ static size_t write_type_tfs(ITypeInfo *typeinfo, unsigned char *str,
     return off;
 }
 
-static unsigned short get_stack_size(ITypeInfo *typeinfo, TYPEDESC *desc)
+static unsigned int get_stack_size(ITypeInfo *typeinfo, TYPEDESC *desc, unsigned int *align, int *by_value)
 {
-#if defined(__i386__) || defined(__arm__)
-    if (desc->vt == VT_CARRAY)
-        return sizeof(void *);
-    return (type_memsize(typeinfo, desc) + 3) & ~3;
-#else
-    return sizeof(void *);
+    unsigned int size = *align = sizeof(void *);
+    int byval = 1;
+
+    switch (desc->vt)
+    {
+    case VT_R8:
+    case VT_I8:
+    case VT_UI8:
+    case VT_DATE:
+#ifdef __arm__
+    case VT_R4:
+        *align = 8;
 #endif
+        size = 8;
+        break;
+    case VT_PTR:
+    case VT_UNKNOWN:
+    case VT_DISPATCH:
+    case VT_CARRAY:
+        byval = 0;
+        break;
+    case VT_VARIANT:
+    case VT_USERDEFINED:
+        size = type_memsize(typeinfo, desc, align);
+        break;
+    default:
+        break;
+    }
+
+#ifdef __i386__
+    *align = sizeof(void *);
+#endif
+    if (byval)
+    {
+#ifdef __x86_64__
+        byval = (size == 1 || size == 2 || size == 4 || size == 8);
+#elif defined __aarch64__
+        byval = (size <= 16);
+#endif
+    }
+    if (!byval) size = *align = sizeof(void *);
+    else if (*align < sizeof(void *)) *align = sizeof(void *);
+    if (by_value) *by_value = byval;
+    return ROUND_SIZE( size, *align );
 }
 
 static const unsigned short MustSize    = 0x0001;
@@ -894,7 +936,7 @@ static HRESULT get_param_pointer_info(ITypeInfo *typeinfo, TYPEDESC *tdesc, int 
         break;
     case VT_CARRAY:
         *flags |= IsSimpleRef | MustFree;
-        *server_size = type_memsize(typeinfo, tdesc);
+        *server_size = type_memsize(typeinfo, tdesc, NULL);
         *tfs_tdesc = tdesc;
         break;
     case VT_USERDEFINED:
@@ -937,7 +979,7 @@ static HRESULT get_param_pointer_info(ITypeInfo *typeinfo, TYPEDESC *tdesc, int 
         *flags |= IsSimpleRef;
         *tfs_tdesc = tdesc;
         if (!is_in && is_out)
-            *server_size = type_memsize(typeinfo, tdesc);
+            *server_size = type_memsize(typeinfo, tdesc, NULL);
         if ((*basetype = get_basetype(typeinfo, tdesc)))
             *flags |= IsBasetype;
         else
@@ -949,7 +991,7 @@ static HRESULT get_param_pointer_info(ITypeInfo *typeinfo, TYPEDESC *tdesc, int 
 }
 
 static HRESULT get_param_info(ITypeInfo *typeinfo, TYPEDESC *tdesc, int is_in,
-        int is_out, unsigned short *server_size, unsigned short *flags,
+        int is_out, int by_val, unsigned short *server_size, unsigned short *flags,
         unsigned char *basetype, TYPEDESC **tfs_tdesc)
 {
     ITypeInfo *refinfo;
@@ -966,15 +1008,10 @@ static HRESULT get_param_info(ITypeInfo *typeinfo, TYPEDESC *tdesc, int is_in,
     switch (tdesc->vt)
     {
     case VT_VARIANT:
-#if !defined(__i386__) && !defined(__arm__)
-        *flags |= IsSimpleRef | MustFree;
-        break;
-#endif
-        /* otherwise fall through */
     case VT_BSTR:
     case VT_SAFEARRAY:
     case VT_CY:
-        *flags |= IsByValue | MustFree;
+        *flags |= (by_val ? IsByValue : IsSimpleRef) | MustFree;
         break;
     case VT_UNKNOWN:
     case VT_DISPATCH:
@@ -995,17 +1032,10 @@ static HRESULT get_param_info(ITypeInfo *typeinfo, TYPEDESC *tdesc, int is_in,
             *basetype = FC_ENUM32;
             break;
         case TKIND_RECORD:
-#if defined(__i386__) || defined(__arm__)
-            *flags |= IsByValue | MustFree;
-#else
-            if (attr->cbSizeInstance <= 8)
-                *flags |= IsByValue | MustFree;
-            else
-                *flags |= IsSimpleRef | MustFree;
-#endif
+            *flags |= (by_val ? IsByValue : IsSimpleRef) | MustFree;
             break;
         case TKIND_ALIAS:
-            hr = get_param_info(refinfo, &attr->tdescAlias, is_in, is_out,
+            hr = get_param_info(refinfo, &attr->tdescAlias, is_in, is_out, 0,
                     server_size, flags, basetype, tfs_tdesc);
             break;
 
@@ -1046,7 +1076,8 @@ static HRESULT write_param_fs(ITypeInfo *typeinfo, unsigned char *type,
     USHORT param_flags = desc->paramdesc.wParamFlags;
     TYPEDESC *tdesc = &desc->tdesc, *tfs_tdesc;
     unsigned short server_size;
-    unsigned short stack_size = get_stack_size(typeinfo, tdesc);
+    int byval;
+    unsigned int align, stack_size = get_stack_size(typeinfo, tdesc, &align, &byval);
     unsigned char basetype;
     unsigned short flags;
     int is_in, is_out;
@@ -1056,7 +1087,7 @@ static HRESULT write_param_fs(ITypeInfo *typeinfo, unsigned char *type,
     is_out = param_flags & PARAMFLAG_FOUT;
     is_in = (param_flags & PARAMFLAG_FIN) || (!is_out && !is_return);
 
-    hr = get_param_info(typeinfo, tdesc, is_in, is_out, &server_size, &flags,
+    hr = get_param_info(typeinfo, tdesc, is_in, is_out, byval, &server_size, &flags,
             &basetype, &tfs_tdesc);
 
     if (is_in)      flags |= IsIn;
@@ -1072,6 +1103,8 @@ static HRESULT write_param_fs(ITypeInfo *typeinfo, unsigned char *type,
 
     if (SUCCEEDED(hr))
     {
+        *stack_offset = ROUND_SIZE( *stack_offset, align );
+
         WRITE_SHORT(proc, *proclen, flags);
         WRITE_SHORT(proc, *proclen, *stack_offset);
         WRITE_SHORT(proc, *proclen, basetype ? basetype : off);
@@ -1082,46 +1115,188 @@ static HRESULT write_param_fs(ITypeInfo *typeinfo, unsigned char *type,
     return hr;
 }
 
+#if defined __arm__ || defined __aarch64__
+
+/* replace consecutive params code by a repeat sequence: 0x9d code<1> repeat_count<2> */
+static unsigned int compress_params_array( unsigned char *params, unsigned int count )
+{
+    unsigned int i, j;
+
+    for (i = 0; i + 4 <= count; i++)
+    {
+        for (j = 1; i + j < count; j++) if (params[i + j] != params[i]) break;
+        if (j < 4) continue;
+        params[i] = 0x9d;
+        params[i + 2] = j & 0xff;
+        params[i + 3] = j >> 8;
+        memmove( params + i + 4, params + i + j, count - (i + j) );
+        count -= j - 4;
+        i += 3;
+    }
+    return count;
+}
+
+/* fill the parameters array for the procedure extra data on ARM platforms */
+static unsigned int fill_params_array( ITypeInfo *typeinfo, FUNCDESC *desc,
+                                       unsigned char *params, unsigned int count )
+{
+    static const unsigned int pointer_size = sizeof(void *);
+    unsigned int reg_count = 0, float_count = 0, double_count = 0, stack_pos = 0, offset = 0;
+    unsigned int i, size, pos, align;
+
+    memset( params, 0x9f /* padding */, count );
+
+    /* This pointer */
+    params[0] = 0x80 + reg_count++;
+    offset += pointer_size;
+
+    for (i = 0; i < desc->cParams; i++)
+    {
+        unsigned char basetype = get_basetype( typeinfo, &desc->lprgelemdescParam[i].tdesc );
+
+        size = get_stack_size( typeinfo, &desc->lprgelemdescParam[i].tdesc, &align, NULL );
+        offset = ROUND_SIZE( offset, align );
+        pos = offset / pointer_size;
+
+#ifdef __aarch64__
+        switch (basetype)
+        {
+        case FC_FLOAT:
+        case FC_DOUBLE:
+            if (double_count >= 8) break;
+            params[pos] = 0x88 + double_count++;
+            offset += size;
+            continue;
+
+        default:
+            reg_count = ROUND_SIZE( reg_count, align / pointer_size );
+            if (reg_count > 8 - size / pointer_size) break;
+            while (size)
+            {
+                params[pos++] = 0x80 + reg_count++;
+                offset += pointer_size;
+                size -= pointer_size;
+            }
+            continue;
+        }
+        (void)float_count; /* unused on arm64 */
+#else
+        switch (basetype)
+        {
+        case FC_FLOAT:
+            if (!(float_count % 2)) float_count = max( float_count, double_count * 2 );
+            if (float_count >= 16)
+            {
+                stack_pos = ROUND_SIZE( stack_pos, align );
+                params[pos] = 0x100 - (offset - stack_pos) / pointer_size;
+                stack_pos += size;
+            }
+            else
+            {
+                params[pos] = 0x84 + float_count++;
+            }
+            offset += size;
+            continue;
+
+        case FC_DOUBLE:
+            double_count = max( double_count, (float_count + 1) / 2 );
+            if (double_count >= 8) break;
+            params[pos] = 0x84 + 2 * double_count;
+            params[pos + 1] = 0x84 + 2 * double_count + 1;
+            double_count++;
+            offset += size;
+            continue;
+
+        default:
+            reg_count = ROUND_SIZE( reg_count, align / pointer_size );
+            if (reg_count <= 4 - size / pointer_size || !stack_pos)
+            {
+                while (size && reg_count < 4)
+                {
+                    params[pos++] = 0x80 + reg_count++;
+                    offset += pointer_size;
+                    size -= pointer_size;
+                }
+            }
+            break;
+        }
+#endif
+        stack_pos = ROUND_SIZE( stack_pos, align );
+        memset( params + pos, 0x100 - (offset - stack_pos) / pointer_size, size / pointer_size );
+        stack_pos += size;
+        offset += size;
+    }
+
+    while (count && params[count - 1] == 0x9f) count--;
+    return count;
+}
+
+#endif  /* __arm__ || __aarch64__ */
+
 static void write_proc_func_header(ITypeInfo *typeinfo, FUNCDESC *desc,
         WORD proc_idx, unsigned char *proc, size_t *proclen)
 {
-    unsigned short stack_size = 2 * sizeof(void *); /* This + return */
-#ifdef __x86_64__
-    unsigned short float_mask = 0;
-    unsigned char basetype;
-#endif
-    WORD param_idx;
+    unsigned int i, align, size, stack_size = sizeof(void *); /* This */
+
+    for (i = 0; i < desc->cParams; i++)
+    {
+        size = get_stack_size(typeinfo, &desc->lprgelemdescParam[i].tdesc, &align, NULL );
+        stack_size = ROUND_SIZE( stack_size, align );
+        stack_size += size;
+    }
+    stack_size += sizeof(void *);  /* return */
 
     WRITE_CHAR (proc, *proclen, FC_AUTO_HANDLE);
     WRITE_CHAR (proc, *proclen, Oi_OBJECT_PROC | Oi_OBJ_USE_V2_INTERPRETER);
     WRITE_SHORT(proc, *proclen, proc_idx);
-    for (param_idx = 0; param_idx < desc->cParams; param_idx++)
-        stack_size += get_stack_size(typeinfo, &desc->lprgelemdescParam[param_idx].tdesc);
     WRITE_SHORT(proc, *proclen, stack_size);
 
     WRITE_SHORT(proc, *proclen, 0); /* constant_client_buffer_size */
     WRITE_SHORT(proc, *proclen, 0); /* constant_server_buffer_size */
     WRITE_CHAR (proc, *proclen, 0x47);  /* HasExtensions | HasReturn | ClientMustSize | ServerMustSize */
     WRITE_CHAR (proc, *proclen, desc->cParams + 1); /* incl. return value */
-#ifdef __x86_64__
-    WRITE_CHAR (proc, *proclen, 10); /* extension size */
-#else
+
+#ifdef __i386__
     WRITE_CHAR (proc, *proclen, 8);  /* extension size */
-#endif
     WRITE_CHAR (proc, *proclen, 1);  /* HasNewCorrDesc */
     WRITE_SHORT(proc, *proclen, 0);  /* ClientCorrHint */
     WRITE_SHORT(proc, *proclen, 0);  /* ServerCorrHint */
     WRITE_SHORT(proc, *proclen, 0);  /* NotifyIndex */
-#ifdef __x86_64__
-    for (param_idx = 0; param_idx < desc->cParams && param_idx < 3; param_idx++)
+#elif defined __x86_64__
     {
-        basetype = get_basetype(typeinfo, &desc->lprgelemdescParam[param_idx].tdesc);
-        if (basetype == FC_FLOAT)
-            float_mask |= (1 << ((param_idx + 1) * 2));
-        else if (basetype == FC_DOUBLE)
-            float_mask |= (2 << ((param_idx + 1) * 2));
+        unsigned short float_mask = 0;
+
+        for (i = 0; i < desc->cParams && i < 3; i++)
+        {
+            unsigned char basetype = get_basetype(typeinfo, &desc->lprgelemdescParam[i].tdesc);
+            if (basetype == FC_FLOAT) float_mask |= (1 << ((i + 1) * 2));
+            else if (basetype == FC_DOUBLE) float_mask |= (2 << ((i + 1) * 2));
+        }
+        WRITE_CHAR (proc, *proclen, 10); /* extension size */
+        WRITE_CHAR (proc, *proclen, 1);  /* HasNewCorrDesc */
+        WRITE_SHORT(proc, *proclen, 0);  /* ClientCorrHint */
+        WRITE_SHORT(proc, *proclen, 0);  /* ServerCorrHint */
+        WRITE_SHORT(proc, *proclen, 0);  /* NotifyIndex */
+        WRITE_SHORT(proc, *proclen, float_mask);
     }
-    WRITE_SHORT(proc, *proclen, float_mask);
+#else
+    {
+        unsigned int len, count = stack_size / sizeof(void *);
+        unsigned char *params = malloc( count );
+
+        count = fill_params_array( typeinfo, desc, params, count );
+        len = compress_params_array( params, count );
+        WRITE_CHAR (proc, *proclen, 8 + 3 + len + !(len % 2) ); /* extension size */
+        WRITE_CHAR (proc, *proclen, 1);  /* HasNewCorrDesc */
+        WRITE_SHORT(proc, *proclen, 0);  /* ClientCorrHint */
+        WRITE_SHORT(proc, *proclen, 0);  /* ServerCorrHint */
+        WRITE_SHORT(proc, *proclen, 0);  /* NotifyIndex */
+        WRITE_SHORT(proc, *proclen, count);
+        WRITE_CHAR (proc, *proclen, len);
+        for (i = 0; i < len; i++) WRITE_CHAR (proc, *proclen, params[i]);
+        if (!(len % 2)) WRITE_CHAR (proc, *proclen, 0);
+        free( params );
+    }
 #endif
 }
 

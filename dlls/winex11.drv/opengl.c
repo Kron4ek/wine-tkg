@@ -184,7 +184,7 @@ static char wglExtensions[4096];
 static int glxVersion[2];
 static int glx_opcode;
 
-struct wgl_pixel_format
+struct glx_pixel_format
 {
     GLXFBConfig fbconfig;
     XVisualInfo *visual;
@@ -199,7 +199,7 @@ struct wgl_context
     BOOL has_been_current;
     BOOL sharing;
     BOOL gl3_context;
-    const struct wgl_pixel_format *fmt;
+    const struct glx_pixel_format *fmt;
     int numAttribs; /* This is needed for delaying wglCreateContextAttribsARB */
     int attribList[16]; /* This is needed for delaying wglCreateContextAttribsARB */
     GLXContext ctx;
@@ -226,7 +226,7 @@ struct gl_drawable
     Window                         window;       /* window if drawable is a GLXWindow */
     Colormap                       colormap;     /* colormap for the client window */
     Pixmap                         pixmap;       /* base pixmap if drawable is a GLXPixmap */
-    const struct wgl_pixel_format *format;       /* pixel format for the drawable */
+    const struct glx_pixel_format *format;       /* pixel format for the drawable */
     SIZE                           pixmap_size;  /* pixmap size for GLXPixmap drawables */
     int                            swap_interval;
     BOOL                           refresh_swap_interval;
@@ -236,7 +236,7 @@ struct gl_drawable
 struct wgl_pbuffer
 {
     struct gl_drawable *gl;
-    const struct wgl_pixel_format* fmt;
+    const struct glx_pixel_format* fmt;
     int        width;
     int        height;
     int*       attribList;
@@ -268,7 +268,7 @@ static XContext gl_pbuffer_context;
 
 static struct list context_list = LIST_INIT( context_list );
 static struct list pbuffer_list = LIST_INIT( pbuffer_list );
-static struct wgl_pixel_format *pixel_formats;
+static struct glx_pixel_format *pixel_formats;
 static int nb_pixel_formats, nb_onscreen_formats;
 static BOOL use_render_texture_emulation = TRUE;
 
@@ -415,7 +415,6 @@ static int GLXErrorHandler(Display *dpy, XErrorEvent *event, void *arg)
 static BOOL X11DRV_WineGL_InitOpenglInfo(void)
 {
     static const char legacy_extensions[] = " WGL_EXT_extensions_string WGL_EXT_swap_control";
-    static const char direct_extension[] = " WINE_EXT_direct_rendering";
 
     int screen = DefaultScreen(gdi_display);
     Window win = 0, root = 0;
@@ -471,18 +470,16 @@ static BOOL X11DRV_WineGL_InitOpenglInfo(void)
     }
     gl_renderer = (const char *)opengl_funcs.gl.p_glGetString(GL_RENDERER);
     gl_version  = (const char *)opengl_funcs.gl.p_glGetString(GL_VERSION);
-    glx_direct = pglXIsDirect(gdi_display, ctx);
     str = (const char *) opengl_funcs.gl.p_glGetString(GL_EXTENSIONS);
-    glExtensions = malloc( strlen(str)+sizeof(legacy_extensions)+sizeof(direct_extension) );
+    glExtensions = malloc( strlen(str) + sizeof(legacy_extensions) );
     strcpy(glExtensions, str);
     strcat(glExtensions, legacy_extensions);
-    if (glx_direct)
-        strcat(glExtensions, direct_extension);
 
     /* Get the common GLX version supported by GLX client and server ( major/minor) */
     pglXQueryVersion(gdi_display, &glxVersion[0], &glxVersion[1]);
 
     glxExtensions = pglXQueryExtensionsString(gdi_display, screen);
+    glx_direct = pglXIsDirect(gdi_display, ctx);
 
     TRACE("GL version             : %s.\n", gl_version);
     TRACE("GL renderer            : %s.\n", gl_renderer);
@@ -1003,7 +1000,7 @@ static BOOL check_fbconfig_bitmap_capability(Display *display, GLXFBConfig fbcon
 
 static void init_pixel_formats( Display *display )
 {
-    struct wgl_pixel_format *list;
+    struct glx_pixel_format *list;
     int size = 0, onscreen_size = 0;
     int fmt_id, nCfgs, i, run, bmp_formats;
     GLXFBConfig* cfgs;
@@ -1122,7 +1119,7 @@ static inline BOOL is_onscreen_pixel_format( int format )
     return format > 0 && format <= nb_onscreen_formats;
 }
 
-static inline int pixel_format_index( const struct wgl_pixel_format *format )
+static inline int pixel_format_index( const struct glx_pixel_format *format )
 {
     return format - pixel_formats + 1;
 }
@@ -1132,7 +1129,7 @@ static inline int pixel_format_index( const struct wgl_pixel_format *format )
  * Wine's main visual and offscreen formats (if they are available).
  * This function converts a WGL format to its corresponding GLX one.
  */
-static const struct wgl_pixel_format *get_pixel_format(Display *display, int iPixelFormat, BOOL AllowOffscreen)
+static const struct glx_pixel_format *get_pixel_format(Display *display, int iPixelFormat, BOOL AllowOffscreen)
 {
     /* Check if the pixelformat is valid. Note that it is legal to pass an invalid
      * iPixelFormat in case of probing the number of pixelformats.
@@ -1311,7 +1308,7 @@ static GLXContext create_glxcontext(Display *display, struct wgl_context *contex
 /***********************************************************************
  *              create_gl_drawable
  */
-static struct gl_drawable *create_gl_drawable( HWND hwnd, const struct wgl_pixel_format *format, BOOL known_child,
+static struct gl_drawable *create_gl_drawable( HWND hwnd, const struct glx_pixel_format *format, BOOL known_child,
                                                BOOL mutable_pf )
 {
     struct gl_drawable *gl, *prev;
@@ -1403,7 +1400,7 @@ static struct gl_drawable *create_gl_drawable( HWND hwnd, const struct wgl_pixel
 /***********************************************************************
  *              set_win_format
  */
-static BOOL set_win_format( HWND hwnd, const struct wgl_pixel_format *format, BOOL internal )
+static BOOL set_win_format( HWND hwnd, const struct glx_pixel_format *format, BOOL internal )
 {
     struct gl_drawable *old, *gl;
 
@@ -1434,7 +1431,7 @@ static BOOL set_win_format( HWND hwnd, const struct wgl_pixel_format *format, BO
 
 static BOOL set_pixel_format( HDC hdc, int format, BOOL internal )
 {
-    const struct wgl_pixel_format *fmt;
+    const struct glx_pixel_format *fmt;
     int value;
     HWND hwnd = NtUserWindowFromDC( hdc );
     int prev;
@@ -1560,17 +1557,17 @@ void destroy_gl_drawable( HWND hwnd )
  *
  * Get the pixel-format descriptor associated to the given id
  */
-static int describe_pixel_format( int iPixelFormat, PIXELFORMATDESCRIPTOR *ppfd, BOOL allow_offscreen )
+static int describe_pixel_format( int iPixelFormat, PIXELFORMATDESCRIPTOR *ppfd )
 {
   /*XVisualInfo *vis;*/
   int value;
   int rb,gb,bb,ab;
-  const struct wgl_pixel_format *fmt;
+  const struct glx_pixel_format *fmt;
 
   if (!has_opengl()) return 0;
 
   /* Look for the iPixelFormat in our list of supported formats. If it is supported we get the index in the FBConfig table and the number of supported formats back */
-  fmt = get_pixel_format(gdi_display, iPixelFormat, allow_offscreen);
+  fmt = get_pixel_format(gdi_display, iPixelFormat, TRUE /* Offscreen */);
   if (!fmt) {
       WARN("unexpected format %d\n", iPixelFormat);
       return 0;
@@ -1684,27 +1681,6 @@ static int describe_pixel_format( int iPixelFormat, PIXELFORMATDESCRIPTOR *ppfd,
   return nb_onscreen_formats;
 }
 
-/**
- * glxdrv_DescribePixelFormat
- *
- * Get the pixel-format descriptor associated to the given id
- */
-static int glxdrv_wglDescribePixelFormat( HDC hdc, int iPixelFormat,
-                                          UINT nBytes, PIXELFORMATDESCRIPTOR *ppfd)
-{
-  TRACE("(%p,%d,%d,%p)\n", hdc, iPixelFormat, nBytes, ppfd);
-
-  if (!ppfd) return nb_onscreen_formats;
-
-  if (nBytes < sizeof(PIXELFORMATDESCRIPTOR))
-  {
-    ERR("Wrong structure size !\n");
-    /* Should set error */
-    return 0;
-  }
-
-  return describe_pixel_format(iPixelFormat, ppfd, FALSE);
-}
 
 /***********************************************************************
  *		glxdrv_wglGetPixelFormat
@@ -2168,7 +2144,7 @@ static struct wgl_pbuffer *X11DRV_wglCreatePbufferARB( HDC hdc, int iPixelFormat
                                                        const int *piAttribList )
 {
     struct wgl_pbuffer* object;
-    const struct wgl_pixel_format *fmt;
+    const struct glx_pixel_format *fmt;
     int attribs[256];
     int nAttribs = 0;
 
@@ -2677,7 +2653,7 @@ static BOOL X11DRV_wglChoosePixelFormatARB( HDC hdc, const int *piAttribIList, c
         format->original_index = it;
 
         memset(&format->pfd, 0, sizeof(format->pfd));
-        if (!describe_pixel_format(format->format, &format->pfd, TRUE))
+        if (!describe_pixel_format(format->format, &format->pfd))
             ERR("describe_pixel_format failed, format %d.\n", format->format);
 
         format->depth = format->pfd.cDepthBits;
@@ -2711,10 +2687,11 @@ static BOOL X11DRV_wglGetPixelFormatAttribivARB( HDC hdc, int iPixelFormat, int 
                                                  UINT nAttributes, const int *piAttributes, int *piValues )
 {
     UINT i;
-    const struct wgl_pixel_format *fmt;
+    const struct glx_pixel_format *fmt;
     int hTest;
     int tmp;
     int curGLXAttr = 0;
+    PIXELFORMATDESCRIPTOR pfd;
 
     TRACE("(%p, %d, %d, %d, %p, %p)\n", hdc, iPixelFormat, iLayerPlane, nAttributes, piAttributes, piValues);
 
@@ -2729,6 +2706,12 @@ static BOOL X11DRV_wglGetPixelFormatAttribivARB( HDC hdc, int iPixelFormat, int 
     fmt = get_pixel_format(gdi_display, iPixelFormat, TRUE /* Offscreen */);
     if(!fmt) {
         WARN("Unable to convert iPixelFormat %d to a GLX one!\n", iPixelFormat);
+    }
+
+    if (!describe_pixel_format(iPixelFormat, &pfd))
+    {
+        WARN("describe_pixel_format failed.\n");
+        memset(&pfd, 0, sizeof(pfd));
     }
 
     for (i = 0; i < nAttributes; ++i) {
@@ -2831,6 +2814,23 @@ static BOOL X11DRV_wglGetPixelFormatAttribivARB( HDC hdc, int iPixelFormat, int 
             case WGL_AUX_BUFFERS_ARB:
                 curGLXAttr = GLX_AUX_BUFFERS;
                 break;
+
+            case WGL_RED_SHIFT_ARB:
+                if (!pfd.nSize) goto pix_error;
+                piValues[i] = pfd.cRedShift;
+                continue;
+            case WGL_GREEN_SHIFT_ARB:
+                if (!pfd.nSize) goto pix_error;
+                piValues[i] = pfd.cGreenShift;
+                continue;
+            case WGL_BLUE_SHIFT_ARB:
+                if (!pfd.nSize) goto pix_error;
+                piValues[i] = pfd.cBlueShift;
+                continue;
+            case WGL_ALPHA_SHIFT_ARB:
+                if (!pfd.nSize) goto pix_error;
+                piValues[i] = pfd.cAlphaShift;
+                continue;
 
             case WGL_SUPPORT_GDI_ARB:
                 if (!fmt) goto pix_error;
@@ -3431,19 +3431,40 @@ static BOOL glxdrv_wglSwapBuffers( HDC hdc )
     return TRUE;
 }
 
+static void glxdrv_get_pixel_formats( struct wgl_pixel_format *formats,
+                                      UINT max_formats, UINT *num_formats,
+                                      UINT *num_onscreen_formats )
+{
+    UINT i;
+
+    if (!has_opengl())
+    {
+        *num_formats = *num_onscreen_formats = 0;
+        return;
+    }
+    if (formats)
+    {
+        for (i = 0; i < min( max_formats, nb_pixel_formats ); ++i)
+            describe_pixel_format( i + 1, &formats[i].pfd );
+    }
+    *num_formats = nb_pixel_formats;
+    *num_onscreen_formats = nb_onscreen_formats;
+}
+
 static struct opengl_funcs opengl_funcs =
 {
     {
         glxdrv_wglCopyContext,              /* p_wglCopyContext */
         glxdrv_wglCreateContext,            /* p_wglCreateContext */
         glxdrv_wglDeleteContext,            /* p_wglDeleteContext */
-        glxdrv_wglDescribePixelFormat,      /* p_wglDescribePixelFormat */
+        NULL,                               /* p_wglDescribePixelFormat */
         glxdrv_wglGetPixelFormat,           /* p_wglGetPixelFormat */
         glxdrv_wglGetProcAddress,           /* p_wglGetProcAddress */
         glxdrv_wglMakeCurrent,              /* p_wglMakeCurrent */
         glxdrv_wglSetPixelFormat,           /* p_wglSetPixelFormat */
         glxdrv_wglShareLists,               /* p_wglShareLists */
         glxdrv_wglSwapBuffers,              /* p_wglSwapBuffers */
+        glxdrv_get_pixel_formats,           /* p_get_pixel_formats */
     }
 };
 

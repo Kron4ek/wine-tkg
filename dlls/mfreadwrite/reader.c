@@ -223,6 +223,8 @@ static void media_stream_destroy(struct media_stream *stream)
         transform_entry_destroy(entry);
     }
 
+    if (stream->transform_service)
+        IMFTransform_Release(stream->transform_service);
     if (stream->stream)
         IMFMediaStream_Release(stream->stream);
     if (stream->current)
@@ -2011,7 +2013,7 @@ static HRESULT source_reader_create_transform(struct source_reader *reader, BOOL
         {
             IMFMediaType *media_type;
 
-            if (FAILED(IMFActivate_ActivateObject(activates[i], &IID_IMFTransform, (void **)&transform)))
+            if (FAILED(hr = IMFActivate_ActivateObject(activates[i], &IID_IMFTransform, (void **)&transform)))
                 continue;
             if (SUCCEEDED(hr = IMFTransform_SetInputType(transform, 0, input_type, 0))
                     && SUCCEEDED(hr = IMFTransform_GetInputCurrentType(transform, 0, &media_type)))

@@ -94,12 +94,13 @@ void wg_parser_destroy(wg_parser_t parser)
     WINE_UNIX_CALL(unix_wg_parser_destroy, &parser);
 }
 
-HRESULT wg_parser_connect(wg_parser_t parser, uint64_t file_size)
+HRESULT wg_parser_connect(wg_parser_t parser, uint64_t file_size, const WCHAR *uri)
 {
     struct wg_parser_connect_params params =
     {
         .parser = parser,
         .file_size = file_size,
+        .uri = uri,
     };
 
     TRACE("parser %#I64x, file_size %I64u.\n", parser, file_size);
@@ -354,6 +355,21 @@ wg_transform_t wg_transform_create(const struct wg_format *input_format,
 
     TRACE("Returning transform %#I64x.\n", params.transform);
     return params.transform;
+}
+
+HRESULT wg_transform_create_quartz(const AM_MEDIA_TYPE *input_type, const AM_MEDIA_TYPE *output_type,
+        const struct wg_transform_attrs *attrs, wg_transform_t *transform)
+{
+    struct wg_format input_format, output_format;
+
+    if (!amt_to_wg_format(input_type, &input_format))
+        return E_FAIL;
+    if (!amt_to_wg_format(output_type, &output_format))
+        return E_FAIL;
+
+    if (!(*transform = wg_transform_create(&input_format, &output_format, attrs)))
+        return E_FAIL;
+    return S_OK;
 }
 
 void wg_transform_destroy(wg_transform_t transform)
@@ -651,14 +667,7 @@ bool wg_video_format_is_rgb(enum wg_video_format format)
         case WG_VIDEO_FORMAT_RGB16:
             return true;
 
-        case WG_VIDEO_FORMAT_AYUV:
-        case WG_VIDEO_FORMAT_I420:
-        case WG_VIDEO_FORMAT_NV12:
-        case WG_VIDEO_FORMAT_UYVY:
-        case WG_VIDEO_FORMAT_YUY2:
-        case WG_VIDEO_FORMAT_YV12:
-        case WG_VIDEO_FORMAT_YVYU:
-        case WG_VIDEO_FORMAT_UNKNOWN:
+        default:
             break;
     }
 

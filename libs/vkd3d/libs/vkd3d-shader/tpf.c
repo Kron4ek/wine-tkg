@@ -3006,8 +3006,18 @@ static D3D_SHADER_VARIABLE_CLASS sm4_class(const struct hlsl_type *type)
             return D3D_SVC_VECTOR;
 
         case HLSL_CLASS_ARRAY:
+        case HLSL_CLASS_DEPTH_STENCIL_VIEW:
+        case HLSL_CLASS_EFFECT_GROUP:
         case HLSL_CLASS_STRUCT:
         case HLSL_CLASS_OBJECT:
+        case HLSL_CLASS_PASS:
+        case HLSL_CLASS_RENDER_TARGET_VIEW:
+        case HLSL_CLASS_SAMPLER:
+        case HLSL_CLASS_STRING:
+        case HLSL_CLASS_TECHNIQUE:
+        case HLSL_CLASS_TEXTURE:
+        case HLSL_CLASS_UAV:
+        case HLSL_CLASS_VOID:
             break;
     }
     vkd3d_unreachable();
@@ -3107,20 +3117,21 @@ static void write_sm4_type(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
 
 static D3D_SHADER_INPUT_TYPE sm4_resource_type(const struct hlsl_type *type)
 {
-    if (type->class == HLSL_CLASS_ARRAY)
-        return sm4_resource_type(type->e.array.type);
-
-    switch (type->base_type)
+    switch (type->class)
     {
-        case HLSL_TYPE_SAMPLER:
+        case HLSL_CLASS_ARRAY:
+            return sm4_resource_type(type->e.array.type);
+        case HLSL_CLASS_SAMPLER:
             return D3D_SIT_SAMPLER;
-        case HLSL_TYPE_TEXTURE:
+        case HLSL_CLASS_TEXTURE:
             return D3D_SIT_TEXTURE;
-        case HLSL_TYPE_UAV:
+        case HLSL_CLASS_UAV:
             return D3D_SIT_UAV_RWTYPED;
         default:
-            vkd3d_unreachable();
+            break;
     }
+
+    vkd3d_unreachable();
 }
 
 static D3D_RESOURCE_RETURN_TYPE sm4_resource_format(const struct hlsl_type *type)
@@ -4558,7 +4569,7 @@ static void write_sm4_ld(const struct tpf_writer *tpf, const struct hlsl_ir_node
         enum hlsl_sampler_dim dim)
 {
     const struct hlsl_type *resource_type = hlsl_deref_get_type(tpf->ctx, resource);
-    bool multisampled = resource_type->base_type == HLSL_TYPE_TEXTURE
+    bool multisampled = resource_type->class == HLSL_CLASS_TEXTURE
             && (resource_type->sampler_dim == HLSL_SAMPLER_DIM_2DMS || resource_type->sampler_dim == HLSL_SAMPLER_DIM_2DMSARRAY);
     bool uav = (hlsl_deref_get_regset(tpf->ctx, resource) == HLSL_REGSET_UAVS);
     unsigned int coords_writemask = VKD3DSP_WRITEMASK_ALL;

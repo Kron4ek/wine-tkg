@@ -282,11 +282,16 @@ static void enumerate_devices( DWORD type, const WCHAR *class )
     NtClose( class_key );
 }
 
-static void rawinput_update_device_list(void)
+static void rawinput_update_device_list( BOOL force )
 {
+    unsigned int ticks = NtGetTickCount();
+    static unsigned int last_check;
     struct device *device, *next;
 
     TRACE( "\n" );
+
+    if (ticks - last_check <= 2000 && !force) return;
+    last_check = ticks;
 
     LIST_FOR_EACH_ENTRY_SAFE( device, next, &devices, struct device, entry )
     {
@@ -301,14 +306,15 @@ static void rawinput_update_device_list(void)
     enumerate_devices( RIM_TYPEHID, guid_devinterface_hidW );
 }
 
-static struct device *find_device_from_handle( HANDLE handle )
+static struct device *find_device_from_handle( HANDLE handle, BOOL refresh )
 {
     struct device *device;
 
     LIST_FOR_EACH_ENTRY( device, &devices, struct device, entry )
         if (device->handle == handle) return device;
+    if (!refresh) return NULL;
 
-    rawinput_update_device_list();
+    rawinput_update_device_list( TRUE );
 
     LIST_FOR_EACH_ENTRY( device, &devices, struct device, entry )
         if (device->handle == handle) return device;
@@ -316,32 +322,12 @@ static struct device *find_device_from_handle( HANDLE handle )
     return NULL;
 }
 
-BOOL rawinput_device_get_usages( HANDLE handle, USAGE *usage_page, USAGE *usage )
-{
-    struct device *device;
-
-    pthread_mutex_lock( &rawinput_mutex );
-
-    if (!(device = find_device_from_handle( handle )) || device->info.dwType != RIM_TYPEHID)
-        *usage_page = *usage = 0;
-    else
-    {
-        *usage_page = device->info.hid.usUsagePage;
-        *usage = device->info.hid.usUsage;
-    }
-
-    pthread_mutex_unlock( &rawinput_mutex );
-
-    return *usage_page || *usage;
-}
-
 /**********************************************************************
  *         NtUserGetRawInputDeviceList   (win32u.@)
  */
 UINT WINAPI NtUserGetRawInputDeviceList( RAWINPUTDEVICELIST *device_list, UINT *device_count, UINT size )
 {
-    unsigned int count = 0, ticks = NtGetTickCount();
-    static unsigned int last_check;
+    unsigned int count = 0;
     struct device *device;
 
     TRACE( "device_list %p, device_count %p, size %u.\n", device_list, device_count, size );
@@ -360,11 +346,7 @@ UINT WINAPI NtUserGetRawInputDeviceList( RAWINPUTDEVICELIST *device_list, UINT *
 
     pthread_mutex_lock( &rawinput_mutex );
 
-    if (ticks - last_check > 2000)
-    {
-        last_check = ticks;
-        rawinput_update_device_list();
-    }
+    rawinput_update_device_list( FALSE );
 
     LIST_FOR_EACH_ENTRY( device, &devices, struct device, entry )
     {
@@ -418,7 +400,7 @@ UINT WINAPI NtUserGetRawInputDeviceInfo( HANDLE handle, UINT command, void *data
 
     pthread_mutex_lock( &rawinput_mutex );
 
-    if (!(device = find_device_from_handle( handle )))
+    if (!(device = find_device_from_handle( handle, TRUE )))
     {
         pthread_mutex_unlock( &rawinput_mutex );
         RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
@@ -587,8 +569,20 @@ BOOL process_rawinput_message( MSG *msg, UINT hw_id, const struct hardware_msg_d
 
     if (msg->message == WM_INPUT_DEVICE_CHANGE)
     {
+        BOOL refresh = msg->wParam == GIDC_ARRIVAL;
+        struct device *device;
+
         pthread_mutex_lock( &rawinput_mutex );
-        rawinput_update_device_list();
+        if ((device = find_device_from_handle( UlongToHandle( msg_data->rawinput.device ), refresh )))
+        {
+            if (msg->wParam == GIDC_REMOVAL)
+            {
+                list_remove( &device->entry );
+                NtClose( device->file );
+                free( device->data );
+                free( device );
+            }
+        }
         pthread_mutex_unlock( &rawinput_mutex );
     }
     else
@@ -602,6 +596,30 @@ BOOL process_rawinput_message( MSG *msg, UINT hw_id, const struct hardware_msg_d
 
     msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
     return TRUE;
+}
+
+static void post_device_notifications( const RAWINPUTDEVICE *filter )
+{
+    ULONG usages = MAKELONG( filter->usUsagePage, filter->usUsage );
+    struct device *device;
+
+    LIST_FOR_EACH_ENTRY( device, &devices, struct device, entry )
+    {
+        switch (device->info.dwType)
+        {
+        case RIM_TYPEMOUSE:
+            if (usages != MAKELONG( HID_USAGE_PAGE_GENERIC, HID_USAGE_GENERIC_MOUSE )) continue;
+            break;
+        case RIM_TYPEKEYBOARD:
+            if (usages != MAKELONG( HID_USAGE_PAGE_GENERIC, HID_USAGE_GENERIC_KEYBOARD )) continue;
+            break;
+        case RIM_TYPEHID:
+            if (usages != MAKELONG( device->info.hid.usUsagePage, device->info.hid.usUsage )) continue;
+            break;
+        }
+
+        NtUserPostMessage( filter->hwndTarget, WM_INPUT_DEVICE_CHANGE, GIDC_ARRIVAL, (LPARAM)device->handle );
+    }
 }
 
 static void register_rawinput_device( const RAWINPUTDEVICE *device )
@@ -625,6 +643,7 @@ static void register_rawinput_device( const RAWINPUTDEVICE *device )
     }
     else
     {
+        if ((device->dwFlags & RIDEV_DEVNOTIFY) && device->hwndTarget) post_device_notifications( device );
         if (pos == end || pos->usUsagePage != device->usUsagePage || pos->usUsage != device->usUsage)
         {
             memmove( pos + 1, pos, (char *)end - (char *)pos );
@@ -689,6 +708,8 @@ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT d
         RtlSetLastWin32Error( ERROR_OUTOFMEMORY );
         return FALSE;
     }
+
+    rawinput_update_device_list( TRUE );
 
     registered_devices = new_registered_devices;
     for (i = 0; i < device_count; ++i) register_rawinput_device( devices + i );

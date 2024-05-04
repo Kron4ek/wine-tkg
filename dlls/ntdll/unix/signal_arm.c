@@ -513,6 +513,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
         memcpy( context->D, frame->d, sizeof(frame->d) );
         context->ContextFlags |= CONTEXT_FLOATING_POINT;
     }
+    set_context_exception_reporting_flags( &context->ContextFlags, CONTEXT_SERVICE_ACTIVE );
     return STATUS_SUCCESS;
 }
 
@@ -544,7 +545,7 @@ static void setup_raise_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec
     void *stack_ptr = (void *)(SP_sig(sigcontext) & ~7);
     NTSTATUS status;
 
-    status = send_debug_event( rec, context, TRUE );
+    status = send_debug_event( rec, context, TRUE, TRUE );
     if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
     {
         restore_context( context, sigcontext );
@@ -1020,7 +1021,7 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 
     if (is_inside_syscall( sigcontext ))
     {
-        context.ContextFlags = CONTEXT_FULL;
+        context.ContextFlags = CONTEXT_FULL | CONTEXT_EXCEPTION_REQUEST;
         NtGetContextThread( GetCurrentThread(), &context );
         wait_suspend( &context );
         NtSetContextThread( GetCurrentThread(), &context );
@@ -1028,6 +1029,7 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
     else
     {
         save_context( &context, sigcontext );
+        context.ContextFlags |= CONTEXT_EXCEPTION_REPORTING;
         wait_suspend( &context );
         restore_context( &context, sigcontext );
     }
@@ -1140,7 +1142,11 @@ void call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB
     if (context.Pc & 1) context.Cpsr |= 0x20; /* thumb mode */
     if ((ctx = get_cpu_area( IMAGE_FILE_MACHINE_ARMNT ))) *ctx = context;
 
-    if (suspend) wait_suspend( &context );
+    if (suspend)
+    {
+        context.ContextFlags |= CONTEXT_EXCEPTION_REPORTING | CONTEXT_EXCEPTION_ACTIVE;
+        wait_suspend( &context );
+    }
 
     ctx = (CONTEXT *)((ULONG_PTR)context.Sp & ~15) - 1;
     *ctx = context;

@@ -79,6 +79,16 @@ enum hlsl_type_class
     HLSL_CLASS_STRUCT,
     HLSL_CLASS_ARRAY,
     HLSL_CLASS_OBJECT,
+    HLSL_CLASS_DEPTH_STENCIL_VIEW,
+    HLSL_CLASS_EFFECT_GROUP,
+    HLSL_CLASS_PASS,
+    HLSL_CLASS_RENDER_TARGET_VIEW,
+    HLSL_CLASS_SAMPLER,
+    HLSL_CLASS_STRING,
+    HLSL_CLASS_TECHNIQUE,
+    HLSL_CLASS_TEXTURE,
+    HLSL_CLASS_UAV,
+    HLSL_CLASS_VOID,
 };
 
 enum hlsl_base_type
@@ -90,18 +100,8 @@ enum hlsl_base_type
     HLSL_TYPE_UINT,
     HLSL_TYPE_BOOL,
     HLSL_TYPE_LAST_SCALAR = HLSL_TYPE_BOOL,
-    HLSL_TYPE_SAMPLER,
-    HLSL_TYPE_TEXTURE,
-    HLSL_TYPE_UAV,
     HLSL_TYPE_PIXELSHADER,
     HLSL_TYPE_VERTEXSHADER,
-    HLSL_TYPE_PASS,
-    HLSL_TYPE_RENDERTARGETVIEW,
-    HLSL_TYPE_DEPTHSTENCILVIEW,
-    HLSL_TYPE_TECHNIQUE,
-    HLSL_TYPE_EFFECT_GROUP,
-    HLSL_TYPE_STRING,
-    HLSL_TYPE_VOID,
 };
 
 enum hlsl_sampler_dim
@@ -145,15 +145,13 @@ struct hlsl_type
     enum hlsl_type_class class;
     /* If class is <= HLSL_CLASS_LAST_NUMERIC, then base_type is <= HLSL_TYPE_LAST_SCALAR.
      * If class is HLSL_CLASS_OBJECT, then base_type is > HLSL_TYPE_LAST_SCALAR.
-     * If class is HLSL_CLASS_OBJECT and base_type is HLSL_TYPE_TECHNIQUE, additional version
-     * field is used to distinguish between technique types.
      * Otherwise, base_type is not used. */
     enum hlsl_base_type base_type;
 
-    /* If base_type is HLSL_TYPE_SAMPLER, then sampler_dim is <= HLSL_SAMPLER_DIM_LAST_SAMPLER.
-     * If base_type is HLSL_TYPE_TEXTURE, then sampler_dim can be any value of the enum except
+    /* If class is HLSL_CLASS_SAMPLER, then sampler_dim is <= HLSL_SAMPLER_DIM_LAST_SAMPLER.
+     * If class is HLSL_CLASS_TEXTURE, then sampler_dim can be any value of the enum except
      *   HLSL_SAMPLER_DIM_GENERIC and HLSL_SAMPLER_DIM_COMPARISON.
-     * If base_type is HLSL_TYPE_UAV, then sampler_dim must be one of HLSL_SAMPLER_DIM_1D,
+     * If class is HLSL_CLASS_UAV, then sampler_dim must be one of HLSL_SAMPLER_DIM_1D,
      *   HLSL_SAMPLER_DIM_2D, HLSL_SAMPLER_DIM_3D, HLSL_SAMPLER_DIM_1DARRAY, HLSL_SAMPLER_DIM_2DARRAY,
      *   HLSL_SAMPLER_DIM_BUFFER, or HLSL_SAMPLER_DIM_STRUCTURED_BUFFER.
      * Otherwise, sampler_dim is not used */
@@ -171,11 +169,7 @@ struct hlsl_type
      * If type is HLSL_CLASS_MATRIX, then dimx is the number of columns, and dimy the number of rows.
      * If type is HLSL_CLASS_ARRAY, then dimx and dimy have the same value as in the type of the array elements.
      * If type is HLSL_CLASS_STRUCT, then dimx is the sum of (dimx * dimy) of every component, and dimy = 1.
-     * If type is HLSL_CLASS_OBJECT, dimx and dimy depend on the base_type:
-     *   If base_type is HLSL_TYPE_SAMPLER, then both dimx = 1 and dimy = 1.
-     *   If base_type is HLSL_TYPE_TEXTURE, then dimx = 4 and dimy = 1.
-     *   If base_type is HLSL_TYPE_UAV, then dimx is the dimx of e.resource_format, and dimy = 1.
-     * Otherwise both dimx = 1 and dimy = 1. */
+     */
     unsigned int dimx;
     unsigned int dimy;
     /* Sample count for HLSL_SAMPLER_DIM_2DMS or HLSL_SAMPLER_DIM_2DMSARRAY. */
@@ -196,8 +190,8 @@ struct hlsl_type
             /* Array length, or HLSL_ARRAY_ELEMENTS_COUNT_IMPLICIT if it is not known yet at parse time. */
             unsigned int elements_count;
         } array;
-        /* Additional information if the base_type is HLSL_TYPE_TEXTURE or
-         * HLSL_TYPE_UAV. */
+        /* Additional information if the class is HLSL_CLASS_TEXTURE or
+         * HLSL_CLASS_UAV. */
         struct
         {
             /* Format of the data contained within the type. */
@@ -396,7 +390,7 @@ struct hlsl_attribute
 struct hlsl_reg_reservation
 {
     char reg_type;
-    unsigned int reg_index;
+    unsigned int reg_space, reg_index;
 
     char offset_type;
     unsigned int offset_index;
@@ -1428,6 +1422,7 @@ struct hlsl_reg hlsl_reg_from_deref(struct hlsl_ctx *ctx, const struct hlsl_dere
 
 bool hlsl_copy_propagation_execute(struct hlsl_ctx *ctx, struct hlsl_block *block);
 bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context);
+bool hlsl_fold_constant_identities(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context);
 bool hlsl_fold_constant_swizzles(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context);
 bool hlsl_transform_ir(struct hlsl_ctx *ctx, bool (*func)(struct hlsl_ctx *ctx, struct hlsl_ir_node *, void *),
         struct hlsl_block *block, void *context);

@@ -3677,6 +3677,87 @@ static BOOL TLB_GUIDFromString(const char *str, GUID *guid)
   return TRUE;
 }
 
+struct bitstream
+{
+    const BYTE *buffer;
+    DWORD       length;
+    WORD        current;
+};
+
+static const char *lookup_code(const BYTE *table, DWORD table_size, struct bitstream *bits)
+{
+    const BYTE *p = table;
+
+    while (p < table + table_size && *p == 0x80)
+    {
+        if (p + 2 >= table + table_size) return NULL;
+
+        if (!(bits->current & 0xff))
+        {
+            if (!bits->length) return NULL;
+            bits->current = (*bits->buffer << 8) | 1;
+            bits->buffer++;
+            bits->length--;
+        }
+
+        if (bits->current & 0x8000)
+        {
+            p += 3;
+        }
+        else
+        {
+            p = table + (*(p + 2) | (*(p + 1) << 8));
+        }
+
+        bits->current <<= 1;
+    }
+
+    if (p + 1 < table + table_size && *(p + 1))
+    {
+        /* FIXME: Whats the meaning of *p? */
+        const BYTE *q = p + 1;
+        while (q < table + table_size && *q) q++;
+        return (q < table + table_size) ? (const char *)(p + 1) : NULL;
+    }
+
+    return NULL;
+}
+
+static const TLBString *decode_string(const BYTE *table, const char *stream, DWORD stream_length, ITypeLibImpl *lib)
+{
+    DWORD buf_size, table_size;
+    const char *p;
+    struct bitstream bits;
+    BSTR buf;
+    TLBString *tlbstr;
+
+    if (!stream_length) return NULL;
+
+    bits.buffer = (const BYTE *)stream;
+    bits.length = stream_length;
+    bits.current = 0;
+
+    buf_size = *(const WORD *)table;
+    table += sizeof(WORD);
+    table_size = *(const DWORD *)table;
+    table += sizeof(DWORD);
+
+    buf = SysAllocStringLen(NULL, buf_size);
+    buf[0] = 0;
+
+    while ((p = lookup_code(table, table_size, &bits)))
+    {
+        static const WCHAR spaceW[] = { ' ',0 };
+        if (buf[0]) lstrcatW(buf, spaceW);
+        MultiByteToWideChar(CP_ACP, 0, p, -1, buf + lstrlenW(buf), buf_size - lstrlenW(buf));
+    }
+
+    tlbstr = TLB_append_str(&lib->string_list, buf);
+    SysFreeString(buf);
+
+    return tlbstr;
+}
+
 static WORD SLTG_ReadString(const char *ptr, const TLBString **pStr, ITypeLibImpl *lib)
 {
     WORD bytelen;
@@ -4008,7 +4089,7 @@ static char *SLTG_DoImpls(char *pBlk, ITypeInfoImpl *pTI,
 }
 
 static void SLTG_DoVars(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI, unsigned short cVars,
-			const char *pNameTable, const sltg_ref_lookup_t *ref_lookup)
+			const char *pNameTable, const sltg_ref_lookup_t *ref_lookup, const BYTE *hlp_strings)
 {
   TLBVarDesc *pVarDesc;
   const TLBString *prevName = NULL;
@@ -4037,6 +4118,12 @@ static void SLTG_DoVars(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI, unsign
       TRACE_(typelib)("name: %s\n", debugstr_w(TLB_get_bstr(pVarDesc->Name)));
       TRACE_(typelib)("byte_offs = 0x%x\n", pItem->byte_offs);
       TRACE_(typelib)("memid = %#lx\n", pItem->memid);
+
+      if (pItem->helpstring != 0xffff)
+      {
+          pVarDesc->HelpString = decode_string(hlp_strings, pBlk + pItem->helpstring, pNameTable - pBlk, pTI->pTypeLib);
+          TRACE_(typelib)("helpstring = %s\n", debugstr_w(pVarDesc->HelpString->str));
+      }
 
       if(pItem->flags & 0x02)
 	  pType = &pItem->type;
@@ -4119,7 +4206,8 @@ static void SLTG_DoVars(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI, unsign
 }
 
 static void SLTG_DoFuncs(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI,
-			 unsigned short cFuncs, char *pNameTable, const sltg_ref_lookup_t *ref_lookup)
+			 unsigned short cFuncs, char *pNameTable, const sltg_ref_lookup_t *ref_lookup,
+			 const BYTE *hlp_strings)
 {
     SLTG_Function *pFunc;
     unsigned short i;
@@ -4160,6 +4248,9 @@ static void SLTG_DoFuncs(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI,
         else
 	    pFuncDesc->funcdesc.oVft = (unsigned short)(pFunc->vtblpos & ~1) * sizeof(void *) / pTI->pTypeLib->ptr_size;
 
+	if (pFunc->helpstring != 0xffff)
+		pFuncDesc->HelpString = decode_string(hlp_strings, pBlk + pFunc->helpstring, pNameTable - pBlk, pTI->pTypeLib);
+
 	if(pFunc->magic & SLTG_FUNCTION_FLAGS_PRESENT)
 	    pFuncDesc->funcdesc.wFuncFlags = pFunc->funcflags;
 
@@ -4177,7 +4268,7 @@ static void SLTG_DoFuncs(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI,
 	pArg = (WORD*)(pBlk + pFunc->arg_off);
 
 	for(param = 0; param < pFuncDesc->funcdesc.cParams; param++) {
-	    char *paramName = pNameTable + *pArg;
+	    char *paramName = pNameTable + (*pArg & ~1);
 	    BOOL HaveOffs;
 	    /* If arg type follows then paramName points to the 2nd
 	       letter of the name, else the next WORD is an offset to
@@ -4188,17 +4279,14 @@ static void SLTG_DoFuncs(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI,
 	       meaning that the next WORD is the type, the latter
 	       meaning that the next WORD is an offset to the type. */
 
-	    HaveOffs = FALSE;
-	    if(*pArg == 0xffff)
+	    if(*pArg == 0xffff || *pArg == 0xfffe)
 	        paramName = NULL;
-	    else if(*pArg == 0xfffe) {
-	        paramName = NULL;
-		HaveOffs = TRUE;
-	    }
-	    else if(paramName[-1] && !isalnum(paramName[-1]))
-	        HaveOffs = TRUE;
 
+	    HaveOffs = !(*pArg & 1);
 	    pArg++;
+
+            TRACE_(typelib)("param %d: paramName %s, *pArg %#x\n",
+                param, debugstr_a(paramName), *pArg);
 
 	    if(HaveOffs) { /* the next word is an offset to type */
 	        pType = (WORD*)(pBlk + *pArg);
@@ -4206,8 +4294,6 @@ static void SLTG_DoFuncs(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI,
 			    &pFuncDesc->funcdesc.lprgelemdescParam[param], ref_lookup);
 		pArg++;
 	    } else {
-		if(paramName)
-		  paramName--;
 		pArg = SLTG_DoElem(pArg, pBlk,
                                    &pFuncDesc->funcdesc.lprgelemdescParam[param], ref_lookup);
 	    }
@@ -4251,7 +4337,7 @@ static void SLTG_ProcessCoClass(char *pBlk, ITypeInfoImpl *pTI,
 
 static void SLTG_ProcessInterface(char *pBlk, ITypeInfoImpl *pTI,
 				  char *pNameTable, SLTG_TypeInfoHeader *pTIHeader,
-				  const SLTG_TypeInfoTail *pTITail)
+				  const SLTG_TypeInfoTail *pTITail, const BYTE *hlp_strings)
 {
     char *pFirstItem;
     sltg_ref_lookup_t *ref_lookup = NULL;
@@ -4268,7 +4354,7 @@ static void SLTG_ProcessInterface(char *pBlk, ITypeInfoImpl *pTI,
     }
 
     if (pTITail->funcs_off != 0xffff)
-        SLTG_DoFuncs(pBlk, pBlk + pTITail->funcs_off, pTI, pTITail->cFuncs, pNameTable, ref_lookup);
+        SLTG_DoFuncs(pBlk, pBlk + pTITail->funcs_off, pTI, pTITail->cFuncs, pNameTable, ref_lookup, hlp_strings);
 
     free(ref_lookup);
 
@@ -4278,9 +4364,9 @@ static void SLTG_ProcessInterface(char *pBlk, ITypeInfoImpl *pTI,
 
 static void SLTG_ProcessRecord(char *pBlk, ITypeInfoImpl *pTI,
 			       const char *pNameTable, SLTG_TypeInfoHeader *pTIHeader,
-			       const SLTG_TypeInfoTail *pTITail)
+			       const SLTG_TypeInfoTail *pTITail, const BYTE *hlp_strings)
 {
-  SLTG_DoVars(pBlk, pBlk + pTITail->vars_off, pTI, pTITail->cVars, pNameTable, NULL);
+  SLTG_DoVars(pBlk, pBlk + pTITail->vars_off, pTI, pTITail->cVars, pNameTable, NULL, hlp_strings);
 }
 
 static void SLTG_ProcessAlias(char *pBlk, ITypeInfoImpl *pTI,
@@ -4313,7 +4399,7 @@ static void SLTG_ProcessAlias(char *pBlk, ITypeInfoImpl *pTI,
 
 static void SLTG_ProcessDispatch(char *pBlk, ITypeInfoImpl *pTI,
 				 char *pNameTable, SLTG_TypeInfoHeader *pTIHeader,
-				 const SLTG_TypeInfoTail *pTITail)
+				 const SLTG_TypeInfoTail *pTITail, const BYTE *hlp_strings)
 {
   sltg_ref_lookup_t *ref_lookup = NULL;
   if (pTIHeader->href_table != 0xffffffff)
@@ -4321,10 +4407,10 @@ static void SLTG_ProcessDispatch(char *pBlk, ITypeInfoImpl *pTI,
                                   pNameTable);
 
   if (pTITail->vars_off != 0xffff)
-    SLTG_DoVars(pBlk, pBlk + pTITail->vars_off, pTI, pTITail->cVars, pNameTable, ref_lookup);
+    SLTG_DoVars(pBlk, pBlk + pTITail->vars_off, pTI, pTITail->cVars, pNameTable, ref_lookup, hlp_strings);
 
   if (pTITail->funcs_off != 0xffff)
-    SLTG_DoFuncs(pBlk, pBlk + pTITail->funcs_off, pTI, pTITail->cFuncs, pNameTable, ref_lookup);
+    SLTG_DoFuncs(pBlk, pBlk + pTITail->funcs_off, pTI, pTITail->cFuncs, pNameTable, ref_lookup, hlp_strings);
 
   if (pTITail->impls_off != 0xffff)
     SLTG_DoImpls(pBlk + pTITail->impls_off, pTI, FALSE, ref_lookup);
@@ -4341,14 +4427,14 @@ static void SLTG_ProcessDispatch(char *pBlk, ITypeInfoImpl *pTI,
 
 static void SLTG_ProcessEnum(char *pBlk, ITypeInfoImpl *pTI,
 			     const char *pNameTable, SLTG_TypeInfoHeader *pTIHeader,
-			     const SLTG_TypeInfoTail *pTITail)
+			     const SLTG_TypeInfoTail *pTITail, const BYTE *hlp_strings)
 {
-  SLTG_DoVars(pBlk, pBlk + pTITail->vars_off, pTI, pTITail->cVars, pNameTable, NULL);
+  SLTG_DoVars(pBlk, pBlk + pTITail->vars_off, pTI, pTITail->cVars, pNameTable, NULL, hlp_strings);
 }
 
 static void SLTG_ProcessModule(char *pBlk, ITypeInfoImpl *pTI,
 			       char *pNameTable, SLTG_TypeInfoHeader *pTIHeader,
-			       const SLTG_TypeInfoTail *pTITail)
+			       const SLTG_TypeInfoTail *pTITail, const BYTE *hlp_strings)
 {
   sltg_ref_lookup_t *ref_lookup = NULL;
   if (pTIHeader->href_table != 0xffffffff)
@@ -4356,10 +4442,10 @@ static void SLTG_ProcessModule(char *pBlk, ITypeInfoImpl *pTI,
                                   pNameTable);
 
   if (pTITail->vars_off != 0xffff)
-    SLTG_DoVars(pBlk, pBlk + pTITail->vars_off, pTI, pTITail->cVars, pNameTable, ref_lookup);
+    SLTG_DoVars(pBlk, pBlk + pTITail->vars_off, pTI, pTITail->cVars, pNameTable, ref_lookup, hlp_strings);
 
   if (pTITail->funcs_off != 0xffff)
-    SLTG_DoFuncs(pBlk, pBlk + pTITail->funcs_off, pTI, pTITail->cFuncs, pNameTable, ref_lookup);
+    SLTG_DoFuncs(pBlk, pBlk + pTITail->funcs_off, pTI, pTITail->cFuncs, pNameTable, ref_lookup, hlp_strings);
   free(ref_lookup);
   if (TRACE_ON(typelib))
     dump_TypeInfo(pTI);
@@ -4368,17 +4454,17 @@ static void SLTG_ProcessModule(char *pBlk, ITypeInfoImpl *pTI,
 /* Because SLTG_OtherTypeInfo is such a painful struct, we make a more
    manageable copy of it into this */
 typedef struct {
-  WORD small_no;
   char *index_name;
   char *other_name;
   WORD res1a;
   WORD name_offs;
-  WORD more_bytes;
+  WORD hlpstr_len;
   char *extra;
   WORD res20;
   DWORD helpcontext;
   WORD res26;
   GUID uuid;
+  WORD typekind;
 } SLTG_InternalOtherTypeInfo;
 
 /****************************************************************************
@@ -4397,8 +4483,8 @@ static ITypeLib2* ITypeLib2_Constructor_SLTG(LPVOID pLib, DWORD dwTLBLength)
     LPVOID pBlk, pFirstBlk;
     SLTG_LibBlk *pLibBlk;
     SLTG_InternalOtherTypeInfo *pOtherTypeInfoBlks;
-    char *pAfterOTIBlks = NULL;
     char *pNameTable, *ptr;
+    const BYTE *hlp_strings;
     int i;
     DWORD len, order;
     ITypeInfoImpl **ppTypeInfoImpl;
@@ -4464,9 +4550,10 @@ static ITypeLib2* ITypeLib2_Constructor_SLTG(LPVOID pLib, DWORD dwTLBLength)
     len += 0x40;
 
     /* And now TypeInfoCount of SLTG_OtherTypeInfo */
+    pTypeLibImpl->TypeInfoCount = *(WORD *)((char *)pLibBlk + len);
+    len += sizeof(WORD);
 
     pOtherTypeInfoBlks = calloc(pTypeLibImpl->TypeInfoCount, sizeof(*pOtherTypeInfoBlks));
-
 
     ptr = (char*)pLibBlk + len;
 
@@ -4474,43 +4561,44 @@ static ITypeLib2* ITypeLib2_Constructor_SLTG(LPVOID pLib, DWORD dwTLBLength)
 	WORD w, extra;
 	len = 0;
 
-	pOtherTypeInfoBlks[i].small_no = *(WORD*)ptr;
-
-	w = *(WORD*)(ptr + 2);
+	w = *(WORD*)ptr;
 	if(w != 0xffff) {
 	    len += w;
-	    pOtherTypeInfoBlks[i].index_name = malloc(w + 1);
-	    memcpy(pOtherTypeInfoBlks[i].index_name, ptr + 4, w);
+	    pOtherTypeInfoBlks[i].index_name = malloc(w+1);
+	    memcpy(pOtherTypeInfoBlks[i].index_name, ptr + 2, w);
 	    pOtherTypeInfoBlks[i].index_name[w] = '\0';
 	}
-	w = *(WORD*)(ptr + 4 + len);
+	w = *(WORD*)(ptr + 2 + len);
 	if(w != 0xffff) {
-	    TRACE_(typelib)("\twith %s\n", debugstr_an(ptr + 6 + len, w));
-	    len += w;
-	    pOtherTypeInfoBlks[i].other_name = malloc(w + 1);
-	    memcpy(pOtherTypeInfoBlks[i].other_name, ptr + 6 + len, w);
+	    TRACE_(typelib)("\twith %s\n", debugstr_an(ptr + 4 + len, w));
+	    pOtherTypeInfoBlks[i].other_name = malloc(w+1);
+	    memcpy(pOtherTypeInfoBlks[i].other_name, ptr + 4 + len, w);
 	    pOtherTypeInfoBlks[i].other_name[w] = '\0';
+	    len += w;
 	}
-	pOtherTypeInfoBlks[i].res1a = *(WORD*)(ptr + len + 6);
-	pOtherTypeInfoBlks[i].name_offs = *(WORD*)(ptr + len + 8);
-	extra = pOtherTypeInfoBlks[i].more_bytes = *(WORD*)(ptr + 10 + len);
+	pOtherTypeInfoBlks[i].res1a = *(WORD*)(ptr + 4 + len);
+	pOtherTypeInfoBlks[i].name_offs = *(WORD*)(ptr + 6 + len);
+	extra = pOtherTypeInfoBlks[i].hlpstr_len = *(WORD*)(ptr + 8 + len);
 	if(extra) {
 	    pOtherTypeInfoBlks[i].extra = malloc(extra);
-	    memcpy(pOtherTypeInfoBlks[i].extra, ptr + 12, extra);
+	    memcpy(pOtherTypeInfoBlks[i].extra, ptr + 10 + len, extra);
 	    len += extra;
 	}
-	pOtherTypeInfoBlks[i].res20 = *(WORD*)(ptr + 12 + len);
-	pOtherTypeInfoBlks[i].helpcontext = *(DWORD*)(ptr + 14 + len);
-	pOtherTypeInfoBlks[i].res26 = *(WORD*)(ptr + 18 + len);
-	memcpy(&pOtherTypeInfoBlks[i].uuid, ptr + 20 + len, sizeof(GUID));
+	pOtherTypeInfoBlks[i].res20 = *(WORD*)(ptr + 10 + len);
+	pOtherTypeInfoBlks[i].helpcontext = *(DWORD*)(ptr + 12 + len);
+	pOtherTypeInfoBlks[i].res26 = *(WORD*)(ptr + 16 + len);
+	memcpy(&pOtherTypeInfoBlks[i].uuid, ptr + 18 + len, sizeof(GUID));
+	pOtherTypeInfoBlks[i].typekind = *(WORD*)(ptr + 18 + sizeof(GUID) + len);
 	len += sizeof(SLTG_OtherTypeInfo);
 	ptr += len;
     }
 
-    pAfterOTIBlks = ptr;
+    /* Get the next DWORD */
+    len = *(DWORD*)ptr;
 
-    /* Skip this WORD and get the next DWORD */
-    len = *(DWORD*)(pAfterOTIBlks + 2);
+    hlp_strings = (const BYTE *)ptr + sizeof(DWORD);
+    TRACE("max help string length %#x, help strings length %#lx\n",
+        *(WORD *)hlp_strings, *(DWORD *)(hlp_strings + 2));
 
     /* Now add this to pLibBLk look at what we're pointing at and
        possibly add 0x20, then add 0x216, sprinkle a bit a magic
@@ -4576,6 +4664,7 @@ static ITypeLib2* ITypeLib2_Constructor_SLTG(LPVOID pLib, DWORD dwTLBLength)
       (*ppTypeInfoImpl)->index = i;
       (*ppTypeInfoImpl)->Name = SLTG_ReadName(pNameTable, pOtherTypeInfoBlks[i].name_offs, pTypeLibImpl);
       (*ppTypeInfoImpl)->dwHelpContext = pOtherTypeInfoBlks[i].helpcontext;
+      (*ppTypeInfoImpl)->DocString = decode_string(hlp_strings, pOtherTypeInfoBlks[i].extra, pOtherTypeInfoBlks[i].hlpstr_len, pTypeLibImpl);
       (*ppTypeInfoImpl)->guid = TLB_append_guid(&pTypeLibImpl->guid_list, &pOtherTypeInfoBlks[i].uuid, 2);
       (*ppTypeInfoImpl)->typeattr.typekind = pTIHeader->typekind;
       (*ppTypeInfoImpl)->typeattr.wMajorVerNum = pTIHeader->major_version;
@@ -4608,17 +4697,17 @@ static ITypeLib2* ITypeLib2_Constructor_SLTG(LPVOID pLib, DWORD dwTLBLength)
       switch(pTIHeader->typekind) {
       case TKIND_ENUM:
 	SLTG_ProcessEnum((char *)(pMemHeader + 1), *ppTypeInfoImpl, pNameTable,
-                         pTIHeader, pTITail);
+                         pTIHeader, pTITail, hlp_strings);
 	break;
 
       case TKIND_RECORD:
 	SLTG_ProcessRecord((char *)(pMemHeader + 1), *ppTypeInfoImpl, pNameTable,
-                           pTIHeader, pTITail);
+                           pTIHeader, pTITail, hlp_strings);
 	break;
 
       case TKIND_INTERFACE:
 	SLTG_ProcessInterface((char *)(pMemHeader + 1), *ppTypeInfoImpl, pNameTable,
-                              pTIHeader, pTITail);
+                              pTIHeader, pTITail, hlp_strings);
 	break;
 
       case TKIND_COCLASS:
@@ -4633,12 +4722,12 @@ static ITypeLib2* ITypeLib2_Constructor_SLTG(LPVOID pLib, DWORD dwTLBLength)
 
       case TKIND_DISPATCH:
 	SLTG_ProcessDispatch((char *)(pMemHeader + 1), *ppTypeInfoImpl, pNameTable,
-                             pTIHeader, pTITail);
+                             pTIHeader, pTITail, hlp_strings);
 	break;
 
       case TKIND_MODULE:
 	SLTG_ProcessModule((char *)(pMemHeader + 1), *ppTypeInfoImpl, pNameTable,
-                           pTIHeader, pTITail);
+                           pTIHeader, pTITail, hlp_strings);
 	break;
 
       default:
@@ -6322,42 +6411,6 @@ static HRESULT WINAPI ITypeInfo_fnGetIDsOfNames( ITypeInfo2 *iface,
 
 extern LONGLONG call_method( void *func, int nb_args, const DWORD *args, int *stack_offset );
 extern double call_double_method( void *func, int nb_args, const DWORD *args, int *stack_offset );
-__ASM_GLOBAL_FUNC( call_method,
-                   "pushl %ebp\n\t"
-                   __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
-                   __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
-                   "movl %esp,%ebp\n\t"
-                   __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
-                   "pushl %esi\n\t"
-                  __ASM_CFI(".cfi_rel_offset %esi,-4\n\t")
-                   "pushl %edi\n\t"
-                  __ASM_CFI(".cfi_rel_offset %edi,-8\n\t")
-                   "movl 12(%ebp),%edx\n\t"
-                   "movl %esp,%edi\n\t"
-                   "shll $2,%edx\n\t"
-                   "jz 1f\n\t"
-                   "subl %edx,%edi\n\t"
-                   "andl $~15,%edi\n\t"
-                   "movl %edi,%esp\n\t"
-                   "movl 12(%ebp),%ecx\n\t"
-                   "movl 16(%ebp),%esi\n\t"
-                   "cld\n\t"
-                   "rep; movsl\n"
-                   "1:\tcall *8(%ebp)\n\t"
-                   "subl %esp,%edi\n\t"
-                   "movl 20(%ebp),%ecx\n\t"
-                   "movl %edi,(%ecx)\n\t"
-                   "leal -8(%ebp),%esp\n\t"
-                   "popl %edi\n\t"
-                   __ASM_CFI(".cfi_same_value %edi\n\t")
-                   "popl %esi\n\t"
-                   __ASM_CFI(".cfi_same_value %esi\n\t")
-                   "popl %ebp\n\t"
-                   __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
-                   __ASM_CFI(".cfi_same_value %ebp\n\t")
-                   "ret" )
-__ASM_GLOBAL_FUNC( call_double_method,
-                   "jmp " __ASM_NAME("call_method") )
 
 HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VARTYPE vtReturn,
                              UINT cActuals, VARTYPE* prgvt, VARIANTARG** prgpvarg, VARIANT* pvargResult )
@@ -6471,52 +6524,6 @@ HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VART
 
 extern DWORD_PTR CDECL call_method( void *func, int nb_args, const DWORD_PTR *args );
 extern double CDECL call_double_method( void *func, int nb_args, const DWORD_PTR *args );
-__ASM_GLOBAL_FUNC( call_method,
-                   "pushq %rbp\n\t"
-                   __ASM_SEH(".seh_pushreg %rbp\n\t")
-                   __ASM_CFI(".cfi_adjust_cfa_offset 8\n\t")
-                   __ASM_CFI(".cfi_rel_offset %rbp,0\n\t")
-                   "movq %rsp,%rbp\n\t"
-                   __ASM_SEH(".seh_setframe %rbp,0\n\t")
-                   __ASM_CFI(".cfi_def_cfa_register %rbp\n\t")
-                   "pushq %rsi\n\t"
-                   __ASM_SEH(".seh_pushreg %rsi\n\t")
-                   __ASM_CFI(".cfi_rel_offset %rsi,-8\n\t")
-                   "pushq %rdi\n\t"
-                   __ASM_SEH(".seh_pushreg %rdi\n\t")
-                   __ASM_CFI(".cfi_rel_offset %rdi,-16\n\t")
-                   __ASM_SEH(".seh_endprologue\n\t")
-                   "movq %rcx,%rax\n\t"
-                   "movq $4,%rcx\n\t"
-                   "cmp %rcx,%rdx\n\t"
-                   "cmovgq %rdx,%rcx\n\t"
-                   "leaq 0(,%rcx,8),%rdx\n\t"
-                   "subq %rdx,%rsp\n\t"
-                   "andq $~15,%rsp\n\t"
-                   "movq %rsp,%rdi\n\t"
-                   "movq %r8,%rsi\n\t"
-                   "rep; movsq\n\t"
-                   "movq 0(%rsp),%rcx\n\t"
-                   "movq 8(%rsp),%rdx\n\t"
-                   "movq 16(%rsp),%r8\n\t"
-                   "movq 24(%rsp),%r9\n\t"
-                   "movq 0(%rsp),%xmm0\n\t"
-                   "movq 8(%rsp),%xmm1\n\t"
-                   "movq 16(%rsp),%xmm2\n\t"
-                   "movq 24(%rsp),%xmm3\n\t"
-                   "callq *%rax\n\t"
-                   "leaq -16(%rbp),%rsp\n\t"
-                   "popq %rdi\n\t"
-                   __ASM_CFI(".cfi_same_value %rdi\n\t")
-                   "popq %rsi\n\t"
-                   __ASM_CFI(".cfi_same_value %rsi\n\t")
-                   __ASM_CFI(".cfi_def_cfa_register %rsp\n\t")
-                   "popq %rbp\n\t"
-                   __ASM_CFI(".cfi_adjust_cfa_offset -8\n\t")
-                   __ASM_CFI(".cfi_same_value %rbp\n\t")
-                   "ret")
-__ASM_GLOBAL_FUNC( call_double_method,
-                   "jmp " __ASM_NAME("call_method") )
 
 HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VARTYPE vtReturn,
                              UINT cActuals, VARTYPE* prgvt, VARIANTARG** prgpvarg, VARIANT* pvargResult )
@@ -6609,40 +6616,6 @@ HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VART
 extern LONGLONG CDECL call_method( void *func, int nb_stk_args, const DWORD *stk_args, const DWORD *reg_args );
 extern float CDECL call_float_method( void *func, int nb_stk_args, const DWORD *stk_args, const DWORD *reg_args );
 extern double CDECL call_double_method( void *func, int nb_stk_args, const DWORD *stk_args, const DWORD *reg_args );
-__ASM_GLOBAL_FUNC( call_method,
-                    /* r0 = *func
-                     * r1 = nb_stk_args
-                     * r2 = *stk_args (pointer to 'nb_stk_args' DWORD values to push on stack)
-                     * r3 = *reg_args (pointer to 8, 64-bit d0-d7 (double) values OR as 16, 32-bit s0-s15 (float) values, followed by 4, 32-bit (DWORD) r0-r3 values)
-                     */
-
-                    "push {fp, lr}\n\t"             /* Save frame pointer and return address (stack still aligned to 8 bytes) */
-                    "mov fp, sp\n\t"                /* Save stack pointer as our frame for cleaning the stack on return */
-
-                    "lsls r1, r1, #2\n\t"           /* r1 = nb_stk_args * sizeof(DWORD) */
-                    "beq 1f\n\t"                    /* Skip allocation if no stack args */
-                    "add r2, r2, r1\n"              /* Calculate ending address of incoming stack data */
-                    "2:\tldr ip, [r2, #-4]!\n\t"    /* Get next value */
-                    "str ip, [sp, #-4]!\n\t"        /* Push it on the stack */
-                    "subs r1, r1, #4\n\t"           /* Decrement count */
-                    "bgt 2b\n\t"                    /* Loop till done */
-
-                    "1:\n\t"
-#ifndef __SOFTFP__
-                    "vldm r3!, {s0-s15}\n\t"        /* Load the s0-s15/d0-d7 arguments */
-#endif
-                    "mov ip, r0\n\t"                /* Save the function call address to ip before we nuke r0 with arguments to pass */
-                    "ldm r3, {r0-r3}\n\t"           /* Load the r0-r3 arguments */
-
-                    "blx ip\n\t"                    /* Call the target function */
-
-                    "mov sp, fp\n\t"                /* Clean the stack using fp */
-                    "pop {fp, pc}\n\t"              /* Restore fp and return */
-                )
-__ASM_GLOBAL_FUNC( call_float_method,
-                   "b " __ASM_NAME("call_method") )
-__ASM_GLOBAL_FUNC( call_double_method,
-                   "b " __ASM_NAME("call_method") )
 
 HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VARTYPE vtReturn,
                              UINT cActuals, VARTYPE* prgvt, VARIANTARG** prgpvarg, VARIANT* pvargResult )
@@ -6652,19 +6625,15 @@ HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VART
     UINT i;
     DWORD *args;
     struct {
-#ifndef __SOFTFP__
         union {
             float s[16];
             double d[8];
         } sd;
-#endif
         DWORD r[4];
     } regs;
     int rcount;     /* 32-bit register index count */
-#ifndef __SOFTFP__
     int scount = 0; /* single-precision float register index count */
     int dcount = 0; /* double-precision float register index count */
-#endif
 
     TRACE("(%p, %Id, %d, %d, %d, %p, %p, %p (vt=%d))\n",
         pvInstance, oVft, cc, vtReturn, cActuals, prgvt, prgpvarg, pvargResult, V_VT(pvargResult));
@@ -6712,11 +6681,8 @@ HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VART
 
         switch (prgvt[i])
         {
-        case VT_EMPTY:
-            break;
         case VT_R8:             /* these must be 8-byte aligned, and put in 'd' regs or stack, as they are double-floats */
         case VT_DATE:
-#ifndef __SOFTFP__
             dcount = max( (scount + 1) / 2, dcount );
             if (dcount < 8)
             {
@@ -6729,7 +6695,6 @@ HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VART
                 argspos += sizeof(V_R8(arg)) / sizeof(DWORD);
             }
             break;
-#endif
         case VT_I8:             /* these must be 8-byte aligned, and put in 'r' regs or stack, as they are long-longs */
         case VT_UI8:
         case VT_CY:
@@ -6767,26 +6732,37 @@ HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VART
                 --ntemp;
             }
             break;
-        case VT_BOOL:  /* VT_BOOL is 16-bit but BOOL is 32-bit, needs to be extended */
-            if (rcount < 4)
-                regs.r[rcount++] = V_BOOL(arg);
-            else
-                args[argspos++] = V_BOOL(arg);
-            break;
         case VT_R4:             /* these must be 4-byte aligned, and put in 's' regs or stack, as they are single-floats */
-#ifndef __SOFTFP__
             if (!(scount % 2)) scount = max( scount, dcount * 2 );
             if (scount < 16)
                 regs.sd.s[scount++] = V_R4(arg);
             else
                 args[argspos++] = V_UI4(arg);
             break;
-#endif
+        /* extend parameters to 32 bits */
+        case VT_I1:
+            if (rcount < 4) regs.r[rcount++] = V_I1(arg);
+            else args[argspos++] = V_I1(arg);
+            break;
+        case VT_UI1:
+            if (rcount < 4) regs.r[rcount++] = V_UI1(arg);
+            else args[argspos++] = V_UI1(arg);
+            break;
+        case VT_I2:
+            if (rcount < 4) regs.r[rcount++] = V_I2(arg);
+            else args[argspos++] = V_I2(arg);
+            break;
+        case VT_UI2:
+            if (rcount < 4) regs.r[rcount++] = V_UI2(arg);
+            else args[argspos++] = V_UI2(arg);
+            break;
+        case VT_BOOL:
+            if (rcount < 4) regs.r[rcount++] = V_BOOL(arg);
+            else args[argspos++] = V_BOOL(arg);
+            break;
         default:
-            if (rcount < 4)
-                regs.r[rcount++] = V_UI4(arg);
-            else
-                args[argspos++] = V_UI4(arg);
+            if (rcount < 4) regs.r[rcount++] = V_UI4(arg);
+            else args[argspos++] = V_UI4(arg);
             break;
         }
         TRACE("arg %u: type %s %s\n", i, debugstr_vt(prgvt[i]), debugstr_variant(arg));
@@ -6796,7 +6772,6 @@ HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VART
 
     switch (vtReturn)
     {
-    case VT_EMPTY:      /* EMPTY = no return value */
     case VT_DECIMAL:    /* DECIMAL and VARIANT already have a pointer argument passed (see above) */
     case VT_VARIANT:
         call_method( func, argspos, args, (DWORD*)&regs );
@@ -6828,37 +6803,6 @@ HRESULT WINAPI DispCallFunc( void* pvInstance, ULONG_PTR oVft, CALLCONV cc, VART
 extern DWORD_PTR CDECL call_method( void *func, int nb_stk_args, const DWORD_PTR *stk_args, const DWORD_PTR *reg_args );
 extern float CDECL call_float_method( void *func, int nb_stk_args, const DWORD_PTR *stk_args, const DWORD_PTR *reg_args );
 extern double CDECL call_double_method( void *func, int nb_stk_args, const DWORD_PTR *stk_args, const DWORD_PTR *reg_args );
-__ASM_GLOBAL_FUNC( call_method,
-                   "stp x29, x30, [sp, #-16]!\n\t"
-                   __ASM_SEH(".seh_save_fplr_x 16\n\t")
-                   "mov x29, sp\n\t"
-                   __ASM_SEH(".seh_set_fp\n\t")
-                   __ASM_SEH(".seh_endprologue\n\t")
-                   "sub sp, sp, x1, lsl #3\n\t"
-                   "cbz x1, 2f\n"
-                   "1:\tsub x1, x1, #1\n\t"
-                   "ldr x4, [x2, x1, lsl #3]\n\t"
-                   "str x4, [sp, x1, lsl #3]\n\t"
-                   "cbnz x1, 1b\n"
-                   "2:\tmov x16, x0\n\t"
-                   "mov x9, x3\n\t"
-                   "ldp d0, d1, [x9]\n\t"
-                   "ldp d2, d3, [x9, #0x10]\n\t"
-                   "ldp d4, d5, [x9, #0x20]\n\t"
-                   "ldp d6, d7, [x9, #0x30]\n\t"
-                   "ldp x0, x1, [x9, #0x40]\n\t"
-                   "ldp x2, x3, [x9, #0x50]\n\t"
-                   "ldp x4, x5, [x9, #0x60]\n\t"
-                   "ldp x6, x7, [x9, #0x70]\n\t"
-                   "ldr x8, [x9, #0x80]\n\t"
-                   "blr x16\n\t"
-                   "mov sp, x29\n\t"
-                   "ldp x29, x30, [sp], #16\n\t"
-                   "ret" )
-__ASM_GLOBAL_FUNC( call_float_method,
-                   "b " __ASM_NAME("call_method") )
-__ASM_GLOBAL_FUNC( call_double_method,
-                   "b " __ASM_NAME("call_method") )
 
 HRESULT WINAPI DispCallFunc( void *instance, ULONG_PTR offset, CALLCONV cc, VARTYPE ret_type, UINT count,
                              VARTYPE *types, VARIANTARG **vargs, VARIANT *result )
@@ -7492,6 +7436,17 @@ static HRESULT WINAPI ITypeInfo_fnInvoke(
                             V_ERROR(arg) = DISP_E_PARAMNOTFOUND;
                         }
                     }
+                }
+                else if (func_desc->cParamsOpt < 0 && ((rgvt[i] & ~VT_BYREF) == (VT_VARIANT | VT_ARRAY)))
+                {
+                    hres = SafeArrayAllocDescriptorEx( VT_EMPTY, 1, &a );
+                    if (FAILED(hres)) break;
+                    if (rgvt[i] & VT_BYREF)
+                        V_BYREF(&rgvarg[i]) = &a;
+                    else
+                        V_ARRAY(&rgvarg[i]) = a;
+                    V_VT(&rgvarg[i]) = rgvt[i];
+                    prgpvarg[i] = &rgvarg[i];
                 }
                 else
                 {

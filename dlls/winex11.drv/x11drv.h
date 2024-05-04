@@ -291,7 +291,7 @@ extern BOOL shape_layered_windows;
 extern const struct gdi_dc_funcs *X11DRV_XRender_Init(void);
 
 extern struct opengl_funcs *get_glx_driver(UINT);
-extern UINT X11DRV_VulkanInit( UINT, void *, struct vulkan_funcs * );
+extern UINT X11DRV_VulkanInit( UINT, void *, const struct vulkan_driver_funcs ** );
 
 extern struct format_entry *import_xdnd_selection( Display *display, Window win, Atom selection,
                                                    Atom *targets, UINT count,
@@ -344,8 +344,7 @@ enum x11drv_escape_codes
     X11DRV_GET_DRAWABLE,     /* get current drawable for a DC */
     X11DRV_START_EXPOSURES,  /* start graphics exposures */
     X11DRV_END_EXPOSURES,    /* end graphics exposures */
-    X11DRV_FLUSH_GL_DRAWABLE, /* flush changes made to the gl drawable */
-    X11DRV_FLUSH_GDI_DISPLAY /* flush the gdi display */
+    X11DRV_FLUSH_GL_DRAWABLE /* flush changes made to the gl drawable */
 };
 
 struct x11drv_escape_set_drawable
@@ -649,7 +648,6 @@ extern void sync_gl_drawable( HWND hwnd, BOOL known_child );
 extern void set_gl_drawable_parent( HWND hwnd, HWND parent );
 extern void destroy_gl_drawable( HWND hwnd );
 extern void destroy_vk_surface( HWND hwnd );
-extern void vulkan_thread_detach(void);
 
 extern void wait_for_withdrawn_state( HWND hwnd, BOOL set );
 extern Window init_clip_window(void);
@@ -658,6 +656,7 @@ extern void read_net_wm_states( Display *display, struct x11drv_win_data *data )
 extern void update_net_wm_states( struct x11drv_win_data *data );
 extern void make_window_embedded( struct x11drv_win_data *data );
 extern Window create_client_window( HWND hwnd, const XVisualInfo *visual, Colormap colormap );
+extern void detach_client_window( struct x11drv_win_data *data, Window client_window );
 extern void destroy_client_window( HWND hwnd, Window client_window );
 extern void set_window_visual( struct x11drv_win_data *data, const XVisualInfo *vis, BOOL use_alpha );
 extern void change_systray_owner( Display *display, Window systray_window );
@@ -688,6 +687,7 @@ extern void ungrab_clipping_window(void);
 extern void move_resize_window( HWND hwnd, int dir );
 extern void X11DRV_InitKeyboard( Display *display );
 extern void X11DRV_InitMouse( Display *display );
+extern BOOL process_events( Display *display, Bool (*filter)(Display*, XEvent*, XPointer), ULONG_PTR arg );
 extern BOOL X11DRV_ProcessEvents( DWORD mask );
 extern HWND *build_hwnd_list(void);
 

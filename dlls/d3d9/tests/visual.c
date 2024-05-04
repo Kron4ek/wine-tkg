@@ -26419,10 +26419,12 @@ static void test_nrm_instruction(void)
 static void test_desktop_window(void)
 {
     IDirect3DVertexShader9 *shader;
+    IDirect3DTexture9 *texture;
     IDirect3DDevice9 *device;
     unsigned int color;
     IDirect3D9 *d3d;
     ULONG refcount;
+    D3DCAPS9 caps;
     HWND window;
     HRESULT hr;
 
@@ -26475,9 +26477,22 @@ static void test_desktop_window(void)
     device = create_device(d3d, NULL, NULL, TRUE);
     ok(device != NULL, "Failed to create a D3D device\n");
 
-    hr = IDirect3DDevice9_CreateVertexShader(device, simple_vs, &shader);
-    ok(SUCCEEDED(hr), "Failed to create vertex shader, hr %#lx.\n", hr);
-    IDirect3DVertexShader9_Release(shader);
+    hr = IDirect3DDevice9_CreateTexture(device, 1, 1, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &texture, NULL);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    IDirect3DTexture9_Release(texture);
+
+    hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
+    ok(SUCCEEDED(hr), "Failed to get device caps, hr %#lx.\n", hr);
+    if (caps.VertexShaderVersion >= D3DVS_VERSION(1, 1))
+    {
+        hr = IDirect3DDevice9_CreateVertexShader(device, simple_vs, &shader);
+        ok(SUCCEEDED(hr), "Failed to create vertex shader, hr %#lx.\n", hr);
+        IDirect3DVertexShader9_Release(shader);
+    }
+    else
+    {
+        skip("Vertex shaders not supported.\n");
+    }
 
     IDirect3DDevice9_Release(device);
 
@@ -26877,6 +26892,7 @@ static void test_sample_attached_rendertarget(void)
     unsigned int color, i;
     IDirect3D9 *d3d;
     ULONG refcount;
+    D3DCAPS9 caps;
     BOOL is_warp;
     HWND window;
     HRESULT hr;
@@ -26921,6 +26937,17 @@ static void test_sample_attached_rendertarget(void)
     if (!(device = create_device(d3d, window, window, TRUE)))
     {
         skip("Failed to create a D3D device, skipping tests.\n");
+        IDirect3D9_Release(d3d);
+        DestroyWindow(window);
+        return;
+    }
+
+    hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    if (caps.PixelShaderVersion < D3DPS_VERSION(2, 0))
+    {
+        skip("No shader model 2 support, skipping tests.\n");
+        IDirect3DDevice9_Release(device);
         IDirect3D9_Release(d3d);
         DestroyWindow(window);
         return;
