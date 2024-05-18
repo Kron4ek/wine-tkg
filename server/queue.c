@@ -43,8 +43,6 @@
 #include "process.h"
 #include "request.h"
 #include "user.h"
-#include "esync.h"
-#include "fsync.h"
 
 #define WM_NCMOUSEFIRST WM_NCMOUSEMOVE
 #define WM_NCMOUSELAST  (WM_NCMOUSEFIRST+(WM_MOUSELAST-WM_MOUSEFIRST))
@@ -148,10 +146,8 @@ struct msg_queue
     timeout_t              last_get_msg;    /* time of last get message call */
     int                    keystate_lock;   /* owns an input keystate lock */
     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
-    int                    esync_fd;        /* esync file descriptor (signalled on message) */
-    int                    esync_in_msgwait; /* our thread is currently waiting on us */
-    unsigned int           fsync_idx;
-    int                    fsync_in_msgwait; /* our thread is currently waiting on us */
+    struct fast_sync      *fast_sync;       /* fast synchronization object */
+    int                    in_fast_wait;    /* are we in a client-side wait? */
 };
 
 struct hotkey
@@ -168,9 +164,8 @@ static void msg_queue_dump( struct object *obj, int verbose );
 static int msg_queue_add_queue( struct object *obj, struct wait_queue_entry *entry );
 static void msg_queue_remove_queue( struct object *obj, struct wait_queue_entry *entry );
 static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry );
-static int msg_queue_get_esync_fd( struct object *obj, enum esync_type *type );
-static unsigned int msg_queue_get_fsync_idx( struct object *obj, enum fsync_type *type );
 static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *entry );
+static struct fast_sync *msg_queue_get_fast_sync( struct object *obj );
 static void msg_queue_destroy( struct object *obj );
 static void msg_queue_poll_event( struct fd *fd, int event );
 static void thread_input_dump( struct object *obj, int verbose );
@@ -185,8 +180,6 @@ static const struct object_ops msg_queue_ops =
     msg_queue_add_queue,       /* add_queue */
     msg_queue_remove_queue,    /* remove_queue */
     msg_queue_signaled,        /* signaled */
-    msg_queue_get_esync_fd,    /* get_esync_fd */
-    msg_queue_get_fsync_idx,   /* get_fsync_idx */
     msg_queue_satisfied,       /* satisfied */
     no_signal,                 /* signal */
     no_get_fd,                 /* get_fd */
@@ -199,6 +192,7 @@ static const struct object_ops msg_queue_ops =
     NULL,                      /* unlink_name */
     no_open_file,              /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
+    msg_queue_get_fast_sync,   /* get_fast_sync */
     no_close_handle,           /* close_handle */
     msg_queue_destroy          /* destroy */
 };
@@ -224,8 +218,6 @@ static const struct object_ops thread_input_ops =
     no_add_queue,                 /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
-    NULL,                         /* get_esync_fd */
-    NULL,                         /* get_fsync_idx */
     NULL,                         /* satisfied */
     no_signal,                    /* signal */
     no_get_fd,                    /* get_fd */
@@ -238,6 +230,7 @@ static const struct object_ops thread_input_ops =
     NULL,                         /* unlink_name */
     no_open_file,                 /* open_file */
     no_kernel_obj_list,           /* get_kernel_obj_list */
+    no_get_fast_sync,             /* get_fast_sync */
     no_close_handle,              /* close_handle */
     thread_input_destroy          /* destroy */
 };
@@ -327,21 +320,13 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
         queue->last_get_msg    = current_time;
         queue->keystate_lock   = 0;
         queue->ignore_post_msg = 0;
-        queue->esync_fd        = -1;
-        queue->esync_in_msgwait = 0;
-        queue->fsync_idx       = 0;
-        queue->fsync_in_msgwait = 0;
+        queue->fast_sync       = NULL;
+        queue->in_fast_wait    = 0;
         list_init( &queue->send_result );
         list_init( &queue->callback_result );
         list_init( &queue->pending_timers );
         list_init( &queue->expired_timers );
         for (i = 0; i < NB_MSG_KINDS; i++) list_init( &queue->msg_list[i] );
-
-        if (do_fsync())
-            queue->fsync_idx = fsync_alloc_shm( 0, 0 );
- 
-        if (do_esync())
-            queue->esync_fd = esync_create_fd( 0, 0 );
 
         thread->queue = queue;
     }
@@ -623,7 +608,11 @@ static inline void set_queue_bits( struct msg_queue *queue, unsigned int bits )
     }
     queue->wake_bits |= bits;
     queue->changed_bits |= bits;
-    if (is_signaled( queue )) wake_up( &queue->obj, 0 );
+    if (is_signaled( queue ))
+    {
+        wake_up( &queue->obj, 0 );
+        fast_set_event( queue->fast_sync );
+    }
 }
 
 /* clear some queue bits */
@@ -636,12 +625,8 @@ static inline void clear_queue_bits( struct msg_queue *queue, unsigned int bits 
         if (queue->keystate_lock) unlock_input_keystate( queue->input );
         queue->keystate_lock = 0;
     }
-
-    if (do_fsync() && !is_signaled( queue ))
-        fsync_clear( &queue->obj );
-
-    if (do_esync() && !is_signaled( queue ))
-        esync_clear( queue->esync_fd );
+    if (!is_signaled( queue ))
+        fast_reset_event( queue->fast_sync );
 }
 
 /* check if message is matched by the filter */
@@ -1131,11 +1116,8 @@ static int is_queue_hung( struct msg_queue *queue )
             return 0;  /* thread is waiting on queue -> not hung */
     }
 
-    if (do_fsync() && queue->fsync_in_msgwait)
-        return 0;   /* thread is waiting on queue in absentia -> not hung */
-
-    if (do_esync() && queue->esync_in_msgwait)
-        return 0;   /* thread is waiting on queue in absentia -> not hung */
+    if (queue->in_fast_wait)
+        return 0;  /* thread is waiting on queue in absentia -> not hung */
 
     return 1;
 }
@@ -1192,25 +1174,22 @@ static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entr
     return ret || is_signaled( queue );
 }
 
-static int msg_queue_get_esync_fd( struct object *obj, enum esync_type *type )
-{
-    struct msg_queue *queue = (struct msg_queue *)obj;
-    *type = ESYNC_QUEUE;
-    return queue->esync_fd;
-}
-
-static unsigned int msg_queue_get_fsync_idx( struct object *obj, enum fsync_type *type )
-{
-    struct msg_queue *queue = (struct msg_queue *)obj;
-    *type = FSYNC_QUEUE;
-    return queue->fsync_idx;
-}
-
 static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *entry )
 {
     struct msg_queue *queue = (struct msg_queue *)obj;
     queue->wake_mask = 0;
     queue->changed_mask = 0;
+    fast_reset_event( queue->fast_sync );
+}
+
+static struct fast_sync *msg_queue_get_fast_sync( struct object *obj )
+{
+    struct msg_queue *queue = (struct msg_queue *)obj;
+
+    if (!queue->fast_sync)
+        queue->fast_sync = fast_create_event( FAST_SYNC_QUEUE, is_signaled( queue ) );
+    if (queue->fast_sync) grab_object( queue->fast_sync );
+    return queue->fast_sync;
 }
 
 static void msg_queue_destroy( struct object *obj )
@@ -1250,7 +1229,7 @@ static void msg_queue_destroy( struct object *obj )
     release_object( queue->input );
     if (queue->hooks) release_object( queue->hooks );
     if (queue->fd) release_object( queue->fd );
-    if (do_esync()) close( queue->esync_fd );
+    if (queue->fast_sync) release_object( queue->fast_sync );
 }
 
 static void msg_queue_poll_event( struct fd *fd, int event )
@@ -1261,6 +1240,7 @@ static void msg_queue_poll_event( struct fd *fd, int event )
     if (event & (POLLERR | POLLHUP)) set_fd_events( fd, -1 );
     else set_fd_events( queue->fd, 0 );
     wake_up( &queue->obj, 0 );
+    fast_set_event( queue->fast_sync );
 }
 
 static void thread_input_dump( struct object *obj, int verbose )
@@ -2884,14 +2864,21 @@ DECL_HANDLER(set_queue_mask)
         if (is_signaled( queue ))
         {
             /* if skip wait is set, do what would have been done in the subsequent wait */
-            if (req->skip_wait) queue->wake_mask = queue->changed_mask = 0;
-            else wake_up( &queue->obj, 0 );
+            if (req->skip_wait)
+            {
+                queue->wake_mask = queue->changed_mask = 0;
+                fast_reset_event( queue->fast_sync );
+            }
+            else
+            {
+                wake_up( &queue->obj, 0 );
+                fast_set_event( queue->fast_sync );
+            }
         }
-        if (do_fsync() && !is_signaled( queue ))
-            fsync_clear( &queue->obj );
-
-        if (do_esync() && !is_signaled( queue ))
-            esync_clear( queue->esync_fd );
+        else
+        {
+            fast_reset_event( queue->fast_sync );
+        }
     }
 }
 
@@ -2905,12 +2892,8 @@ DECL_HANDLER(get_queue_status)
         reply->wake_bits    = queue->wake_bits;
         reply->changed_bits = queue->changed_bits;
         queue->changed_bits &= ~req->clear_bits;
-
-        if (do_fsync() && !is_signaled( queue ))
-            fsync_clear( &queue->obj );
-
-        if (do_esync() && !is_signaled( queue ))
-            esync_clear( queue->esync_fd );
+        if (!is_signaled( queue ))
+            fast_reset_event( queue->fast_sync );
     }
     else reply->wake_bits = reply->changed_bits = 0;
 }
@@ -3101,6 +3084,9 @@ DECL_HANDLER(get_message)
     if (filter & QS_INPUT) queue->changed_bits &= ~QS_INPUT;
     if (filter & QS_PAINT) queue->changed_bits &= ~QS_PAINT;
 
+    if (!is_signaled( queue ))
+        fast_reset_event( queue->fast_sync );
+
     /* then check for posted messages */
     if ((filter & QS_POSTMESSAGE) &&
         get_posted_message( queue, queue->ignore_post_msg, get_win, req->get_first, req->get_last, req->flags, reply ))
@@ -3164,14 +3150,8 @@ DECL_HANDLER(get_message)
     if (get_win == -1 && current->process->idle_event) set_event( current->process->idle_event );
     queue->wake_mask = req->wake_mask;
     queue->changed_mask = req->changed_mask;
+    fast_reset_event( queue->fast_sync );
     set_error( STATUS_PENDING );  /* FIXME */
-
-    if (do_fsync() && !is_signaled( queue ))
-        fsync_clear( &queue->obj );
-
-    if (do_esync() && !is_signaled( queue ))
-        esync_clear( queue->esync_fd );
-
     return;
 
 found_msg:
@@ -3925,32 +3905,55 @@ DECL_HANDLER(update_rawinput_devices)
     }
 }
 
-DECL_HANDLER(esync_msgwait)
+DECL_HANDLER(fast_select_queue)
 {
-    struct msg_queue *queue = get_current_queue();
+    struct msg_queue *queue;
 
-    if (!queue) return;
-    queue->esync_in_msgwait = req->in_msgwait;
+    if (!(queue = (struct msg_queue *)get_handle_obj( current->process, req->handle,
+                                                      SYNCHRONIZE, &msg_queue_ops )))
+        return;
 
-    if (current->process->idle_event && !(queue->wake_mask & QS_SMRESULT))
-        set_event( current->process->idle_event );
+    /* a thread can only wait on its own queue */
+    if (current->queue != queue || queue->in_fast_wait)
+    {
+        set_error( STATUS_ACCESS_DENIED );
+    }
+    else
+    {
+        if (current->process->idle_event && !(queue->wake_mask & QS_SMRESULT))
+            set_event( current->process->idle_event );
 
-    /* and start/stop waiting on the driver */
-    if (queue->fd)
-        set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
+        if (queue->fd)
+            set_fd_events( queue->fd, POLLIN );
+
+        queue->in_fast_wait = 1;
+    }
+
+    release_object( queue );
 }
 
-DECL_HANDLER(fsync_msgwait)
+DECL_HANDLER(fast_unselect_queue)
 {
-    struct msg_queue *queue = get_current_queue();
+    struct msg_queue *queue;
 
-    if (!queue) return;
-    queue->fsync_in_msgwait = req->in_msgwait;
+    if (!(queue = (struct msg_queue *)get_handle_obj( current->process, req->handle,
+                                                      SYNCHRONIZE, &msg_queue_ops )))
+        return;
 
-    if (current->process->idle_event && !(queue->wake_mask & QS_SMRESULT))
-        set_event( current->process->idle_event );
+    if (current->queue != queue || !queue->in_fast_wait)
+    {
+        set_error( STATUS_ACCESS_DENIED );
+    }
+    else
+    {
+        if (queue->fd)
+            set_fd_events( queue->fd, 0 );
 
-    /* and start/stop waiting on the driver */
-    if (queue->fd)
-        set_fd_events( queue->fd, req->in_msgwait ? POLLIN : 0 );
+        if (req->signaled)
+            msg_queue_satisfied( &queue->obj, NULL );
+
+        queue->in_fast_wait = 0;
+    }
+
+    release_object( queue );
 }
