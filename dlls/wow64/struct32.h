@@ -526,12 +526,6 @@ typedef struct
 
 typedef struct
 {
-    ULONG ProcessId;
-    UNICODE_STRING32 ImageName;
-} SYSTEM_PROCESS_ID_INFORMATION32;
-
-typedef struct
-{
     ULONG  OwnerPid;
     BYTE   ObjectType;
     BYTE   HandleFlags;
@@ -733,15 +727,5 @@ typedef struct
     ULONG Token;
     ULONG Thread;
 } PROCESS_ACCESS_TOKEN32;
-
-typedef struct
-{
-    ULONG PagedPoolLimit;
-    ULONG NonPagedPoolLimit;
-    ULONG MinimumWorkingSetSize;
-    ULONG MaximumWorkingSetSize;
-    ULONG PagefileLimit;
-    LARGE_INTEGER TimeLimit;
-} QUOTA_LIMITS32;
 
 #endif /* __WOW64_STRUCT32_H */

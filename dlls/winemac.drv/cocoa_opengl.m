@@ -83,12 +83,7 @@
             macdrv_set_view_backing_size((macdrv_view)self.view, view_backing);
 
             NSView* save = self.view;
-            if ([NSThread isMainThread])
-            {
-                [super clearDrawable];
-                [super setView:save];
-            }
-            else OnMainThread(^{
+            OnMainThread(^{
                 [super clearDrawable];
                 [super setView:save];
             });

@@ -56,6 +56,5 @@ void delete_cab_files(void);
 BOOL delete_pf(const char *rel_path, BOOL is_file);
 BOOL file_exists(const char *file);
 BOOL pf_exists(const char *file);
-BOOL is_process_elevated(void);
+BOOL is_process_limited(void);
 UINT run_query(MSIHANDLE hdb, MSIHANDLE hrec, const char *query);
-void restart_as_admin_elevated(void);

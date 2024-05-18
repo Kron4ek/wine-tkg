@@ -146,6 +146,7 @@ static const struct wined3d_extension_map gl_extension_map[] =
     {"GL_ARB_texture_multisample",          ARB_TEXTURE_MULTISAMPLE       },
     {"GL_ARB_texture_non_power_of_two",     ARB_TEXTURE_NON_POWER_OF_TWO  },
     {"GL_ARB_texture_query_levels",         ARB_TEXTURE_QUERY_LEVELS      },
+    {"GL_ARB_texture_rectangle",            ARB_TEXTURE_RECTANGLE         },
     {"GL_ARB_texture_rg",                   ARB_TEXTURE_RG                },
     {"GL_ARB_texture_rgb10_a2ui",           ARB_TEXTURE_RGB10_A2UI        },
     {"GL_ARB_texture_storage",              ARB_TEXTURE_STORAGE           },
@@ -633,6 +634,8 @@ static BOOL match_fbo_tex_update(const struct wined3d_gl_info *gl_info, struct w
     GLuint tex, fbo;
     GLenum status;
 
+    if (wined3d_settings.offscreen_rendering_mode != ORM_FBO) return FALSE;
+
     memset(data, 0xcc, sizeof(data));
 
     gl_info->gl_ops.gl.p_glGenTextures(1, &tex);
@@ -733,6 +736,8 @@ static BOOL match_broken_arb_fog(const struct wined3d_gl_info *gl_info, struct w
         "MOV result.color, {1.0, 0.0, 0.0, 0.0};\n"
         "END\n";
 
+    if (wined3d_settings.offscreen_rendering_mode != ORM_FBO)
+        return FALSE;
     if (!gl_info->supported[ARB_FRAGMENT_PROGRAM])
         return FALSE;
     if (!gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
@@ -819,6 +824,8 @@ static BOOL match_broken_viewport_subpixel_bits(const struct wined3d_gl_info *gl
 {
     if (!gl_info->supported[ARB_VIEWPORT_ARRAY])
         return FALSE;
+    if (wined3d_settings.offscreen_rendering_mode != ORM_FBO)
+        return FALSE;
     return !wined3d_caps_gl_ctx_test_viewport_subpixel_bits(ctx);
 }
 
@@ -833,6 +840,8 @@ static BOOL match_no_independent_bit_depths(const struct wined3d_gl_info *gl_inf
      * restrictions. The EXT extension explicitly calls out an error in the
      * relevant case. */
     if (!gl_info->supported[ARB_FRAMEBUFFER_OBJECT])
+        return TRUE;
+    if (wined3d_settings.offscreen_rendering_mode != ORM_FBO)
         return TRUE;
 
     gl_info->gl_ops.gl.p_glGenTextures(2, tex);
@@ -912,9 +921,18 @@ static void quirk_no_np2(struct wined3d_gl_info *gl_info)
      *  ARB_tex_npot from the list of supported extensions.
      *
      *  Note that WINE_normalized_texrect can't be used in this case because
-     *  internally it uses ARB_tex_npot, triggering the software fallback. */
+     *  internally it uses ARB_tex_npot, triggering the software fallback.
+     *  There is not much we can do here apart from disabling the
+     *  software-emulated extension and re-enable ARB_tex_rect (which was
+     *  previously disabled in wined3d_adapter_init_gl_caps).
+     *
+     *  This fixup removes performance problems on both the FX 5900 and
+     *  FX 5700 (e.g. for framebuffer post-processing effects in the game
+     *  "Max Payne 2"). The behaviour can be verified through a simple test
+     *  app attached in bugreport #14724. */
     TRACE("GL_ARB_texture_non_power_of_two advertised through OpenGL 2.0 on NV FX card, removing.\n");
     gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO] = FALSE;
+    gl_info->supported[ARB_TEXTURE_RECTANGLE] = TRUE;
 }
 
 static void quirk_clip_varying(struct wined3d_gl_info *gl_info)
@@ -1313,7 +1331,6 @@ cards_nvidia_binary[] =
     /* Direct 3D 11 */
     {"Tesla T4",                    CARD_NVIDIA_TESLA_T4},
     {"Ampere A10",                  CARD_NVIDIA_AMPERE_A10},
-    {"RTX 3080",                    CARD_NVIDIA_GEFORCE_RTX3080},   /* GeForce 3000 - highend */
     {"RTX 3070",                    CARD_NVIDIA_GEFORCE_RTX3070},   /* GeForce 3000 - highend */
     {"RTX 2080 Ti",                 CARD_NVIDIA_GEFORCE_RTX2080TI}, /* GeForce 2000 - highend */
     {"RTX 2080",                    CARD_NVIDIA_GEFORCE_RTX2080},   /* GeForce 2000 - highend */
@@ -1322,13 +1339,11 @@ cards_nvidia_binary[] =
     {"GTX 1660 Ti",                 CARD_NVIDIA_GEFORCE_GTX1660TI}, /* GeForce 1600 - highend */
     {"GTX 1660 SUPER",              CARD_NVIDIA_GEFORCE_GTX1660SUPER}, /* GeForce 1600 - highend */
     {"GTX 1650 SUPER",              CARD_NVIDIA_GEFORCE_GTX1650SUPER}, /* GeForce 1600 - midend high */
-    {"GTX 1650",                    CARD_NVIDIA_GEFORCE_GTX1650},   /* GeForce 1600 - midend high */
     {"TITAN V",                     CARD_NVIDIA_TITANV},            /* GeForce 1000 - highend */
     {"TITAN X (Pascal)",            CARD_NVIDIA_TITANX_PASCAL},     /* GeForce 1000 - highend */
     {"GTX 1080 Ti",                 CARD_NVIDIA_GEFORCE_GTX1080TI}, /* GeForce 1000 - highend */
     {"GTX 1080",                    CARD_NVIDIA_GEFORCE_GTX1080},   /* GeForce 1000 - highend */
     {"GTX 1070",                    CARD_NVIDIA_GEFORCE_GTX1070},   /* GeForce 1000 - highend */
-    {"GTX 1070M",                   CARD_NVIDIA_GEFORCE_GTX1070M},  /* GeForce 1000 - highend */
     {"GTX 1060 3GB",                CARD_NVIDIA_GEFORCE_GTX1060_3GB},/* GeForce 1000 - midend high */
     {"GTX 1060",                    CARD_NVIDIA_GEFORCE_GTX1060},   /* GeForce 1000 - midend high */
     {"GTX 1050 Ti",                 CARD_NVIDIA_GEFORCE_GTX1050TI}, /* GeForce 1000 - midend */
@@ -1983,6 +1998,58 @@ static enum wined3d_pci_device wined3d_guess_card(enum wined3d_feature_level fea
             *card_vendor, debugstr_a(gl_renderer));
 
     return wined3d_gpu_from_feature_level(card_vendor, feature_level);
+}
+
+static const struct wined3d_vertex_pipe_ops *select_vertex_implementation(const struct wined3d_gl_info *gl_info,
+        const struct wined3d_shader_backend_ops *shader_backend_ops)
+{
+    if (shader_backend_ops == &glsl_shader_backend && gl_info->supported[ARB_VERTEX_SHADER])
+        return &glsl_vertex_pipe;
+    return &ffp_vertex_pipe;
+}
+
+static const struct wined3d_fragment_pipe_ops *select_fragment_implementation(const struct wined3d_gl_info *gl_info,
+        const struct wined3d_shader_backend_ops *shader_backend_ops)
+{
+    if (shader_backend_ops == &glsl_shader_backend && gl_info->supported[ARB_FRAGMENT_SHADER])
+        return &glsl_fragment_pipe;
+    if (gl_info->supported[ARB_FRAGMENT_PROGRAM])
+        return &arbfp_fragment_pipeline;
+    if (gl_info->supported[ATI_FRAGMENT_SHADER])
+        return &atifs_fragment_pipeline;
+    if (gl_info->supported[NV_REGISTER_COMBINERS] && gl_info->supported[NV_TEXTURE_SHADER2])
+        return &nvts_fragment_pipeline;
+    if (gl_info->supported[NV_REGISTER_COMBINERS])
+        return &nvrc_fragment_pipeline;
+    return &ffp_fragment_pipeline;
+}
+
+static const struct wined3d_shader_backend_ops *select_shader_backend(const struct wined3d_gl_info *gl_info)
+{
+    BOOL glsl = wined3d_settings.shader_backend == WINED3D_SHADER_BACKEND_AUTO
+            || wined3d_settings.shader_backend == WINED3D_SHADER_BACKEND_GLSL;
+    BOOL arb = wined3d_settings.shader_backend == WINED3D_SHADER_BACKEND_AUTO
+            || wined3d_settings.shader_backend == WINED3D_SHADER_BACKEND_ARB;
+
+    if (!gl_info->supported[WINED3D_GL_LEGACY_CONTEXT] && !glsl)
+    {
+        ERR_(winediag)("Ignoring the shader backend registry key. "
+                "GLSL is the only shader backend available on core profile contexts. "
+                "You need to explicitly set GL version to use legacy contexts.\n");
+        glsl = TRUE;
+    }
+
+    glsl = glsl && gl_info->glsl_version >= MAKEDWORD_VERSION(1, 20);
+
+    if (glsl && gl_info->supported[ARB_VERTEX_SHADER] && gl_info->supported[ARB_FRAGMENT_SHADER])
+        return &glsl_shader_backend;
+    if (arb && gl_info->supported[ARB_VERTEX_PROGRAM] && gl_info->supported[ARB_FRAGMENT_PROGRAM])
+        return &arb_program_shader_backend;
+    if (glsl && (gl_info->supported[ARB_VERTEX_SHADER] || gl_info->supported[ARB_FRAGMENT_SHADER]))
+        return &glsl_shader_backend;
+    if (arb && (gl_info->supported[ARB_VERTEX_PROGRAM] || gl_info->supported[ARB_FRAGMENT_PROGRAM]))
+        return &arb_program_shader_backend;
+    return &none_shader_backend;
 }
 
 static void parse_extension_string(struct wined3d_gl_info *gl_info, const char *extensions,
@@ -2900,7 +2967,7 @@ static void wined3d_adapter_init_limits(struct wined3d_gl_info *gl_info)
         gl_info->limits.general_combiners = gl_max;
         TRACE("Max general combiners: %d.\n", gl_max);
     }
-    if (gl_info->supported[ARB_DRAW_BUFFERS])
+    if (gl_info->supported[ARB_DRAW_BUFFERS] && wined3d_settings.offscreen_rendering_mode == ORM_FBO)
     {
         gl_info->gl_ops.gl.p_glGetIntegerv(GL_MAX_DRAW_BUFFERS_ARB, &gl_max);
         gl_info->limits.buffers = min(WINED3D_MAX_RENDER_TARGETS, gl_max);
@@ -3536,6 +3603,13 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
             gl_info->supported[ATI_FRAGMENT_SHADER] = FALSE;
         }
     }
+    if (gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO])
+    {
+        /* If we have full NP2 texture support, disable
+         * GL_ARB_texture_rectangle because we will never use it.
+         * This saves a few redundant glDisable calls. */
+        gl_info->supported[ARB_TEXTURE_RECTANGLE] = FALSE;
+    }
     if (gl_info->supported[ATI_FRAGMENT_SHADER])
     {
         /* Disable NV_register_combiners and fragment shader if this is supported.
@@ -3694,9 +3768,9 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
 
     checkGLcall("extension detection");
 
-    adapter->shader_backend = &glsl_shader_backend;
-    adapter->vertex_pipe = &glsl_vertex_pipe;
-    adapter->fragment_pipe = &glsl_fragment_pipe;
+    adapter->shader_backend = select_shader_backend(gl_info);
+    adapter->vertex_pipe = select_vertex_implementation(gl_info, adapter->shader_backend);
+    adapter->fragment_pipe = select_fragment_implementation(gl_info, adapter->shader_backend);
 
     if (gl_info->supported[ARB_FRAMEBUFFER_OBJECT])
     {
@@ -3722,8 +3796,6 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
         gl_info->fbo_ops.glBlitFramebuffer = gl_info->gl_ops.ext.p_glBlitFramebuffer;
         gl_info->fbo_ops.glGenerateMipmap = gl_info->gl_ops.ext.p_glGenerateMipmap;
         gl_info->fbo_ops.glFramebufferTexture = gl_info->gl_ops.ext.p_glFramebufferTexture;
-
-        gl_info->supported[EXT_FRAMEBUFFER_OBJECT] = TRUE;
     }
     else
     {
@@ -3747,6 +3819,11 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
             gl_info->fbo_ops.glGetFramebufferAttachmentParameteriv
                     = gl_info->gl_ops.ext.p_glGetFramebufferAttachmentParameterivEXT;
             gl_info->fbo_ops.glGenerateMipmap = gl_info->gl_ops.ext.p_glGenerateMipmapEXT;
+        }
+        else if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
+        {
+            WARN_(d3d_perf)("Framebuffer objects not supported, falling back to backbuffer offscreen rendering mode.\n");
+            wined3d_settings.offscreen_rendering_mode = ORM_BACKBUFFER;
         }
 
         if (gl_info->supported[ARB_GEOMETRY_SHADER4])
@@ -4312,7 +4389,7 @@ static void adapter_gl_get_wined3d_caps(const struct wined3d_adapter *adapter, s
     {
         caps->TextureCaps |= WINED3DPTEXTURECAPS_VOLUMEMAP
                 | WINED3DPTEXTURECAPS_MIPVOLUMEMAP;
-        if (!d3d_info->unconditional_npot)
+        if (!d3d_info->texture_npot)
             caps->TextureCaps |= WINED3DPTEXTURECAPS_VOLUMEMAP_POW2;
 
         caps->VolumeTextureFilterCaps |= WINED3DPTFILTERCAPS_MAGFLINEAR
@@ -4352,7 +4429,7 @@ static void adapter_gl_get_wined3d_caps(const struct wined3d_adapter *adapter, s
     {
         caps->TextureCaps |= WINED3DPTEXTURECAPS_CUBEMAP
                 | WINED3DPTEXTURECAPS_MIPCUBEMAP;
-        if (!d3d_info->unconditional_npot)
+        if (!d3d_info->texture_npot)
             caps->TextureCaps |= WINED3DPTEXTURECAPS_CUBEMAP_POW2;
 
         caps->CubeTextureFilterCaps |= WINED3DPTFILTERCAPS_MAGFLINEAR
@@ -4427,11 +4504,100 @@ static void adapter_gl_get_wined3d_caps(const struct wined3d_adapter *adapter, s
     }
 }
 
+static BOOL wined3d_check_pixel_format_color(const struct wined3d_pixel_format *cfg,
+        const struct wined3d_format *format)
+{
+    /* Float formats need FBOs. If FBOs are used this function isn't called */
+    if (format->attrs & WINED3D_FORMAT_ATTR_FLOAT)
+        return FALSE;
+
+    /* Probably a RGBA_float or color index mode. */
+    if (cfg->iPixelType != WGL_TYPE_RGBA_ARB)
+        return FALSE;
+
+    if (cfg->redSize < format->red_size
+            || cfg->greenSize < format->green_size
+            || cfg->blueSize < format->blue_size
+            || cfg->alphaSize < format->alpha_size)
+        return FALSE;
+
+    return TRUE;
+}
+
+static BOOL wined3d_check_pixel_format_depth(const struct wined3d_pixel_format *cfg,
+        const struct wined3d_format *format)
+{
+    BOOL lockable = FALSE;
+
+    /* Float formats need FBOs. If FBOs are used this function isn't called */
+    if (format->attrs & WINED3D_FORMAT_ATTR_FLOAT)
+        return FALSE;
+
+    if ((format->id == WINED3DFMT_D16_LOCKABLE) || (format->id == WINED3DFMT_D32_FLOAT))
+        lockable = TRUE;
+
+    /* On some modern cards like the Geforce8/9, GLX doesn't offer some
+     * depth/stencil formats which D3D9 reports. We can safely report
+     * "compatible" formats (e.g. D24 can be used for D16) as long as we
+     * aren't dealing with a lockable format. This also helps D3D <= 7 as they
+     * expect D16 which isn't offered without this on Geforce8 cards. */
+    if (!(cfg->depthSize == format->depth_size || (!lockable && cfg->depthSize > format->depth_size)))
+        return FALSE;
+
+    /* Some cards like Intel i915 ones only offer D24S8 but lots of games also
+     * need a format without stencil. We can allow a mismatch if the format
+     * doesn't have any stencil bits. If it does have stencil bits the size
+     * must match, or stencil wrapping would break. */
+    if (format->stencil_size && cfg->stencilSize != format->stencil_size)
+        return FALSE;
+
+    return TRUE;
+}
+
 static BOOL adapter_gl_check_format(const struct wined3d_adapter *adapter,
         const struct wined3d_format *adapter_format, const struct wined3d_format *rt_format,
         const struct wined3d_format *ds_format)
 {
-    return TRUE;
+    const struct wined3d_adapter_gl *adapter_gl = wined3d_adapter_gl_const(adapter);
+    unsigned int i;
+
+    if (wined3d_settings.offscreen_rendering_mode != ORM_BACKBUFFER)
+        return TRUE;
+
+    if (adapter_format && rt_format)
+    {
+        /* In backbuffer mode the front and backbuffer share the same WGL
+         * pixelformat. The format must match in RGB, alpha is allowed to be
+         * different. (Only the backbuffer can have alpha.) */
+        if (adapter_format->red_size != rt_format->red_size
+                || adapter_format->green_size != rt_format->green_size
+                || adapter_format->blue_size != rt_format->blue_size)
+        {
+            TRACE("Render target format %s doesn't match with adapter format %s.\n",
+                    debug_d3dformat(rt_format->id), debug_d3dformat(adapter_format->id));
+            return FALSE;
+        }
+    }
+
+    for (i = 0; i < adapter_gl->pixel_format_count; ++i)
+    {
+        const struct wined3d_pixel_format *cfg = &adapter_gl->pixel_formats[i];
+
+        /* Check if there is a WGL pixel format matching the requirements, the format should also be window
+         * drawable (not offscreen; e.g. Nvidia offers R5G6B5 for pbuffers even when X is running at 24bit) */
+        if (adapter_format && rt_format && !cfg->windowDrawable)
+            continue;
+
+        if ((!adapter_format || wined3d_check_pixel_format_color(cfg, adapter_format))
+                && (!rt_format || wined3d_check_pixel_format_color(cfg, rt_format))
+                && (!ds_format || wined3d_check_pixel_format_depth(cfg, ds_format)))
+        {
+            TRACE("Pixel format %d is compatible.\n", cfg->iPixelFormat);
+            return TRUE;
+        }
+    }
+
+    return FALSE;
 }
 
 static HRESULT adapter_gl_init_3d(struct wined3d_device *device)
@@ -5057,9 +5223,13 @@ static void wined3d_adapter_gl_init_d3d_info(struct wined3d_adapter_gl *adapter_
     d3d_info->vs_clipping = shader_caps.wined3d_caps & WINED3D_SHADER_CAP_VS_CLIPPING;
     d3d_info->shader_double_precision = !!(shader_caps.wined3d_caps & WINED3D_SHADER_CAP_DOUBLE_PRECISION);
     d3d_info->shader_output_interpolation = !!(shader_caps.wined3d_caps & WINED3D_SHADER_CAP_OUTPUT_INTERPOLATION);
+    d3d_info->frag_coord_correction = !!gl_info->supported[ARB_FRAGMENT_COORD_CONVENTIONS];
     d3d_info->viewport_array_index_any_shader = !!gl_info->supported[ARB_SHADER_VIEWPORT_LAYER_ARRAY];
     d3d_info->stencil_export = !!gl_info->supported[ARB_SHADER_STENCIL_EXPORT];
-    d3d_info->unconditional_npot = !!gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO];
+    d3d_info->texture_npot = !!gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO];
+    d3d_info->texture_npot_conditional = gl_info->supported[WINED3D_GL_NORMALIZED_TEXRECT]
+            || gl_info->supported[ARB_TEXTURE_RECTANGLE];
+    d3d_info->normalized_texrect = gl_info->supported[WINED3D_GL_NORMALIZED_TEXRECT];
     d3d_info->draw_base_vertex_offset = !!gl_info->supported[ARB_DRAW_ELEMENTS_BASE_VERTEX];
     d3d_info->vertex_bgra = !!gl_info->supported[ARB_VERTEX_ARRAY_BGRA];
     d3d_info->texture_swizzle = !!gl_info->supported[ARB_TEXTURE_SWIZZLE];
@@ -5095,6 +5265,9 @@ static float wined3d_adapter_find_fill_offset(struct wined3d_caps_gl_ctx *ctx)
     unsigned int upper = ARRAY_SIZE(test_array), lower = 0, test;
     float value;
 
+    if (wined3d_settings.offscreen_rendering_mode != ORM_FBO)
+        goto end;
+
     while (upper != lower)
     {
         test = (upper + lower) / 2;
@@ -5119,6 +5292,7 @@ static float wined3d_adapter_find_fill_offset(struct wined3d_caps_gl_ctx *ctx)
 
     FIXME("Did not find a way to get the filling convention we want.\n");
 
+end:
     /* This value was used unconditionally before the dynamic test function was
      * introduced. */
     return -1.0f / 64.0f;
@@ -5138,19 +5312,6 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
     struct wined3d_caps_gl_ctx caps_gl_ctx = {0};
     LUID primary_luid, *luid = NULL;
     unsigned int i;
-
-    static const struct
-    {
-        enum wined3d_gl_extension extension;
-        const char *string;
-    }
-    required_extensions[] =
-    {
-        {ARB_FRAGMENT_SHADER, "ARB_fragment_shader"},
-        {ARB_SHADING_LANGUAGE_100, "ARB_shading_language_100"},
-        {ARB_VERTEX_SHADER, "ARB_vertex_shader"},
-        {EXT_FRAMEBUFFER_OBJECT, "EXT_framebuffer_object"},
-    };
 
     TRACE("adapter_gl %p, ordinal %u, wined3d_creation_flags %#x.\n",
             adapter_gl, ordinal, wined3d_creation_flags);
@@ -5210,31 +5371,6 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
         return FALSE;
     }
 
-    for (unsigned int i = 0; i < ARRAY_SIZE(required_extensions); ++i)
-    {
-        if (!gl_info->supported[required_extensions[i].extension])
-        {
-            ERR("Required extension %s is not supported.\n", required_extensions[i].string);
-            wined3d_caps_gl_ctx_destroy(&caps_gl_ctx);
-            return FALSE;
-        }
-    }
-
-    if (!gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO] && !gl_info->supported[WINED3D_GL_NORMALIZED_TEXRECT])
-    {
-        ERR("Required extension ARB_texture_non_power_of_two is not supported.\n");
-        wined3d_caps_gl_ctx_destroy(&caps_gl_ctx);
-        return FALSE;
-    }
-
-    if (gl_info->glsl_version < MAKEDWORD_VERSION(1, 20))
-    {
-        ERR("GLSL version %s is too low; 1.20 is required.\n",
-                (const char *)gl_info->gl_ops.gl.p_glGetString(GL_SHADING_LANGUAGE_VERSION_ARB));
-        wined3d_caps_gl_ctx_destroy(&caps_gl_ctx);
-        return FALSE;
-    }
-
     gl_info->filling_convention_offset = wined3d_adapter_find_fill_offset(&caps_gl_ctx);
 
     wined3d_adapter_gl_init_d3d_info(adapter_gl, wined3d_creation_flags);
@@ -5255,6 +5391,10 @@ static BOOL wined3d_adapter_gl_init(struct wined3d_adapter_gl *adapter_gl,
     }
     TRACE("Reporting (fake) driver version 0x%08x-0x%08x.\n",
             driver_info->version_high, driver_info->version_low);
+
+    if (wined3d_settings.offscreen_rendering_mode == ORM_BACKBUFFER)
+        ERR_(winediag)("You are using the backbuffer for offscreen rendering. "
+                "This is unsupported, and will be removed in a future version.\n");
 
     wined3d_adapter_init_fb_cfgs(adapter_gl, caps_gl_ctx.dc);
     /* We haven't found any suitable formats. This should only happen in

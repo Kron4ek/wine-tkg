@@ -1,7 +1,7 @@
 MODULE    = winegstreamer.dll
 UNIXLIB   = winegstreamer.so
 IMPORTLIB = winegstreamer
-IMPORTS   = strmbase ole32 oleaut32 msdmo msvcrt
+IMPORTS   = strmbase ole32 oleaut32 msdmo
 DELAYIMPORTS = mfplat mf
 UNIX_CFLAGS  = $(GSTREAMER_CFLAGS)
 UNIX_LIBS    = $(GSTREAMER_LIBS) $(PTHREAD_LIBS)
@@ -28,4 +28,5 @@ SOURCES = \
 	wg_transform.c \
 	winegstreamer_classes.idl \
 	wm_reader.c \
-	wma_decoder.c
+	wma_decoder.c \
+	wmv_decoder.c

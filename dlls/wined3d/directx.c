@@ -466,13 +466,11 @@ static const struct wined3d_gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1060,    "NVIDIA GeForce GTX 1060",          DRIVER_NVIDIA_KEPLER,  6144},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1060M,   "NVIDIA GeForce GTX 1060M",         DRIVER_NVIDIA_KEPLER,  6144},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1070,    "NVIDIA GeForce GTX 1070",          DRIVER_NVIDIA_KEPLER,  8192},
-    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1070M,   "NVIDIA GeForce GTX 1070M",         DRIVER_NVIDIA_KEPLER,  8192},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1080,    "NVIDIA GeForce GTX 1080",          DRIVER_NVIDIA_KEPLER,  8192},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1080M,   "NVIDIA GeForce GTX 1080M",         DRIVER_NVIDIA_KEPLER,  8192},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1080TI,  "NVIDIA GeForce GTX 1080 Ti",       DRIVER_NVIDIA_KEPLER,  11264},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_TITANX_PASCAL,      "NVIDIA TITAN X (Pascal)",          DRIVER_NVIDIA_KEPLER,  12288},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_TITANV,             "NVIDIA TITAN V",                   DRIVER_NVIDIA_KEPLER,  12288},
-    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1650     ,"NVIDIA GeForce GTX 1650"      ,   DRIVER_NVIDIA_KEPLER,  4096},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1650SUPER,"NVIDIA GeForce GTX 1650 SUPER",   DRIVER_NVIDIA_KEPLER,  4096},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1660SUPER,"NVIDIA GeForce GTX 1660 SUPER",   DRIVER_NVIDIA_KEPLER,  6144},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1660TI,  "NVIDIA GeForce GTX 1660 Ti",       DRIVER_NVIDIA_KEPLER,  6144},
@@ -481,7 +479,6 @@ static const struct wined3d_gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_RTX2080,    "NVIDIA GeForce RTX 2080",          DRIVER_NVIDIA_KEPLER,  8192},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_RTX2080TI,  "NVIDIA GeForce RTX 2080 Ti",       DRIVER_NVIDIA_KEPLER,  11264},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_RTX3070,    "NVIDIA GeForce RTX 3070",          DRIVER_NVIDIA_KEPLER,  8192},
-    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_RTX3080,    "NVIDIA GeForce RTX 3080",          DRIVER_NVIDIA_KEPLER,  10240},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_TESLA_T4,           "NVIDIA Tesla T4",                  DRIVER_NVIDIA_KEPLER,  16384},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_AMPERE_A10,         "NVIDIA Ampere A10",                DRIVER_NVIDIA_KEPLER,  24576},
 
@@ -2437,8 +2434,12 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d_adapter *adapter,
                           WINED3DPTEXTURECAPS_PROJECTED          |
                           WINED3DPTEXTURECAPS_PERSPECTIVE;
 
-    if (!d3d_info->unconditional_npot)
-        caps->TextureCaps |= WINED3DPTEXTURECAPS_POW2 | WINED3DPTEXTURECAPS_NONPOW2CONDITIONAL;
+    if (!d3d_info->texture_npot)
+    {
+        caps->TextureCaps |= WINED3DPTEXTURECAPS_POW2;
+        if (d3d_info->texture_npot_conditional)
+            caps->TextureCaps |= WINED3DPTEXTURECAPS_NONPOW2CONDITIONAL;
+    }
 
     caps->TextureFilterCaps =  WINED3DPTFILTERCAPS_MAGFLINEAR       |
                                WINED3DPTFILTERCAPS_MAGFPOINT        |
@@ -3318,7 +3319,7 @@ static void wined3d_adapter_no3d_init_d3d_info(struct wined3d_adapter *adapter, 
     struct wined3d_d3d_info *d3d_info = &adapter->d3d_info;
 
     d3d_info->wined3d_creation_flags = wined3d_creation_flags;
-    d3d_info->unconditional_npot = true;
+    d3d_info->texture_npot = TRUE;
     d3d_info->feature_level = WINED3D_FEATURE_LEVEL_5;
 }
 

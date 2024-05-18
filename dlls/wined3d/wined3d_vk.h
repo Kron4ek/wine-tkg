@@ -183,24 +183,8 @@ struct wined3d_device_vk;
     VK_DEVICE_EXT_PFN(vkCmdSetDepthCompareOpEXT) \
     VK_DEVICE_EXT_PFN(vkCmdSetDepthTestEnableEXT) \
     VK_DEVICE_EXT_PFN(vkCmdSetDepthWriteEnableEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetPrimitiveTopologyEXT) \
     VK_DEVICE_EXT_PFN(vkCmdSetStencilOpEXT) \
     VK_DEVICE_EXT_PFN(vkCmdSetStencilTestEnableEXT) \
-    /* VK_EXT_extended_dynamic_state2 */ \
-    VK_DEVICE_EXT_PFN(vkCmdSetPatchControlPointsEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetPrimitiveRestartEnableEXT) \
-    /* VK_EXT_extended_dynamic_state3 */ \
-    VK_DEVICE_EXT_PFN(vkCmdSetAlphaToCoverageEnableEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetColorBlendEnableEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetColorBlendEquationEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetColorWriteMaskEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetCullModeEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetDepthBiasEnableEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetDepthClampEnableEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetFrontFaceEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetRasterizationSamplesEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetRasterizerDiscardEnableEXT) \
-    VK_DEVICE_EXT_PFN(vkCmdSetSampleMaskEXT) \
     /* VK_EXT_transform_feedback */ \
     VK_DEVICE_EXT_PFN(vkCmdBeginQueryIndexedEXT) \
     VK_DEVICE_EXT_PFN(vkCmdBeginTransformFeedbackEXT) \
@@ -258,12 +242,7 @@ struct wined3d_vk_info
     BOOL supported[WINED3D_VK_EXT_COUNT];
     HMODULE vulkan_lib;
 
-    bool multiple_viewports;
-    bool dynamic_state2;
-    bool dynamic_patch_vertex_count;
-    bool dynamic_multisample_state;
-    bool dynamic_blend_state;
-    bool dynamic_rasterizer_state;
+    unsigned int multiple_viewports : 1;
 };
 
 #define VK_CALL(f) (vk_info->vk_ops.f)
@@ -586,7 +565,7 @@ struct wined3d_context_vk
 
     const struct wined3d_vk_info *vk_info;
 
-    VkDynamicState dynamic_states[27];
+    VkDynamicState dynamic_states[11];
 
     uint32_t update_compute_pipeline : 1;
     uint32_t update_stream_output : 1;
@@ -614,9 +593,6 @@ struct wined3d_context_vk
     struct wined3d_command_buffer_vk current_command_buffer;
     uint64_t completed_command_buffer_id;
     VkDeviceSize retired_bo_size;
-    /* Number of draw or dispatch calls that have been recorded into the
-     * current command buffer. */
-    unsigned int command_buffer_work_count;
 
     struct
     {

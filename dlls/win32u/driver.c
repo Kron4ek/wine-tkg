@@ -522,6 +522,21 @@ static BOOL nulldrv_UnrealizePalette( HPALETTE palette )
     return FALSE;
 }
 
+static NTSTATUS nulldrv_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
+{
+    return STATUS_PROCEDURE_NOT_FOUND;
+}
+
+static NTSTATUS nulldrv_D3DKMTOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc )
+{
+    return STATUS_PROCEDURE_NOT_FOUND;
+}
+
+static NTSTATUS nulldrv_D3DKMTQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc )
+{
+    return STATUS_PROCEDURE_NOT_FOUND;
+}
+
 const struct gdi_dc_funcs null_driver =
 {
     nulldrv_AbortDoc,                   /* pAbortDoc */
@@ -613,6 +628,9 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_StrokeAndFillPath,          /* pStrokeAndFillPath */
     nulldrv_StrokePath,                 /* pStrokePath */
     nulldrv_UnrealizePalette,           /* pUnrealizePalette */
+    nulldrv_D3DKMTCloseAdapter,         /* pD3DKMTCloseAdapter */
+    nulldrv_D3DKMTOpenAdapterFromLuid,  /* pD3DKMTOpenAdapterFromLuid */
+    nulldrv_D3DKMTQueryVideoMemoryInfo, /* pD3DKMTQueryVideoMemoryInfo */
 
     GDI_PRIORITY_NULL_DRV               /* priority */
 };
@@ -761,9 +779,9 @@ static INT nulldrv_GetDisplayDepth( LPCWSTR name, BOOL is_primary )
     return -1; /* use default implementation */
 }
 
-static UINT nulldrv_UpdateDisplayDevices( const struct gdi_device_manager *manager, BOOL force, void *param )
+static BOOL nulldrv_UpdateDisplayDevices( const struct gdi_device_manager *manager, BOOL force, void *param )
 {
-    return STATUS_NOT_IMPLEMENTED;
+    return FALSE;
 }
 
 static BOOL nulldrv_CreateDesktop( const WCHAR *name, UINT width, UINT height )
@@ -901,7 +919,7 @@ static BOOL nulldrv_SystemParametersInfo( UINT action, UINT int_param, void *ptr
     return FALSE;
 }
 
-static UINT nulldrv_VulkanInit( UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs )
+static UINT nulldrv_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *vulkan_funcs )
 {
     return STATUS_NOT_IMPLEMENTED;
 }
@@ -1175,7 +1193,7 @@ static void loaderdrv_UpdateClipboard(void)
     load_driver()->pUpdateClipboard();
 }
 
-static UINT loaderdrv_UpdateDisplayDevices( const struct gdi_device_manager *manager, BOOL force, void *param )
+static BOOL loaderdrv_UpdateDisplayDevices( const struct gdi_device_manager *manager, BOOL force, void *param )
 {
     return load_driver()->pUpdateDisplayDevices( manager, force, param );
 }
@@ -1222,9 +1240,9 @@ static BOOL loaderdrv_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWI
     return load_driver()->pUpdateLayeredWindow( hwnd, info, window_rect );
 }
 
-static UINT loaderdrv_VulkanInit( UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs )
+static UINT loaderdrv_VulkanInit( UINT version, void *vulkan_handle, struct vulkan_funcs *vulkan_funcs )
 {
-    return load_driver()->pVulkanInit( version, vulkan_handle, driver_funcs );
+    return load_driver()->pVulkanInit( version, vulkan_handle, vulkan_funcs );
 }
 
 static const struct user_driver_funcs lazy_load_driver =

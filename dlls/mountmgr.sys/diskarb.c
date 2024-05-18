@@ -65,7 +65,6 @@ static void appeared_callback( DADiskRef disk, void *context )
     CFDictionaryRef dict = DADiskCopyDescription( disk );
     const void *ref;
     char device[64];
-    CFURLRef volume_url;
     char mount_point[PATH_MAX];
     size_t model_len = 0;
     GUID guid, *guid_ptr = NULL;
@@ -88,25 +87,10 @@ static void appeared_callback( DADiskRef disk, void *context )
     strcpy( device, "/dev/r" );
     CFStringGetCString( ref, device + 6, sizeof(device) - 6, kCFStringEncodingASCII );
 
-    if ((volume_url = CFDictionaryGetValue( dict, CFSTR("DAVolumePath") )))
-        CFURLGetFileSystemRepresentation( volume_url, true, (UInt8 *)mount_point, sizeof(mount_point) );
+    if ((ref = CFDictionaryGetValue( dict, CFSTR("DAVolumePath") )))
+        CFURLGetFileSystemRepresentation( ref, true, (UInt8 *)mount_point, sizeof(mount_point) );
     else
-    {
-        TRACE( "ignoring volume %s, uuid %s: no macOS volume path\n", device, wine_dbgstr_guid(guid_ptr) );
-        goto done;
-    }
-
-    if (CFURLCopyResourcePropertyForKey( volume_url, kCFURLVolumeIsBrowsableKey, &ref, NULL ))
-    {
-        Boolean is_browsable = CFBooleanGetValue( ref );
-        CFRelease( ref );
-
-        if (!is_browsable)
-        {
-            TRACE( "ignoring volume %s, uuid %s: not browsable\n", device, wine_dbgstr_guid(guid_ptr) );
-            goto done;
-        }
-    }
+        mount_point[0] = 0;
 
     if ((ref = CFDictionaryGetValue( dict, CFSTR("DAMediaKind") )))
     {

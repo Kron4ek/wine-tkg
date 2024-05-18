@@ -253,9 +253,7 @@ static inline VkSurfaceKHR wine_surface_to_handle(struct wine_surface *surface)
 
 struct wine_swapchain
 {
-    struct wine_surface *surface;  /* parent */
     VkSwapchainKHR host_swapchain;
-    VkExtent2D extents;
 
     struct wrapper_entry wrapper_entry;
 };
@@ -272,7 +270,6 @@ static inline VkSwapchainKHR wine_swapchain_to_handle(struct wine_swapchain *sur
 
 BOOL wine_vk_device_extension_supported(const char *name);
 BOOL wine_vk_instance_extension_supported(const char *name);
-BOOL wine_vk_is_host_surface_extension(const char *name);
 
 BOOL wine_vk_is_type_wrapped(VkObjectType type);
 

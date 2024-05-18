@@ -41,8 +41,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 
-DEFINE_MEDIATYPE_GUID(MFVideoFormat_ABGR32, D3DFMT_A8B8G8R8);
-
 struct stream_response
 {
     struct list entry;
@@ -81,7 +79,6 @@ struct transform_entry
     UINT32 pending_flags;
     GUID category;
     BOOL hidden;
-    BOOL attributes_initialized;
 };
 
 struct media_stream
@@ -226,8 +223,6 @@ static void media_stream_destroy(struct media_stream *stream)
         transform_entry_destroy(entry);
     }
 
-    if (stream->transform_service)
-        IMFTransform_Release(stream->transform_service);
     if (stream->stream)
         IMFMediaStream_Release(stream->stream);
     if (stream->current)
@@ -260,6 +255,7 @@ static ULONG source_reader_release(struct source_reader *reader)
         }
         source_reader_release_responses(reader, NULL);
         free(reader->streams);
+        MFUnlockWorkQueue(reader->queue);
         DeleteCriticalSection(&reader->cs);
         free(reader);
     }
@@ -771,82 +767,6 @@ static HRESULT source_reader_push_transform_samples(struct source_reader *reader
     return hr;
 }
 
-/* update the transform output type while keeping subtype which matches the old output type */
-static HRESULT transform_entry_update_output_type(struct transform_entry *entry, IMFMediaType *old_output_type)
-{
-    IMFMediaType *new_output_type;
-    GUID subtype, desired;
-    UINT i = 0;
-    HRESULT hr;
-
-    IMFMediaType_GetGUID(old_output_type, &MF_MT_SUBTYPE, &desired);
-
-    /* find an available output type matching the desired subtype */
-    while (SUCCEEDED(hr = IMFTransform_GetOutputAvailableType(entry->transform, 0, i++, &new_output_type)))
-    {
-        IMFMediaType_GetGUID(new_output_type, &MF_MT_SUBTYPE, &subtype);
-        if (IsEqualGUID(&subtype, &desired) && SUCCEEDED(hr = IMFTransform_SetOutputType(entry->transform, 0, new_output_type, 0)))
-        {
-            entry->pending_flags |= MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED;
-            IMFMediaType_Release(new_output_type);
-            return S_OK;
-        }
-        IMFMediaType_Release(new_output_type);
-    }
-
-    return hr;
-}
-
-/* update the transform input type while keeping an output type which matches the current output subtype */
-static HRESULT transform_entry_update_input_type(struct transform_entry *entry, IMFMediaType *input_type)
-{
-    IMFMediaType *old_output_type, *new_output_type;
-    HRESULT hr;
-
-    if (FAILED(hr = IMFTransform_GetOutputCurrentType(entry->transform, 0, &old_output_type)))
-        return hr;
-    if (FAILED(hr = IMFTransform_SetInputType(entry->transform, 0, input_type, 0)))
-        return hr;
-
-    /* check if transform output type is still valid or if we need to update it as well */
-    if (FAILED(hr = IMFTransform_GetOutputCurrentType(entry->transform, 0, &new_output_type)))
-        hr = transform_entry_update_output_type(entry, old_output_type);
-    else
-        IMFMediaType_Release(new_output_type);
-
-    IMFMediaType_Release(old_output_type);
-    return hr;
-}
-
-static void transform_entry_initialize_attributes(struct source_reader *reader, struct transform_entry *entry)
-{
-    IMFAttributes *attributes;
-
-    if (SUCCEEDED(IMFTransform_GetAttributes(entry->transform, &attributes)))
-    {
-        if (FAILED(IMFAttributes_GetItem(attributes, &MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT, NULL)))
-            IMFAttributes_SetUINT32(attributes, &MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT, 6);
-
-        IMFAttributes_Release(attributes);
-    }
-
-    if (SUCCEEDED(IMFTransform_GetOutputStreamAttributes(entry->transform, 0, &attributes)))
-    {
-        UINT32 shared, shared_without_mutex, bind_flags;
-
-        if (SUCCEEDED(IMFAttributes_GetUINT32(reader->attributes, &MF_SA_D3D11_SHARED, &shared)))
-            IMFAttributes_SetUINT32(attributes, &MF_SA_D3D11_SHARED, shared);
-        if (SUCCEEDED(IMFAttributes_GetUINT32(reader->attributes, &MF_SA_D3D11_SHARED_WITHOUT_MUTEX, &shared_without_mutex)))
-            IMFAttributes_SetUINT32(attributes, &MF_SA_D3D11_SHARED_WITHOUT_MUTEX, shared_without_mutex);
-        if (SUCCEEDED(IMFAttributes_GetUINT32(reader->attributes, &MF_SOURCE_READER_D3D11_BIND_FLAGS, &bind_flags)))
-            IMFAttributes_SetUINT32(attributes, &MF_SA_D3D11_BINDFLAGS, bind_flags);
-        else if ((reader->flags & SOURCE_READER_DXGI_DEVICE_MANAGER) && FAILED(IMFAttributes_GetItem(attributes, &MF_SA_D3D11_BINDFLAGS, NULL)))
-            IMFAttributes_SetUINT32(attributes, &MF_SA_D3D11_BINDFLAGS, 1024);
-
-        IMFAttributes_Release(attributes);
-    }
-}
-
 static HRESULT source_reader_pull_transform_samples(struct source_reader *reader, struct media_stream *stream,
         struct transform_entry *entry)
 {
@@ -859,12 +779,6 @@ static HRESULT source_reader_pull_transform_samples(struct source_reader *reader
     if ((ptr = list_next(&stream->transforms, &entry->entry)))
         next = LIST_ENTRY(ptr, struct transform_entry, entry);
 
-    if (!entry->attributes_initialized)
-    {
-        transform_entry_initialize_attributes(reader, entry);
-        entry->attributes_initialized = TRUE;
-    }
-
     if (FAILED(hr = IMFTransform_GetOutputStreamInfo(entry->transform, 0, &stream_info)))
         return hr;
     stream_info.cbSize = max(stream_info.cbSize, entry->min_buffer_size);
@@ -872,7 +786,7 @@ static HRESULT source_reader_pull_transform_samples(struct source_reader *reader
     while (SUCCEEDED(hr))
     {
         MFT_OUTPUT_DATA_BUFFER out_buffer = {0};
-        IMFMediaType *media_type;
+        IMFMediaType *output_type, *media_type;
 
         if (!(stream_info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES))
                 && FAILED(hr = source_reader_allocate_stream_sample(&stream_info, &out_buffer.pSample)))
@@ -880,15 +794,23 @@ static HRESULT source_reader_pull_transform_samples(struct source_reader *reader
 
         if (SUCCEEDED(hr = IMFTransform_ProcessOutput(entry->transform, 0, 1, &out_buffer, &status)))
         {
-            /* propagate upstream type to the transform input type */
             if ((entry->pending_flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED)
-                    && SUCCEEDED(hr = IMFTransform_GetOutputCurrentType(entry->transform, 0, &media_type)))
+                    && SUCCEEDED(hr = IMFTransform_GetOutputCurrentType(entry->transform, 0, &output_type)))
             {
                 if (!next)
-                    hr = IMFMediaType_CopyAllItems(media_type, (IMFAttributes *)stream->current);
-                else
-                    hr = transform_entry_update_input_type(next, media_type);
-                IMFMediaType_Release(media_type);
+                    hr = IMFMediaType_CopyAllItems(output_type, (IMFAttributes *)stream->current);
+                else if (SUCCEEDED(hr = IMFTransform_SetInputType(next->transform, 0, output_type, 0)))
+                {
+                    /* check if transform output type is still valid or if we need to reset it as well */
+                    if (FAILED(hr = IMFTransform_GetOutputCurrentType(next->transform, 0, &media_type))
+                            && SUCCEEDED(hr = IMFTransform_GetOutputAvailableType(next->transform, 0, 0, &output_type)))
+                    {
+                        next->pending_flags |= MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED;
+                        hr = IMFTransform_SetOutputType(entry->transform, 0, media_type, 0);
+                        IMFMediaType_Release(media_type);
+                    }
+                }
+                IMFMediaType_Release(output_type);
             }
 
             if (FAILED(hr))
@@ -901,15 +823,16 @@ static HRESULT source_reader_pull_transform_samples(struct source_reader *reader
             entry->pending_flags = 0;
         }
 
-        if (hr == MF_E_TRANSFORM_STREAM_CHANGE && SUCCEEDED(hr = IMFTransform_GetOutputCurrentType(entry->transform, 0, &media_type)))
+        if (hr == MF_E_TRANSFORM_STREAM_CHANGE && SUCCEEDED(hr = IMFTransform_GetOutputAvailableType(entry->transform, 0, 0, &output_type)))
         {
-            hr = transform_entry_update_output_type(entry, media_type);
-            IMFMediaType_Release(media_type);
+            hr = IMFTransform_SetOutputType(entry->transform, 0, output_type, 0);
+            IMFMediaType_Release(output_type);
 
             if (SUCCEEDED(hr))
             {
                 hr = IMFTransform_GetOutputStreamInfo(entry->transform, 0, &stream_info);
                 stream_info.cbSize = max(stream_info.cbSize, entry->min_buffer_size);
+                entry->pending_flags |= MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED;
             }
         }
 
@@ -1667,7 +1590,6 @@ static ULONG WINAPI src_reader_Release(IMFSourceReaderEx *iface)
             }
         }
 
-        MFUnlockWorkQueue(reader->queue);
         source_reader_release(reader);
     }
 
@@ -2004,8 +1926,7 @@ static HRESULT source_reader_create_transform(struct source_reader *reader, BOOL
 {
     MFT_REGISTER_TYPE_INFO in_type, out_type;
     struct transform_entry *entry;
-    IMFActivate **activates;
-    GUID category;
+    GUID *classes, category;
     IMFTransform *transform;
     UINT i, count;
     HRESULT hr;
@@ -2038,19 +1959,8 @@ static HRESULT source_reader_create_transform(struct source_reader *reader, BOOL
             entry->min_buffer_size = max(entry->min_buffer_size, bytes_per_second);
     }
 
-    if (IsEqualGUID(&out_type.guidMajorType, &MFMediaType_Video) && IsEqualGUID(&out_type.guidSubtype, &MFVideoFormat_ABGR32)
-            && IsEqualGUID(&category, &MFT_CATEGORY_VIDEO_PROCESSOR))
-    {
-        /* The video processor isn't registered for MFVideoFormat_ABGR32, and native even only supports that format when
-         * D3D-enabled, we still want to instantiate a video processor in such case, so fixup the subtype for MFTEnumEx.
-         */
-        WARN("Fixing up MFVideoFormat_ABGR32 subtype for the video processor\n");
-        out_type.guidSubtype = MFVideoFormat_RGB32;
-    }
-
-
     count = 0;
-    if (SUCCEEDED(hr = MFTEnumEx(category, 0, &in_type, allow_processor ? NULL : &out_type, &activates, &count)))
+    if (SUCCEEDED(hr = MFTEnum(category, 0, &in_type, allow_processor ? NULL : &out_type, NULL, &classes, &count)))
     {
         if (!count)
         {
@@ -2060,33 +1970,10 @@ static HRESULT source_reader_create_transform(struct source_reader *reader, BOOL
 
         for (i = 0; i < count; i++)
         {
-            IMFAttributes *attributes;
             IMFMediaType *media_type;
 
-            if (FAILED(hr = IMFActivate_ActivateObject(activates[i], &IID_IMFTransform, (void **)&transform)))
-                continue;
-
-            if (!reader->device_manager || FAILED(IMFTransform_GetAttributes(transform, &attributes)))
-                entry->attributes_initialized = TRUE;
-            else
-            {
-                UINT32 d3d_aware = FALSE;
-
-                if (reader->flags & SOURCE_READER_DXGI_DEVICE_MANAGER)
-                {
-                    if (SUCCEEDED(IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_AWARE, &d3d_aware)) && d3d_aware)
-                        IMFTransform_ProcessMessage(transform, MFT_MESSAGE_SET_D3D_MANAGER, (ULONG_PTR)reader->device_manager);
-                }
-                else if (reader->flags & SOURCE_READER_D3D9_DEVICE_MANAGER)
-                {
-                    if (SUCCEEDED(IMFAttributes_GetUINT32(attributes, &MF_SA_D3D_AWARE, &d3d_aware)) && d3d_aware)
-                        IMFTransform_ProcessMessage(transform, MFT_MESSAGE_SET_D3D_MANAGER, (ULONG_PTR)reader->device_manager);
-                }
-
-                entry->attributes_initialized = !d3d_aware;
-                IMFAttributes_Release(attributes);
-            }
-
+            if (FAILED(hr = CoCreateInstance(&classes[i], NULL, CLSCTX_INPROC_SERVER, &IID_IMFTransform, (void **)&transform)))
+                break;
             if (SUCCEEDED(hr = IMFTransform_SetInputType(transform, 0, input_type, 0))
                     && SUCCEEDED(hr = IMFTransform_GetInputCurrentType(transform, 0, &media_type)))
             {
@@ -2108,20 +1995,17 @@ static HRESULT source_reader_create_transform(struct source_reader *reader, BOOL
                 {
                     entry->transform = transform;
                     *out = entry;
-                    break;
+                    return S_OK;
                 }
             }
 
             IMFTransform_Release(transform);
         }
 
-        for (i = 0; i < count; ++i)
-            IMFActivate_Release(activates[i]);
-        CoTaskMemFree(activates);
+        CoTaskMemFree(classes);
     }
 
-    if (FAILED(hr))
-        free(entry);
+    free(entry);
     return hr;
 }
 
@@ -2477,6 +2361,7 @@ static HRESULT WINAPI src_reader_GetServiceForStream(IMFSourceReaderEx *iface, D
         REFIID riid, void **object)
 {
     struct source_reader *reader = impl_from_IMFSourceReaderEx(iface);
+    struct media_stream *stream = &reader->streams[index];
     IUnknown *obj = NULL;
     HRESULT hr = S_OK;
 
@@ -2497,7 +2382,7 @@ static HRESULT WINAPI src_reader_GetServiceForStream(IMFSourceReaderEx *iface, D
 
             if (index >= reader->stream_count)
                 hr = MF_E_INVALIDSTREAMNUMBER;
-            else if (!(obj = (IUnknown *)reader->streams[index].transform_service))
+            else if (!(obj = (IUnknown *)stream->transform_service))
                 hr = E_NOINTERFACE;
             break;
     }
@@ -2623,9 +2508,6 @@ static HRESULT WINAPI src_reader_GetTransformForStream(IMFSourceReaderEx *iface,
 
     TRACE("%p, %#lx, %#lx, %p, %p.\n", iface, stream_index, transform_index, category, transform);
 
-    if (!transform)
-        return E_POINTER;
-
     EnterCriticalSection(&reader->cs);
 
     if (stream_index == MF_SOURCE_READER_FIRST_VIDEO_STREAM)
@@ -2639,8 +2521,7 @@ static HRESULT WINAPI src_reader_GetTransformForStream(IMFSourceReaderEx *iface,
         hr = MF_E_INVALIDINDEX;
     else
     {
-        if (category)
-            *category = entry->category;
+        *category = entry->category;
         *transform = entry->transform;
         IMFTransform_AddRef(*transform);
         hr = S_OK;

@@ -779,8 +779,9 @@ LONG WINAPI UnhandledExceptionFilter( EXCEPTION_POINTERS *epointers )
             if (ret != EXCEPTION_CONTINUE_SEARCH) return ret;
         }
 
-        if ((GetErrorMode() & SEM_NOGPFAULTERRORBOX) ||
-            !start_debugger_atomic( epointers ) || !NtCurrentTeb()->Peb->BeingDebugged)
+        /* FIXME: Should check the current error mode */
+
+        if (!start_debugger_atomic( epointers ) || !NtCurrentTeb()->Peb->BeingDebugged)
             return EXCEPTION_EXECUTE_HANDLER;
     }
     return EXCEPTION_CONTINUE_SEARCH;

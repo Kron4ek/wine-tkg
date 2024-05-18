@@ -269,12 +269,15 @@ LONG ANDROID_ChangeDisplaySettings( LPDEVMODEW displays, LPCWSTR primary_name, H
 /***********************************************************************
  *           ANDROID_UpdateDisplayDevices
  */
-UINT ANDROID_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, BOOL force, void *param )
+BOOL ANDROID_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, BOOL force, void *param )
 {
     if (force || force_display_devices_refresh)
     {
-        static const DWORD source_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_VGA_COMPATIBLE;
-        struct pci_id pci_id = {0};
+        static const struct gdi_gpu gpu;
+        static const struct gdi_adapter adapter =
+        {
+            .state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_VGA_COMPATIBLE,
+        };
         struct gdi_monitor gdi_monitor =
         {
             .rc_monitor = virtual_screen_rect,
@@ -282,25 +285,18 @@ UINT ANDROID_UpdateDisplayDevices( const struct gdi_device_manager *device_manag
         };
         const DEVMODEW mode =
         {
-            .dmSize = sizeof(mode),
             .dmFields = DM_DISPLAYORIENTATION | DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL |
-                        DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+                        DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY | DM_POSITION,
             .dmBitsPerPel = screen_bpp, .dmPelsWidth = screen_width, .dmPelsHeight = screen_height, .dmDisplayFrequency = 60,
         };
-        DEVMODEW current = mode;
-
-        device_manager->add_gpu( "Android GPU", &pci_id, NULL, 0, param );
-        device_manager->add_source( "Default", source_flags, param );
+        device_manager->add_gpu( &gpu, param );
+        device_manager->add_adapter( &adapter, param );
         device_manager->add_monitor( &gdi_monitor, param );
-
-        current.dmFields |= DM_POSITION;
-        device_manager->add_modes( &current, 1, &mode, param );
+        device_manager->add_mode( &mode, TRUE, param );
         force_display_devices_refresh = FALSE;
-
-        return STATUS_SUCCESS;
     }
 
-    return STATUS_ALREADY_COMPLETE;
+    return TRUE;
 }
 
 

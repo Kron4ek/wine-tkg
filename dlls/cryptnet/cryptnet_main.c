@@ -1869,16 +1869,15 @@ static WCHAR *build_request_url(const WCHAR *base_url, const BYTE *data, DWORD d
     DWORD len = 0;
 
     if (!(path = build_request_path(data, data_size))) return NULL;
-    len = (wcslen(base_url) + wcslen(path) + 1) * sizeof(WCHAR);
+
+    InternetCombineUrlW(base_url, path, NULL, &len, 0);
     if (!(ret = malloc(len * sizeof(WCHAR))))
     {
         free(path);
         return NULL;
     }
-    wcscpy(ret, base_url);
-    wcscat(ret, path);
+    InternetCombineUrlW(base_url, path, ret, &len, 0);
     free(path);
-    TRACE("-> %s.\n", debugstr_w(ret));
     return ret;
 }
 

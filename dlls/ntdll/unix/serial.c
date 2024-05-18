@@ -31,12 +31,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
-#ifdef HAVE_ASM_TERMBITS_H
-# include <asm/termbits.h>
-# include <asm/ioctls.h>
-#else
-# include <termios.h>
-#endif
+#include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -124,18 +119,6 @@ static const char* iocode2str(UINT ioc)
 
 static NTSTATUS get_baud_rate(int fd, SERIAL_BAUD_RATE* sbr)
 {
-#ifdef HAVE_ASM_TERMBITS_H
-    struct termios2 port;
-
-    if (ioctl(fd, TCGETS2, &port) == -1)
-    {
-        ERR("ioctl TCGETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-
-    /* TERMIOS2 supports separate input and output baudrate, but wine supports only the common baudrate. */
-    sbr->BaudRate = port.c_ospeed;
-#else
     struct termios port;
     int speed;
 
@@ -209,22 +192,12 @@ static NTSTATUS get_baud_rate(int fd, SERIAL_BAUD_RATE* sbr)
         ERR("unknown speed %x\n", speed);
         return STATUS_INVALID_PARAMETER;
     }
-#endif
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS get_hand_flow(int fd, SERIAL_HANDFLOW* shf)
 {
     int stat = 0;
-#ifdef HAVE_ASM_TERMBITS_H
-    struct termios2 port;
-
-    if (ioctl(fd, TCGETS2, &port) == -1)
-    {
-        ERR("ioctl TCGETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     struct termios port;
 
     if (tcgetattr(fd, &port) == -1)
@@ -232,7 +205,6 @@ static NTSTATUS get_hand_flow(int fd, SERIAL_HANDFLOW* shf)
         ERR("tcgetattr error '%s'\n", strerror(errno));
         return errno_to_status( errno );
     }
-#endif
     /* termios does not support DTR/DSR flow control */
     shf->ControlHandShake = 0;
     shf->FlowReplace = 0;
@@ -278,15 +250,6 @@ static NTSTATUS get_hand_flow(int fd, SERIAL_HANDFLOW* shf)
 
 static NTSTATUS get_line_control(int fd, SERIAL_LINE_CONTROL* slc)
 {
-#ifdef HAVE_ASM_TERMBITS_H
-    struct termios2 port;
-
-    if (ioctl(fd, TCGETS2, &port) == -1)
-    {
-        ERR("ioctl TCGETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     struct termios port;
 
     if (tcgetattr(fd, &port) == -1)
@@ -294,7 +257,6 @@ static NTSTATUS get_line_control(int fd, SERIAL_LINE_CONTROL* slc)
         ERR("tcgetattr error '%s'\n", strerror(errno));
         return errno_to_status( errno );
     }
-#endif
 
 #ifdef CMSPAR
     switch (port.c_cflag & (PARENB | PARODD | CMSPAR))
@@ -394,15 +356,6 @@ static NTSTATUS get_properties(int fd, SERIAL_COMMPROP *prop)
 
 static NTSTATUS get_special_chars(int fd, SERIAL_CHARS* sc)
 {
-#ifdef HAVE_ASM_TERMBITS_H
-    struct termios2 port;
-
-    if (ioctl(fd, TCGETS2, &port) == -1)
-    {
-        ERR("ioctl TCGETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     struct termios port;
 
     if (tcgetattr(fd, &port) == -1)
@@ -410,8 +363,6 @@ static NTSTATUS get_special_chars(int fd, SERIAL_CHARS* sc)
         ERR("tcgetattr error '%s'\n", strerror(errno));
         return errno_to_status( errno );
     }
-#endif
-
     sc->EofChar   = port.c_cc[VEOF];
     sc->ErrorChar = 0xFF;
     sc->BreakChar = 0; /* FIXME */
@@ -493,45 +444,15 @@ static NTSTATUS purge(int fd, DWORD flags)
     ** Perhaps if we had our own internal queues, one flushes them
     ** and the other flushes the kernel's buffers.
     */
-#ifdef HAVE_ASM_TERMBITS_H
-    if (flags & PURGE_TXABORT) ioctl(fd, TCFLSH, TCOFLUSH);
-    if (flags & PURGE_RXABORT) ioctl(fd, TCFLSH, TCIFLUSH);
-    if (flags & PURGE_TXCLEAR) ioctl(fd, TCFLSH, TCOFLUSH);
-    if (flags & PURGE_RXCLEAR) ioctl(fd, TCFLSH, TCIFLUSH);
-#else
     if (flags & PURGE_TXABORT) tcflush(fd, TCOFLUSH);
     if (flags & PURGE_RXABORT) tcflush(fd, TCIFLUSH);
     if (flags & PURGE_TXCLEAR) tcflush(fd, TCOFLUSH);
     if (flags & PURGE_RXCLEAR) tcflush(fd, TCIFLUSH);
-#endif
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS set_baud_rate(int fd, const SERIAL_BAUD_RATE* sbr)
 {
-#ifdef HAVE_ASM_TERMBITS_H
-    struct termios2 port;
-
-    if (ioctl(fd, TCGETS2, &port) == -1)
-    {
-        ERR("ioctl TCGETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-
-    port.c_cflag &= ~CBAUD;
-    port.c_cflag |= BOTHER;
-    port.c_ospeed = sbr->BaudRate;
-
-    port.c_cflag &= ~(CBAUD << IBSHIFT);
-    port.c_cflag |= BOTHER << IBSHIFT;
-    port.c_ispeed = sbr->BaudRate;
-
-    if (ioctl(fd, TCSETS2, &port) == -1)
-    {
-        ERR("ioctl TCSETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     struct termios port;
 
     if (tcgetattr(fd, &port) == -1)
@@ -643,7 +564,6 @@ static NTSTATUS set_baud_rate(int fd, const SERIAL_BAUD_RATE* sbr)
         ERR("tcsetattr error '%s'\n", strerror(errno));
         return errno_to_status( errno );
     }
-#endif
     return STATUS_SUCCESS;
 }
 
@@ -663,29 +583,17 @@ static int whack_modem(int fd, unsigned int andy, unsigned int orrie)
 
 static NTSTATUS set_handflow(int fd, const SERIAL_HANDFLOW* shf)
 {
-#ifdef HAVE_ASM_TERMBITS_H
-    struct termios2 port;
-#else
     struct termios port;
-#endif
 
     if ((shf->FlowReplace & (SERIAL_RTS_CONTROL | SERIAL_RTS_HANDSHAKE)) ==
         (SERIAL_RTS_CONTROL | SERIAL_RTS_HANDSHAKE))
         return STATUS_NOT_SUPPORTED;
 
-#ifdef HAVE_ASM_TERMBITS_H
-    if (ioctl(fd, TCGETS2, &port) == -1)
-    {
-        ERR("ioctl TCGETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     if (tcgetattr(fd, &port) == -1)
     {
         ERR("tcgetattr error '%s'\n", strerror(errno));
         return errno_to_status( errno );
     }
-#endif
 
 #ifdef CRTSCTS
     if ((shf->ControlHandShake & SERIAL_CTS_HANDSHAKE) ||
@@ -724,44 +632,25 @@ static NTSTATUS set_handflow(int fd, const SERIAL_HANDFLOW* shf)
         port.c_iflag |= IXON;
     else
         port.c_iflag &= ~IXON;
-
-#ifdef HAVE_ASM_TERMBITS_H
-    if (ioctl(fd, TCSETS2, &port) == -1)
-    {
-        ERR("ioctl TCSETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     if (tcsetattr(fd, TCSANOW, &port) == -1)
     {
         ERR("tcsetattr error '%s'\n", strerror(errno));
         return errno_to_status( errno );
     }
-#endif
 
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS set_line_control(int fd, const SERIAL_LINE_CONTROL* slc)
 {
-    unsigned bytesize, stopbits;
-#ifdef HAVE_ASM_TERMBITS_H
-    struct termios2 port;
-
-    if (ioctl(fd, TCGETS2, &port) == -1)
-    {
-        ERR("ioctl TCGETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     struct termios port;
+    unsigned bytesize, stopbits;
 
     if (tcgetattr(fd, &port) == -1)
     {
         ERR("tcgetattr error '%s'\n", strerror(errno));
         return errno_to_status( errno );
     }
-#endif
 
 #ifdef IMAXBEL
     port.c_iflag &= ~(ISTRIP|BRKINT|IGNCR|ICRNL|INLCR|PARMRK|IMAXBEL);
@@ -856,19 +745,11 @@ static NTSTATUS set_line_control(int fd, const SERIAL_LINE_CONTROL* slc)
         return STATUS_NOT_SUPPORTED;
     }
     /* otherwise it hangs with pending input*/
-#ifdef HAVE_ASM_TERMBITS_H
-    if (ioctl(fd, TCSETS2, &port) == -1)
-    {
-        ERR("ioctl TCSETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     if (tcsetattr(fd, TCSANOW, &port) == -1)
     {
         ERR("tcsetattr error '%s'\n", strerror(errno));
         return errno_to_status( errno );
     }
-#endif
     return STATUS_SUCCESS;
 }
 
@@ -880,15 +761,6 @@ static NTSTATUS set_queue_size(int fd, const SERIAL_QUEUE_SIZE* sqs)
 
 static NTSTATUS set_special_chars(int fd, const SERIAL_CHARS* sc)
 {
-#ifdef HAVE_ASM_TERMBITS_H
-    struct termios2 port;
-
-    if (ioctl(fd, TCGETS2, &port) == -1)
-    {
-        ERR("ioctl TCGETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     struct termios port;
 
     if (tcgetattr(fd, &port) == -1)
@@ -896,7 +768,6 @@ static NTSTATUS set_special_chars(int fd, const SERIAL_CHARS* sc)
         ERR("tcgetattr error '%s'\n", strerror(errno));
         return errno_to_status( errno );
     }
-#endif
 
     port.c_cc[VEOF  ] = sc->EofChar;
     /* FIXME: sc->ErrorChar is not supported */
@@ -905,19 +776,11 @@ static NTSTATUS set_special_chars(int fd, const SERIAL_CHARS* sc)
     port.c_cc[VSTART] = sc->XonChar;
     port.c_cc[VSTOP ] = sc->XoffChar;
 
-#ifdef HAVE_ASM_TERMBITS_H
-    if (ioctl(fd, TCSETS2, &port) == -1)
-    {
-        ERR("ioctl TCSETS2 error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     if (tcsetattr(fd, TCSANOW, &port) == -1)
     {
         ERR("tcsetattr error '%s'\n", strerror(errno));
         return errno_to_status( errno );
     }
-#endif
     return STATUS_SUCCESS;
 }
 
@@ -926,18 +789,10 @@ static NTSTATUS set_special_chars(int fd, const SERIAL_CHARS* sc)
  */
 static NTSTATUS set_XOff(int fd)
 {
-#ifdef HAVE_ASM_TERMBITS_H
-    if (ioctl(fd, TCXONC, TCOOFF) == -1)
-    {
-        ERR("ioctl TCXONC error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     if (tcflow(fd, TCOOFF))
     {
         return errno_to_status( errno );
     }
-#endif
     return STATUS_SUCCESS;
 }
 
@@ -946,18 +801,10 @@ static NTSTATUS set_XOff(int fd)
  */
 static NTSTATUS set_XOn(int fd)
 {
-#ifdef HAVE_ASM_TERMBITS_H
-    if (ioctl(fd, TCXONC, TCOON) == -1)
-    {
-        ERR("ioctl TCXONC error '%s'\n", strerror(errno));
-        return errno_to_status( errno );
-    }
-#else
     if (tcflow(fd, TCOON))
     {
         return errno_to_status( errno );
     }
-#endif
     return STATUS_SUCCESS;
 }
 
@@ -1517,7 +1364,7 @@ NTSTATUS serial_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE ap
 
 NTSTATUS serial_FlushBuffersFile( int fd )
 {
-#if defined(HAVE_TCDRAIN) && !defined(HAVE_ASM_TERMBITS_H)
+#ifdef HAVE_TCDRAIN
     while (tcdrain( fd ) == -1)
     {
         if (errno != EINTR) return errno_to_status( errno );

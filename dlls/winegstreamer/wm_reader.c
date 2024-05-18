@@ -54,7 +54,6 @@ struct wm_reader
     QWORD start_time;
     QWORD file_size;
 
-    WCHAR *filename;
     IStream *source_stream;
     HANDLE file;
     HANDLE read_thread;
@@ -1453,7 +1452,7 @@ static HRESULT init_stream(struct wm_reader *reader)
     HRESULT hr;
     WORD i;
 
-    if (!(wg_parser = wg_parser_create(FALSE)))
+    if (!(wg_parser = wg_parser_create(WG_PARSER_DECODEBIN, FALSE)))
         return E_OUTOFMEMORY;
 
     reader->wg_parser = wg_parser;
@@ -1465,7 +1464,7 @@ static HRESULT init_stream(struct wm_reader *reader)
         goto out_destroy_parser;
     }
 
-    if (FAILED(hr = wg_parser_connect(reader->wg_parser, reader->file_size, reader->filename)))
+    if (FAILED(hr = wg_parser_connect(reader->wg_parser, reader->file_size)))
     {
         ERR("Failed to connect parser, hr %#lx.\n", hr);
         goto out_shutdown_thread;
@@ -1558,7 +1557,7 @@ static HRESULT reinit_stream(struct wm_reader *reader, bool read_compressed)
     wg_parser_destroy(reader->wg_parser);
     reader->wg_parser = 0;
 
-    if (!(wg_parser = wg_parser_create(read_compressed)))
+    if (!(wg_parser = wg_parser_create(WG_PARSER_DECODEBIN, read_compressed)))
         return E_OUTOFMEMORY;
 
     reader->wg_parser = wg_parser;
@@ -1570,7 +1569,7 @@ static HRESULT reinit_stream(struct wm_reader *reader, bool read_compressed)
         goto out_destroy_parser;
     }
 
-    if (FAILED(hr = wg_parser_connect(reader->wg_parser, reader->file_size, reader->filename)))
+    if (FAILED(hr = wg_parser_connect(reader->wg_parser, reader->file_size)))
     {
         ERR("Failed to connect parser, hr %#lx.\n", hr);
         goto out_shutdown_thread;
@@ -1889,8 +1888,6 @@ static HRESULT WINAPI reader_Close(IWMSyncReader2 *iface)
     if (reader->file)
         CloseHandle(reader->file);
     reader->file = NULL;
-    free(reader->filename);
-    reader->filename = NULL;
 
     LeaveCriticalSection(&reader->cs);
     return S_OK;
@@ -2215,17 +2212,11 @@ static HRESULT WINAPI reader_Open(IWMSyncReader2 *iface, const WCHAR *filename)
         return E_UNEXPECTED;
     }
 
-    reader->filename = wcsdup(filename);
     reader->file = file;
     reader->file_size = size.QuadPart;
 
     if (FAILED(hr = init_stream(reader)))
-    {
-        CloseHandle(reader->file);
         reader->file = NULL;
-        free(reader->filename);
-        reader->filename = NULL;
-    }
 
     LeaveCriticalSection(&reader->cs);
     return hr;
@@ -2233,34 +2224,16 @@ static HRESULT WINAPI reader_Open(IWMSyncReader2 *iface, const WCHAR *filename)
 
 static HRESULT WINAPI reader_OpenStream(IWMSyncReader2 *iface, IStream *stream)
 {
-    static const ULONG64 canary_size = 0xdeadbeeffeedcafe;
     struct wm_reader *reader = impl_from_IWMSyncReader2(iface);
     STATSTG stat;
     HRESULT hr;
 
     TRACE("reader %p, stream %p.\n", reader, stream);
 
-    stat.cbSize.QuadPart = canary_size;
     if (FAILED(hr = IStream_Stat(stream, &stat, STATFLAG_NONAME)))
     {
         ERR("Failed to stat stream, hr %#lx.\n", hr);
         return hr;
-    }
-
-    if (stat.cbSize.QuadPart == canary_size)
-    {
-        /* Call of Juarez: Gunslinger implements IStream_Stat as an empty function returning S_OK, leaving
-         * the output stat unchanged. Windows doesn't call IStream_Seek(_SEEK_END) and probably validates
-         * the size against WMV file headers so the bigger cbSize doesn't change anything.
-         * Such streams work as soon as the uninitialized cbSize is big enough which is usually the case
-         * (if that is not the case Windows will favour shorter cbSize). */
-        static const LARGE_INTEGER zero = { 0 };
-        ULARGE_INTEGER pos = { .QuadPart = canary_size };
-
-        if (SUCCEEDED(hr = IStream_Seek(stream, zero, STREAM_SEEK_END, &pos)))
-            IStream_Seek(stream, zero, STREAM_SEEK_SET, NULL);
-        stat.cbSize.QuadPart = pos.QuadPart == canary_size ? 0 : pos.QuadPart;
-        ERR("IStream_Stat did not fill the stream size, size from _Seek %I64u.\n", stat.cbSize.QuadPart);
     }
 
     EnterCriticalSection(&reader->cs);

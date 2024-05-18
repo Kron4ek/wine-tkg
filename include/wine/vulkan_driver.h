@@ -21,7 +21,7 @@
 #define __WINE_VULKAN_DRIVER_H
 
 /* Wine internal vulkan driver version, needs to be bumped upon vulkan_funcs changes. */
-#define WINE_VULKAN_DRIVER_VERSION 34
+#define WINE_VULKAN_DRIVER_VERSION 19
 
 struct vulkan_funcs
 {
@@ -29,28 +29,21 @@ struct vulkan_funcs
      * needs to provide. Other function calls will be provided indirectly by dispatch
      * tables part of dispatchable Vulkan objects such as VkInstance or vkDevice.
      */
+    VkResult (*p_vkCreateInstance)(const VkInstanceCreateInfo *, const VkAllocationCallbacks *, VkInstance *);
+    VkResult (*p_vkCreateSwapchainKHR)(VkDevice, const VkSwapchainCreateInfoKHR *, const VkAllocationCallbacks *, VkSwapchainKHR *);
     VkResult (*p_vkCreateWin32SurfaceKHR)(VkInstance, const VkWin32SurfaceCreateInfoKHR *, const VkAllocationCallbacks *, VkSurfaceKHR *);
+    void (*p_vkDestroyInstance)(VkInstance, const VkAllocationCallbacks *);
     void (*p_vkDestroySurfaceKHR)(VkInstance, VkSurfaceKHR, const VkAllocationCallbacks *);
+    void (*p_vkDestroySwapchainKHR)(VkDevice, VkSwapchainKHR, const VkAllocationCallbacks *);
+    VkResult (*p_vkEnumerateInstanceExtensionProperties)(const char *, uint32_t *, VkExtensionProperties *);
     void * (*p_vkGetDeviceProcAddr)(VkDevice, const char *);
     void * (*p_vkGetInstanceProcAddr)(VkInstance, const char *);
     VkBool32 (*p_vkGetPhysicalDeviceWin32PresentationSupportKHR)(VkPhysicalDevice, uint32_t);
-    VkResult (*p_vkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *, VkSurfaceKHR *surfaces);
+    VkResult (*p_vkGetSwapchainImagesKHR)(VkDevice, VkSwapchainKHR, uint32_t *, VkImage *);
+    VkResult (*p_vkQueuePresentKHR)(VkQueue, const VkPresentInfoKHR *);
 
     /* winevulkan specific functions */
-    const char *(*p_get_host_surface_extension)(void);
     VkSurfaceKHR (*p_wine_get_host_surface)(VkSurfaceKHR);
-};
-
-/* interface between win32u and the user drivers */
-struct vulkan_driver_funcs
-{
-    VkResult (*p_vulkan_surface_create)(HWND, VkInstance, VkSurfaceKHR *, void **);
-    void (*p_vulkan_surface_destroy)(HWND, void *);
-    void (*p_vulkan_surface_detach)(HWND, void *);
-    void (*p_vulkan_surface_presented)(HWND, VkResult);
-
-    VkBool32 (*p_vkGetPhysicalDeviceWin32PresentationSupportKHR)(VkPhysicalDevice, uint32_t);
-    const char *(*p_get_host_surface_extension)(void);
 };
 
 #endif /* __WINE_VULKAN_DRIVER_H */

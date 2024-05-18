@@ -131,18 +131,34 @@ NTSTATUS WINAPI FltBuildDefaultSecurityDescriptor(PSECURITY_DESCRIPTOR *descript
         goto done;
     }
 
-    RtlCreateSecurityDescriptor(sec_desc, SECURITY_DESCRIPTOR_REVISION);
+    ret = RtlCreateSecurityDescriptor(sec_desc, SECURITY_DESCRIPTOR_REVISION);
+    if (ret != STATUS_SUCCESS)
+        goto done;
+
     dacl = (PACL)((char*)sec_desc + SECURITY_DESCRIPTOR_MIN_LENGTH);
-    RtlCreateAcl(dacl, sid_len - SECURITY_DESCRIPTOR_MIN_LENGTH, ACL_REVISION);
-    RtlAddAccessAllowedAce(dacl, ACL_REVISION, access, sid);
-    RtlAddAccessAllowedAce(dacl, ACL_REVISION, access, sid_system);
-    RtlSetDaclSecurityDescriptor(sec_desc, 1, dacl, 0);
-    *descriptor = sec_desc;
-    ret = STATUS_SUCCESS;
+    ret = RtlCreateAcl(dacl, sid_len - SECURITY_DESCRIPTOR_MIN_LENGTH, ACL_REVISION);
+    if (ret != STATUS_SUCCESS)
+        goto done;
+
+    ret = RtlAddAccessAllowedAce(dacl, ACL_REVISION, access, sid);
+    if (ret != STATUS_SUCCESS)
+        goto done;
+
+    ret = RtlAddAccessAllowedAce(dacl, ACL_REVISION, access, sid_system);
+    if (ret != STATUS_SUCCESS)
+        goto done;
+
+    ret = RtlSetDaclSecurityDescriptor(sec_desc, 1, dacl, 0);
+    if (ret == STATUS_SUCCESS)
+        *descriptor = sec_desc;
 
 done:
+    if (ret != STATUS_SUCCESS)
+        ExFreePool(sec_desc);
+
     ExFreePool(sid);
     ExFreePool(sid_system);
+
     return ret;
 }
 

@@ -632,58 +632,6 @@ static const IHTMLObjectElement2Vtbl HTMLObjectElement2Vtbl = {
     HTMLObjectElement2_get_data
 };
 
-/*
- * This object wraps any unrecognized interface overriding its IUnknown methods, allowing
- * us to return external interface from our QI implementation preserving COM rules.
- * This can't be done right and it seems to be broken by design.
- */
-typedef struct {
-    IUnknown IUnknown_iface;
-    IUnknown *iface;
-    IUnknown *ref_unk;
-    LONG ref;
-} iface_wrapper_t;
-
-static inline iface_wrapper_t *impl_from_IUnknown(IUnknown *iface)
-{
-    return CONTAINING_RECORD(iface, iface_wrapper_t, IUnknown_iface);
-}
-
-HRESULT WINAPI wrapper_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
-{
-    iface_wrapper_t *This = impl_from_IUnknown(iface);
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    return IUnknown_QueryInterface(This->ref_unk, riid, ppv);
-}
-
-ULONG WINAPI wrapper_AddRef(IUnknown *iface)
-{
-    iface_wrapper_t *This = impl_from_IUnknown(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
-}
-
-ULONG WINAPI wrapper_Release(IUnknown *iface)
-{
-    iface_wrapper_t *This = impl_from_IUnknown(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        IUnknown_Release(This->iface);
-        IUnknown_Release(This->ref_unk);
-        free(This);
-    }
-
-    return ref;
-}
-
 static inline HTMLObjectElement *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
 {
     return CONTAINING_RECORD(iface, HTMLObjectElement, plugin_container.element.node);
@@ -717,25 +665,19 @@ static void *HTMLObjectElement_query_interface(DispatchEx *dispex, REFIID riid)
 
     elem_iface = HTMLElement_query_interface(&This->plugin_container.element.node.event_target.dispex, riid);
     if(!elem_iface && This->plugin_container.plugin_host && This->plugin_container.plugin_host->plugin_unk) {
-        IUnknown *plugin_iface;
+        IUnknown *plugin_iface, *ret;
         HRESULT hres = IUnknown_QueryInterface(This->plugin_container.plugin_host->plugin_unk, riid, (void**)&plugin_iface);
 
         if(hres == S_OK) {
-            iface_wrapper_t *wrapper = malloc(sizeof(*wrapper));
-            if(!wrapper) {
-                IUnknown_Release(plugin_iface);
+            hres = wrap_iface(plugin_iface, (IUnknown*)&This->IHTMLObjectElement_iface, &ret);
+            IUnknown_Release(plugin_iface);
+            if(FAILED(hres)) {
+                ERR("wrap_iface failed: %08lx\n", hres);
                 return NULL;
             }
 
-            wrapper->IUnknown_iface.lpVtbl = (const IUnknownVtbl *)iface_wrapper_vtbl;
-            wrapper->ref = 1;
-            wrapper->iface = plugin_iface;
-            IUnknown_AddRef(wrapper->iface);
-            wrapper->ref_unk = (IUnknown*)&This->IHTMLObjectElement_iface;
-
-            IUnknown_Release(plugin_iface);
-            TRACE("returning plugin iface %p wrapped to %p\n", plugin_iface, wrapper);
-            return &wrapper->IUnknown_iface;
+            TRACE("returning plugin iface %p wrapped to %p\n", plugin_iface, ret);
+            return ret;
         }
     }
 

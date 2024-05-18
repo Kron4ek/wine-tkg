@@ -890,8 +890,6 @@ HRESULT WINAPI DllGetClassObject( REFCLSID clsid, REFIID iid, void **out )
     return CLASS_E_CLASSNOTAVAILABLE;
 }
 
-#if DIRECTINPUT_VERSION == 0x0700
-
 HRESULT WINAPI DirectInputCreateEx( HINSTANCE hinst, DWORD version, REFIID iid, void **out, IUnknown *outer )
 {
     IUnknown *unknown;
@@ -921,18 +919,6 @@ HRESULT WINAPI DirectInputCreateEx( HINSTANCE hinst, DWORD version, REFIID iid, 
 
     return DI_OK;
 }
-
-HRESULT WINAPI DECLSPEC_HOTPATCH DirectInputCreateA( HINSTANCE hinst, DWORD version, IDirectInputA **out, IUnknown *outer )
-{
-    return DirectInputCreateEx( hinst, version, &IID_IDirectInput7A, (void **)out, outer );
-}
-
-HRESULT WINAPI DECLSPEC_HOTPATCH DirectInputCreateW( HINSTANCE hinst, DWORD version, IDirectInputW **out, IUnknown *outer )
-{
-    return DirectInputCreateEx( hinst, version, &IID_IDirectInput7W, (void **)out, outer );
-}
-
-#else
 
 HRESULT WINAPI DECLSPEC_HOTPATCH DirectInput8Create( HINSTANCE hinst, DWORD version, REFIID iid, void **out, IUnknown *outer )
 {
@@ -966,4 +952,12 @@ HRESULT WINAPI DECLSPEC_HOTPATCH DirectInput8Create( HINSTANCE hinst, DWORD vers
     return S_OK;
 }
 
-#endif
+HRESULT WINAPI DECLSPEC_HOTPATCH DirectInputCreateA( HINSTANCE hinst, DWORD version, IDirectInputA **out, IUnknown *outer )
+{
+    return DirectInputCreateEx( hinst, version, &IID_IDirectInput7A, (void **)out, outer );
+}
+
+HRESULT WINAPI DECLSPEC_HOTPATCH DirectInputCreateW( HINSTANCE hinst, DWORD version, IDirectInputW **out, IUnknown *outer )
+{
+    return DirectInputCreateEx( hinst, version, &IID_IDirectInput7W, (void **)out, outer );
+}

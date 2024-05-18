@@ -264,7 +264,7 @@ BOOL WINAPI NtUserSetThreadDesktop( HDESK handle )
         thread_info->client_info.top_window = 0;
         thread_info->client_info.msg_window = 0;
         if (key_state_info) key_state_info->time = 0;
-        if (was_virtual_desktop != is_virtual_desktop()) update_display_cache( FALSE );
+        if (was_virtual_desktop != is_virtual_desktop()) update_display_cache( TRUE );
     }
     return ret;
 }
@@ -566,7 +566,7 @@ static HANDLE get_winstations_dir_handle(void)
     NTSTATUS status;
     HANDLE dir;
 
-    snprintf( bufferA, sizeof(bufferA), "\\Sessions\\%u\\Windows\\WindowStations", (int)NtCurrentTeb()->Peb->SessionId );
+    sprintf( bufferA, "\\Sessions\\%u\\Windows\\WindowStations", (int)NtCurrentTeb()->Peb->SessionId );
     str.Buffer = buffer;
     str.MaximumLength = asciiz_to_unicode( buffer, bufferA );
     str.Length = str.MaximumLength - sizeof(WCHAR);

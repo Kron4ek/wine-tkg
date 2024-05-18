@@ -42,7 +42,6 @@ AC_ARG_WITH(inotify,   AS_HELP_STRING([--without-inotify],[do not use inotify (f
 AC_ARG_WITH(krb5,      AS_HELP_STRING([--without-krb5],[do not use krb5 (Kerberos)]))
 AC_ARG_WITH(mingw,     AS_HELP_STRING([--without-mingw],[do not use the MinGW cross-compiler]))
 AC_ARG_WITH(netapi,    AS_HELP_STRING([--without-netapi],[do not use the Samba NetAPI library]))
-AC_ARG_WITH(odbc,      AS_HELP_STRING([--without-odbc],[do not use the ODBC library]))
 AC_ARG_WITH(opencl,    AS_HELP_STRING([--without-opencl],[do not use OpenCL]),
             [if test "x$withval" = "xno"; then ac_cv_header_CL_cl_h=no; ac_cv_header_CL_opencl_h=no; fi])
 AC_ARG_WITH(opengl,    AS_HELP_STRING([--without-opengl],[do not use OpenGL]))
@@ -368,7 +367,6 @@ AC_CHECK_HEADERS(\
 	EGL/egl.h \
 	arpa/inet.h \
 	arpa/nameser.h \
-	asm/termbits.h \
 	asm/types.h \
 	asm/user.h \
 	elf.h \
@@ -799,16 +797,7 @@ saved_CC=$CC
 saved_CFLAGS=$CFLAGS
 saved_LDFLAGS=$LDFLAGS
 
-AS_UNSET(extra_arch)
-for arch in $cross_archs
-do
-  case $arch in
-    arm64ec) test ${extra_arch+y} || extra_arch=x86_64 ;;
-    x86_64) extra_arch="" ;;
-  esac
-done
-
-for wine_arch in $cross_archs $extra_arch
+for wine_arch in $cross_archs
 do
     case "x$with_mingw" in
       xclang|x*/clang) AS_VAR_SET(${wine_arch}_CC,$with_mingw) ;;
@@ -940,8 +929,7 @@ This is an error since --enable-archs=$wine_arch was requested.])])
 This is an error since --enable-archs=$wine_arch was requested.])])
                           continue])])
 
-    AS_VAR_IF([wine_arch],[$extra_arch],[],[AS_VAR_APPEND([PE_ARCHS],[" $wine_arch"])])
-
+    AS_VAR_APPEND([PE_ARCHS],[" $wine_arch"])
     WINE_TRY_PE_CFLAGS([-fno-strict-aliasing])
     dnl clang needs to be told to fail on unknown options
     WINE_TRY_PE_CFLAGS([-Werror=unknown-warning-option],[CFLAGS="$CFLAGS -Werror=unknown-warning-option"])
@@ -1021,9 +1009,6 @@ case $HOST_ARCH in
   arm|aarch64)
     test "x$PE_ARCHS" != x || AC_MSG_ERROR([PE cross-compilation is required for $HOST_ARCH, please install clang/llvm-dlltool/lld, or llvm-mingw.])
     DLLEXT="" ;;
-  *)
-    WINE_NOTICE_WITH(mingw,[test "x$PE_ARCHS" = "x"],
-                     [Suitable PE cross-compiler not found, PE files won't be built.]) ;;
 esac
 
 dnl **** External libraries ****
@@ -1844,7 +1829,7 @@ then
     WINE_CHECK_SONAME(vulkan, vkGetInstanceProcAddr)
     if test "x$ac_cv_lib_soname_vulkan" = "x"
     then
-        WINE_CHECK_SONAME(MoltenVK, vkGetInstanceProcAddr, [AC_DEFINE_UNQUOTED(SONAME_LIBVULKAN,["$ac_cv_lib_soname_MoltenVK"])])
+        WINE_CHECK_SONAME(MoltenVK, vkGetInstanceProcAddr, [AC_DEFINE_UNQUOTED(SONAME_LIBVULKAN,[$ac_cv_lib_soname_MoltenVK])])
     fi
 fi
 WINE_NOTICE_WITH(vulkan,[test "x$ac_cv_lib_soname_vulkan" = "x" -a "x$ac_cv_lib_soname_MoltenVK" = "x"],
@@ -3731,7 +3716,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-9.9.r0.gd5c85dc4\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-9.5.r0.g722ee5ed\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

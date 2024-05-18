@@ -215,12 +215,8 @@ struct vkd3d_shader_sm1_parser
 
     struct vkd3d_shader_parser p;
 
-    struct
-    {
 #define MAX_CONSTANT_COUNT 8192
-        uint32_t def_mask[VKD3D_BITMAP_SIZE(MAX_CONSTANT_COUNT)];
-        uint32_t count;
-    } constants[3];
+    uint32_t constant_def_mask[3][MAX_CONSTANT_COUNT / 32];
 };
 
 /* This table is not order or position dependent. */
@@ -396,6 +392,11 @@ static const enum vkd3d_shader_resource_type resource_type_table[] =
     /* VKD3D_SM1_RESOURCE_TEXTURE_3D */   VKD3D_SHADER_RESOURCE_TEXTURE_3D,
 };
 
+static struct vkd3d_shader_sm1_parser *vkd3d_shader_sm1_parser(struct vkd3d_shader_parser *parser)
+{
+    return CONTAINING_RECORD(parser, struct vkd3d_shader_sm1_parser, p);
+}
+
 static uint32_t read_u32(const uint32_t **ptr)
 {
     return *(*ptr)++;
@@ -413,7 +414,7 @@ static bool has_relative_address(uint32_t param)
 static const struct vkd3d_sm1_opcode_info *shader_sm1_get_opcode_info(
         const struct vkd3d_shader_sm1_parser *sm1, enum vkd3d_sm1_opcode opcode)
 {
-    const struct vkd3d_shader_version *version = &sm1->p.program->shader_version;
+    const struct vkd3d_shader_version *version = &sm1->p.program.shader_version;
     const struct vkd3d_sm1_opcode_info *info;
     unsigned int i = 0;
 
@@ -536,14 +537,13 @@ static bool add_signature_element(struct vkd3d_shader_sm1_parser *sm1, bool outp
         const char *name, unsigned int index, enum vkd3d_shader_sysval_semantic sysval,
         unsigned int register_index, bool is_dcl, unsigned int mask)
 {
-    struct vsir_program *program = sm1->p.program;
     struct shader_signature *signature;
     struct signature_element *element;
 
     if (output)
-        signature = &program->output_signature;
+        signature = &sm1->p.program.output_signature;
     else
-        signature = &program->input_signature;
+        signature = &sm1->p.program.input_signature;
 
     if ((element = find_signature_element(signature, name, index)))
     {
@@ -568,7 +568,7 @@ static bool add_signature_element(struct vkd3d_shader_sm1_parser *sm1, bool outp
     element->register_count = 1;
     element->mask = mask;
     element->used_mask = is_dcl ? 0 : mask;
-    if (program->shader_version.type == VKD3D_SHADER_TYPE_PIXEL && !output)
+    if (sm1->p.program.shader_version.type == VKD3D_SHADER_TYPE_PIXEL && !output)
         element->interpolation_mode = VKD3DSIM_LINEAR;
 
     return true;
@@ -577,14 +577,13 @@ static bool add_signature_element(struct vkd3d_shader_sm1_parser *sm1, bool outp
 static void add_signature_mask(struct vkd3d_shader_sm1_parser *sm1, bool output,
         unsigned int register_index, unsigned int mask)
 {
-    struct vsir_program *program = sm1->p.program;
     struct shader_signature *signature;
     struct signature_element *element;
 
     if (output)
-        signature = &program->output_signature;
+        signature = &sm1->p.program.output_signature;
     else
-        signature = &program->input_signature;
+        signature = &sm1->p.program.input_signature;
 
     if (!(element = find_signature_element_by_register_index(signature, register_index)))
     {
@@ -599,7 +598,7 @@ static void add_signature_mask(struct vkd3d_shader_sm1_parser *sm1, bool output,
 static bool add_signature_element_from_register(struct vkd3d_shader_sm1_parser *sm1,
         const struct vkd3d_shader_register *reg, bool is_dcl, unsigned int mask)
 {
-    const struct vkd3d_shader_version *version = &sm1->p.program->shader_version;
+    const struct vkd3d_shader_version *version = &sm1->p.program.shader_version;
     unsigned int register_index = reg->idx[0].offset;
 
     switch (reg->type)
@@ -702,7 +701,7 @@ static bool add_signature_element_from_register(struct vkd3d_shader_sm1_parser *
 static bool add_signature_element_from_semantic(struct vkd3d_shader_sm1_parser *sm1,
         const struct vkd3d_shader_semantic *semantic)
 {
-    const struct vkd3d_shader_version *version = &sm1->p.program->shader_version;
+    const struct vkd3d_shader_version *version = &sm1->p.program.shader_version;
     const struct vkd3d_shader_register *reg = &semantic->resource.reg.reg;
     enum vkd3d_shader_sysval_semantic sysval = VKD3D_SHADER_SV_NONE;
     unsigned int mask = semantic->resource.reg.write_mask;
@@ -751,20 +750,22 @@ static bool add_signature_element_from_semantic(struct vkd3d_shader_sm1_parser *
 static void record_constant_register(struct vkd3d_shader_sm1_parser *sm1,
         enum vkd3d_shader_d3dbc_constant_register set, uint32_t index, bool from_def)
 {
-    sm1->constants[set].count = max(sm1->constants[set].count, index + 1);
+    struct vkd3d_shader_desc *desc = &sm1->p.shader_desc;
+
+    desc->flat_constant_count[set].used = max(desc->flat_constant_count[set].used, index + 1);
     if (from_def)
     {
         /* d3d shaders have a maximum of 8192 constants; we should not overrun
          * this array. */
-        assert((index / 32) <= ARRAY_SIZE(sm1->constants[set].def_mask));
-        bitmap_set(sm1->constants[set].def_mask, index);
+        assert((index / 32) <= ARRAY_SIZE(sm1->constant_def_mask[set]));
+        bitmap_set(sm1->constant_def_mask[set], index);
     }
 }
 
 static void shader_sm1_scan_register(struct vkd3d_shader_sm1_parser *sm1,
         const struct vkd3d_shader_register *reg, unsigned int mask, bool from_def)
 {
-    struct vsir_program *program = sm1->p.program;
+    struct vsir_program *program = &sm1->p.program;
     uint32_t register_index = reg->idx[0].offset;
 
     switch (reg->type)
@@ -825,7 +826,7 @@ static void shader_sm1_read_param(struct vkd3d_shader_sm1_parser *sm1,
      * VS >= 2.0 have relative addressing (with token)
      * VS >= 1.0 < 2.0 have relative addressing (without token)
      * The version check below should work in general. */
-    if (sm1->p.program->shader_version.major < 2)
+    if (sm1->p.program.shader_version.major < 2)
     {
         *addr_token = (1u << 31)
                 | ((VKD3DSPR_ADDR << VKD3D_SM1_REGISTER_TYPE_SHIFT2) & VKD3D_SM1_REGISTER_TYPE_MASK2)
@@ -854,7 +855,7 @@ static void shader_sm1_skip_opcode(const struct vkd3d_shader_sm1_parser *sm1, co
     /* Version 2.0+ shaders may contain address tokens, but fortunately they
      * have a useful length mask - use it here. Version 1.x shaders contain no
      * such tokens. */
-    if (sm1->p.program->shader_version.major >= 2)
+    if (sm1->p.program.shader_version.major >= 2)
     {
         length = (opcode_token & VKD3D_SM1_INSTRUCTION_LENGTH_MASK) >> VKD3D_SM1_INSTRUCTION_LENGTH_SHIFT;
         *ptr += length;
@@ -880,6 +881,14 @@ static void shader_sm1_skip_opcode(const struct vkd3d_shader_sm1_parser *sm1, co
     *ptr += (opcode_info->dst_count + opcode_info->src_count);
 }
 
+static void shader_sm1_destroy(struct vkd3d_shader_parser *parser)
+{
+    struct vkd3d_shader_sm1_parser *sm1 = vkd3d_shader_sm1_parser(parser);
+
+    vsir_program_cleanup(&parser->program);
+    vkd3d_free(sm1);
+}
+
 static void shader_sm1_read_src_param(struct vkd3d_shader_sm1_parser *sm1, const uint32_t **ptr,
         struct vkd3d_shader_src_param *src_param)
 {
@@ -889,7 +898,7 @@ static void shader_sm1_read_src_param(struct vkd3d_shader_sm1_parser *sm1, const
     shader_sm1_read_param(sm1, ptr, &token, &addr_token);
     if (has_relative_address(token))
     {
-        if (!(src_rel_addr = vsir_program_get_src_params(sm1->p.program, 1)))
+        if (!(src_rel_addr = vsir_program_get_src_params(&sm1->p.program, 1)))
         {
             vkd3d_shader_parser_error(&sm1->p, VKD3D_SHADER_ERROR_D3DBC_OUT_OF_MEMORY,
                     "Out of memory.");
@@ -910,7 +919,7 @@ static void shader_sm1_read_dst_param(struct vkd3d_shader_sm1_parser *sm1, const
     shader_sm1_read_param(sm1, ptr, &token, &addr_token);
     if (has_relative_address(token))
     {
-        if (!(dst_rel_addr = vsir_program_get_src_params(sm1->p.program, 1)))
+        if (!(dst_rel_addr = vsir_program_get_src_params(&sm1->p.program, 1)))
         {
             vkd3d_shader_parser_error(&sm1->p, VKD3D_SHADER_ERROR_D3DBC_OUT_OF_MEMORY,
                     "Out of memory.");
@@ -1079,7 +1088,7 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
 {
     struct vkd3d_shader_src_param *src_params, *predicate;
     const struct vkd3d_sm1_opcode_info *opcode_info;
-    struct vsir_program *program = sm1->p.program;
+    struct vsir_program *program = &sm1->p.program;
     struct vkd3d_shader_dst_param *dst_param;
     const uint32_t **ptr = &sm1->ptr;
     uint32_t opcode_token;
@@ -1216,7 +1225,12 @@ static bool shader_sm1_is_end(struct vkd3d_shader_sm1_parser *sm1)
     return false;
 }
 
-static enum vkd3d_result shader_sm1_init(struct vkd3d_shader_sm1_parser *sm1, struct vsir_program *program,
+const struct vkd3d_shader_parser_ops shader_sm1_parser_ops =
+{
+    .parser_destroy = shader_sm1_destroy,
+};
+
+static enum vkd3d_result shader_sm1_init(struct vkd3d_shader_sm1_parser *sm1,
         const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_message_context *message_context)
 {
     const struct vkd3d_shader_location location = {.source_name = compile_info->source_name};
@@ -1271,10 +1285,9 @@ static enum vkd3d_result shader_sm1_init(struct vkd3d_shader_sm1_parser *sm1, st
     sm1->end = &code[token_count];
 
     /* Estimate instruction count to avoid reallocation in most shaders. */
-    if (!vsir_program_init(program, &version, code_size != ~(size_t)0 ? token_count / 4u + 4 : 16))
+    if (!vkd3d_shader_parser_init(&sm1->p, message_context, compile_info->source_name, &version, &shader_sm1_parser_ops,
+            code_size != ~(size_t)0 ? token_count / 4u + 4 : 16))
         return VKD3D_ERROR_OUT_OF_MEMORY;
-
-    vkd3d_shader_parser_init(&sm1->p, program, message_context, compile_info->source_name);
     sm1->ptr = sm1->start;
 
     return VKD3D_OK;
@@ -1288,67 +1301,76 @@ static uint32_t get_external_constant_count(struct vkd3d_shader_sm1_parser *sm1,
     /* Find the highest constant index which is not written by a DEF
      * instruction. We can't (easily) use an FFZ function for this since it
      * needs to be limited by the highest used register index. */
-    for (j = sm1->constants[set].count; j > 0; --j)
+    for (j = sm1->p.shader_desc.flat_constant_count[set].used; j > 0; --j)
     {
-        if (!bitmap_is_set(sm1->constants[set].def_mask, j - 1))
+        if (!bitmap_is_set(sm1->constant_def_mask[set], j - 1))
             return j;
     }
 
     return 0;
 }
 
-int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t config_flags,
-        struct vkd3d_shader_message_context *message_context, struct vsir_program *program)
+int vkd3d_shader_sm1_parser_create(const struct vkd3d_shader_compile_info *compile_info,
+        struct vkd3d_shader_message_context *message_context, struct vkd3d_shader_parser **parser)
 {
     struct vkd3d_shader_instruction_array *instructions;
-    struct vkd3d_shader_sm1_parser sm1 = {0};
     struct vkd3d_shader_instruction *ins;
+    struct vkd3d_shader_sm1_parser *sm1;
     unsigned int i;
     int ret;
 
-    if ((ret = shader_sm1_init(&sm1, program, compile_info, message_context)) < 0)
+    if (!(sm1 = vkd3d_calloc(1, sizeof(*sm1))))
+    {
+        ERR("Failed to allocate parser.\n");
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    }
+
+    if ((ret = shader_sm1_init(sm1, compile_info, message_context)) < 0)
     {
         WARN("Failed to initialise shader parser, ret %d.\n", ret);
+        vkd3d_free(sm1);
         return ret;
     }
 
-    instructions = &program->instructions;
-    while (!shader_sm1_is_end(&sm1))
+    instructions = &sm1->p.program.instructions;
+    while (!shader_sm1_is_end(sm1))
     {
         if (!shader_instruction_array_reserve(instructions, instructions->count + 1))
         {
             ERR("Failed to allocate instructions.\n");
-            vkd3d_shader_parser_error(&sm1.p, VKD3D_SHADER_ERROR_D3DBC_OUT_OF_MEMORY, "Out of memory.");
-            vsir_program_cleanup(program);
+            vkd3d_shader_parser_error(&sm1->p, VKD3D_SHADER_ERROR_D3DBC_OUT_OF_MEMORY, "Out of memory.");
+            shader_sm1_destroy(&sm1->p);
             return VKD3D_ERROR_OUT_OF_MEMORY;
         }
         ins = &instructions->elements[instructions->count];
-        shader_sm1_read_instruction(&sm1, ins);
+        shader_sm1_read_instruction(sm1, ins);
 
         if (ins->handler_idx == VKD3DSIH_INVALID)
         {
             WARN("Encountered unrecognized or invalid instruction.\n");
-            vsir_program_cleanup(program);
+            shader_sm1_destroy(&sm1->p);
             return VKD3D_ERROR_INVALID_SHADER;
         }
         ++instructions->count;
     }
 
-    for (i = 0; i < ARRAY_SIZE(program->flat_constant_count); ++i)
-        program->flat_constant_count[i] = get_external_constant_count(&sm1, i);
+    for (i = 0; i < ARRAY_SIZE(sm1->p.shader_desc.flat_constant_count); ++i)
+        sm1->p.shader_desc.flat_constant_count[i].external = get_external_constant_count(sm1, i);
 
-    if (!sm1.p.failed)
-        ret = vkd3d_shader_parser_validate(&sm1.p, config_flags);
+    if (!sm1->p.failed)
+        ret = vkd3d_shader_parser_validate(&sm1->p);
 
-    if (sm1.p.failed && ret >= 0)
+    if (sm1->p.failed && ret >= 0)
         ret = VKD3D_ERROR_INVALID_SHADER;
 
     if (ret < 0)
     {
         WARN("Failed to parse shader.\n");
-        vsir_program_cleanup(program);
+        shader_sm1_destroy(&sm1->p);
         return ret;
     }
+
+    *parser = &sm1->p;
 
     return ret;
 }
@@ -1484,62 +1506,35 @@ D3DXPARAMETER_CLASS hlsl_sm1_class(const struct hlsl_type *type)
                 return D3DXPC_MATRIX_COLUMNS;
             else
                 return D3DXPC_MATRIX_ROWS;
+        case HLSL_CLASS_OBJECT:
+            return D3DXPC_OBJECT;
         case HLSL_CLASS_SCALAR:
             return D3DXPC_SCALAR;
         case HLSL_CLASS_STRUCT:
             return D3DXPC_STRUCT;
         case HLSL_CLASS_VECTOR:
             return D3DXPC_VECTOR;
-        case HLSL_CLASS_PIXEL_SHADER:
-        case HLSL_CLASS_SAMPLER:
-        case HLSL_CLASS_STRING:
-        case HLSL_CLASS_TEXTURE:
-        case HLSL_CLASS_VERTEX_SHADER:
-            return D3DXPC_OBJECT;
-        case HLSL_CLASS_DEPTH_STENCIL_VIEW:
-        case HLSL_CLASS_EFFECT_GROUP:
-        case HLSL_CLASS_PASS:
-        case HLSL_CLASS_RENDER_TARGET_VIEW:
-        case HLSL_CLASS_TECHNIQUE:
-        case HLSL_CLASS_UAV:
-        case HLSL_CLASS_VOID:
-            break;
+        default:
+            ERR("Invalid class %#x.\n", type->class);
+            vkd3d_unreachable();
     }
-
-    vkd3d_unreachable();
 }
 
 D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
 {
-    switch (type->class)
+    switch (type->base_type)
     {
-        case HLSL_CLASS_SCALAR:
-        case HLSL_CLASS_VECTOR:
-        case HLSL_CLASS_MATRIX:
-            switch (type->e.numeric.type)
-            {
-                case HLSL_TYPE_BOOL:
-                    return D3DXPT_BOOL;
-                /* Actually double behaves differently depending on DLL version:
-                 * For <= 36, it maps to D3DXPT_FLOAT.
-                 * For 37-40, it maps to zero (D3DXPT_VOID).
-                 * For >= 41, it maps to 39, which is D3D_SVT_DOUBLE (note D3D_SVT_*
-                 *            values are mostly compatible with D3DXPT_*).
-                 * However, the latter two cases look like bugs, and a reasonable
-                 * application certainly wouldn't know what to do with them.
-                 * For fx_2_0 it's always D3DXPT_FLOAT regardless of DLL version. */
-                case HLSL_TYPE_DOUBLE:
-                case HLSL_TYPE_FLOAT:
-                case HLSL_TYPE_HALF:
-                    return D3DXPT_FLOAT;
-                case HLSL_TYPE_INT:
-                case HLSL_TYPE_UINT:
-                    return D3DXPT_INT;
-                default:
-                    vkd3d_unreachable();
-            }
-
-        case HLSL_CLASS_SAMPLER:
+        case HLSL_TYPE_BOOL:
+            return D3DXPT_BOOL;
+        case HLSL_TYPE_FLOAT:
+        case HLSL_TYPE_HALF:
+            return D3DXPT_FLOAT;
+        case HLSL_TYPE_INT:
+        case HLSL_TYPE_UINT:
+            return D3DXPT_INT;
+        case HLSL_TYPE_PIXELSHADER:
+            return D3DXPT_PIXELSHADER;
+        case HLSL_TYPE_SAMPLER:
             switch (type->sampler_dim)
             {
                 case HLSL_SAMPLER_DIM_1D:
@@ -1557,8 +1552,9 @@ D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
                     vkd3d_unreachable();
             }
             break;
-
-        case HLSL_CLASS_TEXTURE:
+        case HLSL_TYPE_STRING:
+            return D3DXPT_STRING;
+        case HLSL_TYPE_TEXTURE:
             switch (type->sampler_dim)
             {
                 case HLSL_SAMPLER_DIM_1D:
@@ -1576,33 +1572,13 @@ D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
                     vkd3d_unreachable();
             }
             break;
-
-        case HLSL_CLASS_ARRAY:
-            return hlsl_sm1_base_type(type->e.array.type);
-
-        case HLSL_CLASS_STRUCT:
-            return D3DXPT_VOID;
-
-        case HLSL_CLASS_STRING:
-            return D3DXPT_STRING;
-
-        case HLSL_CLASS_PIXEL_SHADER:
-            return D3DXPT_PIXELSHADER;
-
-        case HLSL_CLASS_VERTEX_SHADER:
+        case HLSL_TYPE_VERTEXSHADER:
             return D3DXPT_VERTEXSHADER;
-
-        case HLSL_CLASS_DEPTH_STENCIL_VIEW:
-        case HLSL_CLASS_EFFECT_GROUP:
-        case HLSL_CLASS_PASS:
-        case HLSL_CLASS_RENDER_TARGET_VIEW:
-        case HLSL_CLASS_TECHNIQUE:
-        case HLSL_CLASS_UAV:
-        case HLSL_CLASS_VOID:
-            break;
+        case HLSL_TYPE_VOID:
+            return D3DXPT_VOID;
+        default:
+            vkd3d_unreachable();
     }
-
-    vkd3d_unreachable();
 }
 
 static void write_sm1_type(struct vkd3d_bytecode_buffer *buffer, struct hlsl_type *type, unsigned int ctab_start)
@@ -1689,7 +1665,7 @@ static void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffe
 
         for (r = 0; r <= HLSL_REGSET_LAST; ++r)
         {
-            if (var->semantic.name || !var->regs[r].allocated || !var->last_read)
+            if (var->semantic.name || !var->regs[r].allocated)
                 continue;
 
             ++uniform_count;
@@ -1727,14 +1703,14 @@ static void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffe
 
         for (r = 0; r <= HLSL_REGSET_LAST; ++r)
         {
-            if (var->semantic.name || !var->regs[r].allocated || !var->last_read)
+            if (var->semantic.name || !var->regs[r].allocated)
                 continue;
 
             put_u32(buffer, 0); /* name */
             if (r == HLSL_REGSET_NUMERIC)
             {
                 put_u32(buffer, vkd3d_make_u32(D3DXRS_FLOAT4, var->regs[r].id));
-                put_u32(buffer, var->bind_count[r]);
+                put_u32(buffer, var->data_type->reg_size[r] / 4);
             }
             else
             {
@@ -1756,7 +1732,7 @@ static void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffe
         {
             size_t var_offset, name_offset;
 
-            if (var->semantic.name || !var->regs[r].allocated || !var->last_read)
+            if (var->semantic.name || !var->regs[r].allocated)
                 continue;
 
             var_offset = vars_start + (uniform_count * 5 * sizeof(uint32_t));
@@ -1988,11 +1964,11 @@ static void write_sm1_cast(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
     /* Narrowing casts were already lowered. */
     assert(src_type->dimx == dst_type->dimx);
 
-    switch (dst_type->e.numeric.type)
+    switch (dst_type->base_type)
     {
         case HLSL_TYPE_HALF:
         case HLSL_TYPE_FLOAT:
-            switch (src_type->e.numeric.type)
+            switch (src_type->base_type)
             {
                 case HLSL_TYPE_INT:
                 case HLSL_TYPE_UINT:
@@ -2014,7 +1990,7 @@ static void write_sm1_cast(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
 
         case HLSL_TYPE_INT:
         case HLSL_TYPE_UINT:
-            switch(src_type->e.numeric.type)
+            switch(src_type->base_type)
             {
                 case HLSL_TYPE_HALF:
                 case HLSL_TYPE_FLOAT:
@@ -2276,7 +2252,7 @@ static void write_sm1_expr(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
         return;
     }
 
-    if (instr->data_type->e.numeric.type != HLSL_TYPE_FLOAT)
+    if (instr->data_type->base_type != HLSL_TYPE_FLOAT)
     {
         /* These need to be lowered. */
         hlsl_fixme(ctx, &instr->loc, "SM1 non-float expression.");
@@ -2355,14 +2331,6 @@ static void write_sm1_expr(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
                 default:
                     vkd3d_unreachable();
             }
-            break;
-
-        case HLSL_OP2_LOGIC_AND:
-            write_sm1_binary_op(ctx, buffer, D3DSIO_MIN, &instr->reg, &arg1->reg, &arg2->reg);
-            break;
-
-        case HLSL_OP2_LOGIC_OR:
-            write_sm1_binary_op(ctx, buffer, D3DSIO_MAX, &instr->reg, &arg1->reg, &arg2->reg);
             break;
 
         case HLSL_OP2_SLT:
@@ -2596,11 +2564,19 @@ static void write_sm1_instructions(struct hlsl_ctx *ctx, struct vkd3d_bytecode_b
     {
         if (instr->data_type)
         {
-            if (instr->data_type->class != HLSL_CLASS_SCALAR && instr->data_type->class != HLSL_CLASS_VECTOR)
+            if (instr->data_type->class == HLSL_CLASS_MATRIX)
             {
-                hlsl_fixme(ctx, &instr->loc, "Class %#x should have been lowered or removed.", instr->data_type->class);
+                /* These need to be lowered. */
+                hlsl_fixme(ctx, &instr->loc, "SM1 matrix expression.");
+                continue;
+            }
+            else if (instr->data_type->class == HLSL_CLASS_OBJECT)
+            {
+                hlsl_fixme(ctx, &instr->loc, "Object copy.");
                 break;
             }
+
+            assert(instr->data_type->class == HLSL_CLASS_SCALAR || instr->data_type->class == HLSL_CLASS_VECTOR);
         }
 
         switch (instr->type)

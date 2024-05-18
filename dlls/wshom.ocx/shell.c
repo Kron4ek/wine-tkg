@@ -1374,8 +1374,7 @@ static HRESULT WINAPI WshShell3_Run(IWshShell3 *iface, BSTR cmd, VARIANT *style,
 
     memset(&info, 0, sizeof(info));
     info.cbSize = sizeof(info);
-    info.fMask = SEE_MASK_FLAG_NO_UI;
-    info.fMask |= waitforprocess ? SEE_MASK_NOASYNC | SEE_MASK_NOCLOSEPROCESS : SEE_MASK_DEFAULT;
+    info.fMask = waitforprocess ? SEE_MASK_NOASYNC | SEE_MASK_NOCLOSEPROCESS : SEE_MASK_DEFAULT;
     info.lpFile = file;
     info.lpParameters = params;
     info.nShow = show;
@@ -1385,7 +1384,7 @@ static HRESULT WINAPI WshShell3_Run(IWshShell3 *iface, BSTR cmd, VARIANT *style,
     if (!ret)
     {
         TRACE("ShellExecute failed, %ld\n", GetLastError());
-        *exit_code = GetLastError();
+        return HRESULT_FROM_WIN32(GetLastError());
     }
     else
     {
@@ -1400,8 +1399,8 @@ static HRESULT WINAPI WshShell3_Run(IWshShell3 *iface, BSTR cmd, VARIANT *style,
         else
             *exit_code = 0;
 
+        return S_OK;
     }
-    return S_OK;
 }
 
 struct popup_thread_param

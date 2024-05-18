@@ -22,19 +22,12 @@
  */
 
 #include <stdlib.h>
-#include <stdarg.h>
 
-#include "ntstatus.h"
-#define WIN32_NO_STATUS
-#include "windef.h"
-#include "winbase.h"
-#include "winreg.h"
-#include "winternl.h"
+#include "ntdll_test.h"
 #include "in6addr.h"
 #include "inaddr.h"
 #include "ip2string.h"
 #include "ddk/ntifs.h"
-#include "wine/test.h"
 #include "wine/asm.h"
 #include "initguid.h"
 #define COBJMACROS

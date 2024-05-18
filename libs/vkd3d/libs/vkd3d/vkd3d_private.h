@@ -24,6 +24,10 @@
 #define VK_NO_PROTOTYPES
 #define CONST_VTABLE
 
+#ifdef _WIN32
+# define _WIN32_WINNT 0x0600  /* for condition variables */
+#endif
+
 #include "vkd3d_common.h"
 #include "vkd3d_blob.h"
 #include "vkd3d_memory.h"
@@ -124,7 +128,6 @@ struct vkd3d_vulkan_info
     bool KHR_sampler_mirror_clamp_to_edge;
     bool KHR_timeline_semaphore;
     /* EXT device extensions */
-    bool EXT_4444_formats;
     bool EXT_calibrated_timestamps;
     bool EXT_conditional_rendering;
     bool EXT_debug_marker;
@@ -182,7 +185,6 @@ struct vkd3d_instance
     struct vkd3d_vulkan_info vk_info;
     struct vkd3d_vk_global_procs vk_global_procs;
     void *libvulkan;
-    uint32_t vk_api_version;
 
     uint64_t config_flags;
     enum vkd3d_api_version api_version;
@@ -200,6 +202,36 @@ union vkd3d_thread_handle
 {
     void *handle;
 };
+
+struct vkd3d_cond
+{
+    CONDITION_VARIABLE cond;
+};
+
+static inline void vkd3d_cond_init(struct vkd3d_cond *cond)
+{
+    InitializeConditionVariable(&cond->cond);
+}
+
+static inline void vkd3d_cond_signal(struct vkd3d_cond *cond)
+{
+    WakeConditionVariable(&cond->cond);
+}
+
+static inline void vkd3d_cond_broadcast(struct vkd3d_cond *cond)
+{
+    WakeAllConditionVariable(&cond->cond);
+}
+
+static inline void vkd3d_cond_wait(struct vkd3d_cond *cond, struct vkd3d_mutex *lock)
+{
+    if (!SleepConditionVariableCS(&cond->cond, &lock->lock, INFINITE))
+        ERR("Could not sleep on the condition variable, error %lu.\n", GetLastError());
+}
+
+static inline void vkd3d_cond_destroy(struct vkd3d_cond *cond)
+{
+}
 
 static inline bool vkd3d_atomic_compare_exchange(unsigned int volatile *x, unsigned int cmp, unsigned int xchg)
 {
@@ -230,6 +262,56 @@ union vkd3d_thread_handle
     pthread_t pthread;
     void *handle;
 };
+
+struct vkd3d_cond
+{
+    pthread_cond_t cond;
+};
+
+static inline void vkd3d_cond_init(struct vkd3d_cond *cond)
+{
+    int ret;
+
+    ret = pthread_cond_init(&cond->cond, NULL);
+    if (ret)
+        ERR("Could not initialize the condition variable, error %d.\n", ret);
+}
+
+static inline void vkd3d_cond_signal(struct vkd3d_cond *cond)
+{
+    int ret;
+
+    ret = pthread_cond_signal(&cond->cond);
+    if (ret)
+        ERR("Could not signal the condition variable, error %d.\n", ret);
+}
+
+static inline void vkd3d_cond_broadcast(struct vkd3d_cond *cond)
+{
+    int ret;
+
+    ret = pthread_cond_broadcast(&cond->cond);
+    if (ret)
+        ERR("Could not broadcast the condition variable, error %d.\n", ret);
+}
+
+static inline void vkd3d_cond_wait(struct vkd3d_cond *cond, struct vkd3d_mutex *lock)
+{
+    int ret;
+
+    ret = pthread_cond_wait(&cond->cond, &lock->lock);
+    if (ret)
+        ERR("Could not wait on the condition variable, error %d.\n", ret);
+}
+
+static inline void vkd3d_cond_destroy(struct vkd3d_cond *cond)
+{
+    int ret;
+
+    ret = pthread_cond_destroy(&cond->cond);
+    if (ret)
+        ERR("Could not destroy the condition variable, error %d.\n", ret);
+}
 
 # if HAVE_SYNC_BOOL_COMPARE_AND_SWAP
 static inline bool vkd3d_atomic_compare_exchange(unsigned int volatile *x, unsigned int cmp, unsigned int xchg)
@@ -1131,7 +1213,6 @@ struct d3d12_pipeline_state
 
     struct d3d12_pipeline_uav_counter_state uav_counters;
 
-    ID3D12RootSignature *implicit_root_signature;
     struct d3d12_device *device;
 
     struct vkd3d_private_store private_store;
@@ -1588,7 +1669,7 @@ struct vkd3d_desc_object_cache
 /* ID3D12Device */
 struct d3d12_device
 {
-    ID3D12Device9 ID3D12Device9_iface;
+    ID3D12Device8 ID3D12Device8_iface;
     unsigned int refcount;
 
     VkDevice vk_device;
@@ -1596,7 +1677,6 @@ struct d3d12_device
     struct vkd3d_vk_device_procs vk_procs;
     PFN_vkd3d_signal_event signal_event;
     size_t wchar_size;
-    enum vkd3d_shader_spirv_environment environment;
 
     struct vkd3d_gpu_va_allocator gpu_va_allocator;
 
@@ -1664,29 +1744,29 @@ struct vkd3d_queue *d3d12_device_get_vkd3d_queue(struct d3d12_device *device, D3
 bool d3d12_device_is_uma(struct d3d12_device *device, bool *coherent);
 void d3d12_device_mark_as_removed(struct d3d12_device *device, HRESULT reason,
         const char *message, ...) VKD3D_PRINTF_FUNC(3, 4);
-struct d3d12_device *unsafe_impl_from_ID3D12Device9(ID3D12Device9 *iface);
+struct d3d12_device *unsafe_impl_from_ID3D12Device8(ID3D12Device8 *iface);
 HRESULT d3d12_device_add_descriptor_heap(struct d3d12_device *device, struct d3d12_descriptor_heap *heap);
 void d3d12_device_remove_descriptor_heap(struct d3d12_device *device, struct d3d12_descriptor_heap *heap);
 
 static inline HRESULT d3d12_device_query_interface(struct d3d12_device *device, REFIID iid, void **object)
 {
-    return ID3D12Device9_QueryInterface(&device->ID3D12Device9_iface, iid, object);
+    return ID3D12Device8_QueryInterface(&device->ID3D12Device8_iface, iid, object);
 }
 
 static inline ULONG d3d12_device_add_ref(struct d3d12_device *device)
 {
-    return ID3D12Device9_AddRef(&device->ID3D12Device9_iface);
+    return ID3D12Device8_AddRef(&device->ID3D12Device8_iface);
 }
 
 static inline ULONG d3d12_device_release(struct d3d12_device *device)
 {
-    return ID3D12Device9_Release(&device->ID3D12Device9_iface);
+    return ID3D12Device8_Release(&device->ID3D12Device8_iface);
 }
 
 static inline unsigned int d3d12_device_get_descriptor_handle_increment_size(struct d3d12_device *device,
         D3D12_DESCRIPTOR_HEAP_TYPE descriptor_type)
 {
-    return ID3D12Device9_GetDescriptorHandleIncrementSize(&device->ID3D12Device9_iface, descriptor_type);
+    return ID3D12Device8_GetDescriptorHandleIncrementSize(&device->ID3D12Device8_iface, descriptor_type);
 }
 
 /* utils */
@@ -1846,11 +1926,5 @@ static inline void vkd3d_prepend_struct(void *header, void *structure)
     vkd3d_structure->next = vkd3d_header->next;
     vkd3d_header->next = vkd3d_structure;
 }
-
-struct vkd3d_shader_cache;
-
-int vkd3d_shader_open_cache(struct vkd3d_shader_cache **cache);
-unsigned int vkd3d_shader_cache_incref(struct vkd3d_shader_cache *cache);
-unsigned int vkd3d_shader_cache_decref(struct vkd3d_shader_cache *cache);
 
 #endif  /* __VKD3D_PRIVATE_H */

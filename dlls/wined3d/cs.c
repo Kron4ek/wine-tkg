@@ -1044,13 +1044,6 @@ static void wined3d_cs_exec_draw(struct wined3d_cs *cs, const void *data)
         if (state->primitive_type == WINED3D_PT_POINTLIST || op->primitive_type == WINED3D_PT_POINTLIST)
             device_invalidate_state(cs->c.device, STATE_POINT_ENABLE);
         state->primitive_type = op->primitive_type;
-        for (i = 0; i < device->context_count; ++i)
-            device->contexts[i]->update_primitive_type = 1;
-    }
-    if (state->patch_vertex_count != op->patch_vertex_count)
-    {
-        for (i = 0; i < device->context_count; ++i)
-            device->contexts[i]->update_patch_vertex_count = 1;
     }
     state->patch_vertex_count = op->patch_vertex_count;
 
@@ -1758,20 +1751,17 @@ void wined3d_device_context_emit_set_shader(struct wined3d_device_context *conte
 static void wined3d_cs_exec_set_blend_state(struct wined3d_cs *cs, const void *data)
 {
     const struct wined3d_cs_set_blend_state *op = data;
-    struct wined3d_device *device = cs->c.device;
     struct wined3d_state *state = &cs->state;
 
     if (state->blend_state != op->state)
     {
         state->blend_state = op->state;
-        device_invalidate_state(device, STATE_BLEND);
+        device_invalidate_state(cs->c.device, STATE_BLEND);
     }
     state->blend_factor = op->factor;
-    device_invalidate_state(device, STATE_BLEND_FACTOR);
+    device_invalidate_state(cs->c.device, STATE_BLEND_FACTOR);
     state->sample_mask = op->sample_mask;
-    device_invalidate_state(device, STATE_SAMPLE_MASK);
-    for (unsigned int i = 0; i < device->context_count; ++i)
-        device->contexts[i]->update_multisample_state = 1;
+    device_invalidate_state(cs->c.device, STATE_SAMPLE_MASK);
 }
 
 void wined3d_device_context_emit_set_blend_state(struct wined3d_device_context *context,

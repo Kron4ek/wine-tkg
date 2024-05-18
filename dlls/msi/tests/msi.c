@@ -41,6 +41,77 @@ static BOOL is_wow64;
 static const char msifile[] = "winetest.msi";
 static const WCHAR msifileW[] = L"winetest.msi";
 
+static LONG (WINAPI *pRegDeleteKeyExA)(HKEY, LPCSTR, REGSAM, DWORD);
+static BOOL (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
+
+static INSTALLSTATE (WINAPI *pMsiGetComponentPathA)
+    (LPCSTR, LPCSTR, LPSTR, DWORD*);
+static INSTALLSTATE (WINAPI *pMsiGetComponentPathExA)
+    (LPCSTR, LPCSTR, LPCSTR, MSIINSTALLCONTEXT, LPSTR, LPDWORD);
+static INSTALLSTATE (WINAPI *pMsiProvideComponentA)
+    (LPCSTR, LPCSTR, LPCSTR, DWORD, LPSTR, LPDWORD);
+static INSTALLSTATE (WINAPI *pMsiProvideComponentW)
+    (LPCWSTR, LPCWSTR, LPCWSTR, DWORD, LPWSTR, LPDWORD);
+static UINT (WINAPI *pMsiGetFileHashA)
+    (LPCSTR, DWORD, PMSIFILEHASHINFO);
+static UINT (WINAPI *pMsiGetProductInfoExA)
+    (LPCSTR, LPCSTR, MSIINSTALLCONTEXT, LPCSTR, LPSTR, LPDWORD);
+static UINT (WINAPI *pMsiOpenPackageExA)
+    (LPCSTR, DWORD, MSIHANDLE*);
+static UINT (WINAPI *pMsiOpenPackageExW)
+    (LPCWSTR, DWORD, MSIHANDLE*);
+static UINT (WINAPI *pMsiEnumPatchesExA)
+    (LPCSTR, LPCSTR, DWORD, DWORD, DWORD, LPSTR, LPSTR,
+    MSIINSTALLCONTEXT*, LPSTR, LPDWORD);
+static UINT (WINAPI *pMsiQueryComponentStateA)
+    (LPCSTR, LPCSTR, MSIINSTALLCONTEXT, LPCSTR, INSTALLSTATE*);
+static INSTALLSTATE (WINAPI *pMsiUseFeatureExA)
+    (LPCSTR, LPCSTR ,DWORD, DWORD);
+static UINT (WINAPI *pMsiGetPatchInfoExA)
+    (LPCSTR, LPCSTR, LPCSTR, MSIINSTALLCONTEXT, LPCSTR, LPSTR, DWORD *);
+static UINT (WINAPI *pMsiEnumProductsExA)
+    (LPCSTR, LPCSTR, DWORD, DWORD, CHAR[39], MSIINSTALLCONTEXT *, LPSTR, LPDWORD);
+static UINT (WINAPI *pMsiEnumComponentsExA)
+    (LPCSTR, DWORD, DWORD, CHAR[39], MSIINSTALLCONTEXT *, LPSTR, LPDWORD);
+static UINT (WINAPI *pMsiSetExternalUIRecord)
+    (INSTALLUI_HANDLER_RECORD, DWORD, LPVOID, PINSTALLUI_HANDLER_RECORD);
+static UINT (WINAPI *pMsiSourceListGetInfoA)
+    (LPCSTR, LPCSTR, MSIINSTALLCONTEXT, DWORD, LPCSTR, LPSTR, LPDWORD);
+
+static void init_functionpointers(void)
+{
+    HMODULE hmsi = GetModuleHandleA("msi.dll");
+    HMODULE hadvapi32 = GetModuleHandleA("advapi32.dll");
+    HMODULE hkernel32 = GetModuleHandleA("kernel32.dll");
+
+#define GET_PROC(dll, func) \
+    p ## func = (void *)GetProcAddress(dll, #func); \
+    if(!p ## func) \
+      trace("GetProcAddress(%s) failed\n", #func);
+
+    GET_PROC(hmsi, MsiGetComponentPathA)
+    GET_PROC(hmsi, MsiGetComponentPathExA);
+    GET_PROC(hmsi, MsiProvideComponentA)
+    GET_PROC(hmsi, MsiProvideComponentW)
+    GET_PROC(hmsi, MsiGetFileHashA)
+    GET_PROC(hmsi, MsiGetProductInfoExA)
+    GET_PROC(hmsi, MsiOpenPackageExA)
+    GET_PROC(hmsi, MsiOpenPackageExW)
+    GET_PROC(hmsi, MsiEnumPatchesExA)
+    GET_PROC(hmsi, MsiQueryComponentStateA)
+    GET_PROC(hmsi, MsiSetExternalUIRecord)
+    GET_PROC(hmsi, MsiUseFeatureExA)
+    GET_PROC(hmsi, MsiGetPatchInfoExA)
+    GET_PROC(hmsi, MsiEnumProductsExA)
+    GET_PROC(hmsi, MsiEnumComponentsExA)
+    GET_PROC(hmsi, MsiSourceListGetInfoA)
+
+    GET_PROC(hadvapi32, RegDeleteKeyExA)
+    GET_PROC(hkernel32, IsWow64Process)
+
+#undef GET_PROC
+}
+
 /* cabinet definitions */
 
 /* make the max size large so there is only one cab file */
@@ -803,33 +874,46 @@ static void test_usefeature(void)
 {
     INSTALLSTATE r;
 
+    if (!pMsiUseFeatureExA)
+    {
+        win_skip("MsiUseFeatureExA not implemented\n");
+        return;
+    }
+
     r = MsiQueryFeatureStateA(NULL, NULL);
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return val\n");
 
     r = MsiQueryFeatureStateA("{9085040-6000-11d3-8cfe-0150048383c9}" ,NULL);
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return val\n");
 
-    r = MsiUseFeatureExA(NULL,NULL,0,0);
+    r = pMsiUseFeatureExA(NULL,NULL,0,0);
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return val\n");
 
-    r = MsiUseFeatureExA(NULL, "WORDVIEWFiles", -2, 1 );
+    r = pMsiUseFeatureExA(NULL, "WORDVIEWFiles", -2, 1 );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return val\n");
 
-    r = MsiUseFeatureExA("{90850409-6000-11d3-8cfe-0150048383c9}",
+    r = pMsiUseFeatureExA("{90850409-6000-11d3-8cfe-0150048383c9}",
                          NULL, -2, 0 );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return val\n");
 
-    r = MsiUseFeatureExA("{9085040-6000-11d3-8cfe-0150048383c9}",
+    r = pMsiUseFeatureExA("{9085040-6000-11d3-8cfe-0150048383c9}",
                          "WORDVIEWFiles", -2, 0 );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return val\n");
 
-    r = MsiUseFeatureExA("{0085040-6000-11d3-8cfe-0150048383c9}",
+    r = pMsiUseFeatureExA("{0085040-6000-11d3-8cfe-0150048383c9}",
                          "WORDVIEWFiles", -2, 0 );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return val\n");
 
-    r = MsiUseFeatureExA("{90850409-6000-11d3-8cfe-0150048383c9}",
+    r = pMsiUseFeatureExA("{90850409-6000-11d3-8cfe-0150048383c9}",
                          "WORDVIEWFiles", -2, 1 );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return val\n");
+}
+
+static LONG delete_key( HKEY key, LPCSTR subkey, REGSAM access )
+{
+    if (pRegDeleteKeyExA)
+        return pRegDeleteKeyExA( key, subkey, access, 0 );
+    return RegDeleteKeyA( key, subkey );
 }
 
 static void test_null(void)
@@ -845,7 +929,7 @@ static void test_null(void)
     if (is_wow64)
         access |= KEY_WOW64_64KEY;
 
-    r = MsiOpenPackageExW(NULL, 0, &hpkg);
+    r = pMsiOpenPackageExW(NULL, 0, &hpkg);
     ok( r == ERROR_INVALID_PARAMETER,"wrong error\n");
 
     state = MsiQueryProductStateW(NULL);
@@ -932,8 +1016,8 @@ static void test_null(void)
     r = RegCloseKey(hkey);
     ok( r == ERROR_SUCCESS, "wrong error %d\n", r);
 
-    r = RegDeleteKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{F1C3AF50-8B56-4A69-A00C-00773FE42F30}",
-                        access & KEY_WOW64_64KEY, 0);
+    r = delete_key(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{F1C3AF50-8B56-4A69-A00C-00773FE42F30}",
+                   access & KEY_WOW64_64KEY);
     ok( r == ERROR_SUCCESS, "wrong error %d\n", r);
 }
 
@@ -943,33 +1027,36 @@ static void test_getcomponentpath(void)
     char buffer[0x100];
     DWORD sz;
 
-    r = MsiGetComponentPathA( NULL, NULL, NULL, NULL );
+    if(!pMsiGetComponentPathA)
+        return;
+
+    r = pMsiGetComponentPathA( NULL, NULL, NULL, NULL );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return value\n");
 
-    r = MsiGetComponentPathA( "bogus", "bogus", NULL, NULL );
+    r = pMsiGetComponentPathA( "bogus", "bogus", NULL, NULL );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return value\n");
 
-    r = MsiGetComponentPathA( "bogus", "{00000000-0000-0000-000000000000}", NULL, NULL );
+    r = pMsiGetComponentPathA( "bogus", "{00000000-0000-0000-000000000000}", NULL, NULL );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return value\n");
 
     sz = sizeof buffer;
     buffer[0]=0;
-    r = MsiGetComponentPathA( "bogus", "{00000000-0000-0000-000000000000}", buffer, &sz );
+    r = pMsiGetComponentPathA( "bogus", "{00000000-0000-0000-000000000000}", buffer, &sz );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return value\n");
 
-    r = MsiGetComponentPathA( "{00000000-78E1-11D2-B60F-006097C998E7}",
+    r = pMsiGetComponentPathA( "{00000000-78E1-11D2-B60F-006097C998E7}",
         "{00000000-0000-0000-0000-000000000000}", buffer, &sz );
     ok( r == INSTALLSTATE_UNKNOWN, "wrong return value\n");
 
-    r = MsiGetComponentPathA( "{00000409-78E1-11D2-B60F-006097C998E7}",
+    r = pMsiGetComponentPathA( "{00000409-78E1-11D2-B60F-006097C998E7}",
         "{00000000-0000-0000-0000-00000000}", buffer, &sz );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return value\n");
 
-    r = MsiGetComponentPathA( "{00000409-78E1-11D2-B60F-006097C998E7}",
+    r = pMsiGetComponentPathA( "{00000409-78E1-11D2-B60F-006097C998E7}",
         "{029E403D-A86A-1D11-5B5B0006799C897E}", buffer, &sz );
     ok( r == INSTALLSTATE_INVALIDARG, "wrong return value\n");
 
-    r = MsiGetComponentPathA( "{00000000-78E1-11D2-B60F-006097C9987e}",
+    r = pMsiGetComponentPathA( "{00000000-78E1-11D2-B60F-006097C9987e}",
                             "{00000000-A68A-11d1-5B5B-0006799C897E}", buffer, &sz );
     ok( r == INSTALLSTATE_UNKNOWN, "wrong return value\n");
 }
@@ -1049,32 +1136,38 @@ static void test_MsiGetFileHash(void)
     MSIFILEHASHINFO hash;
     DWORD i;
 
+    if (!pMsiGetFileHashA)
+    {
+        win_skip("MsiGetFileHash not implemented\n");
+        return;
+    }
+
     hash.dwFileHashInfoSize = sizeof(MSIFILEHASHINFO);
 
     /* szFilePath is NULL */
-    r = MsiGetFileHashA(NULL, 0, &hash);
+    r = pMsiGetFileHashA(NULL, 0, &hash);
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
 
     /* szFilePath is empty */
-    r = MsiGetFileHashA("", 0, &hash);
+    r = pMsiGetFileHashA("", 0, &hash);
     ok(r == ERROR_PATH_NOT_FOUND || r == ERROR_BAD_PATHNAME,
        "Expected ERROR_PATH_NOT_FOUND or ERROR_BAD_PATHNAME, got %d\n", r);
 
     /* szFilePath is nonexistent */
-    r = MsiGetFileHashA(name, 0, &hash);
+    r = pMsiGetFileHashA(name, 0, &hash);
     ok(r == ERROR_FILE_NOT_FOUND, "Expected ERROR_FILE_NOT_FOUND, got %d\n", r);
 
     /* dwOptions is non-zero */
-    r = MsiGetFileHashA(name, 1, &hash);
+    r = pMsiGetFileHashA(name, 1, &hash);
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
 
     /* pHash.dwFileHashInfoSize is not correct */
     hash.dwFileHashInfoSize = 0;
-    r = MsiGetFileHashA(name, 0, &hash);
+    r = pMsiGetFileHashA(name, 0, &hash);
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
 
     /* pHash is NULL */
-    r = MsiGetFileHashA(name, 0, NULL);
+    r = pMsiGetFileHashA(name, 0, NULL);
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
 
     for (i = 0; i < ARRAY_SIZE(hash_data); i++)
@@ -1086,7 +1179,7 @@ static void test_MsiGetFileHash(void)
         memset(&hash, 0, sizeof(MSIFILEHASHINFO));
         hash.dwFileHashInfoSize = sizeof(MSIFILEHASHINFO);
 
-        r = MsiGetFileHashA(name, 0, &hash);
+        r = pMsiGetFileHashA(name, 0, &hash);
         ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
 
         ret = memcmp(&hash, &hash_data[i].hash, HASHSIZE);
@@ -1285,7 +1378,7 @@ static void test_MsiQueryProductState(void)
     ok(error == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %lu\n", error);
 
     RegDeleteValueA(localkey, "WindowsInstaller");
-    RegDeleteKeyExA(localkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(localkey, "", access & KEY_WOW64_64KEY);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
     lstrcatA(keypath, usersid);
@@ -1328,6 +1421,19 @@ static void test_MsiQueryProductState(void)
     SetLastError(0xdeadbeef);
     state = MsiQueryProductStateA(prodcode);
     error = GetLastError();
+    if (state == INSTALLSTATE_ADVERTISED)
+    {
+        win_skip("broken result\n");
+        RegDeleteValueA(props, "WindowsInstaller");
+        delete_key(props, "", access & KEY_WOW64_64KEY);
+        RegCloseKey(props);
+        delete_key(localkey, "", access & KEY_WOW64_64KEY);
+        RegCloseKey(localkey);
+        RegDeleteKeyA(userkey, "");
+        RegCloseKey(userkey);
+        LocalFree(usersid);
+        return;
+    }
     ok(state == INSTALLSTATE_DEFAULT, "Expected INSTALLSTATE_DEFAULT, got %d\n", state);
     ok(error == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %lu\n", error);
 
@@ -1352,9 +1458,9 @@ static void test_MsiQueryProductState(void)
     ok(error == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %lu\n", error);
 
     RegDeleteValueA(props, "WindowsInstaller");
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(localkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(localkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(localkey);
     RegDeleteKeyA(userkey, "");
     RegCloseKey(userkey);
@@ -1401,11 +1507,11 @@ static void test_MsiQueryProductState(void)
     ok(state == INSTALLSTATE_DEFAULT, "Expected INSTALLSTATE_DEFAULT, got %d\n", state);
 
     RegDeleteValueA(props, "WindowsInstaller");
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(localkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(localkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(localkey);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     /* MSIINSTALLCONTEXT_MACHINE */
@@ -1452,11 +1558,11 @@ static void test_MsiQueryProductState(void)
     ok(state == INSTALLSTATE_DEFAULT, "Expected INSTALLSTATE_DEFAULT, got %d\n", state);
 
     RegDeleteValueA(props, "WindowsInstaller");
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(localkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(localkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(localkey);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     LocalFree(usersid);
@@ -1777,8 +1883,8 @@ static void test_MsiQueryFeatureState(void)
 
     RegDeleteValueA(compkey, prod_squashed);
     RegDeleteValueA(compkey2, prod_squashed);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(compkey2, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
+    delete_key(compkey2, "", access & KEY_WOW64_64KEY);
     RegDeleteValueA(localkey, "feature");
     RegDeleteValueA(userkey, "feature");
     RegDeleteKeyA(userkey, "");
@@ -1884,11 +1990,11 @@ static void test_MsiQueryFeatureState(void)
 
     RegDeleteValueA(compkey, prod_squashed);
     RegDeleteValueA(compkey2, prod_squashed);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(compkey2, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
+    delete_key(compkey2, "", access & KEY_WOW64_64KEY);
     RegDeleteValueA(localkey, "feature");
     RegDeleteValueA(userkey, "feature");
-    RegDeleteKeyExA(userkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(compkey);
     RegCloseKey(compkey2);
     RegCloseKey(localkey);
@@ -1992,11 +2098,11 @@ static void test_MsiQueryFeatureState(void)
 
     RegDeleteValueA(compkey, prod_squashed);
     RegDeleteValueA(compkey2, prod_squashed);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(compkey2, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
+    delete_key(compkey2, "", access & KEY_WOW64_64KEY);
     RegDeleteValueA(localkey, "feature");
     RegDeleteValueA(userkey, "feature");
-    RegDeleteKeyExA(userkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(compkey);
     RegCloseKey(compkey2);
     RegCloseKey(localkey);
@@ -2022,6 +2128,12 @@ static void test_MsiQueryComponentState(void)
 
     static const INSTALLSTATE MAGIC_ERROR = 0xdeadbeef;
 
+    if (!pMsiQueryComponentStateA)
+    {
+        win_skip("MsiQueryComponentStateA not implemented\n");
+        return;
+    }
+
     create_test_guid(prodcode, prod_squashed);
     compose_base85_guid(component, comp_base85, comp_squashed);
     usersid = get_user_sid();
@@ -2032,7 +2144,7 @@ static void test_MsiQueryComponentState(void)
     /* NULL szProductCode */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(NULL, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(NULL, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
@@ -2041,7 +2153,7 @@ static void test_MsiQueryComponentState(void)
     /* empty szProductCode */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA("", NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA("", NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
@@ -2050,7 +2162,7 @@ static void test_MsiQueryComponentState(void)
     /* random szProductCode */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA("random", NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA("random", NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
@@ -2059,7 +2171,7 @@ static void test_MsiQueryComponentState(void)
     /* GUID-length szProductCode */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA("DJANE93KNDNAS-2KN2NR93KMN3LN13=L1N3KDE", NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA("DJANE93KNDNAS-2KN2NR93KMN3LN13=L1N3KDE", NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
@@ -2068,7 +2180,7 @@ static void test_MsiQueryComponentState(void)
     /* GUID-length with brackets */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA("{JANE93KNDNAS-2KN2NR93KMN3LN13=L1N3KD}", NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA("{JANE93KNDNAS-2KN2NR93KMN3LN13=L1N3KD}", NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
@@ -2077,7 +2189,7 @@ static void test_MsiQueryComponentState(void)
     /* actual GUID */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
@@ -2085,7 +2197,7 @@ static void test_MsiQueryComponentState(void)
 
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
@@ -2105,13 +2217,13 @@ static void test_MsiQueryComponentState(void)
 
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_UNKNOWN_COMPONENT, "Expected ERROR_UNKNOWN_COMPONENT, got %d\n", r);
     ok(state == INSTALLSTATE_UNKNOWN, "Expected INSTALLSTATE_UNKNOWN, got %d\n", state);
     ok(error == 0xdeadbeef, "expected 0xdeadbeef, got %lu\n", error);
 
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     /* create local system product key */
@@ -2130,7 +2242,7 @@ static void test_MsiQueryComponentState(void)
 
     /* local system product key exists */
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
@@ -2142,7 +2254,7 @@ static void test_MsiQueryComponentState(void)
     /* LocalPackage value exists */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_UNKNOWN_COMPONENT, "Expected ERROR_UNKNOWN_COMPONENT, got %d\n", r);
     ok(state == INSTALLSTATE_UNKNOWN, "Expected INSTALLSTATE_UNKNOWN, got %d\n", state);
@@ -2157,7 +2269,7 @@ static void test_MsiQueryComponentState(void)
     /* component key exists */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_UNKNOWN_COMPONENT, "Expected ERROR_UNKNOWN_COMPONENT, got %d\n", r);
     ok(state == INSTALLSTATE_UNKNOWN, "Expected INSTALLSTATE_UNKNOWN, got %d\n", state);
@@ -2169,7 +2281,7 @@ static void test_MsiQueryComponentState(void)
     /* component\product exists */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     error = GetLastError();
     ok(state == INSTALLSTATE_NOTUSED || state == INSTALLSTATE_LOCAL,
@@ -2179,7 +2291,7 @@ static void test_MsiQueryComponentState(void)
     /* NULL component, product exists */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, NULL, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, NULL, &state);
     error = GetLastError();
     ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected state not changed, got %d\n", state);
@@ -2191,7 +2303,7 @@ static void test_MsiQueryComponentState(void)
     /* INSTALLSTATE_LOCAL */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(state == INSTALLSTATE_LOCAL, "Expected INSTALLSTATE_LOCAL, got %d\n", state);
@@ -2203,7 +2315,7 @@ static void test_MsiQueryComponentState(void)
     /* INSTALLSTATE_SOURCE */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(state == INSTALLSTATE_SOURCE, "Expected INSTALLSTATE_SOURCE, got %d\n", state);
@@ -2215,7 +2327,7 @@ static void test_MsiQueryComponentState(void)
     /* bad INSTALLSTATE_SOURCE */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(state == INSTALLSTATE_LOCAL, "Expected INSTALLSTATE_LOCAL, got %d\n", state);
@@ -2227,7 +2339,7 @@ static void test_MsiQueryComponentState(void)
     /* INSTALLSTATE_SOURCE */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(state == INSTALLSTATE_SOURCE, "Expected INSTALLSTATE_SOURCE, got %d\n", state);
@@ -2239,23 +2351,23 @@ static void test_MsiQueryComponentState(void)
     /* registry component */
     state = MAGIC_ERROR;
     SetLastError(0xdeadbeef);
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, component, &state);
     error = GetLastError();
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(state == INSTALLSTATE_LOCAL, "Expected INSTALLSTATE_LOCAL, got %d\n", state);
     ok(error == 0xdeadbeef, "expected 0xdeadbeef, got %lu\n", error);
 
     RegDeleteValueA(prodkey, "LocalPackage");
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegDeleteValueA(compkey, prod_squashed);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
     RegCloseKey(compkey);
 
     /* MSIINSTALLCONTEXT_USERUNMANAGED */
 
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
     ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
 
@@ -2266,7 +2378,7 @@ static void test_MsiQueryComponentState(void)
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
     ok(r == ERROR_UNKNOWN_COMPONENT, "Expected ERROR_UNKNOWN_COMPONENT, got %d\n", r);
     ok(state == INSTALLSTATE_UNKNOWN, "Expected INSTALLSTATE_UNKNOWN, got %d\n", state);
 
@@ -2288,7 +2400,7 @@ static void test_MsiQueryComponentState(void)
     RegCloseKey(prodkey);
 
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
     ok(r == ERROR_UNKNOWN_COMPONENT, "Expected ERROR_UNKNOWN_COMPONENT, got %d\n", r);
     ok(state == INSTALLSTATE_UNKNOWN, "Expected INSTALLSTATE_UNKNOWN, got %d\n", state);
 
@@ -2302,7 +2414,7 @@ static void test_MsiQueryComponentState(void)
 
     /* component key exists */
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
     ok(r == ERROR_UNKNOWN_COMPONENT, "Expected ERROR_UNKNOWN_COMPONENT, got %d\n", r);
     ok(state == INSTALLSTATE_UNKNOWN, "Expected INSTALLSTATE_UNKNOWN, got %d\n", state);
 
@@ -2311,7 +2423,7 @@ static void test_MsiQueryComponentState(void)
 
     /* component\product exists */
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(state == INSTALLSTATE_NOTUSED || state == INSTALLSTATE_LOCAL,
        "Expected INSTALLSTATE_NOTUSED or INSTALLSTATE_LOCAL, got %d\n", state);
@@ -2320,14 +2432,14 @@ static void test_MsiQueryComponentState(void)
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, component, &state);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(state == INSTALLSTATE_LOCAL, "Expected INSTALLSTATE_LOCAL, got %d\n", state);
 
     /* MSIINSTALLCONTEXT_USERMANAGED */
 
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, component, &state);
     ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
 
@@ -2338,7 +2450,7 @@ static void test_MsiQueryComponentState(void)
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, component, &state);
     ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(state == MAGIC_ERROR, "Expected 0xdeadbeef, got %d\n", state);
 
@@ -2354,11 +2466,11 @@ static void test_MsiQueryComponentState(void)
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, component, &state);
     ok(r == ERROR_UNKNOWN_COMPONENT, "Expected ERROR_UNKNOWN_COMPONENT, got %d\n", r);
     ok(state == INSTALLSTATE_UNKNOWN, "Expected INSTALLSTATE_UNKNOWN, got %d\n", state);
 
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
@@ -2374,15 +2486,15 @@ static void test_MsiQueryComponentState(void)
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     state = MAGIC_ERROR;
-    r = MsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, component, &state);
+    r = pMsiQueryComponentStateA(prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, component, &state);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(state == INSTALLSTATE_LOCAL, "Expected INSTALLSTATE_LOCAL, got %d\n", state);
 
     RegDeleteValueA(prodkey, "LocalPackage");
     RegDeleteValueA(prodkey, "ManagedLocalPackage");
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegDeleteValueA(compkey, prod_squashed);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
     RegCloseKey(compkey);
     LocalFree(usersid);
@@ -2562,9 +2674,9 @@ static void test_MsiGetComponentPath(void)
     ok(size == 10, "Expected 10, got %lu\n", size);
 
     RegDeleteValueA(compkey, prod_squashed);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
     RegDeleteValueA(installprop, "WindowsInstaller");
-    RegDeleteKeyExA(installprop, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(installprop, "", access & KEY_WOW64_64KEY);
     RegCloseKey(compkey);
     RegCloseKey(installprop);
     DeleteFileA("C:\\imapath");
@@ -2652,9 +2764,9 @@ static void test_MsiGetComponentPath(void)
     ok(size == 10, "Expected 10, got %lu\n", size);
 
     RegDeleteValueA(compkey, prod_squashed);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
     RegDeleteValueA(installprop, "WindowsInstaller");
-    RegDeleteKeyExA(installprop, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(installprop, "", access & KEY_WOW64_64KEY);
     RegCloseKey(compkey);
     RegCloseKey(installprop);
     DeleteFileA("C:\\imapath");
@@ -2762,10 +2874,10 @@ static void test_MsiGetComponentPath(void)
     ok(size == 10, "Expected 10, got %lu\n", size);
 
     RegDeleteValueA(compkey, prod_squashed);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
     RegDeleteValueA(installprop, "WindowsInstaller");
-    RegDeleteKeyExA(installprop, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(installprop, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
     RegCloseKey(compkey);
     RegCloseKey(installprop);
@@ -2845,7 +2957,7 @@ static void test_MsiGetComponentPath(void)
 
     RegDeleteValueA(compkey, prod_squashed);
     RegDeleteKeyA(prodkey, "");
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
     RegCloseKey(compkey);
     DeleteFileA("C:\\imapath");
@@ -2927,8 +3039,8 @@ static void test_MsiGetComponentPath(void)
     ok(size == 10, "Expected 10, got %lu\n", size);
 
     RegDeleteValueA(compkey, prod_squashed);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
     RegCloseKey(compkey);
     DeleteFileA("C:\\imapath");
@@ -2946,6 +3058,12 @@ static void test_MsiGetComponentPathEx(void)
     REGSAM access = KEY_ALL_ACCESS;
     LONG res;
 
+    if (!pMsiGetComponentPathExA)
+    {
+        win_skip( "MsiGetComponentPathExA not present\n" );
+        return;
+    }
+
     if (is_wow64) access |= KEY_WOW64_64KEY;
 
     create_test_guid( prod, prod_squashed );
@@ -2954,37 +3072,37 @@ static void test_MsiGetComponentPathEx(void)
 
     /* NULL product */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( NULL, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( NULL, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
     ok( state == INSTALLSTATE_INVALIDARG, "got %d\n", state );
     todo_wine ok( !size, "got %lu\n", size );
 
     /* NULL component */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, NULL, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( prod, NULL, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
     ok( state == INSTALLSTATE_INVALIDARG, "got %d\n", state );
     todo_wine ok( !size, "got %lu\n", size );
 
     /* non-NULL usersid, MSIINSTALLCONTEXT_MACHINE */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, usersid, MSIINSTALLCONTEXT_MACHINE, path, &size);
+    state = pMsiGetComponentPathExA( prod, comp, usersid, MSIINSTALLCONTEXT_MACHINE, path, &size);
     ok( state == INSTALLSTATE_INVALIDARG, "got %d\n", state );
     todo_wine ok( !size, "got %lu\n", size );
 
     /* NULL buf */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, NULL, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, NULL, &size );
     ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
     todo_wine ok( size == MAX_PATH * 2, "got %lu\n", size );
 
     /* NULL buflen */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, NULL );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, NULL );
     ok( state == INSTALLSTATE_INVALIDARG, "got %d\n", state );
     ok( size == MAX_PATH, "got %lu\n", size );
 
     /* all params valid */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
     ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
     todo_wine ok( !size, "got %lu\n", size );
 
@@ -3003,7 +3121,7 @@ static void test_MsiGetComponentPathEx(void)
 
     /* local system component key exists */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
     ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
 
     res = RegSetValueExA( key_comp, prod_squashed, 0, REG_SZ, (const BYTE *)"c:\\testcomponentpath", 20 );
@@ -3012,7 +3130,7 @@ static void test_MsiGetComponentPathEx(void)
     /* product value exists */
     path[0] = 0;
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
     ok( state == INSTALLSTATE_ABSENT, "got %d\n", state );
     ok( !lstrcmpA( path, "c:\\testcomponentpath" ), "got %s\n", path );
     ok( size == 20, "got %lu\n", size );
@@ -3032,7 +3150,7 @@ static void test_MsiGetComponentPathEx(void)
     /* install properties key exists */
     path[0] = 0;
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
     ok( state == INSTALLSTATE_ABSENT, "got %d\n", state );
     ok( !lstrcmpA( path, "c:\\testcomponentpath"), "got %s\n", path );
     ok( size == 20, "got %lu\n", size );
@@ -3042,22 +3160,22 @@ static void test_MsiGetComponentPathEx(void)
     /* file exists */
     path[0] = 0;
     size = 0;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
     ok( state == INSTALLSTATE_MOREDATA, "got %d\n", state );
     ok( !path[0], "got %s\n", path );
     todo_wine ok( size == 40, "got %lu\n", size );
 
     path[0] = 0;
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
     ok( state == INSTALLSTATE_LOCAL, "got %d\n", state );
     ok( !lstrcmpA( path, "c:\\testcomponentpath" ), "got %s\n", path );
     ok( size == 20, "got %lu\n", size );
 
     RegDeleteValueA( key_comp, prod_squashed );
-    RegDeleteKeyExA( key_comp, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( key_comp, "", access & KEY_WOW64_64KEY );
     RegDeleteValueA( key_installprop, "WindowsInstaller" );
-    RegDeleteKeyExA( key_installprop, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( key_installprop, "", access & KEY_WOW64_64KEY );
     RegCloseKey( key_comp );
     RegCloseKey( key_installprop );
     DeleteFileA( "c:\\testcomponentpath" );
@@ -3070,7 +3188,7 @@ static void test_MsiGetComponentPathEx(void)
 
     /* user unmanaged product key exists */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, path, &size );
     ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
     todo_wine ok(!size, "got %lu\n", size);
 
@@ -3085,7 +3203,7 @@ static void test_MsiGetComponentPathEx(void)
 
     /* user unmanaged component key exists */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, path, &size );
     ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
     todo_wine ok(!size, "got %lu\n", size);
 
@@ -3095,7 +3213,7 @@ static void test_MsiGetComponentPathEx(void)
     /* product value exists */
     path[0] = 0;
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, path, &size );
     ok( state == INSTALLSTATE_ABSENT, "got %d\n", state );
     ok( !lstrcmpA( path, "c:\\testcomponentpath"), "got %s\n", path );
     ok( size == 20, "got %lu\n", size );
@@ -3105,14 +3223,14 @@ static void test_MsiGetComponentPathEx(void)
     /* file exists */
     path[0] = 0;
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERUNMANAGED, path, &size );
     ok( state == INSTALLSTATE_LOCAL, "got %d\n", state );
     ok( !lstrcmpA( path, "c:\\testcomponentpath"), "got %s\n", path );
     ok( size == 20, "got %lu\n", size );
 
     RegDeleteValueA( key_comp, prod_squashed );
     RegDeleteKeyA( key_prod, "" );
-    RegDeleteKeyExA( key_comp, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( key_comp, "", access & KEY_WOW64_64KEY );
     RegCloseKey( key_prod );
     RegCloseKey( key_comp );
     DeleteFileA( "c:\\testcomponentpath" );
@@ -3128,7 +3246,7 @@ static void test_MsiGetComponentPathEx(void)
 
     /* user managed product key exists */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
     ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
 
     lstrcpyA( path_key, "Software\\Microsoft\\Windows\\CurrentVersion\\" );
@@ -3142,7 +3260,7 @@ static void test_MsiGetComponentPathEx(void)
 
     /* user managed component key exists */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
     ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
 
     res = RegSetValueExA( key_comp, prod_squashed, 0, REG_SZ, (const BYTE *)"c:\\testcomponentpath", 20 );
@@ -3151,7 +3269,7 @@ static void test_MsiGetComponentPathEx(void)
     /* product value exists */
     path[0] = 0;
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
     ok( state == INSTALLSTATE_ABSENT, "got %d\n", state );
     ok( !lstrcmpA( path, "c:\\testcomponentpath" ), "got %s\n", path );
     ok( size == 20, "got %lu\n", size );
@@ -3171,7 +3289,7 @@ static void test_MsiGetComponentPathEx(void)
     /* install properties key exists */
     path[0] = 0;
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
     ok( state == INSTALLSTATE_ABSENT, "got %d\n", state );
     ok( !lstrcmpA( path, "c:\\testcomponentpath" ), "got %s\n", path );
     ok( size == 20, "got %lu\n", size );
@@ -3181,16 +3299,16 @@ static void test_MsiGetComponentPathEx(void)
     /* file exists */
     path[0] = 0;
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_USERMANAGED, path, &size );
     ok( state == INSTALLSTATE_LOCAL, "got %d\n", state );
     ok( !lstrcmpA( path, "c:\\testcomponentpath" ), "got %s\n", path );
     ok( size == 20, "got %lu\n", size );
 
     RegDeleteValueA( key_comp, prod_squashed );
-    RegDeleteKeyExA( key_prod, "", access & KEY_WOW64_64KEY, 0 );
-    RegDeleteKeyExA( key_comp, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( key_prod, "", access & KEY_WOW64_64KEY );
+    delete_key( key_comp, "", access & KEY_WOW64_64KEY );
     RegDeleteValueA( key_installprop, "WindowsInstaller" );
-    RegDeleteKeyExA( key_installprop, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( key_installprop, "", access & KEY_WOW64_64KEY );
     RegCloseKey( key_prod );
     RegCloseKey( key_comp );
     RegCloseKey( key_installprop );
@@ -3209,7 +3327,7 @@ static void test_MsiGetComponentPathEx(void)
 
     /* local classes product key exists */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
     ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
     todo_wine ok(!size, "got %lu\n", size);
 
@@ -3222,7 +3340,7 @@ static void test_MsiGetComponentPathEx(void)
 
     /* local user component key exists */
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
     ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
     todo_wine ok(!size, "got %lu\n", size);
 
@@ -3232,7 +3350,7 @@ static void test_MsiGetComponentPathEx(void)
     /* product value exists */
     path[0] = 0;
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
     ok( state == INSTALLSTATE_ABSENT, "got %d\n", state );
     ok( !lstrcmpA( path, "c:\\testcomponentpath" ), "got %s\n", path );
     ok( size == 20, "got %lu\n", size );
@@ -3242,14 +3360,14 @@ static void test_MsiGetComponentPathEx(void)
     /* file exists */
     path[0] = 0;
     size = MAX_PATH;
-    state = MsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
+    state = pMsiGetComponentPathExA( prod, comp, NULL, MSIINSTALLCONTEXT_MACHINE, path, &size );
     ok( state == INSTALLSTATE_LOCAL, "got %d\n", state );
     ok( !lstrcmpA( path, "c:\\testcomponentpath" ), "got %s\n", path );
     ok( size == 20, "got %lu\n", size );
 
     RegDeleteValueA( key_comp, prod_squashed );
-    RegDeleteKeyExA( key_prod, "", access & KEY_WOW64_64KEY, 0 );
-    RegDeleteKeyExA( key_comp, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( key_prod, "", access & KEY_WOW64_64KEY );
+    delete_key( key_comp, "", access & KEY_WOW64_64KEY );
     RegCloseKey( key_prod );
     RegCloseKey( key_comp );
     DeleteFileA( "c:\\testcomponentpath" );
@@ -3264,7 +3382,7 @@ static void test_MsiProvideComponent(void)
     DWORD len, len2;
     UINT r;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip("process is limited\n");
         return;
@@ -3278,9 +3396,9 @@ static void test_MsiProvideComponent(void)
 
     buf[0] = 0;
     len = sizeof(buf);
-    r = MsiProvideComponentA("{90120000-0070-0000-0000-4000000FF1CE}",
-                             "{17961602-C4E2-482E-800A-DF6E627549CF}",
-                             "ProductFiles", INSTALLMODE_NODETECTION, buf, &len);
+    r = pMsiProvideComponentA("{90120000-0070-0000-0000-4000000FF1CE}",
+                              "{17961602-C4E2-482E-800A-DF6E627549CF}",
+                              "ProductFiles", INSTALLMODE_NODETECTION, buf, &len);
     ok(r == ERROR_INVALID_PARAMETER, "got %u\n", r);
 
     r = MsiInstallProductA(msifile, NULL);
@@ -3291,24 +3409,24 @@ static void test_MsiProvideComponent(void)
 
     buf[0] = 0;
     len = sizeof(buf);
-    r = MsiProvideComponentA("{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", "sourcedir",
-                             "{DD422F92-3ED8-49B5-A0B7-F266F98357DF}",
-                             INSTALLMODE_NODETECTION, buf, &len);
+    r = pMsiProvideComponentA("{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", "sourcedir",
+                              "{DD422F92-3ED8-49B5-A0B7-F266F98357DF}",
+                              INSTALLMODE_NODETECTION, buf, &len);
     ok(r == ERROR_SUCCESS, "got %u\n", r);
     ok(buf[0], "empty path\n");
     ok(len == lstrlenA(buf), "got %lu\n", len);
 
     len2 = 0;
-    r = MsiProvideComponentA("{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", "sourcedir",
-                             "{DD422F92-3ED8-49B5-A0B7-F266F98357DF}",
-                             INSTALLMODE_NODETECTION, NULL, &len2);
+    r = pMsiProvideComponentA("{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", "sourcedir",
+                              "{DD422F92-3ED8-49B5-A0B7-F266F98357DF}",
+                              INSTALLMODE_NODETECTION, NULL, &len2);
     ok(r == ERROR_SUCCESS, "got %u\n", r);
     ok(len2 == len, "got %lu\n", len2);
 
     len2 = 0;
-    r = MsiProvideComponentA("{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", "sourcedir",
-                             "{DD422F92-3ED8-49B5-A0B7-F266F98357DF}",
-                             INSTALLMODE_NODETECTION, buf, &len2);
+    r = pMsiProvideComponentA("{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", "sourcedir",
+                              "{DD422F92-3ED8-49B5-A0B7-F266F98357DF}",
+                              INSTALLMODE_NODETECTION, buf, &len2);
     ok(r == ERROR_MORE_DATA, "got %u\n", r);
     ok(len2 == len, "got %lu\n", len2);
 
@@ -3316,21 +3434,21 @@ static void test_MsiProvideComponent(void)
 
     bufW[0] = 0;
     len = sizeof(buf);
-    r = MsiProvideComponentW(L"{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", L"sourcedir",
-                             L"{DD422F92-3ED8-49B5-A0B7-F266F98357DF}", INSTALLMODE_NODETECTION, bufW, &len);
+    r = pMsiProvideComponentW(L"{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", L"sourcedir",
+                              L"{DD422F92-3ED8-49B5-A0B7-F266F98357DF}", INSTALLMODE_NODETECTION, bufW, &len);
     ok(r == ERROR_SUCCESS, "got %u\n", r);
     ok(bufW[0], "empty path\n");
     ok(len == lstrlenW(bufW), "got %lu\n", len);
 
     len2 = 0;
-    r = MsiProvideComponentW(L"{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", L"sourcedir",
-                             L"{DD422F92-3ED8-49B5-A0B7-F266F98357DF}", INSTALLMODE_NODETECTION, NULL, &len2);
+    r = pMsiProvideComponentW(L"{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", L"sourcedir",
+                              L"{DD422F92-3ED8-49B5-A0B7-F266F98357DF}", INSTALLMODE_NODETECTION, NULL, &len2);
     ok(r == ERROR_SUCCESS, "got %u\n", r);
     ok(len2 == len, "got %lu\n", len2);
 
     len2 = 0;
-    r = MsiProvideComponentW(L"{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", L"sourcedir",
-                             L"{DD422F92-3ED8-49B5-A0B7-F266F98357DF}", INSTALLMODE_NODETECTION, bufW, &len2);
+    r = pMsiProvideComponentW(L"{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", L"sourcedir",
+                              L"{DD422F92-3ED8-49B5-A0B7-F266F98357DF}", INSTALLMODE_NODETECTION, bufW, &len2);
     ok(r == ERROR_MORE_DATA, "got %u\n", r);
     ok(len2 == len, "got %lu\n", len2);
 
@@ -3354,7 +3472,7 @@ static void test_MsiProvideQualifiedComponentEx(void)
     HKEY hkey, hkey2, hkey3, hkey4, hkey5;
     LONG res;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip( "process is limited\n" );
         return;
@@ -3470,15 +3588,15 @@ static void test_MsiProvideQualifiedComponentEx(void)
     DeleteFileA( "msitest\\text.txt" );
     RemoveDirectoryA( "msitest" );
 
-    RegDeleteKeyExA( hkey5, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( hkey5, "", access & KEY_WOW64_64KEY );
     RegCloseKey( hkey5 );
-    RegDeleteKeyExA( hkey4, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( hkey4, "", access & KEY_WOW64_64KEY );
     RegCloseKey( hkey4 );
-    RegDeleteKeyExA( hkey3, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( hkey3, "", access & KEY_WOW64_64KEY );
     RegCloseKey( hkey3 );
-    RegDeleteKeyExA( hkey2, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( hkey2, "", access & KEY_WOW64_64KEY );
     RegCloseKey( hkey2 );
-    RegDeleteKeyExA( hkey, "", access & KEY_WOW64_64KEY, 0 );
+    delete_key( hkey, "", access & KEY_WOW64_64KEY );
     RegCloseKey( hkey );
 }
 
@@ -3597,7 +3715,7 @@ static void test_MsiGetProductCode(void)
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(product, prodcode), "Expected %s, got %s\n", prodcode, product);
 
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Installer\\Products\\");
@@ -3633,7 +3751,7 @@ static void test_MsiGetProductCode(void)
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(product, prodcode), "Expected %s, got %s\n", prodcode, product);
 
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\");
@@ -3651,11 +3769,11 @@ static void test_MsiGetProductCode(void)
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(product, prodcode2), "Expected %s, got %s\n", prodcode2, product);
 
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
     RegDeleteValueA(compkey, prod_squashed);
     RegDeleteValueA(compkey, prod2_squashed);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(compkey);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\");
@@ -3698,7 +3816,7 @@ static void test_MsiGetProductCode(void)
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(product, prodcode), "Expected %s, got %s\n", prodcode, product);
 
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Installer\\Products\\");
@@ -3734,7 +3852,7 @@ static void test_MsiGetProductCode(void)
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(product, prodcode), "Expected %s, got %s\n", prodcode, product);
 
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\");
@@ -3752,11 +3870,11 @@ static void test_MsiGetProductCode(void)
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(product, prodcode2), "Expected %s, got %s\n", prodcode2, product);
 
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
     RegDeleteValueA(compkey, prod_squashed);
     RegDeleteValueA(compkey, prod2_squashed);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(compkey);
     LocalFree(usersid);
 }
@@ -3883,7 +4001,7 @@ static void test_MsiEnumClients(void)
 
     RegDeleteValueA(compkey, prod_squashed);
     RegDeleteValueA(compkey, prod2_squashed);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(compkey);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\");
@@ -3891,12 +4009,6 @@ static void test_MsiEnumClients(void)
     lstrcatA(keypath, comp_squashed);
 
     res = RegCreateKeyExA(HKEY_LOCAL_MACHINE, keypath, 0, NULL, 0, access, NULL, &compkey, NULL);
-    if (res == ERROR_ACCESS_DENIED)
-    {
-        skip("Not enough rights to perform tests\n");
-        LocalFree(usersid);
-        return;
-    }
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* user local component key exists */
@@ -3959,7 +4071,7 @@ static void test_MsiEnumClients(void)
 
     RegDeleteValueA(compkey, prod_squashed);
     RegDeleteValueA(compkey, prod2_squashed);
-    RegDeleteKeyExA(compkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(compkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(compkey);
     LocalFree(usersid);
 }
@@ -4169,6 +4281,13 @@ static void test_MsiGetFileVersion(void)
     lstrcpyA(lang, "lang");
     r = MsiGetFileVersionA(path, version, &versz, lang, &langsz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    if (langchecksz && !langsz)
+    {
+        win_skip("broken MsiGetFileVersionA detected\n");
+        free(vercheck);
+        free(langcheck);
+        return;
+    }
     ok(versz == verchecksz, "Expected %lu, got %lu\n", verchecksz, versz);
     ok(strstr(lang, langcheck) != NULL, "Expected \"%s\" in \"%s\"\n", langcheck, lang);
     ok(!lstrcmpA(version, vercheck),
@@ -4393,7 +4512,7 @@ static void test_MsiGetProductInfo(void)
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "got %lu\n", sz);
 
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
@@ -4505,9 +4624,9 @@ static void test_MsiGetProductInfo(void)
 
     RegDeleteValueA(propkey, "IMadeThis");
     RegDeleteValueA(propkey, "HelpLink");
-    RegDeleteKeyExA(propkey, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(localkey, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(propkey, "", access & KEY_WOW64_64KEY);
+    delete_key(localkey, "", access & KEY_WOW64_64KEY);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(propkey);
     RegCloseKey(localkey);
     RegCloseKey(prodkey);
@@ -4567,8 +4686,8 @@ static void test_MsiGetProductInfo(void)
     ok(sz == 4, "Expected 4, got %lu\n", sz);
 
     RegDeleteValueA(propkey, "HelpLink");
-    RegDeleteKeyExA(propkey, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(localkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(propkey, "", access & KEY_WOW64_64KEY);
+    delete_key(localkey, "", access & KEY_WOW64_64KEY);
     RegDeleteKeyA(prodkey, "");
     RegCloseKey(propkey);
     RegCloseKey(localkey);
@@ -4624,8 +4743,8 @@ static void test_MsiGetProductInfo(void)
     ok(!lstrcmpA(buf, "apple"), "Expected \"apple\", got \"%s\"\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
-    RegDeleteKeyExA(propkey, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(localkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(propkey, "", access & KEY_WOW64_64KEY);
+    delete_key(localkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(propkey);
     RegCloseKey(localkey);
 
@@ -5530,8 +5649,8 @@ static void test_MsiGetProductInfo(void)
     RegDeleteValueA(propkey, "Version");
     RegDeleteValueA(propkey, "ProductIcon");
     RegDeleteValueA(propkey, "AuthorizedLUAApp");
-    RegDeleteKeyExA(propkey, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(localkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(propkey, "", access & KEY_WOW64_64KEY);
+    delete_key(localkey, "", access & KEY_WOW64_64KEY);
     RegDeleteValueA(prodkey, "InstanceType");
     RegDeleteValueA(prodkey, "Transforms");
     RegDeleteValueA(prodkey, "Language");
@@ -5542,8 +5661,8 @@ static void test_MsiGetProductInfo(void)
     RegDeleteValueA(prodkey, "ProductIcon");
     RegDeleteValueA(prodkey, "AuthorizedLUAApp");
     RegDeleteValueA(source, "PackageName");
-    RegDeleteKeyExA(source, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(source, "", access & KEY_WOW64_64KEY);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(propkey);
     RegCloseKey(localkey);
     RegCloseKey(source);
@@ -5567,6 +5686,12 @@ static void test_MsiGetProductInfoEx(void)
     DWORD sz;
     REGSAM access = KEY_ALL_ACCESS;
 
+    if (!pMsiGetProductInfoExA)
+    {
+        win_skip("MsiGetProductInfoExA is not available\n");
+        return;
+    }
+
     create_test_guid(prodcode, prod_squashed);
     create_test_guid(packcode, pack_squashed);
     usersid = get_user_sid();
@@ -5577,95 +5702,115 @@ static void test_MsiGetProductInfoEx(void)
     /* NULL szProductCode */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(NULL, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
-                             INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetProductInfoExA(NULL, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
     /* empty szProductCode */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA("", usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
-                             INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetProductInfoExA("", usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
     /* garbage szProductCode */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA("garbage", usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
-                             INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetProductInfoExA("garbage", usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
     /* guid without brackets */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA("6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D", usersid,
-                             MSIINSTALLCONTEXT_USERUNMANAGED,
-                             INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetProductInfoExA("6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D", usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
     /* guid with brackets */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA("{6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D}", usersid,
-                             MSIINSTALLCONTEXT_USERUNMANAGED,
-                             INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA("{6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D}", usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
     /* szValue is non-NULL while pcchValue is NULL */
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
-                             INSTALLPROPERTY_PRODUCTSTATEA, buf, NULL);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, NULL);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
 
     /* dwContext is out of range */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, 42, INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid, 42,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
     /* szProperty is NULL */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, NULL, buf, &sz);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              NULL, buf, &sz);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
     /* szProperty is empty */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, "", buf, &sz);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              "", buf, &sz);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
     /* szProperty is not a valid property */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, "notvalid", buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              "notvalid", buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
     /* same length as guid, but random */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA("A938G02JF-2NF3N93-VN3-2NNF-3KGKALDNF93", usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
-                             INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetProductInfoExA("A938G02JF-2NF3N93-VN3-2NNF-3KGKALDNF93", usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -5688,9 +5833,11 @@ static void test_MsiGetProductInfoEx(void)
     /* local user product key exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTSTATEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -5700,9 +5847,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallProperties key exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTSTATEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -5712,8 +5861,9 @@ static void test_MsiGetProductInfoEx(void)
     /* LocalPackage value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTSTATEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "5"), "Expected \"5\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
@@ -5723,8 +5873,11 @@ static void test_MsiGetProductInfoEx(void)
     /* LocalPackage value must exist */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPLINKA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPLINKA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -5734,7 +5887,9 @@ static void test_MsiGetProductInfoEx(void)
     /* LocalPackage exists, but HelpLink does not exist */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPLINKA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPLINKA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, ""), "Expected \"\", got \"%s\"\n", buf);
     ok(sz == 0, "Expected 0, got %lu\n", sz);
@@ -5745,7 +5900,9 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpLink value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPLINKA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPLINKA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "link"), "Expected \"link\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -5756,45 +5913,53 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpTelephone value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPTELEPHONEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPTELEPHONEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "phone"), "Expected \"phone\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
 
     /* szValue and pcchValue are NULL */
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPTELEPHONEA,
-                             NULL, NULL);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPTELEPHONEA, NULL, NULL);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
 
     /* pcchValue is exactly 5 */
     sz = 5;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPTELEPHONEA,
-                             buf, &sz);
-    ok(r == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPTELEPHONEA, buf, &sz);
+    ok(r == ERROR_MORE_DATA,
+       "Expected ERROR_MORE_DATA, got %d\n", r);
     ok(sz == 10, "Expected 10, got %lu\n", sz);
 
     /* szValue is NULL, pcchValue is exactly 5 */
     sz = 5;
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPTELEPHONEA,
-                             NULL, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPTELEPHONEA, NULL, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(sz == 10, "Expected 10, got %lu\n", sz);
 
     /* szValue is NULL, pcchValue is MAX_PATH */
     sz = MAX_PATH;
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPTELEPHONEA,
-                             NULL, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPTELEPHONEA, NULL, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(sz == 10, "Expected 10, got %lu\n", sz);
 
     /* pcchValue is exactly 0 */
     sz = 0;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPTELEPHONEA,
-                             buf, &sz);
-    ok(r == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPTELEPHONEA, buf, &sz);
+    ok(r == ERROR_MORE_DATA,
+       "Expected ERROR_MORE_DATA, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected \"apple\", got \"%s\"\n", buf);
     ok(sz == 10, "Expected 10, got %lu\n", sz);
 
@@ -5804,8 +5969,11 @@ static void test_MsiGetProductInfoEx(void)
     /* szProperty is not a valid property */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, "notvalid", buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              "notvalid", buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -5815,8 +5983,9 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallDate value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_INSTALLDATEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_INSTALLDATEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "date"), "Expected \"date\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -5827,8 +5996,9 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "name"), "Expected \"name\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -5839,8 +6009,9 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallLocation value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_INSTALLLOCATIONA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_INSTALLLOCATIONA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "loc"), "Expected \"loc\", got \"%s\"\n", buf);
     ok(sz == 3, "Expected 3, got %lu\n", sz);
@@ -5851,8 +6022,9 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallSource value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_INSTALLSOURCEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_INSTALLSOURCEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "source"), "Expected \"source\", got \"%s\"\n", buf);
     ok(sz == 6, "Expected 6, got %lu\n", sz);
@@ -5863,8 +6035,9 @@ static void test_MsiGetProductInfoEx(void)
     /* LocalPackage value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_LOCALPACKAGEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "local"), "Expected \"local\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -5875,8 +6048,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Publisher value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PUBLISHERA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PUBLISHERA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "pub"), "Expected \"pub\", got \"%s\"\n", buf);
     ok(sz == 3, "Expected 3, got %lu\n", sz);
@@ -5887,8 +6061,9 @@ static void test_MsiGetProductInfoEx(void)
     /* URLInfoAbout value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_URLINFOABOUTA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_URLINFOABOUTA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "about"), "Expected \"about\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -5899,8 +6074,9 @@ static void test_MsiGetProductInfoEx(void)
     /* URLUpdateInfo value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_URLUPDATEINFOA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_URLUPDATEINFOA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "update"), "Expected \"update\", got \"%s\"\n", buf);
     ok(sz == 6, "Expected 6, got %lu\n", sz);
@@ -5911,8 +6087,9 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMinor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_VERSIONMINORA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_VERSIONMINORA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "2"), "Expected \"2\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
@@ -5923,8 +6100,9 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMajor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_VERSIONMAJORA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_VERSIONMAJORA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "3"), "Expected \"3\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
@@ -5935,8 +6113,9 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayVersion value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_VERSIONSTRINGA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_VERSIONSTRINGA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "3.2.1"), "Expected \"3.2.1\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -5947,8 +6126,9 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductID value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTIDA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTIDA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "id"), "Expected \"id\", got \"%s\"\n", buf);
     ok(sz == 2, "Expected 2, got %lu\n", sz);
@@ -5959,8 +6139,9 @@ static void test_MsiGetProductInfoEx(void)
     /* RegCompany value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_REGCOMPANYA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_REGCOMPANYA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "comp"), "Expected \"comp\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -5971,8 +6152,9 @@ static void test_MsiGetProductInfoEx(void)
     /* RegOwner value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_REGOWNERA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_REGOWNERA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "owner"), "Expected \"owner\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -5983,9 +6165,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Transforms value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_TRANSFORMSA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_TRANSFORMSA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -5995,9 +6179,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Language value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LANGUAGEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_LANGUAGEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6007,9 +6193,11 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTNAMEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTNAMEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6021,9 +6209,11 @@ static void test_MsiGetProductInfoEx(void)
     /* AssignmentType value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_ASSIGNMENTTYPEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_ASSIGNMENTTYPEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6033,9 +6223,11 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageCode value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PACKAGECODEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PACKAGECODEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6045,9 +6237,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Version value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_VERSIONA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_VERSIONA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6057,9 +6251,11 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductIcon value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTICONA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTICONA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6069,9 +6265,11 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PACKAGENAMEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PACKAGENAMEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6081,9 +6279,11 @@ static void test_MsiGetProductInfoEx(void)
     /* AuthorizedLUAApp value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_AUTHORIZED_LUA_APPA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_AUTHORIZED_LUA_APPA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6129,9 +6329,11 @@ static void test_MsiGetProductInfoEx(void)
     /* user product key exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTSTATEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6146,9 +6348,17 @@ static void test_MsiGetProductInfoEx(void)
 
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTSTATEA,
-                             buf, &sz);
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_SUCCESS || broken(r == ERROR_UNKNOWN_PRODUCT), "Expected ERROR_SUCCESS, got %d\n", r);
+    if (r == ERROR_UNKNOWN_PRODUCT)
+    {
+        win_skip("skipping remaining tests for MsiGetProductInfoEx\n");
+        delete_key(prodkey, "", access);
+        RegCloseKey(prodkey);
+        return;
+    }
     ok(!lstrcmpA(buf, "1"), "Expected \"1\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
 
@@ -6158,9 +6368,11 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpLink value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPLINKA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPLINKA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6170,9 +6382,11 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpTelephone value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_HELPTELEPHONEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_HELPTELEPHONEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6182,9 +6396,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallDate value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_INSTALLDATEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_INSTALLDATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6194,9 +6410,11 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6206,9 +6424,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallLocation value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_INSTALLLOCATIONA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_INSTALLLOCATIONA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6218,9 +6438,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallSource value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_INSTALLSOURCEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_INSTALLSOURCEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6230,9 +6452,11 @@ static void test_MsiGetProductInfoEx(void)
     /* LocalPackage value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_LOCALPACKAGEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6242,9 +6466,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Publisher value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PUBLISHERA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PUBLISHERA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6254,9 +6480,11 @@ static void test_MsiGetProductInfoEx(void)
     /* URLInfoAbout value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_URLINFOABOUTA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_URLINFOABOUTA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6266,9 +6494,11 @@ static void test_MsiGetProductInfoEx(void)
     /* URLUpdateInfo value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_URLUPDATEINFOA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_URLUPDATEINFOA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6278,9 +6508,11 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMinor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_VERSIONMINORA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_VERSIONMINORA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6290,9 +6522,11 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMajor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_VERSIONMAJORA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_VERSIONMAJORA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6302,9 +6536,11 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayVersion value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_VERSIONSTRINGA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_VERSIONSTRINGA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6314,9 +6550,11 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductID value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTIDA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTIDA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6326,9 +6564,11 @@ static void test_MsiGetProductInfoEx(void)
     /* RegCompany value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_REGCOMPANYA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_REGCOMPANYA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6338,9 +6578,11 @@ static void test_MsiGetProductInfoEx(void)
     /* RegOwner value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_REGOWNERA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_REGOWNERA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6350,8 +6592,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Transforms value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_TRANSFORMSA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_TRANSFORMSA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "trans"), "Expected \"trans\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -6362,8 +6605,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Language value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LANGUAGEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_LANGUAGEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "lang"), "Expected \"lang\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -6374,8 +6618,9 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTNAMEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTNAMEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "name"), "Expected \"name\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -6388,8 +6633,9 @@ static void test_MsiGetProductInfoEx(void)
     /* AssignmentType value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_ASSIGNMENTTYPEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_ASSIGNMENTTYPEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, ""), "Expected \"\", got \"%s\"\n", buf);
     ok(sz == 0, "Expected 0, got %lu\n", sz);
@@ -6402,11 +6648,13 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageCode value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PACKAGECODEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PACKAGECODEA, buf, &sz);
     todo_wine
     {
-        ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+        ok(r == ERROR_BAD_CONFIGURATION,
+           "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
         ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
         ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
     }
@@ -6417,8 +6665,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Version value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_VERSIONA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_VERSIONA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "ver"), "Expected \"ver\", got \"%s\"\n", buf);
     ok(sz == 3, "Expected 3, got %lu\n", sz);
@@ -6429,8 +6678,9 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductIcon value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PRODUCTICONA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PRODUCTICONA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "icon"), "Expected \"icon\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -6441,11 +6691,13 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_PACKAGENAMEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_PACKAGENAMEA, buf, &sz);
     todo_wine
     {
-        ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+        ok(r == ERROR_UNKNOWN_PRODUCT,
+           "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
         ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
         ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
     }
@@ -6456,8 +6708,9 @@ static void test_MsiGetProductInfoEx(void)
     /* AuthorizedLUAApp value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_AUTHORIZED_LUA_APPA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERUNMANAGED,
+                              INSTALLPROPERTY_AUTHORIZED_LUA_APPA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "auth"), "Expected \"auth\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -6488,7 +6741,7 @@ static void test_MsiGetProductInfoEx(void)
     RegDeleteValueA(prodkey, "HelpTelephone");
     RegDeleteValueA(prodkey, "HelpLink");
     RegDeleteValueA(prodkey, "LocalPackage");
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     /* MSIINSTALLCONTEXT_USERMANAGED */
@@ -6504,9 +6757,11 @@ static void test_MsiGetProductInfoEx(void)
     /* local user product key exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTSTATEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6516,9 +6771,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallProperties key exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTSTATEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6528,8 +6785,9 @@ static void test_MsiGetProductInfoEx(void)
     /* ManagedLocalPackage value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTSTATEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "5"), "Expected \"5\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
@@ -6540,8 +6798,9 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpLink value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_HELPLINKA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_HELPLINKA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "link"), "Expected \"link\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -6552,8 +6811,9 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpTelephone value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_HELPTELEPHONEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_HELPTELEPHONEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "phone"), "Expected \"phone\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -6564,8 +6824,9 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallDate value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_INSTALLDATEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_INSTALLDATEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "date"), "Expected \"date\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -6576,8 +6837,9 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "name"), "Expected \"name\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -6588,8 +6850,9 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallLocation value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_INSTALLLOCATIONA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_INSTALLLOCATIONA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "loc"), "Expected \"loc\", got \"%s\"\n", buf);
     ok(sz == 3, "Expected 3, got %lu\n", sz);
@@ -6600,8 +6863,9 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallSource value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_INSTALLSOURCEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_INSTALLSOURCEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "source"), "Expected \"source\", got \"%s\"\n", buf);
     ok(sz == 6, "Expected 6, got %lu\n", sz);
@@ -6612,8 +6876,9 @@ static void test_MsiGetProductInfoEx(void)
     /* LocalPackage value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_LOCALPACKAGEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "local"), "Expected \"local\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -6624,8 +6889,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Publisher value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PUBLISHERA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PUBLISHERA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "pub"), "Expected \"pub\", got \"%s\"\n", buf);
     ok(sz == 3, "Expected 3, got %lu\n", sz);
@@ -6636,8 +6902,9 @@ static void test_MsiGetProductInfoEx(void)
     /* URLInfoAbout value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_URLINFOABOUTA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_URLINFOABOUTA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "about"), "Expected \"about\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -6648,8 +6915,9 @@ static void test_MsiGetProductInfoEx(void)
     /* URLUpdateInfo value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_URLUPDATEINFOA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_URLUPDATEINFOA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "update"), "Expected \"update\", got \"%s\"\n", buf);
     ok(sz == 6, "Expected 6, got %lu\n", sz);
@@ -6660,8 +6928,9 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMinor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_VERSIONMINORA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_VERSIONMINORA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "2"), "Expected \"2\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
@@ -6672,8 +6941,9 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMajor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_VERSIONMAJORA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_VERSIONMAJORA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "3"), "Expected \"3\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
@@ -6684,8 +6954,9 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayVersion value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_VERSIONSTRINGA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_VERSIONSTRINGA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "3.2.1"), "Expected \"3.2.1\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -6696,8 +6967,9 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductID value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTIDA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTIDA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "id"), "Expected \"id\", got \"%s\"\n", buf);
     ok(sz == 2, "Expected 2, got %lu\n", sz);
@@ -6708,8 +6980,9 @@ static void test_MsiGetProductInfoEx(void)
     /* RegCompany value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_REGCOMPANYA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_REGCOMPANYA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "comp"), "Expected \"comp\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -6720,8 +6993,9 @@ static void test_MsiGetProductInfoEx(void)
     /* RegOwner value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_REGOWNERA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_REGOWNERA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "owner"), "Expected \"owner\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -6732,9 +7006,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Transforms value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_TRANSFORMSA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_TRANSFORMSA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6744,9 +7020,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Language value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LANGUAGEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_LANGUAGEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6756,9 +7034,11 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTNAMEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTNAMEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6770,9 +7050,11 @@ static void test_MsiGetProductInfoEx(void)
     /* AssignmentType value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_ASSIGNMENTTYPEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_ASSIGNMENTTYPEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6782,9 +7064,11 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageCode value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PACKAGECODEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PACKAGECODEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6794,9 +7078,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Version value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_VERSIONA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_VERSIONA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6806,9 +7092,11 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductIcon value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTICONA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTICONA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6818,9 +7106,11 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PACKAGENAMEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PACKAGENAMEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6830,9 +7120,11 @@ static void test_MsiGetProductInfoEx(void)
     /* AuthorizedLUAApp value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_AUTHORIZED_LUA_APPA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_AUTHORIZED_LUA_APPA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6862,9 +7154,9 @@ static void test_MsiGetProductInfoEx(void)
     RegDeleteValueA(propkey, "HelpTelephone");
     RegDeleteValueA(propkey, "HelpLink");
     RegDeleteValueA(propkey, "ManagedLocalPackage");
-    RegDeleteKeyExA(propkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(propkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(propkey);
-    RegDeleteKeyExA(localkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(localkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(localkey);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\Managed\\");
@@ -6878,13 +7170,14 @@ static void test_MsiGetProductInfoEx(void)
     /* user product key exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTSTATEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "1"), "Expected \"1\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
 
-    RegDeleteKeyExA(userkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(userkey);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Installer\\Products\\");
@@ -6896,9 +7189,11 @@ static void test_MsiGetProductInfoEx(void)
     /* current user product key exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTSTATEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6908,9 +7203,11 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpLink value exists, user product key does not exist */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_HELPLINKA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_HELPLINKA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6928,9 +7225,11 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpLink value exists, user product key does exist */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_HELPLINKA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_HELPLINKA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6940,9 +7239,11 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpTelephone value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_HELPTELEPHONEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_HELPTELEPHONEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6952,9 +7253,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallDate value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_INSTALLDATEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_INSTALLDATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6964,9 +7267,11 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6976,9 +7281,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallLocation value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_INSTALLLOCATIONA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_INSTALLLOCATIONA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -6988,9 +7295,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallSource value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_INSTALLSOURCEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_INSTALLSOURCEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7000,9 +7309,11 @@ static void test_MsiGetProductInfoEx(void)
     /* LocalPackage value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_LOCALPACKAGEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7012,9 +7323,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Publisher value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PUBLISHERA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PUBLISHERA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7024,9 +7337,11 @@ static void test_MsiGetProductInfoEx(void)
     /* URLInfoAbout value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_URLINFOABOUTA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_URLINFOABOUTA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7036,9 +7351,11 @@ static void test_MsiGetProductInfoEx(void)
     /* URLUpdateInfo value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_URLUPDATEINFOA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_URLUPDATEINFOA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7048,9 +7365,11 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMinor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_VERSIONMINORA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_VERSIONMINORA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7060,9 +7379,11 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMajor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_VERSIONMAJORA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_VERSIONMAJORA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7072,9 +7393,11 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayVersion value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_VERSIONSTRINGA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_VERSIONSTRINGA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7084,9 +7407,11 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductID value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTIDA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTIDA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7096,9 +7421,11 @@ static void test_MsiGetProductInfoEx(void)
     /* RegCompany value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_REGCOMPANYA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_REGCOMPANYA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7108,9 +7435,11 @@ static void test_MsiGetProductInfoEx(void)
     /* RegOwner value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_REGOWNERA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_REGOWNERA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7120,8 +7449,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Transforms value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_TRANSFORMSA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_TRANSFORMSA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "trans"), "Expected \"trans\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -7132,8 +7462,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Language value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LANGUAGEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_LANGUAGEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "lang"), "Expected \"lang\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7144,8 +7475,9 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTNAMEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTNAMEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "name"), "Expected \"name\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7158,8 +7490,9 @@ static void test_MsiGetProductInfoEx(void)
     /* AssignmentType value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_ASSIGNMENTTYPEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_ASSIGNMENTTYPEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, ""), "Expected \"\", got \"%s\"\n", buf);
     ok(sz == 0, "Expected 0, got %lu\n", sz);
@@ -7172,11 +7505,13 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageCode value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PACKAGECODEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PACKAGECODEA, buf, &sz);
     todo_wine
     {
-        ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+        ok(r == ERROR_BAD_CONFIGURATION,
+           "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
         ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
         ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
     }
@@ -7187,8 +7522,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Version value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_VERSIONA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_VERSIONA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "ver"), "Expected \"ver\", got \"%s\"\n", buf);
     ok(sz == 3, "Expected 3, got %lu\n", sz);
@@ -7199,8 +7535,9 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductIcon value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PRODUCTICONA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PRODUCTICONA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "icon"), "Expected \"icon\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7211,11 +7548,13 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PACKAGENAMEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_PACKAGENAMEA, buf, &sz);
     todo_wine
     {
-        ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+        ok(r == ERROR_UNKNOWN_PRODUCT,
+           "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
         ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
         ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
     }
@@ -7226,8 +7565,9 @@ static void test_MsiGetProductInfoEx(void)
     /* AuthorizedLUAApp value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_AUTHORIZED_LUA_APPA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_USERMANAGED,
+                              INSTALLPROPERTY_AUTHORIZED_LUA_APPA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "auth"), "Expected \"auth\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7257,9 +7597,9 @@ static void test_MsiGetProductInfoEx(void)
     RegDeleteValueA(userkey, "InstallDate");
     RegDeleteValueA(userkey, "HelpTelephone");
     RegDeleteValueA(userkey, "HelpLink");
-    RegDeleteKeyExA(userkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(userkey);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     /* MSIINSTALLCONTEXT_MACHINE */
@@ -7267,8 +7607,11 @@ static void test_MsiGetProductInfoEx(void)
     /* szUserSid is non-NULL */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, usersid, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, usersid,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7281,8 +7624,11 @@ static void test_MsiGetProductInfoEx(void)
     /* local system product key exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7292,8 +7638,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallProperties key exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7303,7 +7652,9 @@ static void test_MsiGetProductInfoEx(void)
     /* LocalPackage value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "5"), "Expected \"5\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
@@ -7314,7 +7665,9 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpLink value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_HELPLINKA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_HELPLINKA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "link"), "Expected \"link\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7325,7 +7678,9 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpTelephone value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_HELPTELEPHONEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_HELPTELEPHONEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "phone"), "Expected \"phone\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -7336,7 +7691,9 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallDate value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_INSTALLDATEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_INSTALLDATEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "date"), "Expected \"date\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7347,8 +7704,9 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "name"), "Expected \"name\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7359,7 +7717,9 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallLocation value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_INSTALLLOCATIONA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_INSTALLLOCATIONA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "loc"), "Expected \"loc\", got \"%s\"\n", buf);
     ok(sz == 3, "Expected 3, got %lu\n", sz);
@@ -7370,7 +7730,9 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallSource value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_INSTALLSOURCEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_INSTALLSOURCEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "source"), "Expected \"source\", got \"%s\"\n", buf);
     ok(sz == 6, "Expected 6, got %lu\n", sz);
@@ -7381,7 +7743,9 @@ static void test_MsiGetProductInfoEx(void)
     /* LocalPackage value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_LOCALPACKAGEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "local"), "Expected \"local\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -7392,7 +7756,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Publisher value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PUBLISHERA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PUBLISHERA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "pub"), "Expected \"pub\", got \"%s\"\n", buf);
     ok(sz == 3, "Expected 3, got %lu\n", sz);
@@ -7403,7 +7769,9 @@ static void test_MsiGetProductInfoEx(void)
     /* URLInfoAbout value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_URLINFOABOUTA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_URLINFOABOUTA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "about"), "Expected \"about\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -7414,7 +7782,9 @@ static void test_MsiGetProductInfoEx(void)
     /* URLUpdateInfo value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_URLUPDATEINFOA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_URLUPDATEINFOA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "update"), "Expected \"update\", got \"%s\"\n", buf);
     ok(sz == 6, "Expected 6, got %lu\n", sz);
@@ -7425,7 +7795,9 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMinor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_VERSIONMINORA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_VERSIONMINORA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "2"), "Expected \"2\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
@@ -7436,7 +7808,9 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMajor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_VERSIONMAJORA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_VERSIONMAJORA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "3"), "Expected \"3\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
@@ -7447,7 +7821,9 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayVersion value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_VERSIONSTRINGA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_VERSIONSTRINGA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "3.2.1"), "Expected \"3.2.1\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -7458,7 +7834,9 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductID value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTIDA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTIDA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "id"), "Expected \"id\", got \"%s\"\n", buf);
     ok(sz == 2, "Expected 2, got %lu\n", sz);
@@ -7469,7 +7847,9 @@ static void test_MsiGetProductInfoEx(void)
     /* RegCompany value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_REGCOMPANYA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_REGCOMPANYA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "comp"), "Expected \"comp\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7480,7 +7860,9 @@ static void test_MsiGetProductInfoEx(void)
     /* RegOwner value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_REGOWNERA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_REGOWNERA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "owner"), "Expected \"owner\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -7491,8 +7873,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Transforms value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_TRANSFORMSA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_TRANSFORMSA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7502,8 +7887,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Language value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LANGUAGEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_LANGUAGEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7513,8 +7901,11 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTNAMEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTNAMEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7526,8 +7917,11 @@ static void test_MsiGetProductInfoEx(void)
     /* AssignmentType value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_ASSIGNMENTTYPEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_ASSIGNMENTTYPEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7537,8 +7931,11 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageCode value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PACKAGECODEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PACKAGECODEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7548,8 +7945,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Version value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_VERSIONA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_VERSIONA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7559,8 +7959,11 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductIcon value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTICONA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTICONA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7570,8 +7973,11 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PACKAGENAMEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PACKAGENAMEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7581,8 +7987,11 @@ static void test_MsiGetProductInfoEx(void)
     /* AuthorizedLUAApp value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_AUTHORIZED_LUA_APPA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_AUTHORIZED_LUA_APPA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7612,9 +8021,9 @@ static void test_MsiGetProductInfoEx(void)
     RegDeleteValueA(propkey, "HelpTelephone");
     RegDeleteValueA(propkey, "HelpLink");
     RegDeleteValueA(propkey, "LocalPackage");
-    RegDeleteKeyExA(propkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(propkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(propkey);
-    RegDeleteKeyExA(localkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(localkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(localkey);
 
     lstrcpyA(keypath, "Software\\Classes\\Installer\\Products\\");
@@ -7632,7 +8041,9 @@ static void test_MsiGetProductInfoEx(void)
     /* local classes product key exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTSTATEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "1"), "Expected \"1\", got \"%s\"\n", buf);
     ok(sz == 1, "Expected 1, got %lu\n", sz);
@@ -7643,8 +8054,11 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpLink value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_HELPLINKA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_HELPLINKA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7654,8 +8068,11 @@ static void test_MsiGetProductInfoEx(void)
     /* HelpTelephone value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_HELPTELEPHONEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_HELPTELEPHONEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7665,8 +8082,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallDate value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_INSTALLDATEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_INSTALLDATEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7676,9 +8096,11 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA,
-                             buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_INSTALLEDPRODUCTNAMEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7688,8 +8110,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallLocation value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_INSTALLLOCATIONA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_INSTALLLOCATIONA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7699,8 +8124,11 @@ static void test_MsiGetProductInfoEx(void)
     /* InstallSource value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_INSTALLSOURCEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_INSTALLSOURCEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7710,8 +8138,11 @@ static void test_MsiGetProductInfoEx(void)
     /* LocalPackage value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_LOCALPACKAGEA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7721,8 +8152,11 @@ static void test_MsiGetProductInfoEx(void)
     /* Publisher value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PUBLISHERA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PUBLISHERA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7732,8 +8166,11 @@ static void test_MsiGetProductInfoEx(void)
     /* URLInfoAbout value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_URLINFOABOUTA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_URLINFOABOUTA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7743,8 +8180,11 @@ static void test_MsiGetProductInfoEx(void)
     /* URLUpdateInfo value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_URLUPDATEINFOA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_URLUPDATEINFOA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7754,8 +8194,11 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMinor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_VERSIONMINORA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_VERSIONMINORA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7765,8 +8208,11 @@ static void test_MsiGetProductInfoEx(void)
     /* VersionMajor value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_VERSIONMAJORA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_VERSIONMAJORA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7776,8 +8222,11 @@ static void test_MsiGetProductInfoEx(void)
     /* DisplayVersion value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_VERSIONSTRINGA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_VERSIONSTRINGA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7787,8 +8236,11 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductID value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTIDA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTIDA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7798,8 +8250,11 @@ static void test_MsiGetProductInfoEx(void)
     /* RegCompany value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_REGCOMPANYA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_REGCOMPANYA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7809,8 +8264,11 @@ static void test_MsiGetProductInfoEx(void)
     /* RegOwner value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_REGOWNERA, buf, &sz);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_REGOWNERA, buf, &sz);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
     ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
 
@@ -7820,7 +8278,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Transforms value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_TRANSFORMSA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_TRANSFORMSA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "trans"), "Expected \"trans\", got \"%s\"\n", buf);
     ok(sz == 5, "Expected 5, got %lu\n", sz);
@@ -7831,7 +8291,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Language value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LANGUAGEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_LANGUAGEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "lang"), "Expected \"lang\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7842,7 +8304,9 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTNAMEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTNAMEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "name"), "Expected \"name\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7855,7 +8319,9 @@ static void test_MsiGetProductInfoEx(void)
     /* AssignmentType value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_ASSIGNMENTTYPEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_ASSIGNMENTTYPEA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, ""), "Expected \"\", got \"%s\"\n", buf);
     ok(sz == 0, "Expected 0, got %lu\n", sz);
@@ -7868,10 +8334,13 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageCode value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PACKAGECODEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PACKAGECODEA, buf, &sz);
     todo_wine
     {
-        ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+        ok(r == ERROR_BAD_CONFIGURATION,
+           "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
         ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
         ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
     }
@@ -7882,7 +8351,9 @@ static void test_MsiGetProductInfoEx(void)
     /* Version value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_VERSIONA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_VERSIONA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "ver"), "Expected \"ver\", got \"%s\"\n", buf);
     ok(sz == 3, "Expected 3, got %lu\n", sz);
@@ -7893,7 +8364,9 @@ static void test_MsiGetProductInfoEx(void)
     /* ProductIcon value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PRODUCTICONA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PRODUCTICONA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "icon"), "Expected \"icon\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7904,10 +8377,13 @@ static void test_MsiGetProductInfoEx(void)
     /* PackageName value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_PACKAGENAMEA, buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_PACKAGENAMEA, buf, &sz);
     todo_wine
     {
-        ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+        ok(r == ERROR_UNKNOWN_PRODUCT,
+           "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
         ok(!lstrcmpA(buf, "apple"), "Expected buf to be unchanged, got %s\n", buf);
         ok(sz == MAX_PATH, "Expected MAX_PATH, got %lu\n", sz);
     }
@@ -7918,8 +8394,9 @@ static void test_MsiGetProductInfoEx(void)
     /* AuthorizedLUAApp value exists */
     sz = MAX_PATH;
     lstrcpyA(buf, "apple");
-    r = MsiGetProductInfoExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_AUTHORIZED_LUA_APPA,
-                             buf, &sz);
+    r = pMsiGetProductInfoExA(prodcode, NULL,
+                              MSIINSTALLCONTEXT_MACHINE,
+                              INSTALLPROPERTY_AUTHORIZED_LUA_APPA, buf, &sz);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(buf, "auth"), "Expected \"auth\", got \"%s\"\n", buf);
     ok(sz == 4, "Expected 4, got %lu\n", sz);
@@ -7949,7 +8426,7 @@ static void test_MsiGetProductInfoEx(void)
     RegDeleteValueA(prodkey, "InstallDate");
     RegDeleteValueA(prodkey, "HelpTelephone");
     RegDeleteValueA(prodkey, "HelpLink");
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
     LocalFree(usersid);
 }
@@ -8306,11 +8783,11 @@ static void test_MsiGetUserInfo(void)
     RegDeleteValueA(props, "ProductID");
     RegDeleteValueA(props, "RegCompany");
     RegDeleteValueA(props, "RegOwner");
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(userprod, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userprod, "", access & KEY_WOW64_64KEY);
     RegCloseKey(userprod);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     /* MSIINSTALLCONTEXT_USERUNMANAGED */
@@ -8424,9 +8901,9 @@ static void test_MsiGetUserInfo(void)
     RegDeleteValueA(props, "ProductID");
     RegDeleteValueA(props, "RegCompany");
     RegDeleteValueA(props, "RegOwner");
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(userprod, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userprod, "", access & KEY_WOW64_64KEY);
     RegCloseKey(userprod);
     RegDeleteKeyA(prodkey, "");
     RegCloseKey(prodkey);
@@ -8547,11 +9024,11 @@ static void test_MsiGetUserInfo(void)
     RegDeleteValueA(props, "ProductID");
     RegDeleteValueA(props, "RegCompany");
     RegDeleteValueA(props, "RegOwner");
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(userprod, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userprod, "", access & KEY_WOW64_64KEY);
     RegCloseKey(userprod);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
     LocalFree(usersid);
 }
@@ -8711,11 +9188,11 @@ static void test_MsiOpenProduct(void)
     MsiCloseHandle(hprod);
 
     RegDeleteValueA(props, "ManagedLocalPackage");
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(userkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(userkey);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     /* MSIINSTALLCONTEXT_USERUNMANAGED */
@@ -8780,9 +9257,9 @@ static void test_MsiOpenProduct(void)
     MsiCloseHandle(hprod);
 
     RegDeleteValueA(props, "LocalPackage");
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(userkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(userkey);
     RegDeleteKeyA(prodkey, "");
     RegCloseKey(prodkey);
@@ -8872,11 +9349,11 @@ static void test_MsiOpenProduct(void)
     ok(hprod == 0xdeadbeef, "Expected hprod to be unchanged\n");
 
     RegDeleteValueA(props, "LocalPackage");
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(userkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(userkey);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     DeleteFileA(msifile);
@@ -8909,19 +9386,23 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
-                          MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
-                          &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     if (r == ERROR_ACCESS_DENIED)
     {
         skip("Not enough rights to perform tests\n");
         return;
     }
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\Managed\\");
@@ -8943,13 +9424,18 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(prodkey, "Patches", 0, NULL, 0, access, NULL, &patches, NULL);
@@ -8961,13 +9447,18 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(patches, "Patches", 0, REG_SZ,
@@ -8981,13 +9472,19 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ,
@@ -9000,13 +9497,19 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     patch_squashed[lstrlenA(patch_squashed) + 1] = '\0';
@@ -9021,13 +9524,18 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(patches, patch_squashed, 0, REG_SZ,
@@ -9040,14 +9548,20 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERMANAGED, "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* increase the index */
     lstrcpyA(patchcode, "apple");
@@ -9055,13 +9569,18 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          1, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 1, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* increase again */
@@ -9070,13 +9589,19 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          2, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 2, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* szPatchCode is NULL */
@@ -9084,52 +9609,72 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, NULL, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, NULL, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERMANAGED, "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* szTargetProductCode is NULL */
     lstrcpyA(patchcode, "apple");
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, NULL, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, NULL,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(context == MSIINSTALLCONTEXT_USERMANAGED, "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(context == MSIINSTALLCONTEXT_USERMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* pdwTargetProductContext is NULL */
     lstrcpyA(patchcode, "apple");
     lstrcpyA(targetprod, "banana");
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, NULL, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           NULL, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* szTargetUserSid is NULL */
     lstrcpyA(patchcode, "apple");
     lstrcpyA(targetprod, "banana");
     context = 0xdeadbeef;
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, NULL, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, NULL, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERMANAGED, "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
-    ok(size == lstrlenA(expectedsid) * sizeof(WCHAR), "Expected %d*sizeof(WCHAR), got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
+    ok(size == lstrlenA(expectedsid) * sizeof(WCHAR),
+       "Expected %d*sizeof(WCHAR), got %lu\n", lstrlenA(expectedsid), size);
 
     /* pcchTargetUserSid is exactly the length of szTargetUserSid */
     lstrcpyA(patchcode, "apple");
@@ -9137,14 +9682,20 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = lstrlenA(expectedsid);
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERMANAGED, "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
-    ok(!strncmp(targetsid, expectedsid, lstrlenA(expectedsid) - 1), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid) * sizeof(WCHAR), "Expected %d*sizeof(WCHAR), got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
+    ok(!strncmp(targetsid, expectedsid, lstrlenA(expectedsid) - 1),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid) * sizeof(WCHAR),
+       "Expected %d*sizeof(WCHAR), got %lu\n", lstrlenA(expectedsid), size);
 
     /* pcchTargetUserSid has enough room for NULL terminator */
     lstrcpyA(patchcode, "apple");
@@ -9152,25 +9703,35 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = lstrlenA(expectedsid) + 1;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERMANAGED, "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* both szTargetuserSid and pcchTargetUserSid are NULL */
     lstrcpyA(patchcode, "apple");
     lstrcpyA(targetprod, "banana");
     context = 0xdeadbeef;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, NULL, NULL);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, NULL, NULL);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERMANAGED, "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
 
     /* MSIPATCHSTATE_SUPERSEDED */
 
@@ -9179,13 +9740,18 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
@@ -9207,13 +9773,18 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(udprod, "Patches", 0, NULL, 0, access, NULL, &udpatch, NULL);
@@ -9225,13 +9796,18 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(udpatch, patch_squashed, 0, NULL, 0, access, NULL, &hpatch, NULL);
@@ -9243,13 +9819,19 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     data = MSIPATCHSTATE_SUPERSEDED;
@@ -9263,14 +9845,20 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERMANAGED, "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* MSIPATCHSTATE_OBSOLETED */
 
@@ -9279,13 +9867,18 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_OBSOLETED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_OBSOLETED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     data = MSIPATCHSTATE_OBSOLETED;
@@ -9299,14 +9892,20 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_OBSOLETED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_OBSOLETED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERMANAGED, "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* MSIPATCHSTATE_REGISTERED */
     /* FIXME */
@@ -9319,14 +9918,20 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_ALL,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_ALL, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERMANAGED, "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* same patch in multiple places, only one is enumerated */
     lstrcpyA(patchcode, "apple");
@@ -9334,26 +9939,31 @@ static void test_MsiEnumPatchesEx_usermanaged(LPCSTR usersid, LPCSTR expectedsid
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, MSIPATCHSTATE_ALL,
-                          1, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED,
+                           MSIPATCHSTATE_ALL, 1, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     RegDeleteValueA(hpatch, "State");
-    RegDeleteKeyExA(hpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hpatch);
-    RegDeleteKeyExA(udpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udpatch);
-    RegDeleteKeyExA(udprod, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udprod, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udprod);
     RegDeleteValueA(patches, "Patches");
-    RegDeleteKeyExA(patches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(patches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(patches);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 }
 
@@ -9384,13 +9994,18 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Installer\\Products\\");
@@ -9405,13 +10020,18 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyA(prodkey, "Patches", &patches);
@@ -9423,13 +10043,18 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(patches, "Patches", 0, REG_SZ,
@@ -9443,13 +10068,19 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ,
@@ -9462,13 +10093,19 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     patch_squashed[lstrlenA(patch_squashed) + 1] = 0;
@@ -9483,13 +10120,20 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_NO_MORE_ITEMS ||
+       broken(r == ERROR_BAD_CONFIGURATION), /* Windows Installer 3.0 */
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(patches, patch_squashed, 0, REG_SZ,
@@ -9502,13 +10146,20 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_NO_MORE_ITEMS ||
+       broken(r == ERROR_BAD_CONFIGURATION), /* Windows Installer 3.0 */
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
@@ -9530,14 +10181,20 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERUNMANAGED, "Expected MSIINSTALLCONTEXT_USERUNMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERUNMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERUNMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* MSIPATCHSTATE_SUPERSEDED */
 
@@ -9546,13 +10203,18 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
@@ -9574,13 +10236,18 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(udprod, "Patches", 0, NULL, 0, access, NULL, &udpatch, NULL);
@@ -9592,13 +10259,18 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(udpatch, patch_squashed, 0, NULL, 0, access, NULL, &hpatch, NULL);
@@ -9610,13 +10282,19 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     data = MSIPATCHSTATE_SUPERSEDED;
@@ -9630,14 +10308,20 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERUNMANAGED, "Expected MSIINSTALLCONTEXT_USERUNMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERUNMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERUNMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* MSIPATCHSTATE_OBSOLETED */
 
@@ -9646,13 +10330,18 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_OBSOLETED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_OBSOLETED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     data = MSIPATCHSTATE_OBSOLETED;
@@ -9666,14 +10355,20 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_OBSOLETED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_OBSOLETED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERUNMANAGED, "Expected MSIINSTALLCONTEXT_USERUNMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERUNMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERUNMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* MSIPATCHSTATE_REGISTERED */
     /* FIXME */
@@ -9686,14 +10381,20 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_ALL,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_ALL, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_USERUNMANAGED, "Expected MSIINSTALLCONTEXT_USERUNMANAGED, got %d\n", context);
-    ok(!lstrcmpA(targetsid, expectedsid), "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
-    ok(size == lstrlenA(expectedsid), "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_USERUNMANAGED,
+       "Expected MSIINSTALLCONTEXT_USERUNMANAGED, got %d\n", context);
+    ok(!lstrcmpA(targetsid, expectedsid),
+       "Expected \"%s\", got \"%s\"\n", expectedsid, targetsid);
+    ok(size == lstrlenA(expectedsid),
+       "Expected %d, got %lu\n", lstrlenA(expectedsid), size);
 
     /* same patch in multiple places, only one is enumerated */
     lstrcpyA(patchcode, "apple");
@@ -9701,23 +10402,28 @@ static void test_MsiEnumPatchesEx_userunmanaged(LPCSTR usersid, LPCSTR expecteds
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_ALL,
-                          1, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_ALL, 1, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     RegDeleteValueA(hpatch, "State");
-    RegDeleteKeyExA(hpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hpatch);
-    RegDeleteKeyExA(udpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udpatch);
-    RegDeleteKeyExA(udprod, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udprod, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udprod);
-    RegDeleteKeyExA(userkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(userkey);
     RegDeleteValueA(patches, patch_squashed);
     RegDeleteValueA(patches, "Patches");
@@ -9756,13 +10462,18 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Classes\\Installer\\Products\\");
@@ -9782,13 +10493,18 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                         0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(prodkey, "Patches", 0, NULL, 0, access, NULL, &patches, NULL);
@@ -9800,13 +10516,18 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(patches, "Patches", 0, REG_SZ,
@@ -9820,13 +10541,19 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ,
@@ -9839,13 +10566,19 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     patch_squashed[lstrlenA(patch_squashed) + 1] = '\0';
@@ -9860,13 +10593,18 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(patches, patch_squashed, 0, REG_SZ,
@@ -9879,12 +10617,16 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_MACHINE, "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_MACHINE,
+       "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
     ok(!lstrcmpA(targetsid, ""), "Expected \"\", got \"%s\"\n", targetsid);
     ok(size == 0, "Expected 0, got %lu\n", size);
 
@@ -9906,13 +10648,18 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_MACHINE, "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
-    ok(!lstrcmpA(targetsid, ""), "Expected \"\", got \"%s\"\n", targetsid);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_MACHINE,
+       "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
+    ok(!lstrcmpA(targetsid, ""),
+       "Expected \"\", got \"%s\"\n", targetsid);
     ok(size == 0, "Expected 0, got %lu\n", size);
 
     res = RegCreateKeyExA(udprod, "Patches", 0, NULL, 0, access, NULL, &udpatch, NULL);
@@ -9924,13 +10671,18 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_MACHINE, "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
-    ok(!lstrcmpA(targetsid, ""), "Expected \"\", got \"%s\"\n", targetsid);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_MACHINE,
+       "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
+    ok(!lstrcmpA(targetsid, ""),
+       "Expected \"\", got \"%s\"\n", targetsid);
     ok(size == 0, "Expected 0, got %lu\n", size);
 
     res = RegCreateKeyExA(udpatch, patch_squashed, 0, NULL, 0, access, NULL, &hpatch, NULL);
@@ -9942,13 +10694,18 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     data = MSIPATCHSTATE_APPLIED;
@@ -9962,13 +10719,18 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_APPLIED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_APPLIED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_MACHINE, "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
-    ok(!lstrcmpA(targetsid, ""), "Expected \"\", got \"%s\"\n", targetsid);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_MACHINE,
+       "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
+    ok(!lstrcmpA(targetsid, ""),
+       "Expected \"\", got \"%s\"\n", targetsid);
     ok(size == 0, "Expected 0, got %lu\n", size);
 
     /* MSIPATCHSTATE_SUPERSEDED */
@@ -9978,13 +10740,18 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     data = MSIPATCHSTATE_SUPERSEDED;
@@ -9998,12 +10765,16 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_SUPERSEDED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_SUPERSEDED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_MACHINE, "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_MACHINE,
+       "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
     ok(!lstrcmpA(targetsid, ""), "Expected \"\", got \"%s\"\n", targetsid);
     ok(size == 0, "Expected 0, got %lu\n", size);
 
@@ -10014,13 +10785,18 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_OBSOLETED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_OBSOLETED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     data = MSIPATCHSTATE_OBSOLETED;
@@ -10034,12 +10810,16 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_OBSOLETED,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_OBSOLETED, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_MACHINE, "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_MACHINE,
+       "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
     ok(!lstrcmpA(targetsid, ""), "Expected \"\", got \"%s\"\n", targetsid);
     ok(size == 0, "Expected 0, got %lu\n", size);
 
@@ -10054,12 +10834,16 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_ALL,
-                          0, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_ALL, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, patch), "Expected \"%s\", got \"%s\"\n", patch, patchcode);
-    ok(!lstrcmpA(targetprod, prodcode), "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
-    ok(context == MSIINSTALLCONTEXT_MACHINE, "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
+    ok(!lstrcmpA(patchcode, patch),
+       "Expected \"%s\", got \"%s\"\n", patch, patchcode);
+    ok(!lstrcmpA(targetprod, prodcode),
+       "Expected \"%s\", got \"%s\"\n", prodcode, targetprod);
+    ok(context == MSIINSTALLCONTEXT_MACHINE,
+       "Expected MSIINSTALLCONTEXT_MACHINE, got %d\n", context);
     ok(!lstrcmpA(targetsid, ""), "Expected \"\", got \"%s\"\n", targetsid);
     ok(size == 0, "Expected 0, got %lu\n", size);
 
@@ -10069,29 +10853,34 @@ static void test_MsiEnumPatchesEx_machine(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_ALL,
-                          1, patchcode, targetprod, &context, targetsid, &size);
+    r = pMsiEnumPatchesExA(prodcode, NULL, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_ALL, 1, patchcode, targetprod,
+                           &context, targetsid, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    RegDeleteKeyExA(hpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hpatch, "", access & KEY_WOW64_64KEY);
     RegDeleteValueA(hpatch, "State");
     RegCloseKey(hpatch);
-    RegDeleteKeyExA(udpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udpatch);
-    RegDeleteKeyExA(udprod, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udprod, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udprod);
 
 done:
     RegDeleteValueA(patches, patch_squashed);
     RegDeleteValueA(patches, "Patches");
-    RegDeleteKeyExA(patches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(patches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(patches);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 }
 
@@ -10105,6 +10894,12 @@ static void test_MsiEnumPatchesEx(void)
     DWORD size;
     UINT r;
 
+    if (!pMsiEnumPatchesExA)
+    {
+        win_skip("MsiEnumPatchesExA not implemented\n");
+        return;
+    }
+
     create_test_guid(prodcode, prod_squashed);
     usersid = get_user_sid();
 
@@ -10114,13 +10909,19 @@ static void test_MsiEnumPatchesEx(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA("", usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_ALL,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA("", usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_ALL, 0, patchcode, targetprod, &context,
+                           targetsid, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* garbage szProductCode */
@@ -10129,13 +10930,19 @@ static void test_MsiEnumPatchesEx(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA("garbage", usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_ALL,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA("garbage", usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_ALL, 0, patchcode, targetprod, &context,
+                           targetsid, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* guid without brackets */
@@ -10144,13 +10951,20 @@ static void test_MsiEnumPatchesEx(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA("6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D", usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
-                          MSIPATCHSTATE_ALL, 0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA("6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D", usersid,
+                           MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_ALL,
+                           0, patchcode, targetprod, &context,
+                           targetsid, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* guid with brackets */
@@ -10159,13 +10973,20 @@ static void test_MsiEnumPatchesEx(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA("{6700E8CF-95AB-4D9C-BC2C-15840DDA7A5D}", usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
-                          MSIPATCHSTATE_ALL, 0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA("{6700E8CF-95AB-4D9C-BC2C-15840DDA7A5D}", usersid,
+                           MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_ALL,
+                           0, patchcode, targetprod, &context,
+                           targetsid, &size);
+    ok(r == ERROR_NO_MORE_ITEMS,
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* szUserSid is S-1-5-18 */
@@ -10174,13 +10995,20 @@ static void test_MsiEnumPatchesEx(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, "S-1-5-18", MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_ALL,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, "S-1-5-18",
+                           MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_ALL,
+                           0, patchcode, targetprod, &context,
+                           targetsid, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* dwContext is MSIINSTALLCONTEXT_MACHINE, but szUserSid is non-NULL */
@@ -10189,13 +11017,19 @@ static void test_MsiEnumPatchesEx(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_MACHINE, MSIPATCHSTATE_ALL,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_MACHINE,
+                           MSIPATCHSTATE_ALL, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* dwContext is out of bounds */
@@ -10204,13 +11038,19 @@ static void test_MsiEnumPatchesEx(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, 0, MSIPATCHSTATE_ALL, 0, patchcode, targetprod,
-                          &context, targetsid, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, 0,
+                           MSIPATCHSTATE_ALL, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* dwContext is out of bounds */
@@ -10219,13 +11059,19 @@ static void test_MsiEnumPatchesEx(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_ALL + 1, MSIPATCHSTATE_ALL, 0, patchcode,
-                          targetprod, &context, targetsid, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_ALL + 1,
+                           MSIPATCHSTATE_ALL, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* dwFilter is out of bounds */
@@ -10234,13 +11080,19 @@ static void test_MsiEnumPatchesEx(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_INVALID,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_INVALID, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* dwFilter is out of bounds */
@@ -10249,13 +11101,19 @@ static void test_MsiEnumPatchesEx(void)
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
     size = MAX_PATH;
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_ALL + 1,
-                          0, patchcode, targetprod, &context, targetsid, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_ALL + 1, 0, patchcode, targetprod,
+                           &context, targetsid, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* pcchTargetUserSid is NULL while szTargetUserSid is non-NULL */
@@ -10263,13 +11121,19 @@ static void test_MsiEnumPatchesEx(void)
     lstrcpyA(targetprod, "banana");
     context = 0xdeadbeef;
     lstrcpyA(targetsid, "kiwi");
-    r = MsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, MSIPATCHSTATE_ALL,
-                          0, patchcode, targetprod, &context, targetsid, NULL);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patchcode, "apple"), "Expected patchcode to be unchanged, got %s\n", patchcode);
-    ok(!lstrcmpA(targetprod, "banana"), "Expected targetprod to be unchanged, got %s\n", targetprod);
-    ok(context == 0xdeadbeef, "Expected context to be unchanged, got %d\n", context);
-    ok(!lstrcmpA(targetsid, "kiwi"), "Expected targetsid to be unchanged, got %s\n", targetsid);
+    r = pMsiEnumPatchesExA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                           MSIPATCHSTATE_ALL, 0, patchcode, targetprod,
+                           &context, targetsid, NULL);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patchcode, "apple"),
+       "Expected patchcode to be unchanged, got %s\n", patchcode);
+    ok(!lstrcmpA(targetprod, "banana"),
+       "Expected targetprod to be unchanged, got %s\n", targetprod);
+    ok(context == 0xdeadbeef,
+       "Expected context to be unchanged, got %d\n", context);
+    ok(!lstrcmpA(targetsid, "kiwi"),
+       "Expected targetsid to be unchanged, got %s\n", targetsid);
 
     test_MsiEnumPatchesEx_usermanaged(usersid, usersid);
     test_MsiEnumPatchesEx_usermanaged(NULL, usersid);
@@ -10432,12 +11296,18 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_NO_MORE_ITEMS ||
+       broken(r == ERROR_FILE_NOT_FOUND), /* Windows Installer < 3.0 */
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    res = RegSetValueExA(patches, "Patches", 0, REG_SZ, (const BYTE *)patch_squashed, lstrlenA(patch_squashed) + 1);
+    res = RegSetValueExA(patches, "Patches", 0, REG_SZ,
+                         (const BYTE *)patch_squashed,
+                         lstrlenA(patch_squashed) + 1);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Patches value exists, is not REG_MULTI_SZ */
@@ -10445,12 +11315,17 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_BAD_CONFIGURATION ||
+       broken(r == ERROR_SUCCESS), /* Windows Installer < 3.0 */
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ, (const BYTE *)"a\0b\0c\0\0", 7);
+    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ,
+                         (const BYTE *)"a\0b\0c\0\0", 7);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Patches value exists, is not a squashed guid */
@@ -10458,13 +11333,18 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     patch_squashed[lstrlenA(patch_squashed) + 1] = '\0';
-    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ, (const BYTE *)patch_squashed, lstrlenA(patch_squashed) + 2);
+    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ,
+                         (const BYTE *)patch_squashed,
+                         lstrlenA(patch_squashed) + 2);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Patches value exists */
@@ -10472,12 +11352,18 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_NO_MORE_ITEMS ||
+       broken(r == ERROR_FILE_NOT_FOUND), /* Windows Installer < 3.0 */
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple") ||
+       broken(!lstrcmpA(patch, patchcode)), /* Windows Installer < 3.0 */
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    res = RegSetValueExA(patches, patch_squashed, 0, REG_SZ, (const BYTE *)"whatever", 9);
+    res = RegSetValueExA(patches, patch_squashed, 0, REG_SZ,
+                         (const BYTE *)"whatever", 9);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* patch squashed value exists */
@@ -10486,33 +11372,42 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patch, patchcode), "Expected \"%s\", got \"%s\"\n", patchcode, patch);
-    ok(!lstrcmpA(transforms, "whatever"), "Expected \"whatever\", got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, patchcode),
+       "Expected \"%s\", got \"%s\"\n", patchcode, patch);
+    ok(!lstrcmpA(transforms, "whatever"),
+       "Expected \"whatever\", got \"%s\"\n", transforms);
     ok(size == 8 || size == MAX_PATH, "Expected 8 or MAX_PATH, got %lu\n", size);
 
     /* lpPatchBuf is NULL */
     size = MAX_PATH;
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, NULL, transforms, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* lpTransformsBuf is NULL, pcchTransformsBuf is not */
     size = MAX_PATH;
     lstrcpyA(patch, "apple");
     r = MsiEnumPatchesA(prodcode, 0, patch, NULL, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* pcchTransformsBuf is NULL, lpTransformsBuf is not */
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, NULL);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
 
     /* pcchTransformsBuf is too small */
     size = 6;
@@ -10520,8 +11415,11 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
     ok(r == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", r);
-    ok(!lstrcmpA(patch, patchcode), "Expected \"%s\", got \"%s\"\n", patchcode, patch);
-    ok(!lstrcmpA(transforms, "whate"), "Expected \"whate\", got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, patchcode),
+       "Expected \"%s\", got \"%s\"\n", patchcode, patch);
+    ok(!lstrcmpA(transforms, "whate") ||
+       broken(!lstrcmpA(transforms, "banana")), /* Windows Installer < 3.0 */
+       "Expected \"whate\", got \"%s\"\n", transforms);
     ok(size == 8 || size == 16, "Expected 8 or 16, got %lu\n", size);
 
     /* increase the index */
@@ -10530,8 +11428,10 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 1, patch, transforms, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* increase again */
@@ -10540,14 +11440,16 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 2, patch, transforms, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     RegDeleteValueA(patches, "Patches");
-    RegDeleteKeyExA(patches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(patches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(patches);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     /* MSIINSTALLCONTEXT_USERUNMANAGED */
@@ -10556,9 +11458,12 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Installer\\Products\\");
@@ -10573,8 +11478,10 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyA(prodkey, "Patches", &patches);
@@ -10585,12 +11492,18 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_NO_MORE_ITEMS ||
+       broken(r == ERROR_FILE_NOT_FOUND), /* Windows Installer < 3.0 */
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    res = RegSetValueExA(patches, "Patches", 0, REG_SZ, (const BYTE *)patch_squashed, lstrlenA(patch_squashed) + 1);
+    res = RegSetValueExA(patches, "Patches", 0, REG_SZ,
+                         (const BYTE *)patch_squashed,
+                         lstrlenA(patch_squashed) + 1);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Patches value exists, is not REG_MULTI_SZ */
@@ -10598,12 +11511,17 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_BAD_CONFIGURATION ||
+       broken(r == ERROR_SUCCESS), /* Windows Installer < 3.0 */
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ, (const BYTE *)"a\0b\0c\0\0", 7);
+    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ,
+                         (const BYTE *)"a\0b\0c\0\0", 7);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Patches value exists, is not a squashed guid */
@@ -10611,13 +11529,18 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     patch_squashed[lstrlenA(patch_squashed) + 1] = '\0';
-    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ, (const BYTE *)patch_squashed, lstrlenA(patch_squashed) + 2);
+    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ,
+                         (const BYTE *)patch_squashed,
+                         lstrlenA(patch_squashed) + 2);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Patches value exists */
@@ -10625,12 +11548,18 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_NO_MORE_ITEMS ||
+       broken(r == ERROR_FILE_NOT_FOUND), /* Windows Installer < 3.0 */
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple") ||
+       broken(!lstrcmpA(patch, patchcode)), /* Windows Installer < 3.0 */
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    res = RegSetValueExA(patches, patch_squashed, 0, REG_SZ, (const BYTE *)"whatever", 9);
+    res = RegSetValueExA(patches, patch_squashed, 0, REG_SZ,
+                         (const BYTE *)"whatever", 9);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* patch code value exists */
@@ -10638,9 +11567,15 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_NO_MORE_ITEMS ||
+       broken(r == ERROR_SUCCESS), /* Windows Installer < 3.0 */
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple") ||
+       broken(!lstrcmpA(patch, patchcode)), /* Windows Installer < 3.0 */
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana") ||
+       broken(!lstrcmpA(transforms, "whatever")), /* Windows Installer < 3.0 */
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
@@ -10649,12 +11584,6 @@ static void test_MsiEnumPatches(void)
     lstrcatA(keypath, patch_squashed);
 
     res = RegCreateKeyExA(HKEY_LOCAL_MACHINE, keypath, 0, NULL, 0, access, NULL, &userkey, NULL);
-    if (res == ERROR_ACCESS_DENIED)
-    {
-        skip("Not enough rights to perform tests\n");
-        LocalFree(usersid);
-        return;
-    }
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* userdata patch key exists */
@@ -10663,11 +11592,13 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patch, patchcode), "Expected \"%s\", got \"%s\"\n", patchcode, patch);
-    ok(!lstrcmpA(transforms, "whatever"), "Expected \"whatever\", got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, patchcode),
+       "Expected \"%s\", got \"%s\"\n", patchcode, patch);
+    ok(!lstrcmpA(transforms, "whatever"),
+       "Expected \"whatever\", got \"%s\"\n", transforms);
     ok(size == 8 || size == MAX_PATH, "Expected 8 or MAX_PATH, got %lu\n", size);
 
-    RegDeleteKeyExA(userkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(userkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(userkey);
     RegDeleteValueA(patches, patch_squashed);
     RegDeleteValueA(patches, "Patches");
@@ -10682,9 +11613,12 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Classes\\Installer\\Products\\");
@@ -10705,8 +11639,10 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
     ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(prodkey, "Patches", 0, NULL, 0, access, NULL, &patches, NULL);
@@ -10717,12 +11653,18 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_NO_MORE_ITEMS ||
+       broken(r == ERROR_FILE_NOT_FOUND), /* Windows Installer < 3.0 */
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    res = RegSetValueExA(patches, "Patches", 0, REG_SZ, (const BYTE *)patch_squashed, lstrlenA(patch_squashed) + 1);
+    res = RegSetValueExA(patches, "Patches", 0, REG_SZ,
+                         (const BYTE *)patch_squashed,
+                         lstrlenA(patch_squashed) + 1);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Patches value exists, is not REG_MULTI_SZ */
@@ -10730,12 +11672,17 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_BAD_CONFIGURATION ||
+       broken(r == ERROR_SUCCESS), /* Windows Installer < 3.0 */
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ, (const BYTE *)"a\0b\0c\0\0", 7);
+    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ,
+                         (const BYTE *)"a\0b\0c\0\0", 7);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Patches value exists, is not a squashed guid */
@@ -10743,13 +11690,18 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_BAD_CONFIGURATION, "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_BAD_CONFIGURATION,
+       "Expected ERROR_BAD_CONFIGURATION, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple"),
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     patch_squashed[lstrlenA(patch_squashed) + 1] = '\0';
-    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ, (const BYTE *)patch_squashed, lstrlenA(patch_squashed) + 2);
+    res = RegSetValueExA(patches, "Patches", 0, REG_MULTI_SZ,
+                         (const BYTE *)patch_squashed,
+                         lstrlenA(patch_squashed) + 2);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Patches value exists */
@@ -10757,12 +11709,18 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_NO_MORE_ITEMS ||
+       broken(r == ERROR_FILE_NOT_FOUND), /* Windows Installer < 3.0 */
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple") ||
+       broken(!lstrcmpA(patch, patchcode)), /* Windows Installer < 3.0 */
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana"),
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    res = RegSetValueExA(patches, patch_squashed, 0, REG_SZ, (const BYTE *)"whatever", 9);
+    res = RegSetValueExA(patches, patch_squashed, 0, REG_SZ,
+                         (const BYTE *)"whatever", 9);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* patch code value exists */
@@ -10771,8 +11729,10 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patch, patchcode), "Expected \"%s\", got \"%s\"\n", patchcode, patch);
-    ok(!lstrcmpA(transforms, "whatever"), "Expected \"whatever\", got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, patchcode),
+       "Expected \"%s\", got \"%s\"\n", patchcode, patch);
+    ok(!lstrcmpA(transforms, "whatever"),
+       "Expected \"whatever\", got \"%s\"\n", transforms);
     ok(size == 8 || size == MAX_PATH, "Expected 8 or MAX_PATH, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\");
@@ -10788,8 +11748,10 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patch, patchcode), "Expected \"%s\", got \"%s\"\n", patchcode, patch);
-    ok(!lstrcmpA(transforms, "whatever"), "Expected \"whatever\", got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, patchcode),
+       "Expected \"%s\", got \"%s\"\n", patchcode, patch);
+    ok(!lstrcmpA(transforms, "whatever"),
+       "Expected \"whatever\", got \"%s\"\n", transforms);
     ok(size == 8 || size == MAX_PATH, "Expected 8 or MAX_PATH, got %lu\n", size);
 
     res = RegCreateKeyExA(udprod, "Patches", 0, NULL, 0, access, NULL, &udpatch, NULL);
@@ -10801,8 +11763,10 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patch, patchcode), "Expected \"%s\", got \"%s\"\n", patchcode, patch);
-    ok(!lstrcmpA(transforms, "whatever"), "Expected \"whatever\", got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, patchcode),
+       "Expected \"%s\", got \"%s\"\n", patchcode, patch);
+    ok(!lstrcmpA(transforms, "whatever"),
+       "Expected \"whatever\", got \"%s\"\n", transforms);
     ok(size == 8 || size == MAX_PATH, "Expected 8 or MAX_PATH, got %lu\n", size);
 
     res = RegCreateKeyExA(udpatch, patch_squashed, 0, NULL, 0, access, NULL, &hpatch, NULL);
@@ -10813,13 +11777,20 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(patch, "apple");
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
-    ok(r == ERROR_NO_MORE_ITEMS, "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
-    ok(!lstrcmpA(patch, "apple"), "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
-    ok(!lstrcmpA(transforms, "banana"), "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
+    ok(r == ERROR_NO_MORE_ITEMS ||
+       broken(r == ERROR_SUCCESS), /* Windows Installer < 3.0 */
+       "Expected ERROR_NO_MORE_ITEMS, got %d\n", r);
+    ok(!lstrcmpA(patch, "apple") ||
+       broken(!lstrcmpA(patch, patchcode)), /* Windows Installer < 3.0 */
+       "Expected lpPatchBuf to be unchanged, got \"%s\"\n", patch);
+    ok(!lstrcmpA(transforms, "banana") ||
+       broken(!lstrcmpA(transforms, "whatever")), /* Windows Installer < 3.0 */
+       "Expected lpTransformsBuf to be unchanged, got \"%s\"\n", transforms);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     data = MSIPATCHSTATE_APPLIED;
-    res = RegSetValueExA(hpatch, "State", 0, REG_DWORD, (const BYTE *)&data, sizeof(DWORD));
+    res = RegSetValueExA(hpatch, "State", 0, REG_DWORD,
+                         (const BYTE *)&data, sizeof(DWORD));
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* State value exists */
@@ -10828,8 +11799,10 @@ static void test_MsiEnumPatches(void)
     lstrcpyA(transforms, "banana");
     r = MsiEnumPatchesA(prodcode, 0, patch, transforms, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(patch, patchcode), "Expected \"%s\", got \"%s\"\n", patchcode, patch);
-    ok(!lstrcmpA(transforms, "whatever"), "Expected \"whatever\", got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, patchcode),
+       "Expected \"%s\", got \"%s\"\n", patchcode, patch);
+    ok(!lstrcmpA(transforms, "whatever"),
+       "Expected \"whatever\", got \"%s\"\n", transforms);
     ok(size == 8 || size == MAX_PATH, "Expected 8 or MAX_PATH, got %lu\n", size);
 
     /* now duplicate some of the tests for the W version */
@@ -10843,8 +11816,11 @@ static void test_MsiEnumPatches(void)
     ok(r == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", r);
     WideCharToMultiByte( CP_ACP, 0, patchW, -1, patch, MAX_PATH, NULL, NULL );
     WideCharToMultiByte( CP_ACP, 0, transformsW, -1, transforms, MAX_PATH, NULL, NULL );
-    ok(!lstrcmpA(patch, patchcode), "Expected \"%s\", got \"%s\"\n", patchcode, patch);
-    ok(!lstrcmpA(transforms, "whate"), "Expected \"whate\", got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, patchcode),
+       "Expected \"%s\", got \"%s\"\n", patchcode, patch);
+    ok(!lstrcmpA(transforms, "whate") ||
+       broken(!lstrcmpA(transforms, "banana")), /* Windows Installer < 3.0 */
+       "Expected \"whate\", got \"%s\"\n", transforms);
     ok(size == 8, "Expected 8, got %lu\n", size);
 
     /* patch code value exists */
@@ -10855,22 +11831,24 @@ static void test_MsiEnumPatches(void)
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     WideCharToMultiByte( CP_ACP, 0, patchW, -1, patch, MAX_PATH, NULL, NULL );
     WideCharToMultiByte( CP_ACP, 0, transformsW, -1, transforms, MAX_PATH, NULL, NULL );
-    ok(!lstrcmpA(patch, patchcode), "Expected \"%s\", got \"%s\"\n", patchcode, patch);
-    ok(!lstrcmpA(transforms, "whatever"), "Expected \"whatever\", got \"%s\"\n", transforms);
+    ok(!lstrcmpA(patch, patchcode),
+       "Expected \"%s\", got \"%s\"\n", patchcode, patch);
+    ok(!lstrcmpA(transforms, "whatever"),
+       "Expected \"whatever\", got \"%s\"\n", transforms);
     ok(size == 8 || size == MAX_PATH, "Expected 8 or MAX_PATH, got %lu\n", size);
 
     RegDeleteValueA(patches, patch_squashed);
     RegDeleteValueA(patches, "Patches");
-    RegDeleteKeyExA(patches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(patches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(patches);
     RegDeleteValueA(hpatch, "State");
-    RegDeleteKeyExA(hpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hpatch);
-    RegDeleteKeyExA(udpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udpatch);
-    RegDeleteKeyExA(udprod, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udprod, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udprod);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
     LocalFree(usersid);
 }
@@ -10888,6 +11866,12 @@ static void test_MsiGetPatchInfoEx(void)
     UINT r;
     REGSAM access = KEY_ALL_ACCESS;
 
+    if (!pMsiGetPatchInfoExA)
+    {
+        win_skip("MsiGetPatchInfoEx not implemented\n");
+        return;
+    }
+
     create_test_guid(prodcode, prod_squashed);
     create_test_guid(patchcode, patch_squashed);
     usersid = get_user_sid();
@@ -10898,181 +11882,237 @@ static void test_MsiGetPatchInfoEx(void)
     /* NULL szPatchCode */
     lstrcpyA(val, "apple");
     size = MAX_PATH;
-    r = MsiGetPatchInfoExA(NULL, prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(NULL, prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* empty szPatchCode */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA("", prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA("", prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* garbage szPatchCode */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA("garbage", prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA("garbage", prodcode, NULL,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* guid without brackets */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA("6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D", prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED,
-                           INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA("6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D", prodcode,
+                            NULL, MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* guid with brackets */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA("{6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D}", prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED,
-                           INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA("{6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D}", prodcode,
+                            NULL, MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* same length as guid, but random */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA("A938G02JF-2NF3N93-VN3-2NNF-3KGKALDNF93", prodcode, NULL, MSIINSTALLCONTEXT_USERMANAGED,
-                           INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA("A938G02JF-2NF3N93-VN3-2NNF-3KGKALDNF93", prodcode,
+                            NULL, MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* NULL szProductCode */
     lstrcpyA(val, "apple");
     size = MAX_PATH;
-    r = MsiGetPatchInfoExA(patchcode, NULL, NULL, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, NULL, NULL, MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* empty szProductCode */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, "", NULL, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, "", NULL, MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* garbage szProductCode */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, "garbage", NULL, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, "garbage", NULL,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* guid without brackets */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, "6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D", NULL, MSIINSTALLCONTEXT_USERMANAGED,
-                           INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, "6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D",
+                            NULL, MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* guid with brackets */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, "{6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D}", NULL, MSIINSTALLCONTEXT_USERMANAGED,
-                           INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, "{6700E8CF-95AB-4D9C-BC2C-15840DEA7A5D}",
+                            NULL, MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* same length as guid, but random */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, "A938G02JF-2NF3N93-VN3-2NNF-3KGKALDNF93", NULL, MSIINSTALLCONTEXT_USERMANAGED,
-                           INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, "A938G02JF-2NF3N93-VN3-2NNF-3KGKALDNF93",
+                            NULL, MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* szUserSid cannot be S-1-5-18 for MSIINSTALLCONTEXT_USERMANAGED */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, "S-1-5-18", MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, "S-1-5-18",
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* szUserSid cannot be S-1-5-18 for MSIINSTALLCONTEXT_USERUNMANAGED */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, "S-1-5-18", MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, "S-1-5-18",
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* szUserSid cannot be S-1-5-18 for MSIINSTALLCONTEXT_MACHINE */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, "S-1-5-18", MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, "S-1-5-18",
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* szUserSid must be NULL for MSIINSTALLCONTEXT_MACHINE */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* dwContext is out of range */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_NONE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_NONE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* dwContext is out of range */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_ALL, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_ALL,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* dwContext is invalid */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, 3, INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid, 3,
+                           INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     /* MSIINSTALLCONTEXT_USERMANAGED */
 
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
@@ -11092,10 +12132,13 @@ static void test_MsiGetPatchInfoEx(void)
     /* local UserData product key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(udprod, "InstallProperties", 0, NULL, 0, access, NULL, &props, NULL);
@@ -11104,10 +12147,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* InstallProperties key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(udprod, "Patches", 0, NULL, 0, access, NULL, &patches, NULL);
@@ -11116,10 +12161,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCHA, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(patches, patch_squashed, 0, NULL, 0, access, NULL, &hpatch, NULL);
@@ -11128,10 +12175,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\Managed\\");
@@ -11145,10 +12194,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* managed product key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(prodkey, "Patches", 0, NULL, 0, access, NULL, &prodpatches, NULL);
@@ -11157,22 +12208,27 @@ static void test_MsiGetPatchInfoEx(void)
     /* Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
-    res = RegSetValueExA(prodpatches, patch_squashed, 0, REG_SZ, (const BYTE *)"transforms", 11);
+    res = RegSetValueExA(prodpatches, patch_squashed, 0, REG_SZ,
+                         (const BYTE *)"transforms", 11);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* specific patch value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
@@ -11186,114 +12242,132 @@ static void test_MsiGetPatchInfoEx(void)
     /* UserData Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, ""), "Expected \"\", got \"%s\"\n", val);
     ok(size == 0, "Expected 0, got %lu\n", size);
 
-    res = RegSetValueExA(udpatch, "ManagedLocalPackage", 0, REG_SZ, (const BYTE *)"pack", 5);
+    res = RegSetValueExA(udpatch, "ManagedLocalPackage", 0, REG_SZ,
+                         (const BYTE *)"pack", 5);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* ManagedLocalPatch value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "pack"), "Expected \"pack\", got \"%s\"\n", val);
     ok(size == 4, "Expected 4, got %lu\n", size);
 
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_TRANSFORMSA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_TRANSFORMSA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "transforms"), "Expected \"transforms\", got \"%s\"\n", val);
     ok(size == 10, "Expected 10, got %lu\n", size);
 
-    res = RegSetValueExA(hpatch, "Installed", 0, REG_SZ, (const BYTE *)"mydate", 7);
+    res = RegSetValueExA(hpatch, "Installed", 0, REG_SZ,
+                         (const BYTE *)"mydate", 7);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Installed value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_INSTALLDATEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_INSTALLDATEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "mydate"), "Expected \"mydate\", got \"%s\"\n", val);
     ok(size == 6, "Expected 6, got %lu\n", size);
 
-    res = RegSetValueExA(hpatch, "Uninstallable", 0, REG_SZ, (const BYTE *)"yes", 4);
+    res = RegSetValueExA(hpatch, "Uninstallable", 0, REG_SZ,
+                         (const BYTE *)"yes", 4);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Uninstallable value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_UNINSTALLABLEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_UNINSTALLABLEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "yes"), "Expected \"yes\", got \"%s\"\n", val);
     ok(size == 3, "Expected 3, got %lu\n", size);
 
-    res = RegSetValueExA(hpatch, "State", 0, REG_SZ, (const BYTE *)"good", 5);
+    res = RegSetValueExA(hpatch, "State", 0, REG_SZ,
+                         (const BYTE *)"good", 5);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* State value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PATCHSTATEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_PATCHSTATEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "good"), "Expected \"good\", got \"%s\"\n", val);
     ok(size == 4, "Expected 4, got %lu\n", size);
 
     size = 1;
-    res = RegSetValueExA(hpatch, "State", 0, REG_DWORD, (const BYTE *)&size, sizeof(DWORD));
+    res = RegSetValueExA(hpatch, "State", 0, REG_DWORD,
+                         (const BYTE *)&size, sizeof(DWORD));
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* State value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_PATCHSTATEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_PATCHSTATEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "1"), "Expected \"1\", got \"%s\"\n", val);
     ok(size == 1, "Expected 1, got %lu\n", size);
 
     size = 1;
-    res = RegSetValueExA(hpatch, "Uninstallable", 0, REG_DWORD, (const BYTE *)&size, sizeof(DWORD));
+    res = RegSetValueExA(hpatch, "Uninstallable", 0, REG_DWORD,
+                         (const BYTE *)&size, sizeof(DWORD));
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Uninstallable value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_UNINSTALLABLEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_UNINSTALLABLEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "1"), "Expected \"1\", got \"%s\"\n", val);
     ok(size == 1, "Expected 1, got %lu\n", size);
 
-    res = RegSetValueExA(hpatch, "DisplayName", 0, REG_SZ, (const BYTE *)"display", 8);
+    res = RegSetValueExA(hpatch, "DisplayName", 0, REG_SZ,
+                         (const BYTE *)"display", 8);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* DisplayName value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_DISPLAYNAMEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_DISPLAYNAMEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "display"), "Expected \"display\", got \"%s\"\n", val);
     ok(size == 7, "Expected 7, got %lu\n", size);
 
-    res = RegSetValueExA(hpatch, "MoreInfoURL", 0, REG_SZ, (const BYTE *)"moreinfo", 9);
+    res = RegSetValueExA(hpatch, "MoreInfoURL", 0, REG_SZ,
+                         (const BYTE *)"moreinfo", 9);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* MoreInfoURL value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_MOREINFOURLA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_MOREINFOURLA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "moreinfo"), "Expected \"moreinfo\", got \"%s\"\n", val);
     ok(size == 8, "Expected 8, got %lu\n", size);
@@ -11301,59 +12375,71 @@ static void test_MsiGetPatchInfoEx(void)
     /* szProperty is invalid */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, "IDontExist", val, &size);
-    ok(r == ERROR_UNKNOWN_PROPERTY, "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            "IDontExist", val, &size);
+    ok(r == ERROR_UNKNOWN_PROPERTY,
+       "Expected ERROR_UNKNOWN_PROPERTY, got %d\n", r);
     ok(!lstrcmpA(val, "apple"), "Expected \"apple\", got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected MAX_PATH, got %lu\n", size);
 
     /* lpValue is NULL, while pcchValue is non-NULL */
     size = MAX_PATH;
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_MOREINFOURLA,
-                           NULL, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_MOREINFOURLA, NULL, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(size == 16, "Expected 16, got %lu\n", size);
 
     /* pcchValue is NULL, while lpValue is non-NULL */
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_MOREINFOURLA,
-                           val, NULL);
-    ok(r == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_MOREINFOURLA, val, NULL);
+    ok(r == ERROR_INVALID_PARAMETER,
+       "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
     ok(!lstrcmpA(val, "apple"), "Expected \"apple\", got \"%s\"\n", val);
 
     /* both lpValue and pcchValue are NULL */
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_MOREINFOURLA,
-                           NULL, NULL);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_MOREINFOURLA, NULL, NULL);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
 
     /* pcchValue doesn't have enough room for NULL terminator */
     size = 8;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_MOREINFOURLA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_MOREINFOURLA, val, &size);
     ok(r == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", r);
-    ok(!lstrcmpA(val, "moreinf"), "Expected \"moreinf\", got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "moreinf"),
+       "Expected \"moreinf\", got \"%s\"\n", val);
     ok(size == 16, "Expected 16, got %lu\n", size);
 
     /* pcchValue has exactly enough room for NULL terminator */
     size = 9;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_MOREINFOURLA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_MOREINFOURLA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
-    ok(!lstrcmpA(val, "moreinfo"), "Expected \"moreinfo\", got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "moreinfo"),
+       "Expected \"moreinfo\", got \"%s\"\n", val);
     ok(size == 8, "Expected 8, got %lu\n", size);
 
     /* pcchValue is too small, lpValue is NULL */
     size = 0;
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_MOREINFOURLA,
-                           NULL, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_MOREINFOURLA, NULL, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(size == 16, "Expected 16, got %lu\n", size);
 
     RegDeleteValueA(prodpatches, patch_squashed);
-    RegDeleteKeyExA(prodpatches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodpatches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodpatches);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     /* UserData is sufficient for all properties
@@ -11361,8 +12447,9 @@ static void test_MsiGetPatchInfoEx(void)
      */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "pack"), "Expected \"pack\", got \"%s\"\n", val);
     ok(size == 4, "Expected 4, got %lu\n", size);
@@ -11372,8 +12459,9 @@ static void test_MsiGetPatchInfoEx(void)
      */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERMANAGED, INSTALLPROPERTY_TRANSFORMSA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERMANAGED,
+                            INSTALLPROPERTY_TRANSFORMSA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
     ok(!lstrcmpA(val, "apple"), "Expected \"apple\", got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected MAX_PATH, got %lu\n", size);
@@ -11384,25 +12472,28 @@ static void test_MsiGetPatchInfoEx(void)
     RegDeleteValueA(hpatch, "Uninstallable");
     RegDeleteValueA(hpatch, "Installed");
     RegDeleteValueA(udpatch, "ManagedLocalPackage");
-    RegDeleteKeyExA(udpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udpatch);
-    RegDeleteKeyExA(hpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hpatch);
-    RegDeleteKeyExA(patches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(patches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(patches);
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(udprod, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udprod, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udprod);
 
     /* MSIINSTALLCONTEXT_USERUNMANAGED */
 
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
@@ -11416,10 +12507,13 @@ static void test_MsiGetPatchInfoEx(void)
     /* local UserData product key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(udprod, "InstallProperties", 0, NULL, 0, access, NULL, &props, NULL);
@@ -11428,10 +12522,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* InstallProperties key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(udprod, "Patches", 0, NULL, 0, access, NULL, &patches, NULL);
@@ -11440,10 +12536,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(patches, patch_squashed, 0, NULL, 0, access, NULL, &hpatch, NULL);
@@ -11452,10 +12550,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Installer\\Products\\");
@@ -11467,10 +12567,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* current user product key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyA(prodkey, "Patches", &prodpatches);
@@ -11479,10 +12581,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(prodpatches, patch_squashed, 0, REG_SZ,
@@ -11492,10 +12596,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* specific patch value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\");
@@ -11509,8 +12615,9 @@ static void test_MsiGetPatchInfoEx(void)
     /* UserData Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, ""), "Expected \"\", got \"%s\"\n", val);
     ok(size == 0, "Expected 0, got %lu\n", size);
@@ -11522,22 +12629,24 @@ static void test_MsiGetPatchInfoEx(void)
     /* LocalPatch value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "pack"), "Expected \"pack\", got \"%s\"\n", val);
     ok(size == 4, "Expected 4, got %lu\n", size);
 
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_TRANSFORMSA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_TRANSFORMSA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "transforms"), "Expected \"transforms\", got \"%s\"\n", val);
     ok(size == 10, "Expected 10, got %lu\n", size);
 
     RegDeleteValueA(prodpatches, patch_squashed);
-    RegDeleteKeyExA(prodpatches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodpatches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodpatches);
     RegDeleteKeyA(prodkey, "");
     RegCloseKey(prodkey);
@@ -11547,8 +12656,9 @@ static void test_MsiGetPatchInfoEx(void)
      */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "pack"), "Expected \"pack\", got \"%s\"\n", val);
     ok(size == 4, "Expected 4, got %lu\n", size);
@@ -11558,32 +12668,36 @@ static void test_MsiGetPatchInfoEx(void)
      */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, INSTALLPROPERTY_TRANSFORMSA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, usersid,
+                            MSIINSTALLCONTEXT_USERUNMANAGED,
+                            INSTALLPROPERTY_TRANSFORMSA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
     ok(!lstrcmpA(val, "apple"), "Expected \"apple\", got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected MAX_PATH, got %lu\n", size);
 
     RegDeleteValueA(udpatch, "LocalPackage");
-    RegDeleteKeyExA(udpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udpatch);
-    RegDeleteKeyExA(hpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hpatch);
-    RegDeleteKeyExA(patches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(patches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(patches);
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(udprod, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udprod, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udprod);
 
     /* MSIINSTALLCONTEXT_MACHINE */
 
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer");
@@ -11596,10 +12710,13 @@ static void test_MsiGetPatchInfoEx(void)
     /* local UserData product key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
+    ok(r == ERROR_UNKNOWN_PRODUCT,
+       "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(udprod, "InstallProperties", 0, NULL, 0, access, NULL, &props, NULL);
@@ -11608,10 +12725,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* InstallProperties key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(udprod, "Patches", 0, NULL, 0, access, NULL, &patches, NULL);
@@ -11620,10 +12739,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(patches, patch_squashed, 0, NULL, 0, access, NULL, &hpatch, NULL);
@@ -11632,10 +12753,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Classes\\Installer\\Products\\");
@@ -11653,10 +12776,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* local product key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegCreateKeyExA(prodkey, "Patches", 0, NULL, 0, access, NULL, &prodpatches, NULL);
@@ -11665,10 +12790,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     res = RegSetValueExA(prodpatches, patch_squashed, 0, REG_SZ,
@@ -11678,10 +12805,12 @@ static void test_MsiGetPatchInfoEx(void)
     /* specific patch value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
-    ok(!lstrcmpA(val, "apple"), "Expected val to be unchanged, got \"%s\"\n", val);
+    ok(!lstrcmpA(val, "apple"),
+       "Expected val to be unchanged, got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected size to be unchanged, got %lu\n", size);
 
     lstrcpyA(keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer");
@@ -11694,36 +12823,40 @@ static void test_MsiGetPatchInfoEx(void)
     /* UserData Patches key exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, ""), "Expected \"\", got \"%s\"\n", val);
     ok(size == 0, "Expected 0, got %lu\n", size);
 
-    res = RegSetValueExA(udpatch, "LocalPackage", 0, REG_SZ, (const BYTE *)"pack", 5);
+    res = RegSetValueExA(udpatch, "LocalPackage", 0, REG_SZ,
+                         (const BYTE *)"pack", 5);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* LocalPatch value exists */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "pack"), "Expected \"pack\", got \"%s\"\n", val);
     ok(size == 4, "Expected 4, got %lu\n", size);
 
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_TRANSFORMSA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_TRANSFORMSA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "transforms"), "Expected \"transforms\", got \"%s\"\n", val);
     ok(size == 10, "Expected 10, got %lu\n", size);
 
     RegDeleteValueA(prodpatches, patch_squashed);
-    RegDeleteKeyExA(prodpatches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodpatches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodpatches);
-    RegDeleteKeyExA(prodkey, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(prodkey, "", access & KEY_WOW64_64KEY);
     RegCloseKey(prodkey);
 
     /* UserData is sufficient for all properties
@@ -11731,8 +12864,9 @@ static void test_MsiGetPatchInfoEx(void)
      */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_LOCALPACKAGEA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_LOCALPACKAGEA, val, &size);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(!lstrcmpA(val, "pack"), "Expected \"pack\", got \"%s\"\n", val);
     ok(size == 4, "Expected 4, got %lu\n", size);
@@ -11742,22 +12876,23 @@ static void test_MsiGetPatchInfoEx(void)
      */
     size = MAX_PATH;
     lstrcpyA(val, "apple");
-    r = MsiGetPatchInfoExA(patchcode, prodcode, NULL, MSIINSTALLCONTEXT_MACHINE, INSTALLPROPERTY_TRANSFORMSA,
-                           val, &size);
+    r = pMsiGetPatchInfoExA(patchcode, prodcode, NULL,
+                            MSIINSTALLCONTEXT_MACHINE,
+                            INSTALLPROPERTY_TRANSFORMSA, val, &size);
     ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
     ok(!lstrcmpA(val, "apple"), "Expected \"apple\", got \"%s\"\n", val);
     ok(size == MAX_PATH, "Expected MAX_PATH, got %lu\n", size);
 
     RegDeleteValueA(udpatch, "LocalPackage");
-    RegDeleteKeyExA(udpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udpatch);
-    RegDeleteKeyExA(hpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hpatch);
-    RegDeleteKeyExA(patches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(patches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(patches);
-    RegDeleteKeyExA(props, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(props, "", access & KEY_WOW64_64KEY);
     RegCloseKey(props);
-    RegDeleteKeyExA(udprod, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(udprod, "", access & KEY_WOW64_64KEY);
     RegCloseKey(udprod);
     LocalFree(usersid);
 }
@@ -11933,25 +13068,25 @@ static void test_MsiGetPatchInfo(void)
     ok(valW[0], "expected > 0 got %u\n", valW[0]);
     ok(size == 11, "expected 11 got %lu\n", size);
 
-    RegDeleteKeyExA(hkey_udproductpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hkey_udproductpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hkey_udproductpatch);
-    RegDeleteKeyExA(hkey_udproductpatches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hkey_udproductpatches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hkey_udproductpatches);
-    RegDeleteKeyExA(hkey_udpatch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hkey_udpatch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hkey_udpatch);
-    RegDeleteKeyExA(hkey_udpatches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hkey_udpatches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hkey_udpatches);
-    RegDeleteKeyExA(hkey_udprops, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hkey_udprops, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hkey_udprops);
-    RegDeleteKeyExA(hkey_udproduct, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hkey_udproduct, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hkey_udproduct);
 
 done:
-    RegDeleteKeyExA(hkey_patches, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hkey_patches, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hkey_patches);
-    RegDeleteKeyExA(hkey_product, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hkey_product, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hkey_product);
-    RegDeleteKeyExA(hkey_patch, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(hkey_patch, "", access & KEY_WOW64_64KEY);
     RegCloseKey(hkey_patch);
 }
 
@@ -11967,7 +13102,7 @@ static void test_MsiEnumProducts(void)
     HKEY key1, key2, key3;
     REGSAM access = KEY_ALL_ACCESS;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip( "process is limited\n" );
         return;
@@ -12041,8 +13176,8 @@ static void test_MsiEnumProducts(void)
     ok(found2, "product2 not found\n");
     ok(found3, "product3 not found\n");
 
-    RegDeleteKeyExA(key1, "", access & KEY_WOW64_64KEY, 0);
-    RegDeleteKeyExA(key2, "", access & KEY_WOW64_64KEY, 0);
+    delete_key(key1, "", access & KEY_WOW64_64KEY);
+    delete_key(key2, "", access & KEY_WOW64_64KEY);
     RegDeleteKeyA(key3, "");
     RegCloseKey(key1);
     RegCloseKey(key2);
@@ -12106,6 +13241,12 @@ static void test_MsiEnumProductsEx(void)
     char *usersid = get_user_sid();
     BOOL found1, found2, found3;
 
+    if (!pMsiEnumProductsExA)
+    {
+        win_skip("MsiEnumProductsExA not implemented\n");
+        return;
+    }
+
     create_test_guid( product0, NULL );
     create_test_guid( product1, product_squashed1 );
     create_test_guid( product2, product_squashed2 );
@@ -12144,34 +13285,34 @@ static void test_MsiEnumProductsEx(void)
     r = RegCreateKeyExA( HKEY_USERS, keypath3, 0, NULL, 0, access, NULL, &key3, NULL );
     ok( r == ERROR_SUCCESS, "got %u\n", r );
 
-    r = MsiEnumProductsExA( NULL, NULL, 0, 0, NULL, NULL, NULL, NULL );
+    r = pMsiEnumProductsExA( NULL, NULL, 0, 0, NULL, NULL, NULL, NULL );
     ok( r == ERROR_INVALID_PARAMETER, "got %u\n", r );
 
     len = sizeof(sid);
-    r = MsiEnumProductsExA( NULL, NULL, 0, 0, NULL, NULL, NULL, &len );
+    r = pMsiEnumProductsExA( NULL, NULL, 0, 0, NULL, NULL, NULL, &len );
     ok( r == ERROR_INVALID_PARAMETER, "got %u\n", r );
     ok( len == sizeof(sid), "got %lu\n", len );
 
-    r = MsiEnumProductsExA( NULL, NULL, MSIINSTALLCONTEXT_ALL, 0, NULL, NULL, NULL, NULL );
+    r = pMsiEnumProductsExA( NULL, NULL, MSIINSTALLCONTEXT_ALL, 0, NULL, NULL, NULL, NULL );
     ok( r == ERROR_SUCCESS, "got %u\n", r );
 
     sid[0] = 0;
     len = sizeof(sid);
-    r = MsiEnumProductsExA( product0, NULL, MSIINSTALLCONTEXT_ALL, 0, NULL, NULL, sid, &len );
+    r = pMsiEnumProductsExA( product0, NULL, MSIINSTALLCONTEXT_ALL, 0, NULL, NULL, sid, &len );
     ok( r == ERROR_NO_MORE_ITEMS, "got %u\n", r );
     ok( len == sizeof(sid), "got %lu\n", len );
     ok( !sid[0], "got %s\n", sid );
 
     sid[0] = 0;
     len = sizeof(sid);
-    r = MsiEnumProductsExA( product0, usersid, MSIINSTALLCONTEXT_ALL, 0, NULL, NULL, sid, &len );
+    r = pMsiEnumProductsExA( product0, usersid, MSIINSTALLCONTEXT_ALL, 0, NULL, NULL, sid, &len );
     ok( r == ERROR_NO_MORE_ITEMS, "got %u\n", r );
     ok( len == sizeof(sid), "got %lu\n", len );
     ok( !sid[0], "got %s\n", sid );
 
     sid[0] = 0;
     len = 0;
-    r = MsiEnumProductsExA( NULL, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, 0, NULL, NULL, sid, &len );
+    r = pMsiEnumProductsExA( NULL, usersid, MSIINSTALLCONTEXT_USERUNMANAGED, 0, NULL, NULL, sid, &len );
     ok( r == ERROR_MORE_DATA, "got %u\n", r );
     ok( len, "length unchanged\n" );
     ok( !sid[0], "got %s\n", sid );
@@ -12180,7 +13321,7 @@ static void test_MsiEnumProductsEx(void)
     context = 0xdeadbeef;
     sid[0] = 0;
     len = sizeof(sid);
-    r = MsiEnumProductsExA( NULL, NULL, MSIINSTALLCONTEXT_ALL, 0, guid, &context, sid, &len );
+    r = pMsiEnumProductsExA( NULL, NULL, MSIINSTALLCONTEXT_ALL, 0, guid, &context, sid, &len );
     ok( r == ERROR_SUCCESS, "got %u\n", r );
     ok( guid[0], "empty guid\n" );
     ok( context != 0xdeadbeef, "context unchanged\n" );
@@ -12191,7 +13332,7 @@ static void test_MsiEnumProductsEx(void)
     context = 0xdeadbeef;
     sid[0] = 0;
     len = sizeof(sid);
-    r = MsiEnumProductsExA( NULL, usersid, MSIINSTALLCONTEXT_ALL, 0, guid, &context, sid, &len );
+    r = pMsiEnumProductsExA( NULL, usersid, MSIINSTALLCONTEXT_ALL, 0, guid, &context, sid, &len );
     ok( r == ERROR_SUCCESS, "got %u\n", r );
     ok( guid[0], "empty guid\n" );
     ok( context != 0xdeadbeef, "context unchanged\n" );
@@ -12202,7 +13343,7 @@ static void test_MsiEnumProductsEx(void)
     context = 0xdeadbeef;
     sid[0] = 0;
     len = sizeof(sid);
-    r = MsiEnumProductsExA( NULL, "S-1-1-0", MSIINSTALLCONTEXT_ALL, 0, guid, &context, sid, &len );
+    r = pMsiEnumProductsExA( NULL, "S-1-1-0", MSIINSTALLCONTEXT_ALL, 0, guid, &context, sid, &len );
     if (r == ERROR_ACCESS_DENIED)
     {
         skip( "insufficient rights\n" );
@@ -12220,7 +13361,7 @@ static void test_MsiEnumProductsEx(void)
     sid[0] = 0;
     len = sizeof(sid);
     found1 = found2 = found3 = FALSE;
-    while (!MsiEnumProductsExA( NULL, "S-1-1-0", MSIINSTALLCONTEXT_ALL, index, guid, &context, sid, &len ))
+    while (!pMsiEnumProductsExA( NULL, "S-1-1-0", MSIINSTALLCONTEXT_ALL, index, guid, &context, sid, &len ))
     {
         if (!strcmp( product1, guid ))
         {
@@ -12255,9 +13396,9 @@ static void test_MsiEnumProductsEx(void)
     ok(found3, "product3 not found\n");
 
 done:
-    RegDeleteKeyExA( key1, "", access, 0 );
-    RegDeleteKeyExA( key2, "", access, 0 );
-    RegDeleteKeyExA( key3, "", access, 0 );
+    delete_key( key1, "", access );
+    delete_key( key2, "", access );
+    delete_key( key3, "", access );
     RegCloseKey( key1 );
     RegCloseKey( key2 );
     RegCloseKey( key3 );
@@ -12276,7 +13417,7 @@ static void test_MsiEnumComponents(void)
     char *usersid = get_user_sid();
     HKEY key1 = NULL, key2 = NULL;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip("process is limited\n");
         return;
@@ -12330,8 +13471,8 @@ static void test_MsiEnumComponents(void)
     ok( found2, "comp2 not found\n" );
 
 done:
-    RegDeleteKeyExA( key1, "", access, 0 );
-    RegDeleteKeyExA( key2, "", access, 0 );
+    delete_key( key1, "", access );
+    delete_key( key2, "", access );
     RegCloseKey( key1 );
     RegCloseKey( key2 );
     LocalFree( usersid );
@@ -12350,7 +13491,12 @@ static void test_MsiEnumComponentsEx(void)
     REGSAM access = KEY_ALL_ACCESS;
     char *usersid = get_user_sid();
 
-    if (!is_process_elevated())
+    if (!pMsiEnumComponentsExA)
+    {
+        win_skip( "MsiEnumComponentsExA not implemented\n" );
+        return;
+    }
+    if (is_process_limited())
     {
         skip("process is limited\n");
         return;
@@ -12395,7 +13541,7 @@ static void test_MsiEnumComponentsEx(void)
     sid[0] = 0;
     len = sizeof(sid);
     found1 = found2 = FALSE;
-    while (!MsiEnumComponentsExA( "S-1-1-0", MSIINSTALLCONTEXT_ALL, index, guid, &context, sid, &len ))
+    while (!pMsiEnumComponentsExA( "S-1-1-0", MSIINSTALLCONTEXT_ALL, index, guid, &context, sid, &len ))
     {
         if (!strcmp( comp1, guid ))
         {
@@ -12422,16 +13568,16 @@ static void test_MsiEnumComponentsEx(void)
     ok( found1, "comp1 not found\n" );
     ok( found2, "comp2 not found\n" );
 
-    r = MsiEnumComponentsExA( NULL, 0, 0, NULL, NULL, NULL, NULL );
+    r = pMsiEnumComponentsExA( NULL, 0, 0, NULL, NULL, NULL, NULL );
     ok( r == ERROR_INVALID_PARAMETER, "got %u\n", r );
 
-    r = MsiEnumComponentsExA( NULL, MSIINSTALLCONTEXT_ALL, 0, NULL, NULL, sid, NULL );
+    r = pMsiEnumComponentsExA( NULL, MSIINSTALLCONTEXT_ALL, 0, NULL, NULL, sid, NULL );
     ok( r == ERROR_INVALID_PARAMETER, "got %u\n", r );
 
 done:
     RegDeleteValueA( key2, comp_squashed2 );
-    RegDeleteKeyExA( key1, "", access, 0 );
-    RegDeleteKeyExA( key2, "", access, 0 );
+    delete_key( key1, "", access );
+    delete_key( key2, "", access );
     RegCloseKey( key1 );
     RegCloseKey( key2 );
     LocalFree( usersid );
@@ -12446,7 +13592,7 @@ static void test_MsiConfigureProductEx(void)
     CHAR keypath[MAX_PATH * 2], localpackage[MAX_PATH], packagename[MAX_PATH];
     REGSAM access = KEY_ALL_ACCESS;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip("process is limited\n");
         return;
@@ -12729,7 +13875,7 @@ static void test_MsiSetFeatureAttributes(void)
     char path[MAX_PATH];
     MSIHANDLE package;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip("process is limited\n");
         return;
@@ -12811,7 +13957,7 @@ static void test_MsiGetFeatureInfo(void)
     char title[32], help[32], path[MAX_PATH];
     DWORD attrs, title_len, help_len;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip("process is limited\n");
         return;
@@ -12932,12 +14078,18 @@ static void test_MsiSetExternalUI(void)
     ret_a = MsiSetExternalUIA(NULL, 0, NULL);
     ok(ret_a == handler_a, "expected %p, got %p\n", handler_a, ret_a);
 
-    error = MsiSetExternalUIRecord(handler_record, INSTALLLOGMODE_ERROR, NULL, &prev);
+    /* Not present before Installer 3.1 */
+    if (!pMsiSetExternalUIRecord) {
+        win_skip("MsiSetExternalUIRecord is not available\n");
+        return;
+    }
+
+    error = pMsiSetExternalUIRecord(handler_record, INSTALLLOGMODE_ERROR, NULL, &prev);
     ok(!error, "MsiSetExternalUIRecord failed %u\n", error);
     ok(prev == NULL, "expected NULL, got %p\n", prev);
 
     prev = (INSTALLUI_HANDLER_RECORD)0xdeadbeef;
-    error = MsiSetExternalUIRecord(NULL, INSTALLLOGMODE_ERROR, NULL, &prev);
+    error = pMsiSetExternalUIRecord(NULL, INSTALLLOGMODE_ERROR, NULL, &prev);
     ok(!error, "MsiSetExternalUIRecord failed %u\n", error);
     ok(prev == handler_record, "expected %p, got %p\n", handler_record, prev);
 
@@ -12954,7 +14106,7 @@ static void test_MsiSetExternalUI(void)
     ok(ret_w == NULL, "expected NULL, got %p\n", ret_w);
 
     prev = (INSTALLUI_HANDLER_RECORD)0xdeadbeef;
-    error = MsiSetExternalUIRecord(handler_record, INSTALLLOGMODE_ERROR, NULL, &prev);
+    error = pMsiSetExternalUIRecord(handler_record, INSTALLLOGMODE_ERROR, NULL, &prev);
     ok(!error, "MsiSetExternalUIRecord failed %u\n", error);
     ok(prev == NULL, "expected NULL, got %p\n", prev);
 
@@ -12965,14 +14117,14 @@ static void test_MsiSetExternalUI(void)
     ok(ret_w == NULL, "expected NULL, got %p\n", ret_w);
 
     prev = (INSTALLUI_HANDLER_RECORD)0xdeadbeef;
-    error = MsiSetExternalUIRecord(NULL, 0, NULL, &prev);
+    error = pMsiSetExternalUIRecord(NULL, 0, NULL, &prev);
     ok(!error, "MsiSetExternalUIRecord failed %u\n", error);
     ok(prev == handler_record, "expected %p, got %p\n", handler_record, prev);
 
-    error = MsiSetExternalUIRecord(handler_record, INSTALLLOGMODE_ERROR, NULL, NULL);
+    error = pMsiSetExternalUIRecord(handler_record, INSTALLLOGMODE_ERROR, NULL, NULL);
     ok(!error, "MsiSetExternalUIRecord failed %u\n", error);
 
-    error = MsiSetExternalUIRecord(NULL, 0, NULL, NULL);
+    error = pMsiSetExternalUIRecord(NULL, 0, NULL, NULL);
     ok(!error, "MsiSetExternalUIRecord failed %u\n", error);
 }
 
@@ -12982,6 +14134,12 @@ static void test_lastusedsource(void)
     char value[MAX_PATH], path[MAX_PATH];
     DWORD size;
     UINT r;
+
+    if (!pMsiSourceListGetInfoA)
+    {
+        win_skip("MsiSourceListGetInfoA is not available\n");
+        return;
+    }
 
     CreateDirectoryA("msitest", NULL);
     create_file("maximus", 500);
@@ -12998,8 +14156,8 @@ static void test_lastusedsource(void)
 
     size = MAX_PATH;
     lstrcpyA(value, "aaa");
-    r = MsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
-                              MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
+    r = pMsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
+                               MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
     ok(r == ERROR_UNKNOWN_PRODUCT, "expected ERROR_UNKNOWN_PRODUCT, got %u\n", r);
     ok(!lstrcmpA(value, "aaa"), "expected \"aaa\", got \"%s\"\n", value);
 
@@ -13016,8 +14174,8 @@ static void test_lastusedsource(void)
 
     size = MAX_PATH;
     lstrcpyA(value, "aaa");
-    r = MsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
-                              MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
+    r = pMsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
+                               MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
     ok(r == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %u\n", r);
     ok(!lstrcmpA(value, path), "expected \"%s\", got \"%s\"\n", path, value);
     ok(size == lstrlenA(path), "expected %d, got %lu\n", lstrlenA(path), size);
@@ -13029,8 +14187,8 @@ static void test_lastusedsource(void)
 
     size = MAX_PATH;
     lstrcpyA(value, "aaa");
-    r = MsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
-                              MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
+    r = pMsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
+                               MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
     ok(r == ERROR_UNKNOWN_PRODUCT, "expected ERROR_UNKNOWN_PRODUCT, got %u\n", r);
     ok(!lstrcmpA(value, "aaa"), "expected \"aaa\", got \"%s\"\n", value);
 
@@ -13042,8 +14200,8 @@ static void test_lastusedsource(void)
 
     size = MAX_PATH;
     lstrcpyA(value, "aaa");
-    r = MsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
-                              MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
+    r = pMsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
+                               MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
     ok(r == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %u\n", r);
     ok(!lstrcmpA(value, path), "expected \"%s\", got \"%s\"\n", path, value);
     ok(size == lstrlenA(path), "expected %d, got %lu\n", lstrlenA(path), size);
@@ -13053,8 +14211,8 @@ static void test_lastusedsource(void)
 
     size = MAX_PATH;
     lstrcpyA(value, "aaa");
-    r = MsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
-                              MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
+    r = pMsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
+                               MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
     ok(r == ERROR_UNKNOWN_PRODUCT, "expected ERROR_UNKNOWN_PRODUCT, got %u\n", r);
     ok(!lstrcmpA(value, "aaa"), "expected \"aaa\", got \"%s\"\n", value);
 
@@ -13067,8 +14225,8 @@ static void test_lastusedsource(void)
 
     size = MAX_PATH;
     lstrcpyA(value, "aaa");
-    r = MsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
-                              MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
+    r = pMsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
+                               MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
     ok(r == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %u\n", r);
     ok(!lstrcmpA(value, path), "expected \"%s\", got \"%s\"\n", path, value);
     ok(size == lstrlenA(path), "expected %d, got %lu\n", lstrlenA(path), size);
@@ -13078,8 +14236,8 @@ static void test_lastusedsource(void)
 
     size = MAX_PATH;
     lstrcpyA(value, "aaa");
-    r = MsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
-                              MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
+    r = pMsiSourceListGetInfoA(prodcode, NULL, MSIINSTALLCONTEXT_USERUNMANAGED,
+                               MSICODE_PRODUCT, INSTALLPROPERTY_LASTUSEDSOURCEA, value, &size);
     ok(r == ERROR_UNKNOWN_PRODUCT, "expected ERROR_UNKNOWN_PRODUCT, got %u\n", r);
     ok(!lstrcmpA(value, "aaa"), "expected \"aaa\", got \"%s\"\n", value);
 
@@ -13096,7 +14254,7 @@ static void test_setpropertyfolder(void)
 {
     UINT r;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip("process is limited\n");
         return;
@@ -13151,7 +14309,7 @@ static void test_sourcedir_props(void)
 {
     UINT r;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip("process is limited\n");
         return;
@@ -13215,7 +14373,7 @@ static void test_concurrentinstall(void)
     UINT r;
     CHAR path[MAX_PATH];
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip("process is limited\n");
         return;
@@ -13267,7 +14425,7 @@ static void test_command_line_parsing(void)
     UINT r;
     const char *cmd;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         skip("process is limited\n");
         return;
@@ -13427,9 +14585,10 @@ START_TEST(msi)
     DWORD len;
     char temp_path[MAX_PATH], prev_path[MAX_PATH];
 
-    if (!is_process_elevated()) restart_as_admin_elevated();
+    init_functionpointers();
 
-    IsWow64Process(GetCurrentProcess(), &is_wow64);
+    if (pIsWow64Process)
+        pIsWow64Process(GetCurrentProcess(), &is_wow64);
 
     GetCurrentDirectoryA(MAX_PATH, prev_path);
     GetTempPathA(MAX_PATH, temp_path);
@@ -13477,7 +14636,8 @@ START_TEST(msi)
     test_lastusedsource();
     test_setpropertyfolder();
     test_sourcedir_props();
-    test_concurrentinstall();
+    if (pMsiGetComponentPathExA)
+        test_concurrentinstall();
     test_command_line_parsing();
     test_MsiProvideQualifiedComponentEx();
 

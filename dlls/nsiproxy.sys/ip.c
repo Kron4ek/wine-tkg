@@ -1578,11 +1578,7 @@ static NTSTATUS ipv6_forward_enumerate_all( void *key_data, UINT key_size, void 
         UINT rtf_flags;
         FILE *fp;
 
-        if (!(fp = fopen( "/proc/net/ipv6_route", "r" )))
-        {
-            *count = 0;
-            return STATUS_SUCCESS;
-        }
+        if (!(fp = fopen( "/proc/net/ipv6_route", "r" ))) return STATUS_NOT_SUPPORTED;
 
         while ((ptr = fgets( buf, sizeof(buf), fp )))
         {

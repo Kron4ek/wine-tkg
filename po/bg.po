@@ -19266,9 +19266,8 @@ msgid "Help topics: "
 msgstr ""
 
 #: programs/wmic/wmic.rc:28
-#, fuzzy
-msgid "Error: Command not supported\n"
-msgstr "Файлът не е намерен.\n"
+msgid "Error: Command line not supported\n"
+msgstr ""
 
 #: programs/wmic/wmic.rc:29
 #, fuzzy
@@ -19284,10 +19283,6 @@ msgstr "Невалидни знаци в пътя.\n"
 #, fuzzy
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "Невалидни знаци в пътя.\n"
-
-#: programs/wmic/wmic.rc:32
-msgid "Supply a command\n"
-msgstr ""
 
 #: programs/wordpad/wordpad.rc:31
 #, fuzzy

@@ -449,15 +449,6 @@ p2
 @todo_wine@---
 q2
 q3
-------------- Testing internal commands return codes
-SUCCESS
-FAILURE 0
-@todo_wine@foo@space@
-@todo_wine@SUCCESS
-@todo_wine@FAILURE 666
-SUCCESS
-@todo_wine@FAILURE 0
-@todo_wine@---
 ------------ Testing 'set' ------------
 1
 0
@@ -541,8 +532,6 @@ ert@or_broken@qwerty
 e@or_broken@qwerty
 ''@or_broken@'qwerty'
 r@or_broken@qwerty
-ty
-mmydir
 ------------ Testing variable substitution ------------
 --- in FOR variables
 "A B"
@@ -609,12 +598,6 @@ N
 @drive@
 ''
 '.eh'@or_broken@''
-"foo bar"
-@todo_wine@foo
-@todo_wine@bar
---- in digit variables
-@todo_wine@a %1 %2
-@todo_wine@b %1 %2
 ------------ Testing parameter zero ------------
 :func parm1
 [:func] [@drive@] [@path@] [test] [.cmd] [@drive@@shortpath@test.cmd]
@@ -633,7 +616,6 @@ bar@or_broken@foo
 0@or_broken@1
 foo
 !WINE_FOO!
-@todo_wine@not empty
 --- using /V cmd flag
 foo
 foo@or_broken@!WINE_FOO!
@@ -1013,9 +995,6 @@ A C
 A D
 B C
 B D
---- nested FORs and args tempering
-@todo_wine@inner argument {-foo, bar}
-@todo_wine@inner argument {-x, y}
 --- basic wildcards
 bazbaz
 --- wildcards in subdirs
@@ -1549,8 +1528,6 @@ foo created
 Should expand foobaz
 batfile
 robinfile
-0
-@todo_wine@1
 1
 1
 non-builtin dir
@@ -1559,15 +1536,6 @@ Line two
 Get if
 ... and else!
 passed
---- mixing batch and builtins
-bar@space@
-@todo_wine@foo
-foo
-foo
-bar@space@
-bat bar@space@
-bar@space@
-bat bar@space@
 ------------ Testing SHIFT ------------
 'p1' 'p2' 'p3' 'p4' 'p5'
 'p2' 'p3' 'p4' 'p5' ''

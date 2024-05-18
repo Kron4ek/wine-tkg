@@ -1,5 +1,5 @@
 MODULE    = qdvd.dll
-IMPORTS   = strmbase strmiids uuid ole32 msvcrt
+IMPORTS   = strmbase strmiids uuid ole32
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 

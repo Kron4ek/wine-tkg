@@ -98,19 +98,26 @@ static HRESULT transform_query_interface(struct strmbase_filter *iface, REFIID i
 static HRESULT transform_init_stream(struct strmbase_filter *iface)
 {
     struct transform *filter = impl_from_strmbase_filter(iface);
+    struct wg_format input_format, output_format;
     struct wg_transform_attrs attrs = {0};
     HRESULT hr;
 
     if (filter->source.pin.peer)
     {
+        if (!amt_to_wg_format(&filter->sink.pin.mt, &input_format))
+            return E_FAIL;
+
+        if (!amt_to_wg_format(&filter->source.pin.mt, &output_format))
+            return E_FAIL;
+
         if (FAILED(hr = wg_sample_queue_create(&filter->sample_queue)))
             return hr;
 
-        if (FAILED(hr = wg_transform_create_quartz(&filter->sink.pin.mt, &filter->source.pin.mt,
-                &attrs, &filter->transform)))
+        filter->transform = wg_transform_create(&input_format, &output_format, &attrs);
+        if (!filter->transform)
         {
             wg_sample_queue_destroy(filter->sample_queue);
-            return hr;
+            return E_FAIL;
         }
 
         hr = IMemAllocator_Commit(filter->source.pAllocator);
@@ -737,24 +744,39 @@ static const struct transform_ops mpeg_audio_codec_transform_ops =
 
 HRESULT mpeg_audio_codec_create(IUnknown *outer, IUnknown **out)
 {
-    static const WAVEFORMATEX output_format =
+    static const struct wg_format output_format =
     {
-        .wFormatTag = WAVE_FORMAT_PCM, .wBitsPerSample = 16, .nSamplesPerSec = 44100, .nChannels = 1,
+        .major_type = WG_MAJOR_TYPE_AUDIO,
+        .u.audio =
+        {
+            .format = WG_AUDIO_FORMAT_S16LE,
+            .channel_mask = 1,
+            .channels = 1,
+            .rate = 44100,
+        },
     };
-    static const MPEG1WAVEFORMAT input_format =
+    static const struct wg_format input_format =
     {
-        .wfx = {.wFormatTag = WAVE_FORMAT_MPEG, .nSamplesPerSec = 44100, .nChannels = 1,
-                .cbSize = sizeof(input_format) - sizeof(WAVEFORMATEX)},
-        .fwHeadLayer = 2,
+        .major_type = WG_MAJOR_TYPE_AUDIO_MPEG1,
+        .u.audio_mpeg1 =
+        {
+            .layer = 2,
+            .channels = 1,
+            .rate = 44100,
+        },
     };
+    struct wg_transform_attrs attrs = {0};
+    wg_transform_t transform;
     struct transform *object;
     HRESULT hr;
 
-    if (FAILED(hr = check_audio_transform_support(&input_format.wfx, &output_format)))
+    transform = wg_transform_create(&input_format, &output_format, &attrs);
+    if (!transform)
     {
         ERR_(winediag)("GStreamer doesn't support MPEG-1 audio decoding, please install appropriate plugins.\n");
-        return hr;
+        return E_FAIL;
     }
+    wg_transform_destroy(transform);
 
     hr = transform_create(outer, &CLSID_CMpegAudioCodec, &mpeg_audio_codec_transform_ops, &object);
     if (FAILED(hr))
@@ -885,7 +907,7 @@ HRESULT mpeg_video_codec_create(IUnknown *outer, IUnknown **out)
     static const struct wg_format input_format =
     {
         .major_type = WG_MAJOR_TYPE_VIDEO_MPEG1,
-        .u.video = {},
+        .u.video_mpeg1 = {},
     };
     struct wg_transform_attrs attrs = {0};
     wg_transform_t transform;
@@ -1000,23 +1022,39 @@ static const struct transform_ops mpeg_layer3_decoder_transform_ops =
 
 HRESULT mpeg_layer3_decoder_create(IUnknown *outer, IUnknown **out)
 {
-    static const WAVEFORMATEX output_format =
+    static const struct wg_format output_format =
     {
-        .wFormatTag = WAVE_FORMAT_PCM, .wBitsPerSample = 16, .nSamplesPerSec = 44100, .nChannels = 1,
+        .major_type = WG_MAJOR_TYPE_AUDIO,
+        .u.audio =
+        {
+            .format = WG_AUDIO_FORMAT_S16LE,
+            .channel_mask = 1,
+            .channels = 1,
+            .rate = 44100,
+        },
     };
-    static const MPEGLAYER3WAVEFORMAT input_format =
+    static const struct wg_format input_format =
     {
-        .wfx = {.wFormatTag = WAVE_FORMAT_MPEGLAYER3, .nSamplesPerSec = 44100, .nChannels = 1,
-                .cbSize = sizeof(input_format) - sizeof(WAVEFORMATEX)},
+        .major_type = WG_MAJOR_TYPE_AUDIO_MPEG1,
+        .u.audio_mpeg1 =
+        {
+            .layer = 3,
+            .channels = 1,
+            .rate = 44100,
+        },
     };
+    struct wg_transform_attrs attrs = {0};
+    wg_transform_t transform;
     struct transform *object;
     HRESULT hr;
 
-    if (FAILED(hr = check_audio_transform_support(&input_format.wfx, &output_format)))
+    transform = wg_transform_create(&input_format, &output_format, &attrs);
+    if (!transform)
     {
-        ERR_(winediag)("GStreamer doesn't support MP3 audio decoding, please install appropriate plugins.\n");
-        return hr;
+        ERR_(winediag)("GStreamer doesn't support MPEG-1 audio decoding, please install appropriate plugins.\n");
+        return E_FAIL;
     }
+    wg_transform_destroy(transform);
 
     hr = transform_create(outer, &CLSID_mpeg_layer3_decoder, &mpeg_layer3_decoder_transform_ops, &object);
     if (FAILED(hr))

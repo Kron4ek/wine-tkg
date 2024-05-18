@@ -130,7 +130,7 @@ extern LONG macdrv_ChangeDisplaySettings(LPDEVMODEW displays, LPCWSTR primary_na
 extern BOOL macdrv_GetCurrentDisplaySettings(LPCWSTR name, BOOL is_primary, LPDEVMODEW devmode);
 extern INT macdrv_GetDisplayDepth(LPCWSTR name, BOOL is_primary);
 extern LRESULT macdrv_ClipboardWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
-extern UINT macdrv_UpdateDisplayDevices( const struct gdi_device_manager *device_manager,
+extern BOOL macdrv_UpdateDisplayDevices( const struct gdi_device_manager *device_manager,
                                          BOOL force, void *param );
 extern BOOL macdrv_GetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp);
 extern BOOL macdrv_SetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp);
@@ -258,7 +258,7 @@ extern BOOL query_pasteboard_data(HWND hwnd, CFStringRef type);
 extern void macdrv_lost_pasteboard_ownership(HWND hwnd);
 
 extern struct opengl_funcs *macdrv_wine_get_wgl_driver(UINT version);
-extern UINT macdrv_VulkanInit(UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs);
+extern UINT macdrv_VulkanInit(UINT version, void *vulkan_handle, struct vulkan_funcs *vulkan_funcs);
 extern void sync_gl_view(struct macdrv_win_data* data, const RECT* old_whole_rect, const RECT* old_client_rect);
 
 extern CGImageRef create_cgimage_from_icon_bitmaps(HDC hdc, HANDLE icon, HBITMAP hbmColor,

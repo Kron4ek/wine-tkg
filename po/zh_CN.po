@@ -14162,7 +14162,7 @@ msgstr ""
 "FTYPE\t\t显示或更改文件类型关联的打开命令\n"
 "HELP\t\t显示某个主题的帮助信息概览\n"
 "MD (MKDIR)\t创建子目录\n"
-"MKLINK\t\t创建符号链接\n"
+"MKLINK\t创建符号链接\n"
 "MORE\t\t分页显示输出\n"
 "MOVE\t\t移动一个或多个文件，或整个目录树\n"
 "PATH\t\t设置或显示命令搜索路径\n"
@@ -19093,9 +19093,7 @@ msgid "Help topics: "
 msgstr "帮助主题: "
 
 #: programs/wmic/wmic.rc:28
-#, fuzzy
-#| msgid "Error: Command line not supported\n"
-msgid "Error: Command not supported\n"
+msgid "Error: Command line not supported\n"
 msgstr "错误: 不支持此命令行\n"
 
 #: programs/wmic/wmic.rc:29
@@ -19109,12 +19107,6 @@ msgstr "错误: 无效查询\n"
 #: programs/wmic/wmic.rc:31
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "错误: PATH 语法无效\n"
-
-#: programs/wmic/wmic.rc:32
-#, fuzzy
-#| msgid "Bad command.\n"
-msgid "Supply a command\n"
-msgstr "错误指令。\n"
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

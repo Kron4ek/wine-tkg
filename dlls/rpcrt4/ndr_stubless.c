@@ -346,9 +346,9 @@ static handle_t client_get_handle(const MIDL_STUB_MESSAGE *pStubMsg,
                 {
                     ERR("null context handle isn't allowed\n");
                     RpcRaiseException(RPC_X_SS_IN_NULL_CONTEXT);
+                    return NULL;
                 }
                 /* FIXME: should we store this structure in stubMsg.pContext? */
-                return NULL;
             }
         default:
             ERR("bad explicit binding handle type (0x%02x)\n", pProcHeader->handle_type);
@@ -478,7 +478,7 @@ static size_t basetype_arg_size( unsigned char fc )
 }
 
 void client_do_args( PMIDL_STUB_MESSAGE pStubMsg, PFORMAT_STRING pFormat, enum stubless_phase phase,
-                     BOOLEAN fpu_args, unsigned short number_of_params, unsigned char *pRetVal )
+                     void **fpu_args, unsigned short number_of_params, unsigned char *pRetVal )
 {
     const NDR_PARAM_OIF *params = (const NDR_PARAM_OIF *)pFormat;
     unsigned int i;
@@ -488,7 +488,7 @@ void client_do_args( PMIDL_STUB_MESSAGE pStubMsg, PFORMAT_STRING pFormat, enum s
         unsigned char *pArg = pStubMsg->StackTop + params[i].stack_offset;
         PFORMAT_STRING pTypeFormat = (PFORMAT_STRING)&pStubMsg->StubDesc->pFormatTypes[params[i].u.type_offset];
 
-#ifndef __i386__  /* floats are passed as doubles through varargs functions */
+#ifdef __x86_64__  /* floats are passed as doubles through varargs functions */
         float f;
 
         if (params[i].attr.IsBasetype &&
@@ -700,10 +700,10 @@ static void CALLBACK ndr_client_call_finally(BOOL normal, void *arg)
     }
 }
 
-/* Helper for NdrpClientCall2, to factor out the part that may or may not be
+/* Helper for ndr_client_call, to factor out the part that may or may not be
  * guarded by a try/except block. */
-static LONG_PTR ndr_client_call( const MIDL_STUB_DESC *stub_desc, const PFORMAT_STRING format,
-        const PFORMAT_STRING handle_format, void **stack_top, BOOLEAN fpu_args, MIDL_STUB_MESSAGE *stub_msg,
+static LONG_PTR do_ndr_client_call( const MIDL_STUB_DESC *stub_desc, const PFORMAT_STRING format,
+        const PFORMAT_STRING handle_format, void **stack_top, void **fpu_stack, MIDL_STUB_MESSAGE *stub_msg,
         unsigned short procedure_number, unsigned short stack_size, unsigned int number_of_params,
         INTERPRETER_OPT_FLAGS Oif_flags, INTERPRETER_OPT_FLAGS2 ext_flags, const NDR_PROC_HEADER *proc_header )
 {
@@ -745,7 +745,10 @@ static LONG_PTR ndr_client_call( const MIDL_STUB_DESC *stub_desc, const PFORMAT_
 
         /* we only need a handle if this isn't an object method */
         if (!(proc_header->Oi_flags & Oi_OBJECT_PROC))
+        {
             hbinding = client_get_handle(stub_msg, proc_header, handle_format);
+            if (!hbinding) return 0;
+        }
 
         stub_msg->BufferLength = 0;
 
@@ -786,13 +789,13 @@ static LONG_PTR ndr_client_call( const MIDL_STUB_DESC *stub_desc, const PFORMAT_
         if (proc_header->Oi_flags & Oi_OBJECT_PROC)
         {
             TRACE( "INITOUT\n" );
-            client_do_args(stub_msg, format, STUBLESS_INITOUT, fpu_args,
+            client_do_args(stub_msg, format, STUBLESS_INITOUT, fpu_stack,
                            number_of_params, (unsigned char *)&retval);
         }
 
         /* 2. CALCSIZE */
         TRACE( "CALCSIZE\n" );
-        client_do_args(stub_msg, format, STUBLESS_CALCSIZE, fpu_args,
+        client_do_args(stub_msg, format, STUBLESS_CALCSIZE, fpu_stack,
                        number_of_params, (unsigned char *)&retval);
 
         /* 3. GETBUFFER */
@@ -812,7 +815,7 @@ static LONG_PTR ndr_client_call( const MIDL_STUB_DESC *stub_desc, const PFORMAT_
 
         /* 4. MARSHAL */
         TRACE( "MARSHAL\n" );
-        client_do_args(stub_msg, format, STUBLESS_MARSHAL, fpu_args,
+        client_do_args(stub_msg, format, STUBLESS_MARSHAL, fpu_stack,
                        number_of_params, (unsigned char *)&retval);
 
         /* 5. SENDRECEIVE */
@@ -838,7 +841,7 @@ static LONG_PTR ndr_client_call( const MIDL_STUB_DESC *stub_desc, const PFORMAT_
 
         /* 6. UNMARSHAL */
         TRACE( "UNMARSHAL\n" );
-        client_do_args(stub_msg, format, STUBLESS_UNMARSHAL, fpu_args,
+        client_do_args(stub_msg, format, STUBLESS_UNMARSHAL, fpu_stack,
                        number_of_params, (unsigned char *)&retval);
     }
     __FINALLY_CTX(ndr_client_call_finally, &finally_ctx)
@@ -846,8 +849,8 @@ static LONG_PTR ndr_client_call( const MIDL_STUB_DESC *stub_desc, const PFORMAT_
     return retval;
 }
 
-LONG_PTR WINAPI NdrpClientCall2( PMIDL_STUB_DESC pStubDesc, PFORMAT_STRING pFormat,
-                                 void **stack_top, BOOLEAN fpu_args )
+LONG_PTR CDECL ndr_client_call( PMIDL_STUB_DESC pStubDesc, PFORMAT_STRING pFormat,
+                                void **stack_top, void **fpu_stack )
 {
     /* pointer to start of stack where arguments start */
     MIDL_STUB_MESSAGE stubMsg;
@@ -913,6 +916,19 @@ LONG_PTR WINAPI NdrpClientCall2( PMIDL_STUB_DESC pStubDesc, PFORMAT_STRING pForm
             const NDR_PROC_HEADER_EXTS *pExtensions = (const NDR_PROC_HEADER_EXTS *)pFormat;
             ext_flags = pExtensions->Flags2;
             pFormat += pExtensions->Size;
+#ifdef __x86_64__
+            if (pExtensions->Size > sizeof(*pExtensions) && fpu_stack)
+            {
+                int i;
+                unsigned short fpu_mask = *(unsigned short *)(pExtensions + 1);
+                for (i = 0; i < 4; i++, fpu_mask >>= 2)
+                    switch (fpu_mask & 3)
+                    {
+                    case 1: *(float *)&stack_top[i] = *(float *)&fpu_stack[i]; break;
+                    case 2: *(double *)&stack_top[i] = *(double *)&fpu_stack[i]; break;
+                    }
+            }
+#endif
         }
     }
     else
@@ -926,16 +942,15 @@ LONG_PTR WINAPI NdrpClientCall2( PMIDL_STUB_DESC pStubDesc, PFORMAT_STRING pForm
     {
         __TRY
         {
-            RetVal = ndr_client_call(pStubDesc, pFormat, pHandleFormat,
-                                     stack_top, fpu_args, &stubMsg, procedure_number, stack_size,
-                                     number_of_params, Oif_flags, ext_flags, pProcHeader);
+            RetVal = do_ndr_client_call(pStubDesc, pFormat, pHandleFormat,
+                    stack_top, fpu_stack, &stubMsg, procedure_number, stack_size,
+                    number_of_params, Oif_flags, ext_flags, pProcHeader);
         }
         __EXCEPT_ALL
         {
             /* 7. FREE */
             TRACE( "FREE\n" );
-            stubMsg.StackTop = (unsigned char *)stack_top;
-            client_do_args(&stubMsg, pFormat, STUBLESS_FREE, fpu_args,
+            client_do_args(&stubMsg, pFormat, STUBLESS_FREE, fpu_stack,
                            number_of_params, (unsigned char *)&RetVal);
             RetVal = NdrProxyErrorHandler(GetExceptionCode());
         }
@@ -945,9 +960,9 @@ LONG_PTR WINAPI NdrpClientCall2( PMIDL_STUB_DESC pStubDesc, PFORMAT_STRING pForm
     {
         __TRY
         {
-            RetVal = ndr_client_call(pStubDesc, pFormat, pHandleFormat,
-                                     stack_top, fpu_args, &stubMsg, procedure_number, stack_size,
-                                     number_of_params, Oif_flags, ext_flags, pProcHeader);
+            RetVal = do_ndr_client_call(pStubDesc, pFormat, pHandleFormat,
+                    stack_top, fpu_stack, &stubMsg, procedure_number, stack_size,
+                    number_of_params, Oif_flags, ext_flags, pProcHeader);
         }
         __EXCEPT_ALL
         {
@@ -978,57 +993,17 @@ LONG_PTR WINAPI NdrpClientCall2( PMIDL_STUB_DESC pStubDesc, PFORMAT_STRING pForm
     }
     else
     {
-        RetVal = ndr_client_call(pStubDesc, pFormat, pHandleFormat,
-                                 stack_top, fpu_args, &stubMsg, procedure_number, stack_size,
-                                 number_of_params, Oif_flags, ext_flags, pProcHeader);
+        RetVal = do_ndr_client_call(pStubDesc, pFormat, pHandleFormat,
+                stack_top, fpu_stack, &stubMsg, procedure_number, stack_size,
+                number_of_params, Oif_flags, ext_flags, pProcHeader);
     }
 
     TRACE("RetVal = 0x%Ix\n", RetVal);
     return RetVal;
 }
 
-#ifdef __aarch64__
-__ASM_GLOBAL_FUNC( NdrClientCall2,
-                   "stp x29, x30, [sp, #-0x40]!\n\t"
-                   ".seh_save_fplr_x 0x40\n\t"
-                   ".seh_endprologue\n\t"
-                   "stp x2, x3, [sp, #0x10]\n\t"
-                   "stp x4, x5, [sp, #0x20]\n\t"
-                   "stp x6, x7, [sp, #0x30]\n\t"
-                   "add x2, sp, #0x10\n\t"   /* stack */
-                   "mov x3, #0\n\t"          /* fpu_stack */
-                   "bl NdrpClientCall2\n\t"
-                   "ldp x29, x30, [sp], #0x40\n\t"
-                   "ret" )
-#elif defined(__arm64ec__)
-CLIENT_CALL_RETURN __attribute__((naked)) NdrClientCall2( PMIDL_STUB_DESC desc, PFORMAT_STRING fmt, ... )
-{
-    asm( ".seh_proc \"#NdrClientCall2\"\n\t"
-         "stp x29, x30, [sp, #-0x20]!\n\t"
-         ".seh_save_fplr_x 0x20\n\t"
-         ".seh_endprologue\n\t"
-         "stp x2, x3, [x4, #-0x10]!\n\t"
-         "mov x2, x4\n\t"          /* stack */
-         "mov x3, #0\n\t"          /* fpu_stack */
-         "bl \"#NdrpClientCall2\"\n\t"
-         "ldp x29, x30, [sp], #0x20\n\t"
-         "ret\n\t"
-         ".seh_endproc" );
-}
-#elif defined(__arm__)
-__ASM_GLOBAL_FUNC( NdrClientCall2,
-                   "push {r2-r3}\n\t"
-                   ".seh_save_regs {r2,r3}\n\t"
-                   "push {fp,lr}\n\t"
-                   ".seh_save_regs_w {fp,lr}\n\t"
-                   ".seh_endprologue\n\t"
-                   "add r2, sp, #8\n\t"      /* stack */
-                   "mov r3, #0\n\t"          /* fpu_stack */
-                   "bl NdrpClientCall2\n\t"
-                   "pop {fp,lr}\n\t"
-                   "add sp, #8\n\t"
-                   "bx lr" )
-#elif defined(__x86_64__)
+#ifdef __x86_64__
+
 __ASM_GLOBAL_FUNC( NdrClientCall2,
                    "subq $0x28,%rsp\n\t"
                    __ASM_SEH(".seh_stackalloc 0x28\n\t")
@@ -1036,104 +1011,212 @@ __ASM_GLOBAL_FUNC( NdrClientCall2,
                    __ASM_CFI(".cfi_adjust_cfa_offset 0x28\n\t")
                    "movq %r8,0x40(%rsp)\n\t"
                    "movq %r9,0x48(%rsp)\n\t"
-                   "leaq 0x40(%rsp),%r8\n\t" /* stack */
-                   "xorq %r9,%r9\n\t"        /* fpu_stack */
-                   "call " __ASM_NAME("NdrpClientCall2") "\n\t"
+                   "leaq 0x40(%rsp),%r8\n\t"
+                   "xorq %r9,%r9\n\t"
+                   "call " __ASM_NAME("ndr_client_call") "\n\t"
                    "addq $0x28,%rsp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
-                   "ret" )
-#elif defined(__i386__)
-__ASM_GLOBAL_FUNC( NdrClientCall2,
-                   "pushl %ebp\n\t"
-                   __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
-                   __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
-                   "movl %esp,%ebp\n\t"
-                   __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
-                   "push $0\n\t"             /* fpu_stack */
-                   "push 16(%ebp)\n\t"       /* stack */
-                   "push 12(%ebp)\n\t"       /* format */
-                   "push 8(%ebp)\n\t"        /* desc */
-                   "call " __ASM_STDCALL("NdrpClientCall2",16) "\n\t"
-                   "leave\n\t"
-                   __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
-                   __ASM_CFI(".cfi_same_value %ebp\n\t")
-                   "ret" )
-#endif
+                   "ret" );
 
-#if defined(__aarch64__) || defined(__arm__)
-static void **args_regs_to_stack( void **regs, void **fpu_regs, const NDR_PROC_PARTIAL_OIF_HEADER *header )
+#else  /* __x86_64__ */
+
+/***********************************************************************
+ *            NdrClientCall2 [RPCRT4.@]
+ */
+CLIENT_CALL_RETURN WINAPIV NdrClientCall2( PMIDL_STUB_DESC desc, PFORMAT_STRING format, ... )
 {
-    static const unsigned int nb_gpregs = sizeof(void *); /* 4 gpregs on arm32, 8 on arm64 */
-    const NDR_PROC_HEADER_EXTS *ext = (const NDR_PROC_HEADER_EXTS *)(header + 1);
-    unsigned int i, size, count, pos, params;
-    unsigned char *data;
-    void **stack, **args = regs + nb_gpregs;
-
-    if (ext->Size < sizeof(*ext) + 3) return NULL;
-    data = (unsigned char *)(ext + 1);
-    params = data[0] + (data[1] << 8);
-    if (!(stack = malloc( params * sizeof(*stack) ))) return NULL;
-    size = min( ext->Size - sizeof(*ext) - 3, data[2] );
-    data += 3;
-    for (i = pos = 0; i < size; i++, pos++)
-    {
-        if (data[i] < 0x80) continue;
-        else if (data[i] < 0x80 + nb_gpregs) stack[pos] = regs[data[i] - 0x80];
-        else if (data[i] < 0x94) stack[pos] = fpu_regs[data[i] - 0x80 - nb_gpregs];
-        else if (data[i] == 0x9d) /* repeat */
-        {
-            if (i + 3 >= size) break;
-            count = data[i + 2] + (data[i + 3] << 8);
-            memcpy( &stack[pos], &args[pos + (signed char)data[i + 1]], count * sizeof(*args) );
-            pos += count - 1;
-            i += 3;
-        }
-        else if (data[i] < 0xa0) continue;
-        else stack[pos] = args[pos + (signed char)data[i]];
-    }
-    return stack;
-}
-#endif
-
-extern LONG_PTR __cdecl call_server_func(SERVER_ROUTINE func, unsigned char * args, unsigned int stack_size,
-                                         const NDR_PROC_PARTIAL_OIF_HEADER *header);
-
-#ifndef __i386__
-LONG_PTR WINAPI ndr_stubless_client_call( unsigned int index, void **args, void **fpu_regs )
-{
-    void **this = args[0];
-    const void **vtbl = *this;
-    const MIDL_STUBLESS_PROXY_INFO *proxy_info = vtbl[-2];
-    const unsigned char *format = proxy_info->ProcFormatString + proxy_info->FormatStringOffset[index];
-    const NDR_PROC_HEADER *proc = (const NDR_PROC_HEADER *)format;
-    void **stack_top = args;
+    va_list args;
     LONG_PTR ret;
 
-    if (is_oicf_stubdesc( proxy_info->pStubDesc ))
-    {
-        unsigned int hdr_size = (proc->Oi_flags & Oi_HAS_RPCFLAGS) ? sizeof(NDR_PROC_HEADER_RPC) : sizeof(NDR_PROC_HEADER);
-        const NDR_PROC_PARTIAL_OIF_HEADER *hdr = (const NDR_PROC_PARTIAL_OIF_HEADER *)(format + hdr_size);
-
-        if (hdr->Oi2Flags.HasExtensions)
-        {
-            const NDR_PROC_HEADER_EXTS *ext = (const NDR_PROC_HEADER_EXTS *)(hdr + 1);
-            if (ext->Size > sizeof(*ext))
-            {
-#ifdef __x86_64__
-                unsigned short fpu_mask = *(unsigned short *)(ext + 1);
-                for (int i = 0; i < 4; i++, fpu_mask >>= 2) if (fpu_mask & 3) args[i] = fpu_regs[i];
-#else
-                stack_top = args_regs_to_stack( args, fpu_regs, hdr );
-#endif
-            }
-        }
-    }
-
-    ret = NdrpClientCall2( proxy_info->pStubDesc, format, stack_top, TRUE );
-    if (stack_top != args) free( stack_top );
-    return ret;
+    va_start( args, format );
+    ret = ndr_client_call( desc, format, va_arg( args, void ** ), NULL );
+    va_end( args );
+    return *(CLIENT_CALL_RETURN *)&ret;
 }
-#endif  /* __i386__ */
+
+#endif  /* __x86_64__ */
+
+/* Calls a function with the specified arguments, restoring the stack
+ * properly afterwards as we don't know the calling convention of the
+ * function */
+#if defined __i386__ && defined _MSC_VER
+__declspec(naked) LONG_PTR __cdecl call_server_func(SERVER_ROUTINE func, unsigned char * args, unsigned int stack_size)
+{
+    __asm
+    {
+        push ebp
+        mov ebp, esp
+        push edi            ; Save registers
+        push esi
+        mov eax, [ebp+16]   ; Get stack size
+        sub esp, eax        ; Make room in stack for arguments
+        and esp, 0xFFFFFFF0
+        mov edi, esp
+        mov ecx, eax
+        mov esi, [ebp+12]
+        shr ecx, 2
+        cld
+        rep movsd           ; Copy dword blocks
+        call [ebp+8]        ; Call function
+        lea esp, [ebp-8]    ; Restore stack
+        pop esi             ; Restore registers
+        pop edi
+        pop ebp
+        ret
+    }
+}
+#elif defined __i386__ && defined __GNUC__
+LONG_PTR __cdecl call_server_func(SERVER_ROUTINE func, unsigned char * args, unsigned int stack_size);
+__ASM_GLOBAL_FUNC(call_server_func,
+    "pushl %ebp\n\t"
+    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+    __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+    "movl %esp,%ebp\n\t"
+    __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+    "pushl %edi\n\t"            /* Save registers */
+    __ASM_CFI(".cfi_rel_offset %edi,-4\n\t")
+    "pushl %esi\n\t"
+    __ASM_CFI(".cfi_rel_offset %esi,-8\n\t")
+    "movl 16(%ebp), %eax\n\t"   /* Get stack size */
+    "subl %eax, %esp\n\t"       /* Make room in stack for arguments */
+    "andl $~15, %esp\n\t"	/* Make sure stack has 16-byte alignment for Mac OS X */
+    "movl %esp, %edi\n\t"
+    "movl %eax, %ecx\n\t"
+    "movl 12(%ebp), %esi\n\t"
+    "shrl $2, %ecx\n\t"         /* divide by 4 */
+    "cld\n\t"
+    "rep; movsl\n\t"            /* Copy dword blocks */
+    "call *8(%ebp)\n\t"         /* Call function */
+    "leal -8(%ebp), %esp\n\t"   /* Restore stack */
+    "popl %esi\n\t"             /* Restore registers */
+    __ASM_CFI(".cfi_same_value %esi\n\t")
+    "popl %edi\n\t"
+    __ASM_CFI(".cfi_same_value %edi\n\t")
+    "popl %ebp\n\t"
+    __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
+    __ASM_CFI(".cfi_same_value %ebp\n\t")
+    "ret" )
+#elif defined __x86_64__
+LONG_PTR __cdecl call_server_func(SERVER_ROUTINE func, unsigned char * args, unsigned int stack_size);
+__ASM_GLOBAL_FUNC( call_server_func,
+                   "pushq %rbp\n\t"
+                   __ASM_SEH(".seh_pushreg %rbp\n\t")
+                   __ASM_CFI(".cfi_adjust_cfa_offset 8\n\t")
+                   __ASM_CFI(".cfi_rel_offset %rbp,0\n\t")
+                   "movq %rsp,%rbp\n\t"
+                   __ASM_SEH(".seh_setframe %rbp,0\n\t")
+                   __ASM_CFI(".cfi_def_cfa_register %rbp\n\t")
+                   "pushq %rsi\n\t"
+                   __ASM_SEH(".seh_pushreg %rsi\n\t")
+                   __ASM_CFI(".cfi_rel_offset %rsi,-8\n\t")
+                   "pushq %rdi\n\t"
+                   __ASM_SEH(".seh_pushreg %rdi\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   __ASM_CFI(".cfi_rel_offset %rdi,-16\n\t")
+                   "movq %rcx,%rax\n\t"   /* function to call */
+                   "movq $32,%rcx\n\t"    /* allocate max(32,stack_size) bytes of stack space */
+                   "cmpq %rcx,%r8\n\t"
+                   "cmovgq %r8,%rcx\n\t"
+                   "subq %rcx,%rsp\n\t"
+                   "andq $~15,%rsp\n\t"
+                   "movq %r8,%rcx\n\t"
+                   "shrq $3,%rcx\n\t"
+                   "movq %rsp,%rdi\n\t"
+                   "movq %rdx,%rsi\n\t"
+                   "rep; movsq\n\t"       /* copy arguments */
+                   "movq 0(%rsp),%rcx\n\t"
+                   "movq 8(%rsp),%rdx\n\t"
+                   "movq 16(%rsp),%r8\n\t"
+                   "movq 24(%rsp),%r9\n\t"
+                   "movq 0(%rsp),%xmm0\n\t"
+                   "movq 8(%rsp),%xmm1\n\t"
+                   "movq 16(%rsp),%xmm2\n\t"
+                   "movq 24(%rsp),%xmm3\n\t"
+                   "callq *%rax\n\t"
+                   "leaq -16(%rbp),%rsp\n\t"  /* restore stack */
+                   "popq %rdi\n\t"
+                   __ASM_CFI(".cfi_same_value %rdi\n\t")
+                   "popq %rsi\n\t"
+                   __ASM_CFI(".cfi_same_value %rsi\n\t")
+                   __ASM_CFI(".cfi_def_cfa_register %rsp\n\t")
+                   "popq %rbp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset -8\n\t")
+                   __ASM_CFI(".cfi_same_value %rbp\n\t")
+                   "ret")
+#elif defined __arm__
+LONG_PTR __cdecl call_server_func(SERVER_ROUTINE func, unsigned char *args, unsigned int stack_size);
+__ASM_GLOBAL_FUNC( call_server_func,
+                   "push {r4, r5, LR}\n\t"
+                   "mov r4, r0\n\t"
+                   "mov r5, SP\n\t"
+                   "lsr r3, r2, #2\n\t"
+                   "cmp r3, #0\n\t"
+                   "beq 5f\n\t"
+                   "sub SP, SP, r2\n\t"
+                   "tst r3, #1\n\t"
+                   "it eq\n\t"
+                   "subeq SP, SP, #4\n\t"
+                   "1:\tsub r2, r2, #4\n\t"
+                   "ldr r0, [r1, r2]\n\t"
+                   "str r0, [SP, r2]\n\t"
+                   "cmp r2, #0\n\t"
+                   "bgt 1b\n\t"
+                   "cmp r3, #1\n\t"
+                   "bgt 2f\n\t"
+                   "pop {r0}\n\t"
+                   "b 5f\n\t"
+                   "2:\tcmp r3, #2\n\t"
+                   "bgt 3f\n\t"
+                   "pop {r0-r1}\n\t"
+                   "b 5f\n\t"
+                   "3:\tcmp r3, #3\n\t"
+                   "bgt 4f\n\t"
+                   "pop {r0-r2}\n\t"
+                   "b 5f\n\t"
+                   "4:\tpop {r0-r3}\n\t"
+                   "5:\tblx r4\n\t"
+                   "mov SP, r5\n\t"
+                   "pop {r4, r5, PC}" )
+#elif defined __aarch64__
+LONG_PTR __cdecl call_server_func(SERVER_ROUTINE func, unsigned char *args, unsigned int stack_size);
+__ASM_GLOBAL_FUNC( call_server_func,
+                   "stp x29, x30, [sp, #-16]!\n\t"
+                   __ASM_SEH(".seh_save_fplr_x 16\n\t")
+                   "mov x29, sp\n\t"
+                   __ASM_SEH(".seh_set_fp\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   "add x9, x2, #15\n\t"
+                   "lsr x9, x9, #4\n\t"
+                   "sub sp, sp, x9, lsl #4\n\t"
+                   "cbz x2, 2f\n"
+                   "1:\tsub x2, x2, #8\n\t"
+                   "ldr x4, [x1, x2]\n\t"
+                   "str x4, [sp, x2]\n\t"
+                   "cbnz x2, 1b\n"
+                   "2:\tmov x8, x0\n\t"
+                   "cbz x9, 3f\n\t"
+                   "ldp x0, x1, [sp], #16\n\t"
+                   "cmp x9, #1\n\t"
+                   "b.le 3f\n\t"
+                   "ldp x2, x3, [sp], #16\n\t"
+                   "cmp x9, #2\n\t"
+                   "b.le 3f\n\t"
+                   "ldp x4, x5, [sp], #16\n\t"
+                   "cmp x9, #3\n\t"
+                   "b.le 3f\n\t"
+                   "ldp x6, x7, [sp], #16\n"
+                   "3:\tblr x8\n\t"
+                   "mov sp, x29\n\t"
+                   "ldp x29, x30, [sp], #16\n\t"
+                   "ret" )
+#else
+#warning call_server_func not implemented for your architecture
+LONG_PTR __cdecl call_server_func(SERVER_ROUTINE func, unsigned char * args, unsigned short stack_size)
+{
+    FIXME("Not implemented for your architecture\n");
+    return 0;
+}
+#endif
 
 static LONG_PTR *stub_do_args(MIDL_STUB_MESSAGE *pStubMsg,
                               PFORMAT_STRING pFormat, enum stubless_phase phase,
@@ -1249,7 +1332,6 @@ LONG WINAPI NdrStubCall2(
     enum stubless_phase phase;
     /* header for procedure string */
     const NDR_PROC_HEADER *pProcHeader;
-    const NDR_PROC_PARTIAL_OIF_HEADER *pOIFHeader = NULL;
     /* location to put retval into */
     LONG_PTR *retval_ptr = NULL;
     /* correlation cache */
@@ -1266,6 +1348,23 @@ LONG WINAPI NdrStubCall2(
     pFormat = pServerInfo->ProcString + pServerInfo->FmtStringOffset[pRpcMsg->ProcNum];
     pProcHeader = (const NDR_PROC_HEADER *)&pFormat[0];
 
+    TRACE("NDR Version: 0x%lx\n", pStubDesc->Version);
+
+    if (pProcHeader->Oi_flags & Oi_HAS_RPCFLAGS)
+    {
+        const NDR_PROC_HEADER_RPC *header_rpc = (const NDR_PROC_HEADER_RPC *)&pFormat[0];
+        stack_size = header_rpc->stack_size;
+        pFormat += sizeof(NDR_PROC_HEADER_RPC);
+
+    }
+    else
+    {
+        stack_size = pProcHeader->stack_size;
+        pFormat += sizeof(NDR_PROC_HEADER);
+    }
+
+    TRACE("Oi_flags = 0x%02x\n", pProcHeader->Oi_flags);
+
     if (pProcHeader->Oi_flags & Oi_OBJECT_PROC)
         NdrStubInitialize(pRpcMsg, &stubMsg, pStubDesc, pChannel);
     else
@@ -1275,18 +1374,9 @@ LONG WINAPI NdrStubCall2(
     if (pProcHeader->Oi_flags & Oi_FULL_PTR_USED)
         stubMsg.FullPtrXlatTables = NdrFullPointerXlatInit(0,XLAT_SERVER);
 
+    /* store the RPC flags away */
     if (pProcHeader->Oi_flags & Oi_HAS_RPCFLAGS)
-    {
-        const NDR_PROC_HEADER_RPC *header_rpc = (const NDR_PROC_HEADER_RPC *)pFormat;
-        pRpcMsg->RpcFlags = header_rpc->rpc_flags;
-        stack_size = header_rpc->stack_size;
-        pFormat += sizeof(NDR_PROC_HEADER_RPC);
-    }
-    else
-    {
-        stack_size = pProcHeader->stack_size;
-        pFormat += sizeof(NDR_PROC_HEADER);
-    }
+        pRpcMsg->RpcFlags = ((const NDR_PROC_HEADER_RPC *)pProcHeader)->rpc_flags;
 
     /* use alternate memory allocation routines */
     if (pProcHeader->Oi_flags & Oi_RPCSS_ALLOC_USED)
@@ -1296,8 +1386,7 @@ LONG WINAPI NdrStubCall2(
           FIXME("Set RPCSS memory allocation routines\n");
 #endif
 
-    TRACE("version 0x%lx, Oi_flags %02x, stack size %x, format %p\n",
-          pStubDesc->Version, pProcHeader->Oi_flags, stack_size, pFormat);
+    TRACE("allocating memory for stack of size %x\n", stack_size);
 
     args = calloc(1, stack_size);
     stubMsg.StackTop = args; /* used by conformance of top-level objects */
@@ -1347,7 +1436,8 @@ LONG WINAPI NdrStubCall2(
 
     if (is_oicf_stubdesc(pStubDesc))
     {
-        pOIFHeader = (const NDR_PROC_PARTIAL_OIF_HEADER *)pFormat;
+        const NDR_PROC_PARTIAL_OIF_HEADER *pOIFHeader = (const NDR_PROC_PARTIAL_OIF_HEADER *)pFormat;
+
         Oif_flags = pOIFHeader->Oi2Flags;
         number_of_params = pOIFHeader->number_of_params;
 
@@ -1357,9 +1447,9 @@ LONG WINAPI NdrStubCall2(
 
         if (Oif_flags.HasExtensions)
         {
-            const NDR_PROC_HEADER_EXTS *extensions = (const NDR_PROC_HEADER_EXTS *)pFormat;
-            ext_flags = extensions->Flags2;
-            pFormat += extensions->Size;
+            const NDR_PROC_HEADER_EXTS *pExtensions = (const NDR_PROC_HEADER_EXTS *)pFormat;
+            ext_flags = pExtensions->Flags2;
+            pFormat += pExtensions->Size;
         }
 
         if (Oif_flags.HasPipes)
@@ -1412,7 +1502,8 @@ LONG WINAPI NdrStubCall2(
                 else
                     func = pServerInfo->DispatchTable[pRpcMsg->ProcNum];
 
-                retval = call_server_func(func, args, stack_size, pOIFHeader);
+                /* FIXME: what happens with return values that don't fit into a single register on x86? */
+                retval = call_server_func(func, args, stack_size);
 
                 if (retval_ptr)
                 {
@@ -1660,7 +1751,7 @@ static void do_ndr_async_client_call( const MIDL_STUB_DESC *pStubDesc, PFORMAT_S
 
     /* 1. CALCSIZE */
     TRACE( "CALCSIZE\n" );
-    client_do_args(pStubMsg, pFormat, STUBLESS_CALCSIZE, FALSE, async_call_data->number_of_params, NULL);
+    client_do_args(pStubMsg, pFormat, STUBLESS_CALCSIZE, NULL, async_call_data->number_of_params, NULL);
 
     /* 2. GETBUFFER */
     TRACE( "GETBUFFER\n" );
@@ -1685,7 +1776,7 @@ static void do_ndr_async_client_call( const MIDL_STUB_DESC *pStubDesc, PFORMAT_S
 
     /* 3. MARSHAL */
     TRACE( "MARSHAL\n" );
-    client_do_args(pStubMsg, pFormat, STUBLESS_MARSHAL, FALSE, async_call_data->number_of_params, NULL);
+    client_do_args(pStubMsg, pFormat, STUBLESS_MARSHAL, NULL, async_call_data->number_of_params, NULL);
 
     /* 4. SENDRECEIVE */
     TRACE( "SEND\n" );
@@ -1797,7 +1888,7 @@ RPC_STATUS NdrpCompleteAsyncClientCall(RPC_ASYNC_STATE *pAsync, void *Reply)
     /* 2. UNMARSHAL */
     TRACE( "UNMARSHAL\n" );
     client_do_args(pStubMsg, async_call_data->pParamFormat, STUBLESS_UNMARSHAL,
-                   FALSE, async_call_data->number_of_params, Reply);
+                   NULL, async_call_data->number_of_params, Reply);
 
 cleanup:
     if (pStubMsg->fHasNewCorrDesc)
@@ -1821,48 +1912,8 @@ cleanup:
     return status;
 }
 
-#ifdef __aarch64__
-__ASM_GLOBAL_FUNC( NdrAsyncClientCall,
-                   "stp x29, x30, [sp, #-0x40]!\n\t"
-                   ".seh_save_fplr_x 0x40\n\t"
-                   ".seh_endprologue\n\t"
-                   "stp x2, x3, [sp, #0x10]\n\t"
-                   "stp x4, x5, [sp, #0x20]\n\t"
-                   "stp x6, x7, [sp, #0x30]\n\t"
-                   "add x2, sp, #0x10\n\t"   /* stack */
-                   "mov x3, #0\n\t"          /* fpu_stack */
-                   "bl ndr_async_client_call\n\t"
-                   "ldp x29, x30, [sp], #0x40\n\t"
-                   "ret" )
-#elif defined(__arm64ec__)
-CLIENT_CALL_RETURN __attribute__((naked)) NdrAsyncClientCall( PMIDL_STUB_DESC desc, PFORMAT_STRING fmt, ... )
-{
-    asm( ".seh_proc \"#NdrAsyncClientCall\"\n\t"
-         "stp x29, x30, [sp, #-0x20]!\n\t"
-         ".seh_save_fplr_x 0x20\n\t"
-         ".seh_endprologue\n\t"
-         "stp x2, x3, [x4, #-0x10]!\n\t"
-         "mov x2, x4\n\t"          /* stack */
-         "mov x3, #0\n\t"          /* fpu_stack */
-         "bl \"#ndr_async_client_call\"\n\t"
-         "ldp x29, x30, [sp], #0x20\n\t"
-         "ret\n\t"
-         ".seh_endproc" );
-}
-#elif defined(__arm__)
-__ASM_GLOBAL_FUNC( NdrAsyncClientCall,
-                   "push {r2-r3}\n\t"
-                   ".seh_save_regs {r2,r3}\n\t"
-                   "push {fp,lr}\n\t"
-                   ".seh_save_regs_w {fp,lr}\n\t"
-                   ".seh_endprologue\n\t"
-                   "add r2, sp, #8\n\t"      /* stack */
-                   "mov r3, #0\n\t"          /* fpu_stack */
-                   "bl ndr_async_client_call\n\t"
-                   "pop {fp,lr}\n\t"
-                   "add sp, #8\n\t"
-                   "bx lr" )
-#elif defined(__x86_64__)
+#ifdef __x86_64__
+
 __ASM_GLOBAL_FUNC( NdrAsyncClientCall,
                    "subq $0x28,%rsp\n\t"
                    __ASM_SEH(".seh_stackalloc 0x28\n\t")
@@ -1870,29 +1921,29 @@ __ASM_GLOBAL_FUNC( NdrAsyncClientCall,
                    __ASM_CFI(".cfi_adjust_cfa_offset 0x28\n\t")
                    "movq %r8,0x40(%rsp)\n\t"
                    "movq %r9,0x48(%rsp)\n\t"
-                   "leaq 0x40(%rsp),%r8\n\t" /* stack */
-                   "xorq %r9,%r9\n\t"        /* fpu_stack */
+                   "leaq 0x40(%rsp),%r8\n\t"
                    "call " __ASM_NAME("ndr_async_client_call") "\n\t"
                    "addq $0x28,%rsp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
-                   "ret" )
-#elif defined(__i386__)
-__ASM_GLOBAL_FUNC( NdrAsyncClientCall,
-                   "pushl %ebp\n\t"
-                   __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
-                   __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
-                   "movl %esp,%ebp\n\t"
-                   __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
-                   "push $0\n\t"             /* fpu_stack */
-                   "push 16(%ebp)\n\t"       /* stack */
-                   "push 12(%ebp)\n\t"       /* format */
-                   "push 8(%ebp)\n\t"        /* desc */
-                   "call " __ASM_NAME("ndr_async_client_call") "\n\t"
-                   "leave\n\t"
-                   __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
-                   __ASM_CFI(".cfi_same_value %ebp\n\t")
-                   "ret" )
-#endif
+                   "ret" );
+
+#else  /* __x86_64__ */
+
+/***********************************************************************
+ *            NdrAsyncClientCall [RPCRT4.@]
+ */
+CLIENT_CALL_RETURN WINAPIV NdrAsyncClientCall( PMIDL_STUB_DESC desc, PFORMAT_STRING format, ... )
+{
+    va_list args;
+    LONG_PTR ret;
+
+    va_start( args, format );
+    ret = ndr_async_client_call( desc, format, va_arg( args, void ** ));
+    va_end( args );
+    return *(CLIENT_CALL_RETURN *)&ret;
+}
+
+#endif  /* __x86_64__ */
 
 RPCRTAPI LONG RPC_ENTRY NdrAsyncStubCall(struct IRpcStubBuffer* pThis,
     struct IRpcChannelBuffer* pChannel, PRPC_MESSAGE pRpcMsg,
@@ -1911,7 +1962,6 @@ void RPC_ENTRY NdrAsyncServerCall(PRPC_MESSAGE pRpcMsg)
     unsigned char *args;
     /* header for procedure string */
     const NDR_PROC_HEADER *pProcHeader;
-    const NDR_PROC_PARTIAL_OIF_HEADER *pOIFHeader = NULL;
     struct async_call_data *async_call_data;
     PRPC_ASYNC_STATE pAsync;
     RPC_STATUS status;
@@ -2019,23 +2069,27 @@ void RPC_ENTRY NdrAsyncServerCall(PRPC_MESSAGE pRpcMsg)
 
     if (is_oicf_stubdesc(pStubDesc))
     {
+        const NDR_PROC_PARTIAL_OIF_HEADER *pOIFHeader = (const NDR_PROC_PARTIAL_OIF_HEADER *)pFormat;
+        /* cache of Oif_flags from v2 procedure header */
+        INTERPRETER_OPT_FLAGS Oif_flags;
+        /* cache of extension flags from NDR_PROC_HEADER_EXTS */
         INTERPRETER_OPT_FLAGS2 ext_flags = { 0 };
 
-        pOIFHeader = (const NDR_PROC_PARTIAL_OIF_HEADER *)pFormat;
+        Oif_flags = pOIFHeader->Oi2Flags;
         async_call_data->number_of_params = pOIFHeader->number_of_params;
 
         pFormat += sizeof(NDR_PROC_PARTIAL_OIF_HEADER);
 
-        TRACE("Oif_flags = %s\n", debugstr_INTERPRETER_OPT_FLAGS(pOIFHeader->Oi2Flags) );
+        TRACE("Oif_flags = %s\n", debugstr_INTERPRETER_OPT_FLAGS(Oif_flags) );
 
-        if (pOIFHeader->Oi2Flags.HasExtensions)
+        if (Oif_flags.HasExtensions)
         {
-            const NDR_PROC_HEADER_EXTS *extensions = (const NDR_PROC_HEADER_EXTS *)pFormat;
-            ext_flags = extensions->Flags2;
-            pFormat += extensions->Size;
+            const NDR_PROC_HEADER_EXTS *pExtensions = (const NDR_PROC_HEADER_EXTS *)pFormat;
+            ext_flags = pExtensions->Flags2;
+            pFormat += pExtensions->Size;
         }
 
-        if (pOIFHeader->Oi2Flags.HasPipes)
+        if (Oif_flags.HasPipes)
         {
             FIXME("pipes not supported yet\n");
             RpcRaiseException(RPC_X_WRONG_STUB_VERSION); /* FIXME: remove when implemented */
@@ -2078,8 +2132,7 @@ void RPC_ENTRY NdrAsyncServerCall(PRPC_MESSAGE pRpcMsg)
     if (pServerInfo->ThunkTable && pServerInfo->ThunkTable[pRpcMsg->ProcNum])
         pServerInfo->ThunkTable[pRpcMsg->ProcNum](async_call_data->pStubMsg);
     else
-        call_server_func(pServerInfo->DispatchTable[pRpcMsg->ProcNum], args, async_call_data->stack_size,
-                         pOIFHeader);
+        call_server_func(pServerInfo->DispatchTable[pRpcMsg->ProcNum], args, async_call_data->stack_size);
 }
 
 RPC_STATUS NdrpCompleteAsyncServerCall(RPC_ASYNC_STATE *pAsync, void *Reply)
@@ -2173,11 +2226,12 @@ static const RPC_SYNTAX_IDENTIFIER ndr_syntax_id =
     {{0x8a885d04, 0x1ceb, 0x11c9, {0x9f, 0xe8, 0x08, 0x00, 0x2b, 0x10, 0x48, 0x60}}, {2, 0}};
 
 LONG_PTR CDECL ndr64_client_call( MIDL_STUBLESS_PROXY_INFO *info,
-        ULONG proc, void *retval, void **stack_top )
+        ULONG proc, void *retval, void **stack_top, void **fpu_stack )
 {
     ULONG_PTR i;
 
-    TRACE("info %p, proc %lu, retval %p, stack_top %p\n", info, proc, retval, stack_top);
+    TRACE("info %p, proc %lu, retval %p, stack_top %p, fpu_stack %p\n",
+            info, proc, retval, stack_top, fpu_stack);
 
     for (i = 0; i < info->nCount; ++i)
     {
@@ -2191,8 +2245,8 @@ LONG_PTR CDECL ndr64_client_call( MIDL_STUBLESS_PROXY_INFO *info,
             if (retval)
                 FIXME("Complex return types are not supported.\n");
 
-            return NdrpClientCall2( info->pStubDesc,
-                    syntax_info->ProcString + syntax_info->FmtStringOffset[proc], stack_top, FALSE );
+            return ndr_client_call( info->pStubDesc,
+                    syntax_info->ProcString + syntax_info->FmtStringOffset[proc], stack_top, fpu_stack );
         }
     }
 
@@ -2200,44 +2254,37 @@ LONG_PTR CDECL ndr64_client_call( MIDL_STUBLESS_PROXY_INFO *info,
     return 0;
 }
 
-#ifdef __aarch64__
-__ASM_GLOBAL_FUNC( NdrClientCall3,
-                   "stp x29, x30, [sp, #-0x40]!\n\t"
-                   ".seh_save_fplr_x 0x40\n\t"
-                   ".seh_endprologue\n\t"
-                   "str x3, [sp, #0x18]\n\t"
-                   "stp x4, x5, [sp, #0x20]\n\t"
-                   "stp x6, x7, [sp, #0x30]\n\t"
-                   "add x3, sp, #0x18\n\t"   /* stack */
-                   "bl ndr64_client_call\n\t"
-                   "ldp x29, x30, [sp], #0x40\n\t"
-                   "ret" )
-#elif defined(__arm64ec__)
-CLIENT_CALL_RETURN __attribute__((naked)) NdrClientCall3( MIDL_STUBLESS_PROXY_INFO *info, ULONG proc, void *retval, ... )
-{
-    asm( ".seh_proc \"#NdrClientCall3\"\n\t"
-         "stp x29, x30, [sp, #-0x20]!\n\t"
-         ".seh_save_fplr_x 0x20\n\t"
-         ".seh_endprologue\n\t"
-         "str x3, [x4, #-0x8]!\n\t"
-         "mov x3, x4\n\t"          /* stack */
-         "bl \"#ndr64_client_call\"\n\t"
-         "ldp x29, x30, [sp], #0x20\n\t"
-         "ret\n\t"
-         ".seh_endproc" );
-}
-#elif defined(__x86_64__)
+#ifdef __x86_64__
+
 __ASM_GLOBAL_FUNC( NdrClientCall3,
                    "subq $0x28,%rsp\n\t"
                    __ASM_SEH(".seh_stackalloc 0x28\n\t")
                    __ASM_SEH(".seh_endprologue\n\t")
                    __ASM_CFI(".cfi_adjust_cfa_offset 0x28\n\t")
                    "movq %r9,0x48(%rsp)\n\t"
-                   "leaq 0x48(%rsp),%r9\n\t" /* stack */
+                   "leaq 0x48(%rsp),%r9\n\t"
+                   "movq $0,0x20(%rsp)\n\t"
                    "call " __ASM_NAME("ndr64_client_call") "\n\t"
                    "addq $0x28,%rsp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
-                   "ret" )
+                   "ret" );
+
+#elif defined(_WIN64)
+
+/***********************************************************************
+ *            NdrClientCall3 [RPCRT4.@]
+ */
+CLIENT_CALL_RETURN WINAPIV NdrClientCall3( MIDL_STUBLESS_PROXY_INFO *info, ULONG proc, void *retval, ... )
+{
+    va_list args;
+    LONG_PTR ret;
+
+    va_start( args, retval );
+    ret = ndr64_client_call( info, proc, retval, va_arg( args, void ** ), NULL );
+    va_end( args );
+    return *(CLIENT_CALL_RETURN *)&ret;
+}
+
 #endif
 
 LONG_PTR CDECL ndr64_async_client_call( MIDL_STUBLESS_PROXY_INFO *info,
@@ -2269,45 +2316,35 @@ LONG_PTR CDECL ndr64_async_client_call( MIDL_STUBLESS_PROXY_INFO *info,
     return 0;
 }
 
-#ifdef __aarch64__
-__ASM_GLOBAL_FUNC( Ndr64AsyncClientCall,
-                   "stp x29, x30, [sp, #-0x40]!\n\t"
-                   ".seh_save_fplr_x 0x40\n\t"
-                   ".seh_endprologue\n\t"
-                   "str x3, [sp, #0x18]\n\t"
-                   "stp x4, x5, [sp, #0x20]\n\t"
-                   "stp x6, x7, [sp, #0x30]\n\t"
-                   "add x3, sp, #0x18\n\t"   /* stack */
-                   "mov x4, #0\n\t"          /* fpu_stack */
-                   "bl ndr64_async_client_call\n\t"
-                   "ldp x29, x30, [sp], #0x40\n\t"
-                   "ret" )
-#elif defined(__arm64ec__)
-CLIENT_CALL_RETURN __attribute__((naked)) Ndr64AsyncClientCall( MIDL_STUBLESS_PROXY_INFO *info, ULONG proc, void *retval, ... )
-{
-    asm( ".seh_proc \"#Ndr64AsyncClientCall\"\n\t"
-         "stp x29, x30, [sp, #-0x20]!\n\t"
-         ".seh_save_fplr_x 0x20\n\t"
-         ".seh_endprologue\n\t"
-         "str x3, [x4, #-0x8]!\n\t"
-         "mov x3, x4\n\t"          /* stack */
-         "mov x4, #0\n\t"          /* fpu_stack */
-         "bl \"#ndr64_async_client_call\"\n\t"
-         "ldp x29, x30, [sp], #0x20\n\t"
-         "ret\n\t"
-         ".seh_endproc" );
-}
-#elif defined(__x86_64__)
+#ifdef __x86_64__
+
 __ASM_GLOBAL_FUNC( Ndr64AsyncClientCall,
                    "subq $0x28,%rsp\n\t"
                    __ASM_SEH(".seh_stackalloc 0x28\n\t")
                    __ASM_SEH(".seh_endprologue\n\t")
                    __ASM_CFI(".cfi_adjust_cfa_offset 0x28\n\t")
                    "movq %r9,0x48(%rsp)\n\t"
-                   "leaq 0x48(%rsp),%r9\n\t" /* stack */
-                   "movq $0,0x20(%rsp)\n\t"  /* fpu_stack */
+                   "leaq 0x48(%rsp),%r9\n\t"
+                   "movq $0,0x20(%rsp)\n\t"
                    "call " __ASM_NAME("ndr64_async_client_call") "\n\t"
                    "addq $0x28,%rsp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -0x28\n\t")
-                   "ret" )
+                   "ret" );
+
+#elif defined(_WIN64)
+
+/***********************************************************************
+ *            Ndr64AsyncClientCall [RPCRT4.@]
+ */
+CLIENT_CALL_RETURN WINAPIV Ndr64AsyncClientCall( MIDL_STUBLESS_PROXY_INFO *info, ULONG proc, void *retval, ... )
+{
+    va_list args;
+    LONG_PTR ret;
+
+    va_start( args, retval );
+    ret = ndr64_async_client_call( info, proc, retval, va_arg( args, void ** ), NULL );
+    va_end( args );
+    return *(CLIENT_CALL_RETURN *)&ret;
+}
+
 #endif

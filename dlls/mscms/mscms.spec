@@ -91,7 +91,7 @@
 @ stub WcsEnumColorProfiles
 @ stdcall WcsEnumColorProfilesSize(long ptr ptr)
 @ stub WcsGetCalibrationManagementState
-@ stdcall WcsGetDefaultColorProfile(long wstr long long long long wstr)
+@ stub WcsGetDefaultColorProfile
 @ stdcall WcsGetDefaultColorProfileSize(long wstr long long long ptr)
 @ stdcall WcsGetDefaultRenderingIntent(long ptr)
 @ stdcall WcsGetUsePerUserProfiles(wstr long ptr)

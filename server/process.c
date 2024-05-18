@@ -1545,10 +1545,7 @@ DECL_HANDLER(get_process_debug_info)
 /* fetch the name of the process image */
 DECL_HANDLER(get_process_image_name)
 {
-    struct process *process;
-
-    if (req->pid) process = get_process_from_id( req->pid );
-    else          process = get_process_from_handle( req->handle, PROCESS_QUERY_LIMITED_INFORMATION );
+    struct process *process = get_process_from_handle( req->handle, PROCESS_QUERY_LIMITED_INFORMATION );
 
     if (!process) return;
     if (process->image)
@@ -1588,7 +1585,7 @@ DECL_HANDLER(get_process_vm_counters)
         char proc_path[32], line[256];
         unsigned long value;
 
-        snprintf( proc_path, sizeof(proc_path), "/proc/%u/status", process->unix_pid );
+        sprintf( proc_path, "/proc/%u/status", process->unix_pid );
         if ((f = fopen( proc_path, "r" )))
         {
             while (fgets( line, sizeof(line), f ))

@@ -317,19 +317,19 @@ static HRESULT WINAPI transform_GetOutputAvailableType(IMFTransform *iface, DWOR
         goto done;
 
     if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_NUM_CHANNELS,
-            decoder->input_format.u.audio.channels)))
+            decoder->input_format.u.audio_wma.channels)))
         goto done;
 
     if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_SAMPLES_PER_SECOND,
-            decoder->input_format.u.audio.rate)))
+            decoder->input_format.u.audio_wma.rate)))
         goto done;
 
-    block_alignment = sample_size * decoder->input_format.u.audio.channels / 8;
+    block_alignment = sample_size * decoder->input_format.u.audio_wma.channels / 8;
     if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_BLOCK_ALIGNMENT,
             block_alignment)))
         goto done;
     if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_AVG_BYTES_PER_SECOND,
-            decoder->input_format.u.audio.rate * block_alignment)))
+            decoder->input_format.u.audio_wma.rate * block_alignment)))
         goto done;
 
     if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_ALL_SAMPLES_INDEPENDENT, 1)))
@@ -446,7 +446,7 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
     if (flags & MFT_SET_TYPE_TEST_ONLY)
         return S_OK;
 
-    decoder->input_format.u.audio.depth = sample_size;
+    decoder->input_format.u.audio_wma.depth = sample_size;
 
     mf_media_type_to_wg_format(type, &decoder->output_format);
     decoder->output_buf_size = 1024 * block_alignment * channel_count;
@@ -682,13 +682,13 @@ static HRESULT WINAPI media_object_GetOutputType(IMediaObject *iface, DWORD inde
     memset(type->pbFormat, 0, type->cbFormat);
 
     wfx = (WAVEFORMATEX *)type->pbFormat;
-    if (decoder->input_format.u.audio.depth == 32)
+    if (decoder->input_format.u.audio_wma.depth == 32)
         wfx->wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
     else
         wfx->wFormatTag = WAVE_FORMAT_PCM;
-    wfx->nChannels = decoder->input_format.u.audio.channels;
-    wfx->nSamplesPerSec = decoder->input_format.u.audio.rate;
-    wfx->wBitsPerSample = decoder->input_format.u.audio.depth;
+    wfx->nChannels = decoder->input_format.u.audio_wma.channels;
+    wfx->nSamplesPerSec = decoder->input_format.u.audio_wma.rate;
+    wfx->wBitsPerSample = decoder->input_format.u.audio_wma.depth;
     wfx->nAvgBytesPerSec = wfx->nChannels * wfx->nSamplesPerSec * wfx->wBitsPerSample / 8;
     wfx->nBlockAlign = wfx->nChannels * wfx->wBitsPerSample / 8;
 
@@ -1026,26 +1026,31 @@ static const IPropertyBagVtbl property_bag_vtbl =
 
 HRESULT wma_decoder_create(IUnknown *outer, IUnknown **out)
 {
-    static const WAVEFORMATEX output_format =
+    static const struct wg_format output_format =
     {
-        .wFormatTag = WAVE_FORMAT_IEEE_FLOAT, .wBitsPerSample = 32, .nSamplesPerSec = 44100, .nChannels = 1,
+        .major_type = WG_MAJOR_TYPE_AUDIO,
+        .u.audio =
+        {
+            .format = WG_AUDIO_FORMAT_F32LE,
+            .channel_mask = 1,
+            .channels = 1,
+            .rate = 44100,
+        },
     };
-    static const WMAUDIO2WAVEFORMAT input_format =
-    {
-        .wfx = {.wFormatTag = WAVE_FORMAT_WMAUDIO2, .wBitsPerSample = 16, .nSamplesPerSec = 44100, .nChannels = 1,
-                .nAvgBytesPerSec = 3000, .nBlockAlign = 139, .cbSize = sizeof(input_format) - sizeof(WAVEFORMATEX)},
-        .wEncodeOptions = 1,
-    };
+    static const struct wg_format input_format = {.major_type = WG_MAJOR_TYPE_AUDIO_WMA};
+    struct wg_transform_attrs attrs = {0};
+    wg_transform_t transform;
     struct wma_decoder *decoder;
     HRESULT hr;
 
     TRACE("outer %p, out %p.\n", outer, out);
 
-    if (FAILED(hr = check_audio_transform_support(&input_format.wfx, &output_format)))
+    if (!(transform = wg_transform_create(&input_format, &output_format, &attrs)))
     {
-        ERR_(winediag)("GStreamer doesn't support WMA decoding, please install appropriate plugins.\n");
-        return hr;
+        ERR_(winediag)("GStreamer doesn't support WMA decoding, please install appropriate plugins\n");
+        return E_FAIL;
     }
+    wg_transform_destroy(transform);
 
     if (!(decoder = calloc(1, sizeof(*decoder))))
         return E_OUTOFMEMORY;

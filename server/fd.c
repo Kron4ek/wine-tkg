@@ -482,7 +482,7 @@ const char *get_timeout_str( timeout_t timeout )
     {
         secs = -timeout / TICKS_PER_SEC;
         nsecs = -timeout % TICKS_PER_SEC;
-        snprintf( buffer, sizeof(buffer), "+%ld.%07ld", secs, nsecs );
+        sprintf( buffer, "+%ld.%07ld", secs, nsecs );
     }
     else  /* absolute */
     {
@@ -494,12 +494,12 @@ const char *get_timeout_str( timeout_t timeout )
             secs--;
         }
         if (secs >= 0)
-            snprintf( buffer, sizeof(buffer), "%x%08x (+%ld.%07ld)",
-                      (unsigned int)(timeout >> 32), (unsigned int)timeout, secs, nsecs );
+            sprintf( buffer, "%x%08x (+%ld.%07ld)",
+                     (unsigned int)(timeout >> 32), (unsigned int)timeout, secs, nsecs );
         else
-            snprintf( buffer, sizeof(buffer), "%x%08x (-%ld.%07ld)",
-                      (unsigned int)(timeout >> 32), (unsigned int)timeout,
-                      -(secs + 1), TICKS_PER_SEC - nsecs );
+            sprintf( buffer, "%x%08x (-%ld.%07ld)",
+                     (unsigned int)(timeout >> 32), (unsigned int)timeout,
+                     -(secs + 1), TICKS_PER_SEC - nsecs );
     }
     return buffer;
 }

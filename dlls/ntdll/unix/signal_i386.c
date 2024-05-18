@@ -1004,11 +1004,8 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
     {
         CONTEXT_EX *context_ex = (CONTEXT_EX *)(context + 1);
         XSAVE_AREA_HEADER *xs = (XSAVE_AREA_HEADER *)((char *)context_ex + context_ex->XState.Offset);
-        UINT64 mask = frame->xstate.Mask;
 
-        if (xstate_compaction_enabled) frame->xstate.CompactionMask |= xstate_extended_features();
         copy_xstate( &frame->xstate, xs, xs->Mask );
-        if (xs->CompactionMask) frame->xstate.Mask |= mask & ~xs->CompactionMask;
     }
 
     frame->restore_flags |= flags & ~CONTEXT_INTEGER;
@@ -1129,7 +1126,6 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
                 context_ex->XState.Length > sizeof(XSAVE_AREA_HEADER) + xstate_features_size)
                 return STATUS_INVALID_PARAMETER;
 
-            if (xstate_compaction_enabled) frame->xstate.CompactionMask |= xstate_extended_features();
             mask = (xstate_compaction_enabled ? xstate->CompactionMask : xstate->Mask) & xstate_extended_features();
             xstate->Mask = frame->xstate.Mask & mask;
             xstate->CompactionMask = xstate_compaction_enabled ? (0x8000000000000000 | mask) : 0;
@@ -1139,8 +1135,6 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
                 if (context_ex->XState.Length < xstate_get_size( xstate->CompactionMask, xstate->Mask ))
                     return STATUS_BUFFER_OVERFLOW;
                 copy_xstate( xstate, &frame->xstate, xstate->Mask );
-                /* copy_xstate may use avx in memcpy, restore xstate not to break the tests. */
-                frame->restore_flags |= CONTEXT_XSTATE;
             }
         }
         /* update the cached version of the debug registers */
@@ -1153,7 +1147,6 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
             x86_thread_data()->dr6 = context->Dr6;
             x86_thread_data()->dr7 = context->Dr7;
         }
-        set_context_exception_reporting_flags( &context->ContextFlags, CONTEXT_SERVICE_ACTIVE );
     }
 
     if (context->ContextFlags & (CONTEXT_INTEGER & ~CONTEXT_i386))
@@ -1450,7 +1443,7 @@ static void setup_raise_exception( ucontext_t *sigcontext, void *stack_ptr,
     struct exc_stack_layout *stack;
     size_t stack_size;
     unsigned int xstate_size;
-    NTSTATUS status = send_debug_event( rec, context, TRUE, TRUE );
+    NTSTATUS status = send_debug_event( rec, context, TRUE );
 
     if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
     {
@@ -2154,11 +2147,10 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
             ERR_(seh)( "kernel stack overflow.\n" );
             return;
         }
-        context->c.ContextFlags = CONTEXT_FULL | CONTEXT_EXCEPTION_REQUEST;
+        context->c.ContextFlags = CONTEXT_FULL;
         NtGetContextThread( GetCurrentThread(), &context->c );
         if (xstate_extended_features())
         {
-            if (xstate_compaction_enabled) frame->xstate.CompactionMask |= xstate_extended_features();
             context_init_xstate( &context->c, &frame->xstate );
             saved_compaction = frame->xstate.CompactionMask;
         }
@@ -2177,7 +2169,6 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         struct xcontext context;
 
         save_context( &context, ucontext );
-        context.c.ContextFlags |= CONTEXT_EXCEPTION_REPORTING;
         wait_suspend( &context.c );
         restore_context( &context, ucontext );
     }
@@ -2565,11 +2556,7 @@ void call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB
     ((XSAVE_FORMAT *)context.ExtendedRegisters)->MxCsr = 0x1f80;
     if ((ctx = get_cpu_area( IMAGE_FILE_MACHINE_I386 ))) *ctx = context;
 
-    if (suspend)
-    {
-        context.ContextFlags |= CONTEXT_EXCEPTION_REPORTING | CONTEXT_EXCEPTION_ACTIVE;
-        wait_suspend( &context );
-    }
+    if (suspend) wait_suspend( &context );
 
     ctx = (CONTEXT *)((ULONG_PTR)context.Esp & ~3) - 1;
     *ctx = context;
@@ -2680,8 +2667,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "testl $3,(%ecx)\n\t"           /* frame->syscall_flags & (SYSCALL_HAVE_XSAVE | SYSCALL_HAVE_XSAVEC) */
                    "jz 2f\n\t"
                    "movl %fs:0x1fc,%eax\n\t"       /* x86_thread_data()->xstate_features_mask */
-                   "xorl %edx,%edx\n\t"
-                   "andl $7,%eax\n\t"
+                   "movl %fs:0x200,%edx\n\t"       /* x86_thread_data()->xstate_features_mask high dword */
                    "xorl %edi,%edi\n\t"
                    "movl %edi,0x240(%ecx)\n\t"
                    "movl %edi,0x244(%ecx)\n\t"

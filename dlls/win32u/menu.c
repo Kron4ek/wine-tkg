@@ -232,7 +232,7 @@ BOOL WINAPI NtUserDestroyAcceleratorTable( HACCEL handle )
 
 #define MENUFLAG(bit,text) \
   do { \
-      if (flags & (bit)) { flags &= ~(bit); len += snprintf(buf + len, sizeof(buf) - len, (text)); } \
+      if (flags & (bit)) { flags &= ~(bit); strcat(buf, (text)); } \
   } while (0)
 
 static const char *debugstr_menuitem( const struct menu_item *item )
@@ -243,17 +243,16 @@ static const char *debugstr_menuitem( const struct menu_item *item )
         "HBMMENU_POPUP_RESTORE", "HBMMENU_POPUP_MAXIMIZE", "HBMMENU_POPUP_MINIMIZE" };
     char buf[256];
     UINT flags;
-    int len;
 
     if (!item) return "NULL";
 
-    len = snprintf( buf, sizeof(buf), "{ ID=0x%lx", (long)item->wID );
-    if (item->hSubMenu) len += snprintf( buf + len, sizeof(buf) - len, ", Sub=%p", item->hSubMenu );
+    sprintf( buf, "{ ID=0x%lx", (long)item->wID );
+    if (item->hSubMenu) sprintf( buf + strlen(buf), ", Sub=%p", item->hSubMenu );
 
     flags = item->fType;
     if (flags)
     {
-        len += snprintf( buf + len, sizeof(buf) - len, ", fType=" );
+        strcat( buf, ", fType=" );
         MENUFLAG( MFT_SEPARATOR, "sep" );
         MENUFLAG( MFT_OWNERDRAW, "own" );
         MENUFLAG( MFT_BITMAP, "bit" );
@@ -264,13 +263,13 @@ static const char *debugstr_menuitem( const struct menu_item *item )
         MENUFLAG( MFT_RIGHTORDER, "rorder" );
         MENUFLAG( MF_SYSMENU, "sys" );
         MENUFLAG( MFT_RIGHTJUSTIFY, "right" );  /* same as MF_HELP */
-        if (flags) len += snprintf( buf + len, sizeof(buf) - len, "+0x%x", flags );
+        if (flags) sprintf( buf + strlen(buf), "+0x%x", flags );
     }
 
     flags = item->fState;
     if (flags)
     {
-        len += snprintf( buf + len, sizeof(buf) - len, ", State=" );
+        strcat( buf, ", State=" );
         MENUFLAG( MFS_GRAYED, "grey" );
         MENUFLAG( MFS_DEFAULT, "default" );
         MENUFLAG( MFS_DISABLED, "dis" );
@@ -278,20 +277,20 @@ static const char *debugstr_menuitem( const struct menu_item *item )
         MENUFLAG( MFS_HILITE, "hi" );
         MENUFLAG( MF_USECHECKBITMAPS, "usebit" );
         MENUFLAG( MF_MOUSESELECT, "mouse" );
-        if (flags) len += snprintf( buf + len, sizeof(buf) - len, "+0x%x", flags );
+        if (flags) sprintf( buf + strlen(buf), "+0x%x", flags );
     }
 
-    if (item->hCheckBit)   len += snprintf( buf + len, sizeof(buf) - len, ", Chk=%p", item->hCheckBit );
-    if (item->hUnCheckBit) len += snprintf( buf + len, sizeof(buf) - len, ", Unc=%p", item->hUnCheckBit );
-    if (item->text)        len += snprintf( buf + len, sizeof(buf) - len, ", Text=%s", debugstr_w(item->text) );
-    if (item->dwItemData)  len += snprintf( buf + len, sizeof(buf) - len, ", ItemData=0x%08lx", item->dwItemData );
+    if (item->hCheckBit)   sprintf( buf + strlen(buf), ", Chk=%p", item->hCheckBit );
+    if (item->hUnCheckBit) sprintf( buf + strlen(buf), ", Unc=%p", item->hUnCheckBit );
+    if (item->text)        sprintf( buf + strlen(buf), ", Text=%s", debugstr_w(item->text) );
+    if (item->dwItemData)  sprintf( buf + strlen(buf), ", ItemData=0x%08lx", item->dwItemData );
 
     if (item->hbmpItem)
     {
         if (IS_MAGIC_BITMAP( item->hbmpItem ))
-            len += snprintf( buf + len, sizeof(buf) - len, ", hbitmap=%s", hbmmenus[(INT_PTR)item->hbmpItem + 1] );
+            sprintf( buf + strlen(buf), ", hbitmap=%s", hbmmenus[(INT_PTR)item->hbmpItem + 1] );
         else
-            len += snprintf( buf + len, sizeof(buf) - len, ", hbitmap=%p", item->hbmpItem );
+            sprintf( buf + strlen(buf), ", hbitmap=%p", item->hbmpItem );
     }
     return wine_dbg_sprintf( "%s  }", buf );
 }

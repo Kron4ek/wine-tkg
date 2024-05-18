@@ -229,8 +229,6 @@ void            dump_data( const unsigned char *ptr, unsigned int size, const ch
 const char*	get_time_str( unsigned long );
 unsigned int    strlenW( const unsigned short *str );
 void            dump_unicode_str( const unsigned short *str, int len );
-const char*     get_hexint64_str( DWORD64 l );
-const char*     get_uint64_str( DWORD64 l );
 const char*     get_guid_str(const GUID* guid);
 const char*     get_unicode_str( const WCHAR *str, int len );
 const char*     get_symbol_str(const char* symname);
@@ -270,8 +268,6 @@ enum FileSig    get_kind_nls(void);
 void            nls_dump(void);
 enum FileSig    get_kind_reg(void);
 void            reg_dump(void);
-
-extern void tlb_dump_resource( void *ptr, size_t size, const char *prefix );
 
 BOOL            codeview_dump_symbols(const void* root, unsigned long start, unsigned long size);
 BOOL            codeview_dump_types_from_offsets(const void* table, const DWORD* offsets, unsigned num_types);

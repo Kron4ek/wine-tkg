@@ -673,7 +673,7 @@ static char *get_path_from_fd( int fd, int sz )
 #ifdef linux
     char *ret = malloc( 32 + sz );
 
-    if (ret) snprintf( ret, 32 + sz, "/proc/self/fd/%u", fd );
+    if (ret) sprintf( ret, "/proc/self/fd/%u", fd );
     return ret;
 #elif defined(F_GETPATH)
     char *ret = malloc( PATH_MAX + sz );

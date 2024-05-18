@@ -146,6 +146,7 @@ extern void pack_user_message( void *buffer, size_t size, UINT message,
 
 /* rawinput.c */
 extern BOOL process_rawinput_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data );
+extern BOOL rawinput_device_get_usages( HANDLE handle, USHORT *usage_page, USHORT *usage );
 
 /* scroll.c */
 extern void draw_nc_scrollbar( HWND hwnd, HDC hdc, BOOL draw_horizontal, BOOL draw_vertical );
@@ -190,7 +191,6 @@ extern BOOL update_display_cache( BOOL force );
 extern void user_lock(void);
 extern void user_unlock(void);
 extern void user_check_not_lock(void);
-extern BOOL get_vulkan_uuid_from_luid( const LUID *luid, GUID *uuid );
 
 /* winstation.c */
 extern BOOL is_virtual_desktop(void);

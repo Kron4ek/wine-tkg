@@ -19,6 +19,8 @@
 
 #include <wine/list.h>
 
+typedef struct audio_client ACImpl;
+
 typedef struct audio_session {
     GUID guid;
     struct list clients;

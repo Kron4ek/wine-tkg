@@ -32,14 +32,17 @@
 #include <oaidl.h>
 
 #include "wine/test.h"
-#include "utils.h"
 
 static BOOL is_wow64;
+
+static LONG (WINAPI *pRegDeleteKeyExA)(HKEY, LPCSTR, REGSAM, DWORD);
+static BOOL (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
 
 DEFINE_GUID(GUID_NULL,0,0,0,0,0,0,0,0,0,0,0);
 
 static const char *msifile = "winetest-automation.msi";
 static FILETIME systemtime;
+static CHAR CURR_DIR[MAX_PATH];
 static EXCEPINFO excepinfo;
 
 /*
@@ -149,6 +152,13 @@ static const CHAR registry_dat[] = "Registry\tRoot\tKey\tName\tValue\tComponent_
                                    "regdata\t1\tSOFTWARE\\Wine\\msitest\tblah\tbad\tdangler\n"
                                    "OrderTest\t1\tSOFTWARE\\Wine\\msitest\tOrderTestName\tOrderTestValue\tcomponent\n";
 
+typedef struct _msi_table
+{
+    const CHAR *filename;
+    const CHAR *data;
+    int size;
+} msi_table;
+
 #define ADD_TABLE(x) {#x".idt", x##_dat, sizeof(x##_dat)}
 
 static const msi_table tables[] =
@@ -187,6 +197,65 @@ static const msi_summary_info summary_info[] =
     ADD_INFO_FILETIME(PID_CREATE_DTM, &systemtime),
     ADD_INFO_FILETIME(PID_LASTPRINTED, &systemtime)
 };
+
+static void init_functionpointers(void)
+{
+    HMODULE hadvapi32 = GetModuleHandleA("advapi32.dll");
+    HMODULE hkernel32 = GetModuleHandleA("kernel32.dll");
+
+#define GET_PROC(dll, func) \
+    p ## func = (void *)GetProcAddress(dll, #func); \
+    if(!p ## func) \
+      trace("GetProcAddress(%s) failed\n", #func);
+
+    GET_PROC(hadvapi32, RegDeleteKeyExA)
+    GET_PROC(hkernel32, IsWow64Process)
+
+#undef GET_PROC
+}
+
+static BOOL is_process_limited(void)
+{
+    SID_IDENTIFIER_AUTHORITY NtAuthority = {SECURITY_NT_AUTHORITY};
+    PSID Group = NULL;
+    BOOL IsInGroup;
+    HANDLE token;
+
+    if (!AllocateAndInitializeSid(&NtAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID,
+                                  DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &Group) ||
+        !CheckTokenMembership(NULL, Group, &IsInGroup))
+    {
+        trace("Could not check if the current user is an administrator\n");
+        FreeSid(Group);
+        return FALSE;
+    }
+    FreeSid(Group);
+
+    if (!IsInGroup)
+    {
+        /* Only administrators have enough privileges for these tests */
+        return TRUE;
+    }
+
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+    {
+        BOOL ret;
+        TOKEN_ELEVATION_TYPE type = TokenElevationTypeDefault;
+        DWORD size;
+
+        ret = GetTokenInformation(token, TokenElevationType, &type, sizeof(type), &size);
+        CloseHandle(token);
+        return (ret && type == TokenElevationTypeLimited);
+    }
+    return FALSE;
+}
+
+static LONG delete_key_portable( HKEY key, LPCSTR subkey, REGSAM access )
+{
+    if (pRegDeleteKeyExA)
+        return pRegDeleteKeyExA( key, subkey, access, 0 );
+    return RegDeleteKeyA( key, subkey );
+}
 
 /*
  * Database Helpers
@@ -228,8 +297,8 @@ static void write_msi_summary_info(MSIHANDLE db, const msi_summary_info *info, i
     MsiCloseHandle(summary);
 }
 
-static void create_database_suminfo(const CHAR *name, const msi_table *tables, int num_tables,
-                                    const msi_summary_info *info, int num_info)
+static void create_database(const CHAR *name, const msi_table *tables, int num_tables,
+                            const msi_summary_info *info, int num_info)
 {
     MSIHANDLE db;
     UINT r;
@@ -270,7 +339,7 @@ static BOOL create_package(LPWSTR path)
     DWORD len;
 
     /* Prepare package */
-    create_database_suminfo(msifile, tables, ARRAY_SIZE(tables), summary_info, ARRAY_SIZE(summary_info));
+    create_database(msifile, tables, ARRAY_SIZE(tables), summary_info, ARRAY_SIZE(summary_info));
 
     len = MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED,
                               CURR_DIR, -1, path, MAX_PATH);
@@ -285,6 +354,8 @@ static BOOL create_package(LPWSTR path)
 /*
  * Installation helpers
  */
+
+static char PROG_FILES_DIR[MAX_PATH];
 
 static BOOL get_program_files_dir(LPSTR buf)
 {
@@ -303,6 +374,24 @@ static BOOL get_program_files_dir(LPSTR buf)
     return TRUE;
 }
 
+static void create_file(const CHAR *name, DWORD size)
+{
+    HANDLE file;
+    DWORD written, left;
+
+    file = CreateFileA(name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+    ok(file != INVALID_HANDLE_VALUE, "Failure to open file %s\n", name);
+    WriteFile(file, name, strlen(name), &written, NULL);
+    WriteFile(file, "\n", strlen("\n"), &written, NULL);
+
+    left = size - lstrlenA(name) - 1;
+
+    SetFilePointer(file, left, NULL, FILE_CURRENT);
+    SetEndOfFile(file);
+
+    CloseHandle(file);
+}
+
 static void create_test_files(void)
 {
     CreateDirectoryA("msitest", NULL);
@@ -318,8 +407,23 @@ static void create_test_files(void)
     create_file("msitest\\filename", 100);
 }
 
+static BOOL delete_pf(const CHAR *rel_path, BOOL is_file)
+{
+    CHAR path[MAX_PATH];
+
+    lstrcpyA(path, PROG_FILES_DIR);
+    lstrcatA(path, "\\");
+    lstrcatA(path, rel_path);
+
+    if (is_file)
+        return DeleteFileA(path);
+    else
+        return RemoveDirectoryA(path);
+}
+
 static void delete_test_files(void)
 {
+    DeleteFileA(msifile);
     DeleteFileA("msitest\\cabout\\new\\five.txt");
     DeleteFileA("msitest\\cabout\\four.txt");
     DeleteFileA("msitest\\second\\three.txt");
@@ -2233,7 +2337,7 @@ static UINT delete_registry_key(HKEY hkeyParent, LPCSTR subkey, REGSAM access)
 
     RegCloseKey(hkey);
     free(string);
-    RegDeleteKeyExA(hkeyParent, subkey, access, 0);
+    delete_key_portable(hkeyParent, subkey, access);
     return ERROR_SUCCESS;
 }
 
@@ -2283,7 +2387,7 @@ static void test_Installer_InstallProduct(void)
     IDispatch *pStringList = NULL;
     REGSAM access = KEY_ALL_ACCESS;
 
-    if (!is_process_elevated())
+    if (is_process_limited())
     {
         /* In fact InstallProduct would succeed but then Windows XP
          * would not allow us to clean up the registry!
@@ -2413,13 +2517,13 @@ static void test_Installer_InstallProduct(void)
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     /* Remove registry keys written by RegisterProduct standard action */
-    res = RegDeleteKeyExA(HKEY_LOCAL_MACHINE,
+    res = delete_key_portable(HKEY_LOCAL_MACHINE,
         "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{837450fa-a39b-4bc8-b321-08b393f784b3}",
-                              KEY_WOW64_32KEY, 0);
+                              KEY_WOW64_32KEY);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
-    res = RegDeleteKeyExA(HKEY_LOCAL_MACHINE,
-        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Installer\\UpgradeCodes\\D8E760ECA1E276347B43E42BDBDA5656", access, 0);
+    res = delete_key_portable(HKEY_LOCAL_MACHINE,
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Installer\\UpgradeCodes\\D8E760ECA1E276347B43E42BDBDA5656", access);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
 
     res = find_registry_key(HKEY_LOCAL_MACHINE,
@@ -2430,8 +2534,8 @@ static void test_Installer_InstallProduct(void)
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %ld\n", res);
     RegCloseKey(hkey);
 
-    res = RegDeleteKeyExA(HKEY_LOCAL_MACHINE,
-        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Installer\\Products\\af054738b93a8cb43b12803b397f483b", access, 0);
+    res = delete_key_portable(HKEY_LOCAL_MACHINE,
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Installer\\Products\\af054738b93a8cb43b12803b397f483b", access);
     ok(res == ERROR_FILE_NOT_FOUND, "Expected ERROR_FILE_NOT_FOUND, got %ld\n", res);
 
     /* Remove registry keys written by PublishProduct standard action */
@@ -2587,7 +2691,6 @@ static void test_Installer(void)
 
     /* Installer::InstallProduct and other tests that depend on our product being installed */
     test_Installer_InstallProduct();
-    DeleteFileA(msifile);
 }
 
 START_TEST(automation)
@@ -2598,9 +2701,10 @@ START_TEST(automation)
     CLSID clsid;
     IUnknown *pUnk;
 
-    if (!is_process_elevated()) restart_as_admin_elevated();
+    init_functionpointers();
 
-    IsWow64Process(GetCurrentProcess(), &is_wow64);
+    if (pIsWow64Process)
+        pIsWow64Process(GetCurrentProcess(), &is_wow64);
 
     GetSystemTimeAsFileTime(&systemtime);
 
@@ -2637,5 +2741,6 @@ START_TEST(automation)
     }
 
     OleUninitialize();
+
     SetCurrentDirectoryA(prev_path);
 }

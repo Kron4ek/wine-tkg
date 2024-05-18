@@ -76,8 +76,8 @@ typedef struct MMDevColImpl
 {
     IMMDeviceCollection IMMDeviceCollection_iface;
     LONG ref;
-    IMMDevice **devices;
-    UINT devices_count;
+    EDataFlow flow;
+    DWORD state;
 } MMDevColImpl;
 
 typedef struct IPropertyBagImpl {
@@ -827,8 +827,6 @@ static const IMMEndpointVtbl MMEndpointVtbl =
 static HRESULT MMDevCol_Create(IMMDeviceCollection **ppv, EDataFlow flow, DWORD state)
 {
     MMDevColImpl *This;
-    MMDevice *cur;
-    UINT i = 0;
 
     This = malloc(sizeof(*This));
     *ppv = NULL;
@@ -836,43 +834,14 @@ static HRESULT MMDevCol_Create(IMMDeviceCollection **ppv, EDataFlow flow, DWORD 
         return E_OUTOFMEMORY;
     This->IMMDeviceCollection_iface.lpVtbl = &MMDevColVtbl;
     This->ref = 1;
-    This->devices = NULL;
-    This->devices_count = 0;
+    This->flow = flow;
+    This->state = state;
     *ppv = &This->IMMDeviceCollection_iface;
-
-    LIST_FOR_EACH_ENTRY(cur, &device_list, MMDevice, entry)
-    {
-        if ((cur->flow == flow || flow == eAll) && (cur->state & state))
-            This->devices_count++;
-    }
-
-    if (This->devices_count)
-    {
-        This->devices = malloc(This->devices_count * sizeof(IMMDevice *));
-        if (!This->devices_count)
-            return E_OUTOFMEMORY;
-
-        LIST_FOR_EACH_ENTRY(cur, &device_list, MMDevice, entry)
-        {
-            if ((cur->flow == flow || flow == eAll) && (cur->state & state))
-            {
-                This->devices[i] = &cur->IMMDevice_iface;
-                IMMDevice_AddRef(This->devices[i]);
-                i++;
-            }
-        }
-    }
-
     return S_OK;
 }
 
 static void MMDevCol_Destroy(MMDevColImpl *This)
 {
-    UINT i;
-    for (i = 0; i < This->devices_count; i++)
-        IMMDevice_Release(This->devices[i]);
-
-    free(This->devices);
     free(This);
 }
 
@@ -915,33 +884,46 @@ static ULONG WINAPI MMDevCol_Release(IMMDeviceCollection *iface)
 static HRESULT WINAPI MMDevCol_GetCount(IMMDeviceCollection *iface, UINT *numdevs)
 {
     MMDevColImpl *This = impl_from_IMMDeviceCollection(iface);
+    MMDevice *cur;
 
     TRACE("(%p)->(%p)\n", This, numdevs);
     if (!numdevs)
         return E_POINTER;
 
-    *numdevs = This->devices_count;
+    *numdevs = 0;
+    LIST_FOR_EACH_ENTRY(cur, &device_list, MMDevice, entry)
+    {
+        if ((cur->flow == This->flow || This->flow == eAll)
+            && (cur->state & This->state))
+            ++(*numdevs);
+    }
     return S_OK;
 }
 
 static HRESULT WINAPI MMDevCol_Item(IMMDeviceCollection *iface, UINT n, IMMDevice **dev)
 {
     MMDevColImpl *This = impl_from_IMMDeviceCollection(iface);
+    MMDevice *cur;
+    DWORD i = 0;
 
     TRACE("(%p)->(%u, %p)\n", This, n, dev);
     if (!dev)
         return E_POINTER;
 
-    if (n >= This->devices_count)
+    LIST_FOR_EACH_ENTRY(cur, &device_list, MMDevice, entry)
     {
-        WARN("Could not obtain item %u\n", n);
-        *dev = NULL;
-        return E_INVALIDARG;
+        if ((cur->flow == This->flow || This->flow == eAll)
+            && (cur->state & This->state)
+            && i++ == n)
+        {
+            *dev = &cur->IMMDevice_iface;
+            IMMDevice_AddRef(*dev);
+            return S_OK;
+        }
     }
-
-    *dev = This->devices[n];
-    IMMDevice_AddRef(*dev);
-    return S_OK;
+    WARN("Could not obtain item %u\n", n);
+    *dev = NULL;
+    return E_INVALIDARG;
 }
 
 static const IMMDeviceCollectionVtbl MMDevColVtbl =

@@ -216,36 +216,6 @@ static VkPrimitiveTopology vk_topology_from_wined3d(enum wined3d_primitive_type 
     }
 }
 
-static VkPrimitiveTopology vk_topology_class_from_wined3d(enum wined3d_primitive_type t)
-{
-    switch (t)
-    {
-        case WINED3D_PT_POINTLIST:
-            return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-
-        case WINED3D_PT_LINELIST:
-        case WINED3D_PT_LINELIST_ADJ:
-        case WINED3D_PT_LINESTRIP:
-        case WINED3D_PT_LINESTRIP_ADJ:
-            return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-
-        case WINED3D_PT_TRIANGLEFAN:
-        case WINED3D_PT_TRIANGLELIST:
-        case WINED3D_PT_TRIANGLELIST_ADJ:
-        case WINED3D_PT_TRIANGLESTRIP:
-        case WINED3D_PT_TRIANGLESTRIP_ADJ:
-            return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-        case WINED3D_PT_PATCH:
-            return VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
-
-        default:
-            FIXME("Unhandled primitive type %s.\n", debug_d3dprimitivetype(t));
-        case WINED3D_PT_UNDEFINED:
-            return ~0u;
-    }
-}
-
 static VkStencilOp vk_stencil_op_from_wined3d(enum wined3d_stencil_op op)
 {
     switch (op)
@@ -1771,37 +1741,6 @@ void wined3d_context_vk_cleanup(struct wined3d_context_vk *context_vk)
     wined3d_context_cleanup(&context_vk->c);
 }
 
-/* In general we only submit when necessary or when a frame ends. However,
- * applications which do a lot of work per frame can end up with the GPU idle
- * for long periods of time while the CPU is building commands, and drivers may
- * choose to reclock the GPU to a lower power level if they detect it being idle
- * for that long.
- *
- * This may also help performance simply by virtue of allowing more parallelism
- * between the GPU and CPU, although no clear evidence of that has been seen
- * yet. */
-
-#define WINED3D_PERIODIC_SUBMIT_WORK_COUNT 512
-#define WINED3D_PERIODIC_SUBMIT_MAX_BUFFERS 3
-
-static bool should_periodic_submit(struct wined3d_context_vk *context_vk)
-{
-    uint64_t busy_count;
-
-    if (context_vk->command_buffer_work_count < WINED3D_PERIODIC_SUBMIT_WORK_COUNT)
-        return false;
-
-    /* The point of periodic submit is to keep the GPU busy, so if it's already
-     * busy with 4 or more command buffers, don't submit another one now. */
-    busy_count = context_vk->current_command_buffer.id - context_vk->completed_command_buffer_id - 1;
-    if (busy_count > WINED3D_PERIODIC_SUBMIT_MAX_BUFFERS)
-        return false;
-
-    TRACE("Periodically submitting command buffer, %u draw/dispatch commands since last buffer, %I64u currently busy.\n",
-            context_vk->command_buffer_work_count, busy_count);
-    return true;
-}
-
 VkCommandBuffer wined3d_context_vk_get_command_buffer(struct wined3d_context_vk *context_vk)
 {
     struct wined3d_device_vk *device_vk = wined3d_device_vk(context_vk->c.device);
@@ -1816,7 +1755,7 @@ VkCommandBuffer wined3d_context_vk_get_command_buffer(struct wined3d_context_vk 
     buffer = &context_vk->current_command_buffer;
     if (buffer->vk_command_buffer)
     {
-        if (context_vk->retired_bo_size > WINED3D_RETIRED_BO_SIZE_THRESHOLD || should_periodic_submit(context_vk))
+        if (context_vk->retired_bo_size > WINED3D_RETIRED_BO_SIZE_THRESHOLD)
             wined3d_context_vk_submit_command_buffer(context_vk, 0, NULL, NULL, 0, NULL);
         else
         {
@@ -1885,8 +1824,6 @@ VkCommandBuffer wined3d_context_vk_get_command_buffer(struct wined3d_context_vk 
         wined3d_query_vk_resume(query_vk, context_vk);
     }
 
-    context_vk->command_buffer_work_count = 0;
-
     TRACE("Created new command buffer %p with id 0x%s.\n",
             buffer->vk_command_buffer, wine_dbgstr_longlong(buffer->id));
 
@@ -1938,15 +1875,10 @@ void wined3d_context_vk_submit_command_buffer(struct wined3d_context_vk *context
     context_vk->c.update_compute_shader_resource_bindings = 1;
     context_vk->c.update_unordered_access_view_bindings = 1;
     context_vk->c.update_compute_unordered_access_view_bindings = 1;
-    context_vk->c.update_primitive_type = 1;
-    context_vk->c.update_patch_vertex_count = 1;
-    context_vk->c.update_multisample_state = 1;
     context_invalidate_state(&context_vk->c, STATE_STREAMSRC);
     context_invalidate_state(&context_vk->c, STATE_INDEXBUFFER);
-    context_invalidate_state(&context_vk->c, STATE_BLEND);
     context_invalidate_state(&context_vk->c, STATE_BLEND_FACTOR);
     context_invalidate_state(&context_vk->c, STATE_DEPTH_STENCIL);
-    context_invalidate_state(&context_vk->c, STATE_RASTERIZER);
     context_invalidate_state(&context_vk->c, STATE_STENCIL_REF);
     context_invalidate_state(&context_vk->c, STATE_VIEWPORT);
     context_invalidate_state(&context_vk->c, STATE_SCISSORRECT);
@@ -2173,35 +2105,6 @@ static void wined3d_context_vk_init_graphics_pipeline_key(struct wined3d_context
         dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK;
         dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_STENCIL_WRITE_MASK;
     }
-    if (vk_info->dynamic_state2)
-    {
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY_EXT;
-        if (!(context_vk->c.d3d_info->wined3d_creation_flags & WINED3D_NO_PRIMITIVE_RESTART))
-            dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE_EXT;
-    }
-    if (vk_info->dynamic_patch_vertex_count)
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_PATCH_CONTROL_POINTS_EXT;
-    if (vk_info->dynamic_multisample_state)
-    {
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT;
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_RASTERIZATION_SAMPLES_EXT;
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
-    }
-    if (vk_info->dynamic_blend_state)
-    {
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT;
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT;
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT;
-    }
-    if (vk_info->dynamic_rasterizer_state)
-    {
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT;
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE_EXT;
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_CULL_MODE_EXT;
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_FRONT_FACE_EXT;
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE_EXT;
-        dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_DEPTH_BIAS;
-    }
 
     key = &context_vk->graphics.pipeline_key_vk;
     memset(key, 0, sizeof(*key));
@@ -2233,8 +2136,6 @@ static void wined3d_context_vk_init_graphics_pipeline_key(struct wined3d_context
 
     key->ms_desc.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     key->ms_desc.pSampleMask = &key->sample_mask;
-    /* This has to be initialized to a nonzero value even if it's dynamic. */
-    key->ms_desc.rasterizationSamples = 1;
 
     key->ds_desc.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     key->ds_desc.maxDepthBounds = 1.0f;
@@ -2265,9 +2166,11 @@ static void wined3d_context_vk_init_graphics_pipeline_key(struct wined3d_context
     key->pipeline_desc.basePipelineIndex = -1;
 }
 
-static void rasterizer_state_from_wined3d(VkPipelineRasterizationStateCreateInfo *desc,
-        const struct wined3d_state *state, const struct wined3d_d3d_info *d3d_info)
+static void wined3d_context_vk_update_rasterisation_state(const struct wined3d_context_vk *context_vk,
+        const struct wined3d_state *state, struct wined3d_graphics_pipeline_key_vk *key)
 {
+    const struct wined3d_d3d_info *d3d_info = context_vk->c.d3d_info;
+    VkPipelineRasterizationStateCreateInfo *desc = &key->rs_desc;
     const struct wined3d_rasterizer_state_desc *r;
     float scale_bias;
     union
@@ -2332,58 +2235,6 @@ static void rasterizer_state_from_wined3d(VkPipelineRasterizationStateCreateInfo
     desc->depthBiasClamp = r->depth_bias_clamp;
 }
 
-static void wined3d_context_vk_set_dynamic_rasterizer_state(const struct wined3d_context_vk *context_vk,
-        VkCommandBuffer vk_command_buffer, const struct wined3d_vk_info *vk_info, const struct wined3d_state *state)
-{
-    VkPipelineRasterizationStateCreateInfo desc;
-
-    rasterizer_state_from_wined3d(&desc, state, context_vk->c.d3d_info);
-
-    VK_CALL(vkCmdSetRasterizerDiscardEnableEXT(vk_command_buffer, desc.rasterizerDiscardEnable));
-    VK_CALL(vkCmdSetDepthClampEnableEXT(vk_command_buffer, desc.depthClampEnable));
-    VK_CALL(vkCmdSetCullModeEXT(vk_command_buffer, desc.cullMode));
-    VK_CALL(vkCmdSetFrontFaceEXT(vk_command_buffer, desc.frontFace));
-    VK_CALL(vkCmdSetDepthBiasEnableEXT(vk_command_buffer, desc.depthBiasEnable));
-
-    if (desc.depthBiasEnable)
-        VK_CALL(vkCmdSetDepthBias(vk_command_buffer, desc.depthBiasConstantFactor,
-                desc.depthBiasClamp, desc.depthBiasSlopeFactor));
-}
-
-static void blend_equation_from_wined3d(const struct wined3d_context_vk *context_vk, VkColorBlendEquationEXT *eq,
-        const struct wined3d_rendertarget_blend_state_desc *rt, const struct wined3d_rendertarget_view *rtv)
-{
-    enum wined3d_blend src_blend, dst_blend;
-    const struct wined3d_format *rt_format;
-
-    if (rtv)
-        rt_format = rtv->format;
-    else
-        rt_format = wined3d_get_format(context_vk->c.device->adapter, WINED3DFMT_NULL, 0);
-
-    src_blend = rt->src;
-    dst_blend = rt->dst;
-    if (src_blend == WINED3D_BLEND_BOTHSRCALPHA)
-    {
-        src_blend = WINED3D_BLEND_SRCALPHA;
-        dst_blend = WINED3D_BLEND_INVSRCALPHA;
-    }
-    else if (src_blend == WINED3D_BLEND_BOTHINVSRCALPHA)
-    {
-        src_blend = WINED3D_BLEND_INVSRCALPHA;
-        dst_blend = WINED3D_BLEND_SRCALPHA;
-    }
-    eq->srcColorBlendFactor = vk_blend_factor_from_wined3d(src_blend, rt_format, false);
-    eq->dstColorBlendFactor = vk_blend_factor_from_wined3d(dst_blend, rt_format, false);
-    eq->colorBlendOp = vk_blend_op_from_wined3d(rt->op);
-
-    src_blend = rt->src_alpha;
-    dst_blend = rt->dst_alpha;
-    eq->srcAlphaBlendFactor = vk_blend_factor_from_wined3d(src_blend, rt_format, true);
-    eq->dstAlphaBlendFactor = vk_blend_factor_from_wined3d(dst_blend, rt_format, true);
-    eq->alphaBlendOp = vk_blend_op_from_wined3d(rt->op_alpha);
-}
-
 static void wined3d_context_vk_update_blend_state(const struct wined3d_context_vk *context_vk,
         const struct wined3d_state *state, struct wined3d_graphics_pipeline_key_vk *key)
 {
@@ -2411,57 +2262,43 @@ static void wined3d_context_vk_update_blend_state(const struct wined3d_context_v
     for (i = 0; i < context_vk->rt_count; ++i)
     {
         const struct wined3d_rendertarget_blend_state_desc *rt = &b->rt[b->independent ? i : 0];
+        const struct wined3d_rendertarget_view *rtv = state->fb.render_targets[i];
         VkPipelineColorBlendAttachmentState *a = &key->blend_attachments[i];
+        enum wined3d_blend src_blend, dst_blend;
+        const struct wined3d_format *rt_format;
 
         a->colorWriteMask = vk_colour_write_mask_from_wined3d(rt->writemask);
         if (!rt->enable)
             continue;
 
+        if (rtv)
+            rt_format = rtv->format;
+        else
+            rt_format = wined3d_get_format(context_vk->c.device->adapter, WINED3DFMT_NULL, 0);
         a->blendEnable = VK_TRUE;
 
-        blend_equation_from_wined3d(context_vk,
-                (VkColorBlendEquationEXT *)&a->srcColorBlendFactor, rt, state->fb.render_targets[i]);
+        src_blend = rt->src;
+        dst_blend = rt->dst;
+        if (src_blend == WINED3D_BLEND_BOTHSRCALPHA)
+        {
+            src_blend = WINED3D_BLEND_SRCALPHA;
+            dst_blend = WINED3D_BLEND_INVSRCALPHA;
+        }
+        else if (src_blend == WINED3D_BLEND_BOTHINVSRCALPHA)
+        {
+            src_blend = WINED3D_BLEND_INVSRCALPHA;
+            dst_blend = WINED3D_BLEND_SRCALPHA;
+        }
+        a->srcColorBlendFactor = vk_blend_factor_from_wined3d(src_blend, rt_format, FALSE);
+        a->dstColorBlendFactor = vk_blend_factor_from_wined3d(dst_blend, rt_format, FALSE);
+        a->colorBlendOp = vk_blend_op_from_wined3d(rt->op);
+
+        src_blend = rt->src_alpha;
+        dst_blend = rt->dst_alpha;
+        a->srcAlphaBlendFactor = vk_blend_factor_from_wined3d(src_blend, rt_format, TRUE);
+        a->dstAlphaBlendFactor = vk_blend_factor_from_wined3d(dst_blend, rt_format, TRUE);
+        a->alphaBlendOp = vk_blend_op_from_wined3d(rt->op_alpha);
     }
-}
-
-static void wined3d_context_vk_set_dynamic_blend_state(const struct wined3d_context_vk *context_vk,
-        VkCommandBuffer vk_command_buffer, const struct wined3d_vk_info *vk_info, const struct wined3d_state *state)
-{
-    VkColorBlendEquationEXT equations[WINED3D_MAX_RENDER_TARGETS] = {{0}};
-    VkColorComponentFlags write_mask[WINED3D_MAX_RENDER_TARGETS];
-    unsigned int rt_count = context_vk->rt_count;
-    VkBool32 enable[WINED3D_MAX_RENDER_TARGETS];
-    const struct wined3d_blend_state_desc *b;
-
-    if (!state->blend_state)
-    {
-        static const VkBool32 default_enable[WINED3D_MAX_RENDER_TARGETS];
-#define X (VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT)
-        static const VkColorComponentFlags default_write_mask[WINED3D_MAX_RENDER_TARGETS] = {X, X, X, X, X, X, X, X};
-#undef X
-
-        VK_CALL(vkCmdSetColorBlendEnableEXT(vk_command_buffer, 0, rt_count, default_enable));
-        VK_CALL(vkCmdSetColorWriteMaskEXT(vk_command_buffer, 0, rt_count, default_write_mask));
-        return;
-    }
-
-    b = &state->blend_state->desc;
-    for (unsigned int i = 0; i < rt_count; ++i)
-    {
-        const struct wined3d_rendertarget_blend_state_desc *rt = &b->rt[b->independent ? i : 0];
-
-        write_mask[i] = vk_colour_write_mask_from_wined3d(rt->writemask);
-        enable[i] = rt->enable;
-
-        if (!rt->enable)
-            continue;
-
-        blend_equation_from_wined3d(context_vk, &equations[i], rt, state->fb.render_targets[i]);
-    }
-
-    VK_CALL(vkCmdSetColorBlendEnableEXT(vk_command_buffer, 0, rt_count, enable));
-    VK_CALL(vkCmdSetColorWriteMaskEXT(vk_command_buffer, 0, rt_count, write_mask));
-    VK_CALL(vkCmdSetColorBlendEquationEXT(vk_command_buffer, 0, rt_count, equations));
 }
 
 static VkFormat vk_format_from_component_type(enum wined3d_component_type component_type)
@@ -2612,46 +2449,33 @@ static bool wined3d_context_vk_update_graphics_pipeline_key(struct wined3d_conte
         update = true;
     }
 
-    if (vk_info->dynamic_state2)
+    vk_topology = vk_topology_from_wined3d(state->primitive_type);
+    if (key->ia_desc.topology != vk_topology)
     {
-        vk_topology = vk_topology_class_from_wined3d(state->primitive_type);
-        if (key->ia_desc.topology != vk_topology)
-        {
-            key->ia_desc.topology = vk_topology;
-            update = true;
-        }
-    }
-    else
-    {
-        vk_topology = vk_topology_from_wined3d(state->primitive_type);
-        if (key->ia_desc.topology != vk_topology)
-        {
-            key->ia_desc.topology = vk_topology;
-            key->ia_desc.primitiveRestartEnable = !(d3d_info->wined3d_creation_flags & WINED3D_NO_PRIMITIVE_RESTART)
-                    && !wined3d_primitive_type_is_list(state->primitive_type);
+        key->ia_desc.topology = vk_topology;
+        key->ia_desc.primitiveRestartEnable = !(d3d_info->wined3d_creation_flags & WINED3D_NO_PRIMITIVE_RESTART)
+                && !wined3d_primitive_type_is_list(state->primitive_type);
 
-            update = true;
-        }
+        update = true;
     }
 
-    if (!vk_info->dynamic_patch_vertex_count && key->ts_desc.patchControlPoints != state->patch_vertex_count)
+    if (key->ts_desc.patchControlPoints != state->patch_vertex_count)
     {
         key->ts_desc.patchControlPoints = state->patch_vertex_count;
 
         update = true;
     }
 
-    if (!vk_info->dynamic_rasterizer_state && (wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_RASTERIZER)
-            || wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_SHADER(WINED3D_SHADER_TYPE_GEOMETRY))))
+    if (wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_RASTERIZER)
+            || wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_SHADER(WINED3D_SHADER_TYPE_GEOMETRY)))
     {
-        rasterizer_state_from_wined3d(&key->rs_desc, state, d3d_info);
+        wined3d_context_vk_update_rasterisation_state(context_vk, state, key);
 
         update = true;
     }
 
-    if (!vk_info->dynamic_multisample_state
-            && (key->ms_desc.rasterizationSamples != context_vk->sample_count
-            || isStateDirty(&context_vk->c, STATE_BLEND) || isStateDirty(&context_vk->c, STATE_SAMPLE_MASK)))
+    if (key->ms_desc.rasterizationSamples != context_vk->sample_count
+            || isStateDirty(&context_vk->c, STATE_BLEND) || isStateDirty(&context_vk->c, STATE_SAMPLE_MASK))
     {
         key->ms_desc.rasterizationSamples = context_vk->sample_count;
         key->ms_desc.alphaToCoverageEnable = state->blend_state && state->blend_state->desc.alpha_to_coverage;
@@ -2705,9 +2529,8 @@ static bool wined3d_context_vk_update_graphics_pipeline_key(struct wined3d_conte
         update = true;
     }
 
-    if (!vk_info->dynamic_blend_state
-            && (wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_BLEND)
-            || wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_FRAMEBUFFER)))
+    if (wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_BLEND)
+            || wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_FRAMEBUFFER))
     {
         wined3d_context_vk_update_blend_state(context_vk, state, key);
 
@@ -2732,7 +2555,7 @@ static bool wined3d_context_vk_update_graphics_pipeline_key(struct wined3d_conte
 }
 
 static bool wined3d_context_vk_begin_render_pass(struct wined3d_context_vk *context_vk,
-        const struct wined3d_state *state, const struct wined3d_vk_info *vk_info)
+        VkCommandBuffer vk_command_buffer, const struct wined3d_state *state, const struct wined3d_vk_info *vk_info)
 {
     struct wined3d_device_vk *device_vk = wined3d_device_vk(context_vk->c.device);
     VkClearValue clear_values[WINED3D_MAX_RENDER_TARGETS + 1];
@@ -2742,7 +2565,6 @@ static bool wined3d_context_vk_begin_render_pass(struct wined3d_context_vk *cont
     struct wined3d_rendertarget_view *view;
     const VkPhysicalDeviceLimits *limits;
     struct wined3d_query_vk *query_vk;
-    VkCommandBuffer vk_command_buffer;
     VkRenderPassBeginInfo begin_info;
     unsigned int attachment_count, i;
     struct wined3d_texture *texture;
@@ -2846,12 +2668,6 @@ static bool wined3d_context_vk_begin_render_pass(struct wined3d_context_vk *cont
             begin_info.clearValueCount = attachment_count + 1;
         }
         ++attachment_count;
-    }
-
-    if (!(vk_command_buffer = wined3d_context_vk_get_command_buffer(context_vk)))
-    {
-        ERR("Failed to get command buffer.\n");
-        return false;
     }
 
     if (!(context_vk->vk_render_pass = wined3d_context_vk_get_render_pass(context_vk, &state->fb,
@@ -3723,7 +3539,6 @@ VkCommandBuffer wined3d_context_vk_apply_draw_state(struct wined3d_context_vk *c
         const struct wined3d_state *state, struct wined3d_buffer_vk *indirect_vk, bool indexed)
 {
     struct wined3d_device_vk *device_vk = wined3d_device_vk(context_vk->c.device);
-    const struct wined3d_d3d_info *d3d_info = context_vk->c.d3d_info;
     const struct wined3d_vk_info *vk_info = context_vk->vk_info;
     const struct wined3d_blend_state *b = state->blend_state;
     bool dual_source_blend = b && b->dual_source;
@@ -3812,15 +3627,19 @@ VkCommandBuffer wined3d_context_vk_apply_draw_state(struct wined3d_context_vk *c
 
     wined3d_context_vk_load_buffers(context_vk, state, indirect_vk, indexed);
 
+    if (!(vk_command_buffer = wined3d_context_vk_get_command_buffer(context_vk)))
+    {
+        ERR("Failed to get command buffer.\n");
+        return VK_NULL_HANDLE;
+    }
+
     if (wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_FRAMEBUFFER))
         wined3d_context_vk_end_current_render_pass(context_vk);
-
-    if (!wined3d_context_vk_begin_render_pass(context_vk, state, vk_info))
+    if (!wined3d_context_vk_begin_render_pass(context_vk, vk_command_buffer, state, vk_info))
     {
         ERR("Failed to begin render pass.\n");
         return VK_NULL_HANDLE;
     }
-    vk_command_buffer = context_vk->current_command_buffer.vk_command_buffer;
 
     while (invalidate_rt)
     {
@@ -3989,41 +3808,6 @@ VkCommandBuffer wined3d_context_vk_apply_draw_state(struct wined3d_context_vk *c
         VK_CALL(vkCmdSetViewport(vk_command_buffer, 0, viewport_count, viewports));
         VK_CALL(vkCmdSetScissor(vk_command_buffer, 0, viewport_count, scissors));
     }
-
-    if (vk_info->dynamic_state2 && context_vk->c.update_primitive_type)
-    {
-        VK_CALL(vkCmdSetPrimitiveTopologyEXT(vk_command_buffer, vk_topology_from_wined3d(state->primitive_type)));
-        if (!(d3d_info->wined3d_creation_flags & WINED3D_NO_PRIMITIVE_RESTART))
-            VK_CALL(vkCmdSetPrimitiveRestartEnableEXT(vk_command_buffer,
-                    !wined3d_primitive_type_is_list(state->primitive_type)));
-        context_vk->c.update_primitive_type = 0;
-    }
-
-    if (vk_info->dynamic_patch_vertex_count && context_vk->c.update_patch_vertex_count)
-    {
-        if (state->patch_vertex_count)
-            VK_CALL(vkCmdSetPatchControlPointsEXT(vk_command_buffer, state->patch_vertex_count));
-        context_vk->c.update_patch_vertex_count = 0;
-    }
-
-    if (vk_info->dynamic_multisample_state && context_vk->c.update_multisample_state)
-    {
-        unsigned int sample_count = context_vk->sample_count;
-
-        VK_CALL(vkCmdSetAlphaToCoverageEnableEXT(vk_command_buffer,
-                state->blend_state && state->blend_state->desc.alpha_to_coverage));
-        VK_CALL(vkCmdSetRasterizationSamplesEXT(vk_command_buffer, sample_count));
-        VK_CALL(vkCmdSetSampleMaskEXT(vk_command_buffer, sample_count, &state->sample_mask));
-        context_vk->c.update_multisample_state = 0;
-    }
-
-    if (vk_info->dynamic_rasterizer_state && (wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_RASTERIZER)
-            || wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_SHADER(WINED3D_SHADER_TYPE_GEOMETRY))))
-        wined3d_context_vk_set_dynamic_rasterizer_state(context_vk, vk_command_buffer, vk_info, state);
-
-    if (vk_info->dynamic_blend_state && (wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_BLEND)
-            || wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_FRAMEBUFFER)))
-        wined3d_context_vk_set_dynamic_blend_state(context_vk, vk_command_buffer, vk_info, state);
 
     if (vk_info->supported[WINED3D_VK_EXT_EXTENDED_DYNAMIC_STATE]
             && (wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_DEPTH_STENCIL)

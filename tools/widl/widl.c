@@ -89,7 +89,7 @@ static const char usage[] =
 static const char version_string[] = "Wine IDL Compiler version " PACKAGE_VERSION "\n"
 			"Copyright 2002 Ove Kaaven\n";
 
-struct target target = { 0 };
+static struct target target;
 
 int debuglevel = DEBUGLEVEL_NONE;
 int parser_debug, yy_flex_debug;
@@ -99,6 +99,7 @@ int do_everything = 1;
 static int preprocess_only = 0;
 int do_header = 0;
 int do_typelib = 0;
+int do_old_typelib = 0;
 int do_proxies = 0;
 int do_client = 0;
 int do_server = 0;
@@ -107,11 +108,10 @@ int do_idfile = 0;
 int do_dlldata = 0;
 static int no_preprocess = 0;
 int old_names = 0;
-int old_typelib = 0;
 int winrt_mode = 0;
-int interpreted_mode = 1;
 int use_abi_namespace = 0;
 static int stdinc = 1;
+static enum stub_mode stub_mode = MODE_Os;
 
 char *input_name;
 char *idl_name;
@@ -199,6 +199,13 @@ static const struct long_option long_options[] = {
 
 static void rm_tempfile(void);
 
+enum stub_mode get_stub_mode(void)
+{
+    /* old-style interpreted stubs are not supported on 64-bit */
+    if (stub_mode == MODE_Oi && pointer_size == 8) return MODE_Oif;
+    return stub_mode;
+}
+
 static char *make_token(const char *name)
 {
   char *token;
@@ -256,6 +263,7 @@ static void set_everything(int x)
 {
   do_header = x;
   do_typelib = x;
+  do_old_typelib = x;
   do_proxies = x;
   do_client = x;
   do_server = x;
@@ -587,11 +595,11 @@ static void option_callback( int optc, char *optarg )
       output_name = xstrdup(optarg);
       break;
     case 'O':
-      if (!strcmp( optarg, "s" )) interpreted_mode = 0;
-      else if (!strcmp( optarg, "i" )) interpreted_mode = 1;
-      else if (!strcmp( optarg, "ic" )) interpreted_mode = 1;
-      else if (!strcmp( optarg, "if" )) interpreted_mode = 1;
-      else if (!strcmp( optarg, "icf" )) interpreted_mode = 1;
+      if (!strcmp( optarg, "s" )) stub_mode = MODE_Os;
+      else if (!strcmp( optarg, "i" )) stub_mode = MODE_Oi;
+      else if (!strcmp( optarg, "ic" )) stub_mode = MODE_Oif;
+      else if (!strcmp( optarg, "if" )) stub_mode = MODE_Oif;
+      else if (!strcmp( optarg, "icf" )) stub_mode = MODE_Oif;
       else error( "Invalid argument '-O%s'\n", optarg );
       break;
     case 'p':
@@ -617,7 +625,7 @@ static void option_callback( int optc, char *optarg )
       do_typelib = 1;
       break;
     case OLD_TYPELIB_OPTION:
-      old_typelib = 1;
+      do_old_typelib = 1;
       break;
     case 'T':
       typelib_name = xstrdup(optarg);

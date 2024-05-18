@@ -273,7 +273,13 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
            if (tmpLen > widest) widest = tmpLen;
         }
 
-        fd = xrealloc(fd, (entry_count + 1) * sizeof(WIN32_FIND_DATAW));
+        fd = realloc(fd, (entry_count + 1) * sizeof(WIN32_FIND_DATAW));
+        if (fd == NULL) {
+          FindClose (hff);
+          WINE_ERR("Out of memory\n");
+          errorlevel = 1;
+          return parms->next;
+        }
       } while (FindNextFileW(hff, &fd[entry_count]) != 0);
       FindClose (hff);
     }

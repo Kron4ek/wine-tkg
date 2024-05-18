@@ -8,7 +8,7 @@
 @ stub CtfImmGetIMEFileName
 @ stub CtfImmGetTMAEFlags
 @ stub CtfImmHideToolbarWnd
-@ stdcall CtfImmIsCiceroEnabled()
+@ stub CtfImmIsCiceroEnabled
 @ stub CtfImmIsCiceroStartedInThread
 @ stub CtfImmIsGuidMapEnable
 @ stub CtfImmIsTextFrameServiceDisabled

@@ -306,28 +306,6 @@ const char *debug_d3dshaderinstructionhandler(enum WINED3D_SHADER_INSTRUCTION_HA
     return shader_opcode_names[handler_idx];
 }
 
-enum vkd3d_shader_visibility vkd3d_shader_visibility_from_wined3d(enum wined3d_shader_type shader_type)
-{
-    switch (shader_type)
-    {
-        case WINED3D_SHADER_TYPE_VERTEX:
-            return VKD3D_SHADER_VISIBILITY_VERTEX;
-        case WINED3D_SHADER_TYPE_HULL:
-            return VKD3D_SHADER_VISIBILITY_HULL;
-        case WINED3D_SHADER_TYPE_DOMAIN:
-            return VKD3D_SHADER_VISIBILITY_DOMAIN;
-        case WINED3D_SHADER_TYPE_GEOMETRY:
-            return VKD3D_SHADER_VISIBILITY_GEOMETRY;
-        case WINED3D_SHADER_TYPE_PIXEL:
-            return VKD3D_SHADER_VISIBILITY_PIXEL;
-        case WINED3D_SHADER_TYPE_COMPUTE:
-            return VKD3D_SHADER_VISIBILITY_COMPUTE;
-        default:
-            ERR("Invalid shader type %s.\n", debug_shader_type(shader_type));
-            return VKD3D_SHADER_VISIBILITY_ALL;
-    }
-}
-
 static const char *shader_semantic_name_from_usage(enum wined3d_decl_usage usage)
 {
     if (usage >= ARRAY_SIZE(semantic_names))
@@ -2762,6 +2740,8 @@ void find_ds_compile_args(const struct wined3d_state *state, const struct wined3
             : pixel_shader ? pixel_shader->limits->packed_input : shader->limits->packed_output;
     args->next_shader_type = geometry_shader ? WINED3D_SHADER_TYPE_GEOMETRY : WINED3D_SHADER_TYPE_PIXEL;
 
+    args->render_offscreen = context->render_offscreen;
+
     init_interpolation_compile_args(args->interpolation_mode,
             args->next_shader_type == WINED3D_SHADER_TYPE_PIXEL ? pixel_shader : NULL, context->d3d_info);
 
@@ -2938,6 +2918,7 @@ void find_ps_compile_args(const struct wined3d_state *state, const struct wined3
         args->shadow = 0;
         for (i = 0 ; i < WINED3D_MAX_FRAGMENT_SAMPLERS; ++i)
             args->color_fixup[i] = COLOR_FIXUP_IDENTITY;
+        args->np2_fixup = 0;
     }
     else
     {
@@ -2960,6 +2941,10 @@ void find_ps_compile_args(const struct wined3d_state *state, const struct wined3
 
             if (texture->resource.format_caps & WINED3D_FORMAT_CAP_SHADOW)
                 args->shadow |= 1u << i;
+
+            /* Flag samplers that need NP2 texcoord fixup. */
+            if (!(texture->flags & WINED3D_TEXTURE_POW2_MAT_IDENT))
+                args->np2_fixup |= (1u << i);
         }
     }
 
@@ -3048,6 +3033,10 @@ void find_ps_compile_args(const struct wined3d_state *state, const struct wined3
 
     if (d3d_info->emulated_flatshading)
         args->flatshading = state->render_states[WINED3D_RS_SHADEMODE] == WINED3D_SHADE_FLAT;
+
+    args->y_correction = (shader->reg_maps.vpos && d3d_info->frag_coord_correction)
+            || (shader->reg_maps.usesdsy && wined3d_settings.offscreen_rendering_mode != ORM_FBO)
+            ? !context->render_offscreen : 0;
 
     for (i = 0; i < ARRAY_SIZE(state->fb.render_targets); ++i)
     {

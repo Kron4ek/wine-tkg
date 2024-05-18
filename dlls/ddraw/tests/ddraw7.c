@@ -498,8 +498,7 @@ static HRESULT WINAPI enum_devtype_cb(char *desc_str, char *name, D3DDEVICEDESC7
     return DDENUMRET_OK;
 }
 
-static IDirect3DDevice7 *create_device_ex(HWND window, DWORD coop_level, const GUID *device_guid,
-        IDirectDrawSurface7 **ret_surface)
+static IDirect3DDevice7 *create_device_ex(HWND window, DWORD coop_level, const GUID *device_guid)
 {
     IDirectDrawSurface7 *surface, *ds;
     IDirect3DDevice7 *device = NULL;
@@ -587,16 +586,9 @@ static IDirect3DDevice7 *create_device_ex(HWND window, DWORD coop_level, const G
 
     hr = IDirect3D7_CreateDevice(d3d7, device_guid, surface, &device);
     IDirect3D7_Release(d3d7);
+    IDirectDrawSurface7_Release(surface);
     if (FAILED(hr))
-    {
-        IDirectDrawSurface7_Release(surface);
         return NULL;
-    }
-
-    if (ret_surface)
-        *ret_surface = surface;
-    else
-        IDirectDrawSurface7_Release(surface);
 
     return device;
 }
@@ -623,7 +615,7 @@ static IDirect3DDevice7 *create_device(HWND window, DWORD coop_level)
 
     IDirect3D7_Release(d3d7);
 
-    return create_device_ex(window, coop_level, device_guid, NULL);
+    return create_device_ex(window, coop_level, device_guid);
 }
 
 static bool init_3d_test_context_guid(struct ddraw_test_context *context, const GUID *device_guid)
@@ -633,7 +625,7 @@ static bool init_3d_test_context_guid(struct ddraw_test_context *context, const 
     memset(context, 0, sizeof(*context));
 
     context->window = create_window();
-    if (!(context->device = create_device_ex(context->window, DDSCL_NORMAL, device_guid, NULL)))
+    if (!(context->device = create_device_ex(context->window, DDSCL_NORMAL, device_guid)))
     {
         skip("Failed to create a D3D device.\n");
         DestroyWindow(context->window);
@@ -1594,7 +1586,7 @@ static void test_depth_blit(const GUID *device_guid)
     HWND window;
 
     window = create_window();
-    if (!(device = create_device_ex(window, DDSCL_NORMAL, device_guid, NULL)))
+    if (!(device = create_device_ex(window, DDSCL_NORMAL, device_guid)))
     {
         skip("Failed to create a 3D device, skipping test.\n");
         DestroyWindow(window);
@@ -1852,7 +1844,7 @@ static void test_zenable(const GUID *device_guid)
     HRESULT hr;
 
     window = create_window();
-    if (!(device = create_device_ex(window, DDSCL_NORMAL, device_guid, NULL)))
+    if (!(device = create_device_ex(window, DDSCL_NORMAL, device_guid)))
     {
         skip("Failed to create a 3D device, skipping test.\n");
         DestroyWindow(window);
@@ -1956,7 +1948,7 @@ static void test_ck_rgba(const GUID *device_guid)
     HRESULT hr;
 
     window = create_window();
-    if (!(device = create_device_ex(window, DDSCL_NORMAL, device_guid, NULL)))
+    if (!(device = create_device_ex(window, DDSCL_NORMAL, device_guid)))
     {
         skip("Failed to create a 3D device, skipping test.\n");
         DestroyWindow(window);
@@ -6476,7 +6468,6 @@ static void test_unsupported_formats(void)
 
 static void test_rt_caps(const GUID *device_guid)
 {
-    DWORD fourcc_codes[64], fourcc_code_count;
     PALETTEENTRY palette_entries[256];
     IDirectDrawPalette *palette;
     BOOL software_device;
@@ -6493,12 +6484,6 @@ static void test_rt_caps(const GUID *device_guid)
     {
         sizeof(DDPIXELFORMAT), DDPF_PALETTEINDEXED8 | DDPF_RGB, 0,
         {8}, {0x00000000}, {0x00000000}, {0x00000000}, {0x00000000},
-    };
-    static const DDPIXELFORMAT fourcc_fmt =
-    {
-        .dwSize = sizeof(DDPIXELFORMAT),
-        .dwFlags = DDPF_FOURCC,
-        .dwFourCC = MAKEFOURCC('Y','U','Y','2'),
     };
 
     const struct
@@ -6687,14 +6672,6 @@ static void test_rt_caps(const GUID *device_guid)
             DDERR_INVALIDCAPS,
             DDERR_INVALIDCAPS,
         },
-        {
-            &fourcc_fmt,
-            DDSCAPS_FLIP | DDSCAPS_COMPLEX | DDSCAPS_OFFSCREENPLAIN,
-            0,
-            DDERR_INVALIDCAPS,
-            DDERR_INVALIDCAPS,
-            DDERR_INVALIDCAPS,
-        },
     };
 
     software_device = is_software_device_type(device_guid);
@@ -6729,10 +6706,6 @@ static void test_rt_caps(const GUID *device_guid)
     hr = IDirectDraw7_GetCaps(ddraw, &hal_caps, NULL);
     ok(hr == DD_OK, "Got unexpected hr %#lx.\n", hr);
 
-    fourcc_code_count = ARRAY_SIZE(fourcc_codes);
-    hr = IDirectDraw4_GetFourCCCodes(ddraw, &fourcc_code_count, fourcc_codes);
-    ok(hr == DD_OK, "Got unexpected hr %#lx.\n", hr);
-
     for (i = 0; i < ARRAY_SIZE(test_data); ++i)
     {
         IDirectDrawSurface7 *surface, *rt, *expected_rt, *tmp;
@@ -6750,28 +6723,8 @@ static void test_rt_caps(const GUID *device_guid)
         surface_desc.ddsCaps.dwCaps2 = test_data[i].caps2_in;
         if (test_data[i].pf)
         {
-            if (test_data[i].pf->dwFlags & DDPF_FOURCC)
-            {
-                unsigned int j;
-
-                for (j = 0; j < fourcc_code_count; ++j)
-                {
-                    if (test_data[i].pf->dwFourCC == fourcc_codes[j])
-                        break;
-                }
-                if (j == fourcc_code_count)
-                {
-                    skip("Fourcc format %#lx is not supported, skipping test.\n", test_data[i].pf->dwFourCC);
-                    continue;
-                }
-            }
             surface_desc.dwFlags |= DDSD_PIXELFORMAT;
             surface_desc.ddpfPixelFormat = *test_data[i].pf;
-        }
-        if (caps_in & DDSCAPS_FLIP)
-        {
-            surface_desc.dwFlags |= DDSD_BACKBUFFERCOUNT;
-            surface_desc.dwBackBufferCount = 1;
         }
         surface_desc.dwWidth = 640;
         surface_desc.dwHeight = 480;
@@ -6797,9 +6750,6 @@ static void test_rt_caps(const GUID *device_guid)
            expected_caps = caps_in | DDSCAPS_SYSTEMMEMORY;
         else
            expected_caps = caps_in | DDSCAPS_VIDEOMEMORY | DDSCAPS_LOCALVIDMEM;
-
-        if (caps_in & DDSCAPS_FLIP)
-            expected_caps |= DDSCAPS_FRONTBUFFER;
 
         ok(surface_desc.ddsCaps.dwCaps == expected_caps || (test_data[i].pf == &p8_fmt
                 && surface_desc.ddsCaps.dwCaps == (caps_in | DDSCAPS_SYSTEMMEMORY))
@@ -6859,11 +6809,6 @@ static void test_rt_caps(const GUID *device_guid)
         {
             surface_desc.dwFlags |= DDSD_PIXELFORMAT;
             surface_desc.ddpfPixelFormat = *test_data[i].pf;
-        }
-        if (caps_in & DDSCAPS_FLIP)
-        {
-            surface_desc.dwFlags |= DDSD_BACKBUFFERCOUNT;
-            surface_desc.dwBackBufferCount = 1;
         }
         surface_desc.dwWidth = 640;
         surface_desc.dwHeight = 480;
@@ -19189,7 +19134,7 @@ static void test_texture_wrong_caps(const GUID *device_guid)
     HRESULT hr;
 
     window = create_window();
-    if (!(device = create_device_ex(window, DDSCL_NORMAL, device_guid, NULL)))
+    if (!(device = create_device_ex(window, DDSCL_NORMAL, device_guid)))
     {
         skip("Failed to create a 3D device, skipping test.\n");
         DestroyWindow(window);
@@ -20056,139 +20001,6 @@ static void run_for_each_device_type(void (*test_func)(const GUID *))
     winetest_pop_context();
 }
 
-static void test_multiple_devices(void)
-{
-    IDirect3DDevice7 *device, *device2;
-    IDirectDrawSurface7 *surface;
-    IDirectDraw7 *ddraw;
-    IDirect3D7 *d3d;
-    ULONG refcount;
-    DWORD stateblock;
-    DWORD value;
-    HWND window;
-    HRESULT hr;
-
-    window = create_window();
-    if (!(device = create_device_ex(window, DDSCL_NORMAL, &IID_IDirect3DTnLHalDevice, &surface)))
-    {
-        skip("Failed to create a 3D device, skipping test.\n");
-        DestroyWindow(window);
-        return;
-    }
-
-    hr = IDirect3DDevice7_GetDirect3D(device, &d3d);
-    ok(hr == D3D_OK, "got %#lx.\n", hr);
-    hr = IDirect3DDevice7_QueryInterface(d3d, &IID_IDirectDraw7, (void **)&ddraw);
-    ok(hr == D3D_OK, "got %#lx.\n", hr);
-
-    hr = IDirect3D7_CreateDevice(d3d, &IID_IDirect3DHALDevice, surface, &device2);
-    ok(hr == D3D_OK, "got %#lx.\n", hr);
-
-    hr = IDirect3DDevice7_CreateStateBlock(device, D3DSBT_ALL, &stateblock);
-    ok(hr == D3D_OK, "got %#lx.\n", hr);
-    hr = IDirect3DDevice7_CaptureStateBlock(device2, stateblock);
-    ok(hr == D3DERR_INVALIDSTATEBLOCK, "got %#lx.\n", hr);
-    hr = IDirect3DDevice7_CaptureStateBlock(device, stateblock);
-    ok(hr == D3D_OK, "got %#lx.\n", hr);
-    hr = IDirect3DDevice7_DeleteStateBlock(device, stateblock);
-    ok(hr == D3D_OK, "got %#lx.\n", hr);
-
-    hr = IDirect3DDevice3_SetRenderState(device, D3DRENDERSTATE_ALPHABLENDENABLE, FALSE);
-    ok(hr == DD_OK, "Got unexpected hr %#lx.\n", hr);
-    hr = IDirect3DDevice3_SetRenderState(device2, D3DRENDERSTATE_ALPHABLENDENABLE, FALSE);
-    ok(hr == DD_OK, "Got unexpected hr %#lx.\n", hr);
-
-    hr = IDirect3DDevice3_SetRenderState(device, D3DRENDERSTATE_ALPHABLENDENABLE, TRUE);
-    ok(hr == DD_OK, "Got unexpected hr %#lx.\n", hr);
-    value = 0xdeadbeef;
-    hr = IDirect3DDevice3_GetRenderState(device, D3DRENDERSTATE_ALPHABLENDENABLE, &value);
-    ok(hr == DD_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(value == TRUE, "got %#lx.\n", value);
-    hr = IDirect3DDevice3_GetRenderState(device2, D3DRENDERSTATE_ALPHABLENDENABLE, &value);
-    ok(hr == DD_OK, "Got unexpected hr %#lx.\n", hr);
-    ok(!value, "got %#lx.\n", value);
-
-    refcount = IDirect3DDevice3_Release(device);
-    ok(!refcount, "Device has %lu references left.\n", refcount);
-    refcount = IDirect3DDevice3_Release(device2);
-    ok(!refcount, "Device has %lu references left.\n", refcount);
-    refcount = IDirectDrawSurface4_Release(surface);
-    ok(!refcount, "Surface has %lu references left.\n", refcount);
-    IDirectDraw4_Release(ddraw);
-    IDirect3D3_Release(d3d);
-    DestroyWindow(window);
-}
-
-static void test_vb_desc(void)
-{
-    IDirect3DVertexBuffer7 *vb;
-    D3DVERTEXBUFFERDESC desc;
-    IDirectDraw7 *ddraw;
-    IDirect3D7 *d3d;
-    ULONG refcount;
-    HWND window;
-    HRESULT hr;
-
-    static const DWORD caps_tests[] =
-    {
-        0,
-        D3DVBCAPS_WRITEONLY,
-        D3DVBCAPS_SYSTEMMEMORY,
-        D3DVBCAPS_SYSTEMMEMORY | D3DVBCAPS_WRITEONLY
-    };
-
-    static const DWORD fvf_tests[] = {D3DFVF_XYZ, D3DFVF_XYZRHW};
-
-    ddraw = create_ddraw();
-    ok(!!ddraw, "Failed to create a ddraw object.\n");
-    window = create_window();
-    ok(!!window, "Failed to create a window.\n");
-    hr = IDirectDraw7_SetCooperativeLevel(ddraw, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
-    ok(hr == DD_OK, "SetCooperativeLevel failed, hr %#lx.\n", hr);
-
-    hr = IDirectDraw7_QueryInterface(ddraw, &IID_IDirect3D7, (void **)&d3d);
-    if (FAILED(hr))
-    {
-        skip("D3D interface is not available, skipping test.\n");
-        IDirectDraw7_Release(ddraw);
-        return;
-    }
-
-    for (unsigned int i = 0; i < ARRAY_SIZE(caps_tests); ++i)
-    {
-        for (unsigned int j = 0; j < ARRAY_SIZE(fvf_tests); ++j)
-        {
-            winetest_push_context("caps %#lx, fvf %#lx", caps_tests[i], fvf_tests[j]);
-
-            desc.dwSize = sizeof(desc);
-            desc.dwCaps = caps_tests[i];
-            desc.dwFVF = fvf_tests[j];
-            desc.dwNumVertices = 256;
-
-            hr = IDirect3D7_CreateVertexBuffer(d3d, &desc, &vb, 0);
-            ok(hr == S_OK, "Got hr %#lx.\n", hr);
-
-            memset(&desc, 0, sizeof(desc));
-            hr = IDirect3DVertexBuffer7_GetVertexBufferDesc(vb, &desc);
-            ok(hr == S_OK, "Got hr %#lx.\n", hr);
-
-            ok(!desc.dwSize, "Got size %lu.\n", desc.dwSize);
-            ok(desc.dwCaps == caps_tests[i], "Got caps %#lx.\n", desc.dwCaps);
-            ok(desc.dwFVF == fvf_tests[j], "Got FVF %#lx.\n", desc.dwFVF);
-            ok(desc.dwNumVertices == 256, "Got %lu vertices.\n", desc.dwNumVertices);
-
-            IDirect3DVertexBuffer7_Release(vb);
-
-            winetest_pop_context();
-        }
-    }
-
-    IDirect3D7_Release(d3d);
-    DestroyWindow(window);
-    refcount = IDirectDraw7_Release(ddraw);
-    ok(!refcount, "Device has %lu references left.\n", refcount);
-}
-
 START_TEST(ddraw7)
 {
     DDDEVICEIDENTIFIER2 identifier;
@@ -20364,6 +20176,4 @@ START_TEST(ddraw7)
     test_enum_devices();
     run_for_each_device_type(test_user_memory);
     test_flip_3d();
-    test_multiple_devices();
-    test_vb_desc();
 }

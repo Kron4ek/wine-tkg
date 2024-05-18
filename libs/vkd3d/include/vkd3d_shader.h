@@ -21,7 +21,6 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <stddef.h>
 #include <vkd3d_types.h>
 
 #ifdef __cplusplus
@@ -215,15 +214,6 @@ enum vkd3d_shader_compile_option_feature_flags
      * This corresponds to the "shaderFloat64" feature in the Vulkan API, and
      * the "GL_ARB_gpu_shader_fp64" extension in the OpenGL API. */
     VKD3D_SHADER_COMPILE_OPTION_FEATURE_FLOAT64       = 0x00000002,
-    /** The SPIR-V target environment supports wave operations.
-     * This flag is valid only in VKD3D_SHADER_SPIRV_ENVIRONMENT_VULKAN_1_1
-     * or greater, and corresponds to the following minimum requirements in
-     * VkPhysicalDeviceSubgroupProperties:
-     * - subgroupSize >= 4.
-     * - supportedOperations has BASIC, VOTE, ARITHMETIC, BALLOT, SHUFFLE and
-     *       QUAD bits set.
-     * - supportedStages include COMPUTE and FRAGMENT. \since 1.12 */
-    VKD3D_SHADER_COMPILE_OPTION_FEATURE_WAVE_OPS      = 0x00000004,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_FEATURE_FLAGS),
 };
@@ -312,33 +302,12 @@ enum vkd3d_shader_compile_option_name
     /**
      * If \a value is non-zero compilation will produce a child effect using
      * shared object descriptions, as instructed by the "shared" modifier.
-     * Child effects are supported with fx_4_0, and fx_4_1 profiles. This option
-     * and "shared" modifiers are ignored for the fx_5_0 profile and non-fx profiles.
-     * The fx_2_0 profile does not have a separate concept of child effects, variables
-     * marked with "shared" modifier will be marked as such in a binary.
+     * Child effects are supported with fx_2_0, fx_4_0, and fx_4_1. This option
+     * and "shared" modifiers are ignored for fx_5_0 profile, and non-fx profiles.
      *
      * \since 1.12
      */
     VKD3D_SHADER_COMPILE_OPTION_CHILD_EFFECT = 0x0000000b,
-    /**
-     * If \a value is nonzero, emit a compile warning warn when vectors or
-     * matrices are truncated in an implicit conversion.
-     * If warnings are disabled, this option has no effect.
-     * This option has no effects for targets other than HLSL.
-     *
-     * The default value is nonzero, i.e. enable implicit truncation warnings.
-     *
-     * \since 1.12
-     */
-    VKD3D_SHADER_COMPILE_OPTION_WARN_IMPLICIT_TRUNCATION = 0x0000000c,
-    /**
-     * If \a value is nonzero, empty constant buffers descriptions are
-     * written out in the output effect binary. This option applies only
-     * to fx_4_0 and fx_4_1 profiles and is otherwise ignored.
-     *
-     * \since 1.12
-     */
-    VKD3D_SHADER_COMPILE_OPTION_INCLUDE_EMPTY_BUFFERS_IN_EFFECTS = 0x0000000d,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_NAME),
 };
@@ -932,8 +901,6 @@ enum vkd3d_shader_spirv_environment
     VKD3D_SHADER_SPIRV_ENVIRONMENT_NONE,
     VKD3D_SHADER_SPIRV_ENVIRONMENT_OPENGL_4_5,
     VKD3D_SHADER_SPIRV_ENVIRONMENT_VULKAN_1_0, /* default target */
-    /** \since 1.12 */
-    VKD3D_SHADER_SPIRV_ENVIRONMENT_VULKAN_1_1,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_SPIRV_ENVIRONMENT),
 };

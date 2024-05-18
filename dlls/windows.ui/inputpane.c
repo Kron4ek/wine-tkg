@@ -158,8 +158,7 @@ DEFINE_IINSPECTABLE( inputpane2, IInputPane2, struct inputpane, IInputPane_iface
 static HRESULT WINAPI inputpane2_TryShow( IInputPane2 *iface, boolean *result )
 {
     FIXME( "iface %p, result %p stub!\n", iface, result );
-    *result = FALSE;
-    return S_OK;
+    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI inputpane2_TryHide( IInputPane2 *iface, boolean *result )

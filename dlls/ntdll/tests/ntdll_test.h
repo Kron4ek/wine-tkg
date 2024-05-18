@@ -1,7 +1,7 @@
 /*
- * Runtime Classes for windows.networking.hostname.dll
+ * Unit test suite for ntdll functions
  *
- * Copyright (C) 2023 Mohamad Al-Jaf
+ * Copyright 2003 Eric Pouech
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,6 +18,15 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#pragma makedep register
+#include <stdarg.h>
 
-#include "windows.networking.connectivity.idl"
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
+#include "windef.h"
+#include "winbase.h"
+#include "winnt.h"
+#include "winreg.h"
+#include "winternl.h"
+
+#include "wine/test.h"
+#include "wine/heap.h"

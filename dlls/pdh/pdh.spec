@@ -18,7 +18,7 @@
 @ stdcall PdhCollectQueryDataWithTime(ptr ptr)
 @ stdcall PdhCollectQueryDataEx(ptr long ptr)
 @ stub PdhComputeCounterStatistics
-@ stdcall PdhConnectMachineA(str)
+@ stub PdhConnectMachineA
 @ stub PdhConnectMachineW
 @ stub PdhCreateSQLTablesA
 @ stub PdhCreateSQLTablesW

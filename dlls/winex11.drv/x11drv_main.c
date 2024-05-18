@@ -99,7 +99,18 @@ static int (*old_error_handler)( Display *, XErrorEvent * );
 static BOOL use_xim = TRUE;
 static WCHAR input_style[20];
 
+static pthread_mutex_t d3dkmt_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t error_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+struct x11_d3dkmt_adapter
+{
+    D3DKMT_HANDLE handle;                   /* Kernel mode graphics adapter handle */
+    VkPhysicalDevice vk_device;             /* Vulkan physical device */
+    struct list entry;                      /* List entry */
+};
+
+static VkInstance d3dkmt_vk_instance;       /* Vulkan instance for D3DKMT functions */
+static struct list x11_d3dkmt_adapters = LIST_INIT( x11_d3dkmt_adapters );
 
 #define IS_OPTION_TRUE(ch) \
     ((ch) == 'y' || (ch) == 'Y' || (ch) == 't' || (ch) == 'T' || (ch) == '1')
@@ -771,7 +782,6 @@ static NTSTATUS x11drv_init( void *arg )
 
     init_user_driver();
     X11DRV_DisplayDevices_Init(FALSE);
-    X11DRV_DisplayDevices_RegisterEventHandlers();
     return STATUS_SUCCESS;
 }
 
@@ -785,6 +795,7 @@ void X11DRV_ThreadDetach(void)
 
     if (data)
     {
+        vulkan_thread_detach();
         if (data->xim) XCloseIM( data->xim );
         if (data->font_set) XFreeFontSet( data->display, data->font_set );
         XSync( gdi_display, False ); /* make sure XReparentWindow requests have completed before closing the thread display */
@@ -892,6 +903,337 @@ BOOL X11DRV_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, 
         break;
     }
     return FALSE;  /* let user32 handle it */
+}
+
+NTSTATUS X11DRV_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
+{
+    const struct vulkan_funcs *vulkan_funcs = __wine_get_vulkan_driver( WINE_VULKAN_DRIVER_VERSION );
+    struct x11_d3dkmt_adapter *adapter;
+
+    if (!vulkan_funcs)
+        return STATUS_UNSUCCESSFUL;
+
+    pthread_mutex_lock(&d3dkmt_mutex);
+    LIST_FOR_EACH_ENTRY(adapter, &x11_d3dkmt_adapters, struct x11_d3dkmt_adapter, entry)
+    {
+        if (adapter->handle == desc->hAdapter)
+        {
+            list_remove(&adapter->entry);
+            free(adapter);
+            break;
+        }
+    }
+
+    if (list_empty(&x11_d3dkmt_adapters))
+    {
+        vulkan_funcs->p_vkDestroyInstance(d3dkmt_vk_instance, NULL);
+        d3dkmt_vk_instance = NULL;
+    }
+    pthread_mutex_unlock(&d3dkmt_mutex);
+    return STATUS_SUCCESS;
+}
+
+static HANDLE get_display_device_init_mutex(void)
+{
+    WCHAR bufferW[256];
+    UNICODE_STRING name = {.Buffer = bufferW};
+    OBJECT_ATTRIBUTES attr;
+    char buffer[256];
+    HANDLE mutex;
+
+    snprintf( buffer, ARRAY_SIZE(buffer), "\\Sessions\\%u\\BaseNamedObjects\\display_device_init",
+              (int)NtCurrentTeb()->Peb->SessionId );
+    name.MaximumLength = asciiz_to_unicode( bufferW, buffer );
+    name.Length = name.MaximumLength - sizeof(WCHAR);
+
+    InitializeObjectAttributes( &attr, &name, OBJ_OPENIF, NULL, NULL );
+    if (NtCreateMutant( &mutex, MUTEX_ALL_ACCESS, &attr, FALSE ) < 0) return 0;
+    NtWaitForSingleObject( mutex, FALSE, NULL );
+    return mutex;
+}
+
+static void release_display_device_init_mutex(HANDLE mutex)
+{
+    NtReleaseMutant( mutex, NULL );
+    NtClose( mutex );
+}
+
+/* Find the Vulkan device UUID corresponding to a LUID */
+static BOOL get_vulkan_uuid_from_luid( const LUID *luid, GUID *uuid )
+{
+    static const WCHAR class_guidW[] = {'C','l','a','s','s','G','U','I','D',0};
+    static const WCHAR devpropkey_gpu_vulkan_uuidW[] =
+    {
+        'P','r','o','p','e','r','t','i','e','s',
+        '\\','{','2','3','3','A','9','E','F','3','-','A','F','C','4','-','4','A','B','D',
+        '-','B','5','6','4','-','C','3','2','F','2','1','F','1','5','3','5','C','}',
+        '\\','0','0','0','2'
+    };
+    static const WCHAR devpropkey_gpu_luidW[] =
+    {
+        'P','r','o','p','e','r','t','i','e','s',
+        '\\','{','6','0','B','1','9','3','C','B','-','5','2','7','6','-','4','D','0','F',
+        '-','9','6','F','C','-','F','1','7','3','A','B','A','D','3','E','C','6','}',
+        '\\','0','0','0','2'
+    };
+    static const WCHAR guid_devclass_displayW[] =
+        {'{','4','D','3','6','E','9','6','8','-','E','3','2','5','-','1','1','C','E','-',
+         'B','F','C','1','-','0','8','0','0','2','B','E','1','0','3','1','8','}',0};
+    static const WCHAR pci_keyW[] =
+    {
+        '\\','R','e','g','i','s','t','r','y',
+        '\\','M','a','c','h','i','n','e',
+        '\\','S','y','s','t','e','m',
+        '\\','C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t',
+        '\\','E','n','u','m',
+        '\\','P','C','I'
+    };
+    char buffer[4096];
+    KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
+    HKEY subkey, device_key, prop_key, pci_key;
+    KEY_NODE_INFORMATION *key = (void *)buffer;
+    DWORD size, i = 0;
+    HANDLE mutex;
+
+    mutex = get_display_device_init_mutex();
+
+    pci_key = reg_open_key(NULL, pci_keyW, sizeof(pci_keyW));
+    while (!NtEnumerateKey(pci_key, i++, KeyNodeInformation, key, sizeof(buffer), &size))
+    {
+        unsigned int j = 0;
+
+        if (!(subkey = reg_open_key(pci_key, key->Name, key->NameLength)))
+            continue;
+
+        while (!NtEnumerateKey(subkey, j++, KeyNodeInformation, key, sizeof(buffer), &size))
+        {
+            if (!(device_key = reg_open_key(subkey, key->Name, key->NameLength)))
+                continue;
+
+            size = query_reg_value(device_key, class_guidW, value, sizeof(buffer));
+            if (size != sizeof(guid_devclass_displayW) ||
+                wcscmp((WCHAR *)value->Data, guid_devclass_displayW))
+            {
+                NtClose(device_key);
+                continue;
+            }
+
+            if (!(prop_key = reg_open_key(device_key, devpropkey_gpu_luidW,
+                                          sizeof(devpropkey_gpu_luidW))))
+            {
+                NtClose(device_key);
+                continue;
+            }
+
+            size = query_reg_value(prop_key, NULL, value, sizeof(buffer));
+            NtClose(prop_key);
+            if (size != sizeof(LUID) || memcmp(value->Data, luid, sizeof(LUID)))
+            {
+                NtClose(device_key);
+                continue;
+            }
+
+            if (!(prop_key = reg_open_key(device_key, devpropkey_gpu_vulkan_uuidW,
+                                          sizeof(devpropkey_gpu_vulkan_uuidW))))
+            {
+                NtClose(device_key);
+                continue;
+            }
+
+            size = query_reg_value(prop_key, NULL, value, sizeof(buffer));
+            NtClose(prop_key);
+            if (size != sizeof(GUID))
+            {
+                NtClose(device_key);
+                continue;
+            }
+
+            *uuid = *(const GUID *)value->Data;
+            NtClose(device_key);
+            NtClose(subkey);
+            NtClose(pci_key);
+            release_display_device_init_mutex(mutex);
+            return TRUE;
+        }
+        NtClose(subkey);
+    }
+    NtClose(pci_key);
+
+    release_display_device_init_mutex(mutex);
+    return FALSE;
+}
+
+NTSTATUS X11DRV_D3DKMTOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc )
+{
+    static const char *extensions[] =
+    {
+        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
+    };
+    const struct vulkan_funcs *vulkan_funcs;
+    PFN_vkGetPhysicalDeviceProperties2KHR pvkGetPhysicalDeviceProperties2KHR;
+    PFN_vkEnumeratePhysicalDevices pvkEnumeratePhysicalDevices;
+    VkPhysicalDevice *vk_physical_devices = NULL;
+    VkPhysicalDeviceProperties2 properties2;
+    NTSTATUS status = STATUS_UNSUCCESSFUL;
+    UINT device_count, device_idx = 0;
+    struct x11_d3dkmt_adapter *adapter;
+    VkInstanceCreateInfo create_info;
+    VkPhysicalDeviceIDProperties id;
+    VkResult vr;
+    GUID uuid;
+
+    if (!get_vulkan_uuid_from_luid(&desc->AdapterLuid, &uuid))
+    {
+        WARN("Failed to find Vulkan device with LUID %08x:%08x.\n",
+             (int)desc->AdapterLuid.HighPart, (int)desc->AdapterLuid.LowPart);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Find the Vulkan device with corresponding UUID */
+    if (!(vulkan_funcs = __wine_get_vulkan_driver( WINE_VULKAN_DRIVER_VERSION )))
+    {
+        WARN("Vulkan is unavailable.\n");
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    pthread_mutex_lock(&d3dkmt_mutex);
+
+    if (!d3dkmt_vk_instance)
+    {
+        memset(&create_info, 0, sizeof(create_info));
+        create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+        create_info.enabledExtensionCount = ARRAY_SIZE(extensions);
+        create_info.ppEnabledExtensionNames = extensions;
+
+        vr = vulkan_funcs->p_vkCreateInstance(&create_info, NULL, &d3dkmt_vk_instance);
+        if (vr != VK_SUCCESS)
+        {
+            WARN("Failed to create a Vulkan instance, vr %d.\n", vr);
+            goto done;
+        }
+    }
+
+#define LOAD_VK_FUNC(f)                                                                  \
+    if (!(p##f = (void *)vulkan_funcs->p_vkGetInstanceProcAddr(d3dkmt_vk_instance, #f))) \
+    {                                                                                    \
+        WARN("Failed to load " #f ".\n");                                                \
+        goto done;                                                                       \
+    }
+
+    LOAD_VK_FUNC(vkEnumeratePhysicalDevices)
+    LOAD_VK_FUNC(vkGetPhysicalDeviceProperties2KHR)
+#undef LOAD_VK_FUNC
+
+    vr = pvkEnumeratePhysicalDevices(d3dkmt_vk_instance, &device_count, NULL);
+    if (vr != VK_SUCCESS || !device_count)
+    {
+        WARN("No Vulkan device found, vr %d, device_count %d.\n", vr, device_count);
+        goto done;
+    }
+
+    if (!(vk_physical_devices = calloc(device_count, sizeof(*vk_physical_devices))))
+        goto done;
+
+    vr = pvkEnumeratePhysicalDevices(d3dkmt_vk_instance, &device_count, vk_physical_devices);
+    if (vr != VK_SUCCESS)
+    {
+        WARN("vkEnumeratePhysicalDevices failed, vr %d.\n", vr);
+        goto done;
+    }
+
+    for (device_idx = 0; device_idx < device_count; ++device_idx)
+    {
+        memset(&id, 0, sizeof(id));
+        id.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        properties2.pNext = &id;
+
+        pvkGetPhysicalDeviceProperties2KHR(vk_physical_devices[device_idx], &properties2);
+        if (!IsEqualGUID(&uuid, id.deviceUUID))
+            continue;
+
+        if (!(adapter = malloc(sizeof(*adapter))))
+        {
+            status = STATUS_NO_MEMORY;
+            goto done;
+        }
+
+        adapter->handle = desc->hAdapter;
+        adapter->vk_device = vk_physical_devices[device_idx];
+        list_add_head(&x11_d3dkmt_adapters, &adapter->entry);
+        status = STATUS_SUCCESS;
+        break;
+    }
+
+done:
+    if (d3dkmt_vk_instance && list_empty(&x11_d3dkmt_adapters))
+    {
+        vulkan_funcs->p_vkDestroyInstance(d3dkmt_vk_instance, NULL);
+        d3dkmt_vk_instance = NULL;
+    }
+    pthread_mutex_unlock(&d3dkmt_mutex);
+    free(vk_physical_devices);
+    return status;
+}
+
+NTSTATUS X11DRV_D3DKMTQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc )
+{
+    const struct vulkan_funcs *vulkan_funcs = __wine_get_vulkan_driver( WINE_VULKAN_DRIVER_VERSION );
+    PFN_vkGetPhysicalDeviceMemoryProperties2KHR pvkGetPhysicalDeviceMemoryProperties2KHR;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget;
+    VkPhysicalDeviceMemoryProperties2 properties2;
+    NTSTATUS status = STATUS_INVALID_PARAMETER;
+    struct x11_d3dkmt_adapter *adapter;
+    unsigned int i;
+
+    desc->Budget = 0;
+    desc->CurrentUsage = 0;
+    desc->CurrentReservation = 0;
+    desc->AvailableForReservation = 0;
+
+    if (!vulkan_funcs)
+    {
+        WARN("Vulkan is unavailable.\n");
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    pthread_mutex_lock(&d3dkmt_mutex);
+    LIST_FOR_EACH_ENTRY(adapter, &x11_d3dkmt_adapters, struct x11_d3dkmt_adapter, entry)
+    {
+        if (adapter->handle != desc->hAdapter)
+            continue;
+
+        if (!(pvkGetPhysicalDeviceMemoryProperties2KHR = (void *)vulkan_funcs->p_vkGetInstanceProcAddr(d3dkmt_vk_instance, "vkGetPhysicalDeviceMemoryProperties2KHR")))
+        {
+            WARN("Failed to load vkGetPhysicalDeviceMemoryProperties2KHR.\n");
+            status = STATUS_UNSUCCESSFUL;
+            goto done;
+        }
+
+        memset(&budget, 0, sizeof(budget));
+        budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+        properties2.pNext = &budget;
+        pvkGetPhysicalDeviceMemoryProperties2KHR(adapter->vk_device, &properties2);
+        for (i = 0; i < properties2.memoryProperties.memoryHeapCount; ++i)
+        {
+            if ((desc->MemorySegmentGroup == D3DKMT_MEMORY_SEGMENT_GROUP_LOCAL
+                && properties2.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+                || (desc->MemorySegmentGroup == D3DKMT_MEMORY_SEGMENT_GROUP_NON_LOCAL
+                && !(properties2.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)))
+            {
+                desc->Budget += budget.heapBudget[i];
+                desc->CurrentUsage += budget.heapUsage[i];
+            }
+        }
+        desc->AvailableForReservation = desc->Budget / 2;
+        status = STATUS_SUCCESS;
+        break;
+    }
+done:
+    pthread_mutex_unlock(&d3dkmt_mutex);
+    return status;
 }
 
 NTSTATUS x11drv_client_func( enum x11drv_client_funcs id, const void *params, ULONG size )

@@ -75,8 +75,6 @@
 #define TAG_XNAP VKD3D_MAKE_TAG('X', 'N', 'A', 'P')
 #define TAG_XNAS VKD3D_MAKE_TAG('X', 'N', 'A', 'S')
 
-#define TAG_RD11_REVERSE 0x25441313
-
 static inline uint64_t align(uint64_t addr, size_t alignment)
 {
     return (addr + (alignment - 1)) & ~(alignment - 1);
@@ -340,8 +338,6 @@ static inline int vkd3d_u32_compare(uint32_t x, uint32_t y)
     return (x > y) - (x < y);
 }
 
-#define VKD3D_BITMAP_SIZE(x) (((x) + 0x1f) >> 5)
-
 static inline bool bitmap_clear(uint32_t *map, unsigned int idx)
 {
     return map[idx >> 5] &= ~(1u << (idx & 0x1f));
@@ -440,12 +436,6 @@ struct vkd3d_mutex
 #endif
 };
 
-#ifdef _WIN32
-#define VKD3D_MUTEX_INITIALIZER {{NULL, -1, 0, 0, 0, 0}}
-#else
-#define VKD3D_MUTEX_INITIALIZER PTHREAD_MUTEX_INITIALIZER
-#endif
-
 static inline void vkd3d_mutex_init(struct vkd3d_mutex *lock)
 {
 #ifdef _WIN32
@@ -491,76 +481,6 @@ static inline void vkd3d_mutex_destroy(struct vkd3d_mutex *lock)
 
     if ((ret = pthread_mutex_destroy(&lock->lock)))
         ERR("Failed to destroy the mutex, ret %d.\n", ret);
-#endif
-}
-
-struct vkd3d_cond
-{
-#ifdef _WIN32
-    CONDITION_VARIABLE cond;
-#else
-    pthread_cond_t cond;
-#endif
-};
-
-static inline void vkd3d_cond_init(struct vkd3d_cond *cond)
-{
-#ifdef _WIN32
-    InitializeConditionVariable(&cond->cond);
-#else
-    int ret;
-
-    if ((ret = pthread_cond_init(&cond->cond, NULL)))
-        ERR("Failed to initialise the condition variable, ret %d.\n", ret);
-#endif
-}
-
-static inline void vkd3d_cond_signal(struct vkd3d_cond *cond)
-{
-#ifdef _WIN32
-    WakeConditionVariable(&cond->cond);
-#else
-    int ret;
-
-    if ((ret = pthread_cond_signal(&cond->cond)))
-        ERR("Failed to signal the condition variable, ret %d.\n", ret);
-#endif
-}
-
-static inline void vkd3d_cond_broadcast(struct vkd3d_cond *cond)
-{
-#ifdef _WIN32
-    WakeAllConditionVariable(&cond->cond);
-#else
-    int ret;
-
-    if ((ret = pthread_cond_broadcast(&cond->cond)))
-        ERR("Failed to broadcast the condition variable, ret %d.\n", ret);
-#endif
-}
-
-static inline void vkd3d_cond_wait(struct vkd3d_cond *cond, struct vkd3d_mutex *lock)
-{
-#ifdef _WIN32
-    if (!SleepConditionVariableCS(&cond->cond, &lock->lock, INFINITE))
-        ERR("Failed to wait on the condition variable, error %lu.\n", GetLastError());
-#else
-    int ret;
-
-    if ((ret = pthread_cond_wait(&cond->cond, &lock->lock)))
-        ERR("Failed to wait on the condition variable, ret %d.\n", ret);
-#endif
-}
-
-static inline void vkd3d_cond_destroy(struct vkd3d_cond *cond)
-{
-#ifdef _WIN32
-    /* Nothing to do. */
-#else
-    int ret;
-
-    if ((ret = pthread_cond_destroy(&cond->cond)))
-        ERR("Failed to destroy the condition variable, ret %d.\n", ret);
 #endif
 }
 

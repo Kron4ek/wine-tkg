@@ -49,10 +49,10 @@ HRESULT wg_sample_queue_create(struct wg_sample_queue **out);
 void wg_sample_queue_destroy(struct wg_sample_queue *queue);
 void wg_sample_queue_flush(struct wg_sample_queue *queue, bool all);
 
-wg_parser_t wg_parser_create(bool output_compressed);
+wg_parser_t wg_parser_create(enum wg_parser_type type, bool output_compressed);
 void wg_parser_destroy(wg_parser_t parser);
 
-HRESULT wg_parser_connect(wg_parser_t parser, uint64_t file_size, const WCHAR *uri);
+HRESULT wg_parser_connect(wg_parser_t parser, uint64_t file_size);
 void wg_parser_disconnect(wg_parser_t parser);
 
 bool wg_parser_get_next_read_offset(wg_parser_t parser, uint64_t *offset, uint32_t *size);
@@ -83,10 +83,6 @@ void wg_parser_stream_seek(wg_parser_stream_t stream, double rate,
 
 wg_transform_t wg_transform_create(const struct wg_format *input_format,
         const struct wg_format *output_format, const struct wg_transform_attrs *attrs);
-HRESULT wg_transform_create_mf(IMFMediaType *input_type, IMFMediaType *output_type,
-        const struct wg_transform_attrs *attrs, wg_transform_t *transform);
-HRESULT wg_transform_create_quartz(const AM_MEDIA_TYPE *input_format, const AM_MEDIA_TYPE *output_format,
-        const struct wg_transform_attrs *attrs, wg_transform_t *transform);
 void wg_transform_destroy(wg_transform_t transform);
 bool wg_transform_set_output_format(wg_transform_t transform, struct wg_format *format);
 bool wg_transform_get_status(wg_transform_t transform, bool *accepts_input);
@@ -94,9 +90,6 @@ HRESULT wg_transform_drain(wg_transform_t transform);
 HRESULT wg_transform_flush(wg_transform_t transform);
 void wg_transform_notify_qos(wg_transform_t transform,
         bool underflow, double proportion, int64_t diff, uint64_t timestamp);
-
-HRESULT check_audio_transform_support(const WAVEFORMATEX *input, const WAVEFORMATEX *output);
-HRESULT check_video_transform_support(const MFVIDEOFORMAT *input, const MFVIDEOFORMAT *output);
 
 HRESULT wg_muxer_create(const char *format, wg_muxer_t *muxer);
 void wg_muxer_destroy(wg_muxer_t muxer);

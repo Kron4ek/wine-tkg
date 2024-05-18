@@ -111,14 +111,6 @@ typedef union
 } debug_event_t;
 
 
-enum context_exec_space
-{
-    EXEC_SPACE_USERMODE,
-    EXEC_SPACE_SYSCALL,
-    EXEC_SPACE_EXCEPTION,
-};
-
-
 typedef struct
 {
     unsigned int     machine;
@@ -165,10 +157,6 @@ typedef struct
     } ext;
     union
     {
-        struct { enum context_exec_space space; int __pad; } space;
-    } exec_space;
-    union
-    {
         struct { struct { unsigned __int64 low, high; } ymm_high[16]; } regs;
     } ymm;
 } context_t;
@@ -180,7 +168,6 @@ typedef struct
 #define SERVER_CTX_DEBUG_REGISTERS    0x10
 #define SERVER_CTX_EXTENDED_REGISTERS 0x20
 #define SERVER_CTX_YMM_REGISTERS      0x40
-#define SERVER_CTX_EXEC_SPACE         0x80
 
 
 struct send_fd
@@ -1089,8 +1076,8 @@ struct get_process_image_name_request
 {
     struct request_header __header;
     obj_handle_t handle;
-    process_id_t pid;
     int          win32;
+    char __pad_20[4];
 };
 struct get_process_image_name_reply
 {
@@ -5512,10 +5499,8 @@ struct get_rawinput_buffer_reply
 {
     struct reply_header __header;
     data_size_t next_size;
-    unsigned int time;
     unsigned int count;
     /* VARARG(data,bytes); */
-    char __pad_20[4];
 };
 
 
@@ -6769,7 +6754,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 803
+#define SERVER_PROTOCOL_VERSION 800
 
 /* ### protocol_version end ### */
 

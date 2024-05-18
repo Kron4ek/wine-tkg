@@ -19693,9 +19693,7 @@ msgid "Help topics: "
 msgstr "Содержание: "
 
 #: programs/wmic/wmic.rc:28
-#, fuzzy
-#| msgid "Error: Command line not supported\n"
-msgid "Error: Command not supported\n"
+msgid "Error: Command line not supported\n"
 msgstr "Ошибка: командная строка не поддерживается\n"
 
 #: programs/wmic/wmic.rc:29
@@ -19709,12 +19707,6 @@ msgstr "Ошибка: некорректный запрос\n"
 #: programs/wmic/wmic.rc:31
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "Ошибка: неверный синтаксис PATH\n"
-
-#: programs/wmic/wmic.rc:32
-#, fuzzy
-#| msgid "Bad command.\n"
-msgid "Supply a command\n"
-msgstr "Неверная команда.\n"
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

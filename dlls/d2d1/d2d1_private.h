@@ -159,20 +159,9 @@ enum d2d_device_context_target_type
     D2D_TARGET_COMMAND_LIST,
 };
 
-struct d2d_indexed_objects
-{
-    struct
-    {
-        GUID id;
-        IUnknown *object;
-    } *elements;
-    size_t size;
-    size_t count;
-};
-
 struct d2d_device_context
 {
-    ID2D1DeviceContext6 ID2D1DeviceContext6_iface;
+    ID2D1DeviceContext1 ID2D1DeviceContext1_iface;
     ID2D1GdiInteropRenderTarget ID2D1GdiInteropRenderTarget_iface;
     IDWriteTextRenderer IDWriteTextRenderer_iface;
     IUnknown IUnknown_iface;
@@ -219,8 +208,6 @@ struct d2d_device_context
     D2D1_RENDER_TARGET_PROPERTIES desc;
     D2D1_SIZE_U pixel_size;
     struct d2d_clip_stack clip_stack;
-
-    struct d2d_indexed_objects vertex_buffers;
 };
 
 HRESULT d2d_d3d_create_render_target(struct d2d_device *device, IDXGISurface *surface, IUnknown *outer_unknown,
@@ -607,22 +594,31 @@ HRESULT d2d_geometry_group_init(struct d2d_geometry *geometry, ID2D1Factory *fac
         D2D1_FILL_MODE fill_mode, ID2D1Geometry **src_geometries, unsigned int geometry_count);
 struct d2d_geometry *unsafe_impl_from_ID2D1Geometry(ID2D1Geometry *iface);
 
+struct d2d_shader
+{
+    GUID id;
+    IUnknown *shader;
+};
+
 struct d2d_device
 {
-    ID2D1Device6 ID2D1Device6_iface;
+    ID2D1Device1 ID2D1Device1_iface;
     LONG refcount;
     ID2D1Factory1 *factory;
     IDXGIDevice *dxgi_device;
 
-    struct d2d_indexed_objects shaders;
+    struct
+    {
+        struct d2d_shader *objects;
+        size_t size;
+        size_t count;
+    } shaders;
 };
 
+void d2d_device_init(struct d2d_device *device, ID2D1Factory1 *factory, IDXGIDevice *dxgi_device);
 struct d2d_device *unsafe_impl_from_ID2D1Device(ID2D1Device1 *iface);
-HRESULT d2d_device_add_indexed_object(struct d2d_indexed_objects *objects, const GUID *id,
-        IUnknown *object);
-BOOL d2d_device_get_indexed_object(struct d2d_indexed_objects *objects, const GUID *id,
-        IUnknown **object);
-void d2d_device_indexed_objects_clear(struct d2d_indexed_objects *objects);
+HRESULT d2d_device_add_shader(struct d2d_device *device, REFGUID shader_id, IUnknown *shader);
+BOOL d2d_device_is_shader_loaded(struct d2d_device *device, REFGUID shader_id);
 
 struct d2d_effect_context
 {
@@ -655,7 +651,6 @@ struct d2d_effect_property
 struct d2d_effect_properties
 {
     ID2D1Properties ID2D1Properties_iface;
-    LONG refcount;
     struct d2d_effect *effect;
 
     struct d2d_effect_property *properties;
@@ -679,12 +674,12 @@ struct d2d_effect_registration
     BOOL builtin;
     CLSID id;
 
-    struct d2d_effect_properties *properties;
+    struct d2d_effect_properties properties;
 };
 
 struct d2d_factory
 {
-    ID2D1Factory7 ID2D1Factory7_iface;
+    ID2D1Factory3 ID2D1Factory3_iface;
     ID2D1Multithread ID2D1Multithread_iface;
     LONG refcount;
 
@@ -702,7 +697,7 @@ struct d2d_factory
 
 static inline struct d2d_factory *unsafe_impl_from_ID2D1Factory(ID2D1Factory *iface)
 {
-    return CONTAINING_RECORD((ID2D1Factory7*)iface, struct d2d_factory, ID2D1Factory7_iface);
+    return CONTAINING_RECORD((ID2D1Factory3*)iface, struct d2d_factory, ID2D1Factory3_iface);
 }
 
 void d2d_effects_init_builtins(struct d2d_factory *factory);
@@ -712,72 +707,11 @@ void d2d_factory_register_effect(struct d2d_factory *factory,
         struct d2d_effect_registration *effect);
 HRESULT d2d_effect_property_get_uint32_value(const struct d2d_effect_properties *properties,
         const struct d2d_effect_property *prop, UINT32 *value);
-void d2d_device_init(struct d2d_device *device, struct d2d_factory *factory, IDXGIDevice *dxgi_device);
-
-struct d2d_transform
-{
-    ID2D1TransformNode ID2D1TransformNode_iface;
-    LONG refcount;
-
-    union
-    {
-        D2D1_POINT_2L offset;
-        D2D1_BLEND_DESCRIPTION blend_desc;
-        struct
-        {
-            D2D1_EXTEND_MODE mode_x;
-            D2D1_EXTEND_MODE mode_y;
-        } border;
-        D2D1_RECT_L bounds;
-    };
-
-    UINT32 input_count;
-};
-
-enum d2d_render_info_mask
-{
-    D2D_RENDER_INFO_PIXEL_SHADER = 0x1,
-};
-
-struct d2d_render_info
-{
-    ID2D1DrawInfo ID2D1DrawInfo_iface;
-    LONG refcount;
-
-    unsigned int mask;
-    GUID pixel_shader;
-};
-
-struct d2d_transform_node
-{
-    struct list entry;
-    ID2D1TransformNode *object;
-    struct d2d_render_info *render_info;
-    struct d2d_transform_node **inputs;
-    unsigned int input_count;
-    struct d2d_transform_node *output;
-};
-
-struct d2d_transform_node_connection
-{
-    struct d2d_transform_node *node;
-    unsigned int index;
-};
 
 struct d2d_transform_graph
 {
     ID2D1TransformGraph ID2D1TransformGraph_iface;
     LONG refcount;
-
-    struct d2d_transform_node_connection *inputs;
-    unsigned int input_count;
-
-    struct d2d_transform_node *output;
-
-    bool passthrough;
-    unsigned int passthrough_input;
-
-    struct list nodes;
 };
 
 struct d2d_effect
@@ -797,7 +731,6 @@ struct d2d_effect
 
 HRESULT d2d_effect_create(struct d2d_device_context *context, const CLSID *effect_id,
         ID2D1Effect **effect);
-void d2d_effect_init_properties(struct d2d_effect *effect, struct d2d_effect_properties *properties);
 HRESULT d2d_effect_properties_add(struct d2d_effect_properties *props, const WCHAR *name,
         UINT32 index, D2D1_PROPERTY_TYPE type, const WCHAR *value);
 HRESULT d2d_effect_subproperties_add(struct d2d_effect_properties *props, const WCHAR *name,
@@ -808,12 +741,6 @@ void d2d_effect_properties_cleanup(struct d2d_effect_properties *props);
 HRESULT d2d_factory_register_builtin_effect(struct d2d_factory *factory, REFCLSID effect_id,
         const WCHAR *property_xml, const D2D1_PROPERTY_BINDING *bindings, UINT32 binding_count,
         PD2D1_EFFECT_FACTORY effect_factory);
-
-struct d2d_vertex_buffer
-{
-    ID2D1VertexBuffer ID2D1VertexBuffer_iface;
-    LONG refcount;
-};
 
 enum d2d_command_list_state
 {

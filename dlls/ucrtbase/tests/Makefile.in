@@ -5,7 +5,6 @@ EXTRADEFS = -fno-builtin
 SOURCES = \
 	cpp.c \
 	environ.c \
-	file.c \
 	misc.c \
 	printf.c \
 	scanf.c \

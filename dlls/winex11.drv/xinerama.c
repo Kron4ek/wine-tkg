@@ -190,31 +190,32 @@ done:
     return ret;
 }
 
-static BOOL xinerama_get_gpus( struct x11drv_gpu **new_gpus, int *count, BOOL get_properties )
+static BOOL xinerama_get_gpus( struct gdi_gpu **new_gpus, int *count, BOOL get_properties )
 {
-    struct x11drv_gpu *gpus;
+    static const WCHAR wine_adapterW[] = {'W','i','n','e',' ','A','d','a','p','t','e','r',0};
+    struct gdi_gpu *gpus;
 
     /* Xinerama has no support for GPU, faking one */
     gpus = calloc( 1, sizeof(*gpus) );
     if (!gpus)
         return FALSE;
 
-    gpus[0].name = strdup( "Xinerama GPU" );
+    lstrcpyW( gpus[0].name, wine_adapterW );
+
     *new_gpus = gpus;
     *count = 1;
 
     return TRUE;
 }
 
-static void xinerama_free_gpus( struct x11drv_gpu *gpus, int count )
+static void xinerama_free_gpus( struct gdi_gpu *gpus )
 {
-    while (count--) free( gpus[count].name );
     free( gpus );
 }
 
-static BOOL xinerama_get_adapters( ULONG_PTR gpu_id, struct x11drv_adapter **new_adapters, int *count )
+static BOOL xinerama_get_adapters( ULONG_PTR gpu_id, struct gdi_adapter **new_adapters, int *count )
 {
-    struct x11drv_adapter *adapters = NULL;
+    struct gdi_adapter *adapters = NULL;
     INT index = 0;
     INT i, j;
     INT primary_index;
@@ -267,7 +268,7 @@ static BOOL xinerama_get_adapters( ULONG_PTR gpu_id, struct x11drv_adapter **new
     /* Primary adapter has to be first */
     if (primary_index)
     {
-        struct x11drv_adapter tmp;
+        struct gdi_adapter tmp;
         tmp = adapters[primary_index];
         adapters[primary_index] = adapters[0];
         adapters[0] = tmp;
@@ -279,7 +280,7 @@ static BOOL xinerama_get_adapters( ULONG_PTR gpu_id, struct x11drv_adapter **new
     return TRUE;
 }
 
-static void xinerama_free_adapters( struct x11drv_adapter *adapters )
+static void xinerama_free_adapters( struct gdi_adapter *adapters )
 {
     free( adapters );
 }
@@ -342,6 +343,9 @@ void xinerama_init( unsigned int width, unsigned int height )
     MONITORINFOEXW *primary;
     int i;
     RECT rect;
+
+    if (is_virtual_desktop())
+        return;
 
     pthread_mutex_lock( &xinerama_mutex );
 

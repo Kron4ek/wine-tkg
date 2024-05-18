@@ -36,7 +36,6 @@
 #include "atsvc.h"
 #include "lmapibuf.h"
 #include "lmbrowsr.h"
-#include "lmremutl.h"
 #include "lmshare.h"
 #include "lmwksta.h"
 #include "netbios.h"
@@ -2583,17 +2582,6 @@ NET_API_STATUS WINAPI NetLocalGroupSetMembers(
     FIXME("(%s %s %ld %p %ld) stub!\n", debugstr_w(servername),
             debugstr_w(groupname), level, buf, totalentries);
     return NERR_Success;
-}
-
-/************************************************************
- *                NetRemoteTOD (NETAPI32.@)
- */
-NET_API_STATUS NET_API_FUNCTION NetRemoteTOD(
-    LPCWSTR servername,
-    LPBYTE *buf)
-{
-    FIXME("(%s %p) stub!\n", debugstr_w(servername), buf);
-    return ERROR_NO_BROWSER_SERVERS_FOUND;
 }
 
 /************************************************************

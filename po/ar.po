@@ -20634,9 +20634,7 @@ msgid "Help topics: "
 msgstr "نصائح المساعدة: "
 
 #: programs/wmic/wmic.rc:28
-#, fuzzy
-#| msgid "Error: Command line not supported\n"
-msgid "Error: Command not supported\n"
+msgid "Error: Command line not supported\n"
 msgstr "خطأ : سطر الأوامر غير مدعوم\n"
 
 #: programs/wmic/wmic.rc:29
@@ -20652,12 +20650,6 @@ msgstr "خطأ : استعلام غير سلبم\n"
 #| msgid "Error: Invalid key name\n"
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "خطأ : اسم المفتاح غير سليم\n"
-
-#: programs/wmic/wmic.rc:32
-#, fuzzy
-#| msgid "Bad command.\n"
-msgid "Supply a command\n"
-msgstr "أمر غير سليم.\n"
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

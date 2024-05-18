@@ -316,6 +316,9 @@ static INT X11DRV_ExtEscape( PHYSDEV dev, INT escape, INT in_count, LPCVOID in_d
                     return TRUE;
                 }
                 break;
+            case X11DRV_FLUSH_GDI_DISPLAY:
+                XFlush( gdi_display );
+                return TRUE;
             default:
                 break;
             }
@@ -376,6 +379,9 @@ static const struct user_driver_funcs x11drv_funcs =
     .dc_funcs.pStrokeAndFillPath = X11DRV_StrokeAndFillPath,
     .dc_funcs.pStrokePath = X11DRV_StrokePath,
     .dc_funcs.pUnrealizePalette = X11DRV_UnrealizePalette,
+    .dc_funcs.pD3DKMTCloseAdapter = X11DRV_D3DKMTCloseAdapter,
+    .dc_funcs.pD3DKMTOpenAdapterFromLuid = X11DRV_D3DKMTOpenAdapterFromLuid,
+    .dc_funcs.pD3DKMTQueryVideoMemoryInfo = X11DRV_D3DKMTQueryVideoMemoryInfo,
     .dc_funcs.priority = GDI_PRIORITY_GRAPHICS_DRV,
 
     .pActivateKeyboardLayout = X11DRV_ActivateKeyboardLayout,

@@ -930,7 +930,7 @@ enum wined3d_memory_segment_group
 #define WINED3DUSAGE_MASK                                       0x10007bf0
 
 #define WINED3DUSAGE_SCRATCH                                    0x00400000
-#define WINED3DUSAGE_CS                                         0x00800000
+#define WINED3DUSAGE_PRIVATE                                    0x00800000
 #define WINED3DUSAGE_LEGACY_CUBEMAP                             0x01000000
 #define WINED3DUSAGE_OWNDC                                      0x02000000
 #define WINED3DUSAGE_STATICDECL                                 0x04000000
@@ -2883,9 +2883,6 @@ ULONG __cdecl wined3d_texture_decref(struct wined3d_texture *texture);
 HRESULT __cdecl wined3d_texture_get_dc(struct wined3d_texture *texture, unsigned int sub_resource_idx, HDC *dc);
 unsigned int __cdecl wined3d_texture_get_level_count(const struct wined3d_texture *texture);
 unsigned int __cdecl wined3d_texture_get_lod(const struct wined3d_texture *texture);
-unsigned int __cdecl wined3d_texture_set_lod(struct wined3d_texture *texture, unsigned int lod);
-void __cdecl wined3d_stateblock_texture_changed(struct wined3d_stateblock *stateblock,
-        const struct wined3d_texture *texture);
 HRESULT __cdecl wined3d_texture_get_overlay_position(const struct wined3d_texture *texture,
         unsigned int sub_resource_idx, LONG *x, LONG *y);
 void * __cdecl wined3d_texture_get_parent(const struct wined3d_texture *texture);

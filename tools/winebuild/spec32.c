@@ -411,48 +411,6 @@ void output_exports( DLLSPEC *spec )
 
     if (!nr_exports) return;
 
-    /* ARM64EC exports are more tricky than other targets. For functions implemented in ARM64EC,
-     * linker generates x86_64 thunk and relevant metadata. Use .drectve section to pass export
-     * directives to the linker. */
-    if (target.cpu == CPU_ARM64EC)
-    {
-        output( "\t.section .drectve\n" );
-        for (i = exports->base; i <= exports->limit; i++)
-        {
-            ORDDEF *odp = exports->ordinals[i];
-            const char *symbol;
-
-            if (!odp) continue;
-
-            switch (odp->type)
-            {
-            case TYPE_EXTERN:
-            case TYPE_STDCALL:
-            case TYPE_VARARGS:
-            case TYPE_CDECL:
-                if (odp->flags & FLAG_FORWARD)
-                    symbol = odp->link_name;
-                else if (odp->flags & FLAG_EXT_LINK)
-                    symbol = strmake( "%s_%s", asm_name("__wine_spec_ext_link"), odp->link_name );
-                else
-                    symbol = asm_name( get_link_name( odp ));
-                break;
-            case TYPE_STUB:
-                symbol = asm_name( get_stub_name( odp, spec ));
-                break;
-            default:
-                assert( 0 );
-            }
-
-            output( "\t.ascii \" -export:%s=%s,@%u%s%s\"\n",
-                    odp->name ? odp->name : strmake( "_noname%u", i ),
-                    symbol, i,
-                    odp->name ? "" : ",NONAME",
-                    odp->type == TYPE_EXTERN ? ",DATA" : "" );
-        }
-        return;
-    }
-
     output( "\n/* export table */\n\n" );
     output( "\t%s\n", get_asm_export_section() );
     output( "\t.balign 4\n" );
@@ -1385,8 +1343,9 @@ void output_data_module( DLLSPEC *spec )
  *
  * Build a Win32 def file from a spec file.
  */
-void output_def_file( DLLSPEC *spec, struct exports *exports, int import_only )
+void output_def_file( DLLSPEC *spec, int import_only )
 {
+    struct exports *exports;
     DLLSPEC *spec32 = NULL;
     const char *name;
     int i, total;
@@ -1396,8 +1355,8 @@ void output_def_file( DLLSPEC *spec, struct exports *exports, int import_only )
         spec32 = alloc_dll_spec();
         add_16bit_exports( spec32, spec );
         spec = spec32;
-        exports = &spec->exports;
     }
+    exports = &spec->exports;
 
     if (spec_file_name)
         output( "; File generated automatically from %s; do not edit!\n\n",

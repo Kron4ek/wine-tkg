@@ -273,14 +273,11 @@ void write_regscript( const statement_list_t *stmts )
         put_str( indent, "HKCR\n" );
         put_str( indent++, "{\n" );
 
+        put_str( indent, "NoRemove Interface\n" );
+        put_str( indent++, "{\n" );
         ps_factory = find_ps_factory( stmts );
-        if (ps_factory)
-        {
-            put_str( indent, "NoRemove Interface\n" );
-            put_str( indent++, "{\n" );
-            write_interfaces( stmts, ps_factory );
-            put_str( --indent, "}\n" );
-        }
+        if (ps_factory) write_interfaces( stmts, ps_factory );
+        put_str( --indent, "}\n" );
 
         put_str( indent, "NoRemove CLSID\n" );
         put_str( indent++, "{\n" );
@@ -320,7 +317,7 @@ void write_typelib_regscript( const statement_list_t *stmts )
             error( "Cannot store multiple typelibs into %s\n", typelib_name );
         else
         {
-            if (old_typelib)
+            if (do_old_typelib)
                 create_sltg_typelib( stmt->u.lib );
             else
                 create_msft_typelib( stmt->u.lib );

@@ -284,8 +284,9 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenSCManagerW( const WCHAR *machine, const W
     }
     __ENDTRY
 
+    if (!err) return handle;
     SetLastError( err );
-    return handle;
+    return NULL;
 }
 
 /******************************************************************************

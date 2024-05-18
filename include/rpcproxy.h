@@ -17,7 +17,8 @@
  */
 
 #ifndef __RPCPROXY_H_VERSION__
-#define __RPCPROXY_H_VERSION__ (477)
+/* FIXME: Find an appropriate version number.  I guess something is better than nothing */
+#define __RPCPROXY_H_VERSION__ ( 399 )
 #endif
 
 #ifndef __WINE_RPCPROXY_H
@@ -77,7 +78,11 @@ typedef struct tagCInterfaceProxyHeader
 typedef struct tagCInterfaceProxyVtbl
 {
   CInterfaceProxyHeader header;
-  void *Vtbl[];
+#if defined(__GNUC__)
+  void *Vtbl[0];
+#else
+  void *Vtbl[1];
+#endif
 } CInterfaceProxyVtbl;
 
 typedef void (__RPC_STUB *PRPC_STUB_FUNCTION)(

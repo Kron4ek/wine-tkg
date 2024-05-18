@@ -20091,9 +20091,7 @@ msgid "Help topics: "
 msgstr "Emner i Hjelp: "
 
 #: programs/wmic/wmic.rc:28
-#, fuzzy
-#| msgid "Error: Command line not supported\n"
-msgid "Error: Command not supported\n"
+msgid "Error: Command line not supported\n"
 msgstr "Feil: Kommandolinjen støttes ikke\n"
 
 #: programs/wmic/wmic.rc:29
@@ -20107,12 +20105,6 @@ msgstr "Feil: Ugyldig spørring\n"
 #: programs/wmic/wmic.rc:31
 msgid "Error: Invalid syntax for PATH\n"
 msgstr "Feil: Ugyldig syntaks for PATH\n"
-
-#: programs/wmic/wmic.rc:32
-#, fuzzy
-#| msgid "Bad command.\n"
-msgid "Supply a command\n"
-msgstr "Ugyldig kommando.\n"
 
 #: programs/wordpad/wordpad.rc:31
 msgid "&New...\tCtrl+N"

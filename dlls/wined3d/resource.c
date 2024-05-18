@@ -35,7 +35,7 @@ static void resource_check_usage(uint32_t usage, unsigned int access)
             | WINED3DUSAGE_OVERLAY
             | WINED3DUSAGE_SCRATCH
             | WINED3DUSAGE_MANAGED
-            | WINED3DUSAGE_CS
+            | WINED3DUSAGE_PRIVATE
             | WINED3DUSAGE_LEGACY_CUBEMAP
             | ~WINED3DUSAGE_MASK;
 
@@ -58,8 +58,10 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
         unsigned int size, void *parent, const struct wined3d_parent_ops *parent_ops,
         const struct wined3d_resource_ops *resource_ops)
 {
+    const struct wined3d_d3d_info *d3d_info = &device->adapter->d3d_info;
     enum wined3d_gl_resource_type base_type = WINED3D_GL_RES_TYPE_COUNT;
     enum wined3d_gl_resource_type gl_type = WINED3D_GL_RES_TYPE_COUNT;
+    BOOL tex_2d_ok = FALSE;
     unsigned int i;
 
     static const struct
@@ -73,6 +75,7 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
         {WINED3D_RTYPE_BUFFER,      0,                              WINED3D_GL_RES_TYPE_BUFFER},
         {WINED3D_RTYPE_TEXTURE_1D,  0,                              WINED3D_GL_RES_TYPE_TEX_1D},
         {WINED3D_RTYPE_TEXTURE_2D,  0,                              WINED3D_GL_RES_TYPE_TEX_2D},
+        {WINED3D_RTYPE_TEXTURE_2D,  0,                              WINED3D_GL_RES_TYPE_TEX_RECT},
         {WINED3D_RTYPE_TEXTURE_2D,  0,                              WINED3D_GL_RES_TYPE_RB},
         {WINED3D_RTYPE_TEXTURE_2D,  WINED3DUSAGE_LEGACY_CUBEMAP,    WINED3D_GL_RES_TYPE_TEX_CUBE},
         {WINED3D_RTYPE_TEXTURE_3D,  0,                              WINED3D_GL_RES_TYPE_TEX_3D},
@@ -139,12 +142,26 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
             WARN("Format %s cannot be used for texturing.\n", debug_d3dformat(format->id));
             continue;
         }
+        if (((width & (width - 1)) || (height & (height - 1)))
+                && !d3d_info->texture_npot && !d3d_info->normalized_texrect
+                && gl_type == WINED3D_GL_RES_TYPE_TEX_2D)
+        {
+            TRACE("Skipping 2D texture type to try texture rectangle.\n");
+            tex_2d_ok = TRUE;
+            continue;
+        }
         break;
     }
 
     if (base_type != WINED3D_GL_RES_TYPE_COUNT && i == ARRAY_SIZE(resource_types))
     {
-        if (usage & WINED3DUSAGE_SCRATCH)
+        if (tex_2d_ok)
+        {
+            /* Non power of 2 texture and rectangle textures or renderbuffers do not work.
+             * Use 2D textures, the texture code will pad to a power of 2 size. */
+            gl_type = WINED3D_GL_RES_TYPE_TEX_2D;
+        }
+        else if (usage & WINED3DUSAGE_SCRATCH)
         {
             /* Needed for proper format information. */
             gl_type = base_type;
@@ -205,7 +222,7 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
         adapter_adjust_memory(device->adapter, size);
     }
 
-    if (!(usage & WINED3DUSAGE_CS))
+    if (!(usage & WINED3DUSAGE_PRIVATE))
         device_resource_add(device, resource);
 
     return WINED3D_OK;
@@ -231,7 +248,7 @@ void resource_cleanup(struct wined3d_resource *resource)
         adapter_adjust_memory(resource->device->adapter, (INT64)0 - resource->size);
     }
 
-    if (!(resource->usage & WINED3DUSAGE_CS))
+    if (!(resource->usage & WINED3DUSAGE_PRIVATE))
         device_resource_released(resource->device, resource);
 
     wined3d_resource_reference(resource);
@@ -419,14 +436,16 @@ BOOL wined3d_resource_is_offscreen(struct wined3d_resource *resource)
     if (resource == &swapchain->front_buffer->resource)
         return FALSE;
 
-    return TRUE;
+    /* If the swapchain is rendered to an FBO, the backbuffer is
+     * offscreen, otherwise onscreen */
+    return wined3d_settings.offscreen_rendering_mode == ORM_FBO;
 }
 
 void wined3d_resource_update_draw_binding(struct wined3d_resource *resource)
 {
     const struct wined3d_d3d_info *d3d_info = &resource->device->adapter->d3d_info;
 
-    if (!wined3d_resource_is_offscreen(resource))
+    if (!wined3d_resource_is_offscreen(resource) || wined3d_settings.offscreen_rendering_mode != ORM_FBO)
     {
         resource->draw_binding = WINED3D_LOCATION_DRAWABLE;
     }

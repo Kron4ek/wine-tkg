@@ -166,6 +166,9 @@ struct gdi_dc_funcs
     BOOL     (*pStrokeAndFillPath)(PHYSDEV);
     BOOL     (*pStrokePath)(PHYSDEV);
     BOOL     (*pUnrealizePalette)(HPALETTE);
+    NTSTATUS (*pD3DKMTCloseAdapter)(const D3DKMT_CLOSEADAPTER *);
+    NTSTATUS (*pD3DKMTOpenAdapterFromLuid)(D3DKMT_OPENADAPTERFROMLUID *);
+    NTSTATUS (*pD3DKMTQueryVideoMemoryInfo)(D3DKMT_QUERYVIDEOMEMORYINFO *);
 
     /* priority order for the driver on the stack */
     UINT       priority;
@@ -237,12 +240,22 @@ static inline ULONG window_surface_release( struct window_surface *surface )
 
 /* display manager interface, used to initialize display device registry data */
 
-struct pci_id
+struct gdi_gpu
 {
-    UINT16 vendor;
-    UINT16 device;
-    UINT16 subsystem;
-    UINT16 revision;
+    ULONG_PTR id;
+    WCHAR name[128];      /* name */
+    UINT vendor_id;       /* PCI ID */
+    UINT device_id;
+    UINT subsys_id;
+    UINT revision_id;
+    GUID vulkan_uuid;     /* Vulkan device UUID */
+    ULONGLONG memory_size;
+};
+
+struct gdi_adapter
+{
+    ULONG_PTR id;
+    DWORD state_flags;
 };
 
 struct gdi_monitor
@@ -255,17 +268,15 @@ struct gdi_monitor
 
 struct gdi_device_manager
 {
-    void (*add_gpu)( const char *name, const struct pci_id *pci_id, const GUID *vulkan_uuid, ULONGLONG memory_size, void *param );
-    void (*add_source)( const char *name, UINT state_flags, void *param );
+    void (*add_gpu)( const struct gdi_gpu *gpu, void *param );
+    void (*add_adapter)( const struct gdi_adapter *adapter, void *param );
     void (*add_monitor)( const struct gdi_monitor *monitor, void *param );
-    void (*add_modes)( const DEVMODEW *current, UINT modes_count, const DEVMODEW *modes, void *param );
+    void (*add_mode)( const DEVMODEW *mode, BOOL current, void *param );
 };
 
 #define WINE_DM_UNSUPPORTED 0x80000000
 
 struct tagUPDATELAYEREDWINDOWINFO;
-
-struct vulkan_driver_funcs;
 
 struct user_driver_funcs
 {
@@ -306,7 +317,7 @@ struct user_driver_funcs
     LONG    (*pChangeDisplaySettings)(LPDEVMODEW,LPCWSTR,HWND,DWORD,LPVOID);
     BOOL    (*pGetCurrentDisplaySettings)(LPCWSTR,BOOL,LPDEVMODEW);
     INT     (*pGetDisplayDepth)(LPCWSTR,BOOL);
-    UINT    (*pUpdateDisplayDevices)(const struct gdi_device_manager *,BOOL,void*);
+    BOOL    (*pUpdateDisplayDevices)(const struct gdi_device_manager *,BOOL,void*);
     /* windowing functions */
     BOOL    (*pCreateDesktop)(const WCHAR *,UINT,UINT);
     BOOL    (*pCreateWindow)(HWND);
@@ -338,7 +349,7 @@ struct user_driver_funcs
     /* system parameters */
     BOOL    (*pSystemParametersInfo)(UINT,UINT,void*,UINT);
     /* vulkan support */
-    UINT    (*pVulkanInit)(UINT,void *,const struct vulkan_driver_funcs **);
+    UINT    (*pVulkanInit)(UINT,void *,struct vulkan_funcs *);
     /* opengl support */
     struct opengl_funcs * (*pwine_get_wgl_driver)(UINT);
     /* IME functions */

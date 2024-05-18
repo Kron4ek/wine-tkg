@@ -2119,7 +2119,7 @@ BOOL WINAPI SetupDiGetClassDescriptionExA(
 {
     HKEY hKey;
     DWORD dwLength;
-    LSTATUS ls;
+    BOOL ret;
 
     hKey = SetupDiOpenClassRegKeyExA(ClassGuid,
                                      KEY_ALL_ACCESS,
@@ -2133,11 +2133,11 @@ BOOL WINAPI SetupDiGetClassDescriptionExA(
     }
 
     dwLength = ClassDescriptionSize;
-    ls = RegQueryValueExA(hKey, NULL, NULL, NULL, (BYTE *)ClassDescription, &dwLength);
+    ret = !RegQueryValueExA( hKey, NULL, NULL, NULL,
+                             (LPBYTE)ClassDescription, &dwLength );
+    if (RequiredSize) *RequiredSize = dwLength;
     RegCloseKey(hKey);
-    if ((!ls || ls == ERROR_MORE_DATA) && RequiredSize)
-        *RequiredSize = dwLength;
-    return !ls;
+    return ret;
 }
 
 /***********************************************************************
@@ -2153,7 +2153,7 @@ BOOL WINAPI SetupDiGetClassDescriptionExW(
 {
     HKEY hKey;
     DWORD dwLength;
-    LSTATUS ls;
+    BOOL ret;
 
     hKey = SetupDiOpenClassRegKeyExW(ClassGuid,
                                      KEY_ALL_ACCESS,
@@ -2167,11 +2167,11 @@ BOOL WINAPI SetupDiGetClassDescriptionExW(
     }
 
     dwLength = ClassDescriptionSize * sizeof(WCHAR);
-    ls = RegQueryValueExW(hKey, NULL, NULL, NULL, (BYTE *)ClassDescription, &dwLength);
+    ret = !RegQueryValueExW( hKey, NULL, NULL, NULL,
+                             (LPBYTE)ClassDescription, &dwLength );
+    if (RequiredSize) *RequiredSize = dwLength / sizeof(WCHAR);
     RegCloseKey(hKey);
-    if ((!ls || ls == ERROR_MORE_DATA) && RequiredSize)
-        *RequiredSize = dwLength / sizeof(WCHAR);
-    return !ls;
+    return ret;
 }
 
 /***********************************************************************
@@ -4280,11 +4280,8 @@ BOOL WINAPI SetupDiGetINFClassW(PCWSTR inf, LPGUID class_guid, PWSTR class_name,
         DWORD size, PDWORD required_size)
 {
     BOOL have_guid, have_name;
-    DWORD class_name_len;
+    DWORD dret;
     WCHAR buffer[MAX_PATH];
-    INFCONTEXT inf_ctx;
-    HINF hinf;
-    BOOL retval = FALSE;
 
     if (!inf)
     {
@@ -4305,63 +4302,30 @@ BOOL WINAPI SetupDiGetINFClassW(PCWSTR inf, LPGUID class_guid, PWSTR class_name,
         return FALSE;
     }
 
-    if ((hinf = SetupOpenInfFileW(inf, NULL, INF_STYLE_WIN4, NULL)) == INVALID_HANDLE_VALUE)
-    {
-        ERR("failed to open INF file %s\n", debugstr_w(inf));
+    if (!GetPrivateProfileStringW(Version, Signature, NULL, buffer, MAX_PATH, inf))
         return FALSE;
-    }
-
-    if (!SetupFindFirstLineW(hinf, Version, Signature, &inf_ctx))
-    {
-        ERR("INF file %s does not have mandatory [Version].Signature\n", debugstr_w(inf));
-        goto out;
-    }
-
-    if (!SetupGetStringFieldW(&inf_ctx, 1, buffer, ARRAY_SIZE(buffer), NULL))
-    {
-        ERR("failed to get [Version].Signature string from %s\n", debugstr_w(inf));
-        goto out;
-    }
 
     if (lstrcmpiW(buffer, Chicago) && lstrcmpiW(buffer, WindowsNT))
-    {
-        ERR("INF file %s has invalid [Version].Signature: %s\n", debugstr_w(inf), debugstr_w(buffer));
-        goto out;
-    }
+        return FALSE;
 
-    have_guid = SetupFindFirstLineW(hinf, Version, ClassGUID, &inf_ctx);
-
+    buffer[0] = '\0';
+    have_guid = 0 < GetPrivateProfileStringW(Version, ClassGUID, NULL, buffer, MAX_PATH, inf);
     if (have_guid)
     {
-        if (!SetupGetStringFieldW(&inf_ctx, 1, buffer, ARRAY_SIZE(buffer), NULL))
-        {
-            ERR("failed to get [Version].ClassGUID as a string from '%s'\n", debugstr_w(inf));
-            goto out;
-        }
-
         buffer[lstrlenW(buffer)-1] = 0;
         if (RPC_S_OK != UuidFromStringW(buffer + 1, class_guid))
         {
-            ERR("INF file %s has invalid [Version].ClassGUID: %s\n", debugstr_w(inf), debugstr_w(buffer));
+            FIXME("failed to convert \"%s\" into a guid\n", debugstr_w(buffer));
             SetLastError(ERROR_INVALID_PARAMETER);
-            goto out;
+            return FALSE;
         }
     }
 
-    have_name = SetupFindFirstLineW(hinf, Version, Class, &inf_ctx);
+    buffer[0] = '\0';
+    dret = GetPrivateProfileStringW(Version, Class, NULL, buffer, MAX_PATH, inf);
+    have_name = 0 < dret;
 
-    class_name_len = 0;
-    if (have_name)
-    {
-        if (!SetupGetStringFieldW(&inf_ctx, 1, buffer, ARRAY_SIZE(buffer), NULL))
-        {
-            ERR("failed to get [Version].Class as a string from '%s'\n", debugstr_w(inf));
-            goto out;
-        }
-
-        class_name_len = lstrlenW(buffer);
-    }
-
+    if (dret >= MAX_PATH -1) FIXME("buffer might be too small\n");
     if (have_guid && !have_name)
     {
         class_name[0] = '\0';
@@ -4370,7 +4334,7 @@ BOOL WINAPI SetupDiGetINFClassW(PCWSTR inf, LPGUID class_guid, PWSTR class_name,
 
     if (have_name)
     {
-        if (class_name_len < size) lstrcpyW(class_name, buffer);
+        if (dret < size) lstrcpyW(class_name, buffer);
         else
         {
             SetLastError(ERROR_INSUFFICIENT_BUFFER);
@@ -4378,12 +4342,9 @@ BOOL WINAPI SetupDiGetINFClassW(PCWSTR inf, LPGUID class_guid, PWSTR class_name,
         }
     }
 
-    if (required_size) *required_size = class_name_len + ((class_name_len) ? 1 : 0);
+    if (required_size) *required_size = dret + ((dret) ? 1 : 0);
 
-    retval = (have_guid || have_name);
-out:
-    SetupCloseInfFile(hinf);
-    return retval;
+    return (have_guid || have_name);
 }
 
 static LSTATUS get_device_property(struct device *device, const DEVPROPKEY *prop_key, DEVPROPTYPE *prop_type,

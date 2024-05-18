@@ -450,15 +450,6 @@ if 1==0 (echo o1) else echo o2&&echo o3
 if 1==0 (echo p1) else echo p2||echo p3
 echo ---
 if 1==0 (echo q1) else echo q2&echo q3
-echo ------------- Testing internal commands return codes
-call :setError 0 &&echo SUCCESS||echo FAILURE %errorlevel%
-call :setError 33 &&echo SUCCESS||echo FAILURE %errorlevel%
-call :setError 666
-echo foo &&echo SUCCESS||echo FAILURE %errorlevel%
-echo foo >> h:\i\dont\exist\at\all.txt &&echo SUCCESS||echo FAILURE %errorlevel%
-type NUL &&echo SUCCESS||echo FAILURE %errorlevel%
-type h:\i\dont\exist\at\all.txt &&echo SUCCESS||echo FAILURE %errorlevel%
-echo ---
 echo ------------ Testing 'set' ------------
 call :setError 0
 rem Remove any WINE_FOO* WINE_BA* environment variables from shell before proceeding
@@ -631,13 +622,7 @@ echo %WINE_VAR:~2,-1%
 echo %WINE_VAR:~2,-3%
 echo '%WINE_VAR:~-2,-4%'
 echo %WINE_VAR:~-3,-2%
-echo %WINE_VAR:~4,4%
 set WINE_VAR=
-mkdir dummydir
-cd dummydir
-echo %CD:~-6,6%
-cd ..
-rmdir dummydir
 
 echo ------------ Testing variable substitution ------------
 echo --- in FOR variables
@@ -753,19 +738,6 @@ echo '%~xs1'
 goto :eof
 :endEchoFuns
 
-setlocal EnableDelayedExpansion
-set WINE_FOO=foo bar
-for %%i in ("!WINE_FOO!") do echo %%i
-for %%i in (!WINE_FOO!) do echo %%i
-rem tests disabled for now... wine's cmd loops endlessly here
-rem set WINE_FOO=4 4 4
-rem for /l %%i in (!WINE_FOO!) do echo %%i
-rem set WINE_FOO=4
-rem for /l %%i in (1 2 !WINE_FOO!) do echo %%i
-setlocal DisableDelayedExpansion
-
-echo --- in digit variables
-for %%0 in (a b) do echo %%0 %%1 %%2
 echo ------------ Testing parameter zero ------------
 call :func parm1 parm2
 goto :endParm0
@@ -814,12 +786,6 @@ set WINE_FOO=foo
 echo %WINE_FOO%
 echo !WINE_FOO!
 set WINE_FOO=
-
-setlocal EnableDelayedExpansion
-set WINE_FOO=foo bar
-if !WINE_FOO!=="" (echo empty) else echo not empty
-setlocal DisableDelayedExpansion
-
 echo --- using /V cmd flag
 echo @echo off> tmp.cmd
 echo set WINE_FOO=foo>> tmp.cmd
@@ -1429,18 +1395,6 @@ goto :endForTestFun2
 echo %1 %2
 goto :eof
 :endForTestFun2
-echo --- nested FORs and args tempering
-set "WINE_ARGS= -foo=bar -x=y"
-:test_for_loop_params_parse
-for /F "tokens=1,* delims= " %%a in ("%WINE_ARGS%") do (
-    for /F "tokens=1,2 delims==" %%1 in ("%%a") do (
-        echo inner argument {%%1, %%2}
-    )
-    set "WINE_ARGS=%%b"
-    goto :test_for_loop_params_parse
-)
-set "WINE_ARGS="
-
 mkdir foobar & cd foobar
 mkdir foo
 mkdir bar
@@ -2729,13 +2683,7 @@ echo>robinfile
 if 1==1 call del batfile
 dir /b
 if exist batfile echo batfile shouldn't exist
-rem arcane command, first resets errorlevel, second sets it to one
-(call )
-echo %ErrorLevel%
-(call)
-echo %ErrorLevel%
 rem ... but not for 'if' or 'for'
-call :setError 0
 call if 1==1 echo bar 2> nul
 echo %ErrorLevel%
 call :setError 0
@@ -2761,20 +2709,6 @@ call if 1==1 (
 )
 call call call echo passed
 cd .. & rd /s/q foobar
-
-echo --- mixing batch and builtins
-erase /q echo.bat test.bat 2> NUL
-echo @echo foo> echo.bat
-echo @echo bar> test.bat & call test.bat
-echo @echo.bat bar> test.bat & call test.bat
-echo @call echo bar> test.bat & call test.bat
-echo @call echo.bat bar> test.bat & call test.bat
-erase /q echo.bat 2> NUL
-echo @echo bar> test.bat & call test.bat
-echo @echo.bat bar> test.bat & call test.bat
-echo @call echo bar> test.bat & call test.bat
-echo @call echo.bat bar> test.bat & call test.bat
-erase /q test.bat 2> NUL
 
 echo ------------ Testing SHIFT ------------
 

@@ -583,13 +583,13 @@ static inline ULONG heap_get_flags( const struct heap *heap, ULONG flags )
 static inline void heap_lock( struct heap *heap, ULONG flags )
 {
     if (flags & HEAP_NO_SERIALIZE) return;
-    RtlEnterCriticalSection( &heap->cs );
+    enter_critical_section( &heap->cs );
 }
 
 static inline void heap_unlock( struct heap *heap, ULONG flags )
 {
     if (flags & HEAP_NO_SERIALIZE) return;
-    RtlLeaveCriticalSection( &heap->cs );
+    leave_critical_section( &heap->cs );
 }
 
 static void heap_set_status( const struct heap *heap, ULONG flags, NTSTATUS status )
@@ -1580,9 +1580,9 @@ HANDLE WINAPI RtlCreateHeap( ULONG flags, void *addr, SIZE_T total_size, SIZE_T 
     /* link it into the per-process heap list */
     if (process_heap)
     {
-        RtlEnterCriticalSection( &process_heap->cs );
+        enter_critical_section( &process_heap->cs );
         list_add_head( &process_heap->entry, &heap->entry );
-        RtlLeaveCriticalSection( &process_heap->cs );
+        leave_critical_section( &process_heap->cs );
     }
     else if (!addr)
     {
@@ -1641,9 +1641,9 @@ HANDLE WINAPI RtlDestroyHeap( HANDLE handle )
     if (heap == process_heap) return handle; /* cannot delete the main process heap */
 
     /* remove it from the per-process list */
-    RtlEnterCriticalSection( &process_heap->cs );
+    enter_critical_section( &process_heap->cs );
     list_remove( &heap->entry );
-    RtlLeaveCriticalSection( &process_heap->cs );
+    leave_critical_section( &process_heap->cs );
 
     heap->cs.DebugInfo->Spare[0] = 0;
     RtlDeleteCriticalSection( &heap->cs );
@@ -2534,7 +2534,7 @@ ULONG WINAPI RtlGetProcessHeaps( ULONG count, HANDLE *heaps )
     ULONG total = 1;  /* main heap */
     struct list *ptr;
 
-    RtlEnterCriticalSection( &process_heap->cs );
+    enter_critical_section( &process_heap->cs );
     LIST_FOR_EACH( ptr, &process_heap->entry ) total++;
     if (total <= count)
     {
@@ -2542,7 +2542,7 @@ ULONG WINAPI RtlGetProcessHeaps( ULONG count, HANDLE *heaps )
         LIST_FOR_EACH( ptr, &process_heap->entry )
             *heaps++ = LIST_ENTRY( ptr, struct heap, entry );
     }
-    RtlLeaveCriticalSection( &process_heap->cs );
+    leave_critical_section( &process_heap->cs );
     return total;
 }
 

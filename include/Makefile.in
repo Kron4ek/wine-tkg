@@ -28,7 +28,6 @@ SOURCES = \
 	asysta.idl \
 	atlbase.h \
 	atlcom.h \
-	atldef.h \
 	atliface.idl \
 	atlthunk.h \
 	atlwin.h \
@@ -346,7 +345,6 @@ SOURCES = \
 	highlevelmonitorconfigurationapi.h \
 	hlguids.h \
 	hlink.idl \
-	holographicspaceinterop.idl \
 	hrtfapoapi.idl \
 	hstring.idl \
 	htiface.idl \
@@ -409,7 +407,6 @@ SOURCES = \
 	lmerr.h \
 	lmjoin.h \
 	lmmsg.h \
-	lmremutl.h \
 	lmserver.h \
 	lmshare.h \
 	lmstats.h \

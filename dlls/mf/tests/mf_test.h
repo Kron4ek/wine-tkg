@@ -33,7 +33,6 @@
 extern HRESULT (WINAPI *pMFCreateSampleCopierMFT)(IMFTransform **copier);
 extern HRESULT (WINAPI *pMFGetTopoNodeCurrentType)(IMFTopologyNode *node, DWORD stream, BOOL output, IMFMediaType **type);
 extern HRESULT (WINAPI *pMFCreateDXGIDeviceManager)(UINT *token, IMFDXGIDeviceManager **manager);
-extern HRESULT (WINAPI *pMFCreateVideoSampleAllocatorEx)(REFIID riid, void **obj);
 
 extern BOOL has_video_processor;
 void init_functions(void);
@@ -75,29 +74,28 @@ extern void check_attributes_(const char *file, int line, IMFAttributes *attribu
         const struct attribute_desc *desc, ULONG limit);
 extern void init_media_type(IMFMediaType *mediatype, const struct attribute_desc *desc, ULONG limit);
 
-typedef DWORD (*compare_cb)(const BYTE *data, DWORD *length, const SIZE *size, const RECT *rect, const BYTE *expect);
-extern DWORD compare_nv12(const BYTE *data, DWORD *length, const SIZE *size, const RECT *rect, const BYTE *expect);
-extern DWORD compare_i420(const BYTE *data, DWORD *length, const SIZE *size, const RECT *rect, const BYTE *expect);
-extern DWORD compare_rgb32(const BYTE *data, DWORD *length, const SIZE *size, const RECT *rect, const BYTE *expect);
-extern DWORD compare_rgb24(const BYTE *data, DWORD *length, const SIZE *size, const RECT *rect, const BYTE *expect);
-extern DWORD compare_rgb16(const BYTE *data, DWORD *length, const SIZE *size, const RECT *rect, const BYTE *expect);
-extern DWORD compare_pcm16(const BYTE *data, DWORD *length, const SIZE *size, const RECT *rect, const BYTE *expect);
+typedef DWORD (*compare_cb)(const BYTE *data, DWORD *length, const RECT *rect, const BYTE *expect);
+extern DWORD compare_nv12(const BYTE *data, DWORD *length, const RECT *rect, const BYTE *expect);
+extern DWORD compare_i420(const BYTE *data, DWORD *length, const RECT *rect, const BYTE *expect);
+extern DWORD compare_rgb32(const BYTE *data, DWORD *length, const RECT *rect, const BYTE *expect);
+extern DWORD compare_rgb24(const BYTE *data, DWORD *length, const RECT *rect, const BYTE *expect);
+extern DWORD compare_rgb16(const BYTE *data, DWORD *length, const RECT *rect, const BYTE *expect);
+extern DWORD compare_pcm16(const BYTE *data, DWORD *length, const RECT *rect, const BYTE *expect);
 
-typedef void (*dump_cb)(const BYTE *data, DWORD length, const SIZE *size, HANDLE output);
-extern void dump_rgb32(const BYTE *data, DWORD length, const SIZE *size, HANDLE output);
-extern void dump_rgb24(const BYTE *data, DWORD length, const SIZE *size, HANDLE output);
-extern void dump_rgb16(const BYTE *data, DWORD length, const SIZE *size, HANDLE output);
-extern void dump_nv12(const BYTE *data, DWORD length, const SIZE *size, HANDLE output);
-extern void dump_i420(const BYTE *data, DWORD length, const SIZE *size, HANDLE output);
+typedef void (*dump_cb)(const BYTE *data, DWORD length, const RECT *rect, HANDLE output);
+extern void dump_rgb32(const BYTE *data, DWORD length, const RECT *rect, HANDLE output);
+extern void dump_rgb24(const BYTE *data, DWORD length, const RECT *rect, HANDLE output);
+extern void dump_rgb16(const BYTE *data, DWORD length, const RECT *rect, HANDLE output);
+extern void dump_nv12(const BYTE *data, DWORD length, const RECT *rect, HANDLE output);
+extern void dump_i420(const BYTE *data, DWORD length, const RECT *rect, HANDLE output);
 
 struct buffer_desc
 {
     DWORD length;
     BOOL todo_length;
     compare_cb compare;
-    RECT compare_rect;
     dump_cb dump;
-    SIZE size;
+    RECT rect;
 };
 
 struct sample_desc

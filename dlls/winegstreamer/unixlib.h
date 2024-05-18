@@ -68,7 +68,6 @@ enum wg_video_format
     WG_VIDEO_FORMAT_BGR,
     WG_VIDEO_FORMAT_RGB15,
     WG_VIDEO_FORMAT_RGB16,
-    WG_VIDEO_FORMAT_RGBA,
 
     WG_VIDEO_FORMAT_AYUV,
     WG_VIDEO_FORMAT_I420,
@@ -77,12 +76,17 @@ enum wg_video_format
     WG_VIDEO_FORMAT_YUY2,
     WG_VIDEO_FORMAT_YV12,
     WG_VIDEO_FORMAT_YVYU,
+};
 
-    WG_VIDEO_FORMAT_WMV1,
-    WG_VIDEO_FORMAT_WMV2,
-    WG_VIDEO_FORMAT_WMV3,
-    WG_VIDEO_FORMAT_WMVA,
-    WG_VIDEO_FORMAT_WVC1,
+typedef UINT32 wg_wmv_video_format;
+enum wg_wmv_video_format
+{
+    WG_WMV_VIDEO_FORMAT_UNKNOWN,
+    WG_WMV_VIDEO_FORMAT_WMV1,
+    WG_WMV_VIDEO_FORMAT_WMV2,
+    WG_WMV_VIDEO_FORMAT_WMV3,
+    WG_WMV_VIDEO_FORMAT_WMVA,
+    WG_WMV_VIDEO_FORMAT_WVC1,
 };
 
 struct wg_format
@@ -91,13 +95,6 @@ struct wg_format
 
     union
     {
-        /* Valid members for different audio formats:
-         *
-         * Uncompressed(PCM): channels, channel_mask, rate.
-         * MPEG1: channels, rate, layer.
-         * MPEG4: payload_type, codec_data_len, codec_data.
-         * WMA: channels, rate, bitrate, depth, block_align, version, layer,
-         *         payload_type, codec_data_len, codec_data */
         struct
         {
             wg_audio_format format;
@@ -105,39 +102,75 @@ struct wg_format
             uint32_t channels;
             uint32_t channel_mask; /* In WinMM format. */
             uint32_t rate;
-            uint32_t bitrate;
-            uint32_t depth;
-            uint32_t block_align;
-            uint32_t version;
+        } audio;
+        struct
+        {
             uint32_t layer;
+            uint32_t rate;
+            uint32_t channels;
+        } audio_mpeg1;
+        struct
+        {
             uint32_t payload_type;
             uint32_t codec_data_len;
             unsigned char codec_data[64];
-        } audio;
+        } audio_mpeg4;
+        struct
+        {
+            uint32_t version;
+            uint32_t bitrate;
+            uint32_t rate;
+            uint32_t depth;
+            uint32_t channels;
+            uint32_t block_align;
+            uint32_t codec_data_len;
+            unsigned char codec_data[64];
+        } audio_wma;
 
-        /* Valid members for different video formats:
-         *
-         * Uncompressed(RGB and YUV): width, height, fps_n, fps_d, padding.
-         * CINEPAK: width, height, fps_n, fps_d.
-         * H264: width, height, fps_n, fps_d, profile, level, codec_data_len, codec_data.
-         * WMV: width, height, fps_n, fps_d, codec_data_len, codec_data.
-         * INDEO: width, height, fps_n, fps_d, version.
-         * MPEG1: width, height, fps_n, fps_d. */
         struct
         {
             wg_video_format format;
-
             /* Positive height indicates top-down video; negative height
              * indicates bottom-up video. */
             int32_t width, height;
             uint32_t fps_n, fps_d;
             RECT padding;
+        } video;
+        struct
+        {
+            uint32_t width;
+            uint32_t height;
+            uint32_t fps_n;
+            uint32_t fps_d;
+        } video_cinepak;
+        struct
+        {
+            int32_t width, height;
+            uint32_t fps_n, fps_d;
             uint32_t profile;
             uint32_t level;
-            uint32_t version;
             uint32_t codec_data_len;
             unsigned char codec_data[64];
-        } video;
+        } video_h264;
+        struct
+        {
+            wg_wmv_video_format format;
+            int32_t width, height;
+            uint32_t fps_n, fps_d;
+            uint32_t codec_data_len;
+            unsigned char codec_data[64];
+        } video_wmv;
+        struct
+        {
+            int32_t width, height;
+            uint32_t fps_n, fps_d;
+            uint32_t version;
+        } video_indeo;
+        struct
+        {
+            int32_t width, height;
+            uint32_t fps_n, fps_d;
+        } video_mpeg1;
     } u;
 };
 
@@ -172,21 +205,23 @@ struct wg_parser_buffer
 };
 C_ASSERT(sizeof(struct wg_parser_buffer) == 32);
 
+typedef UINT32 wg_parser_type;
+enum wg_parser_type
+{
+    WG_PARSER_DECODEBIN,
+    WG_PARSER_AVIDEMUX,
+    WG_PARSER_WAVPARSE,
+};
+
 typedef UINT64 wg_parser_t;
 typedef UINT64 wg_parser_stream_t;
 typedef UINT64 wg_transform_t;
 typedef UINT64 wg_muxer_t;
 
-struct wg_init_gstreamer_params
-{
-    UINT8 trace_on;
-    UINT8 warn_on;
-    UINT8 err_on;
-};
-
 struct wg_parser_create_params
 {
     wg_parser_t parser;
+    wg_parser_type type;
     UINT8 output_compressed;
     UINT8 err_on;
     UINT8 warn_on;
@@ -195,7 +230,6 @@ struct wg_parser_create_params
 struct wg_parser_connect_params
 {
     wg_parser_t parser;
-    const WCHAR *uri;
     UINT64 file_size;
 };
 

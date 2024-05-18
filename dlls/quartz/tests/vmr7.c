@@ -3745,14 +3745,12 @@ static void test_default_presenter_allocate(void)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
         todo_wine ok(desc.dwFlags == (DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_PITCH | DDSD_PIXELFORMAT),
                 "Got flags %#lx.\n", desc.dwFlags);
-        todo_wine_if(desc.ddsCaps.dwCaps == (DDSCAPS_LOCALVIDMEM | DDSCAPS_VIDEOMEMORY | DDSCAPS_OFFSCREENPLAIN
-                | DDSCAPS_FLIP | DDSCAPS_COMPLEX))
-        ok(desc.ddsCaps.dwCaps == (DDSCAPS_LOCALVIDMEM | DDSCAPS_VIDEOMEMORY | DDSCAPS_OFFSCREENPLAIN
+        todo_wine ok(desc.ddsCaps.dwCaps == (DDSCAPS_LOCALVIDMEM | DDSCAPS_VIDEOMEMORY | DDSCAPS_OFFSCREENPLAIN
                 | DDSCAPS_FLIP), "Got caps %#lx.\n", desc.ddsCaps.dwCaps);
 
         desc.ddsCaps.dwCaps = DDSCAPS_VIDEOMEMORY;
         hr = IDirectDrawSurface7_GetAttachedSurface(backbuffer2, &desc.ddsCaps, &backbuffer3);
-        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        todo_wine_if (tests[i].compression) ok(hr == S_OK, "Got hr %#lx.\n", hr);
         if (hr == S_OK)
         {
             ok(backbuffer3 == frontbuffer, "Expected only 2 backbuffers.\n");

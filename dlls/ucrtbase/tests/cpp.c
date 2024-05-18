@@ -24,8 +24,6 @@
 
 #include <windef.h>
 #include <winbase.h>
-#include <verrsrc.h>
-#include <dbghelp.h>
 #include "wine/test.h"
 
 typedef unsigned char MSVCRT_bool;
@@ -211,18 +209,11 @@ static void test___unDName(void)
 /*   5 */ {"?meth@Q@@QEGBA?AV1@XZ",
            "public: class Q Q::meth(void)const & ",
            "public: ?? :: ?? ::XZ::V1" /* W10 1507 fails on this :-( */,
-           UNDNAME_NO_MS_KEYWORDS},
+           0x02 /*UNDNAME_NO_MS_KEYWORDS*/},
 /*   6 */ {"?meth@Q@@QEHAA?AV1@XZ",
            "public: class Q Q::meth(void)&& ",
            "public: ?? :: ?? ::XZ::V1" /* W10 1507 fails on this :-( */,
-           UNDNAME_NO_MS_KEYWORDS},
-/*   7 */ {"?AU?$my_iter@H$0A@$$V@@",
-           "struct my_iter<int,0>",
-           NULL,
-           UNDNAME_NO_ARGUMENTS},
-/*   8 */ {"??$foo@J_W$$T@bar@@YAJQB_W$$THQAUgod@@@Z",
-           "long __cdecl bar::foo<long,wchar_t,std::nullptr_t>(wchar_t const * const,std::nullptr_t,int,struct god * const)"},
-
+           0x02 /*UNDNAME_NO_MS_KEYWORDS*/},
     };
     unsigned i;
     for (i = 0; i < ARRAY_SIZE(und_tests); i++)

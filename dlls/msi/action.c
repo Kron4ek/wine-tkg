@@ -5144,6 +5144,11 @@ static UINT ACTION_InstallFinalize(MSIPACKAGE *package)
     if (rc != ERROR_SUCCESS)
         return rc;
 
+    /* then handle commit actions */
+    rc = execute_script(package, SCRIPT_COMMIT);
+    if (rc != ERROR_SUCCESS)
+        return rc;
+
     /* install global assemblies */
     LIST_FOR_EACH_ENTRY( file, &package->files, MSIFILE, entry )
     {
@@ -5181,11 +5186,6 @@ static UINT ACTION_InstallFinalize(MSIPACKAGE *package)
             return rc;
         }
     }
-
-    /* then handle commit actions */
-    rc = execute_script(package, SCRIPT_COMMIT);
-    if (rc != ERROR_SUCCESS)
-        return rc;
 
     if (is_full_uninstall(package))
         rc = ACTION_UnpublishProduct(package);

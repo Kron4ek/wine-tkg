@@ -24,8 +24,6 @@
 
 #include "config.h"
 
-#include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "waylanddrv.h"
 
 #include "wine/debug.h"
@@ -202,19 +200,29 @@ static void output_info_array_arrange_physical_coords(struct wl_array *output_in
 static void wayland_add_device_gpu(const struct gdi_device_manager *device_manager,
                                    void *param)
 {
-    struct pci_id pci_id = {0};
+    static const WCHAR wayland_gpuW[] = {'W','a','y','l','a','n','d','G','P','U',0};
+    struct gdi_gpu gpu = {0};
+    lstrcpyW(gpu.name, wayland_gpuW);
 
-    TRACE("\n");
+    TRACE("id=0x%s name=%s\n",
+          wine_dbgstr_longlong(gpu.id), wine_dbgstr_w(gpu.name));
 
-    device_manager->add_gpu("Wayland GPU", &pci_id, NULL, 0, param);
+    device_manager->add_gpu(&gpu, param);
 }
 
-static void wayland_add_device_source(const struct gdi_device_manager *device_manager,
-                                       void *param, UINT state_flags, struct output_info *output_info)
+static void wayland_add_device_adapter(const struct gdi_device_manager *device_manager,
+                                       void *param, INT output_id)
 {
-    TRACE("name=%s state_flags=0x%x\n",
-          output_info->output->name, state_flags);
-    device_manager->add_source(output_info->output->name, state_flags, param);
+    struct gdi_adapter adapter;
+    adapter.id = output_id;
+    adapter.state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP;
+    if (output_id == 0)
+        adapter.state_flags |= DISPLAY_DEVICE_PRIMARY_DEVICE;
+
+    TRACE("id=0x%s state_flags=0x%x\n",
+          wine_dbgstr_longlong(adapter.id), (UINT)adapter.state_flags);
+
+    device_manager->add_adapter(&adapter, param);
 }
 
 static void wayland_add_device_monitor(const struct gdi_device_manager *device_manager,
@@ -250,42 +258,36 @@ static void populate_devmode(struct wayland_output_mode *output_mode, DEVMODEW *
 static void wayland_add_device_modes(const struct gdi_device_manager *device_manager,
                                      void *param, struct output_info *output_info)
 {
-    DEVMODEW *modes, current = {.dmSize = sizeof(current)};
     struct wayland_output_mode *output_mode;
-    int modes_count = 0;
-
-    if (!(modes = malloc(output_info->output->modes_count * sizeof(*modes))))
-        return;
-
-    populate_devmode(output_info->output->current_mode, &current);
-    current.dmFields |= DM_POSITION;
-    current.dmPosition.x = output_info->x;
-    current.dmPosition.y = output_info->y;
 
     RB_FOR_EACH_ENTRY(output_mode, &output_info->output->modes,
                       struct wayland_output_mode, entry)
     {
         DEVMODEW mode = {.dmSize = sizeof(mode)};
+        BOOL mode_is_current = output_mode == output_info->output->current_mode;
         populate_devmode(output_mode, &mode);
-        modes[modes_count++] = mode;
+        if (mode_is_current)
+        {
+            mode.dmFields |= DM_POSITION;
+            mode.dmPosition.x = output_info->x;
+            mode.dmPosition.y = output_info->y;
+        }
+        device_manager->add_mode(&mode, mode_is_current, param);
     }
-
-    device_manager->add_modes(&current, modes_count, modes, param);
-    free(modes);
 }
 
 /***********************************************************************
  *      UpdateDisplayDevices (WAYLAND.@)
  */
-UINT WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager,
+BOOL WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager,
                                   BOOL force, void *param)
 {
     struct wayland_output *output;
-    DWORD state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE;
+    INT output_id = 0;
     struct wl_array output_info_array;
     struct output_info *output_info;
 
-    if (!force && !force_display_devices_refresh) return STATUS_ALREADY_COMPLETE;
+    if (!force && !force_display_devices_refresh) return TRUE;
 
     TRACE("force=%d force_refresh=%d\n", force, force_display_devices_refresh);
 
@@ -310,15 +312,15 @@ UINT WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manage
 
     wl_array_for_each(output_info, &output_info_array)
     {
-        wayland_add_device_source(device_manager, param, state_flags, output_info);
+        wayland_add_device_adapter(device_manager, param, output_id);
         wayland_add_device_monitor(device_manager, param, output_info);
         wayland_add_device_modes(device_manager, param, output_info);
-        state_flags &= ~DISPLAY_DEVICE_PRIMARY_DEVICE;
+        output_id++;
     }
 
     wl_array_release(&output_info_array);
 
     pthread_mutex_unlock(&process_wayland.output_mutex);
 
-    return STATUS_SUCCESS;
+    return TRUE;
 }

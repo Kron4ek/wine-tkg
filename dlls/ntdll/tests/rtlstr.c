@@ -23,18 +23,12 @@
  */
 
 #include <stdlib.h>
-#include <stdarg.h>
 
 #define INITGUID
 
-#include "ntstatus.h"
-#define WIN32_NO_STATUS
-#include "windef.h"
-#include "winbase.h"
-#include "winternl.h"
+#include "ntdll_test.h"
 #include "winnls.h"
 #include "guiddef.h"
-#include "wine/test.h"
 
 /* Function ptrs for ntdll calls */
 static HMODULE hntdll = 0;
