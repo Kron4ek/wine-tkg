@@ -237,16 +237,12 @@ static inline ULONG window_surface_release( struct window_surface *surface )
 
 /* display manager interface, used to initialize display device registry data */
 
-struct gdi_gpu
+struct pci_id
 {
-    ULONG_PTR id;
-    WCHAR name[128];      /* name */
-    UINT vendor_id;       /* PCI ID */
-    UINT device_id;
-    UINT subsys_id;
-    UINT revision_id;
-    GUID vulkan_uuid;     /* Vulkan device UUID */
-    ULONGLONG memory_size;
+    UINT16 vendor;
+    UINT16 device;
+    UINT16 subsystem;
+    UINT16 revision;
 };
 
 struct gdi_monitor
@@ -259,7 +255,7 @@ struct gdi_monitor
 
 struct gdi_device_manager
 {
-    void (*add_gpu)( const struct gdi_gpu *gpu, void *param );
+    void (*add_gpu)( const char *name, const struct pci_id *pci_id, const GUID *vulkan_uuid, ULONGLONG memory_size, void *param );
     void (*add_source)( const char *name, UINT state_flags, void *param );
     void (*add_monitor)( const struct gdi_monitor *monitor, void *param );
     void (*add_modes)( const DEVMODEW *current, UINT modes_count, const DEVMODEW *modes, void *param );
@@ -310,7 +306,7 @@ struct user_driver_funcs
     LONG    (*pChangeDisplaySettings)(LPDEVMODEW,LPCWSTR,HWND,DWORD,LPVOID);
     BOOL    (*pGetCurrentDisplaySettings)(LPCWSTR,BOOL,LPDEVMODEW);
     INT     (*pGetDisplayDepth)(LPCWSTR,BOOL);
-    BOOL    (*pUpdateDisplayDevices)(const struct gdi_device_manager *,BOOL,void*);
+    UINT    (*pUpdateDisplayDevices)(const struct gdi_device_manager *,BOOL,void*);
     /* windowing functions */
     BOOL    (*pCreateDesktop)(const WCHAR *,UINT,UINT);
     BOOL    (*pCreateWindow)(HWND);

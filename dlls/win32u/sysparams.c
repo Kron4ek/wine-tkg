@@ -67,6 +67,7 @@ static const WCHAR device_descW[] = {'D','e','v','i','c','e','D','e','s','c',0};
 static const WCHAR driver_descW[] = {'D','r','i','v','e','r','D','e','s','c',0};
 static const WCHAR yesW[] = {'Y','e','s',0};
 static const WCHAR noW[] = {'N','o',0};
+static const WCHAR modesW[] = {'M','o','d','e','s',0};
 static const WCHAR mode_countW[] = {'M','o','d','e','C','o','u','n','t',0};
 
 static const char  guid_devclass_displayA[] = "{4D36E968-E325-11CE-BFC1-08002BE10318}";
@@ -83,14 +84,6 @@ static const char guid_display_device_arrivalA[] = "{1CA05180-A699-450A-9A0C-DE4
 static const char guid_devinterface_monitorA[] = "{E6F07B5F-EE97-4A90-B076-33F57BF4EAA7}";
 
 #define NEXT_DEVMODEW(mode) ((DEVMODEW *)((char *)((mode) + 1) + (mode)->dmDriverExtra))
-
-struct pci_id
-{
-    UINT16 vendor;
-    UINT16 device;
-    UINT16 subsystem;
-    UINT16 revision;
-};
 
 struct gpu
 {
@@ -431,10 +424,13 @@ static const char *debugstr_devmodew( const DEVMODEW *devmode )
 static BOOL write_source_mode( HKEY hkey, UINT index, const DEVMODEW *mode )
 {
     WCHAR bufferW[MAX_PATH] = {0};
-    char buffer[MAX_PATH];
 
-    snprintf( buffer, sizeof(buffer), "Modes\\%08X", index );
-    asciiz_to_unicode( bufferW, buffer );
+    assert( index == ENUM_CURRENT_SETTINGS || index == ENUM_REGISTRY_SETTINGS );
+
+    if (index == ENUM_CURRENT_SETTINGS) asciiz_to_unicode( bufferW, "Current" );
+    else if (index == ENUM_REGISTRY_SETTINGS) asciiz_to_unicode( bufferW, "Registry" );
+    else return FALSE;
+
     return set_reg_value( hkey, bufferW, REG_BINARY, &mode->dmFields, sizeof(*mode) - offsetof(DEVMODEW, dmFields) );
 }
 
@@ -442,11 +438,15 @@ static BOOL read_source_mode( HKEY hkey, UINT index, DEVMODEW *mode )
 {
     char value_buf[offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data[sizeof(*mode)])];
     KEY_VALUE_PARTIAL_INFORMATION *value = (void *)value_buf;
-    char buffer[MAX_PATH];
+    const char *key;
 
-    snprintf( buffer, sizeof(buffer), "Modes\\%08X", index );
-    if (!query_reg_ascii_value( hkey, buffer, value, sizeof(value_buf) )) return FALSE;
+    assert( index == ENUM_CURRENT_SETTINGS || index == ENUM_REGISTRY_SETTINGS );
 
+    if (index == ENUM_CURRENT_SETTINGS) key = "Current";
+    else if (index == ENUM_REGISTRY_SETTINGS) key = "Registry";
+    else return FALSE;
+
+    if (!query_reg_ascii_value( hkey, key, value, sizeof(value_buf) )) return FALSE;
     memcpy( &mode->dmFields, value->Data, sizeof(*mode) - offsetof(DEVMODEW, dmFields) );
     return TRUE;
 }
@@ -620,7 +620,6 @@ static BOOL reade_source_from_registry( unsigned int index, struct source *sourc
     char buffer[4096];
     KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
     WCHAR *value_str = (WCHAR *)value->Data;
-    DEVMODEW *mode;
     DWORD i, size;
     HKEY hkey;
 
@@ -646,19 +645,18 @@ static BOOL reade_source_from_registry( unsigned int index, struct source *sourc
     if (query_reg_ascii_value( hkey, "ModeCount", value, sizeof(buffer) ) && value->Type == REG_DWORD)
         source->mode_count = *(const DWORD *)value->Data;
 
-    /* Modes, allocate an extra mode for easier iteration */
-    if ((source->modes = calloc( source->mode_count + 1, sizeof(DEVMODEW) )))
+    /* Modes */
+    size = offsetof( KEY_VALUE_PARTIAL_INFORMATION, Data[(source->mode_count + 1) * sizeof(*source->modes)] );
+    if (!(value = malloc( size )) || !query_reg_ascii_value( hkey, "Modes", value, size )) free( value );
+    else
     {
-        for (i = 0, mode = source->modes; i < source->mode_count; i++)
-        {
-            mode->dmSize = offsetof(DEVMODEW, dmICMMethod);
-            if (!read_source_mode( hkey, i, mode )) break;
-            mode = NEXT_DEVMODEW(mode);
-        }
-        source->mode_count = i;
-
-        qsort(source->modes, source->mode_count, sizeof(*source->modes) + source->modes->dmDriverExtra, mode_compare);
+        source->modes = (DEVMODEW *)value;
+        source->mode_count = value->DataLength / sizeof(*source->modes);
+        memmove( source->modes, value->Data, value->DataLength );
+        memset( source->modes + source->mode_count, 0, sizeof(*source->modes) ); /* extra empty mode for easier iteration */
+        qsort( source->modes, source->mode_count, sizeof(*source->modes), mode_compare );
     }
+    value = (void *)buffer;
 
     /* DeviceID */
     size = query_reg_ascii_value( hkey, "GPUID", value, sizeof(buffer) );
@@ -1185,23 +1183,18 @@ static BOOL write_gpu_to_registry( const struct gpu *gpu, const struct pci_id *p
     return TRUE;
 }
 
-static void add_gpu( const struct gdi_gpu *gpu, void *param )
+static void add_gpu( const char *name, const struct pci_id *pci_id, const GUID *vulkan_uuid,
+                     ULONGLONG memory_size, void *param )
 {
-    const struct pci_id pci_id =
-    {
-        .vendor = gpu->vendor_id,
-        .device = gpu->device_id,
-        .subsystem = gpu->subsys_id,
-        .revision = gpu->revision_id,
-    };
     struct device_manager_ctx *ctx = param;
     char buffer[4096];
     KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
     unsigned int i;
     HKEY hkey, subkey;
+    DWORD len;
 
-    TRACE( "%s %04X %04X %08X %02X\n", debugstr_w(gpu->name),
-           gpu->vendor_id, gpu->device_id, gpu->subsys_id, gpu->revision_id );
+    TRACE( "%s %04X %04X %08X %02X\n", debugstr_a( name ), pci_id->vendor, pci_id->device,
+           pci_id->subsystem, pci_id->revision );
 
     if (!enum_key && !(enum_key = reg_create_ascii_key( NULL, enum_keyA, 0, NULL )))
         return;
@@ -1215,11 +1208,11 @@ static void add_gpu( const struct gdi_gpu *gpu, void *param )
 
     memset( &ctx->gpu, 0, sizeof(ctx->gpu) );
     ctx->gpu.index = ctx->gpu_count;
-    lstrcpyW( ctx->gpu.name, gpu->name );
-    ctx->gpu.vulkan_uuid = gpu->vulkan_uuid;
+    if (vulkan_uuid) ctx->gpu.vulkan_uuid = *vulkan_uuid;
+    if (name) RtlUTF8ToUnicodeN( ctx->gpu.name, sizeof(ctx->gpu.name) - sizeof(WCHAR), &len, name, strlen( name ) );
 
     snprintf( ctx->gpu.path, sizeof(ctx->gpu.path), "PCI\\VEN_%04X&DEV_%04X&SUBSYS_%08X&REV_%02X\\%08X",
-              gpu->vendor_id, gpu->device_id, gpu->subsys_id, gpu->revision_id, ctx->gpu.index );
+              pci_id->vendor, pci_id->device, pci_id->subsystem, pci_id->revision, ctx->gpu.index );
     if (!(hkey = reg_create_ascii_key( enum_key, ctx->gpu.path, 0, NULL ))) return;
 
     if ((subkey = reg_create_ascii_key( hkey, "Device Parameters", 0, NULL )))
@@ -1259,7 +1252,7 @@ static void add_gpu( const struct gdi_gpu *gpu, void *param )
 
     NtClose( hkey );
 
-    if (!write_gpu_to_registry( &ctx->gpu, &pci_id, gpu->memory_size ))
+    if (!write_gpu_to_registry( &ctx->gpu, pci_id, memory_size ))
         WARN( "Failed to write gpu to registry\n" );
     else
         ctx->gpu_count++;
@@ -1451,7 +1444,6 @@ static void add_monitor( const struct gdi_monitor *gdi_monitor, void *param )
 static void add_modes( const DEVMODEW *current, UINT modes_count, const DEVMODEW *modes, void *param )
 {
     struct device_manager_ctx *ctx = param;
-    const DEVMODEW *mode;
     DEVMODEW dummy, detached = *current;
 
     TRACE( "current %s, modes_count %u, modes %p, param %p\n", debugstr_devmodew( current ), modes_count, modes, param );
@@ -1466,12 +1458,10 @@ static void add_modes( const DEVMODEW *current, UINT modes_count, const DEVMODEW
         write_source_mode( ctx->source_key, ENUM_REGISTRY_SETTINGS, current );
     write_source_mode( ctx->source_key, ENUM_CURRENT_SETTINGS, current );
 
-    for (mode = modes; modes_count; mode = NEXT_DEVMODEW(mode), modes_count--)
-    {
-        TRACE( "mode: %s\n", debugstr_devmodew( mode ) );
-        if (write_source_mode( ctx->source_key, ctx->source.mode_count, mode )) ctx->source.mode_count++;
-    }
-    set_reg_value( ctx->source_key, mode_countW, REG_DWORD, &ctx->source.mode_count, sizeof(ctx->source.mode_count) );
+    assert( !modes_count || modes->dmDriverExtra == 0 );
+    set_reg_value( ctx->source_key, modesW, REG_BINARY, modes, modes_count * sizeof(*modes) );
+    set_reg_value( ctx->source_key, mode_countW, REG_DWORD, &modes_count, sizeof(modes_count) );
+    ctx->source.mode_count = modes_count;
 }
 
 static const struct gdi_device_manager device_manager =
@@ -1482,21 +1472,6 @@ static const struct gdi_device_manager device_manager =
     add_modes,
 };
 
-static void reset_display_manager_ctx( struct device_manager_ctx *ctx )
-{
-    HANDLE mutex = ctx->mutex;
-
-    if (ctx->source_key)
-    {
-        NtClose( ctx->source_key );
-        last_query_display_time = 0;
-    }
-    if (ctx->gpu_count) cleanup_devices();
-
-    memset( ctx, 0, sizeof(*ctx) );
-    if ((ctx->mutex = mutex)) prepare_devices();
-}
-
 static void release_display_manager_ctx( struct device_manager_ctx *ctx )
 {
     if (ctx->mutex)
@@ -1505,7 +1480,13 @@ static void release_display_manager_ctx( struct device_manager_ctx *ctx )
         release_display_device_init_mutex( ctx->mutex );
         ctx->mutex = 0;
     }
-    reset_display_manager_ctx( ctx );
+
+    if (ctx->source_key)
+    {
+        NtClose( ctx->source_key );
+        last_query_display_time = 0;
+    }
+    if (ctx->gpu_count) cleanup_devices();
 }
 
 static void clear_display_devices(void)
@@ -1737,27 +1718,33 @@ static BOOL default_update_display_devices( BOOL force, struct device_manager_ct
      */
     static const DEVMODEW modes[] =
     {
-        { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+        { .dmSize = sizeof(DEVMODEW),
+          .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
           .dmBitsPerPel = 32, .dmPelsWidth = 640, .dmPelsHeight = 480, .dmDisplayFrequency = 60, },
-        { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+        { .dmSize = sizeof(DEVMODEW),
+          .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
           .dmBitsPerPel = 32, .dmPelsWidth = 800, .dmPelsHeight = 600, .dmDisplayFrequency = 60, },
-        { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+        { .dmSize = sizeof(DEVMODEW),
+          .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
           .dmBitsPerPel = 32, .dmPelsWidth = 1024, .dmPelsHeight = 768, .dmDisplayFrequency = 60, },
-        { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+        { .dmSize = sizeof(DEVMODEW),
+          .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
           .dmBitsPerPel = 16, .dmPelsWidth = 640, .dmPelsHeight = 480, .dmDisplayFrequency = 60, },
-        { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+        { .dmSize = sizeof(DEVMODEW),
+          .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
           .dmBitsPerPel = 16, .dmPelsWidth = 800, .dmPelsHeight = 600, .dmDisplayFrequency = 60, },
-        { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+        { .dmSize = sizeof(DEVMODEW),
+          .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
           .dmBitsPerPel = 16, .dmPelsWidth = 1024, .dmPelsHeight = 768, .dmDisplayFrequency = 60, },
     };
     static const DWORD source_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_VGA_COMPATIBLE;
-    static const struct gdi_gpu gpu;
+    struct pci_id pci_id = {0};
     struct gdi_monitor monitor = {0};
-    DEVMODEW mode = {{0}};
+    DEVMODEW mode = {.dmSize = sizeof(mode)};
 
     if (!force) return TRUE;
 
-    add_gpu( &gpu, ctx );
+    add_gpu( "Default GPU", &pci_id, NULL, 0, ctx );
     add_source( "Default", source_flags, ctx );
 
     if (!read_source_mode( ctx->source_key, ENUM_CURRENT_SETTINGS, &mode ))
@@ -1857,6 +1844,7 @@ static void add_virtual_modes( struct device_manager_ctx *ctx, const DEVMODEW *c
     {
         DEVMODEW mode =
         {
+            .dmSize = sizeof(mode),
             .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
             .dmDisplayFrequency = 60,
             .dmBitsPerPel = depths[i],
@@ -1891,7 +1879,7 @@ static void add_virtual_modes( struct device_manager_ctx *ctx, const DEVMODEW *c
 
 static BOOL add_virtual_source( struct device_manager_ctx *ctx )
 {
-    DEVMODEW current, initial = ctx->primary, maximum = ctx->primary;
+    DEVMODEW current = {.dmSize = sizeof(current)}, initial = ctx->primary, maximum = ctx->primary;
     struct source virtual_source =
     {
         .state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_VGA_COMPATIBLE,
@@ -1907,7 +1895,7 @@ static BOOL add_virtual_source( struct device_manager_ctx *ctx )
     if (!write_source_to_registry( &virtual_source, &ctx->source_key ))
     {
         WARN( "Failed to write source to registry\n" );
-        return FALSE;
+        return STATUS_UNSUCCESSFUL;
     }
 
     ctx->source = virtual_source;
@@ -1935,18 +1923,21 @@ static BOOL add_virtual_source( struct device_manager_ctx *ctx )
     add_monitor( &monitor, ctx );
     add_virtual_modes( ctx, &current, &initial, &maximum );
 
-    return TRUE;
+    return STATUS_SUCCESS;
 }
 
-static BOOL update_display_devices( BOOL force, struct device_manager_ctx *ctx )
+static UINT update_display_devices( BOOL force, struct device_manager_ctx *ctx )
 {
-    if (user_driver->pUpdateDisplayDevices( &device_manager, force, ctx ))
+    UINT status;
+
+    if (!(status = user_driver->pUpdateDisplayDevices( &device_manager, force, ctx )))
     {
         if (ctx->source_count && is_virtual_desktop()) return add_virtual_source( ctx );
-        return TRUE;
+        return status;
     }
 
-    return default_update_display_devices( force, ctx );
+    if (status == STATUS_NOT_IMPLEMENTED) return default_update_display_devices( force, ctx );
+    return status;
 }
 
 BOOL update_display_cache( BOOL force )
@@ -1955,7 +1946,7 @@ BOOL update_display_cache( BOOL force )
         {'_','_','w','i','n','e','s','e','r','v','i','c','e','_','w','i','n','s','t','a','t','i','o','n',0};
     HWINSTA winstation = NtUserGetProcessWindowStation();
     struct device_manager_ctx ctx = {0};
-    BOOL ret;
+    UINT status;
     WCHAR name[MAX_PATH];
 
     /* services do not have any adapters, only a virtual monitor */
@@ -1969,10 +1960,10 @@ BOOL update_display_cache( BOOL force )
         return TRUE;
     }
 
-    ret = update_display_devices( force, &ctx );
+    status = update_display_devices( force, &ctx );
 
     release_display_manager_ctx( &ctx );
-    if (!ret) WARN( "Failed to update display devices\n" );
+    if (status && status != STATUS_ALREADY_COMPLETE) WARN( "Failed to update display devices, status %#x\n", status );
 
     if (!update_display_cache_from_registry())
     {

@@ -62,50 +62,6 @@ EXCEPTION_DISPOSITION CDECL __CxxFrameHandler(EXCEPTION_RECORD *rec, ULONG64 fra
 }
 
 
-/*********************************************************************
- *		__CppXcptFilter (MSVCRT.@)
- */
-int CDECL __CppXcptFilter(NTSTATUS ex, PEXCEPTION_POINTERS ptr)
-{
-    /* only filter c++ exceptions */
-    if (ex != CXX_EXCEPTION) return EXCEPTION_CONTINUE_SEARCH;
-    return _XcptFilter(ex, ptr);
-}
-
-
-/*********************************************************************
- *		__CxxDetectRethrow (MSVCRT.@)
- */
-BOOL CDECL __CxxDetectRethrow(PEXCEPTION_POINTERS ptrs)
-{
-    PEXCEPTION_RECORD rec;
-
-    if (!ptrs)
-        return FALSE;
-
-    rec = ptrs->ExceptionRecord;
-
-    if (rec->ExceptionCode == CXX_EXCEPTION &&
-        rec->NumberParameters == 3 &&
-        rec->ExceptionInformation[0] == CXX_FRAME_MAGIC_VC6 &&
-        rec->ExceptionInformation[2])
-    {
-        ptrs->ExceptionRecord = msvcrt_get_thread_data()->exc_record;
-        return TRUE;
-    }
-    return (msvcrt_get_thread_data()->exc_record == rec);
-}
-
-
-/*********************************************************************
- *		__CxxQueryExceptionSize (MSVCRT.@)
- */
-unsigned int CDECL __CxxQueryExceptionSize(void)
-{
-    return sizeof(cxx_exception_type);
-}
-
-
 /*******************************************************************
  *		_setjmp (MSVCRT.@)
  */

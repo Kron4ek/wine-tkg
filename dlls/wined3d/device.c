@@ -620,15 +620,6 @@ static void wined3d_device_gl_create_dummy_textures(struct wined3d_device_gl *de
     gl_info->gl_ops.gl.p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0,
             GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, &color);
 
-    if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
-    {
-        gl_info->gl_ops.gl.p_glGenTextures(1, &textures->tex_rect);
-        TRACE("Dummy rectangle texture given name %u.\n", textures->tex_rect);
-        gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_RECTANGLE_ARB, textures->tex_rect);
-        gl_info->gl_ops.gl.p_glTexImage2D(GL_TEXTURE_RECTANGLE_ARB, 0, GL_RGBA8, 1, 1, 0,
-                GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, &color);
-    }
-
     if (gl_info->supported[EXT_TEXTURE3D])
     {
         gl_info->gl_ops.gl.p_glGenTextures(1, &textures->tex_3d);
@@ -764,9 +755,6 @@ static void wined3d_device_gl_destroy_dummy_textures(struct wined3d_device_gl *d
 
     if (gl_info->supported[EXT_TEXTURE3D])
         gl_info->gl_ops.gl.p_glDeleteTextures(1, &dummy_textures->tex_3d);
-
-    if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
-        gl_info->gl_ops.gl.p_glDeleteTextures(1, &dummy_textures->tex_rect);
 
     gl_info->gl_ops.gl.p_glDeleteTextures(1, &dummy_textures->tex_2d);
     gl_info->gl_ops.gl.p_glDeleteTextures(1, &dummy_textures->tex_1d);
@@ -1568,8 +1556,7 @@ void wined3d_device_gl_create_primary_opengl_context_cs(void *object)
     }
 
     wined3d_ffp_blitter_create(&device->blitter, context_gl->gl_info);
-    if (!wined3d_glsl_blitter_create(&device->blitter, device))
-        wined3d_arbfp_blitter_create(&device->blitter, device);
+    wined3d_glsl_blitter_create(&device->blitter, device);
     wined3d_fbo_blitter_create(&device->blitter, context_gl->gl_info);
     wined3d_raw_blitter_create(&device->blitter, context_gl->gl_info);
 

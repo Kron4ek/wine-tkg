@@ -49,6 +49,8 @@
 #define GIF_DISPOSE_RESTORE_TO_BKGND 2
 #define GIF_DISPOSE_RESTORE_TO_PREV 3
 
+#define PIXELFORMATBPP(x) ((x) ? ((x) >> 8) & 255 : 24)
+
 
 COLORREF ARGB2COLORREF(ARGB color);
 HBITMAP ARGB2BMP(ARGB color);
@@ -62,6 +64,8 @@ extern REAL units_scale(GpUnit from, GpUnit to, REAL dpi, BOOL printer_display);
 
 #define WineCoordinateSpaceGdiDevice ((GpCoordinateSpace)4)
 
+extern GpStatus gdi_dc_acquire(GpGraphics *graphics, HDC *hdc);
+extern void gdi_dc_release(GpGraphics *graphics, HDC hdc);
 extern GpStatus gdi_transform_acquire(GpGraphics *graphics);
 extern GpStatus gdi_transform_release(GpGraphics *graphics);
 extern GpStatus get_graphics_transform(GpGraphics *graphics, GpCoordinateSpace dst_space,
@@ -134,6 +138,8 @@ extern void get_font_hfont(GpGraphics *graphics, GDIPCONST GpFont *font,
 extern void free_installed_fonts(void);
 
 extern BOOL lengthen_path(GpPath *path, INT len);
+
+extern GpStatus widen_flat_path_anchors(GpPath *flat_path, GpPen *pen, REAL pen_width, GpPath **anchors);
 
 extern DWORD write_region_data(const GpRegion *region, void *data);
 extern DWORD write_path_data(GpPath *path, void *data);
@@ -248,6 +254,7 @@ struct GpPen{
 struct GpGraphics{
     HDC hdc;
     HWND hwnd;
+    INT hdc_refs;
     BOOL owndc;
     BOOL alpha_hdc;
     BOOL printer_display;
@@ -462,8 +469,6 @@ struct GpBitmap{
     PixelFormat format;
     ImageLockMode lockmode;
     BYTE *bitmapbits;   /* pointer to the buffer we passed in BitmapLockBits */
-    HBITMAP hbitmap;
-    HDC hdc;
     BYTE *bits; /* actual image bits if this is a DIB */
     INT stride; /* stride of bits if this is a DIB */
     BYTE *own_bits; /* image bits that need to be freed with this object */
@@ -656,6 +661,11 @@ static inline BOOL image_lock(GpImage *image)
 static inline void image_unlock(GpImage *image)
 {
     ReleaseSRWLockExclusive(&image->lock);
+}
+
+static inline BOOL has_gdi_dc(GpGraphics *graphics)
+{
+    return graphics->hdc != NULL;
 }
 
 static inline void set_rect(GpRectF *rect, REAL x, REAL y, REAL width, REAL height)

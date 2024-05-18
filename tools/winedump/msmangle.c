@@ -260,6 +260,12 @@ static char* get_args(struct parsed_symbol* sym, BOOL z_term,
     unsigned int        i;
     const char *p;
 
+    if (z_term && sym->current[0] == 'X' && sym->current[1] == 'Z')
+    {
+        sym->current += 2;
+        return str_printf(sym, "%cvoid%c", open_char, close_char);
+    }
+
     str_array_init(&arg_collect);
 
     /* Now come the function arguments */
@@ -273,14 +279,24 @@ static char* get_args(struct parsed_symbol* sym, BOOL z_term,
             sym->current++;
             break;
         }
+        if (z_term && sym->current[0] == 'Z')
+        {
+            sym->current++;
+            if (!str_array_push(sym, "...", -1, &arg_collect))
+                return NULL;
+            break;
+        }
+        /* Handle empty list in variadic template */
+        if (!z_term && sym->current[0] == '$' && sym->current[1] == '$' && sym->current[2] == 'V')
+        {
+            sym->current += 3;
+            continue;
+        }
         if (!demangle_datatype(sym, &ct, IN_ARGS))
             return NULL;
-        /* 'void' terminates an argument list in a function */
-        if (z_term && !strcmp(ct.left, "void")) break;
         if (!str_array_push(sym, str_printf(sym, "%s%s", ct.left, ct.right), -1,
                             &arg_collect))
             return NULL;
-        if (!strcmp(ct.left, "...")) break;
         if (z_term && sym->current - p > 1 && sym->args.num < 20)
         {
             if (!str_array_push(sym, ct.left ? ct.left : "", -1, &sym->args) ||
@@ -293,9 +309,7 @@ static char* get_args(struct parsed_symbol* sym, BOOL z_term,
      */
     if (z_term && *sym->current++ != 'Z') return NULL;
 
-    if (arg_collect.num == 0 ||
-        (arg_collect.num == 1 && !strcmp(arg_collect.elts[0], "void")))
-        return str_printf(sym, "%cvoid%c", open_char, close_char);
+    if (!arg_collect.num) return str_printf(sym, "%c%c", open_char, close_char);
     for (i = 1; i < arg_collect.num; i++)
     {
         args_str = str_printf(sym, "%s,%s", args_str, arg_collect.elts[i]);
@@ -743,7 +757,7 @@ static const char* get_simple_type(char c)
     case 'N': type_string = "double"; break;
     case 'O': type_string = "long double"; break;
     case 'X': type_string = "void"; break;
-    case 'Z': type_string = "..."; break;
+/*  case 'Z': (...) variadic function arguments. Handled in get_args() */
     default:  type_string = NULL; break;
     }
     return type_string;
@@ -794,7 +808,7 @@ static BOOL get_function_signature(struct parsed_symbol* sym, struct function_si
     if (!get_calling_convention(*sym->current++,
                                 &fs->call_conv, &fs->exported,
                                 sym->flags & ~UNDNAME_NO_ALLOCATION_LANGUAGE) ||
-        !demangle_datatype(sym, &fs->return_ct, FALSE))
+        !demangle_datatype(sym, &fs->return_ct, 0))
         return FALSE;
 
     if (!(fs->arguments = get_args(sym, TRUE, '(', ')')))
@@ -873,14 +887,22 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
     case 'B': /* volatile reference */
         if (!get_qualified_type(ct, sym, dt, flags)) goto done;
         break;
+    case 'P': /* Pointer */
     case 'Q': /* const pointer */
     case 'R': /* volatile pointer */
     case 'S': /* const volatile pointer */
-        if (!get_qualified_type(ct, sym, (flags & IN_ARGS) ? dt : 'P', flags)) goto done;
-        break;
-    case 'P': /* Pointer */
+        if (!(flags & IN_ARGS)) dt = 'P';
         if (isdigit(*sym->current))
-	{
+        {
+            const char *ptr_qualif;
+            switch (dt)
+            {
+            default:
+            case 'P': ptr_qualif = NULL; break;
+            case 'Q': ptr_qualif = "const"; break;
+            case 'R': ptr_qualif = "volatile"; break;
+            case 'S': ptr_qualif = "const volatile"; break;
+            }
             /* FIXME:
              *   P6 = Function pointer
              *   P8 = Member function pointer
@@ -898,10 +920,10 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
                 if (!get_function_qualifier(sym, &function_qualifier))
                     goto done;
                 if (!get_function_signature(sym, &fs))
-                     goto done;
+                    goto done;
 
-                ct->left  = str_printf(sym, "%s%s (%s %s::*",
-                                       fs.return_ct.left, fs.return_ct.right, fs.call_conv, class);
+                ct->left  = str_printf(sym, "%s%s (%s %s::*%s",
+                                       fs.return_ct.left, fs.return_ct.right, fs.call_conv, class, ptr_qualif);
                 ct->right = str_printf(sym, ")%s%s", fs.arguments, function_qualifier);
             }
             else if (*sym->current == '6')
@@ -913,14 +935,14 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
                 if (!get_function_signature(sym, &fs))
                      goto done;
 
-                ct->left  = str_printf(sym, "%s%s (%s*",
-                                       fs.return_ct.left, fs.return_ct.right, fs.call_conv);
+                ct->left  = str_printf(sym, "%s%s (%s*%s",
+                                       fs.return_ct.left, fs.return_ct.right, fs.call_conv, ptr_qualif);
                 ct->flags = DT_NO_LEADING_WS;
                 ct->right = str_printf(sym, ")%s", fs.arguments);
             }
             else goto done;
 	}
-	else if (!get_qualified_type(ct, sym, 'P', flags)) goto done;
+	else if (!get_qualified_type(ct, sym, dt, flags)) goto done;
         break;
     case 'W':
         if (*sym->current == '4')
@@ -1043,6 +1065,11 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
             {
                 sym->current++;
                 if (!get_qualified_type(ct, sym, '$', flags)) goto done;
+            }
+            else if (*sym->current == 'T')
+            {
+                sym->current++;
+                ct->left = str_printf(sym, "std::nullptr_t");
             }
             break;
         }

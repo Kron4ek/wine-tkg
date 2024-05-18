@@ -3944,9 +3944,11 @@ NTSTATUS get_reparse_point_unix(const char *unix_name, REPARSE_DATA_BUFFER *buff
     char *p;
 
     ret = readlink( unix_name, link_path, sizeof(link_path) );
+
     if (ret < 0)
     {
-        status = errno_to_status( errno );
+        if (errno == EINVAL) status = STATUS_NOT_A_REPARSE_POINT;
+        else status = errno_to_status( errno );
         goto cleanup;
     }
     link_path_len = ret;
@@ -7534,10 +7536,17 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
     }
     case FSCTL_GET_REPARSE_POINT:
     {
-        REPARSE_DATA_BUFFER *buffer = (REPARSE_DATA_BUFFER *)out_buffer;
-        ULONG size = out_size;
-        status = get_reparse_point( handle, buffer, &size );
-        io->Information = size;
+        io->Information = 0;
+        if (out_buffer){
+            REPARSE_DATA_BUFFER *buffer = (REPARSE_DATA_BUFFER *)out_buffer;
+            ULONG size = out_size;
+            status = get_reparse_point( handle, buffer, &size );
+            if (status == STATUS_SUCCESS)
+                io->Information = size;
+        }
+        else {
+            status = STATUS_INVALID_USER_BUFFER;
+        }
         break;
     }
     case FSCTL_SET_REPARSE_POINT:

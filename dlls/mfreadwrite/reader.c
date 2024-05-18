@@ -41,6 +41,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 
+DEFINE_MEDIATYPE_GUID(MFVideoFormat_ABGR32, D3DFMT_A8B8G8R8);
+
 struct stream_response
 {
     struct list entry;
@@ -79,6 +81,7 @@ struct transform_entry
     UINT32 pending_flags;
     GUID category;
     BOOL hidden;
+    BOOL attributes_initialized;
 };
 
 struct media_stream
@@ -257,7 +260,6 @@ static ULONG source_reader_release(struct source_reader *reader)
         }
         source_reader_release_responses(reader, NULL);
         free(reader->streams);
-        MFUnlockWorkQueue(reader->queue);
         DeleteCriticalSection(&reader->cs);
         free(reader);
     }
@@ -816,6 +818,35 @@ static HRESULT transform_entry_update_input_type(struct transform_entry *entry, 
     return hr;
 }
 
+static void transform_entry_initialize_attributes(struct source_reader *reader, struct transform_entry *entry)
+{
+    IMFAttributes *attributes;
+
+    if (SUCCEEDED(IMFTransform_GetAttributes(entry->transform, &attributes)))
+    {
+        if (FAILED(IMFAttributes_GetItem(attributes, &MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT, NULL)))
+            IMFAttributes_SetUINT32(attributes, &MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT, 6);
+
+        IMFAttributes_Release(attributes);
+    }
+
+    if (SUCCEEDED(IMFTransform_GetOutputStreamAttributes(entry->transform, 0, &attributes)))
+    {
+        UINT32 shared, shared_without_mutex, bind_flags;
+
+        if (SUCCEEDED(IMFAttributes_GetUINT32(reader->attributes, &MF_SA_D3D11_SHARED, &shared)))
+            IMFAttributes_SetUINT32(attributes, &MF_SA_D3D11_SHARED, shared);
+        if (SUCCEEDED(IMFAttributes_GetUINT32(reader->attributes, &MF_SA_D3D11_SHARED_WITHOUT_MUTEX, &shared_without_mutex)))
+            IMFAttributes_SetUINT32(attributes, &MF_SA_D3D11_SHARED_WITHOUT_MUTEX, shared_without_mutex);
+        if (SUCCEEDED(IMFAttributes_GetUINT32(reader->attributes, &MF_SOURCE_READER_D3D11_BIND_FLAGS, &bind_flags)))
+            IMFAttributes_SetUINT32(attributes, &MF_SA_D3D11_BINDFLAGS, bind_flags);
+        else if ((reader->flags & SOURCE_READER_DXGI_DEVICE_MANAGER) && FAILED(IMFAttributes_GetItem(attributes, &MF_SA_D3D11_BINDFLAGS, NULL)))
+            IMFAttributes_SetUINT32(attributes, &MF_SA_D3D11_BINDFLAGS, 1024);
+
+        IMFAttributes_Release(attributes);
+    }
+}
+
 static HRESULT source_reader_pull_transform_samples(struct source_reader *reader, struct media_stream *stream,
         struct transform_entry *entry)
 {
@@ -827,6 +858,12 @@ static HRESULT source_reader_pull_transform_samples(struct source_reader *reader
 
     if ((ptr = list_next(&stream->transforms, &entry->entry)))
         next = LIST_ENTRY(ptr, struct transform_entry, entry);
+
+    if (!entry->attributes_initialized)
+    {
+        transform_entry_initialize_attributes(reader, entry);
+        entry->attributes_initialized = TRUE;
+    }
 
     if (FAILED(hr = IMFTransform_GetOutputStreamInfo(entry->transform, 0, &stream_info)))
         return hr;
@@ -1630,6 +1667,7 @@ static ULONG WINAPI src_reader_Release(IMFSourceReaderEx *iface)
             }
         }
 
+        MFUnlockWorkQueue(reader->queue);
         source_reader_release(reader);
     }
 
@@ -2000,6 +2038,17 @@ static HRESULT source_reader_create_transform(struct source_reader *reader, BOOL
             entry->min_buffer_size = max(entry->min_buffer_size, bytes_per_second);
     }
 
+    if (IsEqualGUID(&out_type.guidMajorType, &MFMediaType_Video) && IsEqualGUID(&out_type.guidSubtype, &MFVideoFormat_ABGR32)
+            && IsEqualGUID(&category, &MFT_CATEGORY_VIDEO_PROCESSOR))
+    {
+        /* The video processor isn't registered for MFVideoFormat_ABGR32, and native even only supports that format when
+         * D3D-enabled, we still want to instantiate a video processor in such case, so fixup the subtype for MFTEnumEx.
+         */
+        WARN("Fixing up MFVideoFormat_ABGR32 subtype for the video processor\n");
+        out_type.guidSubtype = MFVideoFormat_RGB32;
+    }
+
+
     count = 0;
     if (SUCCEEDED(hr = MFTEnumEx(category, 0, &in_type, allow_processor ? NULL : &out_type, &activates, &count)))
     {
@@ -2011,10 +2060,33 @@ static HRESULT source_reader_create_transform(struct source_reader *reader, BOOL
 
         for (i = 0; i < count; i++)
         {
+            IMFAttributes *attributes;
             IMFMediaType *media_type;
 
             if (FAILED(hr = IMFActivate_ActivateObject(activates[i], &IID_IMFTransform, (void **)&transform)))
                 continue;
+
+            if (!reader->device_manager || FAILED(IMFTransform_GetAttributes(transform, &attributes)))
+                entry->attributes_initialized = TRUE;
+            else
+            {
+                UINT32 d3d_aware = FALSE;
+
+                if (reader->flags & SOURCE_READER_DXGI_DEVICE_MANAGER)
+                {
+                    if (SUCCEEDED(IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_AWARE, &d3d_aware)) && d3d_aware)
+                        IMFTransform_ProcessMessage(transform, MFT_MESSAGE_SET_D3D_MANAGER, (ULONG_PTR)reader->device_manager);
+                }
+                else if (reader->flags & SOURCE_READER_D3D9_DEVICE_MANAGER)
+                {
+                    if (SUCCEEDED(IMFAttributes_GetUINT32(attributes, &MF_SA_D3D_AWARE, &d3d_aware)) && d3d_aware)
+                        IMFTransform_ProcessMessage(transform, MFT_MESSAGE_SET_D3D_MANAGER, (ULONG_PTR)reader->device_manager);
+                }
+
+                entry->attributes_initialized = !d3d_aware;
+                IMFAttributes_Release(attributes);
+            }
+
             if (SUCCEEDED(hr = IMFTransform_SetInputType(transform, 0, input_type, 0))
                     && SUCCEEDED(hr = IMFTransform_GetInputCurrentType(transform, 0, &media_type)))
             {

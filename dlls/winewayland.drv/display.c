@@ -24,6 +24,8 @@
 
 #include "config.h"
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "waylanddrv.h"
 
 #include "wine/debug.h"
@@ -200,14 +202,11 @@ static void output_info_array_arrange_physical_coords(struct wl_array *output_in
 static void wayland_add_device_gpu(const struct gdi_device_manager *device_manager,
                                    void *param)
 {
-    static const WCHAR wayland_gpuW[] = {'W','a','y','l','a','n','d','G','P','U',0};
-    struct gdi_gpu gpu = {0};
-    lstrcpyW(gpu.name, wayland_gpuW);
+    struct pci_id pci_id = {0};
 
-    TRACE("id=0x%s name=%s\n",
-          wine_dbgstr_longlong(gpu.id), wine_dbgstr_w(gpu.name));
+    TRACE("\n");
 
-    device_manager->add_gpu(&gpu, param);
+    device_manager->add_gpu("Wayland GPU", &pci_id, NULL, 0, param);
 }
 
 static void wayland_add_device_source(const struct gdi_device_manager *device_manager,
@@ -278,7 +277,7 @@ static void wayland_add_device_modes(const struct gdi_device_manager *device_man
 /***********************************************************************
  *      UpdateDisplayDevices (WAYLAND.@)
  */
-BOOL WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager,
+UINT WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager,
                                   BOOL force, void *param)
 {
     struct wayland_output *output;
@@ -286,7 +285,7 @@ BOOL WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manage
     struct wl_array output_info_array;
     struct output_info *output_info;
 
-    if (!force && !force_display_devices_refresh) return TRUE;
+    if (!force && !force_display_devices_refresh) return STATUS_ALREADY_COMPLETE;
 
     TRACE("force=%d force_refresh=%d\n", force, force_display_devices_refresh);
 
@@ -321,5 +320,5 @@ BOOL WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manage
 
     pthread_mutex_unlock(&process_wayland.output_mutex);
 
-    return TRUE;
+    return STATUS_SUCCESS;
 }

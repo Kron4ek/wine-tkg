@@ -37,7 +37,6 @@ F:	dlls/ntdll/signal_arm*
 F:	programs/winedbg/be_arm*
 
 Audio I/O
-P:	Andrew Eikum <coldpie@fastmail.com>
 P:	Huw Davies <huw@codeweavers.com>
 F:	dlls/dsound/
 F:	dlls/mmdevapi/
@@ -66,7 +65,7 @@ P:	Henri Verbeet <hverbeet@codeweavers.com>
 F:	dlls/d2d*/
 
 Direct3D
-M:	Zebediah Figura <z.figura12@gmail.com>
+M:	Elizabeth Figura <zfigura@codeweavers.com>
 M:	Jan Sikorski <jsikorski@codeweavers.com>
 P:	Henri Verbeet <hverbeet@codeweavers.com>
 P:	Stefan Dösinger <stefan@codeweavers.com>
@@ -106,7 +105,7 @@ F:	dlls/dpnet/
 F:	dlls/dpwsockx/
 
 DirectShow
-M:	Zebediah Figura <z.figura12@gmail.com>
+M:	Elizabeth Figura <zfigura@codeweavers.com>
 P:	Rémi Bernon <rbernon@codeweavers.com>
 F:	dlls/amstream/
 F:	dlls/devenum/
@@ -159,7 +158,7 @@ M:	Marcus Meissner <marcus@jet.franken.de>
 F:	dlls/gphoto2.ds/
 
 GStreamer multimedia backend
-M:	Zebediah Figura <z.figura12@gmail.com>
+M:	Elizabeth Figura <zfigura@codeweavers.com>
 P:	Rémi Bernon <rbernon@codeweavers.com>
 F:	dlls/winegstreamer/
 
@@ -173,7 +172,7 @@ F:	dlls/mouhid.sys/
 F:	dlls/winehid.sys/
 
 HTTP server
-M:	Zebediah Figura <z.figura12@gmail.com>
+M:	Elizabeth Figura <zfigura@codeweavers.com>
 F:	dlls/httpapi/
 F:	dlls/http.sys/
 
@@ -207,15 +206,10 @@ F:	dlls/winexinput.sys/
 F:	dlls/winmm/joystick.c
 F:	dlls/xinput*/
 
-Media format conversion
-P:	Andrew Eikum <coldpie@fastmail.com>
-F:	dlls/*.acm/
-F:	dlls/msacm32/
-
 Media Foundation GStreamer backend
 M:	Rémi Bernon <rbernon@codeweavers.com>
 P:	Nikolay Sivov <nsivov@codeweavers.com>
-P:	Zebediah Figura <z.figura12@gmail.com>
+P:	Elizabeth Figura <zfigura@codeweavers.com>
 F:	dlls/mf/tests/transform.c
 F:	dlls/winegstreamer/aac_decoder.c
 F:	dlls/winegstreamer/color_convert.c
@@ -239,7 +233,7 @@ F:	dlls/vcruntime140_1/
 
 MSI installers
 M:	Hans Leidekker <hans@codeweavers.com>
-P:	Zebediah Figura <z.figura12@gmail.com>
+P:	Elizabeth Figura <zfigura@codeweavers.com>
 F:	dlls/msi/
 
 Netstat
@@ -289,7 +283,7 @@ P:	Huw Davies <huw@codeweavers.com>
 F:	dlls/oleaut32/typelib.c
 
 Plug and Play
-P:	Zebediah Figura <z.figura12@gmail.com>
+P:	Elizabeth Figura <zfigura@codeweavers.com>
 F:	dlls/newdev/
 F:	dlls/ntoskrnl.exe/pnp.c
 F:	dlls/setupapi/devinst.c
@@ -311,7 +305,7 @@ F:	dlls/riched20/
 
 RPC Runtime
 P:	Huw Davies <huw@codeweavers.com>
-P:	Zebediah Figura <z.figura12@gmail.com>
+P:	Elizabeth Figura <zfigura@codeweavers.com>
 F:	dlls/rpcrt4/
 
 Theming
@@ -350,7 +344,7 @@ F:	dlls/shdocvw/
 WIDL
 P:	Huw Davies <huw@codeweavers.com>
 P:	Rémi Bernon <rbernon@codeweavers.com>
-P:	Zebediah Figura <z.figura12@gmail.com>
+P:	Elizabeth Figura <zfigura@codeweavers.com>
 F:	tools/widl/
 
 Windows Imaging Component
@@ -366,7 +360,7 @@ F:	dlls/wbemprox/
 F:	dlls/wmiutils/
 
 Windows Media Format
-M:	Zebediah Figura <z.figura12@gmail.com>
+M:	Elizabeth Figura <zfigura@codeweavers.com>
 P:	Rémi Bernon <rbernon@codeweavers.com>
 F:	dlls/wmp/
 F:	dlls/wmvcore/
@@ -432,7 +426,7 @@ W:	https://wiki.winehq.org/StableRules
 
 Staging Branch
 M:	Alistair Leslie-Hughes <leslie_alistair@hotmail.com>
-P:	Zebediah Figura <z.figura12@gmail.com>
+P:	Elizabeth Figura <zfigura@codeweavers.com>
 P:	Paul Gofman <gofmanp@gmail.com>
 P:	Erich E. Hoover <erich.e.hoover@wine-staging.com>
 W:	https://wine-staging.com/

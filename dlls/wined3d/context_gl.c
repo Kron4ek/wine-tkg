@@ -295,7 +295,6 @@ static void context_dump_fbo_attachment(const struct wined3d_gl_info *gl_info, G
         {GL_TEXTURE_1D,                   GL_TEXTURE_BINDING_1D,                   "1d",          WINED3D_GL_EXT_NONE},
         {GL_TEXTURE_1D_ARRAY,             GL_TEXTURE_BINDING_1D_ARRAY,             "1d-array",    EXT_TEXTURE_ARRAY},
         {GL_TEXTURE_2D,                   GL_TEXTURE_BINDING_2D,                   "2d",          WINED3D_GL_EXT_NONE},
-        {GL_TEXTURE_RECTANGLE_ARB,        GL_TEXTURE_BINDING_RECTANGLE_ARB,        "rectangle",   ARB_TEXTURE_RECTANGLE},
         {GL_TEXTURE_2D_ARRAY,             GL_TEXTURE_BINDING_2D_ARRAY,             "2d-array" ,   EXT_TEXTURE_ARRAY},
         {GL_TEXTURE_CUBE_MAP,             GL_TEXTURE_BINDING_CUBE_MAP,             "cube",        ARB_TEXTURE_CUBE_MAP},
         {GL_TEXTURE_2D_MULTISAMPLE,       GL_TEXTURE_BINDING_2D_MULTISAMPLE,       "2d-ms",       ARB_TEXTURE_MULTISAMPLE},
@@ -701,8 +700,8 @@ static struct fbo_entry *wined3d_context_gl_find_fbo_entry(struct wined3d_contex
                 {
                     rt_texture = wined3d_texture_from_resource(resource);
                     rt_level = render_targets[i].sub_resource_idx % rt_texture->level_count;
-                    width = wined3d_texture_get_level_pow2_width(rt_texture, rt_level);
-                    height = wined3d_texture_get_level_pow2_height(rt_texture, rt_level);
+                    width = wined3d_texture_get_level_width(rt_texture, rt_level);
+                    height = wined3d_texture_get_level_height(rt_texture, rt_level);
                     resource_type = "texture";
                 }
 
@@ -724,8 +723,8 @@ static struct fbo_entry *wined3d_context_gl_find_fbo_entry(struct wined3d_contex
             {
                 ds_texture = wined3d_texture_from_resource(resource);
                 ds_level = depth_stencil->sub_resource_idx % ds_texture->level_count;
-                width = wined3d_texture_get_level_pow2_width(ds_texture, ds_level);
-                height = wined3d_texture_get_level_pow2_height(ds_texture, ds_level);
+                width = wined3d_texture_get_level_width(ds_texture, ds_level);
+                height = wined3d_texture_get_level_height(ds_texture, ds_level);
                 resource_type = "texture";
             }
 
@@ -1800,9 +1799,6 @@ void wined3d_context_gl_bind_dummy_textures(const struct wined3d_context_gl *con
         gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_1D, textures->tex_1d);
         gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_2D, textures->tex_2d);
 
-        if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
-            gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_RECTANGLE_ARB, textures->tex_rect);
-
         if (gl_info->supported[EXT_TEXTURE3D])
             gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_3D, textures->tex_3d);
 
@@ -1937,7 +1933,6 @@ static BOOL wined3d_context_gl_create_wgl_ctx(struct wined3d_context_gl *context
     struct wined3d_device *device;
     bool swap_effect_copy;
     HGLRC ctx, share_ctx;
-    unsigned int i;
 
     device = context->device;
     adapter = device->adapter;
@@ -1950,73 +1945,18 @@ static BOOL wined3d_context_gl_create_wgl_ctx(struct wined3d_context_gl *context
 
     *new_drawable = !GetPixelFormat(context_gl->dc);
 
-    if (wined3d_settings.offscreen_rendering_mode == ORM_BACKBUFFER)
-    {
-        static const enum wined3d_format_id ds_formats[] =
-        {
-            WINED3DFMT_D24_UNORM_S8_UINT,
-            WINED3DFMT_D32_UNORM,
-            WINED3DFMT_R24_UNORM_X8_TYPELESS,
-            WINED3DFMT_D16_UNORM,
-            WINED3DFMT_S1_UINT_D15_UNORM,
-        };
-
-        colour_format = target->format;
-
-        /* In case of ORM_BACKBUFFER, make sure to request an alpha component for
-         * X4R4G4B4/X8R8G8B8 as we might need it for the backbuffer. */
-        if (colour_format->id == WINED3DFMT_B4G4R4X4_UNORM)
-            colour_format = wined3d_get_format(adapter, WINED3DFMT_B4G4R4A4_UNORM, target_bind_flags);
-        else if (colour_format->id == WINED3DFMT_B8G8R8X8_UNORM)
-            colour_format = wined3d_get_format(adapter, WINED3DFMT_B8G8R8A8_UNORM, target_bind_flags);
-
-        /* DirectDraw supports 8bit paletted render targets and these are used by
-         * old games like StarCraft and C&C. Most modern hardware doesn't support
-         * 8bit natively so we perform some form of 8bit -> 32bit conversion. The
-         * conversion (ab)uses the alpha component for storing the palette index.
-         * For this reason we require a format with 8bit alpha, so request
-         * A8R8G8B8. */
-        if (colour_format->id == WINED3DFMT_P8_UINT)
-            colour_format = wined3d_get_format(adapter, WINED3DFMT_B8G8R8A8_UNORM, target_bind_flags);
-
-        /* Try to find a pixel format which matches our requirements. */
-        if (!swapchain_gl->s.ds_format)
-        {
-            for (i = 0; i < ARRAY_SIZE(ds_formats); ++i)
-            {
-                ds_format = wined3d_get_format(adapter, ds_formats[i], WINED3D_BIND_DEPTH_STENCIL);
-                if ((context_gl->pixel_format = context_choose_pixel_format(device,
-                        context_gl->dc, colour_format, ds_format, true, swap_effect_copy)))
-                {
-                    swapchain_gl->s.ds_format = ds_format;
-                    break;
-                }
-
-                TRACE("Depth stencil format %s is not supported, trying next format.\n",
-                        debug_d3dformat(ds_format->id));
-            }
-        }
-        else
-        {
-            context_gl->pixel_format = context_choose_pixel_format(device,
-                    context_gl->dc, colour_format, swapchain_gl->s.ds_format, true, swap_effect_copy);
-        }
-    }
-    else
-    {
-        /* When using FBOs for off-screen rendering, we only use the drawable for
-         * presentation blits, and don't do any rendering to it. That means we
-         * don't need depth or stencil buffers, and can mostly ignore the render
-         * target format. This wouldn't necessarily be quite correct for 10bpc
-         * display modes, but we don't currently support those.
-         * Using the same format regardless of the colour/depth/stencil targets
-         * makes it much less likely that different wined3d instances will set
-         * conflicting pixel formats. */
-        colour_format = wined3d_get_format(adapter, WINED3DFMT_B8G8R8A8_UNORM, target_bind_flags);
-        ds_format = wined3d_get_format(adapter, WINED3DFMT_UNKNOWN, WINED3D_BIND_DEPTH_STENCIL);
-        context_gl->pixel_format = context_choose_pixel_format(device,
-                context_gl->dc, colour_format, ds_format, false, swap_effect_copy);
-    }
+    /* When using FBOs for off-screen rendering, we only use the drawable for
+     * presentation blits, and don't do any rendering to it. That means we
+     * don't need depth or stencil buffers, and can mostly ignore the render
+     * target format. This wouldn't necessarily be quite correct for 10bpc
+     * display modes, but we don't currently support those.
+     * Using the same format regardless of the colour/depth/stencil targets
+     * makes it much less likely that different wined3d instances will set
+     * conflicting pixel formats. */
+    colour_format = wined3d_get_format(adapter, WINED3DFMT_B8G8R8A8_UNORM, target_bind_flags);
+    ds_format = wined3d_get_format(adapter, WINED3DFMT_UNKNOWN, WINED3D_BIND_DEPTH_STENCIL);
+    context_gl->pixel_format = context_choose_pixel_format(device,
+            context_gl->dc, colour_format, ds_format, false, swap_effect_copy);
 
     if (!context_gl->pixel_format)
     {
@@ -2178,7 +2118,6 @@ HRESULT wined3d_context_gl_init(struct wined3d_context_gl *context_gl, struct wi
 
     /* Set up the context defaults. */
 
-    context->render_offscreen = wined3d_resource_is_offscreen(&context->current_rt.texture->resource);
     context_gl->draw_buffers_mask = context_generate_rt_mask(GL_BACK);
 
     if (!wined3d_context_gl_set_current(context_gl))
@@ -2500,33 +2439,26 @@ static void wined3d_context_gl_apply_draw_buffers(struct wined3d_context_gl *con
     }
     else
     {
-        if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
+        unsigned int i = 0;
+
+        while (rt_mask)
         {
-            unsigned int i = 0;
-
-            while (rt_mask)
-            {
-                if (rt_mask & 1)
-                    draw_buffers[i] = GL_COLOR_ATTACHMENT0 + i;
-                else
-                    draw_buffers[i] = GL_NONE;
-
-                rt_mask >>= 1;
-                ++i;
-            }
-
-            if (gl_info->supported[ARB_DRAW_BUFFERS])
-            {
-                GL_EXTCALL(glDrawBuffers(i, draw_buffers));
-            }
+            if (rt_mask & 1)
+                draw_buffers[i] = GL_COLOR_ATTACHMENT0 + i;
             else
-            {
-                gl_info->gl_ops.gl.p_glDrawBuffer(draw_buffers[0]);
-            }
+                draw_buffers[i] = GL_NONE;
+
+            rt_mask >>= 1;
+            ++i;
+        }
+
+        if (gl_info->supported[ARB_DRAW_BUFFERS])
+        {
+            GL_EXTCALL(glDrawBuffers(i, draw_buffers));
         }
         else
         {
-            ERR("Unexpected draw buffers mask with backbuffer ORM.\n");
+            gl_info->gl_ops.gl.p_glDrawBuffer(draw_buffers[0]);
         }
     }
 
@@ -2584,9 +2516,6 @@ void wined3d_context_gl_bind_texture(struct wined3d_context_gl *context_gl, GLen
                 break;
             case GL_TEXTURE_2D_ARRAY:
                 gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_2D_ARRAY, textures->tex_2d_array);
-                break;
-            case GL_TEXTURE_RECTANGLE_ARB:
-                gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_RECTANGLE_ARB, textures->tex_rect);
                 break;
             case GL_TEXTURE_CUBE_MAP:
                 gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_CUBE_MAP, textures->tex_cube);
@@ -3218,39 +3147,9 @@ void wined3d_context_gl_destroy_bo(struct wined3d_context_gl *context_gl, struct
     bo->id = 0;
 }
 
-static void wined3d_context_gl_set_render_offscreen(struct wined3d_context_gl *context_gl, BOOL offscreen)
-{
-    if (context_gl->c.render_offscreen == offscreen)
-        return;
-
-    context_invalidate_state(&context_gl->c, STATE_VIEWPORT);
-    context_invalidate_state(&context_gl->c, STATE_SCISSORRECT);
-    if (!context_gl->gl_info->supported[ARB_CLIP_CONTROL])
-    {
-        context_invalidate_state(&context_gl->c, STATE_RASTERIZER);
-        context_invalidate_state(&context_gl->c, STATE_POINTSPRITECOORDORIGIN);
-        context_invalidate_state(&context_gl->c, STATE_TRANSFORM(WINED3D_TS_PROJECTION));
-    }
-    context_invalidate_state(&context_gl->c, STATE_SHADER(WINED3D_SHADER_TYPE_DOMAIN));
-    if (context_gl->gl_info->supported[ARB_FRAGMENT_COORD_CONVENTIONS])
-        context_invalidate_state(&context_gl->c, STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL));
-    context_gl->c.render_offscreen = offscreen;
-}
-
 GLenum wined3d_context_gl_get_offscreen_gl_buffer(const struct wined3d_context_gl *context_gl)
 {
-    switch (wined3d_settings.offscreen_rendering_mode)
-    {
-        case ORM_FBO:
-            return GL_COLOR_ATTACHMENT0;
-
-        case ORM_BACKBUFFER:
-            return context_gl->aux_buffers > 0 ? GL_AUX0 : GL_BACK;
-
-        default:
-            FIXME("Unhandled offscreen rendering mode %#x.\n", wined3d_settings.offscreen_rendering_mode);
-            return GL_BACK;
-    }
+    return GL_COLOR_ATTACHMENT0;
 }
 
 static uint32_t wined3d_context_gl_generate_rt_mask_no_fbo(const struct wined3d_context_gl *context_gl,
@@ -3411,8 +3310,6 @@ void wined3d_context_gl_apply_ffp_blit_state(struct wined3d_context_gl *context_
         if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
             gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
         gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_3D);
-        if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
-            gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_RECTANGLE_ARB);
         gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_2D);
 
         gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
@@ -3431,8 +3328,6 @@ void wined3d_context_gl_apply_ffp_blit_state(struct wined3d_context_gl *context_
     if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
         gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
     gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_3D);
-    if (gl_info->supported[ARB_TEXTURE_RECTANGLE])
-        gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_RECTANGLE_ARB);
     gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_2D);
 
     gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
@@ -3493,64 +3388,56 @@ BOOL wined3d_context_gl_apply_clear_state(struct wined3d_context_gl *context_gl,
     if (isStateDirty(&context_gl->c, STATE_FRAMEBUFFER) || fb != &state->fb
             || rt_count != gl_info->limits.buffers)
     {
+        struct wined3d_rendertarget_info ds_info = {{0}};
+
         if (!have_framebuffer_attachment(rt_count, rts, dsv))
         {
             WARN("Invalid render target config, need at least one attachment.\n");
             return FALSE;
         }
 
-        if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
+        if (!rt_count || wined3d_resource_is_offscreen(rts[0]->resource))
         {
-            struct wined3d_rendertarget_info ds_info = {{0}};
-
-            if (!rt_count || wined3d_resource_is_offscreen(rts[0]->resource))
+            memset(context_gl->blit_targets, 0, sizeof(context_gl->blit_targets));
+            for (i = 0; i < rt_count; ++i)
             {
-                memset(context_gl->blit_targets, 0, sizeof(context_gl->blit_targets));
-                for (i = 0; i < rt_count; ++i)
+                if (rts[i])
                 {
-                    if (rts[i])
-                    {
-                        struct wined3d_rendertarget_view_gl *rtv_gl = wined3d_rendertarget_view_gl(rts[i]);
-                        context_gl->blit_targets[i].gl_view = rtv_gl->gl_view;
-                        context_gl->blit_targets[i].resource = rtv_gl->v.resource;
-                        context_gl->blit_targets[i].sub_resource_idx = rtv_gl->v.sub_resource_idx;
-                        context_gl->blit_targets[i].layer_count = rtv_gl->v.layer_count;
-                    }
-                    if (rts[i] && rts[i]->format->id != WINED3DFMT_NULL)
-                        rt_mask |= (1u << i);
+                    struct wined3d_rendertarget_view_gl *rtv_gl = wined3d_rendertarget_view_gl(rts[i]);
+                    context_gl->blit_targets[i].gl_view = rtv_gl->gl_view;
+                    context_gl->blit_targets[i].resource = rtv_gl->v.resource;
+                    context_gl->blit_targets[i].sub_resource_idx = rtv_gl->v.sub_resource_idx;
+                    context_gl->blit_targets[i].layer_count = rtv_gl->v.layer_count;
                 }
-
-                if (dsv)
-                {
-                    struct wined3d_rendertarget_view_gl *dsv_gl = wined3d_rendertarget_view_gl(dsv);
-                    ds_info.gl_view = dsv_gl->gl_view;
-                    ds_info.resource = dsv_gl->v.resource;
-                    ds_info.sub_resource_idx = dsv_gl->v.sub_resource_idx;
-                    ds_info.layer_count = dsv_gl->v.layer_count;
-                }
-
-                wined3d_context_gl_apply_fbo_state(context_gl, GL_FRAMEBUFFER, context_gl->blit_targets, &ds_info,
-                        rt_count ? rts[0]->resource->draw_binding : 0, dsv ? dsv->resource->draw_binding : 0);
-            }
-            else
-            {
-                wined3d_context_gl_apply_fbo_state(context_gl, GL_FRAMEBUFFER, NULL, &ds_info,
-                        WINED3D_LOCATION_DRAWABLE, WINED3D_LOCATION_DRAWABLE);
-                rt_mask = context_generate_rt_mask_from_resource(rts[0]->resource);
+                if (rts[i] && rts[i]->format->id != WINED3DFMT_NULL)
+                    rt_mask |= (1u << i);
             }
 
-            /* If the framebuffer is not the device's fb the device's fb has to be reapplied
-             * next draw. Otherwise we could mark the framebuffer state clean here, once the
-             * state management allows this */
-            context_invalidate_state(&context_gl->c, STATE_FRAMEBUFFER);
+            if (dsv)
+            {
+                struct wined3d_rendertarget_view_gl *dsv_gl = wined3d_rendertarget_view_gl(dsv);
+                ds_info.gl_view = dsv_gl->gl_view;
+                ds_info.resource = dsv_gl->v.resource;
+                ds_info.sub_resource_idx = dsv_gl->v.sub_resource_idx;
+                ds_info.layer_count = dsv_gl->v.layer_count;
+            }
+
+            wined3d_context_gl_apply_fbo_state(context_gl, GL_FRAMEBUFFER, context_gl->blit_targets, &ds_info,
+                    rt_count ? rts[0]->resource->draw_binding : 0, dsv ? dsv->resource->draw_binding : 0);
         }
         else
         {
-            rt_mask = wined3d_context_gl_generate_rt_mask_no_fbo(context_gl, rt_count ? rts[0]->resource : NULL);
+            wined3d_context_gl_apply_fbo_state(context_gl, GL_FRAMEBUFFER, NULL, &ds_info,
+                    WINED3D_LOCATION_DRAWABLE, WINED3D_LOCATION_DRAWABLE);
+            rt_mask = context_generate_rt_mask_from_resource(rts[0]->resource);
         }
+
+        /* If the framebuffer is not the device's fb the device's fb has to be reapplied
+         * next draw. Otherwise we could mark the framebuffer state clean here, once the
+         * state management allows this */
+        context_invalidate_state(&context_gl->c, STATE_FRAMEBUFFER);
     }
-    else if (wined3d_settings.offscreen_rendering_mode == ORM_FBO
-            && (!rt_count || wined3d_resource_is_offscreen(rts[0]->resource)))
+    else if (!rt_count || wined3d_resource_is_offscreen(rts[0]->resource))
     {
         for (i = 0; i < rt_count; ++i)
         {
@@ -3572,8 +3459,7 @@ BOOL wined3d_context_gl_apply_clear_state(struct wined3d_context_gl *context_gl,
         context_invalidate_state(&context_gl->c, STATE_FRAMEBUFFER);
     }
 
-    if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
-        wined3d_context_gl_check_fbo_status(context_gl, GL_FRAMEBUFFER);
+    wined3d_context_gl_check_fbo_status(context_gl, GL_FRAMEBUFFER);
 
     context_gl->c.last_was_blit = FALSE;
     context_gl->c.last_was_ffp_blit = FALSE;
@@ -3608,11 +3494,6 @@ static uint32_t find_draw_buffers_mask(const struct wined3d_context_gl *context_
     unsigned int rt_mask, mask;
     unsigned int i;
 
-    if (wined3d_settings.offscreen_rendering_mode != ORM_FBO)
-        return wined3d_context_gl_generate_rt_mask_no_fbo(context_gl, rts[0]->resource);
-    else if (!context_gl->c.render_offscreen)
-        return context_generate_rt_mask_from_resource(rts[0]->resource);
-
     rt_mask = ps ? ps->reg_maps.rt_mask : 1;
     rt_mask &= wined3d_mask_from_size(gl_info->limits.buffers);
     if (state->blend_state && state->blend_state->dual_source)
@@ -3639,33 +3520,23 @@ void context_gl_apply_texture_draw_state(struct wined3d_context_gl *context_gl,
     TRACE("context_gl %p, texture %p, sub_resource_idx %u, location %s.\n",
             context_gl, texture, sub_resource_idx, wined3d_debug_location(location));
 
-    if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
-    {
-        if (format->depth_size || format->stencil_size)
-            wined3d_context_gl_apply_fbo_state_explicit(context_gl, GL_DRAW_FRAMEBUFFER, NULL,
-                    0, &texture->resource, sub_resource_idx, location);
-        else
-            wined3d_context_gl_apply_fbo_state_explicit(context_gl, GL_DRAW_FRAMEBUFFER, &texture->resource,
-                    sub_resource_idx, NULL, 0, location);
-    }
+    if (format->depth_size || format->stencil_size)
+        wined3d_context_gl_apply_fbo_state_explicit(context_gl, GL_DRAW_FRAMEBUFFER, NULL,
+                0, &texture->resource, sub_resource_idx, location);
+    else
+        wined3d_context_gl_apply_fbo_state_explicit(context_gl, GL_DRAW_FRAMEBUFFER, &texture->resource,
+                sub_resource_idx, NULL, 0, location);
 
-    if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
+    if (location != WINED3D_LOCATION_DRAWABLE)
     {
-        if (location != WINED3D_LOCATION_DRAWABLE)
-        {
-            if (texture->resource.format->id == WINED3DFMT_NULL || format->depth_size || format->stencil_size)
-                rt_mask = 0;
-            else
-                rt_mask = 1;
-        }
+        if (texture->resource.format->id == WINED3DFMT_NULL || format->depth_size || format->stencil_size)
+            rt_mask = 0;
         else
-        {
-            rt_mask = context_generate_rt_mask_from_resource(&texture->resource);
-        }
+            rt_mask = 1;
     }
     else
     {
-        rt_mask = wined3d_context_gl_generate_rt_mask_no_fbo(context_gl, &texture->resource);
+        rt_mask = context_generate_rt_mask_from_resource(&texture->resource);
     }
 
     cur_mask = context_gl->current_fbo ? &context_gl->current_fbo->rt_mask : &context_gl->draw_buffers_mask;
@@ -3675,8 +3546,7 @@ void context_gl_apply_texture_draw_state(struct wined3d_context_gl *context_gl,
         *cur_mask = rt_mask;
     }
 
-    if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
-        wined3d_context_gl_check_fbo_status(context_gl, GL_DRAW_FRAMEBUFFER);
+    wined3d_context_gl_check_fbo_status(context_gl, GL_DRAW_FRAMEBUFFER);
 
     context_invalidate_state(context, STATE_FRAMEBUFFER);
 }
@@ -3686,53 +3556,39 @@ void context_state_fb(struct wined3d_context *context, const struct wined3d_stat
 {
     struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
     uint32_t rt_mask = find_draw_buffers_mask(context_gl, state);
+    const struct wined3d_rendertarget_view_gl *view_gl;
+    struct wined3d_rendertarget_info ds_info = {{0}};
     const struct wined3d_fb_state *fb = &state->fb;
     DWORD color_location = 0;
     uint32_t *cur_mask;
 
-    if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
+    memset(context_gl->blit_targets, 0, sizeof(context_gl->blit_targets));
+    for (unsigned int i = 0; i < context_gl->gl_info->limits.buffers; ++i)
     {
-        struct wined3d_rendertarget_info ds_info = {{0}};
+        if (!fb->render_targets[i])
+            continue;
 
-        if (!context->render_offscreen)
-        {
-            wined3d_context_gl_apply_fbo_state(context_gl, GL_FRAMEBUFFER, NULL, &ds_info,
-                    WINED3D_LOCATION_DRAWABLE, WINED3D_LOCATION_DRAWABLE);
-        }
-        else
-        {
-            const struct wined3d_rendertarget_view_gl *view_gl;
-            unsigned int i;
+        view_gl = wined3d_rendertarget_view_gl(fb->render_targets[i]);
+        context_gl->blit_targets[i].gl_view = view_gl->gl_view;
+        context_gl->blit_targets[i].resource = view_gl->v.resource;
+        context_gl->blit_targets[i].sub_resource_idx = view_gl->v.sub_resource_idx;
+        context_gl->blit_targets[i].layer_count = view_gl->v.layer_count;
 
-            memset(context_gl->blit_targets, 0, sizeof(context_gl->blit_targets));
-            for (i = 0; i < context_gl->gl_info->limits.buffers; ++i)
-            {
-                if (!fb->render_targets[i])
-                    continue;
-
-                view_gl = wined3d_rendertarget_view_gl(fb->render_targets[i]);
-                context_gl->blit_targets[i].gl_view = view_gl->gl_view;
-                context_gl->blit_targets[i].resource = view_gl->v.resource;
-                context_gl->blit_targets[i].sub_resource_idx = view_gl->v.sub_resource_idx;
-                context_gl->blit_targets[i].layer_count = view_gl->v.layer_count;
-
-                if (!color_location)
-                    color_location = view_gl->v.resource->draw_binding;
-            }
-
-            if (fb->depth_stencil)
-            {
-                view_gl = wined3d_rendertarget_view_gl(fb->depth_stencil);
-                ds_info.gl_view = view_gl->gl_view;
-                ds_info.resource = view_gl->v.resource;
-                ds_info.sub_resource_idx = view_gl->v.sub_resource_idx;
-                ds_info.layer_count = view_gl->v.layer_count;
-            }
-
-            wined3d_context_gl_apply_fbo_state(context_gl, GL_FRAMEBUFFER, context_gl->blit_targets, &ds_info,
-                    color_location, fb->depth_stencil ? fb->depth_stencil->resource->draw_binding : 0);
-        }
+        if (!color_location)
+            color_location = view_gl->v.resource->draw_binding;
     }
+
+    if (fb->depth_stencil)
+    {
+        view_gl = wined3d_rendertarget_view_gl(fb->depth_stencil);
+        ds_info.gl_view = view_gl->gl_view;
+        ds_info.resource = view_gl->v.resource;
+        ds_info.sub_resource_idx = view_gl->v.sub_resource_idx;
+        ds_info.layer_count = view_gl->v.layer_count;
+    }
+
+    wined3d_context_gl_apply_fbo_state(context_gl, GL_FRAMEBUFFER, context_gl->blit_targets, &ds_info,
+            color_location, fb->depth_stencil ? fb->depth_stencil->resource->draw_binding : 0);
 
     cur_mask = context_gl->current_fbo ? &context_gl->current_fbo->rt_mask : &context_gl->draw_buffers_mask;
     if (rt_mask != *cur_mask)
@@ -3740,7 +3596,6 @@ void context_state_fb(struct wined3d_context *context, const struct wined3d_stat
         wined3d_context_gl_apply_draw_buffers(context_gl, rt_mask);
         *cur_mask = rt_mask;
     }
-    context->constant_update_mask |= WINED3D_SHADER_CONST_PS_Y_CORR;
 }
 
 static void wined3d_context_gl_map_stage(struct wined3d_context_gl *context_gl, unsigned int stage, unsigned int unit)
@@ -4336,8 +4191,6 @@ static BOOL context_apply_draw_state(struct wined3d_context *context,
             FIXME("OpenGL implementation does not support framebuffers with no attachments.\n");
             return FALSE;
         }
-
-        wined3d_context_gl_set_render_offscreen(context_gl, TRUE);
     }
 
     /* Preload resources before FBO setup. Texture preload in particular may
@@ -4437,11 +4290,8 @@ static BOOL context_apply_draw_state(struct wined3d_context *context,
         context->update_compute_unordered_access_view_bindings = 1;
     }
 
-    if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
-        wined3d_context_gl_check_fbo_status(context_gl, GL_FRAMEBUFFER);
+    wined3d_context_gl_check_fbo_status(context_gl, GL_FRAMEBUFFER);
 
-    /* WINED3D_SHADER_CONST_PS_NP2_FIXUP may be set when binding shader
-     * resources, so constant loading needs to be done after that. */
     device->shader_backend->shader_apply_draw_state(device->shader_priv, context, state);
     context->shader_update_mask &= 1u << WINED3D_SHADER_TYPE_COMPUTE;
     context->constant_update_mask = 0;
@@ -4548,12 +4398,8 @@ static void wined3d_context_gl_pause_transform_feedback(struct wined3d_context_g
 static void wined3d_context_gl_setup_target(struct wined3d_context_gl *context_gl,
         struct wined3d_texture *texture, unsigned int sub_resource_idx)
 {
-    BOOL old_render_offscreen = context_gl->c.render_offscreen, render_offscreen;
-
-    render_offscreen = wined3d_resource_is_offscreen(&texture->resource);
     if (context_gl->c.current_rt.texture == texture
-            && context_gl->c.current_rt.sub_resource_idx == sub_resource_idx
-            && render_offscreen == old_render_offscreen)
+            && context_gl->c.current_rt.sub_resource_idx == sub_resource_idx)
         return;
 
     /* To compensate the lack of format switching with some offscreen rendering methods and on onscreen buffers
@@ -4574,32 +4420,10 @@ static void wined3d_context_gl_setup_target(struct wined3d_context_gl *context_g
                     || !(texture->resource.format_caps & WINED3D_FORMAT_CAP_POSTPIXELSHADER_BLENDING))
                 context_invalidate_state(&context_gl->c, STATE_BLEND);
         }
-
-        /* When switching away from an offscreen render target, and we're not
-         * using FBOs, we have to read the drawable into the texture. This is
-         * done via PreLoad (and WINED3D_LOCATION_DRAWABLE set on the surface).
-         * There are some things that need care though. PreLoad needs a GL context,
-         * and FindContext is called before the context is activated. It also
-         * has to be called with the old rendertarget active, otherwise a
-         * wrong drawable is read. */
-        if (wined3d_settings.offscreen_rendering_mode != ORM_FBO
-                && old_render_offscreen && (context_gl->c.current_rt.texture != texture
-                || context_gl->c.current_rt.sub_resource_idx != sub_resource_idx))
-        {
-            struct wined3d_texture_gl *prev_texture = wined3d_texture_gl(context_gl->c.current_rt.texture);
-            unsigned int prev_sub_resource_idx = context_gl->c.current_rt.sub_resource_idx;
-
-            /* Read the back buffer of the old drawable into the destination texture. */
-            if (prev_texture->texture_srgb.name)
-                wined3d_texture_load(&prev_texture->t, &context_gl->c, TRUE);
-            wined3d_texture_load(&prev_texture->t, &context_gl->c, FALSE);
-            wined3d_texture_invalidate_location(&prev_texture->t, prev_sub_resource_idx, WINED3D_LOCATION_DRAWABLE);
-        }
     }
 
     context_gl->c.current_rt.texture = texture;
     context_gl->c.current_rt.sub_resource_idx = sub_resource_idx;
-    wined3d_context_gl_set_render_offscreen(context_gl, render_offscreen);
 }
 
 static void wined3d_context_gl_activate(struct wined3d_context_gl *context_gl,
@@ -5278,12 +5102,11 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
 
     if ((dsv = fb->depth_stencil))
     {
-        /* Note that this depends on the context_acquire() call above to set
-         * context->render_offscreen properly. We don't currently take the
-         * Z-compare function into account, but we could skip loading the
-         * depthstencil for D3DCMP_NEVER and D3DCMP_ALWAYS as well. Also note
-         * that we never copy the stencil data.*/
-        DWORD location = context->render_offscreen ? dsv->resource->draw_binding : WINED3D_LOCATION_DRAWABLE;
+        /* We don't currently take the Z-compare function into account,
+         * but we could skip loading the depthstencil for D3DCMP_NEVER and
+         * D3DCMP_ALWAYS as well.
+         * Also note that we never copy the stencil data. */
+        uint32_t location = dsv->resource->draw_binding;
 
         if (wined3d_state_uses_depth_buffer(state))
             wined3d_rendertarget_view_load_location(dsv, context, location);
@@ -5303,7 +5126,7 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
 
     if (dsv && (!state->depth_stencil_state || state->depth_stencil_state->writes_ds))
     {
-        DWORD location = context->render_offscreen ? dsv->resource->draw_binding : WINED3D_LOCATION_DRAWABLE;
+        uint32_t location = dsv->resource->draw_binding;
 
         wined3d_rendertarget_view_validate_location(dsv, location);
         wined3d_rendertarget_view_invalidate_location(dsv, ~location);

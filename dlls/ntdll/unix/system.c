@@ -158,6 +158,37 @@ struct smbios_chassis
     BYTE contained_element_rec_length;
 };
 
+struct smbios_processor
+{
+    struct smbios_header hdr;
+    BYTE socket;
+    BYTE type;
+    BYTE family;
+    BYTE vendor;
+    ULONGLONG id;
+    BYTE version;
+    BYTE voltage;
+    WORD clock;
+    WORD max_speed;
+    WORD cur_speed;
+    BYTE status;
+    BYTE upgrade;
+    WORD l1cache;
+    WORD l2cache;
+    WORD l3cache;
+    BYTE serial;
+    BYTE asset_tag;
+    BYTE part_number;
+    BYTE core_count;
+    BYTE core_enabled;
+    BYTE thread_count;
+    WORD characteristics;
+    WORD family2;
+    WORD core_count2;
+    WORD core_enabled2;
+    WORD thread_count2;
+};
+
 struct smbios_boot_info
 {
     struct smbios_header hdr;
@@ -167,59 +198,19 @@ struct smbios_boot_info
 
 #include "poppack.h"
 
-struct smbios_bios_args
+enum smbios_type
 {
-    const char *vendor;
-    size_t vendor_len;
-    const char *version;
-    size_t version_len;
-    const char *date;
-    size_t date_len;
+    SMBIOS_TYPE_BIOS = 0,
+    SMBIOS_TYPE_SYSTEM = 1,
+    SMBIOS_TYPE_BASEBOARD = 2,
+    SMBIOS_TYPE_CHASSIS = 3,
+    SMBIOS_TYPE_PROCESSOR = 4,
+    SMBIOS_TYPE_BOOTINFO = 32,
+    SMBIOS_TYPE_END = 127
 };
 
-struct smbios_system_args
-{
-    const char *vendor;
-    size_t vendor_len;
-    const char *product;
-    size_t product_len;
-    const char *version;
-    size_t version_len;
-    const char *serial;
-    size_t serial_len;
-    GUID uuid;
-    const char *sku;
-    size_t sku_len;
-    const char *family;
-    size_t family_len;
-};
-
-struct smbios_board_args
-{
-    const char *vendor;
-    size_t vendor_len;
-    const char *product;
-    size_t product_len;
-    const char *version;
-    size_t version_len;
-    const char *serial;
-    size_t serial_len;
-    const char *asset_tag;
-    size_t asset_tag_len;
-};
-
-struct smbios_chassis_args
-{
-    const char *vendor;
-    size_t vendor_len;
-    BYTE type;
-    const char *version;
-    size_t version_len;
-    const char *serial;
-    size_t serial_len;
-    const char *asset_tag;
-    size_t asset_tag_len;
-};
+#define SMBIOS_MAJOR_VERSION 3
+#define SMBIOS_MINOR_VERSION 0
 
 /* Firmware table providers */
 #define ACPI 0x41435049
@@ -229,6 +220,8 @@ struct smbios_chassis_args
 SYSTEM_CPU_INFORMATION cpu_info = { 0 };
 static SYSTEM_PROCESSOR_FEATURES_INFORMATION cpu_features;
 static char cpu_name[49];
+static char cpu_vendor[13];
+static ULONGLONG cpu_id;
 static ULONG *performance_cores;
 static unsigned int performance_cores_capacity = 0;
 static SYSTEM_LOGICAL_PROCESSOR_INFORMATION *logical_proc_info;
@@ -305,14 +298,6 @@ void copy_xstate( XSAVE_AREA_HEADER *dst, XSAVE_AREA_HEADER *src, UINT64 mask )
         ++i;
     }
 }
-
-#define AUTH	0x68747541	/* "Auth" */
-#define ENTI	0x69746e65	/* "enti" */
-#define CAMD	0x444d4163	/* "cAMD" */
-
-#define GENU	0x756e6547	/* "Genu" */
-#define INEI	0x49656e69	/* "ineI" */
-#define NTEL	0x6c65746e	/* "ntel" */
 
 extern void do_cpuid( unsigned int ax, unsigned int cx, unsigned int *p );
 #ifdef __i386__
@@ -437,6 +422,9 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
     if (!have_cpuid()) return;
 
     do_cpuid( 0x00000000, 0, regs );  /* get standard cpuid level and vendor name */
+    memcpy( cpu_vendor, &regs[1], sizeof(unsigned int) );
+    memcpy( cpu_vendor + 4, &regs[3], sizeof(unsigned int) );
+    memcpy( cpu_vendor + 8, &regs[2], sizeof(unsigned int) );
     if (regs[0]>=0x00000001)   /* Check for supported cpuid version */
     {
         do_cpuid( 0x00000001, 0, regs2 ); /* get cpu features */
@@ -462,6 +450,7 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
         if((regs2[3] & (1 << 26)) && (regs2[3] & (1 << 24)) && have_sse_daz_mode()) /* has SSE2 and FXSAVE/FXRSTOR */
             features |= CPU_FEATURE_DAZ;
 
+        cpu_id = regs2[0] | ((ULONGLONG)regs2[3] << 32);
         if (regs[0] >= 0x00000007)
         {
             do_cpuid( 0x00000007, 0, regs3 ); /* get extended features */
@@ -493,7 +482,7 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
             TRACE("xstate_features_size %lld.\n", (long long)xstate_features_size);
         }
 
-        if (regs[1] == AUTH && regs[3] == ENTI && regs[2] == CAMD)
+        if (!strcmp( cpu_vendor, "AuthenticAMD" ))
         {
             info->ProcessorLevel = (regs2[0] >> 8) & 0xf; /* family */
             if (info->ProcessorLevel == 0xf)  /* AMD says to add the extended family to the family if family is 0xf */
@@ -515,7 +504,7 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
             }
             if (regs[0] >= 0x80000004) get_cpuid_name( cpu_name );
         }
-        else if (regs[1] == GENU && regs[3] == INEI && regs[2] == NTEL)
+        else if (!strcmp( cpu_vendor, "GenuineIntel" ))
         {
             info->ProcessorLevel = ((regs2[0] >> 8) & 0xf) + ((regs2[0] >> 20) & 0xff); /* family + extended family */
             if(info->ProcessorLevel == 15) info->ProcessorLevel = 6;
@@ -549,71 +538,12 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
     info->ProcessorFeatureBits = cpu_features.ProcessorFeatureBits = features;
 }
 
-#elif defined(__arm__)
-
-static inline void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
-{
-    ULONGLONG features = 0;
-#ifdef linux
-    char line[512];
-    char *s, *value;
-    FILE *f = fopen("/proc/cpuinfo", "r");
-    if (f)
-    {
-        while (fgets( line, sizeof(line), f ))
-        {
-            /* NOTE: the ':' is the only character we can rely on */
-            if (!(value = strchr(line,':'))) continue;
-            /* terminate the valuename */
-            s = value - 1;
-            while ((s >= line) && (*s == ' ' || *s == '\t')) s--;
-            s[1] = 0;
-            /* and strip leading spaces from value */
-            value += 1;
-            while (*value == ' ' || *value == '\t') value++;
-            if ((s = strchr( value,'\n' ))) *s = 0;
-            if (!strcmp( line, "CPU architecture" ))
-            {
-                info->ProcessorLevel = atoi(value);
-                continue;
-            }
-            if (!strcmp( line, "CPU revision" ))
-            {
-                info->ProcessorRevision = atoi(value);
-                continue;
-            }
-            if (!strcmp( line, "Features" ))
-            {
-                if (strstr(value, "crc32")) features |= CPU_FEATURE_ARM_V8_CRC32;
-                if (strstr(value, "aes"))   features |= CPU_FEATURE_ARM_V8_CRYPTO;
-                continue;
-            }
-        }
-        fclose( f );
-    }
-#elif defined(__FreeBSD__)
-    size_t valsize;
-    char buf[8];
-    int value;
-
-    valsize = sizeof(buf);
-    if (!sysctlbyname("hw.machine_arch", &buf, &valsize, NULL, 0) && sscanf(buf, "armv%i", &value) == 1)
-        info->ProcessorLevel = value;
-
-    valsize = sizeof(value);
-    if (!sysctlbyname("hw.floatingpoint", &value, &valsize, NULL, 0)) features |= CPU_FEATURE_ARM_VFP_32;
-#else
-    FIXME("CPU Feature detection not implemented.\n");
-#endif
-    info->ProcessorArchitecture = PROCESSOR_ARCHITECTURE_ARM;
-    info->ProcessorFeatureBits = cpu_features.ProcessorFeatureBits = features;
-}
-
-#elif defined(__aarch64__)
+#elif defined(__arm__) || defined(__aarch64__)
 
 static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
 {
     ULONGLONG features = 0;
+    unsigned int implementer = 0x41, part = 0, variant = 0, revision = 0;
 #ifdef linux
     char line[512];
     char *s, *value;
@@ -632,24 +562,23 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
             value += 1;
             while (*value == ' ' || *value == '\t') value++;
             if ((s = strchr( value,'\n' ))) *s = 0;
-            if (!strcmp( line, "CPU architecture" ))
+            if (!strcmp( line, "CPU implementer" )) implementer = strtoul( value, NULL, 0);
+            else if (!strcmp( line, "CPU part" )) part = strtoul( value, NULL, 0);
+            else if (!strcmp( line, "CPU variant" )) variant = strtoul( value, NULL, 0);
+            else if (!strcmp( line, "CPU revision" )) revision = strtoul( value, NULL, 0);
+            else if (!strcmp( line, "Features" ))
             {
-                info->ProcessorLevel = atoi(value);
-                continue;
-            }
-            if (!strcmp( line, "CPU revision" ))
-            {
-                info->ProcessorRevision = atoi(value);
-                continue;
-            }
-            if (!strcmp( line, "Features" ))
-            {
+#ifdef __arm__
+                if (strstr(value, "vfpv3"))   features |= CPU_FEATURE_ARM_VFP_32;
+                if (strstr(value, "neon"))    features |= CPU_FEATURE_ARM_NEON;
+#else
                 if (strstr(value, "crc32"))   features |= CPU_FEATURE_ARM_V8_CRC32;
                 if (strstr(value, "aes"))     features |= CPU_FEATURE_ARM_V8_CRYPTO;
                 if (strstr(value, "atomics")) features |= CPU_FEATURE_ARM_V81_ATOMIC;
                 if (strstr(value, "asimddp")) features |= CPU_FEATURE_ARM_V82_DP;
                 if (strstr(value, "jscvt"))   features |= CPU_FEATURE_ARM_V83_JSCVT;
                 if (strstr(value, "lrcpc"))   features |= CPU_FEATURE_ARM_V83_LRCPC;
+#endif
                 continue;
             }
         }
@@ -658,9 +587,29 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
 #else
     FIXME("CPU Feature detection not implemented.\n");
 #endif
-    info->ProcessorLevel = max(info->ProcessorLevel, 8);
+#ifdef __arm__
+    info->ProcessorArchitecture = PROCESSOR_ARCHITECTURE_ARM;
+#else
     info->ProcessorArchitecture = PROCESSOR_ARCHITECTURE_ARM64;
+#endif
     info->ProcessorFeatureBits = cpu_features.ProcessorFeatureBits = features;
+    info->ProcessorLevel = part;
+    info->ProcessorRevision = (variant << 8) | revision;
+    cpu_id = (implementer << 24) | (variant << 20) | (0x0f << 16) | (part << 4) | revision;
+    switch (implementer)
+    {
+    case 0x41: strcpy( cpu_vendor, "ARM" ); break;
+    case 0x42: strcpy( cpu_vendor, "Broadcom" ); break;
+    case 0x43: strcpy( cpu_vendor, "Cavium" ); break;
+    case 0x44: strcpy( cpu_vendor, "DEC" ); break;
+    case 0x4e: strcpy( cpu_vendor, "Nvidia" ); break;
+    case 0x50: strcpy( cpu_vendor, "APM" ); break;
+    case 0x51: strcpy( cpu_vendor, "Qualcomm" ); break;
+    case 0x53: strcpy( cpu_vendor, "Samsung" ); break;
+    case 0x56: strcpy( cpu_vendor, "Marvell" ); break;
+    case 0x66: strcpy( cpu_vendor, "Faraday" ); break;
+    case 0x69: strcpy( cpu_vendor, "Intel" ); break;
+    }
 }
 
 #endif /* End architecture specific feature detection for CPUs */
@@ -1081,7 +1030,7 @@ static NTSTATUS create_logical_proc_info(void)
 
             for (j = 0; j < 4; j++)
             {
-                CACHE_DESCRIPTOR cache;
+                CACHE_DESCRIPTOR cache = { .Associativity = 8, .LineSize = 64, .Type = CacheUnified, .Size = 64 * 1024 };
                 ULONG_PTR mask = 0;
 
                 snprintf(name, sizeof(name), cache_info, i, j, "shared_cpu_map");
@@ -1095,39 +1044,43 @@ static NTSTATUS create_logical_proc_info(void)
                 cache.Level = r;
 
                 snprintf(name, sizeof(name), cache_info, i, j, "ways_of_associativity");
-                f = fopen(name, "r");
-                if(!f) continue;
-                fscanf(f, "%u", &r);
-                fclose(f);
-                cache.Associativity = r;
+                if ((f = fopen(name, "r")))
+                {
+                    fscanf(f, "%u", &r);
+                    fclose(f);
+                    cache.Associativity = r;
+                }
 
                 snprintf(name, sizeof(name), cache_info, i, j, "coherency_line_size");
-                f = fopen(name, "r");
-                if(!f) continue;
-                fscanf(f, "%u", &r);
-                fclose(f);
-                cache.LineSize = r;
+                if ((f = fopen(name, "r")))
+                {
+                    fscanf(f, "%u", &r);
+                    fclose(f);
+                    cache.LineSize = r;
+                }
 
                 snprintf(name, sizeof(name), cache_info, i, j, "size");
-                f = fopen(name, "r");
-                if(!f) continue;
-                fscanf(f, "%u%c", &r, &op);
-                fclose(f);
-                if(op != 'K')
-                    WARN("unknown cache size %u%c\n", r, op);
-                cache.Size = (op=='K' ? r*1024 : r);
+                if ((f = fopen(name, "r")))
+                {
+                    fscanf(f, "%u%c", &r, &op);
+                    fclose(f);
+                    if(op != 'K')
+                        WARN("unknown cache size %u%c\n", r, op);
+                    cache.Size = (op=='K' ? r*1024 : r);
+                }
 
                 snprintf(name, sizeof(name), cache_info, i, j, "type");
-                f = fopen(name, "r");
-                if(!f) continue;
-                fscanf(f, "%s", name);
-                fclose(f);
-                if (!memcmp(name, "Data", 5))
-                    cache.Type = CacheData;
-                else if(!memcmp(name, "Instruction", 11))
-                    cache.Type = CacheInstruction;
-                else
-                    cache.Type = CacheUnified;
+                if ((f = fopen(name, "r")))
+                {
+                    fscanf(f, "%s", name);
+                    fclose(f);
+                    if (!memcmp(name, "Data", 5))
+                        cache.Type = CacheData;
+                    else if(!memcmp(name, "Instruction", 11))
+                        cache.Type = CacheInstruction;
+                    else
+                        cache.Type = CacheUnified;
+                }
 
                 if (!logical_proc_info_add_cache( mask, &cache ))
                 {
@@ -1359,7 +1312,7 @@ void init_cpu_info(void)
     num = 1;
     FIXME("Detecting the number of processors is not supported.\n");
 #endif
-    peb->NumberOfProcessors = num;
+    peb->NumberOfProcessors = cpu_info.MaximumProcessors = num;
     get_cpuinfo( &cpu_info );
     TRACE( "<- CPU arch %d, level %d, rev %d, features 0x%x\n",
            (int)cpu_info.ProcessorArchitecture, (int)cpu_info.ProcessorLevel,
@@ -1464,216 +1417,250 @@ static NTSTATUS create_cpuset_info(SYSTEM_CPU_SET_INFORMATION *info)
     return STATUS_SUCCESS;
 }
 
-#if defined(linux) || defined(__APPLE__)
-
-static void copy_smbios_string( char **buffer, const char *s, size_t len )
+struct smbios_buffer
 {
-    if (!len) return;
-    memcpy(*buffer, s, len + 1);
-    *buffer += len + 1;
+    struct smbios_prologue *prologue;  /* prologue followed by data */
+    unsigned int            size;      /* allocated size past prologue */
+    WORD                    handle;    /* handle count */
+};
+
+static WORD append_smbios( struct smbios_buffer *buf, struct smbios_header *hdr,
+                           const char *strings[], unsigned int strings_count )
+{
+    struct smbios_prologue *prologue = buf->prologue;
+    unsigned int i, len = hdr->length;
+    char *pos;
+
+    for (i = 0; i < strings_count; i++) len += strlen( strings[i] ) + 1;
+    len += 1 + !strings_count;
+
+    if (!prologue)
+    {
+        unsigned int size = max( 1024, len );
+
+        if (!(prologue = malloc( sizeof(*prologue) + size ))) return 0;
+        prologue->calling_method = 0;
+        prologue->major_version  = SMBIOS_MAJOR_VERSION;
+        prologue->minor_version  = SMBIOS_MINOR_VERSION;
+        prologue->revision       = 0;
+        prologue->length         = 0;
+
+        buf->prologue = prologue;
+        buf->size     = size;
+        buf->handle   = 0;
+    }
+    else if (prologue->length + len > buf->size)
+    {
+        unsigned int size = max( prologue->length + len, buf->size * 2 );
+        if (!(prologue = realloc( buf->prologue, sizeof(*prologue) + size ))) return 0;
+        buf->prologue = prologue;
+        buf->size     = size;
+    }
+
+    pos = (char *)(prologue + 1) + prologue->length;
+    hdr->handle = buf->handle++;
+    memcpy( pos, hdr, hdr->length );
+    pos += hdr->length;
+    for (i = 0; i < strings_count; i++)
+    {
+        strcpy( pos, strings[i] );
+        pos += strlen( strings[i] ) + 1;
+    }
+    if (!strings_count) *pos++ = 0;
+    *pos = 0;
+    prologue->length += len;
+    return hdr->handle;
 }
 
-static NTSTATUS create_smbios_tables( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len,
-                                      ULONG *required_len,
-                                      const struct smbios_bios_args *bios_args,
-                                      const struct smbios_system_args *system_args,
-                                      const struct smbios_board_args *board_args,
-                                      const struct smbios_chassis_args *chassis_args )
+#define ADD_STR(str) (*(str) ? (strings[string_count] = (str), ++string_count) : 0)
+
+static WORD append_smbios_bios( struct smbios_buffer *buf, const char *vendor, const char *version,
+                                const char *date )
 {
-    char *buffer = (char*)sfti->TableBuffer;
-    BYTE string_count;
-    BYTE handle_count = 0;
-    struct smbios_prologue *prologue;
-    struct smbios_bios *bios;
-    struct smbios_system *system;
-    struct smbios_board *board;
-    struct smbios_chassis *chassis;
-    struct smbios_boot_info *boot_info;
-    struct smbios_header *end_of_table;
+    const char *strings[3];
+    unsigned int string_count = 0;
+    struct smbios_bios bios = { .hdr.type = SMBIOS_TYPE_BIOS, .hdr.length = sizeof(bios) };
 
-    *required_len = sizeof(struct smbios_prologue);
-
-#define L(l) (l + (l ? 1 : 0))
-    *required_len += sizeof(struct smbios_bios);
-    *required_len += max(L(bios_args->vendor_len) + L(bios_args->version_len) + L(bios_args->date_len) + 1, 2);
-
-    *required_len += sizeof(struct smbios_system);
-    *required_len += max(L(system_args->vendor_len) + L(system_args->product_len) + L(system_args->version_len) +
-                         L(system_args->serial_len) + L(system_args->sku_len) + L(system_args->family_len) + 1, 2);
-
-    *required_len += sizeof(struct smbios_board);
-    *required_len += max(L(board_args->vendor_len) + L(board_args->product_len) + L(board_args->version_len) +
-                         L(board_args->serial_len) + L(board_args->asset_tag_len) + 1, 2);
-
-    *required_len += sizeof(struct smbios_chassis);
-    *required_len += max(L(chassis_args->vendor_len) + L(chassis_args->version_len) + L(chassis_args->serial_len) +
-                         L(chassis_args->asset_tag_len) + 1, 2);
-
-    *required_len += sizeof(struct smbios_boot_info);
-    *required_len += 2;
-
-    *required_len += sizeof(struct smbios_header);
-    *required_len += 2;
-#undef L
-
-    sfti->TableBufferLength = *required_len;
-
-    *required_len += FIELD_OFFSET(SYSTEM_FIRMWARE_TABLE_INFORMATION, TableBuffer);
-
-    if (available_len < *required_len)
-        return STATUS_BUFFER_TOO_SMALL;
-
-    prologue = (struct smbios_prologue*)buffer;
-    prologue->calling_method = 0;
-    prologue->major_version = 2;
-    prologue->minor_version = 4;
-    prologue->revision = 0;
-    prologue->length = sfti->TableBufferLength - sizeof(struct smbios_prologue);
-    buffer += sizeof(struct smbios_prologue);
-
-    string_count = 0;
-    bios = (struct smbios_bios*)buffer;
-    bios->hdr.type = 0;
-    bios->hdr.length = sizeof(struct smbios_bios);
-    bios->hdr.handle = handle_count++;
-    bios->vendor = bios_args->vendor_len ? ++string_count : 0;
-    bios->version = bios_args->version_len ? ++string_count : 0;
-    bios->start = 0;
-    bios->date = bios_args->date_len ? ++string_count : 0;
-    bios->size = 0;
-    bios->characteristics = 0x4; /* not supported */
-    bios->characteristics_ext[0] = 0;
-    bios->characteristics_ext[1] = 0;
-    bios->system_bios_major_release = 0xFF; /* not supported */
-    bios->system_bios_minor_release = 0xFF; /* not supported */
-    bios->ec_firmware_major_release = 0xFF; /* not supported */
-    bios->ec_firmware_minor_release = 0xFF; /* not supported */
-    buffer += sizeof(struct smbios_bios);
-
-    copy_smbios_string(&buffer, bios_args->vendor, bios_args->vendor_len);
-    copy_smbios_string(&buffer, bios_args->version, bios_args->version_len);
-    copy_smbios_string(&buffer, bios_args->date, bios_args->date_len);
-    if (!string_count) *buffer++ = 0;
-    *buffer++ = 0;
-
-    string_count = 0;
-    system = (struct smbios_system*)buffer;
-    system->hdr.type = 1;
-    system->hdr.length = sizeof(struct smbios_system);
-    system->hdr.handle = handle_count++;
-    system->vendor = system_args->vendor_len ? ++string_count : 0;
-    system->product = system_args->product_len ? ++string_count : 0;
-    system->version = system_args->version_len ? ++string_count : 0;
-    system->serial = system_args->serial_len ? ++string_count : 0;
-    memcpy( system->uuid, &system_args->uuid, sizeof(GUID) );
-    system->wake_up_type = 0x02; /* unknown */
-    system->sku_number = system_args->sku_len ? ++string_count : 0;
-    system->family = system_args->family_len ? ++string_count : 0;
-    buffer += sizeof(struct smbios_system);
-
-    copy_smbios_string(&buffer, system_args->vendor, system_args->vendor_len);
-    copy_smbios_string(&buffer, system_args->product, system_args->product_len);
-    copy_smbios_string(&buffer, system_args->version, system_args->version_len);
-    copy_smbios_string(&buffer, system_args->serial, system_args->serial_len);
-    copy_smbios_string(&buffer, system_args->sku, system_args->sku_len);
-    copy_smbios_string(&buffer, system_args->family, system_args->family_len);
-    if (!string_count) *buffer++ = 0;
-    *buffer++ = 0;
-
-    string_count = 0;
-    chassis = (struct smbios_chassis*)buffer;
-    chassis->hdr.type = 3;
-    chassis->hdr.length = sizeof(struct smbios_chassis);
-    chassis->hdr.handle = handle_count++;
-    chassis->vendor = chassis_args->vendor_len ? ++string_count : 0;
-    chassis->type = chassis_args->type;
-    chassis->version = chassis_args->version_len ? ++string_count : 0;
-    chassis->serial = chassis_args->serial_len ? ++string_count : 0;
-    chassis->asset_tag = chassis_args->asset_tag_len ? ++string_count : 0;
-    chassis->boot_state = 0x02; /* unknown */
-    chassis->power_supply_state = 0x02; /* unknown */
-    chassis->thermal_state = 0x02; /* unknown */
-    chassis->security_status = 0x02; /* unknown */
-    chassis->oem_defined = 0;
-    chassis->height = 0; /* undefined */
-    chassis->num_power_cords = 0; /* unspecified */
-    chassis->num_contained_elements = 0;
-    chassis->contained_element_rec_length = 3;
-    buffer += sizeof(struct smbios_chassis);
-
-    copy_smbios_string(&buffer, chassis_args->vendor, chassis_args->vendor_len);
-    copy_smbios_string(&buffer, chassis_args->version, chassis_args->version_len);
-    copy_smbios_string(&buffer, chassis_args->serial, chassis_args->serial_len);
-    copy_smbios_string(&buffer, chassis_args->asset_tag, chassis_args->asset_tag_len);
-    if (!string_count) *buffer++ = 0;
-    *buffer++ = 0;
-
-    string_count = 0;
-    board = (struct smbios_board*)buffer;
-    board->hdr.type = 2;
-    board->hdr.length = sizeof(struct smbios_board);
-    board->hdr.handle = handle_count++;
-    board->vendor = board_args->vendor_len ? ++string_count : 0;
-    board->product = board_args->product_len ? ++string_count : 0;
-    board->version = board_args->version_len ? ++string_count : 0;
-    board->serial = board_args->serial_len ? ++string_count : 0;
-    board->asset_tag = board_args->asset_tag_len ? ++string_count : 0;
-    board->feature_flags = 0x5; /* hosting board, removable */
-    board->location = 0;
-    board->chassis_handle = chassis->hdr.handle;
-    board->board_type = 0xa; /* motherboard */
-    board->num_contained_handles = 0;
-    buffer += sizeof(struct smbios_board);
-
-    copy_smbios_string(&buffer, board_args->vendor, board_args->vendor_len);
-    copy_smbios_string(&buffer, board_args->product, board_args->product_len);
-    copy_smbios_string(&buffer, board_args->version, board_args->version_len);
-    copy_smbios_string(&buffer, board_args->serial, board_args->serial_len);
-    copy_smbios_string(&buffer, board_args->asset_tag, board_args->asset_tag_len);
-    if (!string_count) *buffer++ = 0;
-    *buffer++ = 0;
-
-    boot_info = (struct smbios_boot_info*)buffer;
-    boot_info->hdr.type = 32;
-    boot_info->hdr.length = sizeof(struct smbios_boot_info);
-    boot_info->hdr.handle = handle_count++;
-    memset(boot_info->reserved, 0, sizeof(boot_info->reserved));
-    memset(boot_info->boot_status, 0, sizeof(boot_info->boot_status)); /* no errors detected */
-    buffer += sizeof(struct smbios_boot_info);
-    *buffer++ = 0;
-    *buffer++ = 0;
-
-    end_of_table = (struct smbios_header*)buffer;
-    end_of_table->type = 127;
-    end_of_table->length = sizeof(struct smbios_header);
-    end_of_table->handle = handle_count++;
-    buffer += sizeof(struct smbios_header);
-    *buffer++ = 0;
-    *buffer++ = 0;
-
-    return STATUS_SUCCESS;
+    bios.vendor                    = ADD_STR( vendor );
+    bios.version                   = ADD_STR( version );
+    bios.start                     = 0xe000;
+    bios.date                      = ADD_STR( date );
+    bios.characteristics           = 0x8;  /* not supported */
+    bios.system_bios_major_release = 0xFF; /* not supported */
+    bios.system_bios_minor_release = 0xFF; /* not supported */
+    bios.ec_firmware_major_release = 0xFF; /* not supported */
+    bios.ec_firmware_minor_release = 0xFF; /* not supported */
+    return append_smbios( buf, &bios.hdr, strings, string_count );
 }
 
-#endif
+static WORD append_smbios_system( struct smbios_buffer *buf, const char *vendor, const char *product,
+                                  const char *version, const char *serial, const char *sku,
+                                  const char *family, const GUID *uuid )
+{
+    const char *strings[6];
+    unsigned int string_count = 0;
+    struct smbios_system system = { .hdr.type = SMBIOS_TYPE_SYSTEM, .hdr.length = sizeof(system) };
+
+    system.vendor       = ADD_STR( vendor );
+    system.product      = ADD_STR( product );
+    system.version      = ADD_STR( version );
+    system.serial       = ADD_STR( serial );
+    memcpy( &system.uuid, uuid, sizeof(*uuid) );
+    system.wake_up_type = 0x06; /* power switch */
+    system.sku_number   = ADD_STR( sku );
+    system.family       = ADD_STR( family );
+    return append_smbios( buf, &system.hdr, strings, string_count );
+}
+
+static WORD append_smbios_chassis( struct smbios_buffer *buf, BYTE type, const char *vendor,
+                                   const char *version, const char *serial, const char *asset_tag )
+{
+    const char *strings[4];
+    unsigned int string_count = 0;
+    struct smbios_chassis chassis = { .hdr.type = SMBIOS_TYPE_CHASSIS, .hdr.length = sizeof(chassis) };
+
+    chassis.vendor                       = ADD_STR( vendor );
+    chassis.type                         = type ? type : 2; /* unknown */
+    chassis.version                      = ADD_STR( version );
+    chassis.serial                       = ADD_STR( serial );
+    chassis.asset_tag                    = ADD_STR( asset_tag );
+    chassis.boot_state                   = 0x02; /* unknown */
+    chassis.power_supply_state           = 0x02; /* unknown */
+    chassis.thermal_state                = 0x02; /* unknown */
+    chassis.security_status              = 0x02; /* unknown */
+    chassis.oem_defined                  = 0;
+    chassis.height                       = 0; /* undefined */
+    chassis.num_power_cords              = 0; /* unspecified */
+    chassis.num_contained_elements       = 0;
+    chassis.contained_element_rec_length = 3;
+    return append_smbios( buf, &chassis.hdr, strings, string_count );
+}
+
+static WORD append_smbios_board( struct smbios_buffer *buf, WORD chassis_handle, const char *vendor,
+                                 const char *product, const char *version, const char *serial,
+                                 const char *asset_tag )
+{
+    const char *strings[5];
+    unsigned int string_count = 0;
+    struct smbios_board board = { .hdr.type = SMBIOS_TYPE_BASEBOARD, .hdr.length = sizeof(board) };
+
+    board.vendor                = ADD_STR( vendor );
+    board.product               = ADD_STR( product );
+    board.version               = ADD_STR( version );
+    board.serial                = ADD_STR( serial );
+    board.asset_tag             = ADD_STR( asset_tag );
+    board.feature_flags         = 0x5; /* hosting board, removable */
+    board.location              = 0;
+    board.chassis_handle        = chassis_handle;
+    board.board_type            = 0xa; /* motherboard */
+    board.num_contained_handles = 0;
+    return append_smbios( buf, &board.hdr, strings, string_count );
+}
+
+static WORD append_smbios_processor( struct smbios_buffer *buf, WORD core_count, WORD thread_count,
+                                     WORD family, const char *socket, const char *vendor,
+                                     const char *version, const char *serial, const char *asset_tag )
+{
+    const char *strings[5];
+    unsigned int string_count = 0;
+    struct smbios_processor proc = { .hdr.type = SMBIOS_TYPE_PROCESSOR, .hdr.length = sizeof(proc) };
+
+    proc.socket         = ADD_STR( socket );
+    proc.type           = 3;  /* central processor */
+    proc.family         = family ? min( family, 0xfe ) : 2; /* unknown */
+    proc.vendor         = ADD_STR( vendor );
+    proc.id             = cpu_id;
+    proc.version        = ADD_STR( version );
+    proc.status         = 0x41; /* cpu enabled */
+    proc.upgrade        = 2;  /* unknown */
+    proc.l1cache        = 0xffff;  /* unknown */
+    proc.l2cache        = 0xffff;  /* unknown */
+    proc.l3cache        = 0xffff;  /* unknown */
+    proc.serial         = ADD_STR( serial );
+    proc.asset_tag      = ADD_STR( asset_tag );
+    proc.core_count     = min( core_count, 0xff );
+    proc.core_enabled   = min( core_count, 0xff );
+    proc.thread_count   = min( thread_count, 0xff );
+    proc.family2        = family ? family : 2;
+    proc.core_count2    = core_count;
+    proc.core_enabled2  = core_count;
+    proc.thread_count2  = thread_count;
+    if (sizeof(void *) > sizeof(int)) proc.characteristics |= 1 << 2;  /* 64-bit */
+    if (core_count > 1) proc.characteristics |= 1 << 3;  /* multi-core */
+    if (thread_count > core_count) proc.characteristics |= 1 << 4;  /* multi-thread */
+    return append_smbios( buf, &proc.hdr, strings, string_count );
+}
+
+static WORD append_smbios_boot_info( struct smbios_buffer *buf )
+{
+    struct smbios_boot_info boot = { .hdr.type = SMBIOS_TYPE_BOOTINFO, .hdr.length = sizeof(boot) };
+
+    return append_smbios( buf, &boot.hdr, NULL, 0 );
+}
+
+static void append_smbios_end( struct smbios_buffer *buf )
+{
+    struct smbios_header end = { .type = SMBIOS_TYPE_END, .length = sizeof(end) };
+
+    append_smbios( buf, &end, NULL, 0 );
+}
+
+static void create_smbios_processors( struct smbios_buffer *buf )
+{
+    char socket[20], name[49];
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *p = logical_proc_info_ex;
+    UINT i, family = 0, core_count = 0, thread_count = 0, pkg_count = 0;
+
+    strcpy( name, cpu_name );
+    for (i = strlen(name); i > 0 && name[i - 1] == ' '; i--) name[i - 1] = 0;
+
+    while ((char *)p != (char *)logical_proc_info_ex + logical_proc_info_ex_size)
+    {
+        switch (p->Relationship)
+        {
+        case RelationProcessorPackage:
+            if (!pkg_count++) break;
+            snprintf( socket, sizeof(socket), "Socket #%u", pkg_count - 1 );
+            append_smbios_processor( buf, core_count, thread_count, family,
+                                     socket, cpu_vendor, name, "", "" );
+            core_count = thread_count = 0;
+            break;
+        case RelationProcessorCore:
+            core_count++;
+            thread_count++;
+            if (p->Processor.Flags & LTP_PC_SMT) thread_count++;
+            break;
+        default:
+            break;
+        }
+        p = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)((char *)p + p->Size);
+    }
+    snprintf( socket, sizeof(socket), "Socket #%u", pkg_count - 1 );
+    append_smbios_processor( buf, core_count, thread_count, family,
+                             socket, cpu_vendor, name, "", "" );
+}
+
+#undef ADD_STR
 
 #ifdef linux
 
-static size_t get_smbios_string( const char *path, char *str, size_t size )
+static const char *get_smbios_string( const char *path, char *str, size_t size )
 {
     FILE *file;
     size_t len;
 
-    if (!(file = fopen(path, "r"))) return 0;
+    str[0] = 0;
+    if (!(file = fopen(path, "r"))) return str;
 
     len = fread( str, 1, size - 1, file );
     fclose( file );
 
     if (len >= 1 && str[len - 1] == '\n') len--;
     str[len] = 0;
-    return len;
+    return str;
 }
 
-static void get_system_uuid( GUID *uuid )
+static GUID *get_system_uuid( GUID *uuid )
 {
     static const unsigned char hex[] =
     {
@@ -1710,103 +1697,75 @@ static void get_system_uuid( GUID *uuid )
         }
         close( fd );
     }
+    return uuid;
 }
 
-static NTSTATUS get_firmware_info( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len,
-                                   ULONG *required_len )
+static struct smbios_prologue *create_smbios_data(void)
 {
-    switch (sfti->ProviderSignature)
-    {
-    case RSMB:
-    {
-        char bios_vendor[128], bios_version[128], bios_date[128];
-        struct smbios_bios_args bios_args;
-        char system_vendor[128], system_product[128], system_version[128], system_serial[128];
-        char system_sku[128], system_family[128];
-        struct smbios_system_args system_args;
-        char board_vendor[128], board_product[128], board_version[128], board_serial[128], board_asset_tag[128];
-        struct smbios_board_args board_args;
-        char chassis_vendor[128], chassis_version[128], chassis_serial[128], chassis_asset_tag[128];
-        char chassis_type[11] = "2"; /* unknown */
-        struct smbios_chassis_args chassis_args;
+    char vendor[128], version[128], date[128], product[128], serial[128];
+    char sku[128], family[128], asset_tag[128], type[11];
+    GUID uuid;
+    BYTE chassis;
+    struct smbios_buffer buf = { 0 };
 
 #define S(s) s, sizeof(s)
-        bios_args.vendor_len = get_smbios_string("/sys/class/dmi/id/bios_vendor", S(bios_vendor));
-        bios_args.vendor = bios_vendor;
-        bios_args.version_len = get_smbios_string("/sys/class/dmi/id/bios_version", S(bios_version));
-        bios_args.version = bios_version;
-        bios_args.date_len = get_smbios_string("/sys/class/dmi/id/bios_date", S(bios_date));
-        bios_args.date = bios_date;
+    append_smbios_bios( &buf,
+                        get_smbios_string( "/sys/class/dmi/id/bios_vendor", S(vendor) ),
+                        get_smbios_string( "/sys/class/dmi/id/bios_version", S(version) ),
+                        get_smbios_string( "/sys/class/dmi/id/bios_date", S(date) ));
 
-        system_args.vendor_len = get_smbios_string("/sys/class/dmi/id/sys_vendor", S(system_vendor));
-        system_args.vendor = system_vendor;
-        system_args.product_len = get_smbios_string("/sys/class/dmi/id/product_name", S(system_product));
-        system_args.product = system_product;
-        system_args.version_len = get_smbios_string("/sys/class/dmi/id/product_version", S(system_version));
-        system_args.version = system_version;
-        system_args.serial_len = get_smbios_string("/sys/class/dmi/id/product_serial", S(system_serial));
-        system_args.serial = system_serial;
-        get_system_uuid(&system_args.uuid);
-        system_args.sku_len = get_smbios_string("/sys/class/dmi/id/product_sku", S(system_sku));
-        system_args.sku = system_sku;
-        system_args.family_len = get_smbios_string("/sys/class/dmi/id/product_family", S(system_family));
-        system_args.family = system_family;
+    append_smbios_system( &buf,
+                          get_smbios_string( "/sys/class/dmi/id/sys_vendor", S(vendor) ),
+                          get_smbios_string( "/sys/class/dmi/id/product_name", S(product) ),
+                          get_smbios_string( "/sys/class/dmi/id/product_version", S(version) ),
+                          get_smbios_string( "/sys/class/dmi/id/product_serial", S(serial) ),
+                          get_smbios_string( "/sys/class/dmi/id/product_sku", S(sku) ),
+                          get_smbios_string( "/sys/class/dmi/id/product_family", S(family) ),
+                          get_system_uuid( &uuid ));
 
-        board_args.vendor_len = get_smbios_string("/sys/class/dmi/id/board_vendor", S(board_vendor));
-        board_args.vendor = board_vendor;
-        board_args.product_len = get_smbios_string("/sys/class/dmi/id/board_name", S(board_product));
-        board_args.product = board_product;
-        board_args.version_len = get_smbios_string("/sys/class/dmi/id/board_version", S(board_version));
-        board_args.version = board_version;
-        board_args.serial_len = get_smbios_string("/sys/class/dmi/id/board_serial", S(board_serial));
-        board_args.serial = board_serial;
-        board_args.asset_tag_len = get_smbios_string("/sys/class/dmi/id/board_asset_tag", S(board_asset_tag));
-        board_args.asset_tag = board_asset_tag;
+    get_smbios_string( "/sys/class/dmi/id/chassis_type", S(type) );
+    chassis = append_smbios_chassis( &buf, atoi(type),
+                                     get_smbios_string( "/sys/class/dmi/id/chassis_vendor", S(vendor) ),
+                                     get_smbios_string( "/sys/class/dmi/id/chassis_version", S(version) ),
+                                     get_smbios_string( "/sys/class/dmi/id/chassis_serial", S(serial) ),
+                                     get_smbios_string( "/sys/class/dmi/id/chassis_tag", S(asset_tag) ));
 
-        chassis_args.vendor_len = get_smbios_string("/sys/class/dmi/id/chassis_vendor", S(chassis_vendor));
-        chassis_args.vendor = chassis_vendor;
-        get_smbios_string("/sys/class/dmi/id/chassis_type", S(chassis_type));
-        chassis_args.type = atoi(chassis_type);
-        chassis_args.version_len = get_smbios_string("/sys/class/dmi/id/chassis_version", S(chassis_version));
-        chassis_args.version = chassis_version;
-        chassis_args.serial_len = get_smbios_string("/sys/class/dmi/id/chassis_serial", S(chassis_serial));
-        chassis_args.serial = chassis_serial;
-        chassis_args.asset_tag_len = get_smbios_string("/sys/class/dmi/id/chassis_tag", S(chassis_asset_tag));
-        chassis_args.asset_tag = chassis_asset_tag;
+    append_smbios_board( &buf, chassis,
+                         get_smbios_string( "/sys/class/dmi/id/board_vendor", S(vendor) ),
+                         get_smbios_string( "/sys/class/dmi/id/board_name", S(product) ),
+                         get_smbios_string( "/sys/class/dmi/id/board_version", S(version) ),
+                         get_smbios_string( "/sys/class/dmi/id/board_serial", S(serial) ),
+                         get_smbios_string( "/sys/class/dmi/id/board_asset_tag", S(asset_tag) ));
 #undef S
 
-        return create_smbios_tables( sfti, available_len, required_len,
-                                     &bios_args, &system_args, &board_args, &chassis_args );
-    }
-    default:
-        FIXME("info_class SYSTEM_FIRMWARE_TABLE_INFORMATION provider %08x\n", (int)sfti->ProviderSignature);
-        return STATUS_NOT_IMPLEMENTED;
-    }
+    create_smbios_processors( &buf );
+    append_smbios_boot_info( &buf );
+    append_smbios_end( &buf );
+    return buf.prologue;
 }
 
 #elif defined(__APPLE__)
 
-static NTSTATUS get_smbios_from_iokit( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len,
-                                       ULONG *required_len )
+static struct smbios_prologue *get_smbios_from_iokit(void)
 {
     io_service_t service;
     CFDataRef data;
     const UInt8 *ptr;
     CFIndex len;
     struct smbios_prologue *prologue;
-    BYTE major_version = 2, minor_version = 0;
+    BYTE major_version = SMBIOS_MAJOR_VERSION, minor_version = SMBIOS_MINOR_VERSION;
 
     if (!(service = IOServiceGetMatchingService(0, IOServiceMatching("AppleSMBIOS"))))
     {
         WARN("can't find AppleSMBIOS service\n");
-        return STATUS_NO_MEMORY;
+        return NULL;
     }
 
     if (!(data = IORegistryEntryCreateCFProperty(service, CFSTR("SMBIOS-EPS"), kCFAllocatorDefault, 0)))
     {
         WARN("can't find SMBIOS entry point\n");
         IOObjectRelease(service);
-        return STATUS_NO_MEMORY;
+        return NULL;
     }
 
     len = CFDataGetLength(data);
@@ -1822,87 +1781,74 @@ static NTSTATUS get_smbios_from_iokit( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, 
     {
         WARN("can't find SMBIOS table\n");
         IOObjectRelease(service);
-        return STATUS_NO_MEMORY;
+        return NULL;
     }
 
     len = CFDataGetLength(data);
     ptr = CFDataGetBytePtr(data);
-    sfti->TableBufferLength = sizeof(*prologue) + len;
-    *required_len = sfti->TableBufferLength + FIELD_OFFSET(SYSTEM_FIRMWARE_TABLE_INFORMATION, TableBuffer);
-    if (available_len < *required_len)
+    if ((prologue = malloc( sizeof(*prologue) + len )))
     {
-        CFRelease(data);
-        IOObjectRelease(service);
-        return STATUS_BUFFER_TOO_SMALL;
+        prologue->calling_method = 0;
+        prologue->major_version = major_version;
+        prologue->minor_version = minor_version;
+        prologue->revision = 0;
+        prologue->length = len;
+        memcpy( prologue + 1, ptr, len );
     }
-
-    prologue = (struct smbios_prologue *)sfti->TableBuffer;
-    prologue->calling_method = 0;
-    prologue->major_version = major_version;
-    prologue->minor_version = minor_version;
-    prologue->revision = 0;
-    prologue->length = sfti->TableBufferLength - sizeof(*prologue);
-
-    memcpy(sfti->TableBuffer + sizeof(*prologue), ptr, len);
-
     CFRelease(data);
     IOObjectRelease(service);
-    return STATUS_SUCCESS;
+    return prologue;
 }
 
-static size_t cf_to_string( CFTypeRef type_ref, char *buffer, size_t buffer_size )
+static void cf_to_string( CFTypeRef type_ref, char *buffer, size_t buffer_size )
 {
-    size_t length = 0;
-
+    buffer[0] = 0;
     if (!type_ref)
-        return 0;
+        return;
 
     if (CFGetTypeID(type_ref) == CFDataGetTypeID())
     {
-        length = MIN(CFDataGetLength(type_ref), buffer_size);
+        size_t length = MIN(CFDataGetLength(type_ref), buffer_size);
         CFDataGetBytes(type_ref, CFRangeMake(0, length), (UInt8*)buffer);
         buffer[length] = 0;
-        length = strlen(buffer);
     }
     else if (CFGetTypeID(type_ref) == CFStringGetTypeID())
     {
-        if (CFStringGetCString(type_ref, buffer, buffer_size, kCFStringEncodingASCII))
-            length = strlen(buffer);
+        CFStringGetCString(type_ref, buffer, buffer_size, kCFStringEncodingASCII);
     }
 
     CFRelease(type_ref);
-    return length;
 }
 
-static NTSTATUS generate_smbios( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len,
-                                 ULONG *required_len )
+static struct smbios_prologue *create_smbios_data(void)
 {
-    /* Apple Silicon Macs don't have SMBIOS, we need to generate it.
-     * Use strings and data from IOKit when available.
-     */
     io_service_t platform_expert;
     CFDataRef cf_manufacturer, cf_model;
     CFStringRef cf_serial_number, cf_uuid_string;
     char manufacturer[128], model[128], serial_number[128];
-    size_t manufacturer_len = 0, model_len = 0, serial_number_len = 0;
     GUID system_uuid = {0};
-    struct smbios_bios_args bios_args;
-    struct smbios_system_args system_args;
-    struct smbios_board_args board_args;
-    struct smbios_chassis_args chassis_args;
+    BYTE chassis;
+    struct smbios_buffer buf = { 0 };
+    struct smbios_prologue *ret;
+
+    if ((ret = get_smbios_from_iokit())) return ret;
+
+    /* Apple Silicon Macs don't have SMBIOS, we need to generate it.
+     * Use strings and data from IOKit when available.
+     */
 
     platform_expert = IOServiceGetMatchingService(0, IOServiceMatching("IOPlatformExpertDevice"));
     if (!platform_expert)
-        return STATUS_NO_MEMORY;
+        return NULL;
 
     cf_manufacturer = IORegistryEntryCreateCFProperty(platform_expert, CFSTR("manufacturer"), kCFAllocatorDefault, 0);
     cf_model = IORegistryEntryCreateCFProperty(platform_expert, CFSTR("model"), kCFAllocatorDefault, 0);
     cf_serial_number = IORegistryEntryCreateCFProperty(platform_expert, CFSTR(kIOPlatformSerialNumberKey), kCFAllocatorDefault, 0);
     cf_uuid_string = IORegistryEntryCreateCFProperty(platform_expert, CFSTR(kIOPlatformUUIDKey), kCFAllocatorDefault, 0);
 
-    manufacturer_len = cf_to_string(cf_manufacturer, manufacturer, sizeof(manufacturer));
-    model_len = cf_to_string(cf_model, model, sizeof(model));
-    serial_number_len = cf_to_string(cf_serial_number, serial_number, sizeof(serial_number));
+    cf_to_string(cf_manufacturer, manufacturer, sizeof(manufacturer));
+    cf_to_string(cf_model, model, sizeof(model));
+    cf_to_string(cf_serial_number, serial_number, sizeof(serial_number));
 
     if (cf_uuid_string)
     {
@@ -1923,69 +1869,67 @@ static NTSTATUS generate_smbios( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG 
 
     IOObjectRelease(platform_expert);
 
-#define S(s, t) { s ## _len = t ## _len; s = t; }
-#define STR(s, t) { s ## _len = sizeof(t)-1; s = t; }
-    S(bios_args.vendor, manufacturer);
-    /* BIOS version and date are both required */
-    STR(bios_args.version, "1.0");
-    STR(bios_args.date, "01/01/2021");
-
-    S(system_args.vendor, manufacturer);
-    S(system_args.product, model);
-    STR(system_args.version, "1.0");
-    S(system_args.serial, serial_number);
-    system_args.uuid = system_uuid;
-    system_args.sku_len = 0;
-    S(system_args.family, model);
-
-    S(board_args.vendor, manufacturer);
-    S(board_args.product, model);
-    S(board_args.version, model);
-    S(board_args.serial, serial_number);
-    board_args.asset_tag_len = 0;
-
-    S(chassis_args.vendor, manufacturer);
-    chassis_args.type = 2; /* unknown */
-    chassis_args.version_len = 0;
-    S(chassis_args.serial, serial_number);
-    chassis_args.asset_tag_len = 0;
-#undef STR
-#undef S
-
-    return create_smbios_tables( sfti, available_len, required_len,
-                                 &bios_args, &system_args, &board_args, &chassis_args );
+    append_smbios_bios( &buf, manufacturer, "1.0", "01/01/2021" );
+    append_smbios_system( &buf, manufacturer, model, "1.0", serial_number, "", model, &system_uuid );
+    chassis = append_smbios_chassis( &buf, 0, manufacturer, "", serial_number, "" );
+    append_smbios_board( &buf, chassis, manufacturer, model, model, serial_number, "" );
+    create_smbios_processors( &buf );
+    append_smbios_boot_info( &buf );
+    append_smbios_end( &buf );
+    return buf.prologue;
 }
+
+#else
+
+static struct smbios_prologue *create_smbios_data(void)
+{
+    static const char *vendor  = "The Wine project";
+    static const char *product = "Wine";
+    static const char *version = PACKAGE_VERSION;
+    static const char *serial  = "0";
+    GUID uuid = { 0 };
+    BYTE chassis;
+    struct smbios_buffer buf = { 0 };
+
+    append_smbios_bios( &buf, vendor, version, "01/01/2021" );
+    append_smbios_system( &buf, vendor, product, version, serial, "", "", &uuid );
+    chassis = append_smbios_chassis( &buf, 0, vendor, version, serial, "" );
+    append_smbios_board( &buf, chassis, vendor, product, version, serial, "" );
+    create_smbios_processors( &buf );
+    append_smbios_boot_info( &buf );
+    append_smbios_end( &buf );
+    return buf.prologue;
+}
+
+#endif
 
 static NTSTATUS get_firmware_info( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len,
                                    ULONG *required_len )
 {
+    static struct smbios_prologue *smbios_data;
+    ULONG len;
+
     switch (sfti->ProviderSignature)
     {
     case RSMB:
-    {
-        NTSTATUS ret;
-        ret = get_smbios_from_iokit(sfti, available_len, required_len);
-        if (ret == STATUS_NO_MEMORY)
-            ret = generate_smbios(sfti, available_len, required_len);
-        return ret;
-    }
+        if (!smbios_data)
+        {
+            struct smbios_prologue *data = create_smbios_data();
+            if (!data) return STATUS_NO_MEMORY;
+            if (InterlockedCompareExchangePointer( (void **)&smbios_data, data, NULL )) free( data );
+        }
+        len = sizeof(*smbios_data) + smbios_data->length;
+        sfti->TableBufferLength = len;
+        *required_len = offsetof( SYSTEM_FIRMWARE_TABLE_INFORMATION, TableBuffer[len] );
+        if (available_len < *required_len) return STATUS_BUFFER_TOO_SMALL;
+        memcpy( sfti->TableBuffer, smbios_data, len );
+        return STATUS_SUCCESS;
+
     default:
         FIXME("info_class SYSTEM_FIRMWARE_TABLE_INFORMATION provider %08x\n", (unsigned int)sfti->ProviderSignature);
         return STATUS_NOT_IMPLEMENTED;
     }
 }
-
-#else
-
-static NTSTATUS get_firmware_info( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len,
-                                   ULONG *required_len )
-{
-    FIXME("info_class SYSTEM_FIRMWARE_TABLE_INFORMATION\n");
-    sfti->TableBufferLength = 0;
-    return STATUS_NOT_IMPLEMENTED;
-}
-
-#endif
 
 static void get_performance_info( SYSTEM_PERFORMANCE_INFORMATION *info )
 {
@@ -2426,7 +2370,6 @@ static time_t find_dst_change(time_t start, time_t end, int *is_dst)
 
 static void get_timezone_info( RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi )
 {
-    static pthread_mutex_t tz_mutex = PTHREAD_MUTEX_INITIALIZER;
     static RTL_DYNAMIC_TIME_ZONE_INFORMATION cached_tzi;
     static int current_year = -1, current_bias = 65535;
     struct tm *tm;
@@ -2434,7 +2377,7 @@ static void get_timezone_info( RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi )
     time_t year_start, year_end, tmp, dlt = 0, std = 0;
     int is_dst, bias;
 
-    mutex_lock( &tz_mutex );
+    mutex_lock( &timezone_mutex );
 
     year_start = time(NULL);
     tm = gmtime(&year_start);
@@ -2444,7 +2387,7 @@ static void get_timezone_info( RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi )
     if (current_year == tm->tm_year && current_bias == bias)
     {
         *tzi = cached_tzi;
-        mutex_unlock( &tz_mutex );
+        mutex_unlock( &timezone_mutex );
         return;
     }
 
@@ -2537,7 +2480,7 @@ static void get_timezone_info( RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi )
 
     find_reg_tz_info(tzi, tz_name, current_year + 1900);
     cached_tzi = *tzi;
-    mutex_unlock( &tz_mutex );
+    mutex_unlock( &timezone_mutex );
 }
 
 

@@ -524,7 +524,7 @@ static void wined3d_swapchain_gl_rotate(struct wined3d_swapchain *swapchain, str
     static const DWORD supported_locations = WINED3D_LOCATION_TEXTURE_RGB | WINED3D_LOCATION_RB_MULTISAMPLE;
 
     if (swapchain->state.desc.swap_effect == WINED3D_SWAP_EFFECT_DISCARD
-            || swapchain->state.desc.backbuffer_count < 2 || wined3d_settings.offscreen_rendering_mode != ORM_FBO)
+            || swapchain->state.desc.backbuffer_count < 2)
          return;
 
     texture_prev = wined3d_texture_gl(swapchain->back_buffers[0]);
@@ -616,8 +616,7 @@ static void swapchain_gl_present(struct wined3d_swapchain *swapchain,
 
         wined3d_texture_load_location(back_buffer, 0, context, back_buffer->resource.draw_binding);
 
-        if (wined3d_settings.offscreen_rendering_mode == ORM_FBO)
-            swapchain_blit(swapchain, context, src_rect, dst_rect);
+        swapchain_blit(swapchain, context, src_rect, dst_rect);
 
         if (swapchain->device->context_count > 1)
         {

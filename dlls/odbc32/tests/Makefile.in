@@ -2,4 +2,4 @@ TESTDLL   = odbc32.dll
 IMPORTS   = odbc32
 
 SOURCES = \
-	connection.c
+	odbc32.c

@@ -3635,9 +3635,11 @@ static HRESULT d3d_device7_DrawIndexedPrimitive(IDirect3DDevice7 *iface,
         WORD *indices, DWORD index_count, DWORD flags)
 {
     struct d3d_device *device = impl_from_IDirect3DDevice7(iface);
+    unsigned int idx_size = index_count * sizeof(*indices);
+    unsigned short min_index = USHRT_MAX, max_index = 0;
+    unsigned int i;
     HRESULT hr;
     UINT stride = get_flexible_vertex_size(fvf);
-    UINT vtx_size = stride * vertex_count, idx_size = index_count * sizeof(*indices);
     UINT vb_pos, ib_pos;
 
     TRACE("iface %p, primitive_type %#x, fvf %#lx, vertices %p, vertex_count %lu, "
@@ -3650,11 +3652,19 @@ static HRESULT d3d_device7_DrawIndexedPrimitive(IDirect3DDevice7 *iface,
         return D3D_OK;
     }
 
+    /* Prince of Persia 3D creates large vertex buffers but only actually uses
+     * a few vertices from them. This improves performance dramatically. */
+    for (i = 0; i < index_count; ++i)
+    {
+        min_index = min(min_index, indices[i]);
+        max_index = max(max_index, indices[i]);
+    }
+
     /* Set the D3DDevice's FVF */
     wined3d_mutex_lock();
 
-    if (FAILED(hr = wined3d_streaming_buffer_upload(device->wined3d_device,
-            &device->vertex_buffer, vertices, vtx_size, stride, &vb_pos)))
+    if (FAILED(hr = wined3d_streaming_buffer_upload(device->wined3d_device, &device->vertex_buffer,
+            (char *)vertices + (min_index * stride), (max_index + 1 - min_index) * stride, stride, &vb_pos)))
         goto done;
 
     if (FAILED(hr = wined3d_streaming_buffer_upload(device->wined3d_device,
@@ -3671,7 +3681,7 @@ static HRESULT d3d_device7_DrawIndexedPrimitive(IDirect3DDevice7 *iface,
             wined3d_primitive_type_from_ddraw(primitive_type), 0);
     wined3d_device_apply_stateblock(device->wined3d_device, device->state);
     d3d_device_sync_surfaces(device);
-    wined3d_device_context_draw_indexed(device->immediate_context, vb_pos / stride,
+    wined3d_device_context_draw_indexed(device->immediate_context, (int)(vb_pos / stride) - min_index,
             ib_pos / sizeof(*indices), index_count, 0, 0);
 
 done:
@@ -4181,7 +4191,7 @@ static HRESULT d3d_device7_DrawPrimitiveVB(IDirect3DDevice7 *iface, D3DPRIMITIVE
 
     stride = get_flexible_vertex_size(vb_impl->fvf);
 
-    if (vb_impl->Caps & D3DVBCAPS_SYSTEMMEMORY)
+    if (vb_impl->sysmem)
     {
         TRACE("Drawing from D3DVBCAPS_SYSTEMMEMORY vertex buffer, forwarding to DrawPrimitive().\n");
         wined3d_mutex_lock();
@@ -4299,7 +4309,7 @@ static HRESULT d3d_device7_DrawIndexedPrimitiveVB(IDirect3DDevice7 *iface,
 
     vb_impl->discarded = false;
 
-    if (vb_impl->Caps & D3DVBCAPS_SYSTEMMEMORY)
+    if (vb_impl->sysmem)
     {
         TRACE("Drawing from D3DVBCAPS_SYSTEMMEMORY vertex buffer, forwarding to DrawIndexedPrimitive().\n");
         wined3d_mutex_lock();

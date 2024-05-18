@@ -245,32 +245,18 @@ static HRESULT try_create_wg_transform(struct video_decoder *decoder)
      * transform to be able to queue its input buffers. We need to use a buffer list
      * to match its expectations.
      */
-    struct wg_format input_format;
-    struct wg_format output_format;
     UINT32 low_latency;
 
     if (decoder->wg_transform)
+    {
         wg_transform_destroy(decoder->wg_transform);
-    decoder->wg_transform = 0;
-
-    mf_media_type_to_wg_format(decoder->input_type, &input_format);
-    if (input_format.major_type == WG_MAJOR_TYPE_UNKNOWN)
-        return MF_E_INVALIDMEDIATYPE;
-
-    mf_media_type_to_wg_format(decoder->output_type, &output_format);
-    if (output_format.major_type == WG_MAJOR_TYPE_UNKNOWN)
-        return MF_E_INVALIDMEDIATYPE;
+        decoder->wg_transform = 0;
+    }
 
     if (SUCCEEDED(IMFAttributes_GetUINT32(decoder->attributes, &MF_LOW_LATENCY, &low_latency)))
         decoder->wg_transform_attrs.low_latency = !!low_latency;
 
-    if (!(decoder->wg_transform = wg_transform_create(&input_format, &output_format, &decoder->wg_transform_attrs)))
-    {
-        ERR("Failed to create transform with input major_type %u.\n", input_format.major_type);
-        return E_FAIL;
-    }
-
-    return S_OK;
+    return wg_transform_create_mf(decoder->input_type, decoder->output_type, &decoder->wg_transform_attrs, &decoder->wg_transform);
 }
 
 static HRESULT create_output_media_type(struct video_decoder *decoder, const GUID *subtype,
@@ -1514,7 +1500,6 @@ static HRESULT video_decoder_create_with_types(const GUID *const *input_types, U
     if (FAILED(hr = MFCreateSampleCopierMFT(&decoder->copier)))
         goto failed;
 
-    decoder->wg_transform_attrs.output_plane_align = 15;
     decoder->wg_transform_attrs.input_queue_length = 15;
 
     *out = decoder;
@@ -1544,30 +1529,27 @@ static const GUID *const h264_decoder_input_types[] =
 
 HRESULT h264_decoder_create(REFIID riid, void **out)
 {
-    static const struct wg_format output_format =
+    const MFVIDEOFORMAT output_format =
     {
-        .major_type = WG_MAJOR_TYPE_VIDEO,
-        .u.video =
-        {
-            .format = WG_VIDEO_FORMAT_I420,
-            .width = 1920,
-            .height = 1080,
-        },
+        .dwSize = sizeof(MFVIDEOFORMAT),
+        .videoInfo = {.dwWidth = 1920, .dwHeight = 1080},
+        .guidFormat = MFVideoFormat_I420,
     };
-    static const struct wg_format input_format = {.major_type = WG_MAJOR_TYPE_VIDEO_H264};
-    struct wg_transform_attrs attrs = {0};
+    const MFVIDEOFORMAT input_format =
+    {
+        .dwSize = sizeof(MFVIDEOFORMAT),
+        .guidFormat = MFVideoFormat_H264,
+    };
     struct video_decoder *decoder;
-    wg_transform_t transform;
     HRESULT hr;
 
     TRACE("riid %s, out %p.\n", debugstr_guid(riid), out);
 
-    if (!(transform = wg_transform_create(&input_format, &output_format, &attrs)))
+    if (FAILED(hr = check_video_transform_support(&input_format, &output_format)))
     {
         ERR_(winediag)("GStreamer doesn't support H.264 decoding, please install appropriate plugins\n");
-        return E_FAIL;
+        return hr;
     }
-    wg_transform_destroy(transform);
 
     if (FAILED(hr = video_decoder_create_with_types(h264_decoder_input_types, ARRAY_SIZE(h264_decoder_input_types),
             video_decoder_output_types, ARRAY_SIZE(video_decoder_output_types), NULL, &decoder)))
@@ -1586,6 +1568,7 @@ HRESULT h264_decoder_create(REFIID riid, void **out)
             | MFT_OUTPUT_STREAM_FIXED_SAMPLE_SIZE;
     decoder->output_info.cbSize = 1920 * 1088 * 2;
 
+    decoder->wg_transform_attrs.output_plane_align = 15;
     decoder->wg_transform_attrs.allow_size_change = TRUE;
 
     TRACE("Created h264 transform %p.\n", &decoder->IMFTransform_iface);
@@ -1666,34 +1649,28 @@ static const GUID *const wmv_decoder_output_types[] =
 
 HRESULT wmv_decoder_create(IUnknown *outer, IUnknown **out)
 {
-    static const struct wg_format input_format =
+    const MFVIDEOFORMAT output_format =
     {
-        .major_type = WG_MAJOR_TYPE_VIDEO_WMV,
-        .u.video.format = WG_VIDEO_FORMAT_WMV3,
+        .dwSize = sizeof(MFVIDEOFORMAT),
+        .videoInfo = {.dwWidth = 1920, .dwHeight = 1080},
+        .guidFormat = MFVideoFormat_I420,
     };
-    static const struct wg_format output_format =
+    const MFVIDEOFORMAT input_format =
     {
-        .major_type = WG_MAJOR_TYPE_VIDEO,
-        .u.video =
-        {
-            .format = WG_VIDEO_FORMAT_NV12,
-            .width = 1920,
-            .height = 1080,
-        },
+        .dwSize = sizeof(MFVIDEOFORMAT),
+        .videoInfo = {.dwWidth = 1920, .dwHeight = 1080},
+        .guidFormat = MFVideoFormat_WMV3,
     };
-    struct wg_transform_attrs attrs = {0};
     struct video_decoder *decoder;
-    wg_transform_t transform;
     HRESULT hr;
 
     TRACE("outer %p, out %p.\n", outer, out);
 
-    if (!(transform = wg_transform_create(&input_format, &output_format, &attrs)))
+    if (FAILED(hr = check_video_transform_support(&input_format, &output_format)))
     {
-        ERR_(winediag)("GStreamer doesn't support WMV decoding, please install appropriate plugins.\n");
-        return E_FAIL;
+        ERR_(winediag)("GStreamer doesn't support WMV decoding, please install appropriate plugins\n");
+        return hr;
     }
-    wg_transform_destroy(transform);
 
     if (FAILED(hr = video_decoder_create_with_types(wmv_decoder_input_types, ARRAY_SIZE(wmv_decoder_input_types),
             wmv_decoder_output_types, ARRAY_SIZE(wmv_decoder_output_types), outer, &decoder)))

@@ -21,6 +21,7 @@
 
 bool vsir_program_init(struct vsir_program *program, const struct vkd3d_shader_version *version, unsigned int reserve)
 {
+    memset(program, 0, sizeof(*program));
     program->shader_version = *version;
     return shader_instruction_array_init(&program->instructions, reserve);
 }
@@ -80,106 +81,6 @@ static bool vsir_instruction_init_with_params(struct vsir_program *program,
     memset(ins->dst, 0, sizeof(*ins->dst) * ins->dst_count);
     memset(ins->src, 0, sizeof(*ins->src) * ins->src_count);
     return true;
-}
-
-static bool get_opcode_from_rel_op(enum vkd3d_shader_rel_op rel_op, enum vkd3d_data_type data_type,
-        enum vkd3d_shader_opcode *opcode, bool *requires_swap)
-{
-    switch (rel_op)
-    {
-        case VKD3D_SHADER_REL_OP_LT:
-        case VKD3D_SHADER_REL_OP_GT:
-            *requires_swap = (rel_op == VKD3D_SHADER_REL_OP_GT);
-            if (data_type == VKD3D_DATA_FLOAT)
-            {
-                *opcode = VKD3DSIH_LTO;
-                return true;
-            }
-            break;
-
-        case VKD3D_SHADER_REL_OP_GE:
-        case VKD3D_SHADER_REL_OP_LE:
-            *requires_swap = (rel_op == VKD3D_SHADER_REL_OP_LE);
-            if (data_type == VKD3D_DATA_FLOAT)
-            {
-                *opcode = VKD3DSIH_GEO;
-                return true;
-            }
-            break;
-
-        case VKD3D_SHADER_REL_OP_EQ:
-            *requires_swap = false;
-            if (data_type == VKD3D_DATA_FLOAT)
-            {
-                *opcode = VKD3DSIH_EQO;
-                return true;
-            }
-            break;
-
-        case VKD3D_SHADER_REL_OP_NE:
-            *requires_swap = false;
-            if (data_type == VKD3D_DATA_FLOAT)
-            {
-                *opcode = VKD3DSIH_NEO;
-                return true;
-            }
-            break;
-    }
-    return false;
-}
-
-static enum vkd3d_result vsir_program_lower_ifc(struct vsir_program *program,
-        struct vkd3d_shader_instruction *ifc, unsigned int *tmp_idx,
-        struct vkd3d_shader_message_context *message_context)
-{
-    struct vkd3d_shader_instruction_array *instructions = &program->instructions;
-    size_t pos = ifc - instructions->elements;
-    struct vkd3d_shader_instruction *ins;
-    enum vkd3d_shader_opcode opcode;
-    bool swap;
-
-    if (!shader_instruction_array_insert_at(instructions, pos + 1, 2))
-        return VKD3D_ERROR_OUT_OF_MEMORY;
-
-    if (*tmp_idx == ~0u)
-        *tmp_idx = program->temp_count++;
-
-    /* Replace ifc comparison with actual comparison, saving the result in the tmp register. */
-    if (!(get_opcode_from_rel_op(ifc->flags, ifc->src[0].reg.data_type, &opcode, &swap)))
-    {
-        vkd3d_shader_error(message_context, &ifc->location, VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED,
-                "Aborting due to not yet implemented feature: opcode for rel_op %u and data type %u.",
-                ifc->flags, ifc->src[0].reg.data_type);
-        return VKD3D_ERROR_NOT_IMPLEMENTED;
-    }
-
-    ins = &instructions->elements[pos + 1];
-    if (!vsir_instruction_init_with_params(program, ins, &ifc->location, opcode, 1, 2))
-        return VKD3D_ERROR_OUT_OF_MEMORY;
-
-    vsir_register_init(&ins->dst[0].reg, VKD3DSPR_TEMP, VKD3D_DATA_UINT, 1);
-    ins->dst[0].reg.dimension = VSIR_DIMENSION_VEC4;
-    ins->dst[0].reg.idx[0].offset = *tmp_idx;
-    ins->dst[0].write_mask = VKD3DSP_WRITEMASK_0;
-
-    ins->src[0] = ifc->src[swap];
-    ins->src[1] = ifc->src[!swap];
-
-    /* Create new if instruction using the previous result. */
-    ins = &instructions->elements[pos + 2];
-    if (!vsir_instruction_init_with_params(program, ins, &ifc->location, VKD3DSIH_IF, 0, 1))
-        return VKD3D_ERROR_OUT_OF_MEMORY;
-    ins->flags = VKD3D_SHADER_CONDITIONAL_OP_NZ;
-
-    vsir_register_init(&ins->src[0].reg, VKD3DSPR_TEMP, VKD3D_DATA_UINT, 1);
-    ins->src[0].reg.dimension = VSIR_DIMENSION_VEC4;
-    ins->src[0].reg.idx[0].offset = *tmp_idx;
-    ins->src[0].swizzle = VKD3D_SHADER_SWIZZLE(X, X, X, X);
-
-    /* Make the original instruction no-op */
-    vkd3d_shader_instruction_make_nop(ifc);
-
-    return VKD3D_OK;
 }
 
 static enum vkd3d_result vsir_program_lower_texkill(struct vsir_program *program,
@@ -310,8 +211,7 @@ static enum vkd3d_result vsir_program_lower_precise_mad(struct vsir_program *pro
     return VKD3D_OK;
 }
 
-static enum vkd3d_result vsir_program_lower_instructions(struct vsir_program *program,
-        struct vkd3d_shader_message_context *message_context)
+static enum vkd3d_result vsir_program_lower_instructions(struct vsir_program *program)
 {
     struct vkd3d_shader_instruction_array *instructions = &program->instructions;
     unsigned int tmp_idx = ~0u, i;
@@ -323,11 +223,6 @@ static enum vkd3d_result vsir_program_lower_instructions(struct vsir_program *pr
 
         switch (ins->handler_idx)
         {
-            case VKD3DSIH_IFC:
-                if ((ret = vsir_program_lower_ifc(program, ins, &tmp_idx, message_context)) < 0)
-                    return ret;
-                break;
-
             case VKD3DSIH_TEXKILL:
                 if ((ret = vsir_program_lower_texkill(program, ins, &tmp_idx)) < 0)
                     return ret;
@@ -5098,12 +4993,12 @@ static void register_map_undominated_use(struct vkd3d_shader_register *reg, stru
 {
     unsigned int i;
 
-    if (register_is_ssa(reg))
-    {
-        i = reg->idx[0].offset;
-        if (alloc->table[i] == UINT_MAX && !vsir_block_dominates(origin_blocks[i], block))
-            alloc->table[i] = alloc->next_temp_idx++;
-    }
+    if (!register_is_ssa(reg))
+        return;
+
+    i = reg->idx[0].offset;
+    if (alloc->table[i] == UINT_MAX && !vsir_block_dominates(origin_blocks[i], block))
+        alloc->table[i] = alloc->next_temp_idx++;
 
     for (i = 0; i < reg->idx_count; ++i)
         if (reg->idx[i].rel_addr)
@@ -5748,9 +5643,30 @@ static void vsir_validate_instruction(struct validation_context *ctx)
                         instruction->declaration.max_tessellation_factor);
             return;
 
-        /* The DXIL parser can generate these outside phases, but this is not an issue. */
-        case VKD3DSIH_DCL_INPUT:
-        case VKD3DSIH_DCL_OUTPUT:
+        case VKD3DSIH_DCL_INPUT_PRIMITIVE:
+            if (instruction->declaration.primitive_type.type == VKD3D_PT_UNDEFINED
+                    || instruction->declaration.primitive_type.type >= VKD3D_PT_COUNT)
+                validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_GS, "GS input primitive %u is invalid.",
+                        instruction->declaration.primitive_type.type);
+            return;
+
+        case VKD3DSIH_DCL_VERTICES_OUT:
+            if (instruction->declaration.count > 1024)
+                validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_GS, "GS output vertex count %u is invalid.",
+                        instruction->declaration.count);
+            return;
+
+        case VKD3DSIH_DCL_OUTPUT_TOPOLOGY:
+            if (instruction->declaration.primitive_type.type == VKD3D_PT_UNDEFINED
+                    || instruction->declaration.primitive_type.type >= VKD3D_PT_COUNT)
+                validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_GS, "GS output primitive %u is invalid.",
+                        instruction->declaration.primitive_type.type);
+            return;
+
+        case VKD3DSIH_DCL_GS_INSTANCES:
+            if (!instruction->declaration.count || instruction->declaration.count > 32)
+                validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_GS, "GS instance count %u is invalid.",
+                        instruction->declaration.count);
             return;
 
         case VKD3DSIH_DCL_OUTPUT_CONTROL_POINT_COUNT:
@@ -5784,7 +5700,9 @@ static void vsir_validate_instruction(struct validation_context *ctx)
             break;
     }
 
-    if (version->type == VKD3D_SHADER_TYPE_HULL && ctx->phase == VKD3DSIH_INVALID)
+    /* Only DCL instructions may occur outside hull shader phases. */
+    if (!vsir_instruction_is_dcl(instruction) && version->type == VKD3D_SHADER_TYPE_HULL
+            && ctx->phase == VKD3DSIH_INVALID)
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_HANDLER,
                 "Instruction %#x appear before any phase instruction in a hull shader.",
                 instruction->handler_idx);
@@ -6162,7 +6080,7 @@ enum vkd3d_result vsir_program_normalise(struct vsir_program *program, uint64_t 
 {
     enum vkd3d_result result = VKD3D_OK;
 
-    if ((result = vsir_program_lower_instructions(program, message_context)) < 0)
+    if ((result = vsir_program_lower_instructions(program)) < 0)
         return result;
 
     if (program->shader_version.major >= 6)

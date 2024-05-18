@@ -97,7 +97,7 @@ static BOOL display_mode_is_supported(CGDisplayModeRef display_mode)
 }
 
 
-static void display_mode_to_devmode(CGDirectDisplayID display_id, CGDisplayModeRef display_mode, DEVMODEW *devmode)
+static void display_mode_to_devmode_fields(CGDirectDisplayID display_id, CGDisplayModeRef display_mode, DEVMODEW *devmode)
 {
     uint32_t io_flags;
     double rotation;
@@ -420,8 +420,7 @@ static CFDictionaryRef create_mode_dict(CGDisplayModeRef display_mode, BOOL is_o
         height *= 2;
     }
 
-    io_flags &= kDisplayModeValidFlag | kDisplayModeSafeFlag | kDisplayModeInterlacedFlag |
-                kDisplayModeStretchedFlag | kDisplayModeTelevisionFlag;
+    io_flags &= kDisplayModeInterlacedFlag | kDisplayModeStretchedFlag | kDisplayModeTelevisionFlag;
     cf_io_flags = CFNumberCreate(NULL, kCFNumberSInt32Type, &io_flags);
     cf_width = CFNumberCreate(NULL, kCFNumberSInt64Type, &width);
     cf_height = CFNumberCreate(NULL, kCFNumberSInt64Type, &height);
@@ -457,6 +456,17 @@ static CFDictionaryRef create_mode_dict(CGDisplayModeRef display_mode, BOOL is_o
 }
 
 
+/***********************************************************************
+ *              mode_is_preferred
+ *
+ * Returns whether new_mode ought to be preferred over old_mode - that is,
+ * whether new_mode is a better option to expose as a valid mode to switch to.
+ * old_mode may be NULL, in which case the function returns true if the mode
+ * should be considered at all.
+ * old_mode and new_mode are guaranteed to have identical return values from
+ * create_mode_dict. So, they will have the same point dimension and relevant
+ * IO flags, among other properties.
+ */
 static BOOL mode_is_preferred(CGDisplayModeRef new_mode, CGDisplayModeRef old_mode,
                               struct display_mode_descriptor *original_mode_desc,
                               BOOL include_unsupported)
@@ -464,6 +474,7 @@ static BOOL mode_is_preferred(CGDisplayModeRef new_mode, CGDisplayModeRef old_mo
     BOOL new_is_supported;
     CFStringRef pixel_encoding;
     size_t width_points, height_points;
+    BOOL new_usable_for_desktop, old_usable_for_desktop;
     size_t old_width_pixels, old_height_pixels, new_width_pixels, new_height_pixels;
     BOOL old_size_same, new_size_same;
 
@@ -504,6 +515,12 @@ static BOOL mode_is_preferred(CGDisplayModeRef new_mode, CGDisplayModeRef old_mo
     /* Prefer supported modes over similar unsupported ones. */
     if (!new_is_supported && display_mode_is_supported(old_mode))
         return FALSE;
+
+    /* Prefer modes that are usable for desktop over ones that aren't. */
+    new_usable_for_desktop = CGDisplayModeIsUsableForDesktopGUI(new_mode);
+    old_usable_for_desktop = CGDisplayModeIsUsableForDesktopGUI(old_mode);
+    if (new_usable_for_desktop && !old_usable_for_desktop)
+        return TRUE;
 
     /* Otherwise, prefer a mode whose pixel size equals its point size over one which
        is scaled. */
@@ -830,7 +847,11 @@ static DEVMODEW *display_get_modes(CGDirectDisplayID display_id, int *modes_coun
     for (i = 0; i < count; i++)
     {
         CGDisplayModeRef mode = (CGDisplayModeRef)CFArrayGetValueAtIndex(modes, i);
-        display_mode_to_devmode(display_id, mode, devmodes + i);
+
+        memset(devmodes + i, 0, sizeof(*devmodes));
+        devmodes[i].dmSize = sizeof(*devmodes);
+
+        display_mode_to_devmode_fields(display_id, mode, devmodes + i);
 
         if (retina_enabled && display_mode_matches_descriptor(mode, desc))
         {
@@ -875,7 +896,7 @@ static void display_get_current_mode(struct macdrv_display *display, DEVMODEW *d
     devmode->dmPosition.y = CGRectGetMinY(display->frame);
     devmode->dmFields |= DM_POSITION;
 
-    display_mode_to_devmode(display_id, display_mode, devmode);
+    display_mode_to_devmode_fields(display_id, display_mode, devmode);
     if (retina_enabled)
     {
         struct display_mode_descriptor *desc = create_original_display_mode_descriptor(display_id);
@@ -1099,28 +1120,16 @@ void macdrv_displays_changed(const macdrv_event *event)
 
 static BOOL force_display_devices_refresh;
 
-static BOOL is_same_devmode(const DEVMODEW *a, const DEVMODEW *b)
-{
-    return a->dmDisplayOrientation == b->dmDisplayOrientation &&
-           a->dmDisplayFixedOutput == b->dmDisplayFixedOutput &&
-           a->dmBitsPerPel == b->dmBitsPerPel &&
-           a->dmPelsWidth == b->dmPelsWidth &&
-           a->dmPelsHeight == b->dmPelsHeight &&
-           a->dmDisplayFlags == b->dmDisplayFlags &&
-           a->dmDisplayFrequency == b->dmDisplayFrequency;
-}
-
-BOOL macdrv_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, BOOL force, void *param )
+UINT macdrv_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, BOOL force, void *param )
 {
     struct macdrv_adapter *adapters, *adapter;
     struct macdrv_monitor *monitors, *monitor;
     struct macdrv_gpu *gpus, *gpu;
     struct macdrv_display *displays, *display;
     INT gpu_count, adapter_count, monitor_count, mode_count, display_count;
-    DEVMODEW *mode, *modes;
-    DWORD len;
+    DEVMODEW *modes;
 
-    if (!force && !force_display_devices_refresh) return TRUE;
+    if (!force && !force_display_devices_refresh) return STATUS_ALREADY_COMPLETE;
     force_display_devices_refresh = FALSE;
 
     if (macdrv_get_displays(&displays, &display_count))
@@ -1133,22 +1142,20 @@ BOOL macdrv_UpdateDisplayDevices( const struct gdi_device_manager *device_manage
     if (macdrv_get_gpus(&gpus, &gpu_count))
     {
         ERR("could not get GPUs\n");
-        return FALSE;
+        return STATUS_UNSUCCESSFUL;
     }
     TRACE("GPU count: %d\n", gpu_count);
 
     for (gpu = gpus; gpu < gpus + gpu_count; gpu++)
     {
-        struct gdi_gpu gdi_gpu =
+        struct pci_id pci_id =
         {
-            .id = gpu->id,
-            .vendor_id = gpu->vendor_id,
-            .device_id = gpu->device_id,
-            .subsys_id = gpu->subsys_id,
-            .revision_id = gpu->revision_id,
+            .vendor = gpu->vendor_id,
+            .device = gpu->device_id,
+            .subsystem = gpu->subsys_id,
+            .revision = gpu->revision_id,
         };
-        RtlUTF8ToUnicodeN(gdi_gpu.name, sizeof(gdi_gpu.name), &len, gpu->name, strlen(gpu->name));
-        device_manager->add_gpu(&gdi_gpu, param);
+        device_manager->add_gpu(gpu->name, &pci_id, NULL, 0, param);
 
         /* Initialize adapters */
         if (macdrv_get_adapters(gpu->id, &adapters, &adapter_count)) break;
@@ -1200,7 +1207,7 @@ BOOL macdrv_UpdateDisplayDevices( const struct gdi_device_manager *device_manage
 
     macdrv_free_gpus(gpus);
     macdrv_free_displays(displays);
-    return TRUE;
+    return STATUS_SUCCESS;
 }
 
 /***********************************************************************

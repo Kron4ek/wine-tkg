@@ -278,6 +278,43 @@ int CDECL _XcptFilter(NTSTATUS ex, PEXCEPTION_POINTERS ptr)
 }
 
 /*********************************************************************
+ *		__CppXcptFilter (MSVCRT.@)
+ */
+int CDECL __CppXcptFilter(NTSTATUS ex, PEXCEPTION_POINTERS ptr)
+{
+    /* only filter c++ exceptions */
+    if (ex != CXX_EXCEPTION) return EXCEPTION_CONTINUE_SEARCH;
+    return _XcptFilter(ex, ptr);
+}
+
+/*********************************************************************
+ *		__CxxDetectRethrow (MSVCRT.@)
+ */
+BOOL CDECL __CxxDetectRethrow(PEXCEPTION_POINTERS ptrs)
+{
+    PEXCEPTION_RECORD rec;
+
+    if (!ptrs)
+        return FALSE;
+
+    rec = ptrs->ExceptionRecord;
+    if (is_cxx_exception( rec ) && rec->ExceptionInformation[2])
+    {
+        ptrs->ExceptionRecord = msvcrt_get_thread_data()->exc_record;
+        return TRUE;
+    }
+    return (msvcrt_get_thread_data()->exc_record == rec);
+}
+
+/*********************************************************************
+ *		__CxxQueryExceptionSize (MSVCRT.@)
+ */
+unsigned int CDECL __CxxQueryExceptionSize(void)
+{
+    return sizeof(cxx_exception_type);
+}
+
+/*********************************************************************
  *		_abnormal_termination (MSVCRT.@)
  */
 int CDECL __intrinsic_abnormal_termination(void)
@@ -406,14 +443,7 @@ void CDECL __DestructExceptionObject(EXCEPTION_RECORD *rec)
 
     TRACE("(%p)\n", rec);
 
-    if (rec->ExceptionCode != CXX_EXCEPTION) return;
-#ifndef __x86_64__
-    if (rec->NumberParameters != 3) return;
-#else
-    if (rec->NumberParameters != 4) return;
-#endif
-    if (rec->ExceptionInformation[0] < CXX_FRAME_MAGIC_VC6 ||
-            rec->ExceptionInformation[0] > CXX_FRAME_MAGIC_VC8) return;
+    if (!is_cxx_exception( rec )) return;
 
     if (!info || !info->destructor)
         return;

@@ -6,8 +6,6 @@ EXTRAINCL = $(VKD3D_PE_CFLAGS)
 SOURCES = \
 	adapter_gl.c \
 	adapter_vk.c \
-	arb_program_shader.c \
-	ati_fragment_shader.c \
 	buffer.c \
 	context.c \
 	context_gl.c \
@@ -18,7 +16,6 @@ SOURCES = \
 	ffp_gl.c \
 	gl_compat.c \
 	glsl_shader.c \
-	nvidia_texture_shader.c \
 	palette.c \
 	query.c \
 	resource.c \

@@ -423,12 +423,12 @@ static void WCMD_show_prompt (BOOL newLine) {
   WCMD_output_asis (out_string);
 }
 
-void *xalloc(size_t size)
+void *xrealloc(void *ptr, size_t size)
 {
     void *ret;
 
-    ret = malloc(size);
-    if(!ret) {
+    if (!(ret = realloc(ptr, size)))
+    {
         ERR("Out of memory\n");
         ExitProcess(1);
     }
@@ -942,6 +942,31 @@ static void WCMD_parse (const WCHAR *s, WCHAR *q, WCHAR *p1, WCHAR *p2)
   }
 }
 
+/* ============================== */
+/*  Data structures for commands  */
+/* ============================== */
+
+static CMD_NODE *node_create_single(CMD_COMMAND *c)
+{
+    CMD_NODE *new = xalloc(sizeof(CMD_NODE));
+
+    new->op = CMD_SINGLE;
+    new->command = c;
+
+    return new;
+}
+
+static CMD_NODE *node_create_binary(CMD_OPERATOR op, CMD_NODE *l, CMD_NODE *r)
+{
+    CMD_NODE *new = xalloc(sizeof(CMD_NODE));
+
+    new->op = op;
+    new->left = l;
+    new->right = r;
+
+    return new;
+}
+
 static void init_msvcrt_io_block(STARTUPINFOW* st)
 {
     STARTUPINFOW st_p;
@@ -1316,7 +1341,7 @@ void WCMD_run_program (WCHAR *command, BOOL called)
 
   /* Not found anywhere - were we called? */
   if (called) {
-    CMD_LIST *toExecute = NULL;         /* Commands left to be executed */
+    CMD_NODE *toExecute = NULL;         /* Commands left to be executed */
 
     /* Parse the command string, without reading any more input */
     WCMD_ReadAndParseLine(command, &toExecute, INVALID_HANDLE_VALUE);
@@ -1344,7 +1369,7 @@ void WCMD_run_program (WCHAR *command, BOOL called)
  *       we are attempting this retry.
  */
 void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
-                   CMD_LIST **cmdList, BOOL retrycall)
+                   CMD_NODE **cmdList, BOOL retrycall)
 {
     WCHAR *cmd, *parms_start, *redir;
     WCHAR *pos;
@@ -1385,11 +1410,10 @@ void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
     while (IsCharAlphaNumericW(whichcmd[count])) {
       count++;
     }
-    for (i=0; i<=WCMD_EXIT; i++) {
+    for (cmd_index=0; cmd_index<=WCMD_EXIT; cmd_index++) {
       if (CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORECASE | SORT_STRINGSORT,
-        whichcmd, count, inbuilt[i], -1) == CSTR_EQUAL) break;
+        whichcmd, count, inbuilt[cmd_index], -1) == CSTR_EQUAL) break;
     }
-    cmd_index = i;
     parms_start = WCMD_skip_leading_spaces (&whichcmd[count]);
 
     /* If the next command is a pipe then we implement pipes by redirecting
@@ -1401,8 +1425,7 @@ void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
        process has to finish before the next one can start but this requires
        a change to not wait for the first app to finish but rather the pipe  */
     if (!(cmd_index == WCMD_FOR || cmd_index == WCMD_IF) &&
-        cmdList && (*cmdList)->nextcommand &&
-        (*cmdList)->nextcommand->prevDelim == CMD_PIPE) {
+        cmdList && (*cmdList)->op == CMD_PIPE) {
 
         WCHAR temp_path[MAX_PATH];
 
@@ -1412,14 +1435,14 @@ void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
 
         /* Generate a unique temporary filename */
         GetTempPathW(ARRAY_SIZE(temp_path), temp_path);
-        GetTempFileNameW(temp_path, L"CMD", 0, (*cmdList)->nextcommand->pipeFile);
+        GetTempFileNameW(temp_path, L"CMD", 0, CMD_node_get_command(CMD_node_next(*cmdList))->pipeFile);
         WINE_TRACE("Using temporary file of %s\n",
-                   wine_dbgstr_w((*cmdList)->nextcommand->pipeFile));
+                   wine_dbgstr_w(CMD_node_get_command(CMD_node_next(*cmdList))->pipeFile));
     }
 
     /* If piped output, send stdout to the pipe by appending >filename to redirects */
     if (piped) {
-        wsprintfW (new_redir, L"%s > %s", redirects, (*cmdList)->nextcommand->pipeFile);
+        wsprintfW (new_redir, L"%s > %s", redirects, CMD_node_get_command(CMD_node_next(*cmdList))->pipeFile);
         WINE_TRACE("Redirects now %s\n", wine_dbgstr_w(new_redir));
     } else {
         lstrcpyW(new_redir, redirects);
@@ -1471,9 +1494,9 @@ void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
      */
     if (!(cmd_index == WCMD_FOR || cmd_index == WCMD_IF)) {
       /* STDIN could come from a preceding pipe, so delete on close if it does */
-      if (cmdList && (*cmdList)->pipeFile[0] != 0x00) {
-          WINE_TRACE("Input coming from %s\n", wine_dbgstr_w((*cmdList)->pipeFile));
-          h = CreateFileW((*cmdList)->pipeFile, GENERIC_READ,
+      if (cmdList && CMD_node_get_command(*cmdList)->pipeFile[0] != 0x00) {
+          WINE_TRACE("Input coming from %s\n", wine_dbgstr_w(CMD_node_get_command(*cmdList)->pipeFile));
+          h = CreateFileW(CMD_node_get_command(*cmdList)->pipeFile, GENERIC_READ,
                     FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING,
                     FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, NULL);
           if (h == INVALID_HANDLE_VALUE) {
@@ -1485,7 +1508,7 @@ void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
           SetStdHandle (STD_INPUT_HANDLE, h);
 
           /* No need to remember the temporary name any longer once opened */
-          (*cmdList)->pipeFile[0] = 0x00;
+          CMD_node_get_command(*cmdList)->pipeFile[0] = 0x00;
 
       /* Otherwise STDIN could come from a '<' redirect */
       } else if ((pos = wcschr(new_redir,'<')) != NULL) {
@@ -1557,15 +1580,15 @@ void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
     WCMD_parse (parms_start, quals, param1, param2);
     WINE_TRACE("param1: %s, param2: %s\n", wine_dbgstr_w(param1), wine_dbgstr_w(param2));
 
-    if (i <= WCMD_EXIT && (parms_start[0] == '/') && (parms_start[1] == '?')) {
+    if (cmd_index <= WCMD_EXIT && (parms_start[0] == '/') && (parms_start[1] == '?')) {
       /* this is a help request for a builtin program */
-      i = WCMD_HELP;
+      cmd_index = WCMD_HELP;
       memcpy(parms_start, whichcmd, count * sizeof(WCHAR));
       parms_start[count] = '\0';
 
     }
 
-    switch (i) {
+    switch (cmd_index) {
 
       case WCMD_CALL:
         WCMD_call (parms_start);
@@ -1699,8 +1722,8 @@ void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
            these two commands, neither 'for' nor 'if' is supported when called,
            i.e. 'call if 1==1...' will fail.                                    */
         if (!retrycall) {
-          if (i==WCMD_FOR) WCMD_for (parms_start, cmdList);
-          else if (i==WCMD_IF) WCMD_if (parms_start, cmdList);
+          if (cmd_index==WCMD_FOR) WCMD_for (parms_start, cmdList);
+          else if (cmd_index==WCMD_IF) WCMD_if (parms_start, cmdList);
           break;
         }
         /* else: drop through */
@@ -1736,24 +1759,33 @@ WCHAR *WCMD_LoadMessage(UINT id) {
     return msg;
 }
 
+static const char *op2str(CMD_OPERATOR op)
+{
+    static const char* optable[] = {"op-single", "op-&", "op-||", "op-&&", "op-|"};
+    if (op < ARRAY_SIZE(optable)) return optable[op];
+    return "op-unk";
+}
+
 /***************************************************************************
  * WCMD_DumpCommands
  *
  *	Dumps out the parsed command line to ensure syntax is correct
  */
-static void WCMD_DumpCommands(CMD_LIST *commands) {
-    CMD_LIST *thisCmd = commands;
+static void WCMD_DumpCommands(CMD_NODE *commands)
+{
+    CMD_NODE *thisCmd = commands;
 
     WINE_TRACE("Parsed line:\n");
-    while (thisCmd != NULL) {
-      WINE_TRACE("%p %d %2.2d %p %s Redir:%s\n",
-               thisCmd,
-               thisCmd->prevDelim,
-               thisCmd->bracketDepth,
-               thisCmd->nextcommand,
-               wine_dbgstr_w(thisCmd->command),
-               wine_dbgstr_w(thisCmd->redirects));
-      thisCmd = thisCmd->nextcommand;
+    while (thisCmd != NULL)
+    {
+        TRACE("%p %2.2d %p %s Redir:%s %s\n",
+              thisCmd,
+              CMD_node_get_depth(thisCmd),
+              CMD_node_next(thisCmd),
+              wine_dbgstr_w(CMD_node_get_command(thisCmd)->command),
+              wine_dbgstr_w(CMD_node_get_command(thisCmd)->redirects),
+              op2str(thisCmd->op));
+        thisCmd = CMD_node_next(thisCmd);
     }
 }
 
@@ -1762,16 +1794,15 @@ static void WCMD_DumpCommands(CMD_LIST *commands) {
  *
  *   Adds a command to the current command list
  */
-static void WCMD_addCommand(WCHAR *command, int *commandLen,
-                     WCHAR *redirs,  int *redirLen,
-                     WCHAR **copyTo, int **copyToLen,
-                     CMD_DELIMITERS prevDelim, int curDepth,
-                     CMD_LIST **lastEntry, CMD_LIST **output) {
-
-    CMD_LIST *thisEntry = NULL;
+static CMD_COMMAND *WCMD_createCommand(WCHAR *command, int *commandLen,
+                                       WCHAR *redirs,  int *redirLen,
+                                       WCHAR **copyTo, int **copyToLen,
+                                       int curDepth)
+{
+    CMD_COMMAND *thisEntry = NULL;
 
     /* Allocate storage for command */
-    thisEntry = xalloc(sizeof(CMD_LIST));
+    thisEntry = xalloc(sizeof(CMD_COMMAND));
 
     /* Copy in the command */
     if (command) {
@@ -1798,17 +1829,26 @@ static void WCMD_addCommand(WCHAR *command, int *commandLen,
     }
 
     /* Fill in other fields */
-    thisEntry->nextcommand = NULL;
-    thisEntry->prevDelim = prevDelim;
     thisEntry->bracketDepth = curDepth;
-    if (*lastEntry) {
-        (*lastEntry)->nextcommand = thisEntry;
-    } else {
-        *output = thisEntry;
-    }
-    *lastEntry = thisEntry;
+    return thisEntry;
 }
 
+static void WCMD_appendCommand(CMD_OPERATOR op, CMD_COMMAND *command, CMD_NODE **node)
+{
+    /* append as left to right operators */
+    if (*node)
+    {
+        CMD_NODE **last = node;
+        while ((*last)->op != CMD_SINGLE)
+            last = &(*last)->right;
+
+        *last = node_create_binary(op, *last, node_create_single(command));
+    }
+    else
+    {
+        *node = node_create_single(command);
+    }
+}
 
 /***************************************************************************
  * WCMD_IsEndQuote
@@ -1878,7 +1918,7 @@ static BOOL WCMD_IsEndQuote(const WCHAR *quote, int quoteIndex)
  *     - Anything else gets put into the command string (including
  *            redirects)
  */
-WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE readFrom)
+WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_NODE **output, HANDLE readFrom)
 {
     WCHAR    *curPos;
     int       inQuotes = 0;
@@ -1889,8 +1929,8 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
     WCHAR    *curCopyTo;
     int      *curLen;
     int       curDepth = 0;
-    CMD_LIST *lastEntry = NULL;
-    CMD_DELIMITERS prevDelim = CMD_NONE;
+    CMD_COMMAND *single_cmd = NULL;
+    CMD_OPERATOR cmd_op = CMD_CONCAT;
     static WCHAR    *extraSpace = NULL;  /* Deliberately never freed */
     BOOL      inOneLine = FALSE;
     BOOL      inFor = FALSE;
@@ -1909,6 +1949,7 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
     int       lineCurDepth;                  /* Bracket depth when line was read in */
     BOOL      resetAtEndOfLine = FALSE;      /* Do we need to reset curdepth at EOL */
 
+    *output = NULL;
     /* Allocate working space for a command read from keyboard, file etc */
     if (!extraSpace)
         extraSpace = xalloc((MAXSTRING + 1) * sizeof(WCHAR));
@@ -1918,6 +1959,7 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
         return NULL;
     }
 
+    *output = NULL;
     /* If initial command read in, use that, otherwise get input from handle */
     if (optionalcmd != NULL) {
         lstrcpyW(extraSpace, optionalcmd);
@@ -2156,19 +2198,18 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
                   if (curStringLen > 0) {
 
                     /* Add the current command */
-                    WCMD_addCommand(curString, &curStringLen,
-                          curRedirs, &curRedirsLen,
-                          &curCopyTo, &curLen,
-                          prevDelim, curDepth,
-                          &lastEntry, output);
-
+                    single_cmd = WCMD_createCommand(curString, &curStringLen,
+                                                    curRedirs, &curRedirsLen,
+                                                    &curCopyTo, &curLen,
+                                                    curDepth);
+                    WCMD_appendCommand(cmd_op, single_cmd, output);
                   }
 
                   if (*(curPos+1) == '|') {
                     curPos++; /* Skip other | */
-                    prevDelim = CMD_ONFAILURE;
+                    cmd_op = CMD_ONFAILURE;
                   } else {
-                    prevDelim = CMD_PIPE;
+                    cmd_op = CMD_PIPE;
                   }
 
                   /* If in an IF or ELSE statement, put subsequent chained
@@ -2230,11 +2271,11 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
                   }
 
                   /* Add the current command */
-                  WCMD_addCommand(curString, &curStringLen,
-                                  curRedirs, &curRedirsLen,
-                                  &curCopyTo, &curLen,
-                                  prevDelim, curDepth,
-                                  &lastEntry, output);
+                  single_cmd = WCMD_createCommand(curString, &curStringLen,
+                                                  curRedirs, &curRedirsLen,
+                                                  &curCopyTo, &curLen,
+                                                  curDepth);
+                  WCMD_appendCommand(cmd_op, single_cmd, output);
 
                   curDepth++;
                 } else {
@@ -2261,19 +2302,18 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
                   if (curStringLen > 0) {
 
                     /* Add the current command */
-                    WCMD_addCommand(curString, &curStringLen,
-                          curRedirs, &curRedirsLen,
-                          &curCopyTo, &curLen,
-                          prevDelim, curDepth,
-                          &lastEntry, output);
-
+                    single_cmd = WCMD_createCommand(curString, &curStringLen,
+                                                    curRedirs, &curRedirsLen,
+                                                    &curCopyTo, &curLen,
+                                                    curDepth);
+                    WCMD_appendCommand(cmd_op, single_cmd, output);
                   }
 
                   if (*(curPos+1) == '&') {
                     curPos++; /* Skip other & */
-                    prevDelim = CMD_ONSUCCESS;
+                    cmd_op = CMD_ONSUCCESS;
                   } else {
-                    prevDelim = CMD_NONE;
+                    cmd_op = CMD_CONCAT;
                   }
                   /* If in an IF or ELSE statement, put subsequent chained
                      commands at a higher depth as if brackets were supplied
@@ -2294,20 +2334,21 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
                   if (curStringLen) {
 
                       /* Add the current command */
-                      WCMD_addCommand(curString, &curStringLen,
-                            curRedirs, &curRedirsLen,
-                            &curCopyTo, &curLen,
-                            prevDelim, curDepth,
-                            &lastEntry, output);
+                      single_cmd = WCMD_createCommand(curString, &curStringLen,
+                                                      curRedirs, &curRedirsLen,
+                                                      &curCopyTo, &curLen,
+                                                      curDepth);
+                      WCMD_appendCommand(cmd_op, single_cmd, output);
                   }
 
                   /* Add an empty entry to the command list */
-                  prevDelim = CMD_NONE;
-                  WCMD_addCommand(NULL, &curStringLen,
-                        curRedirs, &curRedirsLen,
-                        &curCopyTo, &curLen,
-                        prevDelim, curDepth,
-                        &lastEntry, output);
+                  cmd_op = CMD_CONCAT;
+                  single_cmd = WCMD_createCommand(NULL, &curStringLen,
+                                                  curRedirs, &curRedirsLen,
+                                                  &curCopyTo, &curLen,
+                                                  curDepth);
+                  WCMD_appendCommand(cmd_op, single_cmd, output);
+
                   curDepth--;
 
                   /* Leave inIn if necessary */
@@ -2339,11 +2380,11 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
       if (*curPos == 0x00 && !lastWasCaret && *curLen > 0) {
 
           /* Add an entry to the command list */
-          WCMD_addCommand(curString, &curStringLen,
-                curRedirs, &curRedirsLen,
-                &curCopyTo, &curLen,
-                prevDelim, curDepth,
-                &lastEntry, output);
+          single_cmd = WCMD_createCommand(curString, &curStringLen,
+                                          curRedirs, &curRedirsLen,
+                                          &curCopyTo, &curLen,
+                                          curDepth);
+          WCMD_appendCommand(cmd_op, single_cmd, output);
 
           /* If we had a single line if or else, and we pretended to add
              brackets, end them now                                      */
@@ -2363,7 +2404,7 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
         WINE_TRACE("Need to read more data as outstanding brackets or carets\n");
         inOneLine = FALSE;
         ignoreBracket = FALSE;
-        prevDelim = CMD_NONE;
+        cmd_op = CMD_CONCAT;
         inQuotes = 0;
         memset(extraSpace, 0x00, (MAXSTRING+1) * sizeof(WCHAR));
         extraData = extraSpace;
@@ -2425,39 +2466,46 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
  *
  * Process all the commands read in so far
  */
-CMD_LIST *WCMD_process_commands(CMD_LIST *thisCmd, BOOL oneBracket,
+CMD_NODE *WCMD_process_commands(CMD_NODE *thisCmd, BOOL oneBracket,
                                 BOOL retrycall) {
 
     int bdepth = -1;
 
-    if (thisCmd && oneBracket) bdepth = thisCmd->bracketDepth;
+    if (thisCmd && oneBracket) bdepth = CMD_node_get_depth(thisCmd);
 
     /* Loop through the commands, processing them one by one */
     while (thisCmd) {
 
-      CMD_LIST *origCmd = thisCmd;
+      CMD_NODE *origCmd = thisCmd;
 
       /* If processing one bracket only, and we find the end bracket
          entry (or less), return                                    */
-      if (oneBracket && !thisCmd->command &&
-          bdepth <= thisCmd->bracketDepth) {
+      if (oneBracket && !CMD_node_get_command(thisCmd)->command &&
+          bdepth <= CMD_node_get_depth(thisCmd)) {
         WINE_TRACE("Finished bracket @ %p, next command is %p\n",
-                   thisCmd, thisCmd->nextcommand);
-        return thisCmd->nextcommand;
+                   thisCmd, CMD_node_next(thisCmd));
+        return CMD_node_next(thisCmd);
       }
 
       /* Ignore the NULL entries a ')' inserts (Only 'if' cares
          about them and it will be handled in there)
          Also, skip over any batch labels (eg. :fred)          */
-      if (thisCmd->command && thisCmd->command[0] != ':') {
-        WINE_TRACE("Executing command: '%s'\n", wine_dbgstr_w(thisCmd->command));
-        WCMD_execute (thisCmd->command, thisCmd->redirects, &thisCmd, retrycall);
+      if (CMD_node_get_command(thisCmd)->command && CMD_node_get_command(thisCmd)->command[0] != ':') {
+        WINE_TRACE("Executing command: '%s'\n", wine_dbgstr_w(CMD_node_get_command(thisCmd)->command));
+        WCMD_execute (CMD_node_get_command(thisCmd)->command, CMD_node_get_command(thisCmd)->redirects, &thisCmd, retrycall);
       }
 
       /* Step on unless the command itself already stepped on */
-      if (thisCmd == origCmd) thisCmd = thisCmd->nextcommand;
+      if (thisCmd == origCmd) thisCmd = CMD_node_next(thisCmd);
     }
     return NULL;
+}
+
+static void WCMD_free_command(CMD_COMMAND *cmd)
+{
+    free(cmd->command);
+    free(cmd->redirects);
+    free(cmd);
 }
 
 /***************************************************************************
@@ -2468,15 +2516,18 @@ CMD_LIST *WCMD_process_commands(CMD_LIST *thisCmd, BOOL oneBracket,
  *   pointer will be modified within the commands, and hence a single free
  *   routine is simpler
  */
-void WCMD_free_commands(CMD_LIST *cmds) {
-
+void WCMD_free_commands(CMD_NODE *cmds)
+{
     /* Loop through the commands, freeing them one by one */
-    while (cmds) {
-      CMD_LIST *thisCmd = cmds;
-      cmds = cmds->nextcommand;
-      free(thisCmd->command);
-      free(thisCmd->redirects);
-      free(thisCmd);
+    while (cmds)
+    {
+        CMD_NODE *thisCmd = cmds;
+        cmds = CMD_node_next(cmds);
+        if (thisCmd->op == CMD_SINGLE)
+            WCMD_free_command(thisCmd->command);
+        else
+            WCMD_free_commands(thisCmd->left);
+        free(thisCmd);
     }
 }
 
@@ -2502,7 +2553,7 @@ int __cdecl wmain (int argc, WCHAR *argvW[])
   BOOL opt_q;
   int opt_t = 0;
   WCHAR comspec[MAX_PATH];
-  CMD_LIST *toExecute = NULL;         /* Commands left to be executed */
+  CMD_NODE *toExecute = NULL;         /* Commands left to be executed */
   RTL_OSVERSIONINFOEXW osv;
   char osver[50];
   STARTUPINFOW startupInfo;

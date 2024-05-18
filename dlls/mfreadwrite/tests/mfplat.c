@@ -42,11 +42,13 @@ DEFINE_GUID(GUID_NULL, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 #include "initguid.h"
 #include "d3d9.h"
 #include "dxva2api.h"
+#include "d3d11_4.h"
 #include "evr.h"
 
 #include "wine/test.h"
 
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_TEST,MAKEFOURCC('T','E','S','T'));
+DEFINE_MEDIATYPE_GUID(MFVideoFormat_ABGR32,D3DFMT_A8B8G8R8);
 
 #define check_interface(a, b, c) check_interface_(__LINE__, a, b, c)
 static void check_interface_(unsigned int line, void *iface_ptr, REFIID iid, BOOL supported)
@@ -199,6 +201,7 @@ static IDirect3DDevice9 *create_d3d9_device(IDirect3D9 *d3d9, HWND focus_window)
 }
 
 static HRESULT (WINAPI *pMFCreateMFByteStreamOnStream)(IStream *stream, IMFByteStream **bytestream);
+static HRESULT (WINAPI *pMFCreateDXGIDeviceManager)(UINT *token, IMFDXGIDeviceManager **manager);
 
 static void init_functions(void)
 {
@@ -206,6 +209,7 @@ static void init_functions(void)
 
 #define X(f) if (!(p##f = (void*)GetProcAddress(mod, #f))) return;
     X(MFCreateMFByteStreamOnStream);
+    X(MFCreateDXGIDeviceManager);
 #undef X
 }
 
@@ -2296,9 +2300,11 @@ skip_tests:
 }
 
 static BOOL test_decoder_d3d_aware;
+static BOOL test_decoder_d3d11_aware;
 static BOOL test_decoder_got_d3d_manager;
 static BOOL test_decoder_allocate_samples;
-static IDirect3DDeviceManager9 *expect_d3d_manager;
+static IDirect3DDeviceManager9 *expect_d3d9_manager;
+static IMFDXGIDeviceManager *expect_dxgi_manager;
 
 struct test_decoder
 {
@@ -2498,7 +2504,8 @@ static HRESULT WINAPI test_decoder_SetOutputType(IMFTransform *iface, DWORD id, 
     HRESULT hr;
 
     if (type && SUCCEEDED(hr = IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype))
-            && IsEqualGUID(&subtype, &MFVideoFormat_RGB32))
+            && (IsEqualGUID(&subtype, &MFVideoFormat_RGB32)
+            || IsEqualGUID(&subtype, &MFVideoFormat_ABGR32)))
         return MF_E_INVALIDMEDIATYPE;
 
     if (flags & MFT_SET_TYPE_TEST_ONLY)
@@ -2564,20 +2571,35 @@ static HRESULT WINAPI test_decoder_ProcessMessage(IMFTransform *iface, MFT_MESSA
         return S_OK;
 
     case MFT_MESSAGE_SET_D3D_MANAGER:
-        ok(test_decoder_d3d_aware, "Unexpected call.\n");
-        if (param)
+        ok(test_decoder_d3d_aware || test_decoder_d3d11_aware, "Unexpected call.\n");
+        if (!param)
+            return S_OK;
+
+        if (test_decoder_d3d_aware)
         {
             IDirect3DDeviceManager9 *manager;
             HRESULT hr;
 
             hr = IUnknown_QueryInterface((IUnknown *)param, &IID_IDirect3DDeviceManager9, (void **)&manager);
             ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-            ok(manager == expect_d3d_manager, "got manager %p\n", manager);
+            ok(manager == expect_d3d9_manager, "got manager %p\n", manager);
             IDirect3DDeviceManager9_Release(manager);
 
             test_decoder_got_d3d_manager = TRUE;
         }
-        return test_decoder_d3d_aware ? S_OK : E_NOTIMPL;
+        if (test_decoder_d3d11_aware)
+        {
+            IMFDXGIDeviceManager *manager;
+            HRESULT hr;
+
+            hr = IUnknown_QueryInterface((IUnknown *)param, &IID_IMFDXGIDeviceManager, (void **)&manager);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+            ok(manager == expect_dxgi_manager, "got manager %p\n", manager);
+            IMFDXGIDeviceManager_Release(manager);
+
+            test_decoder_got_d3d_manager = TRUE;
+        }
+        return S_OK;
 
     default:
         ok(0, "Unexpected call.\n");
@@ -2712,11 +2734,19 @@ static HRESULT WINAPI test_mft_factory_CreateInstance(IClassFactory *iface, IUnk
     decoder->IMFTransform_iface.lpVtbl = &test_decoder_vtbl;
     decoder->refcount = 1;
 
-    if (test_decoder_d3d_aware)
+    if (test_decoder_d3d_aware || test_decoder_d3d11_aware)
     {
         hr = MFCreateAttributes(&decoder->attributes, 1);
         ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    }
+    if (test_decoder_d3d_aware)
+    {
         hr = IMFAttributes_SetUINT32(decoder->attributes, &MF_SA_D3D_AWARE, 1);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    }
+    if (test_decoder_d3d11_aware)
+    {
+        hr = IMFAttributes_SetUINT32(decoder->attributes, &MF_SA_D3D11_AWARE, 1);
         ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     }
 
@@ -2901,7 +2931,7 @@ skip_tests:
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 }
 
-static void test_source_reader_transforms_d3d(void)
+static void test_source_reader_transforms_d3d9(void)
 {
     static const struct attribute_desc test_stream_type_desc[] =
     {
@@ -2966,8 +2996,11 @@ static void test_source_reader_transforms_d3d(void)
     if (!(d3d9_device = create_d3d9_device(d3d9, window)))
     {
         skip("Failed to create a D3D9 device, skipping tests.\n");
-        goto done;
+        IDirect3D9_Release(d3d9);
+        DestroyWindow(window);
+        return;
     }
+    IDirect3D9_Release(d3d9);
 
     test_decoder_d3d_aware = TRUE;
 
@@ -2984,9 +3017,11 @@ static void test_source_reader_transforms_d3d(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = IDirect3DDeviceManager9_ResetDevice(d3d9_manager, d3d9_device, token);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IDirect3DDevice9_Release(d3d9_device);
+
     hr = IMFAttributes_SetUnknown(attributes, &MF_SOURCE_READER_D3D_MANAGER, (IUnknown *)d3d9_manager);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    expect_d3d_manager = d3d9_manager;
+    expect_d3d9_manager = d3d9_manager;
 
 
     /* test d3d aware decoder that doesn't allocate buffers */
@@ -3016,7 +3051,6 @@ static void test_source_reader_transforms_d3d(void)
         IMFSourceReader_Release(reader);
         goto skip_tests;
     }
-    IMFSourceReaderEx_Release(reader_ex);
 
     hr = IMFSourceReader_SetStreamSelection(reader, 0, TRUE);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -3038,7 +3072,7 @@ static void test_source_reader_transforms_d3d(void)
     hr = IMFSourceReader_SetCurrentMediaType(reader, 0, NULL, media_type);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     IMFMediaType_Release(media_type);
-    todo_wine ok(!!test_decoder_got_d3d_manager, "d3d manager not received\n");
+    ok(!!test_decoder_got_d3d_manager, "d3d manager not received\n");
 
     hr = IMFSourceReader_GetCurrentMediaType(reader, 0, &media_type);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -3046,18 +3080,35 @@ static void test_source_reader_transforms_d3d(void)
     IMFMediaType_Release(media_type);
 
 
-    hr = IMFSourceReader_QueryInterface(reader, &IID_IMFSourceReaderEx, (void **)&reader_ex);
-    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    /* video processor transform is not D3D9 aware on more recent Windows */
 
-    /* video processor transform is not D3D aware */
     hr = IMFSourceReaderEx_GetTransformForStream(reader_ex, 0, 1, NULL, &video_processor);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(video_processor->lpVtbl != &test_decoder_vtbl, "got unexpected transform\n");
     hr = IMFTransform_GetAttributes(video_processor, &attributes);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = IMFAttributes_GetUINT32(attributes, &MF_SA_D3D_AWARE, &value);
+    todo_wine /* Wine exposes MF_SA_D3D_AWARE on the video processor, as Win7 */
+    ok(hr == MF_E_ATTRIBUTENOTFOUND, "Unexpected hr %#lx.\n", hr);
+    hr = IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_AWARE, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(value == 1, "got %u.\n", value);
+    hr = IMFAttributes_GetUINT32(attributes, &MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT, &value);
     ok(hr == MF_E_ATTRIBUTENOTFOUND, "Unexpected hr %#lx.\n", hr);
     IMFAttributes_Release(attributes);
+
+    hr = IMFTransform_GetOutputStreamAttributes(video_processor, 0, &attributes);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFAttributes_GetCount(attributes, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(value == 0, "got %u.\n", value);
+    IMFAttributes_Release(attributes);
+
+    hr = IMFTransform_GetOutputCurrentType(video_processor, 0, &media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_media_type(media_type, rgb32_expect_desc, -1);
+    IMFMediaType_Release(media_type);
+
     IMFTransform_Release(video_processor);
 
     hr = IMFSourceReaderEx_GetTransformForStream(reader_ex, 0, 0, NULL, &test_decoder);
@@ -3070,7 +3121,6 @@ static void test_source_reader_transforms_d3d(void)
     ok(value == 1, "got %u\n", value);
     IMFAttributes_Release(attributes);
 
-    IMFSourceReaderEx_Release(reader_ex);
 
     fail_request_sample = FALSE;
     test_decoder_set_next_output(test_decoder, S_OK);
@@ -3096,7 +3146,32 @@ static void test_source_reader_transforms_d3d(void)
 
     fail_request_sample = TRUE;
 
+
+    /* video processor output stream attributes are left empty in D3D9 mode */
+
+    hr = IMFSourceReaderEx_GetTransformForStream(reader_ex, 0, 1, NULL, &video_processor);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(video_processor->lpVtbl != &test_decoder_vtbl, "got unexpected transform\n");
+
+    hr = IMFTransform_GetAttributes(video_processor, &attributes);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFAttributes_GetUINT32(attributes, &MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(value == 6, "got %u.\n", value);
+    IMFAttributes_Release(attributes);
+
+    hr = IMFTransform_GetOutputStreamAttributes(video_processor, 0, &attributes);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFAttributes_GetCount(attributes, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(value == 0, "got %u.\n", value);
+    IMFAttributes_Release(attributes);
+
+    IMFTransform_Release(video_processor);
+
+
     IMFTransform_Release(test_decoder);
+    IMFSourceReaderEx_Release(reader_ex);
     IMFSourceReader_Release(reader);
 
 
@@ -3136,7 +3211,7 @@ static void test_source_reader_transforms_d3d(void)
     hr = IMFSourceReader_SetCurrentMediaType(reader, 0, NULL, media_type);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     IMFMediaType_Release(media_type);
-    todo_wine ok(!!test_decoder_got_d3d_manager, "d3d manager not received\n");
+    ok(!!test_decoder_got_d3d_manager, "d3d manager not received\n");
 
 
     hr = IMFSourceReader_QueryInterface(reader, &IID_IMFSourceReaderEx, (void **)&reader_ex);
@@ -3182,13 +3257,279 @@ skip_tests:
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     IDirect3DDeviceManager9_Release(d3d9_manager);
-    IDirect3DDevice9_Release(d3d9_device);
-
-done:
-    IDirect3D9_Release(d3d9);
     DestroyWindow(window);
 
+    test_decoder_got_d3d_manager = FALSE;
     test_decoder_d3d_aware = FALSE;
+    expect_d3d9_manager = NULL;
+}
+
+static void test_source_reader_transforms_d3d11(void)
+{
+    static const struct attribute_desc test_stream_type_desc[] =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_TEST),
+        ATTR_RATIO(MF_MT_FRAME_SIZE, 96, 96),
+        {0},
+    };
+    static const struct attribute_desc rgb32_stream_type_desc[] =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32),
+        {0},
+    };
+    static const struct attribute_desc rgb32_expect_desc[] =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32),
+        ATTR_RATIO(MF_MT_FRAME_SIZE, 96, 96),
+        ATTR_UINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, 1),
+        ATTR_UINT32(MF_MT_COMPRESSED, 0, .todo = TRUE),
+        ATTR_UINT32(MF_MT_INTERLACE_MODE, 2, .todo = TRUE),
+        {0},
+    };
+    static const struct attribute_desc abgr32_stream_type_desc[] =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_ABGR32),
+        {0},
+    };
+    static const struct attribute_desc abgr32_expect_desc[] =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_ABGR32),
+        ATTR_RATIO(MF_MT_FRAME_SIZE, 96, 96),
+        ATTR_UINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, 1),
+        ATTR_UINT32(MF_MT_COMPRESSED, 0, .todo = TRUE),
+        ATTR_UINT32(MF_MT_INTERLACE_MODE, 2, .todo = TRUE),
+        {0},
+    };
+    const MFT_REGISTER_TYPE_INFO output_info[] =
+    {
+        {MFMediaType_Video, MFVideoFormat_NV12},
+        {MFMediaType_Video, MFVideoFormat_YUY2},
+    };
+    const MFT_REGISTER_TYPE_INFO input_info[] =
+    {
+        {MFMediaType_Video, MFVideoFormat_TEST},
+    };
+    IClassFactory factory = {.lpVtbl = &test_mft_factory_vtbl};
+    IMFTransform *test_decoder, *video_processor;
+    IMFStreamDescriptor *video_stream;
+    ID3D11Multithread *multithread;
+    IMFDXGIDeviceManager *manager;
+    IMFSourceReaderEx *reader_ex;
+    IMFAttributes *attributes;
+    IMFMediaType *media_type;
+    IMFSourceReader *reader;
+    IMFMediaBuffer *buffer;
+    IMFMediaSource *source;
+    UINT32 value, token;
+    ID3D11Device *d3d11;
+    LONGLONG timestamp;
+    DWORD index, flags;
+    IMFSample *sample;
+    HRESULT hr;
+
+    if (!pMFCreateDXGIDeviceManager)
+    {
+        win_skip("MFCreateDXGIDeviceManager() is not available, skipping tests.\n");
+        return;
+    }
+
+    hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, NULL, 0,
+            D3D11_SDK_VERSION, &d3d11, NULL, NULL);
+    if (FAILED(hr))
+    {
+        skip("D3D11 device creation failed, skipping tests.\n");
+        return;
+    }
+
+    hr = ID3D11Device_QueryInterface(d3d11, &IID_ID3D11Multithread, (void **)&multithread);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    ID3D11Multithread_SetMultithreadProtected(multithread, TRUE);
+    ID3D11Multithread_Release(multithread);
+
+    hr = pMFCreateDXGIDeviceManager(&token, &manager);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    hr = IMFDXGIDeviceManager_ResetDevice(manager, (IUnknown *)d3d11, token);
+    ok(hr == S_OK, "got %#lx\n", hr);
+    ID3D11Device_Release(d3d11);
+
+
+    test_decoder_d3d11_aware = TRUE;
+
+    hr = MFTRegisterLocal(&factory, &MFT_CATEGORY_VIDEO_DECODER, L"Test Decoder", 0,
+            ARRAY_SIZE(input_info), input_info, ARRAY_SIZE(output_info), output_info);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = MFCreateAttributes(&attributes, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFAttributes_SetUINT32(attributes, &MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFAttributes_SetUnknown(attributes, &MF_SOURCE_READER_D3D_MANAGER, (IUnknown *)manager);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    expect_dxgi_manager = manager;
+
+
+    hr = MFCreateMediaType(&media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    init_media_type(media_type, test_stream_type_desc, -1);
+    hr = MFCreateStreamDescriptor(0, 1, &media_type, &video_stream);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFMediaType_Release(media_type);
+
+    source = create_test_source(&video_stream, 1);
+    ok(!!source, "Failed to create test source.\n");
+    IMFStreamDescriptor_Release(video_stream);
+
+    hr = MFCreateSourceReaderFromMediaSource(source, attributes, &reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFAttributes_Release(attributes);
+    IMFMediaSource_Release(source);
+
+    /* skip tests on Win7 which misses IMFSourceReaderEx */
+    hr = IMFSourceReader_QueryInterface(reader, &IID_IMFSourceReaderEx, (void **)&reader_ex);
+    ok(hr == S_OK || broken(hr == E_NOINTERFACE) /* Win7 */, "Unexpected hr %#lx.\n", hr);
+    if (broken(hr == E_NOINTERFACE))
+    {
+        win_skip("missing IMFSourceReaderEx interface, skipping tests on Win7\n");
+        IMFSourceReader_Release(reader);
+        goto skip_tests;
+    }
+
+    hr = IMFSourceReader_SetStreamSelection(reader, 0, TRUE);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFSourceReader_GetNativeMediaType(reader, 0, 0, &media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_media_type(media_type, test_stream_type_desc, -1);
+    IMFMediaType_Release(media_type);
+
+    hr = IMFSourceReader_GetCurrentMediaType(reader, 0, &media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_media_type(media_type, test_stream_type_desc, -1);
+    IMFMediaType_Release(media_type);
+    ok(!test_decoder_got_d3d_manager, "d3d manager received\n");
+
+    hr = MFCreateMediaType(&media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    init_media_type(media_type, abgr32_stream_type_desc, -1);
+    hr = IMFSourceReader_SetCurrentMediaType(reader, 0, NULL, media_type);
+    ok(hr == S_OK || broken(hr == MF_E_INVALIDMEDIATYPE) /* needs a GPU */, "Unexpected hr %#lx.\n", hr);
+    IMFMediaType_Release(media_type);
+
+    if (hr == S_OK)
+    {
+        hr = IMFSourceReader_GetCurrentMediaType(reader, 0, &media_type);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        check_media_type(media_type, abgr32_expect_desc, -1);
+        IMFMediaType_Release(media_type);
+    }
+
+    hr = MFCreateMediaType(&media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    init_media_type(media_type, rgb32_stream_type_desc, -1);
+    hr = IMFSourceReader_SetCurrentMediaType(reader, 0, NULL, media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFMediaType_Release(media_type);
+
+    hr = IMFSourceReader_GetCurrentMediaType(reader, 0, &media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_media_type(media_type, rgb32_expect_desc, -1);
+    IMFMediaType_Release(media_type);
+
+
+    /* video processor output stream attributes are still empty */
+
+    hr = IMFSourceReaderEx_GetTransformForStream(reader_ex, 0, 1, NULL, &video_processor);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(video_processor->lpVtbl != &test_decoder_vtbl, "got unexpected transform\n");
+
+    hr = IMFTransform_GetAttributes(video_processor, &attributes);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFAttributes_GetUINT32(attributes, &MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT, &value);
+    ok(hr == MF_E_ATTRIBUTENOTFOUND, "Unexpected hr %#lx.\n", hr);
+    IMFAttributes_Release(attributes);
+
+    hr = IMFTransform_GetOutputStreamAttributes(video_processor, 0, &attributes);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFAttributes_GetCount(attributes, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(value == 0, "got %u.\n", value);
+    IMFAttributes_Release(attributes);
+
+    IMFTransform_Release(video_processor);
+
+
+    hr = IMFSourceReaderEx_GetTransformForStream(reader_ex, 0, 0, NULL, &test_decoder);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(test_decoder->lpVtbl == &test_decoder_vtbl, "got unexpected transform\n");
+
+    fail_request_sample = FALSE;
+    test_decoder_set_next_output(test_decoder, S_OK);
+
+    sample = (void *)0xdeadbeef;
+    index = flags = timestamp = 0xdeadbeef;
+    hr = IMFSourceReader_ReadSample(reader, 0, 0, &index, &flags, &timestamp, &sample);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(index == 0, "got %lu.\n", index);
+    ok(flags == 0, "got %lu.\n", flags);
+    ok(timestamp == 0, "got %I64d.\n", timestamp);
+    ok(sample != (void *)0xdeadbeef, "got %p.\n", sample);
+
+    hr = IMFSample_GetBufferByIndex(sample, 0, &buffer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_interface(buffer, &IID_IMF2DBuffer2, TRUE);
+    check_interface(buffer, &IID_IMFGetService, FALSE);
+    check_interface(buffer, &IID_IMFDXGIBuffer, TRUE);
+    IMFMediaBuffer_Release(buffer);
+
+    IMFSample_Release(sample);
+
+    fail_request_sample = TRUE;
+
+
+    /* video processor output stream attributes are now set with some defaults */
+
+    hr = IMFSourceReaderEx_GetTransformForStream(reader_ex, 0, 1, NULL, &video_processor);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(video_processor->lpVtbl != &test_decoder_vtbl, "got unexpected transform\n");
+
+    hr = IMFTransform_GetAttributes(video_processor, &attributes);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    value = 0xdeadbeef;
+    hr = IMFAttributes_GetUINT32(attributes, &MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(value == 6, "got %u.\n", value);
+    IMFAttributes_Release(attributes);
+
+    hr = IMFTransform_GetOutputStreamAttributes(video_processor, 0, &attributes);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    value = 0xdeadbeef;
+    hr = IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_BINDFLAGS, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(value == 1024, "got %u.\n", value);
+    IMFAttributes_Release(attributes);
+
+    IMFTransform_Release(video_processor);
+
+
+    IMFSourceReaderEx_Release(reader_ex);
+    IMFSourceReader_Release(reader);
+    IMFTransform_Release(test_decoder);
+
+
+skip_tests:
+    hr = MFTUnregisterLocal(&factory);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    IMFDXGIDeviceManager_Release(manager);
+
+    test_decoder_got_d3d_manager = FALSE;
+    test_decoder_d3d11_aware = FALSE;
+    expect_dxgi_manager = NULL;
 }
 
 START_TEST(mfplat)
@@ -3209,7 +3550,8 @@ START_TEST(mfplat)
     test_source_reader_transforms(TRUE, FALSE);
     test_source_reader_transforms(FALSE, TRUE);
     test_source_reader_transform_stream_change();
-    test_source_reader_transforms_d3d();
+    test_source_reader_transforms_d3d9();
+    test_source_reader_transforms_d3d11();
     test_reader_d3d9();
     test_sink_writer_create();
     test_sink_writer_mp4();

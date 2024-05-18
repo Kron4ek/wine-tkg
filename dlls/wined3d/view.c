@@ -45,7 +45,6 @@ static GLenum get_texture_view_target(const struct wined3d_gl_info *gl_info,
     view_types[] =
     {
         {GL_TEXTURE_CUBE_MAP,  0, GL_TEXTURE_CUBE_MAP},
-        {GL_TEXTURE_RECTANGLE, 0, GL_TEXTURE_RECTANGLE},
         {GL_TEXTURE_3D,        0, GL_TEXTURE_3D},
 
         {GL_TEXTURE_2D,       0,                          GL_TEXTURE_2D},
@@ -465,24 +464,14 @@ void wined3d_rendertarget_view_get_drawable_size(const struct wined3d_rendertarg
         *width = texture->resource.width;
         *height = texture->resource.height;
     }
-    else if (wined3d_settings.offscreen_rendering_mode == ORM_BACKBUFFER)
-    {
-        const struct wined3d_swapchain_desc *desc = &context->swapchain->state.desc;
-
-        /* The drawable size of a backbuffer / aux buffer offscreen target is
-         * the size of the current context's drawable, which is the size of
-         * the back buffer of the swapchain the active context belongs to. */
-        *width = desc->backbuffer_width;
-        *height = desc->backbuffer_height;
-    }
     else
     {
         unsigned int level_idx = view->sub_resource_idx % texture->level_count;
 
         /* The drawable size of an FBO target is the OpenGL texture size,
          * which is the power of two size. */
-        *width = wined3d_texture_get_level_pow2_width(texture, level_idx);
-        *height = wined3d_texture_get_level_pow2_height(texture, level_idx);
+        *width = wined3d_texture_get_level_width(texture, level_idx);
+        *height = wined3d_texture_get_level_height(texture, level_idx);
     }
 }
 
@@ -1315,10 +1304,6 @@ void wined3d_shader_resource_view_gl_bind(struct wined3d_shader_resource_view_gl
     texture_gl = wined3d_texture_gl(wined3d_texture_from_resource(view_gl->v.resource));
     wined3d_texture_gl_bind(texture_gl, context_gl, sampler_gl->s.desc.srgb_decode);
     wined3d_sampler_gl_bind(sampler_gl, unit, texture_gl, context_gl);
-
-    /* Trigger shader constant reloading (for NP2 texcoord fixup) */
-    if (!(texture_gl->t.flags & WINED3D_TEXTURE_POW2_MAT_IDENT))
-        context_gl->c.constant_update_mask |= WINED3D_SHADER_CONST_PS_NP2_FIXUP;
 }
 
 /* Context activation is done by the caller. */

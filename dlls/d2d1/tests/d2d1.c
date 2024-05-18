@@ -32,8 +32,10 @@
 #include "wincodec.h"
 
 DEFINE_GUID(CLSID_TestEffect, 0xb9ee12e9,0x32d9,0xe659,0xac,0x61,0x2d,0x7c,0xea,0x69,0x28,0x78);
+DEFINE_GUID(CLSID_AuxEffect, 0xb9ee12e9,0x32d9,0xe659,0xac,0x61,0x2d,0x7c,0xea,0x69,0x28,0x79);
 DEFINE_GUID(GUID_TestVertexShader, 0x5bcdcfae,0x1e92,0x4dc1,0x94,0xfa,0x3b,0x01,0xca,0x54,0x59,0x20);
 DEFINE_GUID(GUID_TestPixelShader,  0x53015748,0xfc13,0x4168,0xbd,0x13,0x0f,0xcf,0x15,0x29,0x7f,0x01);
+DEFINE_GUID(GUID_CustomVertexBuffer, 0x53015748,0xfc13,0x4168,0xbd,0x13,0x0f,0xcf,0x15,0x29,0x7f,0x02);
 
 static ULONG get_refcount(void *iface)
 {
@@ -389,6 +391,10 @@ struct effect_impl
     ID2D1EffectContext *effect_context;
     ID2D1TransformGraph *transform_graph;
     ID2D1DrawInfo *draw_info;
+
+    const GUID *vertex_buffer;
+    const GUID *vertex_shader;
+    const GUID *pixel_shader;
 };
 
 static void queue_d3d1x_test(void (*test)(BOOL d3d11), BOOL d3d11)
@@ -10947,14 +10953,15 @@ static void test_builtin_effect(BOOL d3d11)
     unsigned int i, j, min_inputs, max_inputs, str_size, input_count;
     D2D1_BITMAP_PROPERTIES bitmap_desc;
     D2D1_BUFFER_PRECISION precision;
+    ID2D1Effect *effect, *effect2;
     ID2D1Image *image_a, *image_b;
     struct d2d1_test_context ctx;
     ID2D1DeviceContext *context;
     ID2D1Factory1 *factory;
     ID2D1Bitmap *bitmap;
-    ID2D1Effect *effect;
     D2D1_SIZE_U size;
     BYTE buffer[256];
+    IUnknown *unk;
     BOOL cached;
     CLSID clsid;
     HRESULT hr;
@@ -11009,6 +11016,17 @@ static void test_builtin_effect(BOOL d3d11)
         ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
         ID2D1Effect_GetOutput(effect, &image_b);
         ok(image_b == image_a, "Got unexpected image_b %p, expected %p.\n", image_b, image_a);
+
+        hr = ID2D1Image_QueryInterface(image_a, &IID_ID2D1Effect, (void **)&effect2);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(effect2 == effect, "Unexpected pointer.\n");
+        ID2D1Effect_Release(effect2);
+
+        hr = ID2D1Image_QueryInterface(image_a, &IID_IUnknown, (void **)&unk);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        ok(unk == (IUnknown *)effect, "Unexpected pointer.\n");
+        IUnknown_Release(unk);
+
         ID2D1Image_Release(image_b);
         ID2D1Image_Release(image_a);
 
@@ -12469,7 +12487,8 @@ static void test_effect_2d_affine(BOOL d3d11)
         }
         ID2D1Effect_GetOutput(effect, &output);
 
-        ID2D1DeviceContext_GetImageLocalBounds(context, output, &output_bounds);
+        hr = ID2D1DeviceContext_GetImageLocalBounds(context, output, &output_bounds);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
         todo_wine
         ok(compare_rect(&output_bounds, test->bounds.left, test->bounds.top, test->bounds.right, test->bounds.bottom, 1),
                 "Got unexpected output bounds {%.8e, %.8e, %.8e, %.8e}, expected {%.8e, %.8e, %.8e, %.8e}.\n",
@@ -12591,7 +12610,9 @@ static void test_effect_crop(BOOL d3d11)
         ID2D1Effect_GetOutput(effect, &output);
 
         set_rect(&output_bounds, -1.0f, -1.0f, -1.0f, -1.0f);
-        ID2D1DeviceContext_GetImageLocalBounds(context, output, &output_bounds);
+        hr = ID2D1DeviceContext_GetImageLocalBounds(context, output, &output_bounds);
+        todo_wine
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
         todo_wine
         ok(compare_rect(&output_bounds, test->bounds.left, test->bounds.top, test->bounds.right, test->bounds.bottom, 0),
                 "Got unexpected output bounds {%.8e, %.8e, %.8e, %.8e}, expected {%.8e, %.8e, %.8e, %.8e}.\n",
@@ -12852,7 +12873,6 @@ static void test_transform_graph(BOOL d3d11)
     ID2D1TransformGraph_Clear(graph);
     hr = ID2D1TransformGraph_ConnectNode(graph,
             (ID2D1TransformNode *)offset_transform, (ID2D1TransformNode *)blend_transform, 0);
-    todo_wine
     ok(hr == HRESULT_FROM_WIN32(ERROR_NOT_FOUND), "Got unexpected hr %#lx.\n", hr);
 
     /* Connect added node to un-added node */
@@ -12860,7 +12880,6 @@ static void test_transform_graph(BOOL d3d11)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     hr = ID2D1TransformGraph_ConnectNode(graph,
             (ID2D1TransformNode *)offset_transform, (ID2D1TransformNode *)blend_transform, 0);
-    todo_wine
     ok(hr == HRESULT_FROM_WIN32(ERROR_NOT_FOUND), "Got unexpected hr %#lx.\n", hr);
 
     /* Connect un-added node to added node */
@@ -12869,7 +12888,6 @@ static void test_transform_graph(BOOL d3d11)
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     hr = ID2D1TransformGraph_ConnectNode(graph,
             (ID2D1TransformNode *)offset_transform, (ID2D1TransformNode *)blend_transform, 0);
-    todo_wine
     ok(hr == HRESULT_FROM_WIN32(ERROR_NOT_FOUND), "Got unexpected hr %#lx.\n", hr);
 
     /* Connect nodes */
@@ -12883,15 +12901,20 @@ static void test_transform_graph(BOOL d3d11)
     {
         hr = ID2D1TransformGraph_ConnectNode(graph,
                 (ID2D1TransformNode *)offset_transform, (ID2D1TransformNode *)blend_transform, i);
-        todo_wine
         ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     }
 
     /* Connect node to out-of-bounds index */
     hr = ID2D1TransformGraph_ConnectNode(graph,
             (ID2D1TransformNode *)offset_transform, (ID2D1TransformNode *)blend_transform, count);
-    todo_wine
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+
+    /* Passthrough graph. */
+    hr = ID2D1TransformGraph_SetPassthroughGraph(graph, 100);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1TransformGraph_SetPassthroughGraph(graph, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
     ID2D1BlendTransform_Release(blend_transform);
     ID2D1OffsetTransform_Release(offset_transform);
@@ -13638,7 +13661,8 @@ static void test_image_bounds(BOOL d3d11)
 
         set_rect(&bounds, 0.0f, 0.0f, 0.0f, 0.0f);
         size = ID2D1Bitmap_GetSize(bitmap);
-        ID2D1DeviceContext_GetImageLocalBounds(context, (ID2D1Image *)bitmap, &bounds);
+        hr = ID2D1DeviceContext_GetImageLocalBounds(context, (ID2D1Image *)bitmap, &bounds);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
         ok(compare_rect(&bounds, 0.0f, 0.0f, size.width, size.height, 0),
                 "Got unexpected bounds {%.8e, %.8e, %.8e, %.8e}, expected {%.8e, %.8e, %.8e, %.8e}.\n",
                 bounds.left, bounds.top, bounds.right, bounds.bottom, 0.0f, 0.0f, size.width, size.height);
@@ -13646,7 +13670,8 @@ static void test_image_bounds(BOOL d3d11)
         /* Test bitmap local bounds after changing context dpi */
         ID2D1DeviceContext_GetDpi(context, &dpi_x, &dpi_y);
         ID2D1DeviceContext_SetDpi(context, dpi_x * 2.0f, dpi_y * 2.0f);
-        ID2D1DeviceContext_GetImageLocalBounds(context, (ID2D1Image *)bitmap, &bounds);
+        hr = ID2D1DeviceContext_GetImageLocalBounds(context, (ID2D1Image *)bitmap, &bounds);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
         ok(compare_rect(&bounds, 0.0f, 0.0f, size.width, size.height, 0),
                 "Got unexpected bounds {%.8e, %.8e, %.8e, %.8e}, expected {%.8e, %.8e, %.8e, %.8e}.\n",
                 bounds.left, bounds.top, bounds.right, bounds.bottom, 0.0f, 0.0f, size.width, size.height);
@@ -13656,7 +13681,8 @@ static void test_image_bounds(BOOL d3d11)
         unit_mode = ID2D1DeviceContext_GetUnitMode(context);
         ok(unit_mode == D2D1_UNIT_MODE_DIPS, "Got unexpected unit mode %#x.\n", unit_mode);
         ID2D1DeviceContext_SetUnitMode(context, D2D1_UNIT_MODE_PIXELS);
-        ID2D1DeviceContext_GetImageLocalBounds(context, (ID2D1Image *)bitmap, &bounds);
+        hr = ID2D1DeviceContext_GetImageLocalBounds(context, (ID2D1Image *)bitmap, &bounds);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
         ok(compare_rect(&bounds, 0.0f, 0.0f, test->pixel_size.width, test->pixel_size.height, 0),
                 "Got unexpected bounds {%.8e, %.8e, %.8e, %.8e}, expected {%.8e, %.8e, %.8e, %.8e}.\n",
                 bounds.left, bounds.top, bounds.right, bounds.bottom, 0.0f, 0.0f,
@@ -14497,35 +14523,16 @@ static void test_dc_target_is_supported(BOOL d3d11)
 static HRESULT STDMETHODCALLTYPE ps_effect_impl_Initialize(ID2D1EffectImpl *iface,
         ID2D1EffectContext *context, ID2D1TransformGraph *graph)
 {
-    static const char ps_code[] =
-        "float4 main() : sv_target\n"
-        "{\n"
-        "    return float4(0.1, 0.2, 0.3, 0.4);\n"
-        "}";
-
     struct effect_impl *effect_impl = impl_from_ID2D1EffectImpl(iface);
-    ID3D10Blob *blob;
-    HRESULT hr;
 
     effect_impl->effect_context = context;
     ID2D1EffectContext_AddRef(effect_impl->effect_context);
 
-    hr = D3DCompile(ps_code, strlen(ps_code), "test_ps", NULL, NULL, "main",
-            "ps_4_0", 0, 0, &blob, NULL);
-    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-
-    if (SUCCEEDED(hr = ID2D1EffectContext_LoadPixelShader(context, &GUID_TestPixelShader,
-           ID3D10Blob_GetBufferPointer(blob), ID3D10Blob_GetBufferSize(blob))))
-    {
-        hr = ID2D1TransformGraph_SetSingleTransformNode(graph,
+    return ID2D1TransformGraph_SetSingleTransformNode(graph,
             (ID2D1TransformNode *)&effect_impl->ID2D1DrawTransform_iface);
-    }
-
-    ID3D10Blob_Release(blob);
-    return hr;
 }
 
-static const ID2D1EffectImplVtbl ps_effect_impl_vtbl =
+static const ID2D1EffectImplVtbl custom_effect_impl_vtbl =
 {
     effect_impl_QueryInterface,
     effect_impl_AddRef,
@@ -14593,6 +14600,9 @@ static HRESULT STDMETHODCALLTYPE effect_impl_draw_transform_MapInvalidRect(
 static HRESULT STDMETHODCALLTYPE effect_impl_draw_transform_SetDrawInfo(ID2D1DrawTransform *iface,
         ID2D1DrawInfo *info)
 {
+    struct effect_impl *effect_impl = impl_from_ID2D1DrawTransform(iface);
+    ID2D1VertexBuffer *buffer = NULL;
+    HRESULT hr = S_OK;
     ULONG refcount;
 
     check_interface(info, &IID_IUnknown, TRUE);
@@ -14602,10 +14612,28 @@ static HRESULT STDMETHODCALLTYPE effect_impl_draw_transform_SetDrawInfo(ID2D1Dra
     refcount = get_refcount(info);
     ok(refcount == 1, "Unexpected refcount %lu.\n", refcount);
 
-    return ID2D1DrawInfo_SetPixelShader(info, &GUID_TestPixelShader, 0);
+    if (effect_impl->pixel_shader)
+        hr = ID2D1DrawInfo_SetPixelShader(info, effect_impl->pixel_shader, 0);
+
+    if (SUCCEEDED(hr) && (effect_impl->vertex_buffer || effect_impl->vertex_shader))
+    {
+        if (effect_impl->vertex_buffer)
+        {
+            hr = ID2D1EffectContext_FindVertexBuffer(effect_impl->effect_context,
+                    effect_impl->vertex_buffer, &buffer);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        }
+
+        hr = ID2D1DrawInfo_SetVertexProcessing(info, buffer, 0, NULL, NULL, effect_impl->vertex_shader);
+    }
+
+    if (buffer)
+        ID2D1VertexBuffer_Release(buffer);
+
+    return hr;
 }
 
-static const ID2D1DrawTransformVtbl ps_effect_draw_transform_vtbl =
+static const ID2D1DrawTransformVtbl custom_shader_effect_draw_transform_vtbl =
 {
     effect_impl_draw_transform_QueryInterface,
     effect_impl_draw_transform_AddRef,
@@ -14617,19 +14645,76 @@ static const ID2D1DrawTransformVtbl ps_effect_draw_transform_vtbl =
     effect_impl_draw_transform_SetDrawInfo,
 };
 
-static HRESULT STDMETHODCALLTYPE ps_effect_impl_create(IUnknown **effect_impl)
+static HRESULT create_custom_shader_effect(IUnknown **effect_impl, const GUID *pixel_shader,
+        const GUID *vertex_shader, const GUID *vertex_buffer)
 {
     struct effect_impl *object;
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
-    object->ID2D1EffectImpl_iface.lpVtbl = &ps_effect_impl_vtbl;
-    object->ID2D1DrawTransform_iface.lpVtbl = &ps_effect_draw_transform_vtbl;
+    object->ID2D1EffectImpl_iface.lpVtbl = &custom_effect_impl_vtbl;
+    object->ID2D1DrawTransform_iface.lpVtbl = &custom_shader_effect_draw_transform_vtbl;
     object->refcount = 1;
+    object->pixel_shader = pixel_shader;
+    object->vertex_shader = vertex_shader;
+    object->vertex_buffer = vertex_buffer;
 
     *effect_impl = (IUnknown *)&object->ID2D1EffectImpl_iface;
     return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE custom_effect_impl_create(IUnknown **effect_impl)
+{
+    return create_custom_shader_effect(effect_impl, &GUID_TestPixelShader, NULL, NULL);
+}
+
+static void preload_shader(const char *target, const char *code, const GUID *id,
+        struct d2d1_test_context *ctx)
+{
+    D2D1_PROPERTY_BINDING bindings[1] = { 0 };
+    ID2D1EffectContext *effect_context;
+    ID2D1DeviceContext *context;
+    ID2D1Factory1 *factory;
+    ID2D1Effect *effect;
+    ID3D10Blob *blob;
+    HRESULT hr;
+
+    context = ctx->context;
+    factory = ctx->factory1;
+
+    bindings[0].propertyName = L"Context";
+    bindings[0].getFunction = effect_impl_get_context;
+    hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_AuxEffect, effect_xml_b,
+            bindings, 1, effect_impl_create);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1DeviceContext_CreateEffect(context, &CLSID_AuxEffect, &effect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1Effect_GetValueByName(effect, L"Context",
+            D2D1_PROPERTY_TYPE_IUNKNOWN, (BYTE *)&effect_context, sizeof(effect_context));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = D3DCompile(code, strlen(code), NULL, NULL, NULL, "main",
+            target, 0, 0, &blob, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    if (!strcmp(target, "ps_4_0"))
+    {
+        hr = ID2D1EffectContext_LoadPixelShader(effect_context, id,
+                ID3D10Blob_GetBufferPointer(blob), ID3D10Blob_GetBufferSize(blob));
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    }
+    else
+        ok(0, "Unexpected target %s.\n", target);
+
+    ID3D10Blob_Release(blob);
+
+    ID2D1Effect_Release(effect);
+
+    hr = ID2D1Factory1_UnregisterEffect(factory, &CLSID_AuxEffect);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 }
 
 static void test_effect_custom_pixel_shader(BOOL d3d11)
@@ -14644,9 +14729,19 @@ static void test_effect_custom_pixel_shader(BOOL d3d11)
                 <Inputs>                                                              \
                     <Input name='Source'/>                                            \
                 </Inputs>                                                             \
+                <Property name='Context' type='iunknown'>                             \
+                    <Property name='DisplayName' type='string' value='Context'/>      \
+                </Property>                                                           \
             </Effect>                                                                 \
         ";
 
+    static const char ps_code[] =
+        "float4 main() : sv_target\n"
+        "{\n"
+        "    return float4(0.1, 0.2, 0.3, 0.4);\n"
+        "}";
+
+    D2D1_PROPERTY_BINDING bindings[1] = { 0 };
     D2D1_BITMAP_PROPERTIES1 bitmap_desc;
     DWORD colour, expected_colour;
     struct d2d1_test_context ctx;
@@ -14672,8 +14767,12 @@ static void test_effect_custom_pixel_shader(BOOL d3d11)
         return;
     }
 
-    hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_TestEffect, description, NULL,
-            0, ps_effect_impl_create);
+    preload_shader("ps_4_0", ps_code, &GUID_TestPixelShader, &ctx);
+
+    bindings[0].propertyName = L"Context";
+    bindings[0].getFunction = effect_impl_get_context;
+    hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_TestEffect, description, bindings,
+            ARRAY_SIZE(bindings), custom_effect_impl_create);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
     hr = ID2D1DeviceContext_CreateEffect(context, &CLSID_TestEffect, &effect);
@@ -14790,6 +14889,220 @@ static void test_get_effect_properties(BOOL d3d11)
     release_test_context(&ctx);
 }
 
+static void create_effect(ID2D1DeviceContext *device_context, const GUID *id,
+        ID2D1EffectContext **effect_context, ID2D1Effect **effect)
+{
+    HRESULT hr;
+
+    hr = ID2D1DeviceContext_CreateEffect(device_context, id, effect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    if (effect_context)
+    {
+        *effect_context = NULL;
+        hr = ID2D1Effect_GetValueByName(*effect, L"Context", D2D1_PROPERTY_TYPE_IUNKNOWN,
+                (BYTE *)effect_context, sizeof*(effect_context));
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    }
+}
+
+static void test_effect_vertex_buffer(BOOL d3d11)
+{
+    static const char custom_vs_code[] =
+        "struct vs_out"
+        "{"
+        "    float4 clipSpaceOutput  : SV_POSITION;"
+        "    float4 sceneSpaceOutput : SCENE_POSITION;"
+        "    float4 texelSpaceInput0 : TEXCOORD0;"
+        "};"
+        "vs_out main(float2 position : CUSTOM_POSITION)"
+        "{"
+        "    vs_out output = (vs_out)0;"
+        "    return output;"
+        "}";
+
+    static const D2D1_INPUT_ELEMENT_DESC custom_layout[] =
+    {
+        {"CUSTOM_POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0},
+    };
+
+    D2D1_CUSTOM_VERTEX_BUFFER_PROPERTIES custom_buffer_desc;
+    D2D1_VERTEX_BUFFER_PROPERTIES buffer_desc;
+    ID2D1VertexBuffer *buffer, *buffer2;
+    ID2D1EffectContext *effect_context;
+    ID2D1DeviceContext *device_context;
+    ID2D1Effect *effect, *effect2;
+    D2D1_PROPERTY_BINDING binding;
+    struct d2d1_test_context ctx;
+    D2D_VECTOR_4F data[3 * 6];
+    ID2D1Factory1 *factory;
+    ID2D1Device *device;
+    BYTE *ptr, *ptr2;
+    ID3D10Blob *vs;
+    HRESULT hr;
+
+    if (!init_test_context(&ctx, d3d11))
+        return;
+
+    factory = ctx.factory1;
+    if (!factory)
+    {
+        win_skip("ID2D1Factory1 is not supported.\n");
+        release_test_context(&ctx);
+        return;
+    }
+
+    binding.propertyName = L"Context";
+    binding.setFunction = NULL;
+    binding.getFunction = effect_impl_get_context;
+    hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_TestEffect,
+            effect_xml_b, &binding, 1, effect_impl_create);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    create_effect(ctx.context, &CLSID_TestEffect, &effect_context, &effect);
+
+    buffer_desc.inputCount = 1;
+    buffer_desc.usage = D2D1_VERTEX_USAGE_STATIC;
+    buffer_desc.data = (const BYTE *)data;
+    buffer_desc.byteWidth = sizeof(data);
+
+    hr = ID2D1EffectContext_CreateVertexBuffer(effect_context, &buffer_desc, NULL, NULL, &buffer);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1EffectContext_CreateVertexBuffer(effect_context, &buffer_desc, NULL, NULL, &buffer2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(buffer != buffer2, "Unexpected buffer instance.\n");
+    ID2D1VertexBuffer_Release(buffer2);
+
+    /* Mapping static buffer. */
+    ptr = NULL;
+    hr = ID2D1VertexBuffer_Map(buffer, &ptr, buffer_desc.byteWidth);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    todo_wine
+    ok(!!ptr, "Unexpected pointer.\n");
+    hr = ID2D1VertexBuffer_Unmap(buffer);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1VertexBuffer_Map(buffer, &ptr, buffer_desc.byteWidth + 1);
+    todo_wine
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1VertexBuffer_Map(buffer, &ptr, buffer_desc.byteWidth - 1);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    todo_wine
+    ok(!!ptr, "Unexpected pointer.\n");
+    hr = ID2D1VertexBuffer_Unmap(buffer);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    /* Map already mapped. */
+    hr = ID2D1VertexBuffer_Map(buffer, &ptr, buffer_desc.byteWidth);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    todo_wine
+    ok(!!ptr, "Unexpected pointer.\n");
+    ptr2 = NULL;
+    hr = ID2D1VertexBuffer_Map(buffer, &ptr2, buffer_desc.byteWidth);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(ptr == ptr2, "Unexpected pointer.\n");
+    hr = ID2D1VertexBuffer_Unmap(buffer);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1VertexBuffer_Release(buffer);
+
+    /* With an id. */
+    buffer = (void *)0xdeadbeef;
+    hr = ID2D1EffectContext_FindVertexBuffer(effect_context, &GUID_NULL, &buffer);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_NOT_FOUND), "Got unexpected hr %#lx.\n", hr);
+    ok(!buffer, "Unexpected pointer %p.\n", buffer);
+
+    hr = ID2D1EffectContext_CreateVertexBuffer(effect_context, &buffer_desc, &GUID_NULL, NULL, &buffer);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1EffectContext_FindVertexBuffer(effect_context, &GUID_NULL, &buffer2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(buffer == buffer2, "Unexpected buffer instance.\n");
+    ID2D1VertexBuffer_Release(buffer2);
+
+    /* Try to create with the same id.*/
+    hr = ID2D1EffectContext_CreateVertexBuffer(effect_context, &buffer_desc, &GUID_NULL, NULL, &buffer2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(buffer == buffer2, "Unexpected buffer instance.\n");
+    ID2D1VertexBuffer_Release(buffer2);
+
+    buffer_desc.usage = D2D1_VERTEX_USAGE_DYNAMIC;
+    hr = ID2D1EffectContext_CreateVertexBuffer(effect_context, &buffer_desc, &GUID_NULL, NULL, &buffer2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(buffer == buffer2, "Unexpected buffer instance.\n");
+    ID2D1VertexBuffer_Release(buffer2);
+
+    ID2D1VertexBuffer_Release(buffer);
+
+    /* Custom input layout. */
+    hr = D3DCompile(custom_vs_code, sizeof(custom_vs_code) - 1, "test_vs", NULL, NULL,
+            "main", "vs_4_0", 0, 0, &vs, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    custom_buffer_desc.elementCount = ARRAYSIZE(custom_layout);
+    custom_buffer_desc.inputElements = custom_layout;
+    custom_buffer_desc.stride = sizeof(D2D_VECTOR_2F);
+    custom_buffer_desc.shaderBufferWithInputSignature = ID3D10Blob_GetBufferPointer(vs);
+    custom_buffer_desc.shaderBufferSize = ID3D10Blob_GetBufferSize(vs);
+
+    hr = ID2D1EffectContext_CreateVertexBuffer(effect_context, &buffer_desc,
+            &GUID_CustomVertexBuffer, &custom_buffer_desc, &buffer);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1EffectContext_FindVertexBuffer(effect_context, &GUID_CustomVertexBuffer, &buffer2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1VertexBuffer_Release(buffer2);
+
+    ID2D1VertexBuffer_Release(buffer);
+
+    ID3D10Blob_Release(vs);
+
+    /* Buffer is not accessible using different device. */
+    hr = ID2D1Factory1_CreateDevice(factory, ctx.device, &device);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1Device_CreateDeviceContext(device, D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &device_context);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    create_effect(device_context, &CLSID_TestEffect, &effect_context, &effect2);
+
+    hr = ID2D1EffectContext_FindVertexBuffer(effect_context, &GUID_CustomVertexBuffer, &buffer);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_NOT_FOUND), "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1Effect_Release(effect2);
+
+    ID2D1DeviceContext_Release(device_context);
+    ID2D1Device_Release(device);
+
+    /* Using same device and different device context. */
+    ID2D1DeviceContext_GetDevice(ctx.context, &device);
+
+    hr = ID2D1Device_CreateDeviceContext(device, D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &device_context);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    create_effect(device_context, &CLSID_TestEffect, &effect_context, &effect2);
+
+    hr = ID2D1EffectContext_FindVertexBuffer(effect_context, &GUID_CustomVertexBuffer, &buffer);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_NOT_FOUND), "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1Effect_Release(effect2);
+
+    ID2D1DeviceContext_Release(device_context);
+
+    ID2D1Device_Release(device);
+
+    ID2D1Effect_Release(effect);
+    hr = ID2D1Factory1_UnregisterEffect(factory, &CLSID_TestEffect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    release_test_context(&ctx);
+}
+
 START_TEST(d2d1)
 {
     HMODULE d2d1_dll = GetModuleHandleA("d2d1.dll");
@@ -14882,6 +15195,8 @@ START_TEST(d2d1)
     queue_test(test_bitmap_create);
     queue_test(test_effect_custom_pixel_shader);
     queue_test(test_get_effect_properties);
+    queue_test(test_effect_custom_pixel_shader);
+    queue_test(test_effect_vertex_buffer);
 
     run_queued_tests();
 }

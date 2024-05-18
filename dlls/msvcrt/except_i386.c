@@ -477,10 +477,7 @@ int CDECL __CxxExceptionFilter( PEXCEPTION_POINTERS ptrs,
     if (!ti) return EXCEPTION_EXECUTE_HANDLER;
 
     rec = ptrs->ExceptionRecord;
-    if (rec->ExceptionCode != CXX_EXCEPTION || rec->NumberParameters != 3 ||
-            rec->ExceptionInformation[0] < CXX_FRAME_MAGIC_VC6 ||
-            rec->ExceptionInformation[0] > CXX_FRAME_MAGIC_VC8)
-        return EXCEPTION_CONTINUE_SEARCH;
+    if (!is_cxx_exception( rec )) return EXCEPTION_CONTINUE_SEARCH;
 
     if (rec->ExceptionInformation[1] == 0 && rec->ExceptionInformation[2] == 0)
     {
@@ -602,9 +599,10 @@ DWORD CDECL cxx_frame_handler( PEXCEPTION_RECORD rec, cxx_exception_frame* frame
         if (rec->ExceptionInformation[0] > CXX_FRAME_MAGIC_VC8 &&
                 exc_type->custom_handler)
         {
-            return exc_type->custom_handler( rec, frame, context, dispatch, descr,
-                                         nested_frame ? nested_frame->trylevel : 0,
-                                         nested_frame ? &nested_frame->frame : NULL, 0 );
+            cxx_exc_custom_handler handler = exc_type->custom_handler;
+            return handler( rec, frame, context, dispatch, descr,
+                            nested_frame ? nested_frame->trylevel : 0,
+                            nested_frame ? &nested_frame->frame : NULL, 0 );
         }
 
         if (TRACE_ON(seh))
@@ -687,48 +685,6 @@ void __stdcall __CxxLongjmpUnwind( const _JUMP_BUFFER *buf )
     TRACE( "unwinding frame %p descr %p trylevel %ld\n", frame, descr, buf->TryLevel );
     cxx_local_unwind( frame, descr, buf->TryLevel );
 }
-
-/*********************************************************************
- *		__CppXcptFilter (MSVCRT.@)
- */
-int CDECL __CppXcptFilter(NTSTATUS ex, PEXCEPTION_POINTERS ptr)
-{
-    /* only filter c++ exceptions */
-    if (ex != CXX_EXCEPTION) return EXCEPTION_CONTINUE_SEARCH;
-    return _XcptFilter( ex, ptr );
-}
-
-/*********************************************************************
- *		__CxxDetectRethrow (MSVCRT.@)
- */
-BOOL CDECL __CxxDetectRethrow(PEXCEPTION_POINTERS ptrs)
-{
-  PEXCEPTION_RECORD rec;
-
-  if (!ptrs)
-    return FALSE;
-
-  rec = ptrs->ExceptionRecord;
-
-  if (rec->ExceptionCode == CXX_EXCEPTION &&
-      rec->NumberParameters == 3 &&
-      rec->ExceptionInformation[0] == CXX_FRAME_MAGIC_VC6 &&
-      rec->ExceptionInformation[2])
-  {
-    ptrs->ExceptionRecord = msvcrt_get_thread_data()->exc_record;
-    return TRUE;
-  }
-  return (msvcrt_get_thread_data()->exc_record == rec);
-}
-
-/*********************************************************************
- *		__CxxQueryExceptionSize (MSVCRT.@)
- */
-unsigned int CDECL __CxxQueryExceptionSize(void)
-{
-  return sizeof(cxx_exception_type);
-}
-
 
 /*********************************************************************
  *		_EH_prolog (MSVCRT.@)

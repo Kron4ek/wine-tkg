@@ -1173,6 +1173,24 @@ static void test_D3DXLoadSurface(IDirect3DDevice9 *device)
     IDirect3DSurface9_LockRect(surf, &lockrect, NULL, D3DLOCK_READONLY);
     check_pixel_4bpp(&lockrect, 0, 0, 0x8dc32bf6);
     IDirect3DSurface9_UnlockRect(surf);
+
+    /*
+     * Test negative offsets in the source rectangle. Causes an access
+     * violation when run on 64-bit Windows.
+     */
+    if (sizeof(void *) != 8)
+    {
+        SetRect(&rect, 0, -1, 1, 0);
+        hr = D3DXLoadSurfaceFromMemory(surf, NULL, NULL, &pixdata_a8b8g8r8[2],
+                D3DFMT_A8R8G8B8, 8, NULL, &rect, D3DX_FILTER_NONE, 0);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        IDirect3DSurface9_LockRect(surf, &lockrect, NULL, D3DLOCK_READONLY);
+        check_pixel_4bpp(&lockrect, 0, 0, pixdata_a8b8g8r8[0]);
+        IDirect3DSurface9_UnlockRect(surf);
+    }
+    else
+        skip("Skipping test for negative source rectangle values on 64-bit.\n");
+
     check_release((IUnknown *)surf, 0);
 
     /* test color conversion */
@@ -1659,6 +1677,27 @@ static void test_D3DXLoadSurface(IDirect3DDevice9 *device)
             check_readback_pixel_4bpp(&surface_rb, 0, 7, 0xffff0000, FALSE); /* Red block, bottom left. */
             check_readback_pixel_4bpp(&surface_rb, 4, 4, 0xff000000, FALSE); /* Black block, top left. */
             check_readback_pixel_4bpp(&surface_rb, 7, 7, 0xff000000, FALSE); /* Black block, bottom right. */
+
+            release_surface_readback(&surface_rb);
+
+            /*
+             * Our source and destination rectangles start on aligned
+             * boundaries, but the size is not the entire block.
+             */
+            SetRect(&rect, 4, 0, 6, 2);
+            SetRect(&destrect, 4, 0, 6, 2);
+            hr = D3DXLoadSurfaceFromMemory(newsurf, NULL, &destrect, dxt5_8_8,
+                    D3DFMT_DXT5, 16 * 2, NULL, &rect, D3DX_FILTER_NONE, 0);
+            ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+            get_surface_decompressed_readback(device, newsurf, &surface_rb);
+
+            check_readback_pixel_4bpp(&surface_rb, 4, 0, 0xff00ff00, FALSE); /* Green block, top left. */
+            /*
+             * Bottom left of green block, should still be black from prior
+             * operation.
+             */
+            check_readback_pixel_4bpp(&surface_rb, 4, 3, 0xff000000, FALSE);
 
             release_surface_readback(&surface_rb);
 

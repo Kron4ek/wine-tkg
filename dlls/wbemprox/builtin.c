@@ -19,7 +19,6 @@
 #define COBJMACROS
 
 #include <stdarg.h>
-#include <intrin.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -44,7 +43,6 @@
 #include "setupapi.h"
 #include "ntddstor.h"
 
-#include "wine/asm.h"
 #include "wine/debug.h"
 #include "wbemprox_private.h"
 
@@ -1221,10 +1219,13 @@ struct smbios_prologue
 
 enum smbios_type
 {
-    SMBIOS_TYPE_BIOS,
-    SMBIOS_TYPE_SYSTEM,
-    SMBIOS_TYPE_BASEBOARD,
-    SMBIOS_TYPE_CHASSIS,
+    SMBIOS_TYPE_BIOS = 0,
+    SMBIOS_TYPE_SYSTEM = 1,
+    SMBIOS_TYPE_BASEBOARD = 2,
+    SMBIOS_TYPE_CHASSIS = 3,
+    SMBIOS_TYPE_PROCESSOR = 4,
+    SMBIOS_TYPE_BOOTINFO = 32,
+    SMBIOS_TYPE_END = 127
 };
 
 struct smbios_header
@@ -1278,11 +1279,43 @@ struct smbios_system
     BYTE                 serial;
     BYTE                 uuid[16];
 };
+
+struct smbios_processor
+{
+    struct smbios_header hdr;
+    BYTE                 socket;
+    BYTE                 type;
+    BYTE                 family;
+    BYTE                 vendor;
+    ULONGLONG            id;
+    BYTE                 version;
+    BYTE                 voltage;
+    WORD                 clock;
+    WORD                 max_speed;
+    WORD                 cur_speed;
+    BYTE                 status;
+    BYTE                 upgrade;
+    WORD                 l1cache;
+    WORD                 l2cache;
+    WORD                 l3cache;
+    BYTE                 serial;
+    BYTE                 asset_tag;
+    BYTE                 part_number;
+    BYTE                 core_count;
+    BYTE                 core_enabled;
+    BYTE                 thread_count;
+    WORD                 characteristics;
+    WORD                 family2;
+    WORD                 core_count2;
+    WORD                 core_enabled2;
+    WORD                 thread_count2;
+};
 #include "poppack.h"
 
 #define RSMB (('R' << 24) | ('S' << 16) | ('M' << 8) | 'B')
 
-static const struct smbios_header *find_smbios_entry( enum smbios_type type, const char *buf, UINT len )
+static const struct smbios_header *find_smbios_entry( enum smbios_type type, unsigned int index,
+                                                      const char *buf, UINT len )
 {
     const char *ptr, *start;
     const struct smbios_prologue *prologue;
@@ -1308,20 +1341,16 @@ static const struct smbios_header *find_smbios_entry( enum smbios_type type, con
         if (hdr->type == type)
         {
             if ((const char *)hdr - start + hdr->length > prologue->length) return NULL;
-            break;
+            if (!index--) return hdr;
         }
-        else /* skip other entries and their strings */
+        /* skip other entries and their strings */
+        for (ptr = (const char *)hdr + hdr->length; ptr - buf < len && *ptr; ptr++)
         {
-            for (ptr = (const char *)hdr + hdr->length; ptr - buf < len && *ptr; ptr++)
-            {
-                for (; ptr - buf < len; ptr++) if (!*ptr) break;
-            }
-            if (ptr == (const char *)hdr + hdr->length) ptr++;
-            hdr = (const struct smbios_header *)(ptr + 1);
+            for (; ptr - buf < len; ptr++) if (!*ptr) break;
         }
+        if (ptr == (const char *)hdr + hdr->length) ptr++;
+        hdr = (const struct smbios_header *)(ptr + 1);
     }
-
-    return hdr;
 }
 
 static WCHAR *get_smbios_string_by_id( BYTE id, const char *buf, UINT offset, UINT buflen )
@@ -1338,12 +1367,12 @@ static WCHAR *get_smbios_string_by_id( BYTE id, const char *buf, UINT offset, UI
     return NULL;
 }
 
-static WCHAR *get_smbios_string( enum smbios_type type, size_t field_offset, const char *buf, UINT len )
+static WCHAR *get_smbios_string( enum smbios_type type, unsigned int index, size_t field_offset, const char *buf, UINT len )
 {
     const struct smbios_header *hdr;
     UINT offset;
 
-    if (!(hdr = find_smbios_entry( type, buf, len ))) return NULL;
+    if (!(hdr = find_smbios_entry( type, index, buf, len ))) return NULL;
 
     if (field_offset + sizeof(BYTE) > hdr->length) return NULL;
 
@@ -1351,30 +1380,51 @@ static WCHAR *get_smbios_string( enum smbios_type type, size_t field_offset, con
     return get_smbios_string_by_id( ((const BYTE *)hdr)[field_offset], buf, offset, len );
 }
 
+static WCHAR *get_reg_str( HKEY root, const WCHAR *path, const WCHAR *value )
+{
+    HKEY hkey = 0;
+    DWORD size, type;
+    WCHAR *ret = NULL;
+
+    if (!RegOpenKeyExW( root, path, 0, KEY_READ, &hkey ) &&
+        !RegQueryValueExW( hkey, value, NULL, &type, NULL, &size ) && type == REG_SZ &&
+        (ret = malloc( size + sizeof(WCHAR) )))
+    {
+        size += sizeof(WCHAR);
+        if (RegQueryValueExW( hkey, value, NULL, NULL, (BYTE *)ret, &size ))
+        {
+            free( ret );
+            ret = NULL;
+        }
+    }
+    if (hkey) RegCloseKey( hkey );
+    return ret;
+}
+
 static WCHAR *get_baseboard_manufacturer( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BASEBOARD, offsetof(struct smbios_baseboard, vendor), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BASEBOARD, 0, offsetof(struct smbios_baseboard, vendor), buf, len );
     if (!ret) return wcsdup( L"Intel Corporation" );
     return ret;
 }
 
 static WCHAR *get_baseboard_product( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BASEBOARD, offsetof(struct smbios_baseboard, product), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BASEBOARD, 0, offsetof(struct smbios_baseboard, product), buf, len );
     if (!ret) return wcsdup( L"Base Board" );
     return ret;
 }
 
 static WCHAR *get_baseboard_serialnumber( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BASEBOARD, offsetof(struct smbios_baseboard, serial), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BASEBOARD, 0, offsetof(struct smbios_baseboard, serial), buf, len );
     if (!ret) return wcsdup( L"None" );
     return ret;
 }
 
 static WCHAR *get_baseboard_version( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BASEBOARD, offsetof(struct smbios_baseboard, version), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BASEBOARD, 0, offsetof(struct smbios_baseboard, version), buf, len );
     if (!ret) return wcsdup( L"1.0" );
     return ret;
 }
@@ -1425,7 +1475,7 @@ static UINT16 get_bios_smbiosminorversion( const char *buf, UINT len )
 }
 static WCHAR *get_bios_manufacturer( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BIOS, offsetof(struct smbios_bios, vendor), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BIOS, 0, offsetof(struct smbios_bios, vendor), buf, len );
     if (!ret) return wcsdup( L"The Wine Project" );
     return ret;
 }
@@ -1463,7 +1513,7 @@ static WCHAR *convert_bios_date( const WCHAR *str )
 
 static WCHAR *get_bios_releasedate( const char *buf, UINT len )
 {
-    WCHAR *ret, *date = get_smbios_string( SMBIOS_TYPE_BIOS, offsetof(struct smbios_bios, date), buf, len );
+    WCHAR *ret, *date = get_smbios_string( SMBIOS_TYPE_BIOS, 0, offsetof(struct smbios_bios, date), buf, len );
     if (!date || !(ret = convert_bios_date( date ))) ret = wcsdup( L"20120608000000.000000+000" );
     free( date );
     return ret;
@@ -1471,7 +1521,7 @@ static WCHAR *get_bios_releasedate( const char *buf, UINT len )
 
 static WCHAR *get_bios_smbiosbiosversion( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BIOS, offsetof(struct smbios_bios, version), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_BIOS, 0, offsetof(struct smbios_bios, version), buf, len );
     if (!ret) return wcsdup( L"Wine" );
     return ret;
 }
@@ -1481,7 +1531,7 @@ static BYTE get_bios_ec_firmware_major_release( const char *buf, UINT len )
     const struct smbios_header *hdr;
     const struct smbios_bios *bios;
 
-    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_BIOS, buf, len ))) return 0xFF;
+    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_BIOS, 0, buf, len ))) return 0xFF;
 
     bios = (const struct smbios_bios *)hdr;
     if (bios->hdr.length >= 0x18) return bios->ec_firmware_major_release;
@@ -1493,7 +1543,7 @@ static BYTE get_bios_ec_firmware_minor_release( const char *buf, UINT len )
     const struct smbios_header *hdr;
     const struct smbios_bios *bios;
 
-    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_BIOS, buf, len ))) return 0xFF;
+    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_BIOS, 0, buf, len ))) return 0xFF;
 
     bios = (const struct smbios_bios *)hdr;
     if (bios->hdr.length >= 0x18) return bios->ec_firmware_minor_release;
@@ -1505,7 +1555,7 @@ static BYTE get_bios_system_bios_major_release( const char *buf, UINT len )
     const struct smbios_header *hdr;
     const struct smbios_bios *bios;
 
-    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_BIOS, buf, len ))) return 0xFF;
+    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_BIOS, 0, buf, len ))) return 0xFF;
 
     bios = (const struct smbios_bios *)hdr;
     if (bios->hdr.length >= 0x18) return bios->system_bios_major_release;
@@ -1517,7 +1567,7 @@ static BYTE get_bios_system_bios_minor_release( const char *buf, UINT len )
     const struct smbios_header *hdr;
     const struct smbios_bios *bios;
 
-    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_BIOS, buf, len ))) return 0xFF;
+    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_BIOS, 0, buf, len ))) return 0xFF;
 
     bios = (const struct smbios_bios *)hdr;
     if (bios->hdr.length >= 0x18) return bios->system_bios_minor_release;
@@ -1611,47 +1661,20 @@ static UINT get_processor_count(void)
     return info.NumberOfProcessors;
 }
 
-static UINT get_logical_processor_count( UINT *num_physical, UINT *num_packages )
+static UINT get_physical_processor_count( const char *buf, UINT len, UINT *num_logical )
 {
-    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *buf, *entry;
-    UINT core_relation_count = 0, package_relation_count = 0;
-    NTSTATUS status;
-    ULONG len, offset = 0;
-    BOOL smt_enabled = FALSE;
-    DWORD all = RelationAll;
+    const struct smbios_header *hdr;
+    const struct smbios_processor *proc;
+    UINT thread_count = 0, package_count = 0;
 
-    if (num_packages) *num_packages = 1;
-    status = NtQuerySystemInformationEx( SystemLogicalProcessorInformationEx, &all, sizeof(all), NULL, 0, &len );
-    if (status != STATUS_INFO_LENGTH_MISMATCH) return get_processor_count();
-
-    if (!(buf = malloc( len ))) return get_processor_count();
-    status = NtQuerySystemInformationEx( SystemLogicalProcessorInformationEx, &all, sizeof(all), buf, len, &len );
-    if (status != STATUS_SUCCESS)
+    while ((hdr = find_smbios_entry( SMBIOS_TYPE_PROCESSOR, package_count, buf, len )))
     {
-        free( buf );
-        return get_processor_count();
+        proc = (const struct smbios_processor *)hdr;
+        thread_count += proc->thread_count2;
+        package_count++;
     }
-
-    while (offset < len)
-    {
-        entry = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)((char *)buf + offset);
-
-        if (entry->Relationship == RelationProcessorCore)
-        {
-            core_relation_count++;
-            if (entry->Processor.Flags & LTP_PC_SMT) smt_enabled = TRUE;
-        }
-        else if (entry->Relationship == RelationProcessorPackage)
-        {
-            package_relation_count++;
-        }
-        offset += entry->Size;
-    }
-
-    free( buf );
-    if (num_physical) *num_physical = core_relation_count;
-    if (num_packages) *num_packages = package_relation_count;
-    return smt_enabled ? core_relation_count * 2 : core_relation_count;
+    if (num_logical) *num_logical = thread_count;
+    return package_count;
 }
 
 static UINT64 get_total_physical_memory(void)
@@ -1702,10 +1725,16 @@ static WCHAR *get_computername(void)
 
 static const WCHAR *get_systemtype(void)
 {
-    SYSTEM_INFO info;
-    GetNativeSystemInfo( &info );
-    if (info.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64) return L"x64 based PC";
-    return L"x86 based PC";
+    SYSTEM_CPU_INFORMATION info;
+
+    RtlGetNativeSystemInformation( SystemCpuInformation, &info, sizeof(info), NULL );
+    switch (info.ProcessorArchitecture)
+    {
+    case PROCESSOR_ARCHITECTURE_ARM:   return L"ARM-based PC";
+    case PROCESSOR_ARCHITECTURE_ARM64: return L"ARM64-based PC";
+    case PROCESSOR_ARCHITECTURE_AMD64: return L"x64-based PC";
+    default:                           return L"x86-based PC";
+    }
 }
 
 static WCHAR *get_username(void)
@@ -1728,14 +1757,14 @@ static WCHAR *get_username(void)
 
 static WCHAR *get_compsysproduct_name( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, offsetof(struct smbios_system, product), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, product), buf, len );
     if (!ret) return wcsdup( L"Wine" );
     return ret;
 }
 
 static WCHAR *get_compsysproduct_vendor( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, offsetof(struct smbios_system, vendor), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, vendor), buf, len );
     if (!ret) return wcsdup( L"The Wine Project" );
     return ret;
 }
@@ -1759,7 +1788,7 @@ static enum fill_status fill_compsys( struct table *table, const struct expr *co
     rec->manufacturer           = get_compsysproduct_vendor( buf, len );
     rec->model                  = get_compsysproduct_name( buf, len );
     rec->name                   = get_computername();
-    rec->num_logical_processors = get_logical_processor_count( NULL, &rec->num_processors );
+    rec->num_processors         = get_physical_processor_count( buf, len, &rec->num_logical_processors );
     rec->systemtype             = get_systemtype();
     rec->total_physical_memory  = get_total_physical_memory();
     rec->username               = get_username();
@@ -1775,7 +1804,7 @@ static enum fill_status fill_compsys( struct table *table, const struct expr *co
 
 static WCHAR *get_compsysproduct_identifyingnumber( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, offsetof(struct smbios_system, serial), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, serial), buf, len );
     if (!ret) return wcsdup( L"0" );
     return ret;
 }
@@ -1788,7 +1817,7 @@ static WCHAR *get_compsysproduct_uuid( const char *buf, UINT len )
     const BYTE *ptr;
     WCHAR *ret = NULL;
 
-    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_SYSTEM, buf, len )) || hdr->length < sizeof(*system)) goto done;
+    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_SYSTEM, 0, buf, len )) || hdr->length < sizeof(*system)) goto done;
     system = (const struct smbios_system *)hdr;
     if (!memcmp( system->uuid, none, sizeof(none) ) || !(ret = malloc( 37 * sizeof(WCHAR) ))) goto done;
 
@@ -1803,7 +1832,7 @@ done:
 
 static WCHAR *get_compsysproduct_version( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, offsetof(struct smbios_system, version), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_SYSTEM, 0, offsetof(struct smbios_system, version), buf, len );
     if (!ret) return wcsdup( L"1.0" );
     return ret;
 }
@@ -3385,111 +3414,37 @@ done:
     return status;
 }
 
-void do_cpuid( unsigned int ax, int *p )
+static WCHAR *get_processor_manufacturer( UINT index, const char *buf, UINT len )
 {
-#if defined(__i386__) || defined(__x86_64__)
-    __cpuid( p, ax );
-#else
-    FIXME("\n");
-#endif
-}
-
-static unsigned int get_processor_model( unsigned int reg0, unsigned int *stepping, unsigned int *family )
-{
-    unsigned int model, family_id = (reg0 & (0x0f << 8)) >> 8;
-
-    model = (reg0 & (0x0f << 4)) >> 4;
-    if (family_id == 6 || family_id == 15) model |= (reg0 & (0x0f << 16)) >> 12;
-    if (family)
-    {
-        *family = family_id;
-        if (family_id == 15) *family += (reg0 & (0xff << 20)) >> 20;
-    }
-    *stepping = reg0 & 0x0f;
-    return model;
-}
-static void regs_to_str( int *regs, unsigned int len, WCHAR *buffer )
-{
-    unsigned int i;
-    unsigned char *p = (unsigned char *)regs;
-
-    for (i = 0; i < len; i++) { buffer[i] = *p++; }
-    buffer[i] = 0;
-}
-static void get_processor_manufacturer( WCHAR *manufacturer, UINT len )
-{
-    int tmp, regs[4] = {0, 0, 0, 0};
-
-    do_cpuid( 0, regs );
-    tmp = regs[2];      /* swap edx and ecx */
-    regs[2] = regs[3];
-    regs[3] = tmp;
-
-    regs_to_str( regs + 1, min( 12, len ), manufacturer );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_PROCESSOR, index, offsetof(struct smbios_processor, vendor), buf, len );
+    if (!ret) ret = wcsdup( L"Unknown" );
+    return ret;
 }
 static const WCHAR *get_osarchitecture(void)
 {
-    SYSTEM_INFO info;
-    GetNativeSystemInfo( &info );
-    if (info.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64) return L"64-bit";
-    return L"32-bit";
-}
-static void get_processor_caption( WCHAR *caption, UINT len )
-{
-    const WCHAR *arch;
-    WCHAR manufacturer[13];
-    int regs[4] = {0, 0, 0, 0};
-    unsigned int family, model, stepping;
+    SYSTEM_CPU_INFORMATION info;
 
-    get_processor_manufacturer( manufacturer, ARRAY_SIZE( manufacturer ) );
-    if (!wcscmp( get_osarchitecture(), L"32-bit" )) arch = L"x86";
-    else if (!wcscmp( manufacturer, L"AuthenticAMD" )) arch = L"AMD64";
-    else arch = L"Intel64";
-
-    do_cpuid( 1, regs );
-
-    model = get_processor_model( regs[0], &stepping, &family );
-    swprintf( caption, len, L"%s Family %u Model %u Stepping %u", arch, family, model, stepping );
-}
-static void get_processor_version( WCHAR *version, UINT len )
-{
-    int regs[4] = {0, 0, 0, 0};
-    unsigned int model, stepping;
-
-    do_cpuid( 1, regs );
-
-    model = get_processor_model( regs[0], &stepping, NULL );
-    swprintf( version, len, L"Model %u Stepping %u", model, stepping );
-}
-static UINT16 get_processor_revision(void)
-{
-    int regs[4] = {0, 0, 0, 0};
-    do_cpuid( 1, regs );
-    return regs[0];
-}
-static void get_processor_id( WCHAR *processor_id, UINT len )
-{
-    int regs[4] = {0, 0, 0, 0};
-
-    do_cpuid( 1, regs );
-    swprintf( processor_id, len, L"%08X%08X", regs[3], regs[0] );
-}
-static void get_processor_name( WCHAR *name )
-{
-    int regs[4] = {0, 0, 0, 0};
-    int i;
-
-    do_cpuid( 0x80000000, regs );
-    if (regs[0] >= 0x80000004)
+    RtlGetNativeSystemInformation( SystemCpuInformation, &info, sizeof(info), NULL );
+    switch (info.ProcessorArchitecture)
     {
-        do_cpuid( 0x80000002, regs );
-        regs_to_str( regs, 16, name );
-        do_cpuid( 0x80000003, regs );
-        regs_to_str( regs, 16, name + 16 );
-        do_cpuid( 0x80000004, regs );
-        regs_to_str( regs, 16, name + 32 );
+    case PROCESSOR_ARCHITECTURE_INTEL:
+    case PROCESSOR_ARCHITECTURE_ARM:
+        return L"32-bit";
+    default:
+        return L"64-bit";
     }
-    for (i = lstrlenW(name) - 1; i >= 0 && name[i] == ' '; i--) name[i] = 0;
+}
+static WCHAR *get_processor_caption( UINT index )
+{
+    WCHAR name[64];
+    swprintf( name, ARRAY_SIZE(name), L"Hardware\\Description\\System\\CentralProcessor\\%u", index );
+    return get_reg_str( HKEY_LOCAL_MACHINE, name, L"Identifier" );
+}
+static WCHAR *get_processor_name( UINT index, const char *buf, UINT len )
+{
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_PROCESSOR, index, offsetof(struct smbios_processor, version), buf, len );
+    if (!ret) ret = wcsdup( L"Unknown CPU" );
+    return ret;
 }
 static UINT get_processor_currentclockspeed( UINT index )
 {
@@ -3522,43 +3477,58 @@ static UINT get_processor_maxclockspeed( UINT index )
 
 static enum fill_status fill_processor( struct table *table, const struct expr *cond )
 {
-    WCHAR caption[100], device_id[14], processor_id[17], manufacturer[13], name[49] = {0}, version[50];
+    WCHAR device_id[14], processor_id[17], version[50];
+    const struct smbios_header *hdr;
+    const struct smbios_processor *proc;
     struct record_processor *rec;
-    UINT i, offset = 0, num_rows = 0, num_logical, num_physical, num_packages;
+    UINT i, len, offset = 0, num_rows = 0, num_packages;
     enum fill_status status = FILL_STATUS_UNFILTERED;
+    SYSTEM_CPU_INFORMATION info;
+    char *buf;
 
-    num_logical = get_logical_processor_count( &num_physical, &num_packages );
+    len = GetSystemFirmwareTable( RSMB, 0, NULL, 0 );
+    if (!(buf = malloc( len ))) return FILL_STATUS_FAILED;
+    GetSystemFirmwareTable( RSMB, 0, buf, len );
 
-    if (!resize_table( table, num_packages, sizeof(*rec) )) return FILL_STATUS_FAILED;
+    num_packages = get_physical_processor_count( buf, len, NULL );
 
-    get_processor_caption( caption, ARRAY_SIZE( caption ) );
-    get_processor_id( processor_id, ARRAY_SIZE( processor_id ) );
-    get_processor_manufacturer( manufacturer, ARRAY_SIZE( manufacturer ) );
-    get_processor_name( name );
-    get_processor_version( version, ARRAY_SIZE( version ) );
+    if (!resize_table( table, num_packages, sizeof(*rec) ))
+    {
+        free( buf );
+        return FILL_STATUS_FAILED;
+    }
+
+    RtlGetNativeSystemInformation( SystemCpuInformation, &info, sizeof(info), NULL );
+    swprintf( version, sizeof(version), L"Model %u, Stepping %u",
+              HIBYTE(info.ProcessorRevision), LOBYTE(info.ProcessorRevision) );
 
     for (i = 0; i < num_packages; i++)
     {
+        if (!(hdr = find_smbios_entry( SMBIOS_TYPE_PROCESSOR, i, buf, len )) || hdr->length < sizeof(*proc))
+            continue;
+        proc = (const struct smbios_processor *)hdr;
+
         rec = (struct record_processor *)(table->data + offset);
-        rec->addresswidth           = !wcscmp( get_osarchitecture(), L"32-bit" ) ? 32 : 64;
-        rec->architecture           = !wcscmp( get_osarchitecture(), L"32-bit" ) ? 0 : 9;
-        rec->caption                = wcsdup( caption );
-        rec->cpu_status             = 1; /* CPU Enabled */
+        rec->addresswidth           = (proc->characteristics & 4) ? 64 : 32;
+        rec->architecture           = info.ProcessorArchitecture;
+        rec->caption                = get_processor_caption( i );
+        rec->cpu_status             = proc->status;
         rec->currentclockspeed      = get_processor_currentclockspeed( i );
-        rec->datawidth              = !wcscmp( get_osarchitecture(), L"32-bit" ) ? 32 : 64;
-        rec->description            = wcsdup( caption );
+        rec->datawidth              = rec->addresswidth;
+        rec->description            = get_processor_caption( i );
         swprintf( device_id, ARRAY_SIZE( device_id ), L"CPU%u", i );
         rec->device_id              = wcsdup( device_id );
-        rec->family                 = 2; /* Unknown */
-        rec->level                  = 15;
-        rec->manufacturer           = wcsdup( manufacturer );
+        rec->family                 = proc->family;
+        rec->level                  = info.ProcessorLevel;
+        rec->manufacturer           = get_processor_manufacturer( i, buf, len );
         rec->maxclockspeed          = get_processor_maxclockspeed( i );
-        rec->name                   = wcsdup( name );
-        rec->num_cores              = num_physical / num_packages;
-        rec->num_logical_processors = num_logical / num_packages;
+        rec->name                   = get_processor_name( i, buf, len );
+        rec->num_cores              = proc->core_count2;
+        rec->num_logical_processors = proc->thread_count2;
+        swprintf( processor_id, ARRAY_SIZE( processor_id ), L"%016I64X", proc->id );
         rec->processor_id           = wcsdup( processor_id );
-        rec->processortype          = 3; /* central processor */
-        rec->revision               = get_processor_revision();
+        rec->processortype          = proc->type;
+        rec->revision               = info.ProcessorRevision;
         rec->version                = wcsdup( version );
         if (!match_row( table, i, cond, &status ))
         {
@@ -3568,6 +3538,8 @@ static enum fill_status fill_processor( struct table *table, const struct expr *
         offset += sizeof(*rec);
         num_rows++;
     }
+
+    free( buf );
 
     TRACE("created %u rows\n", num_rows);
     table->num_rows = num_rows;
@@ -3654,27 +3626,6 @@ static WCHAR *get_locale(void)
 {
     WCHAR *ret = malloc( 5 * sizeof(WCHAR) );
     if (ret) GetLocaleInfoW( LOCALE_SYSTEM_DEFAULT, LOCALE_ILANGUAGE, ret, 5 );
-    return ret;
-}
-
-static WCHAR *get_reg_str( HKEY root, const WCHAR *path, const WCHAR *value )
-{
-    HKEY hkey = 0;
-    DWORD size, type;
-    WCHAR *ret = NULL;
-
-    if (!RegOpenKeyExW( root, path, 0, KEY_READ, &hkey ) &&
-        !RegQueryValueExW( hkey, value, NULL, &type, NULL, &size ) && type == REG_SZ &&
-        (ret = malloc( size + sizeof(WCHAR) )))
-    {
-        size += sizeof(WCHAR);
-        if (RegQueryValueExW( hkey, value, NULL, NULL, (BYTE *)ret, &size ))
-        {
-            free( ret );
-            ret = NULL;
-        }
-    }
-    if (hkey) RegCloseKey( hkey );
     return ret;
 }
 
@@ -4098,7 +4049,7 @@ static enum fill_status fill_sid( struct table *table, const struct expr *cond )
 
 static WCHAR *get_systemenclosure_manufacturer( const char *buf, UINT len )
 {
-    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_CHASSIS, offsetof(struct smbios_chassis, vendor), buf, len );
+    WCHAR *ret = get_smbios_string( SMBIOS_TYPE_CHASSIS, 0, offsetof(struct smbios_chassis, vendor), buf, len );
     if (!ret) return wcsdup( L"Wine" );
     return ret;
 }
@@ -4108,7 +4059,7 @@ static int get_systemenclosure_lockpresent( const char *buf, UINT len )
     const struct smbios_header *hdr;
     const struct smbios_chassis *chassis;
 
-    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_CHASSIS, buf, len )) || hdr->length < sizeof(*chassis)) return 0;
+    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_CHASSIS, 0, buf, len )) || hdr->length < sizeof(*chassis)) return 0;
 
     chassis = (const struct smbios_chassis *)hdr;
     return (chassis->type & 0x80) ? -1 : 0;
@@ -4136,7 +4087,7 @@ static struct array *get_systemenclosure_chassistypes( const char *buf, UINT len
     struct array *ret = NULL;
     UINT16 *types;
 
-    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_CHASSIS, buf, len )) || hdr->length < sizeof(*chassis)) goto done;
+    if (!(hdr = find_smbios_entry( SMBIOS_TYPE_CHASSIS, 0, buf, len )) || hdr->length < sizeof(*chassis)) goto done;
     chassis = (const struct smbios_chassis *)hdr;
 
     if (!(ret = malloc( sizeof(*ret) ))) goto done;

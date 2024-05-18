@@ -140,7 +140,6 @@ enum wined3d_gl_extension
     ARB_TEXTURE_MULTISAMPLE,
     ARB_TEXTURE_NON_POWER_OF_TWO,
     ARB_TEXTURE_QUERY_LEVELS,
-    ARB_TEXTURE_RECTANGLE,
     ARB_TEXTURE_RG,
     ARB_TEXTURE_RGB10_A2UI,
     ARB_TEXTURE_STORAGE,
@@ -369,11 +368,7 @@ struct wined3d_gl_info
 
 void install_gl_compat_wrapper(struct wined3d_gl_info *gl_info, enum wined3d_gl_extension ext);
 void print_glsl_info_log(const struct wined3d_gl_info *gl_info, GLuint id, BOOL program);
-void set_tex_op_nvrc(const struct wined3d_gl_info *gl_info, const struct wined3d_state *state,
-        BOOL is_alpha, int stage, enum wined3d_texture_op op, uint32_t arg1, uint32_t arg2, uint32_t arg3,
-        int texture_idx, DWORD dst);
 void shader_glsl_validate_link(const struct wined3d_gl_info *gl_info, GLuint program);
-void texture_activate_dimensions(struct wined3d_texture *texture, const struct wined3d_gl_info *gl_info);
 GLenum wined3d_buffer_gl_binding_from_bind_flags(const struct wined3d_gl_info *gl_info, uint32_t bind_flags);
 void wined3d_check_gl_call(const struct wined3d_gl_info *gl_info,
         const char *file, unsigned int line, const char *name);
@@ -789,7 +784,6 @@ void wined3d_context_gl_unmap_bo_address(struct wined3d_context_gl *context_gl, 
 void wined3d_context_gl_update_stream_sources(struct wined3d_context_gl *context_gl, const struct wined3d_state *state);
 void wined3d_context_gl_wait_command_fence(struct wined3d_context_gl *context_gl, uint64_t id);
 
-void wined3d_arbfp_blitter_create(struct wined3d_blitter **next, const struct wined3d_device *device);
 void wined3d_fbo_blitter_create(struct wined3d_blitter **next, const struct wined3d_gl_info *gl_info);
 void wined3d_ffp_blitter_create(struct wined3d_blitter **next, const struct wined3d_gl_info *gl_info);
 struct wined3d_blitter *wined3d_glsl_blitter_create(struct wined3d_blitter **next, const struct wined3d_device *device);
@@ -1043,8 +1037,6 @@ struct wined3d_blt_info
 
 void texture2d_get_blt_info(const struct wined3d_texture_gl *texture_gl, unsigned int sub_resource_idx,
         const RECT *rect, struct wined3d_blt_info *info);
-void texture2d_load_fb_texture(struct wined3d_texture_gl *texture_gl, unsigned int sub_resource_idx,
-        BOOL srgb, struct wined3d_context *context);
 void texture2d_read_from_framebuffer(struct wined3d_texture *texture, unsigned int sub_resource_idx,
         struct wined3d_context *context, DWORD src_location, DWORD dst_location);
 

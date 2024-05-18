@@ -190,26 +190,25 @@ done:
     return ret;
 }
 
-static BOOL xinerama_get_gpus( struct gdi_gpu **new_gpus, int *count, BOOL get_properties )
+static BOOL xinerama_get_gpus( struct x11drv_gpu **new_gpus, int *count, BOOL get_properties )
 {
-    static const WCHAR wine_adapterW[] = {'W','i','n','e',' ','A','d','a','p','t','e','r',0};
-    struct gdi_gpu *gpus;
+    struct x11drv_gpu *gpus;
 
     /* Xinerama has no support for GPU, faking one */
     gpus = calloc( 1, sizeof(*gpus) );
     if (!gpus)
         return FALSE;
 
-    lstrcpyW( gpus[0].name, wine_adapterW );
-
+    gpus[0].name = strdup( "Xinerama GPU" );
     *new_gpus = gpus;
     *count = 1;
 
     return TRUE;
 }
 
-static void xinerama_free_gpus( struct gdi_gpu *gpus )
+static void xinerama_free_gpus( struct x11drv_gpu *gpus, int count )
 {
+    while (count--) free( gpus[count].name );
     free( gpus );
 }
 

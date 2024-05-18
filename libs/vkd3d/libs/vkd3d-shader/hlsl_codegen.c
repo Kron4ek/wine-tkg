@@ -263,8 +263,8 @@ static bool types_are_semantic_equivalent(struct hlsl_ctx *ctx, const struct hls
     if (type1->dimx != type2->dimx)
         return false;
 
-    return base_type_get_semantic_equivalent(type1->base_type)
-            == base_type_get_semantic_equivalent(type2->base_type);
+    return base_type_get_semantic_equivalent(type1->e.numeric.type)
+            == base_type_get_semantic_equivalent(type2->e.numeric.type);
 }
 
 static struct hlsl_ir_var *add_semantic_var(struct hlsl_ctx *ctx, struct hlsl_ir_var *var,
@@ -355,10 +355,10 @@ static void prepend_input_copy(struct hlsl_ctx *ctx, struct hlsl_block *block, s
     if (!semantic->name)
         return;
 
-    vector_type_dst = hlsl_get_vector_type(ctx, type->base_type, hlsl_type_minor_size(type));
+    vector_type_dst = hlsl_get_vector_type(ctx, type->e.numeric.type, hlsl_type_minor_size(type));
     vector_type_src = vector_type_dst;
     if (ctx->profile->major_version < 4 && ctx->profile->type == VKD3D_SHADER_TYPE_VERTEX)
-        vector_type_src = hlsl_get_vector_type(ctx, type->base_type, 4);
+        vector_type_src = hlsl_get_vector_type(ctx, type->e.numeric.type, 4);
 
     for (i = 0; i < hlsl_type_major_size(type); ++i)
     {
@@ -500,7 +500,7 @@ static void append_output_copy(struct hlsl_ctx *ctx, struct hlsl_block *block, s
     if (!semantic->name)
         return;
 
-    vector_type = hlsl_get_vector_type(ctx, type->base_type, hlsl_type_minor_size(type));
+    vector_type = hlsl_get_vector_type(ctx, type->e.numeric.type, hlsl_type_minor_size(type));
 
     for (i = 0; i < hlsl_type_major_size(type); ++i)
     {
@@ -1101,7 +1101,7 @@ static bool lower_index_loads(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
         struct hlsl_ir_node *resource_load;
 
         assert(coords->data_type->class == HLSL_CLASS_VECTOR);
-        assert(coords->data_type->base_type == HLSL_TYPE_UINT);
+        assert(coords->data_type->e.numeric.type == HLSL_TYPE_UINT);
         assert(coords->data_type->dimx == dim_count);
 
         if (!(coords = add_zero_mipmap_level(ctx, coords, &instr->loc)))
@@ -1191,7 +1191,7 @@ static bool lower_broadcasts(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, s
     {
         struct hlsl_ir_node *new_cast, *swizzle;
 
-        dst_scalar_type = hlsl_get_scalar_type(ctx, dst_type->base_type);
+        dst_scalar_type = hlsl_get_scalar_type(ctx, dst_type->e.numeric.type);
         /* We need to preserve the cast since it might be doing more than just
          * turning the scalar into a vector. */
         if (!(new_cast = hlsl_new_cast(ctx, cast->operands[0].node, dst_scalar_type, &cast->node.loc)))
@@ -1625,10 +1625,11 @@ static bool copy_propagation_transform_load(struct hlsl_ctx *ctx,
     {
         case HLSL_CLASS_SCALAR:
         case HLSL_CLASS_VECTOR:
+        case HLSL_CLASS_PIXEL_SHADER:
         case HLSL_CLASS_SAMPLER:
         case HLSL_CLASS_TEXTURE:
         case HLSL_CLASS_UAV:
-        case HLSL_CLASS_OBJECT:
+        case HLSL_CLASS_VERTEX_SHADER:
             break;
 
         case HLSL_CLASS_MATRIX:
@@ -2064,7 +2065,7 @@ static bool fold_redundant_casts(struct hlsl_ctx *ctx, struct hlsl_ir_node *inst
         src_type = expr->operands[0].node->data_type;
 
         if (hlsl_types_are_equal(src_type, dst_type)
-                || (src_type->base_type == dst_type->base_type && is_vec1(src_type) && is_vec1(dst_type)))
+                || (src_type->e.numeric.type == dst_type->e.numeric.type && is_vec1(src_type) && is_vec1(dst_type)))
         {
             hlsl_replace_node(&expr->node, expr->operands[0].node);
             return true;
@@ -2191,7 +2192,7 @@ static bool split_matrix_copies(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr
     type = rhs->data_type;
     if (type->class != HLSL_CLASS_MATRIX)
         return false;
-    element_type = hlsl_get_vector_type(ctx, type->base_type, hlsl_type_minor_size(type));
+    element_type = hlsl_get_vector_type(ctx, type->e.numeric.type, hlsl_type_minor_size(type));
 
     if (rhs->type != HLSL_IR_LOAD)
     {
@@ -2228,7 +2229,7 @@ static bool lower_narrowing_casts(struct hlsl_ctx *ctx, struct hlsl_ir_node *ins
     {
         struct hlsl_ir_node *new_cast, *swizzle;
 
-        dst_vector_type = hlsl_get_vector_type(ctx, dst_type->base_type, src_type->dimx);
+        dst_vector_type = hlsl_get_vector_type(ctx, dst_type->e.numeric.type, src_type->dimx);
         /* We need to preserve the cast since it might be doing more than just
          * narrowing the vector. */
         if (!(new_cast = hlsl_new_cast(ctx, cast->operands[0].node, dst_vector_type, &cast->node.loc)))
@@ -2482,7 +2483,7 @@ static bool lower_nonconstant_vector_derefs(struct hlsl_ctx *ctx, struct hlsl_ir
 
         op = HLSL_OP2_DOT;
         if (type->dimx == 1)
-            op = type->base_type == HLSL_TYPE_BOOL ? HLSL_OP2_LOGIC_AND : HLSL_OP2_MUL;
+            op = type->e.numeric.type == HLSL_TYPE_BOOL ? HLSL_OP2_LOGIC_AND : HLSL_OP2_MUL;
 
         /* Note: We may be creating a DOT for bool vectors here, which we need to lower to
          * LOGIC_OR + LOGIC_AND. */
@@ -2676,9 +2677,9 @@ static bool lower_casts_to_int(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr,
         return false;
 
     arg = expr->operands[0].node;
-    if (instr->data_type->base_type != HLSL_TYPE_INT && instr->data_type->base_type != HLSL_TYPE_UINT)
+    if (instr->data_type->e.numeric.type != HLSL_TYPE_INT && instr->data_type->e.numeric.type != HLSL_TYPE_UINT)
         return false;
-    if (arg->data_type->base_type != HLSL_TYPE_FLOAT && arg->data_type->base_type != HLSL_TYPE_HALF)
+    if (arg->data_type->e.numeric.type != HLSL_TYPE_FLOAT && arg->data_type->e.numeric.type != HLSL_TYPE_HALF)
         return false;
 
     if (!(floor = hlsl_new_unary_expr(ctx, HLSL_OP1_FLOOR, arg, &instr->loc)))
@@ -2935,7 +2936,7 @@ static bool lower_logic_not(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, st
     float_type = hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, arg->data_type->dimx);
 
     /* If this is happens, it means we failed to cast the argument to boolean somewhere. */
-    assert(arg->data_type->base_type == HLSL_TYPE_BOOL);
+    assert(arg->data_type->e.numeric.type == HLSL_TYPE_BOOL);
 
     if (!(arg_cast = hlsl_new_cast(ctx, arg, float_type, &arg->loc)))
         return false;
@@ -2991,7 +2992,7 @@ static bool lower_ternary(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, stru
         return false;
     }
 
-    assert(cond->data_type->base_type == HLSL_TYPE_BOOL);
+    assert(cond->data_type->e.numeric.type == HLSL_TYPE_BOOL);
 
     type = hlsl_get_numeric_type(ctx, instr->data_type->class, HLSL_TYPE_FLOAT,
             instr->data_type->dimx, instr->data_type->dimy);
@@ -3285,7 +3286,7 @@ static bool lower_casts_to_bool(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr
     arg_type = expr->operands[0].node->data_type;
     if (type->class > HLSL_CLASS_VECTOR || arg_type->class > HLSL_CLASS_VECTOR)
         return false;
-    if (type->base_type != HLSL_TYPE_BOOL)
+    if (type->e.numeric.type != HLSL_TYPE_BOOL)
         return false;
 
     /* Narrowing casts should have already been lowered. */
@@ -3313,7 +3314,7 @@ struct hlsl_ir_node *hlsl_add_conditional(struct hlsl_ctx *ctx, struct hlsl_bloc
 
     assert(hlsl_types_are_equal(if_true->data_type, if_false->data_type));
 
-    if (cond_type->base_type != HLSL_TYPE_BOOL)
+    if (cond_type->e.numeric.type != HLSL_TYPE_BOOL)
     {
         cond_type = hlsl_get_numeric_type(ctx, cond_type->class, HLSL_TYPE_BOOL, cond_type->dimx, cond_type->dimy);
 
@@ -3349,7 +3350,7 @@ static bool lower_int_division(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr,
         return false;
     if (type->class != HLSL_CLASS_SCALAR && type->class != HLSL_CLASS_VECTOR)
         return false;
-    if (type->base_type != HLSL_TYPE_INT)
+    if (type->e.numeric.type != HLSL_TYPE_INT)
         return false;
     utype = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_UINT, type->dimx, type->dimy);
 
@@ -3415,7 +3416,7 @@ static bool lower_int_modulus(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
         return false;
     if (type->class != HLSL_CLASS_SCALAR && type->class != HLSL_CLASS_VECTOR)
         return false;
-    if (type->base_type != HLSL_TYPE_INT)
+    if (type->e.numeric.type != HLSL_TYPE_INT)
         return false;
     utype = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_UINT, type->dimx, type->dimy);
 
@@ -3474,7 +3475,7 @@ static bool lower_int_abs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, stru
         return false;
     if (type->class != HLSL_CLASS_SCALAR && type->class != HLSL_CLASS_VECTOR)
         return false;
-    if (type->base_type != HLSL_TYPE_INT)
+    if (type->e.numeric.type != HLSL_TYPE_INT)
         return false;
 
     arg = expr->operands[0].node;
@@ -3505,14 +3506,14 @@ static bool lower_int_dot(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, stru
     if (expr->op != HLSL_OP2_DOT)
         return false;
 
-    if (type->base_type == HLSL_TYPE_INT || type->base_type == HLSL_TYPE_UINT
-            || type->base_type == HLSL_TYPE_BOOL)
+    if (type->e.numeric.type == HLSL_TYPE_INT || type->e.numeric.type == HLSL_TYPE_UINT
+            || type->e.numeric.type == HLSL_TYPE_BOOL)
     {
         arg1 = expr->operands[0].node;
         arg2 = expr->operands[1].node;
         assert(arg1->data_type->dimx == arg2->data_type->dimx);
         dimx = arg1->data_type->dimx;
-        is_bool = type->base_type == HLSL_TYPE_BOOL;
+        is_bool = type->e.numeric.type == HLSL_TYPE_BOOL;
 
         if (!(mult = hlsl_new_binary_expr(ctx, is_bool ? HLSL_OP2_LOGIC_AND : HLSL_OP2_MUL, arg1, arg2)))
             return false;
@@ -3558,7 +3559,7 @@ static bool lower_float_modulus(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr
         return false;
     if (type->class != HLSL_CLASS_SCALAR && type->class != HLSL_CLASS_VECTOR)
         return false;
-    if (type->base_type != HLSL_TYPE_FLOAT)
+    if (type->e.numeric.type != HLSL_TYPE_FLOAT)
         return false;
     btype = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_BOOL, type->dimx, type->dimy);
 
@@ -3614,7 +3615,7 @@ static bool lower_nonfloat_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *inst
     if (instr->type != HLSL_IR_EXPR)
         return false;
     expr = hlsl_ir_expr(instr);
-    if (expr->op == HLSL_OP1_CAST || instr->data_type->base_type == HLSL_TYPE_FLOAT)
+    if (expr->op == HLSL_OP1_CAST || instr->data_type->e.numeric.type == HLSL_TYPE_FLOAT)
         return false;
 
     switch (expr->op)
@@ -4247,34 +4248,67 @@ static bool track_object_components_sampler_dim(struct hlsl_ctx *ctx, struct hls
     return false;
 }
 
-static bool track_object_components_usage(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
+static void register_deref_usage(struct hlsl_ctx *ctx, struct hlsl_deref *deref)
 {
-    struct hlsl_ir_resource_load *load;
-    struct hlsl_ir_var *var;
-    enum hlsl_regset regset;
+    struct hlsl_ir_var *var = deref->var;
+    enum hlsl_regset regset = hlsl_deref_get_regset(ctx, deref);
+    uint32_t required_bind_count;
+    struct hlsl_type *type;
     unsigned int index;
 
-    if (instr->type != HLSL_IR_RESOURCE_LOAD)
-        return false;
+    if (!hlsl_regset_index_from_deref(ctx, deref, regset, &index))
+        return;
 
-    load = hlsl_ir_resource_load(instr);
-    var = load->resource.var;
-
-    regset = hlsl_deref_get_regset(ctx, &load->resource);
-
-    if (!hlsl_regset_index_from_deref(ctx, &load->resource, regset, &index))
-        return false;
-
-    var->objects_usage[regset][index].used = true;
-    var->bind_count[regset] = max(var->bind_count[regset], index + 1);
-    if (load->sampler.var)
+    if (regset <= HLSL_REGSET_LAST_OBJECT)
     {
-        var = load->sampler.var;
-        if (!hlsl_regset_index_from_deref(ctx, &load->sampler, HLSL_REGSET_SAMPLERS, &index))
-            return false;
+        var->objects_usage[regset][index].used = true;
+        var->bind_count[regset] = max(var->bind_count[regset], index + 1);
+    }
+    else if (regset == HLSL_REGSET_NUMERIC)
+    {
+        type = hlsl_deref_get_type(ctx, deref);
 
-        var->objects_usage[HLSL_REGSET_SAMPLERS][index].used = true;
-        var->bind_count[HLSL_REGSET_SAMPLERS] = max(var->bind_count[HLSL_REGSET_SAMPLERS], index + 1);
+        hlsl_regset_index_from_deref(ctx, deref, regset, &index);
+        required_bind_count = align(index + type->reg_size[regset], 4) / 4;
+        var->bind_count[regset] = max(var->bind_count[regset], required_bind_count);
+    }
+    else
+    {
+        vkd3d_unreachable();
+    }
+}
+
+static bool track_components_usage(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
+{
+    switch (instr->type)
+    {
+        case HLSL_IR_LOAD:
+        {
+            struct hlsl_ir_load *load = hlsl_ir_load(instr);
+
+            if (!load->src.var->is_uniform)
+                return false;
+
+            /* These will are handled by validate_static_object_references(). */
+            if (hlsl_deref_get_regset(ctx, &load->src) != HLSL_REGSET_NUMERIC)
+                return false;
+
+            register_deref_usage(ctx, &load->src);
+            break;
+        }
+
+        case HLSL_IR_RESOURCE_LOAD:
+            register_deref_usage(ctx, &hlsl_ir_resource_load(instr)->resource);
+            if (hlsl_ir_resource_load(instr)->sampler.var)
+                register_deref_usage(ctx, &hlsl_ir_resource_load(instr)->sampler);
+            break;
+
+        case HLSL_IR_RESOURCE_STORE:
+            register_deref_usage(ctx, &hlsl_ir_resource_store(instr)->resource);
+            break;
+
+        default:
+            break;
     }
 
     return false;
@@ -4453,7 +4487,7 @@ static void allocate_const_registers_recurse(struct hlsl_ctx *ctx,
                         continue;
                     value = &constant->value.u[i++];
 
-                    switch (type->base_type)
+                    switch (type->e.numeric.type)
                     {
                         case HLSL_TYPE_BOOL:
                             f = !!value->u;
@@ -4519,16 +4553,52 @@ static void allocate_const_registers_recurse(struct hlsl_ctx *ctx,
     }
 }
 
+static void sort_uniform_by_numeric_bind_count(struct list *sorted, struct hlsl_ir_var *to_sort)
+{
+    struct hlsl_ir_var *var;
+
+    list_remove(&to_sort->extern_entry);
+
+    LIST_FOR_EACH_ENTRY(var, sorted, struct hlsl_ir_var, extern_entry)
+    {
+        uint32_t to_sort_size = to_sort->bind_count[HLSL_REGSET_NUMERIC];
+        uint32_t var_size = var->bind_count[HLSL_REGSET_NUMERIC];
+
+        if (to_sort_size > var_size)
+        {
+            list_add_before(&var->extern_entry, &to_sort->extern_entry);
+            return;
+        }
+    }
+
+    list_add_tail(sorted, &to_sort->extern_entry);
+}
+
+static void sort_uniforms_by_numeric_bind_count(struct hlsl_ctx *ctx)
+{
+    struct list sorted = LIST_INIT(sorted);
+    struct hlsl_ir_var *var, *next;
+
+    LIST_FOR_EACH_ENTRY_SAFE(var, next, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+    {
+        if (var->is_uniform)
+            sort_uniform_by_numeric_bind_count(&sorted, var);
+    }
+    list_move_tail(&ctx->extern_vars, &sorted);
+}
+
 static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func)
 {
     struct register_allocator allocator = {0};
     struct hlsl_ir_var *var;
 
+    sort_uniforms_by_numeric_bind_count(ctx);
+
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
         unsigned int reg_size = var->data_type->reg_size[HLSL_REGSET_NUMERIC];
 
-        if (!var->is_uniform || !var->last_read || reg_size == 0)
+        if (!var->is_uniform || reg_size == 0)
             continue;
 
         if (var->reg_reservation.reg_type == 'c')
@@ -4559,15 +4629,14 @@ static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_ir_functi
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
-        unsigned int reg_size = var->data_type->reg_size[HLSL_REGSET_NUMERIC];
+        unsigned int alloc_size = 4 * var->bind_count[HLSL_REGSET_NUMERIC];
 
-        if (!var->is_uniform || !var->last_read || reg_size == 0)
+        if (!var->is_uniform || alloc_size == 0)
             continue;
 
         if (!var->regs[HLSL_REGSET_NUMERIC].allocated)
         {
-            var->regs[HLSL_REGSET_NUMERIC] = allocate_numeric_registers_for_type(ctx, &allocator,
-                    1, UINT_MAX, var->data_type);
+            var->regs[HLSL_REGSET_NUMERIC] = allocate_range(ctx, &allocator, 1, UINT_MAX, alloc_size);
             TRACE("Allocated %s to %s.\n", var->name,
                     debug_register('c', var->regs[HLSL_REGSET_NUMERIC], var->data_type));
         }
@@ -5046,7 +5115,7 @@ bool hlsl_component_index_range_from_deref(struct hlsl_ctx *ctx, const struct hl
 
         /* We should always have generated a cast to UINT. */
         assert(path_node->data_type->class == HLSL_CLASS_SCALAR
-                && path_node->data_type->base_type == HLSL_TYPE_UINT);
+                && path_node->data_type->e.numeric.type == HLSL_TYPE_UINT);
 
         idx = hlsl_ir_constant(path_node)->value.u[0].u;
 
@@ -5101,13 +5170,14 @@ bool hlsl_component_index_range_from_deref(struct hlsl_ctx *ctx, const struct hl
     return true;
 }
 
+/* Retrieves true if the index is constant, and false otherwise. In the latter case, the maximum
+ * possible index is retrieved, assuming there is not out-of-bounds access. */
 bool hlsl_regset_index_from_deref(struct hlsl_ctx *ctx, const struct hlsl_deref *deref,
         enum hlsl_regset regset, unsigned int *index)
 {
     struct hlsl_type *type = deref->var->data_type;
+    bool index_is_constant = true;
     unsigned int i;
-
-    assert(regset <= HLSL_REGSET_LAST_OBJECT);
 
     *index = 0;
 
@@ -5117,37 +5187,62 @@ bool hlsl_regset_index_from_deref(struct hlsl_ctx *ctx, const struct hlsl_deref 
         unsigned int idx = 0;
 
         assert(path_node);
-        if (path_node->type != HLSL_IR_CONSTANT)
-            return false;
-
-        /* We should always have generated a cast to UINT. */
-        assert(path_node->data_type->class == HLSL_CLASS_SCALAR
-                && path_node->data_type->base_type == HLSL_TYPE_UINT);
-
-        idx = hlsl_ir_constant(path_node)->value.u[0].u;
-
-        switch (type->class)
+        if (path_node->type == HLSL_IR_CONSTANT)
         {
-            case HLSL_CLASS_ARRAY:
-                if (idx >= type->e.array.elements_count)
-                    return false;
+            /* We should always have generated a cast to UINT. */
+            assert(path_node->data_type->class == HLSL_CLASS_SCALAR
+                    && path_node->data_type->e.numeric.type == HLSL_TYPE_UINT);
 
-                *index += idx * type->e.array.type->reg_size[regset];
-                break;
+            idx = hlsl_ir_constant(path_node)->value.u[0].u;
 
-            case HLSL_CLASS_STRUCT:
-                *index += type->e.record.fields[idx].reg_offset[regset];
-                break;
+            switch (type->class)
+            {
+                case HLSL_CLASS_ARRAY:
+                    if (idx >= type->e.array.elements_count)
+                        return false;
 
-            default:
-                vkd3d_unreachable();
+                    *index += idx * type->e.array.type->reg_size[regset];
+                    break;
+
+                case HLSL_CLASS_STRUCT:
+                    *index += type->e.record.fields[idx].reg_offset[regset];
+                    break;
+
+                case HLSL_CLASS_MATRIX:
+                    *index += 4 * idx;
+                    break;
+
+                default:
+                    vkd3d_unreachable();
+            }
+        }
+        else
+        {
+            index_is_constant = false;
+
+            switch (type->class)
+            {
+                case HLSL_CLASS_ARRAY:
+                    idx = type->e.array.elements_count - 1;
+                    *index += idx * type->e.array.type->reg_size[regset];
+                    break;
+
+                case HLSL_CLASS_MATRIX:
+                    idx = hlsl_type_major_size(type) - 1;
+                    *index += idx * 4;
+                    break;
+
+                default:
+                    vkd3d_unreachable();
+            }
         }
 
         type = hlsl_get_element_type_from_path_index(ctx, type, path_node);
     }
 
-    assert(type->reg_size[regset] == 1);
-    return true;
+    assert(!(regset <= HLSL_REGSET_LAST_OBJECT) || (type->reg_size[regset] == 1));
+    assert(!(regset == HLSL_REGSET_NUMERIC) || type->reg_size[regset] <= 4);
+    return index_is_constant;
 }
 
 bool hlsl_offset_from_deref(struct hlsl_ctx *ctx, const struct hlsl_deref *deref, unsigned int *offset)
@@ -5162,7 +5257,7 @@ bool hlsl_offset_from_deref(struct hlsl_ctx *ctx, const struct hlsl_deref *deref
     {
         /* We should always have generated a cast to UINT. */
         assert(offset_node->data_type->class == HLSL_CLASS_SCALAR
-                && offset_node->data_type->base_type == HLSL_TYPE_UINT);
+                && offset_node->data_type->e.numeric.type == HLSL_TYPE_UINT);
         assert(offset_node->type != HLSL_IR_CONSTANT);
         return false;
     }
@@ -5229,7 +5324,7 @@ static void parse_numthreads_attribute(struct hlsl_ctx *ctx, const struct hlsl_a
         const struct hlsl_ir_constant *constant;
 
         if (type->class != HLSL_CLASS_SCALAR
-                || (type->base_type != HLSL_TYPE_INT && type->base_type != HLSL_TYPE_UINT))
+                || (type->e.numeric.type != HLSL_TYPE_INT && type->e.numeric.type != HLSL_TYPE_UINT))
         {
             struct vkd3d_string_buffer *string;
 
@@ -5248,8 +5343,8 @@ static void parse_numthreads_attribute(struct hlsl_ctx *ctx, const struct hlsl_a
         }
         constant = hlsl_ir_constant(instr);
 
-        if ((type->base_type == HLSL_TYPE_INT && constant->value.u[0].i <= 0)
-                || (type->base_type == HLSL_TYPE_UINT && !constant->value.u[0].u))
+        if ((type->e.numeric.type == HLSL_TYPE_INT && constant->value.u[0].i <= 0)
+                || (type->e.numeric.type == HLSL_TYPE_UINT && !constant->value.u[0].u))
             hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_THREAD_COUNT,
                     "Thread count must be a positive integer.");
 
@@ -5313,15 +5408,42 @@ static void remove_unreachable_code(struct hlsl_ctx *ctx, struct hlsl_block *bod
     }
 }
 
-void hlsl_prepend_global_uniform_copy(struct hlsl_ctx *ctx, struct hlsl_block *body)
+void hlsl_run_const_passes(struct hlsl_ctx *ctx, struct hlsl_block *body)
 {
-    struct hlsl_ir_var *var;
+    bool progress;
 
-    LIST_FOR_EACH_ENTRY(var, &ctx->globals->vars, struct hlsl_ir_var, scope_entry)
+    lower_ir(ctx, lower_matrix_swizzles, body);
+    lower_ir(ctx, lower_index_loads, body);
+
+    lower_ir(ctx, lower_broadcasts, body);
+    while (hlsl_transform_ir(ctx, fold_redundant_casts, body, NULL));
+    do
     {
-        if (var->storage_modifiers & HLSL_STORAGE_UNIFORM)
-            prepend_uniform_copy(ctx, body, var);
+        progress = hlsl_transform_ir(ctx, split_array_copies, body, NULL);
+        progress |= hlsl_transform_ir(ctx, split_struct_copies, body, NULL);
     }
+    while (progress);
+    hlsl_transform_ir(ctx, split_matrix_copies, body, NULL);
+
+    lower_ir(ctx, lower_narrowing_casts, body);
+    lower_ir(ctx, lower_int_dot, body);
+    lower_ir(ctx, lower_int_division, body);
+    lower_ir(ctx, lower_int_modulus, body);
+    lower_ir(ctx, lower_int_abs, body);
+    lower_ir(ctx, lower_casts_to_bool, body);
+    lower_ir(ctx, lower_float_modulus, body);
+    hlsl_transform_ir(ctx, fold_redundant_casts, body, NULL);
+
+    do
+    {
+        progress = hlsl_transform_ir(ctx, hlsl_fold_constant_exprs, body, NULL);
+        progress |= hlsl_transform_ir(ctx, hlsl_fold_constant_identities, body, NULL);
+        progress |= hlsl_transform_ir(ctx, hlsl_fold_constant_swizzles, body, NULL);
+        progress |= hlsl_copy_propagation_execute(ctx, body);
+        progress |= hlsl_transform_ir(ctx, fold_swizzle_chains, body, NULL);
+        progress |= hlsl_transform_ir(ctx, remove_trivial_swizzles, body, NULL);
+        progress |= hlsl_transform_ir(ctx, remove_trivial_conditional_branches, body, NULL);
+    } while (progress);
 }
 
 int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func,
@@ -5332,7 +5454,6 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     struct recursive_call_ctx recursive_call_ctx;
     struct hlsl_ir_var *var;
     unsigned int i;
-    bool progress;
 
     list_move_head(&body->instrs, &ctx->static_initializers.instrs);
 
@@ -5352,7 +5473,11 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     lower_ir(ctx, lower_matrix_swizzles, body);
     lower_ir(ctx, lower_index_loads, body);
 
-    hlsl_prepend_global_uniform_copy(ctx, body);
+    LIST_FOR_EACH_ENTRY(var, &ctx->globals->vars, struct hlsl_ir_var, scope_entry)
+    {
+        if (var->storage_modifiers & HLSL_STORAGE_UNIFORM)
+            prepend_uniform_copy(ctx, body, var);
+    }
 
     for (i = 0; i < entry_func->parameters.count; ++i)
     {
@@ -5406,35 +5531,9 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     {
         hlsl_transform_ir(ctx, lower_discard_neg, body, NULL);
     }
-    lower_ir(ctx, lower_broadcasts, body);
-    while (hlsl_transform_ir(ctx, fold_redundant_casts, body, NULL));
-    do
-    {
-        progress = hlsl_transform_ir(ctx, split_array_copies, body, NULL);
-        progress |= hlsl_transform_ir(ctx, split_struct_copies, body, NULL);
-    }
-    while (progress);
-    hlsl_transform_ir(ctx, split_matrix_copies, body, NULL);
 
-    lower_ir(ctx, lower_narrowing_casts, body);
-    lower_ir(ctx, lower_int_dot, body);
-    lower_ir(ctx, lower_int_division, body);
-    lower_ir(ctx, lower_int_modulus, body);
-    lower_ir(ctx, lower_int_abs, body);
-    lower_ir(ctx, lower_casts_to_bool, body);
-    lower_ir(ctx, lower_float_modulus, body);
-    hlsl_transform_ir(ctx, fold_redundant_casts, body, NULL);
-    do
-    {
-        progress = hlsl_transform_ir(ctx, hlsl_fold_constant_exprs, body, NULL);
-        progress |= hlsl_transform_ir(ctx, hlsl_fold_constant_identities, body, NULL);
-        progress |= hlsl_transform_ir(ctx, hlsl_fold_constant_swizzles, body, NULL);
-        progress |= hlsl_copy_propagation_execute(ctx, body);
-        progress |= hlsl_transform_ir(ctx, fold_swizzle_chains, body, NULL);
-        progress |= hlsl_transform_ir(ctx, remove_trivial_swizzles, body, NULL);
-        progress |= hlsl_transform_ir(ctx, remove_trivial_conditional_branches, body, NULL);
-    }
-    while (progress);
+    hlsl_run_const_passes(ctx, body);
+
     remove_unreachable_code(ctx, body);
     hlsl_transform_ir(ctx, normalize_switch_cases, body, NULL);
 
@@ -5446,7 +5545,12 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     hlsl_transform_ir(ctx, track_object_components_sampler_dim, body, NULL);
     if (profile->major_version >= 4)
         hlsl_transform_ir(ctx, lower_combined_samples, body, NULL);
-    hlsl_transform_ir(ctx, track_object_components_usage, body, NULL);
+
+    do
+        compute_liveness(ctx, entry_func);
+    while (hlsl_transform_ir(ctx, dce, body, NULL));
+
+    hlsl_transform_ir(ctx, track_components_usage, body, NULL);
     sort_synthetic_separated_samplers_first(ctx);
 
     if (profile->major_version < 4)

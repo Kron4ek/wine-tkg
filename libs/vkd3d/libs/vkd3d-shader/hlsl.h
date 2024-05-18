@@ -78,16 +78,17 @@ enum hlsl_type_class
     HLSL_CLASS_LAST_NUMERIC = HLSL_CLASS_MATRIX,
     HLSL_CLASS_STRUCT,
     HLSL_CLASS_ARRAY,
-    HLSL_CLASS_OBJECT,
     HLSL_CLASS_DEPTH_STENCIL_VIEW,
     HLSL_CLASS_EFFECT_GROUP,
     HLSL_CLASS_PASS,
+    HLSL_CLASS_PIXEL_SHADER,
     HLSL_CLASS_RENDER_TARGET_VIEW,
     HLSL_CLASS_SAMPLER,
     HLSL_CLASS_STRING,
     HLSL_CLASS_TECHNIQUE,
     HLSL_CLASS_TEXTURE,
     HLSL_CLASS_UAV,
+    HLSL_CLASS_VERTEX_SHADER,
     HLSL_CLASS_VOID,
 };
 
@@ -100,8 +101,6 @@ enum hlsl_base_type
     HLSL_TYPE_UINT,
     HLSL_TYPE_BOOL,
     HLSL_TYPE_LAST_SCALAR = HLSL_TYPE_BOOL,
-    HLSL_TYPE_PIXELSHADER,
-    HLSL_TYPE_VERTEXSHADER,
 };
 
 enum hlsl_sampler_dim
@@ -143,10 +142,6 @@ struct hlsl_type
     struct rb_entry scope_entry;
 
     enum hlsl_type_class class;
-    /* If class is <= HLSL_CLASS_LAST_NUMERIC, then base_type is <= HLSL_TYPE_LAST_SCALAR.
-     * If class is HLSL_CLASS_OBJECT, then base_type is > HLSL_TYPE_LAST_SCALAR.
-     * Otherwise, base_type is not used. */
-    enum hlsl_base_type base_type;
 
     /* If class is HLSL_CLASS_SAMPLER, then sampler_dim is <= HLSL_SAMPLER_DIM_LAST_SAMPLER.
      * If class is HLSL_CLASS_TEXTURE, then sampler_dim can be any value of the enum except
@@ -177,6 +172,11 @@ struct hlsl_type
 
     union
     {
+        /* Additional information if type is numeric. */
+        struct
+        {
+            enum hlsl_base_type type;
+        } numeric;
         /* Additional information if type is HLSL_CLASS_STRUCT. */
         struct
         {
@@ -447,9 +447,10 @@ struct hlsl_ir_var
         enum hlsl_sampler_dim sampler_dim;
         struct vkd3d_shader_location first_sampler_dim_loc;
     } *objects_usage[HLSL_REGSET_LAST_OBJECT + 1];
-    /* Minimum number of binds required to include all object components actually used in the shader.
-     * It may be less than the allocation size, e.g. for texture arrays. */
-    unsigned int bind_count[HLSL_REGSET_LAST_OBJECT + 1];
+    /* Minimum number of binds required to include all components actually used in the shader.
+     * It may be less than the allocation size, e.g. for texture arrays.
+     * The bind_count for HLSL_REGSET_NUMERIC is only used in uniforms for now. */
+    unsigned int bind_count[HLSL_REGSET_LAST + 1];
 
     /* Whether the shader performs dereferences with non-constant offsets in the variable. */
     bool indexable;
@@ -474,6 +475,8 @@ struct hlsl_state_block_entry
 {
     /* For assignments, the name in the lhs. */
     char *name;
+    /* Resolved format-specific property identifier. */
+    unsigned int name_id;
 
     /* Whether the lhs in the assignment is indexed and, in that case, its index. */
     bool lhs_has_index;
@@ -483,7 +486,7 @@ struct hlsl_state_block_entry
     struct hlsl_block *instrs;
 
     /* For assignments, arguments of the rhs initializer. */
-    struct hlsl_ir_node **args;
+    struct hlsl_src *args;
     unsigned int args_count;
 };
 
@@ -1247,6 +1250,7 @@ bool hlsl_clone_block(struct hlsl_ctx *ctx, struct hlsl_block *dst_block, const 
 
 void hlsl_dump_function(struct hlsl_ctx *ctx, const struct hlsl_ir_function_decl *func);
 
+void hlsl_run_const_passes(struct hlsl_ctx *ctx, struct hlsl_block *body);
 int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func,
         enum vkd3d_shader_target_type target_type, struct vkd3d_shader_code *out);
 int hlsl_emit_effect_binary(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out);
@@ -1400,7 +1404,6 @@ unsigned int hlsl_type_get_sm4_offset(const struct hlsl_type *type, unsigned int
 bool hlsl_types_are_equal(const struct hlsl_type *t1, const struct hlsl_type *t2);
 
 void hlsl_calculate_buffer_offsets(struct hlsl_ctx *ctx);
-void hlsl_prepend_global_uniform_copy(struct hlsl_ctx *ctx, struct hlsl_block *block);
 
 const struct hlsl_type *hlsl_get_multiarray_element_type(const struct hlsl_type *type);
 unsigned int hlsl_get_multiarray_size(const struct hlsl_type *type);

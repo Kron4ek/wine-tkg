@@ -304,6 +304,7 @@ static ULONG STDMETHODCALLTYPE d2d_device_context_inner_Release(IUnknown *iface)
         ID3D11Device1_Release(context->d3d_device);
         ID2D1Factory_Release(context->factory);
         ID2D1Device6_Release(&context->device->ID2D1Device6_iface);
+        d2d_device_indexed_objects_clear(&context->vertex_buffers);
         free(context);
     }
 
@@ -2292,7 +2293,7 @@ static BOOL STDMETHODCALLTYPE d2d_device_context_IsBufferPrecisionSupported(ID2D
     return !!(support & D3D11_FORMAT_SUPPORT_BUFFER);
 }
 
-static void STDMETHODCALLTYPE d2d_device_context_GetImageLocalBounds(ID2D1DeviceContext6 *iface,
+static HRESULT STDMETHODCALLTYPE d2d_device_context_GetImageLocalBounds(ID2D1DeviceContext6 *iface,
         ID2D1Image *image, D2D1_RECT_F *local_bounds)
 {
     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
@@ -2325,10 +2326,14 @@ static void STDMETHODCALLTYPE d2d_device_context_GetImageLocalBounds(ID2D1Device
                 break;
         }
         ID2D1Bitmap_Release(bitmap);
+
+        return S_OK;
     }
     else
     {
         FIXME("Unable to get local bounds of image %p.\n", image);
+
+        return E_NOTIMPL;
     }
 }
 
@@ -4278,11 +4283,20 @@ static ULONG WINAPI d2d_device_AddRef(ID2D1Device6 *iface)
     return refcount;
 }
 
+void d2d_device_indexed_objects_clear(struct d2d_indexed_objects *objects)
+{
+    size_t i;
+
+    for (i = 0; i < objects->count; ++i)
+        IUnknown_Release(objects->elements[i].object);
+    free(objects->elements);
+    objects->elements = NULL;
+}
+
 static ULONG WINAPI d2d_device_Release(ID2D1Device6 *iface)
 {
     struct d2d_device *device = impl_from_ID2D1Device(iface);
     ULONG refcount = InterlockedDecrement(&device->refcount);
-    size_t i;
 
     TRACE("%p decreasing refcount to %lu.\n", iface, refcount);
 
@@ -4290,9 +4304,7 @@ static ULONG WINAPI d2d_device_Release(ID2D1Device6 *iface)
     {
         IDXGIDevice_Release(device->dxgi_device);
         ID2D1Factory1_Release(device->factory);
-        for (i = 0; i < device->shaders.count; ++i)
-            IUnknown_Release(device->shaders.objects[i].shader);
-        free(device->shaders.objects);
+        d2d_device_indexed_objects_clear(&device->shaders);
         free(device);
     }
 
@@ -4517,34 +4529,42 @@ void d2d_device_init(struct d2d_device *device, struct d2d_factory *factory, IDX
     IDXGIDevice_AddRef(device->dxgi_device);
 }
 
-HRESULT d2d_device_add_shader(struct d2d_device *device, REFGUID shader_id, IUnknown *shader)
+HRESULT d2d_device_add_indexed_object(struct d2d_indexed_objects *objects,
+        const GUID *id, IUnknown *object)
 {
-    struct d2d_shader *entry;
-
-    if (!d2d_array_reserve((void **)&device->shaders.objects, &device->shaders.size,
-            device->shaders.count + 1, sizeof(*device->shaders.objects)))
+    if (!d2d_array_reserve((void **)&objects->elements, &objects->size, objects->count + 1,
+            sizeof(*objects->elements)))
     {
-        WARN("Failed to resize shaders array.\n");
+        WARN("Failed to resize elements array.\n");
         return E_OUTOFMEMORY;
     }
 
-    entry = &device->shaders.objects[device->shaders.count++];
-    entry->id = *shader_id;
-    entry->shader = shader;
-    IUnknown_AddRef(entry->shader);
+    objects->elements[objects->count].id = *id;
+    objects->elements[objects->count].object = object;
+    IUnknown_AddRef(object);
+    objects->count++;
 
     return S_OK;
 }
 
-BOOL d2d_device_is_shader_loaded(struct d2d_device *device, REFGUID shader_id)
+BOOL d2d_device_get_indexed_object(struct d2d_indexed_objects *objects, const GUID *id,
+        IUnknown **object)
 {
-     size_t i;
+    size_t i;
 
-     for (i = 0; i < device->shaders.count; ++i)
-     {
-         if (IsEqualGUID(shader_id, &device->shaders.objects[i].id))
-             return TRUE;
-     }
+    for (i = 0; i < objects->count; ++i)
+    {
+        if (IsEqualGUID(id, &objects->elements[i].id))
+        {
+            if (object)
+            {
+                *object = objects->elements[i].object;
+                IUnknown_AddRef(*object);
+            }
+            return TRUE;
+        }
+    }
 
-     return FALSE;
+    if (object) *object = NULL;
+    return FALSE;
 }

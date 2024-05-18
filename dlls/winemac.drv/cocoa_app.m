@@ -1300,78 +1300,6 @@ static NSString* WineLocalizedString(unsigned int stringID)
             [windowsBeingDragged removeObject:window];
     }
 
-    /* Checks if, discounting the given window, there are any visible windows
-       that should make the app have a dock icon. window may be nil. anyVisible
-       will be set to reflect whether any window other than the given one is
-       visible. */
-    - (BOOL) shouldHaveDockIconAfterWindowOrdersOut:(NSWindow *)window
-                                 anyWindowIsVisible:(BOOL *)anyVisible
-    {
-        BOOL foundVisibleWindow = NO;
-
-        if (!eager_dock_icon_hiding)
-            return YES;
-
-        for (NSWindow *w in [NSApp windows])
-        {
-            if (w != window && (w.isVisible || w.isMiniaturized))
-            {
-                foundVisibleWindow = YES;
-
-                if ([w isKindOfClass:[WineWindow class]] && !((WineWindow *)w).needsDockIcon)
-                    continue;
-
-                return YES;
-            }
-        }
-
-        if (anyVisible)
-            *anyVisible = foundVisibleWindow;
-
-        return NO;
-    }
-
-    /* If there are no visible windows that should make the app have a dock icon
-       (other than the provided one), hides the dock icon. window may be nil. */
-    - (void) maybeHideDockIconDueToWindowOrderingOut:(NSWindow *)window
-    {
-        BOOL anyVisibleWindows;
-        static int isMontereyOrLater = -1;
-
-        if (isMontereyOrLater == -1)
-        {
-            isMontereyOrLater = 0;
-            if ([NSProcessInfo instancesRespondToSelector:@selector(isOperatingSystemAtLeastVersion:)])
-            {
-                NSOperatingSystemVersion requiredVersion = { 12, 0, 0 };
-                isMontereyOrLater = [[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:requiredVersion];
-            }
-        }
-
-        if (!eager_dock_icon_hiding)
-            return;
-
-        if (window &&
-            ((!window.isVisible && !window.isMiniaturized) ||
-             ([window isKindOfClass:[WineWindow class]] && !((WineWindow *)window).needsDockIcon)))
-        {
-            /* Nothing to do; that window couldn't have changed anything. */
-            return;
-        }
-
-        if ([NSApp activationPolicy] == NSApplicationActivationPolicyRegular &&
-            ![self shouldHaveDockIconAfterWindowOrdersOut:window
-                                       anyWindowIsVisible:&anyVisibleWindows])
-        {
-            /* Before macOS 12 Monterey, hiding the dock icon while there are
-               visible windows makes those windows disappear until they are
-               programmatically ordered back in. So we don't do that transition
-               (which should be rather uncommon) on older OSes. */
-            if (isMontereyOrLater || !anyVisibleWindows)
-                NSApp.activationPolicy = NSApplicationActivationPolicyAccessory;
-        }
-    }
-
     - (void) windowWillOrderOut:(WineWindow*)window
     {
         if ([windowsBeingDragged containsObject:window])
@@ -1382,8 +1310,6 @@ static NSString* WineLocalizedString(unsigned int stringID)
             [window.queue postEvent:event];
             macdrv_release_event(event);
         }
-
-        [self maybeHideDockIconDueToWindowOrderingOut:window];
     }
 
     - (BOOL) isAnyWineWindowVisible
@@ -2139,9 +2065,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
     static BOOL InputSourceShouldBeIgnored(TISInputSourceRef inputSource)
     {
         /* Certain system utilities are technically input sources, but we
-           shouldn't consider them as such for our purposes.
-           Dictation is its own source too (com.apple.inputmethod.ironwood), but
-           it should receive keypresses; it cancels input on escape. */
+           shouldn't consider them as such for our purposes. */
         static CFStringRef ignoredIDs[] = {
             /* The "Emoji & Symbols" palette. */
             CFSTR("com.apple.CharacterPaletteIM"),
@@ -2151,6 +2075,11 @@ static NSString* WineLocalizedString(unsigned int stringID)
             CFSTR("com.apple.PressAndHold"),
             /* Emoji list on MacBooks with the Touch Bar. */
             CFSTR("com.apple.inputmethod.EmojiFunctionRowItem"),
+            /* Dictation. Ideally this would actually receive key events, since
+               escape cancels it, but it remains a "selected" input source even
+               when not active, so we need to ignore it to avoid incorrectly
+               sending input to it. */
+            CFSTR("com.apple.inputmethod.ironwood"),
         };
 
         CFStringRef sourceID = TISGetInputSourceProperty(inputSource, kTISPropertyInputSourceID);

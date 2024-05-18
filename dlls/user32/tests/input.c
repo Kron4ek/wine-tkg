@@ -705,16 +705,9 @@ static void get_test_scan( WORD vkey, WORD *scan, WCHAR *wch, WCHAR *wch_shift )
     ok_ret( 1, ToUnicodeEx( vkey, *scan, state, wch, 1, 0, hkl ) );
     state[VK_SHIFT] = 0x80;
     ok_ret( 1, ToUnicodeEx( vkey, *scan, state, wch_shift, 1, 0, hkl ) );
-
-    /* zh_CN returns a different WM_(SYS)CHAR, possibly coming from IME */
-    if (HIWORD(hkl) == 0x0804)
-    {
-        *wch = 0x430;
-        *wch_shift = 0x410;
-    }
 }
 
-static void test_SendInput_keyboard_messages( WORD vkey, WORD scan, WCHAR wch, WCHAR wch_shift, WCHAR wch_control )
+static void test_SendInput_keyboard_messages( WORD vkey, WORD scan, WCHAR wch, WCHAR wch_shift, WCHAR wch_control, HKL hkl )
 {
 #define WIN_MSG(m, w, l, ...) {.func = MSG_TEST_WIN, .message = {.msg = m, .wparam = w, .lparam = l}, ## __VA_ARGS__}
 #define KBD_HOOK(m, s, v, f, ...) {.func = LL_HOOK_KEYBD, .ll_hook_kbd = {.msg = m, .scan = s, .vkey = v, .flags = f}, ## __VA_ARGS__}
@@ -1162,6 +1155,17 @@ static void test_SendInput_keyboard_messages( WORD vkey, WORD scan, WCHAR wch, W
     hwnd = CreateWindowW( L"static", NULL, WS_POPUP | WS_VISIBLE, 0, 0, 100, 100, NULL, NULL, NULL, NULL );
     ok_ne( NULL, hwnd, HWND, "%p" );
     wait_messages( 100, FALSE );
+
+    /* If we have had a spurious layout change, wch(_shift) may be incorrect. */
+    if (GetKeyboardLayout( 0 ) != hkl)
+    {
+        win_skip( "Spurious keyboard layout changed detected (expected: %p got: %p)\n",
+                  hkl, GetKeyboardLayout( 0 ) );
+        ok_ret( 1, DestroyWindow( hwnd ) );
+        wait_messages( 100, FALSE );
+        ok_seq( empty_sequence );
+        return;
+    }
 
     hook = SetWindowsHookExW( WH_KEYBOARD_LL, ll_hook_kbd_proc, GetModuleHandleW( NULL ), 0 );
     ok_ne( NULL, hook, HHOOK, "%p" );
@@ -2091,13 +2095,26 @@ static void test_GetRawInputBuffer(void)
     char buffer[16 * sizeof(RAWINPUT64)];
     RAWINPUT64 *rawbuffer64 = (RAWINPUT64 *)buffer;
     RAWINPUT *rawbuffer = (RAWINPUT *)buffer;
+    DWORD t1, t2, t3, now, pos1, pos2;
+    LPARAM extra_info1, extra_info2;
+    INPUT_MESSAGE_SOURCE source;
+    POINT pt;
     HWND hwnd;
+    BOOL ret;
 
     if (is_wow64) rawinput_size = sizeof(RAWINPUTHEADER64) + sizeof(RAWMOUSE);
     else rawinput_size = sizeof(RAWINPUTHEADER) + sizeof(RAWMOUSE);
 
     hwnd = create_foreground_window( TRUE );
     SetWindowLongPtrW( hwnd, GWLP_WNDPROC, (LONG_PTR)rawinputbuffer_wndproc );
+
+    if (pGetCurrentInputMessageSource)
+    {
+        ret = pGetCurrentInputMessageSource( &source );
+        ok( ret, "got error %lu.\n", GetLastError() );
+        ok( !source.deviceType, "got %#x.\n", source.deviceType );
+        ok( !source.originId, "got %#x.\n", source.originId );
+    }
 
     raw_devices[0].usUsagePage = HID_USAGE_PAGE_GENERIC;
     raw_devices[0].usUsage = HID_USAGE_GENERIC_MOUSE;
@@ -2116,6 +2133,11 @@ static void test_GetRawInputBuffer(void)
     ok_ret( ERROR_INVALID_PARAMETER, GetLastError() );
 
     /* valid calls, but no input */
+    t1 = GetMessageTime();
+    pos1 = GetMessagePos();
+    extra_info1 = GetMessageExtraInfo();
+    now = GetTickCount();
+    ok( t1 <= now, "got %lu, %lu.\n", t1, now );
 
     size = sizeof(buffer);
     ok_ret( 0, GetRawInputBuffer( NULL, &size, sizeof(RAWINPUTHEADER) ) );
@@ -2128,8 +2150,10 @@ static void test_GetRawInputBuffer(void)
     ok_eq( 0, size, UINT, "%u" );
 
 
-    mouse_event( MOUSEEVENTF_MOVE, 5, 0, 0, 0 );
-
+    Sleep( 20 );
+    mouse_event( MOUSEEVENTF_MOVE, 5, 0, 0, 0xdeadbeef );
+    t2 = GetMessageTime();
+    ok( t2 == t1, "got %lu, %lu.\n", t1, t2 );
     /* invalid calls with input */
 
     SetLastError( 0xdeadbeef );
@@ -2137,6 +2161,9 @@ static void test_GetRawInputBuffer(void)
     ok_ret( (UINT)-1, GetRawInputBuffer( rawbuffer, &size, sizeof(RAWINPUTHEADER) ) );
     ok_eq( rawinput_size, size, UINT, "%u" );
     ok_ret( ERROR_INSUFFICIENT_BUFFER, GetLastError() );
+    t2 = GetMessageTime();
+    ok( t2 == t1, "got %lu, %lu.\n", t1, t2 );
+
     SetLastError( 0xdeadbeef );
     size = sizeof(buffer);
     ok_ret( (UINT)-1, GetRawInputBuffer( rawbuffer, &size, 0 ) );
@@ -2158,6 +2185,8 @@ static void test_GetRawInputBuffer(void)
     /* NOTE: calling with size == rawinput_size returns an error, */
     /* BUT it fills the buffer nonetheless and empties the internal buffer (!!) */
 
+    Sleep( 20 );
+    t2 = GetTickCount();
     size = 0;
     ok_ret( 0, GetRawInputBuffer( NULL, &size, sizeof(RAWINPUTHEADER) ) );
     ok_eq( rawinput_size, size, UINT, "%u" );
@@ -2170,6 +2199,23 @@ static void test_GetRawInputBuffer(void)
     if (is_wow64) ok_eq( 5, rawbuffer64->data.mouse.lLastX, UINT, "%u" );
     else ok_eq( 5, rawbuffer->data.mouse.lLastX, UINT, "%u" );
 
+    t3 = GetMessageTime();
+    pos2 = GetMessagePos();
+    extra_info2 = GetMessageExtraInfo();
+    ok( extra_info2 == extra_info1, "got %#Ix, %#Ix.\n", extra_info1, extra_info2 );
+    GetCursorPos( &pt );
+    ok( t3 > t1, "got %lu, %lu.\n", t1, t3 );
+    ok( t3 < t2, "got %lu, %lu.\n", t2, t3 );
+    ok( pos1 == pos2, "got pos1 (%ld, %ld), pos2 (%ld, %ld), pt (%ld %ld).\n",
+        pos1 & 0xffff, pos1 >> 16, pos2 & 0xffff, pos2 >> 16, pt.x, pt.y );
+    if (pGetCurrentInputMessageSource)
+    {
+        ret = pGetCurrentInputMessageSource( &source );
+        ok( ret, "got error %lu.\n", GetLastError() );
+        ok( !source.deviceType, "got %#x.\n", source.deviceType );
+        ok( !source.originId, "got %#x.\n", source.originId );
+    }
+
     /* no more data to read */
 
     size = sizeof(buffer);
@@ -2178,8 +2224,20 @@ static void test_GetRawInputBuffer(void)
 
 
     /* rawinput_size + 1 succeeds */
+    t1 = GetMessageTime();
+    pos1 = GetMessagePos();
+    extra_info1 = GetMessageExtraInfo();
+    now = GetTickCount();
+    ok( t1 <= now, "got %lu, %lu.\n", t1, now );
 
-    mouse_event( MOUSEEVENTF_MOVE, 5, 0, 0, 0 );
+    Sleep( 20 );
+    mouse_event( MOUSEEVENTF_MOVE, 5, 0, 0, 0xfeedcafe );
+
+    t2 = GetMessageTime();
+    ok( t2 == t1, "got %lu, %lu.\n", t1, t2 );
+
+    Sleep( 20 );
+    t2 = GetTickCount();
 
     size = rawinput_size + 1;
     memset( buffer, 0, sizeof(buffer) );
@@ -2201,6 +2259,16 @@ static void test_GetRawInputBuffer(void)
     size = sizeof(buffer);
     ok_ret( 0, GetRawInputBuffer( NULL, &size, sizeof(RAWINPUTHEADER) ) );
     ok_eq( 0, size, UINT, "%u" );
+
+    t3 = GetMessageTime();
+    pos2 = GetMessagePos();
+    extra_info2 = GetMessageExtraInfo();
+    GetCursorPos(&pt);
+    ok( extra_info2 == extra_info1, "got %#Ix, %#Ix.\n", extra_info1, extra_info2 );
+    ok( t3 > t1, "got %lu, %lu.\n", t1, t3 );
+    ok( t3 < t2, "got %lu, %lu.\n", t2, t3 );
+    ok( pos1 == pos2, "got pos1 (%ld, %ld), pos2 (%ld, %ld), pt (%ld %ld).\n",
+        pos1 & 0xffff, pos1 >> 16, pos2 & 0xffff, pos2 >> 16, pt.x, pt.y );
 
     raw_devices[0].dwFlags = RIDEV_REMOVE;
     raw_devices[0].hwndTarget = 0;
@@ -4854,7 +4922,7 @@ static void test_UnregisterDeviceNotification(void)
     ok(ret == FALSE, "Unregistering NULL Device Notification returned: %d\n", ret);
 }
 
-static void test_SendInput( WORD vkey, WCHAR wch )
+static void test_SendInput( WORD vkey, WCHAR wch, HKL hkl )
 {
     const struct user_call broken_sequence[] =
     {
@@ -4871,6 +4939,17 @@ static void test_SendInput( WORD vkey, WCHAR wch )
     hwnd = CreateWindowW( L"static", NULL, WS_POPUP | WS_VISIBLE, 0, 0, 100, 100, NULL, NULL, NULL, NULL );
     ok_ne( NULL, hwnd, HWND, "%p" );
     wait_messages( 100, FALSE );
+
+    /* If we have had a spurious layout change, wch may be incorrect. */
+    if (GetKeyboardLayout( 0 ) != hkl)
+    {
+        win_skip( "Spurious keyboard layout changed detected (expected: %p got: %p)\n",
+                  hkl, GetKeyboardLayout( 0 ) );
+        ok_ret( 1, DestroyWindow( hwnd ) );
+        wait_messages( 100, FALSE );
+        ok_seq( empty_sequence );
+        return;
+    }
 
     SetLastError( 0xdeadbeef );
     ok_ret( 0, SendInput( 0, NULL, 0 ) );
@@ -5585,7 +5664,7 @@ static void test_keyboard_ll_hook_blocking(void)
     ok_ret( 1, DestroyWindow( hwnd ) );
 }
 
-static void test_LoadKeyboardLayoutEx(void)
+static void test_LoadKeyboardLayoutEx( HKL orig_hkl )
 {
     static const WCHAR test_layout_name[] = L"00000429";
     static const HKL test_hkl = (HKL)0x04290429;
@@ -5596,6 +5675,16 @@ static void test_LoadKeyboardLayoutEx(void)
 
     old_hkl = GetKeyboardLayout( 0 );
     ok_ne( 0, old_hkl, HKL, "%p" );
+
+    /* If we are dealing with a testbot setup that is prone to spurious
+     * layout changes, layout activations in this test are likely to
+     * not have the expected effect, invalidating the test assumptions. */
+    if (orig_hkl != old_hkl)
+    {
+        win_skip( "Spurious keyboard layout changed detected (expected: %p got: %p)\n",
+                  orig_hkl, old_hkl );
+        return;
+    }
 
     hkl = pLoadKeyboardLayoutEx( NULL, test_layout_name, 0 );
     ok_eq( 0, hkl, HKL, "%p" );
@@ -5728,8 +5817,8 @@ static void test_input_desktop( char **argv )
     test_SetCursorPos();
 
     get_test_scan( 'F', &scan, &wch, &wch_shift );
-    test_SendInput( 'F', wch );
-    test_SendInput_keyboard_messages( 'F', scan, wch, wch_shift, '\x06' );
+    test_SendInput( 'F', wch, hkl );
+    test_SendInput_keyboard_messages( 'F', scan, wch, wch_shift, '\x06', hkl );
     test_SendInput_mouse_messages();
 
     test_keyboard_ll_hook_blocking();
@@ -5738,7 +5827,7 @@ static void test_input_desktop( char **argv )
     test_GetRawInputData();
     test_GetRawInputBuffer();
 
-    test_LoadKeyboardLayoutEx();
+    test_LoadKeyboardLayoutEx( hkl );
 
     ok_ret( 1, SetCursorPos( pos.x, pos.y ) );
 }

@@ -56,25 +56,15 @@ struct resampler
 
 static HRESULT try_create_wg_transform(struct resampler *impl)
 {
-    struct wg_format input_format, output_format;
     struct wg_transform_attrs attrs = {0};
 
     if (impl->wg_transform)
+    {
         wg_transform_destroy(impl->wg_transform);
-    impl->wg_transform = 0;
+        impl->wg_transform = 0;
+    }
 
-    mf_media_type_to_wg_format(impl->input_type, &input_format);
-    if (input_format.major_type == WG_MAJOR_TYPE_UNKNOWN)
-        return MF_E_INVALIDMEDIATYPE;
-
-    mf_media_type_to_wg_format(impl->output_type, &output_format);
-    if (output_format.major_type == WG_MAJOR_TYPE_UNKNOWN)
-        return MF_E_INVALIDMEDIATYPE;
-
-    if (!(impl->wg_transform = wg_transform_create(&input_format, &output_format, &attrs)))
-        return E_FAIL;
-
-    return S_OK;
+    return wg_transform_create_mf(impl->input_type, impl->output_type, &attrs, &impl->wg_transform);
 }
 
 static inline struct resampler *impl_from_IUnknown(IUnknown *iface)
@@ -918,41 +908,24 @@ static const IWMResamplerPropsVtbl resampler_props_vtbl =
 
 HRESULT resampler_create(IUnknown *outer, IUnknown **out)
 {
-    static const struct wg_format input_format =
+    static const WAVEFORMATEX output_format =
     {
-        .major_type = WG_MAJOR_TYPE_AUDIO,
-        .u.audio =
-        {
-            .format = WG_AUDIO_FORMAT_S16LE,
-            .channel_mask = 1,
-            .channels = 1,
-            .rate = 44100,
-        },
+        .wFormatTag = WAVE_FORMAT_IEEE_FLOAT, .wBitsPerSample = 32, .nSamplesPerSec = 44100, .nChannels = 1,
     };
-    static const struct wg_format output_format =
+    static const WAVEFORMATEX input_format =
     {
-        .major_type = WG_MAJOR_TYPE_AUDIO,
-        .u.audio =
-        {
-            .format = WG_AUDIO_FORMAT_F32LE,
-            .channel_mask = 1,
-            .channels = 1,
-            .rate = 44100,
-        },
+        .wFormatTag = WAVE_FORMAT_PCM, .wBitsPerSample = 16, .nSamplesPerSec = 44100, .nChannels = 1,
     };
-    struct wg_transform_attrs attrs = {0};
-    wg_transform_t transform;
     struct resampler *impl;
     HRESULT hr;
 
     TRACE("outer %p, out %p.\n", outer, out);
 
-    if (!(transform = wg_transform_create(&input_format, &output_format, &attrs)))
+    if (FAILED(hr = check_audio_transform_support(&input_format, &output_format)))
     {
         ERR_(winediag)("GStreamer doesn't support audio resampling, please install appropriate plugins.\n");
-        return E_FAIL;
+        return hr;
     }
-    wg_transform_destroy(transform);
 
     if (!(impl = calloc(1, sizeof(*impl))))
         return E_OUTOFMEMORY;

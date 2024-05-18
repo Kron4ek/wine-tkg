@@ -1752,6 +1752,53 @@ static uint32_t vkd3d_spirv_get_op_scope_subgroup(struct vkd3d_spirv_builder *bu
     return vkd3d_spirv_build_once(builder, &builder->scope_subgroup_id, vkd3d_spirv_build_op_scope_subgroup);
 }
 
+static uint32_t vkd3d_spirv_build_op_group_nonuniform_ballot(struct vkd3d_spirv_builder *builder,
+        uint32_t result_type, uint32_t val_id)
+{
+    vkd3d_spirv_enable_capability(builder, SpvCapabilityGroupNonUniformBallot);
+    return vkd3d_spirv_build_op_tr2(builder, &builder->function_stream, SpvOpGroupNonUniformBallot,
+            result_type, vkd3d_spirv_get_op_scope_subgroup(builder), val_id);
+}
+
+static uint32_t vkd3d_spirv_build_op_group_nonuniform_ballot_bit_count(struct vkd3d_spirv_builder *builder,
+        uint32_t result_type, SpvGroupOperation group_op, uint32_t val_id)
+{
+    vkd3d_spirv_enable_capability(builder, SpvCapabilityGroupNonUniformBallot);
+    return vkd3d_spirv_build_op_tr3(builder, &builder->function_stream, SpvOpGroupNonUniformBallotBitCount,
+            result_type, vkd3d_spirv_get_op_scope_subgroup(builder), group_op, val_id);
+}
+
+static uint32_t vkd3d_spirv_build_op_group_nonuniform_elect(struct vkd3d_spirv_builder *builder)
+{
+    vkd3d_spirv_enable_capability(builder, SpvCapabilityGroupNonUniform);
+    return vkd3d_spirv_build_op_tr1(builder, &builder->function_stream, SpvOpGroupNonUniformElect,
+            vkd3d_spirv_get_op_type_bool(builder), vkd3d_spirv_get_op_scope_subgroup(builder));
+}
+
+static uint32_t vkd3d_spirv_build_op_group_nonuniform_broadcast(struct vkd3d_spirv_builder *builder,
+        uint32_t result_type, uint32_t val_id, uint32_t lane_id)
+{
+    vkd3d_spirv_enable_capability(builder, SpvCapabilityGroupNonUniformBallot);
+    return vkd3d_spirv_build_op_tr3(builder, &builder->function_stream, SpvOpGroupNonUniformBroadcast, result_type,
+            vkd3d_spirv_get_op_scope_subgroup(builder), val_id, lane_id);
+}
+
+static uint32_t vkd3d_spirv_build_op_group_nonuniform_shuffle(struct vkd3d_spirv_builder *builder,
+        uint32_t result_type, uint32_t val_id, uint32_t lane_id)
+{
+    vkd3d_spirv_enable_capability(builder, SpvCapabilityGroupNonUniformShuffle);
+    return vkd3d_spirv_build_op_tr3(builder, &builder->function_stream, SpvOpGroupNonUniformShuffle, result_type,
+            vkd3d_spirv_get_op_scope_subgroup(builder), val_id, lane_id);
+}
+
+static uint32_t vkd3d_spirv_build_op_group_nonuniform_broadcast_first(struct vkd3d_spirv_builder *builder,
+        uint32_t result_type, uint32_t val_id)
+{
+    vkd3d_spirv_enable_capability(builder, SpvCapabilityGroupNonUniformBallot);
+    return vkd3d_spirv_build_op_tr2(builder, &builder->function_stream, SpvOpGroupNonUniformBroadcastFirst,
+            result_type, vkd3d_spirv_get_op_scope_subgroup(builder), val_id);
+}
+
 static uint32_t vkd3d_spirv_build_op_glsl_std450_tr1(struct vkd3d_spirv_builder *builder,
         enum GLSLstd450 op, uint32_t result_type, uint32_t operand)
 {
@@ -3594,8 +3641,9 @@ static void spirv_compiler_emit_dereference_register(struct spirv_compiler *comp
             indexes[index_count++] = spirv_compiler_emit_register_addressing(compiler, &reg->idx[0]);
     }
 
+    /* Alignment is supported only in the Kernel execution model and is an optimisation only. */
     if (reg->alignment)
-        WARN("Ignoring alignment %u.\n", reg->alignment);
+        TRACE("Ignoring alignment %u.\n", reg->alignment);
 
     if (index_count)
     {
@@ -5819,7 +5867,7 @@ static void spirv_compiler_emit_dcl_global_flags(struct spirv_compiler *compiler
 
     if (flags & ~(VKD3DSGF_REFACTORING_ALLOWED | VKD3DSGF_ENABLE_RAW_AND_STRUCTURED_BUFFERS))
         FIXME("Unhandled global flags %#"PRIx64".\n", (uint64_t)flags);
-    else
+    else if (flags)
         WARN("Unhandled global flags %#"PRIx64".\n", (uint64_t)flags);
 }
 
@@ -5881,8 +5929,9 @@ static void spirv_compiler_emit_dcl_indexable_temp(struct spirv_compiler *compil
     vsir_register_init(&reg, VKD3DSPR_IDXTEMP, VKD3D_DATA_FLOAT, 1);
     reg.idx[0].offset = temp->register_idx;
 
+    /* Alignment is supported only in the Kernel execution model and is an optimisation only. */
     if (temp->alignment)
-        WARN("Ignoring alignment %u.\n", temp->alignment);
+        TRACE("Ignoring alignment %u.\n", temp->alignment);
 
     function_location = spirv_compiler_get_current_function_location(compiler);
     vkd3d_spirv_begin_function_stream_insertion(builder, function_location);
@@ -9793,6 +9842,157 @@ static void spirv_compiler_emit_wave_bool_op(struct spirv_compiler *compiler,
     spirv_compiler_emit_store_dst(compiler, dst, val_id);
 }
 
+static uint32_t spirv_compiler_emit_group_nonuniform_ballot(struct spirv_compiler *compiler,
+        const struct vkd3d_shader_src_param *src)
+{
+    struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
+    uint32_t type_id, val_id;
+
+    type_id = vkd3d_spirv_get_type_id(builder, VKD3D_SHADER_COMPONENT_UINT, VKD3D_VEC4_SIZE);
+    val_id = spirv_compiler_emit_load_src(compiler, src, VKD3DSP_WRITEMASK_0);
+    val_id = vkd3d_spirv_build_op_group_nonuniform_ballot(builder, type_id, val_id);
+
+    return val_id;
+}
+
+static void spirv_compiler_emit_wave_active_ballot(struct spirv_compiler *compiler,
+        const struct vkd3d_shader_instruction *instruction)
+{
+    const struct vkd3d_shader_dst_param *dst = instruction->dst;
+    uint32_t val_id;
+
+    val_id = spirv_compiler_emit_group_nonuniform_ballot(compiler, instruction->src);
+    spirv_compiler_emit_store_dst(compiler, dst, val_id);
+}
+
+static SpvOp map_wave_alu_op(enum vkd3d_shader_opcode handler_idx, bool is_float)
+{
+    switch (handler_idx)
+    {
+        case VKD3DSIH_WAVE_ACTIVE_BIT_AND:
+            return SpvOpGroupNonUniformBitwiseAnd;
+        case VKD3DSIH_WAVE_ACTIVE_BIT_OR:
+            return SpvOpGroupNonUniformBitwiseOr;
+        case VKD3DSIH_WAVE_ACTIVE_BIT_XOR:
+            return SpvOpGroupNonUniformBitwiseXor;
+        case VKD3DSIH_WAVE_OP_ADD:
+            return is_float ? SpvOpGroupNonUniformFAdd : SpvOpGroupNonUniformIAdd;
+        case VKD3DSIH_WAVE_OP_IMAX:
+            return SpvOpGroupNonUniformSMax;
+        case VKD3DSIH_WAVE_OP_IMIN:
+            return SpvOpGroupNonUniformSMin;
+        case VKD3DSIH_WAVE_OP_MAX:
+            return SpvOpGroupNonUniformFMax;
+        case VKD3DSIH_WAVE_OP_MIN:
+            return SpvOpGroupNonUniformFMin;
+        case VKD3DSIH_WAVE_OP_MUL:
+            return is_float ? SpvOpGroupNonUniformFMul : SpvOpGroupNonUniformIMul;
+        case VKD3DSIH_WAVE_OP_UMAX:
+            return SpvOpGroupNonUniformUMax;
+        case VKD3DSIH_WAVE_OP_UMIN:
+            return SpvOpGroupNonUniformUMin;
+        default:
+            vkd3d_unreachable();
+    }
+}
+
+static void spirv_compiler_emit_wave_alu_op(struct spirv_compiler *compiler,
+        const struct vkd3d_shader_instruction *instruction)
+{
+    struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
+    const struct vkd3d_shader_dst_param *dst = instruction->dst;
+    const struct vkd3d_shader_src_param *src = instruction->src;
+    uint32_t type_id, val_id;
+    SpvOp op;
+
+    op = map_wave_alu_op(instruction->handler_idx, data_type_is_floating_point(src->reg.data_type));
+
+    type_id = vkd3d_spirv_get_type_id_for_data_type(builder, dst->reg.data_type,
+            vsir_write_mask_component_count(dst->write_mask));
+    val_id = spirv_compiler_emit_load_src(compiler, &src[0], dst->write_mask);
+
+    vkd3d_spirv_enable_capability(builder, SpvCapabilityGroupNonUniformArithmetic);
+    val_id = vkd3d_spirv_build_op_tr3(builder, &builder->function_stream, op, type_id,
+            vkd3d_spirv_get_op_scope_subgroup(builder),
+            (instruction->flags & VKD3DSI_WAVE_PREFIX) ? SpvGroupOperationExclusiveScan : SpvGroupOperationReduce,
+            val_id);
+
+    spirv_compiler_emit_store_dst(compiler, dst, val_id);
+}
+
+static void spirv_compiler_emit_wave_bit_count(struct spirv_compiler *compiler,
+        const struct vkd3d_shader_instruction *instruction)
+{
+    struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
+    const struct vkd3d_shader_dst_param *dst = instruction->dst;
+    SpvGroupOperation group_op;
+    uint32_t type_id, val_id;
+
+    group_op = (instruction->handler_idx == VKD3DSIH_WAVE_PREFIX_BIT_COUNT) ? SpvGroupOperationExclusiveScan
+            : SpvGroupOperationReduce;
+
+    val_id = spirv_compiler_emit_group_nonuniform_ballot(compiler, instruction->src);
+    type_id = vkd3d_spirv_get_type_id(builder, VKD3D_SHADER_COMPONENT_UINT, 1);
+    val_id = vkd3d_spirv_build_op_group_nonuniform_ballot_bit_count(builder, type_id, group_op, val_id);
+
+    spirv_compiler_emit_store_dst(compiler, dst, val_id);
+}
+
+static void spirv_compiler_emit_wave_is_first_lane(struct spirv_compiler *compiler,
+        const struct vkd3d_shader_instruction *instruction)
+{
+    struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
+    const struct vkd3d_shader_dst_param *dst = instruction->dst;
+    uint32_t val_id;
+
+    val_id = vkd3d_spirv_build_op_group_nonuniform_elect(builder);
+    spirv_compiler_emit_store_dst(compiler, dst, val_id);
+}
+
+static void spirv_compiler_emit_wave_read_lane_at(struct spirv_compiler *compiler,
+        const struct vkd3d_shader_instruction *instruction)
+{
+    struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
+    const struct vkd3d_shader_dst_param *dst = instruction->dst;
+    const struct vkd3d_shader_src_param *src = instruction->src;
+    uint32_t type_id, lane_id, val_id;
+
+    type_id = vkd3d_spirv_get_type_id_for_data_type(builder, dst->reg.data_type,
+            vsir_write_mask_component_count(dst->write_mask));
+    val_id = spirv_compiler_emit_load_src(compiler, &src[0], dst->write_mask);
+    lane_id = spirv_compiler_emit_load_src(compiler, &src[1], VKD3DSP_WRITEMASK_0);
+
+    /* TODO: detect values loaded from a const buffer? */
+    if (register_is_constant_or_undef(&src[1].reg))
+    {
+        /* Uniform lane_id only. */
+        val_id = vkd3d_spirv_build_op_group_nonuniform_broadcast(builder, type_id, val_id, lane_id);
+    }
+    else
+    {
+        /* WaveReadLaneAt supports non-uniform lane ids, so if lane_id is not constant it may not be uniform. */
+        val_id = vkd3d_spirv_build_op_group_nonuniform_shuffle(builder, type_id, val_id, lane_id);
+    }
+
+    spirv_compiler_emit_store_dst(compiler, dst, val_id);
+}
+
+static void spirv_compiler_emit_wave_read_lane_first(struct spirv_compiler *compiler,
+        const struct vkd3d_shader_instruction *instruction)
+{
+    struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
+    const struct vkd3d_shader_dst_param *dst = instruction->dst;
+    const struct vkd3d_shader_src_param *src = instruction->src;
+    uint32_t type_id, val_id;
+
+    type_id = vkd3d_spirv_get_type_id_for_data_type(builder, dst->reg.data_type,
+            vsir_write_mask_component_count(dst->write_mask));
+    val_id = spirv_compiler_emit_load_src(compiler, src, dst->write_mask);
+    val_id = vkd3d_spirv_build_op_group_nonuniform_broadcast_first(builder, type_id, val_id);
+
+    spirv_compiler_emit_store_dst(compiler, dst, val_id);
+}
+
 /* This function is called after declarations are processed. */
 static void spirv_compiler_emit_main_prolog(struct spirv_compiler *compiler)
 {
@@ -10141,6 +10341,35 @@ static int spirv_compiler_handle_instruction(struct spirv_compiler *compiler,
         case VKD3DSIH_WAVE_ALL_TRUE:
         case VKD3DSIH_WAVE_ANY_TRUE:
             spirv_compiler_emit_wave_bool_op(compiler, instruction);
+            break;
+        case VKD3DSIH_WAVE_ACTIVE_BALLOT:
+            spirv_compiler_emit_wave_active_ballot(compiler, instruction);
+            break;
+        case VKD3DSIH_WAVE_ACTIVE_BIT_AND:
+        case VKD3DSIH_WAVE_ACTIVE_BIT_OR:
+        case VKD3DSIH_WAVE_ACTIVE_BIT_XOR:
+        case VKD3DSIH_WAVE_OP_ADD:
+        case VKD3DSIH_WAVE_OP_IMAX:
+        case VKD3DSIH_WAVE_OP_IMIN:
+        case VKD3DSIH_WAVE_OP_MAX:
+        case VKD3DSIH_WAVE_OP_MIN:
+        case VKD3DSIH_WAVE_OP_MUL:
+        case VKD3DSIH_WAVE_OP_UMAX:
+        case VKD3DSIH_WAVE_OP_UMIN:
+            spirv_compiler_emit_wave_alu_op(compiler, instruction);
+            break;
+        case VKD3DSIH_WAVE_ALL_BIT_COUNT:
+        case VKD3DSIH_WAVE_PREFIX_BIT_COUNT:
+            spirv_compiler_emit_wave_bit_count(compiler, instruction);
+            break;
+        case VKD3DSIH_WAVE_IS_FIRST_LANE:
+            spirv_compiler_emit_wave_is_first_lane(compiler, instruction);
+            break;
+        case VKD3DSIH_WAVE_READ_LANE_AT:
+            spirv_compiler_emit_wave_read_lane_at(compiler, instruction);
+            break;
+        case VKD3DSIH_WAVE_READ_LANE_FIRST:
+            spirv_compiler_emit_wave_read_lane_first(compiler, instruction);
             break;
         case VKD3DSIH_DCL:
         case VKD3DSIH_DCL_HS_MAX_TESSFACTOR:
