@@ -1,4 +1,4 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat May 18 08:20:20 AM UTC 2024 :
+# Last wine-tkg-staging-fsync-git configuration - Sat May 18 11:48:46 AM UTC 2024 :
 
 Local cfg files used
 
@@ -28,7 +28,5 @@ Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix a608ef1.mypatch
 Applied hotfix opencl-fixup.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
-Applied your own patch hags-0002.mypatch
-Applied your own patch winex11-luid.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )
