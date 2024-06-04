@@ -37,6 +37,7 @@
 
 #include "wine/debug.h"
 #include "x11drv.h"
+#include "xcomposite.h"
 
 #define VK_NO_PROTOTYPES
 #define WINE_VK_HOST
@@ -74,13 +75,6 @@ static VkResult X11DRV_vulkan_surface_create( HWND hwnd, VkInstance instance, Vk
 
     TRACE( "%p %p %p %p\n", hwnd, instance, surface, private );
 
-    /* TODO: support child window rendering. */
-    if (NtUserGetAncestor( hwnd, GA_PARENT ) != NtUserGetDesktopWindow())
-    {
-        FIXME("Application requires child window rendering, which is not implemented yet!\n");
-        return VK_ERROR_INCOMPATIBLE_DRIVER;
-    }
-
     if (!(info.window = create_client_window( hwnd, &default_visual, default_colormap )))
     {
         ERR("Failed to allocate client window for hwnd=%p\n", hwnd);
@@ -109,7 +103,7 @@ static void X11DRV_vulkan_surface_destroy( HWND hwnd, void *private )
     destroy_client_window( hwnd, client_window );
 }
 
-static void X11DRV_vulkan_surface_detach( HWND hwnd, void *private )
+static void X11DRV_vulkan_surface_attach( HWND hwnd, void *private )
 {
     Window client_window = (Window)private;
     struct x11drv_win_data *data;
@@ -118,8 +112,40 @@ static void X11DRV_vulkan_surface_detach( HWND hwnd, void *private )
 
     if ((data = get_win_data( hwnd )))
     {
+#ifdef SONAME_LIBXCOMPOSITE
+        if (usexcomposite) pXCompositeUnredirectWindow( gdi_display, client_window, CompositeRedirectManual );
+#endif
+        attach_client_window( data, client_window );
+        release_win_data( data );
+    }
+}
+
+static void X11DRV_vulkan_surface_detach( HWND hwnd, void *private, HDC *hdc )
+{
+    static const WCHAR displayW[] = {'D','I','S','P','L','A','Y'};
+    UNICODE_STRING device_str = RTL_CONSTANT_STRING(displayW);
+    Window client_window = (Window)private;
+    struct x11drv_win_data *data;
+
+    TRACE( "%p %p %p\n", hwnd, private, hdc );
+
+    if ((data = get_win_data( hwnd )))
+    {
         detach_client_window( data, client_window );
         release_win_data( data );
+    }
+
+    if (hdc && (*hdc = NtGdiOpenDCW( &device_str, NULL, NULL, 0, TRUE, NULL, NULL, NULL )))
+    {
+        struct x11drv_escape_set_drawable escape = {0};
+        escape.code = X11DRV_SET_DRAWABLE;
+        escape.mode = IncludeInferiors;
+        escape.drawable = client_window;
+        NtUserGetClientRect( hwnd, &escape.dc_rect );
+        NtGdiExtEscape( *hdc, NULL, 0, X11DRV_ESCAPE, sizeof(escape), (LPSTR)&escape, 0, NULL );
+#ifdef SONAME_LIBXCOMPOSITE
+        if (usexcomposite) pXCompositeRedirectWindow( gdi_display, client_window, CompositeRedirectManual );
+#endif
     }
 }
 
@@ -145,6 +171,7 @@ static const struct vulkan_driver_funcs x11drv_vulkan_driver_funcs =
 {
     .p_vulkan_surface_create = X11DRV_vulkan_surface_create,
     .p_vulkan_surface_destroy = X11DRV_vulkan_surface_destroy,
+    .p_vulkan_surface_attach = X11DRV_vulkan_surface_attach,
     .p_vulkan_surface_detach = X11DRV_vulkan_surface_detach,
     .p_vulkan_surface_presented = X11DRV_vulkan_surface_presented,
 

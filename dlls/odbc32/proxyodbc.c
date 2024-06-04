@@ -2747,7 +2747,7 @@ SQLRETURN WINAPI SQLGetTypeInfoW(SQLHSTMT StatementHandle, SQLSMALLINT DataType)
 /*************************************************************************
  *				SQLSetConnectOptionW          [ODBC32.150]
  */
-SQLRETURN WINAPI SQLSetConnectOptionW(SQLHDBC ConnectionHandle, SQLUSMALLINT Option, SQLLEN Value)
+SQLRETURN WINAPI SQLSetConnectOptionW(SQLHDBC ConnectionHandle, SQLUSMALLINT Option, SQLULEN Value)
 {
     SQLRETURN ret = SQL_ERROR;
 

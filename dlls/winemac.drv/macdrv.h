@@ -130,8 +130,7 @@ extern LONG macdrv_ChangeDisplaySettings(LPDEVMODEW displays, LPCWSTR primary_na
 extern BOOL macdrv_GetCurrentDisplaySettings(LPCWSTR name, BOOL is_primary, LPDEVMODEW devmode);
 extern INT macdrv_GetDisplayDepth(LPCWSTR name, BOOL is_primary);
 extern LRESULT macdrv_ClipboardWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
-extern UINT macdrv_UpdateDisplayDevices( const struct gdi_device_manager *device_manager,
-                                         BOOL force, void *param );
+extern UINT macdrv_UpdateDisplayDevices(const struct gdi_device_manager *device_manager, void *param);
 extern BOOL macdrv_GetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp);
 extern BOOL macdrv_SetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp);
 extern BOOL macdrv_ClipCursor(const RECT *clip, BOOL reset);
@@ -210,9 +209,8 @@ extern void init_win_context(void);
 extern macdrv_window macdrv_get_cocoa_window(HWND hwnd, BOOL require_on_screen);
 extern RGNDATA *get_region_data(HRGN hrgn, HDC hdc_lptodp);
 extern void activate_on_following_focus(void);
-extern struct window_surface *create_surface(macdrv_window window, const RECT *rect,
+extern struct window_surface *create_surface(HWND hwnd, macdrv_window window, const RECT *rect,
                                              struct window_surface *old_surface, BOOL use_alpha);
-extern void set_window_surface(macdrv_window window, struct window_surface *window_surface);
 extern void set_surface_use_alpha(struct window_surface *window_surface, BOOL use_alpha);
 extern void surface_clip_to_visible_rect(struct window_surface *window_surface, const RECT *visible_rect);
 
@@ -272,7 +270,6 @@ extern void macdrv_status_item_mouse_button(const macdrv_event *event);
 extern void macdrv_status_item_mouse_move(const macdrv_event *event);
 
 extern void check_retina_status(void);
-extern void macdrv_init_display_devices(BOOL force);
 extern void macdrv_resize_desktop(void);
 extern void init_user_driver(void);
 

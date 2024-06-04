@@ -657,7 +657,15 @@ static bool vkd3d_shader_signature_from_shader_signature(struct vkd3d_shader_sig
         struct vkd3d_shader_signature_element *d = &signature->elements[i];
         struct signature_element *e = &src->elements[i];
 
-        d->semantic_name = e->semantic_name;
+        if (!(d->semantic_name = vkd3d_strdup(e->semantic_name)))
+        {
+            for (unsigned int j = 0; j < i; ++j)
+            {
+                vkd3d_free((void *)signature->elements[j].semantic_name);
+            }
+            vkd3d_free(signature->elements);
+            return false;
+        }
         d->semantic_index = e->semantic_index;
         d->stream_index = e->stream_index;
         d->sysval_semantic = e->sysval_semantic;
@@ -841,12 +849,13 @@ static void vkd3d_shader_scan_add_uav_flag(const struct vkd3d_shader_scan_contex
 
 static bool vkd3d_shader_instruction_is_uav_read(const struct vkd3d_shader_instruction *instruction)
 {
-    enum vkd3d_shader_opcode handler_idx = instruction->handler_idx;
-    return (VKD3DSIH_ATOMIC_AND <= handler_idx && handler_idx <= VKD3DSIH_ATOMIC_XOR)
-            || (VKD3DSIH_IMM_ATOMIC_ALLOC <= handler_idx && handler_idx <= VKD3DSIH_IMM_ATOMIC_XOR)
-            || handler_idx == VKD3DSIH_LD_UAV_TYPED
-            || (handler_idx == VKD3DSIH_LD_RAW && instruction->src[1].reg.type == VKD3DSPR_UAV)
-            || (handler_idx == VKD3DSIH_LD_STRUCTURED && instruction->src[2].reg.type == VKD3DSPR_UAV);
+    enum vkd3d_shader_opcode opcode = instruction->opcode;
+
+    return (VKD3DSIH_ATOMIC_AND <= opcode && opcode <= VKD3DSIH_ATOMIC_XOR)
+            || (VKD3DSIH_IMM_ATOMIC_ALLOC <= opcode && opcode <= VKD3DSIH_IMM_ATOMIC_XOR)
+            || opcode == VKD3DSIH_LD_UAV_TYPED
+            || (opcode == VKD3DSIH_LD_RAW && instruction->src[1].reg.type == VKD3DSPR_UAV)
+            || (opcode == VKD3DSIH_LD_STRUCTURED && instruction->src[2].reg.type == VKD3DSPR_UAV);
 }
 
 static void vkd3d_shader_scan_record_uav_read(struct vkd3d_shader_scan_context *context,
@@ -857,9 +866,9 @@ static void vkd3d_shader_scan_record_uav_read(struct vkd3d_shader_scan_context *
 
 static bool vkd3d_shader_instruction_is_uav_counter(const struct vkd3d_shader_instruction *instruction)
 {
-    enum vkd3d_shader_opcode handler_idx = instruction->handler_idx;
-    return handler_idx == VKD3DSIH_IMM_ATOMIC_ALLOC
-            || handler_idx == VKD3DSIH_IMM_ATOMIC_CONSUME;
+    enum vkd3d_shader_opcode opcode = instruction->opcode;
+
+    return opcode == VKD3DSIH_IMM_ATOMIC_ALLOC || opcode == VKD3DSIH_IMM_ATOMIC_CONSUME;
 }
 
 static void vkd3d_shader_scan_record_uav_counter(struct vkd3d_shader_scan_context *context,
@@ -870,9 +879,10 @@ static void vkd3d_shader_scan_record_uav_counter(struct vkd3d_shader_scan_contex
 
 static bool vkd3d_shader_instruction_is_uav_atomic_op(const struct vkd3d_shader_instruction *instruction)
 {
-    enum vkd3d_shader_opcode handler_idx = instruction->handler_idx;
-    return (VKD3DSIH_ATOMIC_AND <= handler_idx && handler_idx <= VKD3DSIH_ATOMIC_XOR)
-            || (VKD3DSIH_IMM_ATOMIC_ALLOC <= handler_idx && handler_idx <= VKD3DSIH_IMM_ATOMIC_XOR);
+    enum vkd3d_shader_opcode opcode = instruction->opcode;
+
+    return (VKD3DSIH_ATOMIC_AND <= opcode && opcode <= VKD3DSIH_ATOMIC_XOR)
+            || (VKD3DSIH_IMM_ATOMIC_ALLOC <= opcode && opcode <= VKD3DSIH_IMM_ATOMIC_XOR);
 }
 
 static void vkd3d_shader_scan_record_uav_atomic_op(struct vkd3d_shader_scan_context *context,
@@ -1124,7 +1134,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
 
     context->location = instruction->location;
 
-    switch (instruction->handler_idx)
+    switch (instruction->opcode)
     {
         case VKD3DSIH_DCL_CONSTANT_BUFFER:
             vkd3d_shader_scan_constant_buffer_declaration(context, instruction);
@@ -1763,6 +1773,10 @@ void vkd3d_shader_free_root_signature(struct vkd3d_shader_versioned_root_signatu
 
 void shader_signature_cleanup(struct shader_signature *signature)
 {
+    for (unsigned int i = 0; i < signature->element_count; ++i)
+    {
+        vkd3d_free((void *)signature->elements[i].semantic_name);
+    }
     vkd3d_free(signature->elements);
     signature->elements = NULL;
 }
@@ -1820,6 +1834,10 @@ void vkd3d_shader_free_shader_signature(struct vkd3d_shader_signature *signature
 {
     TRACE("signature %p.\n", signature);
 
+    for (unsigned int i = 0; i < signature->element_count; ++i)
+    {
+        vkd3d_free((void *)signature->elements[i].semantic_name);
+    }
     vkd3d_free(signature->elements);
     signature->elements = NULL;
 }

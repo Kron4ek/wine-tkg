@@ -761,7 +761,7 @@ static INT nulldrv_GetDisplayDepth( LPCWSTR name, BOOL is_primary )
     return -1; /* use default implementation */
 }
 
-static UINT nulldrv_UpdateDisplayDevices( const struct gdi_device_manager *manager, BOOL force, void *param )
+static UINT nulldrv_UpdateDisplayDevices( const struct gdi_device_manager *manager, void *param )
 {
     return STATUS_NOT_IMPLEMENTED;
 }
@@ -1021,6 +1021,7 @@ static const struct user_driver_funcs *load_driver(void)
         __wine_set_user_driver( &null_user_driver, WINE_GDI_DRIVER_VERSION );
     }
 
+    update_display_cache( FALSE );
     return user_driver;
 }
 
@@ -1175,9 +1176,9 @@ static void loaderdrv_UpdateClipboard(void)
     load_driver()->pUpdateClipboard();
 }
 
-static UINT loaderdrv_UpdateDisplayDevices( const struct gdi_device_manager *manager, BOOL force, void *param )
+static UINT loaderdrv_UpdateDisplayDevices( const struct gdi_device_manager *manager, void *param )
 {
-    return load_driver()->pUpdateDisplayDevices( manager, force, param );
+    return load_driver()->pUpdateDisplayDevices( manager, param );
 }
 
 static BOOL loaderdrv_CreateDesktop( const WCHAR *name, UINT width, UINT height )

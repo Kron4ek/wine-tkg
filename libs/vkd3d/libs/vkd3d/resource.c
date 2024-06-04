@@ -1271,7 +1271,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_resource_QueryInterface(ID3D12Resource2 *
             || IsEqualGUID(riid, &IID_ID3D12Object)
             || IsEqualGUID(riid, &IID_IUnknown))
     {
-        ID3D12Resource_AddRef(iface);
+        ID3D12Resource2_AddRef(iface);
         *object = iface;
         return S_OK;
     }
@@ -2350,16 +2350,16 @@ static void *vkd3d_desc_object_cache_get(struct vkd3d_desc_object_cache *cache)
     i = vkd3d_atomic_increment_u32(&cache->next_index) & HEAD_INDEX_MASK;
     for (;;)
     {
-        if (vkd3d_atomic_compare_exchange(&cache->heads[i].spinlock, 0, 1))
+        if (vkd3d_atomic_compare_exchange_u32(&cache->heads[i].spinlock, 0, 1))
         {
             if ((u.object = cache->heads[i].head))
             {
                 vkd3d_atomic_decrement_u32(&cache->free_count);
                 cache->heads[i].head = u.header->next;
-                vkd3d_atomic_exchange(&cache->heads[i].spinlock, 0);
+                vkd3d_atomic_exchange_u32(&cache->heads[i].spinlock, 0);
                 return u.object;
             }
-            vkd3d_atomic_exchange(&cache->heads[i].spinlock, 0);
+            vkd3d_atomic_exchange_u32(&cache->heads[i].spinlock, 0);
         }
         /* Keeping a free count avoids uncertainty over when this loop should terminate,
          * which could result in excess allocations gradually increasing without limit. */
@@ -2381,7 +2381,7 @@ static void vkd3d_desc_object_cache_push(struct vkd3d_desc_object_cache *cache, 
     i = vkd3d_atomic_increment_u32(&cache->next_index) & HEAD_INDEX_MASK;
     for (;;)
     {
-        if (vkd3d_atomic_compare_exchange(&cache->heads[i].spinlock, 0, 1))
+        if (vkd3d_atomic_compare_exchange_u32(&cache->heads[i].spinlock, 0, 1))
             break;
         i = (i + 1) & HEAD_INDEX_MASK;
     }
@@ -2389,7 +2389,7 @@ static void vkd3d_desc_object_cache_push(struct vkd3d_desc_object_cache *cache, 
     head = cache->heads[i].head;
     u.header->next = head;
     cache->heads[i].head = u.object;
-    vkd3d_atomic_exchange(&cache->heads[i].spinlock, 0);
+    vkd3d_atomic_exchange_u32(&cache->heads[i].spinlock, 0);
     vkd3d_atomic_increment_u32(&cache->free_count);
 }
 
@@ -2473,7 +2473,7 @@ void vkd3d_view_decref(void *view, struct d3d12_device *device)
 
 static inline void d3d12_desc_replace(struct d3d12_desc *dst, void *view, struct d3d12_device *device)
 {
-    if ((view = vkd3d_atomic_exchange_pointer(&dst->s.u.object, view)))
+    if ((view = vkd3d_atomic_exchange_ptr(&dst->s.u.object, view)))
         vkd3d_view_decref(view, device);
 }
 
@@ -2652,7 +2652,7 @@ void d3d12_desc_flush_vk_heap_updates_locked(struct d3d12_descriptor_heap *descr
     union d3d12_desc_object u;
     unsigned int i, next;
 
-    if ((i = vkd3d_atomic_exchange(&descriptor_heap->dirty_list_head, UINT_MAX)) == UINT_MAX)
+    if ((i = vkd3d_atomic_exchange_u32(&descriptor_heap->dirty_list_head, UINT_MAX)) == UINT_MAX)
         return;
 
     writes.null_vk_cbv_info.buffer = VK_NULL_HANDLE;
@@ -2667,7 +2667,7 @@ void d3d12_desc_flush_vk_heap_updates_locked(struct d3d12_descriptor_heap *descr
     for (; i != UINT_MAX; i = next)
     {
         src = &descriptors[i];
-        next = vkd3d_atomic_exchange(&src->next, 0);
+        next = vkd3d_atomic_exchange_u32(&src->next, 0);
         next = (int)next >> 1;
 
         /* A race exists here between updating src->next and getting the current object. The best
@@ -2695,13 +2695,13 @@ static void d3d12_desc_mark_as_modified(struct d3d12_desc *dst, struct d3d12_des
     head = descriptor_heap->dirty_list_head;
 
     /* Only one thread can swap the value away from zero. */
-    if (!vkd3d_atomic_compare_exchange(&dst->next, 0, (head << 1) | 1))
+    if (!vkd3d_atomic_compare_exchange_u32(&dst->next, 0, (head << 1) | 1))
         return;
     /* Now it is safe to modify 'next' to another nonzero value if necessary. */
-    while (!vkd3d_atomic_compare_exchange(&descriptor_heap->dirty_list_head, head, i))
+    while (!vkd3d_atomic_compare_exchange_u32(&descriptor_heap->dirty_list_head, head, i))
     {
         head = descriptor_heap->dirty_list_head;
-        vkd3d_atomic_exchange(&dst->next, (head << 1) | 1);
+        vkd3d_atomic_exchange_u32(&dst->next, (head << 1) | 1);
     }
 }
 
@@ -4284,12 +4284,14 @@ static HRESULT d3d12_descriptor_heap_create_descriptor_set(struct d3d12_descript
     VkDescriptorSetVariableDescriptorCountAllocateInfoEXT set_size;
     VkDescriptorSetAllocateInfo set_desc;
     VkResult vr;
+    HRESULT hr;
 
     if (!device->vk_descriptor_heap_layouts[set].vk_set_layout)
     {
         /* Set 0 uses mutable descriptors, and this set is unused. */
-        if (!descriptor_heap->vk_descriptor_sets[0].vk_set)
-            d3d12_descriptor_heap_create_descriptor_set(descriptor_heap, device, 0);
+        if (!descriptor_heap->vk_descriptor_sets[0].vk_set
+                && FAILED(hr = d3d12_descriptor_heap_create_descriptor_set(descriptor_heap, device, 0)))
+            return hr;
         descriptor_set->vk_set = descriptor_heap->vk_descriptor_sets[0].vk_set;
         descriptor_set->vk_type = device->vk_descriptor_heap_layouts[set].type;
         return S_OK;

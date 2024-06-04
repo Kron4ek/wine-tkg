@@ -44,7 +44,6 @@ static const struct wined3d_state_entry_template misc_state_template_vk[] =
     {STATE_DEPTH_BOUNDS,                                  {STATE_DEPTH_BOUNDS,                                  state_nop}},
     {STATE_RASTERIZER,                                    {STATE_RASTERIZER,                                    state_nop}},
     {STATE_SCISSORRECT,                                   {STATE_SCISSORRECT,                                   state_nop}},
-    {STATE_POINTSPRITECOORDORIGIN,                        {STATE_POINTSPRITECOORDORIGIN,                        state_nop}},
 
     {STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),    {STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00),    state_nop}},
     {STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT01),    {STATE_TEXTURESTAGE(0, WINED3D_TSS_BUMPENV_MAT00)}},
@@ -100,27 +99,6 @@ static const struct wined3d_state_entry_template misc_state_template_vk[] =
     {STATE_RENDER(WINED3D_RS_LINEPATTERN),                {STATE_RENDER(WINED3D_RS_LINEPATTERN),                state_nop}},
     {STATE_RENDER(WINED3D_RS_DITHERENABLE),               {STATE_RENDER(WINED3D_RS_DITHERENABLE),               state_nop}},
     {STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),       {STATE_RENDER(WINED3D_RS_MULTISAMPLEANTIALIAS),       state_nop}},
-    /* Samplers */
-    {STATE_SAMPLER(0),                                    {STATE_SAMPLER(0),                                    state_nop}},
-    {STATE_SAMPLER(1),                                    {STATE_SAMPLER(1),                                    state_nop}},
-    {STATE_SAMPLER(2),                                    {STATE_SAMPLER(2),                                    state_nop}},
-    {STATE_SAMPLER(3),                                    {STATE_SAMPLER(3),                                    state_nop}},
-    {STATE_SAMPLER(4),                                    {STATE_SAMPLER(4),                                    state_nop}},
-    {STATE_SAMPLER(5),                                    {STATE_SAMPLER(5),                                    state_nop}},
-    {STATE_SAMPLER(6),                                    {STATE_SAMPLER(6),                                    state_nop}},
-    {STATE_SAMPLER(7),                                    {STATE_SAMPLER(7),                                    state_nop}},
-    {STATE_SAMPLER(8),                                    {STATE_SAMPLER(8),                                    state_nop}},
-    {STATE_SAMPLER(9),                                    {STATE_SAMPLER(9),                                    state_nop}},
-    {STATE_SAMPLER(10),                                   {STATE_SAMPLER(10),                                   state_nop}},
-    {STATE_SAMPLER(11),                                   {STATE_SAMPLER(11),                                   state_nop}},
-    {STATE_SAMPLER(12),                                   {STATE_SAMPLER(12),                                   state_nop}},
-    {STATE_SAMPLER(13),                                   {STATE_SAMPLER(13),                                   state_nop}},
-    {STATE_SAMPLER(14),                                   {STATE_SAMPLER(14),                                   state_nop}},
-    {STATE_SAMPLER(15),                                   {STATE_SAMPLER(15),                                   state_nop}},
-    {STATE_SAMPLER(16), /* Vertex sampler 0 */            {STATE_SAMPLER(16),                                   state_nop}},
-    {STATE_SAMPLER(17), /* Vertex sampler 1 */            {STATE_SAMPLER(17),                                   state_nop}},
-    {STATE_SAMPLER(18), /* Vertex sampler 2 */            {STATE_SAMPLER(18),                                   state_nop}},
-    {STATE_SAMPLER(19), /* Vertex sampler 3 */            {STATE_SAMPLER(19),                                   state_nop}},
     {STATE_BASEVERTEXINDEX,                               {STATE_STREAMSRC}},
     {STATE_FRAMEBUFFER,                                   {STATE_FRAMEBUFFER,                                   state_nop}},
     {STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),             {STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),             state_nop}},
@@ -2348,11 +2326,8 @@ static void wined3d_adapter_vk_init_d3d_info(struct wined3d_adapter_vk *adapter_
 
     d3d_info->wined3d_creation_flags = wined3d_creation_flags;
 
-    d3d_info->xyzrhw = vertex_caps.xyzrhw;
     d3d_info->emulated_flatshading = vertex_caps.emulated_flatshading;
-    d3d_info->ffp_generic_attributes = vertex_caps.ffp_generic_attributes;
     d3d_info->ffp_alpha_test = false;
-    d3d_info->vs_clipping = !!(shader_caps.wined3d_caps & WINED3D_SHADER_CAP_VS_CLIPPING);
     d3d_info->shader_double_precision = !!(shader_caps.wined3d_caps & WINED3D_SHADER_CAP_DOUBLE_PRECISION);
     d3d_info->shader_output_interpolation = !!(shader_caps.wined3d_caps & WINED3D_SHADER_CAP_OUTPUT_INTERPOLATION);
     d3d_info->viewport_array_index_any_shader = false; /* VK_EXT_shader_viewport_index_layer */

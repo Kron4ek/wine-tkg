@@ -600,7 +600,6 @@ static struct opengl_funcs opengl_funcs =
         dibdrv_wglCopyContext,         /* p_wglCopyContext */
         dibdrv_wglCreateContext,       /* p_wglCreateContext */
         dibdrv_wglDeleteContext,       /* p_wglDeleteContext */
-        NULL,                          /* p_wglDescribePixelFormat */
         dibdrv_wglGetPixelFormat,      /* p_wglGetPixelFormat */
         dibdrv_wglGetProcAddress,      /* p_wglGetProcAddress */
         dibdrv_wglMakeCurrent,         /* p_wglMakeCurrent */
@@ -735,6 +734,7 @@ struct windrv_physdev
     struct gdi_physdev     dev;
     struct dibdrv_physdev *dibdrv;
     struct window_surface *surface;
+    UINT lock_count;
 };
 
 static const struct gdi_dc_funcs window_driver;
@@ -744,25 +744,34 @@ static inline struct windrv_physdev *get_windrv_physdev( PHYSDEV dev )
     return (struct windrv_physdev *)dev;
 }
 
+/* gdi_lock should not be locked */
 static inline void lock_surface( struct windrv_physdev *dev )
 {
-    /* gdi_lock should not be locked */
-    dev->surface->funcs->lock( dev->surface );
-    if (IsRectEmpty( dev->dibdrv->bounds ) || dev->surface->draw_start_ticks == 0)
-        dev->surface->draw_start_ticks = NtGetTickCount();
+    struct window_surface *surface = dev->surface;
+
+    if (!dev->lock_count++)
+    {
+        window_surface_lock( surface );
+        if (IsRectEmpty( dev->dibdrv->bounds ) || !surface->draw_start_ticks)
+            surface->draw_start_ticks = NtGetTickCount();
+    }
 }
 
 static inline void unlock_surface( struct windrv_physdev *dev )
 {
-    BOOL should_flush = NtGetTickCount() - dev->surface->draw_start_ticks > FLUSH_PERIOD;
-    dev->surface->funcs->unlock( dev->surface );
-    if (should_flush) dev->surface->funcs->flush( dev->surface );
+    struct window_surface *surface = dev->surface;
+
+    if (!--dev->lock_count)
+    {
+        DWORD ticks = NtGetTickCount() - surface->draw_start_ticks;
+        window_surface_unlock( surface );
+        if (ticks > FLUSH_PERIOD) window_surface_flush( dev->surface );
+    }
 }
 
-static void unlock_bits_surface( struct gdi_image_bits *bits )
+static void unlock_windrv_bits( struct gdi_image_bits *bits )
 {
-    struct window_surface *surface = bits->param;
-    surface->funcs->unlock( surface );
+    unlock_surface( bits->param );
 }
 
 void dibdrv_set_window_surface( DC *dc, struct window_surface *surface )
@@ -797,7 +806,7 @@ void dibdrv_set_window_surface( DC *dc, struct window_surface *surface )
         init_dib_info_from_bitmapinfo( &dibdrv->dib, info, bits );
         dibdrv->dib.rect = dc->attr->vis_rect;
         OffsetRect( &dibdrv->dib.rect, -dc->device_rect.left, -dc->device_rect.top );
-        dibdrv->bounds = surface->funcs->get_bounds( surface );
+        dibdrv->bounds = &surface->bounds;
         DC_InitDC( dc );
     }
     else if (windev)
@@ -965,8 +974,8 @@ static DWORD windrv_GetImage( PHYSDEV dev, BITMAPINFO *info,
     {
         /* use the freeing callback to unlock the surface */
         assert( !bits->free );
-        bits->free = unlock_bits_surface;
-        bits->param = physdev->surface;
+        bits->free = unlock_windrv_bits;
+        bits->param = physdev;
     }
     else unlock_surface( physdev );
     return ret;

@@ -332,17 +332,10 @@ void wined3d_gl_limits_get_uniform_block_range(const struct wined3d_gl_limits *g
 #define WINED3D_QUIRK_BROKEN_ARB_FOG            0x00000200
 #define WINED3D_QUIRK_NO_INDEPENDENT_BIT_DEPTHS 0x00000400
 
-typedef void (WINE_GLAPI *wined3d_ffp_attrib_func)(const void *data);
-typedef void (WINE_GLAPI *wined3d_ffp_texcoord_func)(GLenum unit, const void *data);
 typedef void (WINE_GLAPI *wined3d_generic_attrib_func)(GLuint idx, const void *data);
 
 struct wined3d_ffp_attrib_ops
 {
-    wined3d_ffp_attrib_func position[WINED3D_FFP_EMIT_COUNT];
-    wined3d_ffp_attrib_func diffuse[WINED3D_FFP_EMIT_COUNT];
-    wined3d_ffp_attrib_func specular[WINED3D_FFP_EMIT_COUNT];
-    wined3d_ffp_attrib_func normal[WINED3D_FFP_EMIT_COUNT];
-    wined3d_ffp_texcoord_func texcoord[WINED3D_FFP_EMIT_COUNT];
     wined3d_generic_attrib_func generic[WINED3D_FFP_EMIT_COUNT];
 };
 
@@ -365,6 +358,8 @@ struct wined3d_gl_info
     void (WINE_GLAPI *p_glDisableWINE)(GLenum cap);
     void (WINE_GLAPI *p_glEnableWINE)(GLenum cap);
 };
+
+#define GL_EXTCALL(f) (gl_info->gl_ops.ext.p_##f)
 
 void install_gl_compat_wrapper(struct wined3d_gl_info *gl_info, enum wined3d_gl_extension ext);
 void print_glsl_info_log(const struct wined3d_gl_info *gl_info, GLuint id, BOOL program);
@@ -616,11 +611,10 @@ struct wined3d_context_gl
     uint32_t fog_enabled : 1;
     uint32_t diffuse_attrib_to_1 : 1;
     uint32_t rebind_fbo : 1;
-    uint32_t untracked_material_count : 2; /* Max value 2 */
     uint32_t needs_set : 1;
     uint32_t internal_format_set : 1;
     uint32_t valid : 1;
-    uint32_t padding : 22;
+    uint32_t padding : 24;
 
     uint32_t default_attrib_value_set;
 
@@ -737,8 +731,6 @@ BOOL wined3d_context_gl_apply_clear_state(struct wined3d_context_gl *context_gl,
 void wined3d_context_gl_apply_fbo_state_explicit(struct wined3d_context_gl *context_gl, GLenum target,
         struct wined3d_resource *rt, unsigned int rt_sub_resource_idx,
         struct wined3d_resource *ds, unsigned int ds_sub_resource_idx, uint32_t location);
-void wined3d_context_gl_apply_ffp_blit_state(struct wined3d_context_gl *context_gl,
-        const struct wined3d_device *device);
 void wined3d_context_gl_bind_bo(struct wined3d_context_gl *context_gl, GLenum binding, GLuint name);
 void wined3d_context_gl_bind_dummy_textures(const struct wined3d_context_gl *context_gl);
 void wined3d_context_gl_bind_texture(struct wined3d_context_gl *context_gl, GLenum target, GLuint name);
@@ -751,9 +743,6 @@ void wined3d_context_gl_destroy_bo(struct wined3d_context_gl *context_gl, struct
 void wined3d_context_gl_draw_shaded_quad(struct wined3d_context_gl *context_gl, struct wined3d_texture_gl *texture_gl,
         unsigned int sub_resource_idx, const RECT *src_rect, const RECT *dst_rect,
         enum wined3d_texture_filter_type filter);
-void wined3d_context_gl_draw_textured_quad(struct wined3d_context_gl *context_gl,
-        struct wined3d_texture_gl *texture_gl, unsigned int sub_resource_idx,
-        const RECT *src_rect, const RECT *dst_rect, enum wined3d_texture_filter_type filter);
 void wined3d_context_gl_enable_clip_distances(struct wined3d_context_gl *context_gl, uint32_t mask);
 void wined3d_context_gl_end_transform_feedback(struct wined3d_context_gl *context_gl);
 void wined3d_context_gl_flush_bo_address(struct wined3d_context_gl *context_gl,
@@ -768,8 +757,6 @@ GLenum wined3d_context_gl_get_offscreen_gl_buffer(const struct wined3d_context_g
 const unsigned int *wined3d_context_gl_get_tex_unit_mapping(const struct wined3d_context_gl *context_gl,
         const struct wined3d_shader_version *shader_version, unsigned int *base, unsigned int *count);
 HRESULT wined3d_context_gl_init(struct wined3d_context_gl *context_gl, struct wined3d_swapchain_gl *swapchain_gl);
-void wined3d_context_gl_load_tex_coords(const struct wined3d_context_gl *context_gl,
-        const struct wined3d_stream_info *si, GLuint *current_bo, const struct wined3d_state *state);
 void *wined3d_context_gl_map_bo_address(struct wined3d_context_gl *context_gl,
         const struct wined3d_bo_address *data, size_t size, uint32_t flags);
 struct wined3d_context_gl *wined3d_context_gl_reacquire(struct wined3d_context_gl *context_gl);
@@ -778,7 +765,6 @@ BOOL wined3d_context_gl_set_current(struct wined3d_context_gl *context_gl);
 void wined3d_context_gl_submit_command_fence(struct wined3d_context_gl *context_gl);
 void wined3d_context_gl_texture_update(struct wined3d_context_gl *context_gl,
         const struct wined3d_texture_gl *texture_gl);
-void wined3d_context_gl_unload_tex_coords(const struct wined3d_context_gl *context_gl);
 void wined3d_context_gl_unmap_bo_address(struct wined3d_context_gl *context_gl, const struct wined3d_bo_address *data,
         unsigned int range_count, const struct wined3d_range *ranges);
 void wined3d_context_gl_update_stream_sources(struct wined3d_context_gl *context_gl, const struct wined3d_state *state);

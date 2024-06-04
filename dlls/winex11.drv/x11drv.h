@@ -217,8 +217,7 @@ extern BOOL X11DRV_SystrayDockRemove( HWND hwnd );
 extern LONG X11DRV_ChangeDisplaySettings( LPDEVMODEW displays, LPCWSTR primary_name, HWND hwnd, DWORD flags, LPVOID lpvoid );
 extern BOOL X11DRV_GetCurrentDisplaySettings( LPCWSTR name, BOOL is_primary, LPDEVMODEW devmode );
 extern INT X11DRV_GetDisplayDepth( LPCWSTR name, BOOL is_primary );
-extern UINT X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager,
-                                         BOOL force, void *param );
+extern UINT X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, void *param );
 extern BOOL X11DRV_CreateDesktop( const WCHAR *name, UINT width, UINT height );
 extern BOOL X11DRV_CreateWindow( HWND hwnd );
 extern LRESULT X11DRV_DesktopWindowProc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp );
@@ -268,7 +267,7 @@ extern Pixmap create_pixmap_from_image( HDC hdc, const XVisualInfo *vis, const B
                                         const struct gdi_image_bits *bits, UINT coloruse );
 extern DWORD get_pixmap_image( Pixmap pixmap, int width, int height, const XVisualInfo *vis,
                                BITMAPINFO *info, struct gdi_image_bits *bits );
-extern struct window_surface *create_surface( Window window, const XVisualInfo *vis, const RECT *rect,
+extern struct window_surface *create_surface( HWND hwnd, Window window, const XVisualInfo *vis, const RECT *rect,
                                               COLORREF color_key, BOOL use_alpha );
 extern void set_surface_color_key( struct window_surface *window_surface, COLORREF color_key );
 extern HRGN expose_surface( struct window_surface *window_surface, const RECT *rect );
@@ -656,6 +655,7 @@ extern void read_net_wm_states( Display *display, struct x11drv_win_data *data )
 extern void update_net_wm_states( struct x11drv_win_data *data );
 extern void make_window_embedded( struct x11drv_win_data *data );
 extern Window create_client_window( HWND hwnd, const XVisualInfo *visual, Colormap colormap );
+extern void attach_client_window( struct x11drv_win_data *data, Window client_window );
 extern void detach_client_window( struct x11drv_win_data *data, Window client_window );
 extern void destroy_client_window( HWND hwnd, Window client_window );
 extern void set_window_visual( struct x11drv_win_data *data, const XVisualInfo *vis, BOOL use_alpha );
@@ -783,7 +783,6 @@ struct x11drv_gpu
     char *name;
     struct pci_id pci_id;
     GUID vulkan_uuid;
-    ULONGLONG memory_size;
 };
 
 struct x11drv_adapter
@@ -833,7 +832,6 @@ struct x11drv_display_device_handler
 };
 
 extern void X11DRV_DisplayDevices_SetHandler(const struct x11drv_display_device_handler *handler);
-extern void X11DRV_DisplayDevices_Init(BOOL force);
 extern void X11DRV_DisplayDevices_RegisterEventHandlers(void);
 extern BOOL X11DRV_DisplayDevices_SupportEventHandlers(void);
 /* Display device handler used in virtual desktop mode */

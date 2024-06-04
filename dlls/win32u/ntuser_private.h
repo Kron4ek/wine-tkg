@@ -74,8 +74,7 @@ typedef struct tagWND
     HICON              hIconSmall;    /* window's small icon */
     HICON              hIconSmall2;   /* window's secondary small icon, derived from hIcon */
     HIMC               imc;           /* window's input context */
-    UINT               dpi;           /* window DPI */
-    DPI_AWARENESS      dpi_awareness; /* DPI awareness */
+    UINT               dpi_context;   /* window DPI awareness context */
     struct window_surface *surface;   /* Window surface if any */
     struct list        vulkan_surfaces; /* list of vulkan surfaces created for this window */
     struct tagDIALOGINFO *dlgInfo;    /* Dialog additional info (dialogs only) */
@@ -258,6 +257,8 @@ extern LRESULT system_tray_call( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 
 /* vulkan.c */
 extern void vulkan_detach_surfaces( struct list *surfaces );
+extern void vulkan_set_parent( HWND hwnd, HWND new_parent, HWND old_parent );
+extern void vulkan_set_region( HWND toplevel, HRGN region );
 
 /* window.c */
 HANDLE alloc_user_handle( struct user_object *ptr, unsigned int type );

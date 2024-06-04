@@ -509,7 +509,7 @@ static void test_hstring_struct(void)
 
     ok(WindowsCreateString(input_string, 6, &str) == S_OK, "Failed to create string.\n");
 
-    prv = CONTAINING_RECORD(str, struct hstring_private, header);
+    prv = CONTAINING_RECORD((void*)str, struct hstring_private, header);
 
     ok(prv->header.flags == 0, "Expected 0 in flags field, got %#x.\n", prv->header.flags);
     ok(prv->header.length == 6, "Expected 6 in length field, got %u.\n", prv->header.length);
@@ -520,7 +520,7 @@ static void test_hstring_struct(void)
 
     ok(WindowsDuplicateString(str, &str2) == S_OK, "Failed to duplicate string.\n");
 
-    prv2 = CONTAINING_RECORD(str2, struct hstring_private, header);
+    prv2 = CONTAINING_RECORD((void*)str2, struct hstring_private, header);
 
     ok(prv->refcount == 2, "Expected 2 in refcount, got %lu.\n", prv->refcount);
     ok(prv2->refcount == 2, "Expected 2 in refcount, got %lu.\n", prv2->refcount);
@@ -534,8 +534,8 @@ static void test_hstring_struct(void)
 
     ok(WindowsCreateStringReference(input_string, 6, &hdr, &str) == S_OK, "Failed to create string ref.\n");
 
-    prv = CONTAINING_RECORD(&hdr, struct hstring_private, header);
-    prv2 = CONTAINING_RECORD(str, struct hstring_private, header);
+    prv = CONTAINING_RECORD((void*)&hdr, struct hstring_private, header);
+    prv2 = CONTAINING_RECORD((void*)str, struct hstring_private, header);
 
     ok(prv == prv2, "Pointers not identical.\n");
     ok(prv2->header.flags == 1, "Expected HSTRING_REFERENCE_FLAG to be set, got %#x.\n", prv2->header.flags);

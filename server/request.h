@@ -276,7 +276,6 @@ DECL_HANDLER(get_window_text);
 DECL_HANDLER(set_window_text);
 DECL_HANDLER(get_windows_offset);
 DECL_HANDLER(get_visible_region);
-DECL_HANDLER(get_surface_region);
 DECL_HANDLER(get_window_region);
 DECL_HANDLER(set_window_region);
 DECL_HANDLER(set_layer_region);
@@ -579,7 +578,6 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_set_window_text,
     (req_handler)req_get_windows_offset,
     (req_handler)req_get_visible_region,
-    (req_handler)req_get_surface_region,
     (req_handler)req_get_window_region,
     (req_handler)req_set_window_region,
     (req_handler)req_set_layer_region,
@@ -1557,18 +1555,16 @@ C_ASSERT( FIELD_OFFSET(struct create_window_request, parent) == 12 );
 C_ASSERT( FIELD_OFFSET(struct create_window_request, owner) == 16 );
 C_ASSERT( FIELD_OFFSET(struct create_window_request, atom) == 20 );
 C_ASSERT( FIELD_OFFSET(struct create_window_request, instance) == 24 );
-C_ASSERT( FIELD_OFFSET(struct create_window_request, dpi) == 32 );
-C_ASSERT( FIELD_OFFSET(struct create_window_request, awareness) == 36 );
-C_ASSERT( FIELD_OFFSET(struct create_window_request, style) == 40 );
-C_ASSERT( FIELD_OFFSET(struct create_window_request, ex_style) == 44 );
+C_ASSERT( FIELD_OFFSET(struct create_window_request, dpi_context) == 32 );
+C_ASSERT( FIELD_OFFSET(struct create_window_request, style) == 36 );
+C_ASSERT( FIELD_OFFSET(struct create_window_request, ex_style) == 40 );
 C_ASSERT( sizeof(struct create_window_request) == 48 );
 C_ASSERT( FIELD_OFFSET(struct create_window_reply, handle) == 8 );
 C_ASSERT( FIELD_OFFSET(struct create_window_reply, parent) == 12 );
 C_ASSERT( FIELD_OFFSET(struct create_window_reply, owner) == 16 );
 C_ASSERT( FIELD_OFFSET(struct create_window_reply, extra) == 20 );
 C_ASSERT( FIELD_OFFSET(struct create_window_reply, class_ptr) == 24 );
-C_ASSERT( FIELD_OFFSET(struct create_window_reply, dpi) == 32 );
-C_ASSERT( FIELD_OFFSET(struct create_window_reply, awareness) == 36 );
+C_ASSERT( FIELD_OFFSET(struct create_window_reply, dpi_context) == 32 );
 C_ASSERT( sizeof(struct create_window_reply) == 40 );
 C_ASSERT( FIELD_OFFSET(struct destroy_window_request, handle) == 12 );
 C_ASSERT( sizeof(struct destroy_window_request) == 16 );
@@ -1591,8 +1587,7 @@ C_ASSERT( FIELD_OFFSET(struct get_window_info_reply, pid) == 16 );
 C_ASSERT( FIELD_OFFSET(struct get_window_info_reply, tid) == 20 );
 C_ASSERT( FIELD_OFFSET(struct get_window_info_reply, atom) == 24 );
 C_ASSERT( FIELD_OFFSET(struct get_window_info_reply, is_unicode) == 28 );
-C_ASSERT( FIELD_OFFSET(struct get_window_info_reply, dpi) == 32 );
-C_ASSERT( FIELD_OFFSET(struct get_window_info_reply, awareness) == 36 );
+C_ASSERT( FIELD_OFFSET(struct get_window_info_reply, dpi_context) == 32 );
 C_ASSERT( sizeof(struct get_window_info_reply) == 40 );
 C_ASSERT( FIELD_OFFSET(struct set_window_info_request, flags) == 12 );
 C_ASSERT( FIELD_OFFSET(struct set_window_info_request, is_unicode) == 14 );
@@ -1617,8 +1612,7 @@ C_ASSERT( FIELD_OFFSET(struct set_parent_request, parent) == 16 );
 C_ASSERT( sizeof(struct set_parent_request) == 24 );
 C_ASSERT( FIELD_OFFSET(struct set_parent_reply, old_parent) == 8 );
 C_ASSERT( FIELD_OFFSET(struct set_parent_reply, full_parent) == 12 );
-C_ASSERT( FIELD_OFFSET(struct set_parent_reply, dpi) == 16 );
-C_ASSERT( FIELD_OFFSET(struct set_parent_reply, awareness) == 20 );
+C_ASSERT( FIELD_OFFSET(struct set_parent_reply, dpi_context) == 16 );
 C_ASSERT( sizeof(struct set_parent_reply) == 24 );
 C_ASSERT( FIELD_OFFSET(struct get_window_parents_request, handle) == 12 );
 C_ASSERT( sizeof(struct get_window_parents_request) == 16 );
@@ -1691,15 +1685,12 @@ C_ASSERT( FIELD_OFFSET(struct get_visible_region_reply, win_rect) == 28 );
 C_ASSERT( FIELD_OFFSET(struct get_visible_region_reply, paint_flags) == 44 );
 C_ASSERT( FIELD_OFFSET(struct get_visible_region_reply, total_size) == 48 );
 C_ASSERT( sizeof(struct get_visible_region_reply) == 56 );
-C_ASSERT( FIELD_OFFSET(struct get_surface_region_request, window) == 12 );
-C_ASSERT( sizeof(struct get_surface_region_request) == 16 );
-C_ASSERT( FIELD_OFFSET(struct get_surface_region_reply, visible_rect) == 8 );
-C_ASSERT( FIELD_OFFSET(struct get_surface_region_reply, total_size) == 24 );
-C_ASSERT( sizeof(struct get_surface_region_reply) == 32 );
 C_ASSERT( FIELD_OFFSET(struct get_window_region_request, window) == 12 );
-C_ASSERT( sizeof(struct get_window_region_request) == 16 );
-C_ASSERT( FIELD_OFFSET(struct get_window_region_reply, total_size) == 8 );
-C_ASSERT( sizeof(struct get_window_region_reply) == 16 );
+C_ASSERT( FIELD_OFFSET(struct get_window_region_request, surface) == 16 );
+C_ASSERT( sizeof(struct get_window_region_request) == 24 );
+C_ASSERT( FIELD_OFFSET(struct get_window_region_reply, visible_rect) == 8 );
+C_ASSERT( FIELD_OFFSET(struct get_window_region_reply, total_size) == 24 );
+C_ASSERT( sizeof(struct get_window_region_reply) == 32 );
 C_ASSERT( FIELD_OFFSET(struct set_window_region_request, window) == 12 );
 C_ASSERT( FIELD_OFFSET(struct set_window_region_request, redraw) == 16 );
 C_ASSERT( sizeof(struct set_window_region_request) == 24 );

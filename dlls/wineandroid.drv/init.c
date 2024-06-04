@@ -48,7 +48,6 @@ static const unsigned int screen_bpp = 32;  /* we don't support other modes */
 
 static RECT monitor_rc_work;
 static int device_init_done;
-static BOOL force_display_devices_refresh;
 
 PNTAPCFUNC register_window_callback;
 
@@ -84,13 +83,8 @@ void init_monitors( int width, int height )
     TRACE( "found tray %p %s work area %s\n", hwnd,
            wine_dbgstr_rect( &rect ), wine_dbgstr_rect( &monitor_rc_work ));
 
-    if (*p_java_vm) /* if we're notified from Java thread, update registry */
-    {
-        UINT32 num_path, num_mode;
-        force_display_devices_refresh = TRUE;
-        /* trigger refresh in win32u */
-        NtUserGetDisplayConfigBufferSizes( QDC_ONLY_ACTIVE_PATHS, &num_path, &num_mode );
-    }
+    /* if we're notified from Java thread, update registry */
+    if (*p_java_vm) NtUserCallNoParam( NtUserCallNoParam_UpdateDisplayCache );
 }
 
 
@@ -269,38 +263,32 @@ LONG ANDROID_ChangeDisplaySettings( LPDEVMODEW displays, LPCWSTR primary_name, H
 /***********************************************************************
  *           ANDROID_UpdateDisplayDevices
  */
-UINT ANDROID_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, BOOL force, void *param )
+UINT ANDROID_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, void *param )
 {
-    if (force || force_display_devices_refresh)
+    static const DWORD source_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_VGA_COMPATIBLE;
+    struct pci_id pci_id = {0};
+    struct gdi_monitor gdi_monitor =
     {
-        static const DWORD source_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_VGA_COMPATIBLE;
-        struct pci_id pci_id = {0};
-        struct gdi_monitor gdi_monitor =
-        {
-            .rc_monitor = virtual_screen_rect,
-            .rc_work = monitor_rc_work,
-        };
-        const DEVMODEW mode =
-        {
-            .dmSize = sizeof(mode),
-            .dmFields = DM_DISPLAYORIENTATION | DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL |
-                        DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
-            .dmBitsPerPel = screen_bpp, .dmPelsWidth = screen_width, .dmPelsHeight = screen_height, .dmDisplayFrequency = 60,
-        };
-        DEVMODEW current = mode;
+        .rc_monitor = virtual_screen_rect,
+        .rc_work = monitor_rc_work,
+    };
+    const DEVMODEW mode =
+    {
+        .dmSize = sizeof(mode),
+        .dmFields = DM_DISPLAYORIENTATION | DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL |
+                    DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+        .dmBitsPerPel = screen_bpp, .dmPelsWidth = screen_width, .dmPelsHeight = screen_height, .dmDisplayFrequency = 60,
+    };
+    DEVMODEW current = mode;
 
-        device_manager->add_gpu( "Android GPU", &pci_id, NULL, 0, param );
-        device_manager->add_source( "Default", source_flags, param );
-        device_manager->add_monitor( &gdi_monitor, param );
+    device_manager->add_gpu( "Wine GPU", &pci_id, NULL, param );
+    device_manager->add_source( "Default", source_flags, param );
+    device_manager->add_monitor( &gdi_monitor, param );
 
-        current.dmFields |= DM_POSITION;
-        device_manager->add_modes( &current, 1, &mode, param );
-        force_display_devices_refresh = FALSE;
+    current.dmFields |= DM_POSITION;
+    device_manager->add_modes( &current, 1, &mode, param );
 
-        return STATUS_SUCCESS;
-    }
-
-    return STATUS_ALREADY_COMPLETE;
+    return STATUS_SUCCESS;
 }
 
 
@@ -358,7 +346,6 @@ static const struct user_driver_funcs android_drv_funcs =
     .pSetCapture = ANDROID_SetCapture,
     .pSetLayeredWindowAttributes = ANDROID_SetLayeredWindowAttributes,
     .pSetParent = ANDROID_SetParent,
-    .pSetWindowRgn = ANDROID_SetWindowRgn,
     .pSetWindowStyle = ANDROID_SetWindowStyle,
     .pShowWindow = ANDROID_ShowWindow,
     .pUpdateLayeredWindow = ANDROID_UpdateLayeredWindow,

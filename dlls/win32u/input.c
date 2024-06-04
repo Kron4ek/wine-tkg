@@ -410,27 +410,27 @@ LONG global_key_state_counter = 0;
 BOOL grab_pointer = TRUE;
 BOOL grab_fullscreen = FALSE;
 
-static void kbd_tables_init_vsc2vk( const KBDTABLES *tables, BYTE vsc2vk[0x300] )
+static void kbd_tables_init_vsc2vk( const KBDTABLES *tables, USHORT vsc2vk[0x300] )
 {
     const VSC_VK *entry;
     WORD vsc;
 
-    memset( vsc2vk, 0, 0x300 );
+    memset( vsc2vk, 0, 0x300 * sizeof(USHORT) );
 
     for (vsc = 0; tables->pusVSCtoVK && vsc <= tables->bMaxVSCtoVK; ++vsc)
     {
         if (tables->pusVSCtoVK[vsc] == VK__none_) continue;
-        vsc2vk[vsc] = (BYTE)tables->pusVSCtoVK[vsc];
+        vsc2vk[vsc] = tables->pusVSCtoVK[vsc];
     }
     for (entry = tables->pVSCtoVK_E0; entry && entry->Vsc; entry++)
     {
         if (entry->Vk == VK__none_) continue;
-        vsc2vk[entry->Vsc + 0x100] = (BYTE)entry->Vk;
+        vsc2vk[entry->Vsc + 0x100] = entry->Vk;
     }
     for (entry = tables->pVSCtoVK_E1; entry && entry->Vsc; entry++)
     {
         if (entry->Vk == VK__none_) continue;
-        vsc2vk[entry->Vsc + 0x200] = (BYTE)entry->Vk;
+        vsc2vk[entry->Vsc + 0x200] = entry->Vk;
     }
 }
 
@@ -521,6 +521,7 @@ static WCHAR kbd_tables_vkey_to_wchar( const KBDTABLES *tables, UINT vkey, const
         if (vkey >= 'A' && vkey <= 'Z') return vkey - 'A' + 1;
         tables = &kbdus_tables;
     }
+    if (vkey >= VK_NUMPAD0 && vkey <= VK_NUMPAD9) tables = &kbdus_tables;
 
     mod = caps_mod = kbd_tables_get_mod_num( tables, state, FALSE );
     if (caps) caps_mod = kbd_tables_get_mod_num( tables, state, TRUE );
@@ -1032,7 +1033,8 @@ WORD WINAPI NtUserVkKeyScanEx( WCHAR chr, HKL layout )
  */
 UINT WINAPI NtUserMapVirtualKeyEx( UINT code, UINT type, HKL layout )
 {
-    BYTE vsc2vk[0x300], vk2char[0x100];
+    USHORT vsc2vk[0x300];
+    BYTE vk2char[0x100];
     const KBDTABLES *kbd_tables;
     UINT ret = 0;
 
@@ -1065,7 +1067,7 @@ UINT WINAPI NtUserMapVirtualKeyEx( UINT code, UINT type, HKL layout )
         }
 
         kbd_tables_init_vsc2vk( kbd_tables, vsc2vk );
-        for (ret = 0; ret < ARRAY_SIZE(vsc2vk); ++ret) if (vsc2vk[ret] == code) break;
+        for (ret = 0; ret < ARRAY_SIZE(vsc2vk); ++ret) if ((vsc2vk[ret] & 0xff) == code) break;
         if (ret >= ARRAY_SIZE(vsc2vk)) ret = 0;
 
         if (type == MAPVK_VK_TO_VSC)
@@ -1081,7 +1083,7 @@ UINT WINAPI NtUserMapVirtualKeyEx( UINT code, UINT type, HKL layout )
 
         if (code & 0xe000) code -= 0xdf00;
         if (code >= ARRAY_SIZE(vsc2vk)) ret = 0;
-        else ret = vsc2vk[code];
+        else ret = vsc2vk[code] & 0xff;
 
         if (type == MAPVK_VSC_TO_VK)
         {
@@ -1110,6 +1112,31 @@ UINT WINAPI NtUserMapVirtualKeyEx( UINT code, UINT type, HKL layout )
     return ret;
 }
 
+/***********************************************************************
+ *      map_scan_to_kbd_vkey
+ *
+ * Map a scancode to a virtual key with KBD information.
+ */
+USHORT map_scan_to_kbd_vkey( USHORT scan, HKL layout )
+{
+    const KBDTABLES *kbd_tables;
+    USHORT vsc2vk[0x300];
+    UINT vkey;
+
+    if ((vkey = user_driver->pMapVirtualKeyEx( scan, MAPVK_VSC_TO_VK_EX, layout )) != -1) return vkey;
+
+    if (!(kbd_tables = user_driver->pKbdLayerDescriptor( layout ))) kbd_tables = &kbdus_tables;
+
+    kbd_tables_init_vsc2vk( kbd_tables, vsc2vk );
+    if (scan & 0xe000) scan -= 0xdf00;
+    if (scan >= ARRAY_SIZE(vsc2vk)) vkey = 0;
+    else vkey = vsc2vk[scan];
+
+    if (kbd_tables != &kbdus_tables) user_driver->pReleaseKbdTables( kbd_tables );
+
+    return vkey;
+}
+
 /****************************************************************************
  *	     NtUserGetKeyNameText    (win32u.@)
  */
@@ -1129,15 +1156,15 @@ INT WINAPI NtUserGetKeyNameText( LONG lparam, WCHAR *buffer, INT size )
 
     if (lparam & 0x2000000)
     {
-        BYTE vsc2vk[0x300];
+        USHORT vsc2vk[0x300];
         kbd_tables_init_vsc2vk( kbd_tables, vsc2vk );
-        switch ((vkey = vsc2vk[code]))
+        switch ((vkey = vsc2vk[code] & 0xff))
         {
         case VK_RSHIFT:
         case VK_RCONTROL:
         case VK_RMENU:
             for (code = 0; code < ARRAY_SIZE(vsc2vk); ++code)
-                if (vsc2vk[code] == (vkey - 1)) break;
+                if ((vsc2vk[code] & 0xff) == (vkey - 1)) break;
             break;
         }
     }
@@ -1861,6 +1888,8 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
 
     if (hwnd)
     {
+        NtUserNotifyWinEvent( EVENT_SYSTEM_FOREGROUND, hwnd, 0, 0 );
+
         /* send palette messages */
         if (send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ))
             send_message_timeout( HWND_BROADCAST, WM_PALETTEISCHANGING, (WPARAM)hwnd, 0,

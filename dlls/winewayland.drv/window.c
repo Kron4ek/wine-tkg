@@ -633,7 +633,7 @@ LRESULT WAYLAND_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg)
     {
     case WM_WAYLAND_INIT_DISPLAY_DEVICES:
-        wayland_init_display_devices(TRUE);
+        NtUserCallNoParam(NtUserCallNoParam_UpdateDisplayCache);
         wayland_resize_desktop();
         return 0;
     case WM_WAYLAND_CONFIGURE:
@@ -756,7 +756,7 @@ void wayland_window_flush(HWND hwnd)
     if (!data) return;
 
     if (data->window_surface)
-        data->window_surface->funcs->flush(data->window_surface);
+        window_surface_flush(data->window_surface);
 
     wayland_win_data_release(data);
 }

@@ -3249,11 +3249,11 @@ struct create_window_request
     user_handle_t  owner;
     atom_t         atom;
     mod_handle_t   instance;
-    int            dpi;
-    int            awareness;
+    unsigned int   dpi_context;
     unsigned int   style;
     unsigned int   ex_style;
     /* VARARG(class,unicode_str); */
+    char __pad_44[4];
 };
 struct create_window_reply
 {
@@ -3263,8 +3263,8 @@ struct create_window_reply
     user_handle_t  owner;
     int            extra;
     client_ptr_t   class_ptr;
-    int            dpi;
-    int            awareness;
+    unsigned int   dpi_context;
+    char __pad_36[4];
 };
 
 
@@ -3325,8 +3325,8 @@ struct get_window_info_reply
     thread_id_t    tid;
     atom_t         atom;
     int            is_unicode;
-    int            dpi;
-    int            awareness;
+    unsigned int   dpi_context;
+    char __pad_36[4];
 };
 
 
@@ -3378,8 +3378,8 @@ struct set_parent_reply
     struct reply_header __header;
     user_handle_t  old_parent;
     user_handle_t  full_parent;
-    int            dpi;
-    int            awareness;
+    unsigned int   dpi_context;
+    char __pad_20[4];
 };
 
 
@@ -3570,33 +3570,20 @@ struct get_visible_region_reply
 
 
 
-struct get_surface_region_request
+struct get_window_region_request
 {
     struct request_header __header;
     user_handle_t  window;
+    int            surface;
+    char __pad_20[4];
 };
-struct get_surface_region_reply
+struct get_window_region_reply
 {
     struct reply_header __header;
     rectangle_t    visible_rect;
     data_size_t    total_size;
     /* VARARG(region,rectangles); */
     char __pad_28[4];
-};
-
-
-
-struct get_window_region_request
-{
-    struct request_header __header;
-    user_handle_t  window;
-};
-struct get_window_region_reply
-{
-    struct reply_header __header;
-    data_size_t    total_size;
-    /* VARARG(region,rectangles); */
-    char __pad_12[4];
 };
 
 
@@ -6019,7 +6006,6 @@ enum request
     REQ_set_window_text,
     REQ_get_windows_offset,
     REQ_get_visible_region,
-    REQ_get_surface_region,
     REQ_get_window_region,
     REQ_set_window_region,
     REQ_set_layer_region,
@@ -6323,7 +6309,6 @@ union generic_request
     struct set_window_text_request set_window_text_request;
     struct get_windows_offset_request get_windows_offset_request;
     struct get_visible_region_request get_visible_region_request;
-    struct get_surface_region_request get_surface_region_request;
     struct get_window_region_request get_window_region_request;
     struct set_window_region_request set_window_region_request;
     struct set_layer_region_request set_layer_region_request;
@@ -6625,7 +6610,6 @@ union generic_reply
     struct set_window_text_reply set_window_text_reply;
     struct get_windows_offset_reply get_windows_offset_reply;
     struct get_visible_region_reply get_visible_region_reply;
-    struct get_surface_region_reply get_surface_region_reply;
     struct get_window_region_reply get_window_region_reply;
     struct set_window_region_reply set_window_region_reply;
     struct set_layer_region_reply set_layer_region_reply;
@@ -6769,7 +6753,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 803
+#define SERVER_PROTOCOL_VERSION 805
 
 /* ### protocol_version end ### */
 

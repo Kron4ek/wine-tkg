@@ -1575,10 +1575,6 @@ static void wined3d_cs_exec_set_texture(struct wined3d_cs *cs, const void *data)
         }
     }
 
-    if (op->shader_type == WINED3D_SHADER_TYPE_VERTEX)
-        device_invalidate_state(cs->c.device, STATE_SAMPLER(WINED3D_VERTEX_SAMPLER_OFFSET + op->bind_index));
-    else
-        device_invalidate_state(cs->c.device, STATE_SAMPLER(op->bind_index));
     device_invalidate_state(cs->c.device, STATE_GRAPHICS_SHADER_RESOURCE_BINDING);
 
     if (new_use_color_key != old_use_color_key)
@@ -1696,14 +1692,7 @@ static void wined3d_cs_exec_set_samplers(struct wined3d_cs *cs, const void *data
     unsigned int i;
 
     for (i = 0; i < op->count; ++i)
-    {
         cs->state.sampler[op->type][op->start_idx + i] = op->samplers[i];
-
-        if (op->type == WINED3D_SHADER_TYPE_PIXEL && i < WINED3D_MAX_FRAGMENT_SAMPLERS)
-            device_invalidate_state(cs->c.device, STATE_SAMPLER(i));
-        else if (op->type == WINED3D_SHADER_TYPE_VERTEX && i < WINED3D_MAX_VERTEX_SAMPLERS)
-            device_invalidate_state(cs->c.device, STATE_SAMPLER(WINED3D_VERTEX_SAMPLER_OFFSET + i));
-    }
 
     if (op->type != WINED3D_SHADER_TYPE_COMPUTE)
         device_invalidate_state(cs->c.device, STATE_GRAPHICS_SHADER_RESOURCE_BINDING);
@@ -2081,8 +2070,6 @@ static void wined3d_cs_exec_set_light(struct wined3d_cs *cs, const void *data)
     light_info->OriginalParms = op->light.OriginalParms;
     light_info->position = op->light.position;
     light_info->direction = op->light.direction;
-    light_info->exponent = op->light.exponent;
-    light_info->cutoff = op->light.cutoff;
 }
 
 void wined3d_device_context_emit_set_light(struct wined3d_device_context *context,
@@ -3083,19 +3070,10 @@ static bool wined3d_cs_map_upload_bo(struct wined3d_device_context *context, str
 
     if (flags & (WINED3D_MAP_DISCARD | WINED3D_MAP_NOOVERWRITE))
     {
-        const struct wined3d_d3d_info *d3d_info = &context->device->adapter->d3d_info;
         struct wined3d_device *device = context->device;
         struct wined3d_bo_address addr;
         struct wined3d_bo *bo;
         uint8_t *map_ptr;
-
-        /* We can't use persistent maps if we might need to do vertex attribute
-         * conversion; that will cause the CS thread to invalidate the BO. */
-        if (!d3d_info->xyzrhw || !d3d_info->vertex_bgra || !d3d_info->ffp_generic_attributes)
-        {
-            TRACE("Not returning a persistent buffer because we might need to do vertex attribute conversion.\n");
-            return false;
-        }
 
         if (resource->pin_sysmem)
         {

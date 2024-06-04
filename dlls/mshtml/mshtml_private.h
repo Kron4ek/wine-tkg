@@ -371,6 +371,12 @@ typedef struct {
     /* Used when the object has custom props, and this returns DISPIDs for them */
     HRESULT (*get_dispid)(DispatchEx*,BSTR,DWORD,DISPID*);
 
+    /* Similar to get_dispid, but called only when a dynamic property can't be found */
+    HRESULT (*find_dispid)(DispatchEx*,BSTR,DWORD,DISPID*);
+
+    /* Similar to get_dispid, but called before any other lookup */
+    HRESULT (*lookup_dispid)(DispatchEx*,BSTR,DWORD,DISPID*);
+
     /* These are called when the object implements GetMemberName, InvokeEx, DeleteMemberByDispID and GetNextDispID for custom props */
     HRESULT (*get_name)(DispatchEx*,DISPID,BSTR*);
     HRESULT (*invoke)(DispatchEx*,DISPID,LCID,WORD,DISPPARAMS*,VARIANT*,EXCEPINFO*,IServiceProvider*);
@@ -412,19 +418,7 @@ struct DispatchEx {
     dispex_dynamic_data_t *dynamic_data;
 };
 
-#define DISPEX_IDISPATCH_IMPL(prefix, iface_name, dispex)                                      \
-    static HRESULT WINAPI prefix##_QueryInterface(iface_name *iface, REFIID riid, void **ppv)  \
-    {                                                                                          \
-        return IDispatchEx_QueryInterface(&(dispex).IDispatchEx_iface, riid, ppv);             \
-    }                                                                                          \
-    static ULONG WINAPI prefix##_AddRef(iface_name *iface)                                     \
-    {                                                                                          \
-        return IDispatchEx_AddRef(&(dispex).IDispatchEx_iface);                                \
-    }                                                                                          \
-    static ULONG WINAPI prefix##_Release(iface_name *iface)                                    \
-    {                                                                                          \
-        return IDispatchEx_Release(&(dispex).IDispatchEx_iface);                               \
-    }                                                                                          \
+#define DISPEX_IDISPATCH_NOUNK_IMPL(prefix, iface_name, dispex)                                \
     static HRESULT WINAPI prefix##_GetTypeInfoCount(iface_name *iface, UINT *count)            \
     {                                                                                          \
         return IDispatchEx_GetTypeInfoCount(&(dispex).IDispatchEx_iface, count);               \
@@ -446,6 +440,21 @@ struct DispatchEx {
         return IDispatchEx_Invoke(&(dispex).IDispatchEx_iface, dispid,                         \
                 riid, lcid, flags, params, res, ei, err);                                      \
     }
+
+#define DISPEX_IDISPATCH_IMPL(prefix, iface_name, dispex)                                      \
+    static HRESULT WINAPI prefix##_QueryInterface(iface_name *iface, REFIID riid, void **ppv)  \
+    {                                                                                          \
+        return IDispatchEx_QueryInterface(&(dispex).IDispatchEx_iface, riid, ppv);             \
+    }                                                                                          \
+    static ULONG WINAPI prefix##_AddRef(iface_name *iface)                                     \
+    {                                                                                          \
+        return IDispatchEx_AddRef(&(dispex).IDispatchEx_iface);                                \
+    }                                                                                          \
+    static ULONG WINAPI prefix##_Release(iface_name *iface)                                    \
+    {                                                                                          \
+        return IDispatchEx_Release(&(dispex).IDispatchEx_iface);                               \
+    }                                                                                          \
+    DISPEX_IDISPATCH_NOUNK_IMPL(prefix, iface_name, dispex)
 
 typedef struct {
     void *vtbl;
@@ -568,7 +577,6 @@ struct HTMLWindow {
     IHTMLWindow6       IHTMLWindow6_iface;
     IHTMLWindow7       IHTMLWindow7_iface;
     IHTMLPrivateWindow IHTMLPrivateWindow_iface;
-    IDispatchEx        IDispatchEx_iface;
     IServiceProvider   IServiceProvider_iface;
     ITravelLogClient   ITravelLogClient_iface;
     IObjectIdentity    IObjectIdentity_iface;
@@ -583,6 +591,7 @@ struct HTMLWindow {
 struct HTMLOuterWindow {
     HTMLWindow base;
     IEventTarget IEventTarget_iface;
+    IDispatchEx  IDispatchEx_iface;
 
     nsCycleCollectingAutoRefCnt ccref;
     LONG task_magic;

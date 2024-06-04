@@ -1076,9 +1076,7 @@ static void shader_spirv_get_caps(const struct wined3d_adapter *adapter, struct 
     caps->ps_uniform_count = WINED3D_MAX_PS_CONSTS_F;
     caps->ps_1x_max_value = FLT_MAX;
     caps->varying_count = 0;
-    caps->wined3d_caps = WINED3D_SHADER_CAP_VS_CLIPPING
-            | WINED3D_SHADER_CAP_SRGB_WRITE
-            | WINED3D_SHADER_CAP_FULL_FFP_VARYINGS;
+    caps->wined3d_caps = WINED3D_SHADER_CAP_FULL_FFP_VARYINGS;
 }
 
 static BOOL shader_spirv_color_fixup_supported(struct color_fixup_desc fixup)
@@ -1134,8 +1132,6 @@ static void spirv_vertex_pipe_vk_vp_disable(const struct wined3d_context *contex
 static void spirv_vertex_pipe_vk_vp_get_caps(const struct wined3d_adapter *adapter, struct wined3d_vertex_caps *caps)
 {
     memset(caps, 0, sizeof(*caps));
-    caps->xyzrhw = TRUE;
-    caps->ffp_generic_attributes = TRUE;
 }
 
 static unsigned int spirv_vertex_pipe_vk_vp_get_emul_mask(const struct wined3d_adapter *adapter)

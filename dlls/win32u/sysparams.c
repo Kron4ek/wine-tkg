@@ -39,6 +39,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(system);
 
+static LONG dpi_context; /* process DPI awareness context */
 
 static HKEY video_key, enum_key, control_key, config_key, volatile_base_key;
 
@@ -932,6 +933,7 @@ struct device_manager_ctx
     struct gpu gpu;
     struct source source;
     HKEY source_key;
+    struct list vulkan_gpus;
     /* for the virtual desktop settings */
     BOOL is_primary;
     DEVMODEW primary;
@@ -1183,18 +1185,43 @@ static BOOL write_gpu_to_registry( const struct gpu *gpu, const struct pci_id *p
     return TRUE;
 }
 
-static void add_gpu( const char *name, const struct pci_id *pci_id, const GUID *vulkan_uuid,
-                     ULONGLONG memory_size, void *param )
+static struct vulkan_gpu *find_vulkan_gpu_from_uuid( const struct device_manager_ctx *ctx, const GUID *uuid )
+{
+    struct vulkan_gpu *gpu;
+
+    if (!uuid) return NULL;
+
+    LIST_FOR_EACH_ENTRY( gpu, &ctx->vulkan_gpus, struct vulkan_gpu, entry )
+        if (!memcmp( &gpu->uuid, uuid, sizeof(*uuid) )) return gpu;
+
+    return NULL;
+}
+
+static struct vulkan_gpu *find_vulkan_gpu_from_pci_id( const struct device_manager_ctx *ctx, const struct pci_id *pci_id )
+{
+    struct vulkan_gpu *gpu;
+
+    LIST_FOR_EACH_ENTRY( gpu, &ctx->vulkan_gpus, struct vulkan_gpu, entry )
+        if (gpu->pci_id.vendor == pci_id->vendor && gpu->pci_id.device == pci_id->device) return gpu;
+
+    return NULL;
+}
+
+static void add_gpu( const char *name, const struct pci_id *pci_id, const GUID *vulkan_uuid, void *param )
 {
     struct device_manager_ctx *ctx = param;
     char buffer[4096];
     KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
+    struct vulkan_gpu *vulkan_gpu = NULL;
+    struct list *ptr;
     unsigned int i;
     HKEY hkey, subkey;
     DWORD len;
 
-    TRACE( "%s %04X %04X %08X %02X\n", debugstr_a( name ), pci_id->vendor, pci_id->device,
-           pci_id->subsystem, pci_id->revision );
+    static const GUID empty_uuid;
+
+    TRACE( "%s %04X %04X %08X %02X %s\n", debugstr_a( name ), pci_id->vendor, pci_id->device,
+           pci_id->subsystem, pci_id->revision, debugstr_guid( vulkan_uuid ) );
 
     if (!enum_key && !(enum_key = reg_create_ascii_key( NULL, enum_keyA, 0, NULL )))
         return;
@@ -1208,7 +1235,28 @@ static void add_gpu( const char *name, const struct pci_id *pci_id, const GUID *
 
     memset( &ctx->gpu, 0, sizeof(ctx->gpu) );
     ctx->gpu.index = ctx->gpu_count;
-    if (vulkan_uuid) ctx->gpu.vulkan_uuid = *vulkan_uuid;
+
+    if ((vulkan_gpu = find_vulkan_gpu_from_uuid( ctx, vulkan_uuid )))
+        TRACE( "Found vulkan GPU matching uuid %s, pci_id %#04x:%#04x, name %s\n", debugstr_guid(&vulkan_gpu->uuid),
+               vulkan_gpu->pci_id.vendor, vulkan_gpu->pci_id.device, debugstr_a(vulkan_gpu->name));
+    else if ((vulkan_gpu = find_vulkan_gpu_from_pci_id( ctx, pci_id )))
+        TRACE( "Found vulkan GPU matching pci_id %#04x:%#04x, uuid %s, name %s\n",
+               vulkan_gpu->pci_id.vendor, vulkan_gpu->pci_id.device,
+               debugstr_guid(&vulkan_gpu->uuid), debugstr_a(vulkan_gpu->name));
+    else if ((ptr = list_head( &ctx->vulkan_gpus )))
+    {
+        vulkan_gpu = LIST_ENTRY( ptr, struct vulkan_gpu, entry );
+        WARN( "Using vulkan GPU pci_id %#04x:%#04x, uuid %s, name %s\n",
+               vulkan_gpu->pci_id.vendor, vulkan_gpu->pci_id.device,
+               debugstr_guid(&vulkan_gpu->uuid), debugstr_a(vulkan_gpu->name));
+    }
+
+    if (vulkan_uuid && !IsEqualGUID( vulkan_uuid, &empty_uuid )) ctx->gpu.vulkan_uuid = *vulkan_uuid;
+    else if (vulkan_gpu) ctx->gpu.vulkan_uuid = vulkan_gpu->uuid;
+
+    if (!pci_id->vendor && !pci_id->device && vulkan_gpu) pci_id = &vulkan_gpu->pci_id;
+
+    if ((!name || !strcmp( name, "Wine GPU" )) && vulkan_gpu) name = vulkan_gpu->name;
     if (name) RtlUTF8ToUnicodeN( ctx->gpu.name, sizeof(ctx->gpu.name) - sizeof(WCHAR), &len, name, strlen( name ) );
 
     snprintf( ctx->gpu.path, sizeof(ctx->gpu.path), "PCI\\VEN_%04X&DEV_%04X&SUBSYS_%08X&REV_%02X\\%08X",
@@ -1252,10 +1300,16 @@ static void add_gpu( const char *name, const struct pci_id *pci_id, const GUID *
 
     NtClose( hkey );
 
-    if (!write_gpu_to_registry( &ctx->gpu, pci_id, memory_size ))
+    if (!write_gpu_to_registry( &ctx->gpu, pci_id, vulkan_gpu ? vulkan_gpu->memory : 0 ))
         WARN( "Failed to write gpu to registry\n" );
     else
         ctx->gpu_count++;
+
+    if (vulkan_gpu)
+    {
+        list_remove( &vulkan_gpu->entry );
+        free_vulkan_gpu( vulkan_gpu );
+    }
 }
 
 static BOOL write_source_to_registry( const struct source *source, HKEY *source_key )
@@ -1487,6 +1541,13 @@ static void release_display_manager_ctx( struct device_manager_ctx *ctx )
         last_query_display_time = 0;
     }
     if (ctx->gpu_count) cleanup_devices();
+
+    while (!list_empty( &ctx->vulkan_gpus ))
+    {
+        struct vulkan_gpu *gpu = LIST_ENTRY( list_head( &ctx->vulkan_gpus ), struct vulkan_gpu, entry );
+        list_remove( &gpu->entry );
+        free_vulkan_gpu( gpu );
+    }
 }
 
 static void clear_display_devices(void)
@@ -1711,7 +1772,7 @@ static BOOL update_display_cache_from_registry(void)
     return ret;
 }
 
-static BOOL default_update_display_devices( BOOL force, struct device_manager_ctx *ctx )
+static NTSTATUS default_update_display_devices( struct device_manager_ctx *ctx )
 {
     /* default implementation: expose an adapter and a monitor with a few standard modes,
      * and read / write current display settings from / to the registry.
@@ -1742,9 +1803,7 @@ static BOOL default_update_display_devices( BOOL force, struct device_manager_ct
     struct gdi_monitor monitor = {0};
     DEVMODEW mode = {.dmSize = sizeof(mode)};
 
-    if (!force) return TRUE;
-
-    add_gpu( "Default GPU", &pci_id, NULL, 0, ctx );
+    add_gpu( "Wine GPU", &pci_id, NULL, ctx );
     add_source( "Default", source_flags, ctx );
 
     if (!read_source_mode( ctx->source_key, ENUM_CURRENT_SETTINGS, &mode ))
@@ -1760,7 +1819,7 @@ static BOOL default_update_display_devices( BOOL force, struct device_manager_ct
     add_monitor( &monitor, ctx );
     add_modes( &mode, ARRAY_SIZE(modes), modes, ctx );
 
-    return TRUE;
+    return STATUS_SUCCESS;
 }
 
 /* parse the desktop size specification */
@@ -1926,18 +1985,29 @@ static BOOL add_virtual_source( struct device_manager_ctx *ctx )
     return STATUS_SUCCESS;
 }
 
-static UINT update_display_devices( BOOL force, struct device_manager_ctx *ctx )
+static UINT update_display_devices( struct device_manager_ctx *ctx )
 {
     UINT status;
 
-    if (!(status = user_driver->pUpdateDisplayDevices( &device_manager, force, ctx )))
+    if (!(status = user_driver->pUpdateDisplayDevices( &device_manager, ctx )))
     {
         if (ctx->source_count && is_virtual_desktop()) return add_virtual_source( ctx );
         return status;
     }
 
-    if (status == STATUS_NOT_IMPLEMENTED) return default_update_display_devices( force, ctx );
+    if (status == STATUS_NOT_IMPLEMENTED) return default_update_display_devices( ctx );
     return status;
+}
+
+static void add_vulkan_only_gpus( struct device_manager_ctx *ctx )
+{
+    struct vulkan_gpu *gpu, *next;
+
+    LIST_FOR_EACH_ENTRY_SAFE( gpu, next, &ctx->vulkan_gpus, struct vulkan_gpu, entry )
+    {
+        TRACE( "adding vulkan-only gpu uuid %s, name %s\n", debugstr_guid(&gpu->uuid), debugstr_a(gpu->name));
+        add_gpu( gpu->name, &gpu->pci_id, &gpu->uuid, ctx );
+    }
 }
 
 BOOL update_display_cache( BOOL force )
@@ -1945,7 +2015,7 @@ BOOL update_display_cache( BOOL force )
     static const WCHAR wine_service_station_name[] =
         {'_','_','w','i','n','e','s','e','r','v','i','c','e','_','w','i','n','s','t','a','t','i','o','n',0};
     HWINSTA winstation = NtUserGetProcessWindowStation();
-    struct device_manager_ctx ctx = {0};
+    struct device_manager_ctx ctx = {.vulkan_gpus = LIST_INIT(ctx.vulkan_gpus)};
     UINT status;
     WCHAR name[MAX_PATH];
 
@@ -1960,10 +2030,13 @@ BOOL update_display_cache( BOOL force )
         return TRUE;
     }
 
-    status = update_display_devices( force, &ctx );
-
-    release_display_manager_ctx( &ctx );
-    if (status && status != STATUS_ALREADY_COMPLETE) WARN( "Failed to update display devices, status %#x\n", status );
+    if (force)
+    {
+        if (!get_vulkan_gpus( &ctx.vulkan_gpus )) WARN( "Failed to find any vulkan GPU\n" );
+        if (!(status = update_display_devices( &ctx ))) add_vulkan_only_gpus( &ctx );
+        else WARN( "Failed to update display devices, status %#x\n", status );
+        release_display_manager_ctx( &ctx );
+    }
 
     if (!update_display_cache_from_registry())
     {
@@ -2038,43 +2111,42 @@ UINT get_win_monitor_dpi( HWND hwnd )
     return system_dpi;
 }
 
-/* copied from user32 GetAwarenessFromDpiAwarenessContext, make sure to keep that in sync */
-static DPI_AWARENESS get_awareness_from_dpi_awareness_context( DPI_AWARENESS_CONTEXT context )
+/* keep in sync with user32 */
+static BOOL is_valid_dpi_awareness_context( UINT context, UINT dpi )
 {
-    switch ((ULONG_PTR)context)
+    switch (NTUSER_DPI_CONTEXT_GET_AWARENESS( context ))
     {
-    case 0x10:
-    case 0x11:
-    case 0x12:
-    case 0x22:
-    case 0x80000010:
-    case 0x80000011:
-    case 0x80000012:
-    case 0x80000022:
-        return (ULONG_PTR)context & 3;
-    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_UNAWARE:
-    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_SYSTEM_AWARE:
-    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE:
-        return ~(ULONG_PTR)context;
-    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2:
-        return ~(ULONG_PTR)DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE;
-    default:
-        return DPI_AWARENESS_INVALID;
+    case DPI_AWARENESS_UNAWARE:
+        if (NTUSER_DPI_CONTEXT_GET_FLAGS( context ) & ~NTUSER_DPI_CONTEXT_FLAG_VALID_MASK) return FALSE;
+        if (NTUSER_DPI_CONTEXT_GET_VERSION( context ) != 1) return FALSE;
+        if (NTUSER_DPI_CONTEXT_GET_DPI( context ) != USER_DEFAULT_SCREEN_DPI) return FALSE;
+        return TRUE;
+
+    case DPI_AWARENESS_SYSTEM_AWARE:
+        if (NTUSER_DPI_CONTEXT_GET_FLAGS( context ) & ~NTUSER_DPI_CONTEXT_FLAG_VALID_MASK) return FALSE;
+        if (NTUSER_DPI_CONTEXT_GET_FLAGS( context ) & NTUSER_DPI_CONTEXT_FLAG_GDISCALED) return FALSE;
+        if (NTUSER_DPI_CONTEXT_GET_VERSION( context ) != 1) return FALSE;
+        if (dpi && NTUSER_DPI_CONTEXT_GET_DPI( context ) != dpi) return FALSE;
+        return TRUE;
+
+    case DPI_AWARENESS_PER_MONITOR_AWARE:
+        if (NTUSER_DPI_CONTEXT_GET_FLAGS( context ) & ~NTUSER_DPI_CONTEXT_FLAG_VALID_MASK) return FALSE;
+        if (NTUSER_DPI_CONTEXT_GET_FLAGS( context ) & NTUSER_DPI_CONTEXT_FLAG_GDISCALED) return FALSE;
+        if (NTUSER_DPI_CONTEXT_GET_VERSION( context ) != 1 && NTUSER_DPI_CONTEXT_GET_VERSION( context ) != 2) return FALSE;
+        if (NTUSER_DPI_CONTEXT_GET_DPI( context )) return FALSE;
+        return TRUE;
     }
+
+    return FALSE;
 }
 
-/**********************************************************************
- *           get_thread_dpi_awareness
- */
-DPI_AWARENESS get_thread_dpi_awareness(void)
+UINT get_thread_dpi_awareness_context(void)
 {
     struct ntuser_thread_info *info = NtUserGetThreadInfo();
-    ULONG_PTR context = info->dpi_awareness;
+    UINT context;
 
-    if (context == 0) /* process default */
-        return NtUserGetProcessDpiAwarenessContext( NULL ) & 3;
-
-    return get_awareness_from_dpi_awareness_context((DPI_AWARENESS_CONTEXT)context);
+    if (!(context = info->dpi_context)) context = ReadNoFence( &dpi_context );
+    return context ? context : NTUSER_DPI_UNAWARE;
 }
 
 DWORD get_process_layout(void)
@@ -2087,7 +2159,7 @@ DWORD get_process_layout(void)
  */
 UINT get_thread_dpi(void)
 {
-    switch (get_thread_dpi_awareness())
+    switch (NTUSER_DPI_CONTEXT_GET_AWARENESS( get_thread_dpi_awareness_context() ))
     {
     case DPI_AWARENESS_UNAWARE:      return USER_DEFAULT_SCREEN_DPI;
     case DPI_AWARENESS_SYSTEM_AWARE: return system_dpi;
@@ -2098,34 +2170,28 @@ UINT get_thread_dpi(void)
 /* see GetDpiForSystem */
 UINT get_system_dpi(void)
 {
-    if (get_thread_dpi_awareness() == DPI_AWARENESS_UNAWARE) return USER_DEFAULT_SCREEN_DPI;
+    DPI_AWARENESS awareness = NTUSER_DPI_CONTEXT_GET_AWARENESS( get_thread_dpi_awareness_context() );
+    if (awareness == DPI_AWARENESS_UNAWARE) return USER_DEFAULT_SCREEN_DPI;
     return system_dpi;
 }
 
-/**********************************************************************
- *           SetThreadDpiAwarenessContext   (win32u.so)
- *           copied from user32, make sure to keep that in sync
- */
-DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT context )
+/* keep in sync with user32 */
+UINT set_thread_dpi_awareness_context( UINT context )
 {
     struct ntuser_thread_info *info = NtUserGetThreadInfo();
-    DPI_AWARENESS prev, val = get_awareness_from_dpi_awareness_context( context );
+    UINT prev;
 
-    if (val == DPI_AWARENESS_INVALID)
+    if (!is_valid_dpi_awareness_context( context, system_dpi ))
     {
         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
         return 0;
     }
-    if (!(prev = info->dpi_awareness))
-    {
-        prev = NtUserGetProcessDpiAwarenessContext( GetCurrentProcess() ) & 3;
-        prev |= 0x80000010;  /* restore to process default */
-    }
-    if (((ULONG_PTR)context & ~(ULONG_PTR)0x33) == 0x80000000) info->dpi_awareness = 0;
-    else if (context == DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 || context == (DPI_AWARENESS_CONTEXT)0x22)
-        info->dpi_awareness = 0x22;
-    else info->dpi_awareness = val | 0x10;
-    return ULongToHandle( prev );
+
+    if (!(prev = info->dpi_context)) prev = NtUserGetProcessDpiAwarenessContext( GetCurrentProcess() ) | NTUSER_DPI_CONTEXT_FLAG_PROCESS;
+    if (NTUSER_DPI_CONTEXT_GET_FLAGS( context ) & NTUSER_DPI_CONTEXT_FLAG_PROCESS) info->dpi_context = 0;
+    else info->dpi_context = context;
+
+    return prev;
 }
 
 /**********************************************************************
@@ -3639,7 +3705,7 @@ BOOL WINAPI NtUserGetDpiForMonitor( HMONITOR monitor, UINT type, UINT *x, UINT *
         RtlSetLastWin32Error( ERROR_INVALID_ADDRESS );
         return FALSE;
     }
-    switch (get_thread_dpi_awareness())
+    switch (NTUSER_DPI_CONTEXT_GET_AWARENESS( get_thread_dpi_awareness_context() ))
     {
     case DPI_AWARENESS_UNAWARE:      *x = *y = USER_DEFAULT_SCREEN_DPI; break;
     case DPI_AWARENESS_SYSTEM_AWARE: *x = *y = system_dpi; break;
@@ -6132,28 +6198,25 @@ BOOL WINAPI NtUserSetSysColors( INT count, const INT *colors, const COLORREF *va
     return TRUE;
 }
 
-
-static LONG dpi_awareness;
-
 /***********************************************************************
  *	     NtUserSetProcessDpiAwarenessContext    (win32u.@)
  */
-BOOL WINAPI NtUserSetProcessDpiAwarenessContext( ULONG awareness, ULONG unknown )
+BOOL WINAPI NtUserSetProcessDpiAwarenessContext( ULONG context, ULONG unknown )
 {
-    switch (awareness)
+    if (!is_valid_dpi_awareness_context( context, system_dpi ))
     {
-    case NTUSER_DPI_UNAWARE:
-    case NTUSER_DPI_SYSTEM_AWARE:
-    case NTUSER_DPI_PER_MONITOR_AWARE:
-    case NTUSER_DPI_PER_MONITOR_AWARE_V2:
-    case NTUSER_DPI_PER_UNAWARE_GDISCALED:
-        break;
-    default:
         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
         return FALSE;
     }
 
-    return !InterlockedCompareExchange( &dpi_awareness, awareness, 0 );
+    if (InterlockedCompareExchange( &dpi_context, context, 0 ))
+    {
+        RtlSetLastWin32Error( ERROR_ACCESS_DENIED );
+        return FALSE;
+    }
+
+    TRACE( "set to %#x\n", (UINT)context );
+    return TRUE;
 }
 
 /***********************************************************************
@@ -6161,7 +6224,7 @@ BOOL WINAPI NtUserSetProcessDpiAwarenessContext( ULONG awareness, ULONG unknown 
  */
 ULONG WINAPI NtUserGetProcessDpiAwarenessContext( HANDLE process )
 {
-    DPI_AWARENESS val;
+    ULONG context;
 
     if (process && process != GetCurrentProcess())
     {
@@ -6169,9 +6232,9 @@ ULONG WINAPI NtUserGetProcessDpiAwarenessContext( HANDLE process )
         return NTUSER_DPI_UNAWARE;
     }
 
-    val = ReadNoFence( &dpi_awareness );
-    if (!val) return NTUSER_DPI_UNAWARE;
-    return val;
+    context = ReadNoFence( &dpi_context );
+    if (!context) return NTUSER_DPI_UNAWARE;
+    return context;
 }
 
 BOOL message_beep( UINT i )
@@ -6242,6 +6305,9 @@ ULONG_PTR WINAPI NtUserCallNoParam( ULONG code )
 
     case NtUserCallNoParam_ReleaseCapture:
         return release_capture();
+
+    case NtUserCallNoParam_UpdateDisplayCache:
+        return update_display_cache( TRUE );
 
     /* temporary exports */
     case NtUserExitingThread:
@@ -6337,6 +6403,9 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
 
     case NtUserCallOneParam_SetKeyboardAutoRepeat:
         return set_keyboard_auto_repeat( arg );
+
+    case NtUserCallOneParam_SetThreadDpiAwarenessContext:
+        return set_thread_dpi_awareness_context( arg );
 
     /* temporary exports */
     case NtUserGetDeskPattern:

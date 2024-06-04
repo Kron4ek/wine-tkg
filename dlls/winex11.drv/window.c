@@ -1249,7 +1249,7 @@ static void map_window( HWND hwnd, DWORD new_style )
             XMapWindow( data->display, data->whole_window );
             XFlush( data->display );
             if (data->surface && data->vis.visualid != default_visual.visualid)
-                data->surface->funcs->flush( data->surface );
+                window_surface_flush( data->surface );
         }
         else set_xembed_flags( data, XEMBED_MAPPED );
 
@@ -1469,8 +1469,21 @@ static void sync_client_position( struct x11drv_win_data *data,
 
     if (!data->client_window) return;
 
-    changes.x      = data->client_rect.left - data->whole_rect.left;
-    changes.y      = data->client_rect.top - data->whole_rect.top;
+    if (data->whole_window)
+    {
+        changes.x = data->client_rect.left - data->whole_rect.left;
+        changes.y = data->client_rect.top - data->whole_rect.top;
+    }
+    else
+    {
+        HWND toplevel = NtUserGetAncestor( data->hwnd, GA_ROOT );
+        POINT pos = {data->client_rect.left, data->client_rect.top};
+
+        NtUserMapWindowPoints( toplevel, toplevel, &pos, 1 );
+        changes.x = pos.x;
+        changes.y = pos.y;
+    }
+
     changes.width  = min( max( 1, data->client_rect.right - data->client_rect.left ), 65535 );
     changes.height = min( max( 1, data->client_rect.bottom - data->client_rect.top ), 65535 );
 
@@ -1623,11 +1636,8 @@ void detach_client_window( struct x11drv_win_data *data, Window client_window )
 
     TRACE( "%p/%lx detaching client window %lx\n", data->hwnd, data->whole_window, client_window );
 
-    if (data->whole_window)
-    {
-        client_window_events_disable( data, client_window );
-        XReparentWindow( gdi_display, client_window, get_dummy_parent(), 0, 0 );
-    }
+    client_window_events_disable( data, client_window );
+    XReparentWindow( gdi_display, client_window, get_dummy_parent(), 0, 0 );
 
     data->client_window = 0;
 }
@@ -1636,20 +1646,35 @@ void detach_client_window( struct x11drv_win_data *data, Window client_window )
 /**********************************************************************
  *             attach_client_window
  */
-static void attach_client_window( struct x11drv_win_data *data, Window client_window )
+void attach_client_window( struct x11drv_win_data *data, Window client_window )
 {
+    Window whole_window;
+    POINT pos = {0};
+
     if (data->client_window == client_window || !client_window) return;
 
     TRACE( "%p/%lx attaching client window %lx\n", data->hwnd, data->whole_window, client_window );
 
     detach_client_window( data, data->client_window );
 
-    if (data->whole_window)
+    if ((whole_window = data->whole_window))
     {
-        client_window_events_enable( data, client_window );
-        XReparentWindow( gdi_display, client_window, data->whole_window, data->client_rect.left - data->whole_rect.left,
-                         data->client_rect.top - data->whole_rect.top );
+        pos.x = data->client_rect.left - data->whole_rect.left;
+        pos.y = data->client_rect.top - data->whole_rect.top;
     }
+    else
+    {
+        HWND toplevel = NtUserGetAncestor( data->hwnd, GA_ROOT );
+        whole_window = X11DRV_get_whole_window( toplevel );
+
+        pos.x = data->client_rect.left;
+        pos.y = data->client_rect.top;
+        NtUserMapWindowPoints( toplevel, toplevel, &pos, 1 );
+    }
+    if (!whole_window) whole_window = get_dummy_parent();
+
+    client_window_events_enable( data, client_window );
+    XReparentWindow( gdi_display, client_window, whole_window, pos.x, pos.y );
 
     data->client_window = client_window;
 }
@@ -1813,6 +1838,9 @@ static void destroy_whole_window( struct x11drv_win_data *data, BOOL already_des
 {
     TRACE( "win %p xwin %lx/%lx\n", data->hwnd, data->whole_window, data->client_window );
 
+    if (!already_destroyed) detach_client_window( data, data->client_window );
+    else if (data->client_window) client_window_events_disable( data, data->client_window );
+
     if (!data->whole_window)
     {
         if (data->embedded)
@@ -1829,8 +1857,6 @@ static void destroy_whole_window( struct x11drv_win_data *data, BOOL already_des
     }
     else
     {
-        if (!already_destroyed) detach_client_window( data, data->client_window );
-        else if (data->client_window) client_window_events_disable( data, data->client_window );
         XDeleteContext( data->display, data->whole_window, winContext );
         if (!already_destroyed)
         {
@@ -1839,7 +1865,7 @@ static void destroy_whole_window( struct x11drv_win_data *data, BOOL already_des
         }
     }
     if (data->whole_colormap) XFreeColormap( data->display, data->whole_colormap );
-    data->whole_window = data->client_window = 0;
+    data->whole_window = 0;
     data->whole_colormap = 0;
     data->wm_state = WithdrawnState;
     data->net_wm_state = 0;
@@ -2692,7 +2718,6 @@ BOOL X11DRV_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
 
     if (data->embedded) goto done;
     if (data->whole_window == root_window) goto done;
-    if (data->client_window) goto done;
     if (!client_side_graphics && !layered) goto done;
 
     if (data->surface)
@@ -2710,7 +2735,7 @@ BOOL X11DRV_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
     if (!layered || !NtUserGetLayeredWindowAttributes( hwnd, &key, NULL, &flags ) || !(flags & LWA_COLORKEY))
         key = CLR_INVALID;
 
-    *surface = create_surface( data->whole_window, &data->vis, &surface_rect, key, FALSE );
+    *surface = create_surface( data->hwnd, data->whole_window, &data->vis, &surface_rect, key, FALSE );
 
 done:
     release_win_data( data );
@@ -2869,7 +2894,7 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
 
     XFlush( data->display );  /* make sure changes are done before we start painting again */
     if (data->surface && data->vis.visualid != default_visual.visualid)
-        data->surface->funcs->flush( data->surface );
+        window_surface_flush( data->surface );
 
     release_win_data( data );
 }
@@ -3056,7 +3081,7 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
     surface = data->surface;
     if (!surface || !EqualRect( &surface->rect, &rect ))
     {
-        data->surface = create_surface( data->whole_window, &data->vis, &rect,
+        data->surface = create_surface( data->hwnd, data->whole_window, &data->vis, &rect,
                                         color_key, data->use_alpha );
         if (surface) window_surface_release( surface );
         surface = data->surface;
@@ -3095,7 +3120,7 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
 
     NtGdiSelectBitmap( hdc, dib );
 
-    surface->funcs->lock( surface );
+    window_surface_lock( surface );
 
     if (info->prcDirty)
     {
@@ -3113,11 +3138,11 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
     if (ret)
     {
         memcpy( dst_bits, src_bits, bmi->bmiHeader.biSizeImage );
-        add_bounds_rect( surface->funcs->get_bounds( surface ), &rect );
+        add_bounds_rect( &surface->bounds, &rect );
     }
 
-    surface->funcs->unlock( surface );
-    surface->funcs->flush( surface );
+    window_surface_unlock( surface );
+    window_surface_flush( surface );
 
 done:
     window_surface_release( surface );

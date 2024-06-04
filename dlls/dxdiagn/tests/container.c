@@ -792,6 +792,7 @@ static void test_DxDiag_SystemInfo(void)
         {L"dwDirectXVersionMinor", VT_UI4},
         {L"szDirectXVersionLetter", VT_BSTR},
         {L"bDebug", VT_BOOL},
+        {L"bIsD3DDebugRuntime", VT_BOOL},
         {L"bNECPC98", VT_BOOL},
         {L"ullPhysicalMemory", VT_BSTR},
         {L"ullUsedPageFile", VT_BSTR},
@@ -877,6 +878,9 @@ static void test_DxDiag_DisplayDevices(void)
         {L"szManufacturer", VT_BSTR},
         {L"b3DAccelerationExists", VT_BOOL},
         {L"b3DAccelerationEnabled", VT_BOOL},
+        {L"bAGPEnabled", VT_BOOL},
+        {L"bAGPExistenceValid", VT_BOOL},
+        {L"bAGPExists", VT_BOOL},
         {L"bDDAccelerationEnabled", VT_BOOL},
         {L"iAdapter", VT_UI4},
     };

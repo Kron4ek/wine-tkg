@@ -36,19 +36,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(waylanddrv);
 
-static BOOL force_display_devices_refresh;
-
-void wayland_init_display_devices(BOOL force)
-{
-    UINT32 num_path, num_mode;
-
-    TRACE("force=%d\n", force);
-
-    if (force) force_display_devices_refresh = TRUE;
-    /* Trigger refresh in win32u */
-    NtUserGetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &num_path, &num_mode);
-}
-
 struct output_info
 {
     int x, y;
@@ -206,7 +193,7 @@ static void wayland_add_device_gpu(const struct gdi_device_manager *device_manag
 
     TRACE("\n");
 
-    device_manager->add_gpu("Wayland GPU", &pci_id, NULL, 0, param);
+    device_manager->add_gpu("Wine GPU", &pci_id, NULL, param);
 }
 
 static void wayland_add_device_source(const struct gdi_device_manager *device_manager,
@@ -277,19 +264,14 @@ static void wayland_add_device_modes(const struct gdi_device_manager *device_man
 /***********************************************************************
  *      UpdateDisplayDevices (WAYLAND.@)
  */
-UINT WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager,
-                                  BOOL force, void *param)
+UINT WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager, void *param)
 {
     struct wayland_output *output;
     DWORD state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE;
     struct wl_array output_info_array;
     struct output_info *output_info;
 
-    if (!force && !force_display_devices_refresh) return STATUS_ALREADY_COMPLETE;
-
-    TRACE("force=%d force_refresh=%d\n", force, force_display_devices_refresh);
-
-    force_display_devices_refresh = FALSE;
+    TRACE("\n");
 
     wl_array_init(&output_info_array);
 

@@ -645,11 +645,9 @@ static BOOL get_gpu_properties_from_vulkan( struct x11drv_gpu *gpu, const XRRPro
     VkResult (*pvkGetRandROutputDisplayEXT)( VkPhysicalDevice, Display *, RROutput, VkDisplayKHR * );
     PFN_vkGetPhysicalDeviceProperties2KHR pvkGetPhysicalDeviceProperties2KHR;
     PFN_vkEnumeratePhysicalDevices pvkEnumeratePhysicalDevices;
-    PFN_vkGetPhysicalDeviceMemoryProperties pvkGetPhysicalDeviceMemoryProperties;
-    uint32_t device_count, device_idx, output_idx, heap_idx, i;
+    uint32_t device_count, device_idx, output_idx, i;
     VkPhysicalDevice *vk_physical_devices = NULL;
     VkPhysicalDeviceProperties2 properties2;
-    VkPhysicalDeviceMemoryProperties mem_properties;
     PFN_vkCreateInstance pvkCreateInstance;
     VkInstanceCreateInfo create_info;
     VkPhysicalDeviceIDProperties id;
@@ -685,7 +683,6 @@ static BOOL get_gpu_properties_from_vulkan( struct x11drv_gpu *gpu, const XRRPro
     LOAD_VK_FUNC(vkEnumeratePhysicalDevices)
     LOAD_VK_FUNC(vkGetPhysicalDeviceProperties2KHR)
     LOAD_VK_FUNC(vkGetRandROutputDisplayEXT)
-    LOAD_VK_FUNC(vkGetPhysicalDeviceMemoryProperties)
 #undef LOAD_VK_FUNC
 
     vr = pvkEnumeratePhysicalDevices( vk_instance, &device_count, NULL );
@@ -743,13 +740,6 @@ static BOOL get_gpu_properties_from_vulkan( struct x11drv_gpu *gpu, const XRRPro
             }
             gpu->name = strdup( properties2.properties.deviceName );
 
-            pvkGetPhysicalDeviceMemoryProperties( vk_physical_devices[device_idx], &mem_properties );
-            for (heap_idx = 0; heap_idx < mem_properties.memoryHeapCount; heap_idx++)
-            {
-                if (mem_properties.memoryHeaps[heap_idx].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
-                    gpu->memory_size += mem_properties.memoryHeaps[heap_idx].size;
-            }
-
             ret = TRUE;
             goto done;
         }
@@ -797,7 +787,7 @@ static BOOL xrandr14_get_gpus( struct x11drv_gpu **new_gpus, int *count, BOOL ge
     if (!provider_resources->nproviders)
     {
         WARN("XRandR implementation doesn't report any providers, faking one.\n");
-        gpus[0].name = strdup( "Xrandr GPU" );
+        gpus[0].name = strdup( "Wine GPU" );
         *new_gpus = gpus;
         *count = 1;
         ret = TRUE;
@@ -1191,7 +1181,7 @@ static BOOL xrandr14_device_change_handler( HWND hwnd, XEvent *event )
     xrandr14_invalidate_current_mode_cache();
     if (hwnd == NtUserGetDesktopWindow() && NtUserGetWindowThread( hwnd, NULL ) == GetCurrentThreadId())
     {
-        X11DRV_DisplayDevices_Init( TRUE );
+        NtUserCallNoParam( NtUserCallNoParam_UpdateDisplayCache );
         X11DRV_resize_desktop();
     }
     /* Update xinerama monitors for xinerama_get_fullscreen_monitors() */

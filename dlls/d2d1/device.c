@@ -4516,7 +4516,7 @@ struct d2d_device *unsafe_impl_from_ID2D1Device(ID2D1Device1 *iface)
     if (!iface)
         return NULL;
     assert(iface->lpVtbl == (ID2D1Device1Vtbl *)&d2d_device_vtbl);
-    return CONTAINING_RECORD(iface, struct d2d_device, ID2D1Device6_iface);
+    return CONTAINING_RECORD((ID2D1Device6*)iface, struct d2d_device, ID2D1Device6_iface);
 }
 
 void d2d_device_init(struct d2d_device *device, struct d2d_factory *factory, IDXGIDevice *dxgi_device)

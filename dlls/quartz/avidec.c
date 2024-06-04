@@ -361,8 +361,8 @@ static HRESULT avi_decompressor_source_get_media_type(struct strmbase_pin *iface
         format->bmiHeader.biPlanes = sink_format->bmiHeader.biPlanes;
         format->bmiHeader.biBitCount = formats[index].bpp;
         format->bmiHeader.biCompression = formats[index].compression;
-        format->bmiHeader.biSizeImage = format->bmiHeader.biWidth
-                * format->bmiHeader.biHeight * formats[index].bpp / 8;
+        format->bmiHeader.biSizeImage = format->bmiHeader.biHeight * (((format->bmiHeader.biWidth
+                * formats[index].bpp + 31) / 8) & ~3);
 
         if (IsEqualGUID(formats[index].subtype, &MEDIASUBTYPE_RGB565))
         {
@@ -552,7 +552,7 @@ static HRESULT avi_decompressor_init_stream(struct strmbase_filter *iface)
 
     filter->late = -1;
 
-    source_format = (VIDEOINFOHEADER *)filter->sink.pin.mt.pbFormat;
+    source_format = (VIDEOINFOHEADER *)filter->source.pin.mt.pbFormat;
     if ((res = ICDecompressBegin(filter->hvid, filter->pBihIn, &source_format->bmiHeader)))
     {
         ERR("ICDecompressBegin() failed, error %Id.\n", res);
@@ -573,10 +573,16 @@ static HRESULT avi_decompressor_cleanup_stream(struct strmbase_filter *iface)
     if (!filter->source.pin.peer)
         return S_OK;
 
-    if (filter->hvid && (res = ICDecompressEnd(filter->hvid)))
+    if (filter->hvid)
     {
-        ERR("ICDecompressEnd() failed, error %Id.\n", res);
-        return E_FAIL;
+        EnterCriticalSection(&filter->filter.stream_cs);
+        res = ICDecompressEnd(filter->hvid);
+        LeaveCriticalSection(&filter->filter.stream_cs);
+        if (res)
+        {
+            ERR("ICDecompressEnd() failed, error %Id.\n", res);
+            return E_FAIL;
+        }
     }
 
     IMemAllocator_Decommit(filter->source.pAllocator);

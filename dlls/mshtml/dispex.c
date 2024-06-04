@@ -646,32 +646,15 @@ static inline dispex_dynamic_data_t *get_dynamic_data(DispatchEx *This)
     return This->dynamic_data;
 }
 
-static HRESULT get_dynamic_prop(DispatchEx *This, const WCHAR *name, DWORD flags, dynamic_prop_t **ret)
+static HRESULT alloc_dynamic_prop(DispatchEx *This, const WCHAR *name, dynamic_prop_t *prop, dynamic_prop_t **ret)
 {
-    const BOOL alloc = flags & fdexNameEnsure;
-    dispex_dynamic_data_t *data;
-    dynamic_prop_t *prop;
+    dispex_dynamic_data_t *data = This->dynamic_data;
 
-    data = get_dynamic_data(This);
-    if(!data)
-        return E_OUTOFMEMORY;
-
-    for(prop = data->props; prop < data->props+data->prop_cnt; prop++) {
-        if(flags & fdexNameCaseInsensitive ? !wcsicmp(prop->name, name) : !wcscmp(prop->name, name)) {
-            if(prop->flags & DYNPROP_DELETED) {
-                if(!alloc)
-                    return DISP_E_UNKNOWNNAME;
-                prop->flags &= ~DYNPROP_DELETED;
-            }
-            *ret = prop;
-            return S_OK;
-        }
+    if(prop) {
+        prop->flags &= ~DYNPROP_DELETED;
+        *ret = prop;
+        return S_OK;
     }
-
-    if(!alloc)
-        return DISP_E_UNKNOWNNAME;
-
-    TRACE("creating dynamic prop %s\n", debugstr_w(name));
 
     if(!data->buf_size) {
         data->props = malloc(sizeof(dynamic_prop_t) * 4);
@@ -700,6 +683,35 @@ static HRESULT get_dynamic_prop(DispatchEx *This, const WCHAR *name, DWORD flags
     data->prop_cnt++;
     *ret = prop;
     return S_OK;
+}
+
+static HRESULT get_dynamic_prop(DispatchEx *This, const WCHAR *name, DWORD flags, dynamic_prop_t **ret)
+{
+    const BOOL alloc = flags & fdexNameEnsure;
+    dispex_dynamic_data_t *data;
+    dynamic_prop_t *prop;
+
+    data = get_dynamic_data(This);
+    if(!data)
+        return E_OUTOFMEMORY;
+
+    for(prop = data->props; prop < data->props+data->prop_cnt; prop++) {
+        if(flags & fdexNameCaseInsensitive ? !wcsicmp(prop->name, name) : !wcscmp(prop->name, name)) {
+            *ret = prop;
+            if(prop->flags & DYNPROP_DELETED) {
+                if(!alloc)
+                    return DISP_E_UNKNOWNNAME;
+                prop->flags &= ~DYNPROP_DELETED;
+            }
+            return S_OK;
+        }
+    }
+
+    if(!alloc)
+        return DISP_E_UNKNOWNNAME;
+
+    TRACE("creating dynamic prop %s\n", debugstr_w(name));
+    return alloc_dynamic_prop(This, name, NULL, ret);
 }
 
 HRESULT dispex_get_dprop_ref(DispatchEx *This, const WCHAR *name, BOOL alloc, VARIANT **ret)
@@ -982,6 +994,13 @@ static HRESULT get_builtin_func(dispex_data_t *data, DISPID id, func_info_t **re
 static HRESULT get_builtin_id(DispatchEx *This, BSTR name, DWORD grfdex, DISPID *ret)
 {
     int min, max, n, c;
+    HRESULT hres;
+
+    if(This->info->desc->vtbl->lookup_dispid) {
+        hres = This->info->desc->vtbl->lookup_dispid(This, name, grfdex, ret);
+        if(hres != DISP_E_UNKNOWNNAME)
+            return hres;
+    }
 
     min = 0;
     max = This->info->func_cnt-1;
@@ -1005,8 +1024,6 @@ static HRESULT get_builtin_id(DispatchEx *This, BSTR name, DWORD grfdex, DISPID 
     }
 
     if(This->info->desc->vtbl->get_dispid) {
-        HRESULT hres;
-
         hres = This->info->desc->vtbl->get_dispid(This, name, grfdex, ret);
         if(hres != DISP_E_UNKNOWNNAME)
             return hres;
@@ -1662,7 +1679,7 @@ static HRESULT WINAPI DispatchEx_Invoke(IDispatchEx *iface, DISPID dispIdMember,
 static HRESULT WINAPI DispatchEx_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD grfdex, DISPID *pid)
 {
     DispatchEx *This = impl_from_IDispatchEx(iface);
-    dynamic_prop_t *dprop;
+    dynamic_prop_t *dprop = NULL;
     HRESULT hres;
 
     TRACE("%s (%p)->(%s %lx %p)\n", This->info->desc->name, This, debugstr_w(bstrName), grfdex, pid);
@@ -1677,9 +1694,18 @@ static HRESULT WINAPI DispatchEx_GetDispID(IDispatchEx *iface, BSTR bstrName, DW
     if(hres != DISP_E_UNKNOWNNAME)
         return hres;
 
-    hres = get_dynamic_prop(This, bstrName, grfdex, &dprop);
-    if(FAILED(hres))
-        return hres;
+    hres = get_dynamic_prop(This, bstrName, grfdex & ~fdexNameEnsure, &dprop);
+    if(FAILED(hres)) {
+        if(This->info->desc->vtbl->find_dispid) {
+            hres = This->info->desc->vtbl->find_dispid(This, bstrName, grfdex, pid);
+            if(SUCCEEDED(hres))
+                return hres;
+        }
+        if(grfdex & fdexNameEnsure)
+            hres = alloc_dynamic_prop(This, bstrName, dprop, &dprop);
+        if(FAILED(hres))
+            return hres;
+    }
 
     *pid = DISPID_DYNPROP_0 + (dprop - This->dynamic_data->props);
     return S_OK;
@@ -1778,6 +1804,9 @@ static HRESULT WINAPI DispatchEx_DeleteMemberByName(IDispatchEx *iface, BSTR nam
     HRESULT hres;
 
     TRACE("%s (%p)->(%s %lx)\n", This->info->desc->name, This, debugstr_w(name), grfdex);
+
+    if(dispex_compat_mode(This) < COMPAT_MODE_IE8 && !This->info->desc->vtbl->delete)
+        return E_NOTIMPL;
 
     hres = IDispatchEx_GetDispID(&This->IDispatchEx_iface, name, grfdex & ~fdexNameEnsure, &id);
     if(FAILED(hres)) {

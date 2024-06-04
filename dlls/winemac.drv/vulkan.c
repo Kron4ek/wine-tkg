@@ -178,7 +178,11 @@ static void macdrv_vulkan_surface_destroy(HWND hwnd, void *private)
     wine_vk_surface_destroy(mac_surface);
 }
 
-static void macdrv_vulkan_surface_detach(HWND hwnd, void *private)
+static void macdrv_vulkan_surface_attach(HWND hwnd, void *private)
+{
+}
+
+static void macdrv_vulkan_surface_detach(HWND hwnd, void *private, HDC *hdc)
 {
 }
 
@@ -203,6 +207,7 @@ static const struct vulkan_driver_funcs macdrv_vulkan_driver_funcs =
 {
     .p_vulkan_surface_create = macdrv_vulkan_surface_create,
     .p_vulkan_surface_destroy = macdrv_vulkan_surface_destroy,
+    .p_vulkan_surface_attach = macdrv_vulkan_surface_attach,
     .p_vulkan_surface_detach = macdrv_vulkan_surface_detach,
     .p_vulkan_surface_presented = macdrv_vulkan_surface_presented,
 

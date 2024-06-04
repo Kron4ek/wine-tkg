@@ -559,7 +559,8 @@ static bool add_signature_element(struct vkd3d_shader_sm1_parser *sm1, bool outp
     element = &signature->elements[signature->element_count++];
 
     memset(element, 0, sizeof(*element));
-    element->semantic_name = name;
+    if (!(element->semantic_name = vkd3d_strdup(name)))
+        return false;
     element->semantic_index = index;
     element->sysval_semantic = sysval;
     element->component_type = VKD3D_SHADER_COMPONENT_FLOAT;
@@ -1059,7 +1060,7 @@ static void shader_sm1_read_comment(struct vkd3d_shader_sm1_parser *sm1)
 
 static void shader_sm1_validate_instruction(struct vkd3d_shader_sm1_parser *sm1, struct vkd3d_shader_instruction *ins)
 {
-    if ((ins->handler_idx == VKD3DSIH_BREAKP || ins->handler_idx == VKD3DSIH_IF) && ins->flags)
+    if ((ins->opcode == VKD3DSIH_BREAKP || ins->opcode == VKD3DSIH_IF) && ins->flags)
     {
         vkd3d_shader_parser_warning(&sm1->p, VKD3D_SHADER_WARNING_D3DBC_IGNORED_INSTRUCTION_FLAGS,
                 "Ignoring unexpected instruction flags %#x.", ins->flags);
@@ -1141,23 +1142,23 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
         goto fail;
     }
 
-    if (ins->handler_idx == VKD3DSIH_DCL)
+    if (ins->opcode == VKD3DSIH_DCL)
     {
         shader_sm1_read_semantic(sm1, &p, &ins->declaration.semantic);
     }
-    else if (ins->handler_idx == VKD3DSIH_DEF)
+    else if (ins->opcode == VKD3DSIH_DEF)
     {
         shader_sm1_read_dst_param(sm1, &p, dst_param);
         shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_VEC4, VKD3D_DATA_FLOAT);
         shader_sm1_scan_register(sm1, &dst_param->reg, dst_param->write_mask, true);
     }
-    else if (ins->handler_idx == VKD3DSIH_DEFB)
+    else if (ins->opcode == VKD3DSIH_DEFB)
     {
         shader_sm1_read_dst_param(sm1, &p, dst_param);
         shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_SCALAR, VKD3D_DATA_UINT);
         shader_sm1_scan_register(sm1, &dst_param->reg, dst_param->write_mask, true);
     }
-    else if (ins->handler_idx == VKD3DSIH_DEFI)
+    else if (ins->opcode == VKD3DSIH_DEFI)
     {
         shader_sm1_read_dst_param(sm1, &p, dst_param);
         shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_VEC4, VKD3D_DATA_INT);
@@ -1194,7 +1195,7 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
     return;
 
 fail:
-    ins->handler_idx = VKD3DSIH_INVALID;
+    ins->opcode = VKD3DSIH_INVALID;
     *ptr = sm1->end;
 }
 
@@ -1325,7 +1326,7 @@ int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t c
         ins = &instructions->elements[instructions->count];
         shader_sm1_read_instruction(&sm1, ins);
 
-        if (ins->handler_idx == VKD3DSIH_INVALID)
+        if (ins->opcode == VKD3DSIH_INVALID)
         {
             WARN("Encountered unrecognized or invalid instruction.\n");
             vsir_program_cleanup(program);
@@ -1786,6 +1787,7 @@ static uint32_t sm1_encode_register_type(D3DSHADER_PARAM_REGISTER_TYPE type)
 struct sm1_instruction
 {
     D3DSHADER_INSTRUCTION_OPCODE_TYPE opcode;
+    unsigned int flags;
 
     struct sm1_dst_register
     {
@@ -1824,6 +1826,8 @@ static void write_sm1_instruction(struct hlsl_ctx *ctx, struct vkd3d_bytecode_bu
 {
     uint32_t token = instr->opcode;
     unsigned int i;
+
+    token |= VKD3D_SM1_INSTRUCTION_FLAGS_MASK & (instr->flags << VKD3D_SM1_INSTRUCTION_FLAGS_SHIFT);
 
     if (ctx->profile->major_version > 1)
         token |= (instr->has_dst + instr->src_count) << D3DSI_INSTLENGTH_SHIFT;
@@ -2047,7 +2051,7 @@ static void write_sm1_cast(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
         case HLSL_TYPE_BOOL:
             /* Casts to bool should have already been lowered. */
         default:
-            hlsl_fixme(ctx, &expr->node.loc, "SM1 cast from %s to %s.\n",
+            hlsl_fixme(ctx, &expr->node.loc, "SM1 cast from %s to %s.",
                 debug_hlsl_type(ctx, src_type), debug_hlsl_type(ctx, dst_type));
             break;
     }
@@ -2387,6 +2391,49 @@ static void write_sm1_expr(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
     }
 }
 
+static void write_sm1_block(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer,
+        const struct hlsl_block *block);
+
+static void write_sm1_if(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer, const struct hlsl_ir_node *instr)
+{
+    const struct hlsl_ir_if *iff = hlsl_ir_if(instr);
+    const struct hlsl_ir_node *condition;
+    struct sm1_instruction sm1_ifc, sm1_else, sm1_endif;
+
+    condition = iff->condition.node;
+    assert(condition->data_type->dimx == 1 && condition->data_type->dimy == 1);
+
+    sm1_ifc = (struct sm1_instruction)
+    {
+        .opcode = D3DSIO_IFC,
+        .flags = VKD3D_SHADER_REL_OP_NE, /* Make it a "if_ne" instruction. */
+
+        .srcs[0].type = D3DSPR_TEMP,
+        .srcs[0].swizzle = hlsl_swizzle_from_writemask(condition->reg.writemask),
+        .srcs[0].reg = condition->reg.id,
+        .srcs[0].mod = 0,
+
+        .srcs[1].type = D3DSPR_TEMP,
+        .srcs[1].swizzle = hlsl_swizzle_from_writemask(condition->reg.writemask),
+        .srcs[1].reg = condition->reg.id,
+        .srcs[1].mod = D3DSPSM_NEG,
+
+        .src_count = 2,
+    };
+    write_sm1_instruction(ctx, buffer, &sm1_ifc);
+    write_sm1_block(ctx, buffer, &iff->then_block);
+
+    if (!list_empty(&iff->else_block.instrs))
+    {
+        sm1_else = (struct sm1_instruction){.opcode = D3DSIO_ELSE};
+        write_sm1_instruction(ctx, buffer, &sm1_else);
+        write_sm1_block(ctx, buffer, &iff->else_block);
+    }
+
+    sm1_endif = (struct sm1_instruction){.opcode = D3DSIO_ENDIF};
+    write_sm1_instruction(ctx, buffer, &sm1_endif);
+}
+
 static void write_sm1_jump(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer, const struct hlsl_ir_node *instr)
 {
     const struct hlsl_ir_jump *jump = hlsl_ir_jump(instr);
@@ -2412,7 +2459,7 @@ static void write_sm1_jump(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
         }
 
         default:
-            hlsl_fixme(ctx, &jump->node.loc, "Jump type %s.\n", hlsl_jump_type_to_string(jump->type));
+            hlsl_fixme(ctx, &jump->node.loc, "Jump type %s.", hlsl_jump_type_to_string(jump->type));
     }
 }
 
@@ -2500,7 +2547,7 @@ static void write_sm1_resource_load(struct hlsl_ctx *ctx, struct vkd3d_bytecode_
             break;
 
         default:
-            hlsl_fixme(ctx, &instr->loc, "Resource load type %u\n", load->load_type);
+            hlsl_fixme(ctx, &instr->loc, "Resource load type %u.", load->load_type);
             return;
     }
 
@@ -2532,7 +2579,7 @@ static void write_sm1_store(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *
 
     if (store->lhs.var->data_type->class == HLSL_CLASS_MATRIX)
     {
-        hlsl_fixme(ctx, &instr->loc, "Lower matrix writemasks.\n");
+        hlsl_fixme(ctx, &instr->loc, "Lower matrix writemasks.");
         return;
     }
 
@@ -2587,12 +2634,12 @@ static void write_sm1_swizzle(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer
     write_sm1_instruction(ctx, buffer, &sm1_instr);
 }
 
-static void write_sm1_instructions(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer,
-        const struct hlsl_ir_function_decl *entry_func)
+static void write_sm1_block(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer,
+        const struct hlsl_block *block)
 {
     const struct hlsl_ir_node *instr;
 
-    LIST_FOR_EACH_ENTRY(instr, &entry_func->body.instrs, struct hlsl_ir_node, entry)
+    LIST_FOR_EACH_ENTRY(instr, &block->instrs, struct hlsl_ir_node, entry)
     {
         if (instr->data_type)
         {
@@ -2614,6 +2661,13 @@ static void write_sm1_instructions(struct hlsl_ctx *ctx, struct vkd3d_bytecode_b
 
             case HLSL_IR_EXPR:
                 write_sm1_expr(ctx, buffer, instr);
+                break;
+
+            case HLSL_IR_IF:
+                if (hlsl_version_ge(ctx, 2, 1))
+                    write_sm1_if(ctx, buffer, instr);
+                else
+                    hlsl_fixme(ctx, &instr->loc, "Flatten \"if\" conditionals branches.");
                 break;
 
             case HLSL_IR_JUMP:
@@ -2653,7 +2707,7 @@ int hlsl_sm1_write(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_fun
     write_sm1_constant_defs(ctx, &buffer);
     write_sm1_semantic_dcls(ctx, &buffer);
     write_sm1_sampler_dcls(ctx, &buffer);
-    write_sm1_instructions(ctx, &buffer, entry_func);
+    write_sm1_block(ctx, &buffer, &entry_func->body);
 
     put_u32(&buffer, D3DSIO_END);
 

@@ -494,9 +494,7 @@ BOOL X11DRV_DisplayDevices_SupportEventHandlers(void)
     return !!host_handler.register_event_handlers;
 }
 
-static BOOL force_display_devices_refresh;
-
-UINT X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, BOOL force, void *param )
+UINT X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, void *param )
 {
     struct x11drv_adapter *adapters;
     struct gdi_monitor *monitors;
@@ -506,9 +504,6 @@ UINT X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manage
     DEVMODEW *modes;
     UINT mode_count;
 
-    if (!force && !force_display_devices_refresh) return STATUS_ALREADY_COMPLETE;
-    force_display_devices_refresh = FALSE;
-
     TRACE( "via %s\n", debugstr_a(host_handler.name) );
 
     /* Initialize GPUs */
@@ -517,8 +512,7 @@ UINT X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manage
 
     for (gpu = 0; gpu < gpu_count; gpu++)
     {
-        device_manager->add_gpu( gpus[gpu].name, &gpus[gpu].pci_id, &gpus[gpu].vulkan_uuid,
-                                 gpus[gpu].memory_size, param );
+        device_manager->add_gpu( gpus[gpu].name, &gpus[gpu].pci_id, &gpus[gpu].vulkan_uuid, param );
 
         /* Initialize adapters */
         if (!host_handler.get_adapters( gpus[gpu].id, &adapters, &adapter_count )) break;
@@ -562,13 +556,4 @@ UINT X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manage
 
     host_handler.free_gpus( gpus, gpu_count );
     return STATUS_SUCCESS;
-}
-
-void X11DRV_DisplayDevices_Init(BOOL force)
-{
-    UINT32 num_path, num_mode;
-
-    if (force) force_display_devices_refresh = TRUE;
-    /* trigger refresh in win32u */
-    NtUserGetDisplayConfigBufferSizes( QDC_ONLY_ACTIVE_PATHS, &num_path, &num_mode );
 }

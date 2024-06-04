@@ -2230,6 +2230,12 @@ HRESULT wined3d_context_gl_init(struct wined3d_context_gl *context_gl, struct wi
         }
     }
 
+    if (!gl_info->supported[ARB_CLIP_CONTROL] && gl_info->supported[WINED3D_GL_VERSION_2_0])
+    {
+        GL_EXTCALL(glPointParameteri(GL_POINT_SPRITE_COORD_ORIGIN, GL_LOWER_LEFT));
+        checkGLcall("glPointParameteri(GL_POINT_SPRITE_COORD_ORIGIN, GL_LOWER_LEFT)");
+    }
+
     if (gl_info->supported[ARB_PROVOKING_VERTEX])
     {
         GL_EXTCALL(glProvokingVertex(GL_FIRST_VERTEX_CONVENTION));
@@ -3168,7 +3174,6 @@ void wined3d_context_gl_apply_blit_state(struct wined3d_context_gl *context_gl, 
 {
     struct wined3d_context *context = &context_gl->c;
     const struct wined3d_gl_info *gl_info;
-    unsigned int sampler;
     SIZE rt_size;
 
     TRACE("Setting up context %p for blitting.\n", context);
@@ -3198,16 +3203,6 @@ void wined3d_context_gl_apply_blit_state(struct wined3d_context_gl *context_gl, 
         GL_EXTCALL(glBindSampler(0, 0));
     wined3d_context_gl_active_texture(context_gl, gl_info, 0);
 
-    sampler = context_gl->rev_tex_unit_map[0];
-    if (sampler != WINED3D_UNMAPPED_STAGE)
-    {
-        if (sampler < WINED3D_MAX_FFP_TEXTURES)
-        {
-            context_invalidate_state(context, STATE_TRANSFORM(WINED3D_TS_TEXTURE0 + sampler));
-            context_invalidate_state(context, STATE_TEXTURESTAGE(sampler, WINED3D_TSS_COLOR_OP));
-        }
-        context_invalidate_state(context, STATE_SAMPLER(sampler));
-    }
     context_invalidate_compute_state(context, STATE_COMPUTE_SHADER_RESOURCE_BINDING);
     context_invalidate_state(context, STATE_GRAPHICS_SHADER_RESOURCE_BINDING);
 
@@ -3254,108 +3249,6 @@ void wined3d_context_gl_apply_blit_state(struct wined3d_context_gl *context_gl, 
     context_gl->blit_size = rt_size;
 
     checkGLcall("blit state application");
-}
-
-static void wined3d_context_gl_apply_blit_projection(const struct wined3d_context_gl *context_gl,
-        unsigned int w, unsigned int h)
-{
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    const GLdouble projection[] =
-    {
-        2.0 / w,     0.0,  0.0, 0.0,
-            0.0, 2.0 / h,  0.0, 0.0,
-            0.0,     0.0,  2.0, 0.0,
-           -1.0,    -1.0, -1.0, 1.0,
-    };
-
-    gl_info->gl_ops.gl.p_glMatrixMode(GL_PROJECTION);
-    gl_info->gl_ops.gl.p_glLoadMatrixd(projection);
-}
-
-/* Setup OpenGL states for fixed-function blitting. */
-/* Context activation is done by the caller. */
-void wined3d_context_gl_apply_ffp_blit_state(struct wined3d_context_gl *context_gl,
-        const struct wined3d_device *device)
-{
-    struct wined3d_context *context = &context_gl->c;
-    const struct wined3d_gl_info *gl_info;
-    unsigned int i, sampler;
-
-    gl_info = context_gl->gl_info;
-    if (!gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
-        ERR("Applying fixed-function state without legacy context support.\n");
-
-    if (context->last_was_ffp_blit)
-    {
-        SIZE rt_size;
-
-        wined3d_context_gl_get_rt_size(context_gl, &rt_size);
-        if (context_gl->blit_size.cx != rt_size.cx || context_gl->blit_size.cy != rt_size.cy)
-            wined3d_context_gl_apply_blit_projection(context_gl, rt_size.cx, rt_size.cy);
-        wined3d_context_gl_apply_blit_state(context_gl, device);
-
-        checkGLcall("ffp blit state application");
-        return;
-    }
-    context->last_was_ffp_blit = TRUE;
-
-    wined3d_context_gl_apply_blit_state(context_gl, device);
-
-    /* Disable all textures. The caller can then bind a texture it wants to blit
-     * from. */
-    for (i = gl_info->limits.ffp_textures - 1; i > 0 ; --i)
-    {
-        wined3d_context_gl_active_texture(context_gl, gl_info, i);
-
-        if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
-            gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
-        gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_3D);
-        gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_2D);
-
-        gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-
-        sampler = context_gl->rev_tex_unit_map[i];
-        if (sampler != WINED3D_UNMAPPED_STAGE)
-        {
-            if (sampler < WINED3D_MAX_FFP_TEXTURES)
-                context_invalidate_state(context, STATE_TEXTURESTAGE(sampler, WINED3D_TSS_COLOR_OP));
-            context_invalidate_state(context, STATE_SAMPLER(sampler));
-        }
-    }
-
-    wined3d_context_gl_active_texture(context_gl, gl_info, 0);
-
-    if (gl_info->supported[ARB_TEXTURE_CUBE_MAP])
-        gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_CUBE_MAP_ARB);
-    gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_3D);
-    gl_info->gl_ops.gl.p_glDisable(GL_TEXTURE_2D);
-
-    gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-    if (gl_info->supported[EXT_TEXTURE_LOD_BIAS])
-        gl_info->gl_ops.gl.p_glTexEnvf(GL_TEXTURE_FILTER_CONTROL_EXT, GL_TEXTURE_LOD_BIAS_EXT, 0.0f);
-
-    gl_info->gl_ops.gl.p_glMatrixMode(GL_TEXTURE);
-    gl_info->gl_ops.gl.p_glLoadIdentity();
-
-    /* Setup transforms. */
-    gl_info->gl_ops.gl.p_glMatrixMode(GL_MODELVIEW);
-    gl_info->gl_ops.gl.p_glLoadIdentity();
-    context_invalidate_state(context, STATE_TRANSFORM(WINED3D_TS_WORLD_MATRIX(0)));
-    wined3d_context_gl_apply_blit_projection(context_gl, context_gl->blit_size.cx, context_gl->blit_size.cy);
-    context_invalidate_state(context, STATE_TRANSFORM(WINED3D_TS_PROJECTION));
-
-    /* Other misc states. */
-    gl_info->gl_ops.gl.p_glDisable(GL_LIGHTING);
-    context_invalidate_state(context, STATE_RENDER(WINED3D_RS_LIGHTING));
-    gl_info->p_glDisableWINE(GL_FOG);
-    context_invalidate_state(context, STATE_RENDER(WINED3D_RS_FOGENABLE));
-
-    if (gl_info->supported[EXT_SECONDARY_COLOR])
-    {
-        gl_info->gl_ops.gl.p_glDisable(GL_COLOR_SUM_EXT);
-        context_invalidate_state(context, STATE_RENDER(WINED3D_RS_SPECULARENABLE));
-    }
-    checkGLcall("ffp blit state application");
 }
 
 static BOOL have_framebuffer_attachment(unsigned int rt_count, struct wined3d_rendertarget_view * const *rts,
@@ -3708,7 +3601,6 @@ static void wined3d_context_gl_map_fixed_function_samplers(struct wined3d_contex
             if (context_gl->tex_unit_map[i] != i)
             {
                 wined3d_context_gl_map_stage(context_gl, i, i);
-                context_invalidate_state(&context_gl->c, STATE_SAMPLER(i));
                 context_invalidate_state(&context_gl->c, STATE_GRAPHICS_SHADER_RESOURCE_BINDING);
                 context_invalidate_texture_stage(&context_gl->c, i);
             }
@@ -3724,7 +3616,6 @@ static void wined3d_context_gl_map_fixed_function_samplers(struct wined3d_contex
         if (context_gl->tex_unit_map[i] != tex)
         {
             wined3d_context_gl_map_stage(context_gl, i, tex);
-            context_invalidate_state(&context_gl->c, STATE_SAMPLER(i));
             context_invalidate_state(&context_gl->c, STATE_GRAPHICS_SHADER_RESOURCE_BINDING);
             context_invalidate_texture_stage(&context_gl->c, i);
         }
@@ -3745,7 +3636,6 @@ static void wined3d_context_gl_map_psamplers(struct wined3d_context_gl *context_
         if (resource_info[i].type && context_gl->tex_unit_map[i] != i)
         {
             wined3d_context_gl_map_stage(context_gl, i, i);
-            context_invalidate_state(&context_gl->c, STATE_SAMPLER(i));
             context_invalidate_state(&context_gl->c, STATE_GRAPHICS_SHADER_RESOURCE_BINDING);
             if (i < d3d_info->ffp_fragment_caps.max_blend_stages)
                 context_invalidate_texture_stage(&context_gl->c, i);
@@ -3808,7 +3698,6 @@ static void wined3d_context_gl_map_vsamplers(struct wined3d_context_gl *context_
                     if (context_gl->tex_unit_map[vsampler_idx] != start)
                     {
                         wined3d_context_gl_map_stage(context_gl, vsampler_idx, start);
-                        context_invalidate_state(&context_gl->c, STATE_SAMPLER(vsampler_idx));
                         context_invalidate_state(&context_gl->c, STATE_GRAPHICS_SHADER_RESOURCE_BINDING);
                     }
 
@@ -4720,236 +4609,6 @@ static void wined3d_context_gl_draw_primitive_arrays(struct wined3d_context_gl *
     }
 }
 
-static unsigned int get_stride_idx(const void *idx_data, unsigned int idx_size,
-        unsigned int base_vertex_idx, unsigned int start_idx, unsigned int vertex_idx)
-{
-    if (!idx_data)
-        return start_idx + vertex_idx;
-    if (idx_size == 2)
-        return ((const WORD *)idx_data)[start_idx + vertex_idx] + base_vertex_idx;
-    return ((const DWORD *)idx_data)[start_idx + vertex_idx] + base_vertex_idx;
-}
-
-/* Context activation is done by the caller. */
-static void draw_primitive_immediate_mode(struct wined3d_context_gl *context_gl, const struct wined3d_state *state,
-        const struct wined3d_stream_info *si, const void *idx_data, unsigned int idx_size,
-        int base_vertex_idx, unsigned int start_idx, unsigned int vertex_count, unsigned int instance_count)
-{
-    const BYTE *position = NULL, *normal = NULL, *diffuse = NULL, *specular = NULL;
-    const struct wined3d_d3d_info *d3d_info = context_gl->c.d3d_info;
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    unsigned int coord_idx, stride_idx, texture_idx, vertex_idx;
-    const struct wined3d_stream_info_element *element;
-    const BYTE *tex_coords[WINED3DDP_MAXTEXCOORD];
-    unsigned int texture_unit, texture_stages;
-    const struct wined3d_ffp_attrib_ops *ops;
-    unsigned int untracked_material_count;
-    unsigned int tex_mask = 0;
-    BOOL specular_fog = FALSE;
-    BOOL ps = use_ps(state);
-    const void *ptr;
-
-    static unsigned int once;
-
-    if (!once++)
-        FIXME_(d3d_perf)("Drawing using immediate mode.\n");
-    else
-        WARN_(d3d_perf)("Drawing using immediate mode.\n");
-
-    if (!idx_size && idx_data)
-        ERR("Non-NULL idx_data with 0 idx_size, this should never happen.\n");
-
-    if (instance_count)
-        FIXME("Instancing not implemented.\n");
-
-    /* Immediate mode drawing can't make use of indices in a VBO - get the
-     * data from the index buffer. */
-    if (idx_size)
-        idx_data = (uint8_t *)wined3d_buffer_load_sysmem(state->index_buffer, &context_gl->c) + state->index_offset;
-
-    ops = &gl_info->ffp_attrib_ops;
-
-    gl_info->gl_ops.gl.p_glBegin(gl_primitive_type_from_d3d(state->primitive_type));
-
-    if (use_vs(state) || d3d_info->ffp_generic_attributes)
-    {
-        for (vertex_idx = 0; vertex_idx < vertex_count; ++vertex_idx)
-        {
-            unsigned int use_map = si->use_map;
-            unsigned int element_idx;
-
-            stride_idx = get_stride_idx(idx_data, idx_size, base_vertex_idx, start_idx, vertex_idx);
-            for (element_idx = gl_info->limits.vertex_attribs - 1; use_map;
-                     use_map &= ~(1u << element_idx), --element_idx)
-            {
-                if (!(use_map & 1u << element_idx))
-                    continue;
-
-                ptr = si->elements[element_idx].data.addr + si->elements[element_idx].stride * stride_idx;
-                ops->generic[si->elements[element_idx].format->emit_idx](element_idx, ptr);
-            }
-        }
-
-        gl_info->gl_ops.gl.p_glEnd();
-        return;
-    }
-
-    if (si->use_map & (1u << WINED3D_FFP_POSITION))
-        position = si->elements[WINED3D_FFP_POSITION].data.addr;
-
-    if (si->use_map & (1u << WINED3D_FFP_NORMAL))
-        normal = si->elements[WINED3D_FFP_NORMAL].data.addr;
-    else
-        gl_info->gl_ops.gl.p_glNormal3f(0.0f, 0.0f, 0.0f);
-
-    untracked_material_count = context_gl->untracked_material_count;
-    if (si->use_map & (1u << WINED3D_FFP_DIFFUSE))
-    {
-        element = &si->elements[WINED3D_FFP_DIFFUSE];
-        diffuse = element->data.addr;
-
-        if (untracked_material_count && element->format->id != WINED3DFMT_B8G8R8A8_UNORM)
-            FIXME("Implement diffuse color tracking from %s.\n", debug_d3dformat(element->format->id));
-    }
-    else
-    {
-        gl_info->gl_ops.gl.p_glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-    }
-
-    if (si->use_map & (1u << WINED3D_FFP_SPECULAR))
-    {
-        element = &si->elements[WINED3D_FFP_SPECULAR];
-        specular = element->data.addr;
-
-        /* Special case where the fog density is stored in the specular alpha channel. */
-        if (state->render_states[WINED3D_RS_FOGENABLE]
-                && (state->render_states[WINED3D_RS_FOGVERTEXMODE] == WINED3D_FOG_NONE
-                    || si->elements[WINED3D_FFP_POSITION].format->id == WINED3DFMT_R32G32B32A32_FLOAT)
-                && state->render_states[WINED3D_RS_FOGTABLEMODE] == WINED3D_FOG_NONE)
-        {
-            if (gl_info->supported[EXT_FOG_COORD])
-            {
-                if (element->format->id == WINED3DFMT_B8G8R8A8_UNORM)
-                    specular_fog = TRUE;
-                else
-                    FIXME("Implement fog coordinates from %s.\n", debug_d3dformat(element->format->id));
-            }
-            else
-            {
-                static unsigned int once;
-
-                if (!once++)
-                    FIXME("Implement fog for transformed vertices in software.\n");
-            }
-        }
-    }
-    else if (gl_info->supported[EXT_SECONDARY_COLOR])
-    {
-        GL_EXTCALL(glSecondaryColor3fEXT)(0.0f, 0.0f, 0.0f);
-    }
-
-    texture_stages = d3d_info->ffp_fragment_caps.max_blend_stages;
-    for (texture_idx = 0; texture_idx < texture_stages; ++texture_idx)
-    {
-        if (!gl_info->supported[ARB_MULTITEXTURE] && texture_idx > 0)
-        {
-            FIXME("Program using multiple concurrent textures which this OpenGL implementation doesn't support.\n");
-            continue;
-        }
-
-        if (!ps && !wined3d_state_get_ffp_texture(state, texture_idx))
-            continue;
-
-        texture_unit = context_gl->tex_unit_map[texture_idx];
-        if (texture_unit == WINED3D_UNMAPPED_STAGE)
-            continue;
-
-        coord_idx = state->texture_states[texture_idx][WINED3D_TSS_TEXCOORD_INDEX];
-        if (coord_idx > 7)
-        {
-            TRACE("Skipping generated coordinates (%#x) for texture %u.\n", coord_idx, texture_idx);
-            continue;
-        }
-
-        if (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx)))
-        {
-            tex_coords[coord_idx] = si->elements[WINED3D_FFP_TEXCOORD0 + coord_idx].data.addr;
-            tex_mask |= (1u << texture_idx);
-        }
-        else
-        {
-            TRACE("Setting default coordinates for texture %u.\n", texture_idx);
-            if (gl_info->supported[ARB_MULTITEXTURE])
-                GL_EXTCALL(glMultiTexCoord4fARB(GL_TEXTURE0_ARB + texture_unit, 0.0f, 0.0f, 0.0f, 1.0f));
-            else
-                gl_info->gl_ops.gl.p_glTexCoord4f(0.0f, 0.0f, 0.0f, 1.0f);
-        }
-    }
-
-    /* Blending data and point sizes are not supported by this function. They
-     * are not supported by the fixed function pipeline at all. A FIXME for
-     * them is printed after decoding the vertex declaration. */
-    for (vertex_idx = 0; vertex_idx < vertex_count; ++vertex_idx)
-    {
-        uint32_t tmp_tex_mask;
-
-        stride_idx = get_stride_idx(idx_data, idx_size, base_vertex_idx, start_idx, vertex_idx);
-
-        if (normal)
-        {
-            ptr = normal + stride_idx * si->elements[WINED3D_FFP_NORMAL].stride;
-            ops->normal[si->elements[WINED3D_FFP_NORMAL].format->emit_idx](ptr);
-        }
-
-        if (diffuse)
-        {
-            ptr = diffuse + stride_idx * si->elements[WINED3D_FFP_DIFFUSE].stride;
-            ops->diffuse[si->elements[WINED3D_FFP_DIFFUSE].format->emit_idx](ptr);
-
-            if (untracked_material_count)
-            {
-                struct wined3d_color color;
-                unsigned int i;
-
-                wined3d_color_from_d3dcolor(&color, *(const DWORD *)ptr);
-                for (i = 0; i < untracked_material_count; ++i)
-                {
-                    gl_info->gl_ops.gl.p_glMaterialfv(GL_FRONT_AND_BACK,
-                            context_gl->untracked_materials[i], &color.r);
-                }
-            }
-        }
-
-        if (specular)
-        {
-            ptr = specular + stride_idx * si->elements[WINED3D_FFP_SPECULAR].stride;
-            ops->specular[si->elements[WINED3D_FFP_SPECULAR].format->emit_idx](ptr);
-
-            if (specular_fog)
-                GL_EXTCALL(glFogCoordfEXT((float)(*(const DWORD *)ptr >> 24)));
-        }
-
-        tmp_tex_mask = tex_mask;
-        while (tmp_tex_mask)
-        {
-            texture_idx = wined3d_bit_scan(&tmp_tex_mask);
-            coord_idx = state->texture_states[texture_idx][WINED3D_TSS_TEXCOORD_INDEX];
-            ptr = tex_coords[coord_idx] + (stride_idx * si->elements[WINED3D_FFP_TEXCOORD0 + coord_idx].stride);
-            ops->texcoord[si->elements[WINED3D_FFP_TEXCOORD0 + coord_idx].format->emit_idx](
-                    GL_TEXTURE0_ARB + context_gl->tex_unit_map[texture_idx], ptr);
-        }
-
-        if (position)
-        {
-            ptr = position + stride_idx * si->elements[WINED3D_FFP_POSITION].stride;
-            ops->position[si->elements[WINED3D_FFP_POSITION].format->emit_idx](ptr);
-        }
-    }
-
-    gl_info->gl_ops.gl.p_glEnd();
-    checkGLcall("draw immediate mode");
-}
-
 static void wined3d_context_gl_draw_indirect(struct wined3d_context_gl *context_gl, const struct wined3d_state *state,
         const struct wined3d_indirect_draw_parameters *parameters, unsigned int idx_size)
 {
@@ -4985,28 +4644,6 @@ static void wined3d_context_gl_draw_indirect(struct wined3d_context_gl *context_
     checkGLcall("draw indirect");
 }
 
-static void remove_vbos(struct wined3d_context *context,
-        const struct wined3d_state *state, struct wined3d_stream_info *s)
-{
-    unsigned int i;
-
-    for (i = 0; i < ARRAY_SIZE(s->elements); ++i)
-    {
-        struct wined3d_stream_info_element *e;
-
-        if (!(s->use_map & (1u << i)))
-            continue;
-
-        e = &s->elements[i];
-        if (e->data.buffer_object)
-        {
-            struct wined3d_buffer *vb = state->streams[e->stream_idx].buffer;
-            e->data.buffer_object = 0;
-            e->data.addr += (ULONG_PTR)wined3d_buffer_load_sysmem(vb, context);
-        }
-    }
-}
-
 static GLenum gl_tfb_primitive_type_from_d3d(enum wined3d_primitive_type primitive_type)
 {
     GLenum gl_primitive_type = gl_primitive_type_from_d3d(primitive_type);
@@ -5037,14 +4674,13 @@ static GLenum gl_tfb_primitive_type_from_d3d(enum wined3d_primitive_type primiti
 void draw_primitive(struct wined3d_device *device, const struct wined3d_state *state,
         const struct wined3d_draw_parameters *parameters)
 {
-    BOOL emulation = FALSE, rasterizer_discard = FALSE;
     const struct wined3d_fb_state *fb = &state->fb;
     const struct wined3d_stream_info *stream_info;
     struct wined3d_rendertarget_view *dsv, *rtv;
-    struct wined3d_stream_info si_emulated;
     const struct wined3d_gl_info *gl_info;
     struct wined3d_context_gl *context_gl;
     struct wined3d_context *context;
+    bool rasterizer_discard = false;
     unsigned int i, idx_size = 0;
     const void *idx_data = NULL;
 
@@ -5151,41 +4787,6 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
             idx_size = 4;
     }
 
-    if (!use_vs(state))
-    {
-        if (!stream_info->position_transformed && context_gl->untracked_material_count
-                && state->render_states[WINED3D_RS_LIGHTING])
-        {
-            static BOOL warned;
-
-            if (!warned++)
-                FIXME("Using software emulation because not all material properties could be tracked.\n");
-            else
-                WARN_(d3d_perf)("Using software emulation because not all material properties could be tracked.\n");
-            emulation = TRUE;
-        }
-        else if (context->fog_coord && state->render_states[WINED3D_RS_FOGENABLE])
-        {
-            static BOOL warned;
-
-            /* Either write a pipeline replacement shader or convert the
-             * specular alpha from unsigned byte to a float in the vertex
-             * buffer. */
-            if (!warned++)
-                FIXME("Using software emulation because manual fog coordinates are provided.\n");
-            else
-                WARN_(d3d_perf)("Using software emulation because manual fog coordinates are provided.\n");
-            emulation = TRUE;
-        }
-
-        if (emulation)
-        {
-            si_emulated = context->stream_info;
-            remove_vbos(context, state, &si_emulated);
-            stream_info = &si_emulated;
-        }
-    }
-
     if (use_transform_feedback(state))
     {
         const struct wined3d_shader *shader = state->shader[WINED3D_SHADER_TYPE_GEOMETRY];
@@ -5194,7 +4795,7 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
         {
             glEnable(GL_RASTERIZER_DISCARD);
             checkGLcall("enable rasterizer discard");
-            rasterizer_discard = TRUE;
+            rasterizer_discard = true;
         }
 
         if (context->transform_feedback_paused)
@@ -5246,23 +4847,14 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
 
     if (parameters->indirect)
     {
-        if (!context->use_immediate_mode_draw && !emulation)
-            wined3d_context_gl_draw_indirect(context_gl, state, &parameters->u.indirect, idx_size);
-        else
-            FIXME("Indirect draws with immediate mode/emulation are not supported.\n");
+        wined3d_context_gl_draw_indirect(context_gl, state, &parameters->u.indirect, idx_size);
     }
     else
     {
-        unsigned int instance_count = parameters->u.direct.instance_count;
-
-        if (context->use_immediate_mode_draw || emulation)
-            draw_primitive_immediate_mode(wined3d_context_gl(context), state, stream_info, idx_data,
-                    idx_size, parameters->u.direct.base_vertex_idx,
-                    parameters->u.direct.start_idx, parameters->u.direct.index_count, instance_count);
-        else
-            wined3d_context_gl_draw_primitive_arrays(context_gl, state, idx_data, idx_size,
-                    parameters->u.direct.base_vertex_idx, parameters->u.direct.start_idx,
-                    parameters->u.direct.index_count, parameters->u.direct.start_instance, instance_count);
+        wined3d_context_gl_draw_primitive_arrays(context_gl, state, idx_data, idx_size,
+                parameters->u.direct.base_vertex_idx, parameters->u.direct.start_idx,
+                parameters->u.direct.index_count, parameters->u.direct.start_instance,
+                parameters->u.direct.instance_count);
     }
 
     if (context->uses_uavs)
@@ -5282,18 +4874,6 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
     TRACE("Draw completed.\n");
 }
 
-void wined3d_context_gl_unload_tex_coords(const struct wined3d_context_gl *context_gl)
-{
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    unsigned int texture_idx;
-
-    for (texture_idx = 0; texture_idx < gl_info->limits.texture_coords; ++texture_idx)
-    {
-        gl_info->gl_ops.ext.p_glClientActiveTextureARB(GL_TEXTURE0_ARB + texture_idx);
-        gl_info->gl_ops.gl.p_glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-    }
-}
-
 static const void *get_vertex_attrib_pointer(const struct wined3d_stream_info_element *element,
         const struct wined3d_state *state)
 {
@@ -5302,283 +4882,6 @@ static const void *get_vertex_attrib_pointer(const struct wined3d_stream_info_el
     if (element->data.buffer_object)
         offset += element->data.buffer_object->buffer_offset;
     return offset;
-}
-
-void wined3d_context_gl_load_tex_coords(const struct wined3d_context_gl *context_gl,
-        const struct wined3d_stream_info *si, GLuint *current_bo, const struct wined3d_state *state)
-{
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    const struct wined3d_format_gl *format_gl;
-    unsigned int mapped_stage = 0;
-    unsigned int texture_idx;
-    GLuint bo;
-
-    for (texture_idx = 0; texture_idx < context_gl->c.d3d_info->ffp_fragment_caps.max_blend_stages; ++texture_idx)
-    {
-        unsigned int coord_idx = state->texture_states[texture_idx][WINED3D_TSS_TEXCOORD_INDEX];
-
-        if ((mapped_stage = context_gl->tex_unit_map[texture_idx]) == WINED3D_UNMAPPED_STAGE)
-            continue;
-
-        if (mapped_stage >= gl_info->limits.texture_coords)
-        {
-            FIXME("Attempted to load unsupported texture coordinate %u.\n", mapped_stage);
-            continue;
-        }
-
-        if (coord_idx < WINED3D_MAX_FFP_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))))
-        {
-            const struct wined3d_stream_info_element *e = &si->elements[WINED3D_FFP_TEXCOORD0 + coord_idx];
-
-            TRACE("Setting up texture %u, idx %u, coord_idx %u, data %s.\n",
-                    texture_idx, mapped_stage, coord_idx, debug_bo_address(&e->data));
-
-            bo = wined3d_bo_gl_id(e->data.buffer_object);
-            if (*current_bo != bo)
-            {
-                GL_EXTCALL(glBindBuffer(GL_ARRAY_BUFFER, bo));
-                checkGLcall("glBindBuffer");
-                *current_bo = bo;
-            }
-
-            GL_EXTCALL(glClientActiveTextureARB(GL_TEXTURE0_ARB + mapped_stage));
-            checkGLcall("glClientActiveTextureARB");
-
-            /* The coords to supply depend completely on the fvf/vertex shader. */
-            format_gl = wined3d_format_gl(e->format);
-            gl_info->gl_ops.gl.p_glTexCoordPointer(format_gl->vtx_format, format_gl->vtx_type, e->stride,
-                    get_vertex_attrib_pointer(e, state));
-            gl_info->gl_ops.gl.p_glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-            if (bo)
-                wined3d_buffer_validate_user(state->streams[e->stream_idx].buffer);
-        }
-        else
-        {
-            GL_EXTCALL(glMultiTexCoord4fARB(GL_TEXTURE0_ARB + mapped_stage, 0, 0, 0, 1));
-        }
-    }
-    if (gl_info->supported[NV_REGISTER_COMBINERS])
-    {
-        /* The number of the mapped stages increases monotonically, so it's fine to use the last used one. */
-        for (texture_idx = mapped_stage + 1; texture_idx < gl_info->limits.ffp_textures; ++texture_idx)
-        {
-            GL_EXTCALL(glMultiTexCoord4fARB(GL_TEXTURE0_ARB + texture_idx, 0, 0, 0, 1));
-        }
-    }
-
-    checkGLcall("loadTexCoords");
-}
-
-/* This should match any arrays loaded in wined3d_context_gl_load_vertex_data(). */
-static void wined3d_context_gl_unload_vertex_data(struct wined3d_context_gl *context_gl)
-{
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-
-    if (!context_gl->c.namedArraysLoaded)
-        return;
-    gl_info->gl_ops.gl.p_glDisableClientState(GL_VERTEX_ARRAY);
-    gl_info->gl_ops.gl.p_glDisableClientState(GL_NORMAL_ARRAY);
-    gl_info->gl_ops.gl.p_glDisableClientState(GL_COLOR_ARRAY);
-    if (gl_info->supported[EXT_SECONDARY_COLOR])
-        gl_info->gl_ops.gl.p_glDisableClientState(GL_SECONDARY_COLOR_ARRAY_EXT);
-    wined3d_context_gl_unload_tex_coords(context_gl);
-    context_gl->c.namedArraysLoaded = FALSE;
-}
-
-static void wined3d_context_gl_load_vertex_data(struct wined3d_context_gl *context_gl,
-        const struct wined3d_stream_info *si, const struct wined3d_state *state)
-{
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    const struct wined3d_stream_info_element *e;
-    const struct wined3d_format_gl *format_gl;
-    GLuint current_bo, bo;
-    const void *offset;
-
-    TRACE("context_gl %p, si %p, state %p.\n", context_gl, si, state);
-
-    /* This is used for the fixed-function pipeline only, and the
-     * fixed-function pipeline doesn't do instancing. */
-    current_bo = gl_info->supported[ARB_VERTEX_BUFFER_OBJECT] ? ~0u : 0;
-
-    /* Blend data */
-    if ((si->use_map & (1u << WINED3D_FFP_BLENDWEIGHT))
-            || si->use_map & (1u << WINED3D_FFP_BLENDINDICES))
-    {
-        /* TODO: Support vertex blending in immediate mode draws. No need to
-         * write a FIXME here, this is done after the general vertex
-         * declaration decoding. */
-        WARN("Vertex blending not supported.\n");
-    }
-
-    /* Point Size */
-    if (si->use_map & (1u << WINED3D_FFP_PSIZE))
-    {
-        /* No such functionality in the fixed-function GL pipeline. */
-        WARN("Per-vertex point size not supported.\n");
-    }
-
-    /* Position */
-    if (si->use_map & (1u << WINED3D_FFP_POSITION))
-    {
-        e = &si->elements[WINED3D_FFP_POSITION];
-        format_gl = wined3d_format_gl(e->format);
-        offset = get_vertex_attrib_pointer(e, state);
-
-        bo = wined3d_bo_gl_id(e->data.buffer_object);
-        if (current_bo != bo)
-        {
-            GL_EXTCALL(glBindBuffer(GL_ARRAY_BUFFER, bo));
-            checkGLcall("glBindBuffer");
-            current_bo = bo;
-        }
-
-        TRACE("glVertexPointer(%#x, %#x, %#x, %p);\n", format_gl->vtx_format, format_gl->vtx_type, e->stride, offset);
-        gl_info->gl_ops.gl.p_glVertexPointer(format_gl->vtx_format, format_gl->vtx_type, e->stride, offset);
-        checkGLcall("glVertexPointer(...)");
-        gl_info->gl_ops.gl.p_glEnableClientState(GL_VERTEX_ARRAY);
-        checkGLcall("glEnableClientState(GL_VERTEX_ARRAY)");
-        if (bo)
-            wined3d_buffer_validate_user(state->streams[e->stream_idx].buffer);
-    }
-
-    /* Normals */
-    if (si->use_map & (1u << WINED3D_FFP_NORMAL))
-    {
-        e = &si->elements[WINED3D_FFP_NORMAL];
-        format_gl = wined3d_format_gl(e->format);
-        offset = get_vertex_attrib_pointer(e, state);
-
-        bo = wined3d_bo_gl_id(e->data.buffer_object);
-        if (current_bo != bo)
-        {
-            GL_EXTCALL(glBindBuffer(GL_ARRAY_BUFFER, bo));
-            checkGLcall("glBindBuffer");
-            current_bo = bo;
-        }
-
-        TRACE("glNormalPointer(%#x, %#x, %p);\n", format_gl->vtx_type, e->stride, offset);
-        gl_info->gl_ops.gl.p_glNormalPointer(format_gl->vtx_type, e->stride, offset);
-        checkGLcall("glNormalPointer(...)");
-        gl_info->gl_ops.gl.p_glEnableClientState(GL_NORMAL_ARRAY);
-        checkGLcall("glEnableClientState(GL_NORMAL_ARRAY)");
-        if (bo)
-            wined3d_buffer_validate_user(state->streams[e->stream_idx].buffer);
-    }
-    else
-    {
-        gl_info->gl_ops.gl.p_glNormal3f(0, 0, 0);
-        checkGLcall("glNormal3f(0, 0, 0)");
-    }
-
-    /* Diffuse colour */
-    if (si->use_map & (1u << WINED3D_FFP_DIFFUSE))
-    {
-        e = &si->elements[WINED3D_FFP_DIFFUSE];
-        format_gl = wined3d_format_gl(e->format);
-        offset = get_vertex_attrib_pointer(e, state);
-
-        bo = wined3d_bo_gl_id(e->data.buffer_object);
-        if (current_bo != bo)
-        {
-            GL_EXTCALL(glBindBuffer(GL_ARRAY_BUFFER, bo));
-            checkGLcall("glBindBuffer");
-            current_bo = bo;
-        }
-
-        TRACE("glColorPointer(%#x, %#x %#x, %p);\n",
-                format_gl->vtx_format, format_gl->vtx_type, e->stride, offset);
-        gl_info->gl_ops.gl.p_glColorPointer(format_gl->vtx_format, format_gl->vtx_type, e->stride, offset);
-        checkGLcall("glColorPointer(4, GL_UNSIGNED_BYTE, ...)");
-        gl_info->gl_ops.gl.p_glEnableClientState(GL_COLOR_ARRAY);
-        checkGLcall("glEnableClientState(GL_COLOR_ARRAY)");
-        if (bo)
-            wined3d_buffer_validate_user(state->streams[e->stream_idx].buffer);
-    }
-    else
-    {
-        gl_info->gl_ops.gl.p_glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-        checkGLcall("glColor4f(1, 1, 1, 1)");
-    }
-
-    /* Specular colour */
-    if (si->use_map & (1u << WINED3D_FFP_SPECULAR))
-    {
-        TRACE("Setting specular colour.\n");
-
-        e = &si->elements[WINED3D_FFP_SPECULAR];
-        offset = get_vertex_attrib_pointer(e, state);
-
-        if (gl_info->supported[EXT_SECONDARY_COLOR])
-        {
-            GLint format;
-            GLenum type;
-
-            format_gl = wined3d_format_gl(e->format);
-            type = format_gl->vtx_type;
-            format = format_gl->vtx_format;
-
-            bo = wined3d_bo_gl_id(e->data.buffer_object);
-            if (current_bo != bo)
-            {
-                GL_EXTCALL(glBindBuffer(GL_ARRAY_BUFFER, bo));
-                checkGLcall("glBindBuffer");
-                current_bo = bo;
-            }
-
-            if (format != 4 || (gl_info->quirks & WINED3D_QUIRK_ALLOWS_SPECULAR_ALPHA))
-            {
-                /* Usually specular colors only allow 3 components, since they have no alpha. In D3D, the specular alpha
-                 * contains the fog coordinate, which is passed to GL with GL_EXT_fog_coord. However, the fixed function
-                 * vertex pipeline can pass the specular alpha through, and pixel shaders can read it. So it GL accepts
-                 * 4 component secondary colors use it
-                 */
-                TRACE("glSecondaryColorPointer(%#x, %#x, %#x, %p);\n", format, type, e->stride, offset);
-                GL_EXTCALL(glSecondaryColorPointerEXT(format, type, e->stride, offset));
-                checkGLcall("glSecondaryColorPointerEXT(format, type, ...)");
-            }
-            else
-            {
-                switch (type)
-                {
-                    case GL_UNSIGNED_BYTE:
-                        TRACE("glSecondaryColorPointer(3, GL_UNSIGNED_BYTE, %#x, %p);\n", e->stride, offset);
-                        GL_EXTCALL(glSecondaryColorPointerEXT(3, GL_UNSIGNED_BYTE, e->stride, offset));
-                        checkGLcall("glSecondaryColorPointerEXT(3, GL_UNSIGNED_BYTE, ...)");
-                        break;
-
-                    default:
-                        FIXME("Add 4 component specular colour pointers for type %#x.\n", type);
-                        /* Make sure that the right colour component is dropped. */
-                        TRACE("glSecondaryColorPointer(3, %#x, %#x, %p);\n", type, e->stride, offset);
-                        GL_EXTCALL(glSecondaryColorPointerEXT(3, type, e->stride, offset));
-                        checkGLcall("glSecondaryColorPointerEXT(3, type, ...)");
-                }
-            }
-            gl_info->gl_ops.gl.p_glEnableClientState(GL_SECONDARY_COLOR_ARRAY_EXT);
-            checkGLcall("glEnableClientState(GL_SECONDARY_COLOR_ARRAY_EXT)");
-            if (bo)
-                wined3d_buffer_validate_user(state->streams[e->stream_idx].buffer);
-        }
-        else
-        {
-            WARN("Specular colour is not supported in this GL implementation.\n");
-        }
-    }
-    else
-    {
-        if (gl_info->supported[EXT_SECONDARY_COLOR])
-        {
-            GL_EXTCALL(glSecondaryColor3fEXT)(0, 0, 0);
-            checkGLcall("glSecondaryColor3fEXT(0, 0, 0)");
-        }
-        else
-        {
-            WARN("Specular colour is not supported in this GL implementation.\n");
-        }
-    }
-
-    /* Texture coordinates */
-    wined3d_context_gl_load_tex_coords(context_gl, si, &current_bo, state);
 }
 
 static void wined3d_context_gl_unload_numbered_array(struct wined3d_context_gl *context_gl, unsigned int i)
@@ -5833,21 +5136,7 @@ static void wined3d_context_gl_load_numbered_arrays(struct wined3d_context_gl *c
 void wined3d_context_gl_update_stream_sources(struct wined3d_context_gl *context_gl,
         const struct wined3d_state *state)
 {
-    if (context_gl->c.use_immediate_mode_draw)
-        return;
-
-    wined3d_context_gl_unload_vertex_data(context_gl);
-    if (context_gl->c.d3d_info->ffp_generic_attributes || use_vs(state))
-    {
-        TRACE("Loading numbered arrays.\n");
-        wined3d_context_gl_load_numbered_arrays(context_gl, &context_gl->c.stream_info, state);
-        return;
-    }
-
-    TRACE("Loading named arrays.\n");
-    wined3d_context_gl_unload_numbered_arrays(context_gl);
-    wined3d_context_gl_load_vertex_data(context_gl, &context_gl->c.stream_info, state);
-    context_gl->c.namedArraysLoaded = TRUE;
+    wined3d_context_gl_load_numbered_arrays(context_gl, &context_gl->c.stream_info, state);
 }
 
 static void apply_texture_blit_state(const struct wined3d_gl_info *gl_info, struct gl_texture *texture,
@@ -5925,7 +5214,6 @@ void wined3d_context_gl_draw_shaded_quad(struct wined3d_context_gl *context_gl, 
             GL_EXTCALL(glGenBuffers(1, &context_gl->blit_vbo));
         GL_EXTCALL(glBindBuffer(GL_ARRAY_BUFFER, context_gl->blit_vbo));
 
-        wined3d_context_gl_unload_vertex_data(context_gl);
         wined3d_context_gl_unload_numbered_arrays(context_gl);
 
         GL_EXTCALL(glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STREAM_DRAW));
@@ -5955,48 +5243,6 @@ void wined3d_context_gl_draw_shaded_quad(struct wined3d_context_gl *context_gl, 
         gl_info->gl_ops.gl.p_glEnd();
     }
     checkGLcall("draw");
-
-    gl_info->gl_ops.gl.p_glTexParameteri(info.bind_target, GL_TEXTURE_MAX_LEVEL, texture_gl->t.level_count - 1);
-    wined3d_context_gl_bind_texture(context_gl, info.bind_target, 0);
-}
-
-/* Context activation is done by the caller. */
-void wined3d_context_gl_draw_textured_quad(struct wined3d_context_gl *context_gl,
-        struct wined3d_texture_gl *texture_gl, unsigned int sub_resource_idx,
-        const RECT *src_rect, const RECT *dst_rect, enum wined3d_texture_filter_type filter)
-{
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    struct wined3d_blt_info info;
-    unsigned int level;
-
-    texture2d_get_blt_info(texture_gl, sub_resource_idx, src_rect, &info);
-
-    gl_info->gl_ops.gl.p_glEnable(info.bind_target);
-    checkGLcall("glEnable(bind_target)");
-
-    level = sub_resource_idx % texture_gl->t.level_count;
-    wined3d_context_gl_bind_texture(context_gl, info.bind_target, texture_gl->texture_rgb.name);
-    apply_texture_blit_state(gl_info, &texture_gl->texture_rgb, info.bind_target, level, filter);
-    gl_info->gl_ops.gl.p_glTexParameteri(info.bind_target, GL_TEXTURE_MAX_LEVEL, level);
-    gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-    checkGLcall("glTexEnvi");
-
-    wined3d_context_gl_pause_transform_feedback(context_gl, FALSE);
-
-    /* Draw a quad. */
-    gl_info->gl_ops.gl.p_glBegin(GL_TRIANGLE_STRIP);
-    gl_info->gl_ops.gl.p_glTexCoord3fv(&info.texcoords[0].x);
-    gl_info->gl_ops.gl.p_glVertex2i(dst_rect->left, dst_rect->top);
-
-    gl_info->gl_ops.gl.p_glTexCoord3fv(&info.texcoords[1].x);
-    gl_info->gl_ops.gl.p_glVertex2i(dst_rect->right, dst_rect->top);
-
-    gl_info->gl_ops.gl.p_glTexCoord3fv(&info.texcoords[2].x);
-    gl_info->gl_ops.gl.p_glVertex2i(dst_rect->left, dst_rect->bottom);
-
-    gl_info->gl_ops.gl.p_glTexCoord3fv(&info.texcoords[3].x);
-    gl_info->gl_ops.gl.p_glVertex2i(dst_rect->right, dst_rect->bottom);
-    gl_info->gl_ops.gl.p_glEnd();
 
     gl_info->gl_ops.gl.p_glTexParameteri(info.bind_target, GL_TEXTURE_MAX_LEVEL, texture_gl->t.level_count - 1);
     wined3d_context_gl_bind_texture(context_gl, info.bind_target, 0);

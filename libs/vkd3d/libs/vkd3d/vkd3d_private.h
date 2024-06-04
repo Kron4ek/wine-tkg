@@ -19,6 +19,9 @@
 #ifndef __VKD3D_PRIVATE_H
 #define __VKD3D_PRIVATE_H
 
+#ifndef __MINGW32__
+#define WIDL_C_INLINE_WRAPPERS
+#endif
 #define COBJMACROS
 #define NONAMELESSUNION
 #define VK_NO_PROTOTYPES
@@ -194,92 +197,13 @@ struct vkd3d_instance
     unsigned int refcount;
 };
 
-#ifdef _WIN32
-
 union vkd3d_thread_handle
 {
-    void *handle;
-};
-
-static inline bool vkd3d_atomic_compare_exchange(unsigned int volatile *x, unsigned int cmp, unsigned int xchg)
-{
-    return InterlockedCompareExchange((LONG volatile *)x, xchg, cmp) == cmp;
-}
-
-static inline unsigned int vkd3d_atomic_exchange(unsigned int volatile *x, unsigned int val)
-{
-    return InterlockedExchange((LONG volatile *)x, val);
-}
-
-static inline bool vkd3d_atomic_compare_exchange_pointer(void * volatile *x, void *cmp, void *xchg)
-{
-    return InterlockedCompareExchangePointer(x, xchg, cmp) == cmp;
-}
-
-static inline void *vkd3d_atomic_exchange_pointer(void * volatile *x, void *val)
-{
-    return InterlockedExchangePointer(x, val);
-}
-
-#else  /* _WIN32 */
-
-#include <pthread.h>
-
-union vkd3d_thread_handle
-{
+#ifndef _WIN32
     pthread_t pthread;
+#endif
     void *handle;
 };
-
-# if HAVE_SYNC_BOOL_COMPARE_AND_SWAP
-static inline bool vkd3d_atomic_compare_exchange(unsigned int volatile *x, unsigned int cmp, unsigned int xchg)
-{
-    return __sync_bool_compare_and_swap(x, cmp, xchg);
-}
-
-static inline bool vkd3d_atomic_compare_exchange_pointer(void * volatile *x, void *cmp, void *xchg)
-{
-    return __sync_bool_compare_and_swap(x, cmp, xchg);
-}
-# else
-#  error "vkd3d_atomic_compare_exchange() not implemented for this platform"
-# endif
-
-# if HAVE_ATOMIC_EXCHANGE_N
-static inline unsigned int vkd3d_atomic_exchange(unsigned int volatile *x, unsigned int val)
-{
-    return __atomic_exchange_n(x, val, __ATOMIC_SEQ_CST);
-}
-
-static inline void *vkd3d_atomic_exchange_pointer(void * volatile *x, void *val)
-{
-    return __atomic_exchange_n(x, val, __ATOMIC_SEQ_CST);
-}
-# elif HAVE_SYNC_BOOL_COMPARE_AND_SWAP
-static inline unsigned int vkd3d_atomic_exchange(unsigned int volatile *x, unsigned int val)
-{
-    unsigned int i;
-    do
-    {
-        i = *x;
-    } while (!__sync_bool_compare_and_swap(x, i, val));
-    return i;
-}
-
-static inline void *vkd3d_atomic_exchange_pointer(void * volatile *x, void *val)
-{
-    void *p;
-    do
-    {
-        p = *x;
-    } while (!__sync_bool_compare_and_swap(x, p, val));
-    return p;
-}
-# else
-#   error "vkd3d_atomic_exchange() not implemented for this platform"
-# endif
-
-#endif  /* _WIN32 */
 
 HRESULT vkd3d_create_thread(struct vkd3d_instance *instance,
         PFN_vkd3d_thread thread_main, void *data, union vkd3d_thread_handle *thread);
@@ -742,7 +666,7 @@ static inline bool vkd3d_view_incref(void *desc)
         if (refcount <= 0)
             return false;
     }
-    while (!vkd3d_atomic_compare_exchange(&h->refcount, refcount, refcount + 1));
+    while (!vkd3d_atomic_compare_exchange_u32(&h->refcount, refcount, refcount + 1));
 
     return true;
 }
@@ -1852,5 +1776,9 @@ struct vkd3d_shader_cache;
 int vkd3d_shader_open_cache(struct vkd3d_shader_cache **cache);
 unsigned int vkd3d_shader_cache_incref(struct vkd3d_shader_cache *cache);
 unsigned int vkd3d_shader_cache_decref(struct vkd3d_shader_cache *cache);
+int vkd3d_shader_cache_put(struct vkd3d_shader_cache *cache,
+        const void *key, size_t key_size, const void *value, size_t value_size);
+int vkd3d_shader_cache_get(struct vkd3d_shader_cache *cache,
+        const void *key, size_t key_size, void *value, size_t *value_size);
 
 #endif  /* __VKD3D_PRIVATE_H */

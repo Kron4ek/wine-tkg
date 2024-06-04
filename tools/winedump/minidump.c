@@ -226,10 +226,28 @@ void mdmp_dump(void)
                 for (i = 0; i < mml->NumberOfMemoryRanges; i++, mmd++)
                 {
                     printf("  Memory Range #%d:\n", i);
-                    dump_mdmp_data(&mmd->Memory, "    ");
                     printf("    Range: %s +%#x\n", get_hexint64_str(mmd->StartOfMemoryRange), mmd->Memory.DataSize);
                     if (globals_dump_sect("content"))
                         dump_mdmp_data(&mmd->Memory, "      ");
+                }
+            }
+            break;
+        case Memory64ListStream:
+            if (globals_dump_sect("memory"))
+            {
+                const MINIDUMP_MEMORY64_LIST *mml = stream;
+                const MINIDUMP_MEMORY_DESCRIPTOR64 *mmd = mml->MemoryRanges;
+                ULONG64 i64, base_rva;
+                printf("Stream [%u]: Memory64 Ranges:\n", idx);
+                printf("  NumberOfMemoryRanges: %s\n", get_uint64_str(mml->NumberOfMemoryRanges));
+                base_rva = mml->BaseRva;
+                for (i64 = 0; i64 < mml->NumberOfMemoryRanges; i64++, mmd++)
+                {
+                    printf("  Memory Range #%s:\n", get_uint64_str(i64));
+                    printf("    Range: %s +%s\n", get_hexint64_str(mmd->StartOfMemoryRange), get_hexint64_str(mmd->DataSize));
+                    if (globals_dump_sect("content"))
+                        dump_data(PRD(base_rva, mmd->DataSize), mmd->DataSize, "      ");
+                    base_rva += mmd->DataSize;
                 }
             }
             break;
@@ -499,8 +517,26 @@ void mdmp_dump(void)
 
                     if (mhd->SizeOfDescriptor >= sizeof(MINIDUMP_HANDLE_DESCRIPTOR_2))
                     {
-                        printf("    ObjectInfo: %s\n", get_mdmp_str(hd->ObjectInfoRva));
+                        MINIDUMP_HANDLE_OBJECT_INFORMATION *obj_info;
+                        unsigned link_count = 0;
+
+                        printf("    ObjectInfo: %#x\n", (UINT)hd->ObjectInfoRva);
                         printf("    Reserved0: %#x\n", hd->Reserved0);
+
+                        if (hd->ObjectInfoRva)
+                        {
+                            for (obj_info = (void*)PRD(hd->ObjectInfoRva, sizeof(*obj_info));
+                                 obj_info;
+                                 obj_info = obj_info->NextInfoRva ? (void*)PRD(obj_info->NextInfoRva, sizeof(*obj_info)) : NULL)
+                            {
+                                printf("    Information[%u]\n", link_count++);
+                                printf("      NextInfoRva: %#x\n", (UINT)obj_info->NextInfoRva);
+                                printf("      InfoType: %u\n", obj_info->InfoType);
+                                printf("      SizeOfInfo: %u\n", obj_info->SizeOfInfo);
+                                if (globals_dump_sect("content"))
+                                    dump_data((const BYTE*)(obj_info + 1), obj_info->SizeOfInfo, "        ");
+                            }
+                        }
                     }
 
                     ptr += mhd->SizeOfDescriptor;

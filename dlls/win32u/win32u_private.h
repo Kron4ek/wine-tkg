@@ -45,8 +45,7 @@ extern ULONG_PTR set_icon_param( HICON handle, ULONG_PTR param );
 
 /* dce.c */
 extern struct window_surface dummy_surface;
-extern BOOL create_dib_surface( HDC hdc, const BITMAPINFO *info );
-extern void create_offscreen_window_surface( const RECT *visible_rect,
+extern void create_offscreen_window_surface( HWND hwnd, const RECT *visible_rect,
                                              struct window_surface **surface );
 extern void erase_now( HWND hwnd, UINT rdw_flags );
 extern void flush_window_surfaces( BOOL idle );
@@ -108,6 +107,7 @@ extern void update_mouse_tracking_info( HWND hwnd );
 extern BOOL get_clip_cursor( RECT *rect );
 extern BOOL process_wine_clipcursor( HWND hwnd, UINT flags, BOOL reset );
 extern BOOL clip_fullscreen_window( HWND hwnd, BOOL reset );
+extern USHORT map_scan_to_kbd_vkey( USHORT scan, HKL layout );
 
 /* menu.c */
 extern HMENU create_menu( BOOL is_popup );
@@ -174,7 +174,8 @@ extern HPEN get_sys_color_pen( unsigned int index );
 extern UINT get_system_dpi(void);
 extern int get_system_metrics( int index );
 extern UINT get_thread_dpi(void);
-extern DPI_AWARENESS get_thread_dpi_awareness(void);
+extern UINT set_thread_dpi_awareness_context( UINT context );
+extern UINT get_thread_dpi_awareness_context(void);
 extern RECT get_virtual_screen_rect( UINT dpi );
 extern BOOL is_exiting_thread( DWORD tid );
 extern POINT map_dpi_point( POINT pt, UINT dpi_from, UINT dpi_to );
@@ -190,6 +191,18 @@ extern BOOL update_display_cache( BOOL force );
 extern void user_lock(void);
 extern void user_unlock(void);
 extern void user_check_not_lock(void);
+
+struct vulkan_gpu
+{
+    struct list entry;
+    struct pci_id pci_id;
+    char *name;
+    GUID uuid;
+    ULONGLONG memory;
+};
+
+extern BOOL get_vulkan_gpus( struct list *gpus );
+extern void free_vulkan_gpu( struct vulkan_gpu *gpu );
 extern BOOL get_vulkan_uuid_from_luid( const LUID *luid, GUID *uuid );
 
 /* winstation.c */
@@ -208,7 +221,7 @@ extern UINT get_dpi_for_window( HWND hwnd );
 extern HWND get_full_window_handle( HWND hwnd );
 extern HWND get_parent( HWND hwnd );
 extern HWND get_hwnd_message_parent(void);
-extern DPI_AWARENESS_CONTEXT get_window_dpi_awareness_context( HWND hwnd );
+extern UINT get_window_dpi_awareness_context( HWND hwnd );
 extern MINMAXINFO get_min_max_info( HWND hwnd );
 extern DWORD get_window_context_help_id( HWND hwnd );
 extern HWND get_window_relative( HWND hwnd, UINT rel );

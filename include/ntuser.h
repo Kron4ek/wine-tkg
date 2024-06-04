@@ -83,7 +83,7 @@ struct ntuser_thread_info
     UINT           receive_flags;     /* currently received message flags */
     UINT           top_window;        /* desktop window */
     UINT           msg_window;        /* HWND_MESSAGE parent window */
-    DPI_AWARENESS  dpi_awareness;     /* DPI awareness */
+    UINT           dpi_context;       /* DPI awareness context */
     UINT           default_imc;       /* default input context */
     UINT64         client_imm;        /* client IMM thread info */
     UINT64         wmchar_data;       /* client data for WM_CHAR mappings */
@@ -160,7 +160,7 @@ struct win_proc_params
     BOOL ansi;
     BOOL ansi_dst;
     enum wm_char_mapping mapping;
-    DPI_AWARENESS_CONTEXT dpi_awareness;
+    UINT dpi_context;
     WNDPROC procA;
     WNDPROC procW;
 };
@@ -281,12 +281,23 @@ struct unpack_dde_message_result
     LPARAM lparam;
 };
 
-/* process DPI awareness contexts */
-#define NTUSER_DPI_UNAWARE                0x00006010
-#define NTUSER_DPI_SYSTEM_AWARE           0x00006011
-#define NTUSER_DPI_PER_MONITOR_AWARE      0x00000012
-#define NTUSER_DPI_PER_MONITOR_AWARE_V2   0x00000022
-#define NTUSER_DPI_PER_UNAWARE_GDISCALED  0x40006010
+/* DPI awareness contexts */
+#define MAKE_NTUSER_DPI_CONTEXT( awareness, version, dpi, flags )  ((awareness) | ((version) << 4) | ((dpi) << 8) | (flags))
+#define NTUSER_DPI_CONTEXT_GET_AWARENESS( ctx )                    ((ctx) & 0x0f)
+#define NTUSER_DPI_CONTEXT_GET_VERSION( ctx )                      (((ctx) & 0xf0) >> 4)
+#define NTUSER_DPI_CONTEXT_GET_DPI( ctx )                          ((((ctx) & 0x1ff00) >> 8))
+#define NTUSER_DPI_CONTEXT_GET_FLAGS( ctx )                        ((ctx) & 0xfffe0000)
+#define NTUSER_DPI_CONTEXT_FLAG_GDISCALED                          0x40000000
+#define NTUSER_DPI_CONTEXT_FLAG_PROCESS                            0x80000000
+#define NTUSER_DPI_CONTEXT_FLAG_VALID_MASK                         (NTUSER_DPI_CONTEXT_FLAG_PROCESS | NTUSER_DPI_CONTEXT_FLAG_GDISCALED)
+
+#define NTUSER_DPI_CONTEXT_IS_MONITOR_AWARE( ctx )  (NTUSER_DPI_CONTEXT_GET_AWARENESS( ctx ) == DPI_AWARENESS_PER_MONITOR_AWARE)
+
+#define NTUSER_DPI_UNAWARE                MAKE_NTUSER_DPI_CONTEXT( DPI_AWARENESS_UNAWARE, 1, USER_DEFAULT_SCREEN_DPI, 0 )
+#define NTUSER_DPI_SYSTEM_AWARE           MAKE_NTUSER_DPI_CONTEXT( DPI_AWARENESS_SYSTEM_AWARE, 1, system_dpi, 0 )
+#define NTUSER_DPI_PER_MONITOR_AWARE      MAKE_NTUSER_DPI_CONTEXT( DPI_AWARENESS_PER_MONITOR_AWARE, 1, 0, 0 )
+#define NTUSER_DPI_PER_MONITOR_AWARE_V2   MAKE_NTUSER_DPI_CONTEXT( DPI_AWARENESS_PER_MONITOR_AWARE, 2, 0, 0 )
+#define NTUSER_DPI_PER_UNAWARE_GDISCALED  MAKE_NTUSER_DPI_CONTEXT( DPI_AWARENESS_UNAWARE, 1, USER_DEFAULT_SCREEN_DPI, NTUSER_DPI_CONTEXT_FLAG_GDISCALED )
 
 /* message spy definitions */
 #define SPY_DISPATCHMESSAGE  0x0100
@@ -822,6 +833,7 @@ enum
     NtUserCallNoParam_GetShellWindow,
     NtUserCallNoParam_GetTaskmanWindow,
     NtUserCallNoParam_ReleaseCapture,
+    NtUserCallNoParam_UpdateDisplayCache,
     /* temporary exports */
     NtUserExitingThread,
     NtUserThreadDetach,
@@ -898,6 +910,7 @@ enum
     NtUserCallOneParam_SetCaretBlinkTime,
     NtUserCallOneParam_SetProcessDefaultLayout,
     NtUserCallOneParam_SetKeyboardAutoRepeat,
+    NtUserCallOneParam_SetThreadDpiAwarenessContext,
     /* temporary exports */
     NtUserGetDeskPattern,
 };
@@ -1014,6 +1027,11 @@ static inline BOOL NtUserReplyMessage( LRESULT result )
 static inline UINT NtUserSetProcessDefaultLayout( DWORD layout )
 {
     return NtUserCallOneParam( layout, NtUserCallOneParam_SetProcessDefaultLayout );
+}
+
+static inline UINT NtUserSetThreadDpiAwarenessContext( UINT context )
+{
+    return NtUserCallOneParam( context, NtUserCallOneParam_SetThreadDpiAwarenessContext );
 }
 
 /* NtUserCallTwoParam codes, not compatible with Windows */
@@ -1148,10 +1166,9 @@ static inline HWND NtUserGetParent( HWND hwnd )
     return UlongToHandle( NtUserCallHwnd( hwnd, NtUserCallHwnd_GetParent ));
 }
 
-static inline DPI_AWARENESS_CONTEXT NtUserGetWindowDpiAwarenessContext( HWND hwnd )
+static inline UINT NtUserGetWindowDpiAwarenessContext( HWND hwnd )
 {
-    return (DPI_AWARENESS_CONTEXT)NtUserCallHwnd( hwnd,
-                                                  NtUserCallHwnd_GetWindowDpiAwarenessContext );
+    return NtUserCallHwnd( hwnd, NtUserCallHwnd_GetWindowDpiAwarenessContext );
 }
 
 static inline HIMC NtUserGetWindowInputContext( HWND hwnd )

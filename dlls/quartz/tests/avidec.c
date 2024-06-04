@@ -85,10 +85,10 @@ static LRESULT CALLBACK vfw_driver_proc(DWORD_PTR id, HDRVR driver, UINT msg,
 
         out->biSize = sizeof(BITMAPINFOHEADER);
         out->biCompression = mmioFOURCC('I','4','2','0');
-        out->biWidth = 32;
+        out->biWidth = 29;
         out->biHeight = 24;
         out->biBitCount = 12;
-        out->biSizeImage = 32 * 24 * 12 / 8;
+        out->biSizeImage = 24 * (((29 * 12 + 31) / 8) & ~3);
 
         return ICERR_OK;
     }
@@ -119,7 +119,7 @@ static LRESULT CALLBACK vfw_driver_proc(DWORD_PTR id, HDRVR driver, UINT msg,
         todo_wine_if (in->biSizeImage != sink_bitmap_info.biSizeImage)
             ok(!memcmp(in, &sink_bitmap_info, sizeof(BITMAPINFOHEADER)),
                     "Input types didn't match.\n");
-        todo_wine ok(!memcmp(out, &source_bitmap_info, sizeof(BITMAPINFOHEADER)),
+        ok(!memcmp(out, &source_bitmap_info, sizeof(BITMAPINFOHEADER)),
                 "Output types didn't match.\n");
         ok(!in_begin, "Got multiple ICM_DECOMPRESS_BEGIN messages.\n");
         in_begin = 1;
@@ -159,7 +159,7 @@ static LRESULT CALLBACK vfw_driver_proc(DWORD_PTR id, HDRVR driver, UINT msg,
         for (i = 0; i < 200; ++i)
             expect[i] = i;
         ok(!memcmp(params->lpInput, expect, 200), "Data didn't match.\n");
-        for (i = 0; i < 32 * 24 * 12 / 8; ++i)
+        for (i = 0; i < 24 * (((29 * 12 + 31) / 8) & ~3); ++i)
             output[i] = 111 - i;
 
         return ICERR_OK;
@@ -876,7 +876,7 @@ static HRESULT testsink_connect(struct strmbase_sink *iface, IPin *peer, const A
 static HRESULT WINAPI testsink_Receive(struct strmbase_sink *iface, IMediaSample *sample)
 {
     struct testfilter *filter = impl_from_strmbase_filter(iface->pin.filter);
-    BYTE *data, expect[32 * 24 * 12 / 8];
+    BYTE *data, expect[24 * (((29 * 12 + 31) / 8) & ~3)];
     REFERENCE_TIME start, stop;
     LONG size, i;
     HRESULT hr;
@@ -884,9 +884,9 @@ static HRESULT WINAPI testsink_Receive(struct strmbase_sink *iface, IMediaSample
     ++filter->got_sample;
 
     size = IMediaSample_GetSize(sample);
-    ok(size == 32 * 24 * 12 / 8, "Got size %lu.\n", size);
+    ok(size == 24 * (((29 * 12 + 31) / 8) & ~3), "Got size %lu.\n", size);
     size = IMediaSample_GetActualDataLength(sample);
-    ok(size == 32 * 24 * 12 / 8, "Got valid size %lu.\n", size);
+    ok(size == 24 * (((29 * 12 + 31) / 8) & ~3), "Got valid size %lu.\n", size);
 
     hr = IMediaSample_GetPointer(sample, &data);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1221,7 +1221,7 @@ static void test_connect_pin(void)
     {
         .bmiHeader.biSize = sizeof(BITMAPINFOHEADER),
         .bmiHeader.biCompression = test_handler,
-        .bmiHeader.biWidth = 32,
+        .bmiHeader.biWidth = 29,
         .bmiHeader.biHeight = 24,
         .bmiHeader.biBitCount = 16,
     };
@@ -1330,11 +1330,11 @@ static void test_connect_pin(void)
         VIDEOINFOHEADER expect_format =
         {
             .bmiHeader.biSize = sizeof(BITMAPINFOHEADER),
-            .bmiHeader.biWidth = 32,
+            .bmiHeader.biWidth = 29,
             .bmiHeader.biHeight = 24,
             .bmiHeader.biBitCount = expect[i].bpp,
             .bmiHeader.biCompression = expect[i].compression,
-            .bmiHeader.biSizeImage = 32 * 24 * expect[i].bpp / 8,
+            .bmiHeader.biSizeImage = 24 * (((29 * expect[i].bpp + 31) / 8) & ~3),
         };
 
         AM_MEDIA_TYPE expect_mt =
@@ -1342,7 +1342,7 @@ static void test_connect_pin(void)
             .majortype = MEDIATYPE_Video,
             .subtype = *expect[i].subtype,
             .bFixedSizeSamples = TRUE,
-            .lSampleSize = 32 * 24 * expect[i].bpp / 8,
+            .lSampleSize = 24 * (((29 * expect[i].bpp + 31) / 8) & ~3),
             .formattype = FORMAT_VideoInfo,
             .cbFormat = sizeof(VIDEOINFOHEADER),
             .pbFormat = (BYTE *)&expect_format,

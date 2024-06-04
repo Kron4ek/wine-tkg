@@ -3543,9 +3543,10 @@ void __thiscall ios_base_Callfns(ios_base *this, IOS_BASE_event event)
         cur->event_handler(event, this, cur->index);
 }
 
-/* ?_Tidy@ios_base@std@@AAAXXZ */
+/* ?_Tidy@ios_base@std@@AAEXXZ */
 /* ?_Tidy@ios_base@std@@AEAAXXZ */
-void __cdecl ios_base_Tidy(ios_base *this)
+DEFINE_THISCALL_WRAPPER(ios_base_Tidy, 4)
+void __thiscall ios_base_Tidy(ios_base *this)
 {
     IOS_BASE_iosarray *arr_cur, *arr_next;
     IOS_BASE_fnarray *event_cur, *event_next;
@@ -11154,7 +11155,7 @@ void* __thiscall _Winit_op_assign(void *this, void *rhs)
 
 void init_io(void *base)
 {
-#ifdef __x86_64__
+#ifdef RTTI_USE_RVA
     init_iosb_rtti(base);
     init_ios_base_rtti(base);
     init_basic_ios_char_rtti(base);

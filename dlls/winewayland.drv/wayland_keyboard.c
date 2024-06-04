@@ -358,7 +358,7 @@ static void add_xkb_layout(const char *xkb_layout, struct xkb_keymap *xkb_keymap
 
     unsigned int mod, keyc, len, names_len, min_keycode, max_keycode;
     struct xkb_state *xkb_state = xkb_state_new(xkb_keymap);
-    xkb_mod_mask_t shift_mask, control_mask, altgr_mask, capslock_mask;
+    xkb_mod_mask_t shift_mask, control_mask, altgr_mask, capslock_mask, numlock_mask;
     VSC_LPWSTR *names_entry, *names_ext_entry;
     VSC_VK *vsc2vk_e0_entry, *vsc2vk_e1_entry;
     VK_TO_WCHARS8 *vk2wchars_entry;
@@ -493,6 +493,7 @@ static void add_xkb_layout(const char *xkb_layout, struct xkb_keymap *xkb_keymap
     control_mask = 1 << xkb_keymap_mod_get_index(xkb_keymap, XKB_MOD_NAME_CTRL);
     capslock_mask = 1 << xkb_keymap_mod_get_index(xkb_keymap, XKB_MOD_NAME_CAPS);
     altgr_mask = 1 << xkb_keymap_mod_get_index(xkb_keymap, "Mod5");
+    numlock_mask = 1 << xkb_keymap_mod_get_index(xkb_keymap, XKB_MOD_NAME_NUM);
 
     for (keyc = min_keycode; keyc <= max_keycode; keyc++)
     {
@@ -501,6 +502,19 @@ static void add_xkb_layout(const char *xkb_layout, struct xkb_keymap *xkb_keymap
         BOOL found = FALSE, caps_found = FALSE;
         uint32_t caps_ret, shift_ret;
         unsigned int mod;
+
+        if ((vkey & KBDNUMPAD) && (vkey & 0xff) == VK_DELETE)
+        {
+            VK_TO_WCHARS8 num_vkey2wch = {.VirtualKey = VK_DECIMAL};
+
+            xkb_state_update_mask(xkb_state, 0, 0, numlock_mask, 0, 0, xkb_group);
+            if (!(num_vkey2wch.wch[0] = xkb_state_key_get_utf32(xkb_state, keyc)))
+                num_vkey2wch.wch[0] = WCH_NONE;
+            for (mod = 1; mod < 8; ++mod) num_vkey2wch.wch[mod] = WCH_NONE;
+            num_vkey2wch.Attributes = 0;
+            TRACE("vkey %#06x -> %s\n", num_vkey2wch.VirtualKey, debugstr_wn(num_vkey2wch.wch, 8));
+            *vk2wchars_entry++ = num_vkey2wch;
+        }
 
         for (mod = 0; mod < 8; ++mod)
         {
@@ -801,9 +815,8 @@ static void send_right_control(HWND hwnd, uint32_t state)
 {
     INPUT input = {0};
     input.type = INPUT_KEYBOARD;
-    input.ki.wScan = key2scan(KEY_RIGHTCTRL);
-    input.ki.wVk = VK_RCONTROL;
-    input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+    input.ki.wScan = 0xe000 | (key2scan(KEY_RIGHTCTRL) & 0xff);
+    input.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY;
     if (state == WL_KEYBOARD_KEY_STATE_RELEASED) input.ki.dwFlags |= KEYEVENTF_KEYUP;
     NtUserSendHardwareInput(hwnd, 0, &input, 0);
 }
@@ -824,8 +837,8 @@ static void keyboard_handle_key(void *data, struct wl_keyboard *wl_keyboard,
     if (key == KEY_RIGHTALT) send_right_control(hwnd, state);
 
     input.type = INPUT_KEYBOARD;
-    input.ki.wScan = scan & 0xff;
-    input.ki.wVk = NtUserMapVirtualKeyEx(scan, MAPVK_VSC_TO_VK_EX, keyboard_hkl);
+    input.ki.wScan = (scan & 0x300) ? scan + 0xdf00 : scan;
+    input.ki.dwFlags = KEYEVENTF_SCANCODE;
     if (scan & ~0xff) input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
 
     if (state == WL_KEYBOARD_KEY_STATE_RELEASED) input.ki.dwFlags |= KEYEVENTF_KEYUP;

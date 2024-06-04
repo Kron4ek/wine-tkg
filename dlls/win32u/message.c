@@ -379,7 +379,7 @@ static BOOL init_win_proc_params( struct win_proc_params *params, HWND hwnd, UIN
     params->lparam = lparam;
     params->ansi = params->ansi_dst = ansi;
     params->mapping = WMCHAR_MAP_CALLWINDOWPROC;
-    params->dpi_awareness = get_window_dpi_awareness_context( params->hwnd );
+    params->dpi_context = get_window_dpi_awareness_context( params->hwnd );
     get_winproc_params( params, TRUE );
     return TRUE;
 }
@@ -410,7 +410,7 @@ static BOOL init_window_call_params( struct win_proc_params *params, HWND hwnd, 
     params->lparam = lParam;
     params->ansi = ansi;
     params->mapping = mapping;
-    params->dpi_awareness = get_window_dpi_awareness_context( params->hwnd );
+    params->dpi_context = get_window_dpi_awareness_context( params->hwnd );
     get_winproc_params( params, !is_dialog );
     return TRUE;
 }
@@ -2500,7 +2500,7 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
     }
 
     msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
-    SetThreadDpiAwarenessContext( get_window_dpi_awareness_context( msg->hwnd ));
+    set_thread_dpi_awareness_context( get_window_dpi_awareness_context( msg->hwnd ));
 
     /* FIXME: is this really the right place for this hook? */
     event.message = msg->message;
@@ -2673,14 +2673,14 @@ static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardwar
                                       HWND hwnd_filter, UINT first, UINT last, BOOL remove )
 {
     struct ntuser_thread_info *thread_info = NtUserGetThreadInfo();
-    DPI_AWARENESS_CONTEXT context;
+    UINT context;
     BOOL ret = FALSE;
 
     thread_info->msg_source.deviceType = msg_data->source.device;
     thread_info->msg_source.originId   = msg_data->source.origin;
 
     /* hardware messages are always in physical coords */
-    context = SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
+    context = set_thread_dpi_awareness_context( NTUSER_DPI_PER_MONITOR_AWARE );
 
     if (msg->message == WM_INPUT || msg->message == WM_INPUT_DEVICE_CHANGE)
         ret = process_rawinput_message( msg, hw_id, msg_data );
@@ -2696,7 +2696,7 @@ static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardwar
         process_wine_setcursor( msg->hwnd, (HWND)msg->wParam, (HCURSOR)msg->lParam );
     else
         ERR( "unknown message type %x\n", msg->message );
-    SetThreadDpiAwarenessContext( context );
+    set_thread_dpi_awareness_context( context );
     return ret;
 }
 
@@ -3558,9 +3558,26 @@ NTSTATUS send_hardware_message( HWND hwnd, UINT flags, const INPUT *input, LPARA
                                                         MOUSEEVENTF_XDOWN | MOUSEEVENTF_XUP));
             break;
         case INPUT_KEYBOARD:
-            req->input.kbd.vkey  = input->ki.wVk;
-            req->input.kbd.scan  = input->ki.wScan;
-            req->input.kbd.flags = input->ki.dwFlags;
+            if (input->ki.dwFlags & KEYEVENTF_SCANCODE)
+            {
+                UINT scan = input->ki.wScan;
+                /* TODO: Use the keyboard layout of the target hwnd, once
+                 * NtUserGetKeyboardLayout supports non-current threads. */
+                HKL layout = NtUserGetKeyboardLayout( 0 );
+                if (flags & SEND_HWMSG_INJECTED)
+                {
+                    scan = scan & 0xff;
+                    if (input->ki.dwFlags & KEYEVENTF_EXTENDEDKEY) scan |= 0xe000;
+                }
+                req->input.kbd.vkey = map_scan_to_kbd_vkey( scan, layout );
+                req->input.kbd.scan = input->ki.wScan & 0xff;
+            }
+            else
+            {
+                req->input.kbd.vkey = input->ki.wVk;
+                req->input.kbd.scan = input->ki.wScan;
+            }
+            req->input.kbd.flags = input->ki.dwFlags & ~KEYEVENTF_SCANCODE;
             req->input.kbd.time  = input->ki.time;
             req->input.kbd.info  = input->ki.dwExtraInfo;
             affects_key_state = TRUE;

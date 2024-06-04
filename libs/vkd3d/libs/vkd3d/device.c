@@ -1334,11 +1334,11 @@ static void vkd3d_trace_physical_device_features(const struct vkd3d_physical_dev
 
     fragment_shader_interlock_features = &info->fragment_shader_interlock_features;
     TRACE("  VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT:\n");
-    TRACE("    fragmentShaderSampleInterlock: %#x.\n.",
+    TRACE("    fragmentShaderSampleInterlock: %#x.\n",
             fragment_shader_interlock_features->fragmentShaderSampleInterlock);
-    TRACE("    fragmentShaderPixelInterlock: %#x\n.",
+    TRACE("    fragmentShaderPixelInterlock: %#x.\n",
             fragment_shader_interlock_features->fragmentShaderPixelInterlock);
-    TRACE("    fragmentShaderShadingRateInterlock: %#x\n.",
+    TRACE("    fragmentShaderShadingRateInterlock: %#x.\n",
             fragment_shader_interlock_features->fragmentShaderShadingRateInterlock);
 
     demote_features = &info->demote_features;
@@ -2740,19 +2740,43 @@ static HRESULT STDMETHODCALLTYPE d3d12_cache_session_GetDevice(ID3D12ShaderCache
 static HRESULT STDMETHODCALLTYPE d3d12_cache_session_FindValue(ID3D12ShaderCacheSession *iface,
         const void *key, UINT key_size, void *value, UINT *value_size)
 {
-    FIXME("iface %p, key %p, key_size %#x, value %p, value_size %p stub!\n",
+    struct d3d12_cache_session *session = impl_from_ID3D12ShaderCacheSession(iface);
+    enum vkd3d_result ret;
+    size_t size;
+
+    TRACE("iface %p, key %p, key_size %#x, value %p, value_size %p.\n",
             iface, key, key_size, value, value_size);
 
-    return DXGI_ERROR_NOT_FOUND;
+    if (!value_size)
+    {
+        WARN("value_size is NULL, returning E_INVALIDARG.\n");
+        return E_INVALIDARG;
+    }
+
+    size = *value_size;
+    ret = vkd3d_shader_cache_get(session->cache, key, key_size, value, &size);
+    *value_size = size;
+
+    return hresult_from_vkd3d_result(ret);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d12_cache_session_StoreValue(ID3D12ShaderCacheSession *iface,
         const void *key, UINT key_size, const void *value, UINT value_size)
 {
-    FIXME("iface %p, key %p, key_size %#x, value %p, value_size %u stub!\n", iface, key, key_size,
-            value, value_size);
+    struct d3d12_cache_session *session = impl_from_ID3D12ShaderCacheSession(iface);
+    enum vkd3d_result ret;
 
-    return E_NOTIMPL;
+    TRACE("iface %p, key %p, key_size %#x, value %p, value_size %u.\n",
+            iface, key, key_size, value, value_size);
+
+    if (!key || !key_size || !value || !value_size)
+    {
+        WARN("Invalid input parameters, returning E_INVALIDARG.\n");
+        return E_INVALIDARG;
+    }
+
+    ret = vkd3d_shader_cache_put(session->cache, key, key_size, value, value_size);
+    return hresult_from_vkd3d_result(ret);
 }
 
 static void STDMETHODCALLTYPE d3d12_cache_session_SetDeleteOnDestroy(ID3D12ShaderCacheSession *iface)
@@ -2888,7 +2912,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_QueryInterface(ID3D12Device9 *ifac
             || IsEqualGUID(riid, &IID_ID3D12Object)
             || IsEqualGUID(riid, &IID_IUnknown))
     {
-        ID3D12Device_AddRef(iface);
+        ID3D12Device9_AddRef(iface);
         *object = iface;
         return S_OK;
     }
