@@ -76,6 +76,14 @@ static const char * const required_device_extensions[] =
     VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME,
 };
 
+/* In general we don't want to enable Vulkan beta extensions, but make an
+ * exception for VK_KHR_portability_subset because we draw no real feature from
+ * it, but it's still useful to be able to develop for MoltenVK without being
+ * spammed with validation errors. */
+#ifndef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
+#define VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME "VK_KHR_portability_subset"
+#endif
+
 static const struct vkd3d_optional_extension_info optional_device_extensions[] =
 {
     /* KHR extensions */
@@ -85,6 +93,7 @@ static const struct vkd3d_optional_extension_info optional_device_extensions[] =
     VK_EXTENSION(KHR_IMAGE_FORMAT_LIST, KHR_image_format_list),
     VK_EXTENSION(KHR_MAINTENANCE2, KHR_maintenance2),
     VK_EXTENSION(KHR_MAINTENANCE3, KHR_maintenance3),
+    VK_EXTENSION(KHR_PORTABILITY_SUBSET, KHR_portability_subset),
     VK_EXTENSION(KHR_PUSH_DESCRIPTOR, KHR_push_descriptor),
     VK_EXTENSION(KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE, KHR_sampler_mirror_clamp_to_edge),
     VK_EXTENSION(KHR_TIMELINE_SEMAPHORE, KHR_timeline_semaphore),
@@ -92,7 +101,7 @@ static const struct vkd3d_optional_extension_info optional_device_extensions[] =
     VK_EXTENSION(EXT_4444_FORMATS, EXT_4444_formats),
     VK_EXTENSION(EXT_CALIBRATED_TIMESTAMPS, EXT_calibrated_timestamps),
     VK_EXTENSION(EXT_CONDITIONAL_RENDERING, EXT_conditional_rendering),
-    VK_EXTENSION(EXT_DEBUG_MARKER, EXT_debug_marker),
+    VK_DEBUG_EXTENSION(EXT_DEBUG_MARKER, EXT_debug_marker),
     VK_EXTENSION(EXT_DEPTH_CLIP_ENABLE, EXT_depth_clip_enable),
     VK_EXTENSION(EXT_DESCRIPTOR_INDEXING, EXT_descriptor_indexing),
     VK_EXTENSION(EXT_FRAGMENT_SHADER_INTERLOCK, EXT_fragment_shader_interlock),
@@ -1634,6 +1643,7 @@ static HRESULT vkd3d_init_device_caps(struct d3d12_device *device,
 
     vulkan_info->device_limits = physical_device_info->properties2.properties.limits;
     vulkan_info->sparse_properties = physical_device_info->properties2.properties.sparseProperties;
+    vulkan_info->geometry_shaders = physical_device_info->features2.features.geometryShader;
     vulkan_info->sparse_binding = features->sparseBinding;
     vulkan_info->sparse_residency_3d = features->sparseResidencyImage3D;
     vulkan_info->rasterization_stream = physical_device_info->xfb_properties.transformFeedbackRasterizationStreamSelect;
@@ -3806,7 +3816,8 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_CheckFeatureSupport(ID3D12Device9 
                 return E_INVALIDARG;
             }
 
-            data->UnalignedBlockTexturesSupported = FALSE;
+            /* Vulkan does not restrict block texture alignment. */
+            data->UnalignedBlockTexturesSupported = TRUE;
 
             TRACE("Unaligned block texture support %#x.\n", data->UnalignedBlockTexturesSupported);
             return S_OK;

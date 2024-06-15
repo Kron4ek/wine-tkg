@@ -871,6 +871,14 @@ typedef struct
     lparam_t info;
 } cursor_pos_t;
 
+struct directory_entry
+{
+    data_size_t name_len;
+    data_size_t type_len;
+
+
+};
+
 
 
 
@@ -4883,20 +4891,19 @@ struct open_directory_reply
 
 
 
-struct get_directory_entry_request
+struct get_directory_entries_request
 {
     struct request_header __header;
     obj_handle_t   handle;
     unsigned int   index;
-    char __pad_20[4];
+    unsigned int   max_count;
 };
-struct get_directory_entry_reply
+struct get_directory_entries_reply
 {
     struct reply_header __header;
     data_size_t    total_len;
-    data_size_t    name_len;
-    /* VARARG(name,unicode_str,name_len); */
-    /* VARARG(type,unicode_str); */
+    unsigned int   count;
+    /* VARARG(entries,directory_entries); */
 };
 
 
@@ -5738,7 +5745,6 @@ struct get_esync_fd_reply
     unsigned int shm_idx;
 };
 
-
 struct esync_msgwait_request
 {
     struct request_header __header;
@@ -5747,6 +5753,21 @@ struct esync_msgwait_request
 struct esync_msgwait_reply
 {
     struct reply_header __header;
+};
+
+
+struct set_keyboard_repeat_request
+{
+    struct request_header __header;
+    int enable;
+    int delay;
+    int period;
+};
+struct set_keyboard_repeat_reply
+{
+    struct reply_header __header;
+    int enable;
+    char __pad_12[4];
 };
 
 
@@ -6084,7 +6105,7 @@ enum request
     REQ_set_mailslot_info,
     REQ_create_directory,
     REQ_open_directory,
-    REQ_get_directory_entry,
+    REQ_get_directory_entries,
     REQ_create_symlink,
     REQ_open_symlink,
     REQ_query_symlink,
@@ -6139,6 +6160,7 @@ enum request
     REQ_open_esync,
     REQ_get_esync_fd,
     REQ_esync_msgwait,
+    REQ_set_keyboard_repeat,
     REQ_get_esync_apc_fd,
     REQ_create_fsync,
     REQ_open_fsync,
@@ -6387,7 +6409,7 @@ union generic_request
     struct set_mailslot_info_request set_mailslot_info_request;
     struct create_directory_request create_directory_request;
     struct open_directory_request open_directory_request;
-    struct get_directory_entry_request get_directory_entry_request;
+    struct get_directory_entries_request get_directory_entries_request;
     struct create_symlink_request create_symlink_request;
     struct open_symlink_request open_symlink_request;
     struct query_symlink_request query_symlink_request;
@@ -6442,6 +6464,7 @@ union generic_request
     struct open_esync_request open_esync_request;
     struct get_esync_fd_request get_esync_fd_request;
     struct esync_msgwait_request esync_msgwait_request;
+    struct set_keyboard_repeat_request set_keyboard_repeat_request;
     struct get_esync_apc_fd_request get_esync_apc_fd_request;
     struct create_fsync_request create_fsync_request;
     struct open_fsync_request open_fsync_request;
@@ -6688,7 +6711,7 @@ union generic_reply
     struct set_mailslot_info_reply set_mailslot_info_reply;
     struct create_directory_reply create_directory_reply;
     struct open_directory_reply open_directory_reply;
-    struct get_directory_entry_reply get_directory_entry_reply;
+    struct get_directory_entries_reply get_directory_entries_reply;
     struct create_symlink_reply create_symlink_reply;
     struct open_symlink_reply open_symlink_reply;
     struct query_symlink_reply query_symlink_reply;
@@ -6743,6 +6766,7 @@ union generic_reply
     struct open_esync_reply open_esync_reply;
     struct get_esync_fd_reply get_esync_fd_reply;
     struct esync_msgwait_reply esync_msgwait_reply;
+    struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
     struct get_esync_apc_fd_reply get_esync_apc_fd_reply;
     struct create_fsync_reply create_fsync_reply;
     struct open_fsync_reply open_fsync_reply;
@@ -6753,7 +6777,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 805
+#define SERVER_PROTOCOL_VERSION 808
 
 /* ### protocol_version end ### */
 

@@ -222,6 +222,8 @@ struct hlsl_semantic
     const char *name;
     uint32_t index;
 
+    /* Name exactly as it appears in the sources. */
+    const char *raw_name;
     /* If the variable or field that stores this hlsl_semantic has already reported that it is missing. */
     bool reported_missing;
     /* In case the variable or field that stores this semantic has already reported to use a
@@ -259,8 +261,20 @@ struct hlsl_struct_field
  *   struct. */
 struct hlsl_reg
 {
-    /* Index of the first register allocated. */
+    /* Register number of the first register allocated. */
     uint32_t id;
+    /* For descriptors (buffer, texture, sampler, UAV) this is the base binding
+     * index of the descriptor.
+     * For 5.1 and above descriptors have space and may be arrayed, in which
+     * case the array shares a single register ID but has a range of register
+     * indices, and "id" and "index" are as a rule not equal.
+     * For versions below 5.1, the register number for descriptors is the same
+     * as its external binding index, so only "index" is used, and "id" is
+     * ignored.
+     * For numeric registers "index" is not used. */
+    uint32_t index;
+    /* Register space of a descriptor. Not used for numeric registers. */
+    uint32_t space;
     /* Number of registers to be allocated.
      * Unlike the variable's type's regsize, it is not expressed in register components, but rather
      *  in whole registers, and may depend on which components are used within the shader. */
@@ -396,6 +410,14 @@ struct hlsl_reg_reservation
     unsigned int offset_index;
 };
 
+union hlsl_constant_value_component
+{
+    uint32_t u;
+    int32_t i;
+    float f;
+    double d;
+};
+
 struct hlsl_ir_var
 {
     struct hlsl_type *data_type;
@@ -417,6 +439,15 @@ struct hlsl_ir_var
     struct hlsl_scope *scope;
     /* Scope that contains annotations for this variable. */
     struct hlsl_scope *annotations;
+
+    /* Array of default values the variable was initialized with, one for each component.
+     * Only for variables that need it, such as uniforms and variables inside constant buffers.
+     * This pointer is NULL for others. */
+    struct hlsl_default_value
+    {
+        /* Default value, in case the component is a numeric value. */
+        union hlsl_constant_value_component value;
+    } *default_values;
 
     /* A dynamic array containing the state block on the variable's declaration, if any.
      * An array variable may contain multiple state blocks.
@@ -460,6 +491,8 @@ struct hlsl_ir_var
     uint32_t is_uniform : 1;
     uint32_t is_param : 1;
     uint32_t is_separated_resource : 1;
+    uint32_t is_synthetic : 1;
+    uint32_t has_explicit_bind_point : 1;
 };
 
 /* This struct is used to represent assignments in state block entries:
@@ -775,13 +808,7 @@ struct hlsl_ir_constant
     struct hlsl_ir_node node;
     struct hlsl_constant_value
     {
-        union hlsl_constant_value_component
-        {
-            uint32_t u;
-            int32_t i;
-            float f;
-            double d;
-        } u[4];
+        union hlsl_constant_value_component u[4];
     } value;
     /* Constant register of type 'c' where the constant value is stored for SM1. */
     struct hlsl_reg reg;
@@ -1249,6 +1276,7 @@ void hlsl_block_cleanup(struct hlsl_block *block);
 bool hlsl_clone_block(struct hlsl_ctx *ctx, struct hlsl_block *dst_block, const struct hlsl_block *src_block);
 
 void hlsl_dump_function(struct hlsl_ctx *ctx, const struct hlsl_ir_function_decl *func);
+void hlsl_dump_var_default_values(const struct hlsl_ir_var *var);
 
 void hlsl_run_const_passes(struct hlsl_ctx *ctx, struct hlsl_block *body);
 int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func,
@@ -1259,7 +1287,9 @@ bool hlsl_init_deref_from_index_chain(struct hlsl_ctx *ctx, struct hlsl_deref *d
 bool hlsl_copy_deref(struct hlsl_ctx *ctx, struct hlsl_deref *deref, const struct hlsl_deref *other);
 
 void hlsl_cleanup_deref(struct hlsl_deref *deref);
+
 void hlsl_cleanup_semantic(struct hlsl_semantic *semantic);
+bool hlsl_clone_semantic(struct hlsl_ctx *ctx, struct hlsl_semantic *dst, const struct hlsl_semantic *src);
 
 void hlsl_cleanup_ir_switch_cases(struct list *cases);
 void hlsl_free_ir_switch_case(struct hlsl_ir_switch_case *c);

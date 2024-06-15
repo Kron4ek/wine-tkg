@@ -155,7 +155,7 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue queue, const VkPresentInfoKHR 
             RECT client_rect;
             HDC hdc_dst;
 
-            NtUserGetClientRect( surface->hwnd, &client_rect );
+            NtUserGetClientRect( surface->hwnd, &client_rect, get_win_monitor_dpi(surface->hwnd));
             width = client_rect.right - client_rect.left;
             height = client_rect.bottom - client_rect.top;
 
@@ -463,8 +463,8 @@ void vulkan_set_region( HWND toplevel, HRGN region )
         RECT client_rect;
         BOOL is_clipped;
 
-        NtUserGetClientRect( surface->hwnd, &client_rect );
-        NtUserMapWindowPoints( surface->hwnd, toplevel, (POINT *)&client_rect, 2 );
+        NtUserGetClientRect( surface->hwnd, &client_rect, get_win_monitor_dpi(surface->hwnd));
+        NtUserMapWindowPoints( surface->hwnd, toplevel, (POINT *)&client_rect, 2, 0 /* per-monitor DPI */ );
         is_clipped = NtGdiRectInRegion( region, &client_rect );
 
         if (is_clipped && !surface->offscreen_dc)

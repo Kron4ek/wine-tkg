@@ -458,6 +458,8 @@ enum dx_intrinsic_opcode
     DX_WAVE_ACTIVE_OP               = 119,
     DX_WAVE_ACTIVE_BIT              = 120,
     DX_WAVE_PREFIX_OP               = 121,
+    DX_QUAD_READ_LANE_AT            = 122,
+    DX_QUAD_OP                      = 123,
     DX_LEGACY_F32TOF16              = 130,
     DX_LEGACY_F16TOF32              = 131,
     DX_WAVE_ALL_BIT_COUNT           = 135,
@@ -574,6 +576,13 @@ enum dxil_wave_op_kind
     WAVE_OP_MUL = 1,
     WAVE_OP_MIN = 2,
     WAVE_OP_MAX = 3,
+};
+
+enum dxil_quad_op_kind
+{
+    QUAD_READ_ACROSS_X = 0,
+    QUAD_READ_ACROSS_Y = 1,
+    QUAD_READ_ACROSS_D = 2,
 };
 
 struct sm6_pointer_info
@@ -4619,6 +4628,8 @@ static enum vkd3d_shader_opcode map_dx_binary_op(enum dx_intrinsic_opcode op, co
             return VKD3DSIH_IMAX;
         case DX_IMIN:
             return VKD3DSIH_IMIN;
+        case DX_QUAD_READ_LANE_AT:
+            return VKD3DSIH_QUAD_READ_LANE_AT;
         case DX_UMAX:
             return VKD3DSIH_UMAX;
         case DX_UMIN:
@@ -5368,6 +5379,47 @@ static void sm6_parser_emit_dx_primitive_id(struct sm6_parser *sm6, enum dx_intr
         const struct sm6_value **operands, struct function_emission_state *state)
 {
     sm6_parser_emit_dx_input_register_mov(sm6, state->ins, VKD3DSPR_PRIMID, VKD3D_DATA_UINT);
+}
+
+static enum vkd3d_shader_opcode dx_map_quad_op(enum dxil_quad_op_kind op)
+{
+    switch (op)
+    {
+        case QUAD_READ_ACROSS_X:
+            return VKD3DSIH_QUAD_READ_ACROSS_X;
+        case QUAD_READ_ACROSS_Y:
+            return VKD3DSIH_QUAD_READ_ACROSS_Y;
+        case QUAD_READ_ACROSS_D:
+            return VKD3DSIH_QUAD_READ_ACROSS_D;
+        default:
+            return VKD3DSIH_INVALID;
+    }
+}
+
+static void sm6_parser_emit_dx_quad_op(struct sm6_parser *sm6, enum dx_intrinsic_opcode op,
+        const struct sm6_value **operands, struct function_emission_state *state)
+{
+    struct vkd3d_shader_instruction *ins = state->ins;
+    struct vkd3d_shader_src_param *src_param;
+    enum vkd3d_shader_opcode opcode;
+    enum dxil_quad_op_kind quad_op;
+
+    quad_op = sm6_value_get_constant_uint(operands[1]);
+    if ((opcode = dx_map_quad_op(quad_op)) == VKD3DSIH_INVALID)
+    {
+        FIXME("Unhandled quad op kind %u.\n", quad_op);
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_UNHANDLED_INTRINSIC,
+                "Quad op kind %u is unhandled.", quad_op);
+        return;
+    }
+
+    vsir_instruction_init(ins, &sm6->p.location, opcode);
+
+    if (!(src_param = instruction_src_params_alloc(ins, 1, sm6)))
+        return;
+    src_param_init_from_value(src_param, operands[0]);
+
+    instruction_dst_param_init_ssa_scalar(ins, sm6);
 }
 
 static void sm6_parser_emit_dx_raw_buffer_load(struct sm6_parser *sm6, enum dx_intrinsic_opcode op,
@@ -6229,6 +6281,8 @@ static const struct sm6_dx_opcode_info sm6_dx_op_table[] =
     [DX_MAKE_DOUBLE                   ] = {"d", "ii",   sm6_parser_emit_dx_make_double},
     [DX_OUTPUT_CONTROL_POINT_ID       ] = {"i", "",     sm6_parser_emit_dx_output_control_point_id},
     [DX_PRIMITIVE_ID                  ] = {"i", "",     sm6_parser_emit_dx_primitive_id},
+    [DX_QUAD_OP                       ] = {"n", "Rc",   sm6_parser_emit_dx_quad_op},
+    [DX_QUAD_READ_LANE_AT             ] = {"n", "Ri",   sm6_parser_emit_dx_binary},
     [DX_RAW_BUFFER_LOAD               ] = {"o", "Hii8i", sm6_parser_emit_dx_raw_buffer_load},
     [DX_RAW_BUFFER_STORE              ] = {"v", "Hiioooocc", sm6_parser_emit_dx_raw_buffer_store},
     [DX_ROUND_NE                      ] = {"g", "R",    sm6_parser_emit_dx_unary},

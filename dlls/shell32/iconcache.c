@@ -347,11 +347,14 @@ static INT SIC_LoadIcon (const WCHAR *sourcefile, INT index, DWORD flags)
     SIZE size[ARRAY_SIZE(shell_imagelists)];
     unsigned int i;
     INT ret = -1;
+    INT x, y;
 
     /* Keep track of the sizes in case any icon fails to get extracted */
     for (i = 0; i < ARRAY_SIZE(hicons); i++)
     {
-        ImageList_GetIconSize(shell_imagelists[i], &size[i].cx, &size[i].cy);
+        ImageList_GetIconSize(shell_imagelists[i], &x, &y);
+        size[i].cx = x;
+        size[i].cy = y;
         PrivateExtractIconsW(sourcefile, index, size[i].cx, size[i].cy, &hicons[i], 0, 1, 0);
     }
 

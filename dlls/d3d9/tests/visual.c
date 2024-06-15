@@ -12332,17 +12332,14 @@ static void test_pointsize(void)
                     ok(color != 0xff00ffff, "Got unexpected color 0x%08x at (64, 64).\n", color);
                 }
 
-                todo_wine_if (j == 10)
-                {
-                    color = get_readback_color(&rb, 63, 64);
-                    ok(color == 0xff00ffff, "Got unexpected color 0x%08x at (63, 64).\n", color);
-                    color = get_readback_color(&rb, 65, 64);
-                    ok(color == 0xff00ffff, "Got unexpected color 0x%08x at (65, 64).\n", color);
-                    color = get_readback_color(&rb, 64, 63);
-                    ok(color == 0xff00ffff, "Got unexpected color 0x%08x at (64, 63).\n", color);
-                    color = get_readback_color(&rb, 64, 65);
-                    ok(color == 0xff00ffff, "Got unexpected color 0x%08x at (64, 65).\n", color);
-                }
+                color = get_readback_color(&rb, 63, 64);
+                ok(color == 0xff00ffff, "Got unexpected color 0x%08x at (63, 64).\n", color);
+                color = get_readback_color(&rb, 65, 64);
+                ok(color == 0xff00ffff, "Got unexpected color 0x%08x at (65, 64).\n", color);
+                color = get_readback_color(&rb, 64, 63);
+                ok(color == 0xff00ffff, "Got unexpected color 0x%08x at (64, 63).\n", color);
+                color = get_readback_color(&rb, 64, 65);
+                ok(color == 0xff00ffff, "Got unexpected color 0x%08x at (64, 65).\n", color);
             }
             else
             {
@@ -26086,10 +26083,9 @@ static void test_color_vertex(void)
         ok(SUCCEEDED(hr), "Failed to end scene, hr %#lx.\n", hr);
 
         colour = getPixelColor(device, 320, 240);
-        todo_wine_if (i == 13 || i == 14 || i == 16 || i == 18 || i == 19)
-            ok(color_match(colour, tests[i].result, 1),
-                    "Expected colour 0x%08x for test %u, got 0x%08x.\n",
-                    tests[i].result, i, colour);
+        ok(color_match(colour, tests[i].result, 1),
+                "Expected colour 0x%08x for test %u, got 0x%08x.\n",
+                tests[i].result, i, colour);
     }
 
     refcount = IDirect3DDevice9_Release(device);
@@ -28519,8 +28515,7 @@ static void test_default_diffuse(void)
             ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
             colour = getPixelColor(device, 320, 240);
-            todo_wine_if (j == 2)
-                ok(colour == vs_tests[j].expect_colour, "Got unexpected colour %08x.\n", colour);
+            ok(colour == vs_tests[j].expect_colour, "Got unexpected colour %08x.\n", colour);
 
             winetest_pop_context();
         }

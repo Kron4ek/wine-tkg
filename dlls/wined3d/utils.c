@@ -5834,11 +5834,6 @@ void get_fog_start_end(const struct wined3d_context *context, const struct wined
             *end = 0.0f;
             break;
 
-        case FOGSOURCE_COORD:
-            *start = 255.0f;
-            *end = 0.0f;
-            break;
-
         case FOGSOURCE_FFP:
             tmpvalue.d = state->render_states[WINED3D_RS_FOGSTART];
             *start = tmpvalue.f;
@@ -6507,11 +6502,10 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_context *context,
             }
             else
             {
-                const struct wined3d_stream_info *si = &context->stream_info;
                 unsigned int coord_idx = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
                 if ((state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX] >> WINED3D_FFP_TCI_SHIFT)
                         & WINED3D_FFP_TCI_MASK
-                        || (coord_idx < WINED3D_MAX_FFP_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx)))))
+                        || (coord_idx < WINED3D_MAX_FFP_TEXTURES && (state->vertex_declaration->texcoords & (1u << coord_idx))))
                     settings->texcoords_initialized |= 1u << i;
             }
         }
@@ -6566,6 +6560,7 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
         const struct wined3d_state *state, struct wined3d_ffp_vs_settings *settings)
 {
     enum wined3d_material_color_source diffuse_source, emissive_source, ambient_source, specular_source;
+    const struct wined3d_vertex_declaration *vdecl = state->vertex_declaration;
     const struct wined3d_stream_info *si = &context->stream_info;
     const struct wined3d_d3d_info *d3d_info = context->d3d_info;
     unsigned int coord_idx, i;
@@ -6576,7 +6571,8 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
     {
         settings->transformed = 1;
         settings->point_size = state->primitive_type == WINED3D_PT_POINTLIST;
-        settings->per_vertex_point_size = !!(si->use_map & 1u << WINED3D_FFP_PSIZE);
+        settings->per_vertex_point_size = vdecl->point_size;
+        settings->diffuse = vdecl->diffuse;
         if (!state->render_states[WINED3D_RS_FOGENABLE])
             settings->fog_mode = WINED3D_FFP_VS_FOG_OFF;
         else if (state->render_states[WINED3D_RS_FOGTABLEMODE] != WINED3D_FOG_NONE)
@@ -6587,7 +6583,7 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
         for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
         {
             coord_idx = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
-            if (coord_idx < WINED3D_MAX_FFP_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))))
+            if (coord_idx < WINED3D_MAX_FFP_TEXTURES && (vdecl->texcoords & (1u << coord_idx)))
                 settings->texcoords |= 1u << i;
             settings->texgen[i] = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
         }
@@ -6619,16 +6615,17 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
 
     settings->clipping = state->render_states[WINED3D_RS_CLIPPING]
             && state->render_states[WINED3D_RS_CLIPPLANEENABLE];
-    settings->normal = !!(si->use_map & (1u << WINED3D_FFP_NORMAL));
+    settings->diffuse = vdecl->diffuse;
+    settings->normal = vdecl->normal;
     settings->normalize = settings->normal && state->render_states[WINED3D_RS_NORMALIZENORMALS];
     settings->lighting = !!state->render_states[WINED3D_RS_LIGHTING];
     settings->localviewer = !!state->render_states[WINED3D_RS_LOCALVIEWER];
     settings->specular_enable = !!state->render_states[WINED3D_RS_SPECULARENABLE];
     settings->point_size = state->primitive_type == WINED3D_PT_POINTLIST;
-    settings->per_vertex_point_size = !!(si->use_map & 1u << WINED3D_FFP_PSIZE);
+    settings->per_vertex_point_size = vdecl->point_size;
 
     wined3d_get_material_colour_source(&diffuse_source, &emissive_source,
-            &ambient_source, &specular_source, state, si);
+            &ambient_source, &specular_source, state);
     settings->diffuse_source = diffuse_source;
     settings->emissive_source = emissive_source;
     settings->ambient_source = ambient_source;
@@ -6637,7 +6634,7 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
     for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
     {
         coord_idx = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
-        if (coord_idx < WINED3D_MAX_FFP_TEXTURES && (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))))
+        if (coord_idx < WINED3D_MAX_FFP_TEXTURES && (vdecl->texcoords & (1u << coord_idx)))
             settings->texcoords |= 1u << i;
         settings->texgen[i] = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
     }

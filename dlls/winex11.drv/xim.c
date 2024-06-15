@@ -434,7 +434,7 @@ void X11DRV_UpdateCandidatePos( HWND hwnd, const RECT *caret_rect )
                 pt.y = caret_rect->bottom;
 
                 if (hwnd != data->hwnd)
-                    NtUserMapWindowPoints( hwnd, data->hwnd, &pt, 1 );
+                    NtUserMapWindowPoints( hwnd, data->hwnd, &pt, 1, 0 /* per-monitor DPI */ );
 
                 if (NtUserGetWindowLongW( data->hwnd, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL)
                     pt.x = data->client_rect.right - data->client_rect.left - 1 - pt.x;

@@ -1831,8 +1831,7 @@ static HWND set_focus_window( HWND hwnd )
             send_message( ime_hwnd, WM_IME_INTERNAL, IME_INTERNAL_ACTIVATE,
                           HandleToUlong(hwnd) );
 
-        if (previous)
-            NtUserNotifyWinEvent( EVENT_OBJECT_FOCUS, hwnd, OBJID_CLIENT, 0 );
+        NtUserNotifyWinEvent( EVENT_OBJECT_FOCUS, hwnd, OBJID_CLIENT, 0 );
 
         send_message( hwnd, WM_SETFOCUS, (WPARAM)previous, 0 );
     }
@@ -2213,10 +2212,7 @@ BOOL WINAPI NtUserCreateCaret( HWND hwnd, HBITMAP bitmap, int width, int height 
         if ((ret = !wine_server_call_err( req )))
         {
             prev      = wine_server_ptr_handle( reply->previous );
-            r.left    = reply->old_rect.left;
-            r.top     = reply->old_rect.top;
-            r.right   = reply->old_rect.right;
-            r.bottom  = reply->old_rect.bottom;
+            r         = wine_server_get_rect( reply->old_rect );
             old_state = reply->old_state;
             hidden    = reply->old_hide;
         }
@@ -2256,10 +2252,7 @@ BOOL destroy_caret(void)
         if ((ret = !wine_server_call_err( req )))
         {
             prev      = wine_server_ptr_handle( reply->previous );
-            r.left    = reply->old_rect.left;
-            r.top     = reply->old_rect.top;
-            r.right   = reply->old_rect.right;
-            r.bottom  = reply->old_rect.bottom;
+            r         = wine_server_get_rect( reply->old_rect );
             old_state = reply->old_state;
             hidden    = reply->old_hide;
         }
@@ -2346,10 +2339,7 @@ BOOL set_caret_pos( int x, int y )
         if ((ret = !wine_server_call_err( req )))
         {
             hwnd      = wine_server_ptr_handle( reply->full_handle );
-            r.left    = reply->old_rect.left;
-            r.top     = reply->old_rect.top;
-            r.right   = reply->old_rect.right;
-            r.bottom  = reply->old_rect.bottom;
+            r         = wine_server_get_rect( reply->old_rect );
             old_state = reply->old_state;
             hidden    = reply->old_hide;
         }
@@ -2390,10 +2380,7 @@ BOOL WINAPI NtUserShowCaret( HWND hwnd )
         if ((ret = !wine_server_call_err( req )))
         {
             hwnd      = wine_server_ptr_handle( reply->full_handle );
-            r.left    = reply->old_rect.left;
-            r.top     = reply->old_rect.top;
-            r.right   = reply->old_rect.right;
-            r.bottom  = reply->old_rect.bottom;
+            r         = wine_server_get_rect( reply->old_rect );
             hidden    = reply->old_hide;
         }
     }
@@ -2430,10 +2417,7 @@ BOOL WINAPI NtUserHideCaret( HWND hwnd )
         if ((ret = !wine_server_call_err( req )))
         {
             hwnd      = wine_server_ptr_handle( reply->full_handle );
-            r.left    = reply->old_rect.left;
-            r.top     = reply->old_rect.top;
-            r.right   = reply->old_rect.right;
-            r.bottom  = reply->old_rect.bottom;
+            r         = wine_server_get_rect( reply->old_rect );
             old_state = reply->old_state;
             hidden    = reply->old_hide;
         }
@@ -2465,10 +2449,7 @@ void toggle_caret( HWND hwnd )
         if ((ret = !wine_server_call( req )))
         {
             hwnd      = wine_server_ptr_handle( reply->full_handle );
-            r.left    = reply->old_rect.left;
-            r.top     = reply->old_rect.top;
-            r.right   = reply->old_rect.right;
-            r.bottom  = reply->old_rect.bottom;
+            r         = wine_server_get_rect( reply->old_rect );
             hidden    = reply->old_hide;
         }
     }
@@ -2517,6 +2498,7 @@ BOOL clip_fullscreen_window( HWND hwnd, BOOL reset )
     RECT rect;
     HMONITOR monitor;
     DWORD style;
+    UINT dpi;
     BOOL ret;
 
     if (hwnd == NtUserGetDesktopWindow()) return FALSE;
@@ -2528,14 +2510,15 @@ BOOL clip_fullscreen_window( HWND hwnd, BOOL reset )
     /* maximized windows don't count as full screen */
     if ((style & WS_MAXIMIZE) && (style & WS_CAPTION) == WS_CAPTION) return FALSE;
 
-    if (!NtUserGetWindowRect( hwnd, &rect )) return FALSE;
-    if (!NtUserIsWindowRectFullScreen( &rect )) return FALSE;
+    dpi = get_dpi_for_window( hwnd );
+    if (!NtUserGetWindowRect( hwnd, &rect, dpi )) return FALSE;
+    if (!NtUserIsWindowRectFullScreen( &rect, dpi )) return FALSE;
     if (is_captured_by_system()) return FALSE;
     if (NtGetTickCount() - thread_info->clipping_reset < 1000) return FALSE;
     if (!reset && clipping_cursor && thread_info->clipping_cursor) return FALSE;  /* already clipping */
 
     if (!(monitor = NtUserMonitorFromWindow( hwnd, MONITOR_DEFAULTTONEAREST ))) return FALSE;
-    if (!NtUserGetMonitorInfo( monitor, &monitor_info )) return FALSE;
+    if (!get_monitor_info( monitor, &monitor_info, 0 )) return FALSE;
     if (!grab_fullscreen)
     {
         RECT virtual_rect = NtUserGetVirtualScreenRect();
@@ -2548,10 +2531,7 @@ BOOL clip_fullscreen_window( HWND hwnd, BOOL reset )
     SERVER_START_REQ( set_cursor )
     {
         req->flags = SET_CURSOR_CLIP | SET_CURSOR_FSCLIP;
-        req->clip.left   = monitor_info.rcMonitor.left;
-        req->clip.top    = monitor_info.rcMonitor.top;
-        req->clip.right  = monitor_info.rcMonitor.right;
-        req->clip.bottom = monitor_info.rcMonitor.bottom;
+        req->clip  = wine_server_rectangle( monitor_info.rcMonitor );
         ret = !wine_server_call( req );
     }
     SERVER_END_REQ;
@@ -2571,9 +2551,8 @@ BOOL WINAPI NtUserGetPointerInfoList( UINT32 id, POINTER_INPUT_TYPE type, UINT_P
     return FALSE;
 }
 
-BOOL get_clip_cursor( RECT *rect )
+BOOL get_clip_cursor( RECT *rect, UINT dpi )
 {
-    UINT dpi;
     BOOL ret;
 
     if (!rect) return FALSE;
@@ -2582,16 +2561,11 @@ BOOL get_clip_cursor( RECT *rect )
     {
         req->flags = 0;
         if ((ret = !wine_server_call( req )))
-        {
-            rect->left   = reply->new_clip.left;
-            rect->top    = reply->new_clip.top;
-            rect->right  = reply->new_clip.right;
-            rect->bottom = reply->new_clip.bottom;
-        }
+            *rect = wine_server_get_rect( reply->new_clip );
     }
     SERVER_END_REQ;
 
-    if (ret && (dpi = get_thread_dpi()))
+    if (ret)
     {
         HMONITOR monitor = monitor_from_rect( rect, MONITOR_DEFAULTTOPRIMARY, 0 );
         *rect = map_dpi_rect( *rect, get_monitor_dpi( monitor ), dpi );
@@ -2619,7 +2593,7 @@ BOOL process_wine_clipcursor( HWND hwnd, UINT flags, BOOL reset )
     if (!grab_pointer) return TRUE;
 
     /* we are clipping if the clip rectangle is smaller than the screen */
-    get_clip_cursor( &rect );
+    get_clip_cursor( &rect, 0 );
     intersect_rect( &rect, &rect, &virtual_rect );
     if (EqualRect( &rect, &virtual_rect )) empty = TRUE;
     if (empty && !(flags & SET_CURSOR_FSCLIP))
@@ -2662,10 +2636,7 @@ BOOL WINAPI NtUserClipCursor( const RECT *rect )
         if (rect)
         {
             req->flags       = SET_CURSOR_CLIP;
-            req->clip.left   = rect->left;
-            req->clip.top    = rect->top;
-            req->clip.right  = rect->right;
-            req->clip.bottom = rect->bottom;
+            req->clip        = wine_server_rectangle( *rect );
         }
         else req->flags = SET_CURSOR_NOCLIP;
 

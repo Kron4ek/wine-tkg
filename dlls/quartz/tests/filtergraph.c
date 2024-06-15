@@ -46,7 +46,7 @@ static WCHAR *create_file(const WCHAR *name, const char *data, DWORD size)
     ok(file != INVALID_HANDLE_VALUE, "Failed to create file %s, error %lu.\n",
             wine_dbgstr_w(pathW), GetLastError());
     WriteFile(file, data, size, &written, NULL);
-    ok(written = size, "Failed to write file data, error %lu.\n", GetLastError());
+    ok(written == size, "Failed to write file data, error %lu.\n", GetLastError());
     CloseHandle(file);
 
     return pathW;
@@ -2965,6 +2965,14 @@ static void test_control_delegation(void)
     ok(hr == VFW_E_NOT_CONNECTED, "Got hr %#lx.\n", hr);
     hr = IVideoWindow_SetWindowForeground(window, OAFALSE);
     ok(hr == VFW_E_NOT_CONNECTED, "Got hr %#lx.\n", hr);
+
+    val = 0xdeadbeef;
+    hr = IVideoWindow_get_FullScreenMode(window, &val);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(val == OAFALSE, "Got fullscreen %lu\n", val);
+
+    hr = IVideoWindow_put_FullScreenMode(window, OAFALSE);
+    ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
 
     hr = IFilterGraph2_RemoveFilter(graph, renderer);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);

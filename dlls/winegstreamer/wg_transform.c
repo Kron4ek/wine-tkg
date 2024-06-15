@@ -56,10 +56,10 @@ struct wg_transform
     bool input_is_flipped;
     GstElement *video_flip;
 
-    struct wg_format output_format;
     GstAtomicQueue *output_queue;
     GstSample *output_sample;
     bool output_caps_changed;
+    GstCaps *desired_caps;
     GstCaps *output_caps;
 };
 
@@ -96,7 +96,7 @@ static GstFlowReturn transform_sink_chain_cb(GstPad *pad, GstObject *parent, Gst
         return GST_FLOW_ERROR;
     }
 
-    if (transform->output_caps_changed)
+    if (transform->output_caps_changed && transform->attrs.allow_format_change)
         GST_MINI_OBJECT_FLAG_SET(sample, GST_SAMPLE_FLAG_WG_CAPS_CHANGED);
     transform->output_caps_changed = false;
 
@@ -188,28 +188,53 @@ static gboolean transform_sink_query_allocation(struct wg_transform *transform, 
     return true;
 }
 
-static GstCaps *transform_format_to_caps(struct wg_transform *transform, const struct wg_format *format)
+static void caps_remove_field(GstCaps *caps, const char *field)
 {
-    struct wg_format copy = *format;
+    guint i;
 
-    if (format->major_type == WG_MAJOR_TYPE_VIDEO)
+    for (i = 0; i < gst_caps_get_size(caps); ++i)
     {
-        if (transform->attrs.allow_size_change)
-            copy.u.video.width = copy.u.video.height = 0;
-        copy.u.video.fps_n = copy.u.video.fps_d = 0;
+        GstStructure *structure = gst_caps_get_structure(caps, i);
+        gst_structure_remove_fields(structure, field, NULL);
+    }
+}
+
+static GstCaps *caps_strip_fields(GstCaps *caps, bool strip_size)
+{
+    if (stream_type_from_caps(caps) != GST_STREAM_TYPE_VIDEO)
+        return gst_caps_ref(caps);
+
+    if ((caps = gst_caps_copy(caps)))
+    {
+        if (strip_size)
+        {
+            caps_remove_field(caps, "width");
+            caps_remove_field(caps, "height");
+        }
+
+        /* strip fields which we do not support and could cause pipeline failure or spurious format changes */
+        caps_remove_field(caps, "framerate");
+        caps_remove_field(caps, "colorimetry");
+        caps_remove_field(caps, "chroma-site");
+        caps_remove_field(caps, "interlace-mode");
+        caps_remove_field(caps, "pixel-aspect-ratio");
     }
 
-    return wg_format_to_caps(&copy);
+    return caps;
 }
 
 static gboolean transform_sink_query_caps(struct wg_transform *transform, GstQuery *query)
 {
     GstCaps *caps, *filter, *temp;
+    bool strip_size = false;
 
     GST_LOG("transform %p, %"GST_PTR_FORMAT, transform, query);
 
     gst_query_parse_caps(query, &filter);
-    if (!(caps = transform_format_to_caps(transform, &transform->output_format)))
+    if (filter && gst_structure_has_field(gst_caps_get_structure(filter, 0), "width"))
+        strip_size = transform->attrs.allow_format_change;
+
+    if (!(caps = caps_strip_fields(transform->desired_caps, strip_size)))
         return false;
 
     if (filter)
@@ -248,23 +273,6 @@ static gboolean transform_sink_query_cb(GstPad *pad, GstObject *parent, GstQuery
     return gst_pad_query_default(pad, parent, query);
 }
 
-static gboolean transform_output_caps_is_compatible(struct wg_transform *transform, GstCaps *caps)
-{
-    GstCaps *copy = gst_caps_copy(caps);
-    gboolean ret;
-    gsize i;
-
-    for (i = 0; i < gst_caps_get_size(copy); ++i)
-    {
-        GstStructure *structure = gst_caps_get_structure(copy, i);
-        gst_structure_remove_fields(structure, "framerate", NULL);
-    }
-
-    ret = gst_caps_is_always_compatible(transform->output_caps, copy);
-    gst_caps_unref(copy);
-    return ret;
-}
-
 static void transform_sink_event_caps(struct wg_transform *transform, GstEvent *event)
 {
     GstCaps *caps;
@@ -273,9 +281,9 @@ static void transform_sink_event_caps(struct wg_transform *transform, GstEvent *
 
     gst_event_parse_caps(event, &caps);
 
-    transform->output_caps_changed = transform->output_caps_changed
-            || !transform_output_caps_is_compatible(transform, caps);
-
+    transform->output_caps_changed = true;
+    gst_caps_unref(transform->desired_caps);
+    transform->desired_caps = gst_caps_ref(caps);
     gst_caps_unref(transform->output_caps);
     transform->output_caps = gst_caps_ref(caps);
 }
@@ -320,6 +328,7 @@ NTSTATUS wg_transform_destroy(void *args)
     g_object_unref(transform->my_sink);
     g_object_unref(transform->my_src);
     gst_query_unref(transform->drain_query);
+    gst_caps_unref(transform->desired_caps);
     gst_caps_unref(transform->output_caps);
     gst_atomic_queue_unref(transform->output_queue);
     free(transform);
@@ -411,9 +420,8 @@ NTSTATUS wg_transform_create(void *args)
     if (!(transform->allocator = wg_allocator_create()))
         goto out;
     transform->attrs = *params->attrs;
-    transform->output_format = output_format;
 
-    if (!(src_caps = transform_format_to_caps(transform, &input_format)))
+    if (!(src_caps = wg_format_to_caps(&input_format)))
         goto out;
     if (!(template = gst_pad_template_new("src", GST_PAD_SRC, GST_PAD_ALWAYS, src_caps)))
         goto out;
@@ -427,8 +435,9 @@ NTSTATUS wg_transform_create(void *args)
     gst_pad_set_element_private(transform->my_src, transform);
     gst_pad_set_query_function(transform->my_src, transform_src_query_cb);
 
-    if (!(transform->output_caps = transform_format_to_caps(transform, &output_format)))
+    if (!(transform->output_caps = wg_format_to_caps(&output_format)))
         goto out;
+    transform->desired_caps = gst_caps_ref(transform->output_caps);
     if (!(template = gst_pad_template_new("sink", GST_PAD_SINK, GST_PAD_ALWAYS, transform->output_caps)))
         goto out;
     transform->my_sink = gst_pad_new_from_template(template, "sink");
@@ -577,6 +586,8 @@ NTSTATUS wg_transform_create(void *args)
 out:
     if (transform->my_sink)
         gst_object_unref(transform->my_sink);
+    if (transform->desired_caps)
+        gst_caps_unref(transform->desired_caps);
     if (transform->output_caps)
         gst_caps_unref(transform->output_caps);
     if (transform->my_src)
@@ -605,28 +616,72 @@ out:
     return status;
 }
 
+NTSTATUS wg_transform_get_output_format(void *args)
+{
+    struct wg_transform_get_output_format_params *params = args;
+    struct wg_transform *transform = get_transform(params->transform);
+    struct wg_format *format = params->format;
+    GstVideoInfo video_info;
+    GstCaps *output_caps;
+
+    if (transform->output_sample)
+        output_caps = gst_sample_get_caps(transform->output_sample);
+    else
+        output_caps = transform->output_caps;
+
+    GST_INFO("transform %p output caps %"GST_PTR_FORMAT, transform, output_caps);
+
+    wg_format_from_caps(format, output_caps);
+
+    if (stream_type_from_caps(output_caps) == GST_STREAM_TYPE_VIDEO
+            && gst_video_info_from_caps(&video_info, output_caps))
+    {
+        gsize plane_align = transform->attrs.output_plane_align;
+        GstVideoAlignment align = {0};
+
+        /* set the desired output buffer alignment on the dest video info */
+        align_video_info_planes(plane_align, &video_info, &align);
+
+        GST_INFO("Returning video alignment left %u, top %u, right %u, bottom %u.", align.padding_left,
+                align.padding_top, align.padding_right, align.padding_bottom);
+
+        format->u.video.padding.left = align.padding_left;
+        format->u.video.width += format->u.video.padding.left;
+        format->u.video.padding.right = align.padding_right;
+        format->u.video.width += format->u.video.padding.right;
+        format->u.video.padding.top = align.padding_top;
+        format->u.video.height += format->u.video.padding.top;
+        format->u.video.padding.bottom = align.padding_bottom;
+        format->u.video.height += format->u.video.padding.bottom;
+    }
+
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS wg_transform_set_output_format(void *args)
 {
     struct wg_transform_set_output_format_params *params = args;
     struct wg_transform *transform = get_transform(params->transform);
     const struct wg_format *format = params->format;
+    GstCaps *caps, *stripped;
     GstSample *sample;
-    GstCaps *caps;
 
-    if (!(caps = transform_format_to_caps(transform, format)))
+    if (!(caps = wg_format_to_caps(format)))
     {
         GST_ERROR("Failed to convert format %p to caps.", format);
         return STATUS_UNSUCCESSFUL;
     }
-    transform->output_format = *format;
 
     GST_INFO("transform %p output caps %"GST_PTR_FORMAT, transform, caps);
 
-    if (transform_output_caps_is_compatible(transform, caps))
+    stripped = caps_strip_fields(caps, transform->attrs.allow_format_change);
+    if (gst_caps_is_always_compatible(transform->output_caps, stripped))
     {
+        gst_caps_unref(stripped);
         gst_caps_unref(caps);
         return STATUS_SUCCESS;
     }
+    gst_caps_unref(stripped);
 
     if (!gst_pad_peer_query(transform->my_src, transform->drain_query))
     {
@@ -634,8 +689,8 @@ NTSTATUS wg_transform_set_output_format(void *args)
         return STATUS_UNSUCCESSFUL;
     }
 
-    gst_caps_unref(transform->output_caps);
-    transform->output_caps = caps;
+    gst_caps_unref(transform->desired_caps);
+    transform->desired_caps = caps;
 
     if (transform->video_flip)
     {
@@ -914,7 +969,6 @@ NTSTATUS wg_transform_read_data(void *args)
     struct wg_transform *transform = get_transform(params->transform);
     GstVideoInfo src_video_info, dst_video_info;
     struct wg_sample *sample = params->sample;
-    struct wg_format *format = params->format;
     GstVideoAlignment align = {0};
     GstBuffer *output_buffer;
     GstCaps *output_caps;
@@ -948,29 +1002,6 @@ NTSTATUS wg_transform_read_data(void *args)
     if (GST_MINI_OBJECT_FLAG_IS_SET(transform->output_sample, GST_SAMPLE_FLAG_WG_CAPS_CHANGED))
     {
         GST_MINI_OBJECT_FLAG_UNSET(transform->output_sample, GST_SAMPLE_FLAG_WG_CAPS_CHANGED);
-
-        GST_INFO("transform %p output caps %"GST_PTR_FORMAT, transform, output_caps);
-
-        if (format)
-        {
-            wg_format_from_caps(format, output_caps);
-
-            if (format->major_type == WG_MAJOR_TYPE_VIDEO)
-            {
-                GST_INFO("Returning video alignment left %u, top %u, right %u, bottom %u.", align.padding_left,
-                        align.padding_top, align.padding_right, align.padding_bottom);
-
-                format->u.video.padding.left = align.padding_left;
-                format->u.video.width += format->u.video.padding.left;
-                format->u.video.padding.right = align.padding_right;
-                format->u.video.width += format->u.video.padding.right;
-                format->u.video.padding.top = align.padding_top;
-                format->u.video.height += format->u.video.padding.top;
-                format->u.video.padding.bottom = align.padding_bottom;
-                format->u.video.height += format->u.video.padding.bottom;
-            }
-        }
-
         params->result = MF_E_TRANSFORM_STREAM_CHANGE;
         GST_INFO("Format changed detected, returning no output");
         wg_allocator_release_sample(transform->allocator, sample, false);

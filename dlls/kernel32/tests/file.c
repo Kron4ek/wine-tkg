@@ -2709,6 +2709,7 @@ static void test_FindFirstFileA(void)
     char buffer[5] = "C:\\";
     char buffer2[100];
     char nonexistent[MAX_PATH];
+    BOOL found = FALSE;
 
     /* try FindFirstFileA on "C:\" */
     buffer[0] = get_windows_drive();
@@ -2740,9 +2741,30 @@ static void test_FindFirstFileA(void)
     ok( FindNextFileA( handle, &data ), "FindNextFile failed\n" );
     ok( !strcmp( data.cFileName, ".." ), "FindNextFile should return '..' as second entry\n" );
     while (FindNextFileA( handle, &data ))
+    {
         ok ( strcmp( data.cFileName, "." ) && strcmp( data.cFileName, ".." ),
              "FindNextFile shouldn't return '%s'\n", data.cFileName );
+        if (!found && (data.dwFileAttributes == FILE_ATTRIBUTE_NORMAL ||
+                        data.dwFileAttributes == FILE_ATTRIBUTE_ARCHIVE))
+        {
+            GetWindowsDirectoryA( buffer2, sizeof(buffer2) );
+            strcat(buffer2, "\\");
+            strcat(buffer2, data.cFileName);
+            strcat(buffer2, "\\*");
+            found = TRUE;
+        }
+    }
     ok ( FindClose(handle) == TRUE, "Failed to close handle %s\n", buffer2 );
+
+    ok ( found, "Windows dir should not be empty\n" );
+    if (found)
+    {
+        SetLastError( 0xdeadbeef );
+        handle = FindFirstFileA(buffer2, &data);
+        err = GetLastError();
+        ok ( handle == INVALID_HANDLE_VALUE, "FindFirstFile on %s should fail\n", buffer2 );
+        ok ( err == ERROR_DIRECTORY, "Bad Error number %x\n", err );
+    }
 
     /* try FindFirstFileA on "C:\foo\" */
     SetLastError( 0xdeadbeaf );
@@ -3011,73 +3033,100 @@ static void test_FindFirstFile_wildcards(void)
         "a", "a..a", "a.a", "a.a.a", "aa", "aaa", "aaaa", " .a"
     };
     static const struct {
-        int todo;
         const char *pattern, *result;
     } tests[] = {
-        {0, "*.*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {0, "*.*.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {0, ".*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa'"},
-        {0, "*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {0, ".*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa'"},
-        {0, "*.", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {0, "*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {1, "*..*", ", '.', '..', '..a', '..a.a', '.a..a', 'a..a'"},
-        {0, "*..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {1, ".*.", ", '.', '..', '.a', '.aaa'"},
-        {0, "..*", ", '.', '..', '..a', '..a.a'"},
-        {0, "**", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {0, "**.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {0, "*. ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {0, "* .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {0, "* . ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {0, "*.. ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {0, "*. .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {0, "* ..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {0, " *..", ""},
-        {0, "..* ", ", '.', '..', '..a', '..a.a'"},
-        {1, "a*.", ", '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
-        {0, "*a ", ", '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"*.*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"*.*.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {".*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa'"},
+        {"*.*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {".*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa'"},
+        {". *", ""},
+        {"*.", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {"*", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"*..*", ", '.', '..', '..a', '..a.a', '.a..a', 'a..a'"},
+        {"*..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {".*.", ", '.', '..', '.a', '.aaa'"},
+        {"..*", ", '.', '..', '..a', '..a.a'"},
+        {"**", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"**.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"*. ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"* .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {"* . ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"* . *", ""},
+        {"*.. ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"*. .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {"* ..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {" *..", ""},
+        {"..* ", ", '.', '..', '..a', '..a.a'"},
+        {"* .*.", ", ' .a'"},
 
-        /* a.a.a not found due to short name mismatch, a.a.a -> "AA6BF5~1.A on Windows. */
-        {1, "*aa*", ", '.aaa', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
+        {"a*.", ", '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
+        {"*a ", ", '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"*aa*", ", '.aaa', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
+        {"aa*.", ", '.aaa', 'aa', 'aaa', 'aaaa'"},
+        {"aa.*", ", 'aa'"},
+        {"a a*.*", ""},
+        {"a\"*\"a", ", 'a..a', 'a.a.a'"},
+        {"aa*.*", ", '.aaa', 'a.a.a', 'aa', 'aaa', 'aaaa'"},
+        {"a ?.*", ""},
+        {"? a.*", ""},
+        {"a* a", ""},
+        {" *a", ", ' .a'"},
+        {"* *", ", ' .a'"},
+        {"a* .", ", 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {" ?a", ""},
+        {"* .a", ", ' .a'"},
+        {"< .a", ", ' .a'"},
+        {"** .a", ", ' .a'"},
+        {"<< .a", ", ' .a'"},
+        {"aa? ", ", 'aa', 'aaa'"},
+        {"aa\"*", ", 'aa'"},
+        {"*.a", ", '..a', '..a.a', '.a', '.a..a', '.a.a', 'a..a', 'a.a', 'a.a.a', ' .a'"},
+        {"<.a", ", '..a', '..a.a', '.a', '.a..a', '.a.a', 'a..a', 'a.a', 'a.a.a', ' .a'"},
 
-        {1, "<.<.<", ", '..a', '..a.a', '.a..a', '.a.a', 'a..a', 'a.a.a'"},
-        {1, "<.<.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a..a', 'a.a', 'a.a.a', ' .a'"},
-        {1, ".<.<", ", '..a', '..a.a', '.a..a', '.a.a'"},
-        {1, "<.<", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a..a', 'a.a', 'a.a.a', ' .a'"},
-        {1, ".<", ", '.', '..', '.a', '.aaa'"},
-        {1, "<.", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {1, "<", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
-        {1, "<..<", ", '..a', '.a..a', 'a..a'"},
-        {1, "<..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {1, ".<.", ", '.', '..', '.a', '.aaa'"},
-        {1, "..<", ", '..a'"},
-        {1, "<<", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {1, "<<.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
-        {1, "<. ", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
-        {1, "< .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {1, "< . ", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
-        {1, "<.. ", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
-        {1, "<. .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {1, "< ..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
-        {0, " <..", ""},
-        {1, "..< ", ", '..a'"},
+        {"<.<.<", ", '..a', '..a.a', '.a..a', '.a.a', 'a..a', 'a.a.a'"},
+        {"<.<.< ", ", '..a', '..a.a', '.a..a', '.a.a', 'a..a', 'a.a.a'"},
+        {"<.<.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a..a', 'a.a', 'a.a.a', ' .a'"},
+        {"< .<.", ", ' .a'"},
+        {"< .<. ", ", ' .a'"},
+        {"<.<. ", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a..a', 'a.a', 'a.a.a', ' .a'"},
+        {".<.<", ", '..a', '..a.a', '.a..a', '.a.a'"},
+        {"<.<", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a..a', 'a.a', 'a.a.a', ' .a'"},
+        {".<", ", '.', '..', '.a', '.aaa'"},
+        {"<.", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {"<", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
+        {"<..<", ", '..a', '.a..a', 'a..a'"},
+        {"<..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {".<.", ", '.', '..', '.a', '.aaa'"},
+        {"..<", ", '..a'"},
+        {"<<", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"<<.", ", '.', '..', '..a', '..a.a', '.a', '.a..a', '.a.a', '.aaa', 'a', 'a..a', 'a.a', 'a.a.a', 'aa', 'aaa', 'aaaa', ' .a'"},
+        {"<. ", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
+        {"< .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {"< . ", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
+        {"<.. ", ", '.', '..', '..a', '.a', '.aaa', 'a', 'aa', 'aaa', 'aaaa'"},
+        {"<. .", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {"< ..", ", '.', '..', 'a', '.a', '..a', 'aa', 'aaa', 'aaaa', '.aaa'"},
+        {" <..", ""},
+        {"..< ", ", '..a'"},
 
-        {1, "?", ", '.', '..', 'a'"},
-        {0, "?.", ", '.', '..', 'a'"},
-        {0, "?. ", ", '.', '..', 'a'"},
-        {1, "??.", ", '.', '..', 'a', 'aa'"},
-        {1, "??. ", ", '.', '..', 'a', 'aa'"},
-        {1, "???.", ", '.', '..', 'a', 'aa', 'aaa'"},
-        {1, "?.??.", ", '.', '..', '.a', 'a', 'a.a', ' .a'"},
+        {"?", ", '.', '..', 'a'"},
+        {"?.", ", '.', '..', 'a'"},
+        {"?. ", ", '.', '..', 'a'"},
+        {"? .*", ""},
+        {"??.", ", '.', '..', 'a', 'aa'"},
+        {"??. ", ", '.', '..', 'a', 'aa'"},
+        {"???.", ", '.', '..', 'a', 'aa', 'aaa'"},
+        {"?.??.", ", '.', '..', '.a', 'a', 'a.a', ' .a'"},
+        {". ?", ""},
 
-        {1, ">", ", '.', '..', 'a'"},
-        {1, ">.", ", '.', '..', 'a'"},
-        {1, ">. ", ", '.', '..', 'a'"},
-        {1, ">>.", ", '.', '..', 'a', 'aa'"},
-        {1, ">>. ", ", '.', '..', 'a', 'aa'"},
-        {1, ">>>.", ", '.', '..', 'a', 'aa', 'aaa'"},
-        {1, ">.>>.", ", '.', '..', '.a', 'a.a', ' .a'"},
+        {">", ", '.', '..', 'a'"},
+        {">.", ", '.', '..', 'a'"},
+        {">. ", ", '.', '..', 'a'"},
+        {">>.", ", '.', '..', 'a', 'aa'"},
+        {">>. ", ", '.', '..', 'a', 'aa'"},
+        {">>>.", ", '.', '..', 'a', 'aa', 'aaa'"},
+        {">.>>.", ", '.', '..', '.a', 'a.a', ' .a'"},
     };
 
     CreateDirectoryA("test-dir", NULL);
@@ -3116,7 +3165,6 @@ static void test_FindFirstFile_wildcards(void)
             FindClose(handle);
         }
 
-        todo_wine_if (tests[i].todo)
         ok(missing[0] == 0 && incorrect[0] == 0,
            "FindFirstFile with '%s' found correctly %s, found incorrectly %s, and missed %s\n",
            tests[i].pattern,

@@ -219,7 +219,17 @@ static HRESULT vertexdeclaration_init(struct wined3d_vertex_declaration *declara
             alignment = 4;
 
         if (e->usage == WINED3D_DECL_USAGE_POSITIONT)
-            declaration->position_transformed = TRUE;
+            declaration->position_transformed = true;
+        else if (e->usage == WINED3D_DECL_USAGE_PSIZE)
+            declaration->point_size = true;
+        else if (e->usage == WINED3D_DECL_USAGE_COLOR && !e->usage_idx)
+            declaration->diffuse = true;
+        else if (e->usage == WINED3D_DECL_USAGE_COLOR && e->usage_idx == 1)
+            declaration->specular = true;
+        else if (e->usage == WINED3D_DECL_USAGE_NORMAL)
+            declaration->normal = true;
+        else if (e->usage == WINED3D_DECL_USAGE_TEXCOORD)
+            declaration->texcoords |= (1u << e->usage_idx);
 
         /* Find the streams used in the declaration. The vertex buffers have
          * to be loaded when drawing, but filter tessellation pseudo streams. */

@@ -30,6 +30,10 @@ typedef struct audio_session {
     float *channel_vols;
     BOOL mute;
 
+    WCHAR *display_name;
+    WCHAR *icon_path;
+    GUID grouping_param;
+
     struct list entry;
 } AudioSession;
 

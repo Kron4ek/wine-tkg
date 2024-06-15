@@ -45,6 +45,13 @@ struct volume
     UINT depth;
 };
 
+static inline void set_volume_struct(struct volume *volume, uint32_t width, uint32_t height, uint32_t depth)
+{
+    volume->width = width;
+    volume->height = height;
+    volume->depth = depth;
+}
+
 /* for internal use */
 enum format_type {
     FORMAT_ARGB,   /* unsigned */
@@ -66,6 +73,53 @@ struct pixel_format_desc {
     enum format_type type;
     void (*from_rgba)(const struct vec4 *src, struct vec4 *dst);
     void (*to_rgba)(const struct vec4 *src, struct vec4 *dst, const PALETTEENTRY *palette);
+};
+
+struct d3dx_pixels
+{
+    const void *data;
+    uint32_t row_pitch;
+    uint32_t slice_pitch;
+    const PALETTEENTRY *palette;
+
+    struct volume size;
+    RECT unaligned_rect;
+};
+
+static inline void set_d3dx_pixels(struct d3dx_pixels *pixels, const void *data, uint32_t row_pitch,
+        uint32_t slice_pitch, const PALETTEENTRY *palette, uint32_t width, uint32_t height, uint32_t depth,
+        const RECT *unaligned_rect)
+{
+    pixels->data = data;
+    pixels->row_pitch = row_pitch;
+    pixels->slice_pitch = slice_pitch;
+    pixels->palette = palette;
+    set_volume_struct(&pixels->size, width, height, depth);
+    pixels->unaligned_rect = *unaligned_rect;
+}
+
+#define D3DX_IMAGE_INFO_ONLY 1
+struct d3dx_image
+{
+    D3DRESOURCETYPE resource_type;
+    D3DFORMAT format;
+
+    uint32_t width;
+    uint32_t height;
+    uint32_t depth;
+    uint32_t mip_levels;
+
+    BYTE *pixels;
+
+    /*
+     * image_buf and palette are pointers to allocated memory used to store
+     * image data. If they are non-NULL, they need to be freed when no longer
+     * in use.
+     */
+    void *image_buf;
+    PALETTEENTRY *palette;
+
+    D3DXIMAGE_FILEFORMAT image_file_format;
 };
 
 struct d3dx_include_from_file
@@ -130,6 +184,14 @@ HRESULT unlock_surface(IDirect3DSurface9 *surface, const RECT *surface_rect,
         IDirect3DSurface9 *temp_surface, BOOL update);
 HRESULT save_dds_texture_to_memory(ID3DXBuffer **dst_buffer, IDirect3DBaseTexture9 *src_texture,
     const PALETTEENTRY *src_palette);
+HRESULT d3dx_pixels_init(const void *data, uint32_t row_pitch, uint32_t slice_pitch,
+        const PALETTEENTRY *palette, D3DFORMAT format, uint32_t left, uint32_t top, uint32_t right, uint32_t bottom,
+        uint32_t front, uint32_t back, struct d3dx_pixels *pixels);
+HRESULT d3dx_load_pixels_from_pixels(struct d3dx_pixels *dst_pixels,
+       const struct pixel_format_desc *dst_desc, struct d3dx_pixels *src_pixels,
+       const struct pixel_format_desc *src_desc, uint32_t filter_flags, uint32_t color_key);
+void get_aligned_rect(uint32_t left, uint32_t top, uint32_t right, uint32_t bottom, uint32_t width, uint32_t height,
+        const struct pixel_format_desc *fmt_desc, RECT *aligned_rect);
 
 unsigned short float_32_to_16(const float in);
 float float_16_to_32(const unsigned short in);

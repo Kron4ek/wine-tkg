@@ -2837,7 +2837,7 @@ static void draw_popup_menu( HWND hwnd, HDC hdc, HMENU hmenu )
 
     TRACE( "wnd=%p dc=%p menu=%p\n", hwnd, hdc, hmenu );
 
-    get_client_rect( hwnd, &rect );
+    get_client_rect( hwnd, &rect, get_thread_dpi() );
 
     if (menu && menu->hbrBack) brush = menu->hbrBack;
     if ((prev_hrush = NtGdiSelectBrush( hdc, brush ))
@@ -3068,7 +3068,7 @@ static BOOL show_popup( HWND owner, HMENU hmenu, UINT id, UINT flags,
     pt.y = y;
     monitor = monitor_from_point( pt, MONITOR_DEFAULTTONEAREST, get_thread_dpi() );
     info.cbSize = sizeof(info);
-    get_monitor_info( monitor, &info );
+    get_monitor_info( monitor, &info, get_thread_dpi() );
 
     max_height = info.rcWork.bottom - info.rcWork.top;
     if (menu->cyMax) max_height = min( max_height, menu->cyMax );

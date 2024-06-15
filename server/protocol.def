@@ -887,6 +887,14 @@ typedef struct
     lparam_t info;
 } cursor_pos_t;
 
+struct directory_entry
+{
+    data_size_t name_len;
+    data_size_t type_len;
+    /* VARARG(name,unicode_str,name_len); */
+    /* VARARG(type,unicode_str,type_len); */
+};
+
 /****************************************************************/
 /* Request declarations */
 
@@ -3434,15 +3442,15 @@ struct handle_info
 @END
 
 
-/* Get a directory entry by index */
-@REQ(get_directory_entry)
+/* Get directory entries */
+@REQ(get_directory_entries)
     obj_handle_t   handle;             /* handle to the directory */
-    unsigned int   index;              /* entry index */
+    unsigned int   index;              /* index of first entry */
+    unsigned int   max_count;          /* maximum number of entries to return */
 @REPLY
     data_size_t    total_len;          /* total length needed for strings */
-    data_size_t    name_len;           /* length of the entry name in bytes */
-    VARARG(name,unicode_str,name_len); /* entry name */
-    VARARG(type,unicode_str);          /* entry type */
+    unsigned int   count;              /* number of entries returned */
+    VARARG(entries,directory_entries);
 @END
 
 
@@ -3948,9 +3956,17 @@ enum esync_type
     unsigned int shm_idx;
 @END
 
-/* Notify the server that we are doing a message wait or done with one. */
 @REQ(esync_msgwait)
     int          in_msgwait;    /* are we in a message wait? */
+@END
+
+/* Setup keyboard auto-repeat */
+@REQ(set_keyboard_repeat)
+    int enable;                /* whether to enable auto-repeat */
+    int delay;                 /* auto-repeat delay in ms */
+    int period;                /* auto-repeat period in ms */
+@REPLY
+    int enable;                /* previous state of auto-repeat enable */
 @END
 
 /* Retrieve the fd to wait on for user APCs. */

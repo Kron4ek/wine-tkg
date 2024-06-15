@@ -152,60 +152,6 @@ __ASM_GLOBAL_FUNC( call_handler,
                    "popl %ebp\n\t"
                    "ret" );
 
-static inline void dump_type( const cxx_type_info *type )
-{
-    TRACE( "flags %x type %p %s offsets %d,%d,%d size %d copy ctor %p\n",
-             type->flags, type->type_info, dbgstr_type_info(type->type_info),
-             type->offsets.this_offset, type->offsets.vbase_descr, type->offsets.vbase_offset,
-             type->size, type->copy_ctor );
-}
-
-static void dump_exception_type( const cxx_exception_type *type )
-{
-    UINT i;
-
-    TRACE( "flags %x destr %p handler %p type info %p\n",
-             type->flags, type->destructor, type->custom_handler, type->type_info_table );
-    for (i = 0; i < type->type_info_table->count; i++)
-    {
-        TRACE( "    %d: ", i );
-        dump_type( type->type_info_table->info[i] );
-    }
-}
-
-static void dump_function_descr( const cxx_function_descr *descr )
-{
-    UINT i;
-    int j;
-
-    TRACE( "magic %x\n", descr->magic );
-    TRACE( "unwind table: %p %d\n", descr->unwind_table, descr->unwind_count );
-    for (i = 0; i < descr->unwind_count; i++)
-    {
-        TRACE( "    %d: prev %d func %p\n", i,
-                 descr->unwind_table[i].prev, descr->unwind_table[i].handler );
-    }
-    TRACE( "try table: %p %d\n", descr->tryblock, descr->tryblock_count );
-    for (i = 0; i < descr->tryblock_count; i++)
-    {
-        TRACE( "    %d: start %d end %d catchlevel %d catch %p %d\n", i,
-                 descr->tryblock[i].start_level, descr->tryblock[i].end_level,
-                 descr->tryblock[i].catch_level, descr->tryblock[i].catchblock,
-                 descr->tryblock[i].catchblock_count );
-        for (j = 0; j < descr->tryblock[i].catchblock_count; j++)
-        {
-            const catchblock_info *ptr = &descr->tryblock[i].catchblock[j];
-            TRACE( "        %d: flags %x offset %d handler %p type %p %s\n",
-                     j, ptr->flags, ptr->offset, ptr->handler,
-                     ptr->type_info, dbgstr_type_info( ptr->type_info ) );
-        }
-    }
-    if (descr->magic <= CXX_FRAME_MAGIC_VC6) return;
-    TRACE( "expect list: %p\n", descr->expect_list );
-    if (descr->magic <= CXX_FRAME_MAGIC_VC7) return;
-    TRACE( "flags: %08x\n", descr->flags );
-}
-
 /* unwind the local function up to a given trylevel */
 static void cxx_local_unwind( cxx_exception_frame* frame, const cxx_function_descr *descr, int last_level)
 {
@@ -339,60 +285,6 @@ static inline void call_catch_block( PEXCEPTION_RECORD rec, CONTEXT *context,
     data->processing_throw--;
 }
 
-/*********************************************************************
- *		__CxxExceptionFilter (MSVCRT.@)
- */
-int CDECL __CxxExceptionFilter( PEXCEPTION_POINTERS ptrs,
-                                const type_info *ti, int flags, void **copy)
-{
-    const cxx_type_info *type;
-    PEXCEPTION_RECORD rec;
-
-    TRACE( "%p %p %x %p\n", ptrs, ti, flags, copy );
-
-    if (!ptrs) return EXCEPTION_CONTINUE_SEARCH;
-
-    /* handle catch(...) */
-    if (!ti) return EXCEPTION_EXECUTE_HANDLER;
-
-    rec = ptrs->ExceptionRecord;
-    if (!is_cxx_exception( rec )) return EXCEPTION_CONTINUE_SEARCH;
-
-    if (rec->ExceptionInformation[1] == 0 && rec->ExceptionInformation[2] == 0)
-    {
-        rec = msvcrt_get_thread_data()->exc_record;
-        if (!rec) return EXCEPTION_CONTINUE_SEARCH;
-    }
-
-    type = find_caught_type( (cxx_exception_type*)rec->ExceptionInformation[2], 0, ti, flags );
-    if (!type) return EXCEPTION_CONTINUE_SEARCH;
-
-    if (copy)
-    {
-        void *object = (void *)rec->ExceptionInformation[1];
-
-        if (flags & TYPE_FLAG_REFERENCE)
-        {
-            *copy = get_this_pointer( &type->offsets, object );
-        }
-        else if (type->flags & CLASS_IS_SIMPLE_TYPE)
-        {
-            memmove( copy, object, type->size );
-            /* if it is a pointer, adjust it */
-            if (type->size == sizeof(void*)) *copy = get_this_pointer( &type->offsets, *copy );
-        }
-        else  /* copy the object */
-        {
-            if (type->copy_ctor)
-                call_copy_ctor( type->copy_ctor, copy, get_this_pointer(&type->offsets,object),
-                        (type->flags & CLASS_HAS_VIRTUAL_BASE_CLASS) );
-            else
-                memmove( copy, get_this_pointer(&type->offsets,object), type->size );
-        }
-    }
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-
 static LONG CALLBACK se_translation_filter( EXCEPTION_POINTERS *ep, void *c )
 {
     se_translator_ctx *ctx = (se_translator_ctx *)c;
@@ -488,8 +380,8 @@ DWORD CDECL cxx_frame_handler( PEXCEPTION_RECORD rec, cxx_exception_frame* frame
         {
             TRACE("handling C++ exception rec %p frame %p trylevel %d descr %p nested_frame %p\n",
                   rec, frame, frame->trylevel, descr, nested_frame );
-            dump_exception_type( exc_type );
-            dump_function_descr( descr );
+            TRACE_EXCEPTION_TYPE( exc_type, 0 );
+            dump_function_descr( descr, 0 );
         }
     }
     else
@@ -964,27 +856,14 @@ void __stdcall _seh_longjmp_unwind4(_JUMP_BUFFER *jmp)
 }
 
 /*********************************************************************
- *              _fpieee_flt (MSVCRT.@)
+ *              handle_fpieee_flt
  */
-int __cdecl _fpieee_flt(__msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
-        int (__cdecl *handler)(_FPIEEE_RECORD*))
+int handle_fpieee_flt( __msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
+                       int (__cdecl *handler)(_FPIEEE_RECORD*) )
 {
     FLOATING_SAVE_AREA *ctx = &ep->ContextRecord->FloatSave;
     _FPIEEE_RECORD rec;
     int ret;
-
-    TRACE("(%lx %p %p)\n", exception_code, ep, handler);
-
-    switch(exception_code) {
-    case STATUS_FLOAT_DIVIDE_BY_ZERO:
-    case STATUS_FLOAT_INEXACT_RESULT:
-    case STATUS_FLOAT_INVALID_OPERATION:
-    case STATUS_FLOAT_OVERFLOW:
-    case STATUS_FLOAT_UNDERFLOW:
-        break;
-    default:
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
 
     memset(&rec, 0, sizeof(rec));
     rec.RoundingMode = ctx->ControlWord >> 10;
@@ -1010,7 +889,8 @@ int __cdecl _fpieee_flt(__msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
     rec.Cause.Underflow = rec.Enable.Underflow & rec.Status.Underflow;
     rec.Cause.Inexact = rec.Enable.Inexact & rec.Status.Inexact;
 
-    TRACE("opcode: %lx\n", *(ULONG*)ep->ContextRecord->FloatSave.ErrorOffset);
+    TRACE("code %lx handler %p opcode %lx\n", exception_code, handler,
+          *(ULONG*)ep->ContextRecord->FloatSave.ErrorOffset);
 
     if(*(WORD*)ctx->ErrorOffset == 0x35dc) { /* fdiv m64fp */
         if(exception_code==STATUS_FLOAT_DIVIDE_BY_ZERO || exception_code==STATUS_FLOAT_INVALID_OPERATION) {

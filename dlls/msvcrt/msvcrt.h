@@ -20,6 +20,31 @@
 #ifndef __WINE_MSVCRT_H
 #define __WINE_MSVCRT_H
 
+#if _MSVCR_VER >= 140
+#ifndef _FILE_DEFINED
+#define _FILE_DEFINED
+typedef struct _iobuf
+{
+  char* _ptr;
+  char* _base;
+  int   _cnt;
+  int   _flag;
+  int   _file;
+  int   _charbuf;
+  int   _bufsiz;
+  char* _tmpfname;
+} FILE;
+
+#define _IOREAD     0x0001
+#define _IOWRT      0x0002
+#define _IORW       0x0004
+#define _IOEOF      0x0008
+#define _IOERR      0x0010
+#define _IOMYBUF    0x0040
+#define _IOSTRG     0x1000
+#endif
+#endif
+
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -284,14 +309,13 @@ extern BOOL msvcrt_create_io_inherit_block(WORD*, BYTE**);
 #define _RT_CRNL        252
 #define _RT_BANNER      255
 
-extern FILE MSVCRT__iob[];
-
 #define MSVCRT_NO_CONSOLE_FD (-2)
 #define MSVCRT_NO_CONSOLE ((HANDLE)MSVCRT_NO_CONSOLE_FD)
 
-#define MSVCRT_stdin       (MSVCRT__iob+STDIN_FILENO)
-#define MSVCRT_stdout      (MSVCRT__iob+STDOUT_FILENO)
-#define MSVCRT_stderr      (MSVCRT__iob+STDERR_FILENO)
+#if _MSVCR_VER < 140
+extern FILE MSVCRT__iob[];
+#define __acrt_iob_func(idx) (MSVCRT__iob+(idx))
+#endif
 
 /* internal file._flag flags */
 #define MSVCRT__USERBUF  0x0100

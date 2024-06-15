@@ -673,7 +673,8 @@ void WINAPI SwitchToThisWindow( HWND hwnd, BOOL alt_tab )
  */
 BOOL WINAPI GetWindowRect( HWND hwnd, RECT *rect )
 {
-    BOOL ret = NtUserGetWindowRect( hwnd, rect );
+    UINT dpi = NTUSER_DPI_CONTEXT_GET_DPI( (UINT_PTR)GetThreadDpiAwarenessContext() );
+    BOOL ret = NtUserGetWindowRect( hwnd, rect, dpi );
     if (ret) TRACE( "hwnd %p %s\n", hwnd, wine_dbgstr_rect(rect) );
     return ret;
 }
@@ -715,7 +716,8 @@ int WINAPI GetWindowRgnBox( HWND hwnd, RECT *rect )
  */
 BOOL WINAPI GetClientRect( HWND hwnd, RECT *rect )
 {
-    return NtUserGetClientRect( hwnd, rect );
+    UINT dpi = NTUSER_DPI_CONTEXT_GET_DPI( (UINT_PTR)GetThreadDpiAwarenessContext() );
+    return NtUserGetClientRect( hwnd, rect, dpi );
 }
 
 
@@ -758,7 +760,8 @@ HWND WINAPI ChildWindowFromPointEx( HWND parent, POINT pt, UINT flags )
  */
 INT WINAPI MapWindowPoints( HWND hwnd_from, HWND hwnd_to, POINT *points, UINT count )
 {
-    return NtUserMapWindowPoints( hwnd_from, hwnd_to, points, count );
+    UINT dpi = NTUSER_DPI_CONTEXT_GET_DPI( (UINT_PTR)GetThreadDpiAwarenessContext() );
+    return NtUserMapWindowPoints( hwnd_from, hwnd_to, points, count, dpi );
 }
 
 

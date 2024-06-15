@@ -301,6 +301,7 @@ static const struct user_driver_funcs macdrv_funcs =
     .pToUnicodeEx = macdrv_ToUnicodeEx,
     .pUnregisterHotKey = macdrv_UnregisterHotKey,
     .pUpdateClipboard = macdrv_UpdateClipboard,
+    .pCreateLayeredWindow = macdrv_CreateLayeredWindow,
     .pUpdateLayeredWindow = macdrv_UpdateLayeredWindow,
     .pVkKeyScanEx = macdrv_VkKeyScanEx,
     .pImeProcessKey = macdrv_ImeProcessKey,
@@ -308,6 +309,7 @@ static const struct user_driver_funcs macdrv_funcs =
     .pWindowMessage = macdrv_WindowMessage,
     .pWindowPosChanged = macdrv_WindowPosChanged,
     .pWindowPosChanging = macdrv_WindowPosChanging,
+    .pCreateWindowSurface = macdrv_CreateWindowSurface,
     .pVulkanInit = macdrv_VulkanInit,
     .pwine_get_wgl_driver = macdrv_wine_get_wgl_driver,
 };

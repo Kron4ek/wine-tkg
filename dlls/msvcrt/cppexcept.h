@@ -21,6 +21,7 @@
 #ifndef __MSVCRT_CPPEXCEPT_H
 #define __MSVCRT_CPPEXCEPT_H
 
+#include <fpieee.h>
 #include "cxx.h"
 
 #define CXX_FRAME_MAGIC_VC6 0x19930520
@@ -89,7 +90,9 @@ typedef struct
     UINT type_info;
     int  offset;
     UINT handler;
+#ifdef _WIN64
     UINT frame;
+#endif
 } catchblock_info;
 
 typedef struct
@@ -231,15 +234,9 @@ static inline const cxx_type_info *find_caught_type( cxx_exception_type *exc_typ
 }
 
 /* copy the exception object where the catch block wants it */
-static inline void copy_exception( void *object, uintptr_t frame, int offset, UINT catch_flags,
-                                   const type_info *catch_ti, const cxx_type_info *type, uintptr_t base )
+static inline void copy_exception( void *object, void **dest, UINT catch_flags,
+                                   const cxx_type_info *type, uintptr_t base )
 {
-    void **dest;
-
-    if (!catch_ti || !catch_ti->mangled[0]) return;
-    if (!offset) return;
-    dest = (void **)(frame + offset);
-
     if (catch_flags & TYPE_FLAG_REFERENCE)
     {
         *dest = get_this_pointer( &type->offsets, object );
@@ -261,9 +258,34 @@ static inline void copy_exception( void *object, uintptr_t frame, int offset, UI
     }
 }
 
+#define TRACE_EXCEPTION_TYPE(type,base) do { \
+    const cxx_type_info_table *table = rtti_rva( type->type_info_table, base ); \
+    unsigned int i; \
+    TRACE( "flags %x destr %p handler %p type info %p\n", \
+           type->flags, rtti_rva( type->destructor, base ), \
+           type->custom_handler ? rtti_rva( type->custom_handler, base ) : NULL, table ); \
+    for (i = 0; i < table->count; i++) \
+    { \
+        const cxx_type_info *type = rtti_rva( table->info[i], base ); \
+        const type_info *info = rtti_rva( type->type_info, base ); \
+        TRACE( "    %d: flags %x type %p %s offsets %d,%d,%d size %d copy ctor %p\n", \
+               i, type->flags, info, dbgstr_type_info( info ), \
+               type->offsets.this_offset, type->offsets.vbase_descr, type->offsets.vbase_offset, \
+               type->size, rtti_rva( type->copy_ctor, base )); \
+    } \
+} while(0)
+
+extern void dump_function_descr( const cxx_function_descr *descr, uintptr_t base );
 extern void *find_catch_handler( void *object, uintptr_t frame, uintptr_t exc_base,
                                  const tryblock_info *tryblock,
                                  cxx_exception_type *exc_type, uintptr_t image_base );
+extern int handle_fpieee_flt( __msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
+                              int (__cdecl *handler)(_FPIEEE_RECORD*) );
+#ifndef __i386__
+extern void *call_catch_handler( EXCEPTION_RECORD *rec );
+extern void *call_unwind_handler( void *func, uintptr_t frame, DISPATCHER_CONTEXT *dispatch );
+extern ULONG_PTR get_exception_pc( DISPATCHER_CONTEXT *dispatch );
+#endif
 
 #if _MSVCR_VER >= 80
 #define EXCEPTION_MANGLED_NAME ".?AVexception@std@@"

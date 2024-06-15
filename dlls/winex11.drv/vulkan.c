@@ -141,7 +141,7 @@ static void X11DRV_vulkan_surface_detach( HWND hwnd, void *private, HDC *hdc )
         escape.code = X11DRV_SET_DRAWABLE;
         escape.mode = IncludeInferiors;
         escape.drawable = client_window;
-        NtUserGetClientRect( hwnd, &escape.dc_rect );
+        NtUserGetClientRect( hwnd, &escape.dc_rect, get_win_monitor_dpi(hwnd) );
         NtGdiExtEscape( *hdc, NULL, 0, X11DRV_ESCAPE, sizeof(escape), (LPSTR)&escape, 0, NULL );
 #ifdef SONAME_LIBXCOMPOSITE
         if (usexcomposite) pXCompositeRedirectWindow( gdi_display, client_window, CompositeRedirectManual );

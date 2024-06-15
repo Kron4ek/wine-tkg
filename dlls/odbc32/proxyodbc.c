@@ -55,8 +55,9 @@ struct SQLHDBC_data
     int type;
     struct SQLHENV_data *environment;
     HMODULE module;
-    SQLHENV driver_env;
-    SQLHDBC driver_hdbc;
+    SQLHENV    driver_env;
+    SQLINTEGER driver_ver;             /* ODBC version supported by driver */
+    SQLHDBC    driver_hdbc;
 
     SQLRETURN (WINAPI *pSQLAllocConnect)(SQLHENV,SQLHDBC*);
     SQLRETURN (WINAPI *pSQLAllocEnv)(SQLHENV*);
@@ -312,6 +313,36 @@ static void connection_bind_sql_funcs(struct SQLHDBC_data *connection)
     LOAD_FUNCPTR(SQLTablesW);
     LOAD_FUNCPTR(SQLTransact);
 }
+
+static SQLINTEGER map_odbc2_to_3(SQLINTEGER fieldid)
+{
+    switch( fieldid )
+    {
+        case SQL_COLUMN_COUNT:
+            return SQL_DESC_COUNT;
+        case SQL_COLUMN_NULLABLE:
+            return SQL_DESC_NULLABLE;
+        case SQL_COLUMN_NAME:
+            return SQL_DESC_NAME;
+        default:
+            return fieldid;
+    }
+}
+static SQLINTEGER map_odbc3_to_2(SQLINTEGER fieldid)
+{
+    switch( fieldid )
+    {
+        case SQL_DESC_COUNT:
+            return SQL_COLUMN_COUNT;
+        case SQL_DESC_NULLABLE:
+            return SQL_COLUMN_NULLABLE;
+        case SQL_DESC_NAME:
+            return SQL_COLUMN_NAME;
+        default:
+            return fieldid;
+    }
+}
+
 
 /*************************************************************************
  *				SQLAllocConnect           [ODBC32.001]
@@ -569,10 +600,31 @@ SQLRETURN WINAPI SQLColAttribute(SQLHSTMT StatementHandle, SQLUSMALLINT ColumnNu
         return SQL_ERROR;
     }
 
+    /* ODBC 3.0 */
     if (statement->connection->pSQLColAttribute)
     {
         ret = statement->connection->pSQLColAttribute(statement->driver_stmt, ColumnNumber, FieldIdentifier,
                                  CharacterAttribute, BufferLength, StringLength, NumericAttribute);
+    }
+    /* ODBC 2.0 */
+    else if (statement->connection->pSQLColAttributes)
+    {
+        FieldIdentifier = map_odbc3_to_2(FieldIdentifier);
+        ret = statement->connection->pSQLColAttributes(statement->driver_stmt, ColumnNumber, FieldIdentifier,
+                                 CharacterAttribute, BufferLength, StringLength, NumericAttribute);
+
+        /* Convert back for ODBC3 drivers */
+        if (NumericAttribute && FieldIdentifier == SQL_COLUMN_TYPE &&
+                statement->connection->driver_ver == SQL_OV_ODBC2 &&
+                statement->connection->environment->version == SQL_OV_ODBC3)
+        {
+            if (*NumericAttribute == SQL_TIME)
+                *NumericAttribute = SQL_TYPE_TIME;
+            else if (*NumericAttribute == SQL_DATETIME)
+                *NumericAttribute = SQL_TYPE_DATE;
+            else if (*NumericAttribute == SQL_TIMESTAMP)
+                *NumericAttribute = SQL_TYPE_TIMESTAMP;
+        }
     }
 
     TRACE("ret %d\n", ret);
@@ -735,12 +787,20 @@ SQLRETURN WINAPI SQLError(SQLHENV EnvironmentHandle, SQLHDBC ConnectionHandle, S
                           SQLCHAR *Sqlstate, SQLINTEGER *NativeError, SQLCHAR *MessageText,
                           SQLSMALLINT BufferLength, SQLSMALLINT *TextLength)
 {
+    struct SQLHDBC_data *hdbc = ConnectionHandle;
     SQLRETURN ret = SQL_ERROR;
 
-    FIXME("(EnvironmentHandle %p, ConnectionHandle %p, StatementHandle %p, Sqlstate %p, NativeError %p,"
+    TRACE("(EnvironmentHandle %p, ConnectionHandle %p, StatementHandle %p, Sqlstate %p, NativeError %p,"
           " MessageText %p, BufferLength %d, TextLength %p)\n", EnvironmentHandle, ConnectionHandle,
           StatementHandle, Sqlstate, NativeError, MessageText, BufferLength, TextLength);
 
+    if (hdbc->pSQLError)
+    {
+        ret = hdbc->pSQLError(hdbc->driver_env, hdbc->driver_hdbc, StatementHandle, Sqlstate,
+                              NativeError, MessageText, BufferLength, TextLength);
+    }
+
+    TRACE("ret %d\n", ret);
     return ret;
 }
 
@@ -869,8 +929,46 @@ SQLRETURN WINAPI SQLFreeHandle(SQLSMALLINT HandleType, SQLHANDLE Handle)
 {
     SQLRETURN ret = SQL_ERROR;
 
-    FIXME("(HandleType %d, Handle %p)\n", HandleType, Handle);
+    TRACE("HandleType %d, Handle %p\n", HandleType, Handle);
 
+    if (HandleType == SQL_HANDLE_ENV)
+    {
+        struct SQLHENV_data *henv = Handle;
+
+        if (henv && henv->type != SQL_HANDLE_ENV)
+           WARN("EnvironmentHandle isn't of type SQL_HANDLE_ENV\n");
+        else {
+            henv->type = 0;
+            free(henv);
+            ret = SQL_SUCCESS;
+        }
+    }
+    else if (HandleType == SQL_HANDLE_DBC)
+    {
+        struct SQLHDBC_data *hdbc = Handle;
+
+        if (hdbc->pSQLFreeHandle)
+            ret = hdbc->pSQLFreeHandle(HandleType, hdbc->driver_hdbc);
+        else if (hdbc->pSQLFreeConnect)
+            ret = hdbc->pSQLFreeConnect(hdbc->driver_hdbc);
+
+        hdbc->type = 0;
+        free(hdbc);
+    }
+    else if (HandleType == SQL_HANDLE_STMT)
+    {
+        struct SQLHSTMT_data *statement = Handle;
+
+        if (statement->connection->pSQLFreeHandle)
+            ret = statement->connection->pSQLFreeHandle(HandleType, statement->driver_stmt);
+        else if (statement->connection->pSQLFreeStmt)
+            ret = statement->connection->pSQLFreeStmt(statement->driver_stmt, SQL_CLOSE);
+
+        statement->type = 0;
+        free(statement);
+    }
+
+    TRACE("ret %d\n", ret);
     return ret;
 }
 
@@ -921,6 +1019,10 @@ SQLRETURN WINAPI SQLGetConnectAttr(SQLHDBC ConnectionHandle, SQLINTEGER Attribut
     {
         ret = connection->pSQLGetConnectAttr(connection->driver_hdbc, Attribute, Value,
                                     BufferLength, StringLength);
+    }
+    else if (connection->pSQLGetConnectOption)
+    {
+        ret = connection->pSQLGetConnectOption(connection->driver_hdbc, Attribute, Value);
     }
 
     TRACE("ret %d\n", ret);
@@ -974,6 +1076,16 @@ SQLRETURN WINAPI SQLGetData(SQLHSTMT StatementHandle, SQLUSMALLINT ColumnNumber,
 
     if (statement->connection->pSQLGetData)
     {
+        if(statement->connection->driver_ver == SQL_OV_ODBC2 &&
+                statement->connection->environment->version == SQL_OV_ODBC3)
+        {
+            if (TargetType == SQL_C_TYPE_TIME)
+                TargetType = SQL_C_TIME;
+            else if (TargetType == SQL_C_TYPE_DATE)
+                TargetType = SQL_C_DATE;
+            else if (TargetType == SQL_C_TYPE_TIMESTAMP)
+                TargetType = SQL_C_TIMESTAMP;
+        }
         ret = statement->connection->pSQLGetData(statement->driver_stmt, ColumnNumber, TargetType,
                             TargetValue, BufferLength, StrLen_or_Ind);
     }
@@ -1020,7 +1132,7 @@ SQLRETURN WINAPI SQLGetDiagField(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSM
                                  SQLSMALLINT DiagIdentifier, SQLPOINTER DiagInfo, SQLSMALLINT BufferLength,
                                  SQLSMALLINT *StringLength)
 {
-    SQLRETURN ret = SQL_ERROR;
+    SQLRETURN ret = SQL_NO_DATA;
 
     TRACE("(HandleType %d, Handle %p, RecNumber %d, DiagIdentifier %d, DiagInfo %p, BufferLength %d,"
           " StringLength %p)\n", HandleType, Handle, RecNumber, DiagIdentifier, DiagInfo, BufferLength, StringLength);
@@ -1046,6 +1158,7 @@ SQLRETURN WINAPI SQLGetDiagField(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSM
                                      DiagIdentifier, DiagInfo, BufferLength, StringLength);
     }
 
+    TRACE("ret %d\n", ret);
     return ret;
 }
 
@@ -1056,43 +1169,11 @@ SQLRETURN WINAPI SQLGetDiagRec(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSMAL
                                SQLCHAR *Sqlstate, SQLINTEGER *NativeError, SQLCHAR *MessageText,
                                SQLSMALLINT BufferLength, SQLSMALLINT *TextLength)
 {
-    SQLRETURN ret = SQL_ERROR;
+    SQLRETURN ret = SQL_NO_DATA;
 
-    TRACE("(HandleType %d, Handle %p, RecNumber %d, Sqlstate %p, NativeError %p, MessageText %p, BufferLength %d,"
+    FIXME("(HandleType %d, Handle %p, RecNumber %d, Sqlstate %p, NativeError %p, MessageText %p, BufferLength %d,"
           " TextLength %p)\n", HandleType, Handle, RecNumber, Sqlstate, NativeError, MessageText, BufferLength,
           TextLength);
-
-    if (HandleType == SQL_HANDLE_ENV)
-    {
-        FIXME("Unhandled SQL_HANDLE_ENV records\n");
-    }
-    else if (HandleType == SQL_HANDLE_DBC)
-    {
-        struct SQLHDBC_data *hdbc = Handle;
-
-        if (hdbc->pSQLGetDiagRec)
-            ret = hdbc->pSQLGetDiagRec(HandleType, hdbc->driver_hdbc, RecNumber, Sqlstate,
-                                NativeError, MessageText, BufferLength, TextLength);
-        else if (hdbc->pSQLGetDiagRecA)
-            ret = hdbc->pSQLGetDiagRecA(HandleType, hdbc->driver_hdbc, RecNumber, Sqlstate,
-                                NativeError, MessageText, BufferLength, TextLength);
-    }
-    else if (HandleType == SQL_HANDLE_STMT)
-    {
-        struct SQLHSTMT_data *statement = Handle;
-
-        if (statement->connection->pSQLGetDiagRec)
-            ret = statement->connection->pSQLGetDiagRec(HandleType, statement->driver_stmt, RecNumber,
-                                Sqlstate, NativeError, MessageText, BufferLength, TextLength);
-        else if (statement->connection->pSQLGetDiagRecA)
-            ret = statement->connection->pSQLGetDiagRecA(HandleType, statement->driver_stmt, RecNumber,
-                                Sqlstate, NativeError, MessageText, BufferLength, TextLength);
-    }
-
-    if (ret != SQL_ERROR)
-    {
-        TRACE("%d: %s %s\n", RecNumber, Sqlstate, MessageText);
-    }
 
     return ret;
 }
@@ -1413,10 +1494,39 @@ SQLRETURN WINAPI SQLRowCount(SQLHSTMT StatementHandle, SQLLEN *RowCount)
 SQLRETURN WINAPI SQLSetConnectAttr(SQLHDBC ConnectionHandle, SQLINTEGER Attribute, SQLPOINTER Value,
                                    SQLINTEGER StringLength)
 {
-    SQLRETURN ret = SQL_ERROR;
+    struct SQLHDBC_data *hdbc = ConnectionHandle;
+    SQLRETURN ret = SQL_SUCCESS;
 
-    FIXME("(ConnectionHandle %p, Attribute %d, Value %p, StringLength %d)\n", ConnectionHandle, Attribute, Value,
+    TRACE("(ConnectionHandle %p, Attribute %d, Value %p, StringLength %d)\n", ConnectionHandle, Attribute, Value,
           StringLength);
+
+    if (hdbc->type != SQL_HANDLE_DBC)
+    {
+        WARN("Wrong handle type %d\n", hdbc->type);
+        return SQL_ERROR;
+    }
+
+    switch(Attribute)
+    {
+        case SQL_ATTR_LOGIN_TIMEOUT:
+            if (Value)
+                hdbc->login_timeout = (intptr_t)Value;
+            else
+                hdbc->login_timeout = 0;
+            break;
+        default:
+            if (hdbc->pSQLSetConnectAttr)
+                ret = hdbc->pSQLSetConnectAttr(hdbc->driver_hdbc, Attribute, Value, StringLength);
+            else if(hdbc->pSQLSetConnectOption)
+                ret = hdbc->pSQLSetConnectOption(hdbc->driver_hdbc, Attribute, (SQLULEN)Value);
+            else
+            {
+                FIXME("Unsupported Attribute %d\n", Attribute);
+                ret = SQL_ERROR;
+            }
+    }
+
+    TRACE("ret %d\n", ret);
 
     return ret;
 }
@@ -1552,6 +1662,10 @@ SQLRETURN WINAPI SQLSetStmtAttr(SQLHSTMT StatementHandle, SQLINTEGER Attribute, 
     if (statement->connection->pSQLSetStmtAttr)
     {
         ret = statement->connection->pSQLSetStmtAttr(statement->driver_stmt, Attribute, Value, StringLength);
+    }
+    else if (statement->connection->pSQLSetStmtOption)
+    {
+        ret = statement->connection->pSQLSetStmtOption( statement->driver_stmt, Attribute, (SQLULEN) Value );
     }
 
     TRACE("ret %d\n", ret);
@@ -2013,6 +2127,27 @@ SQLRETURN WINAPI SQLBindParameter(SQLHSTMT hstmt, SQLUSMALLINT ipar, SQLSMALLINT
         ret = statement->connection->pSQLBindParameter(statement->driver_stmt, ipar, fParamType,
                                   fCType, fSqlType, cbColDef, ibScale, rgbValue, cbValueMax, pcbValue);
     }
+    else if(statement->connection->pSQLBindParam)
+    {
+        /* TODO: Make function */
+        if(fCType == SQL_C_TYPE_TIME)
+            fCType = SQL_C_TIME;
+        else if(fCType == SQL_C_TYPE_DATE)
+            fCType = SQL_C_DATE;
+        else if(fCType == SQL_C_TYPE_TIMESTAMP)
+            fCType = SQL_C_TIMESTAMP;
+
+        /* TODO: Make function */
+        if (fSqlType == SQL_TIME)
+            fSqlType = SQL_TYPE_TIME;
+        else if (fSqlType == SQL_DATE)
+            fSqlType = SQL_TYPE_DATE;
+        else if (fSqlType == SQL_TIMESTAMP)
+            fSqlType = SQL_TYPE_TIMESTAMP;
+
+        ret = statement->connection->pSQLBindParam(statement->driver_stmt, ipar, fCType, fSqlType,
+                                                   cbColDef, ibScale, rgbValue, pcbValue);
+    }
 
     TRACE("ret %d\n", ret);
     return ret;
@@ -2047,21 +2182,6 @@ SQLRETURN WINAPI SQLSetScrollOptions(SQLHSTMT statement_handle, SQLUSMALLINT f_c
           f_concurrency, debugstr_sqllen(crow_keyset), crow_rowset);
 
     return ret;
-}
-
-static SQLINTEGER map_odbc2_to_3(SQLINTEGER fieldid)
-{
-    switch( fieldid )
-    {
-        case SQL_COLUMN_COUNT:
-            return SQL_DESC_COUNT;
-        case SQL_COLUMN_NULLABLE:
-            return SQL_DESC_NULLABLE;
-        case SQL_COLUMN_NAME:
-            return SQL_DESC_NAME;
-        default:
-            return fieldid;
-    }
 }
 
 /*************************************************************************
@@ -2172,12 +2292,20 @@ SQLRETURN WINAPI SQLErrorW(SQLHENV EnvironmentHandle, SQLHDBC ConnectionHandle, 
                            WCHAR *Sqlstate, SQLINTEGER *NativeError, WCHAR *MessageText,
                            SQLSMALLINT BufferLength, SQLSMALLINT *TextLength)
 {
+    struct SQLHDBC_data *hdbc = ConnectionHandle;
     SQLRETURN ret = SQL_ERROR;
 
-    FIXME("(EnvironmentHandle %p, ConnectionHandle %p, StatementHandle %p, Sqlstate %p, NativeError %p,"
+    TRACE("(EnvironmentHandle %p, ConnectionHandle %p, StatementHandle %p, Sqlstate %p, NativeError %p,"
           " MessageText %p, BufferLength %d, TextLength %p)\n", EnvironmentHandle, ConnectionHandle,
           StatementHandle, Sqlstate, NativeError, MessageText, BufferLength, TextLength);
 
+    if (hdbc->pSQLErrorW)
+    {
+        ret = hdbc->pSQLErrorW(hdbc->driver_env, hdbc->driver_hdbc, StatementHandle, Sqlstate,
+                              NativeError, MessageText, BufferLength, TextLength);
+    }
+
+    TRACE("ret %d\n", ret);
     return ret;
 }
 
@@ -2283,10 +2411,31 @@ SQLRETURN WINAPI SQLColAttributeW(SQLHSTMT StatementHandle, SQLUSMALLINT ColumnN
         return SQL_ERROR;
     }
 
+    /* ODBC 3.0 */
     if (statement->connection->pSQLColAttributeW)
     {
         ret = statement->connection->pSQLColAttributeW(statement->driver_stmt, ColumnNumber, FieldIdentifier,
                                  CharacterAttribute, BufferLength, StringLength, NumericAttribute);
+    }
+    /* ODBC 2.0 */
+    else if (statement->connection->pSQLColAttributesW)
+    {
+        FieldIdentifier = map_odbc3_to_2(FieldIdentifier);
+        ret = statement->connection->pSQLColAttributesW(statement->driver_stmt, ColumnNumber, FieldIdentifier,
+                                 CharacterAttribute, BufferLength, StringLength, NumericAttribute);
+
+        /* Convert back for ODBC3 drivers */
+        if (NumericAttribute && FieldIdentifier == SQL_COLUMN_TYPE &&
+                statement->connection->driver_ver == SQL_OV_ODBC2 &&
+                statement->connection->environment->version == SQL_OV_ODBC3)
+        {
+            if (*NumericAttribute == SQL_TIME)
+                *NumericAttribute = SQL_TYPE_TIME;
+            else if (*NumericAttribute == SQL_DATETIME)
+                *NumericAttribute = SQL_TYPE_DATE;
+            else if (*NumericAttribute == SQL_TIMESTAMP)
+                *NumericAttribute = SQL_TYPE_TIMESTAMP;
+        }
     }
 
     TRACE("ret %d\n", ret);
@@ -2316,6 +2465,11 @@ SQLRETURN WINAPI SQLGetConnectAttrW(SQLHDBC ConnectionHandle, SQLINTEGER Attribu
         ret = connection->pSQLGetConnectAttrW(connection->driver_hdbc, Attribute, Value,
                                     BufferLength, StringLength);
     }
+    else if (connection->pSQLGetConnectOptionW)
+    {
+        ret = connection->pSQLGetConnectOptionW(connection->driver_hdbc, Attribute, Value);
+    }
+    TRACE("ret %d\n", ret);
 
     TRACE("ret %d\n", ret);
 
@@ -2360,7 +2514,7 @@ SQLRETURN WINAPI SQLGetDiagFieldW(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLS
                                   SQLSMALLINT DiagIdentifier, SQLPOINTER DiagInfo, SQLSMALLINT BufferLength,
                                   SQLSMALLINT *StringLength)
 {
-    SQLRETURN ret = SQL_ERROR;
+    SQLRETURN ret = SQL_NO_DATA;
 
     TRACE("(HandleType %d, Handle %p, RecNumber %d, DiagIdentifier %d, DiagInfo %p, BufferLength %d,"
           " StringLength %p)\n", HandleType, Handle, RecNumber, DiagIdentifier, DiagInfo, BufferLength, StringLength);
@@ -2385,8 +2539,8 @@ SQLRETURN WINAPI SQLGetDiagFieldW(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLS
             ret = statement->connection->pSQLGetDiagFieldW(HandleType, statement->driver_stmt, RecNumber,
                                      DiagIdentifier, DiagInfo, BufferLength, StringLength);
     }
-    TRACE("ret %d\n", ret);
 
+    TRACE("ret %d\n", ret);
     return ret;
 }
 
@@ -2412,16 +2566,30 @@ SQLRETURN WINAPI SQLGetDiagRecW(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSMA
         struct SQLHDBC_data *hdbc = Handle;
 
         if (hdbc->pSQLGetDiagRecW)
+        {
             ret = hdbc->pSQLGetDiagRecW(HandleType, hdbc->driver_hdbc, RecNumber, Sqlstate,
                                 NativeError, MessageText, BufferLength, TextLength);
+        }
+        else if (hdbc->pSQLErrorW)
+        {
+            ret = hdbc->pSQLErrorW(SQL_NULL_HENV, hdbc->driver_hdbc, SQL_NULL_HSTMT, Sqlstate,
+                                NativeError, MessageText, BufferLength, TextLength);
+        }
     }
     else if (HandleType == SQL_HANDLE_STMT)
     {
         struct SQLHSTMT_data *statement = Handle;
 
         if (statement->connection->pSQLGetDiagRecW)
+        {
             ret = statement->connection->pSQLGetDiagRecW(HandleType, statement->driver_stmt, RecNumber,
                                 Sqlstate, NativeError, MessageText, BufferLength, TextLength);
+        }
+        else if (statement->connection->pSQLErrorW)
+        {
+            ret = statement->connection->pSQLErrorW(SQL_NULL_HENV, SQL_NULL_HDBC, statement->driver_stmt,
+                                Sqlstate, NativeError, MessageText, BufferLength, TextLength);
+        }
     }
 
     if (ret != SQL_ERROR)
@@ -2527,6 +2695,8 @@ SQLRETURN WINAPI SQLSetConnectAttrW(SQLHDBC ConnectionHandle, SQLINTEGER Attribu
         default:
             if (hdbc->pSQLSetConnectAttrW)
                 ret = hdbc->pSQLSetConnectAttrW(hdbc->driver_hdbc, Attribute, Value, StringLength);
+            else if(hdbc->pSQLSetConnectOptionW)
+                ret = hdbc->pSQLSetConnectOptionW(hdbc->driver_hdbc, Attribute, (SQLULEN)Value);
             else
             {
                 FIXME("Unsupported Attribute %d\n", Attribute);
@@ -2557,7 +2727,7 @@ SQLRETURN WINAPI SQLColumnsW(SQLHSTMT StatementHandle, WCHAR *CatalogName, SQLSM
     return ret;
 }
 
-static HMODULE load_odbc_driver(const WCHAR *driver)
+static HMODULE load_odbc_driver(const WCHAR *driver, BOOL use_dsn)
 {
     long ret;
     HMODULE hmod;
@@ -2565,7 +2735,10 @@ static HMODULE load_odbc_driver(const WCHAR *driver)
     HKEY hkey;
     WCHAR regpath[256];
 
-    wcscpy(regpath, L"Software\\ODBC\\ODBC.INI\\");
+    if (use_dsn)
+        wcscpy(regpath, L"Software\\ODBC\\ODBC.INI\\");
+    else
+        wcscpy(regpath, L"Software\\ODBC\\ODBCINST.INI\\");
     wcscat(regpath, driver);
 
     if ((ret = RegOpenKeyW(HKEY_CURRENT_USER, regpath, &hkey)) != ERROR_SUCCESS)
@@ -2625,10 +2798,11 @@ SQLRETURN WINAPI SQLDriverConnectW(SQLHDBC ConnectionHandle, SQLHWND WindowHandl
     SQLRETURN ret = SQL_ERROR;
     WCHAR dsn[128];
     WCHAR *p;
+    BOOL is_dsn = TRUE;
 
     TRACE("(ConnectionHandle %p, WindowHandle %p, InConnectionString %s, Length %d, OutConnectionString %p,"
           " BufferLength %d, Length2 %p, DriverCompletion %d)\n", ConnectionHandle, WindowHandle,
-          debugstr_wn(InConnectionString, Length), Length, OutConnectionString, BufferLength, Length2,
+          Length == SQL_NTS ? debugstr_w(InConnectionString) : debugstr_wn(InConnectionString, Length), Length, OutConnectionString, BufferLength, Length2,
           DriverCompletion);
 
     p = wcsstr(InConnectionString, L"DSN=");
@@ -2638,17 +2812,33 @@ SQLRETURN WINAPI SQLDriverConnectW(SQLHDBC ConnectionHandle, SQLHWND WindowHandl
 
         lstrcpynW(dsn, p+4, end - (p + 3));
     }
+    else
+    {
+        p = wcsstr(InConnectionString, L"Driver=");
+        if (p)
+        {
+            WCHAR *end = wcsstr(p, L";");
 
-    driver = load_odbc_driver(dsn);
+            lstrcpynW(dsn, p+7, end - (p + 6));
+            is_dsn = FALSE;
+        }
+    }
+
+    driver = load_odbc_driver(dsn, is_dsn);
     if (!driver)
         return SQL_ERROR;
 
     connection->module = driver;
+    connection->driver_ver = SQL_OV_ODBC2;
     connection_bind_sql_funcs(connection);
 
+    /* ODBC 3.x */
     if (connection->pSQLAllocHandle)
     {
         connection->pSQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &connection->driver_env);
+
+        if (connection->pSQLGetEnvAttr)
+            connection->pSQLGetEnvAttr(connection->driver_env, SQL_ATTR_ODBC_VERSION, &connection->driver_ver, 0, NULL);
 
         if (connection->pSQLSetEnvAttr)
             connection->pSQLSetEnvAttr(connection->driver_env, SQL_ATTR_ODBC_VERSION,
@@ -2656,6 +2846,15 @@ SQLRETURN WINAPI SQLDriverConnectW(SQLHDBC ConnectionHandle, SQLHWND WindowHandl
 
         connection->pSQLAllocHandle(SQL_HANDLE_DBC, connection->driver_env, &connection->driver_hdbc);
     }
+    /* ODBC 2.x */
+    else if(connection->pSQLAllocConnect && connection->pSQLAllocEnv)
+    {
+        connection->pSQLAllocEnv(&connection->driver_env);
+
+        connection->pSQLAllocConnect(connection->driver_env, &connection->driver_hdbc);
+    }
+    else
+        ERR("No functions to allocated Environment handles found.\n");
 
     if(!connection->pSQLDriverConnectW)
     {
@@ -2803,7 +3002,7 @@ SQLRETURN WINAPI SQLStatisticsW(SQLHSTMT StatementHandle, SQLWCHAR *CatalogName,
     }
 
     TRACE("ret %d\n", ret);
-    return ret;
+
 
     return ret;
 }
@@ -3069,6 +3268,10 @@ SQLRETURN WINAPI SQLSetStmtAttrW(SQLHSTMT StatementHandle, SQLINTEGER Attribute,
     {
         ret = statement->connection->pSQLSetStmtAttrW(statement->driver_stmt, Attribute, Value, StringLength);
     }
+    else if (statement->connection->pSQLSetStmtOption)
+    {
+        ret = statement->connection->pSQLSetStmtOption( statement->driver_stmt, Attribute, (SQLULEN) Value );
+    }
 
     TRACE("ret %d\n", ret);
     return ret;
@@ -3095,7 +3298,10 @@ SQLRETURN WINAPI SQLGetDiagRecA(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSMA
     {
         struct SQLHDBC_data *hdbc = Handle;
 
-        if (hdbc->pSQLGetDiagRecA)
+        if (hdbc->pSQLGetDiagRec)
+            ret = hdbc->pSQLGetDiagRec(HandleType, hdbc->driver_hdbc, RecNumber, Sqlstate,
+                                NativeError, MessageText, BufferLength, TextLength);
+        else if (hdbc->pSQLGetDiagRecA)
             ret = hdbc->pSQLGetDiagRecA(HandleType, hdbc->driver_hdbc, RecNumber, Sqlstate,
                                 NativeError, MessageText, BufferLength, TextLength);
     }
@@ -3103,7 +3309,10 @@ SQLRETURN WINAPI SQLGetDiagRecA(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSMA
     {
         struct SQLHSTMT_data *statement = Handle;
 
-        if (statement->connection->pSQLGetDiagRecA)
+        if (statement->connection->pSQLGetDiagRec)
+            ret = statement->connection->pSQLGetDiagRec(HandleType, statement->driver_stmt, RecNumber,
+                                Sqlstate, NativeError, MessageText, BufferLength, TextLength);
+        else if (statement->connection->pSQLGetDiagRecA)
             ret = statement->connection->pSQLGetDiagRecA(HandleType, statement->driver_stmt, RecNumber,
                                 Sqlstate, NativeError, MessageText, BufferLength, TextLength);
     }

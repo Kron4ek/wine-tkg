@@ -32,7 +32,6 @@
 #include "winbase.h"
 #include "winternl.h"
 #include "msvcrt.h"
-#include "wine/exception.h"
 #include "excpt.h"
 #include "wine/debug.h"
 
@@ -41,24 +40,72 @@
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
 
-/*********************************************************************
- *		__CxxExceptionFilter (MSVCRT.@)
+extern void *call_exc_handler( void *handler, ULONG_PTR frame, UINT flags, BYTE *nonvol_regs );
+__ASM_GLOBAL_FUNC( call_exc_handler,
+                   "stp x29, x30, [sp, #-96]!\n\t"
+                   ".seh_save_fplr_x 96\n\t"
+                   "stp x19, x20, [sp, #16]\n\t"
+                   ".seh_save_regp x19, 16\n\t"
+                   "stp x21, x22, [sp, #32]\n\t"
+                   ".seh_save_regp x21, 32\n\t"
+                   "stp x23, x24, [sp, #48]\n\t"
+                   ".seh_save_regp x23, 48\n\t"
+                   "stp x25, x26, [sp, #64]\n\t"
+                   ".seh_save_regp x25, 64\n\t"
+                   "stp x27, x28, [sp, #80]\n\t"
+                   ".seh_save_regp x27, 80\n\t"
+                   "str x1, [sp, #-16]!\n\t"
+                   ".seh_stackalloc 16\n\t"
+                   ".seh_endprologue\n\t"
+                   "ldp x19, x20, [x3, #0]\n\t" /* nonvolatile regs */
+                   "ldp x21, x22, [x3, #16]\n\t"
+                   "ldp x23, x24, [x3, #32]\n\t"
+                   "ldp x25, x26, [x3, #48]\n\t"
+                   "ldp x27, x28, [x3, #64]\n\t"
+                   "ldr x29, [x3, #80]\n\t"
+                   "blr x0\n\t"
+                   "add sp, sp, 16\n\t"
+                   "ldp x19, x20, [sp, #16]\n\t"
+                   "ldp x21, x22, [sp, #32]\n\t"
+                   "ldp x23, x24, [sp, #48]\n\t"
+                   "ldp x25, x26, [sp, #64]\n\t"
+                   "ldp x27, x28, [sp, #80]\n\t"
+                   "ldp x29, x30, [sp], #96\n\t"
+                   "ret" )
+
+
+/*******************************************************************
+ *		call_catch_handler
  */
-int CDECL __CxxExceptionFilter( PEXCEPTION_POINTERS ptrs,
-                                const type_info *ti, int flags, void **copy )
+void *call_catch_handler( EXCEPTION_RECORD *rec )
 {
-    FIXME( "%p %p %x %p: not implemented\n", ptrs, ti, flags, copy );
-    return EXCEPTION_CONTINUE_SEARCH;
+    ULONG_PTR frame = rec->ExceptionInformation[1];
+    void *handler = (void *)rec->ExceptionInformation[5];
+    BYTE *nonvol_regs = (BYTE *)rec->ExceptionInformation[10];
+
+    TRACE( "calling %p frame %Ix\n", handler, frame );
+    return call_exc_handler( handler, frame, 0x100, nonvol_regs );
 }
 
-/*********************************************************************
- *		__CxxFrameHandler (MSVCRT.@)
+
+/*******************************************************************
+ *		call_unwind_handler
  */
-EXCEPTION_DISPOSITION CDECL __CxxFrameHandler(EXCEPTION_RECORD *rec, ULONG64 frame, CONTEXT *context,
-                                              DISPATCHER_CONTEXT *dispatch)
+void *call_unwind_handler( void *handler, ULONG_PTR frame, DISPATCHER_CONTEXT *dispatch )
 {
-    FIXME("%p %I64x %p %p: not implemented\n", rec, frame, context, dispatch);
-    return ExceptionContinueSearch;
+    TRACE( "calling %p frame %Ix\n", handler, frame );
+    return call_exc_handler( handler, frame, 0x100, dispatch->NonVolatileRegisters );
+}
+
+
+/*******************************************************************
+ *		get_exception_pc
+ */
+ULONG_PTR get_exception_pc( DISPATCHER_CONTEXT *dispatch )
+{
+    ULONG_PTR pc = dispatch->ControlPc;
+    if (dispatch->ControlPcIsUnwound) pc -= 4;
+    return pc;
 }
 
 
@@ -69,10 +116,10 @@ __ASM_GLOBAL_FUNC( _setjmp, "b _setjmpex" );
 
 
 /*********************************************************************
- *              _fpieee_flt (MSVCRT.@)
+ *              handle_fpieee_flt
  */
-int __cdecl _fpieee_flt(__msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
-        int (__cdecl *handler)(_FPIEEE_RECORD*))
+int handle_fpieee_flt( __msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
+                       int (__cdecl *handler)(_FPIEEE_RECORD*) )
 {
     FIXME("(%lx %p %p)\n", exception_code, ep, handler);
     return EXCEPTION_CONTINUE_SEARCH;

@@ -218,6 +218,14 @@ static void prepend_uniform_copy(struct hlsl_ctx *ctx, struct hlsl_block *block,
     uniform->is_uniform = 1;
     uniform->is_param = temp->is_param;
     uniform->buffer = temp->buffer;
+    if (temp->default_values)
+    {
+        /* Transfer default values from the temp to the uniform. */
+        assert(!uniform->default_values);
+        assert(hlsl_type_component_count(temp->data_type) == hlsl_type_component_count(uniform->data_type));
+        uniform->default_values = temp->default_values;
+        temp->default_values = NULL;
+    }
 
     if (!(new_name = hlsl_sprintf_alloc(ctx, "<temp-%s>", temp->name)))
         return;
@@ -312,7 +320,7 @@ static struct hlsl_ir_var *add_semantic_var(struct hlsl_ctx *ctx, struct hlsl_ir
         }
     }
 
-    if (!(new_semantic.name = hlsl_strdup(ctx, semantic->name)))
+    if (!(hlsl_clone_semantic(ctx, &new_semantic, semantic)))
     {
         vkd3d_free(new_name);
         return NULL;
@@ -3815,15 +3823,16 @@ static void allocate_register_reservations(struct hlsl_ctx *ctx)
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
+        const struct hlsl_reg_reservation *reservation = &var->reg_reservation;
         unsigned int r;
 
-        if (var->reg_reservation.reg_type)
+        if (reservation->reg_type)
         {
             for (r = 0; r <= HLSL_REGSET_LAST_OBJECT; ++r)
             {
                 if (var->regs[r].allocation_size > 0)
                 {
-                    if (var->reg_reservation.reg_type != get_regset_name(r))
+                    if (reservation->reg_type != get_regset_name(r))
                     {
                         struct vkd3d_string_buffer *type_string;
 
@@ -3839,10 +3848,8 @@ static void allocate_register_reservations(struct hlsl_ctx *ctx)
                     else
                     {
                         var->regs[r].allocated = true;
-                        var->regs[r].id = var->reg_reservation.reg_index;
-                        TRACE("Allocated reserved %s to %c%u-%c%u.\n", var->name, var->reg_reservation.reg_type,
-                                var->reg_reservation.reg_index, var->reg_reservation.reg_type,
-                                var->reg_reservation.reg_index + var->regs[r].allocation_size);
+                        var->regs[r].space = reservation->reg_space;
+                        var->regs[r].index = reservation->reg_index;
                     }
                 }
             }
@@ -4762,13 +4769,14 @@ static void allocate_semantic_registers(struct hlsl_ctx *ctx)
     }
 }
 
-static const struct hlsl_buffer *get_reserved_buffer(struct hlsl_ctx *ctx, uint32_t index)
+static const struct hlsl_buffer *get_reserved_buffer(struct hlsl_ctx *ctx, uint32_t space, uint32_t index)
 {
     const struct hlsl_buffer *buffer;
 
     LIST_FOR_EACH_ENTRY(buffer, &ctx->buffers, const struct hlsl_buffer, entry)
     {
-        if (buffer->used_size && buffer->reservation.reg_type == 'b' && buffer->reservation.reg_index == index)
+        if (buffer->used_size && buffer->reservation.reg_type == 'b'
+                && buffer->reservation.reg_space == space && buffer->reservation.reg_index == index)
             return buffer;
     }
     return NULL;
@@ -4783,6 +4791,7 @@ static void hlsl_calculate_buffer_offset(struct hlsl_ctx *ctx, struct hlsl_ir_va
     if (register_reservation)
     {
         var->buffer_offset = 4 * var->reg_reservation.reg_index;
+        var->has_explicit_bind_point = 1;
     }
     else
     {
@@ -4815,6 +4824,7 @@ static void hlsl_calculate_buffer_offset(struct hlsl_ctx *ctx, struct hlsl_ir_va
                 }
             }
             var->buffer_offset = var->reg_reservation.offset_index;
+            var->has_explicit_bind_point = 1;
         }
         else
         {
@@ -4916,8 +4926,8 @@ void hlsl_calculate_buffer_offsets(struct hlsl_ctx *ctx)
 static void allocate_buffers(struct hlsl_ctx *ctx)
 {
     struct hlsl_buffer *buffer;
+    uint32_t index = 0, id = 0;
     struct hlsl_ir_var *var;
-    uint32_t index = 0;
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
@@ -4938,32 +4948,48 @@ static void allocate_buffers(struct hlsl_ctx *ctx)
 
         if (buffer->type == HLSL_BUFFER_CONSTANT)
         {
-            if (buffer->reservation.reg_type == 'b')
+            const struct hlsl_reg_reservation *reservation = &buffer->reservation;
+
+            if (reservation->reg_type == 'b')
             {
-                const struct hlsl_buffer *reserved_buffer = get_reserved_buffer(ctx, buffer->reservation.reg_index);
+                const struct hlsl_buffer *reserved_buffer = get_reserved_buffer(ctx,
+                        reservation->reg_space, reservation->reg_index);
 
                 if (reserved_buffer && reserved_buffer != buffer)
                 {
                     hlsl_error(ctx, &buffer->loc, VKD3D_SHADER_ERROR_HLSL_OVERLAPPING_RESERVATIONS,
-                            "Multiple buffers bound to cb%u.", buffer->reservation.reg_index);
+                            "Multiple buffers bound to space %u, index %u.",
+                            reservation->reg_space, reservation->reg_index);
                     hlsl_note(ctx, &reserved_buffer->loc, VKD3D_SHADER_LOG_ERROR,
-                            "Buffer %s is already bound to cb%u.", reserved_buffer->name, buffer->reservation.reg_index);
+                            "Buffer %s is already bound to space %u, index %u.",
+                            reserved_buffer->name, reservation->reg_space, reservation->reg_index);
                 }
 
-                buffer->reg.id = buffer->reservation.reg_index;
+                buffer->reg.space = reservation->reg_space;
+                buffer->reg.index = reservation->reg_index;
+                if (hlsl_version_ge(ctx, 5, 1))
+                    buffer->reg.id = id++;
+                else
+                    buffer->reg.id = buffer->reg.index;
                 buffer->reg.allocation_size = 1;
                 buffer->reg.allocated = true;
-                TRACE("Allocated reserved %s to cb%u.\n", buffer->name, index);
+                TRACE("Allocated reserved %s to space %u, index %u, id %u.\n",
+                        buffer->name, buffer->reg.space, buffer->reg.index, buffer->reg.id);
             }
-            else if (!buffer->reservation.reg_type)
+            else if (!reservation->reg_type)
             {
-                while (get_reserved_buffer(ctx, index))
+                while (get_reserved_buffer(ctx, 0, index))
                     ++index;
 
-                buffer->reg.id = index;
+                buffer->reg.space = 0;
+                buffer->reg.index = index;
+                if (hlsl_version_ge(ctx, 5, 1))
+                    buffer->reg.id = id++;
+                else
+                    buffer->reg.id = buffer->reg.index;
                 buffer->reg.allocation_size = 1;
                 buffer->reg.allocated = true;
-                TRACE("Allocated %s to cb%u.\n", buffer->name, index);
+                TRACE("Allocated %s to space 0, index %u, id %u.\n", buffer->name, buffer->reg.index, buffer->reg.id);
                 ++index;
             }
             else
@@ -4980,7 +5006,7 @@ static void allocate_buffers(struct hlsl_ctx *ctx)
 }
 
 static const struct hlsl_ir_var *get_allocated_object(struct hlsl_ctx *ctx, enum hlsl_regset regset,
-        uint32_t index, bool allocated_only)
+        uint32_t space, uint32_t index, bool allocated_only)
 {
     const struct hlsl_ir_var *var;
     unsigned int start, count;
@@ -4995,12 +5021,18 @@ static const struct hlsl_ir_var *get_allocated_object(struct hlsl_ctx *ctx, enum
             start = var->reg_reservation.reg_index;
             count = var->data_type->reg_size[regset];
 
+            if (var->reg_reservation.reg_space != space)
+                continue;
+
             if (!var->regs[regset].allocated && allocated_only)
                 continue;
         }
         else if (var->regs[regset].allocated)
         {
-            start = var->regs[regset].id;
+            if (var->regs[regset].space != space)
+                continue;
+
+            start = var->regs[regset].index;
             count = var->regs[regset].allocation_size;
         }
         else
@@ -5017,8 +5049,8 @@ static const struct hlsl_ir_var *get_allocated_object(struct hlsl_ctx *ctx, enum
 static void allocate_objects(struct hlsl_ctx *ctx, enum hlsl_regset regset)
 {
     char regset_name = get_regset_name(regset);
+    uint32_t min_index = 0, id = 0;
     struct hlsl_ir_var *var;
-    uint32_t min_index = 0;
 
     if (regset == HLSL_REGSET_UAVS)
     {
@@ -5041,35 +5073,44 @@ static void allocate_objects(struct hlsl_ctx *ctx, enum hlsl_regset regset)
         if (var->regs[regset].allocated)
         {
             const struct hlsl_ir_var *reserved_object, *last_reported = NULL;
-            unsigned int index, i;
+            unsigned int i;
 
-            if (var->regs[regset].id < min_index)
+            if (var->regs[regset].index < min_index)
             {
                 assert(regset == HLSL_REGSET_UAVS);
                 hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_OVERLAPPING_RESERVATIONS,
                         "UAV index (%u) must be higher than the maximum render target index (%u).",
-                        var->regs[regset].id, min_index - 1);
+                        var->regs[regset].index, min_index - 1);
                 continue;
             }
 
             for (i = 0; i < count; ++i)
             {
-                index = var->regs[regset].id + i;
+                unsigned int space = var->regs[regset].space;
+                unsigned int index = var->regs[regset].index + i;
 
                 /* get_allocated_object() may return "var" itself, but we
                  * actually want that, otherwise we'll end up reporting the
                  * same conflict between the same two variables twice. */
-                reserved_object = get_allocated_object(ctx, regset, index, true);
+                reserved_object = get_allocated_object(ctx, regset, space, index, true);
                 if (reserved_object && reserved_object != var && reserved_object != last_reported)
                 {
                     hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_OVERLAPPING_RESERVATIONS,
-                            "Multiple variables bound to %c%u.", regset_name, index);
+                            "Multiple variables bound to space %u, %c%u.", regset_name, space, index);
                     hlsl_note(ctx, &reserved_object->loc, VKD3D_SHADER_LOG_ERROR,
-                            "Variable '%s' is already bound to %c%u.", reserved_object->name,
-                            regset_name, index);
+                            "Variable '%s' is already bound to space %u, %c%u.",
+                            reserved_object->name, regset_name, space, index);
                     last_reported = reserved_object;
                 }
             }
+
+            if (hlsl_version_ge(ctx, 5, 1))
+                var->regs[regset].id = id++;
+            else
+                var->regs[regset].id = var->regs[regset].index;
+            TRACE("Allocated reserved variable %s to space %u, indices %c%u-%c%u, id %u.\n",
+                    var->name, var->regs[regset].space, regset_name, var->regs[regset].index,
+                    regset_name, var->regs[regset].index + count, var->regs[regset].id);
         }
         else
         {
@@ -5078,7 +5119,7 @@ static void allocate_objects(struct hlsl_ctx *ctx, enum hlsl_regset regset)
 
             while (available < count)
             {
-                if (get_allocated_object(ctx, regset, index, false))
+                if (get_allocated_object(ctx, regset, 0, index, false))
                     available = 0;
                 else
                     ++available;
@@ -5086,10 +5127,15 @@ static void allocate_objects(struct hlsl_ctx *ctx, enum hlsl_regset regset)
             }
             index -= count;
 
-            var->regs[regset].id = index;
+            var->regs[regset].space = 0;
+            var->regs[regset].index = index;
+            if (hlsl_version_ge(ctx, 5, 1))
+                var->regs[regset].id = id++;
+            else
+                var->regs[regset].id = var->regs[regset].index;
             var->regs[regset].allocated = true;
-            TRACE("Allocated variable %s to %c%u-%c%u.\n", var->name, regset_name, index, regset_name,
-                    index + count);
+            TRACE("Allocated variable %s to space 0, indices %c%u-%c%u, id %u.\n", var->name,
+                    regset_name, index, regset_name, index + count, var->regs[regset].id);
             ++index;
         }
     }
@@ -5295,6 +5341,7 @@ struct hlsl_reg hlsl_reg_from_deref(struct hlsl_ctx *ctx, const struct hlsl_dere
     assert(deref->data_type);
     assert(hlsl_is_numeric_type(deref->data_type));
 
+    ret.index += offset / 4;
     ret.id += offset / 4;
 
     ret.writemask = 0xf & (0xf << (offset % 4));

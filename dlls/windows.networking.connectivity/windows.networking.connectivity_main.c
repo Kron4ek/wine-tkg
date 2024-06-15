@@ -365,19 +365,22 @@ static HRESULT STDMETHODCALLTYPE network_information_statics_GetLanIdentifiers(I
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE network_information_statics_GetHostNames(INetworkInformationStatics *iface, DWORD **value)
+static HRESULT STDMETHODCALLTYPE network_information_statics_GetHostNames(INetworkInformationStatics *iface, __FIVectorView_1_Windows__CNetworking__CHostName **value)
 {
     FIXME("iface %p, %p stub!\n", iface, value);
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE network_information_statics_GetProxyConfigurationAsync(INetworkInformationStatics *iface, char *name, DWORD **value)
+static HRESULT STDMETHODCALLTYPE network_information_statics_GetProxyConfigurationAsync(INetworkInformationStatics *iface, __x_ABI_CWindows_CFoundation_CIUriRuntimeClass *name,
+                                                                                        __FIAsyncOperation_1_Windows__CNetworking__CConnectivity__CProxyConfiguration **value)
 {
     FIXME("iface %p, %p, %p stub!\n", iface, name, value);
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE network_information_statics_GetSortedEndpointPairs(INetworkInformationStatics *iface, DWORD* destinationList, DWORD sortOptions, DWORD **value)
+static HRESULT STDMETHODCALLTYPE network_information_statics_GetSortedEndpointPairs(INetworkInformationStatics *iface, __FIIterable_1_Windows__CNetworking__CEndpointPair* destinationList,
+                                                                                    enum __x_ABI_CWindows_CNetworking_CHostNameSortOptions sortOptions,
+                                                                                    __FIVectorView_1_Windows__CNetworking__CEndpointPair **value)
 {
     FIXME("iface %p, %p stub!\n", iface, value);
     return E_NOTIMPL;

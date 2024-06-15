@@ -507,6 +507,7 @@ enum wine_internal_message
     WM_WINE_FIRST_DRIVER_MSG = 0x80001000,  /* range of messages reserved for the USER driver */
     WM_WINE_CLIPCURSOR = 0x80001ff0, /* internal driver notification messages */
     WM_WINE_SETCURSOR,
+    WM_WINE_DESKTOP_RESIZED,
     WM_WINE_LAST_DRIVER_MSG = 0x80001fff
 };
 
@@ -833,7 +834,7 @@ enum
     NtUserCallNoParam_GetShellWindow,
     NtUserCallNoParam_GetTaskmanWindow,
     NtUserCallNoParam_ReleaseCapture,
-    NtUserCallNoParam_UpdateDisplayCache,
+    NtUserCallNoParam_DisplayModeChanged,
     /* temporary exports */
     NtUserExitingThread,
     NtUserThreadDetach,
@@ -903,7 +904,6 @@ enum
     NtUserCallOneParam_GetSysColorPen,
     NtUserCallOneParam_GetSystemMetrics,
     NtUserCallOneParam_GetVirtualScreenRect,
-    NtUserCallOneParam_IsWindowRectFullScreen,
     NtUserCallOneParam_MessageBeep,
     NtUserCallOneParam_RealizePalette,
     NtUserCallOneParam_ReplyMessage,
@@ -911,6 +911,7 @@ enum
     NtUserCallOneParam_SetProcessDefaultLayout,
     NtUserCallOneParam_SetKeyboardAutoRepeat,
     NtUserCallOneParam_SetThreadDpiAwarenessContext,
+    NtUserCallOneParam_D3DKMTOpenAdapterFromGdiDisplayName,
     /* temporary exports */
     NtUserGetDeskPattern,
 };
@@ -1004,11 +1005,6 @@ static inline RECT NtUserGetVirtualScreenRect(void)
     return virtual;
 }
 
-static inline BOOL NtUserIsWindowRectFullScreen( const RECT *rect )
-{
-    return NtUserCallOneParam( (UINT_PTR)rect, NtUserCallOneParam_IsWindowRectFullScreen );
-}
-
 static inline BOOL NtUserMessageBeep( UINT i )
 {
     return NtUserCallOneParam( i, NtUserCallOneParam_MessageBeep );
@@ -1034,6 +1030,13 @@ static inline UINT NtUserSetThreadDpiAwarenessContext( UINT context )
     return NtUserCallOneParam( context, NtUserCallOneParam_SetThreadDpiAwarenessContext );
 }
 
+typedef struct _D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME;
+
+static inline NTSTATUS NtUserD3DKMTOpenAdapterFromGdiDisplayName( D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME *desc )
+{
+    return NtUserCallOneParam( (UINT_PTR)desc, NtUserCallOneParam_D3DKMTOpenAdapterFromGdiDisplayName );
+}
+
 /* NtUserCallTwoParam codes, not compatible with Windows */
 enum
 {
@@ -1045,6 +1048,8 @@ enum
     NtUserCallTwoParam_SetCaretPos,
     NtUserCallTwoParam_SetIconParam,
     NtUserCallTwoParam_UnhookWindowsHook,
+    NtUserCallTwoParam_AdjustWindowRect,
+    NtUserCallTwoParam_IsWindowRectFullScreen,
     /* temporary exports */
     NtUserAllocWinProc,
 };
@@ -1090,6 +1095,31 @@ static inline UINT_PTR NtUserSetIconParam( HICON icon, ULONG_PTR param )
 static inline BOOL NtUserUnhookWindowsHook( INT id, HOOKPROC proc )
 {
     return NtUserCallTwoParam( id, (UINT_PTR)proc, NtUserCallTwoParam_UnhookWindowsHook );
+}
+
+struct adjust_window_rect_params
+{
+    DWORD style;
+    DWORD ex_style;
+    BOOL menu;
+    UINT dpi;
+};
+
+static inline BOOL NtUserAdjustWindowRect( RECT *rect, DWORD style, BOOL menu, DWORD ex_style, UINT dpi )
+{
+    struct adjust_window_rect_params params =
+    {
+        .style = style,
+        .ex_style = ex_style,
+        .menu = menu,
+        .dpi = dpi,
+    };
+    return NtUserCallTwoParam( (ULONG_PTR)rect, (ULONG_PTR)&params, NtUserCallTwoParam_AdjustWindowRect );
+}
+
+static inline BOOL NtUserIsWindowRectFullScreen( const RECT *rect, UINT dpi )
+{
+    return NtUserCallTwoParam( (UINT_PTR)rect, dpi, NtUserCallTwoParam_IsWindowRectFullScreen );
 }
 
 /* NtUserCallHwnd codes, not compatible with Windows */
@@ -1232,14 +1262,13 @@ enum
     NtUserCallHwndParam_GetClassLongPtrA,
     NtUserCallHwndParam_GetClassLongPtrW,
     NtUserCallHwndParam_GetClassWord,
-    NtUserCallHwndParam_GetClientRect,
     NtUserCallHwndParam_GetScrollInfo,
     NtUserCallHwndParam_GetWindowInfo,
     NtUserCallHwndParam_GetWindowLongA,
     NtUserCallHwndParam_GetWindowLongW,
     NtUserCallHwndParam_GetWindowLongPtrA,
     NtUserCallHwndParam_GetWindowLongPtrW,
-    NtUserCallHwndParam_GetWindowRect,
+    NtUserCallHwndParam_GetWindowRects,
     NtUserCallHwndParam_GetWindowRelative,
     NtUserCallHwndParam_GetWindowThread,
     NtUserCallHwndParam_GetWindowWord,
@@ -1256,6 +1285,13 @@ enum
     NtUserCallHwndParam_SendHardwareInput,
     /* temporary exports */
     NtUserSetWindowStyle,
+};
+
+struct get_window_rects_params
+{
+    RECT *rect;
+    BOOL client;
+    UINT dpi;
 };
 
 static inline BOOL NtUserClientToScreen( HWND hwnd, POINT *pt )
@@ -1298,9 +1334,10 @@ static inline WORD NtUserGetClassWord( HWND hwnd, INT offset )
     return NtUserCallHwndParam( hwnd, offset, NtUserCallHwndParam_GetClassWord );
 }
 
-static inline BOOL NtUserGetClientRect( HWND hwnd, RECT *rect )
+static inline BOOL NtUserGetClientRect( HWND hwnd, RECT *rect, UINT dpi )
 {
-    return NtUserCallHwndParam( hwnd, (UINT_PTR)rect, NtUserCallHwndParam_GetClientRect );
+    struct get_window_rects_params params = {.rect = rect, .client = TRUE, .dpi = dpi};
+    return NtUserCallHwndParam( hwnd, (UINT_PTR)&params, NtUserCallHwndParam_GetWindowRects );
 }
 
 struct get_scroll_info_params
@@ -1340,9 +1377,10 @@ static inline LONG NtUserGetWindowLongW( HWND hwnd, INT offset )
     return NtUserCallHwndParam( hwnd, offset, NtUserCallHwndParam_GetWindowLongW );
 }
 
-static inline BOOL NtUserGetWindowRect( HWND hwnd, RECT *rect )
+static inline BOOL NtUserGetWindowRect( HWND hwnd, RECT *rect, UINT dpi )
 {
-    return NtUserCallHwndParam( hwnd, (UINT_PTR)rect, NtUserCallHwndParam_GetWindowRect );
+    struct get_window_rects_params params = {.rect = rect, .client = FALSE, .dpi = dpi};
+    return NtUserCallHwndParam( hwnd, (UINT_PTR)&params, NtUserCallHwndParam_GetWindowRects );
 }
 
 static inline HWND NtUserGetWindowRelative( HWND hwnd, UINT rel )
@@ -1376,14 +1414,16 @@ struct map_window_points_params
     HWND hwnd_to;
     POINT *points;
     UINT count;
+    UINT dpi;
 };
 
-static inline int NtUserMapWindowPoints( HWND hwnd_from, HWND hwnd_to, POINT *points, UINT count )
+static inline int NtUserMapWindowPoints( HWND hwnd_from, HWND hwnd_to, POINT *points, UINT count, UINT dpi )
 {
     struct map_window_points_params params;
     params.hwnd_to = hwnd_to;
     params.points = points;
     params.count = count;
+    params.dpi = dpi;
     return NtUserCallHwndParam( hwnd_from, (UINT_PTR)&params,
                                 NtUserCallHwndParam_MapWindowPoints );
 }

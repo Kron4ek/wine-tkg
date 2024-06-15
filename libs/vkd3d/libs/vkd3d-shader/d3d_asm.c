@@ -254,6 +254,10 @@ static const char * const shader_opcode_names[] =
     [VKD3DSIH_PHASE                           ] = "phase",
     [VKD3DSIH_PHI                             ] = "phi",
     [VKD3DSIH_POW                             ] = "pow",
+    [VKD3DSIH_QUAD_READ_ACROSS_D              ] = "quad_read_across_d",
+    [VKD3DSIH_QUAD_READ_ACROSS_X              ] = "quad_read_across_x",
+    [VKD3DSIH_QUAD_READ_ACROSS_Y              ] = "quad_read_across_y",
+    [VKD3DSIH_QUAD_READ_LANE_AT               ] = "quad_read_lane_at",
     [VKD3DSIH_RCP                             ] = "rcp",
     [VKD3DSIH_REP                             ] = "rep",
     [VKD3DSIH_RESINFO                         ] = "resinfo",
@@ -1853,8 +1857,13 @@ static void shader_dump_instruction_flags(struct vkd3d_d3d_asm_compiler *compile
             break;
 
         case VKD3DSIH_TEX:
-            if (vkd3d_shader_ver_ge(&compiler->shader_version, 2, 0) && (ins->flags & VKD3DSI_TEXLD_PROJECT))
-                vkd3d_string_buffer_printf(buffer, "p");
+            if (vkd3d_shader_ver_ge(&compiler->shader_version, 2, 0))
+            {
+                if (ins->flags & VKD3DSI_TEXLD_PROJECT)
+                    vkd3d_string_buffer_printf(buffer, "p");
+                else if (ins->flags & VKD3DSI_TEXLD_BIAS)
+                    vkd3d_string_buffer_printf(buffer, "b");
+            }
             break;
 
         case VKD3DSIH_WAVE_OP_ADD:

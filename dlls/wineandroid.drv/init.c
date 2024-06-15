@@ -77,14 +77,14 @@ void init_monitors( int width, int height )
     monitor_rc_work = virtual_screen_rect;
 
     if (!hwnd || !NtUserIsWindowVisible( hwnd )) return;
-    if (!NtUserGetWindowRect( hwnd, &rect )) return;
+    if (!NtUserGetWindowRect( hwnd, &rect, get_win_monitor_dpi( hwnd ) )) return;
     if (rect.top) monitor_rc_work.bottom = rect.top;
     else monitor_rc_work.top = rect.bottom;
     TRACE( "found tray %p %s work area %s\n", hwnd,
            wine_dbgstr_rect( &rect ), wine_dbgstr_rect( &monitor_rc_work ));
 
     /* if we're notified from Java thread, update registry */
-    if (*p_java_vm) NtUserCallNoParam( NtUserCallNoParam_UpdateDisplayCache );
+    if (*p_java_vm) NtUserCallNoParam( NtUserCallNoParam_DisplayModeChanged );
 }
 
 
@@ -348,9 +348,10 @@ static const struct user_driver_funcs android_drv_funcs =
     .pSetParent = ANDROID_SetParent,
     .pSetWindowStyle = ANDROID_SetWindowStyle,
     .pShowWindow = ANDROID_ShowWindow,
-    .pUpdateLayeredWindow = ANDROID_UpdateLayeredWindow,
+    .pCreateLayeredWindow = ANDROID_CreateLayeredWindow,
     .pWindowMessage = ANDROID_WindowMessage,
     .pWindowPosChanging = ANDROID_WindowPosChanging,
+    .pCreateWindowSurface = ANDROID_CreateWindowSurface,
     .pWindowPosChanged = ANDROID_WindowPosChanged,
     .pwine_get_wgl_driver = ANDROID_wine_get_wgl_driver,
 };

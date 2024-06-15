@@ -5886,6 +5886,7 @@ static void test_wmv_decoder(void)
         const struct sample_desc *output_sample_desc;
         const WCHAR *result_bitmap;
         ULONG delta;
+        BOOL todo;
     }
     transform_tests[] =
     {
@@ -5934,7 +5935,7 @@ static void test_wmv_decoder(void)
         },
 
         {
-            /* WMV1 -> RGB (positive stride */
+            /* WMV1 -> RGB (positive stride) */
             .output_type_desc = output_type_desc_rgb_positive_stride,
             .expect_output_type_desc = expect_output_type_desc_rgb,
             .expect_input_info = &expect_input_info_rgb,
@@ -6116,6 +6117,10 @@ static void test_wmv_decoder(void)
                                          transform_tests[j].result_bitmap);
         ok(ret <= transform_tests[j].delta, "got %lu%% diff\n", ret);
         IMFCollection_Release(output_samples);
+
+        hr = IMFTransform_SetOutputType(transform, 0, NULL, 0);
+        ok(hr == S_OK, "SetOutputType returned %#lx\n", hr);
+
         winetest_pop_context();
     }
 
@@ -9372,7 +9377,6 @@ static void test_video_processor_with_dxgi_manager(void)
     IMFSample_Release(output.pSample);
 
     ret = check_mf_sample_collection(output_samples, &output_sample_desc_rgb32, L"rgb32frame.bmp");
-    todo_wine /* FIXME: video process vertically flips the frame... */
     ok(ret <= 5, "got %lu%% diff\n", ret);
 
     for (i = 0; i < 9; i++)

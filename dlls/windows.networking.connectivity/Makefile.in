@@ -1,5 +1,6 @@
 MODULE		= windows.networking.connectivity.dll
 IMPORTS 	= combase uuid
+EXTRAIDLFLAGS = -DDO_NO_IMPORTS
 
 EXTRADLLFLAGS = -mno-cygwin
 

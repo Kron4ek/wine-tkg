@@ -72,7 +72,14 @@ static struct testfile_s {
     { 0, FILE_ATTRIBUTE_NORMAL,    {'e','a','.','t','m','p'},  "normal" },
     { 0, FILE_ATTRIBUTE_NORMAL,    {'e','a'},                  "normal" },
     { 0, FILE_ATTRIBUTE_DIRECTORY, {'.'},                  ". directory" },
-    { 0, FILE_ATTRIBUTE_DIRECTORY, {'.','.'},              ".. directory" }
+    { 0, FILE_ATTRIBUTE_DIRECTORY, {'.','.'},              ".. directory" },
+    { 0, FILE_ATTRIBUTE_NORMAL,    {'e','a','.','t','m','p','.','t','m','p'}, "normal" },
+    { 0, FILE_ATTRIBUTE_NORMAL,    {'.','a'}, "normal" },
+    { 0, FILE_ATTRIBUTE_NORMAL,    {'.','a','.','a'}, "normal" },
+    { 0, FILE_ATTRIBUTE_NORMAL,    {'a','.'}, "normal" },
+    { 0, FILE_ATTRIBUTE_NORMAL,    {'.','.','a'}, "normal" },
+    { 0, FILE_ATTRIBUTE_NORMAL,    {'.','a','a'}, "normal" },
+    { 0, FILE_ATTRIBUTE_NORMAL,    {'a','.', '.'}, "normal" },
 };
 static const int test_dir_count = ARRAY_SIZE(testfiles);
 static const int max_test_dir_size = ARRAY_SIZE(testfiles) + 5;  /* size of above plus some for .. etc */
@@ -96,7 +103,8 @@ static void set_up_attribute_test(const WCHAR *testdir)
 
         if (lstrcmpW(testfiles[i].name, dotW) == 0 || lstrcmpW(testfiles[i].name, dotdotW) == 0)
             continue;
-        lstrcpyW( buf, testdir );
+        lstrcpyW( buf, L"\\\\?\\" );
+        lstrcatW( buf, testdir );
         lstrcatW( buf, backslashW );
         lstrcatW( buf, testfiles[i].name );
         if (testfiles[i].attr & FILE_ATTRIBUTE_DIRECTORY) {
@@ -131,7 +139,8 @@ static void tear_down_attribute_test(const WCHAR *testdir)
         WCHAR buf[MAX_PATH];
         if (lstrcmpW(testfiles[i].name, dotW) == 0 || lstrcmpW(testfiles[i].name, dotdotW) == 0)
             continue;
-        lstrcpyW( buf, testdir );
+        lstrcpyW( buf, L"\\\\?\\" );
+        lstrcatW( buf, testdir );
         lstrcatW( buf, backslashW );
         lstrcatW( buf, testfiles[i].name );
         if (testfiles[i].attr & FILE_ATTRIBUTE_DIRECTORY) {
@@ -174,7 +183,7 @@ static void tally_test_file(FILE_BOTH_DIRECTORY_INFORMATION *dir_info)
 
 static void test_flags_NtQueryDirectoryFile(OBJECT_ATTRIBUTES *attr, const char *testdirA,
                                             UNICODE_STRING *mask,
-                                            BOOLEAN single_entry, BOOLEAN restart_flag)
+                                            BOOLEAN single_entry, BOOLEAN restart_flag, BOOLEAN expect_empty)
 {
     UNICODE_STRING dummy_mask;
     HANDLE dirh, new_dirh;
@@ -204,6 +213,12 @@ static void test_flags_NtQueryDirectoryFile(OBJECT_ATTRIBUTES *attr, const char 
     io.Status = 0xdeadbeef;
     status = pNtQueryDirectoryFile( dirh, NULL, NULL, NULL, &io, data, data_size,
                                     FileBothDirectoryInformation, single_entry, mask, restart_flag );
+    if (expect_empty)
+    {
+        ok( status == STATUS_NO_SUCH_FILE, "got %#lx.\n", status );
+        pNtClose( dirh );
+        return;
+    }
     ok (status == STATUS_SUCCESS, "failed to query directory; status %lx\n", status);
     ok (io.Status == STATUS_SUCCESS, "failed to query directory; status %lx\n", io.Status);
     data_len = io.Information;
@@ -238,7 +253,7 @@ static void test_flags_NtQueryDirectoryFile(OBJECT_ATTRIBUTES *attr, const char 
     }
     ok(numfiles < max_test_dir_size, "too many loops\n");
 
-    if (mask && !wcspbrk( mask->Buffer, L"*?" ))
+    if (mask && !wcspbrk( mask->Buffer, L"*?<\">" ))
         for (i = 0; i < test_dir_count; i++)
             ok(testfiles[i].nfound == (testfiles[i].name == mask->Buffer),
                "Wrong number %d of %s files found (single_entry=%d,mask=%s)\n",
@@ -453,16 +468,86 @@ static void test_NtQueryDirectoryFile(void)
     {
         const WCHAR *mask;
         int found[ARRAY_SIZE(testfiles)];
-        BOOL todo_missing;
     }
     mask_tests[] =
     {
-        {L"*.", {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}, TRUE},
-        {L"*.*", {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1}, TRUE},
-        {L"*.**", {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1}, TRUE},
-        {L"*", {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
-        {L"**", {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
-        {L"??.???", {0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0}},
+        {L"*.",                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1}},
+        {L"*. ",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"* .",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L" *.",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"*.*",                   {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"* *",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"*.**",                  {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"*",                     {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"**",                    {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"?",                     {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0}},
+        {L"?.",                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0}},
+        {L"?..",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}},
+        {L"??",                    {0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0}},
+        {L"??.",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}},
+        {L"??.???",                {0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"<",                     {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1}},
+        {L"*<a",                   {0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0}},
+        {L"<.",                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1}},
+        {L"<..",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}},
+        {L"<.\"",                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1}},
+        {L".<",                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0}},
+        {L"..<",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0}},
+        {L"..*",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0}},
+        {L"*..*",                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1}},
+        {L"*..",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}},
+        {L"..?",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0}},
+        {L"..\"",                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"\"",                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0}},
+        {L"\"\"",                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0}},
+        {L"\"\"\"",                {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0}},
+        {L"a.<",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1}},
+        {L"ea.tmp.tmp<",           {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}},
+        {L"<tmp",                  {1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}},
+        {L"<.tmp",                 {1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}},
+        {L"<name.tmp",             {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"<nam<tmp",              {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"<name.<",               {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"<name<",                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"<\"",                   {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1}},
+        {L"*\"",                   {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"*\"tmp\"tmp\"",         {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}},
+        {L"n\"tmp",                {0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"ea\"",                  {0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"\"a",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0}},
+        {L"\"\"a",                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0}},
+        {L"e\"a",                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"*\"tmp",                {1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}},
+        {L"<.<",                   {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"<\"<",                  {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"<\"<\"",                {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"<\"<.",                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}},
+        {L"<.<\"",                 {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"<<",                    {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"<a",                    {0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0}},
+        {L"*a",                    {0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0}},
+        {L"<aa",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0}},
+        {L"<.a",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0}},
+        {L"<..a",                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0}},
+        {L"<.<.<",                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1}},
+        {L".<.<",                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0}},
+        {L"<<.<",                  {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"<.<<",                  {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"<<<",                   {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+        {L"< ..",                  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"< .",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L"<\"\"",                 {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1}},
+        {L">",                     {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0}},
+        {L">.",                    {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0}},
+        {L">..",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}},
+        {L">>",                    {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0}},
+        {L">>.",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0}},
+        {L">>>",                   {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0}},
+        {L">>.>>>",                {0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1}},
+        {L">.>",                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1}},
+        {L">>.tmp",                {0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L">>tmp",                 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {L">>>tmp",                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
     };
 
     OBJECT_ATTRIBUTES attr;
@@ -478,6 +563,7 @@ static void test_NtQueryDirectoryFile(void)
     FILE_POSITION_INFORMATION pos_info;
     FILE_NAMES_INFORMATION *names;
     const WCHAR *filename = fbdi->FileName;
+    BOOLEAN expect_empty;
     NTSTATUS status;
     HANDLE dirh, h;
 
@@ -495,32 +581,38 @@ static void test_NtQueryDirectoryFile(void)
     }
     InitializeObjectAttributes(&attr, &ntdirname, OBJ_CASE_INSENSITIVE, 0, NULL);
 
-    test_flags_NtQueryDirectoryFile(&attr, testdirA, NULL, FALSE, TRUE);
-    test_flags_NtQueryDirectoryFile(&attr, testdirA, NULL, FALSE, FALSE);
-    test_flags_NtQueryDirectoryFile(&attr, testdirA, NULL, TRUE, TRUE);
-    test_flags_NtQueryDirectoryFile(&attr, testdirA, NULL, TRUE, FALSE);
+    test_flags_NtQueryDirectoryFile(&attr, testdirA, NULL, FALSE, TRUE, FALSE);
+    test_flags_NtQueryDirectoryFile(&attr, testdirA, NULL, FALSE, FALSE, FALSE);
+    test_flags_NtQueryDirectoryFile(&attr, testdirA, NULL, TRUE, TRUE, FALSE);
+    test_flags_NtQueryDirectoryFile(&attr, testdirA, NULL, TRUE, FALSE, FALSE);
 
     for (i = 0; i < test_dir_count; i++)
     {
         if (testfiles[i].name[0] == '.') continue;  /* . and .. as masks are broken on Windows */
         mask.Buffer = testfiles[i].name;
         mask.Length = mask.MaximumLength = lstrlenW(testfiles[i].name) * sizeof(WCHAR);
-        test_flags_NtQueryDirectoryFile(&attr, testdirA, &mask, FALSE, TRUE);
-        test_flags_NtQueryDirectoryFile(&attr, testdirA, &mask, FALSE, FALSE);
-        test_flags_NtQueryDirectoryFile(&attr, testdirA, &mask, TRUE, TRUE);
-        test_flags_NtQueryDirectoryFile(&attr, testdirA, &mask, TRUE, FALSE);
+        test_flags_NtQueryDirectoryFile(&attr, testdirA, &mask, FALSE, TRUE, FALSE);
+        test_flags_NtQueryDirectoryFile(&attr, testdirA, &mask, FALSE, FALSE, FALSE);
+        test_flags_NtQueryDirectoryFile(&attr, testdirA, &mask, TRUE, TRUE, FALSE);
+        test_flags_NtQueryDirectoryFile(&attr, testdirA, &mask, TRUE, FALSE, FALSE);
     }
 
     for (i = 0; i < ARRAY_SIZE(mask_tests); ++i)
     {
         winetest_push_context("mask %s", debugstr_w(mask_tests[i].mask));
         RtlInitUnicodeString(&mask, mask_tests[i].mask);
-        test_flags_NtQueryDirectoryFile(&attr, testdirA, &mask, FALSE, TRUE);
-        for (j = 0; j < test_dir_count; j++)
+        expect_empty = TRUE;
+        for (j = 0; j < ARRAY_SIZE(mask_tests[i].found); ++j)
         {
-            todo_wine_if(mask_tests[i].todo_missing && !mask_tests[i].found[j])
-            ok(testfiles[j].nfound == mask_tests[i].found[j], "%S, got %d.\n", testfiles[j].name, testfiles[j].nfound);
+            if (mask_tests[i].found[j])
+            {
+                expect_empty = FALSE;
+                break;
+            }
         }
+        test_flags_NtQueryDirectoryFile(&attr, testdirA, &mask, FALSE, TRUE, expect_empty);
+        for (j = 0; j < test_dir_count; j++)
+            ok(testfiles[j].nfound == mask_tests[i].found[j], "%S, got %d.\n", testfiles[j].name, testfiles[j].nfound);
         winetest_pop_context();
     }
 
@@ -683,7 +775,7 @@ static void test_NtQueryDirectoryFile(void)
     memset( data, 0x55, data_size );
     io.Status = 0xdeadbeef;
     io.Information = 0xdeadbeef;
-    status = pNtQueryDirectoryFile( dirh, 0, NULL, NULL, &io, data, data_size + 16,
+    status = pNtQueryDirectoryFile( dirh, 0, NULL, NULL, &io, data, data_size + 32,
                                     FileBothDirectoryInformation, FALSE, NULL, TRUE );
     ok( status == STATUS_SUCCESS, "wrong status %lx\n", status );
     ok( io.Status == STATUS_SUCCESS, "wrong status %lx\n", io.Status );

@@ -558,15 +558,14 @@ void ungrab_clipping_window(void)
 }
 
 /***********************************************************************
- *      retry_grab_clipping_window
- *
- * Restore the current clip rectangle.
+ *      reapply_cursor_clipping
  */
-void retry_grab_clipping_window(void)
+void reapply_cursor_clipping(void)
 {
     RECT rect;
-    NtUserGetClipCursor( &rect );
-    NtUserClipCursor( &rect );
+    UINT context = NtUserSetThreadDpiAwarenessContext( NTUSER_DPI_PER_MONITOR_AWARE );
+    if (NtUserGetClipCursor( &rect )) NtUserClipCursor( &rect );
+    NtUserSetThreadDpiAwarenessContext( context );
 }
 
 
@@ -620,7 +619,7 @@ static void map_event_coords( HWND hwnd, Window window, Window event_root, int x
 
             if (NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL)
                 pt.x = data->client_rect.right - data->client_rect.left - 1 - pt.x;
-            NtUserMapWindowPoints( hwnd, 0, &pt, 1 );
+            NtUserMapWindowPoints( hwnd, 0, &pt, 1, 0 /* per-monitor DPI */ );
         }
         release_win_data( data );
     }
@@ -664,10 +663,7 @@ static void send_mouse_input( HWND hwnd, Window window, unsigned int state, INPU
         SERVER_START_REQ( update_window_zorder )
         {
             req->window      = wine_server_user_handle( hwnd );
-            req->rect.left   = rect.left;
-            req->rect.top    = rect.top;
-            req->rect.right  = rect.right;
-            req->rect.bottom = rect.bottom;
+            req->rect        = wine_server_rectangle( rect );
             wine_server_call( req );
         }
         SERVER_END_REQ;

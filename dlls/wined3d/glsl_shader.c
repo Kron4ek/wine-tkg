@@ -9025,7 +9025,10 @@ static void shader_glsl_ffp_vertex_lighting(struct wined3d_string_buffer *buffer
 
     if (!settings->lighting)
     {
-        shader_addline(buffer, "ffp_varying_diffuse = ffp_attrib_diffuse;\n");
+        if (settings->diffuse)
+            shader_addline(buffer, "ffp_varying_diffuse = ffp_attrib_diffuse;\n");
+        else
+            shader_addline(buffer, "ffp_varying_diffuse = vec4(1.0);\n");
         shader_addline(buffer, "ffp_varying_specular = ffp_attrib_specular;\n");
         return;
     }
@@ -9382,7 +9385,7 @@ static GLuint shader_glsl_generate_ffp_vertex_shader(struct shader_glsl_priv *pr
             break;
 
         case WINED3D_FFP_VS_FOG_FOGCOORD:
-            shader_addline(buffer, "ffp_varying_fogcoord = ffp_attrib_specular.w * 255.0;\n");
+            shader_addline(buffer, "ffp_varying_fogcoord = ffp_attrib_specular.w;\n");
             break;
 
         case WINED3D_FFP_VS_FOG_RANGE:
@@ -11844,14 +11847,16 @@ static void glsl_vertex_pipe_shader(struct wined3d_context *context,
 static void glsl_vertex_pipe_vdecl(struct wined3d_context *context,
         const struct wined3d_state *state, DWORD state_id)
 {
+    const struct wined3d_vertex_declaration *vdecl = state->vertex_declaration;
     struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    BOOL specular = !!(context->stream_info.use_map & (1u << WINED3D_FFP_SPECULAR));
-    BOOL diffuse = !!(context->stream_info.use_map & (1u << WINED3D_FFP_DIFFUSE));
-    BOOL normal = !!(context->stream_info.use_map & (1u << WINED3D_FFP_NORMAL));
     const BOOL legacy_clip_planes = needs_legacy_glsl_syntax(gl_info);
     BOOL transformed = context->stream_info.position_transformed;
     BOOL wasrhw = context->last_was_rhw;
+    bool point_size = vdecl && vdecl->point_size;
+    bool specular = vdecl && vdecl->specular;
+    bool diffuse = vdecl && vdecl->diffuse;
+    bool normal = vdecl && vdecl->normal;
     unsigned int i;
 
     context->last_was_rhw = transformed;
@@ -11887,7 +11892,7 @@ static void glsl_vertex_pipe_vdecl(struct wined3d_context *context,
          * normal presence changes. */
         if (!shader_glsl_full_ffp_varyings(gl_info) || (state->render_states[WINED3D_RS_COLORVERTEX]
                 && (diffuse != context->last_was_diffuse || specular != context->last_was_specular))
-                || normal != context->last_was_normal)
+                || normal != context->last_was_normal || point_size != context->last_was_point_size)
             context->shader_update_mask |= 1u << WINED3D_SHADER_TYPE_VERTEX;
 
         if (use_ps(state)
@@ -11912,6 +11917,7 @@ static void glsl_vertex_pipe_vdecl(struct wined3d_context *context,
     context->last_was_diffuse = diffuse;
     context->last_was_specular = specular;
     context->last_was_normal = normal;
+    context->last_was_point_size = point_size;
 }
 
 static void glsl_vertex_pipe_vs(struct wined3d_context *context,
@@ -12322,10 +12328,9 @@ static void glsl_fragment_pipe_fog(struct wined3d_context *context,
 
     if (state->render_states[WINED3D_RS_FOGTABLEMODE] == WINED3D_FOG_NONE)
     {
-        if (use_vshader)
+        if (use_vshader || state->render_states[WINED3D_RS_FOGVERTEXMODE] == WINED3D_FOG_NONE
+                || context->stream_info.position_transformed)
             new_source = FOGSOURCE_VS;
-        else if (state->render_states[WINED3D_RS_FOGVERTEXMODE] == WINED3D_FOG_NONE || context->stream_info.position_transformed)
-            new_source = FOGSOURCE_COORD;
         else
             new_source = FOGSOURCE_FFP;
     }

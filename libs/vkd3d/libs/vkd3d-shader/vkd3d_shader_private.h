@@ -455,6 +455,10 @@ enum vkd3d_shader_opcode
     VKD3DSIH_PHASE,
     VKD3DSIH_PHI,
     VKD3DSIH_POW,
+    VKD3DSIH_QUAD_READ_ACROSS_D,
+    VKD3DSIH_QUAD_READ_ACROSS_X,
+    VKD3DSIH_QUAD_READ_ACROSS_Y,
+    VKD3DSIH_QUAD_READ_LANE_AT,
     VKD3DSIH_RCP,
     VKD3DSIH_REP,
     VKD3DSIH_RESINFO,
@@ -805,6 +809,7 @@ enum vkd3d_tessellator_domain
 
 #define VKD3DSI_NONE                    0x0
 #define VKD3DSI_TEXLD_PROJECT           0x1
+#define VKD3DSI_TEXLD_BIAS              0x2
 #define VKD3DSI_INDEXED_DYNAMIC         0x4
 #define VKD3DSI_RESINFO_RCP_FLOAT       0x1
 #define VKD3DSI_RESINFO_UINT            0x2

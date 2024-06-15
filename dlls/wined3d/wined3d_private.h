@@ -1828,7 +1828,6 @@ void dispatch_compute(struct wined3d_device *device, const struct wined3d_state 
 enum fogsource {
     FOGSOURCE_FFP,
     FOGSOURCE_VS,
-    FOGSOURCE_COORD,
 };
 
 /* Direct3D terminology with little modifications. We do not have an issued
@@ -1908,12 +1907,12 @@ struct wined3d_context
     DWORD update_unordered_access_view_bindings : 1;
     DWORD update_compute_unordered_access_view_bindings : 1;
     DWORD update_primitive_type : 1;
-    DWORD update_patch_vertex_count : 1;
     DWORD last_was_rhw : 1; /* True iff last draw_primitive was in xyzrhw mode. */
     DWORD last_was_vshader : 1;
     DWORD last_was_diffuse : 1;
     DWORD last_was_specular : 1;
     DWORD last_was_normal : 1;
+    DWORD last_was_point_size : 1;
     DWORD last_was_ffp_blit : 1;
     DWORD last_was_blit : 1;
     DWORD last_was_dual_source_blend : 1;
@@ -1928,7 +1927,8 @@ struct wined3d_context
     DWORD destroyed : 1;
     DWORD destroy_delayed : 1;
     DWORD update_multisample_state : 1;
-    DWORD padding : 24;
+    DWORD update_patch_vertex_count : 1;
+    DWORD padding : 23;
 
     DWORD clip_distance_mask : 8; /* WINED3D_MAX_CLIP_DISTANCES, 8 */
 
@@ -2725,7 +2725,8 @@ struct wined3d_ffp_vs_settings
     DWORD ortho_fog       : 1;
     DWORD flatshading     : 1;
     DWORD specular_enable : 1;
-    DWORD padding         : 17;
+    DWORD diffuse         : 1;
+    DWORD padding         : 16;
 
     DWORD swizzle_map; /* MAX_ATTRIBS, 32 */
 
@@ -3491,7 +3492,12 @@ struct wined3d_vertex_declaration
     struct wined3d_vertex_declaration_element *elements;
     unsigned int element_count;
 
-    BOOL position_transformed;
+    bool position_transformed;
+    bool point_size;
+    bool diffuse;
+    bool specular;
+    bool normal;
+    uint8_t texcoords;
 };
 
 bool wined3d_light_state_enable_light(struct wined3d_light_state *state, const struct wined3d_d3d_info *d3d_info,
@@ -4624,21 +4630,22 @@ static inline void wined3d_not_from_cs(const struct wined3d_cs *cs)
     assert(cs->thread_id != GetCurrentThreadId());
 }
 
-static inline enum wined3d_material_color_source validate_material_colour_source(WORD use_map,
-        enum wined3d_material_color_source source)
+static inline enum wined3d_material_color_source validate_material_colour_source(
+        const struct wined3d_vertex_declaration *vdecl, enum wined3d_material_color_source source)
 {
-    if (source == WINED3D_MCS_COLOR1 && use_map & (1u << WINED3D_FFP_DIFFUSE))
+    if (source == WINED3D_MCS_COLOR1 && vdecl->diffuse)
         return source;
-    if (source == WINED3D_MCS_COLOR2 && use_map & (1u << WINED3D_FFP_SPECULAR))
+    if (source == WINED3D_MCS_COLOR2 && vdecl->specular)
         return source;
     return WINED3D_MCS_MATERIAL;
 }
 
 static inline void wined3d_get_material_colour_source(enum wined3d_material_color_source *diffuse,
         enum wined3d_material_color_source *emissive, enum wined3d_material_color_source *ambient,
-        enum wined3d_material_color_source *specular, const struct wined3d_state *state,
-        const struct wined3d_stream_info *si)
+        enum wined3d_material_color_source *specular, const struct wined3d_state *state)
 {
+    const struct wined3d_vertex_declaration *vdecl = state->vertex_declaration;
+
     if (!state->render_states[WINED3D_RS_LIGHTING])
     {
         *diffuse = WINED3D_MCS_COLOR1;
@@ -4655,10 +4662,10 @@ static inline void wined3d_get_material_colour_source(enum wined3d_material_colo
         return;
     }
 
-    *diffuse = validate_material_colour_source(si->use_map, state->render_states[WINED3D_RS_DIFFUSEMATERIALSOURCE]);
-    *emissive = validate_material_colour_source(si->use_map, state->render_states[WINED3D_RS_EMISSIVEMATERIALSOURCE]);
-    *ambient = validate_material_colour_source(si->use_map, state->render_states[WINED3D_RS_AMBIENTMATERIALSOURCE]);
-    *specular = validate_material_colour_source(si->use_map, state->render_states[WINED3D_RS_SPECULARMATERIALSOURCE]);
+    *diffuse = validate_material_colour_source(vdecl, state->render_states[WINED3D_RS_DIFFUSEMATERIALSOURCE]);
+    *emissive = validate_material_colour_source(vdecl, state->render_states[WINED3D_RS_EMISSIVEMATERIALSOURCE]);
+    *ambient = validate_material_colour_source(vdecl, state->render_states[WINED3D_RS_AMBIENTMATERIALSOURCE]);
+    *specular = validate_material_colour_source(vdecl, state->render_states[WINED3D_RS_SPECULARMATERIALSOURCE]);
 }
 
 static inline void wined3d_vec4_transform(struct wined3d_vec4 *dst,

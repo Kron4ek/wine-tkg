@@ -104,7 +104,7 @@ static BOOL intersect_rect( RECT *dst, const RECT *src1, const RECT *src2 )
 /**********************************************************************
  *	     get_win_monitor_dpi
  */
-static UINT get_win_monitor_dpi( HWND hwnd )
+UINT get_win_monitor_dpi( HWND hwnd )
 {
     return NtUserGetSystemDpiForProcess( NULL );  /* FIXME: get monitor dpi */
 }
@@ -416,7 +416,6 @@ static void pull_events(void)
  */
 static int process_events( DWORD mask )
 {
-    UINT context;
     struct java_event *event, *next, *previous;
     unsigned int count = 0;
 
@@ -457,13 +456,9 @@ static int process_events( DWORD mask )
         {
         case DESKTOP_CHANGED:
             TRACE( "DESKTOP_CHANGED %ux%u\n", event->data.desktop.width, event->data.desktop.height );
-            context = NtUserSetThreadDpiAwarenessContext( NTUSER_DPI_PER_MONITOR_AWARE );
             screen_width = event->data.desktop.width;
             screen_height = event->data.desktop.height;
             init_monitors( screen_width, screen_height );
-            NtUserSetWindowPos( NtUserGetDesktopWindow(), 0, 0, 0, screen_width, screen_height,
-                                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW );
-            NtUserSetThreadDpiAwarenessContext( context );
             break;
 
         case CONFIG_CHANGED:
@@ -504,10 +499,7 @@ static int process_events( DWORD mask )
                     SERVER_START_REQ( update_window_zorder )
                     {
                         req->window      = wine_server_user_handle( event->data.motion.hwnd );
-                        req->rect.left   = rect.left;
-                        req->rect.top    = rect.top;
-                        req->rect.right  = rect.right;
-                        req->rect.bottom = rect.bottom;
+                        req->rect        = wine_server_rectangle( rect );
                         wine_server_call( req );
                     }
                     SERVER_END_REQ;
@@ -575,22 +567,12 @@ struct android_window_surface
     RECT                 *clip_rects;
     BYTE                  alpha;
     COLORREF              color_key;
-    void                 *bits;
     BITMAPINFO            info;   /* variable size, must be last */
 };
 
 static struct android_window_surface *get_android_surface( struct window_surface *surface )
 {
     return (struct android_window_surface *)surface;
-}
-
-static inline void add_bounds_rect( RECT *bounds, const RECT *rect )
-{
-    if (rect->left >= rect->right || rect->top >= rect->bottom) return;
-    bounds->left   = min( bounds->left, rect->left );
-    bounds->top    = min( bounds->top, rect->top );
-    bounds->right  = max( bounds->right, rect->right );
-    bounds->bottom = max( bounds->bottom, rect->bottom );
 }
 
 /* store the palette or color mask data in the bitmap info structure */
@@ -643,7 +625,7 @@ static void *android_surface_get_bitmap_info( struct window_surface *window_surf
     struct android_window_surface *surface = get_android_surface( window_surface );
 
     memcpy( info, &surface->info, get_dib_info_size( &surface->info, DIB_RGB_COLORS ));
-    return surface->bits;
+    return window_surface->color_bits;
 }
 
 /***********************************************************************
@@ -688,7 +670,7 @@ static BOOL android_surface_flush( struct window_surface *window_surface, const 
         locked.bottom = rc.bottom;
         intersect_rect( &locked, &locked, rect );
 
-        src = (DWORD *)surface->bits + (locked.top - rect->top) * surface->info.bmiHeader.biWidth +
+        src = (DWORD *)window_surface->color_bits + (locked.top - rect->top) * surface->info.bmiHeader.biWidth +
               (locked.left - rect->left);
         dst = (DWORD *)buffer.bits + locked.top * buffer.stride + locked.left;
         width = min( locked.right - locked.left, buffer.stride );
@@ -733,11 +715,10 @@ static void android_surface_destroy( struct window_surface *window_surface )
 {
     struct android_window_surface *surface = get_android_surface( window_surface );
 
-    TRACE( "freeing %p bits %p\n", surface, surface->bits );
+    TRACE( "freeing %p\n", surface );
 
     free( surface->clip_rects );
     release_ioctl_window( surface->window );
-    free( surface->bits );
     free( surface );
 }
 
@@ -782,26 +763,27 @@ static struct window_surface *create_surface( HWND hwnd, const RECT *rect,
 {
     struct android_window_surface *surface;
     int width = rect->right - rect->left, height = rect->bottom - rect->top;
+    char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+    BITMAPINFO *info = (BITMAPINFO *)buffer;
+
+    memset( info, 0, sizeof(*info) );
+    set_color_info( info, src_alpha );
+    info->bmiHeader.biWidth     = width;
+    info->bmiHeader.biHeight    = -height; /* top-down */
+    info->bmiHeader.biPlanes    = 1;
+    info->bmiHeader.biSizeImage = get_dib_image_size( info );
 
     surface = calloc( 1, FIELD_OFFSET( struct android_window_surface, info.bmiColors[3] ));
     if (!surface) return NULL;
-    window_surface_init( &surface->header, &android_surface_funcs, hwnd, rect );
-
-    set_color_info( &surface->info, src_alpha );
-    surface->info.bmiHeader.biWidth       = width;
-    surface->info.bmiHeader.biHeight      = -height; /* top-down */
-    surface->info.bmiHeader.biPlanes      = 1;
-    surface->info.bmiHeader.biSizeImage   = get_dib_image_size( &surface->info );
+    if (!window_surface_init( &surface->header, &android_surface_funcs, hwnd, rect, info, 0 )) goto failed;
+    memcpy( &surface->info, info, get_dib_info_size( info, DIB_RGB_COLORS ) );
 
     surface->window       = get_ioctl_window( hwnd );
     surface->alpha        = alpha;
     set_color_key( surface, color_key );
 
-    if (!(surface->bits = malloc( surface->info.bmiHeader.biSizeImage )))
-        goto failed;
-
     TRACE( "created %p hwnd %p %s bits %p-%p\n", surface, hwnd, wine_dbgstr_rect(rect),
-           surface->bits, (char *)surface->bits + surface->info.bmiHeader.biSizeImage );
+           surface->header.color_bits, (char *)surface->header.color_bits + info->bmiHeader.biSizeImage );
 
     return &surface->header;
 
@@ -1154,31 +1136,47 @@ static inline BOOL get_surface_rect( const RECT *visible_rect, RECT *surface_rec
 /***********************************************************************
  *           ANDROID_WindowPosChanging
  */
-BOOL ANDROID_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
-                                const RECT *window_rect, const RECT *client_rect, RECT *visible_rect,
-                                struct window_surface **surface )
+BOOL ANDROID_WindowPosChanging( HWND hwnd, UINT swp_flags, const RECT *window_rect, const RECT *client_rect, RECT *visible_rect )
 {
     struct android_win_data *data = get_win_data( hwnd );
+    RECT surface_rect;
+    BOOL ret = FALSE;
+
+    TRACE( "win %p window %s client %s style %08x flags %08x\n",
+           hwnd, wine_dbgstr_rect(window_rect), wine_dbgstr_rect(client_rect),
+           (int)NtUserGetWindowLongW( hwnd, GWL_STYLE ), swp_flags );
+
+    if (!data && !(data = create_win_data( hwnd, window_rect, client_rect ))) return FALSE; /* use default surface */
+
+    if (data->parent) goto done; /* use default surface */
+    if (swp_flags & SWP_HIDEWINDOW) goto done; /* use default surface */
+    if (is_argb_surface( data->surface )) goto done; /* use default surface */
+    if (!get_surface_rect( visible_rect, &surface_rect )) goto done; /* use default surface */
+
+    ret = TRUE;
+
+done:
+    release_win_data(data);
+    return ret;
+}
+
+
+/***********************************************************************
+ *           ANDROID_CreateWindowSurface
+ */
+BOOL ANDROID_CreateWindowSurface( HWND hwnd, UINT swp_flags, const RECT *visible_rect, struct window_surface **surface )
+{
+    struct android_win_data *data;
     RECT surface_rect;
     DWORD flags;
     COLORREF key;
     BYTE alpha;
     BOOL layered = NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED;
 
-    TRACE( "win %p window %s client %s style %08x flags %08x\n",
-           hwnd, wine_dbgstr_rect(window_rect), wine_dbgstr_rect(client_rect),
-           (int)NtUserGetWindowLongW( hwnd, GWL_STYLE ), swp_flags );
+    TRACE( "hwnd %p, swp_flags %08x, visible %s, surface %p\n", hwnd, swp_flags, wine_dbgstr_rect( visible_rect ), surface );
 
-    if (!data && !(data = create_win_data( hwnd, window_rect, client_rect ))) return TRUE;
-
-    *visible_rect = *window_rect;
-
-    /* create the window surface if necessary */
-
-    if (data->parent) goto done;
-    if (swp_flags & SWP_HIDEWINDOW) goto done;
-    if (is_argb_surface( data->surface )) goto done;
-    if (!get_surface_rect( visible_rect, &surface_rect )) goto done;
+    if (!(data = get_win_data( hwnd ))) return TRUE; /* use default surface */
+    if (!get_surface_rect( visible_rect, &surface_rect )) goto done; /* use default surface */
 
     if (data->surface)
     {
@@ -1389,22 +1387,14 @@ void ANDROID_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DW
 
 
 /*****************************************************************************
- *           ANDROID_UpdateLayeredWindow
+ *           ANDROID_CreateLayeredWindow
  */
-BOOL ANDROID_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
-                                  const RECT *window_rect )
+BOOL ANDROID_CreateLayeredWindow( HWND hwnd, const RECT *window_rect, COLORREF color_key,
+                                  struct window_surface **window_surface )
 {
     struct window_surface *surface;
     struct android_win_data *data;
-    BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, 0 };
-    COLORREF color_key = (info->dwFlags & ULW_COLORKEY) ? info->crKey : CLR_INVALID;
-    char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
-    BITMAPINFO *bmi = (BITMAPINFO *)buffer;
-    void *src_bits, *dst_bits;
-    RECT rect, src_rect;
-    HDC hdc = 0;
-    HBITMAP dib;
-    BOOL ret = FALSE;
+    RECT rect;
 
     if (!(data = get_win_data( hwnd ))) return FALSE;
 
@@ -1426,55 +1416,10 @@ BOOL ANDROID_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info
     }
     else set_surface_layered( surface, 255, color_key );
 
-    if (surface) window_surface_add_ref( surface );
+    if ((*window_surface = surface)) window_surface_add_ref( surface );
     release_win_data( data );
 
-    if (!surface) return FALSE;
-    if (!info->hdcSrc)
-    {
-        window_surface_release( surface );
-        return TRUE;
-    }
-
-    dst_bits = surface->funcs->get_info( surface, bmi );
-
-    if (!(dib = NtGdiCreateDIBSection( info->hdcDst, NULL, 0, bmi, DIB_RGB_COLORS, 0, 0, 0, &src_bits )))
-        goto done;
-    if (!(hdc = NtGdiCreateCompatibleDC( 0 ))) goto done;
-
-    NtGdiSelectBitmap( hdc, dib );
-
-    window_surface_lock( surface );
-
-    if (info->prcDirty)
-    {
-        intersect_rect( &rect, &rect, info->prcDirty );
-        memcpy( src_bits, dst_bits, bmi->bmiHeader.biSizeImage );
-        NtGdiPatBlt( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS );
-    }
-    src_rect = rect;
-    if (info->pptSrc) OffsetRect( &src_rect, info->pptSrc->x, info->pptSrc->y );
-    NtGdiTransformPoints( info->hdcSrc, (POINT *)&src_rect, (POINT *)&src_rect, 2, NtGdiDPtoLP );
-
-    if (info->dwFlags & ULW_ALPHA) blend = *info->pblend;
-    ret = NtGdiAlphaBlend( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
-                           info->hdcSrc, src_rect.left, src_rect.top,
-                           src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
-                           *(DWORD *)&blend, 0 );
-    if (ret)
-    {
-        memcpy( dst_bits, src_bits, bmi->bmiHeader.biSizeImage );
-        add_bounds_rect( &surface->bounds, &rect );
-    }
-
-    window_surface_unlock( surface );
-    window_surface_flush( surface );
-
-done:
-    window_surface_release( surface );
-    if (hdc) NtGdiDeleteObjectApp( hdc );
-    if (dib) NtGdiDeleteObjectApp( dib );
-    return ret;
+    return TRUE;
 }
 
 

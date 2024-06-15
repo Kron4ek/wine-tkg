@@ -31,7 +31,6 @@
 #include "winbase.h"
 #include "winternl.h"
 #include "msvcrt.h"
-#include "wine/exception.h"
 #include "excpt.h"
 #include "wine/debug.h"
 
@@ -40,32 +39,56 @@
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
 
-/*********************************************************************
- *		__CxxExceptionFilter (MSVCRT.@)
+extern void *call_exc_handler( void *handler, ULONG_PTR frame, UINT flags, BYTE *nonvol_regs );
+__ASM_GLOBAL_FUNC( call_exc_handler,
+                   "push {r1,r4-r11,lr}\n\t"
+                   ".seh_save_regs_w {r1,r4-r11,lr}\n\t"
+                   ".seh_endprologue\n\t"
+                   "ldm r3, {r4-r11}\n\t"
+                   "blx r0\n\t"
+                   "pop {r3-r11,pc}" )
+
+
+/*******************************************************************
+ *		call_catch_handler
  */
-int CDECL __CxxExceptionFilter( PEXCEPTION_POINTERS ptrs,
-                                const type_info *ti, int flags, void **copy )
+void *call_catch_handler( EXCEPTION_RECORD *rec )
 {
-    FIXME( "%p %p %x %p: not implemented\n", ptrs, ti, flags, copy );
-    return EXCEPTION_CONTINUE_SEARCH;
+    ULONG_PTR frame = rec->ExceptionInformation[1];
+    void *handler = (void *)rec->ExceptionInformation[5];
+    BYTE *nonvol_regs = (BYTE *)rec->ExceptionInformation[10];
+
+    TRACE( "calling %p frame %Ix\n", handler, frame );
+    return call_exc_handler( handler, frame, 0x100, nonvol_regs );
 }
 
-/*********************************************************************
- *		__CxxFrameHandler (MSVCRT.@)
+
+/*******************************************************************
+ *		call_unwind_handler
  */
-EXCEPTION_DISPOSITION CDECL __CxxFrameHandler(EXCEPTION_RECORD *rec, DWORD frame, CONTEXT *context,
-                                              DISPATCHER_CONTEXT *dispatch)
+void *call_unwind_handler( void *handler, ULONG_PTR frame, DISPATCHER_CONTEXT *dispatch )
 {
-    FIXME("%p %lx %p %p: not implemented\n", rec, frame, context, dispatch);
-    return ExceptionContinueSearch;
+    TRACE( "calling %p frame %Ix\n", handler, frame );
+    return call_exc_handler( handler, frame, 0x100, dispatch->NonVolatileRegisters );
+}
+
+
+/*******************************************************************
+ *		get_exception_pc
+ */
+ULONG_PTR get_exception_pc( DISPATCHER_CONTEXT *dispatch )
+{
+    ULONG_PTR pc = dispatch->ControlPc;
+    if (dispatch->ControlPcIsUnwound) pc -= 2;
+    return pc;
 }
 
 
 /*********************************************************************
- *              _fpieee_flt (MSVCRT.@)
+ *              handle_fpieee_flt
  */
-int __cdecl _fpieee_flt(__msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
-        int (__cdecl *handler)(_FPIEEE_RECORD*))
+int handle_fpieee_flt( __msvcrt_ulong exception_code, EXCEPTION_POINTERS *ep,
+                       int (__cdecl *handler)(_FPIEEE_RECORD*) )
 {
     FIXME("(%lx %p %p)\n", exception_code, ep, handler);
     return EXCEPTION_CONTINUE_SEARCH;

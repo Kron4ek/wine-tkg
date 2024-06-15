@@ -238,7 +238,23 @@ static struct video_decoder *impl_from_IMFTransform(IMFTransform *iface)
     return CONTAINING_RECORD(iface, struct video_decoder, IMFTransform_iface);
 }
 
-static HRESULT try_create_wg_transform(struct video_decoder *decoder)
+static HRESULT normalize_stride(IMFMediaType *media_type, IMFMediaType **ret)
+{
+    DMO_MEDIA_TYPE amt;
+    HRESULT hr;
+
+    if (SUCCEEDED(hr = MFInitAMMediaTypeFromMFMediaType(media_type, FORMAT_VideoInfo, &amt)))
+    {
+        VIDEOINFOHEADER *vih = (VIDEOINFOHEADER *)amt.pbFormat;
+        vih->bmiHeader.biHeight = abs(vih->bmiHeader.biHeight);
+        hr = MFCreateMediaTypeFromRepresentation(AM_MEDIA_TYPE_REPRESENTATION, &amt, ret);
+        FreeMediaType(&amt);
+    }
+
+    return hr;
+}
+
+static HRESULT try_create_wg_transform(struct video_decoder *decoder, IMFMediaType *output_type)
 {
     /* Call of Duty: Black Ops 3 doesn't care about the ProcessInput/ProcessOutput
      * return values, it calls them in a specific order and expects the decoder
@@ -256,7 +272,7 @@ static HRESULT try_create_wg_transform(struct video_decoder *decoder)
     if (SUCCEEDED(IMFAttributes_GetUINT32(decoder->attributes, &MF_LOW_LATENCY, &low_latency)))
         decoder->wg_transform_attrs.low_latency = !!low_latency;
 
-    return wg_transform_create_mf(decoder->input_type, decoder->output_type, &decoder->wg_transform_attrs, &decoder->wg_transform);
+    return wg_transform_create_mf(decoder->input_type, output_type, &decoder->wg_transform_attrs, &decoder->wg_transform);
 }
 
 static HRESULT create_output_media_type(struct video_decoder *decoder, const GUID *subtype,
@@ -546,6 +562,27 @@ static HRESULT WINAPI transform_SetInputType(IMFTransform *iface, DWORD id, IMFM
 
     TRACE("iface %p, id %#lx, type %p, flags %#lx.\n", iface, id, type, flags);
 
+    if (!type)
+    {
+        if (decoder->input_type)
+        {
+            IMFMediaType_Release(decoder->input_type);
+            decoder->input_type = NULL;
+        }
+        if (decoder->output_type)
+        {
+            IMFMediaType_Release(decoder->output_type);
+            decoder->output_type = NULL;
+        }
+        if (decoder->wg_transform)
+        {
+            wg_transform_destroy(decoder->wg_transform);
+            decoder->wg_transform = 0;
+        }
+
+        return S_OK;
+    }
+
     if (FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major)) ||
             FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
         return E_INVALIDARG;
@@ -591,11 +628,28 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
 {
     struct video_decoder *decoder = impl_from_IMFTransform(iface);
     UINT64 frame_size, stream_frame_size;
+    IMFMediaType *output_type;
     GUID major, subtype;
     HRESULT hr;
     ULONG i;
 
     TRACE("iface %p, id %#lx, type %p, flags %#lx.\n", iface, id, type, flags);
+
+    if (!type)
+    {
+        if (decoder->output_type)
+        {
+            IMFMediaType_Release(decoder->output_type);
+            decoder->output_type = NULL;
+        }
+        if (decoder->wg_transform)
+        {
+            wg_transform_destroy(decoder->wg_transform);
+            decoder->wg_transform = 0;
+        }
+
+        return S_OK;
+    }
 
     if (!decoder->input_type)
         return MF_E_TRANSFORM_TYPE_NOT_SET;
@@ -625,25 +679,40 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
         IMFMediaType_Release(decoder->output_type);
     IMFMediaType_AddRef((decoder->output_type = type));
 
+    /* WMV decoder outputs RGB formats with default stride forced to negative, likely a
+     * result of internal conversion to DMO media type */
+    if (!decoder->IMediaObject_iface.lpVtbl)
+    {
+        output_type = decoder->output_type;
+        IMFMediaType_AddRef(output_type);
+    }
+    else if (FAILED(hr = normalize_stride(decoder->output_type, &output_type)))
+    {
+        IMFMediaType_Release(decoder->output_type);
+        decoder->output_type = NULL;
+        return hr;
+    }
+
     if (decoder->wg_transform)
     {
         struct wg_format output_format;
-        mf_media_type_to_wg_format(decoder->output_type, &output_format);
+        mf_media_type_to_wg_format(output_type, &output_format);
 
         if (output_format.major_type == WG_MAJOR_TYPE_UNKNOWN
                 || !wg_transform_set_output_format(decoder->wg_transform, &output_format))
         {
             IMFMediaType_Release(decoder->output_type);
             decoder->output_type = NULL;
-            return MF_E_INVALIDMEDIATYPE;
+            hr = MF_E_INVALIDMEDIATYPE;
         }
     }
-    else if (FAILED(hr = try_create_wg_transform(decoder)))
+    else if (FAILED(hr = try_create_wg_transform(decoder, output_type)))
     {
         IMFMediaType_Release(decoder->output_type);
         decoder->output_type = NULL;
     }
 
+    IMFMediaType_Release(output_type);
     return hr;
 }
 
@@ -783,14 +852,17 @@ static HRESULT output_sample(struct video_decoder *decoder, IMFSample **out, IMF
     return S_OK;
 }
 
-static HRESULT handle_stream_type_change(struct video_decoder *decoder, const struct wg_format *format)
+static HRESULT handle_stream_type_change(struct video_decoder *decoder)
 {
     UINT64 frame_size, frame_rate;
+    struct wg_format format;
     HRESULT hr;
 
     if (decoder->stream_type)
         IMFMediaType_Release(decoder->stream_type);
-    if (!(decoder->stream_type = mf_media_type_from_wg_format(format)))
+    if (!(wg_transform_get_output_format(decoder->wg_transform, &format)))
+        return E_FAIL;
+    if (!(decoder->stream_type = mf_media_type_from_wg_format(&format)))
         return E_OUTOFMEMORY;
 
     if (SUCCEEDED(IMFMediaType_GetUINT64(decoder->output_type, &MF_MT_FRAME_RATE, &frame_rate))
@@ -810,7 +882,6 @@ static HRESULT WINAPI transform_ProcessOutput(IMFTransform *iface, DWORD flags, 
         MFT_OUTPUT_DATA_BUFFER *samples, DWORD *status)
 {
     struct video_decoder *decoder = impl_from_IMFTransform(iface);
-    struct wg_format wg_format;
     UINT32 sample_size;
     LONGLONG duration;
     IMFSample *sample;
@@ -860,7 +931,7 @@ static HRESULT WINAPI transform_ProcessOutput(IMFTransform *iface, DWORD flags, 
     }
 
     if (SUCCEEDED(hr = wg_transform_read_mf(decoder->wg_transform, sample,
-            sample_size, &wg_format, &samples->dwStatus)))
+            sample_size, &samples->dwStatus)))
     {
         wg_sample_queue_flush(decoder->wg_sample_queue, false);
 
@@ -879,7 +950,7 @@ static HRESULT WINAPI transform_ProcessOutput(IMFTransform *iface, DWORD flags, 
     {
         samples[0].dwStatus |= MFT_OUTPUT_DATA_BUFFER_FORMAT_CHANGE;
         *status |= MFT_OUTPUT_DATA_BUFFER_FORMAT_CHANGE;
-        hr = handle_stream_type_change(decoder, &wg_format);
+        hr = handle_stream_type_change(decoder);
     }
 
     if (decoder->output_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES)
@@ -1569,7 +1640,7 @@ HRESULT h264_decoder_create(REFIID riid, void **out)
     decoder->output_info.cbSize = 1920 * 1088 * 2;
 
     decoder->wg_transform_attrs.output_plane_align = 15;
-    decoder->wg_transform_attrs.allow_size_change = TRUE;
+    decoder->wg_transform_attrs.allow_format_change = TRUE;
 
     TRACE("Created h264 transform %p.\n", &decoder->IMFTransform_iface);
 
