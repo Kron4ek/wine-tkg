@@ -1683,7 +1683,7 @@ void macdrv_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWOR
     {
         data->layered = TRUE;
         data->ulw_layered = FALSE;
-        if (data->surface) set_surface_use_alpha(data->surface, FALSE);
+        if (data->surface) window_surface_set_layered(data->surface, key, alpha << 24, 0);
         if (data->cocoa_window)
         {
             sync_window_opacity(data, key, alpha, FALSE, flags);
@@ -1782,7 +1782,7 @@ void macdrv_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style)
             data->layered = FALSE;
             data->ulw_layered = FALSE;
             sync_window_opacity(data, 0, 0, FALSE, 0);
-            if (data->surface) set_surface_use_alpha(data->surface, FALSE);
+            if (data->surface) window_surface_set_layered(data->surface, CLR_INVALID, -1, 0);
         }
 
         if (offset == GWL_EXSTYLE && (changed & WS_EX_LAYOUTRTL))
@@ -1891,46 +1891,6 @@ done:
 
 
 /***********************************************************************
- *              CreateLayeredWindow   (MACDRV.@)
- */
-BOOL macdrv_CreateLayeredWindow(HWND hwnd, const RECT *window_rect, COLORREF color_key,
-                                struct window_surface **window_surface)
-{
-    struct window_surface *surface;
-    struct macdrv_win_data *data;
-    RECT rect;
-
-    if (!(data = get_win_data(hwnd))) return FALSE;
-
-    data->layered = TRUE;
-    data->ulw_layered = TRUE;
-
-    rect = *window_rect;
-    OffsetRect(&rect, -window_rect->left, -window_rect->top);
-
-    surface = data->surface;
-    if (!surface || !EqualRect(&surface->rect, &rect))
-    {
-        data->surface = create_surface(data->hwnd, data->cocoa_window, &rect, NULL, TRUE);
-        macdrv_set_window_surface(data->cocoa_window, data->surface);
-        if (surface) window_surface_release(surface);
-        surface = data->surface;
-        if (data->unminimized_surface)
-        {
-            window_surface_release(data->unminimized_surface);
-            data->unminimized_surface = NULL;
-        }
-    }
-    else set_surface_use_alpha(surface, TRUE);
-
-    if ((*window_surface = surface)) window_surface_add_ref(surface);
-
-    release_win_data(data);
-
-    return TRUE;
-}
-
-/***********************************************************************
  *              UpdateLayeredWindow   (MACDRV.@)
  */
 void macdrv_UpdateLayeredWindow(HWND hwnd, const RECT *window_rect, COLORREF color_key,
@@ -1984,19 +1944,6 @@ LRESULT macdrv_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 }
 
 
-static inline RECT get_surface_rect(const RECT *visible_rect)
-{
-    RECT rect = *visible_rect;
-
-    OffsetRect(&rect, -visible_rect->left, -visible_rect->top);
-    rect.left &= ~127;
-    rect.top  &= ~127;
-    rect.right  = max(rect.left + 128, (rect.right + 127) & ~127);
-    rect.bottom = max(rect.top + 128, (rect.bottom + 127) & ~127);
-    return rect;
-}
-
-
 /***********************************************************************
  *              WindowPosChanging   (MACDRV.@)
  */
@@ -2017,7 +1964,6 @@ BOOL macdrv_WindowPosChanging(HWND hwnd, UINT swp_flags, const RECT *window_rect
           wine_dbgstr_rect(visible_rect));
 
     if (!data->cocoa_window) goto done; /* use default surface */
-    if (swp_flags & SWP_HIDEWINDOW) goto done; /* use default surface */
     if (data->ulw_layered) goto done; /* use default surface */
 
     ret = TRUE;
@@ -2025,44 +1971,6 @@ BOOL macdrv_WindowPosChanging(HWND hwnd, UINT swp_flags, const RECT *window_rect
 done:
     release_win_data(data);
     return ret;
-}
-
-
-/***********************************************************************
- *              CreateWindowSurface   (MACDRV.@)
- */
-BOOL macdrv_CreateWindowSurface(HWND hwnd, UINT swp_flags, const RECT *visible_rect, struct window_surface **surface)
-{
-    struct macdrv_win_data *data;
-    DWORD style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
-    RECT surface_rect;
-
-    TRACE("hwnd %p, swp_flags %08x, visible %s, surface %p\n", hwnd, swp_flags, wine_dbgstr_rect(visible_rect), surface);
-
-    if (!(data = get_win_data(hwnd))) return TRUE; /* use default surface */
-
-    if (*surface) window_surface_release(*surface);
-    *surface = NULL;
-
-    surface_rect = get_surface_rect(visible_rect);
-    if (data->surface)
-    {
-        if (EqualRect(&data->surface->rect, &surface_rect))
-        {
-            /* existing surface is good enough */
-            surface_clip_to_visible_rect(data->surface, visible_rect);
-            window_surface_add_ref(data->surface);
-            *surface = data->surface;
-            goto done;
-        }
-    }
-    else if (!(swp_flags & SWP_SHOWWINDOW) && !(style & WS_VISIBLE)) goto done;
-
-    *surface = create_surface(data->hwnd, data->cocoa_window, &surface_rect, data->surface, FALSE);
-
-done:
-    release_win_data(data);
-    return TRUE;
 }
 
 
@@ -2102,7 +2010,6 @@ void macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags,
         }
         else
         {
-            macdrv_set_window_surface(data->cocoa_window, surface);
             if (data->unminimized_surface)
             {
                 window_surface_release(data->unminimized_surface);

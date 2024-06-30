@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: Wine\n"
 "Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
-"PO-Revision-Date: 2024-04-03 22:59+0300\n"
+"PO-Revision-Date: 2024-06-28 01:14+0300\n"
 "Last-Translator: Aurimas Fišeras <aurimas@members.fsf.org>\n"
 "Language-Team: Lithuanian <komp_lt@konf.lt>\n"
 "Language: lt\n"
@@ -14580,6 +14580,18 @@ msgid ""
 msgstr ""
 "Blogai sudarytas skaičius – privalo būti dešimtainis (12),\n"
 " šešioliktainis (0x34) arba aštuntainis (056).\n"
+
+#: programs/cmd/cmd.rc:411
+msgid "Syntax error: unexpected %1\n"
+msgstr "Sintaksės klaida: netikėtas %1\n"
+
+#: programs/cmd/cmd.rc:412
+msgid "End of line"
+msgstr "Eilutės pabaiga"
+
+#: programs/cmd/cmd.rc:413
+msgid "End of file"
+msgstr "Failo pabaiga"
 
 #: programs/conhost/conhost.rc:54
 msgid "Cursor size"

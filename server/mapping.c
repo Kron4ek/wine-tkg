@@ -231,6 +231,36 @@ static const mem_size_t granularity_mask = 0xffff;
 static struct addr_range ranges32;
 static struct addr_range ranges64;
 
+struct session_block
+{
+    struct list entry;      /* entry in the session block list */
+    const char *data;       /* base pointer for the mmaped data */
+    mem_size_t offset;      /* offset of data in the session shared mapping */
+    mem_size_t used_size;   /* used size for previously allocated objects  */
+    mem_size_t block_size;  /* total size of the block */
+};
+
+struct session_object
+{
+    struct list entry;      /* entry in the session free object list */
+    mem_size_t offset;      /* offset of obj in the session shared mapping */
+    shared_object_t obj;    /* object actually shared with the client */
+};
+
+struct session
+{
+    struct list blocks;
+    struct list free_objects;
+    object_id_t last_object_id;
+};
+
+static struct mapping *session_mapping;
+static struct session session =
+{
+    .blocks = LIST_INIT(session.blocks),
+    .free_objects = LIST_INIT(session.free_objects),
+};
+
 #define ROUND_SIZE(size)  (((size) + page_mask) & ~page_mask)
 
 void init_memory(void)
@@ -1260,6 +1290,134 @@ void free_map_addr( client_ptr_t base, mem_size_t size )
 int get_page_size(void)
 {
     return page_mask + 1;
+}
+
+struct mapping *create_session_mapping( struct object *root, const struct unicode_str *name,
+                                        unsigned int attr, const struct security_descriptor *sd )
+{
+    static const unsigned int access = FILE_READ_DATA | FILE_WRITE_DATA;
+    mem_size_t size = max( sizeof(shared_object_t) * 512, 0x10000 );
+
+    return create_mapping( root, name, attr, size, SEC_COMMIT, 0, access, sd );
+}
+
+void set_session_mapping( struct mapping *mapping )
+{
+    int unix_fd = get_unix_fd( mapping->fd );
+    mem_size_t size = mapping->size;
+    struct session_block *block;
+    void *tmp;
+
+    if (!(block = mem_alloc( sizeof(*block) ))) return;
+    if ((tmp = mmap( NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, unix_fd, 0 )) == MAP_FAILED)
+    {
+        free( block );
+        return;
+    }
+
+    block->data = tmp;
+    block->offset = 0;
+    block->used_size = 0;
+    block->block_size = size;
+
+    session_mapping = mapping;
+    list_add_tail( &session.blocks, &block->entry );
+}
+
+static struct session_block *grow_session_mapping( mem_size_t needed )
+{
+    mem_size_t old_size = session_mapping->size, new_size;
+    struct session_block *block;
+    int unix_fd;
+    void *tmp;
+
+    new_size = max( old_size * 3 / 2, old_size + max( needed, 0x10000 ) );
+    new_size = (new_size + page_mask) & ~((mem_size_t)page_mask);
+    assert( new_size > old_size );
+
+    unix_fd = get_unix_fd( session_mapping->fd );
+    if (!grow_file( unix_fd, new_size )) return NULL;
+
+    if (!(block = mem_alloc( sizeof(*block) ))) return NULL;
+    if ((tmp = mmap( NULL, new_size - old_size, PROT_READ | PROT_WRITE, MAP_SHARED, unix_fd, old_size )) == MAP_FAILED)
+    {
+        file_set_error();
+        free( block );
+        return NULL;
+    }
+
+    block->data = tmp;
+    block->offset = old_size;
+    block->used_size = 0;
+    block->block_size = new_size - old_size;
+
+    session_mapping->size = new_size;
+    list_add_tail( &session.blocks, &block->entry );
+
+    return block;
+}
+
+static struct session_block *find_free_session_block( mem_size_t size )
+{
+    struct session_block *block;
+
+    LIST_FOR_EACH_ENTRY( block, &session.blocks, struct session_block, entry )
+        if (size < block->block_size && block->used_size < block->block_size - size) return block;
+
+    return grow_session_mapping( size );
+}
+
+const volatile void *alloc_shared_object(void)
+{
+    struct session_object *object;
+    struct list *ptr;
+
+    if ((ptr = list_head( &session.free_objects )))
+    {
+        object = CONTAINING_RECORD( ptr, struct session_object, entry );
+        list_remove( &object->entry );
+    }
+    else
+    {
+        mem_size_t size = sizeof(*object);
+        struct session_block *block;
+
+        if (!(block = find_free_session_block( size ))) return NULL;
+        object = (struct session_object *)(block->data + block->used_size);
+        object->offset = (char *)&object->obj - block->data;
+        block->used_size += size;
+    }
+
+    SHARED_WRITE_BEGIN( &object->obj.shm, object_shm_t )
+    {
+        /* mark the object data as uninitialized */
+        mark_block_uninitialized( (void *)shared, sizeof(*shared) );
+        CONTAINING_RECORD( shared, shared_object_t, shm )->id = ++session.last_object_id;
+    }
+    SHARED_WRITE_END;
+
+    return &object->obj.shm;
+}
+
+void free_shared_object( const volatile void *object_shm )
+{
+    struct session_object *object = CONTAINING_RECORD( object_shm, struct session_object, obj.shm );
+
+    SHARED_WRITE_BEGIN( &object->obj.shm, object_shm_t )
+    {
+        mark_block_noaccess( (void *)shared, sizeof(*shared) );
+        CONTAINING_RECORD( shared, shared_object_t, shm )->id = 0;
+    }
+    SHARED_WRITE_END;
+
+    list_add_tail( &session.free_objects, &object->entry );
+}
+
+obj_locator_t get_shared_object_locator( const volatile void *object_shm )
+{
+    struct session_object *object = CONTAINING_RECORD( object_shm, struct session_object, obj.shm );
+    obj_locator_t locator = {.offset = object->offset, .id = object->obj.id};
+    return locator;
 }
 
 struct object *create_user_data_mapping( struct object *root, const struct unicode_str *name,

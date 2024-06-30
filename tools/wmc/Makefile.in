@@ -11,8 +11,6 @@ SOURCES = \
 	wmc.man.in \
 	write.c
 
-wmc_EXTRADEFS = \
-	-DNLSDIR="\"${nlsdir}\"" \
-	-DBIN_TO_NLSDIR=\"`${MAKEDEP} -R ${bindir} ${nlsdir}`\"
+wmc_EXTRADEFS = -DBINDIR="\"${bindir}\"" -DDATADIR="\"${datadir}\""
 
 INSTALL_DEV = $(PROGRAMS)

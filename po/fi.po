@@ -14555,6 +14555,24 @@ msgstr ""
 "Luvun muoto ei kelpaa – täytyy olla desimaaliluku (12),\n"
 " heksadesimaaliluku (0x34) tai oktaaliluku (056).\n"
 
+#: programs/cmd/cmd.rc:411
+#, fuzzy
+#| msgid "Syntax error\n"
+msgid "Syntax error: unexpected %1\n"
+msgstr "Syntaksivirhe\n"
+
+#: programs/cmd/cmd.rc:412
+#, fuzzy
+#| msgid "End of file.\n"
+msgid "End of line"
+msgstr "Tiedoston loppu.\n"
+
+#: programs/cmd/cmd.rc:413
+#, fuzzy
+#| msgid "End of file.\n"
+msgid "End of file"
+msgstr "Tiedoston loppu.\n"
+
 #: programs/conhost/conhost.rc:54
 msgid "Cursor size"
 msgstr "Kursorin koko"

@@ -340,7 +340,7 @@
 @ stdcall -syscall NtQueueApcThread(long ptr long long long)
 @ stdcall -syscall NtQueueApcThreadEx(long long ptr long long long)
 @ stdcall -syscall NtRaiseException(ptr ptr long)
-@ stdcall -syscall NtRaiseHardError(long long ptr ptr long ptr)
+@ stdcall -syscall NtRaiseHardError(long long long ptr long ptr)
 @ stdcall -syscall NtReadFile(long long ptr ptr ptr ptr long ptr ptr)
 @ stdcall -syscall NtReadFileScatter(long long ptr ptr ptr ptr long ptr ptr)
 # @ stub NtReadRequestData
@@ -650,7 +650,7 @@
 # @ stub RtlEnumerateGenericTableAvl
 # @ stub RtlEnumerateGenericTableLikeADirectory
 @ stdcall RtlEnumerateGenericTableWithoutSplaying(ptr ptr)
-# @ stub RtlEnumerateGenericTableWithoutSplayingAvl
+@ stdcall RtlEnumerateGenericTableWithoutSplayingAvl(ptr ptr)
 @ stub RtlEnumerateProperties
 @ stdcall RtlEqualComputerName(ptr ptr)
 @ stdcall RtlEqualDomainName(ptr ptr)
@@ -743,8 +743,7 @@
 # @ stub RtlGetLengthWithoutTrailingPathSeperators
 @ stdcall RtlGetLocaleFileMappingAddress(ptr ptr ptr)
 @ stdcall RtlGetLongestNtPathLength()
-@ stdcall -syscall -arch=win32 RtlGetNativeSystemInformation(long ptr long ptr) NtWow64GetNativeSystemInformation
-@ stdcall -syscall -arch=win64 RtlGetNativeSystemInformation(long ptr long ptr) NtQuerySystemInformation
+@ stdcall RtlGetNativeSystemInformation(long ptr long ptr)
 # @ stub RtlGetNextRange
 @ stdcall RtlGetNtGlobalFlags()
 @ stdcall RtlGetNtProductType(ptr)
@@ -899,7 +898,7 @@
 @ stdcall RtlNtStatusToDosError(long)
 @ stdcall RtlNtStatusToDosErrorNoTeb(long)
 @ stdcall RtlNumberGenericTableElements(ptr)
-# @ stub RtlNumberGenericTableElementsAvl
+@ stdcall RtlNumberGenericTableElementsAvl(ptr)
 @ stdcall RtlNumberOfClearBits(ptr)
 @ stdcall RtlNumberOfSetBits(ptr)
 @ stdcall RtlOemStringToUnicodeSize(ptr)
@@ -1390,7 +1389,7 @@
 @ stdcall -private -syscall ZwQueueApcThread(long ptr long long long) NtQueueApcThread
 @ stdcall -private -syscall ZwQueueApcThreadEx(long long ptr long long long) NtQueueApcThreadEx
 @ stdcall -private -syscall ZwRaiseException(ptr ptr long) NtRaiseException
-@ stdcall -private -syscall ZwRaiseHardError(long long ptr ptr long ptr) NtRaiseHardError
+@ stdcall -private -syscall ZwRaiseHardError(long long long ptr long ptr) NtRaiseHardError
 @ stdcall -private -syscall ZwReadFile(long long ptr ptr ptr ptr long ptr ptr) NtReadFile
 @ stdcall -private -syscall ZwReadFileScatter(long long ptr ptr ptr ptr long ptr ptr) NtReadFileScatter
 # @ stub ZwReadRequestData

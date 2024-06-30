@@ -662,6 +662,7 @@ SOURCES = \
 	rmxftmpl.x \
 	roapi.h \
 	roerrorapi.h \
+	rometadata.h \
 	rometadataresolution.h \
 	roparameterizediid.idl \
 	row.idl \
@@ -826,12 +827,15 @@ SOURCES = \
 	windef.h \
 	windns.h \
 	windot11.h \
+	windows.applicationmodel.activation.idl \
+	windows.applicationmodel.background.idl \
 	windows.applicationmodel.core.idl \
 	windows.applicationmodel.idl \
 	windows.devices.bluetooth.idl \
 	windows.devices.enumeration.idl \
 	windows.devices.geolocation.idl \
 	windows.devices.haptics.idl \
+	windows.devices.input.idl \
 	windows.devices.power.idl \
 	windows.devices.radios.idl \
 	windows.devices.usb.idl \
@@ -850,6 +854,7 @@ SOURCES = \
 	windows.graphics.directx.idl \
 	windows.graphics.effects.idl \
 	windows.graphics.holographic.idl \
+	windows.graphics.idl \
 	windows.graphics.imaging.idl \
 	windows.h \
 	windows.management.deployment.idl \
@@ -886,6 +891,7 @@ SOURCES = \
 	windows.ui.composition.interop.idl \
 	windows.ui.core.idl \
 	windows.ui.idl \
+	windows.ui.input.idl \
 	windows.ui.viewmanagement.idl \
 	windows.ui.xaml.hosting.desktopwindowxamlsource.idl \
 	windowscontracts.idl \

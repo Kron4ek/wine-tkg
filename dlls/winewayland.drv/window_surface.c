@@ -45,7 +45,6 @@ struct wayland_window_surface
     struct window_surface header;
     struct wayland_surface *wayland_surface;
     struct wayland_buffer_queue *wayland_buffer_queue;
-    BITMAPINFO info;
 };
 
 static struct wayland_window_surface *wayland_window_surface_cast(
@@ -210,19 +209,6 @@ static void wayland_buffer_queue_add_damage(struct wayland_buffer_queue *queue, 
 }
 
 /***********************************************************************
- *           wayland_window_surface_get_bitmap_info
- */
-static void *wayland_window_surface_get_bitmap_info(struct window_surface *window_surface,
-                                                    BITMAPINFO *info)
-{
-    struct wayland_window_surface *surface = wayland_window_surface_cast(window_surface);
-    /* We don't store any additional information at the end of our BITMAPINFO, so
-     * just copy the structure itself. */
-    memcpy(info, &surface->info, sizeof(*info));
-    return window_surface->color_bits;
-}
-
-/***********************************************************************
  *           wayland_window_surface_set_clip
  */
 static void wayland_window_surface_set_clip(struct window_surface *window_surface,
@@ -254,7 +240,7 @@ RGNDATA *get_region_data(HRGN region)
 /**********************************************************************
  *          copy_pixel_region
  */
-static void copy_pixel_region(char *src_pixels, RECT *src_rect,
+static void copy_pixel_region(const char *src_pixels, RECT *src_rect,
                               char *dst_pixels, RECT *dst_rect,
                               HRGN region)
 {
@@ -274,7 +260,8 @@ static void copy_pixel_region(char *src_pixels, RECT *src_rect,
 
     for (;rgn_rect < rgn_rect_end; rgn_rect++)
     {
-        char *src, *dst;
+        const char *src;
+        char *dst;
         int y, width_bytes, height;
         RECT rc;
 
@@ -283,8 +270,8 @@ static void copy_pixel_region(char *src_pixels, RECT *src_rect,
         if (!intersect_rect(&rc, rgn_rect, src_rect)) continue;
         if (!intersect_rect(&rc, &rc, dst_rect)) continue;
 
-        src = src_pixels + rc.top * src_stride + rc.left * bpp;
-        dst = dst_pixels + rc.top * dst_stride + rc.left * bpp;
+        src = src_pixels + (rc.top - src_rect->top) * src_stride + (rc.left - src_rect->left) * bpp;
+        dst = dst_pixels + (rc.top - dst_rect->top) * dst_stride + (rc.left - dst_rect->left) * bpp;
         width_bytes = (rc.right - rc.left) * bpp;
         height = rc.bottom - rc.top;
 
@@ -310,7 +297,7 @@ static void copy_pixel_region(char *src_pixels, RECT *src_rect,
  *          wayland_shm_buffer_copy_data
  */
 static void wayland_shm_buffer_copy_data(struct wayland_shm_buffer *buffer,
-                                         char *bits, RECT *rect,
+                                         const char *bits, RECT *rect,
                                          HRGN region)
 {
     RECT buffer_rect = {0, 0, buffer->width, buffer->height};
@@ -331,8 +318,10 @@ static void wayland_shm_buffer_copy(struct wayland_shm_buffer *src,
 /***********************************************************************
  *           wayland_window_surface_flush
  */
-static BOOL wayland_window_surface_flush(struct window_surface *window_surface, const RECT *rect, const RECT *dirty)
+static BOOL wayland_window_surface_flush(struct window_surface *window_surface, const RECT *rect, const RECT *dirty,
+                                         const BITMAPINFO *color_info, const void *color_bits)
 {
+    RECT surface_rect = {.right = color_info->bmiHeader.biWidth, .bottom = abs(color_info->bmiHeader.biHeight)};
     struct wayland_window_surface *wws = wayland_window_surface_cast(window_surface);
     struct wayland_shm_buffer *shm_buffer = NULL;
     BOOL flushed = FALSE;
@@ -346,7 +335,8 @@ static BOOL wayland_window_surface_flush(struct window_surface *window_surface, 
         goto done;
     }
 
-    surface_damage_region = NtGdiCreateRectRgn(dirty->left, dirty->top, dirty->right, dirty->bottom);
+    surface_damage_region = NtGdiCreateRectRgn(rect->left + dirty->left, rect->top + dirty->top,
+                                               rect->left + dirty->right, rect->top + dirty->bottom);
     if (!surface_damage_region)
     {
         ERR("failed to create surface damage region\n");
@@ -393,8 +383,7 @@ static BOOL wayland_window_surface_flush(struct window_surface *window_surface, 
         copy_from_window_region = shm_buffer->damage_region;
     }
 
-    wayland_shm_buffer_copy_data(shm_buffer, window_surface->color_bits,
-                                 &window_surface->rect, copy_from_window_region);
+    wayland_shm_buffer_copy_data(shm_buffer, color_bits, &surface_rect, copy_from_window_region);
 
     pthread_mutex_lock(&wws->wayland_surface->mutex);
     if (wayland_surface_reconfigure(wws->wayland_surface))
@@ -440,7 +429,6 @@ static void wayland_window_surface_destroy(struct window_surface *window_surface
 
 static const struct window_surface_funcs wayland_window_surface_funcs =
 {
-    wayland_window_surface_get_bitmap_info,
     wayland_window_surface_set_clip,
     wayland_window_surface_flush,
     wayland_window_surface_destroy
@@ -449,7 +437,7 @@ static const struct window_surface_funcs wayland_window_surface_funcs =
 /***********************************************************************
  *           wayland_window_surface_create
  */
-struct window_surface *wayland_window_surface_create(HWND hwnd, const RECT *rect)
+static struct window_surface *wayland_window_surface_create(HWND hwnd, const RECT *rect)
 {
     char buffer[FIELD_OFFSET(BITMAPINFO, bmiColors[256])];
     BITMAPINFO *info = (BITMAPINFO *)buffer;
@@ -471,10 +459,8 @@ struct window_surface *wayland_window_surface_create(HWND hwnd, const RECT *rect
     wws = calloc(1, sizeof(*wws));
     if (!wws) return NULL;
     if (!window_surface_init(&wws->header, &wayland_window_surface_funcs, hwnd, rect, info, 0)) goto failed;
-    wws->info = *info;
 
-    TRACE("created %p hwnd %p %s bits [%p,%p)\n", wws, hwnd, wine_dbgstr_rect(rect),
-          wws->header.color_bits, (char *)wws->header.color_bits + wws->info.bmiHeader.biSizeImage);
+    TRACE("created %p hwnd %p %s\n", wws, hwnd, wine_dbgstr_rect(rect));
 
     return &wws->header;
 
@@ -486,29 +472,68 @@ failed:
 /***********************************************************************
  *           wayland_window_surface_update_wayland_surface
  */
-void wayland_window_surface_update_wayland_surface(struct window_surface *window_surface,
+void wayland_window_surface_update_wayland_surface(struct window_surface *window_surface, const RECT *visible_rect,
                                                    struct wayland_surface *wayland_surface)
 {
-    struct wayland_window_surface *wws = wayland_window_surface_cast(window_surface);
+    struct wayland_window_surface *wws;
 
+    /* ignore calls with the dummy surface */
+    if (window_surface->funcs != &wayland_window_surface_funcs) return;
+
+    wws = wayland_window_surface_cast(window_surface);
     window_surface_lock(window_surface);
 
-    TRACE("surface=%p hwnd=%p wayland_surface=%p\n", wws, window_surface->hwnd, wayland_surface);
+    TRACE("surface=%p hwnd=%p visible_rect=%s wayland_surface=%p\n", wws, window_surface->hwnd,
+          wine_dbgstr_rect(visible_rect), wayland_surface);
 
     wws->wayland_surface = wayland_surface;
 
-    /* We only need a buffer queue if we have a surface to commit to. */
-    if (wws->wayland_surface && !wws->wayland_buffer_queue)
-    {
-        wws->wayland_buffer_queue =
-            wayland_buffer_queue_create(wws->info.bmiHeader.biWidth,
-                                        abs(wws->info.bmiHeader.biHeight));
-    }
-    else if (!wws->wayland_surface && wws->wayland_buffer_queue)
+    if (wws->wayland_buffer_queue)
     {
         wayland_buffer_queue_destroy(wws->wayland_buffer_queue);
         wws->wayland_buffer_queue = NULL;
     }
 
+    /* We only need a buffer queue if we have a surface to commit to. */
+    if (wws->wayland_surface)
+    {
+        wws->wayland_buffer_queue =
+            wayland_buffer_queue_create(visible_rect->right - visible_rect->left,
+                                        visible_rect->bottom - visible_rect->top);
+    }
+
     window_surface_unlock(window_surface);
+}
+
+
+/***********************************************************************
+ *           WAYLAND_CreateWindowSurface
+ */
+BOOL WAYLAND_CreateWindowSurface(HWND hwnd, const RECT *surface_rect, struct window_surface **surface)
+{
+    struct wayland_win_data *data;
+
+    TRACE("hwnd %p, surface_rect %s, surface %p\n", hwnd, wine_dbgstr_rect(surface_rect), surface);
+
+    if (!(data = wayland_win_data_get(hwnd))) return TRUE; /* use default surface */
+
+    /* Release the dummy surface wine provides for toplevels. */
+    if (*surface) window_surface_release(*surface);
+    *surface = NULL;
+
+    /* Check if we can reuse our current window surface. */
+    if (data->window_surface &&
+        EqualRect(&data->window_surface->rect, surface_rect))
+    {
+        window_surface_add_ref(data->window_surface);
+        *surface = data->window_surface;
+        TRACE("reusing surface %p\n", *surface);
+        goto done;
+    }
+
+    *surface = wayland_window_surface_create(data->hwnd, surface_rect);
+
+done:
+    wayland_win_data_release(data);
+    return TRUE;
 }

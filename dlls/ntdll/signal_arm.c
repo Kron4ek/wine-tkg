@@ -557,6 +557,25 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
 
 
 /*************************************************************************
+ *		RtlGetNativeSystemInformation (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlGetNativeSystemInformation( SYSTEM_INFORMATION_CLASS class,
+                                               void *info, ULONG size, ULONG *ret_size )
+{
+    return NtWow64GetNativeSystemInformation( class, info, size, ret_size );
+}
+
+
+/***********************************************************************
+ *           RtlIsProcessorFeaturePresent [NTDLL.@]
+ */
+BOOLEAN WINAPI RtlIsProcessorFeaturePresent( UINT feature )
+{
+    return NtWow64IsProcessorFeaturePresent( feature );
+}
+
+
+/*************************************************************************
  *		RtlWalkFrameChain (NTDLL.@)
  */
 ULONG WINAPI RtlWalkFrameChain( void **buffer, ULONG count, ULONG flags )

@@ -555,7 +555,7 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
   if ((file_total + dir_total == 0) && (level == 0)) {
     SetLastError (ERROR_FILE_NOT_FOUND);
     WCMD_print_error ();
-    errorlevel = 1;
+    errorlevel = ERROR_INVALID_FUNCTION;
   }
 
   return parms;
@@ -574,7 +574,7 @@ static void WCMD_dir_trailer(const WCHAR *path) {
     WINE_TRACE("Writing trailer for '%s' gave %d(%ld)\n", wine_dbgstr_w(path),
                status, GetLastError());
 
-    if (errorlevel==0 && !bare) {
+    if (errorlevel == NO_ERROR && !bare) {
       if (recurse) {
         WCMD_output (L"\n     Total files listed:\n%1!8d! files%2!25s! bytes\n", file_total, WCMD_filesize64 (byte_total));
         WCMD_output (L"%1!8d! directories %2!18s! bytes free\n\n", dir_total, WCMD_filesize64 (freebytes.QuadPart));
@@ -711,7 +711,7 @@ void WCMD_directory (WCHAR *args)
   WCHAR fname[MAX_PATH];
   WCHAR ext[MAX_PATH];
 
-  errorlevel = 0;
+  errorlevel = NO_ERROR;
 
   /* Prefill quals with (uppercased) DIRCMD env var */
   if (GetEnvironmentVariableW(L"DIRCMD", string, ARRAY_SIZE(string))) {
@@ -797,7 +797,7 @@ void WCMD_directory (WCHAR *args)
               } else {
                 SetLastError(ERROR_INVALID_PARAMETER);
                 WCMD_print_error();
-                errorlevel = 1;
+                errorlevel = ERROR_INVALID_FUNCTION;
                 return;
               }
               break;
@@ -817,7 +817,7 @@ void WCMD_directory (WCHAR *args)
                 default:
                     SetLastError(ERROR_INVALID_PARAMETER);
                     WCMD_print_error();
-                    errorlevel = 1;
+                    errorlevel = ERROR_INVALID_FUNCTION;
                     return;
                 }
                 p++;
@@ -848,7 +848,7 @@ void WCMD_directory (WCHAR *args)
                 default:
                     SetLastError(ERROR_INVALID_PARAMETER);
                     WCMD_print_error();
-                    errorlevel = 1;
+                    errorlevel = ERROR_INVALID_FUNCTION;
                     return;
                 }
 
@@ -867,7 +867,7 @@ void WCMD_directory (WCHAR *args)
     default:
               SetLastError(ERROR_INVALID_PARAMETER);
               WCMD_print_error();
-              errorlevel = 1;
+              errorlevel = ERROR_INVALID_FUNCTION;
               return;
     }
     p = p + 1;
@@ -1006,7 +1006,7 @@ void WCMD_directory (WCHAR *args)
          status = WCMD_volume (0, drive);
          trailerReqd = TRUE;
          if (!status) {
-           errorlevel = 1;
+           errorlevel = ERROR_INVALID_FUNCTION;
            goto exit;
          }
       }
@@ -1015,7 +1015,7 @@ void WCMD_directory (WCHAR *args)
     }
 
     /* Clear any errors from previous invocations, and process it */
-    errorlevel = 0;
+    errorlevel = NO_ERROR;
     prevEntry = thisEntry;
     thisEntry = WCMD_list_directory (thisEntry, 0);
   }

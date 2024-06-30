@@ -452,21 +452,7 @@ static NTSTATUS get_status(int fd, SERIAL_STATUS* ss)
     return status;
 }
 
-static void stop_waiting( HANDLE handle )
-{
-    unsigned int status;
-
-    SERVER_START_REQ( set_serial_info )
-    {
-        req->handle = wine_server_obj_handle( handle );
-        req->flags = SERIALINFO_PENDING_WAIT;
-        if ((status = wine_server_call( req )))
-            ERR("failed to clear waiting state: %#x\n", status);
-    }
-    SERVER_END_REQ;
-}
-
-static NTSTATUS get_wait_mask(HANDLE hDevice, UINT *mask, UINT *cookie, BOOL *pending_write, BOOL start_wait)
+static NTSTATUS get_wait_mask( HANDLE hDevice, UINT *mask, BOOL *pending_write )
 {
     unsigned int status;
 
@@ -474,11 +460,9 @@ static NTSTATUS get_wait_mask(HANDLE hDevice, UINT *mask, UINT *cookie, BOOL *pe
     {
         req->handle = wine_server_obj_handle( hDevice );
         req->flags = pending_write ? SERIALINFO_PENDING_WRITE : 0;
-        if (start_wait) req->flags |= SERIALINFO_PENDING_WAIT;
         if (!(status = wine_server_call( req )))
         {
             *mask = reply->eventmask;
-            if (cookie) *cookie = reply->cookie;
             if (pending_write) *pending_write = reply->pending_write;
         }
     }
@@ -982,7 +966,6 @@ typedef struct async_commio
     struct async_fileio io;
     DWORD*              events;
     UINT                evtmask;
-    UINT                cookie;
     UINT                mstat;
     BOOL                pending_write;
     serial_irq_info     irq_info;
@@ -1095,7 +1078,7 @@ static BOOL async_wait_proc( void *user, ULONG_PTR *info, unsigned int *status )
     if (!server_get_unix_fd( commio->io.handle, FILE_READ_DATA | FILE_WRITE_DATA, &fd, &needs_close, NULL, NULL ))
     {
         serial_irq_info new_irq_info;
-        UINT new_mstat, dummy, cookie;
+        UINT new_mstat, dummy;
 
         TRACE( "device=%p fd=0x%08x mask=0x%08x buffer=%p irq_info=%p\n",
                commio->io.handle, fd, commio->evtmask, commio->events, &commio->irq_info );
@@ -1126,24 +1109,14 @@ static BOOL async_wait_proc( void *user, ULONG_PTR *info, unsigned int *status )
             }
             else
             {
-                get_wait_mask( commio->io.handle, &dummy, &cookie, (commio->evtmask & EV_TXEMPTY) ? &commio->pending_write : NULL, FALSE );
-                if (commio->cookie != cookie)
-                {
-                    *commio->events = 0;
-                    *status = STATUS_CANCELLED;
-                    *info = 0;
-                }
-                else
-                {
-                    if (needs_close) close( fd );
-                    return FALSE;
-                }
+                get_wait_mask( commio->io.handle, &dummy, (commio->evtmask & EV_TXEMPTY) ? &commio->pending_write : NULL );
+                if (needs_close) close( fd );
+                return FALSE;
             }
         }
 
         if (needs_close) close( fd );
     }
-    stop_waiting( commio->io.handle );
     release_fileio( &commio->io );
     return TRUE;
 }
@@ -1161,7 +1134,7 @@ static NTSTATUS wait_on( HANDLE handle, int fd, HANDLE event, PIO_APC_ROUTINE ap
 
     commio->events = out_buffer;
     commio->pending_write = 0;
-    status = get_wait_mask( handle, &commio->evtmask, &commio->cookie, (commio->evtmask & EV_TXEMPTY) ? &commio->pending_write : NULL, TRUE );
+    status = get_wait_mask( handle, &commio->evtmask, (commio->evtmask & EV_TXEMPTY) ? &commio->pending_write : NULL );
     if (status)
     {
         free( commio );
@@ -1229,15 +1202,13 @@ static NTSTATUS wait_on( HANDLE handle, int fd, HANDLE event, PIO_APC_ROUTINE ap
         if (events)
         {
             status = STATUS_SUCCESS;
-            io->Status = STATUS_SUCCESS;
-            io->Information = sizeof(events);
             *out_buffer = events;
-            set_async_direct_result( &wait_handle, STATUS_SUCCESS, sizeof(events), FALSE );
+            set_async_direct_result( &wait_handle, options, io, STATUS_SUCCESS, sizeof(events), FALSE );
         }
         else
         {
             status = STATUS_PENDING;
-            set_async_direct_result( &wait_handle, STATUS_PENDING, 0, TRUE );
+            set_async_direct_result( &wait_handle, options, io, STATUS_PENDING, 0, TRUE );
         }
     }
 
@@ -1274,6 +1245,7 @@ NTSTATUS serial_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE ap
     NTSTATUS status = STATUS_SUCCESS;
     int fd = -1, needs_close = 0;
     enum server_fd_type type;
+    unsigned int options;
 
     TRACE("%p %s %p %d %p %d %p\n",
           device, iocode2str(code), in_buffer, in_size, out_buffer, out_size, io);
@@ -1288,14 +1260,12 @@ NTSTATUS serial_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE ap
         return STATUS_NOT_SUPPORTED;
     }
 
-    io->Information = 0;
-
-    if ((status = server_get_unix_fd( device, access, &fd, &needs_close, &type, NULL ))) goto error;
+    if ((status = server_get_unix_fd( device, access, &fd, &needs_close, &type, &options )))
+        return status;
     if (type != FD_TYPE_SERIAL)
     {
         if (needs_close) close( fd );
-        status = STATUS_OBJECT_TYPE_MISMATCH;
-        goto error;
+        return STATUS_OBJECT_TYPE_MISMATCH;
     }
 
     switch (code)
@@ -1482,11 +1452,11 @@ NTSTATUS serial_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE ap
         status = STATUS_INVALID_PARAMETER;
         break;
     }
+
     if (needs_close) close( fd );
- error:
-    io->Status = status;
-    io->Information = sz;
-    if (event) NtSetEvent(event, NULL);
+
+    if (!NT_ERROR(status))
+        file_complete_async( device, options, event, apc, apc_user, io, status, sz );
     return status;
 }
 

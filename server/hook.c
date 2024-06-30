@@ -43,6 +43,7 @@ struct hook
 {
     struct list         chain;    /* hook chain entry */
     user_handle_t       handle;   /* user handle for this hook */
+    struct desktop     *desktop;  /* desktop the hook is registered for */
     struct process     *process;  /* process the hook is set to */
     struct thread      *thread;   /* thread the hook is set to */
     struct thread      *owner;    /* owner of the out of context hook */
@@ -128,8 +129,20 @@ static struct hook_table *get_global_hooks( struct thread *thread )
     return table;
 }
 
+/* check if a given hook should run in the given thread */
+static int run_hook_in_thread( struct hook *hook, struct thread *thread )
+{
+    if (hook->process && hook->process != thread->process) return 0;
+    if ((hook->flags & WINEVENT_SKIPOWNPROCESS) && hook->process == thread->process) return 0;
+    if (hook->thread && hook->thread != thread) return 0;
+    if ((hook->flags & WINEVENT_SKIPOWNTHREAD) && hook->thread == thread) return 0;
+    return 1;
+}
+
 /* create a new hook and add it to the specified table */
-static struct hook *add_hook( struct desktop *desktop, struct thread *thread, int index, int global )
+static struct hook *add_hook( struct desktop *desktop, struct process *process, struct thread *thread, int index, int global,
+                              int event_min, int event_max, int flags, client_ptr_t proc, int unicode,
+                              WCHAR *module, data_size_t module_size )
 {
     struct hook *hook;
     struct hook_table *table = global ? desktop->global_hooks : get_queue_hooks(thread);
@@ -147,11 +160,30 @@ static struct hook *add_hook( struct desktop *desktop, struct thread *thread, in
         free( hook );
         return NULL;
     }
-    hook->thread = thread ? (struct thread *)grab_object( thread ) : NULL;
-    hook->table  = table;
-    hook->index  = index;
+    hook->owner       = (struct thread *)grab_object( current );
+    hook->desktop     = (struct desktop *)grab_object( desktop );
+    hook->process     = process ? (struct process *)grab_object( process ) : NULL;
+    hook->thread      = thread ? (struct thread *)grab_object( thread ) : NULL;
+    hook->table       = table;
+    hook->index       = index;
+    hook->event_min   = event_min;
+    hook->event_max   = event_max;
+    hook->flags       = flags;
+    hook->proc        = proc;
+    hook->unicode     = unicode;
+    hook->module      = module;
+    hook->module_size = module_size;
     list_add_head( &table->hooks[index], &hook->chain );
     if (thread) thread->desktop_users++;
+
+    if (!global)
+        add_queue_hook_count( hook->thread, index, 1 );
+    else LIST_FOR_EACH_ENTRY( thread, &desktop->threads, struct thread, desktop_entry )
+    {
+        if (!run_hook_in_thread( hook, thread )) continue;
+        add_queue_hook_count( thread, index, 1 );
+    }
+
     return hook;
 }
 
@@ -167,6 +199,7 @@ static void free_hook( struct hook *hook )
         release_object( hook->thread );
     }
     if (hook->process) release_object( hook->process );
+    release_object( hook->desktop );
     release_object( hook->owner );
     list_remove( &hook->chain );
     free( hook );
@@ -208,10 +241,7 @@ static inline int run_hook_in_owner_thread( struct hook *hook )
 /* check if a given hook should run in the current thread */
 static inline int run_hook_in_current_thread( struct hook *hook )
 {
-    if (hook->process && hook->process != current->process) return 0;
-    if ((hook->flags & WINEVENT_SKIPOWNPROCESS) && hook->process == current->process) return 0;
-    if (hook->thread && hook->thread != current) return 0;
-    if ((hook->flags & WINEVENT_SKIPOWNTHREAD) && hook->thread == current) return 0;
+    if (!run_hook_in_thread( hook, current )) return 0;
     /* don't run low-level hooks in processes suspended for debugging */
     if (run_hook_in_owner_thread( hook ) && hook->owner->process->suspend) return 0;
     return 1;
@@ -296,10 +326,41 @@ static void hook_table_destroy( struct object *obj )
 /* remove a hook, freeing it if the chain is not in use */
 static void remove_hook( struct hook *hook )
 {
+    struct desktop *desktop = hook->desktop;
+    int global = hook->table == desktop->global_hooks;
+    struct thread *thread;
+
+    if (!global)
+        add_queue_hook_count( hook->thread, hook->index, -1 );
+    else LIST_FOR_EACH_ENTRY( thread, &desktop->threads, struct thread, desktop_entry )
+    {
+        if (!run_hook_in_thread( hook, thread )) continue;
+        add_queue_hook_count( thread, hook->index, -1 );
+    }
+
     if (hook->table->counts[hook->index])
         hook->proc = 0; /* chain is in use, just mark it and return */
     else
         free_hook( hook );
+}
+
+/* update the thread message queue hooks counters from the desktop global hooks */
+void add_desktop_hook_count( struct desktop *desktop, struct thread *thread, int count )
+{
+    struct hook_table *table;
+    struct hook *hook;
+    int index;
+
+    if (!(table = desktop->global_hooks)) return;
+
+    for (index = 0; index < ARRAY_SIZE(table->hooks); index++)
+    {
+        LIST_FOR_EACH_ENTRY( hook, &table->hooks[index], struct hook, chain )
+        {
+            if (!run_hook_in_thread( hook, thread )) continue;
+            add_queue_hook_count( thread, hook->index, count );
+        }
+    }
 }
 
 /* release a hook chain, removing deleted hooks if the use count drops to 0 */
@@ -341,36 +402,6 @@ void remove_thread_hooks( struct thread *thread )
             hook = next;
         }
     }
-}
-
-/* get a bitmap of active hooks in a hook table */
-static int is_hook_active( struct hook_table *table, int index )
-{
-    struct hook *hook = get_first_hook( table, index );
-
-    while (hook)
-    {
-        if (hook->proc && run_hook_in_current_thread( hook )) return 1;
-        hook = HOOK_ENTRY( list_next( &table->hooks[index], &hook->chain ) );
-    }
-    return 0;
-}
-
-/* get a bitmap of all active hooks for the current thread */
-unsigned int get_active_hooks(void)
-{
-    struct hook_table *table = get_queue_hooks( current );
-    struct hook_table *global_hooks = get_global_hooks( current );
-    unsigned int ret = 1u << 31;  /* set high bit to indicate that the bitmap is valid */
-    int id;
-
-    for (id = WH_MINHOOK; id <= WH_WINEVENT; id++)
-    {
-        if ((table && is_hook_active( table, id - WH_MINHOOK )) ||
-            (global_hooks && is_hook_active( global_hooks, id - WH_MINHOOK )))
-            ret |= 1 << (id - WH_MINHOOK);
-    }
-    return ret;
 }
 
 /* return the thread that owns the first global hook */
@@ -453,19 +484,10 @@ DECL_HANDLER(set_hook)
         global = 0;
     }
 
-    if ((hook = add_hook( desktop, thread, req->id - WH_MINHOOK, global )))
+    if ((hook = add_hook( desktop, process, thread, req->id - WH_MINHOOK, global, req->event_min, req->event_max,
+                          req->flags, req->proc, req->unicode, module, module_size )))
     {
-        hook->owner = (struct thread *)grab_object( current );
-        hook->process = process ? (struct process *)grab_object( process ) : NULL;
-        hook->event_min   = req->event_min;
-        hook->event_max   = req->event_max;
-        hook->flags       = req->flags;
-        hook->proc        = req->proc;
-        hook->unicode     = req->unicode;
-        hook->module      = module;
-        hook->module_size = module_size;
         reply->handle = hook->handle;
-        reply->active_hooks = get_active_hooks();
     }
     else free( module );
 
@@ -502,8 +524,8 @@ DECL_HANDLER(remove_hook)
             return;
         }
     }
+
     remove_hook( hook );
-    reply->active_hooks = get_active_hooks();
 }
 
 
@@ -519,8 +541,6 @@ DECL_HANDLER(start_hook_chain)
         set_error( STATUS_INVALID_PARAMETER );
         return;
     }
-
-    reply->active_hooks = get_active_hooks();
 
     if (!table || !(hook = get_first_valid_hook( table, req->id - WH_MINHOOK, req->event,
                                                  req->window, req->object_id, req->child_id )))

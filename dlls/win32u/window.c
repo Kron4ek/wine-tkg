@@ -1782,6 +1782,57 @@ done:
     if (region) NtGdiDeleteObjectApp( region );
 }
 
+
+static BOOL get_surface_rect( const RECT *visible_rect, RECT *surface_rect )
+{
+    RECT virtual_rect = NtUserGetVirtualScreenRect();
+
+    *surface_rect = *visible_rect;
+
+    /* crop surfaces which are larger than the virtual screen rect, some applications create huge windows */
+    if ((surface_rect->right - surface_rect->left > virtual_rect.right - virtual_rect.left ||
+         surface_rect->bottom - surface_rect->top > virtual_rect.bottom - virtual_rect.top) &&
+        !intersect_rect( surface_rect, surface_rect, &virtual_rect ))
+        return FALSE;
+    OffsetRect( surface_rect, -visible_rect->left, -visible_rect->top );
+
+    /* round the surface coordinates to avoid re-creating them too often on resize */
+    surface_rect->left &= ~127;
+    surface_rect->top  &= ~127;
+    surface_rect->right  = max( surface_rect->left + 128, (surface_rect->right + 127) & ~127 );
+    surface_rect->bottom = max( surface_rect->top + 128, (surface_rect->bottom + 127) & ~127 );
+    return TRUE;
+}
+
+static BOOL get_default_window_surface( HWND hwnd, const RECT *surface_rect, struct window_surface **surface )
+{
+    struct window_surface *previous;
+    WND *win;
+
+    TRACE( "hwnd %p, surface_rect %s, surface %p\n", hwnd, wine_dbgstr_rect( surface_rect ), surface );
+
+    if (!(win = get_win_ptr( hwnd )) || win == WND_DESKTOP || win == WND_OTHER_PROCESS) return FALSE;
+
+    if ((previous = win->surface) && EqualRect( &previous->rect, surface_rect ))
+    {
+        window_surface_add_ref( (*surface = previous) );
+        TRACE( "trying to reuse previous surface %p\n", previous );
+    }
+    else if (!win->parent || win->parent == get_desktop_window())
+    {
+        *surface = &dummy_surface;  /* provide a default surface for top-level windows */
+        window_surface_add_ref( *surface );
+    }
+    else
+    {
+        *surface = NULL; /* use parent surface for child windows */
+        TRACE( "using parent window surface\n" );
+    }
+
+    release_win_ptr( win );
+    return TRUE;
+}
+
 /***********************************************************************
  *           apply_window_pos
  *
@@ -1791,21 +1842,21 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
                               const RECT *window_rect, const RECT *client_rect, const RECT *valid_rects )
 {
     WND *win;
-    HWND surface_win = 0, parent = NtUserGetAncestor( hwnd, GA_PARENT );
+    HWND surface_win = 0;
     BOOL ret, needs_surface, needs_update = FALSE;
-    RECT visible_rect = *window_rect, old_visible_rect, old_window_rect, old_client_rect, extra_rects[3];
-    struct window_surface *old_surface, *new_surface = NULL;
+    RECT surface_rect, visible_rect = *window_rect, old_visible_rect, old_window_rect, old_client_rect, extra_rects[3];
+    struct window_surface *old_surface, *new_surface;
 
-    needs_surface = user_driver->pWindowPosChanging( hwnd, swp_flags, window_rect, client_rect, &visible_rect );
+    if (!user_driver->pWindowPosChanging( hwnd, swp_flags, window_rect, client_rect, &visible_rect )) needs_surface = FALSE;
+    else if (swp_flags & SWP_HIDEWINDOW) needs_surface = FALSE;
+    else if (swp_flags & SWP_SHOWWINDOW) needs_surface = TRUE;
+    else needs_surface = !!(NtUserGetWindowLongW( hwnd, GWL_STYLE ) & WS_VISIBLE);
 
-    if (!parent || parent == get_desktop_window())
-    {
-        new_surface = &dummy_surface;  /* provide a default surface for top-level windows */
-        window_surface_add_ref( new_surface );
-    }
+    if (!get_surface_rect( &visible_rect, &surface_rect )) needs_surface = FALSE;
+    if (!get_default_window_surface( hwnd, &surface_rect, &new_surface )) return FALSE;
 
     if (!needs_surface || IsRectEmpty( &visible_rect )) needs_surface = FALSE; /* use default surface */
-    else needs_surface = !user_driver->pCreateWindowSurface( hwnd, swp_flags, &visible_rect, &new_surface );
+    else needs_surface = !user_driver->pCreateWindowSurface( hwnd, &surface_rect, &new_surface );
 
     get_window_rects( hwnd, COORDS_SCREEN, &old_window_rect, NULL, get_thread_dpi() );
     if (IsRectEmpty( &valid_rects[0] )) valid_rects = NULL;
@@ -1822,7 +1873,7 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
     {
         window_surface_release( new_surface );
         if ((new_surface = win->surface)) window_surface_add_ref( new_surface );
-        create_offscreen_window_surface( hwnd, &visible_rect, &new_surface );
+        create_offscreen_window_surface( hwnd, &surface_rect, &new_surface );
     }
 
     old_visible_rect = win->visible_rect;

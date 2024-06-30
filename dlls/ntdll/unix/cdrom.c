@@ -2819,21 +2819,17 @@ NTSTATUS cdrom_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE apc
     DWORD       sz = 0;
     NTSTATUS    status = STATUS_SUCCESS;
     int fd, needs_close, dev = 0;
+    unsigned int options;
 
     TRACE( "%p %s %p %d %p %d %p\n", device, iocodex(code), in_buffer, in_size, out_buffer, out_size, io );
 
-    io->Information = 0;
-
-    if ((status = server_get_unix_fd( device, 0, &fd, &needs_close, NULL, NULL )))
-    {
-        if (status == STATUS_BAD_DEVICE_TYPE) return status;  /* no associated fd */
-        goto error;
-    }
+    if ((status = server_get_unix_fd( device, 0, &fd, &needs_close, NULL, &options )))
+        return status;
 
     if ((status = CDROM_Open(fd, &dev)))
     {
         if (needs_close) close( fd );
-        goto error;
+        return status;
     }
 
 #ifdef __APPLE__
@@ -2847,16 +2843,13 @@ NTSTATUS cdrom_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE apc
          * Also for some reason it wants the fd to be closed before we even
          * open the parent if we're trying to eject the disk.
          */
-        if ((status = get_parent_device( fd, name, sizeof(name) ))) goto error;
+        if ((status = get_parent_device( fd, name, sizeof(name) ))) return status;
         if (code == IOCTL_STORAGE_EJECT_MEDIA)
             NtClose( device );
         if (needs_close) close( fd );
         TRACE("opening parent %s\n", name );
         if ((fd = open( name, O_RDONLY )) == -1)
-        {
-            status = errno_to_status( errno );
-            goto error;
-        }
+            return errno_to_status( errno );
         needs_close = 1;
     }
 #endif
@@ -3117,13 +3110,10 @@ NTSTATUS cdrom_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE apc
         break;
 
     default:
-        if (needs_close) close( fd );
-        return STATUS_NOT_SUPPORTED;
+        status = STATUS_NOT_SUPPORTED;
     }
     if (needs_close) close( fd );
- error:
-    io->Status = status;
-    io->Information = sz;
-    if (event) NtSetEvent(event, NULL);
+    if (!NT_ERROR(status))
+        file_complete_async( device, options, event, apc, apc_user, io, status, sz );
     return status;
 }

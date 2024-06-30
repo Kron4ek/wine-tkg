@@ -28,6 +28,7 @@
 #define WIN32_NO_STATUS
 #include "ntgdi_private.h"
 #include "win32u_private.h"
+#include "ntuser_private.h"
 #include "wine/vulkan.h"
 #include "wine/vulkan_driver.h"
 
@@ -64,7 +65,6 @@ static PFN_vkGetPhysicalDeviceMemoryProperties2KHR pvkGetPhysicalDeviceMemoryPro
 static PFN_vkGetPhysicalDeviceMemoryProperties pvkGetPhysicalDeviceMemoryProperties;
 static PFN_vkGetPhysicalDeviceProperties2KHR pvkGetPhysicalDeviceProperties2KHR;
 static PFN_vkEnumeratePhysicalDevices pvkEnumeratePhysicalDevices;
-static const struct vulkan_funcs *vulkan_funcs;
 
 static void d3dkmt_init_vulkan(void)
 {
@@ -83,27 +83,26 @@ static void d3dkmt_init_vulkan(void)
     PFN_vkCreateInstance p_vkCreateInstance;
     VkResult vr;
 
-    if (!(vulkan_funcs = __wine_get_vulkan_driver( WINE_VULKAN_DRIVER_VERSION )))
+    if (!vulkan_init())
     {
         WARN( "Failed to open the Vulkan driver\n" );
         return;
     }
 
-    p_vkCreateInstance = vulkan_funcs->p_vkGetInstanceProcAddr( NULL, "vkCreateInstance" );
+    p_vkCreateInstance = p_vkGetInstanceProcAddr( NULL, "vkCreateInstance" );
     if ((vr = p_vkCreateInstance( &create_info, NULL, &d3dkmt_vk_instance )))
     {
         WARN( "Failed to create a Vulkan instance, vr %d.\n", vr );
-        vulkan_funcs = NULL;
         return;
     }
 
-    p_vkDestroyInstance = vulkan_funcs->p_vkGetInstanceProcAddr( d3dkmt_vk_instance, "vkDestroyInstance" );
+    p_vkDestroyInstance = p_vkGetInstanceProcAddr( d3dkmt_vk_instance, "vkDestroyInstance" );
 #define LOAD_VK_FUNC( f )                                                                      \
-    if (!(p##f = (void *)vulkan_funcs->p_vkGetInstanceProcAddr( d3dkmt_vk_instance, #f )))     \
+    if (!(p##f = (void *)p_vkGetInstanceProcAddr( d3dkmt_vk_instance, #f )))                   \
     {                                                                                          \
         WARN( "Failed to load " #f ".\n" );                                                    \
         p_vkDestroyInstance( d3dkmt_vk_instance, NULL );                                       \
-        vulkan_funcs = NULL;                                                                   \
+        d3dkmt_vk_instance = NULL;                                                             \
         return;                                                                                \
     }
     LOAD_VK_FUNC( vkEnumeratePhysicalDevices )
@@ -117,7 +116,7 @@ static BOOL d3dkmt_use_vulkan(void)
 {
     static pthread_once_t once = PTHREAD_ONCE_INIT;
     pthread_once( &once, d3dkmt_init_vulkan );
-    return !!vulkan_funcs;
+    return !!d3dkmt_vk_instance;
 }
 
 /* d3dkmt_lock must be held */

@@ -2756,6 +2756,24 @@ void wined3d_unregister_window(HWND window);
 
 BOOL wined3d_get_app_name(char *app_name, unsigned int app_name_size);
 
+/* Direct3D 1-9 shader constants are submitted by internally feeding them into
+ * wined3d_buffer objects, which are updated with
+ * wined3d_device_context_emit_update_sub_resource().
+ * This allows Vulkan backend shaders to read from the buffers as they would
+ * any other uniform buffer, with no extra code needed to set up the descriptor
+ * set and bind buffers. Other renderers simply map the buffers as CPU buffers
+ * and read from them directly.
+ *
+ * The "FFP" buffer contains constants that are part of the D3D1-9 FFP pipe,
+ * i.e. only used when shaders are disabled.
+ */
+
+struct wined3d_ffp_ps_constants
+{
+    struct wined3d_color texture_constants[WINED3D_MAX_FFP_TEXTURES];
+    struct wined3d_color texture_factor;
+};
+
 enum wined3d_push_constants
 {
     WINED3D_PUSH_CONSTANTS_VS_F,
@@ -2764,6 +2782,7 @@ enum wined3d_push_constants
     WINED3D_PUSH_CONSTANTS_PS_I,
     WINED3D_PUSH_CONSTANTS_VS_B,
     WINED3D_PUSH_CONSTANTS_PS_B,
+    WINED3D_PUSH_CONSTANTS_PS_FFP,
     WINED3D_PUSH_CONSTANTS_COUNT,
 };
 
@@ -3504,8 +3523,6 @@ bool wined3d_light_state_enable_light(struct wined3d_light_state *state, const s
         struct wined3d_light_info *light_info, BOOL enable);
 struct wined3d_light_info *wined3d_light_state_get_light(const struct wined3d_light_state *state,
         unsigned int idx);
-HRESULT wined3d_light_state_set_light(struct wined3d_light_state *state, DWORD light_idx,
-        const struct wined3d_light *params, struct wined3d_light_info **light_info);
 
 enum wined3d_cs_queue_id
 {
@@ -3708,7 +3725,7 @@ void wined3d_device_context_emit_update_sub_resource(struct wined3d_device_conte
 HRESULT wined3d_device_context_emit_unmap(struct wined3d_device_context *context,
         struct wined3d_resource *resource, unsigned int sub_resource_idx);
 void wined3d_device_context_push_constants(struct wined3d_device_context *context,
-        enum wined3d_push_constants type, unsigned int start_idx,
+        enum wined3d_push_constants type, uint32_t update_mask, unsigned int start_idx,
         unsigned int count, const void *constants);
 
 static inline void wined3d_resource_reference(struct wined3d_resource *resource)

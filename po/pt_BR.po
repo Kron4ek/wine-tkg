@@ -14781,6 +14781,24 @@ msgstr ""
 "Número malformado - deve ser decimal (12),\n"
 " hexadecimal (0x34) ou octal (056).\n"
 
+#: programs/cmd/cmd.rc:411
+#, fuzzy
+#| msgid "Syntax error\n"
+msgid "Syntax error: unexpected %1\n"
+msgstr "Erro de sintaxe\n"
+
+#: programs/cmd/cmd.rc:412
+#, fuzzy
+#| msgid "End of file.\n"
+msgid "End of line"
+msgstr "Fim do arquivo.\n"
+
+#: programs/cmd/cmd.rc:413
+#, fuzzy
+#| msgid "End of file.\n"
+msgid "End of file"
+msgstr "Fim do arquivo.\n"
+
 #: programs/conhost/conhost.rc:54
 msgid "Cursor size"
 msgstr "Cursor"

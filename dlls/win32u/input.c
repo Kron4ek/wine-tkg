@@ -406,7 +406,6 @@ static const KBDTABLES kbdus_tables =
 
 static LONG clipping_cursor; /* clipping thread counter */
 
-LONG global_key_state_counter = 0;
 BOOL grab_pointer = TRUE;
 BOOL grab_fullscreen = FALSE;
 
@@ -740,22 +739,22 @@ BOOL WINAPI NtUserSetCursorPos( INT x, INT y )
  */
 BOOL get_cursor_pos( POINT *pt )
 {
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const desktop_shm_t *desktop_shm;
     BOOL ret;
-    DWORD last_change;
+    DWORD last_change = 0;
+    NTSTATUS status;
     UINT dpi;
 
     if (!pt) return FALSE;
 
-    SERVER_START_REQ( set_cursor )
+    while ((status = get_shared_desktop( &lock, &desktop_shm )) == STATUS_PENDING)
     {
-        if ((ret = !wine_server_call( req )))
-        {
-            pt->x = reply->new_x;
-            pt->y = reply->new_y;
-            last_change = reply->last_change;
-        }
+        pt->x = desktop_shm->cursor.x;
+        pt->y = desktop_shm->cursor.y;
+        last_change = desktop_shm->cursor.last_change;
     }
-    SERVER_END_REQ;
+    ret = !status;
 
     /* query new position from graphics driver if we haven't updated recently */
     if (ret && NtGetTickCount() - last_change > 100) ret = user_driver->pGetCursorPos( pt );
@@ -810,52 +809,31 @@ static void check_for_events( UINT flags )
  */
 SHORT WINAPI NtUserGetAsyncKeyState( INT key )
 {
-    struct user_key_state_info *key_state_info = get_user_thread_info()->key_state;
-    INT counter = global_key_state_counter;
-    BYTE prev_key_state;
-    SHORT ret;
+    const desktop_shm_t *desktop_shm;
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    NTSTATUS status;
+    BYTE state = 0;
+    SHORT ret = 0;
 
     if (key < 0 || key >= 256) return 0;
 
     check_for_events( QS_INPUT );
 
-    if (key_state_info && !(key_state_info->state[key] & 0xc0) &&
-        key_state_info->counter == counter && NtGetTickCount() - key_state_info->time < 50)
-    {
-        /* use cached value */
-        return 0;
-    }
-    else if (!key_state_info)
-    {
-        key_state_info = calloc( 1, sizeof(*key_state_info) );
-        get_user_thread_info()->key_state = key_state_info;
-    }
+    while ((status = get_shared_desktop( &lock, &desktop_shm )) == STATUS_PENDING)
+        state = desktop_shm->keystate[key];
 
-    ret = 0;
+    if (status) return 0;
+    if (!(state & 0x40)) return (state & 0x80) << 8;
+
+    /* Need to make a server call to reset the last pressed bit */
     SERVER_START_REQ( get_key_state )
     {
         req->async = 1;
         req->key = key;
-        if (key_state_info)
-        {
-            prev_key_state = key_state_info->state[key];
-            wine_server_set_reply( req, key_state_info->state, sizeof(key_state_info->state) );
-        }
         if (!wine_server_call( req ))
         {
             if (reply->state & 0x40) ret |= 0x0001;
             if (reply->state & 0x80) ret |= 0x8000;
-            if (key_state_info)
-            {
-                /* force refreshing the key state cache - some multithreaded programs
-                 * (like Adobe Photoshop CS5) expect that changes to the async key state
-                 * are also immediately available in other threads. */
-                if (prev_key_state != key_state_info->state[key])
-                    counter = InterlockedIncrement( &global_key_state_counter );
-
-                key_state_info->time    = NtGetTickCount();
-                key_state_info->counter = counter;
-            }
         }
     }
     SERVER_END_REQ;
@@ -2553,24 +2531,21 @@ BOOL WINAPI NtUserGetPointerInfoList( UINT32 id, POINTER_INPUT_TYPE type, UINT_P
 
 BOOL get_clip_cursor( RECT *rect, UINT dpi )
 {
-    BOOL ret;
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const desktop_shm_t *desktop_shm;
+    NTSTATUS status;
 
     if (!rect) return FALSE;
 
-    SERVER_START_REQ( set_cursor )
-    {
-        req->flags = 0;
-        if ((ret = !wine_server_call( req )))
-            *rect = wine_server_get_rect( reply->new_clip );
-    }
-    SERVER_END_REQ;
+    while ((status = get_shared_desktop( &lock, &desktop_shm )) == STATUS_PENDING)
+        *rect = wine_server_get_rect( desktop_shm->cursor.clip );
 
-    if (ret)
+    if (!status)
     {
         HMONITOR monitor = monitor_from_rect( rect, MONITOR_DEFAULTTOPRIMARY, 0 );
         *rect = map_dpi_rect( *rect, get_monitor_dpi( monitor ), dpi );
     }
-    return ret;
+    return !status;
 }
 
 BOOL process_wine_clipcursor( HWND hwnd, UINT flags, BOOL reset )

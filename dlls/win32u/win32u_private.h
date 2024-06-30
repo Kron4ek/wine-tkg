@@ -45,7 +45,7 @@ extern ULONG_PTR set_icon_param( HICON handle, ULONG_PTR param );
 
 /* dce.c */
 extern struct window_surface dummy_surface;
-extern void create_offscreen_window_surface( HWND hwnd, const RECT *visible_rect,
+extern void create_offscreen_window_surface( HWND hwnd, const RECT *surface_rect,
                                              struct window_surface **surface );
 extern void erase_now( HWND hwnd, UINT rdw_flags );
 extern void flush_window_surfaces( BOOL idle );
@@ -55,6 +55,7 @@ extern void move_window_bits_surface( HWND hwnd, const RECT *window_rect, struct
                                       const RECT *old_visible_rect, const RECT *valid_rects );
 extern void register_window_surface( struct window_surface *old,
                                      struct window_surface *new );
+extern void *window_surface_get_color( struct window_surface *surface, BITMAPINFO *info );
 
 /* defwnd.c */
 extern BOOL adjust_window_rect( RECT *rect, DWORD style, BOOL menu, DWORD ex_style, UINT dpi );
@@ -90,7 +91,6 @@ extern void unregister_imm_window( HWND hwnd );
 extern BOOL grab_pointer;
 extern BOOL grab_fullscreen;
 extern BOOL destroy_caret(void);
-extern LONG global_key_state_counter;
 extern HWND get_active_window(void);
 extern HWND get_capture(void);
 extern BOOL get_cursor_pos( POINT *pt );
@@ -205,6 +205,23 @@ extern void free_vulkan_gpu( struct vulkan_gpu *gpu );
 extern BOOL get_vulkan_uuid_from_luid( const LUID *luid, GUID *uuid );
 
 /* winstation.c */
+
+struct object_lock
+{
+    UINT64 id;
+    UINT64 seq;
+};
+#define OBJECT_LOCK_INIT {0}
+
+/* Get shared session object's data pointer, must be called in a loop while STATUS_PENDING
+ * is returned, lock must be initialized with OBJECT_LOCK_INIT.
+ *
+ * The data read from the objects may be transient and no logic should be executed based
+ * on it, within the loop, or after, unless the function has returned STATUS_SUCCESS.
+ */
+extern NTSTATUS get_shared_desktop( struct object_lock *lock, const desktop_shm_t **desktop_shm );
+extern NTSTATUS get_shared_queue( struct object_lock *lock, const queue_shm_t **queue_shm );
+
 extern BOOL is_virtual_desktop(void);
 
 /* window.c */

@@ -91,9 +91,6 @@ AC_ARG_WITH(wine64,    AS_HELP_STRING([--with-wine64=DIR],[use the 64-bit Wine i
 
 AC_CANONICAL_HOST
 
-AC_SUBST(dlldir,[\${libdir}/wine])
-AC_SUBST(fontdir,[\${datadir}/wine/fonts])
-AC_SUBST(nlsdir,[\${datadir}/wine/nls])
 AC_SUBST(srcdir)
 
 dnl **** Check for some programs ****
@@ -196,9 +193,8 @@ else
     AC_MSG_ERROR([could not find Wine tools in $wine_cv_toolsdir])
 fi
 AC_SUBST(toolsdir,[$wine_cv_toolsdir])
-AC_SUBST(MAKEDEP,[$wine_makedep])
 AC_SUBST(RUNTESTFLAGS,["-q -P wine"])
-AC_SUBST(SED_CMD,["LC_ALL=C sed -e 's,@bindir@,\${bindir},g' -e 's,@dlldir@,\${dlldir},g' -e 's,@PACKAGE_STRING@,$PACKAGE_STRING,g' -e 's,@PACKAGE_VERSION@,$PACKAGE_VERSION,g'"])
+AC_SUBST(SED_CMD,["LC_ALL=C sed -e 's,@bindir@,\${bindir},g' -e 's,@PACKAGE_STRING@,$PACKAGE_STRING,g' -e 's,@PACKAGE_VERSION@,$PACKAGE_VERSION,g'"])
 
 if test -n "$host_alias" -a "$host_alias" != "$build_alias"
 then
@@ -641,14 +637,21 @@ case $host_os in
     AC_SUBST(SECURITY_LIBS,"-framework Security -framework CoreFoundation")
     AC_SUBST(SYSTEMCONFIGURATION_LIBS,"-framework SystemConfiguration")
 
-    WINELOADER_LDFLAGS="-Wl,-pie,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
+    WINELOADER_LDFLAGS="-Wl,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
 
     case $HOST_ARCH in
-      i386|x86_64) wine_can_build_preloader=yes ;;
-      *)           wine_can_build_preloader=no ;;
+      i386) wine_use_preloader=yes ;;
+      x86_64)
+        dnl If the -no_huge linker option is present (added in Xcode 15.3), use zerofill sections instead of the preloader
+        WINE_TRY_CFLAGS([-Wl,-no_huge],
+           [wine_use_preloader=no
+            WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-no_pie,-image_base,0x200000000,-no_huge,-no_fixup_chains,-segalign,0x1000,-segaddr,WINE_RESERVE,0x1000,-segaddr,WINE_TOP_DOWN,0x7ff000000000"],
+           [wine_use_preloader=yes])
+        ;;
+      *)    wine_use_preloader=no ;;
     esac
 
-    if test "$wine_can_build_preloader" = "yes"
+    if test "$wine_use_preloader" = "yes"
     then
         WINEPRELOADER_LDFLAGS="-nostartfiles -nodefaultlibs -e _start -ldylib1.o -mmacosx-version-min=10.7 -Wl,-no_new_main,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
         WINE_TRY_CFLAGS([-Wl,-no_pie],
@@ -663,8 +666,6 @@ case $host_os in
         esac
         dnl If preloader is used, the loader needs to be an LC_UNIXTHREAD binary to avoid AppKit/Core Animation problems.
         WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -mmacosx-version-min=10.7"
-    else
-        WINE_WARNING([can't build Wine preloader; many programs won't work])
     fi
 
     if test "x$with_coreaudio" != "xno";
@@ -1431,6 +1432,16 @@ WINE_NOTICE_WITH(pcsclite,[test "x$PCSCLITE_LIBS" = x],
                  [libpcsclite not found, smart cards won't be supported.],
                  [enable_winscard])
 
+dnl **** Check for libodbc ****
+if test "x$with_odbc" != "xno"
+then
+    WINE_PACKAGE_FLAGS(ODBC,[odbc],[-lodbc],,,
+        [AC_CHECK_LIB(odbc,SQLConnect,[:],[ODBC_LIBS=""],[$ODBC_LIBS])])
+fi
+WINE_NOTICE_WITH(odbc,[test "x$ODBC_LIBS" = x],
+                 [libodbc not found, ODBC won't be supported.],
+                 [enable_odbc32])
+
 dnl **** Check for inotify ****
 if test "x$with_inotify" != "xno"
 then
@@ -1959,17 +1970,16 @@ char*f(const char *h,char n) {return strchr(h,n);}]])],[ac_cv_c_logicalop_noisy=
         dnl Mingw uses Windows 64-bit types, not Unix ones
         cygwin*|mingw32*) WINE_TRY_CFLAGS([-Wno-format]) ;;
         dnl Default to ms_abi on 64-bit
-        *) if test -z "$PE_ARCHS"
-           then
-               AC_CACHE_CHECK([for working -mabi=ms], ac_cv_mabi_ms,
-                   [CFLAGS="$CFLAGS -mabi=ms"
-                    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdarg.h>
+        *) AC_CACHE_CHECK([for working -mabi=ms], ac_cv_mabi_ms,
+               [CFLAGS="$CFLAGS -mabi=ms"
+                AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdarg.h>
 int a(int b, ...) { __builtin_ms_va_list list; __builtin_ms_va_start(list,b); }]])],
-                       [ac_cv_mabi_ms=yes],[ac_cv_mabi_ms=no])
-                    CFLAGS=$saved_CFLAGS])
-               test $ac_cv_mabi_ms = yes || AC_MSG_ERROR([The compiler doesn't support -mabi=ms. Use gcc instead of clang, or install mingw-w64.])
-           fi
-           MSVCRTFLAGS="$MSVCRTFLAGS -mabi=ms" ;;
+                   [ac_cv_mabi_ms=yes],[ac_cv_mabi_ms=no])
+                CFLAGS=$saved_CFLAGS])
+           AS_VAR_IF([ac_cv_mabi_ms],[yes],
+                     [MSVCRTFLAGS="$MSVCRTFLAGS -mabi=ms"],
+                     [test -n "$PE_ARCHS" || AC_MSG_ERROR([The compiler doesn't support -mabi=ms. Use gcc instead of clang, or install mingw-w64.])
+                      DLLEXT=""]) ;;
       esac ;;
     arm)
       WINE_TRY_CFLAGS([-Wincompatible-function-pointer-types],[EXTRACFLAGS="$EXTRACFLAGS -Wno-error=incompatible-function-pointer-types"]) ;;
@@ -2030,18 +2040,17 @@ case $host_os in
   linux*)
     if test $HOST_ARCH != unknown
     then
-        test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine-preloader)
-        WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS $wine_binary-preloader"
-    fi
-    ;;
-  darwin*|macosx*)
-    if test "$wine_can_build_preloader" = "yes"
-    then
-        test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine-preloader)
-        WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS $wine_binary-preloader"
+      wine_use_preloader=yes
     fi
     ;;
 esac
+
+if test "$wine_use_preloader" = "yes"
+then
+  test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine-preloader)
+  WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS $wine_binary-preloader"
+  AC_DEFINE(HAVE_WINE_PRELOADER, 1, [Define to 1 if the Wine preloader is being used.])
+fi
 
 dnl **** Check for functions ****
 
@@ -2415,7 +2424,7 @@ AH_BOTTOM([#endif /* __WINE_CONFIG_H */])
 AC_CONFIG_COMMANDS([include/stamp-h], [echo timestamp > include/stamp-h])
 AS_ECHO_N("creating Makefile rules...") >&AS_MESSAGE_FD
 
-makedep_flags=""
+makedep_flags=" -C"
 test "x$enable_silent_rules" = xyes && makedep_flags="$makedep_flags -S"
 
 wine_srcdir=
@@ -2463,6 +2472,7 @@ WINE_CONFIG_MAKEFILE(dlls/avifil32)
 WINE_CONFIG_MAKEFILE(dlls/avifil32/tests)
 WINE_CONFIG_MAKEFILE(dlls/avifile.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/avrt)
+WINE_CONFIG_MAKEFILE(dlls/bcp47langs)
 WINE_CONFIG_MAKEFILE(dlls/bcrypt)
 WINE_CONFIG_MAKEFILE(dlls/bcrypt/tests)
 WINE_CONFIG_MAKEFILE(dlls/bcryptprimitives)
@@ -3032,6 +3042,7 @@ WINE_CONFIG_MAKEFILE(dlls/powrprof)
 WINE_CONFIG_MAKEFILE(dlls/printui)
 WINE_CONFIG_MAKEFILE(dlls/prntvpt)
 WINE_CONFIG_MAKEFILE(dlls/prntvpt/tests)
+WINE_CONFIG_MAKEFILE(dlls/profapi)
 WINE_CONFIG_MAKEFILE(dlls/propsys)
 WINE_CONFIG_MAKEFILE(dlls/propsys/tests)
 WINE_CONFIG_MAKEFILE(dlls/psapi)
@@ -3065,6 +3076,8 @@ WINE_CONFIG_MAKEFILE(dlls/riched20)
 WINE_CONFIG_MAKEFILE(dlls/riched20/tests)
 WINE_CONFIG_MAKEFILE(dlls/riched32)
 WINE_CONFIG_MAKEFILE(dlls/riched32/tests)
+WINE_CONFIG_MAKEFILE(dlls/rometadata)
+WINE_CONFIG_MAKEFILE(dlls/rometadata/tests)
 WINE_CONFIG_MAKEFILE(dlls/rpcrt4)
 WINE_CONFIG_MAKEFILE(dlls/rpcrt4/tests)
 WINE_CONFIG_MAKEFILE(dlls/rsabase)
@@ -3585,6 +3598,7 @@ dnl Main ignore file
 WINE_IGNORE_FILE(TAGS)
 WINE_IGNORE_FILE(tags)
 WINE_IGNORE_FILE(autom4te.cache)
+WINE_IGNORE_FILE(compile_commands.json)
 WINE_IGNORE_FILE(config.log)
 WINE_IGNORE_FILE(config.status)
 WINE_IGNORE_FILE(include/config.h)
@@ -3593,12 +3607,12 @@ test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine)
 
 if test "x$enable_tools" != xno
 then
-    WINE_IGNORE_FILE(tools/makedep$ac_exeext)
     AC_CONFIG_COMMANDS([tools/makedep],[wine_fn_output_makedep || AS_EXIT],
 [wine_fn_output_makedep ()
 {
     AS_MKDIR_P(tools)
-    $CC -I${wine_srcdir}tools -Iinclude -I${wine_srcdir}include -D__WINESRC__ -DWINE_UNIX_LIB $EXTRACFLAGS $CPPFLAGS $CFLAGS -o tools/makedep$ac_exeext ${wine_srcdir}tools/makedep.c $LDFLAGS
+    $CC -c -I${wine_srcdir}tools -Iinclude -I${wine_srcdir}include -D__WINESRC__ -DWINE_UNIX_LIB $EXTRACFLAGS $CPPFLAGS $CFLAGS -o tools/makedep.o ${wine_srcdir}tools/makedep.c
+    $CC -o tools/makedep$ac_exeext tools/makedep.o $LDFLAGS
 }])
 fi
 
@@ -3631,21 +3645,14 @@ dnl Main makefile
 
 AC_SUBST(SHELL,[/bin/sh])
 
-WINE_APPEND_RULE(
-[all: wine
-	@echo \"Wine build complete.\"
-.INIT: Makefile
-.MAKEFILEDEPS:
-all: Makefile
-Makefile: config.status \$(MAKEDEP)
-	@./config.status Makefile
-depend: \$(MAKEDEP)
-	\$(MAKEDEP)$makedep_flags])
-
 dnl Rules for re-running configure
 
 WINE_APPEND_RULE(
-[config.status: ${wine_srcdir}configure
+[all: wine
+	@echo \"Wine build complete.\"
+Makefile: config.status
+	@./config.status Makefile
+config.status: ${wine_srcdir}configure
 	@./config.status --recheck
 include/config.h: include/stamp-h
 include/stamp-h: ${wine_srcdir}include/config.h.in config.status
@@ -3660,18 +3667,6 @@ include/config.h.in: include/stamp-h.in
 include/stamp-h.in: configure.ac aclocal.m4
 	autoheader --warnings=all
 	@echo timestamp > \$[@]])
-fi
-
-if test "x$enable_tools" != xno
-then
-    WINE_APPEND_RULE(
-[tools/makedep$ac_exeext: ${wine_srcdir}tools/makedep.c include/config.h config.status
-	@./config.status tools/makedep
-Makefile: tools/makedep$ac_exeext])
-else
-    WINE_APPEND_RULE(
-[\$(MAKEDEP):
-	@echo \"You need to run make in $toolsdir first\" && false])
 fi
 
 dnl Rules for wineloader
@@ -3732,7 +3727,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-9.11.r0.g1f9ec5ea\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-9.12.r0.g79dd2358\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:
@@ -3752,7 +3747,7 @@ tags ctags:
 	rm -f tags
 	(test -d .git && git ls-files || find -L $srcdir -name '*.[[ch]]' -print) | xargs ctags -a \$(TAGSFLAGS)
 dummy:
-.PHONY: depend dummy install-manpages])
+.PHONY: dummy])
 
 AS_ECHO(" done") >&AS_MESSAGE_FD
 AC_OUTPUT

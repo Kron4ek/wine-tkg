@@ -1628,7 +1628,7 @@ struct typelib_stub
 
 static ULONG WINAPI typelib_stub_Release(IRpcStubBuffer *iface)
 {
-    struct typelib_stub *stub = CONTAINING_RECORD((CStdStubBuffer *)iface, struct typelib_stub, stub.stub_buffer);
+    struct typelib_stub *stub = CONTAINING_RECORD(iface, struct typelib_stub, stub.stub_buffer);
     ULONG refcount = InterlockedDecrement(&stub->stub.stub_buffer.RefCount);
 
     TRACE("(%p) decreasing refs to %ld\n", stub, refcount);

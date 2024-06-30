@@ -50,6 +50,8 @@ struct recordset
     CursorTypeEnum     cursor_type;
     IRowset           *row_set;
     EditModeEnum      editmode;
+    LONG               cache_size;
+    ADO_LONGPTR        max_records;
     VARIANT            filter;
 
     DBTYPE            *columntypes;
@@ -1449,14 +1451,20 @@ static HRESULT WINAPI recordset_put_Bookmark( _Recordset *iface, VARIANT bookmar
 
 static HRESULT WINAPI recordset_get_CacheSize( _Recordset *iface, LONG *size )
 {
-    FIXME( "%p, %p\n", iface, size );
-    return E_NOTIMPL;
+    struct recordset *recordset = impl_from_Recordset( iface );
+    TRACE( "%p, %p\n", iface, size );
+
+    *size = recordset->cache_size;
+    return S_OK;
 }
 
 static HRESULT WINAPI recordset_put_CacheSize( _Recordset *iface, LONG size )
 {
-    FIXME( "%p, %ld\n", iface, size );
-    return E_NOTIMPL;
+    struct recordset *recordset = impl_from_Recordset( iface );
+    TRACE( "%p, %ld\n", iface, size );
+
+    recordset->cache_size = size;
+    return S_OK;
 }
 
 static HRESULT WINAPI recordset_get_CursorType( _Recordset *iface, CursorTypeEnum *cursor_type )
@@ -1525,14 +1533,20 @@ static HRESULT WINAPI recordset_put_LockType( _Recordset *iface, LockTypeEnum lo
 
 static HRESULT WINAPI recordset_get_MaxRecords( _Recordset *iface, ADO_LONGPTR *max_records )
 {
-    FIXME( "%p, %p\n", iface, max_records );
-    return E_NOTIMPL;
+    struct recordset *recordset = impl_from_Recordset( iface );
+    TRACE( "%p, %p\n", iface, max_records );
+
+    *max_records = recordset->max_records;
+    return S_OK;
 }
 
 static HRESULT WINAPI recordset_put_MaxRecords( _Recordset *iface, ADO_LONGPTR max_records )
 {
-    FIXME( "%p, %Id\n", iface, max_records );
-    return E_NOTIMPL;
+    struct recordset *recordset = impl_from_Recordset( iface );
+    TRACE( "%p, %Id\n", iface, max_records );
+
+    recordset->max_records = max_records;
+    return S_OK;
 }
 
 static HRESULT WINAPI recordset_get_RecordCount( _Recordset *iface, ADO_LONGPTR *count )
@@ -2792,6 +2806,8 @@ HRESULT Recordset_create( void **obj )
     recordset->cursor_type = adOpenForwardOnly;
     recordset->row_set = NULL;
     recordset->editmode = adEditNone;
+    recordset->cache_size = 1;
+    recordset->max_records = 0;
     VariantInit( &recordset->filter );
     recordset->columntypes = NULL;
     recordset->haccessors = NULL;

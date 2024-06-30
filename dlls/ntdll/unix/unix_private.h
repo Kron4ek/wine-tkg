@@ -31,6 +31,16 @@
 
 struct msghdr;
 
+typedef struct
+{
+    union
+    {
+        NTSTATUS Status;
+        ULONG Pointer;
+    };
+    ULONG Information;
+} IO_STATUS_BLOCK32;
+
 #ifdef __i386__
 static const WORD current_machine = IMAGE_FILE_MACHINE_I386;
 #elif defined(__x86_64__)
@@ -319,6 +329,8 @@ extern NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG 
 extern void fill_vm_counters( VM_COUNTERS_EX *pvmi, int unix_pid );
 extern NTSTATUS open_hkcu_key( const char *path, HANDLE *key );
 
+extern NTSTATUS sync_ioctl( HANDLE file, ULONG code, void *in_buffer, ULONG in_size,
+                            void *out_buffer, ULONG out_size );
 extern NTSTATUS cdrom_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user,
                                        IO_STATUS_BLOCK *io, UINT code, void *in_buffer,
                                        UINT in_size, void *out_buffer, UINT out_size );
@@ -349,8 +361,10 @@ extern NTSTATUS open_unix_file( HANDLE *handle, const char *unix_name, ACCESS_MA
 extern NTSTATUS get_device_info( int fd, struct _FILE_FS_DEVICE_INFORMATION *info );
 extern void init_files(void);
 extern void init_cpu_info(void);
-extern void add_completion( HANDLE handle, ULONG_PTR value, NTSTATUS status, ULONG info, BOOL async );
-extern void set_async_direct_result( HANDLE *async_handle, NTSTATUS status, ULONG_PTR information, BOOL mark_pending );
+extern void file_complete_async( HANDLE handle, unsigned int options, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user,
+                                 IO_STATUS_BLOCK *io, NTSTATUS status, ULONG_PTR information );
+extern void set_async_direct_result( HANDLE *async_handle, unsigned int options, IO_STATUS_BLOCK *io,
+                                     NTSTATUS status, ULONG_PTR information, BOOL mark_pending );
 
 extern NTSTATUS unixcall_wine_dbg_write( void *args );
 extern NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args );
@@ -466,11 +480,7 @@ static inline void set_async_iosb( client_ptr_t iosb, NTSTATUS status, ULONG_PTR
 
     if (in_wow64_call())
     {
-        struct iosb32
-        {
-            NTSTATUS Status;
-            ULONG    Information;
-        } *io = wine_server_get_ptr( iosb );
+        IO_STATUS_BLOCK32 *io = wine_server_get_ptr( iosb );
         io->Information = info;
         WriteRelease( &io->Status, status );
     }

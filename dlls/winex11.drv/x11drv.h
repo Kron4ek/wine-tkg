@@ -247,7 +247,7 @@ extern void X11DRV_UpdateLayeredWindow( HWND hwnd, const RECT *window_rect, COLO
                                         BYTE alpha, UINT flags );
 extern LRESULT X11DRV_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp );
 extern BOOL X11DRV_WindowPosChanging( HWND hwnd, UINT swp_flags, const RECT *window_rect, const RECT *client_rect, RECT *visible_rect );
-extern BOOL X11DRV_CreateWindowSurface( HWND hwnd, UINT swp_flags, const RECT *visible_rect, struct window_surface **surface );
+extern BOOL X11DRV_CreateWindowSurface( HWND hwnd, const RECT *surface_rect, struct window_surface **surface );
 extern void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
                                      const RECT *rectWindow, const RECT *rectClient,
                                      const RECT *visible_rect, const RECT *valid_rects,
@@ -268,9 +268,6 @@ extern Pixmap create_pixmap_from_image( HDC hdc, const XVisualInfo *vis, const B
                                         const struct gdi_image_bits *bits, UINT coloruse );
 extern DWORD get_pixmap_image( Pixmap pixmap, int width, int height, const XVisualInfo *vis,
                                BITMAPINFO *info, struct gdi_image_bits *bits );
-extern struct window_surface *create_surface( HWND hwnd, Window window, const XVisualInfo *vis, const RECT *rect,
-                                              COLORREF color_key, BOOL use_alpha );
-extern void set_surface_color_key( struct window_surface *window_surface, COLORREF color_key );
 extern HRGN expose_surface( struct window_surface *window_surface, const RECT *rect );
 
 extern RGNDATA *X11DRV_GetRegionData( HRGN hrgn, HDC hdc_lptodp );

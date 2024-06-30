@@ -42,7 +42,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(cmd);
  * a label to goto once opened.
  */
 
-void WCMD_batch (WCHAR *file, WCHAR *command, BOOL called, WCHAR *startLabel, HANDLE pgmHandle)
+void WCMD_batch (WCHAR *file, WCHAR *command, WCHAR *startLabel, HANDLE pgmHandle)
 {
   HANDLE h = INVALID_HANDLE_VALUE;
   BATCH_CONTEXT *prev_context;
@@ -77,7 +77,7 @@ void WCMD_batch (WCHAR *file, WCHAR *command, BOOL called, WCHAR *startLabel, HA
   /* If processing a call :label, 'goto' the label in question */
   if (startLabel) {
     lstrcpyW(param1, startLabel);
-    WCMD_goto(NULL);
+    WCMD_goto();
   }
 
 /*
@@ -92,7 +92,7 @@ void WCMD_batch (WCHAR *file, WCHAR *command, BOOL called, WCHAR *startLabel, HA
       /* Note: although this batch program itself may be called, we are not retrying
          the command as a result of a call failing to find a program, hence the
          retryCall parameter below is FALSE                                           */
-      WCMD_process_commands(toExecute, FALSE, FALSE);
+      node_execute(toExecute);
       node_dispose_tree(toExecute);
       toExecute = NULL;
   }
@@ -112,11 +112,6 @@ void WCMD_batch (WCHAR *file, WCHAR *command, BOOL called, WCHAR *startLabel, HA
 
   free(context->batchfileW);
   LocalFree(context);
-  if ((prev_context != NULL) && (!called)) {
-    WINE_TRACE("Batch completed, but was not 'called' so skipping outer batch too\n");
-    prev_context -> skip_rest = TRUE;
-    context = prev_context;
-  }
   context = prev_context;
 }
 
@@ -396,9 +391,9 @@ void WCMD_HandleTildeModifiers(WCHAR **start, BOOL atExecute)
       break;
 
     } else {
-      int foridx = FOR_VAR_IDX(*lastModifier);
+      int foridx = for_var_char_to_index(*lastModifier);
       /* Its a valid parameter identifier - OK */
-      if ((foridx >= 0) && (forloopcontext.variable[foridx] != NULL)) break;
+      if ((foridx >= 0) && (forloopcontext->variable[foridx] != NULL)) break;
 
       /* Its not a valid parameter identifier - step backwards */
       lastModifier--;
@@ -424,8 +419,9 @@ void WCMD_HandleTildeModifiers(WCHAR **start, BOOL atExecute)
                             *lastModifier-'0' + context -> shift_count[*lastModifier-'0'],
                             NULL, FALSE, TRUE));
   } else {
-    int foridx = FOR_VAR_IDX(*lastModifier);
-    lstrcpyW(outputparam, forloopcontext.variable[foridx]);
+    int foridx = for_var_char_to_index(*lastModifier);
+    if (foridx != -1)
+        lstrcpyW(outputparam, forloopcontext->variable[foridx]);
   }
 
   /* 1. Handle '~' : Strip surrounding quotes */
@@ -641,48 +637,48 @@ void WCMD_HandleTildeModifiers(WCHAR **start, BOOL atExecute)
   WCMD_strsubstW(*start, lastModifier+1, finaloutput, -1);
 }
 
+extern void WCMD_expand(const WCHAR *, WCHAR *);
+
 /*******************************************************************
  * WCMD_call - processes a batch call statement
  *
  *	If there is a leading ':', calls within this batch program
  *	otherwise launches another program.
  */
-void WCMD_call (WCHAR *command) {
+RETURN_CODE WCMD_call(WCHAR *command)
+{
+    WCHAR buffer[MAXSTRING];
+    WCMD_expand(command, buffer);
 
-  /* Run other program if no leading ':' */
-  if (*command != ':') {
-    WCMD_run_program(command, TRUE);
-    /* If the thing we try to run does not exist, call returns 1 */
-    if (errorlevel) errorlevel=1;
-  } else {
-
-    WCHAR gotoLabel[MAX_PATH];
-
-    lstrcpyW(gotoLabel, param1);
-
-    if (context) {
-
-      LARGE_INTEGER li;
-      FOR_CONTEXT oldcontext;
-
-      /* Save the for variable context, then start with an empty context
-         as for loop variables do not survive a call                    */
-      oldcontext = forloopcontext;
-      memset(&forloopcontext, 0, sizeof(forloopcontext));
-
-      /* Save the current file position, call the same file,
-         restore position                                    */
-      li.QuadPart = 0;
-      li.u.LowPart = SetFilePointer(context -> h, li.u.LowPart,
-                     &li.u.HighPart, FILE_CURRENT);
-      WCMD_batch (context->batchfileW, command, TRUE, gotoLabel, context->h);
-      SetFilePointer(context -> h, li.u.LowPart,
-                     &li.u.HighPart, FILE_BEGIN);
-
-      /* Restore the for loop context */
-      forloopcontext = oldcontext;
-    } else {
-      WCMD_output_asis_stderr(WCMD_LoadMessage(WCMD_CALLINSCRIPT));
+    /* Run other program if no leading ':' */
+    if (*command != ':')
+    {
+        WCMD_run_program(buffer, TRUE);
+        /* If the thing we try to run does not exist, call returns 1 */
+        if (errorlevel) errorlevel = ERROR_INVALID_FUNCTION;
     }
-  }
+    else if (context)
+    {
+        LARGE_INTEGER li;
+        WCHAR gotoLabel[MAX_PATH];
+
+        lstrcpyW(gotoLabel, param1);
+
+        /* Save the for variable context, then start with an empty context
+           as for loop variables do not survive a call                    */
+        WCMD_save_for_loop_context(TRUE);
+
+        /* Save the current file position, call the same file,
+           restore position                                    */
+        li.QuadPart = 0;
+        li.u.LowPart = SetFilePointer(context->h, li.u.LowPart,
+                                      &li.u.HighPart, FILE_CURRENT);
+        WCMD_batch(context->batchfileW, buffer, gotoLabel, context->h);
+        SetFilePointer(context->h, li.u.LowPart, &li.u.HighPart, FILE_BEGIN);
+
+        /* Restore the for loop context */
+        WCMD_restore_for_loop_context();
+  } else
+      WCMD_output_asis_stderr(WCMD_LoadMessage(WCMD_CALLINSCRIPT));
+  return errorlevel ? ERROR_INVALID_FUNCTION : NO_ERROR;
 }

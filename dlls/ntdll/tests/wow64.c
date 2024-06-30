@@ -454,6 +454,7 @@ static CROSS_PROCESS_WORK_ENTRY *expect_cross_work_entry_( CROSS_PROCESS_WORK_LI
 
     ok_(__FILE__,line)( entry != NULL, "no more entries in list\n" );
     if (!entry) return NULL;
+    ok_(__FILE__,line)( entry->id == id, "wrong type %u / %u\n", entry->id, id );
     ok_(__FILE__,line)( entry->addr == (ULONG_PTR)addr, "wrong address %s / %p\n",
                         wine_dbgstr_longlong(entry->addr), addr );
     ok_(__FILE__,line)( entry->size == size, "wrong size %s / %Ix\n",
@@ -468,18 +469,58 @@ static CROSS_PROCESS_WORK_ENTRY *expect_cross_work_entry_( CROSS_PROCESS_WORK_LI
     return next;
 }
 
-static void test_cross_process_notifications( HANDLE process, void *ptr )
+static void test_cross_process_notifications( HANDLE process, ULONG_PTR section, ULONG_PTR ptr )
 {
     CROSS_PROCESS_WORK_ENTRY *entry;
-    CROSS_PROCESS_WORK_LIST *list = ptr;
+    CROSS_PROCESS_WORK_LIST *list;
     UINT pos;
-    void *addr, *addr2;
-    SIZE_T size;
+    void *addr = NULL, *addr2;
+    SIZE_T size = 0;
     DWORD old_prot;
     LARGE_INTEGER offset;
     HANDLE file, mapping;
     NTSTATUS status;
+    BOOL ret;
     BYTE data[] = { 0xcc, 0xcc, 0xcc };
+
+    ret = DuplicateHandle( process, (HANDLE)section, GetCurrentProcess(), &mapping,
+                           0, FALSE, DUPLICATE_SAME_ACCESS );
+    ok( ret, "DuplicateHandle failed %lu\n", GetLastError() );
+    status = NtMapViewOfSection( mapping, GetCurrentProcess(), &addr, 0, 0, NULL,
+                                 &size, ViewShare, 0, PAGE_READWRITE );
+    ok( !status, "NtMapViewOfSection failed %lx\n", status );
+    ok( size == 0x4000, "unexpected size %Ix\n", size );
+    list = addr;
+    addr2 = malloc( size );
+    ret = ReadProcessMemory( process, (void *)ptr, addr2, size, &size );
+    ok( ret, "ReadProcessMemory failed %lu\n", GetLastError() );
+    ok( !memcmp( addr2, addr, size ), "wrong data\n" );
+    free( addr2 );
+    CloseHandle( mapping );
+
+    if (pRtlOpenCrossProcessEmulatorWorkConnection)
+    {
+        pRtlOpenCrossProcessEmulatorWorkConnection( process, &mapping, &addr2 );
+        ok( mapping != 0, "got 0 handle\n" );
+        ok( addr2 != NULL, "got NULL data\n" );
+        ok( !memcmp( addr2, addr, size ), "wrong data\n" );
+        UnmapViewOfFile( addr2 );
+        addr2 = NULL;
+        size = 0;
+        status = NtMapViewOfSection( mapping, GetCurrentProcess(), &addr2, 0, 0, NULL,
+                                     &size, ViewShare, 0, PAGE_READWRITE );
+        ok( !status, "NtMapViewOfSection failed %lx\n", status );
+        ok( !memcmp( addr2, addr, size ), "wrong data\n" );
+        ok( CloseHandle( mapping ), "invalid handle\n" );
+        UnmapViewOfFile( addr2 );
+
+        mapping = (HANDLE)0xdead;
+        addr2 = (void *)0xdeadbeef;
+        pRtlOpenCrossProcessEmulatorWorkConnection( GetCurrentProcess(), &mapping, &addr2 );
+        ok( !mapping, "got handle %p\n", mapping );
+        ok( !addr2, "got data %p\n", addr2 );
+    }
+    else skip( "RtlOpenCrossProcessEmulatorWorkConnection not supported\n" );
 
     NtSuspendProcess( process );
 
@@ -672,7 +713,6 @@ static void test_cross_process_notifications( HANDLE process, void *ptr )
 
     FlushInstructionCache( process, addr, 0x1234 );
     entry = pop_from_work_list( &list->work_list );
-    todo_wine_if (current_machine == IMAGE_FILE_MACHINE_ARM64)
     entry = expect_cross_work_entry( list, entry, CrossProcessFlushCache, addr, 0x1234,
                                      0xcccccccc, 0xcccccccc, 0xcccccccc, 0xcccccccc );
     ok( !entry, "not at end of list\n" );
@@ -688,8 +728,6 @@ static void test_cross_process_notifications( HANDLE process, void *ptr )
 
     WriteProcessMemory( process, (char *)addr + 0x1ffe, data, sizeof(data), &size );
     entry = pop_from_work_list( &list->work_list );
-    todo_wine
-    {
     entry = expect_cross_work_entry( list, entry, CrossProcessPreVirtualProtect,
                                      (char *)addr + 0x1000, 0x2000, 0x60000000 | PAGE_EXECUTE_WRITECOPY,
                                      (current_machine != IMAGE_FILE_MACHINE_ARM64) ? 0 : 0xcccccccc,
@@ -707,7 +745,6 @@ static void test_cross_process_notifications( HANDLE process, void *ptr )
     entry = expect_cross_work_entry( list, entry, CrossProcessPostVirtualProtect,
                                      (char *)addr + 0x1000, 0x2000,
                                      0x60000000 | PAGE_EXECUTE_READ, 0, 0xcccccccc, 0xcccccccc );
-    }
     ok( !entry, "not at end of list\n" );
 
     status = NtUnmapViewOfSection( process, addr );
@@ -717,6 +754,99 @@ static void test_cross_process_notifications( HANDLE process, void *ptr )
 
     CloseHandle( mapping );
     CloseHandle( file );
+    UnmapViewOfFile( list );
+}
+
+static void test_wow64_shared_info( HANDLE process )
+{
+    ULONG i, peb_data[0x200], buffer[16];
+    WOW64INFO *info = (WOW64INFO *)buffer;
+    ULONG_PTR peb_ptr;
+    NTSTATUS status;
+    SIZE_T res;
+    BOOLEAN wow64 = 0xcc;
+
+    NtQueryInformationProcess( process, ProcessWow64Information, &peb_ptr, sizeof(peb_ptr), NULL );
+    memset( buffer, 0xcc, sizeof(buffer) );
+    status = pRtlWow64GetSharedInfoProcess( process, &wow64, info );
+    ok( !status, "RtlWow64GetSharedInfoProcess failed %lx\n", status );
+    ok( wow64 == TRUE, "wrong wow64 %u\n", wow64 );
+    todo_wine_if (!info->NativeSystemPageSize) /* not set in old wow64 */
+    {
+        ok( info->NativeSystemPageSize == 0x1000, "wrong page size %lx\n",
+            info->NativeSystemPageSize );
+        ok( info->CpuFlags == (native_machine == IMAGE_FILE_MACHINE_AMD64 ? WOW64_CPUFLAGS_MSFT64 : WOW64_CPUFLAGS_SOFTWARE),
+            "wrong flags %lx\n", info->CpuFlags );
+        ok( info->NativeMachineType == native_machine, "wrong machine %x / %x\n",
+            info->NativeMachineType, native_machine );
+        ok( info->EmulatedMachineType == IMAGE_FILE_MACHINE_I386, "wrong machine %x\n",
+            info->EmulatedMachineType );
+    }
+    ok( buffer[sizeof(*info) / sizeof(ULONG)] == 0xcccccccc, "buffer set %lx\n",
+        buffer[sizeof(*info) / sizeof(ULONG)] );
+    if (ReadProcessMemory( process, (void *)peb_ptr, peb_data, sizeof(peb_data), &res ))
+    {
+        ULONG limit = (sizeof(peb_data) - sizeof(info)) / sizeof(ULONG);
+        for (i = 0; i < limit; i++)
+        {
+            if (!memcmp( peb_data + i, info, sizeof(*info) ))
+            {
+                trace( "wow64info found at %lx\n", i * 4 );
+                break;
+            }
+        }
+        ok( i < limit, "wow64info not found in PEB\n" );
+    }
+    if (info->SectionHandle && info->CrossProcessWorkList)
+        test_cross_process_notifications( process, info->SectionHandle, info->CrossProcessWorkList );
+    else
+        trace( "no WOW64INFO section handle\n" );
+}
+
+static void test_amd64_shared_info( HANDLE process )
+{
+    ULONG i, peb_data[0x200], buffer[16];
+    PROCESS_BASIC_INFORMATION proc_info;
+    NTSTATUS status;
+    SIZE_T res;
+    BOOLEAN wow64 = 0xcc;
+    struct arm64ec_shared_info
+    {
+        ULONG     Wow64ExecuteFlags;
+        USHORT    NativeMachineType;
+        USHORT    EmulatedMachineType;
+        ULONGLONG SectionHandle;
+        ULONGLONG CrossProcessWorkList;
+        ULONGLONG unknown;
+    } *info = NULL;
+
+    NtQueryInformationProcess( process, ProcessBasicInformation, &proc_info, sizeof(proc_info), NULL );
+
+    memset( buffer, 0xcc, sizeof(buffer) );
+    status = pRtlWow64GetSharedInfoProcess( process, &wow64, (WOW64INFO *)buffer );
+    ok( !status, "RtlWow64GetSharedInfoProcess failed %lx\n", status );
+    ok( !wow64, "wrong wow64 %u\n", wow64 );
+    ok( buffer[0] == 0xcccccccc, "buffer initialized %lx\n", buffer[0] );
+
+    if (ReadProcessMemory( process, (void *)proc_info.PebBaseAddress, peb_data, sizeof(peb_data), &res ))
+    {
+        ULONG limit = (sizeof(peb_data) - sizeof(*info)) / sizeof(ULONG);
+        for (i = 0; i < limit; i++)
+        {
+            info = (struct arm64ec_shared_info *)(peb_data + i);
+             if (info->NativeMachineType == IMAGE_FILE_MACHINE_ARM64 &&
+                 info->EmulatedMachineType == IMAGE_FILE_MACHINE_AMD64)
+            {
+                trace( "shared info found at %lx\n", i * 4 );
+                break;
+            }
+        }
+        ok( i < limit, "shared info not found in PEB\n" );
+    }
+    if (info && info->SectionHandle && info->CrossProcessWorkList)
+        test_cross_process_notifications( process, info->SectionHandle, info->CrossProcessWorkList );
+    else
+        trace( "no shared info section handle\n" );
 }
 
 static void test_peb_teb(void)
@@ -834,91 +964,7 @@ static void test_peb_teb(void)
         ResumeThread( pi.hThread );
         WaitForInputIdle( pi.hProcess, 1000 );
 
-        if (pRtlWow64GetSharedInfoProcess)
-        {
-            ULONG i, peb_data[0x200];
-
-            wow64 = 0xcc;
-            memset( buffer, 0xcc, sizeof(buffer) );
-            status = pRtlWow64GetSharedInfoProcess( pi.hProcess, &wow64, wow64info );
-            ok( !status, "RtlWow64GetSharedInfoProcess failed %lx\n", status );
-            ok( wow64 == TRUE, "wrong wow64 %u\n", wow64 );
-            todo_wine_if (!wow64info->NativeSystemPageSize) /* not set in old wow64 */
-            {
-            ok( wow64info->NativeSystemPageSize == 0x1000, "wrong page size %lx\n",
-                wow64info->NativeSystemPageSize );
-            ok( wow64info->CpuFlags == (native_machine == IMAGE_FILE_MACHINE_AMD64 ? WOW64_CPUFLAGS_MSFT64 : WOW64_CPUFLAGS_SOFTWARE),
-                "wrong flags %lx\n", wow64info->CpuFlags );
-            ok( wow64info->NativeMachineType == native_machine, "wrong machine %x / %x\n",
-                wow64info->NativeMachineType, native_machine );
-            ok( wow64info->EmulatedMachineType == IMAGE_FILE_MACHINE_I386, "wrong machine %x\n",
-                wow64info->EmulatedMachineType );
-            }
-            ok( buffer[sizeof(*wow64info) / sizeof(ULONG)] == 0xcccccccc, "buffer set %lx\n",
-                buffer[sizeof(*wow64info) / sizeof(ULONG)] );
-            if (ReadProcessMemory( pi.hProcess, (void *)peb_ptr, peb_data, sizeof(peb_data), &res ))
-            {
-                ULONG limit = (sizeof(peb_data) - sizeof(wow64info)) / sizeof(ULONG);
-                for (i = 0; i < limit; i++)
-                {
-                    if (!memcmp( peb_data + i, wow64info, sizeof(*wow64info) ))
-                    {
-                        trace( "wow64info found at %lx\n", i * 4 );
-                        break;
-                    }
-                }
-                ok( i < limit, "wow64info not found in PEB\n" );
-            }
-            if (wow64info->SectionHandle && wow64info->CrossProcessWorkList)
-            {
-                HANDLE handle;
-                void *data, *addr = NULL;
-                SIZE_T size = 0;
-
-                ret = DuplicateHandle( pi.hProcess, (HANDLE)(ULONG_PTR)wow64info->SectionHandle,
-                                       GetCurrentProcess(), &handle, 0, FALSE, DUPLICATE_SAME_ACCESS );
-                ok( ret, "DuplicateHandle failed %lu\n", GetLastError() );
-                status = NtMapViewOfSection( handle, GetCurrentProcess(), &addr, 0, 0, NULL,
-                                             &size, ViewShare, 0, PAGE_READWRITE );
-                ok( !status, "NtMapViewOfSection failed %lx\n", status );
-                ok( size == 0x4000, "unexpected size %Ix\n", size );
-                data = malloc( size );
-                ret = ReadProcessMemory( pi.hProcess, (void *)(ULONG_PTR)wow64info->CrossProcessWorkList,
-                                         data, size, &size );
-                ok( ret, "ReadProcessMemory failed %lu\n", GetLastError() );
-                ok( !memcmp( data, addr, size ), "wrong data\n" );
-                free( data );
-                CloseHandle( handle );
-
-                if (pRtlOpenCrossProcessEmulatorWorkConnection)
-                {
-                    pRtlOpenCrossProcessEmulatorWorkConnection( pi.hProcess, &handle, &data );
-                    ok( handle != 0, "got 0 handle\n" );
-                    ok( data != NULL, "got NULL data\n" );
-                    ok( !memcmp( data, addr, size ), "wrong data\n" );
-                    UnmapViewOfFile( data );
-                    data = NULL;
-                    size = 0;
-                    status = NtMapViewOfSection( handle, GetCurrentProcess(), &data, 0, 0, NULL,
-                                                 &size, ViewShare, 0, PAGE_READWRITE );
-                    ok( !status, "NtMapViewOfSection failed %lx\n", status );
-                    ok( !memcmp( data, addr, size ), "wrong data\n" );
-                    ok( CloseHandle( handle ), "invalid handle\n" );
-                    UnmapViewOfFile( data );
-
-                    handle = (HANDLE)0xdead;
-                    data = (void *)0xdeadbeef;
-                    pRtlOpenCrossProcessEmulatorWorkConnection( GetCurrentProcess(), &handle, &data );
-                    ok( !handle, "got handle %p\n", handle );
-                    ok( !data, "got data %p\n", data );
-                }
-                else skip( "RtlOpenCrossProcessEmulatorWorkConnection not supported\n" );
-
-                test_cross_process_notifications( pi.hProcess, addr );
-                UnmapViewOfFile( addr );
-            }
-            else trace( "no WOW64INFO section handle\n" );
-        }
+        if (pRtlWow64GetSharedInfoProcess) test_wow64_shared_info( pi.hProcess );
         else win_skip( "RtlWow64GetSharedInfoProcess not supported\n" );
 
         ret = DebugActiveProcess( pi.dwProcessId );
@@ -932,6 +978,44 @@ static void test_peb_teb(void)
             ok( res == sizeof(peb32), "wrong len %Ix\n", res );
             ok( peb32.BeingDebugged == !!ret, "BeingDebugged is %u\n", peb32.BeingDebugged );
         }
+
+        TerminateProcess( pi.hProcess, 0 );
+        CloseHandle( pi.hProcess );
+        CloseHandle( pi.hThread );
+    }
+
+    if (is_win64 && native_machine == IMAGE_FILE_MACHINE_ARM64 &&
+        create_process_machine( (char *)"C:\\windows\\system32\\regsvr32.exe /?", CREATE_SUSPENDED,
+                                IMAGE_FILE_MACHINE_AMD64, &pi ))
+    {
+        memset( &info, 0xcc, sizeof(info) );
+        status = NtQueryInformationThread( pi.hThread, ThreadBasicInformation, &info, sizeof(info), NULL );
+        ok( !status, "ThreadBasicInformation failed %lx\n", status );
+        if (!ReadProcessMemory( pi.hProcess, info.TebBaseAddress, &teb, sizeof(teb), &res )) res = 0;
+        ok( res == sizeof(teb), "wrong len %Ix\n", res );
+        ok( teb.Tib.Self == info.TebBaseAddress, "wrong teb %p / %p\n", teb.Tib.Self, info.TebBaseAddress );
+        ok( !teb.GdiBatchCount, "GdiBatchCount set\n" );
+        ok( !teb.WowTebOffset, "wrong teb offset %ld\n", teb.WowTebOffset );
+        ok( !teb.Tib.ExceptionList, "wrong Tib.ExceptionList %p\n", (char *)teb.Tib.ExceptionList );
+
+        status = NtQueryInformationProcess( pi.hProcess, ProcessBasicInformation,
+                                            &proc_info, sizeof(proc_info), NULL );
+        ok( !status, "ProcessBasicInformation failed %lx\n", status );
+        ok( proc_info.PebBaseAddress == teb.Peb, "wrong peb %p / %p\n", proc_info.PebBaseAddress, teb.Peb );
+
+        status = NtQueryInformationProcess( pi.hProcess, ProcessWow64Information,
+                                            &peb_ptr, sizeof(peb_ptr), NULL );
+        ok( !status, "ProcessWow64Information failed %lx\n", status );
+        ok( !peb_ptr, "wrong peb %p\n", (void *)peb_ptr );
+
+        if (!ReadProcessMemory( pi.hProcess, proc_info.PebBaseAddress, &peb, sizeof(peb), &res )) res = 0;
+        ok( res == sizeof(peb), "wrong len %Ix\n", res );
+        ok( !peb.BeingDebugged, "BeingDebugged is %u\n", peb.BeingDebugged );
+
+        ResumeThread( pi.hThread );
+        WaitForInputIdle( pi.hProcess, 1000 );
+
+        test_amd64_shared_info( pi.hProcess );
 
         TerminateProcess( pi.hProcess, 0 );
         CloseHandle( pi.hProcess );
@@ -2041,14 +2125,31 @@ static void test_init_block(void)
 }
 
 
+static DWORD WINAPI iosb_delayed_write_thread(void *arg)
+{
+    HANDLE client = arg;
+    DWORD size;
+    BOOL ret;
+
+    Sleep(100);
+
+    ret = WriteFile( client, "data", sizeof("data"), &size, NULL );
+    ok( ret == TRUE, "got error %lu\n", GetLastError() );
+
+    return 0;
+}
+
+
 static void test_iosb(void)
 {
     static const char pipe_name[] = "\\\\.\\pipe\\wow64iosbnamedpipe";
-    HANDLE client, server;
+    HANDLE client, server, thread;
     NTSTATUS status;
-    ULONG64 func;
-    DWORD id;
+    ULONG64 read_func, flush_func;
     IO_STATUS_BLOCK iosb32;
+    char buffer[6];
+    DWORD size;
+    BOOL ret;
     struct
     {
         union
@@ -2058,66 +2159,85 @@ static void test_iosb(void)
         };
         ULONG64 Information;
     } iosb64;
-    ULONG64 args[] = { 0, 0, 0, 0, (ULONG_PTR)&iosb64, FSCTL_PIPE_LISTEN, 0, 0, 0, 0 };
+    ULONG64 args[] = { 0, 0, 0, 0, (ULONG_PTR)&iosb64, (ULONG_PTR)buffer, sizeof(buffer), 0, 0 };
+    ULONG64 flush_args[] = { 0, (ULONG_PTR)&iosb64 };
 
     if (!is_wow64) return;
     if (!code_mem) return;
     if (!ntdll_module) return;
-    func = get_proc_address64( ntdll_module, "NtFsControlFile" );
+    read_func = get_proc_address64( ntdll_module, "NtReadFile" );
+    flush_func = get_proc_address64( ntdll_module, "NtFlushBuffersFile" );
 
     /* async calls set iosb32 but not iosb64 */
 
-    server = CreateNamedPipeA( pipe_name, PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+    server = CreateNamedPipeA( pipe_name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                                PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
                                4, 1024, 1024, 1000, NULL );
     ok( server != INVALID_HANDLE_VALUE, "CreateNamedPipe failed: %lu\n", GetLastError() );
 
+    client = CreateFileA( pipe_name, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+                          FILE_FLAG_NO_BUFFERING, NULL );
+    ok( client != INVALID_HANDLE_VALUE, "CreateFile failed: %lu\n", GetLastError() );
+
+    memset( buffer, 0xcc, sizeof(buffer) );
     memset( &iosb32, 0x55, sizeof(iosb32) );
     iosb64.Pointer = PtrToUlong( &iosb32 );
     iosb64.Information = 0xdeadbeef;
 
     args[0] = (LONG_PTR)server;
-    status = call_func64( func, ARRAY_SIZE(args), args );
-    ok( status == STATUS_PENDING, "NtFsControlFile returned %lx\n", status );
+    status = call_func64( read_func, ARRAY_SIZE(args), args );
+    ok( status == STATUS_PENDING, "NtReadFile returned %lx\n", status );
     ok( iosb32.Status == 0x55555555, "status changed to %lx\n", iosb32.Status );
-    ok( iosb64.Pointer == PtrToUlong(&iosb32), "status changed to %lx\n", iosb64.Status );
+    ok( iosb64.Pointer == PtrToUlong(&iosb32), "pointer changed to %I64x\n", iosb64.Pointer );
     ok( iosb64.Information == 0xdeadbeef, "info changed to %Ix\n", (ULONG_PTR)iosb64.Information );
 
-    client = CreateFileA( pipe_name, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
-                          FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED, NULL );
-    ok( client != INVALID_HANDLE_VALUE, "CreateFile failed: %lu\n", GetLastError() );
+    ret = WriteFile( client, "data", sizeof("data"), &size, NULL );
+    ok( ret == TRUE, "got error %lu\n", GetLastError() );
 
     ok( iosb32.Status == 0, "Wrong iostatus %lx\n", iosb32.Status );
-    ok( iosb64.Pointer == PtrToUlong(&iosb32), "status changed to %lx\n", iosb64.Status );
+    ok( iosb32.Information == sizeof("data"), "Wrong information %Ix\n", iosb32.Information );
+    ok( iosb64.Pointer == PtrToUlong(&iosb32), "pointer changed to %I64x\n", iosb64.Pointer );
     ok( iosb64.Information == 0xdeadbeef, "info changed to %Ix\n", (ULONG_PTR)iosb64.Information );
+    ok( !memcmp( buffer, "data", iosb32.Information ),
+        "got wrong data %s\n", debugstr_an(buffer, iosb32.Information) );
+
+    memset( buffer, 0xcc, sizeof(buffer) );
+    memset( &iosb32, 0x55, sizeof(iosb32) );
+    iosb64.Pointer = PtrToUlong( &iosb32 );
+    iosb64.Information = 0xdeadbeef;
+
+    ret = WriteFile( client, "data", sizeof("data"), &size, NULL );
+    ok( ret == TRUE, "got error %lu\n", GetLastError() );
+
+    status = call_func64( read_func, ARRAY_SIZE(args), args );
+    ok( status == STATUS_SUCCESS, "NtReadFile returned %lx\n", status );
+    ok( iosb32.Status == STATUS_SUCCESS, "status changed to %lx\n", iosb32.Status );
+    ok( iosb32.Information == sizeof("data"), "info changed to %Ix\n", iosb32.Information );
+    ok( iosb64.Pointer == PtrToUlong(&iosb32), "pointer changed to %I64x\n", iosb64.Pointer );
+    ok( iosb64.Information == 0xdeadbeef, "info changed to %Ix\n", (ULONG_PTR)iosb64.Information );
+    ok( !memcmp( buffer, "data", iosb32.Information ),
+        "got wrong data %s\n", debugstr_an(buffer, iosb32.Information) );
+
+    /* syscalls which are always synchronous set iosb64 but not iosb32 */
 
     memset( &iosb32, 0x55, sizeof(iosb32) );
     iosb64.Pointer = PtrToUlong( &iosb32 );
     iosb64.Information = 0xdeadbeef;
-    id = 0xdeadbeef;
 
-    args[5] = FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE;
-    args[6] = (ULONG_PTR)"ClientProcessId";
-    args[7] = sizeof("ClientProcessId");
-    args[8] = (ULONG_PTR)&id;
-    args[9] = sizeof(id);
+    flush_args[0] = (LONG_PTR)server;
+    status = call_func64( flush_func, ARRAY_SIZE(flush_args), flush_args );
+    ok( status == STATUS_SUCCESS, "NtFlushBuffersFile returned %lx\n", status );
+    ok( iosb32.Status == 0x55555555, "status changed to %lx\n", iosb32.Status );
+    ok( iosb32.Information == 0x55555555, "info changed to %Ix\n", iosb32.Information );
+    ok( iosb64.Pointer == STATUS_SUCCESS, "pointer changed to %I64x\n", iosb64.Pointer );
+    ok( iosb64.Information == 0, "info changed to %Ix\n", (ULONG_PTR)iosb64.Information );
 
-    status = call_func64( func, ARRAY_SIZE(args), args );
-    ok( status == STATUS_PENDING || status == STATUS_SUCCESS, "NtFsControlFile returned %lx\n", status );
-    todo_wine
-    {
-    ok( iosb32.Status == STATUS_SUCCESS, "status changed to %lx\n", iosb32.Status );
-    ok( iosb32.Information == sizeof(id), "info changed to %Ix\n", iosb32.Information );
-    ok( iosb64.Pointer == PtrToUlong(&iosb32), "status changed to %lx\n", iosb64.Status );
-    ok( iosb64.Information == 0xdeadbeef, "info changed to %Ix\n", (ULONG_PTR)iosb64.Information );
-    }
-    ok( id == GetCurrentProcessId(), "wrong id %lx / %lx\n", id, GetCurrentProcessId() );
     CloseHandle( client );
     CloseHandle( server );
 
     /* synchronous calls set iosb64 but not iosb32 */
 
-    server = CreateNamedPipeA( pipe_name, PIPE_ACCESS_INBOUND,
+    server = CreateNamedPipeA( pipe_name, PIPE_ACCESS_DUPLEX,
                                PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
                                4, 1024, 1024, 1000, NULL );
     ok( server != INVALID_HANDLE_VALUE, "CreateNamedPipe failed: %lu\n", GetLastError() );
@@ -2126,19 +2246,60 @@ static void test_iosb(void)
                           FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED, NULL );
     ok( client != INVALID_HANDLE_VALUE, "CreateFile failed: %lu\n", GetLastError() );
 
+    ret = WriteFile( client, "data", sizeof("data"), &size, NULL );
+    ok( ret == TRUE, "got error %lu\n", GetLastError() );
+
+    memset( buffer, 0xcc, sizeof(buffer) );
     memset( &iosb32, 0x55, sizeof(iosb32) );
     iosb64.Pointer = PtrToUlong( &iosb32 );
     iosb64.Information = 0xdeadbeef;
-    id = 0xdeadbeef;
 
     args[0] = (LONG_PTR)server;
-    status = call_func64( func, ARRAY_SIZE(args), args );
-    ok( status == STATUS_SUCCESS, "NtFsControlFile returned %lx\n", status );
+    status = call_func64( read_func, ARRAY_SIZE(args), args );
+    ok( status == STATUS_SUCCESS, "NtReadFile returned %lx\n", status );
     ok( iosb32.Status == 0x55555555, "status changed to %lx\n", iosb32.Status );
     ok( iosb32.Information == 0x55555555, "info changed to %Ix\n", iosb32.Information );
-    ok( iosb64.Pointer == STATUS_SUCCESS, "status changed to %lx\n", iosb64.Status );
-    ok( iosb64.Information == sizeof(id), "info changed to %Ix\n", (ULONG_PTR)iosb64.Information );
-    ok( id == GetCurrentProcessId(), "wrong id %lx / %lx\n", id, GetCurrentProcessId() );
+    ok( iosb64.Pointer == STATUS_SUCCESS, "pointer changed to %I64x\n", iosb64.Pointer );
+    ok( iosb64.Information == sizeof("data"), "info changed to %Ix\n", (ULONG_PTR)iosb64.Information );
+    ok( !memcmp( buffer, "data", iosb64.Information ),
+        "got wrong data %s\n", debugstr_an(buffer, iosb64.Information) );
+
+    thread = CreateThread( NULL, 0, iosb_delayed_write_thread, client, 0, NULL );
+
+    memset( buffer, 0xcc, sizeof(buffer) );
+    memset( &iosb32, 0x55, sizeof(iosb32) );
+    iosb64.Pointer = PtrToUlong( &iosb32 );
+    iosb64.Information = 0xdeadbeef;
+
+    args[0] = (LONG_PTR)server;
+    status = call_func64( read_func, ARRAY_SIZE(args), args );
+    ok( status == STATUS_SUCCESS, "NtReadFile returned %lx\n", status );
+    todo_wine
+    {
+    ok( iosb32.Status == 0x55555555, "status changed to %lx\n", iosb32.Status );
+    ok( iosb32.Information == 0x55555555, "info changed to %Ix\n", iosb32.Information );
+    ok( iosb64.Pointer == STATUS_SUCCESS, "pointer changed to %I64x\n", iosb64.Pointer );
+    ok( iosb64.Information == sizeof("data"), "info changed to %Ix\n", (ULONG_PTR)iosb64.Information );
+    ok( !memcmp( buffer, "data", iosb64.Information ),
+        "got wrong data %s\n", debugstr_an(buffer, iosb64.Information) );
+    }
+
+    ret = WaitForSingleObject( thread, 1000 );
+    ok(!ret, "got %d\n", ret );
+    CloseHandle( thread );
+
+    memset( &iosb32, 0x55, sizeof(iosb32) );
+    iosb64.Pointer = PtrToUlong( &iosb32 );
+    iosb64.Information = 0xdeadbeef;
+
+    flush_args[0] = (LONG_PTR)server;
+    status = call_func64( flush_func, ARRAY_SIZE(flush_args), flush_args );
+    ok( status == STATUS_SUCCESS, "NtFlushBuffersFile returned %lx\n", status );
+    ok( iosb32.Status == 0x55555555, "status changed to %lx\n", iosb32.Status );
+    ok( iosb32.Information == 0x55555555, "info changed to %Ix\n", iosb32.Information );
+    ok( iosb64.Pointer == STATUS_SUCCESS, "pointer changed to %I64x\n", iosb64.Pointer );
+    ok( iosb64.Information == 0, "info changed to %Ix\n", (ULONG_PTR)iosb64.Information );
+
     CloseHandle( client );
     CloseHandle( server );
 }

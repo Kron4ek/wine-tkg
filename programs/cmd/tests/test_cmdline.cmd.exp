@@ -42,7 +42,7 @@ one = %1
 3
 4
 5
-@todo_wine@var contents: 11
+var contents: 11
 var=33@space@
 99
 ------ Testing invocation of batch files ----------
@@ -115,7 +115,7 @@ bar@space@
 0@space@
 !@space@
 0@space@@or_broken@!@space@
-@todo_wine@0@space@
+0@space@
 '@space@
 +@space@
 0@space@

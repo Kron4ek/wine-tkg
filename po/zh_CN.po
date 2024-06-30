@@ -14369,6 +14369,24 @@ msgstr ""
 "数字的格式错误 - 必须是十进制 (12),\n"
 " 十六进制 (0x34) 或者八进制 (056)。\n"
 
+#: programs/cmd/cmd.rc:411
+#, fuzzy
+#| msgid "Syntax error\n"
+msgid "Syntax error: unexpected %1\n"
+msgstr "语法错误\n"
+
+#: programs/cmd/cmd.rc:412
+#, fuzzy
+#| msgid "End of file.\n"
+msgid "End of line"
+msgstr "文件尾。\n"
+
+#: programs/cmd/cmd.rc:413
+#, fuzzy
+#| msgid "End of file.\n"
+msgid "End of file"
+msgstr "文件尾。\n"
+
 #: programs/conhost/conhost.rc:54
 msgid "Cursor size"
 msgstr "光标尺寸"

@@ -54,16 +54,6 @@ struct winstation
     struct namespace  *desktop_names;      /* namespace for desktops of this winstation */
 };
 
-struct global_cursor
-{
-    int                  x;                /* cursor position */
-    int                  y;
-    rectangle_t          clip;             /* cursor clip rectangle */
-    unsigned int         clip_flags;       /* last cursor clip flags */
-    unsigned int         last_change;      /* time of last position change */
-    user_handle_t        win;              /* window that contains the cursor */
-};
-
 struct key_repeat
 {
     int                  enable;           /* enable auto-repeat */
@@ -90,9 +80,12 @@ struct desktop
     struct timeout_user *close_timeout;    /* timeout before closing the desktop */
     struct thread_input *foreground_input; /* thread input of foreground thread */
     unsigned int         users;            /* processes and threads using this desktop */
-    struct global_cursor cursor;           /* global cursor information */
     unsigned char        keystate[256];    /* asynchronous key state */
+    unsigned char        alt_pressed;      /* last key press was Alt (used to determine msg on release) */
     struct key_repeat    key_repeat;       /* key auto-repeat */
+    unsigned int         clip_flags;       /* last cursor clip flags */
+    user_handle_t        cursor_win;       /* window that contains the cursor */
+    const desktop_shm_t *shared;           /* desktop session shared memory */
 };
 
 /* user handles functions */
@@ -115,12 +108,14 @@ extern void cleanup_clipboard_thread( struct thread *thread );
 extern void remove_thread_hooks( struct thread *thread );
 extern unsigned int get_active_hooks(void);
 extern struct thread *get_first_global_hook( struct desktop *desktop, int id );
+extern void add_desktop_hook_count( struct desktop *desktop, struct thread *thread, int count );
 
 /* queue functions */
 
 extern void free_msg_queue( struct thread *thread );
 extern struct hook_table *get_queue_hooks( struct thread *thread );
 extern void set_queue_hooks( struct thread *thread, struct hook_table *hooks );
+extern void add_queue_hook_count( struct thread *thread, unsigned int index, int count );
 extern void inc_queue_paint_count( struct thread *thread, int incr );
 extern void queue_cleanup_window( struct thread *thread, user_handle_t win );
 extern int init_thread_queue( struct thread *thread );

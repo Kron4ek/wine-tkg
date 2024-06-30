@@ -100,6 +100,9 @@ struct parser_source
     bool need_segment;
 
     bool eos;
+
+    bool interpolate_timestamps;
+    UINT64 prev_end_pts;
 };
 
 static inline struct parser *impl_from_strmbase_filter(struct strmbase_filter *iface)
@@ -630,7 +633,7 @@ static bool amt_from_wg_format_video_cinepak(AM_MEDIA_TYPE *mt, const struct wg_
     return true;
 }
 
-static bool amt_from_wg_format_video_wmv(AM_MEDIA_TYPE *mt, const struct wg_format *format)
+static bool amt_from_wg_format_video_wmv(AM_MEDIA_TYPE *mt, const struct wg_format *format, bool wm)
 {
     VIDEOINFOHEADER *video_format;
     uint32_t frame_time;
@@ -671,7 +674,8 @@ static bool amt_from_wg_format_video_wmv(AM_MEDIA_TYPE *mt, const struct wg_form
     mt->pbFormat = (BYTE *)video_format;
 
     memset(video_format, 0, sizeof(*video_format));
-    SetRect(&video_format->rcSource, 0, 0, format->u.video.width, format->u.video.height);
+    if (wm)
+        SetRect(&video_format->rcSource, 0, 0, format->u.video.width, format->u.video.height);
     video_format->rcTarget = video_format->rcSource;
     if ((frame_time = MulDiv(10000000, format->u.video.fps_d, format->u.video.fps_n)) != -1)
         video_format->AvgTimePerFrame = frame_time;
@@ -681,6 +685,8 @@ static bool amt_from_wg_format_video_wmv(AM_MEDIA_TYPE *mt, const struct wg_form
     video_format->bmiHeader.biPlanes = 1;
     video_format->bmiHeader.biCompression = mt->subtype.Data1;
     video_format->bmiHeader.biBitCount = 24;
+    if (!wm)
+        video_format->bmiHeader.biSizeImage = 3 * format->u.video.width * format->u.video.height;
     video_format->dwBitRate = 0;
     memcpy(video_format+1, format->u.video.codec_data, format->u.video.codec_data_len);
 
@@ -747,7 +753,7 @@ bool amt_from_wg_format(AM_MEDIA_TYPE *mt, const struct wg_format *format, bool 
         return amt_from_wg_format_video_cinepak(mt, format);
 
     case WG_MAJOR_TYPE_VIDEO_WMV:
-        return amt_from_wg_format_video_wmv(mt, format);
+        return amt_from_wg_format_video_wmv(mt, format, wm);
 
     case WG_MAJOR_TYPE_VIDEO_MPEG1:
         return amt_from_wg_format_video_mpeg1(mt, format);
@@ -977,6 +983,30 @@ static bool amt_to_wg_format_video(const AM_MEDIA_TYPE *mt, struct wg_format *fo
     return false;
 }
 
+static bool amt_to_wg_format_video_cinepak(const AM_MEDIA_TYPE *mt, struct wg_format *format)
+{
+    const VIDEOINFOHEADER *video_format = (const VIDEOINFOHEADER *)mt->pbFormat;
+
+    if (!IsEqualGUID(&mt->formattype, &FORMAT_VideoInfo))
+    {
+        FIXME("Unknown format type %s.\n", debugstr_guid(&mt->formattype));
+        return false;
+    }
+    if (mt->cbFormat < sizeof(VIDEOINFOHEADER) || !mt->pbFormat)
+    {
+        ERR("Unexpected format size %lu.\n", mt->cbFormat);
+        return false;
+    }
+
+    format->major_type = WG_MAJOR_TYPE_VIDEO_CINEPAK;
+    format->u.video.width = video_format->bmiHeader.biWidth;
+    format->u.video.height = video_format->bmiHeader.biHeight;
+    format->u.video.fps_n = 10000000;
+    format->u.video.fps_d = video_format->AvgTimePerFrame;
+
+    return true;
+}
+
 static bool amt_to_wg_format_video_wmv(const AM_MEDIA_TYPE *mt, struct wg_format *format)
 {
     const VIDEOINFOHEADER *video_format = (const VIDEOINFOHEADER *)mt->pbFormat;
@@ -1051,6 +1081,8 @@ bool amt_to_wg_format(const AM_MEDIA_TYPE *mt, struct wg_format *format)
 
     if (IsEqualGUID(&mt->majortype, &MEDIATYPE_Video))
     {
+        if (IsEqualGUID(&mt->subtype, &MEDIASUBTYPE_CVID))
+            return amt_to_wg_format_video_cinepak(mt, format);
         if (IsEqualGUID(&mt->subtype, &MEDIASUBTYPE_WMV1)
                 || IsEqualGUID(&mt->subtype, &MEDIASUBTYPE_WMV2)
                 || IsEqualGUID(&mt->subtype, &MEDIASUBTYPE_WMVA)
@@ -1153,30 +1185,34 @@ static HRESULT send_sample(struct parser_source *pin, IMediaSample *sample,
         return S_OK;
     }
 
-    if (buffer->has_pts)
+    if (buffer->has_pts || (pin->interpolate_timestamps && pin->prev_end_pts != 0))
     {
-        REFERENCE_TIME start_pts = buffer->pts;
+        UINT64 start_pts = (buffer->has_pts ? buffer->pts : pin->prev_end_pts);
+        REFERENCE_TIME start_reftime = start_pts;
 
         if (offset)
-            start_pts += scale_uint64(offset, 10000000, bytes_per_second);
-        start_pts -= pin->seek.llCurrent;
-        start_pts *= pin->seek.dRate;
+            start_reftime += scale_uint64(offset, 10000000, bytes_per_second);
+        start_reftime -= pin->seek.llCurrent;
+        start_reftime *= pin->seek.dRate;
 
         if (buffer->has_duration)
         {
-            REFERENCE_TIME end_pts = buffer->pts + buffer->duration;
+            UINT64 end_pts = start_pts + buffer->duration;
+            REFERENCE_TIME end_reftime = end_pts;
 
+            pin->prev_end_pts = end_pts;
             if (offset + size < buffer->size)
-                end_pts = buffer->pts + scale_uint64(offset + size, 10000000, bytes_per_second);
-            end_pts -= pin->seek.llCurrent;
-            end_pts *= pin->seek.dRate;
+                end_reftime = end_reftime + scale_uint64(offset + size, 10000000, bytes_per_second);
+            end_reftime -= pin->seek.llCurrent;
+            end_reftime *= pin->seek.dRate;
 
-            IMediaSample_SetTime(sample, &start_pts, &end_pts);
-            IMediaSample_SetMediaTime(sample, &start_pts, &end_pts);
+            IMediaSample_SetTime(sample, &start_reftime, &end_reftime);
+            IMediaSample_SetMediaTime(sample, &start_reftime, &end_reftime);
         }
         else
         {
-            IMediaSample_SetTime(sample, &start_pts, NULL);
+            pin->prev_end_pts = 0;
+            IMediaSample_SetTime(sample, &start_reftime, NULL);
             IMediaSample_SetMediaTime(sample, NULL, NULL);
         }
     }
@@ -2291,6 +2327,7 @@ static const struct strmbase_sink_ops avi_splitter_sink_ops =
 static BOOL avi_splitter_filter_init_gst(struct parser *filter)
 {
     wg_parser_t parser = filter->wg_parser;
+    struct parser_source *src;
     uint32_t i, stream_count;
     WCHAR source_name[20];
 
@@ -2298,8 +2335,10 @@ static BOOL avi_splitter_filter_init_gst(struct parser *filter)
     for (i = 0; i < stream_count; ++i)
     {
         swprintf(source_name, ARRAY_SIZE(source_name), L"Stream %02u", i);
-        if (!create_pin(filter, wg_parser_get_stream(parser, i), source_name))
+        src = create_pin(filter, wg_parser_get_stream(parser, i), source_name);
+        if (!src)
             return FALSE;
+        src->interpolate_timestamps = TRUE;
     }
 
     return TRUE;

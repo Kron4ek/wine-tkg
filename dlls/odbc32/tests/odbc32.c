@@ -28,7 +28,7 @@
 static void test_SQLAllocHandle( void )
 {
     SQLHANDLE handle;
-    SQLHENV env, env2;
+    SQLHENV env;
     SQLHDBC con;
     SQLRETURN ret;
 
@@ -46,12 +46,6 @@ static void test_SQLAllocHandle( void )
     ok( ret == SQL_SUCCESS, "got %d\n", ret );
     ok( env != (void *)0xdeadbeef, "env not set\n" );
 
-    env2 = (void *)0xdeadbeef;
-    ret = SQLAllocEnv( &env2 );
-    ok( ret == SQL_SUCCESS, "got %d\n", ret );
-    ok( env2 != (void *)0xdeadbeef, "env2 not set\n" );
-    ok( env2 != env, "environment is the same\n" );
-
     con = (void *)0xdeadbeef;
     ret = SQLAllocConnect( env, &con );
     ok( ret == SQL_SUCCESS, "got %d\n", ret );
@@ -62,8 +56,6 @@ static void test_SQLAllocHandle( void )
     ret = SQLFreeConnect( 0 );
     ok( ret == SQL_INVALID_HANDLE, "got %d\n", ret );
     ret = SQLFreeEnv( env );
-    ok( ret == SQL_SUCCESS, "got %d\n", ret );
-    ret = SQLFreeEnv( env2 );
     ok( ret == SQL_SUCCESS, "got %d\n", ret );
     ret = SQLFreeEnv( 0 );
     ok( ret == SQL_INVALID_HANDLE, "got %d\n", ret );
@@ -401,47 +393,6 @@ static void test_SQLExecDirect( void )
     ok( ret == SQL_SUCCESS, "got %d\n", ret );
 }
 
-void test_SQLGetEnvAttr(void)
-{
-    SQLRETURN ret;
-    SQLHENV sqlenv;
-    SQLINTEGER value, length;
-
-    ret = SQLAllocEnv(&sqlenv);
-    ok(ret == SQL_SUCCESS, "got %d\n", ret);
-
-    value = 5;
-    length = 12;
-    ret = SQLGetEnvAttr(SQL_NULL_HENV, SQL_ATTR_CONNECTION_POOLING, &value, sizeof(SQLINTEGER), &length);
-    ok(ret == SQL_SUCCESS, "got %d\n", ret);
-    ok(value == 0, "got %d\n", value);
-    todo_wine ok(length == 12, "got %d\n", length);
-
-    value = 5;
-    length = 13;
-    ret = SQLGetEnvAttr(SQL_NULL_HENV, SQL_ATTR_CONNECTION_POOLING, &value, 0, &length);
-    ok(ret == SQL_SUCCESS, "got %d\n", ret);
-    ok(value == 0, "got %d\n", value);
-    todo_wine ok(length == 13, "got %d\n", length);
-
-    value = 5;
-    length = 12;
-    ret = SQLGetEnvAttr(sqlenv, SQL_ATTR_CONNECTION_POOLING, &value, sizeof(SQLINTEGER), &length);
-    ok(ret == SQL_SUCCESS, "got %d\n", ret);
-    ok(value == 0, "got %d\n", value);
-    ok(length == 12, "got %d\n", length);
-
-    value = 5;
-    length = 12;
-    ret = SQLGetEnvAttr(sqlenv, SQL_ATTR_CONNECTION_POOLING, &value, 2, &length);
-    todo_wine ok(ret == SQL_SUCCESS, "got %d\n", ret);
-    todo_wine ok(value == 0, "got %d\n", value);
-    ok(length == 12, "got %d\n", length);
-
-    ret = SQLFreeEnv(sqlenv);
-    ok(ret == SQL_SUCCESS, "got %d\n", ret);
-}
-
 START_TEST(odbc32)
 {
     test_SQLAllocHandle();
@@ -449,5 +400,4 @@ START_TEST(odbc32)
     test_SQLDataSources();
     test_SQLDrivers();
     test_SQLExecDirect();
-    test_SQLGetEnvAttr();
 }

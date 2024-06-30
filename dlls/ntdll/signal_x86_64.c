@@ -32,6 +32,7 @@
 #define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
+#include "ddk/wdm.h"
 #include "wine/exception.h"
 #include "wine/list.h"
 #include "ntdll_misc.h"
@@ -790,6 +791,25 @@ __ASM_GLOBAL_FUNC( RtlRaiseException,
                    "1:\tcall " __ASM_NAME("NtRaiseException") "\n\t"
                    "movq %rax,%rcx\n\t"
                    "call " __ASM_NAME("RtlRaiseStatus") /* does not return */ );
+
+
+/*************************************************************************
+ *		RtlGetNativeSystemInformation (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlGetNativeSystemInformation( SYSTEM_INFORMATION_CLASS class,
+                                               void *info, ULONG size, ULONG *ret_size )
+{
+    return NtQuerySystemInformation( class, info, size, ret_size );
+}
+
+
+/***********************************************************************
+ *           RtlIsProcessorFeaturePresent [NTDLL.@]
+ */
+BOOLEAN WINAPI RtlIsProcessorFeaturePresent( UINT feature )
+{
+    return feature < PROCESSOR_FEATURE_MAX && user_shared_data->ProcessorFeatures[feature];
+}
 
 
 /*************************************************************************

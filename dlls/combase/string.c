@@ -55,12 +55,12 @@ static inline struct hstring_private *impl_from_HSTRING(HSTRING string)
 
 static inline struct hstring_private *impl_from_HSTRING_HEADER(HSTRING_HEADER *header)
 {
-    return CONTAINING_RECORD((struct hstring_header*)header, struct hstring_private, header);
+    return CONTAINING_RECORD(header, struct hstring_private, header);
 }
 
 static inline struct hstring_private *impl_from_HSTRING_BUFFER(HSTRING_BUFFER buffer)
 {
-    return CONTAINING_RECORD( (void*)buffer, struct hstring_private, buffer);
+    return CONTAINING_RECORD(buffer, struct hstring_private, buffer);
 }
 
 static BOOL alloc_string(UINT32 len, HSTRING *out)

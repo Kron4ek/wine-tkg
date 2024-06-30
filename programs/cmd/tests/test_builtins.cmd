@@ -451,14 +451,23 @@ if 1==0 (echo p1) else echo p2||echo p3
 echo ---
 if 1==0 (echo q1) else echo q2&echo q3
 echo ------------- Testing internal commands return codes
-call :setError 0 &&echo SUCCESS||echo FAILURE %errorlevel%
-call :setError 33 &&echo SUCCESS||echo FAILURE %errorlevel%
-call :setError 666
-echo foo &&echo SUCCESS||echo FAILURE %errorlevel%
-echo foo >> h:\i\dont\exist\at\all.txt &&echo SUCCESS||echo FAILURE %errorlevel%
-type NUL &&echo SUCCESS||echo FAILURE %errorlevel%
-type h:\i\dont\exist\at\all.txt &&echo SUCCESS||echo FAILURE %errorlevel%
+setlocal EnableDelayedExpansion
+
+echo --- call and IF/FOR blocks
+call :setError 0 &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!
+call :setError 33 &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!
+call :setError 666 & (echo foo &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & (echo foo >> h:\i\dont\exist\at\all.txt &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & ((if 1==1 echo "">NUL) &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & ((if 1==0 echo "">NUL) &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & ((if 1==1 (call :setError 33)) &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & ((if 1==0 (call :setError 33) else call :setError 34) &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & ((for %%i in () do echo "") &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & ((for %%i in () do call :setError 33) &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & ((for %%i in (a) do call :setError 0) &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & ((for %%i in (a) do call :setError 33) &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
 echo ---
+setlocal DisableDelayedExpansion
 echo ------------ Testing 'set' ------------
 call :setError 0
 rem Remove any WINE_FOO* WINE_BA* environment variables from shell before proceeding
@@ -757,11 +766,6 @@ setlocal EnableDelayedExpansion
 set WINE_FOO=foo bar
 for %%i in ("!WINE_FOO!") do echo %%i
 for %%i in (!WINE_FOO!) do echo %%i
-rem tests disabled for now... wine's cmd loops endlessly here
-rem set WINE_FOO=4 4 4
-rem for /l %%i in (!WINE_FOO!) do echo %%i
-rem set WINE_FOO=4
-rem for /l %%i in (1 2 !WINE_FOO!) do echo %%i
 setlocal DisableDelayedExpansion
 
 echo --- in digit variables
@@ -806,6 +810,12 @@ set WINE_FOO=foo
 if %WINE_FOO% == foo (
     set WINE_FOO=bar
     if !WINE_FOO! == bar (echo bar) else echo foo
+)
+set WINE_FOO=32
+if %WINE_FOO% == 32 (
+  set WINE_FOO=33
+  call :setError 33
+  if errorlevel !WINE_FOO! (echo gotitright) else echo gotitwrong
 )
 echo %ErrorLevel%
 setlocal DisableDelayedExpansion
@@ -1440,6 +1450,23 @@ for /F "tokens=1,* delims= " %%a in ("%WINE_ARGS%") do (
     goto :test_for_loop_params_parse
 )
 set "WINE_ARGS="
+echo --- nesting and delayed expansion
+setlocal enabledelayedexpansion
+set WINE_ARGS=1
+for %%a in (a b) do (
+  set /a WINE_ARGS+=1
+  echo %%a %WINE_ARGS% !WINE_ARGS!
+  for /l %%b in (1 1 !WINE_ARGS!) do (
+    if !WINE_ARGS!==%%b (echo %%b-A1) else echo %%b-A2
+    if %WINE_ARGS%==%%b (echo %%b-B1) else echo %%b-B2
+  )
+)
+setlocal disabledelayedexpansion
+echo --- nesting if/for
+for %%a in ("f"
+"g"
+"h"
+) do if #==# (echo %%a)
 
 mkdir foobar & cd foobar
 mkdir foo
@@ -1990,6 +2017,21 @@ echo.>> bar
 echo kkk>>bar
 for /f %%k in (foo bar) do echo %%k
 for /f %%k in (bar foo) do echo %%k
+echo ------ quoting and file access
+echo a >  f.zzz
+echo b >> f.zzz
+erase f2.zzz
+for /f %%a in (f.zzz) do echo A%%a
+for /f %%a in ("f.zzz") do echo B%%a
+for /f %%a in (f2.zzz) do echo C%%a
+for /f %%a in ("f2.zzz") do echo D%%a
+for /f "usebackq" %%a in (f.zzz) do echo E%%a
+for /f "usebackq" %%a in ("f.zzz") do echo F%%a
+for /f "usebackq" %%a in (f2.zzz) do echo G%%a
+for /f "usebackq" %%a in ("f2.zzz") do echo H%%a
+for /f %%a in (f*.zzz) do echo I%%a
+for /f %%a in ("f*.zzz") do echo J%%a
+erase f.zzz
 echo ------ command argument
 rem Not implemented on NT4, need to skip it as no way to get output otherwise
 if "%CD%"=="" goto :SkipFORFcmdNT4
@@ -2085,7 +2127,7 @@ echo 3.14>testfile
 FOR /F "tokens=*"  %%A IN (testfile) DO @echo 1:%%A,%%B
 FOR /F "tokens=1*" %%A IN (testfile) DO @echo 2:%%A,%%B
 FOR /F "tokens=2*" %%A IN (testfile) DO @echo 3:%%A,%%B
-FOR /F "tokens=1,* delims=." %%A IN (testfile) DO @echo 4:%%A,%%B
+FOR /F "tokens=1,*@tab@delims=." %%A IN (testfile) DO @echo 4:%%A,%%B
 del testfile
 cd ..
 rd /s/q foobar
@@ -2760,6 +2802,27 @@ call if 1==1 (
   echo ... and else!
 )
 call call call echo passed
+set WINE_FOO=WINE_BAR
+set WINE_BAR=abc
+call echo %%%WINE_FOO%%%
+call cmd.exe /c echo %%%WINE_FOO%%%
+call echo %%%%%WINE_FOO%%%%%
+call cmd.exe /c echo %%%%%WINE_FOO%%%%%
+
+set WINE_BAR=abc
+set WINE_FOO=%%WINE_BAR%%
+
+call :call_expand %WINE_FOO% %%WINE_FOO%% %%%WINE_FOO%%%
+goto :call_expand_done
+
+:call_expand
+set WINE_BAR=def
+echo %1 %2 %3
+call echo %1 %2 %3
+exit /b 0
+
+:call_expand_done
+
 cd .. & rd /s/q foobar
 
 echo --- mixing batch and builtins

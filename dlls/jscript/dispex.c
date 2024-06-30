@@ -1111,7 +1111,7 @@ static ULONG WINAPI ScriptTypeInfo_Release(ITypeInfo *iface)
     {
         for (i = This->num_funcs; i--;)
             release_bytecode(This->funcs[i].code->bytecode);
-        IDispatchEx_Release(&This->jsdisp->IDispatchEx_iface);
+        jsdisp_release(This->jsdisp);
         free(This->funcs);
         free(This->vars);
         free(This);
@@ -1850,7 +1850,7 @@ static HRESULT WINAPI DispatchEx_GetTypeInfo(IDispatchEx *iface, UINT iTInfo, LC
     }
 
     /* Keep a ref to the props and their names */
-    IDispatchEx_AddRef(&This->IDispatchEx_iface);
+    jsdisp_addref(This);
 
     *ppTInfo = &typeinfo->ITypeInfo_iface;
     return S_OK;
@@ -1893,7 +1893,7 @@ static HRESULT WINAPI DispatchEx_Invoke(IDispatchEx *iface, DISPID dispIdMember,
     TRACE("(%p)->(%ld %s %ld %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
           lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 
-    return IDispatchEx_InvokeEx(&This->IDispatchEx_iface, dispIdMember, lcid, wFlags,
+    return IDispatchEx_InvokeEx(to_dispex(This), dispIdMember, lcid, wFlags,
             pDispParams, pVarResult, pExcepInfo, NULL);
 }
 
@@ -2029,7 +2029,7 @@ static HRESULT WINAPI DispatchEx_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
 
 static HRESULT delete_prop(dispex_prop_t *prop, BOOL *ret)
 {
-    if(prop->type == PROP_PROTREF) {
+    if(prop->type == PROP_PROTREF || prop->type == PROP_DELETED) {
         *ret = TRUE;
         return S_OK;
     }
@@ -2204,13 +2204,7 @@ HRESULT init_dispex(jsdisp_t *dispex, script_ctx_t *ctx, const builtin_info_t *b
     return S_OK;
 }
 
-static const builtin_info_t dispex_info = {
-    JSCLASS_NONE,
-    NULL,
-    0, NULL,
-    NULL,
-    NULL
-};
+static const builtin_info_t dispex_info = { .class = JSCLASS_NONE };
 
 HRESULT create_dispex(script_ctx_t *ctx, const builtin_info_t *builtin_info, jsdisp_t *prototype, jsdisp_t **dispex)
 {
@@ -2269,8 +2263,7 @@ void jsdisp_free(jsdisp_t *obj)
 
     if(obj->builtin_info->destructor)
         obj->builtin_info->destructor(obj);
-    else
-        free(obj);
+    free(obj);
 }
 
 #ifdef TRACE_REFCNT

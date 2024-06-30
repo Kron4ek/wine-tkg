@@ -14940,6 +14940,22 @@ msgid ""
 " hexadecimal (0x34) or octal (056).\n"
 msgstr ""
 
+#: programs/cmd/cmd.rc:411
+msgid "Syntax error: unexpected %1\n"
+msgstr ""
+
+#: programs/cmd/cmd.rc:412
+#, fuzzy
+#| msgid "&Standard bar"
+msgid "End of line"
+msgstr "&Ordinara zono"
+
+#: programs/cmd/cmd.rc:413
+#, fuzzy
+#| msgid "&Standard bar"
+msgid "End of file"
+msgstr "&Ordinara zono"
+
 #: programs/conhost/conhost.rc:54
 msgid "Cursor size"
 msgstr "Kursor-grando"

@@ -1169,11 +1169,6 @@ static void check_readback_data_u8_with_buffer_(unsigned int line, struct resour
     unsigned int x = 0, y = 0, z = 0;
     BOOL all_match = FALSE;
 
-    ok_(__FILE__, line)(rb->map_desc.RowPitch == depth_pitch, "Got row pitch %u instead of %u.\n",
-            rb->map_desc.RowPitch, depth_pitch);
-    ok_(__FILE__, line)(rb->map_desc.DepthPitch == slice_pitch, "Got depth pitch %u instead of %u.\n",
-            rb->map_desc.DepthPitch, depth_pitch);
-
     for (z = 0; z < rb->depth; ++z)
     {
         for (y = 0; y < rb->height; ++y)
@@ -36225,6 +36220,7 @@ static void test_nv12(void)
     unsigned int test_idx;
     ID3D10Blob *bytecode;
     ID3D11Device *device;
+    UINT support;
     HRESULT hr;
 
     static const uint32_t clear_values[4] = {0xabcdef00, 0xabcdef00, 0xabcdef00, 0xabcdef00};
@@ -36268,18 +36264,30 @@ static void test_nv12(void)
     {
         uint32_t width;
         uint32_t height;
+        uint32_t copy_x;
+        uint32_t copy_y;
+        uint32_t copy_width;
+        uint32_t copy_height;
     }
     tests[] =
     {
-        {640, 480},
-        {640, 481},
-        {641, 480},
-        {641, 481},
-        {642, 480},
-        {642, 481},
-        {642, 482},
-        {644, 482},
-        {644, 484},
+        {640, 480, 10, 20, 4, 6},
+        {640, 480, 10, 20, 4, 7},
+        {640, 480, 10, 20, 5, 6},
+        {640, 480, 10, 20, 5, 7},
+
+        {640, 480, 10, 21, 4, 6},
+        {640, 480, 11, 20, 4, 6},
+        {640, 480, 11, 21, 4, 6},
+
+        {640, 481, 10, 20, 4, 6},
+        {641, 480, 10, 20, 4, 6},
+        {641, 481, 10, 20, 4, 6},
+        {642, 480, 10, 20, 4, 6},
+        {642, 481, 10, 20, 4, 6},
+        {642, 482, 10, 20, 4, 6},
+        {644, 482, 10, 20, 4, 6},
+        {644, 484, 10, 20, 4, 6},
     };
 
     if (!init_test_context(&test_context, NULL))
@@ -36287,48 +36295,66 @@ static void test_nv12(void)
     device = test_context.device;
     device_context = test_context.immediate_context;
 
+    hr = ID3D11Device_CheckFormatSupport(device, DXGI_FORMAT_NV12, &support);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    if (!(support & D3D11_FORMAT_SUPPORT_TEXTURE2D))
+    {
+        skip("NV12 textures are not supported.\n");
+        release_test_context(&test_context);
+        return;
+    }
+
     bytecode = compile_shader(cs_code, sizeof(cs_code) - 1, "cs_5_0");
     hr = ID3D11Device_CreateComputeShader(device, ID3D10Blob_GetBufferPointer(bytecode),
             ID3D10Blob_GetBufferSize(bytecode), NULL, &cs);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ID3D10Blob_Release(bytecode);
 
     bytecode = compile_shader(luma_ps_code, sizeof(luma_ps_code) - 1, "ps_4_0");
     hr = ID3D11Device_CreatePixelShader(device, ID3D10Blob_GetBufferPointer(bytecode),
             ID3D10Blob_GetBufferSize(bytecode), NULL, &luma_ps);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ID3D10Blob_Release(bytecode);
 
     bytecode = compile_shader(chroma_ps_code, sizeof(chroma_ps_code) - 1, "ps_4_0");
     hr = ID3D11Device_CreatePixelShader(device, ID3D10Blob_GetBufferPointer(bytecode),
             ID3D10Blob_GetBufferSize(bytecode), NULL, &chroma_ps);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ID3D10Blob_Release(bytecode);
 
     for (test_idx = 0; test_idx < ARRAY_SIZE(tests); ++test_idx)
     {
         /* I need only two uints in the cbuffer, but the size must be a multiple of 16. */
-        uint32_t cbuffer_data[4], expected_row_pitch, expected_depth_pitch;
         D3D11_UNORDERED_ACCESS_VIEW_DESC uav_desc = {0};
         D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {0};
         D3D11_SUBRESOURCE_DATA subresource_data = {0};
         D3D11_RENDER_TARGET_VIEW_DESC rtv_desc = {0};
         ID3D11Texture2D *texture, *check_texture;
+        char *content, *content2, *copy_source;
         ID3D11UnorderedAccessView *check_uav;
         ID3D11RenderTargetView *rtv1, *rtv2;
         ID3D11ShaderResourceView *srvs[2];
         D3D11_TEXTURE2D_DESC desc = {0};
         struct resource_readback rb;
+        uint32_t cbuffer_data[4];
         ID3D11Buffer *cbuffer;
         HRESULT expected_hr;
         unsigned int i, j;
-        char *content;
+        D3D11_BOX box;
 
         const uint32_t width = tests[test_idx].width;
         const uint32_t height = tests[test_idx].height;
+        const uint32_t copy_x = tests[test_idx].copy_x;
+        const uint32_t copy_y = tests[test_idx].copy_y;
+        const uint32_t copy_width = tests[test_idx].copy_width;
+        const uint32_t copy_height = tests[test_idx].copy_height;
 
-        winetest_push_context("test %u (%ux%u)", test_idx, width, height);
+        winetest_push_context("test %u (%ux%u, %u,%u,%ux%u)", test_idx, width, height,
+                copy_x, copy_y, copy_width, copy_height);
 
-        expected_row_pitch = (width + 3) & ~3;
-        expected_depth_pitch = expected_row_pitch * height * 3 / 2;
-
+        /* Apparently no Vulkan implementation supports rendering to a NV12 texture, so here we do
+         * not request D3D11_BIND_RENDER_TARGET. We will recreate it later for render target usage. */
         desc.Width = width;
         desc.Height = height;
         desc.MipLevels = 1;
@@ -36336,16 +36362,18 @@ static void test_nv12(void)
         desc.Format = DXGI_FORMAT_NV12;
         desc.SampleDesc.Count = 1;
         desc.Usage = D3D11_USAGE_DEFAULT;
-        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
-        content = calloc(expected_depth_pitch, 1);
-        ok(!!content, "Failed to allocate memory.\n");
+        content = calloc(width * height * 3 / 2, 1);
+        content2 = calloc(width * height * 3 / 2, 1);
+        copy_source = calloc(copy_width * copy_height * 3 / 2, 1);
+        ok(content && content2 && copy_source, "Failed to allocate memory.\n");
 
         for (i = 0; i < height; ++i)
         {
             for (j = 0; j < width; ++j)
             {
-                unsigned int idx = i * expected_row_pitch + j;
+                unsigned int idx = i * width + j;
 
                 content[idx] = (i & 7) << 3 | (j & 7);
             }
@@ -36355,7 +36383,7 @@ static void test_nv12(void)
         {
             for (j = 0; j < width / 2; ++j)
             {
-                unsigned int idx = expected_row_pitch * (height + i) + j * 2;
+                unsigned int idx = width * (height + i) + j * 2;
 
                 content[idx] = 1 << 6 | (i & 7) << 3 | (j & 7);
                 content[idx + 1] = 1 << 7 | (i & 7) << 3 | (j & 7);
@@ -36363,8 +36391,8 @@ static void test_nv12(void)
         }
 
         subresource_data.pSysMem = content;
-        subresource_data.SysMemPitch = expected_row_pitch;
-        subresource_data.SysMemSlicePitch = expected_depth_pitch;
+        subresource_data.SysMemPitch = width;
+        subresource_data.SysMemSlicePitch = 0;
 
         expected_hr = (width & 1 || height & 1) ? E_INVALIDARG : S_OK;
         hr = ID3D11Device_CreateTexture2D(device, &desc, &subresource_data, &texture);
@@ -36418,8 +36446,83 @@ static void test_nv12(void)
         ID3D11DeviceContext_Dispatch(device_context, width, height, 1);
 
         get_texture_readback(check_texture, 0, &rb);
-        check_readback_data_u8_with_buffer(&rb, content, expected_row_pitch, expected_depth_pitch);
+        check_readback_data_u8_with_buffer(&rb, content, width, 0);
         release_resource_readback(&rb);
+
+        memcpy(content2, content, width * height * 3 / 2);
+        if (copy_x % 2 == 0 && copy_y % 2 == 0 && copy_width % 2 == 0 && copy_height % 2 == 0)
+        {
+            for (i = copy_y; i < copy_y + copy_height; ++i)
+            {
+                for (j = copy_x; j < copy_x + copy_width; ++j)
+                {
+                    content2[i * width + j] = 0xab;
+                    if (i % 2 == 0 && j % 2 == 0)
+                    {
+                        content2[width * (height + i / 2) + j] = 0xcd;
+                        content2[width * (height + i / 2) + j + 1] = 0xef;
+                    }
+                }
+            }
+            for (i = 0; i < copy_height; ++i)
+            {
+                for (j = 0; j < copy_width; ++j)
+                {
+                    copy_source[i * copy_width + j] = 0xab;
+                    if (i % 2 == 0 && j % 2 == 0)
+                    {
+                        copy_source[copy_width * (copy_height + i / 2) + j] = 0xcd;
+                        copy_source[copy_width * (copy_height + i / 2) + j + 1] = 0xef;
+                    }
+                }
+            }
+        }
+
+        /* UpdateSubresource() copies the specified box on the luma plane and also the corresponding
+         * box on the chroma plane. It does nothing as soon as any coordinate of the box is not a
+         * multiple of 2. AMD seems to have a bug and copies data with the wrong pitch. */
+        if (!is_amd_device(device))
+        {
+            set_box(&box, copy_x, copy_y, 0, copy_x + copy_width, copy_y + copy_height, 1);
+            ID3D11DeviceContext_UpdateSubresource(device_context,
+                    (ID3D11Resource *)texture, 0, &box, copy_source, copy_width, 0);
+
+            ID3D11DeviceContext_ClearUnorderedAccessViewUint(device_context, check_uav, clear_values);
+            ID3D11DeviceContext_CSSetShader(device_context, cs, NULL, 0);
+            ID3D11DeviceContext_CSSetShaderResources(device_context, 0, ARRAY_SIZE(srvs), srvs);
+            ID3D11DeviceContext_CSSetUnorderedAccessViews(device_context, 1, 1, &check_uav, NULL);
+            ID3D11DeviceContext_CSSetConstantBuffers(device_context, 0, 1, &cbuffer);
+            ID3D11DeviceContext_Dispatch(device_context, width, height, 1);
+
+            get_texture_readback(check_texture, 0, &rb);
+            check_readback_data_u8_with_buffer(&rb, content2, width, 0);
+            release_resource_readback(&rb);
+        }
+
+        ID3D11ShaderResourceView_Release(srvs[0]);
+        ID3D11ShaderResourceView_Release(srvs[1]);
+        ID3D11Texture2D_Release(texture);
+
+        desc.Height = height;
+        desc.Format = DXGI_FORMAT_NV12;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+
+        hr = ID3D11Device_CreateTexture2D(device, &desc, NULL, &texture);
+        todo_wine
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        if (FAILED(hr))
+            goto no_render_target;
+
+        srv_desc.Format = DXGI_FORMAT_R8_UINT;
+
+        hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, &srv_desc, &srvs[0]);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        srv_desc.Format = DXGI_FORMAT_R8G8_UINT;
+
+        hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, &srv_desc, &srvs[1]);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         rtv_desc.Format = DXGI_FORMAT_R8_UINT;
         rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
@@ -36455,11 +36558,13 @@ static void test_nv12(void)
         ID3D11DeviceContext_Dispatch(device_context, width, height, 1);
 
         get_texture_readback(check_texture, 0, &rb);
-        check_readback_data_u8_with_buffer(&rb, content, expected_row_pitch, expected_depth_pitch);
+        check_readback_data_u8_with_buffer(&rb, content, width, 0);
         release_resource_readback(&rb);
 
         ID3D11RenderTargetView_Release(rtv2);
         ID3D11RenderTargetView_Release(rtv1);
+
+    no_render_target:
         ID3D11Buffer_Release(cbuffer);
         ID3D11UnorderedAccessView_Release(check_uav);
         ID3D11ShaderResourceView_Release(srvs[1]);

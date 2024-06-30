@@ -342,7 +342,7 @@ static HRESULT convert_dbproperty_mode(const WCHAR *src, VARIANT *dest)
     V_VT(dest) = VT_I4;
     V_I4(dest) = 0;
 
-    pos = wcsstr(src, L"|");
+    pos = wcschr(src, '|');
     while (pos != NULL)
     {
         lstrcpynW(mode, lastpos, pos - lastpos + 1);
@@ -354,7 +354,7 @@ static HRESULT convert_dbproperty_mode(const WCHAR *src, VARIANT *dest)
         V_I4(dest) |= prop->value;
 
         lastpos = pos + 1;
-        pos = wcsstr(lastpos, L"|");
+        pos = wcschr(lastpos, '|');
     }
 
     if (lastpos)
@@ -783,6 +783,11 @@ HRESULT get_data_source(IUnknown *outer, DWORD clsctx, LPCOLESTR initstring, REF
         }
 
         hr = IDBProperties_SetProperties(dbprops, 1, propset);
+        /* Return S_OK for any successful code.  */
+        if (SUCCEEDED(hr))
+        {
+            hr = S_OK;
+        }
         IDBProperties_Release(dbprops);
         free_dbpropset(1, propset);
         if (FAILED(hr))

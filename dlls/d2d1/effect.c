@@ -22,28 +22,28 @@ WINE_DEFAULT_DEBUG_CHANNEL(d2d);
 
 static inline struct d2d_transform *impl_from_ID2D1OffsetTransform(ID2D1OffsetTransform *iface)
 {
-    return CONTAINING_RECORD((ID2D1TransformNode*)iface, struct d2d_transform, ID2D1TransformNode_iface);
+    return CONTAINING_RECORD(iface, struct d2d_transform, ID2D1TransformNode_iface);
 }
 
 static inline struct d2d_transform *impl_from_ID2D1BlendTransform(ID2D1BlendTransform *iface)
 {
-    return CONTAINING_RECORD((ID2D1TransformNode*)iface, struct d2d_transform, ID2D1TransformNode_iface);
+    return CONTAINING_RECORD(iface, struct d2d_transform, ID2D1TransformNode_iface);
 }
 
 static inline struct d2d_transform *impl_from_ID2D1BorderTransform(ID2D1BorderTransform *iface)
 {
-    return CONTAINING_RECORD((ID2D1TransformNode*)iface, struct d2d_transform, ID2D1TransformNode_iface);
+    return CONTAINING_RECORD(iface, struct d2d_transform, ID2D1TransformNode_iface);
 }
 
 static inline struct d2d_transform *impl_from_ID2D1BoundsAdjustmentTransform(
         ID2D1BoundsAdjustmentTransform *iface)
 {
-    return CONTAINING_RECORD((ID2D1TransformNode*)iface, struct d2d_transform, ID2D1TransformNode_iface);
+    return CONTAINING_RECORD(iface, struct d2d_transform, ID2D1TransformNode_iface);
 }
 
 static inline struct d2d_vertex_buffer *impl_from_ID2D1VertexBuffer(ID2D1VertexBuffer *iface)
 {
-    return CONTAINING_RECORD((ID2D1VertexBuffer*)iface, struct d2d_vertex_buffer, ID2D1VertexBuffer_iface);
+    return CONTAINING_RECORD(iface, struct d2d_vertex_buffer, ID2D1VertexBuffer_iface);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_vertex_buffer_QueryInterface(ID2D1VertexBuffer *iface,

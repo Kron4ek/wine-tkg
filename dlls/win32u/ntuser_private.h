@@ -25,6 +25,7 @@
 #include "ntuser.h"
 #include "shellapi.h"
 #include "wine/list.h"
+#include "wine/vulkan.h"
 
 
 #define WM_POPUPSYSTEMMENU  0x0313
@@ -114,9 +115,7 @@ struct user_thread_info
     WORD                          hook_call_depth;        /* Number of recursively called hook procs */
     WORD                          hook_unicode;           /* Is current hook unicode? */
     HHOOK                         hook;                   /* Current hook */
-    UINT                          active_hooks;           /* Bitmap of active hooks */
     struct received_message_info *receive_info;           /* Message being currently received */
-    struct user_key_state_info   *key_state;              /* Cache of global key state */
     struct imm_thread_data       *imm_thread_data;        /* IMM thread data */
     HKL                           kbd_layout;             /* Current keyboard layout */
     UINT                          kbd_layout_id;          /* Current keyboard layout ID */
@@ -124,6 +123,7 @@ struct user_thread_info
     UINT                          spy_indent;             /* Current spy indent */
     BOOL                          clipping_cursor;        /* thread is currently clipping */
     DWORD                         clipping_reset;         /* time when clipping was last reset */
+    struct session_thread_data   *session_data;           /* shared session thread data */
 };
 
 C_ASSERT( sizeof(struct user_thread_info) <= sizeof(((TEB *)0)->Win32ClientInfo) );
@@ -132,13 +132,6 @@ static inline struct user_thread_info *get_user_thread_info(void)
 {
     return CONTAINING_RECORD( NtUserGetThreadInfo(), struct user_thread_info, client_info );
 }
-
-struct user_key_state_info
-{
-    UINT  time;          /* Time of last key state refresh */
-    INT   counter;       /* Counter to invalidate the key state */
-    BYTE  state[256];    /* State for each key */
-};
 
 struct hook_extra_info
 {
@@ -251,6 +244,10 @@ extern int peek_message( MSG *msg, const struct peek_message_filter *filter );
 extern LRESULT system_tray_call( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, void *data );
 
 /* vulkan.c */
+extern void *(*p_vkGetDeviceProcAddr)(VkDevice, const char *);
+extern void *(*p_vkGetInstanceProcAddr)(VkInstance, const char *);
+
+extern BOOL vulkan_init(void);
 extern void vulkan_detach_surfaces( struct list *surfaces );
 extern void vulkan_set_parent( HWND hwnd, HWND new_parent, HWND old_parent );
 extern void vulkan_set_region( HWND toplevel, HRGN region );

@@ -476,7 +476,6 @@ static void scope_destructor(jsdisp_t *dispex)
 
     if(scope->obj)
         IDispatch_Release(scope->obj);
-    free(scope);
 }
 
 static unsigned scope_idx_length(jsdisp_t *dispex)
@@ -546,15 +545,11 @@ static HRESULT scope_gc_traverse(struct gc_ctx *gc_ctx, enum gc_traverse_op op, 
 
 static const builtin_info_t scope_info = {
     JSCLASS_NONE,
-    NULL,
-    0,
-    NULL,
-    scope_destructor,
-    NULL,
-    scope_idx_length,
-    scope_idx_get,
-    scope_idx_put,
-    scope_gc_traverse
+    .destructor  = scope_destructor,
+    .idx_length  = scope_idx_length,
+    .idx_get     = scope_idx_get,
+    .idx_put     = scope_idx_put,
+    .gc_traverse = scope_gc_traverse
 };
 
 static HRESULT scope_push(script_ctx_t *ctx, scope_chain_t *scope, IDispatch *obj, scope_chain_t **ret)
@@ -3321,7 +3316,7 @@ static HRESULT bind_event_target(script_ctx_t *ctx, function_code_t *func, jsdis
     disp = get_object(v);
     hres = IDispatch_QueryInterface(disp, &IID_IBindEventHandler, (void**)&target);
     if(SUCCEEDED(hres)) {
-        hres = IBindEventHandler_BindHandler(target, func->name, (IDispatch*)&func_obj->IDispatchEx_iface);
+        hres = IBindEventHandler_BindHandler(target, func->name, to_disp(func_obj));
         IBindEventHandler_Release(target);
         if(FAILED(hres))
             WARN("BindEvent failed: %08lx\n", hres);

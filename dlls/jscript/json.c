@@ -315,7 +315,7 @@ static jsval_t transform_json_object(struct transform_json_object_ctx *proc_ctx,
                         goto ret;
                     if(FAILED(jsdisp_get_id(obj, str, 0, &id)))
                         continue;
-                    proc_ctx->hres = disp_delete((IDispatch*)&obj->IDispatchEx_iface, id, &b);
+                    proc_ctx->hres = disp_delete(to_disp(obj), id, &b);
                 }else {
                     proc_ctx->hres = jsdisp_define_data_property(obj, str, PROPF_WRITABLE | PROPF_ENUMERABLE | PROPF_CONFIGURABLE, res);
                     jsval_release(res);
@@ -334,7 +334,7 @@ static jsval_t transform_json_object(struct transform_json_object_ctx *proc_ctx,
                 res = transform_json_object(proc_ctx, obj, jsstr);
                 if(is_undefined(res)) {
                     if(SUCCEEDED(proc_ctx->hres))
-                        proc_ctx->hres = disp_delete((IDispatch*)&obj->IDispatchEx_iface, id, &b);
+                        proc_ctx->hres = disp_delete(to_disp(obj), id, &b);
                 }else {
                     if(!(str = jsstr_flatten(jsstr)))
                         proc_ctx->hres = E_OUTOFMEMORY;
@@ -671,7 +671,7 @@ static HRESULT stringify_object(stringify_ctx_t *ctx, jsdisp_t *obj)
     if(!append_char(ctx, '{'))
         return E_OUTOFMEMORY;
 
-    while((hres = IDispatchEx_GetNextDispID(&obj->IDispatchEx_iface, fdexEnumDefault, dispid, &dispid)) == S_OK) {
+    while((hres = IDispatchEx_GetNextDispID(to_dispex(obj), fdexEnumDefault, dispid, &dispid)) == S_OK) {
         stepback = ctx->buf_len;
 
         if(prop_cnt && !append_char(ctx, ',')) {
@@ -693,7 +693,7 @@ static HRESULT stringify_object(stringify_ctx_t *ctx, jsdisp_t *obj)
             }
         }
 
-        hres = IDispatchEx_GetMemberName(&obj->IDispatchEx_iface, dispid, &prop_name);
+        hres = IDispatchEx_GetMemberName(to_dispex(obj), dispid, &prop_name);
         if(FAILED(hres))
             return hres;
 
@@ -948,12 +948,9 @@ static const builtin_prop_t JSON_props[] = {
 };
 
 static const builtin_info_t JSON_info = {
-    JSCLASS_JSON,
-    NULL,
-    ARRAY_SIZE(JSON_props),
-    JSON_props,
-    NULL,
-    NULL
+    .class     = JSCLASS_JSON,
+    .props_cnt = ARRAY_SIZE(JSON_props),
+    .props     = JSON_props,
 };
 
 HRESULT create_json(script_ctx_t *ctx, jsdisp_t **ret)

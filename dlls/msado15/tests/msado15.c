@@ -53,7 +53,7 @@ static void test_Recordset(void)
     Properties *props;
     Property *prop;
     LONG count, state;
-    ADO_LONGPTR rec_count;
+    ADO_LONGPTR rec_count, max_records;
     VARIANT missing, val, index;
     CursorLocationEnum location;
     CursorTypeEnum cursor;
@@ -61,6 +61,7 @@ static void test_Recordset(void)
     HRESULT hr;
     VARIANT bookmark, filter, active;
     EditModeEnum editmode;
+    LONG cache_size;
 
     hr = CoCreateInstance( &CLSID_Recordset, NULL, CLSCTX_INPROC_SERVER, &IID__Recordset, (void **)&recordset );
     ok( hr == S_OK, "got %08lx\n", hr );
@@ -110,6 +111,36 @@ static void test_Recordset(void)
     hr = _Recordset_get_CursorType( recordset, &cursor );
     ok( hr == S_OK, "got %08lx\n", hr );
     ok( cursor == adOpenForwardOnly, "got %d\n", cursor );
+
+    cache_size = 0;
+    hr = _Recordset_get_CacheSize( recordset, &cache_size );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( cache_size == 1, "got %ld\n", cache_size );
+
+    hr = _Recordset_put_CacheSize( recordset, 5 );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    hr = _Recordset_get_CacheSize( recordset, &cache_size );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( cache_size == 5, "got %ld\n", cache_size );
+
+    hr = _Recordset_put_CacheSize( recordset, 1 );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    max_records = 0;
+    hr = _Recordset_get_MaxRecords( recordset, &max_records );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( max_records == 0, "got %Id\n", max_records );
+
+    hr = _Recordset_put_MaxRecords( recordset, 5 );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    hr = _Recordset_get_MaxRecords( recordset, &max_records );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( max_records == 5, "got %Id\n", max_records );
+
+    hr = _Recordset_put_MaxRecords( recordset, 0 );
+    ok( hr == S_OK, "got %08lx\n", hr );
 
     editmode = -1;
     hr = _Recordset_get_EditMode( recordset, &editmode );
@@ -1300,6 +1331,12 @@ static void test_Command(void)
     CommandTypeEnum cmd_type = adCmdUnspecified;
     BSTR cmd_text = (BSTR)"test";
     _Connection *connection;
+    ADOCommandConstruction *adocommand;
+    Parameters *parameters, *parameters2;
+    _Parameter *parameter = NULL;
+    IDispatch *disp;
+    BSTR str;
+    VARIANT value;
 
     hr = CoCreateInstance( &CLSID_Command, NULL, CLSCTX_INPROC_SERVER, &IID__Command, (void **)&command );
     ok( hr == S_OK, "got %08lx\n", hr );
@@ -1315,6 +1352,13 @@ static void test_Command(void)
     hr = _Command_QueryInterface( command, &IID_Command25, (void **)&command25 );
     ok( hr == S_OK, "got %08lx\n", hr );
     Command25_Release( command25 );
+
+    hr = _Command_QueryInterface( command, &IID_ADOCommandConstruction, (void **)&adocommand );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ADOCommandConstruction_Release( adocommand );
+
+    hr = _Command_QueryInterface( command, &IID_Parameters, (void **)&parameters );
+    ok( hr == E_NOINTERFACE, "got %08lx\n", hr );
 
     hr = _Command_get_CommandType( command, &cmd_type );
     ok( hr == S_OK, "got %08lx\n", hr );
@@ -1360,6 +1404,31 @@ static void test_Command(void)
 
     hr = _Command_putref_ActiveConnection( command,  NULL );
     ok( hr == S_OK, "got %08lx\n", hr );
+
+    VariantInit(&value);
+    str = SysAllocString(L"_");
+    hr = _Command_CreateParameter(command, str, adInteger, adParamInput, 0, value, &parameter );
+    SysFreeString(str);
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( parameter != NULL, "Invalid pointer\n");
+
+    hr = _Command_get_Parameters( command,  &parameters );
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    hr = _Parameter_QueryInterface(parameter, &IID_IDispatch, (void**)&disp);
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    hr = Parameters_Append(parameters, disp);
+    ok( hr == S_OK, "got %08lx\n", hr );
+
+    IDispatch_Release(disp);
+    _Parameter_Release(parameter);
+
+    hr = _Command_get_Parameters( command,  &parameters2 );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( parameters == parameters2, "got %08lx\n", hr );
+    Parameters_Release(parameters);
+    Parameters_Release(parameters2);
 
     _Command_Release( command );
 }

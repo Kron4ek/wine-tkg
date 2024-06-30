@@ -45,6 +45,7 @@ typedef unsigned __int64 mem_size_t;
 typedef unsigned __int64 file_pos_t;
 typedef unsigned __int64 client_ptr_t;
 typedef unsigned __int64 affinity_t;
+typedef unsigned __int64 object_id_t;
 typedef client_ptr_t mod_handle_t;
 
 struct request_header
@@ -894,6 +895,47 @@ struct directory_entry
     /* VARARG(name,unicode_str,name_len); */
     /* VARARG(type,unicode_str,type_len); */
 };
+
+/****************************************************************/
+/* shared session mapping structures */
+
+struct shared_cursor
+{
+    int                  x;                /* cursor position */
+    int                  y;
+    unsigned int         last_change;      /* time of last position change */
+    rectangle_t          clip;             /* cursor clip rectangle */
+};
+
+typedef volatile struct
+{
+    struct shared_cursor cursor;           /* global cursor information */
+    unsigned char        keystate[256];    /* asynchronous key state */
+} desktop_shm_t;
+
+typedef volatile struct
+{
+    int                  hooks_count[WH_MAX - WH_MIN + 2]; /* active hooks count */
+} queue_shm_t;
+
+typedef volatile union
+{
+    desktop_shm_t        desktop;
+    queue_shm_t          queue;
+} object_shm_t;
+
+typedef volatile struct
+{
+    LONG64               seq;              /* sequence number - server updating if (seq & 1) != 0 */
+    object_id_t          id;               /* object unique id, object data is valid if != 0 */
+    object_shm_t         shm;              /* object shared data */
+} shared_object_t;
+
+typedef struct
+{
+    object_id_t          id;               /* object unique id, object data is valid if != 0 */
+    mem_size_t           offset;           /* offset of the object in session shared memory */
+} obj_locator_t;
 
 /****************************************************************/
 /* Request declarations */
@@ -2094,10 +2136,17 @@ enum prefix_type
 @END
 
 
+/* Get a handle for the current thread message queue */
+@REQ(get_msg_queue_handle)
+@REPLY
+    obj_handle_t handle;       /* handle to the queue */
+@END
+
+
 /* Get the message queue of the current thread */
 @REQ(get_msg_queue)
 @REPLY
-    obj_handle_t handle;       /* handle to the queue */
+    obj_locator_t  locator;    /* locator for the shared session object */
 @END
 
 
@@ -2202,7 +2251,6 @@ enum message_type
     int             x;         /* message x position */
     int             y;         /* message y position */
     unsigned int    time;      /* message time */
-    unsigned int    active_hooks; /* active hooks bitmap */
     data_size_t     total;     /* total size of extra data */
     VARARG(data,message_data); /* message data for sent messages */
 @END
@@ -2265,7 +2313,6 @@ enum message_type
     int          flags;
 @REPLY
     unsigned int eventmask;
-    unsigned int cookie;
     unsigned int pending_write;
 @END
 
@@ -2276,7 +2323,6 @@ enum message_type
     int          flags;        /* bitmask to set values (see below) */
 @END
 #define SERIALINFO_PENDING_WRITE 0x04
-#define SERIALINFO_PENDING_WAIT  0x08
 
 /* Cancel all sync io on a thread */
 @REQ(cancel_sync)
@@ -2821,13 +2867,16 @@ enum coords_relative
 @REQ(get_thread_desktop)
     thread_id_t  tid;             /* thread id */
 @REPLY
-    obj_handle_t handle;          /* handle to the desktop */
+    obj_locator_t  locator;       /* locator for the shared session object */
+    obj_handle_t   handle;        /* handle to the desktop */
 @END
 
 
 /* Set the thread current desktop */
 @REQ(set_thread_desktop)
     obj_handle_t handle;          /* handle to the desktop */
+@REPLY
+    obj_locator_t  locator;       /* locator for the shared session object */
 @END
 
 
@@ -3012,7 +3061,6 @@ enum caret_state
     VARARG(module,unicode_str);    /* module name */
 @REPLY
     user_handle_t  handle;         /* handle to the hook */
-    unsigned int   active_hooks;   /* active hooks bitmap */
 @END
 
 
@@ -3022,7 +3070,6 @@ enum caret_state
     client_ptr_t   proc;           /* hook procedure if handle is 0 */
     int            id;             /* id of the hook if handle is 0 */
 @REPLY
-    unsigned int   active_hooks;   /* active hooks bitmap */
 @END
 
 
@@ -3039,7 +3086,6 @@ enum caret_state
     thread_id_t    tid;            /* thread id for low-level keyboard/mouse hooks */
     int            unicode;        /* is it a unicode hook? */
     client_ptr_t   proc;           /* hook procedure */
-    unsigned int   active_hooks;   /* active hooks bitmap */
     VARARG(module,unicode_str);    /* module name */
 @END
 

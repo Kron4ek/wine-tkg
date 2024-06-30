@@ -179,7 +179,7 @@ struct gdi_dc_funcs
 };
 
 /* increment this when you change the DC function table */
-#define WINE_GDI_DRIVER_VERSION 85
+#define WINE_GDI_DRIVER_VERSION 86
 
 #define GDI_PRIORITY_NULL_DRV        0  /* null driver */
 #define GDI_PRIORITY_FONT_DRV      100  /* any font driver */
@@ -211,9 +211,9 @@ struct window_surface;
 
 struct window_surface_funcs
 {
-    void* (*get_info)( struct window_surface *surface, BITMAPINFO *info );
     void  (*set_clip)( struct window_surface *surface, const RECT *rects, UINT count );
-    BOOL  (*flush)( struct window_surface *surface, const RECT *rect, const RECT *dirty );
+    BOOL  (*flush)( struct window_surface *surface, const RECT *rect, const RECT *dirty,
+                    const BITMAPINFO *color_info, const void *color_bits );
     void  (*destroy)( struct window_surface *surface );
 };
 
@@ -229,8 +229,10 @@ struct window_surface
     RECT                               bounds;       /* dirty area rectangle */
     HRGN                               clip_region;  /* visible region of the surface, fully visible if 0 */
     DWORD                              draw_start_ticks; /* start ticks of fresh draw */
+    COLORREF                           color_key;    /* layered window surface color key, invalid if CLR_INVALID */
+    UINT                               alpha_bits;   /* layered window global alpha bits, invalid if -1 */
+    UINT                               alpha_mask;   /* layered window per-pixel alpha mask, invalid if 0 */
     HBITMAP                            color_bitmap; /* bitmap for the surface colors */
-    void                              *color_bits;   /* pixel bits of the color bitmap */
     /* driver-specific fields here */
 };
 
@@ -240,6 +242,7 @@ W32KAPI void window_surface_add_ref( struct window_surface *surface );
 W32KAPI void window_surface_release( struct window_surface *surface );
 W32KAPI void window_surface_lock( struct window_surface *surface );
 W32KAPI void window_surface_unlock( struct window_surface *surface );
+W32KAPI void window_surface_set_layered( struct window_surface *surface, COLORREF color_key, UINT alpha_bits, UINT alpha_mask );
 W32KAPI void window_surface_flush( struct window_surface *surface );
 W32KAPI void window_surface_set_clip( struct window_surface *surface, HRGN clip_region );
 
@@ -339,7 +342,7 @@ struct user_driver_funcs
     void    (*pUpdateLayeredWindow)(HWND,const RECT *,COLORREF,BYTE,UINT);
     LRESULT (*pWindowMessage)(HWND,UINT,WPARAM,LPARAM);
     BOOL    (*pWindowPosChanging)(HWND,UINT,const RECT *,const RECT *,RECT *);
-    BOOL    (*pCreateWindowSurface)(HWND,UINT,const RECT *,struct window_surface**);
+    BOOL    (*pCreateWindowSurface)(HWND,const RECT *,struct window_surface**);
     void    (*pWindowPosChanged)(HWND,HWND,UINT,const RECT *,const RECT *,const RECT *,
                                  const RECT *,struct window_surface*);
     /* system parameters */

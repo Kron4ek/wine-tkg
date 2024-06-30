@@ -412,11 +412,12 @@ static NTSTATUS wg_parser_stream_release_buffer(void *args)
 
     pthread_mutex_lock(&parser->mutex);
 
-    assert(stream->buffer);
-
-    gst_buffer_unmap(stream->buffer, &stream->map_info);
-    gst_buffer_unref(stream->buffer);
-    stream->buffer = NULL;
+    if (stream->buffer)
+    {
+        gst_buffer_unmap(stream->buffer, &stream->map_info);
+        gst_buffer_unref(stream->buffer);
+        stream->buffer = NULL;
+    }
 
     pthread_mutex_unlock(&parser->mutex);
     pthread_cond_signal(&stream->event_empty_cond);
@@ -576,24 +577,20 @@ static gboolean sink_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
     switch (event->type)
     {
         case GST_EVENT_SEGMENT:
-            pthread_mutex_lock(&parser->mutex);
-            if (stream->enabled)
+        {
+            const GstSegment *segment;
+
+            gst_event_parse_segment(event, &segment);
+            if (segment->format != GST_FORMAT_TIME)
             {
-                const GstSegment *segment;
-
-                gst_event_parse_segment(event, &segment);
-
-                if (segment->format != GST_FORMAT_TIME)
-                {
-                    pthread_mutex_unlock(&parser->mutex);
-                    GST_FIXME("Unhandled format \"%s\".", gst_format_get_name(segment->format));
-                    break;
-                }
-
-                gst_segment_copy_into(segment, &stream->segment);
+                GST_FIXME("Unhandled format \"%s\".", gst_format_get_name(segment->format));
+                break;
             }
+            pthread_mutex_lock(&parser->mutex);
+            gst_segment_copy_into(segment, &stream->segment);
             pthread_mutex_unlock(&parser->mutex);
             break;
+        }
 
         case GST_EVENT_EOS:
             pthread_mutex_lock(&parser->mutex);
@@ -608,17 +605,14 @@ static gboolean sink_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
         case GST_EVENT_FLUSH_START:
             pthread_mutex_lock(&parser->mutex);
 
-            if (stream->enabled)
-            {
-                stream->flushing = true;
-                pthread_cond_signal(&stream->event_empty_cond);
+            stream->flushing = true;
+            pthread_cond_signal(&stream->event_empty_cond);
 
-                if (stream->buffer)
-                {
-                    gst_buffer_unmap(stream->buffer, &stream->map_info);
-                    gst_buffer_unref(stream->buffer);
-                    stream->buffer = NULL;
-                }
+            if (stream->buffer)
+            {
+                gst_buffer_unmap(stream->buffer, &stream->map_info);
+                gst_buffer_unref(stream->buffer);
+                stream->buffer = NULL;
             }
 
             pthread_mutex_unlock(&parser->mutex);
@@ -636,8 +630,7 @@ static gboolean sink_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
             pthread_mutex_lock(&parser->mutex);
 
             stream->eos = false;
-            if (stream->enabled)
-                stream->flushing = false;
+            stream->flushing = false;
 
             pthread_mutex_unlock(&parser->mutex);
             break;
