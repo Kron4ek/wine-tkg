@@ -145,8 +145,6 @@ static const struct object_ops token_ops =
     no_add_queue,              /* add_queue */
     NULL,                      /* remove_queue */
     NULL,                      /* signaled */
-    NULL,                      /* get_esync_fd */
-    NULL,                      /* get_fsync_idx */
     NULL,                      /* satisfied */
     no_signal,                 /* signal */
     no_get_fd,                 /* get_fd */
@@ -159,6 +157,7 @@ static const struct object_ops token_ops =
     NULL,                      /* unlink_name */
     no_open_file,              /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
+    no_get_fast_sync,          /* get_fast_sync */
     no_close_handle,           /* close_handle */
     token_destroy              /* destroy */
 };
