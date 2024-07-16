@@ -39,15 +39,18 @@ extern ULONG_PTR highest_user_address;
 extern ULONG_PTR default_zero_bits;
 extern SYSTEM_DLL_INIT_BLOCK *pLdrSystemDllInitBlock;
 
-extern void (WINAPI *pBTCpuNotifyFlushInstructionCache2)( const void *, SIZE_T );
-extern void (WINAPI *pBTCpuNotifyMapViewOfSection)( void * );
-extern void (WINAPI *pBTCpuNotifyMemoryAlloc)( void *, SIZE_T, ULONG, ULONG );
-extern void (WINAPI *pBTCpuNotifyMemoryDirty)( void *, SIZE_T );
-extern void (WINAPI *pBTCpuNotifyMemoryFree)( void *, SIZE_T, ULONG );
-extern void (WINAPI *pBTCpuNotifyMemoryProtect)( void *, SIZE_T, ULONG );
-extern void (WINAPI *pBTCpuNotifyUnmapViewOfSection)( void * );
-extern void (WINAPI *pBTCpuUpdateProcessorInformation)( SYSTEM_CPU_INFORMATION * );
-extern void (WINAPI *pBTCpuThreadTerm)( HANDLE );
+extern void     (WINAPI *pBTCpuFlushInstructionCache2)( const void *, SIZE_T );
+extern void     (WINAPI *pBTCpuFlushInstructionCacheHeavy)( const void *, SIZE_T );
+extern NTSTATUS (WINAPI *pBTCpuNotifyMapViewOfSection)( void *, void *, void *, SIZE_T, ULONG, ULONG );
+extern void     (WINAPI *pBTCpuNotifyMemoryAlloc)( void *, SIZE_T, ULONG, ULONG, BOOL, NTSTATUS );
+extern void     (WINAPI *pBTCpuNotifyMemoryDirty)( void *, SIZE_T );
+extern void     (WINAPI *pBTCpuNotifyMemoryFree)( void *, SIZE_T, ULONG, BOOL, NTSTATUS );
+extern void     (WINAPI *pBTCpuNotifyMemoryProtect)( void *, SIZE_T, ULONG, BOOL, NTSTATUS );
+extern void     (WINAPI *pBTCpuNotifyReadFile)( HANDLE, void *, SIZE_T, BOOL, NTSTATUS );
+extern void     (WINAPI *pBTCpuNotifyUnmapViewOfSection)( void *, BOOL, NTSTATUS );
+extern void     (WINAPI *pBTCpuUpdateProcessorInformation)( SYSTEM_CPU_INFORMATION * );
+extern void     (WINAPI *pBTCpuProcessTerm)( HANDLE, BOOL, NTSTATUS );
+extern void     (WINAPI *pBTCpuThreadTerm)( HANDLE, LONG );
 
 struct object_attr64
 {
@@ -66,6 +69,11 @@ static inline const WCHAR *get_machine_wow64_dir( USHORT machine )
     case IMAGE_FILE_MACHINE_ARMNT:       return L"\\??\\C:\\windows\\sysarm32";
     default: return NULL;
     }
+}
+
+static inline TEB32 *NtCurrentTeb32(void)
+{
+    return (TEB32 *)((char *)NtCurrentTeb() + NtCurrentTeb()->WowTebOffset);
 }
 
 static inline ULONG get_ulong( UINT **args ) { return *(*args)++; }

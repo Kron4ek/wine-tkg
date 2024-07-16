@@ -84,7 +84,7 @@ HRESULT WINAPI D3DXFilterTexture(IDirect3DBaseTexture9 *texture,
             else
             {
                 numfaces = 6;
-                IDirect3DCubeTexture9_GetLevelDesc((IDirect3DTexture9*) texture, srclevel, &desc);
+                IDirect3DCubeTexture9_GetLevelDesc((IDirect3DCubeTexture9 *)texture, srclevel, &desc);
             }
 
             if (filter == D3DX_DEFAULT)
@@ -588,6 +588,7 @@ HRESULT WINAPI D3DXCreateTextureFromFileInMemoryEx(struct IDirect3DDevice9 *devi
 
     staging_tex = tex = *texture = NULL;
     skip_levels = mipfilter != D3DX_DEFAULT ? mipfilter >> D3DX_SKIP_DDS_MIP_LEVELS_SHIFT : 0;
+    skip_levels &= D3DX_SKIP_DDS_MIP_LEVELS_MASK;
     hr = d3dx_image_init(srcdata, srcdatasize, &image, skip_levels, 0);
     if (FAILED(hr))
     {
@@ -1097,14 +1098,12 @@ HRESULT WINAPI D3DXCreateVolumeTextureFromFileInMemoryEx(IDirect3DDevice9 *devic
 {
     HRESULT hr;
     D3DCAPS9 caps;
+    struct d3dx_image image;
     D3DXIMAGE_INFO image_info;
-    BOOL dynamic_texture;
-    BOOL file_width = FALSE;
-    BOOL file_height = FALSE;
-    BOOL file_depth = FALSE;
-    BOOL file_format = FALSE;
-    BOOL file_mip_levels = FALSE;
-    IDirect3DVolumeTexture9 *tex, *buftex;
+    uint32_t loaded_miplevels, skip_levels, i;
+    IDirect3DVolumeTexture9 *tex, *staging_tex;
+    BOOL dynamic_texture, format_specified = FALSE;
+    const struct pixel_format_desc *src_fmt_desc, *dst_fmt_desc;
 
     TRACE("device %p, data %p, data_size %u, width %u, height %u, depth %u, mip_levels %u, "
             "usage %#lx, format %#x, pool %#x, filter %#lx, mip_filter %#lx, color_key 0x%08lx, "
@@ -1115,118 +1114,136 @@ HRESULT WINAPI D3DXCreateVolumeTextureFromFileInMemoryEx(IDirect3DDevice9 *devic
     if (!device || !data || !data_size || !volume_texture)
         return D3DERR_INVALIDCALL;
 
-    hr = D3DXGetImageInfoFromFileInMemory(data, data_size, &image_info);
-    if (FAILED(hr)) return hr;
-
-    if (image_info.ImageFileFormat != D3DXIFF_DDS)
-        return D3DXERR_INVALIDDATA;
-
-    if (width == 0 || width == D3DX_DEFAULT_NONPOW2)
-        width = image_info.Width;
-    if (width == D3DX_DEFAULT)
-        width = make_pow2(image_info.Width);
-
-    if (height == 0 || height == D3DX_DEFAULT_NONPOW2)
-        height = image_info.Height;
-    if (height == D3DX_DEFAULT)
-        height = make_pow2(image_info.Height);
-
-    if (depth == 0 || depth == D3DX_DEFAULT_NONPOW2)
-        depth = image_info.Depth;
-    if (depth == D3DX_DEFAULT)
-        depth = make_pow2(image_info.Depth);
-
-    if (format == D3DFMT_UNKNOWN || format == D3DX_DEFAULT)
-        format = image_info.Format;
-
-    if (width == D3DX_FROM_FILE)
+    staging_tex = tex = *volume_texture = NULL;
+    skip_levels = mip_filter != D3DX_DEFAULT ? mip_filter >> D3DX_SKIP_DDS_MIP_LEVELS_SHIFT : 0;
+    skip_levels &= D3DX_SKIP_DDS_MIP_LEVELS_MASK;
+    hr = d3dx_image_init(data, data_size, &image, skip_levels, 0);
+    if (FAILED(hr))
     {
-        file_width = TRUE;
-        width = image_info.Width;
+        FIXME("Unrecognized file format, returning failure.\n");
+        return hr;
     }
 
-    if (height == D3DX_FROM_FILE)
-    {
-        file_height = TRUE;
-        height = image_info.Height;
-    }
+    d3dximage_info_from_d3dx_image(&image_info, &image);
 
-    if (depth == D3DX_FROM_FILE)
-    {
-        file_depth = TRUE;
-        depth = image_info.Depth;
-    }
+    /* Handle default values. */
+    if (!width || width == D3DX_DEFAULT_NONPOW2 || width == D3DX_FROM_FILE || width == D3DX_DEFAULT)
+        width = (width == D3DX_DEFAULT) ? make_pow2(image_info.Width) : image_info.Width;
+    if (!height || height == D3DX_DEFAULT_NONPOW2 || height == D3DX_FROM_FILE || height == D3DX_DEFAULT)
+        height = (height == D3DX_DEFAULT) ? make_pow2(image_info.Height) : image_info.Height;
+    if (!depth || depth == D3DX_DEFAULT_NONPOW2 || depth == D3DX_FROM_FILE || depth == D3DX_DEFAULT)
+        depth = (depth == D3DX_DEFAULT) ? make_pow2(image_info.Depth) : image_info.Depth;
 
-    if (format == D3DFMT_FROM_FILE)
-    {
-        file_format = TRUE;
-        format = image_info.Format;
-    }
-
-    if (mip_levels == D3DX_FROM_FILE)
-    {
-        file_mip_levels = TRUE;
-        mip_levels = image_info.MipLevels;
-    }
+    format_specified = (format != D3DFMT_UNKNOWN && format != D3DX_DEFAULT);
+    if (format == D3DFMT_FROM_FILE || format == D3DFMT_UNKNOWN || format == D3DX_DEFAULT)
+         format = image_info.Format;
+    mip_levels = (mip_levels == D3DX_FROM_FILE) ? image_info.MipLevels : mip_levels;
 
     hr = D3DXCheckVolumeTextureRequirements(device, &width, &height, &depth, &mip_levels, usage, &format, pool);
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr))
+    {
+        FIXME("Couldn't find suitable texture parameters.\n");
+        goto err;
+    }
 
-    if ((file_width && width != image_info.Width)
-            || (file_height && height != image_info.Height)
-            || (file_depth && depth != image_info.Depth)
-            || (file_format && format != image_info.Format)
-            || (file_mip_levels && mip_levels != image_info.MipLevels))
-        return D3DERR_NOTAVAILABLE;
+    if (color_key && !format_specified)
+        format = get_alpha_replacement_format(format);
 
     hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
     if (FAILED(hr))
-        return D3DERR_INVALIDCALL;
-
-    if (mip_levels > image_info.MipLevels)
     {
-        FIXME("Generation of mipmaps for volume textures is not implemented yet.\n");
-        mip_levels = image_info.MipLevels;
+        hr = D3DERR_INVALIDCALL;
+        goto err;
     }
 
     dynamic_texture = (caps.Caps2 & D3DCAPS2_DYNAMICTEXTURES) && (usage & D3DUSAGE_DYNAMIC);
     if (pool == D3DPOOL_DEFAULT && !dynamic_texture)
     {
-        hr = D3DXCreateVolumeTexture(device, width, height, depth, mip_levels, 0, format, D3DPOOL_SYSTEMMEM, &buftex);
-        tex = buftex;
+        TRACE("Creating staging texture.\n");
+        hr = D3DXCreateVolumeTexture(device, width, height, depth, mip_levels, 0, format, D3DPOOL_SYSTEMMEM, &staging_tex);
+        tex = staging_tex;
     }
     else
     {
         hr = D3DXCreateVolumeTexture(device, width, height, depth, mip_levels, usage, format, pool, &tex);
-        buftex = NULL;
     }
-    if (FAILED(hr)) return hr;
 
-    hr = load_volume_texture_from_dds(tex, data, palette, filter, color_key, &image_info);
     if (FAILED(hr))
     {
-        IDirect3DVolumeTexture9_Release(tex);
-        return hr;
+        FIXME("Texture creation failed.\n");
+        goto err;
     }
 
-    if (buftex)
+    TRACE("Texture created correctly. Now loading the texture data into it.\n");
+    dst_fmt_desc = get_format_info(format);
+    src_fmt_desc = get_format_info(image_info.Format);
+    loaded_miplevels = min(image_info.MipLevels, IDirect3DVolumeTexture9_GetLevelCount(tex));
+    for (i = 0; i < loaded_miplevels; i++)
     {
-        hr = D3DXCreateVolumeTexture(device, width, height, depth, mip_levels, usage, format, pool, &tex);
-        if (FAILED(hr))
-        {
-            IDirect3DVolumeTexture9_Release(buftex);
-            return hr;
-        }
+        struct d3dx_pixels src_pixels, dst_pixels;
+        D3DVOLUME_DESC dst_volume_desc;
+        D3DLOCKED_BOX dst_locked_box;
+        RECT dst_rect;
 
-        IDirect3DDevice9_UpdateTexture(device, (IDirect3DBaseTexture9 *)buftex, (IDirect3DBaseTexture9 *)tex);
-        IDirect3DVolumeTexture9_Release(buftex);
+        hr = d3dx_image_get_pixels(&image, i, &src_pixels);
+        if (FAILED(hr))
+            break;
+
+        hr = IDirect3DVolumeTexture9_LockBox(tex, i, &dst_locked_box, NULL, 0);
+        if (FAILED(hr))
+            break;
+
+        IDirect3DVolumeTexture9_GetLevelDesc(tex, i, &dst_volume_desc);
+        SetRect(&dst_rect, 0, 0, dst_volume_desc.Width, dst_volume_desc.Height);
+        set_d3dx_pixels(&dst_pixels, dst_locked_box.pBits, dst_locked_box.RowPitch, dst_locked_box.SlicePitch, palette,
+                dst_volume_desc.Width, dst_volume_desc.Height, dst_volume_desc.Depth, &dst_rect);
+
+        hr = d3dx_load_pixels_from_pixels(&dst_pixels, dst_fmt_desc, &src_pixels, src_fmt_desc, filter, color_key);
+        IDirect3DVolumeTexture9_UnlockBox(tex, i);
+        if (FAILED(hr))
+            break;
     }
 
+    if (FAILED(hr))
+    {
+        FIXME("Texture loading failed.\n");
+        goto err;
+    }
+
+    hr = D3DXFilterTexture((IDirect3DBaseTexture9 *)tex, palette, loaded_miplevels - 1, mip_filter);
+    if (FAILED(hr))
+    {
+        FIXME("Texture filtering failed.\n");
+        goto err;
+    }
+
+    /* Move the data to the actual texture if necessary. */
+    if (staging_tex)
+    {
+        hr = D3DXCreateVolumeTexture(device, width, height, depth, mip_levels, usage, format, pool, volume_texture);
+        if (FAILED(hr))
+            goto err;
+
+        IDirect3DDevice9_UpdateTexture(device, (IDirect3DBaseTexture9 *)staging_tex, (IDirect3DBaseTexture9 *)(*volume_texture));
+        IDirect3DVolumeTexture9_Release(staging_tex);
+    }
+    else
+    {
+        *volume_texture = tex;
+    }
+
+    d3dx_image_cleanup(&image);
     if (info)
         *info = image_info;
 
-    *volume_texture = tex;
-    return D3D_OK;
+    return hr;
+
+err:
+    d3dx_image_cleanup(&image);
+    if (tex)
+        IDirect3DVolumeTexture9_Release(tex);
+
+    return hr;
 }
 
 static inline void fill_texture(const struct pixel_format_desc *format, BYTE *pos, const D3DXVECTOR4 *value)
@@ -1303,7 +1320,7 @@ HRESULT WINAPI D3DXFillTexture(struct IDirect3DTexture9 *texture, LPD3DXFILL2D f
     if (!texture || !function)
         return D3DERR_INVALIDCALL;
 
-    miplevels = IDirect3DBaseTexture9_GetLevelCount(texture);
+    miplevels = IDirect3DTexture9_GetLevelCount(texture);
 
     for (m = 0; m < miplevels; m++)
     {
@@ -1652,7 +1669,7 @@ HRESULT WINAPI D3DXFillCubeTexture(struct IDirect3DCubeTexture9 *texture, LPD3DX
     if (texture == NULL || function == NULL)
         return D3DERR_INVALIDCALL;
 
-    miplevels = IDirect3DBaseTexture9_GetLevelCount(texture);
+    miplevels = IDirect3DCubeTexture9_GetLevelCount(texture);
 
     for (m = 0; m < miplevels; m++)
     {
@@ -1713,7 +1730,7 @@ HRESULT WINAPI D3DXFillVolumeTexture(struct IDirect3DVolumeTexture9 *texture, LP
     if (texture == NULL || function == NULL)
         return D3DERR_INVALIDCALL;
 
-    miplevels = IDirect3DBaseTexture9_GetLevelCount(texture);
+    miplevels = IDirect3DVolumeTexture9_GetLevelCount(texture);
 
     for (m = 0; m < miplevels; m++)
     {

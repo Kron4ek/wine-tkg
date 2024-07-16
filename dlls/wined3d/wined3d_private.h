@@ -1778,10 +1778,7 @@ void dispatch_compute(struct wined3d_device *device, const struct wined3d_state 
 #define STATE_POINT_ENABLE (STATE_FRAMEBUFFER + 1)
 #define STATE_IS_POINT_ENABLE(a) ((a) == STATE_POINT_ENABLE)
 
-#define STATE_COLOR_KEY (STATE_POINT_ENABLE + 1)
-#define STATE_IS_COLOR_KEY(a) ((a) == STATE_COLOR_KEY)
-
-#define STATE_STREAM_OUTPUT (STATE_COLOR_KEY + 1)
+#define STATE_STREAM_OUTPUT (STATE_POINT_ENABLE + 1)
 #define STATE_IS_STREAM_OUTPUT(a) ((a) == STATE_STREAM_OUTPUT)
 
 #define STATE_BLEND (STATE_STREAM_OUTPUT + 1)
@@ -2768,10 +2765,22 @@ BOOL wined3d_get_app_name(char *app_name, unsigned int app_name_size);
  * i.e. only used when shaders are disabled.
  */
 
+struct wined3d_ffp_vs_constants
+{
+    struct wined3d_ffp_light_constants
+    {
+        struct wined3d_color ambient;
+    } light;
+};
+
 struct wined3d_ffp_ps_constants
 {
     struct wined3d_color texture_constants[WINED3D_MAX_FFP_TEXTURES];
     struct wined3d_color texture_factor;
+    /* (1, 1, 1, 0) or (0, 0, 0, 0), which shaders will multiply with the
+     * specular color. */
+    struct wined3d_color specular_enable;
+    struct wined3d_color color_key[2];
 };
 
 enum wined3d_push_constants
@@ -2782,6 +2791,7 @@ enum wined3d_push_constants
     WINED3D_PUSH_CONSTANTS_PS_I,
     WINED3D_PUSH_CONSTANTS_VS_B,
     WINED3D_PUSH_CONSTANTS_PS_B,
+    WINED3D_PUSH_CONSTANTS_VS_FFP,
     WINED3D_PUSH_CONSTANTS_PS_FFP,
     WINED3D_PUSH_CONSTANTS_COUNT,
 };
@@ -3330,6 +3340,9 @@ struct wined3d_texture
         struct wined3d_color_key gl_color_key;
         DWORD color_key_flags;
     } async;
+
+    /* Color key field accessed from the client side. */
+    struct wined3d_color_key src_blt_color_key;
 
     struct wined3d_dirty_regions
     {

@@ -2034,11 +2034,12 @@ static bool vk_barrier_parameters_from_d3d12_resource_state(unsigned int state, 
     if (vk_queue_flags & VK_QUEUE_GRAPHICS_BIT)
     {
         queue_shader_stages |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT
-                | VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT
-                | VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT
                 | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
         if (device->vk_info.geometry_shaders)
             queue_shader_stages |= VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
+        if (device->vk_info.tessellation_shaders)
+            queue_shader_stages |= VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT
+                    | VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
     }
     if (vk_queue_flags & VK_QUEUE_COMPUTE_BIT)
         queue_shader_stages |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;

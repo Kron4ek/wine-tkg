@@ -3359,6 +3359,13 @@ static void test_coop_level_mode_set(void)
     /* For Wine. */
     change_ret = ChangeDisplaySettingsW(NULL, CDS_FULLSCREEN);
     ok(change_ret == DISP_CHANGE_SUCCESSFUL, "Failed to change display mode, ret %#lx.\n", change_ret);
+    flush_events();
+
+    if (IsIconic(window)) /* make sure the window is restored, working around some Wine/X11 race condition */
+    {
+        ShowWindow(window, SW_RESTORE);
+        flush_events();
+    }
 
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
@@ -3784,6 +3791,8 @@ static void test_coop_level_mode_set(void)
 
     hr = IDirectDraw7_RestoreDisplayMode(ddraw);
     ok(SUCCEEDED(hr), "RestoreDisplayMode failed, hr %#lx.\n", hr);
+
+    flush_events(); /* flush any pending window resize X11 event */
 
     /* If the window is changed at the same time, messages are sent to the new window. */
     hr = IDirectDraw7_SetCooperativeLevel(ddraw, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);

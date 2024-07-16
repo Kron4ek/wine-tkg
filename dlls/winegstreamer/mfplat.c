@@ -586,16 +586,140 @@ static IMFMediaType *mf_media_type_from_wg_format_video(const struct wg_format *
     return NULL;
 }
 
+static IMFMediaType *mf_media_type_from_wg_format_audio_mpeg1(const struct wg_format *format)
+{
+    IMFMediaType *type;
+
+    if (FAILED(MFCreateMediaType(&type)))
+        return NULL;
+
+    if (format->u.audio.layer != 3)
+        FIXME("Unhandled layer %#x.\n", format->u.audio.layer);
+
+    IMFMediaType_SetGUID(type, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
+    IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MFAudioFormat_MP3);
+    IMFMediaType_SetGUID(type, &MF_MT_AM_FORMAT_TYPE, &FORMAT_WaveFormatEx);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_NUM_CHANNELS, format->u.audio.channels);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_CHANNEL_MASK, format->u.audio.channel_mask);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_PREFER_WAVEFORMATEX, TRUE);
+    IMFMediaType_SetUINT32(type, &MF_MT_FIXED_SIZE_SAMPLES, TRUE);
+    IMFMediaType_SetUINT32(type, &MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+
+    return type;
+}
+
+static IMFMediaType *mf_media_type_from_wg_format_audio_mpeg4(const struct wg_format *format)
+{
+    IMFMediaType *type;
+
+    if (FAILED(MFCreateMediaType(&type)))
+        return NULL;
+
+    IMFMediaType_SetGUID(type, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
+    IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MFAudioFormat_AAC);
+    IMFMediaType_SetGUID(type, &MF_MT_AM_FORMAT_TYPE, &FORMAT_WaveFormatEx);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, format->u.audio.rate);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_NUM_CHANNELS, format->u.audio.channels);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_CHANNEL_MASK, format->u.audio.channel_mask);
+    IMFMediaType_SetUINT32(type, &MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0); /* unknown */
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_PREFER_WAVEFORMATEX, TRUE);
+    IMFMediaType_SetUINT32(type, &MF_MT_FIXED_SIZE_SAMPLES, TRUE);
+    IMFMediaType_SetUINT32(type, &MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+    IMFMediaType_SetBlob(type, &MF_MT_USER_DATA, format->u.audio.codec_data, format->u.audio.codec_data_len);
+
+    return type;
+}
+
+static IMFMediaType *mf_media_type_from_wg_format_h264(const struct wg_format *format)
+{
+    IMFMediaType *type;
+
+    if (FAILED(MFCreateMediaType(&type)))
+        return NULL;
+
+    IMFMediaType_SetGUID(type, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
+    IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MFVideoFormat_H264);
+    IMFMediaType_SetGUID(type, &MF_MT_AM_FORMAT_TYPE, &FORMAT_MPEG2Video);
+    IMFMediaType_SetUINT64(type, &MF_MT_FRAME_SIZE,
+            make_uint64(format->u.video.width, format->u.video.height));
+    IMFMediaType_SetUINT64(type, &MF_MT_FRAME_RATE,
+            make_uint64(format->u.video.fps_n, format->u.video.fps_d));
+    IMFMediaType_SetUINT32(type, &MF_MT_VIDEO_ROTATION, MFVideoRotationFormat_0);
+    IMFMediaType_SetUINT32(type, &MF_MT_MPEG2_PROFILE, format->u.video.profile);
+    IMFMediaType_SetUINT32(type, &MF_MT_MPEG2_LEVEL, format->u.video.level);
+
+    return type;
+}
+
+static IMFMediaType *mf_media_type_from_wg_format_wmv(const struct wg_format *format)
+{
+    IMFMediaType *type;
+
+    if (FAILED(MFCreateMediaType(&type)))
+        return NULL;
+
+    IMFMediaType_SetGUID(type, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
+
+    if (format->u.video.format == WG_VIDEO_FORMAT_WMV1)
+        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MEDIASUBTYPE_WMV1);
+    else if (format->u.video.format == WG_VIDEO_FORMAT_WMV2)
+        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MEDIASUBTYPE_WMV2);
+    else if (format->u.video.format == WG_VIDEO_FORMAT_WMV3)
+        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MEDIASUBTYPE_WMV3);
+    else if (format->u.video.format == WG_VIDEO_FORMAT_WMVA)
+        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MEDIASUBTYPE_WMVA);
+    else if (format->u.video.format == WG_VIDEO_FORMAT_WVC1)
+        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MEDIASUBTYPE_WVC1);
+    else
+        FIXME("Unhandled format %#x.\n", format->u.video.format);
+
+    IMFMediaType_SetUINT64(type, &MF_MT_FRAME_SIZE,
+            make_uint64(format->u.video.width, format->u.video.height));
+    IMFMediaType_SetUINT32(type, &MF_MT_VIDEO_ROTATION, MFVideoRotationFormat_0);
+
+    if (format->u.video.codec_data_len)
+        IMFMediaType_SetBlob(type, &MF_MT_USER_DATA, format->u.video.codec_data, format->u.video.codec_data_len);
+
+    return type;
+}
+
+static IMFMediaType *mf_media_type_from_wg_format_wma(const struct wg_format *format)
+{
+    IMFMediaType *type;
+
+    if (FAILED(MFCreateMediaType(&type)))
+        return NULL;
+
+    IMFMediaType_SetGUID(type, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
+
+    if (format->u.audio.version == 1)
+        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MEDIASUBTYPE_MSAUDIO1);
+    else if (format->u.audio.version == 2)
+        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MFAudioFormat_WMAudioV8);
+    else if (format->u.audio.version == 3)
+        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MFAudioFormat_WMAudioV9);
+    else if (format->u.audio.version == 4)
+        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MFAudioFormat_WMAudio_Lossless);
+    else
+        FIXME("Unhandled version %#x.\n", format->u.audio.version);
+
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, format->u.audio.rate);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_NUM_CHANNELS, format->u.audio.channels);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_CHANNEL_MASK, format->u.audio.channel_mask);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_AVG_BYTES_PER_SECOND, format->u.audio.bitrate / 8);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_PREFER_WAVEFORMATEX, TRUE);
+    IMFMediaType_SetUINT32(type, &MF_MT_AUDIO_BLOCK_ALIGNMENT, format->u.audio.block_align);
+    IMFMediaType_SetBlob(type, &MF_MT_USER_DATA, format->u.audio.codec_data, format->u.audio.codec_data_len);
+
+    return type;
+}
+
 IMFMediaType *mf_media_type_from_wg_format(const struct wg_format *format)
 {
     switch (format->major_type)
     {
-        case WG_MAJOR_TYPE_AUDIO_MPEG1:
-        case WG_MAJOR_TYPE_AUDIO_MPEG4:
-        case WG_MAJOR_TYPE_AUDIO_WMA:
         case WG_MAJOR_TYPE_VIDEO_CINEPAK:
-        case WG_MAJOR_TYPE_VIDEO_H264:
-        case WG_MAJOR_TYPE_VIDEO_WMV:
         case WG_MAJOR_TYPE_VIDEO_INDEO:
         case WG_MAJOR_TYPE_VIDEO_MPEG1:
             FIXME("Format %u not implemented!\n", format->major_type);
@@ -608,6 +732,21 @@ IMFMediaType *mf_media_type_from_wg_format(const struct wg_format *format)
 
         case WG_MAJOR_TYPE_VIDEO:
             return mf_media_type_from_wg_format_video(format);
+
+        case WG_MAJOR_TYPE_VIDEO_H264:
+            return mf_media_type_from_wg_format_h264(format);
+
+        case WG_MAJOR_TYPE_AUDIO_MPEG1:
+            return mf_media_type_from_wg_format_audio_mpeg1(format);
+
+        case WG_MAJOR_TYPE_AUDIO_MPEG4:
+            return mf_media_type_from_wg_format_audio_mpeg4(format);
+
+        case WG_MAJOR_TYPE_VIDEO_WMV:
+            return mf_media_type_from_wg_format_wmv(format);
+
+        case WG_MAJOR_TYPE_AUDIO_WMA:
+            return mf_media_type_from_wg_format_wma(format);
     }
 
     assert(0);

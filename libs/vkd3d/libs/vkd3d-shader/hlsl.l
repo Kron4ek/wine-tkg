@@ -198,7 +198,9 @@ while                   {return KW_WHILE;               }
                             struct hlsl_ctx *ctx = yyget_extra(yyscanner);
 
                             yylval->name = hlsl_strdup(ctx, yytext);
-                            if (hlsl_get_var(ctx->cur_scope, yytext) || hlsl_get_function(ctx, yytext))
+                            if (hlsl_version_ge(ctx, 5, 1) && !strcmp(yytext, "ConstantBuffer"))
+                                return KW_CONSTANTBUFFER;
+                            else if (hlsl_get_var(ctx->cur_scope, yytext) || hlsl_get_function(ctx, yytext))
                                 return VAR_IDENTIFIER;
                             else if (hlsl_get_type(ctx->cur_scope, yytext, true, true))
                                 return TYPE_IDENTIFIER;

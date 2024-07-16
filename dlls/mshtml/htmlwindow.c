@@ -109,7 +109,7 @@ static inline HRESULT get_window_event(HTMLWindow *window, eventid_t eid, VARIAN
 static void detach_inner_window(HTMLInnerWindow *window)
 {
     HTMLOuterWindow *outer_window = window->base.outer_window;
-    HTMLDocumentNode *doc = window->doc;
+    HTMLDocumentNode *doc = window->doc, *doc_iter;
 
     while(!list_empty(&window->children)) {
         HTMLOuterWindow *child = LIST_ENTRY(list_tail(&window->children), HTMLOuterWindow, sibling_entry);
@@ -126,6 +126,8 @@ static void detach_inner_window(HTMLInnerWindow *window)
     if(outer_window && is_main_content_window(outer_window))
         window->doc->cp_container.forward_container = NULL;
 
+    LIST_FOR_EACH_ENTRY(doc_iter, &window->documents, HTMLDocumentNode, script_global_entry)
+        doc_iter->script_global = NULL;
     if(doc)
         detach_document_node(doc);
 
@@ -135,6 +137,7 @@ static void detach_inner_window(HTMLInnerWindow *window)
     abort_window_bindings(window);
     remove_target_tasks(window->task_magic);
     release_script_hosts(window);
+    unlink_ref(&window->jscript);
     window->base.outer_window = NULL;
 
     if(outer_window && outer_window->base.inner_window == window) {
@@ -826,7 +829,7 @@ static HRESULT WINAPI HTMLWindow2_get_navigator(IHTMLWindow2 *iface, IOmNavigato
 
     if(!window->navigator) {
         HRESULT hres;
-        hres = create_navigator(dispex_compat_mode(&window->event_target.dispex), &window->navigator);
+        hres = create_navigator(window, &window->navigator);
         if(FAILED(hres))
             return hres;
     }
@@ -1215,7 +1218,7 @@ static HRESULT WINAPI HTMLWindow2_get_screen(IHTMLWindow2 *iface, IHTMLScreen **
     if(!window->screen) {
         HRESULT hres;
 
-        hres = create_html_screen(dispex_compat_mode(&window->event_target.dispex), &window->screen);
+        hres = create_html_screen(window, &window->screen);
         if(FAILED(hres))
             return hres;
     }
@@ -3167,7 +3170,7 @@ static HRESULT WINAPI window_private_matchMedia(IWineHTMLWindowPrivate *iface, B
 
     TRACE("iface %p, media_query %s\n", iface, debugstr_w(media_query));
 
-    return create_media_query_list(This, media_query, media_query_list);
+    return create_media_query_list(This->inner_window, media_query, media_query_list);
 }
 
 static HRESULT WINAPI window_private_get_console(IWineHTMLWindowPrivate *iface, IDispatch **console)
@@ -3178,7 +3181,7 @@ static HRESULT WINAPI window_private_get_console(IWineHTMLWindowPrivate *iface, 
     TRACE("iface %p, console %p.\n", iface, console);
 
     if (!window->console)
-        create_console(dispex_compat_mode(&window->event_target.dispex), &window->console);
+        create_console(window, &window->console);
 
     *console = (IDispatch *)window->console;
     if (window->console)
@@ -3440,6 +3443,48 @@ static HRESULT WINAPI WindowDispEx_GetNameSpaceParent(IWineJSDispatchHost *iface
     return S_OK;
 }
 
+static HRESULT WINAPI WindowDispEx_GetJSDispatch(IWineJSDispatchHost *iface, IWineJSDispatch **ret)
+{
+    HTMLOuterWindow *This = impl_from_IWineJSDispatchHost(iface);
+
+    return IWineJSDispatchHost_GetJSDispatch(&This->base.inner_window->event_target.dispex.IWineJSDispatchHost_iface, ret);
+}
+
+static HRESULT WINAPI WindowDispEx_LookupProperty(IWineJSDispatchHost *iface, const WCHAR *name, DWORD flags,
+                                                  struct property_info *desc)
+{
+    HTMLOuterWindow *This = impl_from_IWineJSDispatchHost(iface);
+
+    return IWineJSDispatchHost_LookupProperty(&This->base.inner_window->event_target.dispex.IWineJSDispatchHost_iface,
+                                              name, flags, desc);
+}
+
+static HRESULT WINAPI WindowDispEx_NextProperty(IWineJSDispatchHost *iface, DISPID id, struct property_info *desc)
+{
+    HTMLOuterWindow *This = impl_from_IWineJSDispatchHost(iface);
+
+    return IWineJSDispatchHost_NextProperty(&This->base.inner_window->event_target.dispex.IWineJSDispatchHost_iface,
+                                            id, desc);
+}
+
+static HRESULT WINAPI WindowDispEx_GetProperty(IWineJSDispatchHost *iface, DISPID id, LCID lcid, VARIANT *r,
+                                               EXCEPINFO *ei, IServiceProvider *caller)
+{
+    HTMLOuterWindow *This = impl_from_IWineJSDispatchHost(iface);
+
+    return IWineJSDispatchHost_GetProperty(&This->base.inner_window->event_target.dispex.IWineJSDispatchHost_iface,
+                                           id, lcid, r, ei, caller);
+}
+
+static HRESULT WINAPI WindowDispEx_SetProperty(IWineJSDispatchHost *iface, DISPID id, LCID lcid, VARIANT *v,
+                                               EXCEPINFO *ei, IServiceProvider *caller)
+{
+    HTMLOuterWindow *This = impl_from_IWineJSDispatchHost(iface);
+
+    return IWineJSDispatchHost_SetProperty(&This->base.inner_window->event_target.dispex.IWineJSDispatchHost_iface,
+                                           id, lcid, v, ei, caller);
+}
+
 static HRESULT WINAPI WindowDispEx_CallFunction(IWineJSDispatchHost *iface, DISPID id, UINT32 iid, DISPPARAMS *dp, VARIANT *ret,
                                                 EXCEPINFO *ei, IServiceProvider *caller)
 {
@@ -3447,6 +3492,13 @@ static HRESULT WINAPI WindowDispEx_CallFunction(IWineJSDispatchHost *iface, DISP
 
     return IWineJSDispatchHost_CallFunction(&This->base.inner_window->event_target.dispex.IWineJSDispatchHost_iface,
                                         id, iid, dp, ret, ei, caller);
+}
+
+static HRESULT WINAPI WindowDispEx_ToString(IWineJSDispatchHost *iface, BSTR *str)
+{
+    HTMLOuterWindow *This = impl_from_IWineJSDispatchHost(iface);
+
+    return IWineJSDispatchHost_ToString(&This->base.inner_window->event_target.dispex.IWineJSDispatchHost_iface, str);
 }
 
 static const IWineJSDispatchHostVtbl WindowDispExVtbl = {
@@ -3465,7 +3517,13 @@ static const IWineJSDispatchHostVtbl WindowDispExVtbl = {
     WindowDispEx_GetMemberName,
     WindowDispEx_GetNextDispID,
     WindowDispEx_GetNameSpaceParent,
+    WindowDispEx_GetJSDispatch,
+    WindowDispEx_LookupProperty,
+    WindowDispEx_NextProperty,
+    WindowDispEx_GetProperty,
+    WindowDispEx_SetProperty,
     WindowDispEx_CallFunction,
+    WindowDispEx_ToString,
 };
 
 static inline HTMLOuterWindow *impl_from_IEventTarget(IEventTarget *iface)
@@ -4183,6 +4241,7 @@ static HRESULT create_inner_window(HTMLOuterWindow *outer_window, IMoniker *mon,
         return E_OUTOFMEMORY;
     window->base.IHTMLWindow2_iface.lpVtbl = &HTMLWindow2Vtbl;
 
+    list_init(&window->documents);
     list_init(&window->children);
     list_init(&window->script_hosts);
     list_init(&window->bindings);
@@ -4311,7 +4370,7 @@ HRESULT update_window_doc(HTMLInnerWindow *window)
     if(outer_window->parent)
         parent_mode = outer_window->parent->base.inner_window->doc->document_mode;
 
-    hres = create_document_node(nsdoc, outer_window->browser, window, parent_mode, &window->doc);
+    hres = create_document_node(nsdoc, outer_window->browser, window, window, parent_mode, &window->doc);
     nsIDOMDocument_Release(nsdoc);
     if(FAILED(hres))
         return hres;

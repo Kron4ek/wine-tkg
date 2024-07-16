@@ -551,15 +551,16 @@ static WCHAR kbd_tables_vkey_to_wchar( const KBDTABLES *tables, UINT vkey, const
  */
 HWND WINAPI NtUserGetForegroundWindow(void)
 {
-    HWND ret = 0;
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const input_shm_t *input_shm;
+    NTSTATUS status;
+    HWND hwnd = 0;
 
-    SERVER_START_REQ( get_thread_input )
-    {
-        req->tid = 0;
-        if (!wine_server_call_err( req )) ret = wine_server_ptr_handle( reply->foreground );
-    }
-    SERVER_END_REQ;
-    return ret;
+    while ((status = get_shared_input( 0, &lock, &input_shm )) == STATUS_PENDING)
+        hwnd = wine_server_ptr_handle( input_shm->active );
+    if (status) hwnd = 0;
+
+    return hwnd;
 }
 
 /* see GetActiveWindow */
@@ -771,22 +772,25 @@ BOOL get_cursor_pos( POINT *pt )
  */
 BOOL WINAPI NtUserGetCursorInfo( CURSORINFO *info )
 {
-    BOOL ret;
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const input_shm_t *input_shm;
+    NTSTATUS status;
 
     if (!info) return FALSE;
 
-    SERVER_START_REQ( get_thread_input )
+    while ((status = get_shared_input( 0, &lock, &input_shm )) == STATUS_PENDING)
     {
-        req->tid = 0;
-        if ((ret = !wine_server_call( req )))
-        {
-            info->hCursor = wine_server_ptr_handle( reply->cursor );
-            info->flags = reply->show_count >= 0 ? CURSOR_SHOWING : 0;
-        }
+        info->hCursor = wine_server_ptr_handle( input_shm->cursor );
+        info->flags = (input_shm->cursor_count >= 0) ? CURSOR_SHOWING : 0;
     }
-    SERVER_END_REQ;
+    if (status)
+    {
+        info->hCursor = 0;
+        info->flags = CURSOR_SHOWING;
+    }
+
     get_cursor_pos( &info->ptScreenPos );
-    return ret;
+    return TRUE;
 }
 
 static void check_for_events( UINT flags )
@@ -842,11 +846,31 @@ SHORT WINAPI NtUserGetAsyncKeyState( INT key )
 }
 
 /***********************************************************************
+ *           get_shared_queue_bits
+ */
+static BOOL get_shared_queue_bits( UINT *wake_bits, UINT *changed_bits )
+{
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const queue_shm_t *queue_shm;
+    UINT status;
+
+    *wake_bits = *changed_bits = 0;
+    while ((status = get_shared_queue( &lock, &queue_shm )) == STATUS_PENDING)
+    {
+        *wake_bits = queue_shm->wake_bits;
+        *changed_bits = queue_shm->changed_bits;
+    }
+
+    if (status) return FALSE;
+    return TRUE;
+}
+
+/***********************************************************************
  *           NtUserGetQueueStatus (win32u.@)
  */
 DWORD WINAPI NtUserGetQueueStatus( UINT flags )
 {
-    DWORD ret;
+    UINT ret, wake_bits, changed_bits;
 
     if (flags & ~(QS_ALLINPUT | QS_ALLPOSTMESSAGE | QS_SMRESULT))
     {
@@ -856,7 +880,9 @@ DWORD WINAPI NtUserGetQueueStatus( UINT flags )
 
     check_for_events( flags );
 
-    SERVER_START_REQ( get_queue_status )
+    if (get_shared_queue_bits( &wake_bits, &changed_bits ) && !(changed_bits & flags))
+        ret = MAKELONG( changed_bits & flags, wake_bits & flags );
+    else SERVER_START_REQ( get_queue_status )
     {
         req->clear_bits = flags;
         wine_server_call( req );
@@ -871,18 +897,12 @@ DWORD WINAPI NtUserGetQueueStatus( UINT flags )
  */
 DWORD get_input_state(void)
 {
-    DWORD ret;
+    UINT wake_bits, changed_bits;
 
     check_for_events( QS_INPUT );
 
-    SERVER_START_REQ( get_queue_status )
-    {
-        req->clear_bits = 0;
-        wine_server_call( req );
-        ret = reply->wake_bits & (QS_KEY | QS_MOUSEBUTTON);
-    }
-    SERVER_END_REQ;
-    return ret;
+    if (!get_shared_queue_bits( &wake_bits, &changed_bits )) return 0;
+    return wake_bits & (QS_KEY | QS_MOUSEBUTTON);
 }
 
 /***********************************************************************

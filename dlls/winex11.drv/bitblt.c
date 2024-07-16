@@ -48,7 +48,6 @@
 
 #include "x11drv.h"
 #include "winternl.h"
-#include "wine/server.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(bitblt);
@@ -1597,206 +1596,6 @@ static struct x11drv_window_surface *get_x11_surface( struct window_surface *sur
     return (struct x11drv_window_surface *)surface;
 }
 
-#ifdef HAVE_LIBXSHAPE
-static inline void flush_rgn_data( HRGN rgn, RGNDATA *data )
-{
-    HRGN tmp = NtGdiExtCreateRegion( NULL, data->rdh.dwSize + data->rdh.nRgnSize, data );
-    NtGdiCombineRgn( rgn, rgn, tmp, RGN_OR );
-    NtGdiDeleteObjectApp( tmp );
-    data->rdh.nCount = 0;
-}
-
-static inline void add_row( HRGN rgn, RGNDATA *data, int x, int y, int len )
-{
-    RECT *rect = (RECT *)data->Buffer + data->rdh.nCount;
-
-    if (len <= 0) return;
-    rect->left   = x;
-    rect->top    = y;
-    rect->right  = x + len;
-    rect->bottom = y + 1;
-    data->rdh.nCount++;
-    if (data->rdh.nCount * sizeof(RECT) > data->rdh.nRgnSize - sizeof(RECT))
-        flush_rgn_data( rgn, data );
-}
-#endif
-
-static void set_layer_region( struct x11drv_window_surface *surface, HRGN hrgn )
-{
-    static const RECT empty_rect;
-    RGNDATA *data;
-    DWORD size;
-    HWND hwnd;
-
-    if (XFindContext( thread_init_display(), surface->window, winContext, (char **)&hwnd ))
-        return;
-
-    if (hrgn)
-    {
-        if (!(size = NtGdiGetRegionData( hrgn, 0, NULL ))) return;
-        if (!(data = malloc( size ))) return;
-        if (!NtGdiGetRegionData( hrgn, size, data ))
-        {
-            free( data );
-            return;
-        }
-        SERVER_START_REQ( set_layer_region )
-        {
-            req->window = wine_server_user_handle( hwnd );
-            if (data->rdh.nCount)
-                wine_server_add_data( req, data->Buffer, data->rdh.nCount * sizeof(RECT) );
-            else
-                wine_server_add_data( req, &empty_rect, sizeof(empty_rect) );
-            wine_server_call( req );
-        }
-        SERVER_END_REQ;
-        free( data );
-    }
-    else  /* clear existing region */
-    {
-        SERVER_START_REQ( set_layer_region )
-        {
-            req->window = wine_server_user_handle( hwnd );
-            wine_server_call( req );
-        }
-        SERVER_END_REQ;
-    }
-}
-
-/***********************************************************************
- *           update_surface_region
- */
-static void update_surface_region( struct x11drv_window_surface *surface, const BITMAPINFO *info, const void *color_bits,
-                                   COLORREF color_key, UINT alpha_mask )
-{
-#ifdef HAVE_LIBXSHAPE
-    char buffer[4096];
-    RGNDATA *data = (RGNDATA *)buffer;
-    UINT *masks = (UINT *)info->bmiColors;
-    int x, y, start, width;
-    HRGN rgn;
-
-    if (!shape_layered_windows) return;
-
-    if (!alpha_mask && color_key == CLR_INVALID)
-    {
-        XShapeCombineMask( gdi_display, surface->window, ShapeBounding, 0, 0, None, ShapeSet );
-        set_layer_region( surface, NULL );
-        return;
-    }
-
-    data->rdh.dwSize = sizeof(data->rdh);
-    data->rdh.iType  = RDH_RECTANGLES;
-    data->rdh.nCount = 0;
-    data->rdh.nRgnSize = sizeof(buffer) - sizeof(data->rdh);
-
-    rgn = NtGdiCreateRectRgn( 0, 0, 0, 0 );
-    width = surface->header.rect.right - surface->header.rect.left;
-
-    switch (info->bmiHeader.biBitCount)
-    {
-    case 16:
-    {
-        const WORD *bits = color_bits;
-        int stride = (width + 1) & ~1;
-        UINT mask = masks[0] | masks[1] | masks[2];
-
-        for (y = surface->header.rect.top; y < surface->header.rect.bottom; y++, bits += stride)
-        {
-            x = 0;
-            while (x < width)
-            {
-                while (x < width && (bits[x] & mask) == color_key) x++;
-                start = x;
-                while (x < width && (bits[x] & mask) != color_key) x++;
-                add_row( rgn, data, surface->header.rect.left + start, y, x - start );
-            }
-        }
-        break;
-    }
-    case 24:
-    {
-        const BYTE *bits = color_bits;
-        int stride = (width * 3 + 3) & ~3;
-
-        for (y = surface->header.rect.top; y < surface->header.rect.bottom; y++, bits += stride)
-        {
-            x = 0;
-            while (x < width)
-            {
-                while (x < width &&
-                       (bits[x * 3] == GetBValue(color_key)) &&
-                       (bits[x * 3 + 1] == GetGValue(color_key)) &&
-                       (bits[x * 3 + 2] == GetRValue(color_key)))
-                    x++;
-                start = x;
-                while (x < width &&
-                       ((bits[x * 3] != GetBValue(color_key)) ||
-                        (bits[x * 3 + 1] != GetGValue(color_key)) ||
-                        (bits[x * 3 + 2] != GetRValue(color_key))))
-                    x++;
-                add_row( rgn, data, surface->header.rect.left + start, y, x - start );
-            }
-        }
-        break;
-    }
-    case 32:
-    {
-        const DWORD *bits = color_bits;
-
-        if (info->bmiHeader.biCompression == BI_RGB)
-        {
-            for (y = surface->header.rect.top; y < surface->header.rect.bottom; y++, bits += width)
-            {
-                x = 0;
-                while (x < width)
-                {
-                    while (x < width &&
-                           ((bits[x] & 0xffffff) == color_key ||
-                            (alpha_mask && !(bits[x] & alpha_mask)))) x++;
-                    start = x;
-                    while (x < width &&
-                           !((bits[x] & 0xffffff) == color_key ||
-                             (alpha_mask && !(bits[x] & alpha_mask)))) x++;
-                    add_row( rgn, data, surface->header.rect.left + start, y, x - start );
-                }
-            }
-        }
-        else
-        {
-            UINT mask = masks[0] | masks[1] | masks[2];
-            for (y = surface->header.rect.top; y < surface->header.rect.bottom; y++, bits += width)
-            {
-                x = 0;
-                while (x < width)
-                {
-                    while (x < width && (bits[x] & mask) == color_key) x++;
-                    start = x;
-                    while (x < width && (bits[x] & mask) != color_key) x++;
-                    add_row( rgn, data, surface->header.rect.left + start, y, x - start );
-                }
-            }
-        }
-        break;
-    }
-    default:
-        assert(0);
-    }
-
-    if (data->rdh.nCount) flush_rgn_data( rgn, data );
-
-    if ((data = X11DRV_GetRegionData( rgn, 0 )))
-    {
-        XShapeCombineRectangles( gdi_display, surface->window, ShapeBounding, 0, 0,
-                                 (XRectangle *)data->Buffer, data->rdh.nCount, ShapeSet, YXBanded );
-        free( data );
-    }
-
-    set_layer_region( surface, rgn );
-    NtGdiDeleteObjectApp( rgn );
-#endif
-}
-
 #ifdef HAVE_LIBXXSHM
 static int xshm_error_handler( Display *display, XErrorEvent *event, void *arg )
 {
@@ -1990,16 +1789,14 @@ static void x11drv_surface_set_clip( struct window_surface *window_surface, cons
  *           x11drv_surface_flush
  */
 static BOOL x11drv_surface_flush( struct window_surface *window_surface, const RECT *rect, const RECT *dirty,
-                                  const BITMAPINFO *color_info, const void *color_bits )
+                                  const BITMAPINFO *color_info, const void *color_bits, BOOL shape_changed,
+                                  const BITMAPINFO *shape_info, const void *shape_bits )
 {
     UINT alpha_mask = window_surface->alpha_mask, alpha_bits = window_surface->alpha_bits;
     struct x11drv_window_surface *surface = get_x11_surface( window_surface );
-    COLORREF color_key = window_surface->color_key;
     XImage *ximage = surface->image->ximage;
     const unsigned char *src = color_bits;
     unsigned char *dst = (unsigned char *)ximage->data;
-
-    if (alpha_mask || color_key != CLR_INVALID) update_surface_region( surface, color_info, color_bits, color_key, alpha_mask );
 
     if (alpha_bits == -1)
     {
@@ -2037,6 +1834,25 @@ static BOOL x11drv_surface_flush( struct window_surface *window_surface, const R
                    dirty->top, rect->left + dirty->left, rect->top + dirty->top,
                    dirty->right - dirty->left, dirty->bottom - dirty->top );
 
+    if (shape_changed)
+    {
+#ifdef HAVE_LIBXSHAPE
+        if (!shape_bits)
+            XShapeCombineMask( gdi_display, surface->window, ShapeBounding, 0, 0, None, ShapeSet );
+        else
+        {
+            struct gdi_image_bits bits = {.ptr = (void *)shape_bits};
+            XVisualInfo vis = default_visual;
+            Pixmap shape;
+
+            vis.depth = 1;
+            shape = create_pixmap_from_image( 0, &vis, shape_info, &bits, DIB_RGB_COLORS );
+            XShapeCombineMask( gdi_display, surface->window, ShapeBounding, 0, 0, shape, ShapeSet );
+            XFreePixmap( gdi_display, shape );
+        }
+#endif /* HAVE_LIBXSHAPE */
+    }
+
     XFlush( gdi_display );
 
     return TRUE;
@@ -2066,7 +1882,7 @@ static const struct window_surface_funcs x11drv_surface_funcs =
  *           create_surface
  */
 static struct window_surface *create_surface( HWND hwnd, Window window, const XVisualInfo *vis, const RECT *rect,
-                                              COLORREF color_key, BOOL use_alpha )
+                                              BOOL use_alpha )
 {
     const XPixmapFormatValues *format = pixmap_formats[vis->depth];
     char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
@@ -2130,11 +1946,11 @@ static struct window_surface *create_surface( HWND hwnd, Window window, const XV
     surface->window = window;
     surface->gc = XCreateGC( gdi_display, window, 0, NULL );
     XSetSubwindowMode( gdi_display, surface->gc, IncludeInferiors );
+#ifdef HAVE_LIBXSHAPE
+    XShapeCombineMask( gdi_display, surface->window, ShapeBounding, 0, 0, None, ShapeSet );
+#endif
 
     TRACE( "created %p for %lx %s image %p\n", surface, window, wine_dbgstr_rect(rect), surface->image->ximage->data );
-
-    if (use_alpha) window_surface_set_layered( &surface->header, color_key, -1, 0xff000000 );
-    else window_surface_set_layered( &surface->header, color_key, -1, 0 );
 
     return &surface->header;
 
@@ -2176,8 +1992,6 @@ HRGN expose_surface( struct window_surface *window_surface, const RECT *rect )
 BOOL X11DRV_CreateWindowSurface( HWND hwnd, const RECT *surface_rect, struct window_surface **surface )
 {
     struct x11drv_win_data *data;
-    DWORD flags;
-    COLORREF key;
     BOOL layered = NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED;
 
     TRACE( "hwnd %p, surface_rect %s, surface %p\n", hwnd, wine_dbgstr_rect( surface_rect ), surface );
@@ -2202,10 +2016,7 @@ BOOL X11DRV_CreateWindowSurface( HWND hwnd, const RECT *surface_rect, struct win
         }
     }
 
-    if (!layered || !NtUserGetLayeredWindowAttributes( hwnd, &key, NULL, &flags ) || !(flags & LWA_COLORKEY))
-        key = CLR_INVALID;
-
-    *surface = create_surface( data->hwnd, data->whole_window, &data->vis, surface_rect, key, FALSE );
+    *surface = create_surface( data->hwnd, data->whole_window, &data->vis, surface_rect, FALSE );
 
 done:
     release_win_data( data );
@@ -2216,30 +2027,24 @@ done:
 /*****************************************************************************
  *              CreateLayeredWindow  (X11DRV.@)
  */
-BOOL X11DRV_CreateLayeredWindow( HWND hwnd, const RECT *window_rect, COLORREF color_key,
+BOOL X11DRV_CreateLayeredWindow( HWND hwnd, const RECT *surface_rect, COLORREF color_key,
                                  struct window_surface **window_surface )
 {
     struct window_surface *surface;
     struct x11drv_win_data *data;
-    RECT rect;
 
     if (!(data = get_win_data( hwnd ))) return FALSE;
 
     data->layered = TRUE;
     if (!data->embedded && argb_visual.visualid) set_window_visual( data, &argb_visual, TRUE );
 
-    rect = *window_rect;
-    OffsetRect( &rect, -window_rect->left, -window_rect->top );
-
     surface = data->surface;
-    if (!surface || !EqualRect( &surface->rect, &rect ))
+    if (!surface || !EqualRect( &surface->rect, surface_rect ))
     {
-        data->surface = create_surface( data->hwnd, data->whole_window, &data->vis, &rect,
-                                        color_key, data->use_alpha );
+        data->surface = create_surface( data->hwnd, data->whole_window, &data->vis, surface_rect, data->use_alpha );
         if (surface) window_surface_release( surface );
         surface = data->surface;
     }
-    else window_surface_set_layered( surface, color_key, -1, 0xff000000 );
 
     if ((*window_surface = surface)) window_surface_add_ref( surface );
     release_win_data( data );

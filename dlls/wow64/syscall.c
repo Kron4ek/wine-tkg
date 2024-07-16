@@ -104,16 +104,19 @@ static void     (WINAPI *pBTCpuThreadInit)(void);
 static void     (WINAPI *pBTCpuSimulate)(void) __attribute__((used));
 static void *   (WINAPI *p__wine_get_unix_opcode)(void);
 static void *   (WINAPI *pKiRaiseUserExceptionDispatcher)(void);
-void (WINAPI *pBTCpuNotifyFlushInstructionCache2)( const void *, SIZE_T ) = NULL;
-void (WINAPI *pBTCpuNotifyMapViewOfSection)( void * ) = NULL;
-void (WINAPI *pBTCpuNotifyMemoryAlloc)( void *, SIZE_T, ULONG, ULONG ) = NULL;
-void (WINAPI *pBTCpuNotifyMemoryDirty)( void *, SIZE_T ) = NULL;
-void (WINAPI *pBTCpuNotifyMemoryFree)( void *, SIZE_T, ULONG ) = NULL;
-void (WINAPI *pBTCpuNotifyMemoryProtect)( void *, SIZE_T, ULONG ) = NULL;
-void (WINAPI *pBTCpuNotifyUnmapViewOfSection)( void * ) = NULL;
+void     (WINAPI *pBTCpuFlushInstructionCache2)( const void *, SIZE_T ) = NULL;
+void     (WINAPI *pBTCpuFlushInstructionCacheHeavy)( const void *, SIZE_T ) = NULL;
+NTSTATUS (WINAPI *pBTCpuNotifyMapViewOfSection)( void *, void *, void *, SIZE_T, ULONG, ULONG ) = NULL;
+void     (WINAPI *pBTCpuNotifyMemoryAlloc)( void *, SIZE_T, ULONG, ULONG, BOOL, NTSTATUS ) = NULL;
+void     (WINAPI *pBTCpuNotifyMemoryDirty)( void *, SIZE_T ) = NULL;
+void     (WINAPI *pBTCpuNotifyMemoryFree)( void *, SIZE_T, ULONG, BOOL, NTSTATUS ) = NULL;
+void     (WINAPI *pBTCpuNotifyMemoryProtect)( void *, SIZE_T, ULONG, BOOL, NTSTATUS ) = NULL;
+void     (WINAPI *pBTCpuNotifyReadFile)( HANDLE, void *, SIZE_T, BOOL, NTSTATUS ) = NULL;
+void     (WINAPI *pBTCpuNotifyUnmapViewOfSection)( void *, BOOL, NTSTATUS ) = NULL;
 NTSTATUS (WINAPI *pBTCpuResetToConsistentState)( EXCEPTION_POINTERS * ) = NULL;
-void (WINAPI *pBTCpuUpdateProcessorInformation)( SYSTEM_CPU_INFORMATION * ) = NULL;
-void (WINAPI *pBTCpuThreadTerm)( HANDLE ) = NULL;
+void     (WINAPI *pBTCpuUpdateProcessorInformation)( SYSTEM_CPU_INFORMATION * ) = NULL;
+void     (WINAPI *pBTCpuProcessTerm)( HANDLE, BOOL, NTSTATUS ) = NULL;
+void     (WINAPI *pBTCpuThreadTerm)( HANDLE, LONG ) = NULL;
 
 BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, void *reserved )
 {
@@ -285,9 +288,7 @@ static void __attribute__((used)) call_user_exception_dispatcher( EXCEPTION_RECO
  */
 static void __attribute__((used)) call_raise_user_exception_dispatcher( ULONG code )
 {
-    TEB32 *teb32 = (TEB32 *)((char *)NtCurrentTeb() + NtCurrentTeb()->WowTebOffset);
-
-    teb32->ExceptionCode = code;
+    NtCurrentTeb32()->ExceptionCode = code;
 
     switch (current_machine)
     {
@@ -804,14 +805,17 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
     GET_PTR( BTCpuResetToConsistentState );
     GET_PTR( BTCpuSetContext );
     GET_PTR( BTCpuSimulate );
-    GET_PTR( BTCpuNotifyFlushInstructionCache2 );
+    GET_PTR( BTCpuFlushInstructionCache2 );
+    GET_PTR( BTCpuFlushInstructionCacheHeavy );
     GET_PTR( BTCpuNotifyMapViewOfSection );
     GET_PTR( BTCpuNotifyMemoryAlloc );
     GET_PTR( BTCpuNotifyMemoryDirty );
     GET_PTR( BTCpuNotifyMemoryFree );
     GET_PTR( BTCpuNotifyMemoryProtect );
+    GET_PTR( BTCpuNotifyReadFile );
     GET_PTR( BTCpuNotifyUnmapViewOfSection );
     GET_PTR( BTCpuUpdateProcessorInformation );
+    GET_PTR( BTCpuProcessTerm );
     GET_PTR( BTCpuThreadTerm );
     GET_PTR( __wine_get_unix_opcode );
 
@@ -844,10 +848,9 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
  */
 static void thread_init(void)
 {
-    TEB32 *teb32 = (TEB32 *)((char *)NtCurrentTeb() + NtCurrentTeb()->WowTebOffset);
     void *cpu_area_ctx;
 
-    teb32->WOW32Reserved = PtrToUlong( pBTCpuGetBopCode() );
+    NtCurrentTeb32()->WOW32Reserved = PtrToUlong( pBTCpuGetBopCode() );
     RtlWow64GetCurrentCpuArea( NULL, &cpu_area_ctx, NULL );
     NtCurrentTeb()->TlsSlots[WOW64_TLS_WOW64INFO] = wow64info;
     if (pBTCpuThreadInit) pBTCpuThreadInit();
@@ -1170,7 +1173,7 @@ NTSTATUS WINAPI Wow64KiUserCallbackDispatcher( ULONG id, void *args, ULONG len,
                                                void **ret_ptr, ULONG *ret_len )
 {
     WOW64_CPURESERVED *cpu = NtCurrentTeb()->TlsSlots[WOW64_TLS_CPURESERVED];
-    TEB32 *teb32 = (TEB32 *)((char *)NtCurrentTeb() + NtCurrentTeb()->WowTebOffset);
+    TEB32 *teb32 = NtCurrentTeb32();
     ULONG teb_frame = teb32->Tib.ExceptionList;
     struct user_callback_frame frame;
     USHORT flags = cpu->Flags;
@@ -1343,12 +1346,12 @@ void WINAPI Wow64ProcessPendingCrossProcessItems(void)
 
     if (flush)
     {
-        if (pBTCpuNotifyFlushInstructionCache2) pBTCpuNotifyFlushInstructionCache2( NULL, ~0ull );
+        if (pBTCpuFlushInstructionCacheHeavy) pBTCpuFlushInstructionCacheHeavy( NULL, 0 );
         while (entry)
         {
             next = entry->next;
             RtlWow64PushCrossProcessWorkOntoFreeList( &list->free_list, entry );
-            entry = CROSS_PROCESS_LIST_ENTRY( &list->work_list, next );
+            entry = next ? CROSS_PROCESS_LIST_ENTRY( &list->work_list, next ) : NULL;
         }
         return;
     }
@@ -1358,35 +1361,39 @@ void WINAPI Wow64ProcessPendingCrossProcessItems(void)
         switch (entry->id)
         {
         case CrossProcessPreVirtualAlloc:
-            /* FIXME */
-            break;
         case CrossProcessPostVirtualAlloc:
             if (!pBTCpuNotifyMemoryAlloc) break;
-            if (entry->args[2]) break;
-            pBTCpuNotifyMemoryAlloc( (void *)entry->addr, entry->size, entry->args[0], entry->args[1] );
+            pBTCpuNotifyMemoryAlloc( (void *)entry->addr, entry->size, entry->args[0], entry->args[1],
+                                     entry->id == CrossProcessPostVirtualAlloc, entry->args[2] );
             break;
         case CrossProcessPreVirtualFree:
-            if (!pBTCpuNotifyMemoryFree) break;
-            pBTCpuNotifyMemoryFree( (void *)entry->addr, entry->size, entry->args[0] );
-            break;
         case CrossProcessPostVirtualFree:
-            /* FIXME */
+            if (!pBTCpuNotifyMemoryFree) break;
+            pBTCpuNotifyMemoryFree( (void *)entry->addr, entry->size, entry->args[0],
+                                     entry->id == CrossProcessPostVirtualFree, entry->args[1] );
             break;
         case CrossProcessPreVirtualProtect:
-            if (!pBTCpuNotifyMemoryProtect) break;
-            pBTCpuNotifyMemoryProtect( (void *)entry->addr, entry->size, entry->args[0] );
-            break;
         case CrossProcessPostVirtualProtect:
-            /* FIXME */
+            if (!pBTCpuNotifyMemoryProtect) break;
+            pBTCpuNotifyMemoryProtect( (void *)entry->addr, entry->size, entry->args[0],
+                                       entry->id == CrossProcessPostVirtualProtect, entry->args[1] );
             break;
         case CrossProcessFlushCache:
-            if (!pBTCpuNotifyFlushInstructionCache2) break;
-            pBTCpuNotifyFlushInstructionCache2( (void *)entry->addr, entry->size );
+            if (!pBTCpuFlushInstructionCache2) break;
+            pBTCpuFlushInstructionCache2( (void *)entry->addr, entry->size );
+            break;
+        case CrossProcessFlushCacheHeavy:
+            if (!pBTCpuFlushInstructionCacheHeavy) break;
+            pBTCpuFlushInstructionCacheHeavy( (void *)entry->addr, entry->size );
+            break;
+        case CrossProcessMemoryWrite:
+            if (!pBTCpuNotifyMemoryDirty) break;
+            pBTCpuNotifyMemoryDirty( (void *)entry->addr, entry->size );
             break;
         }
         next = entry->next;
         RtlWow64PushCrossProcessWorkOntoFreeList( &list->free_list, entry );
-        entry = CROSS_PROCESS_LIST_ENTRY( &list->work_list, next );
+        entry = next ? CROSS_PROCESS_LIST_ENTRY( &list->work_list, next ) : NULL;
     }
 }
 

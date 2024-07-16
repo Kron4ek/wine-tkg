@@ -2601,3 +2601,89 @@ sync_test("initProgressEvent", function() {
     ok(e.loaded === 99, "loaded after re-init = " + e.loaded);
     ok(e.total === 50, "total after re-init = " + e.total);
 });
+
+sync_test("screen", function() {
+    var o = screen;
+
+    ok(typeof(o) == "object", "typeof(o) = " + typeof(o));
+    ok(o instanceof Object, "o is not an instance of Object");
+
+    o.prop = 1;
+    ok(o.prop === 1, "o.prop = " + o.prop);
+    ok(o.hasOwnProperty("prop"), 'o.hasOwnProperty("prop") = ' + o.hasOwnProperty("prop"));
+    test_own_data_prop_desc(o, "prop", true, true, true);
+
+    Object.defineProperty(o, "defprop", {writable: false, enumerable: false, configurable: true, value: 2});
+    ok(o.defprop === 2, "o.prop = " + o.prop);
+    test_own_data_prop_desc(o, "defprop", false, false, true);
+
+    ok(typeof(Object.keys(o)) === "object", "Object.keys(o) = " + Object.keys(o));
+    ok(Object.isExtensible(o) === true, "Object.isExtensible(o) = " + Object.isExtensible(o));
+    ok(Object.isFrozen(o) === false, "Object.isFrozen(o) = " + Object.isFrozen(o));
+    ok(Object.isSealed(o) === false, "Object.isSealed(o) = " + Object.isSealed(o));
+
+    Object.seal(o);
+    test_own_data_prop_desc(o, "prop", true, true, false);
+    test_own_data_prop_desc(o, "defprop", false, false, false);
+    ok(Object.isExtensible(o) === false, "Object.isExtensible(o) = " + Object.isExtensible(o));
+    ok(Object.isFrozen(o) === false, "Object.isFrozen(o) = " + Object.isFrozen(o));
+    ok(Object.isSealed(o) === true, "Object.isSealed(o) = " + Object.isSealed(o));
+
+    o.prop2 = 3;
+    ok(!("prop2" in o), "o.prop2 = " + o.prop2);
+
+    function check_enum(o, name) {
+        var ret = 0;
+        for(var iter in o) {
+            if(iter == name) ret++;
+        }
+        ok(ret < 2, name + " enumerated " + ret + " times");
+        return ret != 0;
+    }
+    ok(check_enum(o, "width"), "width not enumerated");
+    ok(check_enum(o, "height"), "height not enumerated");
+    ok(check_enum(o, "prop"), "prop not enumerated");
+    ok(!check_enum(o, "defprop"), "defprop enumerated");
+    ok(!check_enum(o, "prop2"), "prop2 enumerated");
+});
+
+sync_test("builtin_func", function() {
+    var o = document.implementation;
+    var f = o.hasFeature;
+
+    ok(f instanceof Function, "f is not an instance of Function");
+    ok(Object.getPrototypeOf(f) === Function.prototype, "Object.getPrototypeOf(f) = " + Object.getPrototypeOf(f));
+    ok(!f.hasOwnProperty("length"), "f has own length property");
+    ok(f.length === 0, "f.length = " + f.length);
+    ok(f.call(o, "test", 1) === false, 'f.call(o, "test", 1) = ' + f.call(o, "test", 1));
+    ok("" + f === "\nfunction hasFeature() {\n    [native code]\n}\n", "f = " + f);
+});
+
+async_test("script_global", function() {
+    // Created documents share script global, so their objects are instances of Object from
+    // the current script context.
+    var doc = document.implementation.createHTMLDocument("test");
+    todo_wine.
+    ok(doc instanceof Object, "created doc is not an instance of Object");
+    ok(doc.implementation instanceof Object, "created doc.implementation is not an instance of Object");
+
+    document.body.innerHTML = "";
+    var iframe = document.createElement("iframe");
+
+    // Documents created in iframe use iframe's script global, so their objects are not instances of
+    // current script context Object.
+    iframe.onload = guard(function() {
+        var doc = iframe.contentWindow.document;
+        ok(!(doc instanceof Object), "doc is an instance of Object");
+        ok(!(doc.implementation instanceof Object), "doc.implementation is an instance of Object");
+
+        doc = doc.implementation.createHTMLDocument("test");
+        ok(!(doc instanceof Object), "created iframe doc is an instance of Object");
+        ok(!(doc.implementation instanceof Object), "created iframe doc.implementation is an instance of Object");
+
+        next_test();
+    });
+
+    iframe.src = "about:blank";
+    document.body.appendChild(iframe);
+});

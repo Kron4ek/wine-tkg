@@ -43,6 +43,29 @@ bool array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
 
 #define MEDIATIME_FROM_BYTES(x) ((LONGLONG)(x) * 10000000)
 
+static inline BOOL is_mf_video_area_empty(const MFVideoArea *area)
+{
+    return !area->OffsetX.value && !area->OffsetY.value && !area->Area.cx && !area->Area.cy;
+}
+
+static inline void get_mf_video_content_rect(const MFVideoInfo *info, RECT *rect)
+{
+    if (!is_mf_video_area_empty(&info->MinimumDisplayAperture))
+    {
+        rect->left = info->MinimumDisplayAperture.OffsetX.value;
+        rect->top = info->MinimumDisplayAperture.OffsetY.value;
+        rect->right = rect->left + info->MinimumDisplayAperture.Area.cx;
+        rect->bottom = rect->top + info->MinimumDisplayAperture.Area.cy;
+    }
+    else
+    {
+        rect->left = 0;
+        rect->top = 0;
+        rect->right = info->dwWidth;
+        rect->bottom = info->dwHeight;
+    }
+}
+
 struct wg_sample_queue;
 
 HRESULT wg_sample_queue_create(struct wg_sample_queue **out);
@@ -81,15 +104,13 @@ char *wg_parser_stream_get_tag(wg_parser_stream_t stream, enum wg_parser_tag tag
 void wg_parser_stream_seek(wg_parser_stream_t stream, double rate,
         uint64_t start_pos, uint64_t stop_pos, DWORD start_flags, DWORD stop_flags);
 
-wg_transform_t wg_transform_create(const struct wg_format *input_format,
-        const struct wg_format *output_format, const struct wg_transform_attrs *attrs);
 HRESULT wg_transform_create_mf(IMFMediaType *input_type, IMFMediaType *output_type,
         const struct wg_transform_attrs *attrs, wg_transform_t *transform);
 HRESULT wg_transform_create_quartz(const AM_MEDIA_TYPE *input_format, const AM_MEDIA_TYPE *output_format,
         const struct wg_transform_attrs *attrs, wg_transform_t *transform);
 void wg_transform_destroy(wg_transform_t transform);
-bool wg_transform_get_output_format(wg_transform_t transform, struct wg_format *format);
-bool wg_transform_set_output_format(wg_transform_t transform, struct wg_format *format);
+HRESULT wg_transform_get_output_type(wg_transform_t transform, IMFMediaType **media_type);
+HRESULT wg_transform_set_output_type(wg_transform_t transform, IMFMediaType *media_type);
 bool wg_transform_get_status(wg_transform_t transform, bool *accepts_input);
 HRESULT wg_transform_drain(wg_transform_t transform);
 HRESULT wg_transform_flush(wg_transform_t transform);

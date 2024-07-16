@@ -71,7 +71,6 @@ struct window
     rectangle_t      surface_rect;    /* window surface rectangle (relative to parent client area) */
     rectangle_t      client_rect;     /* client rectangle (relative to parent client area) */
     struct region   *win_region;      /* region for shaped windows (relative to window rect) */
-    struct region   *layer_region;    /* region for layered windows (relative to window rect) */
     struct region   *update_region;   /* update region (relative to window rect) */
     unsigned int     style;           /* window style */
     unsigned int     ex_style;        /* window extended style */
@@ -570,7 +569,6 @@ static struct window *create_window( struct window *parent, struct window *owner
     win->atom           = atom;
     win->last_active    = win->handle;
     win->win_region     = NULL;
-    win->layer_region   = NULL;
     win->update_region  = NULL;
     win->style          = 0;
     win->ex_style       = 0;
@@ -828,9 +826,6 @@ static int is_point_in_window( struct window *win, int *x, int *y, unsigned int 
     if (win->win_region &&
         !point_in_region( win->win_region, *x - win->window_rect.left, *y - win->window_rect.top ))
         return 0;  /* not in window region */
-    if (win->layer_region &&
-        !point_in_region( win->layer_region, *x - win->window_rect.left, *y - win->window_rect.top ))
-        return 0;  /* not in layer mask region */
     return 1;
 }
 
@@ -1988,14 +1983,6 @@ static void set_window_region( struct window *win, struct region *region, int re
 }
 
 
-/* set the layer region */
-static void set_layer_region( struct window *win, struct region *region )
-{
-    if (win->layer_region) free_region( win->layer_region );
-    win->layer_region = region;
-}
-
-
 /* destroy a window */
 void free_window_handle( struct window *win )
 {
@@ -2059,7 +2046,6 @@ void free_window_handle( struct window *win )
     detach_window_thread( win );
 
     if (win->parent) set_parent_window( win, NULL );
-    if (win->layer_region) free_region( win->layer_region );
     free_user_handle( win->handle );
     win->handle = 0;
     release_object( win );
@@ -2706,24 +2692,6 @@ DECL_HANDLER(set_window_region)
         if (win->ex_style & WS_EX_LAYOUTRTL) mirror_region( &win->window_rect, region );
     }
     set_window_region( win, region, req->redraw );
-}
-
-
-/* set the layer region */
-DECL_HANDLER(set_layer_region)
-{
-    struct region *region = NULL;
-    struct window *win = get_window( req->window );
-
-    if (!win) return;
-
-    if (get_req_data_size())  /* no data means remove the region completely */
-    {
-        if (!(region = create_region_from_req_data( get_req_data(), get_req_data_size() )))
-            return;
-        if (win->ex_style & WS_EX_LAYOUTRTL) mirror_region( &win->window_rect, region );
-    }
-    set_layer_region( win, region );
 }
 
 

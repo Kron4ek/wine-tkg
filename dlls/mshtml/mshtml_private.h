@@ -40,6 +40,7 @@
 #include "nsiface.h"
 
 #include "mshtml_private_iface.h"
+#include "../jscript/jsdisp.h"
 
 #include <assert.h>
 
@@ -77,11 +78,20 @@
 #define MSHTML_E_NODOC            0x800a025c
 #define MSHTML_E_NOT_FUNC         0x800a138a
 
+typedef struct HTMLWindow HTMLWindow;
+typedef struct HTMLInnerWindow HTMLInnerWindow;
+typedef struct HTMLOuterWindow HTMLOuterWindow;
+typedef struct HTMLDocumentNode HTMLDocumentNode;
+typedef struct HTMLDocumentObj HTMLDocumentObj;
+typedef struct HTMLFrameBase HTMLFrameBase;
+typedef struct GeckoBrowser GeckoBrowser;
+typedef struct HTMLAttributeCollection HTMLAttributeCollection;
 typedef struct DOMEvent DOMEvent;
 typedef struct HTMLDOMNode HTMLDOMNode;
 typedef struct ConnectionPoint ConnectionPoint;
 typedef struct BSCallback BSCallback;
 typedef struct EventTarget EventTarget;
+typedef struct ScriptHost ScriptHost;
 
 #define TID_LIST \
     XIID(NULL) \
@@ -417,6 +427,7 @@ struct DispatchEx {
 
     nsCycleCollectingAutoRefCnt ccref;
 
+    IWineJSDispatch *jsdisp;
     dispex_data_t *info;
     dispex_dynamic_data_t *dynamic_data;
 };
@@ -480,7 +491,7 @@ extern void (__cdecl *ccp_init)(ExternalCycleCollectionParticipant*,const CCObjC
 extern void (__cdecl *describe_cc_node)(nsCycleCollectingAutoRefCnt*,const char*,nsCycleCollectionTraversalCallback*);
 extern void (__cdecl *note_cc_edge)(nsISupports*,const char*,nsCycleCollectionTraversalCallback*);
 
-void init_dispatch(DispatchEx*,dispex_static_data_t*,compat_mode_t);
+void init_dispatch(DispatchEx*,dispex_static_data_t*,HTMLInnerWindow*,compat_mode_t);
 void dispex_props_unlink(DispatchEx*);
 HRESULT change_type(VARIANT*,VARIANT*,VARTYPE,IServiceProvider*);
 HRESULT dispex_get_dprop_ref(DispatchEx*,const WCHAR*,BOOL,VARIANT**);
@@ -503,17 +514,6 @@ typedef enum {
 } dispex_prop_type_t;
 
 dispex_prop_type_t get_dispid_type(DISPID);
-
-typedef struct HTMLWindow HTMLWindow;
-typedef struct HTMLInnerWindow HTMLInnerWindow;
-typedef struct HTMLOuterWindow HTMLOuterWindow;
-typedef struct HTMLDocumentNode HTMLDocumentNode;
-typedef struct HTMLDocumentObj HTMLDocumentObj;
-typedef struct HTMLFrameBase HTMLFrameBase;
-typedef struct GeckoBrowser GeckoBrowser;
-typedef struct HTMLAttributeCollection HTMLAttributeCollection;
-
-typedef struct ScriptHost ScriptHost;
 
 typedef enum {
     GLOBAL_SCRIPTVAR,
@@ -632,6 +632,8 @@ struct HTMLInnerWindow {
 
     struct list children;
     struct list script_hosts;
+    struct list documents;
+    IWineJScript *jscript;
 
     IHTMLEventObj *event;
 
@@ -993,6 +995,9 @@ struct HTMLDocumentNode {
     GeckoBrowser *browser;
     struct list browser_entry;
 
+    HTMLInnerWindow *script_global;
+    struct list script_global_entry;
+
     compat_mode_t document_mode;
     BOOL document_mode_locked;
 
@@ -1026,7 +1031,7 @@ struct HTMLDocumentNode {
 HRESULT HTMLDocument_Create(IUnknown*,REFIID,void**);
 HRESULT MHTMLDocument_Create(IUnknown*,REFIID,void**);
 HRESULT HTMLLoadOptions_Create(IUnknown*,REFIID,void**);
-HRESULT create_document_node(nsIDOMDocument*,GeckoBrowser*,HTMLInnerWindow*,
+HRESULT create_document_node(nsIDOMDocument*,GeckoBrowser*,HTMLInnerWindow*,HTMLInnerWindow*,
                              compat_mode_t,HTMLDocumentNode**);
 HRESULT create_doctype_node(HTMLDocumentNode*,nsIDOMNode*,HTMLDOMNode**);
 
@@ -1038,8 +1043,8 @@ HRESULT HTMLOptionElementFactory_Create(HTMLInnerWindow*,HTMLOptionElementFactor
 HRESULT HTMLImageElementFactory_Create(HTMLInnerWindow*,HTMLImageElementFactory**);
 HRESULT HTMLXMLHttpRequestFactory_Create(HTMLInnerWindow*,HTMLXMLHttpRequestFactory**);
 HRESULT create_location(HTMLOuterWindow*,HTMLLocation**);
-HRESULT create_navigator(compat_mode_t,IOmNavigator**);
-HRESULT create_html_screen(compat_mode_t,IHTMLScreen**);
+HRESULT create_navigator(HTMLInnerWindow*,IOmNavigator**);
+HRESULT create_html_screen(HTMLInnerWindow*,IHTMLScreen**);
 HRESULT create_performance(HTMLInnerWindow*,IHTMLPerformance**);
 HRESULT create_history(HTMLInnerWindow*,OmHistory**);
 HRESULT create_namespace_collection(compat_mode_t,IHTMLNamespaceCollection**);
@@ -1154,7 +1159,7 @@ HRESULT HTMLTxtRange_Create(HTMLDocumentNode*,nsIDOMRange*,IHTMLTxtRange**);
 HRESULT create_style_sheet(nsIDOMStyleSheet*,compat_mode_t,IHTMLStyleSheet**);
 HRESULT create_style_sheet_collection(nsIDOMStyleSheetList*,compat_mode_t,
                                       IHTMLStyleSheetsCollection**);
-HRESULT create_dom_range(nsIDOMRange*,compat_mode_t,IHTMLDOMRange**);
+HRESULT create_dom_range(nsIDOMRange*,HTMLDocumentNode*,IHTMLDOMRange**);
 HRESULT create_markup_pointer(IMarkupPointer**);
 
 void detach_document_node(HTMLDocumentNode*);
@@ -1547,7 +1552,7 @@ void set_statustext(HTMLDocumentObj*,INT,LPCWSTR);
 IInternetSecurityManager *get_security_manager(void);
 
 extern HINSTANCE hInst;
-void create_console(compat_mode_t compat_mode, IWineMSHTMLConsole **ret);
-HRESULT create_media_query_list(HTMLWindow *window, BSTR media_query, IDispatch **ret);
+void create_console(HTMLInnerWindow *window, IWineMSHTMLConsole **ret);
+HRESULT create_media_query_list(HTMLInnerWindow *window, BSTR media_query, IDispatch **ret);
 
 HRESULT create_mutation_observer_ctor(compat_mode_t compat_mode, IDispatch **ret);

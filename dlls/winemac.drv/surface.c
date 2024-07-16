@@ -78,7 +78,8 @@ static void macdrv_surface_set_clip(struct window_surface *window_surface, const
  *              macdrv_surface_flush
  */
 static BOOL macdrv_surface_flush(struct window_surface *window_surface, const RECT *rect, const RECT *dirty,
-                                 const BITMAPINFO *color_info, const void *color_bits)
+                                 const BITMAPINFO *color_info, const void *color_bits, BOOL shape_changed,
+                                 const BITMAPINFO *shape_info, const void *shape_bits)
 {
     struct macdrv_window_surface *surface = get_mac_surface(window_surface);
     CGImageAlphaInfo alpha_info = (window_surface->alpha_mask ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaNoneSkipFirst);
@@ -126,7 +127,7 @@ static struct macdrv_window_surface *get_mac_surface(struct window_surface *surf
  *              create_surface
  */
 static struct window_surface *create_surface(HWND hwnd, macdrv_window window, const RECT *rect,
-                                             struct window_surface *old_surface, BOOL use_alpha)
+                                             struct window_surface *old_surface)
 {
     struct macdrv_window_surface *surface = NULL;
     int width = rect->right - rect->left, height = rect->bottom - rect->top;
@@ -177,9 +178,6 @@ static struct window_surface *create_surface(HWND hwnd, macdrv_window window, co
 
     TRACE("created %p for %p %s\n", surface, window, wine_dbgstr_rect(rect));
 
-    if (use_alpha) window_surface_set_layered( &surface->header, CLR_INVALID, -1, 0xff000000 );
-    else window_surface_set_layered( &surface->header, CLR_INVALID, -1, 0 );
-
     return &surface->header;
 
 failed:
@@ -215,7 +213,7 @@ BOOL macdrv_CreateWindowSurface(HWND hwnd, const RECT *surface_rect, struct wind
         }
     }
 
-    *surface = create_surface(data->hwnd, data->cocoa_window, surface_rect, data->surface, FALSE);
+    *surface = create_surface(data->hwnd, data->cocoa_window, surface_rect, data->surface);
 
 done:
     release_win_data(data);
@@ -226,25 +224,21 @@ done:
 /***********************************************************************
  *              CreateLayeredWindow   (MACDRV.@)
  */
-BOOL macdrv_CreateLayeredWindow(HWND hwnd, const RECT *window_rect, COLORREF color_key,
+BOOL macdrv_CreateLayeredWindow(HWND hwnd, const RECT *surface_rect, COLORREF color_key,
                                 struct window_surface **window_surface)
 {
     struct window_surface *surface;
     struct macdrv_win_data *data;
-    RECT rect;
 
     if (!(data = get_win_data(hwnd))) return FALSE;
 
     data->layered = TRUE;
     data->ulw_layered = TRUE;
 
-    rect = *window_rect;
-    OffsetRect(&rect, -window_rect->left, -window_rect->top);
-
     surface = data->surface;
-    if (!surface || !EqualRect(&surface->rect, &rect))
+    if (!surface || !EqualRect(&surface->rect, surface_rect))
     {
-        data->surface = create_surface(data->hwnd, data->cocoa_window, &rect, NULL, TRUE);
+        data->surface = create_surface(data->hwnd, data->cocoa_window, surface_rect, NULL);
         if (surface) window_surface_release(surface);
         surface = data->surface;
         if (data->unminimized_surface)
@@ -253,7 +247,6 @@ BOOL macdrv_CreateLayeredWindow(HWND hwnd, const RECT *window_rect, COLORREF col
             data->unminimized_surface = NULL;
         }
     }
-    else window_surface_set_layered(surface, color_key, -1, 0xff000000);
 
     if ((*window_surface = surface)) window_surface_add_ref(surface);
 

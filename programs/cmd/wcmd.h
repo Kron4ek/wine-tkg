@@ -108,18 +108,13 @@ typedef struct _CMD_FOR_CONTROL
     };
 } CMD_FOR_CONTROL;
 
-typedef struct _CMD_COMMAND
-{
-  WCHAR              *command;     /* Command string to execute                */
-} CMD_COMMAND;
-
 typedef struct _CMD_NODE
 {
     CMD_OPERATOR      op;            /* operator */
     CMD_REDIRECTION  *redirects;     /* Redirections */
     union
     {
-        CMD_COMMAND  *command;       /* CMD_SINGLE */
+        WCHAR        *command;       /* CMD_SINGLE */
         struct                       /* binary operator (CMD_CONCAT, ONFAILURE, ONSUCCESS, PIPE) */
         {
             struct _CMD_NODE *left;
@@ -156,57 +151,57 @@ typedef int RETURN_CODE;
 #define RETURN_CODE_SYNTAX_ERROR         255
 #define RETURN_CODE_CANT_LAUNCH          9009
 #define RETURN_CODE_ABORTED              (-999999)
-/* temporary to detect builtin commands not migrated to handle return code */
-#define RETURN_CODE_OLD_CHAINING         (-999998)
 
-void WCMD_assoc (const WCHAR *, BOOL);
-void WCMD_batch(WCHAR *, WCHAR *, WCHAR *, HANDLE);
+BOOL WCMD_print_volume_information(const WCHAR *);
+
+RETURN_CODE WCMD_assoc(const WCHAR *, BOOL);
+RETURN_CODE WCMD_batch(const WCHAR *, WCHAR *, const WCHAR *, HANDLE);
 RETURN_CODE WCMD_call(WCHAR *command);
-void WCMD_change_tty (void);
-void WCMD_choice (const WCHAR *);
-void WCMD_clear_screen (void);
-void WCMD_color (void);
-void WCMD_copy (WCHAR *);
-void WCMD_create_dir (WCHAR *);
-BOOL WCMD_delete (WCHAR *);
-void WCMD_directory (WCHAR *);
+RETURN_CODE WCMD_choice(const WCHAR *);
+RETURN_CODE WCMD_clear_screen(void);
+RETURN_CODE WCMD_color(void);
+RETURN_CODE WCMD_copy(WCHAR *);
+RETURN_CODE WCMD_create_dir(WCHAR *);
+RETURN_CODE WCMD_delete(WCHAR *);
+RETURN_CODE WCMD_directory(WCHAR *);
 RETURN_CODE WCMD_echo(const WCHAR *);
-void WCMD_endlocal (void);
+RETURN_CODE WCMD_endlocal(void);
 void WCMD_enter_paged_mode(const WCHAR *);
 RETURN_CODE WCMD_exit(void);
 BOOL WCMD_get_fullpath(const WCHAR *, SIZE_T, WCHAR *, WCHAR **);
-void WCMD_give_help (const WCHAR *args);
+RETURN_CODE WCMD_give_help(WCHAR *args);
 RETURN_CODE WCMD_goto(void);
+RETURN_CODE WCMD_label(void);
 void WCMD_leave_paged_mode(void);
-void WCMD_more (WCHAR *);
-void WCMD_move (void);
+RETURN_CODE WCMD_more(WCHAR *);
+RETURN_CODE WCMD_move (void);
 WCHAR* WINAPIV WCMD_format_string (const WCHAR *format, ...);
 void WINAPIV WCMD_output (const WCHAR *format, ...);
 void WINAPIV WCMD_output_stderr (const WCHAR *format, ...);
 void WCMD_output_asis (const WCHAR *message);
 void WCMD_output_asis_stderr (const WCHAR *message);
-void WCMD_pause (void);
-void WCMD_popd (void);
+RETURN_CODE WCMD_pause(void);
+RETURN_CODE WCMD_popd(void);
 void WCMD_print_error (void);
-void WCMD_pushd (const WCHAR *args);
-void WCMD_remove_dir (WCHAR *command);
-void WCMD_rename (void);
-void WCMD_run_program (WCHAR *command, BOOL called);
-void WCMD_setlocal (const WCHAR *args);
-void WCMD_setshow_date (void);
-void WCMD_setshow_default (const WCHAR *args);
-void WCMD_setshow_env (WCHAR *command);
-void WCMD_setshow_path (const WCHAR *args);
-void WCMD_setshow_prompt (void);
-void WCMD_setshow_time (void);
-void WCMD_shift (const WCHAR *args);
-void WCMD_start (WCHAR *args);
-void WCMD_title (const WCHAR *);
-void WCMD_type (WCHAR *);
-void WCMD_verify (const WCHAR *args);
-void WCMD_version (void);
-int  WCMD_volume (BOOL set_label, const WCHAR *args);
-void WCMD_mklink(WCHAR *args);
+RETURN_CODE WCMD_pushd(const WCHAR *args);
+RETURN_CODE WCMD_remove_dir(WCHAR *command);
+RETURN_CODE WCMD_rename(void);
+RETURN_CODE WCMD_run_program (WCHAR *command, BOOL called);
+RETURN_CODE WCMD_setlocal(WCHAR *args);
+RETURN_CODE WCMD_setshow_date(void);
+RETURN_CODE WCMD_setshow_default(const WCHAR *args);
+RETURN_CODE WCMD_setshow_env(WCHAR *command);
+RETURN_CODE WCMD_setshow_path(const WCHAR *args);
+RETURN_CODE WCMD_setshow_prompt(void);
+RETURN_CODE WCMD_setshow_time(void);
+RETURN_CODE WCMD_shift(const WCHAR *args);
+RETURN_CODE WCMD_start(WCHAR *args);
+RETURN_CODE WCMD_title(const WCHAR *);
+RETURN_CODE WCMD_type(WCHAR *);
+RETURN_CODE WCMD_verify(void);
+RETURN_CODE WCMD_version(void);
+RETURN_CODE WCMD_volume(void);
+RETURN_CODE WCMD_mklink(WCHAR *args);
 
 WCHAR *WCMD_fgets (WCHAR *buf, DWORD n, HANDLE stream);
 WCHAR *WCMD_parameter (WCHAR *s, int n, WCHAR **start, BOOL raw, BOOL wholecmdline);
@@ -221,7 +216,8 @@ WCHAR *WCMD_LoadMessage(UINT id);
 WCHAR *WCMD_strsubstW(WCHAR *start, const WCHAR* next, const WCHAR* insert, int len);
 BOOL WCMD_ReadFile(const HANDLE hIn, WCHAR *intoBuf, const DWORD maxChars, LPDWORD charsRead);
 
-WCHAR    *WCMD_ReadAndParseLine(const WCHAR *initialcmd, CMD_NODE **output, HANDLE readFrom);
+enum read_parse_line {RPL_SUCCESS, RPL_EOF, RPL_SYNTAXERROR};
+enum read_parse_line WCMD_ReadAndParseLine(const WCHAR *initialcmd, CMD_NODE **output, HANDLE readFrom);
 void      node_dispose_tree(CMD_NODE *cmds);
 RETURN_CODE node_execute(CMD_NODE *node);
 
@@ -332,7 +328,7 @@ void WCMD_set_for_loop_variable(int var_idx, const WCHAR *value);
  * variables and batch parameters substitution already done.
  */
 extern WCHAR quals[MAXSTRING], param1[MAXSTRING], param2[MAXSTRING];
-extern DWORD errorlevel;
+extern int errorlevel;
 extern BATCH_CONTEXT *context;
 extern FOR_CONTEXT *forloopcontext;
 extern BOOL delayedsubst;
@@ -353,7 +349,7 @@ extern BOOL delayedsubst;
 #define WCMD_CHDIR     2
 #define WCMD_CLS       3
 #define WCMD_COPY      4
-#define WCMD_CTTY      5
+/* no longer used slot */
 #define WCMD_DATE      6
 #define WCMD_DEL       7
 #define WCMD_DIR       8
@@ -434,7 +430,6 @@ extern WCHAR version_string[];
 #define WCMD_ARGERR           1027
 #define WCMD_VOLUMESERIALNO   1028
 #define WCMD_VOLUMEPROMPT     1029
-#define WCMD_NOPATH           1030
 #define WCMD_ANYKEY           1031
 #define WCMD_CONSTITLE        1032
 #define WCMD_VERSION          1033

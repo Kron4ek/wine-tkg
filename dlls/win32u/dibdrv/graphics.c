@@ -1531,7 +1531,8 @@ BOOL dibdrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
     DC *dc = get_physdev_dc( dev );
     RECT rect;
     POINT pt[2], *points;
-    int i, end, count;
+    int i, end;
+    ULONG count;
     BOOL ret = TRUE;
     HRGN outline = 0, interior = 0;
 
@@ -1625,7 +1626,7 @@ BOOL dibdrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
     }
 
     if (pdev->brush.style != BS_NULL &&
-        !(interior = ULongToHandle(NtGdiPolyPolyDraw( ULongToHandle(ALTERNATE), points, (const UINT *)&count, 1, NtGdiPolyPolygonRgn ))))
+        !(interior = ULongToHandle(NtGdiPolyPolyDraw( ULongToHandle(ALTERNATE), points, &count, 1, NtGdiPolyPolygonRgn ))))
     {
         free( points );
         if (outline) NtGdiDeleteObjectApp( outline );

@@ -92,16 +92,15 @@ extern BOOL ANDROID_CreateWindow( HWND hwnd );
 extern void ANDROID_DestroyWindow( HWND hwnd );
 extern BOOL ANDROID_ProcessEvents( DWORD mask );
 extern LRESULT ANDROID_DesktopWindowProc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp );
-extern void ANDROID_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha,
-                                                DWORD flags );
 extern void ANDROID_SetParent( HWND hwnd, HWND parent, HWND old_parent );
 extern void ANDROID_SetCapture( HWND hwnd, UINT flags );
 extern void ANDROID_SetWindowStyle( HWND hwnd, INT offset, STYLESTRUCT *style );
 extern UINT ANDROID_ShowWindow( HWND hwnd, INT cmd, RECT *rect, UINT swp );
-extern BOOL ANDROID_CreateLayeredWindow( HWND hwnd, const RECT *window_rect, COLORREF color_key,
+extern BOOL ANDROID_CreateLayeredWindow( HWND hwnd, const RECT *surface_rect, COLORREF color_key,
                                          struct window_surface **surface );
 extern LRESULT ANDROID_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp );
-extern BOOL ANDROID_WindowPosChanging( HWND hwnd, UINT swp_flags, const RECT *window_rect, const RECT *client_rect, RECT *visible_rect );
+extern BOOL ANDROID_WindowPosChanging( HWND hwnd, UINT swp_flags, BOOL shaped, const RECT *window_rect,
+                                       const RECT *client_rect, RECT *visible_rect );
 extern BOOL ANDROID_CreateWindowSurface( HWND hwnd, const RECT *surface_rect, struct window_surface **surface );
 extern void ANDROID_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
                                       const RECT *window_rect, const RECT *client_rect,

@@ -1790,6 +1790,8 @@ static HRESULT session_append_node(struct media_session *session, IMFTopologyNod
 
             if (SUCCEEDED(hr = session_add_media_sink(session, node, media_sink)))
             {
+                IUnknown *device_manager;
+
                 if (SUCCEEDED(session_get_stream_sink_type(topo_node->object.sink_stream, &media_type)))
                 {
                     if (SUCCEEDED(MFGetService(topo_node->object.object, &MR_VIDEO_ACCELERATION_SERVICE,
@@ -1806,6 +1808,21 @@ static HRESULT session_append_node(struct media_session *session, IMFTopologyNod
                                 &topo_node->u.sink.notify_cb);
                     }
                     IMFMediaType_Release(media_type);
+                }
+
+                if (SUCCEEDED(stream_sink_get_device_manager(topo_node->object.sink_stream, &device_manager)))
+                {
+                    IMFTopologyNode *upstream;
+                    DWORD output;
+
+                    if (SUCCEEDED(IMFTopologyNode_GetInput(topo_node->node, 0, &upstream, &output)))
+                    {
+                        if (topology_node_is_d3d_aware(upstream))
+                            topology_node_set_device_manager(upstream, device_manager);
+                        IMFTopologyNode_Release(upstream);
+                    }
+
+                    IUnknown_Release(device_manager);
                 }
             }
             IMFMediaSink_Release(media_sink);
@@ -3347,6 +3364,13 @@ static HRESULT transform_stream_update_input_type(struct topo_node *node, UINT i
     {
         struct transform_stream *stream = &node->u.transform.outputs[output];
         UINT id = transform_node_get_stream_id(node, TRUE, output);
+
+        /* check if transform output type is still valid or if we need to update it as well */
+        if (SUCCEEDED(hr = IMFTransform_GetOutputCurrentType(node->object.transform, id, &new_output_type)))
+        {
+            IMFMediaType_Release(new_output_type);
+            continue;
+        }
 
         if (SUCCEEDED(hr = transform_stream_update_output_type(node, stream, id,
                 old_output_types[output], &new_output_type)))

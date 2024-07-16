@@ -567,6 +567,12 @@ static void no_more_pads_cb(GstElement *element, gpointer user)
     pthread_cond_signal(&parser->init_cond);
 }
 
+static void deep_element_added_cb(GstBin *self, GstBin *sub_bin, GstElement *element, gpointer user)
+{
+    if (element)
+        set_max_threads(element);
+}
+
 static gboolean sink_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
 {
     struct wg_parser_stream *stream = gst_pad_get_element_private(pad);
@@ -1797,6 +1803,7 @@ static BOOL decodebin_parser_init_gst(struct wg_parser *parser)
     g_signal_connect(element, "autoplug-continue", G_CALLBACK(autoplug_continue_cb), parser);
     g_signal_connect(element, "autoplug-select", G_CALLBACK(autoplug_select_cb), parser);
     g_signal_connect(element, "no-more-pads", G_CALLBACK(no_more_pads_cb), parser);
+    g_signal_connect(element, "deep-element-added", G_CALLBACK(deep_element_added_cb), parser);
 
     pthread_mutex_lock(&parser->mutex);
     parser->no_more_pads = false;
@@ -1882,8 +1889,8 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
 
     X(wg_transform_create),
     X(wg_transform_destroy),
-    X(wg_transform_get_output_format),
-    X(wg_transform_set_output_format),
+    X(wg_transform_get_output_type),
+    X(wg_transform_set_output_type),
 
     X(wg_transform_push_data),
     X(wg_transform_read_data),
@@ -1906,6 +1913,13 @@ C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == unix_wg_funcs_count);
 #ifdef _WIN64
 
 typedef ULONG PTR32;
+
+struct wg_media_type32
+{
+    GUID major;
+    UINT32 format_size;
+    PTR32 format;
+};
 
 static NTSTATUS wow64_wg_parser_connect(void *args)
 {
@@ -2051,15 +2065,25 @@ NTSTATUS wow64_wg_transform_create(void *args)
     struct
     {
         wg_transform_t transform;
-        PTR32 input_format;
-        PTR32 output_format;
-        PTR32 attrs;
+        struct wg_media_type32 input_type;
+        struct wg_media_type32 output_type;
+        struct wg_transform_attrs attrs;
     } *params32 = args;
     struct wg_transform_create_params params =
     {
-        .input_format = ULongToPtr(params32->input_format),
-        .output_format = ULongToPtr(params32->output_format),
-        .attrs = ULongToPtr(params32->attrs),
+        .input_type =
+        {
+            .major = params32->input_type.major,
+            .format_size = params32->input_type.format_size,
+            .u.format = ULongToPtr(params32->input_type.format),
+        },
+        .output_type =
+        {
+            .major = params32->output_type.major,
+            .format_size = params32->output_type.format_size,
+            .u.format = ULongToPtr(params32->output_type.format),
+        },
+        .attrs = params32->attrs,
     };
     NTSTATUS ret;
 
@@ -2068,34 +2092,49 @@ NTSTATUS wow64_wg_transform_create(void *args)
     return ret;
 }
 
-NTSTATUS wow64_wg_transform_get_output_format(void *args)
+NTSTATUS wow64_wg_transform_get_output_type(void *args)
 {
     struct
     {
         wg_transform_t transform;
-        PTR32 format;
+        struct wg_media_type32 media_type;
     } *params32 = args;
-    struct wg_transform_get_output_format_params params =
+    struct wg_transform_get_output_type_params params =
     {
         .transform = params32->transform,
-        .format = ULongToPtr(params32->format),
+        .media_type =
+        {
+            .major = params32->media_type.major,
+            .format_size = params32->media_type.format_size,
+            .u.format = ULongToPtr(params32->media_type.format),
+        },
     };
-    return wg_transform_get_output_format(&params);
+    NTSTATUS status;
+
+    status = wg_transform_get_output_type(&params);
+    params32->media_type.major = params.media_type.major;
+    params32->media_type.format_size = params.media_type.format_size;
+    return status;
 }
 
-NTSTATUS wow64_wg_transform_set_output_format(void *args)
+NTSTATUS wow64_wg_transform_set_output_type(void *args)
 {
     struct
     {
         wg_transform_t transform;
-        PTR32 format;
+        struct wg_media_type32 media_type;
     } *params32 = args;
-    struct wg_transform_set_output_format_params params =
+    struct wg_transform_set_output_type_params params =
     {
         .transform = params32->transform,
-        .format = ULongToPtr(params32->format),
+        .media_type =
+        {
+            .major = params32->media_type.major,
+            .format_size = params32->media_type.format_size,
+            .u.format = ULongToPtr(params32->media_type.format),
+        },
     };
-    return wg_transform_set_output_format(&params);
+    return wg_transform_set_output_type(&params);
 }
 
 NTSTATUS wow64_wg_transform_push_data(void *args)
@@ -2247,8 +2286,8 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
 
     X64(wg_transform_create),
     X(wg_transform_destroy),
-    X64(wg_transform_get_output_format),
-    X64(wg_transform_set_output_format),
+    X64(wg_transform_get_output_type),
+    X64(wg_transform_set_output_type),
 
     X64(wg_transform_push_data),
     X64(wg_transform_read_data),

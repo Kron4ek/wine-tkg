@@ -1542,6 +1542,7 @@ void CDECL wined3d_stateblock_set_render_state(struct wined3d_stateblock *stateb
             }
             break;
 
+        case WINED3D_RS_SPECULARENABLE:
         case WINED3D_RS_TEXTUREFACTOR:
             stateblock->changed.ffp_ps_constants = 1;
             break;
@@ -2193,6 +2194,15 @@ static void wined3d_stateblock_state_init(struct wined3d_stateblock_state *state
 
 }
 
+/* FFP push constant buffers do not have a "default" state on the CS side.
+ * We need to explicitly invalidate them when initializing the context or
+ * resetting. */
+static void wined3d_stateblock_invalidate_push_constants(struct wined3d_stateblock *stateblock)
+{
+    stateblock->changed.ffp_ps_constants = 1;
+    stateblock->changed.lights = 1;
+}
+
 static HRESULT stateblock_init(struct wined3d_stateblock *stateblock, const struct wined3d_stateblock *device_state,
         struct wined3d_device *device, enum wined3d_stateblock_type type)
 {
@@ -2207,9 +2217,7 @@ static HRESULT stateblock_init(struct wined3d_stateblock *stateblock, const stru
     stateblock->changed.store_stream_offset = 1;
     list_init(&stateblock->changed.changed_lights);
 
-    /* FFP push constant buffers need to be set if used; the backend does not
-     * have a default state for them. */
-    stateblock->changed.ffp_ps_constants = 1;
+    wined3d_stateblock_invalidate_push_constants(stateblock);
 
     if (type == WINED3D_SBT_RECORDED || type == WINED3D_SBT_PRIMARY)
         return WINED3D_OK;
@@ -2286,6 +2294,7 @@ void CDECL wined3d_stateblock_reset(struct wined3d_stateblock *stateblock)
     memset(&stateblock->stateblock_state, 0, sizeof(stateblock->stateblock_state));
     stateblock->stateblock_state.light_state = &stateblock->light_state;
     wined3d_stateblock_state_init(&stateblock->stateblock_state, stateblock->device, WINED3D_STATE_INIT_DEFAULT);
+    wined3d_stateblock_invalidate_push_constants(stateblock);
 }
 
 static void wined3d_device_set_base_vertex_index(struct wined3d_device *device, int base_index)
@@ -2674,8 +2683,8 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
     bool set_blend_state = false, set_depth_stencil_state = false, set_rasterizer_state = false;
 
     const struct wined3d_stateblock_state *state = &stateblock->stateblock_state;
-    const struct wined3d_saved_states *changed = &stateblock->changed;
     const unsigned int word_bit_count = sizeof(DWORD) * CHAR_BIT;
+    struct wined3d_saved_states *changed = &stateblock->changed;
     struct wined3d_device_context *context = &device->cs->c;
     unsigned int i, j, start, idx;
     bool set_depth_bounds = false;
@@ -2741,19 +2750,6 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
         wined3d_device_set_ps_consts_b(device, range.offset, range.size, &state->ps_consts_b[range.offset]);
     }
 
-    if (changed->lights)
-    {
-        struct wined3d_light_info *light, *cursor;
-
-        LIST_FOR_EACH_ENTRY_SAFE(light, cursor, &changed->changed_lights, struct wined3d_light_info, changed_entry)
-        {
-            wined3d_device_context_set_light(context, light->OriginalIndex, &light->OriginalParms);
-            wined3d_device_set_light_enable(device, light->OriginalIndex, light->glIndex != -1);
-            list_remove(&light->changed_entry);
-            light->changed = false;
-        }
-    }
-
     for (i = 0; i < ARRAY_SIZE(changed->renderState); ++i)
     {
         map = changed->renderState[i];
@@ -2813,6 +2809,10 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                 case WINED3D_RS_ADAPTIVETESS_Z:
                 case WINED3D_RS_ADAPTIVETESS_W:
                     set_depth_bounds = true;
+                    break;
+
+                case WINED3D_RS_AMBIENT:
+                    changed->lights = 1;
                     break;
 
                 case WINED3D_RS_ADAPTIVETESS_Y:
@@ -3306,8 +3306,20 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
     map = changed->textures;
     while (map)
     {
+        struct wined3d_color float_key[2];
+        struct wined3d_texture *texture;
+
         i = wined3d_bit_scan(&map);
-        wined3d_device_set_texture(device, i, state->textures[i]);
+        texture = state->textures[i];
+        wined3d_device_set_texture(device, i, texture);
+
+        if (!i && texture)
+        {
+            wined3d_format_get_float_color_key(texture->resource.format, &texture->src_blt_color_key, float_key);
+            wined3d_device_context_push_constants(context,
+                    WINED3D_PUSH_CONSTANTS_PS_FFP, WINED3D_SHADER_CONST_FFP_COLOR_KEY,
+                    offsetof(struct wined3d_ffp_ps_constants, color_key), sizeof(float_key), float_key);
+        }
     }
 
     map = changed->clipplane;
@@ -3317,8 +3329,28 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
         wined3d_device_set_clip_plane(device, i, &state->clip_planes[i]);
     }
 
+    if (changed->lights)
+    {
+        struct wined3d_ffp_light_constants constants;
+        struct wined3d_light_info *light, *cursor;
+
+        LIST_FOR_EACH_ENTRY_SAFE(light, cursor, &changed->changed_lights, struct wined3d_light_info, changed_entry)
+        {
+            wined3d_device_context_set_light(context, light->OriginalIndex, &light->OriginalParms);
+            wined3d_device_set_light_enable(device, light->OriginalIndex, light->glIndex != -1);
+            list_remove(&light->changed_entry);
+            light->changed = false;
+        }
+
+        wined3d_color_from_d3dcolor(&constants.ambient, state->rs[WINED3D_RS_AMBIENT]);
+        wined3d_device_context_push_constants(context, WINED3D_PUSH_CONSTANTS_VS_FFP, WINED3D_SHADER_CONST_FFP_LIGHTS,
+                offsetof(struct wined3d_ffp_vs_constants, light), sizeof(constants), &constants);
+    }
+
     if (changed->ffp_ps_constants)
     {
+        static const struct wined3d_color specular_enabled = {1.0f, 1.0f, 1.0f, 0.0f};
+        static const struct wined3d_color specular_disabled;
         struct wined3d_ffp_ps_constants constants;
 
         for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
@@ -3326,8 +3358,10 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
 
         wined3d_color_from_d3dcolor(&constants.texture_factor, state->rs[WINED3D_RS_TEXTUREFACTOR]);
 
+        constants.specular_enable = state->rs[WINED3D_RS_SPECULARENABLE] ? specular_enabled : specular_disabled;
+
         wined3d_device_context_push_constants(context, WINED3D_PUSH_CONSTANTS_PS_FFP,
-                WINED3D_SHADER_CONST_FFP_PS, 0, sizeof(constants), &constants);
+                WINED3D_SHADER_CONST_FFP_PS, 0, offsetof(struct wined3d_ffp_ps_constants, color_key), &constants);
     }
 
     assert(list_empty(&stateblock->changed.changed_lights));

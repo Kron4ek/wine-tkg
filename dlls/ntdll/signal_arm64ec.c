@@ -39,6 +39,24 @@
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 WINE_DECLARE_DEBUG_CHANNEL(relay);
 
+/* xtajit64.dll functions */
+static void     (WINAPI *pBTCpu64FlushInstructionCache)(const void*,SIZE_T);
+static BOOLEAN  (WINAPI *pBTCpu64IsProcessorFeaturePresent)(UINT);
+static void     (WINAPI *pBTCpu64NotifyMemoryDirty)(void*,SIZE_T);
+static void     (WINAPI *pBTCpu64NotifyReadFile)(HANDLE,void*,SIZE_T,BOOL,NTSTATUS);
+static void     (WINAPI *pFlushInstructionCacheHeavy)(const void*,SIZE_T);
+static NTSTATUS (WINAPI *pNotifyMapViewOfSection)(void*,void*,void*,SIZE_T,ULONG,ULONG);
+static void     (WINAPI *pNotifyMemoryAlloc)(void*,SIZE_T,ULONG,ULONG,BOOL,NTSTATUS);
+static void     (WINAPI *pNotifyMemoryFree)(void*,SIZE_T,ULONG,BOOL,NTSTATUS);
+static void     (WINAPI *pNotifyMemoryProtect)(void*,SIZE_T,ULONG,BOOL,NTSTATUS);
+static void     (WINAPI *pNotifyUnmapViewOfSection)(void*,BOOL,NTSTATUS);
+static NTSTATUS (WINAPI *pProcessInit)(void);
+static void     (WINAPI *pProcessTerm)(HANDLE,BOOL,NTSTATUS);
+static NTSTATUS (WINAPI *pThreadInit)(void);
+static void     (WINAPI *pThreadTerm)(HANDLE,LONG);
+static void     (WINAPI *pUpdateProcessorInformation)(SYSTEM_CPU_INFORMATION*);
+
+static BOOLEAN emulated_processor_features[PROCESSOR_FEATURE_MAX];
 
 static inline CHPE_V2_CPU_AREA_INFO *get_arm64ec_cpu_area(void)
 {
@@ -51,6 +69,40 @@ static inline BOOL is_valid_arm64ec_frame( ULONG_PTR frame )
     if (is_valid_frame( frame )) return TRUE;
     return (frame >= get_arm64ec_cpu_area()->EmulatorStackLimit &&
             frame <= get_arm64ec_cpu_area()->EmulatorStackBase);
+}
+
+
+/**********************************************************************
+ *           create_cross_process_work_list
+ */
+static NTSTATUS create_cross_process_work_list( struct arm64ec_shared_info *info )
+{
+    SIZE_T map_size = 0x4000;
+    LARGE_INTEGER size;
+    NTSTATUS status;
+    HANDLE section;
+    CROSS_PROCESS_WORK_LIST *list = NULL;
+    CROSS_PROCESS_WORK_ENTRY *end;
+    UINT i;
+
+    size.QuadPart = map_size;
+    status = NtCreateSection( &section, SECTION_ALL_ACCESS, NULL, &size, PAGE_READWRITE, SEC_COMMIT, 0 );
+    if (status) return status;
+    status = NtMapViewOfSection( section, GetCurrentProcess(), (void **)&list, 0, 0, NULL,
+                                 &map_size, ViewShare, MEM_TOP_DOWN, PAGE_READWRITE );
+    if (status)
+    {
+        NtClose( section );
+        return status;
+    }
+
+    end = (CROSS_PROCESS_WORK_ENTRY *)((char *)list + map_size);
+    for (i = 0; list->entries + i + 1 <= end; i++)
+        RtlWow64PushCrossProcessWorkOntoFreeList( &list->free_list, &list->entries[i] );
+
+    info->SectionHandle = section;
+    info->CrossProcessWorkList = list;
+    return STATUS_SUCCESS;
 }
 
 
@@ -85,6 +137,63 @@ static BOOL send_cross_process_notification( HANDLE process, UINT id, const void
     NtUnmapViewOfSection( GetCurrentProcess(), list );
     NtClose( section );
     return TRUE;
+}
+
+
+/*******************************************************************
+ *         arm64ec_process_init
+ */
+NTSTATUS arm64ec_process_init( HMODULE module )
+{
+    NTSTATUS status = STATUS_SUCCESS;
+    struct arm64ec_shared_info *info = (struct arm64ec_shared_info *)(RtlGetCurrentPeb() + 1);
+
+    __os_arm64x_dispatch_call_no_redirect = RtlFindExportedRoutineByName( module, "ExitToX64" );
+    __os_arm64x_dispatch_fptr = RtlFindExportedRoutineByName( module, "DispatchJump" );
+    __os_arm64x_dispatch_ret = RtlFindExportedRoutineByName( module, "RetToEntryThunk" );
+
+#define GET_PTR(name) p ## name = RtlFindExportedRoutineByName( module, #name )
+    GET_PTR( BTCpu64FlushInstructionCache );
+    GET_PTR( BTCpu64IsProcessorFeaturePresent );
+    GET_PTR( BTCpu64NotifyMemoryDirty );
+    GET_PTR( BTCpu64NotifyReadFile );
+    GET_PTR( FlushInstructionCacheHeavy );
+    GET_PTR( NotifyMapViewOfSection );
+    GET_PTR( NotifyMemoryAlloc );
+    GET_PTR( NotifyMemoryFree );
+    GET_PTR( NotifyMemoryProtect );
+    GET_PTR( NotifyUnmapViewOfSection );
+    GET_PTR( ProcessInit );
+    GET_PTR( ProcessTerm );
+    GET_PTR( ThreadInit );
+    GET_PTR( ThreadTerm );
+    GET_PTR( UpdateProcessorInformation );
+#undef GET_PTR
+
+    info->NativeMachineType = IMAGE_FILE_MACHINE_ARM64;
+    info->EmulatedMachineType = IMAGE_FILE_MACHINE_AMD64;
+
+    if (pProcessInit) status = pProcessInit();
+    if (!status)
+    {
+        for (unsigned int i = 0; i < PROCESSOR_FEATURE_MAX; i++)
+            emulated_processor_features[i] = pBTCpu64IsProcessorFeaturePresent( i );
+        status = create_cross_process_work_list( info );
+    }
+    if (!status) status = arm64ec_thread_init();
+    return status;
+}
+
+
+/*******************************************************************
+ *         arm64ec_thread_init
+ */
+NTSTATUS arm64ec_thread_init(void)
+{
+    NTSTATUS status = STATUS_SUCCESS;
+
+    if (pThreadInit) status = pThreadInit();
+    return status;
 }
 
 
@@ -201,8 +310,8 @@ DEFINE_SYSCALL(NtLockFile, (HANDLE file, HANDLE event, PIO_APC_ROUTINE apc, void
 DEFINE_SYSCALL(NtLockVirtualMemory, (HANDLE process, PVOID *addr, SIZE_T *size, ULONG unknown))
 DEFINE_SYSCALL(NtMakePermanentObject, (HANDLE handle))
 DEFINE_SYSCALL(NtMakeTemporaryObject, (HANDLE handle))
-DEFINE_SYSCALL(NtMapViewOfSection, (HANDLE handle, HANDLE process, PVOID *addr_ptr, ULONG_PTR zero_bits, SIZE_T commit_size, const LARGE_INTEGER *offset_ptr, SIZE_T *size_ptr, SECTION_INHERIT inherit, ULONG alloc_type, ULONG protect))
-DEFINE_SYSCALL(NtMapViewOfSectionEx, (HANDLE handle, HANDLE process, PVOID *addr_ptr, const LARGE_INTEGER *offset_ptr, SIZE_T *size_ptr, ULONG alloc_type, ULONG protect, MEM_EXTENDED_PARAMETER *parameters, ULONG count))
+DEFINE_WRAPPED_SYSCALL(NtMapViewOfSection, (HANDLE handle, HANDLE process, PVOID *addr_ptr, ULONG_PTR zero_bits, SIZE_T commit_size, const LARGE_INTEGER *offset_ptr, SIZE_T *size_ptr, SECTION_INHERIT inherit, ULONG alloc_type, ULONG protect))
+DEFINE_WRAPPED_SYSCALL(NtMapViewOfSectionEx, (HANDLE handle, HANDLE process, PVOID *addr_ptr, const LARGE_INTEGER *offset_ptr, SIZE_T *size_ptr, ULONG alloc_type, ULONG protect, MEM_EXTENDED_PARAMETER *parameters, ULONG count))
 DEFINE_SYSCALL(NtNotifyChangeDirectoryFile, (HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, void *apc_context, IO_STATUS_BLOCK *iosb, void *buffer, ULONG buffer_size, ULONG filter, BOOLEAN subtree))
 DEFINE_SYSCALL(NtNotifyChangeKey, (HANDLE key, HANDLE event, PIO_APC_ROUTINE apc, void *apc_context, IO_STATUS_BLOCK *io, ULONG filter, BOOLEAN subtree, void *buffer, ULONG length, BOOLEAN async))
 DEFINE_SYSCALL(NtNotifyChangeMultipleKeys, (HANDLE key, ULONG count, OBJECT_ATTRIBUTES *attr, HANDLE event, PIO_APC_ROUTINE apc, void *apc_context, IO_STATUS_BLOCK *io, ULONG filter, BOOLEAN subtree, void *buffer, ULONG length, BOOLEAN async))
@@ -259,7 +368,7 @@ DEFINE_SYSCALL(NtQuerySemaphore, (HANDLE handle, SEMAPHORE_INFORMATION_CLASS cla
 DEFINE_SYSCALL(NtQuerySymbolicLinkObject, (HANDLE handle, UNICODE_STRING *target, ULONG *length))
 DEFINE_SYSCALL(NtQuerySystemEnvironmentValue, (UNICODE_STRING *name, WCHAR *buffer, ULONG length, ULONG *retlen))
 DEFINE_SYSCALL(NtQuerySystemEnvironmentValueEx, (UNICODE_STRING *name, GUID *vendor, void *buffer, ULONG *retlen, ULONG *attrib))
-DEFINE_SYSCALL(NtQuerySystemInformation, (SYSTEM_INFORMATION_CLASS class, void *info, ULONG size, ULONG *ret_size))
+DEFINE_WRAPPED_SYSCALL(NtQuerySystemInformation, (SYSTEM_INFORMATION_CLASS class, void *info, ULONG size, ULONG *ret_size))
 DEFINE_SYSCALL(NtQuerySystemInformationEx, (SYSTEM_INFORMATION_CLASS class, void *query, ULONG query_len, void *info, ULONG size, ULONG *ret_size))
 DEFINE_SYSCALL(NtQuerySystemTime, (LARGE_INTEGER *time))
 DEFINE_SYSCALL(NtQueryTimer, (HANDLE handle, TIMER_INFORMATION_CLASS class, void *info, ULONG len, ULONG *ret_len))
@@ -271,7 +380,7 @@ DEFINE_SYSCALL(NtQueueApcThread, (HANDLE handle, PNTAPCFUNC func, ULONG_PTR arg1
 DEFINE_SYSCALL(NtQueueApcThreadEx, (HANDLE handle, HANDLE reserve_handle, PNTAPCFUNC func, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3))
 DEFINE_WRAPPED_SYSCALL(NtRaiseException, (EXCEPTION_RECORD *rec, ARM64_NT_CONTEXT *context, BOOL first_chance))
 DEFINE_SYSCALL(NtRaiseHardError, (NTSTATUS status, ULONG count, ULONG params_mask, void **params, HARDERROR_RESPONSE_OPTION option, HARDERROR_RESPONSE *response))
-DEFINE_SYSCALL(NtReadFile, (HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user, IO_STATUS_BLOCK *io, void *buffer, ULONG length, LARGE_INTEGER *offset, ULONG *key))
+DEFINE_WRAPPED_SYSCALL(NtReadFile, (HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user, IO_STATUS_BLOCK *io, void *buffer, ULONG length, LARGE_INTEGER *offset, ULONG *key))
 DEFINE_SYSCALL(NtReadFileScatter, (HANDLE file, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user, IO_STATUS_BLOCK *io, FILE_SEGMENT_ELEMENT *segments, ULONG length, LARGE_INTEGER *offset, ULONG *key))
 DEFINE_SYSCALL(NtReadVirtualMemory, (HANDLE process, const void *addr, void *buffer, SIZE_T size, SIZE_T *bytes_read))
 DEFINE_SYSCALL(NtRegisterThreadTerminatePort, (HANDLE handle))
@@ -325,16 +434,16 @@ DEFINE_SYSCALL(NtSuspendProcess, (HANDLE handle))
 DEFINE_SYSCALL(NtSuspendThread, (HANDLE handle, ULONG *count))
 DEFINE_SYSCALL(NtSystemDebugControl, (SYSDBG_COMMAND command, void *in_buff, ULONG in_len, void *out_buff, ULONG out_len, ULONG *retlen))
 DEFINE_SYSCALL(NtTerminateJobObject, (HANDLE handle, NTSTATUS status))
-DEFINE_SYSCALL(NtTerminateProcess, (HANDLE handle, LONG exit_code))
-DEFINE_SYSCALL(NtTerminateThread, (HANDLE handle, LONG exit_code))
+DEFINE_WRAPPED_SYSCALL(NtTerminateProcess, (HANDLE handle, LONG exit_code))
+DEFINE_WRAPPED_SYSCALL(NtTerminateThread, (HANDLE handle, LONG exit_code))
 DEFINE_SYSCALL(NtTestAlert, (void))
 DEFINE_SYSCALL(NtTraceControl, (ULONG code, void *inbuf, ULONG inbuf_len, void *outbuf, ULONG outbuf_len, ULONG *size))
 DEFINE_SYSCALL(NtUnloadDriver, (const UNICODE_STRING *name))
 DEFINE_SYSCALL(NtUnloadKey, (OBJECT_ATTRIBUTES *attr))
 DEFINE_SYSCALL(NtUnlockFile, (HANDLE handle, IO_STATUS_BLOCK *io_status, LARGE_INTEGER *offset, LARGE_INTEGER *count, ULONG *key))
 DEFINE_SYSCALL(NtUnlockVirtualMemory, (HANDLE process, PVOID *addr, SIZE_T *size, ULONG unknown))
-DEFINE_SYSCALL(NtUnmapViewOfSection, (HANDLE process, PVOID addr))
-DEFINE_SYSCALL(NtUnmapViewOfSectionEx, (HANDLE process, PVOID addr, ULONG flags))
+DEFINE_WRAPPED_SYSCALL(NtUnmapViewOfSection, (HANDLE process, PVOID addr))
+DEFINE_WRAPPED_SYSCALL(NtUnmapViewOfSectionEx, (HANDLE process, PVOID addr, ULONG flags))
 DEFINE_SYSCALL(NtWaitForAlertByThreadId, (const void *address, const LARGE_INTEGER *timeout))
 DEFINE_SYSCALL(NtWaitForDebugEvent, (HANDLE handle, BOOLEAN alertable, LARGE_INTEGER *timeout, DBGUI_WAIT_STATE_CHANGE *state))
 DEFINE_SYSCALL(NtWaitForKeyedEvent, (HANDLE handle, const void *key, BOOLEAN alertable, const LARGE_INTEGER *timeout))
@@ -357,11 +466,14 @@ NTSTATUS SYSCALL_API NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_
 
     if (!is_current) send_cross_process_notification( process, CrossProcessPreVirtualAlloc,
                                                       *ret, *size_ptr, 3, type, protect, 0 );
+    else if (pNotifyMemoryAlloc) pNotifyMemoryAlloc( *ret, *size_ptr, type, protect, FALSE, 0 );
 
     status = syscall_NtAllocateVirtualMemory( process, ret, zero_bits, size_ptr, type, protect );
 
     if (!is_current) send_cross_process_notification( process, CrossProcessPostVirtualAlloc,
                                                       *ret, *size_ptr, 3, type, protect, status );
+    else if (pNotifyMemoryAlloc) pNotifyMemoryAlloc( *ret, *size_ptr, type, protect, TRUE, status );
+
     return status;
 }
 
@@ -375,11 +487,14 @@ NTSTATUS SYSCALL_API NtAllocateVirtualMemoryEx( HANDLE process, PVOID *ret, SIZE
 
     if (!is_current) send_cross_process_notification( process, CrossProcessPreVirtualAlloc,
                                                       *ret, *size_ptr, 3, type, protect, 0 );
+    else if (pNotifyMemoryAlloc) pNotifyMemoryAlloc( *ret, *size_ptr, type, protect, FALSE, 0 );
 
     status = syscall_NtAllocateVirtualMemoryEx( process, ret, size_ptr, type, protect, parameters, count );
 
     if (!is_current) send_cross_process_notification( process, CrossProcessPostVirtualAlloc,
                                                       *ret, *size_ptr, 3, type, protect, status );
+    else if (pNotifyMemoryAlloc) pNotifyMemoryAlloc( *ret, *size_ptr, type, protect, TRUE, status );
+
     return status;
 }
 
@@ -399,6 +514,8 @@ NTSTATUS SYSCALL_API NtFlushInstructionCache( HANDLE process, const void *addr, 
     {
         if (!RtlIsCurrentProcess( process ))
             send_cross_process_notification( process, CrossProcessFlushCache, addr, size, 0 );
+        else if (pBTCpu64FlushInstructionCache)
+            pBTCpu64FlushInstructionCache( addr, size );
     }
     return status;
 }
@@ -410,11 +527,14 @@ NTSTATUS SYSCALL_API NtFreeVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_
 
     if (!is_current) send_cross_process_notification( process, CrossProcessPreVirtualFree,
                                                       *addr_ptr, *size_ptr, 2, type, 0 );
+    else if (pNotifyMemoryFree) pNotifyMemoryFree( *addr_ptr, *size_ptr, type, FALSE, 0 );
 
     status = syscall_NtFreeVirtualMemory( process, addr_ptr, size_ptr, type );
 
     if (!is_current) send_cross_process_notification( process, CrossProcessPostVirtualFree,
                                                       *addr_ptr, *size_ptr, 2, type, status );
+    else if (pNotifyMemoryFree) pNotifyMemoryFree( *addr_ptr, *size_ptr, type, TRUE, status );
+
     return status;
 }
 
@@ -427,6 +547,46 @@ NTSTATUS SYSCALL_API NtGetContextThread( HANDLE handle, CONTEXT *context )
     return status;
 }
 
+static void notify_map_view_of_section( HANDLE handle, void *addr, SIZE_T size, ULONG alloc,
+                                        ULONG protect, NTSTATUS *ret_status )
+{
+    SECTION_IMAGE_INFORMATION info;
+    NTSTATUS status;
+
+    if (!pNotifyMapViewOfSection) return;
+    if (!NtCurrentTeb()->Tib.ArbitraryUserPointer) return;
+    if (NtQuerySection( handle, SectionImageInformation, &info, sizeof(info), NULL )) return;
+    status = pNotifyMapViewOfSection( NULL, addr, NULL, size, alloc, protect );
+    if (NT_SUCCESS(status)) return;
+    NtUnmapViewOfSection( GetCurrentProcess(), addr );
+    *ret_status = status;
+}
+
+NTSTATUS SYSCALL_API NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_ptr,
+                                         ULONG_PTR zero_bits, SIZE_T commit_size,
+                                         const LARGE_INTEGER *offset, SIZE_T *size_ptr,
+                                         SECTION_INHERIT inherit, ULONG alloc_type, ULONG protect )
+{
+    NTSTATUS status = syscall_NtMapViewOfSection( handle, process, addr_ptr, zero_bits, commit_size,
+                                                  offset, size_ptr, inherit, alloc_type, protect );
+
+    if (NT_SUCCESS(status) && RtlIsCurrentProcess( process ))
+        notify_map_view_of_section( handle, *addr_ptr, *size_ptr, alloc_type, protect, &status );
+    return status;
+}
+
+NTSTATUS SYSCALL_API NtMapViewOfSectionEx( HANDLE handle, HANDLE process, PVOID *addr_ptr,
+                                           const LARGE_INTEGER *offset, SIZE_T *size_ptr, ULONG alloc_type,
+                                           ULONG protect, MEM_EXTENDED_PARAMETER *parameters, ULONG count )
+{
+    NTSTATUS status = syscall_NtMapViewOfSectionEx( handle, process, addr_ptr, offset, size_ptr,
+                                                    alloc_type, protect, parameters, count );
+
+    if (NT_SUCCESS(status) && RtlIsCurrentProcess( process ))
+        notify_map_view_of_section( handle, *addr_ptr, *size_ptr, alloc_type, protect, &status );
+    return status;
+}
+
 NTSTATUS SYSCALL_API NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T *size_ptr,
                                              ULONG new_prot, ULONG *old_prot )
 {
@@ -435,11 +595,22 @@ NTSTATUS SYSCALL_API NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SI
 
     if (!is_current) send_cross_process_notification( process, CrossProcessPreVirtualProtect,
                                                       *addr_ptr, *size_ptr, 2, new_prot, 0 );
+    else if (pNotifyMemoryProtect) pNotifyMemoryProtect( *addr_ptr, *size_ptr, new_prot, FALSE, 0 );
 
     status = syscall_NtProtectVirtualMemory( process, addr_ptr, size_ptr, new_prot, old_prot );
 
     if (!is_current) send_cross_process_notification( process, CrossProcessPostVirtualProtect,
                                                       *addr_ptr, *size_ptr, 2, new_prot, status );
+    else if (pNotifyMemoryProtect) pNotifyMemoryProtect( *addr_ptr, *size_ptr, new_prot, TRUE, status );
+
+    return status;
+}
+
+NTSTATUS SYSCALL_API NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class, void *info, ULONG size, ULONG *ret_size )
+{
+    NTSTATUS status = syscall_NtQuerySystemInformation( class, info, size, ret_size );
+
+    if (!status && class == SystemCpuInformation && pUpdateProcessorInformation) pUpdateProcessorInformation( info );
     return status;
 }
 
@@ -451,12 +622,66 @@ NTSTATUS SYSCALL_API NtRaiseException( EXCEPTION_RECORD *rec, CONTEXT *context, 
     return syscall_NtRaiseException( rec, &arm_ctx, first_chance );
 }
 
+NTSTATUS SYSCALL_API NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user,
+                                 IO_STATUS_BLOCK *io, void *buffer, ULONG length,
+                                 LARGE_INTEGER *offset, ULONG *key )
+{
+    NTSTATUS status;
+
+    if (pBTCpu64NotifyReadFile) pBTCpu64NotifyReadFile( handle, buffer, length, FALSE, 0 );
+    status = syscall_NtReadFile( handle, event, apc, apc_user, io, buffer, length, offset, key );
+    if (pBTCpu64NotifyReadFile) pBTCpu64NotifyReadFile( handle, buffer, length, TRUE, status );
+    return status;
+}
+
 NTSTATUS SYSCALL_API NtSetContextThread( HANDLE handle, const CONTEXT *context )
 {
     ARM64_NT_CONTEXT arm_ctx;
 
     context_x64_to_arm( &arm_ctx, (ARM64EC_NT_CONTEXT *)context );
     return syscall_NtSetContextThread( handle, &arm_ctx );
+}
+
+NTSTATUS SYSCALL_API NtTerminateProcess( HANDLE handle, LONG exit_code )
+{
+    NTSTATUS status;
+
+    if (!handle && pProcessTerm)
+    {
+        pProcessTerm( handle, FALSE, 0 );
+        status = syscall_NtTerminateProcess( handle, exit_code );
+        pProcessTerm( handle, TRUE, status );
+        return status;
+    }
+    return syscall_NtTerminateProcess( handle, exit_code );
+}
+
+NTSTATUS SYSCALL_API NtTerminateThread( HANDLE handle, LONG exit_code )
+{
+    if (pThreadTerm) pThreadTerm( handle, exit_code );
+    return syscall_NtTerminateThread( handle, exit_code );
+}
+
+NTSTATUS SYSCALL_API NtUnmapViewOfSection( HANDLE process, void *addr )
+{
+    BOOL is_current = RtlIsCurrentProcess( process );
+    NTSTATUS status;
+
+    if (is_current && pNotifyUnmapViewOfSection) pNotifyUnmapViewOfSection( addr, FALSE, 0 );
+    status = syscall_NtUnmapViewOfSection( process, addr );
+    if (is_current && pNotifyUnmapViewOfSection) pNotifyUnmapViewOfSection( addr, TRUE, status );
+    return status;
+}
+
+NTSTATUS SYSCALL_API NtUnmapViewOfSectionEx( HANDLE process, void *addr, ULONG flags )
+{
+    BOOL is_current = RtlIsCurrentProcess( process );
+    NTSTATUS status;
+
+    if (is_current && pNotifyUnmapViewOfSection) pNotifyUnmapViewOfSection( addr, FALSE, 0 );
+    status = syscall_NtUnmapViewOfSectionEx( process, addr, flags );
+    if (is_current && pNotifyUnmapViewOfSection) pNotifyUnmapViewOfSection( addr, TRUE, status );
+    return status;
 }
 
 
@@ -508,6 +733,74 @@ static NTSTATUS WINAPI LdrpSetX64Information( ULONG type, ULONG_PTR input, void 
     default:
         FIXME( "not implemented type %u\n", type );
         return STATUS_INVALID_PARAMETER;
+    }
+}
+
+
+/**********************************************************************
+ *           ProcessPendingCrossProcessEmulatorWork  (ntdll.@)
+ */
+void WINAPI ProcessPendingCrossProcessEmulatorWork(void)
+{
+    struct arm64ec_shared_info *info = (struct arm64ec_shared_info *)(RtlGetCurrentPeb() + 1);
+    CROSS_PROCESS_WORK_LIST *list = (void *)info->CrossProcessWorkList;
+    CROSS_PROCESS_WORK_ENTRY *entry;
+    BOOLEAN flush = FALSE;
+    UINT next;
+
+    if (!list) return;
+    entry = RtlWow64PopAllCrossProcessWorkFromWorkList( &list->work_list, &flush );
+
+    if (flush)
+    {
+        if (pFlushInstructionCacheHeavy) pFlushInstructionCacheHeavy( NULL, 0 );
+        while (entry)
+        {
+            next = entry->next;
+            RtlWow64PushCrossProcessWorkOntoFreeList( &list->free_list, entry );
+            entry = next ? CROSS_PROCESS_LIST_ENTRY( &list->work_list, next ) : NULL;
+        }
+        return;
+    }
+
+    while (entry)
+    {
+        switch (entry->id)
+        {
+        case CrossProcessPreVirtualAlloc:
+        case CrossProcessPostVirtualAlloc:
+            if (!pNotifyMemoryAlloc) break;
+            pNotifyMemoryAlloc( (void *)entry->addr, entry->size, entry->args[0], entry->args[1],
+                                entry->id == CrossProcessPostVirtualAlloc, entry->args[2] );
+            break;
+        case CrossProcessPreVirtualFree:
+        case CrossProcessPostVirtualFree:
+            if (!pNotifyMemoryFree) break;
+            pNotifyMemoryFree( (void *)entry->addr, entry->size, entry->args[0],
+                               entry->id == CrossProcessPostVirtualFree, entry->args[1] );
+            break;
+        case CrossProcessPreVirtualProtect:
+        case CrossProcessPostVirtualProtect:
+            if (!pNotifyMemoryProtect) break;
+            pNotifyMemoryProtect( (void *)entry->addr, entry->size, entry->args[0],
+                                  entry->id == CrossProcessPostVirtualProtect, entry->args[1] );
+            break;
+        case CrossProcessFlushCache:
+            if (!pBTCpu64FlushInstructionCache) break;
+            pBTCpu64FlushInstructionCache( (void *)entry->addr, entry->size );
+            break;
+        case CrossProcessFlushCacheHeavy:
+            if (!pFlushInstructionCacheHeavy) break;
+            pFlushInstructionCacheHeavy( (void *)entry->addr, entry->size );
+            break;
+        case CrossProcessMemoryWrite:
+            if (!pBTCpu64NotifyMemoryDirty) break;
+            pBTCpu64NotifyMemoryDirty( (void *)entry->addr, entry->size );
+            break;
+        }
+        next = entry->next;
+        RtlWow64PushCrossProcessWorkOntoFreeList( &list->free_list, entry );
+        entry = next ? CROSS_PROCESS_LIST_ENTRY( &list->work_list, next ) : NULL;
     }
 }
 
@@ -1201,7 +1494,7 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
 NTSTATUS WINAPI RtlGetNativeSystemInformation( SYSTEM_INFORMATION_CLASS class,
                                                void *info, ULONG size, ULONG *ret_size )
 {
-    return NtQuerySystemInformation( class, info, size, ret_size );
+    return syscall_NtQuerySystemInformation( class, info, size, ret_size );
 }
 
 
@@ -1210,7 +1503,28 @@ NTSTATUS WINAPI RtlGetNativeSystemInformation( SYSTEM_INFORMATION_CLASS class,
  */
 BOOLEAN WINAPI RtlIsProcessorFeaturePresent( UINT feature )
 {
-    return feature < PROCESSOR_FEATURE_MAX && user_shared_data->ProcessorFeatures[feature];
+    static const ULONGLONG arm64_features =
+        (1ull << PF_COMPARE_EXCHANGE_DOUBLE) |
+        (1ull << PF_NX_ENABLED) |
+        (1ull << PF_ARM_VFP_32_REGISTERS_AVAILABLE) |
+        (1ull << PF_ARM_NEON_INSTRUCTIONS_AVAILABLE) |
+        (1ull << PF_SECOND_LEVEL_ADDRESS_TRANSLATION) |
+        (1ull << PF_FASTFAIL_AVAILABLE) |
+        (1ull << PF_ARM_DIVIDE_INSTRUCTION_AVAILABLE) |
+        (1ull << PF_ARM_64BIT_LOADSTORE_ATOMIC) |
+        (1ull << PF_ARM_EXTERNAL_CACHE_AVAILABLE) |
+        (1ull << PF_ARM_FMAC_INSTRUCTIONS_AVAILABLE) |
+        (1ull << PF_ARM_V8_INSTRUCTIONS_AVAILABLE) |
+        (1ull << PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE) |
+        (1ull << PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE) |
+        (1ull << PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE) |
+        (1ull << PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE) |
+        (1ull << PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE) |
+        (1ull << PF_ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE);
+
+    if (feature >= PROCESSOR_FEATURE_MAX) return FALSE;
+    if (arm64_features & (1ull << feature)) return user_shared_data->ProcessorFeatures[feature];
+    return emulated_processor_features[feature];
 }
 
 

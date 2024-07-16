@@ -4349,7 +4349,11 @@ static HRESULT d3d12_descriptor_heap_init(struct d3d12_descriptor_heap *descript
         return hr;
 
     descriptor_heap->use_vk_heaps = device->use_vk_heaps && (desc->Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE);
-    d3d12_descriptor_heap_vk_descriptor_sets_init(descriptor_heap, device, desc);
+    if (FAILED(hr = d3d12_descriptor_heap_vk_descriptor_sets_init(descriptor_heap, device, desc)))
+    {
+        vkd3d_private_store_destroy(&descriptor_heap->private_store);
+        return hr;
+    }
     vkd3d_mutex_init(&descriptor_heap->vk_sets_mutex);
 
     d3d12_device_add_ref(descriptor_heap->device = device);

@@ -52,6 +52,10 @@
         ((uint32_t)(ch0) | ((uint32_t)(ch1) << 8) \
         | ((uint32_t)(ch2) << 16) | ((uint32_t)(ch3) << 24))
 
+#define VKD3D_EXPAND(x) x
+#define VKD3D_STRINGIFY(x) #x
+#define VKD3D_EXPAND_AND_STRINGIFY(x) VKD3D_EXPAND(VKD3D_STRINGIFY(x))
+
 #define TAG_AON9 VKD3D_MAKE_TAG('A', 'o', 'n', '9')
 #define TAG_DXBC VKD3D_MAKE_TAG('D', 'X', 'B', 'C')
 #define TAG_DXIL VKD3D_MAKE_TAG('D', 'X', 'I', 'L')

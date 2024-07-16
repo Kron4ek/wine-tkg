@@ -478,21 +478,21 @@ static void scope_destructor(jsdisp_t *dispex)
         IDispatch_Release(scope->obj);
 }
 
-static unsigned scope_idx_length(jsdisp_t *dispex)
+static HRESULT scope_lookup_prop(jsdisp_t *jsdisp, const WCHAR *name, unsigned flags, struct property_info *desc)
 {
-    scope_chain_t *scope = scope_from_dispex(dispex);
+    scope_chain_t *scope = scope_from_dispex(jsdisp);
 
-    return scope->detached_vars->argc;
+    return jsdisp_index_lookup(&scope->dispex, name, scope->detached_vars->argc, desc);
 }
 
-static HRESULT scope_idx_get(jsdisp_t *dispex, unsigned idx, jsval_t *r)
+static HRESULT scope_prop_get(jsdisp_t *dispex, unsigned idx, jsval_t *r)
 {
     scope_chain_t *scope = scope_from_dispex(dispex);
 
     return jsval_copy(scope->detached_vars->var[idx], r);
 }
 
-static HRESULT scope_idx_put(jsdisp_t *dispex, unsigned idx, jsval_t val)
+static HRESULT scope_prop_put(jsdisp_t *dispex, unsigned idx, jsval_t val)
 {
     scope_chain_t *scope = scope_from_dispex(dispex);
     jsval_t copy, *ref;
@@ -546,9 +546,9 @@ static HRESULT scope_gc_traverse(struct gc_ctx *gc_ctx, enum gc_traverse_op op, 
 static const builtin_info_t scope_info = {
     JSCLASS_NONE,
     .destructor  = scope_destructor,
-    .idx_length  = scope_idx_length,
-    .idx_get     = scope_idx_get,
-    .idx_put     = scope_idx_put,
+    .lookup_prop = scope_lookup_prop,
+    .prop_get    = scope_prop_get,
+    .prop_put    = scope_prop_put,
     .gc_traverse = scope_gc_traverse
 };
 
@@ -637,14 +637,20 @@ static HRESULT disp_cmp(IDispatch *disp1, IDispatch *disp2, BOOL *ret)
         return S_OK;
     }
 
-    hres = IDispatch_QueryInterface(disp1, &IID_IUnknown, (void**)&unk1);
-    if(FAILED(hres))
-        return hres;
+    unk1 = (IUnknown *)get_host_dispatch(disp1);
+    if(!unk1) {
+        hres = IDispatch_QueryInterface(disp1, &IID_IUnknown, (void**)&unk1);
+        if(FAILED(hres))
+            return hres;
+    }
 
-    hres = IDispatch_QueryInterface(disp2, &IID_IUnknown, (void**)&unk2);
-    if(FAILED(hres)) {
-        IUnknown_Release(unk1);
-        return hres;
+    unk2 = (IUnknown *)get_host_dispatch(disp2);
+    if(!unk2) {
+        hres = IDispatch_QueryInterface(disp2, &IID_IUnknown, (void**)&unk2);
+        if(FAILED(hres)) {
+            IUnknown_Release(unk1);
+            return hres;
+        }
     }
 
     if(unk1 == unk2) {

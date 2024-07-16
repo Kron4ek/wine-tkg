@@ -636,23 +636,6 @@ HRESULT save_dds_texture_to_memory(ID3DXBuffer **dst_buffer, IDirect3DBaseTextur
 
     return hr;
 }
-HRESULT load_volume_from_dds(IDirect3DVolume9 *dst_volume, const PALETTEENTRY *dst_palette,
-    const D3DBOX *dst_box, const void *src_data, const D3DBOX *src_box, DWORD filter, D3DCOLOR color_key,
-    const D3DXIMAGE_INFO *src_info)
-{
-    UINT row_pitch, slice_pitch;
-    const struct dds_header *header = src_data;
-    const BYTE *pixels = (BYTE *)(header + 1);
-
-    if (src_info->ResourceType != D3DRTYPE_VOLUMETEXTURE)
-        return D3DXERR_INVALIDDATA;
-
-    if (FAILED(d3dx_calculate_pixels_size(src_info->Format, src_info->Width, src_info->Height, &row_pitch, &slice_pitch)))
-        return E_NOTIMPL;
-
-    return D3DXLoadVolumeFromMemory(dst_volume, dst_palette, dst_box, pixels, src_info->Format,
-        row_pitch, slice_pitch, NULL, src_box, filter, color_key);
-}
 
 HRESULT load_cube_texture_from_dds(IDirect3DCubeTexture9 *cube_texture, const void *src_data,
     const PALETTEENTRY *palette, DWORD filter, DWORD color_key, const D3DXIMAGE_INFO *src_info)
@@ -707,58 +690,6 @@ HRESULT load_cube_texture_from_dds(IDirect3DCubeTexture9 *cube_texture, const vo
     return D3D_OK;
 }
 
-HRESULT load_volume_texture_from_dds(IDirect3DVolumeTexture9 *volume_texture, const void *src_data,
-    const PALETTEENTRY *palette, DWORD filter, DWORD color_key, const D3DXIMAGE_INFO *src_info)
-{
-    HRESULT hr;
-    UINT mip_level;
-    UINT mip_levels;
-    UINT src_slice_pitch;
-    UINT src_row_pitch;
-    D3DBOX src_box;
-    UINT width, height, depth;
-    IDirect3DVolume9 *volume;
-    const struct dds_header *header = src_data;
-    const BYTE *pixels = (BYTE *)(header + 1);
-
-    if (src_info->ResourceType != D3DRTYPE_VOLUMETEXTURE)
-        return D3DXERR_INVALIDDATA;
-
-    width = src_info->Width;
-    height = src_info->Height;
-    depth = src_info->Depth;
-    mip_levels = min(src_info->MipLevels, IDirect3DVolumeTexture9_GetLevelCount(volume_texture));
-
-    for (mip_level = 0; mip_level < mip_levels; mip_level++)
-    {
-        hr = d3dx_calculate_pixels_size(src_info->Format, width, height, &src_row_pitch, &src_slice_pitch);
-        if (FAILED(hr)) return hr;
-
-        hr = IDirect3DVolumeTexture9_GetVolumeLevel(volume_texture, mip_level, &volume);
-        if (FAILED(hr)) return hr;
-
-        src_box.Left = 0;
-        src_box.Top = 0;
-        src_box.Right = width;
-        src_box.Bottom = height;
-        src_box.Front = 0;
-        src_box.Back = depth;
-
-        hr = D3DXLoadVolumeFromMemory(volume, palette, NULL, pixels, src_info->Format,
-            src_row_pitch, src_slice_pitch, NULL, &src_box, filter, color_key);
-
-        IDirect3DVolume9_Release(volume);
-        if (FAILED(hr)) return hr;
-
-        pixels += depth * src_slice_pitch;
-        width = max(1, width / 2);
-        height = max(1, height / 2);
-        depth = max(1, depth / 2);
-    }
-
-    return D3D_OK;
-}
-
 static HRESULT d3dx_initialize_image_from_dds(const void *src_data, uint32_t src_data_size,
         struct d3dx_image *image, uint32_t starting_mip_level)
 {
@@ -778,21 +709,20 @@ static HRESULT d3dx_initialize_image_from_dds(const void *src_data, uint32_t src
         return D3DXERR_INVALIDDATA;
 
     TRACE("Pixel format is %#x.\n", image->format);
-    if (header->caps2 & DDS_CAPS2_VOLUME)
+    if (header->flags & DDS_DEPTH)
     {
-        image->size.depth = header->depth;
+        image->size.depth = max(header->depth, 1);
         image->resource_type = D3DRTYPE_VOLUMETEXTURE;
     }
     else if (header->caps2 & DDS_CAPS2_CUBEMAP)
     {
-        DWORD face;
-
-        faces = 0;
-        for (face = DDS_CAPS2_CUBEMAP_POSITIVEX; face <= DDS_CAPS2_CUBEMAP_NEGATIVEZ; face <<= 1)
+        if ((header->caps2 & DDS_CAPS2_CUBEMAP_ALL_FACES) != DDS_CAPS2_CUBEMAP_ALL_FACES)
         {
-            if (header->caps2 & face)
-                faces++;
+            WARN("Tried to load a partial cubemap DDS file.\n");
+            return D3DXERR_INVALIDDATA;
         }
+
+        faces = 6;
         image->resource_type = D3DRTYPE_CUBETEXTURE;
     }
     else
@@ -1072,7 +1002,7 @@ static HRESULT d3dx_initialize_image_from_wic(const void *src_data, uint32_t src
     IWICBitmapFrameDecode *bitmap_frame = NULL;
     IWICBitmapDecoder *bitmap_decoder = NULL;
     uint32_t src_image_size = src_data_size;
-    IWICImagingFactory *wic_factory = NULL;
+    IWICImagingFactory *wic_factory;
     const void *src_image = src_data;
     WICPixelFormatGUID pixel_format;
     IWICStream *wic_stream = NULL;
@@ -1172,8 +1102,7 @@ exit:
         IWICBitmapDecoder_Release(bitmap_decoder);
     if (wic_stream)
         IWICStream_Release(wic_stream);
-    if (wic_factory)
-        IWICImagingFactory_Release(wic_factory);
+    IWICImagingFactory_Release(wic_factory);
 
     return hr;
 }

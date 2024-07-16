@@ -26,8 +26,39 @@
 #include "winternl.h"
 #include "wtypes.h"
 #include "mmreg.h"
+#include "vfw.h"
+#include "dshow.h"
+#include "dvdmedia.h"
+#include "mfobjects.h"
 
 #include "wine/unixlib.h"
+
+/* same as MPEG1VIDEOINFO / MPEG2VIDEOINFO but with MFVIDEOFORMAT */
+struct mpeg_video_format
+{
+    MFVIDEOFORMAT hdr;
+    UINT32 start_time_code;
+    UINT32 profile;
+    UINT32 level;
+    UINT32 flags;
+    UINT32 sequence_header_count;
+    UINT32 __pad;
+    BYTE sequence_header[];
+};
+
+C_ASSERT(sizeof(struct mpeg_video_format) == offsetof(struct mpeg_video_format, sequence_header[0]));
+
+struct wg_media_type
+{
+    GUID major;
+    UINT32 format_size;
+    union
+    {
+        void *format;
+        WAVEFORMATEX *audio;
+        MFVIDEOFORMAT *video;
+    } u;
+};
 
 typedef UINT32 wg_major_type;
 enum wg_major_type
@@ -309,9 +340,9 @@ struct wg_transform_attrs
 struct wg_transform_create_params
 {
     wg_transform_t transform;
-    const struct wg_format *input_format;
-    const struct wg_format *output_format;
-    const struct wg_transform_attrs *attrs;
+    struct wg_media_type input_type;
+    struct wg_media_type output_type;
+    struct wg_transform_attrs attrs;
 };
 
 struct wg_transform_push_data_params
@@ -328,16 +359,16 @@ struct wg_transform_read_data_params
     HRESULT result;
 };
 
-struct wg_transform_get_output_format_params
+struct wg_transform_get_output_type_params
 {
     wg_transform_t transform;
-    struct wg_format *format;
+    struct wg_media_type media_type;
 };
 
-struct wg_transform_set_output_format_params
+struct wg_transform_set_output_type_params
 {
     wg_transform_t transform;
-    const struct wg_format *format;
+    struct wg_media_type media_type;
 };
 
 struct wg_transform_get_status_params
@@ -415,8 +446,8 @@ enum unix_funcs
 
     unix_wg_transform_create,
     unix_wg_transform_destroy,
-    unix_wg_transform_get_output_format,
-    unix_wg_transform_set_output_format,
+    unix_wg_transform_get_output_type,
+    unix_wg_transform_set_output_type,
 
     unix_wg_transform_push_data,
     unix_wg_transform_read_data,

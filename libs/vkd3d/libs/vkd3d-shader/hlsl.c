@@ -369,15 +369,18 @@ static void hlsl_type_calculate_reg_size(struct hlsl_ctx *ctx, struct hlsl_type 
             type->reg_size[HLSL_REGSET_UAVS] = 1;
             break;
 
+        case HLSL_CLASS_DEPTH_STENCIL_STATE:
         case HLSL_CLASS_DEPTH_STENCIL_VIEW:
         case HLSL_CLASS_EFFECT_GROUP:
         case HLSL_CLASS_PASS:
         case HLSL_CLASS_PIXEL_SHADER:
+        case HLSL_CLASS_RASTERIZER_STATE:
         case HLSL_CLASS_RENDER_TARGET_VIEW:
         case HLSL_CLASS_STRING:
         case HLSL_CLASS_TECHNIQUE:
         case HLSL_CLASS_VERTEX_SHADER:
         case HLSL_CLASS_VOID:
+        case HLSL_CLASS_CONSTANT_BUFFER:
             break;
     }
 }
@@ -437,11 +440,13 @@ static bool type_is_single_component(const struct hlsl_type *type)
 {
     switch (type->class)
     {
+        case HLSL_CLASS_DEPTH_STENCIL_STATE:
         case HLSL_CLASS_DEPTH_STENCIL_VIEW:
         case HLSL_CLASS_PIXEL_SHADER:
         case HLSL_CLASS_SCALAR:
         case HLSL_CLASS_SAMPLER:
         case HLSL_CLASS_STRING:
+        case HLSL_CLASS_RASTERIZER_STATE:
         case HLSL_CLASS_RENDER_TARGET_VIEW:
         case HLSL_CLASS_TEXTURE:
         case HLSL_CLASS_UAV:
@@ -452,6 +457,7 @@ static bool type_is_single_component(const struct hlsl_type *type)
         case HLSL_CLASS_MATRIX:
         case HLSL_CLASS_STRUCT:
         case HLSL_CLASS_ARRAY:
+        case HLSL_CLASS_CONSTANT_BUFFER:
             return false;
 
         case HLSL_CLASS_EFFECT_GROUP:
@@ -530,6 +536,12 @@ static unsigned int traverse_path_from_component_index(struct hlsl_ctx *ctx,
             vkd3d_unreachable();
         }
 
+        case HLSL_CLASS_CONSTANT_BUFFER:
+        {
+            *type_ptr = type->e.resource.format;
+            return traverse_path_from_component_index(ctx, type_ptr, index_ptr);
+        }
+
         default:
             vkd3d_unreachable();
     }
@@ -581,8 +593,10 @@ unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_ty
                 }
                 break;
 
+            case HLSL_CLASS_DEPTH_STENCIL_STATE:
             case HLSL_CLASS_DEPTH_STENCIL_VIEW:
             case HLSL_CLASS_PIXEL_SHADER:
+            case HLSL_CLASS_RASTERIZER_STATE:
             case HLSL_CLASS_RENDER_TARGET_VIEW:
             case HLSL_CLASS_SAMPLER:
             case HLSL_CLASS_STRING:
@@ -597,6 +611,7 @@ unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_ty
             case HLSL_CLASS_TECHNIQUE:
             case HLSL_CLASS_VOID:
             case HLSL_CLASS_SCALAR:
+            case HLSL_CLASS_CONSTANT_BUFFER:
                 vkd3d_unreachable();
         }
         type = next_type;
@@ -870,6 +885,20 @@ struct hlsl_type *hlsl_new_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim 
     return type;
 }
 
+struct hlsl_type *hlsl_new_cb_type(struct hlsl_ctx *ctx, struct hlsl_type *format)
+{
+    struct hlsl_type *type;
+
+    if (!(type = hlsl_alloc(ctx, sizeof(*type))))
+        return NULL;
+    type->class = HLSL_CLASS_CONSTANT_BUFFER;
+    type->dimy = 1;
+    type->e.resource.format = format;
+    hlsl_type_calculate_reg_size(ctx, type);
+    list_add_tail(&ctx->types, &type->entry);
+    return type;
+}
+
 static const char * get_case_insensitive_typename(const char *name)
 {
     static const char *const names[] =
@@ -961,8 +990,13 @@ unsigned int hlsl_type_component_count(const struct hlsl_type *type)
         case HLSL_CLASS_ARRAY:
             return hlsl_type_component_count(type->e.array.type) * type->e.array.elements_count;
 
+        case HLSL_CLASS_CONSTANT_BUFFER:
+            return hlsl_type_component_count(type->e.resource.format);
+
+        case HLSL_CLASS_DEPTH_STENCIL_STATE:
         case HLSL_CLASS_DEPTH_STENCIL_VIEW:
         case HLSL_CLASS_PIXEL_SHADER:
+        case HLSL_CLASS_RASTERIZER_STATE:
         case HLSL_CLASS_RENDER_TARGET_VIEW:
         case HLSL_CLASS_SAMPLER:
         case HLSL_CLASS_STRING:
@@ -1043,10 +1077,15 @@ bool hlsl_types_are_equal(const struct hlsl_type *t1, const struct hlsl_type *t2
         case HLSL_CLASS_TECHNIQUE:
             return t1->e.version == t2->e.version;
 
+        case HLSL_CLASS_CONSTANT_BUFFER:
+            return hlsl_types_are_equal(t1->e.resource.format, t2->e.resource.format);
+
+        case HLSL_CLASS_DEPTH_STENCIL_STATE:
         case HLSL_CLASS_DEPTH_STENCIL_VIEW:
         case HLSL_CLASS_EFFECT_GROUP:
         case HLSL_CLASS_PASS:
         case HLSL_CLASS_PIXEL_SHADER:
+        case HLSL_CLASS_RASTERIZER_STATE:
         case HLSL_CLASS_RENDER_TARGET_VIEW:
         case HLSL_CLASS_STRING:
         case HLSL_CLASS_VERTEX_SHADER:
@@ -1771,7 +1810,8 @@ struct hlsl_ir_node *hlsl_new_jump(struct hlsl_ctx *ctx, enum hlsl_ir_jump_type 
 }
 
 struct hlsl_ir_node *hlsl_new_loop(struct hlsl_ctx *ctx,
-        struct hlsl_block *block, const struct vkd3d_shader_location *loc)
+        struct hlsl_block *block, enum hlsl_ir_loop_unroll_type unroll_type,
+        unsigned int unroll_limit, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_loop *loop;
 
@@ -1780,6 +1820,9 @@ struct hlsl_ir_node *hlsl_new_loop(struct hlsl_ctx *ctx,
     init_node(&loop->node, HLSL_IR_LOOP, NULL, loc);
     hlsl_block_init(&loop->body);
     hlsl_block_add_block(&loop->body, block);
+
+    loop->unroll_type = unroll_type;
+    loop->unroll_limit = unroll_limit;
     return &loop->node;
 }
 
@@ -1842,9 +1885,7 @@ static struct hlsl_ir_node *map_instr(const struct clone_instr_map *map, struct 
             return map->instrs[i].dst;
     }
 
-    /* The block passed to hlsl_clone_block() should have been free of external
-     * references. */
-    vkd3d_unreachable();
+    return src;
 }
 
 static bool clone_deref(struct hlsl_ctx *ctx, struct clone_instr_map *map,
@@ -1941,7 +1982,7 @@ static struct hlsl_ir_node *clone_loop(struct hlsl_ctx *ctx, struct clone_instr_
     if (!clone_block(ctx, &body, &src->body, map))
         return NULL;
 
-    if (!(dst = hlsl_new_loop(ctx, &body, &src->node.loc)))
+    if (!(dst = hlsl_new_loop(ctx, &body, src->unroll_type, src->unroll_limit, &src->node.loc)))
     {
         hlsl_block_cleanup(&body);
         return NULL;
@@ -2413,10 +2454,21 @@ struct vkd3d_string_buffer *hlsl_type_to_string(struct hlsl_ctx *ctx, const stru
             }
             return string;
 
+        case HLSL_CLASS_CONSTANT_BUFFER:
+            vkd3d_string_buffer_printf(string, "ConstantBuffer");
+            if ((inner_string = hlsl_type_to_string(ctx, type->e.resource.format)))
+            {
+                vkd3d_string_buffer_printf(string, "<%s>", inner_string->buffer);
+                hlsl_release_string_buffer(ctx, inner_string);
+            }
+            return string;
+
+        case HLSL_CLASS_DEPTH_STENCIL_STATE:
         case HLSL_CLASS_DEPTH_STENCIL_VIEW:
         case HLSL_CLASS_EFFECT_GROUP:
         case HLSL_CLASS_PASS:
         case HLSL_CLASS_PIXEL_SHADER:
+        case HLSL_CLASS_RASTERIZER_STATE:
         case HLSL_CLASS_RENDER_TARGET_VIEW:
         case HLSL_CLASS_SAMPLER:
         case HLSL_CLASS_STRING:
@@ -2741,6 +2793,7 @@ const char *debug_hlsl_expr_op(enum hlsl_ir_expr_op op)
     static const char *const op_names[] =
     {
         [HLSL_OP0_VOID]         = "void",
+        [HLSL_OP0_RASTERIZER_SAMPLE_COUNT] = "GetRenderTargetSampleCount",
 
         [HLSL_OP1_ABS]          = "abs",
         [HLSL_OP1_BIT_NOT]      = "~",
@@ -3761,9 +3814,11 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
 
     ctx->builtin_types.Void = hlsl_new_simple_type(ctx, "void", HLSL_CLASS_VOID);
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "DepthStencilView", HLSL_CLASS_DEPTH_STENCIL_VIEW));
+    hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "DepthStencilState", HLSL_CLASS_DEPTH_STENCIL_STATE));
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "fxgroup", HLSL_CLASS_EFFECT_GROUP));
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "pass", HLSL_CLASS_PASS));
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "pixelshader", HLSL_CLASS_PIXEL_SHADER));
+    hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "RasterizerState", HLSL_CLASS_RASTERIZER_STATE));
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "RenderTargetView", HLSL_CLASS_RENDER_TARGET_VIEW));
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "STRING", HLSL_CLASS_STRING));
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "texture", HLSL_CLASS_TEXTURE));

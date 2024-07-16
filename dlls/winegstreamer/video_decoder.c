@@ -694,25 +694,17 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
     }
 
     if (decoder->wg_transform)
-    {
-        struct wg_format output_format;
-        mf_media_type_to_wg_format(output_type, &output_format);
+        hr = wg_transform_set_output_type(decoder->wg_transform, output_type);
+    else
+        hr = try_create_wg_transform(decoder, output_type);
 
-        if (output_format.major_type == WG_MAJOR_TYPE_UNKNOWN
-                || !wg_transform_set_output_format(decoder->wg_transform, &output_format))
-        {
-            IMFMediaType_Release(decoder->output_type);
-            decoder->output_type = NULL;
-            hr = MF_E_INVALIDMEDIATYPE;
-        }
-    }
-    else if (FAILED(hr = try_create_wg_transform(decoder, output_type)))
+    IMFMediaType_Release(output_type);
+
+    if (FAILED(hr))
     {
         IMFMediaType_Release(decoder->output_type);
         decoder->output_type = NULL;
     }
-
-    IMFMediaType_Release(output_type);
     return hr;
 }
 
@@ -804,6 +796,10 @@ static HRESULT WINAPI transform_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_
     case MFT_MESSAGE_COMMAND_FLUSH:
         return wg_transform_flush(decoder->wg_transform);
 
+    case MFT_MESSAGE_NOTIFY_START_OF_STREAM:
+        decoder->sample_time = -1;
+        return S_OK;
+
     default:
         FIXME("Ignoring message %#x.\n", message);
         return S_OK;
@@ -818,6 +814,9 @@ static HRESULT WINAPI transform_ProcessInput(IMFTransform *iface, DWORD id, IMFS
 
     if (!decoder->wg_transform)
         return MF_E_TRANSFORM_TYPE_NOT_SET;
+
+    if (decoder->sample_time == -1 && FAILED(IMFSample_GetSampleTime(sample, (LONGLONG *)&decoder->sample_time)))
+        decoder->sample_time = 0;
 
     return wg_transform_push_mf(decoder->wg_transform, sample, decoder->wg_sample_queue);
 }
@@ -855,15 +854,15 @@ static HRESULT output_sample(struct video_decoder *decoder, IMFSample **out, IMF
 static HRESULT handle_stream_type_change(struct video_decoder *decoder)
 {
     UINT64 frame_size, frame_rate;
-    struct wg_format format;
     HRESULT hr;
 
     if (decoder->stream_type)
         IMFMediaType_Release(decoder->stream_type);
-    if (!(wg_transform_get_output_format(decoder->wg_transform, &format)))
-        return E_FAIL;
-    if (!(decoder->stream_type = mf_media_type_from_wg_format(&format)))
-        return E_OUTOFMEMORY;
+    if (FAILED(hr = wg_transform_get_output_type(decoder->wg_transform, &decoder->stream_type)))
+    {
+        WARN("Failed to get transform output type, hr %#lx\n", hr);
+        return hr;
+    }
 
     if (SUCCEEDED(IMFMediaType_GetUINT64(decoder->output_type, &MF_MT_FRAME_RATE, &frame_rate))
             && FAILED(hr = IMFMediaType_SetUINT64(decoder->stream_type, &MF_MT_FRAME_RATE, frame_rate)))

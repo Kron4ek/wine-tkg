@@ -2547,7 +2547,6 @@ struct query_reg_values_test
         WINE_TODO_NAME = 0x40,
         WINE_TODO_TYPE = 0x80,
         WINE_TODO_SIZE = 0x100,
-        WINE_TODO_DATA = 0x200,
     }
     flags;
     ULONG expected_type;
@@ -2611,7 +2610,6 @@ static NTSTATUS WINAPI query_routine(const WCHAR *value_name, ULONG value_type, 
         todo_wine_if(test->flags & WINE_TODO_SIZE)
         ok(value_data_size == expected_size, "Expected size %lu, got %lu\n", expected_size, value_data_size);
 
-        todo_wine_if(test->flags & WINE_TODO_DATA && !(test->flags & SPLIT_MULTI && query_routine_calls == 0))
         if (expected_data == query->DefaultData || expected_data == NULL)
             ok(value_data == expected_data, "Expected data %p, got %p\n", expected_data, value_data);
         else
@@ -2770,7 +2768,7 @@ static struct query_reg_values_test query_reg_values_tests[] =
     },
     {
         {{ query_routine, RTL_QUERY_REGISTRY_NOEXPAND, (WCHAR*)L"CapitalsOfEurope" }},
-        STATUS_SUCCESS, 1, WINE_TODO_SIZE, REG_MULTI_SZ, L"Brussels\0Paris\0%PATH%\0", sizeof(L"Brussels\0Paris\0%PATH%\0")
+        STATUS_SUCCESS, 1, 0, REG_MULTI_SZ, L"Brussels\0Paris\0%PATH%\0", sizeof(L"Brussels\0Paris\0%PATH%\0")
     },
     /* The default value is used if the registry value does not exist */
     {
@@ -2788,6 +2786,16 @@ static struct query_reg_values_test query_reg_values_tests[] =
     {
         {{ query_routine, 0, (WCHAR*)L"I don't exist", NULL, REG_MULTI_SZ, (WCHAR*)L"Brussels\0Paris\0%PATH%\0" }},
         STATUS_SUCCESS, 3, EXPECT_DEFAULT_DATA | SPLIT_MULTI
+    },
+    {
+        {{ query_routine, 0, (WCHAR*)L"I don't exist",
+           NULL, REG_MULTI_SZ, (WCHAR*)L"A\0B\0C", sizeof(L"A\0B\0C") }},
+        STATUS_SUCCESS, 2, EXPECT_DEFAULT_DATA | SPLIT_MULTI
+    },
+    {
+        {{ query_routine, 0, (WCHAR*)L"I don't exist",
+           NULL, REG_MULTI_SZ, (WCHAR*)L"A\0B\0C", sizeof(L"A\0B\0C") - sizeof(L'\0') }},
+        STATUS_SUCCESS, 2, EXPECT_DEFAULT_DATA | SPLIT_MULTI
     },
     {
         {{ query_routine, 0, (WCHAR*)L"I don't exist", NULL, REG_DWORD, (WCHAR*)0xdeadbeef }},
@@ -2866,8 +2874,8 @@ static struct query_reg_values_test query_reg_values_tests[] =
     }, */
     {
         {{ NULL, RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_NOEXPAND, (WCHAR*)L"I don't exist",
-           &query_reg_values_direct_str, REG_MULTI_SZ, (WCHAR*)L"A\0B\0C\0", sizeof(L"A\0B\0C\0") }},
-        STATUS_SUCCESS, 0, EXPECT_DEFAULT_DATA | WINE_TODO_SIZE
+           &query_reg_values_direct_str, REG_MULTI_SZ, (WCHAR*)L"A\0B\0C", sizeof(L"A\0B\0C") - sizeof(L'\0') }},
+        STATUS_SUCCESS, 0, EXPECT_DEFAULT_DATA
     },
     /* The default value is not used if it is not valid */
     {
@@ -2920,7 +2928,7 @@ static void test_RtlQueryRegistryValues(void)
     ok(status == ERROR_SUCCESS, "Failed to create registry value WindowsDrive: %lu\n", status);
 
     status = RegSetKeyValueW(HKEY_CURRENT_USER, L"WineTest", L"CapitalsOfEurope", REG_MULTI_SZ,
-                             L"Brussels\0Paris\0%PATH%", sizeof(L"Brussels\0Paris\0%PATH%"));
+                             L"Brussels\0Paris\0%PATH%", sizeof(L"Brussels\0Paris\0%PATH%") - sizeof(L'\0'));
     ok(status == ERROR_SUCCESS, "Failed to create registry value CapitalsOfEurope: %lu\n", status);
 
     status = RegSetKeyValueW(HKEY_CURRENT_USER, L"WineTest", L"MeaningOfLife32", REG_DWORD,
@@ -3014,7 +3022,6 @@ static void test_RtlQueryRegistryValues(void)
 
                     if (expected_data)
                     {
-                        todo_wine_if(test->flags & WINE_TODO_DATA)
                         ok(!memcmp(query_reg_values_direct_str.Buffer, expected_data, expected_size),
                            "Expected data %s, got %s\n", debugstr_w(expected_data),
                            debugstr_w(query_reg_values_direct_str.Buffer));

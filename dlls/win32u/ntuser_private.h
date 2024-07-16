@@ -109,9 +109,8 @@ struct user_thread_info
 {
     struct ntuser_thread_info     client_info;            /* Data shared with client */
     HANDLE                        server_queue;           /* Handle to server-side queue */
-    DWORD                         wake_mask;              /* Current queue wake mask */
-    DWORD                         changed_mask;           /* Current queue changed mask */
-    WORD                          message_count;          /* Get/PeekMessage loop counter */
+    DWORD                         last_getmsg_time;       /* Get/PeekMessage last request time */
+    DWORD                         last_driver_time;       /* Get/PeekMessage driver event time */
     WORD                          hook_call_depth;        /* Number of recursively called hook procs */
     WORD                          hook_unicode;           /* Is current hook unicode? */
     HHOOK                         hook;                   /* Current hook */

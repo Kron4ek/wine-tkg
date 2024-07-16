@@ -3277,12 +3277,6 @@ static void dump_set_window_region_request( const struct set_window_region_reque
     dump_varargs_rectangles( ", region=", cur_size );
 }
 
-static void dump_set_layer_region_request( const struct set_layer_region_request *req )
-{
-    fprintf( stderr, " window=%08x", req->window );
-    dump_varargs_rectangles( ", region=", cur_size );
-}
-
 static void dump_get_update_region_request( const struct get_update_region_request *req )
 {
     fprintf( stderr, " window=%08x", req->window );
@@ -3548,16 +3542,7 @@ static void dump_get_thread_input_request( const struct get_thread_input_request
 
 static void dump_get_thread_input_reply( const struct get_thread_input_reply *req )
 {
-    fprintf( stderr, " focus=%08x", req->focus );
-    fprintf( stderr, ", capture=%08x", req->capture );
-    fprintf( stderr, ", active=%08x", req->active );
-    fprintf( stderr, ", foreground=%08x", req->foreground );
-    fprintf( stderr, ", menu_owner=%08x", req->menu_owner );
-    fprintf( stderr, ", move_size=%08x", req->move_size );
-    fprintf( stderr, ", caret=%08x", req->caret );
-    fprintf( stderr, ", cursor=%08x", req->cursor );
-    fprintf( stderr, ", show_count=%d", req->show_count );
-    dump_rectangle( ", rect=", &req->rect );
+    dump_obj_locator( " locator=", &req->locator );
 }
 
 static void dump_get_last_input_time_request( const struct get_last_input_time_request *req )
@@ -4945,7 +4930,6 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_visible_region_request,
     (dump_func)dump_get_window_region_request,
     (dump_func)dump_set_window_region_request,
-    (dump_func)dump_set_layer_region_request,
     (dump_func)dump_get_update_region_request,
     (dump_func)dump_update_window_zorder_request,
     (dump_func)dump_redraw_window_request,
@@ -5245,7 +5229,6 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_windows_offset_reply,
     (dump_func)dump_get_visible_region_reply,
     (dump_func)dump_get_window_region_reply,
-    NULL,
     NULL,
     (dump_func)dump_get_update_region_reply,
     NULL,
@@ -5547,7 +5530,6 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "get_visible_region",
     "get_window_region",
     "set_window_region",
-    "set_layer_region",
     "get_update_region",
     "update_window_zorder",
     "redraw_window",

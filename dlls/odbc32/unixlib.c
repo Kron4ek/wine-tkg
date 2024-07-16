@@ -101,7 +101,7 @@ static HANDLE create_hklm_key( const WCHAR *path, ULONG path_size )
     return NULL;
 }
 
-static HANDLE create_key( HANDLE root, const WCHAR *path, ULONG path_size, ULONG options, ULONG *disposition )
+static HANDLE create_key( HANDLE root, const WCHAR *path, ULONG path_size )
 {
     UNICODE_STRING name = { path_size, path_size, (WCHAR *)path };
     OBJECT_ATTRIBUTES attr;
@@ -113,7 +113,23 @@ static HANDLE create_key( HANDLE root, const WCHAR *path, ULONG path_size, ULONG
     attr.Attributes = 0;
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
-    if (NtCreateKey( &ret, MAXIMUM_ALLOWED, &attr, 0, NULL, options, disposition )) return NULL;
+    if (NtCreateKey( &ret, MAXIMUM_ALLOWED, &attr, 0, NULL, 0, NULL )) return NULL;
+    return ret;
+}
+
+static HANDLE open_key( HANDLE root, const WCHAR *path, ULONG path_size )
+{
+    UNICODE_STRING name = { path_size, path_size, (WCHAR *)path };
+    OBJECT_ATTRIBUTES attr;
+    HANDLE ret;
+
+    attr.Length = sizeof(attr);
+    attr.RootDirectory = root;
+    attr.ObjectName = &name;
+    attr.Attributes = 0;
+    attr.SecurityDescriptor = NULL;
+    attr.SecurityQualityOfService = NULL;
+    if (NtOpenKey( &ret, MAXIMUM_ALLOWED, &attr )) return NULL;
     return ret;
 }
 
@@ -131,6 +147,25 @@ static BOOL set_value( HANDLE key, const WCHAR *name, ULONG name_size, ULONG typ
     return !NtSetValueKey( key, &str, 0, type, value, count );
 }
 
+static HANDLE open_odbcinst_key( void )
+{
+    static const WCHAR odbcW[] = {'S','o','f','t','w','a','r','e','\\','O','D','B','C'};
+    static const WCHAR odbcinstW[] = {'O','D','B','C','I','N','S','T','.','I','N','I'};
+    HANDLE ret, root = create_hklm_key( odbcW, sizeof(odbcW) );
+    ret = create_key( root, odbcinstW, sizeof(odbcinstW) );
+    NtClose( root );
+    return ret;
+}
+
+static HANDLE open_drivers_key( void )
+{
+    static const WCHAR driversW[] = {'O','D','B','C',' ','D','r','i','v','e','r','s'};
+    HANDLE ret, root = open_odbcinst_key();
+    ret = create_key( root, driversW, sizeof(driversW) );
+    NtClose( root );
+    return ret;
+}
+
 /***********************************************************************
  * odbc_replicate_odbcinst_to_registry
  *
@@ -144,155 +179,230 @@ static BOOL set_value( HANDLE key, const WCHAR *name, ULONG name_size, ULONG typ
  */
 static void replicate_odbcinst_to_registry( SQLHENV env )
 {
-    static const WCHAR odbcW[] = {'S','o','f','t','w','a','r','e','\\','O','D','B','C'};
-    static const WCHAR odbcinstW[] = {'O','D','B','C','I','N','S','T','.','I','N','I'};
-    static const WCHAR driversW[] = {'O','D','B','C',' ','D','r','i','v','e','r','s'};
-    HANDLE key_odbc, key_odbcinst, key_drivers;
-    BOOL success = FALSE;
+    HANDLE key_odbcinst, key_drivers;
+    SQLRETURN ret;
+    SQLUSMALLINT dir = SQL_FETCH_FIRST;
+    WCHAR desc[256], attrs[1024];
+    SQLSMALLINT len_desc, len_attrs;
 
-    if (!(key_odbc = create_hklm_key( odbcW, sizeof(odbcW) ))) return;
-
-    if ((key_odbcinst = create_key( key_odbc, odbcinstW, sizeof(odbcinstW), 0, NULL )))
+    if (!(key_odbcinst = open_odbcinst_key())) return;
+    if (!(key_drivers = open_drivers_key()))
     {
-        if ((key_drivers = create_key( key_odbcinst, driversW, sizeof(driversW), 0, NULL )))
-        {
-            SQLRETURN ret;
-            SQLUSMALLINT dir = SQL_FETCH_FIRST;
-            WCHAR desc [256];
-            SQLSMALLINT len;
-
-            success = TRUE;
-            while (SUCCESS((ret = SQLDriversW( env, dir, (SQLWCHAR *)desc, sizeof(desc), &len, NULL, 0, NULL ))))
-            {
-                dir = SQL_FETCH_NEXT;
-                if (len == lstrlenW( desc ))
-                {
-                    static const WCHAR installedW[] = {'I','n','s','t','a','l','l','e','d',0};
-                    HANDLE key_driver;
-                    WCHAR buffer[256];
-                    KEY_VALUE_PARTIAL_INFORMATION *info = (void *)buffer;
-
-                    if (!query_value( key_drivers, desc, len * sizeof(WCHAR), info, sizeof(buffer) ))
-                    {
-                        if (!set_value( key_drivers, desc, len * sizeof(WCHAR), REG_SZ, (const BYTE *)installedW,
-                                        sizeof(installedW) ))
-                        {
-                            TRACE( "error replicating driver %s\n", debugstr_w(desc) );
-                            success = FALSE;
-                        }
-                    }
-                    if ((key_driver = create_key( key_odbcinst, desc, lstrlenW( desc ) * sizeof(WCHAR), 0, NULL )))
-                        NtClose( key_driver );
-                    else
-                    {
-                        TRACE( "error ensuring driver key %s\n", debugstr_w(desc) );
-                        success = FALSE;
-                    }
-                }
-                else
-                {
-                    WARN( "unusually long driver name %s not replicated\n", debugstr_w(desc) );
-                    success = FALSE;
-                }
-            }
-            NtClose( key_drivers );
-        }
-        else TRACE( "error opening Drivers key\n" );
-
         NtClose( key_odbcinst );
+        return;
     }
-    else TRACE( "error creating/opening ODBCINST.INI key\n" );
 
-    if (!success) WARN( "may not have replicated all ODBC drivers to the registry\n" );
-    NtClose( key_odbc );
+    while (SUCCESS((ret = SQLDriversW( env, dir, (SQLWCHAR *)desc, ARRAY_SIZE(desc), &len_desc, attrs,
+                                       ARRAY_SIZE(attrs), &len_attrs ))))
+    {
+        static const WCHAR installedW[] = {'I','n','s','t','a','l','l','e','d',0};
+        HANDLE key_driver;
+        WCHAR buffer[1024];
+        KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
+
+        dir = SQL_FETCH_NEXT;
+        if (!query_value( key_drivers, desc, len_desc * sizeof(WCHAR), info, sizeof(buffer) ))
+        {
+            set_value( key_drivers, desc, len_desc * sizeof(WCHAR), REG_SZ, (const BYTE *)installedW,
+                       sizeof(installedW) );
+        }
+
+        if ((key_driver = create_key( key_odbcinst, desc, wcslen( desc ) * sizeof(WCHAR) )))
+        {
+            static const WCHAR driverW[] = {'D','r','i','v','e','r',0}, driver_eqW[] = {'D','r','i','v','e','r','='};
+            const WCHAR *driver = NULL, *ptr = attrs;
+
+            while (*ptr)
+            {
+                if (len_attrs > ARRAY_SIZE(driver_eqW) && !memcmp( driver_eqW, ptr, sizeof(driver_eqW) ))
+                {
+                    driver = ptr + 7;
+                    break;
+                }
+                len_attrs -= wcslen( ptr ) + 1;
+                ptr += wcslen( ptr ) + 1;
+            }
+            if (driver) set_value( key_driver, driverW, sizeof(driverW), REG_SZ, (const BYTE *)driver,
+                                   wcslen(driver) * sizeof(WCHAR) );
+            NtClose( key_driver );
+        }
+    }
+
+    NtClose( key_drivers );
+    NtClose( key_odbcinst );
+}
+
+struct drivers
+{
+    ULONG   count;
+    WCHAR **names;
+};
+
+static void get_drivers( struct drivers *drivers )
+{
+    ULONG idx = 0, count = 0, capacity, info_size, info_max_size;
+    KEY_VALUE_BASIC_INFORMATION *info = NULL;
+    WCHAR **names;
+    NTSTATUS status = STATUS_SUCCESS;
+    HANDLE key;
+
+    drivers->count = 0;
+    drivers->names = NULL;
+
+    if (!(key = open_drivers_key())) return;
+
+    capacity = 4;
+    if (!(names = malloc( capacity * sizeof(*names) ))) goto done;
+    info_max_size = offsetof(KEY_VALUE_BASIC_INFORMATION, Name) + 512;
+    if (!(info = malloc( info_max_size ))) goto done;
+
+    while (!status && info)
+    {
+        status = NtEnumerateValueKey( key, idx, KeyValueBasicInformation, info, info_max_size, &info_size );
+        while (status == STATUS_BUFFER_OVERFLOW)
+        {
+            info_max_size = info_size;
+            if (!(info = realloc( info, info_max_size ))) goto error;
+            status = NtEnumerateValueKey( key, idx, KeyValueFullInformation, info, info_max_size, &info_size );
+        }
+
+        if (status == STATUS_NO_MORE_ENTRIES)
+        {
+            drivers->count = count;
+            drivers->names = names;
+            goto done;
+        }
+        idx++;
+        if (status) break;
+        if (info->Type != REG_SZ) continue;
+
+        if (count >= capacity)
+        {
+            capacity = capacity * 3 / 2;
+            if (!(names = realloc( names, capacity * sizeof(*names) ))) break;
+        }
+
+        if (!(names[count] = malloc( info->NameLength + sizeof(WCHAR) ))) break;
+        memcpy( names[count], info->Name, info->NameLength );
+        names[count][info->NameLength / sizeof(WCHAR)] = 0;
+        count++;
+    }
+
+error:
+    if (names) while (count) free( names[--count] );
+    free( names );
+
+done:
+    free( info );
+    NtClose( key );
+}
+
+/* unixODBC returns the driver filename in the description, use it to look up the driver name */
+static WCHAR *get_driver_name( const WCHAR *filename )
+{
+    struct drivers drivers;
+    HANDLE key_odbcinst, key_driver;
+    WCHAR *ret = NULL;
+    ULONG i;
+
+    get_drivers( &drivers );
+    if (!drivers.count) return NULL;
+
+    key_odbcinst = open_odbcinst_key();
+    for (i = 0; i < drivers.count; i++)
+    {
+        static const WCHAR driverW[] = {'D','r','i','v','e','r',0};
+        WCHAR buffer[1024];
+        KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
+
+        if ((key_driver = open_key( key_odbcinst, drivers.names[i], wcslen(drivers.names[i]) * sizeof(WCHAR) )))
+        {
+            if (query_value( key_driver, driverW, sizeof(driverW), info, sizeof(buffer) ) && info->Type == REG_SZ &&
+                !wcsnicmp( (const WCHAR *)info->Data, filename, info->DataLength / sizeof(WCHAR) ) &&
+                (ret = malloc( (wcslen(drivers.names[i]) + 1) * sizeof(WCHAR) )))
+            {
+                wcscpy( ret, drivers.names[i] );
+                break;
+            }
+            NtClose( key_driver );
+        }
+    }
+
+    for (i = 0; i < drivers.count; i++) free( drivers.names[i] );
+    free( drivers.names );
+    NtClose( key_odbcinst );
+    return ret;
+}
+
+static HANDLE open_odbcini_key( BOOL user )
+{
+    static const WCHAR odbcW[] = {'S','o','f','t','w','a','r','e','\\','O','D','B','C'};
+    static const WCHAR odbcinstW[] = {'O','D','B','C','.','I','N','I'};
+    HANDLE ret, root = user ? create_hkcu_key( odbcW, sizeof(odbcW) ) : create_hklm_key( odbcW, sizeof(odbcW) );
+    ret = create_key( root, odbcinstW, sizeof(odbcinstW) );
+    NtClose( root );
+    return ret;
+}
+
+static HANDLE open_sources_key( BOOL user )
+{
+    static const WCHAR sourcesW[] = {'O','D','B','C',' ','D','a','t','a',' ','S','o','u','r','c','e','s'};
+    HANDLE ret, root = open_odbcini_key( user );
+    ret = create_key( root, sourcesW, sizeof(sourcesW) );
+    NtClose( root );
+    return ret;
 }
 
 /***********************************************************************
  * replicate_odbc_to_registry
  *
- * Utility to replicate_to_registry() to replicate either the USER or
- * SYSTEM data sources.
- *
- * For now simply place the "Driver description" (as returned by SQLDataSources)
- * into the registry as the driver.  This is enough to satisfy Crystal's
- * requirement that there be a driver entry.  (It doesn't seem to care what
- * the setting is).
- * A slightly more accurate setting would be to access the registry to find
- * the actual driver library for the given description (which appears to map
- * to one of the HKLM/Software/ODBC/ODBCINST.INI keys).  (If you do this note
- * that this will add a requirement that this function be called after
- * replicate_odbcinst_to_registry())
+ * Utility to replicate either the USER or SYSTEM data sources.
+ * This function must be called after replicate_odbcinst_to_registry().
  */
 static void replicate_odbc_to_registry( BOOL is_user, SQLHENV env )
 {
-    static const WCHAR odbcW[] = {'S','o','f','t','w','a','r','e','\\','O','D','B','C'};
-    static const WCHAR odbciniW[] = {'O','D','B','C','.','I','N','I'};
-    HANDLE key_odbc, key_odbcini, key_source;
+    HANDLE key_odbcini, key_sources;
     SQLRETURN ret;
     SQLUSMALLINT dir;
     WCHAR dsn[SQL_MAX_DSN_LENGTH + 1], desc[256];
     SQLSMALLINT len_dsn, len_desc;
-    BOOL success = FALSE;
-    const char *which;
 
-    if (is_user)
+    if (!(key_odbcini = open_odbcini_key( is_user ))) return;
+    if (!(key_sources = open_sources_key( is_user )))
     {
-        key_odbc = create_hkcu_key( odbcW, sizeof(odbcW) );
-        which = "user";
-    }
-    else
-    {
-        key_odbc = create_hklm_key( odbcW, sizeof(odbcW) );
-        which = "system";
-    }
-    if (!key_odbc) return;
-
-    if ((key_odbcini = create_key( key_odbc, odbciniW, sizeof(odbciniW), 0, NULL )))
-    {
-        success = TRUE;
-        dir = is_user ? SQL_FETCH_FIRST_USER : SQL_FETCH_FIRST_SYSTEM;
-        while (SUCCESS((ret = SQLDataSourcesW( env, dir, (SQLWCHAR *)dsn, sizeof(dsn), &len_dsn, (SQLWCHAR *)desc,
-                                               sizeof(desc), &len_desc ))))
-        {
-            dir = SQL_FETCH_NEXT;
-            if (len_dsn == lstrlenW( dsn ) && len_desc == lstrlenW( desc ))
-            {
-                if ((key_source = create_key( key_odbcini, dsn, len_dsn * sizeof(WCHAR), 0, NULL )))
-                {
-                    static const WCHAR driverW[] = {'D','r','i','v','e','r'};
-                    WCHAR buffer[256];
-                    KEY_VALUE_PARTIAL_INFORMATION *info = (void *)buffer;
-                    ULONG size;
-
-                    if (!(size = query_value( key_source, driverW, sizeof(driverW), info, sizeof(buffer) )))
-                    {
-                        if (!set_value( key_source, driverW, sizeof(driverW), REG_SZ, (const BYTE *)desc,
-                                        len_desc * sizeof(WCHAR) ))
-                        {
-                            TRACE( "error replicating description of %s (%s)\n", debugstr_w(dsn), debugstr_w(desc) );
-                            success = FALSE;
-                        }
-                    }
-                    NtClose( key_source );
-                }
-                else
-                {
-                    TRACE( "error opening %s DSN key %s\n", which, debugstr_w(dsn) );
-                    success = FALSE;
-                }
-            }
-            else
-            {
-                WARN( "unusually long %s data source name %s (%s) not replicated\n", which, debugstr_w(dsn), debugstr_w(desc) );
-                success = FALSE;
-            }
-        }
         NtClose( key_odbcini );
+        return;
     }
-    else TRACE( "error creating/opening %s ODBC.INI registry key\n", which );
 
-    if (!success) WARN( "may not have replicated all %s ODBC DSNs to the registry\n", which );
-    NtClose( key_odbc );
+    dir = is_user ? SQL_FETCH_FIRST_USER : SQL_FETCH_FIRST_SYSTEM;
+    while (SUCCESS((ret = SQLDataSourcesW( env, dir, dsn, sizeof(dsn), &len_dsn, desc, sizeof(desc), &len_desc ))))
+    {
+        HANDLE key_source;
+        WCHAR buffer[1024], *name = get_driver_name( desc );
+        KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
+
+        dir = SQL_FETCH_NEXT;
+        if (!query_value( key_sources, dsn, len_dsn * sizeof(WCHAR), info, sizeof(buffer) ) && name)
+        {
+            set_value( key_sources, dsn, len_dsn * sizeof(WCHAR), REG_SZ, (const BYTE *)name,
+                       (wcslen(name) + 1) * sizeof(WCHAR) );
+        }
+        free( name );
+
+        if ((key_source = create_key( key_odbcini, dsn, len_dsn * sizeof(WCHAR) )))
+        {
+            static const WCHAR driverW[] = {'D','r','i','v','e','r'};
+            if (!query_value( key_source, driverW, sizeof(driverW), info, sizeof(buffer) ))
+            {
+                set_value( key_source, driverW, sizeof(driverW), REG_SZ, (const BYTE *)desc,
+                           (len_desc + 1) * sizeof(WCHAR) );
+            }
+            NtClose( key_source );
+        }
+    }
+
+    NtClose( key_sources );
+    NtClose( key_odbcini );
 }
 
 /***********************************************************************
@@ -335,33 +445,33 @@ static NTSTATUS odbc_process_attach( void *args )
 static NTSTATUS wrap_SQLAllocConnect( void *args )
 {
     struct SQLAllocConnect_params *params = args;
-    return SQLAllocConnect( (SQLHENV)(ULONG_PTR)params->EnvironmentHandle, (SQLHDBC *)&params->ConnectionHandle );
+    return SQLAllocConnect( (SQLHENV)(ULONG_PTR)params->EnvironmentHandle, (SQLHDBC *)params->ConnectionHandle );
 }
 
 static NTSTATUS wrap_SQLAllocEnv( void *args )
 {
     struct SQLAllocEnv_params *params = args;
-    return SQLAllocEnv( (SQLHENV *)&params->EnvironmentHandle );
+    return SQLAllocEnv( (SQLHENV *)params->EnvironmentHandle );
 }
 
 static NTSTATUS wrap_SQLAllocHandle( void *args )
 {
     struct SQLAllocHandle_params *params = args;
     return SQLAllocHandle( params->HandleType, (SQLHANDLE)(ULONG_PTR)params->InputHandle,
-                           (SQLHANDLE *)&params->OutputHandle );
+                           (SQLHANDLE *)params->OutputHandle );
 }
 
 static NTSTATUS wrap_SQLAllocHandleStd( void *args )
 {
     struct SQLAllocHandleStd_params *params = args;
     return SQLAllocHandleStd( params->HandleType, (SQLHANDLE)(ULONG_PTR)params->InputHandle,
-                              (SQLHANDLE *)&params->OutputHandle );
+                              (SQLHANDLE *)params->OutputHandle );
 }
 
 static NTSTATUS wrap_SQLAllocStmt( void *args )
 {
     struct SQLAllocStmt_params *params = args;
-    return SQLAllocStmt( (SQLHDBC)(ULONG_PTR)params->ConnectionHandle, (SQLHSTMT *)&params->StatementHandle );
+    return SQLAllocStmt( (SQLHDBC)(ULONG_PTR)params->ConnectionHandle, (SQLHSTMT *)params->StatementHandle );
 }
 
 static NTSTATUS wrap_SQLBindCol( void *args )
@@ -369,14 +479,6 @@ static NTSTATUS wrap_SQLBindCol( void *args )
     struct SQLBindCol_params *params = args;
     return SQLBindCol( (SQLHSTMT)(ULONG_PTR)params->StatementHandle, params->ColumnNumber, params->TargetType,
                        params->TargetValue, params->BufferLength, params->StrLen_or_Ind );
-}
-
-static NTSTATUS wrap_SQLBindParam( void *args )
-{
-    struct SQLBindParam_params *params = args;
-    return SQLBindParam( (SQLHSTMT)(ULONG_PTR)params->StatementHandle, params->ParameterNumber, params->ValueType,
-                         params->ParameterType, params->LengthPrecision, params->ParameterScale,
-                         params->ParameterValue, params->StrLen_or_Ind );
 }
 
 static NTSTATUS wrap_SQLBindParameter( void *args )
@@ -507,22 +609,6 @@ static NTSTATUS wrap_SQLCopyDesc( void *args )
     return SQLCopyDesc( (SQLHDESC)(ULONG_PTR)params->SourceDescHandle, (SQLHDESC)(ULONG_PTR)params->TargetDescHandle );
 }
 
-static NTSTATUS wrap_SQLDataSources( void *args )
-{
-    struct SQLDataSources_params *params = args;
-    return SQLDataSources( (SQLHENV)(ULONG_PTR)params->EnvironmentHandle, params->Direction, params->ServerName,
-                           params->BufferLength1, params->NameLength1, params->Description,
-                           params->BufferLength2, params->NameLength2 );
-}
-
-static NTSTATUS wrap_SQLDataSourcesW( void *args )
-{
-    struct SQLDataSourcesW_params *params = args;
-    return SQLDataSourcesW( (SQLHENV)(ULONG_PTR)params->EnvironmentHandle, params->Direction, params->ServerName,
-                            params->BufferLength1, params->NameLength1, params->Description,
-                            params->BufferLength2, params->NameLength2 );
-}
-
 static NTSTATUS wrap_SQLDescribeCol( void *args )
 {
     struct SQLDescribeCol_params *params = args;
@@ -566,22 +652,6 @@ static NTSTATUS wrap_SQLDriverConnectW( void *args )
     return SQLDriverConnectW( (SQLHDBC)(ULONG_PTR)params->ConnectionHandle, (SQLHWND)(ULONG_PTR)params->WindowHandle,
                               params->InConnectionString, params->Length, params->OutConnectionString,
                               params->BufferLength, params->Length2, params->DriverCompletion );
-}
-
-static NTSTATUS wrap_SQLDrivers( void *args )
-{
-    struct SQLDrivers_params *params = args;
-    return SQLDrivers( (SQLHENV)(ULONG_PTR)params->EnvironmentHandle, params->Direction, params->DriverDescription,
-                       params->BufferLength1, params->DescriptionLength, params->DriverAttributes,
-                       params->BufferLength2, params->AttributesLength );
-}
-
-static NTSTATUS wrap_SQLDriversW( void *args )
-{
-    struct SQLDriversW_params *params = args;
-    return SQLDriversW( (SQLHENV)(ULONG_PTR)params->EnvironmentHandle, params->Direction, params->DriverDescription,
-                        params->BufferLength1, params->DescriptionLength, params->DriverAttributes,
-                        params->BufferLength2, params->AttributesLength );
 }
 
 static NTSTATUS wrap_SQLEndTran( void *args )
@@ -1155,7 +1225,6 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     wrap_SQLAllocHandleStd,
     wrap_SQLAllocStmt,
     wrap_SQLBindCol,
-    wrap_SQLBindParam,
     wrap_SQLBindParameter,
     wrap_SQLBrowseConnect,
     wrap_SQLBrowseConnectW,
@@ -1173,16 +1242,12 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     wrap_SQLConnect,
     wrap_SQLConnectW,
     wrap_SQLCopyDesc,
-    wrap_SQLDataSources,
-    wrap_SQLDataSourcesW,
     wrap_SQLDescribeCol,
     wrap_SQLDescribeColW,
     wrap_SQLDescribeParam,
     wrap_SQLDisconnect,
     wrap_SQLDriverConnect,
     wrap_SQLDriverConnectW,
-    wrap_SQLDrivers,
-    wrap_SQLDriversW,
     wrap_SQLEndTran,
     wrap_SQLError,
     wrap_SQLErrorW,
@@ -1295,35 +1360,6 @@ static NTSTATUS wow64_SQLBindCol( void *args )
     };
 
     return wrap_SQLBindCol( &params );
-}
-
-static NTSTATUS wow64_SQLBindParam( void *args )
-{
-    struct
-    {
-        UINT64 StatementHandle;
-        UINT16 ParameterNumber;
-        INT16  ValueType;
-        INT16  ParameterType;
-        UINT64 LengthPrecision;
-        INT16  ParameterScale;
-        PTR32  ParameterValue;
-        PTR32  StrLen_or_Ind;
-    } const *params32 = args;
-
-    struct SQLBindParam_params params =
-    {
-        params32->StatementHandle,
-        params32->ParameterNumber,
-        params32->ValueType,
-        params32->ParameterType,
-        params32->LengthPrecision,
-        params32->ParameterScale,
-        ULongToPtr(params32->ParameterValue),
-        ULongToPtr(params32->StrLen_or_Ind)
-    };
-
-    return wrap_SQLBindParam( &params );
 }
 
 static NTSTATUS wow64_SQLBindParameter( void *args )
@@ -1695,64 +1731,6 @@ static NTSTATUS wow64_SQLConnectW( void *args )
     return wrap_SQLConnectW( &params );
 }
 
-static NTSTATUS wow64_SQLDataSources( void *args )
-{
-    struct
-    {
-        UINT64 EnvironmentHandle;
-        UINT16 Direction;
-        PTR32  ServerName;
-        INT16  BufferLength1;
-        PTR32  NameLength1;
-        PTR32  Description;
-        INT16  BufferLength2;
-        PTR32  NameLength2;
-    } const *params32 = args;
-
-    struct SQLDataSources_params params =
-    {
-        params32->EnvironmentHandle,
-        params32->Direction,
-        ULongToPtr(params32->ServerName),
-        params32->BufferLength1,
-        ULongToPtr(params32->NameLength1),
-        ULongToPtr(params32->Description),
-        params32->BufferLength2,
-        ULongToPtr(params32->NameLength2)
-    };
-
-    return wrap_SQLDataSources( &params );
-}
-
-static NTSTATUS wow64_SQLDataSourcesW( void *args )
-{
-    struct
-    {
-        UINT64 EnvironmentHandle;
-        UINT16 Direction;
-        PTR32  ServerName;
-        INT16  BufferLength1;
-        PTR32  NameLength1;
-        PTR32  Description;
-        INT16  BufferLength2;
-        PTR32  NameLength2;
-    } const *params32 = args;
-
-    struct SQLDataSourcesW_params params =
-    {
-        params32->EnvironmentHandle,
-        params32->Direction,
-        ULongToPtr(params32->ServerName),
-        params32->BufferLength1,
-        ULongToPtr(params32->NameLength1),
-        ULongToPtr(params32->Description),
-        params32->BufferLength2,
-        ULongToPtr(params32->NameLength2)
-    };
-
-    return wrap_SQLDataSourcesW( &params );
-}
-
 static NTSTATUS wow64_SQLDescribeCol( void *args )
 {
     struct
@@ -1838,64 +1816,6 @@ static NTSTATUS wow64_SQLDescribeParam( void *args )
     };
 
     return wrap_SQLDescribeParam( &params );
-}
-
-static NTSTATUS wow64_SQLDrivers( void *args )
-{
-    struct
-    {
-        UINT64 EnvironmentHandle;
-        UINT16 Direction;
-        PTR32  DriverDescription;
-        INT16  BufferLength1;
-        PTR32  DescriptionLength;
-        PTR32  DriverAttributes;
-        INT16  BufferLength2;
-        PTR32  AttributesLength;
-    } const *params32 = args;
-
-    struct SQLDrivers_params params =
-    {
-        params32->EnvironmentHandle,
-        params32->Direction,
-        ULongToPtr(params32->DriverDescription),
-        params32->BufferLength1,
-        ULongToPtr(params32->DescriptionLength),
-        ULongToPtr(params32->DriverAttributes),
-        params32->BufferLength2,
-        ULongToPtr(params32->AttributesLength)
-    };
-
-    return wrap_SQLDrivers( &params );
-}
-
-static NTSTATUS wow64_SQLDriversW( void *args )
-{
-    struct
-    {
-        UINT64 EnvironmentHandle;
-        UINT16 Direction;
-        PTR32  DriverDescription;
-        INT16  BufferLength1;
-        PTR32  DescriptionLength;
-        PTR32  DriverAttributes;
-        INT16  BufferLength2;
-        PTR32  AttributesLength;
-    } const *params32 = args;
-
-    struct SQLDriversW_params params =
-    {
-        params32->EnvironmentHandle,
-        params32->Direction,
-        ULongToPtr(params32->DriverDescription),
-        params32->BufferLength1,
-        ULongToPtr(params32->DescriptionLength),
-        ULongToPtr(params32->DriverAttributes),
-        params32->BufferLength2,
-        ULongToPtr(params32->AttributesLength)
-    };
-
-    return wrap_SQLDriversW( &params );
 }
 
 static NTSTATUS wow64_SQLDriverConnect( void *args )
@@ -3557,7 +3477,6 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     wrap_SQLAllocHandleStd,
     wrap_SQLAllocStmt,
     wow64_SQLBindCol,
-    wow64_SQLBindParam,
     wow64_SQLBindParameter,
     wow64_SQLBrowseConnect,
     wow64_SQLBrowseConnectW,
@@ -3575,16 +3494,12 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     wow64_SQLConnect,
     wow64_SQLConnectW,
     wrap_SQLCopyDesc,
-    wow64_SQLDataSources,
-    wow64_SQLDataSourcesW,
     wow64_SQLDescribeCol,
     wow64_SQLDescribeColW,
     wow64_SQLDescribeParam,
     wrap_SQLDisconnect,
     wow64_SQLDriverConnect,
     wow64_SQLDriverConnectW,
-    wow64_SQLDrivers,
-    wow64_SQLDriversW,
     wrap_SQLEndTran,
     wow64_SQLError,
     wow64_SQLErrorW,

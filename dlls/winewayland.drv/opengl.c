@@ -49,6 +49,7 @@ static EGLDisplay egl_display;
 static char wgl_extensions[4096];
 static EGLConfig *egl_configs;
 static int num_egl_configs;
+static BOOL has_egl_ext_pixel_format_float;
 
 #define USE_GL_FUNC(name) #name,
 static const char *opengl_func_names[] = { ALL_WGL_FUNCS };
@@ -707,14 +708,17 @@ static BOOL wayland_wglSwapIntervalEXT(int interval)
 
 static void describe_pixel_format(EGLConfig config, struct wgl_pixel_format *fmt)
 {
-    EGLint value;
+    EGLint value, surface_type;
     PIXELFORMATDESCRIPTOR *pfd = &fmt->pfd;
 
-    memset(pfd, 0, sizeof(*pfd));
+    /* If we can't get basic information, there is no point continuing */
+    if (!p_eglGetConfigAttrib(egl_display, config, EGL_SURFACE_TYPE, &surface_type)) return;
+
+    memset(fmt, 0, sizeof(*fmt));
     pfd->nSize = sizeof(*pfd);
     pfd->nVersion = 1;
-    pfd->dwFlags = PFD_SUPPORT_OPENGL | PFD_DRAW_TO_WINDOW | PFD_DOUBLEBUFFER |
-                   PFD_SUPPORT_COMPOSITION;
+    pfd->dwFlags = PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_SUPPORT_COMPOSITION;
+    if (surface_type & EGL_WINDOW_BIT) pfd->dwFlags |= PFD_DRAW_TO_WINDOW;
     pfd->iPixelType = PFD_TYPE_RGBA;
     pfd->iLayerType = PFD_MAIN_PLANE;
 
@@ -722,6 +726,9 @@ static void describe_pixel_format(EGLConfig config, struct wgl_pixel_format *fmt
     value = 0; \
     p_eglGetConfigAttrib(egl_display, config, attrib, &value); \
     pfd->field = value;
+#define SET_ATTRIB_ARB(field, attrib) \
+    if (!p_eglGetConfigAttrib(egl_display, config, attrib, &value)) value = -1; \
+    fmt->field = value;
 
     /* Although the documentation describes cColorBits as excluding alpha, real
      * drivers tend to return the full pixel size, so do the same. */
@@ -743,7 +750,81 @@ static void describe_pixel_format(EGLConfig config, struct wgl_pixel_format *fmt
     SET_ATTRIB(cDepthBits, EGL_DEPTH_SIZE);
     SET_ATTRIB(cStencilBits, EGL_STENCIL_SIZE);
 
+    fmt->swap_method = WGL_SWAP_UNDEFINED_ARB;
+
+    if (p_eglGetConfigAttrib(egl_display, config, EGL_TRANSPARENT_TYPE, &value))
+    {
+        switch (value)
+        {
+        case EGL_TRANSPARENT_RGB: fmt->transparent = GL_TRUE; break;
+        case EGL_NONE: fmt->transparent = GL_FALSE; break;
+        default:
+            ERR("unexpected transparency type 0x%x\n", value);
+            fmt->transparent = -1;
+            break;
+        }
+    }
+    else fmt->transparent = -1;
+
+    if (!has_egl_ext_pixel_format_float) fmt->pixel_type = WGL_TYPE_RGBA_ARB;
+    else if (p_eglGetConfigAttrib(egl_display, config, EGL_COLOR_COMPONENT_TYPE_EXT, &value))
+    {
+        switch (value)
+        {
+        case EGL_COLOR_COMPONENT_TYPE_FIXED_EXT:
+            fmt->pixel_type = WGL_TYPE_RGBA_ARB;
+            break;
+        case EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT:
+            fmt->pixel_type = WGL_TYPE_RGBA_FLOAT_ARB;
+            break;
+        default:
+            ERR("unexpected color component type 0x%x\n", value);
+            fmt->pixel_type = -1;
+            break;
+        }
+    }
+    else fmt->pixel_type = -1;
+
+    fmt->draw_to_pbuffer = !!(surface_type & EGL_PBUFFER_BIT);
+    SET_ATTRIB_ARB(max_pbuffer_pixels, EGL_MAX_PBUFFER_PIXELS);
+    SET_ATTRIB_ARB(max_pbuffer_width, EGL_MAX_PBUFFER_WIDTH);
+    SET_ATTRIB_ARB(max_pbuffer_height, EGL_MAX_PBUFFER_HEIGHT);
+
+    if (p_eglGetConfigAttrib(egl_display, config, EGL_TRANSPARENT_RED_VALUE, &value))
+    {
+        fmt->transparent_red_value_valid = GL_TRUE;
+        fmt->transparent_red_value = value;
+    }
+    if (p_eglGetConfigAttrib(egl_display, config, EGL_TRANSPARENT_GREEN_VALUE, &value))
+    {
+        fmt->transparent_green_value_valid = GL_TRUE;
+        fmt->transparent_green_value = value;
+    }
+    if (p_eglGetConfigAttrib(egl_display, config, EGL_TRANSPARENT_BLUE_VALUE, &value))
+    {
+        fmt->transparent_blue_value_valid = GL_TRUE;
+        fmt->transparent_blue_value = value;
+    }
+    fmt->transparent_alpha_value_valid = GL_TRUE;
+    fmt->transparent_alpha_value = 0;
+    fmt->transparent_index_value_valid = GL_TRUE;
+    fmt->transparent_index_value = 0;
+
+    SET_ATTRIB_ARB(sample_buffers, EGL_SAMPLE_BUFFERS);
+    SET_ATTRIB_ARB(samples, EGL_SAMPLES);
+
+    SET_ATTRIB_ARB(bind_to_texture_rgb, EGL_BIND_TO_TEXTURE_RGB);
+    SET_ATTRIB_ARB(bind_to_texture_rgba, EGL_BIND_TO_TEXTURE_RGBA);
+    fmt->bind_to_texture_rectangle_rgb = fmt->bind_to_texture_rgb;
+    fmt->bind_to_texture_rectangle_rgba = fmt->bind_to_texture_rgba;
+
+    /* TODO: Support SRGB surfaces and enable the attribute */
+    fmt->framebuffer_srgb_capable = GL_FALSE;
+
+    fmt->float_components = GL_FALSE;
+
 #undef SET_ATTRIB
+#undef SET_ATTRIB_ARB
 }
 
 static BOOL has_opengl(void);
@@ -826,6 +907,17 @@ static BOOL init_opengl_funcs(void)
     register_extension("WGL_EXT_swap_control");
     opengl_funcs.ext.p_wglGetSwapIntervalEXT = wayland_wglGetSwapIntervalEXT;
     opengl_funcs.ext.p_wglSwapIntervalEXT = wayland_wglSwapIntervalEXT;
+
+    register_extension("WGL_ARB_pixel_format");
+    opengl_funcs.ext.p_wglChoosePixelFormatARB = (void *)1; /* never called */
+    opengl_funcs.ext.p_wglGetPixelFormatAttribfvARB = (void *)1; /* never called */
+    opengl_funcs.ext.p_wglGetPixelFormatAttribivARB = (void *)1; /* never called */
+
+    if (has_egl_ext_pixel_format_float)
+    {
+        register_extension("WGL_ARB_pixel_format_float");
+        register_extension("WGL_ATI_pixel_format_float");
+    }
 
     return TRUE;
 }
@@ -960,6 +1052,8 @@ static void init_opengl(void)
     REQUIRE_EXT(EGL_KHR_create_context_no_error);
     REQUIRE_EXT(EGL_KHR_no_config_context);
 #undef REQUIRE_EXT
+
+    has_egl_ext_pixel_format_float = has_extension(egl_exts, "EGL_EXT_pixel_format_float");
 
     if (!init_opengl_funcs()) goto err;
     if (!init_egl_configs()) goto err;

@@ -105,8 +105,9 @@ static inline ULONGLONG monotonic_counter(void)
     return ticks_from_time_t( now.tv_sec ) + now.tv_usec * 10 - server_start_time;
 }
 
-
 #ifdef __linux__
+
+#define USE_FUTEX
 
 #include <linux/futex.h>
 
@@ -126,13 +127,76 @@ static inline int futex_wait( const LONG *addr, int val, struct timespec *timeou
     return syscall( __NR_futex, addr, FUTEX_WAIT_PRIVATE, val, timeout, 0, 0 );
 }
 
-static inline int futex_wake( const LONG *addr, int val )
+static inline int futex_wake_one( const LONG *addr )
 {
-    return syscall( __NR_futex, addr, FUTEX_WAKE_PRIVATE, val, NULL, 0, 0 );
+    return syscall( __NR_futex, addr, FUTEX_WAKE_PRIVATE, 1, NULL, 0, 0 );
 }
 
+#elif defined(__APPLE__)
+
+#define USE_FUTEX
+
+#include <AvailabilityMacros.h>
+
+#ifdef MAC_OS_VERSION_14_4
+#include <os/os_sync_wait_on_address.h>
 #endif
 
+#define UL_COMPARE_AND_WAIT 1
+
+extern int __ulock_wait( uint32_t operation, void *addr, uint64_t value, uint32_t timeout );
+
+extern int __ulock_wake( uint32_t operation, void *addr, uint64_t wake_value );
+
+static inline int futex_wait( const LONG *addr, int val, struct timespec *timeout )
+{
+#ifdef MAC_OS_VERSION_14_4
+    if (__builtin_available( macOS 14.4, * ))
+    {
+        /* 18446744073 seconds could overflow a uint64_t in nanoseconds */
+        if (timeout && timeout->tv_sec < 18446744073)
+        {
+            uint64_t ns_timeout = (timeout->tv_sec * 1000000000) + timeout->tv_nsec;
+
+            if (!ns_timeout)
+            {
+                errno = ETIMEDOUT;
+                return -1;
+            }
+            return os_sync_wait_on_address_with_timeout( (void *)addr, (uint64_t)val, 4, OS_SYNC_WAIT_ON_ADDRESS_NONE,
+                                                         OS_CLOCK_MACH_ABSOLUTE_TIME, ns_timeout );
+        }
+
+        return os_sync_wait_on_address( (void *)addr, (uint64_t)val, 4, OS_SYNC_WAIT_ON_ADDRESS_NONE );
+    }
+#endif
+
+    /* 4294 seconds could overflow a uint32_t in microseconds */
+    if (timeout && timeout->tv_sec < 4294)
+    {
+        uint32_t us_timeout = ((uint32_t)timeout->tv_sec * 1000000) + ((uint32_t)timeout->tv_nsec / 1000);
+
+        if (!us_timeout)
+        {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        return __ulock_wait( UL_COMPARE_AND_WAIT, (void *)addr, (uint64_t)val, us_timeout );
+    }
+
+    return __ulock_wait( UL_COMPARE_AND_WAIT, (void *)addr, (uint64_t)val, 0 );
+}
+
+static inline int futex_wake_one( const LONG *addr )
+{
+#ifdef MAC_OS_VERSION_14_4
+    if (__builtin_available( macOS 14.4, * ))
+        return os_sync_wake_by_address_any( (void *)addr, 4, OS_SYNC_WAKE_BY_ADDRESS_NONE );
+#endif
+    return __ulock_wake( UL_COMPARE_AND_WAIT, (void *)addr, 0 );
+}
+
+#endif /* __APPLE__ */
 
 /* create a struct security_descriptor and contained information in one contiguous piece of memory */
 unsigned int alloc_object_attributes( const OBJECT_ATTRIBUTES *attr, struct object_attributes **ret,
@@ -2538,10 +2602,10 @@ NTSTATUS WINAPI NtQueryInformationAtom( RTL_ATOM atom, ATOM_INFORMATION_CLASS cl
 
 union tid_alert_entry
 {
-#ifdef HAVE_KQUEUE
-    int kq;
-#elif defined(__linux__)
+#ifdef USE_FUTEX
     LONG futex;
+#elif defined(HAVE_KQUEUE)
+    int kq;
 #else
     HANDLE event;
 #endif
@@ -2579,7 +2643,9 @@ static union tid_alert_entry *get_tid_alert_entry( HANDLE tid )
 
     entry = &tid_alert_blocks[block_idx][idx % TID_ALERT_BLOCK_SIZE];
 
-#ifdef HAVE_KQUEUE
+#ifdef USE_FUTEX
+    return entry;
+#elif defined(HAVE_KQUEUE)
     if (!entry->kq)
     {
         int kq = kqueue();
@@ -2609,8 +2675,6 @@ static union tid_alert_entry *get_tid_alert_entry( HANDLE tid )
         if (InterlockedCompareExchange( (LONG *)&entry->kq, kq, 0 ))
             close( kq );
     }
-#elif defined(__linux__)
-    return entry;
 #else
     if (!entry->event)
     {
@@ -2638,7 +2702,14 @@ NTSTATUS WINAPI NtAlertThreadByThreadId( HANDLE tid )
 
     if (!entry) return STATUS_INVALID_CID;
 
-#ifdef HAVE_KQUEUE
+#ifdef USE_FUTEX
+    {
+        LONG *futex = &entry->futex;
+        if (!InterlockedExchange( futex, 1 ))
+            futex_wake_one( futex );
+        return STATUS_SUCCESS;
+    }
+#elif defined(HAVE_KQUEUE)
     {
         static const struct kevent signal_event =
         {
@@ -2653,20 +2724,13 @@ NTSTATUS WINAPI NtAlertThreadByThreadId( HANDLE tid )
         kevent( entry->kq, &signal_event, 1, NULL, 0, NULL );
         return STATUS_SUCCESS;
     }
-#elif defined(__linux__)
-    {
-        LONG *futex = &entry->futex;
-        if (!InterlockedExchange( futex, 1 ))
-            futex_wake( futex, 1 );
-        return STATUS_SUCCESS;
-    }
 #else
     return NtSetEvent( entry->event, NULL );
 #endif
 }
 
 
-#if defined(__linux__) || defined(HAVE_KQUEUE)
+#if defined(USE_FUTEX) || defined(HAVE_KQUEUE)
 static LONGLONG get_absolute_timeout( const LARGE_INTEGER *timeout )
 {
     LARGE_INTEGER now;
@@ -2689,59 +2753,6 @@ static LONGLONG update_timeout( ULONGLONG end )
 #endif
 
 
-#ifdef HAVE_KQUEUE
-
-/***********************************************************************
- *             NtWaitForAlertByThreadId (NTDLL.@)
- */
-NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEGER *timeout )
-{
-    union tid_alert_entry *entry = get_tid_alert_entry( NtCurrentTeb()->ClientId.UniqueThread );
-    ULONGLONG end;
-    int ret;
-    struct timespec timespec;
-    struct kevent wait_event;
-
-    TRACE( "%p %s\n", address, debugstr_timeout( timeout ) );
-
-    if (!entry) return STATUS_INVALID_CID;
-
-    if (timeout)
-    {
-        if (timeout->QuadPart == TIMEOUT_INFINITE)
-            timeout = NULL;
-        else
-            end = get_absolute_timeout( timeout );
-    }
-
-    do
-    {
-        if (timeout)
-        {
-            LONGLONG timeleft = update_timeout( end );
-
-            timespec.tv_sec = timeleft / (ULONGLONG)TICKSPERSEC;
-            timespec.tv_nsec = (timeleft % TICKSPERSEC) * 100;
-            if (timespec.tv_sec > 0x7FFFFFFF) timeout = NULL;
-        }
-
-        ret = kevent( entry->kq, NULL, 0, &wait_event, 1, timeout ? &timespec : NULL );
-    } while (ret == -1 && errno == EINTR);
-
-    switch (ret)
-    {
-    case 1:
-        return STATUS_ALERTED;
-    case 0:
-        return STATUS_TIMEOUT;
-    default:
-        ERR( "kevent failed with error: %d (%s)\n", errno, strerror( errno ) );
-        return STATUS_INVALID_HANDLE;
-    }
-}
-
-#else
-
 /***********************************************************************
  *             NtWaitForAlertByThreadId (NTDLL.@)
  */
@@ -2753,7 +2764,7 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
 
     if (!entry) return STATUS_INVALID_CID;
 
-#ifdef __linux__
+#ifdef USE_FUTEX
     {
         LONG *futex = &entry->futex;
         ULONGLONG end;
@@ -2785,6 +2796,46 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
         }
         return STATUS_ALERTED;
     }
+#elif defined(HAVE_KQUEUE)
+    {
+        ULONGLONG end;
+        int ret;
+        struct timespec timespec;
+        struct kevent wait_event;
+
+        if (timeout)
+        {
+            if (timeout->QuadPart == TIMEOUT_INFINITE)
+                timeout = NULL;
+            else
+                end = get_absolute_timeout( timeout );
+        }
+
+        do
+        {
+            if (timeout)
+            {
+                LONGLONG timeleft = update_timeout( end );
+
+                timespec.tv_sec = timeleft / (ULONGLONG)TICKSPERSEC;
+                timespec.tv_nsec = (timeleft % TICKSPERSEC) * 100;
+                if (timespec.tv_sec > 0x7FFFFFFF) timeout = NULL;
+            }
+
+            ret = kevent( entry->kq, NULL, 0, &wait_event, 1, timeout ? &timespec : NULL );
+        } while (ret == -1 && errno == EINTR);
+
+        switch (ret)
+        {
+        case 1:
+            return STATUS_ALERTED;
+        case 0:
+            return STATUS_TIMEOUT;
+        default:
+            ERR( "kevent failed with error: %d (%s)\n", errno, strerror( errno ) );
+            return STATUS_INVALID_HANDLE;
+        }
+    }
 #else
     {
         NTSTATUS status = NtWaitForSingleObject( entry->event, FALSE, timeout );
@@ -2794,7 +2845,6 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
 #endif
 }
 
-#endif
 
 /***********************************************************************
  *           NtCreateTransaction (NTDLL.@)

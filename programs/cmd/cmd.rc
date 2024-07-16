@@ -51,9 +51,6 @@ default directory.\n"
   WCMD_COPY,
 "COPY <filename> copies a file.\n"
 
-  WCMD_CTTY,
-"CTTY changes the input/output device.\n"
-
   WCMD_DATE,
 "DATE shows or changes the system date.\n"
 
@@ -390,7 +387,6 @@ Enter HELP <command> for further information on any of the above commands.\n"
   WCMD_ARGERR, "Parameter error\n"
   WCMD_VOLUMESERIALNO, "Volume Serial Number is %1!04x!-%2!04x!\n\n"
   WCMD_VOLUMEPROMPT, "Volume label (11 characters, <Enter> for none)?"
-  WCMD_NOPATH, "PATH not found\n"
   WCMD_ANYKEY,"Press any key to continue... "
   WCMD_CONSTITLE,"Wine Command Prompt"
   WCMD_VERSION,"Microsoft Windows %1!S!\n"
