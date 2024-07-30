@@ -20,6 +20,7 @@
 
 #include "hlsl.h"
 #include <stdio.h>
+#include <math.h>
 
 /* TODO: remove when no longer needed, only used for new_offset_instr_from_deref() */
 static struct hlsl_ir_node *new_offset_from_path_index(struct hlsl_ctx *ctx, struct hlsl_block *block,
@@ -3016,6 +3017,108 @@ static bool lower_floor(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct
     return true;
 }
 
+/* Lower SIN/COS to SINCOS for SM1.  */
+static bool lower_trig(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct hlsl_block *block)
+{
+    struct hlsl_ir_node *arg, *half, *two_pi, *reciprocal_two_pi, *neg_pi;
+    struct hlsl_constant_value half_value, two_pi_value, reciprocal_two_pi_value, neg_pi_value;
+    struct hlsl_ir_node *mad, *frc, *reduced;
+    struct hlsl_type *type;
+    struct hlsl_ir_expr *expr;
+    enum hlsl_ir_expr_op op;
+    struct hlsl_ir_node *sincos;
+    int i;
+
+    if (instr->type != HLSL_IR_EXPR)
+        return false;
+    expr = hlsl_ir_expr(instr);
+
+    if (expr->op == HLSL_OP1_SIN)
+        op = HLSL_OP1_SIN_REDUCED;
+    else if (expr->op == HLSL_OP1_COS)
+        op = HLSL_OP1_COS_REDUCED;
+    else
+        return false;
+
+    arg = expr->operands[0].node;
+    type = arg->data_type;
+
+    /* Reduce the range of the input angles to [-pi, pi]. */
+    for (i = 0; i < type->dimx; ++i)
+    {
+        half_value.u[i].f = 0.5;
+        two_pi_value.u[i].f = 2.0 * M_PI;
+        reciprocal_two_pi_value.u[i].f = 1.0 / (2.0 * M_PI);
+        neg_pi_value.u[i].f = -M_PI;
+    }
+
+    if (!(half = hlsl_new_constant(ctx, type, &half_value, &instr->loc))
+            || !(two_pi = hlsl_new_constant(ctx, type, &two_pi_value, &instr->loc))
+            || !(reciprocal_two_pi = hlsl_new_constant(ctx, type, &reciprocal_two_pi_value, &instr->loc))
+            || !(neg_pi = hlsl_new_constant(ctx, type, &neg_pi_value, &instr->loc)))
+        return false;
+    hlsl_block_add_instr(block, half);
+    hlsl_block_add_instr(block, two_pi);
+    hlsl_block_add_instr(block, reciprocal_two_pi);
+    hlsl_block_add_instr(block, neg_pi);
+
+    if (!(mad = hlsl_new_ternary_expr(ctx, HLSL_OP3_MAD, arg, reciprocal_two_pi, half)))
+        return false;
+    hlsl_block_add_instr(block, mad);
+    if (!(frc = hlsl_new_unary_expr(ctx, HLSL_OP1_FRACT, mad, &instr->loc)))
+        return false;
+    hlsl_block_add_instr(block, frc);
+    if (!(reduced = hlsl_new_ternary_expr(ctx, HLSL_OP3_MAD, frc, two_pi, neg_pi)))
+        return false;
+    hlsl_block_add_instr(block, reduced);
+
+    if (type->dimx == 1)
+    {
+        if (!(sincos = hlsl_new_unary_expr(ctx, op, reduced, &instr->loc)))
+            return false;
+        hlsl_block_add_instr(block, sincos);
+    }
+    else
+    {
+        struct hlsl_ir_node *comps[4] = {0};
+        struct hlsl_ir_var *var;
+        struct hlsl_deref var_deref;
+        struct hlsl_ir_load *var_load;
+
+        for (i = 0; i < type->dimx; ++i)
+        {
+            uint32_t s = hlsl_swizzle_from_writemask(1 << i);
+
+            if (!(comps[i] = hlsl_new_swizzle(ctx, s, 1, reduced, &instr->loc)))
+                return false;
+            hlsl_block_add_instr(block, comps[i]);
+        }
+
+        if (!(var = hlsl_new_synthetic_var(ctx, "sincos", type, &instr->loc)))
+            return false;
+        hlsl_init_simple_deref_from_var(&var_deref, var);
+
+        for (i = 0; i < type->dimx; ++i)
+        {
+            struct hlsl_block store_block;
+
+            if (!(sincos = hlsl_new_unary_expr(ctx, op, comps[i], &instr->loc)))
+                return false;
+            hlsl_block_add_instr(block, sincos);
+
+            if (!hlsl_new_store_component(ctx, &store_block, &var_deref, i, sincos))
+                return false;
+            hlsl_block_add_block(block, &store_block);
+        }
+
+        if (!(var_load = hlsl_new_load_index(ctx, &var_deref, NULL, &instr->loc)))
+            return false;
+        hlsl_block_add_instr(block, &var_load->node);
+    }
+
+    return true;
+}
+
 static bool lower_logic_not(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, struct hlsl_block *block)
 {
     struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS];
@@ -4230,6 +4333,30 @@ static struct hlsl_reg allocate_register(struct hlsl_ctx *ctx, struct register_a
     return ret;
 }
 
+/* Allocate a register with writemask, while reserving reg_writemask. */
+static struct hlsl_reg allocate_register_with_masks(struct hlsl_ctx *ctx, struct register_allocator *allocator,
+        unsigned int first_write, unsigned int last_read, uint32_t reg_writemask, uint32_t writemask)
+{
+    struct hlsl_reg ret = {0};
+    uint32_t reg_idx;
+
+    assert((reg_writemask & writemask) == writemask);
+
+    for (reg_idx = 0;; ++reg_idx)
+    {
+        if ((get_available_writemask(allocator, first_write, last_read, reg_idx) & reg_writemask) == reg_writemask)
+            break;
+    }
+
+    record_allocation(ctx, allocator, reg_idx, reg_writemask, first_write, last_read);
+
+    ret.id = reg_idx;
+    ret.allocation_size = 1;
+    ret.writemask = writemask;
+    ret.allocated = true;
+    return ret;
+}
+
 static bool is_range_available(const struct register_allocator *allocator,
         unsigned int first_write, unsigned int last_read, uint32_t reg_idx, unsigned int reg_size)
 {
@@ -4433,6 +4560,44 @@ static void calculate_resource_register_counts(struct hlsl_ctx *ctx)
     }
 }
 
+static void allocate_instr_temp_register(struct hlsl_ctx *ctx,
+        struct hlsl_ir_node *instr, struct register_allocator *allocator)
+{
+    unsigned int reg_writemask = 0, dst_writemask = 0;
+
+    if (instr->reg.allocated || !instr->last_read)
+        return;
+
+    if (instr->type == HLSL_IR_EXPR)
+    {
+        switch (hlsl_ir_expr(instr)->op)
+        {
+            case HLSL_OP1_COS_REDUCED:
+                dst_writemask = VKD3DSP_WRITEMASK_0;
+                reg_writemask = ctx->profile->major_version < 3 ? (1 << 3) - 1 : VKD3DSP_WRITEMASK_0;
+                break;
+
+            case HLSL_OP1_SIN_REDUCED:
+                dst_writemask = VKD3DSP_WRITEMASK_1;
+                reg_writemask = ctx->profile->major_version < 3 ? (1 << 3) - 1 : VKD3DSP_WRITEMASK_1;
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    if (reg_writemask)
+        instr->reg = allocate_register_with_masks(ctx, allocator,
+                instr->index, instr->last_read, reg_writemask, dst_writemask);
+    else
+        instr->reg = allocate_numeric_registers_for_type(ctx, allocator,
+                instr->index, instr->last_read, instr->data_type);
+
+    TRACE("Allocated anonymous expression @%u to %s (liveness %u-%u).\n", instr->index,
+            debug_register('r', instr->reg, instr->data_type), instr->index, instr->last_read);
+}
+
 static void allocate_variable_temp_register(struct hlsl_ctx *ctx,
         struct hlsl_ir_var *var, struct register_allocator *allocator)
 {
@@ -4472,13 +4637,7 @@ static void allocate_temp_registers_recurse(struct hlsl_ctx *ctx,
         if (ctx->profile->major_version >= 4 && instr->type == HLSL_IR_CONSTANT)
             continue;
 
-        if (!instr->reg.allocated && instr->last_read)
-        {
-            instr->reg = allocate_numeric_registers_for_type(ctx, allocator, instr->index, instr->last_read,
-                    instr->data_type);
-            TRACE("Allocated anonymous expression @%u to %s (liveness %u-%u).\n", instr->index,
-                    debug_register('r', instr->reg, instr->data_type), instr->index, instr->last_read);
-        }
+        allocate_instr_temp_register(ctx, instr, allocator);
 
         switch (instr->type)
         {
@@ -5691,7 +5850,7 @@ static void sm1_generate_vsir(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl
     version.major = ctx->profile->major_version;
     version.minor = ctx->profile->minor_version;
     version.type = ctx->profile->type;
-    if (!vsir_program_init(program, &version, 0))
+    if (!vsir_program_init(program, NULL, &version, 0))
     {
         ctx->result = VKD3D_ERROR_OUT_OF_MEMORY;
         return;
@@ -6050,6 +6209,7 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
         lower_ir(ctx, lower_round, body);
         lower_ir(ctx, lower_ceil, body);
         lower_ir(ctx, lower_floor, body);
+        lower_ir(ctx, lower_trig, body);
         lower_ir(ctx, lower_comparison_operators, body);
         lower_ir(ctx, lower_logic_not, body);
         if (ctx->profile->type == VKD3D_SHADER_TYPE_PIXEL)

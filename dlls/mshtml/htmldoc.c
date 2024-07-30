@@ -2819,8 +2819,7 @@ static HRESULT WINAPI HTMLDocument4_get_namespaces(IHTMLDocument4 *iface, IDispa
     if(!This->namespaces) {
         HRESULT hres;
 
-        hres = create_namespace_collection(dispex_compat_mode(&This->node.event_target.dispex),
-                                           &This->namespaces);
+        hres = create_namespace_collection(This, &This->namespaces);
         if(FAILED(hres))
             return hres;
     }
@@ -2864,7 +2863,7 @@ static HRESULT WINAPI HTMLDocument4_createEventObject(IHTMLDocument4 *iface,
         return E_NOTIMPL;
     }
 
-    return create_event_obj(NULL, dispex_compat_mode(&This->node.event_target.dispex), ppEventObj);
+    return create_event_obj(NULL, This, ppEventObj);
 }
 
 static HRESULT WINAPI HTMLDocument4_fireEvent(IHTMLDocument4 *iface, BSTR bstrEventName,
@@ -3015,7 +3014,7 @@ static HRESULT WINAPI HTMLDocument5_createAttribute(IHTMLDocument5 *iface, BSTR 
 
     TRACE("(%p)->(%s %p)\n", This, debugstr_w(bstrattrName), ppattribute);
 
-    hres = HTMLDOMAttribute_Create(bstrattrName, NULL, 0, dispex_compat_mode(&This->node.event_target.dispex), &attr);
+    hres = HTMLDOMAttribute_Create(bstrattrName, NULL, 0, This, &attr);
     if(FAILED(hres))
         return hres;
 
@@ -5365,18 +5364,7 @@ static void HTMLDocumentNode_destructor(DispatchEx *dispex)
     HTMLDOMNode_destructor(&This->node.event_target.dispex);
 }
 
-static HRESULT HTMLDocumentNode_get_name(DispatchEx *dispex, DISPID id, BSTR *name)
-{
-    HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
-    DWORD idx = id - MSHTML_DISPID_CUSTOM_MIN;
-
-    if(!This->dom_document || idx >= This->elem_vars_cnt)
-        return DISP_E_MEMBERNOTFOUND;
-
-    return (*name = SysAllocString(This->elem_vars[idx])) ? S_OK : E_OUTOFMEMORY;
-}
-
-static HRESULT HTMLDocumentNode_get_dispid(DispatchEx *dispex, BSTR name, DWORD grfdex, DISPID *dispid)
+static HRESULT HTMLDocumentNode_get_dispid(DispatchEx *dispex, const WCHAR *name, DWORD grfdex, DISPID *dispid)
 {
     HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
     HRESULT hres = DISP_E_UNKNOWNNAME;
@@ -5390,7 +5378,7 @@ static HRESULT HTMLDocumentNode_get_dispid(DispatchEx *dispex, BSTR name, DWORD 
     return hres;
 }
 
-static HRESULT HTMLDocumentNode_find_dispid(DispatchEx *dispex, BSTR name, DWORD grfdex, DISPID *dispid)
+static HRESULT HTMLDocumentNode_find_dispid(DispatchEx *dispex, const WCHAR *name, DWORD grfdex, DISPID *dispid)
 {
     HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
     HRESULT hres = DISP_E_UNKNOWNNAME;
@@ -5532,12 +5520,28 @@ static HRESULT HTMLDocumentNode_next_dispid(DispatchEx *dispex, DISPID id, DISPI
     return S_OK;
 }
 
-static compat_mode_t HTMLDocumentNode_get_compat_mode(DispatchEx *dispex)
+static HRESULT HTMLDocumentNode_get_prop_desc(DispatchEx *dispex, DISPID id, struct property_info *desc)
+{
+    HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
+    DWORD idx = id - MSHTML_DISPID_CUSTOM_MIN;
+
+    if(!This->dom_document || idx >= This->elem_vars_cnt)
+        return DISP_E_MEMBERNOTFOUND;
+
+    desc->name = This->elem_vars[idx];
+    desc->id = id;
+    desc->flags = PROPF_WRITABLE | PROPF_CONFIGURABLE | PROPF_ENUMERABLE;
+    desc->func_iid = 0;
+    return S_OK;
+}
+
+static compat_mode_t HTMLDocumentNode_get_compat_mode(DispatchEx *dispex, HTMLInnerWindow **script_global)
 {
     HTMLDocumentNode *This = impl_from_DispatchEx(dispex);
 
     TRACE("(%p) returning %u\n", This, This->document_mode);
 
+    *script_global = This->script_global;
     return lock_document_mode(This);
 }
 
@@ -5629,9 +5633,9 @@ static const event_target_vtbl_t HTMLDocumentNode_event_target_vtbl = {
         .destructor          = HTMLDocumentNode_destructor,
         .traverse            = HTMLDocumentNode_traverse,
         .unlink              = HTMLDocumentNode_unlink,
-        .get_name            = HTMLDocumentNode_get_name,
         .get_dispid          = HTMLDocumentNode_get_dispid,
         .find_dispid         = HTMLDocumentNode_find_dispid,
+        .get_prop_desc       = HTMLDocumentNode_get_prop_desc,
         .invoke              = HTMLDocumentNode_invoke,
         .disp_invoke         = HTMLDocumentNode_disp_invoke,
         .next_dispid         = HTMLDocumentNode_next_dispid,

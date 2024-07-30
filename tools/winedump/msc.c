@@ -52,11 +52,12 @@ struct full_value
     } v;
 };
 
-static int full_numeric_leaf(struct full_value* fv, const unsigned short int* leaf)
+static int full_numeric_leaf(struct full_value *fv, const unsigned char *leaf)
 {
-    unsigned short int type = *leaf++;
+    unsigned short int type = *(const unsigned short *)leaf;
     int length = 2;
 
+    leaf += length;
     fv->type = fv_integer;
     if (type < LF_NUMERIC)
     {
@@ -184,7 +185,7 @@ static const char* full_value_string(const struct full_value* fv)
     return tmp;
 }
 
-static int numeric_leaf(int* value, const unsigned short int* leaf)
+static int numeric_leaf(int* value, const unsigned char* leaf)
 {
     struct full_value fv;
     int len = full_numeric_leaf(&fv, leaf);
@@ -518,24 +519,24 @@ static void do_field(const unsigned char* start, const unsigned char* end)
         switch (fieldtype->generic.id)
         {
         case LF_ENUMERATE_V1:
-            leaf_len = full_numeric_leaf(&full_value, &fieldtype->enumerate_v1.value);
-            pstr = PSTRING(&fieldtype->enumerate_v1.value, leaf_len);
+            leaf_len = full_numeric_leaf(&full_value, fieldtype->enumerate_v1.data);
+            pstr = (const struct p_string*)&fieldtype->enumerate_v1.data[leaf_len];
             printf("\t\tEnumerate V1: '%s' value:%s\n",
                    p_string(pstr), full_value_string(&full_value));
             ptr += 2 + 2 + leaf_len + 1 + pstr->namelen;
             break;
 
         case LF_ENUMERATE_V3:
-            leaf_len = full_numeric_leaf(&full_value, &fieldtype->enumerate_v3.value);
-            cstr = (const char*)&fieldtype->enumerate_v3.value + leaf_len;
+            leaf_len = full_numeric_leaf(&full_value, fieldtype->enumerate_v3.data);
+            cstr = (const char*)&fieldtype->enumerate_v3.data[leaf_len];
             printf("\t\tEnumerate V3: '%s' value:%s\n",
                    cstr, full_value_string(&full_value));
             ptr += 2 + 2 + leaf_len + strlen(cstr) + 1;
             break;
 
         case LF_MEMBER_V1:
-            leaf_len = numeric_leaf(&value, &fieldtype->member_v1.offset);
-            pstr = PSTRING(&fieldtype->member_v1.offset, leaf_len);
+            leaf_len = numeric_leaf(&value, fieldtype->member_v1.data);
+            pstr = (const struct p_string *)&fieldtype->member_v1.data[leaf_len];
             printf("\t\tMember V1: '%s' type:%x attr:%s @%d\n",
                    p_string(pstr), fieldtype->member_v1.type,
                    get_attr(fieldtype->member_v1.attribute), value);
@@ -543,8 +544,8 @@ static void do_field(const unsigned char* start, const unsigned char* end)
             break;
 
         case LF_MEMBER_V2:
-            leaf_len = numeric_leaf(&value, &fieldtype->member_v2.offset);
-            pstr = PSTRING(&fieldtype->member_v2.offset, leaf_len);
+            leaf_len = numeric_leaf(&value, fieldtype->member_v2.data);
+            pstr = (const struct p_string *)&fieldtype->member_v2.data[leaf_len];
             printf("\t\tMember V2: '%s' type:%x attr:%s @%d\n",
                    p_string(pstr), fieldtype->member_v2.type,
                    get_attr(fieldtype->member_v2.attribute), value);
@@ -552,10 +553,10 @@ static void do_field(const unsigned char* start, const unsigned char* end)
             break;
 
         case LF_MEMBER_V3:
-            leaf_len = numeric_leaf(&value, &fieldtype->member_v3.offset);
-            cstr = (const char*)&fieldtype->member_v3.offset + leaf_len;
+            leaf_len = numeric_leaf(&value, fieldtype->member_v3.data);
+            cstr = (const char*)&fieldtype->member_v3.data[leaf_len];
             printf("\t\tMember V3: '%s' type:%x attr:%s @%d\n",
-                   cstr, fieldtype->member_v3.type, 
+                   cstr, fieldtype->member_v3.type,
                    get_attr(fieldtype->member_v3.attribute), value);
             ptr += 2 + 2 + 4 + leaf_len + strlen(cstr) + 1;
             break;
@@ -693,43 +694,43 @@ static void do_field(const unsigned char* start, const unsigned char* end)
             break;
 
         case LF_BCLASS_V1:
-            leaf_len = numeric_leaf(&value, &fieldtype->bclass_v1.offset);
+            leaf_len = numeric_leaf(&value, fieldtype->bclass_v1.data);
             printf("\t\tBase class V1: type:%x attr:%s @%d\n",
-                   fieldtype->bclass_v1.type, 
+                   fieldtype->bclass_v1.type,
                    get_attr(fieldtype->bclass_v1.attribute), value);
             ptr += 2 + 2 + 2 + leaf_len;
             break;
 
         case LF_BCLASS_V2:
-            leaf_len = numeric_leaf(&value, &fieldtype->bclass_v2.offset);
+            leaf_len = numeric_leaf(&value, fieldtype->bclass_v2.data);
             printf("\t\tBase class V2: type:%x attr:%s @%d\n",
-                   fieldtype->bclass_v2.type, 
+                   fieldtype->bclass_v2.type,
                    get_attr(fieldtype->bclass_v2.attribute), value);
             ptr += 2 + 2 + 4 + leaf_len;
             break;
 
         case LF_VBCLASS_V1:
         case LF_IVBCLASS_V1:
-            leaf_len = numeric_leaf(&value, &fieldtype->vbclass_v1.vbpoff);
+            leaf_len = numeric_leaf(&value, fieldtype->vbclass_v1.data);
             printf("\t\t%sirtual base class V1: type:%x (ptr:%x) attr:%s vbpoff:%d ",
                    (fieldtype->generic.id == LF_VBCLASS_V2) ? "V" : "Indirect v",
                    fieldtype->vbclass_v1.btype, fieldtype->vbclass_v1.vbtype,
                    get_attr(fieldtype->vbclass_v1.attribute), value);
             ptr += 2 + 2 + 2 + 2 + leaf_len;
-            leaf_len = numeric_leaf(&value, (const unsigned short*)ptr);
+            leaf_len = numeric_leaf(&value, ptr);
             printf("vboff:%d\n", value);
             ptr += leaf_len;
             break;
 
         case LF_VBCLASS_V2:
         case LF_IVBCLASS_V2:
-            leaf_len = numeric_leaf(&value, &fieldtype->vbclass_v1.vbpoff);
+            leaf_len = numeric_leaf(&value, fieldtype->vbclass_v1.data);
             printf("\t\t%sirtual base class V2: type:%x (ptr:%x) attr:%s vbpoff:%d ",
                    (fieldtype->generic.id == LF_VBCLASS_V2) ? "V" : "Indirect v",
                    fieldtype->vbclass_v2.btype, fieldtype->vbclass_v2.vbtype,
                    get_attr(fieldtype->vbclass_v2.attribute), value);
             ptr += 2 + 2 + 4 + 4 + leaf_len;
-            leaf_len = numeric_leaf(&value, (const unsigned short*)ptr);
+            leaf_len = numeric_leaf(&value, ptr);
             printf("vboff:%d\n", value);
             ptr += leaf_len;
             break;
@@ -826,20 +827,20 @@ static void codeview_dump_one_type(unsigned curr_type, const union codeview_type
                curr_type, type->pointer_v2.datatype);
         break;
     case LF_ARRAY_V1:
-        leaf_len = numeric_leaf(&value, &type->array_v1.arrlen);
+        leaf_len = numeric_leaf(&value, type->array_v1.data);
         printf("\t%x => Array V1-'%s'[%u type:%x] type:%x\n",
-               curr_type, p_string(PSTRING(&type->array_v1.arrlen, leaf_len)),
+               curr_type, p_string((const struct p_string *)&type->array_v1.data[leaf_len]),
                value, type->array_v1.idxtype, type->array_v1.elemtype);
         break;
     case LF_ARRAY_V2:
-        leaf_len = numeric_leaf(&value, &type->array_v2.arrlen);
+        leaf_len = numeric_leaf(&value, type->array_v2.data);
         printf("\t%x => Array V2-'%s'[%u type:%x] type:%x\n",
-               curr_type, p_string(PSTRING(&type->array_v2.arrlen, leaf_len)),
+               curr_type, p_string((const struct p_string *)&type->array_v2.data[leaf_len]),
                value, type->array_v2.idxtype, type->array_v2.elemtype);
         break;
     case LF_ARRAY_V3:
-        leaf_len = numeric_leaf(&value, &type->array_v3.arrlen);
-        str = (const char*)&type->array_v3.arrlen + leaf_len;
+        leaf_len = numeric_leaf(&value, type->array_v3.data);
+        str = (const char*)&type->array_v3.data[leaf_len];
         printf("\t%x => Array V3-'%s'[%u type:%x] type:%x\n",
                curr_type, str, value,
                type->array_v3.idxtype, type->array_v3.elemtype);
@@ -870,10 +871,10 @@ static void codeview_dump_one_type(unsigned curr_type, const union codeview_type
 
     case LF_STRUCTURE_V1:
     case LF_CLASS_V1:
-        leaf_len = numeric_leaf(&value, &type->struct_v1.structlen);
+        leaf_len = numeric_leaf(&value, type->struct_v1.data);
         printf("\t%x => %s V1 '%s' elts:%u property:%s fieldlist-type:%x derived-type:%x vshape:%x size:%u\n",
                curr_type, type->generic.id == LF_CLASS_V1 ? "Class" : "Struct",
-               p_string(PSTRING(&type->struct_v1.structlen, leaf_len)),
+               p_string((const struct p_string *)&type->struct_v1.data[leaf_len]),
                type->struct_v1.n_element, get_property(type->struct_v1.property),
                type->struct_v1.fieldlist, type->struct_v1.derived,
                type->struct_v1.vshape, value);
@@ -881,11 +882,11 @@ static void codeview_dump_one_type(unsigned curr_type, const union codeview_type
 
     case LF_STRUCTURE_V2:
     case LF_CLASS_V2:
-        leaf_len = numeric_leaf(&value, &type->struct_v2.structlen);
+        leaf_len = numeric_leaf(&value, type->struct_v2.data);
         printf("\t%x => %s V2 '%s' elts:%u property:%s\n"
                "                fieldlist-type:%x derived-type:%x vshape:%x size:%u\n",
                curr_type, type->generic.id == LF_CLASS_V2 ? "Class" : "Struct",
-               p_string(PSTRING(&type->struct_v2.structlen, leaf_len)),
+               p_string((const struct p_string *)&type->struct_v2.data[leaf_len]),
                type->struct_v2.n_element, get_property(type->struct_v2.property),
                type->struct_v2.fieldlist, type->struct_v2.derived,
                type->struct_v2.vshape, value);
@@ -893,8 +894,8 @@ static void codeview_dump_one_type(unsigned curr_type, const union codeview_type
 
     case LF_STRUCTURE_V3:
     case LF_CLASS_V3:
-        leaf_len = numeric_leaf(&value, &type->struct_v3.structlen);
-        str = (const char*)&type->struct_v3.structlen + leaf_len;
+        leaf_len = numeric_leaf(&value, type->struct_v3.data);
+        str = (const char*)&type->struct_v3.data[leaf_len];
         printf("\t%x => %s V3 '%s' elts:%u property:%s\n"
                "                fieldlist-type:%x derived-type:%x vshape:%x size:%u\n",
                curr_type, type->generic.id == LF_CLASS_V3 ? "Class" : "Struct",
@@ -906,24 +907,24 @@ static void codeview_dump_one_type(unsigned curr_type, const union codeview_type
         break;
 
     case LF_UNION_V1:
-        leaf_len = numeric_leaf(&value, &type->union_v1.un_len);
+        leaf_len = numeric_leaf(&value, type->union_v1.data);
         printf("\t%x => Union V1 '%s' count:%u property:%s fieldlist-type:%x size:%u\n",
-               curr_type, p_string(PSTRING(&type->union_v1.un_len, leaf_len)),
+               curr_type, p_string((const struct p_string *)&type->union_v1.data[leaf_len]),
                type->union_v1.count, get_property(type->union_v1.property),
                type->union_v1.fieldlist, value);
         break;
 
     case LF_UNION_V2:
-        leaf_len = numeric_leaf(&value, &type->union_v2.un_len);
+        leaf_len = numeric_leaf(&value, type->union_v2.data);
         printf("\t%x => Union V2 '%s' count:%u property:%s fieldlist-type:%x size:%u\n",
-               curr_type, p_string(PSTRING(&type->union_v2.un_len, leaf_len)),
+               curr_type, p_string((const struct p_string *)&type->union_v2.data[leaf_len]),
                type->union_v2.count, get_property(type->union_v2.property),
                type->union_v2.fieldlist, value);
         break;
 
     case LF_UNION_V3:
-        leaf_len = numeric_leaf(&value, &type->union_v3.un_len);
-        str = (const char*)&type->union_v3.un_len + leaf_len;
+        leaf_len = numeric_leaf(&value, type->union_v3.data);
+        str = (const char*)&type->union_v3.data[leaf_len];
         printf("\t%x => Union V3 '%s' count:%u property:%s fieldlist-type:%x size:%u\n",
                curr_type, str, type->union_v3.count,
                get_property(type->union_v3.property),
@@ -1698,9 +1699,9 @@ BOOL codeview_dump_symbols(const void* root, unsigned long start, unsigned long 
                 int             vlen;
                 struct full_value fv;
 
-                vlen = full_numeric_leaf(&fv, &sym->constant_v2.cvalue);
+                vlen = full_numeric_leaf(&fv, sym->constant_v2.data);
                 printf("Constant V2 '%s' = %s type:%x\n",
-                       p_string(PSTRING(&sym->constant_v2.cvalue, vlen)),
+                       p_string((const struct p_string *)&sym->constant_v2.data[vlen]),
                        full_value_string(&fv), sym->constant_v2.type);
             }
             break;
@@ -1710,9 +1711,9 @@ BOOL codeview_dump_symbols(const void* root, unsigned long start, unsigned long 
                 int             vlen;
                 struct full_value fv;
 
-                vlen = full_numeric_leaf(&fv, &sym->constant_v3.cvalue);
+                vlen = full_numeric_leaf(&fv, sym->constant_v3.data);
                 printf("Constant V3 '%s' =  %s type:%x\n",
-                       (const char*)&sym->constant_v3.cvalue + vlen,
+                       (const char*)&sym->constant_v3.data[vlen],
                        full_value_string(&fv), sym->constant_v3.type);
             }
             break;
@@ -1888,6 +1889,7 @@ BOOL codeview_dump_symbols(const void* root, unsigned long start, unsigned long 
         case S_INLINEES:
             {
                 unsigned i, ninvoc;
+                const cv_typ_t *functions;
                 const unsigned* invoc;
                 const char* tag;
 
@@ -1895,12 +1897,15 @@ BOOL codeview_dump_symbols(const void* root, unsigned long start, unsigned long 
                 else if (sym->generic.id == S_CALLEES) tag = "Callees";
                 else tag = "Inlinees";
                 printf("%s V3 count:%u\n", tag, sym->function_list_v3.count);
-                invoc = (const unsigned*)&sym->function_list_v3.funcs[sym->function_list_v3.count];
+                functions = (const cv_typ_t *)&sym->function_list_v3.data;
+                invoc = (const unsigned*)&functions[sym->function_list_v3.count];
                 ninvoc = (const unsigned*)get_last(sym) - invoc;
+                if (ninvoc < sym->function_list_v3.count) ninvoc = sym->function_list_v3.count;
 
-                for (i = 0; i < sym->function_list_v3.count; ++i)
+                for (i = 0; i < ninvoc; ++i)
                     printf("%*s| func:%x invoc:%u\n",
-                           indent, "", sym->function_list_v3.funcs[i], i < ninvoc ? invoc[i] : 0);
+                           indent, "", functions[i], invoc[i]);
+                if (i < sym->function_list_v3.count) printf("Number of entries exceed symbol serialized size\n");
             }
             break;
 

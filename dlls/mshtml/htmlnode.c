@@ -317,10 +317,10 @@ static void HTMLDOMChildrenCollection_destructor(DispatchEx *dispex)
 
 #define DISPID_CHILDCOL_0 MSHTML_DISPID_CUSTOM_MIN
 
-static HRESULT HTMLDOMChildrenCollection_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
+static HRESULT HTMLDOMChildrenCollection_get_dispid(DispatchEx *dispex, const WCHAR *name, DWORD flags, DISPID *dispid)
 {
     HTMLDOMChildrenCollection *This = impl_from_DispatchEx(dispex);
-    WCHAR *ptr;
+    const WCHAR *ptr;
     DWORD idx=0;
     UINT32 len = 0;
 
@@ -1288,7 +1288,11 @@ void HTMLDOMNode_Init(HTMLDocumentNode *doc, HTMLDOMNode *node, nsIDOMNode *nsno
     node->IHTMLDOMNode2_iface.lpVtbl = &HTMLDOMNode2Vtbl;
     node->IHTMLDOMNode3_iface.lpVtbl = &HTMLDOMNode3Vtbl;
 
-    EventTarget_Init(&node->event_target, dispex_data, doc->document_mode);
+    /* FIXME: We can't use new bindings for nodes with custom properties yet */
+    if(dispex_data->vtbl->get_name)
+        EventTarget_Init(&node->event_target, dispex_data, doc->document_mode);
+    else
+        init_event_target(&node->event_target, dispex_data, doc->script_global);
 
     if(&doc->node != node)
         IHTMLDOMNode_AddRef(&doc->node.IHTMLDOMNode_iface);
@@ -1410,7 +1414,7 @@ HRESULT get_node(nsIDOMNode *nsnode, BOOL create, HTMLDOMNode **ret)
 
     hres = get_document_node(dom_document, &document);
     nsIDOMDocument_Release(dom_document);
-    if(!document)
+    if(FAILED(hres))
         return E_FAIL;
 
     hres = create_node(document, nsnode, ret);

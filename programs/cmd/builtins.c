@@ -97,7 +97,7 @@ static const WCHAR externals[][10] = {
 };
 
 static HINSTANCE hinst;
-struct env_stack *saved_environment;
+static struct env_stack *saved_environment;
 static BOOL verify_mode = FALSE;
 
 /* set /a routines work from single character operators, but some of the
@@ -282,168 +282,200 @@ RETURN_CODE WCMD_clear_screen(void)
  *
  */
 
-RETURN_CODE WCMD_choice (const WCHAR * args)
+RETURN_CODE WCMD_choice(WCHAR *args)
 {
+    RETURN_CODE return_code = NO_ERROR;
     WCHAR answer[16];
     WCHAR buffer[16];
     WCHAR *ptr = NULL;
     WCHAR *opt_c = NULL;
-    WCHAR *my_command = NULL;
+    WCHAR *opt_m = NULL;
     WCHAR opt_default = 0;
-    DWORD opt_timeout = 0;
-    DWORD count;
+    DWORD opt_timeout = -1;
+    WCHAR *end;
     DWORD oldmode;
     BOOL have_console;
     BOOL opt_n = FALSE;
-    BOOL opt_s = FALSE;
+    BOOL opt_cs = FALSE;
+    int argno;
 
-    have_console = GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &oldmode);
-    my_command = xstrdupW(WCMD_skip_leading_spaces((WCHAR*)args));
+    for (argno = 0; ; argno++)
+    {
+        WCHAR *arg = WCMD_parameter(args, argno, NULL, FALSE, FALSE);
+        if (!*arg) break;
 
-    ptr = my_command;
-    /* syntax errors are reported with ERRORLEVEL=1, which doesn't allow to
-     * discriminate from a choosen option!
-     */
-    while (*ptr == '/') {
-        switch (towupper(ptr[1])) {
-            case 'C':
-                ptr += 2;
-                /* the colon is optional */
-                if (*ptr == ':')
-                    ptr++;
-
-                if (!*ptr || iswspace(*ptr)) {
-                    WINE_FIXME("bad parameter %s for /C\n", wine_dbgstr_w(ptr));
-                    free(my_command);
-                    return errorlevel = ERROR_INVALID_FUNCTION;
+        if (!wcsicmp(arg, L"/N")) opt_n = TRUE;
+        else if (!wcsicmp(arg, L"/CS")) opt_cs = TRUE;
+        else if (arg[0] == L'/' && wcschr(L"CDTM", towupper(arg[1])))
+        {
+            WCHAR opt = towupper(arg[1]);
+            if (arg[2] == L'\0')
+            {
+                arg = WCMD_parameter(args, ++argno, NULL, FALSE, FALSE);
+                if (!*arg)
+                {
+                    return_code = ERROR_INVALID_FUNCTION;
+                    break;
                 }
-
-                /* remember the allowed keys (overwrite previous /C option) */
-                opt_c = ptr;
-                while (*ptr && (!iswspace(*ptr)))
-                    ptr++;
-
-                if (*ptr) {
-                    /* terminate allowed chars */
-                    *ptr = 0;
-                    ptr = WCMD_skip_leading_spaces(&ptr[1]);
-                }
-                WINE_TRACE("answer-list: %s\n", wine_dbgstr_w(opt_c));
+            }
+            else if (arg[2] == L':')
+                arg += 3;
+            else
+            {
+                return_code = ERROR_INVALID_FUNCTION;
                 break;
-
-            case 'N':
-                opt_n = TRUE;
-                ptr = WCMD_skip_leading_spaces(&ptr[2]);
+            }
+            switch (opt)
+            {
+            case L'C':
+                opt_c = wcsdup(arg);
                 break;
-
-            case 'S':
-                opt_s = TRUE;
-                ptr = WCMD_skip_leading_spaces(&ptr[2]);
+            case L'M':
+                opt_m = wcsdup(arg);
                 break;
-
-            case 'T':
-                ptr = &ptr[2];
-                /* the colon is optional */
-                if (*ptr == ':')
-                    ptr++;
-
-                opt_default = *ptr++;
-
-                if (!opt_default || (*ptr != ',')) {
-                    WINE_FIXME("bad option %s for /T\n", opt_default ? wine_dbgstr_w(ptr) : "");
-                    free(my_command);
-                    return errorlevel = ERROR_INVALID_FUNCTION;
-                }
-                ptr++;
-
-                count = 0;
-                while (((answer[count] = *ptr)) && iswdigit(*ptr) && (count < 15)) {
-                    count++;
-                    ptr++;
-                }
-
-                answer[count] = 0;
-                opt_timeout = wcstol(answer, NULL, 10);
-
-                ptr = WCMD_skip_leading_spaces(ptr);
+            case L'D':
+                opt_default = *arg;
                 break;
-
-            default:
-                WINE_FIXME("bad parameter: %s\n", wine_dbgstr_w(ptr));
-                free(my_command);
-                return errorlevel = ERROR_INVALID_FUNCTION;
+            case L'T':
+                opt_timeout = wcstol(arg, &end, 10);
+                if (end == arg || (*end && !iswspace(*end)))
+                    opt_timeout = 10000;
+                break;
+            }
         }
+        else
+            return_code = ERROR_INVALID_FUNCTION;
     }
 
-    if (opt_timeout)
-        WINE_FIXME("timeout not supported: %c,%ld\n", opt_default, opt_timeout);
-
-    if (have_console)
-        SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), 0);
-
     /* use default keys, when needed: localized versions of "Y"es and "No" */
-    if (!opt_c) {
+    if (!opt_c)
+    {
         LoadStringW(hinst, WCMD_YES, buffer, ARRAY_SIZE(buffer));
         LoadStringW(hinst, WCMD_NO, buffer + 1, ARRAY_SIZE(buffer) - 1);
         opt_c = buffer;
-        buffer[2] = 0;
+        buffer[2] = L'\0';
     }
+    /* validate various options */
+    if (!opt_cs) wcsupr(opt_c);
+    /* check that default is in the choices list */
+    if (!wcschr(opt_c, opt_cs ? opt_default : towupper(opt_default)))
+        return_code = ERROR_INVALID_FUNCTION;
+    /* check that there's no duplicates in the choices list */
+    for (ptr = opt_c; *ptr; ptr++)
+        if (wcschr(ptr + 1, opt_cs ? *ptr : towupper(*ptr)))
+            return_code = ERROR_INVALID_FUNCTION;
+
+    TRACE("CHOICE message(%s) choices(%s) timeout(%ld) default(%c)\n",
+          debugstr_w(opt_m), debugstr_w(opt_c), opt_timeout, opt_default ? opt_default : '?');
+    if (return_code != NO_ERROR ||
+        (opt_timeout == -1) != (opt_default == L'\0') ||
+        (opt_timeout != -1 && opt_timeout > 9999))
+    {
+        WCMD_output_stderr(WCMD_LoadMessage(WCMD_ARGERR));
+        errorlevel = 255;
+        if (opt_c != buffer) free(opt_c);
+        free(opt_m);
+        return ERROR_INVALID_FUNCTION;
+    }
+
+    have_console = GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &oldmode);
+    if (have_console)
+        SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), 0);
 
     /* print the question, when needed */
-    if (*ptr)
-        WCMD_output_asis(ptr);
+    if (opt_m)
+        WCMD_output_asis(opt_m);
 
-    if (!opt_s) {
-        wcsupr(opt_c);
-        WINE_TRACE("case insensitive answer-list: %s\n", wine_dbgstr_w(opt_c));
-    }
-
-    if (!opt_n) {
+    if (!opt_n)
+    {
         /* print a list of all allowed answers inside brackets */
+        if (opt_m) WCMD_output_asis(L" ");
         WCMD_output_asis(L"[");
-        ptr = opt_c;
-        answer[1] = 0;
-        while ((answer[0] = *ptr++)) {
-            WCMD_output_asis(answer);
-            if (*ptr)
+        answer[1] = L'\0';
+        for (ptr = opt_c; *ptr; ptr++)
+        {
+            if (ptr != opt_c)
                 WCMD_output_asis(L",");
+            answer[0] = *ptr;
+            WCMD_output_asis(answer);
         }
         WCMD_output_asis(L"]?");
     }
 
-    while (TRUE) {
-
-        /* FIXME: Add support for option /T */
-        answer[1] = 0; /* terminate single character string */
-        if (!WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), answer, 1, &count) || !count)
+    while (return_code == NO_ERROR)
+    {
+        if (opt_timeout == 0)
+            answer[0] = opt_default;
+        else
         {
-            free(my_command);
-            /* FIXME: is this choice 1 or ERROR_INVALID_FUNCTION? */
-            return errorlevel = 1;
-        }
+            LARGE_INTEGER li, zeroli = {0};
+            OVERLAPPED overlapped = {0};
+            DWORD count;
 
-        if (!opt_s)
+            overlapped.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+            if (SetFilePointerEx(GetStdHandle(STD_INPUT_HANDLE), zeroli, &li, FILE_CURRENT))
+            {
+                overlapped.Offset = li.LowPart;
+                overlapped.OffsetHigh = li.HighPart;
+            }
+            if (ReadFile(GetStdHandle(STD_INPUT_HANDLE), answer, 1, NULL, &overlapped))
+            {
+                switch (WaitForSingleObject(overlapped.hEvent, opt_timeout == -1 ? INFINITE : opt_timeout * 1000))
+                {
+                case WAIT_OBJECT_0:
+                    break;
+                case WAIT_TIMEOUT:
+                    answer[0] = opt_default;
+                    break;
+                default:
+                    return_code = ERROR_INVALID_FUNCTION;
+                }
+            }
+            else if (ReadFile(GetStdHandle(STD_INPUT_HANDLE), answer, 1, &count, NULL))
+            {
+                if (count == 0)
+                {
+                    if (opt_timeout != -1)
+                        answer[0] = opt_default;
+                    else
+                        return_code = ERROR_INVALID_FUNCTION;
+                }
+            }
+            else
+                return_code = ERROR_INVALID_FUNCTION;
+            CloseHandle(overlapped.hEvent);
+        }
+        if (return_code != NO_ERROR)
+        {
+            errorlevel = 255;
+            break;
+        }
+        if (!opt_cs)
             answer[0] = towupper(answer[0]);
 
+        answer[1] = L'\0'; /* terminate single character string */
         ptr = wcschr(opt_c, answer[0]);
-        if (ptr) {
+        if (ptr)
+        {
             WCMD_output_asis(answer);
             WCMD_output_asis(L"\r\n");
-            if (have_console)
-                SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), oldmode);
 
-            errorlevel = (ptr - opt_c) + 1;
-            TRACE("answer: %d\n", errorlevel);
-            free(my_command);
-            return errorlevel;
+            return_code = errorlevel = (ptr - opt_c) + 1;
+            TRACE("answer: %d\n", return_code);
         }
         else
         {
             /* key not allowed: play the bell */
-            WINE_TRACE("key not allowed: %s\n", wine_dbgstr_w(answer));
+            TRACE("key not allowed: %s\n", wine_dbgstr_w(answer));
             WCMD_output_asis(L"\a");
         }
     }
+    if (have_console)
+        SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), oldmode);
+
+    if (opt_c != buffer) free(opt_c);
+    free(opt_m);
+    return return_code;
 }
 
 /****************************************************************************
@@ -1786,89 +1818,45 @@ RETURN_CODE WCMD_give_help(WCHAR *args)
 
 RETURN_CODE WCMD_goto(void)
 {
-  WCHAR string[MAX_PATH];
-  WCHAR *labelend = NULL;
-  const WCHAR labelEndsW[] = L"><|& :\t";
+    if (context != NULL)
+    {
+        WCHAR *paramStart = param1;
+        HANDLE h;
+        BOOL ret;
 
-  if (context != NULL) {
-    WCHAR *paramStart = param1, *str;
-
-    if (param1[0] == 0x00) {
-      WCMD_output_stderr(WCMD_LoadMessage(WCMD_NOARG));
-      return ERROR_INVALID_FUNCTION;
-    }
-
-    /* Handle special :EOF label */
-    if (lstrcmpiW(L":eof", param1) == 0) {
-      context -> skip_rest = TRUE;
-      return RETURN_CODE_ABORTED;
-    }
-
-    /* Support goto :label as well as goto label plus remove trailing chars */
-    if (*paramStart == ':') paramStart++;
-    labelend = wcspbrk(paramStart, labelEndsW);
-    if (labelend) *labelend = 0x00;
-    WINE_TRACE("goto label: '%s'\n", wine_dbgstr_w(paramStart));
-
-    /* Loop through potentially twice - once from current file position
-       through to the end, and second time from start to current file
-       position                                                         */
-    if (*paramStart) {
-        int loop;
-        LARGE_INTEGER startli;
-        for (loop=0; loop<2; loop++) {
-            if (loop==0) {
-              /* On first loop, save the file size */
-              startli.QuadPart = 0;
-              startli.u.LowPart = SetFilePointer(context -> h, startli.u.LowPart,
-                                                 &startli.u.HighPart, FILE_CURRENT);
-            } else {
-              /* On second loop, start at the beginning of the file */
-              WINE_TRACE("Label not found, trying from beginning of file\n");
-              if (loop==1) SetFilePointer (context -> h, 0, NULL, FILE_BEGIN);
-            }
-
-            while (WCMD_fgets (string, ARRAY_SIZE(string), context -> h)) {
-              str = string;
-
-              /* Ignore leading whitespace or no-echo character */
-              while (*str=='@' || iswspace (*str)) str++;
-
-              /* If the first real character is a : then this is a label */
-              if (*str == ':') {
-                str++;
-
-                /* Skip spaces between : and label */
-                while (iswspace (*str)) str++;
-                WINE_TRACE("str before brk %s\n", wine_dbgstr_w(str));
-
-                /* Label ends at whitespace or redirection characters */
-                labelend = wcspbrk(str, labelEndsW);
-                if (labelend) *labelend = 0x00;
-                WINE_TRACE("comparing found label %s\n", wine_dbgstr_w(str));
-
-                if (lstrcmpiW (str, paramStart) == 0) return RETURN_CODE_ABORTED;
-              }
-
-              /* See if we have gone beyond the end point if second time through */
-              if (loop==1) {
-                LARGE_INTEGER curli;
-                curli.QuadPart = 0;
-                curli.u.LowPart = SetFilePointer(context -> h, curli.u.LowPart,
-                                                &curli.u.HighPart, FILE_CURRENT);
-                if (curli.QuadPart > startli.QuadPart) {
-                  WINE_TRACE("Reached wrap point, label not found\n");
-                  break;
-                }
-              }
-            }
+        if (!param1[0])
+        {
+            WCMD_output_stderr(WCMD_LoadMessage(WCMD_NOARG));
+            return ERROR_INVALID_FUNCTION;
         }
-    }
 
-    WCMD_output_stderr(WCMD_LoadMessage(WCMD_NOTARGET));
-    context -> skip_rest = TRUE;
-  }
-  return ERROR_INVALID_FUNCTION;
+        /* Handle special :EOF label */
+        if (lstrcmpiW(L":eof", param1) == 0)
+        {
+            context->skip_rest = TRUE;
+            return RETURN_CODE_ABORTED;
+        }
+        h = CreateFileW(context->batchfileW, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+                        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE)
+        {
+            SetLastError(ERROR_FILE_NOT_FOUND);
+            WCMD_print_error();
+            return ERROR_INVALID_FUNCTION;
+        }
+
+        /* Support goto :label as well as goto label plus remove trailing chars */
+        if (*paramStart == ':') paramStart++;
+        WCMD_set_label_end(paramStart);
+        TRACE("goto label: '%s'\n", wine_dbgstr_w(paramStart));
+
+        ret = WCMD_find_label(h, paramStart, &context->file_position);
+        CloseHandle(h);
+        if (ret) return RETURN_CODE_ABORTED;
+        WCMD_output_stderr(WCMD_LoadMessage(WCMD_NOTARGET));
+        context->skip_rest = TRUE;
+    }
+    return ERROR_INVALID_FUNCTION;
 }
 
 /*****************************************************************************
@@ -2343,7 +2331,7 @@ RETURN_CODE WCMD_setlocal(WCHAR *args)
   env_copy->strings = WCMD_dupenv (env);
   if (env_copy->strings)
   {
-    env_copy->batchhandle = context->h;
+    env_copy->context = context;
     env_copy->next = saved_environment;
     env_copy->delayedsubst = delayedsubst;
     delayedsubst = newdelay;
@@ -2378,7 +2366,7 @@ RETURN_CODE WCMD_endlocal(void)
 
   /* setlocal needs a saved environment from within the same context (batch
      program) as it was saved in                                            */
-  if (!saved_environment || saved_environment->batchhandle != context->h)
+  if (!saved_environment || saved_environment->context != context)
     return ERROR_INVALID_FUNCTION;
 
   /* pop the old environment from the stack */
@@ -3191,7 +3179,7 @@ RETURN_CODE WCMD_setshow_env(WCHAR *s)
     }
 
     /* If no parameter, or no '=' sign, return an error */
-    if (!(*s) || ((p = wcschr (s, '=')) == NULL )) {
+    if (!(*s) || ((p = wcschr(s, '=')) == NULL )) {
       WCMD_output_stderr(WCMD_LoadMessage(WCMD_NOARG));
       return_code = ERROR_INVALID_FUNCTION;
     }
@@ -3199,7 +3187,15 @@ RETURN_CODE WCMD_setshow_env(WCHAR *s)
     {
       /* Output the prompt */
       *p++ = '\0';
-      if (*p) WCMD_output_asis(p);
+      if (*p) {
+        p = WCMD_strtrim(p);
+        if (*p == L'"') {
+          WCHAR* last = wcsrchr(p+1, L'"');
+          p++;
+          if (last) *last = L'\0';
+        }
+        WCMD_output_asis(p);
+      }
 
       /* Read the reply */
       if (WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), string, ARRAY_SIZE(string), &count) && count > 1) {
@@ -3207,7 +3203,7 @@ RETURN_CODE WCMD_setshow_env(WCHAR *s)
         if (string[count-2] == '\r') string[count-2] = '\0'; /* Under Windoze we get CRLF! */
         TRACE("set /p: Setting var '%s' to '%s'\n", wine_dbgstr_w(s),
               wine_dbgstr_w(string));
-        SetEnvironmentVariableW(s, string);
+        if (*string) SetEnvironmentVariableW(s, string);
       }
     }
 

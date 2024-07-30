@@ -935,6 +935,8 @@ typedef volatile struct
     rectangle_t          caret_rect;       /* caret rectangle */
     user_handle_t        cursor;           /* handle to the cursor */
     int                  cursor_count;     /* cursor show count */
+    unsigned char        keystate[256];    /* key state */
+    int                  keystate_lock;    /* keystate is locked */
 } input_shm_t;
 
 typedef volatile union
@@ -1501,8 +1503,6 @@ enum server_fd_type
     FD_TYPE_DIR,      /* directory */
     FD_TYPE_SOCKET,   /* socket */
     FD_TYPE_SERIAL,   /* serial port */
-    FD_TYPE_PIPE,     /* named pipe */
-    FD_TYPE_MAILSLOT, /* mailslot */
     FD_TYPE_CHAR,     /* unspecified char device */
     FD_TYPE_DEVICE,   /* Windows device file */
     FD_TYPE_NB_TYPES
@@ -2966,10 +2966,9 @@ enum coords_relative
 /* Retrieve queue keyboard state for current thread or global async state */
 @REQ(get_key_state)
     int            async;         /* whether to query the async state */
-    int            key;           /* optional key code or -1 */
+    int            key;           /* key code */
 @REPLY
     unsigned char  state;         /* state of specified key */
-    VARARG(keystate,bytes);       /* state array for all the keys */
 @END
 
 /* Set queue keyboard state for current thread */
@@ -3452,6 +3451,7 @@ struct handle_info
 /* Create a mailslot */
 @REQ(create_mailslot)
     unsigned int   access;        /* wanted access rights */
+    unsigned int   options;
     timeout_t      read_timeout;
     unsigned int   max_msgsize;
     VARARG(objattr,object_attributes); /* object attributes */

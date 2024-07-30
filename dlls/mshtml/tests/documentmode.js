@@ -58,7 +58,6 @@ if(window.addEventListener) {
         pageshow_fired = true;
 
         var r = Object.prototype.toString.call(e);
-        todo_wine.
         ok(r === "[object PageTransitionEvent]", "pageshow toString = " + r);
         ok("persisted" in e, "'persisted' not in pageshow event");
         ok(document.readyState === "complete", "pageshow readyState = " + document.readyState);
@@ -70,7 +69,6 @@ if(window.addEventListener) {
         ok(document.documentMode >= 11, "pagehide fired");
 
         var r = Object.prototype.toString.call(e);
-        todo_wine.
         ok(r === "[object PageTransitionEvent]", "pagehide toString = " + r);
         ok("persisted" in e, "'persisted' not in pagehide event");
     }, true);
@@ -109,126 +107,126 @@ sync_test("page transition events", function() {
 
 sync_test("builtin_toString", function() {
     var tags = [
-        [ "abbr",            "Phrase" ],
-        [ "acronym",         "Phrase" ],
-        [ "address",         "Block" ],
+        [ "abbr",            "Phrase", -1 ],
+        [ "acronym",         "Phrase", -1 ],
+        [ "address",         "Block", -1 ],
      // [ "applet",          "Applet" ],  // makes Windows pop up a dialog box
         [ "article",         "" ],
         [ "aside",           "" ],
-        [ "audio",           "Audio" ],
-        [ "b",               "Phrase" ],
-        [ "base",            "Base" ],
-        [ "basefont",        "BaseFont" ],
+        [ "audio",           "Audio", -1 ],
+        [ "b",               "Phrase", -1 ],
+        [ "base",            "Base", -1 ],
+        [ "basefont",        "BaseFont", -1 ],
         [ "bdi",             "Unknown" ],
-        [ "bdo",             "Phrase" ],
-        [ "big",             "Phrase" ],
-        [ "blockquote",      "Block" ],
+        [ "bdo",             "Phrase", -1 ],
+        [ "big",             "Phrase", -1 ],
+        [ "blockquote",      "Block", -1 ],
         [ "body",            "Body" ],
-        [ "br",              "BR" ],
+        [ "br",              "BR", -1 ],
         [ "button",          "Button" ],
-        [ "canvas",          "Canvas" ],
-        [ "caption",         "TableCaption" ],
-        [ "center",          "Block" ],
-        [ "cite",            "Phrase" ],
-        [ "code",            "Phrase" ],
-        [ "col",             "TableCol" ],
-        [ "colgroup",        "TableCol" ],
+        [ "canvas",          "Canvas", -1 ],
+        [ "caption",         "TableCaption", -1 ],
+        [ "center",          "Block", -1 ],
+        [ "cite",            "Phrase", -1 ],
+        [ "code",            "Phrase", -1 ],
+        [ "col",             "TableCol", -1 ],
+        [ "colgroup",        "TableCol", -1 ],
         [ "data",            "Unknown" ],
         [ "datalist",        "DataList", 10 ],
-        [ "dd",              "DD" ],
-        [ "del",             "Mod" ],
+        [ "dd",              "DD", -1 ],
+        [ "del",             "Mod", -1 ],
         [ "details",         "Unknown" ],
-        [ "dfn",             "Phrase" ],
+        [ "dfn",             "Phrase", -1 ],
         [ "dialog",          "Unknown" ],
-        [ "dir",             "Directory" ],
-        [ "div",             "Div" ],
-        [ "dl",              "DList" ],
-        [ "dt",              "DT" ],
-        [ "em",              "Phrase" ],
+        [ "dir",             "Directory", -1 ],
+        [ "div",             "Div", -1 ],
+        [ "dl",              "DList", -1 ],
+        [ "dt",              "DT", -1 ],
+        [ "em",              "Phrase", -1 ],
         [ "embed",           "Embed" ],
-        [ "fieldset",        "FieldSet" ],
+        [ "fieldset",        "FieldSet", -1 ],
         [ "figcaption",      "" ],
         [ "figure",          "" ],
-        [ "font",            "Font" ],
+        [ "font",            "Font", -1 ],
         [ "footer",          "" ],
         [ "form",            "Form" ],
-        [ "frame",           "Frame" ],
-        [ "frameset",        "FrameSet" ],
-        [ "h1",              "Heading" ],
-        [ "h2",              "Heading" ],
-        [ "h3",              "Heading" ],
-        [ "h4",              "Heading" ],
-        [ "h5",              "Heading" ],
-        [ "h6",              "Heading" ],
+        [ "frame",           "Frame", -1 ],
+        [ "frameset",        "FrameSet", -1 ],
+        [ "h1",              "Heading", -1 ],
+        [ "h2",              "Heading", -1 ],
+        [ "h3",              "Heading", -1 ],
+        [ "h4",              "Heading", -1 ],
+        [ "h5",              "Heading", -1 ],
+        [ "h6",              "Heading", -1 ],
         [ "h7",              "Unknown" ],
         [ "head",            "Head" ],
         [ "header",          "" ],
-        [ "hr",              "HR" ],
+        [ "hr",              "HR", -1 ],
         [ "html",            "Html" ],
-        [ "i",               "Phrase" ],
-        [ "iframe",          "IFrame" ],
+        [ "i",               "Phrase", -1 ],
+        [ "iframe",          "IFrame", -1 ],
         [ "img",             "Image" ],
         [ "input",           "Input" ],
-        [ "ins",             "Mod" ],
-        [ "kbd",             "Phrase" ],
+        [ "ins",             "Mod", -1 ],
+        [ "kbd",             "Phrase", -1 ],
         [ "label",           "Label" ],
-        [ "legend",          "Legend" ],
-        [ "li",              "LI" ],
+        [ "legend",          "Legend", -1 ],
+        [ "li",              "LI", -1 ],
         [ "link",            "Link" ],
         [ "main",            "Unknown" ],
-        [ "map",             "Map" ],
+        [ "map",             "Map", -1 ],
         [ "mark",            "" ],
         [ "meta",            "Meta" ],
         [ "meter",           "Unknown" ],
         [ "nav",             "" ],
         [ "noframes",        "" ],
         [ "noscript",        "" ],
-        [ "object",          "Object" ],
-        [ "ol",              "OList" ],
-        [ "optgroup",        "OptGroup" ],
+        [ "object",          "Object", -1 ],
+        [ "ol",              "OList", -1 ],
+        [ "optgroup",        "OptGroup", -1 ],
         [ "option",          "Option" ],
         [ "output",          "Unknown" ],
-        [ "p",               "Paragraph" ],
-        [ "param",           "Param" ],
+        [ "p",               "Paragraph", -1 ],
+        [ "param",           "Param", -1 ],
         [ "picture",         "Unknown" ],
-        [ "pre",             "Pre" ],
+        [ "pre",             "Pre", -1 ],
         [ "progress",        "Progress", 10 ],
-        [ "q",               "Quote" ],
-        [ "rp",              "Phrase" ],
-        [ "rt",              "Phrase" ],
-        [ "ruby",            "Phrase" ],
-        [ "s",               "Phrase" ],
-        [ "samp",            "Phrase" ],
+        [ "q",               "Quote", -1 ],
+        [ "rp",              "Phrase", -1 ],
+        [ "rt",              "Phrase", -1 ],
+        [ "ruby",            "Phrase", -1 ],
+        [ "s",               "Phrase", -1 ],
+        [ "samp",            "Phrase", -1 ],
         [ "script",          "Script" ],
         [ "section",         "" ],
-        [ "select",          "Select" ],
-        [ "small",           "Phrase" ],
-        [ "source",          "Source" ],
-        [ "span",            "Span" ],
-        [ "strike",          "Phrase" ],
-        [ "strong",          "Phrase" ],
+        [ "select",          "Select", -1 ],
+        [ "small",           "Phrase", -1 ],
+        [ "source",          "Source", -1 ],
+        [ "span",            "Span", -1 ],
+        [ "strike",          "Phrase", -1 ],
+        [ "strong",          "Phrase", -1 ],
         [ "style",           "Style" ],
-        [ "sub",             "Phrase" ],
+        [ "sub",             "Phrase", -1 ],
         [ "summary",         "Unknown" ],
-        [ "sup",             "Phrase" ],
+        [ "sup",             "Phrase", -1 ],
         [ "svg",             "Unknown" ],
         [ "table",           "Table" ],
-        [ "tbody",           "TableSection" ],
+        [ "tbody",           "TableSection", -1 ],
         [ "td",              "TableDataCell" ],
         [ "template",        "Unknown" ],
         [ "textarea",        "TextArea" ],
-        [ "tfoot",           "TableSection" ],
-        [ "th",              "TableHeaderCell" ],
-        [ "thead",           "TableSection" ],
+        [ "tfoot",           "TableSection", -1 ],
+        [ "th",              "TableHeaderCell", -1 ],
+        [ "thead",           "TableSection", -1 ],
         [ "time",            "Unknown" ],
         [ "title",           "Title" ],
         [ "tr",              "TableRow" ],
         [ "track",           "Track", 10 ],
-        [ "tt",              "Phrase" ],
-        [ "u",               "Phrase" ],
-        [ "ul",              "UList" ],
-        [ "var",             "Phrase" ],
-        [ "video",           "Video" ],
+        [ "tt",              "Phrase", -1 ],
+        [ "u",               "Phrase", -1 ],
+        [ "ul",              "UList", -1 ],
+        [ "var",             "Phrase", -1 ],
+        [ "video",           "Video", -1 ],
         [ "wbr",             "" ],
         [ "winetest",        "Unknown" ]
     ];
@@ -248,17 +246,17 @@ sync_test("builtin_toString", function() {
 
     for(var i = 0; i < tags.length; i++)
         if(tags[i].length < 3 || v >= tags[i][2])
-            test("tag '" + tags[i][0] + "'", document.createElement(tags[i][0]), "HTML" + tags[i][1] + "Element", null, true);
+            test("tag '" + tags[i][0] + "'", document.createElement(tags[i][0]), "HTML" + tags[i][1] + "Element", null, tags[i].length > 2);
 
     e = document.createElement("a");
     ok(e.toString() === "", "tag 'a' (without href) toString returned " + e.toString());
     e.href = "https://www.winehq.org/";
-    test("tag 'a'", e, "HTMLAnchorElement", "https://www.winehq.org/", true);
+    test("tag 'a'", e, "HTMLAnchorElement", "https://www.winehq.org/");
 
     e = document.createElement("area");
     ok(e.toString() === "", "tag 'area' (without href) toString returned " + e.toString());
     e.href = "https://www.winehq.org/";
-    test("tag 'area'", e, "HTMLAreaElement", "https://www.winehq.org/", true);
+    test("tag 'area'", e, "HTMLAreaElement", "https://www.winehq.org/");
 
     e = document.createElement("style");
     document.body.appendChild(e);
@@ -292,24 +290,24 @@ sync_test("builtin_toString", function() {
     }
     if(!localStorage) win_skip("localStorage is buggy and not available, skipping");
 
-    test("attribute", document.createAttribute("class"), "Attr", null, true);
+    test("attribute", document.createAttribute("class"), "Attr");
     if(false /* todo_wine */) test("attributes", e.attributes, "NamedNodeMap");
     test("childNodes", document.body.childNodes, "NodeList", null, true);
     if(clientRects) test("clientRect", clientRects[0], "ClientRect", null, true);
-    if(clientRects) test("clientRects", clientRects, "ClientRectList", null, true);
+    if(clientRects) test("clientRects", clientRects, "ClientRectList");
     if(currentStyle) test("currentStyle", currentStyle, "MSCurrentStyleCSSProperties", null, true);
-    if(v >= 11 /* todo_wine */) test("document", document, v < 11 ? "Document" : "HTMLDocument", null, true);
+    if(v >= 11 /* todo_wine */) test("document", document, v < 11 ? "Document" : "HTMLDocument");
     test("elements", document.getElementsByTagName("body"), "HTMLCollection", null, true);
     test("history", window.history, "History");
     test("implementation", document.implementation, "DOMImplementation");
     if(localStorage) test("localStorage", localStorage, "Storage", null, true);
     test("location", window.location, "Object", window.location.href, null, true);
-    if(v >= 11 /* todo_wine */) test("mimeTypes", window.navigator.mimeTypes, v < 11 ? "MSMimeTypesCollection" : "MimeTypeArray", null, true);
+    if(v >= 11 /* todo_wine */) test("mimeTypes", window.navigator.mimeTypes, v < 11 ? "MSMimeTypesCollection" : "MimeTypeArray");
     test("navigator", window.navigator, "Navigator");
     test("performance", window.performance, "Performance");
     test("performanceNavigation", window.performance.navigation, "PerformanceNavigation");
     test("performanceTiming", window.performance.timing, "PerformanceTiming");
-    if(v >= 11 /* todo_wine */) test("plugins", window.navigator.plugins, v < 11 ? "MSPluginsCollection" : "PluginArray", null, true);
+    if(v >= 11 /* todo_wine */) test("plugins", window.navigator.plugins, v < 11 ? "MSPluginsCollection" : "PluginArray");
     test("screen", window.screen, "Screen");
     test("sessionStorage", window.sessionStorage, "Storage", null, true);
     test("style", document.body.style, "MSStyleCSSProperties", null, true);
@@ -317,26 +315,26 @@ sync_test("builtin_toString", function() {
     test("styleSheetRule", sheet.rules[0], "CSSStyleRule", null, true);
     test("styleSheetRules", sheet.rules, "MSCSSRuleList", null, true);
     test("styleSheets", document.styleSheets, "StyleSheetList", null, true);
-    test("textNode", document.createTextNode("testNode"), "Text", v < 9 ? "testNode" : null, true);
+    test("textNode", document.createTextNode("testNode"), "Text", v < 9 ? "testNode" : null);
     test("textRange", txtRange, "TextRange");
     test("window", window, "Window", "[object Window]", true);
-    test("xmlHttpRequest", new XMLHttpRequest(), "XMLHttpRequest", null, true);
+    test("xmlHttpRequest", new XMLHttpRequest(), "XMLHttpRequest");
     if(v < 10) {
-        test("namespaces", document.namespaces, "MSNamespaceInfoCollection", null, true);
+        test("namespaces", document.namespaces, "MSNamespaceInfoCollection");
     }
     if(v < 11) {
-        test("eventObject", document.createEventObject(), "MSEventObj", null, true);
+        test("eventObject", document.createEventObject(), "MSEventObj");
         test("selection", document.selection, "MSSelection");
     }
     if(v >= 9) {
         test("computedStyle", window.getComputedStyle(e), "CSSStyleDeclaration", null, true);
-        test("doctype", document.doctype, "DocumentType", null, true);
+        test("doctype", document.doctype, "DocumentType");
 
-        test("Event", document.createEvent("Event"), "Event", null, true);
-        test("CustomEvent", document.createEvent("CustomEvent"), "CustomEvent", null, true);
-        test("KeyboardEvent", document.createEvent("KeyboardEvent"), "KeyboardEvent", null, true);
-        test("MouseEvent", document.createEvent("MouseEvent"), "MouseEvent", null, true);
-        test("UIEvent", document.createEvent("UIEvent"), "UIEvent", null, true);
+        test("Event", document.createEvent("Event"), "Event");
+        test("CustomEvent", document.createEvent("CustomEvent"), "CustomEvent");
+        test("KeyboardEvent", document.createEvent("KeyboardEvent"), "KeyboardEvent");
+        test("MouseEvent", document.createEvent("MouseEvent"), "MouseEvent");
+        test("UIEvent", document.createEvent("UIEvent"), "UIEvent");
     }
     if(v >= 10) {
         test("classList", e.classList, "DOMTokenList", "testclass    another ", true);
@@ -348,7 +346,7 @@ sync_test("builtin_toString", function() {
     }
     if(v >= 9) {
         document.body.innerHTML = "<!--...-->";
-        test("comment", document.body.firstChild, "Comment", null, true);
+        test("comment", document.body.firstChild, "Comment");
     }
 });
 
@@ -381,7 +379,6 @@ sync_test("builtin_obj", function() {
     }catch(ex) {
         e = ex.number;
     }
-    todo_wine_if(v >= 9).
     ok(e === (v < 9 ? 0xa0005 : 0x0ffff) - 0x80000000, "[f.call(Object, 'div')] e = " + e);
 
     e = 0;
@@ -390,7 +387,6 @@ sync_test("builtin_obj", function() {
     }catch(ex) {
         e = ex.number;
     }
-    todo_wine_if(v >= 9).
     ok(e === (v < 9 ? 0xa0005 : 0x0ffff) - 0x80000000, "[f.call(null, 'div')] e = " + e);
 
     var elem1 = f.call(document, "div");
@@ -662,60 +658,42 @@ sync_test("xhr open", function() {
 });
 
 sync_test("style_props", function() {
-    var style = document.body.style;
+    var style = document.body.style, currentStyle = document.body.currentStyle, computedStyle = window.getComputedStyle ? window.getComputedStyle(document.body) : undefined;
 
-    function test_exposed(prop, expect) {
-        if(expect)
+    function test_exposed(prop, expect_style, expect_currentStyle, expect_computedStyle) {
+        if(expect_style)
             ok(prop in style, prop + " not found in style object.");
         else
             ok(!(prop in style), prop + " found in style object.");
+        if(expect_currentStyle)
+            ok(prop in currentStyle, prop + " not found in currentStyle object.");
+        else
+            ok(!(prop in currentStyle), prop + " found in currentStyle object.");
+        if(computedStyle) {
+            if(expect_computedStyle)
+                ok(prop in computedStyle, prop + " not found in computedStyle object.");
+            else
+                ok(!(prop in computedStyle), prop + " found in computedStyle object.");
+        }
     }
 
     var v = document.documentMode;
 
-    test_exposed("removeAttribute", true);
-    test_exposed("zIndex", true);
-    test_exposed("z-index", true);
-    test_exposed("filter", true);
-    test_exposed("pixelTop", true);
-    test_exposed("float", true);
-    test_exposed("css-float", false);
-    test_exposed("style-float", false);
-    test_exposed("setProperty", v >= 9);
-    test_exposed("removeProperty", v >= 9);
-    test_exposed("background-clip", v >= 9);
-    test_exposed("msTransform", v >= 9);
-    test_exposed("transform", v >= 10);
-
-    style = document.body.currentStyle;
-
-    test_exposed("zIndex", true);
-    test_exposed("z-index", true);
-    test_exposed("filter", true);
-    test_exposed("pixelTop", false);
-    test_exposed("float", true);
-    test_exposed("css-float", false);
-    test_exposed("style-float", false);
-    test_exposed("setProperty", v >= 9);
-    test_exposed("removeProperty", v >= 9);
-    test_exposed("background-clip", v >= 9);
-    test_exposed("transform", v >= 10);
-
-    if(window.getComputedStyle) {
-        style = window.getComputedStyle(document.body);
-
-        test_exposed("removeAttribute", false);
-        test_exposed("zIndex", true);
-        test_exposed("z-index", true);
-        test_exposed("pixelTop", false);
-        test_exposed("float", true);
-        test_exposed("css-float", false);
-        test_exposed("style-float", false);
-        test_exposed("setProperty", v >= 9);
-        test_exposed("removeProperty", v >= 9);
-        test_exposed("background-clip", v >= 9);
-        test_exposed("transform", v >= 10);
-    }
+    test_exposed("removeAttribute", true, broken(true) ? v >= 9 : false /* todo_wine */, false);
+    test_exposed("zIndex", true, true, true);
+    test_exposed("z-index", true, true, true);
+    test_exposed("filter", true, true, broken(true) ? v >= 10 : v >= 9 /* todo_wine */);
+    test_exposed("pixelTop", true, false, false);
+    test_exposed("float", true, true, true);
+    test_exposed("css-float", false, false, false);
+    test_exposed("style-float", false, false, false);
+    test_exposed("setProperty", v >= 9, v >= 9, v >= 9);
+    test_exposed("removeProperty", v >= 9, v >= 9, v >= 9);
+    test_exposed("background-clip", v >= 9, v >= 9, v >= 9);
+    test_exposed("msTransform", v >= 9, v >= 9, v >= 9);
+    test_exposed("msTransition", v >= 10, v >= 10, v >= 10);
+    test_exposed("transform", v >= 10, v >= 10, v >= 10);
+    test_exposed("transition", v >= 10, v >= 10, v >= 10);
 });
 
 sync_test("createElement_inline_attr", function() {
@@ -1958,7 +1936,7 @@ async_test("storage events", function() {
             return;
         }
         var s = Object.prototype.toString.call(e);
-        todo_wine.
+        todo_wine_if(e.target != window && e.target != document).
         ok(s === "[object StorageEvent]", "Object.toString = " + s);
         ok(e.key === key, "key = " + e.key + ", expected " + key);
         ok(e.oldValue === oldValue, "oldValue = " + e.oldValue + ", expected " + oldValue);

@@ -955,9 +955,19 @@ HKL WINAPI NtUserGetKeyboardLayout( DWORD thread_id )
  */
 SHORT WINAPI NtUserGetKeyState( INT vkey )
 {
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const input_shm_t *input_shm;
+    BOOL ret = FALSE;
     SHORT retval = 0;
+    NTSTATUS status;
 
-    SERVER_START_REQ( get_key_state )
+    while ((status = get_shared_input( GetCurrentThreadId(), &lock, &input_shm )) == STATUS_PENDING)
+    {
+        ret = !!input_shm->keystate_lock; /* needs a request for sync_input_keystate */
+        retval = (signed char)(input_shm->keystate[vkey & 0xff] & 0x81);
+    }
+
+    if (!ret) SERVER_START_REQ( get_key_state )
     {
         req->key = vkey;
         if (!wine_server_call( req )) retval = (signed char)(reply->state & 0x81);
@@ -972,21 +982,37 @@ SHORT WINAPI NtUserGetKeyState( INT vkey )
  */
 BOOL WINAPI NtUserGetKeyboardState( BYTE *state )
 {
-    BOOL ret;
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const input_shm_t *input_shm;
+    NTSTATUS status;
     UINT i;
 
     TRACE("(%p)\n", state);
 
-    memset( state, 0, 256 );
-    SERVER_START_REQ( get_key_state )
-    {
-        req->key = -1;
-        wine_server_set_reply( req, state, 256 );
-        ret = !wine_server_call_err( req );
-        for (i = 0; i < 256; i++) state[i] &= 0x81;
-    }
-    SERVER_END_REQ;
-    return ret;
+    while ((status = get_shared_input( GetCurrentThreadId(), &lock, &input_shm )) == STATUS_PENDING)
+        memcpy( state, (const void *)input_shm->keystate, 256 );
+    if (status) memset( state, 0, 256 );
+
+    for (i = 0; i < 256; i++) state[i] &= 0x81;
+    return TRUE;
+}
+
+/***********************************************************************
+ *           get_async_keyboard_state
+ */
+BOOL get_async_keyboard_state( BYTE state[256] )
+{
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const desktop_shm_t *desktop_shm;
+    NTSTATUS status;
+
+    TRACE("(%p)\n", state);
+
+    while ((status = get_shared_desktop( &lock, &desktop_shm )) == STATUS_PENDING)
+        memcpy( state, (const void *)desktop_shm->keystate, 256 );
+    if (status) memset( state, 0, 256 );
+
+    return !status;
 }
 
 /**********************************************************************

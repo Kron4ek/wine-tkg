@@ -1272,7 +1272,7 @@ static enum vkd3d_result shader_sm1_init(struct vkd3d_shader_sm1_parser *sm1, st
     sm1->end = &code[token_count];
 
     /* Estimate instruction count to avoid reallocation in most shaders. */
-    if (!vsir_program_init(program, &version, code_size != ~(size_t)0 ? token_count / 4u + 4 : 16))
+    if (!vsir_program_init(program, compile_info, &version, code_size != ~(size_t)0 ? token_count / 4u + 4 : 16))
         return VKD3D_ERROR_OUT_OF_MEMORY;
 
     vkd3d_shader_parser_init(&sm1->p, program, message_context, compile_info->source_name);
@@ -2371,6 +2371,17 @@ static void d3dbc_write_per_component_unary_op(struct d3dbc_compiler *d3dbc,
     }
 }
 
+static void d3dbc_write_sincos(struct d3dbc_compiler *d3dbc, enum hlsl_ir_expr_op op,
+        const struct hlsl_reg *dst, const struct hlsl_reg *src)
+{
+    if (op == HLSL_OP1_COS_REDUCED)
+        assert(dst->writemask == VKD3DSP_WRITEMASK_0);
+    else /* HLSL_OP1_SIN_REDUCED */
+        assert(dst->writemask == VKD3DSP_WRITEMASK_1);
+
+    d3dbc_write_unary_op(d3dbc, D3DSIO_SINCOS, dst, src, 0, 0);
+}
+
 static void d3dbc_write_expr(struct d3dbc_compiler *d3dbc, const struct hlsl_ir_node *instr)
 {
     const struct vkd3d_shader_version *version = &d3dbc->program->shader_version;
@@ -2439,6 +2450,11 @@ static void d3dbc_write_expr(struct d3dbc_compiler *d3dbc, const struct hlsl_ir_
             d3dbc_write_per_component_unary_op(d3dbc, instr, D3DSIO_RSQ);
             break;
 
+        case HLSL_OP1_COS_REDUCED:
+        case HLSL_OP1_SIN_REDUCED:
+            d3dbc_write_sincos(d3dbc, expr->op, &instr->reg, &arg1->reg);
+            break;
+
         case HLSL_OP2_ADD:
             d3dbc_write_binary_op(d3dbc, D3DSIO_ADD, &instr->reg, &arg1->reg, &arg2->reg);
             break;
@@ -2497,6 +2513,10 @@ static void d3dbc_write_expr(struct d3dbc_compiler *d3dbc, const struct hlsl_ir_
 
         case HLSL_OP3_DP2ADD:
             d3dbc_write_dp2add(d3dbc, &instr->reg, &arg1->reg, &arg2->reg, &arg3->reg);
+            break;
+
+        case HLSL_OP3_MAD:
+            d3dbc_write_ternary_op(d3dbc, D3DSIO_MAD, &instr->reg, &arg1->reg, &arg2->reg, &arg3->reg);
             break;
 
         default:

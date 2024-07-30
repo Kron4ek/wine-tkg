@@ -685,8 +685,7 @@ static HRESULT create_plugins_collection(OmNavigator *navigator, HTMLPluginsColl
     col->IHTMLPluginsCollection_iface.lpVtbl = &HTMLPluginsCollectionVtbl;
     col->navigator = navigator;
 
-    init_dispatch(&col->dispex, &HTMLPluginsCollection_dispex, NULL,
-                  dispex_compat_mode(&navigator->dispex));
+    init_dispatch_with_owner(&col->dispex, &HTMLPluginsCollection_dispex, &navigator->dispex);
 
     *ret = col;
     return S_OK;
@@ -787,8 +786,7 @@ static HRESULT create_mime_types_collection(OmNavigator *navigator, HTMLMimeType
     col->IHTMLMimeTypesCollection_iface.lpVtbl = &HTMLMimeTypesCollectionVtbl;
     col->navigator = navigator;
 
-    init_dispatch(&col->dispex, &HTMLMimeTypesCollection_dispex, NULL,
-                  dispex_compat_mode(&navigator->dispex));
+    init_dispatch_with_owner(&col->dispex, &HTMLMimeTypesCollection_dispex, &navigator->dispex);
 
     *ret = col;
     return S_OK;
@@ -1922,7 +1920,7 @@ static dispex_static_data_t HTMLNamespaceCollection_dispex = {
     HTMLNamespaceCollection_iface_tids
 };
 
-HRESULT create_namespace_collection(compat_mode_t compat_mode, IHTMLNamespaceCollection **ret)
+HRESULT create_namespace_collection(HTMLDocumentNode *doc, IHTMLNamespaceCollection **ret)
 {
     HTMLNamespaceCollection *namespaces;
 
@@ -1930,7 +1928,8 @@ HRESULT create_namespace_collection(compat_mode_t compat_mode, IHTMLNamespaceCol
         return E_OUTOFMEMORY;
 
     namespaces->IHTMLNamespaceCollection_iface.lpVtbl = &HTMLNamespaceCollectionVtbl;
-    init_dispatch(&namespaces->dispex, &HTMLNamespaceCollection_dispex, NULL, compat_mode);
+    init_dispatch(&namespaces->dispex, &HTMLNamespaceCollection_dispex, doc->script_global,
+                  dispex_compat_mode(&doc->node.event_target.dispex));
     *ret = &namespaces->IHTMLNamespaceCollection_iface;
     return S_OK;
 }

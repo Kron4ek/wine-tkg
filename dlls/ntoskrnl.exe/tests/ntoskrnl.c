@@ -59,9 +59,6 @@ static BOOL (WINAPI *pRtlFreeUnicodeString)(UNICODE_STRING *);
 static BOOL (WINAPI *pCancelIoEx)(HANDLE, OVERLAPPED *);
 static BOOL (WINAPI *pIsWow64Process)(HANDLE, BOOL *);
 static BOOL (WINAPI *pSetFileCompletionNotificationModes)(HANDLE, UCHAR);
-static HRESULT (WINAPI *pSignerSign)(SIGNER_SUBJECT_INFO *subject, SIGNER_CERT *cert,
-        SIGNER_SIGNATURE_INFO *signature, SIGNER_PROVIDER_INFO *provider,
-        const WCHAR *timestamp, CRYPT_ATTRIBUTES *attr, void *sip_data);
 
 static void load_resource(const WCHAR *name, WCHAR *filename)
 {
@@ -249,6 +246,10 @@ static void testsign_cleanup(struct testsign_context *ctx)
 
 static void testsign_sign(struct testsign_context *ctx, const WCHAR *filename)
 {
+    static HRESULT (WINAPI *pSignerSign)(SIGNER_SUBJECT_INFO *subject, SIGNER_CERT *cert,
+            SIGNER_SIGNATURE_INFO *signature, SIGNER_PROVIDER_INFO *provider,
+            const WCHAR *timestamp, CRYPT_ATTRIBUTES *attr, void *sip_data);
+
     SIGNER_ATTR_AUTHCODE authcode = {sizeof(authcode)};
     SIGNER_SIGNATURE_INFO signature = {sizeof(signature)};
     SIGNER_SUBJECT_INFO subject = {sizeof(subject)};
@@ -257,6 +258,9 @@ static void testsign_sign(struct testsign_context *ctx, const WCHAR *filename)
     SIGNER_FILE_INFO file = {sizeof(file)};
     DWORD index = 0;
     HRESULT hr;
+
+    if (!pSignerSign)
+        pSignerSign = (void *)GetProcAddress(LoadLibraryA("mssign32"), "SignerSign");
 
     subject.dwSubjectChoice = 1;
     subject.pdwIndex = &index;
@@ -1315,7 +1319,6 @@ static void add_file_to_catalog(HANDLE catalog, const WCHAR *file)
 {
     SIP_SUBJECTINFO subject_info = {sizeof(SIP_SUBJECTINFO)};
     SIP_INDIRECT_DATA *indirect_data;
-    const WCHAR *filepart = file;
     CRYPTCATMEMBER *member;
     WCHAR hash_buffer[100];
     GUID subject_guid;
@@ -1330,7 +1333,6 @@ static void add_file_to_catalog(HANDLE catalog, const WCHAR *file)
     subject_info.pgSubjectType = &subject_guid;
     subject_info.pwsFileName = file;
     subject_info.DigestAlgorithm.pszObjId = (char *)szOID_OIWSEC_sha1;
-    subject_info.dwFlags = SPC_INC_PE_RESOURCES_FLAG | SPC_INC_PE_IMPORT_ADDR_TABLE_FLAG | SPC_EXC_PE_PAGE_HASHES_FLAG | 0x10000;
     ret = CryptSIPCreateIndirectData(&subject_info, &size, NULL);
     todo_wine ok(ret, "Failed to get indirect data size, error %lu\n", GetLastError());
 
@@ -1346,19 +1348,6 @@ static void add_file_to_catalog(HANDLE catalog, const WCHAR *file)
         member = CryptCATPutMemberInfo(catalog, (WCHAR *)file,
                 hash_buffer, &subject_guid, 0, size, (BYTE *)indirect_data);
         ok(!!member, "Failed to write member, error %lu\n", GetLastError());
-
-        if (wcsrchr(file, '\\'))
-            filepart = wcsrchr(file, '\\') + 1;
-
-        ret = !!CryptCATPutAttrInfo(catalog, member, (WCHAR *)L"File",
-                CRYPTCAT_ATTR_NAMEASCII | CRYPTCAT_ATTR_DATAASCII | CRYPTCAT_ATTR_AUTHENTICATED,
-                (wcslen(filepart) + 1) * 2, (BYTE *)filepart);
-        ok(ret, "Failed to write attr, error %lu\n", GetLastError());
-
-        ret = !!CryptCATPutAttrInfo(catalog, member, (WCHAR *)L"OSAttr",
-                CRYPTCAT_ATTR_NAMEASCII | CRYPTCAT_ATTR_DATAASCII | CRYPTCAT_ATTR_AUTHENTICATED,
-                sizeof(L"2:6.0"), (BYTE *)L"2:6.0");
-        ok(ret, "Failed to write attr, error %lu\n", GetLastError());
     }
 
     free(indirect_data);
@@ -1905,7 +1894,6 @@ START_TEST(ntoskrnl)
     pIsWow64Process = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "IsWow64Process");
     pSetFileCompletionNotificationModes = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"),
                                                                  "SetFileCompletionNotificationModes");
-    pSignerSign = (void *)GetProcAddress(LoadLibraryA("mssign32"), "SignerSign");
 
     if (IsWow64Process(GetCurrentProcess(), &is_wow64) && is_wow64)
     {

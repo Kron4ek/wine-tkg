@@ -1191,7 +1191,7 @@ NTSTATUS sock_write( HANDLE handle, int fd, HANDLE event, PIO_APC_ROUTINE apc,
     static const DWORD async_size = offsetof( struct async_send_ioctl, iov[1] );
     struct async_send_ioctl *async;
 
-    if (!(async = (struct async_send_ioctl *)alloc_fileio( async_size, async_recv_proc, handle )))
+    if (!(async = (struct async_send_ioctl *)alloc_fileio( async_size, async_send_proc, handle )))
         return STATUS_NO_MEMORY;
 
     async->count = 1;
@@ -1787,8 +1787,7 @@ NTSTATUS sock_ioctl( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, void *apc
 
             if (getifaddrs( &ifaddrs ) < 0)
             {
-                status = sock_errno_to_status( errno );
-                break;
+                return sock_errno_to_status( errno );
             }
 
             for (ifaddr = ifaddrs; ifaddr != NULL; ifaddr = ifaddr->ifa_next)

@@ -619,6 +619,7 @@ enum vkd3d_shader_register_type
     VKD3DSPR_SSA,
     VKD3DSPR_WAVELANECOUNT,
     VKD3DSPR_WAVELANEINDEX,
+    VKD3DSPR_PARAMETER,
 
     VKD3DSPR_COUNT,
 
@@ -1362,6 +1363,10 @@ struct vsir_program
     struct shader_signature output_signature;
     struct shader_signature patch_constant_signature;
 
+    unsigned int parameter_count;
+    const struct vkd3d_shader_parameter1 *parameters;
+    bool free_parameters;
+
     unsigned int input_control_point_count, output_control_point_count;
     unsigned int flat_constant_count[3];
     unsigned int block_count;
@@ -1377,7 +1382,10 @@ void vsir_program_cleanup(struct vsir_program *program);
 int vsir_program_compile(struct vsir_program *program, uint64_t config_flags,
         const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_code *out,
         struct vkd3d_shader_message_context *message_context);
-bool vsir_program_init(struct vsir_program *program, const struct vkd3d_shader_version *version, unsigned int reserve);
+const struct vkd3d_shader_parameter1 *vsir_program_get_parameter(
+        const struct vsir_program *program, enum vkd3d_shader_parameter_name name);
+bool vsir_program_init(struct vsir_program *program, const struct vkd3d_shader_compile_info *compile_info,
+        const struct vkd3d_shader_version *version, unsigned int reserve);
 enum vkd3d_result vsir_program_normalise(struct vsir_program *program, uint64_t config_flags,
         const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_message_context *message_context);
 enum vkd3d_result vsir_program_validate(struct vsir_program *program, uint64_t config_flags,

@@ -1583,7 +1583,7 @@ RETURN_CODE WCMD_run_program(WCHAR *command, BOOL called)
         BOOL oldinteractive = interactive;
 
         interactive = FALSE;
-        return_code = WCMD_batch(thisDir, command, NULL, INVALID_HANDLE_VALUE);
+        return_code = WCMD_call_batch(thisDir, command);
         interactive = oldinteractive;
         if (context && !called) {
           TRACE("Batch completed, but was not 'called' so skipping outer batch too\n");
@@ -1732,7 +1732,7 @@ static RETURN_CODE execute_single_command(const WCHAR *command)
 {
     RETURN_CODE return_code;
     WCHAR *cmd, *parms_start;
-    int status, cmd_index, count;
+    int cmd_index, count;
     WCHAR *whichcmd;
     WCHAR *new_cmd = NULL;
     BOOL prev_echo_mode;
@@ -1767,27 +1767,29 @@ static RETURN_CODE execute_single_command(const WCHAR *command)
  * else if it exists after whitespace is ignored
  */
 
-    if ((cmd[1] == ':') && IsCharAlphaW(cmd[0]) &&
-        (!cmd[2] || cmd[2] == ' ' || cmd[2] == '\t')) {
+    if (cmd[1] == L':' && (!cmd[2] || iswspace(cmd[2]))) {
       WCHAR envvar[5];
       WCHAR dir[MAX_PATH];
 
       /* Ignore potential garbage on the same line */
-      cmd[2]=0x00;
+      cmd[2] = L'\0';
 
       /* According to MSDN CreateProcess docs, special env vars record
          the current directory on each drive, in the form =C:
          so see if one specified, and if so go back to it             */
       lstrcpyW(envvar, L"=");
       lstrcatW(envvar, cmd);
-      if (GetEnvironmentVariableW(envvar, dir, MAX_PATH) == 0) {
+      if (GetEnvironmentVariableW(envvar, dir, ARRAY_SIZE(dir)) == 0) {
         wsprintfW(cmd, L"%s\\", cmd);
         WINE_TRACE("No special directory settings, using dir of %s\n", wine_dbgstr_w(cmd));
       }
       WINE_TRACE("Got directory %s as %s\n", wine_dbgstr_w(envvar), wine_dbgstr_w(cmd));
-      status = SetCurrentDirectoryW(cmd);
-      if (!status) WCMD_print_error ();
-      return_code = ERROR_INVALID_FUNCTION;
+      if (!SetCurrentDirectoryW(cmd))
+      {
+          WCMD_print_error();
+          return_code = errorlevel = ERROR_INVALID_FUNCTION;
+      }
+      else return_code = NO_ERROR;
       goto cleanup;
     }
 
@@ -2675,7 +2677,7 @@ static void lexer_push_command(struct node_builder *builder,
     *copyTo       = command;
 }
 
-static WCHAR *fetch_next_line(BOOL feed, BOOL first_line, HANDLE from, WCHAR* buffer)
+static WCHAR *fetch_next_line(BOOL feed, BOOL first_line, WCHAR* buffer)
 {
     /* display prompt */
     if (interactive && !context)
@@ -2687,10 +2689,35 @@ static WCHAR *fetch_next_line(BOOL feed, BOOL first_line, HANDLE from, WCHAR* bu
             WCMD_show_prompt();
     }
 
-    if (feed && !WCMD_fgets(buffer, MAXSTRING, from))
+    if (feed)
     {
-        buffer[0] = L'\0';
-        return NULL;
+        BOOL ret;
+        if (context)
+        {
+            LARGE_INTEGER zeroli = {.QuadPart = 0};
+            HANDLE h = CreateFileW(context->batchfileW, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+                                   NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h == INVALID_HANDLE_VALUE)
+            {
+                SetLastError(ERROR_FILE_NOT_FOUND);
+                WCMD_print_error();
+                ret = FALSE;
+            }
+            else
+            {
+                ret = SetFilePointerEx(h, context->file_position, NULL, FILE_BEGIN) &&
+                    !!WCMD_fgets(buffer, MAXSTRING, h) &&
+                    SetFilePointerEx(h, zeroli, &context->file_position, FILE_CURRENT);
+                CloseHandle(h);
+            }
+        }
+        else
+            ret = !!WCMD_fgets(buffer, MAXSTRING, GetStdHandle(STD_INPUT_HANDLE));
+        if (!ret)
+        {
+            buffer[0] = L'\0';
+            return NULL;
+        }
     }
     /* Handle truncated input - issue warning */
     if (wcslen(buffer) == MAXSTRING - 1)
@@ -2751,7 +2778,7 @@ static WCHAR *fetch_next_line(BOOL feed, BOOL first_line, HANDLE from, WCHAR* bu
  *     - Anything else gets put into the command string (including
  *            redirects)
  */
-enum read_parse_line WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_NODE **output, HANDLE readFrom)
+enum read_parse_line WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_NODE **output)
 {
     WCHAR    *curPos;
     int       inQuotes = 0;
@@ -2786,7 +2813,7 @@ enum read_parse_line WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_NODE **
     /* If initial command read in, use that, otherwise get input from handle */
     if (optionalcmd)
         wcscpy(extraSpace, optionalcmd);
-    if (!(curPos = fetch_next_line(optionalcmd == NULL, TRUE, readFrom, extraSpace)))
+    if (!(curPos = fetch_next_line(optionalcmd == NULL, TRUE, extraSpace)))
         return RPL_EOF;
 
     TRACE("About to parse line (%ls)\n", extraSpace);
@@ -3049,12 +3076,13 @@ enum read_parse_line WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_NODE **
                   if (curPos[1] == L'\0') {
                     TRACE("Caret found at end of line\n");
                     extraSpace[0] = L'^';
-                    if (!fetch_next_line(TRUE, FALSE, readFrom, extraSpace + 1))
+                    if (optionalcmd) break;
+                    if (!fetch_next_line(TRUE, FALSE, extraSpace + 1))
                         break;
                     if (!extraSpace[1]) /* empty line */
                     {
                         extraSpace[1] = L'\r';
-                        if (!fetch_next_line(TRUE, FALSE, readFrom, extraSpace + 2))
+                        if (!fetch_next_line(TRUE, FALSE, extraSpace + 2))
                             break;
                     }
                     curPos = extraSpace;
@@ -3125,7 +3153,7 @@ enum read_parse_line WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_NODE **
           node_builder_push_token(&builder, TKN_EOL);
 
           /* If we have reached the end of the string, see if bracketing is outstanding */
-          if (builder.opened_parenthesis > 0 && readFrom != INVALID_HANDLE_VALUE) {
+          if (builder.opened_parenthesis > 0 && optionalcmd == NULL) {
               TRACE("Need to read more data as outstanding brackets or carets\n");
               inOneLine = FALSE;
               ignoreBracket = FALSE;
@@ -3135,7 +3163,7 @@ enum read_parse_line WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_NODE **
 
               /* fetch next non empty line */
               do {
-                  curPos = fetch_next_line(TRUE, FALSE, readFrom, extraSpace);
+                  curPos = fetch_next_line(TRUE, FALSE, extraSpace);
               } while (curPos && *curPos == L'\0');
               if (!curPos)
                   curPos = extraSpace;
@@ -3698,7 +3726,10 @@ RETURN_CODE node_execute(CMD_NODE *node)
             WCHAR filename[MAX_PATH];
             CMD_REDIRECTION *output;
             HANDLE saved_output;
+            BATCH_CONTEXT *saved_context = context;
 
+            /* pipe LHS & RHS are run outside of any batch context */
+            context = NULL;
             /* FIXME: a real pipe instead of writing to an intermediate file would be
              * better.
              * But waiting for completion of commands will require more work.
@@ -3718,12 +3749,13 @@ RETURN_CODE node_execute(CMD_NODE *node)
             if (set_std_redirections(output))
             {
                 RETURN_CODE return_code_left = node_execute(node->left);
-                return_code = NO_ERROR;
-
                 CloseHandle(GetStdHandle(STD_OUTPUT_HANDLE));
                 SetStdHandle(STD_OUTPUT_HANDLE, saved_output);
 
-                if (return_code == NO_ERROR)
+                if (errorlevel == RETURN_CODE_CANT_LAUNCH && saved_context)
+                    ExitProcess(255);
+                return_code = ERROR_INVALID_FUNCTION;
+                if (return_code_left != RETURN_CODE_ABORTED && errorlevel != RETURN_CODE_CANT_LAUNCH)
                 {
                     HANDLE h = CreateFileW(filename, GENERIC_READ,
                                            FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING,
@@ -3732,15 +3764,16 @@ RETURN_CODE node_execute(CMD_NODE *node)
                     {
                         SetStdHandle(STD_INPUT_HANDLE, h);
                         return_code = node_execute(node->right);
+                        if (errorlevel == RETURN_CODE_CANT_LAUNCH && saved_context)
+                            ExitProcess(255);
                     }
-                    else return_code = ERROR_INVALID_FUNCTION;
                 }
                 DeleteFileW(filename);
-                if (return_code_left != NO_ERROR || return_code != NO_ERROR)
-                    errorlevel = ERROR_INVALID_FUNCTION;
+                errorlevel = return_code;
             }
             else return_code = ERROR_INVALID_FUNCTION;
             redirection_dispose_list(output);
+            context = saved_context;
         }
         break;
     case CMD_IF:
@@ -4046,7 +4079,7 @@ int __cdecl wmain (int argc, WCHAR *argvW[])
        */
 
       /* Parse the command string, without reading any more input */
-      rpl_status = WCMD_ReadAndParseLine(cmd, &toExecute, INVALID_HANDLE_VALUE);
+      rpl_status = WCMD_ReadAndParseLine(cmd, &toExecute);
       if (rpl_status == RPL_SUCCESS && toExecute)
       {
           node_execute(toExecute);
@@ -4130,7 +4163,7 @@ int __cdecl wmain (int argc, WCHAR *argvW[])
 
   if (opt_k)
   {
-      rpl_status = WCMD_ReadAndParseLine(cmd, &toExecute, INVALID_HANDLE_VALUE);
+      rpl_status = WCMD_ReadAndParseLine(cmd, &toExecute);
       /* Parse the command string, without reading any more input */
       if (rpl_status == RPL_SUCCESS && toExecute)
       {
@@ -4150,7 +4183,7 @@ int __cdecl wmain (int argc, WCHAR *argvW[])
   if (!opt_k) WCMD_output_asis(version_string);
   if (echo_mode) WCMD_output_asis(L"\r\n");
   /* Read until EOF (which for std input is never, but if redirect in place, may occur */
-  while ((rpl_status = WCMD_ReadAndParseLine(NULL, &toExecute, GetStdHandle(STD_INPUT_HANDLE))) != RPL_EOF)
+  while ((rpl_status = WCMD_ReadAndParseLine(NULL, &toExecute)) != RPL_EOF)
   {
       if (rpl_status == RPL_SUCCESS && toExecute)
       {

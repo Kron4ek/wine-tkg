@@ -1759,7 +1759,7 @@ static void update_wineprefix( BOOL force )
         update_user_profile();
         update_win_version();
 
-        WINE_MESSAGE( "wine: configuration in %s has been updated.\n", debugstr_w(prettyprint_configdir()) );
+        TRACE( "wine: configuration in %s has been updated.\n", debugstr_w(prettyprint_configdir()) );
     }
 
 done:

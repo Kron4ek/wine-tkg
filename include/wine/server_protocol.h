@@ -919,6 +919,8 @@ typedef volatile struct
     rectangle_t          caret_rect;
     user_handle_t        cursor;
     int                  cursor_count;
+    unsigned char        keystate[256];
+    int                  keystate_lock;
 } input_shm_t;
 
 typedef volatile union
@@ -1776,8 +1778,6 @@ enum server_fd_type
     FD_TYPE_DIR,
     FD_TYPE_SOCKET,
     FD_TYPE_SERIAL,
-    FD_TYPE_PIPE,
-    FD_TYPE_MAILSLOT,
     FD_TYPE_CHAR,
     FD_TYPE_DEVICE,
     FD_TYPE_NB_TYPES
@@ -4119,7 +4119,6 @@ struct get_key_state_reply
 {
     struct reply_header __header;
     unsigned char  state;
-    /* VARARG(keystate,bytes); */
     char __pad_9[7];
 };
 
@@ -4873,10 +4872,12 @@ struct create_mailslot_request
 {
     struct request_header __header;
     unsigned int   access;
+    unsigned int   options;
+    char __pad_20[4];
     timeout_t      read_timeout;
     unsigned int   max_msgsize;
     /* VARARG(objattr,object_attributes); */
-    char __pad_28[4];
+    char __pad_36[4];
 };
 struct create_mailslot_reply
 {
@@ -6824,7 +6825,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 832
+#define SERVER_PROTOCOL_VERSION 838
 
 /* ### protocol_version end ### */
 

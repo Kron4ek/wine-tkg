@@ -452,13 +452,14 @@ p2
 q2
 q3
 ------------- Testing internal commands return codes
---- call and IF/FOR blocks
+--- success/failure for basics
 SUCCESS 0
 FAILURE 33
 foo@space@
 SUCCESS 666
 FAILURE 1
 ERRORLEVEL 666
+--- success/failure for IF/FOR blocks
 SUCCESS 666
 SUCCESS 666
 FAILURE 33
@@ -485,6 +486,17 @@ SUCCESS 0
 foo@space@
 FAILURE 1025
 FAILURE 2
+--- success/failure for pipes
+b
+SUCCESS 0
+FAILURE 1
+a
+SUCCESS 0
+FAILURE 3
+a
+SUCCESS 0
+FAILURE 255
+FAILURE 255
 --- success/failure for START command
 @todo_wine@FAILURE 1
 foo@space@
@@ -520,6 +532,11 @@ SUCCESS 0
 FAILURE 1
 SUCCESS 0
 FAILURE 1
+FAILURE 1
+--- success/failure for change drive command
+SUCCESS 666
+FAILURE 1
+SUCCESS 0
 FAILURE 1
 --- success/failure for MKDIR,MD command
 FAILURE 1
@@ -689,20 +706,24 @@ foo
 I'm here!@space@
 I'm here!@space@
 I'm here!@space@
+prompt XbarX
+prompt YfooY
+'prompt' YfooY
+@todo_wine@promptYfooY
 ------------ Testing 'choice' ------------
-@todo_wine@Example message [A,B,C]?A@or_broken@choice unavailable
+Example message [A,B,C]?A@or_broken@choice unavailable
 1@or_broken@9009
-@todo_wine@Example message [A,B,C]?B@or_broken@choice unavailable
-@todo_wine@2@or_broken@9009
-@todo_wine@[D,E,F]?F@or_broken@choice unavailable
-@todo_wine@3@or_broken@9009
-@todo_wine@[A,B,C,X,Y,Z]?Y@or_broken@choice unavailable
-@todo_wine@5@or_broken@9009
-@todo_wine@A@or_broken@choice unavailable
-@todo_wine@1@or_broken@9009
-@todo_wine@[a,b,c,A,B,C]?A@or_broken@choice unavailable
-@todo_wine@4@or_broken@9009
-@todo_wine@255@or_broken@9009
+Example message [A,B,C]?B@or_broken@choice unavailable
+2@or_broken@9009
+[D,E,F]?F@or_broken@choice unavailable
+3@or_broken@9009
+[A,B,C,X,Y,Z]?Y@or_broken@choice unavailable
+5@or_broken@9009
+A@or_broken@choice unavailable
+1@or_broken@9009
+[a,b,c,A,B,C]?A@or_broken@choice unavailable
+4@or_broken@9009
+255@or_broken@9009
 ------------ Testing variable expansion ------------
 ~p0 should be path containing batch file
 @path@
@@ -1992,6 +2013,7 @@ Normal+tab+garbage
 @todo_wine@21
 Success
 @todo_wine@Success
+---- Testing nasty bits ----
 ------------ Testing combined CALLs/GOTOs ------------
 world
 cheball

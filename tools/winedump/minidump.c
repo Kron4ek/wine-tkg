@@ -76,7 +76,7 @@ void mdmp_dump(void)
 
     if (!hdr)
     {
-        printf("Cannot get Minidump header\n");
+        printf("Corrupt file, cannot get Minidump header\n");
         return;
     }
 
@@ -89,13 +89,21 @@ void mdmp_dump(void)
     printf("  TimeDateStamp: %s\n", get_time_str(hdr->TimeDateStamp));
     printf("Flags: %s\n", get_hexint64_str(hdr->Flags));
 
+    if (!PRD(hdr->StreamDirectoryRva, hdr->NumberOfStreams * sizeof(MINIDUMP_DIRECTORY)))
+    {
+        printf("Corrupt file, can't read all minidump directories\n");
+        return;
+    }
     for (idx = 0; idx < hdr->NumberOfStreams; ++idx)
     {
         dir = PRD(hdr->StreamDirectoryRva + idx * sizeof(MINIDUMP_DIRECTORY), sizeof(*dir));
-        if (!dir) break;
 
         stream = PRD(dir->Location.Rva, dir->Location.DataSize);
-
+        if (!stream)
+        {
+            printf("Stream [%u]: corrupt file, stream is larger that file\n", idx);
+            continue;
+        }
         switch (dir->StreamType)
         {
         case UnusedStream:
@@ -844,6 +852,36 @@ void mdmp_dump(void)
                     printf("    ThreadId: %#x\n", (UINT)tn->ThreadId);
                     printf("    ThreadName: %s\n", get_mdmp_str(tn->RvaOfThreadName));
                 }
+            }
+            break;
+        case CommentStreamA:
+            {
+                /* MSDN states an ANSI string, so stopping at first '\0' if any */
+                const char *end = memchr(stream, '\0', dir->Location.DataSize);
+                printf("Stream [%u]: CommentA\n", idx);
+                printf("--- start of comment\n");
+                write(1, stream, end ? end - (const char*)stream : dir->Location.DataSize);
+                printf("---  end  of comment\n");
+                if (globals_dump_sect("content"))
+                    dump_mdmp_data(&dir->Location, "  ");
+            }
+            break;
+        case CommentStreamW:
+            {
+                const WCHAR *ptr;
+
+                /* MSDN states an UNICODE string, so stopping at first L'\0' if any */
+                printf("Stream [%u]: CommentW\n", idx);
+                printf("--- start of comment\n");
+                for (ptr = stream; ptr + 1 <= (const WCHAR *)((const char *)stream + dir->Location.DataSize) && *ptr; ptr++)
+                {
+                    if (*ptr== L'\n' || *ptr== L'\r' || *ptr== L'\t' || (*ptr >= L' ' && *ptr < 127))
+                        putchar((char)*ptr);
+                    else printf("\\u%04x", *ptr);
+                }
+                printf("---  end  of comment\n");
+                if (globals_dump_sect("content"))
+                    dump_mdmp_data(&dir->Location, "  ");
             }
             break;
         default:

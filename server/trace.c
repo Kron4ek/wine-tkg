@@ -3563,7 +3563,6 @@ static void dump_get_key_state_request( const struct get_key_state_request *req 
 static void dump_get_key_state_reply( const struct get_key_state_reply *req )
 {
     fprintf( stderr, " state=%02x", req->state );
-    dump_varargs_bytes( ", keystate=", cur_size );
 }
 
 static void dump_set_key_state_request( const struct set_key_state_request *req )
@@ -4096,6 +4095,7 @@ static void dump_get_system_handles_reply( const struct get_system_handles_reply
 static void dump_create_mailslot_request( const struct create_mailslot_request *req )
 {
     fprintf( stderr, " access=%08x", req->access );
+    fprintf( stderr, ", options=%08x", req->options );
     dump_timeout( ", read_timeout=", &req->read_timeout );
     fprintf( stderr, ", max_msgsize=%08x", req->max_msgsize );
     dump_varargs_object_attributes( ", objattr=", cur_size );

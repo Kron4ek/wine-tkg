@@ -5365,8 +5365,6 @@ const char *debug_d3dstate(uint32_t state)
         return "STATE_VIEWPORT";
     if (STATE_IS_LIGHT_TYPE(state))
         return "STATE_LIGHT_TYPE";
-    if (STATE_IS_ACTIVELIGHT(state))
-        return wine_dbg_sprintf("STATE_ACTIVELIGHT(%#x)", state - STATE_ACTIVELIGHT(0));
     if (STATE_IS_SCISSORRECT(state))
         return "STATE_SCISSORRECT";
     if (STATE_IS_CLIPPLANE(state))
@@ -5689,11 +5687,11 @@ void get_projection_matrix(const struct wined3d_context *context, const struct w
 
 /* Setup this textures matrix according to the texture flags. */
 static void compute_texture_matrix(const struct wined3d_matrix *matrix, uint32_t flags, BOOL calculated_coords,
-        BOOL transformed, enum wined3d_format_id format_id, struct wined3d_matrix *out_matrix)
+        enum wined3d_format_id format_id, struct wined3d_matrix *out_matrix)
 {
     struct wined3d_matrix mat;
 
-    if (flags == WINED3D_TTFF_DISABLE || flags == WINED3D_TTFF_COUNT1 || transformed)
+    if (flags == WINED3D_TTFF_DISABLE || flags == WINED3D_TTFF_COUNT1)
     {
         get_identity_matrix(out_matrix);
         return;
@@ -5748,20 +5746,23 @@ static void compute_texture_matrix(const struct wined3d_matrix *matrix, uint32_t
     *out_matrix = mat;
 }
 
-void get_texture_matrix(const struct wined3d_context *context, const struct wined3d_state *state,
-        const unsigned int tex, struct wined3d_matrix *mat)
+void get_texture_matrix(const struct wined3d_stream_info *si,
+        const struct wined3d_stateblock_state *state, const unsigned int tex, struct wined3d_matrix *mat)
 {
     BOOL generated = (state->texture_states[tex][WINED3D_TSS_TEXCOORD_INDEX] & 0xffff0000)
             != WINED3DTSS_TCI_PASSTHRU;
     unsigned int coord_idx = min(state->texture_states[tex][WINED3D_TSS_TEXCOORD_INDEX] & 0x0000ffff,
             WINED3D_MAX_FFP_TEXTURES - 1);
+    enum wined3d_format_id attribute_format;
+
+    if (si->use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx)))
+        attribute_format = si->elements[WINED3D_FFP_TEXCOORD0 + coord_idx].format->id;
+    else
+        attribute_format = WINED3DFMT_UNKNOWN;
 
     compute_texture_matrix(&state->transforms[WINED3D_TS_TEXTURE0 + tex],
             state->texture_states[tex][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS],
-            generated, context->stream_info.position_transformed,
-            context->stream_info.use_map & (1u << (WINED3D_FFP_TEXCOORD0 + coord_idx))
-            ? context->stream_info.elements[WINED3D_FFP_TEXCOORD0 + coord_idx].format->id
-            : WINED3DFMT_UNKNOWN, mat);
+            generated, attribute_format, mat);
 }
 
 void get_pointsize_minmax(const struct wined3d_context *context, const struct wined3d_state *state,
@@ -6113,7 +6114,7 @@ static float color_to_float(DWORD color, DWORD size, DWORD offset)
 void wined3d_format_get_float_color_key(const struct wined3d_format *format,
         const struct wined3d_color_key *key, struct wined3d_color *float_colors)
 {
-    struct wined3d_color slop;
+    struct wined3d_color slop = {INFINITY, INFINITY, INFINITY, INFINITY};
 
     switch (format->id)
     {
@@ -6135,10 +6136,14 @@ void wined3d_format_get_float_color_key(const struct wined3d_format *format,
         case WINED3DFMT_R8G8B8X8_UNORM:
         case WINED3DFMT_R16G16_UNORM:
         case WINED3DFMT_B10G10R10A2_UNORM:
-            slop.r = 0.5f / wined3d_mask_from_size(format->red_size);
-            slop.g = 0.5f / wined3d_mask_from_size(format->green_size);
-            slop.b = 0.5f / wined3d_mask_from_size(format->blue_size);
-            slop.a = 0.5f / wined3d_mask_from_size(format->alpha_size);
+            if (format->red_size)
+                slop.r = 0.5f / wined3d_mask_from_size(format->red_size);
+            if (format->green_size)
+                slop.g = 0.5f / wined3d_mask_from_size(format->green_size);
+            if (format->blue_size)
+                slop.b = 0.5f / wined3d_mask_from_size(format->blue_size);
+            if (format->alpha_size)
+                slop.a = 0.5f / wined3d_mask_from_size(format->alpha_size);
 
             float_colors[0].r = color_to_float(key->color_space_low_value, format->red_size, format->red_offset)
                     - slop.r;

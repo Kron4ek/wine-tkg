@@ -369,36 +369,6 @@ BOOL WINAPI SetupGetSourceFileLocationA( HINF hinf, PINFCONTEXT context, PCSTR f
     return ret;
 }
 
-static LPWSTR get_source_id( HINF hinf, PINFCONTEXT context, PCWSTR filename )
-{
-    DWORD size;
-    LPWSTR source_id;
-
-    if (!SetupFindFirstLineW( hinf, source_disks_files_platform, filename, context ) &&
-        !SetupFindFirstLineW( hinf, source_disks_files, filename, context ))
-        return NULL;
-
-    if (!SetupGetStringFieldW( context, 1, NULL, 0, &size ))
-        return NULL;
-
-    if (!(source_id = malloc( size * sizeof(WCHAR) )))
-        return NULL;
-
-    if (!SetupGetStringFieldW( context, 1, source_id, size, NULL ))
-    {
-        free( source_id );
-        return NULL;
-    }
-
-    if (!SetupFindFirstLineW( hinf, source_disks_names_platform, source_id, context ) &&
-        !SetupFindFirstLineW( hinf, source_disks_names, source_id, context ))
-    {
-        free( source_id );
-        return NULL;
-    }
-    return source_id;
-}
-
 /***********************************************************************
  *            SetupGetSourceFileLocationW   (SETUPAPI.@)
  */
@@ -408,25 +378,45 @@ BOOL WINAPI SetupGetSourceFileLocationW( HINF hinf, PINFCONTEXT context, PCWSTR 
                                          PDWORD required_size )
 {
     INFCONTEXT ctx;
-    WCHAR *end, *source_id_str;
+    int id;
 
     TRACE("%p, %p, %s, %p, %p, 0x%08lx, %p\n", hinf, context, debugstr_w(filename), source_id,
           buffer, buffer_size, required_size);
 
-    if (!context) context = &ctx;
-
-    if (!(source_id_str = get_source_id( hinf, context, filename )))
-        return FALSE;
-
-    *source_id = wcstol( source_id_str, &end, 10 );
-    if (end == source_id_str || *end)
+    if (context)
     {
-        free( source_id_str );
-        return FALSE;
-    }
-    free( source_id_str );
+        WCHAR *ctx_filename;
+        DWORD filename_size;
 
-    if (SetupGetStringFieldW( context, 4, buffer, buffer_size, required_size ))
+        if (!SetupGetStringFieldW( context, 1, NULL, 0, &filename_size ))
+            return FALSE;
+        if (!(ctx_filename = malloc( filename_size * sizeof(WCHAR) )))
+            return FALSE;
+        SetupGetStringFieldW( context, 1, ctx_filename, filename_size, NULL );
+
+        if (!SetupFindFirstLineW( hinf, source_disks_files_platform, ctx_filename, &ctx ) &&
+            !SetupFindFirstLineW( hinf, source_disks_files, ctx_filename, &ctx ))
+        {
+            free( ctx_filename );
+            return FALSE;
+        }
+
+        free( ctx_filename );
+    }
+    else
+    {
+        if (!SetupFindFirstLineW( hinf, source_disks_files_platform, filename, &ctx ) &&
+            !SetupFindFirstLineW( hinf, source_disks_files, filename, &ctx ))
+        {
+            return FALSE;
+        }
+    }
+
+    if (!SetupGetIntField( &ctx, 1, &id ))
+        return FALSE;
+    *source_id = id;
+
+    if (SetupGetStringFieldW( &ctx, 2, buffer, buffer_size, required_size ))
         return TRUE;
 
     if (required_size) *required_size = 1;

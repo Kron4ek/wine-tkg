@@ -1457,20 +1457,17 @@ static NTSTATUS WINAPI wow64_NtUserThunkLock( void *arg, ULONG size )
 
 static NTSTATUS WINAPI wow64_NtUserCallVulkanDebugReportCallback( void *arg, ULONG size )
 {
-    FIXME( "\n" );
-    return 0;
+    return dispatch_callback( NtUserCallVulkanDebugReportCallback, arg, size );
 }
 
 static NTSTATUS WINAPI wow64_NtUserCallVulkanDebugUtilsCallback( void *arg, ULONG size )
 {
-    FIXME( "\n" );
-    return 0;
+    return dispatch_callback( NtUserCallVulkanDebugUtilsCallback, arg, size );
 }
 
 static NTSTATUS WINAPI wow64_NtUserCallOpenGLDebugMessageCallback( void *arg, ULONG size )
 {
-    FIXME( "\n" );
-    return 0;
+    return dispatch_callback( NtUserCallOpenGLDebugMessageCallback, arg, size );
 }
 
 static NTSTATUS WINAPI wow64_NtUserDriverCallbackFirst0( void *arg, ULONG size )

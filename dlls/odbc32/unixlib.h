@@ -183,6 +183,12 @@ struct param_binding
     struct param *param;
 };
 
+struct SQLHDESC_data
+{
+    struct handle *parent;
+    SQLHDESC driver_hdesc;
+};
+
 struct handle
 {
     /* handles */
@@ -194,12 +200,18 @@ struct handle
     UINT32 env_attr_version;
     UINT32 con_attr_con_timeout;
     UINT32 con_attr_login_timeout;
+    /* statement parameters */
+    struct SQLHDESC_data app_row_desc;
+    struct SQLHDESC_data imp_row_desc;
+    struct SQLHDESC_data app_param_desc;
+    struct SQLHDESC_data imp_param_desc;
     /* drivers and data sources */
     UINT32 drivers_idx;
     void  *drivers_key;
     UINT32 sources_idx;
     void  *sources_key;
     BOOL   sources_system;
+    UINT32 driver_ver;
     /* parameter bindings */
     struct param_binding bind_col;
     struct param_binding bind_parameter;

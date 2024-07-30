@@ -189,8 +189,8 @@ static uint32_t write_string(const char *string, struct fx_write_context *fx)
 
 static void write_pass(struct hlsl_ir_var *var, struct fx_write_context *fx)
 {
-    if (var->state_block_count)
-        hlsl_fixme(fx->ctx, &var->loc, "Write state block assignments.");
+    if (var->state_block_count && var->state_blocks[0]->count)
+        hlsl_fixme(fx->ctx, &var->loc, "Write pass assignments.");
 
     fx->ops->write_pass(var, fx);
 }
@@ -397,6 +397,9 @@ static void write_fx_2_pass(struct hlsl_ir_var *var, struct fx_write_context *fx
 
     /* TODO: annotations */
     /* TODO: assignments */
+
+    /* For some reason every pass adds to the total shader object count. */
+    fx->shader_count++;
 }
 
 static uint32_t get_fx_4_type_size(const struct hlsl_type *type)
@@ -852,6 +855,10 @@ static uint32_t write_fx_2_parameter(const struct hlsl_type *type, const char *n
         case HLSL_CLASS_STRUCT:
             put_u32(buffer, type->e.record.field_count);
             break;
+        case HLSL_CLASS_VERTEX_SHADER:
+        case HLSL_CLASS_PIXEL_SHADER:
+            fx->shader_count += elements_count;
+            break;
         default:
             ;
     }
@@ -1063,7 +1070,7 @@ static const struct fx_write_context_ops fx_2_ops =
 
 static int hlsl_fx_2_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
 {
-    uint32_t offset, size, technique_count, parameter_count, object_count;
+    uint32_t offset, size, technique_count, shader_count, parameter_count, object_count;
     struct vkd3d_bytecode_buffer buffer = { 0 };
     struct vkd3d_bytecode_buffer *structured;
     struct fx_write_context fx;
@@ -1080,7 +1087,7 @@ static int hlsl_fx_2_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
 
     parameter_count = put_u32(structured, 0); /* Parameter count */
     technique_count = put_u32(structured, 0);
-    put_u32(structured, 0); /* Unknown */
+    shader_count = put_u32(structured, 0);
     object_count = put_u32(structured, 0);
 
     write_fx_2_parameters(&fx);
@@ -1089,6 +1096,7 @@ static int hlsl_fx_2_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
 
     write_techniques(ctx->globals, &fx);
     set_u32(structured, technique_count, fx.technique_count);
+    set_u32(structured, shader_count, fx.shader_count);
 
     put_u32(structured, 0); /* String count */
     put_u32(structured, 0); /* Resource count */

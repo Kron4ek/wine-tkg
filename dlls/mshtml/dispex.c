@@ -680,7 +680,7 @@ static HRESULT alloc_dynamic_prop(DispatchEx *This, const WCHAR *name, dynamic_p
         return E_OUTOFMEMORY;
 
     VariantInit(&prop->var);
-    prop->flags = 0;
+    prop->flags = PROPF_WRITABLE | PROPF_CONFIGURABLE | PROPF_ENUMERABLE;
     data->prop_cnt++;
     *ret = prop;
     return S_OK;
@@ -999,7 +999,7 @@ static HRESULT function_value(DispatchEx *dispex, LCID lcid, WORD flags, DISPPAR
     return hres;
 }
 
-static HRESULT function_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
+static HRESULT function_get_dispid(DispatchEx *dispex, const WCHAR *name, DWORD flags, DISPID *dispid)
 {
     DWORD i;
 
@@ -1173,7 +1173,7 @@ static HRESULT get_builtin_func(dispex_data_t *data, DISPID id, func_info_t **re
     return DISP_E_MEMBERNOTFOUND;
 }
 
-static HRESULT get_builtin_id(DispatchEx *This, BSTR name, DWORD grfdex, DISPID *ret)
+static HRESULT get_builtin_id(DispatchEx *This, const WCHAR *name, DWORD grfdex, DISPID *ret)
 {
     int min, max, n, c;
     HRESULT hres;
@@ -1678,13 +1678,6 @@ HRESULT remove_attribute(DispatchEx *This, DISPID id, VARIANT_BOOL *success)
     }
 }
 
-compat_mode_t dispex_compat_mode(DispatchEx *dispex)
-{
-    return dispex->info != dispex->info->desc->delayed_init_info
-        ? dispex->info->compat_mode
-        : dispex->info->desc->vtbl->get_compat_mode(dispex);
-}
-
 HRESULT dispex_to_string(DispatchEx *dispex, BSTR *ret)
 {
     static const WCHAR prefix[8] = L"[object ";
@@ -1741,11 +1734,22 @@ static dispex_data_t *ensure_dispex_info(DispatchEx *dispex, dispex_static_data_
 
 static BOOL ensure_real_info(DispatchEx *dispex)
 {
+    HTMLInnerWindow *script_global = NULL;
+    compat_mode_t compat_mode;
+
     if(dispex->info != dispex->info->desc->delayed_init_info)
         return TRUE;
 
-    dispex->info = ensure_dispex_info(dispex, dispex->info->desc, dispex_compat_mode(dispex), NULL);
+    compat_mode = dispex->info->desc->vtbl->get_compat_mode(dispex, &script_global);
+    dispex->info = ensure_dispex_info(dispex, dispex->info->desc, compat_mode, script_global);
     return dispex->info != NULL;
+}
+
+compat_mode_t dispex_compat_mode(DispatchEx *dispex)
+{
+    if(!ensure_real_info(dispex))
+        return COMPAT_MODE_NONE;
+    return dispex->info->compat_mode;
 }
 
 static inline DispatchEx *impl_from_IWineJSDispatchHost(IWineJSDispatchHost *iface)
@@ -1859,7 +1863,8 @@ static HRESULT WINAPI DispatchEx_GetIDsOfNames(IWineJSDispatchHost *iface, REFII
 
     /* Native ignores all cNames > 1, and doesn't even fill them */
     if(cNames)
-        hres = IWineJSDispatchHost_GetDispID(&This->IWineJSDispatchHost_iface, rgszNames[0], 0, rgDispId);
+        hres = IWineJSDispatchHost_GetDispID(&This->IWineJSDispatchHost_iface, rgszNames[0],
+                                             fdexNameCaseInsensitive, rgDispId);
 
     return hres;
 }
@@ -1877,11 +1882,35 @@ static HRESULT WINAPI DispatchEx_Invoke(IWineJSDispatchHost *iface, DISPID dispI
             pVarResult, pExcepInfo, NULL);
 }
 
+HRESULT dispex_get_id(DispatchEx *dispex, const WCHAR *name, DWORD flags, DISPID *pid)
+{
+    dynamic_prop_t *dprop = NULL;
+    HRESULT hres;
+
+    hres = get_builtin_id(dispex, name, flags, pid);
+    if(hres != DISP_E_UNKNOWNNAME)
+        return hres;
+
+    hres = get_dynamic_prop(dispex, name, flags & ~fdexNameEnsure, &dprop);
+    if(FAILED(hres)) {
+        if(dispex->info->desc->vtbl->find_dispid) {
+            hres = dispex->info->desc->vtbl->find_dispid(dispex, name, flags, pid);
+            if(SUCCEEDED(hres))
+                return hres;
+        }
+        if(flags & fdexNameEnsure)
+            hres = alloc_dynamic_prop(dispex, name, dprop, &dprop);
+        if(FAILED(hres))
+            return hres;
+    }
+
+    *pid = DISPID_DYNPROP_0 + (dprop - dispex->dynamic_data->props);
+    return S_OK;
+}
+
 static HRESULT WINAPI DispatchEx_GetDispID(IWineJSDispatchHost *iface, BSTR bstrName, DWORD grfdex, DISPID *pid)
 {
     DispatchEx *This = impl_from_IWineJSDispatchHost(iface);
-    dynamic_prop_t *dprop = NULL;
-    HRESULT hres;
 
     TRACE("%s (%p)->(%s %lx %p)\n", This->info->desc->name, This, debugstr_w(bstrName), grfdex, pid);
 
@@ -1892,29 +1921,10 @@ static HRESULT WINAPI DispatchEx_GetDispID(IWineJSDispatchHost *iface, BSTR bstr
         return E_OUTOFMEMORY;
     if(This->jsdisp)
         return IWineJSDispatch_GetDispID(This->jsdisp, bstrName, grfdex, pid);
-
-    hres = get_builtin_id(This, bstrName, grfdex, pid);
-    if(hres != DISP_E_UNKNOWNNAME)
-        return hres;
-
-    hres = get_dynamic_prop(This, bstrName, grfdex & ~fdexNameEnsure, &dprop);
-    if(FAILED(hres)) {
-        if(This->info->desc->vtbl->find_dispid) {
-            hres = This->info->desc->vtbl->find_dispid(This, bstrName, grfdex, pid);
-            if(SUCCEEDED(hres))
-                return hres;
-        }
-        if(grfdex & fdexNameEnsure)
-            hres = alloc_dynamic_prop(This, bstrName, dprop, &dprop);
-        if(FAILED(hres))
-            return hres;
-    }
-
-    *pid = DISPID_DYNPROP_0 + (dprop - This->dynamic_data->props);
-    return S_OK;
+    return dispex_get_id(This, bstrName, grfdex, pid);
 }
 
-static HRESULT dispex_prop_get(DispatchEx *dispex, DISPID id, LCID lcid, VARIANT *r, EXCEPINFO *ei, IServiceProvider *caller)
+HRESULT dispex_prop_get(DispatchEx *dispex, DISPID id, LCID lcid, VARIANT *r, EXCEPINFO *ei, IServiceProvider *caller)
 {
     switch(get_dispid_type(id)) {
     case DISPEXPROP_CUSTOM: {
@@ -1950,7 +1960,7 @@ static HRESULT dispex_prop_get(DispatchEx *dispex, DISPID id, LCID lcid, VARIANT
     }
 }
 
-static HRESULT dispex_prop_put(DispatchEx *dispex, DISPID id, LCID lcid, VARIANT *v, EXCEPINFO *ei, IServiceProvider *caller)
+HRESULT dispex_prop_put(DispatchEx *dispex, DISPID id, LCID lcid, VARIANT *v, EXCEPINFO *ei, IServiceProvider *caller)
 {
     static DISPID propput_dispid = DISPID_PROPERTYPUT;
 
@@ -2091,6 +2101,32 @@ static HRESULT WINAPI DispatchEx_InvokeEx(IWineJSDispatchHost *iface, DISPID id,
     }
 }
 
+static HRESULT dispex_prop_delete(DispatchEx *dispex, DISPID id)
+{
+    if(is_custom_dispid(id) && dispex->info->desc->vtbl->delete)
+        return dispex->info->desc->vtbl->delete(dispex, id);
+
+    if(dispex_compat_mode(dispex) < COMPAT_MODE_IE8) {
+        /* Not implemented by IE */
+        return E_NOTIMPL;
+    }
+
+    if(is_dynamic_dispid(id)) {
+        DWORD idx = id - DISPID_DYNPROP_0;
+        dynamic_prop_t *prop;
+
+        if(!get_dynamic_data(dispex) || idx >= dispex->dynamic_data->prop_cnt)
+            return S_OK;
+
+        prop = dispex->dynamic_data->props + idx;
+        VariantClear(&prop->var);
+        prop->flags |= DYNPROP_DELETED;
+        return S_OK;
+    }
+
+    return S_OK;
+}
+
 static HRESULT WINAPI DispatchEx_DeleteMemberByName(IWineJSDispatchHost *iface, BSTR name, DWORD grfdex)
 {
     DispatchEx *This = impl_from_IWineJSDispatchHost(iface);
@@ -2127,28 +2163,7 @@ static HRESULT WINAPI DispatchEx_DeleteMemberByDispID(IWineJSDispatchHost *iface
         return E_OUTOFMEMORY;
     if(This->jsdisp)
         return IWineJSDispatch_DeleteMemberByDispID(This->jsdisp, id);
-    if(is_custom_dispid(id) && This->info->desc->vtbl->delete)
-        return This->info->desc->vtbl->delete(This, id);
-
-    if(dispex_compat_mode(This) < COMPAT_MODE_IE8) {
-        /* Not implemented by IE */
-        return E_NOTIMPL;
-    }
-
-    if(is_dynamic_dispid(id)) {
-        DWORD idx = id - DISPID_DYNPROP_0;
-        dynamic_prop_t *prop;
-
-        if(!get_dynamic_data(This) || idx >= This->dynamic_data->prop_cnt)
-            return S_OK;
-
-        prop = This->dynamic_data->props + idx;
-        VariantClear(&prop->var);
-        prop->flags |= DYNPROP_DELETED;
-        return S_OK;
-    }
-
-    return S_OK;
+    return dispex_prop_delete(This, id);
 }
 
 static HRESULT WINAPI DispatchEx_GetMemberProperties(IWineJSDispatchHost *iface, DISPID id, DWORD grfdexFetch, DWORD *pgrfdex)
@@ -2158,11 +2173,52 @@ static HRESULT WINAPI DispatchEx_GetMemberProperties(IWineJSDispatchHost *iface,
     return E_NOTIMPL;
 }
 
+HRESULT dispex_prop_name(DispatchEx *dispex, DISPID id, BSTR *ret)
+{
+    func_info_t *func;
+    HRESULT hres;
+
+    if(is_custom_dispid(id)) {
+        if(dispex->info->desc->vtbl->get_prop_desc) {
+            struct property_info desc;
+            WCHAR buf[12];
+
+            hres = dispex->info->desc->vtbl->get_prop_desc(dispex, id, &desc);
+            if(FAILED(hres))
+                return hres;
+            if(!desc.name) {
+                swprintf(buf, ARRAYSIZE(buf), L"%u", desc.index);
+                desc.name = buf;
+            }
+            *ret = SysAllocString(desc.name);
+            return *ret ? S_OK : E_OUTOFMEMORY;
+        }
+        if(dispex->info->desc->vtbl->get_name)
+            return dispex->info->desc->vtbl->get_name(dispex, id, ret);
+        return DISP_E_MEMBERNOTFOUND;
+    }
+
+    if(is_dynamic_dispid(id)) {
+        DWORD idx = id - DISPID_DYNPROP_0;
+
+        if(!get_dynamic_data(dispex) || dispex->dynamic_data->prop_cnt <= idx)
+            return DISP_E_MEMBERNOTFOUND;
+
+        *ret = SysAllocString(dispex->dynamic_data->props[idx].name);
+        return *ret ? S_OK : E_OUTOFMEMORY;
+    }
+
+    hres = get_builtin_func(dispex->info, id, &func);
+    if(FAILED(hres))
+        return hres;
+
+    *ret = SysAllocString(func->name);
+    return *ret ? S_OK : E_OUTOFMEMORY;
+}
+
 static HRESULT WINAPI DispatchEx_GetMemberName(IWineJSDispatchHost *iface, DISPID id, BSTR *pbstrName)
 {
     DispatchEx *This = impl_from_IWineJSDispatchHost(iface);
-    func_info_t *func;
-    HRESULT hres;
 
     TRACE("%s (%p)->(%lx %p)\n", This->info->desc->name, This, id, pbstrName);
 
@@ -2170,34 +2226,7 @@ static HRESULT WINAPI DispatchEx_GetMemberName(IWineJSDispatchHost *iface, DISPI
         return E_OUTOFMEMORY;
     if(This->jsdisp)
         return IWineJSDispatch_GetMemberName(This->jsdisp, id, pbstrName);
-
-    if(is_custom_dispid(id)) {
-        if(This->info->desc->vtbl->get_name)
-            return This->info->desc->vtbl->get_name(This, id, pbstrName);
-        return DISP_E_MEMBERNOTFOUND;
-    }
-
-    if(is_dynamic_dispid(id)) {
-        DWORD idx = id - DISPID_DYNPROP_0;
-
-        if(!get_dynamic_data(This) || This->dynamic_data->prop_cnt <= idx)
-            return DISP_E_MEMBERNOTFOUND;
-
-        *pbstrName = SysAllocString(This->dynamic_data->props[idx].name);
-        if(!*pbstrName)
-            return E_OUTOFMEMORY;
-
-        return S_OK;
-    }
-
-    hres = get_builtin_func(This->info, id, &func);
-    if(FAILED(hres))
-        return hres;
-
-    *pbstrName = SysAllocString(func->name);
-    if(!*pbstrName)
-        return E_OUTOFMEMORY;
-    return S_OK;
+    return dispex_prop_name(This, id, pbstrName);
 }
 
 static HRESULT next_dynamic_id(DispatchEx *dispex, DWORD idx, DISPID *ret_id)
@@ -2215,41 +2244,33 @@ static HRESULT next_dynamic_id(DispatchEx *dispex, DWORD idx, DISPID *ret_id)
     return S_OK;
 }
 
-static HRESULT WINAPI DispatchEx_GetNextDispID(IWineJSDispatchHost *iface, DWORD grfdex, DISPID id, DISPID *pid)
+HRESULT dispex_next_id(DispatchEx *dispex, DISPID id, DISPID *ret)
 {
-    DispatchEx *This = impl_from_IWineJSDispatchHost(iface);
     func_info_t *func;
     HRESULT hres;
-
-    TRACE("%s (%p)->(%lx %lx %p)\n", This->info->desc->name, This, grfdex, id, pid);
-
-    if(!ensure_real_info(This))
-        return E_OUTOFMEMORY;
-    if(This->jsdisp)
-        return IWineJSDispatch_GetNextDispID(This->jsdisp, grfdex, id, pid);
 
     if(is_dynamic_dispid(id)) {
         DWORD idx = id - DISPID_DYNPROP_0;
 
-        if(!get_dynamic_data(This) || This->dynamic_data->prop_cnt <= idx)
+        if(!get_dynamic_data(dispex) || dispex->dynamic_data->prop_cnt <= idx)
             return DISP_E_MEMBERNOTFOUND;
 
-        return next_dynamic_id(This, idx+1, pid);
+        return next_dynamic_id(dispex, idx+1, ret);
     }
 
     if(!is_custom_dispid(id)) {
         if(id == DISPID_STARTENUM) {
-            func = This->info->funcs;
+            func = dispex->info->funcs;
         }else {
-            hres = get_builtin_func(This->info, id, &func);
+            hres = get_builtin_func(dispex->info, id, &func);
             if(FAILED(hres))
                 return hres;
             func++;
         }
 
-        while(func < This->info->funcs + This->info->func_cnt) {
+        while(func < dispex->info->funcs + dispex->info->func_cnt) {
             if(func->func_disp_idx == -1) {
-                *pid = func->id;
+                *ret = func->id;
                 return S_OK;
             }
             func++;
@@ -2258,17 +2279,30 @@ static HRESULT WINAPI DispatchEx_GetNextDispID(IWineJSDispatchHost *iface, DWORD
         id = DISPID_STARTENUM;
     }
 
-    if(This->info->desc->vtbl->next_dispid) {
-        hres = This->info->desc->vtbl->next_dispid(This, id, pid);
+    if(dispex->info->desc->vtbl->next_dispid) {
+        hres = dispex->info->desc->vtbl->next_dispid(dispex, id, ret);
         if(hres != S_FALSE)
             return hres;
     }
 
-    if(get_dynamic_data(This) && This->dynamic_data->prop_cnt)
-        return next_dynamic_id(This, 0, pid);
+    if(get_dynamic_data(dispex) && dispex->dynamic_data->prop_cnt)
+        return next_dynamic_id(dispex, 0, ret);
 
-    *pid = DISPID_STARTENUM;
+    *ret = DISPID_STARTENUM;
     return S_FALSE;
+}
+
+static HRESULT WINAPI DispatchEx_GetNextDispID(IWineJSDispatchHost *iface, DWORD grfdex, DISPID id, DISPID *pid)
+{
+    DispatchEx *This = impl_from_IWineJSDispatchHost(iface);
+
+    TRACE("%s (%p)->(%lx %lx %p)\n", This->info->desc->name, This, grfdex, id, pid);
+
+    if(!ensure_real_info(This))
+        return E_OUTOFMEMORY;
+    if(This->jsdisp)
+        return IWineJSDispatch_GetNextDispID(This->jsdisp, grfdex, id, pid);
+    return dispex_next_id(This, id, pid);
 }
 
 static HRESULT WINAPI DispatchEx_GetNameSpaceParent(IWineJSDispatchHost *iface, IUnknown **ppunk)
@@ -2289,35 +2323,69 @@ static HRESULT WINAPI JSDispatchHost_GetJSDispatch(IWineJSDispatchHost *iface, I
     return S_OK;
 }
 
+HRESULT dispex_index_prop_desc(DispatchEx *dispex, DISPID id, struct property_info *desc)
+{
+    desc->id = id;
+    desc->flags = PROPF_WRITABLE | PROPF_CONFIGURABLE;
+    if(dispex->info->desc->vtbl->next_dispid)
+        desc->flags |= PROPF_ENUMERABLE;
+    desc->name = NULL;
+    desc->index = id - MSHTML_DISPID_CUSTOM_MIN;
+    desc->func_iid = 0;
+    return S_OK;
+}
+
+static HRESULT get_host_property_descriptor(DispatchEx *This, DISPID id, struct property_info *desc)
+{
+    HRESULT hres;
+
+    desc->id = id;
+
+    switch(get_dispid_type(id)) {
+    case DISPEXPROP_BUILTIN: {
+        func_info_t *func;
+
+        hres = get_builtin_func(This->info, id, &func);
+        if(FAILED(hres))
+            return hres;
+        desc->flags = PROPF_WRITABLE | PROPF_CONFIGURABLE;
+        desc->name = func->name;
+        if(func->func_disp_idx < 0) {
+            desc->flags |= PROPF_ENUMERABLE;
+            desc->func_iid = 0;
+        }else {
+            desc->func_iid = func->tid;
+        }
+        break;
+    }
+    case DISPEXPROP_DYNAMIC: {
+        dynamic_prop_t *prop = &This->dynamic_data->props[id - DISPID_DYNPROP_0];
+        desc->flags = prop->flags & PROPF_PUBLIC_MASK;
+        desc->name = prop->name;
+        desc->func_iid = 0;
+        break;
+    }
+    case DISPEXPROP_CUSTOM:
+        return This->info->desc->vtbl->get_prop_desc(This, id, desc);
+    }
+
+    return S_OK;
+}
+
 static HRESULT WINAPI JSDispatchHost_LookupProperty(IWineJSDispatchHost *iface, const WCHAR *name, DWORD flags,
                                                     struct property_info *desc)
 {
     DispatchEx *This = impl_from_IWineJSDispatchHost(iface);
-    func_info_t *func;
     DISPID id;
     HRESULT hres;
 
     TRACE("%s (%p)->(%s)\n", This->info->desc->name, This, debugstr_w(name));
 
-    /* FIXME: name cast works as long as the object doesn't require the actual BSTR for its custom
-     * properties, we will need to fix it properly. */
-    hres = get_builtin_id(This, (BSTR)name, flags, &id);
+    hres = dispex_get_id(This, name, flags, &id);
     if(FAILED(hres))
         return hres;
 
-    hres = get_builtin_func(This->info, id, &func);
-    if(FAILED(hres))
-        return hres;
-    desc->id = id;
-    desc->flags = PROPF_WRITABLE | PROPF_CONFIGURABLE;
-    if(func->func_disp_idx < 0) {
-        desc->flags |= PROPF_ENUMERABLE;
-        desc->func_iid = 0;
-    }else {
-        desc->func_iid = func->tid;
-    }
-    desc->name = func->name;
-    return S_OK;
+    return get_host_property_descriptor(This, id, desc);
 }
 
 static HRESULT WINAPI JSDispatchHost_NextProperty(IWineJSDispatchHost *iface, DISPID id, struct property_info *desc)
@@ -2370,6 +2438,32 @@ static HRESULT WINAPI JSDispatchHost_SetProperty(IWineJSDispatchHost *iface, DIS
     return dispex_prop_put(This, id, lcid, v, ei, caller);
 }
 
+static HRESULT WINAPI JSDispatchHost_DeleteProperty(IWineJSDispatchHost *iface, DISPID id)
+{
+    DispatchEx *This = impl_from_IWineJSDispatchHost(iface);
+
+    TRACE("%s (%p)->(%lx)\n", This->info->desc->name, This, id);
+
+    return dispex_prop_delete(This, id);
+}
+
+static HRESULT WINAPI JSDispatchHost_ConfigureProperty(IWineJSDispatchHost *iface, DISPID id, UINT32 flags)
+{
+    DispatchEx *This = impl_from_IWineJSDispatchHost(iface);
+
+    TRACE("%s (%p)->(%lx %x)\n", This->info->desc->name, This, id, flags);
+
+    if(is_dynamic_dispid(id)) {
+        DWORD idx = id - DISPID_DYNPROP_0;
+        if(This->dynamic_data && idx < This->dynamic_data->prop_cnt) {
+            dynamic_prop_t *prop = &This->dynamic_data->props[idx];
+            prop->flags = (prop->flags & ~PROPF_PUBLIC_MASK) | flags;
+        }
+    }
+
+    return S_OK;
+}
+
 static HRESULT WINAPI JSDispatchHost_CallFunction(IWineJSDispatchHost *iface, DISPID id, UINT32 iid, DISPPARAMS *dp, VARIANT *ret,
                                               EXCEPINFO *ei, IServiceProvider *caller)
 {
@@ -2417,6 +2511,8 @@ static IWineJSDispatchHostVtbl JSDispatchHostVtbl = {
     JSDispatchHost_NextProperty,
     JSDispatchHost_GetProperty,
     JSDispatchHost_SetProperty,
+    JSDispatchHost_DeleteProperty,
+    JSDispatchHost_ConfigureProperty,
     JSDispatchHost_CallFunction,
     JSDispatchHost_ToString,
 };
@@ -2572,4 +2668,12 @@ void init_dispatch(DispatchEx *dispex, dispex_static_data_t *data, HTMLInnerWind
     }else {
         dispex->info = ensure_dispex_info(dispex, data, compat_mode, script_global);
     }
+}
+
+void init_dispatch_with_owner(DispatchEx *dispex, dispex_static_data_t *desc, DispatchEx *owner)
+{
+    HTMLInnerWindow *script_global = get_script_global(owner);
+    init_dispatch(dispex, desc, script_global, dispex_compat_mode(owner));
+    if(script_global)
+        IHTMLWindow2_Release(&script_global->base.IHTMLWindow2_iface);
 }

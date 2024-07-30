@@ -55,16 +55,13 @@ static HRESULT WINAPI HTMLDOMAttribute_get_nodeName(IHTMLDOMAttribute *iface, BS
         return *p ? S_OK : E_OUTOFMEMORY;
     }
 
-    return IWineJSDispatchHost_GetMemberName(&This->elem->node.event_target.dispex.IWineJSDispatchHost_iface, This->dispid, p);
+    return dispex_prop_name(&This->elem->node.event_target.dispex, This->dispid, p);
 }
 
 static HRESULT WINAPI HTMLDOMAttribute_put_nodeValue(IHTMLDOMAttribute *iface, VARIANT v)
 {
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
-    DISPID dispidNamed = DISPID_PROPERTYPUT;
-    DISPPARAMS dp = {&v, &dispidNamed, 1, 1};
     EXCEPINFO ei;
-    VARIANT ret;
 
     TRACE("(%p)->(%s)\n", This, debugstr_variant(&v));
 
@@ -72,9 +69,7 @@ static HRESULT WINAPI HTMLDOMAttribute_put_nodeValue(IHTMLDOMAttribute *iface, V
         return VariantCopy(&This->value, &v);
 
     memset(&ei, 0, sizeof(ei));
-
-    return IWineJSDispatchHost_InvokeEx(&This->elem->node.event_target.dispex.IWineJSDispatchHost_iface, This->dispid, LOCALE_SYSTEM_DEFAULT,
-            DISPATCH_PROPERTYPUT, &dp, &ret, &ei, NULL);
+    return dispex_prop_put(&This->elem->node.event_target.dispex, This->dispid, LOCALE_SYSTEM_DEFAULT, &v, &ei, NULL);
 }
 
 static HRESULT WINAPI HTMLDOMAttribute_get_nodeValue(IHTMLDOMAttribute *iface, VARIANT *p)
@@ -110,7 +105,7 @@ static HRESULT WINAPI HTMLDOMAttribute_get_specified(IHTMLDOMAttribute *iface, V
         return S_OK;
     }
 
-    hres = IWineJSDispatchHost_GetMemberName(&This->elem->node.event_target.dispex.IWineJSDispatchHost_iface, This->dispid, &name);
+    hres = dispex_prop_name(&This->elem->node.event_target.dispex, This->dispid, &name);
     if(FAILED(hres))
         return hres;
 
@@ -422,7 +417,8 @@ HTMLDOMAttribute *unsafe_impl_from_IHTMLDOMAttribute(IHTMLDOMAttribute *iface)
     return iface->lpVtbl == &HTMLDOMAttributeVtbl ? impl_from_IHTMLDOMAttribute(iface) : NULL;
 }
 
-HRESULT HTMLDOMAttribute_Create(const WCHAR *name, HTMLElement *elem, DISPID dispid, compat_mode_t compat_mode, HTMLDOMAttribute **attr)
+HRESULT HTMLDOMAttribute_Create(const WCHAR *name, HTMLElement *elem, DISPID dispid,
+                                HTMLDocumentNode *doc, HTMLDOMAttribute **attr)
 {
     HTMLAttributeCollection *col;
     HTMLDOMAttribute *ret;
@@ -437,7 +433,8 @@ HRESULT HTMLDOMAttribute_Create(const WCHAR *name, HTMLElement *elem, DISPID dis
     ret->dispid = dispid;
     ret->elem = elem;
 
-    init_dispatch(&ret->dispex, &HTMLDOMAttribute_dispex, NULL, compat_mode);
+    init_dispatch(&ret->dispex, &HTMLDOMAttribute_dispex, doc->script_global,
+                  dispex_compat_mode(&doc->script_global->event_target.dispex));
 
     /* For attributes attached to an element, (elem,dispid) pair should be valid used for its operation. */
     if(elem) {

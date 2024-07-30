@@ -66,7 +66,7 @@ static void diag( SQLHANDLE handle, SQLSMALLINT type )
 {
     SQLINTEGER err;
     SQLSMALLINT len;
-    SQLCHAR state[5], msg[256];
+    SQLCHAR state[6], msg[256];
     SQLRETURN ret;
 
     state[0] = 0;
@@ -119,7 +119,8 @@ static void test_SQLConnect( void )
     ok( len == strlen(str), "got %d\n", len );
     trace( "version %s\n", str );
 
-    ret = SQLConnect( con, (SQLCHAR *)"winetest", 8, (SQLCHAR *)"winetest", 8, (SQLCHAR *)"winetest", 8 );
+    ret = SQLConnect( con, (SQLCHAR *)"winetest", SQL_NTS, (SQLCHAR *)"winetest", SQL_NTS, (SQLCHAR *)"winetest",
+                      SQL_NTS );
     if (ret == SQL_ERROR) diag( con, SQL_HANDLE_DBC );
     if (ret != SQL_SUCCESS)
     {
@@ -135,6 +136,18 @@ static void test_SQLConnect( void )
     ok( ret == SQL_SUCCESS, "got %d\n", ret );
     ok( timeout != 0xdeadbeef, "timeout not set\n" );
     ok( size == -1, "size set\n" );
+
+    ret = SQLTransact( NULL, NULL, SQL_COMMIT );
+    ok( ret == SQL_INVALID_HANDLE, "got %d\n", ret );
+
+    ret = SQLTransact( env, NULL, SQL_COMMIT );
+    ok( ret == SQL_SUCCESS, "got %d\n", ret );
+
+    ret = SQLTransact( NULL, con, SQL_COMMIT );
+    ok( ret == SQL_SUCCESS, "got %d\n", ret );
+
+    ret = SQLTransact( env, con, SQL_COMMIT );
+    ok( ret == SQL_SUCCESS, "got %d\n", ret );
 
     ret = SQLDisconnect( con );
     ok( ret == SQL_SUCCESS, "got %d\n", ret );
@@ -300,8 +313,9 @@ static void test_SQLExecDirect( void )
     SQLRETURN ret;
     SQLLEN count, len_id[2], len_name[2];
     SQLULEN rows_fetched;
-    SQLINTEGER id[2];
-    SQLCHAR name[32];
+    SQLINTEGER id[2], err;
+    SQLCHAR name[32], msg[32], state[6];
+    SQLSMALLINT len;
 
     ret = SQLAllocEnv( &env );
     ok( ret == SQL_SUCCESS, "got %d\n", ret );
@@ -447,6 +461,18 @@ static void test_SQLExecDirect( void )
 
     ret = SQLExecDirect( stmt, (SQLCHAR *)"DROP TABLE winetest", ARRAYSIZE("DROP TABLE winetest") - 1 );
     ok( ret == SQL_SUCCESS, "got %d\n", ret );
+
+    ret = SQLError( NULL, NULL, NULL, state, &err, msg, sizeof(msg), &len );
+    ok( ret == SQL_INVALID_HANDLE, "got %d\n", ret );
+
+    ret = SQLError( env, NULL, NULL, state, &err, msg, sizeof(msg), &len );
+    ok( ret == SQL_NO_DATA, "got %d\n", ret );
+
+    ret = SQLError( env, con, NULL, state, &err, msg, sizeof(msg), &len );
+    ok( ret == SQL_NO_DATA, "got %d\n", ret );
+
+    ret = SQLError( env, con, stmt, state, &err, msg, sizeof(msg), &len );
+    ok( ret == SQL_NO_DATA, "got %d\n", ret );
 
     ret = SQLFreeStmt( stmt, SQL_UNBIND );
     ok( ret == SQL_SUCCESS, "got %d\n", ret );

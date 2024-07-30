@@ -1185,6 +1185,7 @@ static HRESULT d3d9_device_reset(struct d3d9_device *device,
                     surface->parent_device = &device->IDirect3DDevice9Ex_iface;
             }
 
+            device->in_scene = FALSE;
             device->device_state = D3D9_DEVICE_STATE_OK;
 
             if (extended)
@@ -1797,6 +1798,13 @@ static HRESULT WINAPI d3d9_device_UpdateSurface(IDirect3DDevice9Ex *iface,
         WARN("Surface formats (%#x/%#x) don't match.\n",
                 d3dformat_from_wined3dformat(src_desc.format),
                 d3dformat_from_wined3dformat(dst_desc.format));
+        return D3DERR_INVALIDCALL;
+    }
+
+    if (src_desc.multisample_type != WINED3D_MULTISAMPLE_NONE || dst_desc.multisample_type != WINED3D_MULTISAMPLE_NONE)
+    {
+        wined3d_mutex_unlock();
+        WARN("Cannot use UpdateSurface with multisampled surfaces.\n");
         return D3DERR_INVALIDCALL;
     }
 

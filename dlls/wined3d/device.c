@@ -3022,7 +3022,7 @@ static void init_transformed_lights(struct lights_settings *ls,
             continue;
 
         light = &ls->lights[index];
-        wined3d_vec4_transform(&vec4, &light_info->direction, &state->transforms[WINED3D_TS_VIEW]);
+        wined3d_vec4_transform(&vec4, &light_info->constants.direction, &state->transforms[WINED3D_TS_VIEW]);
         light->direction = *(struct wined3d_vec3 *)&vec4;
         wined3d_vec3_normalise(&light->direction);
 
@@ -3040,7 +3040,7 @@ static void init_transformed_lights(struct lights_settings *ls,
 
         light = &ls->lights[index];
 
-        wined3d_vec4_transform(&light->position, &light_info->position, &state->transforms[WINED3D_TS_VIEW]);
+        wined3d_vec4_transform(&light->position, &light_info->constants.position, &state->transforms[WINED3D_TS_VIEW]);
         light->range = light_info->OriginalParms.range;
         light->c_att = light_info->OriginalParms.attenuation0;
         light->l_att = light_info->OriginalParms.attenuation1;
@@ -3060,8 +3060,8 @@ static void init_transformed_lights(struct lights_settings *ls,
 
         light = &ls->lights[index];
 
-        wined3d_vec4_transform(&light->position, &light_info->position, &state->transforms[WINED3D_TS_VIEW]);
-        wined3d_vec4_transform(&vec4, &light_info->direction, &state->transforms[WINED3D_TS_VIEW]);
+        wined3d_vec4_transform(&light->position, &light_info->constants.position, &state->transforms[WINED3D_TS_VIEW]);
+        wined3d_vec4_transform(&vec4, &light_info->constants.direction, &state->transforms[WINED3D_TS_VIEW]);
         light->direction = *(struct wined3d_vec3 *)&vec4;
         wined3d_vec3_normalise(&light->direction);
         light->range = light_info->OriginalParms.range;
@@ -3086,7 +3086,7 @@ static void init_transformed_lights(struct lights_settings *ls,
 
         light = &ls->lights[index];
 
-        wined3d_vec4_transform(&vec4, &light_info->position, &state->transforms[WINED3D_TS_VIEW]);
+        wined3d_vec4_transform(&vec4, &light_info->constants.position, &state->transforms[WINED3D_TS_VIEW]);
         *(struct wined3d_vec3 *)&light->position = *(struct wined3d_vec3 *)&vec4;
         wined3d_vec3_normalise((struct wined3d_vec3 *)&light->position);
         light->diffuse = light_info->OriginalParms.diffuse;
@@ -5256,6 +5256,8 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
     if (reset_state)
     {
         TRACE("Resetting state.\n");
+        if (device->inScene)
+            wined3d_device_end_scene(device);
         wined3d_device_context_emit_reset_state(&device->cs->c, false);
         state_cleanup(state);
 

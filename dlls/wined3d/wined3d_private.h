@@ -1751,10 +1751,8 @@ void dispatch_compute(struct wined3d_device *device, const struct wined3d_state 
 
 #define STATE_LIGHT_TYPE (STATE_VIEWPORT + 1)
 #define STATE_IS_LIGHT_TYPE(a) ((a) == STATE_LIGHT_TYPE)
-#define STATE_ACTIVELIGHT(a) (STATE_LIGHT_TYPE + 1 + (a))
-#define STATE_IS_ACTIVELIGHT(a) ((a) >= STATE_ACTIVELIGHT(0) && (a) < STATE_ACTIVELIGHT(WINED3D_MAX_ACTIVE_LIGHTS))
 
-#define STATE_SCISSORRECT (STATE_ACTIVELIGHT(WINED3D_MAX_ACTIVE_LIGHTS - 1) + 1)
+#define STATE_SCISSORRECT (STATE_LIGHT_TYPE + 1)
 #define STATE_IS_SCISSORRECT(a) ((a) == STATE_SCISSORRECT)
 
 #define STATE_CLIPPLANE(a) (STATE_SCISSORRECT + 1 + (a))
@@ -2065,6 +2063,14 @@ void context_state_drawbuf(struct wined3d_context *context,
 void context_state_fb(struct wined3d_context *context,
         const struct wined3d_state *state, DWORD state_id);
 
+struct wined3d_light_constants
+{
+    struct wined3d_color diffuse, specular, ambient;
+    struct wined3d_vec4 position, direction;
+    float range, falloff, cos_half_theta, cos_half_phi;
+    float const_att, linear_att, quad_att;
+};
+
 /*****************************************************************************
  * Internal representation of a light
  */
@@ -2075,9 +2081,8 @@ struct wined3d_light_info
     LONG         glIndex;
     BOOL         enabled;
 
-    /* Converted parms to speed up swapping lights */
-    struct wined3d_vec4 position;
-    struct wined3d_vec4 direction;
+    /* Computed constants used by the vertex pipe. */
+    struct wined3d_light_constants constants;
 
     struct rb_entry entry;
     struct list changed_entry;
@@ -2767,9 +2772,11 @@ BOOL wined3d_get_app_name(char *app_name, unsigned int app_name_size);
 
 struct wined3d_ffp_vs_constants
 {
+    struct wined3d_matrix texture_matrices[WINED3D_MAX_FFP_TEXTURES];
     struct wined3d_ffp_light_constants
     {
         struct wined3d_color ambient;
+        struct wined3d_light_constants lights[8];
     } light;
 };
 
@@ -3343,6 +3350,7 @@ struct wined3d_texture
 
     /* Color key field accessed from the client side. */
     struct wined3d_color_key src_blt_color_key;
+    uint32_t color_key_flags;
 
     struct wined3d_dirty_regions
     {
@@ -4376,8 +4384,8 @@ void get_modelview_matrix(const struct wined3d_context *context, const struct wi
         unsigned int index, struct wined3d_matrix *mat);
 void get_projection_matrix(const struct wined3d_context *context, const struct wined3d_state *state,
         struct wined3d_matrix *mat);
-void get_texture_matrix(const struct wined3d_context *context, const struct wined3d_state *state,
-        unsigned int tex, struct wined3d_matrix *mat);
+void get_texture_matrix(const struct wined3d_stream_info *si,
+        const struct wined3d_stateblock_state *state, const unsigned int tex, struct wined3d_matrix *mat);
 void get_pointsize_minmax(const struct wined3d_context *context, const struct wined3d_state *state,
         float *out_min, float *out_max);
 void get_pointsize(const struct wined3d_context *context, const struct wined3d_state *state,

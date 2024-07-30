@@ -20,12 +20,17 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
+#include "winnls.h"
 #include "winuser.h"
 #include "winreg.h"
+#include "ntsecapi.h"
+#include "wincrypt.h"
+#include "mscat.h"
 #include "devguid.h"
 #include "initguid.h"
 #include "devpkey.h"
@@ -34,6 +39,7 @@
 #include "cguid.h"
 
 #include "wine/test.h"
+#include "wine/mssign.h"
 
 /* This is a unique guid for testing purposes */
 static GUID guid = {0x6a55b5a4, 0x3f65, 0x11db, {0xb7,0x04,0x00,0x11,0x95,0x5c,0x2b,0xdb}};
@@ -41,8 +47,9 @@ static GUID guid2 = {0x6a55b5a5, 0x3f65, 0x11db, {0xb7,0x04,0x00,0x11,0x95,0x5c,
 static GUID iface_guid = {0xdeadbeef, 0x3f65, 0x11db, {0xb7,0x04,0x00,0x11,0x95,0x5c,0x2b,0xdb}};
 static GUID iface_guid2 = {0xdeadf00d, 0x3f65, 0x11db, {0xb7,0x04,0x00,0x11,0x95,0x5c,0x2b,0xdb}};
 
-BOOL (WINAPI *pSetupDiSetDevicePropertyW)(HDEVINFO, PSP_DEVINFO_DATA, const DEVPROPKEY *, DEVPROPTYPE, const BYTE *, DWORD, DWORD);
-BOOL (WINAPI *pSetupDiGetDevicePropertyW)(HDEVINFO, PSP_DEVINFO_DATA, const DEVPROPKEY *, DEVPROPTYPE *, BYTE *, DWORD, DWORD *, DWORD);
+static BOOL (WINAPI *pSetupDiSetDevicePropertyW)(HDEVINFO, SP_DEVINFO_DATA *, const DEVPROPKEY *, DEVPROPTYPE, const BYTE *, DWORD, DWORD);
+static BOOL (WINAPI *pSetupDiGetDevicePropertyW)(HDEVINFO, SP_DEVINFO_DATA *, const DEVPROPKEY *, DEVPROPTYPE *, BYTE *, DWORD, DWORD *, DWORD);
+static BOOL (WINAPI *pSetupQueryInfOriginalFileInformationA)(SP_INF_INFORMATION *, UINT, SP_ALTPLATFORM_INFO *, SP_ORIGINAL_FILE_INFO_A *);
 
 static BOOL wow64;
 
@@ -75,6 +82,241 @@ static void load_resource(const char *name, const char *filename)
     WriteFile( file, ptr, SizeofResource( GetModuleHandleA(NULL), res ), &written, NULL );
     ok( written == SizeofResource( GetModuleHandleA(NULL), res ), "couldn't write resource\n" );
     CloseHandle( file );
+}
+
+struct testsign_context
+{
+    HCRYPTPROV provider;
+    const CERT_CONTEXT *cert, *root_cert, *publisher_cert;
+    HCERTSTORE root_store, publisher_store;
+};
+
+static BOOL testsign_create_cert(struct testsign_context *ctx)
+{
+    BYTE encoded_name[100], encoded_key_id[200], public_key_info_buffer[1000];
+    WCHAR container_name[26];
+    BYTE hash_buffer[16], cert_buffer[1000], provider_nameA[100], serial[16];
+    CERT_PUBLIC_KEY_INFO *public_key_info = (CERT_PUBLIC_KEY_INFO *)public_key_info_buffer;
+    CRYPT_KEY_PROV_INFO provider_info = {0};
+    CRYPT_ALGORITHM_IDENTIFIER algid = {0};
+    CERT_AUTHORITY_KEY_ID_INFO key_info;
+    CERT_INFO cert_info = {0};
+    WCHAR provider_nameW[100];
+    CERT_EXTENSION extension;
+    HCRYPTKEY key;
+    DWORD size;
+    BOOL ret;
+
+    memset(ctx, 0, sizeof(*ctx));
+
+    srand(time(NULL));
+    swprintf(container_name, ARRAY_SIZE(container_name), L"wine_testsign%u", rand());
+
+    ret = CryptAcquireContextW(&ctx->provider, container_name, NULL, PROV_RSA_FULL, CRYPT_NEWKEYSET);
+    ok(ret, "Failed to create container, error %#lx\n", GetLastError());
+
+    ret = CryptGenKey(ctx->provider, AT_SIGNATURE, CRYPT_EXPORTABLE, &key);
+    ok(ret, "Failed to create key, error %#lx\n", GetLastError());
+    ret = CryptDestroyKey(key);
+    ok(ret, "Failed to destroy key, error %#lx\n", GetLastError());
+    ret = CryptGetUserKey(ctx->provider, AT_SIGNATURE, &key);
+    ok(ret, "Failed to get user key, error %#lx\n", GetLastError());
+    ret = CryptDestroyKey(key);
+    ok(ret, "Failed to destroy key, error %#lx\n", GetLastError());
+
+    size = sizeof(encoded_name);
+    ret = CertStrToNameA(X509_ASN_ENCODING, "CN=winetest_cert", CERT_X500_NAME_STR, NULL, encoded_name, &size, NULL);
+    ok(ret, "Failed to convert name, error %#lx\n", GetLastError());
+    key_info.CertIssuer.cbData = size;
+    key_info.CertIssuer.pbData = encoded_name;
+
+    size = sizeof(public_key_info_buffer);
+    ret = CryptExportPublicKeyInfo(ctx->provider, AT_SIGNATURE, X509_ASN_ENCODING, public_key_info, &size);
+    ok(ret, "Failed to export public key, error %#lx\n", GetLastError());
+    cert_info.SubjectPublicKeyInfo = *public_key_info;
+
+    size = sizeof(hash_buffer);
+    ret = CryptHashPublicKeyInfo(ctx->provider, CALG_MD5, 0, X509_ASN_ENCODING, public_key_info, hash_buffer, &size);
+    ok(ret, "Failed to hash public key, error %#lx\n", GetLastError());
+
+    key_info.KeyId.cbData = size;
+    key_info.KeyId.pbData = hash_buffer;
+
+    RtlGenRandom(serial, sizeof(serial));
+    key_info.CertSerialNumber.cbData = sizeof(serial);
+    key_info.CertSerialNumber.pbData = serial;
+
+    size = sizeof(encoded_key_id);
+    ret = CryptEncodeObject(X509_ASN_ENCODING, X509_AUTHORITY_KEY_ID, &key_info, encoded_key_id, &size);
+    ok(ret, "Failed to convert name, error %#lx\n", GetLastError());
+
+    extension.pszObjId = (char *)szOID_AUTHORITY_KEY_IDENTIFIER;
+    extension.fCritical = TRUE;
+    extension.Value.cbData = size;
+    extension.Value.pbData = encoded_key_id;
+
+    cert_info.dwVersion = CERT_V3;
+    cert_info.SerialNumber = key_info.CertSerialNumber;
+    cert_info.SignatureAlgorithm.pszObjId = (char *)szOID_RSA_SHA1RSA;
+    cert_info.Issuer = key_info.CertIssuer;
+    GetSystemTimeAsFileTime(&cert_info.NotBefore);
+    GetSystemTimeAsFileTime(&cert_info.NotAfter);
+    cert_info.NotAfter.dwHighDateTime += 1;
+    cert_info.Subject = key_info.CertIssuer;
+    cert_info.cExtension = 1;
+    cert_info.rgExtension = &extension;
+    algid.pszObjId = (char *)szOID_RSA_SHA1RSA;
+    size = sizeof(cert_buffer);
+    ret = CryptSignAndEncodeCertificate(ctx->provider, AT_SIGNATURE, X509_ASN_ENCODING,
+            X509_CERT_TO_BE_SIGNED, &cert_info, &algid, NULL, cert_buffer, &size);
+    ok(ret, "Failed to create certificate, error %#lx\n", GetLastError());
+
+    ctx->cert = CertCreateCertificateContext(X509_ASN_ENCODING, cert_buffer, size);
+    ok(!!ctx->cert, "Failed to create context, error %#lx\n", GetLastError());
+
+    size = sizeof(provider_nameA);
+    ret = CryptGetProvParam(ctx->provider, PP_NAME, provider_nameA, &size, 0);
+    ok(ret, "Failed to get prov param, error %#lx\n", GetLastError());
+    MultiByteToWideChar(CP_ACP, 0, (char *)provider_nameA, -1, provider_nameW, ARRAY_SIZE(provider_nameW));
+
+    provider_info.pwszContainerName = (WCHAR *)container_name;
+    provider_info.pwszProvName = provider_nameW;
+    provider_info.dwProvType = PROV_RSA_FULL;
+    provider_info.dwKeySpec = AT_SIGNATURE;
+    ret = CertSetCertificateContextProperty(ctx->cert, CERT_KEY_PROV_INFO_PROP_ID, 0, &provider_info);
+    ok(ret, "Failed to set provider info, error %#lx\n", GetLastError());
+
+    ctx->root_store = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_A, 0, 0, CERT_SYSTEM_STORE_LOCAL_MACHINE, "root");
+    if (!ctx->root_store && GetLastError() == ERROR_ACCESS_DENIED)
+    {
+        skip("Failed to open root store.\n");
+
+        ret = CertFreeCertificateContext(ctx->cert);
+        ok(ret, "Failed to free certificate, error %lu\n", GetLastError());
+        ret = CryptReleaseContext(ctx->provider, 0);
+        ok(ret, "failed to release context, error %lu\n", GetLastError());
+
+        return FALSE;
+    }
+    ok(!!ctx->root_store, "Failed to open store, error %lu\n", GetLastError());
+    ret = CertAddCertificateContextToStore(ctx->root_store, ctx->cert, CERT_STORE_ADD_ALWAYS, &ctx->root_cert);
+    if (!ret && GetLastError() == ERROR_ACCESS_DENIED)
+    {
+        skip("Failed to add self-signed certificate to store.\n");
+
+        ret = CertFreeCertificateContext(ctx->cert);
+        ok(ret, "Failed to free certificate, error %lu\n", GetLastError());
+        ret = CertCloseStore(ctx->root_store, CERT_CLOSE_STORE_CHECK_FLAG);
+        ok(ret, "Failed to close store, error %lu\n", GetLastError());
+        ret = CryptReleaseContext(ctx->provider, 0);
+        ok(ret, "failed to release context, error %lu\n", GetLastError());
+
+        return FALSE;
+    }
+    ok(ret, "Failed to add certificate, error %lu\n", GetLastError());
+
+    ctx->publisher_store = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_A, 0, 0,
+            CERT_SYSTEM_STORE_LOCAL_MACHINE, "trustedpublisher");
+    ok(!!ctx->publisher_store, "Failed to open store, error %lu\n", GetLastError());
+    ret = CertAddCertificateContextToStore(ctx->publisher_store, ctx->cert,
+            CERT_STORE_ADD_ALWAYS, &ctx->publisher_cert);
+    ok(ret, "Failed to add certificate, error %lu\n", GetLastError());
+
+    return TRUE;
+}
+
+static void testsign_cleanup(struct testsign_context *ctx)
+{
+    BOOL ret;
+
+    ret = CertFreeCertificateContext(ctx->cert);
+    ok(ret, "Failed to free certificate, error %lu\n", GetLastError());
+
+    ret = CertFreeCertificateContext(ctx->root_cert);
+    ok(ret, "Failed to free certificate context, error %lu\n", GetLastError());
+    ret = CertCloseStore(ctx->root_store, CERT_CLOSE_STORE_CHECK_FLAG);
+    ok(ret, "Failed to close store, error %lu\n", GetLastError());
+
+    ret = CertFreeCertificateContext(ctx->publisher_cert);
+    ok(ret, "Failed to free certificate context, error %lu\n", GetLastError());
+    ret = CertCloseStore(ctx->publisher_store, CERT_CLOSE_STORE_CHECK_FLAG);
+    ok(ret, "Failed to close store, error %lu\n", GetLastError());
+
+    ret = CryptReleaseContext(ctx->provider, 0);
+    ok(ret, "failed to release context, error %lu\n", GetLastError());
+}
+
+static void testsign_sign(struct testsign_context *ctx, const WCHAR *filename)
+{
+    static HRESULT (WINAPI *pSignerSign)(SIGNER_SUBJECT_INFO *subject, SIGNER_CERT *cert,
+            SIGNER_SIGNATURE_INFO *signature, SIGNER_PROVIDER_INFO *provider,
+            const WCHAR *timestamp, CRYPT_ATTRIBUTES *attr, void *sip_data);
+
+    SIGNER_ATTR_AUTHCODE authcode = {sizeof(authcode)};
+    SIGNER_SIGNATURE_INFO signature = {sizeof(signature)};
+    SIGNER_SUBJECT_INFO subject = {sizeof(subject)};
+    SIGNER_CERT_STORE_INFO store = {sizeof(store)};
+    SIGNER_CERT cert_info = {sizeof(cert_info)};
+    SIGNER_FILE_INFO file = {sizeof(file)};
+    DWORD index = 0;
+    HRESULT hr;
+
+    if (!pSignerSign)
+        pSignerSign = (void *)GetProcAddress(LoadLibraryA("mssign32"), "SignerSign");
+
+    subject.dwSubjectChoice = 1;
+    subject.pdwIndex = &index;
+    subject.pSignerFileInfo = &file;
+    file.pwszFileName = (WCHAR *)filename;
+    cert_info.dwCertChoice = 2;
+    cert_info.pCertStoreInfo = &store;
+    store.pSigningCert = ctx->cert;
+    store.dwCertPolicy = 0;
+    signature.algidHash = CALG_SHA_256;
+    signature.dwAttrChoice = SIGNER_AUTHCODE_ATTR;
+    signature.pAttrAuthcode = &authcode;
+    authcode.pwszName = L"";
+    authcode.pwszInfo = L"";
+    hr = pSignerSign(&subject, &cert_info, &signature, NULL, NULL, NULL, NULL);
+    todo_wine ok(hr == S_OK || broken(hr == NTE_BAD_ALGID) /* < 7 */, "Failed to sign, hr %#lx\n", hr);
+}
+
+static void add_file_to_catalog(HANDLE catalog, const WCHAR *file)
+{
+    SIP_SUBJECTINFO subject_info = {sizeof(SIP_SUBJECTINFO)};
+    SIP_INDIRECT_DATA *indirect_data;
+    CRYPTCATMEMBER *member;
+    WCHAR hash_buffer[100];
+    GUID subject_guid;
+    unsigned int i;
+    DWORD size;
+    BOOL ret;
+
+    ret = CryptSIPRetrieveSubjectGuidForCatalogFile(file, NULL, &subject_guid);
+    todo_wine ok(ret, "Failed to get subject guid, error %lu\n", GetLastError());
+
+    size = 0;
+    subject_info.pgSubjectType = &subject_guid;
+    subject_info.pwsFileName = file;
+    subject_info.DigestAlgorithm.pszObjId = (char *)szOID_OIWSEC_sha1;
+    ret = CryptSIPCreateIndirectData(&subject_info, &size, NULL);
+    todo_wine ok(ret, "Failed to get indirect data size, error %lu\n", GetLastError());
+
+    indirect_data = malloc(size);
+    ret = CryptSIPCreateIndirectData(&subject_info, &size, indirect_data);
+    todo_wine ok(ret, "Failed to get indirect data, error %lu\n", GetLastError());
+    if (ret)
+    {
+        memset(hash_buffer, 0, sizeof(hash_buffer));
+        for (i = 0; i < indirect_data->Digest.cbData; ++i)
+            swprintf(&hash_buffer[i * 2], 2, L"%02X", indirect_data->Digest.pbData[i]);
+
+        member = CryptCATPutMemberInfo(catalog, (WCHAR *)file,
+                hash_buffer, &subject_guid, 0, size, (BYTE *)indirect_data);
+        ok(!!member, "Failed to write member, error %lu\n", GetLastError());
+    }
+
+    free(indirect_data);
 }
 
 static void test_create_device_list_ex(void)
@@ -2106,7 +2348,7 @@ static void test_device_interface_key(void)
     ok(ret == ERROR_FILE_NOT_FOUND, "key shouldn't exist\n");
 
     dikey = SetupDiCreateDeviceInterfaceRegKeyA(set, &iface, 0, KEY_ALL_ACCESS, NULL, NULL);
-    ok(dikey != INVALID_HANDLE_VALUE, "got error %lu\n", GetLastError());
+    ok(dikey != INVALID_HANDLE_VALUE, "Got error %#lx\n", GetLastError());
 
     ret = RegOpenKeyA(parent, "#\\Device Parameters", &key);
     ok(!ret, "key should exist: %lu\n", ret);
@@ -2122,7 +2364,7 @@ static void test_device_interface_key(void)
     RegCloseKey(key);
 
     ret = SetupDiDeleteDeviceInterfaceRegKey(set, &iface, 0);
-    ok(ret, "got error %lu\n", GetLastError());
+    ok(ret, "Got error %#lx\n", GetLastError());
 
     ret = RegOpenKeyA(parent, "#\\Device Parameters", &key);
     ok(ret == ERROR_FILE_NOT_FOUND, "key shouldn't exist\n");
@@ -3407,10 +3649,348 @@ todo_wine {
     SetupDiDestroyDeviceInfoList(set);
 }
 
+static BOOL file_exists(const char *path)
+{
+    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+static BOOL is_in_inf_dir(const char *path)
+{
+    char expect[MAX_PATH];
+
+    GetWindowsDirectoryA(expect, sizeof(expect));
+    strcat(expect, "\\inf\\");
+    return !strncasecmp(path, expect, strrchr(path, '\\') - path);
+}
+
+static void check_original_file_name(const char *dest_inf, const char *src_inf, const char *src_catalog)
+{
+    SP_ORIGINAL_FILE_INFO_A orig_info;
+    SP_INF_INFORMATION *inf_info;
+    DWORD size;
+    HINF hinf;
+    BOOL res;
+
+    if (!pSetupQueryInfOriginalFileInformationA)
+    {
+        win_skip("SetupQueryInfOriginalFileInformationA is not available\n");
+        return;
+    }
+
+    hinf = SetupOpenInfFileA(dest_inf, NULL, INF_STYLE_WIN4, NULL);
+    ok(hinf != NULL, "Failed to open INF file, error %lu.\n", GetLastError());
+
+    res = SetupGetInfInformationA(hinf, INFINFO_INF_SPEC_IS_HINF, NULL, 0, &size);
+    ok(res, "Failed to get INF information, error %lu.\n", GetLastError());
+
+    inf_info = malloc(size);
+
+    res = SetupGetInfInformationA(hinf, INFINFO_INF_SPEC_IS_HINF, inf_info, size, NULL);
+    ok(res, "Failed to get INF information, error %lu.\n", GetLastError());
+
+    orig_info.cbSize = 0;
+    SetLastError(0xdeadbeef);
+    res = pSetupQueryInfOriginalFileInformationA(inf_info, 0, NULL, &orig_info);
+    ok(!res, "Got %d.\n", res);
+    ok(GetLastError() == ERROR_INVALID_USER_BUFFER, "Got error %#lx.\n", GetLastError());
+
+    orig_info.cbSize = sizeof(orig_info);
+    SetLastError(0xdeadbeef);
+    res = pSetupQueryInfOriginalFileInformationA(inf_info, 0, NULL, &orig_info);
+    ok(res == TRUE, "Got %d.\n", res);
+    ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(!strcmp(orig_info.OriginalCatalogName, src_catalog), "Expected original catalog name %s, got %s.\n",
+            debugstr_a(src_catalog), debugstr_a(orig_info.OriginalCatalogName));
+    ok(!strcmp(orig_info.OriginalInfName, src_inf), "Expected orignal inf name %s, got %s.\n",
+            debugstr_a(src_inf), debugstr_a(orig_info.OriginalInfName));
+
+    free(inf_info);
+
+    SetupCloseInfFile(hinf);
+}
+
+static void test_copy_oem_inf(struct testsign_context *ctx)
+{
+    char path[MAX_PATH * 2], dest[MAX_PATH], orig_dest[MAX_PATH];
+    char orig_cwd[MAX_PATH], *cwd, *filepart, pnf[MAX_PATH];
+    SYSTEM_INFO system_info;
+    HANDLE catalog;
+    DWORD size;
+    BOOL ret;
+
+    static const char inf_data1[] =
+        "[Version]\n"
+        "Signature=\"$Chicago$\"\n"
+        "CatalogFile=winetest.cat\n"
+        /* Windows 10 needs a non-empty Manufacturer section, otherwise
+         * SetupUninstallOEMInf() fails with ERROR_INVALID_PARAMETER. */
+        "[Manufacturer]\n"
+        "mfg1=mfg_section,NT" MYEXT "\n"
+        "; This is a WINE test INF file\n";
+
+    static const char inf_data2[] =
+        "[Version]\n"
+        "Signature=\"$Chicago$\"\n"
+        "CatalogFile=winetest2.cat\n"
+        "[Manufacturer]\n"
+        "mfg1=mfg_section,NT" MYEXT "\n"
+        "; This is another WINE test INF file\n";
+
+    if (wow64)
+        return;
+
+    GetSystemInfo(&system_info);
+
+    GetCurrentDirectoryA(sizeof(orig_cwd), orig_cwd);
+    cwd = tempnam(NULL, "wine");
+    ret = CreateDirectoryA(cwd, NULL);
+    ok(ret, "Failed to create %s, error %#lx.\n", debugstr_a(cwd), GetLastError());
+    ret = SetCurrentDirectoryA(cwd);
+    ok(ret, "Failed to cd to %s, error %#lx.\n", debugstr_a(cwd), GetLastError());
+
+    /* try NULL SourceInfFileName */
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(NULL, NULL, 0, SP_COPY_NOOVERWRITE, NULL, 0, NULL, NULL);
+    ok(!ret, "Got %d.\n", ret);
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "Got error %#lx.\n", GetLastError());
+
+    /* try empty SourceInfFileName */
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA("", NULL, 0, SP_COPY_NOOVERWRITE, NULL, 0, NULL, NULL);
+    ok(!ret, "Got %d.\n", ret);
+    ok(GetLastError() == ERROR_FILE_NOT_FOUND
+            || GetLastError() == ERROR_INVALID_PARAMETER /* vista, 2k8 */, "Got error %#lx.\n", GetLastError());
+
+    /* try a relative nonexistent SourceInfFileName */
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA("nonexistent", NULL, 0, SP_COPY_NOOVERWRITE, NULL, 0, NULL, NULL);
+    ok(!ret, "Got %d.\n", ret);
+    ok(GetLastError() == ERROR_FILE_NOT_FOUND, "Got error %#lx.\n", GetLastError());
+
+    /* try an absolute nonexistent SourceInfFileName */
+    GetCurrentDirectoryA(sizeof(path), path);
+    strcat(path, "\\nonexistent");
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, 0, SP_COPY_NOOVERWRITE, NULL, 0, NULL, NULL);
+    ok(!ret, "Got %d.\n", ret);
+    ok(GetLastError() == ERROR_FILE_NOT_FOUND, "Got error %#lx.\n", GetLastError());
+
+    create_file("winetest.inf", inf_data1);
+
+    catalog = CryptCATOpen((WCHAR *)L"winetest.cat", CRYPTCAT_OPEN_CREATENEW, 0, CRYPTCAT_VERSION_1, 0);
+    ok(catalog != INVALID_HANDLE_VALUE, "Failed to create catalog, error %#lx\n", GetLastError());
+
+    add_file_to_catalog(catalog, L"winetest.inf");
+
+    ret = CryptCATPersistStore(catalog);
+    todo_wine ok(ret, "Failed to write catalog, error %#lx\n", GetLastError());
+
+    ret = CryptCATClose(catalog);
+    ok(ret, "Failed to close catalog, error %#lx\n", GetLastError());
+
+    testsign_sign(ctx, L"winetest.cat");
+
+    /* Test with a relative path. */
+    SetLastError(0xdeadbeef);
+    memset(dest, 0xcc, sizeof(dest));
+    ret = SetupCopyOEMInfA("winetest.inf", NULL, 0, SP_COPY_NOOVERWRITE, dest, sizeof(dest), NULL, &filepart);
+    todo_wine ok(ret == TRUE, "Got %d.\n", ret);
+    todo_wine ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(file_exists("winetest.inf"), "Expected source inf to exist.\n");
+    if (ret)
+    {
+        ok(file_exists(dest), "Expected dest file to exist.\n");
+        ok(is_in_inf_dir(dest), "Got unexpected path '%s'.\n", dest);
+        ok(filepart == strrchr(dest, '\\') + 1, "Got unexpected file part %s.\n", filepart);
+
+        ret = SetupUninstallOEMInfA("bogus.inf", 0, NULL);
+        ok(!ret, "Got %d.\n", ret);
+        ok(GetLastError() == ERROR_FILE_NOT_FOUND, "Got error %#lx.\n", GetLastError());
+
+        strcpy(pnf, dest);
+        *(strrchr(pnf, '.') + 1) = 'p';
+        SetLastError(0xdeadbeef);
+        ret = SetupUninstallOEMInfA(filepart, 0, NULL);
+        ok(ret == TRUE, "Got %d.\n", ret);
+        ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+        ok(!file_exists(dest), "Expected inf '%s' not to exist.\n", dest);
+        DeleteFileA(dest);
+        ok(!file_exists(pnf), "Expected pnf '%s' not to exist.\n", pnf);
+    }
+
+    /* try SP_COPY_REPLACEONLY, dest does not exist */
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, SP_COPY_REPLACEONLY, NULL, 0, NULL, NULL);
+    ok(!ret, "Got %d.\n", ret);
+    ok(GetLastError() == ERROR_FILE_NOT_FOUND, "Got error %#lx.\n", GetLastError());
+    ok(file_exists("winetest.inf"), "Expected source inf to exist.\n");
+
+    /* Test a successful call. */
+    GetCurrentDirectoryA(sizeof(path), path);
+    strcat(path, "\\winetest.inf");
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, 0, dest, sizeof(dest), NULL, NULL);
+    ok(ret == TRUE, "Got %d.\n", ret);
+    ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(file_exists(path), "Expected source inf to exist.\n");
+    ok(file_exists(dest), "Expected dest file to exist.\n");
+    ok(is_in_inf_dir(dest), "Got unexpected path '%s'.\n", dest);
+    strcpy(orig_dest, dest);
+
+    check_original_file_name(dest, "winetest.inf", "winetest.cat");
+
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, 0, dest, sizeof(dest), NULL, NULL);
+    ok(ret == TRUE, "Got %d.\n", ret);
+    ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(file_exists(path), "Expected source inf to exist.\n");
+    ok(file_exists(dest), "Expected dest file to exist.\n");
+    ok(!strcmp(orig_dest, dest), "Expected '%s', got '%s'.\n", orig_dest, dest);
+
+    /* On Windows 7 and earlier, trying to install the same file with a
+     * different base name does nothing and returns the existing driver store
+     * location and INF directory file.
+     * On Windows 8 and later, it's installed to a new location. */
+
+    /* try SP_COPY_REPLACEONLY, dest exists */
+    GetCurrentDirectoryA(sizeof(path), path);
+    strcat(path, "\\winetest.inf");
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, SP_COPY_REPLACEONLY, dest, sizeof(dest), NULL, NULL);
+    ok(ret == TRUE, "Got %d.\n", ret);
+    ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(file_exists(path), "Expected source inf to exist.\n");
+    ok(file_exists(dest), "Expected dest file to exist.\n");
+    ok(!strcmp(orig_dest, dest), "Expected '%s', got '%s'.\n", orig_dest, dest);
+
+    strcpy(dest, "aaa");
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, SP_COPY_NOOVERWRITE, dest, sizeof(dest), NULL, NULL);
+    ok(!ret, "Got %d.\n", ret);
+    ok(GetLastError() == ERROR_FILE_EXISTS, "Got error %#lx.\n", GetLastError());
+    ok(!strcmp(orig_dest, dest), "Expected '%s', got '%s'.\n", orig_dest, dest);
+
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, 0, NULL, 0, NULL, NULL);
+    ok(ret == TRUE, "Got %d.\n", ret);
+    ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(file_exists(path), "Expected source inf to exist.\n");
+    ok(file_exists(orig_dest), "Expected dest file to exist.\n");
+
+    strcpy(dest, "aaa");
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, 0, dest, 5, &size, NULL);
+    ok(!ret, "Got %d.\n", ret);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "Got error %#lx.\n", GetLastError());
+    ok(file_exists(path), "Expected source inf to exist.\n");
+    ok(file_exists(orig_dest), "Expected dest inf to exist.\n");
+    ok(!strcmp(dest, "aaa"), "Expected dest to be unchanged\n");
+    ok(size == strlen(orig_dest) + 1, "Got %ld.\n", size);
+
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, 0, dest, sizeof(dest), &size, NULL);
+    ok(ret == TRUE, "Got %d.\n", ret);
+    ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(!strcmp(orig_dest, dest), "Expected '%s', got '%s'.\n", orig_dest, dest);
+    ok(size == strlen(dest) + 1, "Got %ld.\n", size);
+
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, 0, dest, sizeof(dest), NULL, &filepart);
+    ok(ret == TRUE, "Got %d.\n", ret);
+    ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(!strcmp(orig_dest, dest), "Expected '%s', got '%s'.\n", orig_dest, dest);
+    ok(filepart == strrchr(dest, '\\') + 1, "Got unexpected file part %s.\n", filepart);
+
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, SP_COPY_DELETESOURCE, NULL, 0, NULL, NULL);
+    ok(ret == TRUE, "Got %d.\n", ret);
+    ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(!file_exists(path), "Expected source inf not to exist.\n");
+
+    strcpy(pnf, dest);
+    *(strrchr(pnf, '.') + 1) = 'p';
+
+    ret = SetupUninstallOEMInfA(strrchr(dest, '\\') + 1, 0, NULL);
+    ok(ret, "Failed to uninstall '%s', error %#lx.\n", dest, GetLastError());
+    todo_wine ok(!file_exists(dest), "Expected inf '%s' not to exist.\n", dest);
+    DeleteFileA(dest);
+    todo_wine ok(!file_exists(pnf), "Expected pnf '%s' not to exist.\n", pnf);
+
+    create_file("winetest.inf", inf_data1);
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, 0, dest, sizeof(dest), NULL, NULL);
+    ok(ret == TRUE, "Got %d.\n", ret);
+    ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(is_in_inf_dir(dest), "Got unexpected path '%s'.\n", dest);
+    strcpy(orig_dest, dest);
+
+    create_file("winetest2.inf", inf_data2);
+
+    catalog = CryptCATOpen((WCHAR *)L"winetest2.cat", CRYPTCAT_OPEN_CREATENEW, 0, CRYPTCAT_VERSION_1, 0);
+    ok(catalog != INVALID_HANDLE_VALUE, "Failed to create catalog, error %#lx\n", GetLastError());
+
+    add_file_to_catalog(catalog, L"winetest2.inf");
+
+    ret = CryptCATPersistStore(catalog);
+    todo_wine ok(ret, "Failed to write catalog, error %#lx\n", GetLastError());
+
+    ret = CryptCATClose(catalog);
+    ok(ret, "Failed to close catalog, error %#lx\n", GetLastError());
+
+    testsign_sign(ctx, L"winetest2.cat");
+
+    SetLastError(0xdeadbeef);
+    GetCurrentDirectoryA(sizeof(path), path);
+    strcat(path, "\\winetest2.inf");
+    ret = SetupCopyOEMInfA(path, NULL, SPOST_NONE, 0, dest, sizeof(dest), NULL, NULL);
+    ok(ret == TRUE, "Got %d.\n", ret);
+    ok(!GetLastError(), "Got error %#lx.\n", GetLastError());
+    ok(is_in_inf_dir(dest), "Got unexpected path '%s'.\n", dest);
+    ok(strcmp(dest, orig_dest), "Expected INF files to be copied to different paths.\n");
+
+    ret = SetupUninstallOEMInfA(strrchr(dest, '\\') + 1, 0, NULL);
+    ok(ret, "Failed to uninstall '%s', error %#lx.\n", dest, GetLastError());
+    todo_wine ok(!file_exists(dest), "Expected inf '%s' not to exist.\n", dest);
+    DeleteFileA(dest);
+    strcpy(pnf, dest);
+    *(strrchr(pnf, '.') + 1) = 'p';
+    todo_wine ok(!file_exists(pnf), "Expected pnf '%s' not to exist.\n", pnf);
+
+    ret = SetupUninstallOEMInfA(strrchr(orig_dest, '\\') + 1, 0, NULL);
+    ok(ret, "Failed to uninstall '%s', error %#lx.\n", orig_dest, GetLastError());
+    todo_wine ok(!file_exists(orig_dest), "Expected inf '%s' not to exist.\n", dest);
+    DeleteFileA(orig_dest);
+    strcpy(pnf, dest);
+    *(strrchr(pnf, '.') + 1) = 'p';
+    todo_wine ok(!file_exists(pnf), "Expected pnf '%s' not to exist.\n", pnf);
+
+    ret = DeleteFileA("winetest2.cat");
+    ok(ret, "Failed to delete file, error %#lx.\n", GetLastError());
+
+    ret = DeleteFileA("winetest2.inf");
+    ok(ret, "Failed to delete file, error %#lx.\n", GetLastError());
+
+    ret = DeleteFileA("winetest.cat");
+    ok(ret, "Failed to delete file, error %#lx.\n", GetLastError());
+
+    ret = DeleteFileA("winetest.inf");
+    ok(ret, "Failed to delete file, error %#lx.\n", GetLastError());
+
+    SetCurrentDirectoryA(orig_cwd);
+    ret = RemoveDirectoryA(cwd);
+    ok(ret, "Failed to delete %s, error %#lx.\n", cwd, GetLastError());
+
+}
+
 START_TEST(devinst)
 {
     static BOOL (WINAPI *pIsWow64Process)(HANDLE, BOOL *);
+    HMODULE module = GetModuleHandleA("setupapi.dll");
+    struct testsign_context ctx;
     HKEY hkey;
+
+    pSetupQueryInfOriginalFileInformationA = (void *)GetProcAddress(module, "SetupQueryInfOriginalFileInformationA");
 
     test_get_actual_section();
 
@@ -3446,4 +4026,11 @@ START_TEST(devinst)
     test_driver_list();
     test_call_class_installer();
     test_get_class_devs();
+
+    if (!testsign_create_cert(&ctx))
+        return;
+
+    test_copy_oem_inf(&ctx);
+
+    testsign_cleanup(&ctx);
 }

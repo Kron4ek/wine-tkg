@@ -1621,7 +1621,7 @@ static HRESULT WINAPI recordset_CancelUpdate( _Recordset *iface )
         return S_OK;
 
     recordset->editmode = adEditNone;
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static HRESULT WINAPI recordset_Close( _Recordset *iface )
@@ -2361,7 +2361,8 @@ static HRESULT WINAPI recordset_NextRecordset( _Recordset *iface, VARIANT *recor
 static HRESULT WINAPI recordset_Supports( _Recordset *iface, CursorOptionEnum cursor_options, VARIANT_BOOL *ret )
 {
     FIXME( "%p, %08x, %p\n", iface, cursor_options, ret );
-    return E_NOTIMPL;
+    *ret = VARIANT_TRUE;
+    return S_OK;
 }
 
 static HRESULT WINAPI recordset_get_Collect( _Recordset *iface, VARIANT index, VARIANT *var )

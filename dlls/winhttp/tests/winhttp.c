@@ -3332,6 +3332,13 @@ static void test_redirect(int port)
     ok(ret, "got %lu\n", GetLastError());
     ok(!wcscmp(url, expected), "expected %s got %s\n", wine_dbgstr_w(expected), wine_dbgstr_w(url));
 
+    /* Exact buffer size match. */
+    url[0] = 0;
+    size = (lstrlenW(expected) + 1) * sizeof(WCHAR);
+    ret = WinHttpQueryOption(req, WINHTTP_OPTION_URL, url, &size);
+    ok(ret, "got %lu\n", GetLastError());
+    ok(!wcscmp(url, expected), "expected %s got %s\n", wine_dbgstr_w(expected), wine_dbgstr_w(url));
+
     ret = WinHttpReceiveResponse(req, NULL);
     ok(ret, "failed to receive response %lu\n", GetLastError());
 
@@ -4417,6 +4424,14 @@ static void test_credentials(void)
     ok(!wcscmp(buffer, proxy_userW), "unexpected result %s\n", wine_dbgstr_w(buffer));
     ok(size == lstrlenW(proxy_userW) * sizeof(WCHAR), "unexpected result %lu\n", size);
 
+    /* Exact buffer size match. */
+    size = (lstrlenW(proxy_userW) + 1) * sizeof(WCHAR);
+    buffer[0] = 0;
+    ret = WinHttpQueryOption(req, WINHTTP_OPTION_PROXY_USERNAME, &buffer, &size);
+    ok(ret, "failed to query proxy username %lu\n", GetLastError());
+    ok(!wcscmp(buffer, proxy_userW), "unexpected result %s\n", wine_dbgstr_w(buffer));
+    ok(size == lstrlenW(proxy_userW) * sizeof(WCHAR), "unexpected result %lu\n", size);
+
     buffer[0] = 0x1;
     SetLastError(0xdeadbeef);
     ret = WinHttpQueryOption(req, WINHTTP_OPTION_PROXY_USERNAME, &buffer, &size);
@@ -4463,6 +4478,14 @@ static void test_credentials(void)
     ok(!wcscmp(buffer, proxy_passW), "unexpected result %s\n", wine_dbgstr_w(buffer));
     ok(size == lstrlenW(proxy_passW) * sizeof(WCHAR), "unexpected result %lu\n", size);
 
+    /* Exact buffer size match. */
+    size = (lstrlenW(proxy_passW) + 1) * sizeof(WCHAR);
+    buffer[0] = 0;
+    ret = WinHttpQueryOption(req, WINHTTP_OPTION_PROXY_PASSWORD, &buffer, &size);
+    ok(ret, "failed to query proxy password %lu\n", GetLastError());
+    ok(!wcscmp(buffer, proxy_passW), "unexpected result %s\n", wine_dbgstr_w(buffer));
+    ok(size == lstrlenW(proxy_passW) * sizeof(WCHAR), "unexpected result %lu\n", size);
+
     buffer[0] = 0x1;
     SetLastError(0xdeadbeef);
     ret = WinHttpQueryOption(req, WINHTTP_OPTION_PROXY_PASSWORD, &buffer, &size);
@@ -4485,6 +4508,14 @@ static void test_credentials(void)
     ok(!wcscmp(buffer, userW), "unexpected result %s\n", wine_dbgstr_w(buffer));
     ok(size == lstrlenW(userW) * sizeof(WCHAR), "unexpected result %lu\n", size);
 
+    /* Exact buffer size match. */
+    size = (lstrlenW(userW) + 1) * sizeof(WCHAR);
+    buffer[0] = 0;
+    ret = WinHttpQueryOption(req, WINHTTP_OPTION_USERNAME, &buffer, &size);
+    ok(ret, "failed to query username %lu\n", GetLastError());
+    ok(!wcscmp(buffer, userW), "unexpected result %s\n", wine_dbgstr_w(buffer));
+    ok(size == lstrlenW(userW) * sizeof(WCHAR), "unexpected result %lu\n", size);
+
     buffer[0] = 0x1;
     SetLastError(0xdeadbeef);
     ret = WinHttpQueryOption(req, WINHTTP_OPTION_USERNAME, &buffer, &size);
@@ -4502,6 +4533,14 @@ static void test_credentials(void)
     ok(ret, "failed to set password %lu\n", GetLastError());
 
     size = ARRAY_SIZE(buffer);
+    ret = WinHttpQueryOption(req, WINHTTP_OPTION_PASSWORD, &buffer, &size);
+    ok(ret, "failed to query password %lu\n", GetLastError());
+    ok(!wcscmp(buffer, passW), "unexpected result %s\n", wine_dbgstr_w(buffer));
+    ok(size == lstrlenW(passW) * sizeof(WCHAR), "unexpected result %lu\n", size);
+
+    /* Exact buffer size match. */
+    buffer[0] = 0;
+    size = (lstrlenW(passW) + 1) * sizeof(WCHAR);
     ret = WinHttpQueryOption(req, WINHTTP_OPTION_PASSWORD, &buffer, &size);
     ok(ret, "failed to query password %lu\n", GetLastError());
     ok(!wcscmp(buffer, passW), "unexpected result %s\n", wine_dbgstr_w(buffer));
@@ -5072,8 +5111,9 @@ static void test_IWinHttpRequest(int port)
     SysFreeString( url );
 
     hr = IWinHttpRequest_Send( req, empty );
-    ok( hr == S_OK || hr == HRESULT_FROM_WIN32( ERROR_WINHTTP_INVALID_SERVER_RESPONSE ) ||
-        hr == SEC_E_ILLEGAL_MESSAGE /* winxp */, "got %#lx\n", hr );
+    ok( hr == S_OK ||
+        hr == HRESULT_FROM_WIN32( ERROR_WINHTTP_INVALID_SERVER_RESPONSE ) ||
+        hr == HRESULT_FROM_WIN32( ERROR_WINHTTP_SECURE_CHANNEL_ERROR ) /* win7 */, "got %#lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = IWinHttpRequest_get_ResponseText( req, &response );
@@ -5756,7 +5796,9 @@ static void test_max_http_automatic_redirects (void)
     size = sizeof(url);
     ret = WinHttpQueryOption(request, WINHTTP_OPTION_URL, url, &size);
     ok(ret, "got %lu\n", GetLastError());
-    ok(!wcscmp(url, L"http://test.winehq.org/tests/redirecttest.php?id=2&max=3"), "got %s\n", wine_dbgstr_w(url));
+    ok(!wcscmp(url, L"http://test.winehq.org/tests/redirecttest.php?id=2&max=3") ||
+       broken(!wcscmp(url, L"http://test.winehq.org/tests/redirecttest.php?id=1&max=3")) /* < Win10 1809 */,
+       "got %s\n", wine_dbgstr_w(url));
 
  done:
     ret = WinHttpCloseHandle(request);
@@ -6012,7 +6054,6 @@ static const BYTE pfxdata[] =
 static void test_client_cert_authentication(void)
 {
     HINTERNET ses, req, con;
-    DWORD protocols;
     BOOL ret;
     CRYPT_DATA_BLOB pfx;
     HCERTSTORE store;
@@ -6021,16 +6062,6 @@ static void test_client_cert_authentication(void)
     ses = WinHttpOpen( L"winetest", WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0 );
     ok( ses != NULL, "failed to open session %lu\n", GetLastError() );
 
-    protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_1;
-    ret = WinHttpSetOption( ses, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols) );
-    if (!ret && GetLastError() == ERROR_INVALID_PARAMETER) /* vista */
-    {
-        win_skip( "can't set secure protocols\n" );
-        WinHttpCloseHandle( ses );
-        return;
-    }
-    ok( ret, "failed to set protocols %lu\n", GetLastError() );
-
     con = WinHttpConnect( ses, L"test.winehq.org", 443, 0 );
     ok( con != NULL, "failed to open a connection %lu\n", GetLastError() );
 
@@ -6038,7 +6069,9 @@ static void test_client_cert_authentication(void)
     ok( req != NULL, "failed to open a request %lu\n", GetLastError() );
 
     ret = WinHttpSendRequest( req, NULL, 0, NULL, 0, 0, 0 );
-    ok( ret, "failed to send request %lu\n", GetLastError() );
+    ok( ret || broken(!ret && GetLastError() == ERROR_WINHTTP_SECURE_FAILURE) /* win7 */,
+        "failed to send request %lu\n", GetLastError() );
+    if (!ret) goto done;
 
     SetLastError( 0xdeadbeef );
     ret = WinHttpReceiveResponse( req, NULL );
@@ -6063,11 +6096,13 @@ static void test_client_cert_authentication(void)
     ret = WinHttpReceiveResponse( req, NULL );
     todo_wine {
     ok( !ret, "unexpected success\n" );
-    ok( GetLastError() == SEC_E_CERT_EXPIRED, "got %lu\n", GetLastError() );
+    ok( GetLastError() == ERROR_WINHTTP_SECURE_FAILURE || GetLastError() == SEC_E_CERT_EXPIRED, /* win8 */
+        "got %lu\n", GetLastError() );
     }
 
     CertFreeCertificateContext( cert );
     CertCloseStore( store, 0 );
+done:
     WinHttpCloseHandle( req );
     WinHttpCloseHandle( con );
     WinHttpCloseHandle( ses );

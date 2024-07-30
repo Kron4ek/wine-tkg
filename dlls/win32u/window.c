@@ -826,7 +826,12 @@ BOOL enable_window( HWND hwnd, BOOL enable )
     if (enable)
     {
         ret = (set_window_style( hwnd, 0, WS_DISABLED ) & WS_DISABLED) != 0;
-        if (ret) send_message( hwnd, WM_ENABLE, TRUE, 0 );
+        if (ret)
+        {
+            NtUserNotifyWinEvent( EVENT_OBJECT_STATECHANGE, hwnd, OBJID_WINDOW, 0 );
+
+            send_message( hwnd, WM_ENABLE, TRUE, 0 );
+        }
     }
     else
     {
@@ -835,6 +840,8 @@ BOOL enable_window( HWND hwnd, BOOL enable )
         ret = (set_window_style( hwnd, WS_DISABLED, 0 ) & WS_DISABLED) != 0;
         if (!ret)
         {
+            NtUserNotifyWinEvent( EVENT_OBJECT_STATECHANGE, hwnd, OBJID_WINDOW, 0 );
+
             if (hwnd == get_focus())
                 NtUserSetFocus( 0 ); /* A disabled window can't have the focus */
 
@@ -4763,7 +4770,7 @@ HICON WINAPI NtUserInternalGetWindowIcon( HWND hwnd, UINT type )
 /***********************************************************************
  *           send_destroy_message
  */
-static void send_destroy_message( HWND hwnd )
+static void send_destroy_message( HWND hwnd, BOOL winevent )
 {
     GUITHREADINFO info;
 
@@ -4775,6 +4782,9 @@ static void send_destroy_message( HWND hwnd )
     }
 
     if (hwnd == NtUserGetClipboardOwner()) release_clipboard_owner( hwnd );
+
+    if (winevent)
+        NtUserNotifyWinEvent( EVENT_OBJECT_DESTROY, hwnd, OBJID_WINDOW, 0 );
 
     send_message( hwnd, WM_DESTROY, 0, 0);
 
@@ -4791,7 +4801,7 @@ static void send_destroy_message( HWND hwnd )
 
         for (i = 0; children[i]; i++)
         {
-            if (is_window( children[i] )) send_destroy_message( children[i] );
+            if (is_window( children[i] )) send_destroy_message( children[i], FALSE );
         }
         free( children );
     }
@@ -4901,7 +4911,7 @@ LRESULT destroy_window( HWND hwnd )
 /***********************************************************************
  *           NtUserDestroyWindow (win32u.@)
  */
-BOOL WINAPI NtUserDestroyWindow( HWND hwnd )
+static BOOL user_destroy_window( HWND hwnd, BOOL winevent )
 {
     BOOL is_child;
 
@@ -4961,7 +4971,7 @@ BOOL WINAPI NtUserDestroyWindow( HWND hwnd )
                 if (get_window_relative( children[i], GW_OWNER ) != hwnd) continue;
                 if (is_current_thread_window( children[i] ))
                 {
-                    NtUserDestroyWindow( children[i] );
+                    user_destroy_window( children[i], FALSE );
                     got_one = TRUE;
                     continue;
                 }
@@ -4972,11 +4982,16 @@ BOOL WINAPI NtUserDestroyWindow( HWND hwnd )
         }
     }
 
-    send_destroy_message( hwnd );
+    send_destroy_message( hwnd, winevent );
     if (!is_window( hwnd )) return TRUE;
 
     destroy_window( hwnd );
     return TRUE;
+}
+
+BOOL WINAPI NtUserDestroyWindow( HWND hwnd )
+{
+    return user_destroy_window( hwnd, TRUE );
 }
 
 /*****************************************************************************

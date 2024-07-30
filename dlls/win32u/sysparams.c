@@ -1914,8 +1914,8 @@ static void add_virtual_modes( struct device_manager_ctx *ctx, const DEVMODEW *c
             mode.dmPelsWidth = screen_sizes[j].width;
             mode.dmPelsHeight = screen_sizes[j].height;
 
-            if (mode.dmPelsWidth > maximum->dmPelsWidth || mode.dmPelsHeight > maximum->dmPelsWidth) continue;
-            if (mode.dmPelsWidth == maximum->dmPelsWidth && mode.dmPelsHeight == maximum->dmPelsWidth) continue;
+            if (mode.dmPelsWidth > maximum->dmPelsWidth || mode.dmPelsHeight > maximum->dmPelsHeight) continue;
+            if (mode.dmPelsWidth == maximum->dmPelsWidth && mode.dmPelsHeight == maximum->dmPelsHeight) continue;
             if (mode.dmPelsWidth == initial->dmPelsWidth && mode.dmPelsHeight == initial->dmPelsHeight) continue;
             modes[modes_count++] = mode;
         }
@@ -6487,6 +6487,9 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
 
     case NtUserCallOneParam_D3DKMTOpenAdapterFromGdiDisplayName:
         return d3dkmt_open_adapter_from_gdi_display_name( (void *)arg );
+
+    case NtUserCallOneParam_GetAsyncKeyboardState:
+        return get_async_keyboard_state( (void *)arg );
 
     /* temporary exports */
     case NtUserGetDeskPattern:

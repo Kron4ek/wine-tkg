@@ -2493,7 +2493,7 @@ fail:
 }
 
 static bool shader_sm4_init(struct vkd3d_shader_sm4_parser *sm4, struct vsir_program *program,
-        const uint32_t *byte_code, size_t byte_code_size, const char *source_name,
+        const uint32_t *byte_code, size_t byte_code_size, const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_message_context *message_context)
 {
     struct vkd3d_shader_version version;
@@ -2552,9 +2552,9 @@ static bool shader_sm4_init(struct vkd3d_shader_sm4_parser *sm4, struct vsir_pro
     version.minor = VKD3D_SM4_VERSION_MINOR(version_token);
 
     /* Estimate instruction count to avoid reallocation in most shaders. */
-    if (!vsir_program_init(program, &version, token_count / 7u + 20))
+    if (!vsir_program_init(program, compile_info, &version, token_count / 7u + 20))
         return false;
-    vkd3d_shader_parser_init(&sm4->p, program, message_context, source_name);
+    vkd3d_shader_parser_init(&sm4->p, program, message_context, compile_info->source_name);
     sm4->ptr = sm4->start;
 
     init_sm4_lookup_tables(&sm4->lookup);
@@ -2651,7 +2651,7 @@ int tpf_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t con
     }
 
     if (!shader_sm4_init(&sm4, program, dxbc_desc.byte_code, dxbc_desc.byte_code_size,
-            compile_info->source_name, message_context))
+            compile_info, message_context))
     {
         WARN("Failed to initialise shader parser.\n");
         free_dxbc_shader_desc(&dxbc_desc);
@@ -5186,6 +5186,44 @@ static void write_sm4_expr(const struct tpf_writer *tpf, const struct hlsl_ir_ex
 
                 default:
                     hlsl_fixme(tpf->ctx, &expr->node.loc, "SM4 %s negation expression.", dst_type_string->buffer);
+            }
+            break;
+
+        case HLSL_OP1_RCP:
+            switch (dst_type->e.numeric.type)
+            {
+                case HLSL_TYPE_FLOAT:
+                    /* SM5 comes with a RCP opcode */
+                    if (tpf->ctx->profile->major_version >= 5)
+                    {
+                        write_sm4_unary_op(tpf, VKD3D_SM5_OP_RCP, &expr->node, arg1, 0);
+                    }
+                    else
+                    {
+                        /* For SM4, implement as DIV dst, 1.0, src */
+                        struct sm4_instruction instr;
+                        struct hlsl_constant_value one;
+
+                        assert(type_is_float(dst_type));
+
+                        memset(&instr, 0, sizeof(instr));
+                        instr.opcode = VKD3D_SM4_OP_DIV;
+
+                        sm4_dst_from_node(&instr.dsts[0], &expr->node);
+                        instr.dst_count = 1;
+
+                        for (unsigned int i = 0; i < 4; i++)
+                            one.u[i].f = 1.0f;
+                        sm4_src_from_constant_value(&instr.srcs[0], &one, dst_type->dimx, instr.dsts[0].write_mask);
+                        sm4_src_from_node(tpf, &instr.srcs[1], arg1, instr.dsts[0].write_mask);
+                        instr.src_count = 2;
+
+                        write_sm4_instruction(tpf, &instr);
+                    }
+                    break;
+
+                default:
+                    hlsl_fixme(tpf->ctx, &expr->node.loc, "SM4 %s rcp expression.", dst_type_string->buffer);
             }
             break;
 

@@ -216,7 +216,7 @@ static void storage_event_proc(event_task_t *_task)
     if(event->event_id == EVENTID_STORAGE && (compat_mode = dispex_compat_mode(&window->event_target.dispex)) >= COMPAT_MODE_IE9) {
         dispatch_event(&window->event_target, event);
         if(window->doc) {
-            hres = create_event_obj(event, compat_mode, (IHTMLEventObj**)&V_DISPATCH(&var));
+            hres = create_event_obj(event, window->doc, (IHTMLEventObj**)&V_DISPATCH(&var));
             if(SUCCEEDED(hres)) {
                 V_VT(&var) = VT_DISPATCH;
                 fire_event(&window->doc->node, L"onstorage", &var, &cancelled);
@@ -1100,7 +1100,7 @@ static HRESULT get_prop(HTMLStorage *This, const WCHAR *name, DISPID *dispid)
     return S_OK;
 }
 
-static HRESULT HTMLStorage_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
+static HRESULT HTMLStorage_get_dispid(DispatchEx *dispex, const WCHAR *name, DWORD flags, DISPID *dispid)
 {
     HTMLStorage *This = impl_from_DispatchEx(dispex);
     HRESULT hres;

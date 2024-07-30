@@ -61,6 +61,7 @@ struct wined3d_saved_states
     /* Flags only consumed by wined3d_device_apply_stateblock(), concerned with
      * translation from stateblock formats to wined3d_state formats. */
     uint32_t ffp_ps_constants : 1;
+    uint32_t texture_matrices : 1;
 };
 
 struct stage_state
@@ -248,6 +249,19 @@ static const DWORD vertex_states_sampler[] =
 {
     WINED3D_SAMP_DMAP_OFFSET,
 };
+
+static void transpose_matrix(struct wined3d_matrix *out, const struct wined3d_matrix *m)
+{
+    struct wined3d_matrix temp;
+
+    for (unsigned int i = 0; i < 4; ++i)
+    {
+        for (unsigned int j = 0; j < 4; ++j)
+            (&temp._11)[4 * j + i] = (&m->_11)[4 * i + j];
+    }
+
+    *out = temp;
+}
 
 static inline void stateblock_set_all_bits(uint32_t *map, UINT map_size)
 {
@@ -661,6 +675,7 @@ static void set_light_changed(struct wined3d_stateblock *stateblock, struct wine
 static HRESULT wined3d_light_state_set_light(struct wined3d_light_state *state, unsigned int light_idx,
         const struct wined3d_light *params, struct wined3d_light_info **light_info)
 {
+    struct wined3d_light_constants *constants;
     struct wined3d_light_info *object;
 
     if (!(object = wined3d_light_state_get_light(state, light_idx)))
@@ -677,6 +692,8 @@ static HRESULT wined3d_light_state_set_light(struct wined3d_light_state *state, 
         rb_put(&state->lights_tree, (void *)(ULONG_PTR)light_idx, &object->entry);
     }
 
+    constants = &object->constants;
+
     object->OriginalParms = *params;
 
     /* Initialize the object. */
@@ -689,46 +706,58 @@ static HRESULT wined3d_light_state_set_light(struct wined3d_light_state *state, 
             params->direction.x, params->direction.y, params->direction.z,
             params->range, params->falloff, params->theta, params->phi);
 
+    constants->diffuse = params->diffuse;
+    constants->specular = params->specular;
+    constants->ambient = params->ambient;
+
+    constants->range = params->range;
+    constants->falloff = params->falloff;
+    constants->const_att = params->attenuation0;
+    constants->linear_att = params->attenuation1;
+    constants->quad_att = params->attenuation2;
+    constants->cos_half_theta = cosf(params->theta / 2.0f);
+    constants->cos_half_phi = cosf(params->phi / 2.0f);
+
     switch (params->type)
     {
         case WINED3D_LIGHT_POINT:
             /* Position */
-            object->position.x = params->position.x;
-            object->position.y = params->position.y;
-            object->position.z = params->position.z;
-            object->position.w = 1.0f;
+            constants->position.x = params->position.x;
+            constants->position.y = params->position.y;
+            constants->position.z = params->position.z;
+            constants->position.w = 1.0f;
             /* FIXME: Range */
             break;
 
         case WINED3D_LIGHT_DIRECTIONAL:
             /* Direction */
-            object->direction.x = -params->direction.x;
-            object->direction.y = -params->direction.y;
-            object->direction.z = -params->direction.z;
-            object->direction.w = 0.0f;
+            constants->direction.x = -params->direction.x;
+            constants->direction.y = -params->direction.y;
+            constants->direction.z = -params->direction.z;
+            constants->direction.w = 0.0f;
             break;
 
         case WINED3D_LIGHT_SPOT:
             /* Position */
-            object->position.x = params->position.x;
-            object->position.y = params->position.y;
-            object->position.z = params->position.z;
-            object->position.w = 1.0f;
+            constants->position.x = params->position.x;
+            constants->position.y = params->position.y;
+            constants->position.z = params->position.z;
+            constants->position.w = 1.0f;
 
             /* Direction */
-            object->direction.x = params->direction.x;
-            object->direction.y = params->direction.y;
-            object->direction.z = params->direction.z;
-            object->direction.w = 0.0f;
+            constants->direction.x = params->direction.x;
+            constants->direction.y = params->direction.y;
+            constants->direction.z = params->direction.z;
+            constants->direction.w = 0.0f;
 
             /* FIXME: Range */
             break;
 
         case WINED3D_LIGHT_PARALLELPOINT:
-            object->position.x = params->position.x;
-            object->position.y = params->position.y;
-            object->position.z = params->position.z;
-            object->position.w = 1.0f;
+            constants->position.x = params->position.x;
+            constants->position.y = params->position.y;
+            constants->position.z = params->position.z;
+            constants->position.w = 1.0f;
             break;
 
         default:
@@ -1516,6 +1545,10 @@ void CDECL wined3d_stateblock_set_vertex_declaration(struct wined3d_stateblock *
         wined3d_vertex_declaration_decref(stateblock->stateblock_state.vertex_declaration);
     stateblock->stateblock_state.vertex_declaration = declaration;
     stateblock->changed.vertexDecl = TRUE;
+    /* Texture matrices depend on the format of the TEXCOORD attributes. */
+    /* FIXME: They also depend on whether the draw is pretransformed,
+     * but that should go away. */
+    stateblock->changed.texture_matrices = TRUE;
 }
 
 void CDECL wined3d_stateblock_set_render_state(struct wined3d_stateblock *stateblock,
@@ -1590,8 +1623,20 @@ void CDECL wined3d_stateblock_set_texture_stage_state(struct wined3d_stateblock 
     stateblock->stateblock_state.texture_states[stage][state] = value;
     stateblock->changed.textureState[stage] |= 1u << state;
 
-    if (state == WINED3D_TSS_CONSTANT)
-        stateblock->changed.ffp_ps_constants = 1;
+    switch (state)
+    {
+        case WINED3D_TSS_CONSTANT:
+            stateblock->changed.ffp_ps_constants = 1;
+            break;
+
+        case WINED3D_TSS_TEXCOORD_INDEX:
+        case WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS:
+            stateblock->changed.texture_matrices = 1;
+            break;
+
+        default:
+            break;
+    }
 }
 
 void CDECL wined3d_stateblock_set_texture(struct wined3d_stateblock *stateblock,
@@ -1625,6 +1670,9 @@ void CDECL wined3d_stateblock_set_transform(struct wined3d_stateblock *statebloc
     stateblock->stateblock_state.transforms[d3dts] = *matrix;
     stateblock->changed.transform[d3dts >> 5] |= 1u << (d3dts & 0x1f);
     stateblock->changed.transforms = 1;
+
+    if (d3dts >= WINED3D_TS_TEXTURE0 && d3dts <= WINED3D_TS_TEXTURE7)
+        stateblock->changed.texture_matrices = 1;
 }
 
 void CDECL wined3d_stateblock_multiply_transform(struct wined3d_stateblock *stateblock,
@@ -2201,6 +2249,7 @@ static void wined3d_stateblock_invalidate_push_constants(struct wined3d_stateblo
 {
     stateblock->changed.ffp_ps_constants = 1;
     stateblock->changed.lights = 1;
+    stateblock->changed.texture_matrices = 1;
 }
 
 static HRESULT stateblock_init(struct wined3d_stateblock *stateblock, const struct wined3d_stateblock *device_state,
@@ -2694,7 +2743,12 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
     TRACE("device %p, stateblock %p.\n", device, stateblock);
 
     if (changed->vertexShader)
+    {
         wined3d_device_context_set_shader(context, WINED3D_SHADER_TYPE_VERTEX, state->vs);
+        /* Clip planes are affected by the view matrix, but only if not using
+         * vertex shaders. */
+        changed->clipplane = wined3d_mask_from_size(WINED3D_MAX_CLIP_DISTANCES);
+    }
     if (changed->pixelShader)
         wined3d_device_context_set_shader(context, WINED3D_SHADER_TYPE_PIXEL, state->ps);
 
@@ -3279,9 +3333,20 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
             {
                 j = wined3d_bit_scan(&map);
                 idx = i * word_bit_count + j;
-                wined3d_device_set_transform(device, idx, &state->transforms[idx]);
+
+                if (idx == WINED3D_TS_VIEW)
+                {
+                    changed->lights = 1;
+                    changed->clipplane = wined3d_mask_from_size(WINED3D_MAX_CLIP_DISTANCES);
+                }
+
+                if (!(idx >= WINED3D_TS_TEXTURE0 && idx <= WINED3D_TS_TEXTURE7))
+                    wined3d_device_set_transform(device, idx, &state->transforms[idx]);
             }
         }
+
+        /* Clip planes are affected by the view matrix. */
+        changed->clipplane = wined3d_mask_from_size(WINED3D_MAX_CLIP_DISTANCES);
     }
 
     if (changed->indices)
@@ -3313,7 +3378,7 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
         texture = state->textures[i];
         wined3d_device_set_texture(device, i, texture);
 
-        if (!i && texture)
+        if (!i && texture && (texture->color_key_flags & WINED3D_CKEY_SRC_BLT))
         {
             wined3d_format_get_float_color_key(texture->resource.format, &texture->src_blt_color_key, float_key);
             wined3d_device_context_push_constants(context,
@@ -3326,11 +3391,44 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
     while (map)
     {
         i = wined3d_bit_scan(&map);
-        wined3d_device_set_clip_plane(device, i, &state->clip_planes[i]);
+
+        /* In Direct3D, clipping is done based on the position as transformed
+         * by the world (model) matrix, but not the view matrix.
+         *
+         * GL and Vulkan do not distinguish the world and view, so we pass them
+         * as a single uniform. That means, however, that we need to unapply the
+         * view matrix from the clip planes that we are applying. We do this by
+         * multiplying by the transpose of the inverse of the view matrix.
+         *
+         * This works mathematically (c = clip plane, p = position):
+         *
+         * clip distance = dot((V⁻¹)ᵀc, VMp)
+         *               = ((V⁻¹)ᵀc)ᵀVMp
+         *               = cᵀV⁻¹VMp
+         *               = cᵀMp
+         *               = dot(c, Mp)
+         */
+
+        if (!state->vs)
+        {
+            struct wined3d_matrix matrix;
+            struct wined3d_vec4 plane;
+
+            invert_matrix(&matrix, &state->transforms[WINED3D_TS_VIEW]);
+            transpose_matrix(&matrix, &matrix);
+            wined3d_vec4_transform(&plane, &state->clip_planes[i], &matrix);
+            wined3d_device_set_clip_plane(device, i, &plane);
+        }
+        else
+        {
+            wined3d_device_set_clip_plane(device, i, &state->clip_planes[i]);
+        }
     }
 
     if (changed->lights)
     {
+        unsigned int point_idx, spot_idx, directional_idx, parallel_point_idx;
+        unsigned int point_count = 0, spot_count = 0, directional_count = 0;
         struct wined3d_ffp_light_constants constants;
         struct wined3d_light_info *light, *cursor;
 
@@ -3343,8 +3441,94 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
         }
 
         wined3d_color_from_d3dcolor(&constants.ambient, state->rs[WINED3D_RS_AMBIENT]);
+
+        for (unsigned int i = 0; i < WINED3D_MAX_ACTIVE_LIGHTS; ++i)
+        {
+            if (!state->light_state->lights[i])
+                continue;
+
+            switch (state->light_state->lights[i]->OriginalParms.type)
+            {
+                case WINED3D_LIGHT_POINT:
+                    ++point_count;
+                    break;
+                case WINED3D_LIGHT_SPOT:
+                    ++spot_count;
+                    break;
+                case WINED3D_LIGHT_DIRECTIONAL:
+                    ++directional_count;
+                    break;
+                case WINED3D_LIGHT_PARALLELPOINT:
+                    break;
+                default:
+                    FIXME("Unhandled light type %#x.\n", state->light_state->lights[i]->OriginalParms.type);
+                    break;
+            }
+        }
+        point_idx = 0;
+        spot_idx = point_idx + point_count;
+        directional_idx = spot_idx + spot_count;
+        parallel_point_idx = directional_idx + directional_count;
+
+        for (unsigned int i = 0; i < WINED3D_MAX_ACTIVE_LIGHTS; ++i)
+        {
+            const struct wined3d_light_info *light_info = state->light_state->lights[i];
+            const struct wined3d_light_constants *light_constants;
+            enum wined3d_light_type type;
+            unsigned int idx;
+
+            if (!light_info)
+                continue;
+            type = light_info->OriginalParms.type;
+            light_constants = &state->light_state->lights[i]->constants;
+
+            switch (type)
+            {
+                case WINED3D_LIGHT_POINT:
+                    idx = point_idx++;
+                    break;
+                case WINED3D_LIGHT_SPOT:
+                    idx = spot_idx++;
+                    break;
+                case WINED3D_LIGHT_DIRECTIONAL:
+                    idx = directional_idx++;
+                    break;
+                case WINED3D_LIGHT_PARALLELPOINT:
+                    idx = parallel_point_idx++;
+                    break;
+                default:
+                    FIXME("Unhandled light type %#x.\n", type);
+                    continue;
+            }
+            constants.lights[idx] = *light_constants;
+
+            if (type != WINED3D_LIGHT_DIRECTIONAL)
+                wined3d_vec4_transform(&constants.lights[idx].position,
+                        &light_constants->position, &state->transforms[WINED3D_TS_VIEW]);
+            if (type == WINED3D_LIGHT_SPOT || type == WINED3D_LIGHT_DIRECTIONAL)
+                wined3d_vec4_transform(&constants.lights[idx].direction,
+                        &light_constants->direction, &state->transforms[WINED3D_TS_VIEW]);
+        }
+
         wined3d_device_context_push_constants(context, WINED3D_PUSH_CONSTANTS_VS_FFP, WINED3D_SHADER_CONST_FFP_LIGHTS,
                 offsetof(struct wined3d_ffp_vs_constants, light), sizeof(constants), &constants);
+    }
+
+    if (changed->texture_matrices)
+    {
+        struct wined3d_ffp_vs_constants constants;
+        struct wined3d_stream_info si;
+
+        /* FIXME: This is a bit fragile. Ideally we should be calculating
+         * stream info from the stateblock state. */
+        wined3d_stream_info_from_declaration(&si, context->state, &device->adapter->d3d_info);
+
+        for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
+            get_texture_matrix(&si, state, i, &constants.texture_matrices[i]);
+        wined3d_device_context_push_constants(context,
+                WINED3D_PUSH_CONSTANTS_VS_FFP, WINED3D_SHADER_CONST_FFP_TEXMATRIX,
+                offsetof(struct wined3d_ffp_vs_constants, texture_matrices),
+                sizeof(constants.texture_matrices), constants.texture_matrices);
     }
 
     if (changed->ffp_ps_constants)

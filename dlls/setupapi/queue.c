@@ -293,42 +293,29 @@ UINT CALLBACK QUEUE_callback_WtoA( void *context, UINT notification,
 static void get_source_info( HINF hinf, const WCHAR *src_file, SP_FILE_COPY_PARAMS_W *params,
                              WCHAR *src_root, WCHAR *src_path)
 {
-    INFCONTEXT file_ctx, disk_ctx;
-    INT id, diskid;
+    UINT diskid;
     DWORD len;
 
-    /* find the SourceDisksFiles entry */
-    if (!SetupFindFirstLineW( hinf, L"SourceDisksFiles", src_file, &file_ctx )) return;
-    if (!SetupGetIntField( &file_ctx, 1, &diskid )) return;
+    if (!SetupGetSourceFileLocationW( hinf, NULL, src_file, &diskid, src_path, MAX_PATH, &len ))
+        return;
 
-    /* now find the diskid in the SourceDisksNames section */
-    if (!SetupFindFirstLineW( hinf, L"SourceDisksNames", NULL, &disk_ctx )) return;
-    for (;;)
-    {
-        if (SetupGetIntField( &disk_ctx, 0, &id ) && (id == diskid)) break;
-        if (!SetupFindNextLine( &disk_ctx, &disk_ctx )) return;
-    }
+    if (len > 1)
+        params->SourcePath = src_path;
 
-    if (SetupGetStringFieldW( &disk_ctx, 1, NULL, 0, &len ) && len > sizeof(WCHAR)
+    if (SetupGetSourceInfoW( hinf, diskid, SRCINFO_DESCRIPTION, NULL, 0, &len ) && len > 1
             && (params->SourceDescription = malloc( len * sizeof(WCHAR) )))
-        SetupGetStringFieldW( &disk_ctx, 1, (WCHAR *)params->SourceDescription, len, NULL );
+        SetupGetSourceInfoW( hinf, diskid, SRCINFO_DESCRIPTION, (WCHAR *)params->SourceDescription, len, NULL );
 
-    if (SetupGetStringFieldW( &disk_ctx, 2, NULL, 0, &len ) && len > sizeof(WCHAR)
+    if (SetupGetSourceInfoW( hinf, diskid, SRCINFO_TAGFILE, NULL, 0, &len ) && len > 1
             && (params->SourceTagfile = malloc( len * sizeof(WCHAR) )))
-        SetupGetStringFieldW( &disk_ctx, 2, (WCHAR *)params->SourceTagfile, len, NULL );
+        SetupGetSourceInfoW( hinf, diskid, SRCINFO_TAGFILE, (WCHAR *)params->SourceTagfile, len, NULL );
 
-    if (SetupGetStringFieldW( &disk_ctx, 4, NULL, 0, &len ) && len > sizeof(WCHAR)
+    if (SetupGetSourceInfoW( hinf, diskid, SRCINFO_PATH, NULL, 0, &len ) && len > 1
             && len < MAX_PATH - lstrlenW( src_root ) - 1)
     {
         lstrcatW( src_root, L"\\" );
-        SetupGetStringFieldW( &disk_ctx, 4, src_root + lstrlenW( src_root ),
+        SetupGetSourceInfoW( hinf, diskid, SRCINFO_PATH, src_root + lstrlenW( src_root ),
                               MAX_PATH - lstrlenW( src_root ), NULL );
-    }
-
-    if (SetupGetStringFieldW( &file_ctx, 2, NULL, 0, &len ) && len > sizeof(WCHAR) && len < MAX_PATH)
-    {
-        SetupGetStringFieldW( &file_ctx, 2, src_path, MAX_PATH, NULL );
-        params->SourcePath = src_path;
     }
 }
 

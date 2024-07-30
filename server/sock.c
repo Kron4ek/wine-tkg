@@ -2047,6 +2047,7 @@ static struct sock *accept_socket( struct sock *sock )
             release_object( acceptsock );
             return NULL;
         }
+        allow_fd_caching( acceptsock->fd );
         unix_len = sizeof(unix_addr);
         if (!getsockname( acceptfd, &unix_addr.addr, &unix_len ))
         {
@@ -2095,6 +2096,7 @@ static int accept_into_socket( struct sock *sock, struct sock *acceptsock )
                                             get_fd_options( acceptsock->fd ) )))
             return FALSE;
     }
+    allow_fd_caching( newfd );
 
     acceptsock->state = SOCK_CONNECTED;
     acceptsock->bound = 1;

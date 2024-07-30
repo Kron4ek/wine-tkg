@@ -10206,12 +10206,13 @@ static struct sm6_function *sm6_parser_get_function(const struct sm6_parser *sm6
     return NULL;
 }
 
-static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, struct vsir_program *program, const char *source_name,
+static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, struct vsir_program *program,
+        const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_message_context *message_context, struct dxbc_shader_desc *dxbc_desc)
 {
     size_t count, length, function_count, expected_function_count, byte_code_size = dxbc_desc->byte_code_size;
+    const struct vkd3d_shader_location location = {.source_name = compile_info->source_name};
     struct shader_signature *patch_constant_signature, *output_signature, *input_signature;
-    const struct vkd3d_shader_location location = {.source_name = source_name};
     uint32_t version_token, dxil_version, token_count, magic;
     const uint32_t *byte_code = dxbc_desc->byte_code;
     unsigned int chunk_offset, chunk_size;
@@ -10302,9 +10303,9 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, struct vsir_pro
 
     /* Estimate instruction count to avoid reallocation in most shaders. */
     count = max(token_count, 400) - 400;
-    if (!vsir_program_init(program, &version, (count + (count >> 2)) / 2u + 10))
+    if (!vsir_program_init(program, compile_info, &version, (count + (count >> 2)) / 2u + 10))
         return VKD3D_ERROR_OUT_OF_MEMORY;
-    vkd3d_shader_parser_init(&sm6->p, program, message_context, source_name);
+    vkd3d_shader_parser_init(&sm6->p, program, message_context, compile_info->source_name);
     sm6->ptr = &sm6->start[1];
     sm6->bitpos = 2;
 
@@ -10565,7 +10566,7 @@ int dxil_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t co
         dxbc_desc.byte_code = byte_code;
     }
 
-    ret = sm6_parser_init(&sm6, program, compile_info->source_name, message_context, &dxbc_desc);
+    ret = sm6_parser_init(&sm6, program, compile_info, message_context, &dxbc_desc);
     free_dxbc_shader_desc(&dxbc_desc);
     vkd3d_free(byte_code);
 

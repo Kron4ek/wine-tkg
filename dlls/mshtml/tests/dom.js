@@ -331,6 +331,18 @@ sync_test("rects", function() {
     ok(rects.length === 1, "rect.length = " + rects.length);
     ok(rects[0].top === rect.top, "rects[0].top = " + rects[0].top + " rect.top = " + rect.top);
     ok(rects[0].bottom === rect.bottom, "rects[0].bottom = " + rects[0].bottom + " rect.bottom = " + rect.bottom);
+
+    ok("" + rects[0] === "[object ClientRect]", "rects[0] = " + rects[0]);
+    ok(rects.hasOwnProperty("0"), 'rects.hasOwnProperty("0") = ' + rects.hasOwnProperty("0"));
+    todo_wine.
+    ok(rects.hasOwnProperty("1"), 'rects.hasOwnProperty("1") = ' + rects.hasOwnProperty("1"));
+    var desc = Object.getOwnPropertyDescriptor(rects, "0");
+    ok(desc.writable === true, "writable = " + desc.writable);
+    todo_wine.
+    ok(desc.enumerable === true, "enumerable = " + desc.enumerable);
+    ok(desc.configurable === true, "configurable = " + desc.configurable);
+    ok("" + desc.value === "[object ClientRect]", "desc.value = " + desc.value);
+
     ok(rect.height === rect.bottom - rect.top, "rect.height = " + rect.height + " rect.bottom = " + rect.bottom + " rect.top = " + rect.top);
     ok(rect.width === rect.right - rect.left, "rect.width = " + rect.width + " rect.right = " + rect.right + " rect.left = " + rect.left);
 
@@ -399,6 +411,20 @@ sync_test("style_properties", function() {
     ok(val === "", "removeProperty() returned " + val);
     ok(style.testVal === "test", "testVal = " + style.testVal);
 
+    val = style.getPropertyValue("testVal");
+    ok(val === "", 'style.getPropertyValue("testVal") = ' + val);
+    ok(style.testVal === "test", "testVal = " + style.testVal);
+
+    style.setProperty("testVal", "1px");
+    val = style.getPropertyValue("testVal");
+    ok(val === "", 'style.getPropertyValue("testVal") = ' + val);
+    ok(style.testVal === "test", "testVal = " + style.testVal);
+
+    style.setProperty("test", "1px");
+    val = style.getPropertyValue("test");
+    ok(val === "", 'style.getPropertyValue("test") = ' + val);
+    ok(!("test" in style), "test in style");
+
     style["z-index"] = 1;
     ok(style.zIndex === 1, "zIndex = " + style.zIndex);
     ok(style["z-index"] === 1, "z-index = " + style["z-index"]);
@@ -458,6 +484,21 @@ sync_test("style_properties", function() {
     ok(computed_style.zIndex === 4, "computed_style.zIndex = " + computed_style.zIndex);
 
     window.getComputedStyle(elem, null);
+
+    /* ms* prefixed styles alias */
+    var list = [
+        [ "transform", "translate(5px, 5px)" ],
+        [ "transition", "background-color 0.5s linear 0.1s" ]
+    ];
+    for(var i = 0; i < list.length; i++) {
+        var s = list[i][0], v = list[i][1], ms = "ms" + s[0].toUpperCase() + s.substring(1);
+        style[s] = v;
+        ok(style[s] === v, "style." + s + " = " + style[s] + ", expected " + v);
+        ok(style[ms] === v, "style." + ms + " = " + style[ms] + ", expected " + v);
+        elem.style[ms] = v;
+        ok(elem.style[s] === v, "elem.style." + s + " = " + elem.style[s] + ", expected " + v);
+        ok(elem.style[ms] === v, "elem.style." + ms + " = " + elem.style[ms] + ", expected " + v);
+    }
 });
 
 sync_test("stylesheets", function() {
